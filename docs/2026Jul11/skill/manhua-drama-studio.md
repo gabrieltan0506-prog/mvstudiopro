@@ -27,6 +27,8 @@ defaultEnabled: false
 ## 文本模型（画布）
 - 默认 / 主力：**GPT-5.6 Sol**；备选 **GPT-5.6 Terra**
 - **Gemini 3.1 Pro** 仅保留选项（知识截止约 2025-01-01，偏旧）
+- **编剧室扩写**：官方 **Responses API · reasoning.mode=pro**（失败回退 Chat Completions）
+- 页首双入口：**漫剧工厂** vs **自由画布**（同页滚动，不拆路由）
 
 ## 六段硬链路（确认后）
 1. **story_brief**：标题钩子 + 欲望 + 冲突 + 收束（可注入编剧室剧情包）  

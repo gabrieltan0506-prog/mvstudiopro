@@ -64,24 +64,14 @@ import {
   MANHUA_WRITER_EPISODE_DEFAULT,
   MANHUA_WRITER_EPISODE_MAX,
   MANHUA_WRITER_EPISODE_MIN,
-  buildManhuaWriterExpandPrompt,
   clampWriterEpisodeCount,
   composeWriterPackFactoryContext,
-  parseManhuaWriterPack,
   writerPackLooksReady,
   type ManhuaWriterPack,
 } from "@shared/manhuaWriterRoom";
 import { trpc } from "@/lib/trpc";
-import { Clapperboard, Loader2, Play, Sparkles, Square } from "lucide-react";
+import { Clapperboard, LayoutTemplate, Loader2, Play, Sparkles, Square } from "lucide-react";
 import { toast } from "sonner";
-
-function extractGeminiScriptText(json: unknown): string {
-  const j = json as {
-    text?: string;
-    raw?: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-  };
-  return String(j?.raw?.candidates?.[0]?.content?.parts?.[0]?.text || j?.text || "").trim();
-}
 
 const LS_KEY = "mv-freeform-canvas-v1";
 const LS_FACTORY_PREFS_KEY = "mv-manhua-factory-character-prefs-v1";
@@ -402,6 +392,7 @@ export default function OmniCanvas() {
   }, [writerConfirmed, writerPack, writerFocusEpisode]);
 
   const optimizeCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
+  const expandWriterMutation = trpc.mvAnalysis.expandManhuaWriterPack.useMutation();
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
 
   const runDeps = useMemo<CanvasRunDeps>(
@@ -610,31 +601,24 @@ export default function OmniCanvas() {
     setWriterConfirmed(false);
     try {
       const count = clampWriterEpisodeCount(writerEpisodeCount);
-      const prompt = buildManhuaWriterExpandPrompt({ topic, brief, episodeCount: count });
-      const resp = await fetch("/api/google?op=geminiScript", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, model: "gemini-3.1-pro-preview" }),
+      const res = await expandWriterMutation.mutateAsync({
+        topic,
+        brief: brief || undefined,
+        episodeCount: count,
       });
-      const json = await resp.json();
-      if (!resp.ok || !json?.ok) {
-        throw new Error(String(json?.error || json?.message || "扩写失败，请稍后重试"));
-      }
-      const text = extractGeminiScriptText(json);
-      if (text.length < 80) throw new Error("扩写结果过短，请再试一次");
-      const pack = parseManhuaWriterPack(text, count);
-      if (!writerPackLooksReady(pack)) {
+      const pack = res.pack;
+      if (!res.ready && !writerPackLooksReady(pack)) {
         toast.message("已生成草稿，建议检查每集片尾钩子是否完整");
       }
       setWriterPack(pack);
       setWriterFocusEpisode(1);
-      toast.success(`已扩写 ${pack.episodes.length} 集剧情，确认后再进入编导`);
+      toast.success(`已扩写 ${pack.episodes.length} 集剧情（GPT-5.6 Pro），确认后再进入编导`);
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "扩写失败");
     } finally {
       setWriterBusy(false);
     }
-  }, [factoryTopic, writerBrief, writerEpisodeCount]);
+  }, [factoryTopic, writerBrief, writerEpisodeCount, expandWriterMutation]);
 
   const confirmWriterToDirector = useCallback(() => {
     if (!writerPack || !writerPackLooksReady(writerPack)) {
@@ -938,18 +922,56 @@ export default function OmniCanvas() {
           <div className="mb-5">
             <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
               <Clapperboard className="h-3.5 w-3.5" />
-              自由画布 · 编剧室 · 编导分镜
+              漫剧工厂 · 自由画布
             </div>
-            <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">Gemini Omini 创作画布</h1>
+            <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">创作画布</h1>
             <p className="mt-2 max-w-2xl text-sm leading-7 text-white/65">
-              先扩写连载剧情并确认人物场景，再进入编导分镜与成片。每集片尾都会留钩子。
+              做连载短剧走左边漫剧工厂；随便拼文本/图/视频节点走右边自由画布。
             </p>
 
+            <div className="mt-5 grid max-w-4xl gap-3 md:grid-cols-2">
+              <button
+                type="button"
+                onClick={() =>
+                  document.getElementById("manhua-factory-zone")?.scrollIntoView({ behavior: "smooth", block: "start" })
+                }
+                className="rounded-2xl border border-emerald-400/35 bg-gradient-to-b from-emerald-500/15 to-transparent p-4 text-left transition hover:border-emerald-300/50 hover:from-emerald-500/25"
+              >
+                <div className="flex items-center gap-2 text-sm font-semibold text-emerald-50">
+                  <Clapperboard className="h-4 w-4" />
+                  漫剧工厂
+                </div>
+                <p className="mt-2 text-[12px] leading-5 text-white/60">
+                  一句题材 → 扩写连载（GPT-5.6 Pro）→ 确认后铺板跑静帧与成片。适合竖屏短剧流水线。
+                </p>
+                <span className="mt-3 inline-block text-[11px] font-medium text-emerald-200/90">进入编剧室 ↓</span>
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  document.getElementById("freeform-canvas-zone")?.scrollIntoView({ behavior: "smooth", block: "start" })
+                }
+                className="rounded-2xl border border-sky-400/35 bg-gradient-to-b from-sky-500/15 to-transparent p-4 text-left transition hover:border-sky-300/50 hover:from-sky-500/25"
+              >
+                <div className="flex items-center gap-2 text-sm font-semibold text-sky-50">
+                  <LayoutTemplate className="h-4 w-4" />
+                  自由画布
+                </div>
+                <p className="mt-2 text-[12px] leading-5 text-white/60">
+                  文本 / 图片 / 视频方块自由连线，按节点跑。适合实验构图、单镜改写、非连载任务。
+                </p>
+                <span className="mt-3 inline-block text-[11px] font-medium text-sky-200/90">跳到画布 ↓</span>
+              </button>
+            </div>
+
             {/* ① 编剧室 */}
-            <div className="mt-5 max-w-3xl rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.07] to-transparent p-4 md:p-5">
+            <div
+              id="manhua-factory-zone"
+              className="mt-5 max-w-3xl scroll-mt-28 rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.07] to-transparent p-4 md:p-5"
+            >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <div className="text-sm font-semibold text-white/90">① 编剧室</div>
-                <span className="text-[11px] text-white/40">题材 + 三到五句条件 → 连载剧情包</span>
+                <div className="text-sm font-semibold text-white/90">① 编剧室 · 漫剧工厂</div>
+                <span className="text-[11px] text-white/40">题材 + 条件 → GPT-5.6 Pro 连载包</span>
               </div>
               <label className="mt-3 block text-[11px] text-white/45">题材</label>
               <input
@@ -1562,6 +1584,11 @@ export default function OmniCanvas() {
             </div>
           </div>
 
+          <div id="freeform-canvas-zone" className="scroll-mt-24">
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+              <div className="text-sm font-semibold text-white/85">自由画布</div>
+              <span className="text-[11px] text-white/40">方块连线 · 与上方漫剧工厂互补</span>
+            </div>
           <FreeformCanvas
             blocks={blocks}
             edges={edges}
@@ -1571,6 +1598,7 @@ export default function OmniCanvas() {
             focusBlockId={focusBlockId}
             onFocusBlockConsumed={() => setFocusBlockId(null)}
           />
+          </div>
         </div>
       </main>
     </div>
