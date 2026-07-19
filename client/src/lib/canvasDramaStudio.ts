@@ -51,6 +51,9 @@ import {
   buildPromoCoverPrompt,
   getPromoCoverLayoutById,
 } from "@shared/manhuaPromoCoverLayouts";
+import { buildActionCameraInjectBlock } from "@shared/manhuaActionCameraRecipeBank";
+import { formatCineVocabInjectBlock } from "@shared/manhuaCineVocabBank";
+import { buildWardrobePropContinuityInjectBlock } from "@shared/manhuaWardrobePropContinuity";
 import {
   buildManhuaPreviouslyOnRecap,
   buildManhuaRecapCardImagePrompt,
@@ -125,6 +128,12 @@ export type SpawnManhuaDramaStudioOpts = {
   maleMicroExpressionIds?: string[];
   /** 宣发封面构图 id：额外铺 promo_cover 图片节点 */
   promoCoverLayoutIds?: string[];
+  /** 动作运镜配方（FPV / 打斗轨迹 / 双轨） */
+  actionCameraRecipeIds?: string[];
+  /** 电影级可拍词表 id */
+  cineVocabIds?: string[];
+  /** 服装道具连续性卡片 id */
+  wardrobePropContinuityIds?: string[];
   /** 编导反推输出档 */
   videoReverseOutputMode?: "zh" | "en" | "compact";
   /** 编剧室已确认上下文（人物/道具/场景/本集+钩子） */
@@ -350,6 +359,15 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     .map((id) => String(id || "").trim())
     .filter(Boolean);
   const promoCoverBlock = buildPromoCoverInjectBlock(promoCoverIds);
+  const actionCameraBlock = buildActionCameraInjectBlock(
+    (opts.actionCameraRecipeIds || []).map((id) => String(id || "").trim()).filter(Boolean),
+  );
+  const cineVocabBlock = formatCineVocabInjectBlock(
+    (opts.cineVocabIds || []).map((id) => String(id || "").trim()).filter(Boolean),
+  );
+  const wardrobeBlock = buildWardrobePropContinuityInjectBlock(
+    (opts.wardrobePropContinuityIds || []).map((id) => String(id || "").trim()).filter(Boolean),
+  );
   const includeDirectorCraft = Boolean(opts.includeDirectorCraft || writerContext);
   const episodeIndex =
     typeof opts.episodeIndex === "number" && opts.episodeIndex >= 1
@@ -420,7 +438,13 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const bibleBase = usePack
     ? buildManhuaStagePromptWithGenre("character_bible", stageOpts)
     : MANHUA_DRAMA_DEFAULT_PROMPTS.character_bible;
-  bible.prompt = [bibleBase, characterBlock, maleHairstyleBlock, propAnchorBlock]
+  bible.prompt = [
+    bibleBase,
+    characterBlock,
+    maleHairstyleBlock,
+    wardrobeBlock,
+    propAnchorBlock,
+  ]
     .filter(Boolean)
     .join("\n\n");
   bible.parentId = story.id;
@@ -435,6 +459,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     beatsBase,
     craftShotBlock,
     pathCameraBlock,
+    actionCameraBlock,
+    cineVocabBlock,
     narrativeLightingBlock,
     maleMicroBlock,
     propAnchorBlock,
@@ -453,6 +479,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     reverseBase,
     craftShotBlock,
     pathCameraBlock,
+    actionCameraBlock,
+    cineVocabBlock,
     narrativeLightingBlock,
   ]
     .filter(Boolean)
@@ -485,7 +513,12 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
 
   const clip = defaultCanvasBlock("video", originX + gapX * (col0 + 5), originY);
   clip.id = makeFactoryStageId("clip", episodeIndex);
-  clip.prompt = [MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip, pathCameraBlock, motionBlock]
+  clip.prompt = [
+    MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip,
+    pathCameraBlock,
+    actionCameraBlock,
+    motionBlock,
+  ]
     .filter(Boolean)
     .join("\n\n");
   clip.parentId = keyArt.id;
@@ -499,7 +532,9 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   omniEdit.id = makeFactoryStageId("omni_edit", episodeIndex);
   const omniBase =
     "在保留角色身份与主构图的前提下，按自然语言改写上一镜视频：加强微表情与运镜层次，不要重拍成无关场景。";
-  omniEdit.prompt = [omniBase, pathCameraBlock, motionBlock].filter(Boolean).join("\n\n");
+  omniEdit.prompt = [omniBase, pathCameraBlock, actionCameraBlock, motionBlock]
+    .filter(Boolean)
+    .join("\n\n");
   omniEdit.parentId = clip.id;
   omniEdit.videoModel = "gemini-omni-flash";
   omniEdit.aspectRatio = "9:16";
@@ -672,6 +707,9 @@ export function applyFactoryPrefsToBlocks(
     maleHairstyleIds?: string[];
     maleMicroExpressionIds?: string[];
     promoCoverLayoutIds?: string[];
+    actionCameraRecipeIds?: string[];
+    cineVocabIds?: string[];
+    wardrobePropContinuityIds?: string[];
     sceneId?: string;
     propIds?: string[];
     genreId?: string;
@@ -687,6 +725,9 @@ export function applyFactoryPrefsToBlocks(
   const maleHairstyleBlock = buildMaleHairstyleInjectBlock(opts.maleHairstyleIds || []);
   const maleMicroBlock = buildMaleMicroExpressionInjectBlock(opts.maleMicroExpressionIds || []);
   const promoCoverBlock = buildPromoCoverInjectBlock(opts.promoCoverLayoutIds || []);
+  const actionCameraBlock = buildActionCameraInjectBlock(opts.actionCameraRecipeIds || []);
+  const cineVocabBlock = formatCineVocabInjectBlock(opts.cineVocabIds || []);
+  const wardrobeBlock = buildWardrobePropContinuityInjectBlock(opts.wardrobePropContinuityIds || []);
   const pathRecipeId = (opts.pathCameraRecipeIds || []).map(String).filter(Boolean)[0];
   const characterBlock = buildManhuaCharacterPromptBlock(opts.characterIds || [], {
     artStyleId: opts.artStyleId,
@@ -715,6 +756,8 @@ export function applyFactoryPrefsToBlocks(
     if (b.id.startsWith("beats-") || b.id.startsWith("reverse-") || b.id.startsWith("keyart-")) {
       let base = stripInjectBlock(b.prompt, "【手法条目库·原子镜头】");
       base = stripMarkedSection(base, "【路径运镜配方】");
+      base = stripMarkedSection(base, "【动作运镜配方】");
+      base = stripMarkedSection(base, "【电影级可拍词表】");
       base = stripMarkedSection(base, "【叙事灯光动机库】");
       base = stripMarkedSection(base, "【男生微表情库】");
       if (syncGenre) base = stripMarkedSection(base, "【编剧剧种模板");
@@ -737,6 +780,8 @@ export function applyFactoryPrefsToBlocks(
           : "",
         craftBlock,
         !b.id.startsWith("keyart-") ? pathCameraBlock : "",
+        !b.id.startsWith("keyart-") ? actionCameraBlock : "",
+        !b.id.startsWith("keyart-") ? cineVocabBlock : "",
         narrativeLightingBlock,
         (b.id.startsWith("beats-") || b.id.startsWith("keyart-")) && maleMicroBlock
           ? maleMicroBlock
@@ -763,6 +808,7 @@ export function applyFactoryPrefsToBlocks(
         base = stripMarkedSection(base, "【角色库锚点】");
         base = stripMarkedSection(base, "【点选道具锚点】");
         base = stripMarkedSection(base, "【男发预设库】");
+        base = stripMarkedSection(base, "【服装道具连续性】");
       }
       const parts = [
         base,
@@ -771,6 +817,7 @@ export function applyFactoryPrefsToBlocks(
         b.id.startsWith("story-") && sceneDemoBlock ? sceneDemoBlock : "",
         b.id.startsWith("bible-") && characterBlock ? characterBlock : "",
         b.id.startsWith("bible-") && maleHairstyleBlock ? maleHairstyleBlock : "",
+        b.id.startsWith("bible-") && wardrobeBlock ? wardrobeBlock : "",
         b.id.startsWith("bible-") && propAnchorBlock ? propAnchorBlock : "",
       ].filter(Boolean);
       return { ...b, prompt: parts.join("\n\n") };
@@ -794,9 +841,12 @@ export function applyFactoryPrefsToBlocks(
     if (b.id.startsWith("clip-") || b.id.startsWith("omni_edit-")) {
       let base = stripInjectBlock(b.prompt, "【包装动效手法】");
       base = stripMarkedSection(base, "【路径运镜配方】");
+      base = stripMarkedSection(base, "【动作运镜配方】");
       return {
         ...b,
-        prompt: [base, pathCameraBlock, motionBlock].filter(Boolean).join("\n\n"),
+        prompt: [base, pathCameraBlock, actionCameraBlock, motionBlock]
+          .filter(Boolean)
+          .join("\n\n"),
         ...(b.id.startsWith("clip-")
           ? {
               pathCameraRecipeId: pathRecipeId || undefined,

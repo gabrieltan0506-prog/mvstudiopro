@@ -86,6 +86,37 @@ export const MANHUA_PROMO_COVER_LAYOUTS: readonly ManhuaPromoCoverLayout[] = [
     promptLockEn: "back figure solid, sky/cape region double-exposes past and future",
     aspectHint: "9:16",
   },
+  {
+    id: "promo_09_watercolor_profile_world",
+    no: 9,
+    nameZh: "水彩侧脸世界",
+    compositionZh:
+      "侧脸容器可读脸；剪影内完整叙事风景；同人小身影；花鸟溢出；水彩洇边米白纸底。",
+    whenToUseZh: "图文笔记封面气质、旅行/心境宣发。",
+    promptLockEn:
+      "watercolor double-exposure profile container, mini same-subject figure, ink-bleed parchment, face-readable",
+    aspectHint: "3:4",
+  },
+  {
+    id: "promo_10_moonlit_conservatory",
+    no: 10,
+    nameZh: "月下玻璃廊融合",
+    compositionZh: "侧脸容器叠月下玻璃廊与烛径；钥匙/玫瑰等物件溢出边界。",
+    whenToUseZh: "浪漫悬念、回忆线宣发。",
+    promptLockEn:
+      "profile silhouette filled with moonlit conservatory path, candle warmth, prop overflow, no watermark",
+    aspectHint: "3:4",
+  },
+  {
+    id: "promo_11_alpine_memory",
+    no: 11,
+    nameZh: "高山记忆融合",
+    compositionZh: "侧脸容器叠雪峰小屋与登山者同人；水彩边；冷调高调纸底。",
+    whenToUseZh: "冒险、远行、成长线。",
+    promptLockEn:
+      "alpine double-exposure profile, lodge trail mini figure, watercolor bleed, high-key paper",
+    aspectHint: "9:16",
+  },
 ];
 
 export function getPromoCoverLayoutById(id?: string | null): ManhuaPromoCoverLayout | null {

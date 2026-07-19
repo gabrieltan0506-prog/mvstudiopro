@@ -4,12 +4,15 @@
  * 实际主题一律来自用户粘贴正文。
  */
 
-export type InfographicHeroMode = "exploded" | "split" | "hub" | "timeline";
+import { GRAPHIC_NOTE_FUSION_TEMPLATES } from "./graphicNoteFusionTemplates.js";
+
+export type InfographicHeroMode = "exploded" | "split" | "hub" | "timeline" | "fusion";
 
 export const INFOGRAPHIC_HERO_MODE_ORDER: readonly {
   id: InfographicHeroMode;
   labelZh: string;
 }[] = [
+  { id: "fusion", labelZh: "人景物融合" },
   { id: "exploded", labelZh: "拆解标注" },
   { id: "timeline", labelZh: "流程时间轴" },
   { id: "hub", labelZh: "枢纽辐射" },
@@ -88,6 +91,17 @@ export const INFOGRAPHIC_NOTE_TEMPLATES: readonly InfographicNoteTemplate[] = [
     aspect: "3:4",
     layoutPromptEn: `LAYOUT ONLY — encyclopedic 3:4 infographic. Hero: hyper-detailed structural deconstruction / exploded layered architecture of the USER TOPIC. Dark museum-editorial canvas with rubbing-like pattern watermarks. Inscription-style annotations, motif/module magnifiers, stage strip, material-or-metric analysis specs. No ancient-artifact or dynasty samples unless user text explicitly requires them. Documentary quality, 4K. --ar 3:4`,
   },
+  // 人景物融合（来自 graphicNoteFusionTemplates）
+  ...GRAPHIC_NOTE_FUSION_TEMPLATES.map(
+    (t): InfographicNoteTemplate => ({
+      id: t.id,
+      labelZh: t.labelZh,
+      blurbZh: t.blurbZh,
+      heroMode: "fusion",
+      aspect: "3:4",
+      layoutPromptEn: t.layoutPromptEn,
+    }),
+  ),
 ];
 
 /** 旧 id 兼容：古代器物 → 结构层解构 */

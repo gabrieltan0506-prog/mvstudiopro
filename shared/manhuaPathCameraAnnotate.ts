@@ -1,8 +1,12 @@
 /**
  * 自研静帧路径标注：锚点 JSON → 分阶段运镜句。
- * 不依赖第三方画布实现；坐标为归一化 0–1。
+ * 支持红轨（人物）/ 蓝轨（镜头）双轨迹。
  */
 
+import {
+  compileDualTrackMotionPrompt,
+  getActionCameraRecipeById,
+} from "./manhuaActionCameraRecipeBank.js";
 import {
   compilePathCameraRecipeToMotionPrompt,
   getPathCameraRecipeById,
@@ -12,6 +16,8 @@ import {
 
 export const PATH_ANNOTATE_ANCHOR_MIN = 3;
 export const PATH_ANNOTATE_ANCHOR_MAX = 8;
+
+export type ManhuaPathTrackRole = "subject" | "camera";
 
 export type ManhuaPathAnchor = {
   /** 1-based index */
@@ -24,12 +30,16 @@ export type ManhuaPathAnchor = {
   cameraEn: string;
   subjectActionEn: string;
   durationHintSec: number;
+  /** 红=人物动作轨，蓝=镜头轨；缺省按 subject */
+  trackRole?: ManhuaPathTrackRole;
 };
 
 export type ManhuaPathAnnotation = {
   version: 1;
   imageUrl?: string;
   recipeId?: string | null;
+  /** 动作运镜配方 id（FPV / 打斗 / 双轨） */
+  actionRecipeId?: string | null;
   anchors: ManhuaPathAnchor[];
   notesZh?: string;
 };
@@ -37,6 +47,10 @@ export type ManhuaPathAnnotation = {
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(1, n));
+}
+
+function parseTrackRole(raw: unknown): ManhuaPathTrackRole {
+  return raw === "camera" ? "camera" : "subject";
 }
 
 export function normalizePathAnnotation(raw: unknown): ManhuaPathAnnotation | null {
@@ -53,8 +67,10 @@ export function normalizePathAnnotation(raw: unknown): ManhuaPathAnnotation | nu
       y: clamp01(Number(a.y)),
       focusZh: String(a.focusZh || "").trim().slice(0, 40) || `点${anchors.length + 1}`,
       cameraEn: String(a.cameraEn || "").trim().slice(0, 120) || "slow motivated camera move",
-      subjectActionEn: String(a.subjectActionEn || "").trim().slice(0, 120) || "subtle natural micro-motion",
+      subjectActionEn:
+        String(a.subjectActionEn || "").trim().slice(0, 120) || "subtle natural micro-motion",
       durationHintSec: Math.max(1, Math.min(6, Math.round(Number(a.durationHintSec) || 2))),
+      trackRole: parseTrackRole(a.trackRole),
     });
   }
   if (anchors.length < PATH_ANNOTATE_ANCHOR_MIN) return null;
@@ -62,6 +78,7 @@ export function normalizePathAnnotation(raw: unknown): ManhuaPathAnnotation | nu
     version: 1,
     imageUrl: o.imageUrl ? String(o.imageUrl).slice(0, 2000) : undefined,
     recipeId: o.recipeId != null ? String(o.recipeId) : null,
+    actionRecipeId: o.actionRecipeId != null ? String(o.actionRecipeId) : null,
     anchors,
     notesZh: o.notesZh ? String(o.notesZh).slice(0, 500) : undefined,
   };
@@ -84,6 +101,7 @@ export function anchorsFromRecipe(
       cameraEn: p.cameraEn,
       subjectActionEn: p.subjectActionEn,
       durationHintSec: p.durationHintSec,
+      trackRole: "subject" as const,
     };
   });
 }
@@ -112,16 +130,51 @@ export function annotationToPhases(ann: ManhuaPathAnnotation): ManhuaPathCameraP
   }));
 }
 
-/** 标注 JSON → Seedance 时段运镜句 */
+/** 标注 JSON → Seedance 时段运镜句（支持双轨） */
 export function compilePathAnnotationToMotionPrompt(ann: ManhuaPathAnnotation): string {
   const normalized = normalizePathAnnotation(ann);
   if (!normalized) {
     return "Slow cinematic push-in, subtle natural movement, soft atmospheric haze";
   }
+
+  const action = getActionCameraRecipeById(normalized.actionRecipeId);
+  if (action?.trackMode === "fpv") {
+    return `${action.craftLockEn}. ${action.seedancePromptZh}`;
+  }
+
+  const subjectAnchors = normalized.anchors.filter((a) => (a.trackRole || "subject") === "subject");
+  const cameraAnchors = normalized.anchors.filter((a) => a.trackRole === "camera");
+  const dual =
+    action?.trackMode === "dual" ||
+    (subjectAnchors.length >= 2 && cameraAnchors.length >= 2);
+
+  if (dual) {
+    const subjectBeats = (subjectAnchors.length ? subjectAnchors : normalized.anchors).map(
+      (a) => a.subjectActionEn,
+    );
+    const cameraBeats = (cameraAnchors.length ? cameraAnchors : normalized.anchors).map(
+      (a) => a.cameraEn,
+    );
+    const dualEn = compileDualTrackMotionPrompt({ subjectBeats, cameraBeats });
+    return action ? `${action.craftLockEn}. ${dualEn}` : dualEn;
+  }
+
+  if (action?.trackMode === "single_action") {
+    const parts = normalized.anchors.map((a) => {
+      const t0 = normalized.anchors.slice(0, a.index - 1).reduce((s, x) => s + x.durationHintSec, 0);
+      const t1 = t0 + a.durationHintSec;
+      return `${t0}-${t1}s: subject ${a.subjectActionEn} along action path; camera ${a.cameraEn}`;
+    });
+    return [
+      action.craftLockEn,
+      "Guide lines must not appear in final frames.",
+      ...parts,
+    ].join(" ");
+  }
+
   if (normalized.recipeId) {
     const recipe = getPathCameraRecipeById(normalized.recipeId);
     if (recipe && normalized.anchors.length === recipe.phases.length) {
-      // 用户未改阶段文案时，直接用配方编译；改过则以锚点为准
       const unchanged = normalized.anchors.every((a, i) => {
         const p = recipe.phases[i]!;
         return a.cameraEn === p.cameraEn && a.subjectActionEn === p.subjectActionEn;
@@ -129,6 +182,7 @@ export function compilePathAnnotationToMotionPrompt(ann: ManhuaPathAnnotation): 
       if (unchanged) return compilePathCameraRecipeToMotionPrompt(recipe);
     }
   }
+
   const parts = normalized.anchors.map((a) => {
     const t0 = normalized.anchors.slice(0, a.index - 1).reduce((s, x) => s + x.durationHintSec, 0);
     const t1 = t0 + a.durationHintSec;
@@ -137,6 +191,7 @@ export function compilePathAnnotationToMotionPrompt(ann: ManhuaPathAnnotation): 
   return [
     "One primary path move along annotated anchors.",
     "Separate camera from subject action. No stacked camera moves.",
+    "Guide lines must not appear in final frames.",
     ...parts,
   ].join(" ");
 }
@@ -144,12 +199,14 @@ export function compilePathAnnotationToMotionPrompt(ann: ManhuaPathAnnotation): 
 export function formatPathAnnotationBrief(ann: ManhuaPathAnnotation): string {
   const n = normalizePathAnnotation(ann);
   if (!n) return "";
-  const lines = n.anchors.map(
-    (a) => `${a.index}. ${a.focusZh} @(${a.x.toFixed(2)},${a.y.toFixed(2)}) · ${a.durationHintSec}s`,
-  );
+  const lines = n.anchors.map((a) => {
+    const role = (a.trackRole || "subject") === "camera" ? "蓝·镜" : "红·人";
+    return `${a.index}.[${role}] ${a.focusZh} @(${a.x.toFixed(2)},${a.y.toFixed(2)}) · ${a.durationHintSec}s`;
+  });
   return [
     "【路径标注】",
-    n.recipeId ? `配方：${n.recipeId}` : "自定义锚点",
+    n.actionRecipeId ? `动作配方：${n.actionRecipeId}` : "",
+    n.recipeId ? `路径配方：${n.recipeId}` : "自定义锚点",
     ...lines,
     n.notesZh ? `备注：${n.notesZh}` : "",
   ]

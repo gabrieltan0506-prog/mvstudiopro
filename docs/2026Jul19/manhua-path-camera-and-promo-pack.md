@@ -29,3 +29,7 @@
 1. 漫剧工厂编导区选择「路径运镜配方」，或在静帧生成后用标注面板点路径。
 2. 叙事灯光 / 微表情注入节拍与静帧；男发注入角色圣经；宣发构图另铺封面节点。
 3. Seedance 成片运行时，`compileI2VMotionPrompt` 会优先使用标注 JSON 或配方时段句。
+
+## 追加（融合 / 动作双轨 / 词表）
+
+见同目录 [`manhua-fusion-action-wardrobe.md`](./manhua-fusion-action-wardrobe.md)：图文 `fusion` 子模板、三种动作运镜、红/蓝双轨迹、运镜词表与服装道具连续性。
