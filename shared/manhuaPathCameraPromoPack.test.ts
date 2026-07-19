@@ -66,15 +66,15 @@ describe("manhua path camera + P3 banks", () => {
   it("compiles recipe to timed motion prompt", () => {
     const r = getPathCameraRecipeById("path_01_feet_to_face")!;
     const motion = compilePathCameraRecipeToMotionPrompt(r);
-    expect(motion).toMatch(/0-\d+s: camera/);
-    expect(motion).toMatch(/subject/);
-    expect(motion).toMatch(/One primary path move/);
+    expect(motion).toMatch(/\d+[–-]\d+秒：镜头/);
+    expect(motion).toContain("【路径】");
+    expect(motion).toMatch(/每镜一个主运镜/);
   });
 
   it("annotation JSON compiles and feeds I2V priority", () => {
     const ann = annotationFromRecipeId("path_05_action_burst")!;
     const motion = compilePathAnnotationToMotionPrompt(ann);
-    expect(motion).toMatch(/action|impact|stance/i);
+    expect(motion).toMatch(/动作|交锋|对峙|爆发|【路径】/);
     const viaI2V = compileI2VMotionPrompt("ignore long cyberpunk masterpiece 8k", {
       hasReferenceImage: true,
       pathAnnotationJson: ann,
@@ -84,7 +84,7 @@ describe("manhua path camera + P3 banks", () => {
       hasReferenceImage: true,
       pathCameraRecipeId: "path_03_evidence_push",
     });
-    expect(viaRecipe).toMatch(/evidence|reaction/i);
+    expect(viaRecipe).toMatch(/证据|揭穿|反应|【路径】/);
   });
 
   it("rejects annotation with too few anchors", () => {
@@ -239,9 +239,9 @@ describe("fusion + action dual-track + MIT vocab/wardrobe", () => {
         },
       ],
     });
-    expect(motion).toMatch(/RED path|red path/i);
-    expect(motion).toMatch(/BLUE path|blue path/i);
-    expect(motion).toMatch(/Guide lines must not appear/i);
+    expect(motion).toMatch(/红轨|人物节拍/);
+    expect(motion).toMatch(/蓝轨|镜头节拍/);
+    expect(motion).toMatch(/最终画面不显示|成片不显示轨迹/);
     const viaI2V = compileI2VMotionPrompt("ignore", {
       hasReferenceImage: true,
       pathAnnotationJson: {
@@ -291,7 +291,7 @@ describe("fusion + action dual-track + MIT vocab/wardrobe", () => {
         ],
       },
     });
-    expect(viaI2V).toMatch(/Dual-track|RED path/i);
+    expect(viaI2V).toMatch(/红蓝双轨|人物节拍|红轨/);
   });
 
   it("cine vocab and wardrobe have no director names", () => {

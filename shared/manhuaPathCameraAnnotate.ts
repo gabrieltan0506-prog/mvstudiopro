@@ -3,12 +3,8 @@
  * 支持红轨（人物）/ 蓝轨（镜头）双轨迹。
  */
 
+import { getActionCameraRecipeById } from "./manhuaActionCameraRecipeBank.js";
 import {
-  compileDualTrackMotionPrompt,
-  getActionCameraRecipeById,
-} from "./manhuaActionCameraRecipeBank.js";
-import {
-  compilePathCameraRecipeToMotionPrompt,
   getPathCameraRecipeById,
   type ManhuaPathCameraPhase,
   type ManhuaPathCameraRecipe,
@@ -192,7 +188,7 @@ export function annotationToPhases(ann: ManhuaPathAnnotation): ManhuaPathCameraP
   }));
 }
 
-/** 标注 JSON → 用户可见中文运镜说明（编剧可读；Seedance EN 仍用 compilePathAnnotationToMotionPrompt） */
+/** 标注 JSON → 中文运镜说明（界面 + Seedance / I2V 同一套，可读可执行） */
 export function compilePathAnnotationToMotionPromptZh(ann: ManhuaPathAnnotation): string {
   const normalized = normalizePathAnnotation(ann);
   if (!normalized) {
@@ -270,70 +266,9 @@ export function compilePathAnnotationToMotionPromptZh(ann: ManhuaPathAnnotation)
   );
 }
 
-/** 标注 JSON → Seedance 时段运镜句（支持双轨） */
+/** 标注 JSON → Seedance / I2V 运镜句（中文；与 Zh 版同一实现） */
 export function compilePathAnnotationToMotionPrompt(ann: ManhuaPathAnnotation): string {
-  const normalized = normalizePathAnnotation(ann);
-  if (!normalized) {
-    return "Slow cinematic push-in, subtle natural movement, soft atmospheric haze";
-  }
-
-  const action = getActionCameraRecipeById(normalized.actionRecipeId);
-  if (action?.trackMode === "fpv") {
-    return `${action.craftLockEn}. ${action.seedancePromptZh}`;
-  }
-
-  const subjectAnchors = normalized.anchors.filter((a) => (a.trackRole || "subject") === "subject");
-  const cameraAnchors = normalized.anchors.filter((a) => a.trackRole === "camera");
-  const dual =
-    action?.trackMode === "dual" ||
-    (subjectAnchors.length >= 2 && cameraAnchors.length >= 2);
-
-  if (dual) {
-    const subjectBeats = (subjectAnchors.length ? subjectAnchors : normalized.anchors).map(
-      (a) => a.subjectActionEn,
-    );
-    const cameraBeats = (cameraAnchors.length ? cameraAnchors : normalized.anchors).map(
-      (a) => a.cameraEn,
-    );
-    const dualEn = compileDualTrackMotionPrompt({ subjectBeats, cameraBeats });
-    return action ? `${action.craftLockEn}. ${dualEn}` : dualEn;
-  }
-
-  if (action?.trackMode === "single_action") {
-    const parts = normalized.anchors.map((a) => {
-      const t0 = normalized.anchors.slice(0, a.index - 1).reduce((s, x) => s + x.durationHintSec, 0);
-      const t1 = t0 + a.durationHintSec;
-      return `${t0}-${t1}s: subject ${a.subjectActionEn} along action path; camera ${a.cameraEn}`;
-    });
-    return [
-      action.craftLockEn,
-      "Guide lines must not appear in final frames.",
-      ...parts,
-    ].join(" ");
-  }
-
-  if (normalized.recipeId) {
-    const recipe = getPathCameraRecipeById(normalized.recipeId);
-    if (recipe && normalized.anchors.length === recipe.phases.length) {
-      const unchanged = normalized.anchors.every((a, i) => {
-        const p = recipe.phases[i]!;
-        return a.cameraEn === p.cameraEn && a.subjectActionEn === p.subjectActionEn;
-      });
-      if (unchanged) return compilePathCameraRecipeToMotionPrompt(recipe);
-    }
-  }
-
-  const parts = normalized.anchors.map((a) => {
-    const t0 = normalized.anchors.slice(0, a.index - 1).reduce((s, x) => s + x.durationHintSec, 0);
-    const t1 = t0 + a.durationHintSec;
-    return `${t0}-${t1}s: camera ${a.cameraEn}; subject ${a.subjectActionEn}`;
-  });
-  return [
-    "One primary path move along annotated anchors.",
-    "Separate camera from subject action. No stacked camera moves.",
-    "Guide lines must not appear in final frames.",
-    ...parts,
-  ].join(" ");
+  return compilePathAnnotationToMotionPromptZh(ann);
 }
 
 export function formatPathAnnotationBrief(ann: ManhuaPathAnnotation): string {

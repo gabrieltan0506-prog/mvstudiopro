@@ -155,18 +155,19 @@ export function listPathCameraRecipes(): readonly ManhuaPathCameraRecipe[] {
   return MANHUA_PATH_CAMERA_RECIPE_BANK;
 }
 
-/** 将配方 phases 编译为 Seedance 时段运镜句（镜头与主体分写） */
+/** 将配方 phases 编译为 Seedance 中文时段运镜句（镜头与主体分写） */
 export function compilePathCameraRecipeToMotionPrompt(recipe: ManhuaPathCameraRecipe): string {
   const parts = recipe.phases.map((p) => {
     const t0 = recipe.phases.slice(0, p.index - 1).reduce((s, x) => s + x.durationHintSec, 0);
     const t1 = t0 + p.durationHintSec;
-    return `${t0}-${t1}s: camera ${p.cameraEn}; subject ${p.subjectActionEn}`;
+    return `${t0}–${t1}秒：镜头看向「${p.focusZh}」；主体配合微动。`;
   });
   return [
-    `One primary path move: ${recipe.craftLockEn}.`,
-    "Separate camera from subject action. No stacked camera moves.",
+    `【路径】${recipe.nameZh}：${recipe.craftSummaryZh}`,
+    `效果：${recipe.effectZh}`,
+    "每镜一个主运镜；镜头运动与主体动作分开写；成片不显示轨迹参考线。",
     ...parts,
-  ].join(" ");
+  ].join("\n");
 }
 
 export function buildPathCameraInjectBlock(ids: string[]): string {

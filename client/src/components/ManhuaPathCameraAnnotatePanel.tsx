@@ -13,7 +13,6 @@ import {
   PATH_ANNOTATE_ANCHOR_MAX,
   PATH_ANNOTATE_ANCHOR_MIN,
   annotationFromRecipeId,
-  compilePathAnnotationToMotionPrompt,
   compilePathAnnotationToMotionPromptZh,
   downsampleStrokeToAnchors,
   formatPathAnnotationBrief,
@@ -42,8 +41,8 @@ type Props = {
   onChange: (ann: ManhuaPathAnnotation | null) => void;
   onRecipeIdChange?: (id: string) => void;
   onActionRecipeIdChange?: (id: string) => void;
-  /** GPT-5.6 Terra：英文运镜句 → 通顺中文（编剧大师 brief） */
-  translateMotionZh?: (englishMotion: string) => Promise<string>;
+  /** GPT-5.6 Terra：中文运镜句润色（编剧大师 brief） */
+  translateMotionZh?: (motionZh: string) => Promise<string>;
 };
 
 type InputMode = "draw" | "tap";
@@ -104,12 +103,7 @@ export default function ManhuaPathCameraAnnotatePanel({
   const strokes = value?.strokes || [];
   const activeActionId = actionRecipeId || value?.actionRecipeId || "";
 
-  /** Seedance / I2V 仍用英文编译；界面展示中文 */
-  const motionEn = useMemo(() => {
-    if (!value || anchors.length < PATH_ANNOTATE_ANCHOR_MIN) return "";
-    return compilePathAnnotationToMotionPrompt(value);
-  }, [value, anchors.length]);
-
+  /** 界面与 Seedance 同一套中文运镜句 */
   const motionZhDraft = useMemo(() => {
     if (!value || anchors.length < PATH_ANNOTATE_ANCHOR_MIN) return "";
     return compilePathAnnotationToMotionPromptZh(value);
@@ -119,7 +113,7 @@ export default function ManhuaPathCameraAnnotatePanel({
   const [motionZhBusy, setMotionZhBusy] = useState(false);
 
   useEffect(() => {
-    if (!motionEn || !translateMotionZh) {
+    if (!motionZhDraft || !translateMotionZh) {
       setMotionZhPolished("");
       setMotionZhBusy(false);
       return;
@@ -129,7 +123,7 @@ export default function ManhuaPathCameraAnnotatePanel({
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          const zh = await translateMotionZh(motionEn);
+          const zh = await translateMotionZh(motionZhDraft);
           if (translateSeq.current !== seq) return;
           setMotionZhPolished(String(zh || "").trim());
         } catch {
@@ -141,7 +135,7 @@ export default function ManhuaPathCameraAnnotatePanel({
       })();
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [motionEn, translateMotionZh]);
+  }, [motionZhDraft, translateMotionZh]);
 
   const motionPreviewZh = motionZhPolished || motionZhDraft;
 

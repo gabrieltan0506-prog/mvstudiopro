@@ -730,7 +730,7 @@ export default function OmniCanvas() {
     [optimizeCopyMutation, getSignedUrlMutation, debugMode, pushDebug],
   );
 
-  /** Terra：英文运镜说明 → 通顺中文（编剧大师人设） */
+  /** Terra：中文运镜说明润色（编剧大师人设） */
   const translateMotionZh = useCallback(
     async (englishMotion: string) => {
       const src = String(englishMotion || "").trim();
