@@ -95,6 +95,7 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "mvAnalysis.patchHtmlPptPage",
   "mvAnalysis.generateHtmlPptSlideImage",
   "mvAnalysis.askPlatformSkillQa",
+  "mvAnalysis.chatPlatformProAgent",
   "mvAnalysis.confirmPlatformSkillQaImage",
   "mvAnalysis.getVideoUploadSignedUrl",
   "usage.checkFeatureAccess",

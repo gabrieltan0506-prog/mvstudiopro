@@ -306,8 +306,38 @@ export const CREDIT_COSTS = {
   decisionIntelTopicExecutionCopyRegenerate: 20,
 } as const;
 
-/** 创作顾问问答：每日免费次数上限（登录用户；可问任意问题，不限 Skill） */
-export const PLATFORM_SKILL_QA_DAILY_FREE_LIMIT = 10;
+/**
+ * 创作顾问问答 · 每日免费次数（按模型分桶）。
+ * @deprecated 请用 {@link PLATFORM_SKILL_QA_TERRA_DAILY_FREE} / {@link PLATFORM_SKILL_QA_SOL_DAILY_FREE}
+ */
+export const PLATFORM_SKILL_QA_DAILY_FREE_LIMIT = 15;
+
+/** 创作顾问 · GPT-5.6 Terra（标准）每日免费次数 */
+export const PLATFORM_SKILL_QA_TERRA_DAILY_FREE = 15;
+/** 创作顾问 · GPT-5.6 Sol（深度）每日免费次数 */
+export const PLATFORM_SKILL_QA_SOL_DAILY_FREE = 5;
+
+/**
+ * 创作顾问超额计费：API 成本估值积分（可被服务端 env 覆盖）。
+ * 售价 = round(apiCost × 1.6)（成本 + 60% 利润）。
+ */
+export const PLATFORM_SKILL_QA_TERRA_API_COST_CREDITS = 5;
+export const PLATFORM_SKILL_QA_SOL_API_COST_CREDITS = 12;
+export const PLATFORM_SKILL_QA_PROFIT_MARKUP = 1.6;
+
+export type PlatformSkillQaBillingMode = "terra" | "sol";
+
+/** 创作顾问超额单次售价积分 */
+export function platformSkillQaPaidCredits(mode: PlatformSkillQaBillingMode): number {
+  const api =
+    mode === "sol" ? PLATFORM_SKILL_QA_SOL_API_COST_CREDITS : PLATFORM_SKILL_QA_TERRA_API_COST_CREDITS;
+  // ceil：保证不低于成本+60%（12×1.6 → 20）
+  return Math.max(1, Math.ceil(api * PLATFORM_SKILL_QA_PROFIT_MARKUP - 1e-9));
+}
+
+export function platformSkillQaDailyFreeLimit(mode: PlatformSkillQaBillingMode): number {
+  return mode === "sol" ? PLATFORM_SKILL_QA_SOL_DAILY_FREE : PLATFORM_SKILL_QA_TERRA_DAILY_FREE;
+}
 
 /** 动效 PPT 清单页数范围（用户必选） */
 export const PLATFORM_HTML_PPT_PAGE_MIN = 10;

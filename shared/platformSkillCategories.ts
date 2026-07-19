@@ -106,10 +106,21 @@ export const CANVAS_ONLY_SKILL_IDS = [
   "manhua-scene-asset-library",
 ] as const;
 
+/** 营销首页动效等：文档在 skill 目录，但不进 /platform 勾选池 */
+export const HOME_ONLY_SKILL_IDS = ["home-motion-v3"] as const;
+
 export type CanvasOnlySkillId = (typeof CANVAS_ONLY_SKILL_IDS)[number];
 
 export function isCanvasOnlySkillId(id: string): boolean {
   return (CANVAS_ONLY_SKILL_IDS as readonly string[]).includes(id);
+}
+
+/** 不进入 /platform Skill 勾选池（Canvas 专用 + 首页专用） */
+export function isExcludedFromPlatformSkillPool(id: string): boolean {
+  const s = String(id || "").trim();
+  if (!s) return true;
+  if (isCanvasOnlySkillId(s)) return true;
+  return (HOME_ONLY_SKILL_IDS as readonly string[]).includes(s);
 }
 
 export function resolvePlatformSkillCategory(skill: {
@@ -144,7 +155,7 @@ export function groupPlatformSkillsByCategory<T extends { id: string; source?: s
   const buckets = new Map<PlatformSkillCategoryId, T[]>();
   for (const meta of PLATFORM_SKILL_CATEGORY_ORDER) buckets.set(meta.id, []);
   for (const sk of skills) {
-    if (isCanvasOnlySkillId(sk.id)) continue;
+    if (isExcludedFromPlatformSkillPool(sk.id)) continue;
     const cat = resolvePlatformSkillCategory(sk);
     buckets.get(cat)!.push(sk);
   }

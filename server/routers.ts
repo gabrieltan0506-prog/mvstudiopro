@@ -5427,7 +5427,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     /**
-     * 创作顾问免费问答（每日 10 次，任意提问）。
+     * 创作顾问问答：Sol/Terra 分桶免费额度；超额按成本×1.6 扣点。
      * 若检测到生图意图，返回 imageOffer（须用户再点确认才扣费生图）。
      */
     askPlatformSkillQa: protectedProcedure
@@ -5436,18 +5436,52 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           question: z.string().min(2).max(4000),
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
           allowBloggerTitle: z.boolean().optional(),
-          /** 仅 supervisor/admin（或合法 supervisorToken）生效；一般用户服务端强制 Terra */
+          /** 所有登录用户可选；计费与免费额度不同 */
           qaModel: z.enum(["gpt-5.6-terra", "gpt-5.6-sol"]).optional(),
+          /** 超额付费确认（前端 confirm 后传 true） */
+          confirmPaid: z.boolean().optional(),
           supervisorToken: z.string().max(512).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(
-          ctx.user,
-          input.supervisorToken,
-        );
-        const { askPlatformSkillQa } = await import("./services/platformSkillQa.js");
+        const {
+          askPlatformSkillQa,
+          countPlatformSkillQaToday,
+          resolveSkillQaBillingMode,
+        } = await import("./services/platformSkillQa.js");
+        const { resolvePlatformSkillQaPaidCredits } = await import("./config/platformSwitches.js");
+        const { platformSkillQaDailyFreeLimit } = await import("../shared/plans.js");
+        const qaMode = resolveSkillQaBillingMode(input.qaModel);
+        const dailyLimit = platformSkillQaDailyFreeLimit(qaMode);
+        const paidUnit = resolvePlatformSkillQaPaidCredits(qaMode);
+        const usedToday = isAdminUser
+          ? 0
+          : await countPlatformSkillQaToday(ctx.user.id, qaMode);
+        const needPay = !isAdminUser && usedToday >= dailyLimit;
+        let paidCreditsAlreadyCharged = 0;
+        if (needPay) {
+          if (!input.confirmPaid) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `今日${qaMode === "sol" ? " Sol" : " Terra"}免费 ${dailyLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次（成本+60%）。请确认后重试。`,
+            });
+          }
+          const creditsInfo = await getCredits(ctx.user.id);
+          if (creditsInfo.totalAvailable < paidUnit) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，需要 ${paidUnit} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCreditsAmount(
+            ctx.user.id,
+            paidUnit,
+            qaMode === "sol" ? "platformSkillQaSol" : "platformSkillQaTerra",
+            `创作顾问问答·${qaMode === "sol" ? "Sol" : "Terra"}超额 · ${input.question.slice(0, 48)}`,
+          );
+          paidCreditsAlreadyCharged = paidUnit;
+        }
         try {
           const result = await askPlatformSkillQa({
             userId: ctx.user.id,
@@ -5455,19 +5489,66 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
             allowBloggerTitle: Boolean(input.allowBloggerTitle),
             isAdmin: isAdminUser,
-            allowQaModelOverride: supervisorOpsAllowed,
-            qaModel: supervisorOpsAllowed ? input.qaModel : undefined,
+            allowQaModelOverride: true,
+            qaModel: input.qaModel || "gpt-5.6-terra",
+            paidCreditsAlreadyCharged,
           });
           return { success: true as const, ...result };
         } catch (e: unknown) {
+          if (paidCreditsAlreadyCharged > 0) {
+            const { refundCredits } = await import("./credits.js");
+            await refundCredits(
+              ctx.user.id,
+              paidCreditsAlreadyCharged,
+              "创作顾问问答失败退还",
+            ).catch(() => undefined);
+          }
           const msg = e instanceof Error ? e.message : "问答失败";
           const friendly =
             /Unexpected token|is not valid JSON|An error o/i.test(msg)
               ? "算力紧张或请求超时，请稍后重试"
               : msg;
           throw new TRPCError({
-            code: /上限/.test(msg) ? "TOO_MANY_REQUESTS" : "BAD_REQUEST",
+            code: /上限|免费额度/.test(msg) ? "TOO_MANY_REQUESTS" : "BAD_REQUEST",
             message: friendly,
+          });
+        }
+      }),
+
+    /**
+     * 管理者 Pro Agent 多轮对话（Responses Pro）；不计用户免费额度、不扣点。
+     */
+    chatPlatformProAgent: protectedProcedure
+      .input(
+        z.object({
+          messages: z
+            .array(
+              z.object({
+                role: z.enum(["user", "assistant"]),
+                content: z.string().min(1).max(8000),
+              }),
+            )
+            .min(1)
+            .max(24),
+          supervisorToken: z.string().max(512).optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const allowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
+        if (!allowed) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "仅管理者可使用 Pro Agent" });
+        }
+        const { chatPlatformProAgent } = await import("./services/platformProAgentChat.js");
+        try {
+          const result = await chatPlatformProAgent({ messages: input.messages });
+          return { success: true as const, ...result };
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : "Pro Agent 失败";
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: /Unexpected token|timeout|超时|鉴权/i.test(msg)
+              ? "算力紧张或鉴权失败，请稍后重试"
+              : msg.slice(0, 200),
           });
         }
       }),
