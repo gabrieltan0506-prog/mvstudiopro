@@ -168,6 +168,13 @@ function App() {
           <AmbientSceneProvider>
             <GlobalAmbientBackdrop />
             <DomainRedirector />
+            {/*
+              全站悬浮区约定（避免互相挡点击）：
+              - 顶栏 Navbar：z-50，全宽
+              - Pro Agent：右上 top≈4.5rem（管理者）
+              - PWA「新增到手机桌面」：左下
+              新增悬浮按钮前先避开这三块，禁止再占 bottom-right。
+            */}
             <div className="relative z-[1] min-h-dvh">
               <Toaster />
               <PWAInstallButton />

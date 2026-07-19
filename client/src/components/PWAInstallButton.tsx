@@ -87,14 +87,17 @@ export function PWAInstallButton() {
 
   return (
     <>
-      <div className="fixed bottom-6 right-6 z-[100] max-w-[calc(100vw-3rem)]">
+      {/* 左下：避开右上 Pro Agent / 顶栏；勿再放 bottom-right */}
+      <div className="fixed bottom-5 left-3 z-[55] max-w-[calc(100vw-1.5rem)] sm:bottom-6 sm:left-4">
         <Button
           type="button"
           onClick={onFabClick}
-          className="rounded-full shadow-lg bg-gradient-to-r from-violet-600 to-indigo-600 text-white hover:from-violet-500 hover:to-indigo-500 border border-white/20 transition-transform hover:scale-105"
+          aria-label="新增到手机桌面"
+          title="新增到手机桌面（PWA）"
+          className="h-11 rounded-full border border-white/20 bg-gradient-to-r from-violet-600 to-indigo-600 px-3 text-white shadow-lg transition-transform hover:scale-105 hover:from-violet-500 hover:to-indigo-500 sm:px-4"
         >
-          <Download className="mr-2 h-4 w-4 shrink-0" />
-          新增到手机桌面
+          <Download className="h-4 w-4 shrink-0 sm:mr-2" />
+          <span className="hidden sm:inline">新增到手机桌面</span>
         </Button>
       </div>
 
@@ -136,7 +139,7 @@ export function PWAInstallButton() {
                       点浏览器右上角 <strong>「⋮」</strong>，看是否有 <strong>「安装应用」</strong>、<strong>「添加到主屏幕」</strong> 或 <strong>「Install app」</strong>。
                     </li>
                     <li>
-                      若首页右下角有 <strong>「新增到手机桌面」</strong> 按钮：Chrome 已支持安装时，点按钮会弹出系统安装对话框；若未弹出，多半是之前不满足图标要求——本站已配置 192/512 PNG，部署后请<strong>完全关闭浏览器再开</strong>或清除本站数据后重试。
+                      若首页左下角有 <strong>「新增到手机桌面」</strong> 按钮：Chrome 已支持安装时，点按钮会弹出系统安装对话框；若未弹出，多半是之前不满足图标要求——本站已配置 192/512 PNG，部署后请<strong>完全关闭浏览器再开</strong>或清除本站数据后重试。
                     </li>
                   </ol>
                 ) : null}
