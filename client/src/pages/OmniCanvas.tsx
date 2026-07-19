@@ -229,6 +229,21 @@ export default function OmniCanvas() {
   const initial = useMemo(() => loadCanvasState(), []);
   const initialFactoryPrefs = useMemo(() => loadFactoryCharacterPrefs(), []);
   const initialWriterSession = useMemo(() => bootWriterSession(), []);
+
+  useEffect(() => {
+    if (!initialWriterSession?.writerPack && !initialWriterSession?.projectBible) return;
+    pushDebug("writerSession:restore", {
+      level: "ok",
+      detail: [
+        initialWriterSession.writerPack
+          ? `${initialWriterSession.writerPack.seriesTitle}·${initialWriterSession.writerPack.episodes.length}ep`
+          : "noPack",
+        `confirmed=${Boolean(initialWriterSession.writerConfirmed)}`,
+        `bible=${summarizeManhuaProjectBible(initialWriterSession.projectBible)}`,
+      ].join(" · "),
+    });
+  }, [initialWriterSession, pushDebug]);
+
   const bootBible = initialWriterSession?.projectBible ?? null;
   const bootCast = bootBible?.cast;
   const bootManual = bootBible?.manualOverrides;
