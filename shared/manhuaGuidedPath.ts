@@ -31,6 +31,8 @@ export type ManhuaGuidedProgress = {
   hasWriterPack: boolean;
   writerConfirmed: boolean;
   hasCast: boolean;
+  /** 画布已有工厂链（已铺板） */
+  hasFactoryChain?: boolean;
   hasKeyart: boolean;
   hasClip: boolean;
   hasFinalVideo: boolean;
@@ -85,10 +87,19 @@ export function resolveManhuaGuidedNextAction(p: ManhuaGuidedProgress): ManhuaGu
     };
   }
   if (p.writerConfirmed && p.hasCast) {
+    if (!p.hasFactoryChain) {
+      return {
+        stepId: "wb",
+        title: "铺板并出片",
+        hint: "造型已套好；在工作台点「生成本集成片」会自动铺节点并开跑。",
+        ctaLabel: "打开工作台出片",
+        href: "#manhua-workbench-zone",
+      };
+    }
     return {
       stepId: "wb",
       title: "进入工作台出片",
-      hint: "造型已套好，生成本集静帧与成片。",
+      hint: "节点已铺好，生成本集静帧与成片。",
       ctaLabel: "打开工作台",
       href: "#manhua-workbench-zone",
     };

@@ -82,5 +82,13 @@ describe("resolveManhuaGuidedActiveStep", () => {
         hasClip: true,
       }).href,
     ).toBe("#manhua-clip-dock-zone");
+    expect(
+      resolveManhuaGuidedNextAction({
+        ...base,
+        writerConfirmed: true,
+        hasCast: true,
+        hasFactoryChain: false,
+      }).title,
+    ).toMatch(/铺板/);
   });
 });

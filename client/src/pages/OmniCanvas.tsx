@@ -2049,6 +2049,9 @@ export default function OmniCanvas() {
                       factoryAncientArchetypeIds.length ||
                       writerConfirmed,
                   ),
+                  hasFactoryChain: blocks.some((b) =>
+                    MANHUA_FACTORY_STAGE_ORDER.some((s) => b.id.startsWith(`${s}-`)),
+                  ),
                   hasKeyart: blocks.some(
                     (b) =>
                       stageKeyFromBlockId(b.id) === "keyart" &&
