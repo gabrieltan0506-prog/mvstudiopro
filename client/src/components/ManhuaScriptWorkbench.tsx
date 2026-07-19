@@ -11,10 +11,7 @@ import {
   stageKeyFromBlockId,
 } from "@/lib/canvasDramaStudio";
 import { getManhuaCharacterById, getManhuaCharacterPreviewUrl } from "@shared/manhuaCharacterAssetLibrary";
-import {
-  getAncientArchetypeById,
-  getAncientArchetypePreviewUrl,
-} from "@shared/manhuaAncientArchetypeLibrary";
+import { getAncientArchetypeById } from "@shared/manhuaAncientArchetypeLibrary";
 import { getManhuaSceneTemplate } from "@shared/manhuaSceneAssetLibrary";
 import {
   getManhuaDemoAsset,
@@ -307,21 +304,20 @@ export default function ManhuaScriptWorkbench({
                 key={a!.id}
                 type="button"
                 onClick={() => onOpenCharacterCard?.()}
-                className="overflow-hidden rounded-lg border border-amber-400/30 bg-amber-500/10 text-left"
-                title={a!.nameZh}
+                className="overflow-hidden rounded-lg border border-amber-400/35 bg-gradient-to-b from-amber-500/20 to-black/50 text-left"
+                title={`${a!.nameZh} · 定妆图未入库，造型按文案硬锁`}
               >
-                <div className="relative aspect-square w-full bg-black/50">
-                  <img
-                    src={getAncientArchetypePreviewUrl(a!.id)}
-                    alt=""
-                    className="absolute inset-0 h-full w-full object-cover object-top"
-                    loading="lazy"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).style.display = "none";
-                    }}
-                  />
-                  <div className="absolute inset-0 flex items-end bg-gradient-to-t from-black/80 to-transparent px-1 pb-1 text-[9px] text-amber-50/95">
-                    {a!.nameZh}
+                <div className="flex aspect-square w-full flex-col justify-between p-1.5">
+                  <span className="rounded bg-black/45 px-1 py-0.5 text-[8px] text-amber-100/80">
+                    古风·文案造型
+                  </span>
+                  <div>
+                    <div className="line-clamp-2 text-[10px] font-semibold leading-tight text-amber-50">
+                      {a!.nameZh}
+                    </div>
+                    <div className="mt-0.5 line-clamp-2 text-[8px] leading-snug text-white/45">
+                      {(a!.wardrobeLayers || []).slice(0, 2).join("·") || "古装层次"}
+                    </div>
                   </div>
                 </div>
               </button>
