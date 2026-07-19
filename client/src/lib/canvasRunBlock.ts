@@ -460,6 +460,9 @@ export async function runCanvasBlock(
     const ar = block.aspectRatio;
     const count = block.imageBatchCount || 1;
     const isEdit = block.imageMode === "edit";
+    /** 默认 Image-2；用户手选 NB2 省钱则尊重（计费不同） */
+    const imageModel: CanvasBlock["imageModel"] =
+      block.imageModel === "nano-banana-2" ? "nano-banana-2" : "gpt-image-2";
     const editRef =
       refUrl ||
       block.uploadedAssets?.find((a) => a.kind === "image" || /\.(png|jpe?g|webp)(\?|$)/i.test(a.fileName || a.url))
@@ -485,9 +488,9 @@ export async function runCanvasBlock(
         ]
           .filter(Boolean)
           .join("\n")
-      : await resolveImagePromptViaJsonDirector(deps, mergedPrompt, ar, block.imageModel);
-    /** 主路径：官方 GPT-Image-2；失败才回退 Nano Banana 2（显式选 Nano 时不走 Image-2） */
-    const preferGptImage2 = block.imageModel !== "nano-banana-2";
+      : await resolveImagePromptViaJsonDirector(deps, mergedPrompt, ar, imageModel);
+    /** 主路径 Image-2；失败回退 NB2。显式手选 NB2 省钱时直走，不先打 Image-2 */
+    const preferGptImage2 = imageModel !== "nano-banana-2";
     let urls: string[] = [];
     if (preferGptImage2) {
       try {

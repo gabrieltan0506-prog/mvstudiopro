@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { MANHUA_SCENE_ASSET_LIBRARY } from "./manhuaSceneAssetLibrary";
+import { isManhuaDemoAssetPublicReady } from "./manhuaDemoPublicReady";
 import {
   MANHUA_CONTENT_LANE_WEIGHT,
   MANHUA_SCENE_PROP_DEMO_CATALOG,
@@ -7,6 +9,8 @@ import {
   composeManhuaSelectedPropAnchorBlock,
   getManhuaDemoAssetPublicUrl,
   listManhuaDemoAssets,
+  listManhuaDemoAssetsForSceneTemplate,
+  listManhuaSceneTemplateIdsWithDemo,
   pickDailyManhuaDemoBatch,
   contentLanesForSceneGenre,
   recommendManhuaContentLanesFromTopic,
@@ -51,13 +55,26 @@ describe("manhuaScenePropDemoCatalog", () => {
     expect(next.every((a) => !done.has(a.id))).toBe(true);
   });
 
-  it("exposes public urls and prompt anchors for scene/prop demos", () => {
-    expect(getManhuaDemoAssetPublicUrl("demo_scene_intrigue_court")).toBe(
-      "/manhua-scenes/demo_scene_intrigue_court.jpg",
+  it("binds every scene_01…20 template to at least one demo catalog entry", () => {
+    const bound = new Set(listManhuaSceneTemplateIdsWithDemo());
+    expect(bound.size).toBe(MANHUA_SCENE_ASSET_LIBRARY.length);
+    for (const s of MANHUA_SCENE_ASSET_LIBRARY) {
+      expect(bound.has(s.id)).toBe(true);
+      expect(listManhuaDemoAssetsForSceneTemplate(s.id).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("only exposes public urls for demos that are on disk (no pending placeholders)", () => {
+    expect(getManhuaDemoAssetPublicUrl("demo_scene_xianxia_sect")).toBe(
+      "/manhua-scenes/demo_scene_xianxia_sect.jpg",
     );
-    expect(getManhuaDemoAssetPublicUrl("demo_prop_business_fountain_pen")).toBe(
-      "/manhua-props/demo_prop_business_fountain_pen.jpg",
-    );
+    expect(isManhuaDemoAssetPublicReady("demo_scene_xianxia_sect")).toBe(true);
+    // 目录有条目但未落盘 → URL 必须为空（UI 不得展示待生成）
+    expect(getManhuaDemoAssetPublicUrl("demo_scene_intrigue_court")).toBe("");
+    expect(getManhuaDemoAssetPublicUrl("demo_prop_business_fountain_pen")).toBe("");
+  });
+
+  it("exposes prompt anchors for scene/prop demos", () => {
     const sceneAnchor = composeManhuaSceneDemoAnchorBlock("scene_06");
     expect(sceneAnchor).toContain("【场景示范图锚点】");
     expect(sceneAnchor).toContain("皇宫");

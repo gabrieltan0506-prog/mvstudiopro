@@ -1,5 +1,5 @@
 /**
- * 场景/道具示范图轻量预览（有落盘才显示缩略图；无图仍可看文案锚点）。
+ * 场景/道具示范图轻量预览：仅展示已落盘 jpg，未生成不占位。
  */
 import { useMemo, useState } from "react";
 import {
@@ -7,12 +7,14 @@ import {
   getManhuaDemoAssetPublicUrl,
   listManhuaDemoAssets,
   listManhuaDemoAssetsForSceneTemplate,
+  listManhuaDemoAssetsReady,
   listManhuaDemoPropsForLane,
   contentLanesForSceneGenre,
   recommendManhuaContentLanesFromTopic,
   type ManhuaContentLane,
   type ManhuaDemoAsset,
 } from "@shared/manhuaScenePropDemoCatalog";
+import { isManhuaDemoAssetPublicReady } from "@shared/manhuaDemoPublicReady";
 import type { ManhuaSceneGenre } from "@shared/manhuaSceneAssetLibrary";
 import { getManhuaSceneTemplate } from "@shared/manhuaSceneAssetLibrary";
 
@@ -27,6 +29,7 @@ function DemoThumb({
 }) {
   const [broken, setBroken] = useState(false);
   const url = getManhuaDemoAssetPublicUrl(asset.id);
+  if (!url) return null;
   return (
     <button
       type="button"
@@ -39,7 +42,7 @@ function DemoThumb({
       }`}
     >
       <div className="relative h-14 bg-black/50">
-        {url && !broken ? (
+        {!broken ? (
           <img
             src={url}
             alt=""
@@ -47,13 +50,7 @@ function DemoThumb({
             loading="lazy"
             onError={() => setBroken(true)}
           />
-        ) : (
-          <div className="flex h-full items-center justify-center px-1 text-center text-[9px] leading-tight text-white/35">
-            {asset.kind === "scene" ? "场景" : "道具"}
-            <br />
-            待生成
-          </div>
-        )}
+        ) : null}
       </div>
       <div className="px-1 py-1">
         <div className="truncate text-[10px] font-medium text-white/85">{asset.nameZh}</div>
@@ -79,9 +76,7 @@ export default function ManhuaScenePropDemoStrip({
   genreId?: string;
   selectedPropIds?: string[];
   disabled?: boolean;
-  /** 点示范空镜且绑定了 scene_XX 时，写入工厂主场景 */
   onApplySceneTemplate?: (sceneTemplateId: string) => void;
-  /** 点道具：写入/取消工厂点选锚点 */
   onToggleProp?: (propId: string) => void;
 }) {
   const [laneFilter, setLaneFilter] = useState<ManhuaContentLane | "">("");
@@ -93,7 +88,6 @@ export default function ManhuaScenePropDemoStrip({
     const scene = getManhuaSceneTemplate(sceneTemplateId);
     const genre = (genreId || scene?.genres[0]) as ManhuaSceneGenre | undefined;
     const fromGenre = contentLanesForSceneGenre(genre);
-    // 题材命中优先，再用剧种补齐
     const merged: ManhuaContentLane[] = [];
     for (const lane of [...fromTopic, ...fromGenre]) {
       if (!merged.includes(lane)) merged.push(lane);
@@ -102,10 +96,12 @@ export default function ManhuaScenePropDemoStrip({
   }, [topic, sceneTemplateId, genreId]);
 
   const sceneDemos = useMemo(() => {
-    const linked = listManhuaDemoAssetsForSceneTemplate(sceneTemplateId);
+    const linked = listManhuaDemoAssetsForSceneTemplate(sceneTemplateId).filter((a) =>
+      isManhuaDemoAssetPublicReady(a.id),
+    );
     if (linked.length) return linked.slice(0, 4);
     const lanes = laneFilter ? [laneFilter] : recommendedLanes.slice(0, 3);
-    return listManhuaDemoAssets({ kind: "scene", lane: lanes }).slice(0, 4);
+    return listManhuaDemoAssetsReady({ kind: "scene", lane: lanes }).slice(0, 4);
   }, [sceneTemplateId, laneFilter, recommendedLanes]);
 
   const propDemos = useMemo(() => {
@@ -113,6 +109,7 @@ export default function ManhuaScenePropDemoStrip({
     const out: ManhuaDemoAsset[] = [];
     for (const lane of lanes) {
       for (const p of listManhuaDemoPropsForLane(lane)) {
+        if (!isManhuaDemoAssetPublicReady(p.id)) continue;
         if (out.length >= 6) break;
         if (!out.some((x) => x.id === p.id)) out.push(p);
       }
@@ -122,7 +119,7 @@ export default function ManhuaScenePropDemoStrip({
   }, [laneFilter, recommendedLanes]);
 
   const focus = useMemo(
-    () => listManhuaDemoAssets().find((a) => a.id === focusId) || null,
+    () => listManhuaDemoAssets().find((a) => a.id === focusId && isManhuaDemoAssetPublicReady(a.id)) || null,
     [focusId],
   );
 
@@ -136,6 +133,8 @@ export default function ManhuaScenePropDemoStrip({
     "business",
   ];
 
+  if (!sceneDemos.length && !propDemos.length) return null;
+
   return (
     <div
       className={`mt-3 rounded-xl border border-white/8 bg-black/25 p-2.5 ${
@@ -144,7 +143,7 @@ export default function ManhuaScenePropDemoStrip({
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="text-[11px] font-medium text-white/70">场景 / 道具示范库</div>
-        <div className="text-[10px] text-white/35">有图可预览 · 无图显示待生成</div>
+        <div className="text-[10px] text-white/35">仅展示已落盘封面</div>
       </div>
 
       <div className="mt-2 flex flex-wrap gap-1">
@@ -242,7 +241,7 @@ export default function ManhuaScenePropDemoStrip({
         </div>
       ) : (
         <p className="mt-2 text-[10px] text-white/35">
-          点空镜写主场景（绑定 scene_XX 时）；点道具锁定外形锚点（再点取消）。权谋 / 商战偏海外可读符号。
+          点空镜写主场景；点道具锁定外形锚点。缺口由每日文生批次补图后自动出现。
         </p>
       )}
     </div>
