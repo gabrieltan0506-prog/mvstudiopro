@@ -44,6 +44,8 @@ describe("recommendManhuaCastBundle", () => {
     expect(b.femaleId).toBe("");
     expect(b.maleId).toBe("");
     expect(b.ancientArchetypeIds).toContain("arch_rain_jianghu_dao");
+    expect(b.ancientArchetypeIds).not.toContain("arch_phoenix_empress");
+    expect(b.ancientArchetypeIds).toEqual(["arch_rain_jianghu_dao"]);
     expect(b.wardrobePropContinuityIds).toContain("wpc_02_jianghu_dao");
     expect(b.propIds.every((id) => !/lipstick|ring_box|fountain_pen/i.test(id))).toBe(true);
     expect(b.propIds.some((id) => id.includes("ancient") || id.includes("intrigue"))).toBe(true);

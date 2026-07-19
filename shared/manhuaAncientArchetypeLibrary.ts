@@ -250,7 +250,7 @@ const ARCHETYPE_TOPIC_HINTS: Array<{
   keys: string[];
   score: number;
 }> = [
-  { id: "arch_rain_jianghu_dao", keys: ["江湖", "刀客", "雨夜", "客栈", "复仇", "浪客"], score: 6 },
+  { id: "arch_rain_jianghu_dao", keys: ["江湖", "刀客", "刀光", "打斗", "雨夜", "客栈", "复仇", "浪客"], score: 6 },
   { id: "arch_red_armor_general", keys: ["将军", "赤甲", "边关", "出征", "王爷", "统帅", "权谋", "朝堂"], score: 5 },
   { id: "arch_phoenix_empress", keys: ["女帝", "皇后", "宫斗", "宫廷", "凤", "后宫", "权谋"], score: 5 },
   { id: "arch_xianmen_sword_cold", keys: ["仙侠", "剑修", "宗门", "修仙", "御剑", "仙门"], score: 6 },
@@ -347,14 +347,21 @@ export function recommendAncientArchetypesFromTopic(
       if (!matched.includes(m)) matched.push(m);
     }
   }
-  // 若只挑到同性，补一个对位默认
+  // 若只挑到同性，补一个对位默认（江湖刀客主命中时勿硬塞宫廷女帝）
+  const jianghuDominant =
+    ranked[0]?.id === "arch_rain_jianghu_dao" ||
+    matched.some((m) => ["江湖", "刀客", "雨夜", "客栈", "浪客", "刀光"].includes(m));
   if (picked.length < max) {
-    const fill = hasFemale
-      ? "arch_red_armor_general"
-      : hasMale
-        ? "arch_phoenix_empress"
-        : "arch_rain_jianghu_dao";
-    if (!picked.includes(fill) && getAncientArchetypeById(fill)) picked.push(fill);
+    if (jianghuDominant && hasMale && !hasFemale) {
+      // 江湖对打题材：只锁刀客轨，第二槽留给用户点选，避免宫斗女帝串味
+    } else {
+      const fill = hasFemale
+        ? "arch_red_armor_general"
+        : hasMale
+          ? "arch_phoenix_empress"
+          : "arch_rain_jianghu_dao";
+      if (!picked.includes(fill) && getAncientArchetypeById(fill)) picked.push(fill);
+    }
   }
 
   const archetypeIds = picked.slice(0, max);
