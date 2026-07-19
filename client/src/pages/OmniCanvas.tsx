@@ -79,6 +79,10 @@ import { MANHUA_CINE_VOCAB_BANK } from "@shared/manhuaCineVocabBank";
 import { listWardrobePropContinuity } from "@shared/manhuaWardrobePropContinuity";
 import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
 import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
+import ManhuaFactoryDebugPanel, {
+  type ManhuaFactoryDebugEntry,
+  type ManhuaFactoryDebugLevel,
+} from "@/components/canvas/ManhuaFactoryDebugPanel";
 import type { VideoReverseOutputMode } from "@shared/videoReversePrompt";
 import {
   MANHUA_WRITER_EPISODE_DEFAULT,
@@ -89,9 +93,13 @@ import {
   writerPackLooksReady,
   type ManhuaWriterPack,
 } from "@shared/manhuaWriterRoom";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { hasSupervisorAccess } from "@/lib/supervisorAccess";
 import { trpc } from "@/lib/trpc";
 import { Clapperboard, LayoutTemplate, Loader2, Play, Sparkles, Square } from "lucide-react";
 import { toast } from "sonner";
+
+const MANHUA_FACTORY_DEBUG_MAX = 80;
 
 const LS_KEY = "mv-freeform-canvas-v1";
 const LS_FACTORY_PREFS_KEY = "mv-manhua-factory-character-prefs-v1";
@@ -160,6 +168,34 @@ function saveFactoryCharacterPrefs(prefs: FactoryCharacterPrefs) {
 }
 
 export default function OmniCanvas() {
+  const { user } = useAuth({ redirectOnUnauthenticated: false });
+  const [supervisorAccess] = useState(() => hasSupervisorAccess());
+  const canShowCanvasDebug =
+    supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+  const [debugMode, setDebugMode] = useState(false);
+  const [debugLog, setDebugLog] = useState<ManhuaFactoryDebugEntry[]>([]);
+  const stageStartedAtRef = useRef<number | null>(null);
+
+  const pushDebug = useCallback(
+    (op: string, opts?: { level?: ManhuaFactoryDebugLevel; detail?: string; ms?: number }) => {
+      if (!canShowCanvasDebug) return;
+      const entry: ManhuaFactoryDebugEntry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        at: Date.now(),
+        level: opts?.level || "info",
+        op,
+        detail: opts?.detail,
+        ms: opts?.ms,
+      };
+      setDebugLog((prev) => [entry, ...prev].slice(0, MANHUA_FACTORY_DEBUG_MAX));
+    },
+    [canShowCanvasDebug],
+  );
+
+  useEffect(() => {
+    if (!canShowCanvasDebug && debugMode) setDebugMode(false);
+  }, [canShowCanvasDebug, debugMode]);
+
   const initial = useMemo(() => loadCanvasState(), []);
   const initialFactoryPrefs = useMemo(() => loadFactoryCharacterPrefs(), []);
   const [blocks, setBlocks] = useState<CanvasBlock[]>(initial.blocks);
@@ -459,6 +495,62 @@ export default function OmniCanvas() {
     () => (factoryWardrobeId.trim() ? [factoryWardrobeId.trim()] : []),
     [factoryWardrobeId],
   );
+
+  const debugInjectSummary = useMemo(() => {
+    if (!debugMode) return "";
+    const pathAnchors = factoryPathAnnotation?.anchors?.length || 0;
+    const pathStrokes = factoryPathAnnotation?.strokes?.length || 0;
+    const lines = [
+      `topic: ${factoryTopic.trim() || "—"}`,
+      `focusEpisode: ${writerFocusEpisode}`,
+      `runScope: ${factoryRunScope}`,
+      `chars: ${selectedCharacterIds.join(",") || "—"}`,
+      `ancient: ${factoryAncientArchetypeIds.join(",") || "—"}`,
+      `artStyle: ${factoryArtStyleId}`,
+      `genre/scene: ${factoryGenreId || "auto"} / ${factorySceneId || "auto"}`,
+      `props: ${factoryPropIds.join(",") || "—"}`,
+      `craft: ${selectedCraftShotIds.join(",") || "—"}`,
+      `pathRecipe: ${selectedPathRecipeIds.join(",") || "—"}`,
+      `actionRecipe: ${selectedActionRecipeIds.join(",") || "—"}`,
+      `pathAnnotate: anchors=${pathAnchors} strokes=${pathStrokes}`,
+      `lighting: ${selectedNarrativeLightingIds.join(",") || "—"}`,
+      `maleHair/micro: ${selectedMaleHairstyleIds.join(",") || "—"} / ${selectedMaleMicroIds.join(",") || "—"}`,
+      `cineVocab: ${selectedCineVocabIds.join(",") || "—"}`,
+      `wardrobe: ${selectedWardrobeIds.join(",") || "—"}`,
+      `promo: ${selectedPromoLayoutIds.join(",") || "—"}`,
+      `motion: ${selectedMotionIds.join(",") || "—"}`,
+      `reverseMode: ${factoryReverseMode}`,
+      `writerPack: ${writerPack ? `${writerPack.seriesTitle} · ${writerPack.episodes.length}ep · confirmed=${writerConfirmed}` : "—"}`,
+      `progress: ${factoryProgress || "—"}`,
+    ];
+    return lines.join("\n");
+  }, [
+    debugMode,
+    factoryTopic,
+    writerFocusEpisode,
+    factoryRunScope,
+    selectedCharacterIds,
+    factoryAncientArchetypeIds,
+    factoryArtStyleId,
+    factoryGenreId,
+    factorySceneId,
+    factoryPropIds,
+    selectedCraftShotIds,
+    selectedPathRecipeIds,
+    selectedActionRecipeIds,
+    factoryPathAnnotation,
+    selectedNarrativeLightingIds,
+    selectedMaleHairstyleIds,
+    selectedMaleMicroIds,
+    selectedCineVocabIds,
+    selectedWardrobeIds,
+    selectedPromoLayoutIds,
+    selectedMotionIds,
+    factoryReverseMode,
+    writerPack,
+    writerConfirmed,
+    factoryProgress,
+  ]);
 
   const keyArtPreviewUrl = useMemo(() => {
     const key = blocks.find(
@@ -790,6 +882,10 @@ export default function OmniCanvas() {
     }
     setWriterBusy(true);
     setWriterConfirmed(false);
+    const t0 = Date.now();
+    pushDebug("expandWriterPack:start", {
+      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${clampWriterEpisodeCount(writerEpisodeCount)}`,
+    });
     try {
       const count = clampWriterEpisodeCount(writerEpisodeCount);
       const designInject = [
@@ -810,9 +906,16 @@ export default function OmniCanvas() {
       }
       setWriterPack(pack);
       setWriterFocusEpisode(1);
-      toast.success(`已扩写 ${pack.episodes.length} 集剧情（GPT-5.6 Pro），确认后再进入编导`);
+      pushDebug("expandWriterPack:ok", {
+        level: "ok",
+        ms: Date.now() - t0,
+        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)}`,
+      });
+      toast.success(`已扩写 ${pack.episodes.length} 集剧情，确认后再进入编导`);
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "扩写失败");
+      const msg = e instanceof Error ? e.message : "扩写失败";
+      pushDebug("expandWriterPack:error", { level: "error", ms: Date.now() - t0, detail: msg });
+      toast.error(msg);
     } finally {
       setWriterBusy(false);
     }
@@ -823,6 +926,7 @@ export default function OmniCanvas() {
     expandWriterMutation,
     selectedMaleHairstyleIds,
     selectedMaleMicroIds,
+    pushDebug,
   ]);
 
   const confirmWriterToDirector = useCallback(() => {
@@ -888,10 +992,14 @@ export default function OmniCanvas() {
       continuity.previousEndingHook ? "上集钩子" : null,
       continuity.previouslyOnRecap ? "前情提要" : null,
     ].filter(Boolean);
+    pushDebug("confirmWriterToDirector", {
+      level: "ok",
+      detail: `ep=${continuity.episodeIndex} · chars=${selectedCharacterIds.join(",") || "—"} · path=${selectedPathRecipeIds.join(",") || "—"} · action=${selectedActionRecipeIds.join(",") || "—"} · ancient=${factoryAncientArchetypeIds.join(",") || "—"}`,
+    });
     toast.success(
       tips.length
-        ? `已确认剧情，焦点集编导链已就绪（含${tips.join("·")}）`
-        : "已确认剧情，编导分镜链路已就绪（焦点集）",
+        ? `已确认剧情，第${continuity.episodeIndex}集编导链已就绪（含${tips.join("·")}）`
+        : `已确认剧情，第${continuity.episodeIndex}集编导分镜链路已就绪`,
     );
   }, [
     writerPack,
@@ -913,10 +1021,12 @@ export default function OmniCanvas() {
     factoryGenreId,
     factorySceneId,
     factoryPropIds,
+    factoryAncientArchetypeIds,
     writerFocusEpisode,
     blocks,
     edges,
     remapDockSelectionAfterSpawn,
+    pushDebug,
   ]);
 
   const confirmWriterSeriesSpawn = useCallback(() => {
@@ -1037,6 +1147,10 @@ export default function OmniCanvas() {
       abortRef.current = ac;
       setFactoryBusy(true);
       setFactoryProgress("准备中…");
+      const runStartedAt = Date.now();
+      pushDebug("factoryRun:start", {
+        detail: `until=${untilStage} · force=${opts?.forceFromStage || "—"}`,
+      });
       try {
         const spawned = ensureStudioSpawned(factoryTopic);
         const cleanedGraph = sanitizeManhuaRecapUpstreamLinks(spawned.blocks, spawned.edges);
@@ -1055,6 +1169,9 @@ export default function OmniCanvas() {
         const episodeIndexes = opts?.episodeIndexes?.length
           ? opts.episodeIndexes
           : resolveRunEpisodeIndexes(workingBlocks);
+        pushDebug("factoryRun:episodes", {
+          detail: `eps=[${episodeIndexes.join(",")}] · chars=${selectedCharacterIds.join(",") || "—"} · path=${selectedPathRecipeIds.join(",") || "—"} · action=${selectedActionRecipeIds.join(",") || "—"}`,
+        });
         toast.message(
           untilStage === "reverse"
             ? `漫剧工厂：故事→角色→节拍→反推（第 ${episodeIndexes.join("、")} 集）`
@@ -1089,14 +1206,29 @@ export default function OmniCanvas() {
               });
             },
             onStageStart: (_id, index, total, label) => {
+              if (stageStartedAtRef.current != null) {
+                pushDebug("factoryStage:donePrev", {
+                  level: "ok",
+                  ms: Date.now() - stageStartedAtRef.current,
+                });
+              }
+              stageStartedAtRef.current = Date.now();
               setFactoryProgress(`第${episodeIndex}集 · ${index + 1}/${total} · ${label}`);
+              pushDebug("factoryStage:start", {
+                detail: `ep${episodeIndex} · ${index + 1}/${total} · ${label}`,
+              });
               toast.message(`第${episodeIndex}集 ${index + 1}/${total}`, { description: label });
             },
             onStageSkip: (_id, label) => {
               setFactoryProgress(`第${episodeIndex}集 · 跳过已完成 · ${label}`);
+              pushDebug("factoryStage:skip", { level: "warn", detail: `ep${episodeIndex} · ${label}` });
             },
             onStageRetry: (_id, label, attempt, message) => {
               setFactoryProgress(`第${episodeIndex}集 · 重试 ${attempt} · ${label}`);
+              pushDebug("factoryStage:retry", {
+                level: "warn",
+                detail: `ep${episodeIndex} · ${label} · attempt=${attempt} · ${message.slice(0, 160)}`,
+              });
               toast.message(`瞬时失败，自动重试 ${attempt}`, {
                 description: `${label}：${message.slice(0, 120)}`,
               });
@@ -1105,6 +1237,13 @@ export default function OmniCanvas() {
           workingBlocks = result.blocks;
           completed += result.completedIds.length;
           skipped += result.skippedIds.length;
+          if (stageStartedAtRef.current != null) {
+            pushDebug("factoryStage:donePrev", {
+              level: "ok",
+              ms: Date.now() - stageStartedAtRef.current,
+            });
+            stageStartedAtRef.current = null;
+          }
           if (result.errors.length) {
             lastError = result.errors[0]!;
             break;
@@ -1112,24 +1251,51 @@ export default function OmniCanvas() {
         }
         if (lastError) {
           const errStage = stageKeyFromBlockId(lastError.id);
+          pushDebug("factoryRun:error", {
+            level: "error",
+            ms: Date.now() - runStartedAt,
+            detail: `${errStage || "unknown"} · ${lastError.message || ""}`,
+          });
           toast.error(
             `完成 ${completed} 段` +
               (skipped ? `、跳过 ${skipped}` : "") +
               `，中断于${errStage ? MANHUA_FACTORY_STAGE_LABEL_ZH[errStage] : "未知"}：${lastError.message || ""}`,
           );
         } else {
+          pushDebug("factoryRun:ok", {
+            level: "ok",
+            ms: Date.now() - runStartedAt,
+            detail: `completed=${completed} skipped=${skipped}`,
+          });
           toast.success(`漫剧工厂完成：新跑 ${completed}` + (skipped ? ` · 跳过 ${skipped}` : ""));
         }
         setFactoryProgress("");
       } catch (e: unknown) {
-        toast.error(e instanceof Error ? e.message : "漫剧工厂失败");
+        const msg = e instanceof Error ? e.message : "漫剧工厂失败";
+        pushDebug("factoryRun:exception", {
+          level: "error",
+          ms: Date.now() - runStartedAt,
+          detail: msg,
+        });
+        toast.error(msg);
         setFactoryProgress("");
       } finally {
         abortRef.current = null;
+        stageStartedAtRef.current = null;
         setFactoryBusy(false);
       }
     },
-    [ensureStudioSpawned, factoryBusy, factoryTopic, runDeps, resolveRunEpisodeIndexes],
+    [
+      ensureStudioSpawned,
+      factoryBusy,
+      factoryTopic,
+      runDeps,
+      resolveRunEpisodeIndexes,
+      pushDebug,
+      selectedCharacterIds,
+      selectedPathRecipeIds,
+      selectedActionRecipeIds,
+    ],
   );
 
   const resumeFromFailure = useCallback(() => {
@@ -1182,16 +1348,41 @@ export default function OmniCanvas() {
                   </>
                 )}
               </div>
-              {canvasMode !== "pick" ? (
-                <button
-                  type="button"
-                  onClick={() => selectCanvasMode("pick")}
-                  className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/10 hover:text-white"
-                >
-                  切换模式
-                </button>
-              ) : null}
+              <div className="flex flex-wrap items-center gap-2">
+                {canShowCanvasDebug ? (
+                  <button
+                    type="button"
+                    onClick={() => setDebugMode((v) => !v)}
+                    className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] transition ${
+                      debugMode
+                        ? "border-[#49e6ff]/30 bg-[rgba(73,230,255,0.12)] text-[#8cefff]"
+                        : "border-white/10 bg-white/5 text-[#b7add8] hover:bg-white/10"
+                    }`}
+                  >
+                    {debugMode ? "Debug On" : "Debug Off"}
+                  </button>
+                ) : null}
+                {canvasMode !== "pick" ? (
+                  <button
+                    type="button"
+                    onClick={() => selectCanvasMode("pick")}
+                    className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/10 hover:text-white"
+                  >
+                    切换模式
+                  </button>
+                ) : null}
+              </div>
             </div>
+            {canShowCanvasDebug && debugMode ? (
+              <div className="mt-4">
+                <ManhuaFactoryDebugPanel
+                  enabled={debugMode}
+                  entries={debugLog}
+                  injectSummary={debugInjectSummary}
+                  onClear={() => setDebugLog([])}
+                />
+              </div>
+            ) : null}
             <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">
               {canvasMode === "manhua" ? "漫剧创作" : canvasMode === "freeform" ? "自由画布" : "创作画布"}
             </h1>
@@ -1215,7 +1406,7 @@ export default function OmniCanvas() {
                     漫剧创作
                   </div>
                   <p className="mt-3 text-[13px] leading-6 text-white/60">
-                    展开完整工作流：题材扩写（GPT-5.6 Pro）→ 编导确认 → 铺板跑静帧与成片。适合竖屏连载短剧。
+                    展开完整工作流：题材扩写 → 编导确认 → 铺板跑静帧与成片。适合竖屏连载短剧。
                   </p>
                   <span className="mt-4 inline-block text-[12px] font-medium text-emerald-200/90">进入漫剧工作流 →</span>
                 </button>
@@ -1245,7 +1436,7 @@ export default function OmniCanvas() {
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <div className="text-sm font-semibold text-white/90">① 编剧室 · 漫剧工厂</div>
-                <span className="text-[11px] text-white/40">题材 + 条件 → GPT-5.6 Pro 连载包</span>
+                <span className="text-[11px] text-white/40">题材 + 条件 → 连载剧情包</span>
               </div>
               <label className="mt-3 block text-[11px] text-white/45">题材</label>
               <input
