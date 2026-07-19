@@ -23,15 +23,15 @@ export function growthPlatformsForStatsAggregationList(): (typeof growthPlatform
   return growthPlatformValues.filter((p) => isGrowthPlatformInStatsAggregate(p));
 }
 
+/** Phase2 主力 gpt-5.6-sol；gemini 仅语音 scan；gpt-5.5 兼容旧入参 */
 export const growthCampModelValues = [
-  "gemini-3.5-flash",
   "gpt-5.6-sol",
-  /** @deprecated Phase 2 已迁至 gpt-5.6-sol；保留以便旧客户端/任务入参通过校验 */
+  "gemini-3.5-flash",
   "gpt-5.5",
 ] as const;
 
 export const growthCampModelSchema = z.enum(growthCampModelValues);
-export type GrowthCampModel = z.infer<typeof growthCampModelSchema>;
+export type GrowthCampModel = (typeof growthCampModelValues)[number];
 
 export const growthAnalysisModeValues = ["GROWTH", "REMIX"] as const;
 export const growthAnalysisModeSchema = z.enum(growthAnalysisModeValues);
