@@ -593,8 +593,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     .filter(Boolean)
     .join("\n\n");
   clip.parentId = keyArt.id;
-  /** 工厂主成片走 Seedance；Omni 留给下游 omni_edit（Interactions，须 @google/genai≥2） */
-  clip.videoModel = "seedance-2.0";
+  /** 工厂主成片走 Gemini Omni（静帧 I2V）；omni_edit 为可选自然语言改写 */
+  clip.videoModel = "gemini-omni-flash";
   clip.aspectRatio = "9:16";
   if (pathCameraRecipeIds[0]) clip.pathCameraRecipeId = pathCameraRecipeIds[0];
   if (opts.pathAnnotationJson != null) clip.pathAnnotationJson = opts.pathAnnotationJson;
@@ -958,10 +958,11 @@ export function applyFactoryPrefsToBlocks(
           .join("\n\n"),
         ...(b.id.startsWith("clip-")
           ? {
+              videoModel: "gemini-omni-flash" as const,
               pathCameraRecipeId: pathRecipeId || undefined,
               pathAnnotationJson: opts.pathAnnotationJson,
             }
-          : {}),
+          : { videoModel: "gemini-omni-flash" as const }),
       };
     }
     if (b.id.startsWith("recap_card-")) {
@@ -1383,8 +1384,14 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       break;
     }
     const blockId = orderedIds[i]!;
-    const block = working.find((b) => b.id === blockId);
+    let block = working.find((b) => b.id === blockId);
     if (!block) continue;
+    // 旧画布 clip 曾误挂 Seedance：工厂主成片一律 Gemini Omni
+    if (block.id.startsWith("clip-") && block.videoModel !== "gemini-omni-flash") {
+      block = { ...block, videoModel: "gemini-omni-flash" };
+      working = working.map((b) => (b.id === blockId ? block! : b));
+      opts.onBlocksChange?.(working);
+    }
     const stage = stageKeyFromBlockId(blockId);
     const label = stage ? MANHUA_FACTORY_STAGE_LABEL_ZH[stage] : blockId;
     const stageIdx = stage ? MANHUA_FACTORY_STAGE_ORDER.indexOf(stage) : i;
