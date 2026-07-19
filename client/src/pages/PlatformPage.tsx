@@ -14,7 +14,9 @@ import { PlatformTrendWorkbench } from "@/components/platform/PlatformTrendWorkb
 import { PlatformToolsWorkbench } from "@/components/platform/PlatformToolsWorkbench";
 import { PlatformStructuredPersonaForm } from "@/components/platform/PlatformStructuredPersonaForm";
 import { PlatformOutputTypePicker } from "@/components/platform/PlatformOutputTypePicker";
+import { PlatformDraftPresetsBar } from "@/components/platform/PlatformDraftPresetsBar";
 import { PlatformAdvancedSettingsFold } from "@/components/platform/PlatformAdvancedSettingsFold";
+import { PlatformSkillDrawer } from "@/components/platform/PlatformSkillDrawer";
 import PlatformHtmlPptPanel from "@/components/PlatformHtmlPptPanel";
 import {
   composeFocusPromptFromPersona,
@@ -24,12 +26,15 @@ import {
   parsePersonaFromFocusPrompt,
   pushRecentTask,
   readConfigPresets,
+  readDefaultSkillIds,
   readRecentTasks,
   readWorkbenchDraft,
   resolvePlatformLocation,
   syncPlatformModeToUrl,
   toolsTabFromMode,
   trackPlatformFunnel,
+  writeConfigPresets,
+  writeDefaultSkillIds,
   writePlatformModeToStorage,
   writeWorkbenchDraft,
   type PlatformConfigPreset,
@@ -2125,6 +2130,7 @@ export default function PlatformPage() {
   const [configPresets, setConfigPresets] = useState<PlatformConfigPreset[]>([]);
   const [recentTasks, setRecentTasks] = useState<PlatformRecentTask[]>([]);
   const [draftMeta, setDraftMeta] = useState<{ savedAt: string } | null>(null);
+  const [skillDrawerOpen, setSkillDrawerOpen] = useState(false);
   const [personaFieldErrors, setPersonaFieldErrors] = useState<
     Partial<Record<keyof PlatformStructuredPersona | "freeform", string>>
   >({});
@@ -8184,6 +8190,52 @@ export default function PlatformPage() {
     toast.success("已恢复草稿");
   }, [applyPlatformMode, workbenchUserKey]);
 
+  const handleSavePreset = useCallback(() => {
+    if (!workbenchUserKey) {
+      toast.message("请先登录后再保存预设");
+      return;
+    }
+    const name = window.prompt("预设名称", `配置 ${configPresets.length + 1}`);
+    if (!name?.trim()) return;
+    const preset: PlatformConfigPreset = {
+      id: `p-${Date.now()}`,
+      name: name.trim().slice(0, 32),
+      savedAt: new Date().toISOString(),
+      enabledSkillIds: Array.from(enabledPlatformSkillIds),
+      topicShortlistCount,
+      outputType: outputType ?? "single_page",
+      persona: structuredPersona,
+      focusPrompt,
+    };
+    const next = [preset, ...configPresets].slice(0, 12);
+    setConfigPresets(next);
+    writeConfigPresets(workbenchUserKey, next);
+    writeDefaultSkillIds(workbenchUserKey, preset.enabledSkillIds);
+    trackPlatformFunnel("preset_save", { reason: "user_save" });
+    toast.success("已保存预设");
+  }, [
+    configPresets,
+    enabledPlatformSkillIds,
+    topicShortlistCount,
+    outputType,
+    structuredPersona,
+    focusPrompt,
+    workbenchUserKey,
+  ]);
+
+  const handleApplyPreset = useCallback(
+    (preset: PlatformConfigPreset) => {
+      setFocusPrompt(preset.focusPrompt || composeFocusPromptFromPersona(preset.persona));
+      setStructuredPersona(preset.persona || { ...EMPTY_STRUCTURED_PERSONA });
+      setTopicShortlistCount(preset.topicShortlistCount || PLATFORM_TOPIC_SHORTLIST_DEFAULT);
+      setOutputType(preset.outputType || null);
+      setEnabledPlatformSkillIds(new Set(preset.enabledSkillIds || []));
+      trackPlatformFunnel("preset_apply", { reason: "user_apply" });
+      toast.success(`已应用预设「${preset.name}」`);
+    },
+    [],
+  );
+
   const stickyCtaNode = (
     <PlatformStickyCtaRail
       title={platformMode === "trend" ? "趋势分析" : platformMode === "tools" ? "工具操作" : "内容创作"}
@@ -8364,16 +8416,17 @@ export default function PlatformPage() {
           />
         ) : null}
 
-        {platformMode === "create" && draftMeta ? (
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={handleRestoreDraft}
-              className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-[12px] font-semibold text-[#c9c0e6] hover:bg-white/10"
-            >
-              恢复草稿
-            </button>
-            <span className="text-[11px] text-[#c9c0e6]/45">已自动保存配置（不含生成结果）</span>
+        {platformMode === "create" ? (
+          <div className="mb-4">
+            <PlatformDraftPresetsBar
+              presets={configPresets}
+              recent={recentTasks}
+              onSavePreset={handleSavePreset}
+              onApplyPreset={handleApplyPreset}
+              onRestoreDraft={handleRestoreDraft}
+              hasDraft={Boolean(draftMeta)}
+              draftSavedAt={draftMeta?.savedAt}
+            />
           </div>
         ) : null}
 
@@ -8799,6 +8852,15 @@ export default function PlatformPage() {
                 }
                 stickyCta={stickyCtaNode}
               >
+                <div className="mb-3 flex flex-wrap gap-2 lg:hidden">
+                  <button
+                    type="button"
+                    onClick={() => setSkillDrawerOpen(true)}
+                    className="rounded-lg border border-white/12 bg-white/5 px-3 py-1.5 text-[12px] font-semibold text-[#c9c0e6]"
+                  >
+                    Skill / 模板
+                  </button>
+                </div>
                 <div className="mb-1 flex flex-wrap items-center gap-2">
                   <PenLine className="h-5 w-5 text-[#ff4fb8]" />
                   <h2 className="text-lg font-black tracking-tight text-white md:text-xl">内容创作</h2>
@@ -9800,6 +9862,24 @@ export default function PlatformPage() {
             ) : null}
           </div>
         </section>
+
+        <div className="lg:hidden">
+          <PlatformStickyCtaRail
+            variant="bar"
+            title={platformMode === "trend" ? "趋势分析" : platformMode === "tools" ? "工具操作" : "内容创作"}
+            label={activePrimaryCta.label}
+            creditsLabel={activePrimaryCta.creditsLabel}
+            disabled={activePrimaryCta.disabled}
+            disabledReason={activePrimaryCta.disabledReason}
+            busy={activePrimaryCta.busy}
+            onClick={() => runActivePrimaryCta()}
+            onDisabledAttempt={() => recordCtaDisabled()}
+          />
+        </div>
+
+        <PlatformSkillDrawer open={skillDrawerOpen} onClose={() => setSkillDrawerOpen(false)} title="Skill 与顾问">
+          {platformSkillsAccessoryPanel}
+        </PlatformSkillDrawer>
 
         {customWorkspaceOperating && platformMode === "create" ? (
           <p className="mb-4 text-center text-xs text-[#c9c0e6]/45">
