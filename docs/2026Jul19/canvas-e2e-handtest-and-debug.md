@@ -34,18 +34,31 @@
    - 运镜编译句「subject moves along red action path」重复偏多  
    - `api.mvstudiopro.com/api/health` 偶发 status 0
 
-## Debug Mode（本 PR）
+## Debug Mode（本 PR · 方案 B）
 
 - 可见范围：`?supervisor=1` / localStorage supervisor / `admin` / `supervisor`
 - 入口：画布顶栏「Debug On / Off」（不对一般用户展示）
-- 内容（方案 A · 轻量日志板）：
-  - 阶段日志：扩写 / 确认 / 工厂 start·stage·skip·retry·ok·error + 耗时 ms
-  - 当前注入摘要：题材、焦点集、角色、古风原型、路径/动作配方、路径标注锚点与笔迹数、词表/服装等
+- 内容：
+  - 阶段日志：扩写 / 确认 / 工厂 / optimizeCopy + 耗时 ms
+  - 可展开 **Request / Response**（扩写包摘要、optimizeCopy 原文等）
+  - 当前注入摘要：题材、焦点集、角色、古风原型、路径/动作配方、路径标注等
 
-未做：完整 request/response 透视（方案 B）、Debug 快跑入口（方案 C）——需要时可再开 PR。
+未做：Debug 快跑入口（方案 C）。
+
+## 生图路径（本 PR）
+
+- 默认引擎：**官方 GPT-Image-2**（工厂静帧 / 前情提要 / 宣发封面 / 自由画布新图块）
+- **Nano Banana 2** 仅作 GPT-Image-2 失败回退（或用户显式手选）
+
+## 英文说明 → 中文（本 PR）
+
+- 运镜工作台：界面展示中文运镜说明（本地中文编译 + **GPT-5.6 Terra** 编剧大师润色）
+- Seedance / I2V 注入仍保留英文编译锁，避免成片模型掉语义
+- 路径/动作配方注入块去掉 `EN:` 行，避免文本阶段带出英文说明
 
 ## 建议下一轮
 
 1. 江湖/古风题材自动换角或强提示「当前都市库与剧本冲突」  
 2. 确认编导时默认回到第 1 集，或二次确认焦点集  
 3. Omni 改视频节点闭环手测  
+

@@ -3,6 +3,7 @@
  */
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -13,6 +14,7 @@ import {
   PATH_ANNOTATE_ANCHOR_MIN,
   annotationFromRecipeId,
   compilePathAnnotationToMotionPrompt,
+  compilePathAnnotationToMotionPromptZh,
   downsampleStrokeToAnchors,
   formatPathAnnotationBrief,
   mergeTrackAnchors,
@@ -40,6 +42,8 @@ type Props = {
   onChange: (ann: ManhuaPathAnnotation | null) => void;
   onRecipeIdChange?: (id: string) => void;
   onActionRecipeIdChange?: (id: string) => void;
+  /** GPT-5.6 Terra：英文运镜句 → 通顺中文（编剧大师 brief） */
+  translateMotionZh?: (englishMotion: string) => Promise<string>;
 };
 
 type InputMode = "draw" | "tap";
@@ -84,6 +88,7 @@ export default function ManhuaPathCameraAnnotatePanel({
   onChange,
   onRecipeIdChange,
   onActionRecipeIdChange,
+  translateMotionZh,
 }: Props) {
   const recipes = useMemo(() => listPathCameraRecipes(), []);
   const actionRecipes = useMemo(() => listActionCameraRecipes(), []);
@@ -94,14 +99,51 @@ export default function ManhuaPathCameraAnnotatePanel({
   const drawingRef = useRef(false);
   const strokeRef = useRef<Array<{ x: number; y: number }>>([]);
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const translateSeq = useRef(0);
   const anchors = value?.anchors || [];
   const strokes = value?.strokes || [];
   const activeActionId = actionRecipeId || value?.actionRecipeId || "";
 
-  const motionPreview = useMemo(() => {
+  /** Seedance / I2V 仍用英文编译；界面展示中文 */
+  const motionEn = useMemo(() => {
     if (!value || anchors.length < PATH_ANNOTATE_ANCHOR_MIN) return "";
     return compilePathAnnotationToMotionPrompt(value);
   }, [value, anchors.length]);
+
+  const motionZhDraft = useMemo(() => {
+    if (!value || anchors.length < PATH_ANNOTATE_ANCHOR_MIN) return "";
+    return compilePathAnnotationToMotionPromptZh(value);
+  }, [value, anchors.length]);
+
+  const [motionZhPolished, setMotionZhPolished] = useState("");
+  const [motionZhBusy, setMotionZhBusy] = useState(false);
+
+  useEffect(() => {
+    if (!motionEn || !translateMotionZh) {
+      setMotionZhPolished("");
+      setMotionZhBusy(false);
+      return;
+    }
+    const seq = ++translateSeq.current;
+    setMotionZhBusy(true);
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const zh = await translateMotionZh(motionEn);
+          if (translateSeq.current !== seq) return;
+          setMotionZhPolished(String(zh || "").trim());
+        } catch {
+          if (translateSeq.current !== seq) return;
+          setMotionZhPolished("");
+        } finally {
+          if (translateSeq.current === seq) setMotionZhBusy(false);
+        }
+      })();
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [motionEn, translateMotionZh]);
+
+  const motionPreviewZh = motionZhPolished || motionZhDraft;
 
   const brief = useMemo(() => (value ? formatPathAnnotationBrief(value) : ""), [value]);
 
@@ -520,10 +562,15 @@ export default function ManhuaPathCameraAnnotatePanel({
           {brief}
         </pre>
       ) : null}
-      {motionPreview ? (
-        <pre className="max-h-20 overflow-auto whitespace-pre-wrap rounded border border-cyan-400/20 bg-black/50 p-1.5 text-[9px] leading-snug text-cyan-50/80">
-          {motionPreview}
-        </pre>
+      {motionPreviewZh ? (
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2 text-[9px] text-white/35">
+            <span>运镜说明（中文）{motionZhBusy ? " · Terra 润色中…" : motionZhPolished ? " · Terra 已润色" : ""}</span>
+          </div>
+          <pre className="max-h-28 overflow-auto whitespace-pre-wrap rounded border border-cyan-400/20 bg-black/50 p-1.5 text-[10px] leading-snug text-cyan-50/90">
+            {motionPreviewZh}
+          </pre>
+        </div>
       ) : (
         <p className="text-[10px] text-white/30">
           画满至少一轨流畅线（合计 ≥{PATH_ANNOTATE_ANCHOR_MIN} 锚点）后生成运镜句。

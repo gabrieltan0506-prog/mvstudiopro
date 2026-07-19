@@ -72,7 +72,7 @@ export function buildActionCameraInjectBlock(ids: string[]): string {
   if (!picked.length) return "";
   const lines = picked.map(
     (e, i) =>
-      `${i + 1}. 【动作运镜·${e.trackMode}】${e.nameZh}：${e.craftSummaryZh}\n   Seedance：${e.seedancePromptZh}\n   EN: ${e.craftLockEn}`,
+      `${i + 1}. 【动作运镜·${e.trackMode}】${e.nameZh}：${e.craftSummaryZh}\n   Seedance：${e.seedancePromptZh}`,
   );
   return [
     "【动作运镜配方】",

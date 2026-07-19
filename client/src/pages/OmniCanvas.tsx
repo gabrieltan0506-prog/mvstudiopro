@@ -95,6 +95,10 @@ import {
 } from "@shared/manhuaWriterRoom";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
+import {
+  MANHUA_SCREENWRITER_TERRA_MODEL,
+  MANHUA_SCREENWRITER_TRANSLATE_BRIEF,
+} from "@shared/manhuaScreenwriterTranslate";
 import { trpc } from "@/lib/trpc";
 import { Clapperboard, LayoutTemplate, Loader2, Play, Sparkles, Square } from "lucide-react";
 import { toast } from "sonner";
@@ -177,7 +181,16 @@ export default function OmniCanvas() {
   const stageStartedAtRef = useRef<number | null>(null);
 
   const pushDebug = useCallback(
-    (op: string, opts?: { level?: ManhuaFactoryDebugLevel; detail?: string; ms?: number }) => {
+    (
+      op: string,
+      opts?: {
+        level?: ManhuaFactoryDebugLevel;
+        detail?: string;
+        ms?: number;
+        request?: string;
+        response?: string;
+      },
+    ) => {
       if (!canShowCanvasDebug) return;
       const entry: ManhuaFactoryDebugEntry = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -186,6 +199,8 @@ export default function OmniCanvas() {
         op,
         detail: opts?.detail,
         ms: opts?.ms,
+        request: opts?.request,
+        response: opts?.response,
       };
       setDebugLog((prev) => [entry, ...prev].slice(0, MANHUA_FACTORY_DEBUG_MAX));
     },
@@ -363,7 +378,7 @@ export default function OmniCanvas() {
       sheet.id = makeCanvasBlockId("charsheet");
       sheet.prompt = prompt;
       sheet.aspectRatio = "9:16";
-      sheet.imageModel = "nano-banana-2";
+      sheet.imageModel = "gpt-image-2";
       // 仅预填 prompt；不挂本地 /manhua-characters 相对路径（云端生图拉不到）
       sheet.imageMode = "generate";
       sheet.refImageUrl = undefined;
@@ -507,6 +522,7 @@ export default function OmniCanvas() {
       `chars: ${selectedCharacterIds.join(",") || "—"}`,
       `ancient: ${factoryAncientArchetypeIds.join(",") || "—"}`,
       `artStyle: ${factoryArtStyleId}`,
+      `imageEngine: gpt-image-2 (default) · nano-banana-2 fallback`,
       `genre/scene: ${factoryGenreId || "auto"} / ${factorySceneId || "auto"}`,
       `props: ${factoryPropIds.join(",") || "—"}`,
       `craft: ${selectedCraftShotIds.join(",") || "—"}`,
@@ -662,12 +678,44 @@ export default function OmniCanvas() {
   const runDeps = useMemo<CanvasRunDeps>(
     () => ({
       optimizeCopy: async ({ sourceText, optimizationBrief, modelName }) => {
-        const res = await optimizeCopyMutation.mutateAsync({
-          sourceText,
-          optimizationBrief,
-          modelName,
-        });
-        return res.result.optimizedMarkdown;
+        const t0 = Date.now();
+        const reqPreview = [
+          `model=${modelName || "default"}`,
+          optimizationBrief ? `brief:\n${optimizationBrief.slice(0, 2000)}` : "",
+          `source:\n${String(sourceText || "").slice(0, 6000)}`,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        try {
+          const res = await optimizeCopyMutation.mutateAsync({
+            sourceText,
+            optimizationBrief,
+            modelName,
+          });
+          const md = res.result.optimizedMarkdown;
+          if (debugMode) {
+            pushDebug("optimizeCopy:ok", {
+              level: "ok",
+              ms: Date.now() - t0,
+              detail: `model=${modelName || "default"} · out=${md.length}c`,
+              request: reqPreview,
+              response: md.slice(0, 8000),
+            });
+          }
+          return md;
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : "optimizeCopy failed";
+          if (debugMode) {
+            pushDebug("optimizeCopy:error", {
+              level: "error",
+              ms: Date.now() - t0,
+              detail: msg,
+              request: reqPreview,
+              response: msg,
+            });
+          }
+          throw e;
+        }
       },
       uploadImageFile: async (file) => {
         const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
@@ -679,7 +727,22 @@ export default function OmniCanvas() {
         return asset.url;
       },
     }),
-    [optimizeCopyMutation, getSignedUrlMutation],
+    [optimizeCopyMutation, getSignedUrlMutation, debugMode, pushDebug],
+  );
+
+  /** Terra：英文运镜说明 → 通顺中文（编剧大师人设） */
+  const translateMotionZh = useCallback(
+    async (englishMotion: string) => {
+      const src = String(englishMotion || "").trim();
+      if (!src) return "";
+      const md = await runDeps.optimizeCopy({
+        sourceText: src,
+        optimizationBrief: MANHUA_SCREENWRITER_TRANSLATE_BRIEF,
+        modelName: MANHUA_SCREENWRITER_TERRA_MODEL,
+      });
+      return String(md || "").trim();
+    },
+    [runDeps],
   );
 
   const handleBlocksChange = useCallback(
@@ -883,18 +946,20 @@ export default function OmniCanvas() {
     setWriterBusy(true);
     setWriterConfirmed(false);
     const t0 = Date.now();
+    const count = clampWriterEpisodeCount(writerEpisodeCount);
+    const designInject = [
+      buildMaleHairstyleInjectBlock(selectedMaleHairstyleIds),
+      buildMaleMicroExpressionInjectBlock(selectedMaleMicroIds),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    const mergedBrief = [brief, designInject].filter(Boolean).join("\n\n");
+    const reqPreview = `topic=${topic}\nepisodes=${count}\nbrief:\n${mergedBrief.slice(0, 4000)}`;
     pushDebug("expandWriterPack:start", {
-      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${clampWriterEpisodeCount(writerEpisodeCount)}`,
+      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count}`,
+      request: reqPreview,
     });
     try {
-      const count = clampWriterEpisodeCount(writerEpisodeCount);
-      const designInject = [
-        buildMaleHairstyleInjectBlock(selectedMaleHairstyleIds),
-        buildMaleMicroExpressionInjectBlock(selectedMaleMicroIds),
-      ]
-        .filter(Boolean)
-        .join("\n\n");
-      const mergedBrief = [brief, designInject].filter(Boolean).join("\n\n");
       const res = await expandWriterMutation.mutateAsync({
         topic,
         brief: mergedBrief || undefined,
@@ -906,15 +971,26 @@ export default function OmniCanvas() {
       }
       setWriterPack(pack);
       setWriterFocusEpisode(1);
+      const epDigest = pack.episodes
+        .map((ep) => `第${ep.index}集·${ep.title || ""}：${String(ep.endHook || "").slice(0, 80)}`)
+        .join("\n");
       pushDebug("expandWriterPack:ok", {
         level: "ok",
         ms: Date.now() - t0,
         detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)}`,
+        request: reqPreview,
+        response: `${pack.seriesTitle || ""}\n${pack.logline || ""}\n${epDigest}`.slice(0, 8000),
       });
       toast.success(`已扩写 ${pack.episodes.length} 集剧情，确认后再进入编导`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "扩写失败";
-      pushDebug("expandWriterPack:error", { level: "error", ms: Date.now() - t0, detail: msg });
+      pushDebug("expandWriterPack:error", {
+        level: "error",
+        ms: Date.now() - t0,
+        detail: msg,
+        request: reqPreview,
+        response: msg,
+      });
       toast.error(msg);
     } finally {
       setWriterBusy(false);
@@ -1808,6 +1884,7 @@ export default function OmniCanvas() {
                     setActionRecipeManual(true);
                     setFactoryActionRecipeId(id);
                   }}
+                  translateMotionZh={translateMotionZh}
                 />
                 <p className="text-[10px] text-white/35">
                   {recommendedPath.reasonZh}

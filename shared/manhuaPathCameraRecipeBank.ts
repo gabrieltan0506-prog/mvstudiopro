@@ -176,7 +176,7 @@ export function buildPathCameraInjectBlock(ids: string[]): string {
     const phaseLine = e.phases
       .map((p) => `${p.index}.${p.focusZh}(${p.durationHintSec}s)`)
       .join("→");
-    return `${i + 1}. 【路径运镜】${e.nameZh}：${e.craftSummaryZh}（效果：${e.effectZh}）\n   阶段：${phaseLine}\n   EN: ${e.craftLockEn}`;
+    return `${i + 1}. 【路径运镜】${e.nameZh}：${e.craftSummaryZh}（效果：${e.effectZh}）\n   阶段：${phaseLine}`;
   });
   return [
     "【路径运镜配方】",
