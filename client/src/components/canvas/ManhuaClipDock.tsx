@@ -200,6 +200,18 @@ export default function ManhuaClipDock({
             </div>
             <p className="mt-1 max-w-xl text-[11px] leading-relaxed text-white/45">
               各集微动就绪后，一键拼成长片并自动配乐。勾选集号可同时作为工厂运行范围。
+              {canAssemble ? (
+                <span className="text-cyan-100/70">
+                  {" "}
+                  本次将拼第{" "}
+                  {assembleClips
+                    .map((c) => c.episodeIndex)
+                    .filter((n) => n >= 1)
+                    .sort((a, b) => a - b)
+                    .join("、")}{" "}
+                  集。
+                </span>
+              ) : null}
             </p>
             <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
               <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-white/60">
