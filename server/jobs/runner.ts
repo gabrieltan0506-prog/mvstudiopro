@@ -1303,6 +1303,27 @@ async function processPlatformJob(
         .join("\n")
         .slice(0, 4000);
 
+      let recentUserTopicTitles: string[] = [];
+      const uidRawForRecent = jobUserId != null ? Number(jobUserId) : NaN;
+      if (Number.isFinite(uidRawForRecent) && uidRawForRecent > 0) {
+        try {
+          const { loadRecentPlatformBlueprintTitles } = await import(
+            "../services/platformStrategicBlueprintSnapshots.js"
+          );
+          recentUserTopicTitles = await loadRecentPlatformBlueprintTitles({
+            userId: uidRawForRecent,
+            withinDays: 14,
+            limitSnapshots: 6,
+            maxTitles: 36,
+          });
+        } catch (e) {
+          console.warn(
+            "[platform_build_content] load recent titles skipped:",
+            e instanceof Error ? e.message.slice(0, 160) : e,
+          );
+        }
+      }
+
       const built = await buildPlatformContent({
         snapshot: snapshotSummary,
         platformMenu,
@@ -1319,6 +1340,8 @@ async function processPlatformJob(
         allowBloggerTitle: allowBloggerTitleForJob,
         skillRouteMode: "auto",
         skillRouteContext,
+        recentUserTopicTitles,
+        enableProTopicOptimize: true,
         // monetization / 兜底：不再预灌单一赛道全文；六维由 buildPlatformContent 内 diverse 路由
         platformSkillsPrompt: "",
         onBlueprintGenerated: platformJobId

@@ -1301,6 +1301,10 @@ export async function buildPlatformContent(params: {
   skillRouteMode?: "auto" | "all" | null;
   /** 仅供 Skill 路由打分（看板 headline 等）；不改变 Stage2 user JSON 的 context */
   skillRouteContext?: string | null;
+  /** 近窗已生成选题标题（禁复读）；可由 worker 从快照加载 */
+  recentUserTopicTitles?: string[] | null;
+  /** 为 false 时跳过 Responses Pro 深度选题优化（默认开启） */
+  enableProTopicOptimize?: boolean;
 }): Promise<{
   data: z.infer<typeof platformContentResponseSchema>;
   diagnostics: Record<string, unknown>;
@@ -1339,10 +1343,11 @@ export async function buildPlatformContent(params: {
   } catch {
     diagnostics.storeItemCountsByPlatform = "unavailable";
   }
-  const getPlatformDecisionWindowDays = (platform: string): number => {
-    if (platform === "douyin" || platform === "kuaishou") return 5;
-    if (platform === "bilibili" || platform === "xiaohongshu") return 15;
-    return params.windowDays;
+  /** 与 UI 所选 3/7/15/30/45 对齐；不再按平台硬编码 5/15 */
+  const getPlatformDecisionWindowDays = (_platform: string): number => {
+    const n = Number(params.windowDays);
+    if (n === 3 || n === 7 || n === 15 || n === 30 || n === 45) return n;
+    return 15;
   };
   const readTrendItemTimestampMs = (item: any): number | null => {
     const ts =
@@ -1514,8 +1519,9 @@ export async function buildPlatformContent(params: {
       : null) ?? null;
   const weixinChannelsDouyinHotRef = douyinHotForWeixin
     ? {
-        note: "视频号母语参照：抖音近窗（约3–5天）高互动样本的钩子结构与节奏；禁止抄标题。",
-        decisionWindowDays: (douyinHotForWeixin as { decisionWindowDays?: number }).decisionWindowDays ?? 5,
+        note: `视频号母语参照：抖音近窗（${params.windowDays}天，与用户所选周期一致）高互动样本的钩子结构与节奏；禁止抄标题。`,
+        decisionWindowDays:
+          (douyinHotForWeixin as { decisionWindowDays?: number }).decisionWindowDays ?? params.windowDays,
         highEngagementSamples: Array.isArray(
           (douyinHotForWeixin as { highEngagementSamples?: unknown }).highEngagementSamples,
         )
@@ -1526,6 +1532,60 @@ export async function buildPlatformContent(params: {
         note: "当前请求未含抖音链；视频号仍按生活一句人话母语写，勿抄热梗标题。",
         highEngagementSamples: [],
       };
+
+  const recentUserTopicTitles = Array.isArray(params.recentUserTopicTitles)
+    ? params.recentUserTopicTitles.map((t) => String(t || "").trim()).filter(Boolean).slice(0, 36)
+    : [];
+  diagnostics.recentUserTopicTitleCount = recentUserTopicTitles.length;
+
+  let proTopicOptimizeBrief: Awaited<
+    ReturnType<typeof import("./services/platformStage2ProTopicOptimize.js").optimizeStage2TopicsWithPro>
+  > | null = null;
+  const enableProTopicOptimize = params.enableProTopicOptimize !== false;
+  if (enableProTopicOptimize) {
+    const proT0 = Date.now();
+    try {
+      const { optimizeStage2TopicsWithPro } = await import("./services/platformStage2ProTopicOptimize.js");
+      const stage1SeedTitles = Array.isArray(handoff?.contentSeeds)
+        ? handoff!.contentSeeds
+            .map((s: { title?: string }) => String(s?.title || "").trim())
+            .filter(Boolean)
+            .slice(0, 12)
+        : [];
+      const trendDigest = dynamicDecisionChain.map((row) => ({
+        platform: row.platform,
+        decisionWindowDays: row.decisionWindowDays,
+        highEngagementSamples: (row.highEngagementSamples || []).slice(0, 6).map((s) => ({
+          title: s.title,
+          category: s.category,
+          isBreakout: s.isBreakout,
+          source: s.source,
+        })),
+        topBuckets: row.topBuckets,
+      }));
+      proTopicOptimizeBrief = await optimizeStage2TopicsWithPro({
+        context: String(params.context || ""),
+        windowDays: params.windowDays,
+        requestedPlatforms: params.requestedPlatforms,
+        trendDigest,
+        stage1SeedTitles,
+        recentUserTitles: recentUserTopicTitles,
+        abortSignal: params.abortSignal,
+      });
+      diagnostics.proTopicOptimizeOk = Boolean(proTopicOptimizeBrief.ok);
+      diagnostics.proTopicOptimizeMs = Date.now() - proT0;
+      diagnostics.proTopicOptimizeVia = proTopicOptimizeBrief.via || null;
+      diagnostics.proTopicOptimizeError = proTopicOptimizeBrief.rawError || null;
+    } catch (e) {
+      diagnostics.proTopicOptimizeOk = false;
+      diagnostics.proTopicOptimizeMs = Date.now() - proT0;
+      diagnostics.proTopicOptimizeError = e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200);
+      proTopicOptimizeBrief = null;
+    }
+  } else {
+    diagnostics.proTopicOptimizeOk = false;
+    diagnostics.proTopicOptimizeSkipped = true;
+  }
 
   const stage2UserJsonString = JSON.stringify({
           context: params.context || "",
@@ -1538,6 +1598,11 @@ export async function buildPlatformContent(params: {
           /** 与 dynamicDecisionChain 内 trendSampleEngagementNote 同源，便于模型扫读 */
           trendEngagementAlignmentPolicy:
             "dynamicDecisionChain 中 highEngagementSamples 为抓取样本的高互动/增长潜力参考（非用户账号实测CTR或转化）。contentBlueprints 的 title/hook/copywriting/detailedScript 须在完整人设（职业、身份、兴趣、爱好、专长）约束下对齐其钩子结构与内容节拍；可借鉴切口与张力，热点与样本仅作参考，须改写为贴合本人设的表达，禁止字面抄袭标题或正文，禁止硬套无关热梗。",
+          /** Responses Pro 深度选题优化结果：六维方向包；正式文案须对齐且拉开差异 */
+          proTopicOptimizeBrief: proTopicOptimizeBrief?.ok ? proTopicOptimizeBrief : null,
+          recentUserTopicTitles,
+          recentTitleBanPolicy:
+            "recentUserTopicTitles 为该用户近两周已产出选题。禁止复读同标题、同母题、同场景情绪；须换切口。",
           snapshotData: {
             titleExecutions: params.snapshot.titleExecutions || [],
             monetizationStrategies: params.snapshot.monetizationStrategies || [],
@@ -1562,6 +1627,8 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 【人设口径】此处「人设 / Persona / IP」均指可获知信息下尽量还原的真实创作者画像；选题、脚本、变现须能用**职业、身份、兴趣、爱好、专长**等多维解释。**不建议**把人设写成泛化「创作者」「博主」。热点与高互动样本仅作结构与节奏参考，**须改写**为贴合本人设的事实与口气，**不建议**硬套无关热梗。
 
 【Stage 1 战略看板已定稿】user JSON 中的 stage1StrategicHandoff 为系统对战略看板的清洗摘要，其中 contentSeeds 每条可含 title、hook、copywriting 及分镜类字段（detailedScript、graphicPlan、videoPlan）。请在此基础上产出 **6 条**更深、更可执行的 contentBlueprints：允许重写、扩写与改分镜以符合本任务 schema，但**不建议**偏离人设与 headline/subheadline/persona 主线；若种子不足 6 条，可补充新选题但须与同一真实人设一致。
+
+【Pro 深度选题优化 · 必读】若 user JSON 含 proTopicOptimizeBrief.ok=true：六条须分别对齐 directions[0..5] 的 angle / differenceHook / workingTitle 意图（可润色标题，不可六条同质）；须遵守 banMotifs 与 recentUserTopicTitles 禁复读；trendBorrow 只借结构不抄原标题。若 brief 为空，仍须用 dynamicDecisionChain 拉开六维差异。
 
 【绝对禁止词汇黑名单】（任何输出中出现以下词汇/句式即判定为不合格，须重写）：
 - "电商带货" / "带货" / "橱窗"
@@ -7679,6 +7746,24 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             .join("\n")
             .slice(0, 4000);
 
+          let syncRecentTitles: string[] = [];
+          const syncUid = ctx.user?.id != null ? Number(ctx.user.id) : NaN;
+          if (Number.isFinite(syncUid) && syncUid > 0) {
+            try {
+              const { loadRecentPlatformBlueprintTitles } = await import(
+                "./services/platformStrategicBlueprintSnapshots.js"
+              );
+              syncRecentTitles = await loadRecentPlatformBlueprintTitles({
+                userId: syncUid,
+                withinDays: 14,
+                limitSnapshots: 6,
+                maxTitles: 36,
+              });
+            } catch {
+              /* ignore */
+            }
+          }
+
           const raced = await Promise.race([
             buildPlatformContent({
               snapshot: input.snapshotSummary,
@@ -7696,6 +7781,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               skillRouteMode: "auto",
               skillRouteContext: syncSkillRouteContext,
               platformSkillsPrompt: "",
+              recentUserTopicTitles: syncRecentTitles,
+              enableProTopicOptimize: true,
             }).then(
               (r): Stage2RaceDone => ({
                 kind: "done",

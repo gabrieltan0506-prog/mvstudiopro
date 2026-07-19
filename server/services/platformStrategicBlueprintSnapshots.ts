@@ -217,6 +217,67 @@ export async function upsertPlatformBlueprintSnapshotEntries(params: {
   }
 }
 
+/**
+ * 近 N 天快照里的选题标题，供 Stage2 Pro 深度优化禁复读。
+ */
+export async function loadRecentPlatformBlueprintTitles(params: {
+  userId: number;
+  withinDays?: number;
+  limitSnapshots?: number;
+  maxTitles?: number;
+}): Promise<string[]> {
+  const userId = Number(params.userId);
+  if (!Number.isFinite(userId) || userId <= 0) return [];
+  const withinDays = Math.min(45, Math.max(3, Number(params.withinDays) || 14));
+  const limitSnapshots = Math.min(12, Math.max(1, Number(params.limitSnapshots) || 6));
+  const maxTitles = Math.min(48, Math.max(6, Number(params.maxTitles) || 36));
+  const database = await db.getDb();
+  if (!database) return [];
+  try {
+    const rows = await database
+      .select({
+        blueprintsJson: platformStrategicBlueprintSnapshots.blueprintsJson,
+        updatedAt: platformStrategicBlueprintSnapshots.updatedAt,
+      })
+      .from(platformStrategicBlueprintSnapshots)
+      .where(eq(platformStrategicBlueprintSnapshots.userId, userId))
+      .orderBy(desc(platformStrategicBlueprintSnapshots.updatedAt))
+      .limit(limitSnapshots);
+    const cutoff = Date.now() - withinDays * 24 * 60 * 60 * 1000;
+    const titles: string[] = [];
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const ts = row.updatedAt ? new Date(row.updatedAt).getTime() : 0;
+      if (ts && ts < cutoff) continue;
+      if (!row.blueprintsJson) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(row.blueprintsJson);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(parsed)) continue;
+      for (const item of parsed) {
+        if (!item || typeof item !== "object") continue;
+        const title = readBlueprintTitle(item as Record<string, unknown>);
+        if (!title || title.length < 4) continue;
+        const key = title.replace(/\s+/g, "").toLowerCase().slice(0, 32);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        titles.push(title.slice(0, 120));
+        if (titles.length >= maxTitles) return titles;
+      }
+    }
+    return titles;
+  } catch (e) {
+    console.warn(
+      "[loadRecentPlatformBlueprintTitles]:",
+      e instanceof Error ? e.message.slice(0, 200) : e,
+    );
+    return [];
+  }
+}
+
 export async function savePlatformStrategicBlueprintSnapshot(params: {
   userId: number;
   windowDays: number;
