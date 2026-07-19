@@ -12,7 +12,10 @@ import {
   stageKeyFromBlockId,
 } from "@/lib/canvasDramaStudio";
 import { getManhuaCharacterById, getManhuaCharacterPreviewUrl } from "@shared/manhuaCharacterAssetLibrary";
-import { getAncientArchetypeById } from "@shared/manhuaAncientArchetypeLibrary";
+import {
+  getAncientArchetypeById,
+  getAncientArchetypePreviewUrl,
+} from "@shared/manhuaAncientArchetypeLibrary";
 import { getManhuaSceneTemplate } from "@shared/manhuaSceneAssetLibrary";
 import {
   getManhuaDemoAsset,
@@ -218,12 +221,24 @@ export default function ManhuaScriptWorkbench({
               </button>
             ))}
             {archetypes.map((a) => (
-              <div
+              <button
                 key={a!.id}
-                className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-1.5 py-2 text-[10px] text-amber-50/90"
+                type="button"
+                onClick={() => onOpenCharacterCard?.()}
+                className="overflow-hidden rounded-lg border border-amber-400/25 bg-amber-500/10 text-left"
+                title={a!.nameZh}
               >
-                古风·{a!.nameZh}
-              </div>
+                <img
+                  src={getAncientArchetypePreviewUrl(a!.id)}
+                  alt=""
+                  className="aspect-[3/4] w-full object-cover object-top"
+                  loading="lazy"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                  }}
+                />
+                <div className="truncate px-1.5 py-1 text-[10px] text-amber-50/90">古风·{a!.nameZh}</div>
+              </button>
             ))}
             {!characters.length && !archetypes.length ? (
               <button
