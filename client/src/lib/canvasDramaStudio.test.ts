@@ -356,6 +356,8 @@ slow dolly in, soft rain, trembling hand
   it("detects transient errors and resume stage", () => {
     expect(isTransientFactoryError("网关超时，请稍后重试")).toBe(true);
     expect(isTransientFactoryError("算力紧张，请稍后重试（503）")).toBe(true);
+    expect(isTransientFactoryError("Failed to fetch")).toBe(true);
+    expect(isTransientFactoryError("TypeError: fetch failed")).toBe(true);
     expect(isTransientFactoryError("积分不足")).toBe(false);
     const { blocks } = spawnManhuaDramaStudio();
     const withError = blocks.map((b) =>

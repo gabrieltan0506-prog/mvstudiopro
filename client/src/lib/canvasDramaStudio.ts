@@ -1014,7 +1014,7 @@ export function extractFactoryMotionHints(reverseMarkdown: string): {
 /** 网关超时 / 瞬时 5xx / abort 等可重试 */
 export function isTransientFactoryError(message: string): boolean {
   const m = String(message || "");
-  return /abort|timeout|超时|ROUTER_EXTERNAL|ECONNRESET|ETIMEDOUT|502|503|504|网关|稍后重试|算力紧张|rate.?limit|429/i.test(
+  return /abort|timeout|超时|ROUTER_EXTERNAL|ECONNRESET|ETIMEDOUT|502|503|504|网关|稍后重试|算力紧张|rate.?limit|429|Failed to fetch|fetch failed|NetworkError|Load failed|network error/i.test(
     m,
   );
 }
