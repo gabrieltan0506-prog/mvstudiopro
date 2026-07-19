@@ -58,8 +58,11 @@ import {
   MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
   summarizeManhuaPathTrackStatus,
 } from "@shared/manhuaFinalAssemble";
+import { buildManhuaAssembleJobInput } from "@shared/manhuaAssembleJobInput";
 import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import ManhuaGuidedPathRail from "@/components/ManhuaGuidedPathRail";
+import ManhuaCastStrip from "@/components/ManhuaCastStrip";
+import ManhuaLiveProgressBoard from "@/components/ManhuaLiveProgressBoard";
 import ManhuaScriptWorkbench from "@/components/ManhuaScriptWorkbench";
 import ManhuaAssetWall from "@/components/ManhuaAssetWall";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
@@ -1058,21 +1061,16 @@ export default function OmniCanvas() {
         const { jobId } = await createJobSameOrigin({
           type: "video",
           userId: user?.id ? String(user.id) : "",
-          input: {
-            action: "manhua_assemble_final",
-            params: {
-              clips: ready,
-              topic: factoryTopic,
-              seriesTitle: writerPack?.seriesTitle || projectBible?.seriesTitle || "",
-              logline: writerPack?.logline || projectBible?.logline || "",
-              musicDuration: MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
-              transition: "fade",
-              resolution: "9:16",
-              musicVolume: 0.35,
-              musicFadeInSec: 1,
-              musicFadeOutSec: 2,
-            },
-          },
+          input: buildManhuaAssembleJobInput({
+            clips: ready,
+            topic: factoryTopic,
+            seriesTitle: writerPack?.seriesTitle || projectBible?.seriesTitle || "",
+            logline: writerPack?.logline || projectBible?.logline || "",
+            musicDuration: MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
+            musicVolume: 0.35,
+            musicFadeInSec: 1,
+            musicFadeOutSec: 2,
+          }),
         });
         pushDebug("assemble:queued", { level: "info", detail: `jobId=${jobId}` });
         const job = await pollJobUntilTerminal(jobId, {
@@ -1788,6 +1786,16 @@ export default function OmniCanvas() {
       abortRef.current = ac;
       setFactoryBusy(true);
       setFactoryProgress("准备中…");
+      window.setTimeout(() => {
+        document.querySelector("#manhua-live-progress-zone")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+        const canvasDetails = document.getElementById(
+          "manhua-factory-canvas-details",
+        ) as HTMLDetailsElement | null;
+        if (canvasDetails) canvasDetails.open = true;
+      }, 40);
       const runStartedAt = Date.now();
       pushDebug("factoryRun:start", {
         detail: `until=${untilStage} · force=${opts?.forceFromStage || "—"}`,
@@ -2046,6 +2054,9 @@ export default function OmniCanvas() {
                       factoryAncientArchetypeIds.length ||
                       writerConfirmed,
                   ),
+                  hasFactoryChain: blocks.some((b) =>
+                    MANHUA_FACTORY_STAGE_ORDER.some((s) => b.id.startsWith(`${s}-`)),
+                  ),
                   hasKeyart: blocks.some(
                     (b) =>
                       stageKeyFromBlockId(b.id) === "keyart" &&
@@ -2066,11 +2077,35 @@ export default function OmniCanvas() {
                   }
                 }}
                 onNextActionClick={(stepId) => {
+                  // 剧情包已出未确认：下一步直接确认并滚到工作台（少一次找按钮）
+                  if (stepId === "writer" && writerPack && !writerConfirmed) {
+                    confirmWriterToDirector();
+                    setManhuaUiMode("workbench");
+                    window.setTimeout(() => {
+                      document.querySelector("#manhua-live-progress-zone")?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      });
+                    }, 80);
+                    return;
+                  }
                   if (stepId === "card" || stepId === "cast") setManhuaAssetDrawer("characters");
                   if (stepId === "wb" || stepId === "keyart" || stepId === "clip") {
                     setManhuaUiMode("workbench");
                   }
+                  if (stepId === "preview" || stepId === "clip") {
+                    /* scroll handled by rail */
+                  }
                 }}
+                busyLabel={
+                  assembleBusy
+                    ? "正在合成长片与配乐"
+                    : factoryBusy
+                      ? "工厂出片进行中"
+                      : writerBusy
+                        ? "编剧室扩写中"
+                        : null
+                }
               />
             ) : null}
 
@@ -2086,9 +2121,9 @@ export default function OmniCanvas() {
                     漫剧创作
                   </div>
                   <p className="mt-3 text-[13px] leading-6 text-white/60">
-                    展开完整工作流：题材扩写 → 编导确认 → 铺板跑静帧与成片。适合竖屏连载短剧。
+                    引导式路径：题材 → 编剧确认 → 自动套造型 → 工作台出片 → 成片坞合成。适合竖屏连载短剧。
                   </p>
-                  <span className="mt-4 inline-block text-[12px] font-medium text-emerald-200/90">进入漫剧工作流 →</span>
+                  <span className="mt-4 inline-block text-[12px] font-medium text-emerald-200/90">进入引导式漫剧 →</span>
                 </button>
                 <button
                   type="button"
@@ -2109,10 +2144,10 @@ export default function OmniCanvas() {
 
             {canvasMode === "manhua" ? (
             <>
-            {/* ① 题材 + 编剧室 */}
+            {/* ① 题材 + 编剧室（确认后默认收起，腾出可视区给画布推进） */}
             <div
               id="manhua-factory-zone"
-              className="mt-2 max-w-3xl scroll-mt-32 rounded-2xl border border-cyan-400/15 bg-gradient-to-b from-[#0c1520] via-[#0a0e18]/90 to-transparent p-4 md:p-5"
+              className="mt-2 max-w-3xl scroll-mt-44 rounded-2xl border border-cyan-400/15 bg-gradient-to-b from-[#0c1520] via-[#0a0e18]/90 to-transparent p-4 md:p-5"
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-white/90">
@@ -2120,10 +2155,30 @@ export default function OmniCanvas() {
                     1–2
                   </span>
                   题材 · 编剧室
+                  {writerConfirmed ? (
+                    <span className="rounded-full border border-emerald-400/35 bg-emerald-500/12 px-2 py-0.5 text-[10px] font-medium text-emerald-100">
+                      已确认
+                    </span>
+                  ) : null}
                 </div>
-                <span className="text-[11px] text-white/40">填题材 → 扩写确认 → 再进工作台</span>
+                <span className="text-[11px] text-white/40">
+                  {writerConfirmed
+                    ? "已收起 · 点下方展开可改题材"
+                    : "填题材 → 扩写确认 → 再进工作台"}
+                </span>
               </div>
-              <label className="mt-3 block text-[11px] text-white/45">题材</label>
+              <details className="mt-2" open={!writerConfirmed}>
+                <summary
+                  className={
+                    writerConfirmed
+                      ? "cursor-pointer text-[11px] text-cyan-200/75 hover:text-cyan-100"
+                      : "list-none text-[0px] leading-none [&::-webkit-details-marker]:hidden"
+                  }
+                >
+                  {writerConfirmed ? "展开编剧室（改题材 / 重扩写）" : "\u00a0"}
+                </summary>
+                <div className={writerConfirmed ? "mt-3" : "mt-1"}>
+              <label className="block text-[11px] text-white/45">题材</label>
               <input
                 value={factoryTopic}
                 onChange={(e) => {
@@ -2185,7 +2240,7 @@ export default function OmniCanvas() {
                     confirmWriterToDirector();
                     setManhuaUiMode("workbench");
                     window.setTimeout(() => {
-                      document.querySelector("#manhua-workbench-zone")?.scrollIntoView({
+                      document.querySelector("#manhua-live-progress-zone")?.scrollIntoView({
                         behavior: "smooth",
                         block: "start",
                       });
@@ -2197,7 +2252,7 @@ export default function OmniCanvas() {
                       : "border-sky-400/35 bg-sky-500/15 text-sky-50 hover:bg-sky-500/25"
                   }`}
                 >
-                  {writerConfirmed ? "已确认 · 回工作台" : "确认并进入工作台"}
+                  {writerConfirmed ? "已确认 · 看生成推进" : "确认并进入工作台"}
                 </button>
                 <button
                   type="button"
@@ -2221,8 +2276,31 @@ export default function OmniCanvas() {
                 </button>
               </div>
 
+              {writerBusy ? (
+                <div className="mt-3 rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-3 py-2.5">
+                  <div className="flex items-center gap-2 text-[11px] font-medium text-cyan-50">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    正在扩写连载剧情包…
+                  </div>
+                  <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
+                    <div className="h-full w-1/2 animate-pulse rounded-full bg-gradient-to-r from-cyan-400/70 to-teal-300/80" />
+                  </div>
+                </div>
+              ) : null}
+
               {writerPack ? (
-                <div className="mt-4 rounded-xl border border-white/10 bg-black/30 p-3">
+                <div
+                  className={`mt-4 rounded-xl border p-3 ${
+                    writerConfirmed
+                      ? "border-emerald-400/25 bg-emerald-500/[0.06]"
+                      : "border-cyan-400/25 bg-cyan-500/[0.07]"
+                  }`}
+                >
+                  {!writerConfirmed ? (
+                    <div className="mb-2 rounded-lg border border-cyan-400/30 bg-cyan-500/12 px-2.5 py-1.5 text-[10px] font-medium text-cyan-50">
+                      剧情包已就绪 · 请点上方主按钮「确认并进入工作台」
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="text-sm font-semibold text-white">{writerPack.seriesTitle}</div>
                     {writerPack.logline ? (
@@ -2232,7 +2310,11 @@ export default function OmniCanvas() {
                       <span className="rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-100">
                         已确认
                       </span>
-                    ) : null}
+                    ) : (
+                      <span className="rounded-md border border-amber-400/35 bg-amber-500/12 px-2 py-0.5 text-[10px] text-amber-50">
+                        待确认
+                      </span>
+                    )}
                   </div>
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {writerPack.episodes.map((ep) => (
@@ -2280,46 +2362,22 @@ export default function OmniCanvas() {
                   </details>
                 </div>
               ) : null}
+                </div>
+              </details>
             </div>
 
-            {/* ③–④ 自动套 / 角色卡入口 */}
-            <div
-              id="manhua-cast-zone"
-              className="mt-4 max-w-6xl scroll-mt-32 rounded-2xl border border-cyan-400/12 bg-gradient-to-r from-[#0c1520]/90 to-[#0a0e18]/60 px-3 py-3 md:px-4"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-white/88">
-                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-cyan-400/90 text-[11px] font-bold text-black">
-                      3–4
-                    </span>
-                    造型 · 角色卡
-                  </div>
-                  <p className="mt-0.5 truncate text-[11px] text-white/40">
-                    {writerConfirmed
-                      ? `已按剧本套造型 · 角色 ${selectedCharacterIds.length || "—"} · 古风原型 ${factoryAncientArchetypeIds.length || "—"} · ${getManhuaArtStylePreset(factoryArtStyleId).labelZh}`
-                      : "确认编剧后自动套角色/服装/道具；可点角色库微调面孔"}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setManhuaAssetDrawer("characters")}
-                    className="rounded-lg border border-cyan-400/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-50 hover:bg-cyan-500/25"
-                  >
-                    打开角色库
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setManhuaAssetDrawer("assets")}
-                    className="rounded-lg border border-white/12 bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.08]"
-                  >
-                    打开资产墙
-                  </button>
-                </div>
-              </div>
-            </div>
+            <ManhuaCastStrip
+              characterIds={selectedCharacterIds}
+              ancientArchetypeIds={factoryAncientArchetypeIds}
+              sceneId={factorySceneId || recommendedScene?.id}
+              propIds={factoryPropIds}
+              writerConfirmed={writerConfirmed}
+              artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
+              onOpenCharacters={() => setManhuaAssetDrawer("characters")}
+              onOpenAssets={() => setManhuaAssetDrawer("assets")}
+            />
 
+            {/* 对标 c1/c2：工作台三栏（右栏大预览）为主屏；推进条 sticky；节点画布降级可展开 */}
             <div className="mt-3 flex max-w-6xl flex-wrap items-center gap-2">
               <span className="text-[11px] text-white/45">生产主界面</span>
               <div className="inline-flex rounded-lg border border-white/10 bg-black/35 p-0.5">
@@ -2346,11 +2404,13 @@ export default function OmniCanvas() {
                   经典表单编导
                 </button>
               </div>
-              <span className="text-[10px] text-white/35">默认工作台；表单为专家模式</span>
+              <span className="text-[10px] text-white/35">
+                主屏=工作台右栏「视频结果」+ 底栏集时间线 · 节点画布可展开
+              </span>
             </div>
 
             {manhuaUiMode === "workbench" ? (
-              <div id="manhua-workbench-zone" className="max-w-6xl scroll-mt-32">
+              <div id="manhua-workbench-zone" className="max-w-6xl scroll-mt-44">
                 <ManhuaScriptWorkbench
                   blocks={blocks}
                   topic={factoryTopic}
@@ -2369,14 +2429,23 @@ export default function OmniCanvas() {
                   narrativeLightingLabelZh={narrativeLightingLabelZh}
                   finalVideoUrl={finalAssembleVideoUrl}
                   factoryBusy={factoryBusy || assembleBusy}
+                  factoryProgress={
+                    assembleBusy ? "正在合成长片与配乐…" : factoryProgress || undefined
+                  }
                   canRun={Boolean(directorUnlocked || writerConfirmed)}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
                   onFocusBlock={(id) => {
                     setFocusBlockId(id);
-                    document
-                      .getElementById("freeform-canvas-zone")
-                      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    const details = document.getElementById(
+                      "manhua-factory-canvas-details",
+                    ) as HTMLDetailsElement | null;
+                    if (details) details.open = true;
+                    window.setTimeout(() => {
+                      document
+                        .getElementById("freeform-canvas-zone")
+                        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                    }, 40);
                   }}
                   onSpawnAndRunClip={() => {
                     setFactoryRunScope("focus");
@@ -2431,6 +2500,65 @@ export default function OmniCanvas() {
               </div>
             ) : null}
 
+            {/* sticky 推进条：集×阶段即时可见；节点画布默认收起，排错时展开 */}
+            <div className="mt-3 max-w-[1920px]">
+              <ManhuaLiveProgressBoard
+                blocks={blocks}
+                focusEpisode={writerFocusEpisode}
+                factoryBusy={factoryBusy || assembleBusy}
+                factoryProgress={
+                  assembleBusy ? "正在合成长片与配乐…" : factoryProgress || undefined
+                }
+                onFocusEpisode={(ep) => {
+                  setWriterFocusEpisode(ep);
+                  setManhuaUiMode("workbench");
+                }}
+                onFocusBlock={(id) => {
+                  setFocusBlockId(id);
+                  const details = document.getElementById(
+                    "manhua-factory-canvas-details",
+                  ) as HTMLDetailsElement | null;
+                  if (details) details.open = true;
+                  window.setTimeout(() => {
+                    document
+                      .getElementById("freeform-canvas-zone")
+                      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                  }, 40);
+                }}
+              />
+              <details
+                id="manhua-factory-canvas-details"
+                className="mt-3 overflow-hidden rounded-2xl border border-white/12 bg-[#080b12]"
+              >
+                <summary className="cursor-pointer list-none px-3 py-2 text-[12px] font-semibold text-white/75 marker:content-none [&::-webkit-details-marker]:hidden">
+                  <span className="inline-flex flex-wrap items-center gap-2">
+                    工厂节点画布（专家排错）
+                    <span className="rounded-full border border-white/15 px-2 py-0.5 text-[10px] font-normal text-white/40">
+                      默认收起 · 点此展开
+                    </span>
+                    {factoryBusy ? (
+                      <span className="text-[11px] font-normal text-amber-100/85">
+                        {factoryProgress || "运行中…"}
+                      </span>
+                    ) : null}
+                  </span>
+                </summary>
+                <div id="freeform-canvas-zone" className="scroll-mt-44 border-t border-white/10">
+                  <div className="min-h-[360px] md:min-h-[480px]">
+                    <FreeformCanvas
+                      blocks={blocks}
+                      edges={edges}
+                      onBlocksChange={handleBlocksChange}
+                      onEdgesChange={handleEdgesChange}
+                      runDeps={runDeps}
+                      focusBlockId={focusBlockId}
+                      onFocusBlockConsumed={() => setFocusBlockId(null)}
+                    />
+                  </div>
+                </div>
+              </details>
+            </div>
+
             {/* 角色库 / 资产墙：抽屉，不长期占主流程 */}
             {manhuaAssetDrawer ? (
               <div className="fixed inset-0 z-[80] flex justify-end bg-black/55 backdrop-blur-[2px]">
@@ -2440,11 +2568,14 @@ export default function OmniCanvas() {
                   aria-label="关闭资产抽屉"
                   onClick={() => setManhuaAssetDrawer(null)}
                 />
-                <aside className="relative z-[81] flex h-full w-full max-w-3xl flex-col border-l border-white/12 bg-[#0c0a14] shadow-2xl">
-                  <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                <aside className="relative z-[81] flex h-full w-full max-w-3xl flex-col border-l border-cyan-400/20 bg-gradient-to-b from-[#0c1520] to-[#0a0e18] shadow-2xl">
+                  <div className="flex items-center justify-between border-b border-cyan-400/15 px-4 py-3">
                     <div>
-                      <div className="text-sm font-semibold text-white/90">
+                      <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-white/90">
                         {manhuaAssetDrawer === "characters" ? "角色库 · 画风" : "资产墙 · 场景道具"}
+                        <span className="rounded-full border border-cyan-400/30 bg-cyan-500/12 px-1.5 py-0.5 text-[9px] font-medium text-cyan-100/85">
+                          步骤 3–4
+                        </span>
                       </div>
                       <p className="mt-0.5 text-[10px] text-white/40">
                         手选始终覆盖自动推荐；确认编剧后写入专案设定并绑定各集
@@ -3060,7 +3191,7 @@ export default function OmniCanvas() {
               各集成片就绪后，在下方成片坞一键合成长片（含配乐）。
             </p>
 
-            <div id="manhua-clip-dock-zone" className="mt-4 max-w-4xl scroll-mt-32">
+            <div id="manhua-clip-dock-zone" className="mt-4 max-w-4xl scroll-mt-44">
               <ManhuaClipDock
                 blocks={blocks}
                 topic={factoryTopic}
@@ -3074,6 +3205,19 @@ export default function OmniCanvas() {
                 assembleBusy={assembleBusy}
                 finalVideoUrl={finalAssembleVideoUrl}
                 onAssembleFinal={(clips) => void assembleManhuaFinal(clips)}
+                onGoWorkbench={() => {
+                  setManhuaUiMode("workbench");
+                  window.setTimeout(() => {
+                    document.querySelector("#manhua-workbench-zone")?.scrollIntoView({
+                      behavior: "smooth",
+                      block: "start",
+                    });
+                  }, 60);
+                }}
+                onSelectEpisode={(ep) => {
+                  setWriterFocusEpisode(ep);
+                  setManhuaUiMode("workbench");
+                }}
                 onFocusBlock={(id) => {
                   setFocusBlockId(id);
                   const hit = blocks.find((b) => b.id === id);
@@ -3086,16 +3230,12 @@ export default function OmniCanvas() {
             ) : null}
           </div>
 
-          {canvasMode === "manhua" || canvasMode === "freeform" ? (
+          {canvasMode === "freeform" ? (
           <div id="freeform-canvas-zone" className="scroll-mt-24">
             <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-              <div className="text-sm font-semibold text-white/85">
-                {canvasMode === "manhua" ? "工厂画布节点" : "自由画布"}
-              </div>
+              <div className="text-sm font-semibold text-white/85">自由画布</div>
               <span className="text-[11px] text-white/40">
-                {canvasMode === "manhua"
-                  ? "漫剧流水线铺出的节点 · 可点选聚焦"
-                  : "多任务节点自由接线 · 文生图 / 视频 / 提文字 / 文案"}
+                多任务节点自由接线 · 文生图 / 视频 / 提文字 / 文案
               </span>
             </div>
           <FreeformCanvas

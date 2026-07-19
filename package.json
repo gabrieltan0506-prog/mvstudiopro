@@ -29,6 +29,7 @@
     "platform:fullcase-smoke": "tsx scripts/smoke-platform-fullcase.mts",
     "canvas:probe": "tsx scripts/probe-canvas-apis.mts",
     "manhua:probe": "tsx scripts/probe-manhua-factory.mts",
+    "manhua:assemble-smoke": "tsx scripts/smoke-manhua-assemble-enqueue.mts",
     "manhua:genre-probe": "tsx scripts/probe-manhua-genre-infer.mts",
     "manhua:writer-probe": "tsx scripts/probe-manhua-writer-room.mts",
     "manhua:character-verify": "tsx scripts/verify-manhua-character-gallery.mts",

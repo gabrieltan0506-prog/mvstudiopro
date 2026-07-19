@@ -26,6 +26,10 @@ type Props = {
   assembleBusy?: boolean;
   finalVideoUrl?: string | null;
   onAssembleFinal?: (clips: ReturnType<typeof collectManhuaAssembleClipsFromDock>) => void;
+  /** 尚无可合成成片时，引导回工作台 */
+  onGoWorkbench?: () => void;
+  /** 点胶片条集卡时切换焦点集 */
+  onSelectEpisode?: (episodeIndex: number) => void;
 };
 
 function episodeClipReady(list: ManhuaClipDockItem[]): boolean {
@@ -51,6 +55,8 @@ export default function ManhuaClipDock({
   assembleBusy,
   finalVideoUrl,
   onAssembleFinal,
+  onGoWorkbench,
+  onSelectEpisode,
 }: Props) {
   const [exportBusy, setExportBusy] = useState(false);
   const items = useMemo(() => collectManhuaClipDockItems(blocks), [blocks]);
@@ -197,6 +203,18 @@ export default function ManhuaClipDock({
             </div>
             <p className="mt-1 max-w-xl text-[11px] leading-relaxed text-white/45">
               各集微动就绪后，一键拼成长片并自动配乐。勾选集号可同时作为工厂运行范围。
+              {canAssemble ? (
+                <span className="text-cyan-100/70">
+                  {" "}
+                  本次将拼第{" "}
+                  {assembleClips
+                    .map((c) => c.episodeIndex)
+                    .filter((n) => n >= 1)
+                    .sort((a, b) => a - b)
+                    .join("、")}{" "}
+                  集。
+                </span>
+              ) : null}
             </p>
             <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
               <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-white/60">
@@ -216,21 +234,54 @@ export default function ManhuaClipDock({
             </div>
           </div>
 
-          <button
-            type="button"
-            disabled={assembleBusy || exportBusy || !canAssemble}
-            onClick={() => onAssembleFinal?.(assembleClips)}
-            className="inline-flex min-w-[9.5rem] items-center justify-center gap-2 rounded-xl border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-4 py-2.5 text-[12px] font-semibold text-cyan-50 shadow-[0_0_24px_rgba(34,211,238,0.12)] hover:from-cyan-400/40 hover:to-cyan-600/35 disabled:opacity-40"
-            title={
-              canAssemble
-                ? `将用 ${assembleClips.length} 集成片合成长片并自动配乐`
-                : "需至少一集有微动成片"
-            }
-          >
-            {assembleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clapperboard className="h-4 w-4" />}
-            {assembleBusy ? "合成中…" : "合成长片（含配乐）"}
-          </button>
+          <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
+            <button
+              type="button"
+              disabled={assembleBusy || exportBusy || !canAssemble}
+              onClick={() => onAssembleFinal?.(assembleClips)}
+              className="inline-flex min-w-[9.5rem] items-center justify-center gap-2 rounded-xl border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-4 py-2.5 text-[12px] font-semibold text-cyan-50 shadow-[0_0_24px_rgba(34,211,238,0.12)] hover:from-cyan-400/40 hover:to-cyan-600/35 disabled:opacity-40"
+              title={
+                canAssemble
+                  ? `将用 ${assembleClips.length} 集成片合成长片并自动配乐`
+                  : "需至少一集有微动成片"
+              }
+            >
+              {assembleBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clapperboard className="h-4 w-4" />}
+              {assembleBusy
+                ? "合成中…"
+                : canAssemble
+                  ? `合成长片（${assembleClips.length} 集·含配乐）`
+                  : "合成长片（含配乐）"}
+            </button>
+            {!canAssemble && !assembleBusy && onGoWorkbench ? (
+              <button
+                type="button"
+                onClick={onGoWorkbench}
+                className="text-[10px] font-medium text-cyan-200/75 underline-offset-2 hover:text-cyan-100 hover:underline"
+              >
+                还没有成片 · 回工作台生成 →
+              </button>
+            ) : null}
+          </div>
         </div>
+
+        {!canAssemble && !finalVideoUrl && !assembleBusy ? (
+          <div className="mt-3 rounded-xl border border-dashed border-cyan-400/25 bg-cyan-500/[0.06] px-3 py-2.5">
+            <p className="text-[11px] font-medium text-cyan-50/90">合成前提：至少一集微动成片就绪</p>
+            <p className="mt-0.5 text-[10px] leading-relaxed text-white/45">
+              在工作台点「生成本集成片」，或勾选集后全自动跑完。成片出现在下方胶片条后，再回这里一键合成。
+            </p>
+            {onGoWorkbench ? (
+              <button
+                type="button"
+                onClick={onGoWorkbench}
+                className="mt-2 inline-flex items-center gap-1 rounded-lg border border-cyan-400/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-50 hover:bg-cyan-500/25"
+              >
+                去工作台出片
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {assembleBusy ? (
           <div className="mt-3">
@@ -283,7 +334,10 @@ export default function ManhuaClipDock({
                 <button
                   key={ep}
                   type="button"
-                  onClick={() => toggleEpisode(ep)}
+                  onClick={() => {
+                    onSelectEpisode?.(ep);
+                    toggleEpisode(ep);
+                  }}
                   className={`w-[7.25rem] shrink-0 overflow-hidden rounded-xl border text-left transition ${
                     epAllOn
                       ? "border-cyan-400/45 bg-cyan-500/12"
@@ -365,9 +419,20 @@ export default function ManhuaClipDock({
       </div>
 
       {!items.length ? (
-        <p className="px-3 py-4 text-[11px] leading-relaxed text-white/40 md:px-4">
-          画布尚无工厂链。请先在编剧确认后「按集铺板」，再回到此处勾选集号跑工厂与合成。
-        </p>
+        <div className="px-3 py-4 md:px-4">
+          <p className="text-[11px] leading-relaxed text-white/45">
+            画布尚无工厂链。请先确认编剧 → 工作台出片（或「按集铺板」），再回此处合成长片。
+          </p>
+          {onGoWorkbench ? (
+            <button
+              type="button"
+              onClick={onGoWorkbench}
+              className="mt-2 inline-flex items-center gap-1 rounded-lg border border-cyan-400/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-50 hover:bg-cyan-500/25"
+            >
+              去工作台开始
+            </button>
+          ) : null}
+        </div>
       ) : (
         <div className="max-h-64 space-y-2 overflow-y-auto px-3 py-2.5 md:px-4">
           {byEpisode.map(([ep, list]) => {

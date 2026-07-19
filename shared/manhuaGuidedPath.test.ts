@@ -72,8 +72,8 @@ describe("resolveManhuaGuidedActiveStep", () => {
     expect(resolveManhuaGuidedNextAction(base).ctaLabel).toMatch(/题材/);
     expect(resolveManhuaGuidedNextAction({ ...base, hasTopic: true }).ctaLabel).toMatch(/扩写/);
     expect(
-      resolveManhuaGuidedNextAction({ ...base, hasTopic: true, hasWriterPack: true }).title,
-    ).toMatch(/确认编剧/);
+      resolveManhuaGuidedNextAction({ ...base, hasTopic: true, hasWriterPack: true }).ctaLabel,
+    ).toMatch(/确认并看生成推进/);
     expect(
       resolveManhuaGuidedNextAction({
         ...base,
@@ -82,5 +82,13 @@ describe("resolveManhuaGuidedActiveStep", () => {
         hasClip: true,
       }).href,
     ).toBe("#manhua-clip-dock-zone");
+    expect(
+      resolveManhuaGuidedNextAction({
+        ...base,
+        writerConfirmed: true,
+        hasCast: true,
+        hasFactoryChain: false,
+      }).title,
+    ).toMatch(/铺板/);
   });
 });

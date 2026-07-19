@@ -4,7 +4,7 @@
  * 数据接工厂节点；多镜先由节拍/反推解析（按镜批量属中期）。
  */
 import { useMemo, useState } from "react";
-import { Clapperboard, Focus, Play, Sparkles } from "lucide-react";
+import { Clapperboard, Focus, Loader2, Play, Sparkles } from "lucide-react";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
   getBlockEpisodeIndex,
@@ -50,6 +50,8 @@ type Props = {
   /** 合成长片预览（成片坞合成后） */
   finalVideoUrl?: string | null;
   factoryBusy?: boolean;
+  /** 工厂进度一行（如「第2集 · 静帧」） */
+  factoryProgress?: string;
   canRun?: boolean;
   onOpenCharacterCard?: () => void;
   onOpenAssetWall?: () => void;
@@ -87,6 +89,7 @@ export default function ManhuaScriptWorkbench({
   narrativeLightingLabelZh,
   finalVideoUrl,
   factoryBusy,
+  factoryProgress,
   canRun,
   onOpenCharacterCard,
   onOpenAssetWall,
@@ -219,6 +222,22 @@ export default function ManhuaScriptWorkbench({
       </div>
 
       {/* 主 CTA 区：生成本集为主，全自动/续跑为次 */}
+      {!canRun ? (
+        <div className="border-b border-amber-400/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-50/90 md:px-4">
+          工作台出片尚未解锁 · 请先在上方编剧室扩写并点「确认并进入工作台」
+        </div>
+      ) : null}
+      {canRun && factoryBusy ? (
+        <div className="border-b border-cyan-400/20 bg-cyan-500/10 px-3 py-2 md:px-4">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium text-cyan-50">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {factoryProgress?.trim() ? factoryProgress : "本集工厂链路生成中…"}
+          </div>
+          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
+            <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-cyan-400/80 to-teal-300/80" />
+          </div>
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-2.5 md:px-4">
         <div className="flex flex-wrap gap-2">
           <button
@@ -463,8 +482,13 @@ export default function ManhuaScriptWorkbench({
         {/* 右：预览 */}
         <aside className="p-3">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="text-[11px] font-semibold text-white/75">预览</div>
-            {finalVideoUrl ? (
+            <div className="text-[12px] font-semibold text-white/85">视频结果</div>
+            {factoryBusy ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                生成中
+              </span>
+            ) : finalVideoUrl ? (
               <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[9px] font-semibold text-cyan-100">
                 长片已合成
               </span>
@@ -476,11 +500,19 @@ export default function ManhuaScriptWorkbench({
               <span className="rounded-full border border-white/15 bg-white/[0.04] px-2 py-0.5 text-[9px] text-white/50">
                 静帧
               </span>
-            ) : null}
+            ) : (
+              <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9px] text-white/35">
+                待生成
+              </span>
+            )}
           </div>
           <div
-            className={`flex aspect-[9/16] max-h-[420px] w-full items-center justify-center overflow-hidden rounded-xl border bg-black/50 ${
-              finalVideoUrl ? "border-cyan-400/35" : "border-white/10"
+            className={`flex aspect-[9/16] min-h-[360px] max-h-[min(72vh,640px)] w-full items-center justify-center overflow-hidden rounded-xl border bg-black/60 ${
+              finalVideoUrl || previewIsVideo
+                ? "border-cyan-400/40"
+                : factoryBusy
+                  ? "border-amber-400/35"
+                  : "border-white/10"
             }`}
           >
             {finalVideoUrl ? (
@@ -493,14 +525,30 @@ export default function ManhuaScriptWorkbench({
               )
             ) : (
               <div className="px-4 text-center text-[11px] leading-relaxed text-white/40">
-                生成后将在此查看本集静帧或成片。
+                {factoryBusy
+                  ? "正在生成，推进状态见上方「生成推进」条…"
+                  : "生成后在此即时预览本集静帧 / 成片（对标工作台右栏「视频结果」）。"}
                 <br />
-                主按钮：「生成本集成片」（需已确认编剧）。
+                {!factoryBusy ? "主按钮：「生成本集成片」。" : null}
               </div>
             )}
           </div>
           {finalVideoUrl ? (
-            <p className="mt-1.5 text-[10px] text-cyan-100/75">当前预览：多集合成长片（含配乐）· 详见下方成片坞</p>
+            <p className="mt-1.5 text-[10px] text-cyan-100/75">
+              当前预览：多集合成长片（含配乐）·{" "}
+              <button
+                type="button"
+                className="underline underline-offset-2 hover:text-cyan-50"
+                onClick={() =>
+                  document.querySelector("#manhua-clip-dock-zone")?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start",
+                  })
+                }
+              >
+                打开成片坞
+              </button>
+            </p>
           ) : null}
           <div className="mt-2 flex flex-wrap gap-2">
             {keyart?.id ? (

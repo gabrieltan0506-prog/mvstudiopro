@@ -20,9 +20,9 @@ export const MANHUA_GUIDED_STEPS: ReadonlyArray<{
   { id: "writer", label: "编剧", href: "#manhua-factory-zone" },
   { id: "cast", label: "自动套", href: "#manhua-cast-zone" },
   { id: "card", label: "角色卡", href: "#manhua-cast-zone" },
-  { id: "wb", label: "工作台", href: "#manhua-workbench-zone" },
-  { id: "keyart", label: "静帧", href: "#manhua-workbench-zone" },
-  { id: "clip", label: "成片", href: "#manhua-clip-dock-zone" },
+  { id: "wb", label: "工作台", href: "#manhua-live-progress-zone" },
+  { id: "keyart", label: "静帧", href: "#manhua-live-progress-zone" },
+  { id: "clip", label: "成片", href: "#manhua-live-progress-zone" },
   { id: "preview", label: "预览", href: "#manhua-clip-dock-zone" },
 ];
 
@@ -31,6 +31,8 @@ export type ManhuaGuidedProgress = {
   hasWriterPack: boolean;
   writerConfirmed: boolean;
   hasCast: boolean;
+  /** 画布已有工厂链（已铺板） */
+  hasFactoryChain?: boolean;
   hasKeyart: boolean;
   hasClip: boolean;
   hasFinalVideo: boolean;
@@ -79,18 +81,27 @@ export function resolveManhuaGuidedNextAction(p: ManhuaGuidedProgress): ManhuaGu
     return {
       stepId: "clip",
       title: "跑成本集成片",
-      hint: "静帧已出，继续生成微动成片。",
-      ctaLabel: "去工作台生成",
-      href: "#manhua-workbench-zone",
+      hint: "静帧已出；可看上方推进板与画布，再到工作台继续生成微动。",
+      ctaLabel: "看推进并继续出片",
+      href: "#manhua-live-progress-zone",
     };
   }
   if (p.writerConfirmed && p.hasCast) {
+    if (!p.hasFactoryChain) {
+      return {
+        stepId: "wb",
+        title: "铺板并出片",
+        hint: "造型已套好；滚动到推进区/工作台点「生成本集成片」。",
+        ctaLabel: "去生成推进区",
+        href: "#manhua-live-progress-zone",
+      };
+    }
     return {
       stepId: "wb",
-      title: "进入工作台出片",
-      hint: "造型已套好，生成本集静帧与成片。",
-      ctaLabel: "打开工作台",
-      href: "#manhua-workbench-zone",
+      title: "看生成推进",
+      hint: "节点已铺好；推进板与画布在造型区下方，实时可见。",
+      ctaLabel: "打开推进区",
+      href: "#manhua-live-progress-zone",
     };
   }
   if (p.writerConfirmed) {
@@ -106,9 +117,9 @@ export function resolveManhuaGuidedNextAction(p: ManhuaGuidedProgress): ManhuaGu
     return {
       stepId: "writer",
       title: "确认编剧",
-      hint: "剧情包已出，确认后自动套造型并解锁工作台。",
-      ctaLabel: "回到编剧室确认",
-      href: "#manhua-factory-zone",
+      hint: "剧情包已出；点下一步将确认并跳到生成推进区（自动套造型）。",
+      ctaLabel: "确认并看生成推进",
+      href: "#manhua-live-progress-zone",
     };
   }
   if (p.hasTopic) {

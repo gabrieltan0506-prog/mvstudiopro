@@ -28,11 +28,26 @@ export async function createJob(payload: {
   );
 
   if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(detail || `Failed to create job (${response.status})`);
+    throw new Error(await formatCreateJobError(response));
   }
 
   return response.json() as Promise<{ jobId: string }>;
+}
+
+async function formatCreateJobError(response: Response): Promise<string> {
+  const detail = await response.text().catch(() => "");
+  let message = detail || `Failed to create job (${response.status})`;
+  try {
+    const parsed = JSON.parse(detail) as { error?: string };
+    if (parsed?.error === "Invalid job type") {
+      message = "任务类型无效，请刷新后重试";
+    } else if (typeof parsed?.error === "string" && parsed.error.trim()) {
+      message = parsed.error;
+    }
+  } catch {
+    /* keep raw */
+  }
+  return message;
 }
 
 /**
@@ -50,8 +65,7 @@ export async function createJobSameOrigin(payload: {
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(detail || `Failed to create job (${response.status})`);
+    throw new Error(await formatCreateJobError(response));
   }
   return response.json() as Promise<{ jobId: string }>;
 }
