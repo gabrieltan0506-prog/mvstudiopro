@@ -362,9 +362,13 @@ export const MANHUA_CHARACTER_ASSET_LIBRARY: ManhuaCharacterTemplate[] = [
     age: 22,
     jobZh: "红妆新娘",
     temperamentTags: ["红妆", "凤冠", "古风婚礼", "喜庆", "含蓄"],
+    /**
+     * 仅借妆造/场景/道具手法反推；禁止可识别真人演员脸。
+     * 仿真人库图须由 image-2 纯文生成（见 manhua:photoreal-library TEXT_ONLY_IDS）。
+     */
     promptZh:
-      "半写实二次元，国乙立绘，韩系厚涂，电影柔光，鹅蛋脸红妆新娘，凤冠霞帔，朱红喜服，团扇遮面，古典婚礼喜庆含蓄，超写实8K。",
-    sourceFile: "photoreal/refs/jul19-wedding/r01_bride_portrait.jpg",
+      "原创虚构东亚女主，禁止名人/真人演员脸。高髻凤冠（金丝花鸟、红珠步摇、珍珠流苏遮额）、朱红绣金喜服（宽袖珠边、白里襟）、圆丝团扇（红面金纹可遮面）。场景：宫室喜堂红幔灯笼烛光虚化，或暖阳庭院朱红地毯；姿态含蓄低眉或团扇遮面；电影剧照写实、浅景深。锁骨相换装不换脸。",
+    sourceFile: "photoreal-gen/char_f_16",
   },
   {
     id: "char_m_01",

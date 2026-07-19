@@ -119,6 +119,7 @@ export default function ManhuaClipDock({
         sceneId,
         demoAssetIds,
         writerPackMarkdown,
+        finalVideoUrl: finalVideoUrl || undefined,
       });
       if (result.failCount > 0) {
         window.alert(
@@ -151,6 +152,7 @@ export default function ManhuaClipDock({
         sceneId,
         demoAssetIds,
         writerPackMarkdown,
+        finalVideoUrl: finalVideoUrl || undefined,
       });
       window.alert(
         `已导出多集工程包 ${result.filename}（${result.okCount} 项${
