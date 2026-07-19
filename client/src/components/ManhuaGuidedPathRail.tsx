@@ -63,7 +63,8 @@ export default function ManhuaGuidedPathRail({
         </div>
         <span className="text-[10px] text-white/40">
           当前：{MANHUA_GUIDED_STEPS[Math.max(0, activeIndex)]?.label || "题材"}
-          {" · "}点步骤可跳转
+          {" · "}点步骤跳转
+          {busy ? " · 生成中勿重复点击主按钮" : ""}
         </span>
       </div>
       <div className="flex gap-1 overflow-x-auto pb-0.5">
