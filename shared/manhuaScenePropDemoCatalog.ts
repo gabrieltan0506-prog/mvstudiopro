@@ -10,6 +10,7 @@
  */
 
 import type { ManhuaSceneGenre } from "./manhuaSceneAssetLibrary.js";
+import { isManhuaDemoAssetPublicReady } from "./manhuaDemoPublicReady.js";
 
 export type ManhuaDemoWeight = "high" | "medium" | "skip";
 
@@ -540,6 +541,118 @@ export const MANHUA_SCENE_PROP_DEMO_CATALOG: ManhuaDemoAsset[] = [
       "黑色表盘商务机械腕表特写，白底棚拍，金属表带质感，竖屏9:16，表盘无品牌字无水印。",
     weight: "high",
   },
+
+  // ── 文案库 scene_XX 补绑（纯文生空镜；禁剧名/抽帧/水印）──
+  {
+    id: "demo_scene_xianxia_cloud_sea",
+    kind: "scene",
+    lane: "xianxia",
+    nameZh: "云海仙山空镜",
+    sceneGenre: "xianxia",
+    sceneTemplateId: "scene_02",
+    promptZh:
+      "仙侠云海仙山空镜，浮空山峰与飞瀑，仙亭于悬崖，薄雾晨光，竖屏9:16，角色极远或无，禁止文字水印与剧名符号。",
+    weight: "high",
+  },
+  {
+    id: "demo_scene_xianxia_sword_yard",
+    kind: "scene",
+    lane: "xianxia",
+    nameZh: "练剑广场空镜",
+    sceneGenre: "xianxia",
+    sceneTemplateId: "scene_03",
+    promptZh:
+      "仙侠宗门练剑广场空镜，石台旗幡与山门远景，晨光剑气余痕（无清晰文字），竖屏9:16，无人脸特写，禁止水印。",
+    weight: "high",
+  },
+  {
+    id: "demo_scene_ancient_battlefield_ruin",
+    kind: "scene",
+    lane: "revenge",
+    nameZh: "战场废墟空镜",
+    sceneGenre: "ancient",
+    sceneTemplateId: "scene_09",
+    promptZh:
+      "古风战场废墟空镜，残垣烟尘与破碎战旗剪影，冷色天幕，竖屏9:16，无人脸特写，禁止文字水印与现代物。",
+    weight: "high",
+  },
+  {
+    id: "demo_scene_ancient_border_wall",
+    kind: "scene",
+    lane: "ancient",
+    nameZh: "边塞城墙空镜",
+    sceneGenre: "ancient",
+    sceneTemplateId: "scene_10",
+    promptZh:
+      "古风边塞城墙与烽火台空镜，黄沙风雪苍凉，远处骑兵剪影极小，竖屏9:16，无人脸特写，禁止文字水印。",
+    weight: "high",
+  },
+  {
+    id: "demo_scene_urban_nightclub",
+    kind: "scene",
+    lane: "romance",
+    nameZh: "酒吧夜店空镜",
+    sceneGenre: "urban",
+    sceneTemplateId: "scene_13",
+    promptZh:
+      "都市酒吧夜店空镜，霓虹吧台与酒柜虚化人影，迷离灯光，竖屏9:16，无人脸特写，禁止可读招牌字与水印Logo。",
+    weight: "high",
+  },
+  {
+    id: "demo_scene_campus_classroom",
+    kind: "scene",
+    lane: "romance",
+    nameZh: "校园教室空镜",
+    sceneGenre: "campus",
+    sceneTemplateId: "scene_14",
+    promptZh:
+      "校园教室空镜，整齐课桌与窗边阳光，黑板为干净深色块（无可读粉笔字），竖屏9:16，无人脸特写，禁止水印。",
+    weight: "medium",
+  },
+  {
+    id: "demo_scene_scifi_future_city",
+    kind: "scene",
+    lane: "scifi",
+    nameZh: "未来城市空镜",
+    sceneGenre: "scifi",
+    sceneTemplateId: "scene_15",
+    promptZh:
+      "科幻未来城市空镜，摩天楼与霓虹天际线，全息广告为抽象光带无可读字，竖屏9:16，无人脸，禁止品牌水印。",
+    weight: "medium",
+  },
+  {
+    id: "demo_scene_apocalypse_shelter",
+    kind: "scene",
+    lane: "revenge",
+    nameZh: "废土避难所空镜",
+    sceneGenre: "apocalypse",
+    sceneTemplateId: "scene_17",
+    promptZh:
+      "末日废土避难所空镜，拼接金属围墙与发电机轮廓，黄沙尘土，竖屏9:16，无人脸特写，禁止文字水印与现实品牌。",
+    weight: "high",
+  },
+  {
+    id: "demo_scene_scifi_glass_lab",
+    kind: "scene",
+    lane: "scifi",
+    nameZh: "玻璃舱实验室空镜",
+    sceneGenre: "scifi",
+    sceneTemplateId: "scene_18",
+    promptZh:
+      "科幻玻璃实验舱实验室空镜，冷白灯与蓝数据屏（屏幕无可读文字仅几何光纹），竖屏9:16，无人脸，禁止水印。",
+    weight: "medium",
+  },
+  {
+    id: "demo_scene_suspense_hacker_room",
+    kind: "scene",
+    lane: "suspense",
+    nameZh: "黑客多屏房间空镜",
+    sceneGenre: "suspense",
+    sceneTemplateId: "scene_20",
+    promptZh:
+      "悬疑黑客房间空镜，多屏显示器与服务器机柜，蓝绿霓虹，屏幕为抽象代码光流无可读字，竖屏9:16，无人脸，禁止Logo水印。",
+    weight: "medium",
+  },
 ];
 
 export function getManhuaDemoAsset(id: string | undefined | null): ManhuaDemoAsset | null {
@@ -548,11 +661,20 @@ export function getManhuaDemoAsset(id: string | undefined | null): ManhuaDemoAss
   return MANHUA_SCENE_PROP_DEMO_CATALOG.find((a) => a.id === key) || null;
 }
 
-/** 浏览器可访问路径（需先跑 manhua:scene-prop-daily 落盘） */
+/** 浏览器可访问路径：仅已落盘 jpg 返回 URL；未生成返回空（UI 不得展示「待生成」） */
 export function getManhuaDemoAssetPublicUrl(id: string | undefined | null): string {
   const a = getManhuaDemoAsset(id);
-  if (!a) return "";
+  if (!a || !isManhuaDemoAssetPublicReady(a.id)) return "";
   return a.kind === "scene" ? `/manhua-scenes/${a.id}.jpg` : `/manhua-props/${a.id}.jpg`;
+}
+
+/** 仅返回已有封面的示范资产（资产墙 / 示范条用） */
+export function listManhuaDemoAssetsReady(opts?: {
+  kind?: ManhuaDemoAssetKind;
+  weight?: ManhuaDemoWeight | ManhuaDemoWeight[];
+  lane?: ManhuaContentLane | ManhuaContentLane[];
+}): ManhuaDemoAsset[] {
+  return listManhuaDemoAssets(opts).filter((a) => isManhuaDemoAssetPublicReady(a.id));
 }
 
 export function listManhuaDemoAssetsForSceneTemplate(sceneTemplateId: string | undefined | null): ManhuaDemoAsset[] {
@@ -561,6 +683,16 @@ export function listManhuaDemoAssetsForSceneTemplate(sceneTemplateId: string | u
   return listManhuaDemoAssets({ kind: "scene" }).filter(
     (a) => a.sceneTemplateId === key || a.sceneTemplateId === `scene_${key}`,
   );
+}
+
+/** 已挂 scene_XX 文案库绑定的示范场景 id 列表（用于覆盖率断言） */
+export function listManhuaSceneTemplateIdsWithDemo(): string[] {
+  const ids = new Set<string>();
+  for (const a of listManhuaDemoAssets({ kind: "scene" })) {
+    const t = String(a.sceneTemplateId || "").trim();
+    if (t) ids.add(t.startsWith("scene_") ? t : `scene_${t}`);
+  }
+  return [...ids].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
 export function listManhuaDemoPropsForLane(lane: ManhuaContentLane | undefined | null): ManhuaDemoAsset[] {

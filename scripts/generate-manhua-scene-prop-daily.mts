@@ -9,6 +9,7 @@
  * 用法：
  *   pnpm run manhua:scene-prop-daily
  *   LIMIT=4 FORCE=1 LANE=intrigue,business pnpm run manhua:scene-prop-daily
+ *   IDS=demo_scene_a,demo_scene_b pnpm run manhua:scene-prop-daily
  *   DRY_RUN=1 pnpm run manhua:scene-prop-daily
  *
  * 输出：
@@ -23,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import {
   MANHUA_CONTENT_LANE_LABEL_ZH,
   MANHUA_DAILY_DEMO_QUOTA,
+  getManhuaDemoAsset,
   listManhuaDemoAssets,
   pickDailyManhuaDemoBatch,
   type ManhuaContentLane,
@@ -67,15 +69,40 @@ function publicPath(a: ManhuaDemoAsset) {
 
 function alreadyOk(a: ManhuaDemoAsset): boolean {
   if (FORCE) return false;
+  // 以 public 落盘为准（UI 只认 public）；无 COPY_PUBLIC 时回退审阅目录
+  if (COPY_PUBLIC && fs.existsSync(publicPath(a))) return true;
   return fs.existsSync(destPath(a));
 }
 
 function loadDoneIds(): Set<string> {
   const done = new Set<string>();
   for (const a of listManhuaDemoAssets()) {
-    if (fs.existsSync(destPath(a))) done.add(a.id);
+    const ok = COPY_PUBLIC ? fs.existsSync(publicPath(a)) : fs.existsSync(destPath(a));
+    if (ok) done.add(a.id);
   }
   return done;
+}
+
+/** 优先补齐挂了 scene_XX 且尚未落盘的封面（资产墙缺口） */
+function pickSceneTemplateGaps(done: Set<string>, limit: number): ManhuaDemoAsset[] {
+  if (limit <= 0) return [];
+  const out: ManhuaDemoAsset[] = [];
+  const scenes = listManhuaDemoAssets({ kind: "scene" }).filter((a) => a.sceneTemplateId);
+  // scene_01…20 顺序；同模板取第一条未完成
+  const byTemplate = new Map<string, ManhuaDemoAsset[]>();
+  for (const a of scenes) {
+    const t = String(a.sceneTemplateId);
+    const arr = byTemplate.get(t) || [];
+    arr.push(a);
+    byTemplate.set(t, arr);
+  }
+  const templateIds = [...byTemplate.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  for (const tid of templateIds) {
+    if (out.length >= limit) break;
+    const gap = (byTemplate.get(tid) || []).find((a) => !done.has(a.id));
+    if (gap) out.push(gap);
+  }
+  return out;
 }
 
 function buildPrompt(a: ManhuaDemoAsset): string {
@@ -208,6 +235,17 @@ function quotaFromEnv() {
 }
 
 function pickBatch(): ManhuaDemoAsset[] {
+  const idsRaw = String(process.env.IDS || "").trim();
+  if (idsRaw) {
+    const ids = idsRaw.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+    const list: ManhuaDemoAsset[] = [];
+    for (const id of ids) {
+      const a = getManhuaDemoAsset(id);
+      if (a) list.push(a);
+      else console.warn(`  · IDS skip unknown ${id}`);
+    }
+    return LIMIT > 0 ? list.slice(0, LIMIT) : list;
+  }
   const lanes = parseLaneFilter();
   if (lanes?.length) {
     const done = loadDoneIds();
@@ -216,7 +254,20 @@ function pickBatch(): ManhuaDemoAsset[] {
     return list;
   }
   const done = FORCE ? new Set<string>() : loadDoneIds();
-  let batch = pickDailyManhuaDemoBatch(done, quotaFromEnv());
+  const quota = quotaFromEnv();
+  const sceneGapBudget = Math.max(quota.highScenes + quota.mediumScenes, LIMIT > 0 ? LIMIT : 8);
+  const gaps = pickSceneTemplateGaps(done, sceneGapBudget);
+  const gapIds = new Set(gaps.map((a) => a.id));
+  const restDone = new Set([...done, ...gapIds]);
+  let rest = pickDailyManhuaDemoBatch(restDone, {
+    ...quota,
+    highScenes: Math.max(0, quota.highScenes - gaps.filter((a) => a.weight === "high").length),
+    mediumScenes: Math.max(0, quota.mediumScenes - gaps.filter((a) => a.weight === "medium").length),
+  });
+  let batch = [...gaps, ...rest];
+  // 去重保序
+  const seen = new Set<string>();
+  batch = batch.filter((a) => (seen.has(a.id) ? false : (seen.add(a.id), true)));
   if (LIMIT > 0) batch = batch.slice(0, LIMIT);
   return batch;
 }
@@ -333,6 +384,15 @@ async function main() {
   const ok = rows.filter((r) => r.ok).length;
   console.log(`\n完成：ok=${ok}/${rows.length}`);
   console.log(`审阅：${OUT_ROOT}`);
+  if (COPY_PUBLIC) {
+    const sync = spawnSync("pnpm", ["exec", "tsx", "scripts/sync-manhua-demo-public-ready.mts"], {
+      cwd: ROOT,
+      encoding: "utf8",
+    });
+    if (sync.stdout) process.stdout.write(sync.stdout);
+    if (sync.stderr) process.stderr.write(sync.stderr);
+    if (sync.status !== 0) console.warn("sync-manhua-demo-public-ready failed");
+  }
 }
 
 main().catch((e) => {

@@ -20,6 +20,9 @@ defaultEnabled: false
 - **适量**：小说改编壳 · 悬疑 · 科幻
 - **不生**：沙雕搞笑（平台已下架）
 - 落盘：`client/public/manhua-scenes|manhua-props/` 与 `~/Downloads/2026Jul18/scene-prop-review/`
+- **执行方式**：本地/运维手动跑 `pnpm run manhua:scene-prop-daily`（**非** GitHub Actions 自动 cron）；批次优先补齐挂了 `scene_XX` 且尚未进 public 的封面
+- **UI 口径**：资产墙 / 示范条**只展示已落盘 jpg**；未生成不占「待生成」位。就绪名单：`shared/manhuaDemoPublicReady.ts`（`pnpm run manhua:scene-prop-sync-ready`）
+- 示范封面为平台**纯文生空镜**，非剧照、非用户上传
 - Canvas 静帧会附加 `【场景示范图锚点】`；编剧室注入 `【道具示范库】`
 
 ## 剧种 → 默认场景包
