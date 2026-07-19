@@ -174,8 +174,8 @@ export const TEXT_MODEL_OPTIONS: Array<{ id: CanvasTextModel; label: string }> =
 ];
 
 export const IMAGE_MODEL_OPTIONS: Array<{ id: CanvasImageModel; label: string }> = [
-  { id: "nano-banana-2", label: "Nano Banana 2" },
   { id: "gpt-image-2", label: "GPT-Image-2" },
+  { id: "nano-banana-2", label: "Nano Banana 2（仅手选）" },
 ];
 
 export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }> = [
@@ -213,7 +213,7 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
               ? "反推分镜表与 Seedance 微动句；成稿去导演名。可先上传 ≤120s 参考短片。"
               : "镜头缓慢推进，主体动作自然，电影级光影。",
     textModel: DEFAULT_CANVAS_TEXT_MODEL,
-    imageModel: "nano-banana-2",
+    imageModel: "gpt-image-2",
     videoModel: "gemini-omni-flash",
     aspectRatio: "9:16",
     imageMode: "generate",

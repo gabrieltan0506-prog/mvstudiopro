@@ -416,7 +416,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     });
     recapCard.width = 360;
     recapCard.height = 320;
-    recapCard.imageModel = "nano-banana-2";
+    recapCard.imageModel = "gpt-image-2";
     recapCard.aspectRatio = "9:16";
   }
 
@@ -521,7 +521,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     .filter(Boolean)
     .join("\n\n");
   keyArt.parentId = reverse.id;
-  keyArt.imageModel = "nano-banana-2";
+  /** 成片底图必须 Image-2；NB2 易多肢/手，不作视频静帧主路径 */
+  keyArt.imageModel = "gpt-image-2";
   keyArt.aspectRatio = "9:16";
 
   const clip = defaultCanvasBlock("video", originX + gapX * (col0 + 5), originY);
@@ -568,7 +569,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
       .filter(Boolean)
       .join("\n\n");
     promoCover.parentId = keyArt.id;
-    promoCover.imageModel = "nano-banana-2";
+    promoCover.imageModel = "gpt-image-2";
     promoCover.aspectRatio = "9:16";
   }
 

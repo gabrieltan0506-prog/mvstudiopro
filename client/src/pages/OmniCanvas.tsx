@@ -327,7 +327,7 @@ export default function OmniCanvas() {
       sheet.id = makeCanvasBlockId("charsheet");
       sheet.prompt = prompt;
       sheet.aspectRatio = "9:16";
-      sheet.imageModel = "nano-banana-2";
+      sheet.imageModel = "gpt-image-2";
       // 仅预填 prompt；不挂本地 /manhua-characters 相对路径（云端生图拉不到）
       sheet.imageMode = "generate";
       sheet.refImageUrl = undefined;
