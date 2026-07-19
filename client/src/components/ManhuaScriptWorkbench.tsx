@@ -219,6 +219,11 @@ export default function ManhuaScriptWorkbench({
       </div>
 
       {/* 主 CTA 区：生成本集为主，全自动/续跑为次 */}
+      {!canRun ? (
+        <div className="border-b border-amber-400/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-50/90 md:px-4">
+          工作台出片尚未解锁 · 请先在上方编剧室扩写并点「确认并进入工作台」
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-2.5 md:px-4">
         <div className="flex flex-wrap gap-2">
           <button
