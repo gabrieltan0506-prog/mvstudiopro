@@ -59,6 +59,8 @@ type Props = {
   /** 从编导反推强制重跑本集静帧（覆盖旧图；工作台主路径入口） */
   onRerunKeyartsFromReverse?: () => void;
   onFocusBlock?: (blockId: string) => void;
+  /** 确认编剧后：整屏编辑器壳（无圆角卡片、三栏占满视口） */
+  immersive?: boolean;
 };
 
 function blockByStage(blocks: CanvasBlock[], episode: number, stage: string): CanvasBlock | undefined {
@@ -107,6 +109,7 @@ export default function ManhuaScriptWorkbench({
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
   onFocusBlock,
+  immersive = false,
 }: Props) {
   const [shotIndex, setShotIndex] = useState(0);
 
@@ -190,7 +193,12 @@ export default function ManhuaScriptWorkbench({
   return (
     <div
       id="manhua-workbench-shell"
-      className="mt-1 flex h-[calc(100dvh-5.75rem)] min-h-[620px] w-full min-w-[1180px] flex-col overflow-hidden rounded-xl border border-white/12 bg-[#0a0d14] shadow-[0_12px_48px_rgba(0,0,0,0.45)]"
+      data-manhua-layout={immersive ? "immersive-3col" : "card-3col"}
+      className={
+        immersive
+          ? "flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#0a0d14]"
+          : "mt-1 flex h-[calc(100dvh-5.75rem)] min-h-[620px] w-full min-w-[1180px] flex-col overflow-hidden rounded-xl border border-white/12 bg-[#0a0d14] shadow-[0_12px_48px_rgba(0,0,0,0.45)]"
+      }
     >
       {/* 顶栏 */}
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-1.5 md:px-4">
@@ -204,6 +212,15 @@ export default function ManhuaScriptWorkbench({
                 {artStyleLabelZh ? ` · ${artStyleLabelZh}` : ""}
               </span>
             </div>
+            {immersive ? (
+              <div className="mt-0.5 flex items-center gap-2 text-[10px] text-white/35">
+                <span className="text-white/50">本集资产</span>
+                <span aria-hidden>｜</span>
+                <span className="text-white/50">片段脚本</span>
+                <span aria-hidden>｜</span>
+                <span className="text-white/50">视频结果</span>
+              </div>
+            ) : null}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -279,10 +296,22 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
 
-      {/* 左 240｜中弹性≥360｜右 440，总宽≥1180，避免中栏被挤没 */}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      {/* 左资产｜中脚本｜右预览：沉浸用固定三栏 grid，禁止竖叠 */}
+      <div
+        className={
+          immersive
+            ? "grid min-h-0 min-w-[1040px] flex-1 grid-cols-[240px_minmax(360px,1fr)_420px] overflow-x-auto overflow-y-hidden"
+            : "flex min-h-0 flex-1 overflow-hidden"
+        }
+      >
         {/* 左：本集资产 */}
-        <aside className="min-h-0 w-[240px] shrink-0 overflow-y-auto border-r border-white/10 p-2.5">
+        <aside
+          className={
+            immersive
+              ? "min-h-0 overflow-y-auto border-r border-white/10 p-2.5"
+              : "min-h-0 w-[240px] shrink-0 overflow-y-auto border-r border-white/10 p-2.5"
+          }
+        >
           <div className="mb-2 flex items-center justify-between">
             <div className="text-[12px] font-semibold text-white/85">本集资产</div>
             <button
@@ -445,7 +474,13 @@ export default function ManhuaScriptWorkbench({
         </aside>
 
         {/* 中：片段脚本 */}
-        <section className="flex min-h-0 min-w-[360px] flex-1 flex-col overflow-hidden border-r border-white/10 p-2.5 md:p-3">
+        <section
+          className={
+            immersive
+              ? "flex min-h-0 flex-col overflow-hidden border-r border-white/10 p-2.5 md:p-3"
+              : "flex min-h-0 min-w-[360px] flex-1 flex-col overflow-hidden border-r border-white/10 p-2.5 md:p-3"
+          }
+        >
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/85">
               片段 {String(Math.min(shotIndex + 1, Math.max(shots.length, 1))).padStart(2, "0")}
@@ -534,7 +569,13 @@ export default function ManhuaScriptWorkbench({
         </section>
 
         {/* 右：视频结果 */}
-        <aside className="flex min-h-0 w-[440px] shrink-0 flex-col p-2.5 md:p-3">
+        <aside
+          className={
+            immersive
+              ? "flex min-h-0 flex-col p-2.5 md:p-3"
+              : "flex min-h-0 w-[440px] shrink-0 flex-col p-2.5 md:p-3"
+          }
+        >
           <div className="mb-1.5 flex shrink-0 items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/90">视频结果</div>
             {factoryBusy ? (
