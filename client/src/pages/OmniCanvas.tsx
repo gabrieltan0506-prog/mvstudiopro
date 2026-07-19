@@ -40,17 +40,10 @@ import {
   DEFAULT_MANHUA_ART_STYLE_ID,
   buildManhuaCharacterSheetGenPrompt,
   getManhuaArtStylePreset,
-  getManhuaCharacterById,
-  getManhuaCharacterPreviewUrl,
   recommendManhuaArtStyleFromTopic,
   type ManhuaArtStyleId,
   type ManhuaCharacterGender,
 } from "@shared/manhuaCharacterAssetLibrary";
-import {
-  getAncientArchetypeById,
-  getAncientArchetypePreviewUrl,
-} from "@shared/manhuaAncientArchetypeLibrary";
-import { getManhuaDemoAsset } from "@shared/manhuaScenePropDemoCatalog";
 import { recommendManhuaCastBundle } from "@shared/manhuaCastBundle";
 import {
   buildManhuaProjectBible,
@@ -68,6 +61,7 @@ import {
 import { buildManhuaAssembleJobInput } from "@shared/manhuaAssembleJobInput";
 import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import ManhuaGuidedPathRail from "@/components/ManhuaGuidedPathRail";
+import ManhuaCastStrip from "@/components/ManhuaCastStrip";
 import ManhuaScriptWorkbench from "@/components/ManhuaScriptWorkbench";
 import ManhuaAssetWall from "@/components/ManhuaAssetWall";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
@@ -2072,9 +2066,24 @@ export default function OmniCanvas() {
                   }
                 }}
                 onNextActionClick={(stepId) => {
+                  // 剧情包已出未确认：下一步直接确认并滚到工作台（少一次找按钮）
+                  if (stepId === "writer" && writerPack && !writerConfirmed) {
+                    confirmWriterToDirector();
+                    setManhuaUiMode("workbench");
+                    window.setTimeout(() => {
+                      document.querySelector("#manhua-workbench-zone")?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      });
+                    }, 80);
+                    return;
+                  }
                   if (stepId === "card" || stepId === "cast") setManhuaAssetDrawer("characters");
                   if (stepId === "wb" || stepId === "keyart" || stepId === "clip") {
                     setManhuaUiMode("workbench");
+                  }
+                  if (stepId === "preview" || stepId === "clip") {
+                    /* scroll handled by rail */
                   }
                 }}
                 busyLabel={
@@ -2324,124 +2333,16 @@ export default function OmniCanvas() {
               ) : null}
             </div>
 
-            {/* ③–④ 自动套 / 角色卡入口 */}
-            <div
-              id="manhua-cast-zone"
-              className="mt-4 max-w-6xl scroll-mt-44 rounded-2xl border border-cyan-400/12 bg-gradient-to-r from-[#0c1520]/90 to-[#0a0e18]/60 px-3 py-3 md:px-4"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-white/88">
-                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-cyan-400/90 text-[11px] font-bold text-black">
-                      3–4
-                    </span>
-                    造型 · 角色卡
-                  </div>
-                  <p className="mt-0.5 truncate text-[11px] text-white/40">
-                    {writerConfirmed
-                      ? `已按剧本套造型 · 角色 ${selectedCharacterIds.length || "—"} · 古风原型 ${factoryAncientArchetypeIds.length || "—"} · ${getManhuaArtStylePreset(factoryArtStyleId).labelZh}`
-                      : "确认编剧后自动套角色/服装/道具；可点角色库微调面孔"}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setManhuaAssetDrawer("characters")}
-                    className="rounded-lg border border-cyan-400/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-50 hover:bg-cyan-500/25"
-                  >
-                    打开角色库
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setManhuaAssetDrawer("assets")}
-                    className="rounded-lg border border-white/12 bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.08]"
-                  >
-                    打开资产墙
-                  </button>
-                </div>
-              </div>
-              {(selectedCharacterIds.length || factoryAncientArchetypeIds.length) ? (
-                <div className="mt-2.5 flex gap-2 overflow-x-auto pb-0.5">
-                  {selectedCharacterIds.map((id) => {
-                    const c = getManhuaCharacterById(id);
-                    if (!c) return null;
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => setManhuaAssetDrawer("characters")}
-                        className="w-[72px] shrink-0 overflow-hidden rounded-xl border border-white/12 bg-black/40 text-left hover:border-cyan-400/40"
-                        title={c.nameZh}
-                      >
-                        <img
-                          src={getManhuaCharacterPreviewUrl(id)}
-                          alt=""
-                          className="aspect-[3/4] w-full object-cover object-top"
-                          loading="lazy"
-                        />
-                        <div className="truncate px-1 py-0.5 text-[9px] text-white/70">{c.nameZh}</div>
-                      </button>
-                    );
-                  })}
-                  {factoryAncientArchetypeIds.map((id) => {
-                    const a = getAncientArchetypeById(id);
-                    if (!a) return null;
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => setManhuaAssetDrawer("characters")}
-                        className="w-[72px] shrink-0 overflow-hidden rounded-xl border border-amber-400/25 bg-amber-500/10 text-left hover:border-amber-400/45"
-                        title={a.nameZh}
-                      >
-                        <img
-                          src={getAncientArchetypePreviewUrl(id)}
-                          alt=""
-                          className="aspect-[3/4] w-full object-cover object-top"
-                          loading="lazy"
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display = "none";
-                          }}
-                        />
-                        <div className="truncate px-1 py-0.5 text-[9px] text-amber-50/85">古风·{a.nameZh}</div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="mt-2 text-[10px] text-white/35">
-                  {writerConfirmed
-                    ? "造型尚未露出缩略图时，点「打开角色库」微调。"
-                    : "确认编剧后，此处会出现已套角色缩略图。"}
-                </p>
-              )}
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {(factorySceneId || recommendedScene?.id) ? (
-                  <button
-                    type="button"
-                    onClick={() => setManhuaAssetDrawer("assets")}
-                    className="rounded-md border border-white/12 bg-white/[0.04] px-2 py-0.5 text-[10px] text-white/65 hover:border-cyan-400/35"
-                  >
-                    场景 ·{" "}
-                    {getManhuaSceneTemplate(factorySceneId || recommendedScene?.id || "")?.nameZh ||
-                      "已选"}
-                  </button>
-                ) : null}
-                {factoryPropIds.slice(0, 4).map((pid) => {
-                  const p = getManhuaDemoAsset(pid);
-                  return (
-                    <button
-                      key={pid}
-                      type="button"
-                      onClick={() => setManhuaAssetDrawer("assets")}
-                      className="rounded-md border border-white/12 bg-white/[0.04] px-2 py-0.5 text-[10px] text-white/60 hover:border-cyan-400/35"
-                    >
-                      道具 · {p?.nameZh || pid}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            <ManhuaCastStrip
+              characterIds={selectedCharacterIds}
+              ancientArchetypeIds={factoryAncientArchetypeIds}
+              sceneId={factorySceneId || recommendedScene?.id}
+              propIds={factoryPropIds}
+              writerConfirmed={writerConfirmed}
+              artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
+              onOpenCharacters={() => setManhuaAssetDrawer("characters")}
+              onOpenAssets={() => setManhuaAssetDrawer("assets")}
+            />
 
             <div className="mt-3 flex max-w-6xl flex-wrap items-center gap-2">
               <span className="text-[11px] text-white/45">生产主界面</span>

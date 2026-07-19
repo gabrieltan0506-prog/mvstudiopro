@@ -117,9 +117,9 @@ export function resolveManhuaGuidedNextAction(p: ManhuaGuidedProgress): ManhuaGu
     return {
       stepId: "writer",
       title: "确认编剧",
-      hint: "剧情包已出，确认后自动套造型并解锁工作台。",
-      ctaLabel: "回到编剧室确认",
-      href: "#manhua-factory-zone",
+      hint: "剧情包已出；点下一步将确认并进入工作台（自动套造型）。",
+      ctaLabel: "确认并进入工作台",
+      href: "#manhua-workbench-zone",
     };
   }
   if (p.hasTopic) {
