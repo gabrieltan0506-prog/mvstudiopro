@@ -692,7 +692,7 @@ export function listManhuaSceneTemplateIdsWithDemo(): string[] {
     const t = String(a.sceneTemplateId || "").trim();
     if (t) ids.add(t.startsWith("scene_") ? t : `scene_${t}`);
   }
-  return [...ids].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  return Array.from(ids).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
 export function listManhuaDemoPropsForLane(lane: ManhuaContentLane | undefined | null): ManhuaDemoAsset[] {
