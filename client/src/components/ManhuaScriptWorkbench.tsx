@@ -482,8 +482,13 @@ export default function ManhuaScriptWorkbench({
         {/* 右：预览 */}
         <aside className="p-3">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="text-[11px] font-semibold text-white/75">预览</div>
-            {finalVideoUrl ? (
+            <div className="text-[12px] font-semibold text-white/85">视频结果</div>
+            {factoryBusy ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                生成中
+              </span>
+            ) : finalVideoUrl ? (
               <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[9px] font-semibold text-cyan-100">
                 长片已合成
               </span>
@@ -495,11 +500,19 @@ export default function ManhuaScriptWorkbench({
               <span className="rounded-full border border-white/15 bg-white/[0.04] px-2 py-0.5 text-[9px] text-white/50">
                 静帧
               </span>
-            ) : null}
+            ) : (
+              <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9px] text-white/35">
+                待生成
+              </span>
+            )}
           </div>
           <div
-            className={`flex aspect-[9/16] max-h-[420px] w-full items-center justify-center overflow-hidden rounded-xl border bg-black/50 ${
-              finalVideoUrl ? "border-cyan-400/35" : "border-white/10"
+            className={`flex aspect-[9/16] min-h-[360px] max-h-[min(72vh,640px)] w-full items-center justify-center overflow-hidden rounded-xl border bg-black/60 ${
+              finalVideoUrl || previewIsVideo
+                ? "border-cyan-400/40"
+                : factoryBusy
+                  ? "border-amber-400/35"
+                  : "border-white/10"
             }`}
           >
             {finalVideoUrl ? (
@@ -512,9 +525,11 @@ export default function ManhuaScriptWorkbench({
               )
             ) : (
               <div className="px-4 text-center text-[11px] leading-relaxed text-white/40">
-                生成后将在此查看本集静帧或成片。
+                {factoryBusy
+                  ? "正在生成，推进状态见上方「生成推进」条…"
+                  : "生成后在此即时预览本集静帧 / 成片（对标工作台右栏「视频结果」）。"}
                 <br />
-                主按钮：「生成本集成片」（需已确认编剧）。
+                {!factoryBusy ? "主按钮：「生成本集成片」。" : null}
               </div>
             )}
           </div>

@@ -97,7 +97,7 @@ export default function ManhuaLiveProgressBoard({
   return (
     <div
       id="manhua-live-progress-zone"
-      className="mt-3 scroll-mt-44 rounded-2xl border border-cyan-400/25 bg-gradient-to-b from-[#0c1520] to-[#080b12] px-3 py-3 md:px-4"
+      className="sticky top-[8.5rem] z-20 mt-3 scroll-mt-44 rounded-2xl border border-cyan-400/25 bg-[#0a121c]/95 px-3 py-3 shadow-[0_8px_28px_rgba(0,0,0,0.35)] backdrop-blur-md md:px-4"
     >
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
