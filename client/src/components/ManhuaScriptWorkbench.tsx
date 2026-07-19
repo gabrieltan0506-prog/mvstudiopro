@@ -36,6 +36,8 @@ type Props = {
   sceneId?: string;
   propIds: string[];
   artStyleLabelZh?: string;
+  /** 专案 Bible 一行摘要（确认编剧后） */
+  projectBibleSummary?: string;
   factoryBusy?: boolean;
   canRun?: boolean;
   onOpenCharacterCard?: () => void;
@@ -65,6 +67,7 @@ export default function ManhuaScriptWorkbench({
   sceneId,
   propIds,
   artStyleLabelZh,
+  projectBibleSummary,
   factoryBusy,
   canRun,
   onOpenCharacterCard,
@@ -144,8 +147,29 @@ export default function ManhuaScriptWorkbench({
             {" · "}
             第{focusEpisode}集 · 片段约 {totalSec}s · {shots.length} 镜
           </p>
+          {projectBibleSummary ? (
+            <p className="mt-1 truncate text-[10px] text-emerald-100/70" title={projectBibleSummary}>
+              专案设定：{projectBibleSummary}
+            </p>
+          ) : (
+            <p className="mt-1 text-[10px] text-white/35">确认编剧后生成专案设定（绑定角色/画风至各集）</p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenCharacterCard?.()}
+            className="rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[11px] font-medium text-white/75 hover:bg-white/[0.08]"
+          >
+            角色库
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenAssetWall?.()}
+            className="rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[11px] font-medium text-white/75 hover:bg-white/[0.08]"
+          >
+            资产墙
+          </button>
           <button
             type="button"
             disabled={!canRun || factoryBusy}
