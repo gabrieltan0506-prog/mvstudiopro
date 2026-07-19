@@ -34,7 +34,7 @@ describe("canvasDramaStudio factory", () => {
     }
     expect(blocks[0]!.prompt).toContain("星际车站离别");
     const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
-    expect(clip.videoModel).toBe("seedance-2.0");
+    expect(clip.videoModel).toBe("gemini-omni-flash");
     const omni = blocks.find((b) => b.id.startsWith("omni_edit-"))!;
     expect(omni.videoModel).toBe("gemini-omni-flash");
     expect(omni.parentId).toMatch(/^clip-/);
