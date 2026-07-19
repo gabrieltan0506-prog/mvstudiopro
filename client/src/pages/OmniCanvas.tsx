@@ -262,10 +262,13 @@ export default function OmniCanvas() {
   const [blocks, setBlocks] = useState<CanvasBlock[]>(initial.blocks);
   const [edges, setEdges] = useState<CanvasEdge[]>(initial.edges);
   const [factoryBusy, setFactoryBusy] = useState(false);
-  /** 剧本工作台（逼近竞品壳）优先；可切回下方长表单编导 */
-  const [manhuaUiMode, setManhuaUiMode] = useState<"workbench" | "form">(
-    () => initialWriterSession?.manhuaUiMode || "workbench",
-  );
+  /** 剧本工作台优先；已确认编剧时强制工作台（旧 session 若停在表单会像「UI 没改」） */
+  const [manhuaUiMode, setManhuaUiMode] = useState<"workbench" | "form">(() => {
+    if (initialWriterSession?.writerConfirmed) return "workbench";
+    return initialWriterSession?.manhuaUiMode || "workbench";
+  });
+  /** 沉浸工作台下临时展开编剧室/成片坞 */
+  const [immersiveExtrasOpen, setImmersiveExtrasOpen] = useState(false);
   /** 角色库 / 资产墙改抽屉，避免长期占主流程 */
   const [manhuaAssetDrawer, setManhuaAssetDrawer] = useState<null | "characters" | "assets">(null);
   /** 确认编剧后的专案 Bible（系列级真相；≠ 工厂节点 bible-*） */
@@ -1972,31 +1975,83 @@ export default function OmniCanvas() {
     void runFactory("clip", { forceFromStageByEpisode, episodeIndexes: toRun });
   }, [blocks, runFactory, resolveRunEpisodeIndexes, writerFocusEpisode]);
 
+  const immersiveWorkbench =
+    canvasMode === "manhua" && writerConfirmed && manhuaUiMode === "workbench";
+
   return (
     <div className="min-h-dvh bg-transparent text-white">
       <Navbar />
-      <main className="px-4 pb-10 pt-24 md:px-6">
-        <div className="mx-auto max-w-[1920px]">
-          <div className="mb-5">
+      <main
+        className={
+          immersiveWorkbench ? "px-0 pb-0 pt-16" : "px-4 pb-10 pt-24 md:px-6"
+        }
+      >
+        <div className={immersiveWorkbench ? "mx-auto w-full max-w-none" : "mx-auto max-w-[1920px]"}>
+          <div className={immersiveWorkbench ? "mb-0 px-3 py-1 md:px-4" : "mb-5"}>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
-                {canvasMode === "manhua" ? (
-                  <>
-                    <Clapperboard className="h-3.5 w-3.5" />
-                    漫剧创作
-                  </>
-                ) : canvasMode === "freeform" ? (
-                  <>
-                    <LayoutTemplate className="h-3.5 w-3.5" />
-                    自由画布
-                  </>
-                ) : (
-                  <>
-                    <Clapperboard className="h-3.5 w-3.5" />
-                    创作画布
-                  </>
-                )}
-              </div>
+              {immersiveWorkbench ? (
+                <div className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-white/45">
+                  <span className="font-medium text-white/70">剧本工作室</span>
+                  <span className="text-white/20">·</span>
+                  <button
+                    type="button"
+                    className="underline underline-offset-2 hover:text-white/75"
+                    onClick={() => {
+                      setImmersiveExtrasOpen(true);
+                      window.setTimeout(() => {
+                        document
+                          .getElementById("manhua-factory-zone")
+                          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }, 40);
+                    }}
+                  >
+                    改题材
+                  </button>
+                  <button
+                    type="button"
+                    className="underline underline-offset-2 hover:text-white/75"
+                    onClick={() => {
+                      setImmersiveExtrasOpen(true);
+                      window.setTimeout(() => {
+                        document
+                          .getElementById("manhua-clip-dock-zone")
+                          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }, 40);
+                    }}
+                  >
+                    成片坞
+                  </button>
+                  <button
+                    type="button"
+                    className="underline underline-offset-2 hover:text-white/75"
+                    onClick={() => {
+                      setImmersiveExtrasOpen(false);
+                      setManhuaUiMode("form");
+                    }}
+                  >
+                    经典表单
+                  </button>
+                </div>
+              ) : (
+                <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
+                  {canvasMode === "manhua" ? (
+                    <>
+                      <Clapperboard className="h-3.5 w-3.5" />
+                      漫剧创作
+                    </>
+                  ) : canvasMode === "freeform" ? (
+                    <>
+                      <LayoutTemplate className="h-3.5 w-3.5" />
+                      自由画布
+                    </>
+                  ) : (
+                    <>
+                      <Clapperboard className="h-3.5 w-3.5" />
+                      创作画布
+                    </>
+                  )}
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-2">
                 {canShowCanvasDebug ? (
                   <button
@@ -2055,7 +2110,8 @@ export default function OmniCanvas() {
               </>
             ) : null}
 
-            {canvasMode === "manhua" ? (
+            {/* 沉浸工作台：去掉路径轨，避免仍像引导长页 */}
+            {canvasMode === "manhua" && !immersiveWorkbench ? (
               <ManhuaGuidedPathRail
                 variant={
                   writerConfirmed && manhuaUiMode === "workbench" ? "compact" : "full"
@@ -2160,9 +2216,19 @@ export default function OmniCanvas() {
             {canvasMode === "manhua" ? (
             <>
             {/* 确认编剧 + 工作台：编剧室压到工作台之后，主屏先出三栏 */}
-            {writerConfirmed && manhuaUiMode === "workbench" ? (
-              <div id="manhua-workbench-zone" className="-mx-3 scroll-mt-24 overflow-x-auto px-3">
+            {writerConfirmed &&
+            manhuaUiMode === "workbench" &&
+            !(immersiveWorkbench && immersiveExtrasOpen) ? (
+              <div
+                id="manhua-workbench-zone"
+                className={
+                  immersiveWorkbench
+                    ? "relative h-[calc(100dvh-4.75rem)] w-full overflow-hidden"
+                    : "-mx-3 scroll-mt-24 overflow-x-auto px-3"
+                }
+              >
                 <ManhuaScriptWorkbench
+                  immersive={immersiveWorkbench}
                   blocks={blocks}
                   topic={factoryTopic}
                   seriesTitle={writerPack?.seriesTitle || projectBible?.seriesTitle}
@@ -2188,6 +2254,7 @@ export default function OmniCanvas() {
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
                   onFocusBlock={(id) => {
                     setFocusBlockId(id);
+                    setImmersiveExtrasOpen(true);
                     const details = document.getElementById(
                       "manhua-factory-canvas-details",
                     ) as HTMLDetailsElement | null;
@@ -2267,26 +2334,52 @@ export default function OmniCanvas() {
                     });
                   }}
                 />
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-white/40">
-                  <button
-                    type="button"
-                    className="underline underline-offset-2 hover:text-white/70"
-                    onClick={() =>
-                      document
-                        .getElementById("manhua-factory-zone")
-                        ?.scrollIntoView({ behavior: "smooth", block: "start" })
-                    }
-                  >
-                    改题材 / 编剧室
-                  </button>
-                  <button
-                    type="button"
-                    className="underline underline-offset-2 hover:text-white/70"
-                    onClick={() => setManhuaUiMode("form")}
-                  >
-                    切经典表单编导
-                  </button>
-                </div>
+                {!immersiveWorkbench ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-white/40">
+                    <button
+                      type="button"
+                      className="underline underline-offset-2 hover:text-white/70"
+                      onClick={() =>
+                        document
+                          .getElementById("manhua-factory-zone")
+                          ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                      }
+                    >
+                      改题材 / 编剧室
+                    </button>
+                    <button
+                      type="button"
+                      className="underline underline-offset-2 hover:text-white/70"
+                      onClick={() => setManhuaUiMode("form")}
+                    >
+                      切经典表单编导
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {/* 沉浸主屏时默认藏长页；点「改题材/成片坞」再展开 */}
+            <div
+              id="manhua-post-workbench"
+              className={
+                immersiveWorkbench && !immersiveExtrasOpen
+                  ? "hidden"
+                  : immersiveWorkbench
+                    ? "border-t border-white/10 bg-[#070a10] px-4 py-4 md:px-6"
+                    : undefined
+              }
+            >
+            {immersiveWorkbench && immersiveExtrasOpen ? (
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <span className="text-[12px] text-white/55">编剧室 · 成片坞</span>
+                <button
+                  type="button"
+                  className="rounded-lg border border-white/15 px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/5"
+                  onClick={() => setImmersiveExtrasOpen(false)}
+                >
+                  回到剧本工作室
+                </button>
               </div>
             ) : null}
 
@@ -3311,6 +3404,7 @@ export default function OmniCanvas() {
                 onAssembleFinal={(clips) => void assembleManhuaFinal(clips)}
                 onGoWorkbench={() => {
                   setManhuaUiMode("workbench");
+                  setImmersiveExtrasOpen(false);
                   window.setTimeout(() => {
                     document.querySelector("#manhua-workbench-zone")?.scrollIntoView({
                       behavior: "smooth",
@@ -3321,6 +3415,7 @@ export default function OmniCanvas() {
                 onSelectEpisode={(ep) => {
                   setWriterFocusEpisode(ep);
                   setManhuaUiMode("workbench");
+                  setImmersiveExtrasOpen(false);
                 }}
                 onFocusBlock={(id) => {
                   setFocusBlockId(id);
@@ -3329,6 +3424,7 @@ export default function OmniCanvas() {
                   if (ep != null) setWriterFocusEpisode(ep);
                 }}
               />
+            </div>
             </div>
             </>
             ) : null}
