@@ -2962,15 +2962,13 @@ export default function OmniCanvas() {
             </div>
             ) : null}
 
-            <p className="mt-3 max-w-3xl text-[11px] leading-5 text-amber-100/70">
-              <span className="font-semibold text-amber-100/90">Seedance 2.5 Coming soon</span>
+            <p className="mt-3 max-w-4xl text-[11px] leading-5 text-white/40">
+              更高画质档位即将开放 · 文生 / 图生 / 参考生已就绪，待开放；当前成片默认约 15s。
               {" · "}
-              文生 / 图生 / 参考生已就绪，待开放；当前 Seedance 2.0（默认 15s）。
-              {" · "}
-              工程包可导出 zip；有成片后可用「合成长片（含配乐）」出多集长片。
+              各集成片就绪后，在下方成片坞一键合成长片（含配乐）。
             </p>
 
-            <div className="mt-4 max-w-3xl">
+            <div className="mt-4 max-w-4xl">
               <ManhuaClipDock
                 blocks={blocks}
                 topic={factoryTopic}
