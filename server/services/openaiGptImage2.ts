@@ -1,14 +1,28 @@
 /**
- * 官方 OpenAI `gpt-image-2`（images/generations + images/edits）
+ * 官方 OpenAI GPT Image 2（images/generations + images/edits 共用同一 snapshot）
  * 供 canvasGptImage2 / 平台单帧像素链（不再走 EvoLink）。
  *
- * 环境变量：OPENAI_IMAGE_API_KEY 或 OPENAI_API_KEY
+ * 环境变量：
+ * - OPENAI_IMAGE_API_KEY 或 OPENAI_API_KEY
+ * - OPENAI_GPT_IMAGE2_MODEL（可选；默认钉 gpt-image-2-2026-04-21）
  */
 import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
 import { uploadBufferToPlatformStorage } from "./evolinkGptImage2.js";
 
 const OPENAI_BASE = String(process.env.OPENAI_API_BASE || "https://api.openai.com").replace(/\/$/, "");
-const MODEL = "gpt-image-2" as const;
+
+/** 文档 snapshot：https://developers.openai.com/api/docs/models/gpt-image-2 */
+export const OPENAI_GPT_IMAGE2_SNAPSHOT_DEFAULT = "gpt-image-2-2026-04-21" as const;
+
+/**
+ * 生图 / 改图共用。默认钉 snapshot；可用 OPENAI_GPT_IMAGE2_MODEL 覆盖（如回退别名 gpt-image-2）。
+ */
+export function resolveOpenAiGptImage2Model(): string {
+  const raw = String(process.env.OPENAI_GPT_IMAGE2_MODEL || "").trim();
+  if (raw === "gpt-image-2" || /^gpt-image-2-\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return OPENAI_GPT_IMAGE2_SNAPSHOT_DEFAULT;
+}
+
 const REQUEST_TIMEOUT_MS = Math.min(
   Math.max(Number(process.env.OPENAI_GPT_IMAGE2_TIMEOUT_MS) || 180_000, 60_000),
   600_000,
@@ -79,9 +93,10 @@ async function postGenerations(
   prompt: string,
   size: string,
   quality: "low" | "medium" | "high",
+  model: string,
 ): Promise<Buffer> {
   const body = {
-    model: MODEL,
+    model,
     prompt,
     n: 1,
     size,
@@ -112,7 +127,8 @@ async function postEdits(
   size: string,
   quality: "low" | "medium" | "high",
   imageUrls: string[],
-  maskUrl?: string,
+  maskUrl: string | undefined,
+  model: string,
 ): Promise<Buffer> {
   const buffers = await Promise.all(imageUrls.slice(0, 16).map((u) => downloadUrl(u)));
   const maskBuf = maskUrl ? await downloadUrl(maskUrl) : null;
@@ -127,7 +143,7 @@ async function postEdits(
       ),
     );
   };
-  addField("model", MODEL);
+  addField("model", model);
   addField("prompt", prompt);
   addField("size", size);
   addField("quality", quality);
@@ -208,16 +224,17 @@ export async function postOpenAiGptImage2AndUpload(
 
   const refs = (opts.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean).slice(0, 16);
   const maskUrl = String(opts.maskUrl || "").trim() || undefined;
+  const model = resolveOpenAiGptImage2Model();
 
   appendImageFlowLog(
     L,
-    `[GPT-IMAGE-2·OpenAI] ${refs.length ? "edits" : "generations"} · size=${size} · quality=${quality}${refs.length ? ` · refs=${refs.length}` : ""}`,
+    `[GPT-IMAGE-2·OpenAI] ${refs.length ? "edits" : "generations"} · model=${model} · size=${size} · quality=${quality}${refs.length ? ` · refs=${refs.length}` : ""}`,
   );
 
   try {
     const buffer = refs.length
-      ? await postEdits(apiKey, promptTrimmed, size, quality, refs, maskUrl)
-      : await postGenerations(apiKey, promptTrimmed, size, quality);
+      ? await postEdits(apiKey, promptTrimmed, size, quality, refs, maskUrl, model)
+      : await postGenerations(apiKey, promptTrimmed, size, quality, model);
     const publicUrl = await uploadBufferToPlatformStorage(buffer, gcsSubdir, L);
     appendImageFlowLog(L, `[GPT-IMAGE-2·OpenAI] 成功 · ${String(publicUrl).slice(0, 160)}…`);
     return publicUrl;

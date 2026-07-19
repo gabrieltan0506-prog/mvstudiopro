@@ -10879,7 +10879,8 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           ));
         };
 
-        addField("model", "gpt-image-2");
+        const { resolveOpenAiGptImage2Model } = await import("./services/openaiGptImage2.js");
+        addField("model", resolveOpenAiGptImage2Model());
         addField("prompt", input.prompt);
         if (input.size) addField("size", input.size);
         if (input.quality) addField("quality", input.quality);

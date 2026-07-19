@@ -1022,6 +1022,7 @@ export type ManhuaCharacterRecommendResult = {
 
 /**
  * 4.B：按题材气质推荐男女主各一名（可更换；无信号时给库内稳定默认）。
+ * 古风成套造型由 recommendManhuaCastBundle 负责，本函数只服务都市轨。
  */
 export function recommendManhuaCharactersFromTopic(topic?: string): ManhuaCharacterRecommendResult {
   const t = String(topic || "").trim();
@@ -1163,7 +1164,7 @@ export function buildManhuaCharacterClipboardText(
 /** 注入角色圣经 / 生图：选中卡的外形+气质+提示词（可选画风硬锁） */
 export function buildManhuaCharacterPromptBlock(
   ids: string[],
-  opts?: { artStyleId?: string | null },
+  opts?: { artStyleId?: string | null; identityLockZh?: string | null },
 ): string {
   const picked = ids.map(getManhuaCharacterById).filter(Boolean) as ManhuaCharacterTemplate[];
   if (!picked.length) return "";
@@ -1193,6 +1194,16 @@ export function buildManhuaCharacterPromptBlock(
     const lifeLine = life ? `\n${life}` : "";
     return `${i + 1}. ${display}（${roleLabel}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}${bone}${lifeLine}${previewLine}`;
   });
-  return `【角色库锚点】\n公式：${MANHUA_CHARACTER_FORMULA_ZH}\n【画风】${style.labelZh}\n${style.promptZh}\n${linesOut.join("\n")}`;
+  const identity = String(opts?.identityLockZh || "").trim();
+  return [
+    "【角色库锚点】",
+    `公式：${MANHUA_CHARACTER_FORMULA_ZH}`,
+    `【画风】${style.labelZh}`,
+    style.promptZh,
+    identity || "",
+    linesOut.join("\n"),
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 

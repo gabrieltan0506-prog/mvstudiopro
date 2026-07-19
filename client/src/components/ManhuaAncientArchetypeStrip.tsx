@@ -39,9 +39,9 @@ export default function ManhuaAncientArchetypeStrip({
     <div className="mt-4 rounded-xl border border-amber-400/25 bg-amber-500/[0.06] p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="text-[12px] font-semibold text-amber-100/90">古风原型</div>
+          <div className="text-[12px] font-semibold text-amber-100/90">古风原型 · 点选即套用</div>
           <p className="text-[10px] leading-snug text-white/45">
-            设计板锚点（三视图公式字段）；最多选 {maxSelect} 个，与都市角色库并行注入。
+            设计板锚点（服饰层次+道具）；最多选 {maxSelect} 个，铺编导时写入角色卡。
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">

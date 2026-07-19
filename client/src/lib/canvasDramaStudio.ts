@@ -115,6 +115,8 @@ export type SpawnManhuaDramaStudioOpts = {
   characterIds?: string[];
   /** 古风原型 arch_*（与都市槽并行注入） */
   ancientArchetypeIds?: string[];
+  /** 剧本跟随身份锁（时代/族裔/服饰；来自 CastBundle） */
+  identityLockZh?: string;
   /** 角色/场景统一画风 A/B/C */
   artStyleId?: ManhuaArtStyleId | string;
   /** 包装动效库 id：注入微动成片 / 视频改写节点 */
@@ -329,15 +331,20 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     recommendManhuaSceneIdFromTopic({ genreId, topic: opts.topic }).sceneId ||
     undefined;
   const writerContext = String(opts.writerContext || "").trim();
-  const characterIds = (opts.characterIds || []).map((id) => String(id || "").trim()).filter(Boolean);
-  const characterBlock = buildManhuaCharacterPromptBlock(characterIds, {
-    artStyleId: opts.artStyleId,
-  });
   const ancientArchetypeIds = (opts.ancientArchetypeIds || [])
     .map((id) => String(id || "").trim())
     .filter(Boolean)
     .slice(0, 2);
-  const ancientBlock = buildAncientArchetypePromptBlock(ancientArchetypeIds);
+  // 已挂古风原型时丢弃都市 char_*，防止西装定妆污染 keyart
+  const characterIds = ancientArchetypeIds.length
+    ? []
+    : (opts.characterIds || []).map((id) => String(id || "").trim()).filter(Boolean);
+  const identityLockZh = String(opts.identityLockZh || "").trim() || undefined;
+  const characterBlock = buildManhuaCharacterPromptBlock(characterIds, {
+    artStyleId: opts.artStyleId,
+    identityLockZh,
+  });
+  const ancientBlock = buildAncientArchetypePromptBlock(ancientArchetypeIds, { identityLockZh });
   const propIds = (opts.propIds || []).map((id) => String(id || "").trim()).filter(Boolean).slice(0, 4);
   const propAnchorBlock = composeManhuaSelectedPropAnchorBlock(propIds);
   const motionPromptIds = (opts.motionPromptIds || []).map((id) => String(id || "").trim()).filter(Boolean);
@@ -536,7 +543,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     .filter(Boolean)
     .join("\n\n");
   clip.parentId = keyArt.id;
-  clip.videoModel = "seedance-2.0";
+  /** 开发期默认 Omni（省钱可测）；Seedance 2.0 仍在 VIDEO_MODEL_OPTIONS，完工验收再手选真跑 */
+  clip.videoModel = "gemini-omni-flash";
   clip.aspectRatio = "9:16";
   if (pathCameraRecipeIds[0]) clip.pathCameraRecipeId = pathCameraRecipeIds[0];
   if (opts.pathAnnotationJson != null) clip.pathAnnotationJson = opts.pathAnnotationJson;
@@ -729,6 +737,7 @@ export function applyFactoryPrefsToBlocks(
     genreId?: string;
     characterIds?: string[];
     ancientArchetypeIds?: string[];
+    identityLockZh?: string;
     artStyleId?: ManhuaArtStyleId | string;
     videoReverseOutputMode?: "zh" | "en" | "compact";
   },
@@ -744,10 +753,21 @@ export function applyFactoryPrefsToBlocks(
   const cineVocabBlock = formatCineVocabInjectBlock(opts.cineVocabIds || []);
   const wardrobeBlock = buildWardrobePropContinuityInjectBlock(opts.wardrobePropContinuityIds || []);
   const pathRecipeId = (opts.pathCameraRecipeIds || []).map(String).filter(Boolean)[0];
-  const characterBlock = buildManhuaCharacterPromptBlock(opts.characterIds || [], {
+  const identityLockZh = String(opts.identityLockZh || "").trim() || undefined;
+  const prefsAncientIds = (opts.ancientArchetypeIds || [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean)
+    .slice(0, 2);
+  const prefsCharacterIds = prefsAncientIds.length
+    ? []
+    : (opts.characterIds || []).map((id) => String(id || "").trim()).filter(Boolean);
+  const characterBlock = buildManhuaCharacterPromptBlock(prefsCharacterIds, {
     artStyleId: opts.artStyleId,
+    identityLockZh,
   });
-  const ancientBlock = buildAncientArchetypePromptBlock(opts.ancientArchetypeIds || []);
+  const ancientBlock = buildAncientArchetypePromptBlock(prefsAncientIds, {
+    identityLockZh,
+  });
   const artStyle = getManhuaArtStylePreset(opts.artStyleId);
   const artStyleBlock = `【画风硬锁】${artStyle.labelZh}\n${artStyle.promptZh}`;
   const scene = getManhuaSceneTemplate(opts.sceneId);

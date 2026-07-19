@@ -197,15 +197,203 @@ export function isAncientArchetypeId(id?: string | null): boolean {
   return Boolean(getAncientArchetypeById(id));
 }
 
+const ANCIENT_COSTUME_TOPIC_RE =
+  /古装|古风|仙侠|玄幻|江湖|宫斗|宫廷|朝堂|修仙|武侠|刀客|将军|皇权|府邸|边塞|宅斗|王朝|女帝|王爷|宗门|剑修|药庐|客栈|雨夜江湖|刀光|打斗|武打|拔刀|长刀|劲装|交领|褙子|武盟|盟主|监国|山河册|断岳|玄甲|软甲|束发|玉冠|扳指/;
+
+/** 编剧人物表/服装描写：强古风信号（可单独把轨纠回 ancient） */
+export const ANCIENT_WARDROBE_SCRIPT_RE =
+  /交领|外袍|窄袖|褙子|劲装|玄甲|软甲|皮甲|长刀|短刀|刀鞘|玉冠|束发|马尾|扳指|宫装|襦裙|甲胄|护腕|银针|印泥|火漆|盟誓|朝服|圆领袍/;
+
+/** 权谋 alone 可能是商战；与古风词或剧种叠加才算古装权谋 */
+const ANCIENT_INTRIGUE_RE = /权谋|宫墙|廷议|宦官/;
+
+const ANCIENT_GENRE_IDS = new Set(["ancient", "xianxia"]);
+
+const MODERN_BUSINESS_TOPIC_RE =
+  /华尔街|商战|并购|董事会|上市|股权|合同|职场|总裁|办公室|都市|校园|校服/;
+
+/**
+ * 是否走古风造型轨。
+ * 不以 genreId=ancient 单独成立（「权谋」会误伤商战）；须题材有古装时代信号，
+ * 或显式仙侠/古风剧种且无现代商战词；或人物表服装描写已是古装。
+ */
+export function isAncientCostumeTopic(
+  topic?: string | null,
+  genreId?: string | null,
+  charactersMd?: string | null,
+): boolean {
+  const t = String(topic || "").trim();
+  const md = String(charactersMd || "").trim();
+  const blob = [t, md].filter(Boolean).join("\n");
+  const g = String(genreId || "").trim();
+  if (MODERN_BUSINESS_TOPIC_RE.test(t) && !ANCIENT_COSTUME_TOPIC_RE.test(blob) && !ANCIENT_WARDROBE_SCRIPT_RE.test(md)) {
+    return false;
+  }
+  if (ANCIENT_COSTUME_TOPIC_RE.test(blob)) return true;
+  if (md && ANCIENT_WARDROBE_SCRIPT_RE.test(md)) return true;
+  if (ANCIENT_INTRIGUE_RE.test(blob) && /古|朝|宫|江|侠|帝|王|将军|刀|装/.test(blob)) return true;
+  // 用户手选仙侠/古风且题材未写现代商战 → 古风轨
+  if (ANCIENT_GENRE_IDS.has(g) && !MODERN_BUSINESS_TOPIC_RE.test(t)) return true;
+  return false;
+}
+
+export type ManhuaAncientArchetypeRecommendResult = {
+  archetypeIds: string[];
+  /** 对应服装道具连续性卡片（可空） */
+  wardrobePropContinuityIds: string[];
+  reasonZh: string;
+  matched: string[];
+};
+
+const ARCHETYPE_TOPIC_HINTS: Array<{
+  id: string;
+  keys: string[];
+  score: number;
+}> = [
+  { id: "arch_rain_jianghu_dao", keys: ["江湖", "刀客", "雨夜", "客栈", "复仇", "浪客"], score: 6 },
+  { id: "arch_red_armor_general", keys: ["将军", "赤甲", "边关", "出征", "王爷", "统帅", "权谋", "朝堂"], score: 5 },
+  { id: "arch_phoenix_empress", keys: ["女帝", "皇后", "宫斗", "宫廷", "凤", "后宫", "权谋"], score: 5 },
+  { id: "arch_xianmen_sword_cold", keys: ["仙侠", "剑修", "宗门", "修仙", "御剑", "仙门"], score: 6 },
+  { id: "arch_yaolu_physician", keys: ["医者", "药庐", "行医", "药囊", "温润"], score: 5 },
+  { id: "arch_forest_phoenix_queen", keys: ["森灵", "凰后", "玄幻", "灵族"], score: 4 },
+  { id: "arch_cloud_phoenix_queen", keys: ["云凰", "仙国", "云上"], score: 4 },
+];
+
+const ARCHETYPE_TO_WARDROBE: Record<string, string> = {
+  arch_xianmen_sword_cold: "wpc_01_xianxia_sword",
+  arch_rain_jianghu_dao: "wpc_02_jianghu_dao",
+  arch_red_armor_general: "wpc_04_red_armor",
+  arch_yaolu_physician: "wpc_05_physician",
+};
+
+/**
+ * 题材 → 古风原型（最多 2）+ 可选服装连续卡。
+ * 无信号时给「权谋男主 + 江湖刀客」稳定默认，避免空锚点。
+ */
+export function recommendAncientArchetypesFromTopic(
+  topic?: string | null,
+  opts?: { genreId?: string | null; max?: number },
+): ManhuaAncientArchetypeRecommendResult {
+  const t = String(topic || "").trim();
+  const max = Math.min(2, Math.max(1, opts?.max ?? 2));
+  const scores = new Map<string, { score: number; matched: string[] }>();
+  for (const hint of ARCHETYPE_TOPIC_HINTS) {
+    const matched = hint.keys.filter((k) => t.includes(k));
+    if (!matched.length) continue;
+    const prev = scores.get(hint.id) || { score: 0, matched: [] as string[] };
+    prev.score += hint.score * matched.length;
+    for (const m of matched) {
+      if (!prev.matched.includes(m)) prev.matched.push(m);
+    }
+    scores.set(hint.id, prev);
+  }
+  // 剧种偏置
+  const g = String(opts?.genreId || "").trim();
+  if (g === "xianxia") {
+    const prev = scores.get("arch_xianmen_sword_cold") || { score: 0, matched: [] as string[] };
+    prev.score += 3;
+    scores.set("arch_xianmen_sword_cold", prev);
+  }
+  if (g === "ancient") {
+    for (const id of ["arch_red_armor_general", "arch_phoenix_empress", "arch_rain_jianghu_dao"]) {
+      const prev = scores.get(id) || { score: 0, matched: [] as string[] };
+      prev.score += 2;
+      scores.set(id, prev);
+    }
+  }
+
+  let ranked = Array.from(scores.entries())
+    .sort((a, b) => b[1].score - a[1].score || a[0].localeCompare(b[0]))
+    .map(([id, v]) => ({ id, ...v }));
+
+  if (!ranked.length) {
+    ranked = [
+      { id: "arch_red_armor_general", score: 1, matched: [] },
+      { id: "arch_phoenix_empress", score: 1, matched: [] },
+    ];
+  }
+
+  // 尽量一男向一女向：将军/刀客/剑修/医者 vs 女帝/凰后
+  const maleBias = new Set([
+    "arch_red_armor_general",
+    "arch_rain_jianghu_dao",
+    "arch_xianmen_sword_cold",
+    "arch_yaolu_physician",
+  ]);
+  const femaleBias = new Set([
+    "arch_phoenix_empress",
+    "arch_forest_phoenix_queen",
+    "arch_cloud_phoenix_queen",
+  ]);
+  const picked: string[] = [];
+  const matched: string[] = [];
+  let hasMale = false;
+  let hasFemale = false;
+  for (const row of ranked) {
+    if (picked.length >= max) break;
+    if (!getAncientArchetypeById(row.id)) continue;
+    const isM = maleBias.has(row.id);
+    const isF = femaleBias.has(row.id);
+    if (picked.length === 1 && isM && hasMale && ranked.some((r) => femaleBias.has(r.id))) {
+      continue;
+    }
+    if (picked.length === 1 && isF && hasFemale && ranked.some((r) => maleBias.has(r.id))) {
+      continue;
+    }
+    picked.push(row.id);
+    if (isM) hasMale = true;
+    if (isF) hasFemale = true;
+    for (const m of row.matched) {
+      if (!matched.includes(m)) matched.push(m);
+    }
+  }
+  // 若只挑到同性，补一个对位默认
+  if (picked.length < max) {
+    const fill = hasFemale
+      ? "arch_red_armor_general"
+      : hasMale
+        ? "arch_phoenix_empress"
+        : "arch_rain_jianghu_dao";
+    if (!picked.includes(fill) && getAncientArchetypeById(fill)) picked.push(fill);
+  }
+
+  const archetypeIds = picked.slice(0, max);
+  const wardrobePropContinuityIds = Array.from(
+    new Set(
+      archetypeIds
+        .map((id) => ARCHETYPE_TO_WARDROBE[id])
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ).slice(0, 2);
+
+  const names = archetypeIds
+    .map((id) => getAncientArchetypeById(id)?.nameZh)
+    .filter(Boolean)
+    .join("·");
+  const reasonZh = matched.length
+    ? `古风题材命中「${matched.slice(0, 4).join("·")}」→ 套用原型 ${names}`
+    : `古风题材默认套用原型 ${names}（可点选更换）`;
+
+  return { archetypeIds, wardrobePropContinuityIds, reasonZh, matched };
+}
+
 /** 注入角色卡 / 圣经：古风设计板 brief */
-export function buildAncientArchetypePromptBlock(ids: string[]): string {
+export function buildAncientArchetypePromptBlock(
+  ids: string[],
+  opts?: { identityLockZh?: string | null },
+): string {
   const picked = ids
     .map((id) => getAncientArchetypeById(id))
     .filter(Boolean) as ManhuaAncientDesignBoard[];
   if (!picked.length) return "";
+  const identity = String(opts?.identityLockZh || "").trim();
   return [
     "【古风原型锚点】",
-    "与都市角色库并行；锁气质与服饰层次，贯穿全片；禁止外仓品牌名。",
+    "古风题材以本锚点为主角造型来源；锁气质与服饰层次，贯穿全片；禁止外仓品牌名。",
+    "服饰以古风锚点/服装连续为准；若并存都市库定妆图，忽略其现代衣着，只可借骨相气质。",
+    identity || "",
     ...picked.map((b, i) => `${i + 1}. ${formatAncientDesignBoardBrief(b)}`),
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }

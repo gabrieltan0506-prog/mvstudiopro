@@ -94,6 +94,8 @@ type Props = {
   /** 古风原型 arch_*（与都市槽并行） */
   ancientArchetypeIds?: string[];
   onToggleAncientArchetype?: (id: string) => void;
+  /** CastBundle 轨：古风时优先展示原型条、收起都市墙 */
+  castLane?: "urban" | "ancient";
 };
 
 function EmptyLead({ label }: { label: string }) {
@@ -121,7 +123,9 @@ export default function ManhuaCharacterGallery({
   topicHint,
   ancientArchetypeIds = [],
   onToggleAncientArchetype,
+  castLane = "urban",
 }: Props) {
+  const isAncientLane = castLane === "ancient";
   const initialPrefs = useMemo(() => loadLibraryPrefs(), []);
   const [libraryTab, setLibraryTab] = useState<ManhuaLibraryCastTab>(() => {
     const t = initialPrefs.tab;
@@ -149,7 +153,7 @@ export default function ManhuaCharacterGallery({
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => loadFavoriteIds());
   const [customCouples, setCustomCouples] = useState<CustomCouple[]>(() => loadCustomCouples());
   const [copyFlash, setCopyFlash] = useState("");
-  const libraryRef = useRef<HTMLDivElement | null>(null);
+  const libraryRef = useRef<HTMLDetailsElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const packFilter = useMemo(() => getManhuaTemperamentPackById(packFilterId), [packFilterId]);
   const topicCoupleRec = useMemo(
@@ -849,7 +853,25 @@ export default function ManhuaCharacterGallery({
     });
   }, [libraryTab, packFilterId, sortMode, denseGrid, lockArtStyle, compactUi]);
 
-  const focusLibrary = (gender: ManhuaCharacterGender) => {
+  /** 左栏：当前库 Tab 对应的主槽（女青 / 男琥珀）；老人/儿童 Tab 时仍以选中卡片为主预览 */
+  const activeBoardCharacter =
+    libraryTab === "male"
+      ? selectedMale
+      : libraryTab === "female"
+        ? selectedFemale
+        : selectedInTab
+          ? getManhuaCharacterById(selectedInTab)
+          : null;
+  const activeBoardAccent: "cyan" | "amber" =
+    libraryTab === "male" ? "amber" : libraryTab === "female" ? "cyan" : tabAccent(activeBoardCharacter);
+  const activeBoardAutoApplied =
+    libraryTab === "male" ? Boolean(maleAutoApplied) : libraryTab === "female" ? Boolean(femaleAutoApplied) : false;
+  const otherLeadChip =
+    libraryTab === "male"
+      ? { gender: "female" as const, character: selectedFemale, label: "女主", accent: "cyan" as const }
+      : { gender: "male" as const, character: selectedMale, label: "男主", accent: "amber" as const };
+
+    const focusLibrary = (gender: ManhuaCharacterGender) => {
     setLibraryTab(gender);
     setLibraryQuery("");
     setTagFilter("");
@@ -861,216 +883,201 @@ export default function ManhuaCharacterGallery({
   };
 
   return (
-    <div className="rounded-xl border border-white/10 bg-black/30 p-3">
+    <div className="rounded-xl border border-white/10 bg-black/30 p-3 md:p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <div className="text-[12px] font-semibold text-white/90">② 角色卡</div>
-          <div className="mt-1.5 max-w-xl rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-2 text-[10px] leading-relaxed text-white/55">
-            <span className="font-semibold text-white/70">怎么用：</span>
-            题材软推套组 → 点选/1–8 换双人 → 悬停看三视图 → 统一画风（L 可锁）→
-            「同版式」只铺节点（需你点运行，勿误触）
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-semibold text-white/90">② 角色卡</div>
+          <div className="mt-1.5 max-w-2xl rounded-lg border border-cyan-400/20 bg-cyan-500/[0.06] px-2.5 py-2 text-[10px] leading-relaxed text-white/65">
+            <span className="font-semibold text-cyan-100/90">怎么用：</span>
+            ① 题材自动套用 → ② 悬停看妆造三视图 → ③ 点选更换（女主青 / 男主琥珀）→ ④ 底栏画风与场景一致 →
+            「同版式生成新人」只铺节点（需你点运行）
           </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            disabled={disabled || (!femaleId && !maleId)}
-            onClick={() => void copyBoth()}
-            className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
-          >
-            复制双人锚点
-          </button>
-          <button
-            type="button"
-            disabled={disabled || (!femaleId && !maleId)}
-            onClick={() => void copyDualBrief()}
-            className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
-          >
-            复制短名片
-          </button>
-          <button
-            type="button"
-            disabled={disabled || (!femaleId && !maleId)}
-            onClick={() => void exportCoupleSelection()}
-            className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
-          >
-            导出双人选型
-          </button>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => void importCoupleSelection()}
-            className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
-          >
-            导入双人选型
-          </button>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => void exportWorkspace()}
-            className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
-          >
-            导出工作区
-          </button>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => void importWorkspace()}
-            className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40"
-          >
-            导入工作区
-          </button>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={resetLocalWorkspace}
-            className="text-[10px] text-rose-200/70 underline-offset-2 hover:underline disabled:opacity-40"
-          >
-            重置本机工作区
-          </button>
-          {onClearManual ? (
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={onClearManual}
-              className="text-[10px] text-sky-200/80 underline-offset-2 hover:underline disabled:opacity-40"
-            >
-              恢复自动推荐
-            </button>
+          {isAncientLane ? (
+            <p className="mt-1.5 text-[10px] text-amber-100/70">
+              当前为古风造型轨：已自动套用原型，都市西装库可右侧展开；点选原型即套用。
+            </p>
           ) : null}
         </div>
+        <details className="text-right">
+          <summary className="cursor-pointer list-none text-[10px] text-white/45 hover:text-white/70">
+            更多工具 ▾
+          </summary>
+          <div className="mt-2 flex max-w-md flex-wrap justify-end gap-2 rounded-lg border border-white/10 bg-black/40 p-2">
+            <button type="button" disabled={disabled || (!femaleId && !maleId)} onClick={() => void copyBoth()} className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40">复制双人锚点</button>
+            <button type="button" disabled={disabled || (!femaleId && !maleId)} onClick={() => void copyDualBrief()} className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40">复制短名片</button>
+            <button type="button" disabled={disabled || (!femaleId && !maleId)} onClick={() => void exportCoupleSelection()} className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40">导出双人选型</button>
+            <button type="button" disabled={disabled} onClick={() => void importCoupleSelection()} className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40">导入双人选型</button>
+            <button type="button" disabled={disabled} onClick={() => void exportWorkspace()} className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40">导出工作区</button>
+            <button type="button" disabled={disabled} onClick={() => void importWorkspace()} className="text-[10px] text-white/70 underline-offset-2 hover:underline disabled:opacity-40">导入工作区</button>
+            <button type="button" disabled={disabled} onClick={resetLocalWorkspace} className="text-[10px] text-rose-200/70 underline-offset-2 hover:underline disabled:opacity-40">重置本机工作区</button>
+            {onClearManual ? (
+              <button type="button" disabled={disabled} onClick={onClearManual} className="text-[10px] text-sky-200/80 underline-offset-2 hover:underline disabled:opacity-40">恢复自动推荐</button>
+            ) : null}
+          </div>
+        </details>
       </div>
-      {reasonZh ? <p className="mt-2 text-[10px] leading-snug text-emerald-200/75">{reasonZh}</p> : null}
+      {reasonZh ? (
+        <p className="mt-2 rounded-lg border border-emerald-400/25 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] leading-snug text-emerald-100/90">
+          <span className="font-semibold">已自动套用：</span>
+          {reasonZh}
+        </p>
+      ) : null}
       {copyFlash ? <p className="mt-1 text-[10px] text-emerald-200/85">{copyFlash}</p> : null}
-      <ManhuaDualCompareStrip female={selectedFemale} male={selectedMale} artStyleId={artStyleId} />
 
-      <ManhuaCharacterCoupleKitsPanel
-        disabled={disabled}
-        femaleId={femaleId}
-        maleId={maleId}
-        canRandomBoth={Boolean(randomBothPools.females.length && randomBothPools.males.length)}
-        topicReasonZh={topicCoupleRec.reasonZh}
-        topicFirstPackId={topicCoupleRec.packIds[0]}
-        topicCoupleIds={topicCoupleSet}
-        recentCouplePacks={recentCouplePacks}
-        customCouples={customCouples}
-        onApplyPack={applyCouplePack}
-        onApplyPair={applyCouplePair}
-        onPickRandomPack={pickRandomCouplePack}
-        onPickRandomBoth={pickRandomBothLeads}
-        onFavoriteBoth={favoriteBothLeads}
-        onSaveCurrentCustom={saveCurrentAsCustomCouple}
-        onClearRecentPacks={() => setRecentCouplePackIds(clearRecentCouplePackIds())}
-        onExportCustom={() => void exportCustomCouples()}
-        onImportCustom={() => void importCustomCouples()}
-        onRemoveCustom={removeCustomCouple}
-      />
+      {onToggleAncientArchetype ? (
+        <ManhuaAncientArchetypeStrip
+          selectedIds={ancientArchetypeIds}
+          disabled={disabled}
+          onToggle={onToggleAncientArchetype}
+        />
+      ) : null}
 
-      {/* 双人同显 */}
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        <div className="space-y-2">
-          <div className="text-[11px] font-semibold text-cyan-100/80">女主（青色高亮）</div>
-          {selectedFemale ? (
-            <ManhuaCharacterSheetPreview
-              character={selectedFemale}
-              accent="cyan"
-              autoApplied={femaleAutoApplied}
-              artStyleId={artStyleId}
-              compact
+      <details className="mt-2">
+        <summary className="cursor-pointer list-none text-[10px] text-white/40 hover:text-white/65">
+          套组 / 双人对照（次要）▾
+        </summary>
+        {!isAncientLane ? (
+          <div className="mt-2">
+            <ManhuaDualCompareStrip female={selectedFemale} male={selectedMale} artStyleId={artStyleId} />
+            <ManhuaCharacterCoupleKitsPanel
+              disabled={disabled}
+              femaleId={femaleId}
+              maleId={maleId}
+              canRandomBoth={Boolean(randomBothPools.females.length && randomBothPools.males.length)}
+              topicReasonZh={topicCoupleRec.reasonZh}
+              topicFirstPackId={topicCoupleRec.packIds[0]}
+              topicCoupleIds={topicCoupleSet}
+              recentCouplePacks={recentCouplePacks}
+              customCouples={customCouples}
+              onApplyPack={applyCouplePack}
+              onApplyPair={applyCouplePair}
+              onPickRandomPack={pickRandomCouplePack}
+              onPickRandomBoth={pickRandomBothLeads}
+              onFavoriteBoth={favoriteBothLeads}
+              onSaveCurrentCustom={saveCurrentAsCustomCouple}
+              onClearRecentPacks={() => setRecentCouplePackIds(clearRecentCouplePackIds())}
+              onExportCustom={() => void exportCustomCouples()}
+              onImportCustom={() => void importCustomCouples()}
+              onRemoveCustom={removeCustomCouple}
             />
-          ) : (
-            <EmptyLead label="女主" />
-          )}
-          <div className="flex flex-wrap gap-2">
+          </div>
+        ) : (
+          <p className="mt-2 text-[10px] text-white/40">古风轨以原型条为主；都市双人套组已收起。</p>
+        )}
+      </details>
+
+      {/* 示意级工作流板：左已套用 · 右库墙 · 底画风 */}
+      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(260px,36%)_minmax(0,1fr)] lg:items-start">
+        <aside className="space-y-2 lg:sticky lg:top-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               disabled={disabled}
               onClick={() => focusLibrary("female")}
-              className="rounded-lg border border-cyan-400/40 bg-cyan-500/20 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-40"
+              className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold disabled:opacity-40 ${
+                libraryTab === "female"
+                  ? "border-cyan-400/50 bg-cyan-500/20 text-cyan-50"
+                  : "border-white/10 text-white/50 hover:border-white/25"
+              }`}
             >
-              更换女主
+              女主{selectedFemale ? ` · ${selectedFemale.nameZh}` : ""}
             </button>
             <button
               type="button"
-              disabled={disabled || !onGenerateSameLayout}
-              onClick={() => onGenerateSameLayout?.("female")}
-              className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] text-white/80 disabled:opacity-40"
+              disabled={disabled}
+              onClick={() => focusLibrary("male")}
+              className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold disabled:opacity-40 ${
+                libraryTab === "male"
+                  ? "border-amber-400/50 bg-amber-500/20 text-amber-50"
+                  : "border-white/10 text-white/50 hover:border-white/25"
+              }`}
             >
-              同版式生成新人
-            </button>
-            <button
-              type="button"
-              disabled={disabled || !selectedFemale}
-              onClick={() => void copySelected("female")}
-              className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] text-white/80 disabled:opacity-40"
-            >
-              复制锚点
-            </button>
-            <button
-              type="button"
-              disabled={disabled || !selectedFemale}
-              onClick={() => onSelectFemale("")}
-              className="rounded-lg border border-white/15 bg-transparent px-3 py-1.5 text-[11px] text-white/55 disabled:opacity-40"
-            >
-              清除
+              男主{selectedMale ? ` · ${selectedMale.nameZh}` : ""}
             </button>
           </div>
-        </div>
-
-        <div className="space-y-2">
-          <div className="text-[11px] font-semibold text-amber-100/80">男主（琥珀高亮）</div>
-          {selectedMale ? (
+          <div className="text-[11px] font-semibold text-white/70">
+            {libraryTab === "male" ? "男主（琥珀高亮）" : libraryTab === "female" ? "女主（青色高亮）" : "当前预览"}
+          </div>
+          {activeBoardCharacter ? (
             <ManhuaCharacterSheetPreview
-              character={selectedMale}
-              accent="amber"
-              autoApplied={maleAutoApplied}
+              character={activeBoardCharacter}
+              accent={activeBoardAccent}
+              autoApplied={activeBoardAutoApplied}
               artStyleId={artStyleId}
-              compact
             />
           ) : (
-            <EmptyLead label="男主" />
+            <EmptyLead label={libraryTab === "male" ? "男主" : "女主"} />
           )}
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               disabled={disabled}
-              onClick={() => focusLibrary("male")}
-              className="rounded-lg border border-amber-400/40 bg-amber-500/20 px-3 py-1.5 text-[11px] font-semibold text-amber-50 disabled:opacity-40"
+              onClick={() => focusLibrary(libraryTab === "male" ? "male" : "female")}
+              className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold disabled:opacity-40 ${
+                libraryTab === "male"
+                  ? "border-amber-400/40 bg-amber-500/20 text-amber-50"
+                  : "border-cyan-400/40 bg-cyan-500/20 text-cyan-50"
+              }`}
             >
-              更换男主
+              更换{libraryTab === "male" ? "男主" : "女主"}
             </button>
             <button
               type="button"
-              disabled={disabled || !onGenerateSameLayout}
-              onClick={() => onGenerateSameLayout?.("male")}
+              disabled={disabled || !onGenerateSameLayout || (libraryTab !== "female" && libraryTab !== "male")}
+              onClick={() => onGenerateSameLayout?.(libraryTab === "male" ? "male" : "female")}
               className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] text-white/80 disabled:opacity-40"
             >
               同版式生成新人
             </button>
             <button
               type="button"
-              disabled={disabled || !selectedMale}
-              onClick={() => void copySelected("male")}
+              disabled={disabled || !activeBoardCharacter || (libraryTab !== "female" && libraryTab !== "male")}
+              onClick={() => void copySelected(libraryTab === "male" ? "male" : "female")}
               className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-[11px] text-white/80 disabled:opacity-40"
             >
               复制锚点
             </button>
             <button
               type="button"
-              disabled={disabled || !selectedMale}
-              onClick={() => onSelectMale("")}
+              disabled={disabled || !activeBoardCharacter || (libraryTab !== "female" && libraryTab !== "male")}
+              onClick={() => (libraryTab === "male" ? onSelectMale("") : onSelectFemale(""))}
               className="rounded-lg border border-white/15 bg-transparent px-3 py-1.5 text-[11px] text-white/55 disabled:opacity-40"
             >
               清除
             </button>
           </div>
-        </div>
-      </div>
+          {otherLeadChip.character ? (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => focusLibrary(otherLeadChip.gender)}
+              className={`w-full rounded-lg border px-2.5 py-2 text-left text-[10px] disabled:opacity-40 ${
+                otherLeadChip.accent === "cyan"
+                  ? "border-cyan-400/25 bg-cyan-500/10 text-cyan-50/90"
+                  : "border-amber-400/25 bg-amber-500/10 text-amber-50/90"
+              }`}
+            >
+              另一槽 · {otherLeadChip.label}：{otherLeadChip.character.nameZh}（点此切换编辑）
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => focusLibrary(otherLeadChip.gender)}
+              className="w-full rounded-lg border border-dashed border-white/15 px-2.5 py-2 text-left text-[10px] text-white/40 disabled:opacity-40"
+            >
+              另一槽 · {otherLeadChip.label}尚未选择（点此去库里选）
+            </button>
+          )}
+        </aside>
 
-      <div ref={libraryRef} className="mt-4">
+        <section ref={libraryRef} className="min-w-0 rounded-xl border border-white/10 bg-black/25 p-2.5 md:p-3">
+          <div className="mb-2 text-[11px] font-semibold text-white/75">
+            {isAncientLane ? "从角色库更换（都市库，古风题材可选）" : "从角色库更换"}
+          </div>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="text-[11px] font-semibold text-white/70">从角色库更换</div>
+            <div className="text-[11px] font-semibold text-white/50">筛选与点选</div>
             <button
               type="button"
               disabled={disabled}
@@ -1423,9 +1430,11 @@ export default function ManhuaCharacterGallery({
             </div>
           ) : null}
         </div>
+
+        </section>
       </div>
 
-      <div className="mt-3 rounded-xl border border-white/10 bg-black/35 p-3">
+      <div className="sticky bottom-0 z-10 mt-3 rounded-xl border border-white/15 bg-[#0b0a12]/95 p-3 shadow-[0_-8px_32px_rgba(0,0,0,0.45)] backdrop-blur-md">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="text-[11px] font-semibold text-white/80">角色与场景画风（须与场景一致）</div>
           {artStyleAutoApplied ? (
@@ -1453,23 +1462,45 @@ export default function ManhuaCharacterGallery({
         <div className="mt-2 grid gap-2 sm:grid-cols-3">
           {MANHUA_ART_STYLE_PRESETS.map((p) => {
             const selected = artStyleId === p.id;
+            const sampleId = selectedFemale?.id || selectedMale?.id || "char_f_01";
+            const sampleUrl =
+              p.id === "photoreal"
+                ? `/manhua-characters/photoreal/${sampleId}_sheet.jpg`
+                : `/manhua-characters/${sampleId}_sheet.jpg`;
             return (
               <button
                 key={p.id}
                 type="button"
                 disabled={disabled}
                 onClick={() => onSelectArtStyle(p.id)}
-                className={`rounded-xl border px-3 py-2.5 text-left transition disabled:opacity-45 ${
+                className={`overflow-hidden rounded-xl border text-left transition disabled:opacity-45 ${
                   selected
                     ? "border-cyan-400/60 bg-cyan-500/15 shadow-[0_0_0_1px_rgba(34,211,238,0.35)]"
                     : "border-white/10 bg-white/[0.03] hover:border-white/25"
                 }`}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[12px] font-semibold text-white">{p.labelZh}</span>
-                  {selected ? <span className="text-[11px] font-bold text-cyan-300">✓</span> : null}
+                <div className="relative h-16 w-full bg-black/50">
+                  <img
+                    src={sampleUrl}
+                    alt=""
+                    className="h-full w-full object-cover object-top opacity-90"
+                    loading="lazy"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display = "none";
+                    }}
+                  />
+                  {selected ? (
+                    <span className="absolute right-1.5 top-1.5 rounded bg-cyan-500/90 px-1 text-[10px] font-bold text-black">
+                      ✓
+                    </span>
+                  ) : null}
                 </div>
-                <p className="mt-1 text-[10px] text-white/45">{p.shortZh}</p>
+                <div className="px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[12px] font-semibold text-white">{p.labelZh}</span>
+                  </div>
+                  <p className="mt-0.5 text-[10px] text-white/45">{p.shortZh}</p>
+                </div>
               </button>
             );
           })}
@@ -1479,16 +1510,9 @@ export default function ManhuaCharacterGallery({
         </p>
       </div>
 
-      {onToggleAncientArchetype ? (
-        <ManhuaAncientArchetypeStrip
-          selectedIds={ancientArchetypeIds}
-          disabled={disabled}
-          onToggle={onToggleAncientArchetype}
-        />
-      ) : null}
 
-      <p className="mt-3 text-[10px] leading-snug text-white/35">
-        验收口径：三视图=设定卡裁切（非三张独立渲染）；换画风只改 prompt，预览仍为 CG 底图；「同版式」勿点运行以免烧生图。古风原型为独立设计板锚点。
+      <p className="mt-2 text-[10px] leading-snug text-white/35">
+        验收口径：左栏=当前槽位大卡与三视图；右栏=库墙悬停妆造；底栏=画风 A/B/C。三视图=设定卡裁切；换画风只改 prompt；「同版式」勿点运行以免烧生图。
       </p>
     </div>
   );
