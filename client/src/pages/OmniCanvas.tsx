@@ -150,6 +150,8 @@ export default function OmniCanvas() {
   const [factorySceneId, setFactorySceneId] = useState("");
   /** 资产墙点选的道具示范（最多 4） */
   const [factoryPropIds, setFactoryPropIds] = useState<string[]>([]);
+  /** 古风原型 arch_*（最多 2） */
+  const [factoryAncientArchetypeIds, setFactoryAncientArchetypeIds] = useState<string[]>([]);
   /** 手选场景后不再被题材自动覆盖（⑤D） */
   const [sceneManual, setSceneManual] = useState(false);
   const [factoryFemaleId, setFactoryFemaleId] = useState(initialFactoryPrefs.femaleId || "");
@@ -361,6 +363,7 @@ export default function OmniCanvas() {
           propIds: factoryPropIds,
           genreId: factoryGenreId || undefined,
           characterIds: selectedCharacterIds,
+          ancientArchetypeIds: factoryAncientArchetypeIds,
           artStyleId: factoryArtStyleId,
           videoReverseOutputMode: factoryReverseMode,
         });
@@ -387,6 +390,7 @@ export default function OmniCanvas() {
     factoryGenreId,
     factoryFemaleId,
     factoryMaleId,
+    factoryAncientArchetypeIds,
     factoryArtStyleId,
     factoryReverseMode,
     selectedCraftShotIds,
@@ -555,6 +559,7 @@ export default function OmniCanvas() {
         sceneId: factorySceneId || undefined,
         propIds: factoryPropIds,
         characterIds: selectedCharacterIds,
+        ancientArchetypeIds: factoryAncientArchetypeIds,
         artStyleId: factoryArtStyleId,
         motionPromptIds: selectedMotionIds,
         craftShotIds: selectedCraftShotIds,
@@ -663,6 +668,7 @@ export default function OmniCanvas() {
       sceneId: factorySceneId || undefined,
       propIds: factoryPropIds,
       characterIds: selectedCharacterIds,
+      ancientArchetypeIds: factoryAncientArchetypeIds,
       artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
@@ -752,6 +758,7 @@ export default function OmniCanvas() {
       sceneId: factorySceneId || undefined,
       propIds: factoryPropIds,
       characterIds: selectedCharacterIds,
+      ancientArchetypeIds: factoryAncientArchetypeIds,
       artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
@@ -1189,9 +1196,10 @@ export default function OmniCanvas() {
                 artStyleAutoApplied={artStyleAutoApplied}
                 disabled={factoryBusy}
                 topicHint={[factoryGenreLabel, factoryTopic].filter(Boolean).join(" ")}
+                ancientArchetypeIds={factoryAncientArchetypeIds}
                 reasonZh={`${recommendedLeads.reasonZh}；${recommendedArtStyle.reasonZh}${
-                  selectedCharacterIds.length
-                    ? "；已选将在「铺编导节点」时注入角色卡。预览/换人/画风/铺同版式节点均不烧 token。"
+                  selectedCharacterIds.length || factoryAncientArchetypeIds.length
+                    ? "；已选将在「铺编导节点」时注入角色卡/古风原型。预览/换人/画风/铺同版式节点均不烧 token。"
                     : "；预览与换人不烧 token。"
                 }`}
                 onSelectFemale={(id) => {
@@ -1207,6 +1215,12 @@ export default function OmniCanvas() {
                   setFactoryArtStyleId(id);
                 }}
                 onGenerateSameLayout={spawnSameLayoutSheet}
+                onToggleAncientArchetype={(id) => {
+                  setFactoryAncientArchetypeIds((prev) => {
+                    if (prev.includes(id)) return prev.filter((x) => x !== id);
+                    return [...prev, id].slice(-2);
+                  });
+                }}
                 onClearManual={() => {
                   setFemaleLeadManual(false);
                   setMaleLeadManual(false);
@@ -1504,6 +1518,7 @@ export default function OmniCanvas() {
                       sceneId: factorySceneId || undefined,
                       propIds: factoryPropIds,
                       characterIds: selectedCharacterIds,
+                      ancientArchetypeIds: factoryAncientArchetypeIds,
                       artStyleId: factoryArtStyleId,
                       motionPromptIds: selectedMotionIds,
                       craftShotIds: selectedCraftShotIds,
