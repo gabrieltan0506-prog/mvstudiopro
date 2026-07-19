@@ -1,6 +1,7 @@
 /**
- * 关键静帧 · 用 GPT-Image-2 edit + 多图融图套场景/道具/角色示范图。
- * 有可抓取示范图 → imageMode=edit + image_urls；缺图 → 文案锚点并走文生图重做。
+ * 关键静帧 · 用官方 GPT-Image-2 edit（OpenAI images/edits → 失败回落 OpenRouter）多图融图。
+ * 有可抓取示范图 → imageMode=edit + referenceImageUrls；缺图 → 文案锚点并走文生图重做。
+ * 不走 EvoLink。
  */
 
 import {
@@ -62,7 +63,7 @@ export function planManhuaKeyartEditFusion(opts?: {
   for (const id of opts?.ancientArchetypeIds || []) {
     const key = String(id || "").trim();
     if (!key) continue;
-    // 古风 sheet 尚未批量落盘：勿挂会 404 的路径毒死 image_urls，改文生补造型
+    // 古风 sheet 尚未批量落盘：勿挂会 404 的路径毒死 edits 参考图，改文生补造型
     const path = getAncientArchetypePreviewUrl(key);
     void path;
     missingLabelsZh.push(`古风原型 ${key}（造型按文案重绘）`);
@@ -142,7 +143,7 @@ export function planManhuaKeyartEditFusion(opts?: {
   };
 }
 
-/** 把相对站点路径转成 EvoLink 可抓取的绝对 URL（浏览器端用 location.origin） */
+/** 把相对站点路径转成 HTTPS 绝对 URL（OpenAI/OpenRouter edits 服务端需可下载） */
 export function absolutizeManhuaAssetUrl(
   pathOrUrl: string | undefined | null,
   origin?: string | null,

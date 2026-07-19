@@ -32,7 +32,7 @@ describe("manhuaKeyartEditFusion", () => {
     expect(plan.editPromptAddonZh).toContain("重新生成");
   });
 
-  it("absolutizes site-relative asset paths for EvoLink", () => {
+  it("absolutizes site-relative asset paths for OpenAI edits download", () => {
     expect(absolutizeManhuaAssetUrl("/manhua-props/x.jpg", "https://www.mvstudiopro.com")).toBe(
       "https://www.mvstudiopro.com/manhua-props/x.jpg",
     );

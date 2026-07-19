@@ -464,7 +464,7 @@ export async function runCanvasBlock(
     /** 默认 Image-2；用户手选 NB2 省钱则尊重（计费不同） */
     const imageModel: CanvasBlock["imageModel"] =
       block.imageModel === "nano-banana-2" ? "nano-banana-2" : "gpt-image-2";
-    // 站点相对路径（/manhua-*）须转绝对 URL，EvoLink image_urls 才能抓取
+    // 站点相对路径（/manhua-*）须转绝对 HTTPS：官方 OpenAI images/edits 服务端会下载参考图
     const { absolutizeManhuaAssetUrl, absolutizeManhuaAssetUrls } = await import(
       "@shared/manhuaKeyartEditFusion"
     );
