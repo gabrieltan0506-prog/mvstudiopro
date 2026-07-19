@@ -1,5 +1,5 @@
 /**
- * 示意 A · 引导式实测路径轨（整页地基）+ 下一步行动条
+ * 引导式路径轨 + 下一步行动条（成品工作台导航，非演示徽章）
  */
 import { useMemo } from "react";
 import { ArrowRight, Loader2 } from "lucide-react";
@@ -57,9 +57,6 @@ export default function ManhuaGuidedPathRail({
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[12px] font-semibold tracking-wide text-white/90">引导路径</span>
-          <span className="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-100">
-            今天可测
-          </span>
         </div>
         <span className="text-[10px] text-white/40">
           当前：{MANHUA_GUIDED_STEPS[Math.max(0, activeIndex)]?.label || "题材"}

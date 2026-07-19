@@ -459,24 +459,50 @@ export async function runCanvasBlock(
   if (block.kind === "image") {
     const ar = block.aspectRatio;
     const count = block.imageBatchCount || 1;
-    const isEdit = block.imageMode === "edit";
+    const isKeyart = block.id.startsWith("keyart-");
+    let isEdit = block.imageMode === "edit";
     /** 默认 Image-2；用户手选 NB2 省钱则尊重（计费不同） */
     const imageModel: CanvasBlock["imageModel"] =
       block.imageModel === "nano-banana-2" ? "nano-banana-2" : "gpt-image-2";
-    const editRef =
+    // 站点相对路径（/manhua-*）须转绝对 HTTPS：官方 OpenAI images/edits 服务端会下载参考图
+    const { absolutizeManhuaAssetUrl, absolutizeManhuaAssetUrls } = await import(
+      "@shared/manhuaKeyartEditFusion"
+    );
+    const absRef = (u?: string | null) => absolutizeManhuaAssetUrl(u) || String(u || "").trim();
+    const editRefRaw =
       refUrl ||
       block.uploadedAssets?.find((a) => a.kind === "image" || /\.(png|jpe?g|webp)(\?|$)/i.test(a.fileName || a.url))
         ?.url ||
       block.outputUrl ||
       block.outputUrls?.[0];
-    if (isEdit && !editRef) {
-      throw new Error("微调模式需要底图：请先上传图片，或先文生图后再点「微调这张图」");
+    let editRef = absRef(editRefRaw);
+    // 相对路径转绝对后仍非 http → 不可 edit
+    if (editRef && !/^https?:\/\//i.test(editRef) && editRef.startsWith("/")) {
+      editRef = absRef(editRef);
     }
-    const fusionUrls = (block.editFusionUrls || [])
-      .map((u) => String(u || "").trim())
-      .filter((u) => u && u !== editRef)
-      .slice(0, 15);
-    const maskUrl = String(block.editMaskUrl || "").trim();
+    if (isEdit && editRef && !/^https?:\/\//i.test(editRef)) {
+      // 浏览器无 origin 时无法绝对化：关键静帧降级文生图，其它节点仍报错
+      if (isKeyart) {
+        isEdit = false;
+        editRef = "";
+      } else {
+        throw new Error("微调模式需要可访问的底图 URL（HTTPS）");
+      }
+    }
+    if (isEdit && !editRef) {
+      if (isKeyart) {
+        isEdit = false;
+      } else {
+        throw new Error("微调模式需要底图：请先上传图片，或先文生图后再点「微调这张图」");
+      }
+    }
+    const fusionUrls = absolutizeManhuaAssetUrls(
+      (block.editFusionUrls || [])
+        .map((u) => String(u || "").trim())
+        .filter((u) => u && u !== editRefRaw && u !== editRef)
+        .slice(0, 15),
+    );
+    const maskUrl = absRef(block.editMaskUrl) || String(block.editMaskUrl || "").trim();
     // 微调：提示词即修改说明；文生图才走 JSON 导演中台
     const imagePrompt = isEdit
       ? [
@@ -499,19 +525,43 @@ export async function runCanvasBlock(
           ar,
           isEdit
             ? { refImageUrl: editRef, referenceImageUrls: fusionUrls, maskUrl: maskUrl || undefined }
-            : { refImageUrl: refUrl },
+            : { refImageUrl: absRef(refUrl) || refUrl },
           count,
         );
       } catch (primaryErr) {
         const reason =
           primaryErr instanceof Error ? primaryErr.message.slice(0, 160) : "GPT-Image-2 失败";
-        try {
-          urls = await runNanoBanana2(imagePrompt, ar, isEdit ? editRef : refUrl, count);
-          console.warn(`[canvasRunBlock] GPT-Image-2 失败，已回退 Nano Banana 2：${reason}`);
-        } catch (fallbackErr) {
-          const fb =
-            fallbackErr instanceof Error ? fallbackErr.message : "Nano Banana 2 回退也失败";
-          throw new Error(`生图失败（官方 Image-2：${reason}；回退：${fb}）`);
+        // 关键静帧：edit/融图失败 → 纯文生图重做（不能套用就重新生成）
+        if (isKeyart && isEdit) {
+          try {
+            const regenPrompt = await resolveImagePromptViaJsonDirector(
+              deps,
+              mergedPrompt,
+              ar,
+              imageModel,
+            );
+            urls = await runGptImage2Batch(regenPrompt, ar, {}, count);
+            console.warn(`[canvasRunBlock] keyart edit/融图失败，已文生图重做：${reason}`);
+          } catch (regenErr) {
+            const rr = regenErr instanceof Error ? regenErr.message.slice(0, 120) : "文生图重做失败";
+            try {
+              urls = await runNanoBanana2(imagePrompt, ar, undefined, count);
+              console.warn(`[canvasRunBlock] keyart 文生图重做失败，回退 NB2：${rr}`);
+            } catch (fallbackErr) {
+              const fb =
+                fallbackErr instanceof Error ? fallbackErr.message : "Nano Banana 2 回退也失败";
+              throw new Error(`生图失败（融图：${reason}；重做：${rr}；回退：${fb}）`);
+            }
+          }
+        } else {
+          try {
+            urls = await runNanoBanana2(imagePrompt, ar, isEdit ? editRef : refUrl, count);
+            console.warn(`[canvasRunBlock] GPT-Image-2 失败，已回退 Nano Banana 2：${reason}`);
+          } catch (fallbackErr) {
+            const fb =
+              fallbackErr instanceof Error ? fallbackErr.message : "Nano Banana 2 回退也失败";
+            throw new Error(`生图失败（官方 Image-2：${reason}；回退：${fb}）`);
+          }
         }
       }
     } else {

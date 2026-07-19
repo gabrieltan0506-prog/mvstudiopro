@@ -60,6 +60,9 @@ describe("recommendManhuaCastBundle", () => {
     expect(b.characterIds).toEqual([]);
     expect(b.ancientArchetypeIds).toContain("arch_rain_jianghu_dao");
     expect(b.ancientArchetypeIds).toContain("arch_phoenix_empress");
+    expect(b.wardrobePropContinuityIds).toEqual(
+      expect.arrayContaining(["wpc_02_jianghu_dao", "wpc_07_court_phoenix"]),
+    );
   });
 
   it("题材含糊但编剧人物表已是交领外袍 → 纠回 ancient", () => {

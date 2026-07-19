@@ -3,6 +3,7 @@ import {
   MANHUA_FACTORY_STAGE_ORDER,
   applyFactoryPrefsToBlocks,
   applyTopicToFactoryStory,
+  expandManhuaShotKeyartsAfterReverse,
   extractFactoryMotionHints,
   filterBlocksByEpisode,
   getBlockEpisodeIndex,
@@ -188,6 +189,84 @@ describe("canvasDramaStudio factory", () => {
     const keyart = next.find((b) => b.id.startsWith("keyart-"))!.prompt;
     expect(keyart).toContain("【画风硬锁】");
     expect(keyart).toContain("仿真人");
+    expect(keyart).toContain("【角色库锚点】");
+  });
+
+  it("spawns keyart in edit mode with scene/prop fusion refs when demos ready", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      ancientArchetypeIds: ["arch_rain_jianghu_dao"],
+      sceneId: "scene_07",
+      propIds: ["demo_prop_xianxia_sword", "demo_prop_ancient_jade"],
+    });
+    const key = blocks.find((b) => b.id.startsWith("keyart-"))!;
+    expect(key.imageMode).toBe("edit");
+    expect(key.refImageUrl).toMatch(/\/manhua-scenes\//);
+    expect(key.editFusionUrls?.some((u) => u.includes("/manhua-props/"))).toBe(true);
+    expect(key.prompt).toContain("【静帧·示范图融图】");
+  });
+
+  it("expands multi-shot keyarts after reverse and orders all of them", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id
+        ? {
+            ...b,
+            status: "done" as const,
+            outputText: [
+              "1. 刀客推门进客栈",
+              "2. 对峙油灯",
+              "3. 拔刀交锋",
+              "4. 雨夜收刀",
+            ].join("\n"),
+          }
+        : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+    const keyarts = expanded.blocks.filter((b) => b.id.startsWith("keyart-"));
+    expect(keyarts.length).toBe(4);
+    expect(keyarts.every((k) => k.prompt.includes("【分镜"))).toBe(true);
+    expect(keyarts.some((k) => k.prompt.includes("拔刀交锋"))).toBe(true);
+    const ordered = resolveManhuaFactoryOrderedIds(expanded.blocks, "keyart", 1);
+    expect(ordered.filter((id) => id.startsWith("keyart-"))).toHaveLength(4);
+  });
+
+  it("spawn/prefs inject wardrobe+cast+genre into keyart (not bible-only)", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "仙侠剑修闯秘境",
+      genreId: "xianxia",
+      sceneId: "scene_04",
+      ancientArchetypeIds: ["arch_rain_jianghu_dao"],
+      wardrobePropContinuityIds: ["wpc_01_xianxia_sword"],
+      propIds: ["demo_prop_xianxia_sword"],
+      writerContext: "【编剧视觉摘要】女帝青衣佩剑，雨夜秘境石阶，冷青雾气。",
+    });
+    const key = blocks.find((b) => b.id.startsWith("keyart-"))!.prompt;
+    expect(key).toContain("【服装道具连续性】");
+    expect(key).toContain("仙侠剑修连续");
+    expect(key).toContain("【古风原型锚点】");
+    expect(key).toContain("【编剧剧种模板");
+    expect(key).toContain("编剧视觉摘要");
+    expect(key).toContain("本集主场景优先");
+    expect(key).toMatch(/秘境|洞府/);
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      wardrobePropContinuityIds: ["wpc_03_urban_power"],
+      characterIds: ["char_f_02", "char_m_02"],
+      ancientArchetypeIds: [],
+      genreId: "urban",
+      sceneId: "scene_12",
+      craftShotIds: [],
+      motionPromptIds: [],
+    });
+    const key2 = next.find((b) => b.id.startsWith("keyart-"))!.prompt;
+    expect(key2).toContain("都市权谋连续");
+    expect(key2).not.toContain("仙侠剑修连续");
+    expect(key2).toContain("【角色库锚点】");
+    expect(key2).toContain("都市办公室");
   });
 
   it("spawn injects art style into bible and keyart", () => {

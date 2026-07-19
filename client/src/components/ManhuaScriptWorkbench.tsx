@@ -1,7 +1,6 @@
 /**
- * 剧本工作台（示意 A · 引导式实测路径）：
- * 左=本集资产 · 中=片段脚本+多镜 · 右=预览 · 底=集时间线
- * 数据接工厂节点；多镜先由节拍/反推解析（按镜批量属中期）。
+ * 剧本工作台：左=本集资产 · 中=片段脚本+多镜 · 右=预览 · 底=集/分镜时间线
+ * 数据接工厂节点；反推后按镜展开多张静帧。
  */
 import { useMemo, useState } from "react";
 import { Clapperboard, Focus, Loader2, Play, Sparkles } from "lucide-react";
@@ -20,13 +19,14 @@ import { getManhuaSceneTemplate } from "@shared/manhuaSceneAssetLibrary";
 import {
   getManhuaDemoAsset,
   getManhuaDemoAssetPublicUrl,
+  listManhuaDemoAssetsForSceneTemplate,
 } from "@shared/manhuaScenePropDemoCatalog";
 import {
   parseWorkbenchShotsFromText,
+  resolveKeyartShotIndex,
   workbenchShotTotalSec,
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
-import { MANHUA_GUIDED_STEPS } from "@shared/manhuaGuidedPath";
 
 type Props = {
   blocks: CanvasBlock[];
@@ -64,6 +64,16 @@ type Props = {
 
 function blockByStage(blocks: CanvasBlock[], episode: number, stage: string): CanvasBlock | undefined {
   return blocks.find((b) => stageKeyFromBlockId(b.id) === stage && (getBlockEpisodeIndex(b) ?? 1) === episode);
+}
+
+function keyartsForEpisode(blocks: CanvasBlock[], episode: number): CanvasBlock[] {
+  return blocks
+    .filter((b) => b.id.startsWith("keyart-") && (getBlockEpisodeIndex(b) ?? 1) === episode)
+    .sort(
+      (a, b) =>
+        resolveKeyartShotIndex(a.id, a.prompt) - resolveKeyartShotIndex(b.id, b.prompt) ||
+        a.id.localeCompare(b.id),
+    );
 }
 
 function mediaUrl(b?: CanvasBlock): string | undefined {
@@ -112,7 +122,11 @@ export default function ManhuaScriptWorkbench({
 
   const beats = blockByStage(blocks, focusEpisode, "beats");
   const reverse = blockByStage(blocks, focusEpisode, "reverse");
-  const keyart = blockByStage(blocks, focusEpisode, "keyart");
+  const episodeKeyarts = useMemo(
+    () => keyartsForEpisode(blocks, focusEpisode),
+    [blocks, focusEpisode],
+  );
+  const keyart = episodeKeyarts[0];
   const clip = blockByStage(blocks, focusEpisode, "clip");
   const story = blockByStage(blocks, focusEpisode, "story");
 
@@ -126,7 +140,14 @@ export default function ManhuaScriptWorkbench({
 
   const totalSec = workbenchShotTotalSec(shots);
   const activeShot = shots[Math.min(shotIndex, Math.max(0, shots.length - 1))] || shots[0];
-  const previewUrl = mediaUrl(clip) || mediaUrl(keyart);
+  const activeKeyart =
+    episodeKeyarts.find(
+      (b) => resolveKeyartShotIndex(b.id, b.prompt) === (activeShot?.index ?? 1),
+    ) ||
+    episodeKeyarts[Math.min(shotIndex, Math.max(0, episodeKeyarts.length - 1))] ||
+    keyart;
+  const anyKeyartUrl = episodeKeyarts.map(mediaUrl).find(Boolean);
+  const previewUrl = mediaUrl(clip) || mediaUrl(activeKeyart) || anyKeyartUrl;
   const previewIsVideo = Boolean(mediaUrl(clip));
 
   const characters = characterIds
@@ -136,11 +157,24 @@ export default function ManhuaScriptWorkbench({
     .map((id) => getAncientArchetypeById(id))
     .filter(Boolean);
   const scene = sceneId ? getManhuaSceneTemplate(sceneId) : null;
+  const sceneDemos = useMemo(
+    () => listManhuaDemoAssetsForSceneTemplate(sceneId).slice(0, 4),
+    [sceneId],
+  );
   const props = propIds.map((id) => getManhuaDemoAsset(id)).filter(Boolean);
 
   const stageStrip = useMemo(() => {
     const stages = ["story", "bible", "beats", "reverse", "keyart", "clip"] as const;
     return stages.map((stage) => {
+      if (stage === "keyart") {
+        const has = episodeKeyarts.some((b) => Boolean(mediaUrl(b)));
+        return {
+          stage,
+          label: MANHUA_FACTORY_STAGE_LABEL_ZH[stage],
+          has,
+          blockId: activeKeyart?.id || episodeKeyarts[0]?.id,
+        };
+      }
       const b = blockByStage(blocks, focusEpisode, stage);
       const has =
         Boolean(b && (b.outputUrl || b.outputUrls?.[0] || (b.outputText || "").trim()));
@@ -151,73 +185,30 @@ export default function ManhuaScriptWorkbench({
         blockId: b?.id,
       };
     });
-  }, [blocks, focusEpisode]);
-
-  const guidedActiveId = useMemo(() => {
-    if (finalVideoUrl) return "preview";
-    if (mediaUrl(clip)) return "clip";
-    if (mediaUrl(keyart)) return "keyart";
-    if (characters.length || archetypes.length) return "wb";
-    if (projectBibleSummary) return "cast";
-    return "wb";
-  }, [finalVideoUrl, clip, keyart, characters.length, archetypes.length, projectBibleSummary]);
-
-  const guidedActiveIndex = MANHUA_GUIDED_STEPS.findIndex((s) => s.id === guidedActiveId);
+  }, [blocks, focusEpisode, episodeKeyarts, activeKeyart?.id]);
 
   return (
-    <div className="mt-4 overflow-hidden rounded-2xl border border-cyan-400/15 bg-gradient-to-b from-[#0c1520] via-[#0a0e18] to-[#08070f]">
-      {/* 引导路径条 · 示意 A */}
-      <div className="border-b border-white/10 px-3 py-2.5 md:px-4">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-[13px] font-semibold text-white/90">
-            <Clapperboard className="h-4 w-4 text-cyan-300" />
-            剧本工作台
-            <span className="rounded-full border border-cyan-400/35 bg-cyan-500/12 px-2 py-0.5 text-[10px] font-medium text-cyan-100/90">
-              引导式实测
-            </span>
+    <div className="mt-3 overflow-hidden rounded-2xl border border-white/12 bg-[#0a0d14] shadow-[0_12px_48px_rgba(0,0,0,0.45)]">
+      {/* 顶栏：对标竞品工作台条，路径轨由页顶引导条负责，此处不再重复 */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-2.5 md:px-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <Clapperboard className="h-4 w-4 shrink-0 text-cyan-300" />
+          <div className="min-w-0">
+            <div className="text-[13px] font-semibold text-white/95">剧本工作台</div>
+            <p className="truncate text-[11px] text-white/40">
+              {seriesTitle || topic || "未填题材"}
+              {artStyleLabelZh ? ` · ${artStyleLabelZh}` : ""}
+              {" · "}
+              第{focusEpisode}集 · 约 {totalSec}s · {shots.length} 镜
+            </p>
           </div>
-          <p className="truncate text-[11px] text-white/40">
-            {seriesTitle || topic || "未填题材"}
-            {artStyleLabelZh ? ` · ${artStyleLabelZh}` : ""}
-            {" · "}
-            第{focusEpisode}集 · 约 {totalSec}s · {shots.length} 镜
-          </p>
-        </div>
-        <div className="flex gap-1 overflow-x-auto pb-0.5">
-          {MANHUA_GUIDED_STEPS.map((step, i) => {
-            const done = i < guidedActiveIndex;
-            const on = i === guidedActiveIndex;
-            return (
-              <div key={step.id} className="flex shrink-0 items-center gap-1">
-                {i > 0 ? <span className="px-0.5 text-[10px] text-white/20">→</span> : null}
-                <span
-                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
-                    on
-                      ? "border-cyan-400/50 bg-cyan-500/20 text-cyan-50"
-                      : done
-                        ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-100/80"
-                        : "border-white/10 bg-white/[0.03] text-white/35"
-                  }`}
-                >
-                  <span
-                    className={`flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold ${
-                      on ? "bg-cyan-400/90 text-black" : done ? "bg-emerald-500/70 text-white" : "bg-white/10"
-                    }`}
-                  >
-                    {i + 1}
-                  </span>
-                  {step.label}
-                </span>
-              </div>
-            );
-          })}
         </div>
         {projectBibleSummary ? (
-          <p className="mt-1.5 truncate text-[10px] text-emerald-100/65" title={projectBibleSummary}>
+          <p className="max-w-md truncate text-[10px] text-emerald-100/70" title={projectBibleSummary}>
             专案设定：{projectBibleSummary}
           </p>
         ) : (
-          <p className="mt-1.5 text-[10px] text-white/35">确认编剧后生成专案设定（绑定角色/画风至各集）</p>
+          <p className="text-[10px] text-white/35">确认编剧后绑定角色 / 画风至各集</p>
         )}
       </div>
 
@@ -288,36 +279,38 @@ export default function ManhuaScriptWorkbench({
         </div>
       </div>
 
-      <div className="grid gap-0 lg:grid-cols-[220px_minmax(0,1fr)_minmax(240px,320px)]">
-        {/* 左：本集资产 */}
-        <aside className="border-b border-white/10 p-3 lg:border-b-0 lg:border-r">
+      <div className="grid gap-0 xl:grid-cols-[280px_minmax(0,1fr)_minmax(420px,46vw)] lg:grid-cols-[240px_minmax(0,1fr)_minmax(340px,40vw)]">
+        {/* 左：本案资产（角色缩略 + 场景墙 + 道具墙） */}
+        <aside className="max-h-[min(78vh,860px)] overflow-y-auto border-b border-white/10 p-3 lg:border-b-0 lg:border-r">
           <div className="mb-2 flex items-center justify-between">
-            <div className="text-[11px] font-semibold text-white/75">本集资产</div>
+            <div className="text-[12px] font-semibold text-white/85">本案资产</div>
             <button
               type="button"
               onClick={() => onOpenCharacterCard?.()}
               className="text-[10px] text-cyan-200/80 underline-offset-2 hover:underline"
             >
-              换人
+              换造型
             </button>
           </div>
 
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-white/35">角色</div>
-          <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+          <div className="text-[10px] font-semibold tracking-wide text-white/40">
+            角色 · {(characters.length || 0) + (archetypes.length || 0)}
+          </div>
+          <div className="mt-1.5 grid grid-cols-3 gap-1.5">
             {characters.map((c) => (
               <button
                 key={c!.id}
                 type="button"
                 onClick={() => onOpenCharacterCard?.()}
-                className="overflow-hidden rounded-lg border border-white/10 bg-black/35 text-left"
+                className="overflow-hidden rounded-lg border border-white/12 bg-black/40 text-left"
               >
                 <img
                   src={getManhuaCharacterPreviewUrl(c!.id)}
                   alt=""
-                  className="aspect-[3/4] w-full object-cover object-top"
+                  className="aspect-square w-full object-cover object-top"
                   loading="lazy"
                 />
-                <div className="truncate px-1.5 py-1 text-[10px] text-white/80">{c!.nameZh}</div>
+                <div className="truncate px-1 py-0.5 text-[9px] text-white/80">{c!.nameZh}</div>
               </button>
             ))}
             {archetypes.map((a) => (
@@ -325,34 +318,40 @@ export default function ManhuaScriptWorkbench({
                 key={a!.id}
                 type="button"
                 onClick={() => onOpenCharacterCard?.()}
-                className="overflow-hidden rounded-lg border border-amber-400/25 bg-amber-500/10 text-left"
+                className="overflow-hidden rounded-lg border border-amber-400/30 bg-amber-500/10 text-left"
                 title={a!.nameZh}
               >
-                <img
-                  src={getAncientArchetypePreviewUrl(a!.id)}
-                  alt=""
-                  className="aspect-[3/4] w-full object-cover object-top"
-                  loading="lazy"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.display = "none";
-                  }}
-                />
-                <div className="truncate px-1.5 py-1 text-[10px] text-amber-50/90">古风·{a!.nameZh}</div>
+                <div className="relative aspect-square w-full bg-black/50">
+                  <img
+                    src={getAncientArchetypePreviewUrl(a!.id)}
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover object-top"
+                    loading="lazy"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display = "none";
+                    }}
+                  />
+                  <div className="absolute inset-0 flex items-end bg-gradient-to-t from-black/80 to-transparent px-1 pb-1 text-[9px] text-amber-50/95">
+                    {a!.nameZh}
+                  </div>
+                </div>
               </button>
             ))}
             {!characters.length && !archetypes.length ? (
               <button
                 type="button"
                 onClick={() => onOpenCharacterCard?.()}
-                className="col-span-2 rounded-lg border border-dashed border-white/15 px-2 py-4 text-center text-[10px] text-white/40"
+                className="col-span-3 rounded-lg border border-dashed border-white/15 px-2 py-5 text-center text-[10px] text-white/40"
               >
-                尚未套用角色 · 点此打开角色卡
+                尚未套用角色 · 打开角色卡
               </button>
             ) : null}
           </div>
 
           <div className="mt-3 flex items-center justify-between">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-white/35">场景</div>
+            <div className="text-[10px] font-semibold tracking-wide text-white/40">
+              场景 · {sceneDemos.length || (scene ? 1 : 0)}
+            </div>
             <button
               type="button"
               onClick={() => onOpenAssetWall?.()}
@@ -361,16 +360,45 @@ export default function ManhuaScriptWorkbench({
               资产墙
             </button>
           </div>
-          <div className="mt-1.5 rounded-lg border border-white/10 bg-black/35 px-2 py-2 text-[11px] text-white/75">
-            {scene ? scene.nameZh : "未选场景（铺板时按题材推荐）"}
+          <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+            {sceneDemos.map((d) => {
+              const url = getManhuaDemoAssetPublicUrl(d.id);
+              return (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => onOpenAssetWall?.()}
+                  className="overflow-hidden rounded-lg border border-white/12 bg-black/40 text-left"
+                  title={d.nameZh}
+                >
+                  {url ? (
+                    <img src={url} alt="" className="aspect-video w-full object-cover" loading="lazy" />
+                  ) : (
+                    <div className="flex aspect-video items-center justify-center text-[9px] text-white/30">
+                      待生成
+                    </div>
+                  )}
+                  <div className="truncate px-1 py-0.5 text-[9px] text-white/70">{d.nameZh}</div>
+                </button>
+              );
+            })}
+            {!sceneDemos.length ? (
+              <div className="col-span-2 rounded-lg border border-white/10 bg-black/35 px-2 py-3 text-[11px] text-white/55">
+                {scene ? scene.nameZh : "未选场景（铺板时按题材推荐）"}
+              </div>
+            ) : null}
           </div>
 
-          <div className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-white/35">道具</div>
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
+          <div className="mt-3 text-[10px] font-semibold tracking-wide text-white/40">
+            道具 · {props.length}
+          </div>
+          <div className="mt-1.5 grid grid-cols-3 gap-1.5">
             {props.map((p) => (
-              <div
+              <button
                 key={p!.id}
-                className="w-[72px] overflow-hidden rounded-md border border-white/10 bg-black/35"
+                type="button"
+                onClick={() => onOpenAssetWall?.()}
+                className="overflow-hidden rounded-md border border-white/12 bg-black/40 text-left"
                 title={p!.nameZh}
               >
                 <img
@@ -383,10 +411,16 @@ export default function ManhuaScriptWorkbench({
                   }}
                 />
                 <div className="truncate px-1 py-0.5 text-[9px] text-white/65">{p!.nameZh}</div>
-              </div>
+              </button>
             ))}
             {!props.length ? (
-              <span className="text-[10px] text-white/35">未点选道具</span>
+              <button
+                type="button"
+                onClick={() => onOpenAssetWall?.()}
+                className="col-span-3 rounded-lg border border-dashed border-white/15 px-2 py-4 text-center text-[10px] text-white/40"
+              >
+                未点选道具 · 打开资产墙
+              </button>
             ) : null}
           </div>
 
@@ -410,12 +444,15 @@ export default function ManhuaScriptWorkbench({
           </div>
         </aside>
 
-        {/* 中：脚本 + 多镜 */}
-        <section className="min-w-0 border-b border-white/10 p-3 lg:border-b-0 lg:border-r">
+        {/* 中：脚本 + 多镜（对标竞品「片段」编辑区） */}
+        <section className="min-w-0 border-b border-white/10 p-3 lg:max-h-[min(78vh,860px)] lg:overflow-y-auto lg:border-b-0 lg:border-r">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/85">
-              片段 · 第{focusEpisode}集
+              片段 {String(focusEpisode).padStart(2, "0")}
               {story?.episodeTitle ? ` · ${story.episodeTitle}` : ""}
+              <span className="ml-2 font-normal text-white/40">
+                镜 {activeShot?.index ?? "—"}/{shots.length}
+              </span>
             </div>
             <div className="flex flex-wrap gap-1">
               {stageStrip.map((s) => (
@@ -447,42 +484,59 @@ export default function ManhuaScriptWorkbench({
           <div className="mt-3 text-[11px] font-semibold text-white/70">
             分镜（{shots.length}）· 当前第 {activeShot?.index ?? "—"} 镜
           </div>
-          <div className="mt-1.5 max-h-[320px] space-y-1.5 overflow-y-auto pr-1">
+          <div className="mt-1.5 max-h-[min(52vh,480px)] space-y-1.5 overflow-y-auto pr-1">
             {shots.map((shot, i) => {
               const on = i === Math.min(shotIndex, shots.length - 1);
+              const shotKey =
+                episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
+                episodeKeyarts[i];
+              const thumb = mediaUrl(shotKey);
               return (
                 <button
                   key={shot.index}
                   type="button"
                   onClick={() => setShotIndex(i)}
-                  className={`w-full rounded-lg border px-2.5 py-2 text-left transition ${
+                  className={`flex w-full gap-2 rounded-lg border px-2 py-2 text-left transition ${
                     on
-                      ? "border-cyan-400/45 bg-cyan-500/15"
+                      ? "border-cyan-400/50 bg-cyan-500/15"
                       : "border-white/10 bg-white/[0.03] hover:border-white/20"
                   }`}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-semibold text-white/90">
-                      分镜 {shot.index}
-                      <span className="ml-2 font-normal text-white/45">{shot.durationSec}s</span>
-                    </span>
-                    {on ? <Sparkles className="h-3.5 w-3.5 text-cyan-200" /> : null}
+                  <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-white/10 bg-black/50">
+                    {thumb ? (
+                      <img src={thumb} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-[9px] text-white/30">
+                        {String(shot.index).padStart(2, "0")}
+                      </div>
+                    )}
                   </div>
-                  <div className="mt-0.5 text-[10px] text-cyan-100/70">{shot.cameraZh}</div>
-                  <div className="mt-0.5 text-[11px] leading-snug text-white/70">{shot.actionZh}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold text-white/90">
+                        分镜 {shot.index}
+                        <span className="ml-2 font-normal text-white/45">{shot.durationSec}s</span>
+                      </span>
+                      {on ? <Sparkles className="h-3.5 w-3.5 shrink-0 text-cyan-200" /> : null}
+                    </div>
+                    <div className="mt-0.5 text-[10px] text-cyan-100/70">{shot.cameraZh}</div>
+                    <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-white/70">
+                      {shot.actionZh}
+                    </div>
+                  </div>
                 </button>
               );
             })}
           </div>
           <p className="mt-2 text-[10px] leading-snug text-white/35">
-            多镜列表由节拍/反推文本解析；成片仍是每集一条微动（下一步再接按镜静帧批量）。点阶段 chip 可聚焦对应画布节点。
+            点分镜切换右栏预览；静帧按镜生成（最多 {Math.min(shots.length, 4)} 张），成片以第 1 镜为底图。
           </p>
         </section>
 
-        {/* 右：预览 */}
-        <aside className="p-3">
+        {/* 右：视频结果（主视觉，对标竞品大预览） */}
+        <aside className="flex flex-col p-3 lg:min-h-[min(78vh,860px)]">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="text-[12px] font-semibold text-white/85">视频结果</div>
+            <div className="text-[13px] font-semibold text-white/90">视频结果</div>
             {factoryBusy ? (
               <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50">
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -507,13 +561,13 @@ export default function ManhuaScriptWorkbench({
             )}
           </div>
           <div
-            className={`flex aspect-[9/16] min-h-[360px] max-h-[min(72vh,640px)] w-full items-center justify-center overflow-hidden rounded-xl border bg-black/60 ${
+            className={`flex min-h-[420px] w-full flex-1 items-center justify-center overflow-hidden rounded-xl border bg-black/70 ${
               finalVideoUrl || previewIsVideo
-                ? "border-cyan-400/40"
+                ? "border-cyan-400/45"
                 : factoryBusy
                   ? "border-amber-400/35"
-                  : "border-white/10"
-            }`}
+                  : "border-white/12"
+            } aspect-[9/16] max-h-[min(78vh,820px)]`}
           >
             {finalVideoUrl ? (
               <video src={finalVideoUrl} controls className="h-full w-full object-contain" />
@@ -551,13 +605,13 @@ export default function ManhuaScriptWorkbench({
             </p>
           ) : null}
           <div className="mt-2 flex flex-wrap gap-2">
-            {keyart?.id ? (
+            {activeKeyart?.id ? (
               <button
                 type="button"
-                onClick={() => onFocusBlock?.(keyart.id)}
+                onClick={() => onFocusBlock?.(activeKeyart.id)}
                 className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-[10px] text-white/65 hover:bg-white/5"
               >
-                <Focus className="h-3 w-3" /> 聚焦静帧节点
+                <Focus className="h-3 w-3" /> 聚焦本镜静帧
               </button>
             ) : null}
             {clip?.id ? (
@@ -573,8 +627,54 @@ export default function ManhuaScriptWorkbench({
         </aside>
       </div>
 
-      {/* 底：集时间线胶片条 */}
+      {/* 底：本集分镜胶片 + 集时间线 */}
       <div className="border-t border-white/10 px-3 py-2.5 md:px-4">
+        <div className="mb-2.5">
+          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-[11px] font-semibold text-white/70">
+              片段时间线 · 第{focusEpisode}集
+            </div>
+            <span className="text-[9px] text-white/35">
+              静帧 {episodeKeyarts.filter((b) => mediaUrl(b)).length}/
+              {Math.max(episodeKeyarts.length, shots.length, 1)} · 点选切换预览
+            </span>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {shots.map((shot, i) => {
+              const shotKey =
+                episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
+                episodeKeyarts[i];
+              const thumb = mediaUrl(shotKey);
+              const on = i === Math.min(shotIndex, shots.length - 1);
+              return (
+                <button
+                  key={`shot-${shot.index}`}
+                  type="button"
+                  onClick={() => setShotIndex(i)}
+                  className={`relative w-[88px] shrink-0 overflow-hidden rounded-lg border text-left ${
+                    on ? "border-cyan-400/60 ring-1 ring-cyan-400/35" : "border-white/12"
+                  }`}
+                >
+                  <div className="aspect-[9/16] bg-black/55">
+                    {thumb ? (
+                      <img src={thumb} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full flex-col items-center justify-center gap-0.5 text-white/30">
+                        <span className="text-[12px] font-semibold">
+                          {String(shot.index).padStart(2, "0")}
+                        </span>
+                        <span className="text-[8px]">待出</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="truncate px-1 py-0.5 text-[9px] text-white/60">
+                    片段{String(shot.index).padStart(2, "0")}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-white/35">
             集时间线
@@ -584,11 +684,12 @@ export default function ManhuaScriptWorkbench({
         </div>
         <div className="flex gap-2 overflow-x-auto pb-1">
           {episodeIndexes.map((ep) => {
-            const epKeyart = blockByStage(blocks, ep, "keyart");
+            const epKeys = keyartsForEpisode(blocks, ep);
+            const epKeyart = epKeys[0];
             const epClip = blockByStage(blocks, ep, "clip");
-            const thumb = mediaUrl(epKeyart) || mediaUrl(epClip);
+            const thumb = mediaUrl(epClip) || epKeys.map(mediaUrl).find(Boolean);
             const clipReady = Boolean(mediaUrl(epClip));
-            const stillReady = Boolean(mediaUrl(epKeyart));
+            const stillReady = epKeys.some((b) => Boolean(mediaUrl(b)));
             const bound = bibleBoundEpisodes.includes(ep);
             const on = ep === focusEpisode;
             return (
