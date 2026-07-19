@@ -1,10 +1,12 @@
 /**
- * 示意 A · 引导式实测路径轨（整页地基）
+ * 示意 A · 引导式实测路径轨（整页地基）+ 下一步行动条
  */
 import { useMemo } from "react";
+import { ArrowRight } from "lucide-react";
 import {
   MANHUA_GUIDED_STEPS,
   resolveManhuaGuidedActiveStep,
+  resolveManhuaGuidedNextAction,
   type ManhuaGuidedProgress,
   type ManhuaGuidedStepId,
 } from "@shared/manhuaGuidedPath";
@@ -15,11 +17,23 @@ type Props = {
   progress: ManhuaGuidedProgress;
   activeStepId?: ManhuaGuidedStepId;
   onStepClick?: (stepId: ManhuaGuidedStepId, href: string) => void;
+  onNextActionClick?: (stepId: ManhuaGuidedStepId, href: string) => void;
 };
 
-export default function ManhuaGuidedPathRail({ progress, activeStepId, onStepClick }: Props) {
+function scrollToHref(href: string) {
+  const el = document.querySelector(href);
+  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+export default function ManhuaGuidedPathRail({
+  progress,
+  activeStepId,
+  onStepClick,
+  onNextActionClick,
+}: Props) {
   const activeId = activeStepId || resolveManhuaGuidedActiveStep(progress);
   const activeIndex = MANHUA_GUIDED_STEPS.findIndex((s) => s.id === activeId);
+  const next = useMemo(() => resolveManhuaGuidedNextAction(progress), [progress]);
 
   const doneFlags = useMemo(() => {
     return {
@@ -63,8 +77,7 @@ export default function ManhuaGuidedPathRail({ progress, activeStepId, onStepCli
                 type="button"
                 onClick={() => {
                   onStepClick?.(step.id, step.href);
-                  const el = document.querySelector(step.href);
-                  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                  scrollToHref(step.href);
                 }}
                 className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
                   on
@@ -90,6 +103,27 @@ export default function ManhuaGuidedPathRail({ progress, activeStepId, onStepCli
             </div>
           );
         })}
+      </div>
+
+      <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-3 py-2">
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold text-cyan-50">
+            下一步 · {next.title}
+          </div>
+          <p className="mt-0.5 text-[10px] leading-snug text-white/50">{next.hint}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            onNextActionClick?.(next.stepId, next.href);
+            onStepClick?.(next.stepId, next.href);
+            scrollToHref(next.href);
+          }}
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/35 to-cyan-600/30 px-3 py-1.5 text-[11px] font-semibold text-cyan-50"
+        >
+          {next.ctaLabel}
+          <ArrowRight className="h-3.5 w-3.5" />
+        </button>
       </div>
     </div>
   );

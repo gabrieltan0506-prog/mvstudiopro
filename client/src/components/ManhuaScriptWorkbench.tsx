@@ -26,18 +26,7 @@ import {
   workbenchShotTotalSec,
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
-
-/** 示意 A 主路径（工作台内进度条；题材/编剧在上游完成） */
-const GUIDED_PATH_STEPS = [
-  { id: "topic", label: "题材" },
-  { id: "writer", label: "编剧" },
-  { id: "cast", label: "自动套" },
-  { id: "card", label: "角色卡" },
-  { id: "wb", label: "工作台" },
-  { id: "keyart", label: "静帧" },
-  { id: "clip", label: "成片" },
-  { id: "preview", label: "预览" },
-] as const;
+import { MANHUA_GUIDED_STEPS } from "@shared/manhuaGuidedPath";
 
 type Props = {
   blocks: CanvasBlock[];
@@ -170,7 +159,7 @@ export default function ManhuaScriptWorkbench({
     return "wb";
   }, [finalVideoUrl, clip, keyart, characters.length, archetypes.length, projectBibleSummary]);
 
-  const guidedActiveIndex = GUIDED_PATH_STEPS.findIndex((s) => s.id === guidedActiveId);
+  const guidedActiveIndex = MANHUA_GUIDED_STEPS.findIndex((s) => s.id === guidedActiveId);
 
   return (
     <div className="mt-4 overflow-hidden rounded-2xl border border-cyan-400/15 bg-gradient-to-b from-[#0c1520] via-[#0a0e18] to-[#08070f]">
@@ -192,7 +181,7 @@ export default function ManhuaScriptWorkbench({
           </p>
         </div>
         <div className="flex gap-1 overflow-x-auto pb-0.5">
-          {GUIDED_PATH_STEPS.map((step, i) => {
+          {MANHUA_GUIDED_STEPS.map((step, i) => {
             const done = i < guidedActiveIndex;
             const on = i === guidedActiveIndex;
             return (

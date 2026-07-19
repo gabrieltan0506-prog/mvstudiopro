@@ -1104,6 +1104,12 @@ export default function OmniCanvas() {
           response: finalVideoUrl.slice(0, 180),
         });
         toast.success(`长片已合成（${out.sceneCount || ready.length} 集 + 配乐）`);
+        window.setTimeout(() => {
+          document.querySelector("#manhua-clip-dock-zone")?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          });
+        }, 80);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "合成失败";
         for (const step of charged.reverse()) {
@@ -2055,7 +2061,15 @@ export default function OmniCanvas() {
                 }}
                 onStepClick={(stepId) => {
                   if (stepId === "card" || stepId === "cast") setManhuaAssetDrawer("characters");
-                  if (stepId === "wb" || stepId === "keyart") setManhuaUiMode("workbench");
+                  if (stepId === "wb" || stepId === "keyart" || stepId === "clip") {
+                    setManhuaUiMode("workbench");
+                  }
+                }}
+                onNextActionClick={(stepId) => {
+                  if (stepId === "card" || stepId === "cast") setManhuaAssetDrawer("characters");
+                  if (stepId === "wb" || stepId === "keyart" || stepId === "clip") {
+                    setManhuaUiMode("workbench");
+                  }
                 }}
               />
             ) : null}
@@ -2132,7 +2146,7 @@ export default function OmniCanvas() {
                 placeholder={"例：\n主角隐忍多年后归来\n对手是旧日盟友\n每集结尾必须留下未揭的局"}
                 className="mt-1 w-full resize-y rounded-xl border border-white/15 bg-black/50 px-3.5 py-2.5 text-sm leading-6 text-white placeholder:text-white/30 outline-none focus:border-emerald-400/55 disabled:opacity-50"
               />
-              <div className="mt-3 flex flex-wrap items-end gap-3">
+              <div className="mt-3 flex flex-wrap items-end gap-2.5">
                 <div>
                   <label className="block text-[11px] text-white/45">集数</label>
                   <select
@@ -2155,24 +2169,41 @@ export default function OmniCanvas() {
                   type="button"
                   disabled={writerBusy || factoryBusy}
                   onClick={() => void expandWriterRoom()}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-400/35 bg-emerald-500/20 px-3.5 py-2 text-xs font-semibold text-emerald-50 hover:bg-emerald-500/30 disabled:opacity-50"
+                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold disabled:opacity-50 ${
+                    writerPack
+                      ? "border-white/15 bg-white/[0.05] text-white/70 hover:bg-white/[0.08]"
+                      : "border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 text-cyan-50"
+                  }`}
                 >
                   {writerBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                  扩写剧情
+                  {writerPack ? "重新扩写" : "扩写剧情"}
                 </button>
                 <button
                   type="button"
                   disabled={writerBusy || factoryBusy || !writerPack}
-                  onClick={confirmWriterToDirector}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-sky-400/35 bg-sky-500/15 px-3.5 py-2 text-xs font-semibold text-sky-50 hover:bg-sky-500/25 disabled:opacity-50"
+                  onClick={() => {
+                    confirmWriterToDirector();
+                    setManhuaUiMode("workbench");
+                    window.setTimeout(() => {
+                      document.querySelector("#manhua-workbench-zone")?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                      });
+                    }, 80);
+                  }}
+                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold disabled:opacity-50 ${
+                    writerPack && !writerConfirmed
+                      ? "border-cyan-300/50 bg-gradient-to-b from-cyan-400/35 to-cyan-600/30 text-cyan-50 shadow-[0_0_18px_rgba(34,211,238,0.12)]"
+                      : "border-sky-400/35 bg-sky-500/15 text-sky-50 hover:bg-sky-500/25"
+                  }`}
                 >
-                  确认并进入编导
+                  {writerConfirmed ? "已确认 · 回工作台" : "确认并进入工作台"}
                 </button>
                 <button
                   type="button"
                   disabled={writerBusy || factoryBusy || !writerPack}
                   onClick={confirmWriterSeriesSpawn}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-violet-400/35 bg-violet-500/15 px-3.5 py-2 text-xs font-semibold text-violet-50 hover:bg-violet-500/25 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-white/12 bg-white/[0.04] px-3 py-2 text-xs font-medium text-white/60 hover:bg-white/[0.08] disabled:opacity-50"
                 >
                   按集铺板（最多 {MANHUA_SERIES_SPAWN_MAX}）
                 </button>
@@ -2184,7 +2215,7 @@ export default function OmniCanvas() {
                     setWriterConfirmed(false);
                     toast.message("已解锁编导区（未带连载剧情包）");
                   }}
-                  className="text-[11px] text-white/40 underline-offset-2 hover:text-white/70 hover:underline"
+                  className="text-[11px] text-white/35 underline-offset-2 hover:text-white/65 hover:underline"
                 >
                   跳过连载扩写
                 </button>

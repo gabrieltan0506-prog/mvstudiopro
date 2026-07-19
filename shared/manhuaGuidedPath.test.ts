@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolveManhuaGuidedActiveStep, type ManhuaGuidedProgress } from "./manhuaGuidedPath";
+import {
+  resolveManhuaGuidedActiveStep,
+  resolveManhuaGuidedNextAction,
+  type ManhuaGuidedProgress,
+} from "./manhuaGuidedPath";
 
 const base: ManhuaGuidedProgress = {
   hasTopic: false,
@@ -62,5 +66,21 @@ describe("resolveManhuaGuidedActiveStep", () => {
         hasFinalVideo: true,
       }),
     ).toBe("preview");
+  });
+
+  it("resolveManhuaGuidedNextAction follows pipeline", () => {
+    expect(resolveManhuaGuidedNextAction(base).ctaLabel).toMatch(/题材/);
+    expect(resolveManhuaGuidedNextAction({ ...base, hasTopic: true }).ctaLabel).toMatch(/扩写/);
+    expect(
+      resolveManhuaGuidedNextAction({ ...base, hasTopic: true, hasWriterPack: true }).title,
+    ).toMatch(/确认编剧/);
+    expect(
+      resolveManhuaGuidedNextAction({
+        ...base,
+        writerConfirmed: true,
+        hasCast: true,
+        hasClip: true,
+      }).href,
+    ).toBe("#manhua-clip-dock-zone");
   });
 });
