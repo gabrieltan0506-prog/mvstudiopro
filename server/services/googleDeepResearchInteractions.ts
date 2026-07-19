@@ -213,6 +213,7 @@ export async function createDeepResearchInteraction(params: CreateDrInteractionP
       "Content-Type": "application/json; charset=utf-8",
       "x-goog-api-key": apiKey,
       "X-Goog-Api-Client": "genai-node/deep-research-rest-create",
+      "Api-Revision": "2026-05-20",
     },
     body: JSON.stringify(body),
   });

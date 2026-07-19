@@ -35,6 +35,27 @@ export async function createJob(payload: {
   return response.json() as Promise<{ jobId: string }>;
 }
 
+/**
+ * 同源入队（www → Vercel rewrite → Fly）：适合「短创建 + 轮询」任务，避免长任务直连 api 子域。
+ */
+export async function createJobSameOrigin(payload: {
+  type: JobType;
+  userId: string;
+  input: Record<string, unknown>;
+}): Promise<{ jobId: string }> {
+  const response = await fetch("/api/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(detail || `Failed to create job (${response.status})`);
+  }
+  return response.json() as Promise<{ jobId: string }>;
+}
+
 function jobApiPath(jobId: string): string {
   return `/api/jobs/${encodeURIComponent(jobId)}`;
 }

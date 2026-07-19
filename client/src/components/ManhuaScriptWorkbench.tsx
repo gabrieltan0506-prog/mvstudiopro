@@ -53,6 +53,9 @@ type Props = {
   onOpenCharacterCard?: () => void;
   onOpenAssetWall?: () => void;
   onSpawnAndRunClip?: () => void;
+  /** 成片坞已勾选集：静帧+成片连跑 */
+  onRunFullAuto?: () => void;
+  onResumeFromFailure?: () => void;
   onFocusBlock?: (blockId: string) => void;
 };
 
@@ -87,6 +90,8 @@ export default function ManhuaScriptWorkbench({
   onOpenCharacterCard,
   onOpenAssetWall,
   onSpawnAndRunClip,
+  onRunFullAuto,
+  onResumeFromFailure,
   onFocusBlock,
 }: Props) {
   const [shotIndex, setShotIndex] = useState(0);
@@ -193,6 +198,26 @@ export default function ManhuaScriptWorkbench({
             <Play className="h-3.5 w-3.5" />
             {factoryBusy ? "生成中…" : "生成本集成片"}
           </button>
+          {onRunFullAuto ? (
+            <button
+              type="button"
+              disabled={!canRun || factoryBusy}
+              onClick={() => onRunFullAuto()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400/40 bg-amber-500/15 px-3 py-1.5 text-[11px] font-semibold text-amber-50 disabled:opacity-45"
+            >
+              勾选集全自动
+            </button>
+          ) : null}
+          {onResumeFromFailure ? (
+            <button
+              type="button"
+              disabled={!canRun || factoryBusy}
+              onClick={() => onResumeFromFailure()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-orange-400/35 bg-orange-500/15 px-3 py-1.5 text-[11px] font-semibold text-orange-50 disabled:opacity-45"
+            >
+              从失败处续跑
+            </button>
+          ) : null}
         </div>
       </div>
 

@@ -543,8 +543,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     .filter(Boolean)
     .join("\n\n");
   clip.parentId = keyArt.id;
-  /** 开发期默认 Omni（省钱可测）；Seedance 2.0 仍在 VIDEO_MODEL_OPTIONS，完工验收再手选真跑 */
-  clip.videoModel = "gemini-omni-flash";
+  /** 工厂主成片走 Seedance；Omni 留给下游 omni_edit（Interactions，须 @google/genai≥2） */
+  clip.videoModel = "seedance-2.0";
   clip.aspectRatio = "9:16";
   if (pathCameraRecipeIds[0]) clip.pathCameraRecipeId = pathCameraRecipeIds[0];
   if (opts.pathAnnotationJson != null) clip.pathAnnotationJson = opts.pathAnnotationJson;
@@ -1014,7 +1014,7 @@ export function extractFactoryMotionHints(reverseMarkdown: string): {
 /** 网关超时 / 瞬时 5xx / abort 等可重试 */
 export function isTransientFactoryError(message: string): boolean {
   const m = String(message || "");
-  return /abort|timeout|超时|ROUTER_EXTERNAL|ECONNRESET|ETIMEDOUT|502|503|504|网关|稍后重试|算力紧张|rate.?limit|429/i.test(
+  return /abort|timeout|超时|ROUTER_EXTERNAL|ECONNRESET|ETIMEDOUT|502|503|504|网关|稍后重试|算力紧张|rate.?limit|429|Failed to fetch|fetch failed|NetworkError|Load failed|network error/i.test(
     m,
   );
 }
@@ -1200,8 +1200,11 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       ),
     );
 
-    // 角色卡阶段历史上易 503：多给两次退避；下游 runGeminiScript / 网关会再换 Flash
-    const maxRetries = stage === "bible" ? Math.min(5, defaultMaxRetries + 2) : defaultMaxRetries;
+    // 角色卡 / 故事大纲易遇网关抖动（含浏览器 Failed to fetch）：多给两次退避
+    const maxRetries =
+      stage === "bible" || stage === "story"
+        ? Math.min(5, defaultMaxRetries + 2)
+        : defaultMaxRetries;
     let lastMessage = "生成失败";
     let succeeded = false;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {

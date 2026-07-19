@@ -26,14 +26,6 @@ import { characterLockStep } from "../server/workflow/steps/characterLockStep.js
 import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveStep.js";
 import { synthesizeVoiceAudio } from "../server/models/voiceSynthesis.js";
 import { resolveSafeFlyPlatformImageReadPath } from "../server/services/flyVolumeGeneratedImages.js";
-import {
-  MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
-  buildManhuaAssemblePlan,
-  buildManhuaSunoPrompt,
-  type ManhuaAssembleClipInput,
-  type ManhuaAssembleSceneVideo,
-} from "../shared/manhuaFinalAssemble.js";
-
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
 function getBody(req: VercelRequest): any {
@@ -2874,212 +2866,33 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
      */
     if (opNormalized === "manhuaassemblefinal") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-
-      let sceneVideos: ManhuaAssembleSceneVideo[] = [];
-      let skippedEpisodes: Array<{ episodeIndex: number; reason: string; title?: string }> = [];
-      if (Array.isArray(b.sceneVideos) && b.sceneVideos.length) {
-        sceneVideos = b.sceneVideos
-          .map((row: any, i: number) => ({
-            sceneIndex: Math.max(1, Math.floor(Number(row?.sceneIndex) || i + 1)),
-            url: s(row?.url).trim(),
-            duration: s(row?.duration).trim() || "15s",
-            stillImageUrl: s(row?.stillImageUrl).trim() || undefined,
-            stillDuration: s(row?.stillDuration).trim() || undefined,
-          }))
-          .filter((row: ManhuaAssembleSceneVideo) => Boolean(row.url));
-      } else {
-        const clipsRaw = Array.isArray(b.clips) ? b.clips : [];
-        const clips: ManhuaAssembleClipInput[] = clipsRaw.map((row: any) => ({
-          episodeIndex: Math.floor(Number(row?.episodeIndex) || 0),
-          episodeTitle: s(row?.episodeTitle).trim() || undefined,
-          clipUrl: s(row?.clipUrl || row?.url).trim() || undefined,
-          keyartUrl: s(row?.keyartUrl || row?.stillImageUrl).trim() || undefined,
-          durationSec: Number(row?.durationSec) || undefined,
-        }));
-        const episodeIndexes = Array.isArray(b.episodeIndexes)
-          ? b.episodeIndexes.map((n: any) => Math.floor(Number(n) || 0)).filter((n: number) => n >= 1)
-          : undefined;
-        const plan = buildManhuaAssemblePlan(clips, { episodeIndexes });
-        sceneVideos = plan.sceneVideos;
-        skippedEpisodes = plan.skippedEpisodes;
-      }
-      if (!sceneVideos.length) {
-        return res.status(400).json(
-          fail("manhua_assemble_no_clips", "至少需要一集成片才能合成长片", { skippedEpisodes }),
-        );
-      }
-
-      let musicUrl = s(b.musicUrl).trim();
-      let musicPrompt = s(b.musicPrompt).trim();
-      let musicProviderUsed: "suno" | "udio" | "" = "";
-      if (!musicUrl) {
-        if (!AIM_KEY) {
-          return res.status(500).json(fail("missing_env", "AIMUSIC_API_KEY is required", { detail: "AIMUSIC_API_KEY" }));
-        }
-        if (!musicPrompt) {
-          musicPrompt = buildManhuaSunoPrompt({
-            topic: s(b.topic),
-            seriesTitle: s(b.seriesTitle),
-            logline: s(b.logline),
-          });
-        }
-        // 一次生成约 4 分钟，够约两集；常一次出两首 → 三集一轮够用。失败则回退 Udio。
-        const musicDuration = Math.max(
-          30,
-          Math.min(240, Math.floor(Number(b.musicDuration) || MANHUA_ASSEMBLE_MUSIC_DURATION_SEC)),
-        );
-        const preferredProvider = normalizeMusicProvider(b.musicProvider || "suno");
-        const providerOrder: Array<"suno" | "udio"> =
-          preferredProvider === "udio" ? ["udio", "suno"] : ["suno", "udio"];
-        let rawTask: any = null;
-        const providerErrors: Array<{ provider: string; error: string }> = [];
-
-        for (const provider of providerOrder) {
-          const createUrl =
-            provider === "udio" ? `${AIM_BASE}/api/v1/nuro/create` : `${AIM_BASE}/api/v1/sonic/create`;
-          const taskUrlBase =
-            provider === "udio" ? `${AIM_BASE}/api/v1/nuro/task/` : `${AIM_BASE}/api/v1/sonic/task/`;
-          const nuroDuration = Math.max(30, Math.min(120, musicDuration));
-          const createBody =
-            provider === "udio"
-              ? {
-                  type: "bgm",
-                  version: "v2.0",
-                  description: musicPrompt.slice(0, 200),
-                  duration: nuroDuration,
-                }
-              : {
-                  task_type: "create_music",
-                  custom_mode: false,
-                  mv: "sonic-v5-5",
-                  gpt_description_prompt: musicPrompt,
-                };
-
-          const created = await fetchJson(createUrl, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${AIM_KEY}`,
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify(createBody),
-          });
-          if (!created.ok) {
-            providerErrors.push({
-              provider,
-              error: "music_create_failed",
-            });
-            continue;
-          }
-          const taskId = s(
-            created.json?.data?.task_id ||
-              created.json?.task_id ||
-              created.json?.taskId ||
-              created.json?.data?.id ||
-              created.json?.id,
-          ).trim();
-          if (!taskId) {
-            providerErrors.push({ provider, error: "missing_music_task_id" });
-            continue;
-          }
-
-          let candidateUrl = "";
-          let failed = false;
-          for (let i = 0; i < 40; i += 1) {
-            await sleep(3000);
-            const polled = await fetchJson(`${taskUrlBase}${encodeURIComponent(taskId)}`, {
-              method: "GET",
-              headers: { Authorization: `Bearer ${AIM_KEY}`, Accept: "application/json" },
-            });
-            let pollJson: any = polled.json ?? polled.rawText;
-            if (provider === "udio") pollJson = normalizeNuroPollJson(pollJson);
-            rawTask = pollJson;
-            const status = s(
-              pollJson?.status ||
-                pollJson?.state ||
-                pollJson?.data?.[0]?.status ||
-                pollJson?.data?.[0]?.state ||
-                "",
-            ).toLowerCase();
-            candidateUrl = extractMusicUrlFromPayload(pollJson);
-            if (candidateUrl) break;
-            if (status === "failed" || status === "error" || status === "cancelled") {
-              providerErrors.push({
-                provider,
-                error: deriveMusicError(status, rawTask) || status,
-              });
-              failed = true;
-              break;
-            }
-          }
-          if (failed) continue;
-          if (!candidateUrl) {
-            providerErrors.push({ provider, error: "music_task_timeout_or_missing_music_url" });
-            continue;
-          }
-          try {
-            musicUrl = await uploadWorkflowAudioToBlob(candidateUrl, "manhua-music");
-            musicProviderUsed = provider;
-            break;
-          } catch (error: any) {
-            providerErrors.push({
-              provider,
-              error: error?.message || String(error) || "music download failed",
-            });
-          }
-        }
-
-        if (!musicUrl) {
-          return res.status(502).json(
-            fail("music_create_failed", "Music create request failed", {
-              tried: providerOrder,
-              providerErrors,
-              raw: rawTask,
-            }),
-          );
-        }
-      }
-
-      const musicVolume = Number.isFinite(Number(b.musicVolume)) ? Math.max(0, Number(b.musicVolume)) : 0.35;
-      const musicFadeInSec = Number.isFinite(Number(b.musicFadeInSec)) ? Math.max(0, Number(b.musicFadeInSec)) : 1;
-      const musicFadeOutSec = Number.isFinite(Number(b.musicFadeOutSec))
-        ? Math.max(0, Number(b.musicFadeOutSec))
-        : 2;
-      let finalVideoUrl = "";
+      // 同步调试入口；正式前台走 POST /api/jobs 入队 + GET 轮询（见 manhua_assemble_final worker）
       try {
-        finalVideoUrl = await renderWorkflowFinalVideo({
-          sceneVideos: sceneVideos.map((sv) => ({
-            sceneIndex: sv.sceneIndex,
-            url: sv.url,
-            duration: sv.duration,
-            stillImageUrl: sv.stillImageUrl,
-            stillDuration: sv.stillDuration,
-          })),
-          musicUrl: musicUrl || undefined,
-          musicVolume,
-          musicFadeInSec,
-          musicFadeOutSec,
-          transition: s(b.transition).trim() || "fade",
-          resolution: s(b.resolution).trim() || "9:16",
+        const { runManhuaAssembleFinal } = await import("../server/services/manhuaAssembleFinalService.js");
+        const result = await runManhuaAssembleFinal({
+          clips: Array.isArray(b.clips) ? b.clips : undefined,
+          sceneVideos: Array.isArray(b.sceneVideos) ? b.sceneVideos : undefined,
+          episodeIndexes: Array.isArray(b.episodeIndexes) ? b.episodeIndexes : undefined,
+          musicUrl: s(b.musicUrl).trim() || undefined,
+          musicPrompt: s(b.musicPrompt).trim() || undefined,
+          topic: s(b.topic),
+          seriesTitle: s(b.seriesTitle),
+          logline: s(b.logline),
+          musicDuration: Number(b.musicDuration) || undefined,
+          musicProvider: s(b.musicProvider).trim() || undefined,
+          musicVolume: Number(b.musicVolume),
+          musicFadeInSec: Number(b.musicFadeInSec),
+          musicFadeOutSec: Number(b.musicFadeOutSec),
+          transition: s(b.transition).trim() || undefined,
+          resolution: s(b.resolution).trim() || undefined,
         });
+        return res.status(200).json({ ok: true, ...result });
       } catch (error: any) {
-        return res.status(502).json(
-          fail("manhua_assemble_render_failed", error?.message || String(error) || "render failed", {
-            sceneCount: sceneVideos.length,
-          }),
-        );
+        const code = s(error?.code).trim() || "manhua_assemble_failed";
+        const msg = error?.message || String(error) || "assemble failed";
+        const status = code === "manhua_assemble_no_clips" ? 400 : 502;
+        return res.status(status).json(fail(code, msg));
       }
-
-      return res.status(200).json({
-        ok: true,
-        finalVideoUrl,
-        musicUrl: musicUrl || undefined,
-        musicPrompt: musicPrompt || undefined,
-        musicProvider: musicProviderUsed || undefined,
-        sceneCount: sceneVideos.length,
-        episodeIndexes: sceneVideos.map((sv) => sv.sceneIndex),
-        skippedEpisodes,
-      });
     }
 
     if (opNormalized === "generatevoice") {

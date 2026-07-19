@@ -13,6 +13,7 @@ import {
   applyTopicToFactoryStory,
   filterBlocksByEpisode,
   getBlockEpisodeIndex,
+  isTransientFactoryError,
   manhuaEpisodeHasFactoryChain,
   replaceManhuaEpisodeChain,
   resolveFactoryResumeStage,
@@ -61,6 +62,7 @@ import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import ManhuaScriptWorkbench from "@/components/ManhuaScriptWorkbench";
 import ManhuaAssetWall from "@/components/ManhuaAssetWall";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
+import { createJobSameOrigin, pollJobUntilTerminal } from "@/lib/jobs";
 import {
   MOTION_PROMPT_BANK,
   MOTION_PROMPT_CATEGORY_LABEL_ZH,
@@ -1050,44 +1052,57 @@ export default function OmniCanvas() {
         await chargeWorkflowStepMutation.mutateAsync({ step: "final_render", quantity: 1 });
         charged.push("final_render");
 
-        pushDebug("assemble:music", { level: "info", detail: "generating score…" });
-        const url = withLongJobsFlyDirect("/api/jobs?op=manhuaAssembleFinal");
-        const resp = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({
-            clips: ready,
-            topic: factoryTopic,
-            seriesTitle: writerPack?.seriesTitle || projectBible?.seriesTitle || "",
-            logline: writerPack?.logline || projectBible?.logline || "",
-            // 一次约 4 分钟够约两集；常一次两首 → 三集一轮够用（失败服务端回退另一渠道）
-            musicDuration: MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
-            transition: "fade",
-            resolution: "9:16",
-            musicVolume: 0.35,
-            musicFadeInSec: 1,
-            musicFadeOutSec: 2,
-          }),
+        // 短入队（www→Vercel rewrite→Fly）+ GET 轮询，不走长任务直连 api 子域
+        pushDebug("assemble:music", { level: "info", detail: "queued · polling…" });
+        const { jobId } = await createJobSameOrigin({
+          type: "video",
+          userId: user?.id ? String(user.id) : "",
+          input: {
+            action: "manhua_assemble_final",
+            params: {
+              clips: ready,
+              topic: factoryTopic,
+              seriesTitle: writerPack?.seriesTitle || projectBible?.seriesTitle || "",
+              logline: writerPack?.logline || projectBible?.logline || "",
+              musicDuration: MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
+              transition: "fade",
+              resolution: "9:16",
+              musicVolume: 0.35,
+              musicFadeInSec: 1,
+              musicFadeOutSec: 2,
+            },
+          },
         });
-        const json = (await resp.json().catch(() => ({}))) as {
-          ok?: boolean;
-          finalVideoUrl?: string;
-          musicUrl?: string;
-          sceneCount?: number;
-          skippedEpisodes?: unknown;
-          message?: string;
-          error?: string;
-        };
-        if (!resp.ok || json?.ok === false || !json.finalVideoUrl) {
-          throw new Error(json?.message || json?.error || `合成失败 HTTP ${resp.status}`);
+        pushDebug("assemble:queued", { level: "info", detail: `jobId=${jobId}` });
+        const job = await pollJobUntilTerminal(jobId, {
+          maxWaitMs: 18 * 60_000,
+          intervalMs: 3000,
+          onPoll: (tick) => {
+            if (tick.attempt === 1 || tick.attempt % 5 === 0) {
+              pushDebug("assemble:poll", {
+                level: "info",
+                detail: `#${tick.attempt} · ${tick.status} · ${Math.round(tick.elapsedMs / 1000)}s`,
+              });
+            }
+          },
+        });
+        if (job.status !== "succeeded") {
+          throw new Error(job.error || "合成失败");
         }
-        setFinalAssembleVideoUrl(json.finalVideoUrl);
+        const out = (job.output || {}) as {
+          finalVideoUrl?: string;
+          videoUrl?: string;
+          sceneCount?: number;
+        };
+        const finalVideoUrl = String(out.finalVideoUrl || out.videoUrl || "").trim();
+        if (!finalVideoUrl) throw new Error("合成完成但未返回成片地址");
+        setFinalAssembleVideoUrl(finalVideoUrl);
         pushDebug("assemble:done", {
           level: "ok",
-          detail: `scenes=${json.sceneCount || ready.length} · final ok`,
-          response: json.finalVideoUrl.slice(0, 180),
+          detail: `scenes=${out.sceneCount || ready.length} · final ok`,
+          response: finalVideoUrl.slice(0, 180),
         });
-        toast.success(`长片已合成（${json.sceneCount || ready.length} 集 + 配乐）`);
+        toast.success(`长片已合成（${out.sceneCount || ready.length} 集 + 配乐）`);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "合成失败";
         for (const step of charged.reverse()) {
@@ -1112,6 +1127,7 @@ export default function OmniCanvas() {
       projectBible?.seriesTitle,
       projectBible?.logline,
       pushDebug,
+      user?.id,
     ],
   );
 
@@ -1126,36 +1142,44 @@ export default function OmniCanvas() {
         ]
           .filter(Boolean)
           .join("\n\n");
-        try {
-          const res = await optimizeCopyMutation.mutateAsync({
-            sourceText,
-            optimizationBrief,
-            modelName,
-          });
-          const md = res.result.optimizedMarkdown;
-          if (debugMode) {
-            pushDebug("optimizeCopy:ok", {
-              level: "ok",
-              ms: Date.now() - t0,
-              detail: `model=${modelName || "default"} · out=${md.length}c`,
-              request: reqPreview,
-              response: md.slice(0, 8000),
+        const maxAttempts = 3;
+        let lastErr: unknown;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          try {
+            const res = await optimizeCopyMutation.mutateAsync({
+              sourceText,
+              optimizationBrief,
+              modelName,
             });
+            const md = res.result.optimizedMarkdown;
+            if (debugMode) {
+              pushDebug("optimizeCopy:ok", {
+                level: "ok",
+                ms: Date.now() - t0,
+                detail: `model=${modelName || "default"} · out=${md.length}c · try=${attempt}`,
+                request: reqPreview,
+                response: md.slice(0, 8000),
+              });
+            }
+            return md;
+          } catch (e: unknown) {
+            lastErr = e;
+            const msg = e instanceof Error ? e.message : "optimizeCopy failed";
+            const canRetry = attempt < maxAttempts && isTransientFactoryError(msg);
+            if (debugMode) {
+              pushDebug(canRetry ? "optimizeCopy:retry" : "optimizeCopy:error", {
+                level: canRetry ? "warn" : "error",
+                ms: Date.now() - t0,
+                detail: canRetry ? `try=${attempt}/${maxAttempts} · ${msg}` : msg,
+                request: reqPreview,
+                response: msg,
+              });
+            }
+            if (!canRetry) throw e;
+            await new Promise((r) => setTimeout(r, 1200 * attempt));
           }
-          return md;
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : "optimizeCopy failed";
-          if (debugMode) {
-            pushDebug("optimizeCopy:error", {
-              level: "error",
-              ms: Date.now() - t0,
-              detail: msg,
-              request: reqPreview,
-              response: msg,
-            });
-          }
-          throw e;
         }
+        throw lastErr instanceof Error ? lastErr : new Error("optimizeCopy failed");
       },
       uploadImageFile: async (file) => {
         const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
@@ -2266,6 +2290,50 @@ export default function OmniCanvas() {
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
                     void runFactory("clip", { episodeIndexes: [writerFocusEpisode] });
+                  }}
+                  onRunFullAuto={() => {
+                    if (!window.confirm("将按成片坞已勾选集跑完整链路（静帧 + 成片），耗时与积分较高。继续？")) {
+                      return;
+                    }
+                    setFactoryRunScope("dock");
+                    ensureStudioSpawned(factoryTopic);
+                    const items = collectManhuaClipDockItems(blocks);
+                    const eps = episodeIndexesFromDockSelection(items, dockSelectedIds);
+                    void runFactory("clip", {
+                      episodeIndexes: eps.length ? eps : [writerFocusEpisode],
+                    });
+                  }}
+                  onResumeFromFailure={() => {
+                    // 工作台：扫画布各集，不依赖异步 setScope
+                    const onCanvas = Array.from(
+                      new Set(
+                        blocks
+                          .map((b) => getBlockEpisodeIndex(b))
+                          .filter((n): n is number => n != null),
+                      ),
+                    ).sort((a, b) => a - b);
+                    const forceFromStageByEpisode: Partial<Record<number, ManhuaFactoryStageKey>> =
+                      {};
+                    const toRun: number[] = [];
+                    for (const ep of onCanvas.length ? onCanvas : [writerFocusEpisode]) {
+                      const stage = resolveFactoryResumeStage(blocks, ep);
+                      if (!stage) continue;
+                      forceFromStageByEpisode[ep] = stage;
+                      toRun.push(ep);
+                    }
+                    if (!toRun.length) {
+                      toast.message("各集链路都已完成，无需续跑");
+                      return;
+                    }
+                    toast.message(
+                      `按集续跑：${toRun
+                        .map(
+                          (ep) =>
+                            `第${ep}集·${MANHUA_FACTORY_STAGE_LABEL_ZH[forceFromStageByEpisode[ep]!]}`,
+                        )
+                        .join("；")}`,
+                    );
+                    void runFactory("clip", { forceFromStageByEpisode, episodeIndexes: toRun });
                   }}
                 />
               </div>

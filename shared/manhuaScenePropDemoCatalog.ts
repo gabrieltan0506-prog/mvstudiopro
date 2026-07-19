@@ -590,7 +590,7 @@ export const MANHUA_SCENE_PROP_DEMO_CATALOG: ManhuaDemoAsset[] = [
     overseasHintZh: "同场不同角度比较图",
     promptZh:
       "同一古风朝堂大殿空镜·侧向立柱景：深色木柱金色箍带、雕花屏风层次、红毯一角入画，低对比暖阴影，无人，竖屏9:16，禁止文字水印。",
-    weight: "medium",
+    weight: "high",
   },
   {
     id: "demo_scene_ancient_palace_gate_empty",

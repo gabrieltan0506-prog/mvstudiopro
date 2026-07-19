@@ -270,6 +270,8 @@ async function startServer() {
       const provider =
         type === "audio"
           ? "suno"
+          : action === "manhua_assemble_final"
+          ? "manhua-assemble"
           : type === "video"
           ? "kling-cn"
           : action === "nano_image"

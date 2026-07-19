@@ -256,6 +256,38 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
   const { createAssetAnalysisProgressReporter } = await import("../growth/assetAnalysisJobProgress");
   const progress = createAssetAnalysisProgressReporter(jobId);
 
+  if (input.action === "manhua_assemble_final") {
+    const { runManhuaAssembleFinal } = await import("../services/manhuaAssembleFinalService");
+    const result = await runManhuaAssembleFinal({
+      ...(isRecord(params) ? params : {}),
+      clips: Array.isArray(params.clips) ? (params.clips as any) : undefined,
+      sceneVideos: Array.isArray(params.sceneVideos) ? (params.sceneVideos as any) : undefined,
+      episodeIndexes: Array.isArray(params.episodeIndexes)
+        ? (params.episodeIndexes as number[])
+        : undefined,
+      musicUrl: typeof params.musicUrl === "string" ? params.musicUrl : undefined,
+      musicPrompt: typeof params.musicPrompt === "string" ? params.musicPrompt : undefined,
+      topic: typeof params.topic === "string" ? params.topic : undefined,
+      seriesTitle: typeof params.seriesTitle === "string" ? params.seriesTitle : undefined,
+      logline: typeof params.logline === "string" ? params.logline : undefined,
+      musicDuration: typeof params.musicDuration === "number" ? params.musicDuration : undefined,
+      musicProvider: typeof params.musicProvider === "string" ? params.musicProvider : undefined,
+      musicVolume: typeof params.musicVolume === "number" ? params.musicVolume : undefined,
+      musicFadeInSec: typeof params.musicFadeInSec === "number" ? params.musicFadeInSec : undefined,
+      musicFadeOutSec: typeof params.musicFadeOutSec === "number" ? params.musicFadeOutSec : undefined,
+      transition: typeof params.transition === "string" ? params.transition : undefined,
+      resolution: typeof params.resolution === "string" ? params.resolution : undefined,
+    });
+    return {
+      provider: "manhua-assemble",
+      output: {
+        ...result,
+        finalVideoUrl: result.finalVideoUrl,
+        videoUrl: result.finalVideoUrl,
+      },
+    };
+  }
+
   if (input.action === "growth_analyze_video") {
     const numericUserId = userId ? Number(userId) : NaN;
     const growthMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
@@ -774,6 +806,12 @@ function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
   if (type !== "video") return defaultTimeout;
   try {
     const input = asEnvelope(inputRaw);
+    if (input.action === "manhua_assemble_final") {
+      const raw = Number(process.env.MANHUA_ASSEMBLE_JOB_TIMEOUT_MS);
+      if (Number.isFinite(raw) && raw >= 120_000) return raw;
+      // 配乐轮询 + 多集拼接，默认 18 分钟
+      return 18 * 60_000;
+    }
     if (input.action === "growth_analyze_video" || input.action === "growth_analyze_images") {
       const params = input.params ?? {};
       const durationSeconds =
