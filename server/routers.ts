@@ -7447,6 +7447,67 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 自定义创作工作台 · 深度优化文案（纯 LLM，无出图）。
      * 扣 {@link CREDIT_COSTS.platformOptimizeCustomCopy} 积分/次。
      */
+    /**
+     * /canvas 编剧室连载扩写：官方 Responses Pro（gpt-5.6-sol）→ Chat Completions 回退。
+     * 不扣点（与原 geminiScript 扩写一致）。
+     */
+    expandManhuaWriterPack: protectedProcedure
+      .input(
+        z.object({
+          topic: z.string().max(500).optional(),
+          brief: z.string().max(2000).optional(),
+          episodeCount: z.number().int().min(2).max(6).optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const topic = String(input.topic || "").trim();
+        const brief = String(input.brief || "").trim();
+        if (!topic && !brief) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "请先填写题材，或至少写几句补充条件",
+          });
+        }
+        const {
+          buildManhuaWriterExpandPrompt,
+          clampWriterEpisodeCount,
+          parseManhuaWriterPack,
+          writerPackLooksReady,
+        } = await import("../shared/manhuaWriterRoom.js");
+        const { invokeGpt56ResponsesText } = await import("./services/gpt56ResponsesClient.js");
+        const episodeCount = clampWriterEpisodeCount(input.episodeCount);
+        const prompt = buildManhuaWriterExpandPrompt({ topic, brief, episodeCount });
+        let markdown = "";
+        try {
+          markdown = await invokeGpt56ResponsesText({
+            input: prompt,
+            reasoningMode: "pro",
+            reasoningEffort: "medium",
+            store: false,
+            timeoutMs: 300_000,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "SERVICE_UNAVAILABLE",
+            message: `剧情扩写暂时不可用：${msg.slice(0, 200)}`,
+          });
+        }
+        if (markdown.trim().length < 80) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "扩写结果过短，请再试一次",
+          });
+        }
+        const pack = parseManhuaWriterPack(markdown, episodeCount);
+        return {
+          markdown,
+          pack,
+          ready: writerPackLooksReady(pack),
+          via: "gpt56_responses_pro" as const,
+        };
+      }),
+
     optimizeCustomCopy: protectedProcedure
       .input(
         z.object({

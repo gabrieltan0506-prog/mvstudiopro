@@ -1472,6 +1472,97 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(fails.length ? 502 : 200).json(out);
     }
 
+    /**
+     * Responses API 探针：`POST /v1/responses` · gpt-5.6-sol
+     * which=pro → reasoning.mode=pro；默认 standard；store=false
+     */
+    if (opNormalized === "proberesponses") {
+      if (req.method !== "POST" && req.method !== "GET") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const which = String(b.which || q.which || "standard")
+        .trim()
+        .toLowerCase();
+      const usePro = which === "pro" || which === "gpt56pro";
+      const t0 = Date.now();
+      try {
+        const { getOfficialOpenAiApiKey } = await import("../server/services/gpt56CopywritingGateway.js");
+        const { invokeGpt56Responses } = await import("../server/services/gpt56ResponsesClient.js");
+        const key = getOfficialOpenAiApiKey();
+        if (!key) {
+          return res.status(200).json({
+            ok: false,
+            configured: false,
+            error: "OPENAI_API_KEY missing/invalid",
+            ms: Date.now() - t0,
+          });
+        }
+        const r = await invokeGpt56Responses({
+          input: "Reply with exactly: pong",
+          reasoningMode: usePro ? "pro" : "standard",
+          reasoningEffort: "medium",
+          store: false,
+          fallbackChatCompletions: false,
+          timeoutMs: 90_000,
+        });
+        return res.status(200).json({
+          ok: Boolean(r.text),
+          configured: true,
+          via: r.via,
+          reasoningMode: r.reasoningMode,
+          reply: String(r.text || "").slice(0, 80),
+          responseId: r.responseId || null,
+          ms: Date.now() - t0,
+        });
+      } catch (e: any) {
+        return res.status(502).json({
+          ok: false,
+          configured: true,
+          error: e?.message || String(e),
+          ms: Date.now() - t0,
+        });
+      }
+    }
+
+    /** IA 参谋：产出 /canvas 双入口文案简报（Responses Pro） */
+    if (opNormalized === "canvasiabrief") {
+      if (req.method !== "POST" && req.method !== "GET") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const t0 = Date.now();
+      try {
+        const { invokeGpt56ResponsesText } = await import("../server/services/gpt56ResponsesClient.js");
+        const markdown = await invokeGpt56ResponsesText({
+          reasoningMode: "pro",
+          reasoningEffort: "medium",
+          store: false,
+          timeoutMs: 180_000,
+          instructions: `你是产品信息架构顾问。只输出 Markdown，不要代码围栏。面向中文创作者，语气干脆、可落地。`,
+          input: `当前产品问题：/canvas 页把「漫剧工厂（编剧室→六段成片）」与「自由画布（方块连线）」混在一页，hero 还写 Gemini Omini，新手不知道该点哪。
+
+请输出一份简报，含：
+1. 首屏双入口卡文案（卡A 漫剧工厂 / 卡B 自由画布）：标题、一句说明、主 CTA、次要提示
+2. Hero 主标题 + 副句（禁止再以 Gemini/供应商名作品牌主角）
+3. 用户决策树：我想做连载短剧 / 我想随便拼节点 / 我只有一句题材
+4. 按钮命名建议（扩写剧情、确认进编导、跳到画布等）
+5. 附录：/platform 若要商用加值，列 5 条以后可做的引导点（本阶段不实现）
+
+约束：同页双卡、不拆路由；文案短、可直接贴进 UI。`,
+        });
+        return res.status(200).json({
+          ok: Boolean(markdown && markdown.length > 80),
+          markdown,
+          ms: Date.now() - t0,
+        });
+      } catch (e: any) {
+        return res.status(502).json({
+          ok: false,
+          error: e?.message || String(e),
+          ms: Date.now() - t0,
+        });
+      }
+    }
+
     if (opNormalized === "blobmedia") {
       if (req.method !== "GET") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });

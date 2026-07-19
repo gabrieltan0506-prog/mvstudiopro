@@ -1,33 +1,27 @@
 /**
- * 战略全景图 / 决策智库：仅 Evolink GPT‑5.6 · reasoning high · JSON（已取消 Gemini fallback）。
+ * 战略全景图 / 决策智库选题扩写：官方 Responses Pro（gpt-5.6-sol）→ Chat Completions 回退。
  */
-import { extractFirstChoicePlainText, invokeLLM } from "../_core/llm.js";
 import { getPlatformStage2OpenAiModel } from "../config/platformSwitches.js";
-import { resolveGemini35FlashCopywritingMaxOutputTokens } from "./gemini35FlashRuntime.js";
-
-const DECISION_INTEL_TEMPERATURE = 0.8;
+import { invokeGpt56ResponsesText } from "./gpt56ResponsesClient.js";
 
 export async function callDecisionIntelGpt55StructuredJson(params: {
   taskSystemInstruction: string;
   userText: string;
   abortSignal?: AbortSignal;
 }): Promise<string> {
-  const response = await invokeLLM({
-    provider: "openai",
+  const text = await invokeGpt56ResponsesText({
+    instructions: params.taskSystemInstruction,
+    input: params.userText,
     modelName: getPlatformStage2OpenAiModel(),
-    max_tokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
-    temperature: DECISION_INTEL_TEMPERATURE,
-    response_format: { type: "json_object" },
-    reasoningEffort: "high",
-    messages: [
-      { role: "system", content: params.taskSystemInstruction },
-      { role: "user", content: params.userText },
-    ],
+    reasoningMode: "pro",
+    reasoningEffort: "medium",
+    store: false,
+    jsonObject: true,
     abortSignal: params.abortSignal,
+    timeoutMs: 240_000,
   });
-  const text = extractFirstChoicePlainText(response).trim();
-  if (!text) {
-    throw new Error("Evolink GPT-5.6 Sol 决策智库返回空内容（已取消 Gemini fallback）");
+  if (!text.trim()) {
+    throw new Error("GPT-5.6 Sol Responses 决策智库返回空内容");
   }
-  return text;
+  return text.trim();
 }
