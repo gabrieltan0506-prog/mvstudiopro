@@ -349,8 +349,11 @@ export default function OmniCanvas() {
 
   useEffect(() => {
     if (castBundle.lane === "ancient") {
-      if (!femaleLeadManual) setFactoryFemaleId("");
-      if (!maleLeadManual) setFactoryMaleId("");
+      // 古风轨硬清都市角色卡，避免「江湖剧本 + 西装定妆」再进静帧/成片
+      setFactoryFemaleId("");
+      setFactoryMaleId("");
+      setFemaleLeadManual(false);
+      setMaleLeadManual(false);
       if (!ancientManual) setFactoryAncientArchetypeIds(castBundle.ancientArchetypeIds);
     } else {
       if (!femaleLeadManual && castBundle.femaleId) setFactoryFemaleId(castBundle.femaleId);

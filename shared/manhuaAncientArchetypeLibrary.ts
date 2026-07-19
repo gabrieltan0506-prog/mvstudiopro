@@ -198,7 +198,11 @@ export function isAncientArchetypeId(id?: string | null): boolean {
 }
 
 const ANCIENT_COSTUME_TOPIC_RE =
-  /古装|古风|仙侠|玄幻|江湖|宫斗|宫廷|朝堂|修仙|武侠|刀客|将军|皇权|府邸|边塞|宅斗|王朝|女帝|王爷|宗门|剑修|药庐|客栈|雨夜江湖/;
+  /古装|古风|仙侠|玄幻|江湖|宫斗|宫廷|朝堂|修仙|武侠|刀客|将军|皇权|府邸|边塞|宅斗|王朝|女帝|王爷|宗门|剑修|药庐|客栈|雨夜江湖|刀光|打斗|武打|拔刀|长刀|劲装|交领|褙子|武盟|盟主|监国|山河册|断岳|玄甲|软甲|束发|玉冠|扳指/;
+
+/** 编剧人物表/服装描写：强古风信号（可单独把轨纠回 ancient） */
+export const ANCIENT_WARDROBE_SCRIPT_RE =
+  /交领|外袍|窄袖|褙子|劲装|玄甲|软甲|皮甲|长刀|短刀|刀鞘|玉冠|束发|马尾|扳指|宫装|襦裙|甲胄|护腕|银针|印泥|火漆|盟誓|朝服|圆领袍/;
 
 /** 权谋 alone 可能是商战；与古风词或剧种叠加才算古装权谋 */
 const ANCIENT_INTRIGUE_RE = /权谋|宫墙|廷议|宦官/;
@@ -211,19 +215,23 @@ const MODERN_BUSINESS_TOPIC_RE =
 /**
  * 是否走古风造型轨。
  * 不以 genreId=ancient 单独成立（「权谋」会误伤商战）；须题材有古装时代信号，
- * 或显式仙侠/古风剧种且无现代商战词。
+ * 或显式仙侠/古风剧种且无现代商战词；或人物表服装描写已是古装。
  */
 export function isAncientCostumeTopic(
   topic?: string | null,
   genreId?: string | null,
+  charactersMd?: string | null,
 ): boolean {
   const t = String(topic || "").trim();
+  const md = String(charactersMd || "").trim();
+  const blob = [t, md].filter(Boolean).join("\n");
   const g = String(genreId || "").trim();
-  if (MODERN_BUSINESS_TOPIC_RE.test(t) && !ANCIENT_COSTUME_TOPIC_RE.test(t)) {
+  if (MODERN_BUSINESS_TOPIC_RE.test(t) && !ANCIENT_COSTUME_TOPIC_RE.test(blob) && !ANCIENT_WARDROBE_SCRIPT_RE.test(md)) {
     return false;
   }
-  if (ANCIENT_COSTUME_TOPIC_RE.test(t)) return true;
-  if (ANCIENT_INTRIGUE_RE.test(t) && /古|朝|宫|江|侠|帝|王|将军|刀|装/.test(t)) return true;
+  if (ANCIENT_COSTUME_TOPIC_RE.test(blob)) return true;
+  if (md && ANCIENT_WARDROBE_SCRIPT_RE.test(md)) return true;
+  if (ANCIENT_INTRIGUE_RE.test(blob) && /古|朝|宫|江|侠|帝|王|将军|刀|装/.test(blob)) return true;
   // 用户手选仙侠/古风且题材未写现代商战 → 古风轨
   if (ANCIENT_GENRE_IDS.has(g) && !MODERN_BUSINESS_TOPIC_RE.test(t)) return true;
   return false;

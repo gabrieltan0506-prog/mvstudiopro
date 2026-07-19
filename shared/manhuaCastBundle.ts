@@ -75,22 +75,39 @@ function recommendUrbanWardrobeIds(topic: string): string[] {
   return ["wpc_03_urban_power"];
 }
 
-function recommendPropIds(topic: string, genreId?: string, limit = 3): string[] {
+function recommendPropIds(
+  topic: string,
+  genreId?: string,
+  limit = 3,
+  lane: ManhuaCastLane = "urban",
+): string[] {
   const lanes = recommendManhuaContentLanesFromTopic(topic);
   // 剧种微调：古风优先 ancient/intrigue；都市商战优先 business
-  const ordered = [...lanes];
-  if (genreId === "ancient" || genreId === "xianxia") {
-    for (const l of ["ancient", "intrigue", "xianxia"] as const) {
-      if (!ordered.includes(l)) ordered.unshift(l);
-    }
+  let ordered = [...lanes];
+  if (lane === "ancient" || genreId === "ancient" || genreId === "xianxia") {
+    ordered = Array.from(
+      new Set([
+        "ancient",
+        "intrigue",
+        "xianxia",
+        ...lanes.filter((l) => l !== "romance" && l !== "business"),
+      ]),
+    );
   }
-  if (/商战|华尔街|并购|董事会/.test(topic) && !ordered.includes("business")) {
+  if (lane !== "ancient" && /商战|华尔街|并购|董事会/.test(topic) && !ordered.includes("business")) {
     ordered.unshift("business");
   }
   const picked: string[] = [];
-  for (const lane of ordered) {
-    for (const p of listManhuaDemoPropsForLane(lane)) {
+  for (const propLane of ordered) {
+    for (const p of listManhuaDemoPropsForLane(propLane)) {
       if (picked.length >= limit) break;
+      // 古风轨禁止甜宠/商战现代小物
+      if (
+        lane === "ancient" &&
+        (p.lane === "romance" || p.lane === "business" || /lipstick|ring_box|fountain_pen|watch|coffee/i.test(p.id))
+      ) {
+        continue;
+      }
       if (!picked.includes(p.id)) picked.push(p.id);
     }
     if (picked.length >= limit) break;
@@ -98,9 +115,7 @@ function recommendPropIds(topic: string, genreId?: string, limit = 3): string[] 
   return picked.slice(0, limit);
 }
 
-/**
- * 从编剧人物表抽一点信号（可选）：有「古装/外国」等词时强化 lane / identity，不强制换脸库。
- */
+/** 都市轨：对照编剧人物表强化身份锁（不在此改换脸库） */
 function mergeWriterCharactersMd(
   bundle: ManhuaCastBundle,
   charactersMd?: string | null,
@@ -127,13 +142,18 @@ export function recommendManhuaCastBundle(opts?: {
   propLimit?: number;
 }): ManhuaCastBundle {
   const topic = String(opts?.topic || "").trim();
+  const charactersMd = String(opts?.charactersMd || "").trim();
   const resolved = resolveManhuaGenreId({ genreId: opts?.genreId || undefined, topic });
   const genreId = resolved.genreId;
-  const ancient = isAncientCostumeTopic(topic, genreId);
+  // 题材 + 编剧人物表服装描写联合判定（避免「江湖剧本 + 西装角色卡」）
+  const ancient = isAncientCostumeTopic(topic, genreId, charactersMd);
 
   if (ancient) {
-    const arch = recommendAncientArchetypesFromTopic(topic, { genreId, max: 2 });
-    const propIds = recommendPropIds(topic, genreId, opts?.propLimit ?? 3);
+    const arch = recommendAncientArchetypesFromTopic(`${topic}\n${charactersMd}`, {
+      genreId,
+      max: 2,
+    });
+    const propIds = recommendPropIds(topic, genreId, opts?.propLimit ?? 3, "ancient");
     const matched = [...arch.matched];
     const names = arch.archetypeIds
       .map((id) => getAncientArchetypeById(id)?.nameZh)
@@ -164,11 +184,19 @@ export function recommendManhuaCastBundle(opts?: {
       ancientArchetypeIds: arch.archetypeIds,
       wardrobePropContinuityIds: arch.wardrobePropContinuityIds,
       propIds,
-      identityLockZh: buildIdentityLockZh({ lane: "ancient", topic }),
+      identityLockZh: buildIdentityLockZh({ lane: "ancient", topic, charactersMd }),
       reasonZh: reasonZh || "古风题材已自动套用原型/服装/道具",
       matched,
     };
-    return mergeWriterCharactersMd(bundle, opts?.charactersMd);
+    if (charactersMd) {
+      bundle.reasonZh = `${bundle.reasonZh}；已对照编剧人物表（古风轨·不套都市角色卡）`;
+      bundle.identityLockZh = buildIdentityLockZh({
+        lane: "ancient",
+        topic: `${topic}\n${charactersMd}`,
+        charactersMd,
+      });
+    }
+    return bundle;
   }
 
   const leads = recommendManhuaCharactersFromTopic(topic);
@@ -176,7 +204,7 @@ export function recommendManhuaCastBundle(opts?: {
   const maleId = String(leads.maleId || "").trim();
   const characterIds = [femaleId, maleId].filter((id) => Boolean(getManhuaCharacterById(id)));
   const wardrobePropContinuityIds = recommendUrbanWardrobeIds(topic);
-  const propIds = recommendPropIds(topic, genreId, opts?.propLimit ?? 3);
+  const propIds = recommendPropIds(topic, genreId, opts?.propLimit ?? 3, "urban");
   const wardrobeNames = wardrobePropContinuityIds
     .map((id) => getWardrobePropContinuityById(id)?.nameZh)
     .filter(Boolean)

@@ -331,16 +331,19 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     recommendManhuaSceneIdFromTopic({ genreId, topic: opts.topic }).sceneId ||
     undefined;
   const writerContext = String(opts.writerContext || "").trim();
-  const characterIds = (opts.characterIds || []).map((id) => String(id || "").trim()).filter(Boolean);
+  const ancientArchetypeIds = (opts.ancientArchetypeIds || [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean)
+    .slice(0, 2);
+  // 已挂古风原型时丢弃都市 char_*，防止西装定妆污染 keyart
+  const characterIds = ancientArchetypeIds.length
+    ? []
+    : (opts.characterIds || []).map((id) => String(id || "").trim()).filter(Boolean);
   const identityLockZh = String(opts.identityLockZh || "").trim() || undefined;
   const characterBlock = buildManhuaCharacterPromptBlock(characterIds, {
     artStyleId: opts.artStyleId,
     identityLockZh,
   });
-  const ancientArchetypeIds = (opts.ancientArchetypeIds || [])
-    .map((id) => String(id || "").trim())
-    .filter(Boolean)
-    .slice(0, 2);
   const ancientBlock = buildAncientArchetypePromptBlock(ancientArchetypeIds, { identityLockZh });
   const propIds = (opts.propIds || []).map((id) => String(id || "").trim()).filter(Boolean).slice(0, 4);
   const propAnchorBlock = composeManhuaSelectedPropAnchorBlock(propIds);
@@ -751,11 +754,18 @@ export function applyFactoryPrefsToBlocks(
   const wardrobeBlock = buildWardrobePropContinuityInjectBlock(opts.wardrobePropContinuityIds || []);
   const pathRecipeId = (opts.pathCameraRecipeIds || []).map(String).filter(Boolean)[0];
   const identityLockZh = String(opts.identityLockZh || "").trim() || undefined;
-  const characterBlock = buildManhuaCharacterPromptBlock(opts.characterIds || [], {
+  const prefsAncientIds = (opts.ancientArchetypeIds || [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean)
+    .slice(0, 2);
+  const prefsCharacterIds = prefsAncientIds.length
+    ? []
+    : (opts.characterIds || []).map((id) => String(id || "").trim()).filter(Boolean);
+  const characterBlock = buildManhuaCharacterPromptBlock(prefsCharacterIds, {
     artStyleId: opts.artStyleId,
     identityLockZh,
   });
-  const ancientBlock = buildAncientArchetypePromptBlock(opts.ancientArchetypeIds || [], {
+  const ancientBlock = buildAncientArchetypePromptBlock(prefsAncientIds, {
     identityLockZh,
   });
   const artStyle = getManhuaArtStylePreset(opts.artStyleId);

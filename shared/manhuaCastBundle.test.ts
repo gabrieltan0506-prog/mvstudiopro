@@ -36,4 +36,27 @@ describe("recommendManhuaCastBundle", () => {
     expect(b.wardrobePropContinuityIds).not.toContain("wpc_02_jianghu_dao");
     expect(b.wardrobePropContinuityIds).not.toContain("wpc_04_red_armor");
   });
+
+  it("江湖刀光打斗交锋的短剧 → ancient，不塞西装角色，不推口红戒指盒", () => {
+    const b = recommendManhuaCastBundle({ topic: "江湖刀光打斗交锋的短剧" });
+    expect(b.lane).toBe("ancient");
+    expect(b.characterIds).toEqual([]);
+    expect(b.femaleId).toBe("");
+    expect(b.maleId).toBe("");
+    expect(b.ancientArchetypeIds).toContain("arch_rain_jianghu_dao");
+    expect(b.wardrobePropContinuityIds).toContain("wpc_02_jianghu_dao");
+    expect(b.propIds.every((id) => !/lipstick|ring_box|fountain_pen/i.test(id))).toBe(true);
+    expect(b.propIds.some((id) => id.includes("ancient") || id.includes("intrigue"))).toBe(true);
+  });
+
+  it("题材含糊但编剧人物表已是交领外袍 → 纠回 ancient", () => {
+    const b = recommendManhuaCastBundle({
+      topic: "父辈拔刀成仇儿女执手破局",
+      charactersMd:
+        "沈照野｜墨黑高马尾，玄青窄袖外袍叠银灰交领内衫，左肩皮甲｜顾青棠｜暗红短褙子叠月白内衫，黑色护腕",
+    });
+    expect(b.lane).toBe("ancient");
+    expect(b.characterIds).toEqual([]);
+    expect(b.ancientArchetypeIds.length).toBeGreaterThanOrEqual(1);
+  });
 });
