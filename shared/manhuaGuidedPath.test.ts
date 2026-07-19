@@ -73,7 +73,7 @@ describe("resolveManhuaGuidedActiveStep", () => {
     expect(resolveManhuaGuidedNextAction({ ...base, hasTopic: true }).ctaLabel).toMatch(/扩写/);
     expect(
       resolveManhuaGuidedNextAction({ ...base, hasTopic: true, hasWriterPack: true }).ctaLabel,
-    ).toMatch(/确认并进入工作台/);
+    ).toMatch(/确认并看生成推进/);
     expect(
       resolveManhuaGuidedNextAction({
         ...base,
