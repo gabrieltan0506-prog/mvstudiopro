@@ -192,7 +192,7 @@ export default function ManhuaClipDock({
                 成片坞
               </span>
               <span className="rounded-full border border-cyan-400/35 bg-cyan-500/12 px-2 py-0.5 text-[10px] font-medium text-cyan-100/90">
-                终局出口
+                步骤 7–8 · 终局出口
               </span>
             </div>
             <p className="mt-1 max-w-xl text-[11px] leading-relaxed text-white/45">

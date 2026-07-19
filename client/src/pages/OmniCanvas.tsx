@@ -59,6 +59,7 @@ import {
   summarizeManhuaPathTrackStatus,
 } from "@shared/manhuaFinalAssemble";
 import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
+import ManhuaGuidedPathRail from "@/components/ManhuaGuidedPathRail";
 import ManhuaScriptWorkbench from "@/components/ManhuaScriptWorkbench";
 import ManhuaAssetWall from "@/components/ManhuaAssetWall";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
@@ -2024,9 +2025,40 @@ export default function OmniCanvas() {
               {canvasMode === "pick"
                 ? "先选工作方式：连载短剧走漫剧工作流；单次图/视频/文案任务走自由画布。"
                 : canvasMode === "manhua"
-                  ? "编剧室扩写 → 确认后铺板 → 静帧与成片。画布区承载工厂节点，可按集续跑。"
+                  ? "引导式路径：题材 → 编剧确认 → 自动套造型 → 工作台 → 静帧 → 成片 → 成片坞合成。按步骤走即可验收。"
                   : "文生图 / 文生视频 / 图生视频、提文字、文案整理等简单任务，多节点自由接线，不铺漫剧流水线。"}
             </p>
+
+            {canvasMode === "manhua" ? (
+              <ManhuaGuidedPathRail
+                progress={{
+                  hasTopic: Boolean(factoryTopic.trim()),
+                  hasWriterPack: Boolean(writerPack),
+                  writerConfirmed: Boolean(writerConfirmed),
+                  hasCast: Boolean(
+                    selectedCharacterIds.length ||
+                      factoryAncientArchetypeIds.length ||
+                      writerConfirmed,
+                  ),
+                  hasKeyart: blocks.some(
+                    (b) =>
+                      stageKeyFromBlockId(b.id) === "keyart" &&
+                      Boolean(b.outputUrl || b.outputUrls?.[0]),
+                  ),
+                  hasClip: blocks.some(
+                    (b) =>
+                      (stageKeyFromBlockId(b.id) === "clip" ||
+                        stageKeyFromBlockId(b.id) === "omni_edit") &&
+                      Boolean(b.outputUrl || b.outputUrls?.[0]),
+                  ),
+                  hasFinalVideo: Boolean(finalAssembleVideoUrl),
+                }}
+                onStepClick={(stepId) => {
+                  if (stepId === "card" || stepId === "cast") setManhuaAssetDrawer("characters");
+                  if (stepId === "wb" || stepId === "keyart") setManhuaUiMode("workbench");
+                }}
+              />
+            ) : null}
 
             {canvasMode === "pick" ? (
               <div className="mt-6 grid max-w-3xl gap-4 md:grid-cols-2">
@@ -2063,14 +2095,19 @@ export default function OmniCanvas() {
 
             {canvasMode === "manhua" ? (
             <>
-            {/* ① 编剧室 */}
+            {/* ① 题材 + 编剧室 */}
             <div
               id="manhua-factory-zone"
-              className="mt-5 max-w-3xl scroll-mt-28 rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.07] to-transparent p-4 md:p-5"
+              className="mt-2 max-w-3xl scroll-mt-32 rounded-2xl border border-cyan-400/15 bg-gradient-to-b from-[#0c1520] via-[#0a0e18]/90 to-transparent p-4 md:p-5"
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <div className="text-sm font-semibold text-white/90">① 编剧室 · 漫剧工厂</div>
-                <span className="text-[11px] text-white/40">题材 + 条件 → 连载剧情包</span>
+                <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-white/90">
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-cyan-400/90 text-[11px] font-bold text-black">
+                    1–2
+                  </span>
+                  题材 · 编剧室
+                </div>
+                <span className="text-[11px] text-white/40">填题材 → 扩写确认 → 再进工作台</span>
               </div>
               <label className="mt-3 block text-[11px] text-white/45">题材</label>
               <input
@@ -2214,7 +2251,45 @@ export default function OmniCanvas() {
               ) : null}
             </div>
 
-            <div className="mt-4 flex max-w-6xl flex-wrap items-center gap-2">
+            {/* ③–④ 自动套 / 角色卡入口 */}
+            <div
+              id="manhua-cast-zone"
+              className="mt-4 max-w-6xl scroll-mt-32 rounded-2xl border border-cyan-400/12 bg-gradient-to-r from-[#0c1520]/90 to-[#0a0e18]/60 px-3 py-3 md:px-4"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-white/88">
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-cyan-400/90 text-[11px] font-bold text-black">
+                      3–4
+                    </span>
+                    造型 · 角色卡
+                  </div>
+                  <p className="mt-0.5 truncate text-[11px] text-white/40">
+                    {writerConfirmed
+                      ? `已按剧本套造型 · 角色 ${selectedCharacterIds.length || "—"} · 古风原型 ${factoryAncientArchetypeIds.length || "—"} · ${getManhuaArtStylePreset(factoryArtStyleId).labelZh}`
+                      : "确认编剧后自动套角色/服装/道具；可点角色库微调面孔"}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setManhuaAssetDrawer("characters")}
+                    className="rounded-lg border border-cyan-400/35 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-50 hover:bg-cyan-500/25"
+                  >
+                    打开角色库
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setManhuaAssetDrawer("assets")}
+                    className="rounded-lg border border-white/12 bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.08]"
+                  >
+                    打开资产墙
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 flex max-w-6xl flex-wrap items-center gap-2">
               <span className="text-[11px] text-white/45">生产主界面</span>
               <div className="inline-flex rounded-lg border border-white/10 bg-black/35 p-0.5">
                 <button
@@ -2222,7 +2297,7 @@ export default function OmniCanvas() {
                   onClick={() => setManhuaUiMode("workbench")}
                   className={`rounded-md px-2.5 py-1 text-[11px] font-semibold ${
                     manhuaUiMode === "workbench"
-                      ? "bg-emerald-500/25 text-emerald-50"
+                      ? "bg-cyan-500/25 text-cyan-50"
                       : "text-white/50 hover:text-white/75"
                   }`}
                 >
@@ -2240,25 +2315,11 @@ export default function OmniCanvas() {
                   经典表单编导
                 </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setManhuaAssetDrawer("characters")}
-                className="rounded-md border border-white/12 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/[0.08]"
-              >
-                打开角色库
-              </button>
-              <button
-                type="button"
-                onClick={() => setManhuaAssetDrawer("assets")}
-                className="rounded-md border border-white/12 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/[0.08]"
-              >
-                打开资产墙
-              </button>
-              <span className="text-[10px] text-white/35">角色/资产改抽屉；表单为专家模式</span>
+              <span className="text-[10px] text-white/35">默认工作台；表单为专家模式</span>
             </div>
 
             {manhuaUiMode === "workbench" ? (
-              <div className="max-w-6xl">
+              <div id="manhua-workbench-zone" className="max-w-6xl scroll-mt-32">
                 <ManhuaScriptWorkbench
                   blocks={blocks}
                   topic={factoryTopic}
@@ -2968,7 +3029,7 @@ export default function OmniCanvas() {
               各集成片就绪后，在下方成片坞一键合成长片（含配乐）。
             </p>
 
-            <div className="mt-4 max-w-4xl">
+            <div id="manhua-clip-dock-zone" className="mt-4 max-w-4xl scroll-mt-32">
               <ManhuaClipDock
                 blocks={blocks}
                 topic={factoryTopic}
