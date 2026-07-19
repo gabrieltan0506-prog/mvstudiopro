@@ -7958,6 +7958,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         };
       }),
 
+    /**
+     * 正式进度 + 健康摘要（MVAnalysis 分析中依赖 anomalies / currentSupportActivities）。
+     * 敏感写操作见 setGrowthRuntimeMode / setGrowthBurstControl（adminProcedure，含 supervisor）。
+     * Debug 面板只读仍走本接口，但仅在 supervisor UI 挂载时请求；勿改为仅 admin 否则正式分析会挂。
+     */
     getGrowthSystemStatus: publicProcedure
       .query(async () => {
         const store = await readTrendStore({ preferDerivedFiles: true }).catch(() => null);
@@ -8185,7 +8190,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         };
       }),
 
-    setGrowthRuntimeMode: publicProcedure
+    setGrowthRuntimeMode: adminProcedure
       .input(z.object({
         mode: z.enum(["auto", "live", "backfill"]),
       }))
@@ -8226,7 +8231,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         };
       }),
 
-    setGrowthBurstControl: publicProcedure
+    setGrowthBurstControl: adminProcedure
       .input(z.object({
         burst: z.enum(["auto", "manual", "off"]),
         platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels", "toutiao"])).default([]),

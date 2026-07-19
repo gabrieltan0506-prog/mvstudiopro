@@ -27,6 +27,10 @@ const requireUser = t.middleware(async opts => {
 
 export const protectedProcedure = t.procedure.use(requireUser);
 
+/**
+ * 高权限写操作：DB 角色为 admin **或** supervisor（产品口径：监管入口可用）。
+ * 普通账号 → FORBIDDEN。名称历史遗留为 adminProcedure，实际包含 supervisor。
+ */
 export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
