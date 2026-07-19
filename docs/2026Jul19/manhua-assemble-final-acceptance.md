@@ -27,8 +27,12 @@
 ## 线上实测（合成）
 
 - 合入前 Fly 探测：`manhuaAssembleFinal` → `unknown_op`（预期，未 Deploy）
-- 合入 Deploy 绿后：用 3 段公开短片作为 clips 打一次合成，记录 `finalVideoUrl` / `sceneCount`
-- 前台：成片坞「合成长片（含配乐）」文案无供应商名；工作台可预览长片
+- **#869 Fly Deploy success**（2026-07-19）
+- API 空 clips → `manhua_assemble_no_clips`（正常）
+- **三集合成验收通过**（`fly.dev` 样本片 ×3，勿用 www 路径：会 404）
+  - `sceneCount=3` · `episodeIndexes=[1,2,3]` · 配乐主渠道成功
+  - `finalVideoUrl`：`https://dfww7dlrjd2729oq.public.blob.vercel-storage.com/renders/1784469580539-rendered-video.mp4`
+- 前台：成片坞「合成长片（含配乐）」文案无供应商名；Debug On 可看 `assemble:*` 日志
 
 ## 已知边界
 
