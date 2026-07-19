@@ -2124,7 +2124,7 @@ export default function OmniCanvas() {
             {/* ① 题材 + 编剧室 */}
             <div
               id="manhua-factory-zone"
-              className="mt-2 max-w-3xl scroll-mt-32 rounded-2xl border border-cyan-400/15 bg-gradient-to-b from-[#0c1520] via-[#0a0e18]/90 to-transparent p-4 md:p-5"
+              className="mt-2 max-w-3xl scroll-mt-44 rounded-2xl border border-cyan-400/15 bg-gradient-to-b from-[#0c1520] via-[#0a0e18]/90 to-transparent p-4 md:p-5"
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-white/90">
@@ -2324,7 +2324,7 @@ export default function OmniCanvas() {
             {/* ③–④ 自动套 / 角色卡入口 */}
             <div
               id="manhua-cast-zone"
-              className="mt-4 max-w-6xl scroll-mt-32 rounded-2xl border border-cyan-400/12 bg-gradient-to-r from-[#0c1520]/90 to-[#0a0e18]/60 px-3 py-3 md:px-4"
+              className="mt-4 max-w-6xl scroll-mt-44 rounded-2xl border border-cyan-400/12 bg-gradient-to-r from-[#0c1520]/90 to-[#0a0e18]/60 px-3 py-3 md:px-4"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
@@ -2470,7 +2470,7 @@ export default function OmniCanvas() {
             </div>
 
             {manhuaUiMode === "workbench" ? (
-              <div id="manhua-workbench-zone" className="max-w-6xl scroll-mt-32">
+              <div id="manhua-workbench-zone" className="max-w-6xl scroll-mt-44">
                 <ManhuaScriptWorkbench
                   blocks={blocks}
                   topic={factoryTopic}
@@ -3180,7 +3180,7 @@ export default function OmniCanvas() {
               各集成片就绪后，在下方成片坞一键合成长片（含配乐）。
             </p>
 
-            <div id="manhua-clip-dock-zone" className="mt-4 max-w-4xl scroll-mt-32">
+            <div id="manhua-clip-dock-zone" className="mt-4 max-w-4xl scroll-mt-44">
               <ManhuaClipDock
                 blocks={blocks}
                 topic={factoryTopic}
