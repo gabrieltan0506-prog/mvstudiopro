@@ -13,6 +13,7 @@ import {
   applyTopicToFactoryStory,
   filterBlocksByEpisode,
   getBlockEpisodeIndex,
+  isTransientFactoryError,
   manhuaEpisodeHasFactoryChain,
   replaceManhuaEpisodeChain,
   resolveFactoryResumeStage,
@@ -1126,36 +1127,44 @@ export default function OmniCanvas() {
         ]
           .filter(Boolean)
           .join("\n\n");
-        try {
-          const res = await optimizeCopyMutation.mutateAsync({
-            sourceText,
-            optimizationBrief,
-            modelName,
-          });
-          const md = res.result.optimizedMarkdown;
-          if (debugMode) {
-            pushDebug("optimizeCopy:ok", {
-              level: "ok",
-              ms: Date.now() - t0,
-              detail: `model=${modelName || "default"} · out=${md.length}c`,
-              request: reqPreview,
-              response: md.slice(0, 8000),
+        const maxAttempts = 3;
+        let lastErr: unknown;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          try {
+            const res = await optimizeCopyMutation.mutateAsync({
+              sourceText,
+              optimizationBrief,
+              modelName,
             });
+            const md = res.result.optimizedMarkdown;
+            if (debugMode) {
+              pushDebug("optimizeCopy:ok", {
+                level: "ok",
+                ms: Date.now() - t0,
+                detail: `model=${modelName || "default"} · out=${md.length}c · try=${attempt}`,
+                request: reqPreview,
+                response: md.slice(0, 8000),
+              });
+            }
+            return md;
+          } catch (e: unknown) {
+            lastErr = e;
+            const msg = e instanceof Error ? e.message : "optimizeCopy failed";
+            const canRetry = attempt < maxAttempts && isTransientFactoryError(msg);
+            if (debugMode) {
+              pushDebug(canRetry ? "optimizeCopy:retry" : "optimizeCopy:error", {
+                level: canRetry ? "warn" : "error",
+                ms: Date.now() - t0,
+                detail: canRetry ? `try=${attempt}/${maxAttempts} · ${msg}` : msg,
+                request: reqPreview,
+                response: msg,
+              });
+            }
+            if (!canRetry) throw e;
+            await new Promise((r) => setTimeout(r, 1200 * attempt));
           }
-          return md;
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : "optimizeCopy failed";
-          if (debugMode) {
-            pushDebug("optimizeCopy:error", {
-              level: "error",
-              ms: Date.now() - t0,
-              detail: msg,
-              request: reqPreview,
-              response: msg,
-            });
-          }
-          throw e;
         }
+        throw lastErr instanceof Error ? lastErr : new Error("optimizeCopy failed");
       },
       uploadImageFile: async (file) => {
         const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
@@ -2266,6 +2275,50 @@ export default function OmniCanvas() {
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
                     void runFactory("clip", { episodeIndexes: [writerFocusEpisode] });
+                  }}
+                  onRunFullAuto={() => {
+                    if (!window.confirm("将按成片坞已勾选集跑完整链路（静帧 + 成片），耗时与积分较高。继续？")) {
+                      return;
+                    }
+                    setFactoryRunScope("dock");
+                    ensureStudioSpawned(factoryTopic);
+                    const items = collectManhuaClipDockItems(blocks);
+                    const eps = episodeIndexesFromDockSelection(items, dockSelectedIds);
+                    void runFactory("clip", {
+                      episodeIndexes: eps.length ? eps : [writerFocusEpisode],
+                    });
+                  }}
+                  onResumeFromFailure={() => {
+                    // 工作台：扫画布各集，不依赖异步 setScope
+                    const onCanvas = Array.from(
+                      new Set(
+                        blocks
+                          .map((b) => getBlockEpisodeIndex(b))
+                          .filter((n): n is number => n != null),
+                      ),
+                    ).sort((a, b) => a - b);
+                    const forceFromStageByEpisode: Partial<Record<number, ManhuaFactoryStageKey>> =
+                      {};
+                    const toRun: number[] = [];
+                    for (const ep of onCanvas.length ? onCanvas : [writerFocusEpisode]) {
+                      const stage = resolveFactoryResumeStage(blocks, ep);
+                      if (!stage) continue;
+                      forceFromStageByEpisode[ep] = stage;
+                      toRun.push(ep);
+                    }
+                    if (!toRun.length) {
+                      toast.message("各集链路都已完成，无需续跑");
+                      return;
+                    }
+                    toast.message(
+                      `按集续跑：${toRun
+                        .map(
+                          (ep) =>
+                            `第${ep}集·${MANHUA_FACTORY_STAGE_LABEL_ZH[forceFromStageByEpisode[ep]!]}`,
+                        )
+                        .join("；")}`,
+                    );
+                    void runFactory("clip", { forceFromStageByEpisode, episodeIndexes: toRun });
                   }}
                 />
               </div>

@@ -96,7 +96,7 @@ export default function ManhuaFactoryDebugPanel({
                         <span className="text-white/40"> · {line.ms}ms</span>
                       ) : null}
                       {expandable ? (
-                        <span className="text-[10px] text-fuchsia-200/70">{open ? "▾" : "▸"} RR</span>
+                        <span className="text-[10px] text-fuchsia-200/70">{open ? "▾" : "▸"}</span>
                       ) : null}
                     </button>
                     {line.detail ? <div className="pl-1 text-white/55">{line.detail}</div> : null}

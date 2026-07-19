@@ -69,8 +69,12 @@ describe("manhuaScenePropDemoCatalog", () => {
       "/manhua-scenes/demo_scene_xianxia_sect.jpg",
     );
     expect(isManhuaDemoAssetPublicReady("demo_scene_xianxia_sect")).toBe(true);
-    // 目录有条目但未落盘 → URL 必须为空（UI 不得展示待生成）
-    expect(getManhuaDemoAssetPublicUrl("demo_scene_intrigue_court")).toBe("");
+    expect(getManhuaDemoAssetPublicUrl("demo_scene_intrigue_court")).toBe(
+      "/manhua-scenes/demo_scene_intrigue_court.jpg",
+    );
+    // 目录有条目但未进 public-ready → URL 必须为空（UI 不得展示待生成）
+    expect(isManhuaDemoAssetPublicReady("demo_scene_business_trading_floor")).toBe(false);
+    expect(getManhuaDemoAssetPublicUrl("demo_scene_business_trading_floor")).toBe("");
     expect(getManhuaDemoAssetPublicUrl("demo_prop_business_fountain_pen")).toBe("");
   });
 
