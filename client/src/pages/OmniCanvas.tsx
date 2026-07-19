@@ -2032,19 +2032,34 @@ export default function OmniCanvas() {
                 />
               </div>
             ) : null}
-            <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">
-              {canvasMode === "manhua" ? "漫剧创作" : canvasMode === "freeform" ? "自由画布" : "创作画布"}
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-7 text-white/65">
-              {canvasMode === "pick"
-                ? "先选工作方式：连载短剧走漫剧工作流；单次图/视频/文案任务走自由画布。"
-                : canvasMode === "manhua"
-                  ? "引导路径：题材 → 编剧确认 → 自动套造型 → 工作台 → 多镜静帧 → 成片 → 成片坞合成。"
-                  : "文生图 / 文生视频 / 图生视频、提文字、文案整理等简单任务，多节点自由接线，不铺漫剧流水线。"}
-            </p>
+            {!(
+              canvasMode === "manhua" &&
+              writerConfirmed &&
+              manhuaUiMode === "workbench"
+            ) ? (
+              <>
+                <h1 className="mt-3 text-3xl font-black tracking-tight md:text-4xl">
+                  {canvasMode === "manhua"
+                    ? "漫剧创作"
+                    : canvasMode === "freeform"
+                      ? "自由画布"
+                      : "创作画布"}
+                </h1>
+                <p className="mt-2 max-w-2xl text-sm leading-7 text-white/65">
+                  {canvasMode === "pick"
+                    ? "先选工作方式：连载短剧走漫剧工作流；单次图/视频/文案任务走自由画布。"
+                    : canvasMode === "manhua"
+                      ? "引导路径：题材 → 编剧确认 → 自动套造型 → 工作台 → 多镜静帧 → 成片 → 成片坞合成。"
+                      : "文生图 / 文生视频 / 图生视频、提文字、文案整理等简单任务，多节点自由接线，不铺漫剧流水线。"}
+                </p>
+              </>
+            ) : null}
 
             {canvasMode === "manhua" ? (
               <ManhuaGuidedPathRail
+                variant={
+                  writerConfirmed && manhuaUiMode === "workbench" ? "compact" : "full"
+                }
                 progress={{
                   hasTopic: Boolean(factoryTopic.trim()),
                   hasWriterPack: Boolean(writerPack),
@@ -2082,7 +2097,7 @@ export default function OmniCanvas() {
                     confirmWriterToDirector();
                     setManhuaUiMode("workbench");
                     window.setTimeout(() => {
-                      document.querySelector("#manhua-live-progress-zone")?.scrollIntoView({
+                      document.querySelector("#manhua-workbench-shell")?.scrollIntoView({
                         behavior: "smooth",
                         block: "start",
                       });
@@ -2144,11 +2159,128 @@ export default function OmniCanvas() {
 
             {canvasMode === "manhua" ? (
             <>
-            {/* ① 题材 + 编剧室（确认后默认收起，腾出可视区给画布推进） */}
+            {/* 确认编剧 + 工作台：编剧室压到工作台之后，主屏先出三栏 */}
+            {writerConfirmed && manhuaUiMode === "workbench" ? (
+              <div id="manhua-workbench-zone" className="scroll-mt-24">
+                <ManhuaScriptWorkbench
+                  blocks={blocks}
+                  topic={factoryTopic}
+                  seriesTitle={writerPack?.seriesTitle || projectBible?.seriesTitle}
+                  episodeCount={writerEpisodeCount}
+                  focusEpisode={writerFocusEpisode}
+                  onFocusEpisode={setWriterFocusEpisode}
+                  characterIds={selectedCharacterIds}
+                  ancientArchetypeIds={factoryAncientArchetypeIds}
+                  sceneId={factorySceneId || recommendedScene?.id}
+                  propIds={factoryPropIds}
+                  artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
+                  projectBibleSummary={summarizeManhuaProjectBible(projectBible)}
+                  bibleBoundEpisodes={projectBible?.cast.boundEpisodeIndexes}
+                  pathTrackLabelZh={pathTrackStatus.labelZh}
+                  narrativeLightingLabelZh={narrativeLightingLabelZh}
+                  finalVideoUrl={finalAssembleVideoUrl}
+                  factoryBusy={factoryBusy || assembleBusy}
+                  factoryProgress={
+                    assembleBusy ? "正在合成长片与配乐…" : factoryProgress || undefined
+                  }
+                  canRun={Boolean(directorUnlocked || writerConfirmed)}
+                  onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
+                  onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
+                  onFocusBlock={(id) => {
+                    setFocusBlockId(id);
+                    const details = document.getElementById(
+                      "manhua-factory-canvas-details",
+                    ) as HTMLDetailsElement | null;
+                    if (details) details.open = true;
+                    window.setTimeout(() => {
+                      document
+                        .getElementById("freeform-canvas-zone")
+                        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                    }, 40);
+                  }}
+                  onSpawnAndRunClip={() => {
+                    setFactoryRunScope("focus");
+                    ensureStudioSpawned(factoryTopic);
+                    void runFactory("clip", { episodeIndexes: [writerFocusEpisode] });
+                  }}
+                  onRunFullAuto={() => {
+                    if (
+                      !window.confirm(
+                        "将按成片坞已勾选集跑完整链路（静帧 + 成片），耗时与积分较高。继续？",
+                      )
+                    ) {
+                      return;
+                    }
+                    setFactoryRunScope("dock");
+                    ensureStudioSpawned(factoryTopic);
+                    const items = collectManhuaClipDockItems(blocks);
+                    const eps = episodeIndexesFromDockSelection(items, dockSelectedIds);
+                    void runFactory("clip", {
+                      episodeIndexes: eps.length ? eps : [writerFocusEpisode],
+                    });
+                  }}
+                  onResumeFromFailure={() => {
+                    const onCanvas = Array.from(
+                      new Set(
+                        blocks
+                          .map((b) => getBlockEpisodeIndex(b))
+                          .filter((n): n is number => n != null),
+                      ),
+                    ).sort((a, b) => a - b);
+                    const forceFromStageByEpisode: Partial<Record<number, ManhuaFactoryStageKey>> =
+                      {};
+                    const toRun: number[] = [];
+                    for (const ep of onCanvas.length ? onCanvas : [writerFocusEpisode]) {
+                      const stage = resolveFactoryResumeStage(blocks, ep);
+                      if (!stage) continue;
+                      forceFromStageByEpisode[ep] = stage;
+                      toRun.push(ep);
+                    }
+                    if (!toRun.length) {
+                      toast.message("各集链路都已完成，无需续跑");
+                      return;
+                    }
+                    toast.message(
+                      `按集续跑：${toRun
+                        .map(
+                          (ep) =>
+                            `第${ep}集·${MANHUA_FACTORY_STAGE_LABEL_ZH[forceFromStageByEpisode[ep]!]}`,
+                        )
+                        .join("；")}`,
+                    );
+                    void runFactory("clip", { forceFromStageByEpisode, episodeIndexes: toRun });
+                  }}
+                />
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-white/40">
+                  <button
+                    type="button"
+                    className="underline underline-offset-2 hover:text-white/70"
+                    onClick={() =>
+                      document
+                        .getElementById("manhua-factory-zone")
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                    }
+                  >
+                    改题材 / 编剧室
+                  </button>
+                  <button
+                    type="button"
+                    className="underline underline-offset-2 hover:text-white/70"
+                    onClick={() => setManhuaUiMode("form")}
+                  >
+                    切经典表单编导
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {/* ① 题材 + 编剧室（确认后默认收起；沉浸工作台时压到主屏下方） */}
             <div
               id="manhua-factory-zone"
               className={`mt-2 scroll-mt-44 rounded-2xl border border-cyan-400/15 bg-gradient-to-b from-[#0c1520] via-[#0a0e18]/90 to-transparent p-4 md:p-5 ${
-                writerConfirmed && manhuaUiMode === "workbench" ? "max-w-3xl opacity-90" : "max-w-3xl"
+                writerConfirmed && manhuaUiMode === "workbench"
+                  ? "max-w-3xl opacity-80"
+                  : "max-w-3xl"
               }`}
             >
               <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -2382,39 +2514,39 @@ export default function OmniCanvas() {
               />
             ) : null}
 
-            {/* 对标 c1/c2：工作台三栏（右栏大预览）为主屏；推进条 sticky；节点画布降级可展开 */}
-            <div className="mt-3 flex max-w-[1920px] flex-wrap items-center gap-2">
-              <span className="text-[11px] text-white/45">生产主界面</span>
-              <div className="inline-flex rounded-lg border border-white/10 bg-black/35 p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setManhuaUiMode("workbench")}
-                  className={`rounded-md px-2.5 py-1 text-[11px] font-semibold ${
-                    manhuaUiMode === "workbench"
-                      ? "bg-cyan-500/25 text-cyan-50"
-                      : "text-white/50 hover:text-white/75"
-                  }`}
-                >
-                  剧本工作台
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setManhuaUiMode("form")}
-                  className={`rounded-md px-2.5 py-1 text-[11px] font-semibold ${
-                    manhuaUiMode === "form"
-                      ? "bg-white/15 text-white/90"
-                      : "text-white/50 hover:text-white/75"
-                  }`}
-                >
-                  经典表单编导
-                </button>
+            {/* 未确认编剧时：仍显示模式切换；确认后工作台已提到路径下方主屏 */}
+            {!(writerConfirmed && manhuaUiMode === "workbench") ? (
+              <div className="mt-3 flex max-w-[1920px] flex-wrap items-center gap-2">
+                <span className="text-[11px] text-white/45">生产主界面</span>
+                <div className="inline-flex rounded-lg border border-white/10 bg-black/35 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setManhuaUiMode("workbench")}
+                    className={`rounded-md px-2.5 py-1 text-[11px] font-semibold ${
+                      manhuaUiMode === "workbench"
+                        ? "bg-cyan-500/25 text-cyan-50"
+                        : "text-white/50 hover:text-white/75"
+                    }`}
+                  >
+                    剧本工作台
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setManhuaUiMode("form")}
+                    className={`rounded-md px-2.5 py-1 text-[11px] font-semibold ${
+                      manhuaUiMode === "form"
+                        ? "bg-white/15 text-white/90"
+                        : "text-white/50 hover:text-white/75"
+                    }`}
+                  >
+                    经典表单编导
+                  </button>
+                </div>
               </div>
-              <span className="text-[10px] text-white/35">
-                左资产墙 · 中片段脚本 · 右大预览 · 底片段胶片
-              </span>
-            </div>
+            ) : null}
 
-            {manhuaUiMode === "workbench" ? (
+            {/* 未确认时也可预览工作台壳；确认后已在上方渲染，避免双份 */}
+            {manhuaUiMode === "workbench" && !writerConfirmed ? (
               <div id="manhua-workbench-zone" className="max-w-[1920px] scroll-mt-44">
                 <ManhuaScriptWorkbench
                   blocks={blocks}
@@ -2446,60 +2578,11 @@ export default function OmniCanvas() {
                       "manhua-factory-canvas-details",
                     ) as HTMLDetailsElement | null;
                     if (details) details.open = true;
-                    window.setTimeout(() => {
-                      document
-                        .getElementById("freeform-canvas-zone")
-                        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                    }, 40);
                   }}
                   onSpawnAndRunClip={() => {
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
                     void runFactory("clip", { episodeIndexes: [writerFocusEpisode] });
-                  }}
-                  onRunFullAuto={() => {
-                    if (!window.confirm("将按成片坞已勾选集跑完整链路（静帧 + 成片），耗时与积分较高。继续？")) {
-                      return;
-                    }
-                    setFactoryRunScope("dock");
-                    ensureStudioSpawned(factoryTopic);
-                    const items = collectManhuaClipDockItems(blocks);
-                    const eps = episodeIndexesFromDockSelection(items, dockSelectedIds);
-                    void runFactory("clip", {
-                      episodeIndexes: eps.length ? eps : [writerFocusEpisode],
-                    });
-                  }}
-                  onResumeFromFailure={() => {
-                    // 工作台：扫画布各集，不依赖异步 setScope
-                    const onCanvas = Array.from(
-                      new Set(
-                        blocks
-                          .map((b) => getBlockEpisodeIndex(b))
-                          .filter((n): n is number => n != null),
-                      ),
-                    ).sort((a, b) => a - b);
-                    const forceFromStageByEpisode: Partial<Record<number, ManhuaFactoryStageKey>> =
-                      {};
-                    const toRun: number[] = [];
-                    for (const ep of onCanvas.length ? onCanvas : [writerFocusEpisode]) {
-                      const stage = resolveFactoryResumeStage(blocks, ep);
-                      if (!stage) continue;
-                      forceFromStageByEpisode[ep] = stage;
-                      toRun.push(ep);
-                    }
-                    if (!toRun.length) {
-                      toast.message("各集链路都已完成，无需续跑");
-                      return;
-                    }
-                    toast.message(
-                      `按集续跑：${toRun
-                        .map(
-                          (ep) =>
-                            `第${ep}集·${MANHUA_FACTORY_STAGE_LABEL_ZH[forceFromStageByEpisode[ep]!]}`,
-                        )
-                        .join("；")}`,
-                    );
-                    void runFactory("clip", { forceFromStageByEpisode, episodeIndexes: toRun });
                   }}
                 />
               </div>
