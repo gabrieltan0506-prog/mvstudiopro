@@ -49,6 +49,10 @@ import {
   summarizeManhuaProjectBible,
   type ManhuaProjectBible,
 } from "@shared/manhuaProjectBible";
+import {
+  loadManhuaWriterSessionFromStorage,
+  saveManhuaWriterSessionToStorage,
+} from "@shared/manhuaWriterSession";
 import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import ManhuaScriptWorkbench from "@/components/ManhuaScriptWorkbench";
 import ManhuaAssetWall from "@/components/ManhuaAssetWall";
@@ -177,6 +181,11 @@ function saveFactoryCharacterPrefs(prefs: FactoryCharacterPrefs) {
   }
 }
 
+/** 本机编剧会话（剧情包 / 确认态 / Bible）；硬刷新恢复，避免线上重扩 */
+function bootWriterSession() {
+  return loadManhuaWriterSessionFromStorage();
+}
+
 export default function OmniCanvas() {
   const { user } = useAuth({ redirectOnUnauthenticated: false });
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
@@ -219,38 +228,109 @@ export default function OmniCanvas() {
 
   const initial = useMemo(() => loadCanvasState(), []);
   const initialFactoryPrefs = useMemo(() => loadFactoryCharacterPrefs(), []);
+  const initialWriterSession = useMemo(() => bootWriterSession(), []);
+
+  useEffect(() => {
+    if (!initialWriterSession?.writerPack && !initialWriterSession?.projectBible) return;
+    pushDebug("writerSession:restore", {
+      level: "ok",
+      detail: [
+        initialWriterSession.writerPack
+          ? `${initialWriterSession.writerPack.seriesTitle}·${initialWriterSession.writerPack.episodes.length}ep`
+          : "noPack",
+        `confirmed=${Boolean(initialWriterSession.writerConfirmed)}`,
+        `bible=${summarizeManhuaProjectBible(initialWriterSession.projectBible)}`,
+      ].join(" · "),
+    });
+  }, [initialWriterSession, pushDebug]);
+
+  const bootBible = initialWriterSession?.projectBible ?? null;
+  const bootCast = bootBible?.cast;
+  const bootManual = bootBible?.manualOverrides;
   const [blocks, setBlocks] = useState<CanvasBlock[]>(initial.blocks);
   const [edges, setEdges] = useState<CanvasEdge[]>(initial.edges);
   const [factoryBusy, setFactoryBusy] = useState(false);
   /** 剧本工作台（逼近竞品壳）优先；可切回下方长表单编导 */
-  const [manhuaUiMode, setManhuaUiMode] = useState<"workbench" | "form">("workbench");
+  const [manhuaUiMode, setManhuaUiMode] = useState<"workbench" | "form">(
+    () => initialWriterSession?.manhuaUiMode || "workbench",
+  );
   /** 角色库 / 资产墙改抽屉，避免长期占主流程 */
   const [manhuaAssetDrawer, setManhuaAssetDrawer] = useState<null | "characters" | "assets">(null);
   /** 确认编剧后的专案 Bible（系列级真相；≠ 工厂节点 bible-*） */
-  const [projectBible, setProjectBible] = useState<ManhuaProjectBible | null>(null);
-  const [factoryTopic, setFactoryTopic] = useState(initialFactoryPrefs.topic || "");
-  const [factoryGenreId, setFactoryGenreId] = useState("");
-  const [factorySceneId, setFactorySceneId] = useState("");
-  /** 资产墙点选的道具示范（最多 4） */
-  const [factoryPropIds, setFactoryPropIds] = useState<string[]>([]);
-  /** 古风原型 arch_*（最多 2） */
-  const [factoryAncientArchetypeIds, setFactoryAncientArchetypeIds] = useState<string[]>([]);
-  /** 剧本跟随身份锁（CastBundle） */
-  const [factoryIdentityLockZh, setFactoryIdentityLockZh] = useState("");
-  /** 手选场景后不再被题材自动覆盖（⑤D） */
-  const [sceneManual, setSceneManual] = useState(false);
-  const [factoryFemaleId, setFactoryFemaleId] = useState(initialFactoryPrefs.femaleId || "");
-  const [factoryMaleId, setFactoryMaleId] = useState(initialFactoryPrefs.maleId || "");
-  /** 用户手选后不再被题材自动覆盖（4.B） */
-  const [femaleLeadManual, setFemaleLeadManual] = useState(Boolean(initialFactoryPrefs.femaleLeadManual));
-  const [maleLeadManual, setMaleLeadManual] = useState(Boolean(initialFactoryPrefs.maleLeadManual));
-  const [ancientManual, setAncientManual] = useState(false);
-  const [wardrobeManual, setWardrobeManual] = useState(false);
-  const [propManual, setPropManual] = useState(false);
-  const [factoryArtStyleId, setFactoryArtStyleId] = useState<ManhuaArtStyleId>(
-    initialFactoryPrefs.artStyleId || DEFAULT_MANHUA_ART_STYLE_ID,
+  const [projectBible, setProjectBible] = useState<ManhuaProjectBible | null>(() => bootBible);
+  const [factoryTopic, setFactoryTopic] = useState(
+    () => initialWriterSession?.topic || initialFactoryPrefs.topic || "",
   );
-  const [artStyleManual, setArtStyleManual] = useState(Boolean(initialFactoryPrefs.artStyleManual));
+  const [factoryGenreId, setFactoryGenreId] = useState("");
+  const [factorySceneId, setFactorySceneId] = useState(() => bootCast?.sceneId || "");
+  /** 资产墙点选的道具示范（最多 4） */
+  const [factoryPropIds, setFactoryPropIds] = useState<string[]>(() => bootCast?.propIds || []);
+  /** 古风原型 arch_*（最多 2） */
+  const [factoryAncientArchetypeIds, setFactoryAncientArchetypeIds] = useState<string[]>(
+    () => bootCast?.ancientArchetypeIds || [],
+  );
+  /** 剧本跟随身份锁（CastBundle） */
+  const [factoryIdentityLockZh, setFactoryIdentityLockZh] = useState(
+    () => bootCast?.identityLockZh || "",
+  );
+  /** 手选场景后不再被题材自动覆盖（⑤D） */
+  const [sceneManual, setSceneManual] = useState(() =>
+    Boolean(bootManual?.scene || (bootCast?.sceneId && initialWriterSession?.writerConfirmed)),
+  );
+  const bootUrbanIds = bootCast?.lane === "urban" ? bootCast.characterIds : [];
+  const [factoryFemaleId, setFactoryFemaleId] = useState(
+    () => bootUrbanIds[0] || initialFactoryPrefs.femaleId || "",
+  );
+  const [factoryMaleId, setFactoryMaleId] = useState(
+    () => bootUrbanIds[1] || initialFactoryPrefs.maleId || "",
+  );
+  /** 用户手选后不再被题材自动覆盖（4.B） */
+  const [femaleLeadManual, setFemaleLeadManual] = useState(() =>
+    Boolean(
+      bootManual?.femaleLead ||
+        initialFactoryPrefs.femaleLeadManual ||
+        (bootUrbanIds[0] && initialWriterSession?.writerConfirmed),
+    ),
+  );
+  const [maleLeadManual, setMaleLeadManual] = useState(() =>
+    Boolean(
+      bootManual?.maleLead ||
+        initialFactoryPrefs.maleLeadManual ||
+        (bootUrbanIds[1] && initialWriterSession?.writerConfirmed),
+    ),
+  );
+  const [ancientManual, setAncientManual] = useState(() =>
+    Boolean(
+      bootManual?.ancient ||
+        (bootCast?.lane === "ancient" &&
+          bootCast.ancientArchetypeIds.length &&
+          initialWriterSession?.writerConfirmed),
+    ),
+  );
+  const [wardrobeManual, setWardrobeManual] = useState(() =>
+    Boolean(
+      bootManual?.wardrobe ||
+        (bootCast?.wardrobePropContinuityIds.length && initialWriterSession?.writerConfirmed),
+    ),
+  );
+  const [propManual, setPropManual] = useState(() =>
+    Boolean(
+      bootManual?.props || (bootCast?.propIds.length && initialWriterSession?.writerConfirmed),
+    ),
+  );
+  const [factoryArtStyleId, setFactoryArtStyleId] = useState<ManhuaArtStyleId>(
+    () =>
+      (bootCast?.artStyleId as ManhuaArtStyleId | undefined) ||
+      initialFactoryPrefs.artStyleId ||
+      DEFAULT_MANHUA_ART_STYLE_ID,
+  );
+  const [artStyleManual, setArtStyleManual] = useState(() =>
+    Boolean(
+      bootManual?.artStyle ||
+        initialFactoryPrefs.artStyleManual ||
+        (bootCast?.artStyleId && initialWriterSession?.writerConfirmed),
+    ),
+  );
   const [factoryMotionId, setFactoryMotionId] = useState("");
   const [factoryCraftShotId, setFactoryCraftShotId] = useState("");
   /** 手选手法后不再被题材自动覆盖 */
@@ -270,18 +350,30 @@ export default function OmniCanvas() {
   const [factoryActionRecipeId, setFactoryActionRecipeId] = useState("");
   const [actionRecipeManual, setActionRecipeManual] = useState(false);
   const [factoryCineVocabId, setFactoryCineVocabId] = useState("");
-  const [factoryWardrobeId, setFactoryWardrobeId] = useState("");
+  const [factoryWardrobeId, setFactoryWardrobeId] = useState(
+    () => bootCast?.wardrobePropContinuityIds[0] || "",
+  );
   const [factoryReverseMode, setFactoryReverseMode] = useState<VideoReverseOutputMode>("zh");
   /** 侧栏进阶下拉默认折叠，降低信息密度 */
   const [factoryAdvancedOpen, setFactoryAdvancedOpen] = useState(false);
   const [factoryProgress, setFactoryProgress] = useState<string>("");
-  const [writerBrief, setWriterBrief] = useState("");
-  const [writerEpisodeCount, setWriterEpisodeCount] = useState(MANHUA_WRITER_EPISODE_DEFAULT);
+  const [writerBrief, setWriterBrief] = useState(() => initialWriterSession?.brief || "");
+  const [writerEpisodeCount, setWriterEpisodeCount] = useState(() =>
+    clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
+  );
   const [writerBusy, setWriterBusy] = useState(false);
-  const [writerPack, setWriterPack] = useState<ManhuaWriterPack | null>(null);
-  const [writerConfirmed, setWriterConfirmed] = useState(false);
-  const [writerFocusEpisode, setWriterFocusEpisode] = useState(1);
-  const [directorUnlocked, setDirectorUnlocked] = useState(false);
+  const [writerPack, setWriterPack] = useState<ManhuaWriterPack | null>(
+    () => initialWriterSession?.writerPack ?? null,
+  );
+  const [writerConfirmed, setWriterConfirmed] = useState(
+    () => Boolean(initialWriterSession?.writerConfirmed),
+  );
+  const [writerFocusEpisode, setWriterFocusEpisode] = useState(() =>
+    Math.max(1, Math.floor(Number(initialWriterSession?.focusEpisode) || 1)),
+  );
+  const [directorUnlocked, setDirectorUnlocked] = useState(
+    () => Boolean(initialWriterSession?.directorUnlocked),
+  );
   /** 工厂运行范围：焦点集（默认）或成片坞已勾选集 */
   const [factoryRunScope, setFactoryRunScope] = useState<"focus" | "dock">("focus");
   const [dockSelectedIds, setDockSelectedIds] = useState<Set<string>>(() => new Set());
@@ -611,6 +703,95 @@ export default function OmniCanvas() {
     () => [factoryFemaleId, factoryMaleId].map((id) => id.trim()).filter(Boolean),
     [factoryFemaleId, factoryMaleId],
   );
+
+  /** 编剧包 / Bible / 确认态持久化：硬刷新后继续三集流程，无需重扩 */
+  useEffect(() => {
+    saveManhuaWriterSessionToStorage({
+      topic: factoryTopic,
+      brief: writerBrief,
+      episodeCount: writerEpisodeCount,
+      focusEpisode: writerFocusEpisode,
+      writerPack,
+      writerConfirmed,
+      directorUnlocked,
+      projectBible,
+      manhuaUiMode,
+    });
+  }, [
+    factoryTopic,
+    writerBrief,
+    writerEpisodeCount,
+    writerFocusEpisode,
+    writerPack,
+    writerConfirmed,
+    directorUnlocked,
+    projectBible,
+    manhuaUiMode,
+  ]);
+
+  /** 抽屉改造型后回写 Bible cast（保留 confirmedAt 与剧情正文） */
+  useEffect(() => {
+    if (!writerConfirmed || !projectBible) return;
+    const sceneId = factorySceneId || projectBible.cast.sceneId || "";
+    const wardrobeIds = factoryWardrobeId.trim()
+      ? [factoryWardrobeId.trim()]
+      : projectBible.cast.wardrobePropContinuityIds;
+    const nextCast = {
+      ...projectBible.cast,
+      lane: castBundle.lane,
+      characterIds: selectedCharacterIds,
+      ancientArchetypeIds: factoryAncientArchetypeIds,
+      artStyleId: factoryArtStyleId,
+      sceneId: sceneId || undefined,
+      propIds: factoryPropIds,
+      wardrobePropContinuityIds: wardrobeIds,
+      identityLockZh: factoryIdentityLockZh || projectBible.cast.identityLockZh,
+    };
+    const same =
+      nextCast.lane === projectBible.cast.lane &&
+      nextCast.artStyleId === projectBible.cast.artStyleId &&
+      nextCast.sceneId === projectBible.cast.sceneId &&
+      nextCast.identityLockZh === projectBible.cast.identityLockZh &&
+      nextCast.characterIds.join("|") === projectBible.cast.characterIds.join("|") &&
+      nextCast.ancientArchetypeIds.join("|") === projectBible.cast.ancientArchetypeIds.join("|") &&
+      nextCast.propIds.join("|") === projectBible.cast.propIds.join("|") &&
+      nextCast.wardrobePropContinuityIds.join("|") ===
+        projectBible.cast.wardrobePropContinuityIds.join("|");
+    if (same) return;
+    setProjectBible({
+      ...projectBible,
+      cast: nextCast,
+      focusEpisode: writerFocusEpisode,
+      manualOverrides: {
+        femaleLead: femaleLeadManual,
+        maleLead: maleLeadManual,
+        ancient: ancientManual,
+        artStyle: artStyleManual,
+        scene: sceneManual,
+        props: propManual,
+        wardrobe: wardrobeManual,
+      },
+    });
+  }, [
+    writerConfirmed,
+    projectBible,
+    castBundle.lane,
+    selectedCharacterIds,
+    factoryAncientArchetypeIds,
+    factoryArtStyleId,
+    factorySceneId,
+    factoryPropIds,
+    factoryWardrobeId,
+    factoryIdentityLockZh,
+    writerFocusEpisode,
+    femaleLeadManual,
+    maleLeadManual,
+    ancientManual,
+    artStyleManual,
+    sceneManual,
+    propManual,
+    wardrobeManual,
+  ]);
   const selectedMotionIds = useMemo(
     () => (factoryMotionId.trim() ? [factoryMotionId.trim()] : []),
     [factoryMotionId],
@@ -1956,6 +2137,7 @@ export default function OmniCanvas() {
                   propIds={factoryPropIds}
                   artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
                   projectBibleSummary={summarizeManhuaProjectBible(projectBible)}
+                  bibleBoundEpisodes={projectBible?.cast.boundEpisodeIndexes}
                   factoryBusy={factoryBusy}
                   canRun={Boolean(directorUnlocked || writerConfirmed)}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}

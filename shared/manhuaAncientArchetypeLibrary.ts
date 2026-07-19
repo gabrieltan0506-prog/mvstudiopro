@@ -250,7 +250,7 @@ const ARCHETYPE_TOPIC_HINTS: Array<{
   keys: string[];
   score: number;
 }> = [
-  { id: "arch_rain_jianghu_dao", keys: ["江湖", "刀客", "雨夜", "客栈", "复仇", "浪客"], score: 6 },
+  { id: "arch_rain_jianghu_dao", keys: ["江湖", "刀客", "刀光", "打斗", "雨夜", "客栈", "复仇", "浪客"], score: 6 },
   { id: "arch_red_armor_general", keys: ["将军", "赤甲", "边关", "出征", "王爷", "统帅", "权谋", "朝堂"], score: 5 },
   { id: "arch_phoenix_empress", keys: ["女帝", "皇后", "宫斗", "宫廷", "凤", "后宫", "权谋"], score: 5 },
   { id: "arch_xianmen_sword_cold", keys: ["仙侠", "剑修", "宗门", "修仙", "御剑", "仙门"], score: 6 },
@@ -302,6 +302,21 @@ export function recommendAncientArchetypesFromTopic(
     }
   }
 
+  // 江湖权谋 / 刀客入朝：允许刀客轨 + 宫廷女向混搭（看剧本信号，不按单一题材禁绝）
+  const courtSignal = /朝堂|宫廷|宫斗|女帝|皇后|后宫|权谋|王爷|密谋/.test(t);
+  const jianghuSignal = /江湖|刀客|刀光|客栈|浪客|雨夜|打斗/.test(t);
+  if (jianghuSignal && courtSignal) {
+    for (const [id, bonus, tag] of [
+      ["arch_rain_jianghu_dao", 4, "江湖×朝堂"] as const,
+      ["arch_phoenix_empress", 4, "江湖×朝堂"] as const,
+    ]) {
+      const prev = scores.get(id) || { score: 0, matched: [] as string[] };
+      prev.score += bonus;
+      if (!prev.matched.includes(tag)) prev.matched.push(tag);
+      scores.set(id, prev);
+    }
+  }
+
   let ranked = Array.from(scores.entries())
     .sort((a, b) => b[1].score - a[1].score || a[0].localeCompare(b[0]))
     .map(([id, v]) => ({ id, ...v }));
@@ -347,10 +362,12 @@ export function recommendAncientArchetypesFromTopic(
       if (!matched.includes(m)) matched.push(m);
     }
   }
-  // 若只挑到同性，补一个对位默认
+  // 若只挑到同性，补一个对位默认（可混搭；手选始终可改）
   if (picked.length < max) {
     const fill = hasFemale
-      ? "arch_red_armor_general"
+      ? jianghuSignal
+        ? "arch_rain_jianghu_dao"
+        : "arch_red_armor_general"
       : hasMale
         ? "arch_phoenix_empress"
         : "arch_rain_jianghu_dao";

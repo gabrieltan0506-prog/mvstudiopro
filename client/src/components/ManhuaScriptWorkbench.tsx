@@ -12,7 +12,10 @@ import {
   stageKeyFromBlockId,
 } from "@/lib/canvasDramaStudio";
 import { getManhuaCharacterById, getManhuaCharacterPreviewUrl } from "@shared/manhuaCharacterAssetLibrary";
-import { getAncientArchetypeById } from "@shared/manhuaAncientArchetypeLibrary";
+import {
+  getAncientArchetypeById,
+  getAncientArchetypePreviewUrl,
+} from "@shared/manhuaAncientArchetypeLibrary";
 import { getManhuaSceneTemplate } from "@shared/manhuaSceneAssetLibrary";
 import {
   getManhuaDemoAsset,
@@ -38,6 +41,8 @@ type Props = {
   artStyleLabelZh?: string;
   /** 专案 Bible 一行摘要（确认编剧后） */
   projectBibleSummary?: string;
+  /** Bible 已绑定造型的集号（1-based） */
+  bibleBoundEpisodes?: number[];
   factoryBusy?: boolean;
   canRun?: boolean;
   onOpenCharacterCard?: () => void;
@@ -68,6 +73,7 @@ export default function ManhuaScriptWorkbench({
   propIds,
   artStyleLabelZh,
   projectBibleSummary,
+  bibleBoundEpisodes = [],
   factoryBusy,
   canRun,
   onOpenCharacterCard,
@@ -215,12 +221,24 @@ export default function ManhuaScriptWorkbench({
               </button>
             ))}
             {archetypes.map((a) => (
-              <div
+              <button
                 key={a!.id}
-                className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-1.5 py-2 text-[10px] text-amber-50/90"
+                type="button"
+                onClick={() => onOpenCharacterCard?.()}
+                className="overflow-hidden rounded-lg border border-amber-400/25 bg-amber-500/10 text-left"
+                title={a!.nameZh}
               >
-                古风·{a!.nameZh}
-              </div>
+                <img
+                  src={getAncientArchetypePreviewUrl(a!.id)}
+                  alt=""
+                  className="aspect-[3/4] w-full object-cover object-top"
+                  loading="lazy"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                  }}
+                />
+                <div className="truncate px-1.5 py-1 text-[10px] text-amber-50/90">古风·{a!.nameZh}</div>
+              </button>
             ))}
             {!characters.length && !archetypes.length ? (
               <button
@@ -386,7 +404,8 @@ export default function ManhuaScriptWorkbench({
       {/* 底：集时间线 */}
       <div className="border-t border-white/10 px-3 py-2.5 md:px-4">
         <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/35">
-          集时间线（点选切换焦点集）
+          集时间线（点选切换焦点集
+          {bibleBoundEpisodes.length ? " · 绿点=专案设定已绑定" : ""}）
         </div>
         <div className="flex gap-2 overflow-x-auto pb-1">
           {episodeIndexes.map((ep) => {
@@ -394,6 +413,7 @@ export default function ManhuaScriptWorkbench({
             const epClip = blockByStage(blocks, ep, "clip");
             const thumb = mediaUrl(epKeyart) || mediaUrl(epClip);
             const ready = Boolean(mediaUrl(epClip) || mediaUrl(epKeyart));
+            const bound = bibleBoundEpisodes.includes(ep);
             const on = ep === focusEpisode;
             return (
               <button
@@ -422,8 +442,17 @@ export default function ManhuaScriptWorkbench({
                       有产出
                     </span>
                   ) : null}
+                  {bound ? (
+                    <span
+                      className="absolute left-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_0_1px_rgba(0,0,0,0.45)]"
+                      title="专案设定已绑定本集"
+                    />
+                  ) : null}
                 </div>
-                <div className="px-1.5 py-1 text-[10px] font-semibold text-white/80">片段 {String(ep).padStart(2, "0")}</div>
+                <div className="px-1.5 py-1 text-[10px] font-semibold text-white/80">
+                  片段 {String(ep).padStart(2, "0")}
+                  {bound ? <span className="ml-1 font-normal text-emerald-200/70">绑</span> : null}
+                </div>
               </button>
             );
           })}
