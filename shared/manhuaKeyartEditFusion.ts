@@ -2,17 +2,20 @@
  * 关键静帧 · 用官方 GPT-Image-2 edit（OpenAI images/edits → 失败回落 OpenRouter）多图融图。
  * 有可抓取示范图 → imageMode=edit + referenceImageUrls；缺图 → 文案锚点并走文生图重做。
  * 不走 EvoLink。
+ * 古风无 sheet：禁止挂 404；必须用服饰/发型硬锁 + 场景/道具示范图融进画。
  */
 
 import {
   getAncientArchetypePreviewUrl,
 } from "./manhuaAncientDesignBoard.js";
+import { getAncientArchetypeById } from "./manhuaAncientArchetypeLibrary.js";
 import { getManhuaCharacterPreviewUrl } from "./manhuaCharacterAssetLibrary.js";
 import {
   getManhuaDemoAsset,
   getManhuaDemoAssetPublicUrl,
   listManhuaDemoAssetsForSceneTemplate,
 } from "./manhuaScenePropDemoCatalog.js";
+
 export type ManhuaKeyartEditRef = {
   id: string;
   role: "character" | "ancient" | "scene" | "prop";
@@ -47,6 +50,39 @@ function uniqPaths(items: ManhuaKeyartEditRef[]): ManhuaKeyartEditRef[] {
   return out;
 }
 
+/** 古风无定妆 sheet：把发型/服饰/气质写成硬锁，供 edit 与文生重做共用 */
+export function buildManhuaKeyartAncientHardLockZh(ancientArchetypeIds?: string[] | null): string {
+  const ids = (ancientArchetypeIds || []).map((id) => String(id || "").trim()).filter(Boolean);
+  if (!ids.length) return "";
+  const lines: string[] = [
+    "【古装时代硬锁·必守】",
+    "本集为古装/宫廷/江湖题材。画面人物必须古装：发髻或束发、袍服/甲胄/宫装层次齐全。",
+    "禁止：西装、衬衫、T恤、连衣裙街拍、现代城市夜景、手机、汽车、霓虹、鸡汤字幕、网感竖屏封面字。",
+    "有场景示范图时：宫殿/殿宇/客栈等环境层次必须保留可读；点选道具必须入画且时代正确。",
+    "古风定妆 sheet 未落盘：人物外形按下列原型从零绘制进场景，不得套用都市脸与现代衣着。",
+  ];
+  let n = 0;
+  for (const id of ids) {
+    const b = getAncientArchetypeById(id);
+    if (!b) {
+      lines.push(`- 原型 ${id}：按古装身份重绘（服饰发型与题材一致）。`);
+      continue;
+    }
+    n += 1;
+    lines.push(
+      [
+        `${n}. ${b.nameZh}（${b.id}）`,
+        `五官气质：${b.faceTemperamentZh}`,
+        `发型：${b.hairstyleZh}`,
+        `服饰：${b.wardrobeLayers.join("、")}`,
+        `随身：${b.props.slice(0, 4).join("、")}`,
+        `配色：${b.palette.join("、")}`,
+      ].join("；"),
+    );
+  }
+  return lines.join("\n");
+}
+
 /**
  * 收集角色 / 古风 / 场景示范 / 道具示范的可融图 URL，并给出 edit 计划。
  */
@@ -59,24 +95,31 @@ export function planManhuaKeyartEditFusion(opts?: {
 }): ManhuaKeyartEditPlan {
   const refs: ManhuaKeyartEditRef[] = [];
   const missingLabelsZh: string[] = [];
+  const ancientIds = (opts?.ancientArchetypeIds || [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean);
+  const hardLockZh = buildManhuaKeyartAncientHardLockZh(ancientIds);
 
-  for (const id of opts?.ancientArchetypeIds || []) {
-    const key = String(id || "").trim();
-    if (!key) continue;
-    // 古风 sheet 尚未批量落盘：勿挂会 404 的路径毒死 edits 参考图，改文生补造型
-    const path = getAncientArchetypePreviewUrl(key);
-    void path;
-    missingLabelsZh.push(`古风原型 ${key}（造型按文案重绘）`);
+  for (const id of ancientIds) {
+    // 古风 sheet 目录为空：勿挂 404 毒死 edits；造型走硬锁文案
+    void getAncientArchetypePreviewUrl(id);
+    const board = getAncientArchetypeById(id);
+    missingLabelsZh.push(
+      board ? `古风·${board.nameZh}（无定妆图，按硬锁重绘）` : `古风原型 ${id}（无定妆图，按硬锁重绘）`,
+    );
   }
 
-  for (const id of opts?.characterIds || []) {
-    const key = String(id || "").trim();
-    if (!key) continue;
-    const path = getManhuaCharacterPreviewUrl(key, { artStyleId: opts?.artStyleId });
-    if (path) {
-      refs.push({ id: key, role: "character", labelZh: `角色·${key}`, path });
-    } else {
-      missingLabelsZh.push(`角色 ${key}`);
+  // 已挂古风时不再挂都市角色 sheet，避免西装定妆抢参考
+  if (!ancientIds.length) {
+    for (const id of opts?.characterIds || []) {
+      const key = String(id || "").trim();
+      if (!key) continue;
+      const path = getManhuaCharacterPreviewUrl(key, { artStyleId: opts?.artStyleId });
+      if (path) {
+        refs.push({ id: key, role: "character", labelZh: `角色·${key}`, path });
+      } else {
+        missingLabelsZh.push(`角色 ${key}`);
+      }
     }
   }
 
@@ -117,17 +160,21 @@ export function planManhuaKeyartEditFusion(opts?: {
     ready[0];
   const fusion = ready.filter((r) => r.path !== base?.path).slice(0, 15);
   const canEdit = Boolean(base?.path);
+  const baseIsEnvOnly = Boolean(base && (base.role === "scene" || base.role === "prop"));
 
   const editPromptAddonZh = [
     "【静帧·示范图融图】",
+    hardLockZh,
     canEdit
-      ? "底图与参考图已挂载：请用改图/融图把角色放进场景，道具必须入画且与题材时代一致；保持人物身份与服装连续，禁止空棚抠贴、禁止错时代穿戴。"
-      : "暂无可用示范底图：请按文案锚点完整文生一张关键静帧（人物+场景+道具同框）。",
+      ? baseIsEnvOnly && ancientIds.length
+        ? "底图是场景/道具示范：请把硬锁中的古装人物绘入该环境，道具入画；禁止在宫景里画现代人，禁止改成都市街拍。"
+        : "底图与参考图已挂载：请用改图/融图把角色放进场景，道具必须入画且与题材时代一致；保持人物身份与服装连续，禁止空棚抠贴、禁止错时代穿戴。"
+      : "暂无可用示范底图：请按硬锁与文案锚点完整文生一张关键静帧（古装人物+场景+道具同框）。",
     fusion.length
-      ? `融图参考 ${fusion.length} 张：${fusion.map((r) => r.labelZh).join("、")}——按构图需要吸收其造型/环境/道具外观。`
+      ? `融图参考 ${fusion.length} 张：${fusion.map((r) => r.labelZh).join("、")}——吸收其环境/道具外观；人物造型以古装硬锁为准。`
       : "",
     missingLabelsZh.length
-      ? `下列点选资产尚无示范图文件，须按文字锚点重新生成进画面：${missingLabelsZh.join("、")}。`
+      ? `下列点选资产尚无示范图文件，须按文字/硬锁重新生成进画面：${missingLabelsZh.join("、")}。`
       : "",
   ]
     .filter(Boolean)
