@@ -330,12 +330,16 @@ export default function OmniCanvas() {
       }),
     [factoryTopic, factoryGenreId, writerPack?.charactersMd],
   );
+  /** 1423：编剧确认 / 跳过进编导后才硬套 Cast；此前仅软预览 */
+  const castHardApplyReady = writerConfirmed || directorUnlocked;
   const femaleAutoApplied =
+    castHardApplyReady &&
     !femaleLeadManual &&
     castBundle.lane === "urban" &&
     Boolean(factoryFemaleId) &&
     factoryFemaleId === castBundle.femaleId;
   const maleAutoApplied =
+    castHardApplyReady &&
     !maleLeadManual &&
     castBundle.lane === "urban" &&
     Boolean(factoryMaleId) &&
@@ -348,12 +352,30 @@ export default function OmniCanvas() {
     !artStyleManual && factoryArtStyleId === recommendedArtStyle.artStyleId;
 
   useEffect(() => {
+    setFactoryIdentityLockZh(castBundle.identityLockZh);
+
+    // 古风题材：确认前也清掉残留都市角色卡（防 localStorage/prefs 污染）
     if (castBundle.lane === "ancient") {
-      // 古风轨硬清都市角色卡，避免「江湖剧本 + 西装定妆」再进静帧/成片
       setFactoryFemaleId("");
       setFactoryMaleId("");
       setFemaleLeadManual(false);
       setMaleLeadManual(false);
+    }
+
+    if (!castHardApplyReady) {
+      // 软预览：不写入原型/都市脸/服/道具，等编剧确认
+      if (!ancientManual) setFactoryAncientArchetypeIds([]);
+      if (!wardrobeManual) setFactoryWardrobeId("");
+      if (!propManual) setFactoryPropIds([]);
+      if (castBundle.lane === "urban") {
+        if (!femaleLeadManual) setFactoryFemaleId("");
+        if (!maleLeadManual) setFactoryMaleId("");
+        if (!ancientManual) setFactoryAncientArchetypeIds([]);
+      }
+      return;
+    }
+
+    if (castBundle.lane === "ancient") {
       if (!ancientManual) setFactoryAncientArchetypeIds(castBundle.ancientArchetypeIds);
     } else {
       if (!femaleLeadManual && castBundle.femaleId) setFactoryFemaleId(castBundle.femaleId);
@@ -366,9 +388,9 @@ export default function OmniCanvas() {
     if (!propManual) {
       setFactoryPropIds(castBundle.propIds);
     }
-    setFactoryIdentityLockZh(castBundle.identityLockZh);
   }, [
     castBundle,
+    castHardApplyReady,
     femaleLeadManual,
     maleLeadManual,
     ancientManual,
@@ -381,6 +403,77 @@ export default function OmniCanvas() {
       setFactoryArtStyleId(recommendedArtStyle.artStyleId);
     }
   }, [recommendedArtStyle.artStyleId, artStyleManual]);
+
+  /** 确认/铺板瞬间同步硬套 Cast（避免 setState 尚未生效就 spawn） */
+  const resolveHardCastForSpawn = useCallback(
+    (opts?: { topicOverride?: string; charactersMd?: string | null }) => {
+      const topic = String(opts?.topicOverride || factoryTopic || "").trim();
+      const bundle = recommendManhuaCastBundle({
+        topic,
+        genreId: factoryGenreId || undefined,
+        charactersMd: opts?.charactersMd ?? writerPack?.charactersMd,
+      });
+      setFactoryIdentityLockZh(bundle.identityLockZh);
+      if (bundle.lane === "ancient") {
+        const ancientIds = ancientManual
+          ? factoryAncientArchetypeIds
+          : bundle.ancientArchetypeIds;
+        const propIds = propManual ? factoryPropIds : bundle.propIds;
+        const wardrobeId = wardrobeManual
+          ? factoryWardrobeId
+          : bundle.wardrobePropContinuityIds[0] || "";
+        setFactoryFemaleId("");
+        setFactoryMaleId("");
+        setFemaleLeadManual(false);
+        setMaleLeadManual(false);
+        if (!ancientManual) setFactoryAncientArchetypeIds(ancientIds);
+        if (!propManual) setFactoryPropIds(propIds);
+        if (!wardrobeManual) setFactoryWardrobeId(wardrobeId);
+        return {
+          characterIds: [] as string[],
+          ancientArchetypeIds: ancientIds,
+          propIds,
+          wardrobePropContinuityIds: wardrobeId ? [wardrobeId] : [],
+          identityLockZh: bundle.identityLockZh,
+          lane: "ancient" as const,
+        };
+      }
+      const femaleId = femaleLeadManual ? factoryFemaleId : bundle.femaleId;
+      const maleId = maleLeadManual ? factoryMaleId : bundle.maleId;
+      const propIds = propManual ? factoryPropIds : bundle.propIds;
+      const wardrobeId = wardrobeManual
+        ? factoryWardrobeId
+        : bundle.wardrobePropContinuityIds[0] || "";
+      if (!femaleLeadManual && bundle.femaleId) setFactoryFemaleId(bundle.femaleId);
+      if (!maleLeadManual && bundle.maleId) setFactoryMaleId(bundle.maleId);
+      if (!ancientManual) setFactoryAncientArchetypeIds([]);
+      if (!propManual) setFactoryPropIds(propIds);
+      if (!wardrobeManual) setFactoryWardrobeId(wardrobeId);
+      return {
+        characterIds: [femaleId, maleId].map((id) => String(id || "").trim()).filter(Boolean),
+        ancientArchetypeIds: [] as string[],
+        propIds,
+        wardrobePropContinuityIds: wardrobeId ? [wardrobeId] : [],
+        identityLockZh: bundle.identityLockZh,
+        lane: "urban" as const,
+      };
+    },
+    [
+      factoryTopic,
+      factoryGenreId,
+      writerPack?.charactersMd,
+      ancientManual,
+      factoryAncientArchetypeIds,
+      propManual,
+      factoryPropIds,
+      wardrobeManual,
+      factoryWardrobeId,
+      femaleLeadManual,
+      factoryFemaleId,
+      maleLeadManual,
+      factoryMaleId,
+    ],
+  );
 
   useEffect(() => {
     saveFactoryCharacterPrefs({
@@ -558,10 +651,11 @@ export default function OmniCanvas() {
       `topic: ${factoryTopic.trim() || "—"}`,
       `focusEpisode: ${writerFocusEpisode}`,
       `runScope: ${factoryRunScope}`,
+      `castApply: ${castHardApplyReady ? "hard(after-writer)" : "soft-preview"} · lane=${castBundle.lane}`,
       `chars: ${selectedCharacterIds.join(",") || "—"}`,
       `ancient: ${factoryAncientArchetypeIds.join(",") || "—"}`,
       `artStyle: ${factoryArtStyleId}`,
-      `imageEngine: gpt-image-2 (default) · nano-banana-2 fallback`,
+      `imageEngine: gpt-image-2-2026-04-21 (pinned) · nano-banana-2 fallback`,
       `genre/scene: ${factoryGenreId || "auto"} / ${factorySceneId || "auto"}`,
       `props: ${factoryPropIds.join(",") || "—"}`,
       `craft: ${selectedCraftShotIds.join(",") || "—"}`,
@@ -584,6 +678,8 @@ export default function OmniCanvas() {
     factoryTopic,
     writerFocusEpisode,
     factoryRunScope,
+    castHardApplyReady,
+    castBundle.lane,
     selectedCharacterIds,
     factoryAncientArchetypeIds,
     factoryArtStyleId,
@@ -891,6 +987,13 @@ export default function OmniCanvas() {
         writerConfirmed && writerPack
           ? composeWriterPackFactoryContext(writerPack, continuity.episodeIndex)
           : writerContext;
+      const hardCast =
+        writerConfirmed || directorUnlocked
+          ? resolveHardCastForSpawn({
+              topicOverride: topic || factoryTopic,
+              charactersMd: writerPack?.charactersMd,
+            })
+          : null;
       const spawned = spawnManhuaDramaStudio({
         originX: 60,
         originY: 80 + Math.max(0, continuity.episodeIndex - 1) * 420,
@@ -898,10 +1001,10 @@ export default function OmniCanvas() {
         seriesTitle: writerPack?.seriesTitle,
         genreId: factoryGenreId || undefined,
         sceneId: factorySceneId || undefined,
-        propIds: factoryPropIds,
-        characterIds: selectedCharacterIds,
-        ancientArchetypeIds: factoryAncientArchetypeIds,
-        identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
+        propIds: hardCast?.propIds ?? factoryPropIds,
+        characterIds: hardCast?.characterIds ?? selectedCharacterIds,
+        ancientArchetypeIds: hardCast?.ancientArchetypeIds ?? factoryAncientArchetypeIds,
+        identityLockZh: hardCast?.identityLockZh || factoryIdentityLockZh || castBundle.identityLockZh,
         artStyleId: factoryArtStyleId,
         motionPromptIds: selectedMotionIds,
         craftShotIds: selectedCraftShotIds,
@@ -913,7 +1016,7 @@ export default function OmniCanvas() {
         promoCoverLayoutIds: selectedPromoLayoutIds,
         actionCameraRecipeIds: selectedActionRecipeIds,
         cineVocabIds: selectedCineVocabIds,
-        wardrobePropContinuityIds: selectedWardrobeIds,
+        wardrobePropContinuityIds: hardCast?.wardrobePropContinuityIds ?? selectedWardrobeIds,
         videoReverseOutputMode: factoryReverseMode,
         writerContext: focusCtx,
         includeDirectorCraft: Boolean(focusCtx) || directorUnlocked,
@@ -956,6 +1059,11 @@ export default function OmniCanvas() {
       factorySceneId,
       factoryPropIds,
       factoryArtStyleId,
+      factoryTopic,
+      factoryAncientArchetypeIds,
+      factoryIdentityLockZh,
+      castBundle.identityLockZh,
+      resolveHardCastForSpawn,
       selectedCharacterIds,
       selectedMotionIds,
       selectedCraftShotIds,
@@ -1054,21 +1162,27 @@ export default function OmniCanvas() {
     }
     setWriterConfirmed(true);
     setDirectorUnlocked(true);
+    const topicForSpawn = factoryTopic.trim() || writerPack.seriesTitle || writerPack.logline || "连载短剧";
     if (!factoryTopic.trim()) {
-      setFactoryTopic(writerPack.seriesTitle || writerPack.logline || "连载短剧");
+      setFactoryTopic(topicForSpawn);
     }
+    // 1423：确认瞬间按剧本硬套 Cast，再铺板
+    const hardCast = resolveHardCastForSpawn({
+      topicOverride: topicForSpawn,
+      charactersMd: writerPack.charactersMd,
+    });
     const continuity = resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, writerFocusEpisode);
     const spawned = spawnManhuaDramaStudio({
       originX: 60,
       originY: 80 + Math.max(0, continuity.episodeIndex - 1) * 420,
-      topic: factoryTopic.trim() || writerPack.seriesTitle,
+      topic: topicForSpawn,
       seriesTitle: writerPack.seriesTitle,
       genreId: factoryGenreId || undefined,
       sceneId: factorySceneId || undefined,
-      propIds: factoryPropIds,
-      characterIds: selectedCharacterIds,
-      ancientArchetypeIds: factoryAncientArchetypeIds,
-      identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
+      propIds: hardCast.propIds,
+      characterIds: hardCast.characterIds,
+      ancientArchetypeIds: hardCast.ancientArchetypeIds,
+      identityLockZh: hardCast.identityLockZh,
       artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
@@ -1080,7 +1194,7 @@ export default function OmniCanvas() {
       promoCoverLayoutIds: selectedPromoLayoutIds,
       actionCameraRecipeIds: selectedActionRecipeIds,
       cineVocabIds: selectedCineVocabIds,
-      wardrobePropContinuityIds: selectedWardrobeIds,
+      wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
       videoReverseOutputMode: factoryReverseMode,
       writerContext: composeWriterPackFactoryContext(writerPack, continuity.episodeIndex),
       includeDirectorCraft: true,
@@ -1113,7 +1227,7 @@ export default function OmniCanvas() {
     ].filter(Boolean);
     pushDebug("confirmWriterToDirector", {
       level: "ok",
-      detail: `ep=${continuity.episodeIndex} · chars=${selectedCharacterIds.join(",") || "—"} · path=${selectedPathRecipeIds.join(",") || "—"} · action=${selectedActionRecipeIds.join(",") || "—"} · ancient=${factoryAncientArchetypeIds.join(",") || "—"}`,
+      detail: `ep=${continuity.episodeIndex} · lane=${hardCast.lane} · chars=${hardCast.characterIds.join(",") || "—"} · ancient=${hardCast.ancientArchetypeIds.join(",") || "—"} · props=${hardCast.propIds.join(",") || "—"}`,
     });
     toast.success(
       tips.length
@@ -1123,7 +1237,7 @@ export default function OmniCanvas() {
   }, [
     writerPack,
     factoryTopic,
-    selectedCharacterIds,
+    resolveHardCastForSpawn,
     selectedMotionIds,
     selectedCraftShotIds,
     selectedPathRecipeIds,
@@ -1134,13 +1248,10 @@ export default function OmniCanvas() {
     selectedPromoLayoutIds,
     selectedActionRecipeIds,
     selectedCineVocabIds,
-    selectedWardrobeIds,
     factoryArtStyleId,
     factoryReverseMode,
     factoryGenreId,
     factorySceneId,
-    factoryPropIds,
-    factoryAncientArchetypeIds,
     writerFocusEpisode,
     blocks,
     edges,
@@ -1170,20 +1281,25 @@ export default function OmniCanvas() {
     }
     setWriterConfirmed(true);
     setDirectorUnlocked(true);
+    const topicForSpawn = factoryTopic.trim() || writerPack.seriesTitle || writerPack.logline || "连载短剧";
     if (!factoryTopic.trim()) {
-      setFactoryTopic(writerPack.seriesTitle || writerPack.logline || "连载短剧");
+      setFactoryTopic(topicForSpawn);
     }
+    const hardCast = resolveHardCastForSpawn({
+      topicOverride: topicForSpawn,
+      charactersMd: writerPack.charactersMd,
+    });
     const spawned = spawnManhuaDramaStudioSeries({
       originX: 60,
       originY: 80,
-      topic: factoryTopic.trim() || writerPack.seriesTitle,
+      topic: topicForSpawn,
       seriesTitle: writerPack.seriesTitle,
       genreId: factoryGenreId || undefined,
       sceneId: factorySceneId || undefined,
-      propIds: factoryPropIds,
-      characterIds: selectedCharacterIds,
-      ancientArchetypeIds: factoryAncientArchetypeIds,
-      identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
+      propIds: hardCast.propIds,
+      characterIds: hardCast.characterIds,
+      ancientArchetypeIds: hardCast.ancientArchetypeIds,
+      identityLockZh: hardCast.identityLockZh,
       artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
@@ -1195,7 +1311,7 @@ export default function OmniCanvas() {
       promoCoverLayoutIds: selectedPromoLayoutIds,
       actionCameraRecipeIds: selectedActionRecipeIds,
       cineVocabIds: selectedCineVocabIds,
-      wardrobePropContinuityIds: selectedWardrobeIds,
+      wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
       videoReverseOutputMode: factoryReverseMode,
       episodes: episodes.map((ep) => ({
         index: ep.index,
@@ -1227,7 +1343,7 @@ export default function OmniCanvas() {
   }, [
     writerPack,
     factoryTopic,
-    selectedCharacterIds,
+    resolveHardCastForSpawn,
     selectedMotionIds,
     selectedCraftShotIds,
     selectedPathRecipeIds,
@@ -1238,12 +1354,10 @@ export default function OmniCanvas() {
     selectedPromoLayoutIds,
     selectedActionRecipeIds,
     selectedCineVocabIds,
-    selectedWardrobeIds,
     factoryArtStyleId,
     factoryReverseMode,
     factoryGenreId,
     factorySceneId,
-    factoryPropIds,
   ]);
 
   const stopFactory = useCallback(() => {
@@ -1796,9 +1910,11 @@ export default function OmniCanvas() {
                 ancientArchetypeIds={factoryAncientArchetypeIds}
                 castLane={castBundle.lane}
                 reasonZh={`${castBundle.reasonZh}；${recommendedArtStyle.reasonZh}${
-                  selectedCharacterIds.length || factoryAncientArchetypeIds.length
-                    ? "；已套用将在「铺编导节点」注入角色卡/古风原型/服装/道具。点选可微调；「同版式」重生成不烧 token 至你点运行。"
-                    : "；填题材后自动套用人物·服装·道具。"
+                  castHardApplyReady
+                    ? selectedCharacterIds.length || factoryAncientArchetypeIds.length
+                      ? "；已按剧本硬套，将在铺板注入原型/服装/道具。点选可微调。"
+                      : "；已确认编剧，可点选微调角色/画风。"
+                    : "；主路径 1423：先扩写并确认编剧，再按剧本自动套造型（当前为软预览，不定死面孔）。"
                 }`}
                 onSelectFemale={(id) => {
                   setFemaleLeadManual(true);
