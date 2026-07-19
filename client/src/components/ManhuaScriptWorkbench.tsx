@@ -267,10 +267,10 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
 
-      {/* 三栏主区：左资产 · 中片段 · 右预览（满高，对标阿硕） */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)_minmax(320px,42%)] xl:grid-cols-[240px_minmax(0,1fr)_minmax(380px,44%)]">
+      {/* 三栏主区：始终横向 左资产｜中片段｜右预览（对标阿硕，禁止竖向堆叠） */}
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {/* 左：本集资产 */}
-        <aside className="min-h-0 overflow-y-auto border-b border-white/10 p-2.5 lg:border-b-0 lg:border-r">
+        <aside className="min-h-0 w-[200px] shrink-0 overflow-y-auto border-r border-white/10 p-2.5 md:w-[220px] xl:w-[240px]">
           <div className="mb-2 flex items-center justify-between">
             <div className="text-[12px] font-semibold text-white/85">本集资产</div>
             <button
@@ -434,7 +434,7 @@ export default function ManhuaScriptWorkbench({
         </aside>
 
         {/* 中：片段脚本（可滚） */}
-        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden border-b border-white/10 p-2.5 lg:border-b-0 lg:border-r md:p-3">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-white/10 p-2.5 md:p-3">
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/85">
               片段 {String(Math.min(shotIndex + 1, Math.max(shots.length, 1))).padStart(2, "0")}
@@ -522,8 +522,8 @@ export default function ManhuaScriptWorkbench({
           </p>
         </section>
 
-        {/* 右：视频结果（满高主预览） */}
-        <aside className="flex min-h-0 flex-col p-2.5 md:p-3">
+        {/* 右：视频结果（横向第三栏，固定占比） */}
+        <aside className="flex min-h-0 w-[36%] min-w-[260px] max-w-[46%] shrink-0 flex-col p-2.5 md:p-3 xl:w-[40%]">
           <div className="mb-1.5 flex shrink-0 items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/90">视频结果</div>
             {factoryBusy ? (
