@@ -38,6 +38,8 @@ type Props = {
   artStyleLabelZh?: string;
   /** 专案 Bible 一行摘要（确认编剧后） */
   projectBibleSummary?: string;
+  /** Bible 已绑定造型的集号（1-based） */
+  bibleBoundEpisodes?: number[];
   factoryBusy?: boolean;
   canRun?: boolean;
   onOpenCharacterCard?: () => void;
@@ -68,6 +70,7 @@ export default function ManhuaScriptWorkbench({
   propIds,
   artStyleLabelZh,
   projectBibleSummary,
+  bibleBoundEpisodes = [],
   factoryBusy,
   canRun,
   onOpenCharacterCard,
@@ -386,7 +389,8 @@ export default function ManhuaScriptWorkbench({
       {/* 底：集时间线 */}
       <div className="border-t border-white/10 px-3 py-2.5 md:px-4">
         <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/35">
-          集时间线（点选切换焦点集）
+          集时间线（点选切换焦点集
+          {bibleBoundEpisodes.length ? " · 绿点=专案设定已绑定" : ""}）
         </div>
         <div className="flex gap-2 overflow-x-auto pb-1">
           {episodeIndexes.map((ep) => {
@@ -394,6 +398,7 @@ export default function ManhuaScriptWorkbench({
             const epClip = blockByStage(blocks, ep, "clip");
             const thumb = mediaUrl(epKeyart) || mediaUrl(epClip);
             const ready = Boolean(mediaUrl(epClip) || mediaUrl(epKeyart));
+            const bound = bibleBoundEpisodes.includes(ep);
             const on = ep === focusEpisode;
             return (
               <button
@@ -422,8 +427,17 @@ export default function ManhuaScriptWorkbench({
                       有产出
                     </span>
                   ) : null}
+                  {bound ? (
+                    <span
+                      className="absolute left-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_0_1px_rgba(0,0,0,0.45)]"
+                      title="专案设定已绑定本集"
+                    />
+                  ) : null}
                 </div>
-                <div className="px-1.5 py-1 text-[10px] font-semibold text-white/80">片段 {String(ep).padStart(2, "0")}</div>
+                <div className="px-1.5 py-1 text-[10px] font-semibold text-white/80">
+                  片段 {String(ep).padStart(2, "0")}
+                  {bound ? <span className="ml-1 font-normal text-emerald-200/70">绑</span> : null}
+                </div>
               </button>
             );
           })}

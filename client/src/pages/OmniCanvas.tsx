@@ -2122,6 +2122,7 @@ export default function OmniCanvas() {
                   propIds={factoryPropIds}
                   artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
                   projectBibleSummary={summarizeManhuaProjectBible(projectBible)}
+                  bibleBoundEpisodes={projectBible?.cast.boundEpisodeIndexes}
                   factoryBusy={factoryBusy}
                   canRun={Boolean(directorUnlocked || writerConfirmed)}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
