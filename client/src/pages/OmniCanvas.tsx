@@ -2370,7 +2370,9 @@ export default function OmniCanvas() {
                   经典表单编导
                 </button>
               </div>
-              <span className="text-[10px] text-white/35">默认工作台；表单为专家模式</span>
+              <span className="text-[10px] text-white/35">
+                默认工作台 · 经典表单仅专家微调（灯光/运镜库等）
+              </span>
             </div>
 
             {manhuaUiMode === "workbench" ? (
