@@ -59,6 +59,32 @@ import {
   recommendCraftShotFromTopic,
   type CraftShotCategory,
 } from "@shared/craftShotBank";
+import {
+  listPathCameraRecipes,
+  recommendPathCameraFromTopic,
+} from "@shared/manhuaPathCameraRecipeBank";
+import {
+  listNarrativeLighting,
+  recommendNarrativeLightingFromTopic,
+} from "@shared/manhuaNarrativeLightingBank";
+import {
+  buildMaleHairstyleInjectBlock,
+  listMaleHairstylePresets,
+} from "@shared/manhuaMaleHairstylePresetBank";
+import {
+  buildMaleMicroExpressionInjectBlock,
+  listMaleMicroExpressions,
+  recommendMaleMicroExpressionFromTopic,
+} from "@shared/manhuaMaleMicroExpressionBank";
+import { listPromoCoverLayouts } from "@shared/manhuaPromoCoverLayouts";
+import {
+  listActionCameraRecipes,
+  recommendActionCameraFromTopic,
+} from "@shared/manhuaActionCameraRecipeBank";
+import { MANHUA_CINE_VOCAB_BANK } from "@shared/manhuaCineVocabBank";
+import { listWardrobePropContinuity } from "@shared/manhuaWardrobePropContinuity";
+import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
+import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
 import type { VideoReverseOutputMode } from "@shared/videoReversePrompt";
 import {
   MANHUA_WRITER_EPISODE_DEFAULT,
@@ -168,7 +194,24 @@ export default function OmniCanvas() {
   /** 手选手法后不再被题材自动覆盖 */
   const [craftShotManual, setCraftShotManual] = useState(false);
   const [motionManual, setMotionManual] = useState(false);
+  const [factoryPathRecipeId, setFactoryPathRecipeId] = useState("");
+  const [pathRecipeManual, setPathRecipeManual] = useState(false);
+  const [factoryPathAnnotation, setFactoryPathAnnotation] = useState<ManhuaPathAnnotation | null>(
+    null,
+  );
+  const [factoryNarrativeLightingId, setFactoryNarrativeLightingId] = useState("");
+  const [narrativeLightingManual, setNarrativeLightingManual] = useState(false);
+  const [factoryMaleHairstyleId, setFactoryMaleHairstyleId] = useState("");
+  const [factoryMaleMicroId, setFactoryMaleMicroId] = useState("");
+  const [maleMicroManual, setMaleMicroManual] = useState(false);
+  const [factoryPromoLayoutId, setFactoryPromoLayoutId] = useState("");
+  const [factoryActionRecipeId, setFactoryActionRecipeId] = useState("");
+  const [actionRecipeManual, setActionRecipeManual] = useState(false);
+  const [factoryCineVocabId, setFactoryCineVocabId] = useState("");
+  const [factoryWardrobeId, setFactoryWardrobeId] = useState("");
   const [factoryReverseMode, setFactoryReverseMode] = useState<VideoReverseOutputMode>("zh");
+  /** 侧栏进阶下拉默认折叠，降低信息密度 */
+  const [factoryAdvancedOpen, setFactoryAdvancedOpen] = useState(false);
   const [factoryProgress, setFactoryProgress] = useState<string>("");
   const [writerBrief, setWriterBrief] = useState("");
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(MANHUA_WRITER_EPISODE_DEFAULT);
@@ -337,6 +380,47 @@ export default function OmniCanvas() {
     }
   }, [recommendedMotion.motionId, motionManual]);
 
+  const recommendedPath = useMemo(
+    () => recommendPathCameraFromTopic(factoryTopic),
+    [factoryTopic],
+  );
+  const recommendedNarrativeLighting = useMemo(
+    () => recommendNarrativeLightingFromTopic(factoryTopic),
+    [factoryTopic],
+  );
+  const recommendedMaleMicro = useMemo(
+    () => recommendMaleMicroExpressionFromTopic(factoryTopic),
+    [factoryTopic],
+  );
+  const recommendedAction = useMemo(
+    () => recommendActionCameraFromTopic(factoryTopic),
+    [factoryTopic],
+  );
+
+  useEffect(() => {
+    if (!pathRecipeManual && recommendedPath.recipeId) {
+      setFactoryPathRecipeId(recommendedPath.recipeId);
+    }
+  }, [recommendedPath.recipeId, pathRecipeManual]);
+
+  useEffect(() => {
+    if (!actionRecipeManual && recommendedAction.recipeId) {
+      setFactoryActionRecipeId(recommendedAction.recipeId);
+    }
+  }, [recommendedAction.recipeId, actionRecipeManual]);
+
+  useEffect(() => {
+    if (!narrativeLightingManual && recommendedNarrativeLighting.lightingId) {
+      setFactoryNarrativeLightingId(recommendedNarrativeLighting.lightingId);
+    }
+  }, [recommendedNarrativeLighting.lightingId, narrativeLightingManual]);
+
+  useEffect(() => {
+    if (!maleMicroManual && recommendedMaleMicro.expressionId) {
+      setFactoryMaleMicroId(recommendedMaleMicro.expressionId);
+    }
+  }, [recommendedMaleMicro.expressionId, maleMicroManual]);
+
   const selectedCharacterIds = useMemo(
     () => [factoryFemaleId, factoryMaleId].map((id) => id.trim()).filter(Boolean),
     [factoryFemaleId, factoryMaleId],
@@ -349,6 +433,45 @@ export default function OmniCanvas() {
     () => (factoryCraftShotId.trim() ? [factoryCraftShotId.trim()] : []),
     [factoryCraftShotId],
   );
+  const selectedPathRecipeIds = useMemo(
+    () => (factoryPathRecipeId.trim() ? [factoryPathRecipeId.trim()] : []),
+    [factoryPathRecipeId],
+  );
+  const selectedNarrativeLightingIds = useMemo(
+    () => (factoryNarrativeLightingId.trim() ? [factoryNarrativeLightingId.trim()] : []),
+    [factoryNarrativeLightingId],
+  );
+  const selectedMaleHairstyleIds = useMemo(
+    () => (factoryMaleHairstyleId.trim() ? [factoryMaleHairstyleId.trim()] : []),
+    [factoryMaleHairstyleId],
+  );
+  const selectedMaleMicroIds = useMemo(
+    () => (factoryMaleMicroId.trim() ? [factoryMaleMicroId.trim()] : []),
+    [factoryMaleMicroId],
+  );
+  const selectedPromoLayoutIds = useMemo(
+    () => (factoryPromoLayoutId.trim() ? [factoryPromoLayoutId.trim()] : []),
+    [factoryPromoLayoutId],
+  );
+  const selectedActionRecipeIds = useMemo(
+    () => (factoryActionRecipeId.trim() ? [factoryActionRecipeId.trim()] : []),
+    [factoryActionRecipeId],
+  );
+  const selectedCineVocabIds = useMemo(
+    () => (factoryCineVocabId.trim() ? [factoryCineVocabId.trim()] : []),
+    [factoryCineVocabId],
+  );
+  const selectedWardrobeIds = useMemo(
+    () => (factoryWardrobeId.trim() ? [factoryWardrobeId.trim()] : []),
+    [factoryWardrobeId],
+  );
+
+  const keyArtPreviewUrl = useMemo(() => {
+    const key = blocks.find(
+      (b) => b.id.startsWith("keyart-") && (b.outputUrl || b.outputUrls?.[0] || b.refImageUrl),
+    );
+    return key?.outputUrl || key?.outputUrls?.[0] || key?.refImageUrl || "";
+  }, [blocks]);
 
   /** 已铺工厂板时：手法/动效/场景/反推档（已铺可同步）变更同步进节点，不必整板重铺（短防抖） */
   useEffect(() => {
@@ -359,6 +482,15 @@ export default function OmniCanvas() {
         const next = applyFactoryPrefsToBlocks(prev, {
           craftShotIds: selectedCraftShotIds,
           motionPromptIds: selectedMotionIds,
+          pathCameraRecipeIds: selectedPathRecipeIds,
+          pathAnnotationJson: factoryPathAnnotation,
+          narrativeLightingIds: selectedNarrativeLightingIds,
+          maleHairstyleIds: selectedMaleHairstyleIds,
+          maleMicroExpressionIds: selectedMaleMicroIds,
+          promoCoverLayoutIds: selectedPromoLayoutIds,
+          actionCameraRecipeIds: selectedActionRecipeIds,
+          cineVocabIds: selectedCineVocabIds,
+          wardrobePropContinuityIds: selectedWardrobeIds,
           sceneId: factorySceneId || undefined,
           propIds: factoryPropIds,
           genreId: factoryGenreId || undefined,
@@ -372,7 +504,9 @@ export default function OmniCanvas() {
           return (
             !p ||
             p.prompt !== b.prompt ||
-            p.videoReverseOutputMode !== b.videoReverseOutputMode
+            p.videoReverseOutputMode !== b.videoReverseOutputMode ||
+            p.pathCameraRecipeId !== b.pathCameraRecipeId ||
+            p.pathAnnotationJson !== b.pathAnnotationJson
           );
         });
         if (!changed) return prev;
@@ -385,6 +519,15 @@ export default function OmniCanvas() {
   }, [
     factoryCraftShotId,
     factoryMotionId,
+    factoryPathRecipeId,
+    factoryPathAnnotation,
+    factoryNarrativeLightingId,
+    factoryMaleHairstyleId,
+    factoryMaleMicroId,
+    factoryPromoLayoutId,
+    factoryActionRecipeId,
+    factoryCineVocabId,
+    factoryWardrobeId,
     factorySceneId,
     factoryPropIds,
     factoryGenreId,
@@ -395,6 +538,14 @@ export default function OmniCanvas() {
     factoryReverseMode,
     selectedCraftShotIds,
     selectedMotionIds,
+    selectedPathRecipeIds,
+    selectedNarrativeLightingIds,
+    selectedMaleHairstyleIds,
+    selectedMaleMicroIds,
+    selectedPromoLayoutIds,
+    selectedActionRecipeIds,
+    selectedCineVocabIds,
+    selectedWardrobeIds,
     selectedCharacterIds,
   ]);
   const motionGrouped = useMemo(() => {
@@ -563,6 +714,15 @@ export default function OmniCanvas() {
         artStyleId: factoryArtStyleId,
         motionPromptIds: selectedMotionIds,
         craftShotIds: selectedCraftShotIds,
+        pathCameraRecipeIds: selectedPathRecipeIds,
+        pathAnnotationJson: factoryPathAnnotation,
+        narrativeLightingIds: selectedNarrativeLightingIds,
+        maleHairstyleIds: selectedMaleHairstyleIds,
+        maleMicroExpressionIds: selectedMaleMicroIds,
+        promoCoverLayoutIds: selectedPromoLayoutIds,
+        actionCameraRecipeIds: selectedActionRecipeIds,
+        cineVocabIds: selectedCineVocabIds,
+        wardrobePropContinuityIds: selectedWardrobeIds,
         videoReverseOutputMode: factoryReverseMode,
         writerContext: focusCtx,
         includeDirectorCraft: Boolean(focusCtx) || directorUnlocked,
@@ -608,6 +768,15 @@ export default function OmniCanvas() {
       selectedCharacterIds,
       selectedMotionIds,
       selectedCraftShotIds,
+      selectedPathRecipeIds,
+      factoryPathAnnotation,
+      selectedNarrativeLightingIds,
+      selectedMaleHairstyleIds,
+      selectedMaleMicroIds,
+      selectedPromoLayoutIds,
+      selectedActionRecipeIds,
+      selectedCineVocabIds,
+      selectedWardrobeIds,
       factoryReverseMode,
       writerContext,
       directorUnlocked,
@@ -629,9 +798,16 @@ export default function OmniCanvas() {
     setWriterConfirmed(false);
     try {
       const count = clampWriterEpisodeCount(writerEpisodeCount);
+      const designInject = [
+        buildMaleHairstyleInjectBlock(selectedMaleHairstyleIds),
+        buildMaleMicroExpressionInjectBlock(selectedMaleMicroIds),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      const mergedBrief = [brief, designInject].filter(Boolean).join("\n\n");
       const res = await expandWriterMutation.mutateAsync({
         topic,
-        brief: brief || undefined,
+        brief: mergedBrief || undefined,
         episodeCount: count,
       });
       const pack = res.pack;
@@ -646,7 +822,14 @@ export default function OmniCanvas() {
     } finally {
       setWriterBusy(false);
     }
-  }, [factoryTopic, writerBrief, writerEpisodeCount, expandWriterMutation]);
+  }, [
+    factoryTopic,
+    writerBrief,
+    writerEpisodeCount,
+    expandWriterMutation,
+    selectedMaleHairstyleIds,
+    selectedMaleMicroIds,
+  ]);
 
   const confirmWriterToDirector = useCallback(() => {
     if (!writerPack || !writerPackLooksReady(writerPack)) {
@@ -672,6 +855,15 @@ export default function OmniCanvas() {
       artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
+      pathCameraRecipeIds: selectedPathRecipeIds,
+      pathAnnotationJson: factoryPathAnnotation,
+      narrativeLightingIds: selectedNarrativeLightingIds,
+      maleHairstyleIds: selectedMaleHairstyleIds,
+      maleMicroExpressionIds: selectedMaleMicroIds,
+      promoCoverLayoutIds: selectedPromoLayoutIds,
+      actionCameraRecipeIds: selectedActionRecipeIds,
+      cineVocabIds: selectedCineVocabIds,
+      wardrobePropContinuityIds: selectedWardrobeIds,
       videoReverseOutputMode: factoryReverseMode,
       writerContext: composeWriterPackFactoryContext(writerPack, continuity.episodeIndex),
       includeDirectorCraft: true,
@@ -713,6 +905,15 @@ export default function OmniCanvas() {
     selectedCharacterIds,
     selectedMotionIds,
     selectedCraftShotIds,
+    selectedPathRecipeIds,
+    factoryPathAnnotation,
+    selectedNarrativeLightingIds,
+    selectedMaleHairstyleIds,
+    selectedMaleMicroIds,
+    selectedPromoLayoutIds,
+    selectedActionRecipeIds,
+    selectedCineVocabIds,
+    selectedWardrobeIds,
     factoryArtStyleId,
     factoryReverseMode,
     factoryGenreId,
@@ -762,6 +963,15 @@ export default function OmniCanvas() {
       artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
+      pathCameraRecipeIds: selectedPathRecipeIds,
+      pathAnnotationJson: factoryPathAnnotation,
+      narrativeLightingIds: selectedNarrativeLightingIds,
+      maleHairstyleIds: selectedMaleHairstyleIds,
+      maleMicroExpressionIds: selectedMaleMicroIds,
+      promoCoverLayoutIds: selectedPromoLayoutIds,
+      actionCameraRecipeIds: selectedActionRecipeIds,
+      cineVocabIds: selectedCineVocabIds,
+      wardrobePropContinuityIds: selectedWardrobeIds,
       videoReverseOutputMode: factoryReverseMode,
       episodes: episodes.map((ep) => ({
         index: ep.index,
@@ -796,6 +1006,15 @@ export default function OmniCanvas() {
     selectedCharacterIds,
     selectedMotionIds,
     selectedCraftShotIds,
+    selectedPathRecipeIds,
+    factoryPathAnnotation,
+    selectedNarrativeLightingIds,
+    selectedMaleHairstyleIds,
+    selectedMaleMicroIds,
+    selectedPromoLayoutIds,
+    selectedActionRecipeIds,
+    selectedCineVocabIds,
+    selectedWardrobeIds,
     factoryArtStyleId,
     factoryReverseMode,
     factoryGenreId,
@@ -1355,7 +1574,7 @@ export default function OmniCanvas() {
               <div className="mt-3 max-w-md space-y-3">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <label className="block text-[11px] text-white/45">拍摄手法（已铺可同步）（可选 · 1 条）</label>
+                    <label className="block text-[11px] text-white/45">拍摄手法（可选 · 1 条）</label>
                     {craftAutoApplied ? (
                       <span className="rounded-md border border-emerald-400/35 bg-emerald-500/12 px-1.5 py-0.5 text-[10px] text-emerald-100">
                         已按题材自动套用
@@ -1397,50 +1616,233 @@ export default function OmniCanvas() {
                     {selectedCraftShot
                       ? ` · 当前「${selectedCraftShot.nameZh}」${craftAutoApplied ? "·自动" : craftShotManual ? "·手选" : ""}`
                       : ""}
-                    ；注入节拍 / 反推 / 静帧。
                   </p>
                 </div>
-                <div>
-                  <label className="block text-[11px] text-white/45">反推输出档</label>
-                  <select
-                    value={factoryReverseMode}
-                    onChange={(e) => setFactoryReverseMode(e.target.value as VideoReverseOutputMode)}
-                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
-                  >
-                    <option value="zh">完整中文八维</option>
-                    <option value="compact">精简档</option>
-                    <option value="en">English</option>
-                  </select>
-                  <p className="mt-1 text-[10px] text-white/30">写入编导反推节点输出结构。</p>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-[11px] text-white/45">路径运镜</label>
+                    <select
+                      value={factoryPathRecipeId}
+                      onChange={(e) => {
+                        setPathRecipeManual(true);
+                        setFactoryPathRecipeId(e.target.value);
+                      }}
+                      disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                      className="mt-1 w-full rounded-lg border border-cyan-400/25 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none focus:border-cyan-300/40 disabled:opacity-50"
+                    >
+                      <option value="">不指定</option>
+                      {listPathCameraRecipes().map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {String(e.no).padStart(2, "0")} {e.nameZh}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-white/45">动作运镜</label>
+                    <select
+                      value={factoryActionRecipeId}
+                      onChange={(e) => {
+                        setActionRecipeManual(true);
+                        setFactoryActionRecipeId(e.target.value);
+                      }}
+                      disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                      className="mt-1 w-full rounded-lg border border-rose-400/25 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none focus:border-rose-300/40 disabled:opacity-50"
+                    >
+                      <option value="">不指定</option>
+                      {listActionCameraRecipes().map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {String(e.no).padStart(2, "0")} {e.nameZh}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-[11px] text-white/45">包装动效（已铺可同步）（可选 · 1 条）</label>
-                  <select
-                    value={factoryMotionId}
-                    onChange={(e) => {
-                      setMotionManual(true);
-                      setFactoryMotionId(e.target.value);
-                    }}
-                    disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                    className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none focus:border-white/25 disabled:opacity-50"
+                <p className="text-[10px] text-white/40">
+                  {recommendedPath.reasonZh} · {recommendedAction.reasonZh}
+                  {actionRecipeManual ? " ·动作手选" : ""}
+                </p>
+
+                <ManhuaPathCameraAnnotatePanel
+                  imageUrl={keyArtPreviewUrl || undefined}
+                  value={factoryPathAnnotation}
+                  recipeId={factoryPathRecipeId}
+                  actionRecipeId={factoryActionRecipeId}
+                  disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                  onChange={setFactoryPathAnnotation}
+                  onRecipeIdChange={(id) => {
+                    setPathRecipeManual(true);
+                    setFactoryPathRecipeId(id);
+                  }}
+                  onActionRecipeIdChange={(id) => {
+                    setActionRecipeManual(true);
+                    setFactoryActionRecipeId(id);
+                  }}
+                />
+
+                <div className="rounded-lg border border-white/10 bg-white/[0.02]">
+                  <button
+                    type="button"
+                    onClick={() => setFactoryAdvancedOpen((v) => !v)}
+                    className="flex w-full items-center justify-between px-3 py-2 text-left text-[11px] font-medium text-white/70 hover:bg-white/[0.04]"
                   >
-                    <option value="">不指定</option>
-                    {motionGrouped.map((g) => (
-                      <optgroup key={g.category} label={g.label}>
-                        {g.items.map((e) => (
-                          <option key={e.id} value={e.id}>
-                            {String(e.no).padStart(2, "0")} {e.nameZh}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                  <p className="mt-1 text-[10px] leading-snug text-white/45">
-                    {recommendedMotion.reasonZh}
-                    {motionManual ? " · 手选锁定" : ""}
-                    ；注入微动成片 / 视频改写。
-                  </p>
+                    <span>进阶注入（灯光 / 造型 / 宣发 / 词条…）</span>
+                    <span className="text-white/40">{factoryAdvancedOpen ? "收起" : "展开"}</span>
+                  </button>
+                  {factoryAdvancedOpen ? (
+                    <div className="space-y-3 border-t border-white/8 px-3 py-3">
+                      <div>
+                        <label className="block text-[11px] text-white/45">叙事灯光</label>
+                        <select
+                          value={factoryNarrativeLightingId}
+                          onChange={(e) => {
+                            setNarrativeLightingManual(true);
+                            setFactoryNarrativeLightingId(e.target.value);
+                          }}
+                          disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                          className="mt-1 w-full rounded-lg border border-amber-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                        >
+                          <option value="">不指定</option>
+                          {listNarrativeLighting().map((e) => (
+                            <option key={e.id} value={e.id}>
+                              {String(e.no).padStart(2, "0")} {e.nameZh}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="mt-1 text-[10px] text-amber-100/60">
+                          {recommendedNarrativeLighting.reasonZh}
+                        </p>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div>
+                          <label className="block text-[11px] text-white/45">男发</label>
+                          <select
+                            value={factoryMaleHairstyleId}
+                            onChange={(e) => setFactoryMaleHairstyleId(e.target.value)}
+                            disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                          >
+                            <option value="">不指定</option>
+                            {listMaleHairstylePresets().map((e) => (
+                              <option key={e.id} value={e.id}>
+                                {String(e.no).padStart(2, "0")} {e.nameZh}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[11px] text-white/45">微表情</label>
+                          <select
+                            value={factoryMaleMicroId}
+                            onChange={(e) => {
+                              setMaleMicroManual(true);
+                              setFactoryMaleMicroId(e.target.value);
+                            }}
+                            disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                          >
+                            <option value="">不指定</option>
+                            {listMaleMicroExpressions().map((e) => (
+                              <option key={e.id} value={e.id}>
+                                {String(e.no).padStart(2, "0")} {e.nameZh}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] text-white/45">宣发封面</label>
+                        <select
+                          value={factoryPromoLayoutId}
+                          onChange={(e) => setFactoryPromoLayoutId(e.target.value)}
+                          disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                          className="mt-1 w-full rounded-lg border border-fuchsia-400/25 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                        >
+                          <option value="">不铺宣发封面</option>
+                          {listPromoCoverLayouts().map((e) => (
+                            <option key={e.id} value={e.id}>
+                              {String(e.no).padStart(2, "0")} {e.nameZh}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div>
+                          <label className="block text-[11px] text-white/45">运镜词条</label>
+                          <select
+                            value={factoryCineVocabId}
+                            onChange={(e) => setFactoryCineVocabId(e.target.value)}
+                            disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                          >
+                            <option value="">不指定</option>
+                            {MANHUA_CINE_VOCAB_BANK.map((e) => (
+                              <option key={e.id} value={e.id}>
+                                {e.zh}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[11px] text-white/45">服装道具连续</label>
+                          <select
+                            value={factoryWardrobeId}
+                            onChange={(e) => setFactoryWardrobeId(e.target.value)}
+                            disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                          >
+                            <option value="">不指定</option>
+                            {listWardrobePropContinuity().map((e) => (
+                              <option key={e.id} value={e.id}>
+                                {String(e.no).padStart(2, "0")} {e.nameZh}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div>
+                          <label className="block text-[11px] text-white/45">反推档</label>
+                          <select
+                            value={factoryReverseMode}
+                            onChange={(e) =>
+                              setFactoryReverseMode(e.target.value as VideoReverseOutputMode)
+                            }
+                            disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                          >
+                            <option value="zh">完整中文八维</option>
+                            <option value="compact">精简档</option>
+                            <option value="en">English</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[11px] text-white/45">包装动效</label>
+                          <select
+                            value={factoryMotionId}
+                            onChange={(e) => {
+                              setMotionManual(true);
+                              setFactoryMotionId(e.target.value);
+                            }}
+                            disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                          >
+                            <option value="">不指定</option>
+                            {motionGrouped.map((g) => (
+                              <optgroup key={g.category} label={g.label}>
+                                {g.items.map((e) => (
+                                  <option key={e.id} value={e.id}>
+                                    {String(e.no).padStart(2, "0")} {e.nameZh}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
@@ -1522,6 +1924,15 @@ export default function OmniCanvas() {
                       artStyleId: factoryArtStyleId,
                       motionPromptIds: selectedMotionIds,
                       craftShotIds: selectedCraftShotIds,
+                      pathCameraRecipeIds: selectedPathRecipeIds,
+                      pathAnnotationJson: factoryPathAnnotation,
+                      narrativeLightingIds: selectedNarrativeLightingIds,
+                      maleHairstyleIds: selectedMaleHairstyleIds,
+                      maleMicroExpressionIds: selectedMaleMicroIds,
+                      promoCoverLayoutIds: selectedPromoLayoutIds,
+                      actionCameraRecipeIds: selectedActionRecipeIds,
+                      cineVocabIds: selectedCineVocabIds,
+                      wardrobePropContinuityIds: selectedWardrobeIds,
                       videoReverseOutputMode: factoryReverseMode,
                       writerContext: focusCtx,
                       includeDirectorCraft: true,

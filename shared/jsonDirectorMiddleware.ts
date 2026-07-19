@@ -7,6 +7,15 @@
  * 来源对齐：~/Downloads/2026Jul16/json.mp4 · https://www.super-i.cn/info-2570.html · info-2574.html
  */
 
+import {
+  compilePathAnnotationToMotionPrompt,
+  normalizePathAnnotation,
+} from "./manhuaPathCameraAnnotate.js";
+import {
+  compilePathCameraRecipeToMotionPrompt,
+  getPathCameraRecipeById,
+} from "./manhuaPathCameraRecipeBank.js";
+
 export type AspectRatio169Or916 = "16:9" | "9:16";
 
 export type DirectorJsonLock = {
@@ -285,14 +294,33 @@ function detectAmbience(text: string): string | null {
   return null;
 }
 
+export type CompileI2VMotionPromptOpts = {
+  hasReferenceImage?: boolean;
+  /** 路径运镜配方 id：优先编译分阶段时段句 */
+  pathCameraRecipeId?: string | null;
+  /** 路径标注 JSON：优先于 recipeId */
+  pathAnnotationJson?: unknown;
+};
+
 /**
  * 图生视频提示词编译：有参考图时强制做减法。
  * 公式：[镜头运动] + [主体微动] + [环境氛围]
+ * 有路径配方/标注时优先用分阶段时段句。
  */
 export function compileI2VMotionPrompt(
   rawPrompt: string,
-  opts?: { hasReferenceImage?: boolean },
+  opts?: CompileI2VMotionPromptOpts,
 ): string {
+  if (opts?.pathAnnotationJson != null) {
+    const ann = normalizePathAnnotation(opts.pathAnnotationJson);
+    if (ann) return compilePathAnnotationToMotionPrompt(ann);
+  }
+  const recipeId = String(opts?.pathCameraRecipeId || "").trim();
+  if (recipeId) {
+    const recipe = getPathCameraRecipeById(recipeId);
+    if (recipe) return compilePathCameraRecipeToMotionPrompt(recipe);
+  }
+
   const raw = stripDirectorNamesForDelivery(String(rawPrompt || "").trim());
   if (!raw) {
     return "Slow cinematic push-in, subtle natural breathing, soft atmospheric haze";
@@ -308,6 +336,11 @@ export function compileI2VMotionPrompt(
     !looksLikeDirectorJson(raw);
 
   if (alreadyMotionLike) return raw;
+
+  // 路径时段句（来自注入块）直接放行
+  if (/^\d+-\d+s:\s*camera/i.test(raw) || /One primary path move/i.test(raw)) {
+    return raw.slice(0, 1200);
+  }
 
   const camera = detectCameraMove(raw) || (opts?.hasReferenceImage ? "Slow cinematic push-in" : "Slow cinematic zoom out");
   const subject = detectSubjectMicro(raw) || "subtle natural movement, soft fabric response";
