@@ -45,6 +45,7 @@ import {
 } from "@shared/manhuaCharacterAssetLibrary";
 import { recommendManhuaCastBundle } from "@shared/manhuaCastBundle";
 import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
+import ManhuaScriptWorkbench from "@/components/ManhuaScriptWorkbench";
 import ManhuaAssetWall from "@/components/ManhuaAssetWall";
 import {
   MOTION_PROMPT_BANK,
@@ -216,6 +217,8 @@ export default function OmniCanvas() {
   const [blocks, setBlocks] = useState<CanvasBlock[]>(initial.blocks);
   const [edges, setEdges] = useState<CanvasEdge[]>(initial.edges);
   const [factoryBusy, setFactoryBusy] = useState(false);
+  /** 剧本工作台（逼近竞品壳）优先；可切回下方长表单编导 */
+  const [manhuaUiMode, setManhuaUiMode] = useState<"workbench" | "form">("workbench");
   const [factoryTopic, setFactoryTopic] = useState(initialFactoryPrefs.topic || "");
   const [factoryGenreId, setFactoryGenreId] = useState("");
   const [factorySceneId, setFactorySceneId] = useState("");
@@ -1694,8 +1697,81 @@ export default function OmniCanvas() {
               ) : null}
             </div>
 
+            <div className="mt-4 flex max-w-6xl flex-wrap items-center gap-2">
+              <span className="text-[11px] text-white/45">主界面</span>
+              <div className="inline-flex rounded-lg border border-white/10 bg-black/35 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setManhuaUiMode("workbench")}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-semibold ${
+                    manhuaUiMode === "workbench"
+                      ? "bg-emerald-500/25 text-emerald-50"
+                      : "text-white/50 hover:text-white/75"
+                  }`}
+                >
+                  剧本工作台
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setManhuaUiMode("form")}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-semibold ${
+                    manhuaUiMode === "form"
+                      ? "bg-white/15 text-white/90"
+                      : "text-white/50 hover:text-white/75"
+                  }`}
+                >
+                  经典表单编导
+                </button>
+              </div>
+              <span className="text-[10px] text-white/35">工作台便于实测；表单保留全部专家控件</span>
+            </div>
+
+            {manhuaUiMode === "workbench" ? (
+              <div className="max-w-6xl">
+                <ManhuaScriptWorkbench
+                  blocks={blocks}
+                  topic={factoryTopic}
+                  seriesTitle={writerPack?.seriesTitle}
+                  episodeCount={writerEpisodeCount}
+                  focusEpisode={writerFocusEpisode}
+                  onFocusEpisode={setWriterFocusEpisode}
+                  characterIds={selectedCharacterIds}
+                  ancientArchetypeIds={factoryAncientArchetypeIds}
+                  sceneId={factorySceneId || recommendedScene?.id}
+                  propIds={factoryPropIds}
+                  artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
+                  factoryBusy={factoryBusy}
+                  canRun={Boolean(directorUnlocked || writerConfirmed)}
+                  onOpenCharacterCard={() => {
+                    document
+                      .getElementById("manhua-character-card-zone")
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                  onOpenAssetWall={() => {
+                    document
+                      .getElementById("manhua-asset-wall-zone")
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                  onFocusBlock={(id) => {
+                    setFocusBlockId(id);
+                    document
+                      .getElementById("freeform-canvas-zone")
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                  onSpawnAndRunClip={() => {
+                    setFactoryRunScope("focus");
+                    ensureStudioSpawned(factoryTopic);
+                    void runFactory("clip", { episodeIndexes: [writerFocusEpisode] });
+                  }}
+                />
+              </div>
+            ) : null}
+
             {/* ② 角色卡：始终可预览/换人/选画风（不烧 token；不依赖编剧解锁） */}
-            <div className="mt-4 max-w-6xl rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-4 md:p-5">
+            <div
+              id="manhua-character-card-zone"
+              className="mt-4 max-w-6xl scroll-mt-28 rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-4 md:p-5"
+            >
               {factoryGenreId ? (
                 <p className="mb-3 text-[10px] leading-snug text-white/45">
                   题材已选：角色与画风会软推荐；手选后点「恢复自动推荐」可再跟题材走。切换题材不烧 token。
@@ -1751,7 +1827,7 @@ export default function OmniCanvas() {
                 }}
               />
 
-              <div className="mt-4">
+              <div id="manhua-asset-wall-zone" className="mt-4 scroll-mt-28">
                 <ManhuaAssetWall
                   femaleId={factoryFemaleId}
                   maleId={factoryMaleId}
@@ -1784,7 +1860,8 @@ export default function OmniCanvas() {
               </div>
             </div>
 
-            {/* ③ 编导工厂：确认或跳过后解锁 */}
+            {/* ③ 编导工厂：经典表单（工作台模式下收起，专家控件仍可切回） */}
+            {manhuaUiMode === "form" ? (
             <div
               className={`mt-4 max-w-3xl rounded-2xl border p-4 md:p-5 ${
                 directorUnlocked || writerConfirmed
@@ -2292,6 +2369,7 @@ export default function OmniCanvas() {
                 ) : null}
               </div>
             </div>
+            ) : null}
 
             <p className="mt-3 max-w-3xl text-[11px] leading-5 text-amber-100/70">
               <span className="font-semibold text-amber-100/90">Seedance 2.5 Coming soon</span>
