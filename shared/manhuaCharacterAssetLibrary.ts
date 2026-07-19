@@ -56,6 +56,8 @@ export const MANHUA_PHOTOREAL_NAME_ZH: Record<string, string> = {
   char_f_13: "姜如初",
   char_f_14: "阮听雨",
   char_f_15: "叶清欢",
+  /** 古装红妆凤冠新娘（真人场景道具参考入库） */
+  char_f_16: "沈红妆",
   char_m_01: "周临川",
   char_m_02: "傅北辰",
   char_m_03: "沈渡",
@@ -352,6 +354,17 @@ export const MANHUA_CHARACTER_ASSET_LIBRARY: ManhuaCharacterTemplate[] = [
     temperamentTags: ["优雅清冷"],
     promptZh: "半写实二次元，国乙立绘，韩系厚涂，纯白背景，调香师优雅清冷，超写实8K。",
     sourceFile: "微信圖片_20260717074445_2346_558.jpg",
+  },
+  {
+    id: "char_f_16",
+    gender: "female",
+    nameZh: "顾凤仪",
+    age: 22,
+    jobZh: "红妆新娘",
+    temperamentTags: ["红妆", "凤冠", "古风婚礼", "喜庆", "含蓄"],
+    promptZh:
+      "半写实二次元，国乙立绘，韩系厚涂，电影柔光，鹅蛋脸红妆新娘，凤冠霞帔，朱红喜服，团扇遮面，古典婚礼喜庆含蓄，超写实8K。",
+    sourceFile: "photoreal/refs/jul19-wedding/r01_bride_portrait.jpg",
   },
   {
     id: "char_m_01",
@@ -946,6 +959,7 @@ const TOPIC_TEMPERAMENT_HINTS: Array<{ keys: string[]; tags: string[] }> = [
   { keys: ["时尚", "杂志", "香氛", "珠宝"], tags: ["气场强大", "优雅干练", "冷感", "精致", "优雅", "品牌感"] },
   { keys: ["赛车", "速度", "张扬"], tags: ["张扬", "速度感"] },
   { keys: ["外交", "律师", "投行"], tags: ["冷静从容", "锐利", "沉着", "锋利", "从容", "利落", "精英"] },
+  { keys: ["婚礼", "红妆", "凤冠", "成亲", "花嫁", "喜堂", "霞帔"], tags: ["红妆", "凤冠", "古风婚礼", "喜庆", "含蓄"] },
 ];
 
 /** 题材 → 套组软推荐（只高亮，不自动覆盖手选） */

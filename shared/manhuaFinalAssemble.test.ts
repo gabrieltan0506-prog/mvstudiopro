@@ -48,6 +48,15 @@ describe("manhuaFinalAssemble", () => {
     expect(p.length).toBeLessThanOrEqual(480);
   });
 
+  it("builds wedding underscore for red bridal topics", () => {
+    const p = buildManhuaSunoPrompt({
+      topic: "古风红妆凤冠婚礼",
+      seriesTitle: "红妆夜",
+      logline: "喜堂认亲",
+    });
+    expect(p.toLowerCase()).toMatch(/wedding|ceremonial|no vocals/);
+  });
+
   it("summarizes blue/red path tracks", () => {
     const s = summarizeManhuaPathTrackStatus({
       version: 1,

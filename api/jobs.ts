@@ -27,6 +27,7 @@ import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveS
 import { synthesizeVoiceAudio } from "../server/models/voiceSynthesis.js";
 import { resolveSafeFlyPlatformImageReadPath } from "../server/services/flyVolumeGeneratedImages.js";
 import {
+  MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
   buildManhuaAssemblePlan,
   buildManhuaSunoPrompt,
   type ManhuaAssembleClipInput,
@@ -2910,6 +2911,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
 
       let musicUrl = s(b.musicUrl).trim();
       let musicPrompt = s(b.musicPrompt).trim();
+      let musicProviderUsed: "suno" | "udio" | "" = "";
       if (!musicUrl) {
         if (!AIM_KEY) {
           return res.status(500).json(fail("missing_env", "AIMUSIC_API_KEY is required", { detail: "AIMUSIC_API_KEY" }));
@@ -2921,76 +2923,117 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             logline: s(b.logline),
           });
         }
-        const musicDuration = Math.max(30, Math.min(120, Math.floor(Number(b.musicDuration) || 60)));
-        const createUrl = `${AIM_BASE}/api/v1/sonic/create`;
-        const taskUrlBase = `${AIM_BASE}/api/v1/sonic/task/`;
-        const created = await fetchJson(createUrl, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${AIM_KEY}`,
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            task_type: "create_music",
-            custom_mode: false,
-            mv: "sonic-v5-5",
-            gpt_description_prompt: musicPrompt,
-          }),
-        });
-        if (!created.ok) {
-          return res.status(502).json(
-            fail("music_create_failed", "Music create request failed", { raw: created.json ?? created.rawText }),
-          );
-        }
-        const taskId = s(
-          created.json?.data?.task_id ||
-            created.json?.task_id ||
-            created.json?.taskId ||
-            created.json?.data?.id ||
-            created.json?.id,
-        ).trim();
-        if (!taskId) {
-          return res.status(502).json(
-            fail("missing_music_task_id", "Music task id is missing", { raw: created.json ?? created.rawText }),
-          );
-        }
+        // 一次生成约 4 分钟，够约两集；常一次出两首 → 三集一轮够用。失败则回退 Udio。
+        const musicDuration = Math.max(
+          30,
+          Math.min(240, Math.floor(Number(b.musicDuration) || MANHUA_ASSEMBLE_MUSIC_DURATION_SEC)),
+        );
+        const preferredProvider = normalizeMusicProvider(b.musicProvider || "suno");
+        const providerOrder: Array<"suno" | "udio"> =
+          preferredProvider === "udio" ? ["udio", "suno"] : ["suno", "udio"];
         let rawTask: any = null;
-        for (let i = 0; i < 40; i += 1) {
-          await sleep(3000);
-          const polled = await fetchJson(`${taskUrlBase}${encodeURIComponent(taskId)}`, {
-            method: "GET",
-            headers: { Authorization: `Bearer ${AIM_KEY}`, Accept: "application/json" },
+        const providerErrors: Array<{ provider: string; error: string }> = [];
+
+        for (const provider of providerOrder) {
+          const createUrl =
+            provider === "udio" ? `${AIM_BASE}/api/v1/nuro/create` : `${AIM_BASE}/api/v1/sonic/create`;
+          const taskUrlBase =
+            provider === "udio" ? `${AIM_BASE}/api/v1/nuro/task/` : `${AIM_BASE}/api/v1/sonic/task/`;
+          const nuroDuration = Math.max(30, Math.min(120, musicDuration));
+          const createBody =
+            provider === "udio"
+              ? {
+                  type: "bgm",
+                  version: "v2.0",
+                  description: musicPrompt.slice(0, 200),
+                  duration: nuroDuration,
+                }
+              : {
+                  task_type: "create_music",
+                  custom_mode: false,
+                  mv: "sonic-v5-5",
+                  gpt_description_prompt: musicPrompt,
+                };
+
+          const created = await fetchJson(createUrl, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${AIM_KEY}`,
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify(createBody),
           });
-          const pollJson: any = polled.json ?? polled.rawText;
-          rawTask = pollJson;
-          const status = s(
-            pollJson?.status ||
-              pollJson?.state ||
-              pollJson?.data?.[0]?.status ||
-              pollJson?.data?.[0]?.state ||
-              "",
-          ).toLowerCase();
-          musicUrl = extractMusicUrlFromPayload(pollJson);
-          if (musicUrl) break;
-          if (status === "failed" || status === "error" || status === "cancelled") {
-            return res.status(502).json(
-              fail("music_task_failed", deriveMusicError(status, rawTask), { raw: rawTask }),
-            );
+          if (!created.ok) {
+            providerErrors.push({
+              provider,
+              error: "music_create_failed",
+            });
+            continue;
+          }
+          const taskId = s(
+            created.json?.data?.task_id ||
+              created.json?.task_id ||
+              created.json?.taskId ||
+              created.json?.data?.id ||
+              created.json?.id,
+          ).trim();
+          if (!taskId) {
+            providerErrors.push({ provider, error: "missing_music_task_id" });
+            continue;
+          }
+
+          let candidateUrl = "";
+          let failed = false;
+          for (let i = 0; i < 40; i += 1) {
+            await sleep(3000);
+            const polled = await fetchJson(`${taskUrlBase}${encodeURIComponent(taskId)}`, {
+              method: "GET",
+              headers: { Authorization: `Bearer ${AIM_KEY}`, Accept: "application/json" },
+            });
+            let pollJson: any = polled.json ?? polled.rawText;
+            if (provider === "udio") pollJson = normalizeNuroPollJson(pollJson);
+            rawTask = pollJson;
+            const status = s(
+              pollJson?.status ||
+                pollJson?.state ||
+                pollJson?.data?.[0]?.status ||
+                pollJson?.data?.[0]?.state ||
+                "",
+            ).toLowerCase();
+            candidateUrl = extractMusicUrlFromPayload(pollJson);
+            if (candidateUrl) break;
+            if (status === "failed" || status === "error" || status === "cancelled") {
+              providerErrors.push({
+                provider,
+                error: deriveMusicError(status, rawTask) || status,
+              });
+              failed = true;
+              break;
+            }
+          }
+          if (failed) continue;
+          if (!candidateUrl) {
+            providerErrors.push({ provider, error: "music_task_timeout_or_missing_music_url" });
+            continue;
+          }
+          try {
+            musicUrl = await uploadWorkflowAudioToBlob(candidateUrl, "manhua-music");
+            musicProviderUsed = provider;
+            break;
+          } catch (error: any) {
+            providerErrors.push({
+              provider,
+              error: error?.message || String(error) || "music download failed",
+            });
           }
         }
+
         if (!musicUrl) {
           return res.status(502).json(
-            fail("music_task_timeout_or_missing_music_url", "Music task timeout or missing music url", {
-              raw: rawTask,
-            }),
-          );
-        }
-        try {
-          musicUrl = await uploadWorkflowAudioToBlob(musicUrl, "manhua-music");
-        } catch (error: any) {
-          return res.status(502).json(
-            fail("music_download_failed", error?.message || String(error) || "music download failed", {
+            fail("music_create_failed", "Music create request failed", {
+              tried: providerOrder,
+              providerErrors,
               raw: rawTask,
             }),
           );
@@ -3032,6 +3075,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         finalVideoUrl,
         musicUrl: musicUrl || undefined,
         musicPrompt: musicPrompt || undefined,
+        musicProvider: musicProviderUsed || undefined,
         sceneCount: sceneVideos.length,
         episodeIndexes: sceneVideos.map((sv) => sv.sceneIndex),
         skippedEpisodes,

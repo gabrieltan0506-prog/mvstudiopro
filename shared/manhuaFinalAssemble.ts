@@ -34,6 +34,12 @@ export type ManhuaSunoPromptInput = {
   logline?: string;
 };
 
+/**
+ * 一次配乐生成约 4 分钟，通常够覆盖约两集；上游常一次出两首，三集一轮够用。
+ * 客户端/服务端默认按此时长请求（Udio 侧会再 clamp 到其上限）。
+ */
+export const MANHUA_ASSEMBLE_MUSIC_DURATION_SEC = 240;
+
 /** 从坞条目（按集）组装 sceneVideos；缺 clip 的集记入 skipped */
 export function buildManhuaAssemblePlan(
   clips: ManhuaAssembleClipInput[],
@@ -119,6 +125,10 @@ export function buildManhuaSunoPrompt(input: ManhuaSunoPromptInput): string {
   if (/甜宠|校园|恋爱|情感/.test(blend)) {
     mood =
       "soft modern drama underscore, warm piano, light pads, gentle tempo ~90 BPM, no vocals, leave room for dialogue";
+  }
+  if (/婚礼|红妆|凤冠|成亲|花嫁|喜堂/.test(blend)) {
+    mood =
+      "ancient wedding underscore, ceremonial drums distant, soft suona colors restrained, warm strings, festive but under dialogue, no vocals";
   }
   const themeLine = truncateAscii(
     logline || topic || title,
