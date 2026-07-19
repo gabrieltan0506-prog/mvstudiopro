@@ -1,39 +1,49 @@
 /**
- * /platform 创作顾问问答：每日免费额度 + 可选单页生图（首张封面九折）。
- * 文案默认 GPT-5.6 Terra（reasoning high）；不对普通用户展示模型名。
- * supervisor 可切换 Sol / Terra。
+ * /platform 创作顾问问答：按 Sol/Terra 分桶每日免费额度 + 超额成本×1.6 扣点；
+ * 可选单页生图（首张封面九折）。
+ * Terra：reasoning medium · max 32k；Sol：reasoning high · max 32k。
+ * 用户可选 5.6 Sol / 5.6 Terra（计费不同）。
  *
  * 核心口径：像可调用趋势库的 ChatGPT——**先直接回答用户问题**；
  * Skill 仅作软参考，禁止被 Skill 带跑成全案策略看板。
  */
-import { and, count, eq, gte } from "drizzle-orm";
+import { and, count, eq, gte, inArray } from "drizzle-orm";
 import { extractFirstChoicePlainText, extractJsonString, invokeLLM } from "../_core/llm.js";
 import {
   resolvePlatformSkillQaOpenAiModel,
+  resolvePlatformSkillQaPaidCredits,
   resolvePlatformSkillQaReasoningEffort,
 } from "../config/platformSwitches.js";
 import { getDb } from "../db.js";
 import { stripeUsageLogs } from "../../drizzle/schema-stripe.js";
 import {
-  PLATFORM_SKILL_QA_DAILY_FREE_LIMIT,
+  platformSkillQaDailyFreeLimit,
   platformSkillQaImageCredits,
+  type PlatformSkillQaBillingMode,
 } from "../../shared/plans.js";
 import { composePlatformImageSkillHints } from "../../shared/platformNativeVariants.js";
 import { resolvePlatformSkillsPrompt } from "./platformSkillsService.js";
 import { translateMattingUserPromptToEnglish } from "./platformCustomMatting.js";
 import { generateGptImage2FromRawEnglishPrompt, appendImageFlowLog } from "./proxyImageService.js";
 
+/** @deprecated 旧统一桶；计数时与 Terra 桶合并兼容 */
 export const PLATFORM_SKILL_QA_ACTION = "platformSkillQa";
+export const PLATFORM_SKILL_QA_TERRA_ACTION = "platformSkillQaTerra";
+export const PLATFORM_SKILL_QA_SOL_ACTION = "platformSkillQaSol";
 export const PLATFORM_SKILL_QA_IMAGE_ACTION = "platformSkillQaImage";
 
-/** 创作顾问问答输出上限（用户指定 65535） */
-const PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS = 65_535;
+/** 创作顾问问答输出上限（Terra/Sol 统一 32k） */
+const PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS = 32_000;
 
 export type PlatformSkillQaAskResult = {
   answer: string;
   remainingFreeToday: number;
   usedToday: number;
   dailyLimit: number;
+  qaMode: PlatformSkillQaBillingMode;
+  creditsCharged: number;
+  paidThisTurn: boolean;
+  paidUnitCredits: number;
   imageOffer: null | {
     creationRelated: boolean;
     suggestedPrompt: string;
@@ -76,16 +86,33 @@ function startOfTodayLocal(): Date {
   return d;
 }
 
-export async function countPlatformSkillQaToday(userId: number): Promise<number> {
+function qaActionForMode(mode: PlatformSkillQaBillingMode): string {
+  return mode === "sol" ? PLATFORM_SKILL_QA_SOL_ACTION : PLATFORM_SKILL_QA_TERRA_ACTION;
+}
+
+export function resolveSkillQaBillingMode(qaModel?: string | null): PlatformSkillQaBillingMode {
+  const m = resolvePlatformSkillQaOpenAiModel({ requested: qaModel });
+  return m.includes("sol") ? "sol" : "terra";
+}
+
+/** 今日该模式已用次数（Terra 含旧 platformSkillQa 桶，避免刷次数） */
+export async function countPlatformSkillQaToday(
+  userId: number,
+  mode: PlatformSkillQaBillingMode = "terra",
+): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
+  const actions =
+    mode === "sol"
+      ? [PLATFORM_SKILL_QA_SOL_ACTION]
+      : [PLATFORM_SKILL_QA_TERRA_ACTION, PLATFORM_SKILL_QA_ACTION];
   const [row] = await db
     .select({ c: count() })
     .from(stripeUsageLogs)
     .where(
       and(
         eq(stripeUsageLogs.userId, userId),
-        eq(stripeUsageLogs.action, PLATFORM_SKILL_QA_ACTION),
+        inArray(stripeUsageLogs.action, actions),
         gte(stripeUsageLogs.createdAt, startOfTodayLocal()),
       ),
     );
@@ -104,16 +131,34 @@ export async function countPlatformSkillQaImagesEver(userId: number): Promise<nu
   return Number(row?.c || 0);
 }
 
-export async function logPlatformSkillQaFreeUse(userId: number, question: string): Promise<void> {
+export async function logPlatformSkillQaUse(params: {
+  userId: number;
+  question: string;
+  mode: PlatformSkillQaBillingMode;
+  creditsCost: number;
+  isFreeQuota: boolean;
+}): Promise<void> {
   const db = await getDb();
   if (!db) return;
+  const modeLabel = params.mode === "sol" ? "Sol" : "Terra";
   await db.insert(stripeUsageLogs).values({
-    userId,
-    action: PLATFORM_SKILL_QA_ACTION,
-    creditsCost: 0,
-    isFreeQuota: 1,
-    description: `创作顾问问答（免费）· ${String(question || "").slice(0, 80)}`,
+    userId: params.userId,
+    action: qaActionForMode(params.mode),
+    creditsCost: Math.max(0, Math.floor(params.creditsCost)),
+    isFreeQuota: params.isFreeQuota ? 1 : 0,
+    description: `创作顾问问答·${modeLabel}${params.isFreeQuota ? "（免费）" : "（付费）"} · ${String(params.question || "").slice(0, 80)}`,
     balanceAfter: null,
+  });
+}
+
+/** @deprecated 使用 {@link logPlatformSkillQaUse} */
+export async function logPlatformSkillQaFreeUse(userId: number, question: string): Promise<void> {
+  await logPlatformSkillQaUse({
+    userId,
+    question,
+    mode: "terra",
+    creditsCost: 0,
+    isFreeQuota: true,
   });
 }
 
@@ -326,27 +371,38 @@ export async function askPlatformSkillQa(params: {
   question: string;
   enabledSkillIds?: string[] | null;
   allowBloggerTitle?: boolean;
-  /** 跳过每日免费次数上限（admin / supervisor 角色） */
+  /** 跳过每日免费次数上限与扣点（admin / supervisor 角色） */
   isAdmin?: boolean;
-  /** 允许覆盖问答模型（admin / supervisor / 合法 supervisorToken） */
+  /** @deprecated 所有登录用户均可选模型；保留以免调用方报错 */
   allowQaModelOverride?: boolean;
-  /** supervisor 可选；一般用户忽略，强制 Terra */
+  /** gpt-5.6-terra | gpt-5.6-sol */
   qaModel?: string | null;
+  /**
+   * 超额时由路由先扣点再调用；此处仅记 usage。
+   * 若未预扣且已超免费，抛错提示路由扣点。
+   */
+  paidCreditsAlreadyCharged?: number;
 }): Promise<PlatformSkillQaAskResult> {
   const question = String(params.question || "").trim();
   if (question.length < 2) throw new Error("请先输入问题");
 
-  const usedToday = await countPlatformSkillQaToday(params.userId);
-  const dailyLimit = PLATFORM_SKILL_QA_DAILY_FREE_LIMIT;
-  if (!params.isAdmin && usedToday >= dailyLimit) {
-    throw new Error(`今日免费问答已达上限（${dailyLimit} 次），明天再来，或去「自定义 / 全案」继续创作。`);
+  const qaMode = resolveSkillQaBillingMode(params.qaModel);
+  const dailyLimit = platformSkillQaDailyFreeLimit(qaMode);
+  const paidUnit = resolvePlatformSkillQaPaidCredits(qaMode);
+  const usedToday = await countPlatformSkillQaToday(params.userId, qaMode);
+  const withinFree = params.isAdmin || usedToday < dailyLimit;
+  const paidThisTurn = !withinFree;
+  if (paidThisTurn && !(Number(params.paidCreditsAlreadyCharged) > 0)) {
+    throw new Error(
+      `今日${qaMode === "sol" ? " Sol" : " Terra"}免费额度已用完（${dailyLimit} 次）。继续提问将扣除 ${paidUnit} 积分/次，请确认后重试。`,
+    );
   }
 
   const modelName = resolvePlatformSkillQaOpenAiModel({
     requested: params.qaModel,
-    isSupervisor: Boolean(params.allowQaModelOverride),
+    isSupervisor: true,
   });
-  const reasoningEffort = resolvePlatformSkillQaReasoningEffort();
+  const reasoningEffort = resolvePlatformSkillQaReasoningEffort(qaMode);
   const qaKind = classifyPlatformSkillQaKind(question);
 
   // Skill：创作类可挂；市场调研类默认不灌，避免勾选 Skill 把答案带成全案卡
@@ -447,8 +503,19 @@ export async function askPlatformSkillQa(params: {
     throw new Error(friendly);
   }
 
+  const creditsCharged = params.isAdmin
+    ? 0
+    : paidThisTurn
+      ? Math.max(0, Math.floor(Number(params.paidCreditsAlreadyCharged) || paidUnit))
+      : 0;
   if (!params.isAdmin) {
-    await logPlatformSkillQaFreeUse(params.userId, question);
+    await logPlatformSkillQaUse({
+      userId: params.userId,
+      question,
+      mode: qaMode,
+      creditsCost: creditsCharged,
+      isFreeQuota: !paidThisTurn,
+    });
   }
   const usedAfter = params.isAdmin ? usedToday : usedToday + 1;
 
@@ -471,9 +538,13 @@ export async function askPlatformSkillQa(params: {
 
   return {
     answer: parsed.answer,
-    remainingFreeToday: Math.max(0, dailyLimit - usedAfter),
+    remainingFreeToday: Math.max(0, dailyLimit - Math.min(usedAfter, dailyLimit)),
     usedToday: usedAfter,
     dailyLimit,
+    qaMode,
+    creditsCharged,
+    paidThisTurn: Boolean(paidThisTurn && creditsCharged > 0),
+    paidUnitCredits: paidUnit,
     imageOffer,
   };
 }

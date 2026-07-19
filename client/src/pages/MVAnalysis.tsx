@@ -560,7 +560,7 @@ const GROWTH_CAMP_ANALYSIS_PROFILE_LS = "mv-growth-camp-analysis-profile";
 const GROWTH_CAMP_EXTRACT_PROMPT_LS = "mv-growth-camp-extract-prompt";
 
 /** 成长营分析引擎（内部常量，不对用户展示模型名） */
-const GROWTH_CAMP_ANALYSIS_MODEL: GrowthCampModel = "gpt-5.5";
+const GROWTH_CAMP_ANALYSIS_MODEL: GrowthCampModel = "gpt-5.6-sol";
 
 /** 仅 Debug 面板展示：提取模式链路说明 */
 const EXTRACT_PIPELINE_DEBUG_NOTE =
@@ -3347,9 +3347,9 @@ export default function MVAnalysisPage() {
               href="/platform?tab=assets"
               className="font-semibold text-[#ff9fe0] underline underline-offset-2"
             >
-              平台页 · 自定义创作工作台 → 素材分析
+              平台页 · 视频深度拆解
             </a>
-            。本页为旧版调试入口（<code className="text-xs">/creator-growth-camp/legacy</code>），新链路支持素材分析 → 深度优化 → 一键生图。
+            。本页为旧版调试入口（<code className="text-xs">/creator-growth-camp/legacy</code>），新链路请用导航「视频深度拆解」（/platform?tab=video）。
           </div>
 
           <div className="mb-8 flex items-center justify-between">

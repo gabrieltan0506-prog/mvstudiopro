@@ -22,9 +22,10 @@ import { storageRead } from "../storage";
 import {
   resolveGrowthCampExtractorModel,
   resolveGrowthCampExtractScanEngine,
-  resolveGrowthCampGpt55Engine,
+  resolveGrowthCampPhase2Engine,
   resolveGrowthCampPipelineMode,
   resolveGrowthCampStrategistEngine,
+  growthCampPhase2InvokeOpts,
   type GrowthCampStrategistEngine,
 } from "./extractorPipeline";
 import { runGrowthCampStrategistMultimodalPass, ensureGrowthCoreScores } from "./growthCampStrategistPass";
@@ -172,7 +173,7 @@ type StrategistRefinement = Partial<Pick<GrowthAnalysisScores,
   | "followUpPrompt"
 >>;
 
-// Stage 1（音频/视觉初筛）默认 Gemini 3.5 Flash；提取模式抽帧分析与总结固定 GPT-5.5。
+// Stage 1（音频/语音 scan）默认 Gemini 3.5 Flash；Phase 2 抽帧视觉+总结固定 GPT-5.6 Sol（high / 128k）。
 function growthCampFirstPassModel(): string {
   return resolveGrowthCampExtractorModel();
 }
@@ -195,15 +196,7 @@ function resolveGrowthCampFinalModel(modelName?: string): string {
 }
 
 function strategistInvokeBase(engine: GrowthCampStrategistEngine) {
-  const base = {
-    model: "pro" as const,
-    provider: engine.provider,
-    modelName: engine.modelName,
-  };
-  if (engine.provider === "openai" && engine.modelName === "gpt-5.5") {
-    return { ...base, reasoningEffort: "medium" as const };
-  }
-  return base;
+  return growthCampPhase2InvokeOpts(engine);
 }
 
 function parseLlmJsonResponse<T extends Record<string, unknown>>(raw: string): T {
@@ -212,7 +205,7 @@ function parseLlmJsonResponse<T extends Record<string, unknown>>(raw: string): T
   return JSON.parse(extractJsonString(content)) as T;
 }
 
-/** extract_only：Vertex 走 json_schema；GPT-5.5 可能直接回 Markdown，需兼容。 */
+/** extract_only：Vertex 走 json_schema；GPT-5.6 Sol 可能直接回 Markdown，需兼容。 */
 function parseExtractPassResponse(raw: string): { extractedContent: string; summary: string } {
   const content = String(raw || "").trim();
   if (!content) return { extractedContent: "", summary: "" };
@@ -227,7 +220,7 @@ function parseExtractPassResponse(raw: string): { extractedContent: string; summ
       return { extractedContent: content, summary };
     }
   } catch {
-    /* GPT-5.5 / Evolink 常忽略 json_schema，直接输出 Markdown */
+    /* GPT-5.6 Sol / OpenAI 常忽略 json_schema，直接输出 Markdown */
   }
   const firstLine = content
     .split("\n")
@@ -617,7 +610,7 @@ function isExtractScanWeak(
   return false;
 }
 
-/** 提取模式 Phase 1：基于转写找重点时刻；默认 Gemini 3.5 Flash，效果差则改 GPT-5.5 */
+/** 提取模式 Phase 1：基于转写找重点时刻；默认 Gemini 3.5 Flash，效果差则改 GPT-5.6 Sol */
 async function runExtractTranscriptScan(params: {
   transcript: string;
   duration: number;
@@ -682,8 +675,8 @@ async function runExtractTranscriptScanWithFallback(params: {
   const flashEngine = resolveGrowthCampExtractScanEngine();
   let scan = await runExtractTranscriptScan({ ...params, scanEngine: flashEngine });
   if (isExtractScanWeak(scan, params.transcript, params.duration)) {
-    console.warn("[growth.analyzeVideo] extract transcript scan weak on Flash, retry with GPT-5.5");
-    scan = await runExtractTranscriptScan({ ...params, scanEngine: resolveGrowthCampGpt55Engine() });
+    console.warn("[growth.analyzeVideo] extract transcript scan weak on Flash, retry with GPT-5.6 Sol");
+    scan = await runExtractTranscriptScan({ ...params, scanEngine: resolveGrowthCampPhase2Engine() });
   }
   return scan;
 }
@@ -700,7 +693,7 @@ async function runExtractOnlyPipeline(params: {
   extractPrompt?: string;
   mode: GrowthAnalysisMode;
 }) {
-  const extractEngine = resolveGrowthCampGpt55Engine();
+  const extractEngine = resolveGrowthCampPhase2Engine();
   const transcriptChunks: string[] = [];
 
   for (const chunk of params.chunkRanges) {
@@ -1169,7 +1162,7 @@ async function runVisualFirstPass(params: {
   };
 }
 
-/** 提取模式：GPT-5.5 关键帧视觉描述（不做商业/钩子解读） */
+/** 提取模式：GPT-5.6 Sol 关键帧视觉描述（不做商业/钩子解读） */
 async function runExtractVisualFirstPass(params: {
   strategistEngine: GrowthCampStrategistEngine;
   sparseFrames: SparseFrame[];
@@ -1659,7 +1652,7 @@ function buildExtractSystemPrompt(params: {
   const minVisualEntries = Math.max(4, Math.round(params.duration / 75));
 
   return `
-你是视频内容整理助手（GPT-5.5）。后台已用 Gemini 3.5 Flash 完成语音 scan；你负责把转写、关键帧画面整理成**流畅、详尽、去重**的 Markdown。
+你是视频内容整理助手（GPT-5.6 Sol）。后台已用 Gemini 3.5 Flash 完成语音 scan；你负责把转写、关键帧画面整理成**流畅、详尽、去重**的 Markdown。
 
 【任务目标】
 像培训实录文档：大纲清晰、正文流畅详尽。**同一事实不要在多个章节全文重复**——各章分工明确，后章只可一句交叉引用。
@@ -1928,7 +1921,7 @@ function emptyVisualFirstPass(): VisualFirstPass {
   };
 }
 
-/** Platform 素材区参考视频：Gemini Flash 语音扫描 → GPT-5.5 抽针深析（跳过完整多 chunk 管线） */
+/** Platform 素材区参考视频：Gemini Flash 语音扫描 → GPT-5.6 Sol 抽针深析（跳过完整多 chunk 管线） */
 async function runPlatformReferenceAssetPipeline(params: {
   videoPath: string;
   duration: number;
@@ -2316,12 +2309,12 @@ export async function analyzeVideo(params: {
             audioUrl: "",
             transcript: extractResult.transcript,
             videoDuration: duration,
-            provider: resolveGrowthCampGpt55Engine().provider,
-            model: resolveGrowthCampGpt55Engine().modelName,
+            provider: resolveGrowthCampPhase2Engine().provider,
+            model: resolveGrowthCampPhase2Engine().modelName,
             fallback: false,
-            pipeline: "extract_only_flash_scan_gpt55_visual_summary",
+            pipeline: "extract_only_flash_scan_gpt56_sol_visual_summary",
             stageOneModel: resolveGrowthCampExtractScanEngine().modelName,
-            stageTwoModel: resolveGrowthCampGpt55Engine().modelName,
+            stageTwoModel: resolveGrowthCampPhase2Engine().modelName,
             sparseFrameCount: extractResult.sparseFrameCount,
             estimatedCostProfile: extractResult.costProfile,
             failureStage: undefined,

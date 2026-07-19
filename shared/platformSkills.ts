@@ -139,7 +139,9 @@ export type PlatformBuiltinSkillId = (typeof PLATFORM_BUILTIN_SKILL_IDS)[number]
 
 export {
   CANVAS_ONLY_SKILL_IDS,
+  HOME_ONLY_SKILL_IDS,
   isCanvasOnlySkillId,
+  isExcludedFromPlatformSkillPool,
   groupPlatformSkillsByCategory,
   resolvePlatformSkillCategory,
   PLATFORM_SKILL_CATEGORY_ORDER,

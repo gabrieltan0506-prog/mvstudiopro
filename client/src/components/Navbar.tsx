@@ -1,5 +1,4 @@
 import { useAuth } from "@/_core/hooks/useAuth";
-import { getLoginUrl } from "@/const";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
 import { Menu, Film, LogOut, User, LayoutDashboard, Shield, ChevronDown, FolderOpen } from "lucide-react";
@@ -21,15 +20,37 @@ import {
 
 const NAV_ITEMS = [
   { label: "平台创作", href: "/platform" },
+  { label: "视频深度拆解", href: "/platform?tab=video" },
   { label: "竞品调研", href: "/research" },
   { label: "Omini，Seedance 2.X画布", href: "/canvas" },
   { label: "套餐", href: "/pricing" },
 ];
 
+const VIDEO_DEEP_TAB_VALUES = new Set(["video", "assets", "deep-video", "video-deep"]);
+
+function isNavItemActive(href: string, locationPath: string): boolean {
+  const [path, query = ""] = href.split("?");
+  if (locationPath !== path) return false;
+  const wantTab = new URLSearchParams(query).get("tab");
+  const curTab = new URLSearchParams(
+    typeof window !== "undefined" ? window.location.search : "",
+  ).get("tab");
+  const curIsVideoDeep = VIDEO_DEEP_TAB_VALUES.has(String(curTab || ""));
+  if (wantTab && VIDEO_DEEP_TAB_VALUES.has(wantTab)) {
+    return curIsVideoDeep;
+  }
+  // 「平台创作」：在 /platform 且未落在视频深度拆解 tab 时高亮
+  if (path === "/platform" && !wantTab) {
+    return !curIsVideoDeep;
+  }
+  return !wantTab;
+}
+
 export default function Navbar() {
   const { user, isAuthenticated, logout } = useAuth();
   const [location, navigate] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [, setSearchTick] = useState(0);
   const showTestLab = import.meta.env.DEV || user?.role === "admin";
   const navItems = showTestLab
     ? [...NAV_ITEMS, { label: "测试台", href: "/test-lab" }]
@@ -39,6 +60,17 @@ export default function Navbar() {
   useEffect(() => {
     setMobileOpen(false);
   }, [location]);
+
+  // wouter location 不含 query；监听 search 变化以刷新高亮
+  useEffect(() => {
+    const onUrl = () => setSearchTick((n) => n + 1);
+    window.addEventListener("popstate", onUrl);
+    window.addEventListener("mvs:platform-tab", onUrl);
+    return () => {
+      window.removeEventListener("popstate", onUrl);
+      window.removeEventListener("mvs:platform-tab", onUrl);
+    };
+  }, []);
 
   const closeMobile = () => setMobileOpen(false);
 
@@ -61,8 +93,13 @@ export default function Navbar() {
             <Link
               key={item.href}
               href={item.href}
+              onClick={() => {
+                if (item.href.includes("tab=video")) {
+                  window.setTimeout(() => window.dispatchEvent(new Event("mvs:platform-tab")), 0);
+                }
+              }}
               className={`px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 no-underline hover:scale-[1.05] active:scale-[0.97] ${
-                location === item.href
+                isNavItemActive(item.href, location)
                   ? "text-primary bg-primary/10"
                   : "text-muted-foreground hover:text-foreground hover:bg-accent"
               }`}
@@ -162,11 +199,16 @@ export default function Navbar() {
                   key={item.href}
                   href={item.href}
                   className={`block px-4 py-3 rounded-md text-sm font-medium no-underline min-h-11 ${
-                    location === item.href
+                    isNavItemActive(item.href, location)
                       ? "text-primary bg-primary/10"
                       : "text-muted-foreground hover:text-foreground hover:bg-accent"
                   }`}
-                  onClick={closeMobile}
+                  onClick={() => {
+                    if (item.href.includes("tab=video")) {
+                      window.setTimeout(() => window.dispatchEvent(new Event("mvs:platform-tab")), 0);
+                    }
+                    closeMobile();
+                  }}
                 >
                   {item.label}
                 </Link>

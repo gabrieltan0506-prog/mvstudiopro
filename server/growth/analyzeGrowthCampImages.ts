@@ -170,7 +170,7 @@ export async function analyzeGrowthCampImages(params: {
   const fileUrls = refs.map((ref) => ref.publicUrl);
   const openAiUserContent = buildOpenAiVisionUserContent(refs, params.context);
   const vertexUserContent = buildVertexVisionUserContent(refs, params.context);
-  const primaryModel = params.modelName || "gpt-5.5";
+  const primaryModel = params.modelName || "gpt-5.6-sol";
 
   let analysis: GrowthAnalysisScores;
   let fallback = false;

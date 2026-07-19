@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { toPng } from "html-to-image";
 import { AnimatePresence, motion } from "framer-motion";
@@ -50,7 +51,9 @@ import type {
 import {
   CREDIT_COSTS,
   PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL,
-  PLATFORM_SKILL_QA_DAILY_FREE_LIMIT,
+  PLATFORM_SKILL_QA_SOL_DAILY_FREE,
+  PLATFORM_SKILL_QA_TERRA_DAILY_FREE,
+  platformSkillQaPaidCredits,
   platformCoverBundleTotalCredits,
   platformCompositeBundleTotalCreditsForGrid,
   platformCoverCompositeBulkBundleTotalCreditsForGrid,
@@ -99,6 +102,10 @@ import {
   groupPlatformSkillsByCategory,
   PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE,
 } from "@shared/platformSkills";
+import {
+  PLATFORM_SKILL_ROUTER_CORE_IDS,
+  routePlatformSkillIds,
+} from "@shared/platformSkillRouter";
 import {
   formatAssignedCraftTechniqueZh,
   pickCraftTechniqueProfile,
@@ -180,8 +187,8 @@ const PLATFORM_COPY_LLM_ENGINE_LS_KEY = "mvstudiopro.platform.copyLlmEngine.v1";
 const PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY = "mvstudiopro.platform.stage2SupervisorCopyEngine.v1";
 type PlatformCopyLlmEngine = "vertex" | "openai";
 
-/** supervisor：创作顾问免费问答模型（一般用户服务端固定 Terra） */
-const PLATFORM_SKILL_QA_MODEL_LS_KEY = "mvstudiopro.platform.skillQaModel.v1";
+/** 创作顾问问答模型（所有登录用户可选；Sol/Terra 免费额度与超额单价不同） */
+const PLATFORM_SKILL_QA_MODEL_LS_KEY = "mvstudiopro.platform.skillQaModel.v2";
 type PlatformSkillQaModelChoice = "gpt-5.6-terra" | "gpt-5.6-sol";
 
 function readPlatformSkillQaModelFromLs(): PlatformSkillQaModelChoice {
@@ -196,7 +203,8 @@ function readPlatformSkillQaModelFromLs(): PlatformSkillQaModelChoice {
 }
 
 /** /platform 挂载 Skill：勾选 id 列表（JSON string[]） */
-const PLATFORM_ENABLED_SKILL_IDS_LS_KEY = "mvstudiopro.platform.enabledSkillIds.v1";
+/** v2：默认只开核心 Skill；旧 v1 全开记忆不再沿用 */
+const PLATFORM_ENABLED_SKILL_IDS_LS_KEY = "mvstudiopro.platform.enabledSkillIds.v2";
 /** 接受「博主/创作者」自称（默认关） */
 const PLATFORM_ALLOW_BLOGGER_TITLE_LS_KEY = "mvstudiopro.platform.allowBloggerTitle.v1";
 
@@ -1931,9 +1939,8 @@ export default function PlatformPage() {
   const canConfigureStage2CopyEngine =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
 
-  /** 创作顾问问答模型切换：仅 supervisor / admin 可见；一般用户服务端固定 Terra */
-  const canConfigureSkillQaModel =
-    supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+  /** 创作顾问：所有登录用户可选 Sol / Terra（计费不同） */
+  const canConfigureSkillQaModel = Boolean(isAuthenticated);
 
   const [platformCopyLlmEngine, setPlatformCopyLlmEngine] = useState<PlatformCopyLlmEngine>(() =>
     readPlatformCopyLlmEngineFromLs(),
@@ -2003,7 +2010,7 @@ export default function PlatformPage() {
     if (platformDashboard && !platformContent) {
       return "战略看板已就绪。若流程中断，可点下方手动「生成专属文案」继续。";
     }
-    return `点击「开始全案分析」将基于你的背景生成平台优先级、切入方向、选题文案与分镜脚本（入队时扣 ${CREDIT_COSTS.platformStage2Copywriting} 积分；不含封面图、编导分镜图与决策智库报告）。`;
+    return `点击「开始全案分析」：先按所选周期用 Pro 深度优化选题，再生成六条文案（入队扣 ${CREDIT_COSTS.platformStage2Copywriting} 积分，含 Pro 优化不加收；不含封面/分镜/决策智库）。`;
   }, [
     isContentLoading,
     contentLoadingText,
@@ -2060,6 +2067,7 @@ export default function PlatformPage() {
   const pendingOptimizeVisionRef = useRef<string | undefined>(undefined);
   const pendingOptimizeLiveTrendsRef = useRef(false);
   const [assetAnalysisBusy, setAssetAnalysisBusy] = useState(false);
+  const [locationPath, setLocationPath] = useLocation();
   /** 素材分析完成后的拍摄手法摘要，注入分镜 scriptContext */
   const lastShootingTechniqueBriefRef = useRef<string>("");
   /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 vs 自定义抠像 */
@@ -2068,12 +2076,41 @@ export default function PlatformPage() {
   >("copy");
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const tab = params.get("tab");
-    if (tab === "assets" || tab === "copy" || tab === "topic" || tab === "matting" || tab === "htmlPpt") {
-      setCustomWorkspaceTab(tab);
-    }
-  }, []);
+    const applyTabFromUrl = (opts?: { scroll?: boolean }) => {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get("tab");
+      const videoDeepTabs = new Set(["assets", "video", "deep-video", "video-deep"]);
+      if (tab && videoDeepTabs.has(tab)) {
+        setCustomWorkspaceTab("assets");
+        if (opts?.scroll !== false) {
+          window.setTimeout(() => {
+            document.getElementById("platform-custom-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }, 80);
+        }
+        return;
+      }
+      if (tab === "copy" || tab === "topic" || tab === "matting" || tab === "htmlPpt") {
+        setCustomWorkspaceTab(tab);
+      }
+    };
+    applyTabFromUrl({ scroll: true });
+    const onUrl = () => applyTabFromUrl({ scroll: true });
+    window.addEventListener("popstate", onUrl);
+    window.addEventListener("mvs:platform-tab", onUrl as EventListener);
+    return () => {
+      window.removeEventListener("popstate", onUrl);
+      window.removeEventListener("mvs:platform-tab", onUrl as EventListener);
+    };
+  }, [locationPath]);
+
+  const openVideoDeepBreakdown = useCallback(() => {
+    setCustomWorkspaceTab("assets");
+    setLocationPath("/platform?tab=video");
+    window.dispatchEvent(new Event("mvs:platform-tab"));
+    window.setTimeout(() => {
+      document.getElementById("platform-custom-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 40);
+  }, [setLocationPath]);
 
   /** 自定义选题：选题标题（可选）、主人公特质、参考人像、分镜网格 */
   const [customTopicTitle, setCustomTopicTitle] = useState("");
@@ -2273,7 +2310,15 @@ export default function PlatformPage() {
   useEffect(() => {
     const skills = platformSkillsQuery.data?.skills;
     if (!skills?.length || platformSkillIdsHydrated) return;
-    setEnabledPlatformSkillIds(new Set(skills.filter((s) => s.defaultEnabled).map((s) => s.id)));
+    // 未主动勾选时：只开核心 Skill（不再默认全开 defaultEnabled）
+    const core = new Set<string>(PLATFORM_SKILL_ROUTER_CORE_IDS as readonly string[]);
+    const next = new Set(
+      skills.map((s) => s.id).filter((id) => core.has(id)),
+    );
+    if (next.size === 0) {
+      for (const id of PLATFORM_SKILL_ROUTER_CORE_IDS) next.add(id);
+    }
+    setEnabledPlatformSkillIds(next);
     setPlatformSkillIdsHydrated(true);
   }, [platformSkillsQuery.data?.skills, platformSkillIdsHydrated]);
 
@@ -2307,6 +2352,39 @@ export default function PlatformPage() {
       return next;
     });
   }, []);
+
+  const platformSkillRecommend = useMemo(() => {
+    const skills = platformSkillsQuery.data?.skills ?? [];
+    const poolIds = skills.map((s) => s.id);
+    const routed = routePlatformSkillIds({
+      poolIds: poolIds.length ? poolIds : [...PLATFORM_SKILL_ROUTER_CORE_IDS],
+      context: focusPrompt,
+      sheetKind: "unknown",
+      maxSkills: 14,
+    });
+    const core = new Set<string>(PLATFORM_SKILL_ROUTER_CORE_IDS as readonly string[]);
+    const extraIds = routed.selectedIds.filter((id) => !core.has(id)).slice(0, 6);
+    const nameById = new Map(skills.map((s) => [s.id, s.name] as const));
+    return {
+      lane: routed.primaryLane,
+      extraIds,
+      labels: extraIds.map((id) => nameById.get(id) || id),
+    };
+  }, [focusPrompt, platformSkillsQuery.data?.skills]);
+
+  const applyPlatformSkillRecommend = useCallback(() => {
+    setEnabledPlatformSkillIds((prev) => {
+      const next = new Set(prev);
+      for (const id of PLATFORM_SKILL_ROUTER_CORE_IDS) next.add(id);
+      for (const id of platformSkillRecommend.extraIds) next.add(id);
+      return next;
+    });
+    toast.success(
+      platformSkillRecommend.extraIds.length
+        ? `已采纳推荐 Skill（${platformSkillRecommend.labels.join(" · ")}）`
+        : "已确认核心 Skill（当前背景暂无额外赛道推荐）",
+    );
+  }, [platformSkillRecommend.extraIds, platformSkillRecommend.labels]);
 
   const togglePlatformSkillId = useCallback((id: string) => {
     setEnabledPlatformSkillIds((prev) => {
@@ -2364,25 +2442,67 @@ export default function PlatformPage() {
       toast.error("请先登录后再提问");
       return;
     }
+    const mode = skillQaModel === "gpt-5.6-sol" ? "sol" : "terra";
+    const paidUnit = platformSkillQaPaidCredits(mode);
+    const freeLimit = mode === "sol" ? PLATFORM_SKILL_QA_SOL_DAILY_FREE : PLATFORM_SKILL_QA_TERRA_DAILY_FREE;
+    const remaining = skillQaRemaining;
+    let confirmPaid = false;
+    if (remaining != null && remaining <= 0) {
+      const ok = window.confirm(
+        `今日 ${mode === "sol" ? "5.6 Sol" : "5.6 Terra"} 免费 ${freeLimit} 次已用完。继续将扣除 ${paidUnit} 积分/次。确认？`,
+      );
+      if (!ok) return;
+      confirmPaid = true;
+    }
     try {
       const supervisorTok = getSupervisorTrpcToken();
       const res = await askPlatformSkillQaMutation.mutateAsync({
         question: q,
         enabledSkillIds: Array.from(enabledPlatformSkillIds),
         allowBloggerTitle,
-        ...(canConfigureSkillQaModel
-          ? {
-              qaModel: skillQaModel,
-              ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
-            }
-          : {}),
+        qaModel: skillQaModel,
+        confirmPaid,
+        ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
       });
       setSkillQaAnswer(res.answer || "");
       setSkillQaRemaining(res.remainingFreeToday);
       setSkillQaImageOffer(res.imageOffer ?? null);
       setSkillQaImageUrl(null);
+      if (res.paidThisTurn && res.creditsCharged > 0) {
+        toast.message(`已扣 ${res.creditsCharged} 积分（超额问答）`);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      if (/免费.*已用完|PAYMENT_REQUIRED|扣除/.test(msg) && !confirmPaid) {
+        const ok = window.confirm(`${sanitizePlatformUserMessage(msg, "")}\n\n确认扣点继续？`);
+        if (ok) {
+          try {
+            const supervisorTok = getSupervisorTrpcToken();
+            const res = await askPlatformSkillQaMutation.mutateAsync({
+              question: q,
+              enabledSkillIds: Array.from(enabledPlatformSkillIds),
+              allowBloggerTitle,
+              qaModel: skillQaModel,
+              confirmPaid: true,
+              ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
+            });
+            setSkillQaAnswer(res.answer || "");
+            setSkillQaRemaining(res.remainingFreeToday);
+            setSkillQaImageOffer(res.imageOffer ?? null);
+            setSkillQaImageUrl(null);
+            if (res.creditsCharged > 0) toast.message(`已扣 ${res.creditsCharged} 积分（超额问答）`);
+            return;
+          } catch (err2) {
+            toast.error(
+              sanitizePlatformUserMessage(
+                err2 instanceof Error ? err2.message : String(err2),
+                "问答失败，请稍后重试",
+              ),
+            );
+            return;
+          }
+        }
+      }
       toast.error(sanitizePlatformUserMessage(msg, "问答失败，请稍后重试"));
     }
   }, [
@@ -2391,8 +2511,8 @@ export default function PlatformPage() {
     askPlatformSkillQaMutation,
     enabledPlatformSkillIds,
     allowBloggerTitle,
-    canConfigureSkillQaModel,
     skillQaModel,
+    skillQaRemaining,
   ]);
 
   const handleConfirmSkillQaImage = useCallback(async () => {
@@ -2437,58 +2557,321 @@ export default function PlatformPage() {
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  const platformSkillsMountPanel = (
-    <div className="space-y-3">
+  const platformMainPersonaTopicsPanel = (
+    <div className="space-y-4">
       <div
-        className="flex items-start gap-3 rounded-2xl border border-[#49e6ff]/25 bg-[linear-gradient(135deg,rgba(73,230,255,0.12),rgba(99,102,241,0.08))] px-3.5 py-3 shadow-[0_8px_28px_rgba(73,230,255,0.08)]"
+        id="platform-persona-focus"
+        className="rounded-2xl border border-[#fbbf24]/40 bg-[rgba(251,191,36,0.1)] px-4 py-4"
+      >
+        <div className="flex items-center gap-2 text-lg font-bold text-[#fef08a] md:text-xl">
+          <Target className="h-5 w-5 shrink-0" aria-hidden />
+          人物背景与创作诉求
+          <span className="rounded border border-[#fbbf24]/35 bg-black/20 px-1.5 py-0.5 text-[11px] font-medium text-[#fde68a]">
+            全案 / 选题共用
+          </span>
+        </div>
+        <p className="mt-1.5 text-[13px] leading-snug text-gray-300">
+          写清职业、专长、兴趣与目标；全案分析与下方选题初选 / 扩写都读这一栏。
+        </p>
+        <div className="relative mt-3">
+          <textarea
+            value={focusPrompt}
+            onChange={(event) => setFocusPrompt(event.target.value)}
+            placeholder="例如：我是医学背景创作者，做小红书虚拟资料店；擅长慢病科普与资料包变现，想找持续量大、利润清晰的品类与定价。"
+            rows={4}
+            className="min-h-[110px] w-full rounded-xl border border-white/15 bg-[#0c061e] px-3.5 py-3 pr-12 text-[14px] leading-relaxed text-white outline-none transition focus:border-[#fbbf24]/45"
+          />
+          <div className="absolute right-2 top-2">
+            <VoiceInputButton
+              onTranscript={(t) => setFocusPrompt((prev) => (prev ? `${prev} ${t}` : t))}
+              onDebugLog={addVoiceDebug}
+              size={26}
+            />
+          </div>
+        </div>
+        {!focusPrompt.trim() ? (
+          <p className="mt-2 text-[12px] text-amber-200/90">未填写时无法生成初选（避免空背景抽卡）。</p>
+        ) : null}
+      </div>
+
+      <div className="rounded-2xl border border-[#10B981]/35 bg-[#10B981]/10 px-4 py-3.5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-semibold text-white">智能推荐 Skill</div>
+            <p className="mt-1 text-[12px] leading-snug text-gray-300">
+              核心 Skill 已默认开启。根据你的背景
+              {platformSkillRecommend.lane !== "default" ? `（赛道 ${platformSkillRecommend.lane}）` : ""}
+              ，建议加开：
+              <span className="text-[#a7f3d0]">
+                {platformSkillRecommend.labels.length
+                  ? platformSkillRecommend.labels.join(" · ")
+                  : "暂无额外赛道（保持核心即可）"}
+              </span>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={applyPlatformSkillRecommend}
+            className="shrink-0 rounded-lg border border-[#10B981]/45 bg-[#10B981]/20 px-3 py-2 text-[12px] font-bold text-[#a7f3d0] hover:bg-[#10B981]/30"
+          >
+            一键采纳推荐
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-[#49e6ff]/35 bg-[#49e6ff]/8 px-4 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-lg font-bold text-white md:text-xl">选题初选</div>
+            <p className="mt-1 text-[13px] leading-snug text-gray-300">
+              先填背景再生成。默认 {PLATFORM_TOPIC_SHORTLIST_DEFAULT} 条；扩写正式文案{" "}
+              {CREDIT_COSTS.platformTopicExpand} 点/次（最多 {PLATFORM_TOPIC_EXPAND_MAX} 条）。
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-gray-300">
+              <span>条数</span>
+              {([6, 12, 20] as const).map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setTopicShortlistCount(n)}
+                  className={`rounded border px-2.5 py-1 font-semibold ${
+                    topicShortlistCount === n
+                      ? "border-[#49e6ff]/50 bg-[#49e6ff]/20 text-[#b8f4ff]"
+                      : "border-white/15 text-gray-400"
+                  }`}
+                >
+                  {n}
+                  {n > PLATFORM_TOPIC_SHORTLIST_DEFAULT ? "·加量" : "·默认"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={
+              !isAuthenticated ||
+              generateTopicShortlistMutation.isPending ||
+              expandTopicPicksMutation.isPending
+            }
+            onClick={() => {
+              void (async () => {
+                if (!focusPrompt.trim()) {
+                  toast.error("请先填写上方「人物背景与创作诉求」，再生成初选");
+                  scrollToPlatformSection("platform-persona-focus");
+                  return;
+                }
+                try {
+                  const existingTitles = [
+                    ...(platformContent?.contentBlueprints || []).map((b: { title?: string }) =>
+                      String(b?.title || ""),
+                    ),
+                    ...topicShortlist.map((t) => t.title),
+                  ].filter(Boolean);
+                  const res = await generateTopicShortlistMutation.mutateAsync({
+                    context: focusPrompt.trim() || undefined,
+                    enabledSkillIds: Array.from(enabledPlatformSkillIds),
+                    allowBloggerTitle,
+                    existingTitles,
+                    count: topicShortlistCount,
+                  });
+                  const topics = res.topics || [];
+                  setTopicShortlist(topics);
+                  setSelectedShortlistIds(
+                    new Set(topics.slice(0, PLATFORM_TOPIC_EXPAND_MAX).map((t) => t.id)),
+                  );
+                  if (!topics.length) {
+                    toast.error(
+                      "初选未返回选题（可能超时或模型空回）。请稍后重试；若刚扣点请联系管理员核对。",
+                    );
+                    return;
+                  }
+                  toast.success(
+                    `已生成 ${topics.length} 条初选${
+                      res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""
+                    }`,
+                  );
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  const friendly =
+                    msg.includes("Unexpected token") ||
+                    msg.includes("is not valid JSON") ||
+                    msg.includes("An error o") ||
+                    msg.includes("timeout") ||
+                    msg.includes("504")
+                      ? "算力紧张或请求超时，请稍后重试选题初选"
+                      : msg || "初选生成失败";
+                  toast.error(friendly);
+                }
+              })();
+            }}
+            className="shrink-0 rounded-xl border border-[#49e6ff]/50 bg-[#49e6ff]/20 px-4 py-2.5 text-[14px] font-bold text-[#b8f4ff] disabled:opacity-50"
+          >
+            {generateTopicShortlistMutation.isPending
+              ? "生成中…"
+              : `生成 ${topicShortlistCount} 条初选（${topicShortlistPrice.total} 点）`}
+          </button>
+        </div>
+        {topicShortlist.length > 0 ? (
+          <>
+            <div className="mt-3 max-h-[320px] space-y-1.5 overflow-y-auto pr-1">
+              {topicShortlist.map((t) => {
+                const on = selectedShortlistIds.has(t.id);
+                return (
+                  <label
+                    key={t.id}
+                    className={`flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 text-[12px] ${
+                      on
+                        ? "border-[#49e6ff]/50 bg-[#49e6ff]/10 text-white"
+                        : "border-white/10 bg-black/20 text-gray-300"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={on}
+                      onChange={() => {
+                        setSelectedShortlistIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(t.id)) next.delete(t.id);
+                          else if (next.size < PLATFORM_TOPIC_EXPAND_MAX) next.add(t.id);
+                          else toast.message(`最多勾选 ${PLATFORM_TOPIC_EXPAND_MAX} 条`);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="font-semibold text-white/95">{t.title}</span>
+                      <span className="mt-0.5 block text-gray-400">{t.conveyGoal}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={
+                  expandTopicPicksMutation.isPending ||
+                  selectedShortlistIds.size < PLATFORM_TOPIC_EXPAND_MIN ||
+                  selectedShortlistIds.size > PLATFORM_TOPIC_EXPAND_MAX
+                }
+                onClick={() => {
+                  void (async () => {
+                    const picks = topicShortlist.filter((t) => selectedShortlistIds.has(t.id));
+                    if (picks.length < PLATFORM_TOPIC_EXPAND_MIN) {
+                      toast.message(`请至少勾选 ${PLATFORM_TOPIC_EXPAND_MIN} 条`);
+                      return;
+                    }
+                    try {
+                      const res = await expandTopicPicksMutation.mutateAsync({
+                        context: focusPrompt.trim() || undefined,
+                        enabledSkillIds: Array.from(enabledPlatformSkillIds),
+                        allowBloggerTitle,
+                        picks,
+                      });
+                      const bps = res.contentBlueprints || [];
+                      setPlatformContent((prev: any) => ({
+                        ...(prev && typeof prev === "object" ? prev : {}),
+                        contentBlueprints: bps,
+                        monetizationLanes: Array.isArray(prev?.monetizationLanes)
+                          ? prev.monetizationLanes
+                          : [],
+                      }));
+                      toast.success(`已扩写 ${bps.length} 条正式文案（含图文页结构）`);
+                      scrollToPlatformExecutionCopy();
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "扩写失败");
+                    }
+                  })();
+                }}
+                className="rounded-xl border border-emerald-400/50 bg-emerald-500/25 px-5 py-3 text-base font-black tracking-wide text-emerald-50 shadow-[0_8px_28px_rgba(16,185,129,0.25)] disabled:opacity-50"
+              >
+                {expandTopicPicksMutation.isPending
+                  ? "扩写中…"
+                  : `选题扩写（${selectedShortlistIds.size}/${PLATFORM_TOPIC_EXPAND_MAX}）`}
+              </button>
+              <button
+                type="button"
+                disabled={generateTopicShortlistMutation.isPending}
+                onClick={() => {
+                  setSelectedShortlistIds(new Set());
+                  toast.message("已清空勾选；可再点生成换一批");
+                }}
+                className="rounded-lg border border-white/15 px-3 py-2 text-[12px] text-gray-300"
+              >
+                清空勾选
+              </button>
+            </div>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+
+  const platformSkillsAccessoryPanel = (
+    <details className="rounded-xl border border-white/10 bg-black/25 open:bg-black/30">
+      <summary className="cursor-pointer list-none px-4 py-3 text-[12px] font-semibold text-gray-300">
+        更多 Skill 与顾问（可选 · 默认折叠，不挡主功能）
+        <span className="ml-2 font-normal text-gray-500">
+          已开 {enabledPlatformSkillIds.size} 项 · 核心已默认
+        </span>
+      </summary>
+      <div className="space-y-3 border-t border-white/10 px-3 pb-3 pt-3">
+      <div
+        className="flex items-start gap-3 rounded-2xl border border-[#49e6ff]/20 bg-[linear-gradient(135deg,rgba(73,230,255,0.08),rgba(99,102,241,0.05))] px-3 py-2.5"
         role="status"
         aria-label="Skill 与提示词优先级说明"
       >
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[#49e6ff]/40 bg-[#49e6ff]/15 text-[#8cefff]">
-          <Bot className="h-4 w-4" aria-hidden />
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#49e6ff]/35 bg-[#49e6ff]/12 text-[#8cefff]">
+          <Bot className="h-3.5 w-3.5" aria-hidden />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8cefff]">智能提醒</div>
-          <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-black/30 px-3 py-2.5 text-[12px] leading-relaxed text-gray-200">
-            <p>
-              Skill <strong className="text-white">可以自由勾选或取消</strong>
-              ，不必全开。若觉得 Skill 没法满足你的要求，直接写进下方「人物背景与创作诉求」（与选题初选同一块），或自定义提示词。
-            </p>
-            <p className="mt-1.5 text-[#b8f4ff]">
-              <strong className="text-white">只要有提示词要求，优先级高于 Skill 设定</strong>
-              ——冲突时一律以你的提示词为准。
-            </p>
+          <div className="mb-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#8cefff]/80">陪衬说明</div>
+          <div className="text-[11px] leading-relaxed text-gray-400">
+            不选额外 Skill 时只开核心。提示词要求优先于 Skill。全案请用上方「一键采纳推荐」。
           </div>
         </div>
       </div>
 
-      <div className="rounded-xl border border-[#49e6ff]/30 bg-[#49e6ff]/8 px-4 py-3">
+      <div className="rounded-xl border border-[#49e6ff]/25 bg-[#49e6ff]/6 px-3 py-2.5">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-white">创作顾问问答</div>
-            <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
-              可问任何问题（创作 / Skill / 平台运营 / 时令赛道等），每日免费{" "}
-              {PLATFORM_SKILL_QA_DAILY_FREE_LIMIT} 次
-              {skillQaRemaining != null ? ` · 今日剩 ${skillQaRemaining}` : ""}
-              。若要生图：先出文字建议，再确认扣费；生涯首张按封面九折（
-              {CREDIT_COSTS.platformSkillQaImageFirst} 点），之后 {CREDIT_COSTS.platformTopicFrameGraphic}{" "}
-              点。生图会带上你勾选的 Skill（你的提示词仍优先）。
+            <div className="text-[12px] font-semibold text-white/90">创作顾问问答</div>
+            <p className="mt-0.5 text-[10px] leading-snug text-gray-500">
+              可问创作 / Skill / 运营等问题。
+              {skillQaModel === "gpt-5.6-sol" ? (
+                <>
+                  {" "}
+                  Sol 每日免费 {PLATFORM_SKILL_QA_SOL_DAILY_FREE} 次
+                  {skillQaRemaining != null ? ` · 今日剩 ${skillQaRemaining}` : ""}
+                  ，超额 {platformSkillQaPaidCredits("sol")} 积分/次。
+                </>
+              ) : (
+                <>
+                  {" "}
+                  Terra 每日免费 {PLATFORM_SKILL_QA_TERRA_DAILY_FREE} 次
+                  {skillQaRemaining != null ? ` · 今日剩 ${skillQaRemaining}` : ""}
+                  ，超额 {platformSkillQaPaidCredits("terra")} 积分/次。
+                </>
+              )}{" "}
+              生图另计：首张九折 {CREDIT_COSTS.platformSkillQaImageFirst} 点，之后{" "}
+              {CREDIT_COSTS.platformTopicFrameGraphic} 点。
             </p>
           </div>
           {canConfigureSkillQaModel ? (
             <label className="flex shrink-0 flex-col gap-1 text-[10px] text-[#8cefff]/90">
-              <span className="font-semibold uppercase tracking-[0.12em]">Supervisor · 问答模型</span>
+              <span className="font-semibold uppercase tracking-[0.12em]">问答模型</span>
               <select
                 value={skillQaModel}
-                onChange={(e) =>
-                  setSkillQaModel(
-                    e.target.value === "gpt-5.6-sol" ? "gpt-5.6-sol" : "gpt-5.6-terra",
-                  )
-                }
+                onChange={(e) => {
+                  const next = e.target.value === "gpt-5.6-sol" ? "gpt-5.6-sol" : "gpt-5.6-terra";
+                  setSkillQaModel(next);
+                  setSkillQaRemaining(null);
+                }}
                 className="rounded-md border border-[#49e6ff]/35 bg-black/50 px-2 py-1.5 text-[11px] font-semibold text-white focus:border-[#49e6ff]/60 focus:outline-none"
               >
-                <option value="gpt-5.6-terra">GPT-5.6 Terra（默认）</option>
-                <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
+                <option value="gpt-5.6-terra">5.6 Terra · 免{PLATFORM_SKILL_QA_TERRA_DAILY_FREE}次</option>
+                <option value="gpt-5.6-sol">5.6 Sol · 免{PLATFORM_SKILL_QA_SOL_DAILY_FREE}次</option>
               </select>
             </label>
           ) : null}
@@ -2572,17 +2955,15 @@ export default function PlatformPage() {
         ) : null}
       </div>
 
-      <div className="rounded-xl border border-[#10B981]/30 bg-[#10B981]/8 px-4 py-3">
+      <div className="rounded-xl border border-[#10B981]/25 bg-[#10B981]/6 px-3 py-2.5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-white">生成 Skill（全案 + 自定义共用）</div>
-          <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
-            勾选后同时作用于「开始全案分析」、自定义文案优化、自定义选题扩写与分镜/图文出图，以及上方创作顾问问答/生图。内置在{" "}
-            <code className="text-[10px] text-[#a7f3d0]">docs/2026Jul11/skill/</code>
-            ；可上传 .md 追加。
+          <div className="text-[12px] font-semibold text-white/90">手动勾选 Skill</div>
+          <p className="mt-0.5 text-[10px] leading-snug text-gray-500">
+            分类默认折叠。不勾选则仅核心生效；也可上方「一键采纳推荐」。
           </p>
         </div>
-        <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[#10B981]/45 bg-[#10B981]/15 px-2.5 py-1.5 text-[11px] font-bold text-[#a7f3d0] transition hover:bg-[#10B981]/25">
+        <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[#10B981]/35 bg-[#10B981]/10 px-2 py-1 text-[10px] font-bold text-[#a7f3d0] transition hover:bg-[#10B981]/20">
           {platformSkillUploading ? (
             <>
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -2625,7 +3006,7 @@ export default function PlatformPage() {
           return (
             <details
               key={category.id}
-              open={category.id === "core" || category.id === "lane"}
+              open={false}
               className="rounded-xl border border-white/10 bg-black/20"
             >
               <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-[11px]">
@@ -2720,285 +3101,25 @@ export default function PlatformPage() {
         ) : null}
       </div>
 
-      <div className="mt-3 rounded-lg border border-white/10 bg-black/25 px-3 py-2.5">
-        <div className="text-[12px] font-semibold text-[#a7f3d0]">{PLATFORM_SKILL_MASTER_READONLY.title}</div>
-        <p className="mt-1 text-[10px] leading-snug text-gray-400">{PLATFORM_SKILL_MASTER_READONLY.summary}</p>
-        <p className="mt-1 text-[10px] leading-snug text-gray-500">{PLATFORM_SKILL_MASTER_READONLY.shortlistHint}</p>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {PLATFORM_SKILL_MASTER_READONLY.lanes.map((ln) => (
-            <span
-              key={ln.id}
-              className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] text-gray-300"
-              title={ln.skills}
-            >
-              {ln.id} · {ln.label}
-            </span>
-          ))}
-        </div>
+      <div className="mt-2 rounded-lg border border-white/10 bg-black/25 px-3 py-2">
+        <div className="text-[11px] font-semibold text-[#a7f3d0]">{PLATFORM_SKILL_MASTER_READONLY.title}</div>
+        <p className="mt-1 text-[10px] leading-snug text-gray-500">{PLATFORM_SKILL_MASTER_READONLY.summary}</p>
       </div>
+      </div>
+      </div>
+      </details>
+  );
 
-      <div
-        id="platform-persona-focus"
-        className="mt-3 rounded-lg border border-[#fbbf24]/35 bg-[rgba(251,191,36,0.08)] px-3 py-2.5"
-      >
-        <div className="flex items-center gap-2 text-[12px] font-semibold text-[#fef08a]">
-          <Target className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          人物背景与创作诉求
-          <span className="rounded border border-[#fbbf24]/35 bg-black/20 px-1.5 py-0.5 text-[9px] font-medium text-[#fde68a]">
-            选题初选必填 · 与全案共用
-          </span>
-        </div>
-        <p className="mt-1 text-[10px] leading-snug text-gray-400">
-          写清职业、专长、兴趣与目标；下方「生成初选 / 扩写」与全案分析都读这一栏，不必翻到页面底部去找。
-        </p>
-        <div className="relative mt-2">
-          <textarea
-            value={focusPrompt}
-            onChange={(event) => setFocusPrompt(event.target.value)}
-            placeholder="例如：我是医学背景创作者，做小红书虚拟资料店；擅长慢病科普与资料包变现，想找持续量大、利润清晰的品类与定价。"
-            rows={4}
-            className="min-h-[96px] w-full rounded-md border border-white/15 bg-[#0c061e] px-3 py-2 pr-11 text-[12px] leading-relaxed text-white outline-none transition focus:border-[#fbbf24]/45"
-          />
-          <div className="absolute right-2 top-2">
-            <VoiceInputButton
-              onTranscript={(t) => setFocusPrompt((prev) => (prev ? `${prev} ${t}` : t))}
-              onDebugLog={addVoiceDebug}
-              size={26}
-            />
-          </div>
-        </div>
-        {!focusPrompt.trim() ? (
-          <p className="mt-1.5 text-[10px] text-amber-200/90">未填写时无法生成初选（避免空背景抽卡）。</p>
-        ) : null}
-      </div>
-
-      <div className="mt-3 rounded-lg border border-[#49e6ff]/25 bg-[#49e6ff]/6 px-3 py-2.5">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <div className="text-[12px] font-semibold text-white">选题初选（先挑再写）</div>
-            <p className="mt-0.5 text-[10px] leading-snug text-gray-400">
-              先填上方人物背景，再生成初选。默认 {PLATFORM_TOPIC_SHORTLIST_DEFAULT} 条（每条写明 Skill
-              与传达目标）；超出按条另计费（最多 {PLATFORM_TOPIC_SHORTLIST_MAX}
-              ）。勾选后扩写正式文案。基础 {CREDIT_COSTS.platformTopicShortlist} 点
-              {topicShortlistPrice.extraCount > 0
-                ? ` + 加量 ${topicShortlistPrice.extraCount}×${CREDIT_COSTS.platformTopicShortlistExtra}=${topicShortlistPrice.total} 点`
-                : ""}
-              {" · "}扩写 {CREDIT_COSTS.platformTopicExpand} 点/次（最多 {PLATFORM_TOPIC_EXPAND_MAX} 条）。
-            </p>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-gray-300">
-              <span>条数</span>
-              {([6, 12, 20] as const).map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setTopicShortlistCount(n)}
-                  className={`rounded border px-2 py-0.5 font-semibold ${
-                    topicShortlistCount === n
-                      ? "border-[#49e6ff]/50 bg-[#49e6ff]/20 text-[#b8f4ff]"
-                      : "border-white/15 text-gray-400"
-                  }`}
-                >
-                  {n}
-                  {n > PLATFORM_TOPIC_SHORTLIST_DEFAULT ? "·加量" : "·默认"}
-                </button>
-              ))}
-            </div>
-          </div>
-          <button
-            type="button"
-            disabled={
-              !isAuthenticated ||
-              generateTopicShortlistMutation.isPending ||
-              expandTopicPicksMutation.isPending
-            }
-            onClick={() => {
-              void (async () => {
-                if (!focusPrompt.trim()) {
-                  toast.error("请先填写上方「人物背景与创作诉求」，再生成初选");
-                  scrollToPlatformSection("platform-persona-focus");
-                  return;
-                }
-                try {
-                  const existingTitles = [
-                    ...(platformContent?.contentBlueprints || []).map((b: { title?: string }) =>
-                      String(b?.title || ""),
-                    ),
-                    ...topicShortlist.map((t) => t.title),
-                  ].filter(Boolean);
-                  const res = await generateTopicShortlistMutation.mutateAsync({
-                    context: focusPrompt.trim() || undefined,
-                    enabledSkillIds: Array.from(enabledPlatformSkillIds),
-                    allowBloggerTitle,
-                    existingTitles,
-                    count: topicShortlistCount,
-                  });
-                  const topics = res.topics || [];
-                  setTopicShortlist(topics);
-                  // 默认全选（不超过扩写上限）
-                  setSelectedShortlistIds(
-                    new Set(topics.slice(0, PLATFORM_TOPIC_EXPAND_MAX).map((t) => t.id)),
-                  );
-                  if (!topics.length) {
-                    toast.error(
-                      "初选未返回选题（可能超时或模型空回）。请稍后重试；若刚扣点请联系管理员核对。",
-                    );
-                    return;
-                  }
-                  toast.success(
-                    `已生成 ${topics.length} 条初选${
-                      res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""
-                    }`,
-                  );
-                } catch (err) {
-                  const msg = err instanceof Error ? err.message : String(err);
-                  const friendly =
-                    msg.includes("Unexpected token") ||
-                    msg.includes("is not valid JSON") ||
-                    msg.includes("An error o") ||
-                    msg.includes("timeout") ||
-                    msg.includes("504")
-                      ? "算力紧张或请求超时，请稍后重试选题初选"
-                      : msg || "初选生成失败";
-                  toast.error(friendly);
-                }
-              })();
-            }}
-            className="shrink-0 rounded-md border border-[#49e6ff]/45 bg-[#49e6ff]/15 px-2.5 py-1.5 text-[10px] font-bold text-[#b8f4ff] disabled:opacity-50"
-          >
-            {generateTopicShortlistMutation.isPending
-              ? "生成中…"
-              : `生成 ${topicShortlistCount} 条初选（${topicShortlistPrice.total} 点）`}
-          </button>
-        </div>
-        {topicShortlist.length > 0 ? (
-          <>
-            <div className="mt-2 max-h-[320px] space-y-1.5 overflow-y-auto pr-1">
-              {topicShortlist.map((t) => {
-                const on = selectedShortlistIds.has(t.id);
-                const selectedCount = selectedShortlistIds.size;
-                return (
-                  <label
-                    key={t.id}
-                    className={`flex cursor-pointer items-start gap-2 rounded-md border px-2 py-1.5 text-[10px] ${
-                      on
-                        ? "border-[#49e6ff]/50 bg-[#49e6ff]/10 text-white"
-                        : "border-white/10 bg-black/20 text-gray-300"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      checked={on}
-                      onChange={() => {
-                        setSelectedShortlistIds((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(t.id)) next.delete(t.id);
-                          else if (next.size < PLATFORM_TOPIC_EXPAND_MAX) next.add(t.id);
-                          else toast.message(`最多勾选 ${PLATFORM_TOPIC_EXPAND_MAX} 条`);
-                          return next;
-                        });
-                      }}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="font-semibold text-white/95">{t.title}</span>
-                      <span className="mt-0.5 block text-gray-400">{t.conveyGoal}</span>
-                      <span className="mt-0.5 flex flex-wrap gap-1">
-                        <span className="rounded bg-white/10 px-1 text-[9px] text-[#a7f3d0]">
-                          {t.primaryLane}
-                        </span>
-                        <span className="rounded bg-white/10 px-1 text-[9px] text-gray-300">
-                          {t.formatHint}
-                        </span>
-                        {(t.skillsUsed || []).slice(0, 5).map((sid) => (
-                          <span key={sid} className="rounded bg-white/5 px-1 text-[9px] text-gray-400">
-                            {sid}
-                          </span>
-                        ))}
-                        {t.commentHook ? (
-                          <span className="rounded bg-amber-500/20 px-1 text-[9px] text-amber-100">
-                            评「{t.commentHook}」
-                          </span>
-                        ) : null}
-                        {(t.linkedCampaigns || []).slice(0, 2).map((c) => (
-                          <span
-                            key={c}
-                            className="rounded bg-[#ff6b9d]/20 px-1 text-[9px] text-[#ffb3cc]"
-                          >
-                            {c}
-                          </span>
-                        ))}
-                      </span>
-                      <span className="sr-only">{selectedCount}</span>
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={
-                  expandTopicPicksMutation.isPending ||
-                  selectedShortlistIds.size < PLATFORM_TOPIC_EXPAND_MIN ||
-                  selectedShortlistIds.size > PLATFORM_TOPIC_EXPAND_MAX
-                }
-                onClick={() => {
-                  void (async () => {
-                    const picks = topicShortlist.filter((t) => selectedShortlistIds.has(t.id));
-                    if (picks.length < PLATFORM_TOPIC_EXPAND_MIN) {
-                      toast.message(`请至少勾选 ${PLATFORM_TOPIC_EXPAND_MIN} 条`);
-                      return;
-                    }
-                    try {
-                      const res = await expandTopicPicksMutation.mutateAsync({
-                        context: focusPrompt.trim() || undefined,
-                        enabledSkillIds: Array.from(enabledPlatformSkillIds),
-                        allowBloggerTitle,
-                        picks,
-                      });
-                      const bps = res.contentBlueprints || [];
-                      setPlatformContent((prev: any) => ({
-                        ...(prev && typeof prev === "object" ? prev : {}),
-                        contentBlueprints: bps,
-                        monetizationLanes: Array.isArray(prev?.monetizationLanes)
-                          ? prev.monetizationLanes
-                          : [],
-                      }));
-                      toast.success(`已扩写 ${bps.length} 条正式文案（含图文页结构）`);
-                      scrollToPlatformExecutionCopy();
-                    } catch (err) {
-                      toast.error(err instanceof Error ? err.message : "扩写失败");
-                    }
-                  })();
-                }}
-                className="rounded-md border border-[#10B981]/45 bg-[#10B981]/15 px-2.5 py-1.5 text-[10px] font-bold text-[#a7f3d0] disabled:opacity-50"
-              >
-                {expandTopicPicksMutation.isPending
-                  ? "扩写中…"
-                  : `扩写已勾选（${selectedShortlistIds.size}/${PLATFORM_TOPIC_EXPAND_MAX}）`}
-              </button>
-              <button
-                type="button"
-                disabled={generateTopicShortlistMutation.isPending}
-                onClick={() => {
-                  setSelectedShortlistIds(new Set());
-                  toast.message("已清空勾选；可再点生成换一批");
-                }}
-                className="rounded-md border border-white/15 px-2.5 py-1.5 text-[10px] text-gray-300"
-              >
-                清空勾选
-              </button>
-            </div>
-          </>
-        ) : null}
-      </div>
-    </div>
+  const platformSkillsMountPanel = (
+    <div className="space-y-4">
+      {platformMainPersonaTopicsPanel}
+      {platformSkillsAccessoryPanel}
     </div>
   );
 
   /** Fly worker 回传后解析 platformContent（轮询与错误处理集中一处，供初次与重试共用） */
   const runStage2FromJobId = useCallback(async (jobId: string) => {
-    setContentLoadingText("后台正在处理专属文案…");
+    setContentLoadingText("Pro 深度优化选题后，正在生成专属文案…");
     const j = await pollJobUntilTerminal(jobId, {
       intervalMs: 2500,
       maxWaitMs: 25 * 60_000,
@@ -7490,11 +7611,12 @@ export default function PlatformPage() {
             <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-black/35 px-3 py-2.5 text-[12px] leading-relaxed text-gray-200">
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8cefff]">智能提醒</p>
               <p>
-                Skill <strong className="text-white">可自由勾选</strong>
-                。若 Skill 不能满足你，把要求写进提示词即可。
+                核心 Skill 已默认开启；将按你的背景<strong className="text-white">智能推荐</strong>
+                赛道 Skill（可在生成前一键采纳）。不必翻完整 Skill 墙。
               </p>
               <p className="mt-1.5 text-[#b8f4ff]">
-                <strong className="text-white">有提示词要求时，优先级高于 Skill 设定。</strong>
+                出六条前会先用 <strong className="text-white">Pro 深度优化选题</strong>
+                （对齐你选的 {selectedWindowDays} 天热点并避开近期复读）。
               </p>
               <p className="mt-2 text-[10px] leading-snug text-gray-500 whitespace-pre-wrap">
                 {PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE}
@@ -7503,7 +7625,7 @@ export default function PlatformPage() {
           </div>
           <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[12px] leading-relaxed text-amber-50/90">
             入队扣除 <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 积分</strong>
-            。不含封面图、编导分镜图、决策智库报告。全程约数分钟，请勿关闭页面。
+            （含 Pro 选题优化，不加收）。不含封面图、编导分镜图、决策智库报告。全程可能更久，请勿关闭页面。
           </div>
           <div className="flex flex-wrap justify-end gap-2 pt-1">
             <button
@@ -7542,6 +7664,14 @@ export default function PlatformPage() {
               <PenLine className="h-3.5 w-3.5" />
               自定义创作
             </a>
+            <button
+              type="button"
+              onClick={openVideoDeepBreakdown}
+              className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/40 bg-[linear-gradient(135deg,rgba(52,211,153,0.22),rgba(16,185,129,0.10))] px-3.5 py-2 text-xs font-bold text-emerald-100 shadow-[0_4px_20px_rgba(52,211,153,0.18)] transition hover:border-emerald-300/55 hover:brightness-110"
+            >
+              <Video className="h-3.5 w-3.5" />
+              视频深度拆解
+            </button>
           </div>
           <div className="rounded-full border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.22em] text-[#8cefff]">
             Platform Intelligence
@@ -7605,11 +7735,11 @@ export default function PlatformPage() {
           <div className="flex flex-wrap items-center gap-2 mb-1">
             <PenLine className="h-5 w-5 text-[#ff4fb8]" />
             <h2 className="text-lg md:text-xl font-black tracking-tight text-white">自定义创作工作台</h2>
-            <span className="ml-1 rounded-full border border-[#ff4fb8]/50 bg-[rgba(255,79,184,0.12)] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#ff9fe0]">
-              成长营已并入
+            <span className="ml-1 rounded-full border border-emerald-400/45 bg-[rgba(52,211,153,0.12)] px-2.5 py-0.5 text-[10px] font-bold tracking-wide text-emerald-100">
+              含视频深度拆解
             </span>
           </div>
-          <p className="mb-4 text-xs text-[#c9c0e6]/55">粘贴文案、上传素材分析、自定义选题与抠像，均在本页同屏完成，无需跳转</p>
+          <p className="mb-4 text-xs text-[#c9c0e6]/55">粘贴文案、视频深度拆解、自定义选题与抠像，均在本页同屏完成，无需跳转</p>
 
           {/* 平台趋势分析 · 常驻在工作台顶部，不依赖下方全案区是否展开 */}
           <div
@@ -7975,15 +8105,13 @@ export default function PlatformPage() {
             })()}
           </div>
 
-          {/* 一级 Tab：按「文案 / 动效PPT / 素材」三段排布，勿打散 */}
-          <div className="mb-5 flex flex-col gap-2">
-            <div className="inline-flex flex-wrap items-center gap-0.5 rounded-xl border border-white/10 bg-black/35 p-0.5">
-              <span className="px-2 text-[10px] font-semibold uppercase tracking-wide text-white/35">文案</span>
+          {/* 一级 Tab：文案 / 选题 / 动效PPT / 素材 — 同一条连续，中间不插 Skill */}
+          <div className="mb-5 inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-xl border border-white/10 bg-black/35 p-1">
               <button
                 type="button"
                 onClick={() => setCustomWorkspaceTab("copy")}
                 disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[13px] font-semibold transition disabled:opacity-50 ${
                   customWorkspaceTab === "copy"
                     ? "bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] text-white shadow-sm"
                     : "text-[#c9c0e6]/70 hover:text-white"
@@ -8010,7 +8138,7 @@ export default function PlatformPage() {
                     ? "导出当前自定义文案、优化结果与生成图片为 PDF"
                     : "请先输入文案或完成生成"
                 }
-                className="inline-flex items-center gap-1.5 rounded-lg border border-[#ff4fb8]/35 bg-[rgba(255,79,184,0.08)] px-3 py-2 text-[12px] font-semibold text-[#ff9fe0] transition hover:bg-[rgba(255,79,184,0.16)] disabled:cursor-not-allowed disabled:opacity-45"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#ff4fb8]/35 bg-[rgba(255,79,184,0.08)] px-2.5 py-2 text-[11px] font-semibold text-[#ff9fe0] transition hover:bg-[rgba(255,79,184,0.16)] disabled:cursor-not-allowed disabled:opacity-45"
               >
                 {isDownloadingCustomCopyPdf ? (
                   <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
@@ -8023,7 +8151,7 @@ export default function PlatformPage() {
                 type="button"
                 onClick={() => setCustomWorkspaceTab("topic")}
                 disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[13px] font-semibold transition disabled:opacity-50 ${
                   customWorkspaceTab === "topic"
                     ? "bg-[linear-gradient(135deg,#49e6ff,#6a5cff)] text-white shadow-sm"
                     : "text-[#c9c0e6]/70 hover:text-white"
@@ -8032,52 +8160,37 @@ export default function PlatformPage() {
                 <UserRound className="h-3.5 w-3.5 shrink-0" />
                 自定义选题
               </button>
-            </div>
-            <div
-              className={`flex flex-wrap items-center gap-2 rounded-xl border p-1.5 transition ${
-                customWorkspaceTab === "htmlPpt"
-                  ? "border-indigo-400/45 bg-[linear-gradient(135deg,rgba(99,102,241,0.18),rgba(129,140,248,0.08))] shadow-[0_0_0_1px_rgba(129,140,248,0.12)]"
-                  : "border-indigo-400/25 bg-[rgba(99,102,241,0.08)]"
-              }`}
-            >
-              <div className="flex min-w-[7.5rem] flex-col px-2 py-0.5">
-                <span className="text-[11px] font-bold tracking-wide text-indigo-200">动效PPT</span>
-                <span className="text-[10px] leading-tight text-indigo-100/55">路演投屏 · 独立能力</span>
-              </div>
               <button
                 type="button"
                 onClick={() => setCustomWorkspaceTab("htmlPpt")}
                 disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2.5 text-[13px] font-semibold transition disabled:opacity-50 ${
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[13px] font-semibold transition disabled:opacity-50 ${
                   customWorkspaceTab === "htmlPpt"
                     ? "bg-[linear-gradient(135deg,#818cf8,#6366f1)] text-white shadow-sm"
-                    : "bg-black/25 text-indigo-100/85 hover:bg-black/40 hover:text-white"
+                    : "text-indigo-100/80 hover:text-white"
                 }`}
               >
                 <Presentation className="h-4 w-4 shrink-0" />
-                生成动效PPT
+                动效PPT
               </button>
-            </div>
-            <div className="inline-flex flex-wrap items-center gap-0.5 rounded-xl border border-white/10 bg-black/35 p-0.5">
-              <span className="px-2 text-[10px] font-semibold uppercase tracking-wide text-white/35">素材</span>
               <button
                 type="button"
-                onClick={() => setCustomWorkspaceTab("assets")}
+                onClick={openVideoDeepBreakdown}
                 disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                   customWorkspaceTab === "assets"
                     ? "bg-[linear-gradient(135deg,#a3e635,#16a34a)] text-white shadow-sm"
                     : "text-[#c9c0e6]/70 hover:text-white"
                 }`}
               >
-                <Layers className="h-3.5 w-3.5 shrink-0" />
-                素材分析
+                <Video className="h-3.5 w-3.5 shrink-0" />
+                视频深度拆解
               </button>
               <button
                 type="button"
                 onClick={() => setCustomWorkspaceTab("matting")}
                 disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                   customWorkspaceTab === "matting"
                     ? "bg-[linear-gradient(135deg,#34d399,#059669)] text-white shadow-sm"
                     : "text-[#c9c0e6]/70 hover:text-white"
@@ -8086,10 +8199,14 @@ export default function PlatformPage() {
                 <Scissors className="h-3.5 w-3.5 shrink-0" />
                 自定义抠像
               </button>
-            </div>
           </div>
 
-          <div className="mb-5">{platformSkillsMountPanel}</div>
+          {customWorkspaceTab === "copy" || customWorkspaceTab === "topic" ? (
+            <div className="mb-5 space-y-4">
+              {platformMainPersonaTopicsPanel}
+              {platformSkillsAccessoryPanel}
+            </div>
+          ) : null}
 
           {customWorkspaceTab === "copy" ? (
             <>
@@ -8978,7 +9095,7 @@ export default function PlatformPage() {
 
         {customWorkspaceOperating ? (
           <p className="mb-4 text-center text-xs text-[#c9c0e6]/45">
-            自定义文案/选题/抠像进行中，下方全案分析区已收起；平台趋势报表与素材分析仍可在上方工作台查看。
+            自定义文案/选题/抠像进行中，下方全案分析区已收起；平台趋势报表与视频深度拆解仍可在上方工作台查看。
           </p>
         ) : null}
         <div className={customWorkspaceOperating ? "hidden" : undefined} aria-hidden={customWorkspaceOperating}>
@@ -10326,7 +10443,10 @@ export default function PlatformPage() {
                       <p className="mt-1 text-xs text-gray-500">批量：一键生成封面套装、一键生成编导分镜套装、一键生成封面加编导分镜。</p>
                     </div>
                   </div>
-                  {platformSkillsMountPanel}
+                  <div className="space-y-4">
+                    {platformMainPersonaTopicsPanel}
+                    {platformSkillsAccessoryPanel}
+                  </div>
                   {platformTopicCount > 0 ? (
                     <div className="rounded-xl border border-[#c4b5fd]/35 bg-[#6a5cff]/10 px-4 py-3">
                       <div className="flex flex-wrap items-start gap-3">
