@@ -56,6 +56,8 @@ type Props = {
   /** 成片坞已勾选集：静帧+成片连跑 */
   onRunFullAuto?: () => void;
   onResumeFromFailure?: () => void;
+  /** 从编导反推强制重跑本集静帧（覆盖旧图；工作台主路径入口） */
+  onRerunKeyartsFromReverse?: () => void;
   onFocusBlock?: (blockId: string) => void;
 };
 
@@ -103,6 +105,7 @@ export default function ManhuaScriptWorkbench({
   onSpawnAndRunClip,
   onRunFullAuto,
   onResumeFromFailure,
+  onRerunKeyartsFromReverse,
   onFocusBlock,
 }: Props) {
   const [shotIndex, setShotIndex] = useState(0);
@@ -213,6 +216,17 @@ export default function ManhuaScriptWorkbench({
             <Play className="h-3.5 w-3.5" />
             {factoryBusy ? "生成中…" : "生成"}
           </button>
+          {onRerunKeyartsFromReverse ? (
+            <button
+              type="button"
+              disabled={!canRun || factoryBusy}
+              onClick={() => onRerunKeyartsFromReverse()}
+              title="从编导反推重跑本集多镜静帧，覆盖右栏旧图"
+              className="rounded-lg border border-amber-400/40 bg-amber-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/25 disabled:opacity-45"
+            >
+              重出静帧
+            </button>
+          ) : null}
           {onRunFullAuto ? (
             <button
               type="button"
@@ -228,6 +242,7 @@ export default function ManhuaScriptWorkbench({
               type="button"
               disabled={!canRun || factoryBusy}
               onClick={() => onResumeFromFailure()}
+              title="仅从失败/未完成节点接着跑；已出的错图不会重做"
               className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06] disabled:opacity-45"
             >
               续跑
@@ -568,6 +583,20 @@ export default function ManhuaScriptWorkbench({
               </div>
             )}
           </div>
+          {previewUrl && !previewIsVideo && onRerunKeyartsFromReverse ? (
+            <p className="mt-1.5 shrink-0 text-[10px] leading-snug text-white/40">
+              静帧不对（穿错时代/没进场景）→ 顶栏点
+              <button
+                type="button"
+                disabled={!canRun || factoryBusy}
+                onClick={() => onRerunKeyartsFromReverse()}
+                className="mx-0.5 font-semibold text-amber-100/90 underline underline-offset-2 disabled:opacity-45"
+              >
+                重出静帧
+              </button>
+              （从反推重跑，覆盖旧图）。「续跑」不会重做已出图。
+            </p>
+          ) : null}
           <div className="mt-1.5 flex shrink-0 flex-wrap gap-1.5">
             {finalVideoUrl ? (
               <button
