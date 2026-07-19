@@ -516,7 +516,21 @@ export default function ManhuaScriptWorkbench({
             )}
           </div>
           {finalVideoUrl ? (
-            <p className="mt-1.5 text-[10px] text-cyan-100/75">当前预览：多集合成长片（含配乐）· 详见下方成片坞</p>
+            <p className="mt-1.5 text-[10px] text-cyan-100/75">
+              当前预览：多集合成长片（含配乐）·{" "}
+              <button
+                type="button"
+                className="underline underline-offset-2 hover:text-cyan-50"
+                onClick={() =>
+                  document.querySelector("#manhua-clip-dock-zone")?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start",
+                  })
+                }
+              >
+                打开成片坞
+              </button>
+            </p>
           ) : null}
           <div className="mt-2 flex flex-wrap gap-2">
             {keyart?.id ? (
