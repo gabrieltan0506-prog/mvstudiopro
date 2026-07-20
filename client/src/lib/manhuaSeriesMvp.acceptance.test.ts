@@ -117,7 +117,7 @@ describe("manhua series MVP acceptance (jobstodo §6)", () => {
       });
       expect(filename).toBe("mv-manhua-series-石门冷光.zip");
       expect(okCount).toBe(2);
-      expect(manifest.note).toContain("不含自动拼接");
+      expect(manifest.note).toContain("成片坞一键合成长片");
       expect(manifest.selected.some((s) => s.path?.startsWith("ep01/"))).toBe(true);
       expect(manifest.selected.some((s) => s.path?.startsWith("ep02/"))).toBe(true);
       expect(blob.size).toBeGreaterThan(50);
