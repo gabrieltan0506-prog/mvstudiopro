@@ -154,24 +154,35 @@ export function planManhuaKeyartEditFusion(opts?: {
   }
 
   const ready = uniqPaths(refs);
+  const characterRefCount = ready.filter((r) => r.role === "character").length;
+  const multiCastHint =
+    ancientIds.length >= 2 || characterRefCount >= 2 || /两人|双人|对视|对峙/.test(hardLockZh);
+  // 多角色时优先用场景作底，避免单人定妆 sheet 把成图锁成单人肖像
+  const sceneBase = ready.find((r) => r.role === "scene");
   const base =
+    (multiCastHint && sceneBase) ||
     ready.find((r) => r.role === "ancient" || r.role === "character") ||
-    ready.find((r) => r.role === "scene") ||
+    sceneBase ||
     ready[0];
   const fusion = ready.filter((r) => r.path !== base?.path).slice(0, 15);
   const canEdit = Boolean(base?.path);
   const baseIsEnvOnly = Boolean(base && (base.role === "scene" || base.role === "prop"));
+  const castCountLock =
+    ancientIds.length >= 2 || characterRefCount >= 2
+      ? `人数硬锁：本集已锁定 ${Math.max(ancientIds.length, characterRefCount)} 名主角定妆/原型；关系镜、对峙镜、递接镜必须同框画出全部已锁定主角，禁止只保留单人半身定妆像。`
+      : "人数硬锁：分镜若写两人/对视/对峙/递接，必须同框出现至少两名可读人物，禁止只画单人肖像。";
 
   const editPromptAddonZh = [
     "【静帧·示范图融图】",
     hardLockZh,
+    castCountLock,
     canEdit
-      ? baseIsEnvOnly && ancientIds.length
-        ? "底图是场景/道具示范：请把硬锁中的古装人物绘入该环境，道具入画；禁止在宫景里画现代人，禁止改成都市街拍。"
-        : "底图与参考图已挂载：请用改图/融图把角色放进场景，道具必须入画且与题材时代一致；保持人物身份与服装连续，禁止空棚抠贴、禁止错时代穿戴。"
-      : "暂无可用示范底图：请按硬锁与文案锚点完整文生一张关键静帧（古装人物+场景+道具同框）。",
+      ? baseIsEnvOnly && (ancientIds.length || characterRefCount)
+        ? "底图是场景/道具示范：请把硬锁与角色锚点中的人物全部绘入该环境（多角色须同框），道具入画；禁止在宫景里画现代人，禁止改成都市街拍，禁止只贴一张单人定妆脸。"
+        : "底图与参考图已挂载：请用改图/融图把角色放进场景；多角色场面须同框；道具必须入画且与题材时代一致；保持人物身份与服装连续，禁止空棚抠贴、禁止错时代穿戴、禁止单人肖像偷懒。"
+      : "暂无可用示范底图：请按硬锁与文案锚点完整文生一张关键静帧（人物+场景+道具同框；关系镜须双人以上）。",
     fusion.length
-      ? `融图参考 ${fusion.length} 张：${fusion.map((r) => r.labelZh).join("、")}——吸收其环境/道具外观；人物造型以古装硬锁为准。`
+      ? `融图参考 ${fusion.length} 张：${fusion.map((r) => r.labelZh).join("、")}——吸收其外形/环境/道具；多角色时每位主角都要入画。`
       : "",
     missingLabelsZh.length
       ? `下列点选资产尚无示范图文件，须按文字/硬锁重新生成进画面：${missingLabelsZh.join("、")}。`

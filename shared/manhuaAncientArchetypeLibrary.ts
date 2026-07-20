@@ -411,6 +411,9 @@ export function buildAncientArchetypePromptBlock(
     "【古风原型锚点】",
     "古风题材以本锚点为主角造型来源；锁气质与服饰层次，贯穿全片；禁止外仓品牌名。",
     "服饰以古风锚点/服装连续为准；若并存都市库定妆图，忽略其现代衣着，只可借骨相气质。",
+    picked.length >= 2
+      ? `人数硬锁：已挂 ${picked.length} 个古风原型，关系镜/对峙镜须同框画出对应人物，禁止只画单人定妆像。`
+      : "",
     identity || "",
     ...picked.map((b, i) => `${i + 1}. ${formatAncientDesignBoardBrief(b)}`),
   ]

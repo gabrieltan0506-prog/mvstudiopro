@@ -203,10 +203,10 @@ export default function ManhuaScriptWorkbench({
   const totalSec = workbenchShotTotalSec(shots);
   const activeShot = shots[Math.min(shotIndex, Math.max(0, shots.length - 1))] || shots[0];
   const activeShotNo = activeShot?.index ?? 1;
+  // 严格按镜号对齐：禁止用「列表第 N 张」顶替，避免剧本与静帧错位
   const activeKeyart =
     episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === activeShotNo) ||
-    episodeKeyarts[Math.min(shotIndex, Math.max(0, episodeKeyarts.length - 1))] ||
-    keyart;
+    (activeShotNo === 1 ? keyart : undefined);
   const activeClip =
     episodeClips.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === activeShotNo) ||
     (activeShotNo === 1 ? legacyClip : undefined);

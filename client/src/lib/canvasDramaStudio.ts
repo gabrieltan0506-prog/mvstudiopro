@@ -1327,8 +1327,19 @@ export function expandManhuaShotKeyartsAfterReverse(
 
   const basePrompt = stripShotInjectSection(primary.prompt);
   const shot1 = shots[0]!;
+  const primaryPad = String(shot1.index).padStart(2, "0");
+  // 主静帧补上 -s01 镜号，避免与后续镜错位、UI 误绑
+  const primaryId =
+    /-s\d{2}(?:-|$)/.test(primary.id)
+      ? primary.id
+      : makeCanvasBlockId(
+          ep != null
+            ? `keyart-e${String(ep).padStart(2, "0")}-s${primaryPad}`
+            : `keyart-s${primaryPad}`,
+        );
   const primaryUpdated: CanvasBlock = {
     ...primary,
+    id: primaryId,
     prompt: [basePrompt, formatWorkbenchShotInjectBlock(shot1)].filter(Boolean).join("\n\n"),
   };
 
@@ -1355,15 +1366,24 @@ export function expandManhuaShotKeyartsAfterReverse(
   }
 
   const nextBlocks = [
-    ...blocks.map((b) => (b.id === primary.id ? primaryUpdated : b)),
+    ...blocks
+      .filter((b) => b.id !== primary.id)
+      .map((b) => (b.parentId === primary.id ? { ...b, parentId: primaryId } : b)),
+    primaryUpdated,
     ...extras,
   ];
 
-  // reverse → 各镜静帧
-  let nextEdges = edges.filter((e) => !(e.fromId === reverse.id && e.toId.startsWith("keyart-")));
+  // reverse → 各镜静帧；顺带改写指向旧 primary id 的边
+  let nextEdges = edges
+    .filter((e) => !(e.fromId === reverse.id && e.toId.startsWith("keyart-")))
+    .map((e) => ({
+      ...e,
+      fromId: e.fromId === primary.id ? primaryId : e.fromId,
+      toId: e.toId === primary.id ? primaryId : e.toId,
+    }));
   nextEdges = [
     ...nextEdges,
-    { fromId: reverse.id, toId: primary.id },
+    { fromId: reverse.id, toId: primaryId },
     ...extras.map((k) => ({ fromId: reverse.id, toId: k.id })),
   ];
 
@@ -1421,7 +1441,7 @@ export function extractFactoryMotionHints(reverseMarkdown: string): {
     summary ? `题材摘要：${summary}` : "",
     lockSnippet ? `角色/场景锁定：\n${lockSnippet}` : "",
     boardSnippet ? `分镜要点：\n${boardSnippet}` : "",
-    "竖屏电影感关键静帧：主体清晰、角色外形锁定、无字幕、无水印。",
+    "竖屏电影感关键静帧：按分镜人数同框入画；关系镜须双人以上；角色外形锁定、无字幕、无水印。",
   ]
     .filter(Boolean)
     .join("\n");
