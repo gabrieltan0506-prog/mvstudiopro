@@ -186,6 +186,8 @@ export default function ManhuaScriptWorkbench({
   const [shotIndex, setShotIndex] = useState(0);
   /** 中栏：分镜列表 | 运镜画板（主路径可见） */
   const [scriptTab, setScriptTab] = useState<"shots" | "path">("shots");
+  /** 胶片多选：生成所选 */
+  const [selectedShotIndexes, setSelectedShotIndexes] = useState<number[]>([]);
   /** 资产缺图时可跳过进分镜（对标 C2）；可由父级持久化 */
   const [assetsSkippedLocal, setAssetsSkippedLocal] = useState(false);
   const assetsSkipped = assetsSkippedProp ?? assetsSkippedLocal;
@@ -321,11 +323,15 @@ export default function ManhuaScriptWorkbench({
     shotMount.expectedCastCount > mountedCastCount
       ? shotMount.expectedCastCount - mountedCastCount
       : 0;
+  const filmstripShots = useMemo(
+    () =>
+      shots.length
+        ? shots
+        : ([{ index: 1, durationSec: 5, cameraZh: "", actionZh: "" }] as ManhuaWorkbenchShot[]),
+    [shots],
+  );
   const missingFragmentIndexes = useMemo(() => {
-    const list = shots.length
-      ? shots
-      : ([{ index: 1, durationSec: 5, cameraZh: "", actionZh: "" }] as ManhuaWorkbenchShot[]);
-    return list
+    return filmstripShots
       .filter((shot) => {
         const shotClip =
           episodeClips.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
@@ -335,7 +341,16 @@ export default function ManhuaScriptWorkbench({
         return !playable || failed;
       })
       .map((shot) => shot.index);
-  }, [shots, episodeClips, legacyClip]);
+  }, [filmstripShots, episodeClips, legacyClip]);
+  const selectedSorted = useMemo(
+    () => [...selectedShotIndexes].sort((a, b) => a - b),
+    [selectedShotIndexes],
+  );
+  const toggleShotSelected = (shotIndex: number) => {
+    setSelectedShotIndexes((prev) =>
+      prev.includes(shotIndex) ? prev.filter((n) => n !== shotIndex) : [...prev, shotIndex],
+    );
+  };
   const hasCastAssets = Boolean(
     characters.length || archetypes.length || scene || props.length,
   );
@@ -486,6 +501,18 @@ export default function ManhuaScriptWorkbench({
             <Play className="h-3.5 w-3.5" />
             {factoryBusy ? "生成中…" : `生成片段 ${String(activeShotNo).padStart(2, "0")}`}
           </button>
+          {onGenerateMissingFragments && selectedSorted.length > 0 ? (
+            <button
+              type="button"
+              data-manhua-action="generate-selected-fragments"
+              disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
+              onClick={() => onGenerateMissingFragments(selectedSorted)}
+              className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45"
+              title={`依次生成已勾选片段：${selectedSorted.map((n) => String(n).padStart(2, "0")).join("、")}`}
+            >
+              生成所选 {selectedSorted.length}
+            </button>
+          ) : null}
           {onGenerateMissingFragments && missingFragmentIndexes.length > 0 ? (
             <button
               type="button"
@@ -1517,15 +1544,44 @@ export default function ManhuaScriptWorkbench({
         className="shrink-0 border-t border-white/10 bg-[#080b12] px-2.5 py-2 md:px-3"
       >
         <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-          <div className="text-[11px] font-semibold text-white/75">
-            片段
-            {missingFragmentIndexes.length ? (
-              <span className="ml-1.5 text-[9px] font-normal text-amber-100/70">
-                缺 {missingFragmentIndexes.length} 片
-              </span>
-            ) : (
-              <span className="ml-1.5 text-[9px] font-normal text-emerald-100/60">齐</span>
-            )}
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <div className="text-[11px] font-semibold text-white/75">
+              片段
+              {missingFragmentIndexes.length ? (
+                <span className="ml-1.5 text-[9px] font-normal text-amber-100/70">
+                  缺 {missingFragmentIndexes.length} 片
+                </span>
+              ) : (
+                <span className="ml-1.5 text-[9px] font-normal text-emerald-100/60">齐</span>
+              )}
+              {selectedSorted.length ? (
+                <span className="ml-1.5 text-[9px] font-normal text-cyan-100/70">
+                  已选 {selectedSorted.length}
+                </span>
+              ) : null}
+            </div>
+            {onGenerateMissingFragments ? (
+              <div className="flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  data-manhua-action="select-missing-fragments"
+                  disabled={!missingFragmentIndexes.length}
+                  onClick={() => setSelectedShotIndexes(missingFragmentIndexes)}
+                  className="rounded border border-white/12 px-1.5 py-0.5 text-[9px] text-white/55 hover:bg-white/[0.06] disabled:opacity-35"
+                >
+                  勾选缺片
+                </button>
+                <button
+                  type="button"
+                  data-manhua-action="clear-fragment-selection"
+                  disabled={!selectedSorted.length}
+                  onClick={() => setSelectedShotIndexes([])}
+                  className="rounded border border-white/12 px-1.5 py-0.5 text-[9px] text-white/55 hover:bg-white/[0.06] disabled:opacity-35"
+                >
+                  清空勾选
+                </button>
+              </div>
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[9px] text-white/35">
@@ -1556,8 +1612,7 @@ export default function ManhuaScriptWorkbench({
           </div>
         </div>
         <div className="flex gap-2 overflow-x-auto pb-0.5">
-          {(shots.length ? shots : [{ index: 1, durationSec: 5, cameraZh: "", actionZh: "" } as ManhuaWorkbenchShot]).map(
-            (shot, i) => {
+          {filmstripShots.map((shot, i) => {
               const shotKey =
                 episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
                 episodeKeyarts[i];
@@ -1580,19 +1635,35 @@ export default function ManhuaScriptWorkbench({
               const on = i === Math.min(shotIndex, Math.max(shots.length, 1) - 1);
               const dur = shot.durationSec || 5;
               const needsRetry = !clipPassed;
+              const checked = selectedShotIndexes.includes(shot.index);
               return (
                 <div
                   key={`shot-${shot.index}`}
+                  data-manhua-fragment-checked={checked ? "true" : "false"}
                   className={`relative w-[100px] shrink-0 overflow-hidden rounded-md border text-left ${
-                    on
-                      ? "border-white/70 ring-1 ring-white/40"
-                      : clipPassed
-                        ? "border-emerald-400/35"
-                        : clipFailed
-                          ? "border-rose-400/40"
-                          : "border-white/12"
+                    checked
+                      ? "border-cyan-300/70 ring-1 ring-cyan-400/45"
+                      : on
+                        ? "border-white/70 ring-1 ring-white/40"
+                        : clipPassed
+                          ? "border-emerald-400/35"
+                          : clipFailed
+                            ? "border-rose-400/40"
+                            : "border-white/12"
                   }`}
                 >
+                  <label
+                    className="absolute right-1 top-1 z-10 flex h-4 w-4 cursor-pointer items-center justify-center rounded border border-white/30 bg-black/65"
+                    title="勾选后可批量生成所选"
+                  >
+                    <input
+                      type="checkbox"
+                      data-manhua-fragment-check={shot.index}
+                      checked={checked}
+                      onChange={() => toggleShotSelected(shot.index)}
+                      className="h-3 w-3 accent-cyan-400"
+                    />
+                  </label>
                   <button
                     type="button"
                     data-manhua-filmstrip-shot={shot.index}
@@ -1656,8 +1727,7 @@ export default function ManhuaScriptWorkbench({
                   ) : null}
                 </div>
               );
-            },
-          )}
+            })}
         </div>
         {/* 集缩略（窄条，不抢片段胶片） */}
         <div className="mt-2 hidden gap-1.5 overflow-x-auto border-t border-white/5 pt-2 sm:flex">

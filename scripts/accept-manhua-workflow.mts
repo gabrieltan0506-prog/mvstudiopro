@@ -364,6 +364,10 @@ async function inspectShell(page: Page) {
       hasGenerateMissing: Boolean(
         shell?.querySelector("[data-manhua-action='generate-missing-fragments']"),
       ),
+      hasSelectMissing: Boolean(
+        shell?.querySelector("[data-manhua-action='select-missing-fragments']"),
+      ),
+      hasFragmentCheck: Boolean(shell?.querySelector("[data-manhua-fragment-check]")),
       shotMountMode:
         shell?.querySelector<HTMLElement>("[data-manhua-column='assets']")?.dataset
           .manhuaShotMount || "",
