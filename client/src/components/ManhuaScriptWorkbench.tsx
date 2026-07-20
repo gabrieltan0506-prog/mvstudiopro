@@ -134,10 +134,10 @@ export default function ManhuaScriptWorkbench({
   const story = blockByStage(blocks, focusEpisode, "story");
 
   const shots: ManhuaWorkbenchShot[] = useMemo(() => {
-    const fromBeats = parseWorkbenchShotsFromText(beats?.outputText || beats?.prompt);
-    if (fromBeats.length >= 2 && (beats?.outputText || "").trim()) return fromBeats;
     const fromReverse = parseWorkbenchShotsFromText(reverse?.outputText || reverse?.prompt);
     if ((reverse?.outputText || "").trim()) return fromReverse;
+    const fromBeats = parseWorkbenchShotsFromText(beats?.outputText || beats?.prompt);
+    if (fromBeats.length >= 2 && (beats?.outputText || "").trim()) return fromBeats;
     return fromBeats;
   }, [beats?.outputText, beats?.prompt, reverse?.outputText, reverse?.prompt]);
 
