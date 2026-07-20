@@ -301,11 +301,11 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
 
-      {/* 左资产｜中脚本｜右预览：沉浸用固定三栏 grid，禁止竖叠 */}
+      {/* 左资产｜中脚本｜右预览：随横屏收窄但始终三栏同屏；极窄屏才横移 */}
       <div
         className={
           immersive
-            ? "grid min-h-0 min-w-[1040px] flex-1 grid-cols-[240px_minmax(360px,1fr)_420px] overflow-x-auto overflow-y-hidden"
+            ? "grid min-h-0 min-w-[560px] flex-1 grid-cols-[clamp(150px,20vw,240px)_minmax(220px,1fr)_clamp(190px,30vw,420px)] overflow-x-auto overflow-y-hidden"
             : "flex min-h-0 flex-1 overflow-hidden"
         }
       >

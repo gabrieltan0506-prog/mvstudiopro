@@ -50,6 +50,14 @@ const TIMEOUT_MS = Math.max(
   60_000,
   Number(process.env.MANHUA_ACCEPTANCE_TIMEOUT_MS || 12 * 60_000),
 );
+const VIEWPORT_WIDTH = Math.max(
+  320,
+  Number(process.env.MANHUA_ACCEPTANCE_VIEWPORT_WIDTH || 1440),
+);
+const VIEWPORT_HEIGHT = Math.max(
+  480,
+  Number(process.env.MANHUA_ACCEPTANCE_VIEWPORT_HEIGHT || 900),
+);
 const runStamp = new Date().toISOString().replace(/[:.]/g, "-");
 const runDate = new Date().toISOString().slice(0, 10).replaceAll("-", "");
 const OUT_DIR =
@@ -332,6 +340,7 @@ async function inspectShell(page: Page) {
       shotCount: Number(filmstrip?.dataset.manhuaShotCount || 0),
       previewKind: preview?.dataset.manhuaPreviewKind || "",
       previewUrl: preview?.dataset.manhuaPreviewUrl || "",
+      viewportWidth: window.innerWidth,
       assetImages: [
         ...document.querySelectorAll<HTMLImageElement>("[data-manhua-column='assets'] img"),
       ].map((image) => ({
@@ -362,6 +371,8 @@ async function runUiChecks(page: Page) {
       preview &&
       assets.left < script.left &&
       script.left < preview.left &&
+      assets.left >= 0 &&
+      preview.right <= first.viewportWidth + 1 &&
       Math.min(assets.bottom, script.bottom, preview.bottom) >
         Math.max(assets.top, script.top, preview.top) + 200,
   );
@@ -602,7 +613,11 @@ async function main() {
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
   const page = await browser.newPage();
-  await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
+  await page.setViewport({
+    width: VIEWPORT_WIDTH,
+    height: VIEWPORT_HEIGHT,
+    deviceScaleFactor: 1,
+  });
   try {
     await installCookies(page);
     if (MODE === "fixture") await seedFixture(page);
