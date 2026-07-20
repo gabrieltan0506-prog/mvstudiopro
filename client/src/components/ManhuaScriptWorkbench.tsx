@@ -1483,17 +1483,10 @@ export default function ManhuaScriptWorkbench({
                     : "待出";
               const on = i === Math.min(shotIndex, Math.max(shots.length, 1) - 1);
               const dur = shot.durationSec || 5;
+              const needsRetry = !clipPassed;
               return (
-                <button
+                <div
                   key={`shot-${shot.index}`}
-                  type="button"
-                  data-manhua-filmstrip-shot={shot.index}
-                  data-manhua-active={on ? "true" : "false"}
-                  data-manhua-keyart-url={thumb || ""}
-                  data-manhua-fragment-status={
-                    clipPassed ? "clip" : clipFailed ? "qc-failed" : thumb ? "keyart" : "idle"
-                  }
-                  onClick={() => setShotIndex(i)}
                   className={`relative w-[100px] shrink-0 overflow-hidden rounded-md border text-left ${
                     on
                       ? "border-white/70 ring-1 ring-white/40"
@@ -1504,36 +1497,68 @@ export default function ManhuaScriptWorkbench({
                           : "border-white/12"
                   }`}
                 >
-                  <div className="aspect-video bg-black/70">
-                    {thumb ? (
-                      <img src={thumb} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full flex-col items-center justify-center gap-0.5 text-white/30">
-                        <span className="text-[11px] font-semibold">
-                          {String(shot.index).padStart(2, "0")}
-                        </span>
-                        <span className="text-[8px]">待出</span>
-                      </div>
-                    )}
-                    <span
-                      className={`absolute left-1 top-1 rounded px-1 py-0.5 text-[8px] font-semibold ${
-                        clipPassed
-                          ? "bg-emerald-500/90 text-white"
-                          : clipFailed
-                            ? "bg-rose-500/90 text-white"
-                            : thumb
-                              ? "bg-amber-500/85 text-black"
-                              : "bg-black/65 text-white/55"
-                      }`}
+                  <button
+                    type="button"
+                    data-manhua-filmstrip-shot={shot.index}
+                    data-manhua-active={on ? "true" : "false"}
+                    data-manhua-keyart-url={thumb || ""}
+                    data-manhua-fragment-status={
+                      clipPassed ? "clip" : clipFailed ? "qc-failed" : thumb ? "keyart" : "idle"
+                    }
+                    onClick={() => setShotIndex(i)}
+                    className="block w-full text-left"
+                  >
+                    <div className="aspect-video bg-black/70">
+                      {thumb ? (
+                        <img src={thumb} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full flex-col items-center justify-center gap-0.5 text-white/30">
+                          <span className="text-[11px] font-semibold">
+                            {String(shot.index).padStart(2, "0")}
+                          </span>
+                          <span className="text-[8px]">待出</span>
+                        </div>
+                      )}
+                      <span
+                        className={`absolute left-1 top-1 rounded px-1 py-0.5 text-[8px] font-semibold ${
+                          clipPassed
+                            ? "bg-emerald-500/90 text-white"
+                            : clipFailed
+                              ? "bg-rose-500/90 text-white"
+                              : thumb
+                                ? "bg-amber-500/85 text-black"
+                                : "bg-black/65 text-white/55"
+                        }`}
+                      >
+                        {statusLabel}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between px-1 py-0.5 text-[9px] text-white/65">
+                      <span>片段 {String(shot.index).padStart(2, "0")}</span>
+                      <span className="text-white/40">{dur.toFixed(1)}s</span>
+                    </div>
+                  </button>
+                  {needsRetry && onGenerateFragment ? (
+                    <button
+                      type="button"
+                      data-manhua-action="retry-fragment"
+                      data-manhua-retry-shot={shot.index}
+                      disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
+                      onClick={() => {
+                        setShotIndex(i);
+                        onGenerateFragment({
+                          shotIndex: shot.index,
+                          keyartId: shotKey?.id,
+                          clipId: shotClip?.id,
+                        });
+                      }}
+                      className="w-full border-t border-white/10 bg-white/[0.04] py-0.5 text-[8px] font-semibold text-cyan-100/80 hover:bg-cyan-500/15 disabled:opacity-35"
+                      title={`只重跑片段 ${String(shot.index).padStart(2, "0")}`}
                     >
-                      {statusLabel}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between px-1 py-0.5 text-[9px] text-white/65">
-                    <span>片段 {String(shot.index).padStart(2, "0")}</span>
-                    <span className="text-white/40">{dur.toFixed(1)}s</span>
-                  </div>
-                </button>
+                      重跑此片
+                    </button>
+                  ) : null}
+                </div>
               );
             },
           )}
