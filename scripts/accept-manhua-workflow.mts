@@ -487,6 +487,12 @@ async function runUiChecks(page: Page) {
         backStoryboard.shotMountMode === "default"),
     `title=${backStoryboard.shotMountTitle} mode=${backStoryboard.shotMountMode}`,
   );
+  check(
+    "UI-07-C6",
+    "胶片可勾选批量生成",
+    backStoryboard.hasFragmentCheck && backStoryboard.hasSelectMissing,
+    `check=${backStoryboard.hasFragmentCheck} selectMissing=${backStoryboard.hasSelectMissing}`,
+  );
   check("UI-07-D", "中栏运镜页签", first.hasPathTab, `pathTab=${first.hasPathTab}`);
   if (first.hasPathTab) {
     await page.click("[data-manhua-script-tab='path']");
