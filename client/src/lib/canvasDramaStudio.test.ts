@@ -407,6 +407,46 @@ describe("canvasDramaStudio factory", () => {
     expect(key2).toContain("都市办公室");
   });
 
+  it("spawn/prefs wire custom https refs into keyart edit fusion", () => {
+    const customRefs = [
+      {
+        id: "cust_c",
+        url: "https://cdn.example/char.jpg",
+        role: "character" as const,
+        labelZh: "自传人物",
+      },
+      {
+        id: "cust_s",
+        url: "https://cdn.example/scene.jpg",
+        role: "scene" as const,
+        labelZh: "自传场景",
+      },
+    ];
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "自传融图",
+      characterIds: ["char_f_01"],
+      sceneId: "scene_12",
+      customRefs,
+    });
+    const key = blocks.find((b) => b.id.startsWith("keyart-"))!;
+    expect(key.imageMode).toBe("edit");
+    expect(key.refImageUrl).toMatch(/^https:\/\//);
+    expect([key.refImageUrl, ...(key.editFusionUrls || [])]).toEqual(
+      expect.arrayContaining(["https://cdn.example/char.jpg", "https://cdn.example/scene.jpg"]),
+    );
+    expect(key.prompt).toContain("【静帧·用户参考融图】");
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      characterIds: ["char_f_02"],
+      sceneId: "scene_04",
+      customRefs,
+      craftShotIds: [],
+      motionPromptIds: [],
+    });
+    const key2 = next.find((b) => b.id.startsWith("keyart-"))!;
+    expect(key2.imageMode).toBe("edit");
+    expect(key2.prompt).toContain("用户上传参考");
+  });
+
   it("spawn injects art style into bible and keyart", () => {
     const { blocks } = spawnManhuaDramaStudio({
       topic: "仙侠权谋",

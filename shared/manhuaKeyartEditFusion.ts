@@ -15,12 +15,17 @@ import {
   getManhuaDemoAssetPublicUrl,
   listManhuaDemoAssetsForSceneTemplate,
 } from "./manhuaScenePropDemoCatalog.js";
+import {
+  customRefsByRole,
+  taggedManhuaCustomAssetRefs,
+  type ManhuaCustomAssetRef,
+} from "./manhuaCustomAssetRefs.js";
 
 export type ManhuaKeyartEditRef = {
   id: string;
   role: "character" | "ancient" | "scene" | "prop";
   labelZh: string;
-  /** 站点相对路径，如 /manhua-props/xxx.jpg；运行时再转绝对 URL */
+  /** 站点相对路径或 HTTPS（用户上传）；运行时再转绝对 URL */
   path: string;
 };
 
@@ -84,7 +89,8 @@ export function buildManhuaKeyartAncientHardLockZh(ancientArchetypeIds?: string[
 }
 
 /**
- * 收集角色 / 古风 / 场景示范 / 道具示范的可融图 URL，并给出 edit 计划。
+ * 收集角色 / 古风 / 场景示范 / 道具示范 / 用户上传的可融图 URL，并给出 edit 计划。
+ * 用户上传图优先：有对应角色的自传图时，不再强制并入库内同类路径。
  */
 export function planManhuaKeyartEditFusion(opts?: {
   characterIds?: string[] | null;
@@ -92,12 +98,33 @@ export function planManhuaKeyartEditFusion(opts?: {
   artStyleId?: string | null;
   sceneId?: string | null;
   propIds?: string[] | null;
+  /** 用户上传并勾选角色的参考图（HTTPS） */
+  customRefs?: ManhuaCustomAssetRef[] | null;
 }): ManhuaKeyartEditPlan {
   const refs: ManhuaKeyartEditRef[] = [];
   const missingLabelsZh: string[] = [];
-  const ancientIds = (opts?.ancientArchetypeIds || [])
-    .map((id) => String(id || "").trim())
-    .filter(Boolean);
+  const customTagged = taggedManhuaCustomAssetRefs(opts?.customRefs);
+  const customChars = customRefsByRole(opts?.customRefs, "character");
+  const customScenes = customRefsByRole(opts?.customRefs, "scene");
+  const customProps = customRefsByRole(opts?.customRefs, "prop");
+  const preferCustomCast = customChars.length > 0;
+  const preferCustomScene = customScenes.length > 0;
+  const preferCustomProp = customProps.length > 0;
+
+  for (const c of customTagged) {
+    const roleLabel =
+      c.role === "character" ? "人物" : c.role === "scene" ? "场景" : "服装道具";
+    refs.push({
+      id: c.id,
+      role: c.role,
+      labelZh: c.labelZh || `自传·${roleLabel}`,
+      path: c.url,
+    });
+  }
+
+  const ancientIds = preferCustomCast
+    ? []
+    : (opts?.ancientArchetypeIds || []).map((id) => String(id || "").trim()).filter(Boolean);
   const hardLockZh = buildManhuaKeyartAncientHardLockZh(ancientIds);
 
   for (const id of ancientIds) {
@@ -109,8 +136,8 @@ export function planManhuaKeyartEditFusion(opts?: {
     );
   }
 
-  // 已挂古风时不再挂都市角色 sheet，避免西装定妆抢参考
-  if (!ancientIds.length) {
+  // 已挂古风时不再挂都市角色 sheet；有自传人物时也不挂库角色
+  if (!ancientIds.length && !preferCustomCast) {
     for (const id of opts?.characterIds || []) {
       const key = String(id || "").trim();
       if (!key) continue;
@@ -124,7 +151,7 @@ export function planManhuaKeyartEditFusion(opts?: {
   }
 
   const sceneTemplateId = String(opts?.sceneId || "").trim();
-  if (sceneTemplateId) {
+  if (sceneTemplateId && !preferCustomScene) {
     const demos = listManhuaDemoAssetsForSceneTemplate(sceneTemplateId);
     let gotScene = false;
     for (const demo of demos.slice(0, 2)) {
@@ -141,15 +168,17 @@ export function planManhuaKeyartEditFusion(opts?: {
     }
   }
 
-  for (const id of opts?.propIds || []) {
-    const key = String(id || "").trim();
-    if (!key) continue;
-    const asset = getManhuaDemoAsset(key);
-    const path = getManhuaDemoAssetPublicUrl(key);
-    if (path && asset) {
-      refs.push({ id: key, role: "prop", labelZh: asset.nameZh, path });
-    } else {
-      missingLabelsZh.push(asset ? `道具·${asset.nameZh}` : `道具 ${key}`);
+  if (!preferCustomProp) {
+    for (const id of opts?.propIds || []) {
+      const key = String(id || "").trim();
+      if (!key) continue;
+      const asset = getManhuaDemoAsset(key);
+      const path = getManhuaDemoAssetPublicUrl(key);
+      if (path && asset) {
+        refs.push({ id: key, role: "prop", labelZh: asset.nameZh, path });
+      } else {
+        missingLabelsZh.push(asset ? `道具·${asset.nameZh}` : `道具 ${key}`);
+      }
     }
   }
 
@@ -172,15 +201,20 @@ export function planManhuaKeyartEditFusion(opts?: {
       ? `人数硬锁：本集已锁定 ${Math.max(ancientIds.length, characterRefCount)} 名主角定妆/原型；关系镜、对峙镜、递接镜必须同框画出全部已锁定主角，禁止只保留单人半身定妆像。`
       : "人数硬锁：分镜若写两人/对视/对峙/递接，必须同框出现至少两名可读人物，禁止只画单人肖像。";
 
+  const customHint = customTagged.length
+    ? `用户上传参考 ${customTagged.length} 张（已按人物/场景/服装道具勾选）：请优先吸收其外形、环境与道具，勿被库内示范图带跑。`
+    : "";
+
   const editPromptAddonZh = [
-    "【静帧·示范图融图】",
+    customTagged.length ? "【静帧·用户参考融图】" : "【静帧·示范图融图】",
     hardLockZh,
     castCountLock,
+    customHint,
     canEdit
       ? baseIsEnvOnly && (ancientIds.length || characterRefCount)
-        ? "底图是场景/道具示范：请把硬锁与角色锚点中的人物全部绘入该环境（多角色须同框），道具入画；禁止在宫景里画现代人，禁止改成都市街拍，禁止只贴一张单人定妆脸。"
+        ? "底图是场景/道具参考：请把硬锁与角色锚点中的人物全部绘入该环境（多角色须同框），道具入画；禁止在宫景里画现代人，禁止改成都市街拍，禁止只贴一张单人定妆脸。"
         : "底图与参考图已挂载：请用改图/融图把角色放进场景；多角色场面须同框；道具必须入画且与题材时代一致；保持人物身份与服装连续，禁止空棚抠贴、禁止错时代穿戴、禁止单人肖像偷懒。"
-      : "暂无可用示范底图：请按硬锁与文案锚点完整文生一张关键静帧（人物+场景+道具同框；关系镜须双人以上）。",
+      : "暂无可用参考底图：请按硬锁与文案锚点完整文生一张关键静帧（人物+场景+道具同框；关系镜须双人以上）。",
     fusion.length
       ? `融图参考 ${fusion.length} 张：${fusion.map((r) => r.labelZh).join("、")}——吸收其外形/环境/道具；多角色时每位主角都要入画。`
       : "",

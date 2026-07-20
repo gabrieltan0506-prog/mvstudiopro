@@ -1,6 +1,6 @@
 /**
  * 漫剧资产门禁：剧本确认后，须锁定角色+场景，且角色图/场景图齐，才解禁分镜。
- * 库内示意封面可算「有图」；缺封面时须先生成 sceneplate / charsheet 节点。
+ * 库内示意封面可算「有图」；用户上传并勾选人物+场景也可替代库内锁。
  */
 
 import { getAncientArchetypePreviewUrl } from "./manhuaAncientDesignBoard.js";
@@ -17,6 +17,11 @@ import {
 } from "./manhuaScenePropDemoCatalog.js";
 import { getManhuaSceneTemplate } from "./manhuaSceneAssetLibrary.js";
 import { buildManhuaScenePlateGenPrompt } from "./manhuaScriptVisualBrief.js";
+import {
+  customRefsByRole,
+  hasCustomCastAndScene,
+  type ManhuaCustomAssetRef,
+} from "./manhuaCustomAssetRefs.js";
 
 export type ManhuaAssetImageGateInput = {
   characterIds?: string[];
@@ -24,6 +29,8 @@ export type ManhuaAssetImageGateInput = {
   sceneId?: string | null;
   artStyleId?: ManhuaArtStyleId | string | null;
   topic?: string;
+  /** 用户上传并勾选角色的参考图 */
+  customRefs?: ManhuaCustomAssetRef[] | null;
   /** 画布上已有的角色设定卡 / 场景设定图节点 */
   assetBlocks?: Array<{
     id: string;
@@ -37,6 +44,8 @@ export type ManhuaAssetImageGateResult = {
   sceneLocked: boolean;
   castImagesReady: boolean;
   sceneImageReady: boolean;
+  /** 走用户上传勾选路径（不强制库内角色/场景） */
+  viaCustomUpload: boolean;
   /** 角色+场景已锁定且图齐 → 可进分镜 */
   ready: boolean;
   missingCastIds: string[];
@@ -60,6 +69,21 @@ function findAssetBlock(
 export function evaluateManhuaAssetImageGate(
   input: ManhuaAssetImageGateInput,
 ): ManhuaAssetImageGateResult {
+  const customReady = hasCustomCastAndScene(input.customRefs);
+  if (customReady) {
+    return {
+      castLocked: true,
+      sceneLocked: true,
+      castImagesReady: true,
+      sceneImageReady: true,
+      viaCustomUpload: true,
+      ready: true,
+      missingCastIds: [],
+      missingScene: false,
+      hintZh: null,
+    };
+  }
+
   const characterIds = (input.characterIds || []).map((id) => String(id || "").trim()).filter(Boolean);
   const ancientIds = (input.ancientArchetypeIds || [])
     .map((id) => String(id || "").trim())
@@ -67,43 +91,62 @@ export function evaluateManhuaAssetImageGate(
   const sceneId = String(input.sceneId || "").trim();
   const artStyleId = input.artStyleId;
   const blocks = input.assetBlocks || [];
+  const customChars = customRefsByRole(input.customRefs, "character");
+  const customScenes = customRefsByRole(input.customRefs, "scene");
 
-  const castLocked = characterIds.length > 0 || ancientIds.length > 0;
-  const sceneLocked = Boolean(sceneId && getManhuaSceneTemplate(sceneId));
+  const castLocked = characterIds.length > 0 || ancientIds.length > 0 || customChars.length > 0;
+  const sceneLocked =
+    Boolean(sceneId && getManhuaSceneTemplate(sceneId)) || customScenes.length > 0;
 
   const missingCastIds: string[] = [];
-  for (const id of characterIds) {
-    const preview = getManhuaCharacterPreviewUrl(id, { artStyleId });
-    const sheet = findAssetBlock(blocks, "charsheet-", id);
-    if (!preview && !blockHasMedia(sheet)) missingCastIds.push(id);
+  if (!customChars.length) {
+    for (const id of characterIds) {
+      const preview = getManhuaCharacterPreviewUrl(id, { artStyleId });
+      const sheet = findAssetBlock(blocks, "charsheet-", id);
+      if (!preview && !blockHasMedia(sheet)) missingCastIds.push(id);
+    }
+    for (const id of ancientIds) {
+      const preview = getAncientArchetypePreviewUrl(id);
+      const sheet = findAssetBlock(blocks, "charsheet-", id);
+      if (!preview && !blockHasMedia(sheet)) missingCastIds.push(id);
+    }
   }
-  for (const id of ancientIds) {
-    const preview = getAncientArchetypePreviewUrl(id);
-    const sheet = findAssetBlock(blocks, "charsheet-", id);
-    if (!preview && !blockHasMedia(sheet)) missingCastIds.push(id);
-  }
-  const castImagesReady = castLocked && missingCastIds.length === 0;
+  const castImagesReady =
+    (castLocked && missingCastIds.length === 0) || customChars.length > 0;
 
   const demos = listManhuaDemoAssetsForSceneTemplate(sceneId);
   const demoReady = demos.some((d) => Boolean(getManhuaDemoAssetPublicUrl(d.id)));
   const scenePlate = findAssetBlock(blocks, "sceneplate-", sceneId);
-  const sceneImageReady = sceneLocked && (demoReady || blockHasMedia(scenePlate));
-  const missingScene = sceneLocked && !sceneImageReady;
+  const sceneImageReady =
+    customScenes.length > 0 ||
+    (Boolean(sceneId && getManhuaSceneTemplate(sceneId)) &&
+      (demoReady || blockHasMedia(scenePlate)));
+  const missingScene =
+    Boolean(sceneId && getManhuaSceneTemplate(sceneId)) &&
+    !customScenes.length &&
+    !sceneImageReady;
 
   const ready = castLocked && sceneLocked && castImagesReady && sceneImageReady;
 
   let hintZh: string | null = null;
-  if (!castLocked && !sceneLocked) hintZh = "请先锁定角色与场景";
-  else if (!castLocked) hintZh = "请先锁定角色";
-  else if (!sceneLocked) hintZh = "请先锁定场景";
-  else if (!castImagesReady) hintZh = "请先出齐角色图（库内示意或设定卡）";
-  else if (!sceneImageReady) hintZh = "请先出齐场景图（示意封面或场景设定图）";
+  if (!castLocked && !sceneLocked) {
+    hintZh = "请上传并勾选人物与场景，或从库内选择角色与场景";
+  } else if (!castLocked) {
+    hintZh = "请勾选至少一张人物参考，或从库内选择角色";
+  } else if (!sceneLocked) {
+    hintZh = "请勾选至少一张场景参考，或从库内选择场景";
+  } else if (!castImagesReady) {
+    hintZh = "请先出齐角色图（自传勾选、库内示意或设定卡）";
+  } else if (!sceneImageReady) {
+    hintZh = "请先出齐场景图（自传勾选、示意封面或场景设定图）";
+  }
 
   return {
     castLocked,
     sceneLocked,
     castImagesReady,
     sceneImageReady,
+    viaCustomUpload: false,
     ready,
     missingCastIds,
     missingScene,
@@ -123,6 +166,9 @@ export function planManhuaAssetImageSpawns(
   input: ManhuaAssetImageGateInput,
 ): ManhuaAssetImageSpawnPlan[] {
   const gate = evaluateManhuaAssetImageGate(input);
+  // 用户上传路径已齐：不必再文生设定卡
+  if (gate.viaCustomUpload || gate.ready) return [];
+
   const artStyle = getManhuaArtStylePreset(input.artStyleId);
   const topic = String(input.topic || "").trim();
   const plans: ManhuaAssetImageSpawnPlan[] = [];

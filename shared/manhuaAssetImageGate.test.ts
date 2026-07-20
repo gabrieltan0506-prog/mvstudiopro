@@ -42,4 +42,19 @@ describe("manhuaAssetImageGate", () => {
       expect(plans.find((p) => p.kind === "sceneplate")?.prompt).toContain("场景设定图");
     }
   });
+
+  it("custom tagged character+scene unlocks gate without library ids", () => {
+    const gate = evaluateManhuaAssetImageGate({
+      customRefs: [
+        { id: "c1", url: "https://cdn.example/c.jpg", role: "character" },
+        { id: "s1", url: "https://cdn.example/s.jpg", role: "scene" },
+      ],
+    });
+    expect(gate.viaCustomUpload).toBe(true);
+    expect(gate.ready).toBe(true);
+    expect(planManhuaAssetImageSpawns({ customRefs: gate.ready ? [
+      { id: "c1", url: "https://cdn.example/c.jpg", role: "character" },
+      { id: "s1", url: "https://cdn.example/s.jpg", role: "scene" },
+    ] : [] })).toEqual([]);
+  });
 });
