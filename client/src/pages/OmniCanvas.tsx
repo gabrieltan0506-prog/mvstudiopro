@@ -2260,6 +2260,19 @@ export default function OmniCanvas() {
                   bibleBoundEpisodes={projectBible?.cast.boundEpisodeIndexes}
                   pathTrackLabelZh={pathTrackStatus.labelZh}
                   narrativeLightingLabelZh={narrativeLightingLabelZh}
+                  pathAnnotation={factoryPathAnnotation}
+                  pathRecipeId={factoryPathRecipeId}
+                  actionRecipeId={factoryActionRecipeId}
+                  onPathAnnotationChange={setFactoryPathAnnotation}
+                  onPathRecipeIdChange={(id) => {
+                    setPathRecipeManual(true);
+                    setFactoryPathRecipeId(id);
+                  }}
+                  onActionRecipeIdChange={(id) => {
+                    setActionRecipeManual(true);
+                    setFactoryActionRecipeId(id);
+                  }}
+                  translateMotionZh={translateMotionZh}
                   finalVideoUrl={finalAssembleVideoUrl}
                   factoryBusy={factoryBusy || assembleBusy}
                   factoryProgress={

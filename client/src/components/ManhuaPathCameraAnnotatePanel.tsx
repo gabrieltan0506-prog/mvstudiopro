@@ -41,8 +41,10 @@ type Props = {
   onChange: (ann: ManhuaPathAnnotation | null) => void;
   onRecipeIdChange?: (id: string) => void;
   onActionRecipeIdChange?: (id: string) => void;
-  /** GPT-5.6 Terra：中文运镜句润色（编剧大师 brief） */
+  /** 中文运镜句润色（可选） */
   translateMotionZh?: (motionZh: string) => Promise<string>;
+  /** 工作台主屏嵌入：更紧凑，突出画布 */
+  compact?: boolean;
 };
 
 type InputMode = "draw" | "tap";
@@ -57,9 +59,9 @@ function emptyAnchor(
     index,
     x,
     y,
-    focusZh: `点${index}`,
-    cameraEn: "slow motivated camera move along path",
-    subjectActionEn: "subtle natural micro-motion",
+    focusZh: trackRole === "camera" ? `镜头落点${index}` : `人物落点${index}`,
+    cameraEn: "镜头沿蓝色路径缓缓跟进",
+    subjectActionEn: "人物沿红色路径自然微动",
     durationHintSec: 2,
     trackRole,
   };
@@ -88,6 +90,7 @@ export default function ManhuaPathCameraAnnotatePanel({
   onRecipeIdChange,
   onActionRecipeIdChange,
   translateMotionZh,
+  compact = false,
 }: Props) {
   const recipes = useMemo(() => listPathCameraRecipes(), []);
   const actionRecipes = useMemo(() => listActionCameraRecipes(), []);
@@ -325,9 +328,16 @@ export default function ManhuaPathCameraAnnotatePanel({
   });
 
   return (
-    <div className="space-y-2 rounded-lg border border-cyan-400/25 bg-cyan-500/[0.06] p-2.5">
+    <div
+      data-manhua-path-annotate={compact ? "compact" : "full"}
+      className={`space-y-2 rounded-lg border border-cyan-400/25 bg-cyan-500/[0.06] ${
+        compact ? "p-2" : "p-2.5"
+      }`}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <label className="text-[11px] font-medium text-cyan-100/90">运镜工作台 · 红蓝双轨</label>
+        <label className="text-[11px] font-medium text-cyan-100/90">
+          {compact ? "运镜标注 · 蓝线镜头 / 红线人物" : "运镜工作台 · 红蓝双轨"}
+        </label>
         <div className="flex flex-wrap gap-1.5">
           <select
             value={recipeId || value?.recipeId || ""}
@@ -420,9 +430,9 @@ export default function ManhuaPathCameraAnnotatePanel({
 
       <p className="text-[10px] leading-snug text-white/45">
         {inputMode === "draw"
-          ? "按住拖出流畅轨迹；松手保留笔迹，并抽稀为编译锚点（替换当前轨）。"
+          ? "在静帧上拖出轨迹：蓝线=镜头运镜，红线=人物动作；松手保留。"
           : `点击加点（合计 ${PATH_ANNOTATE_ANCHOR_MIN}–${PATH_ANNOTATE_ANCHOR_MAX}）。`}{" "}
-        成片不显示轨迹线。
+        生成片段时跟轨；成片画面不显示参考线。
       </p>
 
       <div
@@ -432,7 +442,9 @@ export default function ManhuaPathCameraAnnotatePanel({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        className={`relative mx-auto aspect-[9/16] max-h-80 w-full max-w-[14rem] touch-none overflow-hidden rounded-lg border border-white/20 bg-black/60 shadow-inner ${
+        className={`relative mx-auto aspect-[9/16] touch-none overflow-hidden rounded-lg border border-white/20 bg-black/60 shadow-inner ${
+          compact ? "max-h-56 w-full max-w-none" : "max-h-80 w-full max-w-[14rem]"
+        } ${
           disabled || !imageUrl
             ? "cursor-not-allowed opacity-60"
             : inputMode === "draw"
@@ -559,7 +571,10 @@ export default function ManhuaPathCameraAnnotatePanel({
       {motionPreviewZh ? (
         <div className="space-y-1">
           <div className="flex items-center justify-between gap-2 text-[9px] text-white/35">
-            <span>运镜说明（中文）{motionZhBusy ? " · Terra 润色中…" : motionZhPolished ? " · Terra 已润色" : ""}</span>
+            <span>
+              运镜说明（中文）
+              {motionZhBusy ? " · 润色中…" : motionZhPolished ? " · 已润色" : ""}
+            </span>
           </div>
           <pre className="max-h-28 overflow-auto whitespace-pre-wrap rounded border border-cyan-400/20 bg-black/50 p-1.5 text-[10px] leading-snug text-cyan-50/90">
             {motionPreviewZh}

@@ -34,6 +34,8 @@ import {
   workbenchShotTotalSec,
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
+import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
+import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
 
 type Props = {
   blocks: CanvasBlock[];
@@ -54,6 +56,14 @@ type Props = {
   /** 蓝/红轨 + 叙事灯光状态行 */
   pathTrackLabelZh?: string;
   narrativeLightingLabelZh?: string;
+  /** 运镜标注（主屏可画蓝/红轨） */
+  pathAnnotation?: ManhuaPathAnnotation | null;
+  pathRecipeId?: string;
+  actionRecipeId?: string;
+  onPathAnnotationChange?: (ann: ManhuaPathAnnotation | null) => void;
+  onPathRecipeIdChange?: (id: string) => void;
+  onActionRecipeIdChange?: (id: string) => void;
+  translateMotionZh?: (motionZh: string) => Promise<string>;
   /** 合成长片预览（成片坞合成后） */
   finalVideoUrl?: string | null;
   factoryBusy?: boolean;
@@ -125,6 +135,13 @@ export default function ManhuaScriptWorkbench({
   bibleBoundEpisodes = [],
   pathTrackLabelZh,
   narrativeLightingLabelZh,
+  pathAnnotation = null,
+  pathRecipeId,
+  actionRecipeId,
+  onPathAnnotationChange,
+  onPathRecipeIdChange,
+  onActionRecipeIdChange,
+  translateMotionZh,
   finalVideoUrl,
   factoryBusy,
   factoryProgress,
@@ -141,6 +158,8 @@ export default function ManhuaScriptWorkbench({
   immersive = false,
 }: Props) {
   const [shotIndex, setShotIndex] = useState(0);
+  /** 中栏：分镜列表 | 运镜画板（主路径可见） */
+  const [scriptTab, setScriptTab] = useState<"shots" | "path">("shots");
 
   const episodeIndexes = useMemo(() => {
     const fromBlocks = new Set<number>();
@@ -193,11 +212,15 @@ export default function ManhuaScriptWorkbench({
     (activeShotNo === 1 ? legacyClip : undefined);
   const clip = activeClip || legacyClip;
   const clipQuality = clip?.manhuaClipQuality;
+  const clipVideoUrl = mediaUrl(clip);
   const approvedClipUrl =
-    clip?.status === "done" && clipQuality?.status === "passed" ? mediaUrl(clip) : undefined;
+    clipQuality?.status === "passed" && clipVideoUrl ? clipVideoUrl : undefined;
+  // 有成片就播：质检未过/服务暂不可用时仍可看，避免「生成成功却像失败」
+  const playableClipUrl = approvedClipUrl || clipVideoUrl;
   const anyKeyartUrl = episodeKeyarts.map(mediaUrl).find(Boolean);
-  const previewUrl = approvedClipUrl || mediaUrl(activeKeyart) || anyKeyartUrl;
-  const previewIsVideo = Boolean(approvedClipUrl);
+  const previewUrl = playableClipUrl || mediaUrl(activeKeyart) || anyKeyartUrl;
+  const previewIsVideo = Boolean(playableClipUrl);
+  const annotateStillUrl = mediaUrl(activeKeyart) || anyKeyartUrl;
 
   const runGenerateFragment = () => {
     if (onGenerateFragment) {
@@ -607,24 +630,26 @@ export default function ManhuaScriptWorkbench({
             ) : null}
           </div>
 
-          <div className="mt-3 rounded-xl border border-cyan-400/15 bg-cyan-500/[0.06] px-2.5 py-2 text-[10px] leading-relaxed text-white/60">
-            <div className="mb-1 text-[10px] font-semibold text-cyan-100/80">运镜 · 灯光（本集）</div>
+          <button
+            type="button"
+            data-manhua-open-path-tab
+            onClick={() => setScriptTab("path")}
+            className="mt-3 w-full rounded-xl border border-cyan-400/25 bg-cyan-500/[0.08] px-2.5 py-2 text-left text-[10px] leading-relaxed text-white/65 hover:border-cyan-300/40 hover:bg-cyan-500/[0.12]"
+          >
+            <div className="mb-1 text-[10px] font-semibold text-cyan-100/90">运镜 · 点此画轨</div>
             <div className="flex flex-wrap gap-1.5">
-              <span className="rounded-md border border-sky-400/30 bg-sky-500/15 px-1.5 py-0.5 text-sky-100/85">
-                蓝轨
+              <span className="rounded-md border border-sky-400/35 bg-sky-500/20 px-1.5 py-0.5 text-sky-50">
+                蓝线·镜头
               </span>
-              <span className="rounded-md border border-rose-400/30 bg-rose-500/15 px-1.5 py-0.5 text-rose-100/85">
-                红轨
+              <span className="rounded-md border border-rose-400/35 bg-rose-500/20 px-1.5 py-0.5 text-rose-50">
+                红线·人物
               </span>
             </div>
-            <div className="mt-1.5 text-white/55">{pathTrackLabelZh || "运镜标注：蓝轨— · 动作红轨—"}</div>
-            <div className="mt-0.5 text-white/55">
-              叙事灯光：{narrativeLightingLabelZh || "未选（节拍/静帧可注入）"}
+            <div className="mt-1.5 text-white/55">{pathTrackLabelZh || "尚未画轨 · 中栏「运镜」可画"}</div>
+            <div className="mt-0.5 text-white/45">
+              灯光：{narrativeLightingLabelZh || "未选"}
             </div>
-            <p className="mt-1 text-[9px] text-white/35">
-              蓝线=运镜轨迹，红线=动作轨迹；成片跟轨，画面不显示参考线。
-            </p>
-          </div>
+          </button>
         </aside>
 
         {/* 中：片段脚本 */}
@@ -644,103 +669,155 @@ export default function ManhuaScriptWorkbench({
                 {activeShot?.durationSec ?? 5}s · 镜 {activeShot?.index ?? "—"}/{shots.length || 1}
               </span>
             </div>
-            <div className="flex flex-wrap gap-1">
-              {stageStrip.map((s) => (
-                <button
-                  key={s.stage}
-                  type="button"
-                  disabled={!s.blockId}
-                  onClick={() => s.blockId && onFocusBlock?.(s.blockId)}
-                  className={`rounded-md border px-1.5 py-0.5 text-[9px] ${
-                    s.has
-                      ? "border-emerald-400/35 bg-emerald-500/12 text-emerald-100"
-                      : "border-white/10 text-white/35"
-                  } disabled:opacity-40`}
-                  title={s.label}
-                >
-                  {s.label.slice(0, 2)}
-                </button>
-              ))}
+            <div className="flex gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
+              <button
+                type="button"
+                data-manhua-script-tab="shots"
+                onClick={() => setScriptTab("shots")}
+                className={`rounded-md px-2.5 py-1 text-[10px] font-semibold ${
+                  scriptTab === "shots"
+                    ? "bg-white/12 text-white"
+                    : "text-white/40 hover:text-white/70"
+                }`}
+              >
+                分镜
+              </button>
+              <button
+                type="button"
+                data-manhua-script-tab="path"
+                onClick={() => setScriptTab("path")}
+                className={`rounded-md px-2.5 py-1 text-[10px] font-semibold ${
+                  scriptTab === "path"
+                    ? "bg-sky-500/25 text-sky-50"
+                    : "text-white/40 hover:text-white/70"
+                }`}
+              >
+                运镜
+              </button>
             </div>
           </div>
 
-          <p className="mt-2 max-h-14 shrink-0 overflow-y-auto rounded-lg border border-white/8 bg-black/30 px-2.5 py-2 text-[11px] leading-relaxed text-white/55">
-            {(story?.outputText || story?.prompt || topic || "铺板并跑过故事节点后，此处显示本集摘要。").slice(
-              0,
-              360,
-            )}
-          </p>
+          {scriptTab === "shots" ? (
+            <>
+              <p className="mt-2 max-h-14 shrink-0 overflow-y-auto rounded-lg border border-white/8 bg-black/30 px-2.5 py-2 text-[11px] leading-relaxed text-white/55">
+                {(
+                  story?.outputText ||
+                  story?.prompt ||
+                  topic ||
+                  "铺板并跑过故事节点后，此处显示本集摘要。"
+                ).slice(0, 360)}
+              </p>
 
-          <div className="mt-2 shrink-0 text-[11px] font-semibold text-white/70">
-            分镜（{shots.length}）· 当前第 {activeShot?.index ?? "—"} 镜
-          </div>
-          <div className="mt-1.5 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
-            {shots.map((shot, i) => {
-              const on = i === Math.min(shotIndex, shots.length - 1);
-              const shotKey =
-                episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
-                episodeKeyarts[i];
-              const thumb = mediaUrl(shotKey);
-              return (
-                <div
-                  key={shot.index}
-                  data-manhua-shot={shot.index}
-                  data-manhua-active={on ? "true" : "false"}
-                  data-manhua-keyart-url={thumb || ""}
-                  className={`flex w-full items-stretch rounded-lg border text-left transition ${
-                    on
-                      ? "border-cyan-400/50 bg-cyan-500/15"
-                      : "border-white/10 bg-white/[0.03] hover:border-white/20"
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setShotIndex(i)}
-                    className="flex min-w-0 flex-1 gap-2 px-2 py-2 text-left"
-                  >
-                    <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-white/10 bg-black/50">
-                      {thumb ? (
-                        <img src={thumb} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        <div className="flex h-full items-center justify-center text-[9px] text-white/30">
-                          {String(shot.index).padStart(2, "0")}
-                        </div>
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[11px] font-semibold text-white/90">
-                          分镜 {shot.index}
-                          <span className="ml-2 font-normal text-white/45">{shot.durationSec}s</span>
-                        </span>
-                        {on ? <Sparkles className="h-3.5 w-3.5 shrink-0 text-cyan-200" /> : null}
-                      </div>
-                      <div className="mt-0.5 text-[10px] text-cyan-100/70">{shot.cameraZh}</div>
-                      <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-white/70">
-                        {shot.actionZh}
-                      </div>
-                    </div>
-                  </button>
-                  {shotKey?.id && onRerunKeyartShot ? (
-                    <button
-                      type="button"
-                      data-manhua-action="rerun-shot"
-                      disabled={!canRun || factoryBusy}
-                      onClick={() => onRerunKeyartShot(shotKey.id, shot.index)}
-                      className="flex w-11 shrink-0 flex-col items-center justify-center gap-1 border-l border-white/10 text-[9px] text-amber-100/75 hover:bg-amber-500/10 disabled:opacity-35"
-                      title={`只重出第 ${shot.index} 镜，保留其他镜头`}
+              <div className="mt-2 shrink-0 text-[11px] font-semibold text-white/70">
+                分镜（{shots.length}）· 当前第 {activeShot?.index ?? "—"} 镜
+              </div>
+              <div className="mt-1.5 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+                {shots.map((shot, i) => {
+                  const on = i === Math.min(shotIndex, shots.length - 1);
+                  const shotKey =
+                    episodeKeyarts.find(
+                      (b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index,
+                    ) || episodeKeyarts[i];
+                  const thumb = mediaUrl(shotKey);
+                  return (
+                    <div
+                      key={shot.index}
+                      data-manhua-shot={shot.index}
+                      data-manhua-active={on ? "true" : "false"}
+                      data-manhua-keyart-url={thumb || ""}
+                      className={`flex w-full items-stretch rounded-lg border text-left transition ${
+                        on
+                          ? "border-cyan-400/50 bg-cyan-500/15"
+                          : "border-white/10 bg-white/[0.03] hover:border-white/20"
+                      }`}
                     >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      单镜
-                    </button>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-          <p className="mt-2 text-[10px] leading-snug text-white/35">
-            点片段切换中栏与右栏；顶栏「生成片段」只跑当前镜静帧与成片，其他片段保留。
-          </p>
+                      <button
+                        type="button"
+                        onClick={() => setShotIndex(i)}
+                        className="flex min-w-0 flex-1 gap-2 px-2 py-2 text-left"
+                      >
+                        <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-white/10 bg-black/50">
+                          {thumb ? (
+                            <img src={thumb} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="flex h-full items-center justify-center text-[9px] text-white/30">
+                              {String(shot.index).padStart(2, "0")}
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-semibold text-white/90">
+                              分镜 {shot.index}
+                              <span className="ml-2 font-normal text-white/45">
+                                {shot.durationSec}s
+                              </span>
+                            </span>
+                            {on ? (
+                              <Sparkles className="h-3.5 w-3.5 shrink-0 text-cyan-200" />
+                            ) : null}
+                          </div>
+                          <div className="mt-0.5 text-[10px] text-cyan-100/70">{shot.cameraZh}</div>
+                          <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-white/70">
+                            {shot.actionZh}
+                          </div>
+                        </div>
+                      </button>
+                      {shotKey?.id && onRerunKeyartShot ? (
+                        <button
+                          type="button"
+                          data-manhua-action="rerun-shot"
+                          disabled={!canRun || factoryBusy}
+                          onClick={() => onRerunKeyartShot(shotKey.id, shot.index)}
+                          className="flex w-11 shrink-0 flex-col items-center justify-center gap-1 border-l border-white/10 text-[9px] text-amber-100/75 hover:bg-amber-500/10 disabled:opacity-35"
+                          title={`只重出第 ${shot.index} 镜，保留其他镜头`}
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          单镜
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-[10px] leading-snug text-white/35">
+                先出静帧 → 切「运镜」画蓝/红线 → 顶栏「生成片段」。只跑当前镜，其他片段保留。
+              </p>
+            </>
+          ) : (
+            <div className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
+              <p className="text-[10px] leading-snug text-white/45">
+                当前片段静帧上画轨：
+                <span className="text-sky-200">蓝线=镜头运镜</span>
+                ，
+                <span className="text-rose-200">红线=人物动作</span>
+                。画完再点顶栏生成片段。
+              </p>
+              {onPathAnnotationChange ? (
+                <ManhuaPathCameraAnnotatePanel
+                  compact
+                  imageUrl={annotateStillUrl}
+                  value={pathAnnotation}
+                  recipeId={pathRecipeId}
+                  actionRecipeId={actionRecipeId}
+                  disabled={!canRun || factoryBusy}
+                  onChange={onPathAnnotationChange}
+                  onRecipeIdChange={onPathRecipeIdChange}
+                  onActionRecipeIdChange={onActionRecipeIdChange}
+                  translateMotionZh={translateMotionZh}
+                />
+              ) : (
+                <p className="rounded-lg border border-white/10 bg-black/30 px-3 py-4 text-[11px] text-white/40">
+                  运镜画板未接线
+                </p>
+              )}
+              {!annotateStillUrl ? (
+                <p className="text-[10px] text-amber-100/70">
+                  尚无本片段静帧。可先「生成片段」出静帧，或切回分镜点「单镜」重出。
+                </p>
+              ) : null}
+            </div>
+          )}
         </section>
 
         {/* 右：视频结果 */}
@@ -772,10 +849,14 @@ export default function ManhuaScriptWorkbench({
               <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[9px] font-semibold text-cyan-100">
                 长片已合成
               </span>
-            ) : previewIsVideo ? (
+            ) : previewIsVideo && clipQuality?.status === "passed" ? (
               <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/35 bg-emerald-500/12 px-2 py-0.5 text-[9px] font-medium text-emerald-100/85">
                 <CheckCircle2 className="h-3 w-3" />
                 质检通过
+              </span>
+            ) : previewIsVideo ? (
+              <span className="rounded-full border border-amber-400/35 bg-amber-500/12 px-2 py-0.5 text-[9px] font-medium text-amber-50">
+                成片可播
               </span>
             ) : previewUrl ? (
               <span className="rounded-full border border-white/15 bg-white/[0.04] px-2 py-0.5 text-[9px] text-white/50">

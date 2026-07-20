@@ -78,3 +78,27 @@ export function buildManhuaClipQualityPrompt(expectedContext: string): string {
     .filter(Boolean)
     .join("\n");
 }
+
+/** 质检链路/媒体拉取失败（非画面内容不合格） */
+export function isManhuaClipQualityInfraFailure(
+  report: Pick<ManhuaClipQualityReport, "summary" | "raw" | "failedKeys">,
+): boolean {
+  const summary = String(report.summary || "");
+  const raw = String(report.raw || "");
+  if (/暂不可用|质检服务/.test(summary)) return true;
+  if (
+    /quality_|empty_quality|missing_reference|missing_video|HTTP\s*[45]\d\d|Failed to fetch|fetch failed|TypeError/i.test(
+      raw,
+    )
+  ) {
+    return true;
+  }
+  // 全键失败且无模型 SUMMARY 原文时，多半是包装层兜底
+  if (
+    report.failedKeys.length >= MANHUA_CLIP_QUALITY_KEYS.length &&
+    /暂不可用|quality_|HTTP|fetch/i.test(`${summary}\n${raw}`)
+  ) {
+    return true;
+  }
+  return false;
+}

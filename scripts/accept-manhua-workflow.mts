@@ -343,6 +343,8 @@ async function inspectShell(page: Page) {
       hasGenerateFragment: Boolean(
         shell?.querySelector("[data-manhua-action='generate-fragment']"),
       ),
+      hasPathTab: Boolean(shell?.querySelector("[data-manhua-script-tab='path']")),
+      hasPathAnnotate: Boolean(shell?.querySelector("[data-manhua-path-annotate]")),
       workflowPhases: [
         ...shell?.querySelectorAll<HTMLElement>("[data-manhua-phase]") || [],
       ].map((phase) => ({
@@ -429,6 +431,18 @@ async function runUiChecks(page: Page) {
     first.workflowPhases.map((phase) => phase.id).join(",") === "outline,assets,storyboard",
     JSON.stringify(first.workflowPhases),
   );
+  check("UI-07-D", "中栏运镜页签", first.hasPathTab, `pathTab=${first.hasPathTab}`);
+  if (first.hasPathTab) {
+    await page.click("[data-manhua-script-tab='path']");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const pathShell = await inspectShell(page);
+    check(
+      "UI-07-E",
+      "运镜画板在工作台主屏",
+      pathShell.hasPathAnnotate,
+      `annotate=${pathShell.hasPathAnnotate}`,
+    );
+  }
 
   if (first.shots.length >= 2) {
     await page.click(`[data-manhua-shot="${first.shots[1]!.index}"]`);

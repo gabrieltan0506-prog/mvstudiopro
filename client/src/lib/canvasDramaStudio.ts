@@ -15,6 +15,7 @@ import {
 } from "./canvasTypes";
 import { loadCanvasDocumentTexts } from "./canvasDocumentText";
 import { reviewManhuaClipQuality } from "./manhuaClipQuality";
+import { isManhuaClipQualityInfraFailure } from "@shared/manhuaClipQuality";
 import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
 import {
@@ -1761,7 +1762,10 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             });
 
           clipQuality = await review(firstCandidate, 1, out.outputUrl);
-          if (clipQuality.status !== "passed") {
+          if (
+            clipQuality.status !== "passed" &&
+            !isManhuaClipQualityInfraFailure(clipQuality)
+          ) {
             const fallbackCandidate = sameShotCandidates.find(
               (candidate) => candidate.id !== firstCandidate.id,
             );
@@ -1778,20 +1782,31 @@ export async function runManhuaDramaFactoryPipeline(opts: {
 
           if (clipQuality.status !== "passed") {
             const failedQuality = clipQuality;
+            const infra = isManhuaClipQualityInfraFailure(failedQuality);
             working = working.map((candidate) =>
               candidate.id === blockId
                 ? {
                     ...candidate,
-                    status: "error" as const,
+                    // 服务异常：成片保留可播；内容不合格：标 error 拦合成
+                    status: infra ? ("done" as const) : ("error" as const),
                     outputUrl: out.outputUrl,
                     outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : candidate.outputUrls),
                     manhuaClipQuality: failedQuality,
-                    error: `智能质检不合格：${failedQuality.summary}`,
+                    error: infra
+                      ? failedQuality.summary
+                      : `智能质检不合格：${failedQuality.summary}`,
                   }
                 : candidate,
             );
             publish(working);
-            throw new Error(`智能质检不合格：${failedQuality.summary}`);
+            if (!infra) {
+              throw new Error(`智能质检不合格：${failedQuality.summary}`);
+            }
+            // 质检服务暂不可用：不中断整链，成片可预览但不进成片坞（export 仍看 passed）
+            completedIds.push(blockId);
+            opts.onStageDone?.(blockId, i, orderedIds.length, label);
+            succeeded = true;
+            break;
           }
         }
         let next = working.map((b) =>

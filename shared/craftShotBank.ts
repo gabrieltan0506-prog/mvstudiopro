@@ -456,11 +456,11 @@ export function buildCraftShotInjectBlock(ids: string[]): string {
   if (!picked.length) return "";
   const lines = picked.map((e, i) => {
     const cat = CRAFT_SHOT_CATEGORY_LABEL_ZH[e.category];
-    return `${i + 1}. 【${cat}】${e.nameZh}：${e.craftSummaryZh}（效果：${e.effectZh}）\n   EN: ${e.craftLockEn}`;
+    return `${i + 1}. 【${cat}】${e.nameZh}：${e.craftSummaryZh}（效果：${e.effectZh}）`;
   });
   return [
     "【手法条目库·原子镜头】",
-    "硬规则：成稿只写景别/运镜/灯光/情绪手法词；禁止导演名、片名、「某某风」。",
+    "硬规则：成稿只写景别/运镜/灯光/情绪手法词（中文）；禁止导演名、片名、「某某风」。",
     "本集主用下列条目（可微调变奏，勿混炖无关风格）：",
     ...lines,
   ].join("\n");
