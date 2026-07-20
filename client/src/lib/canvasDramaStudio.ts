@@ -57,7 +57,10 @@ import {
   buildPromoCoverPrompt,
   getPromoCoverLayoutById,
 } from "@shared/manhuaPromoCoverLayouts";
-import { buildActionCameraInjectBlock } from "@shared/manhuaActionCameraRecipeBank";
+import {
+  buildActionCameraInjectBlock,
+  recommendActionCameraFromTopic,
+} from "@shared/manhuaActionCameraRecipeBank";
 import { formatCineVocabInjectBlock } from "@shared/manhuaCineVocabBank";
 import { buildWardrobePropContinuityInjectBlock } from "@shared/manhuaWardrobePropContinuity";
 import {
@@ -160,7 +163,7 @@ export type SpawnManhuaDramaStudioOpts = {
   ancientArchetypeIds?: string[];
   /** 剧本跟随身份锁（时代/族裔/服饰；来自 CastBundle） */
   identityLockZh?: string;
-  /** 角色/场景统一画风 A/B/C */
+  /** 角色/场景统一画风：仿真人 / CG 漫剧 */
   artStyleId?: ManhuaArtStyleId | string;
   /** 包装动效库 id：注入微动成片 / 视频改写节点 */
   motionPromptIds?: string[];
@@ -398,11 +401,12 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     if (autoCraft) craftShotIds = [autoCraft];
   }
   const craftShotBlock = buildCraftShotInjectBlock(craftShotIds);
+  const craftTopicBlob = [opts.topic, opts.writerContext].filter(Boolean).join("\n");
   let pathCameraRecipeIds = (opts.pathCameraRecipeIds || [])
     .map((id) => String(id || "").trim())
     .filter(Boolean);
   if (!pathCameraRecipeIds.length) {
-    const autoPath = recommendPathCameraFromTopic(opts.topic).recipeId;
+    const autoPath = recommendPathCameraFromTopic(craftTopicBlob).recipeId;
     if (autoPath) pathCameraRecipeIds = [autoPath];
   }
   const pathCameraBlock = buildPathCameraInjectBlock(pathCameraRecipeIds);
@@ -419,9 +423,14 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     .map((id) => String(id || "").trim())
     .filter(Boolean);
   const promoCoverBlock = buildPromoCoverInjectBlock(promoCoverIds);
-  const actionCameraBlock = buildActionCameraInjectBlock(
-    (opts.actionCameraRecipeIds || []).map((id) => String(id || "").trim()).filter(Boolean),
-  );
+  let actionCameraRecipeIds = (opts.actionCameraRecipeIds || [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean);
+  if (!actionCameraRecipeIds.length) {
+    const autoAction = recommendActionCameraFromTopic(craftTopicBlob).recipeId;
+    if (autoAction) actionCameraRecipeIds = [autoAction];
+  }
+  const actionCameraBlock = buildActionCameraInjectBlock(actionCameraRecipeIds);
   const cineVocabBlock = formatCineVocabInjectBlock(
     (opts.cineVocabIds || []).map((id) => String(id || "").trim()).filter(Boolean),
   );
@@ -1063,7 +1072,8 @@ export function filterManhuaFactoryTargetIds(
 }
 
 /**
- * 解析「生成片段」目标：缺静帧则先跑该镜 keyart，再跑该镜 clip；已有静帧则只跑 clip。
+ * 解析「生成片段」目标：必须先有该镜静帧节点；缺图则先跑该镜 keyart 再 clip。
+ * 禁止无对应静帧时只跑 clip（会误挂第 1 镜导致成片雷同）。
  * 须在 expand / ensureManhuaFragmentClips 之后调用。
  */
 export function resolveManhuaFragmentRunTargets(
@@ -1091,11 +1101,18 @@ export function resolveManhuaFragmentRunTargets(
       .sort(sortKeyartBlocks)
       .find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot) ||
     undefined;
+  if (!keyart) {
+    return { targetBlockIds: [], forceFromStage: "keyart" };
+  }
   if (!clip) {
-    return { targetBlockIds: [], forceFromStage: "clip" };
+    return {
+      targetBlockIds: [keyart.id],
+      forceFromStage: "keyart",
+      keyartId: keyart.id,
+    };
   }
   const keyReady = Boolean(mediaUrlOf(keyart));
-  if (keyReady && keyart) {
+  if (keyReady) {
     return {
       targetBlockIds: [clip.id],
       forceFromStage: "clip",
@@ -1103,17 +1120,10 @@ export function resolveManhuaFragmentRunTargets(
       clipId: clip.id,
     };
   }
-  if (keyart) {
-    return {
-      targetBlockIds: [keyart.id, clip.id],
-      forceFromStage: "keyart",
-      keyartId: keyart.id,
-      clipId: clip.id,
-    };
-  }
   return {
-    targetBlockIds: [clip.id],
-    forceFromStage: "clip",
+    targetBlockIds: [keyart.id, clip.id],
+    forceFromStage: "keyart",
+    keyartId: keyart.id,
     clipId: clip.id,
   };
 }
@@ -1152,7 +1162,8 @@ function makeShotBlockId(
 }
 
 /**
- * 按分镜为每镜铺/对齐片段成片节点（clip-eXX-sNN），parent 绑对应静帧。
+ * 按分镜为每镜铺/对齐片段成片节点（clip-eXX-sNN），parent 只绑「同镜号」静帧。
+ * 禁止回落到 keyarts[0]（否则多镜成片同源、画面雷同）。
  * 保留无镜号后缀的旧整集 clip 作兼容，但工作台主路径读镜级 clip。
  */
 export function ensureManhuaFragmentClips(
@@ -1191,15 +1202,18 @@ export function ensureManhuaFragmentClips(
     const shotIdx = resolveKeyartShotIndex(clip.id, clip.prompt);
     if (!clipByShot.has(shotIdx)) clipByShot.set(shotIdx, clip);
   }
-  // 旧整集 clip 视为第 1 镜片段成片
-  if (legacyClip && !clipByShot.has(1)) clipByShot.set(1, legacyClip);
+  // 旧整集 clip 视为第 1 镜片段成片（仅当确有第 1 镜静帧）
+  if (legacyClip && !clipByShot.has(1) && keyartByShot.has(1)) {
+    clipByShot.set(1, legacyClip);
+  }
 
   const template = legacyClip || existingShotClips[0] || keyarts[0]!;
   const nextExtras: CanvasBlock[] = [];
   const keepShotClipIds = new Set<string>();
 
   for (const shot of shotList) {
-    const keyart = keyartByShot.get(shot.index) || keyarts[0]!;
+    const keyart = keyartByShot.get(shot.index);
+    if (!keyart) continue; // 无对应静帧节点 → 不造 clip，避免挂错镜
     const existing = clipByShot.get(shot.index);
     if (existing) {
       keepShotClipIds.add(existing.id);
@@ -1235,7 +1249,7 @@ export function ensureManhuaFragmentClips(
     clipByShot.set(shot.index, clone);
   }
 
-  // 删掉本集多余镜级 clip（旧反推遗留）
+  // 删掉本集多余镜级 clip（旧反推遗留）；以及曾误挂到非同镜静帧的孤儿
   const staleClipIds = new Set(
     existingShotClips.filter((c) => !keepShotClipIds.has(c.id)).map((c) => c.id),
   );
@@ -1246,7 +1260,8 @@ export function ensureManhuaFragmentClips(
   ].map((b) => {
     if (!b.id.startsWith("clip-") || !sameEpisode(b) || !keepShotClipIds.has(b.id)) return b;
     const shotIdx = resolveKeyartShotIndex(b.id, b.prompt);
-    const keyart = keyartByShot.get(shotIdx) || keyarts[0]!;
+    const keyart = keyartByShot.get(shotIdx);
+    if (!keyart) return b;
     const keyUrl = mediaUrlOf(keyart);
     if (b.parentId === keyart.id && (!keyUrl || b.refImageUrl === keyUrl)) return b;
     return {
@@ -1267,11 +1282,11 @@ export function ensureManhuaFragmentClips(
       !staleClipIds.has(e.toId) &&
       !episodeClipIds.has(e.toId),
   );
-  // 重挂：每镜 keyart → 对应 clip
+  // 重挂：每镜 keyart → 同镜号 clip（绝不串镜）
   for (const shot of shotList) {
-    const keyart = keyartByShot.get(shot.index) || keyarts[0]!;
+    const keyart = keyartByShot.get(shot.index);
     const clip = clipByShot.get(shot.index);
-    if (!clip) continue;
+    if (!keyart || !clip) continue;
     nextEdges.push({ fromId: keyart.id, toId: clip.id });
   }
 
@@ -1464,6 +1479,7 @@ export function isTransientFactoryError(message: string): boolean {
 
 /**
  * 续跑起点：优先第一个 error；否则第一个未完成（非 done 有产出）。
+ * keyart/clip 按多镜扫描，避免「第 1 镜 done」误判整阶段完成。
  * 全完成则返回 null。
  */
 export function resolveFactoryResumeStage(
@@ -1479,6 +1495,15 @@ export function resolveFactoryResumeStage(
     scoped = filterBlocksByEpisode(blocks, firstEp);
   }
   for (const stage of MANHUA_FACTORY_STAGE_ORDER) {
+    if (stage === "keyart" || stage === "clip") {
+      const nodes = scoped
+        .filter((x) => x.id.startsWith(`${stage}-`))
+        .sort(sortKeyartBlocks);
+      if (!nodes.length) continue;
+      if (nodes.some((b) => b.status === "error")) return stage;
+      if (nodes.some((b) => !blockLooksDone(b))) return stage;
+      continue;
+    }
     const b = scoped.find((x) => x.id.startsWith(`${stage}-`));
     // 可选阶段（如第1–2集无 recap_card）：跳过而非当成「未完成」
     if (!b) continue;
@@ -1620,8 +1645,14 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   onStageSkip?: (blockId: string, label: string) => void;
   onStageRetry?: (blockId: string, label: string, attempt: number, message: string) => void;
   signal?: AbortSignal;
+  /** 同集镜间接力 A/B；默认双开 */
+  shotContinuity?: {
+    keyartFromPrevStill?: boolean;
+    clipFromPrevTail?: boolean;
+  };
 }): Promise<ManhuaFactoryPipelineResult> {
-  const stopOnError = opts.stopOnError !== false;
+  // 默认不因单镜失败停整链（多镜一次出齐）；仅显式 stopOnError:true 才断
+  const stopOnError = opts.stopOnError === true;
   const skipDone = opts.skipDone !== false;
   const defaultMaxRetries = Math.max(0, Math.min(4, opts.maxRetries ?? 2));
   const hadPoisonedRecapLink = opts.blocks.some(
@@ -1768,15 +1799,56 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           nearestRef && nearestRef !== current.refImageUrl
             ? { ...current, refImageUrl: nearestRef }
             : current;
-        // 多集连续：clip 阶段把上一集成片 URL 注入 refVideoUrl，供 Seedance 末帧/视频参考
-        if (stage === "clip" && !runBlockPayload.refVideoUrl) {
-          const ep = getBlockEpisodeIndex(runBlockPayload);
-          if (ep != null && ep >= 2) {
-            const { resolvePreviousEpisodeClipUrl } = await import("@shared/manhuaClipContinuity");
-            const prevClipUrl = resolvePreviousEpisodeClipUrl(working, ep);
-            if (prevClipUrl) {
-              runBlockPayload = { ...runBlockPayload, refVideoUrl: prevClipUrl };
+        const {
+          normalizeManhuaShotContinuityPrefs,
+          resolvePreviousShotKeyartUrl,
+          resolvePreviousShotClipUrl,
+          MANHUA_SHOT_KEYART_CONTINUITY_HINT_ZH,
+          MANHUA_SHOT_CLIP_CONTINUITY_HINT_ZH,
+        } = await import("@shared/manhuaShotContinuity");
+        const shotCont = normalizeManhuaShotContinuityPrefs(opts.shotContinuity);
+        const epForShot = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
+        const shotForCont = resolveKeyartShotIndex(runBlockPayload.id, runBlockPayload.prompt);
+
+        // A：下一镜静帧 ← 上一镜静帧（edit 底图）
+        if (stage === "keyart" && shotCont.keyartFromPrevStill && shotForCont >= 2) {
+          const prevStill = resolvePreviousShotKeyartUrl(working, epForShot, shotForCont);
+          if (prevStill) {
+            const basePrompt = String(runBlockPayload.prompt || "");
+            runBlockPayload = {
+              ...runBlockPayload,
+              refImageUrl: prevStill,
+              imageMode: "edit",
+              prompt: basePrompt.includes("镜间静帧接力")
+                ? basePrompt
+                : `${basePrompt}\n\n${MANHUA_SHOT_KEYART_CONTINUITY_HINT_ZH}`,
+            };
+          }
+        }
+
+        // B：下一镜成片 ← 上一镜成片（末帧/视频参考）；无同集上镜时再退回跨集
+        if (stage === "clip") {
+          let prevClipUrl: string | undefined;
+          if (shotCont.clipFromPrevTail && shotForCont >= 2) {
+            prevClipUrl = resolvePreviousShotClipUrl(working, epForShot, shotForCont);
+          }
+          if (!prevClipUrl && !runBlockPayload.refVideoUrl) {
+            const ep = getBlockEpisodeIndex(runBlockPayload);
+            if (ep != null && ep >= 2) {
+              const { resolvePreviousEpisodeClipUrl } = await import("@shared/manhuaClipContinuity");
+              prevClipUrl = resolvePreviousEpisodeClipUrl(working, ep);
             }
+          }
+          if (prevClipUrl) {
+            const basePrompt = String(runBlockPayload.prompt || "");
+            runBlockPayload = {
+              ...runBlockPayload,
+              refVideoUrl: prevClipUrl,
+              prompt:
+                shotCont.clipFromPrevTail && !basePrompt.includes("镜间成片接力")
+                  ? `${basePrompt}\n\n${MANHUA_SHOT_CLIP_CONTINUITY_HINT_ZH}`
+                  : basePrompt,
+            };
           }
         }
 
@@ -1875,27 +1947,93 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             const failedQuality = clipQuality;
             const infra = isManhuaClipQualityInfraFailure(failedQuality);
             const keyartTextFail = isManhuaClipQualityKeyartTextFailure(failedQuality);
-            const failMsg = keyartTextFail
-              ? `智能质检不合格：${failedQuality.summary}（建议先「重出静帧」再生成片段）`
-              : `智能质检不合格：${failedQuality.summary}`;
+            // 首镜烧字：自动重出该镜静帧一次，再重跑成片；仍失败才拦
+            if (keyartTextFail && firstCandidate.id) {
+              opts.onStageRetry?.(
+                firstCandidate.id,
+                `静帧含字·重出第${shotIdx}镜`,
+                1,
+                failedQuality.summary || "首镜含违规文字",
+              );
+              const keyartBlock = working.find((b) => b.id === firstCandidate.id);
+              if (keyartBlock) {
+                try {
+                  const keyOut = await runCanvasBlock(
+                    opts.deps,
+                    {
+                      ...keyartBlock,
+                      status: "idle",
+                      outputUrl: undefined,
+                      outputUrls: [],
+                      error: undefined,
+                      // 强制文生图，避免带字底图继续融脏
+                      imageMode: "generate",
+                      editMaskUrl: undefined,
+                      editFusionUrls: [],
+                    },
+                    { visionImages, texts },
+                  );
+                  if (keyOut.outputUrl) {
+                    working = working.map((b) =>
+                      b.id === firstCandidate.id
+                        ? {
+                            ...b,
+                            status: "done" as const,
+                            outputUrl: keyOut.outputUrl,
+                            outputUrls: keyOut.outputUrls ?? [keyOut.outputUrl!],
+                            error: undefined,
+                          }
+                        : b,
+                    );
+                    publish(working);
+                    const freshKey = working.find((b) => b.id === firstCandidate.id)!;
+                    const freshUrl = mediaUrlOf(freshKey) || keyOut.outputUrl!;
+                    out = await runCanvasBlock(
+                      opts.deps,
+                      { ...runBlockPayload, refImageUrl: freshUrl },
+                      { visionImages, texts },
+                    );
+                    if (out.outputUrl) {
+                      clipQuality = await review(
+                        { id: freshKey.id, url: freshUrl, prompt: freshKey.prompt },
+                        2,
+                        out.outputUrl,
+                      );
+                    }
+                  }
+                } catch {
+                  /* 自动重出失败则走下方原失败分支 */
+                }
+              }
+            }
+          }
+
+          if (clipQuality.status !== "passed") {
+            const failedQuality = clipQuality;
+            const infra = isManhuaClipQualityInfraFailure(failedQuality);
+            const keyartTextFail = isManhuaClipQualityKeyartTextFailure(failedQuality);
+            // 软拦：成片保留可播；默认不进成片坞，等用户「仍采用」
+            const softTip = keyartTextFail
+              ? `质检提醒：${failedQuality.summary}（建议重出静帧后再采用）`
+              : infra
+                ? `质检暂不可用：${failedQuality.summary}`
+                : `质检提醒：${failedQuality.summary}（可预览；点「仍采用此片」才进成片坞）`;
             working = working.map((candidate) =>
               candidate.id === blockId
                 ? {
                     ...candidate,
-                    // 服务异常：成片保留可播；内容不合格：标 error 拦合成
-                    status: infra ? ("done" as const) : ("error" as const),
+                    status: "done" as const,
                     outputUrl: out.outputUrl,
                     outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : candidate.outputUrls),
-                    manhuaClipQuality: failedQuality,
-                    error: infra ? failedQuality.summary : failMsg,
+                    manhuaClipQuality: {
+                      ...failedQuality,
+                      userAcceptedDespiteQc: false,
+                    },
+                    error: softTip,
                   }
                 : candidate,
             );
             publish(working);
-            if (!infra) {
-              throw new Error(failMsg);
-            }
-            // 质检服务暂不可用：不中断整链，成片可预览但不进成片坞（export 仍看 passed）
             completedIds.push(blockId);
             opts.onStageDone?.(blockId, i, orderedIds.length, label);
             succeeded = true;
@@ -1960,12 +2098,16 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     }
 
     if (!succeeded) {
+      const alreadyLogged = errors.some((e) => e.id === blockId);
       publish(
         working.map((b) =>
           b.id === blockId ? { ...b, status: "error" as const, error: lastMessage } : b,
         ),
       );
-      errors.push({ id: blockId, message: lastMessage });
+      if (!alreadyLogged) {
+        errors.push({ id: blockId, message: lastMessage });
+      }
+      if (lastMessage === "已取消" || opts.signal?.aborted) break;
       if (stopOnError) break;
     }
   }

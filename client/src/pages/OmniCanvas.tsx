@@ -30,6 +30,7 @@ import {
   episodeIndexesFromDockSelection,
 } from "@/lib/manhuaProjectExport";
 import { shouldAttachManhuaPreviouslyOn } from "@shared/manhuaEpisodeRecap";
+import { resolveKeyartShotIndex } from "@shared/manhuaScriptWorkbench";
 import {
   listScreenwriterGenres,
   MANHUA_SCENE_GENRE_LABEL_ZH,
@@ -67,6 +68,11 @@ import {
   trySaveLocalCanvas,
   trySaveLocalClientUpdatedAt,
 } from "@/lib/manhuaCloudDraftSync";
+import {
+  loadManhuaShotContinuityPrefs,
+  saveManhuaShotContinuityPrefs,
+  type ManhuaShotContinuityPrefs,
+} from "@shared/manhuaShotContinuity";
 import {
   MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
   summarizeManhuaPathTrackStatus,
@@ -419,6 +425,9 @@ export default function OmniCanvas() {
   const [manhuaCanvasPresentation, setManhuaCanvasPresentation] = useState<"media" | "all">(
     "media",
   );
+  const [shotContinuity, setShotContinuity] = useState<ManhuaShotContinuityPrefs>(() =>
+    loadManhuaShotContinuityPrefs(),
+  );
 
   const openManhuaFactoryCanvas = useCallback(
     (blockId?: string) => {
@@ -428,6 +437,13 @@ export default function OmniCanvas() {
         setManhuaCanvasPresentation(isMedia ? "media" : "all");
         setFocusBlockId(blockId);
       }
+      // 工作台右栏画布若已收起，点节点时自动展开
+      window.setTimeout(() => {
+        const openBtn = document.querySelector(
+          '[data-manhua-action="open-canvas-dock"]',
+        ) as HTMLButtonElement | null;
+        openBtn?.click();
+      }, 0);
       window.setTimeout(() => {
         const zone = document.getElementById("freeform-canvas-zone");
         // 右栏已挂画布时只聚焦，不展开下方折叠区、不跳出三栏
@@ -442,7 +458,7 @@ export default function OmniCanvas() {
         document
           .getElementById("freeform-canvas-zone")
           ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      }, 40);
+      }, 80);
     },
     [blocks],
   );
@@ -747,9 +763,26 @@ export default function OmniCanvas() {
     }
   }, [recommendedMotion.motionId, motionManual]);
 
+  /** 运镜/动作推荐：题材 + 本集剧本（打斗/比赛/多人/肢体移位等） */
+  const craftHintBlob = useMemo(() => {
+    const parts = [factoryTopic.trim()];
+    if (writerPack) {
+      const ep =
+        writerPack.episodes.find((e) => e.index === writerFocusEpisode) || writerPack.episodes[0];
+      parts.push(
+        writerPack.seriesTitle || "",
+        writerPack.logline || "",
+        ep?.title || "",
+        ep?.body || "",
+        ep?.endHook || "",
+      );
+    }
+    return parts.filter(Boolean).join("\n");
+  }, [factoryTopic, writerPack, writerFocusEpisode]);
+
   const recommendedPath = useMemo(
-    () => recommendPathCameraFromTopic(factoryTopic),
-    [factoryTopic],
+    () => recommendPathCameraFromTopic(craftHintBlob),
+    [craftHintBlob],
   );
   const recommendedNarrativeLighting = useMemo(
     () => recommendNarrativeLightingFromTopic(factoryTopic),
@@ -760,8 +793,8 @@ export default function OmniCanvas() {
     [factoryTopic],
   );
   const recommendedAction = useMemo(
-    () => recommendActionCameraFromTopic(factoryTopic),
-    [factoryTopic],
+    () => recommendActionCameraFromTopic(craftHintBlob),
+    [craftHintBlob],
   );
 
   useEffect(() => {
@@ -1942,11 +1975,12 @@ export default function OmniCanvas() {
     });
     setManhuaUiMode("workbench");
     setImmersiveExtrasOpen(false);
-    setWorkflowPhase("storyboard");
+    // 确认剧本后先进资产设定（角色/场景/道具已按剧本自动套用，可改画风）
+    setWorkflowPhase("assets");
     toast.success(
       tips.length
-        ? `已确认剧情并生成专案设定；第${continuity.episodeIndex}集编导链就绪（含${tips.join("·")}）`
-        : `已确认剧情并生成专案设定；右栏可先调画布再生成`,
+        ? `已确认剧情；造型已预填。请自选仿真人/CG 并改资产，再进分镜（第${continuity.episodeIndex}集已含${tips.join("·")}）`
+        : `已确认剧情；造型已预填。请自选仿真人/CG、改角色场景道具，再进分镜出片`,
     );
   }, [
     writerPack,
@@ -2120,8 +2154,14 @@ export default function OmniCanvas() {
   ]);
 
   const stopFactory = useCallback(() => {
-    abortRef.current?.abort();
-    toast.message("正在取消漫剧工厂…");
+    if (!abortRef.current) {
+      toast.message("当前没有进行中的生成");
+      return;
+    }
+    abortRef.current.abort();
+    toast.message("已请求中断", {
+      description: "当前步骤结束后会停住；已完成的片段会保留，可改设定后继续测。",
+    });
   }, []);
 
   const runFactory = useCallback(
@@ -2200,8 +2240,8 @@ export default function OmniCanvas() {
             : untilStage === "reverse"
               ? `漫剧工厂：故事→角色→节拍→反推（第 ${episodeIndexes.join("、")} 集）`
               : untilStage === "keyart"
-                ? `漫剧工厂：跑到关键静帧（第 ${episodeIndexes.join("、")} 集）`
-                : `漫剧工厂全自动：含静帧 + 成片（第 ${episodeIndexes.join("、")} 集）`,
+                ? `一次生成本集全部分镜静帧（第 ${episodeIndexes.join("、")} 集）`
+                : `漫剧工厂：全部分镜静帧 + 成片（第 ${episodeIndexes.join("、")} 集）`,
         );
         let completed = 0;
         let skipped = 0;
@@ -2232,6 +2272,7 @@ export default function OmniCanvas() {
               forceFromStage,
               targetBlockIds: opts?.targetBlockIds,
               fragmentShotIndex,
+              shotContinuity,
               skipDone: true,
               signal: ac.signal,
               onBlocksChange: (next) => {
@@ -2289,13 +2330,34 @@ export default function OmniCanvas() {
               });
               stageStartedAtRef.current = null;
             }
+            // 单镜/单片段失败不拦后续镜——继续出齐本集分镜
             if (result.errors.length) {
               lastError = result.errors[0]!;
-              break outer;
+              pushDebug("factoryRun:shotError", {
+                level: "warn",
+                detail: result.errors
+                  .map((e) => `${e.id}:${e.message}`)
+                  .join(" · ")
+                  .slice(0, 280),
+              });
             }
           }
         }
-        if (lastError) {
+        const userStopped =
+          ac.signal.aborted || lastError?.message === "已取消";
+        if (userStopped) {
+          pushDebug("factoryRun:aborted", {
+            level: "warn",
+            ms: Date.now() - runStartedAt,
+            detail: `completed=${completed} skipped=${skipped}`,
+          });
+          toast.message(
+            `已中断生成（完成 ${completed}` +
+              (skipped ? `、跳过 ${skipped}` : "") +
+              "）",
+            { description: "已完成片段保留；可改资产/画风后继续测，不必重跑整条。" },
+          );
+        } else if (lastError && completed === 0) {
           const errStage = stageKeyFromBlockId(lastError.id);
           pushDebug("factoryRun:error", {
             level: "error",
@@ -2303,9 +2365,19 @@ export default function OmniCanvas() {
             detail: `${errStage || "unknown"} · ${lastError.message || ""}`,
           });
           toast.error(
-            `完成 ${completed} 段` +
-              (skipped ? `、跳过 ${skipped}` : "") +
-              `，中断于${errStage ? MANHUA_FACTORY_STAGE_LABEL_ZH[errStage] : "未知"}：${lastError.message || ""}`,
+            `${errStage ? MANHUA_FACTORY_STAGE_LABEL_ZH[errStage] : "生成"}失败：${lastError.message || ""}`,
+          );
+        } else if (lastError) {
+          pushDebug("factoryRun:partial", {
+            level: "warn",
+            ms: Date.now() - runStartedAt,
+            detail: `completed=${completed} skipped=${skipped} · ${lastError.message}`,
+          });
+          toast.message(
+            `已跑完可跑节点：新跑 ${completed}` + (skipped ? ` · 跳过 ${skipped}` : ""),
+            {
+              description: `部分失败：${lastError.message.slice(0, 120)}。可单独重出失败镜。`,
+            },
           );
         } else {
           pushDebug("factoryRun:ok", {
@@ -2318,12 +2390,19 @@ export default function OmniCanvas() {
         setFactoryProgress("");
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "漫剧工厂失败";
-        pushDebug("factoryRun:exception", {
-          level: "error",
+        const userStopped = ac.signal.aborted || msg === "已取消";
+        pushDebug(userStopped ? "factoryRun:aborted" : "factoryRun:exception", {
+          level: userStopped ? "warn" : "error",
           ms: Date.now() - runStartedAt,
           detail: msg,
         });
-        toast.error(msg);
+        if (userStopped) {
+          toast.message("已中断生成", {
+            description: "已完成片段保留；可改设定后继续测。",
+          });
+        } else {
+          toast.error(msg);
+        }
         setFactoryProgress("");
       } finally {
         abortRef.current = null;
@@ -2341,6 +2420,7 @@ export default function OmniCanvas() {
       selectedCharacterIds,
       selectedPathRecipeIds,
       selectedActionRecipeIds,
+      shotContinuity,
     ],
   );
 
@@ -2548,7 +2628,7 @@ export default function OmniCanvas() {
                     confirmWriterToDirector();
                     setManhuaUiMode("workbench");
                     setImmersiveExtrasOpen(false);
-                    setWorkflowPhase("storyboard");
+                    // confirmWriterToDirector 已切到资产设定；勿再强制进分镜
                     window.setTimeout(() => {
                       document.querySelector("#manhua-workbench-shell")?.scrollIntoView({
                         behavior: "smooth",
@@ -2574,6 +2654,7 @@ export default function OmniCanvas() {
                         ? "编剧室扩写中"
                         : null
                 }
+                onStopBusy={factoryBusy ? stopFactory : undefined}
               />
             ) : null}
 
@@ -2627,6 +2708,11 @@ export default function OmniCanvas() {
                   immersive={immersiveWorkbench}
                   blocks={blocks}
                   topic={factoryTopic}
+                  shotContinuity={shotContinuity}
+                  onShotContinuityChange={(next) => {
+                    const saved = saveManhuaShotContinuityPrefs(next);
+                    setShotContinuity(saved);
+                  }}
                   seriesTitle={writerPack?.seriesTitle || projectBible?.seriesTitle}
                   logline={writerPack?.logline || projectBible?.logline}
                   outlineEpisodes={(writerPack?.episodes || []).map((ep) => ({
@@ -2663,12 +2749,16 @@ export default function OmniCanvas() {
                   factoryProgress={
                     assembleBusy ? "正在合成长片与配乐…" : factoryProgress || undefined
                   }
+                  onStopFactory={factoryBusy ? stopFactory : undefined}
                   canRun={Boolean(directorUnlocked || writerConfirmed)}
                   writerPackReady={Boolean(writerPack && writerPackLooksReady(writerPack))}
                   onConfirmOutline={() => {
                     confirmWriterToDirector();
-                    // 套造型后进分镜：右栏常驻画布，便于先调节点再生成
-                    setWorkflowPhase("storyboard");
+                  }}
+                  artStyleId={factoryArtStyleId}
+                  onArtStyleChange={(id) => {
+                    setFactoryArtStyleId(id);
+                    setArtStyleManual(true);
                   }}
                   assetsSkipped={assetsSkipped}
                   onAssetsSkippedChange={setAssetsSkipped}
@@ -2717,7 +2807,73 @@ export default function OmniCanvas() {
                     ensureStudioSpawned(factoryTopic);
                     void runFactory("clip", { episodeIndexes: [writerFocusEpisode] });
                   }}
+                  onGenerateAllEpisodeKeyarts={() => {
+                    const hasCast =
+                      selectedCharacterIds.length > 0 || factoryAncientArchetypeIds.length > 0;
+                    const sceneId = factorySceneId || recommendedScene?.id || "";
+                    if (!hasCast || !sceneId) {
+                      toast.message("请先锁定角色与场景", {
+                        description: "资产设定里选好人物和场景后，再一次出齐本集全部分镜。",
+                      });
+                      setWorkflowPhase("assets");
+                      setManhuaAssetDrawer(!hasCast ? "characters" : "assets");
+                      return;
+                    }
+                    setFactoryRunScope("focus");
+                    ensureStudioSpawned(factoryTopic);
+                    // 出图前把角色/场景/服装/运镜锁进每镜静帧提示词
+                    setBlocks((prev) => {
+                      const next = applyFactoryPrefsToBlocks(prev, {
+                        craftShotIds: selectedCraftShotIds,
+                        motionPromptIds: selectedMotionIds,
+                        pathCameraRecipeIds: selectedPathRecipeIds,
+                        pathAnnotationJson: factoryPathAnnotation,
+                        narrativeLightingIds: selectedNarrativeLightingIds,
+                        maleHairstyleIds: selectedMaleHairstyleIds,
+                        maleMicroExpressionIds: selectedMaleMicroIds,
+                        promoCoverLayoutIds: selectedPromoLayoutIds,
+                        actionCameraRecipeIds: selectedActionRecipeIds,
+                        cineVocabIds: selectedCineVocabIds,
+                        wardrobePropContinuityIds: selectedWardrobeIds,
+                        sceneId,
+                        propIds: factoryPropIds,
+                        genreId: factoryGenreId || undefined,
+                        characterIds: selectedCharacterIds,
+                        ancientArchetypeIds: factoryAncientArchetypeIds,
+                        identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
+                        artStyleId: factoryArtStyleId,
+                        videoReverseOutputMode: factoryReverseMode,
+                      });
+                      setEdges((eds) => {
+                        saveCanvasState(next, eds);
+                        return eds;
+                      });
+                      return next;
+                    });
+                    // 故事→反推→按镜展开→一次跑齐本集全部静帧（已完成的跳过）
+                    void runFactory("keyart", {
+                      episodeIndexes: [writerFocusEpisode],
+                    });
+                  }}
                   onGenerateFragment={({ shotIndex }) => {
+                    const hasShotKeyart = blocks.some(
+                      (b) =>
+                        b.id.startsWith("keyart-") &&
+                        (getBlockEpisodeIndex(b) ?? 1) === writerFocusEpisode &&
+                        resolveKeyartShotIndex(b.id, b.prompt) === shotIndex &&
+                        Boolean(b.outputUrl || b.outputUrls?.[0]),
+                    );
+                    if (!hasShotKeyart) {
+                      toast.message("请先点「生成本集全部分镜」出齐静帧", {
+                        description: `第 ${String(shotIndex).padStart(2, "0")} 镜还没有自己的分镜图，成片不能共用别镜。`,
+                      });
+                      setFactoryRunScope("focus");
+                      ensureStudioSpawned(factoryTopic);
+                      void runFactory("keyart", {
+                        episodeIndexes: [writerFocusEpisode],
+                      });
+                      return;
+                    }
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
                     void runFactory("clip", {
@@ -2824,6 +2980,31 @@ export default function OmniCanvas() {
                       forceFromStage: "keyart",
                       episodeIndexes: [writerFocusEpisode],
                       targetBlockIds: [blockId],
+                    });
+                  }}
+                  onAcceptClipDespiteQc={(clipBlockId) => {
+                    setBlocks((prev) => {
+                      const next = prev.map((b) => {
+                        if (b.id !== clipBlockId || !b.manhuaClipQuality) return b;
+                        return {
+                          ...b,
+                          manhuaClipQuality: {
+                            ...b.manhuaClipQuality,
+                            userAcceptedDespiteQc: true,
+                          },
+                          error: b.manhuaClipQuality.summary
+                            ? `已采用（质检未过）：${b.manhuaClipQuality.summary}`
+                            : "已采用（质检未过）",
+                        };
+                      });
+                      setEdges((eds) => {
+                        saveCanvasState(next, eds);
+                        return eds;
+                      });
+                      return next;
+                    });
+                    toast.message("已采用此片", {
+                      description: "可在成片坞勾选并参与长片合成。",
                     });
                   }}
                 />
@@ -2976,7 +3157,7 @@ export default function OmniCanvas() {
                     confirmWriterToDirector();
                     setManhuaUiMode("workbench");
                     setImmersiveExtrasOpen(false);
-                    setWorkflowPhase("storyboard");
+                    // 先进资产设定改人物/场景/道具，再进分镜
                     window.setTimeout(() => {
                       document.querySelector("#manhua-workbench-zone")?.scrollIntoView({
                         behavior: "smooth",
@@ -2990,7 +3171,7 @@ export default function OmniCanvas() {
                       : "border-sky-400/35 bg-sky-500/15 text-sky-50 hover:bg-sky-500/25"
                   }`}
                 >
-                  {writerConfirmed ? "已确认 · 看生成推进" : "确认并进入工作台"}
+                  {writerConfirmed ? "已确认 · 先调资产" : "确认并进入资产设定"}
                 </button>
                 <button
                   type="button"
@@ -3097,7 +3278,7 @@ export default function OmniCanvas() {
                 >
                   {!writerConfirmed ? (
                     <div className="mb-2 rounded-lg border border-cyan-400/30 bg-cyan-500/12 px-2.5 py-1.5 text-[10px] font-medium text-cyan-50">
-                      剧情包已就绪 · 请点上方主按钮「确认并进入工作台」
+                      剧情包已就绪 · 请点上方主按钮「确认并进入资产设定」
                     </div>
                   ) : null}
                   <div className="flex flex-wrap items-center gap-2">
@@ -3219,6 +3400,7 @@ export default function OmniCanvas() {
                 factoryProgress={
                   assembleBusy ? "正在合成长片与配乐…" : factoryProgress || undefined
                 }
+                onStopFactory={factoryBusy ? stopFactory : undefined}
                 onFocusEpisode={(ep) => {
                   setWriterFocusEpisode(ep);
                   setManhuaUiMode("workbench");
@@ -3327,12 +3509,12 @@ export default function OmniCanvas() {
                         topicHint={[factoryGenreLabel, factoryTopic].filter(Boolean).join(" ")}
                         ancientArchetypeIds={factoryAncientArchetypeIds}
                         castLane={castBundle.lane}
-                        reasonZh={`${castBundle.reasonZh}；${recommendedArtStyle.reasonZh}${
+                        reasonZh={`${castBundle.reasonZh}；画风可自选仿真人或 CG（题材仅软推荐）${
                           castHardApplyReady
                             ? selectedCharacterIds.length || factoryAncientArchetypeIds.length
-                              ? "；已按剧本硬套，将在铺板注入原型/服装/道具。点选可微调。"
-                              : "；已确认编剧，可点选微调角色/画风。"
-                            : "；主路径 1423：先扩写并确认编剧，再按剧本自动套造型（当前为软预览）。"
+                              ? "；角色/场景/道具已按剧本预填，点选可改。"
+                              : "；已确认编剧，可改角色与画风后再进分镜。"
+                            : "；先扩写并确认剧本后，会预填造型（当前为软预览）。"
                         }`}
                         onSelectFemale={(id) => {
                           setFemaleLeadManual(true);
@@ -3547,6 +3729,9 @@ export default function OmniCanvas() {
                   translateMotionZh={translateMotionZh}
                 />
                 <p className="text-[10px] text-white/35">
+                  {!pathRecipeManual || !actionRecipeManual
+                    ? "已按题材/本集剧情自动带入运镜与动作轨迹（打斗、比赛、多人、肢体移位等，可改）。"
+                    : ""}
                   {recommendedPath.reasonZh}
                   {recommendedAction.reasonZh ? ` · ${recommendedAction.reasonZh}` : ""}
                 </p>
@@ -3901,9 +4086,10 @@ export default function OmniCanvas() {
                     type="button"
                     className="inline-flex items-center gap-1.5 rounded-xl border border-red-400/40 bg-red-500/15 px-3 py-2 text-xs font-semibold text-red-100 hover:bg-red-500/25"
                     onClick={stopFactory}
+                    title="立刻中断，不必跑完整条链"
                   >
-                    <Square className="h-3.5 w-3.5" />
-                    取消
+                    <Square className="h-3.5 w-3.5 fill-current" />
+                    中断生成
                   </button>
                 ) : null}
               </div>

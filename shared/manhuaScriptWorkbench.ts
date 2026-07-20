@@ -186,9 +186,13 @@ export function inferWorkbenchShotCastCount(actionZh: string): number {
   return 1;
 }
 
-/** 静帧禁字：避免设定卡/字幕污染后续质检 */
+/** 静帧禁字：避免设定卡/字幕污染后续质检（中文硬锁，写入 keyart prompt） */
 export const MANHUA_KEYART_NO_TEXT_LOCK =
-  "禁字硬锁：禁止任何可读文字、字幕、水印、Logo、姓名条、设定卡多格排版、UI 面板文案、标题大字；工牌/屏幕/文件仅几何光纹或模糊不可读纹理。";
+  "禁字硬锁：画面必须是纯视觉电影静帧，零可读文字。禁止字幕、对白气泡、旁白条、水印、Logo、姓名条、设定卡多格、UI 文案、标题大字、镜号数字、印章题跋；对白/旁白只作表演依据，绝不能烧进画面；工牌/手机/文件/霓虹仅几何光斑或完全模糊不可辨认字形。";
+
+/** 生图最终英文提示词追加（模型对英文 negative 更听话） */
+export const MANHUA_KEYART_NO_TEXT_EN =
+  "STRICT NO TEXT: pure cinematic still only. Zero readable letters, Chinese characters, numbers, subtitles, captions, speech bubbles, logos, watermarks, nameplates, UI panels, title cards, or signage glyphs. Any dialogue is acting direction only — never painted on the image. Screens/badges/papers = blank glow or illegible blur only.";
 
 /** 写入静帧 prompt：本镜场面必须带场景/道具/服装配合 */
 export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): string {
@@ -222,6 +226,7 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
     castLock,
     "光线硬锁：必须落实本镜动作描述中的具体光向、冷暖与明暗关系；禁止套用统一的暖背景加轮廓光模板。",
     "必须画出本镜人物、场景与点选道具的配合；服装连续与题材时代一致；禁止空镜或错时代穿戴。",
+    "对白硬锁：若动作描述含对白/旁白，只表现为口型、表情与肢体，禁止任何字形出现在画面中。",
     MANHUA_KEYART_NO_TEXT_LOCK,
   ]
     .filter(Boolean)

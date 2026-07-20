@@ -55,23 +55,31 @@ describe("manhuaProjectExport", () => {
     expect(episodeIndexesFromDockSelection(items, ["clip-e02-b", "keyart-e01-a"])).toEqual([1, 2]);
   });
 
-  it("keeps failed quality clips visible but blocks export and final assembly", () => {
+  it("keeps failed quality clips visible but blocks export until user accepts", () => {
     const clip = defaultCanvasBlock("video", 0, 0);
     clip.id = "clip-e01-failed";
     clip.episodeIndex = 1;
     clip.outputUrl = "https://cdn.example/failed.mp4";
-    clip.status = "error";
+    clip.status = "done";
     clip.manhuaClipQuality = {
       ...passedQuality,
       status: "failed",
       checks: { ...passedQuality.checks, CHARACTER_MATCH: false },
       failedKeys: ["CHARACTER_MATCH"],
       summary: "人物与首镜无关",
+      userAcceptedDespiteQc: false,
     };
     const items = collectManhuaClipDockItems([clip]);
     expect(items).toHaveLength(1);
     expect(selectExportableDockIds(items)).toEqual([]);
     expect(collectManhuaAssembleClipsFromDock(items)[0]?.clipUrl).toBeUndefined();
+
+    clip.manhuaClipQuality = { ...clip.manhuaClipQuality!, userAcceptedDespiteQc: true };
+    const accepted = collectManhuaClipDockItems([clip]);
+    expect(selectExportableDockIds(accepted)).toEqual(["clip-e01-failed"]);
+    expect(collectManhuaAssembleClipsFromDock(accepted)[0]?.clipUrl).toBe(
+      "https://cdn.example/failed.mp4",
+    );
   });
 
   it("includes pending story so dock can select episodes before outputs exist", () => {

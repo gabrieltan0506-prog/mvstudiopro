@@ -126,7 +126,10 @@ export type CanvasBlock = {
   pathCameraRecipeId?: string;
   /** 静帧路径标注 JSON（视频节点 I2V 优先于配方） */
   pathAnnotationJson?: unknown;
-  /** 漫剧成片智能质检；失败成片不得进入长片合成。 */
+  /**
+   * 漫剧成片智能质检（软拦）：failed 默认可预览、不进成片坞；
+   * 用户「仍采用」后 quality.userAcceptedDespiteQc=true 才可合成。
+   */
   manhuaClipQuality?: ManhuaClipQualityReport;
 };
 

@@ -28,6 +28,7 @@ import {
   MANHUA_CLIP_CONTINUITY_HINT_ZH,
   MANHUA_CLIP_TAIL_FRAME_COUNT,
 } from "@shared/manhuaClipContinuity";
+import { MANHUA_KEYART_NO_TEXT_EN } from "@shared/manhuaScriptWorkbench";
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
@@ -524,17 +525,22 @@ export async function runCanvasBlock(
     );
     const maskUrl = absRef(block.editMaskUrl) || String(block.editMaskUrl || "").trim();
     // 微调：提示词即修改说明；文生图才走 JSON 导演中台
-    const imagePrompt = isEdit
+    const rawImagePrompt = isEdit
       ? [
           mergedPrompt,
           fusionUrls.length
             ? `【多图融合】另有 ${fusionUrls.length} 张参考图：请按说明把风格/元素/妆造合理融合进底图，保持人物身份一致。`
             : "",
           maskUrl ? "【局部遮罩】仅修改遮罩透明区域，其余像素尽量原样保留。" : "",
+          isKeyart ? MANHUA_KEYART_NO_TEXT_EN : "",
         ]
           .filter(Boolean)
           .join("\n")
       : await resolveImagePromptViaJsonDirector(deps, mergedPrompt, ar, imageModel);
+    // 关键静帧：英文禁字再钉死一次（翻译中台偶发丢掉 negative）
+    const imagePrompt = isKeyart
+      ? `${rawImagePrompt.trim()}\n\n${MANHUA_KEYART_NO_TEXT_EN}`
+      : rawImagePrompt;
     /** 主路径 Image-2；失败回退 NB2。显式手选 NB2 省钱时直走，不先打 Image-2 */
     const preferGptImage2 = imageModel !== "nano-banana-2";
     let urls: string[] = [];
@@ -560,7 +566,12 @@ export async function runCanvasBlock(
               ar,
               imageModel,
             );
-            urls = await runGptImage2Batch(regenPrompt, ar, {}, count);
+            urls = await runGptImage2Batch(
+              isKeyart ? `${regenPrompt.trim()}\n\n${MANHUA_KEYART_NO_TEXT_EN}` : regenPrompt,
+              ar,
+              {},
+              count,
+            );
             console.warn(`[canvasRunBlock] keyart edit/融图失败，已文生图重做：${reason}`);
           } catch (regenErr) {
             const rr = regenErr instanceof Error ? regenErr.message.slice(0, 120) : "文生图重做失败";
@@ -635,7 +646,7 @@ export async function runCanvasBlock(
         videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
       });
     } else {
-      // 工厂 omni_edit-*：上游成片 URL（常经 refImageUrl/refVideoUrl 传入）→ Gemini Omni edit_video
+      // 工厂 omni_edit-* / 镜间接力：有上游成片时 edit_video 承接末段；否则本镜静帧 I2V
       const isOmniEdit = block.id.startsWith("omni_edit-");
       const looksLikeVideo = (u?: string) => Boolean(u && /\.(mp4|mov|webm)(\?|$)/i.test(u));
       const editVideoUrl =
@@ -643,10 +654,18 @@ export async function runCanvasBlock(
         uploadedVideoUrl ||
         (looksLikeVideo(refUrl) ? refUrl : undefined) ||
         upstream.visionImages.find((i) => looksLikeVideo(i.url))?.url;
-      url = await runOmniFlash(motionPrompt, isOmniEdit ? undefined : refUrl, ar, {
-        edit: isOmniEdit || Boolean(editVideoUrl && block.videoModel === "gemini-omni-flash" && looksLikeVideo(editVideoUrl)),
-        videoUrl: isOmniEdit ? editVideoUrl : undefined,
-      });
+      const useVideoContinuity =
+        Boolean(editVideoUrl && looksLikeVideo(editVideoUrl)) &&
+        (isOmniEdit || Boolean(block.refVideoUrl));
+      url = await runOmniFlash(
+        motionPrompt,
+        useVideoContinuity ? undefined : stillRef || refUrl,
+        ar,
+        {
+          edit: useVideoContinuity,
+          videoUrl: useVideoContinuity ? editVideoUrl : undefined,
+        },
+      );
     }
     return { outputUrl: url };
   }

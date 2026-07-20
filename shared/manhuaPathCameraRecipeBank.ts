@@ -194,7 +194,37 @@ export function recommendPathCameraFromTopic(topic?: string): {
 } {
   const t = String(topic || "").trim();
   const hints: Array<{ keys: string[]; id: string }> = [
-    { keys: ["打斗", "对打", "比武", "交锋", "动作"], id: "path_05_action_burst" },
+    // 肢体动作 / 身体移位 / 打斗 / 比赛（短阶段动作运镜）
+    {
+      keys: [
+        "打斗",
+        "对打",
+        "比武",
+        "交锋",
+        "武打",
+        "搏斗",
+        "格斗",
+        "追逐",
+        "奔跑",
+        "冲刺",
+        "跳跃",
+        "翻滚",
+        "闪避",
+        "扑",
+        "推搡",
+        "拉扯",
+        "移位",
+        "肢体",
+        "身体",
+        "赛场",
+        "比赛",
+        "竞技",
+        "球赛",
+        "对决",
+        "动作",
+      ],
+      id: "path_05_action_burst",
+    },
     { keys: ["证据", "线索", "揭穿", "翻盘"], id: "path_03_evidence_push" },
     { keys: ["对峙", "谈判", "逼近"], id: "path_04_confrontation_track" },
     { keys: ["暧昧", "耳语", "欲言又止", "亲吻"], id: "path_07_intimate_cu_linger" },

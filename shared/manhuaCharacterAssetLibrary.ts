@@ -113,8 +113,8 @@ export function getManhuaCharacterPreviewUrl(id: string, opts?: { artStyleId?: s
   return `/manhua-characters/${key}.jpg`;
 }
 
-/** 角色/场景须统一的画风（示意 A/B/C） */
-export type ManhuaArtStyleId = "photoreal" | "cg_drama" | "manga_2d";
+/** 角色/场景须统一的画风：仿真人 / CG 漫剧（旧 manga_2d 归一为 CG） */
+export type ManhuaArtStyleId = "photoreal" | "cg_drama";
 
 export type ManhuaArtStylePreset = {
   id: ManhuaArtStyleId;
@@ -127,7 +127,7 @@ export type ManhuaArtStylePreset = {
 export const MANHUA_ART_STYLE_PRESETS: ManhuaArtStylePreset[] = [
   {
     id: "photoreal",
-    labelZh: "A · 仿真人",
+    labelZh: "仿真人",
     shortZh: "都市情感 / 校园更贴",
     promptZh:
       "画风硬锁：半写实仿真人电影剧照，真实皮肤纹理与发丝，自然光影，非卡通非塑料 CGI；角色与场景同一画风。\n" +
@@ -137,38 +137,33 @@ export const MANHUA_ART_STYLE_PRESETS: ManhuaArtStylePreset[] = [
   },
   {
     id: "cg_drama",
-    labelZh: "B · CG 漫剧质感",
+    labelZh: "CG 漫剧",
     shortZh: "仙侠 / 权谋默认",
     promptZh:
       "画风硬锁：半写实二次元国乙立绘质感，韩系厚涂，电影柔光，漫剧成片级 CG；角色与场景同一画风。",
-  },
-  {
-    id: "manga_2d",
-    labelZh: "C · 二维漫画",
-    shortZh: "轻喜 / 夸张表情",
-    promptZh:
-      "画风硬锁：清晰二维漫画线稿上色，赛璐璐或轻厚涂，禁止写真摄影质感；角色与场景同一画风。",
   },
 ];
 
 export const DEFAULT_MANHUA_ART_STYLE_ID: ManhuaArtStyleId = "cg_drama";
 
-export function getManhuaArtStylePreset(id?: string | null): ManhuaArtStylePreset {
-  const hit = MANHUA_ART_STYLE_PRESETS.find((p) => p.id === id);
-  return hit || MANHUA_ART_STYLE_PRESETS.find((p) => p.id === DEFAULT_MANHUA_ART_STYLE_ID)!;
+/** 旧会话 manga_2d 等非法值 → CG 漫剧 */
+export function normalizeManhuaArtStyleId(id?: string | null): ManhuaArtStyleId {
+  return String(id || "").trim() === "photoreal" ? "photoreal" : DEFAULT_MANHUA_ART_STYLE_ID;
 }
 
-/** 题材 → 画风软推荐（可手改） */
+export function getManhuaArtStylePreset(id?: string | null): ManhuaArtStylePreset {
+  const key = normalizeManhuaArtStyleId(id);
+  return MANHUA_ART_STYLE_PRESETS.find((p) => p.id === key) || MANHUA_ART_STYLE_PRESETS[1]!;
+}
+
+/** 题材 → 画风软推荐（可手改；仅仿真人 / CG） */
 export function recommendManhuaArtStyleFromTopic(topic: string): {
   artStyleId: ManhuaArtStyleId;
   reasonZh: string;
 } {
   const t = String(topic || "").trim();
   if (!t) {
-    return { artStyleId: DEFAULT_MANHUA_ART_STYLE_ID, reasonZh: "未填题材时默认 CG 漫剧质感（可更换）" };
-  }
-  if (/漫画|条漫|表情包|轻松|搞笑|日常番|二次元纯/.test(t)) {
-    return { artStyleId: "manga_2d", reasonZh: "题材偏轻松漫画向 → 推荐二维" };
+    return { artStyleId: DEFAULT_MANHUA_ART_STYLE_ID, reasonZh: "未填题材时默认 CG 漫剧（可更换）" };
   }
   if (/都市|职场|霸总|校园|现实|情感连载|总裁/.test(t) && !/仙侠|玄幻|古风|宫斗|修仙/.test(t)) {
     return { artStyleId: "photoreal", reasonZh: "题材偏都市/校园情感 → 推荐仿真人" };
@@ -176,7 +171,7 @@ export function recommendManhuaArtStyleFromTopic(topic: string): {
   if (/仙侠|玄幻|古风|宫斗|修仙|权谋|末日|科幻/.test(t)) {
     return { artStyleId: DEFAULT_MANHUA_ART_STYLE_ID, reasonZh: "题材偏仙侠/权谋/奇幻 → 推荐 CG 漫剧" };
   }
-  return { artStyleId: DEFAULT_MANHUA_ART_STYLE_ID, reasonZh: "默认 CG 漫剧质感（可更换）" };
+  return { artStyleId: DEFAULT_MANHUA_ART_STYLE_ID, reasonZh: "默认 CG 漫剧（可更换）" };
 }
 
 /** 选中卡妆造摘要（库无细拆字段时用职业+气质+提示词短句） */
@@ -732,7 +727,7 @@ export const MANHUA_COUPLE_PACKS: ManhuaCouplePack[] = [
     blurbZh: "温以宁 × 秦屿 · 利落对张扬",
     femaleId: "char_f_10",
     maleId: "char_m_09",
-    artStyleId: "manga_2d",
+    artStyleId: "cg_drama",
   },
   {
     id: "diplomacy_edge",

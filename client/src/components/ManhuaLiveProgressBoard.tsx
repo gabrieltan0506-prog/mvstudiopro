@@ -2,7 +2,7 @@
  * 漫剧实时推进板：集 × 阶段状态，生成时始终在可视区上方。
  */
 import { useMemo } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Square } from "lucide-react";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
   getBlockEpisodeIndex,
@@ -39,6 +39,8 @@ type Props = {
   focusEpisode: number;
   factoryBusy?: boolean;
   factoryProgress?: string;
+  /** 生成中随时中断 */
+  onStopFactory?: () => void;
   onFocusEpisode: (ep: number) => void;
   onFocusBlock?: (blockId: string) => void;
 };
@@ -48,6 +50,7 @@ export default function ManhuaLiveProgressBoard({
   focusEpisode,
   factoryBusy,
   factoryProgress,
+  onStopFactory,
   onFocusEpisode,
   onFocusBlock,
 }: Props) {
@@ -112,7 +115,22 @@ export default function ManhuaLiveProgressBoard({
             </span>
           ) : null}
         </div>
-        <span className="text-[10px] text-white/35">点集可切换焦点 · 点阶段可定位节点</span>
+        <div className="flex flex-wrap items-center gap-2">
+          {factoryBusy && onStopFactory ? (
+            <button
+              type="button"
+              data-manhua-action="stop-factory-progress"
+              onClick={onStopFactory}
+              className="inline-flex items-center gap-1 rounded-md border border-red-400/45 bg-red-500/20 px-2.5 py-1 text-[10px] font-semibold text-red-50 hover:bg-red-500/30"
+              title="立刻中断，不必跑完整条链"
+            >
+              <Square className="h-3 w-3 fill-current" />
+              中断生成
+            </button>
+          ) : (
+            <span className="text-[10px] text-white/35">点集可切换焦点 · 点阶段可定位节点</span>
+          )}
+        </div>
       </div>
 
       {!hasChain && !factoryBusy ? (

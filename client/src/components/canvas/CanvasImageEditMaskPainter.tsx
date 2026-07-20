@@ -173,11 +173,12 @@ export function CanvasImageEditMaskPainter({
           />
         </label>
       </div>
-      <div className="relative mx-auto max-h-56 w-full max-w-[220px] overflow-hidden rounded-md border border-white/10 bg-black/60">
+      {/* 固定 9:16 画板高度，避免 canvas h-full 在无明确高度父级上塌成横缝 */}
+      <div className="relative mx-auto aspect-[9/16] w-full max-w-[min(100%,20rem)] overflow-hidden rounded-md border border-white/10 bg-black/60">
         <canvas ref={canvasRef} className="absolute inset-0 h-full w-full object-contain" />
         <canvas
           ref={overlayRef}
-          className="relative z-10 h-full w-full cursor-crosshair touch-none object-contain"
+          className="absolute inset-0 z-10 h-full w-full cursor-crosshair touch-none object-contain"
           onPointerDown={(e) => {
             drawing.current = true;
             (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);

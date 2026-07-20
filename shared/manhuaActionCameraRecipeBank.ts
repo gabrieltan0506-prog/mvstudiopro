@@ -1,5 +1,5 @@
 /**
- * 动作运镜配方：FPV / 打斗全景轨迹 / 红蓝双轨迹一镜到底。
+ * 动作运镜配方：FPV / 动作全景轨迹 / 红蓝双轨迹一镜到底。
  * 语义来自公开 I2V 轨迹教程（自研条目，不抄原片）。
  */
 
@@ -33,14 +33,15 @@ export const MANHUA_ACTION_CAMERA_RECIPE_BANK: readonly ManhuaActionCameraRecipe
   {
     id: "action_fight_panorama_track",
     no: 2,
-    nameZh: "打斗全景轨迹",
+    nameZh: "动作全景轨迹",
     trackMode: "single_action",
-    effectZh: "先全景静帧，再沿动作轨迹完成移动/闪避/攻击。",
-    whenToUseZh: "打斗、追逐、对战、兵器交锋。",
-    craftSummaryZh: "人物沿红色动作轨；镜头相对稳或轻跟；2–3 秒一段击打反馈。",
-    craftLockEn: "fight along action track: move dodge attack, smooth, stable positions, hide guides",
+    effectZh: "先全景静帧，再沿动作轨迹完成移动/闪避/攻防或肢体移位。",
+    whenToUseZh: "打斗、追逐、比武、比赛冲刺，以及任何明显肢体动作与身体移位。",
+    craftSummaryZh: "人物沿红色动作轨；镜头相对稳或轻跟；2–3 秒一段动作反馈。",
+    craftLockEn:
+      "body motion along action track: move dodge interact, smooth, stable positions, hide guides",
     seedancePromptZh:
-      "两人或多人沿着画面中的运动轨迹进行打斗，完成移动、闪避和攻击。动作流畅，方向明确，人物位置稳定。轨迹线仅作参考，最终画面不显示。",
+      "一人或多人沿着画面中的运动轨迹完成肢体动作与身体移位（移动、闪避、攻防或互动）。动作流畅，方向明确，人物位置稳定。轨迹线仅作参考，最终画面不显示。",
   },
   {
     id: "action_dual_track_oner",
@@ -48,12 +49,12 @@ export const MANHUA_ACTION_CAMERA_RECIPE_BANK: readonly ManhuaActionCameraRecipe
     nameZh: "红蓝双轨一镜",
     trackMode: "dual",
     effectZh: "红轨=人物动作，蓝轨=镜头路径；可绕过主体的一镜调度。",
-    whenToUseZh: "一镜到底、多人群演、复杂空间调度。",
+    whenToUseZh: "一镜到底、多人同框、群演调度、复杂空间穿插。",
     craftSummaryZh: "人物严格沿红轨；镜头严格沿蓝轨；人/景/空间关系稳定；可绕过主体。",
     craftLockEn:
       "dual tracks: subject on red path, camera on blue path, may bypass subject, hide guide lines",
     seedancePromptZh:
-      "参考轨迹图、人物参考与场景图生成视频。人物严格沿红色轨迹移动与打斗；镜头严格沿蓝色轨迹运动。保持人物一致、场景一致、空间关系稳定；动作流畅、方向明确。轨迹线仅作参考，最终画面不显示。",
+      "参考轨迹图、人物参考与场景图生成视频。人物严格沿红色轨迹移动与动作；镜头严格沿蓝色轨迹运动。保持人物一致、场景一致、空间关系稳定；动作流畅、方向明确。轨迹线仅作参考，最终画面不显示。",
   },
 ];
 
@@ -88,9 +89,42 @@ export function recommendActionCameraFromTopic(topic?: string): {
 } {
   const t = String(topic || "").trim();
   const hints: Array<{ keys: string[]; id: string }> = [
-    { keys: ["穿越", "FPV", "球场", "球赛", "人群", "战争群"], id: "action_fpv_stadium" },
-    { keys: ["打斗", "对打", "比武", "交锋", "闪避"], id: "action_fight_panorama_track" },
-    { keys: ["一镜", "双轨", "绕过", "群演", "调度"], id: "action_dual_track_oner" },
+    // 赛场 / 人群穿越感
+    {
+      keys: ["穿越", "FPV", "球场", "球赛", "赛场", "比赛", "竞技", "运动会", "观众", "人群", "战争群"],
+      id: "action_fpv_stadium",
+    },
+    // 肢体动作 / 身体移位 / 打斗（单红轨动作）
+    {
+      keys: [
+        "打斗",
+        "对打",
+        "比武",
+        "交锋",
+        "武打",
+        "搏斗",
+        "格斗",
+        "追逐",
+        "奔跑",
+        "冲刺",
+        "跳跃",
+        "翻滚",
+        "闪避",
+        "扑击",
+        "推搡",
+        "拉扯",
+        "移位",
+        "肢体",
+        "身体",
+        "对决",
+      ],
+      id: "action_fight_panorama_track",
+    },
+    // 多人同框 / 群演调度（红蓝双轨）
+    {
+      keys: ["一镜", "双轨", "绕过", "群演", "调度", "多人", "双人", "三人", "众人", "同框", "群戏", "围观"],
+      id: "action_dual_track_oner",
+    },
   ];
   for (const h of hints) {
     if (h.keys.some((k) => t.includes(k))) {

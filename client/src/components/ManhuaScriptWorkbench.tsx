@@ -8,11 +8,14 @@ import {
   CheckCircle2,
   Clapperboard,
   Focus,
+  LayoutGrid,
   Loader2,
   Play,
   RefreshCw,
   ShieldCheck,
   Sparkles,
+  Square,
+  X,
 } from "lucide-react";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
@@ -20,7 +23,13 @@ import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   stageKeyFromBlockId,
 } from "@/lib/canvasDramaStudio";
-import { getManhuaCharacterById, getManhuaCharacterPreviewUrl } from "@shared/manhuaCharacterAssetLibrary";
+import {
+  getManhuaCharacterById,
+  getManhuaCharacterDisplayName,
+  getManhuaCharacterPreviewUrl,
+  MANHUA_ART_STYLE_PRESETS,
+  type ManhuaArtStyleId,
+} from "@shared/manhuaCharacterAssetLibrary";
 import { getAncientArchetypeById } from "@shared/manhuaAncientArchetypeLibrary";
 import { getManhuaSceneTemplate } from "@shared/manhuaSceneAssetLibrary";
 import {
@@ -76,6 +85,8 @@ type Props = {
   factoryBusy?: boolean;
   /** 工厂进度一行（如「第2集 · 静帧」） */
   factoryProgress?: string;
+  /** 生成中随时中断（测试不必跑完整条链） */
+  onStopFactory?: () => void;
   canRun?: boolean;
   /** 剧情包已出、尚未确认编剧 */
   writerPackReady?: boolean;
@@ -97,6 +108,8 @@ type Props = {
   }) => void;
   /** 本集所有缺成片/质检失败的片段依次生成 */
   onGenerateMissingFragments?: (shotIndexes: number[]) => void;
+  /** 资产锁定后：一次生成本集全部分镜静帧（主路径） */
+  onGenerateAllEpisodeKeyarts?: () => void;
   /** 成片坞已勾选集：静帧+成片连跑 */
   onRunFullAuto?: () => void;
   onResumeFromFailure?: () => void;
@@ -104,6 +117,8 @@ type Props = {
   onRerunKeyartsFromReverse?: () => void;
   /** 只重跑当前分镜静帧，保留同集其他已完成镜头。 */
   onRerunKeyartShot?: (blockId: string, shotIndex: number) => void;
+  /** 质检软拦：用户仍采用当前镜成片进入成片坞 */
+  onAcceptClipDespiteQc?: (clipBlockId: string) => void;
   onFocusBlock?: (blockId: string) => void;
   /** 确认编剧后：整屏编辑器壳（无圆角卡片、三栏占满视口） */
   immersive?: boolean;
@@ -113,6 +128,18 @@ type Props = {
   previewCanvas?: ReactNode;
   /** 右栏画布工具条（呈现切换等） */
   previewCanvasToolbar?: ReactNode;
+  /** 同集镜间接力：A 静帧←上镜静帧；B 成片←上镜成片末段 */
+  shotContinuity?: {
+    keyartFromPrevStill: boolean;
+    clipFromPrevTail: boolean;
+  };
+  onShotContinuityChange?: (next: {
+    keyartFromPrevStill: boolean;
+    clipFromPrevTail: boolean;
+  }) => void;
+  /** 画风：仿真人 / CG 漫剧（资产设定页可自选） */
+  artStyleId?: ManhuaArtStyleId;
+  onArtStyleChange?: (id: ManhuaArtStyleId) => void;
 };
 
 function blockByStage(blocks: CanvasBlock[], episode: number, stage: string): CanvasBlock | undefined {
@@ -171,6 +198,7 @@ export default function ManhuaScriptWorkbench({
   finalVideoUrl,
   factoryBusy,
   factoryProgress,
+  onStopFactory,
   canRun,
   writerPackReady,
   onConfirmOutline,
@@ -183,19 +211,38 @@ export default function ManhuaScriptWorkbench({
   onSpawnAndRunClip,
   onGenerateFragment,
   onGenerateMissingFragments,
+  onGenerateAllEpisodeKeyarts,
   onRunFullAuto,
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
   onRerunKeyartShot,
+  onAcceptClipDespiteQc,
   onFocusBlock,
   immersive = false,
   previewCanvas,
   previewCanvasToolbar,
+  shotContinuity,
+  onShotContinuityChange,
+  artStyleId,
+  onArtStyleChange,
 }: Props) {
   const dockCanvas = Boolean(previewCanvas);
+  const continuity = shotContinuity || {
+    keyartFromPrevStill: true,
+    clipFromPrevTail: true,
+  };
+  const activeArtStyleId: ManhuaArtStyleId =
+    artStyleId === "photoreal" ? "photoreal" : "cg_drama";
   const [shotIndex, setShotIndex] = useState(0);
   /** 中栏：分镜列表 | 运镜画板（主路径可见） */
   const [scriptTab, setScriptTab] = useState<"shots" | "path">("shots");
+  /**
+   * 右栏本集画布：未出片默认开；有成片后自动收起让出检查空间；用户可再开。
+   * 镜头一多时避免画布长期占满右栏。
+   */
+  const [canvasDockOpen, setCanvasDockOpen] = useState(true);
+  /** 运镜静帧画板：同样不常占位，有成片后默认收起 */
+  const [pathBoardOpen, setPathBoardOpen] = useState(true);
   /** 胶片多选：生成所选 */
   const [selectedShotIndexes, setSelectedShotIndexes] = useState<number[]>([]);
   /** 资产缺图时可跳过进分镜（对标 C2）；可由父级持久化 */
@@ -274,6 +321,25 @@ export default function ManhuaScriptWorkbench({
   const previewUrl = playableClipUrl || mediaUrl(activeKeyart) || anyKeyartUrl;
   const previewIsVideo = Boolean(playableClipUrl);
   const annotateStillUrl = mediaUrl(activeKeyart) || anyKeyartUrl;
+
+  /** 切镜 / 成片出现：未出片展开，已出片收起；用户点开后可临时查看，再切镜会重新按规则收合 */
+  useEffect(() => {
+    if (!dockCanvas) return;
+    setCanvasDockOpen(!playableClipUrl);
+  }, [dockCanvas, playableClipUrl, activeShotNo]);
+
+  useEffect(() => {
+    setPathBoardOpen(!playableClipUrl);
+  }, [playableClipUrl, activeShotNo]);
+
+  const openCanvasDock = () => setCanvasDockOpen(true);
+  const closeCanvasDock = () => setCanvasDockOpen(false);
+  const focusBlockAndOpenCanvas = (blockId: string) => {
+    setCanvasDockOpen(true);
+    onFocusBlock?.(blockId);
+  };
+
+  const showCanvasDock = dockCanvas && canvasDockOpen;
 
   const runGenerateFragment = () => {
     if (onGenerateFragment) {
@@ -497,20 +563,50 @@ export default function ManhuaScriptWorkbench({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            data-manhua-action="generate-fragment"
-            disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
-            onClick={runGenerateFragment}
-            className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
-            title={
-              fragmentGateHint ||
-              `只生成当前片段 ${String(activeShotNo).padStart(2, "0")}（该镜静帧+成片）`
-            }
-          >
-            <Play className="h-3.5 w-3.5" />
-            {factoryBusy ? "生成中…" : `生成片段 ${String(activeShotNo).padStart(2, "0")}`}
-          </button>
+          {factoryBusy && onStopFactory ? (
+            <button
+              type="button"
+              data-manhua-action="stop-factory"
+              onClick={onStopFactory}
+              className="inline-flex items-center gap-1 rounded-lg border border-red-400/50 bg-red-500/20 px-3 py-1.5 text-[11px] font-semibold text-red-50 hover:bg-red-500/30"
+              title="立刻中断当前生成，不必跑完整条链"
+            >
+              <Square className="h-3.5 w-3.5 fill-current" />
+              中断生成
+            </button>
+          ) : (
+            <>
+              {onGenerateAllEpisodeKeyarts ? (
+                <button
+                  type="button"
+                  data-manhua-action="generate-all-keyarts"
+                  disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
+                  onClick={() => onGenerateAllEpisodeKeyarts()}
+                  className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
+                  title={
+                    fragmentGateHint ||
+                    "角色/场景/服装/道具已锁定后，一次出齐本集全部分镜静帧；出图后可单镜改图"
+                  }
+                >
+                  <Play className="h-3.5 w-3.5" />
+                  生成本集全部分镜
+                </button>
+              ) : null}
+              <button
+                type="button"
+                data-manhua-action="generate-fragment"
+                disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
+                onClick={runGenerateFragment}
+                className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/75 hover:bg-white/[0.08] disabled:opacity-45"
+                title={
+                  fragmentGateHint ||
+                  `当前镜 ${String(activeShotNo).padStart(2, "0")} 成片（须已有该镜静帧）`
+                }
+              >
+                {`成片 ${String(activeShotNo).padStart(2, "0")}`}
+              </button>
+            </>
+          )}
           {onGenerateMissingFragments && selectedSorted.length > 0 ? (
             <button
               type="button"
@@ -541,11 +637,58 @@ export default function ManhuaScriptWorkbench({
               data-manhua-action="rerun-keyarts"
               disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
               onClick={() => onRerunKeyartsFromReverse()}
-              title="从编导反推重跑本集多镜静帧，覆盖右栏旧图"
+              title="从编导反推重跑本集多镜静帧，覆盖旧图"
               className="rounded-lg border border-amber-400/40 bg-amber-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/25 disabled:opacity-45"
             >
-              重出静帧
+              重出全部分镜
             </button>
+          ) : null}
+          {onShotContinuityChange ? (
+            <div
+              data-manhua-shot-continuity
+              className="flex flex-wrap items-center gap-1 rounded-lg border border-white/10 bg-white/[0.03] px-1.5 py-1"
+              title="镜间接力：减少人物/场景飘移；可分别关闭"
+            >
+              <span className="px-1 text-[9px] text-white/40">接力</span>
+              <button
+                type="button"
+                data-manhua-continuity="keyart"
+                aria-pressed={continuity.keyartFromPrevStill}
+                onClick={() =>
+                  onShotContinuityChange({
+                    ...continuity,
+                    keyartFromPrevStill: !continuity.keyartFromPrevStill,
+                  })
+                }
+                className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
+                  continuity.keyartFromPrevStill
+                    ? "border border-cyan-400/40 bg-cyan-500/20 text-cyan-50"
+                    : "border border-white/10 text-white/40"
+                }`}
+                title="A：下一镜静帧以上一镜静帧为起点"
+              >
+                静帧←上镜
+              </button>
+              <button
+                type="button"
+                data-manhua-continuity="clip"
+                aria-pressed={continuity.clipFromPrevTail}
+                onClick={() =>
+                  onShotContinuityChange({
+                    ...continuity,
+                    clipFromPrevTail: !continuity.clipFromPrevTail,
+                  })
+                }
+                className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
+                  continuity.clipFromPrevTail
+                    ? "border border-emerald-400/40 bg-emerald-500/20 text-emerald-50"
+                    : "border border-white/10 text-white/40"
+                }`}
+                title="B：下一镜成片承接上一镜成片末段"
+              >
+                成片←上镜
+              </button>
+            </div>
           ) : null}
           {onRunFullAuto ? (
             <button
@@ -614,15 +757,29 @@ export default function ManhuaScriptWorkbench({
           </button>
         </div>
       ) : null}
-      {canGenerateFragment && factoryBusy ? (
+      {factoryBusy ? (
         <div
           data-manhua-status="running"
-          className="shrink-0 border-b border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5"
+          className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-amber-400/25 bg-amber-500/10 px-3 py-1.5"
         >
-          <div className="flex items-center gap-1.5 text-[11px] font-medium text-cyan-50">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {factoryProgress?.trim() ? factoryProgress : "生成中…"}
+          <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-amber-50">
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            <span className="truncate">
+              {factoryProgress?.trim() ? factoryProgress : "生成中…"}
+              <span className="ml-1.5 font-normal text-amber-50/60">可随时中断</span>
+            </span>
           </div>
+          {onStopFactory ? (
+            <button
+              type="button"
+              data-manhua-action="stop-factory-banner"
+              onClick={onStopFactory}
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-red-400/45 bg-red-500/20 px-2.5 py-1 text-[10px] font-semibold text-red-50 hover:bg-red-500/30"
+            >
+              <Square className="h-3 w-3 fill-current" />
+              中断
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -770,7 +927,7 @@ export default function ManhuaScriptWorkbench({
               <div>
                 <div className="text-[13px] font-semibold text-white/90">资产设定</div>
                 <p className="mt-1 text-[11px] leading-5 text-white/45">
-                  先备角色与场景；缺图可跳过，稍后再补。刷新后仍保留跳过状态。
+                  已按剧本预填角色 / 场景 / 道具服装；画风请自选仿真人或 CG（不硬套）。点卡片可改，确认后再进分镜出静帧与成片。
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -779,14 +936,14 @@ export default function ManhuaScriptWorkbench({
                   onClick={() => onOpenCharacterCard?.()}
                   className="rounded-lg border border-white/12 px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.06]"
                 >
-                  角色库
+                  改角色
                 </button>
                 <button
                   type="button"
                   onClick={() => onOpenAssetWall?.()}
                   className="rounded-lg border border-white/12 px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.06]"
                 >
-                  资产墙
+                  改场景·道具·服装
                 </button>
                 {assetsSkipped ? (
                   <button
@@ -803,12 +960,46 @@ export default function ManhuaScriptWorkbench({
                   data-manhua-action="skip-assets"
                   disabled={!outlineComplete}
                   onClick={enterStoryboard}
-                  className="rounded-lg border border-amber-400/40 bg-amber-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-amber-50 disabled:opacity-45"
+                  className="rounded-lg border border-cyan-300/45 bg-cyan-500/20 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
                 >
-                  {hasCastAssets ? "进入分镜视频" : "跳过缺图并继续"}
+                  {hasCastAssets ? "确认资产，进入分镜" : "跳过缺图并进入分镜"}
                 </button>
               </div>
             </div>
+
+            {onArtStyleChange ? (
+              <div
+                data-manhua-art-style
+                className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3"
+              >
+                <div className="text-[11px] font-semibold text-white/75">成片画风（自选，不硬套）</div>
+                <p className="mt-0.5 text-[10px] text-white/40">
+                  仿真人 / CG 漫剧均可；影响静帧与成片，与角色库底栏同步。
+                </p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {MANHUA_ART_STYLE_PRESETS.map((p) => {
+                    const on = activeArtStyleId === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        data-manhua-art-style-id={p.id}
+                        aria-pressed={on}
+                        onClick={() => onArtStyleChange(p.id)}
+                        className={`rounded-lg border px-3 py-2.5 text-left transition ${
+                          on
+                            ? "border-cyan-400/50 bg-cyan-500/15 text-cyan-50"
+                            : "border-white/12 bg-black/30 text-white/65 hover:border-white/25"
+                        }`}
+                      >
+                        <div className="text-[12px] font-semibold">{p.labelZh}</div>
+                        <div className="mt-0.5 text-[10px] text-white/45">{p.shortZh}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
 
             <div
               data-manhua-asset-ready
@@ -863,9 +1054,13 @@ export default function ManhuaScriptWorkbench({
               <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                 <div className="mb-2 flex items-center justify-between text-[11px] font-semibold text-white/70">
                   <span>角色 · {(characters.length || 0) + (archetypes.length || 0)}</span>
-                  <span className="text-[9px] font-normal text-white/35">
-                    {characters.length || archetypes.length ? "已选" : "缺"}
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onOpenCharacterCard?.()}
+                    className="text-[9px] font-normal text-cyan-200/80 hover:text-cyan-100"
+                  >
+                    更换
+                  </button>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5">
                   {characters.map((c) => (
@@ -873,26 +1068,32 @@ export default function ManhuaScriptWorkbench({
                       key={c!.id}
                       type="button"
                       onClick={() => onOpenCharacterCard?.()}
-                      className="overflow-hidden rounded-lg border border-white/12 bg-black/40 text-left"
+                      className="overflow-hidden rounded-lg border border-white/12 bg-black/40 text-left hover:border-cyan-400/40"
+                      title="点击更换角色"
                     >
                       <img
-                        src={getManhuaCharacterPreviewUrl(c!.id)}
+                        src={getManhuaCharacterPreviewUrl(c!.id, { artStyleId: activeArtStyleId })}
                         alt=""
                         className="aspect-square w-full object-cover object-top"
                         loading="lazy"
                       />
                       <div className="truncate px-1 py-0.5 text-[9px] text-white/80">
-                        {c!.nameZh}
+                        {getManhuaCharacterDisplayName(c!.id, {
+                          artStyleId: activeArtStyleId,
+                        }) || c!.nameZh}
                       </div>
                     </button>
                   ))}
                   {archetypes.map((a) => (
-                    <div
+                    <button
                       key={a!.id}
-                      className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-1.5 py-2 text-[9px] text-amber-50"
+                      type="button"
+                      onClick={() => onOpenCharacterCard?.()}
+                      className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-1.5 py-2 text-left text-[9px] text-amber-50 hover:border-amber-300/50"
+                      title="点击更换造型"
                     >
                       {a!.nameZh}
-                    </div>
+                    </button>
                   ))}
                   {!characters.length && !archetypes.length ? (
                     <button
@@ -900,15 +1101,29 @@ export default function ManhuaScriptWorkbench({
                       onClick={() => onOpenCharacterCard?.()}
                       className="col-span-3 rounded-lg border border-dashed border-white/15 px-2 py-6 text-[10px] text-white/40"
                     >
-                      尚未选角色 · 点开角色库
+                      尚未选角色 · 点此更换
                     </button>
                   ) : null}
                 </div>
               </section>
               <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                <div className="mb-2 text-[11px] font-semibold text-white/70">场景</div>
+                <div className="mb-2 flex items-center justify-between text-[11px] font-semibold text-white/70">
+                  <span>场景</span>
+                  <button
+                    type="button"
+                    onClick={() => onOpenAssetWall?.()}
+                    className="text-[9px] font-normal text-cyan-200/80 hover:text-cyan-100"
+                  >
+                    更换
+                  </button>
+                </div>
                 {scene ? (
-                  <div className="overflow-hidden rounded-lg border border-white/12">
+                  <button
+                    type="button"
+                    onClick={() => onOpenAssetWall?.()}
+                    className="w-full overflow-hidden rounded-lg border border-white/12 text-left hover:border-cyan-400/40"
+                    title="点击更换场景"
+                  >
                     {sceneDemos[0] ? (
                       <img
                         src={getManhuaDemoAssetPublicUrl(sceneDemos[0].id)}
@@ -922,20 +1137,27 @@ export default function ManhuaScriptWorkbench({
                       </div>
                     )}
                     <div className="px-2 py-1.5 text-[11px] text-white/80">{scene.nameZh}</div>
-                  </div>
+                  </button>
                 ) : (
                   <button
                     type="button"
                     onClick={() => onOpenAssetWall?.()}
                     className="w-full rounded-lg border border-dashed border-white/15 px-2 py-8 text-[10px] text-white/40"
                   >
-                    尚未选场景 · 点开资产墙
+                    尚未选场景 · 点此更换
                   </button>
                 )}
               </section>
               <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                <div className="mb-2 text-[11px] font-semibold text-white/70">
-                  道具 · {props.length}
+                <div className="mb-2 flex items-center justify-between text-[11px] font-semibold text-white/70">
+                  <span>道具·服装 · {props.length}</span>
+                  <button
+                    type="button"
+                    onClick={() => onOpenAssetWall?.()}
+                    className="text-[9px] font-normal text-cyan-200/80 hover:text-cyan-100"
+                  >
+                    更换
+                  </button>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5">
                   {props.map((p) => (
@@ -943,7 +1165,8 @@ export default function ManhuaScriptWorkbench({
                       key={p!.id}
                       type="button"
                       onClick={() => onOpenAssetWall?.()}
-                      className="overflow-hidden rounded-lg border border-white/12 bg-black/40 text-left"
+                      className="overflow-hidden rounded-lg border border-white/12 bg-black/40 text-left hover:border-cyan-400/40"
+                      title="点击更换道具或服装"
                     >
                       <img
                         src={getManhuaDemoAssetPublicUrl(p!.id)}
@@ -962,7 +1185,7 @@ export default function ManhuaScriptWorkbench({
                       onClick={() => onOpenAssetWall?.()}
                       className="col-span-3 rounded-lg border border-dashed border-white/15 px-2 py-6 text-[10px] text-white/40"
                     >
-                      道具可选 · 缺图可跳过
+                      道具·服装可选 · 点此添加或更换
                     </button>
                   ) : null}
                 </div>
@@ -978,8 +1201,8 @@ export default function ManhuaScriptWorkbench({
         className={
           activePhase !== "storyboard"
             ? "hidden"
-            : immersive
-              ? dockCanvas
+            :             immersive
+              ? showCanvasDock
                 ? "grid min-h-0 min-w-[1280px] flex-1 grid-cols-[200px_minmax(300px,0.85fr)_minmax(480px,1.35fr)] overflow-x-auto overflow-y-hidden"
                 : "grid min-h-0 min-w-[1120px] flex-1 grid-cols-[220px_minmax(420px,1fr)_minmax(380px,440px)] overflow-x-auto overflow-y-hidden"
               : "flex min-h-0 flex-1 overflow-hidden"
@@ -1290,12 +1513,15 @@ export default function ManhuaScriptWorkbench({
                         onClick={() => setShotIndex(i)}
                         className="flex min-w-0 flex-1 gap-2 px-2 py-2 text-left"
                       >
-                        <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-white/10 bg-black/50">
+                        <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-dashed border-amber-400/35 bg-amber-500/10">
                           {thumb ? (
                             <img src={thumb} alt="" className="h-full w-full object-cover" />
                           ) : (
-                            <div className="flex h-full items-center justify-center text-[9px] text-white/30">
-                              {String(shot.index).padStart(2, "0")}
+                            <div className="flex h-full flex-col items-center justify-center gap-0.5 px-0.5 text-center text-amber-100/80">
+                              <span className="text-[9px] font-semibold">
+                                {String(shot.index).padStart(2, "0")}
+                              </span>
+                              <span className="text-[7px] leading-tight">待出图</span>
                             </div>
                           )}
                         </div>
@@ -1335,39 +1561,68 @@ export default function ManhuaScriptWorkbench({
                 })}
               </div>
               <p className="mt-2 text-[10px] leading-snug text-white/35">
-                先出静帧 → 切「运镜」画蓝/红线 → 顶栏「生成片段」。只跑当前镜，其他片段保留。
+                先点「生成本集全部分镜」出齐静帧 → 可单镜改图 → 再点「成片」出当前镜视频。
               </p>
             </>
           ) : (
-            <div className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
-              <p className="text-[10px] leading-snug text-white/45">
-                当前片段静帧上画轨：
-                <span className="text-sky-200">蓝线=镜头运镜</span>
-                ，
-                <span className="text-rose-200">红线=人物动作</span>
-                。画完再点顶栏生成片段。
-              </p>
-              {onPathAnnotationChange ? (
-                <ManhuaPathCameraAnnotatePanel
-                  compact
-                  imageUrl={annotateStillUrl}
-                  value={pathAnnotation}
-                  recipeId={pathRecipeId}
-                  actionRecipeId={actionRecipeId}
-                  disabled={!canRun || factoryBusy}
-                  onChange={onPathAnnotationChange}
-                  onRecipeIdChange={onPathRecipeIdChange}
-                  onActionRecipeIdChange={onActionRecipeIdChange}
-                  translateMotionZh={translateMotionZh}
-                />
+            <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+                <p className="text-[10px] leading-snug text-white/45">
+                  静帧画轨（
+                  <span className="text-sky-200">蓝=镜头</span>
+                  {" · "}
+                  <span className="text-rose-200">红=人物</span>
+                  ）· 有成片后默认收起，不占分镜列表空间
+                </p>
+                {pathBoardOpen ? (
+                  <button
+                    type="button"
+                    onClick={() => setPathBoardOpen(false)}
+                    className="inline-flex items-center gap-1 rounded-md border border-white/12 px-2 py-0.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
+                  >
+                    <X className="h-3 w-3" />
+                    收起画板
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setPathBoardOpen(true)}
+                    className="inline-flex items-center gap-1 rounded-md border border-sky-400/35 bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-50 hover:bg-sky-500/25"
+                  >
+                    <Focus className="h-3 w-3" />
+                    {playableClipUrl ? "打开画板改轨" : "打开画板"}
+                  </button>
+                )}
+              </div>
+              {pathBoardOpen ? (
+                onPathAnnotationChange ? (
+                  <ManhuaPathCameraAnnotatePanel
+                    compact
+                    imageUrl={annotateStillUrl}
+                    value={pathAnnotation}
+                    recipeId={pathRecipeId}
+                    actionRecipeId={actionRecipeId}
+                    disabled={!canRun || factoryBusy}
+                    onChange={onPathAnnotationChange}
+                    onRecipeIdChange={onPathRecipeIdChange}
+                    onActionRecipeIdChange={onActionRecipeIdChange}
+                    translateMotionZh={translateMotionZh}
+                  />
+                ) : (
+                  <p className="rounded-lg border border-white/10 bg-black/30 px-3 py-4 text-[11px] text-white/40">
+                    运镜画板未接线
+                  </p>
+                )
               ) : (
-                <p className="rounded-lg border border-white/10 bg-black/30 px-3 py-4 text-[11px] text-white/40">
-                  运镜画板未接线
+                <p className="rounded-lg border border-dashed border-white/12 bg-white/[0.02] px-3 py-3 text-[11px] leading-relaxed text-white/40">
+                  {playableClipUrl
+                    ? "本镜已有成片，画板已收起。检查视频请看右栏；若要改运镜轨再点「打开画板改轨」。"
+                    : "画板已收起，点上方打开后在静帧上划线。"}
                 </p>
               )}
               {!annotateStillUrl ? (
                 <p className="text-[10px] text-amber-100/70">
-                  尚无本片段静帧。可先「生成片段」出静帧，或切回分镜点「单镜」重出。
+                  尚无本片段静帧。请先点顶栏「生成本集全部分镜」出齐图，再回来改/出片。
                 </p>
               ) : null}
             </div>
@@ -1378,7 +1633,7 @@ export default function ManhuaScriptWorkbench({
         <aside
           data-manhua-column="preview"
           data-manhua-preview-kind={
-            dockCanvas
+            showCanvasDock
               ? "canvas"
               : finalVideoUrl || previewIsVideo
                 ? "video"
@@ -1390,26 +1645,56 @@ export default function ManhuaScriptWorkbench({
           className={
             immersive
               ? "flex min-h-0 flex-col p-2 md:p-2.5"
-              : dockCanvas
+              : showCanvasDock
                 ? "flex min-h-0 w-[min(56vw,640px)] shrink-0 flex-col p-2.5"
                 : "flex min-h-0 w-[440px] shrink-0 flex-col p-2.5 md:p-3"
           }
         >
           <div className="mb-1.5 flex shrink-0 flex-wrap items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/90">
-              {dockCanvas ? "本集画布" : "视频结果"}
+              {showCanvasDock ? "本集画布" : previewIsVideo || finalVideoUrl ? "视频结果" : "预览"}
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
-              {previewCanvasToolbar}
+              {dockCanvas ? (
+                showCanvasDock ? (
+                  <button
+                    type="button"
+                    data-manhua-action="close-canvas-dock"
+                    onClick={closeCanvasDock}
+                    className="inline-flex items-center gap-1 rounded-md border border-white/12 px-2 py-0.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
+                    title="收起画布，腾出空间检查成片"
+                  >
+                    <X className="h-3 w-3" />
+                    收起画布
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    data-manhua-action="open-canvas-dock"
+                    onClick={openCanvasDock}
+                    className="inline-flex items-center gap-1 rounded-md border border-cyan-400/35 bg-cyan-500/15 px-2 py-0.5 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25"
+                    title="打开本集画布（多镜节点）"
+                  >
+                    <LayoutGrid className="h-3 w-3" />
+                    打开画布
+                  </button>
+                )
+              ) : null}
+              {showCanvasDock ? previewCanvasToolbar : null}
               {factoryBusy ? (
                 <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   生成／质检中
                 </span>
-              ) : clipQuality?.status === "failed" ? (
-                <span className="inline-flex items-center gap-1 rounded-full border border-rose-400/45 bg-rose-500/15 px-2 py-0.5 text-[9px] font-semibold text-rose-100">
+              ) : clipQuality?.status === "failed" && clipQuality.userAcceptedDespiteQc ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/45 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50">
                   <AlertTriangle className="h-3 w-3" />
-                  质检未通过
+                  已采用（质检未过）
+                </span>
+              ) : clipQuality?.status === "failed" ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/45 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50">
+                  <AlertTriangle className="h-3 w-3" />
+                  质检提醒
                 </span>
               ) : finalVideoUrl ? (
                 <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[9px] font-semibold text-cyan-100">
@@ -1438,13 +1723,19 @@ export default function ManhuaScriptWorkbench({
           {dockCanvas ? (
             <div
               id="freeform-canvas-zone"
-              className={`relative min-h-0 w-full flex-1 overflow-hidden rounded-lg border bg-[#06080f] ${
-                factoryBusy ? "border-amber-400/35" : "border-white/12"
-              }`}
+              className={
+                showCanvasDock
+                  ? `relative min-h-0 w-full flex-1 overflow-hidden rounded-lg border bg-[#06080f] ${
+                      factoryBusy ? "border-amber-400/35" : "border-white/12"
+                    }`
+                  : "hidden"
+              }
+              aria-hidden={!showCanvasDock}
             >
               {previewCanvas}
             </div>
-          ) : (
+          ) : null}
+          {!showCanvasDock ? (
             <div
               className={`flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden rounded-lg border bg-black ${
                 finalVideoUrl || previewIsVideo
@@ -1464,18 +1755,22 @@ export default function ManhuaScriptWorkbench({
                 )
               ) : (
                 <div className="px-4 text-center text-[11px] leading-relaxed text-white/40">
-                  {factoryBusy ? "正在生成…" : "点「生成」后，静帧 / 成片在此预览"}
+                  {factoryBusy
+                    ? "正在生成…"
+                    : dockCanvas
+                      ? "点「打开画布」调节点，或先生成片段后在此检查成片"
+                      : "点「生成」后，静帧 / 成片在此预览"}
                 </div>
               )}
             </div>
-          )}
+          ) : null}
           <div
             data-manhua-clip-quality={clipQuality?.status || "idle"}
             className={`mt-2 shrink-0 rounded-lg border px-2.5 py-2 ${
               clipQuality?.status === "passed"
                 ? "border-emerald-400/25 bg-emerald-500/[0.07]"
                 : clipQuality?.status === "failed"
-                  ? "border-rose-400/30 bg-rose-500/[0.08]"
+                  ? "border-amber-400/30 bg-amber-500/[0.08]"
                   : "border-white/10 bg-white/[0.025]"
             }`}
           >
@@ -1487,7 +1782,11 @@ export default function ManhuaScriptWorkbench({
               <span className="text-[9px] text-white/35">
                 {clipQuality
                   ? `第 ${clipQuality.attempts} 次 · ${
-                      clipQuality.status === "passed" ? "可进入成片坞" : "已拦截"
+                      clipQuality.status === "passed"
+                        ? "可进入成片坞"
+                        : clipQuality.userAcceptedDespiteQc
+                          ? "已采用（质检未过）"
+                          : "提醒·默认不进坞"
                     }`
                   : factoryBusy
                     ? "生成后自动检查"
@@ -1505,7 +1804,7 @@ export default function ManhuaScriptWorkbench({
                       passed
                         ? "bg-emerald-500/12 text-emerald-100"
                         : failed
-                          ? "bg-rose-500/12 text-rose-100"
+                          ? "bg-amber-500/12 text-amber-50"
                           : "bg-white/[0.035] text-white/35"
                     }`}
                   >
@@ -1522,12 +1821,26 @@ export default function ManhuaScriptWorkbench({
               })}
             </div>
             {clipQuality?.status === "failed" ? (
-              <p className="mt-1.5 line-clamp-3 text-[9px] leading-relaxed text-rose-100/75">
-                {clipQuality.summary}
-                {/文字|设定卡|姓名条|字幕|重出静帧/.test(clipQuality.summary || "")
-                  ? " → 请先重出静帧再生成片段。"
-                  : ""}
-              </p>
+              <div className="mt-1.5 space-y-1.5">
+                <p className="line-clamp-3 text-[9px] leading-relaxed text-amber-50/85">
+                  {clipQuality.summary}
+                  {/文字|设定卡|姓名条|字幕|重出静帧/.test(clipQuality.summary || "")
+                    ? " → 建议重出静帧后再采用。"
+                    : " → 成片可预览；要不要进成片坞由你决定。"}
+                </p>
+                {clip?.id && onAcceptClipDespiteQc && !clipQuality.userAcceptedDespiteQc ? (
+                  <button
+                    type="button"
+                    data-manhua-action="accept-clip-despite-qc"
+                    onClick={() => onAcceptClipDespiteQc(clip.id)}
+                    className="rounded-md border border-amber-400/45 bg-amber-500/20 px-2.5 py-1 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/30"
+                  >
+                    仍采用此片
+                  </button>
+                ) : clipQuality.userAcceptedDespiteQc ? (
+                  <p className="text-[9px] text-amber-100/70">已采用：可进成片坞勾选合成</p>
+                ) : null}
+              </div>
             ) : null}
           </div>
           {((previewUrl && !previewIsVideo) ||
@@ -1565,7 +1878,7 @@ export default function ManhuaScriptWorkbench({
             {activeKeyart?.id ? (
               <button
                 type="button"
-                onClick={() => onFocusBlock?.(activeKeyart.id)}
+                onClick={() => focusBlockAndOpenCanvas(activeKeyart.id)}
                 className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-0.5 text-[10px] text-white/65 hover:bg-white/5"
               >
                 <Focus className="h-3 w-3" /> 静帧节点
@@ -1574,7 +1887,7 @@ export default function ManhuaScriptWorkbench({
             {clip?.id ? (
               <button
                 type="button"
-                onClick={() => onFocusBlock?.(clip.id)}
+                onClick={() => focusBlockAndOpenCanvas(clip.id)}
                 className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-0.5 text-[10px] text-white/65 hover:bg-white/5"
               >
                 <Focus className="h-3 w-3" /> 成片节点
@@ -1672,14 +1985,21 @@ export default function ManhuaScriptWorkbench({
                 shotClip?.status === "done" &&
                 shotClip.manhuaClipQuality?.status === "passed" &&
                 Boolean(mediaUrl(shotClip));
-              const clipFailed = shotClip?.manhuaClipQuality?.status === "failed";
+              const clipAccepted =
+                shotClip?.manhuaClipQuality?.status === "failed" &&
+                shotClip.manhuaClipQuality.userAcceptedDespiteQc &&
+                Boolean(mediaUrl(shotClip));
+              const clipFailed =
+                shotClip?.manhuaClipQuality?.status === "failed" && !clipAccepted;
               const statusLabel = clipPassed
                 ? "成片"
-                : clipFailed
-                  ? "质检失败"
-                  : thumb
-                    ? "静帧"
-                    : "待出";
+                : clipAccepted
+                  ? "已采用"
+                  : clipFailed
+                    ? "质检提醒"
+                    : thumb
+                      ? "静帧"
+                      : "待出";
               const on = i === Math.min(shotIndex, Math.max(shots.length, 1) - 1);
               const dur = shot.durationSec || 5;
               const needsRetry = !clipPassed;
@@ -1695,8 +2015,10 @@ export default function ManhuaScriptWorkbench({
                         ? "border-white/70 ring-1 ring-white/40"
                         : clipPassed
                           ? "border-emerald-400/35"
+                          : clipAccepted
+                            ? "border-amber-400/40"
                           : clipFailed
-                            ? "border-rose-400/40"
+                            ? "border-amber-400/35"
                             : "border-white/12"
                   }`}
                 >
@@ -1723,15 +2045,19 @@ export default function ManhuaScriptWorkbench({
                     onClick={() => setShotIndex(i)}
                     className="block w-full text-left"
                   >
-                    <div className="aspect-video bg-black/70">
+                    <div
+                      className={`aspect-video ${
+                        thumb ? "bg-black/70" : "border border-dashed border-amber-400/30 bg-amber-500/10"
+                      }`}
+                    >
                       {thumb ? (
                         <img src={thumb} alt="" className="h-full w-full object-cover" />
                       ) : (
-                        <div className="flex h-full flex-col items-center justify-center gap-0.5 text-white/30">
+                        <div className="flex h-full flex-col items-center justify-center gap-0.5 text-amber-100/85">
                           <span className="text-[11px] font-semibold">
                             {String(shot.index).padStart(2, "0")}
                           </span>
-                          <span className="text-[8px]">待出</span>
+                          <span className="text-[8px]">待出图</span>
                         </div>
                       )}
                       <span
@@ -1742,10 +2068,10 @@ export default function ManhuaScriptWorkbench({
                               ? "bg-rose-500/90 text-white"
                               : thumb
                                 ? "bg-amber-500/85 text-black"
-                                : "bg-black/65 text-white/55"
+                                : "bg-amber-500/80 text-black"
                         }`}
                       >
-                        {statusLabel}
+                        {statusLabel === "待出" ? "待出图" : statusLabel}
                       </span>
                     </div>
                     <div className="flex items-center justify-between px-1 py-0.5 text-[9px] text-white/65">

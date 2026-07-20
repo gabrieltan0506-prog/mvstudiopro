@@ -8,6 +8,7 @@ import {
   upsertStroke,
   PATH_ANNOTATE_ANCHOR_MIN,
 } from "./manhuaPathCameraAnnotate";
+import { recommendActionCameraFromTopic } from "./manhuaActionCameraRecipeBank";
 import {
   buildPathCameraInjectBlock,
   compilePathCameraRecipeToMotionPrompt,
@@ -101,7 +102,18 @@ describe("manhua path camera + P3 banks", () => {
 
   it("recommends path from topic", () => {
     expect(recommendPathCameraFromTopic("江湖刀光打斗交锋").recipeId).toBe("path_05_action_burst");
+    expect(recommendPathCameraFromTopic("赛场冲刺肢体移位").recipeId).toBe("path_05_action_burst");
     expect(recommendPathCameraFromTopic("证据揭穿翻盘").recipeId).toBe("path_03_evidence_push");
+  });
+
+  it("recommends action camera for match / multi-person / body motion", () => {
+    expect(recommendActionCameraFromTopic("球场决赛人群").recipeId).toBe("action_fpv_stadium");
+    expect(recommendActionCameraFromTopic("追逐奔跑闪避").recipeId).toBe(
+      "action_fight_panorama_track",
+    );
+    expect(recommendActionCameraFromTopic("多人同框群演调度").recipeId).toBe(
+      "action_dual_track_oner",
+    );
   });
 
   it("narrative lighting bank", () => {

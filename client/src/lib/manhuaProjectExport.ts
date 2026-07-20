@@ -8,6 +8,7 @@ import {
   listManhuaDemoAssetsForSceneTemplate,
 } from "@shared/manhuaScenePropDemoCatalog";
 import { getManhuaCharacterPreviewUrl } from "@shared/manhuaCharacterAssetLibrary";
+import { manhuaClipQualityAllowsAssemble } from "@shared/manhuaClipQuality";
 import type { CanvasBlock } from "./canvasTypes";
 import { getBlockEpisodeIndex, stageKeyFromBlockId, type ManhuaFactoryStageKey } from "./canvasDramaStudio";
 
@@ -34,6 +35,14 @@ export type ManhuaClipDockItem = {
   kind: CanvasBlock["kind"];
   clipQuality?: CanvasBlock["manhuaClipQuality"];
 };
+
+/** 成片是否可进坞勾选 / 长片合成（passed 或用户仍采用） */
+export function manhuaClipDockItemAllowsAssemble(item: Pick<ManhuaClipDockItem, "outputUrl" | "clipQuality">): boolean {
+  return manhuaClipQualityAllowsAssemble({
+    outputUrl: item.outputUrl,
+    quality: item.clipQuality,
+  });
+}
 
 const STAGE_FILE: Partial<Record<ManhuaFactoryStageKey, { base: string; extHint: "jpg" | "mp4" | "md" }>> = {
   recap_card: { base: "recap_card", extHint: "jpg" },
@@ -102,7 +111,7 @@ export function collectManhuaClipDockItems(
 export function manhuaClipDockItemHasExportableOutput(item: ManhuaClipDockItem): boolean {
   if (TEXT_EXPORT_STAGES.has(item.stage)) return Boolean(item.outputText?.trim());
   if (item.stage === "clip") {
-    return Boolean(item.outputUrl && item.clipQuality?.status === "passed");
+    return manhuaClipDockItemAllowsAssemble(item);
   }
   return Boolean(item.outputUrl);
 }
@@ -144,7 +153,7 @@ export function collectManhuaAssembleClipsFromDock(
       episodeTitle: it.episodeTitle,
     };
     if (it.episodeTitle) cur.episodeTitle = it.episodeTitle;
-    if (it.stage === "clip" && it.outputUrl && it.clipQuality?.status === "passed") {
+    if (it.stage === "clip" && manhuaClipDockItemAllowsAssemble(it)) {
       cur.clipUrl = it.outputUrl;
     }
     if ((it.stage === "keyart" || it.stage === "recap_card") && it.outputUrl) {

@@ -82,6 +82,8 @@ describe("manhuaScriptWorkbench", () => {
     expect(block).toContain("至少两名");
     expect(block).toContain("禁止套用统一的暖背景加轮廓光模板");
     expect(block).toContain("禁字硬锁");
+    expect(block).toContain("对白硬锁");
+    expect(block).toContain("零可读文字");
     expect(resolveKeyartShotIndex("keyart-e01-s03-abc", "")).toBe(3);
     expect(resolveKeyartShotIndex("keyart-e01-xyz", block)).toBe(2);
   });

@@ -23,6 +23,7 @@ import {
 } from "./canvasDramaStudio";
 import { collectVisionImages, resolveNearestUpstreamImageUrl } from "./canvasTypes";
 import type { CanvasRunDeps } from "./canvasRunBlock";
+import { resolveKeyartShotIndex } from "@shared/manhuaScriptWorkbench";
 
 describe("canvasDramaStudio factory", () => {
   it("spawns seven linked stages with topic (含 Omni 视频改写)", () => {
@@ -99,6 +100,53 @@ describe("canvasDramaStudio factory", () => {
     const beats = blocks.find((b) => b.id.startsWith("beats-"))!;
     expect(beats.prompt).toContain("【手法条目库·原子镜头】");
     expect(beats.prompt).toContain("高反差");
+  });
+
+  it("auto-injects path + action camera for fight topic when ids omitted", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "江湖刀光打斗交锋",
+      writerContext: "雨夜客栈拔刀交锋，比武闪避",
+    });
+    const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
+    const beats = blocks.find((b) => b.id.startsWith("beats-"))!;
+    expect(clip.prompt).toContain("【路径运镜配方】");
+    expect(clip.prompt).toContain("【动作运镜配方】");
+    expect(beats.prompt).toMatch(/打斗|动作运镜|路径运镜/);
+  });
+
+  it("auto-injects path + action for multi-person body motion / match topic", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "校园球赛决赛",
+      writerContext: "多人同框冲刺与肢体移位，观众围观",
+    });
+    const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
+    expect(clip.prompt).toContain("【路径运镜配方】");
+    expect(clip.prompt).toContain("【动作运镜配方】");
+  });
+
+  it("expanded multi-shot keyarts keep scene and character inject", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+      sceneId: "scene_07",
+      ancientArchetypeIds: ["arch_rain_jianghu_dao"],
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id
+        ? {
+            ...b,
+            status: "done" as const,
+            outputText: "1. 推门\n2. 对峙\n3. 拔刀\n4. 收刀",
+          }
+        : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+    const keyarts = expanded.blocks.filter((b) => b.id.startsWith("keyart-"));
+    expect(keyarts.length).toBe(4);
+    for (const k of keyarts) {
+      expect(k.prompt).toMatch(/场景|角色|原型|画风/);
+    }
   });
 
   it("applyFactoryPrefsToBlocks updates reverse mode and craft inject", () => {
@@ -243,11 +291,27 @@ describe("canvasDramaStudio factory", () => {
     expect(orderedClip.filter((id) => id.startsWith("clip-")).length).toBeGreaterThanOrEqual(4);
     const frag2 = resolveManhuaFragmentRunTargets(expanded.blocks, 1, 2);
     expect(frag2.clipId).toMatch(/-s02/);
+    expect(frag2.keyartId).toMatch(/-s02/);
     expect(frag2.forceFromStage).toBe("keyart");
     expect(frag2.targetBlockIds).toEqual([frag2.keyartId, frag2.clipId]);
     expect(filterManhuaFactoryTargetIds(orderedClip, frag2.targetBlockIds)).toEqual(
       frag2.targetBlockIds,
     );
+    // 成片 parent 必须是同镜静帧，禁止全挂第 1 镜
+    for (const clip of clips.filter((b) => /-s\d{2}/.test(b.id))) {
+      const shot = resolveKeyartShotIndex(clip.id, clip.prompt);
+      expect(clip.parentId).toMatch(new RegExp(`-s${String(shot).padStart(2, "0")}`));
+    }
+  });
+
+  it("resolveManhuaFragmentRunTargets refuses clip-only when keyart missing", () => {
+    const { blocks } = spawnManhuaDramaStudio({ topic: "江湖刀客", episodeIndex: 1 });
+    const onlyClip = resolveManhuaFragmentRunTargets(
+      blocks.filter((b) => !b.id.startsWith("keyart-")),
+      1,
+      2,
+    );
+    expect(onlyClip.targetBlockIds).toEqual([]);
   });
 
   it("ensureManhuaFragmentClips lays one clip per shot and targets a single fragment", () => {
