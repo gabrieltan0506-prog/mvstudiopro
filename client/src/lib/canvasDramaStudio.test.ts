@@ -386,9 +386,11 @@ describe("canvasDramaStudio factory", () => {
     expect(key).toContain("仙侠剑修连续");
     expect(key).toContain("【古风原型锚点】");
     expect(key).toContain("【编剧剧种模板");
-    expect(key).toContain("编剧视觉摘要");
+    expect(key).toContain("【视觉提示词简报");
+    expect(key).toContain("女帝青衣佩剑");
     expect(key).toContain("本集主场景优先");
     expect(key).toMatch(/秘境|洞府/);
+    expect(key).not.toContain("## 人物表");
     const next = applyFactoryPrefsToBlocks(blocks, {
       wardrobePropContinuityIds: ["wpc_03_urban_power"],
       characterIds: ["char_f_02", "char_m_02"],

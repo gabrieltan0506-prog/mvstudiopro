@@ -16,6 +16,7 @@ import {
   MANHUA_DRAMA_DEFAULT_PROMPTS,
   type ManhuaDramaStage,
 } from "./videoReversePrompt.js";
+import { compileManhuaScriptVisualBrief } from "./manhuaScriptVisualBrief.js";
 
 export type ScreenwriterGenreTemplate = {
   id: ManhuaSceneGenre | string;
@@ -359,15 +360,21 @@ export function buildManhuaStagePromptWithGenre(
       : "";
 
   const parts = [base];
-  // 静帧也要编剧包视觉摘要 + 剧种调性，否则成图与题材/服化道脱节
+  // 文本阶段可带完整编剧包；静帧必须编排成视觉简报，禁止整段剧本硬灌
   if (
     writerContext &&
-    (stage === "story_brief" ||
-      stage === "character_bible" ||
-      stage === "episode_beats" ||
-      stage === "key_art")
+    (stage === "story_brief" || stage === "character_bible" || stage === "episode_beats")
   ) {
-    parts.push(writerContext.slice(0, stage === "key_art" ? 2800 : 6000));
+    parts.push(writerContext.slice(0, 6000));
+  }
+  if (writerContext && stage === "key_art") {
+    parts.push(
+      compileManhuaScriptVisualBrief(writerContext, {
+        topic,
+        forStage: "key_art",
+        maxChars: 1100,
+      }),
+    );
   }
   if (
     genreBlock &&

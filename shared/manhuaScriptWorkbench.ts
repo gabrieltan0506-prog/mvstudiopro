@@ -196,7 +196,8 @@ export const MANHUA_KEYART_NO_TEXT_EN =
 
 /** 写入静帧 prompt：本镜场面必须带场景/道具/服装配合 */
 export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): string {
-  const camera = String(shot.cameraZh || "");
+  const camera = String(shot.cameraZh || "").trim();
+  const action = String(shot.actionZh || "").trim();
   const framingLock = /全景|远景/.test(camera)
     ? "景别硬锁：全景/远景；人物必须全身入画，并清楚展示环境纵深与人物空间关系，禁止裁到腰部或大腿。"
     : /中近景/.test(camera)
@@ -217,12 +218,15 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
       : castCount >= 2
         ? "人数硬锁：本镜为双人/关系场面，须同框出现至少两名身份可辨的人物（含对视、对峙、递接、并肩），禁止只保留单人肖像或单人特写糊弄。"
         : "人数提示：若分镜动作涉及第二人，必须同框画出，不得省略成单人空镜肖像。";
-
+  const sceneShiftHint = /切到|转场|外景|内景|门外|窗|殿|庙|街|台/.test(action)
+    ? "场景变换：若动作含空间跳转，画面须交代前后景或门窗过渡，禁止无因跳切空棚。"
+    : "";
   return [
     `【分镜 ${shot.index}·静帧】`,
-    `运镜：${shot.cameraZh}`,
+    camera ? `运镜（镜头运动，勿与人物动作混写）：${camera}` : "运镜：承接上镜构图做可读微动",
     framingLock,
-    `动作场面：${shot.actionZh}`,
+    action ? `动作轨迹（主体肢体/身体移位，须有方向与起止）：${action}` : "动作轨迹：落实本镜关键表演",
+    sceneShiftHint,
     castLock,
     "光线硬锁：必须落实本镜动作描述中的具体光向、冷暖与明暗关系；禁止套用统一的暖背景加轮廓光模板。",
     "必须画出本镜人物、场景与点选道具的配合；服装连续与题材时代一致；禁止空镜或错时代穿戴。",
@@ -240,11 +244,12 @@ export function formatWorkbenchClipInjectBlock(shot: ManhuaWorkbenchShot): strin
       ? Math.round(shot.durationSec * 10) / 10
       : 2.5;
   const action = String(shot.actionZh || "").trim() || "落实本镜节拍中的关键动作与道具交互";
+  const camera = String(shot.cameraZh || "").trim() || "承接首镜构图做可读微动";
   return [
     `【分镜 ${shot.index}·片段成片】`,
     `目标时长：约 ${dur} 秒（允许 ±0.8 秒）；勿按整集 10 秒要求本镜。`,
-    `本镜必须演绎的事件：${action}`,
-    `运镜：${String(shot.cameraZh || "").trim() || "承接首镜构图做可读微动"}`,
+    `动作轨迹（主体肢体/身体移位）：${action}`,
+    `运镜（镜头运动，与动作分行执行）：${camera}`,
     "禁止只做空镜走路或纯运镜展示；须出现本镜关键动作、道具交互或人物关系变化中的至少一项。",
     "承接首镜人物身份与服装，不新增无关角色；成片画面无新增可读字幕。",
   ].join("\n");

@@ -37,6 +37,7 @@ import {
   getManhuaDemoAssetPublicUrl,
   listManhuaDemoAssetsForSceneTemplate,
 } from "@shared/manhuaScenePropDemoCatalog";
+import { evaluateManhuaAssetImageGate } from "@shared/manhuaAssetImageGate";
 import {
   parseWorkbenchShotsFromText,
   resolveKeyartShotIndex,
@@ -91,7 +92,7 @@ type Props = {
   /** 剧情包已出、尚未确认编剧 */
   writerPackReady?: boolean;
   onConfirmOutline?: () => void;
-  /** 资产缺图跳过（父级持久化） */
+  /** @deprecated 方案 B 已取消跳过；保留字段仅兼容旧会话 */
   assetsSkipped?: boolean;
   onAssetsSkippedChange?: (skipped: boolean) => void;
   /** 三阶段（父级可持久化） */
@@ -99,6 +100,9 @@ type Props = {
   onWorkflowPhaseChange?: (phase: WorkflowPhaseId) => void;
   onOpenCharacterCard?: () => void;
   onOpenAssetWall?: () => void;
+  /** 确认资产：先按序出角色图→场景图，再进分镜 */
+  onConfirmAssetsAndPrepareImages?: () => void | Promise<void>;
+
   /** 生成当前选中片段（该镜静帧若缺则先出 + 该片段成片） */
   onSpawnAndRunClip?: () => void;
   onGenerateFragment?: (opts: {
@@ -202,12 +206,13 @@ export default function ManhuaScriptWorkbench({
   canRun,
   writerPackReady,
   onConfirmOutline,
-  assetsSkipped: assetsSkippedProp,
-  onAssetsSkippedChange,
+  assetsSkipped: _assetsSkippedProp,
+  onAssetsSkippedChange: _onAssetsSkippedChange,
   workflowPhase: workflowPhaseProp,
   onWorkflowPhaseChange,
   onOpenCharacterCard,
   onOpenAssetWall,
+  onConfirmAssetsAndPrepareImages,
   onSpawnAndRunClip,
   onGenerateFragment,
   onGenerateMissingFragments,
@@ -245,13 +250,6 @@ export default function ManhuaScriptWorkbench({
   const [pathBoardOpen, setPathBoardOpen] = useState(true);
   /** 胶片多选：生成所选 */
   const [selectedShotIndexes, setSelectedShotIndexes] = useState<number[]>([]);
-  /** 资产缺图时可跳过进分镜（对标 C2）；可由父级持久化 */
-  const [assetsSkippedLocal, setAssetsSkippedLocal] = useState(false);
-  const assetsSkipped = assetsSkippedProp ?? assetsSkippedLocal;
-  const setAssetsSkipped = (next: boolean) => {
-    if (assetsSkippedProp === undefined) setAssetsSkippedLocal(next);
-    onAssetsSkippedChange?.(next);
-  };
   const [activePhaseLocal, setActivePhaseLocal] = useState<WorkflowPhaseId>(() =>
     canRun ? "storyboard" : "outline",
   );
@@ -427,18 +425,30 @@ export default function ManhuaScriptWorkbench({
       prev.includes(shotIndex) ? prev.filter((n) => n !== shotIndex) : [...prev, shotIndex],
     );
   };
-  const hasCastAssets = Boolean(
-    characters.length || archetypes.length || scene || props.length,
+  const assetGate = useMemo(
+    () =>
+      evaluateManhuaAssetImageGate({
+        characterIds,
+        ancientArchetypeIds,
+        sceneId,
+        artStyleId: activeArtStyleId,
+        assetBlocks: blocks.filter(
+          (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
+        ),
+      }),
+    [characterIds, ancientArchetypeIds, sceneId, activeArtStyleId, blocks],
   );
   const outlineComplete = Boolean(canRun);
-  const assetsComplete = hasCastAssets || assetsSkipped;
-  /** 未确认大纲，或资产未齐且未跳过 → 禁止空跑分镜成片 */
+  /** 方案 B：剧本确认 + 角色/场景锁定 + 角色图/场景图齐，才可进分镜出片 */
+  const assetsComplete = assetGate.ready;
   const canGenerateFragment = outlineComplete && assetsComplete;
   const fragmentGateHint = !outlineComplete
     ? "请先确认剧本大纲"
-    : !assetsComplete
-      ? "请先完成资产设定，或跳过缺图后继续"
-      : null;
+    : !assetGate.castLocked || !assetGate.sceneLocked
+      ? "请先锁定角色与场景"
+      : !assetsComplete
+        ? assetGate.hintZh || "请先出齐角色图与场景图"
+        : null;
 
   const stageStrip = useMemo(() => {
     const stages = ["story", "bible", "beats", "reverse", "keyart", "clip"] as const;
@@ -475,7 +485,7 @@ export default function ManhuaScriptWorkbench({
   }, [blocks, focusEpisode, episodeKeyarts, episodeClips, activeKeyart?.id, activeClip?.id, legacyClip?.id]);
   const workflowPhases = useMemo(() => {
     const byStage = new Map(stageStrip.map((item) => [item.stage, item]));
-    // 阿硕 C2：大纲确认 → 资产（可跳过缺图）→ 分镜三栏主屏
+    // 大纲确认 → 资产锁定（角色+场景+图）→ 分镜
     const definitions: Array<{
       id: WorkflowPhaseId;
       label: string;
@@ -502,6 +512,12 @@ export default function ManhuaScriptWorkbench({
     }
   }, [outlineComplete, activePhase]);
 
+  useEffect(() => {
+    if (outlineComplete && !assetsComplete && activePhase === "storyboard") {
+      setActivePhase("assets");
+    }
+  }, [outlineComplete, assetsComplete, activePhase]);
+
   const selectPhase = (phase: WorkflowPhaseId) => {
     if (phase === "storyboard" && !outlineComplete) {
       setActivePhase("outline");
@@ -523,9 +539,14 @@ export default function ManhuaScriptWorkbench({
       setActivePhase("outline");
       return;
     }
-    if (!assetsComplete) {
-      setAssetsSkipped(true);
+    if (!assetGate.castLocked || !assetGate.sceneLocked) {
+      return;
     }
+    if (onConfirmAssetsAndPrepareImages) {
+      void onConfirmAssetsAndPrepareImages();
+      return;
+    }
+    if (!assetsComplete) return;
     setActivePhase("storyboard");
   };
 
@@ -741,20 +762,7 @@ export default function ManhuaScriptWorkbench({
       ) : null}
       {outlineComplete && !assetsComplete ? (
         <div className="shrink-0 border-b border-amber-400/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-50/90">
-          资产未齐：请先选角色/场景，或在「资产设定」跳过缺图后再出片
-        </div>
-      ) : null}
-      {outlineComplete && assetsSkipped && !hasCastAssets && activePhase === "storyboard" ? (
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-amber-400/20 bg-amber-500/[0.08] px-3 py-1.5 text-[11px] text-amber-50/85">
-          <span>已跳过资产缺图，成片可能缺角色/场景一致性</span>
-          <button
-            type="button"
-            data-manhua-action="goto-assets-from-banner"
-            onClick={() => setActivePhase("assets")}
-            className="shrink-0 rounded border border-amber-300/35 px-2 py-0.5 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/20"
-          >
-            回去补资产
-          </button>
+          {fragmentGateHint || "请先锁定角色与场景，并出齐角色图 / 场景图后再进分镜"}
         </div>
       ) : null}
       {factoryBusy ? (
@@ -919,7 +927,7 @@ export default function ManhuaScriptWorkbench({
       {activePhase === "assets" ? (
         <div
           data-manhua-phase-panel="assets"
-          data-manhua-assets-skipped={assetsSkipped ? "true" : "false"}
+          data-manhua-assets-ready={assetsComplete ? "true" : "false"}
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6"
         >
           <div className="mx-auto max-w-4xl">
@@ -927,7 +935,8 @@ export default function ManhuaScriptWorkbench({
               <div>
                 <div className="text-[13px] font-semibold text-white/90">资产设定</div>
                 <p className="mt-1 text-[11px] leading-5 text-white/45">
-                  已按剧本预填角色 / 场景 / 道具服装；画风请自选仿真人或 CG（不硬套）。点卡片可改，确认后再进分镜出静帧与成片。
+                  须锁定角色与场景，并先出齐角色图 / 场景图（库内示意或新生成），再进分镜。画风可自选仿真人或
+                  CG；点卡片可改。
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -945,24 +954,23 @@ export default function ManhuaScriptWorkbench({
                 >
                   改场景·道具·服装
                 </button>
-                {assetsSkipped ? (
-                  <button
-                    type="button"
-                    data-manhua-action="unskip-assets"
-                    onClick={() => setAssetsSkipped(false)}
-                    className="rounded-lg border border-white/15 px-2.5 py-1.5 text-[11px] text-white/65 hover:bg-white/[0.06]"
-                  >
-                    撤销跳过
-                  </button>
-                ) : null}
                 <button
                   type="button"
-                  data-manhua-action="skip-assets"
-                  disabled={!outlineComplete}
+                  data-manhua-action="confirm-assets"
+                  disabled={
+                    !outlineComplete || !assetGate.castLocked || !assetGate.sceneLocked || factoryBusy
+                  }
                   onClick={enterStoryboard}
                   className="rounded-lg border border-cyan-300/45 bg-cyan-500/20 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
+                  title={
+                    !assetGate.castLocked || !assetGate.sceneLocked
+                      ? "请先选好角色与场景"
+                      : assetsComplete
+                        ? "进入分镜"
+                        : "将先补齐角色图 / 场景图，再进分镜"
+                  }
                 >
-                  {hasCastAssets ? "确认资产，进入分镜" : "跳过缺图并进入分镜"}
+                  {assetsComplete ? "确认资产，进入分镜" : "确认资产并出角色/场景图"}
                 </button>
               </div>
             </div>
@@ -1039,14 +1047,18 @@ export default function ManhuaScriptWorkbench({
               </span>
               <span
                 className={`rounded-md border px-2 py-0.5 ${
-                  assetsSkipped
-                    ? "border-amber-400/40 bg-amber-500/15 text-amber-50"
-                    : assetsComplete
-                      ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-50"
-                      : "border-rose-400/30 bg-rose-500/10 text-rose-50"
+                  assetsComplete
+                    ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-50"
+                    : "border-rose-400/30 bg-rose-500/10 text-rose-50"
                 }`}
               >
-                {assetsSkipped ? "已跳过缺图" : assetsComplete ? "可进分镜" : "未齐"}
+                {assetsComplete
+                  ? "可进分镜"
+                  : !assetGate.castImagesReady
+                    ? "缺角色图"
+                    : !assetGate.sceneImageReady
+                      ? "缺场景图"
+                      : "未齐"}
               </span>
             </div>
 

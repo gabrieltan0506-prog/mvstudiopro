@@ -4,7 +4,11 @@ import FreeformCanvas from "@/components/canvas/FreeformCanvas";
 import ManhuaClipDock from "@/components/canvas/ManhuaClipDock";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
 import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/lib/canvasTypes";
-import type { CanvasRunDeps } from "@/lib/canvasRunBlock";
+import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
+import {
+  evaluateManhuaAssetImageGate,
+  planManhuaAssetImageSpawns,
+} from "@shared/manhuaAssetImageGate";
 import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   MANHUA_FACTORY_STAGE_ORDER,
@@ -2164,6 +2168,138 @@ export default function OmniCanvas() {
     });
   }, []);
 
+  /** 方案 B：锁定角色+场景后，先出齐角色图→场景图，再进分镜 */
+  const confirmAssetsAndPrepareImages = useCallback(async () => {
+    const sceneId = factorySceneId || recommendedScene?.id || "";
+    const assetBlocks = blocks.filter(
+      (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
+    );
+    const gateInput = {
+      characterIds: selectedCharacterIds,
+      ancientArchetypeIds: factoryAncientArchetypeIds,
+      sceneId,
+      artStyleId: factoryArtStyleId,
+      topic: factoryTopic,
+      assetBlocks,
+    };
+    const gate = evaluateManhuaAssetImageGate(gateInput);
+    if (!gate.castLocked || !gate.sceneLocked) {
+      toast.message("请先锁定角色与场景", {
+        description: "资产设定里选好人物和场景后，再确认。",
+      });
+      setWorkflowPhase("assets");
+      setManhuaAssetDrawer(!gate.castLocked ? "characters" : "assets");
+      return;
+    }
+    setAssetsSkipped(false);
+    if (gate.ready) {
+      setWorkflowPhase("storyboard");
+      toast.message("资产已齐，进入分镜");
+      return;
+    }
+    if (factoryBusy) {
+      toast.message("请等待当前生成结束");
+      return;
+    }
+
+    const plans = planManhuaAssetImageSpawns(gateInput);
+    if (!plans.length) {
+      toast.message(gate.hintZh || "资产图未齐");
+      return;
+    }
+
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setFactoryBusy(true);
+    setFactoryProgress("准备角色/场景图…");
+    try {
+      let working = [...blocks];
+      let originX = working.reduce((m, b) => Math.max(m, b.x + b.width), 60) + 40;
+      const originY = 80;
+      for (let i = 0; i < plans.length; i++) {
+        const plan = plans[i]!;
+        if (ac.signal.aborted) break;
+        let block = working.find((b) => b.id === plan.id);
+        if (!block) {
+          block = defaultCanvasBlock("image", originX, originY + i * 40);
+          block.id = plan.id;
+          block.prompt = plan.prompt;
+          block.aspectRatio = "9:16";
+          block.imageModel = "gpt-image-2";
+          block.imageMode = "generate";
+          block.refImageUrl = undefined;
+          block.width = 360;
+          block.height = 400;
+          working = [...working, block];
+          originX += 40;
+        } else if (!(block.outputUrl || block.outputUrls?.[0])) {
+          block = { ...block, prompt: plan.prompt, status: "idle", error: undefined };
+          working = working.map((b) => (b.id === plan.id ? block! : b));
+        } else {
+          continue;
+        }
+        setBlocks(working);
+        saveCanvasState(working, edges);
+        setFactoryProgress(
+          plan.kind === "charsheet"
+            ? `角色图 · ${plan.labelZh}`
+            : `场景图 · ${plan.labelZh}`,
+        );
+        toast.message(
+          plan.kind === "charsheet" ? `正在出角色图：${plan.labelZh}` : `正在出场景图：${plan.labelZh}`,
+        );
+        const out = await runCanvasBlock(runDeps, block, { visionImages: [], texts: [] });
+        working = working.map((b) =>
+          b.id === plan.id
+            ? {
+                ...b,
+                ...out,
+                status: out.outputUrl || out.outputUrls?.[0] ? ("done" as const) : ("error" as const),
+                error:
+                  out.outputUrl || out.outputUrls?.[0]
+                    ? undefined
+                    : "角色/场景图未返回可用地址",
+              }
+            : b,
+        );
+        setBlocks(working);
+        saveCanvasState(working, edges);
+      }
+      const nextGate = evaluateManhuaAssetImageGate({
+        ...gateInput,
+        assetBlocks: working.filter(
+          (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
+        ),
+      });
+      if (nextGate.ready) {
+        setWorkflowPhase("storyboard");
+        toast.message("角色图 / 场景图已齐，进入分镜");
+      } else {
+        setWorkflowPhase("assets");
+        toast.message(nextGate.hintZh || "资产图仍未齐，请重试或改选有示意封面的场景");
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "资产图生成失败";
+      toast.error("角色/场景图未完成", { description: msg });
+      setWorkflowPhase("assets");
+    } finally {
+      setFactoryBusy(false);
+      setFactoryProgress("");
+      abortRef.current = null;
+    }
+  }, [
+    blocks,
+    edges,
+    factoryAncientArchetypeIds,
+    factoryArtStyleId,
+    factoryBusy,
+    factorySceneId,
+    factoryTopic,
+    recommendedScene?.id,
+    runDeps,
+    selectedCharacterIds,
+  ]);
+
   const runFactory = useCallback(
     async (
       untilStage: ManhuaFactoryStageKey,
@@ -2762,6 +2898,7 @@ export default function OmniCanvas() {
                   }}
                   assetsSkipped={assetsSkipped}
                   onAssetsSkippedChange={setAssetsSkipped}
+                  onConfirmAssetsAndPrepareImages={confirmAssetsAndPrepareImages}
                   workflowPhase={workflowPhase}
                   onWorkflowPhaseChange={setWorkflowPhase}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
@@ -2808,15 +2945,22 @@ export default function OmniCanvas() {
                     void runFactory("clip", { episodeIndexes: [writerFocusEpisode] });
                   }}
                   onGenerateAllEpisodeKeyarts={() => {
-                    const hasCast =
-                      selectedCharacterIds.length > 0 || factoryAncientArchetypeIds.length > 0;
                     const sceneId = factorySceneId || recommendedScene?.id || "";
-                    if (!hasCast || !sceneId) {
-                      toast.message("请先锁定角色与场景", {
-                        description: "资产设定里选好人物和场景后，再一次出齐本集全部分镜。",
+                    const gate = evaluateManhuaAssetImageGate({
+                      characterIds: selectedCharacterIds,
+                      ancientArchetypeIds: factoryAncientArchetypeIds,
+                      sceneId,
+                      artStyleId: factoryArtStyleId,
+                      assetBlocks: blocks.filter(
+                        (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
+                      ),
+                    });
+                    if (!gate.ready) {
+                      toast.message(gate.hintZh || "请先锁定角色与场景并出齐资产图", {
+                        description: "确认资产后会先出角色图 / 场景图，再一次出齐本集全部分镜。",
                       });
                       setWorkflowPhase("assets");
-                      setManhuaAssetDrawer(!hasCast ? "characters" : "assets");
+                      setManhuaAssetDrawer(!gate.castLocked ? "characters" : "assets");
                       return;
                     }
                     setFactoryRunScope("focus");

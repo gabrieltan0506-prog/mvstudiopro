@@ -44,8 +44,9 @@ describe("screenwriterGenreTemplates + scene library", () => {
     expect(key).toContain("校园教室");
     expect(key).toContain("本集主场景优先");
     expect(key).toContain("【编剧剧种模板");
-    expect(key).toContain("编剧视觉摘要");
+    expect(key).toContain("【视觉提示词简报");
     expect(key).toContain("校服领带");
+    expect(key).not.toContain("## 人物表");
   });
 
   it("recommends scene id from topic keywords not only genre default", () => {
