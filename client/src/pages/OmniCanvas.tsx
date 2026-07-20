@@ -113,6 +113,7 @@ import {
   clampWriterEpisodeCount,
   composeWriterPackFactoryContext,
   deriveSeriesTitleFromTopic,
+  importManhuaWriterPackFromText,
   isPlaceholderSeriesTitle,
   writerPackLooksReady,
   type ManhuaWriterPack,
@@ -124,7 +125,7 @@ import {
   MANHUA_SCREENWRITER_TRANSLATE_BRIEF,
 } from "@shared/manhuaScreenwriterTranslate";
 import { trpc } from "@/lib/trpc";
-import { Clapperboard, LayoutTemplate, Loader2, Play, Sparkles, Square, X } from "lucide-react";
+import { Clapperboard, FileUp, LayoutTemplate, Loader2, Play, Sparkles, Square, X } from "lucide-react";
 import { toast } from "sonner";
 
 const MANHUA_FACTORY_DEBUG_MAX = 80;
@@ -379,6 +380,9 @@ export default function OmniCanvas() {
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
   );
   const [writerBusy, setWriterBusy] = useState(false);
+  /** 次要入口：粘贴 / 上传已有剧本 */
+  const [writerImportDraft, setWriterImportDraft] = useState("");
+  const writerImportFileRef = useRef<HTMLInputElement | null>(null);
   const [writerPack, setWriterPack] = useState<ManhuaWriterPack | null>(
     () => initialWriterSession?.writerPack ?? null,
   );
@@ -1532,9 +1536,71 @@ export default function OmniCanvas() {
     pushDebug,
   ]);
 
+  const importWriterRoomFromText = useCallback(
+    (raw: string) => {
+      const text = String(raw || "").trim();
+      if (!text) {
+        toast.error("请先粘贴剧本，或选择 .txt / .md 文件");
+        return;
+      }
+      const res = importManhuaWriterPackFromText(text, {
+        topic: factoryTopic.trim() || undefined,
+        episodeCount: writerEpisodeCount,
+      });
+      if (!res.ok) {
+        toast.error(res.error);
+        pushDebug("importWriterPack:error", {
+          level: "error",
+          detail: res.error,
+          request: text.slice(0, 4000),
+        });
+        return;
+      }
+      setWriterPack(res.pack);
+      setWriterConfirmed(false);
+      setProjectBible(null);
+      setWriterFocusEpisode(1);
+      setWriterEpisodeCount(res.pack.episodeCount);
+      setWriterImportDraft(text);
+      if (!factoryTopic.trim()) {
+        setFactoryTopic(res.pack.seriesTitle);
+      }
+      pushDebug("importWriterPack:ok", {
+        level: "ok",
+        detail: `${res.pack.seriesTitle} · ${res.pack.episodes.length}ep · via=${res.via}`,
+        request: text.slice(0, 4000),
+        response: res.pack.episodes.map((ep) => `第${ep.index}集·${ep.title}`).join("\n"),
+      });
+      toast.success(`已导入 ${res.pack.episodes.length} 集《${res.pack.seriesTitle}》，确认后再进入编导`);
+    },
+    [factoryTopic, writerEpisodeCount, pushDebug],
+  );
+
+  const onWriterImportFile = useCallback(
+    async (file: File | null) => {
+      if (!file) return;
+      const name = file.name.toLowerCase();
+      if (!/\.(txt|md|markdown)$/.test(name) && file.type && !/^text\//i.test(file.type)) {
+        toast.error("请上传 .txt 或 .md 文本文件");
+        return;
+      }
+      if (file.size > 2_000_000) {
+        toast.error("文件过大，请控制在约 2MB 以内");
+        return;
+      }
+      try {
+        const text = await file.text();
+        importWriterRoomFromText(text);
+      } catch {
+        toast.error("读取文件失败，请改用粘贴导入");
+      }
+    },
+    [importWriterRoomFromText],
+  );
+
   const confirmWriterToDirector = useCallback(() => {
     if (!writerPack || !writerPackLooksReady(writerPack)) {
-      toast.error("请先扩写并检查剧情包是否完整");
+      toast.error("请先扩写或导入剧本，并检查剧情包是否完整");
       return;
     }
     setWriterConfirmed(true);
@@ -2555,7 +2621,7 @@ export default function OmniCanvas() {
                 <span className="text-[11px] text-white/40">
                   {writerConfirmed
                     ? "已收起 · 点下方展开可改题材"
-                    : "填题材 → 扩写确认 → 再进工作台"}
+                    : "主路径：题材扩写 · 次要：导入已有剧本"}
                 </span>
               </div>
               <details className="mt-2" open={!writerConfirmed}>
@@ -2666,6 +2732,67 @@ export default function OmniCanvas() {
                   跳过连载扩写
                 </button>
               </div>
+
+              <details className="mt-3 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2">
+                <summary className="cursor-pointer list-none text-[11px] font-medium text-white/55 marker:content-none [&::-webkit-details-marker]:hidden">
+                  <span className="inline-flex items-center gap-1.5">
+                    <FileUp className="h-3.5 w-3.5 text-white/40" />
+                    已有正版剧本？导入文本（粘贴 / .txt / .md）
+                  </span>
+                </summary>
+                <div className="mt-2 border-t border-white/8 pt-2">
+                  <p className="text-[10px] leading-5 text-white/40">
+                    次要入口，不跑扩写。请自行确保版权合规。正文需含「第1集」「第2集」等分集标记，或粘贴平台扩写格式。
+                  </p>
+                  <textarea
+                    value={writerImportDraft}
+                    onChange={(e) => setWriterImportDraft(e.target.value)}
+                    disabled={writerBusy || factoryBusy}
+                    rows={5}
+                    placeholder={"例：\n# 剧名\n\n第1集 标题\n本集剧情…\n片尾钩子：…\n\n第2集 标题\n…"}
+                    className="mt-2 w-full resize-y rounded-xl border border-white/12 bg-black/45 px-3 py-2 text-[12px] leading-5 text-white placeholder:text-white/28 outline-none focus:border-white/25 disabled:opacity-50"
+                  />
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={writerBusy || factoryBusy || !writerImportDraft.trim()}
+                      onClick={() => importWriterRoomFromText(writerImportDraft)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/[0.06] px-3 py-1.5 text-[11px] font-semibold text-white/80 hover:bg-white/[0.1] disabled:opacity-50"
+                    >
+                      导入为剧情包
+                    </button>
+                    <button
+                      type="button"
+                      disabled={writerBusy || factoryBusy}
+                      onClick={() => writerImportFileRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-3 py-1.5 text-[11px] text-white/60 hover:bg-white/[0.06] disabled:opacity-50"
+                    >
+                      选择文件
+                    </button>
+                    <input
+                      ref={writerImportFileRef}
+                      type="file"
+                      accept=".txt,.md,.markdown,text/plain,text/markdown"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        e.target.value = "";
+                        void onWriterImportFile(file);
+                      }}
+                    />
+                    {writerImportDraft.trim() ? (
+                      <button
+                        type="button"
+                        disabled={writerBusy || factoryBusy}
+                        onClick={() => setWriterImportDraft("")}
+                        className="text-[10px] text-white/35 underline-offset-2 hover:text-white/60 hover:underline"
+                      >
+                        清空粘贴区
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </details>
 
               {writerBusy ? (
                 <div className="mt-3 rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-3 py-2.5">

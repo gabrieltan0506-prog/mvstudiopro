@@ -223,6 +223,209 @@ export function writerPackLooksReady(pack: ManhuaWriterPack | null | undefined):
   return hooks.length >= Math.min(pack.episodes.length, 2);
 }
 
+/** 导入已有剧本：字符上限（约 8 万字） */
+export const MANHUA_WRITER_IMPORT_MAX_CHARS = 80_000;
+
+export type ManhuaWriterImportResult =
+  | { ok: true; pack: ManhuaWriterPack; via: "structured" | "episode_markers" }
+  | { ok: false; error: string };
+
+function lastParagraphAsHook(body: string): string {
+  const paras = String(body || "")
+    .split(/\n\s*\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const last = paras[paras.length - 1] || String(body || "").trim();
+  const line = last
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .pop();
+  return String(line || last).slice(0, 200);
+}
+
+function ensureEpisodeHooks(pack: ManhuaWriterPack): ManhuaWriterPack {
+  return {
+    ...pack,
+    episodes: pack.episodes.map((ep) => {
+      const hook = ep.endHook.trim();
+      if (hook.length >= 4) return ep;
+      const derived = lastParagraphAsHook(ep.body);
+      return { ...ep, endHook: derived.length >= 4 ? derived : "悬念未揭，下一集见。" };
+    }),
+  };
+}
+
+function extractFreeformSeriesTitle(md: string, topic?: string): string {
+  const fromHeading =
+    md.match(/^#\s+([^\n#]+)/m)?.[1] ||
+    md.match(/^(?:剧名|系列标题|片名)\s*[:：]\s*([^\n]+)/m)?.[1] ||
+    "";
+  const cleaned = cleanWriterTitleLine(fromHeading);
+  if (!isPlaceholderSeriesTitle(cleaned)) return cleaned.slice(0, 48);
+  const topicFallback = deriveSeriesTitleFromTopic(topic || "");
+  if (topicFallback) return topicFallback;
+  const firstLine = cleanWriterTitleLine(md.split("\n").find((l) => l.trim()) || "");
+  if (firstLine && firstLine.length <= 36 && !/^第\s*\d+\s*集/.test(firstLine)) {
+    return firstLine.slice(0, 48);
+  }
+  return "导入剧本";
+}
+
+type MarkedEpisode = { index: number; title: string; body: string };
+
+function splitByEpisodeMarkers(md: string): MarkedEpisode[] {
+  const re = /(?:^|\n)(?:#{1,3}\s*)?第\s*(\d+)\s*集\s*[：:\-—–]?\s*([^\n]*)/g;
+  const hits: Array<{ index: number; title: string; start: number; headerEnd: number }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(md)) !== null) {
+    const index = Math.floor(Number(m[1]));
+    if (!Number.isFinite(index) || index < 1) continue;
+    const header = m[0];
+    const start = m.index + (header.startsWith("\n") ? 1 : 0);
+    const headerEnd = m.index + header.length;
+    hits.push({
+      index,
+      title: cleanWriterTitleLine(m[2] || "") || `第${index}集`,
+      start,
+      headerEnd,
+    });
+  }
+  if (hits.length < MANHUA_WRITER_EPISODE_MIN) return [];
+  hits.sort((a, b) => a.start - b.start);
+  const out: MarkedEpisode[] = [];
+  for (let i = 0; i < hits.length; i++) {
+    const cur = hits[i]!;
+    const nextStart = hits[i + 1]?.start ?? md.length;
+    const body = md.slice(cur.headerEnd, nextStart).trim();
+    if (body.length < 8) continue;
+    out.push({ index: cur.index, title: cur.title, body });
+  }
+  return out;
+}
+
+function extractHookFromEpisodeBody(body: string): { body: string; endHook: string } {
+  const hookMatch =
+    body.match(/(?:^|\n)(?:#{2,4}\s*)?(?:片尾钩子|结尾钩子|钩子)\s*[:：]?\s*\n+([\s\S]*?)$/i) ||
+    body.match(/(?:^|\n)(?:片尾钩子|结尾钩子|钩子)\s*[:：]\s*([^\n]+)/i);
+  if (hookMatch) {
+    const endHook = String(hookMatch[1] || "").trim();
+    const bodyOnly = body.slice(0, hookMatch.index).trim();
+    return {
+      body: bodyOnly || body.trim(),
+      endHook: endHook.length >= 4 ? endHook.slice(0, 200) : lastParagraphAsHook(bodyOnly || body),
+    };
+  }
+  return { body: body.trim(), endHook: lastParagraphAsHook(body) };
+}
+
+/**
+ * 导入已有剧本（粘贴 / .txt / .md）→ 编剧包。
+ * 优先识别平台扩写结构；否则要求文中含「第N集」分集标记。
+ */
+export function importManhuaWriterPackFromText(
+  raw: string,
+  opts?: { topic?: string; episodeCount?: number },
+): ManhuaWriterImportResult {
+  const text = String(raw || "")
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n/g, "\n")
+    .trim();
+  if (text.length < 80) {
+    return { ok: false, error: "文本太短，请粘贴完整分集剧本（至少两集，建议含「第1集」「第2集」）" };
+  }
+  if (text.length > MANHUA_WRITER_IMPORT_MAX_CHARS) {
+    return { ok: false, error: "文本过长，请控制在约 8 万字以内，或先拆成系列大纲再导入" };
+  }
+
+  const topic = String(opts?.topic || "").trim();
+  const looksStructured =
+    /##\s*系列标题/.test(text) || (/###\s*本集剧情/.test(text) && /##\s*第\s*\d+\s*集/.test(text));
+
+  if (looksStructured) {
+    const markedCount = (text.match(/##\s*第\s*\d+\s*集/g) || []).length;
+    const n = clampWriterEpisodeCount(
+      markedCount >= MANHUA_WRITER_EPISODE_MIN
+        ? markedCount
+        : opts?.episodeCount || MANHUA_WRITER_EPISODE_DEFAULT,
+    );
+    const structured = ensureEpisodeHooks(parseManhuaWriterPack(text, n, { topic }));
+    const solid = structured.episodes.filter((e) => e.body.trim().length >= 8);
+    if (solid.length >= MANHUA_WRITER_EPISODE_MIN && writerPackLooksReady({
+      ...structured,
+      episodes: solid,
+      episodeCount: solid.length,
+      rawMarkdown: text,
+    })) {
+      return {
+        ok: true,
+        pack: {
+          ...structured,
+          episodes: solid.slice(0, MANHUA_WRITER_EPISODE_MAX).map((e, i) => ({
+            ...e,
+            index: i + 1,
+          })),
+          episodeCount: Math.min(solid.length, MANHUA_WRITER_EPISODE_MAX),
+        },
+        via: "structured",
+      };
+    }
+  }
+
+  const marked = splitByEpisodeMarkers(text);
+  if (marked.length < MANHUA_WRITER_EPISODE_MIN) {
+    return {
+      ok: false,
+      error: "未能识别分集。请用「第1集」「第2集」标出至少两集，或粘贴平台扩写格式的剧情包。",
+    };
+  }
+
+  const n = clampWriterEpisodeCount(
+    Math.min(marked.length, opts?.episodeCount || marked.length, MANHUA_WRITER_EPISODE_MAX),
+  );
+  const picked = marked
+    .slice()
+    .sort((a, b) => a.index - b.index)
+    .slice(0, n);
+  const episodes: ManhuaWriterEpisode[] = picked.map((ep, i) => {
+    const split = extractHookFromEpisodeBody(ep.body);
+    return {
+      index: i + 1,
+      title: ep.title || `第${i + 1}集`,
+      body: split.body,
+      endHook: split.endHook.length >= 4 ? split.endHook : "悬念未揭，下一集见。",
+    };
+  });
+
+  const seriesTitle = extractFreeformSeriesTitle(text, topic);
+  const logline =
+    cleanWriterTitleLine(
+      text.match(/(?:^|\n)(?:梗概|一句话|logline)\s*[:：]\s*([^\n]+)/i)?.[1] || "",
+    ).slice(0, 80) || "";
+  const charactersMd =
+    text.match(/##\s*人物表\n+([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() || "";
+  const propsMd = text.match(/##\s*道具表\n+([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() || "";
+  const locationsMd =
+    text.match(/##\s*场景表\n+([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() || "";
+
+  const pack = ensureEpisodeHooks({
+    seriesTitle,
+    logline,
+    charactersMd,
+    propsMd,
+    locationsMd,
+    episodes,
+    rawMarkdown: text,
+    episodeCount: episodes.length,
+  });
+
+  if (!writerPackLooksReady(pack)) {
+    return { ok: false, error: "已识别分集，但内容过短或不完整，请补全每集正文后再导入" };
+  }
+
+  return { ok: true, pack, via: "episode_markers" };
+}
+
 /** 确认进编导后，灌进工厂故事/角色/节拍的上下文块 */
 export function composeWriterPackFactoryContext(pack: ManhuaWriterPack, focusEpisode = 1): string {
   const ep = pack.episodes.find((e) => e.index === focusEpisode) || pack.episodes[0];

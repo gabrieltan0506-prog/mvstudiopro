@@ -725,7 +725,7 @@ export default function ManhuaScriptWorkbench({
               ) : null}
               {!outlineComplete && !writerPackReady ? (
                 <p className="text-[11px] text-amber-100/80">
-                  请先在上方「改题材」完成扩写，再回来确认大纲。
+                  请先在上方「改题材」扩写或导入剧本，再回来确认大纲。
                 </p>
               ) : null}
               {outlineComplete ? (

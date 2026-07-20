@@ -4,6 +4,7 @@ import {
   clampWriterEpisodeCount,
   composeWriterPackFactoryContext,
   deriveSeriesTitleFromTopic,
+  importManhuaWriterPackFromText,
   isPlaceholderSeriesTitle,
   parseManhuaWriterPack,
   writerPackLooksReady,
@@ -96,5 +97,50 @@ describe("manhuaWriterRoom", () => {
     expect(isPlaceholderSeriesTitle("（一句话标题）")).toBe(true);
     expect(placeholder.seriesTitle).toBe(deriveSeriesTitleFromTopic("都市逆袭：程序员绑定剧情改写器"));
     expect(placeholder.seriesTitle).not.toMatch(/^未命名/);
+  });
+
+  it("imports freeform script with episode markers", () => {
+    const raw = `# 花名册上没有我
+
+梗概：改写现实救人，反被系统抹除身份。
+
+第1集 救下她
+高主管把裁员文件夹推到林夏面前。周野改写名单，林夏留下，自己却刷不开门禁。
+
+片尾钩子：系统提示在十秒后切断——
+
+第2集 客服微笑
+秦策劝他再改一次。林夏带他进门，却忽然问：你是谁？
+
+第3集 同名替身
+周野查出额度流向秦策，最后一改让光环倒流，秦策却长出与他相同的脸。
+钩子：现实只允许一名周野存在，被删除的将是——
+`;
+    const res = importManhuaWriterPackFromText(raw);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.via).toBe("episode_markers");
+    expect(res.pack.seriesTitle).toBe("花名册上没有我");
+    expect(res.pack.episodes).toHaveLength(3);
+    expect(writerPackLooksReady(res.pack)).toBe(true);
+    expect(res.pack.episodes[0]!.endHook.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("imports structured expand markdown", () => {
+    const res = importManhuaWriterPackFromText(SAMPLE);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.via).toBe("structured");
+    expect(res.pack.seriesTitle).toBe("深宫棋子");
+    expect(writerPackLooksReady(res.pack)).toBe(true);
+  });
+
+  it("rejects import without episode markers", () => {
+    const res = importManhuaWriterPackFromText(
+      "这是一段没有分集标记的长文。".repeat(20),
+    );
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toMatch(/分集|第1集/);
   });
 });
