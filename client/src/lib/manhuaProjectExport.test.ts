@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { MANHUA_CLIP_QUALITY_KEYS } from "@shared/manhuaClipQuality";
 import { defaultCanvasBlock } from "./canvasTypes";
 import {
+  collectManhuaAssembleClipsFromDock,
   collectManhuaClipDockItems,
   episodeIndexesFromDockSelection,
   exportManhuaProjectZip,
@@ -8,6 +10,19 @@ import {
   selectExportableDockIds,
   summarizeManhuaDockExport,
 } from "./manhuaProjectExport";
+
+const passedQuality = {
+  status: "passed" as const,
+  checks: Object.fromEntries(MANHUA_CLIP_QUALITY_KEYS.map((key) => [key, true])) as Record<
+    (typeof MANHUA_CLIP_QUALITY_KEYS)[number],
+    boolean
+  >,
+  failedKeys: [],
+  summary: "全部通过",
+  raw: "",
+  attempts: 1,
+  reviewedAt: "2026-07-20T00:00:00.000Z",
+};
 
 describe("manhuaProjectExport", () => {
   it("collects keyart/clip/omni/story with outputs, grouped by episode", () => {
@@ -23,6 +38,7 @@ describe("manhuaProjectExport", () => {
     clip.episodeIndex = 2;
     clip.outputUrl = "https://cdn.example/c2.mp4";
     clip.status = "done";
+    clip.manhuaClipQuality = passedQuality;
 
     const idle = defaultCanvasBlock("video", 0, 0);
     idle.id = "clip-e01-c";
@@ -37,6 +53,25 @@ describe("manhuaProjectExport", () => {
     const items = collectManhuaClipDockItems([key, clip, idle, story]);
     expect(items.map((i) => i.blockId)).toEqual(["keyart-e01-a", "story-e01-d", "clip-e02-b"]);
     expect(episodeIndexesFromDockSelection(items, ["clip-e02-b", "keyart-e01-a"])).toEqual([1, 2]);
+  });
+
+  it("keeps failed quality clips visible but blocks export and final assembly", () => {
+    const clip = defaultCanvasBlock("video", 0, 0);
+    clip.id = "clip-e01-failed";
+    clip.episodeIndex = 1;
+    clip.outputUrl = "https://cdn.example/failed.mp4";
+    clip.status = "error";
+    clip.manhuaClipQuality = {
+      ...passedQuality,
+      status: "failed",
+      checks: { ...passedQuality.checks, CHARACTER_MATCH: false },
+      failedKeys: ["CHARACTER_MATCH"],
+      summary: "人物与首镜无关",
+    };
+    const items = collectManhuaClipDockItems([clip]);
+    expect(items).toHaveLength(1);
+    expect(selectExportableDockIds(items)).toEqual([]);
+    expect(collectManhuaAssembleClipsFromDock(items)[0]?.clipUrl).toBeUndefined();
   });
 
   it("includes pending story so dock can select episodes before outputs exist", () => {
@@ -79,6 +114,7 @@ describe("manhuaProjectExport", () => {
           episodeIndex: 1,
           outputUrl: "https://cdn.example/b.mp4",
           status: "done",
+          manhuaClipQuality: passedQuality,
         },
       ]);
       const { blob, filename, manifest, okCount } = await exportManhuaProjectZip({

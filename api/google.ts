@@ -15,6 +15,10 @@ import {
   getOmniFlashInteraction,
   type OmniVideoTask,
 } from "../server/services/geminiOmniInteractions";
+import {
+  buildManhuaClipQualityPrompt,
+  parseManhuaClipQualityMarkdown,
+} from "../shared/manhuaClipQuality";
 export { runVertexUpscaleImage, type VertexUpscaleResult };
 
 /**
@@ -312,6 +316,21 @@ async function fetchImageAsBase64(imageUrl:string){
   return { mimeType, b64: buf.toString("base64"), bytes: buf.length };
 }
 
+async function fetchVideoAsBase64(videoUrl: string) {
+  const url = s(videoUrl).trim();
+  if (!url) throw new Error("missing_video_url");
+  const r = await fetch(url, {
+    redirect: "follow",
+    headers: { "User-Agent": "mvstudiopro/1.0 (+clip-quality)" },
+  });
+  if (!r.ok) throw new Error(`video_fetch_failed:${r.status}`);
+  const mimeType = String(r.headers.get("content-type") || "video/mp4").split(";")[0] || "video/mp4";
+  const buf = Buffer.from(await r.arrayBuffer());
+  if (!buf.length) throw new Error("empty_video");
+  if (buf.length > 30 * 1024 * 1024) throw new Error("video_too_large");
+  return { mimeType, b64: buf.toString("base64"), bytes: buf.length };
+}
+
 export default async function handler(req:VercelRequest,res:VercelResponse){
   try{
     const q:any = req.query || {};
@@ -541,6 +560,65 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       if (!r.ok) return res.status(502).json({ ok: false, status: r.status, error: "video_reverse_failed", raw });
       if (!markdown) return res.status(502).json({ ok: false, error: "empty_markdown", raw });
       return res.status(200).json({ ok: true, markdown, frameCount: images.length, model });
+    }
+
+    // ---------------- 漫剧成片：首镜 + 完整视频智能质检 ----------------
+    if (op === "manhuaClipQualityReview") {
+      const referenceImageUrl = s(b.referenceImageUrl || "").trim();
+      const videoUrl = s(b.videoUrl || "").trim();
+      const expectedContext = s(b.expectedContext || "").trim();
+      if (!referenceImageUrl) return res.status(400).json({ ok: false, error: "missing_reference_image" });
+      if (!videoUrl) return res.status(400).json({ ok: false, error: "missing_video" });
+
+      let image: Awaited<ReturnType<typeof fetchImageAsBase64>>;
+      let video: Awaited<ReturnType<typeof fetchVideoAsBase64>>;
+      try {
+        [image, video] = await Promise.all([
+          fetchImageAsBase64(referenceImageUrl),
+          fetchVideoAsBase64(videoUrl),
+        ]);
+      } catch (fetchErr: any) {
+        return res.status(502).json({
+          ok: false,
+          error: "quality_media_fetch_failed",
+          message: String(fetchErr?.message || fetchErr),
+        });
+      }
+
+      const model = "gemini-3.1-pro-preview";
+      const location = (s(process.env.VERTEX_GEMINI_LOCATION) || "global").trim();
+      const base = baseUrlFor(location);
+      const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
+      const r = await fetchJson(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { text: buildManhuaClipQualityPrompt(expectedContext) },
+                { inlineData: { mimeType: image.mimeType, data: image.b64 } },
+                { inlineData: { mimeType: video.mimeType, data: video.b64 } },
+              ],
+            },
+          ],
+          generationConfig: {
+            maxOutputTokens: 4096,
+            temperature: 0.1,
+            thinkingConfig: { includeThoughts: false, thinkingLevel: "HIGH" },
+          },
+        }),
+      });
+      const raw = r.json ?? r.rawText;
+      const markdown = String((raw as any)?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+      if (!r.ok) return res.status(502).json({ ok: false, status: r.status, error: "quality_review_failed" });
+      if (!markdown) return res.status(502).json({ ok: false, error: "empty_quality_review" });
+      return res.status(200).json({
+        ok: true,
+        report: parseManhuaClipQualityMarkdown(markdown),
+        media: { imageBytes: image.bytes, videoBytes: video.bytes },
+      });
     }
 
     // ---------------- Canvas：多图视觉 → Markdown ----------------

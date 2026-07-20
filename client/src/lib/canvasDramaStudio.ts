@@ -14,6 +14,7 @@ import {
   type CanvasEdge,
 } from "./canvasTypes";
 import { loadCanvasDocumentTexts } from "./canvasDocumentText";
+import { reviewManhuaClipQuality } from "./manhuaClipQuality";
 import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
 import {
@@ -1459,7 +1460,83 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             ? await loadCanvasDocumentTexts(collectDocumentAssets(blockId, working, edges))
             : [];
         const texts = [...collectUpstreamTexts(blockId, working, edges), ...docTexts];
-        const out = await runCanvasBlock(opts.deps, runBlockPayload, { visionImages, texts });
+        let out = await runCanvasBlock(opts.deps, runBlockPayload, { visionImages, texts });
+        let clipQuality: CanvasBlock["manhuaClipQuality"];
+        if (stage === "clip" && out.outputUrl) {
+          const episodeIndex = getBlockEpisodeIndex(current) ?? 1;
+          const keyartCandidates = working
+            .filter(
+              (candidate) =>
+                candidate.id.startsWith("keyart-") &&
+                (getBlockEpisodeIndex(candidate) ?? 1) === episodeIndex &&
+                candidate.status === "done" &&
+                Boolean(candidate.outputUrl || candidate.outputUrls?.[0]),
+            )
+            .sort(
+              (a, b) =>
+                resolveKeyartShotIndex(a.id, a.prompt) - resolveKeyartShotIndex(b.id, b.prompt),
+            )
+            .map((candidate) => ({
+              id: candidate.id,
+              url: candidate.outputUrl || candidate.outputUrls?.[0] || "",
+              prompt: candidate.prompt,
+            }))
+            .filter((candidate) => Boolean(candidate.url));
+          const initialRef = String(
+            runBlockPayload.refImageUrl || visionImages.find((item) => item.url)?.url || "",
+          ).trim();
+          const firstCandidate =
+            keyartCandidates.find((candidate) => candidate.url === initialRef) ||
+            keyartCandidates[0];
+          if (!firstCandidate) throw new Error("缺少可供成片质检的关键静帧");
+
+          const review = async (
+            candidate: (typeof keyartCandidates)[number],
+            attempts: number,
+            videoUrl: string,
+          ) =>
+            reviewManhuaClipQuality({
+              videoUrl,
+              referenceImageUrl: candidate.url,
+              expectedContext: [candidate.prompt, ...texts].filter(Boolean).join("\n\n"),
+              attempts,
+              sourceKeyartId: candidate.id,
+            });
+
+          clipQuality = await review(firstCandidate, 1, out.outputUrl);
+          if (clipQuality.status !== "passed") {
+            const fallbackCandidate = keyartCandidates.find(
+              (candidate) => candidate.id !== firstCandidate.id,
+            );
+            if (fallbackCandidate) {
+              out = await runCanvasBlock(
+                opts.deps,
+                { ...runBlockPayload, refImageUrl: fallbackCandidate.url },
+                { visionImages, texts },
+              );
+              if (!out.outputUrl) throw new Error("智能质检重试未返回成片");
+              clipQuality = await review(fallbackCandidate, 2, out.outputUrl);
+            }
+          }
+
+          if (clipQuality.status !== "passed") {
+            const failedQuality = clipQuality;
+            working = working.map((candidate) =>
+              candidate.id === blockId
+                ? {
+                    ...candidate,
+                    status: "error" as const,
+                    outputUrl: out.outputUrl,
+                    outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : candidate.outputUrls),
+                    manhuaClipQuality: failedQuality,
+                    error: `智能质检不合格：${failedQuality.summary}`,
+                  }
+                : candidate,
+            );
+            publish(working);
+            throw new Error(`智能质检不合格：${failedQuality.summary}`);
+          }
+        }
         let next = working.map((b) =>
           b.id === blockId
             ? {
@@ -1468,6 +1545,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                 outputText: out.outputText,
                 outputUrl: out.outputUrl,
                 outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : b.outputUrls),
+                manhuaClipQuality: clipQuality,
                 error: undefined,
               }
             : b,

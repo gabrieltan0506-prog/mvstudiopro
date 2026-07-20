@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import { Clapperboard, FileText, Image as ImageIcon, LayoutTemplate, Video } from "lucide-react";
+import type { ManhuaClipQualityReport } from "@shared/manhuaClipQuality";
 
 export type CanvasBlockKind = "text" | "image" | "video" | "copy_organize" | "video_reverse";
 
@@ -125,6 +126,8 @@ export type CanvasBlock = {
   pathCameraRecipeId?: string;
   /** 静帧路径标注 JSON（视频节点 I2V 优先于配方） */
   pathAnnotationJson?: unknown;
+  /** 漫剧成片智能质检；失败成片不得进入长片合成。 */
+  manhuaClipQuality?: ManhuaClipQualityReport;
 };
 
 export type CanvasEdge = { fromId: string; toId: string };
