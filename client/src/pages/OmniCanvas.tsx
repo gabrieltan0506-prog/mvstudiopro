@@ -68,6 +68,11 @@ import {
   trySaveLocalClientUpdatedAt,
 } from "@/lib/manhuaCloudDraftSync";
 import {
+  loadManhuaShotContinuityPrefs,
+  saveManhuaShotContinuityPrefs,
+  type ManhuaShotContinuityPrefs,
+} from "@shared/manhuaShotContinuity";
+import {
   MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
   summarizeManhuaPathTrackStatus,
 } from "@shared/manhuaFinalAssemble";
@@ -418,6 +423,9 @@ export default function OmniCanvas() {
   /** 漫剧工厂画布：默认只看本集静帧/成片，避免文本节点墙 */
   const [manhuaCanvasPresentation, setManhuaCanvasPresentation] = useState<"media" | "all">(
     "media",
+  );
+  const [shotContinuity, setShotContinuity] = useState<ManhuaShotContinuityPrefs>(() =>
+    loadManhuaShotContinuityPrefs(),
   );
 
   const openManhuaFactoryCanvas = useCallback(
@@ -2239,6 +2247,7 @@ export default function OmniCanvas() {
               forceFromStage,
               targetBlockIds: opts?.targetBlockIds,
               fragmentShotIndex,
+              shotContinuity,
               skipDone: true,
               signal: ac.signal,
               onBlocksChange: (next) => {
@@ -2348,6 +2357,7 @@ export default function OmniCanvas() {
       selectedCharacterIds,
       selectedPathRecipeIds,
       selectedActionRecipeIds,
+      shotContinuity,
     ],
   );
 
@@ -2634,6 +2644,11 @@ export default function OmniCanvas() {
                   immersive={immersiveWorkbench}
                   blocks={blocks}
                   topic={factoryTopic}
+                  shotContinuity={shotContinuity}
+                  onShotContinuityChange={(next) => {
+                    const saved = saveManhuaShotContinuityPrefs(next);
+                    setShotContinuity(saved);
+                  }}
                   seriesTitle={writerPack?.seriesTitle || projectBible?.seriesTitle}
                   logline={writerPack?.logline || projectBible?.logline}
                   outlineEpisodes={(writerPack?.episodes || []).map((ep) => ({

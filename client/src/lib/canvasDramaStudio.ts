@@ -1620,6 +1620,11 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   onStageSkip?: (blockId: string, label: string) => void;
   onStageRetry?: (blockId: string, label: string, attempt: number, message: string) => void;
   signal?: AbortSignal;
+  /** 同集镜间接力 A/B；默认双开 */
+  shotContinuity?: {
+    keyartFromPrevStill?: boolean;
+    clipFromPrevTail?: boolean;
+  };
 }): Promise<ManhuaFactoryPipelineResult> {
   const stopOnError = opts.stopOnError !== false;
   const skipDone = opts.skipDone !== false;
@@ -1768,15 +1773,56 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           nearestRef && nearestRef !== current.refImageUrl
             ? { ...current, refImageUrl: nearestRef }
             : current;
-        // 多集连续：clip 阶段把上一集成片 URL 注入 refVideoUrl，供 Seedance 末帧/视频参考
-        if (stage === "clip" && !runBlockPayload.refVideoUrl) {
-          const ep = getBlockEpisodeIndex(runBlockPayload);
-          if (ep != null && ep >= 2) {
-            const { resolvePreviousEpisodeClipUrl } = await import("@shared/manhuaClipContinuity");
-            const prevClipUrl = resolvePreviousEpisodeClipUrl(working, ep);
-            if (prevClipUrl) {
-              runBlockPayload = { ...runBlockPayload, refVideoUrl: prevClipUrl };
+        const {
+          normalizeManhuaShotContinuityPrefs,
+          resolvePreviousShotKeyartUrl,
+          resolvePreviousShotClipUrl,
+          MANHUA_SHOT_KEYART_CONTINUITY_HINT_ZH,
+          MANHUA_SHOT_CLIP_CONTINUITY_HINT_ZH,
+        } = await import("@shared/manhuaShotContinuity");
+        const shotCont = normalizeManhuaShotContinuityPrefs(opts.shotContinuity);
+        const epForShot = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
+        const shotForCont = resolveKeyartShotIndex(runBlockPayload.id, runBlockPayload.prompt);
+
+        // A：下一镜静帧 ← 上一镜静帧（edit 底图）
+        if (stage === "keyart" && shotCont.keyartFromPrevStill && shotForCont >= 2) {
+          const prevStill = resolvePreviousShotKeyartUrl(working, epForShot, shotForCont);
+          if (prevStill) {
+            const basePrompt = String(runBlockPayload.prompt || "");
+            runBlockPayload = {
+              ...runBlockPayload,
+              refImageUrl: prevStill,
+              imageMode: "edit",
+              prompt: basePrompt.includes("镜间静帧接力")
+                ? basePrompt
+                : `${basePrompt}\n\n${MANHUA_SHOT_KEYART_CONTINUITY_HINT_ZH}`,
+            };
+          }
+        }
+
+        // B：下一镜成片 ← 上一镜成片（末帧/视频参考）；无同集上镜时再退回跨集
+        if (stage === "clip") {
+          let prevClipUrl: string | undefined;
+          if (shotCont.clipFromPrevTail && shotForCont >= 2) {
+            prevClipUrl = resolvePreviousShotClipUrl(working, epForShot, shotForCont);
+          }
+          if (!prevClipUrl && !runBlockPayload.refVideoUrl) {
+            const ep = getBlockEpisodeIndex(runBlockPayload);
+            if (ep != null && ep >= 2) {
+              const { resolvePreviousEpisodeClipUrl } = await import("@shared/manhuaClipContinuity");
+              prevClipUrl = resolvePreviousEpisodeClipUrl(working, ep);
             }
+          }
+          if (prevClipUrl) {
+            const basePrompt = String(runBlockPayload.prompt || "");
+            runBlockPayload = {
+              ...runBlockPayload,
+              refVideoUrl: prevClipUrl,
+              prompt:
+                shotCont.clipFromPrevTail && !basePrompt.includes("镜间成片接力")
+                  ? `${basePrompt}\n\n${MANHUA_SHOT_CLIP_CONTINUITY_HINT_ZH}`
+                  : basePrompt,
+            };
           }
         }
 

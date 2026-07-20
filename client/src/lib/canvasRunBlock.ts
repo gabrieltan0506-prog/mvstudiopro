@@ -646,7 +646,7 @@ export async function runCanvasBlock(
         videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
       });
     } else {
-      // 工厂 omni_edit-*：上游成片 URL（常经 refImageUrl/refVideoUrl 传入）→ Gemini Omni edit_video
+      // 工厂 omni_edit-* / 镜间接力：有上游成片时 edit_video 承接末段；否则本镜静帧 I2V
       const isOmniEdit = block.id.startsWith("omni_edit-");
       const looksLikeVideo = (u?: string) => Boolean(u && /\.(mp4|mov|webm)(\?|$)/i.test(u));
       const editVideoUrl =
@@ -654,10 +654,18 @@ export async function runCanvasBlock(
         uploadedVideoUrl ||
         (looksLikeVideo(refUrl) ? refUrl : undefined) ||
         upstream.visionImages.find((i) => looksLikeVideo(i.url))?.url;
-      url = await runOmniFlash(motionPrompt, isOmniEdit ? undefined : refUrl, ar, {
-        edit: isOmniEdit || Boolean(editVideoUrl && block.videoModel === "gemini-omni-flash" && looksLikeVideo(editVideoUrl)),
-        videoUrl: isOmniEdit ? editVideoUrl : undefined,
-      });
+      const useVideoContinuity =
+        Boolean(editVideoUrl && looksLikeVideo(editVideoUrl)) &&
+        (isOmniEdit || Boolean(block.refVideoUrl));
+      url = await runOmniFlash(
+        motionPrompt,
+        useVideoContinuity ? undefined : stillRef || refUrl,
+        ar,
+        {
+          edit: useVideoContinuity,
+          videoUrl: useVideoContinuity ? editVideoUrl : undefined,
+        },
+      );
     }
     return { outputUrl: url };
   }

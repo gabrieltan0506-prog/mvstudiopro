@@ -115,6 +115,15 @@ type Props = {
   previewCanvas?: ReactNode;
   /** 右栏画布工具条（呈现切换等） */
   previewCanvasToolbar?: ReactNode;
+  /** 同集镜间接力：A 静帧←上镜静帧；B 成片←上镜成片末段 */
+  shotContinuity?: {
+    keyartFromPrevStill: boolean;
+    clipFromPrevTail: boolean;
+  };
+  onShotContinuityChange?: (next: {
+    keyartFromPrevStill: boolean;
+    clipFromPrevTail: boolean;
+  }) => void;
 };
 
 function blockByStage(blocks: CanvasBlock[], episode: number, stage: string): CanvasBlock | undefined {
@@ -193,8 +202,14 @@ export default function ManhuaScriptWorkbench({
   immersive = false,
   previewCanvas,
   previewCanvasToolbar,
+  shotContinuity,
+  onShotContinuityChange,
 }: Props) {
   const dockCanvas = Boolean(previewCanvas);
+  const continuity = shotContinuity || {
+    keyartFromPrevStill: true,
+    clipFromPrevTail: true,
+  };
   const [shotIndex, setShotIndex] = useState(0);
   /** 中栏：分镜列表 | 运镜画板（主路径可见） */
   const [scriptTab, setScriptTab] = useState<"shots" | "path">("shots");
@@ -574,6 +589,53 @@ export default function ManhuaScriptWorkbench({
             >
               重出静帧
             </button>
+          ) : null}
+          {onShotContinuityChange ? (
+            <div
+              data-manhua-shot-continuity
+              className="flex flex-wrap items-center gap-1 rounded-lg border border-white/10 bg-white/[0.03] px-1.5 py-1"
+              title="镜间接力：减少人物/场景飘移；可分别关闭"
+            >
+              <span className="px-1 text-[9px] text-white/40">接力</span>
+              <button
+                type="button"
+                data-manhua-continuity="keyart"
+                aria-pressed={continuity.keyartFromPrevStill}
+                onClick={() =>
+                  onShotContinuityChange({
+                    ...continuity,
+                    keyartFromPrevStill: !continuity.keyartFromPrevStill,
+                  })
+                }
+                className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
+                  continuity.keyartFromPrevStill
+                    ? "border border-cyan-400/40 bg-cyan-500/20 text-cyan-50"
+                    : "border border-white/10 text-white/40"
+                }`}
+                title="A：下一镜静帧以上一镜静帧为起点"
+              >
+                静帧←上镜
+              </button>
+              <button
+                type="button"
+                data-manhua-continuity="clip"
+                aria-pressed={continuity.clipFromPrevTail}
+                onClick={() =>
+                  onShotContinuityChange({
+                    ...continuity,
+                    clipFromPrevTail: !continuity.clipFromPrevTail,
+                  })
+                }
+                className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
+                  continuity.clipFromPrevTail
+                    ? "border border-emerald-400/40 bg-emerald-500/20 text-emerald-50"
+                    : "border border-white/10 text-white/40"
+                }`}
+                title="B：下一镜成片承接上一镜成片末段"
+              >
+                成片←上镜
+              </button>
+            </div>
           ) : null}
           {onRunFullAuto ? (
             <button
