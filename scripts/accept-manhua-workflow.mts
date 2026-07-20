@@ -351,6 +351,16 @@ async function inspectShell(page: Page) {
         id: phase.dataset.manhuaPhase || "",
         status: phase.dataset.manhuaPhaseStatus || "",
       })),
+      activePhasePanel:
+        (
+          [
+            ...shell?.querySelectorAll<HTMLElement>("[data-manhua-phase-panel]") || [],
+          ].find((el) => {
+            const style = window.getComputedStyle(el);
+            return style.display !== "none" && style.visibility !== "hidden";
+          }) || null
+        )?.dataset.manhuaPhasePanel || "",
+      hasSkipAssets: Boolean(shell?.querySelector("[data-manhua-action='skip-assets']")),
       readyKeyarts: Number(filmstrip?.dataset.manhuaKeyartReady || 0),
       shotCount: Number(filmstrip?.dataset.manhuaShotCount || 0),
       previewKind: preview?.dataset.manhuaPreviewKind || "",
@@ -430,6 +440,33 @@ async function runUiChecks(page: Page) {
     "阿硕三阶段导航（大纲/资产/分镜）",
     first.workflowPhases.map((phase) => phase.id).join(",") === "outline,assets,storyboard",
     JSON.stringify(first.workflowPhases),
+  );
+  check(
+    "UI-07-C2",
+    "默认落在分镜视频三栏主屏",
+    first.activePhasePanel === "storyboard",
+    `panel=${first.activePhasePanel}`,
+  );
+  await page.click("[data-manhua-phase='assets']");
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const assetsPhase = await inspectShell(page);
+  check(
+    "UI-07-C3",
+    "资产设定阶段可切换且可跳过",
+    assetsPhase.activePhasePanel === "assets" && assetsPhase.hasSkipAssets,
+    `panel=${assetsPhase.activePhasePanel} skip=${assetsPhase.hasSkipAssets}`,
+  );
+  await page.click("[data-manhua-phase='storyboard']");
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  const backStoryboard = await inspectShell(page);
+  check(
+    "UI-07-C4",
+    "回到分镜视频仍为三栏主屏",
+    backStoryboard.activePhasePanel === "storyboard" &&
+      backStoryboard.columns.some((c) => c.name === "assets") &&
+      backStoryboard.columns.some((c) => c.name === "script") &&
+      backStoryboard.columns.some((c) => c.name === "preview"),
+    `panel=${backStoryboard.activePhasePanel}`,
   );
   check("UI-07-D", "中栏运镜页签", first.hasPathTab, `pathTab=${first.hasPathTab}`);
   if (first.hasPathTab) {
