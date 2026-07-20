@@ -1840,7 +1840,7 @@ export default function OmniCanvas() {
       )
         .map((n) => Math.floor(n))
         .filter((n) => n >= 1);
-      const uniqueFragmentIndexes = [...new Set(fragmentShotIndexes)];
+      const uniqueFragmentIndexes = Array.from(new Set(fragmentShotIndexes));
       pushDebug("factoryRun:start", {
         detail: `until=${untilStage} · force=${opts?.forceFromStage || "—"} · frag=${uniqueFragmentIndexes.join(",") || "—"}`,
       });
