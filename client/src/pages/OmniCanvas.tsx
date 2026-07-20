@@ -3340,7 +3340,7 @@ export default function OmniCanvas() {
             ) : null}
 
             <p className="mt-3 max-w-4xl text-[11px] leading-5 text-white/40">
-              更高画质档位即将开放 · 文生 / 图生 / 参考生已就绪，待开放；当前成片默认约 15s。
+              更高画质档位即将开放 · 文生 / 图生 / 参考生已就绪，待开放；当前单次成片固定 10s。
               {" · "}
               各集成片就绪后，在下方成片坞一键合成长片（含配乐）。
             </p>

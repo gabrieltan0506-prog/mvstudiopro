@@ -14,13 +14,21 @@ describe("manhuaScriptWorkbench", () => {
     );
     expect(shots).toHaveLength(4);
     expect(shots[0]?.actionZh).toContain("推门");
-    expect(workbenchShotTotalSec(shots)).toBeCloseTo(15, 0);
+    expect(workbenchShotTotalSec(shots)).toBeCloseTo(10, 0);
   });
 
   it("falls back to default skeleton when text is unstructured", () => {
     const shots = parseWorkbenchShotsFromText("只有一段散文没有编号");
     expect(shots.length).toBeGreaterThanOrEqual(3);
     expect(defaultWorkbenchShots().length).toBe(4);
+  });
+
+  it("caps one ten-second clip at four shots", () => {
+    const shots = parseWorkbenchShotsFromText(
+      ["1. 开门建立空间", "2. 走近形成压力", "3. 递出证物", "4. 反应特写", "5. 转身离开"].join("\n"),
+    );
+    expect(shots).toHaveLength(4);
+    expect(workbenchShotTotalSec(shots)).toBe(10);
   });
 
   it("formats shot inject and resolves keyart shot index", () => {

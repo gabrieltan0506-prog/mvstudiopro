@@ -16,7 +16,9 @@ const DEFAULT_CAMERAS = [
   "特写，平视，微推",
 ];
 
-/** 从节拍 / 反推正文拆出多镜；失败则回落为 4 镜骨架（合计约 15s） */
+export const MANHUA_SINGLE_CLIP_DURATION_SEC = 10;
+
+/** 从节拍 / 反推正文拆出多镜；失败则回落为 4 镜骨架（单次合计 10s） */
 export function parseWorkbenchShotsFromText(raw: string | undefined | null): ManhuaWorkbenchShot[] {
   const text = String(raw || "").trim();
   if (!text) return defaultWorkbenchShots();
@@ -41,10 +43,10 @@ export function parseWorkbenchShotsFromText(raw: string | undefined | null): Man
     }
   }
 
-  const unique = Array.from(new Set(numbered)).slice(0, 8);
+  const unique = Array.from(new Set(numbered)).slice(0, MANHUA_SHOT_KEYART_MAX);
   if (unique.length < 2) return defaultWorkbenchShots(text.slice(0, 180));
 
-  const durations = splitDurations(15, unique.length);
+  const durations = splitDurations(MANHUA_SINGLE_CLIP_DURATION_SEC, unique.length);
   return unique.map((actionZh, i) => ({
     index: i + 1,
     durationSec: durations[i]!,
@@ -68,7 +70,7 @@ export function defaultWorkbenchShots(seedAction?: string): ManhuaWorkbenchShot[
         "情绪/信息转折点",
         "集末钩子，引导下一集",
       ];
-  const durations = splitDurations(15, actions.length);
+  const durations = splitDurations(MANHUA_SINGLE_CLIP_DURATION_SEC, actions.length);
   return actions.map((actionZh, i) => ({
     index: i + 1,
     durationSec: durations[i]!,
