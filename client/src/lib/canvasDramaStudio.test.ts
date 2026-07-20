@@ -114,6 +114,16 @@ describe("canvasDramaStudio factory", () => {
     expect(beats.prompt).toMatch(/打斗|动作运镜|路径运镜/);
   });
 
+  it("auto-injects path + action for multi-person body motion / match topic", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "校园球赛决赛",
+      writerContext: "多人同框冲刺与肢体移位，观众围观",
+    });
+    const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
+    expect(clip.prompt).toContain("【路径运镜配方】");
+    expect(clip.prompt).toContain("【动作运镜配方】");
+  });
+
   it("expanded multi-shot keyarts keep scene and character inject", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "江湖刀客雨夜客栈",

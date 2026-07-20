@@ -763,7 +763,7 @@ export default function OmniCanvas() {
     }
   }, [recommendedMotion.motionId, motionManual]);
 
-  /** 运镜/动作推荐：题材 + 本集剧本正文（打斗等关键词） */
+  /** 运镜/动作推荐：题材 + 本集剧本（打斗/比赛/多人/肢体移位等） */
   const craftHintBlob = useMemo(() => {
     const parts = [factoryTopic.trim()];
     if (writerPack) {
@@ -3730,7 +3730,7 @@ export default function OmniCanvas() {
                 />
                 <p className="text-[10px] text-white/35">
                   {!pathRecipeManual || !actionRecipeManual
-                    ? "已按题材/本集剧情自动带入运镜与动作（可改）。"
+                    ? "已按题材/本集剧情自动带入运镜与动作轨迹（打斗、比赛、多人、肢体移位等，可改）。"
                     : ""}
                   {recommendedPath.reasonZh}
                   {recommendedAction.reasonZh ? ` · ${recommendedAction.reasonZh}` : ""}
