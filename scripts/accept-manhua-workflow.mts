@@ -361,6 +361,13 @@ async function inspectShell(page: Page) {
           }) || null
         )?.dataset.manhuaPhasePanel || "",
       hasSkipAssets: Boolean(shell?.querySelector("[data-manhua-action='skip-assets']")),
+      hasGenerateMissing: Boolean(
+        shell?.querySelector("[data-manhua-action='generate-missing-fragments']"),
+      ),
+      shotMountMode:
+        shell?.querySelector<HTMLElement>("[data-manhua-column='assets']")?.dataset
+          .manhuaShotMount || "",
+      shotMountTitle: /本片段挂载/.test(shellText),
       readyKeyarts: Number(filmstrip?.dataset.manhuaKeyartReady || 0),
       shotCount: Number(filmstrip?.dataset.manhuaShotCount || 0),
       previewKind: preview?.dataset.manhuaPreviewKind || "",
@@ -467,6 +474,14 @@ async function runUiChecks(page: Page) {
       backStoryboard.columns.some((c) => c.name === "script") &&
       backStoryboard.columns.some((c) => c.name === "preview"),
     `panel=${backStoryboard.activePhasePanel}`,
+  );
+  check(
+    "UI-07-C5",
+    "左栏本片段挂载随选片段",
+    backStoryboard.shotMountTitle &&
+      (backStoryboard.shotMountMode === "matched" ||
+        backStoryboard.shotMountMode === "default"),
+    `title=${backStoryboard.shotMountTitle} mode=${backStoryboard.shotMountMode}`,
   );
   check("UI-07-D", "中栏运镜页签", first.hasPathTab, `pathTab=${first.hasPathTab}`);
   if (first.hasPathTab) {
