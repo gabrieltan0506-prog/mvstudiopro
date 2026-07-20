@@ -389,6 +389,12 @@ export default function OmniCanvas() {
   const [directorUnlocked, setDirectorUnlocked] = useState(
     () => Boolean(initialWriterSession?.directorUnlocked),
   );
+  const [assetsSkipped, setAssetsSkipped] = useState(
+    () => Boolean(initialWriterSession?.assetsSkipped),
+  );
+  const [workflowPhase, setWorkflowPhase] = useState<"outline" | "assets" | "storyboard">(
+    () => initialWriterSession?.workflowPhase || (initialWriterSession?.writerConfirmed ? "storyboard" : "outline"),
+  );
   /** 工厂运行范围：焦点集（默认）或成片坞已勾选集 */
   const [factoryRunScope, setFactoryRunScope] = useState<"focus" | "dock">("focus");
   const [dockSelectedIds, setDockSelectedIds] = useState<Set<string>>(() => new Set());
@@ -760,6 +766,8 @@ export default function OmniCanvas() {
       directorUnlocked,
       projectBible,
       manhuaUiMode,
+      assetsSkipped,
+      workflowPhase,
     });
   }, [
     factoryTopic,
@@ -771,6 +779,8 @@ export default function OmniCanvas() {
     directorUnlocked,
     projectBible,
     manhuaUiMode,
+    assetsSkipped,
+    workflowPhase,
   ]);
 
   /** 抽屉改造型后回写 Bible cast（保留 confirmedAt 与剧情正文） */
@@ -2339,7 +2349,12 @@ export default function OmniCanvas() {
                   writerPackReady={Boolean(writerPack && writerPackLooksReady(writerPack))}
                   onConfirmOutline={() => {
                     confirmWriterToDirector();
+                    setWorkflowPhase("assets");
                   }}
+                  assetsSkipped={assetsSkipped}
+                  onAssetsSkippedChange={setAssetsSkipped}
+                  workflowPhase={workflowPhase}
+                  onWorkflowPhaseChange={setWorkflowPhase}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
                   onFocusBlock={(id) => {

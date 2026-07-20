@@ -27,6 +27,10 @@ export type ManhuaWriterSession = {
   directorUnlocked: boolean;
   projectBible: ManhuaProjectBible | null;
   manhuaUiMode: "workbench" | "form";
+  /** 资产设定缺图时用户选择跳过；硬刷新后仍可进分镜 */
+  assetsSkipped: boolean;
+  /** 工作台三阶段：大纲 / 资产 / 分镜 */
+  workflowPhase: "outline" | "assets" | "storyboard";
 };
 
 export type ManhuaWriterSessionPartial = Partial<Omit<ManhuaWriterSession, "format">> & {
@@ -62,6 +66,15 @@ function normalizeWriterPack(raw: unknown): ManhuaWriterPack | null {
 
 export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): ManhuaWriterSession {
   const mode = input.manhuaUiMode === "form" ? "form" : "workbench";
+  const writerConfirmed = Boolean(input.writerConfirmed);
+  const workflowPhase =
+    input.workflowPhase === "outline" ||
+    input.workflowPhase === "assets" ||
+    input.workflowPhase === "storyboard"
+      ? input.workflowPhase
+      : writerConfirmed
+        ? "storyboard"
+        : "outline";
   return {
     format: MANHUA_WRITER_SESSION_FORMAT,
     topic: String(input.topic || "").trim(),
@@ -69,10 +82,12 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     episodeCount: clampWriterEpisodeCount(input.episodeCount),
     focusEpisode: Math.max(1, Math.floor(Number(input.focusEpisode) || 1)),
     writerPack: normalizeWriterPack(input.writerPack),
-    writerConfirmed: Boolean(input.writerConfirmed),
+    writerConfirmed,
     directorUnlocked: Boolean(input.directorUnlocked),
     projectBible: parseManhuaProjectBible(input.projectBible),
     manhuaUiMode: mode,
+    assetsSkipped: Boolean(input.assetsSkipped),
+    workflowPhase,
   };
 }
 
