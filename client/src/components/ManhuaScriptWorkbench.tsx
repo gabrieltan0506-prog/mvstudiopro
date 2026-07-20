@@ -1339,8 +1339,8 @@ export default function ManhuaScriptWorkbench({
               </p>
             </>
           ) : (
-            <div className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
-              <p className="text-[10px] leading-snug text-white/45">
+            <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
+              <p className="shrink-0 text-[10px] leading-snug text-white/45">
                 当前片段静帧上画轨：
                 <span className="text-sky-200">蓝线=镜头运镜</span>
                 ，
