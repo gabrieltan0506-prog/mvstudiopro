@@ -1995,7 +1995,12 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                     );
                     if (out.outputUrl) {
                       clipQuality = await review(
-                        { id: freshKey.id, url: freshUrl, prompt: freshKey.prompt },
+                        {
+                          id: freshKey.id,
+                          url: freshUrl,
+                          prompt: freshKey.prompt,
+                          shotIndex: resolveKeyartShotIndex(freshKey.id, freshKey.prompt),
+                        },
                         2,
                         out.outputUrl,
                       );

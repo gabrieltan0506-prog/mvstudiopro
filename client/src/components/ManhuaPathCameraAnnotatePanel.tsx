@@ -435,6 +435,10 @@ export default function ManhuaPathCameraAnnotatePanel({
         生成片段时跟轨；成片画面不显示参考线。
       </p>
 
+      {/*
+        compact 禁止「w-full + max-h」：宽栏下会把 9:16 压成横缝，object-cover 只露一条，无法划线。
+        用 max-w 锁定宽度，由 aspect-ratio 推出完整竖幅高度。
+      */}
       <div
         ref={surfaceRef}
         role="presentation"
@@ -442,10 +446,6 @@ export default function ManhuaPathCameraAnnotatePanel({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        {/*
-          compact 禁止「w-full + max-h」：宽栏下会把 9:16 压成横缝，object-cover 只露一条，无法划线。
-          用 max-w 锁定宽度，由 aspect-ratio 推出完整竖幅高度。
-        */}
         className={`relative mx-auto shrink-0 touch-none overflow-hidden rounded-lg border border-white/20 bg-black/60 shadow-inner ${
           compact
             ? "aspect-[9/16] w-full max-w-[min(100%,20rem)]"
