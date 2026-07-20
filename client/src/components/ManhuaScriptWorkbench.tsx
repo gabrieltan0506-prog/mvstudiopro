@@ -10,6 +10,7 @@ import {
   Focus,
   Loader2,
   Play,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
@@ -67,6 +68,8 @@ type Props = {
   onResumeFromFailure?: () => void;
   /** 从编导反推强制重跑本集静帧（覆盖旧图；工作台主路径入口） */
   onRerunKeyartsFromReverse?: () => void;
+  /** 只重跑当前分镜静帧，保留同集其他已完成镜头。 */
+  onRerunKeyartShot?: (blockId: string, shotIndex: number) => void;
   onFocusBlock?: (blockId: string) => void;
   /** 确认编剧后：整屏编辑器壳（无圆角卡片、三栏占满视口） */
   immersive?: boolean;
@@ -126,6 +129,7 @@ export default function ManhuaScriptWorkbench({
   onRunFullAuto,
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
+  onRerunKeyartShot,
   onFocusBlock,
   immersive = false,
 }: Props) {
@@ -212,6 +216,36 @@ export default function ManhuaScriptWorkbench({
       };
     });
   }, [blocks, focusEpisode, episodeKeyarts, activeKeyart?.id]);
+  const workflowPhases = useMemo(() => {
+    const byStage = new Map(stageStrip.map((item) => [item.stage, item]));
+    const definitions = [
+      {
+        id: "story",
+        label: "集故事",
+        stages: ["story", "bible"] as const,
+        blockId: byStage.get("story")?.blockId,
+      },
+      {
+        id: "storyboard",
+        label: "资产与分镜",
+        stages: ["beats", "reverse", "keyart"] as const,
+        blockId: byStage.get("keyart")?.blockId || byStage.get("reverse")?.blockId,
+      },
+      {
+        id: "clip",
+        label: "成片质检",
+        stages: ["clip"] as const,
+        blockId: byStage.get("clip")?.blockId,
+      },
+    ];
+    let foundCurrent = false;
+    return definitions.map((phase, index) => {
+      const complete = phase.stages.every((stage) => byStage.get(stage)?.has);
+      const current = !complete && !foundCurrent;
+      if (current) foundCurrent = true;
+      return { ...phase, index: index + 1, complete, current };
+    });
+  }, [stageStrip]);
 
   return (
     <div
@@ -323,6 +357,54 @@ export default function ManhuaScriptWorkbench({
           </div>
         </div>
       ) : null}
+
+      <div
+        data-manhua-workflow-rail
+        className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-white/10 bg-white/[0.018] px-3 py-1.5"
+      >
+        <span className="mr-1 shrink-0 text-[9px] font-semibold tracking-[0.14em] text-white/30">
+          工作流
+        </span>
+        {workflowPhases.map((phase, index) => (
+          <div key={phase.id} className="flex min-w-0 flex-1 items-center gap-1.5">
+            <button
+              type="button"
+              data-manhua-phase={phase.id}
+              data-manhua-phase-status={
+                phase.complete ? "complete" : phase.current ? "current" : "pending"
+              }
+              disabled={!phase.blockId}
+              onClick={() => phase.blockId && onFocusBlock?.(phase.blockId)}
+              className={`flex min-w-[130px] flex-1 items-center gap-2 rounded-md border px-2.5 py-1 text-left ${
+                phase.complete
+                  ? "border-emerald-400/25 bg-emerald-500/[0.08] text-emerald-50"
+                  : phase.current
+                    ? "border-cyan-400/45 bg-cyan-500/[0.12] text-cyan-50"
+                    : "border-white/10 bg-white/[0.025] text-white/40"
+              } disabled:cursor-default`}
+            >
+              <span
+                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${
+                  phase.complete
+                    ? "bg-emerald-400 text-emerald-950"
+                    : phase.current
+                      ? "bg-cyan-300 text-cyan-950"
+                      : "bg-white/10 text-white/45"
+                }`}
+              >
+                {phase.complete ? <CheckCircle2 className="h-3 w-3" /> : phase.index}
+              </span>
+              <span className="truncate text-[10px] font-semibold">{phase.label}</span>
+              <span className="ml-auto shrink-0 text-[8px] opacity-60">
+                {phase.complete ? "已完成" : phase.current ? "当前" : "待开始"}
+              </span>
+            </button>
+            {index < workflowPhases.length - 1 ? (
+              <span aria-hidden className="h-px w-3 shrink-0 bg-white/15" />
+            ) : null}
+          </div>
+        ))}
+      </div>
 
       {/* 阿硕工作流：左本集资产｜中片段脚本｜右视频结果；窄屏保持桌面比例并横移 */}
       <div
@@ -557,42 +639,59 @@ export default function ManhuaScriptWorkbench({
                 episodeKeyarts[i];
               const thumb = mediaUrl(shotKey);
               return (
-                <button
+                <div
                   key={shot.index}
-                  type="button"
                   data-manhua-shot={shot.index}
                   data-manhua-active={on ? "true" : "false"}
                   data-manhua-keyart-url={thumb || ""}
-                  onClick={() => setShotIndex(i)}
-                  className={`flex w-full gap-2 rounded-lg border px-2 py-2 text-left transition ${
+                  className={`flex w-full items-stretch rounded-lg border text-left transition ${
                     on
                       ? "border-cyan-400/50 bg-cyan-500/15"
                       : "border-white/10 bg-white/[0.03] hover:border-white/20"
                   }`}
                 >
-                  <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-white/10 bg-black/50">
-                    {thumb ? (
-                      <img src={thumb} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-[9px] text-white/30">
-                        {String(shot.index).padStart(2, "0")}
+                  <button
+                    type="button"
+                    onClick={() => setShotIndex(i)}
+                    className="flex min-w-0 flex-1 gap-2 px-2 py-2 text-left"
+                  >
+                    <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-white/10 bg-black/50">
+                      {thumb ? (
+                        <img src={thumb} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-[9px] text-white/30">
+                          {String(shot.index).padStart(2, "0")}
+                        </div>
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-semibold text-white/90">
+                          分镜 {shot.index}
+                          <span className="ml-2 font-normal text-white/45">{shot.durationSec}s</span>
+                        </span>
+                        {on ? <Sparkles className="h-3.5 w-3.5 shrink-0 text-cyan-200" /> : null}
                       </div>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] font-semibold text-white/90">
-                        分镜 {shot.index}
-                        <span className="ml-2 font-normal text-white/45">{shot.durationSec}s</span>
-                      </span>
-                      {on ? <Sparkles className="h-3.5 w-3.5 shrink-0 text-cyan-200" /> : null}
+                      <div className="mt-0.5 text-[10px] text-cyan-100/70">{shot.cameraZh}</div>
+                      <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-white/70">
+                        {shot.actionZh}
+                      </div>
                     </div>
-                    <div className="mt-0.5 text-[10px] text-cyan-100/70">{shot.cameraZh}</div>
-                    <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-white/70">
-                      {shot.actionZh}
-                    </div>
-                  </div>
-                </button>
+                  </button>
+                  {shotKey?.id && onRerunKeyartShot ? (
+                    <button
+                      type="button"
+                      data-manhua-action="rerun-shot"
+                      disabled={!canRun || factoryBusy}
+                      onClick={() => onRerunKeyartShot(shotKey.id, shot.index)}
+                      className="flex w-11 shrink-0 flex-col items-center justify-center gap-1 border-l border-white/10 text-[9px] text-amber-100/75 hover:bg-amber-500/10 disabled:opacity-35"
+                      title={`只重出第 ${shot.index} 镜，保留其他镜头`}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      单镜
+                    </button>
+                  ) : null}
+                </div>
               );
             })}
           </div>

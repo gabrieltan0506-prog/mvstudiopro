@@ -7,6 +7,7 @@ import {
   extractFactoryMotionHints,
   filterBlocksByEpisode,
   getBlockEpisodeIndex,
+  filterManhuaFactoryTargetIds,
   isTransientFactoryError,
   manhuaEpisodeHasFactoryChain,
   replaceManhuaEpisodeChain,
@@ -426,6 +427,20 @@ slow push, crystal glow
     expect(resolveManhuaFactoryOrderedIds(blocks, "reverse")).toHaveLength(4);
     expect(resolveManhuaFactoryOrderedIds(blocks, "keyart")).toHaveLength(5);
     expect(resolveManhuaFactoryOrderedIds(blocks, "clip")).toHaveLength(6);
+  });
+
+  it("limits a manual rerun to the selected shot keyart", () => {
+    const ordered = [
+      "story-e01-a",
+      "reverse-e01-a",
+      "keyart-e01-s01-a",
+      "keyart-e01-s02-a",
+      "clip-e01-a",
+    ];
+    expect(filterManhuaFactoryTargetIds(ordered, ["keyart-e01-s02-a"])).toEqual([
+      "keyart-e01-s02-a",
+    ]);
+    expect(filterManhuaFactoryTargetIds(ordered)).toEqual(ordered);
   });
 
   it("applies topic to existing story node", () => {

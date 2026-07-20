@@ -1040,6 +1040,15 @@ export function resolveManhuaFactoryOrderedIds(
   return ids;
 }
 
+export function filterManhuaFactoryTargetIds(
+  orderedIds: string[],
+  targetBlockIds?: string[],
+): string[] {
+  if (!targetBlockIds?.length) return orderedIds;
+  const targets = new Set(targetBlockIds);
+  return orderedIds.filter((id) => targets.has(id));
+}
+
 function stripShotInjectSection(prompt: string): string {
   return stripMarkedSection(String(prompt || ""), "【分镜");
 }
@@ -1315,6 +1324,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   episodeIndex?: number | null;
   /** 从该阶段开始强制重跑（含）；之前的 done 仍跳过 */
   forceFromStage?: ManhuaFactoryStageKey;
+  /** 仅执行这些已铺好的节点；用于工作台单镜重出，不重跑同集其他静帧。 */
+  targetBlockIds?: string[];
   skipDone?: boolean;
   stopOnError?: boolean;
   /** 单阶段瞬时失败重试次数（不含首次），默认 2 */
@@ -1362,6 +1373,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     opts.untilStage ?? "clip",
     opts.episodeIndex,
   );
+  orderedIds = filterManhuaFactoryTargetIds(orderedIds, opts.targetBlockIds);
   const forceIdx = opts.forceFromStage
     ? MANHUA_FACTORY_STAGE_ORDER.indexOf(opts.forceFromStage)
     : -1;

@@ -1782,6 +1782,8 @@ export default function OmniCanvas() {
         forceFromStageByEpisode?: Partial<Record<number, ManhuaFactoryStageKey>>;
         /** 覆盖运行范围解析出的集号列表 */
         episodeIndexes?: number[];
+        /** 仅重跑已铺好的指定节点（工作台单镜重出）。 */
+        targetBlockIds?: string[];
       },
     ) => {
       if (factoryBusy) return;
@@ -1846,6 +1848,7 @@ export default function OmniCanvas() {
             untilStage,
             episodeIndex,
             forceFromStage,
+            targetBlockIds: opts?.targetBlockIds,
             skipDone: true,
             signal: ac.signal,
             onBlocksChange: (next) => {
@@ -2331,6 +2334,23 @@ export default function OmniCanvas() {
                     void runFactory("keyart", {
                       forceFromStage: "reverse",
                       episodeIndexes: [writerFocusEpisode],
+                    });
+                  }}
+                  onRerunKeyartShot={(blockId, shotIndex) => {
+                    if (
+                      !window.confirm(
+                        `只重跑第${writerFocusEpisode}集第${shotIndex}镜静帧；其他镜头保留。继续？`,
+                      )
+                    ) {
+                      return;
+                    }
+                    setFactoryRunScope("focus");
+                    ensureStudioSpawned(factoryTopic);
+                    toast.message(`第${writerFocusEpisode}集 · 单独重出第${shotIndex}镜`);
+                    void runFactory("keyart", {
+                      forceFromStage: "keyart",
+                      episodeIndexes: [writerFocusEpisode],
+                      targetBlockIds: [blockId],
                     });
                   }}
                 />
