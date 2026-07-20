@@ -206,6 +206,8 @@ export const CREDIT_COSTS = {
   storyboardFlash: 8,           // 每次分镜脚本 Gemini 3.0 Flash 消耗 8 credits
   storyboardGpt5: 20,           // 每次分镜脚本 GPT 5.1 消耗 20 credits
   forgeImage: 3,              // Forge AI 图片每张 3 credits
+  /** 漫剧资产静帧（人物/场景/服装道具）原价 54；授权匿名进库半价 27 */
+  manhuaAssetStill: 54,
 
   // ─── AI 文本生成（Gemini）─────────────────────
   aiInspiration: 5,           // AI 灵感助手生成脚本消耗 5 credits（Gemini API 成本 ~$0.01）

@@ -12,6 +12,10 @@ import {
   writerPackLooksReady,
   type ManhuaWriterPack,
 } from "./manhuaWriterRoom.js";
+import {
+  normalizeManhuaCustomAssetRefs,
+  type ManhuaCustomAssetRef,
+} from "./manhuaCustomAssetRefs.js";
 
 export const MANHUA_WRITER_SESSION_FORMAT = "mv-manhua-writer-session-v1" as const;
 export const MANHUA_WRITER_SESSION_LS_KEY = "mv-manhua-writer-session-v1";
@@ -31,6 +35,10 @@ export type ManhuaWriterSession = {
   assetsSkipped: boolean;
   /** 工作台三阶段：大纲 / 资产 / 分镜 */
   workflowPhase: "outline" | "assets" | "storyboard";
+  /** 用户上传/基于库参考生成的参考图（HTTPS + 勾选角色） */
+  customAssetRefs: ManhuaCustomAssetRef[];
+  /** 生成资产图时授权匿名进库（半价） */
+  shareAssetToLibrary: boolean;
 };
 
 export type ManhuaWriterSessionPartial = Partial<Omit<ManhuaWriterSession, "format">> & {
@@ -88,6 +96,8 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     manhuaUiMode: mode,
     assetsSkipped: Boolean(input.assetsSkipped),
     workflowPhase,
+    customAssetRefs: normalizeManhuaCustomAssetRefs(input.customAssetRefs),
+    shareAssetToLibrary: Boolean(input.shareAssetToLibrary),
   };
 }
 

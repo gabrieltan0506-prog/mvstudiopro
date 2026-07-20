@@ -386,9 +386,11 @@ describe("canvasDramaStudio factory", () => {
     expect(key).toContain("仙侠剑修连续");
     expect(key).toContain("【古风原型锚点】");
     expect(key).toContain("【编剧剧种模板");
-    expect(key).toContain("编剧视觉摘要");
+    expect(key).toContain("【视觉提示词简报");
+    expect(key).toContain("女帝青衣佩剑");
     expect(key).toContain("本集主场景优先");
     expect(key).toMatch(/秘境|洞府/);
+    expect(key).not.toContain("## 人物表");
     const next = applyFactoryPrefsToBlocks(blocks, {
       wardrobePropContinuityIds: ["wpc_03_urban_power"],
       characterIds: ["char_f_02", "char_m_02"],
@@ -403,6 +405,46 @@ describe("canvasDramaStudio factory", () => {
     expect(key2).not.toContain("仙侠剑修连续");
     expect(key2).toContain("【角色库锚点】");
     expect(key2).toContain("都市办公室");
+  });
+
+  it("spawn/prefs wire custom https refs into keyart edit fusion", () => {
+    const customRefs = [
+      {
+        id: "cust_c",
+        url: "https://cdn.example/char.jpg",
+        role: "character" as const,
+        labelZh: "自传人物",
+      },
+      {
+        id: "cust_s",
+        url: "https://cdn.example/scene.jpg",
+        role: "scene" as const,
+        labelZh: "自传场景",
+      },
+    ];
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "自传融图",
+      characterIds: ["char_f_01"],
+      sceneId: "scene_12",
+      customRefs,
+    });
+    const key = blocks.find((b) => b.id.startsWith("keyart-"))!;
+    expect(key.imageMode).toBe("edit");
+    expect(key.refImageUrl).toMatch(/^https:\/\//);
+    expect([key.refImageUrl, ...(key.editFusionUrls || [])]).toEqual(
+      expect.arrayContaining(["https://cdn.example/char.jpg", "https://cdn.example/scene.jpg"]),
+    );
+    expect(key.prompt).toContain("【静帧·用户参考融图】");
+    const next = applyFactoryPrefsToBlocks(blocks, {
+      characterIds: ["char_f_02"],
+      sceneId: "scene_04",
+      customRefs,
+      craftShotIds: [],
+      motionPromptIds: [],
+    });
+    const key2 = next.find((b) => b.id.startsWith("keyart-"))!;
+    expect(key2.imageMode).toBe("edit");
+    expect(key2.prompt).toContain("用户上传参考");
   });
 
   it("spawn injects art style into bible and keyart", () => {

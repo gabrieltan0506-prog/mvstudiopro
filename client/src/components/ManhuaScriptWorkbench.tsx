@@ -37,6 +37,14 @@ import {
   getManhuaDemoAssetPublicUrl,
   listManhuaDemoAssetsForSceneTemplate,
 } from "@shared/manhuaScenePropDemoCatalog";
+import { evaluateManhuaAssetImageGate } from "@shared/manhuaAssetImageGate";
+import {
+  MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH,
+  MANHUA_CUSTOM_ASSET_ROLES,
+  summarizeCustomAssetRefsZh,
+  type ManhuaCustomAssetRef,
+  type ManhuaCustomAssetRole,
+} from "@shared/manhuaCustomAssetRefs";
 import {
   parseWorkbenchShotsFromText,
   resolveKeyartShotIndex,
@@ -91,7 +99,7 @@ type Props = {
   /** 剧情包已出、尚未确认编剧 */
   writerPackReady?: boolean;
   onConfirmOutline?: () => void;
-  /** 资产缺图跳过（父级持久化） */
+  /** @deprecated 方案 B 已取消跳过；保留字段仅兼容旧会话 */
   assetsSkipped?: boolean;
   onAssetsSkippedChange?: (skipped: boolean) => void;
   /** 三阶段（父级可持久化） */
@@ -99,6 +107,29 @@ type Props = {
   onWorkflowPhaseChange?: (phase: WorkflowPhaseId) => void;
   onOpenCharacterCard?: () => void;
   onOpenAssetWall?: () => void;
+  /** 确认资产：先按序出角色图→场景图，再进分镜 */
+  onConfirmAssetsAndPrepareImages?: () => void | Promise<void>;
+  /** 用户上传 / 基于库参考生成的参考图 */
+  customAssetRefs?: ManhuaCustomAssetRef[];
+  onUploadCustomAssets?: (files: FileList | File[]) => void | Promise<void>;
+  onCustomAssetRoleChange?: (id: string, role: ManhuaCustomAssetRef["role"]) => void;
+  onRemoveCustomAsset?: (id: string) => void;
+  /** 基于当前库选条目生成新参考（库仅为种子） */
+  onGenerateCustomAssetFromLibrary?: (opts: {
+    role: ManhuaCustomAssetRole;
+    seedLibraryId: string;
+  }) => void | Promise<void>;
+  /** 授权进库半价（付费积分）；兑换码赠送积分路径由父级锁定强制进库 */
+  shareAssetToLibrary?: boolean;
+  onShareAssetToLibraryChange?: (next: boolean) => void;
+  assetShareBilling?: {
+    credits: number;
+    halfPriceApplied: boolean;
+    giftedBlocksHalfPrice: boolean;
+    noticeZh: string;
+    priceLabelZh: string;
+  };
+
   /** 生成当前选中片段（该镜静帧若缺则先出 + 该片段成片） */
   onSpawnAndRunClip?: () => void;
   onGenerateFragment?: (opts: {
@@ -202,12 +233,21 @@ export default function ManhuaScriptWorkbench({
   canRun,
   writerPackReady,
   onConfirmOutline,
-  assetsSkipped: assetsSkippedProp,
-  onAssetsSkippedChange,
+  assetsSkipped: _assetsSkippedProp,
+  onAssetsSkippedChange: _onAssetsSkippedChange,
   workflowPhase: workflowPhaseProp,
   onWorkflowPhaseChange,
   onOpenCharacterCard,
   onOpenAssetWall,
+  onConfirmAssetsAndPrepareImages,
+  customAssetRefs = [],
+  onUploadCustomAssets,
+  onCustomAssetRoleChange,
+  onRemoveCustomAsset,
+  onGenerateCustomAssetFromLibrary,
+  shareAssetToLibrary = false,
+  onShareAssetToLibraryChange,
+  assetShareBilling,
   onSpawnAndRunClip,
   onGenerateFragment,
   onGenerateMissingFragments,
@@ -245,13 +285,6 @@ export default function ManhuaScriptWorkbench({
   const [pathBoardOpen, setPathBoardOpen] = useState(true);
   /** 胶片多选：生成所选 */
   const [selectedShotIndexes, setSelectedShotIndexes] = useState<number[]>([]);
-  /** 资产缺图时可跳过进分镜（对标 C2）；可由父级持久化 */
-  const [assetsSkippedLocal, setAssetsSkippedLocal] = useState(false);
-  const assetsSkipped = assetsSkippedProp ?? assetsSkippedLocal;
-  const setAssetsSkipped = (next: boolean) => {
-    if (assetsSkippedProp === undefined) setAssetsSkippedLocal(next);
-    onAssetsSkippedChange?.(next);
-  };
   const [activePhaseLocal, setActivePhaseLocal] = useState<WorkflowPhaseId>(() =>
     canRun ? "storyboard" : "outline",
   );
@@ -427,18 +460,32 @@ export default function ManhuaScriptWorkbench({
       prev.includes(shotIndex) ? prev.filter((n) => n !== shotIndex) : [...prev, shotIndex],
     );
   };
-  const hasCastAssets = Boolean(
-    characters.length || archetypes.length || scene || props.length,
+  const assetGate = useMemo(
+    () =>
+      evaluateManhuaAssetImageGate({
+        characterIds,
+        ancientArchetypeIds,
+        sceneId,
+        artStyleId: activeArtStyleId,
+        customRefs: customAssetRefs,
+        assetBlocks: blocks.filter(
+          (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
+        ),
+      }),
+    [characterIds, ancientArchetypeIds, sceneId, activeArtStyleId, customAssetRefs, blocks],
   );
+  const customSummaryZh = summarizeCustomAssetRefsZh(customAssetRefs);
   const outlineComplete = Boolean(canRun);
-  const assetsComplete = hasCastAssets || assetsSkipped;
-  /** 未确认大纲，或资产未齐且未跳过 → 禁止空跑分镜成片 */
+  /** 方案 B：剧本确认 + 角色/场景锁定 + 角色图/场景图齐，才可进分镜出片 */
+  const assetsComplete = assetGate.ready;
   const canGenerateFragment = outlineComplete && assetsComplete;
   const fragmentGateHint = !outlineComplete
     ? "请先确认剧本大纲"
-    : !assetsComplete
-      ? "请先完成资产设定，或跳过缺图后继续"
-      : null;
+    : !assetGate.castLocked || !assetGate.sceneLocked
+      ? "请先锁定角色与场景"
+      : !assetsComplete
+        ? assetGate.hintZh || "请先出齐角色图与场景图"
+        : null;
 
   const stageStrip = useMemo(() => {
     const stages = ["story", "bible", "beats", "reverse", "keyart", "clip"] as const;
@@ -475,7 +522,7 @@ export default function ManhuaScriptWorkbench({
   }, [blocks, focusEpisode, episodeKeyarts, episodeClips, activeKeyart?.id, activeClip?.id, legacyClip?.id]);
   const workflowPhases = useMemo(() => {
     const byStage = new Map(stageStrip.map((item) => [item.stage, item]));
-    // 阿硕 C2：大纲确认 → 资产（可跳过缺图）→ 分镜三栏主屏
+    // 大纲确认 → 资产锁定（角色+场景+图）→ 分镜
     const definitions: Array<{
       id: WorkflowPhaseId;
       label: string;
@@ -502,6 +549,12 @@ export default function ManhuaScriptWorkbench({
     }
   }, [outlineComplete, activePhase]);
 
+  useEffect(() => {
+    if (outlineComplete && !assetsComplete && activePhase === "storyboard") {
+      setActivePhase("assets");
+    }
+  }, [outlineComplete, assetsComplete, activePhase]);
+
   const selectPhase = (phase: WorkflowPhaseId) => {
     if (phase === "storyboard" && !outlineComplete) {
       setActivePhase("outline");
@@ -523,9 +576,14 @@ export default function ManhuaScriptWorkbench({
       setActivePhase("outline");
       return;
     }
-    if (!assetsComplete) {
-      setAssetsSkipped(true);
+    if (!assetGate.castLocked || !assetGate.sceneLocked) {
+      return;
     }
+    if (onConfirmAssetsAndPrepareImages) {
+      void onConfirmAssetsAndPrepareImages();
+      return;
+    }
+    if (!assetsComplete) return;
     setActivePhase("storyboard");
   };
 
@@ -741,20 +799,7 @@ export default function ManhuaScriptWorkbench({
       ) : null}
       {outlineComplete && !assetsComplete ? (
         <div className="shrink-0 border-b border-amber-400/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-50/90">
-          资产未齐：请先选角色/场景，或在「资产设定」跳过缺图后再出片
-        </div>
-      ) : null}
-      {outlineComplete && assetsSkipped && !hasCastAssets && activePhase === "storyboard" ? (
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-amber-400/20 bg-amber-500/[0.08] px-3 py-1.5 text-[11px] text-amber-50/85">
-          <span>已跳过资产缺图，成片可能缺角色/场景一致性</span>
-          <button
-            type="button"
-            data-manhua-action="goto-assets-from-banner"
-            onClick={() => setActivePhase("assets")}
-            className="shrink-0 rounded border border-amber-300/35 px-2 py-0.5 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/20"
-          >
-            回去补资产
-          </button>
+          {fragmentGateHint || "请先锁定角色与场景，并出齐角色图 / 场景图后再进分镜"}
         </div>
       ) : null}
       {factoryBusy ? (
@@ -919,7 +964,7 @@ export default function ManhuaScriptWorkbench({
       {activePhase === "assets" ? (
         <div
           data-manhua-phase-panel="assets"
-          data-manhua-assets-skipped={assetsSkipped ? "true" : "false"}
+          data-manhua-assets-ready={assetsComplete ? "true" : "false"}
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6"
         >
           <div className="mx-auto max-w-4xl">
@@ -927,7 +972,8 @@ export default function ManhuaScriptWorkbench({
               <div>
                 <div className="text-[13px] font-semibold text-white/90">资产设定</div>
                 <p className="mt-1 text-[11px] leading-5 text-white/45">
-                  已按剧本预填角色 / 场景 / 道具服装；画风请自选仿真人或 CG（不硬套）。点卡片可改，确认后再进分镜出静帧与成片。
+                  可上传参考图并勾选人物 / 场景 / 服装道具，直接用于分镜融图；也可基于库条目生成新参考。库内造型仅为参考，不强制锁死。
+                  {customSummaryZh ? ` 已勾选：${customSummaryZh}` : ""}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -936,35 +982,210 @@ export default function ManhuaScriptWorkbench({
                   onClick={() => onOpenCharacterCard?.()}
                   className="rounded-lg border border-white/12 px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.06]"
                 >
-                  改角色
+                  库角色（可选）
                 </button>
                 <button
                   type="button"
                   onClick={() => onOpenAssetWall?.()}
                   className="rounded-lg border border-white/12 px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.06]"
                 >
-                  改场景·道具·服装
+                  库场景·道具（可选）
                 </button>
-                {assetsSkipped ? (
-                  <button
-                    type="button"
-                    data-manhua-action="unskip-assets"
-                    onClick={() => setAssetsSkipped(false)}
-                    className="rounded-lg border border-white/15 px-2.5 py-1.5 text-[11px] text-white/65 hover:bg-white/[0.06]"
-                  >
-                    撤销跳过
-                  </button>
-                ) : null}
                 <button
                   type="button"
-                  data-manhua-action="skip-assets"
-                  disabled={!outlineComplete}
+                  data-manhua-action="confirm-assets"
+                  disabled={
+                    !outlineComplete || !assetGate.castLocked || !assetGate.sceneLocked || factoryBusy
+                  }
                   onClick={enterStoryboard}
                   className="rounded-lg border border-cyan-300/45 bg-cyan-500/20 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
+                  title={
+                    !assetGate.castLocked || !assetGate.sceneLocked
+                      ? "请上传勾选人物与场景，或从库内选择"
+                      : assetsComplete
+                        ? "进入分镜"
+                        : "将先补齐角色图 / 场景图，再进分镜"
+                  }
                 >
-                  {hasCastAssets ? "确认资产，进入分镜" : "跳过缺图并进入分镜"}
+                  {assetsComplete
+                    ? "确认资产，进入分镜"
+                    : assetGate.viaCustomUpload
+                      ? "确认参考，进入分镜"
+                      : "确认资产并出角色/场景图"}
                 </button>
               </div>
+            </div>
+
+            <div
+              data-manhua-custom-refs
+              className="mt-3 rounded-xl border border-cyan-400/25 bg-cyan-500/[0.06] p-3"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="text-[11px] font-semibold text-cyan-50/90">我的参考图</div>
+                  <p className="mt-0.5 text-[10px] leading-4 text-white/45">
+                    上传后勾选类型；或点下方「基于库生成」用当前库选作种子出新图。未勾选不进融图。
+                  </p>
+                </div>
+                {onUploadCustomAssets ? (
+                  <label className="inline-flex cursor-pointer items-center rounded-lg border border-cyan-300/40 bg-cyan-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-50 hover:bg-cyan-500/25">
+                    上传图片
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        const files = e.target.files;
+                        if (files?.length) void onUploadCustomAssets(files);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                ) : null}
+              </div>
+              {onGenerateCustomAssetFromLibrary || onShareAssetToLibraryChange ? (
+                <div
+                  data-manhua-asset-share
+                  className="mt-2 rounded-lg border border-white/10 bg-black/25 px-2.5 py-2"
+                >
+                  {assetShareBilling?.giftedBlocksHalfPrice ? (
+                    <p className="text-[10px] leading-4 text-amber-100/85">
+                      {assetShareBilling.noticeZh}
+                      {assetShareBilling.priceLabelZh
+                        ? ` 本单约 ${assetShareBilling.priceLabelZh}。`
+                        : ""}
+                    </p>
+                  ) : (
+                    <>
+                      <label className="flex cursor-pointer items-start gap-2">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={Boolean(shareAssetToLibrary)}
+                          disabled={!onShareAssetToLibraryChange || factoryBusy}
+                          onChange={(e) =>
+                            onShareAssetToLibraryChange?.(e.target.checked)
+                          }
+                        />
+                        <span className="text-[10px] leading-4 text-white/70">
+                          授权进库半价
+                          {assetShareBilling?.priceLabelZh
+                            ? ` · ${assetShareBilling.priceLabelZh}`
+                            : ""}
+                        </span>
+                      </label>
+                      <p className="mt-1 text-[10px] leading-4 text-white/40">
+                        {assetShareBilling?.noticeZh ||
+                          "勾选后本单半价并匿名进参考库；兑换码赠送积分不享半价，生成后仍无条件进库。成片与分镜静帧不享受半价。"}
+                      </p>
+                    </>
+                  )}
+                </div>
+              ) : null}
+              {onGenerateCustomAssetFromLibrary ? (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    disabled={factoryBusy || !(characterIds[0] || ancientArchetypeIds[0])}
+                    onClick={() =>
+                      void onGenerateCustomAssetFromLibrary({
+                        role: "character",
+                        seedLibraryId: characterIds[0] || ancientArchetypeIds[0] || "",
+                      })
+                    }
+                    className="rounded-md border border-white/15 px-2 py-1 text-[10px] text-white/70 hover:bg-white/[0.06] disabled:opacity-40"
+                  >
+                    基于库生成新人物
+                  </button>
+                  <button
+                    type="button"
+                    disabled={factoryBusy || !sceneId}
+                    onClick={() =>
+                      void onGenerateCustomAssetFromLibrary({
+                        role: "scene",
+                        seedLibraryId: sceneId || "",
+                      })
+                    }
+                    className="rounded-md border border-white/15 px-2 py-1 text-[10px] text-white/70 hover:bg-white/[0.06] disabled:opacity-40"
+                  >
+                    基于库生成新场景
+                  </button>
+                  <button
+                    type="button"
+                    disabled={factoryBusy || !propIds[0]}
+                    onClick={() =>
+                      void onGenerateCustomAssetFromLibrary({
+                        role: "prop",
+                        seedLibraryId: propIds[0] || "",
+                      })
+                    }
+                    className="rounded-md border border-white/15 px-2 py-1 text-[10px] text-white/70 hover:bg-white/[0.06] disabled:opacity-40"
+                  >
+                    基于库生成新服装道具
+                  </button>
+                </div>
+              ) : null}
+              {customAssetRefs.length ? (
+                <div className="mt-2 grid gap-2 sm:grid-cols-2 md:grid-cols-3">
+                  {customAssetRefs.map((ref) => (
+                    <div
+                      key={ref.id}
+                      data-manhua-custom-ref-id={ref.id}
+                      className="overflow-hidden rounded-lg border border-white/12 bg-black/35"
+                    >
+                      <img
+                        src={ref.url}
+                        alt=""
+                        className="aspect-[3/4] w-full object-cover object-top"
+                        loading="lazy"
+                      />
+                      <div className="space-y-1.5 p-2">
+                        <div className="truncate text-[10px] text-white/55">
+                          {ref.labelZh || "参考图"}
+                          {ref.source === "generated" ? " · 新生成" : " · 上传"}
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {MANHUA_CUSTOM_ASSET_ROLES.map((role) => {
+                            const on = ref.role === role;
+                            return (
+                              <button
+                                key={role}
+                                type="button"
+                                aria-pressed={on}
+                                onClick={() => onCustomAssetRoleChange?.(ref.id, role)}
+                                className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${
+                                  on
+                                    ? "bg-cyan-500/30 text-cyan-50"
+                                    : "bg-white/5 text-white/50 hover:bg-white/10"
+                                }`}
+                              >
+                                {MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH[role]}
+                              </button>
+                            );
+                          })}
+                          <button
+                            type="button"
+                            onClick={() => onCustomAssetRoleChange?.(ref.id, "unset")}
+                            className="rounded px-1.5 py-0.5 text-[9px] text-white/35 hover:bg-white/10"
+                          >
+                            清除
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onRemoveCustomAsset?.(ref.id)}
+                            className="ml-auto rounded px-1.5 py-0.5 text-[9px] text-rose-200/70 hover:bg-rose-500/20"
+                          >
+                            删除
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-[10px] text-white/40">尚未上传或生成参考图。</p>
+              )}
             </div>
 
             {onArtStyleChange ? (
@@ -1007,26 +1228,32 @@ export default function ManhuaScriptWorkbench({
             >
               <span
                 className={`rounded-md border px-2 py-0.5 ${
-                  characters.length || archetypes.length
+                  assetGate.castLocked
                     ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-50"
                     : "border-white/10 bg-white/[0.03] text-white/40"
                 }`}
               >
                 角色{" "}
-                {characters.length || archetypes.length
-                  ? `已选 ${(characters.length || 0) + (archetypes.length || 0)}`
-                  : "未选"}
-                {archetypes.length ? " · 含文案造型" : ""}
+                {assetGate.viaCustomUpload
+                  ? "自传已勾选"
+                  : characters.length || archetypes.length
+                    ? `库选 ${(characters.length || 0) + (archetypes.length || 0)}`
+                    : "未齐"}
               </span>
               <span
                 className={`rounded-md border px-2 py-0.5 ${
-                  scene
+                  assetGate.sceneLocked
                     ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-50"
                     : "border-white/10 bg-white/[0.03] text-white/40"
                 }`}
               >
-                场景 {scene ? "已选" : "未选"}
-                {scene && !sceneDemos.length ? " · 缺示意封面" : ""}
+                场景{" "}
+                {assetGate.viaCustomUpload
+                  ? "自传已勾选"
+                  : scene
+                    ? "库选"
+                    : "未齐"}
+                {scene && !sceneDemos.length && !assetGate.viaCustomUpload ? " · 缺示意封面" : ""}
               </span>
               <span
                 className={`rounded-md border px-2 py-0.5 ${
@@ -1039,14 +1266,18 @@ export default function ManhuaScriptWorkbench({
               </span>
               <span
                 className={`rounded-md border px-2 py-0.5 ${
-                  assetsSkipped
-                    ? "border-amber-400/40 bg-amber-500/15 text-amber-50"
-                    : assetsComplete
-                      ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-50"
-                      : "border-rose-400/30 bg-rose-500/10 text-rose-50"
+                  assetsComplete
+                    ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-50"
+                    : "border-rose-400/30 bg-rose-500/10 text-rose-50"
                 }`}
               >
-                {assetsSkipped ? "已跳过缺图" : assetsComplete ? "可进分镜" : "未齐"}
+                {assetsComplete
+                  ? "可进分镜"
+                  : !assetGate.castImagesReady
+                    ? "缺角色图"
+                    : !assetGate.sceneImageReady
+                      ? "缺场景图"
+                      : "未齐"}
               </span>
             </div>
 

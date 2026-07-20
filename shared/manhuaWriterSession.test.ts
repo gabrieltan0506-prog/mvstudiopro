@@ -59,6 +59,32 @@ describe("manhuaWriterSession", () => {
     expect(again?.focusEpisode).toBe(2);
     expect(again?.assetsSkipped).toBe(false);
     expect(again?.workflowPhase).toBe("storyboard");
+    expect(again?.customAssetRefs).toEqual([]);
+  });
+
+  it("round-trips customAssetRefs https urls", () => {
+    const session = buildManhuaWriterSession({
+      topic: "自传融图",
+      customAssetRefs: [
+        {
+          id: "cust_a",
+          url: "https://cdn.example/a.jpg",
+          role: "character",
+          source: "upload",
+        },
+        {
+          id: "cust_b",
+          url: "https://cdn.example/b.jpg",
+          role: "scene",
+          source: "generated",
+          seedLibraryId: "scene_04",
+        },
+        { id: "bad", url: "blob:local", role: "prop" },
+      ],
+    });
+    expect(session.customAssetRefs).toHaveLength(2);
+    expect(session.customAssetRefs[0]?.role).toBe("character");
+    expect(session.customAssetRefs[1]?.seedLibraryId).toBe("scene_04");
   });
 
   it("loads/saves via storage mock", () => {

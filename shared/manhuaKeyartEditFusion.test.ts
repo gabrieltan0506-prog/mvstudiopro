@@ -53,4 +53,51 @@ describe("manhuaKeyartEditFusion", () => {
     expect(absolutizeManhuaAssetUrl("https://cdn.example/a.png")).toBe("https://cdn.example/a.png");
     expect(absolutizeManhuaAssetUrl("/manhua-props/x.jpg", "")).toBe("");
   });
+
+  it("prefers custom https refs and suppresses library cast/scene/prop", () => {
+    const plan = planManhuaKeyartEditFusion({
+      characterIds: ["char_f_01", "char_m_01"],
+      sceneId: "scene_12",
+      propIds: ["demo_prop_romance_ring_box"],
+      customRefs: [
+        {
+          id: "cust_c",
+          url: "https://cdn.example/char.jpg",
+          role: "character",
+          labelZh: "自传人物",
+        },
+        {
+          id: "cust_s",
+          url: "https://cdn.example/scene.jpg",
+          role: "scene",
+          labelZh: "自传场景",
+        },
+        {
+          id: "cust_p",
+          url: "https://cdn.example/prop.jpg",
+          role: "prop",
+          labelZh: "自传道具",
+        },
+        {
+          id: "cust_unset",
+          url: "https://cdn.example/ignore.jpg",
+          role: "unset",
+        },
+      ],
+    });
+    expect(plan.canEdit).toBe(true);
+    expect(plan.editPromptAddonZh).toContain("【静帧·用户参考融图】");
+    expect(plan.refs.map((r) => r.path)).toEqual(
+      expect.arrayContaining([
+        "https://cdn.example/char.jpg",
+        "https://cdn.example/scene.jpg",
+        "https://cdn.example/prop.jpg",
+      ]),
+    );
+    expect(plan.refs.some((r) => r.path.includes("/manhua-characters/"))).toBe(false);
+    expect(plan.refs.some((r) => r.path.includes("/manhua-scenes/") || r.path.includes("/manhua-props/"))).toBe(
+      false,
+    );
+    expect(plan.refs.some((r) => r.path.includes("ignore.jpg"))).toBe(false);
+  });
 });

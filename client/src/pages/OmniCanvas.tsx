@@ -4,7 +4,27 @@ import FreeformCanvas from "@/components/canvas/FreeformCanvas";
 import ManhuaClipDock from "@/components/canvas/ManhuaClipDock";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
 import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/lib/canvasTypes";
-import type { CanvasRunDeps } from "@/lib/canvasRunBlock";
+import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
+import {
+  evaluateManhuaAssetImageGate,
+  planManhuaAssetImageSpawns,
+} from "@shared/manhuaAssetImageGate";
+import {
+  buildManhuaCustomAssetGenFromLibraryPrompt,
+  makeManhuaCustomAssetId,
+  normalizeManhuaCustomAssetRefs,
+  type ManhuaCustomAssetRef,
+  type ManhuaCustomAssetRole,
+} from "@shared/manhuaCustomAssetRefs";
+import { resolveManhuaCustomAssetSeed } from "@shared/manhuaCustomAssetSeed";
+import { absolutizeManhuaAssetUrl } from "@shared/manhuaKeyartEditFusion";
+import {
+  MANHUA_ASSET_SHARE_CONSENT_HINT_ZH,
+  MANHUA_ASSET_STILL_FULL_CREDITS,
+  MANHUA_ASSET_STILL_SHARE_HALF_CREDITS,
+  manhuaAssetStillPriceLabelZh,
+} from "@shared/manhuaAssetSharePricing";
+import { uploadCanvasFilesParallel } from "@/lib/canvasUpload";
 import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   MANHUA_FACTORY_STAGE_ORDER,
@@ -414,6 +434,12 @@ export default function OmniCanvas() {
   const [assetsSkipped, setAssetsSkipped] = useState(
     () => Boolean(initialWriterSession?.assetsSkipped),
   );
+  const [customAssetRefs, setCustomAssetRefs] = useState<ManhuaCustomAssetRef[]>(() =>
+    normalizeManhuaCustomAssetRefs(initialWriterSession?.customAssetRefs),
+  );
+  const [shareAssetToLibrary, setShareAssetToLibrary] = useState(
+    () => Boolean(initialWriterSession?.shareAssetToLibrary),
+  );
   const [workflowPhase, setWorkflowPhase] = useState<"outline" | "assets" | "storyboard">(
     () => initialWriterSession?.workflowPhase || (initialWriterSession?.writerConfirmed ? "storyboard" : "outline"),
   );
@@ -477,6 +503,41 @@ export default function OmniCanvas() {
     refetchOnWindowFocus: false,
     retry: 1,
   });
+  const generateAssetStillMutation = trpc.manhuaAssetShare.generateAssetStill.useMutation();
+  const assetShareQuote = trpc.manhuaAssetShare.quote.useQuery(
+    { shareToLibrary: shareAssetToLibrary },
+    {
+      enabled: Boolean(user?.id) && canvasMode === "manhua",
+      staleTime: 30_000,
+      refetchOnWindowFocus: true,
+    },
+  );
+  const assetShareBillingUi = useMemo(() => {
+    const q = assetShareQuote.data;
+    const remainingGifted = Number(q?.remainingGiftedCredits) || 0;
+    const priceLabelZh = manhuaAssetStillPriceLabelZh({
+      shareToLibrary: shareAssetToLibrary,
+      remainingGiftedCredits: remainingGifted,
+    });
+    if (q) {
+      return {
+        credits: q.credits,
+        halfPriceApplied: q.halfPriceApplied,
+        giftedBlocksHalfPrice: q.giftedBlocksHalfPrice,
+        noticeZh: q.noticeZh,
+        priceLabelZh,
+      };
+    }
+    return {
+      credits: shareAssetToLibrary
+        ? MANHUA_ASSET_STILL_SHARE_HALF_CREDITS
+        : MANHUA_ASSET_STILL_FULL_CREDITS,
+      halfPriceApplied: Boolean(shareAssetToLibrary),
+      giftedBlocksHalfPrice: false,
+      noticeZh: MANHUA_ASSET_SHARE_CONSENT_HINT_ZH,
+      priceLabelZh,
+    };
+  }, [assetShareQuote.data, shareAssetToLibrary]);
   const cloudDraftUpsert = trpc.manhuaCloudDraft.upsert.useMutation({
     onError: (err) => {
       pushDebug("cloudDraft:upsert-fail", {
@@ -841,6 +902,8 @@ export default function OmniCanvas() {
         manhuaUiMode,
         assetsSkipped,
         workflowPhase,
+        customAssetRefs,
+        shareAssetToLibrary,
       });
     } catch {
       /* 本机权限/配额失败：不阻断云端通路 */
@@ -857,6 +920,8 @@ export default function OmniCanvas() {
     manhuaUiMode,
     assetsSkipped,
     workflowPhase,
+    customAssetRefs,
+    shareAssetToLibrary,
   ]);
 
   const applyCloudDraftToUi = useCallback((draft: ManhuaCloudDraftPayload) => {
@@ -875,6 +940,8 @@ export default function OmniCanvas() {
     setProjectBible(session.projectBible);
     setManhuaUiMode(session.manhuaUiMode === "form" ? "form" : "workbench");
     setAssetsSkipped(Boolean(session.assetsSkipped));
+    setCustomAssetRefs(normalizeManhuaCustomAssetRefs(session.customAssetRefs));
+    setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
     setWorkflowPhase(
       session.workflowPhase === "assets" || session.workflowPhase === "storyboard"
         ? session.workflowPhase
@@ -883,6 +950,9 @@ export default function OmniCanvas() {
           : "outline",
     );
     const prefs = draft.factoryPrefs || {};
+    if (Array.isArray(prefs.customAssetRefs)) {
+      setCustomAssetRefs(normalizeManhuaCustomAssetRefs(prefs.customAssetRefs));
+    }
     if (typeof prefs.femaleId === "string") setFactoryFemaleId(prefs.femaleId);
     if (typeof prefs.maleId === "string") setFactoryMaleId(prefs.maleId);
     if (typeof prefs.artStyleId === "string") {
@@ -991,6 +1061,8 @@ export default function OmniCanvas() {
       femaleLeadManual,
       maleLeadManual,
       artStyleManual,
+      customAssetRefs,
+      shareAssetToLibrary,
     };
     const writerSession = {
       topic: factoryTopic,
@@ -1004,6 +1076,8 @@ export default function OmniCanvas() {
       manhuaUiMode,
       assetsSkipped,
       workflowPhase,
+      customAssetRefs,
+      shareAssetToLibrary,
     };
     // 本机双写补强（与既有 LS effect 叠加；失败不阻断）
     persistManhuaDraftLocally({
@@ -1052,6 +1126,8 @@ export default function OmniCanvas() {
     manhuaUiMode,
     assetsSkipped,
     workflowPhase,
+    customAssetRefs,
+    shareAssetToLibrary,
     blocks,
     edges,
     factoryFemaleId,
@@ -1263,6 +1339,7 @@ export default function OmniCanvas() {
           identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
           artStyleId: factoryArtStyleId,
           videoReverseOutputMode: factoryReverseMode,
+          customRefs: customAssetRefs,
         });
         const changed = next.some((b, i) => {
           const p = prev[i];
@@ -1271,7 +1348,9 @@ export default function OmniCanvas() {
             p.prompt !== b.prompt ||
             p.videoReverseOutputMode !== b.videoReverseOutputMode ||
             p.pathCameraRecipeId !== b.pathCameraRecipeId ||
-            p.pathAnnotationJson !== b.pathAnnotationJson
+            p.pathAnnotationJson !== b.pathAnnotationJson ||
+            p.refImageUrl !== b.refImageUrl ||
+            p.imageMode !== b.imageMode
           );
         });
         if (!changed) return prev;
@@ -1302,6 +1381,7 @@ export default function OmniCanvas() {
     factoryIdentityLockZh,
     factoryArtStyleId,
     factoryReverseMode,
+    customAssetRefs,
     selectedCraftShotIds,
     selectedMotionIds,
     selectedPathRecipeIds,
@@ -1669,6 +1749,7 @@ export default function OmniCanvas() {
         cineVocabIds: selectedCineVocabIds,
         wardrobePropContinuityIds: hardCast?.wardrobePropContinuityIds ?? selectedWardrobeIds,
         videoReverseOutputMode: factoryReverseMode,
+        customRefs: customAssetRefs,
         writerContext: focusCtx,
         includeDirectorCraft: Boolean(focusCtx) || directorUnlocked,
         episodeIndex: continuity.episodeIndex,
@@ -1728,6 +1809,7 @@ export default function OmniCanvas() {
       selectedCineVocabIds,
       selectedWardrobeIds,
       factoryReverseMode,
+      customAssetRefs,
       writerContext,
       directorUnlocked,
       writerConfirmed,
@@ -1940,6 +2022,7 @@ export default function OmniCanvas() {
       cineVocabIds: selectedCineVocabIds,
       wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
       videoReverseOutputMode: factoryReverseMode,
+      customRefs: customAssetRefs,
       writerContext: composeWriterPackFactoryContext(writerPack, continuity.episodeIndex),
       includeDirectorCraft: true,
       episodeIndex: continuity.episodeIndex,
@@ -2097,6 +2180,7 @@ export default function OmniCanvas() {
       cineVocabIds: selectedCineVocabIds,
       wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
       videoReverseOutputMode: factoryReverseMode,
+      customRefs: customAssetRefs,
       episodes: episodes.map((ep) => ({
         index: ep.index,
         title: ep.title,
@@ -2163,6 +2247,287 @@ export default function OmniCanvas() {
       description: "当前步骤结束后会停住；已完成的片段会保留，可改设定后继续测。",
     });
   }, []);
+
+  const uploadCustomAssetFiles = useCallback(
+    async (files: FileList | File[]) => {
+      const list = Array.from(files || []).filter((f) => /^image\//i.test(f.type));
+      if (!list.length) {
+        toast.message("请选择图片文件");
+        return;
+      }
+      try {
+        const { assets, failed } = await uploadCanvasFilesParallel({
+          files: list,
+          getSignedUploadUrl: (input) => getSignedUrlMutation.mutateAsync(input),
+        });
+        const added: ManhuaCustomAssetRef[] = assets
+          .filter((a) => a.kind === "image" && /^https:\/\//i.test(a.url))
+          .map((a) => ({
+            id: makeManhuaCustomAssetId(),
+            url: a.url,
+            role: "unset" as const,
+            labelZh: a.fileName?.replace(/\.[^.]+$/, "").slice(0, 40) || "上传参考",
+            source: "upload" as const,
+          }));
+        if (added.length) {
+          setCustomAssetRefs((prev) =>
+            normalizeManhuaCustomAssetRefs([...prev, ...added]),
+          );
+          toast.message(`已上传 ${added.length} 张参考图`, {
+            description: "请勾选每张是人物、场景还是服装道具。",
+          });
+        }
+        if (failed.length) {
+          toast.error(`${failed.length} 张上传失败`, {
+            description: failed[0]?.error || "请重试",
+          });
+        }
+      } catch (e: unknown) {
+        toast.error("上传失败", {
+          description: e instanceof Error ? e.message : "请稍后重试",
+        });
+      }
+    },
+    [getSignedUrlMutation],
+  );
+
+  const setCustomAssetRole = useCallback(
+    (id: string, role: ManhuaCustomAssetRef["role"]) => {
+      setCustomAssetRefs((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, role } : r)),
+      );
+    },
+    [],
+  );
+
+  const removeCustomAssetRef = useCallback((id: string) => {
+    setCustomAssetRefs((prev) => prev.filter((r) => r.id !== id));
+  }, []);
+
+  /** 基于库参考生成新人物/场景/服装道具（扣费；授权进库半价） */
+  const generateCustomAssetFromLibrary = useCallback(
+    async (opts: { role: ManhuaCustomAssetRole; seedLibraryId: string }) => {
+      if (factoryBusy) {
+        toast.message("请等待当前生成结束");
+        return;
+      }
+      if (!user?.id) {
+        toast.message("请先登录后再生成资产图");
+        return;
+      }
+      const seed = resolveManhuaCustomAssetSeed({
+        role: opts.role,
+        seedLibraryId: opts.seedLibraryId,
+        artStyleId: factoryArtStyleId,
+      });
+      if (!seed) {
+        toast.message("未找到库参考，请先点选对应库条目");
+        return;
+      }
+      const style = getManhuaArtStylePreset(factoryArtStyleId);
+      const prompt = buildManhuaCustomAssetGenFromLibraryPrompt({
+        role: opts.role,
+        seedLabelZh: seed.labelZh,
+        seedPromptZh: seed.promptZh,
+        topic: factoryTopic,
+        artStyleLabelZh: style.labelZh,
+        artStylePromptZh: style.promptZh,
+      });
+      const refAbs = absolutizeManhuaAssetUrl(seed.previewPath, window.location.origin);
+      setFactoryBusy(true);
+      const roleZh =
+        opts.role === "character" ? "人物" : opts.role === "scene" ? "场景" : "服装道具";
+      setFactoryProgress(`基于库参考生成新${roleZh}…`);
+      try {
+        toast.message(`正在生成新${roleZh}`, {
+          description: `${assetShareBillingUi.priceLabelZh} · 参考「${seed.labelZh}」`,
+        });
+        const res = await generateAssetStillMutation.mutateAsync({
+          prompt,
+          role: opts.role,
+          shareToLibrary: shareAssetToLibrary,
+          labelZh: `新${roleZh}·${seed.labelZh}`,
+          aspectRatio: "9:16",
+          referenceImageUrl: /^https:\/\//i.test(refAbs) ? refAbs : undefined,
+        });
+        const url = String(res.imageUrl || "").trim();
+        if (!/^https:\/\//i.test(url)) {
+          throw new Error("未返回可用图片地址");
+        }
+        const ref: ManhuaCustomAssetRef = {
+          id: makeManhuaCustomAssetId(),
+          url,
+          role: opts.role,
+          labelZh: `新${roleZh}·${seed.labelZh}`,
+          source: "generated",
+          seedLibraryId: seed.seedLibraryId,
+        };
+        setCustomAssetRefs((prev) => normalizeManhuaCustomAssetRefs([...prev, ref]));
+        void assetShareQuote.refetch();
+        const doneDesc = res.giftedBlocksHalfPrice
+          ? `已扣 ${res.creditsCharged} 积分（兑换码积分原价），已无条件匿名进参考库`
+          : res.halfPriceApplied
+            ? `已扣 ${res.creditsCharged} 积分（半价），已匿名进参考库`
+            : res.shareToLibrary
+              ? `已扣 ${res.creditsCharged} 积分，已匿名进参考库`
+              : `已扣 ${res.creditsCharged} 积分；勾选授权可用充值积分半价并进库`;
+        toast.message(`已生成新${roleZh}并勾选`, { description: doneDesc });
+      } catch (e: unknown) {
+        toast.error(`新${roleZh}生成失败`, {
+          description: e instanceof Error ? e.message : "请稍后重试",
+        });
+      } finally {
+        setFactoryBusy(false);
+        setFactoryProgress("");
+      }
+    },
+    [
+      assetShareBillingUi.priceLabelZh,
+      assetShareQuote,
+      factoryArtStyleId,
+      factoryBusy,
+      factoryTopic,
+      generateAssetStillMutation,
+      shareAssetToLibrary,
+      user?.id,
+    ],
+  );
+
+  /** 方案 B：锁定角色+场景后，先出齐角色图→场景图，再进分镜 */
+  const confirmAssetsAndPrepareImages = useCallback(async () => {
+    const sceneId = factorySceneId || recommendedScene?.id || "";
+    const assetBlocks = blocks.filter(
+      (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
+    );
+    const gateInput = {
+      characterIds: selectedCharacterIds,
+      ancientArchetypeIds: factoryAncientArchetypeIds,
+      sceneId,
+      artStyleId: factoryArtStyleId,
+      topic: factoryTopic,
+      customRefs: customAssetRefs,
+      assetBlocks,
+    };
+    const gate = evaluateManhuaAssetImageGate(gateInput);
+    if (!gate.castLocked || !gate.sceneLocked) {
+      toast.message("请先准备人物与场景参考", {
+        description: "可上传并勾选人物/场景，或从库内选择；库内仅为参考。",
+      });
+      setWorkflowPhase("assets");
+      setManhuaAssetDrawer(!gate.castLocked ? "characters" : "assets");
+      return;
+    }
+    setAssetsSkipped(false);
+    if (gate.ready) {
+      setWorkflowPhase("storyboard");
+      toast.message(
+        gate.viaCustomUpload ? "自传参考已齐，进入分镜" : "资产已齐，进入分镜",
+      );
+      return;
+    }
+    if (factoryBusy) {
+      toast.message("请等待当前生成结束");
+      return;
+    }
+
+    const plans = planManhuaAssetImageSpawns(gateInput);
+    if (!plans.length) {
+      toast.message(gate.hintZh || "资产图未齐");
+      return;
+    }
+
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setFactoryBusy(true);
+    setFactoryProgress("准备角色/场景图…");
+    try {
+      let working = [...blocks];
+      let originX = working.reduce((m, b) => Math.max(m, b.x + b.width), 60) + 40;
+      const originY = 80;
+      for (let i = 0; i < plans.length; i++) {
+        const plan = plans[i]!;
+        if (ac.signal.aborted) break;
+        let block = working.find((b) => b.id === plan.id);
+        if (!block) {
+          block = defaultCanvasBlock("image", originX, originY + i * 40);
+          block.id = plan.id;
+          block.prompt = plan.prompt;
+          block.aspectRatio = "9:16";
+          block.imageModel = "gpt-image-2";
+          block.imageMode = "generate";
+          block.refImageUrl = undefined;
+          block.width = 360;
+          block.height = 400;
+          working = [...working, block];
+          originX += 40;
+        } else if (!(block.outputUrl || block.outputUrls?.[0])) {
+          block = { ...block, prompt: plan.prompt, status: "idle", error: undefined };
+          working = working.map((b) => (b.id === plan.id ? block! : b));
+        } else {
+          continue;
+        }
+        setBlocks(working);
+        saveCanvasState(working, edges);
+        setFactoryProgress(
+          plan.kind === "charsheet"
+            ? `角色图 · ${plan.labelZh}`
+            : `场景图 · ${plan.labelZh}`,
+        );
+        toast.message(
+          plan.kind === "charsheet" ? `正在出角色图：${plan.labelZh}` : `正在出场景图：${plan.labelZh}`,
+        );
+        const out = await runCanvasBlock(runDeps, block, { visionImages: [], texts: [] });
+        working = working.map((b) =>
+          b.id === plan.id
+            ? {
+                ...b,
+                ...out,
+                status: out.outputUrl || out.outputUrls?.[0] ? ("done" as const) : ("error" as const),
+                error:
+                  out.outputUrl || out.outputUrls?.[0]
+                    ? undefined
+                    : "角色/场景图未返回可用地址",
+              }
+            : b,
+        );
+        setBlocks(working);
+        saveCanvasState(working, edges);
+      }
+      const nextGate = evaluateManhuaAssetImageGate({
+        ...gateInput,
+        assetBlocks: working.filter(
+          (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
+        ),
+      });
+      if (nextGate.ready) {
+        setWorkflowPhase("storyboard");
+        toast.message("角色图 / 场景图已齐，进入分镜");
+      } else {
+        setWorkflowPhase("assets");
+        toast.message(nextGate.hintZh || "资产图仍未齐，请重试或改选有示意封面的场景");
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "资产图生成失败";
+      toast.error("角色/场景图未完成", { description: msg });
+      setWorkflowPhase("assets");
+    } finally {
+      setFactoryBusy(false);
+      setFactoryProgress("");
+      abortRef.current = null;
+    }
+  }, [
+    blocks,
+    customAssetRefs,
+    edges,
+    factoryAncientArchetypeIds,
+    factoryArtStyleId,
+    factoryBusy,
+    factorySceneId,
+    factoryTopic,
+    recommendedScene?.id,
+    runDeps,
+    selectedCharacterIds,
+  ]);
 
   const runFactory = useCallback(
     async (
@@ -2762,6 +3127,15 @@ export default function OmniCanvas() {
                   }}
                   assetsSkipped={assetsSkipped}
                   onAssetsSkippedChange={setAssetsSkipped}
+                  onConfirmAssetsAndPrepareImages={confirmAssetsAndPrepareImages}
+                  customAssetRefs={customAssetRefs}
+                  onUploadCustomAssets={uploadCustomAssetFiles}
+                  onCustomAssetRoleChange={setCustomAssetRole}
+                  onRemoveCustomAsset={removeCustomAssetRef}
+                  onGenerateCustomAssetFromLibrary={generateCustomAssetFromLibrary}
+                  shareAssetToLibrary={shareAssetToLibrary}
+                  onShareAssetToLibraryChange={setShareAssetToLibrary}
+                  assetShareBilling={assetShareBillingUi}
                   workflowPhase={workflowPhase}
                   onWorkflowPhaseChange={setWorkflowPhase}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
@@ -2808,15 +3182,23 @@ export default function OmniCanvas() {
                     void runFactory("clip", { episodeIndexes: [writerFocusEpisode] });
                   }}
                   onGenerateAllEpisodeKeyarts={() => {
-                    const hasCast =
-                      selectedCharacterIds.length > 0 || factoryAncientArchetypeIds.length > 0;
                     const sceneId = factorySceneId || recommendedScene?.id || "";
-                    if (!hasCast || !sceneId) {
-                      toast.message("请先锁定角色与场景", {
-                        description: "资产设定里选好人物和场景后，再一次出齐本集全部分镜。",
+                    const gate = evaluateManhuaAssetImageGate({
+                      characterIds: selectedCharacterIds,
+                      ancientArchetypeIds: factoryAncientArchetypeIds,
+                      sceneId,
+                      artStyleId: factoryArtStyleId,
+                      customRefs: customAssetRefs,
+                      assetBlocks: blocks.filter(
+                        (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
+                      ),
+                    });
+                    if (!gate.ready) {
+                      toast.message(gate.hintZh || "请先准备人物与场景参考", {
+                        description: "可上传勾选或基于库参考生成；库内仅为参考，不强制锁死。",
                       });
                       setWorkflowPhase("assets");
-                      setManhuaAssetDrawer(!hasCast ? "characters" : "assets");
+                      setManhuaAssetDrawer(!gate.castLocked ? "characters" : "assets");
                       return;
                     }
                     setFactoryRunScope("focus");
@@ -2843,6 +3225,7 @@ export default function OmniCanvas() {
                         identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
                         artStyleId: factoryArtStyleId,
                         videoReverseOutputMode: factoryReverseMode,
+                        customRefs: customAssetRefs,
                       });
                       setEdges((eds) => {
                         saveCanvasState(next, eds);
@@ -3993,6 +4376,7 @@ export default function OmniCanvas() {
                       cineVocabIds: selectedCineVocabIds,
                       wardrobePropContinuityIds: selectedWardrobeIds,
                       videoReverseOutputMode: factoryReverseMode,
+                      customRefs: customAssetRefs,
                       writerContext: focusCtx,
                       includeDirectorCraft: true,
                       episodeIndex: continuity.episodeIndex,

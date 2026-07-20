@@ -81,12 +81,14 @@ import {
   planManhuaKeyartEditFusion,
   type ManhuaKeyartEditPlan,
 } from "@shared/manhuaKeyartEditFusion";
+import type { ManhuaCustomAssetRef } from "@shared/manhuaCustomAssetRefs";
 
 function applyKeyartEditPlanToBlock(
   block: CanvasBlock,
   plan: ManhuaKeyartEditPlan,
 ): CanvasBlock {
   let prompt = stripMarkedSection(block.prompt, "【静帧·示范图融图】");
+  prompt = stripMarkedSection(prompt, "【静帧·用户参考融图】");
   prompt = [prompt, plan.editPromptAddonZh].filter(Boolean).join("\n\n");
   if (plan.canEdit && plan.refImageUrl) {
     return {
@@ -161,6 +163,8 @@ export type SpawnManhuaDramaStudioOpts = {
   characterIds?: string[];
   /** 古风原型 arch_*（与都市槽并行注入） */
   ancientArchetypeIds?: string[];
+  /** 用户上传/基于库参考生成的参考图（勾选角色后进静帧融图） */
+  customRefs?: ManhuaCustomAssetRef[];
   /** 剧本跟随身份锁（时代/族裔/服饰；来自 CastBundle） */
   identityLockZh?: string;
   /** 角色/场景统一画风：仿真人 / CG 漫剧 */
@@ -595,6 +599,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     artStyleId: opts.artStyleId,
     sceneId,
     propIds,
+    customRefs: opts.customRefs,
   });
   Object.assign(keyArt, applyKeyartEditPlanToBlock(keyArt, keyartEditPlan));
 
@@ -806,6 +811,7 @@ export function applyFactoryPrefsToBlocks(
     identityLockZh?: string;
     artStyleId?: ManhuaArtStyleId | string;
     videoReverseOutputMode?: "zh" | "en" | "compact";
+    customRefs?: ManhuaCustomAssetRef[];
   },
 ): CanvasBlock[] {
   const craftBlock = buildCraftShotInjectBlock(opts.craftShotIds || []);
@@ -915,6 +921,7 @@ export function applyFactoryPrefsToBlocks(
           artStyleId: opts.artStyleId,
           sceneId: opts.sceneId,
           propIds: opts.propIds,
+          customRefs: opts.customRefs,
         });
         return applyKeyartEditPlanToBlock(merged, editPlan);
       }
