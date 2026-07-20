@@ -2273,6 +2273,11 @@ export default function OmniCanvas() {
                   blocks={blocks}
                   topic={factoryTopic}
                   seriesTitle={writerPack?.seriesTitle || projectBible?.seriesTitle}
+                  logline={writerPack?.logline || projectBible?.logline}
+                  outlineEpisodes={(writerPack?.episodes || []).map((ep) => ({
+                    index: ep.index,
+                    title: ep.title || `第${ep.index}集`,
+                  }))}
                   episodeCount={writerEpisodeCount}
                   focusEpisode={writerFocusEpisode}
                   onFocusEpisode={setWriterFocusEpisode}
@@ -2304,6 +2309,10 @@ export default function OmniCanvas() {
                     assembleBusy ? "正在合成长片与配乐…" : factoryProgress || undefined
                   }
                   canRun={Boolean(directorUnlocked || writerConfirmed)}
+                  writerPackReady={Boolean(writerPack && writerPackLooksReady(writerPack))}
+                  onConfirmOutline={() => {
+                    confirmWriterToDirector();
+                  }}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
                   onFocusBlock={(id) => {
