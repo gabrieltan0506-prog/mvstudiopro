@@ -8,11 +8,13 @@ import {
   CheckCircle2,
   Clapperboard,
   Focus,
+  LayoutGrid,
   Loader2,
   Play,
   RefreshCw,
   ShieldCheck,
   Sparkles,
+  X,
 } from "lucide-react";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
@@ -196,6 +198,13 @@ export default function ManhuaScriptWorkbench({
   const [shotIndex, setShotIndex] = useState(0);
   /** 中栏：分镜列表 | 运镜画板（主路径可见） */
   const [scriptTab, setScriptTab] = useState<"shots" | "path">("shots");
+  /**
+   * 右栏本集画布：未出片默认开；有成片后自动收起让出检查空间；用户可再开。
+   * 镜头一多时避免画布长期占满右栏。
+   */
+  const [canvasDockOpen, setCanvasDockOpen] = useState(true);
+  /** 运镜静帧画板：同样不常占位，有成片后默认收起 */
+  const [pathBoardOpen, setPathBoardOpen] = useState(true);
   /** 胶片多选：生成所选 */
   const [selectedShotIndexes, setSelectedShotIndexes] = useState<number[]>([]);
   /** 资产缺图时可跳过进分镜（对标 C2）；可由父级持久化 */
@@ -274,6 +283,25 @@ export default function ManhuaScriptWorkbench({
   const previewUrl = playableClipUrl || mediaUrl(activeKeyart) || anyKeyartUrl;
   const previewIsVideo = Boolean(playableClipUrl);
   const annotateStillUrl = mediaUrl(activeKeyart) || anyKeyartUrl;
+
+  /** 切镜 / 成片出现：未出片展开，已出片收起；用户点开后可临时查看，再切镜会重新按规则收合 */
+  useEffect(() => {
+    if (!dockCanvas) return;
+    setCanvasDockOpen(!playableClipUrl);
+  }, [dockCanvas, playableClipUrl, activeShotNo]);
+
+  useEffect(() => {
+    setPathBoardOpen(!playableClipUrl);
+  }, [playableClipUrl, activeShotNo]);
+
+  const openCanvasDock = () => setCanvasDockOpen(true);
+  const closeCanvasDock = () => setCanvasDockOpen(false);
+  const focusBlockAndOpenCanvas = (blockId: string) => {
+    setCanvasDockOpen(true);
+    onFocusBlock?.(blockId);
+  };
+
+  const showCanvasDock = dockCanvas && canvasDockOpen;
 
   const runGenerateFragment = () => {
     if (onGenerateFragment) {
@@ -978,8 +1006,8 @@ export default function ManhuaScriptWorkbench({
         className={
           activePhase !== "storyboard"
             ? "hidden"
-            : immersive
-              ? dockCanvas
+            :             immersive
+              ? showCanvasDock
                 ? "grid min-h-0 min-w-[1280px] flex-1 grid-cols-[200px_minmax(300px,0.85fr)_minmax(480px,1.35fr)] overflow-x-auto overflow-y-hidden"
                 : "grid min-h-0 min-w-[1120px] flex-1 grid-cols-[220px_minmax(420px,1fr)_minmax(380px,440px)] overflow-x-auto overflow-y-hidden"
               : "flex min-h-0 flex-1 overflow-hidden"
@@ -1340,29 +1368,58 @@ export default function ManhuaScriptWorkbench({
             </>
           ) : (
             <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
-              <p className="shrink-0 text-[10px] leading-snug text-white/45">
-                当前片段静帧上画轨：
-                <span className="text-sky-200">蓝线=镜头运镜</span>
-                ，
-                <span className="text-rose-200">红线=人物动作</span>
-                。画完再点顶栏生成片段。
-              </p>
-              {onPathAnnotationChange ? (
-                <ManhuaPathCameraAnnotatePanel
-                  compact
-                  imageUrl={annotateStillUrl}
-                  value={pathAnnotation}
-                  recipeId={pathRecipeId}
-                  actionRecipeId={actionRecipeId}
-                  disabled={!canRun || factoryBusy}
-                  onChange={onPathAnnotationChange}
-                  onRecipeIdChange={onPathRecipeIdChange}
-                  onActionRecipeIdChange={onActionRecipeIdChange}
-                  translateMotionZh={translateMotionZh}
-                />
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+                <p className="text-[10px] leading-snug text-white/45">
+                  静帧画轨（
+                  <span className="text-sky-200">蓝=镜头</span>
+                  {" · "}
+                  <span className="text-rose-200">红=人物</span>
+                  ）· 有成片后默认收起，不占分镜列表空间
+                </p>
+                {pathBoardOpen ? (
+                  <button
+                    type="button"
+                    onClick={() => setPathBoardOpen(false)}
+                    className="inline-flex items-center gap-1 rounded-md border border-white/12 px-2 py-0.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
+                  >
+                    <X className="h-3 w-3" />
+                    收起画板
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setPathBoardOpen(true)}
+                    className="inline-flex items-center gap-1 rounded-md border border-sky-400/35 bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-50 hover:bg-sky-500/25"
+                  >
+                    <Focus className="h-3 w-3" />
+                    {playableClipUrl ? "打开画板改轨" : "打开画板"}
+                  </button>
+                )}
+              </div>
+              {pathBoardOpen ? (
+                onPathAnnotationChange ? (
+                  <ManhuaPathCameraAnnotatePanel
+                    compact
+                    imageUrl={annotateStillUrl}
+                    value={pathAnnotation}
+                    recipeId={pathRecipeId}
+                    actionRecipeId={actionRecipeId}
+                    disabled={!canRun || factoryBusy}
+                    onChange={onPathAnnotationChange}
+                    onRecipeIdChange={onPathRecipeIdChange}
+                    onActionRecipeIdChange={onActionRecipeIdChange}
+                    translateMotionZh={translateMotionZh}
+                  />
+                ) : (
+                  <p className="rounded-lg border border-white/10 bg-black/30 px-3 py-4 text-[11px] text-white/40">
+                    运镜画板未接线
+                  </p>
+                )
               ) : (
-                <p className="rounded-lg border border-white/10 bg-black/30 px-3 py-4 text-[11px] text-white/40">
-                  运镜画板未接线
+                <p className="rounded-lg border border-dashed border-white/12 bg-white/[0.02] px-3 py-3 text-[11px] leading-relaxed text-white/40">
+                  {playableClipUrl
+                    ? "本镜已有成片，画板已收起。检查视频请看右栏；若要改运镜轨再点「打开画板改轨」。"
+                    : "画板已收起，点上方打开后在静帧上划线。"}
                 </p>
               )}
               {!annotateStillUrl ? (
@@ -1378,7 +1435,7 @@ export default function ManhuaScriptWorkbench({
         <aside
           data-manhua-column="preview"
           data-manhua-preview-kind={
-            dockCanvas
+            showCanvasDock
               ? "canvas"
               : finalVideoUrl || previewIsVideo
                 ? "video"
@@ -1390,17 +1447,42 @@ export default function ManhuaScriptWorkbench({
           className={
             immersive
               ? "flex min-h-0 flex-col p-2 md:p-2.5"
-              : dockCanvas
+              : showCanvasDock
                 ? "flex min-h-0 w-[min(56vw,640px)] shrink-0 flex-col p-2.5"
                 : "flex min-h-0 w-[440px] shrink-0 flex-col p-2.5 md:p-3"
           }
         >
           <div className="mb-1.5 flex shrink-0 flex-wrap items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/90">
-              {dockCanvas ? "本集画布" : "视频结果"}
+              {showCanvasDock ? "本集画布" : previewIsVideo || finalVideoUrl ? "视频结果" : "预览"}
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
-              {previewCanvasToolbar}
+              {dockCanvas ? (
+                showCanvasDock ? (
+                  <button
+                    type="button"
+                    data-manhua-action="close-canvas-dock"
+                    onClick={closeCanvasDock}
+                    className="inline-flex items-center gap-1 rounded-md border border-white/12 px-2 py-0.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
+                    title="收起画布，腾出空间检查成片"
+                  >
+                    <X className="h-3 w-3" />
+                    收起画布
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    data-manhua-action="open-canvas-dock"
+                    onClick={openCanvasDock}
+                    className="inline-flex items-center gap-1 rounded-md border border-cyan-400/35 bg-cyan-500/15 px-2 py-0.5 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25"
+                    title="打开本集画布（多镜节点）"
+                  >
+                    <LayoutGrid className="h-3 w-3" />
+                    打开画布
+                  </button>
+                )
+              ) : null}
+              {showCanvasDock ? previewCanvasToolbar : null}
               {factoryBusy ? (
                 <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50">
                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -1438,13 +1520,19 @@ export default function ManhuaScriptWorkbench({
           {dockCanvas ? (
             <div
               id="freeform-canvas-zone"
-              className={`relative min-h-0 w-full flex-1 overflow-hidden rounded-lg border bg-[#06080f] ${
-                factoryBusy ? "border-amber-400/35" : "border-white/12"
-              }`}
+              className={
+                showCanvasDock
+                  ? `relative min-h-0 w-full flex-1 overflow-hidden rounded-lg border bg-[#06080f] ${
+                      factoryBusy ? "border-amber-400/35" : "border-white/12"
+                    }`
+                  : "hidden"
+              }
+              aria-hidden={!showCanvasDock}
             >
               {previewCanvas}
             </div>
-          ) : (
+          ) : null}
+          {!showCanvasDock ? (
             <div
               className={`flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden rounded-lg border bg-black ${
                 finalVideoUrl || previewIsVideo
@@ -1464,11 +1552,15 @@ export default function ManhuaScriptWorkbench({
                 )
               ) : (
                 <div className="px-4 text-center text-[11px] leading-relaxed text-white/40">
-                  {factoryBusy ? "正在生成…" : "点「生成」后，静帧 / 成片在此预览"}
+                  {factoryBusy
+                    ? "正在生成…"
+                    : dockCanvas
+                      ? "点「打开画布」调节点，或先生成片段后在此检查成片"
+                      : "点「生成」后，静帧 / 成片在此预览"}
                 </div>
               )}
             </div>
-          )}
+          ) : null}
           <div
             data-manhua-clip-quality={clipQuality?.status || "idle"}
             className={`mt-2 shrink-0 rounded-lg border px-2.5 py-2 ${
@@ -1565,7 +1657,7 @@ export default function ManhuaScriptWorkbench({
             {activeKeyart?.id ? (
               <button
                 type="button"
-                onClick={() => onFocusBlock?.(activeKeyart.id)}
+                onClick={() => focusBlockAndOpenCanvas(activeKeyart.id)}
                 className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-0.5 text-[10px] text-white/65 hover:bg-white/5"
               >
                 <Focus className="h-3 w-3" /> 静帧节点
@@ -1574,7 +1666,7 @@ export default function ManhuaScriptWorkbench({
             {clip?.id ? (
               <button
                 type="button"
-                onClick={() => onFocusBlock?.(clip.id)}
+                onClick={() => focusBlockAndOpenCanvas(clip.id)}
                 className="inline-flex items-center gap-1 rounded-md border border-white/15 px-2 py-0.5 text-[10px] text-white/65 hover:bg-white/5"
               >
                 <Focus className="h-3 w-3" /> 成片节点

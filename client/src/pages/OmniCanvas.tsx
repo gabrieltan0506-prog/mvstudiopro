@@ -428,6 +428,13 @@ export default function OmniCanvas() {
         setManhuaCanvasPresentation(isMedia ? "media" : "all");
         setFocusBlockId(blockId);
       }
+      // 工作台右栏画布若已收起，点节点时自动展开
+      window.setTimeout(() => {
+        const openBtn = document.querySelector(
+          '[data-manhua-action="open-canvas-dock"]',
+        ) as HTMLButtonElement | null;
+        openBtn?.click();
+      }, 0);
       window.setTimeout(() => {
         const zone = document.getElementById("freeform-canvas-zone");
         // 右栏已挂画布时只聚焦，不展开下方折叠区、不跳出三栏
@@ -442,7 +449,7 @@ export default function OmniCanvas() {
         document
           .getElementById("freeform-canvas-zone")
           ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      }, 40);
+      }, 80);
     },
     [blocks],
   );
