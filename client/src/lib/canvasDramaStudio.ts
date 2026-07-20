@@ -1063,7 +1063,8 @@ export function filterManhuaFactoryTargetIds(
 }
 
 /**
- * 解析「生成片段」目标：缺静帧则先跑该镜 keyart，再跑该镜 clip；已有静帧则只跑 clip。
+ * 解析「生成片段」目标：必须先有该镜静帧节点；缺图则先跑该镜 keyart 再 clip。
+ * 禁止无对应静帧时只跑 clip（会误挂第 1 镜导致成片雷同）。
  * 须在 expand / ensureManhuaFragmentClips 之后调用。
  */
 export function resolveManhuaFragmentRunTargets(
@@ -1091,11 +1092,18 @@ export function resolveManhuaFragmentRunTargets(
       .sort(sortKeyartBlocks)
       .find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot) ||
     undefined;
+  if (!keyart) {
+    return { targetBlockIds: [], forceFromStage: "keyart" };
+  }
   if (!clip) {
-    return { targetBlockIds: [], forceFromStage: "clip" };
+    return {
+      targetBlockIds: [keyart.id],
+      forceFromStage: "keyart",
+      keyartId: keyart.id,
+    };
   }
   const keyReady = Boolean(mediaUrlOf(keyart));
-  if (keyReady && keyart) {
+  if (keyReady) {
     return {
       targetBlockIds: [clip.id],
       forceFromStage: "clip",
@@ -1103,17 +1111,10 @@ export function resolveManhuaFragmentRunTargets(
       clipId: clip.id,
     };
   }
-  if (keyart) {
-    return {
-      targetBlockIds: [keyart.id, clip.id],
-      forceFromStage: "keyart",
-      keyartId: keyart.id,
-      clipId: clip.id,
-    };
-  }
   return {
-    targetBlockIds: [clip.id],
-    forceFromStage: "clip",
+    targetBlockIds: [keyart.id, clip.id],
+    forceFromStage: "keyart",
+    keyartId: keyart.id,
     clipId: clip.id,
   };
 }
@@ -1152,7 +1153,8 @@ function makeShotBlockId(
 }
 
 /**
- * 按分镜为每镜铺/对齐片段成片节点（clip-eXX-sNN），parent 绑对应静帧。
+ * 按分镜为每镜铺/对齐片段成片节点（clip-eXX-sNN），parent 只绑「同镜号」静帧。
+ * 禁止回落到 keyarts[0]（否则多镜成片同源、画面雷同）。
  * 保留无镜号后缀的旧整集 clip 作兼容，但工作台主路径读镜级 clip。
  */
 export function ensureManhuaFragmentClips(
@@ -1191,15 +1193,18 @@ export function ensureManhuaFragmentClips(
     const shotIdx = resolveKeyartShotIndex(clip.id, clip.prompt);
     if (!clipByShot.has(shotIdx)) clipByShot.set(shotIdx, clip);
   }
-  // 旧整集 clip 视为第 1 镜片段成片
-  if (legacyClip && !clipByShot.has(1)) clipByShot.set(1, legacyClip);
+  // 旧整集 clip 视为第 1 镜片段成片（仅当确有第 1 镜静帧）
+  if (legacyClip && !clipByShot.has(1) && keyartByShot.has(1)) {
+    clipByShot.set(1, legacyClip);
+  }
 
   const template = legacyClip || existingShotClips[0] || keyarts[0]!;
   const nextExtras: CanvasBlock[] = [];
   const keepShotClipIds = new Set<string>();
 
   for (const shot of shotList) {
-    const keyart = keyartByShot.get(shot.index) || keyarts[0]!;
+    const keyart = keyartByShot.get(shot.index);
+    if (!keyart) continue; // 无对应静帧节点 → 不造 clip，避免挂错镜
     const existing = clipByShot.get(shot.index);
     if (existing) {
       keepShotClipIds.add(existing.id);
@@ -1235,7 +1240,7 @@ export function ensureManhuaFragmentClips(
     clipByShot.set(shot.index, clone);
   }
 
-  // 删掉本集多余镜级 clip（旧反推遗留）
+  // 删掉本集多余镜级 clip（旧反推遗留）；以及曾误挂到非同镜静帧的孤儿
   const staleClipIds = new Set(
     existingShotClips.filter((c) => !keepShotClipIds.has(c.id)).map((c) => c.id),
   );
@@ -1246,7 +1251,8 @@ export function ensureManhuaFragmentClips(
   ].map((b) => {
     if (!b.id.startsWith("clip-") || !sameEpisode(b) || !keepShotClipIds.has(b.id)) return b;
     const shotIdx = resolveKeyartShotIndex(b.id, b.prompt);
-    const keyart = keyartByShot.get(shotIdx) || keyarts[0]!;
+    const keyart = keyartByShot.get(shotIdx);
+    if (!keyart) return b;
     const keyUrl = mediaUrlOf(keyart);
     if (b.parentId === keyart.id && (!keyUrl || b.refImageUrl === keyUrl)) return b;
     return {
@@ -1267,11 +1273,11 @@ export function ensureManhuaFragmentClips(
       !staleClipIds.has(e.toId) &&
       !episodeClipIds.has(e.toId),
   );
-  // 重挂：每镜 keyart → 对应 clip
+  // 重挂：每镜 keyart → 同镜号 clip（绝不串镜）
   for (const shot of shotList) {
-    const keyart = keyartByShot.get(shot.index) || keyarts[0]!;
+    const keyart = keyartByShot.get(shot.index);
     const clip = clipByShot.get(shot.index);
-    if (!clip) continue;
+    if (!keyart || !clip) continue;
     nextEdges.push({ fromId: keyart.id, toId: clip.id });
   }
 
@@ -1464,6 +1470,7 @@ export function isTransientFactoryError(message: string): boolean {
 
 /**
  * 续跑起点：优先第一个 error；否则第一个未完成（非 done 有产出）。
+ * keyart/clip 按多镜扫描，避免「第 1 镜 done」误判整阶段完成。
  * 全完成则返回 null。
  */
 export function resolveFactoryResumeStage(
@@ -1479,6 +1486,15 @@ export function resolveFactoryResumeStage(
     scoped = filterBlocksByEpisode(blocks, firstEp);
   }
   for (const stage of MANHUA_FACTORY_STAGE_ORDER) {
+    if (stage === "keyart" || stage === "clip") {
+      const nodes = scoped
+        .filter((x) => x.id.startsWith(`${stage}-`))
+        .sort(sortKeyartBlocks);
+      if (!nodes.length) continue;
+      if (nodes.some((b) => b.status === "error")) return stage;
+      if (nodes.some((b) => !blockLooksDone(b))) return stage;
+      continue;
+    }
     const b = scoped.find((x) => x.id.startsWith(`${stage}-`));
     // 可选阶段（如第1–2集无 recap_card）：跳过而非当成「未完成」
     if (!b) continue;
@@ -1626,7 +1642,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     clipFromPrevTail?: boolean;
   };
 }): Promise<ManhuaFactoryPipelineResult> {
-  const stopOnError = opts.stopOnError !== false;
+  // 默认不因单镜失败停整链（多镜一次出齐）；仅显式 stopOnError:true 才断
+  const stopOnError = opts.stopOnError === true;
   const skipDone = opts.skipDone !== false;
   const defaultMaxRetries = Math.max(0, Math.min(4, opts.maxRetries ?? 2));
   const hadPoisonedRecapLink = opts.blocks.some(
@@ -2003,13 +2020,16 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                 : candidate,
             );
             publish(working);
-            if (!infra) {
-              throw new Error(failMsg);
+            if (infra) {
+              // 质检服务暂不可用：不中断整链，成片可预览但不进成片坞（export 仍看 passed）
+              completedIds.push(blockId);
+              opts.onStageDone?.(blockId, i, orderedIds.length, label);
+              succeeded = true;
+              break;
             }
-            // 质检服务暂不可用：不中断整链，成片可预览但不进成片坞（export 仍看 passed）
-            completedIds.push(blockId);
-            opts.onStageDone?.(blockId, i, orderedIds.length, label);
-            succeeded = true;
+            // 内容不合格：记下该镜失败，但不 throw——后续镜继续出图/出片
+            lastMessage = failMsg;
+            errors.push({ id: blockId, message: failMsg });
             break;
           }
         }
@@ -2071,12 +2091,16 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     }
 
     if (!succeeded) {
+      const alreadyLogged = errors.some((e) => e.id === blockId);
       publish(
         working.map((b) =>
           b.id === blockId ? { ...b, status: "error" as const, error: lastMessage } : b,
         ),
       );
-      errors.push({ id: blockId, message: lastMessage });
+      if (!alreadyLogged) {
+        errors.push({ id: blockId, message: lastMessage });
+      }
+      if (lastMessage === "已取消" || opts.signal?.aborted) break;
       if (stopOnError) break;
     }
   }

@@ -30,6 +30,7 @@ import {
   episodeIndexesFromDockSelection,
 } from "@/lib/manhuaProjectExport";
 import { shouldAttachManhuaPreviouslyOn } from "@shared/manhuaEpisodeRecap";
+import { resolveKeyartShotIndex } from "@shared/manhuaScriptWorkbench";
 import {
   listScreenwriterGenres,
   MANHUA_SCENE_GENRE_LABEL_ZH,
@@ -2222,8 +2223,8 @@ export default function OmniCanvas() {
             : untilStage === "reverse"
               ? `漫剧工厂：故事→角色→节拍→反推（第 ${episodeIndexes.join("、")} 集）`
               : untilStage === "keyart"
-                ? `漫剧工厂：跑到关键静帧（第 ${episodeIndexes.join("、")} 集）`
-                : `漫剧工厂全自动：含静帧 + 成片（第 ${episodeIndexes.join("、")} 集）`,
+                ? `一次生成本集全部分镜静帧（第 ${episodeIndexes.join("、")} 集）`
+                : `漫剧工厂：全部分镜静帧 + 成片（第 ${episodeIndexes.join("、")} 集）`,
         );
         let completed = 0;
         let skipped = 0;
@@ -2312,9 +2313,16 @@ export default function OmniCanvas() {
               });
               stageStartedAtRef.current = null;
             }
+            // 单镜/单片段失败不拦后续镜——继续出齐本集分镜
             if (result.errors.length) {
               lastError = result.errors[0]!;
-              break outer;
+              pushDebug("factoryRun:shotError", {
+                level: "warn",
+                detail: result.errors
+                  .map((e) => `${e.id}:${e.message}`)
+                  .join(" · ")
+                  .slice(0, 280),
+              });
             }
           }
         }
@@ -2332,7 +2340,7 @@ export default function OmniCanvas() {
               "）",
             { description: "已完成片段保留；可改资产/画风后继续测，不必重跑整条。" },
           );
-        } else if (lastError) {
+        } else if (lastError && completed === 0) {
           const errStage = stageKeyFromBlockId(lastError.id);
           pushDebug("factoryRun:error", {
             level: "error",
@@ -2340,9 +2348,19 @@ export default function OmniCanvas() {
             detail: `${errStage || "unknown"} · ${lastError.message || ""}`,
           });
           toast.error(
-            `完成 ${completed} 段` +
-              (skipped ? `、跳过 ${skipped}` : "") +
-              `，中断于${errStage ? MANHUA_FACTORY_STAGE_LABEL_ZH[errStage] : "未知"}：${lastError.message || ""}`,
+            `${errStage ? MANHUA_FACTORY_STAGE_LABEL_ZH[errStage] : "生成"}失败：${lastError.message || ""}`,
+          );
+        } else if (lastError) {
+          pushDebug("factoryRun:partial", {
+            level: "warn",
+            ms: Date.now() - runStartedAt,
+            detail: `completed=${completed} skipped=${skipped} · ${lastError.message}`,
+          });
+          toast.message(
+            `已跑完可跑节点：新跑 ${completed}` + (skipped ? ` · 跳过 ${skipped}` : ""),
+            {
+              description: `部分失败：${lastError.message.slice(0, 120)}。可单独重出失败镜。`,
+            },
           );
         } else {
           pushDebug("factoryRun:ok", {
@@ -2772,7 +2790,33 @@ export default function OmniCanvas() {
                     ensureStudioSpawned(factoryTopic);
                     void runFactory("clip", { episodeIndexes: [writerFocusEpisode] });
                   }}
+                  onGenerateAllEpisodeKeyarts={() => {
+                    setFactoryRunScope("focus");
+                    ensureStudioSpawned(factoryTopic);
+                    // 故事→反推→按镜展开→一次跑齐本集全部静帧（已完成的跳过）
+                    void runFactory("keyart", {
+                      episodeIndexes: [writerFocusEpisode],
+                    });
+                  }}
                   onGenerateFragment={({ shotIndex }) => {
+                    const hasShotKeyart = blocks.some(
+                      (b) =>
+                        b.id.startsWith("keyart-") &&
+                        (getBlockEpisodeIndex(b) ?? 1) === writerFocusEpisode &&
+                        resolveKeyartShotIndex(b.id, b.prompt) === shotIndex &&
+                        Boolean(b.outputUrl || b.outputUrls?.[0]),
+                    );
+                    if (!hasShotKeyart) {
+                      toast.message("请先点「生成本集全部分镜」出齐静帧", {
+                        description: `第 ${String(shotIndex).padStart(2, "0")} 镜还没有自己的分镜图，成片不能共用别镜。`,
+                      });
+                      setFactoryRunScope("focus");
+                      ensureStudioSpawned(factoryTopic);
+                      void runFactory("keyart", {
+                        episodeIndexes: [writerFocusEpisode],
+                      });
+                      return;
+                    }
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
                     void runFactory("clip", {

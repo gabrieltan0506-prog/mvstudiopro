@@ -108,6 +108,8 @@ type Props = {
   }) => void;
   /** 本集所有缺成片/质检失败的片段依次生成 */
   onGenerateMissingFragments?: (shotIndexes: number[]) => void;
+  /** 资产锁定后：一次生成本集全部分镜静帧（主路径） */
+  onGenerateAllEpisodeKeyarts?: () => void;
   /** 成片坞已勾选集：静帧+成片连跑 */
   onRunFullAuto?: () => void;
   onResumeFromFailure?: () => void;
@@ -207,6 +209,7 @@ export default function ManhuaScriptWorkbench({
   onSpawnAndRunClip,
   onGenerateFragment,
   onGenerateMissingFragments,
+  onGenerateAllEpisodeKeyarts,
   onRunFullAuto,
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
@@ -569,20 +572,37 @@ export default function ManhuaScriptWorkbench({
               中断生成
             </button>
           ) : (
-            <button
-              type="button"
-              data-manhua-action="generate-fragment"
-              disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
-              onClick={runGenerateFragment}
-              className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
-              title={
-                fragmentGateHint ||
-                `只生成当前片段 ${String(activeShotNo).padStart(2, "0")}（该镜静帧+成片）`
-              }
-            >
-              <Play className="h-3.5 w-3.5" />
-              {`生成片段 ${String(activeShotNo).padStart(2, "0")}`}
-            </button>
+            <>
+              {onGenerateAllEpisodeKeyarts ? (
+                <button
+                  type="button"
+                  data-manhua-action="generate-all-keyarts"
+                  disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
+                  onClick={() => onGenerateAllEpisodeKeyarts()}
+                  className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
+                  title={
+                    fragmentGateHint ||
+                    "角色/场景/服装/道具已锁定后，一次出齐本集全部分镜静帧；出图后可单镜改图"
+                  }
+                >
+                  <Play className="h-3.5 w-3.5" />
+                  生成本集全部分镜
+                </button>
+              ) : null}
+              <button
+                type="button"
+                data-manhua-action="generate-fragment"
+                disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
+                onClick={runGenerateFragment}
+                className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/75 hover:bg-white/[0.08] disabled:opacity-45"
+                title={
+                  fragmentGateHint ||
+                  `当前镜 ${String(activeShotNo).padStart(2, "0")} 成片（须已有该镜静帧）`
+                }
+              >
+                {`成片 ${String(activeShotNo).padStart(2, "0")}`}
+              </button>
+            </>
           )}
           {onGenerateMissingFragments && selectedSorted.length > 0 ? (
             <button
@@ -614,10 +634,10 @@ export default function ManhuaScriptWorkbench({
               data-manhua-action="rerun-keyarts"
               disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
               onClick={() => onRerunKeyartsFromReverse()}
-              title="从编导反推重跑本集多镜静帧，覆盖右栏旧图"
+              title="从编导反推重跑本集多镜静帧，覆盖旧图"
               className="rounded-lg border border-amber-400/40 bg-amber-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/25 disabled:opacity-45"
             >
-              重出静帧
+              重出全部分镜
             </button>
           ) : null}
           {onShotContinuityChange ? (
@@ -1490,12 +1510,15 @@ export default function ManhuaScriptWorkbench({
                         onClick={() => setShotIndex(i)}
                         className="flex min-w-0 flex-1 gap-2 px-2 py-2 text-left"
                       >
-                        <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-white/10 bg-black/50">
+                        <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-dashed border-amber-400/35 bg-amber-500/10">
                           {thumb ? (
                             <img src={thumb} alt="" className="h-full w-full object-cover" />
                           ) : (
-                            <div className="flex h-full items-center justify-center text-[9px] text-white/30">
-                              {String(shot.index).padStart(2, "0")}
+                            <div className="flex h-full flex-col items-center justify-center gap-0.5 px-0.5 text-center text-amber-100/80">
+                              <span className="text-[9px] font-semibold">
+                                {String(shot.index).padStart(2, "0")}
+                              </span>
+                              <span className="text-[7px] leading-tight">待出图</span>
                             </div>
                           )}
                         </div>
@@ -1987,15 +2010,19 @@ export default function ManhuaScriptWorkbench({
                     onClick={() => setShotIndex(i)}
                     className="block w-full text-left"
                   >
-                    <div className="aspect-video bg-black/70">
+                    <div
+                      className={`aspect-video ${
+                        thumb ? "bg-black/70" : "border border-dashed border-amber-400/30 bg-amber-500/10"
+                      }`}
+                    >
                       {thumb ? (
                         <img src={thumb} alt="" className="h-full w-full object-cover" />
                       ) : (
-                        <div className="flex h-full flex-col items-center justify-center gap-0.5 text-white/30">
+                        <div className="flex h-full flex-col items-center justify-center gap-0.5 text-amber-100/85">
                           <span className="text-[11px] font-semibold">
                             {String(shot.index).padStart(2, "0")}
                           </span>
-                          <span className="text-[8px]">待出</span>
+                          <span className="text-[8px]">待出图</span>
                         </div>
                       )}
                       <span
@@ -2006,10 +2033,10 @@ export default function ManhuaScriptWorkbench({
                               ? "bg-rose-500/90 text-white"
                               : thumb
                                 ? "bg-amber-500/85 text-black"
-                                : "bg-black/65 text-white/55"
+                                : "bg-amber-500/80 text-black"
                         }`}
                       >
-                        {statusLabel}
+                        {statusLabel === "待出" ? "待出图" : statusLabel}
                       </span>
                     </div>
                     <div className="flex items-center justify-between px-1 py-0.5 text-[9px] text-white/65">
