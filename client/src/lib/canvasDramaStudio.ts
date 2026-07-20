@@ -1084,17 +1084,26 @@ export function expandManhuaShotKeyartsAfterReverse(
   const primary = existingKeyarts[0];
   if (!primary) return { blocks, edges };
 
-  // 已有足够按镜静帧则只补齐分镜注入，不重复铺板
-  if (existingKeyarts.length >= shots.length) {
-    const nextBlocks = blocks.map((b) => {
+  const existingByShot = new Map<number, CanvasBlock>();
+  for (const keyart of existingKeyarts) {
+    const shotIndex = resolveKeyartShotIndex(keyart.id, keyart.prompt);
+    if (!existingByShot.has(shotIndex)) existingByShot.set(shotIndex, keyart);
+  }
+
+  // 已有每镜静帧时同步到当前反推：补齐注入，并删除旧反推遗留的多余/重复静帧。
+  if (shots.every((shot) => existingByShot.has(shot.index))) {
+    const keepIds = new Set(shots.map((shot) => existingByShot.get(shot.index)!.id));
+    const removedIds = new Set(existingKeyarts.filter((b) => !keepIds.has(b.id)).map((b) => b.id));
+    const nextBlocks = blocks.filter((b) => !removedIds.has(b.id)).map((b) => {
       if (!b.id.startsWith("keyart-") || !sameEpisode(b)) return b;
       const shotIdx = resolveKeyartShotIndex(b.id, b.prompt);
-      const shot = shots.find((s) => s.index === shotIdx) || shots[Math.min(shotIdx, shots.length) - 1];
+      const shot = shots.find((s) => s.index === shotIdx);
       if (!shot) return b;
       const base = stripShotInjectSection(b.prompt);
       return { ...b, prompt: [base, formatWorkbenchShotInjectBlock(shot)].filter(Boolean).join("\n\n") };
     });
-    return { blocks: nextBlocks, edges };
+    const nextEdges = edges.filter((edge) => !removedIds.has(edge.fromId) && !removedIds.has(edge.toId));
+    return { blocks: nextBlocks, edges: nextEdges };
   }
 
   const basePrompt = stripShotInjectSection(primary.prompt);

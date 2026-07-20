@@ -235,6 +235,32 @@ describe("canvasDramaStudio factory", () => {
     expect(ordered.filter((id) => id.startsWith("keyart-"))).toHaveLength(4);
   });
 
+  it("removes stale keyarts when a rerun returns fewer shots", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const fourShotBlocks = blocks.map((b) =>
+      b.id === reverse.id
+        ? { ...b, status: "done" as const, outputText: "1. 推门\n2. 对峙\n3. 拔刀\n4. 收刀" }
+        : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(fourShotBlocks, edges, reverse.id);
+    const threeShotBlocks = expanded.blocks.map((b) =>
+      b.id === reverse.id ? { ...b, outputText: "1. 推门\n2. 对峙\n3. 收刀" } : b,
+    );
+    const shrunk = expandManhuaShotKeyartsAfterReverse(
+      threeShotBlocks,
+      expanded.edges,
+      reverse.id,
+    );
+    const keyarts = shrunk.blocks.filter((b) => b.id.startsWith("keyart-"));
+    expect(keyarts).toHaveLength(3);
+    expect(keyarts.some((b) => b.id.includes("-s04-"))).toBe(false);
+    expect(shrunk.edges.some((edge) => edge.fromId.includes("-s04-") || edge.toId.includes("-s04-"))).toBe(false);
+  });
+
   it("spawn/prefs inject wardrobe+cast+genre into keyart (not bible-only)", () => {
     const { blocks } = spawnManhuaDramaStudio({
       topic: "仙侠剑修闯秘境",
