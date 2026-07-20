@@ -78,7 +78,7 @@ export function loadManhuaShotContinuityPrefs(
 
 export function saveManhuaShotContinuityPrefs(
   prefs: Partial<ManhuaShotContinuityPrefs>,
-  storage: Pick<Storage, "setItem"> = localStorage,
+  storage: Pick<Storage, "getItem" | "setItem"> = localStorage,
 ): ManhuaShotContinuityPrefs {
   const next = normalizeManhuaShotContinuityPrefs({
     ...loadManhuaShotContinuityPrefs(storage),
