@@ -37,6 +37,8 @@ export type ManhuaWriterSession = {
   workflowPhase: "outline" | "assets" | "storyboard";
   /** 用户上传/基于库参考生成的参考图（HTTPS + 勾选角色） */
   customAssetRefs: ManhuaCustomAssetRef[];
+  /** 生成资产图时授权匿名进库（半价） */
+  shareAssetToLibrary: boolean;
 };
 
 export type ManhuaWriterSessionPartial = Partial<Omit<ManhuaWriterSession, "format">> & {
@@ -95,6 +97,7 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     assetsSkipped: Boolean(input.assetsSkipped),
     workflowPhase,
     customAssetRefs: normalizeManhuaCustomAssetRefs(input.customAssetRefs),
+    shareAssetToLibrary: Boolean(input.shareAssetToLibrary),
   };
 }
 

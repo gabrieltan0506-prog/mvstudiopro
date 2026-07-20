@@ -119,6 +119,16 @@ type Props = {
     role: ManhuaCustomAssetRole;
     seedLibraryId: string;
   }) => void | Promise<void>;
+  /** 授权进库半价（付费积分）；兑换码赠送积分路径由父级锁定强制进库 */
+  shareAssetToLibrary?: boolean;
+  onShareAssetToLibraryChange?: (next: boolean) => void;
+  assetShareBilling?: {
+    credits: number;
+    halfPriceApplied: boolean;
+    giftedBlocksHalfPrice: boolean;
+    noticeZh: string;
+    priceLabelZh: string;
+  };
 
   /** 生成当前选中片段（该镜静帧若缺则先出 + 该片段成片） */
   onSpawnAndRunClip?: () => void;
@@ -235,6 +245,9 @@ export default function ManhuaScriptWorkbench({
   onCustomAssetRoleChange,
   onRemoveCustomAsset,
   onGenerateCustomAssetFromLibrary,
+  shareAssetToLibrary = false,
+  onShareAssetToLibraryChange,
+  assetShareBilling,
   onSpawnAndRunClip,
   onGenerateFragment,
   onGenerateMissingFragments,
@@ -1031,6 +1044,45 @@ export default function ManhuaScriptWorkbench({
                   </label>
                 ) : null}
               </div>
+              {onGenerateCustomAssetFromLibrary || onShareAssetToLibraryChange ? (
+                <div
+                  data-manhua-asset-share
+                  className="mt-2 rounded-lg border border-white/10 bg-black/25 px-2.5 py-2"
+                >
+                  {assetShareBilling?.giftedBlocksHalfPrice ? (
+                    <p className="text-[10px] leading-4 text-amber-100/85">
+                      {assetShareBilling.noticeZh}
+                      {assetShareBilling.priceLabelZh
+                        ? ` 本单约 ${assetShareBilling.priceLabelZh}。`
+                        : ""}
+                    </p>
+                  ) : (
+                    <>
+                      <label className="flex cursor-pointer items-start gap-2">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={Boolean(shareAssetToLibrary)}
+                          disabled={!onShareAssetToLibraryChange || factoryBusy}
+                          onChange={(e) =>
+                            onShareAssetToLibraryChange?.(e.target.checked)
+                          }
+                        />
+                        <span className="text-[10px] leading-4 text-white/70">
+                          授权进库半价
+                          {assetShareBilling?.priceLabelZh
+                            ? ` · ${assetShareBilling.priceLabelZh}`
+                            : ""}
+                        </span>
+                      </label>
+                      <p className="mt-1 text-[10px] leading-4 text-white/40">
+                        {assetShareBilling?.noticeZh ||
+                          "勾选后本单半价并匿名进参考库；兑换码赠送积分不享半价，生成后仍无条件进库。成片与分镜静帧不享受半价。"}
+                      </p>
+                    </>
+                  )}
+                </div>
+              ) : null}
               {onGenerateCustomAssetFromLibrary ? (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   <button

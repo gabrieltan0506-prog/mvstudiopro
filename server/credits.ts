@@ -553,6 +553,48 @@ export async function getCreditTransactions(userId: number, limit = 50) {
     .limit(limit);
 }
 
+/** 兑换码 / 活动赠送积分来源（先花赠送：估算剩余） */
+const GIFTED_CREDIT_SOURCES = new Set(["beta", "bonus", "referral"]);
+
+/**
+ * 估算个人帐户尚未花完的赠送积分（兑换码 beta、活动 bonus、邀请 referral）。
+ * 假设历史扣费优先消耗赠送余额：remaining = min(balance, max(0, giftedIn - spent))。
+ * 无限额度账号返回 0（不阻断半价）。
+ */
+export async function estimateRemainingGiftedCredits(
+  userId: number,
+): Promise<number> {
+  if (await isAdmin(userId)) return 0;
+  const db = await getDb();
+  if (!db) return 0;
+
+  const rows = await db
+    .select({
+      amount: creditTransactions.amount,
+      type: creditTransactions.type,
+      source: creditTransactions.source,
+    })
+    .from(creditTransactions)
+    .where(eq(creditTransactions.userId, userId));
+
+  let giftedIn = 0;
+  let spent = 0;
+  for (const r of rows) {
+    const amt = Number(r.amount) || 0;
+    if (r.type === "credit" && GIFTED_CREDIT_SOURCES.has(String(r.source))) {
+      giftedIn += Math.max(0, amt);
+    } else if (r.type === "debit") {
+      spent += Math.abs(amt);
+    }
+  }
+
+  const balance = await getOrCreateBalance(userId);
+  return Math.min(
+    Math.max(0, Number(balance.balance) || 0),
+    Math.max(0, giftedIn - spent),
+  );
+}
+
 // ─── 生成失败时退回已扣除积分（非金流退款）──────────
 export async function refundCredits(
   userId: number,

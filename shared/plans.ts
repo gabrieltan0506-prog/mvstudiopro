@@ -199,6 +199,8 @@ export const CREDIT_COSTS = {
   storyboardFlash: 8,
   storyboardGpt5: 20,
   forgeImage: 3,
+  /** 漫剧资产静帧（人物/场景/服装道具）原价；授权进库时半价见 manhuaAssetSharePricing */
+  manhuaAssetStill: 54,
 
   // ─── AI 文本生成（Gemini）─────────────────────
   aiInspiration: 5,

@@ -18,6 +18,12 @@ import {
 } from "@shared/manhuaCustomAssetRefs";
 import { resolveManhuaCustomAssetSeed } from "@shared/manhuaCustomAssetSeed";
 import { absolutizeManhuaAssetUrl } from "@shared/manhuaKeyartEditFusion";
+import {
+  MANHUA_ASSET_SHARE_CONSENT_HINT_ZH,
+  MANHUA_ASSET_STILL_FULL_CREDITS,
+  MANHUA_ASSET_STILL_SHARE_HALF_CREDITS,
+  manhuaAssetStillPriceLabelZh,
+} from "@shared/manhuaAssetSharePricing";
 import { uploadCanvasFilesParallel } from "@/lib/canvasUpload";
 import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
@@ -431,6 +437,9 @@ export default function OmniCanvas() {
   const [customAssetRefs, setCustomAssetRefs] = useState<ManhuaCustomAssetRef[]>(() =>
     normalizeManhuaCustomAssetRefs(initialWriterSession?.customAssetRefs),
   );
+  const [shareAssetToLibrary, setShareAssetToLibrary] = useState(
+    () => Boolean(initialWriterSession?.shareAssetToLibrary),
+  );
   const [workflowPhase, setWorkflowPhase] = useState<"outline" | "assets" | "storyboard">(
     () => initialWriterSession?.workflowPhase || (initialWriterSession?.writerConfirmed ? "storyboard" : "outline"),
   );
@@ -494,6 +503,41 @@ export default function OmniCanvas() {
     refetchOnWindowFocus: false,
     retry: 1,
   });
+  const generateAssetStillMutation = trpc.manhuaAssetShare.generateAssetStill.useMutation();
+  const assetShareQuote = trpc.manhuaAssetShare.quote.useQuery(
+    { shareToLibrary: shareAssetToLibrary },
+    {
+      enabled: Boolean(user?.id) && canvasMode === "manhua",
+      staleTime: 30_000,
+      refetchOnWindowFocus: true,
+    },
+  );
+  const assetShareBillingUi = useMemo(() => {
+    const q = assetShareQuote.data;
+    const remainingGifted = Number(q?.remainingGiftedCredits) || 0;
+    const priceLabelZh = manhuaAssetStillPriceLabelZh({
+      shareToLibrary: shareAssetToLibrary,
+      remainingGiftedCredits: remainingGifted,
+    });
+    if (q) {
+      return {
+        credits: q.credits,
+        halfPriceApplied: q.halfPriceApplied,
+        giftedBlocksHalfPrice: q.giftedBlocksHalfPrice,
+        noticeZh: q.noticeZh,
+        priceLabelZh,
+      };
+    }
+    return {
+      credits: shareAssetToLibrary
+        ? MANHUA_ASSET_STILL_SHARE_HALF_CREDITS
+        : MANHUA_ASSET_STILL_FULL_CREDITS,
+      halfPriceApplied: Boolean(shareAssetToLibrary),
+      giftedBlocksHalfPrice: false,
+      noticeZh: MANHUA_ASSET_SHARE_CONSENT_HINT_ZH,
+      priceLabelZh,
+    };
+  }, [assetShareQuote.data, shareAssetToLibrary]);
   const cloudDraftUpsert = trpc.manhuaCloudDraft.upsert.useMutation({
     onError: (err) => {
       pushDebug("cloudDraft:upsert-fail", {
@@ -859,6 +903,7 @@ export default function OmniCanvas() {
         assetsSkipped,
         workflowPhase,
         customAssetRefs,
+        shareAssetToLibrary,
       });
     } catch {
       /* 本机权限/配额失败：不阻断云端通路 */
@@ -876,6 +921,7 @@ export default function OmniCanvas() {
     assetsSkipped,
     workflowPhase,
     customAssetRefs,
+    shareAssetToLibrary,
   ]);
 
   const applyCloudDraftToUi = useCallback((draft: ManhuaCloudDraftPayload) => {
@@ -895,6 +941,7 @@ export default function OmniCanvas() {
     setManhuaUiMode(session.manhuaUiMode === "form" ? "form" : "workbench");
     setAssetsSkipped(Boolean(session.assetsSkipped));
     setCustomAssetRefs(normalizeManhuaCustomAssetRefs(session.customAssetRefs));
+    setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
     setWorkflowPhase(
       session.workflowPhase === "assets" || session.workflowPhase === "storyboard"
         ? session.workflowPhase
@@ -1015,6 +1062,7 @@ export default function OmniCanvas() {
       maleLeadManual,
       artStyleManual,
       customAssetRefs,
+      shareAssetToLibrary,
     };
     const writerSession = {
       topic: factoryTopic,
@@ -1029,6 +1077,7 @@ export default function OmniCanvas() {
       assetsSkipped,
       workflowPhase,
       customAssetRefs,
+      shareAssetToLibrary,
     };
     // 本机双写补强（与既有 LS effect 叠加；失败不阻断）
     persistManhuaDraftLocally({
@@ -1078,6 +1127,7 @@ export default function OmniCanvas() {
     assetsSkipped,
     workflowPhase,
     customAssetRefs,
+    shareAssetToLibrary,
     blocks,
     edges,
     factoryFemaleId,
@@ -2254,11 +2304,15 @@ export default function OmniCanvas() {
     setCustomAssetRefs((prev) => prev.filter((r) => r.id !== id));
   }, []);
 
-  /** 基于库参考生成新人物/场景/服装道具（库不硬锁，产出进自传池） */
+  /** 基于库参考生成新人物/场景/服装道具（扣费；授权进库半价） */
   const generateCustomAssetFromLibrary = useCallback(
     async (opts: { role: ManhuaCustomAssetRole; seedLibraryId: string }) => {
       if (factoryBusy) {
         toast.message("请等待当前生成结束");
+        return;
+      }
+      if (!user?.id) {
+        toast.message("请先登录后再生成资产图");
         return;
       }
       const seed = resolveManhuaCustomAssetSeed({
@@ -2280,27 +2334,23 @@ export default function OmniCanvas() {
         artStylePromptZh: style.promptZh,
       });
       const refAbs = absolutizeManhuaAssetUrl(seed.previewPath, window.location.origin);
-      const ac = new AbortController();
-      abortRef.current = ac;
       setFactoryBusy(true);
       const roleZh =
         opts.role === "character" ? "人物" : opts.role === "scene" ? "场景" : "服装道具";
       setFactoryProgress(`基于库参考生成新${roleZh}…`);
       try {
-        const block = defaultCanvasBlock("image", 80, 80);
-        block.id = `custgen-${opts.role}-${Date.now().toString(36)}`;
-        block.prompt = prompt;
-        block.aspectRatio = "9:16";
-        block.imageModel = "gpt-image-2";
-        block.imageMode = refAbs ? "edit" : "generate";
-        block.refImageUrl = refAbs || undefined;
-        block.width = 360;
-        block.height = 400;
         toast.message(`正在生成新${roleZh}`, {
-          description: `参考「${seed.labelZh}」，不会复刻同一张。`,
+          description: `${assetShareBillingUi.priceLabelZh} · 参考「${seed.labelZh}」`,
         });
-        const out = await runCanvasBlock(runDeps, block, { visionImages: [], texts: [] });
-        const url = String(out.outputUrl || out.outputUrls?.[0] || "").trim();
+        const res = await generateAssetStillMutation.mutateAsync({
+          prompt,
+          role: opts.role,
+          shareToLibrary: shareAssetToLibrary,
+          labelZh: `新${roleZh}·${seed.labelZh}`,
+          aspectRatio: "9:16",
+          referenceImageUrl: /^https:\/\//i.test(refAbs) ? refAbs : undefined,
+        });
+        const url = String(res.imageUrl || "").trim();
         if (!/^https:\/\//i.test(url)) {
           throw new Error("未返回可用图片地址");
         }
@@ -2313,9 +2363,15 @@ export default function OmniCanvas() {
           seedLibraryId: seed.seedLibraryId,
         };
         setCustomAssetRefs((prev) => normalizeManhuaCustomAssetRefs([...prev, ref]));
-        toast.message(`已生成新${roleZh}并勾选`, {
-          description: "将直接用于分镜融图；可再改勾选或继续上传。",
-        });
+        void assetShareQuote.refetch();
+        const doneDesc = res.giftedBlocksHalfPrice
+          ? `已扣 ${res.creditsCharged} 积分（兑换码积分原价），已无条件匿名进参考库`
+          : res.halfPriceApplied
+            ? `已扣 ${res.creditsCharged} 积分（半价），已匿名进参考库`
+            : res.shareToLibrary
+              ? `已扣 ${res.creditsCharged} 积分，已匿名进参考库`
+              : `已扣 ${res.creditsCharged} 积分；勾选授权可用充值积分半价并进库`;
+        toast.message(`已生成新${roleZh}并勾选`, { description: doneDesc });
       } catch (e: unknown) {
         toast.error(`新${roleZh}生成失败`, {
           description: e instanceof Error ? e.message : "请稍后重试",
@@ -2323,10 +2379,18 @@ export default function OmniCanvas() {
       } finally {
         setFactoryBusy(false);
         setFactoryProgress("");
-        abortRef.current = null;
       }
     },
-    [factoryArtStyleId, factoryBusy, factoryTopic, runDeps],
+    [
+      assetShareBillingUi.priceLabelZh,
+      assetShareQuote,
+      factoryArtStyleId,
+      factoryBusy,
+      factoryTopic,
+      generateAssetStillMutation,
+      shareAssetToLibrary,
+      user?.id,
+    ],
   );
 
   /** 方案 B：锁定角色+场景后，先出齐角色图→场景图，再进分镜 */
@@ -3069,6 +3133,9 @@ export default function OmniCanvas() {
                   onCustomAssetRoleChange={setCustomAssetRole}
                   onRemoveCustomAsset={removeCustomAssetRef}
                   onGenerateCustomAssetFromLibrary={generateCustomAssetFromLibrary}
+                  shareAssetToLibrary={shareAssetToLibrary}
+                  onShareAssetToLibraryChange={setShareAssetToLibrary}
+                  assetShareBilling={assetShareBillingUi}
                   workflowPhase={workflowPhase}
                   onWorkflowPhaseChange={setWorkflowPhase}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
