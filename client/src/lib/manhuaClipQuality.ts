@@ -10,6 +10,8 @@ export async function reviewManhuaClipQuality(input: {
   expectedContext: string;
   attempts: number;
   sourceKeyartId?: string;
+  expectedDurationSec?: number;
+  shotIndex?: number;
 }): Promise<ManhuaClipQualityReport> {
   const reviewedAt = new Date().toISOString();
   try {
@@ -20,6 +22,8 @@ export async function reviewManhuaClipQuality(input: {
         videoUrl: input.videoUrl,
         referenceImageUrl: input.referenceImageUrl,
         expectedContext: input.expectedContext,
+        expectedDurationSec: input.expectedDurationSec,
+        shotIndex: input.shotIndex,
       }),
     });
     const json = (await response.json()) as {

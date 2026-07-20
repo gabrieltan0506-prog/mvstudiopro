@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   defaultWorkbenchShots,
+  formatWorkbenchClipInjectBlock,
   formatWorkbenchShotInjectBlock,
   inferWorkbenchShotCastCount,
   parseWorkbenchShotsFromText,
@@ -80,8 +81,22 @@ describe("manhuaScriptWorkbench", () => {
     expect(block).toContain("人数硬锁");
     expect(block).toContain("至少两名");
     expect(block).toContain("禁止套用统一的暖背景加轮廓光模板");
+    expect(block).toContain("禁字硬锁");
     expect(resolveKeyartShotIndex("keyart-e01-s03-abc", "")).toBe(3);
     expect(resolveKeyartShotIndex("keyart-e01-xyz", block)).toBe(2);
+  });
+
+  it("formats clip inject with shot event and duration", () => {
+    const block = formatWorkbenchClipInjectBlock({
+      index: 1,
+      durationSec: 2.5,
+      cameraZh: "全景缓慢推近",
+      actionZh: "高主管推上红色裁员文件夹",
+    });
+    expect(block).toContain("【分镜 1·片段成片】");
+    expect(block).toContain("约 2.5 秒");
+    expect(block).toContain("红色裁员文件夹");
+    expect(block).toContain("禁止只做空镜走路");
   });
 
   it("resolves per-shot asset mount from named cast or soft dual roles", () => {

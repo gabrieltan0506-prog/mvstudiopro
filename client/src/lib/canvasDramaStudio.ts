@@ -15,7 +15,10 @@ import {
 } from "./canvasTypes";
 import { loadCanvasDocumentTexts } from "./canvasDocumentText";
 import { reviewManhuaClipQuality } from "./manhuaClipQuality";
-import { isManhuaClipQualityInfraFailure } from "@shared/manhuaClipQuality";
+import {
+  isManhuaClipQualityInfraFailure,
+  isManhuaClipQualityKeyartTextFailure,
+} from "@shared/manhuaClipQuality";
 import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
 import {
@@ -63,7 +66,9 @@ import {
   shouldAttachManhuaPreviouslyOn,
 } from "@shared/manhuaEpisodeRecap";
 import {
+  formatWorkbenchClipInjectBlock,
   formatWorkbenchShotInjectBlock,
+  MANHUA_KEYART_NO_TEXT_LOCK,
   MANHUA_SHOT_KEYART_MAX,
   parseWorkbenchShotsFromText,
   resolveKeyartShotIndex,
@@ -1209,7 +1214,7 @@ export function ensureManhuaFragmentClips(
       parentId: keyart.id,
       prompt: [
         MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip,
-        formatWorkbenchShotInjectBlock(shot),
+        formatWorkbenchClipInjectBlock(shot),
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -1441,7 +1446,8 @@ export function extractFactoryMotionHints(reverseMarkdown: string): {
     summary ? `题材摘要：${summary}` : "",
     lockSnippet ? `角色/场景锁定：\n${lockSnippet}` : "",
     boardSnippet ? `分镜要点：\n${boardSnippet}` : "",
-    "竖屏电影感关键静帧：按分镜人数同框入画；关系镜须双人以上；角色外形锁定、无字幕、无水印。",
+    "竖屏电影感关键静帧：按分镜人数同框入画；关系镜须双人以上；角色外形锁定。",
+    MANHUA_KEYART_NO_TEXT_LOCK,
   ]
     .filter(Boolean)
     .join("\n");
@@ -1488,7 +1494,35 @@ function stripFactoryEnrichSections(prompt: string): string {
     .replace(/\n*\n【来自编导反推】[\s\S]*?(?=\n\n【|\n*$)/g, "")
     .replace(/\n*\n【角色卡锚点】[\s\S]*?(?=\n\n【|\n*$)/g, "")
     .replace(/\n*\n【微动优先】[\s\S]*?(?=\n\n【|\n*$)/g, "")
+    .replace(/\n*\n【分镜\s*\d+·片段成片】[\s\S]*?(?=\n\n【|\n*$)/g, "")
     .trim();
+}
+
+function extractShotInjectSection(prompt: string): string {
+  const m = String(prompt || "").match(/【分镜\s*\d+[·・].*?】[\s\S]*?(?=\n\n【|\n*$)/);
+  return String(m?.[0] || "").trim().slice(0, 1200);
+}
+
+function buildFragmentQualityExpectedContext(opts: {
+  shot?: ManhuaWorkbenchShot;
+  keyartPrompt?: string;
+  clipPrompt?: string;
+}): string {
+  const shot = opts.shot;
+  const shotBlock = shot
+    ? [
+        formatWorkbenchShotInjectBlock(shot),
+        formatWorkbenchClipInjectBlock(shot),
+      ].join("\n\n")
+    : extractShotInjectSection(opts.keyartPrompt || "") ||
+      extractShotInjectSection(opts.clipPrompt || "");
+  return [
+    shotBlock,
+    "质检范围：仅本镜。只要首镜人物/场景连贯，且成片出现本镜关键事件或道具交互即可通过剧情项。",
+  ]
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 5000);
 }
 
 function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string): CanvasBlock[] {
@@ -1509,7 +1543,8 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
   )
     .trim()
     .slice(0, 700);
-  if (!keyArtHint && !seedanceHint && !bibleText) return working;
+  const shots = resolveShotsForEpisodeKeyarts(working, ep ?? 1);
+  if (!keyArtHint && !seedanceHint && !bibleText && !shots.length) return working;
   return working.map((b) => {
     if (!sameEpisode(b)) return b;
     if (b.id.startsWith("keyart-") && (keyArtHint || bibleText)) {
@@ -1518,15 +1553,33 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
       const parts = [
         kept,
         keyArtHint ? `【来自编导反推】\n${keyArtHint}` : "",
-        bibleText ? `【角色卡锚点】\n${bibleText}` : "",
+        // 角色锚点只取外形句，避免整段设定卡诱导多格文字排版
+        bibleText
+          ? `【角色外形锚点·禁字】\n${bibleText.slice(0, 400)}\n${MANHUA_KEYART_NO_TEXT_LOCK}`
+          : "",
       ].filter(Boolean);
       return { ...b, prompt: parts.join("\n\n") };
     }
-    if (b.id.startsWith("clip-") && seedanceHint) {
+    if (b.id.startsWith("clip-")) {
+      const shotIdx = resolveKeyartShotIndex(b.id, b.prompt);
+      const shot =
+        shots.find((s) => s.index === shotIdx) ||
+        ({
+          index: shotIdx,
+          durationSec: 2.5,
+          cameraZh: "",
+          actionZh: "",
+        } as ManhuaWorkbenchShot);
       const kept = stripFactoryEnrichSections(b.prompt) || MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip;
       return {
         ...b,
-        prompt: `${kept}\n\n【微动优先】\n${seedanceHint}`,
+        prompt: [
+          kept,
+          formatWorkbenchClipInjectBlock(shot),
+          seedanceHint ? `【微动优先】\n${seedanceHint}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
       };
     }
     return b;
@@ -1768,6 +1821,17 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             keyartCandidates[0];
           if (!firstCandidate) throw new Error("缺少可供成片质检的关键静帧");
 
+          const episodeForShot = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
+          const shotIdx = resolveKeyartShotIndex(blockId, runBlockPayload.prompt);
+          const shotMeta = resolveShotsForEpisodeKeyarts(working, episodeForShot).find(
+            (s) => s.index === shotIdx,
+          );
+          const expectedDurationSec = shotMeta?.durationSec ?? 2.5;
+          const expectedContext = buildFragmentQualityExpectedContext({
+            shot: shotMeta,
+            keyartPrompt: firstCandidate.prompt,
+            clipPrompt: runBlockPayload.prompt,
+          });
           const review = async (
             candidate: (typeof keyartCandidates)[number],
             attempts: number,
@@ -1776,15 +1840,22 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             reviewManhuaClipQuality({
               videoUrl,
               referenceImageUrl: candidate.url,
-              expectedContext: [candidate.prompt, ...texts].filter(Boolean).join("\n\n"),
+              expectedContext: buildFragmentQualityExpectedContext({
+                shot: shotMeta,
+                keyartPrompt: candidate.prompt,
+                clipPrompt: runBlockPayload.prompt,
+              }) || expectedContext,
               attempts,
               sourceKeyartId: candidate.id,
+              expectedDurationSec,
+              shotIndex: shotIdx,
             });
 
           clipQuality = await review(firstCandidate, 1, out.outputUrl);
           if (
             clipQuality.status !== "passed" &&
-            !isManhuaClipQualityInfraFailure(clipQuality)
+            !isManhuaClipQualityInfraFailure(clipQuality) &&
+            !isManhuaClipQualityKeyartTextFailure(clipQuality)
           ) {
             const fallbackCandidate = sameShotCandidates.find(
               (candidate) => candidate.id !== firstCandidate.id,
@@ -1803,6 +1874,10 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           if (clipQuality.status !== "passed") {
             const failedQuality = clipQuality;
             const infra = isManhuaClipQualityInfraFailure(failedQuality);
+            const keyartTextFail = isManhuaClipQualityKeyartTextFailure(failedQuality);
+            const failMsg = keyartTextFail
+              ? `智能质检不合格：${failedQuality.summary}（建议先「重出静帧」再生成片段）`
+              : `智能质检不合格：${failedQuality.summary}`;
             working = working.map((candidate) =>
               candidate.id === blockId
                 ? {
@@ -1812,15 +1887,13 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                     outputUrl: out.outputUrl,
                     outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : candidate.outputUrls),
                     manhuaClipQuality: failedQuality,
-                    error: infra
-                      ? failedQuality.summary
-                      : `智能质检不合格：${failedQuality.summary}`,
+                    error: infra ? failedQuality.summary : failMsg,
                   }
                 : candidate,
             );
             publish(working);
             if (!infra) {
-              throw new Error(`智能质检不合格：${failedQuality.summary}`);
+              throw new Error(failMsg);
             }
             // 质检服务暂不可用：不中断整链，成片可预览但不进成片坞（export 仍看 passed）
             completedIds.push(blockId);

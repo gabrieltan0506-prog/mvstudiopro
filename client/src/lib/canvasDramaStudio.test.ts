@@ -460,7 +460,7 @@ slow push, crystal glow
       expect(key.prompt).toContain("秘境洞府");
       expect(key.prompt).toContain("发光晶石");
       expect(key.prompt).toContain("来自编导反推");
-      expect(key.prompt).toContain("角色卡锚点");
+      expect(key.prompt).toContain("角色外形锚点·禁字");
     } finally {
       globalThis.fetch = prevFetch;
       void original;

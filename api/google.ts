@@ -567,6 +567,8 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const referenceImageUrl = s(b.referenceImageUrl || "").trim();
       const videoUrl = s(b.videoUrl || "").trim();
       const expectedContext = s(b.expectedContext || "").trim();
+      const expectedDurationSec = Number(b.expectedDurationSec);
+      const shotIndex = Number(b.shotIndex);
       if (!referenceImageUrl) return res.status(400).json({ ok: false, error: "missing_reference_image" });
       if (!videoUrl) return res.status(400).json({ ok: false, error: "missing_video" });
 
@@ -589,6 +591,11 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const location = (s(process.env.VERTEX_GEMINI_LOCATION) || "global").trim();
       const base = baseUrlFor(location);
       const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
+      const qualityPrompt = buildManhuaClipQualityPrompt({
+        expectedContext,
+        expectedDurationSec: Number.isFinite(expectedDurationSec) ? expectedDurationSec : undefined,
+        shotIndex: Number.isFinite(shotIndex) && shotIndex >= 1 ? shotIndex : undefined,
+      });
       const r = await fetchJson(url, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -597,7 +604,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
             {
               role: "user",
               parts: [
-                { text: buildManhuaClipQualityPrompt(expectedContext) },
+                { text: qualityPrompt },
                 { inlineData: { mimeType: image.mimeType, data: image.b64 } },
                 { inlineData: { mimeType: video.mimeType, data: video.b64 } },
               ],

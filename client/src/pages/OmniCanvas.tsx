@@ -418,11 +418,17 @@ export default function OmniCanvas() {
         setManhuaCanvasPresentation(isMedia ? "media" : "all");
         setFocusBlockId(blockId);
       }
-      const details = document.getElementById(
-        "manhua-factory-canvas-details",
-      ) as HTMLDetailsElement | null;
-      if (details) details.open = true;
       window.setTimeout(() => {
+        const zone = document.getElementById("freeform-canvas-zone");
+        // 右栏已挂画布时只聚焦，不展开下方折叠区、不跳出三栏
+        if (zone && zone.getClientRects().length > 0) {
+          zone.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          return;
+        }
+        const details = document.getElementById(
+          "manhua-factory-canvas-details",
+        ) as HTMLDetailsElement | null;
+        if (details) details.open = true;
         document
           .getElementById("freeform-canvas-zone")
           ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -1699,10 +1705,12 @@ export default function OmniCanvas() {
       detail: `ep=${continuity.episodeIndex} · ${summarizeManhuaProjectBible(bible)} · props=${hardCast.propIds.join(",") || "—"}`,
     });
     setManhuaUiMode("workbench");
+    setImmersiveExtrasOpen(false);
+    setWorkflowPhase("storyboard");
     toast.success(
       tips.length
         ? `已确认剧情并生成专案设定；第${continuity.episodeIndex}集编导链就绪（含${tips.join("·")}）`
-        : `已确认剧情并生成专案设定；第${continuity.episodeIndex}集编导链就绪`,
+        : `已确认剧情并生成专案设定；右栏可先调画布再生成`,
     );
   }, [
     writerPack,
@@ -2303,6 +2311,8 @@ export default function OmniCanvas() {
                   if (stepId === "writer" && writerPack && !writerConfirmed) {
                     confirmWriterToDirector();
                     setManhuaUiMode("workbench");
+                    setImmersiveExtrasOpen(false);
+                    setWorkflowPhase("storyboard");
                     window.setTimeout(() => {
                       document.querySelector("#manhua-workbench-shell")?.scrollIntoView({
                         behavior: "smooth",
@@ -2421,7 +2431,8 @@ export default function OmniCanvas() {
                   writerPackReady={Boolean(writerPack && writerPackLooksReady(writerPack))}
                   onConfirmOutline={() => {
                     confirmWriterToDirector();
-                    setWorkflowPhase("assets");
+                    // 套造型后进分镜：右栏常驻画布，便于先调节点再生成
+                    setWorkflowPhase("storyboard");
                   }}
                   assetsSkipped={assetsSkipped}
                   onAssetsSkippedChange={setAssetsSkipped}
@@ -2430,9 +2441,41 @@ export default function OmniCanvas() {
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
                   onFocusBlock={(id) => {
-                    setImmersiveExtrasOpen(true);
                     openManhuaFactoryCanvas(id);
                   }}
+                  previewCanvasToolbar={
+                    <label className="inline-flex items-center gap-1 text-[10px] text-white/45">
+                      呈现
+                      <select
+                        value={manhuaCanvasPresentation}
+                        onChange={(e) =>
+                          setManhuaCanvasPresentation(e.target.value as "media" | "all")
+                        }
+                        className="rounded-md border border-white/12 bg-black/40 px-1.5 py-0.5 text-[10px] text-white/85"
+                      >
+                        <option value="media">图视频</option>
+                        <option value="all">全部节点</option>
+                      </select>
+                    </label>
+                  }
+                  previewCanvas={
+                    <div className="absolute inset-0 overflow-auto">
+                      <FreeformCanvas
+                        blocks={blocks}
+                        edges={edges}
+                        onBlocksChange={handleBlocksChange}
+                        onEdgesChange={handleEdgesChange}
+                        runDeps={runDeps}
+                        focusBlockId={focusBlockId}
+                        onFocusBlockConsumed={() => setFocusBlockId(null)}
+                        presentation={manhuaCanvasPresentation === "media" ? "media" : "full"}
+                        focusEpisode={writerFocusEpisode}
+                        spawnKinds={
+                          manhuaCanvasPresentation === "media" ? ["image", "video"] : undefined
+                        }
+                      />
+                    </div>
+                  }
                   onSpawnAndRunClip={() => {
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
@@ -2696,8 +2739,10 @@ export default function OmniCanvas() {
                   onClick={() => {
                     confirmWriterToDirector();
                     setManhuaUiMode("workbench");
+                    setImmersiveExtrasOpen(false);
+                    setWorkflowPhase("storyboard");
                     window.setTimeout(() => {
-                      document.querySelector("#manhua-live-progress-zone")?.scrollIntoView({
+                      document.querySelector("#manhua-workbench-zone")?.scrollIntoView({
                         behavior: "smooth",
                         block: "start",
                       });
@@ -2944,60 +2989,63 @@ export default function OmniCanvas() {
                 }}
                 onFocusBlock={(id) => openManhuaFactoryCanvas(id)}
               />
-              <details
-                id="manhua-factory-canvas-details"
-                className="mt-3 overflow-hidden rounded-2xl border border-white/12 bg-[#080b12]"
-              >
-                <summary className="cursor-pointer list-none px-3 py-2 text-[12px] font-semibold text-white/75 marker:content-none [&::-webkit-details-marker]:hidden">
-                  <span className="inline-flex flex-wrap items-center gap-2">
-                    本集静帧 / 成片画布
-                    <span className="rounded-full border border-white/15 px-2 py-0.5 text-[10px] font-normal text-white/40">
-                      第{writerFocusEpisode}集 · 默认只看图视频
-                    </span>
-                    {factoryBusy ? (
-                      <span className="text-[11px] font-normal text-amber-100/85">
-                        {factoryProgress || "运行中…"}
+              {/* 沉浸三栏右栏已挂画布时不再挂第二份，避免双实例状态分裂 */}
+              {!(immersiveWorkbench && !immersiveExtrasOpen) ? (
+                <details
+                  id="manhua-factory-canvas-details"
+                  className="mt-3 overflow-hidden rounded-2xl border border-white/12 bg-[#080b12]"
+                >
+                  <summary className="cursor-pointer list-none px-3 py-2 text-[12px] font-semibold text-white/75 marker:content-none [&::-webkit-details-marker]:hidden">
+                    <span className="inline-flex flex-wrap items-center gap-2">
+                      本集静帧 / 成片画布
+                      <span className="rounded-full border border-white/15 px-2 py-0.5 text-[10px] font-normal text-white/40">
+                        第{writerFocusEpisode}集 · 默认只看图视频
                       </span>
-                    ) : null}
-                  </span>
-                </summary>
-                <div id="freeform-canvas-zone" className="scroll-mt-44 border-t border-white/10">
-                  <div className="flex flex-wrap items-center gap-2 border-b border-white/8 px-3 py-2">
-                    <label className="text-[10px] text-white/45">
-                      呈现
-                      <select
-                        value={manhuaCanvasPresentation}
-                        onChange={(e) =>
-                          setManhuaCanvasPresentation(e.target.value as "media" | "all")
-                        }
-                        className="ml-1.5 rounded-md border border-white/12 bg-black/40 px-2 py-1 text-[11px] text-white/85"
-                      >
-                        <option value="media">仅图片与视频 + 提示词</option>
-                        <option value="all">全部节点（含文本链）</option>
-                      </select>
-                    </label>
-                    <span className="text-[10px] text-white/30">
-                      文本大纲 / 节拍仍在工厂后台跑，不占主画布
+                      {factoryBusy ? (
+                        <span className="text-[11px] font-normal text-amber-100/85">
+                          {factoryProgress || "运行中…"}
+                        </span>
+                      ) : null}
                     </span>
+                  </summary>
+                  <div id="freeform-canvas-zone" className="scroll-mt-44 border-t border-white/10">
+                    <div className="flex flex-wrap items-center gap-2 border-b border-white/8 px-3 py-2">
+                      <label className="text-[10px] text-white/45">
+                        呈现
+                        <select
+                          value={manhuaCanvasPresentation}
+                          onChange={(e) =>
+                            setManhuaCanvasPresentation(e.target.value as "media" | "all")
+                          }
+                          className="ml-1.5 rounded-md border border-white/12 bg-black/40 px-2 py-1 text-[11px] text-white/85"
+                        >
+                          <option value="media">仅图片与视频 + 提示词</option>
+                          <option value="all">全部节点（含文本链）</option>
+                        </select>
+                      </label>
+                      <span className="text-[10px] text-white/30">
+                        文本大纲 / 节拍仍在工厂后台跑，不占主画布
+                      </span>
+                    </div>
+                    <div className="min-h-[360px] md:min-h-[480px]">
+                      <FreeformCanvas
+                        blocks={blocks}
+                        edges={edges}
+                        onBlocksChange={handleBlocksChange}
+                        onEdgesChange={handleEdgesChange}
+                        runDeps={runDeps}
+                        focusBlockId={focusBlockId}
+                        onFocusBlockConsumed={() => setFocusBlockId(null)}
+                        presentation={manhuaCanvasPresentation === "media" ? "media" : "full"}
+                        focusEpisode={writerFocusEpisode}
+                        spawnKinds={
+                          manhuaCanvasPresentation === "media" ? ["image", "video"] : undefined
+                        }
+                      />
+                    </div>
                   </div>
-                  <div className="min-h-[360px] md:min-h-[480px]">
-                    <FreeformCanvas
-                      blocks={blocks}
-                      edges={edges}
-                      onBlocksChange={handleBlocksChange}
-                      onEdgesChange={handleEdgesChange}
-                      runDeps={runDeps}
-                      focusBlockId={focusBlockId}
-                      onFocusBlockConsumed={() => setFocusBlockId(null)}
-                      presentation={manhuaCanvasPresentation === "media" ? "media" : "full"}
-                      focusEpisode={writerFocusEpisode}
-                      spawnKinds={
-                        manhuaCanvasPresentation === "media" ? ["image", "video"] : undefined
-                      }
-                    />
-                  </div>
-                </div>
-              </details>
+                </details>
+              ) : null}
             </div>
 
             {/* 角色库 / 资产墙：抽屉，不长期占主流程 */}

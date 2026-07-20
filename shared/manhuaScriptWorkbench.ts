@@ -186,6 +186,10 @@ export function inferWorkbenchShotCastCount(actionZh: string): number {
   return 1;
 }
 
+/** 静帧禁字：避免设定卡/字幕污染后续质检 */
+export const MANHUA_KEYART_NO_TEXT_LOCK =
+  "禁字硬锁：禁止任何可读文字、字幕、水印、Logo、姓名条、设定卡多格排版、UI 面板文案、标题大字；工牌/屏幕/文件仅几何光纹或模糊不可读纹理。";
+
 /** 写入静帧 prompt：本镜场面必须带场景/道具/服装配合 */
 export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): string {
   const camera = String(shot.cameraZh || "");
@@ -218,9 +222,27 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
     castLock,
     "光线硬锁：必须落实本镜动作描述中的具体光向、冷暖与明暗关系；禁止套用统一的暖背景加轮廓光模板。",
     "必须画出本镜人物、场景与点选道具的配合；服装连续与题材时代一致；禁止空镜或错时代穿戴。",
+    MANHUA_KEYART_NO_TEXT_LOCK,
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/** 写入片段成片 prompt：强制本镜事件，时长对齐分镜秒数 */
+export function formatWorkbenchClipInjectBlock(shot: ManhuaWorkbenchShot): string {
+  const dur =
+    typeof shot.durationSec === "number" && shot.durationSec > 0
+      ? Math.round(shot.durationSec * 10) / 10
+      : 2.5;
+  const action = String(shot.actionZh || "").trim() || "落实本镜节拍中的关键动作与道具交互";
+  return [
+    `【分镜 ${shot.index}·片段成片】`,
+    `目标时长：约 ${dur} 秒（允许 ±0.8 秒）；勿按整集 10 秒要求本镜。`,
+    `本镜必须演绎的事件：${action}`,
+    `运镜：${String(shot.cameraZh || "").trim() || "承接首镜构图做可读微动"}`,
+    "禁止只做空镜走路或纯运镜展示；须出现本镜关键动作、道具交互或人物关系变化中的至少一项。",
+    "承接首镜人物身份与服装，不新增无关角色；成片画面无新增可读字幕。",
+  ].join("\n");
 }
 
 /** 从 keyart / clip 节点 id 或静帧 prompt 解析分镜号（默认 1） */
