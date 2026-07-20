@@ -79,6 +79,12 @@ type Props = {
   /** 剧情包已出、尚未确认编剧 */
   writerPackReady?: boolean;
   onConfirmOutline?: () => void;
+  /** 资产缺图跳过（父级持久化） */
+  assetsSkipped?: boolean;
+  onAssetsSkippedChange?: (skipped: boolean) => void;
+  /** 三阶段（父级可持久化） */
+  workflowPhase?: WorkflowPhaseId;
+  onWorkflowPhaseChange?: (phase: WorkflowPhaseId) => void;
   onOpenCharacterCard?: () => void;
   onOpenAssetWall?: () => void;
   /** 生成当前选中片段（该镜静帧若缺则先出 + 该片段成片） */
@@ -161,6 +167,10 @@ export default function ManhuaScriptWorkbench({
   canRun,
   writerPackReady,
   onConfirmOutline,
+  assetsSkipped: assetsSkippedProp,
+  onAssetsSkippedChange,
+  workflowPhase: workflowPhaseProp,
+  onWorkflowPhaseChange,
   onOpenCharacterCard,
   onOpenAssetWall,
   onSpawnAndRunClip,
@@ -176,11 +186,21 @@ export default function ManhuaScriptWorkbench({
   const [shotIndex, setShotIndex] = useState(0);
   /** 中栏：分镜列表 | 运镜画板（主路径可见） */
   const [scriptTab, setScriptTab] = useState<"shots" | "path">("shots");
-  /** 资产缺图时可跳过进分镜（对标 C2） */
-  const [assetsSkipped, setAssetsSkipped] = useState(false);
-  const [activePhase, setActivePhase] = useState<WorkflowPhaseId>(() =>
+  /** 资产缺图时可跳过进分镜（对标 C2）；可由父级持久化 */
+  const [assetsSkippedLocal, setAssetsSkippedLocal] = useState(false);
+  const assetsSkipped = assetsSkippedProp ?? assetsSkippedLocal;
+  const setAssetsSkipped = (next: boolean) => {
+    if (assetsSkippedProp === undefined) setAssetsSkippedLocal(next);
+    onAssetsSkippedChange?.(next);
+  };
+  const [activePhaseLocal, setActivePhaseLocal] = useState<WorkflowPhaseId>(() =>
     canRun ? "storyboard" : "outline",
   );
+  const activePhase = workflowPhaseProp ?? activePhaseLocal;
+  const setActivePhase = (next: WorkflowPhaseId) => {
+    if (workflowPhaseProp === undefined) setActivePhaseLocal(next);
+    onWorkflowPhaseChange?.(next);
+  };
 
   const episodeIndexes = useMemo(() => {
     const fromBlocks = new Set<number>();
@@ -538,6 +558,19 @@ export default function ManhuaScriptWorkbench({
           资产未齐：请先选角色/场景，或在「资产设定」跳过缺图后再出片
         </div>
       ) : null}
+      {outlineComplete && assetsSkipped && !hasCastAssets && activePhase === "storyboard" ? (
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-amber-400/20 bg-amber-500/[0.08] px-3 py-1.5 text-[11px] text-amber-50/85">
+          <span>已跳过资产缺图，成片可能缺角色/场景一致性</span>
+          <button
+            type="button"
+            data-manhua-action="goto-assets-from-banner"
+            onClick={() => setActivePhase("assets")}
+            className="shrink-0 rounded border border-amber-300/35 px-2 py-0.5 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/20"
+          >
+            回去补资产
+          </button>
+        </div>
+      ) : null}
       {canGenerateFragment && factoryBusy ? (
         <div
           data-manhua-status="running"
@@ -686,6 +719,7 @@ export default function ManhuaScriptWorkbench({
       {activePhase === "assets" ? (
         <div
           data-manhua-phase-panel="assets"
+          data-manhua-assets-skipped={assetsSkipped ? "true" : "false"}
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6"
         >
           <div className="mx-auto max-w-4xl">
@@ -693,7 +727,7 @@ export default function ManhuaScriptWorkbench({
               <div>
                 <div className="text-[13px] font-semibold text-white/90">资产设定</div>
                 <p className="mt-1 text-[11px] leading-5 text-white/45">
-                  先备角色与场景；缺图可跳过，稍后再补。
+                  先备角色与场景；缺图可跳过，稍后再补。刷新后仍保留跳过状态。
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -711,6 +745,16 @@ export default function ManhuaScriptWorkbench({
                 >
                   资产墙
                 </button>
+                {assetsSkipped ? (
+                  <button
+                    type="button"
+                    data-manhua-action="unskip-assets"
+                    onClick={() => setAssetsSkipped(false)}
+                    className="rounded-lg border border-white/15 px-2.5 py-1.5 text-[11px] text-white/65 hover:bg-white/[0.06]"
+                  >
+                    撤销跳过
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   data-manhua-action="skip-assets"
@@ -723,10 +767,62 @@ export default function ManhuaScriptWorkbench({
               </div>
             </div>
 
+            <div
+              data-manhua-asset-ready
+              className="mt-3 flex flex-wrap gap-1.5 text-[10px]"
+            >
+              <span
+                className={`rounded-md border px-2 py-0.5 ${
+                  characters.length || archetypes.length
+                    ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-50"
+                    : "border-white/10 bg-white/[0.03] text-white/40"
+                }`}
+              >
+                角色{" "}
+                {characters.length || archetypes.length
+                  ? `已选 ${(characters.length || 0) + (archetypes.length || 0)}`
+                  : "未选"}
+                {archetypes.length ? " · 含文案造型" : ""}
+              </span>
+              <span
+                className={`rounded-md border px-2 py-0.5 ${
+                  scene
+                    ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-50"
+                    : "border-white/10 bg-white/[0.03] text-white/40"
+                }`}
+              >
+                场景 {scene ? "已选" : "未选"}
+                {scene && !sceneDemos.length ? " · 缺示意封面" : ""}
+              </span>
+              <span
+                className={`rounded-md border px-2 py-0.5 ${
+                  props.length
+                    ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-50"
+                    : "border-white/10 bg-white/[0.03] text-white/40"
+                }`}
+              >
+                道具 {props.length ? `已选 ${props.length}` : "可选"}
+              </span>
+              <span
+                className={`rounded-md border px-2 py-0.5 ${
+                  assetsSkipped
+                    ? "border-amber-400/40 bg-amber-500/15 text-amber-50"
+                    : assetsComplete
+                      ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-50"
+                      : "border-rose-400/30 bg-rose-500/10 text-rose-50"
+                }`}
+              >
+                {assetsSkipped ? "已跳过缺图" : assetsComplete ? "可进分镜" : "未齐"}
+              </span>
+            </div>
+
             <div className="mt-4 grid gap-3 md:grid-cols-3">
               <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                <div className="mb-2 text-[11px] font-semibold text-white/70">
-                  角色 · {(characters.length || 0) + (archetypes.length || 0)}
+                <div className="mb-2 flex items-center justify-between text-[11px] font-semibold text-white/70">
+                  <span>角色 · {(characters.length || 0) + (archetypes.length || 0)}</span>
+                  <span className="text-[9px] font-normal text-white/35">
+                    {characters.length || archetypes.length ? "已选" : "缺"}
+                  </span>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5">
                   {characters.map((c) => (

@@ -57,6 +57,8 @@ describe("manhuaWriterSession", () => {
     expect(again?.writerConfirmed).toBe(true);
     expect(again?.projectBible?.cast.ancientArchetypeIds).toEqual(["arch_rain_jianghu_dao"]);
     expect(again?.focusEpisode).toBe(2);
+    expect(again?.assetsSkipped).toBe(false);
+    expect(again?.workflowPhase).toBe("storyboard");
   });
 
   it("loads/saves via storage mock", () => {
@@ -72,6 +74,8 @@ describe("manhuaWriterSession", () => {
         topic: "校园甜宠",
         writerPack: { ...pack, seriesTitle: "校门口" },
         writerConfirmed: true,
+        assetsSkipped: true,
+        workflowPhase: "assets",
       },
       storage,
     );
@@ -79,6 +83,8 @@ describe("manhuaWriterSession", () => {
     expect(loaded?.topic).toBe("校园甜宠");
     expect(loaded?.writerPack?.seriesTitle).toBe("校门口");
     expect(loaded?.writerConfirmed).toBe(true);
+    expect(loaded?.assetsSkipped).toBe(true);
+    expect(loaded?.workflowPhase).toBe("assets");
   });
 
   it("rejects unknown format", () => {
