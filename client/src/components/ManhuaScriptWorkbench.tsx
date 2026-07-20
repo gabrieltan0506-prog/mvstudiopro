@@ -558,6 +558,19 @@ export default function ManhuaScriptWorkbench({
           资产未齐：请先选角色/场景，或在「资产设定」跳过缺图后再出片
         </div>
       ) : null}
+      {outlineComplete && assetsSkipped && !hasCastAssets && activePhase === "storyboard" ? (
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-amber-400/20 bg-amber-500/[0.08] px-3 py-1.5 text-[11px] text-amber-50/85">
+          <span>已跳过资产缺图，成片可能缺角色/场景一致性</span>
+          <button
+            type="button"
+            data-manhua-action="goto-assets-from-banner"
+            onClick={() => setActivePhase("assets")}
+            className="shrink-0 rounded border border-amber-300/35 px-2 py-0.5 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/20"
+          >
+            回去补资产
+          </button>
+        </div>
+      ) : null}
       {canGenerateFragment && factoryBusy ? (
         <div
           data-manhua-status="running"
