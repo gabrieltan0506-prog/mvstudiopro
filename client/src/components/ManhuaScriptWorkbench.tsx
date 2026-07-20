@@ -2,7 +2,7 @@
  * 剧本工作台：左=本集资产 · 中=片段脚本+多镜 · 右=预览 · 底=集/分镜时间线
  * 数据接工厂节点；反推后按镜展开多张静帧。
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -36,6 +36,7 @@ import {
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
 import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
+import { MANHUA_DRAFT_RETENTION_HINT_ZH } from "@shared/manhuaCloudDraft";
 import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
 
 type WorkflowPhaseId = "outline" | "assets" | "storyboard";
@@ -106,6 +107,12 @@ type Props = {
   onFocusBlock?: (blockId: string) => void;
   /** 确认编剧后：整屏编辑器壳（无圆角卡片、三栏占满视口） */
   immersive?: boolean;
+  /**
+   * 分镜右栏常驻画布（阿硕式）。有值时替换单路预览主区，质检条保留在下方。
+   */
+  previewCanvas?: ReactNode;
+  /** 右栏画布工具条（呈现切换等） */
+  previewCanvasToolbar?: ReactNode;
 };
 
 function blockByStage(blocks: CanvasBlock[], episode: number, stage: string): CanvasBlock | undefined {
@@ -133,7 +140,7 @@ const CLIP_QUALITY_ROWS = [
   ["PLOT_MATCH", "剧情"],
   ["CAMERA_MOTION", "运镜"],
   ["LIGHTING", "灯光"],
-  ["DURATION_10S", "10 秒"],
+  ["DURATION_OK", "时长"],
 ] as const;
 
 export default function ManhuaScriptWorkbench({
@@ -182,7 +189,10 @@ export default function ManhuaScriptWorkbench({
   onRerunKeyartShot,
   onFocusBlock,
   immersive = false,
+  previewCanvas,
+  previewCanvasToolbar,
 }: Props) {
+  const dockCanvas = Boolean(previewCanvas);
   const [shotIndex, setShotIndex] = useState(0);
   /** 中栏：分镜列表 | 运镜画板（主路径可见） */
   const [scriptTab, setScriptTab] = useState<"shots" | "path">("shots");
@@ -481,7 +491,7 @@ export default function ManhuaScriptWorkbench({
                 <span aria-hidden>｜</span>
                 <span className="text-white/50">片段脚本</span>
                 <span aria-hidden>｜</span>
-                <span className="text-white/50">视频结果</span>
+                <span className="text-white/50">{dockCanvas ? "本集画布" : "视频结果"}</span>
               </div>
             ) : null}
           </div>
@@ -575,6 +585,12 @@ export default function ManhuaScriptWorkbench({
         </div>
       </div>
 
+      <div
+        data-manhua-draft-retention-hint
+        className="shrink-0 border-b border-white/8 bg-white/[0.03] px-3 py-1.5 text-[10px] leading-relaxed text-white/45"
+      >
+        {MANHUA_DRAFT_RETENTION_HINT_ZH}
+      </div>
       {!outlineComplete ? (
         <div className="shrink-0 border-b border-amber-400/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-50/90">
           请先确认剧本大纲，再进入资产与分镜
@@ -725,7 +741,7 @@ export default function ManhuaScriptWorkbench({
               ) : null}
               {!outlineComplete && !writerPackReady ? (
                 <p className="text-[11px] text-amber-100/80">
-                  请先在上方「改题材」完成扩写，再回来确认大纲。
+                  请先在上方「改题材」扩写或导入剧本，再回来确认大纲。
                 </p>
               ) : null}
               {outlineComplete ? (
@@ -956,14 +972,16 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
 
-      {/* 阿硕工作流：左本集资产｜中片段脚本｜右视频结果；窄屏保持桌面比例并横移 */}
+      {/* 阿硕工作流：左本集资产｜中片段脚本｜右本集画布；窄屏保持桌面比例并横移 */}
       <div
         data-manhua-phase-panel="storyboard"
         className={
           activePhase !== "storyboard"
             ? "hidden"
             : immersive
-              ? "grid min-h-0 min-w-[1120px] flex-1 grid-cols-[220px_minmax(420px,1fr)_minmax(380px,440px)] overflow-x-auto overflow-y-hidden"
+              ? dockCanvas
+                ? "grid min-h-0 min-w-[1280px] flex-1 grid-cols-[200px_minmax(300px,0.85fr)_minmax(480px,1.35fr)] overflow-x-auto overflow-y-hidden"
+                : "grid min-h-0 min-w-[1120px] flex-1 grid-cols-[220px_minmax(420px,1fr)_minmax(380px,440px)] overflow-x-auto overflow-y-hidden"
               : "flex min-h-0 flex-1 overflow-hidden"
         }
       >
@@ -1356,77 +1374,101 @@ export default function ManhuaScriptWorkbench({
           )}
         </section>
 
-        {/* 右：视频结果 */}
+        {/* 右：本集画布（阿硕式常驻）或单路视频结果 */}
         <aside
           data-manhua-column="preview"
           data-manhua-preview-kind={
-            finalVideoUrl || previewIsVideo ? "video" : previewUrl ? "image" : "empty"
+            dockCanvas
+              ? "canvas"
+              : finalVideoUrl || previewIsVideo
+                ? "video"
+                : previewUrl
+                  ? "image"
+                  : "empty"
           }
           data-manhua-preview-url={finalVideoUrl || previewUrl || ""}
           className={
             immersive
-              ? "flex min-h-0 flex-col p-2.5 md:p-3"
-              : "flex min-h-0 w-[440px] shrink-0 flex-col p-2.5 md:p-3"
+              ? "flex min-h-0 flex-col p-2 md:p-2.5"
+              : dockCanvas
+                ? "flex min-h-0 w-[min(56vw,640px)] shrink-0 flex-col p-2.5"
+                : "flex min-h-0 w-[440px] shrink-0 flex-col p-2.5 md:p-3"
           }
         >
-          <div className="mb-1.5 flex shrink-0 items-center justify-between gap-2">
-            <div className="text-[12px] font-semibold text-white/90">视频结果</div>
-            {factoryBusy ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                生成／质检中
-              </span>
-            ) : clipQuality?.status === "failed" ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-rose-400/45 bg-rose-500/15 px-2 py-0.5 text-[9px] font-semibold text-rose-100">
-                <AlertTriangle className="h-3 w-3" />
-                质检未通过
-              </span>
-            ) : finalVideoUrl ? (
-              <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[9px] font-semibold text-cyan-100">
-                长片已合成
-              </span>
-            ) : previewIsVideo && clipQuality?.status === "passed" ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/35 bg-emerald-500/12 px-2 py-0.5 text-[9px] font-medium text-emerald-100/85">
-                <CheckCircle2 className="h-3 w-3" />
-                质检通过
-              </span>
-            ) : previewIsVideo ? (
-              <span className="rounded-full border border-amber-400/35 bg-amber-500/12 px-2 py-0.5 text-[9px] font-medium text-amber-50">
-                成片可播
-              </span>
-            ) : previewUrl ? (
-              <span className="rounded-full border border-white/15 bg-white/[0.04] px-2 py-0.5 text-[9px] text-white/50">
-                静帧
-              </span>
-            ) : (
-              <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9px] text-white/35">
-                待生成
-              </span>
-            )}
-          </div>
-          <div
-            className={`flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden rounded-lg border bg-black ${
-              finalVideoUrl || previewIsVideo
-                ? "border-cyan-400/45"
-                : factoryBusy
-                  ? "border-amber-400/35"
-                  : "border-white/12"
-            }`}
-          >
-            {finalVideoUrl ? (
-              <video src={finalVideoUrl} controls className="h-full max-h-full w-full object-contain" />
-            ) : previewUrl ? (
-              previewIsVideo ? (
-                <video src={previewUrl} controls className="h-full max-h-full w-full object-contain" />
+          <div className="mb-1.5 flex shrink-0 flex-wrap items-center justify-between gap-2">
+            <div className="text-[12px] font-semibold text-white/90">
+              {dockCanvas ? "本集画布" : "视频结果"}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {previewCanvasToolbar}
+              {factoryBusy ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  生成／质检中
+                </span>
+              ) : clipQuality?.status === "failed" ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-rose-400/45 bg-rose-500/15 px-2 py-0.5 text-[9px] font-semibold text-rose-100">
+                  <AlertTriangle className="h-3 w-3" />
+                  质检未通过
+                </span>
+              ) : finalVideoUrl ? (
+                <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[9px] font-semibold text-cyan-100">
+                  长片已合成
+                </span>
+              ) : previewIsVideo && clipQuality?.status === "passed" ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/35 bg-emerald-500/12 px-2 py-0.5 text-[9px] font-medium text-emerald-100/85">
+                  <CheckCircle2 className="h-3 w-3" />
+                  质检通过
+                </span>
+              ) : previewIsVideo ? (
+                <span className="rounded-full border border-amber-400/35 bg-amber-500/12 px-2 py-0.5 text-[9px] font-medium text-amber-50">
+                  成片可播
+                </span>
+              ) : previewUrl ? (
+                <span className="rounded-full border border-white/15 bg-white/[0.04] px-2 py-0.5 text-[9px] text-white/50">
+                  静帧
+                </span>
               ) : (
-                <img src={previewUrl} alt="" className="h-full max-h-full w-full object-contain" />
-              )
-            ) : (
-              <div className="px-4 text-center text-[11px] leading-relaxed text-white/40">
-                {factoryBusy ? "正在生成…" : "点「生成」后，静帧 / 成片在此预览"}
-              </div>
-            )}
+                <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9px] text-white/35">
+                  {dockCanvas ? "可调节点" : "待生成"}
+                </span>
+              )}
+            </div>
           </div>
+          {dockCanvas ? (
+            <div
+              id="freeform-canvas-zone"
+              className={`relative min-h-0 w-full flex-1 overflow-hidden rounded-lg border bg-[#06080f] ${
+                factoryBusy ? "border-amber-400/35" : "border-white/12"
+              }`}
+            >
+              {previewCanvas}
+            </div>
+          ) : (
+            <div
+              className={`flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden rounded-lg border bg-black ${
+                finalVideoUrl || previewIsVideo
+                  ? "border-cyan-400/45"
+                  : factoryBusy
+                    ? "border-amber-400/35"
+                    : "border-white/12"
+              }`}
+            >
+              {finalVideoUrl ? (
+                <video src={finalVideoUrl} controls className="h-full max-h-full w-full object-contain" />
+              ) : previewUrl ? (
+                previewIsVideo ? (
+                  <video src={previewUrl} controls className="h-full max-h-full w-full object-contain" />
+                ) : (
+                  <img src={previewUrl} alt="" className="h-full max-h-full w-full object-contain" />
+                )
+              ) : (
+                <div className="px-4 text-center text-[11px] leading-relaxed text-white/40">
+                  {factoryBusy ? "正在生成…" : "点「生成」后，静帧 / 成片在此预览"}
+                </div>
+              )}
+            </div>
+          )}
           <div
             data-manhua-clip-quality={clipQuality?.status || "idle"}
             className={`mt-2 shrink-0 rounded-lg border px-2.5 py-2 ${
@@ -1480,14 +1522,20 @@ export default function ManhuaScriptWorkbench({
               })}
             </div>
             {clipQuality?.status === "failed" ? (
-              <p className="mt-1.5 line-clamp-2 text-[9px] leading-relaxed text-rose-100/75">
+              <p className="mt-1.5 line-clamp-3 text-[9px] leading-relaxed text-rose-100/75">
                 {clipQuality.summary}
+                {/文字|设定卡|姓名条|字幕|重出静帧/.test(clipQuality.summary || "")
+                  ? " → 请先重出静帧再生成片段。"
+                  : ""}
               </p>
             ) : null}
           </div>
-          {previewUrl && !previewIsVideo && onRerunKeyartsFromReverse ? (
+          {((previewUrl && !previewIsVideo) ||
+            (clipQuality?.status === "failed" &&
+              /文字|设定卡|姓名条|字幕|重出静帧/.test(clipQuality.summary || ""))) &&
+          onRerunKeyartsFromReverse ? (
             <p className="mt-1.5 shrink-0 text-[10px] leading-snug text-white/40">
-              静帧不对（穿错时代/没进场景）→ 顶栏点
+              静帧不对（穿错时代/没进场景/带字）→ 顶栏点
               <button
                 type="button"
                 disabled={!canGenerateFragment || factoryBusy}

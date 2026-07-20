@@ -54,6 +54,19 @@ import {
   loadManhuaWriterSessionFromStorage,
   saveManhuaWriterSessionToStorage,
 } from "@shared/manhuaWriterSession";
+import type { ManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
+import {
+  MANHUA_CLOUD_DRAFT_SYNC_DEBOUNCE_MS,
+  buildLocalCloudDraftSnapshot,
+  chooseManhuaDraftHydrate,
+  cloudDraftBlocksToCanvas,
+  persistManhuaDraftLocally,
+  readLocalDraftPartsForHydrate,
+  repairLocalFromCloudDraft,
+  serializeCloudDraftForUpload,
+  trySaveLocalCanvas,
+  trySaveLocalClientUpdatedAt,
+} from "@/lib/manhuaCloudDraftSync";
 import {
   MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
   summarizeManhuaPathTrackStatus,
@@ -112,6 +125,9 @@ import {
   MANHUA_WRITER_EPISODE_MIN,
   clampWriterEpisodeCount,
   composeWriterPackFactoryContext,
+  deriveSeriesTitleFromTopic,
+  importManhuaWriterPackFromText,
+  isPlaceholderSeriesTitle,
   writerPackLooksReady,
   type ManhuaWriterPack,
 } from "@shared/manhuaWriterRoom";
@@ -122,7 +138,7 @@ import {
   MANHUA_SCREENWRITER_TRANSLATE_BRIEF,
 } from "@shared/manhuaScreenwriterTranslate";
 import { trpc } from "@/lib/trpc";
-import { Clapperboard, LayoutTemplate, Loader2, Play, Sparkles, Square, X } from "lucide-react";
+import { Clapperboard, FileUp, LayoutTemplate, Loader2, Play, Sparkles, Square, X } from "lucide-react";
 import { toast } from "sonner";
 
 const MANHUA_FACTORY_DEBUG_MAX = 80;
@@ -168,11 +184,8 @@ function loadCanvasState(): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
 }
 
 function saveCanvasState(blocks: CanvasBlock[], edges: CanvasEdge[]) {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify({ blocks, edges }));
-  } catch {
-    /* ignore quota */
-  }
+  // 本机瘦身：去视频/blob；配额失败时再降级（见 trySaveLocalCanvas）
+  trySaveLocalCanvas(blocks, edges);
 }
 
 function loadFactoryCharacterPrefs(): FactoryCharacterPrefs {
@@ -377,6 +390,9 @@ export default function OmniCanvas() {
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
   );
   const [writerBusy, setWriterBusy] = useState(false);
+  /** 次要入口：粘贴 / 上传已有剧本 */
+  const [writerImportDraft, setWriterImportDraft] = useState("");
+  const writerImportFileRef = useRef<HTMLInputElement | null>(null);
   const [writerPack, setWriterPack] = useState<ManhuaWriterPack | null>(
     () => initialWriterSession?.writerPack ?? null,
   );
@@ -412,11 +428,17 @@ export default function OmniCanvas() {
         setManhuaCanvasPresentation(isMedia ? "media" : "all");
         setFocusBlockId(blockId);
       }
-      const details = document.getElementById(
-        "manhua-factory-canvas-details",
-      ) as HTMLDetailsElement | null;
-      if (details) details.open = true;
       window.setTimeout(() => {
+        const zone = document.getElementById("freeform-canvas-zone");
+        // 右栏已挂画布时只聚焦，不展开下方折叠区、不跳出三栏
+        if (zone && zone.getClientRects().length > 0) {
+          zone.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          return;
+        }
+        const details = document.getElementById(
+          "manhua-factory-canvas-details",
+        ) as HTMLDetailsElement | null;
+        if (details) details.open = true;
         document
           .getElementById("freeform-canvas-zone")
           ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -430,6 +452,23 @@ export default function OmniCanvas() {
   const abortRef = useRef<AbortController | null>(null);
   const chargeWorkflowStepMutation = trpc.workflow.chargeStep.useMutation();
   const refundWorkflowStepMutation = trpc.workflow.refundStep.useMutation();
+  /** 登录后云端草稿：与本机双通路，互不放弃 */
+  const [cloudSyncReady, setCloudSyncReady] = useState(false);
+  const cloudHydrateDoneRef = useRef(false);
+  const cloudDraftQuery = trpc.manhuaCloudDraft.get.useQuery(undefined, {
+    enabled: Boolean(user?.id),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+  const cloudDraftUpsert = trpc.manhuaCloudDraft.upsert.useMutation({
+    onError: (err) => {
+      pushDebug("cloudDraft:upsert-fail", {
+        level: "warn",
+        detail: String(err.message || err).slice(0, 160),
+      });
+    },
+  });
 
   const selectCanvasMode = useCallback((mode: CanvasWorkspaceMode) => {
     setCanvasMode(mode);
@@ -756,19 +795,23 @@ export default function OmniCanvas() {
 
   /** 编剧包 / Bible / 确认态持久化：硬刷新后继续三集流程，无需重扩 */
   useEffect(() => {
-    saveManhuaWriterSessionToStorage({
-      topic: factoryTopic,
-      brief: writerBrief,
-      episodeCount: writerEpisodeCount,
-      focusEpisode: writerFocusEpisode,
-      writerPack,
-      writerConfirmed,
-      directorUnlocked,
-      projectBible,
-      manhuaUiMode,
-      assetsSkipped,
-      workflowPhase,
-    });
+    try {
+      saveManhuaWriterSessionToStorage({
+        topic: factoryTopic,
+        brief: writerBrief,
+        episodeCount: writerEpisodeCount,
+        focusEpisode: writerFocusEpisode,
+        writerPack,
+        writerConfirmed,
+        directorUnlocked,
+        projectBible,
+        manhuaUiMode,
+        assetsSkipped,
+        workflowPhase,
+      });
+    } catch {
+      /* 本机权限/配额失败：不阻断云端通路 */
+    }
   }, [
     factoryTopic,
     writerBrief,
@@ -781,6 +824,211 @@ export default function OmniCanvas() {
     manhuaUiMode,
     assetsSkipped,
     workflowPhase,
+  ]);
+
+  const applyCloudDraftToUi = useCallback((draft: ManhuaCloudDraftPayload) => {
+    const session = draft.writerSession;
+    const nextBlocks = cloudDraftBlocksToCanvas(draft.canvas.blocks);
+    const nextEdges = draft.canvas.edges as CanvasEdge[];
+    setBlocks(nextBlocks);
+    setEdges(nextEdges);
+    setFactoryTopic(session.topic || "");
+    setWriterBrief(session.brief || "");
+    setWriterEpisodeCount(clampWriterEpisodeCount(session.episodeCount));
+    setWriterFocusEpisode(Math.max(1, Math.floor(Number(session.focusEpisode) || 1)));
+    setWriterPack(session.writerPack);
+    setWriterConfirmed(Boolean(session.writerConfirmed));
+    setDirectorUnlocked(Boolean(session.directorUnlocked));
+    setProjectBible(session.projectBible);
+    setManhuaUiMode(session.manhuaUiMode === "form" ? "form" : "workbench");
+    setAssetsSkipped(Boolean(session.assetsSkipped));
+    setWorkflowPhase(
+      session.workflowPhase === "assets" || session.workflowPhase === "storyboard"
+        ? session.workflowPhase
+        : session.writerConfirmed
+          ? "storyboard"
+          : "outline",
+    );
+    const prefs = draft.factoryPrefs || {};
+    if (typeof prefs.femaleId === "string") setFactoryFemaleId(prefs.femaleId);
+    if (typeof prefs.maleId === "string") setFactoryMaleId(prefs.maleId);
+    if (typeof prefs.artStyleId === "string") {
+      setFactoryArtStyleId(prefs.artStyleId as ManhuaArtStyleId);
+    }
+    if (prefs.femaleLeadManual != null) setFemaleLeadManual(Boolean(prefs.femaleLeadManual));
+    if (prefs.maleLeadManual != null) setMaleLeadManual(Boolean(prefs.maleLeadManual));
+    if (prefs.artStyleManual != null) setArtStyleManual(Boolean(prefs.artStyleManual));
+    const cast = session.projectBible?.cast;
+    if (cast) {
+      if (cast.sceneId) setFactorySceneId(cast.sceneId);
+      if (cast.propIds?.length) setFactoryPropIds(cast.propIds);
+      if (cast.ancientArchetypeIds?.length) setFactoryAncientArchetypeIds(cast.ancientArchetypeIds);
+      if (cast.identityLockZh) setFactoryIdentityLockZh(cast.identityLockZh);
+      if (cast.wardrobePropContinuityIds?.[0]) {
+        setFactoryWardrobeId(cast.wardrobePropContinuityIds[0]);
+      }
+      if (cast.lane === "urban" && cast.characterIds?.length) {
+        if (cast.characterIds[0]) setFactoryFemaleId(cast.characterIds[0]);
+        if (cast.characterIds[1]) setFactoryMaleId(cast.characterIds[1]);
+      }
+      if (cast.artStyleId) setFactoryArtStyleId(cast.artStyleId as ManhuaArtStyleId);
+    }
+    // 胜出草稿尽量补写本机（失败忽略）
+    repairLocalFromCloudDraft(draft);
+  }, []);
+
+  /** 登录后：云端与本机比新，胜出方驱动 UI，并补写较弱一侧 */
+  useEffect(() => {
+    if (!user?.id) {
+      cloudHydrateDoneRef.current = false;
+      setCloudSyncReady(false);
+      return;
+    }
+    if (cloudHydrateDoneRef.current) return;
+    if (cloudDraftQuery.isLoading || cloudDraftQuery.isFetching) return;
+    cloudHydrateDoneRef.current = true;
+
+    const localParts = readLocalDraftPartsForHydrate();
+    const choice = chooseManhuaDraftHydrate({
+      cloud: cloudDraftQuery.data?.draft ?? null,
+      localWriter: localParts.writer,
+      localCanvas: localParts.canvas,
+      localPrefs: localParts.prefs,
+      localClientUpdatedAt: localParts.clientUpdatedAt,
+    });
+
+    if (choice.source === "cloud") {
+      applyCloudDraftToUi(choice.draft);
+      toast.message("已从云端恢复草稿（约 30 天暂存；请记得导出备份）");
+      pushDebug("cloudDraft:hydrate-cloud", {
+        level: "ok",
+        detail: `blocks=${choice.draft.canvas.blocks.length} · at=${choice.draft.clientUpdatedAt}`,
+      });
+    } else if (choice.source === "local") {
+      // 本机较新：补写云端（不打断当前 UI）
+      const payloadJson = serializeCloudDraftForUpload(choice.draft);
+      if (payloadJson) {
+        cloudDraftUpsert.mutate(
+          { payloadJson },
+          {
+            onSuccess: () => {
+              trySaveLocalClientUpdatedAt(choice.draft.clientUpdatedAt);
+              pushDebug("cloudDraft:repair-cloud-from-local", { level: "ok" });
+            },
+          },
+        );
+      }
+      // 本机读失败键再尽力写一次
+      persistManhuaDraftLocally({
+        writerSession: choice.draft.writerSession,
+        blocks: cloudDraftBlocksToCanvas(choice.draft.canvas.blocks),
+        edges: choice.draft.canvas.edges as CanvasEdge[],
+        factoryPrefs: choice.draft.factoryPrefs,
+        clientUpdatedAt: choice.draft.clientUpdatedAt,
+      });
+    } else if (cloudDraftQuery.isError) {
+      pushDebug("cloudDraft:hydrate-skip", {
+        level: "warn",
+        detail: "云端暂不可用，继续本机通路",
+      });
+    }
+
+    setCloudSyncReady(true);
+  }, [
+    user?.id,
+    cloudDraftQuery.isLoading,
+    cloudDraftQuery.isFetching,
+    cloudDraftQuery.isError,
+    cloudDraftQuery.data?.draft,
+    applyCloudDraftToUi,
+    cloudDraftUpsert,
+    pushDebug,
+  ]);
+
+  /** 登录后防抖上传云端；本机仍各自写，互不依赖 */
+  useEffect(() => {
+    if (!user?.id || !cloudSyncReady) return;
+    if (factoryBusy) return;
+    const clientUpdatedAt = new Date().toISOString();
+    const factoryPrefs = {
+      topic: factoryTopic,
+      femaleId: factoryFemaleId,
+      maleId: factoryMaleId,
+      artStyleId: factoryArtStyleId,
+      femaleLeadManual,
+      maleLeadManual,
+      artStyleManual,
+    };
+    const writerSession = {
+      topic: factoryTopic,
+      brief: writerBrief,
+      episodeCount: writerEpisodeCount,
+      focusEpisode: writerFocusEpisode,
+      writerPack,
+      writerConfirmed,
+      directorUnlocked,
+      projectBible,
+      manhuaUiMode,
+      assetsSkipped,
+      workflowPhase,
+    };
+    // 本机双写补强（与既有 LS effect 叠加；失败不阻断）
+    persistManhuaDraftLocally({
+      writerSession,
+      blocks,
+      edges,
+      factoryPrefs,
+      clientUpdatedAt,
+    });
+
+    const timer = window.setTimeout(() => {
+      const payload = buildLocalCloudDraftSnapshot({
+        writerSession,
+        blocks,
+        edges,
+        factoryPrefs,
+        clientUpdatedAt,
+      });
+      const payloadJson = serializeCloudDraftForUpload(payload);
+      if (!payloadJson) {
+        pushDebug("cloudDraft:skip-too-large", { level: "warn" });
+        return;
+      }
+      cloudDraftUpsert.mutate(
+        { payloadJson },
+        {
+          onSuccess: () => {
+            trySaveLocalClientUpdatedAt(clientUpdatedAt);
+          },
+        },
+      );
+    }, MANHUA_CLOUD_DRAFT_SYNC_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    user?.id,
+    cloudSyncReady,
+    factoryBusy,
+    factoryTopic,
+    writerBrief,
+    writerEpisodeCount,
+    writerFocusEpisode,
+    writerPack,
+    writerConfirmed,
+    directorUnlocked,
+    projectBible,
+    manhuaUiMode,
+    assetsSkipped,
+    workflowPhase,
+    blocks,
+    edges,
+    factoryFemaleId,
+    factoryMaleId,
+    factoryArtStyleId,
+    femaleLeadManual,
+    maleLeadManual,
+    artStyleManual,
+    cloudDraftUpsert,
+    pushDebug,
   ]);
 
   /** 抽屉改造型后回写 Bible cast（保留 confirmedAt 与剧情正文） */
@@ -1487,6 +1735,10 @@ export default function OmniCanvas() {
         episodeCount: count,
       });
       const pack = res.pack;
+      if (isPlaceholderSeriesTitle(pack.seriesTitle)) {
+        const fallback = deriveSeriesTitleFromTopic(topic);
+        if (fallback) pack.seriesTitle = fallback;
+      }
       if (!res.ready && !writerPackLooksReady(pack)) {
         toast.message("已生成草稿，建议检查每集片尾钩子是否完整");
       }
@@ -1526,9 +1778,71 @@ export default function OmniCanvas() {
     pushDebug,
   ]);
 
+  const importWriterRoomFromText = useCallback(
+    (raw: string) => {
+      const text = String(raw || "").trim();
+      if (!text) {
+        toast.error("请先粘贴剧本，或选择 .txt / .md 文件");
+        return;
+      }
+      const res = importManhuaWriterPackFromText(text, {
+        topic: factoryTopic.trim() || undefined,
+        episodeCount: writerEpisodeCount,
+      });
+      if (!res.ok) {
+        toast.error(res.error);
+        pushDebug("importWriterPack:error", {
+          level: "error",
+          detail: res.error,
+          request: text.slice(0, 4000),
+        });
+        return;
+      }
+      setWriterPack(res.pack);
+      setWriterConfirmed(false);
+      setProjectBible(null);
+      setWriterFocusEpisode(1);
+      setWriterEpisodeCount(res.pack.episodeCount);
+      setWriterImportDraft(text);
+      if (!factoryTopic.trim()) {
+        setFactoryTopic(res.pack.seriesTitle);
+      }
+      pushDebug("importWriterPack:ok", {
+        level: "ok",
+        detail: `${res.pack.seriesTitle} · ${res.pack.episodes.length}ep · via=${res.via}`,
+        request: text.slice(0, 4000),
+        response: res.pack.episodes.map((ep) => `第${ep.index}集·${ep.title}`).join("\n"),
+      });
+      toast.success(`已导入 ${res.pack.episodes.length} 集《${res.pack.seriesTitle}》，确认后再进入编导`);
+    },
+    [factoryTopic, writerEpisodeCount, pushDebug],
+  );
+
+  const onWriterImportFile = useCallback(
+    async (file: File | null) => {
+      if (!file) return;
+      const name = file.name.toLowerCase();
+      if (!/\.(txt|md|markdown)$/.test(name) && file.type && !/^text\//i.test(file.type)) {
+        toast.error("请上传 .txt 或 .md 文本文件");
+        return;
+      }
+      if (file.size > 2_000_000) {
+        toast.error("文件过大，请控制在约 2MB 以内");
+        return;
+      }
+      try {
+        const text = await file.text();
+        importWriterRoomFromText(text);
+      } catch {
+        toast.error("读取文件失败，请改用粘贴导入");
+      }
+    },
+    [importWriterRoomFromText],
+  );
+
   const confirmWriterToDirector = useCallback(() => {
     if (!writerPack || !writerPackLooksReady(writerPack)) {
-      toast.error("请先扩写并检查剧情包是否完整");
+      toast.error("请先扩写或导入剧本，并检查剧情包是否完整");
       return;
     }
     setWriterConfirmed(true);
@@ -1627,10 +1941,12 @@ export default function OmniCanvas() {
       detail: `ep=${continuity.episodeIndex} · ${summarizeManhuaProjectBible(bible)} · props=${hardCast.propIds.join(",") || "—"}`,
     });
     setManhuaUiMode("workbench");
+    setImmersiveExtrasOpen(false);
+    setWorkflowPhase("storyboard");
     toast.success(
       tips.length
         ? `已确认剧情并生成专案设定；第${continuity.episodeIndex}集编导链就绪（含${tips.join("·")}）`
-        : `已确认剧情并生成专案设定；第${continuity.episodeIndex}集编导链就绪`,
+        : `已确认剧情并生成专案设定；右栏可先调画布再生成`,
     );
   }, [
     writerPack,
@@ -2231,6 +2547,8 @@ export default function OmniCanvas() {
                   if (stepId === "writer" && writerPack && !writerConfirmed) {
                     confirmWriterToDirector();
                     setManhuaUiMode("workbench");
+                    setImmersiveExtrasOpen(false);
+                    setWorkflowPhase("storyboard");
                     window.setTimeout(() => {
                       document.querySelector("#manhua-workbench-shell")?.scrollIntoView({
                         behavior: "smooth",
@@ -2349,7 +2667,8 @@ export default function OmniCanvas() {
                   writerPackReady={Boolean(writerPack && writerPackLooksReady(writerPack))}
                   onConfirmOutline={() => {
                     confirmWriterToDirector();
-                    setWorkflowPhase("assets");
+                    // 套造型后进分镜：右栏常驻画布，便于先调节点再生成
+                    setWorkflowPhase("storyboard");
                   }}
                   assetsSkipped={assetsSkipped}
                   onAssetsSkippedChange={setAssetsSkipped}
@@ -2358,9 +2677,41 @@ export default function OmniCanvas() {
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
                   onFocusBlock={(id) => {
-                    setImmersiveExtrasOpen(true);
                     openManhuaFactoryCanvas(id);
                   }}
+                  previewCanvasToolbar={
+                    <label className="inline-flex items-center gap-1 text-[10px] text-white/45">
+                      呈现
+                      <select
+                        value={manhuaCanvasPresentation}
+                        onChange={(e) =>
+                          setManhuaCanvasPresentation(e.target.value as "media" | "all")
+                        }
+                        className="rounded-md border border-white/12 bg-black/40 px-1.5 py-0.5 text-[10px] text-white/85"
+                      >
+                        <option value="media">图视频</option>
+                        <option value="all">全部节点</option>
+                      </select>
+                    </label>
+                  }
+                  previewCanvas={
+                    <div className="absolute inset-0 overflow-auto">
+                      <FreeformCanvas
+                        blocks={blocks}
+                        edges={edges}
+                        onBlocksChange={handleBlocksChange}
+                        onEdgesChange={handleEdgesChange}
+                        runDeps={runDeps}
+                        focusBlockId={focusBlockId}
+                        onFocusBlockConsumed={() => setFocusBlockId(null)}
+                        presentation={manhuaCanvasPresentation === "media" ? "media" : "full"}
+                        focusEpisode={writerFocusEpisode}
+                        spawnKinds={
+                          manhuaCanvasPresentation === "media" ? ["image", "video"] : undefined
+                        }
+                      />
+                    </div>
+                  }
                   onSpawnAndRunClip={() => {
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
@@ -2549,7 +2900,7 @@ export default function OmniCanvas() {
                 <span className="text-[11px] text-white/40">
                   {writerConfirmed
                     ? "已收起 · 点下方展开可改题材"
-                    : "填题材 → 扩写确认 → 再进工作台"}
+                    : "主路径：题材扩写 · 次要：导入已有剧本"}
                 </span>
               </div>
               <details className="mt-2" open={!writerConfirmed}>
@@ -2624,8 +2975,10 @@ export default function OmniCanvas() {
                   onClick={() => {
                     confirmWriterToDirector();
                     setManhuaUiMode("workbench");
+                    setImmersiveExtrasOpen(false);
+                    setWorkflowPhase("storyboard");
                     window.setTimeout(() => {
-                      document.querySelector("#manhua-live-progress-zone")?.scrollIntoView({
+                      document.querySelector("#manhua-workbench-zone")?.scrollIntoView({
                         behavior: "smooth",
                         block: "start",
                       });
@@ -2660,6 +3013,67 @@ export default function OmniCanvas() {
                   跳过连载扩写
                 </button>
               </div>
+
+              <details className="mt-3 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2">
+                <summary className="cursor-pointer list-none text-[11px] font-medium text-white/55 marker:content-none [&::-webkit-details-marker]:hidden">
+                  <span className="inline-flex items-center gap-1.5">
+                    <FileUp className="h-3.5 w-3.5 text-white/40" />
+                    已有正版剧本？导入文本（粘贴 / .txt / .md）
+                  </span>
+                </summary>
+                <div className="mt-2 border-t border-white/8 pt-2">
+                  <p className="text-[10px] leading-5 text-white/40">
+                    次要入口，不跑扩写。请自行确保版权合规。正文需含「第1集」「第2集」等分集标记，或粘贴平台扩写格式。
+                  </p>
+                  <textarea
+                    value={writerImportDraft}
+                    onChange={(e) => setWriterImportDraft(e.target.value)}
+                    disabled={writerBusy || factoryBusy}
+                    rows={5}
+                    placeholder={"例：\n# 剧名\n\n第1集 标题\n本集剧情…\n片尾钩子：…\n\n第2集 标题\n…"}
+                    className="mt-2 w-full resize-y rounded-xl border border-white/12 bg-black/45 px-3 py-2 text-[12px] leading-5 text-white placeholder:text-white/28 outline-none focus:border-white/25 disabled:opacity-50"
+                  />
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={writerBusy || factoryBusy || !writerImportDraft.trim()}
+                      onClick={() => importWriterRoomFromText(writerImportDraft)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/[0.06] px-3 py-1.5 text-[11px] font-semibold text-white/80 hover:bg-white/[0.1] disabled:opacity-50"
+                    >
+                      导入为剧情包
+                    </button>
+                    <button
+                      type="button"
+                      disabled={writerBusy || factoryBusy}
+                      onClick={() => writerImportFileRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-white/12 px-3 py-1.5 text-[11px] text-white/60 hover:bg-white/[0.06] disabled:opacity-50"
+                    >
+                      选择文件
+                    </button>
+                    <input
+                      ref={writerImportFileRef}
+                      type="file"
+                      accept=".txt,.md,.markdown,text/plain,text/markdown"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        e.target.value = "";
+                        void onWriterImportFile(file);
+                      }}
+                    />
+                    {writerImportDraft.trim() ? (
+                      <button
+                        type="button"
+                        disabled={writerBusy || factoryBusy}
+                        onClick={() => setWriterImportDraft("")}
+                        className="text-[10px] text-white/35 underline-offset-2 hover:text-white/60 hover:underline"
+                      >
+                        清空粘贴区
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </details>
 
               {writerBusy ? (
                 <div className="mt-3 rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-3 py-2.5">
@@ -2811,60 +3225,63 @@ export default function OmniCanvas() {
                 }}
                 onFocusBlock={(id) => openManhuaFactoryCanvas(id)}
               />
-              <details
-                id="manhua-factory-canvas-details"
-                className="mt-3 overflow-hidden rounded-2xl border border-white/12 bg-[#080b12]"
-              >
-                <summary className="cursor-pointer list-none px-3 py-2 text-[12px] font-semibold text-white/75 marker:content-none [&::-webkit-details-marker]:hidden">
-                  <span className="inline-flex flex-wrap items-center gap-2">
-                    本集静帧 / 成片画布
-                    <span className="rounded-full border border-white/15 px-2 py-0.5 text-[10px] font-normal text-white/40">
-                      第{writerFocusEpisode}集 · 默认只看图视频
-                    </span>
-                    {factoryBusy ? (
-                      <span className="text-[11px] font-normal text-amber-100/85">
-                        {factoryProgress || "运行中…"}
+              {/* 沉浸三栏右栏已挂画布时不再挂第二份，避免双实例状态分裂 */}
+              {!(immersiveWorkbench && !immersiveExtrasOpen) ? (
+                <details
+                  id="manhua-factory-canvas-details"
+                  className="mt-3 overflow-hidden rounded-2xl border border-white/12 bg-[#080b12]"
+                >
+                  <summary className="cursor-pointer list-none px-3 py-2 text-[12px] font-semibold text-white/75 marker:content-none [&::-webkit-details-marker]:hidden">
+                    <span className="inline-flex flex-wrap items-center gap-2">
+                      本集静帧 / 成片画布
+                      <span className="rounded-full border border-white/15 px-2 py-0.5 text-[10px] font-normal text-white/40">
+                        第{writerFocusEpisode}集 · 默认只看图视频
                       </span>
-                    ) : null}
-                  </span>
-                </summary>
-                <div id="freeform-canvas-zone" className="scroll-mt-44 border-t border-white/10">
-                  <div className="flex flex-wrap items-center gap-2 border-b border-white/8 px-3 py-2">
-                    <label className="text-[10px] text-white/45">
-                      呈现
-                      <select
-                        value={manhuaCanvasPresentation}
-                        onChange={(e) =>
-                          setManhuaCanvasPresentation(e.target.value as "media" | "all")
-                        }
-                        className="ml-1.5 rounded-md border border-white/12 bg-black/40 px-2 py-1 text-[11px] text-white/85"
-                      >
-                        <option value="media">仅图片与视频 + 提示词</option>
-                        <option value="all">全部节点（含文本链）</option>
-                      </select>
-                    </label>
-                    <span className="text-[10px] text-white/30">
-                      文本大纲 / 节拍仍在工厂后台跑，不占主画布
+                      {factoryBusy ? (
+                        <span className="text-[11px] font-normal text-amber-100/85">
+                          {factoryProgress || "运行中…"}
+                        </span>
+                      ) : null}
                     </span>
+                  </summary>
+                  <div id="freeform-canvas-zone" className="scroll-mt-44 border-t border-white/10">
+                    <div className="flex flex-wrap items-center gap-2 border-b border-white/8 px-3 py-2">
+                      <label className="text-[10px] text-white/45">
+                        呈现
+                        <select
+                          value={manhuaCanvasPresentation}
+                          onChange={(e) =>
+                            setManhuaCanvasPresentation(e.target.value as "media" | "all")
+                          }
+                          className="ml-1.5 rounded-md border border-white/12 bg-black/40 px-2 py-1 text-[11px] text-white/85"
+                        >
+                          <option value="media">仅图片与视频 + 提示词</option>
+                          <option value="all">全部节点（含文本链）</option>
+                        </select>
+                      </label>
+                      <span className="text-[10px] text-white/30">
+                        文本大纲 / 节拍仍在工厂后台跑，不占主画布
+                      </span>
+                    </div>
+                    <div className="min-h-[360px] md:min-h-[480px]">
+                      <FreeformCanvas
+                        blocks={blocks}
+                        edges={edges}
+                        onBlocksChange={handleBlocksChange}
+                        onEdgesChange={handleEdgesChange}
+                        runDeps={runDeps}
+                        focusBlockId={focusBlockId}
+                        onFocusBlockConsumed={() => setFocusBlockId(null)}
+                        presentation={manhuaCanvasPresentation === "media" ? "media" : "full"}
+                        focusEpisode={writerFocusEpisode}
+                        spawnKinds={
+                          manhuaCanvasPresentation === "media" ? ["image", "video"] : undefined
+                        }
+                      />
+                    </div>
                   </div>
-                  <div className="min-h-[360px] md:min-h-[480px]">
-                    <FreeformCanvas
-                      blocks={blocks}
-                      edges={edges}
-                      onBlocksChange={handleBlocksChange}
-                      onEdgesChange={handleEdgesChange}
-                      runDeps={runDeps}
-                      focusBlockId={focusBlockId}
-                      onFocusBlockConsumed={() => setFocusBlockId(null)}
-                      presentation={manhuaCanvasPresentation === "media" ? "media" : "full"}
-                      focusEpisode={writerFocusEpisode}
-                      spawnKinds={
-                        manhuaCanvasPresentation === "media" ? ["image", "video"] : undefined
-                      }
-                    />
-                  </div>
-                </div>
-              </details>
+                </details>
+              ) : null}
             </div>
 
             {/* 角色库 / 资产墙：抽屉，不长期占主流程 */}

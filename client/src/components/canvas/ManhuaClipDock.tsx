@@ -20,6 +20,7 @@ import {
   summarizeManhuaDockExport,
   type ManhuaClipDockItem,
 } from "@/lib/manhuaProjectExport";
+import { MANHUA_DRAFT_EXPORT_HINT_ZH } from "@shared/manhuaCloudDraft";
 
 type Props = {
   blocks: CanvasBlock[];
@@ -416,7 +417,9 @@ export default function ManhuaClipDock({
       ) : null}
 
       {/* 次要：导出 */}
-      <div className="flex flex-wrap gap-1.5 border-b border-white/8 px-3 py-2 md:px-4">
+      <div className="space-y-1.5 border-b border-white/8 px-3 py-2 md:px-4">
+        <p className="text-[10px] leading-relaxed text-white/40">{MANHUA_DRAFT_EXPORT_HINT_ZH}</p>
+        <div className="flex flex-wrap gap-1.5">
         <button
           type="button"
           disabled={!items.length}
@@ -459,6 +462,7 @@ export default function ManhuaClipDock({
           {exportBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
           导出勾选
         </button>
+        </div>
       </div>
 
       {!items.length ? (

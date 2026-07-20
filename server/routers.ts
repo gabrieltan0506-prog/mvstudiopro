@@ -118,6 +118,7 @@ const zPlatformTopicCoverPixelEngine = z.enum(["gpt_image2", "nano_banana_2", "n
 
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
+import { manhuaCloudDraftRouter } from "./routers/manhuaCloudDraft";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
 import {
   deductCredits,
@@ -2775,6 +2776,7 @@ export const appRouter = router({
   creations: creationsRouter,
   enterpriseAgents: enterpriseAgentsRouter,
   workflow: workflowRouter,
+  manhuaCloudDraft: manhuaCloudDraftRouter,
   videoParser: router({
     parse: protectedProcedure
       .input(z.object({ url: z.string().url() }))
@@ -7666,7 +7668,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             message: "扩写结果过短，请再试一次",
           });
         }
-        const pack = parseManhuaWriterPack(markdown, episodeCount);
+        const pack = parseManhuaWriterPack(markdown, episodeCount, { topic });
         return {
           markdown,
           pack,
