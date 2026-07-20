@@ -1213,12 +1213,17 @@ export function buildManhuaCharacterPromptBlock(
     return `${i + 1}. ${display}（${roleLabel}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}${bone}${lifeLine}${previewLine}`;
   });
   const identity = String(opts?.identityLockZh || "").trim();
+  const castLock =
+    picked.length >= 2
+      ? `人数硬锁：已选 ${picked.length} 名角色，静帧须按分镜同框人数入画；对视/对峙/递接等关系镜禁止只画其中一人的半身肖像。`
+      : "";
   return [
     "【角色库锚点】",
     `公式：${MANHUA_CHARACTER_FORMULA_ZH}`,
     `【画风】${style.labelZh}`,
     style.promptZh,
     identity || "",
+    castLock,
     linesOut.join("\n"),
   ]
     .filter(Boolean)

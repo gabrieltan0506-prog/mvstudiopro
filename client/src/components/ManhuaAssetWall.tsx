@@ -217,28 +217,18 @@ export default function ManhuaAssetWall({
         </div>
       </div>
 
-      <div className="mt-2 flex flex-wrap gap-1">
-        {(
-          [
-            ["scenes", `场景库（${shownCount}）`],
-            ["leads", "男女主预览"],
-            ["support", "老人/儿童"],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id)}
-            className={`rounded-md border px-2 py-0.5 text-[10px] ${
-              tab === id
-                ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-100"
-                : "border-white/10 text-white/50 hover:border-white/25"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <label className="mt-2 block text-[10px] text-white/45">
+        资产分类
+        <select
+          value={tab}
+          onChange={(e) => setTab(e.target.value as typeof tab)}
+          className="mt-0.5 w-full max-w-xs rounded-lg border border-white/12 bg-black/40 px-2.5 py-1.5 text-[11px] text-white/90 outline-none focus:border-emerald-400/35"
+        >
+          <option value="scenes">场景库（{shownCount}）</option>
+          <option value="leads">男女主预览</option>
+          <option value="support">老人/儿童</option>
+        </select>
+      </label>
 
       {tab === "leads" ? (
         <div className="mt-3 space-y-2">

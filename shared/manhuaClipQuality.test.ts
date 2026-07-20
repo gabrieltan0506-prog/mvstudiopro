@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildManhuaClipQualityPrompt,
+  isManhuaClipQualityInfraFailure,
   MANHUA_CLIP_QUALITY_KEYS,
   parseManhuaClipQualityMarkdown,
 } from "./manhuaClipQuality";
@@ -38,5 +39,22 @@ describe("manhuaClipQuality", () => {
     const prompt = buildManhuaClipQualityPrompt("女主在盟誓堂递出密令");
     expect(prompt).toContain("女主在盟誓堂递出密令");
     expect(prompt).toContain("仅画面精美、接口成功或时长正确都不算通过");
+  });
+
+  it("detects quality infra failure separately from content fail", () => {
+    expect(
+      isManhuaClipQualityInfraFailure({
+        summary: "智能质检暂不可用（非成片内容判定），成片已保留但暂不进成片坞",
+        raw: "Failed to fetch",
+        failedKeys: [...MANHUA_CLIP_QUALITY_KEYS],
+      }),
+    ).toBe(true);
+    expect(
+      isManhuaClipQualityInfraFailure({
+        summary: "人物与首镜不符",
+        raw: "CHARACTER_MATCH=NO\nSUMMARY=人物与首镜不符",
+        failedKeys: ["CHARACTER_MATCH"],
+      }),
+    ).toBe(false);
   });
 });

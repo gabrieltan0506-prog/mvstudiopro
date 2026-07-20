@@ -3,6 +3,7 @@ import {
   MANHUA_FACTORY_STAGE_ORDER,
   applyFactoryPrefsToBlocks,
   applyTopicToFactoryStory,
+  ensureManhuaFragmentClips,
   expandManhuaShotKeyartsAfterReverse,
   extractFactoryMotionHints,
   filterBlocksByEpisode,
@@ -14,6 +15,7 @@ import {
   resolveFactoryResumeStage,
   resolveManhuaEpisodeSpawnContinuity,
   resolveManhuaFactoryOrderedIds,
+  resolveManhuaFragmentRunTargets,
   runManhuaDramaFactoryPipeline,
   sanitizeManhuaRecapUpstreamLinks,
   spawnManhuaDramaStudio,
@@ -234,6 +236,49 @@ describe("canvasDramaStudio factory", () => {
     expect(keyarts.some((k) => k.prompt.includes("拔刀交锋"))).toBe(true);
     const ordered = resolveManhuaFactoryOrderedIds(expanded.blocks, "keyart", 1);
     expect(ordered.filter((id) => id.startsWith("keyart-"))).toHaveLength(4);
+    const clips = expanded.blocks.filter((b) => b.id.startsWith("clip-"));
+    expect(clips.length).toBeGreaterThanOrEqual(4);
+    expect(clips.every((c) => keyarts.some((k) => k.id === c.parentId))).toBe(true);
+    const orderedClip = resolveManhuaFactoryOrderedIds(expanded.blocks, "clip", 1);
+    expect(orderedClip.filter((id) => id.startsWith("clip-")).length).toBeGreaterThanOrEqual(4);
+    const frag2 = resolveManhuaFragmentRunTargets(expanded.blocks, 1, 2);
+    expect(frag2.clipId).toMatch(/-s02/);
+    expect(frag2.forceFromStage).toBe("keyart");
+    expect(frag2.targetBlockIds).toEqual([frag2.keyartId, frag2.clipId]);
+    expect(filterManhuaFactoryTargetIds(orderedClip, frag2.targetBlockIds)).toEqual(
+      frag2.targetBlockIds,
+    );
+  });
+
+  it("ensureManhuaFragmentClips lays one clip per shot and targets a single fragment", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id
+        ? { ...b, status: "done" as const, outputText: "1. 推门\n2. 对峙\n3. 拔刀" }
+        : b.id.startsWith("keyart-")
+          ? { ...b, status: "done" as const, outputUrl: "https://example.com/k1.jpg" }
+          : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+    const withKeyarts = expanded.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        : b,
+    );
+    const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1);
+    const shotClips = ensured.blocks.filter(
+      (b) => b.id.startsWith("clip-") && /-s\d{2}/.test(b.id),
+    );
+    expect(shotClips.length).toBeGreaterThanOrEqual(2);
+    const frag = resolveManhuaFragmentRunTargets(ensured.blocks, 1, 2);
+    expect(frag.forceFromStage).toBe("clip");
+    expect(frag.targetBlockIds).toEqual([frag.clipId]);
+    const ordered = resolveManhuaFactoryOrderedIds(ensured.blocks, "clip", 1);
+    expect(filterManhuaFactoryTargetIds(ordered, frag.targetBlockIds)).toEqual([frag.clipId]);
   });
 
   it("removes stale keyarts when a rerun returns fewer shots", () => {

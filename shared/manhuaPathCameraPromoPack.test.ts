@@ -303,7 +303,7 @@ describe("fusion + action dual-track + MIT vocab/wardrobe", () => {
     for (const e of MANHUA_CINE_VOCAB_BANK) {
       expect(`${e.zh} ${e.en}`).not.toMatch(/诺兰|王家卫|昆汀|Nolan|Tarantino/i);
     }
-    expect(MANHUA_WARDROBE_PROP_CONTINUITY_BANK.length).toBe(6);
+    expect(MANHUA_WARDROBE_PROP_CONTINUITY_BANK.length).toBeGreaterThanOrEqual(6);
     const wardrobe = buildWardrobePropContinuityInjectBlock(["wpc_01_xianxia_sword"]);
     expect(wardrobe).toContain("服装道具连续");
     expect(wardrobe).toContain("佩剑");

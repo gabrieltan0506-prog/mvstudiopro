@@ -59,8 +59,7 @@ export function formatCineVocabInjectBlock(ids: string[]): string {
   const picked = ids.map(getCineVocabById).filter(Boolean) as ManhuaCineVocabEntry[];
   if (!picked.length) return "";
   const lines = picked.map(
-    (e, i) =>
-      `${i + 1}. 【${MANHUA_CINE_VOCAB_CATEGORY_LABEL_ZH[e.category]}】${e.zh} / ${e.en}`,
+    (e, i) => `${i + 1}. 【${MANHUA_CINE_VOCAB_CATEGORY_LABEL_ZH[e.category]}】${e.zh}`,
   );
   return [
     "【电影级可拍词表】",

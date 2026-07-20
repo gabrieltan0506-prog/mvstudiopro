@@ -63,6 +63,15 @@ type FreeformCanvasProps = {
   /** 外部请求选中并滚入视口（成片坞定位） */
   focusBlockId?: string | null;
   onFocusBlockConsumed?: () => void;
+  /**
+   * media：只渲染图片/视频节点（隐藏文本生成等），突出媒体与 prompt。
+   * full：全部节点（自由画布 / 专家排错）。
+   */
+  presentation?: "full" | "media";
+  /** 仅显示该集工厂节点；不传则不过滤 */
+  focusEpisode?: number | null;
+  /** 限制「添加节点」菜单；默认 SPAWN_KIND_OPTIONS 全量 */
+  spawnKinds?: CanvasBlockKind[];
 };
 
 type SpawnMenuState = { anchorBlockId: string; x: number; y: number } | null;
@@ -294,6 +303,9 @@ export default function FreeformCanvas({
   runDeps,
   focusBlockId,
   onFocusBlockConsumed,
+  presentation = "full",
+  focusEpisode = null,
+  spawnKinds,
 }: FreeformCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const toolbarFileInputRef = useRef<HTMLInputElement>(null);
@@ -307,6 +319,35 @@ export default function FreeformCanvas({
   const [maskBusyId, setMaskBusyId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ blockId: string; done: number; total: number } | null>(null);
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
+
+  const mediaOnly = presentation === "media";
+  const spawnOptions = useMemo(() => {
+    if (!spawnKinds?.length) {
+      return mediaOnly
+        ? SPAWN_KIND_OPTIONS.filter((o) => o.kind === "image" || o.kind === "video")
+        : SPAWN_KIND_OPTIONS;
+    }
+    const allow = new Set(spawnKinds);
+    return SPAWN_KIND_OPTIONS.filter((o) => allow.has(o.kind));
+  }, [mediaOnly, spawnKinds]);
+
+  const visibleBlocks = useMemo(() => {
+    let list = blocks;
+    if (typeof focusEpisode === "number" && focusEpisode >= 1) {
+      list = list.filter((b) => (getBlockEpisodeIndex(b) ?? 1) === focusEpisode);
+    }
+    if (mediaOnly) {
+      list = list.filter((b) => b.kind === "image" || b.kind === "video");
+    }
+    return list;
+  }, [blocks, focusEpisode, mediaOnly]);
+
+  const visibleIdSet = useMemo(() => new Set(visibleBlocks.map((b) => b.id)), [visibleBlocks]);
+
+  const visibleEdges = useMemo(
+    () => edges.filter((e) => visibleIdSet.has(e.fromId) && visibleIdSet.has(e.toId)),
+    [edges, visibleIdSet],
+  );
 
   const blockMap = useMemo(() => new Map(blocks.map((b) => [b.id, b])), [blocks]);
 
@@ -733,18 +774,24 @@ export default function FreeformCanvas({
       {/* 无限画布 */}
       <div ref={canvasRef} className="relative flex-1 overflow-auto">
         <svg className="pointer-events-none absolute inset-0 h-[2400px] w-[3600px]">
-          {edges.map((e) => renderEdge(e.fromId, e.toId))}
+          {visibleEdges.map((e) => renderEdge(e.fromId, e.toId))}
         </svg>
         <div className="relative h-[2400px] w-[3600px]">
-          {blocks.length === 0 ? (
+          {visibleBlocks.length === 0 ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-white/40">
               <Plus className="mb-3 h-10 w-10 opacity-30" />
-              <p className="text-sm">点击左侧 + 在加号旁创建方块</p>
-              <p className="mt-1 text-xs">可拖动 · 右下角缩放 · 右侧 + 引用上游</p>
+              <p className="text-sm">
+                {mediaOnly ? "本集尚无静帧 / 成片节点" : "点击左侧 + 在加号旁创建方块"}
+              </p>
+              <p className="mt-1 text-xs">
+                {mediaOnly
+                  ? "先在工作台生成片段，或切到「全部节点」查看文本链"
+                  : "可拖动 · 右下角缩放 · 右侧 + 引用上游"}
+              </p>
             </div>
           ) : null}
 
-          {blocks.map((block) => {
+          {visibleBlocks.map((block) => {
             const meta = CANVAS_KIND_META[block.kind];
             const Icon = meta.icon;
             const selected = selectedId === block.id;
@@ -788,7 +835,10 @@ export default function FreeformCanvas({
                     onChange={(e) => patchOne(block.id, { kind: e.target.value as CanvasBlockKind })}
                     className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
                   >
-                    {SPAWN_KIND_OPTIONS.map((o) => (
+                    {(mediaOnly
+                      ? spawnOptions
+                      : SPAWN_KIND_OPTIONS
+                    ).map((o) => (
                       <option key={o.kind} value={o.kind}>
                         {o.label}
                       </option>
@@ -829,9 +879,14 @@ export default function FreeformCanvas({
 
                 <CanvasBlockUploadBanner block={block} />
 
-                <div className="grid min-h-0 flex-1 grid-cols-[1fr_1fr] divide-x divide-white/10">
+                <div
+                  className={`grid min-h-0 flex-1 divide-x divide-white/10 ${
+                    mediaOnly ? "grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]" : "grid-cols-[1fr_1fr]"
+                  }`}
+                >
                   {/* 左：设置 + 提示词 */}
                   <div className="flex min-h-0 flex-col overflow-auto p-3">
+                    {!mediaOnly ? (
                     <div className="mb-2 space-y-2 rounded-xl border border-white/10 bg-black/25 p-2">
                       <div className="text-[10px] uppercase tracking-wider text-white/40">方块设置</div>
                       {block.kind === "text" || block.kind === "copy_organize" ? (
@@ -1072,7 +1127,52 @@ export default function FreeformCanvas({
                         </div>
                       ) : null}
                     </div>
+                    ) : (
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <select
+                          value={block.aspectRatio}
+                          onChange={(e) =>
+                            patchOne(block.id, { aspectRatio: e.target.value as "9:16" | "16:9" })
+                          }
+                          className="rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-white"
+                        >
+                          <option value="9:16">9:16</option>
+                          <option value="16:9">16:9</option>
+                        </select>
+                        <label
+                          htmlFor={`canvas-upload-${block.id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] ${
+                            isUploading
+                              ? "border-amber-400/35 bg-amber-500/10 text-amber-100"
+                              : "border-white/10 bg-black/40 text-white/70"
+                          }`}
+                        >
+                          {isUploading ? (
+                            <LoaderCircle className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Upload className="h-3 w-3" />
+                          )}
+                          上传
+                        </label>
+                        <input
+                          id={`canvas-upload-${block.id}`}
+                          type="file"
+                          accept={CANVAS_UPLOAD_ACCEPT}
+                          multiple
+                          className="sr-only"
+                          disabled={isUploading}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            const picked = takeFilesFromInput(e.target);
+                            if (picked.length) void uploadFilesForBlock(block.id, picked);
+                          }}
+                        />
+                      </div>
+                    )}
 
+                    {!mediaOnly ? (
                     <div className="mb-2 shrink-0 space-y-2">
                       <div className="text-[10px] uppercase tracking-wider text-white/40">素材上传</div>
                       <div className="flex flex-wrap gap-2">
@@ -1091,7 +1191,7 @@ export default function FreeformCanvas({
                           </select>
                         )}
                         <label
-                          htmlFor={`canvas-upload-${block.id}`}
+                          htmlFor={`canvas-upload-full-${block.id}`}
                           onClick={(e) => e.stopPropagation()}
                           onPointerDown={(e) => e.stopPropagation()}
                           className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] hover:text-white ${
@@ -1108,7 +1208,7 @@ export default function FreeformCanvas({
                           {uploadLabel}
                         </label>
                         <input
-                          id={`canvas-upload-${block.id}`}
+                          id={`canvas-upload-full-${block.id}`}
                           type="file"
                           accept={CANVAS_UPLOAD_ACCEPT}
                           multiple
@@ -1123,12 +1223,13 @@ export default function FreeformCanvas({
                       </div>
                       <p className="text-[10px] leading-5 text-white/40">{CANVAS_UPLOAD_FORMAT_HINT}</p>
                     </div>
+                    ) : null}
 
                     <div className="mb-1.5 text-[10px] uppercase tracking-wider text-white/40">提示词</div>
                     <textarea
                       value={block.prompt}
                       onChange={(e) => patchOne(block.id, { prompt: e.target.value })}
-                      rows={4}
+                      rows={mediaOnly ? 6 : 4}
                       className="min-h-[72px] w-full shrink-0 resize-none rounded-xl border border-white/10 bg-black/35 px-2.5 py-2 text-xs leading-6 text-white outline-none focus:border-primary/40"
                       placeholder={
                         documentCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
@@ -1204,7 +1305,7 @@ export default function FreeformCanvas({
             style={{ left: spawnMenu.x, top: spawnMenu.y }}
           >
             <div className="px-2 py-1.5 text-[10px] uppercase tracking-wider text-white/40">引用该节点生成</div>
-            {SPAWN_KIND_OPTIONS.map((opt) => {
+            {spawnOptions.map((opt) => {
               const Icon = CANVAS_KIND_META[opt.kind].icon;
               return (
                 <button
@@ -1247,7 +1348,7 @@ export default function FreeformCanvas({
             style={{ left: toolbarMenu.x, top: toolbarMenu.y }}
           >
             <div className="px-2 py-1.5 text-[10px] uppercase tracking-wider text-white/40">添加方块</div>
-            {SPAWN_KIND_OPTIONS.map((opt) => {
+            {spawnOptions.map((opt) => {
               const Icon = CANVAS_KIND_META[opt.kind].icon;
               return (
                 <button

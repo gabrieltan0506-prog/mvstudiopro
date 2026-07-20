@@ -94,10 +94,10 @@ export function normalizePathAnnotation(raw: unknown): ManhuaPathAnnotation | nu
       index: anchors.length + 1,
       x: clamp01(Number(a.x)),
       y: clamp01(Number(a.y)),
-      focusZh: String(a.focusZh || "").trim().slice(0, 40) || `点${anchors.length + 1}`,
-      cameraEn: String(a.cameraEn || "").trim().slice(0, 120) || "slow motivated camera move",
+      focusZh: String(a.focusZh || "").trim().slice(0, 40) || `落点${anchors.length + 1}`,
+      cameraEn: String(a.cameraEn || "").trim().slice(0, 120) || "镜头沿蓝色路径缓缓跟进",
       subjectActionEn:
-        String(a.subjectActionEn || "").trim().slice(0, 120) || "subtle natural micro-motion",
+        String(a.subjectActionEn || "").trim().slice(0, 120) || "人物沿红色路径自然微动",
       durationHintSec: Math.max(1, Math.min(6, Math.round(Number(a.durationHintSec) || 2))),
       trackRole: parseTrackRole(a.trackRole),
     });
@@ -327,22 +327,47 @@ export function downsampleStrokeToAnchors(
     picked = out;
   }
 
-  return picked.map((p, i) => ({
-    index: i + 1,
-    x: p.x,
-    y: p.y,
-    focusZh: trackRole === "camera" ? `镜${i + 1}` : `动${i + 1}`,
-    cameraEn:
+  const first = picked[0]!;
+  const end = picked[picked.length - 1]!;
+  const dx = end.x - first.x;
+  const dy = end.y - first.y;
+  const dirZh =
+    Math.abs(dx) >= Math.abs(dy)
+      ? dx >= 0
+        ? "自左向右"
+        : "自右向左"
+      : dy >= 0
+        ? "自上向下"
+        : "自下向上";
+
+  return picked.map((p, i) => {
+    const isFirst = i === 0;
+    const isLast = i === picked.length - 1;
+    const focusZh =
       trackRole === "camera"
-        ? "camera follows blue path"
-        : "camera holds or soft follows subject",
-    subjectActionEn:
-      trackRole === "subject"
-        ? "subject moves along red action path"
-        : "subject holds readable stance",
-    durationHintSec: 2,
-    trackRole,
-  }));
+        ? isFirst
+          ? `镜头起点·${dirZh}`
+          : isLast
+            ? `镜头落点·${dirZh}`
+            : `镜头途经${i + 1}·${dirZh}`
+        : isFirst
+          ? `人物起点·${dirZh}`
+          : isLast
+            ? `人物落点·${dirZh}`
+            : `人物途经${i + 1}·${dirZh}`;
+    return {
+      index: i + 1,
+      x: p.x,
+      y: p.y,
+      focusZh,
+      cameraEn:
+        trackRole === "camera" ? "镜头沿蓝色路径运动" : "镜头稳住或轻跟人物",
+      subjectActionEn:
+        trackRole === "subject" ? "人物沿红色路径运动" : "人物姿态保持可读",
+      durationHintSec: 2,
+      trackRole,
+    };
+  });
 }
 
 /** 用一轨新锚点替换同轨旧点，保留另一轨，再重编号 */

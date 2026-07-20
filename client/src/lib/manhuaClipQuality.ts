@@ -39,12 +39,14 @@ export async function reviewManhuaClipQuality(input: {
       reviewedAt,
     };
   } catch (error) {
+    const raw = error instanceof Error ? error.message : String(error);
     return {
       status: "failed",
       checks: emptyManhuaClipQualityChecks(),
       failedKeys: [...MANHUA_CLIP_QUALITY_KEYS],
-      summary: "智能质检暂不可用，成片已拦截，请稍后重试",
-      raw: error instanceof Error ? error.message : String(error),
+      // 与内容不合格区分：右栏可据此仍播成片，但不进成片坞
+      summary: "智能质检暂不可用（非成片内容判定），成片已保留但暂不进成片坞",
+      raw,
       attempts: input.attempts,
       sourceKeyartId: input.sourceKeyartId,
       sourceKeyartUrl: input.referenceImageUrl,
