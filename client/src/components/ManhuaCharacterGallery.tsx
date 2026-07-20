@@ -1,5 +1,5 @@
 /**
- * 漫剧工厂 · 角色库卡片墙 + 设定卡三视图预览 + 画风 A/B/C
+ * 漫剧工厂 · 角色库卡片墙 + 设定卡三视图预览 + 画风（仿真人 / CG 漫剧，用户自选）
  * 设定卡图底部为 FRONT/SIDE/BACK；上方为人像与文案。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -324,16 +324,12 @@ export default function ManhuaCharacterGallery({
   const applyCouplePair = (
     female: string,
     male: string,
-    opts?: { artStyleId?: ManhuaArtStyleId; labelZh?: string },
+    opts?: { labelZh?: string },
   ) => {
     rememberSelect(female, "female");
     rememberSelect(male, "male");
-    if (opts?.artStyleId && !lockArtStyle) onSelectArtStyle(opts.artStyleId);
-    setCopyFlash(
-      opts?.labelZh
-        ? `已套用套组：${opts.labelZh}${lockArtStyle && opts.artStyleId ? "（画风已锁定）" : ""}`
-        : "已套用双人",
-    );
+    // 套组只换人，不硬改画风；仿真人 / CG 由用户自选
+    setCopyFlash(opts?.labelZh ? `已套用套组：${opts.labelZh}` : "已套用双人");
     window.setTimeout(() => setCopyFlash(""), 1600);
   };
 
@@ -341,7 +337,6 @@ export default function ManhuaCharacterGallery({
     const pack = MANHUA_COUPLE_PACKS.find((p) => p.id === packId);
     if (!pack) return;
     applyCouplePair(pack.femaleId, pack.maleId, {
-      artStyleId: pack.artStyleId,
       labelZh: pack.labelZh,
     });
     setRecentCouplePackIds(pushRecentCouplePackId(pack.id));
@@ -487,7 +482,7 @@ export default function ManhuaCharacterGallery({
       if (!mBag.length) continue;
       const m = mBag[Math.floor(Math.random() * mBag.length)];
       if (m) {
-        applyCouplePair(f.id, m.id, { artStyleId, labelZh: `${f.nameZh}×${m.nameZh}` });
+        applyCouplePair(f.id, m.id, { labelZh: `${f.nameZh}×${m.nameZh}` });
         return;
       }
     }
@@ -737,14 +732,6 @@ export default function ManhuaCharacterGallery({
       if (e.key === "?" || (e.shiftKey && e.key === "/")) {
         e.preventDefault();
         setShowShortcuts((v) => !v);
-        return;
-      }
-      if (e.key === "l" || e.key === "L") {
-        e.preventDefault();
-        const next = !lockArtStyle;
-        setLockArtStyle(next);
-        setCopyFlash(next ? "画风已锁定" : "画风已解锁");
-        window.setTimeout(() => setCopyFlash(""), 1200);
         return;
       }
       if (e.key === "u" || e.key === "U") {
@@ -1436,30 +1423,16 @@ export default function ManhuaCharacterGallery({
 
       <div className="sticky bottom-0 z-10 mt-3 rounded-xl border border-white/15 bg-[#0b0a12]/95 p-3 shadow-[0_-8px_32px_rgba(0,0,0,0.45)] backdrop-blur-md">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-[11px] font-semibold text-white/80">角色与场景画风（须与场景一致）</div>
+          <div className="text-[11px] font-semibold text-white/80">成片画风（点选即可，不硬套）</div>
           {artStyleAutoApplied ? (
-            <span className="rounded-md border border-cyan-400/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] text-cyan-100">
-              已按题材推荐
+            <span className="rounded-md border border-white/15 bg-white/[0.04] px-1.5 py-0.5 text-[10px] text-white/55">
+              题材软推荐 · 可改
             </span>
           ) : (
-            <span className="text-[10px] text-white/40">手选优先</span>
+            <span className="text-[10px] text-cyan-200/80">已手选</span>
           )}
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => setLockArtStyle((v) => !v)}
-            className={`rounded-md border px-2 py-0.5 text-[10px] disabled:opacity-40 ${
-              lockArtStyle
-                ? "border-amber-400/45 bg-amber-500/15 text-amber-100"
-                : "border-white/10 text-white/45 hover:border-white/25"
-            }`}
-          >
-            {lockArtStyle ? "画风已锁定（套组不改）" : "锁定画风"}
-          </button>
-        </div>
-        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
           {MANHUA_ART_STYLE_PRESETS.map((p) => {
             const selected = artStyleId === p.id;
             const sampleId = selectedFemale?.id || selectedMale?.id || "char_f_01";
@@ -1471,6 +1444,8 @@ export default function ManhuaCharacterGallery({
               <button
                 key={p.id}
                 type="button"
+                data-manhua-art-style-id={p.id}
+                aria-pressed={selected}
                 disabled={disabled}
                 onClick={() => onSelectArtStyle(p.id)}
                 className={`overflow-hidden rounded-xl border text-left transition disabled:opacity-45 ${
@@ -1506,13 +1481,13 @@ export default function ManhuaCharacterGallery({
           })}
         </div>
         <p className="mt-2 text-[10px] leading-snug text-white/40">
-          选定后写入角色卡与关键静帧提示词。库预览图目前为 CG 设定卡底图；「同版式生成新人」会铺一张竖版设定卡生图节点，需你在画布上点运行。
+          仿真人与 CG 漫剧均可：点选后写入角色卡与静帧提示词；换人不会改画风。
         </p>
       </div>
 
 
       <p className="mt-2 text-[10px] leading-snug text-white/35">
-        验收口径：左栏=当前槽位大卡与三视图；右栏=库墙悬停妆造；底栏=画风 A/B/C。三视图=设定卡裁切；换画风只改 prompt；「同版式」勿点运行以免烧生图。
+        验收口径：左栏=当前槽位大卡与三视图；右栏=库墙悬停妆造；底栏=仿真人 / CG 自选。三视图=设定卡裁切；换画风只改 prompt。
       </p>
     </div>
   );

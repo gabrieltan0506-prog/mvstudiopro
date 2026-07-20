@@ -160,7 +160,7 @@ export type SpawnManhuaDramaStudioOpts = {
   ancientArchetypeIds?: string[];
   /** 剧本跟随身份锁（时代/族裔/服饰；来自 CastBundle） */
   identityLockZh?: string;
-  /** 角色/场景统一画风 A/B/C */
+  /** 角色/场景统一画风：仿真人 / CG 漫剧 */
   artStyleId?: ManhuaArtStyleId | string;
   /** 包装动效库 id：注入微动成片 / 视频改写节点 */
   motionPromptIds?: string[];

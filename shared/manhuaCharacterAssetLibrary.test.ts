@@ -96,7 +96,8 @@ describe("manhuaCharacterAssetLibrary", () => {
   it("recommends art style from topic", () => {
     expect(recommendManhuaArtStyleFromTopic("都市霸总职场情感").artStyleId).toBe("photoreal");
     expect(recommendManhuaArtStyleFromTopic("仙侠修仙权谋翻盘").artStyleId).toBe("cg_drama");
-    expect(recommendManhuaArtStyleFromTopic("轻松日常漫画搞笑").artStyleId).toBe("manga_2d");
+    // 旧「二维漫画」题材改归 CG 漫剧
+    expect(recommendManhuaArtStyleFromTopic("轻松日常漫画搞笑").artStyleId).toBe("cg_drama");
   });
 
   it("4.B recommends cool female + elite male for 权谋题材", () => {
@@ -136,9 +137,9 @@ describe("manhuaCharacterAssetLibrary", () => {
   });
 
   it("builds clipboard text for a single character", () => {
-    const text = buildManhuaCharacterClipboardText("char_f_01", { artStyleId: "manga_2d" });
+    const text = buildManhuaCharacterClipboardText("char_f_01", { artStyleId: "cg_drama" });
     expect(text).toContain("沈清辞");
-    expect(text).toContain("二维漫画");
+    expect(text).toContain("CG 漫剧");
     expect(text).toContain("提示词：");
   });
 

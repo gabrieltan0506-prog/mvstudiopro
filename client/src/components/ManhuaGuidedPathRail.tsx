@@ -2,7 +2,7 @@
  * 引导式路径轨 + 下一步行动条（成品工作台导航，非演示徽章）
  */
 import { useMemo } from "react";
-import { ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2, Square } from "lucide-react";
 import {
   MANHUA_GUIDED_STEPS,
   resolveManhuaGuidedActiveStep,
@@ -20,6 +20,8 @@ type Props = {
   onNextActionClick?: (stepId: ManhuaGuidedStepId, href: string) => void;
   /** 工厂出片 / 合成进行中时，下一步条改显示忙态 */
   busyLabel?: string | null;
+  /** 忙态时可中断生成 */
+  onStopBusy?: () => void;
   /**
    * compact：确认编剧后压成细路径条，腾出整屏给三栏工作台（对标阿硕剧本工作室主屏）。
    */
@@ -37,6 +39,7 @@ export default function ManhuaGuidedPathRail({
   onStepClick,
   onNextActionClick,
   busyLabel,
+  onStopBusy,
   variant = "full",
 }: Props) {
   const activeId = activeStepId || resolveManhuaGuidedActiveStep(progress);
@@ -127,9 +130,22 @@ export default function ManhuaGuidedPathRail({
           );
         })}
         {compact && busy ? (
-          <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[10px] text-amber-100/85">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            {busyLabel}
+          <span className="ml-auto inline-flex shrink-0 items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 text-[10px] text-amber-100/85">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {busyLabel}
+            </span>
+            {onStopBusy ? (
+              <button
+                type="button"
+                data-manhua-action="stop-factory-rail"
+                onClick={onStopBusy}
+                className="inline-flex items-center gap-0.5 rounded border border-red-400/40 bg-red-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-red-50"
+              >
+                <Square className="h-2.5 w-2.5 fill-current" />
+                中断
+              </button>
+            ) : null}
           </span>
         ) : null}
       </div>
@@ -154,9 +170,22 @@ export default function ManhuaGuidedPathRail({
               )}
             </div>
             <p className="mt-0.5 text-[10px] leading-snug text-white/50">
-              {busy ? "可留在本页等待，或点步骤跳转查看对应区块。" : next.hint}
+              {busy
+                ? "可随时中断；或点步骤跳转查看对应区块。"
+                : next.hint}
             </p>
           </div>
+          {busy && onStopBusy ? (
+            <button
+              type="button"
+              data-manhua-action="stop-factory-rail-full"
+              onClick={onStopBusy}
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-red-400/45 bg-red-500/20 px-3 py-1.5 text-[11px] font-semibold text-red-50 hover:bg-red-500/30"
+            >
+              <Square className="h-3.5 w-3.5 fill-current" />
+              中断生成
+            </button>
+          ) : (
           <button
             type="button"
             onClick={() => {
@@ -173,6 +202,7 @@ export default function ManhuaGuidedPathRail({
             {busy ? "查看对应区块" : next.ctaLabel}
             <ArrowRight className="h-3.5 w-3.5" />
           </button>
+          )}
         </div>
       ) : null}
     </div>

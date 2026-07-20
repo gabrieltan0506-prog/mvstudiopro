@@ -14,6 +14,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Sparkles,
+  Square,
   X,
 } from "lucide-react";
 import type { CanvasBlock } from "@/lib/canvasTypes";
@@ -22,7 +23,13 @@ import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   stageKeyFromBlockId,
 } from "@/lib/canvasDramaStudio";
-import { getManhuaCharacterById, getManhuaCharacterPreviewUrl } from "@shared/manhuaCharacterAssetLibrary";
+import {
+  getManhuaCharacterById,
+  getManhuaCharacterDisplayName,
+  getManhuaCharacterPreviewUrl,
+  MANHUA_ART_STYLE_PRESETS,
+  type ManhuaArtStyleId,
+} from "@shared/manhuaCharacterAssetLibrary";
 import { getAncientArchetypeById } from "@shared/manhuaAncientArchetypeLibrary";
 import { getManhuaSceneTemplate } from "@shared/manhuaSceneAssetLibrary";
 import {
@@ -78,6 +85,8 @@ type Props = {
   factoryBusy?: boolean;
   /** 工厂进度一行（如「第2集 · 静帧」） */
   factoryProgress?: string;
+  /** 生成中随时中断（测试不必跑完整条链） */
+  onStopFactory?: () => void;
   canRun?: boolean;
   /** 剧情包已出、尚未确认编剧 */
   writerPackReady?: boolean;
@@ -124,6 +133,9 @@ type Props = {
     keyartFromPrevStill: boolean;
     clipFromPrevTail: boolean;
   }) => void;
+  /** 画风：仿真人 / CG 漫剧（资产设定页可自选） */
+  artStyleId?: ManhuaArtStyleId;
+  onArtStyleChange?: (id: ManhuaArtStyleId) => void;
 };
 
 function blockByStage(blocks: CanvasBlock[], episode: number, stage: string): CanvasBlock | undefined {
@@ -182,6 +194,7 @@ export default function ManhuaScriptWorkbench({
   finalVideoUrl,
   factoryBusy,
   factoryProgress,
+  onStopFactory,
   canRun,
   writerPackReady,
   onConfirmOutline,
@@ -204,12 +217,16 @@ export default function ManhuaScriptWorkbench({
   previewCanvasToolbar,
   shotContinuity,
   onShotContinuityChange,
+  artStyleId,
+  onArtStyleChange,
 }: Props) {
   const dockCanvas = Boolean(previewCanvas);
   const continuity = shotContinuity || {
     keyartFromPrevStill: true,
     clipFromPrevTail: true,
   };
+  const activeArtStyleId: ManhuaArtStyleId =
+    artStyleId === "photoreal" ? "photoreal" : "cg_drama";
   const [shotIndex, setShotIndex] = useState(0);
   /** 中栏：分镜列表 | 运镜画板（主路径可见） */
   const [scriptTab, setScriptTab] = useState<"shots" | "path">("shots");
@@ -540,20 +557,33 @@ export default function ManhuaScriptWorkbench({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            data-manhua-action="generate-fragment"
-            disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
-            onClick={runGenerateFragment}
-            className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
-            title={
-              fragmentGateHint ||
-              `只生成当前片段 ${String(activeShotNo).padStart(2, "0")}（该镜静帧+成片）`
-            }
-          >
-            <Play className="h-3.5 w-3.5" />
-            {factoryBusy ? "生成中…" : `生成片段 ${String(activeShotNo).padStart(2, "0")}`}
-          </button>
+          {factoryBusy && onStopFactory ? (
+            <button
+              type="button"
+              data-manhua-action="stop-factory"
+              onClick={onStopFactory}
+              className="inline-flex items-center gap-1 rounded-lg border border-red-400/50 bg-red-500/20 px-3 py-1.5 text-[11px] font-semibold text-red-50 hover:bg-red-500/30"
+              title="立刻中断当前生成，不必跑完整条链"
+            >
+              <Square className="h-3.5 w-3.5 fill-current" />
+              中断生成
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-manhua-action="generate-fragment"
+              disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
+              onClick={runGenerateFragment}
+              className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
+              title={
+                fragmentGateHint ||
+                `只生成当前片段 ${String(activeShotNo).padStart(2, "0")}（该镜静帧+成片）`
+              }
+            >
+              <Play className="h-3.5 w-3.5" />
+              {`生成片段 ${String(activeShotNo).padStart(2, "0")}`}
+            </button>
+          )}
           {onGenerateMissingFragments && selectedSorted.length > 0 ? (
             <button
               type="button"
@@ -704,15 +734,29 @@ export default function ManhuaScriptWorkbench({
           </button>
         </div>
       ) : null}
-      {canGenerateFragment && factoryBusy ? (
+      {factoryBusy ? (
         <div
           data-manhua-status="running"
-          className="shrink-0 border-b border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5"
+          className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-amber-400/25 bg-amber-500/10 px-3 py-1.5"
         >
-          <div className="flex items-center gap-1.5 text-[11px] font-medium text-cyan-50">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {factoryProgress?.trim() ? factoryProgress : "生成中…"}
+          <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-amber-50">
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            <span className="truncate">
+              {factoryProgress?.trim() ? factoryProgress : "生成中…"}
+              <span className="ml-1.5 font-normal text-amber-50/60">可随时中断</span>
+            </span>
           </div>
+          {onStopFactory ? (
+            <button
+              type="button"
+              data-manhua-action="stop-factory-banner"
+              onClick={onStopFactory}
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-red-400/45 bg-red-500/20 px-2.5 py-1 text-[10px] font-semibold text-red-50 hover:bg-red-500/30"
+            >
+              <Square className="h-3 w-3 fill-current" />
+              中断
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -860,7 +904,7 @@ export default function ManhuaScriptWorkbench({
               <div>
                 <div className="text-[13px] font-semibold text-white/90">资产设定</div>
                 <p className="mt-1 text-[11px] leading-5 text-white/45">
-                  先备角色与场景；缺图可跳过，稍后再补。刷新后仍保留跳过状态。
+                  已按剧本预填角色 / 场景 / 道具服装；画风请自选仿真人或 CG（不硬套）。点卡片可改，确认后再进分镜出静帧与成片。
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -869,14 +913,14 @@ export default function ManhuaScriptWorkbench({
                   onClick={() => onOpenCharacterCard?.()}
                   className="rounded-lg border border-white/12 px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.06]"
                 >
-                  角色库
+                  改角色
                 </button>
                 <button
                   type="button"
                   onClick={() => onOpenAssetWall?.()}
                   className="rounded-lg border border-white/12 px-2.5 py-1.5 text-[11px] text-white/70 hover:bg-white/[0.06]"
                 >
-                  资产墙
+                  改场景·道具·服装
                 </button>
                 {assetsSkipped ? (
                   <button
@@ -893,12 +937,46 @@ export default function ManhuaScriptWorkbench({
                   data-manhua-action="skip-assets"
                   disabled={!outlineComplete}
                   onClick={enterStoryboard}
-                  className="rounded-lg border border-amber-400/40 bg-amber-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-amber-50 disabled:opacity-45"
+                  className="rounded-lg border border-cyan-300/45 bg-cyan-500/20 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
                 >
-                  {hasCastAssets ? "进入分镜视频" : "跳过缺图并继续"}
+                  {hasCastAssets ? "确认资产，进入分镜" : "跳过缺图并进入分镜"}
                 </button>
               </div>
             </div>
+
+            {onArtStyleChange ? (
+              <div
+                data-manhua-art-style
+                className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3"
+              >
+                <div className="text-[11px] font-semibold text-white/75">成片画风（自选，不硬套）</div>
+                <p className="mt-0.5 text-[10px] text-white/40">
+                  仿真人 / CG 漫剧均可；影响静帧与成片，与角色库底栏同步。
+                </p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {MANHUA_ART_STYLE_PRESETS.map((p) => {
+                    const on = activeArtStyleId === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        data-manhua-art-style-id={p.id}
+                        aria-pressed={on}
+                        onClick={() => onArtStyleChange(p.id)}
+                        className={`rounded-lg border px-3 py-2.5 text-left transition ${
+                          on
+                            ? "border-cyan-400/50 bg-cyan-500/15 text-cyan-50"
+                            : "border-white/12 bg-black/30 text-white/65 hover:border-white/25"
+                        }`}
+                      >
+                        <div className="text-[12px] font-semibold">{p.labelZh}</div>
+                        <div className="mt-0.5 text-[10px] text-white/45">{p.shortZh}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
 
             <div
               data-manhua-asset-ready
@@ -953,9 +1031,13 @@ export default function ManhuaScriptWorkbench({
               <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                 <div className="mb-2 flex items-center justify-between text-[11px] font-semibold text-white/70">
                   <span>角色 · {(characters.length || 0) + (archetypes.length || 0)}</span>
-                  <span className="text-[9px] font-normal text-white/35">
-                    {characters.length || archetypes.length ? "已选" : "缺"}
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onOpenCharacterCard?.()}
+                    className="text-[9px] font-normal text-cyan-200/80 hover:text-cyan-100"
+                  >
+                    更换
+                  </button>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5">
                   {characters.map((c) => (
@@ -963,26 +1045,32 @@ export default function ManhuaScriptWorkbench({
                       key={c!.id}
                       type="button"
                       onClick={() => onOpenCharacterCard?.()}
-                      className="overflow-hidden rounded-lg border border-white/12 bg-black/40 text-left"
+                      className="overflow-hidden rounded-lg border border-white/12 bg-black/40 text-left hover:border-cyan-400/40"
+                      title="点击更换角色"
                     >
                       <img
-                        src={getManhuaCharacterPreviewUrl(c!.id)}
+                        src={getManhuaCharacterPreviewUrl(c!.id, { artStyleId: activeArtStyleId })}
                         alt=""
                         className="aspect-square w-full object-cover object-top"
                         loading="lazy"
                       />
                       <div className="truncate px-1 py-0.5 text-[9px] text-white/80">
-                        {c!.nameZh}
+                        {getManhuaCharacterDisplayName(c!.id, {
+                          artStyleId: activeArtStyleId,
+                        }) || c!.nameZh}
                       </div>
                     </button>
                   ))}
                   {archetypes.map((a) => (
-                    <div
+                    <button
                       key={a!.id}
-                      className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-1.5 py-2 text-[9px] text-amber-50"
+                      type="button"
+                      onClick={() => onOpenCharacterCard?.()}
+                      className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-1.5 py-2 text-left text-[9px] text-amber-50 hover:border-amber-300/50"
+                      title="点击更换造型"
                     >
                       {a!.nameZh}
-                    </div>
+                    </button>
                   ))}
                   {!characters.length && !archetypes.length ? (
                     <button
@@ -990,15 +1078,29 @@ export default function ManhuaScriptWorkbench({
                       onClick={() => onOpenCharacterCard?.()}
                       className="col-span-3 rounded-lg border border-dashed border-white/15 px-2 py-6 text-[10px] text-white/40"
                     >
-                      尚未选角色 · 点开角色库
+                      尚未选角色 · 点此更换
                     </button>
                   ) : null}
                 </div>
               </section>
               <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                <div className="mb-2 text-[11px] font-semibold text-white/70">场景</div>
+                <div className="mb-2 flex items-center justify-between text-[11px] font-semibold text-white/70">
+                  <span>场景</span>
+                  <button
+                    type="button"
+                    onClick={() => onOpenAssetWall?.()}
+                    className="text-[9px] font-normal text-cyan-200/80 hover:text-cyan-100"
+                  >
+                    更换
+                  </button>
+                </div>
                 {scene ? (
-                  <div className="overflow-hidden rounded-lg border border-white/12">
+                  <button
+                    type="button"
+                    onClick={() => onOpenAssetWall?.()}
+                    className="w-full overflow-hidden rounded-lg border border-white/12 text-left hover:border-cyan-400/40"
+                    title="点击更换场景"
+                  >
                     {sceneDemos[0] ? (
                       <img
                         src={getManhuaDemoAssetPublicUrl(sceneDemos[0].id)}
@@ -1012,20 +1114,27 @@ export default function ManhuaScriptWorkbench({
                       </div>
                     )}
                     <div className="px-2 py-1.5 text-[11px] text-white/80">{scene.nameZh}</div>
-                  </div>
+                  </button>
                 ) : (
                   <button
                     type="button"
                     onClick={() => onOpenAssetWall?.()}
                     className="w-full rounded-lg border border-dashed border-white/15 px-2 py-8 text-[10px] text-white/40"
                   >
-                    尚未选场景 · 点开资产墙
+                    尚未选场景 · 点此更换
                   </button>
                 )}
               </section>
               <section className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                <div className="mb-2 text-[11px] font-semibold text-white/70">
-                  道具 · {props.length}
+                <div className="mb-2 flex items-center justify-between text-[11px] font-semibold text-white/70">
+                  <span>道具·服装 · {props.length}</span>
+                  <button
+                    type="button"
+                    onClick={() => onOpenAssetWall?.()}
+                    className="text-[9px] font-normal text-cyan-200/80 hover:text-cyan-100"
+                  >
+                    更换
+                  </button>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5">
                   {props.map((p) => (
@@ -1033,7 +1142,8 @@ export default function ManhuaScriptWorkbench({
                       key={p!.id}
                       type="button"
                       onClick={() => onOpenAssetWall?.()}
-                      className="overflow-hidden rounded-lg border border-white/12 bg-black/40 text-left"
+                      className="overflow-hidden rounded-lg border border-white/12 bg-black/40 text-left hover:border-cyan-400/40"
+                      title="点击更换道具或服装"
                     >
                       <img
                         src={getManhuaDemoAssetPublicUrl(p!.id)}
@@ -1052,7 +1162,7 @@ export default function ManhuaScriptWorkbench({
                       onClick={() => onOpenAssetWall?.()}
                       className="col-span-3 rounded-lg border border-dashed border-white/15 px-2 py-6 text-[10px] text-white/40"
                     >
-                      道具可选 · 缺图可跳过
+                      道具·服装可选 · 点此添加或更换
                     </button>
                   ) : null}
                 </div>
