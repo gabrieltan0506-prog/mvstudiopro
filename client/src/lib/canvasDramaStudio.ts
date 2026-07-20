@@ -1875,8 +1875,73 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             const failedQuality = clipQuality;
             const infra = isManhuaClipQualityInfraFailure(failedQuality);
             const keyartTextFail = isManhuaClipQualityKeyartTextFailure(failedQuality);
+            // 首镜烧字：自动重出该镜静帧一次，再重跑成片；仍失败才拦
+            if (keyartTextFail && firstCandidate.id) {
+              opts.onStageRetry?.(
+                firstCandidate.id,
+                `静帧含字·重出第${shotIdx}镜`,
+                1,
+                failedQuality.summary || "首镜含违规文字",
+              );
+              const keyartBlock = working.find((b) => b.id === firstCandidate.id);
+              if (keyartBlock) {
+                try {
+                  const keyOut = await runCanvasBlock(
+                    opts.deps,
+                    {
+                      ...keyartBlock,
+                      status: "idle",
+                      outputUrl: undefined,
+                      outputUrls: [],
+                      error: undefined,
+                      // 强制文生图，避免带字底图继续融脏
+                      imageMode: "generate",
+                      editMaskUrl: undefined,
+                      editFusionUrls: [],
+                    },
+                    { visionImages, texts },
+                  );
+                  if (keyOut.outputUrl) {
+                    working = working.map((b) =>
+                      b.id === firstCandidate.id
+                        ? {
+                            ...b,
+                            status: "done" as const,
+                            outputUrl: keyOut.outputUrl,
+                            outputUrls: keyOut.outputUrls ?? [keyOut.outputUrl!],
+                            error: undefined,
+                          }
+                        : b,
+                    );
+                    publish(working);
+                    const freshKey = working.find((b) => b.id === firstCandidate.id)!;
+                    const freshUrl = mediaUrlOf(freshKey) || keyOut.outputUrl!;
+                    out = await runCanvasBlock(
+                      opts.deps,
+                      { ...runBlockPayload, refImageUrl: freshUrl },
+                      { visionImages, texts },
+                    );
+                    if (out.outputUrl) {
+                      clipQuality = await review(
+                        { id: freshKey.id, url: freshUrl, prompt: freshKey.prompt },
+                        2,
+                        out.outputUrl,
+                      );
+                    }
+                  }
+                } catch {
+                  /* 自动重出失败则走下方原失败分支 */
+                }
+              }
+            }
+          }
+
+          if (clipQuality.status !== "passed") {
+            const failedQuality = clipQuality;
+            const infra = isManhuaClipQualityInfraFailure(failedQuality);
+            const keyartTextFail = isManhuaClipQualityKeyartTextFailure(failedQuality);
             const failMsg = keyartTextFail
-              ? `智能质检不合格：${failedQuality.summary}（建议先「重出静帧」再生成片段）`
+              ? `智能质检不合格：${failedQuality.summary}（已尝试重出静帧仍含字，请顶栏再点「重出静帧」）`
               : `智能质检不合格：${failedQuality.summary}`;
             working = working.map((candidate) =>
               candidate.id === blockId

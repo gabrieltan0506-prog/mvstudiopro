@@ -157,18 +157,24 @@ function cinematicDefaultLock(idea: string): DirectorJsonLock["Cinematography_Lo
   };
 }
 
+function isStrictNoTextIdea(idea: string): boolean {
+  return /禁字硬锁|keyart-|NO TEXT|MANHUA_KEYART|分镜\s*\d+·静帧/i.test(String(idea || ""));
+}
+
 export function buildDirectorJsonFromIdea(
   idea: string,
   aspectRatio: AspectRatio169Or916 = "9:16",
 ): DirectorJsonLock {
   const subject = guessSubject(idea);
+  const strictNoText = isStrictNoTextIdea(idea);
   return {
     Project_Settings: {
       aspect_ratio: aspectRatio,
       resolution: "high definition masterwork",
       rendering_style: "photoreal cinematic still, tactile medium, not plastic CGI",
-      negative_constraints:
-        "No on-image text, no letters, no watermarks, no digital oversharpening, no beauty-filter gloss that erases emotion",
+      negative_constraints: strictNoText
+        ? "FATAL no on-image text: no letters, Chinese characters, numbers, subtitles, captions, speech bubbles, logos, watermarks, nameplates, UI, title cards, or readable signage; dialogue is acting-only never painted; screens/papers = illegible blur only; also no digital oversharpening or beauty-filter gloss"
+        : "No on-image text, no letters, no watermarks, no digital oversharpening, no beauty-filter gloss that erases emotion",
     },
     Subject_Core: {
       identity: subject.identity,
@@ -185,20 +191,26 @@ export function stringifyDirectorJson(lock: DirectorJsonLock): string {
 }
 
 /** 给 LLM 的翻译 brief：JSON → 目标模型可用的纯净提示词 */
-export function buildJsonToImageTranslationBrief(targetModel: "nano-banana" | "gpt-image-2" | "generic"): string {
+export function buildJsonToImageTranslationBrief(
+  targetModel: "nano-banana" | "gpt-image-2" | "generic",
+  opts?: { strictNoText?: boolean },
+): string {
   const shape =
     targetModel === "gpt-image-2"
       ? "写成一段连贯英文画面描写（120–220 words），摄影参数自然融入，不要列表、不要 Markdown 标题。"
       : targetModel === "nano-banana"
         ? "写成一段极具画面感的英文描写段落（100–200 words），摄影与介质词融入句子，不要 JSON、不要代码块。"
         : "写成一段干净英文提示词；若适合标签模型可附一行 comma-separated tags。";
+  const noTextRule = opts?.strictNoText
+    ? "5. **FATAL 画面零文字**：英文提示词末尾必须重申 no readable text/subtitles/speech bubbles/nameplates；禁止把对白写成画面上的字。"
+    : "5. 遵守 negative_constraints；画面内无字。";
   return `你是电影摄影向提示词编译器（JSON 中台→绘图模型）。
 硬规则：
 1. 只输出最终提示词正文，不要解释、不要道歉、不要 Markdown 围栏。
 2. 读取并**主导** Cinematography_Lock（镜头/胶片/布光/构图/调色必须出现在文案里）。
 3. Subject_Core 是锚点：禁止「风格糖衣化」把苦难/脏乱画成精致时尚大片。
 4. Environment_Layer 服从主体，不抢戏。
-5. 遵守 negative_constraints；画面内无字。
+${noTextRule}
 6. **成稿去名**：禁止导演名、片名、「向某某致敬」「某某风」。可用手法词：绝对对称、粉彩、画册构图、变形宽银幕、体积光、胶片颗粒。
 7. ${shape}`;
 }
@@ -225,7 +237,9 @@ export function prepareJsonDirectorImageJob(input: {
   }
   return {
     jsonText,
-    translationBrief: buildJsonToImageTranslationBrief(target),
+    translationBrief: buildJsonToImageTranslationBrief(target, {
+      strictNoText: isStrictNoTextIdea(raw),
+    }),
     usedCompiledTemplate,
   };
 }
