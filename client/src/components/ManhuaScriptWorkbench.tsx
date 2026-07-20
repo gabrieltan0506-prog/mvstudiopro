@@ -226,6 +226,7 @@ export default function ManhuaScriptWorkbench({
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
+            data-manhua-action="generate"
             disabled={!canRun || factoryBusy}
             onClick={() => onSpawnAndRunClip?.()}
             className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
@@ -236,6 +237,7 @@ export default function ManhuaScriptWorkbench({
           {onRerunKeyartsFromReverse ? (
             <button
               type="button"
+              data-manhua-action="rerun-keyarts"
               disabled={!canRun || factoryBusy}
               onClick={() => onRerunKeyartsFromReverse()}
               title="从编导反推重跑本集多镜静帧，覆盖右栏旧图"
@@ -288,7 +290,10 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
       {canRun && factoryBusy ? (
-        <div className="shrink-0 border-b border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5">
+        <div
+          data-manhua-status="running"
+          className="shrink-0 border-b border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5"
+        >
           <div className="flex items-center gap-1.5 text-[11px] font-medium text-cyan-50">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             {factoryProgress?.trim() ? factoryProgress : "生成中…"}
@@ -306,6 +311,7 @@ export default function ManhuaScriptWorkbench({
       >
         {/* 左：本集资产 */}
         <aside
+          data-manhua-column="assets"
           className={
             immersive
               ? "min-h-0 overflow-y-auto border-r border-white/10 p-2.5"
@@ -475,6 +481,7 @@ export default function ManhuaScriptWorkbench({
 
         {/* 中：片段脚本 */}
         <section
+          data-manhua-column="script"
           className={
             immersive
               ? "flex min-h-0 flex-col overflow-hidden border-r border-white/10 p-2.5 md:p-3"
@@ -530,6 +537,9 @@ export default function ManhuaScriptWorkbench({
                 <button
                   key={shot.index}
                   type="button"
+                  data-manhua-shot={shot.index}
+                  data-manhua-active={on ? "true" : "false"}
+                  data-manhua-keyart-url={thumb || ""}
                   onClick={() => setShotIndex(i)}
                   className={`flex w-full gap-2 rounded-lg border px-2 py-2 text-left transition ${
                     on
@@ -570,6 +580,11 @@ export default function ManhuaScriptWorkbench({
 
         {/* 右：视频结果 */}
         <aside
+          data-manhua-column="preview"
+          data-manhua-preview-kind={
+            finalVideoUrl || previewIsVideo ? "video" : previewUrl ? "image" : "empty"
+          }
+          data-manhua-preview-url={finalVideoUrl || previewUrl || ""}
           className={
             immersive
               ? "flex min-h-0 flex-col p-2.5 md:p-3"
@@ -676,7 +691,12 @@ export default function ManhuaScriptWorkbench({
       </div>
 
       {/* 底胶片：片段条为主（对标阿硕），集切换为次 */}
-      <div className="shrink-0 border-t border-white/10 bg-[#080b12] px-2.5 py-2 md:px-3">
+      <div
+        data-manhua-filmstrip
+        data-manhua-keyart-ready={episodeKeyarts.filter((b) => mediaUrl(b)).length}
+        data-manhua-shot-count={Math.max(episodeKeyarts.length, shots.length, 1)}
+        className="shrink-0 border-t border-white/10 bg-[#080b12] px-2.5 py-2 md:px-3"
+      >
         <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
           <div className="text-[11px] font-semibold text-white/75">片段</div>
           <div className="flex flex-wrap items-center gap-2">
@@ -720,6 +740,9 @@ export default function ManhuaScriptWorkbench({
                 <button
                   key={`shot-${shot.index}`}
                   type="button"
+                  data-manhua-filmstrip-shot={shot.index}
+                  data-manhua-active={on ? "true" : "false"}
+                  data-manhua-keyart-url={thumb || ""}
                   onClick={() => setShotIndex(i)}
                   className={`relative w-[100px] shrink-0 overflow-hidden rounded-md border text-left ${
                     on ? "border-white/70 ring-1 ring-white/40" : "border-white/12"
