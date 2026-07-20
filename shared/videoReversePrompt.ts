@@ -184,5 +184,5 @@ export const MANHUA_DRAMA_DEFAULT_PROMPTS: Record<ManhuaDramaStage, string> = {
   key_art:
     "根据角色卡与编导分镜，生成竖屏关键静帧（角色锁定、电影感布光、无字幕无水印）。",
   seedance_clip:
-    "有参考图时只写运镜+主体微动+氛围；目标约 15 秒成片（Seedance 2.0）。",
+    "有参考图时只写运镜+主体微动+氛围；单次生成严格按 10 秒设计，不得要求 15 秒。",
 };

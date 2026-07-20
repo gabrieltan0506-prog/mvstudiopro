@@ -93,12 +93,26 @@ export function workbenchShotTotalSec(shots: ManhuaWorkbenchShot[]): number {
 
 /** 写入静帧 prompt：本镜场面必须带场景/道具/服装配合 */
 export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): string {
+  const camera = String(shot.cameraZh || "");
+  const framingLock = /全景/.test(camera)
+    ? "景别硬锁：全景；人物必须全身入画，并清楚展示环境纵深与人物空间关系，禁止裁到腰部或大腿。"
+    : /中近景/.test(camera)
+      ? "景别硬锁：中近景；主体以胸部以上为主，保留动作方向，禁止退回普通半身中景。"
+      : /特写/.test(camera)
+        ? "景别硬锁：特写；面部表情或关键道具必须占画面主体，禁止生成半身或全身中景。"
+        : /中景/.test(camera)
+          ? "景别硬锁：中景；人物动作与关系清楚可读；若指定三分构图，主体必须落在三分线交点，禁止中心对称海报构图。"
+          : "";
   return [
     `【分镜 ${shot.index}·静帧】`,
     `运镜：${shot.cameraZh}`,
+    framingLock,
     `动作场面：${shot.actionZh}`,
+    "光线硬锁：必须落实本镜动作描述中的具体光向、冷暖与明暗关系；禁止套用统一的暖背景加轮廓光模板。",
     "必须画出本镜人物、场景与点选道具的配合；服装连续与题材时代一致；禁止空镜或错时代穿戴。",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** 从 keyart 节点 id / prompt 解析分镜号（默认 1） */

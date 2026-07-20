@@ -32,6 +32,8 @@ describe("manhuaScriptWorkbench", () => {
     });
     expect(block).toContain("【分镜 2·静帧】");
     expect(block).toContain("递玉佩");
+    expect(block).toContain("中近景；主体以胸部以上为主");
+    expect(block).toContain("禁止套用统一的暖背景加轮廓光模板");
     expect(resolveKeyartShotIndex("keyart-e01-s03-abc", "")).toBe(3);
     expect(resolveKeyartShotIndex("keyart-e01-xyz", block)).toBe(2);
   });

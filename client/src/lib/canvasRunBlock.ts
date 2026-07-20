@@ -321,6 +321,26 @@ async function runSeedance20(
   return String(json.videoUrl);
 }
 
+export const OMNI_CLIP_DURATION_SECONDS = 10;
+
+export function normalizeOmniClipPrompt(rawPrompt: string): string {
+  const prompt = String(rawPrompt || "")
+    .replace(/(?:约|大约|目标约)?\s*15\s*(?:秒|s)\s*(?:成片|视频)?/gi, "10 秒成片")
+    .replace(/打斗短阶段/g, "动作短阶段")
+    .replace(/兵器交锋/g, "舞台化兵器走位")
+    .replace(/击打反馈/g, "动作反馈")
+    .replace(/攻击/g, "动作")
+    .replace(/(?:不出现|禁止出现)?\s*(?:伤口|流血|血迹)+/g, "保持克制")
+    .trim();
+  return [
+    `单次成片严格为 ${OMNI_CLIP_DURATION_SECONDS} 秒。`,
+    "动作采用非写实、无伤害的舞台化调度，保持克制与安全。",
+    prompt,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 async function runOmniFlash(
   prompt: string,
   imageUrl: string | undefined,
@@ -329,10 +349,10 @@ async function runOmniFlash(
 ): Promise<string> {
   const edit = Boolean(opts?.edit || opts?.videoUrl || opts?.previousInteractionId);
   const created = await createOmniInteraction({
-    prompt,
+    prompt: normalizeOmniClipPrompt(prompt),
     task: edit ? "edit_video" : imageUrl ? "image_to_video" : "text_to_video",
     aspectRatio,
-    durationSeconds: edit ? 5 : 10,
+    durationSeconds: OMNI_CLIP_DURATION_SECONDS,
     imageUrl: edit ? undefined : imageUrl,
     videoUrl: opts?.videoUrl,
     previousInteractionId: opts?.previousInteractionId,
