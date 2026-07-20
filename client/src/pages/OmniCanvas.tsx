@@ -112,6 +112,8 @@ import {
   MANHUA_WRITER_EPISODE_MIN,
   clampWriterEpisodeCount,
   composeWriterPackFactoryContext,
+  deriveSeriesTitleFromTopic,
+  isPlaceholderSeriesTitle,
   writerPackLooksReady,
   type ManhuaWriterPack,
 } from "@shared/manhuaWriterRoom";
@@ -1487,6 +1489,10 @@ export default function OmniCanvas() {
         episodeCount: count,
       });
       const pack = res.pack;
+      if (isPlaceholderSeriesTitle(pack.seriesTitle)) {
+        const fallback = deriveSeriesTitleFromTopic(topic);
+        if (fallback) pack.seriesTitle = fallback;
+      }
       if (!res.ready && !writerPackLooksReady(pack)) {
         toast.message("已生成草稿，建议检查每集片尾钩子是否完整");
       }

@@ -86,6 +86,7 @@ export function buildManhuaWriterExpandPrompt(opts: {
     "5. 人物 / 道具 / 场景表要具体、可锁定外形与空间，禁止空泛。",
     "6. 道具表可参考下方示范库外观锚点改写，勿照抄剧名；权谋/商战可偏海外可读符号。",
     "7. 若提供古风原型设计板，人物外形与服饰层次须与之对齐。",
+    "8. 「系列标题」必须是具体可传播的中文剧名（建议 4–24 字），禁止「未命名」「暂定」「一句话标题」等占位，也禁止只复述题材原文整段。",
     "",
     `【用户题材】${topic || "（未填，请基于补充条件合理拟定）"}`,
     brief ? `【补充条件】\n${brief}` : "【补充条件】（无，请在合理范围内自行补全并保持克制）",
@@ -97,7 +98,7 @@ export function buildManhuaWriterExpandPrompt(opts: {
     "请严格按下列结构输出：",
     "",
     "## 系列标题",
-    "（一句话标题）",
+    "（写出正式剧名，勿写说明文字）",
     "",
     "## 一句话系列梗概",
     "（≤40字）",
@@ -126,14 +127,59 @@ export function buildManhuaWriterExpandPrompt(opts: {
   ].join("\n");
 }
 
+/** 去掉加粗/书名号等包装，得到可读标题 */
+function cleanWriterTitleLine(raw: string): string {
+  return String(raw || "")
+    .replace(/^[\s>*\-•]+/, "")
+    .replace(/\*\*/g, "")
+    .replace(/^["「『《]+|["」』》]+$/g, "")
+    .replace(/^标题[:：]\s*/i, "")
+    .trim();
+}
+
+/** 模型偶发输出占位句时视为无效标题 */
+export function isPlaceholderSeriesTitle(title: string): boolean {
+  const t = cleanWriterTitleLine(title);
+  if (!t) return true;
+  if (/^未命名/.test(t)) return true;
+  if (/^(暂定|待定|无标题|标题待定)$/.test(t)) return true;
+  if (/一句话标题|正式剧名|写出剧名|系列标题|勿写说明/.test(t)) return true;
+  if (/^[（(].+[）)]$/.test(t) && t.length <= 24) return true;
+  return false;
+}
+
+/** 题材兜底剧名：优先冒号后短句，否则截题材前段 */
+export function deriveSeriesTitleFromTopic(topic: string): string {
+  const t = String(topic || "").trim().replace(/\s+/g, " ");
+  if (!t) return "";
+  const afterColon = t.split(/[:：]/).slice(1).join("：").trim();
+  const candidate =
+    afterColon && afterColon.length >= 4 && afterColon.length <= 36 ? afterColon : t;
+  return candidate.slice(0, 36);
+}
+
+function extractMarkdownSectionLine(md: string, heading: string): string {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const sameLine = md.match(new RegExp(`##\\s*${escaped}\\s*[:：]\\s*([^\\n#]+)`, "i"))?.[1];
+  if (sameLine) return cleanWriterTitleLine(sameLine);
+  const nextLine = md.match(new RegExp(`##\\s*${escaped}\\n+([^\\n#]+)`, "i"))?.[1];
+  return cleanWriterTitleLine(nextLine || "");
+}
+
 /** 宽松解析扩写 Markdown → 结构（失败时仍保留 raw） */
-export function parseManhuaWriterPack(raw: string, episodeCount: number): ManhuaWriterPack {
+export function parseManhuaWriterPack(
+  raw: string,
+  episodeCount: number,
+  opts?: { topic?: string },
+): ManhuaWriterPack {
   const md = String(raw || "").trim();
   const n = clampWriterEpisodeCount(episodeCount);
-  const seriesTitle =
-    md.match(/##\s*系列标题\n+([^\n#]+)/)?.[1]?.trim() || "未命名系列";
-  const logline =
-    md.match(/##\s*一句话系列梗概\n+([^\n#]+)/)?.[1]?.trim() || "";
+  const parsedTitle = extractMarkdownSectionLine(md, "系列标题");
+  const topicFallback = deriveSeriesTitleFromTopic(opts?.topic || "");
+  const seriesTitle = !isPlaceholderSeriesTitle(parsedTitle)
+    ? parsedTitle.slice(0, 48)
+    : topicFallback || "未命名系列";
+  const logline = extractMarkdownSectionLine(md, "一句话系列梗概").slice(0, 80);
   const charactersMd =
     md.match(/##\s*人物表\n+([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() || "";
   const propsMd = md.match(/##\s*道具表\n+([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() || "";
@@ -145,8 +191,11 @@ export function parseManhuaWriterPack(raw: string, episodeCount: number): Manhua
     const block =
       md.match(new RegExp(`##\\s*第${i}集\\n+([\\s\\S]*?)(?=\\n##\\s*第\\d+集|\\n##\\s[^第]|$)`))?.[1] ||
       "";
-    const title =
-      block.match(/###\s*集标题\n+([^\n#]+)/)?.[1]?.trim() || `第${i}集`;
+    const titleRaw =
+      block.match(/###\s*集标题\s*[:：]\s*([^\n#]+)/)?.[1] ||
+      block.match(/###\s*集标题\n+([^\n#]+)/)?.[1] ||
+      "";
+    const title = cleanWriterTitleLine(titleRaw) || `第${i}集`;
     const body =
       block.match(/###\s*本集剧情\n+([\s\S]*?)(?=\n###\s*片尾钩子|$)/)?.[1]?.trim() ||
       block.trim();

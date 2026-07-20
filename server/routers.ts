@@ -7666,7 +7666,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             message: "扩写结果过短，请再试一次",
           });
         }
-        const pack = parseManhuaWriterPack(markdown, episodeCount);
+        const pack = parseManhuaWriterPack(markdown, episodeCount, { topic });
         return {
           markdown,
           pack,

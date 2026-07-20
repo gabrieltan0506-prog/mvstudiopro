@@ -3,6 +3,8 @@ import {
   buildManhuaWriterExpandPrompt,
   clampWriterEpisodeCount,
   composeWriterPackFactoryContext,
+  deriveSeriesTitleFromTopic,
+  isPlaceholderSeriesTitle,
   parseManhuaWriterPack,
   writerPackLooksReady,
 } from "./manhuaWriterRoom";
@@ -70,11 +72,29 @@ describe("manhuaWriterRoom", () => {
   it("parses pack and factory context", () => {
     const pack = parseManhuaWriterPack(SAMPLE, 3);
     expect(writerPackLooksReady(pack)).toBe(true);
+    expect(pack.seriesTitle).toBe("深宫棋子");
     expect(pack.episodes).toHaveLength(3);
     expect(pack.episodes[0]!.endHook).toContain("玉珏");
     const ctx = composeWriterPackFactoryContext(pack, 1);
     expect(ctx).toContain("已确认编剧包");
     expect(ctx).toContain("第1集");
     expect(ctx).toContain("沈清");
+  });
+
+  it("parses same-line title and rejects placeholder with topic fallback", () => {
+    const sameLine = parseManhuaWriterPack(
+      `## 系列标题：花名册上没有我\n\n## 一句话系列梗概\n改写现实救人反被抹除。\n\n## 人物表\n- A\n\n## 道具表\n- B\n\n## 场景表\n- C\n\n## 第1集\n### 集标题\n一\n### 本集剧情\n冲突。\n### 片尾钩子\n未解悬念还在。\n\n## 第2集\n### 集标题\n二\n### 本集剧情\n再压。\n### 片尾钩子\n客服微笑未完。`,
+      2,
+    );
+    expect(sameLine.seriesTitle).toBe("花名册上没有我");
+
+    const placeholder = parseManhuaWriterPack(
+      `## 系列标题\n（一句话标题）\n\n## 一句话系列梗概\n梗概。\n\n## 人物表\n- A\n\n## 道具表\n- B\n\n## 场景表\n- C\n\n## 第1集\n### 集标题\n一\n### 本集剧情\n冲突。\n### 片尾钩子\n未解悬念还在。\n\n## 第2集\n### 集标题\n二\n### 本集剧情\n再压。\n### 片尾钩子\n客服微笑未完。`,
+      2,
+      { topic: "都市逆袭：程序员绑定剧情改写器" },
+    );
+    expect(isPlaceholderSeriesTitle("（一句话标题）")).toBe(true);
+    expect(placeholder.seriesTitle).toBe(deriveSeriesTitleFromTopic("都市逆袭：程序员绑定剧情改写器"));
+    expect(placeholder.seriesTitle).not.toMatch(/^未命名/);
   });
 });
