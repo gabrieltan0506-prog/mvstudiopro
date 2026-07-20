@@ -335,7 +335,14 @@ async function inspectShell(page: Page) {
       shellText,
       hasGuidedPath: /引导路径|下一步[·・]/.test(shellText),
       hasRerun: Boolean(shell?.querySelector("[data-manhua-action='rerun-keyarts']")),
+      hasRerunShot: Boolean(shell?.querySelector("[data-manhua-action='rerun-shot']")),
       hasGenerate: Boolean(shell?.querySelector("[data-manhua-action='generate']")),
+      workflowPhases: [
+        ...shell?.querySelectorAll<HTMLElement>("[data-manhua-phase]") || [],
+      ].map((phase) => ({
+        id: phase.dataset.manhuaPhase || "",
+        status: phase.dataset.manhuaPhaseStatus || "",
+      })),
       readyKeyarts: Number(filmstrip?.dataset.manhuaKeyartReady || 0),
       shotCount: Number(filmstrip?.dataset.manhuaShotCount || 0),
       previewKind: preview?.dataset.manhuaPreviewKind || "",
@@ -403,6 +410,18 @@ async function runUiChecks(page: Page) {
     "生成与重出静帧入口",
     first.hasGenerate && first.hasRerun,
     `generate=${first.hasGenerate} rerun=${first.hasRerun}`,
+  );
+  check(
+    "UI-07-B",
+    "单镜重出入口",
+    first.hasRerunShot,
+    `rerunShot=${first.hasRerunShot}`,
+  );
+  check(
+    "UI-07-C",
+    "故事到成片三阶段导航",
+    first.workflowPhases.map((phase) => phase.id).join(",") === "story,storyboard,clip",
+    JSON.stringify(first.workflowPhases),
   );
 
   if (first.shots.length >= 2) {
