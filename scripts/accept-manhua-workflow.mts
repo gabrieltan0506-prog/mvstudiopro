@@ -336,7 +336,13 @@ async function inspectShell(page: Page) {
       hasGuidedPath: /引导路径|下一步[·・]/.test(shellText),
       hasRerun: Boolean(shell?.querySelector("[data-manhua-action='rerun-keyarts']")),
       hasRerunShot: Boolean(shell?.querySelector("[data-manhua-action='rerun-shot']")),
-      hasGenerate: Boolean(shell?.querySelector("[data-manhua-action='generate']")),
+      hasGenerate: Boolean(
+        shell?.querySelector("[data-manhua-action='generate-fragment']") ||
+          shell?.querySelector("[data-manhua-action='generate']"),
+      ),
+      hasGenerateFragment: Boolean(
+        shell?.querySelector("[data-manhua-action='generate-fragment']"),
+      ),
       workflowPhases: [
         ...shell?.querySelectorAll<HTMLElement>("[data-manhua-phase]") || [],
       ].map((phase) => ({
@@ -407,9 +413,9 @@ async function runUiChecks(page: Page) {
   );
   check(
     "UI-07",
-    "生成与重出静帧入口",
-    first.hasGenerate && first.hasRerun,
-    `generate=${first.hasGenerate} rerun=${first.hasRerun}`,
+    "生成片段与重出静帧入口",
+    first.hasGenerateFragment && first.hasRerun,
+    `generateFragment=${first.hasGenerateFragment} rerun=${first.hasRerun}`,
   );
   check(
     "UI-07-B",
@@ -419,8 +425,8 @@ async function runUiChecks(page: Page) {
   );
   check(
     "UI-07-C",
-    "故事到成片三阶段导航",
-    first.workflowPhases.map((phase) => phase.id).join(",") === "story,storyboard,clip",
+    "阿硕三阶段导航（大纲/资产/分镜）",
+    first.workflowPhases.map((phase) => phase.id).join(",") === "outline,assets,storyboard",
     JSON.stringify(first.workflowPhases),
   );
 
@@ -623,7 +629,7 @@ async function reviewClipContinuity(page: Page, keyartUrls: string[], duration: 
 }
 
 async function waitForClip(page: Page, keyartUrls: string[]) {
-  await page.click("[data-manhua-action='generate']");
+  await page.click("[data-manhua-action='generate-fragment']");
   await page.waitForFunction(
     () =>
       document.querySelector<HTMLElement>("[data-manhua-column='preview']")?.dataset

@@ -62,7 +62,13 @@ type Props = {
   canRun?: boolean;
   onOpenCharacterCard?: () => void;
   onOpenAssetWall?: () => void;
+  /** 生成当前选中片段（该镜静帧若缺则先出 + 该片段成片） */
   onSpawnAndRunClip?: () => void;
+  onGenerateFragment?: (opts: {
+    shotIndex: number;
+    keyartId?: string;
+    clipId?: string;
+  }) => void;
   /** 成片坞已勾选集：静帧+成片连跑 */
   onRunFullAuto?: () => void;
   onResumeFromFailure?: () => void;
@@ -126,6 +132,7 @@ export default function ManhuaScriptWorkbench({
   onOpenCharacterCard,
   onOpenAssetWall,
   onSpawnAndRunClip,
+  onGenerateFragment,
   onRunFullAuto,
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
@@ -151,12 +158,20 @@ export default function ManhuaScriptWorkbench({
     () => keyartsForEpisode(blocks, focusEpisode),
     [blocks, focusEpisode],
   );
+  const episodeClips = useMemo(
+    () =>
+      blocks
+        .filter((b) => b.id.startsWith("clip-") && (getBlockEpisodeIndex(b) ?? 1) === focusEpisode)
+        .sort(
+          (a, b) =>
+            resolveKeyartShotIndex(a.id, a.prompt) - resolveKeyartShotIndex(b.id, b.prompt) ||
+            a.id.localeCompare(b.id),
+        ),
+    [blocks, focusEpisode],
+  );
   const keyart = episodeKeyarts[0];
-  const clip = blockByStage(blocks, focusEpisode, "clip");
+  const legacyClip = blockByStage(blocks, focusEpisode, "clip");
   const story = blockByStage(blocks, focusEpisode, "story");
-  const clipQuality = clip?.manhuaClipQuality;
-  const approvedClipUrl =
-    clip?.status === "done" && clipQuality?.status === "passed" ? mediaUrl(clip) : undefined;
 
   const shots: ManhuaWorkbenchShot[] = useMemo(() => {
     const fromReverse = parseWorkbenchShotsFromText(reverse?.outputText || reverse?.prompt);
@@ -168,15 +183,33 @@ export default function ManhuaScriptWorkbench({
 
   const totalSec = workbenchShotTotalSec(shots);
   const activeShot = shots[Math.min(shotIndex, Math.max(0, shots.length - 1))] || shots[0];
+  const activeShotNo = activeShot?.index ?? 1;
   const activeKeyart =
-    episodeKeyarts.find(
-      (b) => resolveKeyartShotIndex(b.id, b.prompt) === (activeShot?.index ?? 1),
-    ) ||
+    episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === activeShotNo) ||
     episodeKeyarts[Math.min(shotIndex, Math.max(0, episodeKeyarts.length - 1))] ||
     keyart;
+  const activeClip =
+    episodeClips.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === activeShotNo) ||
+    (activeShotNo === 1 ? legacyClip : undefined);
+  const clip = activeClip || legacyClip;
+  const clipQuality = clip?.manhuaClipQuality;
+  const approvedClipUrl =
+    clip?.status === "done" && clipQuality?.status === "passed" ? mediaUrl(clip) : undefined;
   const anyKeyartUrl = episodeKeyarts.map(mediaUrl).find(Boolean);
   const previewUrl = approvedClipUrl || mediaUrl(activeKeyart) || anyKeyartUrl;
   const previewIsVideo = Boolean(approvedClipUrl);
+
+  const runGenerateFragment = () => {
+    if (onGenerateFragment) {
+      onGenerateFragment({
+        shotIndex: activeShotNo,
+        keyartId: activeKeyart?.id,
+        clipId: activeClip?.id || clip?.id,
+      });
+      return;
+    }
+    onSpawnAndRunClip?.();
+  };
 
   const characters = characterIds
     .map((id) => getManhuaCharacterById(id))
@@ -203,11 +236,19 @@ export default function ManhuaScriptWorkbench({
           blockId: activeKeyart?.id || episodeKeyarts[0]?.id,
         };
       }
+      if (stage === "clip") {
+        const has = episodeClips.some(
+          (b) => b.status === "done" && b.manhuaClipQuality?.status === "passed" && mediaUrl(b),
+        );
+        return {
+          stage,
+          label: MANHUA_FACTORY_STAGE_LABEL_ZH[stage],
+          has,
+          blockId: activeClip?.id || episodeClips[0]?.id || legacyClip?.id,
+        };
+      }
       const b = blockByStage(blocks, focusEpisode, stage);
-      const has =
-        stage === "clip"
-          ? Boolean(b?.status === "done" && b.manhuaClipQuality?.status === "passed" && mediaUrl(b))
-          : Boolean(b && (b.outputUrl || b.outputUrls?.[0] || (b.outputText || "").trim()));
+      const has = Boolean(b && (b.outputUrl || b.outputUrls?.[0] || (b.outputText || "").trim()));
       return {
         stage,
         label: MANHUA_FACTORY_STAGE_LABEL_ZH[stage],
@@ -215,25 +256,26 @@ export default function ManhuaScriptWorkbench({
         blockId: b?.id,
       };
     });
-  }, [blocks, focusEpisode, episodeKeyarts, activeKeyart?.id]);
+  }, [blocks, focusEpisode, episodeKeyarts, episodeClips, activeKeyart?.id, activeClip?.id, legacyClip?.id]);
   const workflowPhases = useMemo(() => {
     const byStage = new Map(stageStrip.map((item) => [item.stage, item]));
+    // 阿硕 C2 顶栏三阶段命名（门控壳；分镜视频=当前三栏主屏）
     const definitions = [
       {
-        id: "story",
-        label: "集故事",
+        id: "outline",
+        label: "剧本大纲",
         stages: ["story", "bible"] as const,
         blockId: byStage.get("story")?.blockId,
       },
       {
-        id: "storyboard",
-        label: "资产与分镜",
+        id: "assets",
+        label: "资产设定",
         stages: ["beats", "reverse", "keyart"] as const,
         blockId: byStage.get("keyart")?.blockId || byStage.get("reverse")?.blockId,
       },
       {
-        id: "clip",
-        label: "成片质检",
+        id: "storyboard",
+        label: "分镜视频",
         stages: ["clip"] as const,
         blockId: byStage.get("clip")?.blockId,
       },
@@ -283,13 +325,14 @@ export default function ManhuaScriptWorkbench({
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
-            data-manhua-action="generate"
+            data-manhua-action="generate-fragment"
             disabled={!canRun || factoryBusy}
-            onClick={() => onSpawnAndRunClip?.()}
+            onClick={runGenerateFragment}
             className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
+            title={`只生成当前片段 ${String(activeShotNo).padStart(2, "0")}（该镜静帧+成片）`}
           >
             <Play className="h-3.5 w-3.5" />
-            {factoryBusy ? "生成中…" : "生成"}
+            {factoryBusy ? "生成中…" : `生成片段 ${String(activeShotNo).padStart(2, "0")}`}
           </button>
           {onRerunKeyartsFromReverse ? (
             <button
@@ -696,7 +739,7 @@ export default function ManhuaScriptWorkbench({
             })}
           </div>
           <p className="mt-2 text-[10px] leading-snug text-white/35">
-            点分镜切换右栏预览；静帧按镜生成（最多 {Math.min(shots.length, 4)} 张），成片以第 1 镜为底图。
+            点片段切换中栏与右栏；顶栏「生成片段」只跑当前镜静帧与成片，其他片段保留。
           </p>
         </section>
 
@@ -919,7 +962,22 @@ export default function ManhuaScriptWorkbench({
               const shotKey =
                 episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
                 episodeKeyarts[i];
+              const shotClip =
+                episodeClips.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
+                (shot.index === 1 ? legacyClip : undefined);
               const thumb = mediaUrl(shotKey);
+              const clipPassed =
+                shotClip?.status === "done" &&
+                shotClip.manhuaClipQuality?.status === "passed" &&
+                Boolean(mediaUrl(shotClip));
+              const clipFailed = shotClip?.manhuaClipQuality?.status === "failed";
+              const statusLabel = clipPassed
+                ? "成片"
+                : clipFailed
+                  ? "质检失败"
+                  : thumb
+                    ? "静帧"
+                    : "待出";
               const on = i === Math.min(shotIndex, Math.max(shots.length, 1) - 1);
               const dur = shot.durationSec || 5;
               return (
@@ -929,9 +987,18 @@ export default function ManhuaScriptWorkbench({
                   data-manhua-filmstrip-shot={shot.index}
                   data-manhua-active={on ? "true" : "false"}
                   data-manhua-keyart-url={thumb || ""}
+                  data-manhua-fragment-status={
+                    clipPassed ? "clip" : clipFailed ? "qc-failed" : thumb ? "keyart" : "idle"
+                  }
                   onClick={() => setShotIndex(i)}
                   className={`relative w-[100px] shrink-0 overflow-hidden rounded-md border text-left ${
-                    on ? "border-white/70 ring-1 ring-white/40" : "border-white/12"
+                    on
+                      ? "border-white/70 ring-1 ring-white/40"
+                      : clipPassed
+                        ? "border-emerald-400/35"
+                        : clipFailed
+                          ? "border-rose-400/40"
+                          : "border-white/12"
                   }`}
                 >
                   <div className="aspect-video bg-black/70">
@@ -945,6 +1012,19 @@ export default function ManhuaScriptWorkbench({
                         <span className="text-[8px]">待出</span>
                       </div>
                     )}
+                    <span
+                      className={`absolute left-1 top-1 rounded px-1 py-0.5 text-[8px] font-semibold ${
+                        clipPassed
+                          ? "bg-emerald-500/90 text-white"
+                          : clipFailed
+                            ? "bg-rose-500/90 text-white"
+                            : thumb
+                              ? "bg-amber-500/85 text-black"
+                              : "bg-black/65 text-white/55"
+                      }`}
+                    >
+                      {statusLabel}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between px-1 py-0.5 text-[9px] text-white/65">
                     <span>片段 {String(shot.index).padStart(2, "0")}</span>
@@ -959,14 +1039,19 @@ export default function ManhuaScriptWorkbench({
         <div className="mt-2 hidden gap-1.5 overflow-x-auto border-t border-white/5 pt-2 sm:flex">
           {episodeIndexes.map((ep) => {
             const epKeys = keyartsForEpisode(blocks, ep);
-            const epClip = blockByStage(blocks, ep, "clip");
-            const clipReady = Boolean(
-              epClip?.status === "done" &&
-                epClip.manhuaClipQuality?.status === "passed" &&
-                mediaUrl(epClip),
+            const epClips = blocks.filter(
+              (b) => b.id.startsWith("clip-") && (getBlockEpisodeIndex(b) ?? 1) === ep,
             );
-            const clipFailed = epClip?.manhuaClipQuality?.status === "failed";
-            const thumb = (clipReady ? mediaUrl(epClip) : undefined) || epKeys.map(mediaUrl).find(Boolean);
+            const epClipReady = epClips.find(
+              (b) =>
+                b.status === "done" &&
+                b.manhuaClipQuality?.status === "passed" &&
+                Boolean(mediaUrl(b)),
+            );
+            const clipReady = Boolean(epClipReady);
+            const clipFailed = epClips.some((b) => b.manhuaClipQuality?.status === "failed");
+            const thumb =
+              (epClipReady ? mediaUrl(epClipReady) : undefined) || epKeys.map(mediaUrl).find(Boolean);
             const stillReady = epKeys.some((b) => Boolean(mediaUrl(b)));
             const bound = bibleBoundEpisodes.includes(ep);
             const on = ep === focusEpisode;

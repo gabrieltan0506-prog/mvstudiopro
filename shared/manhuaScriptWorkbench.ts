@@ -117,14 +117,20 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
     .join("\n");
 }
 
-/** 从 keyart 节点 id / prompt 解析分镜号（默认 1） */
+/** 从 keyart / clip 节点 id 或静帧 prompt 解析分镜号（默认 1） */
 export function resolveKeyartShotIndex(blockId: string, prompt?: string | null): number {
   const fromId = String(blockId || "").match(/-s(\d{2})(?:-|$)/);
   if (fromId?.[1]) return Math.max(1, parseInt(fromId[1], 10));
   const fromPrompt = String(prompt || "").match(/【分镜\s*(\d+)/);
   if (fromPrompt?.[1]) return Math.max(1, parseInt(fromPrompt[1], 10));
+  // 无镜号后缀的本集主 keyart/clip 视为第 1 镜
+  if (/^(keyart|clip)-e\d{2}-/i.test(String(blockId || ""))) return 1;
+  if (/^(keyart|clip)-[a-z0-9]+$/i.test(String(blockId || ""))) return 1;
   return 1;
 }
+
+/** 片段成片 id 与静帧共用镜号解析 */
+export const resolveClipShotIndex = resolveKeyartShotIndex;
 
 /** 成片前按镜静帧上限（成本与编排平衡） */
 export const MANHUA_SHOT_KEYART_MAX = 4;

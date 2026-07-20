@@ -1784,6 +1784,8 @@ export default function OmniCanvas() {
         episodeIndexes?: number[];
         /** 仅重跑已铺好的指定节点（工作台单镜重出）。 */
         targetBlockIds?: string[];
+        /** 工作台「生成片段」：只跑该镜静帧（若缺）+ 该镜成片。 */
+        fragmentShotIndex?: number;
       },
     ) => {
       if (factoryBusy) return;
@@ -1803,7 +1805,7 @@ export default function OmniCanvas() {
       }, 40);
       const runStartedAt = Date.now();
       pushDebug("factoryRun:start", {
-        detail: `until=${untilStage} · force=${opts?.forceFromStage || "—"}`,
+        detail: `until=${untilStage} · force=${opts?.forceFromStage || "—"} · frag=${opts?.fragmentShotIndex ?? "—"}`,
       });
       try {
         const spawned = ensureStudioSpawned(factoryTopic);
@@ -1826,19 +1828,29 @@ export default function OmniCanvas() {
         pushDebug("factoryRun:episodes", {
           detail: `eps=[${episodeIndexes.join(",")}] · chars=${selectedCharacterIds.join(",") || "—"} · path=${selectedPathRecipeIds.join(",") || "—"} · action=${selectedActionRecipeIds.join(",") || "—"}`,
         });
+        const fragmentPad =
+          typeof opts?.fragmentShotIndex === "number" && opts.fragmentShotIndex >= 1
+            ? String(opts.fragmentShotIndex).padStart(2, "0")
+            : "";
         toast.message(
-          untilStage === "reverse"
-            ? `漫剧工厂：故事→角色→节拍→反推（第 ${episodeIndexes.join("、")} 集）`
-            : untilStage === "keyart"
-              ? `漫剧工厂：跑到关键静帧（第 ${episodeIndexes.join("、")} 集）`
-              : `漫剧工厂全自动：含静帧 + Seedance（第 ${episodeIndexes.join("、")} 集）`,
+          fragmentPad
+            ? `生成片段 ${fragmentPad}（第 ${episodeIndexes.join("、")} 集）`
+            : untilStage === "reverse"
+              ? `漫剧工厂：故事→角色→节拍→反推（第 ${episodeIndexes.join("、")} 集）`
+              : untilStage === "keyart"
+                ? `漫剧工厂：跑到关键静帧（第 ${episodeIndexes.join("、")} 集）`
+                : `漫剧工厂全自动：含静帧 + 成片（第 ${episodeIndexes.join("、")} 集）`,
         );
         let completed = 0;
         let skipped = 0;
         let lastError: { id: string; message: string } | null = null;
         for (const episodeIndex of episodeIndexes) {
           if (ac.signal.aborted) break;
-          setFactoryProgress(`第${episodeIndex}集 · 准备…`);
+          setFactoryProgress(
+            fragmentPad
+              ? `第${episodeIndex}集 · 片段 ${fragmentPad}`
+              : `第${episodeIndex}集 · 准备…`,
+          );
           const forceFromStage =
             opts?.forceFromStageByEpisode?.[episodeIndex] ?? opts?.forceFromStage;
           const result = await runManhuaDramaFactoryPipeline({
@@ -1849,6 +1861,7 @@ export default function OmniCanvas() {
             episodeIndex,
             forceFromStage,
             targetBlockIds: opts?.targetBlockIds,
+            fragmentShotIndex: opts?.fragmentShotIndex,
             skipDone: true,
             signal: ac.signal,
             onBlocksChange: (next) => {
@@ -2272,6 +2285,14 @@ export default function OmniCanvas() {
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
                     void runFactory("clip", { episodeIndexes: [writerFocusEpisode] });
+                  }}
+                  onGenerateFragment={({ shotIndex }) => {
+                    setFactoryRunScope("focus");
+                    ensureStudioSpawned(factoryTopic);
+                    void runFactory("clip", {
+                      episodeIndexes: [writerFocusEpisode],
+                      fragmentShotIndex: shotIndex,
+                    });
                   }}
                   onRunFullAuto={() => {
                     if (
