@@ -165,8 +165,12 @@ export function compileManhuaScriptVisualBrief(
   const blobForRec = [topic, extractEpisodeBody(raw)].filter(Boolean).join("\n");
   const pathRec = recommendPathCameraFromTopic(blobForRec);
   const actionRec = recommendActionCameraFromTopic(blobForRec);
-  const pathBlock = buildPathCameraInjectBlock([pathRec.recipeId]);
-  const actionBlock = buildActionCameraInjectBlock([actionRec.recipeId]);
+  const pathBlock = buildPathCameraInjectBlock(
+    pathRec.recipeId ? [pathRec.recipeId] : [],
+  );
+  const actionBlock = buildActionCameraInjectBlock(
+    actionRec.recipeId ? [actionRec.recipeId] : [],
+  );
 
   const eventLimit = stage === "key_art" ? 4 : stage === "clip" ? 3 : 5;
   const events = extractShootableEvents(raw, eventLimit);
