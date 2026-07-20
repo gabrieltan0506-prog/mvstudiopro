@@ -3,7 +3,16 @@
  * 数据接工厂节点；反推后按镜展开多张静帧。
  */
 import { useMemo, useState } from "react";
-import { Clapperboard, Focus, Loader2, Play, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Clapperboard,
+  Focus,
+  Loader2,
+  Play,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
   getBlockEpisodeIndex,
@@ -82,6 +91,15 @@ function mediaUrl(b?: CanvasBlock): string | undefined {
   return b.outputUrl || b.outputUrls?.[0] || undefined;
 }
 
+const CLIP_QUALITY_ROWS = [
+  ["CHARACTER_MATCH", "角色"],
+  ["SCENE_MATCH", "场景"],
+  ["PLOT_MATCH", "剧情"],
+  ["CAMERA_MOTION", "运镜"],
+  ["LIGHTING", "灯光"],
+  ["DURATION_10S", "10 秒"],
+] as const;
+
 export default function ManhuaScriptWorkbench({
   blocks,
   topic,
@@ -132,6 +150,9 @@ export default function ManhuaScriptWorkbench({
   const keyart = episodeKeyarts[0];
   const clip = blockByStage(blocks, focusEpisode, "clip");
   const story = blockByStage(blocks, focusEpisode, "story");
+  const clipQuality = clip?.manhuaClipQuality;
+  const approvedClipUrl =
+    clip?.status === "done" && clipQuality?.status === "passed" ? mediaUrl(clip) : undefined;
 
   const shots: ManhuaWorkbenchShot[] = useMemo(() => {
     const fromReverse = parseWorkbenchShotsFromText(reverse?.outputText || reverse?.prompt);
@@ -150,8 +171,8 @@ export default function ManhuaScriptWorkbench({
     episodeKeyarts[Math.min(shotIndex, Math.max(0, episodeKeyarts.length - 1))] ||
     keyart;
   const anyKeyartUrl = episodeKeyarts.map(mediaUrl).find(Boolean);
-  const previewUrl = mediaUrl(clip) || mediaUrl(activeKeyart) || anyKeyartUrl;
-  const previewIsVideo = Boolean(mediaUrl(clip));
+  const previewUrl = approvedClipUrl || mediaUrl(activeKeyart) || anyKeyartUrl;
+  const previewIsVideo = Boolean(approvedClipUrl);
 
   const characters = characterIds
     .map((id) => getManhuaCharacterById(id))
@@ -180,7 +201,9 @@ export default function ManhuaScriptWorkbench({
       }
       const b = blockByStage(blocks, focusEpisode, stage);
       const has =
-        Boolean(b && (b.outputUrl || b.outputUrls?.[0] || (b.outputText || "").trim()));
+        stage === "clip"
+          ? Boolean(b?.status === "done" && b.manhuaClipQuality?.status === "passed" && mediaUrl(b))
+          : Boolean(b && (b.outputUrl || b.outputUrls?.[0] || (b.outputText || "").trim()));
       return {
         stage,
         label: MANHUA_FACTORY_STAGE_LABEL_ZH[stage],
@@ -301,11 +324,11 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
 
-      {/* 左资产｜中脚本｜右预览：随横屏收窄但始终三栏同屏；极窄屏才横移 */}
+      {/* 阿硕工作流：左本集资产｜中片段脚本｜右视频结果；窄屏保持桌面比例并横移 */}
       <div
         className={
           immersive
-            ? "grid min-h-0 min-w-[560px] flex-1 grid-cols-[clamp(150px,20vw,240px)_minmax(220px,1fr)_clamp(190px,30vw,420px)] overflow-x-auto overflow-y-hidden"
+            ? "grid min-h-0 min-w-[1120px] flex-1 grid-cols-[220px_minmax(420px,1fr)_minmax(380px,440px)] overflow-x-auto overflow-y-hidden"
             : "flex min-h-0 flex-1 overflow-hidden"
         }
       >
@@ -596,15 +619,21 @@ export default function ManhuaScriptWorkbench({
             {factoryBusy ? (
               <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50">
                 <Loader2 className="h-3 w-3 animate-spin" />
-                生成中
+                生成／质检中
+              </span>
+            ) : clipQuality?.status === "failed" ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-rose-400/45 bg-rose-500/15 px-2 py-0.5 text-[9px] font-semibold text-rose-100">
+                <AlertTriangle className="h-3 w-3" />
+                质检未通过
               </span>
             ) : finalVideoUrl ? (
               <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[9px] font-semibold text-cyan-100">
                 长片已合成
               </span>
             ) : previewIsVideo ? (
-              <span className="rounded-full border border-emerald-400/35 bg-emerald-500/12 px-2 py-0.5 text-[9px] font-medium text-emerald-100/85">
-                本集成片
+              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/35 bg-emerald-500/12 px-2 py-0.5 text-[9px] font-medium text-emerald-100/85">
+                <CheckCircle2 className="h-3 w-3" />
+                质检通过
               </span>
             ) : previewUrl ? (
               <span className="rounded-full border border-white/15 bg-white/[0.04] px-2 py-0.5 text-[9px] text-white/50">
@@ -638,6 +667,64 @@ export default function ManhuaScriptWorkbench({
                 {factoryBusy ? "正在生成…" : "点「生成」后，静帧 / 成片在此预览"}
               </div>
             )}
+          </div>
+          <div
+            data-manhua-clip-quality={clipQuality?.status || "idle"}
+            className={`mt-2 shrink-0 rounded-lg border px-2.5 py-2 ${
+              clipQuality?.status === "passed"
+                ? "border-emerald-400/25 bg-emerald-500/[0.07]"
+                : clipQuality?.status === "failed"
+                  ? "border-rose-400/30 bg-rose-500/[0.08]"
+                  : "border-white/10 bg-white/[0.025]"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-white/75">
+                <ShieldCheck className="h-3.5 w-3.5 text-cyan-200/80" />
+                智能质检
+              </div>
+              <span className="text-[9px] text-white/35">
+                {clipQuality
+                  ? `第 ${clipQuality.attempts} 次 · ${
+                      clipQuality.status === "passed" ? "可进入成片坞" : "已拦截"
+                    }`
+                  : factoryBusy
+                    ? "生成后自动检查"
+                    : "等待成片"}
+              </span>
+            </div>
+            <div className="mt-1.5 grid grid-cols-3 gap-1">
+              {CLIP_QUALITY_ROWS.map(([key, label]) => {
+                const passed = clipQuality?.checks[key] === true;
+                const failed = clipQuality?.status === "failed" && !passed;
+                return (
+                  <div
+                    key={key}
+                    className={`flex items-center gap-1 rounded px-1.5 py-1 text-[9px] ${
+                      passed
+                        ? "bg-emerald-500/12 text-emerald-100"
+                        : failed
+                          ? "bg-rose-500/12 text-rose-100"
+                          : "bg-white/[0.035] text-white/35"
+                    }`}
+                  >
+                    {passed ? (
+                      <CheckCircle2 className="h-2.5 w-2.5" />
+                    ) : failed ? (
+                      <AlertTriangle className="h-2.5 w-2.5" />
+                    ) : (
+                      <span className="h-2.5 w-2.5 rounded-full border border-white/20" />
+                    )}
+                    {label}
+                  </div>
+                );
+              })}
+            </div>
+            {clipQuality?.status === "failed" ? (
+              <p className="mt-1.5 line-clamp-2 text-[9px] leading-relaxed text-rose-100/75">
+                {clipQuality.summary}
+              </p>
+            ) : null}
           </div>
           {previewUrl && !previewIsVideo && onRerunKeyartsFromReverse ? (
             <p className="mt-1.5 shrink-0 text-[10px] leading-snug text-white/40">
@@ -774,8 +861,13 @@ export default function ManhuaScriptWorkbench({
           {episodeIndexes.map((ep) => {
             const epKeys = keyartsForEpisode(blocks, ep);
             const epClip = blockByStage(blocks, ep, "clip");
-            const thumb = mediaUrl(epClip) || epKeys.map(mediaUrl).find(Boolean);
-            const clipReady = Boolean(mediaUrl(epClip));
+            const clipReady = Boolean(
+              epClip?.status === "done" &&
+                epClip.manhuaClipQuality?.status === "passed" &&
+                mediaUrl(epClip),
+            );
+            const clipFailed = epClip?.manhuaClipQuality?.status === "failed";
+            const thumb = (clipReady ? mediaUrl(epClip) : undefined) || epKeys.map(mediaUrl).find(Boolean);
             const stillReady = epKeys.some((b) => Boolean(mediaUrl(b)));
             const bound = bibleBoundEpisodes.includes(ep);
             const on = ep === focusEpisode;
@@ -807,12 +899,14 @@ export default function ManhuaScriptWorkbench({
                     className={`absolute right-1 top-1 rounded px-1 py-0.5 text-[9px] font-semibold ${
                       clipReady
                         ? "bg-emerald-500/90 text-white"
+                        : clipFailed
+                          ? "bg-rose-500/90 text-white"
                         : stillReady
                           ? "bg-amber-500/85 text-black"
                           : "bg-black/65 text-white/60"
                     }`}
                   >
-                    {clipReady ? "成片" : stillReady ? "静帧" : "待跑"}
+                    {clipReady ? "通过" : clipFailed ? "质检失败" : stillReady ? "静帧" : "待跑"}
                   </span>
                   {bound ? (
                     <span

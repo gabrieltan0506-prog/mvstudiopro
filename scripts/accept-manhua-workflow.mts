@@ -522,7 +522,88 @@ async function visionReview(urls: string[]) {
   );
 }
 
-async function waitForClip(page: Page) {
+async function reviewClipContinuity(page: Page, keyartUrls: string[], duration: number) {
+  const videoSelector = "[data-manhua-column='preview'] video";
+  const videoElement = await page.$(videoSelector);
+  if (!videoElement || !keyartUrls[0]) throw new Error("缺少成片或首镜静帧，无法执行内容一致性验收");
+
+  const times = [0.2, 0.5, 0.8].map((ratio) =>
+    Math.min(Math.max(duration * ratio, 0), Math.max(duration - 0.1, 0)),
+  );
+  const frameDataUrls: string[] = [];
+  for (const [index, time] of times.entries()) {
+    await page.evaluate(
+      async (selector, seekTime) => {
+        const el = document.querySelector<HTMLVideoElement>(selector);
+        if (!el) throw new Error("video_missing");
+        el.pause();
+        if (Math.abs(el.currentTime - seekTime) < 0.05) return;
+        await new Promise<void>((resolve, reject) => {
+          const timer = window.setTimeout(() => reject(new Error("video_seek_timeout")), 15_000);
+          el.addEventListener(
+            "seeked",
+            () => {
+              window.clearTimeout(timer);
+              resolve();
+            },
+            { once: true },
+          );
+          el.currentTime = seekTime;
+        });
+      },
+      videoSelector,
+      time,
+    );
+    const frame = Buffer.from(
+      await videoElement.screenshot({ type: "jpeg", quality: 85 }),
+    );
+    await fs.writeFile(path.join(OUT_DIR, `05-clip-frame-${index + 1}.jpg`), frame);
+    frameDataUrls.push(`data:image/jpeg;base64,${frame.toString("base64")}`);
+  }
+
+  const response = await fetch(`${BASE}/api/google?op=canvasVisionMarkdown`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: [
+        "你是严格的漫剧成片验收员。第1张是本片应承接的首镜静帧，第2至4张是成片前中后帧。",
+        "只有人物身份/服装、主要场景、核心剧情事件都能从首镜连续承接时才可判 YES；仅时长正确或画面精美不算通过。",
+        "只输出以下六行，不要解释：",
+        "CHARACTER_MATCH=YES或NO",
+        "SCENE_MATCH=YES或NO",
+        "PLOT_MATCH=YES或NO",
+        "CAMERA_CHANGE=YES或NO（前中后帧能看出有意义的运镜或景别变化）",
+        "LIGHTING_CHANGE=YES或NO（灯光方向、冷暖或明暗关系清楚且连续）",
+        "NO_UNRELATED_SCENE=YES或NO（没有换成与首镜无关的人物和故事）",
+      ].join("\n"),
+      images: [
+        { url: keyartUrls[0], mimeType: "image/jpeg" },
+        ...frameDataUrls.map((url) => ({ url, mimeType: "image/jpeg" })),
+      ],
+    }),
+  });
+  const json = (await response.json()) as { ok?: boolean; markdown?: string; error?: string };
+  const markdown = String(json.markdown || "");
+  await fs.writeFile(path.join(OUT_DIR, "05-clip-continuity-review.md"), markdown || json.error || "empty");
+  const expected = [
+    "CHARACTER_MATCH",
+    "SCENE_MATCH",
+    "PLOT_MATCH",
+    "CAMERA_CHANGE",
+    "LIGHTING_CHANGE",
+    "NO_UNRELATED_SCENE",
+  ];
+  const passed = response.ok && expected.every((key) => new RegExp(`${key}\\s*=\\s*YES`, "i").test(markdown));
+  assertCheck(
+    "FN-05",
+    "成片内容、运镜与灯光一致性",
+    passed,
+    markdown.replace(/\s+/g, " ").slice(0, 360) || json.error || `http=${response.status}`,
+    "05-clip-continuity-review.md",
+  );
+}
+
+async function waitForClip(page: Page, keyartUrls: string[]) {
   await page.click("[data-manhua-action='generate']");
   await page.waitForFunction(
     () =>
@@ -564,6 +645,7 @@ async function waitForClip(page: Page) {
     canvasState.videoModel === "gemini-omni-flash" && Boolean(canvasState.outputUrl),
     `videoModel=${canvasState.videoModel} output=${Boolean(canvasState.outputUrl)}`,
   );
+  await reviewClipContinuity(page, keyartUrls, video.duration);
 }
 
 async function writeResult(error?: unknown) {
@@ -643,7 +725,7 @@ async function main() {
     } else if (ALLOW_GENERATION) {
       const urls = await waitForGeneratedKeyarts(page);
       await visionReview(urls);
-      if (ALLOW_CLIP) await waitForClip(page);
+      if (ALLOW_CLIP) await waitForClip(page, urls);
     }
     await writeResult();
     const failures = checks.filter((item) => !item.ok);

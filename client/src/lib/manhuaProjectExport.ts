@@ -32,6 +32,7 @@ export type ManhuaClipDockItem = {
   outputUrl?: string;
   outputText?: string;
   kind: CanvasBlock["kind"];
+  clipQuality?: CanvasBlock["manhuaClipQuality"];
 };
 
 const STAGE_FILE: Partial<Record<ManhuaFactoryStageKey, { base: string; extHint: "jpg" | "mp4" | "md" }>> = {
@@ -91,6 +92,7 @@ export function collectManhuaClipDockItems(
       outputUrl: b.outputUrl || b.outputUrls?.[0],
       outputText: b.outputText,
       kind: b.kind,
+      clipQuality: b.manhuaClipQuality,
     });
   }
   return items.sort((a, b) => a.episodeIndex - b.episodeIndex || a.stage.localeCompare(b.stage));
@@ -99,6 +101,9 @@ export function collectManhuaClipDockItems(
 /** 是否有可写入 zip 的产出 */
 export function manhuaClipDockItemHasExportableOutput(item: ManhuaClipDockItem): boolean {
   if (TEXT_EXPORT_STAGES.has(item.stage)) return Boolean(item.outputText?.trim());
+  if (item.stage === "clip") {
+    return Boolean(item.outputUrl && item.clipQuality?.status === "passed");
+  }
   return Boolean(item.outputUrl);
 }
 
@@ -139,7 +144,9 @@ export function collectManhuaAssembleClipsFromDock(
       episodeTitle: it.episodeTitle,
     };
     if (it.episodeTitle) cur.episodeTitle = it.episodeTitle;
-    if (it.stage === "clip" && it.outputUrl) cur.clipUrl = it.outputUrl;
+    if (it.stage === "clip" && it.outputUrl && it.clipQuality?.status === "passed") {
+      cur.clipUrl = it.outputUrl;
+    }
     if ((it.stage === "keyart" || it.stage === "recap_card") && it.outputUrl) {
       cur.keyartUrl = cur.keyartUrl || it.outputUrl;
     }
