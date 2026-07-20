@@ -1558,7 +1558,7 @@ export default function ManhuaScriptWorkbench({
                 })}
               </div>
               <p className="mt-2 text-[10px] leading-snug text-white/35">
-                先出静帧 → 切「运镜」画蓝/红线 → 顶栏「生成片段」。只跑当前镜，其他片段保留。
+                先点「生成本集全部分镜」出齐静帧 → 可单镜改图 → 再点「成片」出当前镜视频。
               </p>
             </>
           ) : (
@@ -1619,7 +1619,7 @@ export default function ManhuaScriptWorkbench({
               )}
               {!annotateStillUrl ? (
                 <p className="text-[10px] text-amber-100/70">
-                  尚无本片段静帧。可先「生成片段」出静帧，或切回分镜点「单镜」重出。
+                  尚无本片段静帧。请先点顶栏「生成本集全部分镜」出齐图，再回来改/出片。
                 </p>
               ) : null}
             </div>
