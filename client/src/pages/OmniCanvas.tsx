@@ -54,6 +54,19 @@ import {
   loadManhuaWriterSessionFromStorage,
   saveManhuaWriterSessionToStorage,
 } from "@shared/manhuaWriterSession";
+import type { ManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
+import {
+  MANHUA_CLOUD_DRAFT_SYNC_DEBOUNCE_MS,
+  buildLocalCloudDraftSnapshot,
+  chooseManhuaDraftHydrate,
+  cloudDraftBlocksToCanvas,
+  persistManhuaDraftLocally,
+  readLocalDraftPartsForHydrate,
+  repairLocalFromCloudDraft,
+  serializeCloudDraftForUpload,
+  trySaveLocalCanvas,
+  trySaveLocalClientUpdatedAt,
+} from "@/lib/manhuaCloudDraftSync";
 import {
   MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
   summarizeManhuaPathTrackStatus,
@@ -171,11 +184,8 @@ function loadCanvasState(): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
 }
 
 function saveCanvasState(blocks: CanvasBlock[], edges: CanvasEdge[]) {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify({ blocks, edges }));
-  } catch {
-    /* ignore quota */
-  }
+  // 本机瘦身：去视频/blob；配额失败时再降级（见 trySaveLocalCanvas）
+  trySaveLocalCanvas(blocks, edges);
 }
 
 function loadFactoryCharacterPrefs(): FactoryCharacterPrefs {
@@ -442,6 +452,23 @@ export default function OmniCanvas() {
   const abortRef = useRef<AbortController | null>(null);
   const chargeWorkflowStepMutation = trpc.workflow.chargeStep.useMutation();
   const refundWorkflowStepMutation = trpc.workflow.refundStep.useMutation();
+  /** 登录后云端草稿：与本机双通路，互不放弃 */
+  const [cloudSyncReady, setCloudSyncReady] = useState(false);
+  const cloudHydrateDoneRef = useRef(false);
+  const cloudDraftQuery = trpc.manhuaCloudDraft.get.useQuery(undefined, {
+    enabled: Boolean(user?.id),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+  const cloudDraftUpsert = trpc.manhuaCloudDraft.upsert.useMutation({
+    onError: (err) => {
+      pushDebug("cloudDraft:upsert-fail", {
+        level: "warn",
+        detail: String(err.message || err).slice(0, 160),
+      });
+    },
+  });
 
   const selectCanvasMode = useCallback((mode: CanvasWorkspaceMode) => {
     setCanvasMode(mode);
@@ -768,19 +795,23 @@ export default function OmniCanvas() {
 
   /** 编剧包 / Bible / 确认态持久化：硬刷新后继续三集流程，无需重扩 */
   useEffect(() => {
-    saveManhuaWriterSessionToStorage({
-      topic: factoryTopic,
-      brief: writerBrief,
-      episodeCount: writerEpisodeCount,
-      focusEpisode: writerFocusEpisode,
-      writerPack,
-      writerConfirmed,
-      directorUnlocked,
-      projectBible,
-      manhuaUiMode,
-      assetsSkipped,
-      workflowPhase,
-    });
+    try {
+      saveManhuaWriterSessionToStorage({
+        topic: factoryTopic,
+        brief: writerBrief,
+        episodeCount: writerEpisodeCount,
+        focusEpisode: writerFocusEpisode,
+        writerPack,
+        writerConfirmed,
+        directorUnlocked,
+        projectBible,
+        manhuaUiMode,
+        assetsSkipped,
+        workflowPhase,
+      });
+    } catch {
+      /* 本机权限/配额失败：不阻断云端通路 */
+    }
   }, [
     factoryTopic,
     writerBrief,
@@ -793,6 +824,211 @@ export default function OmniCanvas() {
     manhuaUiMode,
     assetsSkipped,
     workflowPhase,
+  ]);
+
+  const applyCloudDraftToUi = useCallback((draft: ManhuaCloudDraftPayload) => {
+    const session = draft.writerSession;
+    const nextBlocks = cloudDraftBlocksToCanvas(draft.canvas.blocks);
+    const nextEdges = draft.canvas.edges as CanvasEdge[];
+    setBlocks(nextBlocks);
+    setEdges(nextEdges);
+    setFactoryTopic(session.topic || "");
+    setWriterBrief(session.brief || "");
+    setWriterEpisodeCount(clampWriterEpisodeCount(session.episodeCount));
+    setWriterFocusEpisode(Math.max(1, Math.floor(Number(session.focusEpisode) || 1)));
+    setWriterPack(session.writerPack);
+    setWriterConfirmed(Boolean(session.writerConfirmed));
+    setDirectorUnlocked(Boolean(session.directorUnlocked));
+    setProjectBible(session.projectBible);
+    setManhuaUiMode(session.manhuaUiMode === "form" ? "form" : "workbench");
+    setAssetsSkipped(Boolean(session.assetsSkipped));
+    setWorkflowPhase(
+      session.workflowPhase === "assets" || session.workflowPhase === "storyboard"
+        ? session.workflowPhase
+        : session.writerConfirmed
+          ? "storyboard"
+          : "outline",
+    );
+    const prefs = draft.factoryPrefs || {};
+    if (typeof prefs.femaleId === "string") setFactoryFemaleId(prefs.femaleId);
+    if (typeof prefs.maleId === "string") setFactoryMaleId(prefs.maleId);
+    if (typeof prefs.artStyleId === "string") {
+      setFactoryArtStyleId(prefs.artStyleId as ManhuaArtStyleId);
+    }
+    if (prefs.femaleLeadManual != null) setFemaleLeadManual(Boolean(prefs.femaleLeadManual));
+    if (prefs.maleLeadManual != null) setMaleLeadManual(Boolean(prefs.maleLeadManual));
+    if (prefs.artStyleManual != null) setArtStyleManual(Boolean(prefs.artStyleManual));
+    const cast = session.projectBible?.cast;
+    if (cast) {
+      if (cast.sceneId) setFactorySceneId(cast.sceneId);
+      if (cast.propIds?.length) setFactoryPropIds(cast.propIds);
+      if (cast.ancientArchetypeIds?.length) setFactoryAncientArchetypeIds(cast.ancientArchetypeIds);
+      if (cast.identityLockZh) setFactoryIdentityLockZh(cast.identityLockZh);
+      if (cast.wardrobePropContinuityIds?.[0]) {
+        setFactoryWardrobeId(cast.wardrobePropContinuityIds[0]);
+      }
+      if (cast.lane === "urban" && cast.characterIds?.length) {
+        if (cast.characterIds[0]) setFactoryFemaleId(cast.characterIds[0]);
+        if (cast.characterIds[1]) setFactoryMaleId(cast.characterIds[1]);
+      }
+      if (cast.artStyleId) setFactoryArtStyleId(cast.artStyleId as ManhuaArtStyleId);
+    }
+    // 胜出草稿尽量补写本机（失败忽略）
+    repairLocalFromCloudDraft(draft);
+  }, []);
+
+  /** 登录后：云端与本机比新，胜出方驱动 UI，并补写较弱一侧 */
+  useEffect(() => {
+    if (!user?.id) {
+      cloudHydrateDoneRef.current = false;
+      setCloudSyncReady(false);
+      return;
+    }
+    if (cloudHydrateDoneRef.current) return;
+    if (cloudDraftQuery.isLoading || cloudDraftQuery.isFetching) return;
+    cloudHydrateDoneRef.current = true;
+
+    const localParts = readLocalDraftPartsForHydrate();
+    const choice = chooseManhuaDraftHydrate({
+      cloud: cloudDraftQuery.data?.draft ?? null,
+      localWriter: localParts.writer,
+      localCanvas: localParts.canvas,
+      localPrefs: localParts.prefs,
+      localClientUpdatedAt: localParts.clientUpdatedAt,
+    });
+
+    if (choice.source === "cloud") {
+      applyCloudDraftToUi(choice.draft);
+      toast.message("已从云端恢复草稿（约 30 天暂存；请记得导出备份）");
+      pushDebug("cloudDraft:hydrate-cloud", {
+        level: "ok",
+        detail: `blocks=${choice.draft.canvas.blocks.length} · at=${choice.draft.clientUpdatedAt}`,
+      });
+    } else if (choice.source === "local") {
+      // 本机较新：补写云端（不打断当前 UI）
+      const payloadJson = serializeCloudDraftForUpload(choice.draft);
+      if (payloadJson) {
+        cloudDraftUpsert.mutate(
+          { payloadJson },
+          {
+            onSuccess: () => {
+              trySaveLocalClientUpdatedAt(choice.draft.clientUpdatedAt);
+              pushDebug("cloudDraft:repair-cloud-from-local", { level: "ok" });
+            },
+          },
+        );
+      }
+      // 本机读失败键再尽力写一次
+      persistManhuaDraftLocally({
+        writerSession: choice.draft.writerSession,
+        blocks: cloudDraftBlocksToCanvas(choice.draft.canvas.blocks),
+        edges: choice.draft.canvas.edges as CanvasEdge[],
+        factoryPrefs: choice.draft.factoryPrefs,
+        clientUpdatedAt: choice.draft.clientUpdatedAt,
+      });
+    } else if (cloudDraftQuery.isError) {
+      pushDebug("cloudDraft:hydrate-skip", {
+        level: "warn",
+        detail: "云端暂不可用，继续本机通路",
+      });
+    }
+
+    setCloudSyncReady(true);
+  }, [
+    user?.id,
+    cloudDraftQuery.isLoading,
+    cloudDraftQuery.isFetching,
+    cloudDraftQuery.isError,
+    cloudDraftQuery.data?.draft,
+    applyCloudDraftToUi,
+    cloudDraftUpsert,
+    pushDebug,
+  ]);
+
+  /** 登录后防抖上传云端；本机仍各自写，互不依赖 */
+  useEffect(() => {
+    if (!user?.id || !cloudSyncReady) return;
+    if (factoryBusy) return;
+    const clientUpdatedAt = new Date().toISOString();
+    const factoryPrefs = {
+      topic: factoryTopic,
+      femaleId: factoryFemaleId,
+      maleId: factoryMaleId,
+      artStyleId: factoryArtStyleId,
+      femaleLeadManual,
+      maleLeadManual,
+      artStyleManual,
+    };
+    const writerSession = {
+      topic: factoryTopic,
+      brief: writerBrief,
+      episodeCount: writerEpisodeCount,
+      focusEpisode: writerFocusEpisode,
+      writerPack,
+      writerConfirmed,
+      directorUnlocked,
+      projectBible,
+      manhuaUiMode,
+      assetsSkipped,
+      workflowPhase,
+    };
+    // 本机双写补强（与既有 LS effect 叠加；失败不阻断）
+    persistManhuaDraftLocally({
+      writerSession,
+      blocks,
+      edges,
+      factoryPrefs,
+      clientUpdatedAt,
+    });
+
+    const timer = window.setTimeout(() => {
+      const payload = buildLocalCloudDraftSnapshot({
+        writerSession,
+        blocks,
+        edges,
+        factoryPrefs,
+        clientUpdatedAt,
+      });
+      const payloadJson = serializeCloudDraftForUpload(payload);
+      if (!payloadJson) {
+        pushDebug("cloudDraft:skip-too-large", { level: "warn" });
+        return;
+      }
+      cloudDraftUpsert.mutate(
+        { payloadJson },
+        {
+          onSuccess: () => {
+            trySaveLocalClientUpdatedAt(clientUpdatedAt);
+          },
+        },
+      );
+    }, MANHUA_CLOUD_DRAFT_SYNC_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    user?.id,
+    cloudSyncReady,
+    factoryBusy,
+    factoryTopic,
+    writerBrief,
+    writerEpisodeCount,
+    writerFocusEpisode,
+    writerPack,
+    writerConfirmed,
+    directorUnlocked,
+    projectBible,
+    manhuaUiMode,
+    assetsSkipped,
+    workflowPhase,
+    blocks,
+    edges,
+    factoryFemaleId,
+    factoryMaleId,
+    factoryArtStyleId,
+    femaleLeadManual,
+    maleLeadManual,
+    artStyleManual,
+    cloudDraftUpsert,
+    pushDebug,
   ]);
 
   /** 抽屉改造型后回写 Bible cast（保留 confirmedAt 与剧情正文） */

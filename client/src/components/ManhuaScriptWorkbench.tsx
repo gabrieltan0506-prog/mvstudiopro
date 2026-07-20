@@ -36,6 +36,7 @@ import {
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
 import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
+import { MANHUA_DRAFT_RETENTION_HINT_ZH } from "@shared/manhuaCloudDraft";
 import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
 
 type WorkflowPhaseId = "outline" | "assets" | "storyboard";
@@ -584,6 +585,12 @@ export default function ManhuaScriptWorkbench({
         </div>
       </div>
 
+      <div
+        data-manhua-draft-retention-hint
+        className="shrink-0 border-b border-white/8 bg-white/[0.03] px-3 py-1.5 text-[10px] leading-relaxed text-white/45"
+      >
+        {MANHUA_DRAFT_RETENTION_HINT_ZH}
+      </div>
       {!outlineComplete ? (
         <div className="shrink-0 border-b border-amber-400/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-50/90">
           请先确认剧本大纲，再进入资产与分镜

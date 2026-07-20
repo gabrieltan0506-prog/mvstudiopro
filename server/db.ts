@@ -102,6 +102,31 @@ async function ensurePaidTrafficReviewsTable(db: NonNullable<Awaited<ReturnType<
   }
 }
 
+/** 漫剧云端草稿：分集剧本 + 静帧 URL（不含视频）。 */
+async function ensureManhuaCloudDraftsTable(db: NonNullable<Awaited<ReturnType<typeof drizzle>>>) {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "manhua_cloud_drafts" (
+        "id" serial PRIMARY KEY,
+        "userId" integer NOT NULL,
+        "payloadJson" text NOT NULL,
+        "clientUpdatedAt" timestamp NOT NULL,
+        "createdAt" timestamp NOT NULL DEFAULT now(),
+        "updatedAt" timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "manhua_cloud_drafts_user_uidx"
+        ON "manhua_cloud_drafts" ("userId")
+    `);
+  } catch (e) {
+    console.warn(
+      "[Database] ensure manhua_cloud_drafts (non-fatal):",
+      e instanceof Error ? e.message.slice(0, 200) : e,
+    );
+  }
+}
+
 /** 官方活动策展表：缺失时自动建表（与 drizzle/postgres/0007 对齐）。 */
 async function ensurePlatformOfficialCampaignsTable(db: NonNullable<Awaited<ReturnType<typeof drizzle>>>) {
   try {
@@ -148,6 +173,7 @@ export async function getDb() {
       await ensurePlatformDrSecondaryStagingTable(_db);
       await ensurePaidTrafficReviewsTable(_db);
       await ensurePlatformOfficialCampaignsTable(_db);
+      await ensureManhuaCloudDraftsTable(_db);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;

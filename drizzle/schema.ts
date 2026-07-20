@@ -92,6 +92,7 @@ export * from "./schema-enterprise-agents";
 export * from "./schema-platform-strategic-blueprints";
 export * from "./schema-dr-secondary-staging";
 export * from "./schema-paid-traffic-reviews";
+export * from "./schema-manhua-cloud-draft";
 
 export const workflowRuns = pgTable("workflow_runs", {
   id: varchar("id", { length: 64 }).primaryKey(),
