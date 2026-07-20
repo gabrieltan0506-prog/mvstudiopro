@@ -117,6 +117,8 @@ type Props = {
   onRerunKeyartsFromReverse?: () => void;
   /** 只重跑当前分镜静帧，保留同集其他已完成镜头。 */
   onRerunKeyartShot?: (blockId: string, shotIndex: number) => void;
+  /** 质检软拦：用户仍采用当前镜成片进入成片坞 */
+  onAcceptClipDespiteQc?: (clipBlockId: string) => void;
   onFocusBlock?: (blockId: string) => void;
   /** 确认编剧后：整屏编辑器壳（无圆角卡片、三栏占满视口） */
   immersive?: boolean;
@@ -214,6 +216,7 @@ export default function ManhuaScriptWorkbench({
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
   onRerunKeyartShot,
+  onAcceptClipDespiteQc,
   onFocusBlock,
   immersive = false,
   previewCanvas,
@@ -1683,10 +1686,15 @@ export default function ManhuaScriptWorkbench({
                   <Loader2 className="h-3 w-3 animate-spin" />
                   生成／质检中
                 </span>
-              ) : clipQuality?.status === "failed" ? (
-                <span className="inline-flex items-center gap-1 rounded-full border border-rose-400/45 bg-rose-500/15 px-2 py-0.5 text-[9px] font-semibold text-rose-100">
+              ) : clipQuality?.status === "failed" && clipQuality.userAcceptedDespiteQc ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/45 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50">
                   <AlertTriangle className="h-3 w-3" />
-                  质检未通过
+                  已采用（质检未过）
+                </span>
+              ) : clipQuality?.status === "failed" ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/45 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50">
+                  <AlertTriangle className="h-3 w-3" />
+                  质检提醒
                 </span>
               ) : finalVideoUrl ? (
                 <span className="rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[9px] font-semibold text-cyan-100">
@@ -1762,7 +1770,7 @@ export default function ManhuaScriptWorkbench({
               clipQuality?.status === "passed"
                 ? "border-emerald-400/25 bg-emerald-500/[0.07]"
                 : clipQuality?.status === "failed"
-                  ? "border-rose-400/30 bg-rose-500/[0.08]"
+                  ? "border-amber-400/30 bg-amber-500/[0.08]"
                   : "border-white/10 bg-white/[0.025]"
             }`}
           >
@@ -1774,7 +1782,11 @@ export default function ManhuaScriptWorkbench({
               <span className="text-[9px] text-white/35">
                 {clipQuality
                   ? `第 ${clipQuality.attempts} 次 · ${
-                      clipQuality.status === "passed" ? "可进入成片坞" : "已拦截"
+                      clipQuality.status === "passed"
+                        ? "可进入成片坞"
+                        : clipQuality.userAcceptedDespiteQc
+                          ? "已采用（质检未过）"
+                          : "提醒·默认不进坞"
                     }`
                   : factoryBusy
                     ? "生成后自动检查"
@@ -1792,7 +1804,7 @@ export default function ManhuaScriptWorkbench({
                       passed
                         ? "bg-emerald-500/12 text-emerald-100"
                         : failed
-                          ? "bg-rose-500/12 text-rose-100"
+                          ? "bg-amber-500/12 text-amber-50"
                           : "bg-white/[0.035] text-white/35"
                     }`}
                   >
@@ -1809,12 +1821,26 @@ export default function ManhuaScriptWorkbench({
               })}
             </div>
             {clipQuality?.status === "failed" ? (
-              <p className="mt-1.5 line-clamp-3 text-[9px] leading-relaxed text-rose-100/75">
-                {clipQuality.summary}
-                {/文字|设定卡|姓名条|字幕|重出静帧/.test(clipQuality.summary || "")
-                  ? " → 请先重出静帧再生成片段。"
-                  : ""}
-              </p>
+              <div className="mt-1.5 space-y-1.5">
+                <p className="line-clamp-3 text-[9px] leading-relaxed text-amber-50/85">
+                  {clipQuality.summary}
+                  {/文字|设定卡|姓名条|字幕|重出静帧/.test(clipQuality.summary || "")
+                    ? " → 建议重出静帧后再采用。"
+                    : " → 成片可预览；要不要进成片坞由你决定。"}
+                </p>
+                {clip?.id && onAcceptClipDespiteQc && !clipQuality.userAcceptedDespiteQc ? (
+                  <button
+                    type="button"
+                    data-manhua-action="accept-clip-despite-qc"
+                    onClick={() => onAcceptClipDespiteQc(clip.id)}
+                    className="rounded-md border border-amber-400/45 bg-amber-500/20 px-2.5 py-1 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/30"
+                  >
+                    仍采用此片
+                  </button>
+                ) : clipQuality.userAcceptedDespiteQc ? (
+                  <p className="text-[9px] text-amber-100/70">已采用：可进成片坞勾选合成</p>
+                ) : null}
+              </div>
             ) : null}
           </div>
           {((previewUrl && !previewIsVideo) ||
@@ -1959,14 +1985,21 @@ export default function ManhuaScriptWorkbench({
                 shotClip?.status === "done" &&
                 shotClip.manhuaClipQuality?.status === "passed" &&
                 Boolean(mediaUrl(shotClip));
-              const clipFailed = shotClip?.manhuaClipQuality?.status === "failed";
+              const clipAccepted =
+                shotClip?.manhuaClipQuality?.status === "failed" &&
+                shotClip.manhuaClipQuality.userAcceptedDespiteQc &&
+                Boolean(mediaUrl(shotClip));
+              const clipFailed =
+                shotClip?.manhuaClipQuality?.status === "failed" && !clipAccepted;
               const statusLabel = clipPassed
                 ? "成片"
-                : clipFailed
-                  ? "质检失败"
-                  : thumb
-                    ? "静帧"
-                    : "待出";
+                : clipAccepted
+                  ? "已采用"
+                  : clipFailed
+                    ? "质检提醒"
+                    : thumb
+                      ? "静帧"
+                      : "待出";
               const on = i === Math.min(shotIndex, Math.max(shots.length, 1) - 1);
               const dur = shot.durationSec || 5;
               const needsRetry = !clipPassed;
@@ -1982,8 +2015,10 @@ export default function ManhuaScriptWorkbench({
                         ? "border-white/70 ring-1 ring-white/40"
                         : clipPassed
                           ? "border-emerald-400/35"
+                          : clipAccepted
+                            ? "border-amber-400/40"
                           : clipFailed
-                            ? "border-rose-400/40"
+                            ? "border-amber-400/35"
                             : "border-white/12"
                   }`}
                 >

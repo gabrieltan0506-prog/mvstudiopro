@@ -15,6 +15,7 @@ import {
   collectManhuaAssembleClipsFromDock,
   collectManhuaClipDockItems,
   downloadManhuaProjectZip,
+  manhuaClipDockItemAllowsAssemble,
   manhuaClipDockItemHasExportableOutput,
   selectExportableDockIds,
   summarizeManhuaDockExport,
@@ -44,12 +45,7 @@ type Props = {
 };
 
 function episodeClipReady(list: ManhuaClipDockItem[]): boolean {
-  return list.some(
-    (it) =>
-      it.stage === "clip" &&
-      Boolean(it.outputUrl) &&
-      it.clipQuality?.status === "passed",
-  );
+  return list.some((it) => it.stage === "clip" && manhuaClipDockItemAllowsAssemble(it));
 }
 
 function episodeKeyartUrl(list: ManhuaClipDockItem[]): string | undefined {
@@ -89,7 +85,7 @@ export default function ManhuaClipDock({
   const clipReadyEpCount = useMemo(() => {
     const eps = new Set<number>();
     for (const it of items) {
-      if (it.stage === "clip" && it.outputUrl && it.clipQuality?.status === "passed") {
+      if (it.stage === "clip" && manhuaClipDockItemAllowsAssemble(it)) {
         eps.add(it.episodeIndex);
       }
     }
@@ -98,7 +94,13 @@ export default function ManhuaClipDock({
   const qualityFailedEpCount = useMemo(() => {
     const eps = new Set<number>();
     for (const it of items) {
-      if (it.stage === "clip" && it.clipQuality?.status === "failed") eps.add(it.episodeIndex);
+      if (
+        it.stage === "clip" &&
+        it.clipQuality?.status === "failed" &&
+        !it.clipQuality.userAcceptedDespiteQc
+      ) {
+        eps.add(it.episodeIndex);
+      }
     }
     return eps.size;
   }, [items]);
@@ -227,11 +229,11 @@ export default function ManhuaClipDock({
               </span>
               <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/25 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-100/85">
                 <ShieldCheck className="h-3 w-3" />
-                仅质检通过可合成
+                质检通过或「仍采用」可合成
               </span>
             </div>
             <p className="mt-1 max-w-xl text-[11px] leading-relaxed text-white/45">
-              各集微动就绪后，一键拼成长片并自动配乐。勾选集号可同时作为工厂运行范围。
+              各集微动就绪后，一键拼成长片并自动配乐。质检未过需在工作台点「仍采用此片」。勾选集号可同时作为工厂运行范围。
               {canAssemble ? (
                 <span className="text-cyan-100/70">
                   {" "}
@@ -250,12 +252,12 @@ export default function ManhuaClipDock({
                 {summary.episodeCount || 0} 集
               </span>
               <span className="rounded-md border border-emerald-400/25 bg-emerald-500/10 px-2 py-0.5 text-emerald-100/85">
-                质检通过 {clipReadyEpCount}
+                可合成 {clipReadyEpCount}
               </span>
               {qualityFailedEpCount ? (
-                <span className="inline-flex items-center gap-1 rounded-md border border-rose-400/30 bg-rose-500/10 px-2 py-0.5 text-rose-100/85">
+                <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-amber-100/85">
                   <AlertTriangle className="h-3 w-3" />
-                  已拦截 {qualityFailedEpCount}
+                  待决定 {qualityFailedEpCount}
                 </span>
               ) : null}
               <span className="rounded-md border border-amber-400/25 bg-amber-500/10 px-2 py-0.5 text-amber-100/80">
@@ -364,7 +366,16 @@ export default function ManhuaClipDock({
               const title = list.find((x) => x.episodeTitle)?.episodeTitle;
               const ready = episodeClipReady(list);
               const qualityFailed = list.some(
-                (it) => it.stage === "clip" && it.clipQuality?.status === "failed",
+                (it) =>
+                  it.stage === "clip" &&
+                  it.clipQuality?.status === "failed" &&
+                  !it.clipQuality.userAcceptedDespiteQc,
+              );
+              const qualityAccepted = list.some(
+                (it) =>
+                  it.stage === "clip" &&
+                  it.clipQuality?.status === "failed" &&
+                  it.clipQuality.userAcceptedDespiteQc,
               );
               const thumb = episodeKeyartUrl(list);
               const epAllOn = list.every((it) => selectedIds.has(it.blockId));
@@ -382,7 +393,7 @@ export default function ManhuaClipDock({
                       : ready
                         ? "border-emerald-400/30 bg-emerald-500/8"
                         : qualityFailed
-                          ? "border-rose-400/35 bg-rose-500/8"
+                          ? "border-amber-400/35 bg-amber-500/8"
                         : "border-white/10 bg-white/[0.03]"
                   }`}
                   title={title || `第${ep}集`}
@@ -395,14 +406,22 @@ export default function ManhuaClipDock({
                     )}
                     <span
                       className={`absolute left-1 top-1 rounded px-1 py-0.5 text-[9px] font-semibold ${
-                        ready
+                        ready && !qualityAccepted
                           ? "bg-emerald-500/85 text-white"
+                          : qualityAccepted
+                            ? "bg-amber-500/90 text-black"
                           : qualityFailed
-                            ? "bg-rose-500/90 text-white"
+                            ? "bg-amber-500/85 text-black"
                             : "bg-black/65 text-white/70"
                       }`}
                     >
-                      {ready ? "质检通过" : qualityFailed ? "已拦截" : "待成片"}
+                      {ready && !qualityAccepted
+                        ? "可合成"
+                        : qualityAccepted
+                          ? "已采用"
+                          : qualityFailed
+                            ? "待决定"
+                            : "待成片"}
                     </span>
                   </div>
                   <div className="px-1.5 py-1.5">
@@ -529,25 +548,38 @@ export default function ManhuaClipDock({
                   {list.map((it) => {
                     const checked = selectedIds.has(it.blockId);
                     const readyItem = manhuaClipDockItemHasExportableOutput(it);
+                    const clipPendingDecision =
+                      it.stage === "clip" &&
+                      it.clipQuality?.status === "failed" &&
+                      !it.clipQuality.userAcceptedDespiteQc;
+                    const clipSoftAccepted =
+                      it.stage === "clip" &&
+                      it.clipQuality?.status === "failed" &&
+                      Boolean(it.clipQuality.userAcceptedDespiteQc);
                     return (
                       <li
                         key={it.blockId}
                         className={`flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-white/[0.04] ${
-                          it.stage === "clip" && it.clipQuality?.status === "failed"
-                            ? "bg-rose-500/[0.07]"
-                            : ""
+                          clipPendingDecision
+                            ? "bg-amber-500/[0.07]"
+                            : clipSoftAccepted
+                              ? "bg-amber-500/[0.05]"
+                              : ""
                         }`}
                         title={
-                          it.stage === "clip" && it.clipQuality?.status === "failed"
-                            ? it.clipQuality.summary
-                            : undefined
+                          clipPendingDecision
+                            ? `${it.clipQuality?.summary || "质检未过"} · 请在工作台点「仍采用此片」`
+                            : clipSoftAccepted
+                              ? `质检未过·已采用：${it.clipQuality?.summary || ""}`
+                              : undefined
                         }
                       >
                         <input
                           type="checkbox"
                           checked={checked}
+                          disabled={clipPendingDecision}
                           onChange={() => toggle(it.blockId)}
-                          className="h-3.5 w-3.5 accent-cyan-400"
+                          className="h-3.5 w-3.5 accent-cyan-400 disabled:opacity-35"
                         />
                         {it.outputUrl && (it.stage === "keyart" || it.stage === "recap_card") ? (
                           <img
@@ -565,17 +597,24 @@ export default function ManhuaClipDock({
                               : it.stage === "clip" || it.stage === "omni_edit"
                                 ? " · mp4"
                                 : " · 图"
-                            : " · 待跑"}
+                            : clipPendingDecision
+                              ? " · 待决定"
+                              : " · 待跑"}
                         </span>
                         {it.stage === "clip" && it.clipQuality?.status === "passed" ? (
                           <span className="inline-flex items-center gap-0.5 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] text-emerald-100">
                             <CheckCircle2 className="h-2.5 w-2.5" />
                             通过
                           </span>
-                        ) : it.stage === "clip" && it.clipQuality?.status === "failed" ? (
-                          <span className="inline-flex items-center gap-0.5 rounded bg-rose-500/15 px-1.5 py-0.5 text-[9px] text-rose-100">
+                        ) : clipSoftAccepted ? (
+                          <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] text-amber-50">
                             <AlertTriangle className="h-2.5 w-2.5" />
-                            拦截
+                            质检未过·已采用
+                          </span>
+                        ) : clipPendingDecision ? (
+                          <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] text-amber-50">
+                            <AlertTriangle className="h-2.5 w-2.5" />
+                            待决定
                           </span>
                         ) : null}
                         {onFocusBlock ? (

@@ -57,7 +57,10 @@ import {
   buildPromoCoverPrompt,
   getPromoCoverLayoutById,
 } from "@shared/manhuaPromoCoverLayouts";
-import { buildActionCameraInjectBlock } from "@shared/manhuaActionCameraRecipeBank";
+import {
+  buildActionCameraInjectBlock,
+  recommendActionCameraFromTopic,
+} from "@shared/manhuaActionCameraRecipeBank";
 import { formatCineVocabInjectBlock } from "@shared/manhuaCineVocabBank";
 import { buildWardrobePropContinuityInjectBlock } from "@shared/manhuaWardrobePropContinuity";
 import {
@@ -398,11 +401,12 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     if (autoCraft) craftShotIds = [autoCraft];
   }
   const craftShotBlock = buildCraftShotInjectBlock(craftShotIds);
+  const craftTopicBlob = [opts.topic, opts.writerContext].filter(Boolean).join("\n");
   let pathCameraRecipeIds = (opts.pathCameraRecipeIds || [])
     .map((id) => String(id || "").trim())
     .filter(Boolean);
   if (!pathCameraRecipeIds.length) {
-    const autoPath = recommendPathCameraFromTopic(opts.topic).recipeId;
+    const autoPath = recommendPathCameraFromTopic(craftTopicBlob).recipeId;
     if (autoPath) pathCameraRecipeIds = [autoPath];
   }
   const pathCameraBlock = buildPathCameraInjectBlock(pathCameraRecipeIds);
@@ -419,9 +423,14 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     .map((id) => String(id || "").trim())
     .filter(Boolean);
   const promoCoverBlock = buildPromoCoverInjectBlock(promoCoverIds);
-  const actionCameraBlock = buildActionCameraInjectBlock(
-    (opts.actionCameraRecipeIds || []).map((id) => String(id || "").trim()).filter(Boolean),
-  );
+  let actionCameraRecipeIds = (opts.actionCameraRecipeIds || [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean);
+  if (!actionCameraRecipeIds.length) {
+    const autoAction = recommendActionCameraFromTopic(craftTopicBlob).recipeId;
+    if (autoAction) actionCameraRecipeIds = [autoAction];
+  }
+  const actionCameraBlock = buildActionCameraInjectBlock(actionCameraRecipeIds);
   const cineVocabBlock = formatCineVocabInjectBlock(
     (opts.cineVocabIds || []).map((id) => String(id || "").trim()).filter(Boolean),
   );
@@ -2003,33 +2012,31 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             const failedQuality = clipQuality;
             const infra = isManhuaClipQualityInfraFailure(failedQuality);
             const keyartTextFail = isManhuaClipQualityKeyartTextFailure(failedQuality);
-            const failMsg = keyartTextFail
-              ? `智能质检不合格：${failedQuality.summary}（已尝试重出静帧仍含字，请顶栏再点「重出静帧」）`
-              : `智能质检不合格：${failedQuality.summary}`;
+            // 软拦：成片保留可播；默认不进成片坞，等用户「仍采用」
+            const softTip = keyartTextFail
+              ? `质检提醒：${failedQuality.summary}（建议重出静帧后再采用）`
+              : infra
+                ? `质检暂不可用：${failedQuality.summary}`
+                : `质检提醒：${failedQuality.summary}（可预览；点「仍采用此片」才进成片坞）`;
             working = working.map((candidate) =>
               candidate.id === blockId
                 ? {
                     ...candidate,
-                    // 服务异常：成片保留可播；内容不合格：标 error 拦合成
-                    status: infra ? ("done" as const) : ("error" as const),
+                    status: "done" as const,
                     outputUrl: out.outputUrl,
                     outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : candidate.outputUrls),
-                    manhuaClipQuality: failedQuality,
-                    error: infra ? failedQuality.summary : failMsg,
+                    manhuaClipQuality: {
+                      ...failedQuality,
+                      userAcceptedDespiteQc: false,
+                    },
+                    error: softTip,
                   }
                 : candidate,
             );
             publish(working);
-            if (infra) {
-              // 质检服务暂不可用：不中断整链，成片可预览但不进成片坞（export 仍看 passed）
-              completedIds.push(blockId);
-              opts.onStageDone?.(blockId, i, orderedIds.length, label);
-              succeeded = true;
-              break;
-            }
-            // 内容不合格：记下该镜失败，但不 throw——后续镜继续出图/出片
-            lastMessage = failMsg;
-            errors.push({ id: blockId, message: failMsg });
+            completedIds.push(blockId);
+            opts.onStageDone?.(blockId, i, orderedIds.length, label);
+            succeeded = true;
             break;
           }
         }

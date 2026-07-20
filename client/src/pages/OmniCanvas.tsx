@@ -763,9 +763,26 @@ export default function OmniCanvas() {
     }
   }, [recommendedMotion.motionId, motionManual]);
 
+  /** 运镜/动作推荐：题材 + 本集剧本正文（打斗等关键词） */
+  const craftHintBlob = useMemo(() => {
+    const parts = [factoryTopic.trim()];
+    if (writerPack) {
+      const ep =
+        writerPack.episodes.find((e) => e.index === writerFocusEpisode) || writerPack.episodes[0];
+      parts.push(
+        writerPack.seriesTitle || "",
+        writerPack.logline || "",
+        ep?.title || "",
+        ep?.body || "",
+        ep?.endHook || "",
+      );
+    }
+    return parts.filter(Boolean).join("\n");
+  }, [factoryTopic, writerPack, writerFocusEpisode]);
+
   const recommendedPath = useMemo(
-    () => recommendPathCameraFromTopic(factoryTopic),
-    [factoryTopic],
+    () => recommendPathCameraFromTopic(craftHintBlob),
+    [craftHintBlob],
   );
   const recommendedNarrativeLighting = useMemo(
     () => recommendNarrativeLightingFromTopic(factoryTopic),
@@ -776,8 +793,8 @@ export default function OmniCanvas() {
     [factoryTopic],
   );
   const recommendedAction = useMemo(
-    () => recommendActionCameraFromTopic(factoryTopic),
-    [factoryTopic],
+    () => recommendActionCameraFromTopic(craftHintBlob),
+    [craftHintBlob],
   );
 
   useEffect(() => {
@@ -2791,8 +2808,48 @@ export default function OmniCanvas() {
                     void runFactory("clip", { episodeIndexes: [writerFocusEpisode] });
                   }}
                   onGenerateAllEpisodeKeyarts={() => {
+                    const hasCast =
+                      selectedCharacterIds.length > 0 || factoryAncientArchetypeIds.length > 0;
+                    const sceneId = factorySceneId || recommendedScene?.id || "";
+                    if (!hasCast || !sceneId) {
+                      toast.message("请先锁定角色与场景", {
+                        description: "资产设定里选好人物和场景后，再一次出齐本集全部分镜。",
+                      });
+                      setWorkflowPhase("assets");
+                      setManhuaAssetDrawer(!hasCast ? "characters" : "assets");
+                      return;
+                    }
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
+                    // 出图前把角色/场景/服装/运镜锁进每镜静帧提示词
+                    setBlocks((prev) => {
+                      const next = applyFactoryPrefsToBlocks(prev, {
+                        craftShotIds: selectedCraftShotIds,
+                        motionPromptIds: selectedMotionIds,
+                        pathCameraRecipeIds: selectedPathRecipeIds,
+                        pathAnnotationJson: factoryPathAnnotation,
+                        narrativeLightingIds: selectedNarrativeLightingIds,
+                        maleHairstyleIds: selectedMaleHairstyleIds,
+                        maleMicroExpressionIds: selectedMaleMicroIds,
+                        promoCoverLayoutIds: selectedPromoLayoutIds,
+                        actionCameraRecipeIds: selectedActionRecipeIds,
+                        cineVocabIds: selectedCineVocabIds,
+                        wardrobePropContinuityIds: selectedWardrobeIds,
+                        sceneId,
+                        propIds: factoryPropIds,
+                        genreId: factoryGenreId || undefined,
+                        characterIds: selectedCharacterIds,
+                        ancientArchetypeIds: factoryAncientArchetypeIds,
+                        identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
+                        artStyleId: factoryArtStyleId,
+                        videoReverseOutputMode: factoryReverseMode,
+                      });
+                      setEdges((eds) => {
+                        saveCanvasState(next, eds);
+                        return eds;
+                      });
+                      return next;
+                    });
                     // 故事→反推→按镜展开→一次跑齐本集全部静帧（已完成的跳过）
                     void runFactory("keyart", {
                       episodeIndexes: [writerFocusEpisode],
@@ -2923,6 +2980,31 @@ export default function OmniCanvas() {
                       forceFromStage: "keyart",
                       episodeIndexes: [writerFocusEpisode],
                       targetBlockIds: [blockId],
+                    });
+                  }}
+                  onAcceptClipDespiteQc={(clipBlockId) => {
+                    setBlocks((prev) => {
+                      const next = prev.map((b) => {
+                        if (b.id !== clipBlockId || !b.manhuaClipQuality) return b;
+                        return {
+                          ...b,
+                          manhuaClipQuality: {
+                            ...b.manhuaClipQuality,
+                            userAcceptedDespiteQc: true,
+                          },
+                          error: b.manhuaClipQuality.summary
+                            ? `已采用（质检未过）：${b.manhuaClipQuality.summary}`
+                            : "已采用（质检未过）",
+                        };
+                      });
+                      setEdges((eds) => {
+                        saveCanvasState(next, eds);
+                        return eds;
+                      });
+                      return next;
+                    });
+                    toast.message("已采用此片", {
+                      description: "可在成片坞勾选并参与长片合成。",
                     });
                   }}
                 />
@@ -3647,6 +3729,9 @@ export default function OmniCanvas() {
                   translateMotionZh={translateMotionZh}
                 />
                 <p className="text-[10px] text-white/35">
+                  {!pathRecipeManual || !actionRecipeManual
+                    ? "已按题材/本集剧情自动带入运镜与动作（可改）。"
+                    : ""}
                   {recommendedPath.reasonZh}
                   {recommendedAction.reasonZh ? ` · ${recommendedAction.reasonZh}` : ""}
                 </p>

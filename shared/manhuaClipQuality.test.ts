@@ -3,11 +3,33 @@ import {
   buildManhuaClipQualityPrompt,
   isManhuaClipQualityInfraFailure,
   isManhuaClipQualityKeyartTextFailure,
+  manhuaClipQualityAllowsAssemble,
   MANHUA_CLIP_QUALITY_KEYS,
   parseManhuaClipQualityMarkdown,
 } from "./manhuaClipQuality";
 
 describe("manhuaClipQuality", () => {
+  it("allows assemble only when passed or user accepted soft fail", () => {
+    expect(
+      manhuaClipQualityAllowsAssemble({
+        outputUrl: "https://x/a.mp4",
+        quality: { status: "failed", userAcceptedDespiteQc: false },
+      }),
+    ).toBe(false);
+    expect(
+      manhuaClipQualityAllowsAssemble({
+        outputUrl: "https://x/a.mp4",
+        quality: { status: "failed", userAcceptedDespiteQc: true },
+      }),
+    ).toBe(true);
+    expect(
+      manhuaClipQualityAllowsAssemble({
+        outputUrl: "https://x/a.mp4",
+        quality: { status: "passed" },
+      }),
+    ).toBe(true);
+  });
+
   it("passes only when every quality gate is YES", () => {
     const raw = [
       ...MANHUA_CLIP_QUALITY_KEYS.map((key) => `${key}=YES`),

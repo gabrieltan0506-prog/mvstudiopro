@@ -29,7 +29,25 @@ export type ManhuaClipQualityReport = {
   sourceKeyartId?: string;
   sourceKeyartUrl?: string;
   reviewedAt: string;
+  /**
+   * 用户显式「仍采用此片」后为 true。
+   * 质检 failed 时默认不进成片坞；仅此项为 true 才可勾选合成。
+   */
+  userAcceptedDespiteQc?: boolean;
 };
+
+/** 成片是否允许进入成片坞 / 长片合成（软质检） */
+export function manhuaClipQualityAllowsAssemble(opts: {
+  outputUrl?: string | null;
+  quality?: Pick<ManhuaClipQualityReport, "status" | "userAcceptedDespiteQc"> | null;
+}): boolean {
+  if (!String(opts.outputUrl || "").trim()) return false;
+  const q = opts.quality;
+  if (!q) return false;
+  if (q.status === "passed") return true;
+  if (q.status === "failed" && q.userAcceptedDespiteQc) return true;
+  return false;
+}
 
 export type ManhuaClipQualityPromptOpts = {
   expectedContext?: string;

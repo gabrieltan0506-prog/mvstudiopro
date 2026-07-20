@@ -102,6 +102,43 @@ describe("canvasDramaStudio factory", () => {
     expect(beats.prompt).toContain("高反差");
   });
 
+  it("auto-injects path + action camera for fight topic when ids omitted", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "江湖刀光打斗交锋",
+      writerContext: "雨夜客栈拔刀交锋，比武闪避",
+    });
+    const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
+    const beats = blocks.find((b) => b.id.startsWith("beats-"))!;
+    expect(clip.prompt).toContain("【路径运镜配方】");
+    expect(clip.prompt).toContain("【动作运镜配方】");
+    expect(beats.prompt).toMatch(/打斗|动作运镜|路径运镜/);
+  });
+
+  it("expanded multi-shot keyarts keep scene and character inject", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+      sceneId: "scene_07",
+      ancientArchetypeIds: ["arch_rain_jianghu_dao"],
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id
+        ? {
+            ...b,
+            status: "done" as const,
+            outputText: "1. 推门\n2. 对峙\n3. 拔刀\n4. 收刀",
+          }
+        : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+    const keyarts = expanded.blocks.filter((b) => b.id.startsWith("keyart-"));
+    expect(keyarts.length).toBe(4);
+    for (const k of keyarts) {
+      expect(k.prompt).toMatch(/场景|角色|原型|画风/);
+    }
+  });
+
   it("applyFactoryPrefsToBlocks updates reverse mode and craft inject", () => {
     const { blocks } = spawnManhuaDramaStudio({ topic: "都市恋爱" });
     const next = applyFactoryPrefsToBlocks(blocks, {
