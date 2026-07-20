@@ -19,6 +19,10 @@ type Props = {
   onAgeGapMax: (n: ManhuaAgeGapMax) => void;
 };
 
+const selectClass =
+  "w-full rounded-lg border border-white/12 bg-black/40 px-2 py-1.5 text-[11px] text-white/90 outline-none focus:border-cyan-400/35 disabled:opacity-50";
+
+/** 角色库筛选：统一下拉，避免 chip 墙打乱一集主路径 */
 export default function ManhuaCharacterLibraryFilterChips({
   disabled,
   packFilterId,
@@ -35,142 +39,88 @@ export default function ManhuaCharacterLibraryFilterChips({
   onAgeGapMax,
 }: Props) {
   return (
-    <>
-      <div className="mb-2 flex flex-wrap gap-1.5">
-        <button
-          type="button"
+    <div className="mb-2 grid gap-2 sm:grid-cols-2">
+      <label className="block text-[10px] text-white/45">
+        气质组合
+        <select
           disabled={disabled}
-          onClick={() => onPackFilterId("")}
-          className={`rounded-full border px-2 py-0.5 text-[10px] ${
-            !packFilterId ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
-          }`}
+          value={packFilterId}
+          onChange={(e) => {
+            onPackFilterId(e.target.value);
+            if (e.target.value) onTagFilter("");
+          }}
+          className={`mt-0.5 ${selectClass}`}
         >
-          全部组合
-        </button>
-        {MANHUA_TEMPERAMENT_PACKS.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            disabled={disabled}
-            title={p.tags.join(" · ")}
-            onClick={() => {
-              onPackFilterId(packFilterId === p.id ? "" : p.id);
-              onTagFilter("");
-            }}
-            className={`rounded-full border px-2 py-0.5 text-[10px] ${
-              packFilterId === p.id
-                ? "border-violet-400/45 bg-violet-500/15 text-violet-100"
-                : "border-white/10 text-white/50 hover:border-white/25"
-            }`}
-          >
-            {p.labelZh}
-          </button>
-        ))}
-      </div>
-      {tagOptions.length ? (
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => onTagFilter("")}
-            className={`rounded-full border px-2 py-0.5 text-[10px] ${
-              !tagFilter ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
-            }`}
-          >
-            全部气质
-          </button>
+          <option value="">全部组合</option>
+          {MANHUA_TEMPERAMENT_PACKS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.labelZh}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="block text-[10px] text-white/45">
+        气质标签
+        <select
+          disabled={disabled || !tagOptions.length}
+          value={tagFilter}
+          onChange={(e) => onTagFilter(e.target.value)}
+          className={`mt-0.5 ${selectClass}`}
+        >
+          <option value="">全部气质</option>
           {tagOptions.map((t) => (
-            <button
-              key={t}
-              type="button"
-              disabled={disabled}
-              onClick={() => onTagFilter(tagFilter === t ? "" : t)}
-              className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                tagFilter === t
-                  ? "border-cyan-400/45 bg-cyan-500/15 text-cyan-100"
-                  : "border-white/10 text-white/50 hover:border-white/25"
-              }`}
-            >
+            <option key={t} value={t}>
               {t}
-            </button>
+            </option>
           ))}
-        </div>
-      ) : null}
-      <div className="mb-2 flex flex-wrap gap-1.5">
-        {(
-          [
-            ["", "全部年龄"],
-            ["le25", "≤25"],
-            ["26_28", "26–28"],
-            ["ge29", "≥29"],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id || "all-age"}
-            type="button"
-            disabled={disabled}
-            onClick={() => onAgeBand(id)}
-            className={`rounded-full border px-2 py-0.5 text-[10px] ${
-              ageBand === id
-                ? "border-sky-400/45 bg-sky-500/15 text-sky-100"
-                : "border-white/10 text-white/50 hover:border-white/25"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-        {(
-          [
-            [0, "不限年龄差"],
-            [3, "年龄差≤3"],
-            [5, "年龄差≤5"],
-          ] as const
-        ).map(([n, label]) => (
-          <button
-            key={`gap-${n}`}
-            type="button"
-            disabled={disabled}
-            title="相对另一侧已选角色的年龄差"
-            onClick={() => onAgeGapMax(n)}
-            className={`rounded-full border px-2 py-0.5 text-[10px] ${
-              ageGapMax === n
-                ? "border-sky-400/45 bg-sky-500/15 text-sky-100"
-                : "border-white/10 text-white/50 hover:border-white/25"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+        </select>
+      </label>
+      <label className="block text-[10px] text-white/45">
+        年龄段
+        <select
+          disabled={disabled}
+          value={ageBand}
+          onChange={(e) => onAgeBand(e.target.value as ManhuaAgeBand)}
+          className={`mt-0.5 ${selectClass}`}
+        >
+          <option value="">全部年龄</option>
+          <option value="le25">≤25</option>
+          <option value="26_28">26–28</option>
+          <option value="ge29">≥29</option>
+        </select>
+      </label>
+      <label className="block text-[10px] text-white/45">
+        年龄差
+        <select
+          disabled={disabled}
+          value={String(ageGapMax)}
+          onChange={(e) => onAgeGapMax(Number(e.target.value) as ManhuaAgeGapMax)}
+          className={`mt-0.5 ${selectClass}`}
+          title="相对另一侧已选角色的年龄差"
+        >
+          <option value="0">不限年龄差</option>
+          <option value="3">年龄差≤3</option>
+          <option value="5">年龄差≤5</option>
+        </select>
+      </label>
       {jobOptions.length ? (
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          <button
-            type="button"
+        <label className="block text-[10px] text-white/45 sm:col-span-2">
+          职业
+          <select
             disabled={disabled}
-            onClick={() => onJobFilter("")}
-            className={`rounded-full border px-2 py-0.5 text-[10px] ${
-              !jobFilter ? "border-white/30 bg-white/10 text-white" : "border-white/10 text-white/50"
-            }`}
+            value={jobFilter}
+            onChange={(e) => onJobFilter(e.target.value)}
+            className={`mt-0.5 ${selectClass}`}
           >
-            全部职业
-          </button>
-          {jobOptions.map((j) => (
-            <button
-              key={j}
-              type="button"
-              disabled={disabled}
-              onClick={() => onJobFilter(jobFilter === j ? "" : j)}
-              className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                jobFilter === j
-                  ? "border-amber-400/45 bg-amber-500/15 text-amber-100"
-                  : "border-white/10 text-white/50 hover:border-white/25"
-              }`}
-            >
-              {j}
-            </button>
-          ))}
-        </div>
+            <option value="">全部职业</option>
+            {jobOptions.map((j) => (
+              <option key={j} value={j}>
+                {j}
+              </option>
+            ))}
+          </select>
+        </label>
       ) : null}
-    </>
+    </div>
   );
 }

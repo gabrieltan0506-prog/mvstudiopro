@@ -393,6 +393,31 @@ export default function OmniCanvas() {
   const [factoryRunScope, setFactoryRunScope] = useState<"focus" | "dock">("focus");
   const [dockSelectedIds, setDockSelectedIds] = useState<Set<string>>(() => new Set());
   const [focusBlockId, setFocusBlockId] = useState<string | null>(null);
+  /** 漫剧工厂画布：默认只看本集静帧/成片，避免文本节点墙 */
+  const [manhuaCanvasPresentation, setManhuaCanvasPresentation] = useState<"media" | "all">(
+    "media",
+  );
+
+  const openManhuaFactoryCanvas = useCallback(
+    (blockId?: string) => {
+      if (blockId) {
+        const block = blocks.find((b) => b.id === blockId);
+        const isMedia = block?.kind === "image" || block?.kind === "video";
+        setManhuaCanvasPresentation(isMedia ? "media" : "all");
+        setFocusBlockId(blockId);
+      }
+      const details = document.getElementById(
+        "manhua-factory-canvas-details",
+      ) as HTMLDetailsElement | null;
+      if (details) details.open = true;
+      window.setTimeout(() => {
+        document
+          .getElementById("freeform-canvas-zone")
+          ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, 40);
+    },
+    [blocks],
+  );
   const [canvasMode, setCanvasMode] = useState<CanvasWorkspaceMode>(() => loadCanvasWorkspaceMode());
   const [assembleBusy, setAssembleBusy] = useState(false);
   const [finalAssembleVideoUrl, setFinalAssembleVideoUrl] = useState<string | null>(null);
@@ -2282,17 +2307,8 @@ export default function OmniCanvas() {
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
                   onFocusBlock={(id) => {
-                    setFocusBlockId(id);
                     setImmersiveExtrasOpen(true);
-                    const details = document.getElementById(
-                      "manhua-factory-canvas-details",
-                    ) as HTMLDetailsElement | null;
-                    if (details) details.open = true;
-                    window.setTimeout(() => {
-                      document
-                        .getElementById("freeform-canvas-zone")
-                        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                    }, 40);
+                    openManhuaFactoryCanvas(id);
                   }}
                   onSpawnAndRunClip={() => {
                     setFactoryRunScope("focus");
@@ -2721,18 +2737,7 @@ export default function OmniCanvas() {
                   setWriterFocusEpisode(ep);
                   setManhuaUiMode("workbench");
                 }}
-                onFocusBlock={(id) => {
-                  setFocusBlockId(id);
-                  const details = document.getElementById(
-                    "manhua-factory-canvas-details",
-                  ) as HTMLDetailsElement | null;
-                  if (details) details.open = true;
-                  window.setTimeout(() => {
-                    document
-                      .getElementById("freeform-canvas-zone")
-                      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                  }, 40);
-                }}
+                onFocusBlock={(id) => openManhuaFactoryCanvas(id)}
               />
               <details
                 id="manhua-factory-canvas-details"
@@ -2740,9 +2745,9 @@ export default function OmniCanvas() {
               >
                 <summary className="cursor-pointer list-none px-3 py-2 text-[12px] font-semibold text-white/75 marker:content-none [&::-webkit-details-marker]:hidden">
                   <span className="inline-flex flex-wrap items-center gap-2">
-                    工厂节点画布（专家排错）
+                    本集静帧 / 成片画布
                     <span className="rounded-full border border-white/15 px-2 py-0.5 text-[10px] font-normal text-white/40">
-                      默认收起 · 点此展开
+                      第{writerFocusEpisode}集 · 默认只看图视频
                     </span>
                     {factoryBusy ? (
                       <span className="text-[11px] font-normal text-amber-100/85">
@@ -2752,6 +2757,24 @@ export default function OmniCanvas() {
                   </span>
                 </summary>
                 <div id="freeform-canvas-zone" className="scroll-mt-44 border-t border-white/10">
+                  <div className="flex flex-wrap items-center gap-2 border-b border-white/8 px-3 py-2">
+                    <label className="text-[10px] text-white/45">
+                      呈现
+                      <select
+                        value={manhuaCanvasPresentation}
+                        onChange={(e) =>
+                          setManhuaCanvasPresentation(e.target.value as "media" | "all")
+                        }
+                        className="ml-1.5 rounded-md border border-white/12 bg-black/40 px-2 py-1 text-[11px] text-white/85"
+                      >
+                        <option value="media">仅图片与视频 + 提示词</option>
+                        <option value="all">全部节点（含文本链）</option>
+                      </select>
+                    </label>
+                    <span className="text-[10px] text-white/30">
+                      文本大纲 / 节拍仍在工厂后台跑，不占主画布
+                    </span>
+                  </div>
                   <div className="min-h-[360px] md:min-h-[480px]">
                     <FreeformCanvas
                       blocks={blocks}
@@ -2761,6 +2784,11 @@ export default function OmniCanvas() {
                       runDeps={runDeps}
                       focusBlockId={focusBlockId}
                       onFocusBlockConsumed={() => setFocusBlockId(null)}
+                      presentation={manhuaCanvasPresentation === "media" ? "media" : "full"}
+                      focusEpisode={writerFocusEpisode}
+                      spawnKinds={
+                        manhuaCanvasPresentation === "media" ? ["image", "video"] : undefined
+                      }
                     />
                   </div>
                 </div>
@@ -3429,10 +3457,11 @@ export default function OmniCanvas() {
                   setImmersiveExtrasOpen(false);
                 }}
                 onFocusBlock={(id) => {
-                  setFocusBlockId(id);
                   const hit = blocks.find((b) => b.id === id);
                   const ep = hit ? getBlockEpisodeIndex(hit) : null;
                   if (ep != null) setWriterFocusEpisode(ep);
+                  setImmersiveExtrasOpen(true);
+                  openManhuaFactoryCanvas(id);
                 }}
               />
             </div>
