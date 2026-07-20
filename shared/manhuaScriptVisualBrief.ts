@@ -223,6 +223,46 @@ export function compileManhuaScriptVisualBrief(
   return out.length > maxChars ? `${out.slice(0, maxChars).trimEnd()}…` : out;
 }
 
+/** 工作台可见简报闸门：结构化摘要（非整段剧本） */
+export type ManhuaVisualBriefUiSummary = {
+  topicZh: string;
+  scenes: string[];
+  cameras: string[];
+  motions: string[];
+  shifts: string[];
+  events: string[];
+  pathLabelZh: string;
+  actionLabelZh: string;
+  fullBriefZh: string;
+};
+
+export function summarizeManhuaVisualBriefForUi(
+  rawScript: string,
+  opts?: ManhuaScriptVisualBriefOpts,
+): ManhuaVisualBriefUiSummary {
+  const topic = String(opts?.topic || "").trim();
+  const raw = String(rawScript || "").trim();
+  const body = extractEpisodeBody(raw);
+  const blobForRec = [topic, body].filter(Boolean).join("\n");
+  const pathRec = recommendPathCameraFromTopic(blobForRec);
+  const actionRec = recommendActionCameraFromTopic(blobForRec);
+  return {
+    topicZh: topic.slice(0, 120),
+    scenes: extractSceneAnchors(raw, 3),
+    cameras: extractCameraCues(raw, 4),
+    motions: extractMotionCues(raw, 4),
+    shifts: extractSceneShifts(raw, 3),
+    events: extractShootableEvents(raw, 4),
+    pathLabelZh: pathRec.entry?.nameZh || pathRec.reasonZh || "",
+    actionLabelZh: actionRec.entry?.nameZh || actionRec.reasonZh || "",
+    fullBriefZh: compileManhuaScriptVisualBrief(raw, {
+      ...opts,
+      forStage: opts?.forStage || "key_art",
+      maxChars: opts?.maxChars ?? 900,
+    }),
+  };
+}
+
 /** 是否仍像「整段剧本硬灌」（用于测试与门禁自检） */
 export function looksLikeRawScriptDump(prompt: string): boolean {
   const p = String(prompt || "");

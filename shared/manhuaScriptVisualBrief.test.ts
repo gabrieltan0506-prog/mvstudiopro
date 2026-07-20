@@ -3,6 +3,7 @@ import {
   buildManhuaScenePlateGenPrompt,
   compileManhuaScriptVisualBrief,
   looksLikeRawScriptDump,
+  summarizeManhuaVisualBriefForUi,
 } from "./manhuaScriptVisualBrief";
 
 describe("manhuaScriptVisualBrief", () => {
@@ -42,6 +43,16 @@ describe("manhuaScriptVisualBrief", () => {
     );
     expect(brief).toContain("女帝青衣佩剑");
     expect(brief).toContain("【视觉提示词简报");
+  });
+
+  it("summarizes brief for workbench gate UI", () => {
+    const ui = summarizeManhuaVisualBriefForUi(
+      "雨夜客栈全景对峙，中近景拔刀交锋，切到庙外追逐冲刺",
+      { topic: "江湖刀光打斗" },
+    );
+    expect(ui.fullBriefZh).toContain("【视觉提示词简报");
+    expect(ui.topicZh).toContain("江湖");
+    expect(ui.pathLabelZh || ui.actionLabelZh || ui.events.length).toBeTruthy();
   });
 
   it("builds scene plate prompt without readable text", () => {

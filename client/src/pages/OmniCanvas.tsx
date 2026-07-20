@@ -38,6 +38,7 @@ import {
   replaceManhuaEpisodeChain,
   resolveFactoryResumeStage,
   resolveManhuaEpisodeSpawnContinuity,
+  layoutManhuaEpisodeReadableChain,
   runManhuaDramaFactoryPipeline,
   sanitizeManhuaRecapUpstreamLinks,
   spawnManhuaDramaStudio,
@@ -1725,7 +1726,7 @@ export default function OmniCanvas() {
               charactersMd: writerPack?.charactersMd,
             })
           : null;
-      const spawned = spawnManhuaDramaStudio({
+      let spawned = spawnManhuaDramaStudio({
         originX: 60,
         originY: 80 + Math.max(0, continuity.episodeIndex - 1) * 420,
         topic,
@@ -1758,6 +1759,10 @@ export default function OmniCanvas() {
         previousEndingHook: continuity.previousEndingHook,
         previouslyOnRecap: continuity.previouslyOnRecap,
       });
+      spawned = {
+        ...spawned,
+        blocks: layoutManhuaEpisodeReadableChain(spawned.blocks, writerFocusEpisode),
+      };
       if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
         setFactoryGenreId(spawned.resolvedGenreId);
         toast.message(
@@ -2963,8 +2968,20 @@ export default function OmniCanvas() {
                   hasCast: Boolean(
                     selectedCharacterIds.length ||
                       factoryAncientArchetypeIds.length ||
+                      customAssetRefs.some((r) => r.role === "character") ||
                       writerConfirmed,
                   ),
+                  assetsReady: evaluateManhuaAssetImageGate({
+                    characterIds: selectedCharacterIds,
+                    ancientArchetypeIds: factoryAncientArchetypeIds,
+                    sceneId: factorySceneId || recommendedScene?.id || "",
+                    artStyleId: factoryArtStyleId,
+                    topic: factoryTopic,
+                    customRefs: customAssetRefs,
+                    assetBlocks: blocks.filter(
+                      (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
+                    ),
+                  }).ready,
                   hasFactoryChain: blocks.some((b) =>
                     MANHUA_FACTORY_STAGE_ORDER.some((s) => b.id.startsWith(`${s}-`)),
                   ),
@@ -3239,29 +3256,28 @@ export default function OmniCanvas() {
                     });
                   }}
                   onGenerateFragment={({ shotIndex }) => {
-                    const hasShotKeyart = blocks.some(
-                      (b) =>
-                        b.id.startsWith("keyart-") &&
-                        (getBlockEpisodeIndex(b) ?? 1) === writerFocusEpisode &&
-                        resolveKeyartShotIndex(b.id, b.prompt) === shotIndex &&
-                        Boolean(b.outputUrl || b.outputUrls?.[0]),
-                    );
-                    if (!hasShotKeyart) {
-                      toast.message("请先点「生成本集全部分镜」出齐静帧", {
-                        description: `第 ${String(shotIndex).padStart(2, "0")} 镜还没有自己的分镜图，成片不能共用别镜。`,
-                      });
-                      setFactoryRunScope("focus");
-                      ensureStudioSpawned(factoryTopic);
-                      void runFactory("keyart", {
-                        episodeIndexes: [writerFocusEpisode],
-                      });
-                      return;
-                    }
+                    const pad = String(shotIndex).padStart(2, "0");
+                    toast.message(`生成片段成片 ${pad}`, {
+                      description: "缺本镜静帧时只补本镜，不整集重跑。",
+                    });
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
                     void runFactory("clip", {
                       episodeIndexes: [writerFocusEpisode],
                       fragmentShotIndex: shotIndex,
+                    });
+                  }}
+                  onLayoutReadableChain={() => {
+                    setBlocks((prev) => {
+                      const next = layoutManhuaEpisodeReadableChain(prev, writerFocusEpisode);
+                      setEdges((eds) => {
+                        saveCanvasState(next, eds);
+                        return eds;
+                      });
+                      return next;
+                    });
+                    toast.message("已对齐画布流水线", {
+                      description: "左文案 → 中静帧竖排 → 右同镜成片",
                     });
                   }}
                   onGenerateMissingFragments={(shotIndexes) => {

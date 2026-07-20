@@ -10,6 +10,7 @@ import {
   getBlockEpisodeIndex,
   filterManhuaFactoryTargetIds,
   isTransientFactoryError,
+  layoutManhuaEpisodeReadableChain,
   manhuaEpisodeHasFactoryChain,
   replaceManhuaEpisodeChain,
   resolveFactoryResumeStage,
@@ -312,6 +313,31 @@ describe("canvasDramaStudio factory", () => {
       2,
     );
     expect(onlyClip.targetBlockIds).toEqual([]);
+  });
+
+  it("layoutManhuaEpisodeReadableChain puts clips to the right of same-shot keyarts", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id
+        ? { ...b, status: "done" as const, outputText: "1. 推门\n2. 对峙\n3. 拔刀" }
+        : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+    const laid = layoutManhuaEpisodeReadableChain(expanded.blocks, 1);
+    const keyarts = laid.filter((b) => b.id.startsWith("keyart-")).sort((a, b) => a.y - b.y);
+    const clips = laid.filter((b) => b.id.startsWith("clip-") && /-s\d{2}/.test(b.id));
+    expect(keyarts.length).toBeGreaterThanOrEqual(2);
+    expect(keyarts[1]!.y).toBeGreaterThan(keyarts[0]!.y);
+    for (const clip of clips) {
+      const shot = resolveKeyartShotIndex(clip.id, clip.prompt);
+      const key = keyarts.find((k) => resolveKeyartShotIndex(k.id, k.prompt) === shot);
+      expect(key).toBeTruthy();
+      expect(clip.x).toBeGreaterThan(key!.x);
+    }
   });
 
   it("ensureManhuaFragmentClips lays one clip per shot and targets a single fragment", () => {

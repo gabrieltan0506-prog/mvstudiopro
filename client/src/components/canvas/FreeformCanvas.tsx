@@ -41,6 +41,7 @@ import { resolvePreviousEpisodeClipUrl } from "@shared/manhuaClipContinuity";
 import { CanvasImageEditMaskPainter } from "@/components/canvas/CanvasImageEditMaskPainter";
 import { trpc } from "@/lib/trpc";
 import {
+  Clapperboard,
   LoaderCircle,
   Plus,
   Sparkles,
@@ -470,6 +471,25 @@ export default function FreeformCanvas({
     pendingUploadBlockIdRef.current = id;
     window.setTimeout(() => toolbarFileInputRef.current?.click(), 0);
   }, [spawnFromToolbar]);
+
+  /** 自由画布：一键铺「文案 → 静帧 → 成片」可读链 */
+  const spawnTextImageVideoChain = useCallback(() => {
+    setToolbarMenu(null);
+    const text = defaultCanvasBlock("text", 80, 120);
+    text.id = makeCanvasBlockId("text");
+    text.prompt = "写一段可拍画面（场景、人物动作、运镜）";
+    const image = defaultCanvasBlock("image", 420, 120, text.id);
+    image.id = makeCanvasBlockId("image");
+    const video = defaultCanvasBlock("video", 760, 120, image.id);
+    video.id = makeCanvasBlockId("video");
+    onBlocksChange((prev) => [...prev, text, image, video]);
+    onEdgesChange([
+      ...edges,
+      { fromId: text.id, toId: image.id },
+      { fromId: image.id, toId: video.id },
+    ]);
+    setSelectedId(image.id);
+  }, [edges, onBlocksChange, onEdgesChange]);
 
   const patchOne = useCallback(
     (id: string, patch: Partial<CanvasBlock>) => {
@@ -1368,6 +1388,17 @@ export default function FreeformCanvas({
               );
             })}
             <div className="my-1 h-px bg-white/10" />
+            <button
+              type="button"
+              className="flex w-full items-start gap-2 rounded-xl px-2 py-2 text-left hover:bg-white/10"
+              onClick={spawnTextImageVideoChain}
+            >
+              <Clapperboard className="mt-0.5 h-4 w-4 shrink-0 text-fuchsia-300" />
+              <div>
+                <div className="text-sm font-medium text-white">文案→静帧→成片</div>
+                <div className="text-[11px] text-white/45">一键铺三条链，左到右跑通</div>
+              </div>
+            </button>
             <button
               type="button"
               className="flex w-full items-start gap-2 rounded-xl px-2 py-2 text-left hover:bg-white/10"

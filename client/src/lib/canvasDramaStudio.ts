@@ -1297,7 +1297,65 @@ export function ensureManhuaFragmentClips(
     nextEdges.push({ fromId: keyart.id, toId: clip.id });
   }
 
-  return { blocks: nextBlocks, edges: nextEdges };
+  const laid = layoutManhuaEpisodeReadableChain(nextBlocks, ep);
+  return { blocks: laid, edges: nextEdges };
+}
+
+/**
+ * 画布可读铺板（左→右）：故事→设定→节拍→反推 → 竖排静帧 → 右侧同镜成片。
+ * 对齐竞品「一眼看懂文→图→视频」流水线，不改节点语义。
+ */
+export function layoutManhuaEpisodeReadableChain(
+  blocks: CanvasBlock[],
+  episodeIndex?: number | null,
+  opts?: { originX?: number; originY?: number; colGap?: number; rowGap?: number },
+): CanvasBlock[] {
+  const ep =
+    typeof episodeIndex === "number" && episodeIndex >= 1
+      ? Math.floor(episodeIndex)
+      : getBlockEpisodeIndex(blocks.find((b) => b.id.startsWith("reverse-") || b.id.startsWith("story-")) || blocks[0]!) ??
+        1;
+  const originX = opts?.originX ?? 80;
+  const originY = opts?.originY ?? 80;
+  const gapX = opts?.colGap ?? 340;
+  const gapY = opts?.rowGap ?? 220;
+  const sameEpisode = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === ep;
+
+  const pick = (prefix: string) =>
+    blocks.filter((b) => b.id.startsWith(`${prefix}-`) && sameEpisode(b));
+
+  const textCols = [
+    pick("story")[0],
+    pick("bible")[0],
+    pick("beats")[0],
+    pick("reverse")[0],
+  ].filter(Boolean) as CanvasBlock[];
+  const keyarts = pick("keyart").sort(sortKeyartBlocks);
+  const clips = pick("clip").sort(sortKeyartBlocks);
+  if (!textCols.length && !keyarts.length) return blocks;
+
+  const pos = new Map<string, { x: number; y: number }>();
+  textCols.forEach((b, i) => {
+    pos.set(b.id, { x: originX + gapX * i, y: originY });
+  });
+  const keyCol = textCols.length;
+  const clipCol = keyCol + 1;
+  keyarts.forEach((k, i) => {
+    pos.set(k.id, { x: originX + gapX * keyCol, y: originY + i * gapY });
+  });
+  for (const c of clips) {
+    const shot = resolveKeyartShotIndex(c.id, c.prompt);
+    const row = keyarts.findIndex((k) => resolveKeyartShotIndex(k.id, k.prompt) === shot);
+    pos.set(c.id, {
+      x: originX + gapX * clipCol,
+      y: originY + Math.max(0, row) * gapY,
+    });
+  }
+
+  return blocks.map((b) => {
+    const p = pos.get(b.id);
+    return p ? { ...b, x: p.x, y: p.y } : b;
+  });
 }
 
 function mediaUrlOf(b?: CanvasBlock): string | undefined {
@@ -1716,6 +1774,20 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     if (fragment.targetBlockIds.length) {
       resolvedTargetIds = fragment.targetBlockIds;
       resolvedForceFromStage = fragment.forceFromStage;
+    } else {
+      // 禁止回落成「整集跑」：缺本镜静帧节点时直接报错退出
+      const shotTag = String(opts.fragmentShotIndex).padStart(2, "0");
+      return {
+        blocks: working,
+        completedIds: [],
+        skippedIds: [],
+        errors: [
+          {
+            id: `keyart-e${String(opts.episodeIndex).padStart(2, "0")}-s${shotTag}`,
+            message: `第 ${shotTag} 镜静帧节点未就绪，请先确认简报并生成分镜画面（只补本镜，勿整集重跑）`,
+          },
+        ],
+      };
     }
   }
 
