@@ -544,6 +544,12 @@ async function waitForClip(page: Page) {
     video.exists && video.readyState >= 2 && Number.isFinite(video.duration) && video.duration > 0,
     `readyState=${video.readyState} duration=${video.duration} src=${video.src.slice(0, 100)}`,
   );
+  assertCheck(
+    "FN-03-DURATION",
+    "单次成片约 10 秒",
+    Number.isFinite(video.duration) && video.duration >= 9 && video.duration <= 11,
+    `duration=${video.duration} expected=9..11s`,
+  );
   await screenshot(page, "05-clip.png", "[data-manhua-column='preview']");
   const canvasState = await page.evaluate(() => {
     const parsed = JSON.parse(localStorage.getItem("mv-freeform-canvas-v1") || "{}");
