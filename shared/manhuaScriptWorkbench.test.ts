@@ -5,6 +5,7 @@ import {
   inferWorkbenchShotCastCount,
   parseWorkbenchShotsFromText,
   resolveKeyartShotIndex,
+  resolveWorkbenchShotAssetMount,
   workbenchShotTotalSec,
 } from "./manhuaScriptWorkbench";
 
@@ -81,5 +82,43 @@ describe("manhuaScriptWorkbench", () => {
     expect(block).toContain("禁止套用统一的暖背景加轮廓光模板");
     expect(resolveKeyartShotIndex("keyart-e01-s03-abc", "")).toBe(3);
     expect(resolveKeyartShotIndex("keyart-e01-xyz", block)).toBe(2);
+  });
+
+  it("resolves per-shot asset mount from named cast or soft dual roles", () => {
+    const named = resolveWorkbenchShotAssetMount({
+      actionZh: "沈清辞推门，顾夜笙回望",
+      characters: [
+        { id: "c1", nameZh: "沈清辞" },
+        { id: "c2", nameZh: "顾夜笙" },
+        { id: "c3", nameZh: "路人甲" },
+      ],
+      props: [{ id: "p1", nameZh: "玉佩" }],
+    });
+    expect(named.mode).toBe("matched");
+    expect(named.characterIds).toEqual(["c1", "c2"]);
+    expect(named.expectedCastCount).toBe(1);
+
+    const dual = resolveWorkbenchShotAssetMount({
+      actionZh: "男女对视，递玉佩",
+      characters: [
+        { id: "c1", nameZh: "沈清辞" },
+        { id: "c2", nameZh: "顾夜笙" },
+      ],
+      props: [{ id: "p1", nameZh: "玉佩" }],
+    });
+    expect(dual.mode).toBe("matched");
+    expect(dual.characterIds).toEqual(["c1", "c2"]);
+    expect(dual.propIds).toEqual(["p1"]);
+    expect(dual.expectedCastCount).toBe(2);
+
+    const fallback = resolveWorkbenchShotAssetMount({
+      actionZh: "空镜推进廊道",
+      characters: [
+        { id: "c1", nameZh: "沈清辞" },
+        { id: "c2", nameZh: "顾夜笙" },
+      ],
+    });
+    expect(fallback.mode).toBe("default");
+    expect(fallback.characterIds).toEqual(["c1", "c2"]);
   });
 });

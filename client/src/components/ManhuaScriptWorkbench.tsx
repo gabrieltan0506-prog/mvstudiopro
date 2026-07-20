@@ -31,6 +31,7 @@ import {
 import {
   parseWorkbenchShotsFromText,
   resolveKeyartShotIndex,
+  resolveWorkbenchShotAssetMount,
   workbenchShotTotalSec,
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
@@ -87,6 +88,8 @@ type Props = {
     keyartId?: string;
     clipId?: string;
   }) => void;
+  /** 本集所有缺成片/质检失败的片段依次生成 */
+  onGenerateMissingFragments?: (shotIndexes: number[]) => void;
   /** 成片坞已勾选集：静帧+成片连跑 */
   onRunFullAuto?: () => void;
   onResumeFromFailure?: () => void;
@@ -162,6 +165,7 @@ export default function ManhuaScriptWorkbench({
   onOpenAssetWall,
   onSpawnAndRunClip,
   onGenerateFragment,
+  onGenerateMissingFragments,
   onRunFullAuto,
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
@@ -263,6 +267,55 @@ export default function ManhuaScriptWorkbench({
     [sceneId],
   );
   const props = propIds.map((id) => getManhuaDemoAsset(id)).filter(Boolean);
+  const shotMount = useMemo(
+    () =>
+      resolveWorkbenchShotAssetMount({
+        actionZh: activeShot?.actionZh,
+        cameraZh: activeShot?.cameraZh,
+        keyartPrompt: activeKeyart?.prompt,
+        characters: characters.map((c) => ({ id: c!.id, nameZh: c!.nameZh })),
+        archetypes: archetypes.map((a) => ({ id: a!.id, nameZh: a!.nameZh })),
+        props: props.map((p) => ({ id: p!.id, nameZh: p!.nameZh })),
+      }),
+    [
+      activeShot?.actionZh,
+      activeShot?.cameraZh,
+      activeKeyart?.prompt,
+      characterIds.join("|"),
+      ancientArchetypeIds.join("|"),
+      propIds.join("|"),
+    ],
+  );
+  const mountedCharacterIdSet = useMemo(
+    () => new Set(shotMount.characterIds),
+    [shotMount.characterIds],
+  );
+  const mountedArchetypeIdSet = useMemo(
+    () => new Set(shotMount.ancientArchetypeIds),
+    [shotMount.ancientArchetypeIds],
+  );
+  const mountedPropIdSet = useMemo(() => new Set(shotMount.propIds), [shotMount.propIds]);
+  const mountedCastCount =
+    shotMount.characterIds.length + shotMount.ancientArchetypeIds.length;
+  const mountGap =
+    shotMount.expectedCastCount > mountedCastCount
+      ? shotMount.expectedCastCount - mountedCastCount
+      : 0;
+  const missingFragmentIndexes = useMemo(() => {
+    const list = shots.length
+      ? shots
+      : ([{ index: 1, durationSec: 5, cameraZh: "", actionZh: "" }] as ManhuaWorkbenchShot[]);
+    return list
+      .filter((shot) => {
+        const shotClip =
+          episodeClips.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
+          (shot.index === 1 ? legacyClip : undefined);
+        const playable = Boolean(mediaUrl(shotClip));
+        const failed = shotClip?.manhuaClipQuality?.status === "failed";
+        return !playable || failed;
+      })
+      .map((shot) => shot.index);
+  }, [shots, episodeClips, legacyClip]);
   const hasCastAssets = Boolean(
     characters.length || archetypes.length || scene || props.length,
   );
@@ -413,6 +466,18 @@ export default function ManhuaScriptWorkbench({
             <Play className="h-3.5 w-3.5" />
             {factoryBusy ? "生成中…" : `生成片段 ${String(activeShotNo).padStart(2, "0")}`}
           </button>
+          {onGenerateMissingFragments && missingFragmentIndexes.length > 0 ? (
+            <button
+              type="button"
+              data-manhua-action="generate-missing-fragments"
+              disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
+              onClick={() => onGenerateMissingFragments(missingFragmentIndexes)}
+              className="rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/75 hover:bg-white/[0.08] disabled:opacity-45"
+              title={`依次生成缺成片/质检失败的片段：${missingFragmentIndexes.map((n) => String(n).padStart(2, "0")).join("、")}`}
+            >
+              生成缺片 {missingFragmentIndexes.length}
+            </button>
+          ) : null}
           {onRerunKeyartsFromReverse ? (
             <button
               type="button"
@@ -779,9 +844,11 @@ export default function ManhuaScriptWorkbench({
               : "flex min-h-0 flex-1 overflow-hidden"
         }
       >
-        {/* 左：本集资产 */}
+        {/* 左：本片段挂载（随胶片切换）+ 本集其他 */}
         <aside
           data-manhua-column="assets"
+          data-manhua-shot-mount={shotMount.mode}
+          data-manhua-shot-mount-cast={String(mountedCastCount)}
           className={
             immersive
               ? "min-h-0 overflow-y-auto border-r border-white/10 p-2.5"
@@ -789,59 +856,97 @@ export default function ManhuaScriptWorkbench({
           }
         >
           <div className="mb-2 flex items-center justify-between">
-            <div className="text-[12px] font-semibold text-white/85">本集资产</div>
+            <div className="min-w-0">
+              <div className="text-[12px] font-semibold text-white/85">
+                本片段挂载
+                <span className="ml-1 text-[10px] font-normal text-white/40">
+                  {String(activeShotNo).padStart(2, "0")}
+                </span>
+              </div>
+              <div className="mt-0.5 text-[9px] text-white/35">
+                {shotMount.mode === "matched" ? "按分镜文案点名" : "默认本集资产"}
+                {mountGap > 0 ? ` · 还缺 ${mountGap} 人同框` : ""}
+              </div>
+            </div>
             <button
               type="button"
               onClick={() => onOpenCharacterCard?.()}
-              className="text-[10px] text-cyan-200/80 underline-offset-2 hover:underline"
+              className="shrink-0 text-[10px] text-cyan-200/80 underline-offset-2 hover:underline"
             >
               换造型
             </button>
           </div>
 
           <div className="text-[10px] font-semibold tracking-wide text-white/40">
-            角色 · {(characters.length || 0) + (archetypes.length || 0)}
+            角色 · 上场 {mountedCastCount}/
+            {(characters.length || 0) + (archetypes.length || 0)}
           </div>
           <div className="mt-1.5 grid grid-cols-3 gap-1.5">
-            {characters.map((c) => (
-              <button
-                key={c!.id}
-                type="button"
-                onClick={() => onOpenCharacterCard?.()}
-                className="overflow-hidden rounded-lg border border-white/12 bg-black/40 text-left"
-              >
-                <img
-                  src={getManhuaCharacterPreviewUrl(c!.id)}
-                  alt=""
-                  className="aspect-square w-full object-cover object-top"
-                  loading="lazy"
-                />
-                <div className="truncate px-1 py-0.5 text-[9px] text-white/80">{c!.nameZh}</div>
-              </button>
-            ))}
-            {archetypes.map((a) => (
-              <button
-                key={a!.id}
-                type="button"
-                onClick={() => onOpenCharacterCard?.()}
-                className="overflow-hidden rounded-lg border border-amber-400/35 bg-gradient-to-b from-amber-500/20 to-black/50 text-left"
-                title={`${a!.nameZh} · 定妆图未入库，造型按文案硬锁`}
-              >
-                <div className="flex aspect-square w-full flex-col justify-between p-1.5">
-                  <span className="rounded bg-black/45 px-1 py-0.5 text-[8px] text-amber-100/80">
-                    古风·文案造型
-                  </span>
-                  <div>
-                    <div className="line-clamp-2 text-[10px] font-semibold leading-tight text-amber-50">
-                      {a!.nameZh}
-                    </div>
-                    <div className="mt-0.5 line-clamp-2 text-[8px] leading-snug text-white/45">
-                      {(a!.wardrobeLayers || []).slice(0, 2).join("·") || "古装层次"}
+            {characters.map((c) => {
+              const onShot = mountedCharacterIdSet.has(c!.id);
+              return (
+                <button
+                  key={c!.id}
+                  type="button"
+                  data-manhua-mount-char={c!.id}
+                  data-manhua-mount-on={onShot ? "true" : "false"}
+                  onClick={() => onOpenCharacterCard?.()}
+                  className={`overflow-hidden rounded-lg border text-left ${
+                    onShot
+                      ? "border-cyan-400/55 bg-cyan-500/10 ring-1 ring-cyan-400/30"
+                      : "border-white/10 bg-black/40 opacity-45"
+                  }`}
+                  title={onShot ? "本片段上场" : "本集其他·本片段未挂"}
+                >
+                  <img
+                    src={getManhuaCharacterPreviewUrl(c!.id)}
+                    alt=""
+                    className="aspect-square w-full object-cover object-top"
+                    loading="lazy"
+                  />
+                  <div className="truncate px-1 py-0.5 text-[9px] text-white/80">
+                    {onShot ? "● " : ""}
+                    {c!.nameZh}
+                  </div>
+                </button>
+              );
+            })}
+            {archetypes.map((a) => {
+              const onShot = mountedArchetypeIdSet.has(a!.id);
+              return (
+                <button
+                  key={a!.id}
+                  type="button"
+                  data-manhua-mount-arch={a!.id}
+                  data-manhua-mount-on={onShot ? "true" : "false"}
+                  onClick={() => onOpenCharacterCard?.()}
+                  className={`overflow-hidden rounded-lg border text-left ${
+                    onShot
+                      ? "border-amber-400/55 bg-gradient-to-b from-amber-500/25 to-black/50 ring-1 ring-amber-400/30"
+                      : "border-amber-400/20 bg-gradient-to-b from-amber-500/10 to-black/50 opacity-45"
+                  }`}
+                  title={
+                    onShot
+                      ? `${a!.nameZh} · 本片段上场`
+                      : `${a!.nameZh} · 本集其他`
+                  }
+                >
+                  <div className="flex aspect-square w-full flex-col justify-between p-1.5">
+                    <span className="rounded bg-black/45 px-1 py-0.5 text-[8px] text-amber-100/80">
+                      {onShot ? "上场" : "本集"}
+                    </span>
+                    <div>
+                      <div className="line-clamp-2 text-[10px] font-semibold leading-tight text-amber-50">
+                        {a!.nameZh}
+                      </div>
+                      <div className="mt-0.5 line-clamp-2 text-[8px] leading-snug text-white/45">
+                        {(a!.wardrobeLayers || []).slice(0, 2).join("·") || "古装层次"}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
             {!characters.length && !archetypes.length ? (
               <button
                 type="button"
@@ -895,29 +1000,38 @@ export default function ManhuaScriptWorkbench({
           </div>
 
           <div className="mt-3 text-[10px] font-semibold tracking-wide text-white/40">
-            道具 · {props.length}
+            道具 · 上场 {shotMount.propIds.length}/{props.length}
           </div>
           <div className="mt-1.5 grid grid-cols-3 gap-1.5">
-            {props.map((p) => (
-              <button
-                key={p!.id}
-                type="button"
-                onClick={() => onOpenAssetWall?.()}
-                className="overflow-hidden rounded-md border border-white/12 bg-black/40 text-left"
-                title={p!.nameZh}
-              >
-                <img
-                  src={getManhuaDemoAssetPublicUrl(p!.id)}
-                  alt=""
-                  className="aspect-square w-full object-cover"
-                  loading="lazy"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.opacity = "0.2";
-                  }}
-                />
-                <div className="truncate px-1 py-0.5 text-[9px] text-white/65">{p!.nameZh}</div>
-              </button>
-            ))}
+            {props.map((p) => {
+              const onShot = mountedPropIdSet.has(p!.id);
+              return (
+                <button
+                  key={p!.id}
+                  type="button"
+                  data-manhua-mount-prop={p!.id}
+                  data-manhua-mount-on={onShot ? "true" : "false"}
+                  onClick={() => onOpenAssetWall?.()}
+                  className={`overflow-hidden rounded-md border text-left ${
+                    onShot
+                      ? "border-cyan-400/45 bg-black/40 ring-1 ring-cyan-400/25"
+                      : "border-white/10 bg-black/40 opacity-45"
+                  }`}
+                  title={onShot ? `${p!.nameZh} · 本片段` : `${p!.nameZh} · 本集其他`}
+                >
+                  <img
+                    src={getManhuaDemoAssetPublicUrl(p!.id)}
+                    alt=""
+                    className="aspect-square w-full object-cover"
+                    loading="lazy"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.opacity = "0.2";
+                    }}
+                  />
+                  <div className="truncate px-1 py-0.5 text-[9px] text-white/65">{p!.nameZh}</div>
+                </button>
+              );
+            })}
             {!props.length ? (
               <button
                 type="button"
@@ -1307,7 +1421,16 @@ export default function ManhuaScriptWorkbench({
         className="shrink-0 border-t border-white/10 bg-[#080b12] px-2.5 py-2 md:px-3"
       >
         <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-          <div className="text-[11px] font-semibold text-white/75">片段</div>
+          <div className="text-[11px] font-semibold text-white/75">
+            片段
+            {missingFragmentIndexes.length ? (
+              <span className="ml-1.5 text-[9px] font-normal text-amber-100/70">
+                缺 {missingFragmentIndexes.length} 片
+              </span>
+            ) : (
+              <span className="ml-1.5 text-[9px] font-normal text-emerald-100/60">齐</span>
+            )}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[9px] text-white/35">
               已出静帧 {episodeKeyarts.filter((b) => mediaUrl(b)).length}/
@@ -1360,17 +1483,10 @@ export default function ManhuaScriptWorkbench({
                     : "待出";
               const on = i === Math.min(shotIndex, Math.max(shots.length, 1) - 1);
               const dur = shot.durationSec || 5;
+              const needsRetry = !clipPassed;
               return (
-                <button
+                <div
                   key={`shot-${shot.index}`}
-                  type="button"
-                  data-manhua-filmstrip-shot={shot.index}
-                  data-manhua-active={on ? "true" : "false"}
-                  data-manhua-keyart-url={thumb || ""}
-                  data-manhua-fragment-status={
-                    clipPassed ? "clip" : clipFailed ? "qc-failed" : thumb ? "keyart" : "idle"
-                  }
-                  onClick={() => setShotIndex(i)}
                   className={`relative w-[100px] shrink-0 overflow-hidden rounded-md border text-left ${
                     on
                       ? "border-white/70 ring-1 ring-white/40"
@@ -1381,36 +1497,68 @@ export default function ManhuaScriptWorkbench({
                           : "border-white/12"
                   }`}
                 >
-                  <div className="aspect-video bg-black/70">
-                    {thumb ? (
-                      <img src={thumb} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full flex-col items-center justify-center gap-0.5 text-white/30">
-                        <span className="text-[11px] font-semibold">
-                          {String(shot.index).padStart(2, "0")}
-                        </span>
-                        <span className="text-[8px]">待出</span>
-                      </div>
-                    )}
-                    <span
-                      className={`absolute left-1 top-1 rounded px-1 py-0.5 text-[8px] font-semibold ${
-                        clipPassed
-                          ? "bg-emerald-500/90 text-white"
-                          : clipFailed
-                            ? "bg-rose-500/90 text-white"
-                            : thumb
-                              ? "bg-amber-500/85 text-black"
-                              : "bg-black/65 text-white/55"
-                      }`}
+                  <button
+                    type="button"
+                    data-manhua-filmstrip-shot={shot.index}
+                    data-manhua-active={on ? "true" : "false"}
+                    data-manhua-keyart-url={thumb || ""}
+                    data-manhua-fragment-status={
+                      clipPassed ? "clip" : clipFailed ? "qc-failed" : thumb ? "keyart" : "idle"
+                    }
+                    onClick={() => setShotIndex(i)}
+                    className="block w-full text-left"
+                  >
+                    <div className="aspect-video bg-black/70">
+                      {thumb ? (
+                        <img src={thumb} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full flex-col items-center justify-center gap-0.5 text-white/30">
+                          <span className="text-[11px] font-semibold">
+                            {String(shot.index).padStart(2, "0")}
+                          </span>
+                          <span className="text-[8px]">待出</span>
+                        </div>
+                      )}
+                      <span
+                        className={`absolute left-1 top-1 rounded px-1 py-0.5 text-[8px] font-semibold ${
+                          clipPassed
+                            ? "bg-emerald-500/90 text-white"
+                            : clipFailed
+                              ? "bg-rose-500/90 text-white"
+                              : thumb
+                                ? "bg-amber-500/85 text-black"
+                                : "bg-black/65 text-white/55"
+                        }`}
+                      >
+                        {statusLabel}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between px-1 py-0.5 text-[9px] text-white/65">
+                      <span>片段 {String(shot.index).padStart(2, "0")}</span>
+                      <span className="text-white/40">{dur.toFixed(1)}s</span>
+                    </div>
+                  </button>
+                  {needsRetry && onGenerateFragment ? (
+                    <button
+                      type="button"
+                      data-manhua-action="retry-fragment"
+                      data-manhua-retry-shot={shot.index}
+                      disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
+                      onClick={() => {
+                        setShotIndex(i);
+                        onGenerateFragment({
+                          shotIndex: shot.index,
+                          keyartId: shotKey?.id,
+                          clipId: shotClip?.id,
+                        });
+                      }}
+                      className="w-full border-t border-white/10 bg-white/[0.04] py-0.5 text-[8px] font-semibold text-cyan-100/80 hover:bg-cyan-500/15 disabled:opacity-35"
+                      title={`只重跑片段 ${String(shot.index).padStart(2, "0")}`}
                     >
-                      {statusLabel}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between px-1 py-0.5 text-[9px] text-white/65">
-                    <span>片段 {String(shot.index).padStart(2, "0")}</span>
-                    <span className="text-white/40">{dur.toFixed(1)}s</span>
-                  </div>
-                </button>
+                      重跑此片
+                    </button>
+                  ) : null}
+                </div>
               );
             },
           )}

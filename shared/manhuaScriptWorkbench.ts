@@ -237,3 +237,80 @@ export function resolveKeyartShotIndex(blockId: string, prompt?: string | null):
 
 /** 片段成片 id 与静帧共用镜号解析 */
 export const resolveClipShotIndex = resolveKeyartShotIndex;
+
+export type WorkbenchShotAssetMount = {
+  /** matched=分镜文案点名；default=回落本集全套 */
+  mode: "matched" | "default";
+  characterIds: string[];
+  ancientArchetypeIds: string[];
+  propIds: string[];
+  expectedCastCount: number;
+};
+
+/**
+ * 按当前片段文案推断左栏「本片段挂载」：点名角色/道具优先；点不到则回落本集资产。
+ */
+export function resolveWorkbenchShotAssetMount(input: {
+  actionZh?: string | null;
+  cameraZh?: string | null;
+  keyartPrompt?: string | null;
+  characters: Array<{ id: string; nameZh: string }>;
+  archetypes?: Array<{ id: string; nameZh: string }>;
+  props?: Array<{ id: string; nameZh: string }>;
+}): WorkbenchShotAssetMount {
+  const hay = [
+    String(input.actionZh || ""),
+    String(input.cameraZh || ""),
+    String(input.keyartPrompt || ""),
+  ]
+    .join("\n")
+    .trim();
+  const expectedCastCount = inferWorkbenchShotCastCount(input.actionZh || "");
+  const characters = input.characters || [];
+  const archetypes = input.archetypes || [];
+  const props = input.props || [];
+
+  const hitChar = characters
+    .filter((c) => c.nameZh && c.nameZh.length >= 2 && hay.includes(c.nameZh))
+    .map((c) => c.id);
+  const hitArch = archetypes
+    .filter((a) => a.nameZh && a.nameZh.length >= 2 && hay.includes(a.nameZh))
+    .map((a) => a.id);
+  const hitProp = props
+    .filter((p) => p.nameZh && p.nameZh.length >= 2 && hay.includes(p.nameZh))
+    .map((p) => p.id);
+
+  // 角色名未点到时，用 女主/男主 等角色词做软匹配（按库序取前 N）
+  let softChar = hitChar;
+  let softArch = hitArch;
+  if (!softChar.length && !softArch.length && hay) {
+    const want = Math.max(1, expectedCastCount);
+    if (/女主|男主|男女|双人|两人|对视|对峙/.test(hay)) {
+      softChar = characters.slice(0, Math.min(want, characters.length)).map((c) => c.id);
+      if (softChar.length < want) {
+        softArch = archetypes
+          .slice(0, Math.min(want - softChar.length, archetypes.length))
+          .map((a) => a.id);
+      }
+    }
+  }
+
+  const matched = softChar.length + softArch.length > 0 || hitProp.length > 0;
+  if (!matched) {
+    return {
+      mode: "default",
+      characterIds: characters.map((c) => c.id),
+      ancientArchetypeIds: archetypes.map((a) => a.id),
+      propIds: props.map((p) => p.id),
+      expectedCastCount,
+    };
+  }
+
+  return {
+    mode: "matched",
+    characterIds: softChar.length ? softChar : characters.map((c) => c.id),
+    ancientArchetypeIds: softArch,
+    propIds: hitProp.length ? hitProp : props.map((p) => p.id),
+    expectedCastCount,
+  };
+}
