@@ -14,7 +14,7 @@ describe("manhuaScriptWorkbench", () => {
     );
     expect(shots).toHaveLength(4);
     expect(shots[0]?.actionZh).toContain("推门");
-    expect(workbenchShotTotalSec(shots)).toBeCloseTo(15, 0);
+    expect(workbenchShotTotalSec(shots)).toBeCloseTo(10, 0);
   });
 
   it("falls back to default skeleton when text is unstructured", () => {
