@@ -17,6 +17,7 @@ const DEFAULT_CAMERAS = [
 ];
 
 export const MANHUA_SINGLE_CLIP_DURATION_SEC = 10;
+export const MANHUA_SINGLE_CLIP_MAX_SHOTS = 4;
 
 /** 从节拍 / 反推正文拆出多镜；失败则回落为 4 镜骨架（单次合计 10s） */
 export function parseWorkbenchShotsFromText(raw: string | undefined | null): ManhuaWorkbenchShot[] {
@@ -43,7 +44,7 @@ export function parseWorkbenchShotsFromText(raw: string | undefined | null): Man
     }
   }
 
-  const unique = Array.from(new Set(numbered)).slice(0, 8);
+  const unique = Array.from(new Set(numbered)).slice(0, MANHUA_SINGLE_CLIP_MAX_SHOTS);
   if (unique.length < 2) return defaultWorkbenchShots(text.slice(0, 180));
 
   const durations = splitDurations(MANHUA_SINGLE_CLIP_DURATION_SEC, unique.length);
