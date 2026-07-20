@@ -212,7 +212,7 @@ const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 
 type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview";
 
-/** 2×4 分镜／小红书八格 **英文化**：默认 **GPT 5.4**（Gemini 3.5 Flash 兜底）；竖版封面单帧仍走 GPT 5.4。 */
+/** @deprecated 2×4 / 封面已中文直送，不再英文化；保留类型仅兼容旧入参。 */
 const COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR: PlatformImagePromptTranslator = "gpt54";
 
 /** 管理员／监管：单帧封面主生图是否走 Vertex Nano Banana 2（官方 API） */
@@ -220,7 +220,7 @@ const PLATFORM_COVER_NB2_LS_KEY = "mvstudiopro.platform.coverNanoBanana2.v1";
 /** 旧键：曾标为 Pro，行为已统一为 NB2，读取时迁移 */
 const PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY = "mvstudiopro.platform.coverNanoBananaPro.v1";
 
-/** 全用户：2×4 / 八格 **出图** 引擎（英文化不变；与封面单帧 NB2 开关独立） */
+/** 全用户：2×4 / 八格 **出图** 引擎选择（现统一 OpenAI/OpenRouter；无 NB2） */
 const PLATFORM_COMPOSITE_2X4_ENGINE_LS_KEY = "mvstudiopro.platform.composite2x4Engine.v1";
 type PlatformComposite2x4ImageEngine = "gpt_image2" | "nano_banana_2";
 
@@ -524,13 +524,13 @@ type ClientJobPollTrace = {
   terminalStatus?: string;
   /** 进行中：仅保留一行「当前步骤」，不把整段 imageGenFlowLog / 轮询流水刷进面板 */
   currentStep?: string;
-  /** 英文化 / 模型翻译阶段轮询次数（由 imageGenFlowLog 阶段推断） */
+  /** 中文直送 / 指令组装阶段轮询次数（由 imageGenFlowLog 阶段推断；字段名历史遗留） */
   translationPollCount?: number;
   /** 封面·分镜像素生成阶段轮询次数 */
   imageGenPollCount?: number;
   translationStep?: string;
   imageGenStep?: string;
-  /** 最近一次英文化完成统计（来自 imageGenFlowLog `[英文化·完成]`） */
+  /** 最近一次中文直送/旧英文化完成统计（来自 flowLog） */
   translationComplete?: TranslationCompleteStats;
 };
 
@@ -577,13 +577,14 @@ function formatTranslationCompleteStats(stats: TranslationCompleteStats): string
 }
 
 function isTranslationFlowLine(line: string): boolean {
-  return /英文化|GPT54|GPT 5\.4|Gemini.*Flash|翻译|Vertex.*Flash|extractChineseVisualBrief|\[GPT54·翻译\]|\[英文化·完成\]|骨架·中文视觉/i.test(
+  // B 栏：中文直送 / staging / 步骤1（含旧 job 的英文化行）
+  return /中文直送|chineseStaging|\[步骤1·中文直送\]|\[步骤1b\]|\[2×4·中文|buildCompositeSheetDirectChineseBody|英文化|GPT54|GPT 5\.4|extractChineseVisualBrief|\[英文化·完成\]|骨架·中文视觉/i.test(
     line,
   );
 }
 
 function isImageGenFlowLine(line: string): boolean {
-  return /GPT-IMAGE|生图|出图|封面·像素|2×4·|fal|OhMyGPT|EvoLink|Nano Banana|FAL·|像素\]|compositeImageUrl|Vertex.*image|gpt_image2/i.test(
+  return /GPT-IMAGE|生图|出图|封面·像素|2×4·步骤2|2×4·主路径|OpenAI\/OpenRouter|单帧·OpenAI|单帧·OpenRouter|fal|OhMyGPT|EvoLink|Nano Banana|FAL·|像素\]|compositeImageUrl|Vertex.*image|gpt_image2/i.test(
     line,
   );
 }
@@ -1572,8 +1573,8 @@ function buildCompositeImageGenPendingLines(input: {
   const ts = new Date().toISOString();
   const is3x4 = input.gridVariant === "3x4";
   const trLine = is3x4
-    ? "3×4 十二格：分段横排生成后拼接（多数 3～5 分钟内完成）。"
-    : "2×4／八格英文化：自动翻译与版式适配（多数 1～3 分钟内完成）。";
+    ? "3×4 十二格：中文直送主体 + 分段横排生成后拼接（多数 3～5 分钟内完成）。"
+    : "2×4／八格：中文直送主体 + OpenAI/OpenRouter 出图（无英文化、无 NB2）。";
   const kindLabel =
     input.kind === "xiaohongshu_dual_note"
       ? is3x4
@@ -1590,7 +1591,7 @@ function buildCompositeImageGenPendingLines(input: {
   return [
     `${ts}  [客户端] 宽幅合成已发起 · ${kindLabel}`,
     `${ts}  [客户端] sceneId=${input.sceneId} · title=${input.title.slice(0, 72)}`,
-    `${ts}  [客户端] 翻译引擎：${trLine}`,
+    `${ts}  [客户端] 出图路径：${trLine}`,
     ...(pid.length >= 8
       ? [
           `${ts}  [实时进度] progressJobId=${pid} · 约每 0.85s 拉取 GET 计数；细节不写进「Fly Jobs」面板`,
@@ -1606,24 +1607,21 @@ function buildCompositeImageGenPendingLines(input: {
 function deriveCompositeUxPhaseHint(snapshotLines: readonly string[], liveServerTail = ""): string {
   const tail = `${liveServerTail}\n${snapshotLines.length ? snapshotLines.slice(-48).join("\n") : ""}`;
   if (/整链(?:重试|[\s\S]*?\d+\/\d+\s*次失败)/i.test(tail) || /\b第\s*\d+\/\d+\s*次失败/.test(tail)) {
-    return "整链重试：重新英文化 + 生图，可能仍需数分钟…";
+    return "整链重试：重新中文直送 + 生图，可能仍需数分钟…";
   }
-  if (/\[2×4·NB2主路径]|Nano Banana|\[2×4·步骤3\] Vertex/.test(tail)) {
-    return "绘制中 · 宽幅编导分镜生成（偶需数分钟）…";
+  if (/\[GPT-IMAGE-2|OpenAI\/OpenRouter|单帧·OpenAI|单帧·OpenRouter/.test(tail)) {
+    return "绘制中 · 高清出图（单尺寸偶需 3～5 分钟）…";
   }
-  if (/\[GPT-IMAGE-2\]|GPT-IMAGE-2/.test(tail)) {
-    return "绘制中 · 高清封面生成（单尺寸偶需 3～5 分钟）…";
-  }
-  if (/\[2×4·步骤2|\[步骤2\]/.test(tail)) {
+  if (/\[2×4·步骤2|\[步骤2\]|\[2×4·主路径\]/.test(tail)) {
     return "准备生图（像素锁已定）…";
   }
-  if (/PROMPT_CONDENSE|\[Prompt 提炼\]/.test(tail)) {
-    return "精炼英文 prompt …";
+  if (/\[步骤1·中文直送\]|\[2×4·中文直送\]|\[chineseStaging|中文直送/.test(tail)) {
+    return "中文直送 · 指令组装中…";
   }
   if (/GPT54·英文化|骨架·中文视觉|extractChineseVisualBrief|\[GPT54·翻译\]/.test(tail)) {
-    return "英文化中（骨架抽取，多数 1～3 分钟内）…";
+    return "旧任务日志：曾走英文化（当前管线已改为中文直送）…";
   }
-  return "英文化与绘图合计大约 3～5 分钟，请勿中途刷新 ";
+  return "中文直送与绘图合计大约 3～5 分钟，请勿中途刷新 ";
 }
 
 /** Stage 2 等长任务：用 shimmer / 光斑 / 节拍点转移注意力（不向用户展示技术细节） */
@@ -3747,14 +3745,14 @@ export default function PlatformPage() {
       <div className="rounded-2xl border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.05)] p-4 space-y-4">
         <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#49e6ff]">Fly Jobs · 轮询</div>
         <p className="text-[11px] leading-relaxed text-[#d7d0ef]">
-          英文化与生图分开展示；每行均含 <span className="text-gray-300">jobId</span>（可复制到 Fly 日志或{" "}
+          中文直送与生图分开展示；每行均含 <span className="text-gray-300">jobId</span>（可复制到 Fly 日志或{" "}
           <code className="text-gray-400">GET /api/jobs/&lt;id&gt;</code>）
         </p>
 
         {imageTraces.length > 0 ? (
           <div className="rounded-xl border border-[#c4b5fd]/25 bg-[rgba(99,102,241,0.08)] p-3">
             <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#c4b5fd]">
-              英文化 · 版式翻译
+              中文直送 · 指令组装
             </div>
             <p className="mt-1 text-[11px] text-[#d7d0ef]">
               合计轮询{" "}
@@ -3763,7 +3761,7 @@ export default function PlatformPage() {
             {translationStatsRows.length > 0 ? (
               <div className="mt-2 space-y-1.5 rounded-lg border border-[#c4b5fd]/20 bg-black/20 px-2.5 py-2">
                 <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-[#e9d5ff]">
-                  翻译完成统计
+                  指令组装统计（旧任务可能仍显示英文化）
                 </div>
                 {translationStatsRows.map((row) => (
                   <p key={row} className="break-words text-[10px] leading-relaxed text-[#f5f3ff]">
@@ -10066,13 +10064,14 @@ export default function PlatformPage() {
                 <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <div className="text-sm font-semibold text-white">封面英文化</div>
+                      <div className="text-sm font-semibold text-white">封面 / 分镜 · 中文直送</div>
                       <p className="mt-1 text-xs leading-relaxed text-white/55">
-                        竖版封面会先完成英文版式适配，再进入高清出图（多数 1～3 分钟内完成）。
+                        封面与编导分镜均为中文指令直送像素链（OpenAI → OpenRouter），不再英文化，也不降级
+                        NB2。
                       </p>
                     </div>
                     <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
-                      封面英文化
+                      中文直送
                     </div>
                   </div>
                 </div>
@@ -10096,7 +10095,7 @@ export default function PlatformPage() {
 
               {canConfigureStage2CopyEngine && debugMode ? (
                 <div className="rounded-[26px] border border-amber-500/20 bg-[rgba(120,53,15,0.08)] px-5 py-3 text-xs text-white/50">
-                  监管提示：文案与深度追问已固定平台文案引擎；封面与 2×4 英文化走封面翻译引擎。
+                  监管提示：文案与深度追问已固定平台文案引擎；封面与 2×4 为中文直送 + OpenAI/OpenRouter 出图。
                 </div>
               ) : null}
 
@@ -11708,7 +11707,7 @@ export default function PlatformPage() {
                         pendingCompositeSheet?.kind === compositeKind;
                       const compositePhaseHint =
                         compositePendingUxHints[`${item.id}::${compositeKind}`] ??
-                        "英文化与出图 · 合计常需 3～5 分钟，请勿中途刷新";
+                        "中文直送与出图 · 合计常需 3～5 分钟，请勿中途刷新";
                       const bundleCost = platformCoverCompositeBundleCreditsForFormatGrid(item.format, is3x4);
                       const bundleRetailSum =
                         CREDIT_COSTS.platformTopicFrameGraphic + compositeCost;

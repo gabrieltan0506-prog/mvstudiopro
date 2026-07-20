@@ -1,31 +1,39 @@
 /**
- * 選題單幀封面管線：將 `imageGenFlowLog` 拆成 **DR-Pro（0.5）**、**英文化**、**生圖（GPT-IMAGE-2 / NB2 / 兜底）**，
- * 供 Platform Debug 對照全鏈路（避免生圖階段只在摺疊「其餘」裡以為卡住）。
+ * 选题单帧封面 / 2×4 管线：将 `imageGenFlowLog` 拆成
+ * **DR-Pro（0.5）**、**中文直送（指令组装）**、**生图（OpenAI/OpenRouter GPT-IMAGE-2）**，
+ * 供 Platform Debug 对照全链路。
  */
 
 export type TopicCoverPipelinePartitionHints = {
-  /** 服務端寫入的 `[管线·阶段顺序]`（有則表示後端已打階段分界標記） */
+  /** 服务端写入的 `[管线·阶段顺序]`（有则表示后端已打阶段分界标记） */
   phaseOrderLine?: string;
-  /** 曾出現 Interactions create / poll（代表至少打到 DR Pro API） */
+  /** 曾出现 Interactions create / poll（代表至少打到 DR Pro API） */
   drProApiActivity: boolean;
-  /** 簡報錨定通過並合併（`完成 · 简报長`） */
+  /** 简报锚定通过并合并（`完成 · 简报長`） */
   drProBriefMerged: boolean;
-  /** 略過 DR（金鑰未設、create 失敗、錨定失敗等會寫入 0.5 行） */
+  /** 略过 DR（密钥未设、create 失败、锚定失败等会写入 0.5 行） */
   drProSkippedOrEmpty: boolean;
-  /** GPT 5.4 / Flash 翻譯層有日誌 */
-  gpt54LayerActivity: boolean;
-  /** 步驟1 英文化已完成字樣 */
-  step1TranslationDone: boolean;
-  /** 步驟2/3 生圖子日誌（GPT-IMAGE-2、NB2、fal 等） */
+  /** 中文直送 / staging / 步骤1 指令组装有日志 */
+  chineseDirectActivity: boolean;
+  /** 步骤1 中文直送主体已就绪 */
+  step1ChineseDirectDone: boolean;
+  /** 步骤2 生图子日志（OpenAI / OpenRouter GPT-IMAGE-2） */
   imageGenLayerActivity: boolean;
-  /** 單條任務已成功取得 URL（服務端 ✓ 行） */
+  /** 单条任务已成功取得 URL（服务端 ✓ 行） */
   imageGenSuccess: boolean;
+  /** @deprecated 兼容旧名；等同 chineseDirectActivity */
+  gpt54LayerActivity: boolean;
+  /** @deprecated 兼容旧名；等同 step1ChineseDirectDone */
+  step1TranslationDone: boolean;
 };
 
 export type TopicCoverPipelinePartition = {
   drProLines: string[];
+  /** 中文直送 · 指令组装（不再含 GPT 5.4 英文化） */
+  chineseDirectLines: string[];
+  /** @deprecated 兼容旧名；等同 chineseDirectLines */
   gpt54AndTranslationLines: string[];
-  /** GPT-IMAGE-2 / Vertex NB2 / fal / 兜底等 */
+  /** OpenAI / OpenRouter GPT-IMAGE-2（无 NB2 降级） */
   imageGenLines: string[];
   otherLines: string[];
   hints: TopicCoverPipelinePartitionHints;
@@ -39,29 +47,33 @@ function lineMatchesDrPro(s: string): boolean {
   );
 }
 
-function lineMatchesGpt54Layer(s: string): boolean {
+/** B 栏：中文直送 / staging / 步骤1 主体组装（含历史英文化行，便于旧 job 对照） */
+function lineMatchesChineseDirectLayer(s: string): boolean {
   return (
-    /\[GPT54|GPT54·|\[步骤1\]|\[步骤1b\]|Vertex·Flash|骨架·中文视觉|extractChineseVisualBrief|\[语境\]|调用 GPT 5\.4|GPT 5\.4（OpenAI）|\[\s*统计\s*\]\s*translated=/.test(
+    /\[步骤1·中文直送\]|\[步骤1b\]|\[chineseStaging|中文直送|无 GPT 5\.4|无智能提炼|确定性语境聚焦/.test(s) ||
+    /\[2×4·中文直送\]|\[2×4·中文骨架\]|\[2×4·步骤1|buildCompositeSheetDirectChineseBody|宽幅合成.*中文/.test(s) ||
+    /\[步骤1\] 完成 · 英文 prompt|\[GPT54|GPT54·|Vertex·Flash|骨架·中文视觉|extractChineseVisualBrief|\[英文化·完成\]|\[套裝·併翻\]|translatePlatformComposite/.test(
       s,
-    ) ||
-    /\[2×4·步骤1|2×4·步骤1b|translatePlatformComposite|\[GPT54·英文化\]|\[套裝·併翻\]/.test(s)
+    )
   );
 }
 
-/** 生圖與其前置銜接（勿與 Vertex·Flash 英文化混淆） */
+/** C 栏：生图像素（勿与中文直送混淆） */
 function lineMatchesImageGenLayer(s: string): boolean {
   return (
-    /\[步骤2\]|\[步骤2-NB2\]|\[封面·像素\]|\[Imagen·封面\]|\[步骤3[ab]?\]|\[步骤1\/2\]/.test(s) ||
+    /\[步骤2\]|\[步骤2·换人\]|\[封面·像素\]|\[Imagen·封面\]|\[步骤3[ab]?\]|\[步骤1\/2\]/.test(s) ||
     /\[步骤3/.test(s) ||
-    /\[GPT-IMAGE-2\]|FAL·GPT-IMAGE-2|OhMyGPT|像素锁|生图|生圖/.test(s) ||
-    /Nano Banana|\bNB2\b|Vertex Nano|nbpImage|platform_topic_reference/.test(s) ||
-    /\[2×4·步骤(2|2b|3)\b|宽?幅.*GPT-IMAGE|2×4.*提炼完成/.test(s)
+    /\[GPT-IMAGE-2|GPT-IMAGE-2·OpenAI|GPT-IMAGE-2·OpenRouter|单帧·OpenAI|单帧·OpenRouter|像素锁|生图|生圖/.test(
+      s,
+    ) ||
+    /\[2×4·步骤2|\[2×4·主路径\]|\[2×4·步骤2a|宽?幅.*GPT-IMAGE|OpenAI\/OpenRouter/.test(s) ||
+    /Nano Banana|\bNB2\b|Vertex Nano|OhMyGPT|FAL·|EvoLink.*GPT-IMAGE|platform_topic_reference/.test(s)
   );
 }
 
 export function partitionTopicCoverPipelineFlowLog(lines: string[]): TopicCoverPipelinePartition {
   const drProLines: string[] = [];
-  const gpt54AndTranslationLines: string[] = [];
+  const chineseDirectLines: string[] = [];
   const imageGenLines: string[] = [];
   const otherLines: string[] = [];
   let phaseOrderLine: string | undefined;
@@ -77,8 +89,8 @@ export function partitionTopicCoverPipelineFlowLog(lines: string[]): TopicCoverP
       drProLines.push(s);
       continue;
     }
-    if (lineMatchesGpt54Layer(s)) {
-      gpt54AndTranslationLines.push(s);
+    if (lineMatchesChineseDirectLayer(s)) {
+      chineseDirectLines.push(s);
       continue;
     }
     if (lineMatchesImageGenLayer(s)) {
@@ -89,8 +101,14 @@ export function partitionTopicCoverPipelineFlowLog(lines: string[]): TopicCoverP
   }
 
   const joinedDr = drProLines.join("\n");
+  const joinedDirect = chineseDirectLines.join("\n");
   const joinedImg = imageGenLines.join("\n");
   const drProBriefMerged = /完成 · 简报長=/.test(joinedDr);
+  const chineseDirectActivity = chineseDirectLines.length > 0;
+  const step1ChineseDirectDone =
+    /\[步骤1·中文直送\]|\[步骤1b\]|\[2×4·步骤1·完成\]|\[2×4·步骤1·中文直送\]|主体就绪|主体直接进封面像素/.test(
+      joinedDirect,
+    );
   const hints: TopicCoverPipelinePartitionHints = {
     phaseOrderLine,
     drProApiActivity: /interaction=|進入輪詢|polling · elapsed|create HTTP/i.test(joinedDr),
@@ -100,12 +118,23 @@ export function partitionTopicCoverPipelineFlowLog(lines: string[]): TopicCoverP
       (/跳過：`GEMINI_API_KEY`/.test(joinedDr) ||
         /create HTTP|正文過短|捨棄：與當前選題/.test(joinedDr) ||
         /\[步骤0\.5\] 异常/.test(joinedDr)),
-    gpt54LayerActivity: gpt54AndTranslationLines.length > 0,
-    step1TranslationDone:
-      /\[步骤1\] 完成 · 英文 prompt|\[2×4·步骤1·完成\]/.test(gpt54AndTranslationLines.join("\n")),
+    chineseDirectActivity,
+    step1ChineseDirectDone,
+    gpt54LayerActivity: chineseDirectActivity,
+    step1TranslationDone: step1ChineseDirectDone,
     imageGenLayerActivity: imageGenLines.length > 0,
-    imageGenSuccess: /✓ 本条结束：已得到 imageUrl|尺寸 \d+x\d+ 成功|\[GPT-IMAGE-2\].*成功/.test(joinedImg),
+    imageGenSuccess:
+      /✓ 本条结束：已得到 imageUrl|尺寸 \d+x\d+ 成功|\[GPT-IMAGE-2[^\n]*成功|OpenAI\/OpenRouter 成功/.test(
+        joinedImg,
+      ),
   };
 
-  return { drProLines, gpt54AndTranslationLines, imageGenLines, otherLines, hints };
+  return {
+    drProLines,
+    chineseDirectLines,
+    gpt54AndTranslationLines: chineseDirectLines,
+    imageGenLines,
+    otherLines,
+    hints,
+  };
 }
