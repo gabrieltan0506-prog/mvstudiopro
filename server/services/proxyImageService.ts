@@ -956,15 +956,14 @@ async function fallbackNanoBanana2FromPrompt(
 }
 
 /**
- * 單幀封面像素：**預設** 走 **GPT‑Image‑2**（`gpt_image2_only`）：**OhMyGPT → EvoLink → fal → NB2**；否則 Vertex Nano Banana 2。
- * 設 `PLATFORM_TOPIC_COVER_PIXEL_ENGINE=gpt_image2` 或請求 `coverPixelEngine=gpt_image2` 強制該鏈。
- * **Nano Banana Pro**：`PLATFORM_TOPIC_COVER_PIXEL_ENGINE=nbp_only` 或請求 `nano_banana_pro`。
+ * 單幀封面像素：OpenAI → OpenRouter GPT‑Image‑2（有参考时 edit；无 NB2 降级）。
+ * 函数名历史遗留；实际不再走 Nano Banana 2。
  */
 export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(options: {
   englishPrompt: string;
   flowLog?: string[];
   coverPixelEngine?: PlatformTopicCoverPixelEngineChoice;
-  /** EvoLink edit 模式参考图（用户上传的人像 URL）；非空则换封面主角。 */
+  /** GPT-Image-2 edit 参考图（用户上传的人像 URL）；非空则换封面主角。 */
   referenceImageUrls?: string[];
   /** 出参：换脸被内容审核拦截时回填 `moderationBlocked`，供上层给用户明确提示。 */
   captureError?: { message?: string; moderationBlocked?: boolean };
@@ -980,10 +979,9 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     .filter(Boolean)
     .slice(0, 16);
 
-  // 封面统一走 GPT-Image-2 像素链：OhMyGPT（主力）→ EvoLink → …；有参考人像时 EvoLink edit → NB2（带脸锁），禁止无参考降级。
   appendImageFlowLog(
     L,
-    `${platformFlowLogTimestamp()}  [封面·像素] GPT-IMAGE-2（9:16）· ${refImageUrls.length ? `edit模式·参考人像=${refImageUrls.length}张 · EvoLink → NB2（带脸锁）` : "顺序 OhMyGPT → EvoLink → fal → NB2"}…`,
+    `${platformFlowLogTimestamp()}  [封面·像素] GPT-IMAGE-2（9:16）· ${refImageUrls.length ? `edit模式·参考人像=${refImageUrls.length}张 · OpenAI/OpenRouter（无 NB2）` : "OpenAI/OpenRouter（无 NB2）"}…`,
   );
   return generateGptImage2FromRawEnglishPrompt({
     englishPrompt: raw,
@@ -1374,9 +1372,9 @@ async function generatePlatformCompositeSheetViaNanoBanana2Primary(options: {
 }
 
 /**
- * 平台页宽幅合成：**同一條** 英文生图 prompt（双语编导 → 可选提炼 → 像素锁）送生图；
- * - **`gpt_image2`（環境與相容預設）**：**OhMyGPT** → **fal** → 可選 **Nano Banana 2** 兜底（受 `PLATFORM_VERTEX_NANO_BANANA2` 約束）。
- * - **`nano_banana_2`**：**僅** Vertex **Nano Banana 2**（16:9·2K），略過 GPT‑Image‑2。
+ * 平台页宽幅合成：中文直送主体 + 英文像素锁送生图。
+ * - **唯一像素路径**：OpenAI → OpenRouter GPT‑Image‑2（有参考时 edit 脸锁，与封面链一致）
+ * - **无** Nano Banana 2 / EvoLink 降级
  */
 export async function generatePlatformCompositeSheetImage(options: {
   kind: PlatformCompositeSheetKind;
@@ -1396,10 +1394,10 @@ export async function generatePlatformCompositeSheetImage(options: {
   forceSkipCompositeDeepResearchPro?: boolean;
   /** IP / 身份錨點，供 DR Pro tenant 與選題錨定 */
   coverPersonaContext?: string;
-  /** 用户上传主人公参考人像 → EvoLink edit，分镜各格保持同一人（古人/历史角色等脚本明示时除外） */
+  /** 用户上传主人公参考人像 → GPT-IMAGE-2 edit 脸锁，分镜各格保持同一人（古人/历史角色等脚本明示时除外） */
   referencePhotoUrl?: string;
   /**
-   * 3×4 续接段等：额外参考图（如上一段横排成品 URL），与 referencePhotoUrl 一并送 EvoLink edit，
+   * 3×4 续接段等：额外参考图（如上一段横排成品 URL），与 referencePhotoUrl 一并送 GPT-IMAGE-2 edit，
    * 用于锁跨段人物脸型、服装阶层、色调与场景材质语言。
    */
   continuityReferenceImageUrls?: string[];
@@ -1447,13 +1445,6 @@ export async function generatePlatformCompositeSheetImage(options: {
     : isKnowledgeCard
       ? "platform_knowledge_card"
       : "platform_xhs_dual";
-  /** 自定义图文笔记：比例 16:9 + resolution=4K + quality=high；封面/分镜维持 2K（传 WxH 或不覆写）。 */
-  const knowledgeCardEvoOpts = {
-    aspectRatio: "16:9" as const,
-    // 勿传 WxH，否则 EvoLink 忽略 resolution
-    quality: "high" as const,
-    resolution: "4K" as const,
-  };
   const referencePhotoUrlEarly = String(options.referencePhotoUrl || "").trim() || undefined;
   const continuityRefsEarly = (options.continuityReferenceImageUrls || [])
     .map((u) => String(u || "").trim())
@@ -1472,7 +1463,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   appendImageFlowLog(
     L,
-    `[2×4·中文骨架] 封面链可选 extractChineseVisualBrief（GPT 5.4 JSON）；2×4 主体由 buildCompositeSheetDirectChineseBody 直送`,
+    `[2×4·中文骨架] 封面/分镜均为中文直送（无 GPT 5.4 英文化/骨架提炼）；2×4 主体由 buildCompositeSheetDirectChineseBody 组装`,
   );
   appendImageFlowLog(
     L,
@@ -1480,11 +1471,9 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   appendImageFlowLog(
     L,
-    `[2×4·流程总览] 分镜图/八格全链路（出图=${
-      compositeImageEngine === "nano_banana_2"
-        ? "**Nano Banana 2 主路径**（略过 GPT‑Image‑2；请求 `compositeImageEngine=gpt_image2` 或部署 `PLATFORM_COMPOSITE_SHEET_ENGINE=gpt_image2` 可恢复）"
-        : "**OhMyGPT→fal GPT‑Image‑2** → 可选 NB2 兜底"
-    }）：① 中文主体（buildCompositeSheetDirectChineseBody）→ ② 英文像素锁 → ③ 送生图`,
+    `[2×4·流程总览] 分镜图/八格全链路（出图=**仅 OpenAI→OpenRouter GPT‑Image‑2**，无 NB2）${
+      compositeImageEngine === "nano_banana_2" ? " · 入参曾请求 nano_banana_2（已忽略，统一走 GPT-IMAGE-2）" : ""
+    }：① 中文主体（buildCompositeSheetDirectChineseBody）→ ② 英文像素锁 → ③ 送生图`,
   );
   const compositeMaxAttempts = Math.min(
     8,
@@ -1492,7 +1481,7 @@ export async function generatePlatformCompositeSheetImage(options: {
   );
   appendImageFlowLog(
     L,
-    `[2×4·整链] 同一请求最多 ${compositeMaxAttempts} 次完整尝试（首次 + ${compositeMaxAttempts - 1} 次重试）；storyboard_sheet_* 与 xiaohongshu_dual_note 共用。每次尝试内含 **中文直送主体** 与 **生图主链/兜底**。可用 PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS 覆寫（1～8）。`,
+    `[2×4·整链] 同一请求最多 ${compositeMaxAttempts} 次完整尝试（首次 + ${compositeMaxAttempts - 1} 次重试）；storyboard_sheet_* 与 xiaohongshu_dual_note 共用。每次尝试内含 **中文直送主体** 与 **OpenAI/OpenRouter 生图**（无 NB2）。可用 PLATFORM_COMPOSITE_SHEET_MAX_ATTEMPTS 覆寫（1～8）。`,
   );
 
   const formatForDr: "短视频" | "图文" = isXhs ? "图文" : "短视频";
@@ -1533,7 +1522,7 @@ export async function generatePlatformCompositeSheetImage(options: {
     }
     appendImageFlowLog(
       L,
-      `[2×4·主人公参考] 已注入视觉锚点 · 参考=${referencePhotoUrl ? "人像/封面" : "无"}${continuityRefs.length ? ` + 连贯图${continuityRefs.length}张` : ""}（强制 GPT-IMAGE-2 edit 模式）`,
+      `[2×4·主人公参考] 已注入视觉锚点 · 参考=${referencePhotoUrl ? "人像/封面" : "无"}${continuityRefs.length ? ` + 连贯图${continuityRefs.length}张` : ""}（强制 OpenAI/OpenRouter GPT-IMAGE-2 edit · 无 NB2）`,
     );
   }
   const drFromAdmin = Boolean(options.enableCompositeDeepResearchPro);
@@ -1694,7 +1683,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         );
       }
 
-      // GPT-Image-2 像素链：OhMyGPT → EvoLink → fal → Nano Banana 2；有参考人像时仍优先 EvoLink edit
+      // 像素链对齐封面：仅 OpenAI → OpenRouter GPT-IMAGE-2（有参考时 edit 脸锁）。失败不降级 NB2 / EvoLink。
       const refImageUrls = [
         ...(referencePhotoUrl ? [referencePhotoUrl] : []),
         ...continuityRefs,
@@ -1703,116 +1692,126 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
       appendImageFlowLog(
         L,
         isKnowledgeCard
-          ? `[图文笔记·步骤2] GPT-IMAGE-2 · 16:9 · quality=high · resolution=4K · gcsSubdir=${subdir} · ${
-              hasSheetRefs ? "换脸·EvoLink edit" : "EvoLink 比例模式直出"
+          ? `[图文笔记·步骤2] GPT-IMAGE-2 · 16:9 · gcsSubdir=${subdir} · ${
+              hasSheetRefs ? "换脸·仅 OpenAI/OpenRouter（无 NB2）" : "仅 OpenAI/OpenRouter（无 NB2）"
             }`
           : `[2×4·步骤2] GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · ${
-              hasSheetRefs ? "换脸·EvoLink edit → NB2" : "顺序 OhMyGPT → EvoLink → fal → NB2"
+              hasSheetRefs ? "换脸·仅 OpenAI/OpenRouter（无 NB2）" : "仅 OpenAI/OpenRouter（无 NB2）"
             }`,
       );
 
-      if (hasSheetRefs && isEvolinkGptImage2Configured()) {
-        const refDirectives = [
-          referencePhotoUrl || continuityRefs.length ? STORYBOARD_REFERENCE_PROTAGONIST_DIRECTIVE_EN : "",
-          referencePhotoUrl && options.referencePhotoFromApprovedCover
-            ? STORYBOARD_COVER_FACE_LOCK_DIRECTIVE_EN
-            : "",
-          continuityRefs.length ? STORYBOARD_PREVIOUS_ROW_CONTINUITY_DIRECTIVE_EN : "",
-        ]
-          .filter(Boolean)
-          .join("\n");
-        const promptForEvo = `${promptForImage}${refDirectives}`;
+      const refDirectives = hasSheetRefs
+        ? [
+            referencePhotoUrl || continuityRefs.length ? STORYBOARD_REFERENCE_PROTAGONIST_DIRECTIVE_EN : "",
+            referencePhotoUrl && options.referencePhotoFromApprovedCover
+              ? STORYBOARD_COVER_FACE_LOCK_DIRECTIVE_EN
+              : "",
+            continuityRefs.length ? STORYBOARD_PREVIOUS_ROW_CONTINUITY_DIRECTIVE_EN : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : "";
+      const promptForPixel = hasSheetRefs ? `${promptForImage}${refDirectives}` : promptForImage;
+
+      if (hasSheetRefs) {
         appendImageFlowLog(
           L,
           isKnowledgeCard
-            ? `[图文笔记·换脸] EvoLink edit · 16:9 · 4K · high · 参考=${refImageUrls.length}张`
-            : `[2×4·步骤2a·换脸主力] EvoLink GPT-IMAGE-2 edit · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · 参考=${refImageUrls.length}张${options.referencePhotoFromApprovedCover ? "(含封面脸锁)" : ""}${continuityRefs.length ? "+上段连贯" : ""}`,
+            ? `[图文笔记·换脸] OpenAI/OpenRouter edit · 16:9 · 参考=${refImageUrls.length}张`
+            : `[2×4·步骤2a·换脸主力] OpenAI/OpenRouter GPT-IMAGE-2 edit · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · 参考=${refImageUrls.length}张${options.referencePhotoFromApprovedCover ? "(含封面脸锁)" : ""}${continuityRefs.length ? "+上段连贯" : ""}`,
         );
-        const evoErr: { message?: string } = {};
-        let fromEvolink = await postEvolinkGptImage2AndUpload(promptForEvo, subdir, {
-          ...(isKnowledgeCard
-            ? knowledgeCardEvoOpts
-            : {
-                aspectRatio: "16:9" as const,
-                size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
-                quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
-              }),
+      } else {
+        appendImageFlowLog(
+          L,
+          isKnowledgeCard
+            ? `[图文笔记·主路径] OpenAI/OpenRouter GPT-IMAGE-2 · 16:9`
+            : `[2×4·主路径] OpenAI/OpenRouter GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
+        );
+      }
+
+      const gptCapture: {
+        message?: string;
+        moderationBlocked?: boolean;
+        openaiError?: string;
+        openrouterError?: string;
+      } = {};
+      let fromGpt = await generateGptImage2FromRawEnglishPrompt({
+        englishPrompt: promptForPixel,
+        aspectRatio: "16:9",
+        gcsSubdir: subdir,
+        flowLog: L,
+        referenceImageUrls: hasSheetRefs ? refImageUrls : undefined,
+        // 分镜/图文锁脸指令已写入 promptForPixel；勿再叠封面换人 directive
+        generalImageEdit: true,
+        captureError: gptCapture,
+      });
+
+      // 良性人像误杀：与旧 EvoLink 路径一致，附澄清语境再试一次
+      if (
+        !fromGpt &&
+        hasSheetRefs &&
+        (gptCapture.moderationBlocked || isEvolinkModerationFailure(gptCapture.message))
+      ) {
+        appendImageFlowLog(L, "[2×4·主人公参考] 审核拦截 → 附澄清语境重试一次（OpenAI/OpenRouter）");
+        const retryCapture: typeof gptCapture = {};
+        fromGpt = await generateGptImage2FromRawEnglishPrompt({
+          englishPrompt: `${promptForPixel}\n${COVER_REFERENCE_BENIGN_CLARIFIER_EN}`,
+          aspectRatio: "16:9",
+          gcsSubdir: subdir,
           flowLog: L,
-          imageUrls: refImageUrls,
-          captureError: evoErr,
+          referenceImageUrls: refImageUrls,
+          generalImageEdit: true,
+          captureError: retryCapture,
         });
-        if (!fromEvolink && isEvolinkModerationFailure(evoErr.message)) {
-          appendImageFlowLog(L, "[2×4·主人公参考] EvoLink 审核拦截 → 附澄清语境重试一次");
-          const retryErr: { message?: string } = {};
-          fromEvolink = await postEvolinkGptImage2AndUpload(
-            `${promptForEvo}\n${COVER_REFERENCE_BENIGN_CLARIFIER_EN}`,
-            subdir,
-            {
-              ...(isKnowledgeCard
-                ? knowledgeCardEvoOpts
-                : {
-                    aspectRatio: "16:9" as const,
-                    size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
-                    quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
-                  }),
-              flowLog: L,
-              imageUrls: refImageUrls,
-              captureError: retryErr,
-            },
-          );
-        }
-        if (fromEvolink) {
-          appendImageFlowLog(L, `[2×4·步骤2a·换脸主力] EvoLink 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
-          emitPlatformImagePipelineStat({
-            event: "composite_sheet_gpt_image2_success",
-            sheetKind: k,
-            compositeSheetAttempt: attempt,
-            compositeSheetMaxAttempts: compositeMaxAttempts,
-          });
-          return fromEvolink;
-        }
-        if (isEvolinkModerationFailure(evoErr.message)) {
+        if (!fromGpt && (retryCapture.moderationBlocked || isEvolinkModerationFailure(retryCapture.message))) {
           moderationBlocked = true;
-          lastFailure = new Error(`内容审核拦截（${String(evoErr.message).slice(0, 120)}）`);
+          lastFailure = new Error(
+            `内容审核拦截（${String(retryCapture.message || gptCapture.message).slice(0, 120)}）`,
+          );
           appendImageFlowLog(
             L,
-            `[2×4·步骤2a·换脸主力] EvoLink 内容审核拦截 → 标记快速失败（不再整链重试；OhMyGPT/fal/NB2 跳过）`,
+            `[2×4·步骤2a·换脸主力] 内容审核拦截 → 标记快速失败（不再整链重试）`,
           );
           throw lastFailure;
         }
-        throw new Error("EvoLink GPT-IMAGE-2（带参考脸锁）未返回图像；已取消 Nano Banana 2 降级");
+        Object.assign(gptCapture, retryCapture);
       }
 
-      if (!isEvolinkGptImage2Configured()) {
-        throw new Error("EVOLINK_API_KEY 未配置（2×4 仅走 EvoLink GPT-IMAGE-2）");
-      }
-      appendImageFlowLog(
-        L,
-        isKnowledgeCard
-          ? `[图文笔记·唯一路径] EvoLink GPT-IMAGE-2 · 16:9 · quality=high · resolution=4K`
-          : `[2×4·唯一路径] EvoLink GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
-      );
-      const fromEvolink = await postEvolinkGptImage2AndUpload(promptForImage, subdir, {
-        ...(isKnowledgeCard
-          ? knowledgeCardEvoOpts
-          : {
-              aspectRatio: "16:9" as const,
-              size: GPT_IMAGE2_LANDSCAPE_SIZES[0],
-              quality: GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY,
-            }),
-        flowLog: L,
-      });
-      if (fromEvolink) {
-        appendImageFlowLog(L, `[2×4·唯一路径] EvoLink 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`);
+      if (fromGpt) {
+        appendImageFlowLog(
+          L,
+          hasSheetRefs
+            ? `[2×4·步骤2a·换脸主力] OpenAI/OpenRouter 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`
+            : `[2×4·主路径] OpenAI/OpenRouter 成功 · 整链第 ${attempt}/${compositeMaxAttempts} 次`,
+        );
         emitPlatformImagePipelineStat({
           event: "composite_sheet_gpt_image2_success",
           sheetKind: k,
           compositeSheetAttempt: attempt,
           compositeSheetMaxAttempts: compositeMaxAttempts,
         });
-        return fromEvolink;
+        return fromGpt;
       }
-      throw new Error("EvoLink GPT-IMAGE-2 未返回图像（已取消 OhMyGPT / fal / Nano Banana 2）");
+
+      if (gptCapture.moderationBlocked || isEvolinkModerationFailure(gptCapture.message)) {
+        moderationBlocked = true;
+        lastFailure = new Error(`内容审核拦截（${String(gptCapture.message).slice(0, 120)}）`);
+        appendImageFlowLog(
+          L,
+          `[2×4·步骤2a] 内容审核拦截 → 标记快速失败（不再整链重试）`,
+        );
+        throw lastFailure;
+      }
+
+      throw new Error(
+        hasSheetRefs
+          ? `GPT-IMAGE-2（OpenAI/OpenRouter·带参考脸锁）未返回图像${
+              gptCapture.message ? ` · ${String(gptCapture.message).slice(0, 160)}` : ""
+            }`
+          : `GPT-IMAGE-2（OpenAI/OpenRouter）未返回图像${
+              gptCapture.message ? ` · ${String(gptCapture.message).slice(0, 160)}` : ""
+            }`,
+      );
     } catch (e: unknown) {
       lastFailure = e;
       const msg = e instanceof Error ? e.message : String(e);

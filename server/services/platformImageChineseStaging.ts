@@ -73,68 +73,32 @@ export async function buildCoverChineseBlobForStaging(opts: {
   strategistCombinedBlock: string;
   baseContextZh: string;
   briefSource: string;
-  extractChineseVisualBrief: (raw: string, log?: string[]) => Promise<string>;
+  /** @deprecated 中文直送已取消 GPT 5.4 骨架提炼；保留参数仅兼容旧调用方 */
+  extractChineseVisualBrief?: (raw: string, log?: string[]) => Promise<string>;
   flowLog: string[];
   maxChars: number;
-  /**
-   * 中文直送主路径默认 **不** 再跑 GPT 5.4 `extractChineseVisualBrief`（可省一轮 LLM）。
-   * 显式 `true`，或 env `PLATFORM_COVER_EXTRACT_VISUAL_BRIEF=1` 时强制提炼。
-   * 未强制时：合并语境超过 `PLATFORM_COVER_EXTRACT_AUTO_CHARS`（默认 4200）才自动提炼。
-   */
+  /** @deprecated 已忽略：封面中文直送永不跑 extractChineseVisualBrief */
   enableVisualBriefExtract?: boolean;
 }): Promise<{ blob: string; provenance: Record<string, unknown> }> {
+  void opts.extractChineseVisualBrief;
+  void opts.enableVisualBriefExtract;
   const strategist = String(opts.strategistCombinedBlock || "").trim();
   const baseContextZh = String(opts.baseContextZh || "").trim();
   const briefSource = String(opts.briefSource || "").trim();
-  const mergedGuess = [strategist, baseContextZh, briefSource].filter(Boolean).join("\n\n");
-  const envForceExtract = ["1", "true", "yes", "on"].includes(
-    String(process.env.PLATFORM_COVER_EXTRACT_VISUAL_BRIEF || "")
-      .trim()
-      .toLowerCase(),
-  );
-  const autoChars = (() => {
-    const raw = Number(process.env.PLATFORM_COVER_EXTRACT_AUTO_CHARS);
-    if (Number.isFinite(raw) && raw >= 0) return Math.floor(raw);
-    return 4200;
-  })();
-  const autoExtract = autoChars > 0 && mergedGuess.length >= autoChars;
-  const shouldExtract = opts.enableVisualBriefExtract === true || envForceExtract || autoExtract;
-  let extracted = "";
-  if (shouldExtract && (strategist || mergedGuess)) {
-    try {
-      if (autoExtract && !envForceExtract && opts.enableVisualBriefExtract !== true) {
-        opts.flowLog.push(
-          `${platformFlowLogTimestamp()}  [chineseStaging·cover] 语境过长（${mergedGuess.length}≥${autoChars}）→ 自动 extractChineseVisualBrief`,
-        );
-      }
-      extracted = (
-        await opts.extractChineseVisualBrief(strategist || mergedGuess, opts.flowLog)
-      ).trim();
-    } catch {
-      extracted = "";
-    }
-  } else if (strategist || baseContextZh) {
-    opts.flowLog.push(
-      `${platformFlowLogTimestamp()}  [chineseStaging·cover] 跳过 GPT 提炼 · 改用无模型语境聚焦（防满屏；超长自动提炼阈值=${autoChars}）`,
-    );
-  }
-  let blob = [extracted, baseContextZh].filter(Boolean).join("\n\n").trim();
-  if (!blob) blob = strategist;
+  let blob = [strategist, baseContextZh].filter(Boolean).join("\n\n").trim();
   if (!blob) blob = briefSource;
-  // 未走 GPT 提炼时：确定性聚焦，保道具行、压长论述
-  if (!extracted) {
-    blob = focusCoverChineseContextForDirectSend(blob, Math.min(opts.maxChars, COVER_DIRECT_CONTEXT_MAX_CHARS));
-  } else if (blob.length > opts.maxChars) {
-    blob = blob.slice(0, opts.maxChars);
-  }
+  opts.flowLog.push(
+    `${platformFlowLogTimestamp()}  [chineseStaging·cover] 中文直送 · 无 GPT 5.4 骨架提炼 · 确定性语境聚焦（防满屏）`,
+  );
+  blob = focusCoverChineseContextForDirectSend(blob, Math.min(opts.maxChars, COVER_DIRECT_CONTEXT_MAX_CHARS));
   return {
     blob,
     provenance: {
       strategistChars: strategist.length,
-      extractedChars: extracted.length,
+      extractedChars: 0,
       baseContextChars: baseContextZh.length,
-      visualBriefSkipped: !shouldExtract,
-      visualBriefAuto: Boolean(autoExtract && shouldExtract && !envForceExtract),
+      visualBriefSkipped: true,
+      visualBriefAuto: false,
       focusedChars: blob.length,
     },
   };

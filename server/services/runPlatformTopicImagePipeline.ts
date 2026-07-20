@@ -110,7 +110,7 @@ export type RunPlatformTopicImagePipelineInput = {
    */
   trendEngagementVisualBrief?: string;
   /**
-   * 可選：用户上传的人像照片 URL（公网可直接抓取）。传入则封面强制走 EvoLink GPT-Image-2 edit 模式，
+   * 可選：用户上传的人像照片 URL（公网可直接抓取）。传入则封面强制走 GPT-Image-2 edit 模式（OpenAI/OpenRouter），
    * 把封面主角替换成此人（保住相貌辨识度），并注入换人指令。
    */
   referencePhotoUrl?: string;
@@ -162,10 +162,9 @@ export async function runPlatformTopicImagePipeline(
   const database = await db.getDb();
   const { userCreations } = await import("../../drizzle/schema-creations.js");
 
-  const {
-    extractChineseVisualBrief,
-    buildPlatformTopicCoverDirectChinesePrompt,
-  } = await import("./geminiPlatformCompositeTranslation.js");
+  const { buildPlatformTopicCoverDirectChinesePrompt } = await import(
+    "./geminiPlatformCompositeTranslation.js",
+  );
   const {
     buildCoverTaskInputFromPipeline,
     isPlatformCoverAgenticBrainEnabled,
@@ -313,7 +312,6 @@ export async function runPlatformTopicImagePipeline(
           strategistCombinedBlock: strategistChinesePrompt ?? "",
           baseContextZh: ctxStr,
           briefSource,
-          extractChineseVisualBrief,
           flowLog: topicImageCondenseLog,
           maxChars: 6500,
         });
@@ -345,7 +343,7 @@ export async function runPlatformTopicImagePipeline(
             (input.coverNativePlatform ? ` · native=${input.coverNativePlatform}` : ""),
         );
         topicImageCondenseLog.push(
-          `${platformFlowLogTimestamp()}  [步骤1b] 无智能提炼 · 主体直接进封面像素链路（GPT‑Image‑2 / NB2 / NBP 由 PLATFORM_TOPIC_COVER_PIXEL_ENGINE 决定，chars=${safePrompt.length}）`,
+          `${platformFlowLogTimestamp()}  [步骤1b] 无 GPT 5.4 提炼 · 中文主体直接进封面像素链路（chars=${safePrompt.length}）`,
         );
         promptStats = buildImagePromptStats(safePrompt);
         topicImageCondenseLog.push(
@@ -356,7 +354,7 @@ export async function runPlatformTopicImagePipeline(
         );
         if (coverReferenceImageUrls.length > 0) {
           topicImageCondenseLog.push(
-            `${platformFlowLogTimestamp()}  [步骤2·换人] 检测到用户上传人像 → EvoLink GPT-Image-2 edit 模式（image_urls=${coverReferenceImageUrls.length}）· 将替换封面主角并保住相貌辨识度`,
+            `${platformFlowLogTimestamp()}  [步骤2·换人] 检测到用户上传人像 → GPT-Image-2 edit（OpenAI/OpenRouter · image_urls=${coverReferenceImageUrls.length}）· 将替换封面主角并保住相貌辨识度`,
           );
         }
         imageUrl = await generatePlatformTopicCoverNanoBanana2FromEnglishPrompt({
