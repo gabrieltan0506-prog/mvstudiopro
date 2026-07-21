@@ -4,6 +4,10 @@
  */
 
 import type { ManhuaWriterPack } from "./manhuaWriterRoom.js";
+import {
+  buildManhuaWriterAssetCanon,
+  type ManhuaWriterAssetCanon,
+} from "./manhuaWriterAssetCanon.js";
 
 export const MANHUA_PROJECT_BIBLE_FORMAT = "mv-manhua-project-bible-v1" as const;
 
@@ -33,6 +37,11 @@ export type ManhuaProjectBible = {
   episodes: Array<{ index: number; title: string; endHook: string }>;
   cast: ManhuaProjectBibleCast;
   focusEpisode: number;
+  /**
+   * 编剧表解析的系列资产真源（人物/道具/场景池 + 每集主场景）。
+   * 优先于库 ID；库仅为可选参考。
+   */
+  assetCanon?: ManhuaWriterAssetCanon;
   /** 手选覆盖自动推荐（冲突规则：人工优先） */
   manualOverrides?: {
     femaleLead?: boolean;
@@ -56,6 +65,7 @@ export type BuildManhuaProjectBibleInput = {
   };
   focusEpisode?: number;
   confirmedAt?: string | Date;
+  assetCanon?: ManhuaWriterAssetCanon | null;
   manualOverrides?: ManhuaProjectBible["manualOverrides"];
 };
 
@@ -69,6 +79,23 @@ export function buildManhuaProjectBible(input: BuildManhuaProjectBibleInput): Ma
     input.confirmedAt instanceof Date
       ? input.confirmedAt.toISOString()
       : String(input.confirmedAt || new Date().toISOString());
+
+  const assetCanon =
+    input.assetCanon ||
+    buildManhuaWriterAssetCanon({
+      charactersMd: input.pack.charactersMd,
+      propsMd: input.pack.propsMd,
+      locationsMd: input.pack.locationsMd,
+      episodes: (input.pack.episodes || []).map((ep) => ({
+        index: ep.index,
+        body: String((ep as { body?: string }).body || ""),
+      })),
+    });
+  const focusEpisode = Math.max(1, Math.floor(Number(input.focusEpisode) || 1));
+  const mainScene =
+    assetCanon.episodeMainSceneId[focusEpisode] ||
+    assetCanon.locations[0]?.id ||
+    undefined;
 
   return {
     format: MANHUA_PROJECT_BIBLE_FORMAT,
@@ -90,13 +117,17 @@ export function buildManhuaProjectBible(input: BuildManhuaProjectBibleInput): Ma
       characterIds: (input.cast.characterIds || []).map(String).filter(Boolean),
       ancientArchetypeIds: (input.cast.ancientArchetypeIds || []).map(String).filter(Boolean).slice(0, 2),
       artStyleId: String(input.cast.artStyleId || "").trim(),
-      sceneId: String(input.cast.sceneId || "").trim() || undefined,
+      sceneId:
+        String(input.cast.sceneId || "").trim() ||
+        mainScene ||
+        undefined,
       propIds: (input.cast.propIds || []).map(String).filter(Boolean).slice(0, 4),
       wardrobePropContinuityIds: (input.cast.wardrobePropContinuityIds || []).map(String).filter(Boolean),
       identityLockZh: String(input.cast.identityLockZh || "").trim() || undefined,
       boundEpisodeIndexes: bound.length ? bound : [1],
     },
-    focusEpisode: Math.max(1, Math.floor(Number(input.focusEpisode) || 1)),
+    focusEpisode,
+    assetCanon,
     manualOverrides: input.manualOverrides,
   };
 }
@@ -142,6 +173,7 @@ export function parseManhuaProjectBible(raw: unknown): ManhuaProjectBible | null
       },
       focusEpisode: o.focusEpisode,
       confirmedAt: o.confirmedAt,
+      assetCanon: (o as { assetCanon?: ManhuaWriterAssetCanon }).assetCanon,
       manualOverrides: o.manualOverrides,
     });
   } catch {
@@ -152,10 +184,15 @@ export function parseManhuaProjectBible(raw: unknown): ManhuaProjectBible | null
 /** UI / Debug 一行摘要 */
 export function summarizeManhuaProjectBible(bible: ManhuaProjectBible | null | undefined): string {
   if (!bible) return "—";
-  const castBits =
-    bible.cast.lane === "ancient"
+  const canon = bible.assetCanon;
+  const castBits = canon?.characters.length
+    ? `表人物·${canon.characters.length}`
+    : bible.cast.lane === "ancient"
       ? `古风·${bible.cast.ancientArchetypeIds.join(",") || "—"}`
       : `人物·${bible.cast.characterIds.join(",") || "—"}`;
+  const sceneBits = canon?.locations.length
+    ? `场景池·${canon.locations.length}`
+    : `场景·${bible.cast.sceneId || "—"}`;
   const eps = bible.cast.boundEpisodeIndexes.join(",");
-  return `${bible.seriesTitle || bible.topic || "未命名"} · ${castBits} · 画风 ${bible.cast.artStyleId || "—"} · 绑定集 ${eps}`;
+  return `${bible.seriesTitle || bible.topic || "未命名"} · ${castBits} · ${sceneBits} · 画风 ${bible.cast.artStyleId || "—"} · 绑定集 ${eps}`;
 }

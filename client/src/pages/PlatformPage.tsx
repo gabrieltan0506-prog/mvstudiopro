@@ -8742,15 +8742,48 @@ export default function PlatformPage() {
                           <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-[#c9c0e6]/60">
                             {rising?.note
                               || "与总览报表数据同源：抖音采集中的合集/漫剧字段单独聚合。其它种草、口播样本仍在「总览」里。"}
+                            {" "}
+                            学节奏：导出榜单 JSON 后本机跑抽帧学习（前 5s + 每 10s；高潮段每 3s），提案须人审才进编剧室模板。
                           </p>
                         </div>
-                        <a
-                          href="/canvas"
-                          className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/30 bg-[rgba(255,79,184,0.1)] px-3 py-1.5 text-[11px] font-semibold text-[#ff9fe0] transition hover:bg-[rgba(255,79,184,0.18)]"
-                        >
-                          <Film className="h-3.5 w-3.5" />
-                          去漫剧工厂
-                        </a>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {rising?.entries?.length ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const payload = {
+                                  exportedAt: new Date().toISOString(),
+                                  windowDays: rising.windowDays,
+                                  note: rising.note,
+                                  entries: rising.entries,
+                                };
+                                const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+                                  type: "application/json",
+                                });
+                                const a = document.createElement("a");
+                                a.href = URL.createObjectURL(blob);
+                                a.download = `ai-manhua-rising-${new Date().toISOString().slice(0, 10)}.json`;
+                                a.click();
+                                URL.revokeObjectURL(a.href);
+                                toast.success("已导出飙升榜 JSON", {
+                                  description:
+                                    "本机：pnpm run manhua:template-learn -- --rising-json <文件> --rank 1",
+                                });
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-full border border-[#8cefff]/30 bg-[rgba(140,239,255,0.1)] px-3 py-1.5 text-[11px] font-semibold text-[#8cefff] transition hover:bg-[rgba(140,239,255,0.18)]"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              导出学习 JSON
+                            </button>
+                          ) : null}
+                          <a
+                            href="/canvas"
+                            className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/30 bg-[rgba(255,79,184,0.1)] px-3 py-1.5 text-[11px] font-semibold text-[#ff9fe0] transition hover:bg-[rgba(255,79,184,0.18)]"
+                          >
+                            <Film className="h-3.5 w-3.5" />
+                            去漫剧工厂
+                          </a>
+                        </div>
                       </div>
 
                       {Object.keys(kindCounts).length > 0 ? (
@@ -8768,12 +8801,13 @@ export default function PlatformPage() {
 
                       {rising?.entries?.length ? (
                         <div className="mt-3 space-y-2">
-                          <div className="grid grid-cols-[28px_1fr_72px_72px_40px] gap-2 px-1 text-[10px] text-[#c9c0e6]/45">
+                          <div className="grid grid-cols-[28px_1fr_72px_72px_40px_56px] gap-2 px-1 text-[10px] text-[#c9c0e6]/45">
                             <span />
                             <span>剧名</span>
                             <span className="text-right">合集播放</span>
                             <span className="text-right">环比</span>
                             <span className="text-right">状态</span>
+                            <span className="text-right">学习</span>
                           </div>
                           {rising.entries.slice(0, 12).map((row, idx) => {
                             const titleNode = (
@@ -8785,10 +8819,13 @@ export default function PlatformPage() {
                                 </div>
                               </div>
                             );
+                            const learnCmd = row.url
+                              ? `pnpm run manhua:template-learn -- --url ${JSON.stringify(row.url)} --title ${JSON.stringify(row.mixName || "")}`
+                              : `pnpm run manhua:template-learn -- --title ${JSON.stringify(row.mixName || "")}`;
                             return (
                               <div
                                 key={row.mixId || idx}
-                                className="grid grid-cols-[28px_1fr_72px_72px_40px] items-center gap-2 rounded-xl border border-white/8 bg-black/25 px-3 py-2 text-[12px]"
+                                className="grid grid-cols-[28px_1fr_72px_72px_40px_56px] items-center gap-2 rounded-xl border border-white/8 bg-black/25 px-3 py-2 text-[12px]"
                               >
                                 <span className="font-bold text-[#c9c0e6]/45">#{idx + 1}</span>
                                 {row.url ? (
@@ -8811,6 +8848,22 @@ export default function PlatformPage() {
                                 <span className="text-right text-[10px] font-semibold text-[#ff9fe0]">
                                   {statusLabel(row.status)}
                                 </span>
+                                <button
+                                  type="button"
+                                  title="复制本机学习命令"
+                                  onClick={() => {
+                                    void navigator.clipboard.writeText(learnCmd).then(
+                                      () =>
+                                        toast.success(`已复制 #${idx + 1} 学习命令`, {
+                                          description: "终端粘贴执行；成片页链接更稳，搜索页可能需改 --url",
+                                        }),
+                                      () => toast.message(learnCmd),
+                                    );
+                                  }}
+                                  className="justify-self-end rounded-md border border-[#8cefff]/25 bg-[rgba(140,239,255,0.08)] px-1.5 py-0.5 text-[10px] font-semibold text-[#8cefff] hover:bg-[rgba(140,239,255,0.16)]"
+                                >
+                                  学节奏
+                                </button>
                               </div>
                             );
                           })}

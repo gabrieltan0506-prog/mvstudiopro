@@ -78,4 +78,53 @@ describe("manhuaAssetImageGate", () => {
     expect(urls).toContain("https://cdn.example/c.jpg");
     expect(urls).toContain("https://cdn.example/sheet.jpg");
   });
+
+  it("viaWriterCanon: plans charsheet/sceneplate from table anchors", () => {
+    const assetCanon = {
+      characters: [
+        {
+          id: "wa_char_shen",
+          role: "character" as const,
+          nameZh: "沈砚舟",
+          lookZh: "玄色鹤氅",
+          promptZh: "原创角色设定卡·沈砚舟。外形：玄色鹤氅。",
+        },
+      ],
+      props: [],
+      locations: [
+        {
+          id: "wa_scene_miao",
+          role: "scene" as const,
+          nameZh: "山神破庙",
+          lookZh: "断梁神像",
+          motiveZh: "阴冷破败",
+          promptZh: "原创场景空镜·山神破庙。氛围：阴冷破败。",
+        },
+      ],
+      episodeMainSceneId: { 1: "wa_scene_miao" },
+    };
+    const gate = evaluateManhuaAssetImageGate({
+      assetCanon,
+      episodeIndex: 1,
+    });
+    expect(gate.viaWriterCanon).toBe(true);
+    expect(gate.castLocked).toBe(true);
+    expect(gate.sceneLocked).toBe(true);
+    expect(gate.ready).toBe(false);
+
+    const plans = planManhuaAssetImageSpawns({ assetCanon, episodeIndex: 1, topic: "鹤归" });
+    expect(plans.some((p) => p.id.includes("wa_char_shen"))).toBe(true);
+    expect(plans.some((p) => p.id.includes("wa_scene_miao"))).toBe(true);
+
+    const ready = evaluateManhuaAssetImageGate({
+      assetCanon,
+      episodeIndex: 1,
+      assetBlocks: [
+        { id: "charsheet-wa_char_shen", outputUrl: "https://cdn.example/c.jpg" },
+        { id: "sceneplate-wa_scene_miao", outputUrl: "https://cdn.example/s.jpg" },
+      ],
+    });
+    expect(ready.ready).toBe(true);
+    expect(ready.viaWriterCanon).toBe(true);
+  });
 });

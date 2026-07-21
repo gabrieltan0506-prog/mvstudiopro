@@ -39,6 +39,8 @@ export type ManhuaWriterSession = {
   customAssetRefs: ManhuaCustomAssetRef[];
   /** 生成资产图时授权匿名进库（半价） */
   shareAssetToLibrary: boolean;
+  /** 审定节奏模板 id（tpl_*）；扩写注入用 */
+  viralTemplateId: string;
 };
 
 export type ManhuaWriterSessionPartial = Partial<Omit<ManhuaWriterSession, "format">> & {
@@ -99,6 +101,7 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     workflowPhase,
     customAssetRefs: normalizeManhuaCustomAssetRefs(input.customAssetRefs),
     shareAssetToLibrary: Boolean(input.shareAssetToLibrary),
+    viralTemplateId: String(input.viralTemplateId || "").trim().slice(0, 64),
   };
 }
 

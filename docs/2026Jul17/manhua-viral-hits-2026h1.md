@@ -2,6 +2,7 @@
 
 > **可信度**：下列片名、播放量与「百强榜」表述来自外部整理（Gemini 二次摘要 + 公开报道链接），**待用真实成片/榜单链接核实**后再当事实引用。  
 > **用法**：Agent 分析流程见 [`.cursor/skills/manhua-viral-hits/SKILL.md`](../../.cursor/skills/manhua-viral-hits/SKILL.md)。  
+> **节奏模板实验室**：新骨架进 [`docs/manhua-template-lab/`](../manhua-template-lab/README.md)；审定后进 `shared/manhuaViralTemplateBank.ts`。  
 > **工厂**：只映射现有 `/canvas` 六段链路；不收录外部模拟 API 流水线代码。
 
 ---

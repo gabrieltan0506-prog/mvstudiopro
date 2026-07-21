@@ -39,6 +39,10 @@ import {
 } from "@shared/manhuaScenePropDemoCatalog";
 import { evaluateManhuaAssetImageGate } from "@shared/manhuaAssetImageGate";
 import {
+  resolveEpisodeMainScene,
+  type ManhuaWriterAssetCanon,
+} from "@shared/manhuaWriterAssetCanon";
+import {
   MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH,
   MANHUA_CUSTOM_ASSET_ROLES,
   summarizeCustomAssetRefsZh,
@@ -102,6 +106,10 @@ type Props = {
   artStyleLabelZh?: string;
   /** 专案 Bible 一行摘要（确认编剧后） */
   projectBibleSummary?: string;
+  /** 编剧表资产真源：系列人物/道具/场景池 + 每集主场景 */
+  assetCanon?: ManhuaWriterAssetCanon | null;
+  /** 已选审定节奏模板短标签（大纲页展示） */
+  viralTemplateLabelZh?: string;
   /** Bible 已绑定造型的集号（1-based） */
   bibleBoundEpisodes?: number[];
   /** 蓝/红轨 + 叙事灯光状态行 */
@@ -257,6 +265,8 @@ export default function ManhuaScriptWorkbench({
   propIds,
   artStyleLabelZh,
   projectBibleSummary,
+  assetCanon = null,
+  viralTemplateLabelZh,
   bibleBoundEpisodes = [],
   pathTrackLabelZh,
   narrativeLightingLabelZh,
@@ -689,11 +699,26 @@ export default function ManhuaScriptWorkbench({
         sceneId,
         artStyleId: activeArtStyleId,
         customRefs: customAssetRefs,
+        assetCanon,
+        episodeIndex: focusEpisode,
         assetBlocks: blocks.filter(
           (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
         ),
       }),
-    [characterIds, ancientArchetypeIds, sceneId, activeArtStyleId, customAssetRefs, blocks],
+    [
+      characterIds,
+      ancientArchetypeIds,
+      sceneId,
+      activeArtStyleId,
+      customAssetRefs,
+      assetCanon,
+      focusEpisode,
+      blocks,
+    ],
+  );
+  const episodeMainScene = useMemo(
+    () => resolveEpisodeMainScene(assetCanon, focusEpisode),
+    [assetCanon, focusEpisode],
   );
   const customSummaryZh = summarizeCustomAssetRefsZh(customAssetRefs);
   const outlineComplete = Boolean(canRun);
@@ -1187,6 +1212,11 @@ export default function ManhuaScriptWorkbench({
               {projectBibleSummary ? (
                 <p className="mt-2 text-[11px] text-white/40">{projectBibleSummary}</p>
               ) : null}
+              {viralTemplateLabelZh ? (
+                <p className="mt-2 text-[11px] text-amber-100/70">
+                  节奏模板：{viralTemplateLabelZh}
+                </p>
+              ) : null}
               <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-white/40">
                 <span>共 {Math.max(episodeCount, outlineEpisodes.length, 1)} 集</span>
                 <span aria-hidden>·</span>
@@ -1262,7 +1292,9 @@ export default function ManhuaScriptWorkbench({
               <div>
                 <div className="text-[13px] font-semibold text-white/90">资产设定</div>
                 <p className="mt-1 text-[11px] leading-5 text-white/45">
-                  可上传参考图并勾选人物 / 场景 / 服装道具，直接用于分镜融图；也可基于库条目生成新参考。库内造型仅为参考，不强制锁死。
+                  {assetCanon?.characters.length
+                    ? "以剧本人物表与系列场景池为准生成设定图；库内造型仅为可选参考。同集可切池内其他场景，须有空间过渡。"
+                    : "可上传参考图并勾选人物 / 场景 / 服装道具，直接用于分镜融图；也可基于库条目生成新参考。库内造型仅为参考，不强制锁死。"}
                   {customSummaryZh ? ` 已勾选：${customSummaryZh}` : ""}
                 </p>
               </div>
@@ -1576,6 +1608,42 @@ export default function ManhuaScriptWorkbench({
               </div>
             ) : null}
 
+            {assetCanon?.locations.length || assetCanon?.characters.length ? (
+              <div
+                data-manhua-writer-canon
+                className="mt-3 rounded-xl border border-amber-400/25 bg-amber-500/[0.07] p-3"
+              >
+                <div className="text-[11px] font-semibold text-amber-50/95">剧本表 · 系列资产</div>
+                <p className="mt-0.5 text-[10px] leading-4 text-white/45">
+                  人物 {assetCanon?.characters.length || 0} · 道具 {assetCanon?.props.length || 0} ·
+                  场景池 {assetCanon?.locations.length || 0}
+                  {episodeMainScene
+                    ? ` · 本集主场景「${episodeMainScene.nameZh}」`
+                    : ""}
+                </p>
+                {assetCanon?.locations.length ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {assetCanon.locations.slice(0, 8).map((loc) => {
+                      const isMain = episodeMainScene?.id === loc.id;
+                      return (
+                        <span
+                          key={loc.id}
+                          className={`rounded-md border px-2 py-0.5 text-[10px] ${
+                            isMain
+                              ? "border-amber-300/45 bg-amber-500/20 text-amber-50"
+                              : "border-white/10 bg-white/[0.03] text-white/55"
+                          }`}
+                        >
+                          {isMain ? "主 · " : ""}
+                          {loc.nameZh}
+                        </span>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <div
               data-manhua-asset-ready
               className="mt-3 flex flex-wrap gap-1.5 text-[10px]"
@@ -1590,9 +1658,11 @@ export default function ManhuaScriptWorkbench({
                 角色{" "}
                 {assetGate.viaCustomUpload
                   ? "自传已勾选"
-                  : characters.length || archetypes.length
-                    ? `库选 ${(characters.length || 0) + (archetypes.length || 0)}`
-                    : "未齐"}
+                  : assetGate.viaWriterCanon
+                    ? `剧本表 ${assetCanon?.characters.length || 0}`
+                    : characters.length || archetypes.length
+                      ? `库选 ${(characters.length || 0) + (archetypes.length || 0)}`
+                      : "未齐"}
               </span>
               <span
                 className={`rounded-md border px-2 py-0.5 ${
@@ -1604,10 +1674,16 @@ export default function ManhuaScriptWorkbench({
                 场景{" "}
                 {assetGate.viaCustomUpload
                   ? "自传已勾选"
-                  : scene
-                    ? "库选"
-                    : "未齐"}
-                {scene && !sceneDemos.length && !assetGate.viaCustomUpload ? " · 缺示意封面" : ""}
+                  : assetGate.viaWriterCanon
+                    ? episodeMainScene
+                      ? `主场景「${episodeMainScene.nameZh}」`
+                      : "场景池已锁"
+                    : scene
+                      ? "库选"
+                      : "未齐"}
+                {scene && !sceneDemos.length && !assetGate.viaCustomUpload && !assetGate.viaWriterCanon
+                  ? " · 缺示意封面"
+                  : ""}
               </span>
               <span
                 className={`rounded-md border px-2 py-0.5 ${

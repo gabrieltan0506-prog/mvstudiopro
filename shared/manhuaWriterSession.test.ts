@@ -60,6 +60,16 @@ describe("manhuaWriterSession", () => {
     expect(again?.assetsSkipped).toBe(false);
     expect(again?.workflowPhase).toBe("storyboard");
     expect(again?.customAssetRefs).toEqual([]);
+    expect(again?.viralTemplateId).toBe("");
+  });
+
+  it("persists viralTemplateId", () => {
+    const session = buildManhuaWriterSession({
+      topic: "边关",
+      viralTemplateId: "tpl_border_farm_revenge",
+    });
+    const again = parseManhuaWriterSession(serializeManhuaWriterSession(session));
+    expect(again?.viralTemplateId).toBe("tpl_border_farm_revenge");
   });
 
   it("round-trips customAssetRefs https urls", () => {

@@ -1,0 +1,43 @@
+name: Manhua Template Scan
+
+on:
+  schedule:
+    # 每周一 08:00 UTC ≈ 北京时间 16:00
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: manhua-template-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    name: Propose viral rhythm templates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Scan public sources → proposals
+        run: pnpm run manhua:template-scan
+      - name: Commit proposals if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/manhua-template-lab/proposals docs/manhua-template-lab/CHANGELOG.md || true
+          if git diff --staged --quiet; then
+            echo "No proposal changes"
+            exit 0
+          fi
+          git commit -m "chore(manhua): weekly template-scan proposals"
+          git push

@@ -370,6 +370,106 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(200).json({ ok: true, text });
     }
 
+    // ---------------- 漫剧学习 A：GCS 签名上传 URL（本机 PUT，Fly 持 SA） ----------------
+    if (op === "manhuaAudioGetUploadUrl") {
+      const fileName = s(b.fileName || q.fileName || "learn-audio.mp3") || "learn-audio.mp3";
+      const mimeType = s(b.mimeType || q.mimeType || "audio/mpeg") || "audio/mpeg";
+      try {
+        const { createGcsSignedUploadUrl } = await import("../server/services/gcs");
+        const signed = await createGcsSignedUploadUrl({
+          fileName,
+          contentType: mimeType,
+          objectName: `manhua-template-learn/${Date.now()}-${fileName.replace(/[^\w.\-]+/g, "-").slice(0, 80)}`,
+          expiresInMinutes: 20,
+        });
+        return res.status(200).json({ ok: true, ...signed, mimeType });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return res.status(500).json({ ok: false, error: "gcs_signed_upload_failed", detail: msg.slice(0, 240) });
+      }
+    }
+
+    // ---------------- 漫剧学习 A：Fly 按 audioUrl/gcsUri 代下 → Gemini 3.5 Flash 高潮扫 ----------------
+    if (op === "manhuaAudioClimaxScan") {
+      const audioUrl = s(b.audioUrl || q.audioUrl);
+      const gcsUri = s(b.gcsUri || q.gcsUri);
+      const mimeType = s(b.mimeType || q.mimeType || "audio/mpeg") || "audio/mpeg";
+      if (!audioUrl && !gcsUri) {
+        return res.status(400).json({ ok: false, error: "missing_audioUrl_or_gcsUri" });
+      }
+      if (!s(process.env.GEMINI_API_KEY).trim()) {
+        return res.status(500).json({ ok: false, error: "missing_env", detail: "GEMINI_API_KEY" });
+      }
+      try {
+        const {
+          analyzeManhuaDramaAudioFromUrl,
+          analyzeManhuaDramaAudioWithGemini,
+          resolveGeminiAudioModelName,
+        } = await import("../server/gemini-audio");
+        let scan;
+        if (gcsUri) {
+          const { downloadGcsObject, signGsUriV4ReadUrl } = await import("../server/services/gcs");
+          // 优先服务账号直下；失败再签名 HTTPS
+          try {
+            const obj = await downloadGcsObject({ gcsUri });
+            scan = await analyzeManhuaDramaAudioWithGemini({
+              audioBase64: obj.buffer.toString("base64"),
+              mimeType,
+            });
+          } catch {
+            const signedRead = signGsUriV4ReadUrl(gcsUri, 3600);
+            scan = await analyzeManhuaDramaAudioFromUrl({ audioUrl: signedRead, mimeType });
+          }
+        } else {
+          scan = await analyzeManhuaDramaAudioFromUrl({ audioUrl, mimeType });
+        }
+        return res.status(200).json({
+          ok: true,
+          model: scan.model || resolveGeminiAudioModelName(),
+          language: scan.language,
+          transcriptSummary: scan.transcriptSummary,
+          sections: scan.sections,
+          via: gcsUri ? "gcs" : "audioUrl",
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[manhuaAudioClimaxScan]", msg.slice(0, 400));
+        return res.status(500).json({ ok: false, error: "manhua_audio_scan_failed", detail: msg.slice(0, 280) });
+      }
+    }
+
+    // ---------------- 轻量探针：本机经 Fly 验 Gemini 3.5 Flash 文本是否通 ----------------
+    if (op === "gemini35FlashPing") {
+      const geminiApiKey = s(process.env.GEMINI_API_KEY).trim();
+      if (!geminiApiKey) return res.status(500).json({ ok: false, error: "missing_env", detail: "GEMINI_API_KEY" });
+      try {
+        const { resolveGeminiAudioModelName } = await import("../server/gemini-audio");
+        const model = resolveGeminiAudioModelName();
+        const r = await fetchJson(
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${geminiApiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ role: "user", parts: [{ text: "只回复两个字：通了" }] }],
+              generationConfig: { maxOutputTokens: 32, temperature: 0 },
+            }),
+          },
+        );
+        const text = (r.json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        return res.status(200).json({
+          ok: Boolean(r.ok && text),
+          model,
+          http: r.status,
+          text: text.slice(0, 80),
+          detail: r.ok ? undefined : String(r.rawText || "").slice(0, 200),
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return res.status(500).json({ ok: false, error: "ping_failed", detail: msg.slice(0, 200) });
+      }
+    }
+
     const projectId = s(process.env.VERTEX_PROJECT_ID).trim();
     if(!projectId) return res.status(500).json({ok:false,error:"missing_env",detail:"VERTEX_PROJECT_ID"});
 
