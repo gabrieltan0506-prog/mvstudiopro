@@ -114,6 +114,7 @@ import {
   zPlatformImagePromptTranslatorInput,
 } from "./services/geminiPlatformCompositeTranslation.js";
 
+/** 封面像素仅 gpt_image2；旧 nb* 值由 resolveSupervisor 折到 gpt_image2 */
 const zPlatformTopicCoverPixelEngine = z.enum(["gpt_image2", "nano_banana_2", "nano_banana_pro"]);
 
 import { creationsRouter, recordCreation } from "./routers/creations";
@@ -4603,7 +4604,11 @@ export const appRouter = router({
       }))
       .mutation(async ({ input }) => {
         const PLATFORM_NAMES: Record<string, string> = {
-          douyin: "抖音", kuaishou: "快手", xiaohongshu: "小红书", toutiao: "今日头条",
+          douyin: "抖音",
+          kuaishou: "快手",
+          xiaohongshu: "小红书",
+          bilibili: "B站",
+          toutiao: "今日头条",
         };
         const platformListStr = input.platforms.map((p) => PLATFORM_NAMES[p] || p).join("、");
 
@@ -4614,12 +4619,50 @@ export const appRouter = router({
         const todayStr = formatShanghaiDateZh(anchorMs);
         const pastStr = formatShanghaiDateZh(shBounds.currentStart);
 
-        // Read store data for selected platforms (best-effort, 15s cap)
+        // 读趋势库：Fly 磁盘 I/O 常见 12–25s；旧 15s 竞态会落到空库，模型误写「本周期样本为空」
+        // 与 getGrowthSnapshot 注释对齐，至少给 60s；超时则明确失败，禁止用空证据生成假洞察
+        const VISUAL_REPORT_STORE_TIMEOUT_MS = Math.max(
+          60_000,
+          Math.min(120_000, Number(process.env.VISUAL_REPORT_STORE_TIMEOUT_MS) || 60_000),
+        );
+        const preferFlyLiveVisual = process.env.PLATFORM_TREND_PREFER_FLY_LIVE === "true";
         const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
-        const store = await Promise.race([
-          readTrendStoreForPlatforms(input.platforms as any[], { preferDerivedFiles: true }),
-          new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => setTimeout(() => resolve(storeNull), 15_000)),
-        ]).catch(() => storeNull);
+        let storeReadTimedOut = false;
+        const storeReadStartedAt = Date.now();
+        const store = await new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => {
+          let settled = false;
+          const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            storeReadTimedOut = true;
+            console.warn(
+              `[generateVisualReport] 趋势库读取超时 ${VISUAL_REPORT_STORE_TIMEOUT_MS}ms，platforms=${input.platforms.join(",")}`,
+            );
+            resolve(storeNull);
+          }, VISUAL_REPORT_STORE_TIMEOUT_MS);
+          readTrendStoreForPlatforms(input.platforms as any[], {
+            preferDerivedFiles: true,
+            preferFlyLive: preferFlyLiveVisual,
+          })
+            .then((s) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              resolve(s);
+            })
+            .catch((err) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              console.warn(
+                `[generateVisualReport] 趋势库读取失败: ${err instanceof Error ? err.message : String(err)}`.slice(0, 240),
+              );
+              resolve(storeNull);
+            });
+        });
+        console.log(
+          `[generateVisualReport] store read done in ${Date.now() - storeReadStartedAt}ms timedOut=${storeReadTimedOut}`,
+        );
 
         // Build concise evidence from real store data for each platform
         const platformEvidence = input.platforms.map((platform) => {
@@ -4659,14 +4702,32 @@ export const appRouter = router({
           return {
             platform,
             displayName: PLATFORM_NAMES[platform] || platform,
-            itemCount: evidenceItems.length,
+            /** 仅服务端门禁用，不写入喂给模型的 evidence 文案 */
+            _itemCount: evidenceItems.length,
             topTitles: hotTitles,
             dramaMixNames,
             dramaRising,
-            medianPlayCount: playCounts.length > 0 ? playCounts[Math.floor(playCounts.length / 2)] : 0,
-            topPlayCount: playCounts[0] || 0,
+            /** 相对热度信号（非后台条数口径） */
+            playHeatHint:
+              playCounts.length > 0
+                ? playCounts[0] >= 1_000_000
+                  ? "头部高播"
+                  : playCounts[0] >= 100_000
+                    ? "中高播"
+                    : "长尾可起量"
+                : "热度待观察",
           };
         });
+
+        const evidenceTotal = platformEvidence.reduce((sum, row) => sum + Number(row._itemCount || 0), 0);
+        if (evidenceTotal <= 0) {
+          throw new TRPCError({
+            code: "SERVICE_UNAVAILABLE",
+            message: storeReadTimedOut
+              ? "趋势库读取超时，尚未拿到本周期样本。请稍后重试分析，勿把空报告当真实增长依据。"
+              : "当前窗口内没有可用的平台样本。请确认采集已更新后再试。",
+          });
+        }
 
         const industryGrowthHintMap = buildIndustryGrowthHintMap(store, input.platforms as string[], wd, anchorMs);
         const industryGrowthHintsObj = Object.fromEntries(
@@ -4685,9 +4746,21 @@ export const appRouter = router({
 你将对比「近 ${wd} 天」与「前 ${wd} 天」（共 ${totalDays} 天数据，均为上海日历连续日）来识别赛道加速或减速信号。
 绝对禁止使用"将会"、"预计"等预测性语言。所有描述必须是已发生的历史事实。
 
-【真实数据矩阵】
-以下是从数据库提取的各平台真实近 ${wd} 天数据快照，你必须从中提取洞察，不可凭空捏造：
-${JSON.stringify(platformEvidence, null, 2)}
+【真实内容证据】
+以下是从趋势库提取的各平台近 ${wd} 天**内容痕迹**（标题/合集/热度档位）。你必须据此写判断与热点，不可凭空捏造。
+**【禁止写进报告】**：样本条数、ItemCount、sample=、BusinessType、后台字段名、空库诊断、「本周期样本为空」类运维句。这些是后台口径，不是给创作者看的分析。
+${JSON.stringify(
+  platformEvidence.map(({ platform, displayName, topTitles, dramaMixNames, dramaRising, playHeatHint }) => ({
+    platform,
+    displayName,
+    topTitles,
+    dramaMixNames,
+    dramaRising,
+    playHeatHint,
+  })),
+  null,
+  2,
+)}
 
 【赛道口径 — 须与历史分类对齐】
 下方「行业样本推断」JSON 的每个 **key** 来自趋势样本入库时的 **正式分类**（industryLabels / contentLabels；缺省时为与增长评分一致的规则化大类兜底），**不是**从标题或评论里切出来的热词碎片。trackGrowth[].name **必须**优先 **逐字**使用该 JSON 的某一 key；若要「主赛道 · 子切口」式合并，**建议**两段均取自该 JSON 的不同 key。**不建议**使用与表中 key 无语义包含/对应关系的碎词、纯地名或账号梗充当整条赛道名。
@@ -4703,10 +4776,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
 报告全局层级（不在 platformDetails 内）必须输出以下维度（不得省略）：
 - reportTitle：精准标题，包含时间段（${pastStr} – ${todayStr}）
-- insightSummary：输出 4 个核心洞察，必须严格遵循 [{"title":"短标题","description":"详细分析"}] 的 JSON 对象数组格式。
-  - title：必须是明确的结论型标题，可以完整表达重点，不要故意压缩到不自然。
-  - description：必须是具体的详细分析与案例，必须引用真实数据、真实平台现象或真实热点活动，至少 30-50 个字。
-  - 【强制约束】：description 的内容绝对不能与 title 重复，不能只是改写 title，必须是一段有起承转合、包含现象或数据支撑的完整论述；如果输出重复内容，视为严重错误。
+- insightSummary：**必须恰好 4 条**，顺序与角色固定（与报表四宫格一致），格式：
+  [{"role":"判断","title":"…","description":"…"},{"role":"热点","title":"…","description":"…"},{"role":"结构","title":"…","description":"…"},{"role":"建议","title":"…","description":"…"}]
+  - 第1条 **判断**：本周期主赛道/内容气质的核心结论（一句结论型 title + 现象论述）
+  - 第2条 **热点**：正在发酵的社会/平台热点介绍（切入口与为何此刻可蹭）
+  - 第3条 **结构**：内容结构或节奏变化（如合集化、工具向转化、连载等）
+  - 第4条 **建议**：可执行的创作建议（给谁发、发什么切口、怎么开头）
+  - title：结论型短句，可读完整，不要写成「判断1」占位。
+  - description：30–80 字完整论述，引用标题痕迹、赛道名或官方活动名；**禁止**与 title 同义反复。
+  - **严禁**：样本条数、ItemCount、AvgLike、mediaPlayCount、sample=0、BusinessType、空库/超时诊断等后台字段或运维话术。
 - trackGrowth：**【强制数量：5-8条】** 仅含**非负向**热门赛道（服务端会剔除负增长/无匹配）；**growth** 与下表完全一致：**+100% 及以下写「+N%」**；**超过 +100% 的格子表里会是「高热」，你必须写「高热」**，禁止自造百分比或倍数。**name** 与上表 JSON 的 key 对齐（见「赛道口径」）。勿编造。**严禁** N/A、括号长句。
 - audiencesAndBiz：目标人群与商业方向（2-3条）。格式：{"audience": "人群描述", "bizDirection": "商业方向"}
 - topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}。**realCase 必须高反差/反常识/猎奇缺口**（例：「每天十碗饭反而瘦十斤」「到了上海以为到了美国」「天天打游戏怎么考上北大」），禁止正确但无聊的论文题；可蹭官方活动名时写在结构旁，勿冲淡反差。
@@ -4717,8 +4795,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 
         /**
-         * 平台趋势分析报表（独立功能）文案 JSON：默认 **gpt-5.5**（见 getVisualReportOpenAiModel）。
-         * 勿用 gpt-5.4（官方下线窗口）；旧 Gemini / 5.4 互备曾导致网关 HTML「An error…」炸 JSON。
+         * 平台趋势分析报表（独立功能）文案 JSON：默认 **gpt-5.6-terra**（见 getVisualReportOpenAiModel）。
          */
         const visualReportModel = getVisualReportOpenAiModel();
         const llmStartedAtMs = Date.now();
@@ -4728,12 +4805,22 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           );
           await ensureOfficialCampaignSeedsLoaded();
           const officialCampaigns = await listOfficialCampaignLinesForReport(input.platforms);
+          const platformEvidenceForLlm = platformEvidence.map(
+            ({ platform, displayName, topTitles, dramaMixNames, dramaRising, playHeatHint }) => ({
+              platform,
+              displayName,
+              topTitles,
+              dramaMixNames,
+              dramaRising,
+              playHeatHint,
+            }),
+          );
           const userPayload = JSON.stringify({
             windowDays: input.windowDays,
             platforms: input.platforms,
             today: todayStr,
             pastDate: pastStr,
-            platformEvidence,
+            platformEvidence: platformEvidenceForLlm,
             industrySampleGrowth: industryGrowthHintsObj,
             officialCampaigns,
             ...(String(input.personaContext || "").trim()
@@ -4758,6 +4845,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               response = await invokeLLM({
                 provider: "openai",
                 modelName: visualReportModel,
+                /** gpt-5.6-terra：仅 api.openai.com，禁止 Evolink / OpenRouter */
+                openAiGateway: "official_only",
                 response_format: { type: "json_object" },
                 max_tokens: visualReportMaxTokens,
                 temperature: 0.55,
@@ -4828,19 +4917,69 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             if (typeof v === "object") return String(v.text || v.title || v.name || v.content || v.desc || v.trackName || v.label || v.value || Object.values(v)[0] || "");
             return String(v);
           };
-          const normalizeInsightItem = (item: any) => {
+          const stripBackendInsightNoise = (text: string): string => {
+            let s = String(text || "");
+            s = s.replace(/\b(ItemCount|AvgLike|mediaPlayCount|BusinessType|sample)\s*[=:：]?\s*\d+/gi, "");
+            s = s.replace(/douyin_\w+_count\s*[=:：]?\s*\d+/gi, "");
+            s = s.replace(/本周期[^。！？\n]{0,24}样本为空[^。！？\n]{0,40}[。！？]?/g, "");
+            s = s.replace(/不要依据此判定[^。！？\n]{0,40}[。！？]?/g, "");
+            s = s.replace(/不建议以此定[^。！？\n]{0,40}[。！？]?/g, "");
+            s = s.replace(/\s{2,}/g, " ").trim();
+            return s;
+          };
+          const INSIGHT_ROLES = ["判断", "热点", "结构", "建议"] as const;
+          const normalizeInsightItem = (item: any, index: number) => {
+            const role = INSIGHT_ROLES[Math.min(Math.max(index, 0), 3)];
             if (typeof item === "string") {
-              return { title: item, description: item };
+              const title = stripBackendInsightNoise(item).slice(0, 80) || `${role}待补`;
+              return { role, title, description: title };
             }
-            const title = safeStr(item?.title || item?.name || "");
-            const fallbackDescription = safeStr(item?.content || item?.detail || item?.analysis || item?.reason || "");
-            const rawDescription = safeStr(item?.description || item?.desc || fallbackDescription);
-            const description = rawDescription && rawDescription.trim() !== title.trim()
-              ? rawDescription
-              : fallbackDescription && fallbackDescription.trim() !== title.trim()
-                ? fallbackDescription
-                : rawDescription;
-            return { title, description };
+            const title = stripBackendInsightNoise(safeStr(item?.title || item?.name || "")).slice(0, 80);
+            const fallbackDescription = stripBackendInsightNoise(
+              safeStr(item?.content || item?.detail || item?.analysis || item?.reason || ""),
+            );
+            const rawDescription = stripBackendInsightNoise(
+              safeStr(item?.description || item?.desc || fallbackDescription),
+            );
+            const description =
+              rawDescription && rawDescription.trim() !== title.trim()
+                ? rawDescription
+                : fallbackDescription && fallbackDescription.trim() !== title.trim()
+                  ? fallbackDescription
+                  : rawDescription;
+            const looksEmptyDiag =
+              /样本为空|ItemCount|sample\s*=\s*0|BusinessType/i.test(`${title} ${description}`);
+            if (looksEmptyDiag || !title) {
+              const fallbackByRole: Record<(typeof INSIGHT_ROLES)[number], { title: string; description: string }> = {
+                判断: {
+                  title: "近窗内容气质已成形，宜抓一条主赛道加码",
+                  description:
+                    "结合本周期标题痕迹，优先押注可辨识的主赛道，用稳定切口连发，避免在后台空指标上做增长判断。",
+                },
+                热点: {
+                  title: "当下可蹭的社会/平台热点，宜做人设改写后再切入",
+                  description:
+                    "优先选仍在发酵的节日、官方话题或搜索热词，改写成贴合创作者身份的切口，而不是照搬榜单词云。",
+                },
+                结构: {
+                  title: "内容结构正从单点爆发转向可复用节奏",
+                  description:
+                    "合集化、工具步骤化或连载节奏更容易被推荐持续分发；先定一版可复用结构，再换题材皮。",
+                },
+                建议: {
+                  title: "先发一条高反差标题，用第一句钉住受众痛点",
+                  description:
+                    "选定主赛道后立刻产出可拍选题：标题留反差缺口，开头点名痛点并留半成品解法，便于二次连载。",
+                },
+              };
+              return { role, ...fallbackByRole[role] };
+            }
+            return { role, title, description };
+          };
+          const normalizeInsightSummary = (raw: unknown) => {
+            const list = Array.isArray(raw) ? raw.slice(0, 4) : [];
+            while (list.length < 4) list.push({});
+            return list.map((item, i) => normalizeInsightItem(item, i));
           };
           /** 兼容 string[] 与 {primary,secondary[]}，避免蓝海栏整段被滤空 */
           const normalizeBlueOceanWords = (raw: unknown): Array<{ primary: string; secondary: string[] }> =>
@@ -4872,8 +5011,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           };
           appendRuntimeMetric("visual.report", {
             ok: true,
-            engineEnv: "evolink",
-            provider: `evolink:${visualReportModel}`,
+            engineEnv: "openai_official",
+            provider: `openai_official:${visualReportModel}`,
             durationMs: Date.now() - llmStartedAtMs,
             upstreamModel: String(response?.model ?? visualReportModel).trim() || null,
             finishReason: choice0?.finish_reason ?? null,
@@ -4962,10 +5101,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             success: true,
             report: {
               reportTitle: safeStr(parsed.reportTitle || `平台趋势看板 · ${pastStr}–${todayStr}`),
-              // insightSummary: support both {title, description} objects and legacy string arrays
-              insightSummary: Array.isArray(parsed.insightSummary)
-                ? parsed.insightSummary.map(normalizeInsightItem)
-                : [],
+              // insightSummary：固定 判断/热点/结构/建议 四栏；清洗后台条数口径
+              insightSummary: normalizeInsightSummary(parsed.insightSummary),
               trackGrowth: displayTrackGrowth,
               audiencesAndBiz: Array.isArray(parsed.audiencesAndBiz)
                 ? parsed.audiencesAndBiz.map((a: any) => ({ audience: safeStr(a?.audience || a), bizDirection: safeStr(a?.bizDirection || "") }))
@@ -5009,8 +5146,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const message = error instanceof Error ? error.message : String(error);
           appendRuntimeMetric("visual.report", {
             ok: false,
-            engineEnv: "evolink",
-            provider: `evolink:${visualReportModel}`,
+            engineEnv: "openai_official",
+            provider: `openai_official:${visualReportModel}`,
             durationMs: Date.now() - llmStartedAtMs,
             message: message.slice(0, 800),
             windowDays: input.windowDays,

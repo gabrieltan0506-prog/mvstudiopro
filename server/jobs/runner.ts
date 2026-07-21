@@ -1614,11 +1614,8 @@ async function processPlatformJob(
         platformsKeyCsv: snapshotPlatformsKey,
         preferFlyLive: preferFlyLiveTrend,
       });
-      const rawCoverPro = (params as { coverProEngine?: unknown }).coverProEngine;
-      const coverProEngine =
-        rawCoverPro === "nano_banana_2" || rawCoverPro === "nano_banana_pro"
-          ? ("nano_banana_2" as const)
-          : undefined;
+      void (params as { coverProEngine?: unknown }).coverProEngine;
+      const coverProEngine = undefined;
       const rawDrPro = (params as { enableTopicCoverDeepResearchPro?: unknown }).enableTopicCoverDeepResearchPro;
       const enableTopicCoverDeepResearchPro = rawDrPro === true;
       const rawDrSec = (params as { drProSecondarySceneId?: unknown }).drProSecondarySceneId;
@@ -1750,11 +1747,8 @@ async function processPlatformJob(
         platformsKeyCsv: snapshotPlatformsKey,
         preferFlyLive: preferFlyLiveTrendBundle,
       });
-      const rawCoverPro = (params as { coverProEngine?: unknown }).coverProEngine;
-      const coverProEngine =
-        rawCoverPro === "nano_banana_2" || rawCoverPro === "nano_banana_pro"
-          ? ("nano_banana_2" as const)
-          : undefined;
+      void (params as { coverProEngine?: unknown }).coverProEngine;
+      const coverProEngine = undefined;
       const rawDrPro = (params as { enableTopicCoverDeepResearchPro?: unknown }).enableTopicCoverDeepResearchPro;
       const enableTopicCoverDeepResearchPro = rawDrPro === true;
       const rawDrSec = (params as { drProSecondarySceneId?: unknown }).drProSecondarySceneId;

@@ -55,7 +55,15 @@ export function isEvolinkGpt56FamilyModel(raw?: string): boolean {
     .trim()
     .toLowerCase();
   if (!key) return false;
-  return Boolean(EVOLINK_CHAT_MODEL_ALIASES[key]) || /^gpt-5\.6(-sol|-terra|-luna)?$/i.test(key);
+  // 仅 5.6 家族；勿把 gpt-5.5 / 5.4 别名误判进此分支（否则会错走网关）
+  if (/^gpt-5\.6(-sol|-terra|-luna)?$/i.test(key)) return true;
+  if (key === "gpt56sol" || key === "gpt56terra") return true;
+  const mapped = EVOLINK_CHAT_MODEL_ALIASES[key];
+  return (
+    mapped === EVOLINK_CHAT_MODEL_GPT56_SOL ||
+    mapped === EVOLINK_CHAT_MODEL_GPT56_TERRA ||
+    mapped === "gpt-5.6"
+  );
 }
 
 /** 平台文案主模型：EvoLink gpt-5.6-sol（可用 EVOLINK_GPT56_SOL_MODEL / PLATFORM_STAGE2_OPENAI_MODEL 覆盖）。 */

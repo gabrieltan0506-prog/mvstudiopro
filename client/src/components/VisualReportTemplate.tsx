@@ -4,8 +4,8 @@ export type VisualReportData = {
   reportTitle: string;
   dateRange: string;
   theme: "dark" | "light";
-  // insightSummary: supports both {title, description} objects and legacy string values
-  insightSummary: Array<string | { title: string; description: string }>;
+  // insightSummary: 判断/热点/结构/建议 四栏；兼容旧 string / {title, description}
+  insightSummary: Array<string | { role?: string; title: string; description: string }>;
   trackGrowth?: Array<{ name: string; growth: string; isHot?: boolean }>;
   audiencesAndBiz?: Array<{ audience: string; bizDirection: string }>;
   topicExamples?: Array<{ structure: string; concept: string; realCase: string }>;
@@ -154,11 +154,16 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(data.insightSummary.length, 4)}, 1fr)`, gap: "14px", marginBottom: "16px", alignItems: "start" }}>
               {data.insightSummary.slice(0, 4).map((insight: any, i) => {
                 const isObj = typeof insight === "object" && insight !== null;
-                const title = isObj ? safeTxt(insight.title || insight.name || "") : safeTxt(insight).slice(0, 20);
+                const roleLabels = ["判断", "热点", "结构", "建议"] as const;
+                const roleRaw = isObj ? safeTxt(insight.role || "") : "";
+                const role = (roleLabels as readonly string[]).includes(roleRaw)
+                  ? roleRaw
+                  : roleLabels[i] || "洞察";
+                const title = isObj ? safeTxt(insight.title || insight.name || "") : safeTxt(insight).slice(0, 48);
                 const desc = isObj ? safeTxt(insight.description || insight.desc || insight.content || "") : safeTxt(insight);
                 return (
                   <div key={i} style={card({ height: "auto", minHeight: 0, overflow: "visible", alignSelf: "start" })}>
-                    <div style={ct(C[i % C.length])}><div style={dot(C[i % C.length])} />{["判断","热点","结构","建议"][i] || "洞察"}{i + 1}</div>
+                    <div style={ct(C[i % C.length])}><div style={dot(C[i % C.length])} />{role}{i + 1}</div>
                     {/* Short title — fully expanded, no truncation */}
                     <div style={{ fontSize: "16px", fontWeight: 800, color: C[i % C.length], lineHeight: "1.35", marginBottom: "12px", wordBreak: "break-word", overflowWrap: "anywhere", whiteSpace: "normal" }}>
                       {title}

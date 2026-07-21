@@ -22,12 +22,15 @@ import {
 import {
   EVOLINK_CHAT_COMPLETIONS_URL,
   getEvolinkApiKey,
+  getOfficialOpenAiApiKey,
   getOpenRouterChatHeaders,
   isEvolinkChatEndpoint,
   isOfficialOpenAiChatEndpoint,
   isOpenRouterChatEndpoint,
+  OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL,
   OPENROUTER_CHAT_COMPLETIONS_URL,
   resolveGpt56CopywritingTarget,
+  resolveGpt56OfficialOnlyTarget,
   toOpenRouterGpt56Model,
 } from "../services/gpt56CopywritingGateway";
 import { getOpenRouterApiKey } from "../services/openrouterGptImage2";
@@ -110,6 +113,12 @@ export type InvokeParams = {
    * 若傳入：返回前會寫入經 {@link truncateForMemory} 裁剪的 messages 摘要與首條選擇正文，避免巨型 diagnostics 長期佔 Heap。
    */
   memorySafeDiagnostics?: MemorySafeLlmDiagnostics;
+  /**
+   * OpenAI 兼容网关选择：
+   * - `auto`（默认）：GPT-5.6 官方 OpenAI → OpenRouter；非 5.6 仍可能走 Evolink
+   * - `official_only`：**仅** `api.openai.com`（禁止 Evolink / OpenRouter）——给 gpt-5.6-terra / 趋势报表
+   */
+  openAiGateway?: "auto" | "official_only";
 };
 
 export type ToolCall = {
@@ -543,24 +552,27 @@ const resolveTarget = (
   modelTier: ModelTier | undefined,
   preferredProvider?: Provider,
   explicitModelName?: string,
+  openAiGateway: "auto" | "official_only" = "auto",
 ): LlmTarget => {
   if (preferredProvider === "openai" || modelTier === "gpt5" || modelTier === "gpt54") {
     const candidate = String(explicitModelName || getOpenAiModelName(modelTier)).trim();
+    const officialOnly = openAiGateway === "official_only";
 
     /**
      * 平台全案 / Stage2 文案：**OpenAI 官方 GPT-5.6 Sol（主）→ OpenRouter（fallback）**。
-     * 调用形态：OpenAI-compatible `/v1/chat/completions`。
+     * `official_only`：仅 api.openai.com（gpt-5.6-terra / 趋势报表）。
      * Refs:
      *   https://developers.openai.com/api/docs/models/gpt-5.6-sol
      *   https://openrouter.ai/openai/gpt-5.6-sol
-     * 图片生成另见 proxyImageService（官方 gpt-image-2 → OpenRouter）。
      */
     if (
       isEvolinkGpt56FamilyModel(candidate) ||
       isOhMyGptGpt56FamilyModel(candidate) ||
       (!explicitModelName && modelTier !== "gpt54" && modelTier !== "gpt5")
     ) {
-      const gw = resolveGpt56CopywritingTarget(candidate || getEvolinkGpt56SolModel());
+      const gw = officialOnly
+        ? resolveGpt56OfficialOnlyTarget(candidate || getEvolinkGpt56SolModel())
+        : resolveGpt56CopywritingTarget(candidate || getEvolinkGpt56SolModel());
       return {
         provider: "openai",
         apiUrl: gw.apiUrl,
@@ -572,6 +584,20 @@ const resolveTarget = (
     const fallback =
       modelTier === "gpt54" || modelTier === "gpt5" ? EVOLINK_CHAT_MODEL_GPT54 : undefined;
     const resolvedModelName = normalizeEvolinkChatModel(candidate || getOpenAiModelName(modelTier), fallback);
+
+    /** official_only：非 5.6 也禁止 Evolink，强制官方 OpenAI */
+    if (officialOnly) {
+      const officialKey = getOfficialOpenAiApiKey();
+      if (!officialKey) {
+        throw new Error("OPENAI_API_KEY（或 OPENAI_CHAT_API_KEY）未配置：official_only 须走 api.openai.com");
+      }
+      return {
+        provider: "openai",
+        apiUrl: OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL,
+        apiKey: officialKey,
+        modelName: resolvedModelName,
+      };
+    }
 
     /**
      * GPT-5.4 / GPT-5.5（非 5.6）仍走 Evolink。
@@ -1253,6 +1279,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     isEvolinkGpt56FamilyModel(String(target.modelName || "")) ||
     isOhMyGptGpt56FamilyModel(String(target.modelName || ""));
 
+  const officialOnly = params.openAiGateway === "official_only";
   try {
     return await postChatCompletions(
       String(target.apiUrl),
@@ -1261,8 +1288,8 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
       label,
     );
   } catch (primaryErr) {
-    // GPT-5.6 文案：官方 OpenAI 失败 → OpenRouter fallback
-    if (isOfficialEndpoint && isGpt56Family) {
+    // GPT-5.6 文案：官方 OpenAI 失败 → OpenRouter fallback（official_only 禁止）
+    if (isOfficialEndpoint && isGpt56Family && !officialOnly) {
       const openrouterKey = getOpenRouterApiKey();
       if (openrouterKey) {
         const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
@@ -1284,7 +1311,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
 }
 
 export async function invokeLLM(params: InvokeParams & { model?: ModelTier }): Promise<InvokeResult> {
-  const target = resolveTarget(params.model, params.provider, params.modelName);
+  const target = resolveTarget(params.model, params.provider, params.modelName, params.openAiGateway);
 
   let raw: InvokeResult;
   if (target.provider === "vertex") {

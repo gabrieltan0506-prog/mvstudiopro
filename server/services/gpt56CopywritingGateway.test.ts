@@ -3,6 +3,7 @@ import {
   OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL,
   OPENROUTER_CHAT_COMPLETIONS_URL,
   resolveGpt56CopywritingTarget,
+  resolveGpt56OfficialOnlyTarget,
   toOpenRouterGpt56Model,
 } from "./gpt56CopywritingGateway.js";
 
@@ -62,5 +63,23 @@ describe("resolveGpt56CopywritingTarget", () => {
   it("maps OpenRouter model slug", () => {
     expect(toOpenRouterGpt56Model("gpt-5.6-sol")).toBe("openai/gpt-5.6-sol");
     expect(toOpenRouterGpt56Model("openai/gpt-5.6-terra")).toBe("openai/gpt-5.6-terra");
+  });
+
+  it("official_only forces api.openai.com and never Evolink/OpenRouter", () => {
+    setEnv("OPENAI_API_KEY", "sk-terra-official");
+    setEnv("OPENROUTER_API_KEY", "sk-or-ignored");
+    setEnv("EVOLINK_API_KEY", "evo-ignored");
+    const t = resolveGpt56OfficialOnlyTarget("gpt-5.6-terra");
+    expect(t.gateway).toBe("openai_official");
+    expect(t.apiUrl).toBe(OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL);
+    expect(t.apiKey).toBe("sk-terra-official");
+    expect(t.modelName).toBe("gpt-5.6-terra");
+  });
+
+  it("official_only throws when OPENAI_API_KEY missing", () => {
+    setEnv("OPENAI_API_KEY", undefined);
+    setEnv("OPENAI_CHAT_API_KEY", undefined);
+    setEnv("OPENROUTER_API_KEY", "sk-or-only");
+    expect(() => resolveGpt56OfficialOnlyTarget("gpt-5.6-terra")).toThrow(/api\.openai\.com/);
   });
 });

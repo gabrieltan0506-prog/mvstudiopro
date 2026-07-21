@@ -95,3 +95,26 @@ export function resolveGpt56CopywritingTarget(modelNameHint?: string): Gpt56Copy
     "OPENAI_API_KEY（或 OPENAI_CHAT_API_KEY）与 OPENROUTER_API_KEY 均未配置（GPT-5.6 文案：官方 OpenAI 优先，OpenRouter fallback）",
   );
 }
+
+/**
+ * 强制仅 OpenAI 官方（`api.openai.com`）：用于 gpt-5.6-terra / 趋势报表等。
+ * **禁止** Evolink / OpenRouter。
+ */
+export function resolveGpt56OfficialOnlyTarget(modelNameHint?: string): Gpt56CopywritingTarget {
+  const modelName = normalizeEvolinkChatModel(
+    modelNameHint || getEvolinkGpt56SolModel(),
+    EVOLINK_CHAT_MODEL_GPT56_SOL,
+  );
+  const officialKey = getOfficialOpenAiApiKey();
+  if (!officialKey) {
+    throw new Error(
+      "OPENAI_API_KEY（或 OPENAI_CHAT_API_KEY）未配置：gpt-5.6-terra / 官方专线须走 api.openai.com，不走 Evolink/OpenRouter",
+    );
+  }
+  return {
+    gateway: "openai_official",
+    apiUrl: OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL,
+    apiKey: officialKey,
+    modelName,
+  };
+}
