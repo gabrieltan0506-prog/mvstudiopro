@@ -537,7 +537,10 @@ export async function runCanvasBlock(
         .slice(0, 15),
     );
     const maskUrl = absRef(block.editMaskUrl) || String(block.editMaskUrl || "").trim();
-    // 微调：提示词即修改说明；文生图才走 JSON 导演中台
+    /**
+     * 关键静帧：提示词已含分镜/画风/硬锁（中文直送即可），再跑导演中台多一轮 LLM，明显拖慢。
+     * 其它 image 节点仍走 JSON 导演编译。
+     */
     const rawImagePrompt = isEdit
       ? [
           mergedPrompt,
@@ -549,10 +552,14 @@ export async function runCanvasBlock(
         ]
           .filter(Boolean)
           .join("\n")
-      : await resolveImagePromptViaJsonDirector(deps, mergedPrompt, ar, imageModel);
-    // 关键静帧：英文禁字再钉死一次（翻译中台偶发丢掉 negative）
+      : isKeyart
+        ? `${String(mergedPrompt || "").trim()}\n\n${MANHUA_KEYART_NO_TEXT_EN}`
+        : await resolveImagePromptViaJsonDirector(deps, mergedPrompt, ar, imageModel);
+    // 关键静帧：英文禁字再钉死一次（直送路径已拼过则去重）
     const imagePrompt = isKeyart
-      ? `${rawImagePrompt.trim()}\n\n${MANHUA_KEYART_NO_TEXT_EN}`
+      ? rawImagePrompt.includes(MANHUA_KEYART_NO_TEXT_EN)
+        ? rawImagePrompt.trim()
+        : `${rawImagePrompt.trim()}\n\n${MANHUA_KEYART_NO_TEXT_EN}`
       : rawImagePrompt;
     /** 主路径 Image-2；失败回退 NB2。显式手选 NB2 省钱时直走，不先打 Image-2 */
     const preferGptImage2 = imageModel !== "nano-banana-2";
@@ -573,18 +580,9 @@ export async function runCanvasBlock(
         // 关键静帧：edit/融图失败 → 纯文生图重做（不能套用就重新生成）
         if (isKeyart && isEdit) {
           try {
-            const regenPrompt = await resolveImagePromptViaJsonDirector(
-              deps,
-              mergedPrompt,
-              ar,
-              imageModel,
-            );
-            urls = await runGptImage2Batch(
-              isKeyart ? `${regenPrompt.trim()}\n\n${MANHUA_KEYART_NO_TEXT_EN}` : regenPrompt,
-              ar,
-              {},
-              count,
-            );
+            // 关键帧重做同样直送中文提示，避免再等一轮编译
+            const regenPrompt = `${String(mergedPrompt || "").trim()}\n\n${MANHUA_KEYART_NO_TEXT_EN}`;
+            urls = await runGptImage2Batch(regenPrompt, ar, {}, count);
             console.warn(`[canvasRunBlock] keyart edit/融图失败，已文生图重做：${reason}`);
           } catch (regenErr) {
             const rr = regenErr instanceof Error ? regenErr.message.slice(0, 120) : "文生图重做失败";

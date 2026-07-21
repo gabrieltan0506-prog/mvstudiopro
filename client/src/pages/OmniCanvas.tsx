@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import Navbar from "@/components/Navbar";
 import FreeformCanvas from "@/components/canvas/FreeformCanvas";
 import ManhuaClipDock from "@/components/canvas/ManhuaClipDock";
@@ -2587,11 +2588,21 @@ export default function OmniCanvas() {
       pushDebug("factoryRun:start", {
         detail: `until=${untilStage} · force=${opts?.forceFromStage || "—"} · frag=${uniqueFragmentIndexes.join(",") || "—"}`,
       });
+      let workingBlocks = blocks;
+      let workingEdges = edges;
+      let factorySaveTimer: number | undefined;
+      const flushFactorySave = () => {
+        if (factorySaveTimer != null) {
+          window.clearTimeout(factorySaveTimer);
+          factorySaveTimer = undefined;
+        }
+        saveCanvasState(workingBlocks, workingEdges);
+      };
       try {
         const spawned = ensureStudioSpawned(factoryTopic);
         const cleanedGraph = sanitizeManhuaRecapUpstreamLinks(spawned.blocks, spawned.edges);
-        let workingBlocks = cleanedGraph.blocks;
-        let workingEdges = cleanedGraph.edges;
+        workingBlocks = cleanedGraph.blocks;
+        workingEdges = cleanedGraph.edges;
         if (
           cleanedGraph.edges.length !== spawned.edges.length ||
           spawned.blocks.some(
@@ -2654,12 +2665,19 @@ export default function OmniCanvas() {
               signal: ac.signal,
               onBlocksChange: (next) => {
                 workingBlocks = next;
-                setBlocks(next);
-                setEdges((eds) => {
-                  workingEdges = eds;
-                  saveCanvasState(next, eds);
-                  return eds;
+                // 出一张立刻上屏；存盘防抖，避免每张都同步写 localStorage 卡顿
+                flushSync(() => {
+                  setBlocks(next);
                 });
+                if (factorySaveTimer != null) window.clearTimeout(factorySaveTimer);
+                factorySaveTimer = window.setTimeout(() => {
+                  factorySaveTimer = undefined;
+                  setEdges((eds) => {
+                    workingEdges = eds;
+                    saveCanvasState(next, eds);
+                    return eds;
+                  });
+                }, 450);
               },
               onStageStart: (_id, index, total, label) => {
                 if (stageStartedAtRef.current != null) {
@@ -2677,7 +2695,12 @@ export default function OmniCanvas() {
                 pushDebug("factoryStage:start", {
                   detail: `ep${episodeIndex} · frag=${fragmentPad || "—"} · ${index + 1}/${total} · ${label}`,
                 });
-                toast.message(`第${episodeIndex}集 ${index + 1}/${total}`, { description: label });
+                // 静帧批量并行时每张都 toast 会刷屏
+                if (label !== MANHUA_FACTORY_STAGE_LABEL_ZH.keyart) {
+                  toast.message(`第${episodeIndex}集 ${index + 1}/${total}`, {
+                    description: label,
+                  });
+                }
               },
               onStageSkip: (_id, label) => {
                 setFactoryProgress(`第${episodeIndex}集 · 跳过已完成 · ${label}`);
@@ -2782,12 +2805,15 @@ export default function OmniCanvas() {
         }
         setFactoryProgress("");
       } finally {
+        flushFactorySave();
         abortRef.current = null;
         stageStartedAtRef.current = null;
         setFactoryBusy(false);
       }
     },
     [
+      blocks,
+      edges,
       ensureStudioSpawned,
       factoryBusy,
       factoryTopic,

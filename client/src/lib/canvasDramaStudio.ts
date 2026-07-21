@@ -20,6 +20,7 @@ import {
   isManhuaClipQualityKeyartTextFailure,
 } from "@shared/manhuaClipQuality";
 import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
+import { mapWithConcurrency } from "./canvasUpload";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
 import {
   buildManhuaStagePromptWithGenre,
@@ -153,6 +154,13 @@ export const MANHUA_FACTORY_STAGE_LABEL_ZH: Record<ManhuaFactoryStageKey, string
   clip: "微动成片",
   omni_edit: "视频改写",
 };
+
+/** 批量静帧并发：过大易打爆上游；过小体感仍串行 */
+export const MANHUA_KEYART_PARALLEL_CONCURRENCY = 3;
+
+/** 批量并行时不能硬吃上一镜底图，用软一致性提示代替镜间接力 */
+const MANHUA_KEYART_BATCH_SOFT_CONTINUITY_ZH =
+  "【同集静帧一致性】与同集其他分镜保持人物身份、服装、场景材质与光色一致，只改本镜动作与构图差异。";
 
 export type SpawnManhuaDramaStudioOpts = {
   originX?: number;
@@ -1862,14 +1870,17 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       opts.signal?.addEventListener("abort", onAbort, { once: true });
     });
 
-  for (let i = 0; i < orderedIds.length; i++) {
+  for (let i = 0; i < orderedIds.length; ) {
     if (opts.signal?.aborted) {
       errors.push({ id: orderedIds[i]!, message: "已取消" });
       break;
     }
     const blockId = orderedIds[i]!;
     let block = working.find((b) => b.id === blockId);
-    if (!block) continue;
+    if (!block) {
+      i += 1;
+      continue;
+    }
     // 旧画布 clip 曾误挂 Seedance：工厂主成片一律 Gemini Omni
     if (block.id.startsWith("clip-") && block.videoModel !== "gemini-omni-flash") {
       block = { ...block, videoModel: "gemini-omni-flash" };
@@ -1881,9 +1892,179 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     const stageIdx = stage ? MANHUA_FACTORY_STAGE_ORDER.indexOf(stage) : i;
     const mustRerun = forceIdx >= 0 && stageIdx >= forceIdx;
 
+    /**
+     * 关键静帧：连续多镜批量并行（出一张 publish 一张），不再串等上一镜 edit 底图。
+     * 单镜重出仍走硬镜间接力（若用户开了 keyartFromPrevStill）。
+     */
+    if (stage === "keyart") {
+      type KeyartJob = { index: number; id: string };
+      const jobs: KeyartJob[] = [];
+      let j = i;
+      const keyartForce =
+        forceIdx >= 0 && MANHUA_FACTORY_STAGE_ORDER.indexOf("keyart") >= forceIdx;
+      while (j < orderedIds.length && orderedIds[j]!.startsWith("keyart-")) {
+        const kid = orderedIds[j]!;
+        const kb = working.find((b) => b.id === kid);
+        if (!kb) {
+          j += 1;
+          continue;
+        }
+        if (skipDone && !keyartForce && blockLooksDone(kb)) {
+          skippedIds.push(kid);
+          opts.onStageSkip?.(kid, MANHUA_FACTORY_STAGE_LABEL_ZH.keyart);
+          j += 1;
+          continue;
+        }
+        jobs.push({ index: j, id: kid });
+        j += 1;
+      }
+      if (!jobs.length) {
+        i = j;
+        continue;
+      }
+
+      const batchParallel = jobs.length >= 2;
+      const concurrency = batchParallel ? MANHUA_KEYART_PARALLEL_CONCURRENCY : 1;
+      const {
+        normalizeManhuaShotContinuityPrefs,
+        resolvePreviousShotKeyartUrl,
+        MANHUA_SHOT_KEYART_CONTINUITY_HINT_ZH,
+      } = await import("@shared/manhuaShotContinuity");
+      const shotCont = normalizeManhuaShotContinuityPrefs(opts.shotContinuity);
+
+      publish(
+        working.map((b) =>
+          jobs.some((job) => job.id === b.id)
+            ? { ...b, status: "running" as const, error: undefined }
+            : b,
+        ),
+      );
+      for (const job of jobs) {
+        opts.onStageStart?.(
+          job.id,
+          job.index,
+          orderedIds.length,
+          MANHUA_FACTORY_STAGE_LABEL_ZH.keyart,
+        );
+      }
+
+      await mapWithConcurrency(jobs, concurrency, async (job) => {
+        const kid = job.id;
+        const kLabel = MANHUA_FACTORY_STAGE_LABEL_ZH.keyart;
+        let lastMessage = "生成失败";
+        let succeeded = false;
+        for (let attempt = 0; attempt <= defaultMaxRetries; attempt++) {
+          if (opts.signal?.aborted) {
+            lastMessage = "已取消";
+            break;
+          }
+          try {
+            const current = working.find((b) => b.id === kid);
+            if (!current) throw new Error("静帧节点不存在");
+            const visionImages = collectVisionImages(kid, working, edges);
+            const nearestRef =
+              current.refImageUrl || resolveNearestUpstreamImageUrl(kid, working, edges);
+            let runBlockPayload =
+              nearestRef && nearestRef !== current.refImageUrl
+                ? { ...current, refImageUrl: nearestRef }
+                : current;
+            const epForShot = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
+            const shotForCont = resolveKeyartShotIndex(runBlockPayload.id, runBlockPayload.prompt);
+
+            if (!batchParallel && shotCont.keyartFromPrevStill && shotForCont >= 2) {
+              const prevStill = resolvePreviousShotKeyartUrl(working, epForShot, shotForCont);
+              if (prevStill) {
+                const basePrompt = String(runBlockPayload.prompt || "");
+                runBlockPayload = {
+                  ...runBlockPayload,
+                  refImageUrl: prevStill,
+                  imageMode: "edit",
+                  prompt: basePrompt.includes("镜间静帧接力")
+                    ? basePrompt
+                    : `${basePrompt}\n\n${MANHUA_SHOT_KEYART_CONTINUITY_HINT_ZH}`,
+                };
+              }
+            } else if (batchParallel && shotCont.keyartFromPrevStill) {
+              const basePrompt = String(runBlockPayload.prompt || "");
+              if (
+                !basePrompt.includes("同集静帧一致性") &&
+                !basePrompt.includes("镜间静帧接力")
+              ) {
+                runBlockPayload = {
+                  ...runBlockPayload,
+                  prompt: `${basePrompt}\n\n${MANHUA_KEYART_BATCH_SOFT_CONTINUITY_ZH}`,
+                };
+              }
+            }
+
+            const texts = collectUpstreamTexts(kid, working, edges);
+            const out = await runCanvasBlock(opts.deps, runBlockPayload, {
+              visionImages,
+              texts,
+            });
+            let next = working.map((b) =>
+              b.id === kid
+                ? {
+                    ...b,
+                    status: "done" as const,
+                    outputText: out.outputText,
+                    outputUrl: out.outputUrl,
+                    outputUrls:
+                      out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : b.outputUrls),
+                    error: undefined,
+                  }
+                : b,
+            );
+            next = enrichDownstreamPrompts(next, kid);
+            publish(next);
+            completedIds.push(kid);
+            opts.onStageDone?.(kid, job.index, orderedIds.length, kLabel);
+            succeeded = true;
+            break;
+          } catch (e: unknown) {
+            lastMessage = e instanceof Error ? e.message : "生成失败";
+            if (lastMessage === "已取消" || opts.signal?.aborted) break;
+            if (attempt < defaultMaxRetries && isTransientFactoryError(lastMessage)) {
+              opts.onStageRetry?.(kid, kLabel, attempt + 1, lastMessage);
+              publish(
+                working.map((b) =>
+                  b.id === kid
+                    ? {
+                        ...b,
+                        status: "running" as const,
+                        error: `重试 ${attempt + 1}/${defaultMaxRetries}：${lastMessage}`,
+                      }
+                    : b,
+                ),
+              );
+              await sleep(1200 * (attempt + 1));
+              continue;
+            }
+            break;
+          }
+        }
+        if (!succeeded) {
+          publish(
+            working.map((b) =>
+              b.id === kid ? { ...b, status: "error" as const, error: lastMessage } : b,
+            ),
+          );
+          if (!errors.some((e) => e.id === kid)) {
+            errors.push({ id: kid, message: lastMessage });
+          }
+        }
+      });
+
+      if (opts.signal?.aborted) break;
+      if (stopOnError && errors.some((e) => jobs.some((job) => job.id === e.id))) break;
+      i = j;
+      continue;
+    }
+
     if (skipDone && !mustRerun && blockLooksDone(block)) {
       skippedIds.push(blockId);
       opts.onStageSkip?.(blockId, label);
+      i += 1;
       continue;
     }
 
@@ -2233,6 +2414,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       if (lastMessage === "已取消" || opts.signal?.aborted) break;
       if (stopOnError) break;
     }
+    i += 1;
   }
 
   return { blocks: working, completedIds, skippedIds, errors };

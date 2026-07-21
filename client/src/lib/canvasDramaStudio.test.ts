@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MANHUA_FACTORY_STAGE_ORDER,
+  MANHUA_KEYART_PARALLEL_CONCURRENCY,
   applyFactoryPrefsToBlocks,
   applyTopicToFactoryStory,
   ensureManhuaFragmentClips,
@@ -23,6 +24,7 @@ import {
   spawnManhuaDramaStudioSeries,
 } from "./canvasDramaStudio";
 import { collectVisionImages, resolveNearestUpstreamImageUrl } from "./canvasTypes";
+import * as canvasRunBlock from "./canvasRunBlock";
 import type { CanvasRunDeps } from "./canvasRunBlock";
 import { resolveKeyartShotIndex } from "@shared/manhuaScriptWorkbench";
 
@@ -871,4 +873,86 @@ slow dolly in, soft rain, trembling hand
     expect(ep2Story.prompt).toContain("【上集钩子】钩A");
     expect(ep2Story.episodeTitle).toBe("二改");
   });
+
+  it("exposes keyart parallel concurrency > 1", () => {
+    expect(MANHUA_KEYART_PARALLEL_CONCURRENCY).toBeGreaterThanOrEqual(2);
+  });
+
+  it("publishes each keyart as it finishes (batch parallel, no hard prev-still wait)", async () => {
+    const spawned = spawnManhuaDramaStudio({ topic: "雨夜对峙" });
+    const reverseId = spawned.blocks.find((b) => b.id.startsWith("reverse-"))!.id;
+    const reverseMd = `## 分镜表
+| 镜号 | 景别 | 内容 | 时长 |
+| 1 | 近景 | 雨夜对视 | 2.5 |
+| 2 | 中景 | 拔刀 | 2.5 |
+| 3 | 全景 | 追击 | 2.5 |
+`;
+    const primed = spawned.blocks.map((b) => {
+      if (b.id.startsWith("story-") || b.id.startsWith("bible-") || b.id.startsWith("beats-")) {
+        return { ...b, status: "done" as const, outputText: "上游已完成" };
+      }
+      if (b.id.startsWith("reverse-")) {
+        return { ...b, status: "done" as const, outputText: reverseMd };
+      }
+      return b;
+    });
+    const expanded = expandManhuaShotKeyartsAfterReverse(primed, spawned.edges, reverseId);
+    const keyarts = expanded.blocks.filter((b) => b.id.startsWith("keyart-"));
+    expect(keyarts.length).toBeGreaterThanOrEqual(3);
+
+    const doneOrder: string[] = [];
+    const inFlightPeaks: number[] = [];
+    let inFlight = 0;
+    const spy = vi.spyOn(canvasRunBlock, "runCanvasBlock").mockImplementation(async (_deps, block) => {
+      if (!block.id.startsWith("keyart-")) {
+        return { outputText: "skip" };
+      }
+      inFlight += 1;
+      inFlightPeaks.push(inFlight);
+      const delay = block.id.includes("-s01") ? 60 : block.id.includes("-s02") ? 10 : 30;
+      await new Promise((r) => setTimeout(r, delay));
+      inFlight -= 1;
+      return { outputUrl: `https://cdn.example/${block.id}.png` };
+    });
+
+    try {
+      const deps: CanvasRunDeps = { optimizeCopy: async () => "" };
+      await runManhuaDramaFactoryPipeline({
+        deps,
+        blocks: expanded.blocks,
+        edges: expanded.edges,
+        untilStage: "keyart",
+        forceFromStage: "keyart",
+        skipDone: true,
+        maxRetries: 0,
+        shotContinuity: { keyartFromPrevStill: true },
+        onBlocksChange: (next) => {
+          const freshlyDone = next
+            .filter((b) => b.id.startsWith("keyart-") && b.status === "done" && b.outputUrl)
+            .map((b) => b.id)
+            .filter((id) => !doneOrder.includes(id));
+          doneOrder.push(...freshlyDone);
+        },
+      });
+
+      // s02 更快：应先于 s01 出现在渐进 publish 里（若严格串行则必为 s01→s02→s03）
+      expect(doneOrder.length).toBeGreaterThanOrEqual(3);
+      expect(doneOrder[0]).toMatch(/-s02/);
+      expect(Math.max(...inFlightPeaks)).toBeGreaterThanOrEqual(2);
+      // 批量并行不应把上一镜静帧硬塞成 edit 底图
+      const keyartCalls = spy.mock.calls.filter(([_, b]) => b.id.startsWith("keyart-"));
+      expect(keyartCalls.every(([_, b]) => b.imageMode !== "edit")).toBe(true);
+      expect(
+        keyartCalls.some(
+          ([_, b]) => String(b.prompt || "").includes("同集静帧一致性"),
+        ),
+      ).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
