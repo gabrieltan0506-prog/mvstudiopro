@@ -78,6 +78,7 @@ import {
   manhuaSegmentDurationSec,
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
   MANHUA_KEYART_NO_TEXT_LOCK,
+  MANHUA_SEGMENT_DEFAULT,
   MANHUA_SHOT_KEYART_MAX,
   parseWorkbenchShotsFromText,
   resolveClipSegmentIndex,
@@ -90,6 +91,7 @@ import {
   planManhuaKeyartEditFusion,
   type ManhuaKeyartEditPlan,
 } from "@shared/manhuaKeyartEditFusion";
+import { collectManhuaIdentityImageUrls } from "@shared/manhuaAssetImageGate";
 import type { ManhuaCustomAssetRef } from "@shared/manhuaCustomAssetRefs";
 
 function applyKeyartEditPlanToBlock(
@@ -157,8 +159,8 @@ export const MANHUA_FACTORY_STAGE_LABEL_ZH: Record<ManhuaFactoryStageKey, string
   omni_edit: "视频改写",
 };
 
-/** 批量静帧并发：过大易打爆上游；过小体感仍串行 */
-export const MANHUA_KEYART_PARALLEL_CONCURRENCY = 3;
+/** 批量静帧并发：官方 Image-2 high 较慢，>2 易撞本地 AbortSignal 超时 */
+export const MANHUA_KEYART_PARALLEL_CONCURRENCY = 2;
 
 /** 批量并行时不能硬吃上一镜底图，用软一致性提示代替镜间接力 */
 const MANHUA_KEYART_BATCH_SOFT_CONTINUITY_ZH =
@@ -477,6 +479,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     includeVisibleAction: true,
     includeShortArc: false,
     includeClipPreflight: true,
+    // 成片侧再钉对白/道具/运镜/动作/场景（三分钟集）
+    includeEpisodeQuality: true,
   });
   const wardrobeBlock = buildWardrobePropContinuityInjectBlock(
     (opts.wardrobePropContinuityIds || []).map((id) => String(id || "").trim()).filter(Boolean),
@@ -973,6 +977,12 @@ export function applyFactoryPrefsToBlocks(
         ...(b.id.startsWith("reverse-") ? { videoReverseOutputMode: reverseMode } : {}),
       };
       if (b.id.startsWith("keyart-")) {
+        const identityImageUrls = collectManhuaIdentityImageUrls({
+          characterIds: prefsCharacterIds,
+          ancientArchetypeIds: prefsAncientIds,
+          customRefs: opts.customRefs,
+          assetBlocks: blocks.filter((x) => x.id.startsWith("charsheet-")),
+        });
         const editPlan = planManhuaKeyartEditFusion({
           characterIds: prefsCharacterIds,
           ancientArchetypeIds: prefsAncientIds,
@@ -980,6 +990,7 @@ export function applyFactoryPrefsToBlocks(
           sceneId: opts.sceneId,
           propIds: opts.propIds,
           customRefs: opts.customRefs,
+          identityImageUrls,
         });
         return applyKeyartEditPlanToBlock(merged, editPlan);
       }
@@ -1738,7 +1749,7 @@ function buildEpisodeQualityExpectedContext(opts: {
           .join("\n\n")
       : extractShotInjectSection(opts.keyartPrompt || "") ||
         String(opts.clipPrompt || "").slice(0, 1200);
-  const segs = opts.segmentCount ?? 6;
+  const segs = opts.segmentCount ?? MANHUA_SEGMENT_DEFAULT;
   const dur = opts.durationSec ?? segs * manhuaSegmentDurationSec(MANHUA_FACTORY_DEFAULT_VIDEO_MODEL);
   return [
     shotBlock,
@@ -1978,11 +1989,17 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       i += 1;
       continue;
     }
-    // 旧画布缺 videoModel 的 clip：补默认 Seedance Fast（不再强制 Omni）
-    if (block.id.startsWith("clip-") && !block.videoModel) {
-      block = { ...block, videoModel: MANHUA_FACTORY_DEFAULT_VIDEO_MODEL };
-      working = working.map((b) => (b.id === blockId ? block! : b));
-      opts.onBlocksChange?.(working);
+    // 旧画布缺 videoModel / 仍挂 Omni 的主成片：迁默认 Seedance Fast（omni_edit 不动）
+    if (block.id.startsWith("clip-") && !block.id.startsWith("omni_edit-")) {
+      const nextModel =
+        block.videoModel === "seedance-2.0" || block.videoModel === "seedance-2.0-fast"
+          ? block.videoModel
+          : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+      if (nextModel !== block.videoModel) {
+        block = { ...block, videoModel: nextModel };
+        working = working.map((b) => (b.id === blockId ? block! : b));
+        opts.onBlocksChange?.(working);
+      }
     }
     const stage = stageKeyFromBlockId(blockId);
     const label = stage ? MANHUA_FACTORY_STAGE_LABEL_ZH[stage] : blockId;
@@ -2059,12 +2076,11 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             const current = working.find((b) => b.id === kid);
             if (!current) throw new Error("静帧节点不存在");
             const visionImages = collectVisionImages(kid, working, edges);
-            const nearestRef =
-              current.refImageUrl || resolveNearestUpstreamImageUrl(kid, working, edges);
-            let runBlockPayload =
-              nearestRef && nearestRef !== current.refImageUrl
-                ? { ...current, refImageUrl: nearestRef }
-                : current;
+            /** 文生静帧勿挂上游 nearestRef，否则会被当成 edits 且易超时 */
+            let runBlockPayload: CanvasBlock =
+              current.imageMode === "edit" && current.refImageUrl
+                ? current
+                : { ...current, refImageUrl: undefined, editFusionUrls: [] };
             const epForShot = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
             const shotForCont = resolveKeyartShotIndex(runBlockPayload.id, runBlockPayload.prompt);
 
@@ -2089,6 +2105,9 @@ export async function runManhuaDramaFactoryPipeline(opts: {
               ) {
                 runBlockPayload = {
                   ...runBlockPayload,
+                  imageMode: "generate",
+                  refImageUrl: undefined,
+                  editFusionUrls: [],
                   prompt: `${basePrompt}\n\n${MANHUA_KEYART_BATCH_SOFT_CONTINUITY_ZH}`,
                 };
               }

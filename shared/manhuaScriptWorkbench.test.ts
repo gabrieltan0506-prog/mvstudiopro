@@ -60,7 +60,7 @@ describe("manhuaScriptWorkbench", () => {
     expect(shots[0]?.actionZh).not.toMatch(/^近景/);
   });
 
-  it("falls back to default skeleton of ~6 segments × 4 keyarts", () => {
+  it("falls back to default skeleton of ~12 segments × 4 keyarts", () => {
     const shots = parseWorkbenchShotsFromText("只有一段散文没有编号");
     expect(shots.length).toBe(MANHUA_SEGMENT_DEFAULT * MANHUA_KEYARTS_PER_SEGMENT_MIN);
     expect(defaultWorkbenchShots().length).toBe(
@@ -74,7 +74,7 @@ describe("manhuaScriptWorkbench", () => {
         "\n",
       ),
     );
-    // 有分镜表：按 4 镜一段，不注水到 6 段
+    // 有分镜表：按 4 镜一段，不注水到默认 12 段
     const segsFast = groupShotsIntoSegments(shots, {
       videoModel: MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
     });
@@ -83,8 +83,8 @@ describe("manhuaScriptWorkbench", () => {
     expect(manhuaSegmentDurationSec("gemini-omni-flash")).toBe(10);
     expect(workbenchShotTotalSec(shots, "seedance-2.0-fast")).toBe(30);
     expect(workbenchShotTotalSec(shots, "gemini-omni-flash")).toBe(20);
-    // 默认骨架：6 段 × 15s
-    expect(workbenchShotTotalSec([], "seedance-2.0-fast")).toBe(90);
+    // 默认骨架：12 段 × 15s = 180s
+    expect(workbenchShotTotalSec([], "seedance-2.0-fast")).toBe(180);
     expect(
       groupShotsIntoSegments([], { videoModel: "seedance-2.0-fast" }).length,
     ).toBe(MANHUA_SEGMENT_DEFAULT);

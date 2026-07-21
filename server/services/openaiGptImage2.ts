@@ -23,8 +23,9 @@ export function resolveOpenAiGptImage2Model(): string {
   return OPENAI_GPT_IMAGE2_SNAPSHOT_DEFAULT;
 }
 
+/** Canvas 静帧/封面：high·竖屏常需 >3min；默认 5min，可用 env 覆写 */
 const REQUEST_TIMEOUT_MS = Math.min(
-  Math.max(Number(process.env.OPENAI_GPT_IMAGE2_TIMEOUT_MS) || 180_000, 60_000),
+  Math.max(Number(process.env.OPENAI_GPT_IMAGE2_TIMEOUT_MS) || 300_000, 60_000),
   600_000,
 );
 

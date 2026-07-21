@@ -1,4 +1,6 @@
 /** Gemini Omni Canvas · 前端 API 封装 */
+import { resolveGeminiScriptFallbackModel } from "@shared/geminiScriptFallback";
+
 export type OmniCanvasVideoEngine = "omni" | "seedance25";
 
 export type OmniVideoTask =
@@ -100,7 +102,7 @@ function isTransientGeminiHttp(status: number): boolean {
  * 对 429/5xx 在客户端再退避；Pro 仍失败时换 Flash 再试（服务端也会换；勿泄漏模型名）。
  */
 export async function runGeminiScript(prompt: string, model?: string) {
-  const { resolveGeminiScriptFallbackModel } = await import("@shared/geminiScriptFallback");
+  // 静态导入：长跑中途若部署换了 hashed chunk，动态 import 会 404 整段工厂中断
   const primary = model || "gemini-3.1-pro-preview";
   const models = [primary];
   const fallback = resolveGeminiScriptFallbackModel(primary);

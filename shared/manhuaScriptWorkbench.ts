@@ -50,8 +50,12 @@ export const MANHUA_OMNI_SEGMENT_DURATION_SEC = 10;
 /** Seedance 2.0 / Fast 每段成片秒数 */
 export const MANHUA_SEEDANCE_SEGMENT_DURATION_SEC = 15;
 
-/** 一集默认段数（6×15s ≈ 90s） */
-export const MANHUA_SEGMENT_DEFAULT = 6;
+/** 一集默认段数（12×15s ≈ 180s；下限约 10×15s=150s） */
+export const MANHUA_SEGMENT_DEFAULT = 12;
+/** 一集建议最短时长（秒，按 Seedance 段长估算） */
+export const MANHUA_EPISODE_TARGET_MIN_SEC = 150;
+/** 一集默认目标时长（秒） */
+export const MANHUA_EPISODE_TARGET_DEFAULT_SEC = 180;
 /** 每段静帧上限 */
 export const MANHUA_KEYARTS_PER_SEGMENT_MAX = 5;
 /** 每段静帧下限（默认骨架用 4） */
@@ -94,7 +98,7 @@ export function groupShotsIntoSegments(
   if (padToDefault || opts?.segmentCount != null) {
     const targetSegs = Math.max(
       1,
-      Math.min(12, Math.floor(opts?.segmentCount ?? MANHUA_SEGMENT_DEFAULT)),
+      Math.min(16, Math.floor(opts?.segmentCount ?? MANHUA_SEGMENT_DEFAULT)),
     );
     const minTotal = targetSegs * per;
     while (list.length < minTotal) {
@@ -284,23 +288,37 @@ export function defaultWorkbenchShots(seedAction?: string): ManhuaWorkbenchShot[
         "钩子收束，留未解悬念",
       ]
     : [
-        "开场建立场景与人物位置",
-        "人物互动，推进本集主冲突",
-        "情绪/信息转折点",
-        "集末钩子，引导下一集",
+        "开场建立场景纵深与人物站位",
+        "人物互动并让关键道具第一次入画",
+        "冲突升级：动作轨迹与对白施压",
+        "集末钩子：道具/信息回扣，引导下一集",
       ];
+  const dialogueSeeds = [
+    "你到底想怎样？",
+    "把东西交出来。",
+    "……你早就知道了？",
+    "别逼我。",
+    "这不是你的了。",
+    "跟我走。",
+  ];
   const total = MANHUA_SEGMENT_DEFAULT * MANHUA_KEYARTS_PER_SEGMENT_MIN;
   return Array.from({ length: total }, (_, i) => {
     const seg = Math.floor(i / MANHUA_KEYARTS_PER_SEGMENT_MIN) + 1;
     const inSeg = (i % MANHUA_KEYARTS_PER_SEGMENT_MIN) + 1;
+    const withDialogue = inSeg === 2 || inSeg === 4;
     return {
       index: i + 1,
       durationSec: 0,
       cameraZh: DEFAULT_CAMERAS[i % DEFAULT_CAMERAS.length]!,
       actionZh:
         inSeg === 1
-          ? `第${seg}段起幅：${beatSeeds[(seg - 1) % beatSeeds.length]}`
-          : `第${seg}段第${inSeg}镜：承接上镜，推进可读动作与关系变化`,
+          ? `第${seg}段起幅：${beatSeeds[(seg - 1) % beatSeeds.length]}；写清空间纵深与起幅机位`
+          : `第${seg}段第${inSeg}镜：承接上镜落点，推进动作轨迹与关系变化${
+              inSeg === 3 ? "；关键道具可读交互" : ""
+            }`,
+      dialogueZh: withDialogue
+        ? dialogueSeeds[(seg + inSeg) % dialogueSeeds.length]
+        : undefined,
     };
   });
 }
@@ -373,6 +391,18 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
   const sceneShiftHint = /切到|转场|外景|内景|门外|窗|殿|庙|街|台/.test(action)
     ? "场景变换：若动作含空间跳转，画面须交代前后景或门窗过渡，禁止无因跳切空棚。"
     : "";
+  const weatherShiftHint = /雨|雪|风|雷|乌云|晴转|骤雨|湿|水花|火把熄|天色/.test(
+    `${action} ${camera}`,
+  )
+    ? "天气/氛围突变：本镜须画出「正在变化」的中介状态（雨丝初落、云影压暗、湿石反光等），禁止上一状态已结束却无过渡。"
+    : "";
+  const fightShiftHint = /打斗|对打|格挡|挥拳|拔刀|夺|推开|撞开|追逐|扭打|爆发/.test(action)
+    ? "戏种跳变：若由对白转入剧烈动作，须保留引爆瞬间（伸手、夺物、贴墙、被打断的半句口型），禁止无预兆开打。"
+    : "";
+  const interactionHint =
+    castCount >= 2
+      ? "人物互动：同框双方须有可读关系轴线（对视/递接/推挡/逼近/退让），禁止第二人只当背景板。"
+      : "";
   const performance = formatManhuaPerformanceInjectBlock(
     mergeManhuaPerformanceCue(
       {
@@ -390,14 +420,24 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
     getManhuaCameraAngle(shot.cameraAngleId) ||
     recommendManhuaCameraAngleFromText(`${camera} ${action} ${shot.emotionZh || ""}`);
   const camAngle = formatManhuaCameraAngleLine(angleEntry);
+  const propHint = /递|夺|握|亮出|翻开|佩|玉|簪|扇|信|腰牌|刀|剑|扣/.test(action)
+    ? "道具入画：本镜须让关键道具占据可读落点（手持/递接/特写），禁止只写在文案里却不画进画面。"
+    : "道具入画：若本集已点选道具，本镜尽量出现一次可读交互或环境落点。";
   return [
     `【分镜 ${shot.index}·静帧】`,
-    camera ? `运镜（镜头运动，勿与人物动作混写）：${camera}` : "运镜：承接上镜构图做可读微动",
+    camera ? `运镜（镜头运动，勿与人物动作混写；写清起幅→落幅）：${camera}` : "运镜：承接上镜构图做可读微动",
     camAngle,
     camMove,
     framingLock,
-    action ? `动作轨迹（主体肢体/身体移位，须有方向与起止）：${action}` : "动作轨迹：落实本镜关键表演",
+    action
+      ? `动作轨迹（可多拍：谁、从哪到哪、起止姿态、接触点）：${action}`
+      : "动作轨迹：落实本镜关键表演，可写动作链；须有方向与起止",
     sceneShiftHint,
+    weatherShiftHint,
+    fightShiftHint,
+    interactionHint,
+    "场景渲染：交代内外/日夜/天气状态与纵深（前景·中景·远景）；材质光色承接上镜；突变须有中介，禁止无因跳棚。",
+    propHint,
     castLock,
     performance,
     "光线硬锁：必须落实本镜动作描述中的具体光向、冷暖与明暗关系；禁止套用统一的暖背景加轮廓光模板。",
@@ -455,10 +495,14 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     String(input.shots[0]?.cameraZh || "").trim() ||
     "承接段内首张静帧构图做可读微动";
   const lead = input.shots[0];
+  const dialogueChain = input.shots
+    .map((s) => String(s.dialogueZh || "").trim())
+    .filter(Boolean)
+    .slice(0, 4);
   const performance = formatManhuaPerformanceInjectBlock(
     mergeManhuaPerformanceCue(
       {
-        dialogueZh: lead?.dialogueZh,
+        dialogueZh: dialogueChain[0] || lead?.dialogueZh,
         emotionZh: lead?.emotionZh,
         voiceToneZh: lead?.voiceToneZh,
         microExpressionZh: lead?.microExpressionZh,
@@ -474,20 +518,41 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
   const camAngle = formatManhuaCameraAngleLine(angleEntry);
   const hookLock =
     seg === 1 ? "首段硬锁：前三秒内须出现问题/异常/冲突之一；禁止平淡开场。" : "";
+  const actionBlob = `${action}\n${shotLines.join("\n")}`;
+  const hasWeatherShift = /雨|雪|风|雷|乌云|晴转|骤雨|湿|水花|天色/.test(actionBlob);
+  const hasFightShift = /打斗|对打|格挡|挥拳|拔刀|夺|推开|撞开|追逐|扭打|爆发/.test(actionBlob);
+  const hasMultiCast = input.shots.some((s) => inferWorkbenchShotCastCount(s.actionZh) >= 2);
+  const dynamicsLines = [
+    hasMultiCast
+      ? "人物互动：段内落实主角与他人的轴线变化（对视→接触→站位推移），禁止旁人静止背景板。"
+      : "",
+    hasWeatherShift
+      ? "天气/氛围：若有晴转雨等突变，成片须演绎变化过程（第一滴雨/云影/湿反光），禁止硬切已湿透。"
+      : "",
+    hasFightShift
+      ? "戏种跳变：对白转剧烈动作时，中间用可见引爆点接上；前半口型气口、后半动作发力，节奏分明。"
+      : "同场多事件：段内可有多拍动作链（A→B→C），上镜落点接下镜起幅，勿只做单一定格微动。",
+  ].filter(Boolean);
   return [
     `【第 ${seg} 段·成片】`,
     `目标时长：约 ${dur} 秒（允许 ±1 秒）；本段一条成片，勿按单镜短秒裁切。`,
     hookLock,
     shotLines.length ? `段内静帧节拍：\n${shotLines.join("\n")}` : "",
-    `动作轨迹（主体肢体/身体移位）：${action}`,
-    `运镜（镜头运动，与动作分行执行）：${camera}`,
+    `动作轨迹（多拍动作链，肢体/站位起止连续）：${action}`,
+    `运镜（镜头运动起幅→落幅，与动作分行）：${camera}`,
     camAngle,
     camMove,
+    dialogueChain.length > 1
+      ? `段内对白链（只作口型气口，勿烧字）：${dialogueChain.map((d) => `「${d}」`).join(" → ")}`
+      : "",
+    ...dynamicsLines,
     performance,
     MANHUA_CLIP_PREFLIGHT_BLOCK,
     "【参考静帧】成片风格、人物造型、服装与场景请对齐本段参考静帧；以参考图为准做微动演绎。",
-    "请落实本段关键动作、道具交互或人物关系变化，避免纯空镜走路。",
+    "请落实本段多拍动作链、人物互动、道具交互与场景/天气过程，避免纯空镜走路或原地发呆灌时长。",
     "承接段内静帧人物身份与服装，不新增无关角色；成片画面无新增可读字幕。",
+    // 段成片再钉一遍质量口径（短摘，避免整块重复过长）
+    "质量抽检：道具须入画；主运镜起落清楚；动作链有方向；互动可读；场景/天气对齐静帧且突变有过渡。",
   ]
     .filter(Boolean)
     .join("\n");

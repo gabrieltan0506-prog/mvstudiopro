@@ -185,10 +185,13 @@ export const IMAGE_MODEL_OPTIONS: Array<{ id: CanvasImageModel; label: string }>
 ];
 
 export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }> = [
-  { id: "gemini-omni-flash", label: "默认成片引擎" },
+  { id: "seedance-2.0-fast", label: "成片·快速（默认）" },
   { id: "seedance-2.0", label: "成片·标准" },
-  { id: "seedance-2.0-fast", label: "成片·快速" },
+  { id: "gemini-omni-flash", label: "成片·改写" },
 ];
+
+/** 工厂主成片默认；与 shared MANHUA_FACTORY_DEFAULT_VIDEO_MODEL 对齐 */
+export const DEFAULT_CANVAS_VIDEO_MODEL: CanvasVideoModel = "seedance-2.0-fast";
 
 export const SPAWN_KIND_OPTIONS: Array<{ kind: CanvasBlockKind; label: string; hint: string }> = [
   { kind: "text", label: "文本生成", hint: "脚本、广告词、品牌文案" },
@@ -222,7 +225,7 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
     textModel: DEFAULT_CANVAS_TEXT_MODEL,
     /** 官方 GPT-Image-2 主路径；手选 NB2 省钱直走，未选手选时失败可回退 NB2 */
     imageModel: "gpt-image-2",
-    videoModel: "gemini-omni-flash",
+    videoModel: DEFAULT_CANVAS_VIDEO_MODEL,
     aspectRatio: "9:16",
     imageMode: "generate",
     width: CANVAS_BLOCK_DEFAULT_WIDTH,
@@ -234,23 +237,35 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
   };
 }
 
+export function normalizeCanvasVideoModel(raw: unknown): CanvasVideoModel {
+  const key = String(raw || "").trim();
+  if (key === "seedance-2.0-fast") return "seedance-2.0-fast";
+  if (key === "seedance-2.0") return "seedance-2.0";
+  if (key === "gemini-omni-flash" || key === "veo-3.1") return "gemini-omni-flash";
+  return DEFAULT_CANVAS_VIDEO_MODEL;
+}
+
+/**
+ * 工厂主成片 clip-*：旧会话若仍挂 Omni，迁到默认 Fast（omni_edit-* 保留改写引擎）。
+ */
+export function migrateFactoryClipVideoModel(block: CanvasBlock): CanvasBlock {
+  const id = String(block.id || "");
+  // 仅主成片 clip-*；omni_edit-* 不走此分支
+  if (!id.startsWith("clip-")) return block;
+  if (block.videoModel === "seedance-2.0" || block.videoModel === "seedance-2.0-fast") {
+    return block;
+  }
+  return { ...block, videoModel: DEFAULT_CANVAS_VIDEO_MODEL };
+}
+
 export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
-  const rawVideoModel = block.videoModel as string | undefined;
-  const videoModel: CanvasVideoModel =
-    rawVideoModel === "seedance-2.0-fast"
-      ? "seedance-2.0-fast"
-      : rawVideoModel === "seedance-2.0"
-        ? "seedance-2.0"
-        : rawVideoModel === "veo-3.1"
-          ? "gemini-omni-flash"
-          : rawVideoModel === "gemini-omni-flash"
-            ? "gemini-omni-flash"
-            : "gemini-omni-flash";
+  const videoModel = normalizeCanvasVideoModel(block.videoModel);
+  const withVideo = migrateFactoryClipVideoModel({ ...block, videoModel });
 
   return {
-    ...block,
+    ...withVideo,
     textModel: normalizeCanvasTextModel(block.textModel),
-    videoModel,
+    videoModel: withVideo.videoModel,
     imageMode: block.imageMode === "edit" ? "edit" : "generate",
     width: block.width ?? CANVAS_BLOCK_DEFAULT_WIDTH,
     height: block.height ?? CANVAS_BLOCK_DEFAULT_HEIGHT,
