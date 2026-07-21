@@ -59,6 +59,7 @@ import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotate
 import ManhuaAgentAdvisorPanel from "@/components/ManhuaAgentAdvisorPanel";
 import ManhuaIntegratedAssetBoardPanel from "@/components/ManhuaIntegratedAssetBoardPanel";
 import ManhuaRoughEditTimeline from "@/components/ManhuaRoughEditTimeline";
+import ManhuaEditMultitrackPanel from "@/components/ManhuaEditMultitrackPanel";
 import type { ManhuaWorkbenchSyncPayload } from "@shared/manhuaAgentLoopSync";
 import { buildManhuaIntegratedAssetBoard } from "@shared/manhuaIntegratedAssetBoard";
 import {
@@ -76,7 +77,7 @@ import {
 } from "@shared/manhuaShotAnglePersist";
 import { toast } from "sonner";
 
-type WorkflowPhaseId = "outline" | "assets" | "storyboard";
+type WorkflowPhaseId = "outline" | "assets" | "storyboard" | "edit";
 
 type Props = {
   blocks: CanvasBlock[];
@@ -321,6 +322,8 @@ export default function ManhuaScriptWorkbench({
   );
   /** 粗剪顺序（镜号列表）；空则按分镜序 */
   const [roughShotOrder, setRoughShotOrder] = useState<number[]>([]);
+  /** 剪辑台字幕轨占位开关（D2 再写轨数据） */
+  const [editSubtitleEnabled, setEditSubtitleEnabled] = useState(false);
   const bPersistKey = manhuaWorkbenchBPersistKey(topic || seriesTitle || "manhua", focusEpisode);
   useEffect(() => {
     const hit = loadManhuaWorkbenchBPersist(bPersistKey);
@@ -664,9 +667,12 @@ export default function ManhuaScriptWorkbench({
       };
     });
   }, [blocks, focusEpisode, episodeKeyarts, episodeClips, activeKeyart?.id, activeClip?.id, legacyClip?.id]);
+  const storyboardReadyEnough =
+    assetsComplete && (shots.length > 0 || Boolean(episodeStillCount));
+
   const workflowPhases = useMemo(() => {
     const byStage = new Map(stageStrip.map((item) => [item.stage, item]));
-    // 大纲确认 → 资产锁定（角色+场景+图）→ 分镜
+    // 大纲 → 资产 → 分镜 → 剪辑
     const definitions: Array<{
       id: WorkflowPhaseId;
       label: string;
@@ -677,7 +683,12 @@ export default function ManhuaScriptWorkbench({
       {
         id: "storyboard",
         label: "分镜视频",
-        complete: Boolean(byStage.get("clip")?.has),
+        complete: Boolean(byStage.get("clip")?.has) || episodeStillCount > 0,
+      },
+      {
+        id: "edit",
+        label: "剪辑",
+        complete: Boolean(byStage.get("clip")?.has) && roughClips.length > 0,
       },
     ];
     return definitions.map((phase, index) => ({
@@ -685,7 +696,14 @@ export default function ManhuaScriptWorkbench({
       index: index + 1,
       current: phase.id === activePhase,
     }));
-  }, [stageStrip, outlineComplete, assetsComplete, activePhase]);
+  }, [
+    stageStrip,
+    outlineComplete,
+    assetsComplete,
+    activePhase,
+    episodeStillCount,
+    roughClips.length,
+  ]);
 
   useEffect(() => {
     if (!outlineComplete && activePhase !== "outline") {
@@ -694,18 +712,26 @@ export default function ManhuaScriptWorkbench({
   }, [outlineComplete, activePhase]);
 
   useEffect(() => {
-    if (outlineComplete && !assetsComplete && activePhase === "storyboard") {
+    if (
+      outlineComplete &&
+      !assetsComplete &&
+      (activePhase === "storyboard" || activePhase === "edit")
+    ) {
       setActivePhase("assets");
     }
   }, [outlineComplete, assetsComplete, activePhase]);
 
   const selectPhase = (phase: WorkflowPhaseId) => {
-    if (phase === "storyboard" && !outlineComplete) {
+    if ((phase === "storyboard" || phase === "edit") && !outlineComplete) {
       setActivePhase("outline");
       return;
     }
-    if (phase === "storyboard" && !assetsComplete) {
+    if ((phase === "storyboard" || phase === "edit") && !assetsComplete) {
       setActivePhase("assets");
+      return;
+    }
+    if (phase === "edit" && !storyboardReadyEnough) {
+      setActivePhase("storyboard");
       return;
     }
     if (phase === "assets" && !outlineComplete) {
@@ -1026,11 +1052,13 @@ export default function ManhuaScriptWorkbench({
                 phase.complete ? "complete" : phase.current ? "current" : "pending"
               }
               onClick={() => selectPhase(phase.id)}
-              className={`flex min-w-[130px] flex-1 items-center gap-2 rounded-md border px-2.5 py-1 text-left ${
+              className={`flex min-w-[108px] flex-1 items-center gap-2 rounded-md border px-2 py-1 text-left ${
                 phase.complete
                   ? "border-emerald-400/25 bg-emerald-500/[0.08] text-emerald-50"
                   : phase.current
-                    ? "border-cyan-400/45 bg-cyan-500/[0.12] text-cyan-50"
+                    ? phase.id === "edit"
+                      ? "border-violet-400/45 bg-violet-500/[0.12] text-violet-50"
+                      : "border-cyan-400/45 bg-cyan-500/[0.12] text-cyan-50"
                     : "border-white/10 bg-white/[0.025] text-white/40"
               }`}
             >
@@ -1604,6 +1632,42 @@ export default function ManhuaScriptWorkbench({
                 </div>
               </section>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {activePhase === "edit" ? (
+        <div
+          data-manhua-phase-panel="edit"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-white/5"
+        >
+          <ManhuaEditMultitrackPanel
+            roughClips={roughClips}
+            shots={shots}
+            stillIndexes={stillIndexSet}
+            clipIndexes={clipIndexSet}
+            activeShotIndex={activeShotNo}
+            subtitleEnabled={editSubtitleEnabled}
+            onSubtitleEnabledChange={setEditSubtitleEnabled}
+            onSelectShot={(idx) => {
+              const i = shots.findIndex((s) => s.index === idx);
+              if (i >= 0) setShotIndex(i);
+            }}
+            onReorder={setRoughShotOrder}
+          />
+          <div className="shrink-0 border-t border-white/10 px-3 py-2">
+            <button
+              type="button"
+              onClick={() => selectPhase("storyboard")}
+              className="text-[10px] text-cyan-200/80 underline-offset-2 hover:underline"
+            >
+              ← 返回分镜视频
+            </button>
+            {!storyboardReadyEnough ? (
+              <span className="ml-3 text-[10px] text-amber-100/70">
+                请先在分镜阶段准备镜头后再剪辑
+              </span>
+            ) : null}
           </div>
         </div>
       ) : null}

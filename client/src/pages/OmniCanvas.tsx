@@ -442,8 +442,12 @@ export default function OmniCanvas() {
   const [shareAssetToLibrary, setShareAssetToLibrary] = useState(
     () => Boolean(initialWriterSession?.shareAssetToLibrary),
   );
-  const [workflowPhase, setWorkflowPhase] = useState<"outline" | "assets" | "storyboard">(
-    () => initialWriterSession?.workflowPhase || (initialWriterSession?.writerConfirmed ? "storyboard" : "outline"),
+  const [workflowPhase, setWorkflowPhase] = useState<
+    "outline" | "assets" | "storyboard" | "edit"
+  >(
+    () =>
+      initialWriterSession?.workflowPhase ||
+      (initialWriterSession?.writerConfirmed ? "storyboard" : "outline"),
   );
   /** 工厂运行范围：焦点集（默认）或成片坞已勾选集 */
   const [factoryRunScope, setFactoryRunScope] = useState<"focus" | "dock">("focus");
@@ -945,7 +949,9 @@ export default function OmniCanvas() {
     setCustomAssetRefs(normalizeManhuaCustomAssetRefs(session.customAssetRefs));
     setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
     setWorkflowPhase(
-      session.workflowPhase === "assets" || session.workflowPhase === "storyboard"
+      session.workflowPhase === "assets" ||
+        session.workflowPhase === "storyboard" ||
+        session.workflowPhase === "edit"
         ? session.workflowPhase
         : session.writerConfirmed
           ? "storyboard"
