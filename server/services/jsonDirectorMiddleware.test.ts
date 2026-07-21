@@ -23,6 +23,16 @@ describe("jsonDirectorMiddleware", () => {
     expect(stringifyDirectorJson(j)).toContain("Cinematography_Lock");
   });
 
+  it("respects CG 漫剧 art-style lock instead of forcing photoreal", () => {
+    const j = buildDirectorJsonFromIdea(
+      "【画风硬锁】CG 漫剧\n画风硬锁：半写实二次元国乙立绘质感\n【分镜 1·静帧】\n运镜：中景推进\n动作轨迹：红衣剑客在潮口拔剑对峙\n",
+      "9:16",
+    );
+    expect(j.Project_Settings.rendering_style).toMatch(/CG|illustration|2D/i);
+    expect(j.Project_Settings.rendering_style).not.toMatch(/^photoreal/i);
+    expect(j.Subject_Core.identity).toMatch(/红衣剑客|潮口|拔剑/);
+  });
+
   it("detects pasted director JSON", () => {
     const j = stringifyDirectorJson(buildDirectorJsonFromIdea("a rider", "16:9"));
     expect(looksLikeDirectorJson(j)).toBe(true);
@@ -47,7 +57,7 @@ describe("jsonDirectorMiddleware", () => {
       "epic cinematic cyberpunk neon masterpiece 8k ultra detailed a lonely cowboy in canyon sunset film grain anamorphic lens volumetric godrays teal orange grade";
     const motion = compileI2VMotionPrompt(long, { hasReferenceImage: true });
     expect(motion.length).toBeLessThan(120);
-    expect(motion).toMatch(/push-in|zoom|pan|orbit|static/i);
+    expect(motion).toMatch(/push-in|zoom|pan|orbit|static|推进|拉远|环绕|固定/i);
     expect(motion.toLowerCase()).not.toContain("cyberpunk");
     expect(motion.toLowerCase()).not.toContain("masterpiece");
   });

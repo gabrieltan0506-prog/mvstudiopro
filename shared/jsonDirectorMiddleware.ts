@@ -75,8 +75,29 @@ export function looksLikeDirectorJson(text: string): boolean {
   return /Cinematography_Lock|Subject_Core|Project_Settings|Environment_Layer/.test(t);
 }
 
+/** 优先抽取本镜静帧段，避免长 prompt 前半把分镜动作挤掉 */
+function extractKeyartShotStillBlock(idea: string): string {
+  const m = String(idea || "").match(
+    /【分镜\s*\d+[·・]静帧】[\s\S]*?(?=\n【(?!分镜)|$)/,
+  );
+  return m?.[0]?.trim() || "";
+}
+
+function wantsCgDramaRendering(idea: string): boolean {
+  const t = String(idea || "");
+  if (/画风硬锁】?\s*仿真人|rendering_style[^\n]*photoreal|photoreal cinematic/i.test(t)) {
+    return false;
+  }
+  return /画风硬锁】?\s*CG\s*漫剧|CG 漫剧|二次元国乙|韩系厚涂|漫剧成片级 CG|cg_drama/i.test(t);
+}
+
 function guessSubject(idea: string): { identity: string; emotion: string; wardrobe: string } {
-  const raw = String(idea || "").trim().slice(0, 400);
+  const shotBlock = extractKeyartShotStillBlock(idea);
+  const actionLine =
+    shotBlock.match(/动作轨迹[^\n]*[：:]\s*(.+)/)?.[1]?.trim() ||
+    shotBlock.match(/运镜[^\n]*[：:]\s*(.+)/)?.[1]?.trim() ||
+    "";
+  const raw = (shotBlock || String(idea || "").trim()).slice(0, 400);
   if (!raw) {
     return {
       identity: "a single clear subject with readable silhouette",
@@ -84,12 +105,15 @@ function guessSubject(idea: string): { identity: string; emotion: string; wardro
       wardrobe: "simple costume with tactile fabric detail",
     };
   }
+  const cg = wantsCgDramaRendering(idea);
   return {
-    identity: raw.slice(0, 180),
+    identity: (actionLine || raw).slice(0, 220),
     emotion: /哭|泪|绝望|脏|伤|raw|despair|dirty|messy/i.test(raw)
       ? "raw emotion, imperfect skin, no beauty filter"
-      : "believable human presence, restrained expression",
-    wardrobe: /西装|裙|制服|运动|校服|盔甲|旗袍/.test(raw)
+      : cg
+        ? "stylized CG drama expression, painterly face, not photoreal skin pores"
+        : "believable human presence, restrained expression",
+    wardrobe: /西装|裙|制服|运动|校服|盔甲|旗袍|宫装|甲胄|袍服/.test(raw)
       ? "wardrobe locked to the described outfit, fabric micro-detail"
       : "wardrobe consistent with scene, no logo text",
   };
@@ -167,23 +191,34 @@ export function buildDirectorJsonFromIdea(
 ): DirectorJsonLock {
   const subject = guessSubject(idea);
   const strictNoText = isStrictNoTextIdea(idea);
+  const cg = wantsCgDramaRendering(idea);
+  const renderingStyle = cg
+    ? "semi-realistic 2D CG manhua drama still, Korean thick-paint illustration, cinematic soft light, NOT photoreal skin pores, NOT live-action photo"
+    : "photoreal cinematic still, tactile medium, not plastic CGI";
+  const styleNeg = cg
+    ? "; also forbid photoreal live-action skin, documentary photo look, street photography, tennis/sportswear modern refs"
+    : "";
   return {
     Project_Settings: {
       aspect_ratio: aspectRatio,
       resolution: "high definition masterwork",
-      rendering_style: "photoreal cinematic still, tactile medium, not plastic CGI",
+      rendering_style: renderingStyle,
       negative_constraints: strictNoText
-        ? "FATAL no on-image text: no letters, Chinese characters, numbers, subtitles, captions, speech bubbles, logos, watermarks, nameplates, UI, title cards, or readable signage; dialogue is acting-only never painted; screens/papers = illegible blur only; also no digital oversharpening or beauty-filter gloss"
-        : "No on-image text, no letters, no watermarks, no digital oversharpening, no beauty-filter gloss that erases emotion",
+        ? `FATAL no on-image text: no letters, Chinese characters, numbers, subtitles, captions, speech bubbles, logos, watermarks, nameplates, UI, title cards, or readable signage; dialogue is acting-only never painted; screens/papers = illegible blur only; also no digital oversharpening or beauty-filter gloss${styleNeg}`
+        : `No on-image text, no letters, no watermarks, no digital oversharpening, no beauty-filter gloss that erases emotion${styleNeg}`,
     },
     Subject_Core: {
       identity: subject.identity,
       emotion_anchor: subject.emotion,
       wardrobe_props: subject.wardrobe,
     },
-    Environment_Layer: guessEnvironment(idea),
+    Environment_Layer: guessEnvironment(shotBlockOrIdea(idea)),
     Cinematography_Lock: cinematicDefaultLock(idea),
   };
+}
+
+function shotBlockOrIdea(idea: string): string {
+  return extractKeyartShotStillBlock(idea) || idea;
 }
 
 export function stringifyDirectorJson(lock: DirectorJsonLock): string {

@@ -244,18 +244,36 @@ describe("canvasDramaStudio factory", () => {
     expect(keyart).toContain("【角色库锚点】");
   });
 
-  it("spawns keyart in edit mode with scene/prop fusion refs when demos ready", () => {
+  it("spawns keyart in edit mode with scene/prop fusion refs when demos ready (仿真人)", () => {
     const { blocks } = spawnManhuaDramaStudio({
       topic: "江湖刀客雨夜客栈",
       ancientArchetypeIds: ["arch_rain_jianghu_dao"],
       sceneId: "scene_07",
       propIds: ["demo_prop_xianxia_sword", "demo_prop_ancient_jade"],
+      artStyleId: "photoreal",
     });
     const key = blocks.find((b) => b.id.startsWith("keyart-"))!;
     expect(key.imageMode).toBe("edit");
     expect(key.refImageUrl).toMatch(/\/manhua-scenes\//);
     expect(key.editFusionUrls?.some((u) => u.includes("/manhua-props/"))).toBe(true);
     expect(key.prompt).toContain("【静帧·示范图融图】");
+  });
+
+  it("CG 漫剧 keyart uses generate path so photoreal demos cannot lock the still", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      ancientArchetypeIds: ["arch_rain_jianghu_dao"],
+      sceneId: "scene_07",
+      propIds: ["demo_prop_xianxia_sword"],
+      artStyleId: "cg_drama",
+    });
+    const key = blocks.find((b) => b.id.startsWith("keyart-"))!;
+    expect(key.imageMode).toBe("generate");
+    expect(key.refImageUrl).toBeFalsy();
+    expect(key.editFusionUrls || []).toHaveLength(0);
+    expect(key.prompt).toContain("【画风硬锁】");
+    expect(key.prompt).toContain("CG 漫剧");
+    expect(key.prompt).toContain("【画风执行·CG 漫剧】");
   });
 
   it("expands multi-shot keyarts after reverse and orders all of them", () => {
@@ -452,6 +470,7 @@ describe("canvasDramaStudio factory", () => {
       topic: "自传融图",
       characterIds: ["char_f_01"],
       sceneId: "scene_12",
+      artStyleId: "photoreal",
       customRefs,
     });
     const key = blocks.find((b) => b.id.startsWith("keyart-"))!;
@@ -464,6 +483,7 @@ describe("canvasDramaStudio factory", () => {
     const next = applyFactoryPrefsToBlocks(blocks, {
       characterIds: ["char_f_02"],
       sceneId: "scene_04",
+      artStyleId: "photoreal",
       customRefs,
       craftShotIds: [],
       motionPromptIds: [],
