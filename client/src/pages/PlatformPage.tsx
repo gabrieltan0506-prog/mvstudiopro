@@ -8896,7 +8896,7 @@ export default function PlatformPage() {
                 acc[k] = (acc[k] || 0) + 1;
                 return acc;
               }, {});
-              const chartEntries = (rising?.entries || []).slice(0, 10);
+              const chartEntries = rising?.entries || [];
               const chartMax = Math.max(
                 1,
                 ...chartEntries.map((e) => Number(e.risingScore || e.mixPlayCount || 0)),
@@ -9160,7 +9160,9 @@ export default function PlatformPage() {
                       {chartEntries.length > 0 ? (
                         <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-3">
                           <div className="mb-2 text-[11px] font-semibold text-[#ff9fe0]">
-                            Top {chartEntries.length} ·{" "}
+                            飙升榜 · {chartEntries.length} 部
+                            {chartEntries.length < 10 ? "（不足 10 部亦展示）" : ""}
+                            {" · "}
                             {aiManhuaPlatformTab === "kuaishou" ? "播放/互动代理" : "飙升分"}
                           </div>
                           <div className="space-y-2">
@@ -9363,7 +9365,7 @@ export default function PlatformPage() {
                             <span className="text-right">状态</span>
                             <span className="text-right">学习</span>
                           </div>
-                          {rising.entries.slice(0, 10).map((row, idx) => {
+                          {rising.entries.map((row, idx) => {
                             const tags = row.tagLabelsZh || [];
                             const learnable = canLearnRow(row);
                             const titleNode = (

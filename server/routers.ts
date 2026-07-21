@@ -5134,7 +5134,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                     items: douyinItems,
                     baselineItems: baseline.items,
                     windowDays: Number(input.windowDays) || 7,
-                    limit: 10,
+                    limit: 20,
                   });
                 } catch {
                   return null;
@@ -7350,16 +7350,17 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
             const douyinItems = ((dramaStore.collections as any)?.douyin?.items || []) as TrendItem[];
             const kuaishouItems = ((dramaStore.collections as any)?.kuaishou?.items || []) as TrendItem[];
-            const windowForBoard = selectedWindowDays >= 7 ? 7 : selectedWindowDays;
+            // 与用户所选分析窗对齐（3–30 天），不再把 15 天强行压成 7 天
+            const windowForBoard = Math.max(3, Math.min(30, selectedWindowDays || 7));
             const baseline = douyinItems.length
-              ? await loadDouyinDramaBaselineItems(windowForBoard)
+              ? await loadDouyinDramaBaselineItems(windowForBoard >= 7 ? 7 : windowForBoard)
               : { items: [] as TrendItem[] };
             const byPlatform = buildAiManhuaRisingByPlatform({
               douyinItems,
               kuaishouItems,
               douyinBaselineItems: baseline.items,
               windowDays: windowForBoard,
-              limit: 10,
+              limit: 20,
               storeReadFailed: dramaStoreTimedOut && douyinItems.length + kuaishouItems.length === 0,
             });
             dashboardWithDrama = {

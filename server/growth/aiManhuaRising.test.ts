@@ -105,6 +105,28 @@ describe("buildAiManhuaRisingBoard", () => {
     expect(board.hasBaseline).toBe(false);
   });
 
+  it("shows fewer than 10 entries and drops caption-like mixes", () => {
+    const board = buildAiManhuaRisingBoard({
+      items: [
+        baseItems[0]!,
+        baseItems[1]!,
+        {
+          id: "noise",
+          title: "一人一句动漫 未来日记",
+          isDrama: true,
+          dramaKind: "unknown",
+          dramaInfo: { mixId: "cap1", mixName: "一人一句动漫", mixPlayCount: 9_999_999 },
+        },
+      ],
+      nowIso: "2026-07-17T00:00:00.000Z",
+      windowDays: 15,
+      limit: 20,
+    });
+    expect(board.windowDays).toBe(15);
+    expect(board.entries.length).toBe(2);
+    expect(board.entries.map((e) => e.mixId)).not.toContain("cap1");
+  });
+
   it("ranks by 7d delta when baseline exists", () => {
     const board = buildAiManhuaRisingBoard({
       items: baseItems,

@@ -63,9 +63,12 @@ function isDramaMixCandidate(item: TrendItem): boolean {
   return isManhuaDramaMixCandidate({
     isDrama: item.isDrama,
     dramaKind: item.dramaKind,
+    mixId: item.dramaInfo?.mixId,
     mixName: item.dramaInfo?.mixName,
     title: item.title,
     tags: item.tags,
+    totalEpisodes: item.dramaInfo?.totalEpisodes,
+    currentEpisode: item.dramaInfo?.currentEpisode,
   });
 }
 
@@ -101,7 +104,8 @@ export function buildAiManhuaRisingBoard(params: {
 }): AiManhuaRisingBoard {
   const platform = params.platform || "douyin";
   const windowDays = Math.max(3, Math.min(30, Number(params.windowDays) || 7));
-  const limit = Math.max(3, Math.min(30, Number(params.limit) || 10));
+  // 不足 10 部也展示；至少 1 条即可上榜（不再卡死 Top10）
+  const limit = Math.max(1, Math.min(30, Number(params.limit) || 10));
   const now = params.nowIso ? new Date(params.nowIso) : new Date();
   const cutoffMs = now.getTime() - windowDays * 24 * 60 * 60 * 1000;
 
@@ -144,8 +148,9 @@ export function buildAiManhuaRisingBoard(params: {
   for (const item of params.items) {
     if (!isDramaMixCandidate(item)) continue;
     const mixId = String(item.dramaInfo?.mixId || "").trim();
-    const mixName = String(item.dramaInfo?.mixName || item.title || "").trim();
-    if (!mixId && !mixName) continue;
+    // 剧名只用合集名，禁止用短视频文案标题冒充剧名
+    const mixName = String(item.dramaInfo?.mixName || "").trim();
+    if (!mixName) continue;
     const key = mixId || mixName;
     const publishedMs = item.publishedAt ? new Date(item.publishedAt).getTime() : NaN;
     const publishedWithin7d = Number.isFinite(publishedMs) && publishedMs >= cutoffMs;
