@@ -41,7 +41,7 @@ describe("canvasDramaStudio factory", () => {
     }
     expect(blocks[0]!.prompt).toContain("星际车站离别");
     const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
-    expect(clip.videoModel).toBe("gemini-omni-flash");
+    expect(clip.videoModel).toBe("seedance-2.0-fast");
     const omni = blocks.find((b) => b.id.startsWith("omni_edit-"))!;
     expect(omni.videoModel).toBe("gemini-omni-flash");
     expect(omni.parentId).toMatch(/^clip-/);
@@ -305,24 +305,25 @@ describe("canvasDramaStudio factory", () => {
     expect(keyarts.some((k) => k.prompt.includes("拔刀交锋"))).toBe(true);
     const ordered = resolveManhuaFactoryOrderedIds(expanded.blocks, "keyart", 1);
     expect(ordered.filter((id) => id.startsWith("keyart-"))).toHaveLength(4);
-    const clips = expanded.blocks.filter((b) => b.id.startsWith("clip-"));
-    expect(clips.length).toBeGreaterThanOrEqual(4);
-    expect(clips.every((c) => keyarts.some((k) => k.id === c.parentId))).toBe(true);
-    const orderedClip = resolveManhuaFactoryOrderedIds(expanded.blocks, "clip", 1);
-    expect(orderedClip.filter((id) => id.startsWith("clip-")).length).toBeGreaterThanOrEqual(4);
-    const frag2 = resolveManhuaFragmentRunTargets(expanded.blocks, 1, 2);
-    expect(frag2.clipId).toMatch(/-s02/);
-    expect(frag2.keyartId).toMatch(/-s02/);
-    expect(frag2.forceFromStage).toBe("keyart");
-    expect(frag2.targetBlockIds).toEqual([frag2.keyartId, frag2.clipId]);
-    expect(filterManhuaFactoryTargetIds(orderedClip, frag2.targetBlockIds)).toEqual(
-      frag2.targetBlockIds,
+    // 4 镜 → 1 段 → 1 条成片（clip-eXX-g01）
+    const clips = expanded.blocks.filter(
+      (b) => b.id.startsWith("clip-") && (/-g\d{2}/i.test(b.id) || /-s\d{2}/.test(b.id)),
     );
-    // 成片 parent 必须是同镜静帧，禁止全挂第 1 镜
-    for (const clip of clips.filter((b) => /-s\d{2}/.test(b.id))) {
-      const shot = resolveKeyartShotIndex(clip.id, clip.prompt);
-      expect(clip.parentId).toMatch(new RegExp(`-s${String(shot).padStart(2, "0")}`));
-    }
+    expect(clips.length).toBe(1);
+    expect(clips.every((c) => keyarts.some((k) => k.id === c.parentId))).toBe(true);
+    expect(clips[0]!.videoModel).toBe("seedance-2.0-fast");
+    const orderedClip = resolveManhuaFactoryOrderedIds(expanded.blocks, "clip", 1);
+    expect(orderedClip.filter((id) => id.startsWith("clip-")).length).toBeGreaterThanOrEqual(1);
+    const frag1 = resolveManhuaFragmentRunTargets(expanded.blocks, 1, 1);
+    expect(frag1.clipId).toMatch(/-g01|-s01/);
+    expect(frag1.keyartId).toMatch(/keyart-/);
+    expect(frag1.forceFromStage).toBe("keyart");
+    expect(frag1.targetBlockIds.length).toBeGreaterThanOrEqual(2);
+    expect(filterManhuaFactoryTargetIds(orderedClip, frag1.targetBlockIds)).toEqual(
+      frag1.targetBlockIds.filter((id) => orderedClip.includes(id)),
+    );
+    // 成片 parent 必须是段内首张静帧
+    expect(clips[0]!.parentId).toMatch(/-s01/);
   });
 
   it("resolveManhuaFragmentRunTargets refuses clip-only when keyart missing", () => {
@@ -349,26 +350,33 @@ describe("canvasDramaStudio factory", () => {
     const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
     const laid = layoutManhuaEpisodeReadableChain(expanded.blocks, 1);
     const keyarts = laid.filter((b) => b.id.startsWith("keyart-")).sort((a, b) => a.y - b.y);
-    const clips = laid.filter((b) => b.id.startsWith("clip-") && /-s\d{2}/.test(b.id));
+    const clips = laid.filter(
+      (b) => b.id.startsWith("clip-") && (/-g\d{2}/i.test(b.id) || /-s\d{2}/.test(b.id)),
+    );
     expect(keyarts.length).toBeGreaterThanOrEqual(2);
     expect(keyarts[1]!.y).toBeGreaterThan(keyarts[0]!.y);
     for (const clip of clips) {
-      const shot = resolveKeyartShotIndex(clip.id, clip.prompt);
-      const key = keyarts.find((k) => resolveKeyartShotIndex(k.id, k.prompt) === shot);
+      const key = keyarts.find((k) => k.id === clip.parentId);
       expect(key).toBeTruthy();
       expect(clip.x).toBeGreaterThan(key!.x);
     }
   });
 
-  it("ensureManhuaFragmentClips lays one clip per shot and targets a single fragment", () => {
+  it("ensureManhuaFragmentClips lays one clip per segment and targets a single fragment", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "江湖刀客雨夜客栈",
       episodeIndex: 1,
     });
     const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    // 5 镜 → 2 段（每段约 4 静帧）
     const withReverse = blocks.map((b) =>
       b.id === reverse.id
-        ? { ...b, status: "done" as const, outputText: "1. 推门\n2. 对峙\n3. 拔刀" }
+        ? {
+            ...b,
+            status: "done" as const,
+            outputText:
+              "1. 刀客推门进客栈\n2. 油灯下对峙\n3. 拔刀交锋\n4. 雨夜收刀\n5. 撑伞离去留钩子",
+          }
         : b.id.startsWith("keyart-")
           ? { ...b, status: "done" as const, outputUrl: "https://example.com/k1.jpg" }
           : b,
@@ -380,11 +388,12 @@ describe("canvasDramaStudio factory", () => {
         : b,
     );
     const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1);
-    const shotClips = ensured.blocks.filter(
-      (b) => b.id.startsWith("clip-") && /-s\d{2}/.test(b.id),
+    const segClips = ensured.blocks.filter(
+      (b) => b.id.startsWith("clip-") && (/-g\d{2}/i.test(b.id) || /-s\d{2}/.test(b.id)),
     );
-    expect(shotClips.length).toBeGreaterThanOrEqual(2);
+    expect(segClips.length).toBe(2);
     const frag = resolveManhuaFragmentRunTargets(ensured.blocks, 1, 2);
+    expect(frag.clipId).toBeTruthy();
     expect(frag.forceFromStage).toBe("clip");
     expect(frag.targetBlockIds).toEqual([frag.clipId]);
     const ordered = resolveManhuaFactoryOrderedIds(ensured.blocks, "clip", 1);

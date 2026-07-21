@@ -270,7 +270,7 @@ async function main() {
         `${omniBase}/api/google?op=omniInteractionCreate`,
         {
           prompt: editPrompt,
-          task: "edit_video",
+          task: "edit",
           videoUrl: videoUrl || undefined,
           aspectRatio: "9:16",
           durationSeconds: 5,

@@ -329,6 +329,10 @@ async function runSeedance20(
 
 export const OMNI_CLIP_DURATION_SECONDS = 10;
 
+/** 成片跟静帧：正向约束，不堆「禁止真人」以免上游拒答 */
+const MANHUA_VIDEO_FOLLOW_STILL_ZH =
+  "【参考静帧】成片画面风格、人物造型、服装与场景材质请直接对齐本段参考静帧；以参考图为准做微动演绎。";
+
 export function normalizeOmniClipPrompt(rawPrompt: string): string {
   const prompt = String(rawPrompt || "")
     .replace(/(?:约|大约|目标约)?\s*15\s*(?:秒|s)\s*(?:成片|视频)?/gi, "10 秒成片")
@@ -341,6 +345,7 @@ export function normalizeOmniClipPrompt(rawPrompt: string): string {
   return [
     `单次成片严格为 ${OMNI_CLIP_DURATION_SECONDS} 秒。`,
     "动作采用非写实、无伤害的舞台化调度，保持克制与安全。",
+    prompt.includes("参考静帧") ? "" : MANHUA_VIDEO_FOLLOW_STILL_ZH,
     prompt,
   ]
     .filter(Boolean)
@@ -351,15 +356,31 @@ async function runOmniFlash(
   prompt: string,
   imageUrl: string | undefined,
   aspectRatio: "9:16" | "16:9",
-  opts?: { videoUrl?: string; previousInteractionId?: string; edit?: boolean },
+  opts?: {
+    videoUrl?: string;
+    previousInteractionId?: string;
+    edit?: boolean;
+    referenceImageUrls?: string[];
+  },
 ): Promise<string> {
   const edit = Boolean(opts?.edit || opts?.videoUrl || opts?.previousInteractionId);
+  const refs = (opts?.referenceImageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const primary = imageUrl || refs[0];
+  const multiRefs = Array.from(new Set([primary, ...refs].filter(Boolean))) as string[];
+  const task = edit
+    ? ("edit" as const)
+    : multiRefs.length > 1
+      ? ("reference_to_video" as const)
+      : primary
+        ? ("image_to_video" as const)
+        : ("text_to_video" as const);
   const created = await createOmniInteraction({
     prompt: normalizeOmniClipPrompt(prompt),
-    task: edit ? "edit_video" : imageUrl ? "image_to_video" : "text_to_video",
+    task,
     aspectRatio,
     durationSeconds: OMNI_CLIP_DURATION_SECONDS,
-    imageUrl: edit ? undefined : imageUrl,
+    imageUrl: edit ? undefined : primary,
+    referenceImageUrls: edit ? undefined : multiRefs.length > 1 ? multiRefs : undefined,
     videoUrl: opts?.videoUrl,
     previousInteractionId: opts?.previousInteractionId,
   });
@@ -626,18 +647,31 @@ export async function runCanvasBlock(
       refUrl && !looksLikeVideo(refUrl)
         ? refUrl
         : upstream.visionImages.find((i) => i.url && !looksLikeVideo(i.url))?.url;
+    const fusionStillUrls = (block.editFusionUrls || [])
+      .map((u) => String(u || "").trim())
+      .filter((u) => u && !looksLikeVideo(u));
+    const followStillPrompt = String(mergedPrompt || "").includes("参考静帧")
+      ? mergedPrompt
+      : `${mergedPrompt}\n\n${MANHUA_VIDEO_FOLLOW_STILL_ZH}`;
     const motionPrompt = compileI2VMotionPrompt(
-      continuityVideoUrl ? `${mergedPrompt}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}` : mergedPrompt,
+      continuityVideoUrl ? `${followStillPrompt}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}` : followStillPrompt,
       {
-        hasReferenceImage: Boolean(stillRef || continuityVideoUrl),
+        hasReferenceImage: Boolean(stillRef || continuityVideoUrl || fusionStillUrls.length),
         pathCameraRecipeId: block.pathCameraRecipeId,
         pathAnnotationJson: block.pathAnnotationJson,
       },
     );
+    const videoModel = block.videoModel || "seedance-2.0-fast";
+    console.info(
+      `[canvasRunBlock] video · id=${block.id} · videoModel=${videoModel} · stills=${[stillRef, ...fusionStillUrls].filter(Boolean).length} · continuity=${Boolean(continuityVideoUrl)}`,
+    );
     let url = "";
-    if (block.videoModel === "seedance-2.0" || block.videoModel === "seedance-2.0-fast") {
+    if (videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast") {
       const imageUrls: string[] = [];
       if (stillRef) imageUrls.push(stillRef);
+      for (const u of fusionStillUrls) {
+        if (!imageUrls.includes(u)) imageUrls.push(u);
+      }
       // 段间接力：成片 URL + 末帧（dataURL 先上传成 HTTPS）
       if (continuityVideoUrl && /^https?:\/\//i.test(continuityVideoUrl)) {
         try {
@@ -651,16 +685,15 @@ export async function runCanvasBlock(
           /* 抽帧/上传失败不阻断：仍传 videoUrls */
         }
       }
-      const httpsImages = await toHttpsImageUrls(deps, imageUrls);
+      const httpsImages = await toHttpsImageUrls(deps, imageUrls.slice(0, 6));
       url = await runSeedance20(motionPrompt, stillRef, ar, {
         imageUrls: httpsImages.length ? httpsImages : undefined,
         videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
-        version: block.videoModel === "seedance-2.0-fast" ? "2.0-fast" : "2.0",
+        version: videoModel === "seedance-2.0-fast" ? "2.0-fast" : "2.0",
       });
     } else {
-      // 工厂 omni_edit-* / 镜间接力：有上游成片时 edit_video 承接末段；否则本镜静帧 I2V
+      // omni_edit / 续编：有上游成片时用 edit；否则段内静帧 I2V / 多图 reference_to_video
       const isOmniEdit = block.id.startsWith("omni_edit-");
-      const looksLikeVideo = (u?: string) => Boolean(u && /\.(mp4|mov|webm)(\?|$)/i.test(u));
       const editVideoUrl =
         block.refVideoUrl ||
         uploadedVideoUrl ||
@@ -669,13 +702,17 @@ export async function runCanvasBlock(
       const useVideoContinuity =
         Boolean(editVideoUrl && looksLikeVideo(editVideoUrl)) &&
         (isOmniEdit || Boolean(block.refVideoUrl));
+      const omniRefs = Array.from(
+        new Set([stillRef || refUrl, ...fusionStillUrls].filter(Boolean) as string[]),
+      );
       url = await runOmniFlash(
         motionPrompt,
-        useVideoContinuity ? undefined : stillRef || refUrl,
+        useVideoContinuity ? undefined : omniRefs[0],
         ar,
         {
           edit: useVideoContinuity,
           videoUrl: useVideoContinuity ? editVideoUrl : undefined,
+          referenceImageUrls: useVideoContinuity ? undefined : omniRefs,
         },
       );
     }

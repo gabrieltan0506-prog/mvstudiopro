@@ -1,6 +1,6 @@
 /**
- * 剧本工作台：左=本集资产 · 中=片段脚本+多镜 · 右=预览 · 底=集/分镜时间线
- * 数据接工厂节点；反推后按镜展开多张静帧。
+ * 剧本工作台：左=本集资产 · 中=一集剧本+按段静帧 · 右=预览 · 底=集/段时间线
+ * 一集一个剧本文本；约 6 段 × 4–5 静帧；每段一条成片（Fast 15s / Omni 10s）。
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
@@ -46,8 +46,12 @@ import {
   type ManhuaCustomAssetRole,
 } from "@shared/manhuaCustomAssetRefs";
 import {
+  groupShotsIntoSegments,
+  MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
   parseWorkbenchShotsFromText,
+  resolveClipSegmentIndex,
   resolveKeyartShotIndex,
+  resolveSegmentIndexFromShotIndex,
   resolveWorkbenchShotAssetMount,
   workbenchShotTotalSec,
   type ManhuaWorkbenchShot,
@@ -402,7 +406,7 @@ export default function ManhuaScriptWorkbench({
         .filter((b) => b.id.startsWith("clip-") && (getBlockEpisodeIndex(b) ?? 1) === focusEpisode)
         .sort(
           (a, b) =>
-            resolveKeyartShotIndex(a.id, a.prompt) - resolveKeyartShotIndex(b.id, b.prompt) ||
+            resolveClipSegmentIndex(a.id, a.prompt) - resolveClipSegmentIndex(b.id, b.prompt) ||
             a.id.localeCompare(b.id),
         ),
     [blocks, focusEpisode],
@@ -418,6 +422,13 @@ export default function ManhuaScriptWorkbench({
     if (fromBeats.length >= 2 && (beats?.outputText || "").trim()) return fromBeats;
     return fromBeats;
   }, [beats?.outputText, beats?.prompt, reverse?.outputText, reverse?.prompt]);
+
+  const episodeVideoModel =
+    episodeClips[0]?.videoModel || legacyClip?.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+  const segments = useMemo(
+    () => groupShotsIntoSegments(shots, { videoModel: episodeVideoModel }),
+    [shots, episodeVideoModel],
+  );
 
   const visualBrief = useMemo(() => {
     const scriptBlob = [
@@ -443,7 +454,7 @@ export default function ManhuaScriptWorkbench({
     if (stillsReadyEnough) setVisualBriefConfirmed(true);
   }, [stillsReadyEnough]);
 
-  const totalSec = workbenchShotTotalSec(shots);
+  const totalSec = workbenchShotTotalSec(shots, episodeVideoModel);
 
   const integratedBoard = useMemo(
     () =>
@@ -495,8 +506,11 @@ export default function ManhuaScriptWorkbench({
   const editShotMedia = useMemo(() => {
     return roughClips.map((c) => {
       const shotClip =
-        episodeClips.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === c.shotIndex) ||
-        (c.shotIndex === 1 ? legacyClip : undefined);
+        episodeClips.find(
+          (b) =>
+            resolveClipSegmentIndex(b.id, b.prompt) ===
+            resolveSegmentIndexFromShotIndex(c.shotIndex),
+        ) || (resolveSegmentIndexFromShotIndex(c.shotIndex) === 1 ? legacyClip : undefined);
       const shotKeyart =
         episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === c.shotIndex) ||
         (c.shotIndex === 1 ? keyart : undefined);
@@ -529,13 +543,15 @@ export default function ManhuaScriptWorkbench({
 
   const activeShot = shots[Math.min(shotIndex, Math.max(0, shots.length - 1))] || shots[0];
   const activeShotNo = activeShot?.index ?? 1;
+  const activeSegNo = resolveSegmentIndexFromShotIndex(activeShotNo);
+  const activeSegment = segments.find((s) => s.index === activeSegNo) || segments[0];
   // 严格按镜号对齐：禁止用「列表第 N 张」顶替，避免剧本与静帧错位
   const activeKeyart =
     episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === activeShotNo) ||
     (activeShotNo === 1 ? keyart : undefined);
   const activeClip =
-    episodeClips.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === activeShotNo) ||
-    (activeShotNo === 1 ? legacyClip : undefined);
+    episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === activeSegNo) ||
+    (activeSegNo === 1 ? legacyClip : undefined);
   const clip = activeClip || legacyClip;
   const clipQuality = clip?.manhuaClipQuality;
   const clipVideoUrl = mediaUrl(clip);
@@ -570,7 +586,8 @@ export default function ManhuaScriptWorkbench({
   const runGenerateFragment = () => {
     if (onGenerateFragment) {
       onGenerateFragment({
-        shotIndex: activeShotNo,
+        // shotIndex 现为段号（工厂按段出一条成片）
+        shotIndex: activeSegNo,
         keyartId: activeKeyart?.id,
         clipId: activeClip?.id || clip?.id,
       });
@@ -633,17 +650,17 @@ export default function ManhuaScriptWorkbench({
     [shots],
   );
   const missingFragmentIndexes = useMemo(() => {
-    return filmstripShots
-      .filter((shot) => {
-        const shotClip =
-          episodeClips.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
-          (shot.index === 1 ? legacyClip : undefined);
-        const playable = Boolean(mediaUrl(shotClip));
-        const failed = shotClip?.manhuaClipQuality?.status === "failed";
+    return segments
+      .filter((seg) => {
+        const segClip =
+          episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === seg.index) ||
+          (seg.index === 1 ? legacyClip : undefined);
+        const playable = Boolean(mediaUrl(segClip));
+        const failed = segClip?.manhuaClipQuality?.status === "failed";
         return !playable || failed;
       })
-      .map((shot) => shot.index);
-  }, [filmstripShots, episodeClips, legacyClip]);
+      .map((seg) => seg.index);
+  }, [segments, episodeClips, legacyClip]);
   const selectedSorted = useMemo(
     () => [...selectedShotIndexes].sort((a, b) => a - b),
     [selectedShotIndexes],
@@ -821,7 +838,7 @@ export default function ManhuaScriptWorkbench({
             <div className="truncate text-[13px] font-semibold text-white/95">
               {seriesTitle || topic || "剧本工作室"}
               <span className="ml-2 text-[11px] font-normal text-white/40">
-                第{focusEpisode}集 · {shots.length} 片段 · 约 {totalSec}s
+                第{focusEpisode}集 · {segments.length} 段 · 约 {totalSec}s · {episodeVideoModel}
                 {artStyleLabelZh ? ` · ${artStyleLabelZh}` : ""}
               </span>
             </div>
@@ -829,7 +846,7 @@ export default function ManhuaScriptWorkbench({
               <div className="mt-0.5 flex items-center gap-2 text-[10px] text-white/35">
                 <span className="text-white/50">本集资产</span>
                 <span aria-hidden>｜</span>
-                <span className="text-white/50">片段脚本</span>
+                <span className="text-white/50">本集剧本</span>
                 <span aria-hidden>｜</span>
                 <span className="text-white/50">{dockCanvas ? "本集画布" : "视频结果"}</span>
               </div>
@@ -885,7 +902,7 @@ export default function ManhuaScriptWorkbench({
                   `当前镜 ${String(activeShotNo).padStart(2, "0")}：缺静帧则只补本镜再出片`
                 }
               >
-                {`生成片段成片 ${String(activeShotNo).padStart(2, "0")}`}
+                {`生成第 ${String(activeSegNo).padStart(2, "0")} 段成片`}
               </button>
             </>
           )}
@@ -906,9 +923,15 @@ export default function ManhuaScriptWorkbench({
               type="button"
               data-manhua-action="generate-selected-fragments"
               disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
-              onClick={() => onGenerateMissingFragments(selectedSorted)}
+              onClick={() =>
+                onGenerateMissingFragments(
+                  Array.from(
+                    new Set(selectedSorted.map((n) => resolveSegmentIndexFromShotIndex(n))),
+                  ),
+                )
+              }
               className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45"
-              title={`依次生成已勾选片段：${selectedSorted.map((n) => String(n).padStart(2, "0")).join("、")}`}
+              title={`依次生成已勾选段：${selectedSorted.map((n) => String(resolveSegmentIndexFromShotIndex(n)).padStart(2, "0")).join("、")}`}
             >
               生成所选成片 {selectedSorted.length}
             </button>
@@ -927,10 +950,10 @@ export default function ManhuaScriptWorkbench({
                 const idxs =
                   missingFragmentIndexes.length > 0
                     ? missingFragmentIndexes
-                    : shots.map((s) => s.index);
+                    : segments.map((s) => s.index);
                 if (
                   !window.confirm(
-                    `确认静帧后将生成全部片段成片（${idxs.map((n) => String(n).padStart(2, "0")).join("、")}）。继续？`,
+                    `确认静帧后将生成全部段成片（${idxs.map((n) => String(n).padStart(2, "0")).join("、")}）。继续？`,
                   )
                 ) {
                   return;
@@ -1270,6 +1293,70 @@ export default function ManhuaScriptWorkbench({
                       : "确认资产并出角色/场景图"}
                 </button>
               </div>
+            </div>
+
+            <div
+              data-manhua-cast-selected
+              className="mt-3 rounded-xl border border-violet-400/30 bg-violet-500/[0.08] p-3"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="text-[11px] font-semibold text-violet-50/95">当前出演人物</div>
+                  <p className="mt-0.5 text-[10px] leading-4 text-white/45">
+                    来自角色库点选；确认后会写入静帧与成片提示。古装线显示造型原型。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onOpenCharacterCard?.()}
+                  className="rounded-lg border border-violet-300/40 bg-violet-500/20 px-2.5 py-1.5 text-[11px] font-semibold text-violet-50 hover:bg-violet-500/30"
+                >
+                  {characters.length || archetypes.length ? "更换人物" : "去选人物"}
+                </button>
+              </div>
+              {characters.length || archetypes.length ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {characters.map((c) => (
+                    <button
+                      key={c!.id}
+                      type="button"
+                      onClick={() => onOpenCharacterCard?.()}
+                      className="flex w-[88px] flex-col overflow-hidden rounded-lg border border-white/15 bg-black/40 text-left hover:border-violet-300/50"
+                    >
+                      <img
+                        src={getManhuaCharacterPreviewUrl(c!.id, {
+                          artStyleId: activeArtStyleId,
+                        })}
+                        alt=""
+                        className="aspect-[3/4] w-full object-cover object-top"
+                        loading="lazy"
+                      />
+                      <span className="truncate px-1.5 py-1 text-[10px] text-white/85">
+                        {getManhuaCharacterDisplayName(c!.id, {
+                          artStyleId: activeArtStyleId,
+                        }) || c!.nameZh}
+                      </span>
+                    </button>
+                  ))}
+                  {archetypes.map((a) => (
+                    <button
+                      key={a!.id}
+                      type="button"
+                      onClick={() => onOpenCharacterCard?.()}
+                      className="flex min-w-[88px] flex-col justify-center rounded-lg border border-amber-400/35 bg-amber-500/15 px-2 py-3 text-left text-[11px] font-semibold text-amber-50 hover:border-amber-300/55"
+                    >
+                      {a!.nameZh}
+                      <span className="mt-0.5 text-[9px] font-normal text-amber-100/70">
+                        古装造型
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 rounded-lg border border-dashed border-white/15 px-3 py-4 text-center text-[11px] text-white/45">
+                  尚未点选人物 · 请点「去选人物」打开角色库
+                </p>
+              )}
             </div>
 
             <div
@@ -1718,10 +1805,16 @@ export default function ManhuaScriptWorkbench({
               onDockSelectedIdsChange(next);
             }}
             onReworkClip={(shotIndex) => {
-              onGenerateFragment?.({ shotIndex });
+              onGenerateFragment?.({
+                shotIndex: resolveSegmentIndexFromShotIndex(shotIndex),
+              });
             }}
             onReworkFailedClips={(indexes) => {
-              onGenerateMissingFragments?.(indexes);
+              onGenerateMissingFragments?.(
+                Array.from(
+                  new Set(indexes.map((n) => resolveSegmentIndexFromShotIndex(n))),
+                ),
+              );
             }}
             onReworkStill={(shotIndex) => {
               const media = editShotMedia.find((m) => m.shotIndex === shotIndex);
@@ -1811,7 +1904,7 @@ export default function ManhuaScriptWorkbench({
                   (k) => resolveKeyartShotIndex(k.id, k.prompt) === idx,
                 );
                 onGenerateFragment?.({
-                  shotIndex: idx,
+                  shotIndex: resolveSegmentIndexFromShotIndex(idx),
                   keyartId: keyart?.id,
                 });
               }}
@@ -2048,10 +2141,11 @@ export default function ManhuaScriptWorkbench({
         >
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/85">
-              片段 {String(Math.min(shotIndex + 1, Math.max(shots.length, 1))).padStart(2, "0")}
+              第 {String(activeSegNo).padStart(2, "0")} 段
               {story?.episodeTitle ? ` · ${story.episodeTitle}` : ""}
               <span className="ml-2 font-normal text-white/40">
-                {activeShot?.durationSec ?? 5}s · 镜 {activeShot?.index ?? "—"}/{shots.length || 1}
+                {activeSegment?.durationSec ?? 15}s · 静帧 {activeShot?.index ?? "—"}/
+                {shots.length || 1} · {episodeVideoModel}
               </span>
             </div>
             <div className="flex flex-wrap gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
@@ -2767,8 +2861,12 @@ export default function ManhuaScriptWorkbench({
                 episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
                 episodeKeyarts[i];
               const shotClip =
-                episodeClips.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
-                (shot.index === 1 ? legacyClip : undefined);
+                episodeClips.find(
+                  (b) =>
+                    resolveClipSegmentIndex(b.id, b.prompt) ===
+                    resolveSegmentIndexFromShotIndex(shot.index),
+                ) ||
+                (resolveSegmentIndexFromShotIndex(shot.index) === 1 ? legacyClip : undefined);
               const thumb = mediaUrl(shotKey);
               const clipPassed =
                 shotClip?.status === "done" &&
@@ -2883,13 +2981,13 @@ export default function ManhuaScriptWorkbench({
                       onClick={() => {
                         setShotIndex(i);
                         onGenerateFragment({
-                          shotIndex: shot.index,
+                          shotIndex: resolveSegmentIndexFromShotIndex(shot.index),
                           keyartId: shotKey?.id,
                           clipId: shotClip?.id,
                         });
                       }}
                       className="w-full border-t border-white/10 bg-white/[0.04] py-0.5 text-[8px] font-semibold text-cyan-100/80 hover:bg-cyan-500/15 disabled:opacity-35"
-                      title={`只重跑本镜：缺静帧先补本镜图再出片`}
+                      title={`重跑本段：缺静帧先补齐段内图再出片`}
                     >
                       生成本镜成片
                     </button>

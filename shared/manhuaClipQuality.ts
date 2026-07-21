@@ -157,11 +157,12 @@ export function isManhuaClipQualityInfraFailure(
   return false;
 }
 
-/** 首镜带字 / 设定卡排版导致的内容失败 → 引导重出静帧 */
+/**
+ * 历史：首镜带字会拦成片。静帧禁字已加固后不再用此闸门拦视频/进坞。
+ * 保留函数以免旧调用方崩，恒为 false。
+ */
 export function isManhuaClipQualityKeyartTextFailure(
-  report: Pick<ManhuaClipQualityReport, "summary" | "raw" | "failedKeys">,
+  _report: Pick<ManhuaClipQualityReport, "summary" | "raw" | "failedKeys">,
 ): boolean {
-  if (isManhuaClipQualityInfraFailure(report)) return false;
-  const blob = `${report.summary || ""}\n${report.raw || ""}`;
-  return /首镜.*文字|违规文字|重出静帧|设定卡|姓名条|字幕|文字排版|可读文字/.test(blob);
+  return false;
 }

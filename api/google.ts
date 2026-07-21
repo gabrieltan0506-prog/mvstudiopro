@@ -1069,6 +1069,12 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const imageUrl = s(b.imageUrl || q.imageUrl || "").trim();
       const videoUrl = s(b.videoUrl || q.videoUrl || "").trim();
       const gcsUri = s(b.gcsUri || q.gcsUri || "").trim();
+      const referenceImageUrls = Array.isArray(b.referenceImageUrls)
+        ? (b.referenceImageUrls as unknown[])
+            .map((u) => s(u).trim())
+            .filter(Boolean)
+            .slice(0, 8)
+        : [];
       const previousInteractionId = s(
         b.previousInteractionId || q.previousInteractionId || b.previous_interaction_id || "",
       ).trim();
@@ -1076,19 +1082,27 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const durationSeconds = Number(b.durationSeconds || q.durationSeconds || 10) || 10;
       const systemInstruction = s(b.systemInstruction || q.systemInstruction || "").trim();
 
-      if (!prompt && !imageUrl && !videoUrl && !gcsUri && !previousInteractionId) {
+      if (
+        !prompt &&
+        !imageUrl &&
+        !videoUrl &&
+        !gcsUri &&
+        !previousInteractionId &&
+        !referenceImageUrls.length
+      ) {
         return res.status(400).json({ ok: false, error: "missing_prompt_or_media" });
       }
 
       try {
         const created = await createOmniFlashInteraction({
           prompt,
-          task: task || (previousInteractionId || videoUrl ? "edit_video" : undefined),
+          task: task || (previousInteractionId || videoUrl ? "edit" : undefined),
           aspectRatio,
           durationSeconds,
           imageUrl: imageUrl || undefined,
           videoUrl: videoUrl || undefined,
           gcsUri: gcsUri || undefined,
+          referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
           previousInteractionId: previousInteractionId || undefined,
           systemInstruction: systemInstruction || undefined,
           responseModalities: ["video"],
