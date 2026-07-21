@@ -121,6 +121,8 @@ export const PLATFORM_BUILTIN_SKILL_IDS = [
   "jimeng-product-ad",
   "jimeng-short-drama",
   "ai-feed-ad",
+  "china-short-video-growth",
+  "manhua-visual-narrative",
   // lane
   "xhs-virtual-goods",
   "cultural-diversity",

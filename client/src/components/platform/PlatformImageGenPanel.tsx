@@ -212,7 +212,7 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
           <div>
             <div className="text-sm font-semibold text-white/85">文生图与海报模板</div>
             <p className="mt-0.5 text-[10px] text-white/40">
-              按用途分类点选；卡片上的「能做什么」说明适用场景。带「·图」须先上传参考图。
+              按用途分类点选；每套含完整审美配套（色板/光影/字体/材质/构图）。带「·图」须先上传参考图。
             </p>
           </div>
           <span className="rounded-full border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-100/80">
@@ -268,14 +268,14 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
       <div className="grid gap-3 lg:grid-cols-[1fr_minmax(220px,0.9fr)]">
         <div className="space-y-2">
           <label className="block text-[11px] font-semibold text-white/55">
-            补充关键词（可选）
+            主体 / 品牌名（写入模板占位）
             <input
               type="text"
               value={subjectHint}
               disabled={disabled || busy}
               onChange={(e) => setSubjectHint(e.target.value)}
               onBlur={refreshDraftFromHint}
-              placeholder="如城市名、产品名、活动标题…"
+              placeholder="如：可口可乐、东京、夏季跑鞋发布…"
               className="mt-1 w-full rounded-lg border border-white/12 bg-black/40 px-3 py-2 text-[12px] text-white/85 outline-none placeholder:text-white/30 focus:border-cyan-400/40"
             />
           </label>
