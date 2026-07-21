@@ -487,6 +487,14 @@ export async function runCanvasBlock(
     const count = block.imageBatchCount || 1;
     const isKeyart = block.id.startsWith("keyart-");
     let isEdit = block.imageMode === "edit";
+    /** CG 漫剧关键静帧：禁止 edit 仿真人底图（会盖过画风与分镜动作） */
+    if (
+      isKeyart &&
+      isEdit &&
+      /画风硬锁】?\s*CG\s*漫剧|【画风执行·CG 漫剧】/.test(String(mergedPrompt || block.prompt || ""))
+    ) {
+      isEdit = false;
+    }
     /** 默认 Image-2；用户手选 NB2 省钱则尊重（计费不同） */
     const imageModel: CanvasBlock["imageModel"] =
       block.imageModel === "nano-banana-2" ? "nano-banana-2" : "gpt-image-2";
