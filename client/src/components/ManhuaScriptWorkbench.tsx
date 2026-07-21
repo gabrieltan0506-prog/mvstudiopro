@@ -56,6 +56,25 @@ import { summarizeManhuaVisualBriefForUi } from "@shared/manhuaScriptVisualBrief
 import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
 import { MANHUA_DRAFT_RETENTION_HINT_ZH } from "@shared/manhuaCloudDraft";
 import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
+import ManhuaAgentAdvisorPanel from "@/components/ManhuaAgentAdvisorPanel";
+import ManhuaIntegratedAssetBoardPanel from "@/components/ManhuaIntegratedAssetBoardPanel";
+import ManhuaRoughEditTimeline from "@/components/ManhuaRoughEditTimeline";
+import type { ManhuaWorkbenchSyncPayload } from "@shared/manhuaAgentLoopSync";
+import { buildManhuaIntegratedAssetBoard } from "@shared/manhuaIntegratedAssetBoard";
+import {
+  MANHUA_CAMERA_ANGLE_ORDER,
+  formatManhuaCameraAngleLine,
+  getManhuaCameraAngle,
+  recommendManhuaCameraAngleFromText,
+  type ManhuaCameraAngleId,
+} from "@shared/manhuaCameraAngleBank";
+import { buildRoughCutClipsFromShots } from "@shared/manhuaEditWorkflowBank";
+import {
+  loadManhuaWorkbenchBPersist,
+  manhuaWorkbenchBPersistKey,
+  saveManhuaWorkbenchBPersist,
+} from "@shared/manhuaShotAnglePersist";
+import { toast } from "sonner";
 
 type WorkflowPhaseId = "outline" | "assets" | "storyboard";
 
@@ -174,6 +193,13 @@ type Props = {
   /** 画风：仿真人 / CG 漫剧（资产设定页可自选） */
   artStyleId?: ManhuaArtStyleId;
   onArtStyleChange?: (id: ManhuaArtStyleId) => void;
+  /** 创作顾问：同步规划产物到工厂节点 */
+  onAdvisorApplySync?: (sync: ManhuaWorkbenchSyncPayload) => void;
+  onAdvisorUpdateBeatsText?: (text: string) => void;
+  onAdvisorUpdateStoryText?: (text: string) => void;
+  onAdvisorBusyChange?: (busy: boolean) => void;
+  /** 机位选定写回反推/节拍（供工厂注入） */
+  onUpsertShotAngles?: (angles: Record<number, string>) => void;
 };
 
 function blockByStage(blocks: CanvasBlock[], episode: number, stage: string): CanvasBlock | undefined {
@@ -269,6 +295,11 @@ export default function ManhuaScriptWorkbench({
   onShotContinuityChange,
   artStyleId,
   onArtStyleChange,
+  onAdvisorApplySync,
+  onAdvisorUpdateBeatsText,
+  onAdvisorUpdateStoryText,
+  onAdvisorBusyChange,
+  onUpsertShotAngles,
 }: Props) {
   const dockCanvas = Boolean(previewCanvas);
   const continuity = shotContinuity || {
@@ -282,8 +313,24 @@ export default function ManhuaScriptWorkbench({
   useEffect(() => {
     setVisualBriefConfirmed(false);
   }, [focusEpisode, topic, seriesTitle]);
-  /** 中栏：分镜列表 | 运镜画板（主路径可见） */
-  const [scriptTab, setScriptTab] = useState<"shots" | "path">("shots");
+  /** 中栏：分镜 | 运镜画板 | 一体参考板 | 粗剪 */
+  const [scriptTab, setScriptTab] = useState<"shots" | "path" | "board" | "edit">("shots");
+  /** 每镜机位密码（可点选覆盖推荐） */
+  const [shotAngleByIndex, setShotAngleByIndex] = useState<Record<number, ManhuaCameraAngleId>>(
+    {},
+  );
+  /** 粗剪顺序（镜号列表）；空则按分镜序 */
+  const [roughShotOrder, setRoughShotOrder] = useState<number[]>([]);
+  const bPersistKey = manhuaWorkbenchBPersistKey(topic || seriesTitle || "manhua", focusEpisode);
+  useEffect(() => {
+    const hit = loadManhuaWorkbenchBPersist(bPersistKey);
+    if (!hit) return;
+    if (Object.keys(hit.shotAngleByIndex).length) setShotAngleByIndex(hit.shotAngleByIndex);
+    if (hit.roughShotOrder.length) setRoughShotOrder(hit.roughShotOrder);
+  }, [bPersistKey]);
+  useEffect(() => {
+    saveManhuaWorkbenchBPersist(bPersistKey, { shotAngleByIndex, roughShotOrder });
+  }, [bPersistKey, shotAngleByIndex, roughShotOrder]);
   /**
    * 右栏本集画布：未出片默认开；有成片后自动收起让出检查空间；用户可再开。
    * 镜头一多时避免画布长期占满右栏。
@@ -366,6 +413,70 @@ export default function ManhuaScriptWorkbench({
   }, [stillsReadyEnough]);
 
   const totalSec = workbenchShotTotalSec(shots);
+
+  const integratedBoard = useMemo(
+    () =>
+      buildManhuaIntegratedAssetBoard({
+        characterIds,
+        ancientArchetypeIds,
+        sceneId,
+        propIds,
+        seriesTitle,
+        artStyleLabelZh,
+      }),
+    [
+      characterIds,
+      ancientArchetypeIds,
+      sceneId,
+      propIds,
+      seriesTitle,
+      artStyleLabelZh,
+    ],
+  );
+
+  const stillIndexSet = useMemo(() => {
+    const s = new Set<number>();
+    for (const b of episodeKeyarts) {
+      if (mediaUrl(b)) s.add(resolveKeyartShotIndex(b.id, b.prompt));
+    }
+    return s;
+  }, [episodeKeyarts]);
+
+  const clipIndexSet = useMemo(() => {
+    const s = new Set<number>();
+    for (const b of episodeClips) {
+      if (mediaUrl(b)) s.add(resolveKeyartShotIndex(b.id, b.prompt));
+    }
+    if (legacyClip && mediaUrl(legacyClip)) s.add(1);
+    return s;
+  }, [episodeClips, legacyClip]);
+
+  const roughClips = useMemo(
+    () =>
+      buildRoughCutClipsFromShots(shots, {
+        stillIndexes: stillIndexSet,
+        clipIndexes: clipIndexSet,
+        order: roughShotOrder.length ? roughShotOrder : undefined,
+      }),
+    [shots, stillIndexSet, clipIndexSet, roughShotOrder],
+  );
+
+  useEffect(() => {
+    // 新分镜到来时，为缺失镜号补推荐机位
+    setShotAngleByIndex((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const shot of shots) {
+        if (next[shot.index]) continue;
+        const rec = recommendManhuaCameraAngleFromText(
+          `${shot.cameraZh} ${shot.actionZh} ${shot.emotionZh || ""}`,
+        );
+        next[shot.index] = rec.id;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [shots]);
 
   const activeShot = shots[Math.min(shotIndex, Math.max(0, shots.length - 1))] || shots[0];
   const activeShotNo = activeShot?.index ?? 1;
@@ -1521,6 +1632,43 @@ export default function ManhuaScriptWorkbench({
               : "min-h-0 w-[240px] shrink-0 overflow-y-auto border-r border-white/10 p-2.5"
           }
         >
+          <div className="mb-2.5 space-y-2">
+            <ManhuaAgentAdvisorPanel
+              compact
+              topic={topic}
+              factoryBusy={factoryBusy}
+              onAdvisorBusyChange={onAdvisorBusyChange}
+              onApplySync={onAdvisorApplySync}
+              onUpdateBeatsText={onAdvisorUpdateBeatsText}
+              onUpdateStoryText={onAdvisorUpdateStoryText}
+              onConfirmVisualBrief={() => setVisualBriefConfirmed(true)}
+              onRequestKeyarts={() => {
+                setVisualBriefConfirmed(true);
+                onGenerateAllEpisodeKeyarts?.();
+              }}
+              onRequestClips={(shotIndexes) => {
+                const idx = shotIndexes?.[0] ?? activeShotNo;
+                const keyarts = keyartsForEpisode(blocks, focusEpisode);
+                const keyart = keyarts.find(
+                  (k) => resolveKeyartShotIndex(k.id, k.prompt) === idx,
+                );
+                onGenerateFragment?.({
+                  shotIndex: idx,
+                  keyartId: keyart?.id,
+                });
+              }}
+            />
+            <ManhuaIntegratedAssetBoardPanel
+              compact
+              board={integratedBoard}
+              onCopyInjectSummary={(text) => {
+                void navigator.clipboard?.writeText(text).then(
+                  () => toast.success("已复制一体参考摘要"),
+                  () => toast.message(text.slice(0, 120)),
+                );
+              }}
+            />
+          </div>
           <div className="mb-2 flex items-center justify-between">
             <div className="min-w-0">
               <div className="text-[12px] font-semibold text-white/85">
@@ -1748,31 +1896,35 @@ export default function ManhuaScriptWorkbench({
                 {activeShot?.durationSec ?? 5}s · 镜 {activeShot?.index ?? "—"}/{shots.length || 1}
               </span>
             </div>
-            <div className="flex gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
-              <button
-                type="button"
-                data-manhua-script-tab="shots"
-                onClick={() => setScriptTab("shots")}
-                className={`rounded-md px-2.5 py-1 text-[10px] font-semibold ${
-                  scriptTab === "shots"
-                    ? "bg-white/12 text-white"
-                    : "text-white/40 hover:text-white/70"
-                }`}
-              >
-                分镜
-              </button>
-              <button
-                type="button"
-                data-manhua-script-tab="path"
-                onClick={() => setScriptTab("path")}
-                className={`rounded-md px-2.5 py-1 text-[10px] font-semibold ${
-                  scriptTab === "path"
-                    ? "bg-sky-500/25 text-sky-50"
-                    : "text-white/40 hover:text-white/70"
-                }`}
-              >
-                运镜
-              </button>
+            <div className="flex flex-wrap gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
+              {(
+                [
+                  ["shots", "分镜"],
+                  ["path", "运镜"],
+                  ["board", "参考板"],
+                  ["edit", "粗剪"],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  data-manhua-script-tab={id}
+                  onClick={() => setScriptTab(id)}
+                  className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
+                    scriptTab === id
+                      ? id === "path"
+                        ? "bg-sky-500/25 text-sky-50"
+                        : id === "board"
+                          ? "bg-amber-500/25 text-amber-50"
+                          : id === "edit"
+                            ? "bg-violet-500/25 text-violet-50"
+                            : "bg-white/12 text-white"
+                      : "text-white/40 hover:text-white/70"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -1812,6 +1964,10 @@ export default function ManhuaScriptWorkbench({
                   {visualBrief.cameras[0] ? (
                     <div>镜头：{visualBrief.cameras.slice(0, 2).join(" · ")}</div>
                   ) : null}
+                  {(() => {
+                    const ang = getManhuaCameraAngle(shotAngleByIndex[activeShotNo]);
+                    return ang ? <div>机位：{ang.nameZh} · {ang.techHintZh}</div> : null;
+                  })()}
                   {visualBrief.motions[0] ? (
                     <div>动作：{visualBrief.motions.slice(0, 2).join(" · ")}</div>
                   ) : null}
@@ -1899,7 +2055,14 @@ export default function ManhuaScriptWorkbench({
                               <Sparkles className="h-3.5 w-3.5 shrink-0 text-cyan-200" />
                             ) : null}
                           </div>
-                          <div className="mt-0.5 text-[10px] text-cyan-100/70">{shot.cameraZh}</div>
+                          <div className="mt-0.5 text-[10px] text-cyan-100/70">
+                            {(() => {
+                              const ang = getManhuaCameraAngle(shotAngleByIndex[shot.index]);
+                              return ang
+                                ? `${ang.nameZh} · ${shot.cameraZh}`
+                                : shot.cameraZh;
+                            })()}
+                          </div>
                           <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-white/70">
                             {shot.actionZh}
                           </div>
@@ -1910,6 +2073,45 @@ export default function ManhuaScriptWorkbench({
                                 ? " · "
                                 : ""}
                               {shot.emotionZh || shot.microExpressionZh || ""}
+                            </div>
+                          ) : null}
+                          {on ? (
+                            <div
+                              className="mt-1 flex flex-wrap gap-0.5"
+                              data-manhua-shot-angles={shot.index}
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => e.stopPropagation()}
+                            >
+                              {MANHUA_CAMERA_ANGLE_ORDER.map((id) => {
+                                const ang = getManhuaCameraAngle(id)!;
+                                const selected = shotAngleByIndex[shot.index] === id;
+                                return (
+                                  <button
+                                    key={id}
+                                    type="button"
+                                    title={`${ang.functionZh}｜${ang.whenToUseZh}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const next = {
+                                        ...shotAngleByIndex,
+                                        [shot.index]: id,
+                                      };
+                                      setShotAngleByIndex(next);
+                                      onUpsertShotAngles?.(next);
+                                      toast.message(`镜${shot.index} · ${ang.nameZh}`, {
+                                        description: formatManhuaCameraAngleLine(ang).slice(0, 80),
+                                      });
+                                    }}
+                                    className={`rounded px-1 py-0.5 text-[8px] ${
+                                      selected
+                                        ? "bg-cyan-500/30 text-cyan-50 ring-1 ring-cyan-400/40"
+                                        : "bg-white/[0.04] text-white/40 hover:text-white/70"
+                                    }`}
+                                  >
+                                    {ang.nameZh}
+                                  </button>
+                                );
+                              })}
                             </div>
                           ) : null}
                         </div>
@@ -1935,6 +2137,36 @@ export default function ManhuaScriptWorkbench({
                 确认简报 → 生成分镜画面 → 可单镜改图 → 生成片段成片（一镜一图一片）。
               </p>
             </>
+          ) : scriptTab === "board" ? (
+            <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-0.5">
+              <ManhuaIntegratedAssetBoardPanel
+                board={integratedBoard}
+                onCopyInjectSummary={(text) => {
+                  void navigator.clipboard?.writeText(text).then(
+                    () => toast.success("已复制一体参考摘要"),
+                    () => toast.message(text.slice(0, 120)),
+                  );
+                }}
+              />
+              <p className="mt-2 text-[10px] leading-snug text-white/35">
+                出图前一眼看齐角色、场景、道具；摘要可注入静帧提示词。
+              </p>
+            </div>
+          ) : scriptTab === "edit" ? (
+            <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-0.5">
+              <ManhuaRoughEditTimeline
+                clips={roughClips}
+                activeShotIndex={activeShotNo}
+                onSelectShot={(idx) => {
+                  const i = shots.findIndex((s) => s.index === idx);
+                  if (i >= 0) setShotIndex(i);
+                }}
+                onReorder={setRoughShotOrder}
+              />
+              <p className="mt-2 text-[10px] leading-snug text-white/35">
+                粗剪只排本集片段顺序；细剪/字幕/质检节点已入库，后续接成片坞合成。
+              </p>
+            </div>
           ) : (
             <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
               <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
@@ -2285,6 +2517,16 @@ export default function ManhuaScriptWorkbench({
           </div>
         </aside>
       </div>
+
+      <ManhuaRoughEditTimeline
+        clips={roughClips}
+        activeShotIndex={activeShotNo}
+        onSelectShot={(idx) => {
+          const i = shots.findIndex((s) => s.index === idx);
+          if (i >= 0) setShotIndex(i);
+        }}
+        onReorder={setRoughShotOrder}
+      />
 
       {/* 底胶片：片段条为主（对标阿硕），集切换为次 */}
       <div

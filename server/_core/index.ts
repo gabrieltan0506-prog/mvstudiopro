@@ -22,6 +22,7 @@ import { registerAuthApiRoutes } from "../routers/authApi";
 import { registerSmsAuthRoutes } from "../routers/smsAuth";
 import { registerSpeechApiRoutes } from "../routers/speechApi";
 import { registerEnterpriseAgentUploadRoutes } from "../routers/enterpriseAgentUpload";
+import { registerManhuaAgentBridgeHttpRoutes } from "../routers/manhuaAgentBridgeHttp";
 import { saveVideoShortLink } from "../services/video-short-links";
 import { bootstrapGrowthTrendScheduler } from "../growth/trendScheduler";
 import workflowJobsHandler from "../../api/jobs";
@@ -211,6 +212,7 @@ async function startServer() {
   registerSmsAuthRoutes(app);
   registerSpeechApiRoutes(app);
   registerEnterpriseAgentUploadRoutes(app);
+  registerManhuaAgentBridgeHttpRoutes(app);
 
   app.all("/api/blob-put-image", async (req, res) => {
     return blobPutImageHandler(req as any, res as any);

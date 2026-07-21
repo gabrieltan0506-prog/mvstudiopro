@@ -82,6 +82,7 @@ import {
   resolveKeyartShotIndex,
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
+import { applyShotAnglesFromText } from "@shared/manhuaShotAnglePersist";
 import {
   planManhuaKeyartEditFusion,
   type ManhuaKeyartEditPlan,
@@ -1185,10 +1186,13 @@ function resolveShotsForEpisodeKeyarts(
   };
   const reverse = blocks.find((b) => b.id.startsWith("reverse-") && sameEpisode(b));
   const beats = blocks.find((b) => b.id.startsWith("beats-") && sameEpisode(b));
-  const fromReverse = parseWorkbenchShotsFromText(reverse?.outputText || reverse?.prompt);
-  const fromBeats = parseWorkbenchShotsFromText(beats?.outputText || beats?.prompt);
+  const reverseText = reverse?.outputText || reverse?.prompt || "";
+  const beatsText = beats?.outputText || beats?.prompt || "";
+  const fromReverse = parseWorkbenchShotsFromText(reverseText);
+  const fromBeats = parseWorkbenchShotsFromText(beatsText);
   const shots = fromReverse.length >= 2 ? fromReverse : fromBeats.length >= 2 ? fromBeats : fromReverse;
-  return shots.slice(0, MANHUA_SHOT_KEYART_MAX);
+  const withAngles = applyShotAnglesFromText(shots, `${reverseText}\n${beatsText}`);
+  return withAngles.slice(0, MANHUA_SHOT_KEYART_MAX);
 }
 
 function makeShotBlockId(

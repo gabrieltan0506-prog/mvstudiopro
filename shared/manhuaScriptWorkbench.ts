@@ -8,6 +8,11 @@ import {
   type ManhuaPerformanceCue,
 } from "./manhuaPerformancePrompt.js";
 import { formatRecommendedCameraMoveLine } from "./manhuaCameraMoveBank.js";
+import {
+  formatManhuaCameraAngleLine,
+  getManhuaCameraAngle,
+  recommendManhuaCameraAngleFromText,
+} from "./manhuaCameraAngleBank.js";
 import { MANHUA_CLIP_PREFLIGHT_BLOCK } from "./manhuaNarrativeEnginePrompt.js";
 
 export type ManhuaWorkbenchShot = {
@@ -23,6 +28,8 @@ export type ManhuaWorkbenchShot = {
   voiceToneZh?: string;
   /** 微表情：眼眶发红泪未落… */
   microExpressionZh?: string;
+  /** 机位密码 id（工作台点选；注入静帧/成片优先于文本推荐） */
+  cameraAngleId?: string;
 };
 
 const DEFAULT_CAMERAS = [
@@ -282,9 +289,14 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
     { stage: "key_art", shotIndex: shot.index },
   );
   const camMove = formatRecommendedCameraMoveLine(`${camera} ${action}`);
+  const angleEntry =
+    getManhuaCameraAngle(shot.cameraAngleId) ||
+    recommendManhuaCameraAngleFromText(`${camera} ${action} ${shot.emotionZh || ""}`);
+  const camAngle = formatManhuaCameraAngleLine(angleEntry);
   return [
     `【分镜 ${shot.index}·静帧】`,
     camera ? `运镜（镜头运动，勿与人物动作混写）：${camera}` : "运镜：承接上镜构图做可读微动",
+    camAngle,
     camMove,
     framingLock,
     action ? `动作轨迹（主体肢体/身体移位，须有方向与起止）：${action}` : "动作轨迹：落实本镜关键表演",
@@ -321,6 +333,10 @@ export function formatWorkbenchClipInjectBlock(shot: ManhuaWorkbenchShot): strin
     { stage: "clip", shotIndex: shot.index },
   );
   const camMove = formatRecommendedCameraMoveLine(`${camera} ${action}`);
+  const angleEntry =
+    getManhuaCameraAngle(shot.cameraAngleId) ||
+    recommendManhuaCameraAngleFromText(`${camera} ${action} ${shot.emotionZh || ""}`);
+  const camAngle = formatManhuaCameraAngleLine(angleEntry);
   const hookLock =
     shot.index === 1
       ? "首镜硬锁：前三秒内须出现问题/异常/冲突之一；禁止平淡开场。"
@@ -331,6 +347,7 @@ export function formatWorkbenchClipInjectBlock(shot: ManhuaWorkbenchShot): strin
     hookLock,
     `动作轨迹（主体肢体/身体移位）：${action}`,
     `运镜（镜头运动，与动作分行执行）：${camera}`,
+    camAngle,
     camMove,
     performance,
     MANHUA_CLIP_PREFLIGHT_BLOCK,

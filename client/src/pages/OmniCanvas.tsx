@@ -52,6 +52,7 @@ import {
 } from "@/lib/manhuaProjectExport";
 import { shouldAttachManhuaPreviouslyOn } from "@shared/manhuaEpisodeRecap";
 import { resolveKeyartShotIndex } from "@shared/manhuaScriptWorkbench";
+import { upsertShotAngleSection } from "@shared/manhuaShotAnglePersist";
 import {
   listScreenwriterGenres,
   MANHUA_SCENE_GENRE_LABEL_ZH,
@@ -3157,6 +3158,80 @@ export default function OmniCanvas() {
                   onWorkflowPhaseChange={setWorkflowPhase}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
+                  onAdvisorApplySync={(sync) => {
+                    const ep = writerFocusEpisode;
+                    handleBlocksChange((prev) =>
+                      prev.map((b) => {
+                        if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
+                        const stage = stageKeyFromBlockId(b.id);
+                        if (stage === "story" && sync.storyText) {
+                          return {
+                            ...b,
+                            outputText: sync.storyText,
+                            status: "done" as const,
+                          };
+                        }
+                        if (stage === "beats" && sync.beatsMarkdown) {
+                          return {
+                            ...b,
+                            outputText: sync.beatsMarkdown,
+                            status: "done" as const,
+                          };
+                        }
+                        if (stage === "reverse" && sync.beatsMarkdown) {
+                          const reverseBody = [
+                            sync.scriptText && `## 剧本\n${sync.scriptText}`,
+                            sync.beatsMarkdown,
+                          ]
+                            .filter(Boolean)
+                            .join("\n\n");
+                          return {
+                            ...b,
+                            outputText: reverseBody,
+                            status: "done" as const,
+                          };
+                        }
+                        return b;
+                      }),
+                    );
+                  }}
+                  onAdvisorUpdateBeatsText={(text) => {
+                    const ep = writerFocusEpisode;
+                    handleBlocksChange((prev) =>
+                      prev.map((b) => {
+                        if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
+                        const stage = stageKeyFromBlockId(b.id);
+                        if (stage !== "beats" && stage !== "reverse") return b;
+                        return { ...b, outputText: text, status: "done" as const };
+                      }),
+                    );
+                  }}
+                  onAdvisorUpdateStoryText={(text) => {
+                    const ep = writerFocusEpisode;
+                    handleBlocksChange((prev) =>
+                      prev.map((b) => {
+                        if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
+                        if (stageKeyFromBlockId(b.id) !== "story") return b;
+                        return { ...b, outputText: text, status: "done" as const };
+                      }),
+                    );
+                  }}
+                  onUpsertShotAngles={(angles) => {
+                    const ep = writerFocusEpisode;
+                    handleBlocksChange((prev) =>
+                      prev.map((b) => {
+                        if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
+                        const stage = stageKeyFromBlockId(b.id);
+                        if (stage !== "reverse" && stage !== "beats") return b;
+                        const base = b.outputText || b.prompt || "";
+                        return {
+                          ...b,
+                          outputText: upsertShotAngleSection(base, angles),
+                          status: "done" as const,
+                        };
+                      }),
+                    );
+                  }}
                   onFocusBlock={(id) => {
                     openManhuaFactoryCanvas(id);
                   }}
