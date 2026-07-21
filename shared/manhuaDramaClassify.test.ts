@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildManhuaDramaDisplayTagsZh,
   extractManhuaDramaTagLabelsZh,
   inferManhuaDramaKind,
   isManhuaDramaMixCandidate,
@@ -24,6 +25,17 @@ describe("manhuaDramaClassify", () => {
     expect(tags).toContain("重生");
     expect(tags).toContain("仙侠");
     expect(tags).toContain("系统");
+  });
+
+  it("display tags include AI+漫剧 or AI+短剧", () => {
+    const manhua = buildManhuaDramaDisplayTagsZh("ai_manhua", "重生漫剧开局");
+    expect(manhua.slice(0, 2)).toEqual(["AI", "漫剧"]);
+    const aiShort = buildManhuaDramaDisplayTagsZh("short_drama", "AI短剧都市逆袭", [], 5);
+    expect(aiShort).toContain("AI");
+    expect(aiShort).toContain("短剧");
+    const plainShort = buildManhuaDramaDisplayTagsZh("short_drama", "红果竖屏剧连载");
+    expect(plainShort[0]).toBe("短剧");
+    expect(plainShort).not.toContain("AI");
   });
 
   it("normalizes mix name key", () => {

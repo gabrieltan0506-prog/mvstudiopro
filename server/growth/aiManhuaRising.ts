@@ -1,7 +1,7 @@
 import type { DouyinDramaKind, TrendItem } from "./trendCollector";
 import {
   AI_MANHUA_RISING_BOARD_LIMIT,
-  extractManhuaDramaTagLabelsZh,
+  buildManhuaDramaDisplayTagsZh,
   isManhuaDramaMixCandidate,
   manhuaDramaCategoryLabelZh,
   type ManhuaDramaPlatform,
@@ -160,11 +160,18 @@ export function buildAiManhuaRisingBoard(params: {
     const publishedWithin7d = Number.isFinite(publishedMs) && publishedMs >= cutoffMs;
     const prev = byMix.get(key);
     const mixPlayCount = Math.max(proxyPlayCount(item), prev?.mixPlayCount || 0);
-    const tags = extractManhuaDramaTagLabelsZh(
+    const nextKind =
+      item.dramaKind === "ai_manhua" || prev?.dramaKind === "ai_manhua"
+        ? "ai_manhua"
+        : item.dramaKind === "short_drama" || prev?.dramaKind === "short_drama"
+          ? "short_drama"
+          : ((item.dramaKind || prev?.dramaKind || "unknown") as DouyinDramaKind);
+    const tags = buildManhuaDramaDisplayTagsZh(
+      nextKind,
       `${mixName} ${item.title || ""}`,
       item.tags || [],
     );
-    const mergedTags = Array.from(new Set([...(prev?.tagLabelsZh || []), ...tags])).slice(0, 4);
+    const mergedTags = Array.from(new Set([...(prev?.tagLabelsZh || []), ...tags])).slice(0, 5);
     // 快手：优先保留已有样本链；无链不在此处硬编假合集页
     const nextUrl =
       platform === "kuaishou"
@@ -173,12 +180,7 @@ export function buildAiManhuaRisingBoard(params: {
     byMix.set(key, {
       mixId: key,
       mixName: mixName || prev?.mixName || key,
-      dramaKind:
-        item.dramaKind === "ai_manhua" || prev?.dramaKind === "ai_manhua"
-          ? "ai_manhua"
-          : item.dramaKind === "short_drama" || prev?.dramaKind === "short_drama"
-            ? "short_drama"
-            : ((item.dramaKind || prev?.dramaKind || "unknown") as DouyinDramaKind),
+      dramaKind: nextKind,
       tagLabelsZh: mergedTags,
       mixPlayCount,
       episodeSample: item.dramaInfo?.currentEpisode ?? prev?.episodeSample,

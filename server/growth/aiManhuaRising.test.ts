@@ -102,6 +102,11 @@ describe("buildAiManhuaRisingBoard", () => {
     expect(ids).toContain("m3");
     expect(board.entries.find((e) => e.mixId === "m1")?.categoryLabelZh).toBe("AI漫剧");
     expect(board.entries.find((e) => e.mixId === "m2")?.categoryLabelZh).toBe("短剧合集");
+    expect(board.entries.find((e) => e.mixId === "m1")?.tagLabelsZh?.slice(0, 2)).toEqual([
+      "AI",
+      "漫剧",
+    ]);
+    expect(board.entries.find((e) => e.mixId === "m2")?.tagLabelsZh).toContain("短剧");
     expect(board.hasBaseline).toBe(false);
   });
 

@@ -85,6 +85,31 @@ export function extractManhuaDramaTagLabelsZh(
   return out;
 }
 
+/**
+ * 前台展示标签：优先带上「AI + 漫剧」或「AI + 短剧」/「短剧」，再拼题材软标签。
+ */
+export function buildManhuaDramaDisplayTagsZh(
+  kind: ManhuaDramaKind | string | undefined,
+  text: string,
+  tags: string[] = [],
+  max = 5,
+): string[] {
+  const hay = `${text} ${tags.join(" ")}`;
+  const prefix: string[] = [];
+  if (kind === "ai_manhua") {
+    prefix.push("AI", "漫剧");
+  } else if (kind === "short_drama") {
+    if (/AI\s*短剧|AI\s*漫剧|AI漫|动态漫/i.test(hay)) {
+      prefix.push("AI", "短剧");
+    } else {
+      prefix.push("短剧");
+    }
+  }
+  const softBudget = Math.max(0, max - prefix.length);
+  const soft = extractManhuaDramaTagLabelsZh(text, tags, softBudget);
+  return Array.from(new Set([...prefix, ...soft])).slice(0, max);
+}
+
 /** 规范化剧名作伪合集键（快手无 mix_id 时） */
 export function normalizeManhuaMixNameKey(name: string): string {
   return String(name || "")
