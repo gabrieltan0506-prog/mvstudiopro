@@ -280,13 +280,18 @@ async function runSeedance20(
   prompt: string,
   imageUrl: string | undefined,
   aspectRatio: "9:16" | "16:9",
-  opts?: { imageUrls?: string[]; videoUrls?: string[] },
+  opts?: {
+    imageUrls?: string[];
+    videoUrls?: string[];
+    version?: "2.0" | "2.0-fast";
+  },
 ): Promise<string> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
   const seedanceUrl = withLongJobsFlyDirect("/api/jobs?op=seedanceI2V");
   const probeOrigin = flyHealthProbeOriginForUrl(seedanceUrl);
   const imageUrls = (opts?.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const videoUrls = (opts?.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const version = opts?.version === "2.0-fast" ? "2.0-fast" : "2.0";
   const res = await withFlyHealthGate(probeOrigin, () =>
     fetch(seedanceUrl, {
       method: "POST",
@@ -297,11 +302,11 @@ async function runSeedance20(
         imageUrl: imageUrl || imageUrls[0] || undefined,
         imageUrls: imageUrls.length ? imageUrls.slice(0, 6) : undefined,
         videoUrls: videoUrls.length ? videoUrls.slice(0, 3) : undefined,
-        resolution: "720p",
+        resolution: version === "2.0-fast" ? "720p" : "720p",
         aspectRatio,
         duration: 15,
         generateAudio: true,
-        preferEvolink: true,
+        version,
       }),
     }),
   );
@@ -312,12 +317,12 @@ async function runSeedance20(
   } catch {
     throw new Error(
       /An error o|ROUTER_EXTERNAL/i.test(text)
-        ? "Seedance 网关超时，请稍后重试（已尽量直连长任务 API）"
-        : `Seedance 2.0 生成失败：${text.slice(0, 160)}`,
+        ? "成片网关超时，请稍后重试（已尽量直连长任务 API）"
+        : `成片生成失败：${text.slice(0, 160)}`,
     );
   }
   if (!res.ok || !json.videoUrl) {
-    throw new Error(json.error || json.message || "Seedance 2.0 生成失败");
+    throw new Error(json.error || json.message || "成片生成失败");
   }
   return String(json.videoUrl);
 }
@@ -624,10 +629,10 @@ export async function runCanvasBlock(
       },
     );
     let url = "";
-    if (block.videoModel === "seedance-2.0") {
+    if (block.videoModel === "seedance-2.0" || block.videoModel === "seedance-2.0-fast") {
       const imageUrls: string[] = [];
       if (stillRef) imageUrls.push(stillRef);
-      // 段间接力：成片 URL + 末帧（dataURL 先上传成 HTTPS，避免 Evolink 拒本地帧）
+      // 段间接力：成片 URL + 末帧（dataURL 先上传成 HTTPS）
       if (continuityVideoUrl && /^https?:\/\//i.test(continuityVideoUrl)) {
         try {
           const { frames } = await extractVideoTailFramesFromUrl(continuityVideoUrl, {
@@ -644,6 +649,7 @@ export async function runCanvasBlock(
       url = await runSeedance20(motionPrompt, stillRef, ar, {
         imageUrls: httpsImages.length ? httpsImages : undefined,
         videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
+        version: block.videoModel === "seedance-2.0-fast" ? "2.0-fast" : "2.0",
       });
     } else {
       // 工厂 omni_edit-* / 镜间接力：有上游成片时 edit_video 承接末段；否则本镜静帧 I2V

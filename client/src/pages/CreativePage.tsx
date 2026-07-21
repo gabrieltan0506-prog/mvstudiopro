@@ -172,8 +172,11 @@ export default function CreativePage() {
 
   async function generateVideo() {
     if (!imageUrl) return;
-    if (videoModel === "seedance-2.0" && !isPaidUser) {
-      setError("Seedance 2.0 暂不开放给未付费用户，需购买积分包才能使用。");
+    if (
+      (videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast") &&
+      !isPaidUser
+    ) {
+      setError("成片档暂不开放给未付费用户，需购买积分包才能使用。");
       return;
     }
     
@@ -184,7 +187,7 @@ export default function CreativePage() {
     let chargedCost = 0;
     try {
       const overrideCost =
-        videoModel === "seedance-2.0"
+        videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast"
           ? CREATIVE_VIDEO_CREDITS_SEEDANCE_20
           : CREATIVE_VIDEO_CREDITS_VEO_31;
 
@@ -197,7 +200,7 @@ export default function CreativePage() {
       const motionPrompt = compileI2VMotionPrompt(prompt, { hasReferenceImage: true });
       setPipelineNote(`图生视频已做减法：${motionPrompt}`);
 
-      if (videoModel === "seedance-2.0") {
+      if (videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast") {
         const seedanceUrl = withLongJobsFlyDirect("/api/jobs?op=seedanceI2V");
         const probeOrigin = flyHealthProbeOriginForUrl(seedanceUrl);
         const res = await withFlyHealthGate(probeOrigin, () =>
@@ -211,7 +214,7 @@ export default function CreativePage() {
               resolution: "720p",
               aspectRatio: videoAspect,
               duration: CREATIVE_VIDEO_DURATION_SEEDANCE_SEC,
-              preferEvolink: true,
+              version: videoModel === "seedance-2.0-fast" ? "2.0-fast" : "2.0",
             }),
           }),
         );
@@ -222,12 +225,12 @@ export default function CreativePage() {
         } catch {
           throw new Error(
             /An error o|ROUTER_EXTERNAL/i.test(text)
-              ? "Seedance 网关超时，请稍后重试"
-              : `Seedance 生成失败：${text.slice(0, 160)}`,
+              ? "成片网关超时，请稍后重试"
+              : `成片生成失败：${text.slice(0, 160)}`,
           );
         }
         if (!res.ok || !json.videoUrl) {
-          throw new Error(json.error || json.message || "Seedance 生成失败");
+          throw new Error(json.error || json.message || "成片生成失败");
         }
         finalVideoUrl = String(json.videoUrl);
       } else {
@@ -364,7 +367,8 @@ export default function CreativePage() {
                       className="rounded-lg border border-white/15 bg-[#0b1020] p-2 text-sm text-white outline-none"
                     >
                       <option value="veo-3.1">Veo 3.1</option>
-                      <option value="seedance-2.0">Seedance 2.0 (限付费用户)</option>
+                      <option value="seedance-2.0">成片·标准（限付费）</option>
+                      <option value="seedance-2.0-fast">成片·快速（限付费）</option>
                     </select>
                   </div>
                   
@@ -387,7 +391,9 @@ export default function CreativePage() {
                   <div className="flex gap-2 items-center">
                     <label className="text-sm font-semibold text-white/80">时长</label>
                     <div className="text-sm font-semibold text-white/50 border border-white/10 bg-white/5 px-3 py-1.5 rounded-lg">
-                      {videoModel === "seedance-2.0" ? "10 秒" : "8 秒"}
+                      {videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast"
+                        ? "10 秒"
+                        : "8 秒"}
                     </div>
                   </div>
                 </div>

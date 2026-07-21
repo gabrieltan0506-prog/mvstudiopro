@@ -45,7 +45,8 @@ function resolveQuality(raw?: string): "low" | "medium" | "high" {
   return "high";
 }
 
-function openRouterHeaders(apiKey: string): Record<string, string> {
+/** OpenRouter 通用鉴权头（生图 / 视频共用） */
+export function buildOpenRouterAuthHeaders(apiKey: string): Record<string, string> {
   const referer = String(process.env.OPENROUTER_HTTP_REFERER || process.env.APP_URL || "https://www.mvstudiopro.com")
     .trim()
     .replace(/\/+$/, "");
@@ -57,6 +58,10 @@ function openRouterHeaders(apiKey: string): Record<string, string> {
     "X-Title": title,
     "X-OpenRouter-Title": title,
   };
+}
+
+function openRouterHeaders(apiKey: string): Record<string, string> {
+  return buildOpenRouterAuthHeaders(apiKey);
 }
 
 async function extractFirstImageBuffer(json: unknown): Promise<Buffer> {
