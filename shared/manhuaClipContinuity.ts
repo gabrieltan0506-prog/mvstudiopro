@@ -5,7 +5,7 @@
 
 export const MANHUA_CLIP_TAIL_FRAME_COUNT = 3;
 export const MANHUA_CLIP_CONTINUITY_HINT_ZH =
-  "【镜头连续性】请以上一段成片末几帧为视觉锚：人物站位、光线方向、空间纵深与运镜惯性平滑承接，避免跳切重置场景。";
+  "【镜头连续性】以上一段成片末几帧为视觉锚：同一张脸、同一套服装、同一场景材质与光色；站位与运镜惯性平滑承接。禁止换脸、换装、下一秒跳棚。";
 
 export type ContinuityClipLike = {
   id: string;

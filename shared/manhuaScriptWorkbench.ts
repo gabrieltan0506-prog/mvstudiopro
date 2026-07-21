@@ -16,6 +16,10 @@ import {
   recommendManhuaCameraAngleFromText,
 } from "./manhuaCameraAngleBank.js";
 import { normalizeManhuaShotCameraLanguage } from "./manhuaCameraLanguageZh.js";
+import {
+  formatManhuaDialogueTimelineBlock,
+  MANHUA_CROSS_SHOT_CONTINUITY_LOCK,
+} from "./manhuaClipDialogueTimeline.js";
 import { MANHUA_CLIP_PREFLIGHT_BLOCK } from "./manhuaNarrativeEnginePrompt.js";
 
 export type ManhuaWorkbenchShot = {
@@ -455,7 +459,8 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
     performance,
     "光线硬锁：必须落实本镜动作描述中的具体光向、冷暖与明暗关系；禁止套用统一的暖背景加轮廓光模板。",
     "必须画出本镜人物、场景与点选道具的配合；服装连续与题材时代一致；禁止空镜或错时代穿戴。",
-    "对白硬锁：若动作描述含对白/旁白，只表现为口型、表情与肢体，禁止任何字形出现在画面中。",
+    "连续硬锁：与上镜/设定卡同一张脸、同一套服装、同一场景材质；禁止换脸换装跳棚。",
+    "对白硬锁：静帧不写台词字面；只表现为口型、表情与肢体，禁止任何字形出现在画面中。",
     MANHUA_KEYART_NO_TEXT_LOCK,
   ]
     .filter(Boolean)
@@ -560,17 +565,18 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     `运镜（镜头运动起幅→落幅，与动作分行）：${camera}`,
     camAngle,
     camMove,
+    formatManhuaDialogueTimelineBlock(input.shots, dur, { segmentIndex: seg }),
     dialogueChain.length
-      ? `段内对白链（成片必演口型气口，勿烧字）：${dialogueChain.map((d) => `「${d}」`).join(" → ")}`
-      : "段内对白：若节拍有台词，必须写入口型气口；无台词则用呼吸与视线撑情绪。",
+      ? `段内对白链（顺序核验）：${dialogueChain.map((d) => `「${d}」`).join(" → ")}`
+      : "",
     ...dynamicsLines,
     performance,
+    MANHUA_CROSS_SHOT_CONTINUITY_LOCK,
     MANHUA_CLIP_PREFLIGHT_BLOCK,
-    "【参考静帧】成片风格、人物造型、服装与场景请对齐本段参考静帧；以参考图为准做微动演绎。",
-    "成片对白硬锁：有对白链则按顺序演绎说话口型与气口节奏；画面仍零字幕、零气泡。",
-    "请落实本段多拍动作链、人物互动、道具交互与场景/天气过程，避免纯空镜走路或原地发呆灌时长。",
-    "承接段内静帧人物身份与服装，不新增无关角色；成片画面无新增可读字幕。",
-    "质量抽检：对白口型到位；道具须入画；主运镜起落清楚；动作链有方向；场景/天气对齐静帧。",
+    "【参考静帧】脸、发型、服装、场景材质必须以本段参考静帧为准；上一段末帧若有则承接站位与光向。",
+    "请落实本段多拍动作链、人物互动、道具交互与场景/天气过程；对白按时间轴秒位演口型与情绪差。",
+    "禁止换脸、换装、跳棚；不新增无关角色；成片画面无新增可读字幕。",
+    "质量抽检：脸服场连续；对白秒位与微表情到位；道具入画；运镜起落清楚。",
   ]
     .filter(Boolean)
     .join("\n");

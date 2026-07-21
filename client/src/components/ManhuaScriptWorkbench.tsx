@@ -2336,11 +2336,11 @@ export default function ManhuaScriptWorkbench({
                               onKeyDown={(e) => e.stopPropagation()}
                             >
                               <label className="block text-[9px] text-rose-100/55">
-                                成片对白（静帧不用字面）
+                                成片对白（段内按秒位演口型；静帧不用字面）
                                 <input
                                   type="text"
                                   value={shot.dialogueZh || ""}
-                                  placeholder="本镜台词，生成片段时写入口型气口"
+                                  placeholder="台词 · 生成片段时写入该镜秒位与情绪"
                                   maxLength={80}
                                   onChange={(e) => {
                                     const line = e.target.value.slice(0, 80);
@@ -2359,7 +2359,7 @@ export default function ManhuaScriptWorkbench({
                                 />
                               </label>
                               <div className="text-[9px] leading-snug text-white/35">
-                                静帧：表情动作 · 成片：上栏对白口型
+                                静帧锁脸服场 · 成片按秒演对白与微表情差
                               </div>
                             </div>
                           ) : shot.dialogueZh || shot.emotionZh || shot.microExpressionZh ? (
