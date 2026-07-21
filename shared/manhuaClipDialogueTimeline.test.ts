@@ -55,14 +55,16 @@ describe("manhuaClipDialogueTimeline", () => {
       15,
       { segmentIndex: 2 },
     );
-    expect(block).toContain("成片对白时间轴");
-    expect(block).toContain("约 0–15s");
+    expect(block).toContain("成片表演剧本");
+    expect(block).toContain("一轮生成");
+    expect(block).toMatch(/分镜5（近景 15秒|约0–15s）/);
     expect(block).toContain("放开");
     expect(block).toContain("咬牙");
+    expect(block).toContain("只重出本段");
     expect(MANHUA_CROSS_SHOT_CONTINUITY_LOCK).toMatch(/换脸|服装|跳棚/);
   });
 
-  it("segment clip inject includes timeline and continuity lock", () => {
+  it("segment clip inject includes feel-style script and continuity lock", () => {
     const text = formatWorkbenchSegmentClipInjectBlock({
       segmentIndex: 1,
       durationSec: 15,
@@ -86,8 +88,10 @@ describe("manhuaClipDialogueTimeline", () => {
         },
       ],
     });
-    expect(text).toContain("成片对白时间轴");
-    expect(text).toContain("约 0–7.5s");
+    expect(text).toContain("成片表演剧本");
+    expect(text).toContain("分镜1");
+    expect(text).toContain("约0–7.5s");
+    expect(text).toContain("只重出本段");
     expect(text).toContain("跨镜连续硬锁");
     expect(text).toMatch(/换脸|服装/);
   });

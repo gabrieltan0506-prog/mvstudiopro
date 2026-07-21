@@ -2336,11 +2336,11 @@ export default function ManhuaScriptWorkbench({
                               onKeyDown={(e) => e.stopPropagation()}
                             >
                               <label className="block text-[9px] text-rose-100/55">
-                                成片对白（段内按秒位演口型；静帧不用字面）
+                                成片台词（写入本段一轮表演剧本；静帧不用字面）
                                 <input
                                   type="text"
                                   value={shot.dialogueZh || ""}
-                                  placeholder="台词 · 生成片段时写入该镜秒位与情绪"
+                                  placeholder="台词 · 只重出本段，勿整集重烧"
                                   maxLength={80}
                                   onChange={(e) => {
                                     const line = e.target.value.slice(0, 80);
@@ -2359,7 +2359,7 @@ export default function ManhuaScriptWorkbench({
                                 />
                               </label>
                               <div className="text-[9px] leading-snug text-white/35">
-                                静帧锁脸服场 · 成片按秒演对白与微表情差
+                                静帧锁脸服场 · 成片本段一轮吃多镜表演 · 改台词只重本段
                               </div>
                             </div>
                           ) : shot.dialogueZh || shot.emotionZh || shot.microExpressionZh ? (
@@ -2430,7 +2430,7 @@ export default function ManhuaScriptWorkbench({
                 })}
               </div>
               <p className="mt-2 text-[10px] leading-snug text-white/35">
-                确认简报 → 生成分镜画面 → 可单镜改图 → 生成片段成片（一镜一图一片）。
+                确认简报 → 静帧锁脸服场 → 本段一轮成片吃多镜表演（对白秒位+微表情）；改台词只重出本段，勿整集重烧。
               </p>
             </>
           ) : scriptTab === "board" ? (
