@@ -121,6 +121,7 @@ import { workflowRouter } from "./routers/workflow";
 import { manhuaCloudDraftRouter } from "./routers/manhuaCloudDraft";
 import { manhuaAgentLoopRouter } from "./routers/manhuaAgentLoop";
 import { manhuaAssetShareRouter } from "./routers/manhuaAssetShare";
+import { manhuaViralTemplateRouter } from "./routers/manhuaViralTemplate";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
 import {
   deductCredits,
@@ -2781,6 +2782,7 @@ export const appRouter = router({
   manhuaCloudDraft: manhuaCloudDraftRouter,
   manhuaAssetShare: manhuaAssetShareRouter,
   manhuaAgentLoop: manhuaAgentLoopRouter,
+  manhuaViralTemplate: manhuaViralTemplateRouter,
   videoParser: router({
     parse: protectedProcedure
       .input(z.object({ url: z.string().url() }))
@@ -7649,13 +7651,25 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           parseManhuaWriterPack,
           writerPackLooksReady,
         } = await import("../shared/manhuaWriterRoom.js");
+        const { formatManhuaViralTemplateWriterAddonFromCard } = await import(
+          "../shared/manhuaViralTemplateBank.js"
+        );
+        const { getMergedManhuaViralTemplate } = await import("./services/manhuaViralTemplateStore.js");
         const { invokeGpt56ResponsesText } = await import("./services/gpt56ResponsesClient.js");
         const episodeCount = clampWriterEpisodeCount(input.episodeCount);
+        let viralTemplateAddon = "";
+        try {
+          const merged = await getMergedManhuaViralTemplate(input.viralTemplateId);
+          viralTemplateAddon = formatManhuaViralTemplateWriterAddonFromCard(merged);
+        } catch {
+          viralTemplateAddon = "";
+        }
         const prompt = buildManhuaWriterExpandPrompt({
           topic,
           brief,
           episodeCount,
           viralTemplateId: input.viralTemplateId,
+          viralTemplateAddon: viralTemplateAddon || undefined,
         });
         let markdown = "";
         try {

@@ -273,6 +273,51 @@ export async function downloadGcsObject(params: {
   };
 }
 
+/** 按前缀列出对象名（最多 maxResults，自动翻页直到凑满或无更多） */
+export async function listGcsObjectNamesByPrefix(params: {
+  prefix: string;
+  maxResults?: number;
+  bucket?: string;
+}): Promise<string[]> {
+  const bucket = params.bucket || getGcsBucketName();
+  if (!bucket) throw new Error("GCS bucket is not configured");
+  const prefix = normalizeObjectName(String(params.prefix || "").replace(/\/?$/, "/")).replace(/\/?$/, "/");
+  const maxResults = Math.max(1, Math.min(500, Math.floor(Number(params.maxResults) || 100)));
+  const accessToken = await getVertexAccessToken();
+  const userProject = getGcsUserProject();
+  const names: string[] = [];
+  let pageToken = "";
+  while (names.length < maxResults) {
+    const url = new URL(
+      `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o`,
+    );
+    url.searchParams.set("prefix", prefix);
+    url.searchParams.set("maxResults", String(Math.min(100, maxResults - names.length)));
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    if (userProject) url.searchParams.set("userProject", userProject);
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const json = (await response.json().catch(() => null)) as {
+      items?: Array<{ name?: string }>;
+      nextPageToken?: string;
+      error?: unknown;
+    } | null;
+    if (!response.ok) {
+      throw new Error(`gcs_list_failed:${response.status}:${JSON.stringify(json?.error || json || {})}`);
+    }
+    for (const item of json?.items || []) {
+      const name = String(item?.name || "").trim();
+      if (name && !name.endsWith("/")) names.push(name);
+      if (names.length >= maxResults) break;
+    }
+    pageToken = String(json?.nextPageToken || "").trim();
+    if (!pageToken) break;
+  }
+  return names;
+}
+
 export async function deleteGcsObject(params: {
   bucket?: string;
   objectName: string;

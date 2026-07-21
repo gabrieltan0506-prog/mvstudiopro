@@ -69,6 +69,8 @@ export function buildManhuaWriterExpandPrompt(opts: {
   scenePacingId?: string | null;
   /** 审定节奏模板 id（tpl_*） */
   viralTemplateId?: string | null;
+  /** 若已解析动态库卡片，直接注入（优先于仅 id 查种子库） */
+  viralTemplateAddon?: string | null;
 }): string {
   const topic = String(opts.topic || "").trim().slice(0, 500);
   const brief = String(opts.brief || "").trim().slice(0, 2000);
@@ -80,7 +82,9 @@ export function buildManhuaWriterExpandPrompt(opts: {
   const ancientBlock = buildAncientArchetypePromptBlock(opts.ancientArchetypeIds || []);
   const purpose = getManhuaPlotPurposeById(opts.plotPurposeId);
   const pacing = getManhuaScenePacingById(opts.scenePacingId);
-  const viralAddon = formatManhuaViralTemplateWriterAddon(opts.viralTemplateId);
+  const viralAddon =
+    String(opts.viralTemplateAddon || "").trim() ||
+    formatManhuaViralTemplateWriterAddon(opts.viralTemplateId);
   return [
     "你是竖屏漫剧连载编剧。根据用户题材与补充条件，扩写成可拍的连载剧情包。",
     "硬规则：",

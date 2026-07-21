@@ -6,11 +6,27 @@ import {
   getManhuaViralTemplate,
   listApprovedManhuaViralTemplates,
   listApprovedManhuaViralTemplatesGrouped,
+  mergeManhuaViralTemplateBanks,
   parseManhuaViralTemplateCard,
+  type ManhuaViralTemplateCard,
 } from "./manhuaViralTemplateBank";
 import { buildManhuaWriterExpandPrompt } from "./manhuaWriterRoom";
 
 describe("manhuaViralTemplateBank", () => {
+  it("merges extras over seed by id", () => {
+    const seed = listApprovedManhuaViralTemplates();
+    const override: ManhuaViralTemplateCard = {
+      ...seed[0]!,
+      nameZh: "动态覆盖名",
+      status: "approved",
+    };
+    const merged = mergeManhuaViralTemplateBanks(seed, [override]);
+    expect(merged.find((t) => t.id === override.id)?.nameZh).toBe("动态覆盖名");
+    expect(listApprovedManhuaViralTemplates([override]).some((t) => t.nameZh === "动态覆盖名")).toBe(
+      true,
+    );
+  });
+
   it("lists only approved cards in product API", () => {
     const approved = listApprovedManhuaViralTemplates();
     expect(approved.length).toBeGreaterThanOrEqual(3);

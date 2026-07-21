@@ -269,11 +269,28 @@ async function startServer() {
       }
 
       const action = typeof (input as any).action === "string" ? String((input as any).action) : "";
+      if (action === "manhua_template_learn") {
+        if (!ctx.user) {
+          return res.status(401).json({ error: "请先登录后再学节奏" });
+        }
+        const { resolvePlatformSupervisorOpsAllowed } = await import("../services/access-policy");
+        const supervisorToken =
+          typeof (req.body as any)?.supervisorToken === "string"
+            ? String((req.body as any).supervisorToken)
+            : typeof (input as any)?.params?.supervisorToken === "string"
+              ? String((input as any).params.supervisorToken)
+              : "";
+        if (!resolvePlatformSupervisorOpsAllowed(ctx.user, supervisorToken)) {
+          return res.status(403).json({ error: "学节奏为监管专用（下片+语音+读帧成本较高）" });
+        }
+      }
       const provider =
         type === "audio"
           ? "suno"
           : action === "manhua_assemble_final"
           ? "manhua-assemble"
+          : action === "manhua_template_learn"
+          ? "manhua-template-learn"
           : type === "video"
           ? "kling-cn"
           : action === "nano_image"
