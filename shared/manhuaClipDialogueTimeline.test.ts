@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildManhuaDialogueTimelineBeats,
+  extractManhuaSceneHintFromPrompt,
   formatManhuaDialogueTimelineBlock,
   MANHUA_CROSS_SHOT_CONTINUITY_LOCK,
+  MANHUA_SEEDANCE_AUDIO_DIRECTOR_LOCK,
 } from "./manhuaClipDialogueTimeline";
 import { formatWorkbenchSegmentClipInjectBlock } from "./manhuaScriptWorkbench";
 
@@ -39,35 +41,48 @@ describe("manhuaClipDialogueTimeline", () => {
     expect(beats[0]?.microExpressionZh).toContain("下颌");
   });
 
-  it("formats timeline block for Seedance clip inject", () => {
+  it("formats director sheet with cut / camera / voiced dialogue", () => {
     const block = formatManhuaDialogueTimelineBlock(
       [
         {
           index: 5,
           durationSec: 0,
-          cameraZh: "近景",
+          cameraZh: "近景，微推",
           actionZh: "握拳",
           dialogueZh: "放开！",
           emotionZh: "怒",
           microExpressionZh: "咬牙",
+          voiceToneZh: "压嗓",
         },
       ],
       15,
-      { segmentIndex: 2 },
+      { segmentIndex: 2, sceneHintZh: "古宅廊下" },
     );
-    expect(block).toContain("成片表演剧本");
-    expect(block).toContain("一轮生成");
-    expect(block).toMatch(/分镜5（近景 15秒|约0–15s）/);
+    expect(block).toContain("视频生成导戏单");
+    expect(block).toContain("一轮");
+    expect(block).toContain("分镜5｜近景｜15秒｜约0–15s");
+    expect(block).toContain("切镜：开场建立");
+    expect(block).toContain("运镜：");
+    expect(block).toContain("场景：古宅廊下");
+    expect(block).toContain("配音/对白");
     expect(block).toContain("放开");
     expect(block).toContain("咬牙");
     expect(block).toContain("只重出本段");
     expect(MANHUA_CROSS_SHOT_CONTINUITY_LOCK).toMatch(/换脸|服装|跳棚/);
+    expect(MANHUA_SEEDANCE_AUDIO_DIRECTOR_LOCK).toMatch(/配音|口型|时间轴/);
   });
 
-  it("segment clip inject includes feel-style script and continuity lock", () => {
+  it("extracts scene name from keyart prompt", () => {
+    expect(
+      extractManhuaSceneHintFromPrompt("前言\n【本集主场景优先】古宅廊下\n直接吸收"),
+    ).toBe("古宅廊下");
+  });
+
+  it("segment clip inject includes director sheet and audio lock", () => {
     const text = formatWorkbenchSegmentClipInjectBlock({
       segmentIndex: 1,
       durationSec: 15,
+      sceneHintZh: "雨夜巷口",
       shots: [
         {
           index: 1,
@@ -88,11 +103,16 @@ describe("manhuaClipDialogueTimeline", () => {
         },
       ],
     });
-    expect(text).toContain("成片表演剧本");
+    expect(text).toContain("视频生成导戏单");
     expect(text).toContain("分镜1");
     expect(text).toContain("约0–7.5s");
+    expect(text).toContain("切镜：");
+    expect(text).toContain("场景：雨夜巷口");
+    expect(text).toContain("配音台词顺序核验");
+    expect(text).toContain("成片配音与导戏硬锁");
     expect(text).toContain("只重出本段");
     expect(text).toContain("跨镜连续硬锁");
     expect(text).toMatch(/换脸|服装/);
+    expect(text).toContain("有声配音");
   });
 });

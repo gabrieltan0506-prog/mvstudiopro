@@ -109,6 +109,7 @@ describe("manhuaScriptWorkbench", () => {
     expect(resolveKeyartShotIndex("keyart-e01-s03-abc", "")).toBe(3);
     expect(resolveKeyartShotIndex("keyart-e01-xyz", block)).toBe(2);
     expect(resolveClipSegmentIndex("clip-e01-g02-xyz", "")).toBe(2);
+    expect(resolveClipSegmentIndex("clip-e02-g13-xyz", "")).toBe(13);
   });
 
   it("formats segment clip inject with duration and follow-still lock", () => {
@@ -128,7 +129,7 @@ describe("manhuaScriptWorkbench", () => {
     expect(block).toContain("约 15 秒");
     expect(block).toContain("红色裁员文件夹");
     expect(block).toContain("参考静帧");
-    expect(block).toContain("避免纯空镜走路");
+    expect(block).toMatch(/哑巴空镜|空镜/);
     // 兼容旧入口
     const legacy = formatWorkbenchClipInjectBlock({
       index: 1,

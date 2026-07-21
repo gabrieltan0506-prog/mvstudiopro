@@ -37,7 +37,12 @@ import {
   getBlockEpisodeIndex,
   sanitizeManhuaRecapUpstreamLinks,
 } from "@/lib/canvasDramaStudio";
-import { resolvePreviousEpisodeClipUrl } from "@shared/manhuaClipContinuity";
+import {
+  MANHUA_CLIP_CONTINUITY_HINT_ZH,
+  MANHUA_CLIP_CROSS_SEGMENT_TRANSITION_HINT_ZH,
+  resolvePreviousSegmentClipUrl,
+} from "@shared/manhuaClipContinuity";
+import { resolveClipSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import { CanvasImageEditMaskPainter } from "@/components/canvas/CanvasImageEditMaskPainter";
 import { trpc } from "@/lib/trpc";
 import {
@@ -529,14 +534,26 @@ export default function FreeformCanvas({
         nearestRef && nearestRef !== block.refImageUrl
           ? { ...block, refImageUrl: nearestRef }
           : block;
-      // 手点 clip：与工厂管线一样注入上一集成片，供 Seedance 末帧/视频参考
+      // 手点 clip：上一段成片（全集连续编号 g13←g12）供末帧/视频参考
       if (block.id.startsWith("clip-") && !runBlockPayload.refVideoUrl) {
-        const ep = getBlockEpisodeIndex(runBlockPayload);
-        if (ep != null && ep >= 2) {
-          const prevClipUrl = resolvePreviousEpisodeClipUrl(safeBlocks, ep);
-          if (prevClipUrl) {
-            runBlockPayload = { ...runBlockPayload, refVideoUrl: prevClipUrl };
-          }
+        const ep = getBlockEpisodeIndex(runBlockPayload) ?? 1;
+        const seg = resolveClipSegmentIndex(runBlockPayload.id, runBlockPayload.prompt);
+        const prevClipUrl = resolvePreviousSegmentClipUrl(safeBlocks, ep, seg);
+        if (prevClipUrl) {
+          const basePrompt = String(runBlockPayload.prompt || "");
+          runBlockPayload = {
+            ...runBlockPayload,
+            refVideoUrl: prevClipUrl,
+            prompt: [
+              basePrompt,
+              !basePrompt.includes("镜头连续性") ? MANHUA_CLIP_CONTINUITY_HINT_ZH : "",
+              !basePrompt.includes("跨段转场")
+                ? MANHUA_CLIP_CROSS_SEGMENT_TRANSITION_HINT_ZH
+                : "",
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+          };
         }
       }
       patchOne(blockId, { status: "running", error: undefined });

@@ -62,13 +62,14 @@ describe("manhuaEpisodeQualityPrompt", () => {
         },
       ],
     });
-    expect(text).toContain("成片表演剧本");
+    expect(text).toContain("视频生成导戏单");
     expect(text).toContain("拿着");
     expect(text).toContain("动作轨迹");
     expect(text).toMatch(/道具入画|道具须入画/);
     expect(text).toContain("跨镜连续硬锁");
     expect(text).toContain("只重出本段");
     expect(text).toContain("多拍动作链");
+    expect(text).toContain("成片配音与导戏硬锁");
   });
 
   it("injects weather and fight-shift cues when actions escalate", () => {

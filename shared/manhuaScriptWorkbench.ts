@@ -15,10 +15,12 @@ import {
   getManhuaCameraAngle,
   recommendManhuaCameraAngleFromText,
 } from "./manhuaCameraAngleBank.js";
+import { formatRecommendedCineOpticsLine } from "./manhuaCineOpticsBank.js";
 import { normalizeManhuaShotCameraLanguage } from "./manhuaCameraLanguageZh.js";
 import {
   formatManhuaDialogueTimelineBlock,
   MANHUA_CROSS_SHOT_CONTINUITY_LOCK,
+  MANHUA_SEEDANCE_AUDIO_DIRECTOR_LOCK,
 } from "./manhuaClipDialogueTimeline.js";
 import { MANHUA_CLIP_PREFLIGHT_BLOCK } from "./manhuaNarrativeEnginePrompt.js";
 
@@ -136,6 +138,48 @@ export function groupShotsIntoSegments(
 export function resolveSegmentIndexFromShotIndex(shotIndex: number): number {
   const s = Math.max(1, Math.floor(shotIndex));
   return Math.floor((s - 1) / MANHUA_KEYARTS_PER_SEGMENT_MIN) + 1;
+}
+
+/**
+ * 全集连续段号：第 2 集第 1 段 → 13（默认每集 12 段）。
+ * 成片 id 的 -gNN 用此编号，便于跨集参考上一段（13←12）。
+ */
+export function manhuaGlobalSegmentIndex(
+  episodeIndex: number,
+  localSegmentIndex: number,
+  segmentsPerEpisode: number = MANHUA_SEGMENT_DEFAULT,
+): number {
+  const ep = Math.max(1, Math.floor(episodeIndex));
+  const local = Math.max(1, Math.floor(localSegmentIndex));
+  const per = Math.max(1, Math.floor(segmentsPerEpisode));
+  return (ep - 1) * per + local;
+}
+
+/** 该集起点的全局段号是否已写入 g（相对旧「每集从 g01 重计」） */
+export function isManhuaGlobalSegmentIndex(
+  segmentIndex: number,
+  episodeIndex: number,
+  segmentsPerEpisode: number = MANHUA_SEGMENT_DEFAULT,
+): boolean {
+  const ep = Math.max(1, Math.floor(episodeIndex));
+  const g = Math.max(1, Math.floor(segmentIndex));
+  const per = Math.max(1, Math.floor(segmentsPerEpisode));
+  if (ep <= 1) return true;
+  return g >= (ep - 1) * per + 1;
+}
+
+/** 全局/旧集内段号 → 本集内段号（1-based） */
+export function manhuaLocalSegmentIndex(
+  segmentIndex: number,
+  episodeIndex: number,
+  segmentsPerEpisode: number = MANHUA_SEGMENT_DEFAULT,
+): number {
+  const ep = Math.max(1, Math.floor(episodeIndex));
+  const g = Math.max(1, Math.floor(segmentIndex));
+  const per = Math.max(1, Math.floor(segmentsPerEpisode));
+  if (ep <= 1) return g;
+  if (!isManhuaGlobalSegmentIndex(g, ep, per)) return g;
+  return Math.max(1, g - (ep - 1) * per);
 }
 
 /** 段号 → 该段全局镜号列表（默认每段 4 镜） */
@@ -490,6 +534,8 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
   shots: ManhuaWorkbenchShot[];
   cameraZh?: string;
   actionZh?: string;
+  /** 本段场景一句（地点/天气），写入导戏单 */
+  sceneHintZh?: string;
 }): string {
   const seg = Math.max(1, Math.floor(input.segmentIndex));
   const dur =
@@ -534,11 +580,18 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     ),
     { stage: "clip", shotIndex: seg },
   );
-  const camMove = formatRecommendedCameraMoveLine(`${camera} ${action}`);
+  const emotionBlob = input.shots
+    .map((s) => [s.emotionZh, s.microExpressionZh].filter(Boolean).join(" "))
+    .filter(Boolean)
+    .join(" ");
+  const opticsQuery = `${camera} ${action} ${emotionBlob}`;
+  const camMove = formatRecommendedCameraMoveLine(opticsQuery);
   const angleEntry =
     getManhuaCameraAngle(lead?.cameraAngleId) ||
     recommendManhuaCameraAngleFromText(`${camera} ${action} ${lead?.emotionZh || ""}`);
   const camAngle = formatManhuaCameraAngleLine(angleEntry);
+  // 仅当运镜/景别可解析时注入；推不出则不写（避免默认光学废话）
+  const opticsLine = formatRecommendedCineOpticsLine(opticsQuery);
   const hookLock =
     seg === 1 ? "首段硬锁：前三秒内须出现问题/异常/冲突之一；禁止平淡开场。" : "";
   const actionBlob = `${action}\n${shotLines.join("\n")}`;
@@ -565,18 +618,23 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     `运镜（镜头运动起幅→落幅，与动作分行）：${camera}`,
     camAngle,
     camMove,
-    formatManhuaDialogueTimelineBlock(input.shots, dur, { segmentIndex: seg }),
+    opticsLine,
+    formatManhuaDialogueTimelineBlock(input.shots, dur, {
+      segmentIndex: seg,
+      sceneHintZh: input.sceneHintZh,
+    }),
     dialogueChain.length
-      ? `段内对白链（顺序核验）：${dialogueChain.map((d) => `「${d}」`).join(" → ")}`
+      ? `配音台词顺序核验：${dialogueChain.map((d) => `「${d}」`).join(" → ")}`
       : "",
     ...dynamicsLines,
     performance,
+    MANHUA_SEEDANCE_AUDIO_DIRECTOR_LOCK,
     MANHUA_CROSS_SHOT_CONTINUITY_LOCK,
     MANHUA_CLIP_PREFLIGHT_BLOCK,
     "【参考静帧】脸、发型、服装、场景材质必须以本段参考静帧为准；上一段末帧若有则承接站位与光向。",
-    "请落实本段多拍动作链、人物互动、道具交互与场景/天气过程；对白按时间轴秒位演口型与情绪差。",
+    "本段须同时产出：有声配音 + 口型气口 + 切镜运镜 + 场面动作；禁止哑巴空镜灌时长。",
     "禁止换脸、换装、跳棚；不新增无关角色；成片画面无新增可读字幕。",
-    "质量抽检：脸服场连续；对白秒位与微表情到位；道具入画；运镜起落清楚。",
+    "质量抽检：有声对白对齐秒位；脸服场连续；微表情差可读；道具入画；运镜起落与切镜清楚。",
   ]
     .filter(Boolean)
     .join("\n");
@@ -594,18 +652,32 @@ export function resolveKeyartShotIndex(blockId: string, prompt?: string | null):
   return 1;
 }
 
-/** 从 clip id 解析段号：优先 -gSS；旧 -sNN 视为段号；否则由镜号映射 */
+/** 从 clip id 解析段号（可为全集连续 g13+）：优先 -gNN；旧 -sNN 视为段号；否则由镜号映射 */
 export function resolveClipSegmentIndex(blockId: string, prompt?: string | null): number {
-  const fromG = String(blockId || "").match(/-g(\d{2})(?:-|$)/i);
+  const fromG = String(blockId || "").match(/-g(\d{2,})(?:-|$)/i);
   if (fromG?.[1]) return Math.max(1, parseInt(fromG[1], 10));
   const fromPrompt = String(prompt || "").match(/【第\s*(\d+)\s*段/);
   if (fromPrompt?.[1]) return Math.max(1, parseInt(fromPrompt[1], 10));
   // 旧 clip-eXX-sNN：一镜一片时代，sNN ≈ 段号
-  const fromS = String(blockId || "").match(/-s(\d{2})(?:-|$)/);
+  const fromS = String(blockId || "").match(/-s(\d{2,})(?:-|$)/);
   if (fromS?.[1] && String(blockId || "").startsWith("clip-")) {
     return Math.max(1, parseInt(fromS[1], 10));
   }
   return resolveSegmentIndexFromShotIndex(resolveKeyartShotIndex(blockId, prompt));
+}
+
+/** clip 段号 → 本集内段号（兼容旧每集 g01 重计） */
+export function resolveClipLocalSegmentIndex(
+  blockId: string,
+  prompt: string | null | undefined,
+  episodeIndex: number,
+  segmentsPerEpisode: number = MANHUA_SEGMENT_DEFAULT,
+): number {
+  return manhuaLocalSegmentIndex(
+    resolveClipSegmentIndex(blockId, prompt),
+    episodeIndex,
+    segmentsPerEpisode,
+  );
 }
 
 /** 片段成片：兼容旧调用；新逻辑请用 resolveClipSegmentIndex */

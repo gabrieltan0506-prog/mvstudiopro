@@ -29,6 +29,28 @@ import type { CanvasRunDeps } from "./canvasRunBlock";
 import { resolveKeyartShotIndex } from "@shared/manhuaScriptWorkbench";
 
 describe("canvasDramaStudio factory", () => {
+  it("does not hard-apply dynasty wardrobe from topic text", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "唐朝贵女宫廷复仇",
+      episodeIndex: 1,
+    });
+    const bible = blocks.find((b) => b.id.startsWith("bible-"));
+    const keyart = blocks.find((b) => b.id.startsWith("keyart-"));
+    expect(bible?.prompt || "").not.toContain("朝代服饰锚点");
+    expect(keyart?.prompt || "").not.toContain("朝代服饰锚点");
+  });
+
+  it("injects dynasty wardrobe only when ids are explicit", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "玄幻修仙门派",
+      episodeIndex: 1,
+      dynastyWardrobeIds: ["dyn_tang"],
+    });
+    const bible = blocks.find((b) => b.id.startsWith("bible-"));
+    expect(bible?.prompt || "").toContain("朝代服饰锚点");
+    expect(bible?.prompt || "").toContain("齐胸襦裙");
+  });
+
   it("spawns seven linked stages with topic (含 Omni 视频改写)", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "星际车站离别",
@@ -389,7 +411,7 @@ describe("canvasDramaStudio factory", () => {
     );
     const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1);
     const segClips = ensured.blocks.filter(
-      (b) => b.id.startsWith("clip-") && (/-g\d{2}/i.test(b.id) || /-s\d{2}/.test(b.id)),
+      (b) => b.id.startsWith("clip-") && (/-g\d{2,}/i.test(b.id) || /-s\d{2,}/.test(b.id)),
     );
     expect(segClips.length).toBe(2);
     const frag = resolveManhuaFragmentRunTargets(ensured.blocks, 1, 2);
@@ -398,6 +420,33 @@ describe("canvasDramaStudio factory", () => {
     expect(frag.targetBlockIds).toEqual([frag.clipId]);
     const ordered = resolveManhuaFactoryOrderedIds(ensured.blocks, "clip", 1);
     expect(filterManhuaFactoryTargetIds(ordered, frag.targetBlockIds)).toEqual([frag.clipId]);
+  });
+
+  it("episode 2 first segment clip uses global g13", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "续集客栈余波",
+      episodeIndex: 2,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id
+        ? {
+            ...b,
+            status: "done" as const,
+            outputText: "1. 推门\n2. 对峙\n3. 拔刀\n4. 收刀",
+          }
+        : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+    const withKeyarts = expanded.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        : b,
+    );
+    const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 2);
+    const clips = ensured.blocks.filter((b) => b.id.startsWith("clip-") && /-g\d{2,}/i.test(b.id));
+    expect(clips.some((c) => /-g13(?:-|$)/i.test(c.id))).toBe(true);
+    expect(clips[0]?.prompt || "").toMatch(/镜头连续性|跨段转场/);
   });
 
   it("removes stale keyarts when a rerun returns fewer shots", () => {

@@ -718,24 +718,32 @@ export async function runCanvasBlock(
     );
     let url = "";
     if (videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast") {
-      const imageUrls: string[] = [];
-      if (stillRef) imageUrls.push(stillRef);
+      // 参考图配额≤6：优先「本段首静帧 + 上一段末帧」再补其余静帧，避免末帧被挤掉
+      const stillPool: string[] = [];
+      if (stillRef) stillPool.push(stillRef);
       for (const u of fusionStillUrls) {
-        if (!imageUrls.includes(u)) imageUrls.push(u);
+        if (!stillPool.includes(u)) stillPool.push(u);
       }
-      // 段间接力：成片 URL + 末帧（dataURL 先上传成 HTTPS）
+      let tailFrames: string[] = [];
       if (continuityVideoUrl && /^https?:\/\//i.test(continuityVideoUrl)) {
         try {
           const { frames } = await extractVideoTailFramesFromUrl(continuityVideoUrl, {
             frameCount: MANHUA_CLIP_TAIL_FRAME_COUNT,
           });
           const rawFrames = frames.map((f) => f.dataUrl).filter(Boolean);
-          const httpsFrames = await toHttpsImageUrls(deps, rawFrames);
-          for (const f of httpsFrames) imageUrls.push(f);
+          tailFrames = await toHttpsImageUrls(deps, rawFrames);
         } catch {
           /* 抽帧/上传失败不阻断：仍传 videoUrls */
         }
       }
+      const imageUrls: string[] = [];
+      const pushUnique = (u?: string) => {
+        const s = String(u || "").trim();
+        if (s && !imageUrls.includes(s)) imageUrls.push(s);
+      };
+      pushUnique(stillPool[0]);
+      for (const f of tailFrames) pushUnique(f);
+      for (const u of stillPool.slice(1)) pushUnique(u);
       const httpsImages = await toHttpsImageUrls(deps, imageUrls.slice(0, 6));
       url = await runSeedance20(motionPrompt, stillRef, ar, {
         imageUrls: httpsImages.length ? httpsImages : undefined,

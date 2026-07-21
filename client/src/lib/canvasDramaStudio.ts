@@ -41,6 +41,10 @@ import {
   type ManhuaArtStyleId,
 } from "@shared/manhuaCharacterAssetLibrary";
 import { buildAncientArchetypePromptBlock } from "@shared/manhuaAncientArchetypeLibrary";
+import {
+  formatDynastyWardrobeInjectBlock,
+  MANHUA_ANCIENT_CHARACTER_FORMULA_ZH,
+} from "@shared/manhuaDynastyWardrobeBank";
 import { buildMotionPromptInjectBlock } from "@shared/motionPromptBank";
 import { buildCraftShotInjectBlock, recommendCraftShotFromTopic } from "@shared/craftShotBank";
 import {
@@ -75,18 +79,27 @@ import {
   formatWorkbenchSegmentClipInjectBlock,
   formatWorkbenchShotInjectBlock,
   groupShotsIntoSegments,
+  manhuaGlobalSegmentIndex,
   manhuaSegmentDurationSec,
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
   MANHUA_KEYART_NO_TEXT_LOCK,
+  MANHUA_KEYARTS_PER_SEGMENT_MIN,
   MANHUA_SEGMENT_DEFAULT,
   MANHUA_SHOT_KEYART_MAX,
   parseWorkbenchShotsFromText,
+  resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
   resolveKeyartShotIndex,
   resolveSegmentIndexFromShotIndex,
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
 import { applyShotAnglesFromText } from "@shared/manhuaShotAnglePersist";
+import { extractManhuaSceneHintFromPrompt } from "@shared/manhuaClipDialogueTimeline";
+import {
+  MANHUA_CLIP_CONTINUITY_HINT_ZH,
+  MANHUA_CLIP_CROSS_SEGMENT_TRANSITION_HINT_ZH,
+  resolvePreviousSegmentClipUrl,
+} from "@shared/manhuaClipContinuity";
 import {
   planManhuaKeyartEditFusion,
   type ManhuaKeyartEditPlan,
@@ -181,6 +194,10 @@ export type SpawnManhuaDramaStudioOpts = {
   characterIds?: string[];
   /** 古风原型 arch_*（与都市槽并行注入） */
   ancientArchetypeIds?: string[];
+  /**
+   * 朝代服饰 dyn_*（可选点选；勿按题材自动推荐——玄幻/CG 常无历史朝代）
+   */
+  dynastyWardrobeIds?: string[];
   /** 用户上传/基于库参考生成的参考图（勾选角色后进静帧融图） */
   customRefs?: ManhuaCustomAssetRef[];
   /** 剧本跟随身份锁（时代/族裔/服饰；来自 CastBundle） */
@@ -413,6 +430,15 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     identityLockZh,
   });
   const ancientBlock = buildAncientArchetypePromptBlock(ancientArchetypeIds, { identityLockZh });
+  const dynastyWardrobeIds = (opts.dynastyWardrobeIds || [])
+    .map((id) => String(id || "").trim())
+    .filter(Boolean)
+    .slice(0, 2);
+  /** 仅显式点选才注入；不按题材硬套朝代 */
+  const dynastyWardrobeBlock = formatDynastyWardrobeInjectBlock(dynastyWardrobeIds);
+  const ancientFormulaBlock = ancientBlock
+    ? `【古风角色公式】${MANHUA_ANCIENT_CHARACTER_FORMULA_ZH}`
+    : "";
   const propIds = (opts.propIds || []).map((id) => String(id || "").trim()).filter(Boolean).slice(0, 4);
   const propAnchorBlock = composeManhuaSelectedPropAnchorBlock(propIds);
   const motionPromptIds = (opts.motionPromptIds || []).map((id) => String(id || "").trim()).filter(Boolean);
@@ -561,6 +587,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     bibleBase,
     characterBlock,
     ancientBlock,
+    ancientFormulaBlock,
+    dynastyWardrobeBlock,
     maleHairstyleBlock,
     wardrobeBlock,
     propAnchorBlock,
@@ -627,6 +655,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     keyArtBase,
     characterBlock,
     ancientBlock,
+    ancientFormulaBlock,
+    dynastyWardrobeBlock,
     wardrobeBlock,
     craftShotBlock,
     narrativeLightingBlock,
@@ -868,6 +898,8 @@ export function applyFactoryPrefsToBlocks(
     genreId?: string;
     characterIds?: string[];
     ancientArchetypeIds?: string[];
+    /** 朝代服饰 dyn_*（可选；仅点选注入） */
+    dynastyWardrobeIds?: string[];
     identityLockZh?: string;
     artStyleId?: ManhuaArtStyleId | string;
     videoReverseOutputMode?: "zh" | "en" | "compact";
@@ -900,6 +932,10 @@ export function applyFactoryPrefsToBlocks(
   const ancientBlock = buildAncientArchetypePromptBlock(prefsAncientIds, {
     identityLockZh,
   });
+  const dynastyWardrobeBlock = formatDynastyWardrobeInjectBlock(opts.dynastyWardrobeIds || []);
+  const ancientFormulaBlock = ancientBlock
+    ? `【古风角色公式】${MANHUA_ANCIENT_CHARACTER_FORMULA_ZH}`
+    : "";
   const artStyle = getManhuaArtStylePreset(opts.artStyleId);
   const artStyleBlockKeyart = `【画风硬锁】${artStyle.labelZh}\n${artStyle.promptZh}`;
   const artStyleBlockClip = `【成片画风】${artStyle.labelZh}\n${artStyle.promptZh}`;
@@ -942,6 +978,8 @@ export function applyFactoryPrefsToBlocks(
           base = stripMarkedSection(base, "【画风硬锁】");
           base = stripMarkedSection(base, "【角色库锚点】");
           base = stripMarkedSection(base, "【古风原型锚点】");
+          base = stripMarkedSection(base, "【古风角色公式】");
+          base = stripMarkedSection(base, "【朝代服饰锚点");
           base = stripMarkedSection(base, "【服装道具连续性】");
           base = stripMarkedSection(base, "【静帧·示范图融图】");
         }
@@ -957,6 +995,8 @@ export function applyFactoryPrefsToBlocks(
           : "",
         b.id.startsWith("keyart-") && characterBlock ? characterBlock : "",
         b.id.startsWith("keyart-") && ancientBlock ? ancientBlock : "",
+        b.id.startsWith("keyart-") && ancientFormulaBlock ? ancientFormulaBlock : "",
+        b.id.startsWith("keyart-") && dynastyWardrobeBlock ? dynastyWardrobeBlock : "",
         b.id.startsWith("keyart-") && wardrobeBlock ? wardrobeBlock : "",
         craftBlock,
         !b.id.startsWith("keyart-") ? pathCameraBlock : "",
@@ -1006,6 +1046,8 @@ export function applyFactoryPrefsToBlocks(
       if (b.id.startsWith("bible-")) {
         base = stripMarkedSection(base, "【角色库锚点】");
         base = stripMarkedSection(base, "【古风原型锚点】");
+        base = stripMarkedSection(base, "【古风角色公式】");
+        base = stripMarkedSection(base, "【朝代服饰锚点");
         base = stripMarkedSection(base, "【点选道具锚点】");
         base = stripMarkedSection(base, "【男发预设库】");
         base = stripMarkedSection(base, "【服装道具连续性】");
@@ -1017,6 +1059,8 @@ export function applyFactoryPrefsToBlocks(
         b.id.startsWith("story-") && sceneDemoBlock ? sceneDemoBlock : "",
         b.id.startsWith("bible-") && characterBlock ? characterBlock : "",
         b.id.startsWith("bible-") && ancientBlock ? ancientBlock : "",
+        b.id.startsWith("bible-") && ancientFormulaBlock ? ancientFormulaBlock : "",
+        b.id.startsWith("bible-") && dynastyWardrobeBlock ? dynastyWardrobeBlock : "",
         b.id.startsWith("bible-") && maleHairstyleBlock ? maleHairstyleBlock : "",
         b.id.startsWith("bible-") && wardrobeBlock ? wardrobeBlock : "",
         b.id.startsWith("bible-") && propAnchorBlock ? propAnchorBlock : "",
@@ -1194,7 +1238,9 @@ export function resolveManhuaFragmentRunTargets(
     blocks
       .filter((b) => b.id.startsWith("clip-") && sameEpisode(b))
       .sort(sortKeyartBlocks)
-      .find((b) => resolveClipSegmentIndex(b.id, b.prompt) === segmentIndex) || undefined;
+      .find(
+        (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, ep) === segmentIndex,
+      ) || undefined;
   if (!keyarts.length) {
     return { targetBlockIds: [], forceFromStage: "keyart" };
   }
@@ -1260,6 +1306,7 @@ function makeShotBlockId(
   return makeCanvasBlockId(`${stage}-s${pad}`);
 }
 
+/** segmentIndex = 全集连续段号（ep2 首段 = 13） */
 function makeSegmentClipId(
   episodeIndex: number | null | undefined,
   segmentIndex: number,
@@ -1311,19 +1358,21 @@ export function ensureManhuaFragmentClips(
     (b) =>
       b.id.startsWith("clip-") &&
       sameEpisode(b) &&
-      !/-s\d{2}(?:-|$)/.test(b.id) &&
-      !/-g\d{2}(?:-|$)/i.test(b.id),
+      !/-s\d{2,}(?:-|$)/.test(b.id) &&
+      !/-g\d{2,}(?:-|$)/i.test(b.id),
   );
   const existingSegClips = blocks.filter(
     (b) =>
       b.id.startsWith("clip-") &&
       sameEpisode(b) &&
-      (/-g\d{2}(?:-|$)/i.test(b.id) || /-s\d{2}(?:-|$)/.test(b.id)),
+      (/-g\d{2,}(?:-|$)/i.test(b.id) || /-s\d{2,}(?:-|$)/.test(b.id)),
   );
+  /** 键 = 全集连续段号；兼容旧集内 g01 重计 */
   const clipBySeg = new Map<number, CanvasBlock>();
   for (const clip of existingSegClips) {
-    const segIdx = resolveClipSegmentIndex(clip.id, clip.prompt);
-    if (!clipBySeg.has(segIdx)) clipBySeg.set(segIdx, clip);
+    const local = resolveClipLocalSegmentIndex(clip.id, clip.prompt, ep);
+    const globalSeg = manhuaGlobalSegmentIndex(ep, local);
+    if (!clipBySeg.has(globalSeg)) clipBySeg.set(globalSeg, clip);
   }
   // 旧整集 clip 只作模板，不直接顶替段级 -g 节点（避免一直 0 条段成片）
 
@@ -1343,17 +1392,24 @@ export function ensureManhuaFragmentClips(
     if (!segKeyarts.length) continue;
     const primary = segKeyarts[0]!;
     const segUrls = segKeyarts.map((k) => mediaUrlOf(k)).filter(Boolean) as string[];
-    const existing = clipBySeg.get(seg.index);
+    const globalSeg = manhuaGlobalSegmentIndex(ep, seg.index);
+    const existing = clipBySeg.get(globalSeg);
     const artLock =
       extractArtStyleLockFromPrompt(primary.prompt) ||
       extractArtStyleLockFromPrompt(template.prompt);
+    const continuityAddon =
+      globalSeg >= 2
+        ? `${MANHUA_CLIP_CONTINUITY_HINT_ZH}\n${MANHUA_CLIP_CROSS_SEGMENT_TRANSITION_HINT_ZH}`
+        : "";
     const segPrompt = [
       MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip,
       formatWorkbenchSegmentClipInjectBlock({
-        segmentIndex: seg.index,
+        segmentIndex: globalSeg,
         durationSec: manhuaSegmentDurationSec(defaultModel),
         shots: seg.shots,
+        sceneHintZh: extractManhuaSceneHintFromPrompt(primary.prompt),
       }),
+      continuityAddon,
       artLock,
     ]
       .filter(Boolean)
@@ -1365,7 +1421,7 @@ export function ensureManhuaFragmentClips(
     const clone: CanvasBlock = {
       ...template,
       kind: "video",
-      id: makeSegmentClipId(ep, seg.index),
+      id: makeSegmentClipId(ep, globalSeg),
       x: primary.x + 220,
       y: primary.y,
       parentId: primary.id,
@@ -1385,7 +1441,7 @@ export function ensureManhuaFragmentClips(
     };
     nextExtras.push(clone);
     keepSegClipIds.add(clone.id);
-    clipBySeg.set(seg.index, clone);
+    clipBySeg.set(globalSeg, clone);
   }
 
   const staleClipIds = new Set([
@@ -1399,8 +1455,8 @@ export function ensureManhuaFragmentClips(
     ...nextExtras,
   ].map((b) => {
     if (!b.id.startsWith("clip-") || !sameEpisode(b) || !keepSegClipIds.has(b.id)) return b;
-    const segIdx = resolveClipSegmentIndex(b.id, b.prompt);
-    const seg = segments.find((s) => s.index === segIdx);
+    const localSeg = resolveClipLocalSegmentIndex(b.id, b.prompt, ep);
+    const seg = segments.find((s) => s.index === localSeg);
     const segKeyarts = (seg?.shots || [])
       .map((s) => keyartByShot.get(s.index))
       .filter((k): k is CanvasBlock => Boolean(k));
@@ -1430,7 +1486,7 @@ export function ensureManhuaFragmentClips(
   // 重挂：段内首张 keyart → 该段 clip
   for (const seg of segments) {
     const primary = seg.shots.map((s) => keyartByShot.get(s.index)).find(Boolean);
-    const clip = clipBySeg.get(seg.index);
+    const clip = clipBySeg.get(manhuaGlobalSegmentIndex(ep, seg.index));
     if (!primary || !clip) continue;
     nextEdges.push({ fromId: primary.id, toId: clip.id });
   }
@@ -1796,30 +1852,48 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
       return { ...b, prompt: parts.join("\n\n") };
     }
     if (b.id.startsWith("clip-")) {
-      const segIdx = resolveClipSegmentIndex(b.id, b.prompt);
+      const epClip = getBlockEpisodeIndex(b) ?? ep ?? 1;
+      const localSeg = resolveClipLocalSegmentIndex(b.id, b.prompt, epClip);
+      const globalSeg = manhuaGlobalSegmentIndex(epClip, localSeg);
       const segShots = shots.filter(
-        (s) => resolveSegmentIndexFromShotIndex(s.index) === segIdx,
+        (s) => resolveSegmentIndexFromShotIndex(s.index) === localSeg,
       );
       const kept = stripFactoryEnrichSections(b.prompt) || MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip;
       const model = b.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+      const sceneFromKeyart =
+        segShots
+          .map((s) =>
+            working.find(
+              (x) =>
+                sameEpisode(x) &&
+                x.id.startsWith("keyart-") &&
+                resolveKeyartShotIndex(x.id, x.prompt) === s.index,
+            ),
+          )
+          .map((k) => (k ? extractManhuaSceneHintFromPrompt(k.prompt) : ""))
+          .find(Boolean) || extractManhuaSceneHintFromPrompt(b.prompt);
       return {
         ...b,
         prompt: [
           kept,
           formatWorkbenchSegmentClipInjectBlock({
-            segmentIndex: segIdx,
+            segmentIndex: globalSeg,
             durationSec: manhuaSegmentDurationSec(model),
             shots: segShots.length
               ? segShots
               : [
                   {
-                    index: (segIdx - 1) * 5 + 1,
+                    index: (localSeg - 1) * MANHUA_KEYARTS_PER_SEGMENT_MIN + 1,
                     durationSec: 0,
                     cameraZh: "",
                     actionZh: "",
                   },
                 ],
+            sceneHintZh: sceneFromKeyart || undefined,
           }),
+          globalSeg >= 2
+            ? `${MANHUA_CLIP_CONTINUITY_HINT_ZH}\n${MANHUA_CLIP_CROSS_SEGMENT_TRANSITION_HINT_ZH}`
+            : "",
           seedanceHint ? `【微动优先】\n${seedanceHint}` : "",
         ]
           .filter(Boolean)
@@ -2214,50 +2288,43 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           nearestRef && nearestRef !== current.refImageUrl
             ? { ...current, refImageUrl: nearestRef }
             : current;
-        const {
-          normalizeManhuaShotContinuityPrefs,
-          resolvePreviousShotClipUrl,
-          MANHUA_SHOT_CLIP_CONTINUITY_HINT_ZH,
-        } = await import("@shared/manhuaShotContinuity");
+        const { normalizeManhuaShotContinuityPrefs } = await import("@shared/manhuaShotContinuity");
         const shotCont = normalizeManhuaShotContinuityPrefs(opts.shotContinuity);
-        const epForShot = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
-        const shotForCont = resolveKeyartShotIndex(runBlockPayload.id, runBlockPayload.prompt);
         // 静帧硬接力已在上方 keyart 并行批次处理；此处串行路径不会再出现 keyart
 
-        // 段成片 ← 上一段成片（末帧/视频参考）；无同集上段时再退回跨集
+        // 段成片 ← 上一段成片（末帧/视频参考，全集连续编号：g13←g12）
         if (stage === "clip") {
+          const epForSeg = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
+          const rawSeg = resolveClipSegmentIndex(blockId, runBlockPayload.prompt);
+          const localSeg = resolveClipLocalSegmentIndex(blockId, runBlockPayload.prompt, epForSeg);
           let prevClipUrl: string | undefined;
-          if (shotCont.clipFromPrevTail && shotForCont >= 2) {
-            prevClipUrl = resolvePreviousShotClipUrl(working, epForShot, shotForCont);
-          }
-          if (!prevClipUrl && !runBlockPayload.refVideoUrl) {
-            const ep = getBlockEpisodeIndex(runBlockPayload);
-            if (ep != null && ep >= 2) {
-              const { resolvePreviousEpisodeClipUrl } = await import("@shared/manhuaClipContinuity");
-              prevClipUrl = resolvePreviousEpisodeClipUrl(working, ep);
-            }
+          if (shotCont.clipFromPrevTail && !runBlockPayload.refVideoUrl) {
+            prevClipUrl = resolvePreviousSegmentClipUrl(working, epForSeg, rawSeg);
           }
           if (prevClipUrl) {
             const basePrompt = String(runBlockPayload.prompt || "");
+            const needCont = !basePrompt.includes("镜头连续性");
+            const needTrans = !basePrompt.includes("跨段转场");
             runBlockPayload = {
               ...runBlockPayload,
               refVideoUrl: prevClipUrl,
-              prompt:
-                shotCont.clipFromPrevTail && !basePrompt.includes("镜间成片接力")
-                  ? `${basePrompt}\n\n${MANHUA_SHOT_CLIP_CONTINUITY_HINT_ZH}`
-                  : basePrompt,
+              prompt: [
+                basePrompt,
+                needCont ? MANHUA_CLIP_CONTINUITY_HINT_ZH : "",
+                needTrans ? MANHUA_CLIP_CROSS_SEGMENT_TRANSITION_HINT_ZH : "",
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
             };
           }
           // 段内全部静帧作多图参考：图是什么画风，成片就跟什么（不靠猜）
-          const segIdx = resolveClipSegmentIndex(blockId, runBlockPayload.prompt);
-          const epForSeg = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
           const segKeyarts = working
             .filter(
               (b) =>
                 b.id.startsWith("keyart-") &&
                 (getBlockEpisodeIndex(b) ?? 1) === epForSeg &&
                 resolveSegmentIndexFromShotIndex(resolveKeyartShotIndex(b.id, b.prompt)) ===
-                  segIdx,
+                  localSeg,
             )
             .sort(sortKeyartBlocks);
           const segUrls = segKeyarts.map((b) => mediaUrlOf(b)).filter(Boolean) as string[];
