@@ -77,14 +77,14 @@ export function mergeManhuaPerformanceCue(
   actionOrScript: string,
 ): ManhuaPerformanceCue {
   const fromAction = extractManhuaPerformanceCue(actionOrScript);
-  return {
+  return enrichPerformanceCueWithVisibleAction({
     dialogueZh: clean(base?.dialogueZh || "") || fromAction.dialogueZh,
     emotionZh: clean(base?.emotionZh || "") || fromAction.emotionZh,
     voiceToneZh: clean(base?.voiceToneZh || "") || fromAction.voiceToneZh,
     microExpressionZh:
       clean(base?.microExpressionZh || "") || fromAction.microExpressionZh,
     bodyBeatZh: clean(base?.bodyBeatZh || "") || fromAction.bodyBeatZh,
-  };
+  });
 }
 
 export function hasManhuaPerformanceCue(cue: ManhuaPerformanceCue): boolean {
@@ -144,6 +144,60 @@ export function formatManhuaPerformanceInjectBlock(
     );
   }
   return lines.join("\n");
+}
+
+/**
+ * 抽象情绪 → 可见动作/微表情提示（少写心理，多写可拍细节）。
+ * 用于补全微表情/身体节拍为空时的提示。
+ */
+const EMOTION_TO_VISIBLE: Array<{ re: RegExp; micro: string; body: string }> = [
+  {
+    re: /害怕|恐惧|慌/,
+    micro: "瞳孔微缩，嘴唇发白，视线乱飘找出口",
+    body: "后退半步，手指死死抓住门把或衣角",
+  },
+  {
+    re: /委屈|不信|震惊/,
+    micro: "眼眶发红泪未落，眉心微蹙，下颌绷紧",
+    body: "猛地抬头或别开脸，肩线僵住",
+  },
+  {
+    re: /愧疚|心虚/,
+    micro: "不敢对视，喉结慢滚，嘴角抿紧",
+    body: "肩膀微塌，手指反复摩挲袖口",
+  },
+  {
+    re: /愤怒|怒/,
+    micro: "咬牙，鼻翼扇动，眼神发冷",
+    body: "攥拳，前倾半步，呼吸加重",
+  },
+  {
+    re: /决绝|狠/,
+    micro: "目光钉死，嘴角压平",
+    body: "站定转身，步幅干净不再回头",
+  },
+  {
+    re: /悲伤|哭|不舍/,
+    micro: "眼皮轻颤，泪在睫毛停住或滑落",
+    body: "抬手擦眼角，肩轻抖后强行压住",
+  },
+];
+
+/** 若缺微表情/身体节拍，用情绪词补可见表演 */
+export function enrichPerformanceCueWithVisibleAction(
+  cue: ManhuaPerformanceCue,
+): ManhuaPerformanceCue {
+  const emotion = cue.emotionZh || cue.voiceToneZh || "";
+  if (!emotion && !cue.dialogueZh) return cue;
+  let micro = cue.microExpressionZh;
+  let body = cue.bodyBeatZh;
+  for (const row of EMOTION_TO_VISIBLE) {
+    if (!row.re.test(emotion) && !row.re.test(cue.dialogueZh)) continue;
+    if (!micro) micro = row.micro;
+    if (!body) body = row.body;
+    break;
+  }
+  return { ...cue, microExpressionZh: micro, bodyBeatZh: body };
 }
 
 /** 从整段剧本抽若干表演线索（给视觉简报） */

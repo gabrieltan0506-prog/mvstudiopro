@@ -62,6 +62,11 @@ import {
   recommendActionCameraFromTopic,
 } from "@shared/manhuaActionCameraRecipeBank";
 import { formatCineVocabInjectBlock } from "@shared/manhuaCineVocabBank";
+import {
+  buildManhuaCameraMoveInjectBlock,
+  MANHUA_CAMERA_MOVE_ORDER,
+} from "@shared/manhuaCameraMoveBank";
+import { composeManhuaNarrativeEngineBlock } from "@shared/manhuaNarrativeEnginePrompt";
 import { buildWardrobePropContinuityInjectBlock } from "@shared/manhuaWardrobePropContinuity";
 import {
   buildManhuaPreviouslyOnRecap,
@@ -438,6 +443,30 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const cineVocabBlock = formatCineVocabInjectBlock(
     (opts.cineVocabIds || []).map((id) => String(id || "").trim()).filter(Boolean),
   );
+  /** 节拍/反推默认注入高频运镜样本（过肩/特写/细节/跟随/手持/低角），避免空运镜 */
+  const cameraMoveSampleBlock = buildManhuaCameraMoveInjectBlock(
+    [
+      "cam_09_ots",
+      "cam_13_closeup",
+      "cam_14_detail",
+      "cam_07_follow",
+      "cam_04_handheld",
+      "cam_01_low_angle",
+    ].filter((id) => MANHUA_CAMERA_MOVE_ORDER.includes(id as (typeof MANHUA_CAMERA_MOVE_ORDER)[number])),
+    { limit: 6, title: "【运镜词库·选用】" },
+  );
+  const narrativeEngineBlock = composeManhuaNarrativeEngineBlock({
+    includeClipPreflight: false,
+  });
+  const clipPreflightBlock = composeManhuaNarrativeEngineBlock({
+    includePlotEngine: false,
+    includeHook3s: true,
+    includeInfoIncrement: false,
+    includeSceneFields: false,
+    includeVisibleAction: true,
+    includeShortArc: false,
+    includeClipPreflight: true,
+  });
   const wardrobeBlock = buildWardrobePropContinuityInjectBlock(
     (opts.wardrobePropContinuityIds || []).map((id) => String(id || "").trim()).filter(Boolean),
   );
@@ -501,7 +530,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   if (episodeHeader) {
     storyPrompt = `${episodeHeader}\n\n${storyPrompt}`;
   }
-  story.prompt = storyPrompt;
+  story.prompt = [storyPrompt, narrativeEngineBlock].filter(Boolean).join("\n\n");
   story.width = 400;
   story.height = 320;
   story.textModel = "gpt-5.6-sol";
@@ -533,6 +562,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     : MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats;
   beats.prompt = [
     beatsBase,
+    narrativeEngineBlock,
+    cameraMoveSampleBlock,
     craftShotBlock,
     pathCameraBlock,
     actionCameraBlock,
@@ -553,6 +584,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     : MANHUA_DRAMA_DEFAULT_PROMPTS.video_reverse;
   reverse.prompt = [
     reverseBase,
+    narrativeEngineBlock,
+    cameraMoveSampleBlock,
     craftShotBlock,
     pathCameraBlock,
     actionCameraBlock,
@@ -607,6 +640,8 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   clip.id = makeFactoryStageId("clip", episodeIndex);
   clip.prompt = [
     MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip,
+    clipPreflightBlock,
+    cameraMoveSampleBlock,
     pathCameraBlock,
     actionCameraBlock,
     motionBlock,

@@ -7,6 +7,8 @@ import {
   mergeManhuaPerformanceCue,
   type ManhuaPerformanceCue,
 } from "./manhuaPerformancePrompt.js";
+import { formatRecommendedCameraMoveLine } from "./manhuaCameraMoveBank.js";
+import { MANHUA_CLIP_PREFLIGHT_BLOCK } from "./manhuaNarrativeEnginePrompt.js";
 
 export type ManhuaWorkbenchShot = {
   index: number;
@@ -279,9 +281,11 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
     ),
     { stage: "key_art", shotIndex: shot.index },
   );
+  const camMove = formatRecommendedCameraMoveLine(`${camera} ${action}`);
   return [
     `【分镜 ${shot.index}·静帧】`,
     camera ? `运镜（镜头运动，勿与人物动作混写）：${camera}` : "运镜：承接上镜构图做可读微动",
+    camMove,
     framingLock,
     action ? `动作轨迹（主体肢体/身体移位，须有方向与起止）：${action}` : "动作轨迹：落实本镜关键表演",
     sceneShiftHint,
@@ -316,12 +320,20 @@ export function formatWorkbenchClipInjectBlock(shot: ManhuaWorkbenchShot): strin
     ),
     { stage: "clip", shotIndex: shot.index },
   );
+  const camMove = formatRecommendedCameraMoveLine(`${camera} ${action}`);
+  const hookLock =
+    shot.index === 1
+      ? "首镜硬锁：前三秒内须出现问题/异常/冲突之一；禁止平淡开场。"
+      : "";
   return [
     `【分镜 ${shot.index}·片段成片】`,
     `目标时长：约 ${dur} 秒（允许 ±0.8 秒）；勿按整集 10 秒要求本镜。`,
+    hookLock,
     `动作轨迹（主体肢体/身体移位）：${action}`,
     `运镜（镜头运动，与动作分行执行）：${camera}`,
+    camMove,
     performance,
+    MANHUA_CLIP_PREFLIGHT_BLOCK,
     "禁止只做空镜走路或纯运镜展示；须出现本镜关键动作、道具交互或人物关系变化中的至少一项。",
     "承接首镜人物身份与服装，不新增无关角色；成片画面无新增可读字幕。",
   ]
