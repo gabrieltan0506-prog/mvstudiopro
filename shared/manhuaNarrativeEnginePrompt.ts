@@ -4,6 +4,7 @@
  */
 
 import { composeManhuaEpisodeQualityBlock } from "./manhuaEpisodeQualityPrompt.js";
+import { MANHUA_CAMERA_ZH_ONLY_LOCK } from "./manhuaCameraLanguageZh.js";
 
 /** 剧情发动机：目标 → 阻力 → 代价 */
 export const MANHUA_PLOT_ENGINE_BLOCK = `【剧情发动机·必填】
@@ -85,6 +86,7 @@ export function composeManhuaNarrativeEngineBlock(opts?: {
     o.includeVisibleAction ? MANHUA_VISIBLE_ACTION_BLOCK : "",
     o.includeShortArc ? MANHUA_SHORT_DRAMA_ARC_BLOCK : "",
     o.includeEpisodeQuality ? composeManhuaEpisodeQualityBlock() : "",
+    MANHUA_CAMERA_ZH_ONLY_LOCK,
     o.includeClipPreflight ? MANHUA_CLIP_PREFLIGHT_BLOCK : "",
   ]
     .filter(Boolean)

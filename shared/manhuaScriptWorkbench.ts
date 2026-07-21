@@ -13,6 +13,7 @@ import {
   getManhuaCameraAngle,
   recommendManhuaCameraAngleFromText,
 } from "./manhuaCameraAngleBank.js";
+import { normalizeManhuaShotCameraLanguage } from "./manhuaCameraLanguageZh.js";
 import { MANHUA_CLIP_PREFLIGHT_BLOCK } from "./manhuaNarrativeEnginePrompt.js";
 
 export type ManhuaWorkbenchShot = {
@@ -177,6 +178,10 @@ type ParsedShotRow = {
 } & Partial<ManhuaPerformanceCue>;
 
 function enrichRowWithPerformance(row: ParsedShotRow): ParsedShotRow {
+  const camNorm = normalizeManhuaShotCameraLanguage({
+    cameraZh: row.cameraZh,
+    actionZh: row.actionZh,
+  });
   const cue = mergeManhuaPerformanceCue(
     {
       dialogueZh: row.dialogueZh,
@@ -185,9 +190,9 @@ function enrichRowWithPerformance(row: ParsedShotRow): ParsedShotRow {
       microExpressionZh: row.microExpressionZh,
       bodyBeatZh: row.bodyBeatZh,
     },
-    `${row.cameraZh} ${row.actionZh}`,
+    `${camNorm.cameraZh} ${camNorm.actionZh}`,
   );
-  return { ...row, ...cue };
+  return { ...row, ...camNorm, ...cue };
 }
 
 function parseShotRowsFromText(raw: string): ParsedShotRow[] {
@@ -366,8 +371,12 @@ export const MANHUA_KEYART_NO_TEXT_EN =
 
 /** 写入静帧 prompt：本镜场面必须带场景/道具/服装配合 */
 export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): string {
-  const camera = String(shot.cameraZh || "").trim();
-  const action = String(shot.actionZh || "").trim();
+  const camNorm = normalizeManhuaShotCameraLanguage({
+    cameraZh: shot.cameraZh,
+    actionZh: shot.actionZh,
+  });
+  const camera = camNorm.cameraZh;
+  const action = camNorm.actionZh;
   const framingLock = /全景|远景/.test(camera)
     ? "景别硬锁：全景/远景；人物必须全身入画，并清楚展示环境纵深与人物空间关系，禁止裁到腰部或大腿。"
     : /中近景/.test(camera)
