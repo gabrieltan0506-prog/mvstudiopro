@@ -54,6 +54,7 @@ import {
 import { shouldAttachManhuaPreviouslyOn } from "@shared/manhuaEpisodeRecap";
 import { resolveKeyartShotIndex } from "@shared/manhuaScriptWorkbench";
 import { upsertShotAngleSection } from "@shared/manhuaShotAnglePersist";
+import { upsertShotDialogueSection } from "@shared/manhuaShotDialoguePersist";
 import {
   listScreenwriterGenres,
   MANHUA_SCENE_GENRE_LABEL_ZH,
@@ -3355,6 +3356,22 @@ export default function OmniCanvas() {
                         return {
                           ...b,
                           outputText: upsertShotAngleSection(base, angles),
+                          status: "done" as const,
+                        };
+                      }),
+                    );
+                  }}
+                  onUpsertShotDialogues={(dialogues) => {
+                    const ep = writerFocusEpisode;
+                    handleBlocksChange((prev) =>
+                      prev.map((b) => {
+                        if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
+                        const stage = stageKeyFromBlockId(b.id);
+                        if (stage !== "reverse" && stage !== "beats") return b;
+                        const base = b.outputText || b.prompt || "";
+                        return {
+                          ...b,
+                          outputText: upsertShotDialogueSection(base, dialogues),
                           status: "done" as const,
                         };
                       }),

@@ -3,8 +3,10 @@
  */
 
 import {
+  extractManhuaPerformanceCue,
   formatManhuaPerformanceInjectBlock,
   mergeManhuaPerformanceCue,
+  stripQuotedDialogueFromAction,
   type ManhuaPerformanceCue,
 } from "./manhuaPerformancePrompt.js";
 import { formatRecommendedCameraMoveLine } from "./manhuaCameraMoveBank.js";
@@ -376,7 +378,8 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
     actionZh: shot.actionZh,
   });
   const camera = camNorm.cameraZh;
-  const action = camNorm.actionZh;
+  /** 静帧动作行去掉「」台词字面，防对白漏进生图 */
+  const action = stripQuotedDialogueFromAction(camNorm.actionZh);
   const framingLock = /全景|远景/.test(camera)
     ? "景别硬锁：全景/远景；人物必须全身入画，并清楚展示环境纵深与人物空间关系，禁止裁到腰部或大腿。"
     : /中近景/.test(camera)
@@ -420,7 +423,8 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
         voiceToneZh: shot.voiceToneZh,
         microExpressionZh: shot.microExpressionZh,
       },
-      action,
+      // 表演字段仍可用原台词推口型开合；注入块本身不会写出字面
+      String(shot.actionZh || camNorm.actionZh),
     ),
     { stage: "key_art", shotIndex: shot.index },
   );
@@ -504,8 +508,13 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     String(input.shots[0]?.cameraZh || "").trim() ||
     "承接段内首张静帧构图做可读微动";
   const lead = input.shots[0];
+  /** 成片对白：字段优先，缺则从动作行「」抽取；本轮 Seedance 必演口型气口 */
   const dialogueChain = input.shots
-    .map((s) => String(s.dialogueZh || "").trim())
+    .map((s) => {
+      const direct = String(s.dialogueZh || "").trim();
+      if (direct) return direct;
+      return extractManhuaPerformanceCue(s.actionZh).dialogueZh;
+    })
     .filter(Boolean)
     .slice(0, 4);
   const performance = formatManhuaPerformanceInjectBlock(
@@ -551,17 +560,17 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     `运镜（镜头运动起幅→落幅，与动作分行）：${camera}`,
     camAngle,
     camMove,
-    dialogueChain.length > 1
-      ? `段内对白链（只作口型气口，勿烧字）：${dialogueChain.map((d) => `「${d}」`).join(" → ")}`
-      : "",
+    dialogueChain.length
+      ? `段内对白链（成片必演口型气口，勿烧字）：${dialogueChain.map((d) => `「${d}」`).join(" → ")}`
+      : "段内对白：若节拍有台词，必须写入口型气口；无台词则用呼吸与视线撑情绪。",
     ...dynamicsLines,
     performance,
     MANHUA_CLIP_PREFLIGHT_BLOCK,
     "【参考静帧】成片风格、人物造型、服装与场景请对齐本段参考静帧；以参考图为准做微动演绎。",
+    "成片对白硬锁：有对白链则按顺序演绎说话口型与气口节奏；画面仍零字幕、零气泡。",
     "请落实本段多拍动作链、人物互动、道具交互与场景/天气过程，避免纯空镜走路或原地发呆灌时长。",
     "承接段内静帧人物身份与服装，不新增无关角色；成片画面无新增可读字幕。",
-    // 段成片再钉一遍质量口径（短摘，避免整块重复过长）
-    "质量抽检：道具须入画；主运镜起落清楚；动作链有方向；互动可读；场景/天气对齐静帧且突变有过渡。",
+    "质量抽检：对白口型到位；道具须入画；主运镜起落清楚；动作链有方向；场景/天气对齐静帧。",
   ]
     .filter(Boolean)
     .join("\n");

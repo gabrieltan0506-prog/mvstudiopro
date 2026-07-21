@@ -56,6 +56,7 @@ import {
   workbenchShotTotalSec,
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
+import { applyShotDialoguesFromText } from "@shared/manhuaShotDialoguePersist";
 import { summarizeManhuaVisualBriefForUi } from "@shared/manhuaScriptVisualBrief";
 import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
 import { MANHUA_DRAFT_RETENTION_HINT_ZH } from "@shared/manhuaCloudDraft";
@@ -209,6 +210,8 @@ type Props = {
   onAdvisorBusyChange?: (busy: boolean) => void;
   /** 机位选定写回反推/节拍（供工厂注入） */
   onUpsertShotAngles?: (angles: Record<number, string>) => void;
+  /** 分镜台词写回（成片注入用；静帧不读字面） */
+  onUpsertShotDialogues?: (dialogues: Record<number, string>) => void;
 };
 
 function blockByStage(blocks: CanvasBlock[], episode: number, stage: string): CanvasBlock | undefined {
@@ -311,6 +314,7 @@ export default function ManhuaScriptWorkbench({
   onAdvisorUpdateStoryText,
   onAdvisorBusyChange,
   onUpsertShotAngles,
+  onUpsertShotDialogues,
 }: Props) {
   const dockCanvas = Boolean(previewCanvas);
   const continuity = shotContinuity || {
@@ -416,11 +420,18 @@ export default function ManhuaScriptWorkbench({
   const story = blockByStage(blocks, focusEpisode, "story");
 
   const shots: ManhuaWorkbenchShot[] = useMemo(() => {
-    const fromReverse = parseWorkbenchShotsFromText(reverse?.outputText || reverse?.prompt);
-    if ((reverse?.outputText || "").trim()) return fromReverse;
-    const fromBeats = parseWorkbenchShotsFromText(beats?.outputText || beats?.prompt);
-    if (fromBeats.length >= 2 && (beats?.outputText || "").trim()) return fromBeats;
-    return fromBeats;
+    const reverseText = reverse?.outputText || reverse?.prompt || "";
+    const beatsText = beats?.outputText || beats?.prompt || "";
+    let list: ManhuaWorkbenchShot[];
+    if (reverseText.trim()) {
+      list = parseWorkbenchShotsFromText(reverseText);
+    } else {
+      list = parseWorkbenchShotsFromText(beatsText);
+    }
+    // 工作台改过的「分镜台词」表优先写回（成片用）
+    list = applyShotDialoguesFromText(list, reverseText);
+    list = applyShotDialoguesFromText(list, beatsText);
+    return list;
   }, [beats?.outputText, beats?.prompt, reverse?.outputText, reverse?.prompt]);
 
   const episodeVideoModel =
@@ -2318,7 +2329,40 @@ export default function ManhuaScriptWorkbench({
                           <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-white/70">
                             {shot.actionZh}
                           </div>
-                          {shot.dialogueZh || shot.emotionZh || shot.microExpressionZh ? (
+                          {on ? (
+                            <div
+                              className="mt-1 space-y-1"
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => e.stopPropagation()}
+                            >
+                              <label className="block text-[9px] text-rose-100/55">
+                                成片对白（静帧不用字面）
+                                <input
+                                  type="text"
+                                  value={shot.dialogueZh || ""}
+                                  placeholder="本镜台词，生成片段时写入口型气口"
+                                  maxLength={80}
+                                  onChange={(e) => {
+                                    const line = e.target.value.slice(0, 80);
+                                    const next: Record<number, string> = {};
+                                    for (const s of shots) {
+                                      const v =
+                                        s.index === shot.index
+                                          ? line
+                                          : String(s.dialogueZh || "").trim();
+                                      if (v) next[s.index] = v;
+                                    }
+                                    if (line.trim()) next[shot.index] = line.trim();
+                                    onUpsertShotDialogues?.(next);
+                                  }}
+                                  className="mt-0.5 w-full rounded border border-rose-400/25 bg-black/35 px-1.5 py-1 text-[10px] text-rose-50 outline-none placeholder:text-white/25 focus:border-rose-300/45"
+                                />
+                              </label>
+                              <div className="text-[9px] leading-snug text-white/35">
+                                静帧：表情动作 · 成片：上栏对白口型
+                              </div>
+                            </div>
+                          ) : shot.dialogueZh || shot.emotionZh || shot.microExpressionZh ? (
                             <div className="mt-0.5 line-clamp-1 text-[10px] text-rose-100/65">
                               {shot.dialogueZh ? `「${shot.dialogueZh}」` : ""}
                               {shot.dialogueZh && (shot.emotionZh || shot.microExpressionZh)
