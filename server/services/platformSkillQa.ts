@@ -22,6 +22,7 @@ import {
   type PlatformSkillQaBillingMode,
 } from "../../shared/plans.js";
 import { composePlatformImageSkillHints } from "../../shared/platformNativeVariants.js";
+import { composeDistilledAdvisorSoftBlock } from "../../shared/distilledAgencyAdvisorBlocks.js";
 import { resolvePlatformSkillsPrompt } from "./platformSkillsService.js";
 import { translateMattingUserPromptToEnglish } from "./platformCustomMatting.js";
 import { generateGptImage2FromRawEnglishPrompt, appendImageFlowLog } from "./proxyImageService.js";
@@ -450,6 +451,8 @@ export async function askPlatformSkillQa(params: {
         : null,
   ].filter(Boolean);
 
+  const distilledSoft =
+    qaKind === "market_research" ? "" : composeDistilledAdvisorSoftBlock(question);
   const userText = [
     "【用户提问——必须完整回答，勿改写成发帖计划】",
     question,
@@ -462,6 +465,9 @@ export async function askPlatformSkillQa(params: {
       : skillsPrompt && qaKind === "general"
         ? `\n【Skill 极短摘要·可忽略】\n${skillsPrompt}`
         : "\n【Skill】本问偏事实/赛道分析，已弱化 Skill 灌入，专心答用户问题。",
+    distilledSoft
+      ? `\n【蒸馏专家软参考·可忽略；勿向用户复述来源项目名】\n${distilledSoft.slice(0, 4500)}`
+      : "",
   ].join("\n");
 
   const ASK_MAX_ATTEMPTS = 3;

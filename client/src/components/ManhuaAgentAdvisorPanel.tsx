@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, MessageSquare, Sparkles } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import type { ManhuaWorkbenchSyncPayload } from "@shared/manhuaAgentLoopSync";
+import { composeDistilledAdvisorSoftBlock } from "@shared/distilledAgencyAdvisorBlocks";
 import {
   PLATFORM_SKILL_QA_TERRA_DAILY_FREE,
   platformSkillQaPaidCredits,
@@ -30,15 +31,22 @@ type Props = {
 
 function buildCanvasAdvisorQuestion(topic: string | undefined, userText: string): string {
   const theme = String(topic || "").trim();
+  const distilled = composeDistilledAdvisorSoftBlock(`${theme}\n${userText}`, {
+    canvasManhua: true,
+  });
   return [
     "【漫剧工厂工作台·创作顾问】",
     theme ? `当前题材/项目：${theme}` : "当前题材：未命名",
     "请用简体中文直接回答用户。若用户要一集竖屏分镜或故事，请在回答中尽量包含「## 故事大纲」与「## 分镜表」段落，便于同步到工作台。",
     "出静帧/成片由用户在工作台确认视觉简报后操作，你只做文案与分镜规划，不要假装已出图。",
+    "成稿禁止写模型名、供应商名、上游开源项目名；画风与时代硬锁须落实。",
+    distilled ? `\n${distilled}` : "",
     "",
     "【用户提问】",
     userText.trim(),
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** 从顾问回答里软提取故事/分镜，尽量同步到工作台（无则忽略） */

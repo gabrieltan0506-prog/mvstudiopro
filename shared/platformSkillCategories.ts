@@ -28,7 +28,7 @@ export const PLATFORM_SKILL_CATEGORY_ORDER: readonly PlatformSkillCategoryMeta[]
   { id: "graphic", label: "图文笔记", hint: "笔记节奏、高收藏、蓝海自然、连载弧" },
   { id: "templates", label: "一键模板", hint: "百科可视化、Image-2 复刻、即梦封面" },
   { id: "deck", label: "动效PPT", hint: "路演投屏、分步动效、HTML / PPTX 导出" },
-  { id: "video", label: "视频与广告", hint: "导演中台、产品广告、短剧钩子、带货广告" },
+  { id: "video", label: "视频与广告", hint: "导演中台、短视频增长、漫剧视觉叙事、产品广告、短剧钩子" },
   { id: "lane", label: "赛道专项", hint: "虚拟资料店、畅销品科普、法医、跨界医学、身份反差等" },
   { id: "custom", label: "我上传的", hint: "你自己上传的 Skill.md" },
 ] as const;
@@ -58,6 +58,8 @@ export const PLATFORM_SKILL_ID_ORDER: readonly string[] = [
   "jimeng-product-ad",
   "jimeng-short-drama",
   "ai-feed-ad",
+  "china-short-video-growth",
+  "manhua-visual-narrative",
   // lane
   "xhs-virtual-goods",
   "cultural-diversity",
@@ -93,6 +95,8 @@ const VIDEO_IDS = new Set([
   "jimeng-product-ad",
   "jimeng-short-drama",
   "ai-feed-ad",
+  "china-short-video-growth",
+  "manhua-visual-narrative",
 ]);
 
 const CORE_IDS = new Set<string>(PLATFORM_SKILL_ROUTER_CORE_IDS);
