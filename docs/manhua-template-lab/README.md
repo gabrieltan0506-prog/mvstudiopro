@@ -15,7 +15,9 @@
 
 ## 流程
 
-1. **Platform「学节奏」**（推荐）：飙升榜一点 → 云端 Job 下片+语音+读帧 → GCS `proposed`  
+1. **Platform「学节奏」**（推荐）：飙升榜一点 **或** 贴合集/单集链接 → 云端 Job  
+   每轮按集顺序采 8–10 集（学完删视频）→ 分集 digest 写 GCS → **结果立刻在网页展示**  
+   累计 ≥16（目标约 20）才合成一张 `proposed` 总分析；你看完再决定是否进库  
    失败自动回退本机 `manhua:template-learn` 命令
 2. **本机学习**（回退）：`pnpm run manhua:template-learn -- --url …` / `--rising-json …`
 3. **定时扫描** `pnpm run manhua:template-scan` → 只增/更新提案
@@ -26,6 +28,8 @@
 
 - action：`manhua_template_learn`（`POST /api/jobs`，监管门禁）
 - 服务：`server/services/manhuaTemplateLearnService.ts`
+- 多集规则：`shared/manhuaTemplateLearnSeries.ts`
+- 合集进度 / 分集摘要：GCS `manhua-template-learn/series/<key>/`
 
 ```bash
 # 备用本机

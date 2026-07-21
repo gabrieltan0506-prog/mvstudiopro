@@ -295,6 +295,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       title: typeof params.title === "string" ? params.title : undefined,
       mixId: typeof params.mixId === "string" ? params.mixId : undefined,
       rank: typeof params.rank === "number" ? params.rank : undefined,
+      batchSize: typeof params.batchSize === "number" ? params.batchSize : undefined,
       onProgress: async (phase, detailZh) => {
         await progress?.patch({
           analysisStage: `manhua_learn_${phase}`,
@@ -306,9 +307,9 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       provider: "manhua-template-learn",
       output: {
         ...result,
-        proposalId: result.proposal.id,
-        nameZh: result.proposal.nameZh,
-        status: result.proposal.status,
+        proposalId: result.proposal?.id || null,
+        nameZh: result.proposal?.nameZh || null,
+        status: result.proposal?.status || null,
       },
     };
   }
@@ -911,8 +912,8 @@ function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
     if (input.action === "manhua_template_learn") {
       const raw = Number(process.env.MANHUA_TEMPLATE_LEARN_JOB_TIMEOUT_MS);
       if (Number.isFinite(raw) && raw >= 180_000) return raw;
-      // 下片 + 语音 + 抽帧 + Terra 读帧，默认 20 分钟
-      return 20 * 60_000;
+      // 每轮 8–10 集：下片+语音+读帧+删视频，默认 90 分钟
+      return 90 * 60_000;
     }
     if (input.action === "growth_analyze_video" || input.action === "growth_analyze_images") {
       const params = input.params ?? {};
