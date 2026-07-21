@@ -174,6 +174,9 @@ type Props = {
   onRerunKeyartShot?: (blockId: string, shotIndex: number) => void;
   /** 质检软拦：用户仍采用当前镜成片进入成片坞 */
   onAcceptClipDespiteQc?: (clipBlockId: string) => void;
+  /** 成片坞勾选集（剪辑阶段可改） */
+  dockSelectedIds?: Set<string>;
+  onDockSelectedIdsChange?: (next: Set<string>) => void;
   onFocusBlock?: (blockId: string) => void;
   /** 确认编剧后：整屏编辑器壳（无圆角卡片、三栏占满视口） */
   immersive?: boolean;
@@ -289,6 +292,8 @@ export default function ManhuaScriptWorkbench({
   onRerunKeyartsFromReverse,
   onRerunKeyartShot,
   onAcceptClipDespiteQc,
+  dockSelectedIds,
+  onDockSelectedIdsChange,
   onFocusBlock,
   immersive = false,
   previewCanvas,
@@ -486,6 +491,24 @@ export default function ManhuaScriptWorkbench({
       }),
     [shots, stillIndexSet, clipIndexSet, roughShotOrder],
   );
+
+  const editShotMedia = useMemo(() => {
+    return roughClips.map((c) => {
+      const shotClip =
+        episodeClips.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === c.shotIndex) ||
+        (c.shotIndex === 1 ? legacyClip : undefined);
+      const shotKeyart =
+        episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === c.shotIndex) ||
+        (c.shotIndex === 1 ? keyart : undefined);
+      return {
+        shotIndex: c.shotIndex,
+        clipBlockId: shotClip?.id,
+        keyartBlockId: shotKeyart?.id,
+        outputUrl: mediaUrl(shotClip),
+        quality: shotClip?.manhuaClipQuality ?? null,
+      };
+    });
+  }, [roughClips, episodeClips, episodeKeyarts, legacyClip, keyart]);
 
   useEffect(() => {
     // 新分镜到来时，为缺失镜号补推荐机位
@@ -1678,6 +1701,48 @@ export default function ManhuaScriptWorkbench({
             onSubtitleEnabledChange={setEditSubtitleEnabled}
             motionPromptIds={editMotionPromptIds}
             onMotionPromptIdsChange={setEditMotionPromptIds}
+            shotMedia={editShotMedia}
+            factoryBusy={factoryBusy}
+            dockSelectedIds={dockSelectedIds}
+            onToggleDockClip={(clipBlockId, selected) => {
+              if (!onDockSelectedIdsChange) return;
+              const next = new Set(dockSelectedIds || []);
+              if (selected) next.add(clipBlockId);
+              else next.delete(clipBlockId);
+              onDockSelectedIdsChange(next);
+            }}
+            onSelectExportableClips={(ids) => {
+              if (!onDockSelectedIdsChange) return;
+              const next = new Set(dockSelectedIds || []);
+              for (const id of ids) next.add(id);
+              onDockSelectedIdsChange(next);
+            }}
+            onReworkClip={(shotIndex) => {
+              onGenerateFragment?.({ shotIndex });
+            }}
+            onReworkFailedClips={(indexes) => {
+              onGenerateMissingFragments?.(indexes);
+            }}
+            onReworkStill={(shotIndex) => {
+              const media = editShotMedia.find((m) => m.shotIndex === shotIndex);
+              if (media?.keyartBlockId && onRerunKeyartShot) {
+                onRerunKeyartShot(media.keyartBlockId, shotIndex);
+              }
+            }}
+            onAcceptDespiteQc={(clipBlockId) => {
+              onAcceptClipDespiteQc?.(clipBlockId);
+              if (onDockSelectedIdsChange) {
+                const next = new Set(dockSelectedIds || []);
+                next.add(clipBlockId);
+                onDockSelectedIdsChange(next);
+              }
+            }}
+            onOpenClipDock={() => {
+              document.querySelector("#manhua-clip-dock-zone")?.scrollIntoView({
+                behavior: "smooth",
+                block: "start",
+              });
+            }}
             onSelectShot={(idx) => {
               const i = shots.findIndex((s) => s.index === idx);
               if (i >= 0) setShotIndex(i);
@@ -2257,7 +2322,7 @@ export default function ManhuaScriptWorkbench({
                 onReorder={setRoughShotOrder}
               />
               <p className="mt-2 text-[10px] leading-snug text-white/35">
-                粗剪只排本集片段顺序；细剪/字幕/质检节点已入库，后续接成片坞合成。
+                粗剪排序；剪辑阶段可细剪、字幕、质检返工，并勾选进成片坞。
               </p>
             </div>
           ) : (

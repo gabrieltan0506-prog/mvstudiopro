@@ -3462,6 +3462,8 @@ export default function OmniCanvas() {
                       targetBlockIds: [blockId],
                     });
                   }}
+                  dockSelectedIds={dockSelectedIds}
+                  onDockSelectedIdsChange={setDockSelectedIds}
                   onAcceptClipDespiteQc={(clipBlockId) => {
                     setBlocks((prev) => {
                       const next = prev.map((b) => {

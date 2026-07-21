@@ -1,8 +1,17 @@
 /**
- * 剪辑阶段 · 多轨：细剪进出点 / 字幕轨数据 / 包装动效入口。
+ * 剪辑阶段 · 多轨：细剪 / 字幕 / 包装 / 质检返工 / 导出勾选。
  */
 import { useMemo, useState } from "react";
-import { Scissors, Subtitles, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Package,
+  RefreshCw,
+  Scissors,
+  ShieldCheck,
+  Sparkles,
+  Subtitles,
+} from "lucide-react";
 import {
   buildManhuaEditMultitrack,
   type ManhuaEditTrack,
@@ -29,6 +38,14 @@ import {
   toggleManhuaEditMotionId,
 } from "@shared/manhuaEditMotionPick";
 import type { MotionPromptCategory } from "@shared/motionPromptBank";
+import {
+  MANHUA_EDIT_QC_ROWS,
+  buildManhuaEditShotQcBoard,
+  manhuaEditExportableClipIds,
+  manhuaEditQcSuggestsReworkStill,
+  summarizeManhuaEditQcBoard,
+  type ManhuaEditShotMedia,
+} from "@shared/manhuaEditQcExport";
 
 type Props = {
   roughClips: ManhuaRoughCutClip[];
@@ -44,6 +61,18 @@ type Props = {
   onSubtitleEnabledChange?: (next: boolean) => void;
   motionPromptIds: string[];
   onMotionPromptIdsChange: (ids: string[]) => void;
+  /** 本集各镜成片/静帧质检原料 */
+  shotMedia: ManhuaEditShotMedia[];
+  factoryBusy?: boolean;
+  dockSelectedIds?: Set<string>;
+  onToggleDockClip?: (clipBlockId: string, selected: boolean) => void;
+  onSelectExportableClips?: (clipBlockIds: string[]) => void;
+  onReworkClip?: (shotIndex: number) => void;
+  /** 批量返工未过/缺片镜 */
+  onReworkFailedClips?: (shotIndexes: number[]) => void;
+  onReworkStill?: (shotIndex: number) => void;
+  onAcceptDespiteQc?: (clipBlockId: string) => void;
+  onOpenClipDock?: () => void;
 };
 
 function TrackRow({
@@ -109,6 +138,16 @@ export default function ManhuaEditMultitrackPanel({
   onSubtitleEnabledChange,
   motionPromptIds,
   onMotionPromptIdsChange,
+  shotMedia,
+  factoryBusy,
+  dockSelectedIds,
+  onToggleDockClip,
+  onSelectExportableClips,
+  onReworkClip,
+  onReworkFailedClips,
+  onReworkStill,
+  onAcceptDespiteQc,
+  onOpenClipDock,
 }: Props) {
   const [motionCat, setMotionCat] = useState<MotionPromptCategory>("logo");
   const { totalSec, tracks } = buildManhuaEditMultitrack({
@@ -133,6 +172,10 @@ export default function ManhuaEditMultitrackPanel({
   const srtPreview = useMemo(() => formatManhuaSubtitleSrt(cues), [cues]);
   const motionEntries = listManhuaEditMotionEntries(motionCat);
   const motionInject = manhuaEditMotionInjectPreview(motionPromptIds);
+  const qcRows = useMemo(() => buildManhuaEditShotQcBoard(shotMedia), [shotMedia]);
+  const qcSummary = useMemo(() => summarizeManhuaEditQcBoard(qcRows), [qcRows]);
+  const exportableIds = useMemo(() => manhuaEditExportableClipIds(qcRows), [qcRows]);
+  const activeQc = qcRows.find((r) => r.shotIndex === activeShotIndex);
 
   const activeClip = roughClips.find((c) => c.shotIndex === activeShotIndex);
   const activeTrim = activeClip
@@ -405,6 +448,227 @@ export default function ManhuaEditMultitrackPanel({
         ) : (
           <p className="mt-1.5 text-[10px] text-white/35">未选包装；成片可按题材自动建议</p>
         )}
+      </div>
+
+      {/* 质检 + 返工 */}
+      <div
+        data-manhua-edit-section="qc"
+        className={`rounded-lg border p-2.5 ${
+          qcSummary.failed > 0
+            ? "border-amber-400/30 bg-amber-500/[0.06]"
+            : "border-emerald-400/20 bg-emerald-500/[0.05]"
+        }`}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-white/80">
+            <ShieldCheck className="h-3.5 w-3.5 text-cyan-200/80" />
+            智能质检
+            <span className="font-normal text-white/40">
+              过 {qcSummary.passed} · 未过 {qcSummary.failed} · 缺片 {qcSummary.missing}
+              {qcSummary.accepted ? ` · 已采用 ${qcSummary.accepted}` : ""}
+            </span>
+          </div>
+          {qcSummary.reworkIndexes.length && onReworkFailedClips ? (
+            <button
+              type="button"
+              disabled={factoryBusy}
+              data-manhua-action="rework-all-failed"
+              onClick={() => onReworkFailedClips(qcSummary.reworkIndexes)}
+              className="inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-500/20 px-2 py-0.5 text-[9px] text-amber-50 disabled:opacity-45"
+            >
+              <RefreshCw className="h-3 w-3" />
+              返工未过镜
+            </button>
+          ) : null}
+        </div>
+
+        {activeQc ? (
+          <div className="mt-2 rounded-md border border-white/10 bg-black/30 p-2">
+            <div className="flex items-center justify-between gap-2 text-[10px]">
+              <span className="font-semibold text-white/75">
+                镜 {String(activeQc.shotIndex).padStart(2, "0")}
+              </span>
+              <span className="text-[9px] text-white/40">
+                {activeQc.gate === "passed"
+                  ? "可进成片坞"
+                  : activeQc.gate === "accepted"
+                    ? "已采用（质检未过）"
+                    : activeQc.gate === "failed"
+                      ? "提醒·默认不进坞"
+                      : activeQc.gate === "missing"
+                        ? "缺成片"
+                        : "等待检查"}
+                {activeQc.quality?.attempts
+                  ? ` · 第 ${activeQc.quality.attempts} 次`
+                  : ""}
+              </span>
+            </div>
+            <div className="mt-1.5 grid grid-cols-3 gap-1">
+              {MANHUA_EDIT_QC_ROWS.map(([key, label]) => {
+                const passed = activeQc.quality?.checks?.[key] === true;
+                const failed = activeQc.gate === "failed" && !passed;
+                return (
+                  <div
+                    key={key}
+                    className={`flex items-center gap-1 rounded px-1.5 py-1 text-[9px] ${
+                      passed
+                        ? "bg-emerald-500/12 text-emerald-100"
+                        : failed
+                          ? "bg-amber-500/12 text-amber-50"
+                          : "bg-white/[0.035] text-white/35"
+                    }`}
+                  >
+                    {passed ? (
+                      <CheckCircle2 className="h-2.5 w-2.5" />
+                    ) : failed ? (
+                      <AlertTriangle className="h-2.5 w-2.5" />
+                    ) : (
+                      <span className="h-2.5 w-2.5 rounded-full border border-white/20" />
+                    )}
+                    {label}
+                  </div>
+                );
+              })}
+            </div>
+            {activeQc.quality?.status === "failed" && activeQc.quality.summary ? (
+              <p className="mt-1.5 line-clamp-3 text-[9px] leading-relaxed text-amber-50/85">
+                {activeQc.quality.summary}
+              </p>
+            ) : null}
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {activeQc.needsRework && onReworkClip ? (
+                <button
+                  type="button"
+                  disabled={factoryBusy}
+                  data-manhua-action="rework-clip"
+                  onClick={() => onReworkClip(activeQc.shotIndex)}
+                  className="rounded border border-cyan-400/35 bg-cyan-500/15 px-2 py-0.5 text-[9px] text-cyan-50 disabled:opacity-45"
+                >
+                  重出本镜成片
+                </button>
+              ) : null}
+              {(manhuaEditQcSuggestsReworkStill(activeQc.quality?.summary) ||
+                activeQc.gate === "missing") &&
+              onReworkStill ? (
+                <button
+                  type="button"
+                  disabled={factoryBusy || !activeQc.keyartBlockId}
+                  data-manhua-action="rework-still"
+                  onClick={() => onReworkStill(activeQc.shotIndex)}
+                  className="rounded border border-amber-400/35 bg-amber-500/15 px-2 py-0.5 text-[9px] text-amber-50 disabled:opacity-45"
+                >
+                  重出本镜静帧
+                </button>
+              ) : null}
+              {activeQc.gate === "failed" &&
+              activeQc.clipBlockId &&
+              onAcceptDespiteQc &&
+              !activeQc.quality?.userAcceptedDespiteQc ? (
+                <button
+                  type="button"
+                  data-manhua-action="accept-clip-despite-qc"
+                  onClick={() => onAcceptDespiteQc(activeQc.clipBlockId!)}
+                  className="rounded border border-amber-400/45 bg-amber-500/20 px-2 py-0.5 text-[9px] font-semibold text-amber-50"
+                >
+                  仍采用此片
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : (
+          <p className="mt-1.5 text-[10px] text-white/35">点选片段查看该镜质检</p>
+        )}
+      </div>
+
+      {/* 导出 → 成片坞 */}
+      <div
+        data-manhua-edit-section="export"
+        className="rounded-lg border border-white/10 bg-white/[0.02] p-2.5"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold text-white/75">
+            <Package className="h-3.5 w-3.5 text-violet-200/80" />
+            导出 · 成片坞勾选
+            <span className="font-normal text-white/35">
+              可勾 {exportableIds.length}/{qcRows.length}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {onSelectExportableClips ? (
+              <button
+                type="button"
+                data-manhua-action="select-exportable-clips"
+                disabled={!exportableIds.length}
+                onClick={() => onSelectExportableClips(exportableIds)}
+                className="rounded border border-violet-400/35 bg-violet-500/15 px-2 py-0.5 text-[9px] text-violet-50 disabled:opacity-40"
+              >
+                勾选本集可导出
+              </button>
+            ) : null}
+            {onOpenClipDock ? (
+              <button
+                type="button"
+                onClick={onOpenClipDock}
+                className="text-[9px] text-cyan-200/80 underline-offset-2 hover:underline"
+              >
+                打开成片坞
+              </button>
+            ) : null}
+          </div>
+        </div>
+        <ul className="mt-2 max-h-36 space-y-1 overflow-y-auto">
+          {qcRows.map((row) => {
+            const checked = Boolean(
+              row.clipBlockId && dockSelectedIds?.has(row.clipBlockId),
+            );
+            const canToggle = row.allowsExport && Boolean(row.clipBlockId);
+            return (
+              <li
+                key={`exp-${row.shotIndex}`}
+                className="flex items-center gap-2 rounded border border-white/8 bg-black/30 px-2 py-1"
+              >
+                <input
+                  type="checkbox"
+                  disabled={!canToggle || !onToggleDockClip}
+                  checked={checked}
+                  onChange={(e) => {
+                    if (!row.clipBlockId || !onToggleDockClip) return;
+                    onToggleDockClip(row.clipBlockId, e.target.checked);
+                  }}
+                  className="accent-violet-400 disabled:opacity-30"
+                  title={
+                    canToggle
+                      ? "勾选进成片坞合成"
+                      : row.gate === "failed"
+                        ? "质检未过，请返工或仍采用"
+                        : "暂不可导出"
+                  }
+                />
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 text-left text-[10px] text-white/70"
+                  onClick={() => onSelectShot?.(row.shotIndex)}
+                >
+                  镜 {String(row.shotIndex).padStart(2, "0")}
+                  <span className="ml-1.5 text-[9px] text-white/35">
+                    {row.gate === "passed"
+                      ? "质检通过"
+                      : row.gate === "accepted"
+                        ? "已采用"
+                        : row.gate === "failed"
+                          ? "未过"
+                          : row.gate === "missing"
+                            ? "缺片"
+                            : "待检"}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+          {!qcRows.length ? (
+            <li className="text-[10px] text-white/35">暂无片段可导出</li>
+          ) : null}
+        </ul>
       </div>
 
       <div className="rounded-lg border border-white/10 bg-white/[0.02] p-2">
