@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
 import { withFlyHealthGate } from "@/lib/flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
+import { createJobSameOrigin, pollJobUntilTerminal } from "@/lib/jobs";
 import {
   compileI2VMotionPrompt,
   extractPlainImagePrompt,
@@ -13,6 +14,7 @@ import {
   prepareJsonDirectorImageJob,
   type AspectRatio169Or916,
 } from "@shared/jsonDirectorMiddleware";
+import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
 import { Sparkles, Image as ImageIcon, Video, LoaderCircle } from "lucide-react";
 import Image2TemplatePicker from "@/components/Image2TemplatePicker";
 import { toast } from "sonner";
@@ -110,35 +112,26 @@ export default function CreativePage() {
       chargedCost = charge.cost;
       
       if (isGptImage2) {
-        // 与 Canvas 一致：canvasGptImage2 + 长任务直连（勿用 workflowGenerateSceneImage）
-        const gptUrl = withLongJobsFlyDirect("/api/jobs?op=canvasGptImage2");
-        const probeOrigin = flyHealthProbeOriginForUrl(gptUrl);
-        const res = await withFlyHealthGate(probeOrigin, () =>
-          fetch(gptUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "omit",
-            body: JSON.stringify({
-              prompt: imagePrompt,
-              aspectRatio,
-            }),
+        // 与 Canvas 一致：短入队 + 轮询（勿长 POST ?op=canvasGptImage2）
+        const { jobId } = await createJobSameOrigin({
+          type: "image",
+          userId: user?.id ? String(user.id) : "",
+          input: buildCanvasGptImage2JobInput({
+            prompt: imagePrompt,
+            aspectRatio,
           }),
-        );
-        const text = await res.text();
-        let json: { ok?: boolean; imageUrl?: string; error?: string; message?: string } = {};
-        try {
-          json = JSON.parse(text) as typeof json;
-        } catch {
-          throw new Error(
-            /An error o|ROUTER_EXTERNAL/i.test(text)
-              ? "算力紧张或网关超时，请稍后重试"
-              : `生图失败：${text.slice(0, 160)}`,
-          );
+        });
+        const job = await pollJobUntilTerminal(jobId, {
+          maxWaitMs: 12 * 60_000,
+          intervalMs: 2500,
+        });
+        if (job.status !== "succeeded") {
+          throw new Error(job.error || "生图失败");
         }
-        if (!res.ok || !json.ok || !json.imageUrl) {
-          throw new Error(json.error || json.message || "生图失败");
-        }
-        setImageUrl(String(json.imageUrl));
+        const out = (job.output || {}) as { imageUrl?: string; imageUrls?: string[] };
+        const url = String(out.imageUrl || out.imageUrls?.[0] || "").trim();
+        if (!url) throw new Error("生图失败：未返回图片");
+        setImageUrl(url);
       } else {
         // Nano Banana 2 (Flash) 生图
         const res = await fetch(`/api/google?op=nanoImage&tier=flash&model=gemini-3.1-flash-image-preview`, {

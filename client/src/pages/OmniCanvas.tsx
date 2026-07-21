@@ -1552,6 +1552,7 @@ export default function OmniCanvas() {
 
   const runDeps = useMemo<CanvasRunDeps>(
     () => ({
+      userId: user?.id ? String(user.id) : "",
       optimizeCopy: async ({ sourceText, optimizationBrief, modelName }) => {
         const t0 = Date.now();
         const reqPreview = [
@@ -1610,7 +1611,7 @@ export default function OmniCanvas() {
         return asset.url;
       },
     }),
-    [optimizeCopyMutation, getSignedUrlMutation, debugMode, pushDebug],
+    [optimizeCopyMutation, getSignedUrlMutation, debugMode, pushDebug, user?.id],
   );
 
   /** Terra：中文运镜说明润色（编剧大师人设） */

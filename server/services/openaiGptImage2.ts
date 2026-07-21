@@ -23,7 +23,10 @@ export function resolveOpenAiGptImage2Model(): string {
   return OPENAI_GPT_IMAGE2_SNAPSHOT_DEFAULT;
 }
 
-/** Canvas 静帧/封面：high·竖屏常需 >3min；默认 5min，可用 env 覆写 */
+/**
+ * Fly worker 内等官方上游的 AbortSignal（非浏览器/Vercel 网关等待）。
+ * 客户端应短入队 + 轮询；此处默认 5min，可用 OPENAI_GPT_IMAGE2_TIMEOUT_MS 覆写。
+ */
 const REQUEST_TIMEOUT_MS = Math.min(
   Math.max(Number(process.env.OPENAI_GPT_IMAGE2_TIMEOUT_MS) || 300_000, 60_000),
   600_000,

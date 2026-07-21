@@ -1,6 +1,7 @@
 import type { CanvasBlock } from "./canvasTypes";
 import { withFlyHealthGate } from "./flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "./longJobsFlyOrigin";
+import { createJobSameOrigin, pollJobUntilTerminal } from "./jobs";
 import {
   createOmniInteraction,
   pollOmniInteractionUntilDone,
@@ -14,6 +15,7 @@ import {
   prepareJsonDirectorImageJob,
   type AspectRatio169Or916,
 } from "@shared/jsonDirectorMiddleware";
+import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
 import { extractVideoFramesFromUrl, extractVideoTailFramesFromUrl } from "./extractVideoFrames";
 import {
   VIDEO_REVERSE_DEFAULT_INTERVAL_SEC,
@@ -34,6 +36,9 @@ const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
 } as const;
 
+/** 客户端轮询上限：须略大于 worker CANVAS_GPT_IMAGE2_JOB_TIMEOUT_MS（默认 10min） */
+const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 12 * 60_000;
+
 export type CanvasRunDeps = {
   optimizeCopy: (input: {
     sourceText: string;
@@ -43,6 +48,8 @@ export type CanvasRunDeps = {
   }) => Promise<string>;
   /** 把 dataURL/本地图上传为 HTTPS，供 Evolink/Seedance 引用（可选） */
   uploadImageFile?: (file: File) => Promise<string>;
+  /** 入队 jobs 时写入 userId（与 assemble 一致；可空串） */
+  userId?: string;
 };
 
 function dataUrlToJpegFile(dataUrl: string, name: string): File | null {
@@ -112,11 +119,15 @@ async function resolveImagePromptViaJsonDirector(
 }
 
 function isOpenAiImageTimeoutError(message: string): boolean {
-  return /aborted due to timeout|TimeoutError|CLIENT_FETCH_ABORT_TIMEOUT|operation was aborted/i.test(
+  return /aborted due to timeout|TimeoutError|CLIENT_FETCH_ABORT_TIMEOUT|operation was aborted|job timed out|轮询已等待/i.test(
     message,
   );
 }
 
+/**
+ * 短入队（www→Fly）+ 轮询；worker 内再等官方上游。
+ * 勿再长 POST ?op=canvasGptImage2（会撞网关/浏览器长连接）。
+ */
 async function runGptImage2(
   prompt: string,
   aspectRatio: "9:16" | "16:9",
@@ -124,8 +135,9 @@ async function runGptImage2(
     refImageUrl?: string;
     referenceImageUrls?: string[];
     maskUrl?: string;
-    /** 关键静帧：只打官方 OpenAI，超时本地再试一次，不回落 OpenRouter */
+    /** 关键静帧：只打官方 OpenAI，超时再入队一次，不回落 OpenRouter */
     openaiOnly?: boolean;
+    userId?: string;
   },
 ): Promise<string> {
   const refImageUrl = String(opts?.refImageUrl || "").trim();
@@ -133,42 +145,30 @@ async function runGptImage2(
   const referenceImageUrls = Array.from(new Set([refImageUrl, ...extraRefs].filter(Boolean))).slice(0, 16);
   const maskUrl = String(opts?.maskUrl || "").trim();
   const openaiOnly = Boolean(opts?.openaiOnly);
-  // 注意：勿再调用 workflowGenerateSceneImage（那是工作流分镜 API，强制要 workflowId）
-  const gptUrl = withLongJobsFlyDirect("/api/jobs?op=canvasGptImage2");
-  const probeOrigin = flyHealthProbeOriginForUrl(gptUrl);
+  const userId = String(opts?.userId || "");
 
   const attemptOnce = async (): Promise<string> => {
-    const res = await withFlyHealthGate(probeOrigin, () =>
-      fetch(gptUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "omit",
-        body: JSON.stringify({
-          prompt,
-          aspectRatio,
-          referenceImageUrl: referenceImageUrls[0] || undefined,
-          referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
-          maskUrl: maskUrl || undefined,
-          imageMode: referenceImageUrls.length ? "edit" : "generate",
-          generalImageEdit: referenceImageUrls.length > 0,
-          // 静帧主链钉官方；避免 OpenAI abort 后再打 OpenRouter 吃 400
-          ...(openaiOnly ? { provider: "openai" } : {}),
-        }),
+    const { jobId } = await createJobSameOrigin({
+      type: "image",
+      userId,
+      input: buildCanvasGptImage2JobInput({
+        prompt,
+        aspectRatio,
+        referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
+        maskUrl: maskUrl || undefined,
+        generalImageEdit: referenceImageUrls.length > 0,
+        providerOverride: openaiOnly ? "openai" : undefined,
       }),
-    );
-    const text = await res.text();
-    let json: { ok?: boolean; imageUrl?: string; error?: string; message?: string } = {};
-    try {
-      json = JSON.parse(text) as typeof json;
-    } catch {
-      throw new Error(
-        /An error o|ROUTER_EXTERNAL/i.test(text)
-          ? "算力紧张或网关超时，请稍后重试"
-          : `GPT-Image-2 生图失败：${text.slice(0, 160)}`,
-      );
+    });
+    const job = await pollJobUntilTerminal(jobId, {
+      maxWaitMs: CANVAS_GPT_IMAGE2_POLL_MAX_MS,
+      intervalMs: 2500,
+    });
+    if (job.status !== "succeeded") {
+      throw new Error(job.error || "GPT-Image-2 生图失败");
     }
-    if (!res.ok || !json.ok) throw new Error(json.error || json.message || "GPT-Image-2 生图失败");
-    const url = String(json.imageUrl || "").trim();
+    const out = (job.output || {}) as { imageUrl?: string; imageUrls?: string[] };
+    const url = String(out.imageUrl || out.imageUrls?.[0] || "").trim();
     if (!url) throw new Error("GPT-Image-2 未返回图片 URL");
     return url;
   };
@@ -178,7 +178,7 @@ async function runGptImage2(
   } catch (firstErr) {
     const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
     if (openaiOnly && isOpenAiImageTimeoutError(msg)) {
-      console.warn("[canvasRunBlock] 官方 Image-2 超时，仅再试一次 OpenAI（不回落 OpenRouter）");
+      console.warn("[canvasRunBlock] 官方 Image-2 超时，仅再入队一次 OpenAI（不回落 OpenRouter）");
       return await attemptOnce();
     }
     throw firstErr;
@@ -211,6 +211,7 @@ async function runGptImage2Batch(
     referenceImageUrls?: string[];
     maskUrl?: string;
     openaiOnly?: boolean;
+    userId?: string;
   },
   count: number,
 ): Promise<string[]> {
@@ -614,16 +615,18 @@ export async function runCanvasBlock(
      * 关键静帧文生图：禁止带 ref（否则 API 会改走 edits，CG 锁失效且更易超时）。
      * 非 keyart 的普通 image 仍可带 ref 做图生图。
      */
+    const gptUserId = String(deps.userId || "");
     const gptImageOpts = isEdit
       ? {
           refImageUrl: editRef,
           referenceImageUrls: fusionUrls,
           maskUrl: maskUrl || undefined,
           openaiOnly: isKeyart,
+          userId: gptUserId,
         }
       : isKeyart
-        ? { openaiOnly: true as const }
-        : { refImageUrl: absRef(refUrl) || refUrl };
+        ? { openaiOnly: true as const, userId: gptUserId }
+        : { refImageUrl: absRef(refUrl) || refUrl, userId: gptUserId };
     let urls: string[] = [];
     if (preferGptImage2) {
       try {
@@ -636,7 +639,12 @@ export async function runCanvasBlock(
           try {
             // 关键帧重做同样直送中文提示，避免再等一轮编译
             const regenPrompt = `${String(mergedPrompt || "").trim()}\n\n${MANHUA_KEYART_NO_TEXT_EN}`;
-            urls = await runGptImage2Batch(regenPrompt, ar, { openaiOnly: true }, count);
+            urls = await runGptImage2Batch(
+              regenPrompt,
+              ar,
+              { openaiOnly: true, userId: gptUserId },
+              count,
+            );
             console.warn(`[canvasRunBlock] keyart edit/融图失败，已文生图重做：${reason}`);
           } catch (regenErr) {
             const rr = regenErr instanceof Error ? regenErr.message.slice(0, 120) : "文生图重做失败";

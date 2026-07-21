@@ -11,8 +11,9 @@ import {
   type PlatformImageGenAspectHint,
   type PlatformImageGenTemplate,
 } from "@shared/platformImageGenTemplates";
-import { withFlyHealthGate } from "@/lib/flyHealthGate";
-import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { createJobSameOrigin, pollJobUntilTerminal } from "@/lib/jobs";
+import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
 import { trpc } from "@/lib/trpc";
 
 const IMAGE_GEN_CREDITS = 54;
@@ -22,6 +23,7 @@ function mapAspectLabel(hint: PlatformImageGenAspectHint): string {
 }
 
 export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean }) {
+  const { user } = useAuth();
   const groups = useMemo(() => listPlatformImageGenByGroup(), []);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -150,39 +152,28 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
       });
       chargedCost = charge.cost;
       const apiAspect = mapPlatformImageGenAspectForApi(aspectHint);
-      const gptUrl = withLongJobsFlyDirect("/api/jobs?op=canvasGptImage2");
-      const probeOrigin = flyHealthProbeOriginForUrl(gptUrl);
       const refs = refUrl ? [refUrl] : [];
-      const res = await withFlyHealthGate(probeOrigin, () =>
-        fetch(gptUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "omit",
-          body: JSON.stringify({
-            prompt,
-            aspectRatio: apiAspect,
-            referenceImageUrl: refs[0] || undefined,
-            referenceImageUrls: refs.length ? refs : undefined,
-            imageMode: refs.length ? "edit" : "generate",
-            generalImageEdit: refs.length > 0,
-          }),
+      const { jobId } = await createJobSameOrigin({
+        type: "image",
+        userId: user?.id ? String(user.id) : "",
+        input: buildCanvasGptImage2JobInput({
+          prompt,
+          aspectRatio: apiAspect,
+          referenceImageUrls: refs.length ? refs : undefined,
+          generalImageEdit: refs.length > 0,
         }),
-      );
-      const text = await res.text();
-      let json: { ok?: boolean; imageUrl?: string; error?: string; message?: string } = {};
-      try {
-        json = JSON.parse(text) as typeof json;
-      } catch {
-        throw new Error(
-          /An error o|ROUTER_EXTERNAL/i.test(text)
-            ? "算力紧张或网关超时，请稍后重试"
-            : `生成失败：${text.slice(0, 160)}`,
-        );
+      });
+      const job = await pollJobUntilTerminal(jobId, {
+        maxWaitMs: 12 * 60_000,
+        intervalMs: 2500,
+      });
+      if (job.status !== "succeeded") {
+        throw new Error(job.error || "生成失败");
       }
-      if (!res.ok || !json.ok || !json.imageUrl) {
-        throw new Error(json.error || json.message || "生成失败");
-      }
-      setResultUrl(String(json.imageUrl));
+      const out = (job.output || {}) as { imageUrl?: string; imageUrls?: string[] };
+      const url = String(out.imageUrl || out.imageUrls?.[0] || "").trim();
+      if (!url) throw new Error("生成失败：未返回图片");
+      setResultUrl(url);
       toast.success(chargedCost > 0 ? `已生成（已扣 ${chargedCost} 积分）` : "已生成");
     } catch (e) {
       if (chargedCost > 0) {

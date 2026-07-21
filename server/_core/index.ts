@@ -278,6 +278,8 @@ async function startServer() {
           ? "kling-cn"
           : action === "nano_image"
           ? "nano"
+          : action === "canvas_gpt_image2"
+          ? "openai-gpt-image-2"
           : "kling-cn";
 
       const jobId = nanoid(16);
