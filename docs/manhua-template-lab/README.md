@@ -17,20 +17,22 @@
 2. **定时扫描** `pnpm run manhua:template-scan` → 只增/更新提案（公开报道）
 3. **榜单学习 B+2**（推荐）：Platform「AI 漫剧」→ 导出 JSON / 学节奏 →  
    `pnpm run manhua:template-learn -- --rising-json <file> --rank N`  
-   抽帧：前 5s + 每 10s；高潮窗每 3s → `downloads/manhua-template-learn/` + 提案草案  
-   **语音（A）**：本机 mp3 → GCS 签名上传 → Fly `manhuaAudioClimaxScan`（secrets 里的 Gemini 3.5 Flash）
+   抽帧：前 5s + 每 10s；高潮窗每 3s → `downloads/manhua-template-learn/` + 提案  
+   **语音（A）**：mp3 → GCS → Fly `manhuaAudioClimaxScan`（Gemini 3.5 Flash）  
+   **读帧**：JPG → GCS → Fly `manhuaTemplateFrameScan`（GPT-5.6 Terra · high）→ 自动填提案字段，仍 `proposed`
 4. **人审批准**：明文「批准进库」后并入 `MANHUA_VIRAL_TEMPLATE_BANK`（`approved`）→ 编剧室节奏模板可选
 
-### Fly 语音通路（本机不必直连 Google）
+### Fly 学习通路（本机不必直连上游）
 
 ```bash
-# 探针（部署含新 op 后）
+# 语音探针（部署含新 op 后）
 curl -sS -X POST 'https://mvstudiopro.fly.dev/api/google?op=gemini35FlashPing' \
   -H 'content-type: application/json' -d '{}'
 
-# 学习脚本默认走 Fly
+# 学习脚本默认：语音 Flash + 读帧 Terra
 pnpm run manhua:template-learn -- --video ./clip.mp4 --title "测试"
 # MANHUA_LEARN_FLY_ORIGIN=https://api.mvstudiopro.com
+# MANHUA_LEARN_LOCAL_TERRA=1  # 可选：本机直打读帧
 ```
 
 ## 禁止

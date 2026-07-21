@@ -40,6 +40,8 @@ export const config = {
  * - op=omniVideoCreate (Gemini Omni · Vertex generateVideos)
  * - op=omniVideoTask   (Gemini Omni polling)
  * - op=translateForVeo (Chinese → Veo-native English audio prompt)
+ * - op=manhuaAudioGetUploadUrl / manhuaAudioClimaxScan（漫剧学习语音 · Gemini Flash）
+ * - op=manhuaTemplateFrameGetUploadUrl / manhuaTemplateFrameScan（漫剧学习读帧 · GPT-5.6 Terra · high）
  *
  * Env:
  * - **Vertex IAM（`generateContent` 圖像、Gemini Script、Veo 等 `aiplatform` 呼叫）**：`GOOGLE_APPLICATION_CREDENTIALS_JSON` **或** `GOOGLE_APPLICATION_CREDENTIALS`（金鑰檔路徑）；換取短效 **Bearer token**，**非** URL `?key=`。
@@ -435,6 +437,69 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         const msg = e instanceof Error ? e.message : String(e);
         console.error("[manhuaAudioClimaxScan]", msg.slice(0, 400));
         return res.status(500).json({ ok: false, error: "manhua_audio_scan_failed", detail: msg.slice(0, 280) });
+      }
+    }
+
+    // ---------------- 漫剧学习：关键帧 GCS 签名上传（本机 PUT，Fly 持 SA） ----------------
+    if (op === "manhuaTemplateFrameGetUploadUrl") {
+      const fileName = s(b.fileName || q.fileName || "learn-frame.jpg") || "learn-frame.jpg";
+      const mimeType = s(b.mimeType || q.mimeType || "image/jpeg") || "image/jpeg";
+      try {
+        const { createGcsSignedUploadUrl } = await import("../server/services/gcs");
+        const signed = await createGcsSignedUploadUrl({
+          fileName,
+          contentType: mimeType,
+          objectName: `manhua-template-learn/frames/${Date.now()}-${fileName.replace(/[^\w.\-]+/g, "-").slice(0, 80)}`,
+          expiresInMinutes: 20,
+        });
+        return res.status(200).json({ ok: true, ...signed, mimeType });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return res.status(500).json({ ok: false, error: "gcs_signed_upload_failed", detail: msg.slice(0, 240) });
+      }
+    }
+
+    // ---------------- 漫剧学习：GCS/URL/dataUrl 关键帧 → GPT-5.6 Terra（high）补全提案字段 ----------------
+    if (op === "manhuaTemplateFrameScan") {
+      const rawFrames = Array.isArray(b.frames) ? b.frames : [];
+      const frames = rawFrames
+        .map((item: { atSec?: unknown; dataUrl?: unknown; url?: unknown; gcsUri?: unknown; mimeType?: unknown }) => ({
+          atSec: Math.max(0, Number(item?.atSec) || 0),
+          dataUrl: s(item?.dataUrl).trim(),
+          url: s(item?.url).trim(),
+          gcsUri: s(item?.gcsUri).trim(),
+          mimeType: s(item?.mimeType || "image/jpeg").trim() || "image/jpeg",
+        }))
+        .filter((item: { dataUrl: string; url: string; gcsUri: string }) => item.dataUrl || item.url || item.gcsUri)
+        .slice(0, 32);
+      if (!frames.length) return res.status(400).json({ ok: false, error: "missing_frames" });
+      try {
+        const { analyzeManhuaTemplateFramesWithTerra } = await import("../server/manhuaTemplateFrameVision");
+        const {
+          MANHUA_TEMPLATE_FRAME_VISION_MODEL,
+          MANHUA_TEMPLATE_FRAME_VISION_REASONING,
+        } = await import("../shared/manhuaTemplateLearnFrameVision");
+        const vision = await analyzeManhuaTemplateFramesWithTerra({
+          frames,
+          titleHint: s(b.titleHint || b.title || ""),
+          durationSec: Number(b.durationSec),
+          transcriptPreview: s(b.transcriptPreview || ""),
+          climaxNotes: Array.isArray(b.climaxNotes)
+            ? b.climaxNotes.map((x: unknown) => s(x).trim()).filter(Boolean)
+            : [],
+          fallbackLane: s(b.fallbackLane || "爽文逆袭") || "爽文逆袭",
+        });
+        return res.status(200).json({
+          ok: true,
+          model: vision.model || MANHUA_TEMPLATE_FRAME_VISION_MODEL,
+          reasoningEffort: vision.reasoningEffort || MANHUA_TEMPLATE_FRAME_VISION_REASONING,
+          vision,
+          frameCount: frames.length,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[manhuaTemplateFrameScan]", msg.slice(0, 400));
+        return res.status(500).json({ ok: false, error: "manhua_frame_scan_failed", detail: msg.slice(0, 280) });
       }
     }
 
