@@ -74,7 +74,7 @@ export function buildManhuaIntegratedAssetBoard(
     .filter(Boolean) as ManhuaCharacterTemplate[];
   const archs = (opts.ancientArchetypeIds || [])
     .map((id) => getAncientArchetypeById(id))
-    .filter(Boolean);
+    .filter((a): a is NonNullable<typeof a> => Boolean(a));
   const scene: ManhuaSceneTemplate | null = opts.sceneId
     ? getManhuaSceneTemplate(opts.sceneId) || null
     : null;
