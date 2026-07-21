@@ -4,6 +4,7 @@ import {
   MANHUA_LEARN_BATCH_DEFAULT,
   canEmitManhuaLearnAnalysis,
   clampManhuaLearnBatchSize,
+  classifyManhuaLearnTitle,
   mergeEpisodeDigestsIntoProposal,
   pickNextEpisodeIndexes,
   type ManhuaLearnEpisodeDigest,
@@ -25,6 +26,12 @@ function digest(i: number): ManhuaLearnEpisodeDigest {
 }
 
 describe("manhuaTemplateLearnSeries", () => {
+  it("classifies title like rising board", () => {
+    const c = classifyManhuaLearnTitle("重生漫剧开局团宠");
+    expect(c.categoryLabelZh).toBe("AI漫剧");
+    expect(c.tagLabelsZh).toContain("重生");
+  });
+
   it("clamps batch to 8–10", () => {
     expect(clampManhuaLearnBatchSize(3)).toBe(8);
     expect(clampManhuaLearnBatchSize(8)).toBe(8);

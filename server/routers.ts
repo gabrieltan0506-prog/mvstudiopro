@@ -63,7 +63,7 @@ import { synthesizeGrowthAnalyses } from "./growth/synthesizeGrowthAnalyses";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./growth/extractorPipeline";
 import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/premiumRemix";
-import { buildAiManhuaRisingBoard } from "./growth/aiManhuaRising";
+import { buildAiManhuaRisingBoard, buildAiManhuaRisingByPlatform } from "./growth/aiManhuaRising";
 import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
 import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, loadDouyinDramaBaselineItems, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
@@ -7224,7 +7224,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const selectedWindowDays = Number(input.windowDays);
         const t0 = Date.now();
 
-        // Read narrow store for evidence enrichment (best-effort, 20s cap)
+        // 看板证据读库：20s；漫剧榜另做 douyin+kuaishou 窄读（≥60s），避免超时整榜空白
         const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
         const store = await Promise.race([
           readTrendStoreForPlatforms(requestedPlatforms.length ? requestedPlatforms as any[] : ["douyin", "xiaohongshu", "bilibili", "kuaishou"], { preferDerivedFiles: true, preferFlyLive: true }),
@@ -7309,18 +7309,69 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         let dashboardWithDrama = platformDashboard;
         if (platformDashboard) {
           try {
-            const douyinItems = ((store.collections as any)?.douyin?.items || []) as TrendItem[];
-            if (douyinItems.length) {
-              const baseline = await loadDouyinDramaBaselineItems(selectedWindowDays >= 7 ? 7 : selectedWindowDays);
-              const aiManhuaRising = buildAiManhuaRisingBoard({
-                items: douyinItems,
-                baselineItems: baseline.items,
-                windowDays: selectedWindowDays >= 7 ? 7 : selectedWindowDays,
-                limit: 10,
+            const DRAMA_STORE_TIMEOUT_MS = Math.max(
+              60_000,
+              Math.min(120_000, Number(process.env.AI_MANHUA_RISING_STORE_TIMEOUT_MS) || 60_000),
+            );
+            let dramaStore = store;
+            let dramaStoreTimedOut = false;
+            const dyLen = ((dramaStore.collections as any)?.douyin?.items || []).length;
+            const ksLen = ((dramaStore.collections as any)?.kuaishou?.items || []).length;
+            if (dyLen + ksLen === 0) {
+              dramaStore = await new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => {
+                let settled = false;
+                const timer = setTimeout(() => {
+                  if (settled) return;
+                  settled = true;
+                  dramaStoreTimedOut = true;
+                  console.warn(
+                    `[platform.getPlatformDashboard] 漫剧榜窄读超时 ${DRAMA_STORE_TIMEOUT_MS}ms`,
+                  );
+                  resolve(storeNull);
+                }, DRAMA_STORE_TIMEOUT_MS);
+                readTrendStoreForPlatforms(["douyin", "kuaishou"], {
+                  preferDerivedFiles: true,
+                  preferFlyLive: true,
+                })
+                  .then((s) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    resolve(s);
+                  })
+                  .catch(() => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    dramaStoreTimedOut = true;
+                    resolve(storeNull);
+                  });
               });
-              dashboardWithDrama = { ...platformDashboard, aiManhuaRising };
             }
-          } catch {
+            const douyinItems = ((dramaStore.collections as any)?.douyin?.items || []) as TrendItem[];
+            const kuaishouItems = ((dramaStore.collections as any)?.kuaishou?.items || []) as TrendItem[];
+            const windowForBoard = selectedWindowDays >= 7 ? 7 : selectedWindowDays;
+            const baseline = douyinItems.length
+              ? await loadDouyinDramaBaselineItems(windowForBoard)
+              : { items: [] as TrendItem[] };
+            const byPlatform = buildAiManhuaRisingByPlatform({
+              douyinItems,
+              kuaishouItems,
+              douyinBaselineItems: baseline.items,
+              windowDays: windowForBoard,
+              limit: 10,
+              storeReadFailed: dramaStoreTimedOut && douyinItems.length + kuaishouItems.length === 0,
+            });
+            dashboardWithDrama = {
+              ...platformDashboard,
+              aiManhuaRising: byPlatform.douyin,
+              aiManhuaRisingByPlatform: byPlatform,
+            };
+          } catch (e) {
+            console.warn(
+              "[platform.getPlatformDashboard] aiManhuaRising failed:",
+              e instanceof Error ? e.message : e,
+            );
             dashboardWithDrama = platformDashboard;
           }
         }

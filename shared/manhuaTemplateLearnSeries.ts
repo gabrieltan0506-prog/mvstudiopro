@@ -4,6 +4,12 @@
  */
 
 import {
+  extractManhuaDramaTagLabelsZh,
+  inferManhuaDramaKind,
+  manhuaDramaCategoryLabelZh,
+  type ManhuaDramaKind,
+} from "./manhuaDramaClassify.js";
+import {
   parseManhuaViralTemplateCard,
   type ManhuaViralTemplateBeat,
   type ManhuaViralTemplateCard,
@@ -32,6 +38,10 @@ export type ManhuaLearnEpisodeDigest = {
   climaxNotes: string[];
   sceneHints: string[];
   learnedAt: string;
+  /** 与飙升榜同源归类（前台展示中文类别/标签） */
+  dramaKind?: ManhuaDramaKind;
+  categoryLabelZh?: string;
+  tagLabelsZh?: string[];
 };
 
 export type ManhuaLearnSeriesProgress = {
@@ -42,7 +52,28 @@ export type ManhuaLearnSeriesProgress = {
   listedEpisodeCount: number;
   learnedEpisodeIndexes: number[];
   updatedAt: string;
+  dramaKind?: ManhuaDramaKind;
+  categoryLabelZh?: string;
+  tagLabelsZh?: string[];
 };
+
+/** 学节奏与飙升榜共用：从剧名/标题推断类别与题材标签 */
+export function classifyManhuaLearnTitle(
+  titleHint: string,
+  extraText = "",
+): {
+  dramaKind: ManhuaDramaKind;
+  categoryLabelZh: string;
+  tagLabelsZh: string[];
+} {
+  const blob = `${titleHint} ${extraText}`.trim();
+  const dramaKind = inferManhuaDramaKind(blob);
+  return {
+    dramaKind,
+    categoryLabelZh: manhuaDramaCategoryLabelZh(dramaKind),
+    tagLabelsZh: extractManhuaDramaTagLabelsZh(blob),
+  };
+}
 
 export function clampManhuaLearnBatchSize(raw?: number): number {
   const n = Math.floor(Number(raw));

@@ -9,6 +9,7 @@ import { getKuaishouCreatorSeeds, getKuaishouDiscoveryKeywords, getPlatformSeeds
 import { nowShanghaiIso, toShanghaiIso } from "./time";
 import { normalizeStringList } from "./trendNormalize";
 import { getAdaptiveRouteDecision, prioritizeAdaptiveSeeds, recordAdaptiveRouteRun, recordAdaptiveSeedRun } from "./trendAdaptiveConfig";
+import { normalizeManhuaMixNameKey } from "../../shared/manhuaDramaClassify";
 
 export type TrendSource = "live" | "seed";
 
@@ -2848,10 +2849,23 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     keywordLimit: defaultSearchKeywordLimit,
     minimumPages: 8,
   });
+  const kuaishouDramaKeywords = String(process.env.KUAISHOU_DRAMA_SEARCH_KEYWORDS || "")
+    .split(/[,，|]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const defaultKuaishouDramaKeywords = [
+    "AI漫剧",
+    "AI短剧",
+    "重生漫剧",
+    "动态漫",
+    "红果漫剧",
+    "竖屏短剧",
+  ];
+  const dramaKw = kuaishouDramaKeywords.length ? kuaishouDramaKeywords : defaultKuaishouDramaKeywords;
   const searchKeywords = await prioritizeAdaptiveSeeds(
     "kuaishou",
     "search_feed",
-    discoveryKeywords,
+    Array.from(new Set([...dramaKw, ...discoveryKeywords])),
     searchRoute.keywordLimit || defaultSearchKeywordLimit,
   );
   const searchPages = searchRoute.pageCount || defaultSearchPages;
@@ -2907,19 +2921,55 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     const likes = parseChineseCount(photo.likeCount ?? item.likeCount);
     const comments = parseChineseCount(photo.commentCount ?? item.commentCount ?? item.comment?.us_c);
     const views = parseChineseCount(photo.viewCount ?? item.viewCount);
+    const isDramaSearch = /漫剧|短剧|动态漫|红果/i.test(sourceLabel) || tags.some((t) => /漫剧|短剧/.test(t));
+    const enrichedTags = isDramaSearch && !tags.includes("快手漫剧检索")
+      ? [...tags, "快手漫剧检索"]
+      : tags;
+
+    // 合集字段（若 API 有）优先；否则用规范化剧名作伪 mixId
+    const series =
+      photo.photoSeries
+      ?? photo.series
+      ?? photo.collection
+      ?? item.photoSeries
+      ?? item.series
+      ?? null;
+    const seriesId = String(series?.id ?? series?.seriesId ?? series?.mix_id ?? "").trim();
+    const seriesName = String(series?.name ?? series?.title ?? series?.mix_name ?? "").trim();
+    const dramaKind = inferDouyinDramaKind(`${seriesName} ${title}`, enrichedTags);
+    const looksDrama =
+      Boolean(seriesId || seriesName)
+      || dramaKind !== "unknown"
+      || /AI\s*漫剧|AI漫|动态漫|漫剧|短剧|红果|竖屏剧/i.test(`${title} ${enrichedTags.join(" ")}`);
+    const mixName = seriesName || (looksDrama ? title.replace(/\s*第?\d+\s*集.*$/, "").trim() || title : "");
+    const mixKey = seriesId || (mixName ? normalizeManhuaMixNameKey(mixName) : "");
+    const mixPlayProxy = Math.max(views || 0, (likes || 0) * 20);
+    const seriesUrl = String(series?.url ?? series?.shareUrl ?? "").trim();
+
     items.push({
       id,
       title,
       bucket: resolveKuaishouBucket(sourceLabel),
       author: authorName || authorId || undefined,
-      url: id ? `https://www.kuaishou.com/short-video/${id}` : undefined,
+      url: seriesUrl || (id ? `https://www.kuaishou.com/short-video/${id}` : undefined),
       publishedAt: safeDateFromTimestamp(Number(photo.timestamp ?? item.timestamp)),
       likes,
       comments,
       views,
       hotValue: (likes || 0) + (comments || 0),
       contentType: "video",
-      tags,
+      tags: enrichedTags,
+      ...(looksDrama && mixKey
+        ? {
+            isDrama: true as const,
+            dramaKind,
+            dramaInfo: {
+              mixId: mixKey,
+              mixName: mixName || mixKey,
+              mixPlayCount: mixPlayProxy || undefined,
+            },
+          }
+        : {}),
     });
   };
 

@@ -23,6 +23,7 @@ import {
   MANHUA_LEARN_BATCH_DEFAULT,
   canEmitManhuaLearnAnalysis,
   clampManhuaLearnBatchSize,
+  classifyManhuaLearnTitle,
   mergeEpisodeDigestsIntoProposal,
   pickNextEpisodeIndexes,
   type ManhuaLearnEpisodeDigest,
@@ -64,6 +65,8 @@ export type ManhuaLearnDigestPreview = {
   hookNoteZh: string;
   transcriptPreview: string;
   durationSec: number;
+  categoryLabelZh?: string;
+  tagLabelsZh?: string[];
 };
 
 export type ManhuaTemplateLearnResult = {
@@ -77,6 +80,9 @@ export type ManhuaTemplateLearnResult = {
   listedEpisodeCount: number;
   /** 网页即时展示：已学分集摘要（视频已删，只留结构化结果） */
   digestsPreview: ManhuaLearnDigestPreview[];
+  /** 与飙升榜同源：类别 / 题材标签（前台中文） */
+  categoryLabelZh?: string;
+  tagLabelsZh?: string[];
   /** 仅 analysisReady 时有值 */
   proposal: ManhuaViralTemplateCard | null;
   proposalGcsUri: string | null;
@@ -93,6 +99,8 @@ function toDigestPreview(d: ManhuaLearnEpisodeDigest): ManhuaLearnDigestPreview 
     hookNoteZh: d.hookNoteZh,
     transcriptPreview: d.transcriptPreview.slice(0, 160),
     durationSec: d.durationSec,
+    categoryLabelZh: d.categoryLabelZh,
+    tagLabelsZh: d.tagLabelsZh,
   };
 }
 
@@ -518,6 +526,7 @@ async function learnOneEpisode(input: {
       );
     }
 
+    const classify = classifyManhuaLearnTitle(input.titleHint, input.ep.title);
     return {
       episodeIndex: input.ep.index,
       url: input.ep.url,
@@ -529,6 +538,9 @@ async function learnOneEpisode(input: {
       climaxNotes: plan.climaxWindows.map((w) => w.reasonZh).slice(0, 6),
       sceneHints: sceneHints.slice(0, 8),
       learnedAt: new Date().toISOString(),
+      dramaKind: classify.dramaKind,
+      categoryLabelZh: classify.categoryLabelZh,
+      tagLabelsZh: classify.tagLabelsZh,
     };
   } finally {
     await rmrf(epDir);
@@ -568,6 +580,7 @@ export async function runManhuaTemplateLearn(
       );
     }
 
+    const seriesClassify = classifyManhuaLearnTitle(title || "未命名合集");
     let prog =
       (await loadSeriesProgress(seriesKey)) ||
       ({
@@ -578,6 +591,9 @@ export async function runManhuaTemplateLearn(
         listedEpisodeCount: listed.length,
         learnedEpisodeIndexes: [],
         updatedAt: new Date().toISOString(),
+        dramaKind: seriesClassify.dramaKind,
+        categoryLabelZh: seriesClassify.categoryLabelZh,
+        tagLabelsZh: seriesClassify.tagLabelsZh,
       } satisfies ManhuaLearnSeriesProgress);
 
     prog = {
@@ -586,6 +602,9 @@ export async function runManhuaTemplateLearn(
       titleHint: title || prog.titleHint,
       listedEpisodeCount: listed.length,
       mixId: String(input.mixId || prog.mixId || "").trim() || undefined,
+      dramaKind: seriesClassify.dramaKind,
+      categoryLabelZh: seriesClassify.categoryLabelZh,
+      tagLabelsZh: seriesClassify.tagLabelsZh,
     };
 
     const listedIndexes = listed.map((e) => e.index);
@@ -624,6 +643,8 @@ export async function runManhuaTemplateLearn(
           batchIndexes: [],
           listedEpisodeCount: listed.length,
           digestsPreview: digests.map(toDigestPreview),
+          categoryLabelZh: prog.categoryLabelZh,
+          tagLabelsZh: prog.tagLabelsZh,
           proposal,
           proposalGcsUri,
           proposalReadUrl,
@@ -684,6 +705,8 @@ export async function runManhuaTemplateLearn(
         batchIndexes: batchLearnedIndexes,
         listedEpisodeCount: listed.length,
         digestsPreview: digests.map(toDigestPreview),
+        categoryLabelZh: prog.categoryLabelZh,
+        tagLabelsZh: prog.tagLabelsZh,
         proposal: null,
         proposalGcsUri: null,
         visionFilled: false,
@@ -779,6 +802,8 @@ export async function runManhuaTemplateLearn(
       batchIndexes: batchLearnedIndexes,
       listedEpisodeCount: listed.length,
       digestsPreview: digests.map(toDigestPreview),
+      categoryLabelZh: prog.categoryLabelZh,
+      tagLabelsZh: prog.tagLabelsZh,
       proposal,
       proposalGcsUri,
       proposalReadUrl,

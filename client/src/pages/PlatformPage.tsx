@@ -449,6 +449,31 @@ type AskResult = {
   nextQuestions: string[];
 };
 
+type AiManhuaRisingEntryView = {
+  mixId: string;
+  mixName: string;
+  dramaKind: string;
+  categoryLabelZh?: string;
+  tagLabelsZh?: string[];
+  platform?: "douyin" | "kuaishou";
+  mixPlayCount: number;
+  delta7d: number | null;
+  risingScore?: number;
+  status: string;
+  author?: string;
+  sampleTitle?: string;
+  url?: string;
+};
+
+type AiManhuaRisingBoardView = {
+  platform?: "douyin" | "kuaishou";
+  windowDays: number;
+  hasBaseline: boolean;
+  note: string;
+  storeReadFailed?: boolean;
+  entries: AiManhuaRisingEntryView[];
+};
+
 type PlatformDashboard = {
   headline: string;
   subheadline: string;
@@ -475,22 +500,11 @@ type PlatformDashboard = {
   }>;
   actionCards: Array<{ title: string; detail: string }>;
   conversationStarters: any[];
-  /** 抖音 AI 漫剧合集飙升（服务端结构化，非 LLM） */
-  aiManhuaRising?: {
-    windowDays: number;
-    hasBaseline: boolean;
-    note: string;
-    entries: Array<{
-      mixId: string;
-      mixName: string;
-      dramaKind: string;
-      mixPlayCount: number;
-      delta7d: number | null;
-      status: string;
-      author?: string;
-      sampleTitle?: string;
-      url?: string;
-    }>;
+  /** 抖音 AI 漫剧合集飙升（兼容别名；完整见 aiManhuaRisingByPlatform） */
+  aiManhuaRising?: AiManhuaRisingBoardView | null;
+  aiManhuaRisingByPlatform?: {
+    douyin: AiManhuaRisingBoardView;
+    kuaishou: AiManhuaRisingBoardView;
   } | null;
 };
 
@@ -1983,6 +1997,8 @@ export default function PlatformPage() {
   const [isVisualReportDownloading, setIsVisualReportDownloading] = useState(false);
   /** 平台趋势区子 Tab：总览（多平台报表）/ AI 漫剧专区 */
   const [trendInsightTab, setTrendInsightTab] = useState<"overview" | "ai_manhua">("overview");
+  /** AI 漫剧专区内：抖音 / 快手子榜 */
+  const [aiManhuaPlatformTab, setAiManhuaPlatformTab] = useState<"douyin" | "kuaishou">("douyin");
   /** AI 漫剧「学节奏」：当前进行中的行 key；学习/分析结果即时展示后再决定是否进库 */
   const [manhuaLearnBusyKey, setManhuaLearnBusyKey] = useState<string | null>(null);
   const [manhuaPasteUrl, setManhuaPasteUrl] = useState("");
@@ -1995,12 +2011,16 @@ export default function PlatformPage() {
     analysisTarget: number;
     batchLearned: number;
     messageZh: string;
+    categoryLabelZh?: string;
+    tagLabelsZh?: string[];
     digestsPreview: Array<{
       episodeIndex: number;
       title: string;
       hookNoteZh: string;
       transcriptPreview: string;
       durationSec: number;
+      categoryLabelZh?: string;
+      tagLabelsZh?: string[];
     }>;
     proposal: {
       id: string;
@@ -3676,17 +3696,25 @@ export default function PlatformPage() {
     const digestsPreview = digestsRaw
       .map((d) => {
         const row = d as Record<string, unknown>;
+        const tags = Array.isArray(row.tagLabelsZh)
+          ? row.tagLabelsZh.map((t) => String(t || "").trim()).filter(Boolean)
+          : [];
         return {
           episodeIndex: Math.max(0, Math.floor(Number(row.episodeIndex) || 0)),
           title: String(row.title || "").trim(),
           hookNoteZh: String(row.hookNoteZh || "").trim(),
           transcriptPreview: String(row.transcriptPreview || "").trim(),
           durationSec: Math.max(0, Number(row.durationSec) || 0),
+          categoryLabelZh: String(row.categoryLabelZh || "").trim() || undefined,
+          tagLabelsZh: tags.length ? tags : undefined,
         };
       })
       .filter((d) => d.episodeIndex >= 1);
     const proposalRaw = (out.proposal || null) as Record<string, unknown> | null;
     const analysisReady = Boolean(out.analysisReady) && Boolean(proposalRaw?.id);
+    const seriesTags = Array.isArray(out.tagLabelsZh)
+      ? out.tagLabelsZh.map((t) => String(t || "").trim()).filter(Boolean)
+      : [];
     setManhuaLearnResult({
       seriesKey: String(out.seriesKey || "").trim(),
       analysisReady,
@@ -3695,6 +3723,8 @@ export default function PlatformPage() {
       analysisTarget: Math.max(1, Math.floor(Number(out.analysisTarget) || 20)),
       batchLearned: Math.max(0, Math.floor(Number(out.batchLearned) || 0)),
       messageZh: String(out.messageZh || "").trim(),
+      categoryLabelZh: String(out.categoryLabelZh || "").trim() || undefined,
+      tagLabelsZh: seriesTags.length ? seriesTags : undefined,
       digestsPreview,
       proposal:
         analysisReady && proposalRaw
@@ -3711,7 +3741,15 @@ export default function PlatformPage() {
   }, []);
 
   const runManhuaTemplateLearnCloud = useCallback(
-    async (row: { url?: string | null; mixName?: string | null; mixId?: string | null }, rank: number) => {
+    async (
+      row: {
+        url?: string | null;
+        mixName?: string | null;
+        mixId?: string | null;
+        platform?: "douyin" | "kuaishou" | string | null;
+      },
+      rank: number,
+    ) => {
       const canOps =
         supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
       if (!canOps) {
@@ -3725,11 +3763,25 @@ export default function PlatformPage() {
       const url = String(row.url || "").trim();
       const title = String(row.mixName || "").trim();
       const busyKey = String(row.mixId || url || title || rank);
+      const isKuaishou = row.platform === "kuaishou";
       if (!url) {
+        if (isKuaishou && title) {
+          try {
+            await navigator.clipboard.writeText(title);
+            toast.message("暂无成片链接", {
+              description: "已复制剧名，请自行找到合集/成片后再学节奏。",
+            });
+          } catch {
+            toast.message("暂无成片链接", {
+              description: title ? `可搜索剧名：${title}` : "该行无可用链接，无法下片学习。",
+            });
+          }
+          return;
+        }
         await copyManhuaLocalLearnFallback(row, "无成片链接，无法云端下片");
         return;
       }
-      if (/douyin\.com\/search\//i.test(url)) {
+      if (/douyin\.com\/search\//i.test(url) || /kuaishou\.com\/search\//i.test(url)) {
         await copyManhuaLocalLearnFallback(row, "当前是搜索页链接");
         return;
       }
@@ -8677,7 +8729,7 @@ export default function PlatformPage() {
                   )}
                 </div>
                 <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[#c9c0e6]/60">
-                  一次启动即可得到四格战略摘要、Stage 1 看板与 PNG 图文报表。「总览」看多平台；「AI 漫剧」专看抖音合集飙升（同源数据，不另开抓取）。不含决策智库全景。
+                  一次启动即可得到四格战略摘要、Stage 1 看板与 PNG 图文报表。「总览」看多平台；「AI 漫剧」专区含抖音/快手飙升子榜（同源数据，不另开抓取）。不含决策智库全景。
                 </p>
               </div>
               {platformDashboard ? (
@@ -8805,21 +8857,58 @@ export default function PlatformPage() {
             ) : null}
 
             {(() => {
-              const rising =
-                platformDashboard?.aiManhuaRising?.entries?.length
+              const byPlatform =
+                platformDashboard?.aiManhuaRisingByPlatform
+                || (visualReportData as { aiManhuaRisingByPlatform?: PlatformDashboard["aiManhuaRisingByPlatform"] } | null)
+                  ?.aiManhuaRisingByPlatform
+                || null;
+              const douyinBoard: AiManhuaRisingBoardView | null =
+                byPlatform?.douyin
+                || (platformDashboard?.aiManhuaRising?.entries?.length
                   ? platformDashboard.aiManhuaRising
-                  : visualReportData?.aiManhuaRising?.entries?.length
-                    ? visualReportData.aiManhuaRising
-                    : null;
+                  : null)
+                || (visualReportData?.aiManhuaRising?.entries?.length
+                  ? (visualReportData.aiManhuaRising as AiManhuaRisingBoardView)
+                  : null);
+              const kuaishouBoard: AiManhuaRisingBoardView | null = byPlatform?.kuaishou || null;
+              const rising =
+                aiManhuaPlatformTab === "kuaishou" ? kuaishouBoard : douyinBoard;
+              const overviewRising = douyinBoard?.entries?.length
+                ? douyinBoard
+                : kuaishouBoard?.entries?.length
+                  ? kuaishouBoard
+                  : null;
+              const badgeCount =
+                (douyinBoard?.entries?.length || 0) + (kuaishouBoard?.entries?.length || 0);
               const fmtPlay = (n: number) =>
                 n >= 10000 ? `${(n / 10000).toFixed(1)}万` : String(n || 0);
               const statusLabel = (s: string) =>
                 s === "surging" ? "飙升" : s === "hot" ? "高热" : s === "new" ? "新爆" : "稳态";
+              const categoryOf = (row: AiManhuaRisingEntryView) =>
+                row.categoryLabelZh
+                || (row.dramaKind === "ai_manhua"
+                  ? "AI漫剧"
+                  : row.dramaKind === "short_drama"
+                    ? "短剧合集"
+                    : "待判定");
               const kindCounts = (rising?.entries || []).reduce<Record<string, number>>((acc, row) => {
-                const k = row.dramaKind === "ai_manhua" ? "AI漫剧" : row.dramaKind === "short_drama" ? "短剧合集" : "待判定";
+                const k = categoryOf(row);
                 acc[k] = (acc[k] || 0) + 1;
                 return acc;
               }, {});
+              const chartEntries = (rising?.entries || []).slice(0, 10);
+              const chartMax = Math.max(
+                1,
+                ...chartEntries.map((e) => Number(e.risingScore || e.mixPlayCount || 0)),
+              );
+              const canLearnRow = (row: AiManhuaRisingEntryView) => {
+                const u = String(row.url || "").trim();
+                if (!u) return false;
+                if (/douyin\.com\/search\//i.test(u) || /kuaishou\.com\/search\//i.test(u)) {
+                  return false;
+                }
+                return true;
+              };
 
               return (
                 <>
@@ -8847,9 +8936,9 @@ export default function PlatformPage() {
                     >
                       <Film className="h-3.5 w-3.5 shrink-0" />
                       AI 漫剧
-                      {rising?.entries?.length ? (
+                      {badgeCount ? (
                         <span className="rounded-full bg-white/15 px-1.5 py-0.5 text-[10px] tabular-nums">
-                          {rising.entries.length}
+                          {badgeCount}
                         </span>
                       ) : null}
                     </button>
@@ -8857,11 +8946,11 @@ export default function PlatformPage() {
 
                   {trendInsightTab === "overview" ? (
                     <>
-                      {rising?.entries?.length ? (
+                      {overviewRising?.entries?.length ? (
                         <div className="mt-3 rounded-2xl border border-[#ff4fb8]/20 bg-[rgba(255,79,184,0.05)] px-4 py-3">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="text-[12px] font-semibold text-[#ff9fe0]">
-                              AI 漫剧摘要 · Top {Math.min(3, rising.entries.length)}
+                              AI 漫剧摘要 · Top {Math.min(3, overviewRising.entries.length)}
                             </div>
                             <button
                               type="button"
@@ -8872,7 +8961,7 @@ export default function PlatformPage() {
                             </button>
                           </div>
                           <div className="mt-2 flex flex-wrap gap-2">
-                            {rising.entries.slice(0, 3).map((row, idx) => (
+                            {overviewRising.entries.slice(0, 3).map((row, idx) => (
                               <span
                                 key={row.mixId || idx}
                                 className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/10 bg-black/30 px-2.5 py-1 text-[11px] text-[#eeeaf8]"
@@ -8920,14 +9009,14 @@ export default function PlatformPage() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <div className="text-sm font-semibold text-[#ff9fe0]">
-                            抖音 AI 漫剧专区 · {rising?.windowDays || selectedWindowDays} 天飙升
+                            AI 漫剧专区 · {rising?.windowDays || selectedWindowDays} 天飙升
                           </div>
                           <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-[#c9c0e6]/60">
                             {rising?.note
-                              || "与总览报表数据同源：抖音采集中的合集/漫剧字段单独聚合。其它种草、口播样本仍在「总览」里。"}
+                              || "与总览报表数据同源：抖音/快手采集中的合集与漫剧样本单独聚合。其它种草、口播样本仍在「总览」里。"}
                             {" "}
-                            学节奏：榜单一点或贴链接，按集顺序每轮采 8–10 集（学完即删视频），累计满约 16–20
-                            集出总分析；结果立刻在本页展示，你看完再决定是否「批准进库」。失败自动回退本机命令。
+                            学节奏：有成片/合集链时可一点学习；无链仅展示剧名与归类。按集顺序每轮采 8–10 集（学完即删视频），累计满约 16–20
+                            集出总分析；结果立刻在本页展示，你看完再决定是否「批准进库」。
                           </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
@@ -8937,6 +9026,7 @@ export default function PlatformPage() {
                               onClick={() => {
                                 const payload = {
                                   exportedAt: new Date().toISOString(),
+                                  platform: aiManhuaPlatformTab,
                                   windowDays: rising.windowDays,
                                   note: rising.note,
                                   entries: rising.entries,
@@ -8946,7 +9036,7 @@ export default function PlatformPage() {
                                 });
                                 const a = document.createElement("a");
                                 a.href = URL.createObjectURL(blob);
-                                a.download = `ai-manhua-rising-${new Date().toISOString().slice(0, 10)}.json`;
+                                a.download = `ai-manhua-rising-${aiManhuaPlatformTab}-${new Date().toISOString().slice(0, 10)}.json`;
                                 a.click();
                                 URL.revokeObjectURL(a.href);
                                 toast.success("已导出飙升榜 JSON", {
@@ -8970,47 +9060,89 @@ export default function PlatformPage() {
                         </div>
                       </div>
 
-                      <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-2.5">
-                        <div className="text-[11px] font-semibold text-[#c9c0e6]/90">贴链接学节奏</div>
-                        <p className="mt-0.5 text-[10px] text-[#c9c0e6]/45">
-                          粘贴合集页或单集链接；合集按剧集顺序采样。学习与分析立刻出现在下方面板，看完再决定是否进库。
-                        </p>
-                        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                          <input
-                            type="url"
-                            value={manhuaPasteUrl}
-                            onChange={(e) => setManhuaPasteUrl(e.target.value)}
-                            placeholder="https://… 合集或单集链接"
-                            className="min-w-0 flex-1 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1.5 text-[11px] text-white placeholder:text-white/30"
-                          />
-                          <input
-                            type="text"
-                            value={manhuaPasteTitle}
-                            onChange={(e) => setManhuaPasteTitle(e.target.value)}
-                            placeholder="可选剧名"
-                            className="w-full rounded-lg border border-white/15 bg-black/40 px-2.5 py-1.5 text-[11px] text-white placeholder:text-white/30 sm:w-36"
-                          />
-                          <button
-                            type="button"
-                            disabled={Boolean(manhuaLearnBusyKey) || !manhuaPasteUrl.trim()}
-                            onClick={() =>
-                              void runManhuaTemplateLearnCloud(
-                                {
-                                  mixName: manhuaPasteTitle.trim() || "贴链接学习",
-                                  url: manhuaPasteUrl.trim(),
-                                },
-                                0,
-                              )
-                            }
-                            className="shrink-0 rounded-lg border border-[#8cefff]/35 bg-[rgba(140,239,255,0.12)] px-3 py-1.5 text-[11px] font-semibold text-[#8cefff] disabled:opacity-45"
-                          >
-                            {manhuaLearnBusyKey ===
-                            String(manhuaPasteUrl.trim() || "贴链接学习")
-                              ? "学习中…"
-                              : "开始学习"}
-                          </button>
-                        </div>
+                      <div className="mt-3 inline-flex rounded-lg border border-white/10 bg-black/35 p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setAiManhuaPlatformTab("douyin")}
+                          className={`rounded-md px-3 py-1 text-[11px] font-semibold transition ${
+                            aiManhuaPlatformTab === "douyin"
+                              ? "bg-white/15 text-white"
+                              : "text-[#c9c0e6]/65 hover:text-white"
+                          }`}
+                        >
+                          抖音
+                          {douyinBoard?.entries?.length ? (
+                            <span className="ml-1 tabular-nums text-[#c9c0e6]/50">
+                              {douyinBoard.entries.length}
+                            </span>
+                          ) : null}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAiManhuaPlatformTab("kuaishou")}
+                          className={`rounded-md px-3 py-1 text-[11px] font-semibold transition ${
+                            aiManhuaPlatformTab === "kuaishou"
+                              ? "bg-white/15 text-white"
+                              : "text-[#c9c0e6]/65 hover:text-white"
+                          }`}
+                        >
+                          快手
+                          {kuaishouBoard?.entries?.length ? (
+                            <span className="ml-1 tabular-nums text-[#c9c0e6]/50">
+                              {kuaishouBoard.entries.length}
+                            </span>
+                          ) : null}
+                        </button>
                       </div>
+
+                      {aiManhuaPlatformTab === "douyin" ? (
+                        <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-2.5">
+                          <div className="text-[11px] font-semibold text-[#c9c0e6]/90">贴链接学节奏</div>
+                          <p className="mt-0.5 text-[10px] text-[#c9c0e6]/45">
+                            粘贴合集页或单集链接；合集按剧集顺序采样。学习与分析立刻出现在下方面板，看完再决定是否进库。
+                          </p>
+                          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                            <input
+                              type="url"
+                              value={manhuaPasteUrl}
+                              onChange={(e) => setManhuaPasteUrl(e.target.value)}
+                              placeholder="https://… 合集或单集链接"
+                              className="min-w-0 flex-1 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1.5 text-[11px] text-white placeholder:text-white/30"
+                            />
+                            <input
+                              type="text"
+                              value={manhuaPasteTitle}
+                              onChange={(e) => setManhuaPasteTitle(e.target.value)}
+                              placeholder="可选剧名"
+                              className="w-full rounded-lg border border-white/15 bg-black/40 px-2.5 py-1.5 text-[11px] text-white placeholder:text-white/30 sm:w-36"
+                            />
+                            <button
+                              type="button"
+                              disabled={Boolean(manhuaLearnBusyKey) || !manhuaPasteUrl.trim()}
+                              onClick={() =>
+                                void runManhuaTemplateLearnCloud(
+                                  {
+                                    mixName: manhuaPasteTitle.trim() || "贴链接学习",
+                                    url: manhuaPasteUrl.trim(),
+                                    platform: "douyin",
+                                  },
+                                  0,
+                                )
+                              }
+                              className="shrink-0 rounded-lg border border-[#8cefff]/35 bg-[rgba(140,239,255,0.12)] px-3 py-1.5 text-[11px] font-semibold text-[#8cefff] disabled:opacity-45"
+                            >
+                              {manhuaLearnBusyKey ===
+                              String(manhuaPasteUrl.trim() || "贴链接学习")
+                                ? "学习中…"
+                                : "开始学习"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="mt-3 text-[10px] leading-relaxed text-[#c9c0e6]/45">
+                          快手榜：有样本链可点开或学节奏；无链时展示剧名、类别与标签，可复制剧名自行查找。
+                        </p>
+                      )}
 
                       {Object.keys(kindCounts).length > 0 ? (
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -9025,6 +9157,40 @@ export default function PlatformPage() {
                         </div>
                       ) : null}
 
+                      {chartEntries.length > 0 ? (
+                        <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-3">
+                          <div className="mb-2 text-[11px] font-semibold text-[#ff9fe0]">
+                            Top {chartEntries.length} ·{" "}
+                            {aiManhuaPlatformTab === "kuaishou" ? "播放/互动代理" : "飙升分"}
+                          </div>
+                          <div className="space-y-2">
+                            {chartEntries.map((row, idx) => {
+                              const score = Number(row.risingScore || row.mixPlayCount || 0);
+                              const pct = Math.max(8, Math.round((score / chartMax) * 100));
+                              return (
+                                <div key={`chart-${row.mixId || idx}`} className="flex flex-col gap-1">
+                                  <div className="flex items-center justify-between gap-2 text-[11px]">
+                                    <span className="min-w-0 truncate text-[#eeeaf8]">
+                                      <span className="mr-1.5 text-[#c9c0e6]/40">#{idx + 1}</span>
+                                      {row.mixName}
+                                    </span>
+                                    <span className="shrink-0 tabular-nums text-[#3eedff]">
+                                      {fmtPlay(row.mixPlayCount)}
+                                    </span>
+                                  </div>
+                                  <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                                    <div
+                                      className="h-full rounded-full bg-[linear-gradient(90deg,#ff4fb8,#c026d3,#8cefff)]"
+                                      style={{ width: `${pct}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
+
                       {manhuaLearnResult ? (
                         <div className="mt-3 space-y-2 rounded-xl border border-amber-300/25 bg-amber-500/10 px-3 py-2.5 text-[11px] text-amber-50/90">
                           <div className="font-semibold">
@@ -9035,6 +9201,24 @@ export default function PlatformPage() {
                                 ? ` · ${manhuaLearnResult.seriesKey}`
                                 : ""}
                           </div>
+                          {(manhuaLearnResult.categoryLabelZh
+                            || (manhuaLearnResult.tagLabelsZh?.length || 0) > 0) ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {manhuaLearnResult.categoryLabelZh ? (
+                                <span className="rounded-full border border-amber-300/30 bg-amber-500/15 px-2 py-0.5 text-[10px]">
+                                  {manhuaLearnResult.categoryLabelZh}
+                                </span>
+                              ) : null}
+                              {(manhuaLearnResult.tagLabelsZh || []).map((tag) => (
+                                <span
+                                  key={tag}
+                                  className="rounded-full border border-white/10 bg-black/25 px-2 py-0.5 text-[10px] text-amber-50/70"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
                           <p className="text-amber-100/70">
                             进度 {manhuaLearnResult.learnedCount}/
                             {manhuaLearnResult.analysisMin} 集（目标约{" "}
@@ -9059,6 +9243,14 @@ export default function PlatformPage() {
                                 >
                                   <span className="font-medium">第{d.episodeIndex}集</span>
                                   {d.title ? ` · ${d.title}` : ""}
+                                  {d.categoryLabelZh ? (
+                                    <span className="ml-1 text-amber-100/45">
+                                      · {d.categoryLabelZh}
+                                      {(d.tagLabelsZh || []).length
+                                        ? ` · ${(d.tagLabelsZh || []).join(" / ")}`
+                                        : ""}
+                                    </span>
+                                  ) : null}
                                   {d.hookNoteZh ? (
                                     <div className="text-amber-100/55">钩子：{d.hookNoteZh}</div>
                                   ) : null}
@@ -9165,20 +9357,26 @@ export default function PlatformPage() {
                         <div className="mt-3 space-y-2">
                           <div className="grid grid-cols-[28px_1fr_72px_72px_40px_64px] gap-2 px-1 text-[10px] text-[#c9c0e6]/45">
                             <span />
-                            <span>剧名</span>
-                            <span className="text-right">合集播放</span>
+                            <span>剧名 / 归类</span>
+                            <span className="text-right">播放</span>
                             <span className="text-right">环比</span>
                             <span className="text-right">状态</span>
                             <span className="text-right">学习</span>
                           </div>
-                          {rising.entries.slice(0, 12).map((row, idx) => {
+                          {rising.entries.slice(0, 10).map((row, idx) => {
+                            const tags = row.tagLabelsZh || [];
+                            const learnable = canLearnRow(row);
                             const titleNode = (
                               <div className="min-w-0">
                                 <div className="truncate font-semibold text-white">{row.mixName}</div>
                                 <div className="truncate text-[10px] text-[#c9c0e6]/50">
-                                  {row.author ? `${row.author} · ` : ""}
-                                  {row.sampleTitle || row.dramaKind}
+                                  {categoryOf(row)}
+                                  {tags.length ? ` · ${tags.join(" / ")}` : ""}
+                                  {row.author ? ` · ${row.author}` : ""}
                                 </div>
+                                {!row.url ? (
+                                  <div className="text-[10px] text-[#c9c0e6]/35">暂无合集链</div>
+                                ) : null}
                               </div>
                             );
                             const busyKey = String(
@@ -9197,7 +9395,11 @@ export default function PlatformPage() {
                                     target="_blank"
                                     rel="noreferrer"
                                     className="min-w-0 hover:opacity-90"
-                                    title="在抖音打开"
+                                    title={
+                                      aiManhuaPlatformTab === "kuaishou"
+                                        ? "在快手打开"
+                                        : "在抖音打开"
+                                    }
                                   >
                                     {titleNode}
                                   </a>
@@ -9215,10 +9417,19 @@ export default function PlatformPage() {
                                 </span>
                                 <button
                                   type="button"
-                                  disabled={Boolean(manhuaLearnBusyKey)}
-                                  title="云端学节奏；失败回退本机命令"
-                                  onClick={() => void runManhuaTemplateLearnCloud(row, idx + 1)}
-                                  className="justify-self-end rounded-md border border-[#8cefff]/25 bg-[rgba(140,239,255,0.08)] px-1.5 py-0.5 text-[10px] font-semibold text-[#8cefff] hover:bg-[rgba(140,239,255,0.16)] disabled:opacity-50"
+                                  disabled={Boolean(manhuaLearnBusyKey) || !learnable}
+                                  title={
+                                    learnable
+                                      ? "云端学节奏；失败回退本机命令"
+                                      : "暂无可用成片链接，无法下片学习"
+                                  }
+                                  onClick={() =>
+                                    void runManhuaTemplateLearnCloud(
+                                      { ...row, platform: aiManhuaPlatformTab },
+                                      idx + 1,
+                                    )
+                                  }
+                                  className="justify-self-end rounded-md border border-[#8cefff]/25 bg-[rgba(140,239,255,0.08)] px-1.5 py-0.5 text-[10px] font-semibold text-[#8cefff] hover:bg-[rgba(140,239,255,0.16)] disabled:opacity-40"
                                 >
                                   {busy ? "学习中…" : "学节奏"}
                                 </button>
@@ -9228,7 +9439,11 @@ export default function PlatformPage() {
                         </div>
                       ) : (
                         <div className="mt-4 rounded-xl border border-dashed border-white/15 bg-black/20 px-4 py-6 text-center text-[12px] leading-relaxed text-[#c9c0e6]/55">
-                          暂无漫剧合集样本。请确认已选「抖音」、完成趋势分析，且采集侧已跑出带 mix_info 的条目。
+                          {rising?.storeReadFailed
+                            ? "趋势库读取超时，暂未拿到合集样本。请稍后重试分析；总览其它数据不受影响。"
+                            : aiManhuaPlatformTab === "kuaishou"
+                              ? "本窗快手侧暂无漫剧/短剧合集样本。完成趋势分析且采集命中后，将展示剧名、类别与标签。"
+                              : "本窗抖音侧暂无漫剧合集样本。请确认已选「抖音」、完成趋势分析，且采集侧已跑出带合集字段的条目。"}
                           <br />
                           总览里的多平台口播/种草数据不受影响。
                         </div>
