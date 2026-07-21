@@ -1,5 +1,6 @@
 import type { DouyinDramaKind, TrendItem } from "./trendCollector";
 import {
+  AI_MANHUA_RISING_BOARD_LIMIT,
   extractManhuaDramaTagLabelsZh,
   isManhuaDramaMixCandidate,
   manhuaDramaCategoryLabelZh,
@@ -104,8 +105,11 @@ export function buildAiManhuaRisingBoard(params: {
 }): AiManhuaRisingBoard {
   const platform = params.platform || "douyin";
   const windowDays = Math.max(3, Math.min(30, Number(params.windowDays) || 7));
-  // 不足 10 部也展示；至少 1 条即可上榜（不再卡死 Top10）
-  const limit = Math.max(1, Math.min(30, Number(params.limit) || 10));
+  // 1–15 部均可展示（默认最多 15；不足亦展示）
+  const limit = Math.max(
+    1,
+    Math.min(AI_MANHUA_RISING_BOARD_LIMIT, Number(params.limit) || AI_MANHUA_RISING_BOARD_LIMIT),
+  );
   const now = params.nowIso ? new Date(params.nowIso) : new Date();
   const cutoffMs = now.getTime() - windowDays * 24 * 60 * 60 * 1000;
 
@@ -252,7 +256,7 @@ export function buildAiManhuaRisingByPlatform(params: {
 }): AiManhuaRisingByPlatform {
   const common = {
     windowDays: params.windowDays,
-    limit: params.limit ?? 10,
+    limit: params.limit ?? AI_MANHUA_RISING_BOARD_LIMIT,
     storeReadFailed: params.storeReadFailed,
   };
   return {

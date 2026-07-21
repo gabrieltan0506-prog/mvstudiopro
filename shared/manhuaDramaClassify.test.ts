@@ -14,6 +14,9 @@ describe("manhuaDramaClassify", () => {
     expect(inferManhuaDramaKind("重生漫剧开荒")).toBe("ai_manhua");
     expect(inferManhuaDramaKind("红果竖屏短剧")).toBe("short_drama");
     expect(inferManhuaDramaKind("今日天气不错")).toBe("unknown");
+    // 成片标题偶然出现「短剧」、合集名无信号 → 不标短剧
+    expect(inferManhuaDramaKind("今日推荐几个短剧看看", [], "日常剪辑合集")).toBe("unknown");
+    expect(inferManhuaDramaKind("第3集更新", [], "都市逆袭短剧")).toBe("short_drama");
   });
 
   it("extracts soft tags", () => {
@@ -66,9 +69,17 @@ describe("manhuaDramaClassify", () => {
       isManhuaDramaMixCandidate({
         isDrama: true,
         dramaKind: "short_drama",
-        mixName: "乙",
+        mixName: "乙短剧",
       }),
     ).toBe(true);
+    // dramaKind 误标 short_drama 但合集名无短剧信号 → 不进榜
+    expect(
+      isManhuaDramaMixCandidate({
+        isDrama: true,
+        dramaKind: "short_drama",
+        mixName: "日常vlog",
+      }),
+    ).toBe(false);
     expect(isManhuaDramaMixCandidate({ title: "无关口播" })).toBe(false);
     // 仅有 mix_info、无剧类词、无多集结构 → 不进榜
     expect(

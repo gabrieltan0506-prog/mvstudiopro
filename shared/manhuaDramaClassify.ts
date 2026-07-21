@@ -6,10 +6,16 @@ export type ManhuaDramaKind = "ai_manhua" | "short_drama" | "unknown";
 
 export type ManhuaDramaPlatform = "douyin" | "kuaishou";
 
+/** 飙升榜最多展示部数（含漫剧+确认短剧，不足亦展示） */
+export const AI_MANHUA_RISING_BOARD_LIMIT = 15;
+
 const AI_MANHUA_HINT_RE = /AI\s*漫剧|AI漫|动态漫|漫剧|条漫剧|AI\s*短剧|虚拟角色剧/i;
 const AI_MANHUA_SOFT_TITLE_RE =
   /剑宗|师妹|仙盆|杂灵根|万妖图|罪妻开荒|团宠|重生之|穿越成|系统觉醒|修仙|灵根|宗门/;
-const SHORT_DRAMA_HINT_RE = /短剧|红果|竖屏剧|微短剧|连载剧/;
+/** 短剧强信号：避免单条口播标题里偶然出现「短剧」二字 */
+const SHORT_DRAMA_STRONG_RE = /红果|竖屏剧|微短剧|短剧合集|AI\s*短剧/;
+/** 短剧弱信号：仅当出现在合集名时采信 */
+const SHORT_DRAMA_MIX_NAME_RE = /短剧|连载剧/;
 
 /** 口播/二创短视频标题特征（非剧名合集） */
 const SHORT_VIDEO_CAPTION_RE =
@@ -29,8 +35,18 @@ const TAG_RULES: Array<{ label: string; re: RegExp }> = [
   { label: "搞笑", re: /沙雕|搞笑|整活|喜剧/ },
 ];
 
-export function inferManhuaDramaKind(text: string, tags: string[] = []): ManhuaDramaKind {
-  const hay = `${text} ${tags.join(" ")}`.trim();
+/**
+ * @param text 成片标题等辅助文本
+ * @param tags 标签
+ * @param mixName 合集名（短剧弱词必须落在合集名上，防短视频误标）
+ */
+export function inferManhuaDramaKind(
+  text: string,
+  tags: string[] = [],
+  mixName = "",
+): ManhuaDramaKind {
+  const mix = String(mixName || "").trim();
+  const hay = `${mix} ${text} ${tags.join(" ")}`.trim();
   if (!hay) return "unknown";
   if (AI_MANHUA_HINT_RE.test(hay)) return "ai_manhua";
   if (
@@ -39,7 +55,9 @@ export function inferManhuaDramaKind(text: string, tags: string[] = []): ManhuaD
   ) {
     return "ai_manhua";
   }
-  if (SHORT_DRAMA_HINT_RE.test(hay)) return "short_drama";
+  if (SHORT_DRAMA_STRONG_RE.test(hay)) return "short_drama";
+  // 弱词「短剧/连载剧」只认合集名，不认单条短视频文案
+  if (mix && SHORT_DRAMA_MIX_NAME_RE.test(mix)) return "short_drama";
   if (AI_MANHUA_SOFT_TITLE_RE.test(hay)) return "ai_manhua";
   return "unknown";
 }
@@ -84,8 +102,14 @@ export function looksLikeShortVideoCaption(text: string): boolean {
   const hashCount = (s.match(/#/g) || []).length;
   if (hashCount >= 2) return true;
   if (SHORT_VIDEO_CAPTION_RE.test(s)) return true;
-  // 过短且无剧类词：多为碎标题
-  if (s.length <= 2 && !AI_MANHUA_HINT_RE.test(s) && !SHORT_DRAMA_HINT_RE.test(s)) return true;
+  if (
+    s.length <= 2
+    && !AI_MANHUA_HINT_RE.test(s)
+    && !SHORT_DRAMA_STRONG_RE.test(s)
+    && !SHORT_DRAMA_MIX_NAME_RE.test(s)
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -93,7 +117,8 @@ function hasStrongDramaLexical(text: string, tags: string[] = []): boolean {
   const hay = `${text} ${tags.join(" ")}`;
   return (
     AI_MANHUA_HINT_RE.test(hay)
-    || SHORT_DRAMA_HINT_RE.test(hay)
+    || SHORT_DRAMA_STRONG_RE.test(hay)
+    || SHORT_DRAMA_MIX_NAME_RE.test(hay)
     || AI_MANHUA_SOFT_TITLE_RE.test(hay)
   );
 }
@@ -101,7 +126,7 @@ function hasStrongDramaLexical(text: string, tags: string[] = []): boolean {
 /**
  * 飙升榜候选门禁：
  * - 不再「有 mix_info 就算漫剧」——抖音大量普通合集会误入
- * - 需剧类词 / 明确 dramaKind / 或多集连载结构 + 合集名不像口播标题
+ * - 短剧须合集名/强信号确认，避免短视频误判为短剧
  */
 export function isManhuaDramaMixCandidate(input: {
   isDrama?: boolean;
@@ -118,28 +143,34 @@ export function isManhuaDramaMixCandidate(input: {
   if (!mixName && !mixId) return false;
 
   if (input.dramaKind === "ai_manhua" || input.dramaKind === "short_drama") {
-    // 已有明确剧类：仍拒绝典型口播碎标题（多 hashtag / 教程分享等）
     if (mixName && looksLikeShortVideoCaption(mixName) && !hasStrongDramaLexical(mixName, [])) {
-      // 极短正式剧名（如单字测试）允许；典型口播短语拒绝
       if (SHORT_VIDEO_CAPTION_RE.test(mixName) || (mixName.match(/#/g) || []).length >= 2) {
         return false;
       }
     }
+    // short_drama：额外要求合集名或强信号，防止成片标题误标后仍进榜
+    if (input.dramaKind === "short_drama") {
+      const okShort =
+        SHORT_DRAMA_STRONG_RE.test(`${mixName} ${input.title || ""}`)
+        || (mixName.length > 0 && SHORT_DRAMA_MIX_NAME_RE.test(mixName));
+      if (!okShort) return false;
+    }
     return Boolean(mixName || mixId);
   }
 
-  // 合集名像口播标题：除非合集名本身含强剧类词，否则剔除
   if (mixName && looksLikeShortVideoCaption(mixName) && !hasStrongDramaLexical(mixName, [])) {
     return false;
   }
 
   const hay = `${mixName} ${input.title || ""} ${(input.tags || []).join(" ")}`;
-  if (AI_MANHUA_HINT_RE.test(hay) || SHORT_DRAMA_HINT_RE.test(hay)) return true;
+  if (AI_MANHUA_HINT_RE.test(hay)) return true;
+  if (SHORT_DRAMA_STRONG_RE.test(hay)) return true;
+  if (mixName && SHORT_DRAMA_MIX_NAME_RE.test(mixName)) return true;
   if (AI_MANHUA_SOFT_TITLE_RE.test(hay)) return true;
 
   const eps = Number(input.totalEpisodes || 0);
   const cur = Number(input.currentEpisode || 0);
-  // 多集连载结构：至少 3 集，且合集名可用
+  // 多集连载 + 合集名可用：可进榜，类别多为「待判定」（不自动标短剧）
   if (input.isDrama && mixName && eps >= 3 && !looksLikeShortVideoCaption(mixName)) {
     return true;
   }
@@ -162,7 +193,7 @@ export function shouldMarkDouyinMixAsDrama(input: {
   const mixName = String(input.mixName || "").trim();
   const title = String(input.title || "").trim();
   const tags = input.tags || [];
-  const kind = inferManhuaDramaKind(`${mixName} ${title}`, tags);
+  const kind = inferManhuaDramaKind(title, tags, mixName);
   if (kind === "ai_manhua" || kind === "short_drama") {
     return { isDrama: true, dramaKind: kind };
   }

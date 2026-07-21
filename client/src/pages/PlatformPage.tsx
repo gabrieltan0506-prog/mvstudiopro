@@ -1997,8 +1997,19 @@ export default function PlatformPage() {
   const [isVisualReportDownloading, setIsVisualReportDownloading] = useState(false);
   /** 平台趋势区子 Tab：总览（多平台报表）/ AI 漫剧专区 */
   const [trendInsightTab, setTrendInsightTab] = useState<"overview" | "ai_manhua">("overview");
-  /** AI 漫剧专区内：抖音 / 快手子榜 */
+  /** AI 漫剧专区内：抖音 / 快手子榜（随上方趋势平台筛选自动切换） */
   const [aiManhuaPlatformTab, setAiManhuaPlatformTab] = useState<"douyin" | "kuaishou">("douyin");
+  useEffect(() => {
+    const hasDy = selectedTrendPlatforms.includes("douyin");
+    const hasKs = selectedTrendPlatforms.includes("kuaishou");
+    if (hasKs && !hasDy) {
+      setAiManhuaPlatformTab("kuaishou");
+      return;
+    }
+    if (hasDy && !hasKs) {
+      setAiManhuaPlatformTab("douyin");
+    }
+  }, [selectedTrendPlatforms]);
   /** AI 漫剧「学节奏」：当前进行中的行 key；学习/分析结果即时展示后再决定是否进库 */
   const [manhuaLearnBusyKey, setManhuaLearnBusyKey] = useState<string | null>(null);
   const [manhuaPasteUrl, setManhuaPasteUrl] = useState("");
@@ -9009,7 +9020,8 @@ export default function PlatformPage() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <div className="text-sm font-semibold text-[#ff9fe0]">
-                            AI 漫剧专区 · {rising?.windowDays || selectedWindowDays} 天飙升
+                            {aiManhuaPlatformTab === "kuaishou" ? "快手" : "抖音"} AI 漫剧专区 ·{" "}
+                            {rising?.windowDays || selectedWindowDays} 天飙升
                           </div>
                           <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-[#c9c0e6]/60">
                             {rising?.note
@@ -9161,7 +9173,7 @@ export default function PlatformPage() {
                         <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-3">
                           <div className="mb-2 text-[11px] font-semibold text-[#ff9fe0]">
                             飙升榜 · {chartEntries.length} 部
-                            {chartEntries.length < 10 ? "（不足 10 部亦展示）" : ""}
+                            {chartEntries.length < 15 ? "（最多 15 部，不足亦展示）" : ""}
                             {" · "}
                             {aiManhuaPlatformTab === "kuaishou" ? "播放/互动代理" : "飙升分"}
                           </div>
@@ -9444,8 +9456,8 @@ export default function PlatformPage() {
                           {rising?.storeReadFailed
                             ? "趋势库读取超时，暂未拿到合集样本。请稍后重试分析；总览其它数据不受影响。"
                             : aiManhuaPlatformTab === "kuaishou"
-                              ? "本窗快手侧暂无漫剧/短剧合集样本。完成趋势分析且采集命中后，将展示剧名、类别与标签。"
-                              : "本窗抖音侧暂无漫剧合集样本。请确认已选「抖音」、完成趋势分析，且采集侧已跑出带合集字段的条目。"}
+                              ? "本窗快手侧暂无已确认的漫剧/短剧合集样本（不会把普通短视频当成短剧）。可继续看总览；采集命中后将展示剧名、类别与标签。"
+                              : "本窗抖音侧暂无已确认的漫剧/短剧合集样本。请完成趋势分析，且采集侧已跑出带合集字段的条目。"}
                           <br />
                           总览里的多平台口播/种草数据不受影响。
                         </div>

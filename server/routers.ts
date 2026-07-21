@@ -64,6 +64,7 @@ import { analyzeVideo } from "./growth/analyzeVideo";
 import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./growth/extractorPipeline";
 import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/premiumRemix";
 import { buildAiManhuaRisingBoard, buildAiManhuaRisingByPlatform } from "./growth/aiManhuaRising";
+import { AI_MANHUA_RISING_BOARD_LIMIT } from "../shared/manhuaDramaClassify";
 import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
 import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, loadDouyinDramaBaselineItems, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
@@ -5134,7 +5135,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                     items: douyinItems,
                     baselineItems: baseline.items,
                     windowDays: Number(input.windowDays) || 7,
-                    limit: 20,
+                    limit: AI_MANHUA_RISING_BOARD_LIMIT,
                   });
                 } catch {
                   return null;
@@ -7360,7 +7361,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               kuaishouItems,
               douyinBaselineItems: baseline.items,
               windowDays: windowForBoard,
-              limit: 20,
+              limit: AI_MANHUA_RISING_BOARD_LIMIT,
               storeReadFailed: dramaStoreTimedOut && douyinItems.length + kuaishouItems.length === 0,
             });
             dashboardWithDrama = {

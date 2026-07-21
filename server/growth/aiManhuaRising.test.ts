@@ -105,7 +105,7 @@ describe("buildAiManhuaRisingBoard", () => {
     expect(board.hasBaseline).toBe(false);
   });
 
-  it("shows fewer than 10 entries and drops caption-like mixes", () => {
+  it("shows fewer than 10 entries (cap 15) and drops caption-like mixes", () => {
     const board = buildAiManhuaRisingBoard({
       items: [
         baseItems[0]!,
@@ -120,10 +120,10 @@ describe("buildAiManhuaRisingBoard", () => {
       ],
       nowIso: "2026-07-17T00:00:00.000Z",
       windowDays: 15,
-      limit: 20,
     });
     expect(board.windowDays).toBe(15);
     expect(board.entries.length).toBe(2);
+    expect(board.entries.length).toBeLessThan(10);
     expect(board.entries.map((e) => e.mixId)).not.toContain("cap1");
   });
 
