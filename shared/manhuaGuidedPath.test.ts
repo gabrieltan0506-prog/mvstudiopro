@@ -73,7 +73,7 @@ describe("resolveManhuaGuidedActiveStep", () => {
     expect(resolveManhuaGuidedNextAction({ ...base, hasTopic: true }).ctaLabel).toMatch(/扩写/);
     expect(
       resolveManhuaGuidedNextAction({ ...base, hasTopic: true, hasWriterPack: true }).ctaLabel,
-    ).toMatch(/确认并看生成推进/);
+    ).toMatch(/确认剧情/);
     expect(
       resolveManhuaGuidedNextAction({
         ...base,
@@ -87,8 +87,17 @@ describe("resolveManhuaGuidedActiveStep", () => {
         ...base,
         writerConfirmed: true,
         hasCast: true,
+        assetsReady: true,
         hasFactoryChain: false,
-      }).title,
-    ).toMatch(/铺板/);
+      }).ctaLabel,
+    ).toMatch(/确认简报/);
+    expect(
+      resolveManhuaGuidedNextAction({
+        ...base,
+        writerConfirmed: true,
+        hasCast: true,
+        assetsReady: false,
+      }).ctaLabel,
+    ).toMatch(/确认资产/);
   });
 });

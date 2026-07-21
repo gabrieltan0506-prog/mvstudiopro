@@ -119,6 +119,7 @@ const zPlatformTopicCoverPixelEngine = z.enum(["gpt_image2", "nano_banana_2", "n
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
 import { manhuaCloudDraftRouter } from "./routers/manhuaCloudDraft";
+import { manhuaAgentLoopRouter } from "./routers/manhuaAgentLoop";
 import { manhuaAssetShareRouter } from "./routers/manhuaAssetShare";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
 import {
@@ -2779,6 +2780,7 @@ export const appRouter = router({
   workflow: workflowRouter,
   manhuaCloudDraft: manhuaCloudDraftRouter,
   manhuaAssetShare: manhuaAssetShareRouter,
+  manhuaAgentLoop: manhuaAgentLoopRouter,
   videoParser: router({
     parse: protectedProcedure
       .input(z.object({ url: z.string().url() }))

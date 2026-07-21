@@ -2,11 +2,34 @@
  * 剧本工作台：从工厂节点文本推导「片段内多镜」列表，供批量静帧与成片对齐。
  */
 
+import {
+  formatManhuaPerformanceInjectBlock,
+  mergeManhuaPerformanceCue,
+  type ManhuaPerformanceCue,
+} from "./manhuaPerformancePrompt.js";
+import { formatRecommendedCameraMoveLine } from "./manhuaCameraMoveBank.js";
+import {
+  formatManhuaCameraAngleLine,
+  getManhuaCameraAngle,
+  recommendManhuaCameraAngleFromText,
+} from "./manhuaCameraAngleBank.js";
+import { MANHUA_CLIP_PREFLIGHT_BLOCK } from "./manhuaNarrativeEnginePrompt.js";
+
 export type ManhuaWorkbenchShot = {
   index: number;
   durationSec: number;
   cameraZh: string;
   actionZh: string;
+  /** 本镜台词（只作表演，不烧字） */
+  dialogueZh?: string;
+  /** 情绪弧：委屈不信 / 愧疚无力… */
+  emotionZh?: string;
+  /** 说话语气：沙哑、压哭腔… */
+  voiceToneZh?: string;
+  /** 微表情：眼眶发红泪未落… */
+  microExpressionZh?: string;
+  /** 机位密码 id（工作台点选；注入静帧/成片优先于文本推荐） */
+  cameraAngleId?: string;
 };
 
 const DEFAULT_CAMERAS = [
@@ -56,7 +79,25 @@ function extractStoryboardSection(text: string): string {
   return text;
 }
 
-type ParsedShotRow = { index: number; cameraZh: string; actionZh: string };
+type ParsedShotRow = {
+  index: number;
+  cameraZh: string;
+  actionZh: string;
+} & Partial<ManhuaPerformanceCue>;
+
+function enrichRowWithPerformance(row: ParsedShotRow): ParsedShotRow {
+  const cue = mergeManhuaPerformanceCue(
+    {
+      dialogueZh: row.dialogueZh,
+      emotionZh: row.emotionZh,
+      voiceToneZh: row.voiceToneZh,
+      microExpressionZh: row.microExpressionZh,
+      bodyBeatZh: row.bodyBeatZh,
+    },
+    `${row.cameraZh} ${row.actionZh}`,
+  );
+  return { ...row, ...cue };
+}
 
 function parseShotRowsFromText(raw: string): ParsedShotRow[] {
   const section = extractStoryboardSection(String(raw || "").trim());
@@ -73,23 +114,30 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
     if (/^\|?\s*[-:| ]+\s*\|?\s*$/.test(line)) continue;
     if (/镜号|景别|内容|镜头/.test(line) && /\|\s*镜|\|\s*景|\|\s*内/.test(line)) continue;
 
-    // Markdown 表：| 1 | 近景 | 女主推门 |
+    // Markdown 表：| 1 | 近景 | 女主推门 | 或加台词/情绪列
     const table = line.match(
-      /^\|\s*(\d{1,2})\s*\|\s*([^|]*)\|\s*(.+?)\s*\|?\s*$/,
+      /^\|\s*(\d{1,2})\s*\|\s*([^|]*)\|\s*([^|]*)\|(?:\s*([^|]*)\|)?(?:\s*([^|]*)\|)?/,
     );
     if (table?.[1] && table[3]) {
       const index = Math.max(1, parseInt(table[1], 10));
       const cameraCell = String(table[2] || "").trim();
       const actionCell = String(table[3] || "").trim();
+      const dialogueCell = String(table[4] || "").trim();
+      const emotionCell = String(table[5] || "").trim();
       if (looksLikeEnglishMotionOnly(actionCell)) continue;
       const split = splitCameraAndAction(
         cameraCell && actionCell ? `${cameraCell}：${actionCell}` : actionCell || cameraCell,
       );
-      byIndex.set(index, {
+      byIndex.set(
         index,
-        cameraZh: split.cameraZh || cameraCell || "",
-        actionZh: split.actionZh || actionCell,
-      });
+        enrichRowWithPerformance({
+          index,
+          cameraZh: split.cameraZh || cameraCell || "",
+          actionZh: split.actionZh || actionCell,
+          dialogueZh: dialogueCell.replace(/^[「『"“]|[」』"”]$/g, ""),
+          emotionZh: emotionCell,
+        }),
+      );
       continue;
     }
 
@@ -102,11 +150,14 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
       if (looksLikeEnglishMotionOnly(body)) continue;
       if (body.length < 2) continue;
       const split = splitCameraAndAction(body);
-      byIndex.set(index, {
+      byIndex.set(
         index,
-        cameraZh: split.cameraZh,
-        actionZh: split.actionZh,
-      });
+        enrichRowWithPerformance({
+          index,
+          cameraZh: split.cameraZh,
+          actionZh: split.actionZh,
+        }),
+      );
     }
   }
 
@@ -129,7 +180,11 @@ export function parseWorkbenchShotsFromText(raw: string | undefined | null): Man
     index: i + 1,
     durationSec: durations[i]!,
     cameraZh: row.cameraZh || DEFAULT_CAMERAS[i % DEFAULT_CAMERAS.length]!,
-    actionZh: row.actionZh.slice(0, 220),
+    actionZh: row.actionZh.slice(0, 280),
+    dialogueZh: row.dialogueZh || undefined,
+    emotionZh: row.emotionZh || undefined,
+    voiceToneZh: row.voiceToneZh || undefined,
+    microExpressionZh: row.microExpressionZh || undefined,
   }));
 }
 
@@ -221,13 +276,33 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
   const sceneShiftHint = /切到|转场|外景|内景|门外|窗|殿|庙|街|台/.test(action)
     ? "场景变换：若动作含空间跳转，画面须交代前后景或门窗过渡，禁止无因跳切空棚。"
     : "";
+  const performance = formatManhuaPerformanceInjectBlock(
+    mergeManhuaPerformanceCue(
+      {
+        dialogueZh: shot.dialogueZh,
+        emotionZh: shot.emotionZh,
+        voiceToneZh: shot.voiceToneZh,
+        microExpressionZh: shot.microExpressionZh,
+      },
+      action,
+    ),
+    { stage: "key_art", shotIndex: shot.index },
+  );
+  const camMove = formatRecommendedCameraMoveLine(`${camera} ${action}`);
+  const angleEntry =
+    getManhuaCameraAngle(shot.cameraAngleId) ||
+    recommendManhuaCameraAngleFromText(`${camera} ${action} ${shot.emotionZh || ""}`);
+  const camAngle = formatManhuaCameraAngleLine(angleEntry);
   return [
     `【分镜 ${shot.index}·静帧】`,
     camera ? `运镜（镜头运动，勿与人物动作混写）：${camera}` : "运镜：承接上镜构图做可读微动",
+    camAngle,
+    camMove,
     framingLock,
     action ? `动作轨迹（主体肢体/身体移位，须有方向与起止）：${action}` : "动作轨迹：落实本镜关键表演",
     sceneShiftHint,
     castLock,
+    performance,
     "光线硬锁：必须落实本镜动作描述中的具体光向、冷暖与明暗关系；禁止套用统一的暖背景加轮廓光模板。",
     "必须画出本镜人物、场景与点选道具的配合；服装连续与题材时代一致；禁止空镜或错时代穿戴。",
     "对白硬锁：若动作描述含对白/旁白，只表现为口型、表情与肢体，禁止任何字形出现在画面中。",
@@ -245,14 +320,42 @@ export function formatWorkbenchClipInjectBlock(shot: ManhuaWorkbenchShot): strin
       : 2.5;
   const action = String(shot.actionZh || "").trim() || "落实本镜节拍中的关键动作与道具交互";
   const camera = String(shot.cameraZh || "").trim() || "承接首镜构图做可读微动";
+  const performance = formatManhuaPerformanceInjectBlock(
+    mergeManhuaPerformanceCue(
+      {
+        dialogueZh: shot.dialogueZh,
+        emotionZh: shot.emotionZh,
+        voiceToneZh: shot.voiceToneZh,
+        microExpressionZh: shot.microExpressionZh,
+      },
+      action,
+    ),
+    { stage: "clip", shotIndex: shot.index },
+  );
+  const camMove = formatRecommendedCameraMoveLine(`${camera} ${action}`);
+  const angleEntry =
+    getManhuaCameraAngle(shot.cameraAngleId) ||
+    recommendManhuaCameraAngleFromText(`${camera} ${action} ${shot.emotionZh || ""}`);
+  const camAngle = formatManhuaCameraAngleLine(angleEntry);
+  const hookLock =
+    shot.index === 1
+      ? "首镜硬锁：前三秒内须出现问题/异常/冲突之一；禁止平淡开场。"
+      : "";
   return [
     `【分镜 ${shot.index}·片段成片】`,
     `目标时长：约 ${dur} 秒（允许 ±0.8 秒）；勿按整集 10 秒要求本镜。`,
+    hookLock,
     `动作轨迹（主体肢体/身体移位）：${action}`,
     `运镜（镜头运动，与动作分行执行）：${camera}`,
+    camAngle,
+    camMove,
+    performance,
+    MANHUA_CLIP_PREFLIGHT_BLOCK,
     "禁止只做空镜走路或纯运镜展示；须出现本镜关键动作、道具交互或人物关系变化中的至少一项。",
     "承接首镜人物身份与服装，不新增无关角色；成片画面无新增可读字幕。",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /** 从 keyart / clip 节点 id 或静帧 prompt 解析分镜号（默认 1） */

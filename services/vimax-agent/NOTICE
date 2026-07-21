@@ -1,0 +1,9 @@
+This directory vendors a subset of HKUDS/ViMax (MIT License).
+Upstream: https://github.com/HKUDS/ViMax
+See vendor/vimax/LICENSE for the full license text.
+
+Modifications for this product:
+- HTTP sidecar + host bridge tools that route image/video generation to the
+  main Node API (credits / jobs). ViMax RenderBackend is not used for keyarts
+  or clips in the hybrid path.
+- User-facing product UI must not expose the upstream project name.

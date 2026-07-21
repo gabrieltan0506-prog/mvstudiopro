@@ -31,6 +31,8 @@ export type ManhuaGuidedProgress = {
   hasWriterPack: boolean;
   writerConfirmed: boolean;
   hasCast: boolean;
+  /** 人物+场景参考已齐（库或自传），可进分镜 */
+  assetsReady?: boolean;
   /** 画布已有工厂链（已铺板） */
   hasFactoryChain?: boolean;
   hasKeyart: boolean;
@@ -80,35 +82,44 @@ export function resolveManhuaGuidedNextAction(p: ManhuaGuidedProgress): ManhuaGu
   if (p.hasKeyart) {
     return {
       stepId: "clip",
-      title: "跑成本集成片",
-      hint: "静帧已出；可看上方推进板与画布，再到工作台继续生成微动。",
-      ctaLabel: "看推进并继续出片",
-      href: "#manhua-live-progress-zone",
+      title: "确认静帧，生成片段成片",
+      hint: "分镜静帧已出；在工作台确认后按镜出视频（一镜一图一片）。",
+      ctaLabel: "确认静帧，生成片段成片",
+      href: "#manhua-workbench-zone",
     };
   }
   if (p.writerConfirmed && p.hasCast) {
+    if (!p.assetsReady) {
+      return {
+        stepId: "wb",
+        title: "确认资产并出图",
+        hint: "请上传勾选人物/场景，或从库选择后确认资产，再进分镜。",
+        ctaLabel: "确认资产并出图",
+        href: "#manhua-workbench-zone",
+      };
+    }
     if (!p.hasFactoryChain) {
       return {
         stepId: "wb",
-        title: "铺板并出片",
-        hint: "造型已套好；滚动到推进区/工作台点「生成本集成片」。",
-        ctaLabel: "去生成推进区",
-        href: "#manhua-live-progress-zone",
+        title: "确认简报，生成分镜画面",
+        hint: "资产已齐；到工作台确认视觉简报后一次出齐本集静帧。",
+        ctaLabel: "确认简报，生成分镜画面",
+        href: "#manhua-workbench-zone",
       };
     }
     return {
-      stepId: "wb",
-      title: "看生成推进",
-      hint: "节点已铺好；推进板与画布在造型区下方，实时可见。",
-      ctaLabel: "打开推进区",
-      href: "#manhua-live-progress-zone",
+      stepId: "keyart",
+      title: "确认简报，生成分镜画面",
+      hint: "节点已铺好；确认视觉简报后生成分镜静帧，再出成片。",
+      ctaLabel: "确认简报，生成分镜画面",
+      href: "#manhua-workbench-zone",
     };
   }
   if (p.writerConfirmed) {
     return {
       stepId: "cast",
       title: "确认造型",
-      hint: "可打开角色库微调面孔与画风。",
+      hint: "可打开角色库微调面孔与画风，或上传参考图。",
       ctaLabel: "打开角色库",
       href: "#manhua-cast-zone",
     };
@@ -117,9 +128,9 @@ export function resolveManhuaGuidedNextAction(p: ManhuaGuidedProgress): ManhuaGu
     return {
       stepId: "writer",
       title: "确认编剧",
-      hint: "剧情包已出；点下一步将确认并跳到生成推进区（自动套造型）。",
-      ctaLabel: "确认并看生成推进",
-      href: "#manhua-live-progress-zone",
+      hint: "剧情包已出；确认后进入资产设定与分镜。",
+      ctaLabel: "确认剧情，进入资产设定",
+      href: "#manhua-workbench-zone",
     };
   }
   if (p.hasTopic) {

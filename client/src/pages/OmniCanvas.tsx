@@ -38,6 +38,7 @@ import {
   replaceManhuaEpisodeChain,
   resolveFactoryResumeStage,
   resolveManhuaEpisodeSpawnContinuity,
+  layoutManhuaEpisodeReadableChain,
   runManhuaDramaFactoryPipeline,
   sanitizeManhuaRecapUpstreamLinks,
   spawnManhuaDramaStudio,
@@ -51,6 +52,7 @@ import {
 } from "@/lib/manhuaProjectExport";
 import { shouldAttachManhuaPreviouslyOn } from "@shared/manhuaEpisodeRecap";
 import { resolveKeyartShotIndex } from "@shared/manhuaScriptWorkbench";
+import { upsertShotAngleSection } from "@shared/manhuaShotAnglePersist";
 import {
   listScreenwriterGenres,
   MANHUA_SCENE_GENRE_LABEL_ZH,
@@ -440,8 +442,12 @@ export default function OmniCanvas() {
   const [shareAssetToLibrary, setShareAssetToLibrary] = useState(
     () => Boolean(initialWriterSession?.shareAssetToLibrary),
   );
-  const [workflowPhase, setWorkflowPhase] = useState<"outline" | "assets" | "storyboard">(
-    () => initialWriterSession?.workflowPhase || (initialWriterSession?.writerConfirmed ? "storyboard" : "outline"),
+  const [workflowPhase, setWorkflowPhase] = useState<
+    "outline" | "assets" | "storyboard" | "edit"
+  >(
+    () =>
+      initialWriterSession?.workflowPhase ||
+      (initialWriterSession?.writerConfirmed ? "storyboard" : "outline"),
   );
   /** 工厂运行范围：焦点集（默认）或成片坞已勾选集 */
   const [factoryRunScope, setFactoryRunScope] = useState<"focus" | "dock">("focus");
@@ -943,7 +949,9 @@ export default function OmniCanvas() {
     setCustomAssetRefs(normalizeManhuaCustomAssetRefs(session.customAssetRefs));
     setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
     setWorkflowPhase(
-      session.workflowPhase === "assets" || session.workflowPhase === "storyboard"
+      session.workflowPhase === "assets" ||
+        session.workflowPhase === "storyboard" ||
+        session.workflowPhase === "edit"
         ? session.workflowPhase
         : session.writerConfirmed
           ? "storyboard"
@@ -1725,7 +1733,7 @@ export default function OmniCanvas() {
               charactersMd: writerPack?.charactersMd,
             })
           : null;
-      const spawned = spawnManhuaDramaStudio({
+      let spawned = spawnManhuaDramaStudio({
         originX: 60,
         originY: 80 + Math.max(0, continuity.episodeIndex - 1) * 420,
         topic,
@@ -1758,6 +1766,10 @@ export default function OmniCanvas() {
         previousEndingHook: continuity.previousEndingHook,
         previouslyOnRecap: continuity.previouslyOnRecap,
       });
+      spawned = {
+        ...spawned,
+        blocks: layoutManhuaEpisodeReadableChain(spawned.blocks, writerFocusEpisode),
+      };
       if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
         setFactoryGenreId(spawned.resolvedGenreId);
         toast.message(
@@ -2963,8 +2975,20 @@ export default function OmniCanvas() {
                   hasCast: Boolean(
                     selectedCharacterIds.length ||
                       factoryAncientArchetypeIds.length ||
+                      customAssetRefs.some((r) => r.role === "character") ||
                       writerConfirmed,
                   ),
+                  assetsReady: evaluateManhuaAssetImageGate({
+                    characterIds: selectedCharacterIds,
+                    ancientArchetypeIds: factoryAncientArchetypeIds,
+                    sceneId: factorySceneId || recommendedScene?.id || "",
+                    artStyleId: factoryArtStyleId,
+                    topic: factoryTopic,
+                    customRefs: customAssetRefs,
+                    assetBlocks: blocks.filter(
+                      (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
+                    ),
+                  }).ready,
                   hasFactoryChain: blocks.some((b) =>
                     MANHUA_FACTORY_STAGE_ORDER.some((s) => b.id.startsWith(`${s}-`)),
                   ),
@@ -3140,6 +3164,80 @@ export default function OmniCanvas() {
                   onWorkflowPhaseChange={setWorkflowPhase}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
+                  onAdvisorApplySync={(sync) => {
+                    const ep = writerFocusEpisode;
+                    handleBlocksChange((prev) =>
+                      prev.map((b) => {
+                        if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
+                        const stage = stageKeyFromBlockId(b.id);
+                        if (stage === "story" && sync.storyText) {
+                          return {
+                            ...b,
+                            outputText: sync.storyText,
+                            status: "done" as const,
+                          };
+                        }
+                        if (stage === "beats" && sync.beatsMarkdown) {
+                          return {
+                            ...b,
+                            outputText: sync.beatsMarkdown,
+                            status: "done" as const,
+                          };
+                        }
+                        if (stage === "reverse" && sync.beatsMarkdown) {
+                          const reverseBody = [
+                            sync.scriptText && `## 剧本\n${sync.scriptText}`,
+                            sync.beatsMarkdown,
+                          ]
+                            .filter(Boolean)
+                            .join("\n\n");
+                          return {
+                            ...b,
+                            outputText: reverseBody,
+                            status: "done" as const,
+                          };
+                        }
+                        return b;
+                      }),
+                    );
+                  }}
+                  onAdvisorUpdateBeatsText={(text) => {
+                    const ep = writerFocusEpisode;
+                    handleBlocksChange((prev) =>
+                      prev.map((b) => {
+                        if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
+                        const stage = stageKeyFromBlockId(b.id);
+                        if (stage !== "beats" && stage !== "reverse") return b;
+                        return { ...b, outputText: text, status: "done" as const };
+                      }),
+                    );
+                  }}
+                  onAdvisorUpdateStoryText={(text) => {
+                    const ep = writerFocusEpisode;
+                    handleBlocksChange((prev) =>
+                      prev.map((b) => {
+                        if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
+                        if (stageKeyFromBlockId(b.id) !== "story") return b;
+                        return { ...b, outputText: text, status: "done" as const };
+                      }),
+                    );
+                  }}
+                  onUpsertShotAngles={(angles) => {
+                    const ep = writerFocusEpisode;
+                    handleBlocksChange((prev) =>
+                      prev.map((b) => {
+                        if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
+                        const stage = stageKeyFromBlockId(b.id);
+                        if (stage !== "reverse" && stage !== "beats") return b;
+                        const base = b.outputText || b.prompt || "";
+                        return {
+                          ...b,
+                          outputText: upsertShotAngleSection(base, angles),
+                          status: "done" as const,
+                        };
+                      }),
+                    );
+                  }}
                   onFocusBlock={(id) => {
                     openManhuaFactoryCanvas(id);
                   }}
@@ -3239,29 +3337,28 @@ export default function OmniCanvas() {
                     });
                   }}
                   onGenerateFragment={({ shotIndex }) => {
-                    const hasShotKeyart = blocks.some(
-                      (b) =>
-                        b.id.startsWith("keyart-") &&
-                        (getBlockEpisodeIndex(b) ?? 1) === writerFocusEpisode &&
-                        resolveKeyartShotIndex(b.id, b.prompt) === shotIndex &&
-                        Boolean(b.outputUrl || b.outputUrls?.[0]),
-                    );
-                    if (!hasShotKeyart) {
-                      toast.message("请先点「生成本集全部分镜」出齐静帧", {
-                        description: `第 ${String(shotIndex).padStart(2, "0")} 镜还没有自己的分镜图，成片不能共用别镜。`,
-                      });
-                      setFactoryRunScope("focus");
-                      ensureStudioSpawned(factoryTopic);
-                      void runFactory("keyart", {
-                        episodeIndexes: [writerFocusEpisode],
-                      });
-                      return;
-                    }
+                    const pad = String(shotIndex).padStart(2, "0");
+                    toast.message(`生成片段成片 ${pad}`, {
+                      description: "缺本镜静帧时只补本镜，不整集重跑。",
+                    });
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
                     void runFactory("clip", {
                       episodeIndexes: [writerFocusEpisode],
                       fragmentShotIndex: shotIndex,
+                    });
+                  }}
+                  onLayoutReadableChain={() => {
+                    setBlocks((prev) => {
+                      const next = layoutManhuaEpisodeReadableChain(prev, writerFocusEpisode);
+                      setEdges((eds) => {
+                        saveCanvasState(next, eds);
+                        return eds;
+                      });
+                      return next;
+                    });
+                    toast.message("已对齐画布流水线", {
+                      description: "左文案 → 中静帧竖排 → 右同镜成片",
                     });
                   }}
                   onGenerateMissingFragments={(shotIndexes) => {
@@ -3365,6 +3462,8 @@ export default function OmniCanvas() {
                       targetBlockIds: [blockId],
                     });
                   }}
+                  dockSelectedIds={dockSelectedIds}
+                  onDockSelectedIdsChange={setDockSelectedIds}
                   onAcceptClipDespiteQc={(clipBlockId) => {
                     setBlocks((prev) => {
                       const next = prev.map((b) => {

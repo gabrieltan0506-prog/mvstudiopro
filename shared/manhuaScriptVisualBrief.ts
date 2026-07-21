@@ -11,6 +11,10 @@ import {
   recommendPathCameraFromTopic,
   buildPathCameraInjectBlock,
 } from "./manhuaPathCameraRecipeBank.js";
+import {
+  extractPerformanceCuesFromScript,
+  formatManhuaPerformanceInjectBlock,
+} from "./manhuaPerformancePrompt.js";
 
 const CAMERA_RE =
   /远景|大远景|全景|中全景|中景|中近景|近景|特写|大特写|过肩|双人镜|推近|推进|拉远|横移|环绕|俯拍|仰拍|跟拍|手持|固定机位|一镜到底|甩镜|微推|缓慢推|反向平移|红蓝双轨|缓慢推进/;
@@ -179,9 +183,19 @@ export function compileManhuaScriptVisualBrief(
   const motions = extractMotionCues(raw, 4);
   const shifts = extractSceneShifts(raw, 3);
 
+  const perfCues = extractPerformanceCuesFromScript(raw, stage === "clip" ? 3 : 4);
+  const perfBlocks = perfCues
+    .map((c, i) =>
+      formatManhuaPerformanceInjectBlock(c, {
+        stage: stage === "clip" ? "clip" : "key_art",
+        shotIndex: i + 1,
+      }),
+    )
+    .filter(Boolean);
+
   const lines: string[] = [
     "【视觉提示词简报·禁止灌剧本】",
-    "硬规则：只写可拍画面；运镜与主体动作分行；场景变换单独点明；禁止整段对白/世界观/人物表硬贴进生图。",
+    "硬规则：只写可拍画面；运镜与主体动作分行；场景变换单独点明；台词/情绪作表演控制，禁止整段对白/世界观/人物表硬贴进生图，禁止烧字。",
   ];
   if (topic) lines.push(`题材锚点：${topic.slice(0, 120)}`);
 
@@ -201,6 +215,18 @@ export function compileManhuaScriptVisualBrief(
     lines.push("动作轨迹（肢体移位/身体位移，须有方向与起止）：");
     for (const s of motions) lines.push(`- ${s}`);
   }
+  if (perfCues.length) {
+    lines.push("人物表演线索（台词只驱动口型/气口，微表情须近景可读）：");
+    for (const c of perfCues) {
+      const bits = [
+        c.dialogueZh ? `「${c.dialogueZh}」` : "",
+        c.voiceToneZh || "",
+        c.emotionZh || "",
+        c.microExpressionZh || "",
+      ].filter(Boolean);
+      if (bits.length) lines.push(`- ${bits.join(" · ")}`);
+    }
+  }
   if (events.length) {
     lines.push("本集可拍事件（按序，每条≤一句）：");
     events.forEach((e, i) => lines.push(`${i + 1}. ${e}`));
@@ -212,15 +238,69 @@ export function compileManhuaScriptVisualBrief(
   const recipeTail = [
     pathBlock ? pathBlock.split("\n").slice(0, 6).join("\n") : "",
     actionBlock ? actionBlock.split("\n").slice(0, 6).join("\n") : "",
+    ...perfBlocks.slice(0, 2),
   ]
     .filter(Boolean)
     .join("\n\n");
 
-  if (body.length > maxChars - 280) {
-    body = `${body.slice(0, Math.max(200, maxChars - 280)).trimEnd()}…`;
+  if (body.length > maxChars - 320) {
+    body = `${body.slice(0, Math.max(200, maxChars - 320)).trimEnd()}…`;
   }
   const out = [body, recipeTail].filter(Boolean).join("\n\n");
   return out.length > maxChars ? `${out.slice(0, maxChars).trimEnd()}…` : out;
+}
+
+/** 工作台可见简报闸门：结构化摘要（非整段剧本） */
+export type ManhuaVisualBriefUiSummary = {
+  topicZh: string;
+  scenes: string[];
+  cameras: string[];
+  motions: string[];
+  shifts: string[];
+  events: string[];
+  /** 台词·语气·微表情摘要（工作台闸门可见） */
+  performanceLines: string[];
+  pathLabelZh: string;
+  actionLabelZh: string;
+  fullBriefZh: string;
+};
+
+export function summarizeManhuaVisualBriefForUi(
+  rawScript: string,
+  opts?: ManhuaScriptVisualBriefOpts,
+): ManhuaVisualBriefUiSummary {
+  const topic = String(opts?.topic || "").trim();
+  const raw = String(rawScript || "").trim();
+  const body = extractEpisodeBody(raw);
+  const blobForRec = [topic, body].filter(Boolean).join("\n");
+  const pathRec = recommendPathCameraFromTopic(blobForRec);
+  const actionRec = recommendActionCameraFromTopic(blobForRec);
+  const performanceLines = extractPerformanceCuesFromScript(raw, 4).map((c) =>
+    [
+      c.dialogueZh ? `「${c.dialogueZh}」` : "",
+      c.voiceToneZh,
+      c.emotionZh,
+      c.microExpressionZh,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  );
+  return {
+    topicZh: topic.slice(0, 120),
+    scenes: extractSceneAnchors(raw, 3),
+    cameras: extractCameraCues(raw, 4),
+    motions: extractMotionCues(raw, 4),
+    shifts: extractSceneShifts(raw, 3),
+    events: extractShootableEvents(raw, 4),
+    performanceLines,
+    pathLabelZh: pathRec.entry?.nameZh || pathRec.reasonZh || "",
+    actionLabelZh: actionRec.entry?.nameZh || actionRec.reasonZh || "",
+    fullBriefZh: compileManhuaScriptVisualBrief(raw, {
+      ...opts,
+      forStage: opts?.forStage || "key_art",
+      maxChars: opts?.maxChars ?? 900,
+    }),
+  };
 }
 
 /** 是否仍像「整段剧本硬灌」（用于测试与门禁自检） */

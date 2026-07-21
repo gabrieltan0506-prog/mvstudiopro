@@ -33,8 +33,8 @@ export type ManhuaWriterSession = {
   manhuaUiMode: "workbench" | "form";
   /** 资产设定缺图时用户选择跳过；硬刷新后仍可进分镜 */
   assetsSkipped: boolean;
-  /** 工作台三阶段：大纲 / 资产 / 分镜 */
-  workflowPhase: "outline" | "assets" | "storyboard";
+  /** 工作台阶段：大纲 / 资产 / 分镜 / 剪辑 */
+  workflowPhase: "outline" | "assets" | "storyboard" | "edit";
   /** 用户上传/基于库参考生成的参考图（HTTPS + 勾选角色） */
   customAssetRefs: ManhuaCustomAssetRef[];
   /** 生成资产图时授权匿名进库（半价） */
@@ -78,7 +78,8 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
   const workflowPhase =
     input.workflowPhase === "outline" ||
     input.workflowPhase === "assets" ||
-    input.workflowPhase === "storyboard"
+    input.workflowPhase === "storyboard" ||
+    input.workflowPhase === "edit"
       ? input.workflowPhase
       : writerConfirmed
         ? "storyboard"
