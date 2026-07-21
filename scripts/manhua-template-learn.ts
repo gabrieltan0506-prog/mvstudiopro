@@ -12,9 +12,10 @@
  *   pnpm run manhua:template-learn -- --video ./local.mp4 --title "已有成片"
  *
  * 依赖：本机 yt-dlp、ffmpeg/ffprobe。
- * 语音分析（方案 A，默认）：本机 PUT → GCS → Fly `/api/google?op=manhuaAudioClimaxScan`（Fly 上 GEMINI_API_KEY · 3.5 Flash）。
- * 可选本机直打：MANHUA_LEARN_LOCAL_GEMINI=1 且本机 GEMINI_API_KEY 可用。
- * 失败则静音检测估高潮。
+ * 语音分析（方案 A，默认）：本机 PUT → GCS → Fly `/api/google?op=manhuaAudioClimaxScan`（Gemini 3.5 Flash）。
+ * 读帧分析（默认）：本机 PUT 帧 → GCS → Fly `manhuaTemplateFrameScan`（GPT-5.6 Terra · high）→ 自动填提案，仍待人审。
+ * 可选本机直打：MANHUA_LEARN_LOCAL_GEMINI=1 / MANHUA_LEARN_LOCAL_TERRA=1。
+ * 语音失败则静音检测估高潮；读帧失败则保留「待读帧」草案。
  *
  * 环境：
  *   MANHUA_LEARN_FLY_ORIGIN=https://mvstudiopro.fly.dev  （或 api.mvstudiopro.com）
@@ -35,6 +36,11 @@ import {
   type ManhuaViralTemplateCard,
   type ManhuaViralTemplateLane,
 } from "../shared/manhuaViralTemplateBank.js";
+import {
+  applyFrameVisionToProposal,
+  selectFramesForVisionAnalysis,
+  type ManhuaTemplateFrameVisionResult,
+} from "../shared/manhuaTemplateLearnFrameVision.js";
 import {
   analyzeManhuaDramaAudioWithGemini,
   isGeminiAudioAvailable,
@@ -277,6 +283,181 @@ async function geminiAudioScan(audioPath: string): Promise<ManhuaDramaAudioScanR
   return null;
 }
 
+async function uploadFrameToGcsViaFly(
+  origin: string,
+  framePath: string,
+  atSec: number,
+): Promise<{ atSec: number; gcsUri: string; mimeType: string } | null> {
+  const buf = await fs.readFile(framePath);
+  const fileName = `f_${atSec.toFixed(2).replace(".", "p")}_${path.basename(framePath)}`.slice(0, 80);
+  const upRes = await fetch(`${origin}/api/google?op=manhuaTemplateFrameGetUploadUrl`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fileName, mimeType: "image/jpeg" }),
+  });
+  const upJson = (await upRes.json().catch(() => null)) as {
+    ok?: boolean;
+    uploadUrl?: string;
+    gcsUri?: string;
+    requiredHeaders?: Record<string, string>;
+    detail?: string;
+    error?: string;
+  } | null;
+  if (!upRes.ok || !upJson?.ok || !upJson.uploadUrl || !upJson.gcsUri) {
+    console.warn(
+      "[learn] 帧签名上传失败:",
+      upJson?.detail || upJson?.error || upRes.status,
+    );
+    return null;
+  }
+  const putRes = await fetch(upJson.uploadUrl, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "image/jpeg",
+      ...(upJson.requiredHeaders || {}),
+    },
+    body: buf,
+  });
+  if (!putRes.ok) {
+    const t = await putRes.text().catch(() => "");
+    console.warn("[learn] 帧 GCS PUT 失败:", putRes.status, t.slice(0, 120));
+    return null;
+  }
+  return { atSec, gcsUri: upJson.gcsUri, mimeType: "image/jpeg" };
+}
+
+async function terraFrameScanViaFly(input: {
+  framePaths: string[];
+  timestamps: number[];
+  titleHint: string;
+  durationSec: number;
+  transcriptPreview: string;
+  climaxNotes: string[];
+  fallbackLane: ManhuaViralTemplateLane;
+}): Promise<ManhuaTemplateFrameVisionResult | null> {
+  const origin = flyOrigin();
+  const paired = input.framePaths
+    .map((p, i) => ({ path: p, atSec: Number(input.timestamps[i]) || 0 }))
+    .filter((x) => x.path);
+  const selected = selectFramesForVisionAnalysis(paired);
+  if (!selected.length) return null;
+
+  console.log(`[learn] Fly 上传 ${selected.length} 帧 → GCS…`);
+  const uploaded: Array<{ atSec: number; gcsUri: string; mimeType: string }> = [];
+  for (const item of selected) {
+    const one = await uploadFrameToGcsViaFly(origin, item.path, item.atSec);
+    if (one) uploaded.push(one);
+  }
+  if (!uploaded.length) {
+    console.warn("[learn] 无一帧上传成功，跳过读帧");
+    return null;
+  }
+
+  console.log("[learn] Fly manhuaTemplateFrameScan（Terra · high）…");
+  const scanRes = await fetch(`${origin}/api/google?op=manhuaTemplateFrameScan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      frames: uploaded,
+      titleHint: input.titleHint,
+      durationSec: input.durationSec,
+      transcriptPreview: input.transcriptPreview,
+      climaxNotes: input.climaxNotes,
+      fallbackLane: input.fallbackLane,
+    }),
+  });
+  const scanJson = (await scanRes.json().catch(() => null)) as {
+    ok?: boolean;
+    vision?: ManhuaTemplateFrameVisionResult;
+    detail?: string;
+    error?: string;
+  } | null;
+  if (!scanRes.ok || !scanJson?.ok || !scanJson.vision) {
+    console.warn(
+      "[learn] Fly 读帧失败:",
+      scanJson?.detail || scanJson?.error || scanRes.status,
+    );
+    return null;
+  }
+  console.log(
+    `[learn] Fly Terra 读帧 ok · nameZh=${scanJson.vision.nameZh} · beats=${scanJson.vision.beatGrid?.length || 0}`,
+  );
+  return scanJson.vision;
+}
+
+async function terraFrameScanLocal(input: {
+  framePaths: string[];
+  timestamps: number[];
+  titleHint: string;
+  durationSec: number;
+  transcriptPreview: string;
+  climaxNotes: string[];
+  fallbackLane: ManhuaViralTemplateLane;
+}): Promise<ManhuaTemplateFrameVisionResult | null> {
+  try {
+    const { analyzeManhuaTemplateFramesWithTerra } = await import(
+      "../server/manhuaTemplateFrameVision.js"
+    );
+    const paired = input.framePaths
+      .map((p, i) => ({ path: p, atSec: Number(input.timestamps[i]) || 0 }))
+      .filter((x) => x.path);
+    const selected = selectFramesForVisionAnalysis(paired);
+    const frames = [];
+    for (const item of selected) {
+      const buf = await fs.readFile(item.path);
+      frames.push({
+        atSec: item.atSec,
+        dataUrl: `data:image/jpeg;base64,${buf.toString("base64")}`,
+        mimeType: "image/jpeg",
+      });
+    }
+    if (!frames.length) return null;
+    const vision = await analyzeManhuaTemplateFramesWithTerra({
+      frames,
+      titleHint: input.titleHint,
+      durationSec: input.durationSec,
+      transcriptPreview: input.transcriptPreview,
+      climaxNotes: input.climaxNotes,
+      fallbackLane: input.fallbackLane,
+    });
+    console.log(
+      `[learn] 本机 Terra 读帧 ok · nameZh=${vision.nameZh} · beats=${vision.beatGrid.length}`,
+    );
+    return vision;
+  } catch (e) {
+    console.warn("[learn] 本机 Terra 读帧失败:", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+async function terraFrameScan(input: {
+  framePaths: string[];
+  timestamps: number[];
+  titleHint: string;
+  durationSec: number;
+  transcriptPreview: string;
+  climaxNotes: string[];
+  fallbackLane: ManhuaViralTemplateLane;
+}): Promise<ManhuaTemplateFrameVisionResult | null> {
+  const preferLocal = /^(1|true|yes|on)$/i.test(
+    String(process.env.MANHUA_LEARN_LOCAL_TERRA || "").trim(),
+  );
+  if (preferLocal) {
+    const local = await terraFrameScanLocal(input);
+    if (local) return local;
+  }
+  if (viaFlyEnabled()) {
+    const via = await terraFrameScanViaFly(input);
+    if (via) return via;
+  }
+  if (!preferLocal) {
+    const local = await terraFrameScanLocal(input);
+    if (local) return local;
+  }
+  console.warn("[learn] 读帧分析不可用，提案保留待补字段");
+  return null;
+}
+
 async function extractFrames(
   videoPath: string,
   timestamps: number[],
@@ -493,7 +674,7 @@ async function main() {
     .replace(/\s+/g, " ")
     .slice(0, 400);
 
-  const card = draftCard({
+  let card = draftCard({
     id: workId,
     titleHint: title || "未命名学习片",
     url: url || undefined,
@@ -502,13 +683,37 @@ async function main() {
     climaxNotes: plan.climaxWindows.map((w) => w.reasonZh),
     transcriptPreview,
   });
+
+  const vision = await terraFrameScan({
+    framePaths,
+    timestamps: plan.timestamps,
+    titleHint: title || "未命名学习片",
+    durationSec,
+    transcriptPreview,
+    climaxNotes: plan.climaxWindows.map((w) => w.reasonZh),
+    fallbackLane: card.laneZh,
+  });
+  let visionFilled = false;
+  if (vision) {
+    const filled = applyFrameVisionToProposal(card, vision);
+    if (filled) {
+      card = filled;
+      visionFilled = true;
+    } else {
+      console.warn("[learn] 读帧结果校验失败，保留草案字段");
+    }
+  }
+
   const validated = parseManhuaViralTemplateCard(card);
   if (!validated) throw new Error("提案卡校验失败");
 
   await fs.mkdir(PROPOSALS, { recursive: true });
   const proposalPath = path.join(PROPOSALS, `${validated.id}.json`);
   await fs.writeFile(proposalPath, `${JSON.stringify(validated, null, 2)}\n`, "utf8");
-  await appendChangelog(validated.id, `frames=${framePaths.length} climax=${plan.climaxWindows.length}`);
+  await appendChangelog(
+    validated.id,
+    `frames=${framePaths.length} climax=${plan.climaxWindows.length} vision=${visionFilled ? "terra" : "skip"}`,
+  );
 
   const manifestPath = path.join(workDir, "manifest.json");
   await fs.writeFile(
@@ -519,8 +724,11 @@ async function main() {
         framesDir,
         framePaths,
         planPath,
-        nextStepZh:
-          "在 Cursor 说「读这些关键帧补全提案并批准进库」或先人工改 proposals JSON；产品只吃 approved。",
+        visionFilled,
+        visionModel: vision?.model || null,
+        nextStepZh: visionFilled
+          ? "读帧已自动填提案（status=proposed）；人审「批准进库」后才进产品库。"
+          : "读帧未完成：可重跑学习或人工改 proposals JSON；产品只吃 approved。",
       },
       null,
       2,
@@ -530,7 +738,11 @@ async function main() {
 
   console.log(`[learn] 提案 → ${proposalPath}`);
   console.log(`[learn] 清单 → ${manifestPath}`);
-  console.log("[learn] 下一步：多模态读帧补全 nameZh/hook3sZh/beatGrid 后「批准进库」");
+  console.log(
+    visionFilled
+      ? "[learn] 读帧已填提案字段；下一步：人审「批准进库」"
+      : "[learn] 读帧未填；可检查 Fly 部署/密钥后重跑，或人工补全后再「批准进库」",
+  );
 }
 
 main().catch((e) => {
