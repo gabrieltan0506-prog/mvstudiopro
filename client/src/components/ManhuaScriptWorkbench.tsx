@@ -70,6 +70,7 @@ import {
   type ManhuaCameraAngleId,
 } from "@shared/manhuaCameraAngleBank";
 import { buildRoughCutClipsFromShots } from "@shared/manhuaEditWorkflowBank";
+import type { ManhuaFineCutByShot, ManhuaFineCutTrim } from "@shared/manhuaEditFineCut";
 import {
   loadManhuaWorkbenchBPersist,
   manhuaWorkbenchBPersistKey,
@@ -322,18 +323,40 @@ export default function ManhuaScriptWorkbench({
   );
   /** 粗剪顺序（镜号列表）；空则按分镜序 */
   const [roughShotOrder, setRoughShotOrder] = useState<number[]>([]);
-  /** 剪辑台字幕轨占位开关（D2 再写轨数据） */
+  /** 细剪进出点 */
+  const [fineCutByShot, setFineCutByShot] = useState<ManhuaFineCutByShot>({});
+  /** 剪辑台字幕轨：开则生成轨数据，默认不烧字 */
   const [editSubtitleEnabled, setEditSubtitleEnabled] = useState(false);
+  /** 包装动效（motionPromptBank id） */
+  const [editMotionPromptIds, setEditMotionPromptIds] = useState<string[]>([]);
   const bPersistKey = manhuaWorkbenchBPersistKey(topic || seriesTitle || "manhua", focusEpisode);
   useEffect(() => {
     const hit = loadManhuaWorkbenchBPersist(bPersistKey);
     if (!hit) return;
     if (Object.keys(hit.shotAngleByIndex).length) setShotAngleByIndex(hit.shotAngleByIndex);
     if (hit.roughShotOrder.length) setRoughShotOrder(hit.roughShotOrder);
+    if (hit.fineCutByShot && Object.keys(hit.fineCutByShot).length) {
+      setFineCutByShot(hit.fineCutByShot);
+    }
+    setEditSubtitleEnabled(Boolean(hit.subtitleEnabled));
+    if (hit.motionPromptIds?.length) setEditMotionPromptIds(hit.motionPromptIds);
   }, [bPersistKey]);
   useEffect(() => {
-    saveManhuaWorkbenchBPersist(bPersistKey, { shotAngleByIndex, roughShotOrder });
-  }, [bPersistKey, shotAngleByIndex, roughShotOrder]);
+    saveManhuaWorkbenchBPersist(bPersistKey, {
+      shotAngleByIndex,
+      roughShotOrder,
+      fineCutByShot,
+      subtitleEnabled: editSubtitleEnabled,
+      motionPromptIds: editMotionPromptIds,
+    });
+  }, [
+    bPersistKey,
+    shotAngleByIndex,
+    roughShotOrder,
+    fineCutByShot,
+    editSubtitleEnabled,
+    editMotionPromptIds,
+  ]);
   /**
    * 右栏本集画布：未出片默认开；有成片后自动收起让出检查空间；用户可再开。
    * 镜头一多时避免画布长期占满右栏。
@@ -1647,8 +1670,14 @@ export default function ManhuaScriptWorkbench({
             stillIndexes={stillIndexSet}
             clipIndexes={clipIndexSet}
             activeShotIndex={activeShotNo}
+            fineCutByShot={fineCutByShot}
+            onFineCutChange={(shotIndex: number, trim: ManhuaFineCutTrim) => {
+              setFineCutByShot((prev) => ({ ...prev, [shotIndex]: trim }));
+            }}
             subtitleEnabled={editSubtitleEnabled}
             onSubtitleEnabledChange={setEditSubtitleEnabled}
+            motionPromptIds={editMotionPromptIds}
+            onMotionPromptIdsChange={setEditMotionPromptIds}
             onSelectShot={(idx) => {
               const i = shots.findIndex((s) => s.index === idx);
               if (i >= 0) setShotIndex(i);

@@ -1,7 +1,8 @@
 /**
- * 剪辑阶段 · 多轨骨架（D1）：V1 静帧 / V2 成片 / A1 对白 / 字幕占位。
+ * 剪辑阶段 · 多轨：细剪进出点 / 字幕轨数据 / 包装动效入口。
  */
-import { Scissors } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Scissors, Subtitles, Sparkles } from "lucide-react";
 import {
   buildManhuaEditMultitrack,
   type ManhuaEditTrack,
@@ -9,6 +10,25 @@ import {
 import type { ManhuaRoughCutClip } from "@shared/manhuaEditWorkflowBank";
 import type { ManhuaWorkbenchShot } from "@shared/manhuaScriptWorkbench";
 import { listRoughTimelineStages } from "@shared/manhuaEditWorkflowBank";
+import {
+  clampFineCut,
+  defaultFineCut,
+  type ManhuaFineCutByShot,
+  type ManhuaFineCutTrim,
+} from "@shared/manhuaEditFineCut";
+import {
+  buildManhuaSubtitleCues,
+  formatManhuaSubtitleSrt,
+} from "@shared/manhuaEditSubtitle";
+import {
+  MANHUA_EDIT_MOTION_CATEGORIES,
+  MANHUA_EDIT_MOTION_MAX,
+  listManhuaEditMotionEntries,
+  manhuaEditMotionCategoryLabel,
+  manhuaEditMotionInjectPreview,
+  toggleManhuaEditMotionId,
+} from "@shared/manhuaEditMotionPick";
+import type { MotionPromptCategory } from "@shared/motionPromptBank";
 
 type Props = {
   roughClips: ManhuaRoughCutClip[];
@@ -18,9 +38,12 @@ type Props = {
   activeShotIndex?: number;
   onSelectShot?: (shotIndex: number) => void;
   onReorder?: (orderedShotIndexes: number[]) => void;
-  /** D2 前仅占位开关，不落轨数据 */
+  fineCutByShot: ManhuaFineCutByShot;
+  onFineCutChange: (shotIndex: number, trim: ManhuaFineCutTrim) => void;
   subtitleEnabled?: boolean;
   onSubtitleEnabledChange?: (next: boolean) => void;
+  motionPromptIds: string[];
+  onMotionPromptIdsChange: (ids: string[]) => void;
 };
 
 function TrackRow({
@@ -80,17 +103,60 @@ export default function ManhuaEditMultitrackPanel({
   activeShotIndex,
   onSelectShot,
   onReorder,
+  fineCutByShot,
+  onFineCutChange,
   subtitleEnabled = false,
   onSubtitleEnabledChange,
+  motionPromptIds,
+  onMotionPromptIdsChange,
 }: Props) {
+  const [motionCat, setMotionCat] = useState<MotionPromptCategory>("logo");
   const { totalSec, tracks } = buildManhuaEditMultitrack({
     roughClips,
     shots,
     stillIndexes,
     clipIndexes,
+    fineCutByShot,
     subtitleEnabled,
   });
   const stages = listRoughTimelineStages();
+  const cues = useMemo(
+    () =>
+      buildManhuaSubtitleCues({
+        roughClips,
+        shots,
+        fineCutByShot,
+        enabled: subtitleEnabled,
+      }),
+    [roughClips, shots, fineCutByShot, subtitleEnabled],
+  );
+  const srtPreview = useMemo(() => formatManhuaSubtitleSrt(cues), [cues]);
+  const motionEntries = listManhuaEditMotionEntries(motionCat);
+  const motionInject = manhuaEditMotionInjectPreview(motionPromptIds);
+
+  const activeClip = roughClips.find((c) => c.shotIndex === activeShotIndex);
+  const activeTrim = activeClip
+    ? clampFineCut(
+        activeClip.durationSec,
+        fineCutByShot[activeClip.shotIndex] ?? defaultFineCut(activeClip.durationSec),
+      )
+    : null;
+
+  const nudgeTrim = (field: "inSec" | "outSec", delta: number) => {
+    if (!activeClip || !activeTrim) return;
+    onFineCutChange(
+      activeClip.shotIndex,
+      clampFineCut(activeClip.durationSec, {
+        ...activeTrim,
+        [field]: activeTrim[field] + delta,
+      }),
+    );
+  };
+
+  const resetTrim = () => {
+    if (!activeClip) return;
+    onFineCutChange(activeClip.shotIndex, defaultFineCut(activeClip.durationSec));
+  };
 
   const move = (from: number, dir: -1 | 1) => {
     const to = from + dir;
@@ -113,11 +179,11 @@ export default function ManhuaEditMultitrackPanel({
             <Scissors className="h-4 w-4 text-violet-200" />
             剪辑台
             <span className="text-[11px] font-normal text-white/40">
-              约 {totalSec}s · 粗剪序驱动
+              约 {totalSec}s · 粗剪序 + 细剪
             </span>
           </div>
           <p className="mt-1 max-w-xl text-[10px] leading-relaxed text-white/40">
-            多轨预览：静帧 / 成片 / 对白提示 / 字幕占位。细剪进出点与烧字开关将逐步开放。
+            多轨预览：静帧 / 成片 / 对白 / 字幕。可调进出点；字幕只生成轨数据，默认不烧进成片。
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -137,7 +203,8 @@ export default function ManhuaEditMultitrackPanel({
               onChange={(e) => onSubtitleEnabledChange?.(e.target.checked)}
               className="accent-violet-400"
             />
-            字幕轨占位
+            <Subtitles className="h-3 w-3" />
+            字幕轨
           </label>
         </div>
       </div>
@@ -163,6 +230,181 @@ export default function ManhuaEditMultitrackPanel({
             <span>{totalSec}s</span>
           </div>
         </div>
+      </div>
+
+      {/* 细剪 */}
+      <div
+        data-manhua-edit-section="fine-cut"
+        className="rounded-lg border border-violet-400/20 bg-violet-500/[0.06] p-2.5"
+      >
+        <div className="text-[10px] font-semibold text-violet-100/90">细剪 · 进出点</div>
+        {activeClip && activeTrim ? (
+          <div className="mt-2 flex flex-wrap items-end gap-3">
+            <div>
+              <div className="text-[9px] text-white/40">
+                镜 {String(activeClip.shotIndex).padStart(2, "0")} · 源长{" "}
+                {activeClip.durationSec}s
+              </div>
+              <div className="mt-1 flex items-center gap-2">
+                <label className="flex items-center gap-1 text-[10px] text-white/70">
+                  入点
+                  <button
+                    type="button"
+                    className="rounded border border-white/15 px-1.5 py-0.5 text-white/50 hover:bg-white/10"
+                    onClick={() => nudgeTrim("inSec", -0.5)}
+                  >
+                    −
+                  </button>
+                  <span className="min-w-[2.5rem] text-center font-mono text-white/90">
+                    {activeTrim.inSec}
+                  </span>
+                  <button
+                    type="button"
+                    className="rounded border border-white/15 px-1.5 py-0.5 text-white/50 hover:bg-white/10"
+                    onClick={() => nudgeTrim("inSec", 0.5)}
+                  >
+                    +
+                  </button>
+                </label>
+                <label className="flex items-center gap-1 text-[10px] text-white/70">
+                  出点
+                  <button
+                    type="button"
+                    className="rounded border border-white/15 px-1.5 py-0.5 text-white/50 hover:bg-white/10"
+                    onClick={() => nudgeTrim("outSec", -0.5)}
+                  >
+                    −
+                  </button>
+                  <span className="min-w-[2.5rem] text-center font-mono text-white/90">
+                    {activeTrim.outSec}
+                  </span>
+                  <button
+                    type="button"
+                    className="rounded border border-white/15 px-1.5 py-0.5 text-white/50 hover:bg-white/10"
+                    onClick={() => nudgeTrim("outSec", 0.5)}
+                  >
+                    +
+                  </button>
+                </label>
+                <span className="text-[9px] text-cyan-200/70">
+                  有效 {(activeTrim.outSec - activeTrim.inSec).toFixed(1)}s
+                </span>
+                <button
+                  type="button"
+                  onClick={resetTrim}
+                  className="text-[9px] text-white/40 underline-offset-2 hover:underline"
+                >
+                  重置
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-1 text-[10px] text-white/35">点选时间线上的片段以调节进出点</p>
+        )}
+      </div>
+
+      {/* 字幕轨数据 */}
+      {subtitleEnabled ? (
+        <div
+          data-manhua-edit-section="subtitle"
+          className="rounded-lg border border-white/10 bg-white/[0.02] p-2.5"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[10px] font-semibold text-white/70">
+              字幕轨数据 · {cues.length} 条（不烧字）
+            </div>
+            {srtPreview ? (
+              <button
+                type="button"
+                className="text-[9px] text-cyan-200/80 underline-offset-2 hover:underline"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(srtPreview);
+                }}
+              >
+                复制 SRT
+              </button>
+            ) : null}
+          </div>
+          {cues.length ? (
+            <ul className="mt-1.5 max-h-28 space-y-1 overflow-y-auto">
+              {cues.map((c) => (
+                <li
+                  key={`cue-${c.shotIndex}-${c.order}`}
+                  className="truncate text-[10px] text-white/55"
+                >
+                  <span className="font-mono text-white/35">
+                    {c.startSec}–{c.endSec}s
+                  </span>{" "}
+                  镜{c.shotIndex} 「{c.textZh}」
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-[10px] text-white/35">当前粗剪序无对白可铺字幕</p>
+          )}
+        </div>
+      ) : null}
+
+      {/* 包装动效 */}
+      <div
+        data-manhua-edit-section="motion"
+        className="rounded-lg border border-amber-400/15 bg-amber-500/[0.04] p-2.5"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 text-[10px] font-semibold text-amber-100/90">
+            <Sparkles className="h-3.5 w-3.5" />
+            包装动效
+            <span className="font-normal text-white/35">
+              可选 · 最多 {MANHUA_EDIT_MOTION_MAX} 条
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {MANHUA_EDIT_MOTION_CATEGORIES.map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setMotionCat(cat)}
+                className={`rounded border px-1.5 py-0.5 text-[8px] ${
+                  motionCat === cat
+                    ? "border-amber-400/40 bg-amber-500/20 text-amber-50"
+                    : "border-white/10 bg-black/30 text-white/45"
+                }`}
+              >
+                {manhuaEditMotionCategoryLabel(cat)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1">
+          {motionEntries.map((e) => {
+            const on = motionPromptIds.includes(e.id);
+            return (
+              <button
+                key={e.id}
+                type="button"
+                title={`${e.effectZh}\n${e.whenToUseZh}`}
+                onClick={() =>
+                  onMotionPromptIdsChange(toggleManhuaEditMotionId(motionPromptIds, e.id))
+                }
+                className={`rounded border px-1.5 py-0.5 text-[9px] ${
+                  on
+                    ? "border-amber-400/45 bg-amber-500/25 text-amber-50"
+                    : "border-white/10 bg-black/40 text-white/55 hover:border-white/25"
+                }`}
+              >
+                {e.nameZh}
+              </button>
+            );
+          })}
+        </div>
+        {motionInject ? (
+          <pre className="mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap rounded border border-white/10 bg-black/40 p-2 text-[9px] leading-relaxed text-white/45">
+            {motionInject}
+          </pre>
+        ) : (
+          <p className="mt-1.5 text-[10px] text-white/35">未选包装；成片可按题材自动建议</p>
+        )}
       </div>
 
       <div className="rounded-lg border border-white/10 bg-white/[0.02] p-2">
