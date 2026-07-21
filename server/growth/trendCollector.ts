@@ -9,7 +9,10 @@ import { getKuaishouCreatorSeeds, getKuaishouDiscoveryKeywords, getPlatformSeeds
 import { nowShanghaiIso, toShanghaiIso } from "./time";
 import { normalizeStringList } from "./trendNormalize";
 import { getAdaptiveRouteDecision, prioritizeAdaptiveSeeds, recordAdaptiveRouteRun, recordAdaptiveSeedRun } from "./trendAdaptiveConfig";
-import { normalizeManhuaMixNameKey } from "../../shared/manhuaDramaClassify";
+import {
+  normalizeManhuaMixNameKey,
+  shouldMarkDouyinMixAsDrama,
+} from "../../shared/manhuaDramaClassify";
 
 export type TrendSource = "live" | "seed";
 
@@ -110,7 +113,7 @@ export function inferDouyinDramaKind(text: string, tags: string[] = []): DouyinD
   return "unknown";
 }
 
-/** 从 aweme.mix_info 提取短剧合集字段 */
+/** 从 aweme.mix_info 提取短剧合集字段（普通短视频合集不标 isDrama） */
 export function dramaMetaFromDouyinAweme(
   item: unknown,
   fallbackTitle = "",
@@ -123,7 +126,7 @@ export function dramaMetaFromDouyinAweme(
 
   const mixId = String(mix.mix_id ?? mix.mixId ?? mix.mix_id_str ?? "").trim();
   const mixName = String(mix.mix_name ?? mix.mixName ?? mix.title ?? "").trim();
-  if (!mixId && !mixName) return { isDrama: true, dramaKind: "unknown" };
+  if (!mixId && !mixName) return {};
 
   const statis = mix.statis ?? mix.stats ?? mix.statistics ?? {};
   const currentEpisode = Number(statis.current_episode ?? statis.currentEpisode ?? mix.current_episode ?? 0) || undefined;
@@ -144,17 +147,22 @@ export function dramaMetaFromDouyinAweme(
     ?? 0,
   ) || undefined;
 
-  const dramaKind = inferDouyinDramaKind(
-    `${mixName} ${fallbackTitle} ${String(it.desc ?? "")}`,
-    fallbackTags,
-  );
+  const marked = shouldMarkDouyinMixAsDrama({
+    mixId,
+    mixName,
+    title: `${fallbackTitle} ${String(it.desc ?? "")}`.trim(),
+    tags: fallbackTags,
+    totalEpisodes,
+    currentEpisode,
+  });
+  if (!marked.isDrama) return {};
 
   return {
     isDrama: true,
-    dramaKind,
+    dramaKind: marked.dramaKind,
     dramaInfo: {
       mixId: mixId || mixName,
-      mixName: mixName || mixId || fallbackTitle || "未命名合集",
+      mixName: mixName || mixId,
       currentEpisode,
       totalEpisodes,
       mixPlayCount,

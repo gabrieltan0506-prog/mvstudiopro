@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildManhuaDramaDisplayTagsZh,
   extractManhuaDramaTagLabelsZh,
   inferManhuaDramaKind,
   isManhuaDramaMixCandidate,
+  looksLikeShortVideoCaption,
   manhuaDramaCategoryLabelZh,
   normalizeManhuaMixNameKey,
+  shouldMarkDouyinMixAsDrama,
 } from "./manhuaDramaClassify";
 
 describe("manhuaDramaClassify", () => {
@@ -12,6 +15,9 @@ describe("manhuaDramaClassify", () => {
     expect(inferManhuaDramaKind("重生漫剧开荒")).toBe("ai_manhua");
     expect(inferManhuaDramaKind("红果竖屏短剧")).toBe("short_drama");
     expect(inferManhuaDramaKind("今日天气不错")).toBe("unknown");
+    // 成片标题偶然出现「短剧」、合集名无信号 → 不标短剧
+    expect(inferManhuaDramaKind("今日推荐几个短剧看看", [], "日常剪辑合集")).toBe("unknown");
+    expect(inferManhuaDramaKind("第3集更新", [], "都市逆袭短剧")).toBe("short_drama");
   });
 
   it("extracts soft tags", () => {
@@ -19,6 +25,17 @@ describe("manhuaDramaClassify", () => {
     expect(tags).toContain("重生");
     expect(tags).toContain("仙侠");
     expect(tags).toContain("系统");
+  });
+
+  it("display tags include AI+漫剧 or AI+短剧", () => {
+    const manhua = buildManhuaDramaDisplayTagsZh("ai_manhua", "重生漫剧开局");
+    expect(manhua.slice(0, 2)).toEqual(["AI", "漫剧"]);
+    const aiShort = buildManhuaDramaDisplayTagsZh("short_drama", "AI短剧都市逆袭", [], 5);
+    expect(aiShort).toContain("AI");
+    expect(aiShort).toContain("短剧");
+    const plainShort = buildManhuaDramaDisplayTagsZh("short_drama", "红果竖屏剧连载");
+    expect(plainShort[0]).toBe("短剧");
+    expect(plainShort).not.toContain("AI");
   });
 
   it("normalizes mix name key", () => {
@@ -29,6 +46,27 @@ describe("manhuaDramaClassify", () => {
     expect(manhuaDramaCategoryLabelZh("ai_manhua")).toBe("AI漫剧");
     expect(manhuaDramaCategoryLabelZh("short_drama")).toBe("短剧合集");
     expect(manhuaDramaCategoryLabelZh("unknown")).toBe("待判定");
+  });
+
+  it("rejects short-video captions posing as mix names", () => {
+    expect(looksLikeShortVideoCaption("一人一句动漫")).toBe(true);
+    expect(looksLikeShortVideoCaption("给他点学术滴 #music #唯美动漫插画")).toBe(true);
+    expect(looksLikeShortVideoCaption("重生漫剧开局团宠")).toBe(false);
+    expect(
+      isManhuaDramaMixCandidate({
+        isDrama: true,
+        dramaKind: "unknown",
+        mixId: "x1",
+        mixName: "一人一句动漫",
+      }),
+    ).toBe(false);
+    expect(
+      shouldMarkDouyinMixAsDrama({
+        mixId: "x1",
+        mixName: "一人一句动漫",
+        title: "未来日记混剪",
+      }).isDrama,
+    ).toBe(false);
   });
 
   it("candidate gate", () => {
@@ -43,9 +81,26 @@ describe("manhuaDramaClassify", () => {
       isManhuaDramaMixCandidate({
         isDrama: true,
         dramaKind: "short_drama",
-        mixName: "乙",
+        mixName: "乙短剧",
       }),
     ).toBe(true);
+    // dramaKind 误标 short_drama 但合集名无短剧信号 → 不进榜
+    expect(
+      isManhuaDramaMixCandidate({
+        isDrama: true,
+        dramaKind: "short_drama",
+        mixName: "日常vlog",
+      }),
+    ).toBe(false);
     expect(isManhuaDramaMixCandidate({ title: "无关口播" })).toBe(false);
+    // 仅有 mix_info、无剧类词、无多集结构 → 不进榜
+    expect(
+      isManhuaDramaMixCandidate({
+        isDrama: true,
+        dramaKind: "unknown",
+        mixId: "m-cap",
+        mixName: "看着屏幕上的主要小伙伴",
+      }),
+    ).toBe(false);
   });
 });

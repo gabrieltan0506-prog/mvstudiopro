@@ -1,6 +1,7 @@
 import type { DouyinDramaKind, TrendItem } from "./trendCollector";
 import {
-  extractManhuaDramaTagLabelsZh,
+  AI_MANHUA_RISING_BOARD_LIMIT,
+  buildManhuaDramaDisplayTagsZh,
   isManhuaDramaMixCandidate,
   manhuaDramaCategoryLabelZh,
   type ManhuaDramaPlatform,
@@ -63,9 +64,12 @@ function isDramaMixCandidate(item: TrendItem): boolean {
   return isManhuaDramaMixCandidate({
     isDrama: item.isDrama,
     dramaKind: item.dramaKind,
+    mixId: item.dramaInfo?.mixId,
     mixName: item.dramaInfo?.mixName,
     title: item.title,
     tags: item.tags,
+    totalEpisodes: item.dramaInfo?.totalEpisodes,
+    currentEpisode: item.dramaInfo?.currentEpisode,
   });
 }
 
@@ -101,7 +105,11 @@ export function buildAiManhuaRisingBoard(params: {
 }): AiManhuaRisingBoard {
   const platform = params.platform || "douyin";
   const windowDays = Math.max(3, Math.min(30, Number(params.windowDays) || 7));
-  const limit = Math.max(3, Math.min(30, Number(params.limit) || 10));
+  // 1–15 部均可展示（默认最多 15；不足亦展示）
+  const limit = Math.max(
+    1,
+    Math.min(AI_MANHUA_RISING_BOARD_LIMIT, Number(params.limit) || AI_MANHUA_RISING_BOARD_LIMIT),
+  );
   const now = params.nowIso ? new Date(params.nowIso) : new Date();
   const cutoffMs = now.getTime() - windowDays * 24 * 60 * 60 * 1000;
 
@@ -144,18 +152,26 @@ export function buildAiManhuaRisingBoard(params: {
   for (const item of params.items) {
     if (!isDramaMixCandidate(item)) continue;
     const mixId = String(item.dramaInfo?.mixId || "").trim();
-    const mixName = String(item.dramaInfo?.mixName || item.title || "").trim();
-    if (!mixId && !mixName) continue;
+    // 剧名只用合集名，禁止用短视频文案标题冒充剧名
+    const mixName = String(item.dramaInfo?.mixName || "").trim();
+    if (!mixName) continue;
     const key = mixId || mixName;
     const publishedMs = item.publishedAt ? new Date(item.publishedAt).getTime() : NaN;
     const publishedWithin7d = Number.isFinite(publishedMs) && publishedMs >= cutoffMs;
     const prev = byMix.get(key);
     const mixPlayCount = Math.max(proxyPlayCount(item), prev?.mixPlayCount || 0);
-    const tags = extractManhuaDramaTagLabelsZh(
+    const nextKind =
+      item.dramaKind === "ai_manhua" || prev?.dramaKind === "ai_manhua"
+        ? "ai_manhua"
+        : item.dramaKind === "short_drama" || prev?.dramaKind === "short_drama"
+          ? "short_drama"
+          : ((item.dramaKind || prev?.dramaKind || "unknown") as DouyinDramaKind);
+    const tags = buildManhuaDramaDisplayTagsZh(
+      nextKind,
       `${mixName} ${item.title || ""}`,
       item.tags || [],
     );
-    const mergedTags = Array.from(new Set([...(prev?.tagLabelsZh || []), ...tags])).slice(0, 4);
+    const mergedTags = Array.from(new Set([...(prev?.tagLabelsZh || []), ...tags])).slice(0, 5);
     // 快手：优先保留已有样本链；无链不在此处硬编假合集页
     const nextUrl =
       platform === "kuaishou"
@@ -164,12 +180,7 @@ export function buildAiManhuaRisingBoard(params: {
     byMix.set(key, {
       mixId: key,
       mixName: mixName || prev?.mixName || key,
-      dramaKind:
-        item.dramaKind === "ai_manhua" || prev?.dramaKind === "ai_manhua"
-          ? "ai_manhua"
-          : item.dramaKind === "short_drama" || prev?.dramaKind === "short_drama"
-            ? "short_drama"
-            : ((item.dramaKind || prev?.dramaKind || "unknown") as DouyinDramaKind),
+      dramaKind: nextKind,
       tagLabelsZh: mergedTags,
       mixPlayCount,
       episodeSample: item.dramaInfo?.currentEpisode ?? prev?.episodeSample,
@@ -247,7 +258,7 @@ export function buildAiManhuaRisingByPlatform(params: {
 }): AiManhuaRisingByPlatform {
   const common = {
     windowDays: params.windowDays,
-    limit: params.limit ?? 10,
+    limit: params.limit ?? AI_MANHUA_RISING_BOARD_LIMIT,
     storeReadFailed: params.storeReadFailed,
   };
   return {
