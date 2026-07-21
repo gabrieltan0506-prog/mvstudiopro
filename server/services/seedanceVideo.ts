@@ -46,8 +46,7 @@ export async function mirrorSeedanceMp4ToGcsSignedUrl(sourceVideoUrl: string): P
 }
 
 /**
- * @deprecated Seedance 已停用 fal / Ark 直连；请改走 `runEvolinkSeedanceVideo`（EvoLink）。
- * 保留本函数签名仅为避免旧 import 在编译期静默落到 fal。
+ * @deprecated 请改走 `runOpenRouterSeedanceVideo`（2.0 / 2.0-fast）或探针 `runEvolinkSeedanceVideo`（Mini）。
  */
 export async function runSeedanceImageToVideo(_input: {
   prompt: string;
@@ -59,6 +58,6 @@ export async function runSeedanceImageToVideo(_input: {
   endImageUrl?: string;
 }): Promise<{ videoUrl: string; seed: number }> {
   throw new Error(
-    "Seedance fal/Ark 路径已停用；请配置 EVOLINK_API_KEY 并调用 runEvolinkSeedanceVideo",
+    "请配置 OPENROUTER_API_KEY 并调用 runOpenRouterSeedanceVideo（成片·标准/快速）",
   );
 }

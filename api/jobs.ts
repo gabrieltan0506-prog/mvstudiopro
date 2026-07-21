@@ -3160,7 +3160,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw: rawOut });
     }
 
-    /** ByteDance Seedance（仅 EvoLink：文生/图生/参考生；不再回退 fal） */
+    /**
+     * Seedance：产品档 2.0 / 2.0-fast → OpenRouter（不回退 EvoLink）。
+     * 已去掉产品侧 Mini 选项；仅 `probe=1` 内部探针可走 EvoLink Mini。
+     * 2.5 仍走独立 op=seedance25。
+     */
     if (op === "seedanceI2V") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -3178,28 +3182,86 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         ? b.audioUrls.map((u: unknown) => s(u)).filter(Boolean)
         : undefined;
 
+      const {
+        parseSeedanceProductVersion,
+        isOpenRouterSeedanceVersion,
+        normalizeSeedanceOpenRouterQuality,
+      } = await import("../shared/seedanceOpenRouterModels.js");
       const { parseSeedanceVersion, normalizeSeedanceQuality } = await import(
         "../shared/seedanceEvolinkModels.js"
       );
-      const seedanceVersion = parseSeedanceVersion(b.version || q.version || "2.0");
-      const resolution = normalizeSeedanceQuality(
-        seedanceVersion,
-        b.resolution || q.resolution || (seedanceVersion === "2.0-mini" ? "480p" : "720p"),
-      );
+      const isProbe =
+        b.probe === true || String(b.probe ?? q.probe ?? "").trim() === "1";
+      let productVersion = parseSeedanceProductVersion(b.version || q.version || "2.0");
+      // 产品侧已移除 Mini：非探针请求把 mini 改走快速档
+      if (productVersion === "2.0-mini" && !isProbe) {
+        productVersion = "2.0-fast";
+      }
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9";
-      const duration = parseSeedanceDurationInput(
-        b.duration ?? q.duration ?? b.durationSec ?? (seedanceVersion === "2.0-mini" ? 5 : 15),
+      const generateAudio = !(
+        String(b.generateAudio ?? q.generateAudio ?? "1").trim() === "0" || b.generateAudio === false
       );
-      const generateAudio = !(String(b.generateAudio ?? q.generateAudio ?? "1").trim() === "0" || b.generateAudio === false);
 
       try {
+        if (isOpenRouterSeedanceVersion(productVersion)) {
+          const { isOpenRouterSeedanceConfigured, runOpenRouterSeedanceVideo } = await import(
+            "../server/services/openrouterSeedanceVideo.js"
+          );
+          if (!isOpenRouterSeedanceConfigured()) {
+            return res.status(503).json({
+              ok: false,
+              error: "视频服务暂不可用，请稍后重试",
+            });
+          }
+          const resolution = normalizeSeedanceOpenRouterQuality(
+            productVersion,
+            b.resolution || q.resolution || "720p",
+          );
+          const duration = parseSeedanceDurationInput(
+            b.duration ?? q.duration ?? b.durationSec ?? 15,
+          );
+          const out = await runOpenRouterSeedanceVideo({
+            prompt,
+            imageUrl,
+            imageUrls,
+            quality: resolution,
+            aspectRatio,
+            duration: typeof duration === "number" ? duration : 15,
+            generateAudio,
+            version: productVersion,
+          });
+          return res.status(200).json({
+            ok: true,
+            videoUrl: out.videoUrl,
+            provider: out.provider,
+            model: out.model,
+            version: out.version,
+            resolution,
+          });
+        }
+
+        // 仅探针 Mini / 未映射版本走 EvoLink
+        const seedanceVersion = parseSeedanceVersion(productVersion);
+        if (seedanceVersion !== "2.0-mini" && seedanceVersion !== "2.5") {
+          return res.status(400).json({
+            ok: false,
+            error: "请使用成片·标准或成片·快速",
+          });
+        }
+        const resolution = normalizeSeedanceQuality(
+          seedanceVersion,
+          b.resolution || q.resolution || (seedanceVersion === "2.0-mini" ? "480p" : "720p"),
+        );
+        const duration = parseSeedanceDurationInput(
+          b.duration ?? q.duration ?? b.durationSec ?? (seedanceVersion === "2.0-mini" ? 5 : 15),
+        );
         const { isEvolinkSeedanceConfigured, runEvolinkSeedanceVideo } = await import(
           "../server/services/evolinkSeedanceVideo.js"
         );
         if (!isEvolinkSeedanceConfigured()) {
           return res.status(503).json({
             ok: false,
-            error: "EVOLINK_API_KEY 未配置，Seedance 仅支持 EvoLink（已停用 fal 回退）",
+            error: "视频服务暂不可用，请稍后重试",
           });
         }
         const out = await runEvolinkSeedanceVideo({

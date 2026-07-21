@@ -31,7 +31,7 @@ export function normalizeCanvasTextModel(raw: unknown): CanvasTextModel {
   return DEFAULT_CANVAS_TEXT_MODEL;
 }
 export type CanvasImageModel = "nano-banana-2" | "gpt-image-2";
-export type CanvasVideoModel = "gemini-omni-flash" | "seedance-2.0";
+export type CanvasVideoModel = "gemini-omni-flash" | "seedance-2.0" | "seedance-2.0-fast";
 /** 文生图 vs 改图（EvoLink image_urls edit） */
 export type CanvasImageMode = "generate" | "edit";
 
@@ -186,7 +186,8 @@ export const IMAGE_MODEL_OPTIONS: Array<{ id: CanvasImageModel; label: string }>
 
 export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }> = [
   { id: "gemini-omni-flash", label: "默认成片引擎" },
-  { id: "seedance-2.0", label: "高画质成片（预留·完工验收）" },
+  { id: "seedance-2.0", label: "成片·标准" },
+  { id: "seedance-2.0-fast", label: "成片·快速" },
 ];
 
 export const SPAWN_KIND_OPTIONS: Array<{ kind: CanvasBlockKind; label: string; hint: string }> = [
@@ -236,13 +237,15 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
 export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
   const rawVideoModel = block.videoModel as string | undefined;
   const videoModel: CanvasVideoModel =
-    rawVideoModel === "seedance-2.0"
-      ? "seedance-2.0"
-      : rawVideoModel === "veo-3.1"
-        ? "gemini-omni-flash"
-        : rawVideoModel === "gemini-omni-flash"
+    rawVideoModel === "seedance-2.0-fast"
+      ? "seedance-2.0-fast"
+      : rawVideoModel === "seedance-2.0"
+        ? "seedance-2.0"
+        : rawVideoModel === "veo-3.1"
           ? "gemini-omni-flash"
-          : "gemini-omni-flash";
+          : rawVideoModel === "gemini-omni-flash"
+            ? "gemini-omni-flash"
+            : "gemini-omni-flash";
 
   return {
     ...block,
