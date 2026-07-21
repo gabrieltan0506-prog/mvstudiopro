@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "noteZh": "仅公开报道/文章 URL；扫描脚本只产出 proposals，不进审定库",
+  "sources": [
+    {
+      "id": "thepaper_ai_manhua_2026",
+      "url": "https://www.thepaper.cn/newsDetail_forward_33588420",
+      "labelZh": "澎湃·AI漫剧相关"
+    },
+    {
+      "id": "tmtpost_ai_manhua_2026",
+      "url": "https://www.tmtpost.com/7890548.html",
+      "labelZh": "钛媒体·AI漫剧相关"
+    },
+    {
+      "id": "oeeee_ai_manhua_2026",
+      "url": "https://www.oeeee.com/html/202604/29/1702585.html",
+      "labelZh": "南都·AI漫剧相关"
+    }
+  ]
+}

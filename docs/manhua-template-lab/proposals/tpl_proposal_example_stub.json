@@ -1,0 +1,32 @@
+{
+  "id": "tpl_proposal_example_stub",
+  "nameZh": "提案格式示例（勿进产品）",
+  "laneZh": "悬疑权谋",
+  "summaryZh": "仅演示 proposals 字段形状；status 非 approved 不会出现在编剧室。",
+  "hook3sZh": "开场密信被拆一半，门外脚步逼近。",
+  "beatGrid": [
+    { "atSec": 0, "conflictZh": "密信半揭", "visualZh": "烛火下撕信" },
+    { "atSec": 90, "conflictZh": "身份反转", "visualZh": "面具落地" },
+    { "atSec": 165, "conflictZh": "片尾钩子", "visualZh": "门外刀锋映窗" }
+  ],
+  "scenePoolHints": ["密室", "宫墙", "夜巷"],
+  "castShape": {
+    "leadDesireZh": "揭开谁封口",
+    "pressureZh": "朝堂追杀",
+    "foilZh": "表面盟友"
+  },
+  "densityHints": {
+    "minBodyChars": 280,
+    "minDialogueLines": 8,
+    "minLocationHits": 2
+  },
+  "sourceRefs": [
+    {
+      "url": "https://example.com/stub",
+      "fetchedAt": "2026-07-21",
+      "noteZh": "示例 stub，可删"
+    }
+  ],
+  "status": "rejected",
+  "updatedAt": "2026-07-21T00:00:00.000Z"
+}

@@ -7630,6 +7630,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           topic: z.string().max(500).optional(),
           brief: z.string().max(2000).optional(),
           episodeCount: z.number().int().min(2).max(6).optional(),
+          /** 审定节奏模板 id（tpl_*） */
+          viralTemplateId: z.string().max(64).optional(),
         }),
       )
       .mutation(async ({ input }) => {
@@ -7649,7 +7651,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         } = await import("../shared/manhuaWriterRoom.js");
         const { invokeGpt56ResponsesText } = await import("./services/gpt56ResponsesClient.js");
         const episodeCount = clampWriterEpisodeCount(input.episodeCount);
-        const prompt = buildManhuaWriterExpandPrompt({ topic, brief, episodeCount });
+        const prompt = buildManhuaWriterExpandPrompt({
+          topic,
+          brief,
+          episodeCount,
+          viralTemplateId: input.viralTemplateId,
+        });
         let markdown = "";
         try {
           markdown = await invokeGpt56ResponsesText({

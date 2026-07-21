@@ -76,6 +76,11 @@ import {
   type ManhuaProjectBible,
 } from "@shared/manhuaProjectBible";
 import {
+  evaluateWriterPackAssetAndDensity,
+  formatWriterAssetCanonFactoryAddon,
+  formatWriterAssetCanonIdentityLock,
+} from "@shared/manhuaWriterAssetCanon";
+import {
   loadManhuaWriterSessionFromStorage,
   saveManhuaWriterSessionToStorage,
 } from "@shared/manhuaWriterSession";
@@ -161,6 +166,10 @@ import {
   writerPackLooksReady,
   type ManhuaWriterPack,
 } from "@shared/manhuaWriterRoom";
+import {
+  getManhuaViralTemplate,
+  listApprovedManhuaViralTemplatesGrouped,
+} from "@shared/manhuaViralTemplateBank";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
 import {
@@ -416,6 +425,9 @@ export default function OmniCanvas() {
   const [factoryAdvancedOpen, setFactoryAdvancedOpen] = useState(false);
   const [factoryProgress, setFactoryProgress] = useState<string>("");
   const [writerBrief, setWriterBrief] = useState(() => initialWriterSession?.brief || "");
+  const [viralTemplateId, setViralTemplateId] = useState(
+    () => String(initialWriterSession?.viralTemplateId || "").trim(),
+  );
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(() =>
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
   );
@@ -918,6 +930,7 @@ export default function OmniCanvas() {
         workflowPhase,
         customAssetRefs,
         shareAssetToLibrary,
+        viralTemplateId,
       });
     } catch {
       /* 本机权限/配额失败：不阻断云端通路 */
@@ -936,6 +949,7 @@ export default function OmniCanvas() {
     workflowPhase,
     customAssetRefs,
     shareAssetToLibrary,
+    viralTemplateId,
   ]);
 
   const applyCloudDraftToUi = useCallback((draft: ManhuaCloudDraftPayload) => {
@@ -956,6 +970,7 @@ export default function OmniCanvas() {
     setAssetsSkipped(Boolean(session.assetsSkipped));
     setCustomAssetRefs(normalizeManhuaCustomAssetRefs(session.customAssetRefs));
     setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
+    setViralTemplateId(String(session.viralTemplateId || "").trim());
     setWorkflowPhase(
       session.workflowPhase === "assets" ||
         session.workflowPhase === "storyboard" ||
@@ -1094,6 +1109,7 @@ export default function OmniCanvas() {
       workflowPhase,
       customAssetRefs,
       shareAssetToLibrary,
+      viralTemplateId,
     };
     // 本机双写补强（与既有 LS effect 叠加；失败不阻断）
     persistManhuaDraftLocally({
@@ -1144,6 +1160,7 @@ export default function OmniCanvas() {
     workflowPhase,
     customAssetRefs,
     shareAssetToLibrary,
+    viralTemplateId,
     blocks,
     edges,
     factoryFemaleId,
@@ -1428,8 +1445,13 @@ export default function OmniCanvas() {
   }, []);
   const writerContext = useMemo(() => {
     if (!writerConfirmed || !writerPack) return undefined;
-    return composeWriterPackFactoryContext(writerPack, writerFocusEpisode);
-  }, [writerConfirmed, writerPack, writerFocusEpisode]);
+    const addon = projectBible?.assetCanon
+      ? formatWriterAssetCanonFactoryAddon(projectBible.assetCanon, writerFocusEpisode)
+      : "";
+    return composeWriterPackFactoryContext(writerPack, writerFocusEpisode, {
+      assetCanonAddonZh: addon || undefined,
+    });
+  }, [writerConfirmed, writerPack, writerFocusEpisode, projectBible?.assetCanon]);
 
   const optimizeCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
   const expandWriterMutation = trpc.mvAnalysis.expandManhuaWriterPack.useMutation();
@@ -1733,7 +1755,14 @@ export default function OmniCanvas() {
             };
       const focusCtx =
         writerConfirmed && writerPack
-          ? composeWriterPackFactoryContext(writerPack, continuity.episodeIndex)
+          ? composeWriterPackFactoryContext(writerPack, continuity.episodeIndex, {
+              assetCanonAddonZh: projectBible?.assetCanon
+                ? formatWriterAssetCanonFactoryAddon(
+                    projectBible.assetCanon,
+                    continuity.episodeIndex,
+                  )
+                : undefined,
+            })
           : writerContext;
       const hardCast =
         writerConfirmed || directorUnlocked
@@ -1742,6 +1771,11 @@ export default function OmniCanvas() {
               charactersMd: writerPack?.charactersMd,
             })
           : null;
+      const identityFromCanon = projectBible?.assetCanon
+        ? formatWriterAssetCanonIdentityLock(projectBible.assetCanon, {
+            episodeIndex: continuity.episodeIndex,
+          })
+        : "";
       let spawned = spawnManhuaDramaStudio({
         originX: 60,
         originY: 80 + Math.max(0, continuity.episodeIndex - 1) * 420,
@@ -1752,7 +1786,11 @@ export default function OmniCanvas() {
         propIds: hardCast?.propIds ?? factoryPropIds,
         characterIds: hardCast?.characterIds ?? selectedCharacterIds,
         ancientArchetypeIds: hardCast?.ancientArchetypeIds ?? factoryAncientArchetypeIds,
-        identityLockZh: hardCast?.identityLockZh || factoryIdentityLockZh || castBundle.identityLockZh,
+        identityLockZh:
+          identityFromCanon ||
+          hardCast?.identityLockZh ||
+          factoryIdentityLockZh ||
+          castBundle.identityLockZh,
         artStyleId: factoryArtStyleId,
         motionPromptIds: selectedMotionIds,
         craftShotIds: selectedCraftShotIds,
@@ -1836,6 +1874,7 @@ export default function OmniCanvas() {
       writerConfirmed,
       writerPack,
       writerFocusEpisode,
+      projectBible?.assetCanon,
       remapDockSelectionAfterSpawn,
     ],
   );
@@ -1869,6 +1908,7 @@ export default function OmniCanvas() {
         topic,
         brief: mergedBrief || undefined,
         episodeCount: count,
+        viralTemplateId: viralTemplateId || undefined,
       });
       const pack = res.pack;
       if (isPlaceholderSeriesTitle(pack.seriesTitle)) {
@@ -1908,11 +1948,21 @@ export default function OmniCanvas() {
     factoryTopic,
     writerBrief,
     writerEpisodeCount,
+    viralTemplateId,
     expandWriterMutation,
     selectedMaleHairstyleIds,
     selectedMaleMicroIds,
     pushDebug,
   ]);
+
+  const viralTemplateGrouped = useMemo(
+    () => listApprovedManhuaViralTemplatesGrouped(),
+    [],
+  );
+  const selectedViralTemplate = useMemo(
+    () => getManhuaViralTemplate(viralTemplateId),
+    [viralTemplateId],
+  );
 
   const importWriterRoomFromText = useCallback(
     (raw: string) => {
@@ -1981,18 +2031,42 @@ export default function OmniCanvas() {
       toast.error("请先扩写或导入剧本，并检查剧情包是否完整");
       return;
     }
+    const densityGate = evaluateWriterPackAssetAndDensity({
+      charactersMd: writerPack.charactersMd,
+      propsMd: writerPack.propsMd,
+      locationsMd: writerPack.locationsMd,
+      episodes: writerPack.episodes,
+      targetSec: 180,
+    });
+    if (!densityGate.ok) {
+      toast.error("剧本未过三分钟密度/资产表门禁", {
+        description: densityGate.errors.slice(0, 4).join("；"),
+      });
+      pushDebug("confirmWriterToDirector", {
+        level: "warn",
+        detail: densityGate.errors.join(" | ").slice(0, 500),
+      });
+      return;
+    }
+    const canon = densityGate.canon;
     setWriterConfirmed(true);
     setDirectorUnlocked(true);
     const topicForSpawn = factoryTopic.trim() || writerPack.seriesTitle || writerPack.logline || "连载短剧";
     if (!factoryTopic.trim()) {
       setFactoryTopic(topicForSpawn);
     }
-    // 1423：确认瞬间按剧本硬套 Cast，再铺板
+    // 库 Cast 仍作可选补充；身份锁与场景以编剧表真源为准
     const hardCast = resolveHardCastForSpawn({
       topicOverride: topicForSpawn,
       charactersMd: writerPack.charactersMd,
     });
-    const sceneForBible = factorySceneId || recommendedScene?.id || "";
+    const continuity = resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, writerFocusEpisode);
+    const mainSceneId =
+      canon.episodeMainSceneId[continuity.episodeIndex] || canon.locations[0]?.id || "";
+    const identityFromCanon = formatWriterAssetCanonIdentityLock(canon, {
+      episodeIndex: continuity.episodeIndex,
+    });
+    const sceneForBible = mainSceneId || factorySceneId || recommendedScene?.id || "";
     const bible = buildManhuaProjectBible({
       topic: topicForSpawn,
       pack: writerPack,
@@ -2004,9 +2078,10 @@ export default function OmniCanvas() {
         sceneId: sceneForBible || undefined,
         propIds: hardCast.propIds,
         wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
-        identityLockZh: hardCast.identityLockZh,
+        identityLockZh: identityFromCanon || hardCast.identityLockZh,
       },
-      focusEpisode: writerFocusEpisode,
+      focusEpisode: continuity.episodeIndex,
+      assetCanon: canon,
       manualOverrides: {
         femaleLead: femaleLeadManual,
         maleLead: maleLeadManual,
@@ -2018,7 +2093,7 @@ export default function OmniCanvas() {
       },
     });
     setProjectBible(bible);
-    const continuity = resolveManhuaEpisodeSpawnContinuity(writerPack.episodes, writerFocusEpisode);
+    setFactoryIdentityLockZh(identityFromCanon || hardCast.identityLockZh || "");
     const spawned = spawnManhuaDramaStudio({
       originX: 60,
       originY: 80 + Math.max(0, continuity.episodeIndex - 1) * 420,
@@ -2029,7 +2104,7 @@ export default function OmniCanvas() {
       propIds: hardCast.propIds,
       characterIds: hardCast.characterIds,
       ancientArchetypeIds: hardCast.ancientArchetypeIds,
-      identityLockZh: hardCast.identityLockZh,
+      identityLockZh: identityFromCanon || hardCast.identityLockZh,
       artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
@@ -2044,7 +2119,9 @@ export default function OmniCanvas() {
       wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
       videoReverseOutputMode: factoryReverseMode,
       customRefs: customAssetRefs,
-      writerContext: composeWriterPackFactoryContext(writerPack, continuity.episodeIndex),
+      writerContext: composeWriterPackFactoryContext(writerPack, continuity.episodeIndex, {
+        assetCanonAddonZh: formatWriterAssetCanonFactoryAddon(canon, continuity.episodeIndex),
+      }),
       includeDirectorCraft: true,
       episodeIndex: continuity.episodeIndex,
       episodeTitle: continuity.episodeTitle,
@@ -2072,19 +2149,20 @@ export default function OmniCanvas() {
     const tips = [
       continuity.previousEndingHook ? "上集钩子" : null,
       continuity.previouslyOnRecap ? "前情提要" : null,
+      `表人物${canon.characters.length}`,
+      `场景池${canon.locations.length}`,
+      mainSceneId ? `本集主场景已锁定` : null,
     ].filter(Boolean);
     pushDebug("confirmWriterToDirector", {
       level: "ok",
-      detail: `ep=${continuity.episodeIndex} · ${summarizeManhuaProjectBible(bible)} · props=${hardCast.propIds.join(",") || "—"}`,
+      detail: `ep=${continuity.episodeIndex} · ${summarizeManhuaProjectBible(bible)} · canonChars=${canon.characters.length} · mainScene=${mainSceneId || "—"}`,
     });
     setManhuaUiMode("workbench");
     setImmersiveExtrasOpen(false);
-    // 确认剧本后先进资产设定（角色/场景/道具已按剧本自动套用，可改画风）
+    // 确认剧本后先进资产设定：按人物表/场景池出设定图
     setWorkflowPhase("assets");
     toast.success(
-      tips.length
-        ? `已确认剧情；造型已预填。请自选仿真人/CG 并改资产，再进分镜（第${continuity.episodeIndex}集已含${tips.join("·")}）`
-        : `已确认剧情；造型已预填。请自选仿真人/CG、改角色场景道具，再进分镜出片`,
+      `已确认剧情并锁定编剧表资产（${tips.join("·")}）。请出齐角色图/本集主场景图后再进分镜`,
     );
   }, [
     writerPack,
@@ -2124,6 +2202,20 @@ export default function OmniCanvas() {
       toast.error("请先扩写并检查剧情包是否完整");
       return;
     }
+    const densityGate = evaluateWriterPackAssetAndDensity({
+      charactersMd: writerPack.charactersMd,
+      propsMd: writerPack.propsMd,
+      locationsMd: writerPack.locationsMd,
+      episodes: writerPack.episodes,
+      targetSec: 180,
+    });
+    if (!densityGate.ok) {
+      toast.error("剧本未过三分钟密度/资产表门禁", {
+        description: densityGate.errors.slice(0, 4).join("；"),
+      });
+      return;
+    }
+    const canon = densityGate.canon;
     const episodes = [...writerPack.episodes]
       .sort((a, b) => a.index - b.index)
       .slice(0, MANHUA_SERIES_SPAWN_MAX);
@@ -2149,7 +2241,12 @@ export default function OmniCanvas() {
       topicOverride: topicForSpawn,
       charactersMd: writerPack.charactersMd,
     });
-    const sceneForBible = factorySceneId || recommendedScene?.id || "";
+    const identityFromCanon = formatWriterAssetCanonIdentityLock(canon, {
+      episodeIndex: writerFocusEpisode,
+    });
+    const mainSceneId =
+      canon.episodeMainSceneId[writerFocusEpisode] || canon.locations[0]?.id || "";
+    const sceneForBible = mainSceneId || factorySceneId || recommendedScene?.id || "";
     setProjectBible(
       buildManhuaProjectBible({
         topic: topicForSpawn,
@@ -2162,9 +2259,10 @@ export default function OmniCanvas() {
           sceneId: sceneForBible || undefined,
           propIds: hardCast.propIds,
           wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
-          identityLockZh: hardCast.identityLockZh,
+          identityLockZh: identityFromCanon || hardCast.identityLockZh,
         },
         focusEpisode: writerFocusEpisode,
+        assetCanon: canon,
         manualOverrides: {
           femaleLead: femaleLeadManual,
           maleLead: maleLeadManual,
@@ -2176,6 +2274,7 @@ export default function OmniCanvas() {
         },
       }),
     );
+    setFactoryIdentityLockZh(identityFromCanon || hardCast.identityLockZh || "");
     setManhuaUiMode("workbench");
     const spawned = spawnManhuaDramaStudioSeries({
       originX: 60,
@@ -2187,7 +2286,7 @@ export default function OmniCanvas() {
       propIds: hardCast.propIds,
       characterIds: hardCast.characterIds,
       ancientArchetypeIds: hardCast.ancientArchetypeIds,
-      identityLockZh: hardCast.identityLockZh,
+      identityLockZh: identityFromCanon || hardCast.identityLockZh,
       artStyleId: factoryArtStyleId,
       motionPromptIds: selectedMotionIds,
       craftShotIds: selectedCraftShotIds,
@@ -2208,7 +2307,10 @@ export default function OmniCanvas() {
         endHook: ep.endHook,
         body: ep.body,
       })),
-      writerContextForEpisode: (ep) => composeWriterPackFactoryContext(writerPack, ep.index),
+      writerContextForEpisode: (ep) =>
+        composeWriterPackFactoryContext(writerPack, ep.index, {
+          assetCanonAddonZh: formatWriterAssetCanonFactoryAddon(canon, ep.index),
+        }),
       includeDirectorCraft: true,
       maxEpisodes: MANHUA_SERIES_SPAWN_MAX,
     });
@@ -2414,9 +2516,13 @@ export default function OmniCanvas() {
     ],
   );
 
-  /** 方案 B：锁定角色+场景后，先出齐角色图→场景图，再进分镜 */
+  /** 锁定角色+场景后，先出齐角色图→场景图，再进分镜（优先编剧表真源） */
   const confirmAssetsAndPrepareImages = useCallback(async () => {
-    const sceneId = factorySceneId || recommendedScene?.id || "";
+    const sceneId =
+      projectBible?.assetCanon?.episodeMainSceneId[writerFocusEpisode] ||
+      factorySceneId ||
+      recommendedScene?.id ||
+      "";
     const assetBlocks = blocks.filter(
       (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
     );
@@ -2427,12 +2533,16 @@ export default function OmniCanvas() {
       artStyleId: factoryArtStyleId,
       topic: factoryTopic,
       customRefs: customAssetRefs,
+      assetCanon: projectBible?.assetCanon,
+      episodeIndex: writerFocusEpisode,
       assetBlocks,
     };
     const gate = evaluateManhuaAssetImageGate(gateInput);
     if (!gate.castLocked || !gate.sceneLocked) {
       toast.message("请先准备人物与场景参考", {
-        description: "可上传并勾选人物/场景，或从库内选择；库内仅为参考。",
+        description: gate.viaWriterCanon
+          ? "请先确认剧本人物表与场景池，再出本集设定图。"
+          : "可上传并勾选人物/场景，或从库内选择；库内仅为参考。",
       });
       setWorkflowPhase("assets");
       setManhuaAssetDrawer(!gate.castLocked ? "characters" : "assets");
@@ -2545,9 +2655,11 @@ export default function OmniCanvas() {
     factoryBusy,
     factorySceneId,
     factoryTopic,
+    projectBible?.assetCanon,
     recommendedScene?.id,
     runDeps,
     selectedCharacterIds,
+    writerFocusEpisode,
   ]);
 
   const runFactory = useCallback(
@@ -2631,13 +2743,19 @@ export default function OmniCanvas() {
         /** A：出静帧/成片前强制资产门禁 + 注入人物/场景/画风（含重出） */
         const needsAssetLock = untilStage === "keyart" || untilStage === "clip";
         if (needsAssetLock) {
-          const sceneId = factorySceneId || recommendedScene?.id || "";
+          const sceneId =
+            projectBible?.assetCanon?.episodeMainSceneId[writerFocusEpisode] ||
+            factorySceneId ||
+            recommendedScene?.id ||
+            "";
           const gate = evaluateManhuaAssetImageGate({
             characterIds: selectedCharacterIds,
             ancientArchetypeIds: factoryAncientArchetypeIds,
             sceneId,
             artStyleId: factoryArtStyleId,
             customRefs: customAssetRefs,
+            assetCanon: projectBible?.assetCanon,
+            episodeIndex: writerFocusEpisode,
             assetBlocks: workingBlocks.filter(
               (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
             ),
@@ -2906,6 +3024,8 @@ export default function OmniCanvas() {
       customAssetRefs,
       recommendedScene?.id,
       castBundle.identityLockZh,
+      projectBible?.assetCanon,
+      writerFocusEpisode,
       runDeps,
       resolveRunEpisodeIndexes,
       pushDebug,
@@ -3104,10 +3224,16 @@ export default function OmniCanvas() {
                   assetsReady: evaluateManhuaAssetImageGate({
                     characterIds: selectedCharacterIds,
                     ancientArchetypeIds: factoryAncientArchetypeIds,
-                    sceneId: factorySceneId || recommendedScene?.id || "",
+                    sceneId:
+                      projectBible?.assetCanon?.episodeMainSceneId[writerFocusEpisode] ||
+                      factorySceneId ||
+                      recommendedScene?.id ||
+                      "",
                     artStyleId: factoryArtStyleId,
                     topic: factoryTopic,
                     customRefs: customAssetRefs,
+                    assetCanon: projectBible?.assetCanon,
+                    episodeIndex: writerFocusEpisode,
                     assetBlocks: blocks.filter(
                       (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
                     ),
@@ -3240,6 +3366,12 @@ export default function OmniCanvas() {
                   propIds={factoryPropIds}
                   artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
                   projectBibleSummary={summarizeManhuaProjectBible(projectBible)}
+                  assetCanon={projectBible?.assetCanon}
+                  viralTemplateLabelZh={
+                    selectedViralTemplate
+                      ? `${selectedViralTemplate.nameZh}（${selectedViralTemplate.laneZh}）`
+                      : undefined
+                  }
                   bibleBoundEpisodes={projectBible?.cast.boundEpisodeIndexes}
                   pathTrackLabelZh={pathTrackStatus.labelZh}
                   narrativeLightingLabelZh={narrativeLightingLabelZh}
@@ -3419,20 +3551,28 @@ export default function OmniCanvas() {
                     void runFactory("clip", { episodeIndexes: [writerFocusEpisode] });
                   }}
                   onGenerateAllEpisodeKeyarts={() => {
-                    const sceneId = factorySceneId || recommendedScene?.id || "";
+                    const sceneId =
+                      projectBible?.assetCanon?.episodeMainSceneId[writerFocusEpisode] ||
+                      factorySceneId ||
+                      recommendedScene?.id ||
+                      "";
                     const gate = evaluateManhuaAssetImageGate({
                       characterIds: selectedCharacterIds,
                       ancientArchetypeIds: factoryAncientArchetypeIds,
                       sceneId,
                       artStyleId: factoryArtStyleId,
                       customRefs: customAssetRefs,
+                      assetCanon: projectBible?.assetCanon,
+                      episodeIndex: writerFocusEpisode,
                       assetBlocks: blocks.filter(
                         (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
                       ),
                     });
                     if (!gate.ready) {
                       toast.message(gate.hintZh || "请先准备人物与场景参考", {
-                        description: "可上传勾选或基于库参考生成；库内仅为参考，不强制锁死。",
+                        description: gate.viaWriterCanon
+                          ? "请先出齐剧本表角色图与本集主场景图。"
+                          : "可上传勾选或基于库参考生成；库内仅为参考。",
                       });
                       setWorkflowPhase("assets");
                       setManhuaAssetDrawer(!gate.castLocked ? "characters" : "assets");
@@ -3739,6 +3879,53 @@ export default function OmniCanvas() {
                 placeholder={"例：\n主角隐忍多年后归来\n对手是旧日盟友\n每集结尾必须留下未揭的局"}
                 className="mt-1 w-full resize-y rounded-xl border border-white/15 bg-black/50 px-3.5 py-2.5 text-sm leading-6 text-white placeholder:text-white/30 outline-none focus:border-emerald-400/55 disabled:opacity-50"
               />
+              <div className="mt-3" data-manhua-viral-template>
+                <label className="block text-[11px] text-white/45">节奏模板（可选）</label>
+                <p className="mt-0.5 text-[10px] leading-4 text-white/35">
+                  审定骨架：前 3 秒钩子 + 约 180 秒节拍格；只借结构，不写外部剧名。不选则按题材自由扩写。
+                </p>
+                <div className="mt-2 space-y-2">
+                  {viralTemplateGrouped.map((group) => (
+                    <div key={group.laneZh}>
+                      <div className="mb-1 text-[10px] font-semibold text-white/40">
+                        {group.laneZh}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {group.items.map((tpl) => {
+                          const on = viralTemplateId === tpl.id;
+                          return (
+                            <button
+                              key={tpl.id}
+                              type="button"
+                              disabled={writerBusy || factoryBusy}
+                              title={tpl.summaryZh}
+                              onClick={() => {
+                                setViralTemplateId((prev) => (prev === tpl.id ? "" : tpl.id));
+                                setWriterConfirmed(false);
+                              }}
+                              className={`rounded-lg border px-2.5 py-1.5 text-left text-[11px] disabled:opacity-50 ${
+                                on
+                                  ? "border-amber-300/45 bg-amber-500/20 text-amber-50"
+                                  : "border-white/12 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]"
+                              }`}
+                            >
+                              <div className="font-semibold">{tpl.nameZh}</div>
+                              <div className="mt-0.5 max-w-[11rem] truncate text-[9px] text-white/40">
+                                {tpl.hook3sZh}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {selectedViralTemplate ? (
+                  <p className="mt-1.5 text-[10px] text-amber-100/70">
+                    已选「{selectedViralTemplate.nameZh}」· 扩写时注入节拍与密度建议
+                  </p>
+                ) : null}
+              </div>
               <div className="mt-3 flex flex-wrap items-end gap-2.5">
                 <div>
                   <label className="block text-[11px] text-white/45">集数</label>

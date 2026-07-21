@@ -2,8 +2,11 @@
  * Gemini Audio Analysis Service
  * Uses Google GenAI SDK to analyze music/audio files
  * Extracts: BPM, mood, rhythm changes, song structure, instrumentation, lyrics
+ *
+ * 漫剧学习抽帧：优先 `gemini-3.5-flash`（见 resolveGemini35FlashModelName / GEMINI_35_FLASH_MODEL）。
  */
 import { GoogleGenAI } from "@google/genai";
+import { resolveGemini35FlashModelName } from "./services/gemini35FlashRuntime.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
@@ -12,6 +15,18 @@ function getClient() {
     throw new Error("GEMINI_API_KEY is not configured");
   }
   return new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+}
+
+/** 音频分析默认：gemini-3.5-flash（与 Platform 趋势同款）；可用 GEMINI_AUDIO_MODEL 覆写 */
+export function resolveGeminiAudioModelName(): string {
+  const fromEnv = String(process.env.GEMINI_AUDIO_MODEL || "").trim();
+  if (fromEnv) return fromEnv;
+  const flash = resolveGemini35FlashModelName();
+  // 仅当环境已显式指定 3.5 flash 时沿用；否则音频链路默认 3.5（勿落到 3-flash-preview）
+  if (/gemini-3\.5-flash/i.test(flash)) return flash;
+  const growth = String(process.env.GROWTH_CAMP_EXTRACTOR_MODEL || "").trim();
+  if (/gemini-3\.5-flash/i.test(growth)) return growth;
+  return "gemini-3.5-flash";
 }
 
 export interface AudioAnalysisResult {
@@ -80,7 +95,7 @@ export async function analyzeAudioWithGemini(audioUrl: string): Promise<AudioAna
 请以 JSON 格式返回分析结果。`;
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.0-flash",
+    model: resolveGeminiAudioModelName(),
     contents: [
       {
         role: "user",
@@ -136,6 +151,120 @@ export async function analyzeAudioWithGemini(audioUrl: string): Promise<AudioAna
   if (!text) throw new Error("Gemini 未返回分析结果");
 
   return JSON.parse(text) as AudioAnalysisResult;
+}
+
+/** 漫剧/短剧音轨：分段 + 对白摘要 + 能量（供抽帧高潮加密） */
+export type ManhuaDramaAudioScanResult = {
+  model: string;
+  language: string;
+  transcriptSummary: string;
+  sections: Array<{
+    name: string;
+    timeRange: string;
+    mood: string;
+    energy: string;
+    lyrics?: string;
+  }>;
+};
+
+/** 方案 A：Fly 按 HTTPS/签名 URL 拉取后 inline 给 Gemini（不把大 base64 从本机塞进请求体） */
+export async function analyzeManhuaDramaAudioFromUrl(input: {
+  audioUrl: string;
+  mimeType?: string;
+  maxBytes?: number;
+}): Promise<ManhuaDramaAudioScanResult> {
+  const url = String(input.audioUrl || "").trim();
+  if (!url || !/^https?:\/\//i.test(url)) {
+    throw new Error("missing_or_invalid_audio_url");
+  }
+  const res = await fetch(url, {
+    redirect: "follow",
+    headers: { "User-Agent": "mvstudiopro/1.0 (+manhua-audio-climax)" },
+  });
+  if (!res.ok) throw new Error(`audio_fetch_failed:${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  const maxBytes = Math.max(1_000_000, Math.min(24 * 1024 * 1024, input.maxBytes ?? 18 * 1024 * 1024));
+  if (!buf.length) throw new Error("empty_audio");
+  if (buf.length > maxBytes) throw new Error(`audio_too_large:${buf.length}`);
+  const mimeType =
+    String(input.mimeType || "").trim() ||
+    String(res.headers.get("content-type") || "audio/mpeg").split(";")[0] ||
+    "audio/mpeg";
+  return analyzeManhuaDramaAudioWithGemini({
+    audioBase64: buf.toString("base64"),
+    mimeType,
+  });
+}
+
+export async function analyzeManhuaDramaAudioWithGemini(input: {
+  audioBase64: string;
+  mimeType?: string;
+}): Promise<ManhuaDramaAudioScanResult> {
+  const ai = getClient();
+  const model = resolveGeminiAudioModelName();
+  const mimeType = String(input.mimeType || "audio/mpeg").trim() || "audio/mpeg";
+  const systemPrompt = `你是竖屏短剧/漫剧听写与节奏分析助手。只根据音频输出 JSON，不要解释。
+任务：
+1. 尽量转写对白/旁白（可压缩，保留冲突与情绪词）。
+2. 按时间拆成 4～12 段，timeRange 用 m:ss-m:ss 或 秒-秒（如 0:00-0:15 或 58-72）。
+3. energy 用：低 / 中 / 高 / 极高。高潮、打脸、反转、对决、爆发段标「高」或「极高」，name 可用「开场钩子/对峙/反转/高潮/片尾钩」等中性名。
+4. 不要输出外部平台剧名、商标。`;
+
+  const response = await ai.models.generateContent({
+    model,
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { inlineData: { data: input.audioBase64, mimeType } },
+          { text: systemPrompt },
+        ],
+      },
+    ],
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "object" as any,
+        properties: {
+          language: { type: "string" as any },
+          transcriptSummary: { type: "string" as any },
+          sections: {
+            type: "array" as any,
+            items: {
+              type: "object" as any,
+              properties: {
+                name: { type: "string" as any },
+                timeRange: { type: "string" as any },
+                mood: { type: "string" as any },
+                energy: { type: "string" as any },
+                lyrics: { type: "string" as any },
+              },
+              required: ["name", "timeRange", "mood", "energy"],
+            },
+          },
+        },
+        required: ["language", "transcriptSummary", "sections"],
+      },
+    },
+  });
+
+  const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error("Gemini 未返回漫剧音频分析");
+  const parsed = JSON.parse(text) as Omit<ManhuaDramaAudioScanResult, "model">;
+  return {
+    model,
+    language: String(parsed.language || "").trim(),
+    transcriptSummary: String(parsed.transcriptSummary || "").trim(),
+    sections: Array.isArray(parsed.sections)
+      ? parsed.sections.map((s) => ({
+          name: String(s.name || "").trim(),
+          timeRange: String(s.timeRange || "").trim(),
+          mood: String(s.mood || "").trim(),
+          energy: String(s.energy || "").trim(),
+          lyrics: String(s.lyrics || "").trim() || undefined,
+        }))
+      : [],
+  };
 }
 
 /**

@@ -1,6 +1,6 @@
 /**
  * 漫剧资产门禁：剧本确认后，须锁定角色+场景，且本集设定卡/场景图齐，才解禁分镜。
- * B：库内示意封面不算齐；须 charsheet / sceneplate 产出，或用户上传勾选人物+场景。
+ * 优先编剧表真源（wa_*）；其次库 ID；或用户上传勾选人物+场景。
  */
 
 import {
@@ -16,6 +16,10 @@ import {
   hasCustomCastAndScene,
   type ManhuaCustomAssetRef,
 } from "./manhuaCustomAssetRefs.js";
+import {
+  resolveEpisodeMainScene,
+  type ManhuaWriterAssetCanon,
+} from "./manhuaWriterAssetCanon.js";
 
 export type ManhuaAssetImageGateInput = {
   characterIds?: string[];
@@ -25,6 +29,10 @@ export type ManhuaAssetImageGateInput = {
   topic?: string;
   /** 用户上传并勾选角色的参考图 */
   customRefs?: ManhuaCustomAssetRef[] | null;
+  /** 编剧表资产真源（方案 A） */
+  assetCanon?: ManhuaWriterAssetCanon | null;
+  /** 当前集号：决定主场景 */
+  episodeIndex?: number;
   /** 画布上已有的角色设定卡 / 场景设定图节点 */
   assetBlocks?: Array<{
     id: string;
@@ -40,6 +48,8 @@ export type ManhuaAssetImageGateResult = {
   sceneImageReady: boolean;
   /** 走用户上传勾选路径（不强制库内角色/场景） */
   viaCustomUpload: boolean;
+  /** 走编剧表真源锁定 */
+  viaWriterCanon: boolean;
   /** 角色+场景已锁定且本集设定图齐 → 可进分镜 */
   ready: boolean;
   missingCastIds: string[];
@@ -62,7 +72,10 @@ function findAssetBlock(
 
 /** 收集本集已出角色设定卡图 URL（供 CG 身份锁） */
 export function collectManhuaIdentityImageUrls(
-  input: Pick<ManhuaAssetImageGateInput, "characterIds" | "ancientArchetypeIds" | "customRefs" | "assetBlocks">,
+  input: Pick<
+    ManhuaAssetImageGateInput,
+    "characterIds" | "ancientArchetypeIds" | "customRefs" | "assetBlocks" | "assetCanon"
+  >,
 ): string[] {
   const urls: string[] = [];
   for (const c of customRefsByRole(input.customRefs, "character")) {
@@ -70,6 +83,7 @@ export function collectManhuaIdentityImageUrls(
     if (u && /^https?:\/\//i.test(u)) urls.push(u);
   }
   const castIds = [
+    ...(input.assetCanon?.characters.map((c) => c.id) || []),
     ...(input.characterIds || []),
     ...(input.ancientArchetypeIds || []),
   ]
@@ -94,6 +108,7 @@ export function evaluateManhuaAssetImageGate(
       castImagesReady: true,
       sceneImageReady: true,
       viaCustomUpload: true,
+      viaWriterCanon: false,
       ready: true,
       missingCastIds: [],
       missingScene: false,
@@ -101,23 +116,36 @@ export function evaluateManhuaAssetImageGate(
     };
   }
 
+  const canon = input.assetCanon;
+  const viaWriterCanon = Boolean(canon?.characters.length && canon.locations.length);
+  const ep = Math.max(1, Math.floor(input.episodeIndex || 1));
+  const mainScene = resolveEpisodeMainScene(canon, ep);
+  const writerSceneId = mainScene?.id || String(input.sceneId || "").trim();
+
   const characterIds = (input.characterIds || []).map((id) => String(id || "").trim()).filter(Boolean);
   const ancientIds = (input.ancientArchetypeIds || [])
     .map((id) => String(id || "").trim())
     .filter(Boolean);
-  const sceneId = String(input.sceneId || "").trim();
+  const sceneId = writerSceneId || String(input.sceneId || "").trim();
   const blocks = input.assetBlocks || [];
   const customChars = customRefsByRole(input.customRefs, "character");
   const customScenes = customRefsByRole(input.customRefs, "scene");
 
-  const castLocked = characterIds.length > 0 || ancientIds.length > 0 || customChars.length > 0;
-  const sceneLocked =
-    Boolean(sceneId && getManhuaSceneTemplate(sceneId)) || customScenes.length > 0;
+  const writerCastIds = (canon?.characters || []).map((c) => c.id);
+  const castIdsForGate = writerCastIds.length
+    ? writerCastIds
+    : [...characterIds, ...ancientIds];
 
-  /** B：库内示意不算齐；须本集 charsheet 有图，或自传人物勾选 */
+  const castLocked =
+    castIdsForGate.length > 0 || customChars.length > 0;
+  const sceneLocked =
+    Boolean(mainScene) ||
+    Boolean(sceneId && getManhuaSceneTemplate(sceneId)) ||
+    customScenes.length > 0;
+
   const missingCastIds: string[] = [];
   if (!customChars.length) {
-    for (const id of [...characterIds, ...ancientIds]) {
+    for (const id of castIdsForGate) {
       const sheet = findAssetBlock(blocks, "charsheet-", id);
       if (!blockHasMedia(sheet)) missingCastIds.push(id);
     }
@@ -125,11 +153,10 @@ export function evaluateManhuaAssetImageGate(
   const castImagesReady =
     (castLocked && missingCastIds.length === 0) || customChars.length > 0;
 
-  /** B：场景示意封面不算齐；须 sceneplate 有图，或自传场景勾选 */
   const scenePlate = sceneId ? findAssetBlock(blocks, "sceneplate-", sceneId) : undefined;
   const sceneImageReady = customScenes.length > 0 || blockHasMedia(scenePlate);
   const missingScene =
-    Boolean(sceneId && getManhuaSceneTemplate(sceneId)) &&
+    (Boolean(mainScene) || Boolean(sceneId && getManhuaSceneTemplate(sceneId))) &&
     !customScenes.length &&
     !sceneImageReady;
 
@@ -137,15 +164,17 @@ export function evaluateManhuaAssetImageGate(
 
   let hintZh: string | null = null;
   if (!castLocked && !sceneLocked) {
-    hintZh = "请上传并勾选人物与场景，或从库内选择角色与场景后再出设定图";
+    hintZh = viaWriterCanon
+      ? "请先确认剧本表中的人物与场景，并生成本集设定图"
+      : "请上传并勾选人物与场景，或从库内选择角色与场景后再出设定图";
   } else if (!castLocked) {
-    hintZh = "请勾选至少一张人物参考，或从库内选择角色";
+    hintZh = "请勾选至少一张人物参考，或保证人物表可解析";
   } else if (!sceneLocked) {
-    hintZh = "请勾选至少一张场景参考，或从库内选择场景";
+    hintZh = "请保证场景表可解析，或勾选场景参考";
   } else if (!castImagesReady) {
-    hintZh = "请先生成本集角色设定卡（库内示意封面不算；可自传勾选替代）";
+    hintZh = "请先生成本集角色设定卡（以剧本人物表为准；可自传勾选替代）";
   } else if (!sceneImageReady) {
-    hintZh = "请先生成本集场景设定图（库内示意封面不算；可自传勾选替代）";
+    hintZh = "请先生成本集主场景设定图（系列场景池·本集主场景；可自传勾选替代）";
   }
 
   return {
@@ -154,6 +183,7 @@ export function evaluateManhuaAssetImageGate(
     castImagesReady,
     sceneImageReady,
     viaCustomUpload: false,
+    viaWriterCanon,
     ready,
     missingCastIds,
     missingScene,
@@ -173,18 +203,36 @@ export function planManhuaAssetImageSpawns(
   input: ManhuaAssetImageGateInput,
 ): ManhuaAssetImageSpawnPlan[] {
   const gate = evaluateManhuaAssetImageGate(input);
-  // 用户上传路径已齐：不必再文生设定卡
   if (gate.viaCustomUpload || gate.ready) return [];
 
   const artStyle = getManhuaArtStylePreset(input.artStyleId);
   const topic = String(input.topic || "").trim();
   const plans: ManhuaAssetImageSpawnPlan[] = [];
   const blocks = input.assetBlocks || [];
+  const canon = input.assetCanon;
+  const ep = Math.max(1, Math.floor(input.episodeIndex || 1));
 
   for (const id of gate.missingCastIds) {
+    const existing = findAssetBlock(blocks, "charsheet-", id);
+    const fromCanon = canon?.characters.find((c) => c.id === id);
+    if (fromCanon) {
+      plans.push({
+        id: existing?.id || `charsheet-${id}`,
+        kind: "charsheet",
+        prompt: [
+          fromCanon.promptZh,
+          artStyle.labelZh ? `【画风】${artStyle.labelZh}` : "",
+          artStyle.promptZh || "",
+          topic ? `题材：${topic.slice(0, 80)}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        labelZh: fromCanon.nameZh,
+      });
+      continue;
+    }
     const char = getManhuaCharacterById(id);
     const gender = char?.gender === "male" ? "male" : "female";
-    const existing = findAssetBlock(blocks, "charsheet-", id);
     const prompt = buildManhuaCharacterSheetGenPrompt({
       characterId: id,
       gender,
@@ -200,26 +248,42 @@ export function planManhuaAssetImageSpawns(
   }
 
   if (gate.missingScene) {
-    const sceneId = String(input.sceneId || "").trim();
-    const scene = getManhuaSceneTemplate(sceneId);
-    if (scene) {
-      const existing = findAssetBlock(blocks, "sceneplate-", sceneId);
+    const main = resolveEpisodeMainScene(canon, ep);
+    const sceneId = main?.id || String(input.sceneId || "").trim();
+    if (main) {
+      const existing = findAssetBlock(blocks, "sceneplate-", main.id);
       plans.push({
-        id: existing?.id || `sceneplate-${sceneId}`,
+        id: existing?.id || `sceneplate-${main.id}`,
         kind: "sceneplate",
         prompt: buildManhuaScenePlateGenPrompt({
-          sceneNameZh: scene.nameZh,
-          scenePromptZh: scene.promptZh,
+          sceneNameZh: main.nameZh,
+          scenePromptZh: main.promptZh,
           topic,
           artStyleLabelZh: artStyle.labelZh,
           artStylePromptZh: artStyle.promptZh,
         }),
-        labelZh: scene.nameZh,
+        labelZh: main.nameZh,
       });
+    } else {
+      const scene = getManhuaSceneTemplate(sceneId);
+      if (scene) {
+        const existing = findAssetBlock(blocks, "sceneplate-", sceneId);
+        plans.push({
+          id: existing?.id || `sceneplate-${sceneId}`,
+          kind: "sceneplate",
+          prompt: buildManhuaScenePlateGenPrompt({
+            sceneNameZh: scene.nameZh,
+            scenePromptZh: scene.promptZh,
+            topic,
+            artStyleLabelZh: artStyle.labelZh,
+            artStylePromptZh: artStyle.promptZh,
+          }),
+          labelZh: scene.nameZh,
+        });
+      }
     }
   }
 
-  // 角色图优先，再场景图
   return plans.sort((a, b) => {
     if (a.kind === b.kind) return a.id.localeCompare(b.id);
     return a.kind === "charsheet" ? -1 : 1;

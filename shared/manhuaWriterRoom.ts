@@ -14,6 +14,7 @@ import {
   getManhuaPlotPurposeById,
   getManhuaScenePacingById,
 } from "./manhuaPlotPurposeCameraBank.js";
+import { formatManhuaViralTemplateWriterAddon } from "./manhuaViralTemplateBank.js";
 
 export const MANHUA_WRITER_EPISODE_MIN = 2;
 export const MANHUA_WRITER_EPISODE_MAX = 6;
@@ -66,6 +67,8 @@ export function buildManhuaWriterExpandPrompt(opts: {
   ancientArchetypeIds?: string[];
   plotPurposeId?: string | null;
   scenePacingId?: string | null;
+  /** 审定节奏模板 id（tpl_*） */
+  viralTemplateId?: string | null;
 }): string {
   const topic = String(opts.topic || "").trim().slice(0, 500);
   const brief = String(opts.brief || "").trim().slice(0, 2000);
@@ -77,6 +80,7 @@ export function buildManhuaWriterExpandPrompt(opts: {
   const ancientBlock = buildAncientArchetypePromptBlock(opts.ancientArchetypeIds || []);
   const purpose = getManhuaPlotPurposeById(opts.plotPurposeId);
   const pacing = getManhuaScenePacingById(opts.scenePacingId);
+  const viralAddon = formatManhuaViralTemplateWriterAddon(opts.viralTemplateId);
   return [
     "你是竖屏漫剧连载编剧。根据用户题材与补充条件，扩写成可拍的连载剧情包。",
     "硬规则：",
@@ -88,6 +92,7 @@ export function buildManhuaWriterExpandPrompt(opts: {
     "6. 道具表可参考下方示范库外观锚点改写，勿照抄剧名；权谋/商战可偏海外可读符号。",
     "7. 若提供古风原型设计板，人物外形与服饰层次须与之对齐。",
     "8. 「系列标题」必须是具体可传播的中文剧名（建议 4–24 字），禁止「未命名」「暂定」「一句话标题」等占位，也禁止只复述题材原文整段。",
+    "9. 若提供节奏模板骨架：每集须大体覆盖节拍格冲突类型与场景池关键词，并对白/换场密度不低于模板建议；禁止照抄模板示例成外部剧名。",
     "",
     `【用户题材】${topic || "（未填，请基于补充条件合理拟定）"}`,
     brief ? `【补充条件】\n${brief}` : "【补充条件】（无，请在合理范围内自行补全并保持克制）",
@@ -95,6 +100,7 @@ export function buildManhuaWriterExpandPrompt(opts: {
     ancientBlock,
     purpose ? formatPlotPurposeCameraBlock(purpose) : "",
     pacing ? formatScenePacingBlock(pacing) : "",
+    viralAddon,
     "",
     "请严格按下列结构输出：",
     "",
@@ -428,12 +434,18 @@ export function importManhuaWriterPackFromText(
 }
 
 /** 确认进编导后，灌进工厂故事/角色/节拍的上下文块 */
-export function composeWriterPackFactoryContext(pack: ManhuaWriterPack, focusEpisode = 1): string {
+export function composeWriterPackFactoryContext(
+  pack: ManhuaWriterPack,
+  focusEpisode = 1,
+  opts?: { assetCanonAddonZh?: string | null },
+): string {
   const ep = pack.episodes.find((e) => e.index === focusEpisode) || pack.episodes[0];
+  const addon = String(opts?.assetCanonAddonZh || "").trim();
   return [
     "【已确认编剧包·强制遵守】",
     `系列：${pack.seriesTitle}`,
     pack.logline ? `梗概：${pack.logline}` : "",
+    addon,
     "",
     "## 人物表",
     pack.charactersMd || "（见原文）",
@@ -450,6 +462,7 @@ export function composeWriterPackFactoryContext(pack: ManhuaWriterPack, focusEpi
           ep.body,
           `片尾钩子：${ep.endHook}`,
           "本轮制作先兑现这一集；钩子留给下一集，勿在本集拍穿。",
+          "人物/道具用系列表锁定；本集主场景见资产真源，可切场景池其他地点但须有过渡。",
         ].join("\n")
       : "",
   ]

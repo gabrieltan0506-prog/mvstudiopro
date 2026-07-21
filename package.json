@@ -33,6 +33,8 @@
     "manhua:assemble-smoke": "tsx scripts/smoke-manhua-assemble-enqueue.mts",
     "manhua:genre-probe": "tsx scripts/probe-manhua-genre-infer.mts",
     "manhua:writer-probe": "tsx scripts/probe-manhua-writer-room.mts",
+    "manhua:template-scan": "tsx scripts/manhua-template-scan.ts",
+    "manhua:template-learn": "tsx scripts/manhua-template-learn.ts",
     "manhua:character-verify": "tsx scripts/verify-manhua-character-gallery.mts",
     "manhua:photoreal-self": "tsx scripts/generate-photoreal-self-slot.mts",
     "manhua:photoreal-library": "tsx scripts/generate-manhua-photoreal-library.mts",
