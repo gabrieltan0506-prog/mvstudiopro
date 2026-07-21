@@ -258,33 +258,60 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
   };
 }
 
-export function getManhuaViralTemplate(id?: string | null): ManhuaViralTemplateCard | null {
+/**
+ * 种子库 ∪ 动态 extras；同 id 以 extras 为准（后写覆盖）。
+ * 用于 GCS approved 与出厂种子合并，避免改 TypeScript 数组。
+ */
+export function mergeManhuaViralTemplateBanks(
+  seed: readonly ManhuaViralTemplateCard[],
+  extras?: readonly ManhuaViralTemplateCard[] | null,
+): ManhuaViralTemplateCard[] {
+  const map = new Map<string, ManhuaViralTemplateCard>();
+  for (const t of seed) {
+    if (t?.id) map.set(t.id, t);
+  }
+  for (const t of extras || []) {
+    if (t?.id) map.set(t.id, t);
+  }
+  return Array.from(map.values());
+}
+
+export function getManhuaViralTemplate(
+  id?: string | null,
+  extras?: readonly ManhuaViralTemplateCard[] | null,
+): ManhuaViralTemplateCard | null {
   const key = String(id || "").trim();
   if (!key) return null;
-  return MANHUA_VIRAL_TEMPLATE_BANK.find((t) => t.id === key) || null;
+  const bank = mergeManhuaViralTemplateBanks(MANHUA_VIRAL_TEMPLATE_BANK, extras);
+  return bank.find((t) => t.id === key) || null;
 }
 
-/** 产品可选列表：仅 approved */
-export function listApprovedManhuaViralTemplates(): ManhuaViralTemplateCard[] {
-  return MANHUA_VIRAL_TEMPLATE_BANK.filter((t) => t.status === "approved");
+/** 产品可选列表：仅 approved（可注入 GCS 动态库） */
+export function listApprovedManhuaViralTemplates(
+  extras?: readonly ManhuaViralTemplateCard[] | null,
+): ManhuaViralTemplateCard[] {
+  return mergeManhuaViralTemplateBanks(MANHUA_VIRAL_TEMPLATE_BANK, extras).filter(
+    (t) => t.status === "approved",
+  );
 }
 
-export function listApprovedManhuaViralTemplatesGrouped(): Array<{
+export function listApprovedManhuaViralTemplatesGrouped(
+  extras?: readonly ManhuaViralTemplateCard[] | null,
+): Array<{
   laneZh: ManhuaViralTemplateLane;
   items: ManhuaViralTemplateCard[];
 }> {
-  const approved = listApprovedManhuaViralTemplates();
+  const approved = listApprovedManhuaViralTemplates(extras);
   return MANHUA_VIRAL_TEMPLATE_LANE_ORDER.map((laneZh) => ({
     laneZh,
     items: approved.filter((t) => t.laneZh === laneZh),
   })).filter((g) => g.items.length > 0);
 }
 
-/** 注入编剧扩写：节拍格 + 密度 + 场景池关键词（不泄漏出处剧名） */
-export function formatManhuaViralTemplateWriterAddon(
-  id?: string | null,
+/** 由完整卡片生成编剧扩写注入块 */
+export function formatManhuaViralTemplateWriterAddonFromCard(
+  tpl: ManhuaViralTemplateCard | null | undefined,
 ): string {
-  const tpl = getManhuaViralTemplate(id);
   if (!tpl || tpl.status !== "approved") return "";
   const beats = tpl.beatGrid
     .slice(0, 16)
@@ -308,4 +335,12 @@ export function formatManhuaViralTemplateWriterAddon(
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/** 注入编剧扩写：节拍格 + 密度 + 场景池关键词（不泄漏出处剧名） */
+export function formatManhuaViralTemplateWriterAddon(
+  id?: string | null,
+  extras?: readonly ManhuaViralTemplateCard[] | null,
+): string {
+  return formatManhuaViralTemplateWriterAddonFromCard(getManhuaViralTemplate(id, extras));
 }

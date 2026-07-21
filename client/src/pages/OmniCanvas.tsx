@@ -169,6 +169,8 @@ import {
 import {
   getManhuaViralTemplate,
   listApprovedManhuaViralTemplatesGrouped,
+  type ManhuaViralTemplateCard,
+  type ManhuaViralTemplateLane,
 } from "@shared/manhuaViralTemplateBank";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
@@ -1955,14 +1957,21 @@ export default function OmniCanvas() {
     pushDebug,
   ]);
 
-  const viralTemplateGrouped = useMemo(
-    () => listApprovedManhuaViralTemplatesGrouped(),
-    [],
-  );
-  const selectedViralTemplate = useMemo(
-    () => getManhuaViralTemplate(viralTemplateId),
-    [viralTemplateId],
-  );
+  const viralTemplatesRemoteQuery = trpc.manhuaViralTemplate.listApproved.useQuery(undefined, {
+    staleTime: 60_000,
+    retry: 1,
+  });
+  const viralTemplateGrouped = useMemo(() => {
+    const remote = viralTemplatesRemoteQuery.data?.groups;
+    if (remote && remote.length > 0) {
+      return remote as Array<{ laneZh: ManhuaViralTemplateLane; items: ManhuaViralTemplateCard[] }>;
+    }
+    return listApprovedManhuaViralTemplatesGrouped();
+  }, [viralTemplatesRemoteQuery.data]);
+  const selectedViralTemplate = useMemo(() => {
+    const extras = viralTemplateGrouped.flatMap((g) => g.items);
+    return getManhuaViralTemplate(viralTemplateId, extras);
+  }, [viralTemplateId, viralTemplateGrouped]);
 
   const importWriterRoomFromText = useCallback(
     (raw: string) => {

@@ -288,6 +288,31 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     };
   }
 
+  if (input.action === "manhua_template_learn") {
+    const { runManhuaTemplateLearn } = await import("../services/manhuaTemplateLearnService");
+    const result = await runManhuaTemplateLearn({
+      url: typeof params.url === "string" ? params.url : undefined,
+      title: typeof params.title === "string" ? params.title : undefined,
+      mixId: typeof params.mixId === "string" ? params.mixId : undefined,
+      rank: typeof params.rank === "number" ? params.rank : undefined,
+      onProgress: async (phase, detailZh) => {
+        await progress?.patch({
+          analysisStage: `manhua_learn_${phase}`,
+          analysisStageLabel: detailZh,
+        });
+      },
+    });
+    return {
+      provider: "manhua-template-learn",
+      output: {
+        ...result,
+        proposalId: result.proposal.id,
+        nameZh: result.proposal.nameZh,
+        status: result.proposal.status,
+      },
+    };
+  }
+
   if (input.action === "growth_analyze_video") {
     const numericUserId = userId ? Number(userId) : NaN;
     const growthMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
@@ -882,6 +907,12 @@ function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
       if (Number.isFinite(raw) && raw >= 120_000) return raw;
       // 配乐轮询 + 多集拼接，默认 18 分钟
       return 18 * 60_000;
+    }
+    if (input.action === "manhua_template_learn") {
+      const raw = Number(process.env.MANHUA_TEMPLATE_LEARN_JOB_TIMEOUT_MS);
+      if (Number.isFinite(raw) && raw >= 180_000) return raw;
+      // 下片 + 语音 + 抽帧 + Terra 读帧，默认 20 分钟
+      return 20 * 60_000;
     }
     if (input.action === "growth_analyze_video" || input.action === "growth_analyze_images") {
       const params = input.params ?? {};
