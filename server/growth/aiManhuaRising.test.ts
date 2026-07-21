@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAiManhuaRisingBoard } from "./aiManhuaRising";
+import { buildAiManhuaRisingBoard, buildAiManhuaRisingByPlatform } from "./aiManhuaRising";
 import {
   dramaMetaFromDouyinAweme,
   extractDouyinSearchAwemes,
@@ -89,16 +89,19 @@ describe("buildAiManhuaRisingBoard", () => {
     },
   ];
 
-  it("keeps AI manhua and excludes pure short_drama", () => {
+  it("includes AI manhua, short_drama and soft-unknown mixes", () => {
     const board = buildAiManhuaRisingBoard({
       items: baseItems,
       nowIso: "2026-07-17T00:00:00.000Z",
       windowDays: 7,
+      limit: 10,
     });
     const ids = board.entries.map((e) => e.mixId);
     expect(ids).toContain("m1");
+    expect(ids).toContain("m2");
     expect(ids).toContain("m3");
-    expect(ids).not.toContain("m2");
+    expect(board.entries.find((e) => e.mixId === "m1")?.categoryLabelZh).toBe("AI漫剧");
+    expect(board.entries.find((e) => e.mixId === "m2")?.categoryLabelZh).toBe("短剧合集");
     expect(board.hasBaseline).toBe(false);
   });
 
@@ -128,5 +131,87 @@ describe("buildAiManhuaRisingBoard", () => {
     expect(board.entries[0].mixId).toBe("m1");
     expect(board.entries[0].delta7d).toBe(1_500_000);
     expect(board.entries[0].status).toBe("surging");
+  });
+
+  it("kuaishou board keeps sample url and omits fake mix link", () => {
+    const board = buildAiManhuaRisingBoard({
+      platform: "kuaishou",
+      items: [
+        {
+          id: "ks1",
+          title: "重生漫剧开局 第1集",
+          isDrama: true,
+          dramaKind: "ai_manhua",
+          dramaInfo: { mixId: "重生漫剧开局", mixName: "重生漫剧开局", mixPlayCount: 120_000 },
+          views: 120_000,
+          tags: ["快手漫剧检索"],
+        },
+        {
+          id: "ks2",
+          title: "仙侠短剧合集",
+          isDrama: true,
+          dramaKind: "short_drama",
+          dramaInfo: { mixId: "仙侠短剧合集", mixName: "仙侠短剧合集", mixPlayCount: 80_000 },
+          url: "https://www.kuaishou.com/short-video/abc",
+          tags: ["短剧"],
+        },
+      ],
+      limit: 10,
+      nowIso: "2026-07-17T00:00:00.000Z",
+    });
+    expect(board.platform).toBe("kuaishou");
+    expect(board.entries.length).toBe(2);
+    const noUrl = board.entries.find((e) => e.mixId === "重生漫剧开局");
+    expect(noUrl?.url).toBeUndefined();
+    expect(noUrl?.tagLabelsZh?.length).toBeGreaterThan(0);
+    const withUrl = board.entries.find((e) => e.mixId === "仙侠短剧合集");
+    expect(withUrl?.url).toContain("kuaishou.com");
+  });
+});
+
+describe("buildAiManhuaRisingByPlatform", () => {
+  it("builds douyin + kuaishou boards with limit 10", () => {
+    const by = buildAiManhuaRisingByPlatform({
+      douyinItems: Array.from({ length: 12 }, (_, i) => ({
+        id: `d${i}`,
+        title: `漫剧${i}`,
+        isDrama: true,
+        dramaKind: "ai_manhua" as const,
+        dramaInfo: {
+          mixId: `dm${i}`,
+          mixName: `抖音漫剧${i}`,
+          mixPlayCount: 1_000_000 - i * 1000,
+        },
+      })),
+      kuaishouItems: Array.from({ length: 5 }, (_, i) => ({
+        id: `k${i}`,
+        title: `快手短剧${i}`,
+        isDrama: true,
+        dramaKind: "short_drama" as const,
+        dramaInfo: {
+          mixId: `km${i}`,
+          mixName: `快手短剧${i}`,
+          mixPlayCount: 500_000 - i * 1000,
+        },
+        url: i % 2 === 0 ? `https://www.kuaishou.com/short-video/${i}` : undefined,
+      })),
+      limit: 10,
+      windowDays: 7,
+    });
+    expect(by.douyin.entries).toHaveLength(10);
+    expect(by.kuaishou.entries).toHaveLength(5);
+    expect(by.douyin.platform).toBe("douyin");
+    expect(by.kuaishou.platform).toBe("kuaishou");
+  });
+
+  it("surfaces storeReadFailed note with empty entries", () => {
+    const by = buildAiManhuaRisingByPlatform({
+      douyinItems: [],
+      kuaishouItems: [],
+      storeReadFailed: true,
+    });
+    expect(by.douyin.storeReadFailed).toBe(true);
+    expect(by.douyin.entries).toHaveLength(0);
+    expect(by.douyin.note).toMatch(/超时|暂未/);
   });
 });
