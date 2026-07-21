@@ -15,7 +15,6 @@
  */
 
 import {
-  EVOLINK_CHAT_MODEL_GPT55,
   EVOLINK_CHAT_MODEL_GPT56_SOL,
   EVOLINK_CHAT_MODEL_GPT56_TERRA,
   getEvolinkGpt56SolModel,
@@ -83,94 +82,46 @@ export function isPlatformVertexNanoBanana2FallbackEnabled(): boolean {
 }
 
 /**
- * 監管／請求：**選題豎封** 像素引擎（**優先於**下方 env {@link resolvePlatformTopicCoverPixelEngine}）。
- *
- * **`gpt_image2`：** **EvoLink** `gpt-image-2`（需 `EVOLINK_API_KEY`）→ OhMyGPT / fal 退路。**部署 EvoLink 密钥后默认竖封走 GPT‑Image‑2**（见 {@link resolvePlatformTopicCoverPixelEngine}）。
- * 显式启用：设 `PLATFORM_TOPIC_COVER_PIXEL_ENGINE=gpt_image2`（或 `gpt-image-2` 等别名），或请求传 `coverPixelEngine: "gpt_image2"`。
+ * 監管／請求：**選題豎封** 像素引擎。
+ * 產品口徑：**僅 OpenAI 官方 gpt-image-2**（不走 OpenRouter；Nano Banana 2/Pro 已下架）。
  */
-export type PlatformTopicCoverPixelEngineChoice = "gpt_image2" | "nano_banana_2" | "nano_banana_pro";
+export type PlatformTopicCoverPixelEngineChoice = "gpt_image2";
 
 export function parsePlatformTopicCoverPixelEngineChoice(
   v: unknown,
 ): PlatformTopicCoverPixelEngineChoice | undefined {
   const s = String(v ?? "").trim();
-  if (s === "gpt_image2" || s === "nano_banana_2" || s === "nano_banana_pro") return s;
+  // 舊 nb2/nbp 入參一律折到 gpt_image2，不再分流 Vertex
+  if (
+    s === "gpt_image2" ||
+    s === "gpt-image-2" ||
+    s === "nano_banana_2" ||
+    s === "nano_banana_pro"
+  ) {
+    return "gpt_image2";
+  }
   return undefined;
 }
 
-/** 監管入參：`topicCoverPixelEngine` 優先；舊 `coverProEngine` 別名仍映射為 `nano_banana_2`。 */
+/** 監管入參：一律 gpt_image2；舊 coverProEngine / nb* 僅兼容吞掉。 */
 export function resolveSupervisorTopicCoverPixelEngineInput(input: {
-  topicCoverPixelEngine?: PlatformTopicCoverPixelEngineChoice;
-  coverProEngine?: "nano_banana_2" | "nano_banana_pro";
+  topicCoverPixelEngine?: string;
+  coverProEngine?: string;
 }): PlatformTopicCoverPixelEngineChoice | undefined {
   const pick = parsePlatformTopicCoverPixelEngineChoice(input.topicCoverPixelEngine);
   if (pick) return pick;
-  if (input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro") {
-    return "nano_banana_2";
-  }
+  if (input.coverProEngine) return "gpt_image2";
   return undefined;
 }
 
 /**
- * 選題 **單幀豎封** env 預設像素（無請求覆寫 {@link PlatformTopicCoverPixelEngineChoice} 時）。
- *
- * - **`gpt_image2_only`**：**EvoLink GPT‑Image‑2**（`EVOLINK_API_KEY` 存在且未显式设 env 时的**默认**）→ OhMyGPT → fal。
- * - **`nb2_only`**：Vertex **Nano Banana 2** · 9:16 · 2K（无 EvoLink 密钥时的默认）。
- * - **`nbp_only`**：Vertex **Nano Banana Pro**（`generatePlatformTopicCoverNanoBananaProImage`）。
- * - 歷史 **Imagen / `auto` / `dual`**：視為 **`nb2_only`**（不再走 Imagen）。
- *
- * `PLATFORM_TOPIC_COVER_PIXEL_ENGINE`：`gpt_image2` | `gpt-image-2` | `ohmygpt` | `nb2` | `nb2_only` | … | `nbp_only` | …
+ * 選題 **單幀豎封** 預設像素：固定 **OpenAI 官方 gpt-image-2**。
+ * 歷史 `nb2_only` / `nbp_only` env 一律視為 gpt_image2_only。
  */
-export type PlatformTopicCoverPixelEngineMode = "gpt_image2_only" | "nb2_only" | "nbp_only";
+export type PlatformTopicCoverPixelEngineMode = "gpt_image2_only";
 
 export function resolvePlatformTopicCoverPixelEngine(): PlatformTopicCoverPixelEngineMode {
-  const v = norm(process.env.PLATFORM_TOPIC_COVER_PIXEL_ENGINE);
-  /** 歷史 Imagen／auto：主產品改走 NB2。 */
-  if (
-    v === "imagen_then_nb2" ||
-    v === "imagen_nb2" ||
-    v === "imagen+nb2" ||
-    v === "dual" ||
-    v === "auto" ||
-    v === "imagen_only" ||
-    v === "imagen_ultra_only" ||
-    v === "imagen"
-  ) {
-    return "nb2_only";
-  }
-  if (
-    v === "gpt_image2_only" ||
-    v === "gpt_image2" ||
-    v === "gpt-image-2" ||
-    v === "gptimage2" ||
-    v === "ohmygpt" ||
-    v === "openai_image"
-  ) {
-    return "gpt_image2_only";
-  }
-  if (
-    v === "nbp_only" ||
-    v === "nbp" ||
-    v === "nano_banana_pro" ||
-    v === "vertex_pro" ||
-    v === "banana_pro"
-  ) {
-    return "nbp_only";
-  }
-  if (
-    v === "nb2_only" ||
-    v === "nb2" ||
-    v === "nano_banana2" ||
-    v === "vertex_nb2" ||
-    v === "vertex"
-  ) {
-    return "nb2_only";
-  }
-  /** 未显式设定：有 EvoLink 密钥则默认 GPT-Image-2 竖封；否则 Nano Banana 2。 */
-  if (String(process.env.EVOLINK_API_KEY || "").trim()) {
-    return "gpt_image2_only";
-  }
-  return "nb2_only";
+  return "gpt_image2_only";
 }
 
 /**
@@ -322,13 +273,14 @@ export function getPlatformStage2OpenAiModel(): string {
 }
 
 /**
- * 平台趋势 PNG 报表（generateVisualReport）专用模型：默认 **gpt-5.5**。
- * 勿用 gpt-5.4（七月底官方下线）；可用 `VISUAL_REPORT_OPENAI_MODEL` 覆盖。
+ * 平台趋势 PNG 报表（generateVisualReport）专用模型：默认 **gpt-5.6-terra**。
+ * 调用方须 `openAiGateway: "official_only"` → **仅 api.openai.com**（禁止 Evolink / OpenRouter）。
+ * 可用 `VISUAL_REPORT_OPENAI_MODEL` 覆盖。
  */
 export function getVisualReportOpenAiModel(): string {
   return normalizeEvolinkChatModel(
-    process.env.VISUAL_REPORT_OPENAI_MODEL || EVOLINK_CHAT_MODEL_GPT55,
-    EVOLINK_CHAT_MODEL_GPT55,
+    process.env.VISUAL_REPORT_OPENAI_MODEL || EVOLINK_CHAT_MODEL_GPT56_TERRA,
+    EVOLINK_CHAT_MODEL_GPT56_TERRA,
   );
 }
 

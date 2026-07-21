@@ -84,6 +84,7 @@ async function invokeTerraJson(
   const response = await invokeLLM({
     provider: "openai",
     modelName: getPlatformSkillQaOpenAiModel(),
+    openAiGateway: "official_only",
     reasoningEffort,
     max_tokens: maxTokens,
     temperature: 0.6,

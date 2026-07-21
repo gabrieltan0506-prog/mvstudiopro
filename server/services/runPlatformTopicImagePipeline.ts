@@ -144,16 +144,12 @@ export type RunPlatformTopicImagePipelineResult = {
 export async function runPlatformTopicImagePipeline(
   input: RunPlatformTopicImagePipelineInput,
 ): Promise<RunPlatformTopicImagePipelineResult> {
-  const legacyCoverNb2 =
-    input.coverProEngine === "nano_banana_2" || input.coverProEngine === "nano_banana_pro";
+  void input.coverProEngine;
   const coverReferencePhotoUrl = String(input.referencePhotoUrl || "").trim();
   const coverReferenceImageUrls = coverReferencePhotoUrl ? [coverReferencePhotoUrl] : [];
+  /** 封面像素固定 OpenAI 官方 gpt-image-2（旧 nb* 入参已折到此） */
   const coverPixelEngineOverride =
-    // 有上传人像 → 强制 GPT-Image-2（唯一支持 image_urls/edit 的供应商），忽略 NB2/NBP 请求。
-    coverReferenceImageUrls.length > 0
-      ? ("gpt_image2" as const)
-      : (parsePlatformTopicCoverPixelEngineChoice(input.coverPixelEngine) ??
-        (legacyCoverNb2 ? ("nano_banana_2" as const) : undefined));
+    parsePlatformTopicCoverPixelEngineChoice(input.coverPixelEngine) ?? ("gpt_image2" as const);
   const title = String(input.topicHook || "").trim().slice(0, 80);
   const sid = String(input.sceneId ?? "").trim();
   void input.imagePromptTranslator;
@@ -201,7 +197,7 @@ export async function runPlatformTopicImagePipeline(
       `${platformFlowLogTimestamp()}  ──────── 单张「${String(input.topicHook || title || "Untitled").slice(0, 48)}」· sceneId=${sid || "N/A"} ────────`,
     );
     topicImageCondenseLog.push(
-      `${platformFlowLogTimestamp()}  [主路径] 中文直送 → 豎封像素（${coverPixelEngineOverride ?? "預設：EvoLink/GPT‑Image‑2（有 EVOLINK_API_KEY）或 Nano Banana 2"}）· 无版式二次生圖`,
+      `${platformFlowLogTimestamp()}  [主路径] 中文直送 → 豎封像素（OpenAI 官方 gpt-image-2 · ${coverPixelEngineOverride}）· 无 OpenRouter / 无 NB`,
     );
 
     if (trendBrief) {
@@ -350,11 +346,11 @@ export async function runPlatformTopicImagePipeline(
           `${platformFlowLogTimestamp()}  [统计] englishPrompt=${promptStats.translatedPromptChars} chars/${promptStats.translatedPromptWords} words`,
         );
         topicImageCondenseLog.push(
-          `${platformFlowLogTimestamp()}  [步骤2] 竖封像素（GPT‑Image‑2 / NB2 / Pro 由 env 决定，见 flowLog · PLATFORM_TOPIC_COVER_PIXEL_ENGINE）…`,
+          `${platformFlowLogTimestamp()}  [步骤2] 竖封像素 · OpenAI 官方 gpt-image-2（9:16）…`,
         );
         if (coverReferenceImageUrls.length > 0) {
           topicImageCondenseLog.push(
-            `${platformFlowLogTimestamp()}  [步骤2·换人] 检测到用户上传人像 → GPT-Image-2 edit（OpenAI/OpenRouter · image_urls=${coverReferenceImageUrls.length}）· 将替换封面主角并保住相貌辨识度`,
+            `${platformFlowLogTimestamp()}  [步骤2·换人] 检测到用户上传人像 → OpenAI 官方 GPT-Image-2 edit（image_urls=${coverReferenceImageUrls.length}）· 将替换封面主角并保住相貌辨识度`,
           );
         }
         imageUrl = await generatePlatformTopicCoverNanoBanana2FromEnglishPrompt({

@@ -216,12 +216,7 @@ type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview";
 /** @deprecated 2×4 / 封面已中文直送，不再英文化；保留类型仅兼容旧入参。 */
 const COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR: PlatformImagePromptTranslator = "gpt54";
 
-/** 管理员／监管：单帧封面主生图是否走 Vertex Nano Banana 2（官方 API） */
-const PLATFORM_COVER_NB2_LS_KEY = "mvstudiopro.platform.coverNanoBanana2.v1";
-/** 旧键：曾标为 Pro，行为已统一为 NB2，读取时迁移 */
-const PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY = "mvstudiopro.platform.coverNanoBananaPro.v1";
-
-/** 全用户：2×4 / 八格 **出图** 引擎选择（现统一 OpenAI/OpenRouter；无 NB2） */
+/** 全用户：2×4 / 八格 **出图** 引擎选择（封面已固定 OpenAI 官方 Image-2） */
 const PLATFORM_COMPOSITE_2X4_ENGINE_LS_KEY = "mvstudiopro.platform.composite2x4Engine.v1";
 type PlatformComposite2x4ImageEngine = "gpt_image2" | "nano_banana_2";
 
@@ -1575,7 +1570,7 @@ function buildCompositeImageGenPendingLines(input: {
   const is3x4 = input.gridVariant === "3x4";
   const trLine = is3x4
     ? "3×4 十二格：中文直送主体 + 分段横排生成后拼接（多数 3～5 分钟内完成）。"
-    : "2×4／八格：中文直送主体 + OpenAI/OpenRouter 出图（无英文化、无 NB2）。";
+    : "2×4／八格：中文直送主体出图；封面固定 OpenAI 官方 Image-2。";
   const kindLabel =
     input.kind === "xiaohongshu_dual_note"
       ? is3x4
@@ -1940,24 +1935,6 @@ export default function PlatformPage() {
   const [question, setQuestion] = useState("");
   const [askResult, setAskResult] = useState<AskResult | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
-  const [platformCoverVertexNb2, setPlatformCoverVertexNb2] = useState(() => {
-    if (typeof window === "undefined") return false;
-    try {
-      if (window.localStorage.getItem(PLATFORM_COVER_NB2_LS_KEY) === "1") return true;
-      if (window.localStorage.getItem(PLATFORM_COVER_NB_PRO_LS_KEY_LEGACY) === "1") return true;
-      return false;
-    } catch {
-      return false;
-    }
-  });
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(PLATFORM_COVER_NB2_LS_KEY, platformCoverVertexNb2 ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
-  }, [platformCoverVertexNb2]);
-
   const [platformComposite2x4Engine, setPlatformComposite2x4Engine] = useState<PlatformComposite2x4ImageEngine>(() => {
     if (typeof window === "undefined") return "gpt_image2";
     try {
@@ -4209,8 +4186,6 @@ export default function PlatformPage() {
         gridVariant: inp.gridVariant ?? "2x4",
         imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
         ...optionalBoundCreationRecordId(),
-        coverProEngine:
-          canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
         ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
           ? { enableTopicCoverDeepResearchPro: true }
           : {}),
@@ -4362,7 +4337,6 @@ export default function PlatformPage() {
     [
       enqueueTopicCoverAndCompositeBundleMutation,
       canConfigureCompositeImageTranslator,
-      platformCoverVertexNb2,
       platformImageFlowPollIntervalMs,
       platformComposite2x4Engine,
       enabledPlatformSkillIds,
@@ -4383,11 +4357,9 @@ export default function PlatformPage() {
       sceneId: string;
       /** Debug 面板区分来源：批量兜底 / 逐张 / 手动 / 静默 */
       pollDebugLabel?: string;
-      /** 管理员专用：Vertex Nano Banana 2 主生图（官方 API） */
-      coverProEngine?: "nano_banana_2";
       /** 一键封面套装：40×N 按序分拆扣费 */
       bulkCoverPack?: { packSceneIds: string[]; sequentialSlot: number };
-      /** 用户上传人像照片 URL → EvoLink GPT-Image-2 edit 换封面主角 */
+      /** 用户上传人像照片 URL → OpenAI 官方 GPT-Image-2 edit 换封面主角 */
       referencePhotoUrl?: string;
     }) => {
       const pollLabel =
@@ -4402,8 +4374,6 @@ export default function PlatformPage() {
         sceneId: inp.sceneId,
         /** 封面 topic 管线；与 2×4 合成出图开关无关。 */
         imagePromptTranslator: "gpt54" as const,
-        coverProEngine:
-          canConfigureCompositeImageTranslator && platformCoverVertexNb2 ? "nano_banana_2" : undefined,
         ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
           ? { enableTopicCoverDeepResearchPro: true }
           : {}),
@@ -4537,7 +4507,7 @@ export default function PlatformPage() {
         userFacingError,
       };
     },
-    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformCoverVertexNb2, platformImageFlowPollIntervalMs, selectedTrendPlatforms],
+    [enqueueGenerateTopicImageMutation, canConfigureCompositeImageTranslator, platformImageFlowPollIntervalMs, selectedTrendPlatforms],
   );
 
   const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
@@ -10527,8 +10497,7 @@ export default function PlatformPage() {
                     <div>
                       <div className="text-sm font-semibold text-white">封面 / 分镜 · 中文直送</div>
                       <p className="mt-1 text-xs leading-relaxed text-white/55">
-                        封面与编导分镜均为中文指令直送像素链（OpenAI → OpenRouter），不再英文化，也不降级
-                        NB2。
+                        封面为中文直送 + OpenAI 官方 Image-2（不走 OpenRouter）；编导分镜同为中文直送像素链。
                       </p>
                     </div>
                     <div className="rounded-full border border-amber-400/50 bg-[rgba(251,191,36,0.12)] px-4 py-2 text-xs font-semibold text-amber-100">
@@ -10556,7 +10525,7 @@ export default function PlatformPage() {
 
               {canConfigureStage2CopyEngine && debugMode ? (
                 <div className="rounded-[26px] border border-amber-500/20 bg-[rgba(120,53,15,0.08)] px-5 py-3 text-xs text-white/50">
-                  监管提示：文案与深度追问已固定平台文案引擎；封面与 2×4 为中文直送 + OpenAI/OpenRouter 出图。
+                  监管提示：文案与深度追问已固定平台文案引擎；封面固定 OpenAI 官方 Image-2（无 Nano Banana 可选）。
                 </div>
               ) : null}
 

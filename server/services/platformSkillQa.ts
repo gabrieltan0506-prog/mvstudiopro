@@ -478,6 +478,8 @@ export async function askPlatformSkillQa(params: {
       const response = await invokeLLM({
         provider: "openai",
         modelName,
+        /** terra/sol 问答：仅 OpenAI 官方（禁止 Evolink） */
+        openAiGateway: "official_only",
         max_tokens: PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS,
         temperature: qaKind === "market_research" ? 0.45 : 0.7,
         response_format: { type: "json_object" },

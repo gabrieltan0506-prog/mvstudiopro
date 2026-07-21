@@ -956,8 +956,8 @@ async function fallbackNanoBanana2FromPrompt(
 }
 
 /**
- * 單幀封面像素：OpenAI → OpenRouter GPT‑Image‑2（有参考时 edit；无 NB2 降级）。
- * 函数名历史遗留；实际不再走 Nano Banana 2。
+ * 單幀封面像素：**仅 OpenAI 官方 gpt-image-2**（有参考时 edit；不走 OpenRouter / NB2 / Pro）。
+ * 函数名历史遗留。
  */
 export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(options: {
   englishPrompt: string;
@@ -974,6 +974,7 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     return null;
   }
   const L = options.flowLog;
+  void options.coverPixelEngine;
   const refImageUrls = (options.referenceImageUrls || [])
     .map((u) => String(u || "").trim())
     .filter(Boolean)
@@ -981,7 +982,7 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
 
   appendImageFlowLog(
     L,
-    `${platformFlowLogTimestamp()}  [封面·像素] GPT-IMAGE-2（9:16）· ${refImageUrls.length ? `edit模式·参考人像=${refImageUrls.length}张 · OpenAI/OpenRouter（无 NB2）` : "OpenAI/OpenRouter（无 NB2）"}…`,
+    `${platformFlowLogTimestamp()}  [封面·像素] OpenAI 官方 GPT-IMAGE-2（9:16）· ${refImageUrls.length ? `edit模式·参考人像=${refImageUrls.length}张` : "text→image"} · 无 OpenRouter / 无 NB…`,
   );
   return generateGptImage2FromRawEnglishPrompt({
     englishPrompt: raw,
@@ -989,6 +990,7 @@ export async function generatePlatformTopicCoverNanoBanana2FromEnglishPrompt(opt
     gcsSubdir: "platform_topic_reference",
     flowLog: L,
     referenceImageUrls: refImageUrls.length ? refImageUrls : undefined,
+    providerOverride: "openai",
     captureError: options.captureError,
   });
 }
