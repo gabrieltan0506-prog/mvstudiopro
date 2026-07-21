@@ -95,4 +95,20 @@ export const manhuaViralTemplateRouter = router({
     const { listGcsManhuaViralApproved } = await import("../services/manhuaViralTemplateStore");
     return { items: await listGcsManhuaViralApproved() };
   }),
+
+  /** 监管：查看合集学习进度与分集摘要（网页即时展示） */
+  getSeriesLearnSnapshot: protectedProcedure
+    .input(
+      z.object({
+        seriesKey: z.string().min(4).max(64),
+        supervisorToken: z.string().max(512).optional(),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      assertSupervisorOps(ctx.user, input.supervisorToken);
+      const { getManhuaSeriesLearnSnapshot } = await import(
+        "../services/manhuaTemplateLearnService"
+      );
+      return getManhuaSeriesLearnSnapshot(input.seriesKey);
+    }),
 });
