@@ -562,12 +562,20 @@ export function trackPlatformFunnel(
   }
 }
 
+/** 内容创作区 Tab（含文生图与海报） */
+export type PlatformCreateWorkspaceTab = "copy" | "topic" | "imageGen";
+
+/** 工具区 Tab */
+export type PlatformToolsWorkspaceTab = "matting" | "assets" | "htmlPpt";
+
+export type PlatformCustomWorkspaceTab = PlatformCreateWorkspaceTab | PlatformToolsWorkspaceTab;
+
 export function toolsTabFromMode(
   mode: PlatformWorkbenchMode,
-  current: "copy" | "topic" | "matting" | "assets" | "htmlPpt",
-): "copy" | "topic" | "matting" | "assets" | "htmlPpt" {
+  current: PlatformCustomWorkspaceTab,
+): PlatformCustomWorkspaceTab {
   if (mode === "create") {
-    return current === "copy" || current === "topic" ? current : "copy";
+    return current === "copy" || current === "topic" || current === "imageGen" ? current : "copy";
   }
   if (mode === "tools") {
     return current === "htmlPpt" || current === "matting" || current === "assets" ? current : "htmlPpt";
