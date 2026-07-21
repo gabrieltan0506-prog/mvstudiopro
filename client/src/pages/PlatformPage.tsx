@@ -18,6 +18,7 @@ import { PlatformDraftPresetsBar } from "@/components/platform/PlatformDraftPres
 import { PlatformAdvancedSettingsFold } from "@/components/platform/PlatformAdvancedSettingsFold";
 import { PlatformSkillDrawer } from "@/components/platform/PlatformSkillDrawer";
 import PlatformHtmlPptPanel from "@/components/PlatformHtmlPptPanel";
+import PlatformImageGenPanel from "@/components/platform/PlatformImageGenPanel";
 import {
   composeFocusPromptFromPersona,
   EMPTY_STRUCTURED_PERSONA,
@@ -2111,9 +2112,9 @@ export default function PlatformPage() {
   const [locationPath, setLocationPath] = useLocation();
   /** 素材分析完成后的拍摄手法摘要，注入分镜 scriptContext */
   const lastShootingTechniqueBriefRef = useRef<string>("");
-  /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 vs 自定义抠像 */
+  /** 自定义工作区 Tab：粘贴文案生图 vs 主人公融合选题 vs 文生图海报 vs 自定义抠像 */
   const [customWorkspaceTab, setCustomWorkspaceTab] = useState<
-    "copy" | "topic" | "matting" | "assets" | "htmlPpt"
+    "copy" | "topic" | "imageGen" | "matting" | "assets" | "htmlPpt"
   >("copy");
   /** 顶栏双模式 + 更多工具（URL ?mode= / localStorage） */
   const [platformMode, setPlatformMode] = useState<PlatformWorkbenchMode>(() =>
@@ -8870,7 +8871,7 @@ export default function PlatformPage() {
                   人物背景 → Skill → 选题初选 → 文案/分镜 → 输出形式。
                 </p>
 
-          {/* 内容创作 Tab：仅文案 / 选题 */}
+          {/* 内容创作 Tab：文案 / 选题 / 文生图与海报 */}
           <div className="mb-5 inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-xl border border-white/10 bg-black/35 p-1">
               <button
                 type="button"
@@ -8924,6 +8925,19 @@ export default function PlatformPage() {
               >
                 <UserRound className="h-3.5 w-3.5 shrink-0" />
                 自定义选题
+              </button>
+              <button
+                type="button"
+                onClick={() => setCustomWorkspaceTab("imageGen")}
+                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[13px] font-semibold transition disabled:opacity-50 ${
+                  customWorkspaceTab === "imageGen"
+                    ? "bg-[linear-gradient(135deg,#34d399,#0ea5e9)] text-white shadow-sm"
+                    : "text-[#c9c0e6]/70 hover:text-white"
+                }`}
+              >
+                <Image className="h-3.5 w-3.5 shrink-0" />
+                文生图与海报
               </button>
           </div>
 
@@ -9592,6 +9606,12 @@ export default function PlatformPage() {
                 </div>
               )}
             </>
+          ) : customWorkspaceTab === "imageGen" ? (
+            <div className="mb-4">
+              <PlatformImageGenPanel
+                disabled={customNoteBusy || customTopicBusy || customMattingBusy || assetAnalysisBusy}
+              />
+            </div>
           ) : null}
 
               </PlatformCreateWorkbench>
