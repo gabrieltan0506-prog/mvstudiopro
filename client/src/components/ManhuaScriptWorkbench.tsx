@@ -1818,6 +1818,9 @@ export default function ManhuaScriptWorkbench({
                   {visualBrief.events[0] ? (
                     <div>事件：{visualBrief.events.slice(0, 2).join(" · ")}</div>
                   ) : null}
+                  {visualBrief.performanceLines?.[0] ? (
+                    <div>表演：{visualBrief.performanceLines.slice(0, 2).join(" ｜ ")}</div>
+                  ) : null}
                 </div>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                   <button
@@ -1900,6 +1903,15 @@ export default function ManhuaScriptWorkbench({
                           <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-white/70">
                             {shot.actionZh}
                           </div>
+                          {shot.dialogueZh || shot.emotionZh || shot.microExpressionZh ? (
+                            <div className="mt-0.5 line-clamp-1 text-[10px] text-rose-100/65">
+                              {shot.dialogueZh ? `「${shot.dialogueZh}」` : ""}
+                              {shot.dialogueZh && (shot.emotionZh || shot.microExpressionZh)
+                                ? " · "
+                                : ""}
+                              {shot.emotionZh || shot.microExpressionZh || ""}
+                            </div>
+                          ) : null}
                         </div>
                       </button>
                       {shotKey?.id && onRerunKeyartShot ? (
