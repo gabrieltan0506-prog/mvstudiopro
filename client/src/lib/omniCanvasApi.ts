@@ -6,6 +6,8 @@ export type OmniVideoTask =
   | "text_to_video"
   | "image_to_video"
   | "reference_to_video"
+  | "edit"
+  | "extend"
   | "edit_video";
 
 async function parseJson(resp: Response) {
@@ -35,6 +37,7 @@ export async function createOmniInteraction(body: {
   imageUrl?: string;
   videoUrl?: string;
   gcsUri?: string;
+  referenceImageUrls?: string[];
   previousInteractionId?: string;
   systemInstruction?: string;
 }) {

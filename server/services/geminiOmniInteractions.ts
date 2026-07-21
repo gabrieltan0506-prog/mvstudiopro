@@ -17,6 +17,9 @@ export type OmniVideoTask =
   | "text_to_video"
   | "image_to_video"
   | "reference_to_video"
+  | "edit"
+  | "extend"
+  /** @deprecated API 已不支持；归一化为 edit */
   | "edit_video";
 
 export type OmniInteractionCreateInput = {
@@ -61,12 +64,21 @@ function normalizeDurationLabel(seconds: number | undefined) {
   return "60s";
 }
 
-function normalizeVideoTask(task: string | undefined, hasImage: boolean, hasVideo: boolean): OmniVideoTask {
+function normalizeVideoTask(
+  task: string | undefined,
+  hasImage: boolean,
+  hasVideo: boolean,
+  multiImage: boolean,
+): OmniVideoTask {
   const t = String(task || "").trim().toLowerCase();
-  if (t === "text_to_video" || t === "image_to_video" || t === "reference_to_video" || t === "edit_video") {
+  // 上游曾用 edit_video，现仅支持 edit / extend
+  if (t === "edit_video" || t === "edit") return "edit";
+  if (t === "extend") return "extend";
+  if (t === "text_to_video" || t === "image_to_video" || t === "reference_to_video") {
     return t as OmniVideoTask;
   }
-  if (hasVideo) return "edit_video";
+  if (hasVideo) return "edit";
+  if (multiImage) return "reference_to_video";
   if (hasImage) return "image_to_video";
   return "text_to_video";
 }
@@ -88,7 +100,8 @@ async function buildInteractionInput(input: OmniInteractionCreateInput) {
 
   const hasVideo = Boolean(videoUrl);
   const hasImage = Boolean(imageUrl) || refUrls.length > 0;
-  const task = normalizeVideoTask(input.task, hasImage, hasVideo);
+  const multiImage = [imageUrl, ...refUrls].filter(Boolean).length > 1;
+  const task = normalizeVideoTask(input.task, hasImage, hasVideo, multiImage);
 
   const parts: Array<Record<string, unknown>> = [];
   if (prompt) parts.push({ type: "text", text: prompt });
@@ -130,9 +143,7 @@ export async function createOmniFlashInteraction(input: OmniInteractionCreateInp
   const duration = normalizeDurationLabel(input.durationSeconds);
   const modalities = input.responseModalities?.length
     ? input.responseModalities
-    : task === "edit_video" || task === "text_to_video" || task === "image_to_video" || task === "reference_to_video"
-      ? (["video"] as const)
-      : (["video"] as const);
+    : (["video"] as const);
 
   const body: Record<string, unknown> = {
     model,
@@ -159,9 +170,9 @@ export async function createOmniFlashInteraction(input: OmniInteractionCreateInp
   const previousInteractionId = String(input.previousInteractionId || "").trim();
   if (previousInteractionId) {
     body.previous_interaction_id = previousInteractionId;
-    // 续编默认按 edit_video；若调用方未指定且未附带源视频，仍走 edit
+    // 续编默认 edit（API 不再接受 edit_video）
     if (!input.task) {
-      (body.generation_config as { video_config: { task: OmniVideoTask } }).video_config.task = "edit_video";
+      (body.generation_config as { video_config: { task: OmniVideoTask } }).video_config.task = "edit";
     }
   }
 

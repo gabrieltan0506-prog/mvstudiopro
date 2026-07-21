@@ -103,6 +103,9 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "ambient.dashboardNews",
   "ambient.hybridDashboard",
   "ambient.mascotCareMessage",
+  /** 云端草稿 payload 偏大，走 Fly，避免 www→Vercel 反代回 HTML 导致 JSON 解析失败 */
+  "manhuaCloudDraft.get",
+  "manhuaCloudDraft.upsert",
 ]);
 
 function useLongTrpcHttpLink(op: { path: string }) {

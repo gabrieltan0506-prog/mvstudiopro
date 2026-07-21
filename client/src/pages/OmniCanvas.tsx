@@ -545,12 +545,18 @@ export default function OmniCanvas() {
       priceLabelZh,
     };
   }, [assetShareQuote.data, shareAssetToLibrary]);
+  const cloudDraftFailAtRef = useRef(0);
   const cloudDraftUpsert = trpc.manhuaCloudDraft.upsert.useMutation({
     onError: (err) => {
-      pushDebug("cloudDraft:upsert-fail", {
-        level: "warn",
-        detail: String(err.message || err).slice(0, 160),
-      });
+      const raw = String(err.message || err);
+      const now = Date.now();
+      // HTML/非 JSON 时多为反代回了网页；勿刷屏
+      if (now - cloudDraftFailAtRef.current < 60_000) return;
+      cloudDraftFailAtRef.current = now;
+      const detail = /<!DOCTYPE|Unexpected token\s*['"]?</i.test(raw)
+        ? "云端草稿接口返回了网页而非数据（已改打长任务 API；请刷新后重试）"
+        : raw.slice(0, 160);
+      pushDebug("cloudDraft:upsert-fail", { level: "warn", detail });
     },
   });
 
@@ -2679,7 +2685,7 @@ export default function OmniCanvas() {
                   });
                 }, 450);
               },
-              onStageStart: (_id, index, total, label) => {
+              onStageStart: (id, index, total, label) => {
                 if (stageStartedAtRef.current != null) {
                   pushDebug("factoryStage:donePrev", {
                     level: "ok",
@@ -2687,18 +2693,33 @@ export default function OmniCanvas() {
                   });
                 }
                 stageStartedAtRef.current = Date.now();
+                const stageBlock = workingBlocks.find((b) => b.id === id);
+                const videoModel =
+                  stageBlock?.kind === "video"
+                    ? String(stageBlock.videoModel || "seedance-2.0-fast")
+                    : "—";
+                const stillRefs =
+                  stageBlock?.kind === "video"
+                    ? [
+                        stageBlock.refImageUrl,
+                        ...(stageBlock.editFusionUrls || []),
+                      ].filter(Boolean).length
+                    : 0;
                 setFactoryProgress(
                   fragmentPad
-                    ? `第${episodeIndex}集 · 片段 ${fragmentPad} · ${index + 1}/${total} · ${label}`
+                    ? `第${episodeIndex}集 · 第${fragmentPad}段 · ${index + 1}/${total} · ${label}`
                     : `第${episodeIndex}集 · ${index + 1}/${total} · ${label}`,
                 );
                 pushDebug("factoryStage:start", {
-                  detail: `ep${episodeIndex} · frag=${fragmentPad || "—"} · ${index + 1}/${total} · ${label}`,
+                  detail: `ep${episodeIndex} · seg=${fragmentPad || "—"} · ${index + 1}/${total} · ${label} · videoModel=${videoModel} · stillRefs=${stillRefs} · id=${id}`,
                 });
                 // 静帧批量并行时每张都 toast 会刷屏
                 if (label !== MANHUA_FACTORY_STAGE_LABEL_ZH.keyart) {
                   toast.message(`第${episodeIndex}集 ${index + 1}/${total}`, {
-                    description: label,
+                    description:
+                      videoModel !== "—"
+                        ? `${label} · ${videoModel}`
+                        : label,
                   });
                 }
               },
