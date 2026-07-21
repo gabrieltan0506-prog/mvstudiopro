@@ -748,6 +748,63 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     };
   }
 
+  /** Canvas 关键静帧 / 封面：与 sync op=canvasGptImage2 同核，供短入队+轮询 */
+  if (input.action === "canvas_gpt_image2") {
+    const prompt = String(params.prompt ?? "").trim();
+    if (!prompt) throw new Error("missing prompt");
+    const aspectRatio = String(params.aspectRatio || "9:16") === "16:9" ? "16:9" : "9:16";
+    const referenceImageUrls = Array.isArray(params.referenceImageUrls)
+      ? (params.referenceImageUrls as unknown[])
+          .map((u) => String(u || "").trim())
+          .filter(Boolean)
+          .slice(0, 16)
+      : [];
+    const maskUrl = typeof params.maskUrl === "string" ? params.maskUrl.trim() : "";
+    const providerRaw = String(params.providerOverride || "")
+      .trim()
+      .toLowerCase();
+    const providerOverride =
+      providerRaw === "openai" || providerRaw === "openrouter" || providerRaw === "auto"
+        ? (providerRaw as "openai" | "openrouter" | "auto")
+        : undefined;
+    const generalImageEdit =
+      Boolean(params.generalImageEdit) || referenceImageUrls.length > 0;
+    const gcsSubdir =
+      typeof params.gcsSubdir === "string" && params.gcsSubdir.trim()
+        ? params.gcsSubdir.trim()
+        : "canvas-gpt-image2";
+
+    const { generateGptImage2FromRawEnglishPrompt } = await import("../services/proxyImageService.js");
+    const captureError: {
+      message?: string;
+      moderationBlocked?: boolean;
+      openaiConfigured?: boolean;
+      openrouterConfigured?: boolean;
+      openaiError?: string;
+      openrouterError?: string;
+    } = {};
+    const imageUrl = await generateGptImage2FromRawEnglishPrompt({
+      englishPrompt: prompt,
+      aspectRatio,
+      gcsSubdir,
+      referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
+      maskUrl: maskUrl || undefined,
+      generalImageEdit: referenceImageUrls.length > 0 || generalImageEdit,
+      providerOverride,
+      captureError,
+    });
+    if (!imageUrl) {
+      throw new Error(captureError.message || "gpt_image2_empty");
+    }
+    return {
+      provider: providerOverride === "openrouter" ? "openrouter-gpt-image-2" : "openai-gpt-image-2",
+      output: {
+        imageUrl,
+        imageUrls: [imageUrl],
+      },
+    };
+  }
+
   throw new Error(`Unsupported image action: ${input.action}`);
 }
 
@@ -797,6 +854,20 @@ function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         if (Number.isFinite(raw) && raw >= 120_000) return raw;
         // 13 页双段 Sol（含 reasoning 重试）默认 22min，避免墙钟砍半稿
         return 22 * 60_000;
+      }
+    } catch {
+      /* fall through */
+    }
+    return defaultTimeout;
+  }
+  if (type === "image") {
+    try {
+      const input = asEnvelope(inputRaw);
+      if (input.action === "canvas_gpt_image2") {
+        const raw = Number(process.env.CANVAS_GPT_IMAGE2_JOB_TIMEOUT_MS);
+        // worker 墙钟：须覆盖官方 Image-2 high 竖屏（常 >3min）+ 偶发排队
+        if (Number.isFinite(raw) && raw >= 180_000) return raw;
+        return 10 * 60_000;
       }
     } catch {
       /* fall through */

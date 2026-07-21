@@ -54,6 +54,7 @@ import {
 import { shouldAttachManhuaPreviouslyOn } from "@shared/manhuaEpisodeRecap";
 import { resolveKeyartShotIndex } from "@shared/manhuaScriptWorkbench";
 import { upsertShotAngleSection } from "@shared/manhuaShotAnglePersist";
+import { upsertShotDialogueSection } from "@shared/manhuaShotDialoguePersist";
 import {
   listScreenwriterGenres,
   MANHUA_SCENE_GENRE_LABEL_ZH,
@@ -1552,6 +1553,7 @@ export default function OmniCanvas() {
 
   const runDeps = useMemo<CanvasRunDeps>(
     () => ({
+      userId: user?.id ? String(user.id) : "",
       optimizeCopy: async ({ sourceText, optimizationBrief, modelName }) => {
         const t0 = Date.now();
         const reqPreview = [
@@ -1610,7 +1612,7 @@ export default function OmniCanvas() {
         return asset.url;
       },
     }),
-    [optimizeCopyMutation, getSignedUrlMutation, debugMode, pushDebug],
+    [optimizeCopyMutation, getSignedUrlMutation, debugMode, pushDebug, user?.id],
   );
 
   /** Terra：中文运镜说明润色（编剧大师人设） */
@@ -2625,6 +2627,61 @@ export default function OmniCanvas() {
         pushDebug("factoryRun:episodes", {
           detail: `eps=[${episodeIndexes.join(",")}] · chars=${selectedCharacterIds.join(",") || "—"} · path=${selectedPathRecipeIds.join(",") || "—"} · action=${selectedActionRecipeIds.join(",") || "—"}`,
         });
+
+        /** A：出静帧/成片前强制资产门禁 + 注入人物/场景/画风（含重出） */
+        const needsAssetLock = untilStage === "keyart" || untilStage === "clip";
+        if (needsAssetLock) {
+          const sceneId = factorySceneId || recommendedScene?.id || "";
+          const gate = evaluateManhuaAssetImageGate({
+            characterIds: selectedCharacterIds,
+            ancientArchetypeIds: factoryAncientArchetypeIds,
+            sceneId,
+            artStyleId: factoryArtStyleId,
+            customRefs: customAssetRefs,
+            assetBlocks: workingBlocks.filter(
+              (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
+            ),
+          });
+          if (!gate.ready) {
+            pushDebug("factoryRun:assetGate", {
+              level: "warn",
+              detail: gate.hintZh || "assets not ready",
+            });
+            toast.message(gate.hintZh || "请先锁定本集角色设定卡与场景设定图", {
+              description: "库内示意封面不算；可自传勾选人物+场景替代。",
+            });
+            setWorkflowPhase("assets");
+            setManhuaAssetDrawer(!gate.castLocked ? "characters" : "assets");
+            setFactoryBusy(false);
+            setFactoryProgress("");
+            return;
+          }
+          workingBlocks = applyFactoryPrefsToBlocks(workingBlocks, {
+            craftShotIds: selectedCraftShotIds,
+            motionPromptIds: selectedMotionIds,
+            pathCameraRecipeIds: selectedPathRecipeIds,
+            pathAnnotationJson: factoryPathAnnotation,
+            narrativeLightingIds: selectedNarrativeLightingIds,
+            maleHairstyleIds: selectedMaleHairstyleIds,
+            maleMicroExpressionIds: selectedMaleMicroIds,
+            promoCoverLayoutIds: selectedPromoLayoutIds,
+            actionCameraRecipeIds: selectedActionRecipeIds,
+            cineVocabIds: selectedCineVocabIds,
+            wardrobePropContinuityIds: selectedWardrobeIds,
+            sceneId,
+            propIds: factoryPropIds,
+            genreId: factoryGenreId || undefined,
+            characterIds: selectedCharacterIds,
+            ancientArchetypeIds: factoryAncientArchetypeIds,
+            identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
+            artStyleId: factoryArtStyleId,
+            videoReverseOutputMode: factoryReverseMode,
+            customRefs: customAssetRefs,
+          });
+          setBlocks(workingBlocks);
+          saveCanvasState(workingBlocks, workingEdges);
+        }
+
         const fragmentLabel = uniqueFragmentIndexes.length
           ? uniqueFragmentIndexes.map((n) => String(n).padStart(2, "0")).join("、")
           : "";
@@ -2838,12 +2895,31 @@ export default function OmniCanvas() {
       ensureStudioSpawned,
       factoryBusy,
       factoryTopic,
+      factorySceneId,
+      factoryAncientArchetypeIds,
+      factoryArtStyleId,
+      factoryPropIds,
+      factoryGenreId,
+      factoryIdentityLockZh,
+      factoryReverseMode,
+      factoryPathAnnotation,
+      customAssetRefs,
+      recommendedScene?.id,
+      castBundle.identityLockZh,
       runDeps,
       resolveRunEpisodeIndexes,
       pushDebug,
       selectedCharacterIds,
+      selectedCraftShotIds,
+      selectedMotionIds,
       selectedPathRecipeIds,
+      selectedNarrativeLightingIds,
+      selectedMaleHairstyleIds,
+      selectedMaleMicroIds,
+      selectedPromoLayoutIds,
       selectedActionRecipeIds,
+      selectedCineVocabIds,
+      selectedWardrobeIds,
       shotContinuity,
     ],
   );
@@ -3280,6 +3356,22 @@ export default function OmniCanvas() {
                         return {
                           ...b,
                           outputText: upsertShotAngleSection(base, angles),
+                          status: "done" as const,
+                        };
+                      }),
+                    );
+                  }}
+                  onUpsertShotDialogues={(dialogues) => {
+                    const ep = writerFocusEpisode;
+                    handleBlocksChange((prev) =>
+                      prev.map((b) => {
+                        if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
+                        const stage = stageKeyFromBlockId(b.id);
+                        if (stage !== "reverse" && stage !== "beats") return b;
+                        const base = b.outputText || b.prompt || "";
+                        return {
+                          ...b,
+                          outputText: upsertShotDialogueSection(base, dialogues),
                           status: "done" as const,
                         };
                       }),

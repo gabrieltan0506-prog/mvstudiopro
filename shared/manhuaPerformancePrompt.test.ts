@@ -4,14 +4,16 @@ import {
   extractPerformanceCuesFromScript,
   formatManhuaPerformanceInjectBlock,
   mergeManhuaPerformanceCue,
+  stripQuotedDialogueFromAction,
 } from "./manhuaPerformancePrompt";
 import {
   formatWorkbenchClipInjectBlock,
+  formatWorkbenchSegmentClipInjectBlock,
   formatWorkbenchShotInjectBlock,
   parseWorkbenchShotsFromText,
 } from "./manhuaScriptWorkbench";
 
-describe("manhuaPerformancePrompt (feel.mp4 lesson)", () => {
+describe("manhuaPerformancePrompt dialogue split", () => {
   it("extracts dialogue tone emotion and micro-expression", () => {
     const cue = extractManhuaPerformanceCue(
       "近景，4秒。过肩拍。女主猛地抬头，双眼发红泪在眼眶打转却未落。她压着哭腔用沙哑的声音问：「从前说过的话，都不算数了？」语气里满是委屈和不信。",
@@ -21,18 +23,33 @@ describe("manhuaPerformancePrompt (feel.mp4 lesson)", () => {
     expect(cue.microExpressionZh || cue.bodyBeatZh).toBeTruthy();
   });
 
-  it("formats inject with no-burn dialogue lock", () => {
-    const block = formatManhuaPerformanceInjectBlock(
-      mergeManhuaPerformanceCue(undefined, "沙哑沉重：「是我对不住你。」下颌绷紧，不敢对视"),
-      { stage: "clip", shotIndex: 2 },
+  it("key_art omits dialogue literal; clip keeps it", () => {
+    const cue = mergeManhuaPerformanceCue(
+      undefined,
+      "沙哑沉重：「是我对不住你。」下颌绷紧，不敢对视",
     );
-    expect(block).toContain("【人物表演·台词情绪");
-    expect(block).toContain("是我对不住你");
-    expect(block).toMatch(/禁止字幕|禁止烧/);
-    expect(block).toContain("气口");
+    const key = formatManhuaPerformanceInjectBlock(cue, { stage: "key_art", shotIndex: 1 });
+    expect(key).toContain("【人物表演·静帧");
+    expect(key).not.toContain("是我对不住你");
+    expect(key).not.toMatch(/台词（/);
+    expect(key).toContain("口型开合");
+
+    const clip = formatManhuaPerformanceInjectBlock(cue, { stage: "clip", shotIndex: 2 });
+    expect(clip).toContain("是我对不住你");
+    expect(clip).toContain("气口");
+    expect(clip).toMatch(/禁止字幕|禁止烧/);
   });
 
-  it("parses feel-style numbered shot into workbench inject", () => {
+  it("strips quoted dialogue from action for stills", () => {
+    expect(
+      stripQuotedDialogueFromAction("女主问：「从前说过的话，都不算数了？」猛地抬头"),
+    ).not.toContain("不算数");
+    expect(stripQuotedDialogueFromAction("女主问：「从前说过的话，都不算数了？」猛地抬头")).toMatch(
+      /猛地抬头/,
+    );
+  });
+
+  it("workbench keyart inject has no dialogue quotes; segment clip has chain", () => {
     const shots = parseWorkbenchShotsFromText(
       [
         "1. 近景：女主猛地抬头，眼眶发红泪未落，压着哭腔沙哑问：「从前说过的话，都不算数了？」满是委屈和不信",
@@ -41,12 +58,18 @@ describe("manhuaPerformancePrompt (feel.mp4 lesson)", () => {
       ].join("\n"),
     );
     expect(shots.length).toBeGreaterThanOrEqual(3);
-    expect(shots[0]?.dialogueZh || shots[0]?.actionZh).toMatch(/从前说过的话|不算数/);
     const key = formatWorkbenchShotInjectBlock(shots[0]!);
-    expect(key).toContain("【人物表演·台词情绪");
-    expect(key).toMatch(/从前说过的话|不算数/);
-    const clip = formatWorkbenchClipInjectBlock(shots[1]!);
-    expect(clip).toContain("【人物表演·台词情绪");
+    expect(key).toContain("【人物表演·静帧");
+    expect(key).not.toContain("不算数");
+    expect(key).not.toMatch(/「[^」]+」/);
+
+    const clip = formatWorkbenchSegmentClipInjectBlock({
+      segmentIndex: 1,
+      durationSec: 15,
+      shots: shots.slice(0, 2),
+    });
+    expect(clip).toMatch(/段内对白链|台词（口型气口依据）|从前说过的话|是我对不住你/);
+    expect(formatWorkbenchClipInjectBlock(shots[1]!)).toContain("是我对不住你");
   });
 
   it("pulls performance lines from full script for brief", () => {

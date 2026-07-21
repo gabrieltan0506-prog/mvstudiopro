@@ -37,7 +37,7 @@ describe("manhuaKeyartEditFusion", () => {
     }
   });
 
-  it("CG drama refuses photoreal demo edit base", () => {
+  it("CG drama refuses photoreal demo edit base without identity sheets", () => {
     const plan = planManhuaKeyartEditFusion({
       ancientArchetypeIds: ["arch_rain_jianghu_dao"],
       sceneId: "scene_07",
@@ -49,6 +49,23 @@ describe("manhuaKeyartEditFusion", () => {
     expect(plan.editFusionUrls).toEqual([]);
     expect(plan.editPromptAddonZh).toContain("【画风执行·CG 漫剧】");
     expect(plan.editPromptAddonZh).toContain("CG 漫剧文生路径");
+  });
+
+  it("CG drama uses identity sheets for edit lock (not library demos)", () => {
+    const plan = planManhuaKeyartEditFusion({
+      ancientArchetypeIds: ["arch_rain_jianghu_dao"],
+      sceneId: "scene_07",
+      artStyleId: "cg_drama",
+      identityImageUrls: [
+        "https://cdn.example/charsheet-a.png",
+        "https://cdn.example/charsheet-b.png",
+      ],
+    });
+    expect(plan.canEdit).toBe(true);
+    expect(plan.refImageUrl).toBe("https://cdn.example/charsheet-a.png");
+    expect(plan.editFusionUrls).toContain("https://cdn.example/charsheet-b.png");
+    expect(plan.editPromptAddonZh).toContain("设定卡身份锁");
+    expect(plan.refImageUrl).not.toMatch(/\/manhua-(scenes|characters|props)\//);
   });
 
   it("ancient path does not attach urban character sheets", () => {

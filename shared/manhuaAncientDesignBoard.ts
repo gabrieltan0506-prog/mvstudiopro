@@ -1,5 +1,6 @@
 /**
  * 古风/仙侠角色设计板 Schema + 提示词公式。
+ * 万能公式：身份 + 发型 + 服饰结构 + 材质 + 配色 + 饰品 + 气质 + 镜头语言；历史朝代可选。
  * 与都市 char_* 槽分离；成稿禁止外仓品牌水印。
  */
 
@@ -44,6 +45,7 @@ export function buildAncientArchetypePrompt(
     | "hairstyleZh"
     | "wardrobeLayers"
     | "props"
+    | "accessories"
     | "palette"
     | "materials"
     | "atmosphereZh"
@@ -61,6 +63,9 @@ export function buildAncientArchetypePrompt(
   if (board.promptFormulaKind === "physician") {
     props = `医者道具：${board.props.join("、") || "药囊、针包、药瓶"}。`;
   }
+  const accessoryLine = board.accessories?.length
+    ? `饰品：${board.accessories.join("、")}。`
+    : "";
   return [
     `角色身份：${identity}。`,
     tags,
@@ -69,10 +74,12 @@ export function buildAncientArchetypePrompt(
     `发型结构：${board.hairstyleZh || "长发束起"}。`,
     wardrobe,
     props,
+    accessoryLine,
     `配色：${board.palette.join("、") || "素雅主色"}。`,
     `材质：${board.materials.join("、") || "棉麻与暗纹绣"}。`,
     `环境氛围：${board.atmosphereZh || "古风场景，光影克制"}。`,
-    "东方古风幻想设定卡；结构清晰可复用；禁止现代街拍、西装连衣裙与品牌水印（时代服饰以剧本为准）。",
+    "镜头语言：设定卡用中全景交待服饰结构，定妆用近景浅景深锁五官。",
+    "东方古风幻想设定卡；公式：身份/发型/服饰结构/材质/配色/饰品/气质/镜头语言（历史朝代可选，玄幻勿硬套）；禁止现代街拍与品牌水印。",
   ]
     .filter(Boolean)
     .join(" ");

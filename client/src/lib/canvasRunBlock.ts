@@ -1,6 +1,7 @@
 import type { CanvasBlock } from "./canvasTypes";
 import { withFlyHealthGate } from "./flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "./longJobsFlyOrigin";
+import { createJobSameOrigin, pollJobUntilTerminal } from "./jobs";
 import {
   createOmniInteraction,
   pollOmniInteractionUntilDone,
@@ -14,6 +15,7 @@ import {
   prepareJsonDirectorImageJob,
   type AspectRatio169Or916,
 } from "@shared/jsonDirectorMiddleware";
+import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
 import { extractVideoFramesFromUrl, extractVideoTailFramesFromUrl } from "./extractVideoFrames";
 import {
   VIDEO_REVERSE_DEFAULT_INTERVAL_SEC,
@@ -34,6 +36,9 @@ const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
 } as const;
 
+/** 客户端轮询上限：须略大于 worker CANVAS_GPT_IMAGE2_JOB_TIMEOUT_MS（默认 10min） */
+const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 12 * 60_000;
+
 export type CanvasRunDeps = {
   optimizeCopy: (input: {
     sourceText: string;
@@ -43,6 +48,8 @@ export type CanvasRunDeps = {
   }) => Promise<string>;
   /** 把 dataURL/本地图上传为 HTTPS，供 Evolink/Seedance 引用（可选） */
   uploadImageFile?: (file: File) => Promise<string>;
+  /** 入队 jobs 时写入 userId（与 assemble 一致；可空串） */
+  userId?: string;
 };
 
 function dataUrlToJpegFile(dataUrl: string, name: string): File | null {
@@ -111,6 +118,16 @@ async function resolveImagePromptViaJsonDirector(
   }
 }
 
+function isOpenAiImageTimeoutError(message: string): boolean {
+  return /aborted due to timeout|TimeoutError|CLIENT_FETCH_ABORT_TIMEOUT|operation was aborted|job timed out|轮询已等待/i.test(
+    message,
+  );
+}
+
+/**
+ * 短入队（www→Fly）+ 轮询；worker 内再等官方上游。
+ * 勿再长 POST ?op=canvasGptImage2（会撞网关/浏览器长连接）。
+ */
 async function runGptImage2(
   prompt: string,
   aspectRatio: "9:16" | "16:9",
@@ -118,46 +135,54 @@ async function runGptImage2(
     refImageUrl?: string;
     referenceImageUrls?: string[];
     maskUrl?: string;
+    /** 关键静帧：只打官方 OpenAI，超时再入队一次，不回落 OpenRouter */
+    openaiOnly?: boolean;
+    userId?: string;
   },
 ): Promise<string> {
   const refImageUrl = String(opts?.refImageUrl || "").trim();
   const extraRefs = (opts?.referenceImageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const referenceImageUrls = Array.from(new Set([refImageUrl, ...extraRefs].filter(Boolean))).slice(0, 16);
   const maskUrl = String(opts?.maskUrl || "").trim();
-  // 注意：勿再调用 workflowGenerateSceneImage（那是工作流分镜 API，强制要 workflowId）
-  const gptUrl = withLongJobsFlyDirect("/api/jobs?op=canvasGptImage2");
-  const probeOrigin = flyHealthProbeOriginForUrl(gptUrl);
-  const res = await withFlyHealthGate(probeOrigin, () =>
-    fetch(gptUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "omit",
-      body: JSON.stringify({
+  const openaiOnly = Boolean(opts?.openaiOnly);
+  const userId = String(opts?.userId || "");
+
+  const attemptOnce = async (): Promise<string> => {
+    const { jobId } = await createJobSameOrigin({
+      type: "image",
+      userId,
+      input: buildCanvasGptImage2JobInput({
         prompt,
         aspectRatio,
-        referenceImageUrl: referenceImageUrls[0] || undefined,
         referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
         maskUrl: maskUrl || undefined,
-        imageMode: referenceImageUrls.length ? "edit" : "generate",
         generalImageEdit: referenceImageUrls.length > 0,
+        providerOverride: openaiOnly ? "openai" : undefined,
       }),
-    }),
-  );
-  const text = await res.text();
-  let json: { ok?: boolean; imageUrl?: string; error?: string; message?: string } = {};
+    });
+    const job = await pollJobUntilTerminal(jobId, {
+      maxWaitMs: CANVAS_GPT_IMAGE2_POLL_MAX_MS,
+      intervalMs: 2500,
+    });
+    if (job.status !== "succeeded") {
+      throw new Error(job.error || "GPT-Image-2 生图失败");
+    }
+    const out = (job.output || {}) as { imageUrl?: string; imageUrls?: string[] };
+    const url = String(out.imageUrl || out.imageUrls?.[0] || "").trim();
+    if (!url) throw new Error("GPT-Image-2 未返回图片 URL");
+    return url;
+  };
+
   try {
-    json = JSON.parse(text) as typeof json;
-  } catch {
-    throw new Error(
-      /An error o|ROUTER_EXTERNAL/i.test(text)
-        ? "算力紧张或网关超时，请稍后重试"
-        : `GPT-Image-2 生图失败：${text.slice(0, 160)}`,
-    );
+    return await attemptOnce();
+  } catch (firstErr) {
+    const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+    if (openaiOnly && isOpenAiImageTimeoutError(msg)) {
+      console.warn("[canvasRunBlock] 官方 Image-2 超时，仅再入队一次 OpenAI（不回落 OpenRouter）");
+      return await attemptOnce();
+    }
+    throw firstErr;
   }
-  if (!res.ok || !json.ok) throw new Error(json.error || json.message || "GPT-Image-2 生图失败");
-  const url = String(json.imageUrl || "").trim();
-  if (!url) throw new Error("GPT-Image-2 未返回图片 URL");
-  return url;
 }
 
 async function runNanoBanana2(
@@ -185,6 +210,8 @@ async function runGptImage2Batch(
     refImageUrl?: string;
     referenceImageUrls?: string[];
     maskUrl?: string;
+    openaiOnly?: boolean;
+    userId?: string;
   },
   count: number,
 ): Promise<string[]> {
@@ -508,12 +535,12 @@ export async function runCanvasBlock(
     const count = block.imageBatchCount || 1;
     const isKeyart = block.id.startsWith("keyart-");
     let isEdit = block.imageMode === "edit";
-    /** CG 漫剧关键静帧：禁止 edit 仿真人底图（会盖过画风与分镜动作） */
-    if (
-      isKeyart &&
-      isEdit &&
-      /画风硬锁】?\s*CG\s*漫剧|【画风执行·CG 漫剧】/.test(String(mergedPrompt || block.prompt || ""))
-    ) {
+    const keyartPromptBlob = String(mergedPrompt || block.prompt || "");
+    const isCgKeyart =
+      isKeyart && /画风硬锁】?\s*CG\s*漫剧|【画风执行·CG 漫剧】/.test(keyartPromptBlob);
+    /** CG：禁止库内仿真人示范 edit；允许「设定卡身份锁」edit */
+    const cgIdentityLockEdit = /设定卡身份锁|CG·设定卡/.test(keyartPromptBlob);
+    if (isCgKeyart && isEdit && !cgIdentityLockEdit) {
       isEdit = false;
     }
     /** 默认 Image-2；用户手选 NB2 省钱则尊重（计费不同） */
@@ -584,17 +611,26 @@ export async function runCanvasBlock(
       : rawImagePrompt;
     /** 主路径 Image-2；失败回退 NB2。显式手选 NB2 省钱时直走，不先打 Image-2 */
     const preferGptImage2 = imageModel !== "nano-banana-2";
+    /**
+     * 关键静帧文生图：禁止带 ref（否则 API 会改走 edits，CG 锁失效且更易超时）。
+     * 非 keyart 的普通 image 仍可带 ref 做图生图。
+     */
+    const gptUserId = String(deps.userId || "");
+    const gptImageOpts = isEdit
+      ? {
+          refImageUrl: editRef,
+          referenceImageUrls: fusionUrls,
+          maskUrl: maskUrl || undefined,
+          openaiOnly: isKeyart,
+          userId: gptUserId,
+        }
+      : isKeyart
+        ? { openaiOnly: true as const, userId: gptUserId }
+        : { refImageUrl: absRef(refUrl) || refUrl, userId: gptUserId };
     let urls: string[] = [];
     if (preferGptImage2) {
       try {
-        urls = await runGptImage2Batch(
-          imagePrompt,
-          ar,
-          isEdit
-            ? { refImageUrl: editRef, referenceImageUrls: fusionUrls, maskUrl: maskUrl || undefined }
-            : { refImageUrl: absRef(refUrl) || refUrl },
-          count,
-        );
+        urls = await runGptImage2Batch(imagePrompt, ar, gptImageOpts, count);
       } catch (primaryErr) {
         const reason =
           primaryErr instanceof Error ? primaryErr.message.slice(0, 160) : "GPT-Image-2 失败";
@@ -603,7 +639,12 @@ export async function runCanvasBlock(
           try {
             // 关键帧重做同样直送中文提示，避免再等一轮编译
             const regenPrompt = `${String(mergedPrompt || "").trim()}\n\n${MANHUA_KEYART_NO_TEXT_EN}`;
-            urls = await runGptImage2Batch(regenPrompt, ar, {}, count);
+            urls = await runGptImage2Batch(
+              regenPrompt,
+              ar,
+              { openaiOnly: true, userId: gptUserId },
+              count,
+            );
             console.warn(`[canvasRunBlock] keyart edit/融图失败，已文生图重做：${reason}`);
           } catch (regenErr) {
             const rr = regenErr instanceof Error ? regenErr.message.slice(0, 120) : "文生图重做失败";
@@ -615,6 +656,16 @@ export async function runCanvasBlock(
                 fallbackErr instanceof Error ? fallbackErr.message : "Nano Banana 2 回退也失败";
               throw new Error(`生图失败（融图：${reason}；重做：${rr}；回退：${fb}）`);
             }
+          }
+        } else if (isKeyart) {
+          // 静帧已钉官方 OpenAI；超时/失败不再拼 OpenRouter 文案吓唬用户，可回退 NB2
+          try {
+            urls = await runNanoBanana2(imagePrompt, ar, undefined, count);
+            console.warn(`[canvasRunBlock] keyart 官方 Image-2 失败，已回退 NB2：${reason}`);
+          } catch (fallbackErr) {
+            const fb =
+              fallbackErr instanceof Error ? fallbackErr.message : "Nano Banana 2 回退也失败";
+            throw new Error(`生图失败（官方 Image-2：${reason}；回退：${fb}）`);
           }
         } else {
           try {
@@ -667,24 +718,32 @@ export async function runCanvasBlock(
     );
     let url = "";
     if (videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast") {
-      const imageUrls: string[] = [];
-      if (stillRef) imageUrls.push(stillRef);
+      // 参考图配额≤6：优先「本段首静帧 + 上一段末帧」再补其余静帧，避免末帧被挤掉
+      const stillPool: string[] = [];
+      if (stillRef) stillPool.push(stillRef);
       for (const u of fusionStillUrls) {
-        if (!imageUrls.includes(u)) imageUrls.push(u);
+        if (!stillPool.includes(u)) stillPool.push(u);
       }
-      // 段间接力：成片 URL + 末帧（dataURL 先上传成 HTTPS）
+      let tailFrames: string[] = [];
       if (continuityVideoUrl && /^https?:\/\//i.test(continuityVideoUrl)) {
         try {
           const { frames } = await extractVideoTailFramesFromUrl(continuityVideoUrl, {
             frameCount: MANHUA_CLIP_TAIL_FRAME_COUNT,
           });
           const rawFrames = frames.map((f) => f.dataUrl).filter(Boolean);
-          const httpsFrames = await toHttpsImageUrls(deps, rawFrames);
-          for (const f of httpsFrames) imageUrls.push(f);
+          tailFrames = await toHttpsImageUrls(deps, rawFrames);
         } catch {
           /* 抽帧/上传失败不阻断：仍传 videoUrls */
         }
       }
+      const imageUrls: string[] = [];
+      const pushUnique = (u?: string) => {
+        const s = String(u || "").trim();
+        if (s && !imageUrls.includes(s)) imageUrls.push(s);
+      };
+      pushUnique(stillPool[0]);
+      for (const f of tailFrames) pushUnique(f);
+      for (const u of stillPool.slice(1)) pushUnique(u);
       const httpsImages = await toHttpsImageUrls(deps, imageUrls.slice(0, 6));
       url = await runSeedance20(motionPrompt, stillRef, ar, {
         imageUrls: httpsImages.length ? httpsImages : undefined,

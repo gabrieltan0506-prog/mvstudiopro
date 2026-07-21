@@ -97,26 +97,71 @@ export function hasManhuaPerformanceCue(cue: ManhuaPerformanceCue): boolean {
   );
 }
 
+/** 静帧用：剥掉「」台词与「台词：」字面，避免漏进生图 */
+export function stripQuotedDialogueFromAction(action: string): string {
+  return String(action || "")
+    // 成对引号
+    .replace(/[「『"“][^」』"”]{0,64}[」』"”]/g, "")
+    // 未闭合引号（抽取截断时常见）
+    .replace(/[「『"“][^」』"”\n]{0,64}/g, "")
+    .replace(/台词[：:]\s*[^\n。；;]{1,64}/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/[，,]{2,}/g, "，")
+    .replace(/^[：:\s，,]+|[：:\s，,]+$/g, "")
+    .trim();
+}
+
 /**
  * 写入静帧 / 成片：精准表演控制。
- * stage=key_art 偏微表情定格；stage=clip 偏气口与情绪过程。
+ * key_art：零台词字面，只钉表情/肢体/口型开合；
+ * clip：写入台词字面 + 气口（仍禁止烧字幕）。
  */
 export function formatManhuaPerformanceInjectBlock(
   cue: ManhuaPerformanceCue,
   opts?: { stage?: "key_art" | "clip"; shotIndex?: number },
 ): string {
-  if (!hasManhuaPerformanceCue(cue)) return "";
   const stage = opts?.stage || "key_art";
   const shot =
     typeof opts?.shotIndex === "number" && opts.shotIndex >= 1
       ? `·镜${opts.shotIndex}`
       : "";
+
+  if (stage === "key_art") {
+    const emotionZh = stripQuotedDialogueFromAction(cue.emotionZh);
+    const microExpressionZh = stripQuotedDialogueFromAction(cue.microExpressionZh);
+    const bodyBeatZh = stripQuotedDialogueFromAction(cue.bodyBeatZh);
+    const hasVisual =
+      emotionZh ||
+      microExpressionZh ||
+      bodyBeatZh ||
+      cue.dialogueZh ||
+      cue.voiceToneZh;
+    if (!hasVisual) return "";
+    const lines: string[] = [
+      `【人物表演·静帧${shot}】`,
+      "硬锁：本镜为静帧，禁止写入任何台词字面、字幕、气泡或可读字形；只表现可见表情与肢体。",
+    ];
+    if (cue.dialogueZh) {
+      lines.push("口型开合：说话意图下嘴部微张或气口停顿（不写具体字）。");
+    }
+    if (emotionZh) lines.push(`情绪弧：${emotionZh}`);
+    if (microExpressionZh) {
+      lines.push(`微表情定格（近景可读）：${microExpressionZh}`);
+    }
+    if (bodyBeatZh) lines.push(`身体节拍：${bodyBeatZh}`);
+    lines.push(
+      "静帧优先：双眼/嘴角/下颌/手部细节把情绪钉住；禁止空洞微笑或表情糊成海报脸。",
+    );
+    return lines.join("\n");
+  }
+
+  if (!hasManhuaPerformanceCue(cue)) return "";
   const lines: string[] = [
-    `【人物表演·台词情绪${shot}】`,
-    "硬锁：台词/旁白只作口型、气口与表演依据，禁止字幕、气泡、旁白条或任何可读字形烧进画面。",
+    `【人物表演·成片台词${shot}】`,
+    "硬锁：台词只驱动口型与气口，禁止字幕、气泡、旁白条或任何可读字形烧进画面。",
   ];
   if (cue.dialogueZh) {
-    lines.push(`台词（勿烧字）：「${cue.dialogueZh}」`);
+    lines.push(`台词（口型气口依据）：「${cue.dialogueZh}」`);
   }
   if (cue.voiceToneZh) {
     lines.push(`说话语气：${cue.voiceToneZh}`);
@@ -125,24 +170,14 @@ export function formatManhuaPerformanceInjectBlock(
     lines.push(`情绪弧：${cue.emotionZh}`);
   }
   if (cue.microExpressionZh) {
-    lines.push(
-      stage === "key_art"
-        ? `微表情定格（近景可读）：${cue.microExpressionZh}`
-        : `微表情过程：${cue.microExpressionZh}`,
-    );
+    lines.push(`微表情过程：${cue.microExpressionZh}`);
   }
   if (cue.bodyBeatZh) {
     lines.push(`身体节拍：${cue.bodyBeatZh}`);
   }
-  if (stage === "clip") {
-    lines.push(
-      "气口：有台词则口型与气息对齐语气；无台词则用呼吸停顿与视线变化撑情绪。",
-    );
-  } else {
-    lines.push(
-      "静帧优先：双眼/嘴角/下颌/手部细节把情绪钉住；禁止空洞微笑或表情糊成海报脸。",
-    );
-  }
+  lines.push(
+    "气口：有台词则口型与气息对齐语气；无台词则用呼吸停顿与视线变化撑情绪。",
+  );
   return lines.join("\n");
 }
 
