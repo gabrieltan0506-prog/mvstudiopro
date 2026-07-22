@@ -50,6 +50,22 @@ describe("manhuaAssetImageGate", () => {
     expect(plans.some((p) => p.kind === "sceneplate")).toBe(true);
   });
 
+  it("plans ancient archetype sheets with Chinese labels not raw arch_ ids", () => {
+    const plans = planManhuaAssetImageSpawns({
+      ancientArchetypeIds: ["arch_phoenix_empress", "arch_rain_jianghu_dao"],
+      sceneId: "scene_06",
+      topic: "朝堂与江湖",
+    });
+    const phoenix = plans.find((p) => p.id.includes("arch_phoenix_empress"));
+    const dao = plans.find((p) => p.id.includes("arch_rain_jianghu_dao"));
+    expect(phoenix?.kind).toBe("charsheet");
+    expect(phoenix?.labelZh).toBe("凤曌女帝");
+    expect(phoenix?.prompt).toContain("禁字硬锁");
+    expect(dao?.labelZh).toBe("雨夜江湖刀客");
+    expect(plans.some((p) => p.labelZh?.startsWith("arch_"))).toBe(false);
+    expect(plans.some((p) => p.kind === "sceneplate" && p.labelZh === "皇宫大殿")).toBe(true);
+  });
+
   it("diverts writer character named like scene library into sceneplate", () => {
     const plans = planManhuaAssetImageSpawns({
       assetCanon: {

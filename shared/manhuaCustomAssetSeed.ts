@@ -10,6 +10,10 @@ import {
   listManhuaDemoAssetsForSceneTemplate,
 } from "./manhuaScenePropDemoCatalog.js";
 import { getManhuaCharacterPreviewUrl } from "./manhuaCharacterAssetLibrary.js";
+import {
+  getAncientArchetypeById,
+} from "./manhuaAncientArchetypeLibrary.js";
+import { getAncientArchetypePreviewUrl } from "./manhuaAncientDesignBoard.js";
 import type { ManhuaCustomAssetRole } from "./manhuaCustomAssetRefs.js";
 
 export type ManhuaCustomAssetSeed = {
@@ -29,6 +33,16 @@ export function resolveManhuaCustomAssetSeed(opts: {
   const id = String(opts.seedLibraryId || "").trim();
   if (!id) return null;
   if (opts.role === "character") {
+    const arch = getAncientArchetypeById(id);
+    if (arch) {
+      return {
+        role: "character",
+        seedLibraryId: id,
+        labelZh: arch.nameZh,
+        promptZh: arch.promptZh,
+        previewPath: getAncientArchetypePreviewUrl(id) || "",
+      };
+    }
     const c = getManhuaCharacterById(id);
     if (!c) return null;
     return {

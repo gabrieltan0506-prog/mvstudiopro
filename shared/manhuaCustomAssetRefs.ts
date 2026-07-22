@@ -3,6 +3,8 @@
  * 仅接受 HTTPS；unset 不进融图与门禁。
  */
 
+import { getAncientArchetypeById } from "./manhuaAncientArchetypeLibrary.js";
+import { getManhuaCharacterById } from "./manhuaCharacterAssetLibrary.js";
 import { getManhuaSceneTemplate, MANHUA_SCENE_ASSET_LIBRARY } from "./manhuaSceneAssetLibrary.js";
 import {
   MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
@@ -112,6 +114,41 @@ export function inferManhuaCustomAssetRole(opts: {
   return declared;
 }
 
+/**
+ * 库条目展示名：禁止把 arch_/char_/scene_ 英文 id 直接露给用户。
+ * 库内只有中文人名/场景名，没有「标题」。
+ */
+export function resolveManhuaCustomAssetDisplayLabelZh(opts: {
+  labelZh?: string | null;
+  seedLibraryId?: string | null;
+}): string | undefined {
+  const seed = String(opts.seedLibraryId || "").trim();
+  const label = String(opts.labelZh || "").trim();
+  const bare = stripManhuaCustomAssetLabelPrefix(label);
+  const looksLikeId = (s: string) =>
+    /^(arch_|char_|scene_|wa_|demo_)/i.test(s) || /^[a-z][a-z0-9_]{6,}$/i.test(s);
+
+  const fromSeed = (id: string): string | undefined => {
+    const arch = getAncientArchetypeById(id);
+    if (arch) return arch.nameZh;
+    const char = getManhuaCharacterById(id);
+    if (char) return char.nameZh;
+    const scene = getManhuaSceneTemplate(id);
+    if (scene) return scene.nameZh;
+    return undefined;
+  };
+
+  if (seed) {
+    const named = fromSeed(seed);
+    if (named && (!label || looksLikeId(bare) || bare === seed)) return named;
+  }
+  if (bare && looksLikeId(bare)) {
+    const named = fromSeed(bare);
+    if (named) return named;
+  }
+  return label ? label.slice(0, 40) : undefined;
+}
+
 /** 清洗并截断用户上传参考列表（只留 HTTPS）；并按 seed/标签纠偏角色分栏 */
 export function normalizeManhuaCustomAssetRefs(
   raw: unknown,
@@ -128,10 +165,13 @@ export function normalizeManhuaCustomAssetRefs(
     if (!isHttpsUrl(url) || seen.has(url)) continue;
     seen.add(url);
     const id = String(o.id || "").trim() || makeManhuaCustomAssetId();
-    const labelZh = String(o.labelZh || "").trim().slice(0, 40) || undefined;
+    const seedLibraryId = String(o.seedLibraryId || "").trim() || undefined;
+    const labelZh = resolveManhuaCustomAssetDisplayLabelZh({
+      labelZh: o.labelZh,
+      seedLibraryId,
+    });
     const source =
       o.source === "generated" || o.source === "upload" ? o.source : undefined;
-    const seedLibraryId = String(o.seedLibraryId || "").trim() || undefined;
     out.push({
       id,
       url,

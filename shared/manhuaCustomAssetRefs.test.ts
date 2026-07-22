@@ -62,6 +62,21 @@ describe("manhuaCustomAssetRefs", () => {
     expect(repaired[0]?.role).toBe("scene");
   });
 
+  it("rewrites raw arch_ english ids into Chinese library names", () => {
+    const refs = normalizeManhuaCustomAssetRefs([
+      {
+        id: "1",
+        url: "https://cdn.example/a.jpg",
+        role: "character",
+        labelZh: "arch_phoenix_empress",
+        seedLibraryId: "arch_phoenix_empress",
+        source: "generated",
+      },
+    ]);
+    expect(refs[0]?.labelZh).toBe("凤曌女帝");
+    expect(refs[0]?.role).toBe("character");
+  });
+
   it("upserts generated sheets into my library by seed id across roles", () => {
     const first = upsertGeneratedManhuaCustomAssetRef([], {
       url: "https://cdn.example/c1.jpg",
