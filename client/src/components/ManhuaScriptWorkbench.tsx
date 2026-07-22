@@ -51,6 +51,10 @@ import {
   type ManhuaCustomAssetRole,
 } from "@shared/manhuaCustomAssetRefs";
 import {
+  areManhuaKeyartsPixelLocked,
+  buildManhuaAssetLockRegistry,
+} from "@shared/manhuaAssetLockRegistry";
+import {
   groupShotsIntoSegments,
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
@@ -510,10 +514,15 @@ export default function ManhuaScriptWorkbench({
     });
   }, [story?.outputText, story?.prompt, reverse?.outputText, reverse?.prompt, topic]);
   const episodeStillCount = episodeKeyarts.filter((b) => mediaUrl(b)).length;
-  const stillsReadyEnough =
+  const stillsCountReady =
     shots.length > 0
       ? episodeStillCount >= shots.length
       : episodeStillCount > 0;
+  /** Skill：资产须垫图改图锁定；仅有成图 URL 不算可烧成片 */
+  const keyartsPixelLocked = areManhuaKeyartsPixelLocked(episodeKeyarts, {
+    minCount: shots.length > 0 ? shots.length : 1,
+  });
+  const stillsReadyEnough = stillsCountReady && keyartsPixelLocked;
 
   useEffect(() => {
     if (stillsReadyEnough) setVisualBriefConfirmed(true);
@@ -797,6 +806,17 @@ export default function ManhuaScriptWorkbench({
     });
   }, [blocks, assetCanon]);
   const customSummaryZh = summarizeCustomAssetRefsZh(customAssetRefs);
+  const assetLockRegistry = useMemo(
+    () =>
+      buildManhuaAssetLockRegistry({
+        characterIds,
+        artStyleId: activeArtStyleId,
+        sceneId,
+        propIds,
+        customRefs: customAssetRefs,
+      }),
+    [characterIds, activeArtStyleId, sceneId, propIds, customAssetRefs],
+  );
   const outlineComplete = Boolean(canRun);
   /** 方案 B：剧本确认 + 角色/场景锁定 + 角色图/场景图齐，才可进分镜出片 */
   const assetsComplete = assetGate.ready;
@@ -865,9 +885,13 @@ export default function ManhuaScriptWorkbench({
       ? "请先锁定资产并出齐参考图"
       : !productionProgress.segmentPlanReady
         ? `可拍表不足：至少 ${MANHUA_SEGMENT_MIN} 段`
-        : !productionProgress.keyartsReady
+        : !stillsCountReady
           ? `请先出齐关键静帧（每段至少 ${MANHUA_KEYARTS_PER_SEGMENT_MIN} 张）`
-          : "请先确认按秒导戏单（静帧锁定后自动生成）";
+          : !keyartsPixelLocked
+            ? "关键静帧须带资产垫图改图（见 @角色/@场景/@道具 编号）后才能出成片"
+            : !productionProgress.keyartsReady
+              ? "请先完成带资产锁的关键静帧"
+              : "请先确认按秒导戏单（静帧锁定后自动生成）";
   const productionBlockHint =
     factoryBusy && factoryProgress?.trim()
       ? factoryProgress.trim()
@@ -1739,6 +1763,29 @@ export default function ManhuaScriptWorkbench({
             ) : null}
 
             <div data-manhua-custom-refs className="mt-3 space-y-2">
+              {assetLockRegistry.slots.length ? (
+                <div
+                  data-manhua-asset-lock-tags
+                  className="rounded-xl border border-cyan-400/30 bg-cyan-500/[0.08] px-3 py-2"
+                >
+                  <div className="text-[11px] font-semibold text-cyan-50/90">资产锁编号</div>
+                  <p className="mt-0.5 text-[10px] leading-4 text-white/45">
+                    静帧改图会按这些编号对照垫图/融图；没有编号垫图的静帧不能出成片。
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {assetLockRegistry.slots.map((s) => (
+                      <span
+                        key={s.tag}
+                        className="rounded-md border border-cyan-300/35 bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-50"
+                        title={s.labelZh}
+                      >
+                        {s.tag}
+                        <span className="ml-1 font-normal text-white/50">{s.labelZh}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {onGenerateCustomAssetFromLibrary || onShareAssetToLibraryChange ? (
                 <div
                   data-manhua-asset-share
@@ -1871,12 +1918,22 @@ export default function ManhuaScriptWorkbench({
                     </div>
                     {refs.length ? (
                       <div className="mt-2 grid gap-2 sm:grid-cols-2 md:grid-cols-3">
-                        {refs.map((ref) => (
+                        {refs.map((ref) => {
+                          const lockTag =
+                            assetLockRegistry.slots.find((s) => s.path === ref.url)?.tag ||
+                            assetLockRegistry.byRole[sec.role].find((s) => s.id === ref.id)?.tag;
+                          return (
                           <div
                             key={ref.id}
                             data-manhua-custom-ref-id={ref.id}
-                            className="overflow-hidden rounded-lg border border-white/12 bg-black/35"
+                            data-manhua-asset-lock-tag={lockTag || ""}
+                            className="relative overflow-hidden rounded-lg border border-white/12 bg-black/35"
                           >
+                            {lockTag ? (
+                              <span className="absolute left-1.5 top-1.5 z-[1] rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100">
+                                {lockTag}
+                              </span>
+                            ) : null}
                             <img
                               src={ref.url}
                               alt=""
@@ -1885,6 +1942,7 @@ export default function ManhuaScriptWorkbench({
                             />
                             <div className="space-y-1.5 p-2">
                               <div className="truncate text-[10px] text-white/55">
+                                {lockTag ? `${lockTag} · ` : ""}
                                 {ref.labelZh || "参考图"}
                                 {ref.source === "generated" ? " · 新生成" : " · 上传"}
                               </div>
@@ -1917,7 +1975,8 @@ export default function ManhuaScriptWorkbench({
                               </div>
                             </div>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     ) : (
                       <p className="mt-2 text-[10px] text-white/35">本栏尚无参考图。</p>

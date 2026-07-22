@@ -16,7 +16,8 @@ describe("manhuaKeyartEditFusion", () => {
     expect(plan.requireLibraryEdit).toBe(true);
     expect(plan.refImageUrl).toMatch(/\/manhua-characters\//);
     expect(plan.editPromptAddonZh).toContain("人物库垫图");
-    expect(plan.editPromptAddonZh).toContain("Image-2 Edit");
+    expect(plan.editPromptAddonZh).toContain("资产锁·编号对照");
+    expect(plan.editPromptAddonZh).toMatch(/@角色\d+/);
     expect(plan.editPromptAddonZh).not.toContain("文生路径");
   });
 

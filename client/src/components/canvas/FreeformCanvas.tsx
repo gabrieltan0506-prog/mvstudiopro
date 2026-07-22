@@ -915,6 +915,21 @@ export default function FreeformCanvas({
                 </div>
 
                 <CanvasBlockUploadBanner block={block} />
+                {String(block.id || "").startsWith("keyart-") ? (
+                  <div className="border-b border-white/10 px-3 py-1.5 text-[10px] leading-4 text-white/65">
+                    {block.imageMode === "edit" && block.refImageUrl ? (
+                      <>
+                        <span className="font-semibold text-emerald-200/90">资产锁</span>
+                        <span className="ml-1 text-white/55">
+                          {(String(block.prompt || "").match(/@(?:角色|场景|道具)\d+/g) || []).join(" ") ||
+                            "已挂垫图改图"}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-amber-200/85">未垫图锁资产 · 不可出成片</span>
+                    )}
+                  </div>
+                ) : null}
 
                 <div
                   className={`grid min-h-0 flex-1 divide-x divide-white/10 ${

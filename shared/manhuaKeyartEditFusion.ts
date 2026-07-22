@@ -24,6 +24,7 @@ import {
   taggedManhuaCustomAssetRefs,
   type ManhuaCustomAssetRef,
 } from "./manhuaCustomAssetRefs.js";
+import { buildManhuaAssetLockRegistry } from "./manhuaAssetLockRegistry.js";
 
 export type ManhuaKeyartEditRef = {
   id: string;
@@ -250,10 +251,18 @@ export function planManhuaKeyartEditFusion(opts?: {
     : "";
 
   const libraryPadHintZh = libraryCastPaths.length
-    ? "【静帧·人物库垫图·Image-2 Edit】底图来自人物库预览（已服务端垫进竖版画幅）：请在垫图上改绘分镜动作与场面，保持身份连续；禁止抛开垫图纯文生无关主体。"
+    ? "【静帧·人物库垫图·改图】底图来自人物库预览（已服务端垫进竖版画幅）：请在垫图上改绘分镜动作与场面，保持身份连续；禁止抛开垫图纯文生无关主体。"
     : customChars.length
-      ? "【静帧·用户垫图·Image-2 Edit】底图来自用户上传人物参考：请在垫图上改绘分镜动作与场面，保持身份连续；禁止抛开垫图纯文生无关主体。"
+      ? "【静帧·用户垫图·改图】底图来自用户上传人物参考：请在垫图上改绘分镜动作与场面，保持身份连续；禁止抛开垫图纯文生无关主体。"
       : "";
+
+  const assetLock = buildManhuaAssetLockRegistry({
+    characterIds: opts?.characterIds,
+    artStyleId: opts?.artStyleId,
+    sceneId: opts?.sceneId,
+    propIds: opts?.propIds,
+    customRefs: opts?.customRefs,
+  });
 
   const refLabelsZh = ready.map((r) => r.labelZh).filter(Boolean);
   const editPromptAddonZh = [
@@ -262,6 +271,7 @@ export function planManhuaKeyartEditFusion(opts?: {
       : customTagged.length
         ? "【静帧·用户参考融图】"
         : "【静帧·示范图融图】",
+    assetLock.promptBlockZh,
     hardLockZh,
     cgStyleLockZh,
     castCountLock,
@@ -269,7 +279,7 @@ export function planManhuaKeyartEditFusion(opts?: {
     canEdit
       ? baseIsEnvOnly && (ancientIds.length || characterRefCount)
         ? "底图是场景/道具参考：请把硬锁与角色锚点中的人物全部绘入该环境（多角色须同框），道具入画；禁止在宫景里画现代人，禁止改成都市街拍，禁止只贴一张单人定妆脸。"
-        : "底图与参考图已挂载（垫图+改图）：请用 Image-2 Edit 把角色放进场景；多角色场面须同框；道具必须入画且与题材时代一致；保持人物身份与服装连续，禁止空棚抠贴、禁止错时代穿戴、禁止单人肖像偷懒，禁止抛开垫图另画无关动物/静物。"
+        : "底图与参考图已挂载（垫图+改图）：请按【资产锁·编号对照】把角色放进场景；多角色场面须同框；道具必须入画且与题材时代一致；保持人物身份与服装连续，禁止空棚抠贴、禁止错时代穿戴、禁止单人肖像偷懒，禁止抛开垫图另画无关主体。"
       : isAncientLane
         ? "暂无可用古代场景底图：请先锁定场景/道具示范或上传场景参考后再出静帧（禁止以现代人物参考图为底做改图，也禁止无垫图纯文生）。"
         : "暂无可用人物库/场景垫图：请先从人物库锁定角色（或上传人物参考）后再出静帧；禁止无垫图纯文生。",
