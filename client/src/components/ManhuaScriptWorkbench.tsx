@@ -1532,17 +1532,23 @@ export default function ManhuaScriptWorkbench({
                   className="rounded-lg border border-cyan-300/45 bg-cyan-500/20 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
                   title={
                     !assetGate.castLocked || !assetGate.sceneLocked
-                      ? "请上传勾选人物与场景，或从库内选择"
+                      ? assetGate.viaWriterCanon
+                        ? "剧本人物/场景表不完整"
+                        : "可上传勾选参考，或确认含人物表的剧本"
                       : assetsComplete
                         ? "进入分镜"
-                        : "将先补齐角色图 / 场景图，再进分镜"
+                        : assetGate.viaWriterCanon
+                          ? "有图复用、缺图按剧本表补出，再进分镜"
+                          : "将先补齐角色图 / 场景图，再进分镜"
                   }
                 >
                   {assetsComplete
                     ? "确认资产，进入分镜"
                     : assetGate.viaCustomUpload
                       ? "确认参考，进入分镜"
-                      : "确认资产并出角色/场景图"}
+                      : assetGate.viaWriterCanon
+                        ? "按剧本补设定图"
+                        : "确认资产并出角色/场景图"}
                 </button>
               </div>
             </div>
@@ -1555,7 +1561,7 @@ export default function ManhuaScriptWorkbench({
                 <div>
                   <div className="text-[11px] font-semibold text-violet-50/95">当前出演人物</div>
                   <p className="mt-0.5 text-[10px] leading-4 text-white/45">
-                    来自角色库点选；确认后会写入静帧与成片提示。古装线显示造型原型。
+                    默认以剧本人物表为准自动出设定图；库内点选仅为可选参考。古装线显示造型原型。
                   </p>
                 </div>
                 <button

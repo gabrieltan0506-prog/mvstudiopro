@@ -20,6 +20,7 @@ import {
   resolveEpisodeMainScene,
   type ManhuaWriterAssetCanon,
 } from "./manhuaWriterAssetCanon.js";
+import { composeManhuaWriterCanonSheetPrompt } from "./manhuaDirectorDistill.js";
 
 export type ManhuaAssetImageGateInput = {
   characterIds?: string[];
@@ -219,14 +220,17 @@ export function planManhuaAssetImageSpawns(
       plans.push({
         id: existing?.id || `charsheet-${id}`,
         kind: "charsheet",
-        prompt: [
-          fromCanon.promptZh,
-          artStyle.labelZh ? `【画风】${artStyle.labelZh}` : "",
-          artStyle.promptZh || "",
-          topic ? `题材：${topic.slice(0, 80)}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
+        prompt: composeManhuaWriterCanonSheetPrompt({
+          nameZh: fromCanon.nameZh,
+          aliasZh: fromCanon.aliasZh,
+          lookZh: fromCanon.lookZh,
+          motiveZh: fromCanon.motiveZh,
+          noteZh: fromCanon.noteZh,
+          basePromptZh: fromCanon.promptZh,
+          artStyleLabelZh: artStyle.labelZh,
+          artStylePromptZh: artStyle.promptZh,
+          topic,
+        }),
         labelZh: fromCanon.nameZh,
       });
       continue;
