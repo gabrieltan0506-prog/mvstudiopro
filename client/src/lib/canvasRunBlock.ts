@@ -6,7 +6,6 @@ import {
   createOmniInteraction,
   pollOmniInteractionUntilDone,
   runGeminiScript,
-  runNanoImage,
 } from "./omniCanvasApi";
 import {
   compileI2VMotionPrompt,
@@ -186,24 +185,6 @@ async function runGptImage2(
     }
     throw firstErr;
   }
-}
-
-async function runNanoBanana2(
-  prompt: string,
-  aspectRatio: string,
-  refImageUrl?: string,
-  count = 1,
-): Promise<string[]> {
-  const urls = await runNanoImage({
-    prompt,
-    aspectRatio,
-    imageUrl: refImageUrl,
-    imageSize: "2K",
-    model: "gemini-3.1-flash-image-preview",
-    tier: "flash",
-    numberOfImages: count,
-  });
-  return urls.filter(Boolean);
 }
 
 async function runGptImage2Batch(
@@ -555,15 +536,11 @@ export async function runCanvasBlock(
       (/人物库垫图|用户垫图|Image-2 Edit|示范图融图|用户参考融图/.test(keyartPromptBlob) ||
         isEdit);
     /**
-     * 默认 Image-2；用户手选 NB2 省钱则尊重。
-     * 角色定妆 / 场景空镜硬钉官方 Image-2：禁止静默 NB2，以免分不清主路径。
+     * 画布出图一律官方 Image-2。
+     * 禁止 GPT-Image-2 失败后静默回退 NB2：复杂中文提示在 NB2 上极易跑偏出错图。
+     * （UI 若仍残留 nano-banana-2 选项，运行时也钉 Image-2。）
      */
-    const imageModel: CanvasBlock["imageModel"] =
-      isAssetSheet || isKeyart
-        ? "gpt-image-2"
-        : block.imageModel === "nano-banana-2"
-          ? "nano-banana-2"
-          : "gpt-image-2";
+    const imageModel: CanvasBlock["imageModel"] = "gpt-image-2";
     // 站点相对路径（/manhua-*）须转绝对 HTTPS：官方 OpenAI images/edits 服务端会下载参考图
     const { absolutizeManhuaAssetUrl, absolutizeManhuaAssetUrls } = await import(
       "@shared/manhuaKeyartEditFusion"
@@ -627,13 +604,11 @@ export async function runCanvasBlock(
         ? rawImagePrompt.trim()
         : `${rawImagePrompt.trim()}\n\n${noTextTail}`
       : rawImagePrompt;
-    /** 主路径 Image-2；失败回退 NB2（设定图除外）。显式手选 NB2 省钱时直走 */
-    const preferGptImage2 = imageModel !== "nano-banana-2";
-    /** 关键静帧 + 设定图：钉官方 OpenAI，不走旁路拼装 */
-    const pinOfficialOpenAi = isKeyart || isAssetSheet;
+    /** 关键静帧 + 设定图 + 自由画布：一律钉官方 OpenAI Image-2，失败即停、不回退 NB2 */
+    const pinOfficialOpenAi = true;
     /**
-     * 关键静帧文生图：禁止带 ref（否则 API 会改走 edits，CG 锁失效且更易超时）。
-     * 设定图同口径直送官方；其它 image 仍可带 ref 做图生图。
+     * 关键静帧 edit 带垫图；设定图/其它节点按模式。
+     * 禁止 Image-2 失败后静默 NB2（复杂提示在 NB2 上极易跑偏）。
      */
     const gptUserId = String(deps.userId || "");
     const gptImageOpts = isEdit
@@ -648,54 +623,29 @@ export async function runCanvasBlock(
         ? { openaiOnly: true as const, userId: gptUserId }
         : { refImageUrl: absRef(refUrl) || refUrl, userId: gptUserId };
     let urls: string[] = [];
-    /** 实际出图像素引擎：成功后写回节点，避免仍标 Image-2 却已静默 NB2 */
-    let resolvedImageModel: CanvasBlock["imageModel"] = imageModel;
-    if (preferGptImage2) {
-      try {
-        urls = await runGptImage2Batch(imagePrompt, ar, gptImageOpts, count);
-        resolvedImageModel = "gpt-image-2";
-        if (isAssetSheet) {
-          console.info(
-            `[canvasRunBlock] asset-sheet · id=${block.id} · engine=official-gpt-image-2 · no-nb2-fallback`,
-          );
-        }
-      } catch (primaryErr) {
-        const reason =
-          primaryErr instanceof Error ? primaryErr.message.slice(0, 160) : "GPT-Image-2 失败";
-        // 设定图 / 关键静帧：禁止 NB2 / 纯文生静默回退（静帧无垫图文生曾漂成无关主体）
-        if (isAssetSheet) {
-          console.warn(
-            `[canvasRunBlock] asset-sheet official Image-2 failed (no NB2 fallback) · id=${block.id} · ${reason}`,
-          );
-          throw new Error("角色/场景设定图生成失败，请稍后重试");
-        }
-        if (isKeyart) {
-          console.warn(
-            `[canvasRunBlock] keyart Image-2 edit failed (no text-gen/NB2 fallback) · id=${block.id} · ${reason}`,
-          );
-          throw new Error("关键静帧改图失败，请确认人物库垫图可访问后重试");
-        } else {
-          try {
-            urls = await runNanoBanana2(imagePrompt, ar, isEdit ? editRef : refUrl, count);
-            resolvedImageModel = "nano-banana-2";
-            console.warn(`[canvasRunBlock] GPT-Image-2 失败，已回退 Nano Banana 2：${reason}`);
-          } catch (fallbackErr) {
-            const fb =
-              fallbackErr instanceof Error ? fallbackErr.message : "备援生图也失败";
-            throw new Error(`生图失败（官方 Image-2：${reason}；备援：${fb}）`);
-          }
-        }
+    try {
+      urls = await runGptImage2Batch(imagePrompt, ar, gptImageOpts, count);
+      if (isAssetSheet || isKeyart) {
+        console.info(
+          `[canvasRunBlock] image · id=${block.id} · engine=official-gpt-image-2 · no-nb2-fallback`,
+        );
       }
-    } else {
-      urls = await runNanoBanana2(imagePrompt, ar, isEdit ? editRef : refUrl, count);
-      resolvedImageModel = "nano-banana-2";
+    } catch (primaryErr) {
+      const reason =
+        primaryErr instanceof Error ? primaryErr.message.slice(0, 160) : "GPT-Image-2 失败";
+      console.warn(
+        `[canvasRunBlock] Image-2 failed (no NB2 fallback) · id=${block.id} · ${reason}`,
+      );
+      if (isAssetSheet) throw new Error("角色/场景设定图生成失败，请稍后重试");
+      if (isKeyart) throw new Error("关键静帧改图失败，请确认人物库垫图可访问后重试");
+      throw new Error("图片生成失败，请稍后重试");
     }
     const filtered = urls.filter(Boolean);
     if (!filtered.length) throw new Error("图片生成返回为空");
     return {
       outputUrl: filtered[0],
       outputUrls: filtered,
-      imageModel: resolvedImageModel,
+      imageModel: "gpt-image-2",
     };
   }
 
