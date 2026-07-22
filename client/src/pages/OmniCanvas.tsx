@@ -1308,7 +1308,7 @@ export default function OmniCanvas() {
       `chars: ${selectedCharacterIds.join(",") || "—"}`,
       `ancient: ${factoryAncientArchetypeIds.join(",") || "—"}`,
       `artStyle: ${factoryArtStyleId}`,
-      `imageEngine: gpt-image-2-2026-04-21 (pinned) · all-canvas-images=no-nb2-fallback · keyart=library-pad+edit-only`,
+      `imageEngine: gpt-image-2-2026-04-21 · keyart=library-pad+edit`,
       `genre/scene: ${factoryGenreId || "auto"} / ${factorySceneId || "auto"}`,
       `props: ${factoryPropIds.join(",") || "—"}`,
       `craft: ${selectedCraftShotIds.join(",") || "—"}`,
@@ -2758,7 +2758,7 @@ export default function OmniCanvas() {
           if (out.outputUrl || out.outputUrls?.[0]) {
             pushDebug("confirmAssetsFromScript:engine", {
               level: "ok",
-              detail: `${plan.kind}:${plan.labelZh} · ${out.imageModel || "gpt-image-2"} · no-nb2-fallback`,
+              detail: `${plan.kind}:${plan.labelZh} · ${out.imageModel || "gpt-image-2"}`,
             });
           }
         }

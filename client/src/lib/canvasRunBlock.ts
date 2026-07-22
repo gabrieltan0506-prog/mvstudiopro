@@ -536,11 +536,7 @@ export async function runCanvasBlock(
       isKeyart &&
       (/人物库垫图|用户垫图|Image-2 Edit|示范图融图|用户参考融图/.test(keyartPromptBlob) ||
         isEdit);
-    /**
-     * 画布出图一律官方 Image-2。
-     * 禁止 GPT-Image-2 失败后静默回退 NB2：复杂中文提示在 NB2 上极易跑偏出错图。
-     * （UI 若仍残留 nano-banana-2 选项，运行时也钉 Image-2。）
-     */
+    /** 画布出图一律官方 Image-2；已移除 Nano Banana 2 选项与回退 */
     const imageModel: CanvasBlock["imageModel"] = "gpt-image-2";
     // 站点相对路径（/manhua-*）须转绝对 HTTPS：官方 OpenAI images/edits 服务端会下载参考图
     const { absolutizeManhuaAssetUrl, absolutizeManhuaAssetUrls } = await import(
@@ -605,12 +601,8 @@ export async function runCanvasBlock(
         ? rawImagePrompt.trim()
         : `${rawImagePrompt.trim()}\n\n${noTextTail}`
       : rawImagePrompt;
-    /** 关键静帧 + 设定图 + 自由画布：一律钉官方 OpenAI Image-2，失败即停、不回退 NB2 */
+    /** 画布一律钉官方 OpenAI Image-2，失败即停；已移除 Nano Banana 2 */
     const pinOfficialOpenAi = true;
-    /**
-     * 关键静帧 edit 带垫图；设定图/其它节点按模式。
-     * 禁止 Image-2 失败后静默 NB2（复杂提示在 NB2 上极易跑偏）。
-     */
     const gptUserId = String(deps.userId || "");
     const gptImageOpts = isEdit
       ? {
@@ -627,16 +619,12 @@ export async function runCanvasBlock(
     try {
       urls = await runGptImage2Batch(imagePrompt, ar, gptImageOpts, count);
       if (isAssetSheet || isKeyart) {
-        console.info(
-          `[canvasRunBlock] image · id=${block.id} · engine=official-gpt-image-2 · no-nb2-fallback`,
-        );
+        console.info(`[canvasRunBlock] image · id=${block.id} · engine=gpt-image-2`);
       }
     } catch (primaryErr) {
       const reason =
-        primaryErr instanceof Error ? primaryErr.message.slice(0, 160) : "GPT-Image-2 失败";
-      console.warn(
-        `[canvasRunBlock] Image-2 failed (no NB2 fallback) · id=${block.id} · ${reason}`,
-      );
+        primaryErr instanceof Error ? primaryErr.message.slice(0, 160) : "生图失败";
+      console.warn(`[canvasRunBlock] image failed · id=${block.id} · ${reason}`);
       if (isAssetSheet) throw new Error("角色/场景设定图生成失败，请稍后重试");
       if (isKeyart) throw new Error("关键静帧改图失败，请确认人物库垫图可访问后重试");
       throw new Error("图片生成失败，请稍后重试");
