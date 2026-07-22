@@ -522,7 +522,7 @@ export async function runCanvasBlock(
     const ar = block.aspectRatio;
     const count = block.imageBatchCount || 1;
     const isKeyart = block.id.startsWith("keyart-");
-    /** 角色定妆 / 场景空镜：软建议无字（硬禁令易拒生）；关键静帧仍走原硬锁 */
+    /** 角色定妆 / 场景空镜 / 关键静帧：禁字硬锁（软建议实测仍烧海报字） */
     const isAssetSheet =
       block.id.startsWith("charsheet-") || block.id.startsWith("sceneplate-");
     const noTextTail = isKeyart
@@ -596,7 +596,7 @@ export async function runCanvasBlock(
       : isKeyart || isAssetSheet
         ? `${String(mergedPrompt || "").trim()}\n\n${noTextTail}`
         : await resolveImagePromptViaJsonDirector(deps, mergedPrompt, ar, imageModel);
-    // 关键静帧硬锁 / 定妆·场景软建议：直送路径已拼过则去重
+    // 关键静帧 / 定妆·场景禁字硬锁：直送路径已拼过则去重
     const imagePrompt = noTextTail
       ? rawImagePrompt.includes(noTextTail)
         ? rawImagePrompt.trim()

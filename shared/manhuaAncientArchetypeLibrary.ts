@@ -271,7 +271,8 @@ const ARCHETYPE_TO_WARDROBE: Record<string, string> = {
 
 /**
  * 题材 → 古风原型（最多 2）+ 可选服装连续卡。
- * 无信号时给「权谋男主 + 江湖刀客」稳定默认，避免空锚点。
+ * 只按关键词命中排序；禁止「江湖+朝堂 → 必出刀客+女帝」这种剧情绑死。
+ * 无命中时按剧种给 1 个轻量服化锚点，不硬凑对手戏对。
  */
 export function recommendAncientArchetypesFromTopic(
   topic?: string | null,
@@ -290,91 +291,41 @@ export function recommendAncientArchetypesFromTopic(
     }
     scores.set(hint.id, prev);
   }
-  // 剧种偏置
+  // 剧种仅作轻偏置，不整包灌进刀客/女帝
   const g = String(opts?.genreId || "").trim();
   if (g === "xianxia") {
     const prev = scores.get("arch_xianmen_sword_cold") || { score: 0, matched: [] as string[] };
-    prev.score += 3;
+    prev.score += 2;
+    if (!prev.matched.includes("仙侠剧种")) prev.matched.push("仙侠剧种");
     scores.set("arch_xianmen_sword_cold", prev);
-  }
-  if (g === "ancient") {
-    for (const id of ["arch_red_armor_general", "arch_phoenix_empress", "arch_rain_jianghu_dao"]) {
-      const prev = scores.get(id) || { score: 0, matched: [] as string[] };
-      prev.score += 2;
-      scores.set(id, prev);
-    }
-  }
-
-  // 江湖权谋 / 刀客入朝：允许刀客轨 + 宫廷女向混搭（看剧本信号，不按单一题材禁绝）
-  const courtSignal = /朝堂|宫廷|宫斗|女帝|皇后|后宫|权谋|王爷|密谋/.test(t);
-  const jianghuSignal = /江湖|刀客|刀光|客栈|浪客|雨夜|打斗/.test(t);
-  if (jianghuSignal && courtSignal) {
-    for (const [id, bonus, tag] of [
-      ["arch_rain_jianghu_dao", 4, "江湖×朝堂"] as const,
-      ["arch_phoenix_empress", 4, "江湖×朝堂"] as const,
-    ]) {
-      const prev = scores.get(id) || { score: 0, matched: [] as string[] };
-      prev.score += bonus;
-      if (!prev.matched.includes(tag)) prev.matched.push(tag);
-      scores.set(id, prev);
-    }
   }
 
   let ranked = Array.from(scores.entries())
     .sort((a, b) => b[1].score - a[1].score || a[0].localeCompare(b[0]))
     .map(([id, v]) => ({ id, ...v }));
 
+  // 无关键词命中：只给 1 个中性服化锚点，避免凭空编「刀客入朝」对手戏
   if (!ranked.length) {
-    ranked = [
-      { id: "arch_red_armor_general", score: 1, matched: [] },
-      { id: "arch_phoenix_empress", score: 1, matched: [] },
-    ];
+    const softDefault =
+      g === "xianxia"
+        ? "arch_xianmen_sword_cold"
+        : /药|医|疗/.test(t)
+          ? "arch_yaolu_physician"
+          : "arch_red_armor_general";
+    ranked = [{ id: softDefault, score: 1, matched: [] }];
   }
 
-  // 尽量一男向一女向：将军/刀客/剑修/医者 vs 女帝/凰后
-  const maleBias = new Set([
-    "arch_red_armor_general",
-    "arch_rain_jianghu_dao",
-    "arch_xianmen_sword_cold",
-    "arch_yaolu_physician",
-  ]);
-  const femaleBias = new Set([
-    "arch_phoenix_empress",
-    "arch_forest_phoenix_queen",
-    "arch_cloud_phoenix_queen",
-  ]);
   const picked: string[] = [];
   const matched: string[] = [];
-  let hasMale = false;
-  let hasFemale = false;
   for (const row of ranked) {
     if (picked.length >= max) break;
     if (!getAncientArchetypeById(row.id)) continue;
-    const isM = maleBias.has(row.id);
-    const isF = femaleBias.has(row.id);
-    if (picked.length === 1 && isM && hasMale && ranked.some((r) => femaleBias.has(r.id))) {
-      continue;
-    }
-    if (picked.length === 1 && isF && hasFemale && ranked.some((r) => maleBias.has(r.id))) {
-      continue;
-    }
+    // 第二名须真有题材分；禁止为了「凑一对」硬塞另一造型轨
+    if (picked.length >= 1 && row.score < 4) break;
     picked.push(row.id);
-    if (isM) hasMale = true;
-    if (isF) hasFemale = true;
     for (const m of row.matched) {
       if (!matched.includes(m)) matched.push(m);
     }
-  }
-  // 若只挑到同性，补一个对位默认（可混搭；手选始终可改）
-  if (picked.length < max) {
-    const fill = hasFemale
-      ? jianghuSignal
-        ? "arch_rain_jianghu_dao"
-        : "arch_red_armor_general"
-      : hasMale
-        ? "arch_phoenix_empress"
-        : "arch_rain_jianghu_dao";
-    if (!picked.includes(fill) && getAncientArchetypeById(fill)) picked.push(fill);
   }
 
   const archetypeIds = picked.slice(0, max);
@@ -391,8 +342,8 @@ export function recommendAncientArchetypesFromTopic(
     .filter(Boolean)
     .join("·");
   const reasonZh = matched.length
-    ? `古风题材命中「${matched.slice(0, 4).join("·")}」→ 套用原型 ${names}`
-    : `古风题材默认套用原型 ${names}（可点选更换）`;
+    ? `古风题材命中「${matched.slice(0, 4).join("·")}」→ 服化参考 ${names}（可改；剧情以剧本为准）`
+    : `古风题材暂用服化参考 ${names}（可点选更换；不限定剧情走向）`;
 
   return { archetypeIds, wardrobePropContinuityIds, reasonZh, matched };
 }
@@ -408,11 +359,11 @@ export function buildAncientArchetypePromptBlock(
   if (!picked.length) return "";
   const identity = String(opts?.identityLockZh || "").trim();
   return [
-    "【古风原型锚点】",
-    "古风题材以本锚点为主角造型来源；锁气质与服饰层次，贯穿全片；禁止外仓品牌名。",
-    "服饰以古风锚点/服装连续为准；若并存都市库定妆图，忽略其现代衣着，只可借骨相气质。",
+    "【古风服化参考】",
+    "以下库条目只作服化道/气质参考，不规定剧情对手戏或身份关系；人物姓名、性别、关系以本集剧本人物表为准。",
+    "服饰以古风参考/服装连续为准；若并存都市库定妆图，忽略其现代衣着，只可借骨相气质；禁止外仓品牌名。",
     picked.length >= 2
-      ? `人数硬锁：已挂 ${picked.length} 个古风原型，关系镜/对峙镜须同框画出对应人物，禁止只画单人定妆像。`
+      ? `本集挂了 ${picked.length} 个服化参考；分镜按剧本实际出场安排，勿为凑齐参考而硬写对峙戏。`
       : "",
     identity || "",
     ...picked.map((b, i) => `${i + 1}. ${formatAncientDesignBoardBrief(b)}`),

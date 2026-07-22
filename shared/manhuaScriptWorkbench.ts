@@ -437,15 +437,12 @@ export const MANHUA_KEYART_NO_TEXT_EN =
   "STRICT NO TEXT: pure cinematic still only. Zero readable letters, Chinese characters, numbers, subtitles, captions, speech bubbles, logos, watermarks, nameplates, UI panels, title cards, or signage glyphs. Any dialogue is acting direction only — never painted on the image. Screens/badges/papers = blank glow or illegible blur only.";
 
 /**
- * 角色定妆 / 场景空镜：软约束（对齐 Downloads/2026Jul19 短片样本「无文字」口径）。
- * 硬禁令堆叠易导致模型拒生；对白与大纲作隐藏说明即可。
+ * 角色定妆 / 场景空镜：禁字硬锁（与关键静帧同级）。
+ * 软建议实测仍会出现海报书法/标题大字；题材与动机只作隐藏说明，不得烧进画面。
  */
-export const MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH =
-  "强烈建议：按要求画出人物或场景本体；对白、大纲、姓名与标签说明请作为隐藏意图，不必画进画面。画面以纯视觉呈现为佳。";
+export const MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH = MANHUA_KEYART_NO_TEXT_LOCK;
 
-export const MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN =
-  "Strong preference: render the character or scene as described. Treat dialogue, outlines, and name labels as hidden direction — prefer a clean visual without readable on-image text.";
-
+export const MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN = MANHUA_KEYART_NO_TEXT_EN;
 /** 写入静帧 prompt：本镜场面必须带场景/道具/服装配合 */
 export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): string {
   const camNorm = normalizeManhuaShotCameraLanguage({

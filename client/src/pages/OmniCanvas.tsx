@@ -2502,7 +2502,9 @@ export default function OmniCanvas() {
   const setCustomAssetRole = useCallback(
     (id: string, role: ManhuaCustomAssetRef["role"]) => {
       setCustomAssetRefs((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, role } : r)),
+        normalizeManhuaCustomAssetRefs(
+          prev.map((r) => (r.id === id ? { ...r, role } : r)),
+        ),
       );
     },
     [],
@@ -2665,9 +2667,10 @@ export default function OmniCanvas() {
         for (const b of assetBlocks) {
           const url = b.outputUrl || b.outputUrls?.[0];
           if (!url) continue;
-          const kind = b.id.startsWith("sceneplate-")
-            ? ("sceneplate" as const)
-            : ("charsheet" as const);
+          const isScene = b.id.startsWith("sceneplate-");
+          const isChar = b.id.startsWith("charsheet-");
+          if (!isScene && !isChar) continue;
+          const kind = isScene ? ("sceneplate" as const) : ("charsheet" as const);
           const seedId = b.id.replace(/^charsheet-/, "").replace(/^sceneplate-/, "");
           const labelZh =
             (kind === "charsheet"

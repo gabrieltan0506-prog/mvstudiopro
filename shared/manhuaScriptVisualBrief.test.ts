@@ -55,7 +55,7 @@ describe("manhuaScriptVisualBrief", () => {
     expect(ui.pathLabelZh || ui.actionLabelZh || ui.events.length).toBeTruthy();
   });
 
-  it("builds scene plate prompt with soft no-text preference", () => {
+  it("builds scene plate prompt with hard no-text lock", () => {
     const p = buildManhuaScenePlateGenPrompt({
       sceneNameZh: "秘境洞府",
       scenePromptZh: "发光晶石与石阶",
@@ -63,9 +63,7 @@ describe("manhuaScriptVisualBrief", () => {
     });
     expect(p).toContain("主场景空镜参考");
     expect(p).toContain("秘境洞府");
-    expect(p).toContain("强烈建议");
-    expect(p).toContain("Strong preference");
-    expect(p).not.toContain("硬约束");
-    expect(p).not.toContain("STRICT NO TEXT");
+    expect(p).toContain("禁字硬锁");
+    expect(p).toContain("STRICT NO TEXT");
   });
 });

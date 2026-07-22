@@ -9,11 +9,14 @@ import {
   getManhuaCharacterById,
   type ManhuaArtStyleId,
 } from "./manhuaCharacterAssetLibrary.js";
+import { getAncientArchetypeById } from "./manhuaAncientArchetypeLibrary.js";
+import { buildAncientArchetypePrompt } from "./manhuaAncientDesignBoard.js";
 import { getManhuaSceneTemplate } from "./manhuaSceneAssetLibrary.js";
 import { buildManhuaScenePlateGenPrompt } from "./manhuaScriptVisualBrief.js";
 import {
   customRefsByRole,
   hasCustomCastAndScene,
+  inferManhuaCustomAssetRole,
   type ManhuaCustomAssetRef,
 } from "./manhuaCustomAssetRefs.js";
 import {
@@ -21,6 +24,16 @@ import {
   type ManhuaWriterAssetCanon,
 } from "./manhuaWriterAssetCanon.js";
 import { composeManhuaWriterCanonSheetPrompt } from "./manhuaDirectorDistill.js";
+
+/** 库原型文案里的「男主/女主」只作气质参考，出图前抹掉性别硬锁词 */
+function stripArchetypeGenderLockZh(text: string): string {
+  return String(text || "")
+    .replace(/复仇男主|权谋男主|东方神话女帝|宫廷至尊|权柄女性/g, "")
+    .replace(/男主|女主|男配|女配/g, "")
+    .replace(/[；;]\s*[；;]/g, "；")
+    .replace(/^[\s；;]+|[\s；;]+$/g, "")
+    .trim();
+}
 
 export type ManhuaAssetImageGateInput = {
   characterIds?: string[];
@@ -240,6 +253,31 @@ export function planManhuaAssetImageSpawns(
     const existing = findAssetBlock(blocks, "charsheet-", id);
     const fromCanon = canon?.characters.find((c) => c.id === id);
     if (fromCanon) {
+      // 编剧误把地点写进人物表时：改出场景空镜，避免「皇宫大殿」进我的角色
+      if (
+        inferManhuaCustomAssetRole({
+          role: "character",
+          seedLibraryId: id,
+          labelZh: fromCanon.nameZh,
+        }) === "scene"
+      ) {
+        const sceneExisting = findAssetBlock(blocks, "sceneplate-", id);
+        if (!blockHasMedia(sceneExisting)) {
+          plans.push({
+            id: sceneExisting?.id || `sceneplate-${id}`,
+            kind: "sceneplate",
+            prompt: buildManhuaScenePlateGenPrompt({
+              sceneNameZh: fromCanon.nameZh,
+              scenePromptZh: fromCanon.lookZh || fromCanon.promptZh || fromCanon.nameZh,
+              topic,
+              artStyleLabelZh: artStyle.labelZh,
+              artStylePromptZh: artStyle.promptZh,
+            }),
+            labelZh: fromCanon.nameZh,
+          });
+        }
+        continue;
+      }
       plans.push({
         id: existing?.id || `charsheet-${id}`,
         kind: "charsheet",
@@ -258,6 +296,55 @@ export function planManhuaAssetImageSpawns(
       });
       continue;
     }
+    const arch = getAncientArchetypeById(id);
+    if (arch) {
+      const lookZh = stripArchetypeGenderLockZh(
+        [
+          arch.faceTemperamentZh,
+          arch.hairstyleZh,
+          arch.wardrobeLayers.join("、"),
+          arch.props.join("、"),
+        ]
+          .filter(Boolean)
+          .join("；"),
+      );
+      const basePromptZh = stripArchetypeGenderLockZh(
+        String(arch.promptZh || buildAncientArchetypePrompt(arch))
+          .replace(/设定卡/g, "定妆肖像")
+          .replace(/姓名条|标题大字|书法题跋/g, ""),
+      );
+      // 优先本集编剧人物表里与该原型同名/同气质的条目，性别外形跟剧本，不跟库刻板
+      const scriptMatch = (canon?.characters || []).find(
+        (c) =>
+          c.nameZh === arch.nameZh ||
+          c.aliasZh === arch.nameZh ||
+          String(c.noteZh || "").includes(arch.id) ||
+          String(c.lookZh || "").includes(arch.nameZh),
+      );
+      plans.push({
+        id: existing?.id || `charsheet-${id}`,
+        kind: "charsheet",
+        prompt: composeManhuaWriterCanonSheetPrompt({
+          nameZh: scriptMatch?.nameZh || arch.nameZh,
+          aliasZh: scriptMatch?.aliasZh,
+          lookZh: scriptMatch?.lookZh || lookZh,
+          motiveZh: scriptMatch?.motiveZh,
+          noteZh: [
+            scriptMatch?.noteZh,
+            arch.atmosphereZh,
+            "性别与年龄以本集剧本人物表为准；库原型只借服化道与气质，勿因刀客/将军/女帝等名锁定生理性别。",
+          ]
+            .filter(Boolean)
+            .join("；"),
+          basePromptZh: scriptMatch?.promptZh || basePromptZh,
+          artStyleLabelZh: artStyle.labelZh,
+          artStylePromptZh: artStyle.promptZh,
+          topic,
+        }),
+        labelZh: scriptMatch?.nameZh || arch.nameZh,
+      });
+      continue;
+    }
     const char = getManhuaCharacterById(id);
     const gender = char?.gender === "male" ? "male" : "female";
     const prompt = buildManhuaCharacterSheetGenPrompt({
@@ -270,7 +357,8 @@ export function planManhuaAssetImageSpawns(
       id: existing?.id || `charsheet-${id}`,
       kind: "charsheet",
       prompt,
-      labelZh: char?.nameZh || id,
+      // 禁止把 arch_/char_ 英文 id 直接露给用户
+      labelZh: char?.nameZh || "角色定妆",
     });
   }
 
