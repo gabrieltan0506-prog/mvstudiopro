@@ -2445,12 +2445,14 @@ export default function OmniCanvas() {
   }, []);
 
   const uploadCustomAssetFiles = useCallback(
-    async (files: FileList | File[]) => {
+    async (files: FileList | File[], role?: ManhuaCustomAssetRole) => {
       const list = Array.from(files || []).filter((f) => /^image\//i.test(f.type));
       if (!list.length) {
         toast.message("请选择图片文件");
         return;
       }
+      const resolvedRole: ManhuaCustomAssetRef["role"] =
+        role === "character" || role === "scene" || role === "prop" ? role : "unset";
       try {
         const { assets, failed } = await uploadCanvasFilesParallel({
           files: list,
@@ -2461,7 +2463,7 @@ export default function OmniCanvas() {
           .map((a) => ({
             id: makeManhuaCustomAssetId(),
             url: a.url,
-            role: "unset" as const,
+            role: resolvedRole,
             labelZh: a.fileName?.replace(/\.[^.]+$/, "").slice(0, 40) || "上传参考",
             source: "upload" as const,
           }));
@@ -2469,8 +2471,18 @@ export default function OmniCanvas() {
           setCustomAssetRefs((prev) =>
             normalizeManhuaCustomAssetRefs([...prev, ...added]),
           );
-          toast.message(`已上传 ${added.length} 张参考图`, {
-            description: "请勾选每张是人物、场景还是服装道具。",
+          const roleZh =
+            resolvedRole === "character"
+              ? "人物"
+              : resolvedRole === "scene"
+                ? "场景"
+                : resolvedRole === "prop"
+                  ? "服装道具"
+                  : "";
+          toast.message(`已上传 ${added.length} 张${roleZh || "参考"}图`, {
+            description: roleZh
+              ? `已归入「我的${roleZh}」。`
+              : "请到对应分区勾选人物、场景或服装道具。",
           });
         }
         if (failed.length) {
@@ -2648,7 +2660,7 @@ export default function OmniCanvas() {
           }),
         );
       };
-      /** 已有画布设定图 → 同步进「我的角色/场景」 */
+      /** 已有画布设定图 → 同步进「我的角色 / 我的场景」分栏 */
       const syncExistingSheetsToMyLibrary = () => {
         for (const b of assetBlocks) {
           const url = b.outputUrl || b.outputUrls?.[0];
@@ -2673,7 +2685,7 @@ export default function OmniCanvas() {
         toast.message(
           gate.viaCustomUpload
             ? "自传参考已齐，进入分镜"
-            : "剧本资产图已齐，已写入我的角色/场景，进入分镜",
+            : "剧本资产图已齐，已写入我的角色与场景分栏，进入分镜",
         );
         return;
       }
@@ -2701,14 +2713,28 @@ export default function OmniCanvas() {
       });
       try {
         let working = [...blocks];
-        let originX = working.reduce((m, b) => Math.max(m, b.x + b.width), 60) + 40;
-        const originY = 80;
+        /** 画布分带：角色定妆一行、场景空镜一行，避免混排 */
+        const baseX =
+          working.reduce((m, b) => Math.max(m, b.x + (b.width || 360)), 60) + 48;
+        const CHAR_SHEET_Y = 80;
+        const SCENE_SHEET_Y = 520;
+        const sheetColGap = 380;
+        let charCol = working.filter((b) => b.id.startsWith("charsheet-")).length;
+        let sceneCol = working.filter((b) => b.id.startsWith("sceneplate-")).length;
         for (let i = 0; i < plans.length; i++) {
           const plan = plans[i]!;
           if (ac.signal.aborted) break;
           let block = working.find((b) => b.id === plan.id);
           if (!block) {
-            block = defaultCanvasBlock("image", originX, originY + i * 40);
+            const isChar = plan.kind === "charsheet";
+            const col = isChar ? charCol : sceneCol;
+            if (isChar) charCol += 1;
+            else sceneCol += 1;
+            block = defaultCanvasBlock(
+              "image",
+              baseX + col * sheetColGap,
+              isChar ? CHAR_SHEET_Y : SCENE_SHEET_Y,
+            );
             block.id = plan.id;
             block.prompt = plan.prompt;
             block.aspectRatio = "9:16";
@@ -2718,7 +2744,6 @@ export default function OmniCanvas() {
             block.width = 360;
             block.height = 400;
             working = [...working, block];
-            originX += 40;
           } else if (!(block.outputUrl || block.outputUrls?.[0])) {
             block = { ...block, prompt: plan.prompt, status: "idle", error: undefined };
             working = working.map((b) => (b.id === plan.id ? block! : b));
@@ -2770,7 +2795,7 @@ export default function OmniCanvas() {
         });
         if (nextGate.ready) {
           setWorkflowPhase("storyboard");
-          toast.message("角色图 / 场景图已齐，已写入我的角色/场景，可出关键静帧");
+          toast.message("角色图 / 场景图已齐，已写入对应分栏，可出关键静帧");
           pushDebug("confirmAssetsFromScript:ok", {
             level: "ok",
             detail: `plans=${plans.length}`,
