@@ -1,6 +1,6 @@
 /**
- * 单集 10–12 段 × 15s 可拍表：对白 / 场景配色 / 角色 / 服化道 / 光影运镜。
- * 禁止灌水：缺字段、寒暄对白、段间高度重复 → 质量不通过。
+ * 单集 10–12 段 × 15s 可拍表：对白 / 表演 / 场景配色 / 角色 / 服化道 / 光影运镜。
+ * 禁止灌水：缺字段、寒暄对白、段间高度重复、对白过稀 → 质量不通过。
  * 数值与 `manhuaScriptWorkbench` 的 MANHUA_SEGMENT_MIN/MAX/DEFAULT / 15s 对齐。
  */
 
@@ -12,9 +12,14 @@ export const MANHUA_EPISODE_SEGMENT_DURATION_SEC = 15;
 export const MANHUA_EPISODE_SEGMENT_TARGET_SEC = 180;
 export const MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC = 150;
 
+/** 每段约 15s：至少 3 句「」对白（推荐 3–4） */
+export const MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES = 3;
+
 export type ManhuaEpisodeSegmentBeat = {
   index: number;
   dialogueZh: string;
+  /** 表情 / 肢体 / 情绪起伏（可拍表演） */
+  performanceZh: string;
   sceneZh: string;
   paletteZh: string;
   castZh: string;
@@ -39,11 +44,15 @@ export type ManhuaEpisodeSegmentPlanQuality = {
 const FILLER_DIALOGUE_RE =
   /^(嗯+|啊+|哦+|好的|是的|对啊|哈哈+|今天天气|你好啊|在吗|没事|随便|加油|晚安|早啊)[.。!！?？…]*$/i;
 
+const PERFORMANCE_CUE_RE =
+  /表情|眼神|眉|嘴角|咬唇|咬牙|泪|哽|颤|冷笑|怒|慌|沉|握拳|攥|指|推|退|逼近|侧身|抬头|低头|转身|跪|扑|甩|肢体|情绪|气口/;
+
 const FIELD_KEYS: Array<{
   key: keyof Omit<ManhuaEpisodeSegmentBeat, "index">;
   aliases: string[];
 }> = [
   { key: "dialogueZh", aliases: ["对白", "台词", "对话"] },
+  { key: "performanceZh", aliases: ["表演", "表情肢体", "情绪表演", "表情", "肢体"] },
   { key: "sceneZh", aliases: ["场景", "地点", "场次"] },
   { key: "paletteZh", aliases: ["配色风格", "配色", "色调", "风格色"] },
   { key: "castZh", aliases: ["角色", "出演", "人物"] },
@@ -65,7 +74,7 @@ function pickField(block: string, aliases: string[]): string {
       "i",
     );
     const m = block.match(re)?.[1];
-    if (m && normalizeFieldLine(m).length >= 2) return normalizeFieldLine(m).slice(0, 160);
+    if (m && normalizeFieldLine(m).length >= 2) return normalizeFieldLine(m).slice(0, 200);
   }
   return "";
 }
@@ -74,12 +83,22 @@ function emptyBeat(index: number): ManhuaEpisodeSegmentBeat {
   return {
     index,
     dialogueZh: "",
+    performanceZh: "",
     sceneZh: "",
     paletteZh: "",
     castZh: "",
     wardrobePropZh: "",
     lightingCameraZh: "",
   };
+}
+
+/** 统计对白行内直角/弯引号句数 */
+export function countManhuaSegmentDialogueQuotes(dialogueZh: string): number {
+  const t = String(dialogueZh || "");
+  const cn = t.match(/「[^」]{1,80}」/g) || [];
+  const curly = t.match(/[\u201c“][^\u201d”]{1,80}[\u201d”]/g) || [];
+  const en = t.match(/"[^"]{1,80}"/g) || [];
+  return new Set([...cn, ...curly, ...en].map((s) => s.trim())).size;
 }
 
 /** 从「#### 段01」或「#### 段 1」块解析 */
@@ -191,6 +210,20 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
       issues.push(`段${String(i).padStart(2, "0")} 对白灌水或过短`);
       break;
     }
+    const quotes = countManhuaSegmentDialogueQuotes(beat.dialogueZh);
+    if (quotes < MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES) {
+      issues.push(
+        `段${String(i).padStart(2, "0")} 对白仅 ${quotes} 句「」，约15秒段至少 ${MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES} 句（推荐3–4句）`,
+      );
+      break;
+    }
+    const perf = String(beat.performanceZh || "").trim();
+    if (perf.length < 8 || !PERFORMANCE_CUE_RE.test(perf)) {
+      issues.push(
+        `段${String(i).padStart(2, "0")} 表演过薄：须写清表情/肢体/情绪起伏（可拍）`,
+      );
+      break;
+    }
     if (seenDialogue.some((d) => nearDuplicate(d, beat.dialogueZh))) {
       issues.push(`段${String(i).padStart(2, "0")} 对白与他段重复`);
       break;
@@ -235,9 +268,12 @@ export function formatManhuaEpisodeSegmentPlanPromptBlock(
   return [
     `### 十至十二段可拍表`,
     `（硬性：至少 ${MANHUA_EPISODE_SEGMENT_COUNT_MIN} 段、至多 ${MANHUA_EPISODE_SEGMENT_COUNT_MAX} 段；推荐 ${n} 段；每段约 ${durationSec} 秒；整集约 ${minSec}–${maxSec} 秒。禁止寒暄灌水、禁止段间复制粘贴。）`,
-    `每一段必须用下列字段（缺一不可；对白须推动关系/信息）：`,
+    `每一段必须用下列字段（缺一不可）：`,
+    `- 对白：至少 ${MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES} 句直角引号「」（推荐 3–4 句），须推动关系/信息/冲突；禁止两句口号撑满 ${durationSec} 秒。`,
+    `- 表演：写清表情、肢体与情绪起伏（可拍），与对白气口对齐；禁止只写抽象词如「很生气」。`,
     `#### 段01`,
     `- 对白：`,
+    `- 表演：`,
     `- 场景：`,
     `- 配色风格：`,
     `- 角色：`,
@@ -265,9 +301,11 @@ export function buildManhuaEpisodeSegmentPlanFixtureMarkdown(): string {
   ];
   const blocks = scenes.map((scene, i) => {
     const n = String(i + 1).padStart(2, "0");
+    const k = i + 1;
     return [
       `#### 段${n}`,
-      `- 对白：「把玉珏交出来——第${i + 1}次，我不会再问。」`,
+      `- 对白：「把玉珏交出来——第${k}次。」「你再装傻，我就掀了这屏风。」「……拿去，别碰她。」`,
+      `- 表演：逼近方眉心紧、握拳指节发白；对方先冷笑再眼神一颤，后退半步攥袖。`,
       `- 场景：${scene}`,
       `- 配色风格：冷青主色，烛金辅，血锈点缀`,
       `- 角色：沈清逼近；旧盟冷笑后退`,
@@ -292,6 +330,7 @@ export function formatManhuaEpisodeSegmentPlanBeatsBlock(
       return [
         `【段${i}·${MANHUA_EPISODE_SEGMENT_DURATION_SEC}s】`,
         `对白：${s.dialogueZh}`,
+        `表演：${s.performanceZh}`,
         `场景：${s.sceneZh}｜配色：${s.paletteZh}`,
         `角色：${s.castZh}｜服化道：${s.wardrobePropZh}`,
         `光影运镜：${s.lightingCameraZh}`,
