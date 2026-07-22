@@ -2679,7 +2679,11 @@ export default function OmniCanvas() {
           ingestSheetToMyLibrary({ id: b.id, kind, labelZh }, url);
         }
       };
-      if (gate.ready) {
+      const hasEpisodeSheetMedia = assetBlocks.some((b) =>
+        Boolean(b.outputUrl || b.outputUrls?.[0]),
+      );
+      // 仅「垫图分栏齐」不够：本集设定图墙仍空时必须继续出角色/场景卡，避免空态写「按剧本补」却点不到
+      if (gate.ready && hasEpisodeSheetMedia) {
         syncExistingSheetsToMyLibrary();
         setWorkflowPhase("storyboard");
         toast.message(
@@ -2694,9 +2698,15 @@ export default function OmniCanvas() {
         return;
       }
 
-      const plans = planManhuaAssetImageSpawns(gateInput);
+      const plans = planManhuaAssetImageSpawns(gateInput, {
+        forceEpisodeSheets: !hasEpisodeSheetMedia,
+      });
       if (!plans.length) {
-        toast.message(gate.hintZh || "资产图未齐");
+        toast.message(
+          hasEpisodeSheetMedia
+            ? gate.hintZh || "资产图未齐"
+            : "暂无可生成的设定图：请确认剧本人物/场景表，或到「我的角色 / 我的场景」上传参考",
+        );
         return;
       }
 

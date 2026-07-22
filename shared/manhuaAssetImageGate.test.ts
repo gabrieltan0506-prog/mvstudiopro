@@ -24,7 +24,7 @@ describe("manhuaAssetImageGate", () => {
     expect(bothNoSheets.castLocked).toBe(true);
     expect(bothNoSheets.sceneLocked).toBe(true);
     expect(bothNoSheets.ready).toBe(false);
-    expect(bothNoSheets.hintZh).toMatch(/设定卡|场景设定图/);
+    expect(bothNoSheets.hintZh).toMatch(/资产设定|设定图/);
   });
 
   it("ready when charsheet + sceneplate media exist", () => {
@@ -67,6 +67,22 @@ describe("manhuaAssetImageGate", () => {
         ],
       }),
     ).toEqual([]);
+  });
+
+  it("forceEpisodeSheets still plans when custom pad already unlocked gate", () => {
+    const plans = planManhuaAssetImageSpawns(
+      {
+        characterIds: ["char_f_07"],
+        sceneId: "scene_04",
+        customRefs: [
+          { id: "c1", url: "https://cdn.example/c.jpg", role: "character" },
+          { id: "s1", url: "https://cdn.example/s.jpg", role: "scene" },
+        ],
+      },
+      { forceEpisodeSheets: true },
+    );
+    expect(plans.some((p) => p.kind === "charsheet" && p.id.includes("char_f_07"))).toBe(true);
+    expect(plans.some((p) => p.kind === "sceneplate" && p.id.includes("scene_04"))).toBe(true);
   });
 
   it("collects identity urls from custom cast + charsheets", () => {

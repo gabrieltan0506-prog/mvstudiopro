@@ -1288,8 +1288,18 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
       {outlineComplete && !assetsComplete ? (
-        <div className="shrink-0 border-b border-amber-400/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-50/90">
-          {fragmentGateHint || "请先锁定角色与场景，并出齐角色图 / 场景图后再进分镜"}
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-amber-400/20 bg-amber-500/10 px-3 py-1.5">
+          <p className="min-w-0 flex-1 text-[11px] text-amber-50/90">
+            {fragmentGateHint || "请先锁定角色与场景，并出齐角色图 / 场景图后再进分镜"}
+          </p>
+          <button
+            type="button"
+            data-manhua-action="goto-assets-from-banner"
+            onClick={() => selectPhase("assets")}
+            className="shrink-0 rounded-md border border-amber-300/45 bg-amber-500/25 px-2.5 py-1 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/35"
+          >
+            打开资产设定
+          </button>
         </div>
       ) : null}
       {factoryBusy ? (
@@ -1601,13 +1611,15 @@ export default function ManhuaScriptWorkbench({
                           : "将先补齐角色图 / 场景图，再进分镜"
                   }
                 >
-                  {assetsComplete
-                    ? "确认资产，进入分镜"
-                    : assetGate.viaCustomUpload
-                      ? "确认参考，进入分镜"
-                      : assetGate.viaWriterCanon
-                        ? "按剧本补设定图"
-                        : "确认资产并出角色/场景图"}
+                  {episodeSheetGallery.length === 0
+                    ? "生成本集角色/场景设定图"
+                    : assetsComplete
+                      ? "确认资产，进入分镜"
+                      : assetGate.viaCustomUpload
+                        ? "确认参考，进入分镜"
+                        : assetGate.viaWriterCanon
+                          ? "生成本集角色/场景设定图"
+                          : "确认资产并出角色/场景图"}
                 </button>
               </div>
             </div>
@@ -1682,9 +1694,25 @@ export default function ManhuaScriptWorkbench({
                   })}
                 </>
               ) : (
-                <p className="text-[10px] text-white/40">
-                  尚未出设定图。确认剧本后点「按剧本补设定图」，或到下方分区上传参考。
-                </p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                  <p className="text-[10px] text-white/40">
+                    尚未出设定图。点右侧按钮从剧本出角色定妆与场景空镜；也可到下方「我的角色 / 我的场景」上传参考。
+                  </p>
+                  <button
+                    type="button"
+                    data-manhua-action="spawn-episode-sheets"
+                    disabled={
+                      !outlineComplete ||
+                      !assetGate.castLocked ||
+                      !assetGate.sceneLocked ||
+                      factoryBusy
+                    }
+                    onClick={enterStoryboard}
+                    className="shrink-0 rounded-lg border border-emerald-300/50 bg-emerald-500/25 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-50 hover:bg-emerald-500/35 disabled:opacity-45"
+                  >
+                    生成本集角色/场景设定图
+                  </button>
+                </div>
               )}
             </div>
 
