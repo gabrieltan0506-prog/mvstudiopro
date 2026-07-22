@@ -169,12 +169,6 @@ import {
   writerPackLooksReady,
   type ManhuaWriterPack,
 } from "@shared/manhuaWriterRoom";
-import {
-  getManhuaViralTemplate,
-  listApprovedManhuaViralTemplatesGrouped,
-  type ManhuaViralTemplateCard,
-  type ManhuaViralTemplateLane,
-} from "@shared/manhuaViralTemplateBank";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
 import {
@@ -430,9 +424,8 @@ export default function OmniCanvas() {
   const [factoryAdvancedOpen, setFactoryAdvancedOpen] = useState(false);
   const [factoryProgress, setFactoryProgress] = useState<string>("");
   const [writerBrief, setWriterBrief] = useState(() => initialWriterSession?.brief || "");
-  const [viralTemplateId, setViralTemplateId] = useState(
-    () => String(initialWriterSession?.viralTemplateId || "").trim(),
-  );
+  /** 节奏模板已停用：扩写只靠题材/补充条件，不再注入审定骨架 */
+  const [viralTemplateId, setViralTemplateId] = useState("");
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(() =>
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
   );
@@ -590,46 +583,57 @@ export default function OmniCanvas() {
   });
   const cloudDraftPrepareUpload = trpc.manhuaCloudDraft.prepareDirectUpload.useMutation();
   const cloudDraftCommitUpload = trpc.manhuaCloudDraft.commitDirectUpload.useMutation();
+  /** 避免 mutation 对象换引用时把防抖同步打成死循环狂刷 */
+  const cloudDraftPrepareMutateRef = useRef(cloudDraftPrepareUpload.mutateAsync);
+  const cloudDraftCommitMutateRef = useRef(cloudDraftCommitUpload.mutateAsync);
+  const cloudDraftUpsertMutateRef = useRef(cloudDraftUpsert.mutate);
+  const cloudDraftSyncInFlightRef = useRef(false);
+  cloudDraftPrepareMutateRef.current = cloudDraftPrepareUpload.mutateAsync;
+  cloudDraftCommitMutateRef.current = cloudDraftCommitUpload.mutateAsync;
+  cloudDraftUpsertMutateRef.current = cloudDraftUpsert.mutate;
   const syncCloudDraftPayload = useCallback(
     async (payload: ManhuaCloudDraftPayload) => {
       if (!user?.id) return;
+      if (cloudDraftSyncInFlightRef.current) {
+        pushDebug("cloudDraft:skip-in-flight", { level: "warn", detail: "上一笔云草稿仍在传" });
+        return;
+      }
       const payloadJson = serializeCloudDraftForUpload(payload);
       if (!payloadJson) {
         pushDebug("cloudDraft:skip-too-large", { level: "warn" });
         return;
       }
-      const direct = await uploadManhuaCloudDraftViaGcsDirect({
-        userId: user.id,
-        payload,
-        prepare: () => cloudDraftPrepareUpload.mutateAsync(),
-        commit: () => cloudDraftCommitUpload.mutateAsync(),
-      });
-      if (direct.ok) {
-        trySaveLocalClientUpdatedAt(payload.clientUpdatedAt);
-        pushDebug("cloudDraft:gcs-direct-ok", { level: "ok" });
-        return;
-      }
-      pushDebug("cloudDraft:gcs-direct-fail", {
-        level: "warn",
-        detail: direct.error.slice(0, 120),
-      });
-      cloudDraftUpsert.mutate(
-        { payloadJson },
-        {
-          onSuccess: () => {
-            trySaveLocalClientUpdatedAt(payload.clientUpdatedAt);
-            pushDebug("cloudDraft:upsert-fallback-ok", { level: "ok" });
+      cloudDraftSyncInFlightRef.current = true;
+      try {
+        const direct = await uploadManhuaCloudDraftViaGcsDirect({
+          userId: user.id,
+          payload,
+          prepare: () => cloudDraftPrepareMutateRef.current(),
+          commit: () => cloudDraftCommitMutateRef.current(),
+        });
+        if (direct.ok) {
+          trySaveLocalClientUpdatedAt(payload.clientUpdatedAt);
+          pushDebug("cloudDraft:gcs-direct-ok", { level: "ok" });
+          return;
+        }
+        pushDebug("cloudDraft:gcs-direct-fail", {
+          level: "warn",
+          detail: direct.error.slice(0, 120),
+        });
+        cloudDraftUpsertMutateRef.current(
+          { payloadJson },
+          {
+            onSuccess: () => {
+              trySaveLocalClientUpdatedAt(payload.clientUpdatedAt);
+              pushDebug("cloudDraft:upsert-fallback-ok", { level: "ok" });
+            },
           },
-        },
-      );
+        );
+      } finally {
+        cloudDraftSyncInFlightRef.current = false;
+      }
     },
-    [
-      user?.id,
-      cloudDraftPrepareUpload,
-      cloudDraftCommitUpload,
-      cloudDraftUpsert,
-      pushDebug,
-    ],
+    [user?.id, pushDebug],
   );
 
   const selectCanvasMode = useCallback((mode: CanvasWorkspaceMode) => {
@@ -1032,7 +1036,7 @@ export default function OmniCanvas() {
     setCustomAssetRefs(normalizeManhuaCustomAssetRefs(session.customAssetRefs));
     setStylePack(session.stylePack ?? null);
     setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
-    setViralTemplateId(String(session.viralTemplateId || "").trim());
+    setViralTemplateId("");
     setWorkflowPhase(
       session.workflowPhase === "assets" ||
         session.workflowPhase === "storyboard" ||
@@ -1135,7 +1139,8 @@ export default function OmniCanvas() {
   /** 登录后防抖上传云端；本机仍各自写，互不依赖 */
   useEffect(() => {
     if (!user?.id || !cloudSyncReady) return;
-    if (factoryBusy) return;
+    // 扩写/出片期间停云同步，避免直传狂刷拖死长任务
+    if (factoryBusy || writerBusy) return;
     const clientUpdatedAt = new Date().toISOString();
     const factoryPrefs = {
       topic: factoryTopic,
@@ -1188,6 +1193,7 @@ export default function OmniCanvas() {
     user?.id,
     cloudSyncReady,
     factoryBusy,
+    writerBusy,
     factoryTopic,
     writerBrief,
     writerEpisodeCount,
@@ -1941,6 +1947,7 @@ export default function OmniCanvas() {
     setProjectBible(null);
     setCustomAssetRefs([]);
     setWriterConfirmBlockers([]);
+    setViralTemplateId("");
     const t0 = Date.now();
     const count = clampWriterEpisodeCount(writerEpisodeCount);
     const designInject = [
@@ -1950,18 +1957,28 @@ export default function OmniCanvas() {
       .filter(Boolean)
       .join("\n\n");
     const mergedBrief = [brief, designInject].filter(Boolean).join("\n\n");
-    const reqPreview = `topic=${topic}\nepisodes=${count}\nbrief:\n${mergedBrief.slice(0, 4000)}`;
+    const reqPreview = `topic=${topic}\nepisodes=${count}\nbrief:\n${mergedBrief.slice(0, 4000)}\nviralTemplate=off`;
     pushDebug("expandWriterPack:start", {
-      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count} overwriteOld=1`,
+      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count} overwriteOld=1 viralTemplate=off`,
       request: reqPreview,
     });
+    /** 服务端 300s；客户端略宽一点，超时必须解锁，避免旧稿挂着却一直「正在扩写」 */
+    const EXPAND_CLIENT_TIMEOUT_MS = 320_000;
     try {
-      const res = await expandWriterMutation.mutateAsync({
-        topic,
-        brief: mergedBrief || undefined,
-        episodeCount: count,
-        viralTemplateId: viralTemplateId || undefined,
-      });
+      const res = await Promise.race([
+        expandWriterMutation.mutateAsync({
+          topic,
+          brief: mergedBrief || undefined,
+          episodeCount: count,
+          // 节奏模板停用：不注入边关/系统/操作等粗糙骨架
+          viralTemplateId: undefined,
+        }),
+        new Promise<never>((_, reject) => {
+          window.setTimeout(() => {
+            reject(new Error("剧情扩写超时，请稍后重试（旧稿未改动）"));
+          }, EXPAND_CLIENT_TIMEOUT_MS);
+        }),
+      ]);
       const pack = res.pack;
       if (isPlaceholderSeriesTitle(pack.seriesTitle)) {
         const fallback = deriveSeriesTitleFromTopic(topic);
@@ -2001,7 +2018,7 @@ export default function OmniCanvas() {
         workflowPhase: "outline" as const,
         customAssetRefs: [] as ManhuaCustomAssetRef[],
         shareAssetToLibrary,
-        viralTemplateId,
+        viralTemplateId: "",
       };
       const factoryPrefs = {
         topic,
@@ -2036,7 +2053,7 @@ export default function OmniCanvas() {
       pushDebug("expandWriterPack:ok", {
         level: "ok",
         ms: Date.now() - t0,
-        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount} · overwritten=1`,
+        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount} · overwritten=1 · viralTemplate=off`,
         request: reqPreview,
         response: `${pack.seriesTitle || ""}\n${pack.logline || ""}\n${epDigest}`.slice(0, 8000),
       });
@@ -2080,22 +2097,6 @@ export default function OmniCanvas() {
     artStyleManual,
     syncCloudDraftPayload,
   ]);
-
-  const viralTemplatesRemoteQuery = trpc.manhuaViralTemplate.listApproved.useQuery(undefined, {
-    staleTime: 60_000,
-    retry: 1,
-  });
-  const viralTemplateGrouped = useMemo(() => {
-    const remote = viralTemplatesRemoteQuery.data?.groups;
-    if (remote && remote.length > 0) {
-      return remote as Array<{ laneZh: ManhuaViralTemplateLane; items: ManhuaViralTemplateCard[] }>;
-    }
-    return listApprovedManhuaViralTemplatesGrouped();
-  }, [viralTemplatesRemoteQuery.data]);
-  const selectedViralTemplate = useMemo(() => {
-    const extras = viralTemplateGrouped.flatMap((g) => g.items);
-    return getManhuaViralTemplate(viralTemplateId, extras);
-  }, [viralTemplateId, viralTemplateGrouped]);
 
   const importWriterRoomFromText = useCallback(
     (raw: string) => {
@@ -3731,11 +3732,7 @@ export default function OmniCanvas() {
                   artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
                   projectBibleSummary={summarizeManhuaProjectBible(projectBible)}
                   assetCanon={projectBible?.assetCanon}
-                  viralTemplateLabelZh={
-                    selectedViralTemplate
-                      ? `${selectedViralTemplate.nameZh}（${selectedViralTemplate.laneZh}）`
-                      : undefined
-                  }
+                  viralTemplateLabelZh={undefined}
                   bibleBoundEpisodes={projectBible?.cast.boundEpisodeIndexes}
                   pathTrackLabelZh={pathTrackStatus.labelZh}
                   narrativeLightingLabelZh={narrativeLightingLabelZh}
@@ -4229,52 +4226,11 @@ export default function OmniCanvas() {
                 placeholder={"例：\n主角隐忍多年后归来\n对手是旧日盟友\n每集结尾必须留下未揭的局"}
                 className="mt-1 w-full resize-y rounded-xl border border-white/15 bg-black/50 px-3.5 py-2.5 text-sm leading-6 text-white placeholder:text-white/30 outline-none focus:border-emerald-400/55 disabled:opacity-50"
               />
-              <div className="mt-3" data-manhua-viral-template>
-                <label className="block text-[11px] text-white/45">节奏模板（可选）</label>
+              <div className="mt-3" data-manhua-viral-template="off">
+                <label className="block text-[11px] text-white/45">扩写方式</label>
                 <p className="mt-0.5 text-[10px] leading-4 text-white/35">
-                  审定骨架：前 3 秒钩子 + 约 180 秒节拍格；只借结构，不写外部剧名。不选则按题材自由扩写。
+                  按题材与补充条件自由扩写；粗粒度节奏模板已停用，避免把故事框死。
                 </p>
-                <div className="mt-2 space-y-2">
-                  {viralTemplateGrouped.map((group) => (
-                    <div key={group.laneZh}>
-                      <div className="mb-1 text-[10px] font-semibold text-white/40">
-                        {group.laneZh}
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {group.items.map((tpl) => {
-                          const on = viralTemplateId === tpl.id;
-                          return (
-                            <button
-                              key={tpl.id}
-                              type="button"
-                              disabled={writerBusy || factoryBusy}
-                              title={tpl.summaryZh}
-                              onClick={() => {
-                                setViralTemplateId((prev) => (prev === tpl.id ? "" : tpl.id));
-                                setWriterConfirmed(false);
-                              }}
-                              className={`rounded-lg border px-2.5 py-1.5 text-left text-[11px] disabled:opacity-50 ${
-                                on
-                                  ? "border-amber-300/45 bg-amber-500/20 text-amber-50"
-                                  : "border-white/12 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]"
-                              }`}
-                            >
-                              <div className="font-semibold">{tpl.nameZh}</div>
-                              <div className="mt-0.5 max-w-[11rem] truncate text-[9px] text-white/40">
-                                {tpl.hook3sZh}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {selectedViralTemplate ? (
-                  <p className="mt-1.5 text-[10px] text-amber-100/70">
-                    已选「{selectedViralTemplate.nameZh}」· 扩写时注入节拍与密度建议
-                  </p>
-                ) : null}
               </div>
               <div className="mt-3 flex flex-wrap items-end gap-2.5">
                 <div>
@@ -4450,6 +4406,11 @@ export default function OmniCanvas() {
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     正在扩写连载剧情包…
                   </div>
+                  {writerPack ? (
+                    <p className="mt-1.5 text-[10px] leading-relaxed text-cyan-50/70">
+                      下方仍是旧稿，成功后才会覆盖；若超过约 5 分钟无结果会自动解锁，请再点「重新扩写」。
+                    </p>
+                  ) : null}
                   <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
                     <div className="h-full w-1/2 animate-pulse rounded-full bg-gradient-to-r from-cyan-400/70 to-teal-300/80" />
                   </div>
