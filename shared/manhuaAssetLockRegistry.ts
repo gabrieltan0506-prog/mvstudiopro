@@ -83,11 +83,15 @@ export function buildManhuaAssetLockRegistry(opts?: {
     });
   };
 
-  const uploadChars = customRefsByRole(opts?.customRefs, "character").filter(
-    (c) => c.source !== "generated",
-  );
-  for (const c of uploadChars) {
-    pushRole("character", c.id, c.labelZh || "上传人物", c.url);
+  // 上传与本集生成的人物垫图都进锁（生成图也是可用 HTTPS）
+  const customChars = customRefsByRole(opts?.customRefs, "character");
+  for (const c of customChars) {
+    pushRole(
+      "character",
+      c.id,
+      c.labelZh || (c.source === "generated" ? "角色定妆" : "上传人物"),
+      c.url,
+    );
   }
   for (const id of opts?.characterIds || []) {
     const key = String(id || "").trim();
@@ -99,14 +103,18 @@ export function buildManhuaAssetLockRegistry(opts?: {
     pushRole("character", key, name, path);
   }
 
-  const uploadScenes = customRefsByRole(opts?.customRefs, "scene").filter(
-    (c) => c.source !== "generated",
-  );
-  for (const c of uploadScenes) {
-    pushRole("scene", c.id, c.labelZh || "上传场景", c.url);
+  // 上传 + 本集生成的场景图都进锁；有自有图时不再塞库内皇宫大殿示范
+  const customScenes = customRefsByRole(opts?.customRefs, "scene");
+  for (const c of customScenes) {
+    pushRole(
+      "scene",
+      c.id,
+      c.labelZh || (c.source === "generated" ? "场景参考" : "上传场景"),
+      c.url,
+    );
   }
   const sceneId = String(opts?.sceneId || "").trim();
-  if (sceneId && !uploadScenes.length) {
+  if (sceneId && !customScenes.length) {
     const demos = listManhuaDemoAssetsForSceneTemplate(sceneId);
     const sceneName = getManhuaSceneTemplate(sceneId)?.nameZh || sceneId;
     for (const demo of demos.slice(0, 2)) {
@@ -115,13 +123,16 @@ export function buildManhuaAssetLockRegistry(opts?: {
     }
   }
 
-  const uploadProps = customRefsByRole(opts?.customRefs, "prop").filter(
-    (c) => c.source !== "generated",
-  );
-  for (const c of uploadProps) {
-    pushRole("prop", c.id, c.labelZh || "上传道具", c.url);
+  const customProps = customRefsByRole(opts?.customRefs, "prop");
+  for (const c of customProps) {
+    pushRole(
+      "prop",
+      c.id,
+      c.labelZh || (c.source === "generated" ? "道具参考" : "上传道具"),
+      c.url,
+    );
   }
-  if (!uploadProps.length) {
+  if (!customProps.length) {
     for (const id of opts?.propIds || []) {
       const key = String(id || "").trim();
       if (!key) continue;

@@ -262,6 +262,64 @@ export function serializeCloudDraftForUpload(payload: ManhuaCloudDraftPayload): 
   return manhuaCloudDraftPayloadSizeOk(s) ? s : null;
 }
 
+/** GCS 直传信封（与 server manhuaCloudDraftGcsStore 一致） */
+export function buildManhuaCloudDraftGcsUploadBody(opts: {
+  userId: number;
+  payload: ManhuaCloudDraftPayload;
+}): string {
+  const serverUpdatedAt = new Date().toISOString();
+  return JSON.stringify({
+    format: "mv-manhua-cloud-draft-gcs-v1",
+    userId: opts.userId,
+    clientUpdatedAt: opts.payload.clientUpdatedAt,
+    serverUpdatedAt,
+    payload: opts.payload,
+  });
+}
+
+/**
+ * 浏览器 → GCS 签名 PUT → commit；失败时由调用方降级 upsert。
+ */
+export async function uploadManhuaCloudDraftViaGcsDirect(opts: {
+  userId: number;
+  payload: ManhuaCloudDraftPayload;
+  prepare: () => Promise<{
+    uploadUrl: string;
+    requiredHeaders?: Record<string, string>;
+  }>;
+  commit: () => Promise<unknown>;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const body = buildManhuaCloudDraftGcsUploadBody({
+    userId: opts.userId,
+    payload: opts.payload,
+  });
+  try {
+    const prepared = await opts.prepare();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...(prepared.requiredHeaders || {}),
+    };
+    const putRes = await fetch(prepared.uploadUrl, {
+      method: "PUT",
+      headers,
+      body,
+    });
+    if (!putRes.ok) {
+      return {
+        ok: false,
+        error: `直传失败 ${putRes.status}`,
+      };
+    }
+    await opts.commit();
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "直传失败",
+    };
+  }
+}
+
 export type ManhuaDraftHydrateChoice =
   | { source: "cloud"; draft: ManhuaCloudDraftPayload }
   | { source: "local"; draft: ManhuaCloudDraftPayload }

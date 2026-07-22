@@ -98,6 +98,7 @@ import {
   serializeCloudDraftForUpload,
   trySaveLocalCanvas,
   trySaveLocalClientUpdatedAt,
+  uploadManhuaCloudDraftViaGcsDirect,
 } from "@/lib/manhuaCloudDraftSync";
 import {
   loadManhuaShotContinuityPrefs,
@@ -587,6 +588,49 @@ export default function OmniCanvas() {
       pushDebug("cloudDraft:upsert-fail", { level: "warn", detail });
     },
   });
+  const cloudDraftPrepareUpload = trpc.manhuaCloudDraft.prepareDirectUpload.useMutation();
+  const cloudDraftCommitUpload = trpc.manhuaCloudDraft.commitDirectUpload.useMutation();
+  const syncCloudDraftPayload = useCallback(
+    async (payload: ManhuaCloudDraftPayload) => {
+      if (!user?.id) return;
+      const payloadJson = serializeCloudDraftForUpload(payload);
+      if (!payloadJson) {
+        pushDebug("cloudDraft:skip-too-large", { level: "warn" });
+        return;
+      }
+      const direct = await uploadManhuaCloudDraftViaGcsDirect({
+        userId: user.id,
+        payload,
+        prepare: () => cloudDraftPrepareUpload.mutateAsync(),
+        commit: () => cloudDraftCommitUpload.mutateAsync(),
+      });
+      if (direct.ok) {
+        trySaveLocalClientUpdatedAt(payload.clientUpdatedAt);
+        pushDebug("cloudDraft:gcs-direct-ok", { level: "ok" });
+        return;
+      }
+      pushDebug("cloudDraft:gcs-direct-fail", {
+        level: "warn",
+        detail: direct.error.slice(0, 120),
+      });
+      cloudDraftUpsert.mutate(
+        { payloadJson },
+        {
+          onSuccess: () => {
+            trySaveLocalClientUpdatedAt(payload.clientUpdatedAt);
+            pushDebug("cloudDraft:upsert-fallback-ok", { level: "ok" });
+          },
+        },
+      );
+    },
+    [
+      user?.id,
+      cloudDraftPrepareUpload,
+      cloudDraftCommitUpload,
+      cloudDraftUpsert,
+      pushDebug,
+    ],
+  );
 
   const selectCanvasMode = useCallback((mode: CanvasWorkspaceMode) => {
     setCanvasMode(mode);
@@ -1057,19 +1101,10 @@ export default function OmniCanvas() {
         detail: `blocks=${choice.draft.canvas.blocks.length} · at=${choice.draft.clientUpdatedAt}`,
       });
     } else if (choice.source === "local") {
-      // 本机较新：补写云端（不打断当前 UI）
-      const payloadJson = serializeCloudDraftForUpload(choice.draft);
-      if (payloadJson) {
-        cloudDraftUpsert.mutate(
-          { payloadJson },
-          {
-            onSuccess: () => {
-              trySaveLocalClientUpdatedAt(choice.draft.clientUpdatedAt);
-              pushDebug("cloudDraft:repair-cloud-from-local", { level: "ok" });
-            },
-          },
-        );
-      }
+      // 本机较新：补写云端（不打断当前 UI；优先 GCS 直传）
+      void syncCloudDraftPayload(choice.draft).then(() => {
+        pushDebug("cloudDraft:repair-cloud-from-local", { level: "ok" });
+      });
       // 本机读失败键再尽力写一次
       persistManhuaDraftLocally({
         writerSession: choice.draft.writerSession,
@@ -1093,7 +1128,7 @@ export default function OmniCanvas() {
     cloudDraftQuery.isError,
     cloudDraftQuery.data?.draft,
     applyCloudDraftToUi,
-    cloudDraftUpsert,
+    syncCloudDraftPayload,
     pushDebug,
   ]);
 
@@ -1146,19 +1181,7 @@ export default function OmniCanvas() {
         factoryPrefs,
         clientUpdatedAt,
       });
-      const payloadJson = serializeCloudDraftForUpload(payload);
-      if (!payloadJson) {
-        pushDebug("cloudDraft:skip-too-large", { level: "warn" });
-        return;
-      }
-      cloudDraftUpsert.mutate(
-        { payloadJson },
-        {
-          onSuccess: () => {
-            trySaveLocalClientUpdatedAt(clientUpdatedAt);
-          },
-        },
-      );
+      void syncCloudDraftPayload(payload);
     }, MANHUA_CLOUD_DRAFT_SYNC_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [
@@ -1187,8 +1210,7 @@ export default function OmniCanvas() {
     femaleLeadManual,
     maleLeadManual,
     artStyleManual,
-    cloudDraftUpsert,
-    pushDebug,
+    syncCloudDraftPayload,
   ]);
 
   /** 抽屉改造型后回写 Bible cast（保留 confirmedAt 与剧情正文） */
@@ -2529,6 +2551,7 @@ export default function OmniCanvas() {
         role: opts.role,
         seedLibraryId: opts.seedLibraryId,
         artStyleId: factoryArtStyleId,
+        topic: factoryTopic,
       });
       if (!seed) {
         toast.message("未找到库参考，请先点选对应库条目");
@@ -2543,14 +2566,22 @@ export default function OmniCanvas() {
         artStyleLabelZh: style.labelZh,
         artStylePromptZh: style.promptZh,
       });
-      const refAbs = absolutizeManhuaAssetUrl(seed.previewPath, window.location.origin);
+      // 有类似人物/服装道具/场景库图 → 垫图；无类似才纯文案出图
+      const refAbs = seed.previewPath
+        ? absolutizeManhuaAssetUrl(seed.previewPath, window.location.origin)
+        : "";
+      const usePad = Boolean(refAbs && /^https:\/\//i.test(refAbs) && seed.strategy !== "text");
       setFactoryBusy(true);
       const roleZh =
         opts.role === "character" ? "人物" : opts.role === "scene" ? "场景" : "服装道具";
-      setFactoryProgress(`基于库参考生成新${roleZh}…`);
+      setFactoryProgress(
+        usePad ? `基于库参考生成新${roleZh}…` : `按文案生成新${roleZh}…`,
+      );
       try {
         toast.message(`正在生成新${roleZh}`, {
-          description: `${assetShareBillingUi.priceLabelZh} · 参考「${seed.labelZh}」`,
+          description: usePad
+            ? `${assetShareBillingUi.priceLabelZh} · 参考「${seed.labelZh}」`
+            : `${assetShareBillingUi.priceLabelZh} · 按文案生成（库中无近似参考图）`,
         });
         const res = await generateAssetStillMutation.mutateAsync({
           prompt,
@@ -2558,7 +2589,7 @@ export default function OmniCanvas() {
           shareToLibrary: shareAssetToLibrary,
           labelZh: `新${roleZh}·${seed.labelZh}`,
           aspectRatio: "9:16",
-          referenceImageUrl: /^https:\/\//i.test(refAbs) ? refAbs : undefined,
+          referenceImageUrl: usePad ? refAbs : undefined,
         });
         const url = String(res.imageUrl || "").trim();
         if (!/^https:\/\//i.test(url)) {
