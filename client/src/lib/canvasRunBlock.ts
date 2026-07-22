@@ -95,13 +95,14 @@ async function resolveImagePromptViaJsonDirector(
   deps: CanvasRunDeps,
   userPrompt: string,
   aspectRatio: AspectRatio169Or916,
-  imageModel: CanvasBlock["imageModel"],
+  _imageModel: CanvasBlock["imageModel"],
 ): Promise<string> {
-  const target = imageModel === "gpt-image-2" ? "gpt-image-2" : "nano-banana";
+  // 画布出图已全钉 Image-2；提示词编译目标不再指向 nano-banana
+  void _imageModel;
   const job = prepareJsonDirectorImageJob({
     userPrompt,
     aspectRatio,
-    targetModel: target,
+    targetModel: "gpt-image-2",
   });
   try {
     const llmOut = await deps.optimizeCopy({
