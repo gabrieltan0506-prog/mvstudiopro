@@ -9,10 +9,7 @@ import {
   getManhuaCharacterById,
   type ManhuaArtStyleId,
 } from "./manhuaCharacterAssetLibrary.js";
-import {
-  getAncientArchetypeById,
-  type ManhuaAncientDesignBoard,
-} from "./manhuaAncientArchetypeLibrary.js";
+import { getAncientArchetypeById } from "./manhuaAncientArchetypeLibrary.js";
 import { buildAncientArchetypePrompt } from "./manhuaAncientDesignBoard.js";
 import { getManhuaSceneTemplate } from "./manhuaSceneAssetLibrary.js";
 import { buildManhuaScenePlateGenPrompt } from "./manhuaScriptVisualBrief.js";
@@ -28,12 +25,14 @@ import {
 } from "./manhuaWriterAssetCanon.js";
 import { composeManhuaWriterCanonSheetPrompt } from "./manhuaDirectorDistill.js";
 
-/** 古风板无独立 gender 字段：从中文定位推断，避免 arch_* 查不到都市库时默认女像 */
-function inferAncientBoardGender(board: ManhuaAncientDesignBoard): "male" | "female" {
-  const hay = [board.nameZh, ...board.positioning, ...board.coreTags].join(" ");
-  if (/女帝|女主|凰后|女王|医女|仙姬|宫妃|女侠|女子|娘娘/.test(hay)) return "female";
-  if (/男主|将军|刀客|剑修|医者|王爷|统帅|浪客|侠士/.test(hay)) return "male";
-  return /女/.test(hay) ? "female" : "male";
+/** 库原型文案里的「男主/女主」只作气质参考，出图前抹掉性别硬锁词 */
+function stripArchetypeGenderLockZh(text: string): string {
+  return String(text || "")
+    .replace(/复仇男主|权谋男主|东方神话女帝|宫廷至尊|权柄女性/g, "")
+    .replace(/男主|女主|男配|女配/g, "")
+    .replace(/[；;]\s*[；;]/g, "；")
+    .replace(/^[\s；;]+|[\s；;]+$/g, "")
+    .trim();
 }
 
 export type ManhuaAssetImageGateInput = {
@@ -299,30 +298,50 @@ export function planManhuaAssetImageSpawns(
     }
     const arch = getAncientArchetypeById(id);
     if (arch) {
-      const lookZh = [
-        arch.faceTemperamentZh,
-        arch.hairstyleZh,
-        arch.wardrobeLayers.join("、"),
-        arch.props.join("、"),
-      ]
-        .filter(Boolean)
-        .join("；");
-      const basePromptZh = String(arch.promptZh || buildAncientArchetypePrompt(arch))
-        .replace(/设定卡/g, "定妆肖像")
-        .replace(/姓名条|标题大字|书法题跋/g, "");
+      const lookZh = stripArchetypeGenderLockZh(
+        [
+          arch.faceTemperamentZh,
+          arch.hairstyleZh,
+          arch.wardrobeLayers.join("、"),
+          arch.props.join("、"),
+        ]
+          .filter(Boolean)
+          .join("；"),
+      );
+      const basePromptZh = stripArchetypeGenderLockZh(
+        String(arch.promptZh || buildAncientArchetypePrompt(arch))
+          .replace(/设定卡/g, "定妆肖像")
+          .replace(/姓名条|标题大字|书法题跋/g, ""),
+      );
+      // 优先本集编剧人物表里与该原型同名/同气质的条目，性别外形跟剧本，不跟库刻板
+      const scriptMatch = (canon?.characters || []).find(
+        (c) =>
+          c.nameZh === arch.nameZh ||
+          c.aliasZh === arch.nameZh ||
+          String(c.noteZh || "").includes(arch.id) ||
+          String(c.lookZh || "").includes(arch.nameZh),
+      );
       plans.push({
         id: existing?.id || `charsheet-${id}`,
         kind: "charsheet",
         prompt: composeManhuaWriterCanonSheetPrompt({
-          nameZh: arch.nameZh,
-          lookZh,
-          noteZh: `${inferAncientBoardGender(arch) === "female" ? "女" : "男"}性定妆；${arch.atmosphereZh}`,
-          basePromptZh,
+          nameZh: scriptMatch?.nameZh || arch.nameZh,
+          aliasZh: scriptMatch?.aliasZh,
+          lookZh: scriptMatch?.lookZh || lookZh,
+          motiveZh: scriptMatch?.motiveZh,
+          noteZh: [
+            scriptMatch?.noteZh,
+            arch.atmosphereZh,
+            "性别与年龄以本集剧本人物表为准；库原型只借服化道与气质，勿因刀客/将军/女帝等名锁定生理性别。",
+          ]
+            .filter(Boolean)
+            .join("；"),
+          basePromptZh: scriptMatch?.promptZh || basePromptZh,
           artStyleLabelZh: artStyle.labelZh,
           artStylePromptZh: artStyle.promptZh,
           topic,
         }),
-        labelZh: arch.nameZh,
+        labelZh: scriptMatch?.nameZh || arch.nameZh,
       });
       continue;
     }

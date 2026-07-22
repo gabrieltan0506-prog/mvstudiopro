@@ -305,7 +305,7 @@ export function recommendAncientArchetypesFromTopic(
     }
   }
 
-  // 江湖权谋 / 刀客入朝：允许刀客轨 + 宫廷女向混搭（看剧本信号，不按单一题材禁绝）
+  // 江湖权谋 / 刀客入朝：江湖服化轨 + 宫廷服化轨可混搭（性别跟剧本，不写死）
   const courtSignal = /朝堂|宫廷|宫斗|女帝|皇后|后宫|权谋|王爷|密谋/.test(t);
   const jianghuSignal = /江湖|刀客|刀光|客栈|浪客|雨夜|打斗/.test(t);
   if (jianghuSignal && courtSignal) {
@@ -331,52 +331,61 @@ export function recommendAncientArchetypesFromTopic(
     ];
   }
 
-  // 尽量一男向一女向：将军/刀客/剑修/医者 vs 女帝/凰后
-  const maleBias = new Set([
+  // 尽量混搭造型轨（江湖浪迹 vs 宫廷/神女服化），不代表生理性别；性别跟剧本
+  const wanderCostumeLane = new Set([
     "arch_red_armor_general",
     "arch_rain_jianghu_dao",
     "arch_xianmen_sword_cold",
     "arch_yaolu_physician",
   ]);
-  const femaleBias = new Set([
+  const courtCostumeLane = new Set([
     "arch_phoenix_empress",
     "arch_forest_phoenix_queen",
     "arch_cloud_phoenix_queen",
   ]);
   const picked: string[] = [];
   const matched: string[] = [];
-  let hasMale = false;
-  let hasFemale = false;
+  let hasWanderLane = false;
+  let hasCourtLane = false;
   for (const row of ranked) {
     if (picked.length >= max) break;
     if (!getAncientArchetypeById(row.id)) continue;
-    const isM = maleBias.has(row.id);
-    const isF = femaleBias.has(row.id);
-    if (picked.length === 1 && isM && hasMale && ranked.some((r) => femaleBias.has(r.id))) {
+    const isWander = wanderCostumeLane.has(row.id);
+    const isCourt = courtCostumeLane.has(row.id);
+    if (
+      picked.length === 1 &&
+      isWander &&
+      hasWanderLane &&
+      ranked.some((r) => courtCostumeLane.has(r.id))
+    ) {
       continue;
     }
-    if (picked.length === 1 && isF && hasFemale && ranked.some((r) => maleBias.has(r.id))) {
+    if (
+      picked.length === 1 &&
+      isCourt &&
+      hasCourtLane &&
+      ranked.some((r) => wanderCostumeLane.has(r.id))
+    ) {
       continue;
     }
     picked.push(row.id);
-    if (isM) hasMale = true;
-    if (isF) hasFemale = true;
+    if (isWander) hasWanderLane = true;
+    if (isCourt) hasCourtLane = true;
     for (const m of row.matched) {
       if (!matched.includes(m)) matched.push(m);
     }
   }
-  // 若只挑到同性，补一个对位默认（可混搭；手选始终可改）
+  // 若只挑到同一造型轨，补一个对位服化（可混搭；手选始终可改；不锁性别）
   if (picked.length < max) {
-    const fill = hasFemale
+    const fill = hasCourtLane
       ? jianghuSignal
         ? "arch_rain_jianghu_dao"
         : "arch_red_armor_general"
-      : hasMale
+      : hasWanderLane
         ? "arch_phoenix_empress"
         : "arch_rain_jianghu_dao";
     if (!picked.includes(fill) && getAncientArchetypeById(fill)) picked.push(fill);
   }
-
   const archetypeIds = picked.slice(0, max);
   const wardrobePropContinuityIds = Array.from(
     new Set(

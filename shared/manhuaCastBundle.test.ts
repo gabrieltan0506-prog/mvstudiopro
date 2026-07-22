@@ -44,17 +44,17 @@ describe("recommendManhuaCastBundle", () => {
     expect(b.femaleId).toBe("");
     expect(b.maleId).toBe("");
     expect(b.ancientArchetypeIds).toContain("arch_rain_jianghu_dao");
-    // 对位可混搭宫廷女向（防单一江湖审美疲劳）；手选可改
+    // 对位可混搭宫廷服化轨（防单一江湖审美疲劳）；手选可改；不锁性别
     expect(b.ancientArchetypeIds.length).toBeGreaterThanOrEqual(1);
     expect(b.wardrobePropContinuityIds).toContain("wpc_02_jianghu_dao");
     expect(b.propIds.every((id) => !/lipstick|ring_box|fountain_pen/i.test(id))).toBe(true);
     expect(b.propIds.some((id) => id.includes("ancient") || id.includes("intrigue"))).toBe(true);
   });
 
-  it("江湖权谋含朝堂宫廷 → 刀客轨与宫廷女向可混搭", () => {
+  it("江湖权谋含朝堂宫廷 → 刀客服化轨与宫廷服化轨可混搭", () => {
     const b = recommendManhuaCastBundle({
       topic: "江湖权谋刀客入朝，朝堂宫廷步步为营",
-      charactersMd: "男主雨夜刀客；女主宫廷权谋凤仪",
+      charactersMd: "雨夜刀客入朝；宫廷权谋凤仪",
     });
     expect(b.lane).toBe("ancient");
     expect(b.characterIds).toEqual([]);
