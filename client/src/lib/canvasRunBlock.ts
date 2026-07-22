@@ -444,6 +444,8 @@ export async function runCanvasBlock(
   outputText?: string;
   outputUrl?: string;
   outputUrls?: string[];
+  /** 实际出图像素引擎（若曾静默回退会改写，便于 Debug 对照） */
+  imageModel?: CanvasBlock["imageModel"];
 }> {
   const refTexts = upstream.texts.filter(Boolean);
   const prompt = block.prompt.trim();
@@ -554,9 +556,15 @@ export async function runCanvasBlock(
     if (isCgKeyart && isEdit && !cgIdentityLockEdit) {
       isEdit = false;
     }
-    /** 默认 Image-2；用户手选 NB2 省钱则尊重（计费不同） */
-    const imageModel: CanvasBlock["imageModel"] =
-      block.imageModel === "nano-banana-2" ? "nano-banana-2" : "gpt-image-2";
+    /**
+     * 默认 Image-2；用户手选 NB2 省钱则尊重。
+     * 角色定妆 / 场景空镜硬钉官方 Image-2：禁止静默 NB2，以免分不清主路径。
+     */
+    const imageModel: CanvasBlock["imageModel"] = isAssetSheet
+      ? "gpt-image-2"
+      : block.imageModel === "nano-banana-2"
+        ? "nano-banana-2"
+        : "gpt-image-2";
     // 站点相对路径（/manhua-*）须转绝对 HTTPS：官方 OpenAI images/edits 服务端会下载参考图
     const { absolutizeManhuaAssetUrl, absolutizeManhuaAssetUrls } = await import(
       "@shared/manhuaKeyartEditFusion"
@@ -620,11 +628,13 @@ export async function runCanvasBlock(
         ? rawImagePrompt.trim()
         : `${rawImagePrompt.trim()}\n\n${noTextTail}`
       : rawImagePrompt;
-    /** 主路径 Image-2；失败回退 NB2。显式手选 NB2 省钱时直走，不先打 Image-2 */
+    /** 主路径 Image-2；失败回退 NB2（设定图除外）。显式手选 NB2 省钱时直走 */
     const preferGptImage2 = imageModel !== "nano-banana-2";
+    /** 关键静帧 + 设定图：钉官方 OpenAI，不走旁路拼装 */
+    const pinOfficialOpenAi = isKeyart || isAssetSheet;
     /**
      * 关键静帧文生图：禁止带 ref（否则 API 会改走 edits，CG 锁失效且更易超时）。
-     * 非 keyart 的普通 image 仍可带 ref 做图生图。
+     * 设定图同口径直送官方；其它 image 仍可带 ref 做图生图。
      */
     const gptUserId = String(deps.userId || "");
     const gptImageOpts = isEdit
@@ -632,19 +642,34 @@ export async function runCanvasBlock(
           refImageUrl: editRef,
           referenceImageUrls: fusionUrls,
           maskUrl: maskUrl || undefined,
-          openaiOnly: isKeyart,
+          openaiOnly: pinOfficialOpenAi,
           userId: gptUserId,
         }
-      : isKeyart
+      : pinOfficialOpenAi
         ? { openaiOnly: true as const, userId: gptUserId }
         : { refImageUrl: absRef(refUrl) || refUrl, userId: gptUserId };
     let urls: string[] = [];
+    /** 实际出图像素引擎：成功后写回节点，避免仍标 Image-2 却已静默 NB2 */
+    let resolvedImageModel: CanvasBlock["imageModel"] = imageModel;
     if (preferGptImage2) {
       try {
         urls = await runGptImage2Batch(imagePrompt, ar, gptImageOpts, count);
+        resolvedImageModel = "gpt-image-2";
+        if (isAssetSheet) {
+          console.info(
+            `[canvasRunBlock] asset-sheet · id=${block.id} · engine=official-gpt-image-2 · no-nb2-fallback`,
+          );
+        }
       } catch (primaryErr) {
         const reason =
           primaryErr instanceof Error ? primaryErr.message.slice(0, 160) : "GPT-Image-2 失败";
+        // 设定图：禁止 NB2 静默回退，失败即停，便于确认官方主路径
+        if (isAssetSheet) {
+          console.warn(
+            `[canvasRunBlock] asset-sheet official Image-2 failed (no NB2 fallback) · id=${block.id} · ${reason}`,
+          );
+          throw new Error("角色/场景设定图生成失败，请稍后重试");
+        }
         // 关键静帧：edit/融图失败 → 纯文生图重做（不能套用就重新生成）
         if (isKeyart && isEdit) {
           try {
@@ -656,45 +681,54 @@ export async function runCanvasBlock(
               { openaiOnly: true, userId: gptUserId },
               count,
             );
+            resolvedImageModel = "gpt-image-2";
             console.warn(`[canvasRunBlock] keyart edit/融图失败，已文生图重做：${reason}`);
           } catch (regenErr) {
             const rr = regenErr instanceof Error ? regenErr.message.slice(0, 120) : "文生图重做失败";
             try {
               urls = await runNanoBanana2(imagePrompt, ar, undefined, count);
+              resolvedImageModel = "nano-banana-2";
               console.warn(`[canvasRunBlock] keyart 文生图重做失败，回退 NB2：${rr}`);
             } catch (fallbackErr) {
               const fb =
-                fallbackErr instanceof Error ? fallbackErr.message : "Nano Banana 2 回退也失败";
-              throw new Error(`生图失败（融图：${reason}；重做：${rr}；回退：${fb}）`);
+                fallbackErr instanceof Error ? fallbackErr.message : "备援生图也失败";
+              throw new Error(`生图失败（融图：${reason}；重做：${rr}；备援：${fb}）`);
             }
           }
         } else if (isKeyart) {
-          // 静帧已钉官方 OpenAI；超时/失败不再拼 OpenRouter 文案吓唬用户，可回退 NB2
+          // 静帧已钉官方 OpenAI；超时/失败可回退 NB2（节点会标回 NB2）
           try {
             urls = await runNanoBanana2(imagePrompt, ar, undefined, count);
+            resolvedImageModel = "nano-banana-2";
             console.warn(`[canvasRunBlock] keyart 官方 Image-2 失败，已回退 NB2：${reason}`);
           } catch (fallbackErr) {
             const fb =
-              fallbackErr instanceof Error ? fallbackErr.message : "Nano Banana 2 回退也失败";
-            throw new Error(`生图失败（官方 Image-2：${reason}；回退：${fb}）`);
+              fallbackErr instanceof Error ? fallbackErr.message : "备援生图也失败";
+            throw new Error(`生图失败（官方 Image-2：${reason}；备援：${fb}）`);
           }
         } else {
           try {
             urls = await runNanoBanana2(imagePrompt, ar, isEdit ? editRef : refUrl, count);
+            resolvedImageModel = "nano-banana-2";
             console.warn(`[canvasRunBlock] GPT-Image-2 失败，已回退 Nano Banana 2：${reason}`);
           } catch (fallbackErr) {
             const fb =
-              fallbackErr instanceof Error ? fallbackErr.message : "Nano Banana 2 回退也失败";
-            throw new Error(`生图失败（官方 Image-2：${reason}；回退：${fb}）`);
+              fallbackErr instanceof Error ? fallbackErr.message : "备援生图也失败";
+            throw new Error(`生图失败（官方 Image-2：${reason}；备援：${fb}）`);
           }
         }
       }
     } else {
       urls = await runNanoBanana2(imagePrompt, ar, isEdit ? editRef : refUrl, count);
+      resolvedImageModel = "nano-banana-2";
     }
     const filtered = urls.filter(Boolean);
     if (!filtered.length) throw new Error("图片生成返回为空");
-    return { outputUrl: filtered[0], outputUrls: filtered };
+    return {
+      outputUrl: filtered[0],
+      outputUrls: filtered,
+      imageModel: resolvedImageModel,
+    };
   }
 
   if (block.kind === "video") {
