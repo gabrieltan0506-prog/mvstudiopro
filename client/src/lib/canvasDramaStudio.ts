@@ -116,9 +116,12 @@ function applyKeyartEditPlanToBlock(
 ): CanvasBlock {
   let prompt = stripMarkedSection(block.prompt, "【静帧·示范图融图】");
   prompt = stripMarkedSection(prompt, "【静帧·用户参考融图】");
+  prompt = stripMarkedSection(prompt, "【静帧·人物库垫图·改图】");
+  prompt = stripMarkedSection(prompt, "【静帧·用户垫图·改图】");
   prompt = stripMarkedSection(prompt, "【静帧·人物库垫图·Image-2 Edit】");
   prompt = stripMarkedSection(prompt, "【静帧·用户垫图·Image-2 Edit】");
   prompt = stripMarkedSection(prompt, "【静帧·设定卡身份锁】");
+  prompt = stripMarkedSection(prompt, "【资产锁·编号对照·必守】");
   prompt = [prompt, plan.editPromptAddonZh].filter(Boolean).join("\n\n");
   if (plan.canEdit && plan.refImageUrl) {
     return {

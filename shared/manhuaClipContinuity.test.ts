@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  MANHUA_CLIP_TAIL_FRAME_COUNT,
+  MANHUA_CLIP_TAIL_WINDOW_SEC,
   resolveClipGlobalSegmentIndex,
   resolvePreviousEpisodeClipUrl,
   resolvePreviousSegmentClipUrl,
@@ -8,6 +10,14 @@ import {
   manhuaGlobalSegmentIndex,
   manhuaLocalSegmentIndex,
 } from "./manhuaScriptWorkbench";
+
+describe("manhua clip tail window for ~15s one-take", () => {
+  it("samples last 3–5 seconds with multiple frames", () => {
+    expect(MANHUA_CLIP_TAIL_WINDOW_SEC).toBeGreaterThanOrEqual(3);
+    expect(MANHUA_CLIP_TAIL_WINDOW_SEC).toBeLessThanOrEqual(5);
+    expect(MANHUA_CLIP_TAIL_FRAME_COUNT).toBeGreaterThanOrEqual(3);
+  });
+});
 
 describe("manhua global segment numbering", () => {
   it("maps ep2 local1 → global 13", () => {

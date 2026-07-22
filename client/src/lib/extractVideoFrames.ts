@@ -96,19 +96,19 @@ export async function extractVideoFramesFromUrl(
   return { frames, durationSec };
 }
 
-/** 抽取成片末 N 帧（短剧段间接力 / Seedance 参考） */
+/** 抽取成片末段均匀 N 帧（短剧段间接力 / Seedance 参考；默认片尾约 4s ≈ 3–5s） */
 export async function extractVideoTailFramesFromUrl(
   videoUrl: string,
   opts?: {
     frameCount?: number;
-    /** 末段采样窗口（秒），默认取片尾约 1.2s */
+    /** 末段采样窗口（秒）；产品默认 3–5s，适配 ~15s 一镜 */
     tailWindowSec?: number;
     maxWidth?: number;
     jpegQuality?: number;
   },
 ): Promise<{ frames: ExtractedVideoFrame[]; durationSec: number }> {
-  const frameCount = Math.max(1, Math.min(6, opts?.frameCount ?? 3));
-  const tailWindowSec = Math.max(0.35, opts?.tailWindowSec ?? 1.2);
+  const frameCount = Math.max(1, Math.min(6, opts?.frameCount ?? 4));
+  const tailWindowSec = Math.max(0.35, Math.min(8, opts?.tailWindowSec ?? 4));
   const maxWidth = opts?.maxWidth ?? 768;
   const quality = opts?.jpegQuality ?? 0.82;
 

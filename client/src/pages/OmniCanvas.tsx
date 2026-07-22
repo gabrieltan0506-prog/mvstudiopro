@@ -812,9 +812,9 @@ export default function OmniCanvas() {
         gender,
         artStyleId: factoryArtStyleId,
       });
-      const originX = blocks.reduce((m, b) => Math.max(m, b.x + b.width), 60) + 40;
-      const originY = 120;
-      const sheet = defaultCanvasBlock("image", originX, originY);
+      // 同版式设定卡也落左上角色带，勿贴画布最右
+      const charCount = blocks.filter((b) => b.id.startsWith("charsheet-")).length;
+      const sheet = defaultCanvasBlock("image", 60 + charCount * 380, 80);
       sheet.id = makeCanvasBlockId("charsheet");
       sheet.prompt = prompt;
       sheet.aspectRatio = "9:16";
@@ -2445,12 +2445,14 @@ export default function OmniCanvas() {
   }, []);
 
   const uploadCustomAssetFiles = useCallback(
-    async (files: FileList | File[]) => {
+    async (files: FileList | File[], role?: ManhuaCustomAssetRole) => {
       const list = Array.from(files || []).filter((f) => /^image\//i.test(f.type));
       if (!list.length) {
         toast.message("请选择图片文件");
         return;
       }
+      const resolvedRole: ManhuaCustomAssetRef["role"] =
+        role === "character" || role === "scene" || role === "prop" ? role : "unset";
       try {
         const { assets, failed } = await uploadCanvasFilesParallel({
           files: list,
@@ -2461,7 +2463,7 @@ export default function OmniCanvas() {
           .map((a) => ({
             id: makeManhuaCustomAssetId(),
             url: a.url,
-            role: "unset" as const,
+            role: resolvedRole,
             labelZh: a.fileName?.replace(/\.[^.]+$/, "").slice(0, 40) || "上传参考",
             source: "upload" as const,
           }));
@@ -2469,8 +2471,18 @@ export default function OmniCanvas() {
           setCustomAssetRefs((prev) =>
             normalizeManhuaCustomAssetRefs([...prev, ...added]),
           );
-          toast.message(`已上传 ${added.length} 张参考图`, {
-            description: "请勾选每张是人物、场景还是服装道具。",
+          const roleZh =
+            resolvedRole === "character"
+              ? "人物"
+              : resolvedRole === "scene"
+                ? "场景"
+                : resolvedRole === "prop"
+                  ? "服装道具"
+                  : "";
+          toast.message(`已上传 ${added.length} 张${roleZh || "参考"}图`, {
+            description: roleZh
+              ? `已归入「我的${roleZh}」。`
+              : "请到对应分区勾选人物、场景或服装道具。",
           });
         }
         if (failed.length) {
@@ -2648,7 +2660,7 @@ export default function OmniCanvas() {
           }),
         );
       };
-      /** 已有画布设定图 → 同步进「我的角色/场景」 */
+      /** 已有画布设定图 → 同步进「我的角色 / 我的场景」分栏 */
       const syncExistingSheetsToMyLibrary = () => {
         for (const b of assetBlocks) {
           const url = b.outputUrl || b.outputUrls?.[0];
@@ -2673,7 +2685,7 @@ export default function OmniCanvas() {
         toast.message(
           gate.viaCustomUpload
             ? "自传参考已齐，进入分镜"
-            : "剧本资产图已齐，已写入我的角色/场景，进入分镜",
+            : "剧本资产图已齐，已写入我的角色与场景分栏，进入分镜",
         );
         return;
       }
@@ -2701,14 +2713,64 @@ export default function OmniCanvas() {
       });
       try {
         let working = [...blocks];
-        let originX = working.reduce((m, b) => Math.max(m, b.x + b.width), 60) + 40;
-        const originY = 80;
+        /** 资产图固定左上：角色一行、场景一行；禁止再贴到画布最右 */
+        const ASSET_ORIGIN_X = 60;
+        const CHAR_SHEET_Y = 80;
+        const SCENE_SHEET_Y = 520;
+        const sheetColGap = 380;
+        const packAssetSheetPositions = (list: typeof working) => {
+          let c = 0;
+          let s = 0;
+          return list.map((b) => {
+            if (b.id.startsWith("charsheet-")) {
+              const next = {
+                ...b,
+                x: ASSET_ORIGIN_X + c * sheetColGap,
+                y: CHAR_SHEET_Y,
+                width: b.width || 360,
+                height: b.height || 400,
+              };
+              c += 1;
+              return next;
+            }
+            if (b.id.startsWith("sceneplate-")) {
+              const next = {
+                ...b,
+                x: ASSET_ORIGIN_X + s * sheetColGap,
+                y: SCENE_SHEET_Y,
+                width: b.width || 360,
+                height: b.height || 400,
+              };
+              s += 1;
+              return next;
+            }
+            return b;
+          });
+        };
+        working = packAssetSheetPositions(working);
+        setBlocks(working);
+        saveCanvasState(working, edges);
+        // 视口滚到左上资产带，别让人去右边找
+        setFocusBlockId(
+          plans[0]?.id ||
+            working.find((b) => b.id.startsWith("charsheet-"))?.id ||
+            working.find((b) => b.id.startsWith("sceneplate-"))?.id ||
+            null,
+        );
         for (let i = 0; i < plans.length; i++) {
           const plan = plans[i]!;
           if (ac.signal.aborted) break;
           let block = working.find((b) => b.id === plan.id);
           if (!block) {
-            block = defaultCanvasBlock("image", originX, originY + i * 40);
+            const isChar = plan.kind === "charsheet";
+            const col = working.filter((b) =>
+              b.id.startsWith(isChar ? "charsheet-" : "sceneplate-"),
+            ).length;
+            block = defaultCanvasBlock(
+              "image",
+              ASSET_ORIGIN_X + col * sheetColGap,
+              isChar ? CHAR_SHEET_Y : SCENE_SHEET_Y,
+            );
             block.id = plan.id;
             block.prompt = plan.prompt;
             block.aspectRatio = "9:16";
@@ -2717,8 +2779,8 @@ export default function OmniCanvas() {
             block.refImageUrl = undefined;
             block.width = 360;
             block.height = 400;
-            working = [...working, block];
-            originX += 40;
+            working = packAssetSheetPositions([...working, block]);
+            block = working.find((b) => b.id === plan.id)!;
           } else if (!(block.outputUrl || block.outputUrls?.[0])) {
             block = { ...block, prompt: plan.prompt, status: "idle", error: undefined };
             working = working.map((b) => (b.id === plan.id ? block! : b));
@@ -2728,6 +2790,7 @@ export default function OmniCanvas() {
           }
           setBlocks(working);
           saveCanvasState(working, edges);
+          if (i === 0) setFocusBlockId(plan.id);
           setFactoryProgress(
             plan.kind === "charsheet"
               ? `角色图 · ${plan.labelZh}`
@@ -2762,6 +2825,14 @@ export default function OmniCanvas() {
             });
           }
         }
+        working = packAssetSheetPositions(working);
+        setBlocks(working);
+        saveCanvasState(working, edges);
+        setFocusBlockId(
+          working.find((b) => b.id.startsWith("charsheet-"))?.id ||
+            working.find((b) => b.id.startsWith("sceneplate-"))?.id ||
+            null,
+        );
         const nextGate = evaluateManhuaAssetImageGate({
           ...gateInput,
           assetBlocks: working.filter(
@@ -2770,7 +2841,7 @@ export default function OmniCanvas() {
         });
         if (nextGate.ready) {
           setWorkflowPhase("storyboard");
-          toast.message("角色图 / 场景图已齐，已写入我的角色/场景，可出关键静帧");
+          toast.message("角色图 / 场景图已齐，已写入对应分栏，可出关键静帧");
           pushDebug("confirmAssetsFromScript:ok", {
             level: "ok",
             detail: `plans=${plans.length}`,

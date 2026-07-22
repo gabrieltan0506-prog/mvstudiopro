@@ -1,5 +1,6 @@
 /**
- * 短剧多段连续：下一段成片参考上一段成片末几帧 + 本段静帧。
+ * 短剧多段连续：下一段成片参考上一段成片末 3–5 秒帧 + 本段静帧。
+ * Seedance 2.0 约 15s 一镜到底，段间只能靠末段画面衔接，否则连续性断裂。
  * 段号按全集连续（第 2 集第 1 段 = g13，参考 g12）。
  */
 
@@ -9,9 +10,17 @@ import {
   resolveClipSegmentIndex,
 } from "./manhuaScriptWorkbench.js";
 
-export const MANHUA_CLIP_TAIL_FRAME_COUNT = 3;
+/** 从片尾窗口均匀抽帧张数（送 Seedance 多图参考，配额内） */
+export const MANHUA_CLIP_TAIL_FRAME_COUNT = 4;
+
+/**
+ * 片尾采样窗口（秒）。产品口径 3–5 秒；默认 4s，适配 ~15s 一镜。
+ * 短于片长时自动夹到 duration。
+ */
+export const MANHUA_CLIP_TAIL_WINDOW_SEC = 4;
+
 export const MANHUA_CLIP_CONTINUITY_HINT_ZH =
-  "【镜头连续性】以上一段成片末几帧为视觉锚：同一张脸、同一套服装、同一场景材质与光色；站位与运镜惯性平滑承接。禁止换脸、换装、下一秒跳棚。";
+  "【镜头连续性】以上一段成片末 3–5 秒画面为起幅视觉锚：同一张脸、同一套服装、同一场景材质与光色；站位与运镜惯性平滑承接，再进入本段事件。禁止换脸、换装、下一秒跳棚。";
 
 /** 跨段/跨集剧情延伸时用短转场遮接缝（脸服仍锁） */
 export const MANHUA_CLIP_CROSS_SEGMENT_TRANSITION_HINT_ZH =
