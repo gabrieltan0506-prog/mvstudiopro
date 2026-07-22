@@ -68,11 +68,8 @@ import {
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
 import {
-  buildManhuaProductionStepStates,
   canManhuaBurnVideo,
-  resolveManhuaProductionNowSummary,
   type ManhuaProductionProgress,
-  type ManhuaProductionStepId,
 } from "@shared/manhuaProductionPipeline";
 import { resolveManhuaWorkbenchNextCta } from "@shared/manhuaWorkbenchNextCta";
 import {
@@ -872,14 +869,6 @@ export default function ManhuaScriptWorkbench({
     assetsComplete,
     episodeClips,
   ]);
-  const productionSteps = useMemo(
-    () => buildManhuaProductionStepStates(productionProgress),
-    [productionProgress],
-  );
-  const productionNow = useMemo(
-    () => resolveManhuaProductionNowSummary(productionProgress),
-    [productionProgress],
-  );
   const videoBurnUnlocked = canManhuaBurnVideo(productionProgress);
   const videoBurnHint = videoBurnUnlocked
     ? null
@@ -894,12 +883,6 @@ export default function ManhuaScriptWorkbench({
             : !productionProgress.keyartsReady
               ? "请先完成带资产锁的关键静帧"
               : "请先确认按秒导戏单（静帧锁定后自动生成）";
-  const productionBlockHint =
-    factoryBusy && factoryProgress?.trim()
-      ? factoryProgress.trim()
-      : fragmentGateHint ||
-        (productionNow.activeId === "video" ? videoBurnHint : null) ||
-        productionNow.hint;
 
   const nextCta = useMemo(
     () =>
@@ -1051,20 +1034,6 @@ export default function ManhuaScriptWorkbench({
     }
     if (!assetsComplete) return;
     setActivePhase("storyboard");
-  };
-
-  const jumpProductionStep = (stepId: ManhuaProductionStepId) => {
-    if (stepId === "topic" || stepId === "screenplay") {
-      selectPhase("outline");
-      return;
-    }
-    if (stepId === "asset_lock") {
-      selectPhase("assets");
-      return;
-    }
-    selectPhase(
-      stepId === "video" && productionProgress.hasClip ? "edit" : "storyboard",
-    );
   };
 
   const runNextCta = () => {
@@ -1449,112 +1418,88 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
 
+      {/* 阿硕式：只留一条阶段轨（大纲→资产→分镜→剪辑），勿叠第二套进度 */}
       <div
-        data-manhua-production-pipeline
-        className="shrink-0 border-b border-cyan-400/25 bg-gradient-to-r from-cyan-500/[0.12] via-[#0a121c] to-transparent px-3 py-2"
+        data-manhua-workflow-rail
+        data-manhua-ashuo-stepper
+        className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-cyan-400/25 bg-gradient-to-r from-cyan-500/[0.1] via-[#0a121c] to-transparent px-3 py-2"
       >
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="text-[10px] font-semibold tracking-[0.12em] text-cyan-200/70">
-                实操进度
-              </span>
-              <span
-                data-manhua-prod-now
-                className="text-[13px] font-bold tracking-wide text-cyan-50"
-              >
-                当前第 {productionNow.stepIndex}/{productionNow.total} 步 ·{" "}
-                {productionNow.label}
-              </span>
-              {productionNow.nextLabel ? (
-                <span className="text-[11px] text-white/45">
-                  下一步 · {productionNow.nextLabel}
-                </span>
-              ) : null}
-            </div>
-            <p
-              data-manhua-prod-block-hint
-              className={`mt-0.5 text-[11px] leading-snug ${
-                fragmentGateHint || (productionNow.activeId === "video" && videoBurnHint)
-                  ? "text-amber-100/85"
-                  : "text-white/55"
+        <span className="mr-1 shrink-0 text-[10px] font-semibold tracking-[0.12em] text-cyan-200/70">
+          阶段
+        </span>
+        {workflowPhases.map((phase, index) => (
+          <div key={phase.id} className="flex min-w-0 flex-1 items-center gap-1.5">
+            <button
+              type="button"
+              data-manhua-phase={phase.id}
+              data-manhua-phase-status={
+                phase.complete ? "complete" : phase.current ? "current" : "pending"
+              }
+              onClick={() => selectPhase(phase.id)}
+              className={`flex min-w-[100px] flex-1 items-center gap-2 rounded-md border px-2.5 py-1.5 text-left ${
+                phase.complete
+                  ? "border-emerald-400/25 bg-emerald-500/[0.08] text-emerald-50"
+                  : phase.current
+                    ? phase.id === "edit"
+                      ? "border-violet-400/45 bg-violet-500/[0.12] text-violet-50"
+                      : "border-cyan-400/45 bg-cyan-500/[0.12] text-cyan-50 shadow-[0_0_14px_rgba(34,211,238,0.15)]"
+                    : "border-white/10 bg-white/[0.025] text-white/40"
               }`}
             >
-              {productionBlockHint}
-            </p>
-          </div>
-          <span className="shrink-0 rounded-md border border-white/12 bg-white/[0.04] px-2 py-1 text-[10px] text-white/50">
-            已完成 {productionNow.doneCount}/{productionNow.total}
-          </span>
-        </div>
-        <div className="mt-2 flex items-center gap-1 overflow-x-auto pb-0.5">
-          {productionSteps.map((step, index) => (
-            <div key={step.id} className="flex items-center gap-1">
-              <button
-                type="button"
-                data-manhua-prod-step={step.id}
-                data-manhua-prod-status={step.status}
-                title={`${step.hint} · 点击打开对应页`}
-                onClick={() => jumpProductionStep(step.id)}
-                className={`flex min-w-[78px] items-center gap-1.5 rounded-md border px-1.5 py-1 text-left transition hover:brightness-110 ${
-                  step.status === "done"
-                    ? "border-emerald-400/35 bg-emerald-500/[0.1] text-emerald-50"
-                    : step.status === "current"
-                      ? "border-cyan-300/55 bg-cyan-500/20 text-cyan-50 shadow-[0_0_14px_rgba(34,211,238,0.18)]"
-                      : step.status === "locked"
-                        ? "border-white/8 bg-white/[0.02] text-white/25"
-                        : "border-white/10 bg-white/[0.02] text-white/40"
+              <span
+                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                  phase.complete
+                    ? "bg-emerald-400 text-emerald-950"
+                    : phase.current
+                      ? "bg-cyan-300 text-cyan-950"
+                      : "bg-white/10 text-white/45"
                 }`}
               >
-                <span
-                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${
-                    step.status === "done"
-                      ? "bg-emerald-400 text-emerald-950"
-                      : step.status === "current"
-                        ? "bg-cyan-300 text-cyan-950"
-                        : "bg-white/10 text-white/45"
-                  }`}
-                >
-                  {step.status === "done" ? (
-                    <CheckCircle2 className="h-3 w-3" />
-                  ) : (
-                    index + 1
-                  )}
-                </span>
-                <span className="text-[10px] font-semibold">{step.label}</span>
-                <span className="ml-auto text-[8px] opacity-70">
-                  {step.status === "done"
-                    ? "已齐"
-                    : step.status === "current"
-                      ? "当前"
-                      : step.status === "locked"
-                        ? "锁定"
-                        : "待做"}
-                </span>
-              </button>
-              {index < productionSteps.length - 1 ? (
-                <span aria-hidden className="text-[9px] text-white/20">
-                  →
-                </span>
-              ) : null}
-            </div>
-          ))}
-        </div>
+                {phase.complete ? <CheckCircle2 className="h-3.5 w-3.5" /> : phase.index}
+              </span>
+              <span className="truncate text-[11px] font-semibold">
+                {phase.id === "assets" ? "资产设定" : phase.label}
+              </span>
+              <span className="ml-auto shrink-0 text-[8px] opacity-60">
+                {phase.complete ? "已完成" : phase.current ? "当前" : "待开始"}
+              </span>
+            </button>
+            {index < workflowPhases.length - 1 ? (
+              <span aria-hidden className="text-[10px] text-white/25">
+                →
+              </span>
+            ) : null}
+          </div>
+        ))}
       </div>
 
       <div
-        data-manhua-next-cta
-        className="flex shrink-0 flex-wrap items-center gap-2 border-b border-emerald-400/30 bg-gradient-to-r from-emerald-500/15 via-[#0a121c] to-transparent px-3 py-2"
+        data-manhua-ashuo-step-bar
+        className="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/10 bg-[#0a121c] px-3 py-2"
       >
         <div className="min-w-0 flex-1">
-          <div className="text-[10px] font-semibold tracking-[0.12em] text-emerald-200/70">
-            当前该点 · 不用找菜单
+          <div
+            data-manhua-ashuo-step-title
+            className="text-[13px] font-bold tracking-wide text-white/95"
+          >
+            {nextCta.stepTitleZh}
           </div>
-          <p className="mt-0.5 text-[11px] leading-snug text-white/60">{nextCta.hintZh}</p>
+          <p className="mt-0.5 text-[11px] leading-snug text-white/50">{nextCta.hintZh}</p>
         </div>
         <button
           type="button"
-          data-manhua-action="next-cta"
+          data-manhua-action="ashuo-prev"
+          disabled={!nextCta.prevPhase || factoryBusy}
+          onClick={() => {
+            if (nextCta.prevPhase) selectPhase(nextCta.prevPhase);
+          }}
+          className="shrink-0 rounded-lg border border-white/15 bg-white/[0.04] px-3 py-2 text-[11px] font-semibold text-white/70 hover:bg-white/[0.08] disabled:opacity-35"
+        >
+          上一步
+        </button>
+        <button
+          type="button"
+          data-manhua-action="ashuo-step-generate"
           disabled={
             nextCta.kind === "confirm_outline"
               ? !writerPackReady || !onConfirmOutline || factoryBusy
@@ -1577,10 +1522,10 @@ export default function ManhuaScriptWorkbench({
                         : factoryBusy
           }
           onClick={runNextCta}
-          className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3.5 py-2 text-[12px] font-bold shadow-[0_0_18px_rgba(52,211,153,0.18)] disabled:opacity-45 ${
+          className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3.5 py-2 text-[12px] font-bold disabled:opacity-45 ${
             nextCta.kind === "busy"
               ? "border-red-400/50 bg-red-500/25 text-red-50"
-              : "border-emerald-300/55 bg-emerald-500/30 text-emerald-50 hover:bg-emerald-500/40"
+              : "border-violet-300/50 bg-violet-500/30 text-violet-50 hover:bg-violet-500/40"
           }`}
         >
           {nextCta.kind === "busy" ? (
@@ -1590,55 +1535,6 @@ export default function ManhuaScriptWorkbench({
           )}
           {nextCta.labelZh}
         </button>
-      </div>
-
-      <div
-        data-manhua-workflow-rail
-        className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-white/10 bg-white/[0.018] px-3 py-1.5"
-      >
-        <span className="mr-1 shrink-0 text-[9px] font-semibold tracking-[0.14em] text-white/30">
-          工作流 · 点步骤切换
-        </span>
-        {workflowPhases.map((phase, index) => (
-          <div key={phase.id} className="flex min-w-0 flex-1 items-center gap-1.5">
-            <button
-              type="button"
-              data-manhua-phase={phase.id}
-              data-manhua-phase-status={
-                phase.complete ? "complete" : phase.current ? "current" : "pending"
-              }
-              onClick={() => selectPhase(phase.id)}
-              className={`flex min-w-[108px] flex-1 items-center gap-2 rounded-md border px-2 py-1 text-left ${
-                phase.complete
-                  ? "border-emerald-400/25 bg-emerald-500/[0.08] text-emerald-50"
-                  : phase.current
-                    ? phase.id === "edit"
-                      ? "border-violet-400/45 bg-violet-500/[0.12] text-violet-50"
-                      : "border-cyan-400/45 bg-cyan-500/[0.12] text-cyan-50"
-                    : "border-white/10 bg-white/[0.025] text-white/40"
-              }`}
-            >
-              <span
-                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${
-                  phase.complete
-                    ? "bg-emerald-400 text-emerald-950"
-                    : phase.current
-                      ? "bg-cyan-300 text-cyan-950"
-                      : "bg-white/10 text-white/45"
-                }`}
-              >
-                {phase.complete ? <CheckCircle2 className="h-3 w-3" /> : phase.index}
-              </span>
-              <span className="truncate text-[10px] font-semibold">{phase.label}</span>
-              <span className="ml-auto shrink-0 text-[8px] opacity-60">
-                {phase.complete ? "已完成" : phase.current ? "当前" : "待开始"}
-              </span>
-            </button>
-            {index < workflowPhases.length - 1 ? (
-              <span aria-hidden className="h-px w-3 shrink-0 bg-white/15" />
-            ) : null}
-          </div>
-        ))}
       </div>
 
       {activePhase === "outline" ? (
@@ -1741,11 +1637,13 @@ export default function ManhuaScriptWorkbench({
           <div className="mx-auto max-w-4xl">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <div className="text-[13px] font-semibold text-white/90">资产设定</div>
+                <div className="text-[15px] font-bold tracking-wide text-white/95">
+                  生成本集角色设定卡
+                </div>
                 <p className="mt-1 text-[11px] leading-5 text-white/45">
                   {assetCanon?.characters.length
-                    ? "以剧本人物表与系列场景池为准生成设定图；库内造型仅为可选参考。同集可切池内其他场景，须有空间过渡。"
-                    : "人物、场景、服装道具分栏上传或生成；未归类不进融图。库内造型仅为参考，不强制锁死。"}
+                    ? "以剧本人物表与系列场景池为准；点右上「生成全部」或底栏同名按钮出定妆与场景空镜。"
+                    : "人物、场景、服装道具分栏上传或生成；未归类不进融图。"}
                   {customSummaryZh ? ` 已归类：${customSummaryZh}` : ""}
                 </p>
               </div>
@@ -1771,28 +1669,22 @@ export default function ManhuaScriptWorkbench({
                     !outlineComplete || !assetGate.castLocked || !assetGate.sceneLocked || factoryBusy
                   }
                   onClick={enterStoryboard}
-                  className="rounded-lg border border-cyan-300/45 bg-cyan-500/20 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
+                  className="rounded-lg border border-violet-300/50 bg-violet-500/30 px-3 py-1.5 text-[12px] font-bold text-violet-50 disabled:opacity-45"
                   title={
                     !assetGate.castLocked || !assetGate.sceneLocked
                       ? assetGate.viaWriterCanon
                         ? "剧本人物/场景表不完整"
                         : "可上传勾选参考，或确认含人物表的剧本"
-                      : assetsComplete
-                        ? "进入分镜"
-                        : assetGate.viaWriterCanon
-                          ? "有图复用、缺图按剧本表补出，再进分镜"
-                          : "将先补齐角色图 / 场景图，再进分镜"
+                      : episodeSheetGallery.length === 0
+                        ? "按剧本出齐角色定妆与场景空镜"
+                        : assetsComplete
+                          ? "进入分镜视频"
+                          : "继续补齐角色图 / 场景图"
                   }
                 >
-                  {episodeSheetGallery.length === 0
-                    ? "生成本集角色/场景设定图"
-                    : assetsComplete
-                      ? "确认资产，进入分镜"
-                      : assetGate.viaCustomUpload
-                        ? "确认参考，进入分镜"
-                        : assetGate.viaWriterCanon
-                          ? "生成本集角色/场景设定图"
-                          : "确认资产并出角色/场景图"}
+                  {episodeSheetGallery.length === 0 || !assetsComplete
+                    ? "生成全部"
+                    : "生成分镜视频 →"}
                 </button>
               </div>
             </div>
@@ -1806,7 +1698,7 @@ export default function ManhuaScriptWorkbench({
                   本集设定图 · {episodeSheetGallery.length} 张
                 </div>
                 <p className="mt-0.5 text-[10px] leading-4 text-white/45">
-                  角色定妆与场景空镜分栏展示；点缩略图定位画布。生成后同步进下方对应分区。
+                  角色定妆与场景空镜分栏；点缩略图定位画布。生成后同步进下方「我的角色 / 我的场景」。
                 </p>
               </div>
               {episodeSheetGallery.length ? (
@@ -1869,7 +1761,7 @@ export default function ManhuaScriptWorkbench({
               ) : (
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">
                   <p className="text-[10px] text-white/40">
-                    尚未出设定图。点右侧按钮从剧本出角色定妆与场景空镜；也可到下方「我的角色 / 我的场景」上传参考。
+                    尚未出设定图。点「生成全部」（或底栏同名按钮）；也可到下方分区上传参考。
                   </p>
                   <button
                     type="button"
@@ -1881,9 +1773,9 @@ export default function ManhuaScriptWorkbench({
                       factoryBusy
                     }
                     onClick={enterStoryboard}
-                    className="shrink-0 rounded-lg border border-emerald-300/50 bg-emerald-500/25 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-50 hover:bg-emerald-500/35 disabled:opacity-45"
+                    className="shrink-0 rounded-lg border border-violet-300/50 bg-violet-500/30 px-3 py-1.5 text-[12px] font-bold text-violet-50 hover:bg-violet-500/40 disabled:opacity-45"
                   >
-                    生成本集角色/场景设定图
+                    生成全部
                   </button>
                 </div>
               )}
