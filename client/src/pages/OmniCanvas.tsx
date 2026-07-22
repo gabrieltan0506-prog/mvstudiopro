@@ -434,6 +434,8 @@ export default function OmniCanvas() {
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
   );
   const [writerBusy, setWriterBusy] = useState(false);
+  /** 确认编剧失败时的门禁原因（页面常驻，不只 toast） */
+  const [writerConfirmBlockers, setWriterConfirmBlockers] = useState<string[]>([]);
   /** 次要入口：粘贴 / 上传已有剧本 */
   const [writerImportDraft, setWriterImportDraft] = useState("");
   const writerImportFileRef = useRef<HTMLInputElement | null>(null);
@@ -1928,6 +1930,7 @@ export default function OmniCanvas() {
       }
       setWriterPack(pack);
       setWriterFocusEpisode(1);
+      setWriterConfirmBlockers([]);
       const epDigest = pack.episodes
         .map((ep) => `第${ep.index}集·${ep.title || ""}：${String(ep.endHook || "").slice(0, 80)}`)
         .join("\n");
@@ -2054,6 +2057,7 @@ export default function OmniCanvas() {
       targetSec: 180,
     });
     if (!densityGate.ok) {
+      setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
       toast.error("剧本未过三分钟密度/资产表门禁", {
         description: densityGate.errors.slice(0, 4).join("；"),
       });
@@ -2063,6 +2067,7 @@ export default function OmniCanvas() {
       });
       return;
     }
+    setWriterConfirmBlockers([]);
     const canon = densityGate.canon;
     setWriterConfirmed(true);
     setDirectorUnlocked(true);
@@ -2225,11 +2230,13 @@ export default function OmniCanvas() {
       targetSec: 180,
     });
     if (!densityGate.ok) {
+      setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
       toast.error("剧本未过三分钟密度/资产表门禁", {
         description: densityGate.errors.slice(0, 4).join("；"),
       });
       return;
     }
+    setWriterConfirmBlockers([]);
     const canon = densityGate.canon;
     const episodes = [...writerPack.episodes]
       .sort((a, b) => a.index - b.index)
@@ -3998,6 +4005,24 @@ export default function OmniCanvas() {
                 >
                   {writerConfirmed ? "已确认 · 先调资产" : "确认并进入资产设定"}
                 </button>
+                {writerConfirmBlockers.length > 0 && !writerConfirmed ? (
+                  <div
+                    data-manhua-writer-confirm-blockers
+                    className="basis-full rounded-xl border border-amber-400/35 bg-amber-500/12 px-3 py-2 text-[11px] leading-relaxed text-amber-50/95"
+                  >
+                    <div className="font-semibold text-amber-50">
+                      卡在「编剧确认」· 请先处理下列问题再点确认
+                    </div>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4 text-amber-50/80">
+                      {writerConfirmBlockers.map((err) => (
+                        <li key={err}>{err}</li>
+                      ))}
+                    </ul>
+                    <p className="mt-1.5 text-[10px] text-amber-100/55">
+                      常见原因：对白未用直角引号「」或可拍表缺「对白」行。可点「重新扩写」后再确认。
+                    </p>
+                  </div>
+                ) : null}
                 <button
                   type="button"
                   disabled={writerBusy || factoryBusy || !writerPack}

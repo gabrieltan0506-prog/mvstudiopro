@@ -89,3 +89,33 @@ export function buildManhuaProductionStepStates(
     return { ...step, status: "pending" as const };
   });
 }
+
+/** 给 UI 大字条用：当前第几步 / 下一步叫什么 */
+export function resolveManhuaProductionNowSummary(p: ManhuaProductionProgress): {
+  stepIndex: number;
+  total: number;
+  activeId: ManhuaProductionStepId;
+  label: string;
+  hint: string;
+  nextLabel: string | null;
+  doneCount: number;
+} {
+  const states = buildManhuaProductionStepStates(p);
+  const activeId = resolveManhuaProductionActiveStep(p);
+  const idx = Math.max(
+    0,
+    MANHUA_PRODUCTION_STEPS.findIndex((s) => s.id === activeId),
+  );
+  const active = MANHUA_PRODUCTION_STEPS[idx]!;
+  const next = MANHUA_PRODUCTION_STEPS[idx + 1] || null;
+  const doneCount = states.filter((s) => s.status === "done").length;
+  return {
+    stepIndex: idx + 1,
+    total: MANHUA_PRODUCTION_STEPS.length,
+    activeId,
+    label: active.label,
+    hint: active.hint,
+    nextLabel: next?.label ?? null,
+    doneCount,
+  };
+}

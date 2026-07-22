@@ -6,6 +6,7 @@ import {
 import {
   buildManhuaProductionStepStates,
   canManhuaBurnVideo,
+  resolveManhuaProductionNowSummary,
 } from "./manhuaProductionPipeline";
 import {
   buildManhuaSecondCueSheet,
@@ -82,5 +83,17 @@ describe("manhuaStoryDistill", () => {
     });
     expect(steps.find((s) => s.id === "video")?.status).toBe("locked");
     expect(steps.find((s) => s.id === "keyart")?.status).toBe("current");
+    const now = resolveManhuaProductionNowSummary({
+      hasTopic: true,
+      hasScreenplay: true,
+      assetsLocked: true,
+      segmentPlanReady: true,
+      keyartsReady: false,
+      cueSheetReady: false,
+      hasClip: false,
+    });
+    expect(now.label).toBe("关键静帧");
+    expect(now.stepIndex).toBe(5);
+    expect(now.nextLabel).toBe("导戏单");
   });
 });

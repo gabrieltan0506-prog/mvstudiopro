@@ -81,9 +81,24 @@ export default function ManhuaGuidedPathRail({
           </span>
         </div>
       ) : null}
+      {compact ? (
+        <div className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="text-[10px] font-semibold tracking-[0.1em] text-white/40">
+            引导路径
+          </span>
+          <span className="text-[12px] font-bold text-cyan-50">
+            当前 · {MANHUA_GUIDED_STEPS[Math.max(0, activeIndex)]?.label || "题材"}
+            {" · "}
+            {activeIndex + 1}/{MANHUA_GUIDED_STEPS.length}
+          </span>
+          {!busy ? (
+            <span className="text-[10px] text-white/45">下一步 · {next.title}</span>
+          ) : null}
+        </div>
+      ) : null}
       <div className={`flex gap-1 overflow-x-auto ${compact ? "items-center pb-0" : "pb-0.5"}`}>
         {compact ? (
-          <span className="mr-1 shrink-0 text-[10px] font-medium text-white/40">路径</span>
+          <span className="mr-1 shrink-0 text-[10px] font-medium text-white/40">步骤</span>
         ) : null}
         {MANHUA_GUIDED_STEPS.map((step, i) => {
           const done = doneFlags[step.id] || i < activeIndex;
