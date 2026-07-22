@@ -376,14 +376,14 @@ export function evaluateWriterPackAssetAndDensity(input: {
   if (canon.props.length < 1) {
     errors.push("道具表至少需要 1 件关键道具");
   }
-  // 三分钟档：额外要求十二段可拍表（对白/场景配色/角色/服化道/光影运镜），禁灌水
+  // 三分钟档：额外要求 10–12 段可拍表（对白/场景配色/角色/服化道/光影运镜），禁灌水
   if ((input.targetSec ?? 180) >= 150) {
     for (const ep of input.episodes || []) {
       const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(String(ep.body || ""));
       const q = evaluateManhuaEpisodeSegmentPlanQuality(plan);
       if (!q.ok) {
         errors.push(
-          `第${ep.index}集十二段可拍表未过关（${q.readyCount}/${q.requiredCount}）：${
+          `第${ep.index}集十至十二段可拍表未过关（合格 ${q.readyCount}，至少 ${q.requiredCount}）：${
             q.issues[0] || "缺表或缺字段"
           }`,
         );

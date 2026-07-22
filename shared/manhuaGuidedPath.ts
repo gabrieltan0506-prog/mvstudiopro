@@ -82,8 +82,8 @@ export function resolveManhuaGuidedNextAction(p: ManhuaGuidedProgress): ManhuaGu
   if (p.hasKeyart) {
     return {
       stepId: "clip",
-      title: "确认静帧，生成片段成片",
-      hint: "分镜静帧已出；在工作台确认后按镜出视频（一镜一图一片）。",
+      title: "确认静帧与导戏单，生成成片",
+      hint: "关键静帧已出；按秒导戏单锁定后按段出视频（默认不自动烧片）。",
       ctaLabel: "确认静帧，生成片段成片",
       href: "#manhua-workbench-zone",
     };

@@ -15,6 +15,17 @@ describe("manhuaEpisodeSegmentPlan", () => {
     expect(q.readyCount).toBe(12);
   });
 
+  it("accepts 10 contiguous ready segments", () => {
+    const md = buildManhuaEpisodeSegmentPlanFixtureMarkdown()
+      .split(/\n#### 段11/)[0]!
+      .trim();
+    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(md);
+    expect(plan.segments.length).toBeGreaterThanOrEqual(10);
+    const q = evaluateManhuaEpisodeSegmentPlanQuality(plan);
+    expect(q.ok).toBe(true);
+    expect(q.readyCount).toBe(10);
+  });
+
   it("rejects filler dialogue and missing fields", () => {
     const thin = [
       "#### 段01",
@@ -31,9 +42,10 @@ describe("manhuaEpisodeSegmentPlan", () => {
     expect(q.issues.some((e) => /不足|灌水|缺段/.test(e))).toBe(true);
   });
 
-  it("prompt block asks for 12×15s", () => {
+  it("prompt block asks for 10–12 ×15s", () => {
     const block = formatManhuaEpisodeSegmentPlanPromptBlock();
-    expect(block).toMatch(/12 段/);
+    expect(block).toMatch(/10/);
+    expect(block).toMatch(/12/);
     expect(block).toMatch(/15 秒/);
     expect(block).toMatch(/对白/);
     expect(block).toMatch(/配色风格/);

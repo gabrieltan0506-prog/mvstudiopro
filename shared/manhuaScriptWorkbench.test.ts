@@ -60,7 +60,7 @@ describe("manhuaScriptWorkbench", () => {
     expect(shots[0]?.actionZh).not.toMatch(/^近景/);
   });
 
-  it("falls back to default skeleton of ~12 segments × 4 keyarts", () => {
+  it("falls back to default skeleton of ~12 segments × 3 keyarts", () => {
     const shots = parseWorkbenchShotsFromText("只有一段散文没有编号");
     expect(shots.length).toBe(MANHUA_SEGMENT_DEFAULT * MANHUA_KEYARTS_PER_SEGMENT_MIN);
     expect(defaultWorkbenchShots().length).toBe(
@@ -74,7 +74,7 @@ describe("manhuaScriptWorkbench", () => {
         "\n",
       ),
     );
-    // 有分镜表：按 4 镜一段，不注水到默认 12 段
+    // 有分镜表：按每段 3 镜切，不注水到默认 12 段
     const segsFast = groupShotsIntoSegments(shots, {
       videoModel: MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
     });

@@ -1,12 +1,16 @@
 /**
- * 单集 12 段 × 15s 可拍表：对白 / 场景配色 / 角色 / 服化道 / 光影运镜。
+ * 单集 10–12 段 × 15s 可拍表：对白 / 场景配色 / 角色 / 服化道 / 光影运镜。
  * 禁止灌水：缺字段、寒暄对白、段间高度重复 → 质量不通过。
- * 数值与 `manhuaScriptWorkbench` 的 MANHUA_SEGMENT_DEFAULT / 15s / 180s 对齐。
+ * 数值与 `manhuaScriptWorkbench` 的 MANHUA_SEGMENT_MIN/MAX/DEFAULT / 15s 对齐。
  */
 
+/** 推荐段数（扩写默认目标） */
 export const MANHUA_EPISODE_SEGMENT_COUNT = 12;
+export const MANHUA_EPISODE_SEGMENT_COUNT_MIN = 10;
+export const MANHUA_EPISODE_SEGMENT_COUNT_MAX = 12;
 export const MANHUA_EPISODE_SEGMENT_DURATION_SEC = 15;
 export const MANHUA_EPISODE_SEGMENT_TARGET_SEC = 180;
+export const MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC = 150;
 
 export type ManhuaEpisodeSegmentBeat = {
   index: number;
@@ -135,66 +139,102 @@ function nearDuplicate(a: string, b: string): boolean {
 
 export function evaluateManhuaEpisodeSegmentPlanQuality(
   plan: ManhuaEpisodeSegmentPlan | null | undefined,
-  requiredCount = MANHUA_EPISODE_SEGMENT_COUNT,
+  requiredCount:
+    | number
+    | { min?: number; max?: number } = {
+      min: MANHUA_EPISODE_SEGMENT_COUNT_MIN,
+      max: MANHUA_EPISODE_SEGMENT_COUNT_MAX,
+    },
 ): ManhuaEpisodeSegmentPlanQuality {
   const issues: string[] = [];
   const segments = plan?.segments || [];
-  const required = Math.max(1, Math.min(24, requiredCount));
-  if (segments.length < required) {
-    issues.push(`可拍段不足：需要 ${required} 段，当前解析到 ${segments.length} 段`);
-  }
+  const minRequired =
+    typeof requiredCount === "number"
+      ? Math.max(1, Math.min(24, requiredCount))
+      : Math.max(
+          1,
+          Math.min(
+            24,
+            Math.floor(requiredCount.min ?? MANHUA_EPISODE_SEGMENT_COUNT_MIN),
+          ),
+        );
+  const maxRequired =
+    typeof requiredCount === "number"
+      ? minRequired
+      : Math.max(
+          minRequired,
+          Math.min(
+            24,
+            Math.floor(requiredCount.max ?? MANHUA_EPISODE_SEGMENT_COUNT_MAX),
+          ),
+        );
 
   let readyCount = 0;
   const seenDialogue: string[] = [];
   const seenScene: string[] = [];
 
-  for (let i = 1; i <= required; i++) {
+  // 从段 1 连续验收到 max；允许在 [min,max] 提前收束
+  for (let i = 1; i <= maxRequired; i++) {
     const beat = segments.find((s) => s.index === i);
     if (!beat) {
-      issues.push(`缺段 ${String(i).padStart(2, "0")}`);
-      continue;
+      if (readyCount < minRequired) {
+        issues.push(`缺段 ${String(i).padStart(2, "0")}`);
+      }
+      break;
     }
     const missing = FIELD_KEYS.filter((f) => !String(beat[f.key] || "").trim()).map((f) => f.aliases[0]);
     if (missing.length) {
       issues.push(`段${String(i).padStart(2, "0")} 缺字段：${missing.join("、")}`);
-      continue;
+      break;
     }
     if (isFillerDialogue(beat.dialogueZh)) {
       issues.push(`段${String(i).padStart(2, "0")} 对白灌水或过短`);
-      continue;
+      break;
     }
     if (seenDialogue.some((d) => nearDuplicate(d, beat.dialogueZh))) {
       issues.push(`段${String(i).padStart(2, "0")} 对白与他段重复`);
-      continue;
+      break;
     }
     seenDialogue.push(beat.dialogueZh);
     seenScene.push(beat.sceneZh);
     readyCount += 1;
   }
 
+  if (readyCount < minRequired) {
+    issues.unshift(
+      `可拍段不足：需要 ${minRequired}–${maxRequired} 段，当前连续合格 ${readyCount} 段`,
+    );
+  }
+
   const uniqueScenes = new Set(seenScene.map((s) => s.replace(/\s+/g, ""))).size;
-  if (readyCount >= required && uniqueScenes <= 2) {
-    issues.push("场景几乎不换场：12 段须有空间/氛围递进，禁止同一空壳场景复读");
+  if (readyCount >= minRequired && uniqueScenes <= 2) {
+    issues.push(
+      `场景几乎不换场：${minRequired}–${maxRequired} 段须有空间/氛围递进，禁止同一空壳场景复读`,
+    );
   }
 
   return {
-    ok: readyCount >= required && issues.length === 0,
+    ok: readyCount >= minRequired && readyCount <= maxRequired && issues.length === 0,
     readyCount,
-    requiredCount: required,
+    requiredCount: minRequired,
     issues: issues.slice(0, 16),
   };
 }
 
-/** 编剧扩写 prompt 用的十二段表头说明（禁灌水） */
+/** 编剧扩写 prompt 用的十至十二段表头说明（禁灌水） */
 export function formatManhuaEpisodeSegmentPlanPromptBlock(
   segmentCount = MANHUA_EPISODE_SEGMENT_COUNT,
   durationSec = MANHUA_EPISODE_SEGMENT_DURATION_SEC,
 ): string {
-  const n = Math.max(1, Math.min(24, segmentCount));
-  const total = n * durationSec;
+  const n = Math.max(
+    MANHUA_EPISODE_SEGMENT_COUNT_MIN,
+    Math.min(MANHUA_EPISODE_SEGMENT_COUNT_MAX, segmentCount),
+  );
+  const minSec = MANHUA_EPISODE_SEGMENT_COUNT_MIN * durationSec;
+  const maxSec = MANHUA_EPISODE_SEGMENT_COUNT_MAX * durationSec;
   return [
-    `### 十二段可拍表`,
-    `（硬性：正好 ${n} 段；每段约 ${durationSec} 秒；整集约 ${total} 秒。禁止寒暄灌水、禁止段间复制粘贴。）`,
+    `### 十至十二段可拍表`,
+    `（硬性：至少 ${MANHUA_EPISODE_SEGMENT_COUNT_MIN} 段、至多 ${MANHUA_EPISODE_SEGMENT_COUNT_MAX} 段；推荐 ${n} 段；每段约 ${durationSec} 秒；整集约 ${minSec}–${maxSec} 秒。禁止寒暄灌水、禁止段间复制粘贴。）`,
     `每一段必须用下列字段（缺一不可；对白须推动关系/信息）：`,
     `#### 段01`,
     `- 对白：`,
@@ -203,7 +243,7 @@ export function formatManhuaEpisodeSegmentPlanPromptBlock(
     `- 角色：`,
     `- 服装道具：`,
     `- 光影运镜：`,
-    `（段02…段${String(n).padStart(2, "0")} 同结构；跨段须有信息增量与场面变化。）`,
+    `（段02…段${String(n).padStart(2, "0")} 同结构；若只写到段10亦可，但不得少于10段；跨段须有信息增量与场面变化。）`,
   ].join("\n");
 }
 
@@ -235,7 +275,7 @@ export function buildManhuaEpisodeSegmentPlanFixtureMarkdown(): string {
       `- 光影运镜：侧逆光压暗；中景推至近景`,
     ].join("\n");
   });
-  return ["### 十二段可拍表", ...blocks].join("\n");
+  return ["### 十至十二段可拍表", ...blocks].join("\n");
 }
 
 /** 把可拍表压成工厂节拍提示（不编造缺失段） */
@@ -257,5 +297,5 @@ export function formatManhuaEpisodeSegmentPlanBeatsBlock(
         `光影运镜：${s.lightingCameraZh}`,
       ].join("\n");
     });
-  return `【已确认十二段可拍表·禁止改写成灌水】\n${lines.join("\n\n")}`;
+  return `【已确认十至十二段可拍表·禁止改写成灌水】\n${lines.join("\n\n")}`;
 }
