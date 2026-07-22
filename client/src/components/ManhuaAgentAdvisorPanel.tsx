@@ -174,7 +174,7 @@ export default function ManhuaAgentAdvisorPanel({
             const msg2 = e2 instanceof Error ? e2.message : "发送失败";
             setLines((prev) => [
               ...prev,
-              { role: "assistant", text: `暂时无法回复：${msg2}。可改用一键工厂。` },
+              { role: "assistant", text: `暂时无法回复：${msg2}。可回工作台按步生成。` },
             ]);
             return;
           }
@@ -188,7 +188,7 @@ export default function ManhuaAgentAdvisorPanel({
         : msg;
       setLines((prev) => [
         ...prev,
-        { role: "assistant", text: `暂时无法回复：${friendly}。可改用一键工厂。` },
+        { role: "assistant", text: `暂时无法回复：${friendly}。可回工作台按步生成。` },
       ]);
     }
   };

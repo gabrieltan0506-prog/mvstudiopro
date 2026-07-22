@@ -3898,22 +3898,6 @@ export default function OmniCanvas() {
                       fragmentShotIndexes: shotIndexes,
                     });
                   }}
-                  onRunFullAuto={() => {
-                    if (
-                      !window.confirm(
-                        "将按成片坞已勾选集跑完整链路（静帧 + 成片），耗时与积分较高。继续？",
-                      )
-                    ) {
-                      return;
-                    }
-                    setFactoryRunScope("dock");
-                    ensureStudioSpawned(factoryTopic);
-                    const items = collectManhuaClipDockItems(blocks);
-                    const eps = episodeIndexesFromDockSelection(items, dockSelectedIds);
-                    void runFactory("clip", {
-                      episodeIndexes: eps.length ? eps : [writerFocusEpisode],
-                    });
-                  }}
                   onResumeFromFailure={() => {
                     const onCanvas = Array.from(
                       new Set(
@@ -5116,18 +5100,6 @@ export default function OmniCanvas() {
                 >
                   {factoryBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
                   跑到静帧
-                </button>
-                <button
-                  type="button"
-                  disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400/35 bg-amber-500/15 px-3 py-2 text-xs font-semibold text-amber-50 hover:bg-amber-500/25 disabled:opacity-50"
-                  onClick={() => {
-                    if (!window.confirm("将跑完整链路（静帧 + 成片），耗时与积分较高。继续？")) return;
-                    void runFactory("clip");
-                  }}
-                >
-                  {factoryBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                  全自动到成片
                 </button>
                 <button
                   type="button"

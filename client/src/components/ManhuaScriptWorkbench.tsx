@@ -204,8 +204,6 @@ type Props = {
   onGenerateAllEpisodeKeyarts?: () => void;
   /** 画布按「文案→静帧→成片」左→右可读对齐 */
   onLayoutReadableChain?: () => void;
-  /** 成片坞已勾选集：静帧+成片连跑 */
-  onRunFullAuto?: () => void;
   onResumeFromFailure?: () => void;
   /** 从编导反推强制重跑本集静帧（覆盖旧图；工作台主路径入口） */
   onRerunKeyartsFromReverse?: () => void;
@@ -332,7 +330,6 @@ export default function ManhuaScriptWorkbench({
   onGenerateMissingFragments,
   onGenerateAllEpisodeKeyarts,
   onLayoutReadableChain,
-  onRunFullAuto,
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
   onRerunKeyartShot,
@@ -1327,16 +1324,6 @@ export default function ManhuaScriptWorkbench({
                 成片←上段末帧
               </button>
             </div>
-          ) : null}
-          {onRunFullAuto ? (
-            <button
-              type="button"
-              disabled={!canGenerateFragment || factoryBusy}
-              onClick={() => onRunFullAuto()}
-              className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06] disabled:opacity-45"
-            >
-              全自动
-            </button>
           ) : null}
           {onResumeFromFailure ? (
             <button

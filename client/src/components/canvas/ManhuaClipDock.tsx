@@ -306,7 +306,7 @@ export default function ManhuaClipDock({
           <div className="mt-3 rounded-xl border border-dashed border-cyan-400/25 bg-cyan-500/[0.06] px-3 py-2.5">
             <p className="text-[11px] font-medium text-cyan-50/90">合成前提：至少一集微动成片就绪</p>
             <p className="mt-0.5 text-[10px] leading-relaxed text-white/45">
-              在工作台点「生成本集成片」，或勾选集后全自动跑完。成片出现在下方胶片条后，再回这里一键合成。
+              在工作台按段生成成片；成片出现在下方胶片条后，再回这里一键合成。
             </p>
             {onGoWorkbench ? (
               <button
