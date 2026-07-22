@@ -72,7 +72,9 @@ import {
   canManhuaBurnVideo,
   resolveManhuaProductionNowSummary,
   type ManhuaProductionProgress,
+  type ManhuaProductionStepId,
 } from "@shared/manhuaProductionPipeline";
+import { resolveManhuaWorkbenchNextCta } from "@shared/manhuaWorkbenchNextCta";
 import {
   buildManhuaSecondCueSheet,
   buildWorkbenchShotsFromSegmentPlan,
@@ -899,6 +901,32 @@ export default function ManhuaScriptWorkbench({
         (productionNow.activeId === "video" ? videoBurnHint : null) ||
         productionNow.hint;
 
+  const nextCta = useMemo(
+    () =>
+      resolveManhuaWorkbenchNextCta({
+        outlineComplete,
+        assetsComplete,
+        episodeSheetCount: episodeSheetGallery.length,
+        stillsReadyEnough,
+        videoBurnUnlocked,
+        hasClip: productionProgress.hasClip,
+        factoryBusy: Boolean(factoryBusy),
+        factoryProgress,
+        writerPackReady: Boolean(writerPackReady),
+      }),
+    [
+      outlineComplete,
+      assetsComplete,
+      episodeSheetGallery.length,
+      stillsReadyEnough,
+      videoBurnUnlocked,
+      productionProgress.hasClip,
+      factoryBusy,
+      factoryProgress,
+      writerPackReady,
+    ],
+  );
+
   const stageStrip = useMemo(() => {
     const stages = ["story", "bible", "beats", "reverse", "keyart", "clip"] as const;
     return stages.map((stage) => {
@@ -979,19 +1007,22 @@ export default function ManhuaScriptWorkbench({
   useEffect(() => {
     if (
       outlineComplete &&
-      !assetsComplete &&
-      (activePhase === "storyboard" || activePhase === "edit")
+      (!assetsComplete || episodeSheetGallery.length === 0) &&
+      (activePhase === "outline" || activePhase === "storyboard" || activePhase === "edit")
     ) {
       setActivePhase("assets");
     }
-  }, [outlineComplete, assetsComplete, activePhase]);
+  }, [outlineComplete, assetsComplete, episodeSheetGallery.length, activePhase]);
 
   const selectPhase = (phase: WorkflowPhaseId) => {
     if ((phase === "storyboard" || phase === "edit") && !outlineComplete) {
       setActivePhase("outline");
       return;
     }
-    if ((phase === "storyboard" || phase === "edit") && !assetsComplete) {
+    if (
+      (phase === "storyboard" || phase === "edit") &&
+      (!assetsComplete || episodeSheetGallery.length === 0)
+    ) {
       setActivePhase("assets");
       return;
     }
@@ -1022,6 +1053,58 @@ export default function ManhuaScriptWorkbench({
     setActivePhase("storyboard");
   };
 
+  const jumpProductionStep = (stepId: ManhuaProductionStepId) => {
+    if (stepId === "topic" || stepId === "screenplay") {
+      selectPhase("outline");
+      return;
+    }
+    if (stepId === "asset_lock") {
+      selectPhase("assets");
+      return;
+    }
+    selectPhase(
+      stepId === "video" && productionProgress.hasClip ? "edit" : "storyboard",
+    );
+  };
+
+  const runNextCta = () => {
+    if (nextCta.kind === "busy") {
+      onStopFactory?.();
+      return;
+    }
+    selectPhase(nextCta.targetPhase);
+    if (nextCta.kind === "confirm_outline") {
+      if (writerPackReady && onConfirmOutline) onConfirmOutline();
+      return;
+    }
+    if (nextCta.kind === "spawn_sheets" || nextCta.kind === "enter_storyboard") {
+      enterStoryboard();
+      return;
+    }
+    if (nextCta.kind === "generate_keyarts") {
+      if (onGenerateAllEpisodeKeyarts) {
+        setVisualBriefConfirmed(true);
+        onGenerateAllEpisodeKeyarts();
+      }
+      return;
+    }
+    if (nextCta.kind === "generate_all_clips") {
+      const idxs =
+        missingFragmentIndexes.length > 0
+          ? missingFragmentIndexes
+          : segments.map((s) => s.index);
+      if (idxs.length) onGenerateMissingFragments?.(idxs);
+      return;
+    }
+    if (nextCta.kind === "generate_clip") {
+      runGenerateFragment();
+      return;
+    }
+    if (nextCta.kind === "open_edit") {
+      selectPhase("edit");
+    }
+  };
+
   return (
     <div
       id="manhua-workbench-shell"
@@ -1045,12 +1128,46 @@ export default function ManhuaScriptWorkbench({
               </span>
             </div>
             {immersive ? (
-              <div className="mt-0.5 flex items-center gap-2 text-[10px] text-white/35">
-                <span className="text-white/50">本集资产</span>
-                <span aria-hidden>｜</span>
-                <span className="text-white/50">本集剧本</span>
-                <span aria-hidden>｜</span>
-                <span className="text-white/50">{dockCanvas ? "本集画布" : "视频结果"}</span>
+              <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => selectPhase("assets")}
+                  className={`rounded px-1.5 py-0.5 font-medium ${
+                    activePhase === "assets"
+                      ? "bg-cyan-500/25 text-cyan-50"
+                      : "text-white/55 hover:bg-white/10 hover:text-white/85"
+                  }`}
+                >
+                  本集资产
+                </button>
+                <span aria-hidden className="text-white/25">
+                  ｜
+                </span>
+                <button
+                  type="button"
+                  onClick={() => selectPhase("outline")}
+                  className={`rounded px-1.5 py-0.5 font-medium ${
+                    activePhase === "outline"
+                      ? "bg-cyan-500/25 text-cyan-50"
+                      : "text-white/55 hover:bg-white/10 hover:text-white/85"
+                  }`}
+                >
+                  本集剧本
+                </button>
+                <span aria-hidden className="text-white/25">
+                  ｜
+                </span>
+                <button
+                  type="button"
+                  onClick={() => selectPhase("storyboard")}
+                  className={`rounded px-1.5 py-0.5 font-medium ${
+                    activePhase === "storyboard"
+                      ? "bg-cyan-500/25 text-cyan-50"
+                      : "text-white/55 hover:bg-white/10 hover:text-white/85"
+                  }`}
+                >
+                  {dockCanvas ? "本集画布" : "视频结果"}
+                </button>
               </div>
             ) : null}
           </div>
@@ -1078,7 +1195,11 @@ export default function ManhuaScriptWorkbench({
                     setVisualBriefConfirmed(true);
                     onGenerateAllEpisodeKeyarts();
                   }}
-                  className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45"
+                  className={`inline-flex items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45 ${
+                    nextCta.kind === "generate_keyarts"
+                      ? "ring-2 ring-cyan-300/70 ring-offset-1 ring-offset-[#0a121c]"
+                      : ""
+                  }`}
                   title={
                     fragmentGateHint ||
                     "确认视觉简报后，一次出齐本集全部分镜静帧"
@@ -1369,11 +1490,13 @@ export default function ManhuaScriptWorkbench({
         <div className="mt-2 flex items-center gap-1 overflow-x-auto pb-0.5">
           {productionSteps.map((step, index) => (
             <div key={step.id} className="flex items-center gap-1">
-              <div
+              <button
+                type="button"
                 data-manhua-prod-step={step.id}
                 data-manhua-prod-status={step.status}
-                title={step.hint}
-                className={`flex min-w-[78px] items-center gap-1.5 rounded-md border px-1.5 py-1 ${
+                title={`${step.hint} · 点击打开对应页`}
+                onClick={() => jumpProductionStep(step.id)}
+                className={`flex min-w-[78px] items-center gap-1.5 rounded-md border px-1.5 py-1 text-left transition hover:brightness-110 ${
                   step.status === "done"
                     ? "border-emerald-400/35 bg-emerald-500/[0.1] text-emerald-50"
                     : step.status === "current"
@@ -1408,7 +1531,7 @@ export default function ManhuaScriptWorkbench({
                         ? "锁定"
                         : "待做"}
                 </span>
-              </div>
+              </button>
               {index < productionSteps.length - 1 ? (
                 <span aria-hidden className="text-[9px] text-white/20">
                   →
@@ -1420,11 +1543,61 @@ export default function ManhuaScriptWorkbench({
       </div>
 
       <div
+        data-manhua-next-cta
+        className="flex shrink-0 flex-wrap items-center gap-2 border-b border-emerald-400/30 bg-gradient-to-r from-emerald-500/15 via-[#0a121c] to-transparent px-3 py-2"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="text-[10px] font-semibold tracking-[0.12em] text-emerald-200/70">
+            当前该点 · 不用找菜单
+          </div>
+          <p className="mt-0.5 text-[11px] leading-snug text-white/60">{nextCta.hintZh}</p>
+        </div>
+        <button
+          type="button"
+          data-manhua-action="next-cta"
+          disabled={
+            nextCta.kind === "confirm_outline"
+              ? !writerPackReady || !onConfirmOutline || factoryBusy
+              : nextCta.kind === "busy"
+                ? !onStopFactory
+                : nextCta.kind === "idle_done"
+                  ? true
+                  : nextCta.kind === "spawn_sheets" || nextCta.kind === "enter_storyboard"
+                    ? !outlineComplete ||
+                      !assetGate.castLocked ||
+                      !assetGate.sceneLocked ||
+                      factoryBusy
+                    : nextCta.kind === "generate_keyarts"
+                      ? !onGenerateAllEpisodeKeyarts || !canGenerateFragment || factoryBusy
+                      : nextCta.kind === "generate_all_clips"
+                        ? !onGenerateMissingFragments ||
+                          !canGenerateFragment ||
+                          !videoBurnUnlocked ||
+                          factoryBusy
+                        : factoryBusy
+          }
+          onClick={runNextCta}
+          className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3.5 py-2 text-[12px] font-bold shadow-[0_0_18px_rgba(52,211,153,0.18)] disabled:opacity-45 ${
+            nextCta.kind === "busy"
+              ? "border-red-400/50 bg-red-500/25 text-red-50"
+              : "border-emerald-300/55 bg-emerald-500/30 text-emerald-50 hover:bg-emerald-500/40"
+          }`}
+        >
+          {nextCta.kind === "busy" ? (
+            <Square className="h-3.5 w-3.5 fill-current" />
+          ) : (
+            <Play className="h-3.5 w-3.5" />
+          )}
+          {nextCta.labelZh}
+        </button>
+      </div>
+
+      <div
         data-manhua-workflow-rail
         className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-white/10 bg-white/[0.018] px-3 py-1.5"
       >
         <span className="mr-1 shrink-0 text-[9px] font-semibold tracking-[0.14em] text-white/30">
-          工作流
+          工作流 · 点步骤切换
         </span>
         {workflowPhases.map((phase, index) => (
           <div key={phase.id} className="flex min-w-0 flex-1 items-center gap-1.5">
