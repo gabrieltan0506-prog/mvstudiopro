@@ -89,6 +89,7 @@ describe("collectPlatformTrends douyin", () => {
                   create_time: Math.floor(Date.now() / 1000),
                   author: { nickname: "search-user" },
                   statistics: { digg_count: 5, comment_count: 1, share_count: 0, play_count: 88 },
+                  text_extra: [{ hashtag_name: "AI漫剧" }],
                   mix_info: {
                     mix_id: "mix-search-1",
                     mix_name: "聚宝仙盆之杂灵根才是真BOSS",

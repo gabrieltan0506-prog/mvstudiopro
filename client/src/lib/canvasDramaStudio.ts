@@ -36,6 +36,10 @@ import {
 } from "@shared/manhuaScenePropDemoCatalog";
 import { CANVAS_DIRECTOR_CRAFT_PROMPT_BLOCK } from "@shared/manhuaWriterRoom";
 import {
+  formatManhuaStylePackInjectBlock,
+  type ManhuaStylePack,
+} from "@shared/manhuaStylePack";
+import {
   buildManhuaCharacterPromptBlock,
   getManhuaArtStylePreset,
   type ManhuaArtStyleId,
@@ -204,6 +208,8 @@ export type SpawnManhuaDramaStudioOpts = {
   identityLockZh?: string;
   /** 角色/场景统一画风：仿真人 / CG 漫剧 */
   artStyleId?: ManhuaArtStyleId | string;
+  /** 产品化风格包：色卡 + 光影构图 DNA（注入静帧/成片） */
+  stylePack?: ManhuaStylePack | null;
   /** 包装动效库 id：注入微动成片 / 视频改写节点 */
   motionPromptIds?: string[];
   /** 拍摄手法条目 id：注入节拍 / 反推 / 静帧 */
@@ -534,6 +540,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   );
   const artStyle = getManhuaArtStylePreset(opts.artStyleId);
   const artStyleBlock = `【画风硬锁】${artStyle.labelZh}\n${artStyle.promptZh}`;
+  const stylePackBlock = formatManhuaStylePackInjectBlock(opts.stylePack);
   const hasRecapCard = Boolean(previouslyOnRecap);
   const col0 = hasRecapCard ? 1 : 0;
 
@@ -662,6 +669,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     narrativeLightingBlock,
     maleMicroBlock,
     artStyleBlock,
+    stylePackBlock,
     sceneDemoAtSpawn,
     propAnchorBlock,
   ]
@@ -699,10 +707,11 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   clip.aspectRatio = "9:16";
   if (pathCameraRecipeIds[0]) clip.pathCameraRecipeId = pathCameraRecipeIds[0];
   if (opts.pathAnnotationJson != null) clip.pathAnnotationJson = opts.pathAnnotationJson;
-  if (artStyleBlock) {
+  if (artStyleBlock || stylePackBlock) {
     clip.prompt = [
       clip.prompt,
-      `【成片画风】${artStyle.labelZh}\n${artStyle.promptZh}`,
+      artStyleBlock ? `【成片画风】${artStyle.labelZh}\n${artStyle.promptZh}` : "",
+      stylePackBlock,
       characterBlock,
       ancientBlock,
     ]
@@ -902,6 +911,7 @@ export function applyFactoryPrefsToBlocks(
     dynastyWardrobeIds?: string[];
     identityLockZh?: string;
     artStyleId?: ManhuaArtStyleId | string;
+    stylePack?: ManhuaStylePack | null;
     videoReverseOutputMode?: "zh" | "en" | "compact";
     customRefs?: ManhuaCustomAssetRef[];
   },
@@ -940,6 +950,7 @@ export function applyFactoryPrefsToBlocks(
   const artStyleBlockKeyart = `【画风硬锁】${artStyle.labelZh}\n${artStyle.promptZh}`;
   const artStyleBlockClip = `【成片画风】${artStyle.labelZh}\n${artStyle.promptZh}`;
   const artStyleBlock = artStyleBlockKeyart;
+  const stylePackBlock = formatManhuaStylePackInjectBlock(opts.stylePack);
   const scene = getManhuaSceneTemplate(opts.sceneId);
   const sceneBlock = scene ? composeManhuaScenePromptBlock([scene]) : "";
   const sceneDemoBlock = composeManhuaSceneDemoAnchorBlock(opts.sceneId);
@@ -1007,6 +1018,10 @@ export function applyFactoryPrefsToBlocks(
           ? maleMicroBlock
           : "",
         b.id.startsWith("keyart-") ? artStyleBlock : "",
+        (b.id.startsWith("keyart-") || b.id.startsWith("clip-") || b.id.startsWith("beats-"))
+          && stylePackBlock
+          ? stylePackBlock
+          : "",
         (b.id.startsWith("beats-") || b.id.startsWith("keyart-")) && propAnchorBlock
           ? propAnchorBlock
           : "",

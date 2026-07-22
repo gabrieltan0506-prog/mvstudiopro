@@ -7,6 +7,7 @@ import {
   pickEpisodeMainSceneId,
   resolveEpisodeMainScene,
 } from "./manhuaWriterAssetCanon";
+import { buildManhuaEpisodeSegmentPlanFixtureMarkdown } from "./manhuaEpisodeSegmentPlan";
 
 const CHARACTERS_MD = `
 - 沈砚舟/沈少主｜二十出头·玄色鹤氅玉冠｜寻鹤归宗｜与云疏冷相峙｜不夺旁人之命
@@ -89,7 +90,7 @@ describe("manhuaWriterAssetCanon", () => {
       episodes: [
         {
           index: 1,
-          body: denseBody("山神破庙", "鹤影湖"),
+          body: `${denseBody("山神破庙", "鹤影湖")}\n\n${buildManhuaEpisodeSegmentPlanFixtureMarkdown()}`,
           endHook: "神像眼缝渗出金光。",
         },
       ],

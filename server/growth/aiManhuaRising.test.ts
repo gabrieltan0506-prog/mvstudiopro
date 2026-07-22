@@ -69,6 +69,7 @@ describe("buildAiManhuaRisingBoard", () => {
       title: "AI漫剧 第1集",
       isDrama: true,
       dramaKind: "ai_manhua",
+      tags: ["AI漫剧"],
       dramaInfo: { mixId: "m1", mixName: "漫剧甲", mixPlayCount: 2_000_000, currentEpisode: 1 },
       publishedAt: "2026-07-16T00:00:00.000Z",
     },
@@ -77,6 +78,7 @@ describe("buildAiManhuaRisingBoard", () => {
       title: "红果短剧 第2集",
       isDrama: true,
       dramaKind: "short_drama",
+      tags: ["AI短剧"],
       dramaInfo: { mixId: "m2", mixName: "真人短剧乙", mixPlayCount: 9_000_000 },
     },
     {
@@ -84,6 +86,7 @@ describe("buildAiManhuaRisingBoard", () => {
       title: "动态漫开局",
       isDrama: true,
       dramaKind: "unknown",
+      tags: ["AIGC", "动态漫"],
       dramaInfo: { mixId: "m3", mixName: "动态漫丙", mixPlayCount: 800_000 },
       publishedAt: "2026-07-15T00:00:00.000Z",
     },
@@ -141,6 +144,7 @@ describe("buildAiManhuaRisingBoard", () => {
           title: "old",
           isDrama: true,
           dramaKind: "ai_manhua",
+          tags: ["AI漫剧"],
           dramaInfo: { mixId: "m1", mixName: "漫剧甲", mixPlayCount: 500_000 },
         },
         {
@@ -148,6 +152,7 @@ describe("buildAiManhuaRisingBoard", () => {
           title: "old3",
           isDrama: true,
           dramaKind: "ai_manhua",
+          tags: ["AIGC"],
           dramaInfo: { mixId: "m3", mixName: "动态漫丙", mixPlayCount: 700_000 },
         },
       ],
@@ -204,6 +209,7 @@ describe("buildAiManhuaRisingByPlatform", () => {
         title: `漫剧${i}`,
         isDrama: true,
         dramaKind: "ai_manhua" as const,
+        tags: ["AI漫剧"],
         dramaInfo: {
           mixId: `dm${i}`,
           mixName: `抖音漫剧${i}`,
@@ -215,6 +221,7 @@ describe("buildAiManhuaRisingByPlatform", () => {
         title: `快手短剧${i}`,
         isDrama: true,
         dramaKind: "short_drama" as const,
+        tags: ["短剧"],
         dramaInfo: {
           mixId: `km${i}`,
           mixName: `快手短剧${i}`,

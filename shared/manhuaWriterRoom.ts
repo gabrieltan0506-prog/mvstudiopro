@@ -15,6 +15,15 @@ import {
   getManhuaScenePacingById,
 } from "./manhuaPlotPurposeCameraBank.js";
 import { formatManhuaViralTemplateWriterAddon } from "./manhuaViralTemplateBank.js";
+import {
+  formatManhuaEpisodeSegmentPlanBeatsBlock,
+  formatManhuaEpisodeSegmentPlanPromptBlock,
+  parseManhuaEpisodeSegmentPlanFromMarkdown,
+} from "./manhuaEpisodeSegmentPlan.js";
+import {
+  formatManhuaGlobalStylePromptRequestBlock,
+  formatManhuaScreenplayEnginePromptBlock,
+} from "./manhuaStoryDistill.js";
 
 export const MANHUA_WRITER_EPISODE_MIN = 2;
 export const MANHUA_WRITER_EPISODE_MAX = 6;
@@ -90,13 +99,17 @@ export function buildManhuaWriterExpandPrompt(opts: {
     "硬规则：",
     "1. 只输出 Markdown，不要代码围栏、不要道歉。",
     "2. 成稿禁止导演名、真实剧集/电影片名、「仿写某某」「致敬某某」。只写可拍的人物关系、权力结构与情绪节奏。",
-    "3. 默认竖屏短剧单次成片严格按 10 秒可拍密度；本阶段先写剧情与设定，不写镜头表。",
+    "3. 单集目标约 150–180 秒 = 10–12 段 × 约 15 秒（推荐 12 段）；对白/场面须撑满密度，禁止寒暄灌水与段间复制粘贴。",
     `4. 必须正好输出 ${n} 集；每一集结尾必须有「片尾钩子」（未揭答案、逼观众追下一集）。`,
     "5. 人物 / 道具 / 场景表要具体、可锁定外形与空间，禁止空泛。",
     "6. 道具表可参考下方示范库外观锚点改写，勿照抄剧名；权谋/商战可偏海外可读符号。",
     "7. 若提供古风原型设计板，人物外形与服饰层次须与之对齐。",
     "8. 「系列标题」必须是具体可传播的中文剧名（建议 4–24 字），禁止「未命名」「暂定」「一句话标题」等占位，也禁止只复述题材原文整段。",
     "9. 若提供节奏模板骨架：每集须大体覆盖节拍格冲突类型与场景池关键词，并对白/换场密度不低于模板建议；禁止照抄模板示例成外部剧名。",
+    "10. 每一集「本集剧情」之后必须输出完整「十至十二段可拍表」（至少段01–段10，推荐到段12），字段见下文模板；缺段或缺字段视为未完成。",
+    "11. 系列级须输出「整体影像风格」与「统一运镜风格」各一段，供后续静帧/成片共用。",
+    "",
+    formatManhuaScreenplayEnginePromptBlock(),
     "",
     `【用户题材】${topic || "（未填，请基于补充条件合理拟定）"}`,
     brief ? `【补充条件】\n${brief}` : "【补充条件】（无，请在合理范围内自行补全并保持克制）",
@@ -123,13 +136,16 @@ export function buildManhuaWriterExpandPrompt(opts: {
     "## 场景表",
     "- 场景｜氛围｜可互动物件",
     "",
+    formatManhuaGlobalStylePromptRequestBlock(),
+    "",
     ...Array.from({ length: n }, (_, i) => {
       const ep = i + 1;
       return [
         `## 第${ep}集`,
         "### 集标题",
         "### 本集剧情",
-        "（冲突、人物场、转折；可分段，勿灌水）",
+        "（冲突、人物场、转折；可分段，勿灌水；须能支撑约 150–180 秒）",
+        formatManhuaEpisodeSegmentPlanPromptBlock(),
         "### 片尾钩子",
         "（必须留下未解悬念或关系反转预兆）",
         "",
@@ -445,6 +461,10 @@ export function composeWriterPackFactoryContext(
 ): string {
   const ep = pack.episodes.find((e) => e.index === focusEpisode) || pack.episodes[0];
   const addon = String(opts?.assetCanonAddonZh || "").trim();
+  const segmentPlan = ep
+    ? parseManhuaEpisodeSegmentPlanFromMarkdown(ep.body || "")
+    : null;
+  const segmentBlock = formatManhuaEpisodeSegmentPlanBeatsBlock(segmentPlan);
   return [
     "【已确认编剧包·强制遵守】",
     `系列：${pack.seriesTitle}`,
@@ -464,9 +484,11 @@ export function composeWriterPackFactoryContext(
       ? [
           `## 本集优先：第${ep.index}集《${ep.title}》`,
           ep.body,
+          segmentBlock,
           `片尾钩子：${ep.endHook}`,
-          "本轮制作先兑现这一集；钩子留给下一集，勿在本集拍穿。",
+          "本轮制作先兑现这一集（约 10–12 段×15 秒）；钩子留给下一集，勿在本集拍穿。",
           "人物/道具用系列表锁定；本集主场景见资产真源，可切场景池其他地点但须有过渡。",
+          "节拍/静帧/成片须对齐十至十二段可拍表字段；每段 3–4 张关键静帧锁定后再出视频。",
         ].join("\n")
       : "",
   ]
