@@ -3,8 +3,9 @@
  * - screenplay-generator：故事发动机 / 剧本医生 / 整体影像+运镜风格
  * - create-storyboard：起幅·戏核·落幅 / 交接棒 / 动作情绪起止
  * - visual-storytelling：资产 inventory → 分镜角色 → 导戏单
+ * - Emily2040/seedance-2.0（MIT）：角色身份契约 / 导戏一致 / 多角色动作分层 → manhuaDirectorDistill
  *
- * 可调用：Sol 扩写注入 + GPT-Image-2 静帧提示 + 按秒导戏单结构。
+ * 可调用：Sol 扩写注入 + 静帧提示 + 按秒导戏单结构（前台不写供应商名）。
  */
 
 import type { ManhuaEpisodeSegmentBeat } from "./manhuaEpisodeSegmentPlan.js";
@@ -12,6 +13,10 @@ import {
   MANHUA_EPISODE_SEGMENT_DURATION_SEC,
   type ManhuaEpisodeSegmentPlan,
 } from "./manhuaEpisodeSegmentPlan.js";
+import {
+  formatManhuaDirectingCoherenceBlock,
+  formatManhuaEnsembleActionHierarchyBlock,
+} from "./manhuaDirectorDistill.js";
 
 /** 与工作台静帧口径对齐（避免与 manhuaScriptWorkbench 循环依赖） */
 export const MANHUA_DISTILL_KEYARTS_PER_SEGMENT_MIN = 3;
@@ -288,6 +293,13 @@ export function formatManhuaKeyframeImage2Prompt(input: {
   const identity = String(input.identityLockZh || "").trim();
   return [
     `【关键静帧·${roleZh}】竖屏电影静帧，纯画面，零可读文字。`,
+    formatManhuaDirectingCoherenceBlock({
+      intentionZh:
+        input.shot.actionZh?.slice(0, 60) ||
+        seg?.dialogueZh?.slice(0, 60) ||
+        null,
+    }),
+    formatManhuaEnsembleActionHierarchyBlock(),
     style ? `整体影像：${style.slice(0, 280)}` : "",
     identity ? identity.slice(0, 400) : "",
     seg?.sceneZh ? `场景：${seg.sceneZh}` : "",
