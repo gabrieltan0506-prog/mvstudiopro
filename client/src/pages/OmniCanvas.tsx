@@ -1308,7 +1308,7 @@ export default function OmniCanvas() {
       `chars: ${selectedCharacterIds.join(",") || "—"}`,
       `ancient: ${factoryAncientArchetypeIds.join(",") || "—"}`,
       `artStyle: ${factoryArtStyleId}`,
-      `imageEngine: gpt-image-2-2026-04-21 (pinned) · charsheet/sceneplate=no-nb2 · keyart=may-fallback-nb2`,
+      `imageEngine: gpt-image-2-2026-04-21 (pinned) · charsheet/sceneplate=no-nb2 · keyart=library-pad+edit-only`,
       `genre/scene: ${factoryGenreId || "auto"} / ${factorySceneId || "auto"}`,
       `props: ${factoryPropIds.join(",") || "—"}`,
       `craft: ${selectedCraftShotIds.join(",") || "—"}`,

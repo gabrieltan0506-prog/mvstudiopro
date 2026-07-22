@@ -5,20 +5,22 @@ import {
 } from "./manhuaKeyartEditFusion";
 
 describe("manhuaKeyartEditFusion", () => {
-  it("plans edit+fusion from ready scene/prop and character sheets", () => {
+  it("plans library-pad edit from character library (not text-gen)", () => {
     const plan = planManhuaKeyartEditFusion({
       characterIds: ["char_f_01", "char_m_01"],
       sceneId: "scene_12",
       propIds: ["demo_prop_romance_ring_box"],
       artStyleId: "photoreal",
     });
-    // 都市：角色 sheet 可作底图；场景/道具若已落盘进融图
     expect(plan.canEdit).toBe(true);
+    expect(plan.requireLibraryEdit).toBe(true);
     expect(plan.refImageUrl).toMatch(/\/manhua-characters\//);
-    expect(plan.editPromptAddonZh).toContain("【静帧·示范图融图】");
+    expect(plan.editPromptAddonZh).toContain("人物库垫图");
+    expect(plan.editPromptAddonZh).toContain("Image-2 Edit");
+    expect(plan.editPromptAddonZh).not.toContain("文生路径");
   });
 
-  it("ancient without sheet files still fuses ready scene+prop + hard lock (仿真人可 edit)", () => {
+  it("ancient without sheet files still fuses ready scene+prop + hard lock", () => {
     const plan = planManhuaKeyartEditFusion({
       ancientArchetypeIds: ["arch_rain_jianghu_dao"],
       sceneId: "scene_07",
@@ -29,7 +31,6 @@ describe("manhuaKeyartEditFusion", () => {
     expect(plan.editPromptAddonZh).toContain("【古装时代硬锁·必守】");
     expect(plan.editPromptAddonZh).toContain("雨夜江湖刀客");
     expect(plan.editPromptAddonZh).toMatch(/禁止：西装|禁止西装/);
-    // 场景/道具已落盘时应能 edit；底图为环境时不得画现代人
     if (plan.canEdit) {
       expect(plan.refImageUrl).toMatch(/\/manhua-(scenes|props)\//);
       expect(plan.editFusionUrls.length + 1).toBeGreaterThanOrEqual(1);
@@ -37,35 +38,41 @@ describe("manhuaKeyartEditFusion", () => {
     }
   });
 
-  it("CG drama refuses photoreal demo edit base without identity sheets", () => {
+  it("CG drama still library-pad edits (no generated identity sheets)", () => {
     const plan = planManhuaKeyartEditFusion({
-      ancientArchetypeIds: ["arch_rain_jianghu_dao"],
-      sceneId: "scene_07",
-      propIds: ["demo_prop_xianxia_sword"],
+      characterIds: ["char_f_01"],
+      sceneId: "scene_12",
       artStyleId: "cg_drama",
+      identityImageUrls: ["https://cdn.example/charsheet-a.png"],
     });
-    expect(plan.canEdit).toBe(false);
-    expect(plan.refImageUrl).toBeUndefined();
-    expect(plan.editFusionUrls).toEqual([]);
+    expect(plan.canEdit).toBe(true);
+    expect(plan.refImageUrl).toMatch(/\/manhua-characters\//);
+    expect(plan.refImageUrl).not.toBe("https://cdn.example/charsheet-a.png");
     expect(plan.editPromptAddonZh).toContain("【画风执行·CG 漫剧】");
-    expect(plan.editPromptAddonZh).toContain("CG 漫剧文生路径");
+    expect(plan.editPromptAddonZh).toContain("人物库垫图");
+    expect(plan.editPromptAddonZh).not.toContain("设定卡身份锁");
+    expect(plan.editPromptAddonZh).not.toContain("CG 漫剧文生路径");
   });
 
-  it("CG drama uses identity sheets for edit lock (not library demos)", () => {
+  it("ignores generated custom character refs for cast pad", () => {
     const plan = planManhuaKeyartEditFusion({
-      ancientArchetypeIds: ["arch_rain_jianghu_dao"],
-      sceneId: "scene_07",
-      artStyleId: "cg_drama",
-      identityImageUrls: [
-        "https://cdn.example/charsheet-a.png",
-        "https://cdn.example/charsheet-b.png",
+      characterIds: ["char_f_01"],
+      sceneId: "scene_12",
+      artStyleId: "photoreal",
+      customRefs: [
+        {
+          id: "cust_gen",
+          url: "https://cdn.example/generated-char.jpg",
+          role: "character",
+          labelZh: "生成定妆",
+          source: "generated",
+          seedLibraryId: "char_f_01",
+        },
       ],
     });
     expect(plan.canEdit).toBe(true);
-    expect(plan.refImageUrl).toBe("https://cdn.example/charsheet-a.png");
-    expect(plan.editFusionUrls).toContain("https://cdn.example/charsheet-b.png");
-    expect(plan.editPromptAddonZh).toContain("设定卡身份锁");
-    expect(plan.refImageUrl).not.toMatch(/\/manhua-(scenes|characters|props)\//);
+    expect(plan.refs.some((r) => r.path.includes("generated-char.jpg"))).toBe(false);
+    expect(plan.refImageUrl).toMatch(/\/manhua-characters\//);
   });
 
   it("ancient path does not attach urban character sheets", () => {
@@ -87,7 +94,7 @@ describe("manhuaKeyartEditFusion", () => {
     expect(absolutizeManhuaAssetUrl("/manhua-props/x.jpg", "")).toBe("");
   });
 
-  it("prefers custom https refs and suppresses library cast/scene/prop", () => {
+  it("keeps library cast pad even when upload refs exist", () => {
     const plan = planManhuaKeyartEditFusion({
       characterIds: ["char_f_01", "char_m_01"],
       sceneId: "scene_12",
@@ -99,18 +106,21 @@ describe("manhuaKeyartEditFusion", () => {
           url: "https://cdn.example/char.jpg",
           role: "character",
           labelZh: "自传人物",
+          source: "upload",
         },
         {
           id: "cust_s",
           url: "https://cdn.example/scene.jpg",
           role: "scene",
           labelZh: "自传场景",
+          source: "upload",
         },
         {
           id: "cust_p",
           url: "https://cdn.example/prop.jpg",
           role: "prop",
           labelZh: "自传道具",
+          source: "upload",
         },
         {
           id: "cust_unset",
@@ -120,17 +130,14 @@ describe("manhuaKeyartEditFusion", () => {
       ],
     });
     expect(plan.canEdit).toBe(true);
-    expect(plan.editPromptAddonZh).toContain("【静帧·用户参考融图】");
+    expect(plan.editPromptAddonZh).toMatch(/人物库垫图|用户垫图|用户参考/);
+    expect(plan.refs.some((r) => r.path.includes("/manhua-characters/"))).toBe(true);
     expect(plan.refs.map((r) => r.path)).toEqual(
       expect.arrayContaining([
         "https://cdn.example/char.jpg",
         "https://cdn.example/scene.jpg",
         "https://cdn.example/prop.jpg",
       ]),
-    );
-    expect(plan.refs.some((r) => r.path.includes("/manhua-characters/"))).toBe(false);
-    expect(plan.refs.some((r) => r.path.includes("/manhua-scenes/") || r.path.includes("/manhua-props/"))).toBe(
-      false,
     );
     expect(plan.refs.some((r) => r.path.includes("ignore.jpg"))).toBe(false);
   });
@@ -147,6 +154,7 @@ describe("manhuaKeyartEditFusion", () => {
           url: "https://cdn.example/modern-tennis.jpg",
           role: "character",
           labelZh: "自传人物·网球",
+          source: "upload",
         },
       ],
     });
@@ -154,7 +162,6 @@ describe("manhuaKeyartEditFusion", () => {
     expect(plan.editPromptAddonZh).toContain("凤曌女帝");
     expect(plan.editPromptAddonZh).toMatch(/运动背心|网球拍|球拍/);
     expect(plan.editPromptAddonZh).toContain("整身改绘");
-    // 底图必须是场景/道具，不能是现代人物照
     expect(plan.refImageUrl).not.toBe("https://cdn.example/modern-tennis.jpg");
     if (plan.canEdit) {
       expect(plan.refImageUrl).toMatch(/\/manhua-(scenes|props)\//);
@@ -163,7 +170,7 @@ describe("manhuaKeyartEditFusion", () => {
     }
   });
 
-  it("ancient lane without scene base falls back to generate instead of editing modern cast photo", () => {
+  it("ancient lane without scene base refuses modern cast photo edit and text-gen", () => {
     const plan = planManhuaKeyartEditFusion({
       ancientArchetypeIds: ["arch_rain_jianghu_dao"],
       artStyleId: "photoreal",
@@ -173,12 +180,13 @@ describe("manhuaKeyartEditFusion", () => {
           url: "https://cdn.example/modern-tennis.jpg",
           role: "character",
           labelZh: "自传人物·网球",
+          source: "upload",
         },
       ],
     });
     expect(plan.canEdit).toBe(false);
     expect(plan.refImageUrl).toBeUndefined();
     expect(plan.editPromptAddonZh).toContain("【古装时代硬锁·必守】");
-    expect(plan.editPromptAddonZh).toContain("禁止以现代人物参考图为底做改图");
+    expect(plan.editPromptAddonZh).toMatch(/禁止.*纯文生|禁止以现代人物参考图为底/);
   });
 });

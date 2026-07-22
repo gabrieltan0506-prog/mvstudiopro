@@ -549,22 +549,21 @@ export async function runCanvasBlock(
         : "";
     let isEdit = block.imageMode === "edit";
     const keyartPromptBlob = String(mergedPrompt || block.prompt || "");
-    const isCgKeyart =
-      isKeyart && /画风硬锁】?\s*CG\s*漫剧|【画风执行·CG 漫剧】/.test(keyartPromptBlob);
-    /** CG：禁止库内仿真人示范 edit；允许「设定卡身份锁」edit */
-    const cgIdentityLockEdit = /设定卡身份锁|CG·设定卡/.test(keyartPromptBlob);
-    if (isCgKeyart && isEdit && !cgIdentityLockEdit) {
-      isEdit = false;
-    }
+    /** 关键静帧：人物库/用户垫图 + Image-2 Edit；不再因 CG 关掉 edit 改纯文生 */
+    const keyartNeedsLibraryEdit =
+      isKeyart &&
+      (/人物库垫图|用户垫图|Image-2 Edit|示范图融图|用户参考融图/.test(keyartPromptBlob) ||
+        isEdit);
     /**
      * 默认 Image-2；用户手选 NB2 省钱则尊重。
      * 角色定妆 / 场景空镜硬钉官方 Image-2：禁止静默 NB2，以免分不清主路径。
      */
-    const imageModel: CanvasBlock["imageModel"] = isAssetSheet
-      ? "gpt-image-2"
-      : block.imageModel === "nano-banana-2"
-        ? "nano-banana-2"
-        : "gpt-image-2";
+    const imageModel: CanvasBlock["imageModel"] =
+      isAssetSheet || isKeyart
+        ? "gpt-image-2"
+        : block.imageModel === "nano-banana-2"
+          ? "nano-banana-2"
+          : "gpt-image-2";
     // 站点相对路径（/manhua-*）须转绝对 HTTPS：官方 OpenAI images/edits 服务端会下载参考图
     const { absolutizeManhuaAssetUrl, absolutizeManhuaAssetUrls } = await import(
       "@shared/manhuaKeyartEditFusion"
@@ -582,20 +581,20 @@ export async function runCanvasBlock(
       editRef = absRef(editRef);
     }
     if (isEdit && editRef && !/^https?:\/\//i.test(editRef)) {
-      // 浏览器无 origin 时无法绝对化：关键静帧降级文生图，其它节点仍报错
-      if (isKeyart) {
-        isEdit = false;
-        editRef = "";
-      } else {
-        throw new Error("微调模式需要可访问的底图 URL（HTTPS）");
+      // 关键静帧禁止降级纯文生（曾漂成无关主体）；须可下载的 HTTPS 垫图
+      if (isKeyart || keyartNeedsLibraryEdit) {
+        throw new Error("关键静帧需要人物库垫图（可访问的 HTTPS 底图），请先从人物库锁定角色后重试");
       }
+      throw new Error("微调模式需要可访问的底图 URL（HTTPS）");
     }
     if (isEdit && !editRef) {
-      if (isKeyart) {
-        isEdit = false;
-      } else {
-        throw new Error("微调模式需要底图：请先上传图片，或先文生图后再点「微调这张图」");
+      if (isKeyart || keyartNeedsLibraryEdit) {
+        throw new Error("关键静帧须先垫人物库/上传参考图再改图，禁止无底图纯文生");
       }
+      throw new Error("微调模式需要底图：请先上传图片，或先文生图后再点「微调这张图」");
+    }
+    if (isKeyart && !isEdit) {
+      throw new Error("关键静帧须走人物库垫图 + 改图；请先从人物库锁定角色（或上传人物参考）");
     }
     const fusionUrls = absolutizeManhuaAssetUrls(
       (block.editFusionUrls || [])
@@ -663,49 +662,18 @@ export async function runCanvasBlock(
       } catch (primaryErr) {
         const reason =
           primaryErr instanceof Error ? primaryErr.message.slice(0, 160) : "GPT-Image-2 失败";
-        // 设定图：禁止 NB2 静默回退，失败即停，便于确认官方主路径
+        // 设定图 / 关键静帧：禁止 NB2 / 纯文生静默回退（静帧无垫图文生曾漂成无关主体）
         if (isAssetSheet) {
           console.warn(
             `[canvasRunBlock] asset-sheet official Image-2 failed (no NB2 fallback) · id=${block.id} · ${reason}`,
           );
           throw new Error("角色/场景设定图生成失败，请稍后重试");
         }
-        // 关键静帧：edit/融图失败 → 纯文生图重做（不能套用就重新生成）
-        if (isKeyart && isEdit) {
-          try {
-            // 关键帧重做同样直送中文提示，避免再等一轮编译
-            const regenPrompt = `${String(mergedPrompt || "").trim()}\n\n${MANHUA_KEYART_NO_TEXT_EN}`;
-            urls = await runGptImage2Batch(
-              regenPrompt,
-              ar,
-              { openaiOnly: true, userId: gptUserId },
-              count,
-            );
-            resolvedImageModel = "gpt-image-2";
-            console.warn(`[canvasRunBlock] keyart edit/融图失败，已文生图重做：${reason}`);
-          } catch (regenErr) {
-            const rr = regenErr instanceof Error ? regenErr.message.slice(0, 120) : "文生图重做失败";
-            try {
-              urls = await runNanoBanana2(imagePrompt, ar, undefined, count);
-              resolvedImageModel = "nano-banana-2";
-              console.warn(`[canvasRunBlock] keyart 文生图重做失败，回退 NB2：${rr}`);
-            } catch (fallbackErr) {
-              const fb =
-                fallbackErr instanceof Error ? fallbackErr.message : "备援生图也失败";
-              throw new Error(`生图失败（融图：${reason}；重做：${rr}；备援：${fb}）`);
-            }
-          }
-        } else if (isKeyart) {
-          // 静帧已钉官方 OpenAI；超时/失败可回退 NB2（节点会标回 NB2）
-          try {
-            urls = await runNanoBanana2(imagePrompt, ar, undefined, count);
-            resolvedImageModel = "nano-banana-2";
-            console.warn(`[canvasRunBlock] keyart 官方 Image-2 失败，已回退 NB2：${reason}`);
-          } catch (fallbackErr) {
-            const fb =
-              fallbackErr instanceof Error ? fallbackErr.message : "备援生图也失败";
-            throw new Error(`生图失败（官方 Image-2：${reason}；备援：${fb}）`);
-          }
+        if (isKeyart) {
+          console.warn(
+            `[canvasRunBlock] keyart Image-2 edit failed (no text-gen/NB2 fallback) · id=${block.id} · ${reason}`,
+          );
+          throw new Error("关键静帧改图失败，请确认人物库垫图可访问后重试");
         } else {
           try {
             urls = await runNanoBanana2(imagePrompt, ar, isEdit ? editRef : refUrl, count);

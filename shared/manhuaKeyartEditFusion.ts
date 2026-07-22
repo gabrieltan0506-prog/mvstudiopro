@@ -1,9 +1,9 @@
 /**
- * 关键静帧 · 用官方 GPT-Image-2 edit（OpenAI images/edits → 失败回落 OpenRouter）多图融图。
- * 有可抓取示范图 → imageMode=edit + referenceImageUrls；缺图 → 文案锚点并走文生图重做。
- * CG 漫剧画风：禁止拿仿真人示范图做 edit 底图（会把成片锁成照片），改走文生 + 画风硬锁。
+ * 关键静帧 · 官方 GPT-Image-2 edit（OpenAI images/edits）。
+ * 身份锚点：人物库预览图（或用户上传，非 generated）→ 服务端垫图 → edits。
+ * 禁止：用本集生成定妆图当身份；禁止缺底图时静默纯文生（易漂成无关主体）。
+ * CG：仍用人库/自传垫图 + 画风硬锁改绘，不挂生成设定卡。
  * 不走 EvoLink。
- * 古风无 sheet：禁止挂 404；必须用服饰/发型硬锁 + 场景/道具示范图融进画。
  */
 
 import {
@@ -36,7 +36,7 @@ export type ManhuaKeyartEditRef = {
 export type ManhuaKeyartEditPlan = {
   /** 是否具备至少一张底图，可走 edit/融图 */
   canEdit: boolean;
-  /** 底图（都市：角色优先；古装：场景/道具优先，人物只进融图） */
+  /** 底图（都市：角色库优先；古装：场景/道具优先，人物只进融图） */
   refImageUrl?: string;
   /** 融图参考（不含底图），最多 15 */
   editFusionUrls: string[];
@@ -45,6 +45,10 @@ export type ManhuaKeyartEditPlan = {
   missingLabelsZh: string[];
   /** 写入静帧 prompt 的 edit 说明 */
   editPromptAddonZh: string;
+  /**
+   * 已锁定人物库/可用垫图时为 true：运行时必须 edit，禁止纯文生回退。
+   */
+  requireLibraryEdit?: boolean;
 };
 
 function uniqPaths(items: ManhuaKeyartEditRef[]): ManhuaKeyartEditRef[] {
@@ -59,7 +63,7 @@ function uniqPaths(items: ManhuaKeyartEditRef[]): ManhuaKeyartEditRef[] {
   return out;
 }
 
-/** 古风无定妆 sheet：把发型/服饰/气质写成硬锁，供 edit 与文生重做共用 */
+/** 古风无定妆 sheet：把发型/服饰/气质写成硬锁，供 edit 共用 */
 export function buildManhuaKeyartAncientHardLockZh(ancientArchetypeIds?: string[] | null): string {
   const ids = (ancientArchetypeIds || []).map((id) => String(id || "").trim()).filter(Boolean);
   if (!ids.length) return "";
@@ -94,8 +98,8 @@ export function buildManhuaKeyartAncientHardLockZh(ancientArchetypeIds?: string[
 }
 
 /**
- * 收集角色 / 古风 / 场景示范 / 道具示范 / 用户上传的可融图 URL，并给出 edit 计划。
- * 用户上传图优先：有对应角色的自传图时，不再强制并入库内同类路径。
+ * 收集角色库 / 场景示范 / 道具示范 / 用户上传（非 generated）可融图 URL，并给出 edit 计划。
+ * 人物身份优先人物库预览；本集生成定妆 / generated 自传不进身份垫图。
  */
 export function planManhuaKeyartEditFusion(opts?: {
   characterIds?: string[] | null;
@@ -103,35 +107,37 @@ export function planManhuaKeyartEditFusion(opts?: {
   artStyleId?: string | null;
   sceneId?: string | null;
   propIds?: string[] | null;
-  /** 用户上传并勾选角色的参考图（HTTPS） */
+  /** 用户上传并勾选角色的参考图（HTTPS）；generated 不进人物身份 */
   customRefs?: ManhuaCustomAssetRef[] | null;
   /**
-   * C：本集已生成的角色设定卡 / 自传人物 HTTPS 图。
-   * CG 只用这些做身份锁，禁止挂库内仿真人示范底图。
+   * @deprecated 关键静帧不再用本集生成设定卡做身份锁；保留参数以免旧调用炸掉。
    */
   identityImageUrls?: string[] | null;
 }): ManhuaKeyartEditPlan {
   const refs: ManhuaKeyartEditRef[] = [];
   const missingLabelsZh: string[] = [];
-  const customTagged = taggedManhuaCustomAssetRefs(opts?.customRefs);
-  const customChars = customRefsByRole(opts?.customRefs, "character");
-  const customScenes = customRefsByRole(opts?.customRefs, "scene");
-  const customProps = customRefsByRole(opts?.customRefs, "prop");
-  const preferCustomCast = customChars.length > 0;
+  // 生成定妆不进人物身份垫图（易漂）；只认上传或库预览
+  const customTagged = taggedManhuaCustomAssetRefs(opts?.customRefs).filter(
+    (c) => !(c.role === "character" && c.source === "generated"),
+  );
+  const customChars = customRefsByRole(opts?.customRefs, "character").filter(
+    (c) => c.source !== "generated",
+  );
+  const customScenes = customRefsByRole(opts?.customRefs, "scene").filter(
+    (c) => c.source !== "generated",
+  );
+  const customProps = customRefsByRole(opts?.customRefs, "prop").filter(
+    (c) => c.source !== "generated",
+  );
   const preferCustomScene = customScenes.length > 0;
   const preferCustomProp = customProps.length > 0;
-  /** 古装轨始终保留原型硬锁；有自传人物时只跳过库内都市 sheet，不得清空硬锁 */
   const ancientIds = (opts?.ancientArchetypeIds || [])
     .map((id) => String(id || "").trim())
     .filter(Boolean);
   const isAncientLane = ancientIds.length > 0;
-  /** CG 漫剧：库内示范/宫殿空镜多为仿真人质感，edit 会压过画风硬锁 */
   const isCgDrama = normalizeManhuaArtStyleId(opts?.artStyleId) === "cg_drama";
-  const identityUrls = (opts?.identityImageUrls || [])
-    .map((u) => String(u || "").trim())
-    .filter((u) => /^https?:\/\//i.test(u))
-    .slice(0, 4);
   const hardLockZh = buildManhuaKeyartAncientHardLockZh(ancientIds);
+  void opts?.identityImageUrls;
 
   for (const c of customTagged) {
     const roleLabel =
@@ -145,7 +151,6 @@ export function planManhuaKeyartEditFusion(opts?: {
   }
 
   for (const id of ancientIds) {
-    // 古风 sheet 目录为空：勿挂 404 毒死 edits；造型走硬锁文案
     void getAncientArchetypePreviewUrl(id);
     const board = getAncientArchetypeById(id);
     missingLabelsZh.push(
@@ -153,14 +158,16 @@ export function planManhuaKeyartEditFusion(opts?: {
     );
   }
 
-  // 已挂古风时不再挂都市角色 sheet；有自传人物时也不挂库角色
-  if (!isAncientLane && !preferCustomCast) {
+  // 都市/CG：始终挂人物库预览作垫图身份（不因自传而跳过库）
+  const libraryCastPaths: string[] = [];
+  if (!isAncientLane) {
     for (const id of opts?.characterIds || []) {
       const key = String(id || "").trim();
       if (!key) continue;
       const path = getManhuaCharacterPreviewUrl(key, { artStyleId: opts?.artStyleId });
       if (path) {
-        refs.push({ id: key, role: "character", labelZh: `角色·${key}`, path });
+        refs.push({ id: key, role: "character", labelZh: `角色库·${key}`, path });
+        libraryCastPaths.push(path);
       } else {
         missingLabelsZh.push(`角色 ${key}`);
       }
@@ -203,82 +210,77 @@ export function planManhuaKeyartEditFusion(opts?: {
   const characterRefCount = ready.filter((r) => r.role === "character").length;
   const multiCastHint =
     ancientIds.length >= 2 || characterRefCount >= 2 || /两人|双人|对视|对峙/.test(hardLockZh);
-  // 多角色时优先用场景作底，避免单人定妆 sheet 把成图锁成单人肖像
   const sceneBase = ready.find((r) => r.role === "scene");
   const propBase = ready.find((r) => r.role === "prop");
-  const castBase = ready.find((r) => r.role === "ancient" || r.role === "character");
+  // 人物库路径优先于自传人物，避免生成定妆/漂移图抢底
+  const libraryCastBase = ready.find(
+    (r) => r.role === "character" && libraryCastPaths.includes(r.path),
+  );
+  const uploadCastBase = ready.find(
+    (r) => r.role === "character" && !libraryCastPaths.includes(r.path),
+  );
+  const castBase = libraryCastBase || uploadCastBase;
   /**
-   * 古装轨：底图必须是场景/道具（时代正确的环境），人物自传图只进融图。
-   * 若只有现代人物参考、没有环境底图 → 改走文生+硬锁，避免把网球街拍当 edit 底图锁死成片。
+   * 古装轨：底图必须是场景/道具（时代正确的环境），人物自传/库只进融图。
+   * 都市/CG：人物库垫图优先；多角色时用场景作底、人物融图。
    */
   const base = isAncientLane
     ? sceneBase || propBase || undefined
     : (multiCastHint && sceneBase) || castBase || sceneBase || ready[0];
   const fusion = ready.filter((r) => r.path !== base?.path).slice(0, 15);
 
-  /** C：CG 仅用本集设定卡/自传人物图做身份锁，不挂库内仿真人示范 */
-  const cgIdentityBase = isCgDrama && identityUrls.length ? identityUrls[0] : undefined;
-  const cgIdentityFusion =
-    isCgDrama && identityUrls.length > 1 ? identityUrls.slice(1, 4) : [];
-
-  /** 仿真人：场景/角色示范 edit；CG：仅设定卡身份锁 edit */
-  const canEdit = isCgDrama ? Boolean(cgIdentityBase) : Boolean(base?.path);
+  const canEdit = Boolean(base?.path);
+  const requireLibraryEdit =
+    canEdit &&
+    (libraryCastPaths.length > 0 || customChars.length > 0 || Boolean(sceneBase || propBase));
   const baseIsEnvOnly = Boolean(base && (base.role === "scene" || base.role === "prop"));
   const castCountLock =
-    ancientIds.length >= 2 || characterRefCount >= 2 || identityUrls.length >= 2
-      ? `人数硬锁：本集已锁定 ${Math.max(ancientIds.length, characterRefCount, identityUrls.length)} 名主角定妆/原型；关系镜、对峙镜、递接镜必须同框画出全部已锁定主角，禁止只保留单人半身定妆像。`
+    ancientIds.length >= 2 || characterRefCount >= 2
+      ? `人数硬锁：本集已锁定 ${Math.max(ancientIds.length, characterRefCount)} 名主角；关系镜、对峙镜、递接镜必须同框画出全部已锁定主角，禁止只保留单人半身定妆像。`
       : "人数硬锁：分镜若写两人/对视/对峙/递接，必须同框出现至少两名可读人物，禁止只画单人肖像。";
 
   const customHint = customTagged.length
-    ? isAncientLane && preferCustomCast
+    ? isAncientLane && customChars.length
       ? `用户上传参考 ${customTagged.length} 张：场景/道具可直接吸收环境层次；人物参考只借五官气质与体态，必须按古装硬锁整身改绘，禁止保留运动装/街拍/现代背景。`
-      : `用户上传参考 ${customTagged.length} 张（已按人物/场景/服装道具勾选）：请优先吸收其外形、环境与道具，勿被库内示范图带跑。`
+      : `用户上传参考 ${customTagged.length} 张（已按人物/场景/服装道具勾选）：与人物库垫图一并融图；勿被无关主体带跑。`
     : "";
 
   const cgStyleLockZh = isCgDrama
-    ? "【画风执行·CG 漫剧】本集已选手绘 CG：必须半写实二次元/国乙厚涂，禁止仿真人皮肤、纪实摄影、真人剧照；构图与场面以【分镜·静帧】动作为准。"
+    ? "【画风执行·CG 漫剧】本集已选手绘 CG：必须半写实二次元/国乙厚涂，禁止仿真人皮肤、纪实摄影、真人剧照；构图与场面以【分镜·静帧】动作为准。垫图只借五官轮廓与服化色块，必须整身 CG 改绘。"
     : "";
 
-  const cgIdentityHintZh =
-    isCgDrama && cgIdentityBase
-      ? "【CG·设定卡身份锁】参考图仅为角色设定卡/自传人物：只借五官比例、发型轮廓、服装色块与身份辨识；必须整身按 CG 厚涂重绘，禁止保留照片皮肤、真实毛孔与纪实光影。"
+  const libraryPadHintZh = libraryCastPaths.length
+    ? "【静帧·人物库垫图·Image-2 Edit】底图来自人物库预览（已服务端垫进竖版画幅）：请在垫图上改绘分镜动作与场面，保持身份连续；禁止抛开垫图纯文生无关主体。"
+    : customChars.length
+      ? "【静帧·用户垫图·Image-2 Edit】底图来自用户上传人物参考：请在垫图上改绘分镜动作与场面，保持身份连续；禁止抛开垫图纯文生无关主体。"
       : "";
 
   const refLabelsZh = ready.map((r) => r.labelZh).filter(Boolean);
   const editPromptAddonZh = [
-    isCgDrama && cgIdentityBase
-      ? "【静帧·设定卡身份锁】"
+    libraryPadHintZh
+      ? libraryPadHintZh
       : customTagged.length
         ? "【静帧·用户参考融图】"
         : "【静帧·示范图融图】",
     hardLockZh,
     cgStyleLockZh,
-    cgIdentityHintZh,
     castCountLock,
     customHint,
     canEdit
-      ? isCgDrama && cgIdentityBase
-        ? "已挂设定卡参考：按【分镜·静帧】动作构图生成 CG 场面，人物身份对齐设定卡，禁止仿真人底图套用。"
-        : baseIsEnvOnly && (ancientIds.length || characterRefCount)
-          ? "底图是场景/道具参考：请把硬锁与角色锚点中的人物全部绘入该环境（多角色须同框），道具入画；禁止在宫景里画现代人，禁止改成都市街拍，禁止只贴一张单人定妆脸。"
-          : "底图与参考图已挂载：请用改图/融图把角色放进场景；多角色场面须同框；道具必须入画且与题材时代一致；保持人物身份与服装连续，禁止空棚抠贴、禁止错时代穿戴、禁止单人肖像偷懒。"
-      : isCgDrama
-        ? `CG 漫剧文生路径：按【分镜·静帧】动作/运镜/人数优先完整文生；${
-            refLabelsZh.length
-              ? `空间与道具文案参考：${refLabelsZh.join("、")}（只借布局与物件，不借照片皮肤）。`
-              : "结合场景与角色文案锚点。"
-          }请先在资产页出齐本集角色设定卡后再重出，以免人物漂移。`
-        : isAncientLane
-          ? "暂无可用古代场景底图：请按硬锁与文案锚点完整文生一张关键静帧（人物必须古装+宫殿/江湖环境同框；禁止以现代人物参考图为底做改图）。"
-          : "暂无可用参考底图：请按硬锁与文案锚点完整文生一张关键静帧（人物+场景+道具同框；关系镜须双人以上）。",
-    canEdit && !isCgDrama && fusion.length
+      ? baseIsEnvOnly && (ancientIds.length || characterRefCount)
+        ? "底图是场景/道具参考：请把硬锁与角色锚点中的人物全部绘入该环境（多角色须同框），道具入画；禁止在宫景里画现代人，禁止改成都市街拍，禁止只贴一张单人定妆脸。"
+        : "底图与参考图已挂载（垫图+改图）：请用 Image-2 Edit 把角色放进场景；多角色场面须同框；道具必须入画且与题材时代一致；保持人物身份与服装连续，禁止空棚抠贴、禁止错时代穿戴、禁止单人肖像偷懒，禁止抛开垫图另画无关动物/静物。"
+      : isAncientLane
+        ? "暂无可用古代场景底图：请先锁定场景/道具示范或上传场景参考后再出静帧（禁止以现代人物参考图为底做改图，也禁止无垫图纯文生）。"
+        : "暂无可用人物库/场景垫图：请先从人物库锁定角色（或上传人物参考）后再出静帧；禁止无垫图纯文生。",
+    canEdit && fusion.length
       ? `融图参考 ${fusion.length} 张：${fusion.map((r) => r.labelZh).join("、")}——吸收其外形/环境/道具；多角色时每位主角都要入画。`
       : "",
-    canEdit && isCgDrama && cgIdentityFusion.length
-      ? `设定卡融图 ${cgIdentityFusion.length} 张：只借身份辨识，必须 CG 厚涂重绘。`
+    !canEdit && refLabelsZh.length
+      ? `已点选但未形成垫图：${refLabelsZh.join("、")}。`
       : "",
     missingLabelsZh.length
-      ? `下列点选资产尚无示范图文件，须按文字/硬锁重新生成进画面：${missingLabelsZh.join("、")}。`
+      ? `下列点选资产尚无示范图文件，须在有垫图的 edit 中按文字/硬锁补进画面：${missingLabelsZh.join("、")}。`
       : "",
   ]
     .filter(Boolean)
@@ -286,15 +288,12 @@ export function planManhuaKeyartEditFusion(opts?: {
 
   return {
     canEdit,
-    refImageUrl: canEdit ? (isCgDrama ? cgIdentityBase : base?.path) : undefined,
-    editFusionUrls: canEdit
-      ? isCgDrama
-        ? cgIdentityFusion
-        : fusion.map((r) => r.path)
-      : [],
+    refImageUrl: canEdit ? base?.path : undefined,
+    editFusionUrls: canEdit ? fusion.map((r) => r.path) : [],
     refs: ready,
     missingLabelsZh,
     editPromptAddonZh,
+    requireLibraryEdit,
   };
 }
 

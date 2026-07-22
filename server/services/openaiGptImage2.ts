@@ -133,8 +133,20 @@ async function postEdits(
   imageUrls: string[],
   maskUrl: string | undefined,
   model: string,
+  flowLog?: string[],
 ): Promise<Buffer> {
-  const buffers = await Promise.all(imageUrls.slice(0, 16).map((u) => downloadUrl(u)));
+  const rawBuffers = await Promise.all(imageUrls.slice(0, 16).map((u) => downloadUrl(u)));
+  const { padImageBufferToSize } = await import("./manhuaKeyartPadReference.js");
+  // 先垫图再 edits：底图（第 1 张）与融图统一装进目标画幅，避免纯文生漂移
+  const buffers = await Promise.all(
+    rawBuffers.map(async (buf, i) => {
+      const padded = await padImageBufferToSize(buf, size);
+      if (i === 0) {
+        appendImageFlowLog(flowLog, `[GPT-IMAGE-2·OpenAI] 垫图 · size=${size} · base+refs=${rawBuffers.length}`);
+      }
+      return padded;
+    }),
+  );
   const maskBuf = maskUrl ? await downloadUrl(maskUrl) : null;
 
   const boundary = `----FormBoundary${Date.now()}`;
@@ -237,7 +249,7 @@ export async function postOpenAiGptImage2AndUpload(
 
   try {
     const buffer = refs.length
-      ? await postEdits(apiKey, promptTrimmed, size, quality, refs, maskUrl, model)
+      ? await postEdits(apiKey, promptTrimmed, size, quality, refs, maskUrl, model, L)
       : await postGenerations(apiKey, promptTrimmed, size, quality, model);
     const publicUrl = await uploadBufferToPlatformStorage(buffer, gcsSubdir, L);
     appendImageFlowLog(L, `[GPT-IMAGE-2·OpenAI] 成功 · ${String(publicUrl).slice(0, 160)}…`);
