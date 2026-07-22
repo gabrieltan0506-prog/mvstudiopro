@@ -108,7 +108,6 @@ import {
   planManhuaKeyartEditFusion,
   type ManhuaKeyartEditPlan,
 } from "@shared/manhuaKeyartEditFusion";
-import { collectManhuaIdentityImageUrls } from "@shared/manhuaAssetImageGate";
 import type { ManhuaCustomAssetRef } from "@shared/manhuaCustomAssetRefs";
 
 function applyKeyartEditPlanToBlock(
@@ -117,6 +116,9 @@ function applyKeyartEditPlanToBlock(
 ): CanvasBlock {
   let prompt = stripMarkedSection(block.prompt, "【静帧·示范图融图】");
   prompt = stripMarkedSection(prompt, "【静帧·用户参考融图】");
+  prompt = stripMarkedSection(prompt, "【静帧·人物库垫图·Image-2 Edit】");
+  prompt = stripMarkedSection(prompt, "【静帧·用户垫图·Image-2 Edit】");
+  prompt = stripMarkedSection(prompt, "【静帧·设定卡身份锁】");
   prompt = [prompt, plan.editPromptAddonZh].filter(Boolean).join("\n\n");
   if (plan.canEdit && plan.refImageUrl) {
     return {
@@ -128,6 +130,7 @@ function applyKeyartEditPlanToBlock(
       editFusionUrls: plan.editFusionUrls,
     };
   }
+  // 无垫图：不静默改文生；保留 generate 标记，运行时会硬失败并提示补人物库
   return {
     ...block,
     prompt,
@@ -1067,12 +1070,7 @@ export function applyFactoryPrefsToBlocks(
         ...(b.id.startsWith("reverse-") ? { videoReverseOutputMode: reverseMode } : {}),
       };
       if (b.id.startsWith("keyart-")) {
-        const identityImageUrls = collectManhuaIdentityImageUrls({
-          characterIds: prefsCharacterIds,
-          ancientArchetypeIds: prefsAncientIds,
-          customRefs: opts.customRefs,
-          assetBlocks: blocks.filter((x) => x.id.startsWith("charsheet-")),
-        });
+        // 静帧身份只认人物库预览 / 用户上传；不用本集生成定妆
         const editPlan = planManhuaKeyartEditFusion({
           characterIds: prefsCharacterIds,
           ancientArchetypeIds: prefsAncientIds,
@@ -1080,7 +1078,6 @@ export function applyFactoryPrefsToBlocks(
           sceneId: opts.sceneId,
           propIds: opts.propIds,
           customRefs: opts.customRefs,
-          identityImageUrls,
         });
         return applyKeyartEditPlanToBlock(merged, editPlan);
       }

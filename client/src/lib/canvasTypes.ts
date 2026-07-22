@@ -30,7 +30,14 @@ export function normalizeCanvasTextModel(raw: unknown): CanvasTextModel {
   if (key === "gpt56terra") return "gpt-5.6-terra";
   return DEFAULT_CANVAS_TEXT_MODEL;
 }
-export type CanvasImageModel = "nano-banana-2" | "gpt-image-2";
+/** 画布出图仅官方 Image-2；旧存档里的 nano-banana-2 读时归一为此值 */
+export type CanvasImageModel = "gpt-image-2";
+
+/** 兼容旧 localStorage / 节点字段，一律折到官方 Image-2 */
+export function normalizeCanvasImageModel(raw: unknown): CanvasImageModel {
+  void raw;
+  return "gpt-image-2";
+}
 export type CanvasVideoModel = "gemini-omni-flash" | "seedance-2.0" | "seedance-2.0-fast";
 /** 文生图 vs 改图（EvoLink image_urls edit） */
 export type CanvasImageMode = "generate" | "edit";
@@ -179,10 +186,9 @@ export const TEXT_MODEL_OPTIONS: Array<{ id: CanvasTextModel; label: string }> =
   { id: "gpt-5.4", label: "GPT 5.4" },
 ];
 
+/** 画布引擎展示：仅官方出图（已移除备选引擎） */
 export const IMAGE_MODEL_OPTIONS: Array<{ id: CanvasImageModel; label: string }> = [
-  { id: "gpt-image-2", label: "GPT-Image-2（默认·官方）" },
-  /** 自由画布手选；角色/场景设定图不走此引擎，也不静默回退至此 */
-  { id: "nano-banana-2", label: "Nano Banana 2（手选省钱）" },
+  { id: "gpt-image-2", label: "官方出图" },
 ];
 
 export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }> = [
@@ -224,7 +230,6 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
               ? "反推分镜表与 Seedance 微动句；成稿去导演名。可先上传 ≤120s 参考短片。"
               : "镜头缓慢推进，主体动作自然，电影级光影。",
     textModel: DEFAULT_CANVAS_TEXT_MODEL,
-    /** 官方 GPT-Image-2 主路径；手选 NB2 省钱直走，未选手选时失败可回退 NB2 */
     imageModel: "gpt-image-2",
     videoModel: DEFAULT_CANVAS_VIDEO_MODEL,
     aspectRatio: "9:16",
@@ -266,6 +271,7 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
   return {
     ...withVideo,
     textModel: normalizeCanvasTextModel(block.textModel),
+    imageModel: normalizeCanvasImageModel(block.imageModel),
     videoModel: withVideo.videoModel,
     imageMode: block.imageMode === "edit" ? "edit" : "generate",
     width: block.width ?? CANVAS_BLOCK_DEFAULT_WIDTH,

@@ -893,10 +893,11 @@ async function fallbackNanoBanana2FromPrompt(
   const refUrl = String(referenceImageUrl || "").trim();
 
   if (role === "optional_fallback_after_openai") {
+    // 产品默认关闭：复杂提示在 NB2 上极易跑偏；仅显式 PLATFORM_VERTEX_NANO_BANANA2=1 才允许
     if (!isPlatformVertexNanoBanana2FallbackEnabled()) {
       appendImageFlowLog(
         L,
-        "[生圖兜底] Vertex Nano Banana 2 已關閉（僅 GPT-IMAGE-2）。開啟：PLATFORM_VERTEX_NANO_BANANA2=1 或 platformSwitches 中 PLATFORM_VERTEX_NANO_BANANA2_ENABLED",
+        "[生圖兜底] Vertex Nano Banana 2 已關閉（僅 GPT-IMAGE-2，禁止静默降级）。运维开启：PLATFORM_VERTEX_NANO_BANANA2=1",
       );
       return null;
     }

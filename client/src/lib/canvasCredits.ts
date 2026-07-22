@@ -2,8 +2,7 @@ import type { CanvasImageModel } from "./canvasTypes";
 
 export type CanvasImageBatchCount = 1 | 2 | 4;
 
-/** Creative 页口径：Nano Banana 2 · 35；GPT-Image-2 · 54 */
-const CANVAS_NANO_UNIT = 35;
+/** 画布出图仅官方 Image-2 · 54 / 张 */
 const CANVAS_GPT_IMAGE_UNIT = 54;
 
 /** 图片批量生成积分：1 张原价；2 张九折；4 张八折 */
@@ -11,7 +10,8 @@ export function canvasImageBatchTotalCredits(
   model: CanvasImageModel,
   count: CanvasImageBatchCount,
 ): number {
-  const unit = model === "gpt-image-2" ? CANVAS_GPT_IMAGE_UNIT : CANVAS_NANO_UNIT;
+  void model;
+  const unit = CANVAS_GPT_IMAGE_UNIT;
   if (count === 1) return unit;
   if (count === 2) return Math.round(unit * 2 * 0.9);
   return Math.round(unit * 4 * 0.8);

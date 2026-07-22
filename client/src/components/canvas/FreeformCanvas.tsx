@@ -971,22 +971,12 @@ export default function FreeformCanvas({
                               <option value="edit">微调这张图</option>
                             </select>
                           </label>
-                          <label className="flex items-center gap-2 text-[11px] text-white/70">
+                          <div className="flex items-center gap-2 text-[11px] text-white/70">
                             <span className="shrink-0 text-white/45">引擎</span>
-                            <select
-                              value={block.imageModel}
-                              onChange={(e) =>
-                                patchOne(block.id, { imageModel: e.target.value as CanvasBlock["imageModel"] })
-                              }
-                              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
-                            >
-                              {IMAGE_MODEL_OPTIONS.map((m) => (
-                                <option key={m.id} value={m.id}>
-                                  {m.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
+                            <span className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white/85">
+                              {IMAGE_MODEL_OPTIONS[0]?.label || "官方出图"}
+                            </span>
+                          </div>
                           <label className="flex items-center gap-2 text-[11px] text-white/70">
                             <span className="shrink-0 text-white/45">张数</span>
                             <select

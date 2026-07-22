@@ -66,11 +66,12 @@ export const PLATFORM_USE_GOOGLE_GCP = true;
 export const PLATFORM_WEEKEND_GCP_ESCAPE = false;
 
 /**
- * Vertex **Nano Banana 2**（`generateGeminiImage` 生圖兜底）**臨時默認開啟**：GPT-Image-2 失敗後走 NB2。
- * 關閉：設 `PLATFORM_VERTEX_NANO_BANANA2=0`。
+ * Vertex **Nano Banana 2**（`generateGeminiImage` 生圖兜底）**默认关闭**：
+ * 复杂中文提示在 NB2 上极易跑偏；GPT-Image-2 失败应直接报错，勿静默降级。
+ * 仅运维显式设 `PLATFORM_VERTEX_NANO_BANANA2=1` 时才允许兜底。
  * {@link isPlatformWeekendGcpEscape} 為真時仍會關閉。
  */
-export const PLATFORM_VERTEX_NANO_BANANA2_ENABLED = true;
+export const PLATFORM_VERTEX_NANO_BANANA2_ENABLED = false;
 
 /** 是否允許在 GPT-IMAGE-2 失敗後調用 Vertex Nano Banana 2。 */
 export function isPlatformVertexNanoBanana2FallbackEnabled(): boolean {
