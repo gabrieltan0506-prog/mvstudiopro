@@ -144,7 +144,8 @@ function roleActionZh(
     return `起幅建立：${scene}；${cast}站位与空间纵深清楚；光影起势（${light}）`;
   }
   if (role === "key_action") {
-    return `戏核动作：${cast}推动关系/信息；对白气口对应表演；服化道可读（${wardrobe}）`;
+    const perf = beat.performanceZh || "表情/肢体贴合对白气口";
+    return `戏核动作：${cast}推动关系/信息；表演：${perf}；服化道可读（${wardrobe}）`;
   }
   if (role === "bridge") {
     return `桥接细节：${wardrobe} 材质/手持交互特写，或光影突变中介态（${light}）`;
@@ -178,7 +179,9 @@ export function buildWorkbenchShotsFromSegmentPlan(
         cameraZh: roleCameraZh(role, beat.lightingCameraZh),
         actionZh: roleActionZh(role, beat),
         dialogueZh: k === 2 || (per >= 4 && k === 3) ? beat.dialogueZh : undefined,
-        emotionZh: beat.dialogueZh ? "贴合对白施压/反应" : undefined,
+        emotionZh:
+          beat.performanceZh ||
+          (beat.dialogueZh ? "贴合对白施压/反应" : undefined),
         keyframeRole: role,
       });
     }

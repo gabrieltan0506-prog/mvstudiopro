@@ -856,6 +856,7 @@ export default function ManhuaScriptWorkbench({
         segment: {
           index: seg.index,
           dialogueZh: seg.shots.find((s) => s.dialogueZh)?.dialogueZh || "",
+          performanceZh: seg.shots.find((s) => s.emotionZh)?.emotionZh || "",
           sceneZh: "",
           paletteZh: "",
           castZh: "",

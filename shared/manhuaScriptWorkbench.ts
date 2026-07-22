@@ -656,6 +656,7 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
         castZh: "",
         wardrobePropZh: "",
         lightingCameraZh: camera,
+        performanceZh: "",
       },
       shots: input.shots,
       durationSec: dur,

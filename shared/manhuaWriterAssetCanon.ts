@@ -280,7 +280,8 @@ export type WriterDensityGateResult = {
 };
 
 const MIN_BODY_CHARS = 280;
-const MIN_DIALOGUE_LINES = 8;
+/** 三分钟档：约 10 段 × 至少 3 句「」 */
+const MIN_DIALOGUE_LINES = 30;
 const MIN_LOCATION_HITS = 2;
 
 export function countDialogueLines(text: string): number {
@@ -382,7 +383,7 @@ export function evaluateWriterPackAssetAndDensity(input: {
   if (canon.props.length < 1) {
     errors.push("道具表至少需要 1 件关键道具");
   }
-  // 三分钟档：额外要求 10–12 段可拍表（对白/场景配色/角色/服化道/光影运镜），禁灌水
+  // 三分钟档：额外要求 10–12 段可拍表（对白+表演/场景配色/角色/服化道/光影运镜），禁灌水
   if ((input.targetSec ?? 180) >= 150) {
     for (const ep of input.episodes || []) {
       const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(String(ep.body || ""));

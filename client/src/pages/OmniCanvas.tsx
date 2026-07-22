@@ -2148,6 +2148,10 @@ export default function OmniCanvas() {
     const identityFromCanon = formatWriterAssetCanonIdentityLock(canon, {
       episodeIndex: continuity.episodeIndex,
     });
+    // 主场景跟编剧表，勿残留题材推荐的皇宫大殿库 id
+    if (mainSceneId) {
+      setFactorySceneId(mainSceneId);
+    }
     const sceneForBible = mainSceneId || factorySceneId || recommendedScene?.id || "";
     const bible = buildManhuaProjectBible({
       topic: topicForSpawn,
@@ -2341,6 +2345,9 @@ export default function OmniCanvas() {
     });
     const mainSceneId =
       canon.episodeMainSceneId[writerFocusEpisode] || canon.locations[0]?.id || "";
+    if (mainSceneId) {
+      setFactorySceneId(mainSceneId);
+    }
     const sceneForBible = mainSceneId || factorySceneId || recommendedScene?.id || "";
     setProjectBible(
       buildManhuaProjectBible({
@@ -2644,8 +2651,29 @@ export default function OmniCanvas() {
       const assetCanon = opts?.assetCanonOverride ?? projectBible?.assetCanon;
       const episodeIndex = opts?.episodeIndexOverride ?? writerFocusEpisode;
       const topic = String(opts?.topicOverride || factoryTopic || "").trim();
+      const writerMainSceneId =
+        assetCanon?.episodeMainSceneId[episodeIndex] || assetCanon?.locations[0]?.id || "";
+      // 按剧本出资产：主场景跟编剧表；清掉未列入场景表的库示范场景（如 scene_06 皇宫大殿）
+      if (writerMainSceneId) {
+        setFactorySceneId(writerMainSceneId);
+      }
+      if (assetCanon?.locations?.length) {
+        const locIds = new Set(assetCanon.locations.map((l) => l.id));
+        const locNames = assetCanon.locations.map((l) => l.nameZh).filter(Boolean);
+        setCustomAssetRefs((prev) =>
+          prev.filter((r) => {
+            if (r.role !== "scene") return true;
+            const seed = String(r.seedLibraryId || "").trim();
+            if (seed && locIds.has(seed)) return true;
+            const label = String(r.labelZh || "").trim();
+            if (label && locNames.some((n) => label.includes(n) || n.includes(label))) return true;
+            if (/^scene_\d+/i.test(seed)) return false;
+            return true;
+          }),
+        );
+      }
       const sceneId =
-        assetCanon?.episodeMainSceneId[episodeIndex] ||
+        writerMainSceneId ||
         factorySceneId ||
         recommendedScene?.id ||
         "";
