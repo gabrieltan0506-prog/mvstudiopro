@@ -144,11 +144,16 @@ export async function commitManhuaCloudDraftAfterDirectUpload(userId: number): P
     const raw = buffer.toString("utf8");
     const env = parseEnvelope(raw);
     if (env && env.userId === userId) {
-      return writeManhuaCloudDraftToGcs({ userId, payload: env.payload });
+      const written = await writeManhuaCloudDraftToGcs({
+        userId,
+        payload: env.payload,
+      });
+      return { payload: env.payload, serverUpdatedAt: written.serverUpdatedAt };
     }
     const bare = parseManhuaCloudDraftPayload(raw);
     if (bare) {
-      return writeManhuaCloudDraftToGcs({ userId, payload: bare });
+      const written = await writeManhuaCloudDraftToGcs({ userId, payload: bare });
+      return { payload: bare, serverUpdatedAt: written.serverUpdatedAt };
     }
     return null;
   } catch (e) {
