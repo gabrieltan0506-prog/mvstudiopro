@@ -78,5 +78,7 @@ describe("router structure", () => {
     expect(procedures).toContain("admin.creditBreakdown");
     expect(procedures).toContain("manhuaCloudDraft.get");
     expect(procedures).toContain("manhuaCloudDraft.upsert");
+    expect(procedures).toContain("manhuaCloudDraft.prepareDirectUpload");
+    expect(procedures).toContain("manhuaCloudDraft.commitDirectUpload");
   });
 });

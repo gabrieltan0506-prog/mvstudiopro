@@ -769,7 +769,7 @@ export default function ManhuaScriptWorkbench({
     () => resolveEpisodeMainScene(assetCanon, focusEpisode),
     [assetCanon, focusEpisode],
   );
-  /** 本集画布上的角色定妆 / 场景空镜（点一下定位） */
+  /** 本集画布设定图 +「我的角色/场景」已勾选图（避免场景墙空着但分栏有图） */
   const episodeSheetGallery = useMemo(() => {
     const items: Array<{
       id: string;
@@ -777,17 +777,20 @@ export default function ManhuaScriptWorkbench({
       labelZh: string;
       url: string;
     }> = [];
+    const seenUrl = new Set<string>();
     for (const b of blocks) {
       const isChar = b.id.startsWith("charsheet-");
       const isScene = b.id.startsWith("sceneplate-");
       if (!isChar && !isScene) continue;
       const url = mediaUrl(b);
-      if (!url) continue;
+      if (!url || seenUrl.has(url)) continue;
+      seenUrl.add(url);
       const seedId = b.id.replace(/^charsheet-/, "").replace(/^sceneplate-/, "");
       const labelZh = isChar
         ? assetCanon?.characters.find((c) => c.id === seedId || b.id.includes(c.id))?.nameZh ||
           "角色定妆"
         : assetCanon?.locations.find((l) => l.id === seedId || b.id.includes(l.id))?.nameZh ||
+          getManhuaSceneTemplate(seedId)?.nameZh ||
           "场景参考";
       items.push({
         id: b.id,
@@ -796,22 +799,41 @@ export default function ManhuaScriptWorkbench({
         url,
       });
     }
+    for (const ref of customAssetRefs) {
+      const url = String(ref.url || "").trim();
+      if (!/^https:\/\//i.test(url) || seenUrl.has(url)) continue;
+      if (ref.role !== "character" && ref.role !== "scene") continue;
+      seenUrl.add(url);
+      const kind = ref.role === "scene" ? ("sceneplate" as const) : ("charsheet" as const);
+      items.push({
+        id: `${kind}-custom-${ref.id}`,
+        kind,
+        labelZh: ref.labelZh || (kind === "sceneplate" ? "场景参考" : "角色定妆"),
+        url,
+      });
+    }
     return items.sort((a, b) => {
       if (a.kind === b.kind) return a.labelZh.localeCompare(b.labelZh, "zh");
       return a.kind === "charsheet" ? -1 : 1;
     });
-  }, [blocks, assetCanon]);
+  }, [blocks, assetCanon, customAssetRefs]);
   const customSummaryZh = summarizeCustomAssetRefsZh(customAssetRefs);
+  /** 编剧主场景优先：有本集主场景名时，勿用题材默认的皇宫大殿库 id 去挂示范锁 */
+  const lockSceneId = useMemo(() => {
+    if (customAssetRefs.some((r) => r.role === "scene")) return "";
+    if (episodeMainScene?.nameZh) return "";
+    return sceneId;
+  }, [customAssetRefs, episodeMainScene?.nameZh, sceneId]);
   const assetLockRegistry = useMemo(
     () =>
       buildManhuaAssetLockRegistry({
         characterIds,
         artStyleId: activeArtStyleId,
-        sceneId,
+        sceneId: lockSceneId,
         propIds,
         customRefs: customAssetRefs,
       }),
-    [characterIds, activeArtStyleId, sceneId, propIds, customAssetRefs],
+    [characterIds, activeArtStyleId, lockSceneId, propIds, customAssetRefs],
   );
   const outlineComplete = Boolean(canRun);
   /** 方案 B：剧本确认 + 角色/场景锁定 + 角色图/场景图齐，才可进分镜出片 */
