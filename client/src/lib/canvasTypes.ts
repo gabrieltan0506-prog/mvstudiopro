@@ -181,7 +181,8 @@ export const TEXT_MODEL_OPTIONS: Array<{ id: CanvasTextModel; label: string }> =
 
 export const IMAGE_MODEL_OPTIONS: Array<{ id: CanvasImageModel; label: string }> = [
   { id: "gpt-image-2", label: "GPT-Image-2（默认·官方）" },
-  { id: "nano-banana-2", label: "Nano Banana 2（手选省钱 / 失败回退）" },
+  /** 自由画布手选；角色/场景设定图不走此引擎，也不静默回退至此 */
+  { id: "nano-banana-2", label: "Nano Banana 2（手选省钱）" },
 ];
 
 export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }> = [

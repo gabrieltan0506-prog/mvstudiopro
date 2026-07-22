@@ -2755,6 +2755,12 @@ export default function OmniCanvas() {
           setBlocks(working);
           saveCanvasState(working, edges);
           ingestSheetToMyLibrary(plan, out.outputUrl || out.outputUrls?.[0]);
+          if (out.outputUrl || out.outputUrls?.[0]) {
+            pushDebug("confirmAssetsFromScript:engine", {
+              level: "ok",
+              detail: `${plan.kind}:${plan.labelZh} · ${out.imageModel || "gpt-image-2"} · no-nb2-fallback`,
+            });
+          }
         }
         const nextGate = evaluateManhuaAssetImageGate({
           ...gateInput,
