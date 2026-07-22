@@ -1928,9 +1928,19 @@ export default function OmniCanvas() {
       toast.error("请先填写题材，或至少写几句补充条件");
       return;
     }
+    // 重扩写：旧剧情包不再留备份，以新稿为准（先提醒再跑）
+    if (writerPack) {
+      const ok = window.confirm(
+        "重新扩写将以新剧本为准，覆盖本机与云端的旧剧情包（不再保留旧备份）。是否继续？",
+      );
+      if (!ok) return;
+    }
     setWriterBusy(true);
     setWriterConfirmed(false);
+    setDirectorUnlocked(false);
     setProjectBible(null);
+    setCustomAssetRefs([]);
+    setWriterConfirmBlockers([]);
     const t0 = Date.now();
     const count = clampWriterEpisodeCount(writerEpisodeCount);
     const designInject = [
@@ -1942,7 +1952,7 @@ export default function OmniCanvas() {
     const mergedBrief = [brief, designInject].filter(Boolean).join("\n\n");
     const reqPreview = `topic=${topic}\nepisodes=${count}\nbrief:\n${mergedBrief.slice(0, 4000)}`;
     pushDebug("expandWriterPack:start", {
-      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count}`,
+      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count} overwriteOld=1`,
       request: reqPreview,
     });
     try {
@@ -1962,31 +1972,78 @@ export default function OmniCanvas() {
       }
       // 新剧情包不应继续展示旧静帧/成片/多集坞（云草稿残留）
       const cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges);
+      const nextBlocks = cleaned.removedCount > 0 ? cleaned.blocks : blocks;
+      const nextEdges = cleaned.removedCount > 0 ? cleaned.edges : edges;
       if (cleaned.removedCount > 0) {
         if (abortRef.current) abortRef.current.abort();
-        setBlocks(cleaned.blocks);
-        setEdges(cleaned.edges);
-        saveCanvasState(cleaned.blocks, cleaned.edges);
+        setBlocks(nextBlocks);
+        setEdges(nextEdges);
+        saveCanvasState(nextBlocks, nextEdges);
         setDockSelectedIds(new Set());
         setWorkflowPhase("outline");
       }
       setWriterPack(pack);
       setWriterFocusEpisode(1);
       setWriterConfirmBlockers([]);
+      // 新剧本立刻落盘并覆盖本机+云端旧稿，避免刷新后又被旧云草稿盖回
+      const clientUpdatedAt = new Date().toISOString();
+      const writerSession = {
+        topic,
+        brief,
+        episodeCount: count,
+        focusEpisode: 1,
+        writerPack: pack,
+        writerConfirmed: false,
+        directorUnlocked: false,
+        projectBible: null,
+        manhuaUiMode,
+        assetsSkipped: false,
+        workflowPhase: "outline" as const,
+        customAssetRefs: [] as ManhuaCustomAssetRef[],
+        shareAssetToLibrary,
+        viralTemplateId,
+      };
+      const factoryPrefs = {
+        topic,
+        femaleId: factoryFemaleId,
+        maleId: factoryMaleId,
+        artStyleId: factoryArtStyleId,
+        femaleLeadManual,
+        maleLeadManual,
+        artStyleManual,
+        customAssetRefs: [] as ManhuaCustomAssetRef[],
+        shareAssetToLibrary,
+      };
+      persistManhuaDraftLocally({
+        writerSession,
+        blocks: nextBlocks,
+        edges: nextEdges,
+        factoryPrefs,
+        clientUpdatedAt,
+      });
+      void syncCloudDraftPayload(
+        buildLocalCloudDraftSnapshot({
+          writerSession,
+          blocks: nextBlocks,
+          edges: nextEdges,
+          factoryPrefs,
+          clientUpdatedAt,
+        }),
+      );
       const epDigest = pack.episodes
         .map((ep) => `第${ep.index}集·${ep.title || ""}：${String(ep.endHook || "").slice(0, 80)}`)
         .join("\n");
       pushDebug("expandWriterPack:ok", {
         level: "ok",
         ms: Date.now() - t0,
-        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount}`,
+        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount} · overwritten=1`,
         request: reqPreview,
         response: `${pack.seriesTitle || ""}\n${pack.logline || ""}\n${epDigest}`.slice(0, 8000),
       });
       toast.success(
         cleaned.removedCount > 0
-          ? `已扩写 ${pack.episodes.length} 集，并清空旧分镜/成片；确认后再进入编导`
-          : `已扩写 ${pack.episodes.length} 集剧情，确认后再进入编导`,
+          ? `已扩写 ${pack.episodes.length} 集：新剧本已覆盖本机与云端旧稿，并清空旧分镜/成片`
+          : `已扩写 ${pack.episodes.length} 集：新剧本已覆盖本机与云端旧稿`,
       );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "扩写失败";
@@ -2012,6 +2069,16 @@ export default function OmniCanvas() {
     blocks,
     edges,
     pushDebug,
+    writerPack,
+    manhuaUiMode,
+    shareAssetToLibrary,
+    factoryFemaleId,
+    factoryMaleId,
+    factoryArtStyleId,
+    femaleLeadManual,
+    maleLeadManual,
+    artStyleManual,
+    syncCloudDraftPayload,
   ]);
 
   const viralTemplatesRemoteQuery = trpc.manhuaViralTemplate.listApproved.useQuery(undefined, {
@@ -4228,19 +4295,31 @@ export default function OmniCanvas() {
                     ))}
                   </select>
                 </div>
-                <button
-                  type="button"
-                  disabled={writerBusy || factoryBusy}
-                  onClick={() => void expandWriterRoom()}
-                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold disabled:opacity-50 ${
-                    writerPack
-                      ? "border-white/15 bg-white/[0.05] text-white/70 hover:bg-white/[0.08]"
-                      : "border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 text-cyan-50"
-                  }`}
-                >
-                  {writerBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                  {writerPack ? "重新扩写" : "扩写剧情"}
-                </button>
+                <div className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    disabled={writerBusy || factoryBusy}
+                    onClick={() => void expandWriterRoom()}
+                    title={
+                      writerPack
+                        ? "重新扩写将覆盖本机与云端旧剧情包，不再保留旧备份"
+                        : undefined
+                    }
+                    className={`inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold disabled:opacity-50 ${
+                      writerPack
+                        ? "border-white/15 bg-white/[0.05] text-white/70 hover:bg-white/[0.08]"
+                        : "border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 text-cyan-50"
+                    }`}
+                  >
+                    {writerBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                    {writerPack ? "重新扩写" : "扩写剧情"}
+                  </button>
+                  {writerPack ? (
+                    <p className="max-w-[16rem] text-[10px] leading-snug text-white/40">
+                      重扩写以新剧本为准，旧稿不再备份。
+                    </p>
+                  ) : null}
+                </div>
                 <button
                   type="button"
                   disabled={writerBusy || factoryBusy || !writerPack}
