@@ -115,15 +115,18 @@ describe("manhuaCharacterAssetLibrary", () => {
     expect(rec.maleId).toBe("char_m_02");
   });
 
-  it("builds same-layout character sheet prompt", () => {
+  it("builds soft no-text identity portrait prompt", () => {
     const prompt = buildManhuaCharacterSheetGenPrompt({
       characterId: "char_f_01",
       artStyleId: "cg_drama",
     });
-    expect(prompt).toContain("FRONT / SIDE / BACK");
+    expect(prompt).toContain("定妆参考");
+    expect(prompt).toContain("强烈建议");
+    expect(prompt).toContain("Strong preference");
     expect(prompt).toContain("沈清辞");
     expect(prompt).toContain("新面孔新人");
     expect(prompt).toContain("CG 漫剧");
+    expect(prompt).not.toMatch(/姓名占位|气质标签条|STRICT NO TEXT|硬约束/);
   });
 
   it("photoreal child sheet prompt includes family-safe cast block", () => {

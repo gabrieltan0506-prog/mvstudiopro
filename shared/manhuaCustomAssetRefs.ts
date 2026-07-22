@@ -94,16 +94,16 @@ export function buildManhuaCustomAssetGenFromLibraryPrompt(opts: {
   const styleLabel = String(opts.artStyleLabelZh || "").trim();
   const stylePrompt = String(opts.artStylePromptZh || "").trim();
   return [
-    `生成一张竖版【漫剧·新${roleZh}参考图】（无可读文字、无字幕、无水印）：`,
-    "硬规则：内建库条目仅作气质/环境/材质参考，必须生成**新**形象或新空镜，禁止复刻同一张脸或同一张示范封面。",
+    `生成一张竖版漫剧·新${roleZh}参考图：`,
+    "库条目仅作气质/环境/材质参考，请生成**新**形象或新空镜，避免复刻同一张脸或同一张示范封面。",
     opts.role === "character"
-      ? "人物：单人清晰可读，服化道完整；可作后续分镜融图定妆参考。"
+      ? "强烈建议：按人物本体来画，服化道清楚；对白与姓名说明作隐藏意图，不必画进画面。"
       : opts.role === "scene"
-        ? "场景：空镜为主，环境层次与纵深清楚；可有远处剪影但不抢戏。"
-        : "服装道具：主体居中、材质可读，背景干净，便于融进分镜。",
-    seedLabel ? `库参考名：${seedLabel}（仅参考，勿复制）` : "",
-    seedPrompt ? `库参考视觉：${seedPrompt.slice(0, 500)}` : "",
-    topic ? `题材锚点：${topic.slice(0, 120)}` : "",
+        ? "强烈建议：按场景本体来画，空镜层次清楚；大纲与场景名作隐藏说明，不必写成标题字。"
+        : "强烈建议：道具主体居中、材质清楚，背景干净，少字。",
+    seedLabel ? `（隐藏库参考名·不必画出：${seedLabel}）` : "",
+    seedPrompt ? `请画出的视觉参考：${seedPrompt.slice(0, 500)}` : "",
+    topic ? `（隐藏题材氛围·不必写成标题：${topic.slice(0, 120)}）` : "",
     styleLabel ? `【画风】${styleLabel}` : "",
     stylePrompt || "",
   ]
@@ -150,4 +150,52 @@ export function summarizeCustomAssetRefsZh(
   if (nScene) parts.push(`场景 ${nScene}`);
   if (nProp) parts.push(`服装道具 ${nProp}`);
   return parts.join(" · ");
+}
+
+/**
+ * 剧本自动出的角色/场景图写入「我的参考」（customAssetRefs）。
+ * 同 seedLibraryId+role 或同 URL 则覆盖更新，避免重复占槽。
+ */
+export function upsertGeneratedManhuaCustomAssetRef(
+  prev: ManhuaCustomAssetRef[] | null | undefined,
+  input: {
+    url: string;
+    role: ManhuaCustomAssetRole;
+    labelZh?: string;
+    seedLibraryId?: string;
+  },
+): ManhuaCustomAssetRef[] {
+  const url = String(input.url || "").trim();
+  if (!isHttpsUrl(url)) return normalizeManhuaCustomAssetRefs(prev);
+  const role = input.role;
+  const labelZh = String(input.labelZh || "").trim().slice(0, 40) || undefined;
+  const seedLibraryId = String(input.seedLibraryId || "").trim() || undefined;
+  const base = normalizeManhuaCustomAssetRefs(prev);
+  const matchIdx = base.findIndex((r) => {
+    if (r.url === url) return true;
+    if (
+      seedLibraryId &&
+      r.source === "generated" &&
+      r.role === role &&
+      r.seedLibraryId === seedLibraryId
+    ) {
+      return true;
+    }
+    return false;
+  });
+  const next: ManhuaCustomAssetRef = {
+    id: matchIdx >= 0 ? base[matchIdx]!.id : makeManhuaCustomAssetId(),
+    url,
+    role,
+    labelZh: labelZh || (matchIdx >= 0 ? base[matchIdx]!.labelZh : undefined),
+    source: "generated",
+    seedLibraryId:
+      seedLibraryId || (matchIdx >= 0 ? base[matchIdx]!.seedLibraryId : undefined),
+  };
+  if (matchIdx >= 0) {
+    const copy = [...base];
+    copy[matchIdx] = next;
+    return normalizeManhuaCustomAssetRefs(copy);
+  }
+  return normalizeManhuaCustomAssetRefs([...base, next]);
 }

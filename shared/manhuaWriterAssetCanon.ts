@@ -113,11 +113,11 @@ function parseTableMd(
     const promptZh =
       role === "character"
         ? [
-            `原创角色设定卡·${parsed.nameZh}${parsed.aliasZh ? `（${parsed.aliasZh}）` : ""}`,
+            `原创角色定妆肖像（身份参考名仅供造型，勿烧字）：${parsed.nameZh}${parsed.aliasZh ? `（${parsed.aliasZh}）` : ""}`,
             lookZh ? `外形：${lookZh}` : "",
-            motiveZh ? `动机：${motiveZh}` : "",
+            motiveZh ? `动机气质：${motiveZh}` : "",
             noteZh ? `关系底线：${noteZh}` : "",
-            "单人清晰、服化道完整、无可读文字、竖屏9:16。禁止名人脸。",
+            "单人清晰、服化道完整、竖屏9:16。强烈建议纯视觉呈现；姓名与对白说明作隐藏意图，不必画出。",
           ]
             .filter(Boolean)
             .join("。")
@@ -126,7 +126,7 @@ function parseTableMd(
               `原创道具特写·${parsed.nameZh}`,
               lookZh ? `外形材质：${lookZh}` : "",
               motiveZh ? `剧作功能：${motiveZh}` : "",
-              "主体居中、材质可读、背景干净、无可读文字、竖屏9:16。",
+              "主体居中、材质可读、背景干净、竖屏9:16。强烈建议画面少字。",
             ]
               .filter(Boolean)
               .join("。")
@@ -134,7 +134,7 @@ function parseTableMd(
               `原创场景空镜·${parsed.nameZh}`,
               motiveZh ? `氛围：${motiveZh}` : "",
               lookZh ? `关键元素：${lookZh}` : "",
-              "空镜为主、纵深清楚、无可读文字、竖屏9:16。",
+              "空镜为主、纵深清楚、竖屏9:16。强烈建议匾额路牌保持不可辨认。",
             ]
               .filter(Boolean)
               .join("。");
