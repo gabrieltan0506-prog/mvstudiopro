@@ -812,9 +812,9 @@ export default function OmniCanvas() {
         gender,
         artStyleId: factoryArtStyleId,
       });
-      const originX = blocks.reduce((m, b) => Math.max(m, b.x + b.width), 60) + 40;
-      const originY = 120;
-      const sheet = defaultCanvasBlock("image", originX, originY);
+      // 同版式设定卡也落左上角色带，勿贴画布最右
+      const charCount = blocks.filter((b) => b.id.startsWith("charsheet-")).length;
+      const sheet = defaultCanvasBlock("image", 60 + charCount * 380, 80);
       sheet.id = makeCanvasBlockId("charsheet");
       sheet.prompt = prompt;
       sheet.aspectRatio = "9:16";
@@ -2713,26 +2713,62 @@ export default function OmniCanvas() {
       });
       try {
         let working = [...blocks];
-        /** 画布分带：角色定妆一行、场景空镜一行，避免混排 */
-        const baseX =
-          working.reduce((m, b) => Math.max(m, b.x + (b.width || 360)), 60) + 48;
+        /** 资产图固定左上：角色一行、场景一行；禁止再贴到画布最右 */
+        const ASSET_ORIGIN_X = 60;
         const CHAR_SHEET_Y = 80;
         const SCENE_SHEET_Y = 520;
         const sheetColGap = 380;
-        let charCol = working.filter((b) => b.id.startsWith("charsheet-")).length;
-        let sceneCol = working.filter((b) => b.id.startsWith("sceneplate-")).length;
+        const packAssetSheetPositions = (list: typeof working) => {
+          let c = 0;
+          let s = 0;
+          return list.map((b) => {
+            if (b.id.startsWith("charsheet-")) {
+              const next = {
+                ...b,
+                x: ASSET_ORIGIN_X + c * sheetColGap,
+                y: CHAR_SHEET_Y,
+                width: b.width || 360,
+                height: b.height || 400,
+              };
+              c += 1;
+              return next;
+            }
+            if (b.id.startsWith("sceneplate-")) {
+              const next = {
+                ...b,
+                x: ASSET_ORIGIN_X + s * sheetColGap,
+                y: SCENE_SHEET_Y,
+                width: b.width || 360,
+                height: b.height || 400,
+              };
+              s += 1;
+              return next;
+            }
+            return b;
+          });
+        };
+        working = packAssetSheetPositions(working);
+        setBlocks(working);
+        saveCanvasState(working, edges);
+        // 视口滚到左上资产带，别让人去右边找
+        setFocusBlockId(
+          plans[0]?.id ||
+            working.find((b) => b.id.startsWith("charsheet-"))?.id ||
+            working.find((b) => b.id.startsWith("sceneplate-"))?.id ||
+            null,
+        );
         for (let i = 0; i < plans.length; i++) {
           const plan = plans[i]!;
           if (ac.signal.aborted) break;
           let block = working.find((b) => b.id === plan.id);
           if (!block) {
             const isChar = plan.kind === "charsheet";
-            const col = isChar ? charCol : sceneCol;
-            if (isChar) charCol += 1;
-            else sceneCol += 1;
+            const col = working.filter((b) =>
+              b.id.startsWith(isChar ? "charsheet-" : "sceneplate-"),
+            ).length;
             block = defaultCanvasBlock(
               "image",
-              baseX + col * sheetColGap,
+              ASSET_ORIGIN_X + col * sheetColGap,
               isChar ? CHAR_SHEET_Y : SCENE_SHEET_Y,
             );
             block.id = plan.id;
@@ -2743,7 +2779,8 @@ export default function OmniCanvas() {
             block.refImageUrl = undefined;
             block.width = 360;
             block.height = 400;
-            working = [...working, block];
+            working = packAssetSheetPositions([...working, block]);
+            block = working.find((b) => b.id === plan.id)!;
           } else if (!(block.outputUrl || block.outputUrls?.[0])) {
             block = { ...block, prompt: plan.prompt, status: "idle", error: undefined };
             working = working.map((b) => (b.id === plan.id ? block! : b));
@@ -2753,6 +2790,7 @@ export default function OmniCanvas() {
           }
           setBlocks(working);
           saveCanvasState(working, edges);
+          if (i === 0) setFocusBlockId(plan.id);
           setFactoryProgress(
             plan.kind === "charsheet"
               ? `角色图 · ${plan.labelZh}`
@@ -2787,6 +2825,14 @@ export default function OmniCanvas() {
             });
           }
         }
+        working = packAssetSheetPositions(working);
+        setBlocks(working);
+        saveCanvasState(working, edges);
+        setFocusBlockId(
+          working.find((b) => b.id.startsWith("charsheet-"))?.id ||
+            working.find((b) => b.id.startsWith("sceneplate-"))?.id ||
+            null,
+        );
         const nextGate = evaluateManhuaAssetImageGate({
           ...gateInput,
           assetBlocks: working.filter(
