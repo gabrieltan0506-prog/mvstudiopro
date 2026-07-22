@@ -384,6 +384,41 @@ export function replaceManhuaEpisodeChain(
   };
 }
 
+/** 漫剧工厂产物（含角色/场景设定图、宣发封面）；自由画布节点不在此列 */
+export function isManhuaFactoryArtifactBlock(
+  block: Pick<CanvasBlock, "id">,
+): boolean {
+  const id = String(block.id || "");
+  if (!id) return false;
+  if (stageKeyFromBlockId(id)) return true;
+  if (id.startsWith("promo_cover-")) return true;
+  if (id.startsWith("charsheet-") || id.startsWith("sceneplate-")) return true;
+  // 旧链偶发无后缀：story / keyart
+  if ((MANHUA_FACTORY_STAGE_ORDER as readonly string[]).includes(id)) return true;
+  return false;
+}
+
+/**
+ * 重扩写 / 换剧本时清掉旧工厂链与设定图，避免旧静帧·成片盖住新剧情。
+ * 保留自由画布上的非工厂节点。
+ */
+export function stripManhuaFactoryCanvasArtifacts(
+  blocks: CanvasBlock[],
+  edges: CanvasEdge[],
+): { blocks: CanvasBlock[]; edges: CanvasEdge[]; removedCount: number } {
+  const removedIds = new Set(
+    blocks.filter((b) => isManhuaFactoryArtifactBlock(b)).map((b) => b.id),
+  );
+  if (!removedIds.size) {
+    return { blocks, edges, removedCount: 0 };
+  }
+  return {
+    blocks: blocks.filter((b) => !removedIds.has(b.id)),
+    edges: edges.filter((e) => !removedIds.has(e.fromId) && !removedIds.has(e.toId)),
+    removedCount: removedIds.size,
+  };
+}
+
 function makeFactoryStageId(stage: string, episodeIndex?: number): string {
   if (typeof episodeIndex === "number" && episodeIndex >= 1) {
     const ep = String(Math.floor(episodeIndex)).padStart(2, "0");

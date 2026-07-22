@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildManhuaWriterAssetCanon,
+  countDialogueLines,
   evaluateWriterPackAssetAndDensity,
   formatWriterAssetCanonIdentityLock,
   parseWriterTableLine,
@@ -70,6 +71,25 @@ describe("manhuaWriterAssetCanon", () => {
     expect(main1?.nameZh).toBe("山神破庙");
     expect(main2?.nameZh).toBe("鹤影湖");
     expect(pickEpisodeMainSceneId(canon.locations, "无关正文")).toBe(canon.locations[0]!.id);
+  });
+
+  it("counts curly quotes and 可拍表对白 lines as dialogue", () => {
+    const curly = [
+      "贺沉沙喝道：“交出玉珏，留你全尸！”",
+      "沈照雪攥紧半珏：“我连自己是谁都忘了。”",
+      "“那声音是裴玄策。”贺沉沙压低声。",
+    ].join("\n");
+    expect(countDialogueLines(curly)).toBeGreaterThanOrEqual(3);
+
+    const planOnly = [
+      "#### 段01",
+      "- 对白：交出玉珏，留你全尸！我连自己是谁都忘了。",
+      "- 场景：暮雨竹道",
+      "#### 段02",
+      "- 对白：那声音是裴玄策还是假扮？",
+      "- 场景：破庙侧门",
+    ].join("\n");
+    expect(countDialogueLines(planOnly)).toBeGreaterThanOrEqual(2);
   });
 
   it("density gate rejects thin episode and accepts dense pack", () => {

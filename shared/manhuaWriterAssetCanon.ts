@@ -285,10 +285,16 @@ const MIN_LOCATION_HITS = 2;
 
 export function countDialogueLines(text: string): number {
   const t = String(text || "");
-  const cn = t.match(/「[^」]{1,40}」/g) || [];
-  const en = t.match(/"[^"]{1,40}"/g) || [];
+  /** 角引号 / 直引号 / 弯引号（模型常出 “” 而非「」） */
+  const cn = t.match(/「[^」]{1,80}」/g) || [];
+  const en = t.match(/"[^"]{1,80}"/g) || [];
+  const curly = t.match(/[\u201c“][^\u201d”]{1,80}[\u201d”]/g) || [];
+  /** 可拍表「- 对白：…」行：即使无引号也计为有效对白句 */
+  const planLines = (t.match(/(?:^|\n)\s*[-*·]?\s*对白\s*[:：]\s*([^\n]+)/g) || [])
+    .map((line) => line.replace(/^[\s\S]*?对白\s*[:：]\s*/, "").trim())
+    .filter((s) => s.length >= 6 && !/^(无|暂无|省略|同上)/.test(s));
   // 去重近似
-  return new Set([...cn, ...en].map((s) => s.trim())).size;
+  return new Set([...cn, ...en, ...curly, ...planLines].map((s) => s.trim())).size;
 }
 
 export function evaluateWriterEpisodeDensity(input: {

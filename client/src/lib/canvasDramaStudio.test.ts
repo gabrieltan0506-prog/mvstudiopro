@@ -14,6 +14,7 @@ import {
   layoutManhuaEpisodeReadableChain,
   manhuaEpisodeHasFactoryChain,
   replaceManhuaEpisodeChain,
+  stripManhuaFactoryCanvasArtifacts,
   resolveFactoryResumeStage,
   resolveManhuaEpisodeSpawnContinuity,
   resolveManhuaFactoryOrderedIds,
@@ -930,6 +931,36 @@ slow dolly in, soft rain, trembling hand
     const ep2Story = merged.blocks.find((b) => b.id.startsWith("story-e02-"))!;
     expect(ep2Story.prompt).toContain("【上集钩子】钩A");
     expect(ep2Story.episodeTitle).toBe("二改");
+  });
+
+  it("stripManhuaFactoryCanvasArtifacts drops factory/keyart but keeps free nodes", () => {
+    const factory = spawnManhuaDramaStudio({ topic: "旧剧", episodeIndex: 1, episodeTitle: "旧" });
+    const free = {
+      ...factory.blocks[0]!,
+      id: "text-free-note",
+      kind: "text" as const,
+      prompt: "自由备注",
+      episodeIndex: undefined,
+    };
+    const withAsset = [
+      ...factory.blocks,
+      free,
+      {
+        ...factory.blocks[0]!,
+        id: "charsheet-arch_old",
+        kind: "image" as const,
+        outputUrl: "https://cdn.example/old.jpg",
+      },
+    ];
+    const edges = [
+      ...factory.edges,
+      { fromId: free.id, toId: factory.blocks[0]!.id },
+    ];
+    const cleaned = stripManhuaFactoryCanvasArtifacts(withAsset, edges);
+    expect(cleaned.removedCount).toBeGreaterThan(0);
+    expect(cleaned.blocks.map((b) => b.id)).toEqual(["text-free-note"]);
+    expect(cleaned.edges).toHaveLength(0);
+    expect(cleaned.blocks.some((b) => b.id.startsWith("keyart-"))).toBe(false);
   });
 
   it("exposes keyart parallel concurrency > 1", () => {

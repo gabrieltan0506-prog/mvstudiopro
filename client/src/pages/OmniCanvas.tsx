@@ -45,6 +45,7 @@ import {
   spawnManhuaDramaStudio,
   spawnManhuaDramaStudioSeries,
   stageKeyFromBlockId,
+  stripManhuaFactoryCanvasArtifacts,
   type ManhuaFactoryStageKey,
 } from "@/lib/canvasDramaStudio";
 import {
@@ -434,6 +435,8 @@ export default function OmniCanvas() {
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
   );
   const [writerBusy, setWriterBusy] = useState(false);
+  /** 确认编剧失败时的门禁原因（页面常驻，不只 toast） */
+  const [writerConfirmBlockers, setWriterConfirmBlockers] = useState<string[]>([]);
   /** 次要入口：粘贴 / 上传已有剧本 */
   const [writerImportDraft, setWriterImportDraft] = useState("");
   const writerImportFileRef = useRef<HTMLInputElement | null>(null);
@@ -1926,19 +1929,34 @@ export default function OmniCanvas() {
       if (!res.ready && !writerPackLooksReady(pack)) {
         toast.message("已生成草稿，建议检查每集片尾钩子是否完整");
       }
+      // 新剧情包不应继续展示旧静帧/成片/多集坞（云草稿残留）
+      const cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges);
+      if (cleaned.removedCount > 0) {
+        if (abortRef.current) abortRef.current.abort();
+        setBlocks(cleaned.blocks);
+        setEdges(cleaned.edges);
+        saveCanvasState(cleaned.blocks, cleaned.edges);
+        setDockSelectedIds(new Set());
+        setWorkflowPhase("outline");
+      }
       setWriterPack(pack);
       setWriterFocusEpisode(1);
+      setWriterConfirmBlockers([]);
       const epDigest = pack.episodes
         .map((ep) => `第${ep.index}集·${ep.title || ""}：${String(ep.endHook || "").slice(0, 80)}`)
         .join("\n");
       pushDebug("expandWriterPack:ok", {
         level: "ok",
         ms: Date.now() - t0,
-        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)}`,
+        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount}`,
         request: reqPreview,
         response: `${pack.seriesTitle || ""}\n${pack.logline || ""}\n${epDigest}`.slice(0, 8000),
       });
-      toast.success(`已扩写 ${pack.episodes.length} 集剧情，确认后再进入编导`);
+      toast.success(
+        cleaned.removedCount > 0
+          ? `已扩写 ${pack.episodes.length} 集，并清空旧分镜/成片；确认后再进入编导`
+          : `已扩写 ${pack.episodes.length} 集剧情，确认后再进入编导`,
+      );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "扩写失败";
       pushDebug("expandWriterPack:error", {
@@ -1960,6 +1978,8 @@ export default function OmniCanvas() {
     expandWriterMutation,
     selectedMaleHairstyleIds,
     selectedMaleMicroIds,
+    blocks,
+    edges,
     pushDebug,
   ]);
 
@@ -1999,24 +2019,38 @@ export default function OmniCanvas() {
         });
         return;
       }
+      const cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges);
+      if (cleaned.removedCount > 0) {
+        if (abortRef.current) abortRef.current.abort();
+        setBlocks(cleaned.blocks);
+        setEdges(cleaned.edges);
+        saveCanvasState(cleaned.blocks, cleaned.edges);
+        setDockSelectedIds(new Set());
+        setWorkflowPhase("outline");
+      }
       setWriterPack(res.pack);
       setWriterConfirmed(false);
       setProjectBible(null);
       setWriterFocusEpisode(1);
       setWriterEpisodeCount(res.pack.episodeCount);
       setWriterImportDraft(text);
+      setWriterConfirmBlockers([]);
       if (!factoryTopic.trim()) {
         setFactoryTopic(res.pack.seriesTitle);
       }
       pushDebug("importWriterPack:ok", {
         level: "ok",
-        detail: `${res.pack.seriesTitle} · ${res.pack.episodes.length}ep · via=${res.via}`,
+        detail: `${res.pack.seriesTitle} · ${res.pack.episodes.length}ep · via=${res.via} · clearedFactory=${cleaned.removedCount}`,
         request: text.slice(0, 4000),
         response: res.pack.episodes.map((ep) => `第${ep.index}集·${ep.title}`).join("\n"),
       });
-      toast.success(`已导入 ${res.pack.episodes.length} 集《${res.pack.seriesTitle}》，确认后再进入编导`);
+      toast.success(
+        cleaned.removedCount > 0
+          ? `已导入 ${res.pack.episodes.length} 集《${res.pack.seriesTitle}》，并清空旧分镜/成片`
+          : `已导入 ${res.pack.episodes.length} 集《${res.pack.seriesTitle}》，确认后再进入编导`,
+      );
     },
-    [factoryTopic, writerEpisodeCount, pushDebug],
+    [factoryTopic, writerEpisodeCount, blocks, edges, pushDebug],
   );
 
   const onWriterImportFile = useCallback(
@@ -2054,6 +2088,7 @@ export default function OmniCanvas() {
       targetSec: 180,
     });
     if (!densityGate.ok) {
+      setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
       toast.error("剧本未过三分钟密度/资产表门禁", {
         description: densityGate.errors.slice(0, 4).join("；"),
       });
@@ -2063,6 +2098,7 @@ export default function OmniCanvas() {
       });
       return;
     }
+    setWriterConfirmBlockers([]);
     const canon = densityGate.canon;
     setWriterConfirmed(true);
     setDirectorUnlocked(true);
@@ -2150,13 +2186,16 @@ export default function OmniCanvas() {
     if (spawned.resolvedSceneId && !factorySceneId) {
       setFactorySceneId(spawned.resolvedSceneId);
     }
-    const hasOtherEpisodes = blocks.some((b) => {
-      const ep = getBlockEpisodeIndex(b);
-      return ep != null && ep !== continuity.episodeIndex;
-    });
-    const next = hasOtherEpisodes
-      ? replaceManhuaEpisodeChain(blocks, edges, spawned, continuity.episodeIndex)
-      : spawned;
+    // 确认编剧 = 以新剧情铺链；先剥尽旧工厂产物，避免旧系列多集坞/英文4镜残留
+    const cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges);
+    const next = {
+      blocks: [...cleaned.blocks, ...spawned.blocks],
+      edges: [...cleaned.edges, ...spawned.edges],
+      resolvedGenreId: spawned.resolvedGenreId,
+      genreInferred: spawned.genreInferred,
+      resolvedSceneId: spawned.resolvedSceneId,
+      characterIds: spawned.characterIds,
+    };
     setBlocks(next.blocks);
     setEdges(next.edges);
     saveCanvasState(next.blocks, next.edges);
@@ -2167,10 +2206,11 @@ export default function OmniCanvas() {
       `表人物${canon.characters.length}`,
       `场景池${canon.locations.length}`,
       mainSceneId ? `本集主场景已锁定` : null,
+      cleaned.removedCount > 0 ? `已替换旧链${cleaned.removedCount}节点` : null,
     ].filter(Boolean);
     pushDebug("confirmWriterToDirector", {
       level: "ok",
-      detail: `ep=${continuity.episodeIndex} · ${summarizeManhuaProjectBible(bible)} · canonChars=${canon.characters.length} · mainScene=${mainSceneId || "—"}`,
+      detail: `ep=${continuity.episodeIndex} · ${summarizeManhuaProjectBible(bible)} · canonChars=${canon.characters.length} · mainScene=${mainSceneId || "—"} · clearedFactory=${cleaned.removedCount}`,
     });
     setManhuaUiMode("workbench");
     setImmersiveExtrasOpen(false);
@@ -2225,11 +2265,13 @@ export default function OmniCanvas() {
       targetSec: 180,
     });
     if (!densityGate.ok) {
+      setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
       toast.error("剧本未过三分钟密度/资产表门禁", {
         description: densityGate.errors.slice(0, 4).join("；"),
       });
       return;
     }
+    setWriterConfirmBlockers([]);
     const canon = densityGate.canon;
     const episodes = [...writerPack.episodes]
       .sort((a, b) => a.index - b.index)
@@ -3998,6 +4040,24 @@ export default function OmniCanvas() {
                 >
                   {writerConfirmed ? "已确认 · 先调资产" : "确认并进入资产设定"}
                 </button>
+                {writerConfirmBlockers.length > 0 && !writerConfirmed ? (
+                  <div
+                    data-manhua-writer-confirm-blockers
+                    className="basis-full rounded-xl border border-amber-400/35 bg-amber-500/12 px-3 py-2 text-[11px] leading-relaxed text-amber-50/95"
+                  >
+                    <div className="font-semibold text-amber-50">
+                      卡在「编剧确认」· 请先处理下列问题再点确认
+                    </div>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4 text-amber-50/80">
+                      {writerConfirmBlockers.map((err) => (
+                        <li key={err}>{err}</li>
+                      ))}
+                    </ul>
+                    <p className="mt-1.5 text-[10px] text-amber-100/55">
+                      常见原因：对白未用直角引号「」或可拍表缺「对白」行。可点「重新扩写」后再确认。
+                    </p>
+                  </div>
+                ) : null}
                 <button
                   type="button"
                   disabled={writerBusy || factoryBusy || !writerPack}

@@ -66,6 +66,7 @@ import {
 import {
   buildManhuaProductionStepStates,
   canManhuaBurnVideo,
+  resolveManhuaProductionNowSummary,
   type ManhuaProductionProgress,
 } from "@shared/manhuaProductionPipeline";
 import {
@@ -818,6 +819,10 @@ export default function ManhuaScriptWorkbench({
     () => buildManhuaProductionStepStates(productionProgress),
     [productionProgress],
   );
+  const productionNow = useMemo(
+    () => resolveManhuaProductionNowSummary(productionProgress),
+    [productionProgress],
+  );
   const videoBurnUnlocked = canManhuaBurnVideo(productionProgress);
   const videoBurnHint = videoBurnUnlocked
     ? null
@@ -828,6 +833,12 @@ export default function ManhuaScriptWorkbench({
         : !productionProgress.keyartsReady
           ? `请先出齐关键静帧（每段至少 ${MANHUA_KEYARTS_PER_SEGMENT_MIN} 张）`
           : "请先确认按秒导戏单（静帧锁定后自动生成）";
+  const productionBlockHint =
+    factoryBusy && factoryProgress?.trim()
+      ? factoryProgress.trim()
+      : fragmentGateHint ||
+        (productionNow.activeId === "video" ? videoBurnHint : null) ||
+        productionNow.hint;
 
   const stageStrip = useMemo(() => {
     const stages = ["story", "bible", "beats", "reverse", "keyart", "clip"] as const;
@@ -1250,45 +1261,93 @@ export default function ManhuaScriptWorkbench({
 
       <div
         data-manhua-production-pipeline
-        className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-white/10 bg-white/[0.02] px-3 py-1.5"
+        className="shrink-0 border-b border-cyan-400/25 bg-gradient-to-r from-cyan-500/[0.12] via-[#0a121c] to-transparent px-3 py-2"
       >
-        <span className="mr-1 shrink-0 text-[9px] font-semibold tracking-[0.14em] text-white/30">
-          实操链路
-        </span>
-        {productionSteps.map((step, index) => (
-          <div key={step.id} className="flex items-center gap-1">
-            <div
-              data-manhua-prod-step={step.id}
-              data-manhua-prod-status={step.status}
-              title={step.hint}
-              className={`flex min-w-[72px] items-center gap-1 rounded-md border px-1.5 py-1 ${
-                step.status === "done"
-                  ? "border-emerald-400/30 bg-emerald-500/[0.08] text-emerald-50"
-                  : step.status === "current"
-                    ? "border-cyan-400/40 bg-cyan-500/[0.12] text-cyan-50"
-                    : step.status === "locked"
-                      ? "border-white/8 bg-white/[0.02] text-white/25"
-                      : "border-white/10 bg-white/[0.02] text-white/40"
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span className="text-[10px] font-semibold tracking-[0.12em] text-cyan-200/70">
+                实操进度
+              </span>
+              <span
+                data-manhua-prod-now
+                className="text-[13px] font-bold tracking-wide text-cyan-50"
+              >
+                当前第 {productionNow.stepIndex}/{productionNow.total} 步 ·{" "}
+                {productionNow.label}
+              </span>
+              {productionNow.nextLabel ? (
+                <span className="text-[11px] text-white/45">
+                  下一步 · {productionNow.nextLabel}
+                </span>
+              ) : null}
+            </div>
+            <p
+              data-manhua-prod-block-hint
+              className={`mt-0.5 text-[11px] leading-snug ${
+                fragmentGateHint || (productionNow.activeId === "video" && videoBurnHint)
+                  ? "text-amber-100/85"
+                  : "text-white/55"
               }`}
             >
-              <span className="text-[9px] font-semibold">{step.label}</span>
-              <span className="text-[8px] opacity-60">
-                {step.status === "done"
-                  ? "齐"
-                  : step.status === "current"
-                    ? "做"
-                    : step.status === "locked"
-                      ? "锁"
-                      : ""}
-              </span>
-            </div>
-            {index < productionSteps.length - 1 ? (
-              <span aria-hidden className="text-[8px] text-white/20">
-                →
-              </span>
-            ) : null}
+              {productionBlockHint}
+            </p>
           </div>
-        ))}
+          <span className="shrink-0 rounded-md border border-white/12 bg-white/[0.04] px-2 py-1 text-[10px] text-white/50">
+            已完成 {productionNow.doneCount}/{productionNow.total}
+          </span>
+        </div>
+        <div className="mt-2 flex items-center gap-1 overflow-x-auto pb-0.5">
+          {productionSteps.map((step, index) => (
+            <div key={step.id} className="flex items-center gap-1">
+              <div
+                data-manhua-prod-step={step.id}
+                data-manhua-prod-status={step.status}
+                title={step.hint}
+                className={`flex min-w-[78px] items-center gap-1.5 rounded-md border px-1.5 py-1 ${
+                  step.status === "done"
+                    ? "border-emerald-400/35 bg-emerald-500/[0.1] text-emerald-50"
+                    : step.status === "current"
+                      ? "border-cyan-300/55 bg-cyan-500/20 text-cyan-50 shadow-[0_0_14px_rgba(34,211,238,0.18)]"
+                      : step.status === "locked"
+                        ? "border-white/8 bg-white/[0.02] text-white/25"
+                        : "border-white/10 bg-white/[0.02] text-white/40"
+                }`}
+              >
+                <span
+                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] font-bold ${
+                    step.status === "done"
+                      ? "bg-emerald-400 text-emerald-950"
+                      : step.status === "current"
+                        ? "bg-cyan-300 text-cyan-950"
+                        : "bg-white/10 text-white/45"
+                  }`}
+                >
+                  {step.status === "done" ? (
+                    <CheckCircle2 className="h-3 w-3" />
+                  ) : (
+                    index + 1
+                  )}
+                </span>
+                <span className="text-[10px] font-semibold">{step.label}</span>
+                <span className="ml-auto text-[8px] opacity-70">
+                  {step.status === "done"
+                    ? "已齐"
+                    : step.status === "current"
+                      ? "当前"
+                      : step.status === "locked"
+                        ? "锁定"
+                        : "待做"}
+                </span>
+              </div>
+              {index < productionSteps.length - 1 ? (
+                <span aria-hidden className="text-[9px] text-white/20">
+                  →
+                </span>
+              ) : null}
+            </div>
+          ))}
+        </div>
       </div>
 
       <div
