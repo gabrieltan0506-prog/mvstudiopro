@@ -173,9 +173,11 @@ export function evaluateManhuaAssetImageGate(
   } else if (!sceneLocked) {
     hintZh = "请保证场景表可解析，或勾选场景参考";
   } else if (!castImagesReady) {
-    hintZh = "请先生成本集角色设定卡（以剧本人物表为准；可自传勾选替代）";
+    hintZh =
+      "打开工作流「资产设定」，点右上角「生成本集角色/场景设定图」（或下方分区上传参考）";
   } else if (!sceneImageReady) {
-    hintZh = "请先生成本集主场景设定图（系列场景池·本集主场景；可自传勾选替代）";
+    hintZh =
+      "打开工作流「资产设定」，点右上角「生成本集角色/场景设定图」补主场景空镜（或上传场景参考）";
   }
 
   return {
@@ -202,9 +204,17 @@ export type ManhuaAssetImageSpawnPlan = {
 /** 缺图时铺设定卡/场景设定图节点（仅预填；是否扣费运行由调用方决定） */
 export function planManhuaAssetImageSpawns(
   input: ManhuaAssetImageGateInput,
+  opts?: {
+    /**
+     * 本集设定图墙仍空时强制按剧本/库 ID 出卡。
+     * 避免「我的角色/场景」垫图已齐 → gate.ready，却永远 plan=[]、按钮变成「进入分镜」。
+     */
+    forceEpisodeSheets?: boolean;
+  },
 ): ManhuaAssetImageSpawnPlan[] {
   const gate = evaluateManhuaAssetImageGate(input);
-  if (gate.viaCustomUpload || gate.ready) return [];
+  const forceEpisodeSheets = Boolean(opts?.forceEpisodeSheets);
+  if (!forceEpisodeSheets && (gate.viaCustomUpload || gate.ready)) return [];
 
   const artStyle = getManhuaArtStylePreset(input.artStyleId);
   const topic = String(input.topic || "").trim();
@@ -213,7 +223,20 @@ export function planManhuaAssetImageSpawns(
   const canon = input.assetCanon;
   const ep = Math.max(1, Math.floor(input.episodeIndex || 1));
 
-  for (const id of gate.missingCastIds) {
+  const writerCastIds = (canon?.characters || []).map((c) => c.id);
+  const castIdsForSheets = writerCastIds.length
+    ? writerCastIds
+    : [
+        ...(input.characterIds || []),
+        ...(input.ancientArchetypeIds || []),
+      ]
+        .map((id) => String(id || "").trim())
+        .filter(Boolean);
+  const missingCastIds = forceEpisodeSheets
+    ? castIdsForSheets.filter((id) => !blockHasMedia(findAssetBlock(blocks, "charsheet-", id)))
+    : gate.missingCastIds;
+
+  for (const id of missingCastIds) {
     const existing = findAssetBlock(blocks, "charsheet-", id);
     const fromCanon = canon?.characters.find((c) => c.id === id);
     if (fromCanon) {
@@ -251,9 +274,18 @@ export function planManhuaAssetImageSpawns(
     });
   }
 
-  if (gate.missingScene) {
-    const main = resolveEpisodeMainScene(canon, ep);
-    const sceneId = main?.id || String(input.sceneId || "").trim();
+  const mainForForce = resolveEpisodeMainScene(canon, ep);
+  const sceneIdForForce = mainForForce?.id || String(input.sceneId || "").trim();
+  const missingScene = forceEpisodeSheets
+    ? Boolean(mainForForce || (sceneIdForForce && getManhuaSceneTemplate(sceneIdForForce))) &&
+      !blockHasMedia(
+        findAssetBlock(blocks, "sceneplate-", mainForForce?.id || sceneIdForForce),
+      )
+    : gate.missingScene;
+
+  if (missingScene) {
+    const main = mainForForce;
+    const sceneId = sceneIdForForce;
     if (main) {
       const existing = findAssetBlock(blocks, "sceneplate-", main.id);
       plans.push({
