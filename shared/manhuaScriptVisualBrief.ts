@@ -15,6 +15,10 @@ import {
   extractPerformanceCuesFromScript,
   formatManhuaPerformanceInjectBlock,
 } from "./manhuaPerformancePrompt.js";
+import {
+  MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
+  MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
+} from "./manhuaScriptWorkbench.js";
 
 const CAMERA_RE =
   /远景|大远景|全景|中全景|中景|中近景|近景|特写|大特写|过肩|双人镜|推近|推进|拉远|横移|环绕|俯拍|仰拍|跟拍|手持|固定机位|一镜到底|甩镜|微推|缓慢推|反向平移|红蓝双轨|缓慢推进/;
@@ -312,7 +316,7 @@ export function looksLikeRawScriptDump(prompt: string): boolean {
   return narrativeHits >= 2 && p.length > 800;
 }
 
-/** 场景设定图（空镜主场景）生图提示——先于分镜静帧 */
+/** 场景设定图（空镜主场景）生图提示——先于分镜静帧；软建议无字 */
 export function buildManhuaScenePlateGenPrompt(opts: {
   sceneNameZh: string;
   scenePromptZh: string;
@@ -326,13 +330,15 @@ export function buildManhuaScenePlateGenPrompt(opts: {
   const styleLabel = String(opts.artStyleLabelZh || "").trim();
   const stylePrompt = String(opts.artStylePromptZh || "").trim();
   return [
-    "生成一张竖版【漫剧主场景设定图】空镜（无可读文字、无字幕）：",
-    "硬约束：环境层次与纵深清楚；可互动物件可读；禁止纯白棚拍；禁止人物特写占满；可有远处剪影人物但不抢戏。",
-    `场景名：${name}`,
-    scenePrompt ? `场景视觉：${scenePrompt}` : "",
-    topic ? `题材锚点：${topic.slice(0, 120)}` : "",
+    "生成一张竖版漫剧主场景空镜参考（9:16）：环境层次与纵深清楚，可互动物件可读。",
+    "强烈建议：按场景本体来画；场景名、大纲、对白作隐藏说明，不必写成标题或路牌字。可有远处剪影，少占满人物特写。",
+    `（隐藏场景名·不必画出：${name}）`,
+    scenePrompt ? `请画出的场景视觉：${scenePrompt}` : "",
+    topic ? `（隐藏题材氛围·不必写成标题：${topic.slice(0, 120)}）` : "",
     styleLabel ? `【画风】${styleLabel}` : "",
     stylePrompt || "",
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
   ]
     .filter(Boolean)
     .join("\n");

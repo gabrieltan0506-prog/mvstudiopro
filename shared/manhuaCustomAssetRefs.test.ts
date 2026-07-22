@@ -4,6 +4,7 @@ import {
   hasCustomCastAndScene,
   normalizeManhuaCustomAssetRefs,
   taggedManhuaCustomAssetRefs,
+  upsertGeneratedManhuaCustomAssetRef,
 } from "./manhuaCustomAssetRefs";
 
 describe("manhuaCustomAssetRefs", () => {
@@ -35,5 +36,31 @@ describe("manhuaCustomAssetRefs", () => {
     expect(p).toContain("新人物参考图");
     expect(p).toContain("仅作气质/环境/材质参考");
     expect(p).toContain("唐若曦");
+  });
+
+  it("upserts generated sheets into my library by seed id", () => {
+    const first = upsertGeneratedManhuaCustomAssetRef([], {
+      url: "https://cdn.example/c1.jpg",
+      role: "character",
+      labelZh: "乌策",
+      seedLibraryId: "wa_char_wu",
+    });
+    expect(first).toHaveLength(1);
+    expect(first[0]?.source).toBe("generated");
+    const second = upsertGeneratedManhuaCustomAssetRef(first, {
+      url: "https://cdn.example/c1b.jpg",
+      role: "character",
+      labelZh: "乌策",
+      seedLibraryId: "wa_char_wu",
+    });
+    expect(second).toHaveLength(1);
+    expect(second[0]?.url).toBe("https://cdn.example/c1b.jpg");
+    const withScene = upsertGeneratedManhuaCustomAssetRef(second, {
+      url: "https://cdn.example/s1.jpg",
+      role: "scene",
+      labelZh: "悬雨桥",
+      seedLibraryId: "wa_scene_bridge",
+    });
+    expect(withScene).toHaveLength(2);
   });
 });

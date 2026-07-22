@@ -14,6 +14,7 @@ import {
   buildManhuaCustomAssetGenFromLibraryPrompt,
   makeManhuaCustomAssetId,
   normalizeManhuaCustomAssetRefs,
+  upsertGeneratedManhuaCustomAssetRef,
   type ManhuaCustomAssetRef,
   type ManhuaCustomAssetRole,
 } from "@shared/manhuaCustomAssetRefs";
@@ -2629,12 +2630,50 @@ export default function OmniCanvas() {
         return;
       }
       setAssetsSkipped(false);
+      const ingestSheetToMyLibrary = (
+        plan: { id: string; kind: "charsheet" | "sceneplate"; labelZh: string },
+        url: string | null | undefined,
+      ) => {
+        const u = String(url || "").trim();
+        if (!/^https:\/\//i.test(u)) return;
+        const seedLibraryId = plan.id
+          .replace(/^charsheet-/, "")
+          .replace(/^sceneplate-/, "");
+        setCustomAssetRefs((prev) =>
+          upsertGeneratedManhuaCustomAssetRef(prev, {
+            url: u,
+            role: plan.kind === "charsheet" ? "character" : "scene",
+            labelZh: plan.labelZh,
+            seedLibraryId,
+          }),
+        );
+      };
+      /** 已有画布设定图 → 同步进「我的角色/场景」 */
+      const syncExistingSheetsToMyLibrary = () => {
+        for (const b of assetBlocks) {
+          const url = b.outputUrl || b.outputUrls?.[0];
+          if (!url) continue;
+          const kind = b.id.startsWith("sceneplate-")
+            ? ("sceneplate" as const)
+            : ("charsheet" as const);
+          const seedId = b.id.replace(/^charsheet-/, "").replace(/^sceneplate-/, "");
+          const labelZh =
+            (kind === "charsheet"
+              ? assetCanon?.characters.find((c) => c.id === seedId || b.id.includes(c.id))
+                  ?.nameZh
+              : assetCanon?.locations.find((l) => l.id === seedId || b.id.includes(l.id))
+                  ?.nameZh) ||
+            (kind === "charsheet" ? "角色定妆" : "场景参考");
+          ingestSheetToMyLibrary({ id: b.id, kind, labelZh }, url);
+        }
+      };
       if (gate.ready) {
+        syncExistingSheetsToMyLibrary();
         setWorkflowPhase("storyboard");
         toast.message(
           gate.viaCustomUpload
             ? "自传参考已齐，进入分镜"
-            : "剧本资产图已齐，进入分镜",
+            : "剧本资产图已齐，已写入我的角色/场景，进入分镜",
         );
         return;
       }
@@ -2684,6 +2723,7 @@ export default function OmniCanvas() {
             block = { ...block, prompt: plan.prompt, status: "idle", error: undefined };
             working = working.map((b) => (b.id === plan.id ? block! : b));
           } else {
+            ingestSheetToMyLibrary(plan, block.outputUrl || block.outputUrls?.[0]);
             continue;
           }
           setBlocks(working);
@@ -2714,6 +2754,7 @@ export default function OmniCanvas() {
           );
           setBlocks(working);
           saveCanvasState(working, edges);
+          ingestSheetToMyLibrary(plan, out.outputUrl || out.outputUrls?.[0]);
         }
         const nextGate = evaluateManhuaAssetImageGate({
           ...gateInput,
@@ -2723,7 +2764,7 @@ export default function OmniCanvas() {
         });
         if (nextGate.ready) {
           setWorkflowPhase("storyboard");
-          toast.message("角色图 / 场景图已齐，进入分镜（可出关键静帧）");
+          toast.message("角色图 / 场景图已齐，已写入我的角色/场景，可出关键静帧");
           pushDebug("confirmAssetsFromScript:ok", {
             level: "ok",
             detail: `plans=${plans.length}`,

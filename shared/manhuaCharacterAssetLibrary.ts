@@ -1102,7 +1102,7 @@ export function recommendManhuaCharactersFromTopic(topic?: string): ManhuaCharac
 }
 
 /**
- * 「同版式生成新人」：竖版设定卡生图提示（上半人像文案区 + 下半 FRONT/SIDE/BACK）。
+ * 角色定妆参考生图提示（软建议纯视觉；对齐 2026Jul19「无文字」短句口径）。
  * 供画布 image 节点预填；不自动跑 API。
  */
 export function buildManhuaCharacterSheetGenPrompt(opts?: {
@@ -1129,8 +1129,8 @@ export function buildManhuaCharacterSheetGenPrompt(opts?: {
           ? "女主"
           : "男主";
   const seed = base
-    ? `以「${base.nameZh}」为气质种子（${base.jobZh}；${base.temperamentTags.join("·")}），生成**新面孔新人**，禁止复刻同一张脸。\n外形锚点：${base.promptZh}`
-    : `生成一名都市现代向${roleZh}新人设定卡，气质鲜明、可连载锁脸。`;
+    ? `以「${base.nameZh}」为气质种子（${base.jobZh}；${base.temperamentTags.join("·")}），生成**新面孔新人**，避免复刻同一张脸。\n请画出的外形：${base.promptZh}`
+    : `生成一名都市现代向${roleZh}新人定妆半身像，气质鲜明、可连载锁脸。`;
   const hint = String(opts?.userHint || "").trim();
   const lifeStageBlock = photorealLifeStagePromptBlock(stage);
   const antiAi =
@@ -1138,11 +1138,8 @@ export function buildManhuaCharacterSheetGenPrompt(opts?: {
       ? `\n${PHOTOREAL_ANTI_AI_LOCK_ZH}${lifeStageBlock ? `\n${lifeStageBlock}` : ""}`
       : "";
   return [
-    "生成一张竖版【漫剧角色设定卡】单图（白底或浅灰干净背景，印刷清晰）：",
-    "版式硬约束：",
-    "1) 上半：半身/胸像人像 + 姓名占位 + 气质标签条 + 妆造短句；",
-    "2) 下半：同一人物全身 **FRONT / SIDE / BACK** 三视图并排，比例一致、服装一致、锁脸；",
-    "3) 三视图下方可有极简英文标注 FRONT SIDE BACK；禁止水印、禁止真实名人脸。",
+    "生成一张竖版漫剧角色定妆参考（白底或浅灰干净背景，9:16）：单人半身或胸像，脸与服饰清楚。",
+    "强烈建议：按人物来画；姓名、标签、三视图标注与对白说明作隐藏意图，不必画进画面。少用名人脸。",
     "",
     `【画风】${style.labelZh}`,
     style.promptZh,
@@ -1150,6 +1147,7 @@ export function buildManhuaCharacterSheetGenPrompt(opts?: {
     "",
     seed,
     hint ? `\n【用户补充】${hint.slice(0, 400)}` : "",
+    "Strong preference: clean character portrait; treat name labels and captions as hidden direction.",
   ]
     .filter(Boolean)
     .join("\n");

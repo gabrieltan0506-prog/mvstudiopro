@@ -761,6 +761,38 @@ export default function ManhuaScriptWorkbench({
     () => resolveEpisodeMainScene(assetCanon, focusEpisode),
     [assetCanon, focusEpisode],
   );
+  /** 本集画布上的角色定妆 / 场景空镜（点一下定位） */
+  const episodeSheetGallery = useMemo(() => {
+    const items: Array<{
+      id: string;
+      kind: "charsheet" | "sceneplate";
+      labelZh: string;
+      url: string;
+    }> = [];
+    for (const b of blocks) {
+      const isChar = b.id.startsWith("charsheet-");
+      const isScene = b.id.startsWith("sceneplate-");
+      if (!isChar && !isScene) continue;
+      const url = mediaUrl(b);
+      if (!url) continue;
+      const seedId = b.id.replace(/^charsheet-/, "").replace(/^sceneplate-/, "");
+      const labelZh = isChar
+        ? assetCanon?.characters.find((c) => c.id === seedId || b.id.includes(c.id))?.nameZh ||
+          "角色定妆"
+        : assetCanon?.locations.find((l) => l.id === seedId || b.id.includes(l.id))?.nameZh ||
+          "场景参考";
+      items.push({
+        id: b.id,
+        kind: isChar ? "charsheet" : "sceneplate",
+        labelZh,
+        url,
+      });
+    }
+    return items.sort((a, b) => {
+      if (a.kind === b.kind) return a.labelZh.localeCompare(b.labelZh, "zh");
+      return a.kind === "charsheet" ? -1 : 1;
+    });
+  }, [blocks, assetCanon]);
   const customSummaryZh = summarizeCustomAssetRefsZh(customAssetRefs);
   const outlineComplete = Boolean(canRun);
   /** 方案 B：剧本确认 + 角色/场景锁定 + 角色图/场景图齐，才可进分镜出片 */
@@ -1554,6 +1586,54 @@ export default function ManhuaScriptWorkbench({
             </div>
 
             <div
+              data-manhua-episode-sheets
+              className="mt-3 rounded-xl border border-emerald-400/35 bg-emerald-500/[0.08] p-3"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="text-[11px] font-semibold text-emerald-50/95">
+                    本集设定图 · {episodeSheetGallery.length} 张
+                  </div>
+                  <p className="mt-0.5 text-[10px] leading-4 text-white/45">
+                    剧本自动出的角色定妆与场景空镜在此；点缩略图定位画布。生成后会同步进下方「我的角色 /
+                    场景」。
+                  </p>
+                </div>
+              </div>
+              {episodeSheetGallery.length ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {episodeSheetGallery.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      data-manhua-sheet-id={item.id}
+                      onClick={() => onFocusBlock?.(item.id)}
+                      className="flex w-[88px] flex-col overflow-hidden rounded-lg border border-emerald-300/35 bg-black/40 text-left hover:border-emerald-200/60"
+                      title={`定位：${item.labelZh}`}
+                    >
+                      <img
+                        src={item.url}
+                        alt=""
+                        className="aspect-[3/4] w-full object-cover object-top"
+                        loading="lazy"
+                      />
+                      <span className="truncate px-1.5 pt-1 text-[10px] text-white/85">
+                        {item.labelZh}
+                      </span>
+                      <span className="truncate px-1.5 pb-1 text-[9px] text-white/40">
+                        {item.kind === "charsheet" ? "角色" : "场景"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-[10px] text-white/40">
+                  尚未出设定图。确认剧本后点「按剧本补设定图」，或上传参考。
+                </p>
+              )}
+            </div>
+
+            <div
               data-manhua-cast-selected
               className="mt-3 rounded-xl border border-violet-400/30 bg-violet-500/[0.08] p-3"
             >
@@ -1633,7 +1713,9 @@ export default function ManhuaScriptWorkbench({
             >
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <div className="text-[11px] font-semibold text-cyan-50/90">我的参考图</div>
+                  <div className="text-[11px] font-semibold text-cyan-50/90">
+                    我的角色 / 场景 / 道具
+                  </div>
                   <p className="mt-0.5 text-[10px] leading-4 text-white/45">
                     上传后勾选类型；或点下方「基于库生成」用当前库选作种子出新图。未勾选不进融图。
                   </p>

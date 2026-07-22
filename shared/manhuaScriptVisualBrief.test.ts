@@ -55,14 +55,17 @@ describe("manhuaScriptVisualBrief", () => {
     expect(ui.pathLabelZh || ui.actionLabelZh || ui.events.length).toBeTruthy();
   });
 
-  it("builds scene plate prompt without readable text", () => {
+  it("builds scene plate prompt with soft no-text preference", () => {
     const p = buildManhuaScenePlateGenPrompt({
       sceneNameZh: "秘境洞府",
       scenePromptZh: "发光晶石与石阶",
       topic: "外门闯秘境",
     });
-    expect(p).toContain("主场景设定图");
+    expect(p).toContain("主场景空镜参考");
     expect(p).toContain("秘境洞府");
-    expect(p).toContain("无可读文字");
+    expect(p).toContain("强烈建议");
+    expect(p).toContain("Strong preference");
+    expect(p).not.toContain("硬约束");
+    expect(p).not.toContain("STRICT NO TEXT");
   });
 });

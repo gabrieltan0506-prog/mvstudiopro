@@ -30,7 +30,10 @@ import {
   MANHUA_CLIP_CONTINUITY_HINT_ZH,
   MANHUA_CLIP_TAIL_FRAME_COUNT,
 } from "@shared/manhuaClipContinuity";
-import { MANHUA_KEYART_NO_TEXT_EN } from "@shared/manhuaScriptWorkbench";
+import {
+  MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
+  MANHUA_KEYART_NO_TEXT_EN,
+} from "@shared/manhuaScriptWorkbench";
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
@@ -534,6 +537,14 @@ export async function runCanvasBlock(
     const ar = block.aspectRatio;
     const count = block.imageBatchCount || 1;
     const isKeyart = block.id.startsWith("keyart-");
+    /** 角色定妆 / 场景空镜：软建议无字（硬禁令易拒生）；关键静帧仍走原硬锁 */
+    const isAssetSheet =
+      block.id.startsWith("charsheet-") || block.id.startsWith("sceneplate-");
+    const noTextTail = isKeyart
+      ? MANHUA_KEYART_NO_TEXT_EN
+      : isAssetSheet
+        ? MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN
+        : "";
     let isEdit = block.imageMode === "edit";
     const keyartPromptBlob = String(mergedPrompt || block.prompt || "");
     const isCgKeyart =
@@ -596,18 +607,18 @@ export async function runCanvasBlock(
             ? `【多图融合】另有 ${fusionUrls.length} 张参考图：请按说明把风格/元素/妆造合理融合进底图，保持人物身份一致。`
             : "",
           maskUrl ? "【局部遮罩】仅修改遮罩透明区域，其余像素尽量原样保留。" : "",
-          isKeyart ? MANHUA_KEYART_NO_TEXT_EN : "",
+          noTextTail,
         ]
           .filter(Boolean)
           .join("\n")
-      : isKeyart
-        ? `${String(mergedPrompt || "").trim()}\n\n${MANHUA_KEYART_NO_TEXT_EN}`
+      : isKeyart || isAssetSheet
+        ? `${String(mergedPrompt || "").trim()}\n\n${noTextTail}`
         : await resolveImagePromptViaJsonDirector(deps, mergedPrompt, ar, imageModel);
-    // 关键静帧：英文禁字再钉死一次（直送路径已拼过则去重）
-    const imagePrompt = isKeyart
-      ? rawImagePrompt.includes(MANHUA_KEYART_NO_TEXT_EN)
+    // 关键静帧硬锁 / 定妆·场景软建议：直送路径已拼过则去重
+    const imagePrompt = noTextTail
+      ? rawImagePrompt.includes(noTextTail)
         ? rawImagePrompt.trim()
-        : `${rawImagePrompt.trim()}\n\n${MANHUA_KEYART_NO_TEXT_EN}`
+        : `${rawImagePrompt.trim()}\n\n${noTextTail}`
       : rawImagePrompt;
     /** 主路径 Image-2；失败回退 NB2。显式手选 NB2 省钱时直走，不先打 Image-2 */
     const preferGptImage2 = imageModel !== "nano-banana-2";
