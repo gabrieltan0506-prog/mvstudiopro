@@ -10,6 +10,10 @@ import {
   formatPhotorealFaceShapeBlock,
   photorealLifeStagePromptBlock,
 } from "./photorealCharacterPrompt.js";
+import {
+  MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
+  MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
+} from "./manhuaScriptWorkbench.js";
 
 export type ManhuaCharacterGender = "female" | "male";
 
@@ -1102,7 +1106,7 @@ export function recommendManhuaCharactersFromTopic(topic?: string): ManhuaCharac
 }
 
 /**
- * 角色定妆参考生图提示（软建议纯视觉；对齐 2026Jul19「无文字」短句口径）。
+ * 角色定妆参考生图提示（禁字硬锁；纯视觉定妆）。
  * 供画布 image 节点预填；不自动跑 API。
  */
 export function buildManhuaCharacterSheetGenPrompt(opts?: {
@@ -1139,7 +1143,7 @@ export function buildManhuaCharacterSheetGenPrompt(opts?: {
       : "";
   return [
     "生成一张竖版漫剧角色定妆参考（白底或浅灰干净背景，9:16）：单人半身或胸像，脸与服饰清楚。",
-    "强烈建议：按人物来画；姓名、标签、三视图标注与对白说明作隐藏意图，不必画进画面。少用名人脸。",
+    "按人物来画；姓名、标签、三视图标注、对白与海报书法作隐藏意图，绝不能画进画面。少用名人脸。",
     "",
     `【画风】${style.labelZh}`,
     style.promptZh,
@@ -1147,7 +1151,8 @@ export function buildManhuaCharacterSheetGenPrompt(opts?: {
     "",
     seed,
     hint ? `\n【用户补充】${hint.slice(0, 400)}` : "",
-    "Strong preference: clean character portrait; treat name labels and captions as hidden direction.",
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
   ]
     .filter(Boolean)
     .join("\n");

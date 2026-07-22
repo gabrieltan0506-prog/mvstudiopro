@@ -3,6 +3,12 @@
  * 仅接受 HTTPS；unset 不进融图与门禁。
  */
 
+import { getManhuaSceneTemplate, MANHUA_SCENE_ASSET_LIBRARY } from "./manhuaSceneAssetLibrary.js";
+import {
+  MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
+  MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
+} from "./manhuaScriptWorkbench.js";
+
 export const MANHUA_CUSTOM_ASSET_ROLES = ["character", "scene", "prop"] as const;
 export type ManhuaCustomAssetRole = (typeof MANHUA_CUSTOM_ASSET_ROLES)[number];
 export type ManhuaCustomAssetRoleOrUnset = ManhuaCustomAssetRole | "unset";
@@ -44,7 +50,69 @@ export function normalizeManhuaCustomAssetRole(
   return "unset";
 }
 
-/** 清洗并截断用户上传参考列表（只留 HTTPS） */
+/** 去掉「新人物·」「新场景·」前缀，便于对齐库内场景名 */
+export function stripManhuaCustomAssetLabelPrefix(labelZh: string | undefined | null): string {
+  return String(labelZh || "")
+    .trim()
+    .replace(/^新(?:人物|场景|服装道具)·/, "");
+}
+
+/**
+ * 按库 seed / 标签把误标资产拉回正确分栏。
+ * 例：皇宫大殿（scene_06）不得停在「我的角色」。
+ */
+export function inferManhuaCustomAssetRole(opts: {
+  role?: unknown;
+  seedLibraryId?: string | null;
+  labelZh?: string | null;
+}): ManhuaCustomAssetRoleOrUnset {
+  const seed = String(opts.seedLibraryId || "").trim();
+  const label = String(opts.labelZh || "").trim();
+  const bare = stripManhuaCustomAssetLabelPrefix(label);
+  const declared = normalizeManhuaCustomAssetRole(opts.role);
+
+  if (
+    seed.startsWith("scene_") ||
+    seed.startsWith("wa_loc") ||
+    seed.startsWith("wa_scene") ||
+    Boolean(getManhuaSceneTemplate(seed))
+  ) {
+    return "scene";
+  }
+  if (
+    seed.startsWith("demo_prop_") ||
+    seed.startsWith("wa_prop") ||
+    seed.startsWith("prop_")
+  ) {
+    return "prop";
+  }
+  if (
+    seed.startsWith("char_") ||
+    seed.startsWith("arch_") ||
+    seed.startsWith("wa_char")
+  ) {
+    return "character";
+  }
+
+  if (bare) {
+    const byName = MANHUA_SCENE_ASSET_LIBRARY.find(
+      (s) => s.nameZh === bare || s.nameZh === label,
+    );
+    if (byName) return "scene";
+    // 强场景词：编剧把地点写进人物表时的兜底
+    if (
+      /大殿|街市|府邸|战场|洞府|宗门|宫殿|空镜|边关|豪宅|办公室|会议室|朝堂|金銮|山门|云海|废墟|回廊|闺阁/.test(
+        bare,
+      )
+    ) {
+      return "scene";
+    }
+  }
+
+  return declared;
+}
+
+/** 清洗并截断用户上传参考列表（只留 HTTPS）；并按 seed/标签纠偏角色分栏 */
 export function normalizeManhuaCustomAssetRefs(
   raw: unknown,
   opts?: { max?: number },
@@ -67,7 +135,11 @@ export function normalizeManhuaCustomAssetRefs(
     out.push({
       id,
       url,
-      role: normalizeManhuaCustomAssetRole(o.role),
+      role: inferManhuaCustomAssetRole({
+        role: o.role,
+        seedLibraryId,
+        labelZh,
+      }),
       labelZh,
       source,
       seedLibraryId,
@@ -97,15 +169,17 @@ export function buildManhuaCustomAssetGenFromLibraryPrompt(opts: {
     `生成一张竖版漫剧·新${roleZh}参考图：`,
     "库条目仅作气质/环境/材质参考，请生成**新**形象或新空镜，避免复刻同一张脸或同一张示范封面。",
     opts.role === "character"
-      ? "强烈建议：按人物本体来画，服化道清楚；对白与姓名说明作隐藏意图，不必画进画面。"
+      ? "按人物本体来画，服化道清楚；对白、姓名与海报句作隐藏意图，绝不能烧进画面。"
       : opts.role === "scene"
-        ? "强烈建议：按场景本体来画，空镜层次清楚；大纲与场景名作隐藏说明，不必写成标题字。"
-        : "强烈建议：道具主体居中、材质清楚，背景干净，少字。",
+        ? "按场景本体来画，空镜层次清楚；大纲与场景名作隐藏说明，禁止标题大字/书法/路牌可读字。"
+        : "道具主体居中、材质清楚，背景干净，禁止可读文字。",
     seedLabel ? `（隐藏库参考名·不必画出：${seedLabel}）` : "",
     seedPrompt ? `请画出的视觉参考：${seedPrompt.slice(0, 500)}` : "",
     topic ? `（隐藏题材氛围·不必写成标题：${topic.slice(0, 120)}）` : "",
     styleLabel ? `【画风】${styleLabel}` : "",
     stylePrompt || "",
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
   ]
     .filter(Boolean)
     .join("\n");
@@ -154,7 +228,7 @@ export function summarizeCustomAssetRefsZh(
 
 /**
  * 剧本自动出的角色/场景图写入「我的参考」（customAssetRefs）。
- * 同 seedLibraryId+role 或同 URL 则覆盖更新，避免重复占槽。
+ * 同 seedLibraryId 或同 URL 则覆盖更新，避免重复占槽；角色按 seed/标签纠偏。
  */
 export function upsertGeneratedManhuaCustomAssetRef(
   prev: ManhuaCustomAssetRef[] | null | undefined,
@@ -167,18 +241,20 @@ export function upsertGeneratedManhuaCustomAssetRef(
 ): ManhuaCustomAssetRef[] {
   const url = String(input.url || "").trim();
   if (!isHttpsUrl(url)) return normalizeManhuaCustomAssetRefs(prev);
-  const role = input.role;
   const labelZh = String(input.labelZh || "").trim().slice(0, 40) || undefined;
   const seedLibraryId = String(input.seedLibraryId || "").trim() || undefined;
+  const role = inferManhuaCustomAssetRole({
+    role: input.role,
+    seedLibraryId,
+    labelZh,
+  });
+  if (role === "unset") {
+    return normalizeManhuaCustomAssetRefs(prev);
+  }
   const base = normalizeManhuaCustomAssetRefs(prev);
   const matchIdx = base.findIndex((r) => {
     if (r.url === url) return true;
-    if (
-      seedLibraryId &&
-      r.source === "generated" &&
-      r.role === role &&
-      r.seedLibraryId === seedLibraryId
-    ) {
+    if (seedLibraryId && r.source === "generated" && r.seedLibraryId === seedLibraryId) {
       return true;
     }
     return false;

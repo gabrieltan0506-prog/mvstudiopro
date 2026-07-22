@@ -50,6 +50,32 @@ describe("manhuaAssetImageGate", () => {
     expect(plans.some((p) => p.kind === "sceneplate")).toBe(true);
   });
 
+  it("diverts writer character named like scene library into sceneplate", () => {
+    const plans = planManhuaAssetImageSpawns({
+      assetCanon: {
+        characters: [
+          {
+            id: "wa_mis_hall",
+            nameZh: "皇宫大殿",
+            lookZh: "金柱龙椅",
+            promptZh: "皇宫大殿空镜",
+          },
+        ],
+        locations: [],
+        props: [],
+        episodeMainSceneId: {},
+      } as any,
+      episodeIndex: 1,
+      topic: "朝堂权谋",
+    });
+    expect(plans.some((p) => p.kind === "charsheet" && p.labelZh === "皇宫大殿")).toBe(false);
+    expect(
+      plans.some(
+        (p) => p.kind === "sceneplate" && p.id.includes("wa_mis_hall") && p.labelZh === "皇宫大殿",
+      ),
+    ).toBe(true);
+  });
+
   it("custom tagged character+scene unlocks gate without library ids", () => {
     const gate = evaluateManhuaAssetImageGate({
       customRefs: [

@@ -17,7 +17,7 @@ export type ManhuaCharacterContractInput = {
   noteZh?: string;
 };
 
-/** 定妆参考用：外形可见；对白/关系作隐藏说明，软建议勿入画 */
+/** 定妆参考用：外形可见；动机/对白只作隐藏说明，禁字硬锁 */
 export function formatManhuaCharacterContractBlock(
   c: ManhuaCharacterContractInput,
 ): string {
@@ -27,8 +27,8 @@ export function formatManhuaCharacterContractBlock(
     "【角色造型参考】",
     `人物气质参考：${tag || "主角"}`,
     c.lookZh ? `请画出的外形：${c.lookZh}` : "",
-    hidden ? `（隐藏说明·不必画出：${hidden}）` : "",
-    "强烈建议：单人定妆半身或胸像，脸与服饰清楚，背景干净；优先纯视觉，无旁人抢戏。",
+    hidden ? `（隐藏说明·绝不能写成海报句或标题大字：${hidden}）` : "",
+    "单人定妆半身或胸像，脸与服饰清楚，背景干净；纯视觉，无旁人抢戏。",
     "贯穿全系列同一身份；换脸、换服、换发色会破坏连载锁定。",
     MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
   ]
@@ -61,7 +61,7 @@ export function formatManhuaDirectingCoherenceBlock(opts?: {
   ].join("\n");
 }
 
-/** 注入定妆参考生图提示：契约 + 原表视觉句（软建议无字） */
+/** 注入定妆参考生图提示：契约 + 原表视觉句（禁字硬锁） */
 export function composeManhuaWriterCanonSheetPrompt(input: {
   nameZh: string;
   aliasZh?: string;
@@ -80,14 +80,15 @@ export function composeManhuaWriterCanonSheetPrompt(input: {
     .replace(/设定卡/g, "定妆肖像");
   return [
     "生成一张竖版漫剧角色定妆参考（9:16）：单人清晰、服化道完整、干净背景。",
-    "强烈建议：按人物外形来画；对白、大纲与姓名标签作隐藏说明，不必出现在画面中。",
+    "按人物外形来画；对白、大纲、姓名标签与海报书法作隐藏说明，绝不能出现在画面中。",
     formatManhuaCharacterContractBlock(input),
     base,
     input.artStyleLabelZh ? `【画风】${input.artStyleLabelZh}` : "",
     String(input.artStylePromptZh || "").trim(),
     input.topic
-      ? `（隐藏题材氛围·不必写成标题：${input.topic.slice(0, 80)}）`
+      ? `（隐藏题材氛围·绝不能写成标题或书法大字：${input.topic.slice(0, 80)}）`
       : "",
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
     MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
   ]
     .filter(Boolean)

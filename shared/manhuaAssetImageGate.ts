@@ -14,6 +14,7 @@ import { buildManhuaScenePlateGenPrompt } from "./manhuaScriptVisualBrief.js";
 import {
   customRefsByRole,
   hasCustomCastAndScene,
+  inferManhuaCustomAssetRole,
   type ManhuaCustomAssetRef,
 } from "./manhuaCustomAssetRefs.js";
 import {
@@ -240,6 +241,31 @@ export function planManhuaAssetImageSpawns(
     const existing = findAssetBlock(blocks, "charsheet-", id);
     const fromCanon = canon?.characters.find((c) => c.id === id);
     if (fromCanon) {
+      // 编剧误把地点写进人物表时：改出场景空镜，避免「皇宫大殿」进我的角色
+      if (
+        inferManhuaCustomAssetRole({
+          role: "character",
+          seedLibraryId: id,
+          labelZh: fromCanon.nameZh,
+        }) === "scene"
+      ) {
+        const sceneExisting = findAssetBlock(blocks, "sceneplate-", id);
+        if (!blockHasMedia(sceneExisting)) {
+          plans.push({
+            id: sceneExisting?.id || `sceneplate-${id}`,
+            kind: "sceneplate",
+            prompt: buildManhuaScenePlateGenPrompt({
+              sceneNameZh: fromCanon.nameZh,
+              scenePromptZh: fromCanon.lookZh || fromCanon.promptZh || fromCanon.nameZh,
+              topic,
+              artStyleLabelZh: artStyle.labelZh,
+              artStylePromptZh: artStyle.promptZh,
+            }),
+            labelZh: fromCanon.nameZh,
+          });
+        }
+        continue;
+      }
       plans.push({
         id: existing?.id || `charsheet-${id}`,
         kind: "charsheet",

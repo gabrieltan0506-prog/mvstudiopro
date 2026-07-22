@@ -316,7 +316,7 @@ export function looksLikeRawScriptDump(prompt: string): boolean {
   return narrativeHits >= 2 && p.length > 800;
 }
 
-/** 场景设定图（空镜主场景）生图提示——先于分镜静帧；软建议无字 */
+/** 场景设定图（空镜主场景）生图提示——先于分镜静帧；禁字硬锁 */
 export function buildManhuaScenePlateGenPrompt(opts: {
   sceneNameZh: string;
   scenePromptZh: string;
@@ -331,10 +331,10 @@ export function buildManhuaScenePlateGenPrompt(opts: {
   const stylePrompt = String(opts.artStylePromptZh || "").trim();
   return [
     "生成一张竖版漫剧主场景空镜参考（9:16）：环境层次与纵深清楚，可互动物件可读。",
-    "强烈建议：按场景本体来画；场景名、大纲、对白作隐藏说明，不必写成标题或路牌字。可有远处剪影，少占满人物特写。",
+    "按场景本体来画；场景名、大纲、对白作隐藏说明，禁止标题大字、书法、路牌可读字。可有远处剪影，少占满人物特写。",
     `（隐藏场景名·不必画出：${name}）`,
     scenePrompt ? `请画出的场景视觉：${scenePrompt}` : "",
-    topic ? `（隐藏题材氛围·不必写成标题：${topic.slice(0, 120)}）` : "",
+    topic ? `（隐藏题材氛围·绝不能写成标题：${topic.slice(0, 120)}）` : "",
     styleLabel ? `【画风】${styleLabel}` : "",
     stylePrompt || "",
     MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
