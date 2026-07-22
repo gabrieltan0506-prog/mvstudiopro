@@ -10,7 +10,7 @@ export const MANHUA_SHOT_CONTINUITY_PREFS_LS_KEY = "mv-manhua-shot-continuity-pr
 export type ManhuaShotContinuityPrefs = {
   /** A：下一镜静帧以上一镜静帧为 edit/融图底图 */
   keyartFromPrevStill: boolean;
-  /** B：下一镜成片挂上一镜成片（抽末帧）作连续参考 */
+  /** B：下一段成片挂上一段成片末 3–5 秒帧作起幅连续参考 */
   clipFromPrevTail: boolean;
 };
 
@@ -23,7 +23,7 @@ export const MANHUA_SHOT_KEYART_CONTINUITY_HINT_ZH =
   "【镜间静帧接力】以上一镜静帧为身份/场景/道具/光线起点，只改本镜动作与构图所需差异，禁止换人换景重开一局。";
 
 export const MANHUA_SHOT_CLIP_CONTINUITY_HINT_ZH =
-  "【镜间成片接力】承接上一镜成片末几帧的人物站位、服装、场景纵深与光向，再演绎本镜事件；禁止跳切重置造型与空间。";
+  "【镜间成片接力】承接上一段成片末 3–5 秒的人物站位、服装、场景纵深与光向作起幅，再演绎本段事件；禁止跳切重置造型与空间。";
 
 export type ShotContinuityBlockLike = {
   id: string;

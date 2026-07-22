@@ -28,6 +28,7 @@ import {
 import {
   MANHUA_CLIP_CONTINUITY_HINT_ZH,
   MANHUA_CLIP_TAIL_FRAME_COUNT,
+  MANHUA_CLIP_TAIL_WINDOW_SEC,
 } from "@shared/manhuaClipContinuity";
 import {
   MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
@@ -670,7 +671,7 @@ export async function runCanvasBlock(
     );
     let url = "";
     if (videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast") {
-      // 参考图配额≤6：优先「本段首静帧 + 上一段末帧」再补其余静帧，避免末帧被挤掉
+      // ~15s 一镜：下一段起幅必须吃上一段末 3–5s 帧，再叠本段静帧（配额≤6）
       const stillPool: string[] = [];
       if (stillRef) stillPool.push(stillRef);
       for (const u of fusionStillUrls) {
@@ -681,11 +682,19 @@ export async function runCanvasBlock(
         try {
           const { frames } = await extractVideoTailFramesFromUrl(continuityVideoUrl, {
             frameCount: MANHUA_CLIP_TAIL_FRAME_COUNT,
+            tailWindowSec: MANHUA_CLIP_TAIL_WINDOW_SEC,
           });
           const rawFrames = frames.map((f) => f.dataUrl).filter(Boolean);
           tailFrames = await toHttpsImageUrls(deps, rawFrames);
-        } catch {
-          /* 抽帧/上传失败不阻断：仍传 videoUrls */
+          console.info(
+            `[canvasRunBlock] clip continuity · prevTailFrames=${tailFrames.length} · window=${MANHUA_CLIP_TAIL_WINDOW_SEC}s`,
+          );
+        } catch (tailErr) {
+          console.warn(
+            `[canvasRunBlock] prev-clip tail extract failed · ${
+              tailErr instanceof Error ? tailErr.message.slice(0, 120) : "unknown"
+            }`,
+          );
         }
       }
       const imageUrls: string[] = [];
@@ -693,11 +702,13 @@ export async function runCanvasBlock(
         const s = String(u || "").trim();
         if (s && !imageUrls.includes(s)) imageUrls.push(s);
       };
-      pushUnique(stillPool[0]);
+      // 末段帧优先：拼接起幅；再补本段静帧
       for (const f of tailFrames) pushUnique(f);
-      for (const u of stillPool.slice(1)) pushUnique(u);
+      for (const u of stillPool) pushUnique(u);
       const httpsImages = await toHttpsImageUrls(deps, imageUrls.slice(0, 6));
-      url = await runSeedance20(motionPrompt, stillRef, ar, {
+      // Seedance 首图：有上一段末帧时用末帧作起幅主参考，否则用本段首静帧
+      const seedStill = tailFrames[tailFrames.length - 1] || stillRef;
+      url = await runSeedance20(motionPrompt, seedStill, ar, {
         imageUrls: httpsImages.length ? httpsImages : undefined,
         videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
         version: videoModel === "seedance-2.0-fast" ? "2.0-fast" : "2.0",

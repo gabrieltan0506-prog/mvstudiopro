@@ -1232,9 +1232,9 @@ export default function ManhuaScriptWorkbench({
                     ? "border border-emerald-400/40 bg-emerald-500/20 text-emerald-50"
                     : "border border-white/10 text-white/40"
                 }`}
-                title="B：下一镜成片承接上一镜成片末段"
+                title="B：下一段成片以上一段末 3–5 秒画面为起幅参考（约 15s 一镜衔接）"
               >
-                成片←上镜
+                成片←上段末帧
               </button>
             </div>
           ) : null}
