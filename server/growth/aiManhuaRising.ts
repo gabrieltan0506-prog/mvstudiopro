@@ -60,7 +60,7 @@ function pickStatus(entry: {
   return "steady";
 }
 
-function isDramaMixCandidate(item: TrendItem): boolean {
+function isDramaMixCandidate(item: TrendItem, platform: ManhuaDramaPlatform): boolean {
   return isManhuaDramaMixCandidate({
     isDrama: item.isDrama,
     dramaKind: item.dramaKind,
@@ -70,6 +70,7 @@ function isDramaMixCandidate(item: TrendItem): boolean {
     tags: item.tags,
     totalEpisodes: item.dramaInfo?.totalEpisodes,
     currentEpisode: item.dramaInfo?.currentEpisode,
+    platform,
   });
 }
 
@@ -127,7 +128,7 @@ export function buildAiManhuaRisingBoard(params: {
 
   const baselineByMix = new Map<string, number>();
   for (const item of params.baselineItems || []) {
-    if (!isDramaMixCandidate(item)) continue;
+    if (!isDramaMixCandidate(item, platform)) continue;
     const mixId = String(item.dramaInfo?.mixId || "").trim();
     if (!mixId) continue;
     const play = Number(item.dramaInfo?.mixPlayCount || 0);
@@ -150,7 +151,7 @@ export function buildAiManhuaRisingBoard(params: {
 
   const byMix = new Map<string, Agg>();
   for (const item of params.items) {
-    if (!isDramaMixCandidate(item)) continue;
+    if (!isDramaMixCandidate(item, platform)) continue;
     const mixId = String(item.dramaInfo?.mixId || "").trim();
     // 剧名只用合集名，禁止用短视频文案标题冒充剧名
     const mixName = String(item.dramaInfo?.mixName || "").trim();

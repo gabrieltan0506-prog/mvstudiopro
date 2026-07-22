@@ -10,6 +10,7 @@ import { nowShanghaiIso, toShanghaiIso } from "./time";
 import { normalizeStringList } from "./trendNormalize";
 import { getAdaptiveRouteDecision, prioritizeAdaptiveSeeds, recordAdaptiveRouteRun, recordAdaptiveSeedRun } from "./trendAdaptiveConfig";
 import {
+  hasDouyinAiDramaEnqueueTag,
   normalizeManhuaMixNameKey,
   shouldMarkDouyinMixAsDrama,
 } from "../../shared/manhuaDramaClassify";
@@ -2261,13 +2262,11 @@ function mapDouyinAwemeToTrendItem(
   };
 }
 
-/** 默认 AI 漫剧 / 短剧搜索词（可用 DOUYIN_DRAMA_SEARCH_KEYWORDS 覆盖） */
+/** 默认抖音漫剧搜索词：与入隊标签对齐（可用 DOUYIN_DRAMA_SEARCH_KEYWORDS 覆盖） */
 const DEFAULT_DOUYIN_DRAMA_SEARCH_KEYWORDS = [
+  "AIGC",
   "AI漫剧",
   "AI短剧",
-  "重生漫剧",
-  "动态漫",
-  "红果漫剧",
 ];
 
 async function collectDouyinWebSearchItems(
@@ -2355,7 +2354,10 @@ async function collectDouyinWebSearchItems(
             `douyin_search_drama:${keyword}`,
             [keyword, "AI漫剧检索"],
           );
-          if (mapped) keywordItems.push(mapped);
+          // 入隊硬门禁：成片标签须含 AIGC / AI漫剧 / AI短剧（内部「AI漫剧检索」不算）
+          if (mapped?.isDrama && hasDouyinAiDramaEnqueueTag(mapped.tags || [])) {
+            keywordItems.push(mapped);
+          }
         }
         notes.push(`Fetched ${awemes.length} Douyin web search items for "${keyword}" page ${page + 1}.`);
         if (!awemes.length) break;
@@ -2857,19 +2859,19 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     keywordLimit: defaultSearchKeywordLimit,
     minimumPages: 8,
   });
-  const kuaishouDramaKeywords = String(process.env.KUAISHOU_DRAMA_SEARCH_KEYWORDS || "")
-    .split(/[,，|]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const defaultKuaishouDramaKeywords = [
-    "AI漫剧",
-    "AI短剧",
-    "重生漫剧",
-    "动态漫",
-    "红果漫剧",
-    "竖屏短剧",
-  ];
-  const dramaKw = kuaishouDramaKeywords.length ? kuaishouDramaKeywords : defaultKuaishouDramaKeywords;
+  // 产品口径：快手漫剧专区样本偏少，默认不抓漫剧搜索词（可用 KUAISHOU_DRAMA_SEARCH_ENABLED=1 临时打开）
+  const kuaishouDramaSearchEnabled =
+    String(process.env.KUAISHOU_DRAMA_SEARCH_ENABLED || "0").trim() === "1";
+  const kuaishouDramaKeywords = kuaishouDramaSearchEnabled
+    ? String(process.env.KUAISHOU_DRAMA_SEARCH_KEYWORDS || "")
+      .split(/[,，|]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    : [];
+  const defaultKuaishouDramaKeywords = ["AI漫剧", "AI短剧", "AIGC"];
+  const dramaKw = kuaishouDramaSearchEnabled
+    ? (kuaishouDramaKeywords.length ? kuaishouDramaKeywords : defaultKuaishouDramaKeywords)
+    : [];
   const searchKeywords = await prioritizeAdaptiveSeeds(
     "kuaishou",
     "search_feed",
@@ -2900,6 +2902,9 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   if (discoveryKeywords.length) {
     notes.push(`Loaded ${discoveryKeywords.length} Kuaishou discovery keywords, including cross-platform title and author signals.`);
   }
+  if (!kuaishouDramaSearchEnabled) {
+    notes.push("Kuaishou drama search skipped (KUAISHOU_DRAMA_SEARCH_ENABLED!=1).");
+  }
   notes.push(`Kuaishou private/list tuned for depth=${privatePages}, concurrency=${privateConcurrency}, retry=${privateRetryLimit}.`);
 
   const resolveKuaishouBucket = (sourceLabel: string) => {
@@ -2929,7 +2934,9 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     const likes = parseChineseCount(photo.likeCount ?? item.likeCount);
     const comments = parseChineseCount(photo.commentCount ?? item.commentCount ?? item.comment?.us_c);
     const views = parseChineseCount(photo.viewCount ?? item.viewCount);
-    const isDramaSearch = /漫剧|短剧|动态漫|红果/i.test(sourceLabel) || tags.some((t) => /漫剧|短剧/.test(t));
+    const isDramaSearch =
+      kuaishouDramaSearchEnabled
+      && (/漫剧|短剧|动态漫|红果|AIGC/i.test(sourceLabel) || tags.some((t) => /漫剧|短剧|AIGC/i.test(t)));
     const enrichedTags = isDramaSearch && !tags.includes("快手漫剧检索")
       ? [...tags, "快手漫剧检索"]
       : tags;
@@ -2945,10 +2952,14 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     const seriesId = String(series?.id ?? series?.seriesId ?? series?.mix_id ?? "").trim();
     const seriesName = String(series?.name ?? series?.title ?? series?.mix_name ?? "").trim();
     const dramaKind = inferDouyinDramaKind(`${seriesName} ${title}`, enrichedTags);
+    // 默认不写 isDrama（快手漫剧先不抓）；仅显式打开搜索时才标合集
     const looksDrama =
-      Boolean(seriesId || seriesName)
-      || dramaKind !== "unknown"
-      || /AI\s*漫剧|AI漫|动态漫|漫剧|短剧|红果|竖屏剧/i.test(`${title} ${enrichedTags.join(" ")}`);
+      kuaishouDramaSearchEnabled
+      && (
+        Boolean(seriesId || seriesName)
+        || dramaKind !== "unknown"
+        || /AI\s*漫剧|AI漫|动态漫|漫剧|短剧|红果|竖屏剧/i.test(`${title} ${enrichedTags.join(" ")}`)
+      );
     const mixName = seriesName || (looksDrama ? title.replace(/\s*第?\d+\s*集.*$/, "").trim() || title : "");
     const mixKey = seriesId || (mixName ? normalizeManhuaMixNameKey(mixName) : "");
     const mixPlayProxy = Math.max(views || 0, (likes || 0) * 20);

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildManhuaDramaDisplayTagsZh,
   extractManhuaDramaTagLabelsZh,
+  hasDouyinAiDramaEnqueueTag,
   inferManhuaDramaKind,
   isManhuaDramaMixCandidate,
   looksLikeShortVideoCaption,
@@ -75,6 +76,7 @@ describe("manhuaDramaClassify", () => {
         isDrama: true,
         dramaKind: "ai_manhua",
         mixName: "甲",
+        tags: ["AI漫剧"],
       }),
     ).toBe(true);
     expect(
@@ -82,14 +84,25 @@ describe("manhuaDramaClassify", () => {
         isDrama: true,
         dramaKind: "short_drama",
         mixName: "乙短剧",
+        tags: ["AI短剧"],
       }),
     ).toBe(true);
+    // 无入隊标签 → 抖音不进榜（即使标了 ai_manhua）
+    expect(
+      isManhuaDramaMixCandidate({
+        isDrama: true,
+        dramaKind: "ai_manhua",
+        mixName: "甲",
+        tags: ["AI漫剧检索"],
+      }),
+    ).toBe(false);
     // dramaKind 误标 short_drama 但合集名无短剧信号 → 不进榜
     expect(
       isManhuaDramaMixCandidate({
         isDrama: true,
         dramaKind: "short_drama",
         mixName: "日常vlog",
+        tags: ["AIGC"],
       }),
     ).toBe(false);
     expect(isManhuaDramaMixCandidate({ title: "无关口播" })).toBe(false);
@@ -100,7 +113,32 @@ describe("manhuaDramaClassify", () => {
         dramaKind: "unknown",
         mixId: "m-cap",
         mixName: "看着屏幕上的主要小伙伴",
+        tags: ["AIGC"],
       }),
     ).toBe(false);
+  });
+
+  it("douyin enqueue requires AIGC / AI漫剧 / AI短剧 tag", () => {
+    expect(hasDouyinAiDramaEnqueueTag(["#AIGC"])).toBe(true);
+    expect(hasDouyinAiDramaEnqueueTag(["AI漫剧"])).toBe(true);
+    expect(hasDouyinAiDramaEnqueueTag(["AI短剧"])).toBe(true);
+    expect(hasDouyinAiDramaEnqueueTag(["AI漫剧检索"])).toBe(false);
+    expect(hasDouyinAiDramaEnqueueTag(["重生", "仙侠"])).toBe(false);
+    expect(
+      shouldMarkDouyinMixAsDrama({
+        mixId: "m1",
+        mixName: "重生漫剧开局团宠",
+        title: "第1集",
+        tags: ["重生漫剧"],
+      }).isDrama,
+    ).toBe(false);
+    expect(
+      shouldMarkDouyinMixAsDrama({
+        mixId: "m1",
+        mixName: "重生漫剧开局团宠",
+        title: "第1集",
+        tags: ["AI漫剧"],
+      }).isDrama,
+    ).toBe(true);
   });
 });

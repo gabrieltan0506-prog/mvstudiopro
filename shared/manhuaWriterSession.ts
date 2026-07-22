@@ -16,6 +16,7 @@ import {
   normalizeManhuaCustomAssetRefs,
   type ManhuaCustomAssetRef,
 } from "./manhuaCustomAssetRefs.js";
+import { parseManhuaStylePack, type ManhuaStylePack } from "./manhuaStylePack.js";
 
 export const MANHUA_WRITER_SESSION_FORMAT = "mv-manhua-writer-session-v1" as const;
 export const MANHUA_WRITER_SESSION_LS_KEY = "mv-manhua-writer-session-v1";
@@ -41,6 +42,8 @@ export type ManhuaWriterSession = {
   shareAssetToLibrary: boolean;
   /** 审定节奏模板 id（tpl_*）；扩写注入用 */
   viralTemplateId: string;
+  /** 产品化风格包（资产阶段） */
+  stylePack: ManhuaStylePack | null;
 };
 
 export type ManhuaWriterSessionPartial = Partial<Omit<ManhuaWriterSession, "format">> & {
@@ -102,6 +105,7 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     customAssetRefs: normalizeManhuaCustomAssetRefs(input.customAssetRefs),
     shareAssetToLibrary: Boolean(input.shareAssetToLibrary),
     viralTemplateId: String(input.viralTemplateId || "").trim().slice(0, 64),
+    stylePack: parseManhuaStylePack(input.stylePack) || null,
   };
 }
 

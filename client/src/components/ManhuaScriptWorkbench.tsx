@@ -68,6 +68,8 @@ import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotate
 import ManhuaAgentAdvisorPanel from "@/components/ManhuaAgentAdvisorPanel";
 import ManhuaIntegratedAssetBoardPanel from "@/components/ManhuaIntegratedAssetBoardPanel";
 import ManhuaRoughEditTimeline from "@/components/ManhuaRoughEditTimeline";
+import ManhuaStylePackPanel from "@/components/ManhuaStylePackPanel";
+import type { ManhuaStylePack } from "@shared/manhuaStylePack";
 import ManhuaEditMultitrackPanel from "@/components/ManhuaEditMultitrackPanel";
 import type { ManhuaWorkbenchSyncPayload } from "@shared/manhuaAgentLoopSync";
 import { buildManhuaIntegratedAssetBoard } from "@shared/manhuaIntegratedAssetBoard";
@@ -144,6 +146,9 @@ type Props = {
   onOpenAssetWall?: () => void;
   /** 确认资产：先按序出角色图→场景图，再进分镜 */
   onConfirmAssetsAndPrepareImages?: () => void | Promise<void>;
+  /** 产品化风格包（色卡 + 光影构图 DNA） */
+  stylePack?: ManhuaStylePack | null;
+  onStylePackChange?: (pack: ManhuaStylePack | null) => void;
   /** 用户上传 / 基于库参考生成的参考图 */
   customAssetRefs?: ManhuaCustomAssetRef[];
   onUploadCustomAssets?: (files: FileList | File[]) => void | Promise<void>;
@@ -291,6 +296,8 @@ export default function ManhuaScriptWorkbench({
   onOpenCharacterCard,
   onOpenAssetWall,
   onConfirmAssetsAndPrepareImages,
+  stylePack = null,
+  onStylePackChange,
   customAssetRefs = [],
   onUploadCustomAssets,
   onCustomAssetRoleChange,
@@ -1401,6 +1408,16 @@ export default function ManhuaScriptWorkbench({
                 </p>
               )}
             </div>
+
+            {onStylePackChange ? (
+              <div className="mt-3">
+                <ManhuaStylePackPanel
+                  value={stylePack}
+                  onChange={onStylePackChange}
+                  artStyleLabelZh={artStyleLabelZh}
+                />
+              </div>
+            ) : null}
 
             <div
               data-manhua-custom-refs

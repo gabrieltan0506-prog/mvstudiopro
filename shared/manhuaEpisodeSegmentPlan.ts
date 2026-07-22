@@ -1,0 +1,261 @@
+/**
+ * 单集 12 段 × 15s 可拍表：对白 / 场景配色 / 角色 / 服化道 / 光影运镜。
+ * 禁止灌水：缺字段、寒暄对白、段间高度重复 → 质量不通过。
+ * 数值与 `manhuaScriptWorkbench` 的 MANHUA_SEGMENT_DEFAULT / 15s / 180s 对齐。
+ */
+
+export const MANHUA_EPISODE_SEGMENT_COUNT = 12;
+export const MANHUA_EPISODE_SEGMENT_DURATION_SEC = 15;
+export const MANHUA_EPISODE_SEGMENT_TARGET_SEC = 180;
+
+export type ManhuaEpisodeSegmentBeat = {
+  index: number;
+  dialogueZh: string;
+  sceneZh: string;
+  paletteZh: string;
+  castZh: string;
+  wardrobePropZh: string;
+  lightingCameraZh: string;
+};
+
+export type ManhuaEpisodeSegmentPlan = {
+  segmentCount: number;
+  durationSecPerSegment: number;
+  targetSec: number;
+  segments: ManhuaEpisodeSegmentBeat[];
+};
+
+export type ManhuaEpisodeSegmentPlanQuality = {
+  ok: boolean;
+  readyCount: number;
+  requiredCount: number;
+  issues: string[];
+};
+
+const FILLER_DIALOGUE_RE =
+  /^(嗯+|啊+|哦+|好的|是的|对啊|哈哈+|今天天气|你好啊|在吗|没事|随便|加油|晚安|早啊)[.。!！?？…]*$/i;
+
+const FIELD_KEYS: Array<{
+  key: keyof Omit<ManhuaEpisodeSegmentBeat, "index">;
+  aliases: string[];
+}> = [
+  { key: "dialogueZh", aliases: ["对白", "台词", "对话"] },
+  { key: "sceneZh", aliases: ["场景", "地点", "场次"] },
+  { key: "paletteZh", aliases: ["配色风格", "配色", "色调", "风格色"] },
+  { key: "castZh", aliases: ["角色", "出演", "人物"] },
+  { key: "wardrobePropZh", aliases: ["服装道具", "服化道", "服装", "道具"] },
+  { key: "lightingCameraZh", aliases: ["光影运镜", "光影", "运镜", "镜头"] },
+];
+
+function normalizeFieldLine(raw: string): string {
+  return String(raw || "")
+    .replace(/^[\s>*\-•·]+/, "")
+    .replace(/\*\*/g, "")
+    .trim();
+}
+
+function pickField(block: string, aliases: string[]): string {
+  for (const alias of aliases) {
+    const re = new RegExp(
+      `(?:^|\\n)\\s*[-*·]?\\s*${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[:：]\\s*([^\\n]+)`,
+      "i",
+    );
+    const m = block.match(re)?.[1];
+    if (m && normalizeFieldLine(m).length >= 2) return normalizeFieldLine(m).slice(0, 160);
+  }
+  return "";
+}
+
+function emptyBeat(index: number): ManhuaEpisodeSegmentBeat {
+  return {
+    index,
+    dialogueZh: "",
+    sceneZh: "",
+    paletteZh: "",
+    castZh: "",
+    wardrobePropZh: "",
+    lightingCameraZh: "",
+  };
+}
+
+/** 从「#### 段01」或「#### 段 1」块解析 */
+export function parseManhuaEpisodeSegmentPlanFromMarkdown(md: string): ManhuaEpisodeSegmentPlan {
+  const text = String(md || "");
+  const segments: ManhuaEpisodeSegmentBeat[] = [];
+  const re = /(?:^|\n)#{2,4}\s*段\s*0*(\d{1,2})\s*\n([\s\S]*?)(?=\n#{2,4}\s*段\s*0*\d|\n#{2,3}\s*片尾钩子|\n##\s*第\d+集|\n##\s[^#]|$)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const index = Math.floor(Number(m[1]));
+    if (!Number.isFinite(index) || index < 1 || index > 24) continue;
+    const block = m[2] || "";
+    const beat = emptyBeat(index);
+    for (const field of FIELD_KEYS) {
+      beat[field.key] = pickField(block, field.aliases);
+    }
+    segments.push(beat);
+  }
+  segments.sort((a, b) => a.index - b.index);
+  // 去重同 index，保留字段更全的一条
+  const byIndex = new Map<number, ManhuaEpisodeSegmentBeat>();
+  for (const s of segments) {
+    const prev = byIndex.get(s.index);
+    if (!prev) {
+      byIndex.set(s.index, s);
+      continue;
+    }
+    const score = (b: ManhuaEpisodeSegmentBeat) =>
+      FIELD_KEYS.reduce((n, f) => n + (b[f.key] ? 1 : 0), 0);
+    if (score(s) >= score(prev)) byIndex.set(s.index, s);
+  }
+  const ordered = Array.from(byIndex.values()).sort((a, b) => a.index - b.index);
+  return {
+    segmentCount: MANHUA_EPISODE_SEGMENT_COUNT,
+    durationSecPerSegment: MANHUA_EPISODE_SEGMENT_DURATION_SEC,
+    targetSec: MANHUA_EPISODE_SEGMENT_TARGET_SEC,
+    segments: ordered,
+  };
+}
+
+function isFillerDialogue(s: string): boolean {
+  const t = s.replace(/\s+/g, "").trim();
+  if (t.length < 4) return true;
+  if (FILLER_DIALOGUE_RE.test(t)) return true;
+  if (/^(哈哈|嘿嘿|呵呵|嗯嗯|啊啊)+$/.test(t)) return true;
+  return false;
+}
+
+function nearDuplicate(a: string, b: string): boolean {
+  const x = a.replace(/\s+/g, "");
+  const y = b.replace(/\s+/g, "");
+  if (!x || !y) return false;
+  if (x === y) return true;
+  if (x.length >= 8 && y.length >= 8 && (x.includes(y) || y.includes(x))) return true;
+  return false;
+}
+
+export function evaluateManhuaEpisodeSegmentPlanQuality(
+  plan: ManhuaEpisodeSegmentPlan | null | undefined,
+  requiredCount = MANHUA_EPISODE_SEGMENT_COUNT,
+): ManhuaEpisodeSegmentPlanQuality {
+  const issues: string[] = [];
+  const segments = plan?.segments || [];
+  const required = Math.max(1, Math.min(24, requiredCount));
+  if (segments.length < required) {
+    issues.push(`可拍段不足：需要 ${required} 段，当前解析到 ${segments.length} 段`);
+  }
+
+  let readyCount = 0;
+  const seenDialogue: string[] = [];
+  const seenScene: string[] = [];
+
+  for (let i = 1; i <= required; i++) {
+    const beat = segments.find((s) => s.index === i);
+    if (!beat) {
+      issues.push(`缺段 ${String(i).padStart(2, "0")}`);
+      continue;
+    }
+    const missing = FIELD_KEYS.filter((f) => !String(beat[f.key] || "").trim()).map((f) => f.aliases[0]);
+    if (missing.length) {
+      issues.push(`段${String(i).padStart(2, "0")} 缺字段：${missing.join("、")}`);
+      continue;
+    }
+    if (isFillerDialogue(beat.dialogueZh)) {
+      issues.push(`段${String(i).padStart(2, "0")} 对白灌水或过短`);
+      continue;
+    }
+    if (seenDialogue.some((d) => nearDuplicate(d, beat.dialogueZh))) {
+      issues.push(`段${String(i).padStart(2, "0")} 对白与他段重复`);
+      continue;
+    }
+    seenDialogue.push(beat.dialogueZh);
+    seenScene.push(beat.sceneZh);
+    readyCount += 1;
+  }
+
+  const uniqueScenes = new Set(seenScene.map((s) => s.replace(/\s+/g, ""))).size;
+  if (readyCount >= required && uniqueScenes <= 2) {
+    issues.push("场景几乎不换场：12 段须有空间/氛围递进，禁止同一空壳场景复读");
+  }
+
+  return {
+    ok: readyCount >= required && issues.length === 0,
+    readyCount,
+    requiredCount: required,
+    issues: issues.slice(0, 16),
+  };
+}
+
+/** 编剧扩写 prompt 用的十二段表头说明（禁灌水） */
+export function formatManhuaEpisodeSegmentPlanPromptBlock(
+  segmentCount = MANHUA_EPISODE_SEGMENT_COUNT,
+  durationSec = MANHUA_EPISODE_SEGMENT_DURATION_SEC,
+): string {
+  const n = Math.max(1, Math.min(24, segmentCount));
+  const total = n * durationSec;
+  return [
+    `### 十二段可拍表`,
+    `（硬性：正好 ${n} 段；每段约 ${durationSec} 秒；整集约 ${total} 秒。禁止寒暄灌水、禁止段间复制粘贴。）`,
+    `每一段必须用下列字段（缺一不可；对白须推动关系/信息）：`,
+    `#### 段01`,
+    `- 对白：`,
+    `- 场景：`,
+    `- 配色风格：`,
+    `- 角色：`,
+    `- 服装道具：`,
+    `- 光影运镜：`,
+    `（段02…段${String(n).padStart(2, "0")} 同结构；跨段须有信息增量与场面变化。）`,
+  ].join("\n");
+}
+
+/** 单测夹具：12 段合格可拍表（禁止当产品灌水生成器用） */
+export function buildManhuaEpisodeSegmentPlanFixtureMarkdown(): string {
+  const scenes = [
+    "雨夜回廊",
+    "烛火偏殿",
+    "鹤影湖堤",
+    "山神破庙",
+    "雨夜回廊侧门",
+    "偏殿屏风后",
+    "湖堤石阶",
+    "破庙香案前",
+    "回廊转角",
+    "偏殿门槛",
+    "湖面栈桥",
+    "破庙外阶",
+  ];
+  const blocks = scenes.map((scene, i) => {
+    const n = String(i + 1).padStart(2, "0");
+    return [
+      `#### 段${n}`,
+      `- 对白：「把玉珏交出来——第${i + 1}次，我不会再问。」`,
+      `- 场景：${scene}`,
+      `- 配色风格：冷青主色，烛金辅，血锈点缀`,
+      `- 角色：沈清逼近；旧盟冷笑后退`,
+      `- 服装道具：青衣银簪；半枚玉珏握于掌心`,
+      `- 光影运镜：侧逆光压暗；中景推至近景`,
+    ].join("\n");
+  });
+  return ["### 十二段可拍表", ...blocks].join("\n");
+}
+
+/** 把可拍表压成工厂节拍提示（不编造缺失段） */
+export function formatManhuaEpisodeSegmentPlanBeatsBlock(
+  plan: ManhuaEpisodeSegmentPlan | null | undefined,
+): string {
+  const segs = plan?.segments || [];
+  if (!segs.length) return "";
+  const lines = segs
+    .slice()
+    .sort((a, b) => a.index - b.index)
+    .map((s) => {
+      const i = String(s.index).padStart(2, "0");
+      return [
+        `【段${i}·${MANHUA_EPISODE_SEGMENT_DURATION_SEC}s】`,
+        `对白：${s.dialogueZh}`,
+        `场景：${s.sceneZh}｜配色：${s.paletteZh}`,
+        `角色：${s.castZh}｜服化道：${s.wardrobePropZh}`,
+        `光影运镜：${s.lightingCameraZh}`,
+      ].join("\n");
+    });
+  return `【已确认十二段可拍表·禁止改写成灌水】\n${lines.join("\n\n")}`;
+}

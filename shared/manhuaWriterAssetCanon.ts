@@ -3,6 +3,11 @@
  * 表文案为真相；库内模板仅可选参考。场景：系列池 + 每集主场景。
  */
 
+import {
+  evaluateManhuaEpisodeSegmentPlanQuality,
+  parseManhuaEpisodeSegmentPlanFromMarkdown,
+} from "./manhuaEpisodeSegmentPlan.js";
+
 export type ManhuaWriterAssetRole = "character" | "prop" | "scene";
 
 export type ManhuaWriterAssetAnchor = {
@@ -370,6 +375,23 @@ export function evaluateWriterPackAssetAndDensity(input: {
   }
   if (canon.props.length < 1) {
     errors.push("道具表至少需要 1 件关键道具");
+  }
+  // 三分钟档：额外要求十二段可拍表（对白/场景配色/角色/服化道/光影运镜），禁灌水
+  if ((input.targetSec ?? 180) >= 150) {
+    for (const ep of input.episodes || []) {
+      const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(String(ep.body || ""));
+      const q = evaluateManhuaEpisodeSegmentPlanQuality(plan);
+      if (!q.ok) {
+        errors.push(
+          `第${ep.index}集十二段可拍表未过关（${q.readyCount}/${q.requiredCount}）：${
+            q.issues[0] || "缺表或缺字段"
+          }`,
+        );
+        for (const iss of q.issues.slice(1, 3)) {
+          errors.push(`第${ep.index}集：${iss}`);
+        }
+      }
+    }
   }
   return {
     ok: errors.length === 0,

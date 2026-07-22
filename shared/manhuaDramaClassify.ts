@@ -9,6 +9,12 @@ export type ManhuaDramaPlatform = "douyin" | "kuaishou";
 /** 飙升榜最多展示部数（含漫剧+确认短剧，不足亦展示） */
 export const AI_MANHUA_RISING_BOARD_LIMIT = 15;
 
+/**
+ * 抖音入隊硬门禁：视频标签须含三者之一，才可写入 isDrama / 进飙升榜。
+ * 不含内部检索标记「AI漫剧检索」——那是搜索路由加的，不是成片标签。
+ */
+export const DOUYIN_AI_DRAMA_ENQUEUE_TAG_LABELS = ["AIGC", "AI漫剧", "AI短剧"] as const;
+
 const AI_MANHUA_HINT_RE = /AI\s*漫剧|AI漫|动态漫|漫剧|条漫剧|AI\s*短剧|虚拟角色剧/i;
 const AI_MANHUA_SOFT_TITLE_RE =
   /剑宗|师妹|仙盆|杂灵根|万妖图|罪妻开荒|团宠|重生之|穿越成|系统觉醒|修仙|灵根|宗门/;
@@ -20,6 +26,30 @@ const SHORT_DRAMA_MIX_NAME_RE = /短剧|连载剧/;
 /** 口播/二创短视频标题特征（非剧名合集） */
 const SHORT_VIDEO_CAPTION_RE =
   /一人一句|插画|教程|分享|日记本|日记|打卡|学画|学绘画|出门教|布置|vlog|日常|二创|混剪|剪辑|壁纸|表情包|#\s*music|#\s*illustration|唯美动漫|动漫分享|看着屏幕/i;
+
+/** 规范化标签：去 #、空白、小写，便于 AIGC / AI漫剧 / AI短剧 比对 */
+export function normalizeDouyinHashtagLabel(tag: string): string {
+  return String(tag || "")
+    .trim()
+    .replace(/^[#＃]+/, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+}
+
+/**
+ * 抖音视频标签是否含入隊三词之一（AIGC / AI漫剧 / AI短剧）。
+ * 只认成片 hashtag / 标签字段，不认「AI漫剧检索」等内部路由标记。
+ */
+export function hasDouyinAiDramaEnqueueTag(tags: string[] = []): boolean {
+  for (const raw of tags) {
+    const t = normalizeDouyinHashtagLabel(raw);
+    if (!t) continue;
+    if (t === "aigc") return true;
+    if (t === "ai漫剧" || t === "ai漫") return true;
+    if (t === "ai短剧") return true;
+  }
+  return false;
+}
 
 /** 题材软标签白名单（有限，避免碎词） */
 const TAG_RULES: Array<{ label: string; re: RegExp }> = [
@@ -150,6 +180,7 @@ function hasStrongDramaLexical(text: string, tags: string[] = []): boolean {
 
 /**
  * 飙升榜候选门禁：
+ * - 抖音：须成片标签含 AIGC / AI漫剧 / AI短剧（防短视频误入）
  * - 不再「有 mix_info 就算漫剧」——抖音大量普通合集会误入
  * - 短剧须合集名/强信号确认，避免短视频误判为短剧
  */
@@ -162,10 +193,17 @@ export function isManhuaDramaMixCandidate(input: {
   tags?: string[];
   totalEpisodes?: number;
   currentEpisode?: number;
+  /** 缺省按抖音严门禁；快手专区可传 kuaishou（当前产品侧先不抓） */
+  platform?: ManhuaDramaPlatform;
 }): boolean {
   const mixName = String(input.mixName || "").trim();
   const mixId = String(input.mixId || "").trim();
   if (!mixName && !mixId) return false;
+
+  const platform = input.platform || "douyin";
+  if (platform === "douyin" && !hasDouyinAiDramaEnqueueTag(input.tags || [])) {
+    return false;
+  }
 
   if (input.dramaKind === "ai_manhua" || input.dramaKind === "short_drama") {
     if (mixName && looksLikeShortVideoCaption(mixName) && !hasStrongDramaLexical(mixName, [])) {
@@ -206,7 +244,7 @@ export function isManhuaDramaMixCandidate(input: {
   return false;
 }
 
-/** 采集侧：是否值得写入 isDrama（比榜单门禁略宽，仍拒绝纯口播合集） */
+/** 采集侧：是否值得写入 isDrama（抖音须先过入隊标签门禁） */
 export function shouldMarkDouyinMixAsDrama(input: {
   mixName?: string;
   mixId?: string;
@@ -218,6 +256,10 @@ export function shouldMarkDouyinMixAsDrama(input: {
   const mixName = String(input.mixName || "").trim();
   const title = String(input.title || "").trim();
   const tags = input.tags || [];
+  // 无 AIGC / AI漫剧 / AI短剧 标签 → 一律不入隊（即使有 mix_info / 题材软词）
+  if (!hasDouyinAiDramaEnqueueTag(tags)) {
+    return { isDrama: false, dramaKind: "unknown" };
+  }
   const kind = inferManhuaDramaKind(title, tags, mixName);
   if (kind === "ai_manhua" || kind === "short_drama") {
     return { isDrama: true, dramaKind: kind };
@@ -231,6 +273,7 @@ export function shouldMarkDouyinMixAsDrama(input: {
     tags,
     totalEpisodes: input.totalEpisodes,
     currentEpisode: input.currentEpisode,
+    platform: "douyin",
   })) {
     return { isDrama: true, dramaKind: kind };
   }

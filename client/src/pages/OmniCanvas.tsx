@@ -455,6 +455,7 @@ export default function OmniCanvas() {
   const [customAssetRefs, setCustomAssetRefs] = useState<ManhuaCustomAssetRef[]>(() =>
     normalizeManhuaCustomAssetRefs(initialWriterSession?.customAssetRefs),
   );
+  const [stylePack, setStylePack] = useState(() => initialWriterSession?.stylePack ?? null);
   const [shareAssetToLibrary, setShareAssetToLibrary] = useState(
     () => Boolean(initialWriterSession?.shareAssetToLibrary),
   );
@@ -933,6 +934,7 @@ export default function OmniCanvas() {
         customAssetRefs,
         shareAssetToLibrary,
         viralTemplateId,
+        stylePack,
       });
     } catch {
       /* 本机权限/配额失败：不阻断云端通路 */
@@ -952,6 +954,7 @@ export default function OmniCanvas() {
     customAssetRefs,
     shareAssetToLibrary,
     viralTemplateId,
+    stylePack,
   ]);
 
   const applyCloudDraftToUi = useCallback((draft: ManhuaCloudDraftPayload) => {
@@ -971,6 +974,7 @@ export default function OmniCanvas() {
     setManhuaUiMode(session.manhuaUiMode === "form" ? "form" : "workbench");
     setAssetsSkipped(Boolean(session.assetsSkipped));
     setCustomAssetRefs(normalizeManhuaCustomAssetRefs(session.customAssetRefs));
+    setStylePack(session.stylePack ?? null);
     setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
     setViralTemplateId(String(session.viralTemplateId || "").trim());
     setWorkflowPhase(
@@ -1807,6 +1811,7 @@ export default function OmniCanvas() {
         wardrobePropContinuityIds: hardCast?.wardrobePropContinuityIds ?? selectedWardrobeIds,
         videoReverseOutputMode: factoryReverseMode,
         customRefs: customAssetRefs,
+        stylePack,
         writerContext: focusCtx,
         includeDirectorCraft: Boolean(focusCtx) || directorUnlocked,
         episodeIndex: continuity.episodeIndex,
@@ -1871,6 +1876,7 @@ export default function OmniCanvas() {
       selectedWardrobeIds,
       factoryReverseMode,
       customAssetRefs,
+      stylePack,
       writerContext,
       directorUnlocked,
       writerConfirmed,
@@ -3416,6 +3422,8 @@ export default function OmniCanvas() {
                   assetsSkipped={assetsSkipped}
                   onAssetsSkippedChange={setAssetsSkipped}
                   onConfirmAssetsAndPrepareImages={confirmAssetsAndPrepareImages}
+                  stylePack={stylePack}
+                  onStylePackChange={setStylePack}
                   customAssetRefs={customAssetRefs}
                   onUploadCustomAssets={uploadCustomAssetFiles}
                   onCustomAssetRoleChange={setCustomAssetRole}
