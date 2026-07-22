@@ -27,9 +27,7 @@ export function formatManhuaCharacterContractBlock(
     "【角色造型参考】",
     `人物气质参考：${tag || "主角"}`,
     c.lookZh ? `请画出的外形：${c.lookZh}` : "",
-    hidden
-      ? `（隐藏说明·不必画出：${hidden}）`
-      : "",
+    hidden ? `（隐藏说明·不必画出：${hidden}）` : "",
     "强烈建议：单人定妆半身或胸像，脸与服饰清楚，背景干净；优先纯视觉，无旁人抢戏。",
     "贯穿全系列同一身份；换脸、换服、换发色会破坏连载锁定。",
     MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
