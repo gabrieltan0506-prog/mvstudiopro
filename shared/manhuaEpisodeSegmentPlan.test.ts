@@ -43,6 +43,41 @@ describe("manhuaEpisodeSegmentPlan", () => {
     expect(q.issues.some((e) => /不足|灌水|缺段|对白仅/.test(e))).toBe(true);
   });
 
+  it("parses nested multi-line dialogue bullets under 对白", () => {
+    const md = [
+      "#### 段01",
+      "- 对白：",
+      "  - 甲：「第一句。」",
+      "  - 乙：「第二句。」",
+      "  - 甲：「第三句。」",
+      "- 表演：甲眉心紧、握拳；乙后退半步眼神一颤。",
+      "- 场景：雪关关隘",
+      "- 配色风格：冷灰",
+      "- 角色：甲、乙",
+      "- 服装道具：旧甲",
+      "- 光影运镜：中近景",
+      "#### 段02",
+      "- 对白：「一」「二」「三」",
+      "- 表演：甲侧脸咬肌隆起，乙握拳。",
+      "- 场景：破屋",
+      "- 配色风格：暖灰",
+      "- 角色：甲、乙",
+      "- 服装道具：锄",
+      "- 光影运镜：推",
+    ].join("\n");
+    // pad to 10 with fixture tail
+    const more = buildManhuaEpisodeSegmentPlanFixtureMarkdown()
+      .split(/\n#### 段/)
+      .slice(3)
+      .map((chunk, i) => `#### 段${String(i + 3).padStart(2, "0")}${chunk.includes("\n") ? chunk.slice(chunk.indexOf("\n")) : ""}`)
+      .join("\n");
+    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(`${md}\n${more}`);
+    expect(plan.segments[0]?.dialogueZh).toMatch(/第一句/);
+    expect(
+      (plan.segments[0]?.dialogueZh.match(/「[^」]+」/g) || []).length,
+    ).toBeGreaterThanOrEqual(3);
+  });
+
   it("rejects only two dialogue quotes in a 15s segment", () => {
     const two = [
       "#### 段01",
