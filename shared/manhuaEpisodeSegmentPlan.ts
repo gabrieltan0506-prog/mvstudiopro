@@ -74,9 +74,46 @@ function pickField(block: string, aliases: string[]): string {
       "i",
     );
     const m = block.match(re)?.[1];
-    if (m && normalizeFieldLine(m).length >= 2) return normalizeFieldLine(m).slice(0, 200);
+    if (m && normalizeFieldLine(m).length >= 2) return normalizeFieldLine(m).slice(0, 400);
   }
   return "";
+}
+
+/**
+ * 对白可单行，也可写成：
+ * - 对白：
+ *   - 甲：「…」
+ *   - 乙：「…」
+ */
+function pickDialogueField(block: string): string {
+  // 冒号后只用同行空白，避免 \s 吃掉换行把下一子弹进「行内」
+  const header = block.match(
+    /(?:^|\n)[ \t]*[-*·]?[ \t]*(?:对白|台词|对话)[ \t]*[:：][ \t]*([^\n]*)/i,
+  );
+  if (!header || header.index == null) return "";
+  const inline = normalizeFieldLine(header[1] || "");
+  const collected: string[] = [];
+  if (inline) collected.push(inline);
+
+  const after = block.slice(header.index + header[0].length);
+  for (const rawLine of after.split("\n")) {
+    const line = String(rawLine || "");
+    if (
+      /^[ \t]*[-*·]?[ \t]*(表演|表情肢体|情绪表演|场景|地点|场次|配色风格|配色|色调|角色|出演|人物|服装道具|服化道|服装|道具|光影运镜|光影|运镜|镜头)[ \t]*[:：]/.test(
+        line,
+      )
+    ) {
+      break;
+    }
+    const t = line.replace(/^[ \t]*[-*·][ \t]*/, "").trim();
+    if (!t) {
+      if (collected.length) break;
+      continue;
+    }
+    collected.push(t);
+  }
+  const readable = collected.join(" ").replace(/\s+/g, " ").trim();
+  return readable.slice(0, 500);
 }
 
 function emptyBeat(index: number): ManhuaEpisodeSegmentBeat {
@@ -113,6 +150,10 @@ export function parseManhuaEpisodeSegmentPlanFromMarkdown(md: string): ManhuaEpi
     const block = m[2] || "";
     const beat = emptyBeat(index);
     for (const field of FIELD_KEYS) {
+      if (field.key === "dialogueZh") {
+        beat.dialogueZh = pickDialogueField(block);
+        continue;
+      }
       beat[field.key] = pickField(block, field.aliases);
     }
     segments.push(beat);
