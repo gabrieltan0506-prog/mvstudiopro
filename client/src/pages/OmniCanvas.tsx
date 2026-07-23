@@ -604,6 +604,7 @@ export default function OmniCanvas() {
       assetCanonOverride?: NonNullable<typeof projectBible>["assetCanon"];
       episodeIndexOverride?: number;
       topicOverride?: string;
+      forceRegenerate?: boolean;
     }) => Promise<void>
   >(async () => {});
   const cloudDraftUpsert = trpc.manhuaCloudDraft.upsert.useMutation({
