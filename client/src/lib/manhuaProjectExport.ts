@@ -121,16 +121,33 @@ export function selectExportableDockIds(items: ManhuaClipDockItem[]): string[] {
   return items.filter(manhuaClipDockItemHasExportableOutput).map((i) => i.blockId);
 }
 
-/** 成片坞 → 长片合成入参（按集取 clip + keyart） */
-export function collectManhuaAssembleClipsFromDock(
-  items: ManhuaClipDockItem[],
-  opts?: { selectedIds?: Set<string> | string[]; onlySelectedEpisodes?: boolean },
-): Array<{
+export type ManhuaDockAssembleClip = {
   episodeIndex: number;
   episodeTitle?: string;
   clipUrl?: string;
   keyartUrl?: string;
-}> {
+  segmentIndex?: number;
+  blockId?: string;
+  trimInSec?: number;
+  trimOutSec?: number;
+  shotPieces?: Array<{
+    shotIndex: number;
+    trimInSec: number;
+    trimOutSec: number;
+    durationSec: number;
+  }>;
+};
+
+/** 成片坞 → 长片合成入参（同集多段按段序；携带细剪 trim） */
+export function collectManhuaAssembleClipsFromDock(
+  items: ManhuaClipDockItem[],
+  opts?: {
+    selectedIds?: Set<string> | string[];
+    onlySelectedEpisodes?: boolean;
+    /** 画布块：读 manhuaEditTrim / manhuaShotEditTrims / 段号 */
+    blocks?: CanvasBlock[];
+  },
+): ManhuaDockAssembleClip[] {
   const selected = opts?.selectedIds
     ? opts.selectedIds instanceof Set
       ? opts.selectedIds
@@ -142,26 +159,81 @@ export function collectManhuaAssembleClipsFromDock(
       if (selected.has(it.blockId)) epFilter.add(it.episodeIndex);
     }
   }
-  const byEp = new Map<
-    number,
-    { episodeIndex: number; episodeTitle?: string; clipUrl?: string; keyartUrl?: string }
-  >();
+  const blockById = new Map((opts?.blocks || []).map((b) => [b.id, b] as const));
+
+  const resolveSeg = (blockId: string, prompt?: string | null): number => {
+    const m =
+      String(blockId || "").match(/-g(\d+)/i) ||
+      String(blockId || "").match(/-s(\d+)/i);
+    if (m?.[1]) return Math.max(1, parseInt(m[1], 10));
+    const fromPrompt = String(prompt || "").match(/【第\s*(\d+)\s*段/);
+    if (fromPrompt?.[1]) return Math.max(1, parseInt(fromPrompt[1], 10));
+    return 1;
+  };
+
+  const keyartByEp = new Map<number, string>();
   for (const it of items) {
     if (epFilter.size && !epFilter.has(it.episodeIndex)) continue;
-    const cur = byEp.get(it.episodeIndex) || {
+    if ((it.stage === "keyart" || it.stage === "recap_card") && it.outputUrl) {
+      if (!keyartByEp.has(it.episodeIndex)) keyartByEp.set(it.episodeIndex, it.outputUrl);
+    }
+  }
+
+  const clips: ManhuaDockAssembleClip[] = [];
+  for (const it of items) {
+    if (epFilter.size && !epFilter.has(it.episodeIndex)) continue;
+    if (it.stage !== "clip" || !manhuaClipDockItemAllowsAssemble(it)) continue;
+    const block = blockById.get(it.blockId);
+    const segmentIndex = resolveSeg(it.blockId, block?.prompt);
+    const trim = block?.manhuaEditTrim;
+    const shotPieces = trim?.shotPieces;
+    clips.push({
       episodeIndex: it.episodeIndex,
       episodeTitle: it.episodeTitle,
-    };
-    if (it.episodeTitle) cur.episodeTitle = it.episodeTitle;
-    if (it.stage === "clip" && manhuaClipDockItemAllowsAssemble(it)) {
-      cur.clipUrl = it.outputUrl;
-    }
-    if ((it.stage === "keyart" || it.stage === "recap_card") && it.outputUrl) {
-      cur.keyartUrl = cur.keyartUrl || it.outputUrl;
-    }
-    byEp.set(it.episodeIndex, cur);
+      clipUrl: it.outputUrl,
+      keyartUrl: keyartByEp.get(it.episodeIndex),
+      segmentIndex,
+      blockId: it.blockId,
+      trimInSec: trim?.inSec,
+      trimOutSec: trim?.outSec,
+      shotPieces: shotPieces?.length ? shotPieces : undefined,
+    });
   }
-  return Array.from(byEp.values()).sort((a, b) => a.episodeIndex - b.episodeIndex);
+
+  if (!clips.length) {
+    // 兼容：无段成片时退回每集一条
+    const byEp = new Map<number, ManhuaDockAssembleClip>();
+    for (const it of items) {
+      if (epFilter.size && !epFilter.has(it.episodeIndex)) continue;
+      const cur = byEp.get(it.episodeIndex) || {
+        episodeIndex: it.episodeIndex,
+        episodeTitle: it.episodeTitle,
+      };
+      if (it.episodeTitle) cur.episodeTitle = it.episodeTitle;
+      if (it.stage === "clip" && manhuaClipDockItemAllowsAssemble(it)) {
+        cur.clipUrl = it.outputUrl;
+        const block = blockById.get(it.blockId);
+        if (block?.manhuaEditTrim) {
+          cur.trimInSec = block.manhuaEditTrim.inSec;
+          cur.trimOutSec = block.manhuaEditTrim.outSec;
+          if (block.manhuaEditTrim.shotPieces?.length) {
+            cur.shotPieces = block.manhuaEditTrim.shotPieces;
+          }
+        }
+      }
+      if ((it.stage === "keyart" || it.stage === "recap_card") && it.outputUrl) {
+        cur.keyartUrl = cur.keyartUrl || it.outputUrl;
+      }
+      byEp.set(it.episodeIndex, cur);
+    }
+    return Array.from(byEp.values()).sort((a, b) => a.episodeIndex - b.episodeIndex);
+  }
+
+  return clips.sort(
+    (a, b) =>
+      a.episodeIndex - b.episodeIndex ||
+      (a.segmentIndex || 0) - (b.segmentIndex || 0),
+  );
 }
 
 export function summarizeManhuaDockExport(items: ManhuaClipDockItem[]): {

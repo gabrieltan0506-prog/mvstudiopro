@@ -101,10 +101,11 @@ export default function ManhuaClipDock({
     const fromSelected = collectManhuaAssembleClipsFromDock(items, {
       selectedIds,
       onlySelectedEpisodes: selectedIds.size > 0,
+      blocks,
     }).filter((c) => c.clipUrl);
     if (fromSelected.length) return fromSelected;
-    return collectManhuaAssembleClipsFromDock(items).filter((c) => c.clipUrl);
-  }, [items, selectedIds]);
+    return collectManhuaAssembleClipsFromDock(items, { blocks }).filter((c) => c.clipUrl);
+  }, [items, selectedIds, blocks]);
   const canAssemble = assembleClips.length > 0 && Boolean(onAssembleFinal);
   const clipReadyEpCount = useMemo(() => {
     const eps = new Set<number>();

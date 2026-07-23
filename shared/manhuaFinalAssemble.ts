@@ -3,6 +3,15 @@
  * 前台文案禁止出现供应商 / 渲染栈名。
  */
 
+export type ManhuaAssembleShotPieceInput = {
+  shotIndex: number;
+  /** 源片绝对入点（秒） */
+  trimInSec: number;
+  /** 源片绝对出点（秒） */
+  trimOutSec: number;
+  durationSec?: number;
+};
+
 export type ManhuaAssembleClipInput = {
   episodeIndex: number;
   episodeTitle?: string;
@@ -12,6 +21,13 @@ export type ManhuaAssembleClipInput = {
   keyartUrl?: string | null;
   /** 成片时长秒，默认 15 */
   durationSec?: number;
+  /** 同集多段时的段号（1-based）；有则按段序拼接，不再每集只留一条 */
+  segmentIndex?: number;
+  /** 整段裁切（无 shotPieces 时生效） */
+  trimInSec?: number;
+  trimOutSec?: number;
+  /** 按镜绝对秒切片（优先；同源 URL 多段裁切） */
+  shotPieces?: ManhuaAssembleShotPieceInput[];
 };
 
 export type ManhuaAssembleSceneVideo = {
@@ -20,6 +36,10 @@ export type ManhuaAssembleSceneVideo = {
   duration: string;
   stillImageUrl?: string;
   stillDuration?: string;
+  /** ffmpeg 源片裁切入点 */
+  trimInSec?: number;
+  /** ffmpeg 源片裁切出点 */
+  trimOutSec?: number;
 };
 
 export type ManhuaAssemblePlan = {
@@ -40,7 +60,26 @@ export type ManhuaSunoPromptInput = {
  */
 export const MANHUA_ASSEMBLE_MUSIC_DURATION_SEC = 240;
 
-/** 从坞条目（按集）组装 sceneVideos；缺 clip 的集记入 skipped */
+function normalizeTrimPair(
+  inSec: unknown,
+  outSec: unknown,
+  fallbackDur: number,
+): { trimInSec?: number; trimOutSec?: number; durationSec: number } {
+  const tin = Number(inSec);
+  const tout = Number(outSec);
+  if (Number.isFinite(tin) && Number.isFinite(tout) && tout - tin >= 0.5) {
+    const trimInSec = Math.max(0, Math.round(tin * 10) / 10);
+    const trimOutSec = Math.max(trimInSec + 0.5, Math.round(tout * 10) / 10);
+    return {
+      trimInSec,
+      trimOutSec,
+      durationSec: Math.round((trimOutSec - trimInSec) * 10) / 10,
+    };
+  }
+  return { durationSec: fallbackDur };
+}
+
+/** 从坞条目组装 sceneVideos；支持同集多段 + 镜级/段级 trim */
 export function buildManhuaAssemblePlan(
   clips: ManhuaAssembleClipInput[],
   opts?: { episodeIndexes?: number[]; defaultDurationSec?: number },
@@ -50,13 +89,95 @@ export function buildManhuaAssemblePlan(
     ? new Set(opts.episodeIndexes.map((n) => Math.floor(Number(n))).filter((n) => n >= 1))
     : null;
 
+  const list = (Array.isArray(clips) ? clips : [])
+    .map((c) => ({
+      ...c,
+      episodeIndex: Math.floor(Number(c.episodeIndex) || 0),
+      segmentIndex: Math.max(0, Math.floor(Number(c.segmentIndex) || 0)),
+    }))
+    .filter((c) => c.episodeIndex >= 1 && (!allow || allow.has(c.episodeIndex)));
+
+  const multiSegment = list.some((c) => c.segmentIndex >= 1) ||
+    list.filter((c) => String(c.clipUrl || "").trim()).length >
+      new Set(list.filter((c) => String(c.clipUrl || "").trim()).map((c) => c.episodeIndex)).size;
+
+  const sceneVideos: ManhuaAssembleSceneVideo[] = [];
+  const skippedEpisodes: ManhuaAssemblePlan["skippedEpisodes"] = [];
+  const seenEps = new Set<number>();
+
+  if (multiSegment) {
+    const sorted = [...list].sort((a, b) => {
+      if (a.episodeIndex !== b.episodeIndex) return a.episodeIndex - b.episodeIndex;
+      return (a.segmentIndex || 0) - (b.segmentIndex || 0);
+    });
+    const keyartByEp = new Map<number, string>();
+    for (const row of sorted) {
+      const still = String(row.keyartUrl || "").trim();
+      if (still && !keyartByEp.has(row.episodeIndex)) keyartByEp.set(row.episodeIndex, still);
+    }
+    let sceneNo = 0;
+    const epsWithClip = new Set<number>();
+    for (const row of sorted) {
+      const url = String(row.clipUrl || "").trim();
+      if (!url) continue;
+      epsWithClip.add(row.episodeIndex);
+      const pieces = Array.isArray(row.shotPieces) ? row.shotPieces : [];
+      const still =
+        row.segmentIndex <= 1 ? keyartByEp.get(row.episodeIndex) || "" : "";
+      if (pieces.length) {
+        for (const p of pieces) {
+          const fb = Math.max(0.5, Number(p.durationSec) || defaultDur);
+          const trim = normalizeTrimPair(p.trimInSec, p.trimOutSec, fb);
+          sceneNo += 1;
+          sceneVideos.push({
+            sceneIndex: sceneNo,
+            url,
+            duration: `${trim.durationSec}s`,
+            trimInSec: trim.trimInSec,
+            trimOutSec: trim.trimOutSec,
+            stillImageUrl: sceneNo === 1 && still ? still : undefined,
+            stillDuration: sceneNo === 1 && still ? "1.2s" : undefined,
+          });
+        }
+      } else {
+        const fb = Math.max(5, Math.min(30, Math.floor(Number(row.durationSec) || defaultDur)));
+        const trim = normalizeTrimPair(row.trimInSec, row.trimOutSec, fb);
+        sceneNo += 1;
+        sceneVideos.push({
+          sceneIndex: sceneNo,
+          url,
+          duration: `${trim.durationSec}s`,
+          trimInSec: trim.trimInSec,
+          trimOutSec: trim.trimOutSec,
+          stillImageUrl: (row.segmentIndex <= 1 || !row.segmentIndex) && still ? still : undefined,
+          stillDuration:
+            (row.segmentIndex <= 1 || !row.segmentIndex) && still ? "1.2s" : undefined,
+        });
+      }
+    }
+    for (const row of sorted) {
+      if (seenEps.has(row.episodeIndex)) continue;
+      seenEps.add(row.episodeIndex);
+      if (!epsWithClip.has(row.episodeIndex)) {
+        skippedEpisodes.push({
+          episodeIndex: row.episodeIndex,
+          title: row.episodeTitle,
+          reason: "缺成片",
+        });
+      }
+    }
+    return {
+      sceneVideos,
+      skippedEpisodes,
+      episodeIndexes: Array.from(epsWithClip).sort((a, b) => a - b),
+    };
+  }
+
+  // 兼容：每集一条（旧坞）
   const byEp = new Map<number, ManhuaAssembleClipInput>();
-  for (const c of clips) {
-    const ep = Math.floor(Number(c.episodeIndex) || 0);
-    if (ep < 1) continue;
-    if (allow && !allow.has(ep)) continue;
+  for (const c of list) {
+    const ep = c.episodeIndex;
     const prev = byEp.get(ep);
-    // 同集优先保留已有 clipUrl 的条目；否则合并 keyart
     if (!prev) {
       byEp.set(ep, { ...c, episodeIndex: ep });
       continue;
@@ -67,13 +188,13 @@ export function buildManhuaAssemblePlan(
       clipUrl: String(prev.clipUrl || c.clipUrl || "").trim() || undefined,
       keyartUrl: String(prev.keyartUrl || c.keyartUrl || "").trim() || undefined,
       durationSec: prev.durationSec ?? c.durationSec,
+      trimInSec: prev.trimInSec ?? c.trimInSec,
+      trimOutSec: prev.trimOutSec ?? c.trimOutSec,
+      shotPieces: prev.shotPieces?.length ? prev.shotPieces : c.shotPieces,
     });
   }
 
   const sortedEps = Array.from(byEp.keys()).sort((a, b) => a - b);
-  const sceneVideos: ManhuaAssembleSceneVideo[] = [];
-  const skippedEpisodes: ManhuaAssemblePlan["skippedEpisodes"] = [];
-
   for (const ep of sortedEps) {
     const row = byEp.get(ep)!;
     const url = String(row.clipUrl || "").trim();
@@ -85,21 +206,51 @@ export function buildManhuaAssemblePlan(
       });
       continue;
     }
-    const dur = Math.max(5, Math.min(30, Math.floor(Number(row.durationSec) || defaultDur)));
+    const pieces = Array.isArray(row.shotPieces) ? row.shotPieces : [];
     const still = String(row.keyartUrl || "").trim();
-    sceneVideos.push({
-      sceneIndex: ep,
-      url,
-      duration: `${dur}s`,
-      stillImageUrl: still || undefined,
-      stillDuration: still ? "1.2s" : undefined,
-    });
+    if (pieces.length) {
+      for (let i = 0; i < pieces.length; i++) {
+        const p = pieces[i]!;
+        const fb = Math.max(0.5, Number(p.durationSec) || defaultDur);
+        const trim = normalizeTrimPair(p.trimInSec, p.trimOutSec, fb);
+        sceneVideos.push({
+          sceneIndex: sceneVideos.length + 1,
+          url,
+          duration: `${trim.durationSec}s`,
+          trimInSec: trim.trimInSec,
+          trimOutSec: trim.trimOutSec,
+          stillImageUrl: i === 0 && still ? still : undefined,
+          stillDuration: i === 0 && still ? "1.2s" : undefined,
+        });
+      }
+    } else {
+      const fb = Math.max(5, Math.min(30, Math.floor(Number(row.durationSec) || defaultDur)));
+      const trim = normalizeTrimPair(row.trimInSec, row.trimOutSec, fb);
+      sceneVideos.push({
+        sceneIndex: ep,
+        url,
+        duration: `${trim.durationSec}s`,
+        trimInSec: trim.trimInSec,
+        trimOutSec: trim.trimOutSec,
+        stillImageUrl: still || undefined,
+        stillDuration: still ? "1.2s" : undefined,
+      });
+    }
   }
 
   return {
     sceneVideos,
     skippedEpisodes,
-    episodeIndexes: sceneVideos.map((s) => s.sceneIndex),
+    episodeIndexes: sceneVideos.length
+      ? Array.from(
+          new Set(
+            sortedEps.filter((ep) => {
+              const row = byEp.get(ep);
+              return Boolean(String(row?.clipUrl || "").trim());
+            }),
+          ),
+        )
+      : [],
   };
 }
 

@@ -4863,6 +4863,18 @@ export default function OmniCanvas() {
                       description: "可在成片坞勾选并参与长片合成。",
                     });
                   }}
+                  onApplyClipEditTrim={(clipBlockId, trim) => {
+                    setBlocks((prev) => {
+                      const next = prev.map((b) =>
+                        b.id === clipBlockId ? { ...b, manhuaEditTrim: trim } : b,
+                      );
+                      setEdges((eds) => {
+                        saveCanvasState(next, eds);
+                        return eds;
+                      });
+                      return next;
+                    });
+                  }}
                 />
                 {!immersiveWorkbench ? (
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-white/40">
