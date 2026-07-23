@@ -42,10 +42,20 @@ import {
   type ManhuaTemplateFrameVisionResult,
 } from "../shared/manhuaTemplateLearnFrameVision.js";
 import {
+  MANHUA_LEARN_STAGE,
+  formatManhuaLearnEpisodeDetail,
+  getManhuaLearnPipelineMeta,
+  manhuaLearnStageLabelZh,
+} from "../shared/manhuaTemplateLearnPipeline.js";
+import {
   analyzeManhuaDramaAudioWithGemini,
   isGeminiAudioAvailable,
   type ManhuaDramaAudioScanResult,
 } from "../server/gemini-audio.js";
+
+function logLearnStage(stage: string, detailZh?: string) {
+  console.log(`[learn·${stage}] ${manhuaLearnStageLabelZh(stage, detailZh)}`);
+}
 
 config({ path: ".env.local" });
 config({ path: ".env" });
@@ -588,6 +598,11 @@ async function main() {
   let url = String(argValue("--url") || "").trim();
   let videoPath = String(argValue("--video") || "").trim();
   const dry = hasFlag("--dry-plan");
+  const meta = getManhuaLearnPipelineMeta();
+  logLearnStage(MANHUA_LEARN_STAGE.local_run, `本机学节奏 · ${meta.summaryZh}`);
+  for (const step of meta.stepsZh) {
+    console.log(`[learn·plan] ${step}`);
+  }
 
   if (risingJson) {
     const row = await loadRisingEntry(path.resolve(risingJson), rank);
@@ -617,6 +632,10 @@ async function main() {
         "[learn] 当前是抖音搜索页链接。若下载失败，请打开搜索结果里的成片/合集页，改用 --url 成片地址。",
       );
     }
+    logLearnStage(
+      MANHUA_LEARN_STAGE.download,
+      formatManhuaLearnEpisodeDetail(MANHUA_LEARN_STAGE.download, 1),
+    );
     videoPath = await downloadVideo(url, workDir);
   } else {
     videoPath = path.resolve(videoPath);
@@ -625,6 +644,10 @@ async function main() {
   const durationSec = await ffprobeDuration(videoPath);
   console.log(`[learn] duration=${durationSec.toFixed(1)}s`);
 
+  logLearnStage(
+    MANHUA_LEARN_STAGE.audio,
+    formatManhuaLearnEpisodeDetail(MANHUA_LEARN_STAGE.audio, 1),
+  );
   const audioPath = path.join(workDir, "audio.mp3");
   await extractAudioMp3(videoPath, audioPath);
   const geminiScan = await geminiAudioScan(audioPath);
@@ -666,9 +689,21 @@ async function main() {
     return;
   }
 
+  logLearnStage(
+    MANHUA_LEARN_STAGE.frames,
+    formatManhuaLearnEpisodeDetail(
+      MANHUA_LEARN_STAGE.frames,
+      1,
+      `${plan.timestamps.length} 张`,
+    ),
+  );
   const framesDir = path.join(workDir, "frames");
   const framePaths = await extractFrames(videoPath, plan.timestamps, framesDir);
   console.log(`[learn] 已抽 ${framePaths.length} 帧 → ${framesDir}`);
+  logLearnStage(
+    MANHUA_LEARN_STAGE.vision,
+    formatManhuaLearnEpisodeDetail(MANHUA_LEARN_STAGE.vision, 1),
+  );
 
   const transcriptPreview = String(geminiScan?.transcriptSummary || "")
     .replace(/\s+/g, " ")
@@ -736,6 +771,7 @@ async function main() {
     "utf8",
   );
 
+  logLearnStage(MANHUA_LEARN_STAGE.done, manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.done));
   console.log(`[learn] 提案 → ${proposalPath}`);
   console.log(`[learn] 清单 → ${manifestPath}`);
   console.log(

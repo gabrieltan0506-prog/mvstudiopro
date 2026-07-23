@@ -1,11 +1,21 @@
 /**
  * Platform「学节奏」结果面板：会话态 ↔ GCS snapshot 映射，本机记住最近合集 key。
+ * 进度阶段真源：shared/manhuaTemplateLearnPipeline（产品流水线，非仅 Cursor skill）。
  */
 
 import {
   MANHUA_LEARN_ANALYSIS_MIN,
   MANHUA_LEARN_ANALYSIS_TARGET,
 } from "@shared/manhuaTemplateLearnSeries";
+import {
+  MANHUA_LEARN_STAGE,
+  appendManhuaLearnProgressLine,
+  buildManhuaLearnStartLines,
+  buildManhuaLocalLearnPanelSteps,
+  manhuaLearnStageLabelZh,
+  type ManhuaLearnChannel,
+  type ManhuaLearnProgressLine,
+} from "@shared/manhuaTemplateLearnPipeline";
 
 export const LS_MANHUA_LEARN_SERIES_KEY = "mv-manhua-learn-focus-series-v1";
 
@@ -23,6 +33,14 @@ export type ManhuaLearnResultUi = {
   tagLabelsZh?: string[];
   listedEpisodeCount?: number;
   pendingCount?: number;
+  /** cloud | local */
+  channel?: ManhuaLearnChannel;
+  /** queued | running | succeeded | failed | local */
+  liveStatus?: "queued" | "running" | "succeeded" | "failed" | "local";
+  livePhase?: string;
+  liveLabelZh?: string;
+  progressLines?: ManhuaLearnProgressLine[];
+  startedAtIso?: string;
   digestsPreview: Array<{
     episodeIndex: number;
     title: string;
@@ -42,30 +60,173 @@ export type ManhuaLearnResultUi = {
   } | null;
 };
 
+function parseProgressLines(raw: unknown): ManhuaLearnProgressLine[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((row) => {
+      const r = row as Record<string, unknown>;
+      return {
+        atIso: String(r.atIso || "").trim() || new Date().toISOString(),
+        stage: String(r.stage || "").trim() || MANHUA_LEARN_STAGE.queued,
+        detailZh: String(r.detailZh || "").trim(),
+      };
+    })
+    .filter((l) => Boolean(l.detailZh));
+}
+
+/** 一点学节奏就立刻落面板（开始态），避免长时间只有按钮「学习中」 */
+export function manhuaLearnResultFromStart(input: {
+  channel: ManhuaLearnChannel;
+  url?: string;
+  title?: string;
+  seriesKey?: string;
+}): ManhuaLearnResultUi {
+  const lines = buildManhuaLearnStartLines(input);
+  return {
+    seriesKey:
+      String(input.seriesKey || "").trim() ||
+      `learn_${Date.now().toString(36)}`,
+    analysisReady: false,
+    learnedCount: 0,
+    analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
+    analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
+    batchLearned: 0,
+    messageZh: lines[0]?.detailZh || "学节奏已开始",
+    channel: input.channel,
+    liveStatus: input.channel === "local" ? "local" : "queued",
+    livePhase: MANHUA_LEARN_STAGE.queued,
+    liveLabelZh: lines[0]?.detailZh,
+    progressLines: lines,
+    startedAtIso: lines[0]?.atIso,
+    digestsPreview: [],
+    proposal: null,
+  };
+}
+
+/** 轮询中把 job.output 阶段刷进面板 */
+export function mergeManhuaLearnLiveProgress(
+  prev: ManhuaLearnResultUi | null,
+  tick: {
+    status: string;
+    output?: Record<string, unknown>;
+  },
+): ManhuaLearnResultUi {
+  const base =
+    prev ||
+    manhuaLearnResultFromStart({ channel: "cloud" });
+  const out = tick.output || {};
+  const label =
+    String(out.analysisStageLabel || "").trim() ||
+    manhuaLearnStageLabelZh(String(out.analysisStage || "").replace(/^manhua_learn_/, ""));
+  const fromJob = parseProgressLines(out.learnProgressLog);
+  const progressLines =
+    fromJob.length > 0
+      ? fromJob
+      : label
+        ? appendManhuaLearnProgressLine(
+            base.progressLines,
+            String(out.analysisStage || "").replace(/^manhua_learn_/, "") ||
+              MANHUA_LEARN_STAGE.queued,
+            label,
+          )
+        : base.progressLines || [];
+  const liveStatus =
+    tick.status === "queued"
+      ? "queued"
+      : tick.status === "running"
+        ? "running"
+        : tick.status === "failed"
+          ? "failed"
+          : tick.status === "succeeded"
+            ? "succeeded"
+            : base.liveStatus || "running";
+  return {
+    ...base,
+    channel: "cloud",
+    liveStatus,
+    livePhase: String(out.analysisStage || base.livePhase || "").replace(/^manhua_learn_/, ""),
+    liveLabelZh: label || base.liveLabelZh,
+    progressLines,
+    messageZh: label || base.messageZh,
+  };
+}
+
 /** 失败也落面板，避免只 toast / 复制本机命令却看不见原因 */
 export function manhuaLearnResultFromFailure(input: {
   errorZh: string;
   url?: string;
   title?: string;
   seriesKey?: string;
+  prev?: ManhuaLearnResultUi | null;
 }): ManhuaLearnResultUi {
   const errorZh = String(input.errorZh || "云端学习失败").trim().slice(0, 400);
   const titleHint = String(input.title || "").trim().slice(0, 40);
   const urlHint = String(input.url || "").trim().slice(0, 80);
   const seriesKey =
-    String(input.seriesKey || "").trim() ||
+    String(input.seriesKey || input.prev?.seriesKey || "").trim() ||
     `fail_${Date.now().toString(36)}`;
   const context = [titleHint, urlHint].filter(Boolean).join(" · ");
+  const failLine = appendManhuaLearnProgressLine(
+    input.prev?.progressLines,
+    MANHUA_LEARN_STAGE.failed,
+    errorZh,
+  );
   return {
     seriesKey,
     analysisReady: false,
-    learnedCount: 0,
+    learnedCount: input.prev?.learnedCount || 0,
     analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
     analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
-    batchLearned: 0,
+    batchLearned: input.prev?.batchLearned || 0,
     messageZh: context ? `${errorZh}（${context}）` : errorZh,
     errorZh,
-    digestsPreview: [],
+    channel: input.prev?.channel || "cloud",
+    liveStatus: "failed",
+    livePhase: MANHUA_LEARN_STAGE.failed,
+    liveLabelZh: errorZh,
+    progressLines: failLine,
+    startedAtIso: input.prev?.startedAtIso,
+    digestsPreview: input.prev?.digestsPreview || [],
+    proposal: input.prev?.proposal || null,
+    categoryLabelZh: input.prev?.categoryLabelZh,
+    tagLabelsZh: input.prev?.tagLabelsZh,
+    listedEpisodeCount: input.prev?.listedEpisodeCount,
+    pendingCount: input.prev?.pendingCount,
+  };
+}
+
+/** 本机回退：把「开始→复制命令→请终端执行」写进同一面板 */
+export function manhuaLearnResultFromLocalFallback(input: {
+  reasonZh: string;
+  cmd: string;
+  url?: string;
+  title?: string;
+  prev?: ManhuaLearnResultUi | null;
+}): ManhuaLearnResultUi {
+  const steps = buildManhuaLocalLearnPanelSteps({
+    reasonZh: input.reasonZh,
+    cmd: input.cmd,
+    title: input.title,
+  });
+  const merged = [...(input.prev?.progressLines || []), ...steps].slice(-40);
+  return {
+    seriesKey:
+      String(input.prev?.seriesKey || "").trim() ||
+      `local_${Date.now().toString(36)}`,
+    analysisReady: false,
+    learnedCount: input.prev?.learnedCount || 0,
+    analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
+    analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
+    batchLearned: input.prev?.batchLearned || 0,
+    messageZh: steps[0]?.detailZh || input.reasonZh,
+    errorZh: String(input.reasonZh || "").trim() || undefined,
+    channel: "local",
+    liveStatus: "local",
+    livePhase: MANHUA_LEARN_STAGE.local_ready,
+    liveLabelZh: manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.local_ready),
+    progressLines: merged,
+    startedAtIso: input.prev?.startedAtIso || steps[0]?.atIso,
+    digestsPreview: input.prev?.digestsPreview || [],
     proposal: null,
   };
 }
@@ -116,6 +277,10 @@ export function manhuaLearnResultFromJobOutput(
     : [];
   const learnedCount = Math.max(0, Math.floor(Number(out.learnedCount) || 0));
   const listed = Math.max(0, Math.floor(Number(out.listedEpisodeCount) || 0));
+  const progressLines = parseProgressLines(out.learnProgressLog);
+  const doneLabel =
+    String(out.analysisStageLabel || "").trim() ||
+    manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.done);
   return {
     seriesKey: String(out.seriesKey || "").trim(),
     analysisReady,
@@ -131,6 +296,14 @@ export function manhuaLearnResultFromJobOutput(
     tagLabelsZh: seriesTags.length ? seriesTags : undefined,
     listedEpisodeCount: listed || undefined,
     pendingCount: listed > 0 ? Math.max(0, listed - learnedCount) : undefined,
+    channel: out.learnChannel === "local" ? "local" : "cloud",
+    liveStatus: "succeeded",
+    livePhase: MANHUA_LEARN_STAGE.done,
+    liveLabelZh: doneLabel,
+    progressLines:
+      progressLines.length > 0
+        ? appendManhuaLearnProgressLine(progressLines, MANHUA_LEARN_STAGE.done, doneLabel)
+        : appendManhuaLearnProgressLine(undefined, MANHUA_LEARN_STAGE.done, doneLabel),
     digestsPreview,
     proposal:
       analysisReady && proposalRaw
