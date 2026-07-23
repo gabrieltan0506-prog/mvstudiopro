@@ -80,6 +80,10 @@ import {
 } from "@shared/manhuaProductionPipeline";
 import { resolveManhuaWorkbenchNextCta } from "@shared/manhuaWorkbenchNextCta";
 import {
+  explainManhuaClipActionGate,
+  explainManhuaKeyartActionGate,
+} from "@shared/manhuaWorkbenchActionGate";
+import {
   buildManhuaSecondCueSheet,
   buildWorkbenchShotsFromSegmentPlan,
   evaluateManhuaCueSheetReady,
@@ -681,18 +685,7 @@ export default function ManhuaScriptWorkbench({
 
   const showCanvasDock = dockCanvas && canvasDockOpen;
 
-  const runGenerateFragment = () => {
-    if (onGenerateFragment) {
-      onGenerateFragment({
-        // shotIndex 现为段号（工厂按段出一条成片）
-        shotIndex: activeSegNo,
-        keyartId: activeKeyart?.id,
-        clipId: activeClip?.id || clip?.id,
-      });
-      return;
-    }
-    onSpawnAndRunClip?.();
-  };
+  // runGenerateFragment 定义在门槛文案之后（避免静默 disabled）
 
   const characters = characterIds
     .map((id) => getManhuaCharacterById(id))
@@ -866,14 +859,6 @@ export default function ManhuaScriptWorkbench({
   const outlineComplete = Boolean(canRun);
   /** 方案 B：剧本确认 + 角色/场景锁定 + 角色图/场景图齐，才可进分镜出片 */
   const assetsComplete = assetGate.ready && !assetScriptStaleHintZh;
-  const canGenerateFragment = outlineComplete && assetsComplete;
-  const fragmentGateHint = !outlineComplete
-    ? "请先确认剧本大纲"
-    : !assetGate.castLocked || !assetGate.sceneLocked
-      ? "请先锁定角色与场景"
-      : !assetsComplete
-        ? assetGate.hintZh || "请先出齐角色图与场景图"
-        : null;
   const productionProgress = useMemo((): ManhuaProductionProgress => {
     const segmentCount = segments.length;
     const segmentPlanReady = segmentCount >= MANHUA_SEGMENT_MIN;
@@ -934,6 +919,43 @@ export default function ManhuaScriptWorkbench({
             : !productionProgress.keyartsReady
               ? "请先完成带资产锁的关键静帧"
               : "请先确认按秒导戏单（静帧锁定后自动生成）";
+
+  /** 门槛只用于点击时报错，禁止拿来把按钮静默变灰 */
+  const keyartGateHint = explainManhuaKeyartActionGate({
+    outlineComplete,
+    assetGate,
+    assetScriptStaleHintZh,
+    factoryBusy,
+  });
+  const clipGateHint = explainManhuaClipActionGate({
+    outlineComplete,
+    assetGate,
+    assetScriptStaleHintZh,
+    factoryBusy,
+    videoBurnHintZh: videoBurnHint,
+    stillsReadyEnough,
+    visualBriefConfirmed,
+  });
+  const fragmentGateHint = keyartGateHint;
+  const refuseIfBlocked = (hint: string | null): boolean => {
+    if (!hint) return false;
+    toast.error("还不能跑", { description: hint });
+    return true;
+  };
+  const runGenerateFragment = () => {
+    if (refuseIfBlocked(clipGateHint)) return;
+    if (activePhase !== "storyboard") setActivePhase("storyboard");
+    if (onGenerateFragment) {
+      onGenerateFragment({
+        // shotIndex 现为段号（工厂按段出一条成片）
+        shotIndex: activeSegNo,
+        keyartId: activeKeyart?.id,
+        clipId: activeClip?.id || clip?.id,
+      });
+      return;
+    }
+    onSpawnAndRunClip?.();
+  };
 
   const nextCta = useMemo(
     () =>
@@ -1038,34 +1060,32 @@ export default function ManhuaScriptWorkbench({
     }
   }, [outlineComplete, activePhase]);
 
-  useEffect(() => {
-    if (
-      outlineComplete &&
-      (!assetsComplete || episodeSheetGallery.length === 0) &&
-      (activePhase === "outline" || activePhase === "storyboard" || activePhase === "edit")
-    ) {
-      setActivePhase("assets");
-    }
-  }, [outlineComplete, assetsComplete, episodeSheetGallery.length, activePhase]);
+  // 不再因资产未齐强制踢回资产页——用横幅 + 点击报错说明，禁止静默挡操作
 
   const selectPhase = (phase: WorkflowPhaseId) => {
     if ((phase === "storyboard" || phase === "edit") && !outlineComplete) {
+      toast.error("还不能进分镜", { description: "请先确认剧本大纲" });
+      setActivePhase("outline");
+      return;
+    }
+    if (phase === "assets" && !outlineComplete) {
+      toast.error("还不能进资产设定", { description: "请先确认剧本大纲" });
       setActivePhase("outline");
       return;
     }
     if (
       (phase === "storyboard" || phase === "edit") &&
-      (!assetsComplete || episodeSheetGallery.length === 0)
+      keyartGateHint &&
+      activePhase !== phase
     ) {
-      setActivePhase("assets");
-      return;
+      // 允许进入分镜查看，但明确告知还缺什么（不强制踢回、不静默）
+      toast.message("分镜可看，生成仍有门槛", { description: keyartGateHint });
     }
     if (phase === "edit" && !storyboardReadyEnough) {
+      toast.message("请先准备分镜镜头", {
+        description: "剪辑台需要分镜就绪后再进入",
+      });
       setActivePhase("storyboard");
-      return;
-    }
-    if (phase === "assets" && !outlineComplete) {
-      setActivePhase("outline");
       return;
     }
     setActivePhase(phase);
@@ -1073,22 +1093,33 @@ export default function ManhuaScriptWorkbench({
 
   const enterStoryboard = () => {
     if (!outlineComplete) {
+      toast.error("还不能进分镜", { description: "请先确认剧本大纲" });
       setActivePhase("outline");
       return;
     }
-    if (!assetGate.castLocked || !assetGate.sceneLocked) {
-      return;
-    }
     if (assetScriptStaleHintZh && onRegenerateAssetsFromScript) {
+      toast.message("设定图与剧本不符", {
+        description: assetScriptStaleHintZh,
+      });
       void onRegenerateAssetsFromScript();
       return;
     }
-    if (onConfirmAssetsAndPrepareImages) {
+    if (!assetsComplete && onConfirmAssetsAndPrepareImages) {
+      if (keyartGateHint) {
+        toast.message("正在准备资产", { description: keyartGateHint });
+      }
       void onConfirmAssetsAndPrepareImages();
       return;
     }
-    if (!assetsComplete) return;
+    if (refuseIfBlocked(keyartGateHint)) return;
     setActivePhase("storyboard");
+  };
+
+  const runGenerateAllKeyarts = () => {
+    if (refuseIfBlocked(keyartGateHint)) return;
+    setActivePhase("storyboard");
+    setVisualBriefConfirmed(true);
+    onGenerateAllEpisodeKeyarts?.();
   };
 
   const runNextCta = () => {
@@ -1096,9 +1127,15 @@ export default function ManhuaScriptWorkbench({
       onStopFactory?.();
       return;
     }
-    selectPhase(nextCta.targetPhase);
     if (nextCta.kind === "confirm_outline") {
-      if (writerPackReady && onConfirmOutline) onConfirmOutline();
+      selectPhase(nextCta.targetPhase);
+      if (!writerPackReady || !onConfirmOutline) {
+        toast.error("还不能跑", {
+          description: "请先在「改题材」扩写或导入剧本，再确认大纲",
+        });
+        return;
+      }
+      onConfirmOutline();
       return;
     }
     if (nextCta.kind === "spawn_sheets" || nextCta.kind === "enter_storyboard") {
@@ -1106,13 +1143,12 @@ export default function ManhuaScriptWorkbench({
       return;
     }
     if (nextCta.kind === "generate_keyarts") {
-      if (onGenerateAllEpisodeKeyarts) {
-        setVisualBriefConfirmed(true);
-        onGenerateAllEpisodeKeyarts();
-      }
+      runGenerateAllKeyarts();
       return;
     }
     if (nextCta.kind === "generate_all_clips") {
+      if (refuseIfBlocked(clipGateHint)) return;
+      selectPhase("storyboard");
       const idxs =
         missingFragmentIndexes.length > 0
           ? missingFragmentIndexes
@@ -1214,40 +1250,30 @@ export default function ManhuaScriptWorkbench({
                 <button
                   type="button"
                   data-manhua-action="generate-all-keyarts"
-                  disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
-                  onClick={() => {
-                    setVisualBriefConfirmed(true);
-                    onGenerateAllEpisodeKeyarts();
-                  }}
+                  disabled={Boolean(factoryBusy)}
+                  onClick={runGenerateAllKeyarts}
                   className={`inline-flex items-center gap-1 rounded-lg border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-3 py-1.5 text-[11px] font-semibold text-cyan-50 disabled:opacity-45 ${
                     nextCta.kind === "generate_keyarts"
                       ? "ring-2 ring-cyan-300/70 ring-offset-1 ring-offset-[#0a121c]"
                       : ""
                   }`}
                   title={
-                    fragmentGateHint ||
-                    "确认视觉简报后，一次出齐本集全部分镜静帧"
+                    keyartGateHint ||
+                    "一次出齐本集关键静帧（条件不满足时会提示缺什么）"
                   }
                 >
                   <Play className="h-3.5 w-3.5" />
-                  确认简报，生成分镜画面
+                  生成关键静帧
                 </button>
               ) : null}
               <button
                 type="button"
                 data-manhua-action="generate-fragment"
-                disabled={
-                  !canGenerateFragment ||
-                  !videoBurnUnlocked ||
-                  factoryBusy ||
-                  activePhase !== "storyboard" ||
-                  (!visualBriefConfirmed && !stillsReadyEnough)
-                }
+                disabled={Boolean(factoryBusy)}
                 onClick={runGenerateFragment}
                 className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/75 hover:bg-white/[0.08] disabled:opacity-45"
                 title={
-                  videoBurnHint ||
-                  fragmentGateHint ||
+                  clipGateHint ||
                   `当前镜 ${String(activeShotNo).padStart(2, "0")}：缺静帧则只补本镜再出片`
                 }
               >
@@ -1259,8 +1285,11 @@ export default function ManhuaScriptWorkbench({
             <button
               type="button"
               data-manhua-action="layout-readable-chain"
-              disabled={factoryBusy || activePhase !== "storyboard"}
-              onClick={() => onLayoutReadableChain()}
+              disabled={Boolean(factoryBusy)}
+              onClick={() => {
+                if (activePhase !== "storyboard") setActivePhase("storyboard");
+                onLayoutReadableChain();
+              }}
               className="rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/70 hover:bg-white/[0.08] disabled:opacity-45"
               title="画布按文案→静帧→成片从左到右对齐"
             >
@@ -1271,22 +1300,19 @@ export default function ManhuaScriptWorkbench({
             <button
               type="button"
               data-manhua-action="generate-selected-fragments"
-              disabled={
-                !canGenerateFragment ||
-                !videoBurnUnlocked ||
-                factoryBusy ||
-                activePhase !== "storyboard"
-              }
-              onClick={() =>
+              disabled={Boolean(factoryBusy)}
+              onClick={() => {
+                if (refuseIfBlocked(clipGateHint)) return;
+                setActivePhase("storyboard");
                 onGenerateMissingFragments(
                   Array.from(
                     new Set(selectedSorted.map((n) => resolveSegmentIndexFromShotIndex(n))),
                   ),
-                )
-              }
+                );
+              }}
               className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45"
               title={
-                videoBurnHint ||
+                clipGateHint ||
                 `依次生成已勾选段：${selectedSorted.map((n) => String(resolveSegmentIndexFromShotIndex(n)).padStart(2, "0")).join("、")}`
               }
             >
@@ -1297,14 +1323,16 @@ export default function ManhuaScriptWorkbench({
             <button
               type="button"
               data-manhua-action="generate-missing-fragments"
-              disabled={
-                !canGenerateFragment ||
-                !videoBurnUnlocked ||
-                factoryBusy ||
-                activePhase !== "storyboard" ||
-                !stillsReadyEnough
-              }
+              disabled={Boolean(factoryBusy)}
               onClick={() => {
+                if (refuseIfBlocked(clipGateHint)) return;
+                if (!stillsReadyEnough) {
+                  toast.error("还不能跑", {
+                    description: "请先点「生成关键静帧」出齐本集静帧",
+                  });
+                  return;
+                }
+                setActivePhase("storyboard");
                 const idxs =
                   missingFragmentIndexes.length > 0
                     ? missingFragmentIndexes
@@ -1319,7 +1347,7 @@ export default function ManhuaScriptWorkbench({
                 onGenerateMissingFragments(idxs);
               }}
               className="rounded-lg border border-fuchsia-300/35 bg-fuchsia-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-fuchsia-50 hover:bg-fuchsia-500/25 disabled:opacity-45"
-              title={videoBurnHint || "静帧与导戏单锁定后批量出片"}
+              title={clipGateHint || "静帧与导戏单锁定后批量出片"}
             >
               确认静帧，生成全部成片
             </button>
@@ -1328,9 +1356,13 @@ export default function ManhuaScriptWorkbench({
             <button
               type="button"
               data-manhua-action="rerun-keyarts"
-              disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
-              onClick={() => onRerunKeyartsFromReverse()}
-              title="从编导反推重跑本集多镜静帧，覆盖旧图"
+              disabled={Boolean(factoryBusy)}
+              onClick={() => {
+                if (refuseIfBlocked(keyartGateHint)) return;
+                setActivePhase("storyboard");
+                onRerunKeyartsFromReverse();
+              }}
+              title={keyartGateHint || "从编导反推重跑本集多镜静帧，覆盖旧图"}
               className="rounded-lg border border-amber-400/40 bg-amber-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/25 disabled:opacity-45"
             >
               重出全部分镜
@@ -1386,9 +1418,12 @@ export default function ManhuaScriptWorkbench({
           {onResumeFromFailure ? (
             <button
               type="button"
-              disabled={!canGenerateFragment || factoryBusy}
-              onClick={() => onResumeFromFailure()}
-              title="仅从失败/未完成节点接着跑；已出的错图不会重做"
+              disabled={Boolean(factoryBusy)}
+              onClick={() => {
+                if (refuseIfBlocked(keyartGateHint)) return;
+                onResumeFromFailure();
+              }}
+              title={keyartGateHint || "仅从失败/未完成节点接着跑；已出的错图不会重做"}
               className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06] disabled:opacity-45"
             >
               续跑
@@ -1422,10 +1457,10 @@ export default function ManhuaScriptWorkbench({
           请先确认剧本大纲，再进入资产与分镜
         </div>
       ) : null}
-      {outlineComplete && !assetsComplete ? (
+      {outlineComplete && keyartGateHint ? (
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-amber-400/20 bg-amber-500/10 px-3 py-1.5">
           <p className="min-w-0 flex-1 text-[11px] text-amber-50/90">
-            {fragmentGateHint || "请先锁定角色与场景，并出齐角色图 / 场景图后再进分镜"}
+            {keyartGateHint}
           </p>
           <button
             type="button"
@@ -1546,25 +1581,11 @@ export default function ManhuaScriptWorkbench({
           type="button"
           data-manhua-action="ashuo-step-generate"
           disabled={
-            nextCta.kind === "confirm_outline"
-              ? !writerPackReady || !onConfirmOutline || factoryBusy
-              : nextCta.kind === "busy"
-                ? !onStopFactory
-                : nextCta.kind === "idle_done"
-                  ? true
-                  : nextCta.kind === "spawn_sheets" || nextCta.kind === "enter_storyboard"
-                    ? !outlineComplete ||
-                      !assetGate.castLocked ||
-                      !assetGate.sceneLocked ||
-                      factoryBusy
-                    : nextCta.kind === "generate_keyarts"
-                      ? !onGenerateAllEpisodeKeyarts || !canGenerateFragment || factoryBusy
-                      : nextCta.kind === "generate_all_clips"
-                        ? !onGenerateMissingFragments ||
-                          !canGenerateFragment ||
-                          !videoBurnUnlocked ||
-                          factoryBusy
-                        : factoryBusy
+            nextCta.kind === "busy"
+              ? !onStopFactory
+              : nextCta.kind === "idle_done"
+                ? true
+                : Boolean(factoryBusy)
           }
           onClick={runNextCta}
           className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3.5 py-2 text-[12px] font-bold disabled:opacity-45 ${
@@ -1711,13 +1732,22 @@ export default function ManhuaScriptWorkbench({
                   <button
                     type="button"
                     data-manhua-action="regen-assets-from-script"
-                    disabled={
-                      !outlineComplete ||
-                      !assetGate.castLocked ||
-                      !assetGate.sceneLocked ||
-                      factoryBusy
-                    }
-                    onClick={() => void onRegenerateAssetsFromScript()}
+                    disabled={Boolean(factoryBusy)}
+                    onClick={() => {
+                      if (!outlineComplete) {
+                        toast.error("还不能跑", { description: "请先确认剧本大纲" });
+                        return;
+                      }
+                      if (!assetGate.castLocked || !assetGate.sceneLocked) {
+                        toast.error("还不能跑", {
+                          description: !assetGate.castLocked
+                            ? "请先锁定人物（剧本人物表或勾选人物参考）"
+                            : "请先锁定场景（剧本场景表或勾选场景参考）",
+                        });
+                        return;
+                      }
+                      void onRegenerateAssetsFromScript();
+                    }}
                     className="rounded-lg border border-amber-300/45 bg-amber-500/20 px-3 py-1.5 text-[12px] font-semibold text-amber-50 disabled:opacity-45"
                     title="清掉与现稿不符的旧人物/场景设定图，再按剧本重出（会扣积分）"
                   >
@@ -1727,30 +1757,37 @@ export default function ManhuaScriptWorkbench({
                 <button
                   type="button"
                   data-manhua-action="confirm-assets"
-                  disabled={
-                    !outlineComplete || !assetGate.castLocked || !assetGate.sceneLocked || factoryBusy
-                  }
-                  onClick={enterStoryboard}
+                  disabled={Boolean(factoryBusy)}
+                  onClick={() => {
+                    if (
+                      !keyartGateHint &&
+                      episodeSheetGallery.length > 0 &&
+                      onGenerateAllEpisodeKeyarts &&
+                      !stillsReadyEnough
+                    ) {
+                      runGenerateAllKeyarts();
+                      return;
+                    }
+                    if (episodeSheetGallery.length === 0 || !assetsComplete) {
+                      enterStoryboard();
+                      return;
+                    }
+                    if (refuseIfBlocked(keyartGateHint)) return;
+                    setActivePhase("storyboard");
+                  }}
                   className="rounded-lg border border-violet-300/50 bg-violet-500/30 px-3 py-1.5 text-[12px] font-bold text-violet-50 disabled:opacity-45"
                   title={
-                    !assetGate.castLocked || !assetGate.sceneLocked
-                      ? assetGate.viaWriterCanon
-                        ? "剧本人物/场景表不完整"
-                        : "可上传勾选参考，或确认含人物表的剧本"
-                      : assetScriptStaleHintZh
-                        ? "现有设定图与剧本不符，请先点「按剧本重出设定图」"
-                        : episodeSheetGallery.length === 0
-                          ? "按剧本出齐角色定妆与场景空镜"
-                          : assetsComplete
-                            ? "进入分镜视频"
-                            : "继续补齐角色图 / 场景图"
+                    keyartGateHint ||
+                    (stillsReadyEnough ? "进入分镜" : "生成关键静帧")
                   }
                 >
                   {assetScriptStaleHintZh
                     ? "设定图已过期"
                     : episodeSheetGallery.length === 0 || !assetsComplete
                       ? "生成全部"
-                      : "生成分镜视频 →"}
+                      : !stillsReadyEnough
+                        ? "生成关键静帧"
+                        : "进入分镜 →"}
                 </button>
               </div>
             </div>
@@ -3040,14 +3077,11 @@ export default function ManhuaScriptWorkbench({
                   {onGenerateAllEpisodeKeyarts ? (
                     <button
                       type="button"
-                      disabled={!canGenerateFragment || factoryBusy}
-                      onClick={() => {
-                        setVisualBriefConfirmed(true);
-                        onGenerateAllEpisodeKeyarts();
-                      }}
-                      className="rounded-md border border-white/15 px-2 py-1 text-[10px] text-white/70 hover:bg-white/[0.06] disabled:opacity-40"
+                      disabled={Boolean(factoryBusy)}
+                      onClick={runGenerateAllKeyarts}
+                      className="rounded-md border border-cyan-300/40 bg-cyan-500/15 px-2 py-1 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-40"
                     >
-                      确认并生成分镜画面
+                      生成关键静帧
                     </button>
                   ) : null}
                 </div>
@@ -3202,10 +3236,13 @@ export default function ManhuaScriptWorkbench({
                         <button
                           type="button"
                           data-manhua-action="rerun-shot"
-                          disabled={!canGenerateFragment || factoryBusy}
-                          onClick={() => onRerunKeyartShot(shotKey.id, shot.index)}
+                          disabled={Boolean(factoryBusy)}
+                          onClick={() => {
+                            if (refuseIfBlocked(keyartGateHint)) return;
+                            onRerunKeyartShot(shotKey.id, shot.index);
+                          }}
                           className="flex w-11 shrink-0 flex-col items-center justify-center gap-1 border-l border-white/10 text-[9px] text-amber-100/75 hover:bg-amber-500/10 disabled:opacity-35"
-                          title={`只重出第 ${shot.index} 镜，保留其他镜头`}
+                          title={keyartGateHint || `只重出第 ${shot.index} 镜，保留其他镜头`}
                         >
                           <RefreshCw className="h-3.5 w-3.5" />
                           单镜
@@ -3307,7 +3344,7 @@ export default function ManhuaScriptWorkbench({
               )}
               {!annotateStillUrl ? (
                 <p className="text-[10px] text-amber-100/70">
-                  尚无本片段静帧。请先点「确认简报，生成分镜画面」；单镜成片缺图时只补本镜。
+                  尚无本片段静帧。请先点「生成关键静帧」；单镜成片缺图时只补本镜。
                 </p>
               ) : null}
             </div>
@@ -3461,7 +3498,7 @@ export default function ManhuaScriptWorkbench({
                       ? "正在生成…"
                       : dockCanvas
                         ? "点「打开画布」调节点，或先生成片段后在此检查成片"
-                        : "确认简报生成分镜画面后，静帧 / 成片在此预览"}
+                        : "生成关键静帧后，静帧 / 成片在此预览"}
                   </div>
                 )}
               </div>
@@ -3554,8 +3591,11 @@ export default function ManhuaScriptWorkbench({
               静帧不对（穿错时代/没进场景/带字）→ 顶栏点
               <button
                 type="button"
-                disabled={!canGenerateFragment || factoryBusy}
-                onClick={() => onRerunKeyartsFromReverse()}
+                disabled={Boolean(factoryBusy)}
+                onClick={() => {
+                  if (refuseIfBlocked(keyartGateHint)) return;
+                  onRerunKeyartsFromReverse();
+                }}
                 className="mx-0.5 font-semibold text-amber-100/90 underline underline-offset-2 disabled:opacity-45"
               >
                 重出静帧
@@ -3807,8 +3847,10 @@ export default function ManhuaScriptWorkbench({
                       type="button"
                       data-manhua-action="retry-fragment"
                       data-manhua-retry-shot={shot.index}
-                      disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
+                      disabled={Boolean(factoryBusy)}
                       onClick={() => {
+                        if (refuseIfBlocked(clipGateHint)) return;
+                        setActivePhase("storyboard");
                         setShotIndex(i);
                         onGenerateFragment({
                           shotIndex: resolveSegmentIndexFromShotIndex(shot.index),
@@ -3817,7 +3859,7 @@ export default function ManhuaScriptWorkbench({
                         });
                       }}
                       className="w-full border-t border-white/10 bg-white/[0.04] py-0.5 text-[8px] font-semibold text-cyan-100/80 hover:bg-cyan-500/15 disabled:opacity-35"
-                      title={`重跑本段：缺静帧先补齐段内图再出片`}
+                      title={clipGateHint || "重跑本段：缺静帧先补本镜再出片"}
                     >
                       生成本镜成片
                     </button>

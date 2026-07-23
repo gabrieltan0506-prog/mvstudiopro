@@ -46,7 +46,7 @@ describe("resolveManhuaWorkbenchNextCta (阿硕步进)", () => {
       factoryBusy: false,
     });
     expect(cta.kind).toBe("generate_keyarts");
-    expect(cta.labelZh).toBe("生成本步内容");
+    expect(cta.labelZh).toBe("生成关键静帧");
     expect(cta.targetPhase).toBe("storyboard");
   });
 

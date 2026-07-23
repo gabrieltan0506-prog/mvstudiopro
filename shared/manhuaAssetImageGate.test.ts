@@ -40,6 +40,32 @@ describe("manhuaAssetImageGate", () => {
     expect(gate.viaCustomUpload).toBe(false);
   });
 
+  it("ready when canvas sheets exist even if node ids differ from table ids", () => {
+    const gate = evaluateManhuaAssetImageGate({
+      assetCanon: {
+        characters: [
+          { id: "wa_hero", nameZh: "阿凛", lookZh: "短发", promptZh: "少年" },
+          { id: "wa_villain", nameZh: "权相", lookZh: "官服", promptZh: "权臣" },
+        ],
+        locations: [{ id: "wa_hall", nameZh: "议事厅", promptZh: "厅堂" }],
+        props: [],
+        episodeMainSceneId: { 1: "wa_hall" },
+      } as any,
+      episodeIndex: 1,
+      assetBlocks: [
+        // id 不含 wa_*，但画布上已有两张定妆 + 一张空镜
+        { id: "charsheet-ep1-a", outputUrl: "https://cdn.example/a.jpg" },
+        { id: "charsheet-ep1-b", outputUrl: "https://cdn.example/b.jpg" },
+        { id: "sceneplate-ep1-main", outputUrl: "https://cdn.example/s.jpg" },
+      ],
+    });
+    expect(gate.castLocked).toBe(true);
+    expect(gate.sceneLocked).toBe(true);
+    expect(gate.castImagesReady).toBe(true);
+    expect(gate.sceneImageReady).toBe(true);
+    expect(gate.ready).toBe(true);
+  });
+
   it("plans charsheet/sceneplate when missing", () => {
     const plans = planManhuaAssetImageSpawns({
       characterIds: ["char_f_07"],
