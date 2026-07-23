@@ -171,6 +171,10 @@ type Props = {
   onOpenAssetWall?: () => void;
   /** 确认资产：先按序出角色图→场景图，再进分镜 */
   onConfirmAssetsAndPrepareImages?: () => void | Promise<void>;
+  /** 清掉与现稿不符的旧设定图，并按剧本强制重出 */
+  onRegenerateAssetsFromScript?: () => void | Promise<void>;
+  /** 剧本人物/场景与当前设定图不对齐时的提示 */
+  assetScriptStaleHintZh?: string | null;
   /** 产品化风格包（色卡 + 光影构图 DNA） */
   stylePack?: ManhuaStylePack | null;
   onStylePackChange?: (pack: ManhuaStylePack | null) => void;
@@ -330,6 +334,8 @@ export default function ManhuaScriptWorkbench({
   onOpenCharacterCard,
   onOpenAssetWall,
   onConfirmAssetsAndPrepareImages,
+  onRegenerateAssetsFromScript,
+  assetScriptStaleHintZh = null,
   stylePack = null,
   onStylePackChange,
   customAssetRefs = [],
@@ -859,7 +865,7 @@ export default function ManhuaScriptWorkbench({
   );
   const outlineComplete = Boolean(canRun);
   /** 方案 B：剧本确认 + 角色/场景锁定 + 角色图/场景图齐，才可进分镜出片 */
-  const assetsComplete = assetGate.ready;
+  const assetsComplete = assetGate.ready && !assetScriptStaleHintZh;
   const canGenerateFragment = outlineComplete && assetsComplete;
   const fragmentGateHint = !outlineComplete
     ? "请先确认剧本大纲"
@@ -1071,6 +1077,10 @@ export default function ManhuaScriptWorkbench({
       return;
     }
     if (!assetGate.castLocked || !assetGate.sceneLocked) {
+      return;
+    }
+    if (assetScriptStaleHintZh && onRegenerateAssetsFromScript) {
+      void onRegenerateAssetsFromScript();
       return;
     }
     if (onConfirmAssetsAndPrepareImages) {
@@ -1697,6 +1707,23 @@ export default function ManhuaScriptWorkbench({
                 >
                   库场景·道具（可选）
                 </button>
+                {onRegenerateAssetsFromScript ? (
+                  <button
+                    type="button"
+                    data-manhua-action="regen-assets-from-script"
+                    disabled={
+                      !outlineComplete ||
+                      !assetGate.castLocked ||
+                      !assetGate.sceneLocked ||
+                      factoryBusy
+                    }
+                    onClick={() => void onRegenerateAssetsFromScript()}
+                    className="rounded-lg border border-amber-300/45 bg-amber-500/20 px-3 py-1.5 text-[12px] font-semibold text-amber-50 disabled:opacity-45"
+                    title="清掉与现稿不符的旧人物/场景设定图，再按剧本重出（会扣积分）"
+                  >
+                    按剧本重出设定图
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   data-manhua-action="confirm-assets"
@@ -1710,19 +1737,45 @@ export default function ManhuaScriptWorkbench({
                       ? assetGate.viaWriterCanon
                         ? "剧本人物/场景表不完整"
                         : "可上传勾选参考，或确认含人物表的剧本"
-                      : episodeSheetGallery.length === 0
-                        ? "按剧本出齐角色定妆与场景空镜"
-                        : assetsComplete
-                          ? "进入分镜视频"
-                          : "继续补齐角色图 / 场景图"
+                      : assetScriptStaleHintZh
+                        ? "现有设定图与剧本不符，请先点「按剧本重出设定图」"
+                        : episodeSheetGallery.length === 0
+                          ? "按剧本出齐角色定妆与场景空镜"
+                          : assetsComplete
+                            ? "进入分镜视频"
+                            : "继续补齐角色图 / 场景图"
                   }
                 >
-                  {episodeSheetGallery.length === 0 || !assetsComplete
-                    ? "生成全部"
-                    : "生成分镜视频 →"}
+                  {assetScriptStaleHintZh
+                    ? "设定图已过期"
+                    : episodeSheetGallery.length === 0 || !assetsComplete
+                      ? "生成全部"
+                      : "生成分镜视频 →"}
                 </button>
               </div>
             </div>
+
+            {assetScriptStaleHintZh ? (
+              <div
+                data-manhua-asset-stale-banner
+                className="mt-3 rounded-xl border border-amber-300/40 bg-amber-500/15 px-3 py-2.5"
+              >
+                <p className="text-[12px] font-semibold text-amber-50">{assetScriptStaleHintZh}</p>
+                <p className="mt-1 text-[10px] leading-4 text-amber-50/70">
+                  重写剧本后旧人物图不会自动继续用。点右上「按剧本重出设定图」清掉旧生成图并按现稿重出；你手动上传的参考会保留。
+                </p>
+                {onRegenerateAssetsFromScript ? (
+                  <button
+                    type="button"
+                    disabled={factoryBusy}
+                    onClick={() => void onRegenerateAssetsFromScript()}
+                    className="mt-2 rounded-lg border border-amber-200/50 bg-amber-400/25 px-3 py-1.5 text-[11px] font-bold text-amber-50 disabled:opacity-45"
+                  >
+                    立刻清掉旧图并重出
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
 
             <div
               data-manhua-episode-sheets
@@ -2102,8 +2155,16 @@ export default function ManhuaScriptWorkbench({
                                 </button>
                               </div>
                               {onCustomAssetDutyChange ? (
-                                <label className="flex items-center gap-1 text-[9px] text-white/40">
-                                  职责
+                                <label
+                                  className="flex flex-col gap-0.5 text-[9px] text-white/40"
+                                  title="成片时这张垫图锁什么：人物默认锁脸、场景默认锁场；可手改"
+                                >
+                                  <span className="flex items-center gap-1">
+                                    垫图用途
+                                    <span className="rounded bg-white/10 px-1 text-[8px] text-white/45">
+                                      自动+可改
+                                    </span>
+                                  </span>
                                   <select
                                     value={ref.refDuty || ""}
                                     onChange={(e) => {
@@ -2115,7 +2176,7 @@ export default function ManhuaScriptWorkbench({
                                           : null,
                                       );
                                     }}
-                                    className="min-w-0 flex-1 rounded border border-white/12 bg-black/40 px-1 py-0.5 text-[9px] text-white/75"
+                                    className="min-w-0 w-full rounded border border-white/12 bg-black/40 px-1 py-0.5 text-[9px] text-white/75"
                                   >
                                     <option value="">未标注</option>
                                     {MANHUA_REF_DUTIES.map((d) => (
