@@ -27,12 +27,42 @@ export const MANHUA_LEARN_BATCH_DEFAULT = 8;
 export const MANHUA_LEARN_ANALYSIS_MIN = 16;
 /** 出分析目标累计集数（有则尽量采到） */
 export const MANHUA_LEARN_ANALYSIS_TARGET = 20;
+/** 单集允许的最长成片（合集单集可能很长） */
+export const MANHUA_LEARN_MAX_DURATION_SEC = 120 * 60;
+/**
+ * 分片学习检查点：每学满 N 秒就合并写入分集 JSON 一次。
+ * 中断后可从 learnedThroughSec 续学，不是「只学前 N 秒」。
+ */
+export const MANHUA_LEARN_CHECKPOINT_SEC = 10 * 60;
+/** @deprecated 使用 MANHUA_LEARN_CHECKPOINT_SEC */
+export const MANHUA_LEARN_ANALYZE_WINDOW_SEC = MANHUA_LEARN_CHECKPOINT_SEC;
+/** 单集/分片失败最多重试次数（含首次），耗尽则停止本轮 */
+export const MANHUA_LEARN_EPISODE_RETRY_MAX = 3;
+
+/** 一集内的 10 分钟（或末段不足）学习块 */
+export type ManhuaLearnEpisodeChunk = {
+  startSec: number;
+  endSec: number;
+  transcriptPreview: string;
+  hookNoteZh: string;
+  beatHints: ManhuaViralTemplateBeat[];
+  climaxNotes: string[];
+  sceneHints: string[];
+  learnedAt: string;
+};
 
 export type ManhuaLearnEpisodeDigest = {
   episodeIndex: number;
   url: string;
   title: string;
+  /** 成片总时长（秒） */
   durationSec: number;
+  /** 已学到的秒数（检查点续学用） */
+  learnedThroughSec?: number;
+  /** 是否整集学完 */
+  complete?: boolean;
+  /** 分片检查点（按时间顺序） */
+  chunks?: ManhuaLearnEpisodeChunk[];
   transcriptPreview: string;
   hookNoteZh: string;
   beatHints: ManhuaViralTemplateBeat[];
@@ -44,6 +74,85 @@ export type ManhuaLearnEpisodeDigest = {
   categoryLabelZh?: string;
   tagLabelsZh?: string[];
 };
+
+/** 旧 digest 无检查点字段视为已完成；新 digest 以 complete / learnedThroughSec 为准 */
+export function isManhuaLearnEpisodeComplete(d: ManhuaLearnEpisodeDigest): boolean {
+  if (d.complete === true) return true;
+  if (d.complete === false) return false;
+  const through = Number(d.learnedThroughSec);
+  const dur = Number(d.durationSec) || 0;
+  if (Number.isFinite(through) && dur > 0) {
+    return through >= dur - 1;
+  }
+  // 无检查点字段的旧记录
+  return !Array.isArray(d.chunks) || d.chunks.length === 0;
+}
+
+/** 把新分片合并进分集 digest（聚合字段 + chunks 追加） */
+export function mergeManhuaLearnChunkIntoDigest(input: {
+  prev: ManhuaLearnEpisodeDigest | null;
+  chunk: ManhuaLearnEpisodeChunk;
+  episodeIndex: number;
+  url: string;
+  title: string;
+  durationSec: number;
+  dramaKind?: ManhuaDramaKind;
+  categoryLabelZh?: string;
+  tagLabelsZh?: string[];
+}): ManhuaLearnEpisodeDigest {
+  const prev = input.prev;
+  const chunks = [...(Array.isArray(prev?.chunks) ? prev!.chunks! : [])];
+  const exists = chunks.some(
+    (c) =>
+      Math.abs(c.startSec - input.chunk.startSec) < 0.5
+      && Math.abs(c.endSec - input.chunk.endSec) < 0.5,
+  );
+  if (!exists) chunks.push(input.chunk);
+  chunks.sort((a, b) => a.startSec - b.startSec);
+
+  const learnedThroughSec = Math.max(
+    Number(prev?.learnedThroughSec) || 0,
+    input.chunk.endSec,
+  );
+  const durationSec = Math.max(1, Number(input.durationSec) || Number(prev?.durationSec) || 1);
+  const complete = learnedThroughSec >= durationSec - 1;
+
+  const beatHints = chunks.flatMap((c) => c.beatHints || []).slice(0, 24);
+  const climaxNotes = chunks.flatMap((c) => c.climaxNotes || []).slice(0, 12);
+  const sceneHints = Array.from(
+    new Set(chunks.flatMap((c) => c.sceneHints || [])),
+  ).slice(0, 12);
+  const transcriptPreview = chunks
+    .map((c) => c.transcriptPreview)
+    .filter(Boolean)
+    .join(" … ")
+    .replace(/\s+/g, " ")
+    .slice(0, 800);
+  const hookNoteZh =
+    chunks.find((c) => c.startSec <= 1)?.hookNoteZh
+    || chunks.map((c) => c.hookNoteZh).find((h) => h && h !== "待补钩子")
+    || prev?.hookNoteZh
+    || "待补钩子";
+
+  return {
+    episodeIndex: input.episodeIndex,
+    url: input.url,
+    title: input.title,
+    durationSec,
+    learnedThroughSec,
+    complete,
+    chunks,
+    transcriptPreview: transcriptPreview || prev?.transcriptPreview || "",
+    hookNoteZh,
+    beatHints: beatHints.length ? beatHints : prev?.beatHints || [],
+    climaxNotes: climaxNotes.length ? climaxNotes : prev?.climaxNotes || [],
+    sceneHints: sceneHints.length ? sceneHints : prev?.sceneHints || [],
+    learnedAt: input.chunk.learnedAt,
+    dramaKind: input.dramaKind || prev?.dramaKind,
+    categoryLabelZh: input.categoryLabelZh || prev?.categoryLabelZh,
+    tagLabelsZh: input.tagLabelsZh || prev?.tagLabelsZh,
+  };
+}
 
 export type ManhuaLearnSeriesProgress = {
   seriesKey: string;
