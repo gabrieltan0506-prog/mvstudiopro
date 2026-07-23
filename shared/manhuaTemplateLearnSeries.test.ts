@@ -50,6 +50,23 @@ describe("manhuaTemplateLearnSeries", () => {
     expect(picked).toEqual([4, 5, 6, 7, 8, 9, 10, 11]);
   });
 
+  it("picks single remaining episode without forcing batch of 8", () => {
+    expect(
+      pickNextEpisodeIndexes({
+        listedIndexes: [1],
+        learnedIndexes: [],
+        batchSize: 8,
+      }),
+    ).toEqual([1]);
+    expect(
+      pickNextEpisodeIndexes({
+        listedIndexes: [1, 2, 3],
+        learnedIndexes: [1],
+        batchSize: 8,
+      }),
+    ).toEqual([2, 3]);
+  });
+
   it("requires min episodes before analysis", () => {
     expect(canEmitManhuaLearnAnalysis(15)).toBe(false);
     expect(canEmitManhuaLearnAnalysis(MANHUA_LEARN_ANALYSIS_MIN)).toBe(true);

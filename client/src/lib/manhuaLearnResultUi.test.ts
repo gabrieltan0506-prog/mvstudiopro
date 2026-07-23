@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  manhuaLearnResultFromFailure,
   manhuaLearnResultFromJobOutput,
   manhuaLearnResultFromSnapshot,
 } from "./manhuaLearnResultUi";
@@ -56,5 +57,15 @@ describe("manhuaLearnResultUi", () => {
     expect(ui.learnedCount).toBe(1);
     expect(ui.categoryLabelZh).toBe("AI漫剧");
     expect(ui.messageZh).toMatch(/云端恢复/);
+  });
+
+  it("maps failure into visible panel state", () => {
+    const ui = manhuaLearnResultFromFailure({
+      errorZh: "合集可解析集数不足",
+      url: "https://www.douyin.com/video/1",
+    });
+    expect(ui.errorZh).toMatch(/不足/);
+    expect(ui.learnedCount).toBe(0);
+    expect(ui.digestsPreview).toEqual([]);
   });
 });
