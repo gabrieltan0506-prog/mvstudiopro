@@ -56,6 +56,33 @@ export const MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH: Record<ManhuaCustomAssetRoleOrUn
   unset: "未勾选",
 };
 
+/** 从资产列表编译【参考职责】注入块（无职责则空串） */
+export function formatCustomAssetRefsDutyBlock(
+  refs: Array<Pick<ManhuaCustomAssetRef, "refDuty" | "labelZh" | "role"> | null | undefined>,
+): string {
+  const duties = (refs || [])
+    .filter(Boolean)
+    .map((r) => {
+      const duty = r!.refDuty;
+      if (!duty) return null;
+      return {
+        duty,
+        labelZh: String(r!.labelZh || MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH[r!.role] || "").trim(),
+      };
+    })
+    .filter(Boolean) as Array<{ duty: ManhuaCustomAssetRefDuty; labelZh: string }>;
+  if (!duties.length) return "";
+  const lines = duties.map((d) => {
+    const dutyLabel = MANHUA_CUSTOM_ASSET_REF_DUTY_LABEL_ZH[d.duty] || d.duty;
+    return `- ${dutyLabel}${d.labelZh ? `：${d.labelZh}` : ""}`;
+  });
+  return [
+    "【参考职责】",
+    "各参考只服务标注职责；身份锁不改脸，空间锁不改陈设布局，首尾帧管起止构图。",
+    ...lines,
+  ].join("\n");
+}
+
 function isHttpsUrl(u: string): boolean {
   return /^https:\/\//i.test(u);
 }

@@ -17,9 +17,16 @@ import {
   type ManhuaCustomAssetRef,
 } from "./manhuaCustomAssetRefs.js";
 import { parseManhuaStylePack, type ManhuaStylePack } from "./manhuaStylePack.js";
+import {
+  normalizeManhuaDeliveryPackage,
+  type ManhuaDeliveryPackage,
+} from "./manhuaDeliveryPackage.js";
+import type { ManhuaCineVocabLocale } from "./manhuaCineVocabBank.js";
 
 export const MANHUA_WRITER_SESSION_FORMAT = "mv-manhua-writer-session-v1" as const;
 export const MANHUA_WRITER_SESSION_LS_KEY = "mv-manhua-writer-session-v1";
+
+const CINE_VOCAB_LOCALES: ManhuaCineVocabLocale[] = ["zh", "en", "ja", "ko", "es", "ru"];
 
 export type ManhuaWriterSession = {
   format: typeof MANHUA_WRITER_SESSION_FORMAT;
@@ -44,6 +51,12 @@ export type ManhuaWriterSession = {
   viralTemplateId: string;
   /** 产品化风格包（资产阶段） */
   stylePack: ManhuaStylePack | null;
+  /** 成色/字幕/配音交付包（剪辑台与成片坞同源） */
+  deliveryPackage: ManhuaDeliveryPackage | null;
+  /** 可拍词表注入语言 */
+  cineVocabLocale: ManhuaCineVocabLocale;
+  /** 链式深度：重锚后忽略该场景此前成片数 */
+  chainIgnoreByScene: Record<string, number>;
 };
 
 export type ManhuaWriterSessionPartial = Partial<Omit<ManhuaWriterSession, "format">> & {
@@ -106,6 +119,25 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     shareAssetToLibrary: Boolean(input.shareAssetToLibrary),
     viralTemplateId: String(input.viralTemplateId || "").trim().slice(0, 64),
     stylePack: parseManhuaStylePack(input.stylePack) || null,
+    deliveryPackage: input.deliveryPackage
+      ? normalizeManhuaDeliveryPackage(input.deliveryPackage, {
+          seriesTitle: normalizeWriterPack(input.writerPack)?.seriesTitle,
+        })
+      : null,
+    cineVocabLocale: CINE_VOCAB_LOCALES.includes(input.cineVocabLocale as ManhuaCineVocabLocale)
+      ? (input.cineVocabLocale as ManhuaCineVocabLocale)
+      : "zh",
+    chainIgnoreByScene: (() => {
+      const raw = input.chainIgnoreByScene;
+      if (!raw || typeof raw !== "object") return {};
+      const out: Record<string, number> = {};
+      for (const [k, v] of Object.entries(raw)) {
+        const key = String(k || "").trim().slice(0, 48);
+        const n = Math.floor(Number(v) || 0);
+        if (key && n >= 0) out[key] = n;
+      }
+      return out;
+    })(),
   };
 }
 

@@ -116,12 +116,14 @@ describe("manhuaScriptWorkbench", () => {
     const block = formatWorkbenchSegmentClipInjectBlock({
       segmentIndex: 1,
       durationSec: 15,
+      intentZh: "压迫感逼近",
       shots: [
         {
           index: 1,
           durationSec: 0,
           cameraZh: "全景缓慢推近",
           actionZh: "高主管推上红色裁员文件夹",
+          intentZh: "压迫感逼近",
         },
       ],
     });
@@ -129,6 +131,8 @@ describe("manhuaScriptWorkbench", () => {
     expect(block).toContain("约 15 秒");
     expect(block).toContain("红色裁员文件夹");
     expect(block).toContain("参考静帧");
+    expect(block).toContain("本段意图");
+    expect(block).toContain("节拍防火墙");
     expect(block).toMatch(/哑巴空镜|空镜/);
     // 兼容旧入口
     const legacy = formatWorkbenchClipInjectBlock({

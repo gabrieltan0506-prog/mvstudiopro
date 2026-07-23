@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   defaultManhuaDeliveryPackage,
   formatManhuaDeliveryPackageMarkdown,
+  normalizeManhuaDeliveryPackage,
   summarizeManhuaDeliveryPackageProgress,
+  syncDeliveryPackageSubtitleEnabled,
 } from "./manhuaDeliveryPackage";
 import {
   formatCineVocabInjectBlock,
@@ -22,6 +24,17 @@ describe("manhuaDeliveryPackage + multilingual vocab", () => {
     expect(md).toContain("字幕");
     expect(md).toContain("配音");
     expect(summarizeManhuaDeliveryPackageProgress(pkg).done).toBeGreaterThan(0);
+  });
+
+  it("normalizes edits and syncs subtitle flag", () => {
+    const pkg = normalizeManhuaDeliveryPackage({
+      seriesTitle: "测试",
+      color: { lookIntentZh: "冷月光" },
+      subtitle: { needSubtitles: false, locale: "ja" },
+    });
+    expect(pkg.color.lookIntentZh).toBe("冷月光");
+    expect(pkg.subtitle.locale).toBe("ja");
+    expect(syncDeliveryPackageSubtitleEnabled(pkg, true).subtitle.needSubtitles).toBe(true);
   });
 
   it("exposes full multilingual cine vocab", () => {

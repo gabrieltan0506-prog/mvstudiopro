@@ -117,6 +117,8 @@ export function slimBlocksForLocalPersist(blocks: CanvasBlock[]): CanvasBlock[] 
       uploadFailures: undefined,
       editMaskUrl: isHttpUrl(b.editMaskUrl) ? b.editMaskUrl : undefined,
       editFusionUrls: (b.editFusionUrls || []).filter(isHttpUrl).slice(0, 8),
+      lastFrameUrl: isHttpUrl(b.lastFrameUrl) ? String(b.lastFrameUrl).trim() : undefined,
+      manhuaRetake: b.manhuaRetake,
     };
   });
 }

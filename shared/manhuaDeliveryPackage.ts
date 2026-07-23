@@ -53,6 +53,84 @@ export type ManhuaDeliveryPackage = {
   updatedAtIso: string;
 };
 
+const LOCALES: ManhuaDeliveryLocale[] = ["zh", "en", "ja", "ko", "es", "ru"];
+
+export function normalizeManhuaDeliveryLocale(raw: unknown): ManhuaDeliveryLocale {
+  const s = String(raw || "").trim() as ManhuaDeliveryLocale;
+  return LOCALES.includes(s) ? s : "zh";
+}
+
+/** 合并用户编辑与默认模板（落盘/剪辑台共用） */
+export function normalizeManhuaDeliveryPackage(
+  raw: unknown,
+  opts?: { seriesTitle?: string; episodeIndexes?: number[]; locale?: ManhuaDeliveryLocale },
+): ManhuaDeliveryPackage {
+  const base = defaultManhuaDeliveryPackage(opts);
+  if (!raw || typeof raw !== "object") return base;
+  const o = raw as Partial<ManhuaDeliveryPackage> & {
+    color?: Partial<ManhuaColorHandoffNotes>;
+    subtitle?: Partial<ManhuaSubtitleDeliveryNotes>;
+    dubbing?: Partial<ManhuaDubbingDeliveryNotes>;
+  };
+  const locale = normalizeManhuaDeliveryLocale(
+    o.subtitle?.locale || o.dubbing?.dialogueLanguage || opts?.locale || base.subtitle.locale,
+  );
+  return {
+    seriesTitle: String(o.seriesTitle || opts?.seriesTitle || base.seriesTitle).trim() || base.seriesTitle,
+    episodeIndexes: Array.isArray(o.episodeIndexes)
+      ? o.episodeIndexes.filter((n) => typeof n === "number" && n >= 1)
+      : opts?.episodeIndexes || base.episodeIndexes,
+    color: {
+      lookIntentZh: String(o.color?.lookIntentZh ?? base.color.lookIntentZh).trim() || base.color.lookIntentZh,
+      workingSpaceHint:
+        String(o.color?.workingSpaceHint ?? base.color.workingSpaceHint).trim() ||
+        base.color.workingSpaceHint,
+      deliveryContainer:
+        String(o.color?.deliveryContainer ?? base.color.deliveryContainer).trim() ||
+        base.color.deliveryContainer,
+      heroColorLocksZh:
+        String(o.color?.heroColorLocksZh ?? base.color.heroColorLocksZh).trim() ||
+        base.color.heroColorLocksZh,
+      notesZh: o.color?.notesZh != null ? String(o.color.notesZh).trim() : base.color.notesZh,
+    },
+    subtitle: {
+      needSubtitles: o.subtitle?.needSubtitles ?? base.subtitle.needSubtitles,
+      needSdh: o.subtitle?.needSdh ?? base.subtitle.needSdh,
+      needForcedNarrative: o.subtitle?.needForcedNarrative ?? base.subtitle.needForcedNarrative,
+      burnInForbidden: o.subtitle?.burnInForbidden ?? base.subtitle.burnInForbidden,
+      locale,
+      notesZh: o.subtitle?.notesZh != null ? String(o.subtitle.notesZh).trim() : base.subtitle.notesZh,
+    },
+    dubbing: {
+      needDubbing: o.dubbing?.needDubbing ?? base.dubbing.needDubbing,
+      needMeStem: o.dubbing?.needMeStem ?? base.dubbing.needMeStem,
+      dialogueLanguage: normalizeManhuaDeliveryLocale(
+        o.dubbing?.dialogueLanguage || locale,
+      ),
+      loudnessTargetHint:
+        String(o.dubbing?.loudnessTargetHint ?? base.dubbing.loudnessTargetHint).trim() ||
+        base.dubbing.loudnessTargetHint,
+      notesZh: o.dubbing?.notesZh != null ? String(o.dubbing.notesZh).trim() : base.dubbing.notesZh,
+    },
+    qcChecklistZh: Array.isArray(o.qcChecklistZh) && o.qcChecklistZh.length
+      ? o.qcChecklistZh.map((x) => String(x || "").trim()).filter(Boolean)
+      : base.qcChecklistZh,
+    updatedAtIso: String(o.updatedAtIso || "").trim() || new Date().toISOString(),
+  };
+}
+
+/** 字幕开关与交付包双向同步 */
+export function syncDeliveryPackageSubtitleEnabled(
+  pkg: ManhuaDeliveryPackage,
+  subtitleEnabled: boolean,
+): ManhuaDeliveryPackage {
+  return normalizeManhuaDeliveryPackage({
+    ...pkg,
+    subtitle: { ...pkg.subtitle, needSubtitles: Boolean(subtitleEnabled) },
+    updatedAtIso: new Date().toISOString(),
+  });
+}
+
 export function defaultManhuaDeliveryPackage(opts?: {
   seriesTitle?: string;
   episodeIndexes?: number[];
@@ -150,7 +228,10 @@ export function summarizeManhuaDeliveryPackageProgress(
   const flags = [
     Boolean(pkg.color.lookIntentZh.trim()),
     Boolean(pkg.color.workingSpaceHint.trim()),
+    Boolean(pkg.color.heroColorLocksZh.trim()),
     pkg.subtitle.burnInForbidden,
+    pkg.subtitle.needSubtitles ? Boolean(pkg.subtitle.locale) : true,
+    pkg.dubbing.needDubbing ? Boolean(pkg.dubbing.loudnessTargetHint.trim()) : true,
     pkg.qcChecklistZh.length >= 4,
   ];
   const done = flags.filter(Boolean).length;

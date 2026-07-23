@@ -28,6 +28,7 @@ import {
   formatManhuaKeyframeImage2Prompt,
   formatManhuaSecondCueSheetBlock,
 } from "./manhuaStoryDistill.js";
+import { compileManhuaDirectedSegmentPrompt, stripManhuaPromptSlop } from "./manhuaDirectingWorkflow.js";
 
 export type ManhuaWorkbenchShot = {
   index: number;
@@ -36,6 +37,8 @@ export type ManhuaWorkbenchShot = {
   actionZh: string;
   /** 本镜台词（只作表演，不烧字） */
   dialogueZh?: string;
+  /** 所属段的单一意图（观众应感到什么；同源可拍表） */
+  intentZh?: string;
   /** 情绪弧：委屈不信 / 愧疚无力… */
   emotionZh?: string;
   /** 说话语气：沙哑、压哭腔… */
@@ -564,7 +567,7 @@ export function formatWorkbenchClipInjectBlock(shot: ManhuaWorkbenchShot): strin
   });
 }
 
-/** 一段一条成片：时长按模型；动作串联段内静帧 */
+/** 一段一条成片：时长按模型；动作串联段内静帧；挂意图 + 节拍防火墙 + 去空话 */
 export function formatWorkbenchSegmentClipInjectBlock(input: {
   segmentIndex: number;
   durationSec: number;
@@ -573,12 +576,23 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
   actionZh?: string;
   /** 本段场景一句（地点/天气），写入导戏单 */
   sceneHintZh?: string;
+  /** 本段单一意图；缺省取 shots[0].intentZh */
+  intentZh?: string;
+  /** 更早段摘要（已发生） */
+  alreadyHappenedZh?: string;
+  /** 留给后段 */
+  reservedForLaterZh?: string;
+  /** 参考职责块（可选） */
+  referenceDutyBlock?: string;
 }): string {
   const seg = Math.max(1, Math.floor(input.segmentIndex));
   const dur =
     typeof input.durationSec === "number" && input.durationSec > 0
       ? Math.round(input.durationSec * 10) / 10
       : manhuaSegmentDurationSec(MANHUA_FACTORY_DEFAULT_VIDEO_MODEL);
+  const intentZh =
+    String(input.intentZh || "").trim() ||
+    String(input.shots.find((s) => s.intentZh)?.intentZh || "").trim();
   const shotLines = input.shots
     .map((s) => {
       const a = String(s.actionZh || "").trim();
@@ -587,14 +601,16 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     })
     .filter(Boolean)
     .slice(0, MANHUA_KEYARTS_PER_SEGMENT_MAX);
-  const action =
+  const action = stripManhuaPromptSlop(
     String(input.actionZh || "").trim() ||
-    shotLines.join(" → ") ||
-    "落实本段节拍中的关键动作与道具交互";
-  const camera =
+      shotLines.join(" → ") ||
+      "落实本段节拍中的关键动作与道具交互",
+  );
+  const camera = stripManhuaPromptSlop(
     String(input.cameraZh || "").trim() ||
-    String(input.shots[0]?.cameraZh || "").trim() ||
-    "承接段内首张静帧构图做可读微动";
+      String(input.shots[0]?.cameraZh || "").trim() ||
+      "承接段内首张静帧构图做可读微动",
+  );
   const lead = input.shots[0];
   /** 成片对白：字段优先，缺则从动作行「」抽取；本轮 Seedance 必演口型气口 */
   const dialogueChain = input.shots
@@ -650,21 +666,21 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     buildManhuaSecondCueSheet({
       segment: {
         index: seg,
-        intentZh: "",
+        intentZh: intentZh || "让观众感到局势或人物关系变化",
         dialogueZh: dialogueChain[0] || "",
         sceneZh: String(input.sceneHintZh || "").trim(),
         paletteZh: "",
         castZh: "",
         wardrobePropZh: "",
         lightingCameraZh: camera,
-        performanceZh: "",
+        performanceZh: String(lead?.emotionZh || "").trim(),
       },
       shots: input.shots,
       durationSec: dur,
     }),
     { segmentIndex: seg },
   );
-  return [
+  const bodyLines = [
     `【第 ${seg} 段·成片】`,
     `目标时长：约 ${dur} 秒（允许 ±1 秒）；本段一条成片，勿按单镜短秒裁切。`,
     hookLock,
@@ -694,6 +710,26 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
   ]
     .filter(Boolean)
     .join("\n");
+  // 防火墙只吃短摘要，完整成片正文放 extra，避免被 900 字截断丢掉硬锁
+  const beatSummary = [
+    dialogueChain[0] ? `对白：${dialogueChain[0]}` : "",
+    `动作：${action.slice(0, 160)}`,
+    `运镜：${camera.slice(0, 80)}`,
+    input.sceneHintZh ? `场景：${String(input.sceneHintZh).trim().slice(0, 60)}` : "",
+  ]
+    .filter(Boolean)
+    .join("；");
+  return compileManhuaDirectedSegmentPrompt({
+    segmentIndex: seg,
+    intentZh,
+    thisBeatZh: beatSummary,
+    alreadyHappenedZh: input.alreadyHappenedZh,
+    reservedForLaterZh: input.reservedForLaterZh,
+    extraBlocks: [
+      stripManhuaPromptSlop(bodyLines),
+      String(input.referenceDutyBlock || "").trim(),
+    ].filter(Boolean),
+  });
 }
 
 /** 从 keyart / clip 节点 id 或静帧 prompt 解析分镜号（默认 1） */

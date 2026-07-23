@@ -374,6 +374,49 @@ export function buildManhuaEpisodeSegmentPlanFixtureMarkdown(): string {
   return ["### 十至十二段可拍表", ...blocks].join("\n");
 }
 
+/**
+ * 把某段「意图」写回可拍表 markdown（有则替换，无则在段标题后插入）。
+ * 找不到 #### 段NN 时原样返回。
+ */
+export function upsertManhuaSegmentIntentInMarkdown(
+  markdown: string,
+  segmentIndex: number,
+  intentZh: string,
+): string {
+  const src = String(markdown || "");
+  const idx = Math.max(1, Math.floor(segmentIndex));
+  const intent = String(intentZh || "").trim().slice(0, 80);
+  if (!intent) return src;
+  const pad = String(idx).padStart(2, "0");
+  const headerRe = new RegExp(
+    `(#{2,4}\\s*段\\s*0*${idx}\\b[^\\n]*\\n)([\\s\\S]*?)(?=#{2,4}\\s*段\\s*\\d|$)`,
+    "i",
+  );
+  const m = src.match(headerRe);
+  if (!m || m.index == null) return src;
+  const header = m[1] || "";
+  let body = m[2] || "";
+  if (/(?:^|\n)\s*[-*·]?\s*(?:意图|本段意图|戏剧意图|观众感受)\s*[:：]/.test(body)) {
+    body = body.replace(
+      /((?:^|\n)\s*[-*·]?\s*(?:意图|本段意图|戏剧意图|观众感受)\s*[:：]\s*)([^\n]*)/i,
+      `$1${intent}`,
+    );
+  } else {
+    body = `- 意图：${intent}\n${body.replace(/^\n*/, "")}`;
+  }
+  return src.slice(0, m.index) + header + body + src.slice(m.index + m[0].length);
+}
+
+/** 从可拍表取某段意图（供工作台/成片注入） */
+export function getManhuaSegmentIntentZh(
+  plan: ManhuaEpisodeSegmentPlan | null | undefined,
+  segmentIndex: number,
+): string {
+  const idx = Math.max(1, Math.floor(segmentIndex));
+  const hit = (plan?.segments || []).find((s) => s.index === idx);
+  return String(hit?.intentZh || "").trim();
+}
+
 /** 把可拍表压成工厂节拍提示（不编造缺失段；含意图 + 节拍防火墙 + 去空话） */
 export function formatManhuaEpisodeSegmentPlanBeatsBlock(
   plan: ManhuaEpisodeSegmentPlan | null | undefined,

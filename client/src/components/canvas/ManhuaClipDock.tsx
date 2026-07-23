@@ -26,8 +26,15 @@ import {
   defaultManhuaDeliveryPackage,
   formatManhuaDeliveryPackageMarkdown,
   summarizeManhuaDeliveryPackageProgress,
+  type ManhuaDeliveryPackage,
 } from "@shared/manhuaDeliveryPackage";
 import { formatCineVocabMultilingualTable } from "@shared/manhuaCineVocabBank";
+import type { ManhuaRetakeVariable } from "@shared/manhuaDirectingWorkflow";
+import {
+  formatManhuaRetakeHintZh,
+  suggestManhuaRetakeVariable,
+  MANHUA_RETAKE_VARIABLE_LABEL_ZH,
+} from "@shared/manhuaDirectingWorkflow";
 
 type Props = {
   blocks: CanvasBlock[];
@@ -48,6 +55,12 @@ type Props = {
   onGoWorkbench?: () => void;
   /** 点胶片条集卡时切换焦点集 */
   onSelectEpisode?: (episodeIndex: number) => void;
+  /** 与剪辑台同源的交付包（非默认壳） */
+  deliveryPackage?: ManhuaDeliveryPackage | null;
+  cineVocabIds?: string[];
+  onAcceptClipDespiteQc?: (clipBlockId: string) => void;
+  onRetakeClip?: (clipBlockId: string, variable: ManhuaRetakeVariable) => void;
+  factoryBusy?: boolean;
 };
 
 function episodeClipReady(list: ManhuaClipDockItem[]): boolean {
@@ -75,6 +88,11 @@ export default function ManhuaClipDock({
   onAssembleFinal,
   onGoWorkbench,
   onSelectEpisode,
+  deliveryPackage: deliveryPackageProp,
+  cineVocabIds = [],
+  onAcceptClipDespiteQc,
+  onRetakeClip,
+  factoryBusy,
 }: Props) {
   const [exportBusy, setExportBusy] = useState(false);
   const items = useMemo(() => collectManhuaClipDockItems(blocks), [blocks]);
@@ -121,15 +139,23 @@ export default function ManhuaClipDock({
     return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
   }, [items]);
 
-  const deliveryPkg = useMemo(
-    () =>
-      defaultManhuaDeliveryPackage({
-        seriesTitle: seriesTitle || topic,
-        episodeIndexes: byEpisode.map(([ep]) => ep),
-        locale: "zh",
-      }),
-    [seriesTitle, topic, byEpisode],
-  );
+  const deliveryPkg = useMemo(() => {
+    const episodeIndexes = byEpisode.map(([ep]) => ep);
+    if (deliveryPackageProp) {
+      return {
+        ...deliveryPackageProp,
+        seriesTitle: deliveryPackageProp.seriesTitle || seriesTitle || topic || "未命名系列",
+        episodeIndexes: deliveryPackageProp.episodeIndexes.length
+          ? deliveryPackageProp.episodeIndexes
+          : episodeIndexes,
+      };
+    }
+    return defaultManhuaDeliveryPackage({
+      seriesTitle: seriesTitle || topic,
+      episodeIndexes,
+      locale: "zh",
+    });
+  }, [deliveryPackageProp, seriesTitle, topic, byEpisode]);
   const deliveryProgress = useMemo(
     () => summarizeManhuaDeliveryPackageProgress(deliveryPkg),
     [deliveryPkg],
@@ -139,7 +165,7 @@ export default function ManhuaClipDock({
     const md = [
       formatManhuaDeliveryPackageMarkdown(deliveryPkg),
       "",
-      formatCineVocabMultilingualTable(),
+      formatCineVocabMultilingualTable(cineVocabIds.length ? cineVocabIds : undefined),
     ].join("\n");
     const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -201,6 +227,10 @@ export default function ManhuaClipDock({
         sceneId,
         demoAssetIds,
         writerPackMarkdown,
+        deliveryPackageMarkdown: formatManhuaDeliveryPackageMarkdown(deliveryPkg),
+        cineVocabTableMarkdown: formatCineVocabMultilingualTable(
+          cineVocabIds.length ? cineVocabIds : undefined,
+        ),
         finalVideoUrl: finalVideoUrl || undefined,
       });
       if (result.failCount > 0) {
@@ -234,6 +264,10 @@ export default function ManhuaClipDock({
         sceneId,
         demoAssetIds,
         writerPackMarkdown,
+        deliveryPackageMarkdown: formatManhuaDeliveryPackageMarkdown(deliveryPkg),
+        cineVocabTableMarkdown: formatCineVocabMultilingualTable(
+          cineVocabIds.length ? cineVocabIds : undefined,
+        ),
         finalVideoUrl: finalVideoUrl || undefined,
       });
       window.alert(
@@ -268,7 +302,7 @@ export default function ManhuaClipDock({
               </span>
             </div>
             <p className="mt-1 max-w-xl text-[11px] leading-relaxed text-white/45">
-              各集微动就绪后，一键拼成长片并自动配乐。质检未过需在工作台点「仍采用此片」。勾选集号可同时作为工厂运行范围。
+              各集微动就绪后，一键拼成长片并自动配乐。质检未过可在本坞或剪辑台点「仍采用此片」/「按建议重拍」。勾选集号可同时作为工厂运行范围。
               {canAssemble ? (
                 <span className="text-cyan-100/70">
                   {" "}
@@ -616,7 +650,7 @@ export default function ManhuaClipDock({
                         }`}
                         title={
                           clipPendingDecision
-                            ? `${it.clipQuality?.summary || "质检未过"} · 请在工作台点「仍采用此片」`
+                            ? `${it.clipQuality?.summary || "质检未过"} · 可仍采用或按建议重拍`
                             : clipSoftAccepted
                               ? `质检未过·已采用：${it.clipQuality?.summary || ""}`
                               : undefined
@@ -664,6 +698,41 @@ export default function ManhuaClipDock({
                             <AlertTriangle className="h-2.5 w-2.5" />
                             待决定
                           </span>
+                        ) : null}
+                        {clipPendingDecision && onRetakeClip && it.clipQuality?.summary ? (
+                          <button
+                            type="button"
+                            disabled={factoryBusy}
+                            title={formatManhuaRetakeHintZh(
+                              suggestManhuaRetakeVariable(it.clipQuality.summary),
+                              1,
+                              3,
+                            )}
+                            onClick={() =>
+                              onRetakeClip(
+                                it.blockId,
+                                suggestManhuaRetakeVariable(it.clipQuality!.summary),
+                              )
+                            }
+                            className="rounded border border-fuchsia-400/40 bg-fuchsia-500/15 px-1.5 py-0.5 text-[9px] text-fuchsia-50 disabled:opacity-40"
+                          >
+                            只改
+                            {
+                              MANHUA_RETAKE_VARIABLE_LABEL_ZH[
+                                suggestManhuaRetakeVariable(it.clipQuality.summary)
+                              ]
+                            }
+                            重拍
+                          </button>
+                        ) : null}
+                        {clipPendingDecision && onAcceptClipDespiteQc ? (
+                          <button
+                            type="button"
+                            onClick={() => onAcceptClipDespiteQc(it.blockId)}
+                            className="rounded border border-amber-400/45 bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-semibold text-amber-50"
+                          >
+                            仍采用
+                          </button>
                         ) : null}
                         {onFocusBlock ? (
                           <button

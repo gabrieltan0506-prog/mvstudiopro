@@ -54,7 +54,12 @@ import {
   episodeIndexesFromDockSelection,
 } from "@/lib/manhuaProjectExport";
 import { shouldAttachManhuaPreviouslyOn } from "@shared/manhuaEpisodeRecap";
-import { resolveKeyartShotIndex } from "@shared/manhuaScriptWorkbench";
+import {
+  resolveClipLocalSegmentIndex,
+  resolveKeyartShotIndex,
+  resolveSegmentIndexFromShotIndex,
+} from "@shared/manhuaScriptWorkbench";
+import { extractManhuaSceneHintFromPrompt } from "@shared/manhuaClipDialogueTimeline";
 import { upsertShotAngleSection } from "@shared/manhuaShotAnglePersist";
 import { upsertShotDialogueSection } from "@shared/manhuaShotDialoguePersist";
 import {
@@ -148,7 +153,21 @@ import {
 } from "@shared/manhuaMaleMicroExpressionBank";
 import { listPromoCoverLayouts } from "@shared/manhuaPromoCoverLayouts";
 import { recommendActionCameraFromTopic } from "@shared/manhuaActionCameraRecipeBank";
-import { MANHUA_CINE_VOCAB_BANK } from "@shared/manhuaCineVocabBank";
+import {
+  MANHUA_CINE_VOCAB_BANK,
+  MANHUA_CINE_VOCAB_LOCALE_LABEL_ZH,
+  type ManhuaCineVocabLocale,
+} from "@shared/manhuaCineVocabBank";
+import {
+  normalizeManhuaDeliveryPackage,
+  type ManhuaDeliveryPackage,
+} from "@shared/manhuaDeliveryPackage";
+import { upsertManhuaSegmentIntentInMarkdown } from "@shared/manhuaEpisodeSegmentPlan";
+import {
+  patchPromptForRetakeVariable,
+  type ManhuaRetakeVariable,
+} from "@shared/manhuaDirectingWorkflow";
+import type { ManhuaCustomAssetRefDuty } from "@shared/manhuaCustomAssetRefs";
 import { listWardrobePropContinuity } from "@shared/manhuaWardrobePropContinuity";
 import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
 import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
@@ -416,6 +435,19 @@ export default function OmniCanvas() {
   const [factoryActionRecipeId, setFactoryActionRecipeId] = useState("");
   const [actionRecipeManual, setActionRecipeManual] = useState(false);
   const [factoryCineVocabId, setFactoryCineVocabId] = useState("");
+  const [factoryCineVocabLocale, setFactoryCineVocabLocale] = useState<ManhuaCineVocabLocale>(
+    () => initialWriterSession?.cineVocabLocale || "zh",
+  );
+  const [deliveryPackage, setDeliveryPackage] = useState<ManhuaDeliveryPackage>(() =>
+    normalizeManhuaDeliveryPackage(initialWriterSession?.deliveryPackage, {
+      seriesTitle: initialWriterSession?.writerPack?.seriesTitle,
+      locale: initialWriterSession?.cineVocabLocale || "zh",
+    }),
+  );
+  /** 链式深度：重锚后忽略该场景此前已完成成片数（按场景开链） */
+  const [chainIgnoreByScene, setChainIgnoreByScene] = useState<Record<string, number>>(
+    () => initialWriterSession?.chainIgnoreByScene || {},
+  );
   const [factoryWardrobeId, setFactoryWardrobeId] = useState(
     () => bootCast?.wardrobePropContinuityIds[0] || "",
   );
@@ -1037,6 +1069,15 @@ export default function OmniCanvas() {
     setStylePack(session.stylePack ?? null);
     setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
     setViralTemplateId("");
+    if (session.deliveryPackage) {
+      setDeliveryPackage(
+        normalizeManhuaDeliveryPackage(session.deliveryPackage, {
+          seriesTitle: session.writerPack?.seriesTitle,
+        }),
+      );
+    }
+    if (session.cineVocabLocale) setFactoryCineVocabLocale(session.cineVocabLocale);
+    if (session.chainIgnoreByScene) setChainIgnoreByScene(session.chainIgnoreByScene);
     setWorkflowPhase(
       session.workflowPhase === "assets" ||
         session.workflowPhase === "storyboard" ||
@@ -1168,6 +1209,9 @@ export default function OmniCanvas() {
       customAssetRefs,
       shareAssetToLibrary,
       viralTemplateId,
+      deliveryPackage,
+      cineVocabLocale: factoryCineVocabLocale,
+      chainIgnoreByScene,
     };
     // 本机双写补强（与既有 LS effect 叠加；失败不阻断）
     persistManhuaDraftLocally({
@@ -1208,6 +1252,9 @@ export default function OmniCanvas() {
     customAssetRefs,
     shareAssetToLibrary,
     viralTemplateId,
+    deliveryPackage,
+    factoryCineVocabLocale,
+    chainIgnoreByScene,
     blocks,
     edges,
     factoryFemaleId,
@@ -1409,6 +1456,7 @@ export default function OmniCanvas() {
           promoCoverLayoutIds: selectedPromoLayoutIds,
           actionCameraRecipeIds: selectedActionRecipeIds,
           cineVocabIds: selectedCineVocabIds,
+            cineVocabLocale: factoryCineVocabLocale,
           wardrobePropContinuityIds: selectedWardrobeIds,
           sceneId: factorySceneId || undefined,
           propIds: factoryPropIds,
@@ -1848,6 +1896,7 @@ export default function OmniCanvas() {
         promoCoverLayoutIds: selectedPromoLayoutIds,
         actionCameraRecipeIds: selectedActionRecipeIds,
         cineVocabIds: selectedCineVocabIds,
+            cineVocabLocale: factoryCineVocabLocale,
         wardrobePropContinuityIds: hardCast?.wardrobePropContinuityIds ?? selectedWardrobeIds,
         videoReverseOutputMode: factoryReverseMode,
         customRefs: customAssetRefs,
@@ -2270,6 +2319,7 @@ export default function OmniCanvas() {
       promoCoverLayoutIds: selectedPromoLayoutIds,
       actionCameraRecipeIds: selectedActionRecipeIds,
       cineVocabIds: selectedCineVocabIds,
+            cineVocabLocale: factoryCineVocabLocale,
       wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
       videoReverseOutputMode: factoryReverseMode,
       customRefs: customAssetRefs,
@@ -2468,6 +2518,7 @@ export default function OmniCanvas() {
       promoCoverLayoutIds: selectedPromoLayoutIds,
       actionCameraRecipeIds: selectedActionRecipeIds,
       cineVocabIds: selectedCineVocabIds,
+            cineVocabLocale: factoryCineVocabLocale,
       wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
       videoReverseOutputMode: factoryReverseMode,
       customRefs: customAssetRefs,
@@ -2605,6 +2656,56 @@ export default function OmniCanvas() {
       );
     },
     [],
+  );
+
+  const setCustomAssetDuty = useCallback((id: string, duty: ManhuaCustomAssetRefDuty | null) => {
+    setCustomAssetRefs((prev) =>
+      normalizeManhuaCustomAssetRefs(
+        prev.map((r) => (r.id === id ? { ...r, refDuty: duty } : r)),
+      ),
+    );
+  }, []);
+
+  const handleSegmentIntentChange = useCallback(
+    (segmentIndex: number, intentZh: string) => {
+      const intent = String(intentZh || "").trim().slice(0, 80);
+      const ep = writerFocusEpisode;
+      setWriterPack((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          episodes: prev.episodes.map((e) =>
+            e.index === ep
+              ? {
+                  ...e,
+                  body: upsertManhuaSegmentIntentInMarkdown(e.body || "", segmentIndex, intent),
+                }
+              : e,
+          ),
+        };
+      });
+      setBlocks((prev) => {
+        const next = prev.map((b) => {
+          if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
+          const stage = stageKeyFromBlockId(b.id);
+          if (stage !== "story" && stage !== "beats" && stage !== "reverse") return b;
+          const base = b.outputText || b.prompt || "";
+          const updated = upsertManhuaSegmentIntentInMarkdown(base, segmentIndex, intent);
+          if (updated === base) return b;
+          return {
+            ...b,
+            outputText: b.outputText != null ? updated : b.outputText,
+            prompt: b.outputText != null ? b.prompt : updated,
+          };
+        });
+        setEdges((eds) => {
+          saveCanvasState(next, eds);
+          return eds;
+        });
+        return next;
+      });
+    },
+    [writerFocusEpisode],
   );
 
   const removeCustomAssetRef = useCallback((id: string) => {
@@ -3162,6 +3263,7 @@ export default function OmniCanvas() {
             promoCoverLayoutIds: selectedPromoLayoutIds,
             actionCameraRecipeIds: selectedActionRecipeIds,
             cineVocabIds: selectedCineVocabIds,
+            cineVocabLocale: factoryCineVocabLocale,
             wardrobePropContinuityIds: selectedWardrobeIds,
             sceneId,
             propIds: factoryPropIds,
@@ -3209,7 +3311,7 @@ export default function OmniCanvas() {
             );
             const forceFromStage =
               opts?.forceFromStageByEpisode?.[episodeIndex] ?? opts?.forceFromStage;
-            // 片段续拍：须挂上一段已接受成片；同集链式深度有上限（超限须设定板重锚）
+            // 片段续拍：须挂上一段尾帧/成片；同场景链式深度封顶（超限引导重锚设定板）
             if (
               untilStage === "clip" &&
               typeof fragmentShotIndex === "number" &&
@@ -3218,6 +3320,9 @@ export default function OmniCanvas() {
               const {
                 canContinueManhuaChain,
                 manhuaContinuationRequiresLastFrame,
+                measureManhuaChainDepth,
+                formatManhuaChainReanchorHintZh,
+                normalizeManhuaChainSceneKey,
               } = await import("@shared/manhuaDirectingWorkflow");
               const priorDone = workingBlocks
                 .filter(
@@ -3231,7 +3336,7 @@ export default function OmniCanvas() {
               const lastAccepted = priorDone[priorDone.length - 1];
               const cont = manhuaContinuationRequiresLastFrame({
                 acceptedClipUrl: lastAccepted?.outputUrl || lastAccepted?.outputUrls?.[0],
-                lastFrameUrl: lastAccepted?.outputUrl || lastAccepted?.outputUrls?.[0],
+                lastFrameUrl: lastAccepted?.lastFrameUrl,
               });
               if (!cont.ok) {
                 toast.message(cont.hintZh || "请先完成上一段成片再续拍");
@@ -3241,15 +3346,57 @@ export default function OmniCanvas() {
                 });
                 break outer;
               }
+              const priorSceneKeys = priorDone.map(
+                (b) =>
+                  extractManhuaSceneHintFromPrompt(b.prompt) ||
+                  `第${episodeIndex}集`,
+              );
+              const nextKeyart = workingBlocks.find(
+                (b) =>
+                  b.id.startsWith("keyart-") &&
+                  (getBlockEpisodeIndex(b) ?? 1) === episodeIndex &&
+                  resolveSegmentIndexFromShotIndex(resolveKeyartShotIndex(b.id, b.prompt)) ===
+                    fragmentShotIndex,
+              );
+              const nextSceneRaw =
+                extractManhuaSceneHintFromPrompt(nextKeyart?.prompt) ||
+                extractManhuaSceneHintFromPrompt(lastAccepted?.prompt) ||
+                `第${episodeIndex}集·段${fragmentShotIndex}`;
+              const sceneKey = normalizeManhuaChainSceneKey(nextSceneRaw);
+              const ignoreFirstN = chainIgnoreByScene[sceneKey] || 0;
+              const measured = measureManhuaChainDepth({
+                priorSceneKeys,
+                nextSceneKey: sceneKey,
+                ignoreFirstN,
+              });
               const chain = canContinueManhuaChain({
-                sceneKey: `ep${episodeIndex}`,
-                depth: Math.max(0, priorDone.length),
+                sceneKey: measured.sceneKey,
+                depth: measured.depth,
               });
               if (!chain.ok) {
-                toast.message(chain.reasonZh || "请先用设定板重锚再续拍");
+                const hint = formatManhuaChainReanchorHintZh(measured.sceneKey);
+                toast.message(chain.reasonZh || hint, {
+                  description: "点右侧可重锚角色/场景设定图，然后重新开链续拍。",
+                  action: {
+                    label: "重锚设定板",
+                    onClick: () => {
+                      setChainIgnoreByScene((prev) => ({
+                        ...prev,
+                        [sceneKey]: priorSceneKeys.length,
+                      }));
+                      setManhuaAssetDrawer("assets");
+                      void confirmAssetsAndPrepareImages({
+                        episodeIndexOverride: episodeIndex,
+                      });
+                      toast.message("已标记重锚开链", {
+                        description: "设定图就绪后可再续拍本场。",
+                      });
+                    },
+                  },
+                });
                 pushDebug("continuation:chain-cap", {
                   level: "warn",
-                  detail: chain.reasonZh || "chain-cap",
+                  detail: `${measured.sceneKey}:depth=${measured.depth}`,
                 });
                 break outer;
               }
@@ -3461,8 +3608,66 @@ export default function OmniCanvas() {
       selectedPromoLayoutIds,
       selectedActionRecipeIds,
       selectedCineVocabIds,
+      factoryCineVocabLocale,
       selectedWardrobeIds,
       shotContinuity,
+      chainIgnoreByScene,
+      confirmAssetsAndPrepareImages,
+    ],
+  );
+
+  const handleRetakeClip = useCallback(
+    (clipBlockId: string, variable: ManhuaRetakeVariable) => {
+      if (factoryBusy) {
+        toast.message("请等待当前生成结束");
+        return;
+      }
+      const hit = blocks.find((b) => b.id === clipBlockId);
+      if (!hit) {
+        toast.message("找不到成片节点");
+        return;
+      }
+      const episodeIndex = getBlockEpisodeIndex(hit) ?? writerFocusEpisode;
+      const localFrag = resolveClipLocalSegmentIndex(hit.id, hit.prompt, episodeIndex);
+      const attempt = Math.max(1, Math.floor((hit.manhuaRetake?.attempt || 0) + 1));
+      setBlocks((prev) => {
+        const next = prev.map((b) => {
+          if (b.id !== clipBlockId) return b;
+          return {
+            ...b,
+            prompt: patchPromptForRetakeVariable(b.prompt, variable, attempt),
+            status: "idle" as const,
+            error: undefined,
+            manhuaClipQuality: undefined,
+            outputUrl: undefined,
+            outputUrls: [],
+            lastFrameUrl: undefined,
+            manhuaRetake: { variable, attempt, maxAttempts: 3 },
+          };
+        });
+        setEdges((eds) => {
+          saveCanvasState(next, eds);
+          return eds;
+        });
+        return next;
+      });
+      toast.message("按建议单变量重拍", { description: "只改一项，正在重出片段…" });
+      setFactoryRunScope("focus");
+      ensureStudioSpawned(factoryTopic);
+      void runFactory("clip", {
+        forceFromStage: "clip",
+        episodeIndexes: [episodeIndex],
+        fragmentShotIndexes: [localFrag],
+        targetBlockIds: [clipBlockId],
+      });
+    },
+    [
+      factoryBusy,
+      blocks,
+      writerFocusEpisode,
+      factoryTopic,
+      ensureStudioSpawned,
+      runFactory,
     ],
   );
 
@@ -3830,6 +4035,19 @@ export default function OmniCanvas() {
                   customAssetRefs={customAssetRefs}
                   onUploadCustomAssets={uploadCustomAssetFiles}
                   onCustomAssetRoleChange={setCustomAssetRole}
+                  onCustomAssetDutyChange={setCustomAssetDuty}
+                  onSegmentIntentChange={handleSegmentIntentChange}
+                  deliveryPackage={deliveryPackage}
+                  onDeliveryPackageChange={(next) =>
+                    setDeliveryPackage(
+                      normalizeManhuaDeliveryPackage(next, {
+                        seriesTitle: writerPack?.seriesTitle || factoryTopic,
+                      }),
+                    )
+                  }
+                  cineVocabLocale={factoryCineVocabLocale}
+                  onCineVocabLocaleChange={setFactoryCineVocabLocale}
+                  onRetakeClip={handleRetakeClip}
                   onRemoveCustomAsset={removeCustomAssetRef}
                   onGenerateCustomAssetFromLibrary={generateCustomAssetFromLibrary}
                   shareAssetToLibrary={shareAssetToLibrary}
@@ -4013,6 +4231,7 @@ export default function OmniCanvas() {
                         promoCoverLayoutIds: selectedPromoLayoutIds,
                         actionCameraRecipeIds: selectedActionRecipeIds,
                         cineVocabIds: selectedCineVocabIds,
+            cineVocabLocale: factoryCineVocabLocale,
                         wardrobePropContinuityIds: selectedWardrobeIds,
                         sceneId,
                         propIds: factoryPropIds,
@@ -5046,6 +5265,25 @@ export default function OmniCanvas() {
                           </select>
                         </div>
                         <div>
+                          <label className="block text-[11px] text-white/45">词条语言</label>
+                          <select
+                            value={factoryCineVocabLocale}
+                            onChange={(e) =>
+                              setFactoryCineVocabLocale(e.target.value as ManhuaCineVocabLocale)
+                            }
+                            disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                          >
+                            {(
+                              Object.keys(MANHUA_CINE_VOCAB_LOCALE_LABEL_ZH) as ManhuaCineVocabLocale[]
+                            ).map((loc) => (
+                              <option key={loc} value={loc}>
+                                {MANHUA_CINE_VOCAB_LOCALE_LABEL_ZH[loc]}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
                           <label className="block text-[11px] text-white/45">服装道具连续</label>
                           <select
                             value={factoryWardrobeId}
@@ -5197,6 +5435,7 @@ export default function OmniCanvas() {
                       promoCoverLayoutIds: selectedPromoLayoutIds,
                       actionCameraRecipeIds: selectedActionRecipeIds,
                       cineVocabIds: selectedCineVocabIds,
+            cineVocabLocale: factoryCineVocabLocale,
                       wardrobePropContinuityIds: selectedWardrobeIds,
                       videoReverseOutputMode: factoryReverseMode,
                       customRefs: customAssetRefs,
@@ -5311,6 +5550,40 @@ export default function OmniCanvas() {
                 assembleBusy={assembleBusy}
                 finalVideoUrl={finalAssembleVideoUrl}
                 onAssembleFinal={(clips) => void assembleManhuaFinal(clips)}
+                deliveryPackage={deliveryPackage}
+                cineVocabIds={selectedCineVocabIds}
+                factoryBusy={factoryBusy}
+                onRetakeClip={handleRetakeClip}
+                onAcceptClipDespiteQc={(clipBlockId) => {
+                  setBlocks((prev) => {
+                    const next = prev.map((b) => {
+                      if (b.id !== clipBlockId || !b.manhuaClipQuality) return b;
+                      return {
+                        ...b,
+                        manhuaClipQuality: {
+                          ...b.manhuaClipQuality,
+                          userAcceptedDespiteQc: true,
+                        },
+                        error: b.manhuaClipQuality.summary
+                          ? `已采用（质检未过）：${b.manhuaClipQuality.summary}`
+                          : "已采用（质检未过）",
+                      };
+                    });
+                    setEdges((eds) => {
+                      saveCanvasState(next, eds);
+                      return eds;
+                    });
+                    return next;
+                  });
+                  setDockSelectedIds((prev) => {
+                    const next = new Set(prev);
+                    next.add(clipBlockId);
+                    return next;
+                  });
+                  toast.message("已采用此片", {
+                    description: "可参与长片合成。",
+                  });
+                }}
                 onGoWorkbench={() => {
                   setManhuaUiMode("workbench");
                   setImmersiveExtrasOpen(false);

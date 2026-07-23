@@ -4,6 +4,7 @@ import {
   evaluateManhuaEpisodeSegmentPlanQuality,
   formatManhuaEpisodeSegmentPlanPromptBlock,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
+  upsertManhuaSegmentIntentInMarkdown,
 } from "./manhuaEpisodeSegmentPlan";
 
 describe("manhuaEpisodeSegmentPlan", () => {
@@ -113,5 +114,12 @@ describe("manhuaEpisodeSegmentPlan", () => {
     expect(block).toMatch(/3–4/);
     expect(block).toMatch(/配色风格/);
     expect(block).toMatch(/光影运镜/);
+  });
+
+  it("upserts segment intent into markdown and re-parses", () => {
+    const md = buildManhuaEpisodeSegmentPlanFixtureMarkdown();
+    const next = upsertManhuaSegmentIntentInMarkdown(md, 2, "新意图·试探转硬碰");
+    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(next);
+    expect(plan.segments.find((s) => s.index === 2)?.intentZh).toContain("新意图");
   });
 });

@@ -108,11 +108,43 @@ export type ManhuaChainDepthState = {
   depth: number;
 };
 
+/** 场景键：同场连续续拍才累加；换场重计 */
+export function normalizeManhuaChainSceneKey(raw?: string | null): string {
+  const s = String(raw || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/[，,。.;；]/g, "")
+    .slice(0, 48);
+  return s || "未命名场景";
+}
+
+/**
+ * 统计「即将拍的这一段」之前、同场景连续已完成段数（从末尾往前数）。
+ * ignoreFirstN：重锚后忽略更早的成片（产品闭环用）。
+ */
+export function measureManhuaChainDepth(opts: {
+  priorSceneKeys: string[];
+  nextSceneKey: string;
+  ignoreFirstN?: number;
+}): { depth: number; sceneKey: string } {
+  const key = normalizeManhuaChainSceneKey(opts.nextSceneKey);
+  const skip = Math.max(0, Math.floor(opts.ignoreFirstN || 0));
+  const keys = (opts.priorSceneKeys || [])
+    .slice(skip)
+    .map((k) => normalizeManhuaChainSceneKey(k));
+  let depth = 0;
+  for (let i = keys.length - 1; i >= 0; i--) {
+    if (keys[i] !== key) break;
+    depth += 1;
+  }
+  return { depth, sceneKey: key };
+}
+
 /** 是否允许再链式续拍；超限须重锚设定板 */
 export function canContinueManhuaChain(
   state: ManhuaChainDepthState | null | undefined,
   opts?: { maxDepth?: number },
-): { ok: boolean; nextDepth: number; reasonZh?: string } {
+): { ok: boolean; nextDepth: number; reasonZh?: string; maxDepth: number } {
   const max = Math.min(
     MANHUA_CHAIN_DEPTH_HARD_MAX,
     Math.max(1, Math.floor(opts?.maxDepth ?? MANHUA_CHAIN_DEPTH_DEFAULT)),
@@ -122,24 +154,59 @@ export function canContinueManhuaChain(
     return {
       ok: false,
       nextDepth: depth,
-      reasonZh: `同场景已连续续拍 ${depth} 次，请用设定板/四视角卡重锚后再拍，避免漂移。`,
+      maxDepth: max,
+      reasonZh: `同场景「${state?.sceneKey || "当前场"}」已连续续拍 ${depth} 次（上限 ${max}）。请先重锚角色/场景设定图，再接着拍，避免脸与空间漂移。`,
     };
   }
-  return { ok: true, nextDepth: depth + 1 };
+  return { ok: true, nextDepth: depth + 1, maxDepth: max };
 }
 
-/** 续拍硬门：必须有已接受尾帧（或成片 URL） */
+export function formatManhuaChainReanchorHintZh(sceneKey?: string | null): string {
+  const key = normalizeManhuaChainSceneKey(sceneKey);
+  return `同场景「${key}」续拍已达上限。点「重锚设定板」出齐角色/场景参考图后，可重新开链续拍。`;
+}
+
+/** 续拍硬门：优先真实尾帧图；无尾帧时可用已接受成片 URL 兜底 */
 export function manhuaContinuationRequiresLastFrame(opts: {
   lastFrameUrl?: string | null;
   acceptedClipUrl?: string | null;
-}): { ok: boolean; hintZh?: string } {
+}): { ok: boolean; hintZh?: string; usedLastFrame: boolean } {
   const last = String(opts.lastFrameUrl || "").trim();
   const clip = String(opts.acceptedClipUrl || "").trim();
-  if (/^https?:\/\//i.test(last) || /^https?:\/\//i.test(clip)) return { ok: true };
+  if (/^https?:\/\//i.test(last)) return { ok: true, usedLastFrame: true };
+  if (/^https?:\/\//i.test(clip)) return { ok: true, usedLastFrame: false };
   return {
     ok: false,
-    hintZh: "续拍须挂上一段已接受成片或尾帧，才能按真实落点接着拍。",
+    usedLastFrame: false,
+    hintZh: "续拍须挂上一段已抽取尾帧或已接受成片，才能按真实落点接着拍。",
   };
+}
+
+/** 单变量重拍：在原 prompt 上叠「只改一项」补丁，其它保持不变 */
+export function patchPromptForRetakeVariable(
+  prompt: string,
+  variable: ManhuaRetakeVariable,
+  attempt = 1,
+): string {
+  const base = stripManhuaPromptSlop(String(prompt || "").trim());
+  const label = MANHUA_RETAKE_VARIABLE_LABEL_ZH[variable];
+  const n = Math.max(1, Math.floor(attempt));
+  const patchByVar: Record<ManhuaRetakeVariable, string> = {
+    camera: "只调整运镜轨迹/速度/起落幅；人物站位、服装、场景陈设保持与参考一致。",
+    performance: "只加强表情/口型气口/肢体可读性；机位与光比保持不变。",
+    lighting: "只调整光比/轮廓/曝光层次；构图与表演节拍保持不变。",
+    reference: "严格贴合参考图身份锁与空间锁；禁止换脸换装跳棚。",
+    duration: "只收紧或拉开动作节奏与气口密度；场景与人物关系不变。",
+    framing: "只调整景别/构图安全区；运镜意图与表演不变。",
+  };
+  const patch = [
+    `【轻量重拍·第 ${n} 次】`,
+    `只改「${label}」一项：${patchByVar[variable]}`,
+    "禁止同时改其它变量；禁止新增无关角色或换场。",
+  ].join("\n");
+  // 去掉旧重拍块，避免叠多层
+  const cleaned = base.replace(/\n*【轻量重拍·第\s*\d+\s*次】[\s\S]*?(?=\n【|$)/g, "").trim();
+  return stripManhuaPromptSlop([cleaned, patch].filter(Boolean).join("\n\n"));
 }
 
 export function formatManhuaReferenceDutyBlock(

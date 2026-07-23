@@ -67,7 +67,12 @@ import {
   buildActionCameraInjectBlock,
   recommendActionCameraFromTopic,
 } from "@shared/manhuaActionCameraRecipeBank";
-import { formatCineVocabInjectBlock } from "@shared/manhuaCineVocabBank";
+import {
+  formatCineVocabInjectBlock,
+  type ManhuaCineVocabLocale,
+} from "@shared/manhuaCineVocabBank";
+import { formatCustomAssetRefsDutyBlock } from "@shared/manhuaCustomAssetRefs";
+import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
 import {
   buildManhuaCameraMoveInjectBlock,
   MANHUA_CAMERA_MOVE_ORDER,
@@ -236,6 +241,8 @@ export type SpawnManhuaDramaStudioOpts = {
   actionCameraRecipeIds?: string[];
   /** 电影级可拍词表 id */
   cineVocabIds?: string[];
+  /** 可拍词表注入语言 */
+  cineVocabLocale?: ManhuaCineVocabLocale;
   /** 服装道具连续性卡片 id */
   wardrobePropContinuityIds?: string[];
   /** 编导反推输出档 */
@@ -528,6 +535,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   const actionCameraBlock = buildActionCameraInjectBlock(actionCameraRecipeIds);
   const cineVocabBlock = formatCineVocabInjectBlock(
     (opts.cineVocabIds || []).map((id) => String(id || "").trim()).filter(Boolean),
+    opts.cineVocabLocale || "zh",
   );
   /** 节拍/反推默认注入高频运镜样本（过肩/特写/细节/跟随/手持/低角），避免空运镜 */
   const cameraMoveSampleBlock = buildManhuaCameraMoveInjectBlock(
@@ -942,6 +950,8 @@ export function applyFactoryPrefsToBlocks(
     promoCoverLayoutIds?: string[];
     actionCameraRecipeIds?: string[];
     cineVocabIds?: string[];
+  /** 可拍词表注入语言 */
+  cineVocabLocale?: ManhuaCineVocabLocale;
     wardrobePropContinuityIds?: string[];
     sceneId?: string;
     propIds?: string[];
@@ -965,7 +975,11 @@ export function applyFactoryPrefsToBlocks(
   const maleMicroBlock = buildMaleMicroExpressionInjectBlock(opts.maleMicroExpressionIds || []);
   const promoCoverBlock = buildPromoCoverInjectBlock(opts.promoCoverLayoutIds || []);
   const actionCameraBlock = buildActionCameraInjectBlock(opts.actionCameraRecipeIds || []);
-  const cineVocabBlock = formatCineVocabInjectBlock(opts.cineVocabIds || []);
+  const cineVocabBlock = formatCineVocabInjectBlock(
+    opts.cineVocabIds || [],
+    opts.cineVocabLocale || "zh",
+  );
+  const referenceDutyBlock = formatCustomAssetRefsDutyBlock(opts.customRefs || []);
   const wardrobeBlock = buildWardrobePropContinuityInjectBlock(opts.wardrobePropContinuityIds || []);
   const pathRecipeId = (opts.pathCameraRecipeIds || []).map(String).filter(Boolean)[0];
   const identityLockZh = String(opts.identityLockZh || "").trim() || undefined;
@@ -1037,6 +1051,7 @@ export function applyFactoryPrefsToBlocks(
         }
       }
       base = stripMarkedSection(base, "【点选道具锚点】");
+      base = stripMarkedSection(base, "【参考职责】");
       const parts = [
         base,
         genreBlock && syncGenre ? genreBlock : "",
@@ -1066,10 +1081,13 @@ export function applyFactoryPrefsToBlocks(
         (b.id.startsWith("beats-") || b.id.startsWith("keyart-")) && propAnchorBlock
           ? propAnchorBlock
           : "",
+        (b.id.startsWith("keyart-") || b.id.startsWith("clip-")) && referenceDutyBlock
+          ? referenceDutyBlock
+          : "",
       ].filter(Boolean);
       const merged: CanvasBlock = {
         ...b,
-        prompt: parts.join("\n\n"),
+        prompt: stripManhuaPromptSlop(parts.join("\n\n")),
         ...(b.id.startsWith("reverse-") ? { videoReverseOutputMode: reverseMode } : {}),
       };
       if (b.id.startsWith("keyart-")) {
@@ -1451,19 +1469,41 @@ export function ensureManhuaFragmentClips(
       globalSeg >= 2
         ? `${MANHUA_CLIP_CONTINUITY_HINT_ZH}\n${MANHUA_CLIP_CROSS_SEGMENT_TRANSITION_HINT_ZH}`
         : "";
-    const segPrompt = [
-      MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip,
-      formatWorkbenchSegmentClipInjectBlock({
-        segmentIndex: globalSeg,
-        durationSec: manhuaSegmentDurationSec(defaultModel),
-        shots: seg.shots,
-        sceneHintZh: extractManhuaSceneHintFromPrompt(primary.prompt),
-      }),
-      continuityAddon,
-      artLock,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    const already = segments
+      .slice(0, Math.max(0, segments.indexOf(seg)))
+      .map(
+        (p) =>
+          `段${p.index}:${String(p.shots.find((s) => s.intentZh)?.intentZh || p.shots[0]?.actionZh || "").slice(0, 24)}`,
+      )
+      .join("；")
+      .slice(0, 280);
+    const later = segments
+      .slice(segments.indexOf(seg) + 1, segments.indexOf(seg) + 3)
+      .map(
+        (p) =>
+          `段${p.index}:${String(p.shots.find((s) => s.intentZh)?.intentZh || "后段冲突").slice(0, 24)}`,
+      )
+      .join("；")
+      .slice(0, 200);
+    const intentZh = String(seg.shots.find((s) => s.intentZh)?.intentZh || "").trim();
+    const segPrompt = stripManhuaPromptSlop(
+      [
+        MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip,
+        formatWorkbenchSegmentClipInjectBlock({
+          segmentIndex: globalSeg,
+          durationSec: manhuaSegmentDurationSec(defaultModel),
+          shots: seg.shots,
+          sceneHintZh: extractManhuaSceneHintFromPrompt(primary.prompt),
+          intentZh,
+          alreadyHappenedZh: already,
+          reservedForLaterZh: later,
+        }),
+        continuityAddon,
+        artLock,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    );
     if (existing) {
       keepSegClipIds.add(existing.id);
       continue;
@@ -1922,9 +1962,30 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
           )
           .map((k) => (k ? extractManhuaSceneHintFromPrompt(k.prompt) : ""))
           .find(Boolean) || extractManhuaSceneHintFromPrompt(b.prompt);
+      const intentZh = String(segShots.find((s) => s.intentZh)?.intentZh || "").trim();
+      const already = shots
+        .filter((s) => resolveSegmentIndexFromShotIndex(s.index) < localSeg)
+        .map(
+          (s) =>
+            `段${resolveSegmentIndexFromShotIndex(s.index)}:${String(s.intentZh || s.actionZh || "").slice(0, 20)}`,
+        )
+        .filter((v, i, a) => a.indexOf(v) === i)
+        .join("；")
+        .slice(0, 280);
+      const later = shots
+        .filter((s) => resolveSegmentIndexFromShotIndex(s.index) > localSeg)
+        .map(
+          (s) =>
+            `段${resolveSegmentIndexFromShotIndex(s.index)}:${String(s.intentZh || "后段冲突").slice(0, 20)}`,
+        )
+        .filter((v, i, a) => a.indexOf(v) === i)
+        .slice(0, 3)
+        .join("；")
+        .slice(0, 200);
       return {
         ...b,
-        prompt: [
+        prompt: stripManhuaPromptSlop(
+          [
           kept,
           formatWorkbenchSegmentClipInjectBlock({
             segmentIndex: globalSeg,
@@ -1940,6 +2001,9 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
                   },
                 ],
             sceneHintZh: sceneFromKeyart || undefined,
+            intentZh,
+            alreadyHappenedZh: already,
+            reservedForLaterZh: later,
           }),
           globalSeg >= 2
             ? `${MANHUA_CLIP_CONTINUITY_HINT_ZH}\n${MANHUA_CLIP_CROSS_SEGMENT_TRANSITION_HINT_ZH}`
@@ -1948,6 +2012,7 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
         ]
           .filter(Boolean)
           .join("\n\n"),
+        ),
         videoModel: model,
       };
     }
@@ -2409,6 +2474,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                 outputText: out.outputText,
                 outputUrl: out.outputUrl,
                 outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : b.outputUrls),
+                lastFrameUrl: out.lastFrameUrl || b.lastFrameUrl,
                 error: undefined,
               }
             : b,
