@@ -36,7 +36,7 @@ defaultEnabled: false
 3. **episode_beats**：6–10 镜，每镜 2–4s（可挂编导手法块）  
 4. **video_reverse**：有参考片则反推；无片则节拍补全分镜  
 5. **key_art**：JSON 导演中台→竖屏静帧  
-6. **seedance_clip**：I2V 微动公式成片  
+6. **seedance_clip**：完整导戏单成片（禁止微动三件套减法）  
 
 ## 比桌面竞品更好的点（必须兑现）
 - 与 Platform Skill / 成稿去导演名统一口径  

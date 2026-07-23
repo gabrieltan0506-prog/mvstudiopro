@@ -725,21 +725,13 @@ export async function runCanvasBlock(
     const seedanceDirectorSource = continuityVideoUrl
       ? `${followStillPrompt}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}`
       : followStillPrompt;
-    // 漫剧导戏单（含 @角色N 对白锁）必须整段进 Seedance；不可压成三句微动口令
+    // 导戏单原样进 Seedance（已废除微动三件套）；clip 不用路径配方覆盖正文
+    const isClip = block.id.startsWith("clip-");
     const motionPrompt = stripManhuaPromptSlop(
-      isManhuaSeedanceDirectorPrompt(seedanceDirectorSource) ||
-        block.id.startsWith("clip-")
-        ? compileI2VMotionPrompt(seedanceDirectorSource, {
-            hasReferenceImage: Boolean(stillRef || continuityVideoUrl || fusionStillUrls.length),
-            // clip 不用路径配方覆盖整段导戏单
-            pathCameraRecipeId: undefined,
-            pathAnnotationJson: undefined,
-          })
-        : compileI2VMotionPrompt(seedanceDirectorSource, {
-            hasReferenceImage: Boolean(stillRef || continuityVideoUrl || fusionStillUrls.length),
-            pathCameraRecipeId: block.pathCameraRecipeId,
-            pathAnnotationJson: block.pathAnnotationJson,
-          }),
+      compileI2VMotionPrompt(seedanceDirectorSource, {
+        pathCameraRecipeId: isClip ? undefined : block.pathCameraRecipeId,
+        pathAnnotationJson: isClip ? undefined : block.pathAnnotationJson,
+      }),
     );
     const videoModel = block.videoModel || "seedance-2.0-fast";
     console.info(

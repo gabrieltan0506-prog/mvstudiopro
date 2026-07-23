@@ -52,14 +52,14 @@ describe("jsonDirectorMiddleware", () => {
     expect(b.usedCompiledTemplate).toBe(false);
   });
 
-  it("compileI2VMotionPrompt subtracts when reference image exists", () => {
+  it("compileI2VMotionPrompt no longer collapses long prompts to three-piece motion", () => {
     const long =
       "epic cinematic cyberpunk neon masterpiece 8k ultra detailed a lonely cowboy in canyon sunset film grain anamorphic lens volumetric godrays teal orange grade";
     const motion = compileI2VMotionPrompt(long, { hasReferenceImage: true });
-    expect(motion.length).toBeLessThan(120);
-    expect(motion).toMatch(/push-in|zoom|pan|orbit|static|推进|拉远|环绕|固定/i);
-    expect(motion.toLowerCase()).not.toContain("cyberpunk");
-    expect(motion.toLowerCase()).not.toContain("masterpiece");
+    expect(motion.length).toBeGreaterThan(80);
+    expect(motion.toLowerCase()).toContain("cowboy");
+    expect(motion).not.toMatch(/^缓慢电影感推进；/);
+    expect(motion).not.toMatch(/动机光下轻薄气氛粒子/);
   });
 
   it("keeps short motion prompts", () => {
