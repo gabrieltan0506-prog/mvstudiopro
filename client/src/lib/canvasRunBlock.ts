@@ -35,6 +35,11 @@ import {
   MANHUA_KEYART_NO_TEXT_EN,
 } from "@shared/manhuaScriptWorkbench";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
+import {
+  buildManhuaFactoryOptimizeBrief,
+  isManhuaBibleOrBeatsBlockId,
+  planManhuaFactoryOptimizeSource,
+} from "@shared/manhuaFactoryTextOptimize";
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
@@ -513,9 +518,38 @@ export async function runCanvasBlock(
         ? "你是创作助手：根据原文直接输出可发布的完整 Markdown 文案，语气专业、有画面感。"
         : "你是创作助手：深度优化并输出可直接发布的完整 Markdown（含标题、正文、平台适配要点）。";
     const sourceText = mergedPrompt.length >= 10 ? mergedPrompt : `${mergedPrompt}\n（请补全为完整创作文案）`;
+    const baseBrief =
+      block.kind === "copy_organize" ? `整理文案结构。\n${brief}` : brief;
+
+    // 漫剧 bible / beats：总上限 32k，超约 16k 拆两次请求，不截断原文
+    if (isManhuaBibleOrBeatsBlockId(block.id)) {
+      const plan = planManhuaFactoryOptimizeSource(sourceText);
+      if (plan.overLimitZh) {
+        throw new Error(plan.overLimitZh);
+      }
+      const parts: string[] = [];
+      let previousMarkdown = "";
+      for (let i = 0; i < plan.chunks.length; i++) {
+        const chunk = plan.chunks[i]!;
+        const partMarkdown = await deps.optimizeCopy({
+          sourceText: chunk,
+          optimizationBrief: buildManhuaFactoryOptimizeBrief({
+            baseBrief,
+            partIndex: i + 1,
+            partTotal: plan.chunks.length,
+            previousMarkdown,
+          }),
+          modelName: model,
+        });
+        parts.push(String(partMarkdown || "").trim());
+        previousMarkdown = parts[parts.length - 1] || "";
+      }
+      return { outputText: parts.filter(Boolean).join("\n\n") };
+    }
+
     const text = await deps.optimizeCopy({
       sourceText,
-      optimizationBrief: block.kind === "copy_organize" ? `整理文案结构。\n${brief}` : brief,
+      optimizationBrief: baseBrief,
       modelName: model,
     });
     return { outputText: text };
