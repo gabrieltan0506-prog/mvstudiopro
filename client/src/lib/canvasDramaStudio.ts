@@ -2051,6 +2051,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   onBlocksChange?: (blocks: CanvasBlock[]) => void;
   onStageStart?: (blockId: string, index: number, total: number, label: string) => void;
   onStageDone?: (blockId: string, index: number, total: number, label: string) => void;
+  /** 单节点最终失败（含关键静帧批量中的一张） */
+  onStageError?: (blockId: string, label: string, message: string) => void;
   onStageSkip?: (blockId: string, label: string) => void;
   onStageRetry?: (blockId: string, label: string, attempt: number, message: string) => void;
   signal?: AbortSignal;
@@ -2242,18 +2244,20 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             : b,
         ),
       );
-      for (const job of jobs) {
-        opts.onStageStart?.(
-          job.id,
-          job.index,
-          orderedIds.length,
-          MANHUA_FACTORY_STAGE_LABEL_ZH.keyart,
-        );
-      }
+      // 进度用「本批静帧张数」而非整条流水线节点序号（避免 16/17 被误读成已出 16 张）
+      const keyartBatchTotal = jobs.length;
+      opts.onStageStart?.(
+        jobs[0]!.id,
+        0,
+        keyartBatchTotal,
+        MANHUA_FACTORY_STAGE_LABEL_ZH.keyart,
+      );
 
-      await mapWithConcurrency(jobs, concurrency, async (job) => {
+      await mapWithConcurrency(jobs, concurrency, async (job, jobOrdinal) => {
         const kid = job.id;
         const kLabel = MANHUA_FACTORY_STAGE_LABEL_ZH.keyart;
+        const localIndex = typeof jobOrdinal === "number" ? jobOrdinal : jobs.findIndex((j) => j.id === kid);
+        opts.onStageStart?.(kid, Math.max(0, localIndex), keyartBatchTotal, kLabel);
         let lastMessage = "生成失败";
         let succeeded = false;
         for (let attempt = 0; attempt <= defaultMaxRetries; attempt++) {
@@ -2322,7 +2326,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             next = enrichDownstreamPrompts(next, kid);
             publish(next);
             completedIds.push(kid);
-            opts.onStageDone?.(kid, job.index, orderedIds.length, kLabel);
+            opts.onStageDone?.(kid, Math.max(0, localIndex), keyartBatchTotal, kLabel);
             succeeded = true;
             break;
           } catch (e: unknown) {
@@ -2356,6 +2360,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           if (!errors.some((e) => e.id === kid)) {
             errors.push({ id: kid, message: lastMessage });
           }
+          opts.onStageError?.(kid, kLabel, lastMessage);
         }
       });
 

@@ -3034,7 +3034,10 @@ export default function ManhuaScriptWorkbench({
                   <div className="text-[11px] font-semibold text-cyan-50/90">视觉简报（出图前确认）</div>
                   <span className="text-[9px] text-white/40">
                     {visualBriefConfirmed ? "已确认" : "未确认"} · 静帧 {episodeStillCount}/
-                    {Math.max(shots.length, 1)}
+                    {Math.max(episodeKeyarts.length, shots.length, 1)}
+                    {episodeKeyarts.some((b) => b.status === "error")
+                      ? ` · 失败 ${episodeKeyarts.filter((b) => b.status === "error").length}`
+                      : ""}
                   </span>
                 </div>
                 <div className="mt-1.5 grid max-h-28 gap-1 overflow-y-auto text-[10px] leading-4 text-white/65">
@@ -3092,17 +3095,25 @@ export default function ManhuaScriptWorkbench({
               <div className="mt-1.5 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
                 {shots.map((shot, i) => {
                   const on = i === Math.min(shotIndex, shots.length - 1);
-                  const shotKey =
-                    episodeKeyarts.find(
-                      (b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index,
-                    ) || episodeKeyarts[i];
+                  // 严格按镜号对齐；禁止用列表下标顶替，避免有图/失败状态错位
+                  const shotKey = episodeKeyarts.find(
+                    (b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index,
+                  );
                   const thumb = mediaUrl(shotKey);
+                  const keyartFailed =
+                    Boolean(shotKey) &&
+                    (shotKey!.status === "error" || Boolean(shotKey!.error)) &&
+                    !thumb;
+                  const keyartRunning = shotKey?.status === "running" && !thumb;
                   return (
                     <div
                       key={shot.index}
                       data-manhua-shot={shot.index}
                       data-manhua-active={on ? "true" : "false"}
                       data-manhua-keyart-url={thumb || ""}
+                      data-manhua-keyart-status={
+                        thumb ? "ready" : keyartFailed ? "error" : keyartRunning ? "running" : "idle"
+                      }
                       className={`flex w-full items-stretch rounded-lg border text-left transition ${
                         on
                           ? "border-cyan-400/50 bg-cyan-500/15"
@@ -3114,9 +3125,23 @@ export default function ManhuaScriptWorkbench({
                         onClick={() => setShotIndex(i)}
                         className="flex min-w-0 flex-1 gap-2 px-2 py-2 text-left"
                       >
-                        <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-dashed border-amber-400/35 bg-amber-500/10">
+                        <div
+                          className={`relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-dashed bg-amber-500/10 ${
+                            keyartFailed
+                              ? "border-red-400/55"
+                              : "border-amber-400/35"
+                          }`}
+                        >
                           {thumb ? (
                             <img src={thumb} alt="" className="h-full w-full object-cover" />
+                          ) : keyartFailed ? (
+                            <div className="flex h-full items-center justify-center px-0.5 text-center text-[8px] font-semibold leading-tight text-red-100/90">
+                              失败
+                            </div>
+                          ) : keyartRunning ? (
+                            <div className="flex h-full items-center justify-center text-[8px] text-amber-100/80">
+                              …
+                            </div>
                           ) : (
                             <div className="flex h-full flex-col items-center justify-center gap-0.5 px-0.5 text-center text-amber-100/80">
                               <span className="text-[9px] font-semibold">
@@ -3701,6 +3726,9 @@ export default function ManhuaScriptWorkbench({
             <span className="text-[9px] text-white/35">
               已出静帧 {episodeKeyarts.filter((b) => mediaUrl(b)).length}/
               {Math.max(episodeKeyarts.length, shots.length, 1)}
+              {episodeKeyarts.filter((b) => b.status === "error" && !mediaUrl(b)).length
+                ? ` · 失败 ${episodeKeyarts.filter((b) => b.status === "error" && !mediaUrl(b)).length}`
+                : ""}
             </span>
             <div className="flex gap-1 overflow-x-auto">
               {episodeIndexes.map((ep) => {
