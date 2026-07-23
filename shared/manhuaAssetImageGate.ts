@@ -173,11 +173,28 @@ export function evaluateManhuaAssetImageGate(
       if (!blockHasMedia(sheet)) missingCastIds.push(id);
     }
   }
+  const charSheetsWithMedia = blocks.filter(
+    (b) => b.id.startsWith("charsheet-") && blockHasMedia(b),
+  );
+  const sceneSheetsWithMedia = blocks.filter(
+    (b) => b.id.startsWith("sceneplate-") && blockHasMedia(b),
+  );
+  // 画布上定妆张数已够（即便节点 id 与人物表 id 细差）→ 视为角色图已齐
+  const canvasSheetsCoverCast =
+    castLocked &&
+    castIdsForGate.length > 0 &&
+    missingCastIds.length > 0 &&
+    charSheetsWithMedia.length >= castIdsForGate.length;
   const castImagesReady =
-    (castLocked && missingCastIds.length === 0) || customChars.length > 0;
+    (castLocked && missingCastIds.length === 0) ||
+    customChars.length > 0 ||
+    canvasSheetsCoverCast;
 
   const scenePlate = sceneId ? findAssetBlock(blocks, "sceneplate-", sceneId) : undefined;
-  const sceneImageReady = customScenes.length > 0 || blockHasMedia(scenePlate);
+  const sceneImageReady =
+    customScenes.length > 0 ||
+    blockHasMedia(scenePlate) ||
+    (sceneLocked && sceneSheetsWithMedia.length > 0);
   const missingScene =
     (Boolean(mainScene) || Boolean(sceneId && getManhuaSceneTemplate(sceneId))) &&
     !customScenes.length &&

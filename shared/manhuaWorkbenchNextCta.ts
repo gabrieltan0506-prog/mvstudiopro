@@ -85,8 +85,8 @@ export function resolveManhuaWorkbenchNextCta(
   if (!input.stillsReadyEnough || !input.videoBurnUnlocked) {
     return {
       kind: "generate_keyarts",
-      labelZh: "生成本步内容",
-      stepTitleZh: "分镜视频",
+      labelZh: "生成关键静帧",
+      stepTitleZh: "分镜 · 关键静帧",
       hintZh: "资产已齐：一次出齐本集关键静帧（导戏单随后自动生成）",
       targetPhase: "storyboard",
       prevPhase: "assets",

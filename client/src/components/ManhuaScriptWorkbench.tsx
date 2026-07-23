@@ -1214,8 +1214,9 @@ export default function ManhuaScriptWorkbench({
                 <button
                   type="button"
                   data-manhua-action="generate-all-keyarts"
-                  disabled={!canGenerateFragment || factoryBusy || activePhase !== "storyboard"}
+                  disabled={!canGenerateFragment || factoryBusy}
                   onClick={() => {
+                    setActivePhase("storyboard");
                     setVisualBriefConfirmed(true);
                     onGenerateAllEpisodeKeyarts();
                   }}
@@ -1226,11 +1227,11 @@ export default function ManhuaScriptWorkbench({
                   }`}
                   title={
                     fragmentGateHint ||
-                    "确认视觉简报后，一次出齐本集全部分镜静帧"
+                    "资产已齐：确认简报并一次出齐本集关键静帧"
                   }
                 >
                   <Play className="h-3.5 w-3.5" />
-                  确认简报，生成分镜画面
+                  生成关键静帧
                 </button>
               ) : null}
               <button
@@ -1730,7 +1731,20 @@ export default function ManhuaScriptWorkbench({
                   disabled={
                     !outlineComplete || !assetGate.castLocked || !assetGate.sceneLocked || factoryBusy
                   }
-                  onClick={enterStoryboard}
+                  onClick={() => {
+                    if (
+                      assetsComplete &&
+                      episodeSheetGallery.length > 0 &&
+                      onGenerateAllEpisodeKeyarts &&
+                      !stillsReadyEnough
+                    ) {
+                      setActivePhase("storyboard");
+                      setVisualBriefConfirmed(true);
+                      onGenerateAllEpisodeKeyarts();
+                      return;
+                    }
+                    enterStoryboard();
+                  }}
                   className="rounded-lg border border-violet-300/50 bg-violet-500/30 px-3 py-1.5 text-[12px] font-bold text-violet-50 disabled:opacity-45"
                   title={
                     !assetGate.castLocked || !assetGate.sceneLocked
@@ -1741,16 +1755,20 @@ export default function ManhuaScriptWorkbench({
                         ? "现有设定图与剧本不符，请先点「按剧本重出设定图」"
                         : episodeSheetGallery.length === 0
                           ? "按剧本出齐角色定妆与场景空镜"
-                          : assetsComplete
-                            ? "进入分镜视频"
-                            : "继续补齐角色图 / 场景图"
+                          : assetsComplete && !stillsReadyEnough
+                            ? "资产已齐：生成关键静帧"
+                            : assetsComplete
+                              ? "进入分镜"
+                              : "继续补齐角色图 / 场景图"
                   }
                 >
                   {assetScriptStaleHintZh
                     ? "设定图已过期"
                     : episodeSheetGallery.length === 0 || !assetsComplete
                       ? "生成全部"
-                      : "生成分镜视频 →"}
+                      : !stillsReadyEnough
+                        ? "生成关键静帧"
+                        : "进入分镜 →"}
                 </button>
               </div>
             </div>
@@ -3045,9 +3063,9 @@ export default function ManhuaScriptWorkbench({
                         setVisualBriefConfirmed(true);
                         onGenerateAllEpisodeKeyarts();
                       }}
-                      className="rounded-md border border-white/15 px-2 py-1 text-[10px] text-white/70 hover:bg-white/[0.06] disabled:opacity-40"
+                      className="rounded-md border border-cyan-300/40 bg-cyan-500/15 px-2 py-1 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-40"
                     >
-                      确认并生成分镜画面
+                      生成关键静帧
                     </button>
                   ) : null}
                 </div>
@@ -3307,7 +3325,7 @@ export default function ManhuaScriptWorkbench({
               )}
               {!annotateStillUrl ? (
                 <p className="text-[10px] text-amber-100/70">
-                  尚无本片段静帧。请先点「确认简报，生成分镜画面」；单镜成片缺图时只补本镜。
+                  尚无本片段静帧。请先点「生成关键静帧」；单镜成片缺图时只补本镜。
                 </p>
               ) : null}
             </div>
