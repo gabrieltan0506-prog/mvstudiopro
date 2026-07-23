@@ -3329,6 +3329,8 @@ export default function OmniCanvas() {
         fragmentShotIndex?: number;
         /** 依次生成多个片段（缺片批量）。 */
         fragmentShotIndexes?: number[];
+        /** true：覆盖重出本集全部关键静帧；默认只补失败/缺失 */
+        overwriteKeyarts?: boolean;
       },
     ) => {
       if (factoryBusy) return;
@@ -3586,6 +3588,7 @@ export default function OmniCanvas() {
               fragmentShotIndex,
               shotContinuity,
               skipDone: true,
+              overwriteKeyarts: opts?.overwriteKeyarts === true,
               signal: ac.signal,
               onBlocksChange: (next) => {
                 workingBlocks = next;
@@ -4496,7 +4499,26 @@ export default function OmniCanvas() {
                       });
                       return next;
                     });
-                    // 故事→反推→按镜展开→一次跑齐本集全部静帧（已完成的跳过）
+                    // 只补失败/缺失；已有产出图的静帧在流水线内跳过（不会整集重烧）
+                    const epKeys = blocks.filter(
+                      (b) =>
+                        b.id.startsWith("keyart-") &&
+                        (getBlockEpisodeIndex(b) ?? 1) === writerFocusEpisode,
+                    );
+                    const already = epKeys.filter((b) =>
+                      Boolean(b.outputUrl || b.outputUrls?.[0]),
+                    ).length;
+                    if (already > 0) {
+                      const need = Math.max(0, epKeys.length - already);
+                      toast.message(
+                        need > 0
+                          ? `已出 ${already} 张将跳过，本次补失败/空白镜头`
+                          : `已出 ${already} 张将跳过；若镜数有新增会只补新镜`,
+                        {
+                          description: "要从头覆盖全部静帧，请用「重出静帧」。",
+                        },
+                      );
+                    }
                     void runFactory("keyart", {
                       episodeIndexes: [writerFocusEpisode],
                     });
@@ -4588,10 +4610,11 @@ export default function OmniCanvas() {
                     }
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
-                    toast.message(`第${writerFocusEpisode}集 · 从反推重出静帧`);
+                    toast.message(`第${writerFocusEpisode}集 · 从反推覆盖重出全部静帧`);
                     void runFactory("keyart", {
                       forceFromStage: "reverse",
                       episodeIndexes: [writerFocusEpisode],
+                      overwriteKeyarts: true,
                     });
                   }}
                   onRerunKeyartShot={(blockId, shotIndex) => {
@@ -4609,6 +4632,8 @@ export default function OmniCanvas() {
                       forceFromStage: "keyart",
                       episodeIndexes: [writerFocusEpisode],
                       targetBlockIds: [blockId],
+                      // 名单镜：允许覆盖该镜已有图
+                      overwriteKeyarts: false,
                     });
                   }}
                   dockSelectedIds={dockSelectedIds}
