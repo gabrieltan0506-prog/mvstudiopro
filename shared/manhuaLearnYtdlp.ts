@@ -94,10 +94,32 @@ export const MANHUA_LEARN_FETCH_ERR = {
     "抖音成片需要有效登录态才能拉取。云端学节奏复用服务端已有的抖音登录凭证（与趋势采集同源 DOUYIN_COOKIE）；若未生效请检查密钥配置。本机学习请在 .env 写入同一套 DOUYIN_COOKIE，或设置 MANHUA_LEARN_YTDLP_COOKIES_FILE。",
   douyinLoginStale:
     "抖音登录态已失效或被风控拦截，无法拉取成片。请更新服务端抖音登录凭证后重试（学节奏与趋势采集共用同一套）。",
+  permissionDenied:
+    "权限不足，无法下载该集成片（可能需购买或会员）。已跳过，继续下一集。",
   searchPage: "当前是搜索页链接，请改用合集或成片页地址后再学节奏",
   listFailed: "无法解析可学剧集，请换合集页或成片链接重试",
   downloadFailed: "成片下载失败，请确认链接可访问或稍后重试",
 } as const;
+
+/** 弱启发：错误原文偶发含付费/会员等字样时标「权限不足」（不可靠，仍计入连续失败） */
+export function isManhuaLearnPermissionDeniedHint(raw: unknown): boolean {
+  const text = raw instanceof Error ? raw.message : String(raw || "");
+  return /付费|付費|会员|會員|购买|購買|无权|無權|权限不足|需开通|需開通|VIP专享|VIP專享|paywall|paid content|premium only/i.test(
+    text,
+  );
+}
+
+/** 合集 mixId → 候选合集页 URL（优先 collection，再 mix） */
+export function buildDouyinMixCandidateUrls(mixId: string): string[] {
+  const id = String(mixId || "").trim();
+  if (!id || id.length < 4) return [];
+  // 避免把剧名误当成 mixId 拼进 URL
+  if (!/^\d{6,}$/.test(id)) return [];
+  return [
+    `https://www.douyin.com/collection/${id}`,
+    `https://www.douyin.com/mix/${id}`,
+  ];
+}
 
 /** 将 yt-dlp / spawn 原始错误收成前台可用中文（不泄漏命令行） */
 export function mapManhuaLearnFetchError(raw: unknown): string {
@@ -105,6 +127,9 @@ export function mapManhuaLearnFetchError(raw: unknown): string {
   const joined = `${text}\n${raw instanceof Error && raw.cause ? String(raw.cause) : ""}`;
   if (/douyin\.com\/search\//i.test(joined) || /搜索页/.test(joined)) {
     return MANHUA_LEARN_FETCH_ERR.searchPage;
+  }
+  if (isManhuaLearnPermissionDeniedHint(joined)) {
+    return MANHUA_LEARN_FETCH_ERR.permissionDenied;
   }
   if (
     /Fresh cookies|cookies?.*(needed|required)|Login required|请先登录|登录态|cookie/i.test(joined)

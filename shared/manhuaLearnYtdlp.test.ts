@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildDouyinMixCandidateUrls,
   buildNetscapeCookiesFromHeader,
   hasManhuaLearnYtdlpCookieSource,
   isDouyinSingleVideoUrl,
+  isManhuaLearnPermissionDeniedHint,
   listedSingleEpisodeFromUrl,
   mapManhuaLearnFetchError,
   MANHUA_LEARN_FETCH_ERR,
@@ -50,5 +52,20 @@ describe("manhuaLearnYtdlp", () => {
     expect(
       hasManhuaLearnYtdlpCookieSource({ MANHUA_LEARN_YTDLP_COOKIES_FILE: "/tmp/c.txt" }),
     ).toBe(true);
+  });
+
+  it("builds mix candidate urls only for numeric mixId", () => {
+    expect(buildDouyinMixCandidateUrls("1234567890123456789")).toEqual([
+      "https://www.douyin.com/collection/1234567890123456789",
+      "https://www.douyin.com/mix/1234567890123456789",
+    ]);
+    expect(buildDouyinMixCandidateUrls("重生漫剧开局")).toEqual([]);
+  });
+
+  it("maps paywall-like text to permission denied", () => {
+    expect(isManhuaLearnPermissionDeniedHint("该集需付费解锁")).toBe(true);
+    expect(mapManhuaLearnFetchError("需要购买后观看")).toBe(
+      MANHUA_LEARN_FETCH_ERR.permissionDenied,
+    );
   });
 });

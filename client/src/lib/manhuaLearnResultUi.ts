@@ -249,6 +249,18 @@ export function writeManhuaLearnFocusSeriesKey(seriesKey: string): void {
   }
 }
 
+/** Job 虽 succeeded 但本轮 0 集：视为失败展示（兼容旧服务端软成功） */
+export function isManhuaLearnEmptyBatchFailure(out: {
+  batchLearned?: unknown;
+  messageZh?: unknown;
+  learnedCount?: unknown;
+}): boolean {
+  const batch = Math.max(0, Math.floor(Number(out.batchLearned) || 0));
+  if (batch > 0) return false;
+  const msg = String(out.messageZh || "");
+  return /未能成功|本轮未能|失败：|登录态|无法拉取|请换链接/.test(msg);
+}
+
 export function manhuaLearnResultFromJobOutput(
   out: Record<string, unknown>,
 ): ManhuaLearnResultUi {
@@ -278,9 +290,20 @@ export function manhuaLearnResultFromJobOutput(
   const learnedCount = Math.max(0, Math.floor(Number(out.learnedCount) || 0));
   const listed = Math.max(0, Math.floor(Number(out.listedEpisodeCount) || 0));
   const progressLines = parseProgressLines(out.learnProgressLog);
-  const doneLabel =
-    String(out.analysisStageLabel || "").trim() ||
-    manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.done);
+  const messageZh = String(out.messageZh || "").trim();
+  const emptyFail = isManhuaLearnEmptyBatchFailure({
+    batchLearned: out.batchLearned,
+    messageZh,
+    learnedCount,
+  });
+  const doneLabel = emptyFail
+    ? messageZh || manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.failed)
+    : String(out.analysisStageLabel || "").trim() ||
+      manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.done);
+  const linesBase =
+    progressLines.length > 0
+      ? progressLines
+      : undefined;
   return {
     seriesKey: String(out.seriesKey || "").trim(),
     analysisReady,
@@ -291,19 +314,19 @@ export function manhuaLearnResultFromJobOutput(
       Math.floor(Number(out.analysisTarget) || MANHUA_LEARN_ANALYSIS_TARGET),
     ),
     batchLearned: Math.max(0, Math.floor(Number(out.batchLearned) || 0)),
-    messageZh: String(out.messageZh || "").trim(),
+    messageZh,
+    errorZh: emptyFail ? messageZh || "本轮未能成功采下新集" : undefined,
     categoryLabelZh: String(out.categoryLabelZh || "").trim() || undefined,
     tagLabelsZh: seriesTags.length ? seriesTags : undefined,
     listedEpisodeCount: listed || undefined,
     pendingCount: listed > 0 ? Math.max(0, listed - learnedCount) : undefined,
     channel: out.learnChannel === "local" ? "local" : "cloud",
-    liveStatus: "succeeded",
-    livePhase: MANHUA_LEARN_STAGE.done,
+    liveStatus: emptyFail ? "failed" : "succeeded",
+    livePhase: emptyFail ? MANHUA_LEARN_STAGE.failed : MANHUA_LEARN_STAGE.done,
     liveLabelZh: doneLabel,
-    progressLines:
-      progressLines.length > 0
-        ? appendManhuaLearnProgressLine(progressLines, MANHUA_LEARN_STAGE.done, doneLabel)
-        : appendManhuaLearnProgressLine(undefined, MANHUA_LEARN_STAGE.done, doneLabel),
+    progressLines: emptyFail
+      ? appendManhuaLearnProgressLine(linesBase, MANHUA_LEARN_STAGE.failed, doneLabel)
+      : appendManhuaLearnProgressLine(linesBase, MANHUA_LEARN_STAGE.done, doneLabel),
     digestsPreview,
     proposal:
       analysisReady && proposalRaw

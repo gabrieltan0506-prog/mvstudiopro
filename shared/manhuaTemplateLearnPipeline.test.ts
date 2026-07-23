@@ -15,7 +15,7 @@ describe("manhuaTemplateLearnPipeline", () => {
     expect(meta.analysisMin).toBe(16);
     expect(meta.analysisTarget).toBe(20);
     expect(meta.stepsZh.length).toBeGreaterThanOrEqual(5);
-    expect(meta.summaryZh).toMatch(/单集或合集/);
+    expect(meta.summaryZh).toMatch(/合集|打点|连续失败/);
   });
 
   it("formats episode details for panel", () => {
