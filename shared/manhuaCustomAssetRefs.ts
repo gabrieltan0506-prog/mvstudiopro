@@ -27,13 +27,23 @@ export type ManhuaCustomAssetRefDuty =
   | "style";
 
 export const MANHUA_CUSTOM_ASSET_REF_DUTY_LABEL_ZH: Record<ManhuaCustomAssetRefDuty, string> = {
-  identity: "身份锁",
-  space: "空间锁",
-  motion: "运动参考",
-  first_frame: "首帧",
-  last_frame: "尾帧",
-  style: "画风参考",
+  identity: "锁脸·身份",
+  space: "锁场·空间",
+  motion: "只参考动作",
+  first_frame: "当首帧",
+  last_frame: "当尾帧",
+  style: "只参考画风",
 };
+
+/** 分栏默认垫图用途：自动填，仍可手改 */
+export function defaultManhuaCustomAssetRefDuty(
+  role: ManhuaCustomAssetRoleOrUnset,
+): ManhuaCustomAssetRefDuty | null {
+  if (role === "character") return "identity";
+  if (role === "scene") return "space";
+  if (role === "prop") return "style";
+  return null;
+}
 
 export type ManhuaCustomAssetRef = {
   id: string;
@@ -220,7 +230,12 @@ export function normalizeManhuaCustomAssetRefs(
     const source =
       o.source === "generated" || o.source === "upload" ? o.source : undefined;
     const refDutyRaw = String(o.refDuty || "").trim();
-    const refDuty = (
+    const role = inferManhuaCustomAssetRole({
+      role: o.role,
+      seedLibraryId,
+      labelZh,
+    });
+    const parsedDuty = (
       [
         "identity",
         "space",
@@ -231,19 +246,16 @@ export function normalizeManhuaCustomAssetRefs(
       ] as const
     ).includes(refDutyRaw as ManhuaCustomAssetRefDuty)
       ? (refDutyRaw as ManhuaCustomAssetRefDuty)
-      : undefined;
+      : null;
     out.push({
       id,
       url,
-      role: inferManhuaCustomAssetRole({
-        role: o.role,
-        seedLibraryId,
-        labelZh,
-      }),
+      role,
       labelZh,
       source,
       seedLibraryId,
-      refDuty: refDuty || null,
+      // 未标注时按分栏自动填；手选过的原样保留
+      refDuty: parsedDuty || defaultManhuaCustomAssetRefDuty(role),
     });
     if (out.length >= max) break;
   }

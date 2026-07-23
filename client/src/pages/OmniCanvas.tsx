@@ -12,12 +12,19 @@ import {
 } from "@shared/manhuaAssetImageGate";
 import {
   buildManhuaCustomAssetGenFromLibraryPrompt,
+  defaultManhuaCustomAssetRefDuty,
   makeManhuaCustomAssetId,
   normalizeManhuaCustomAssetRefs,
   upsertGeneratedManhuaCustomAssetRef,
   type ManhuaCustomAssetRef,
+  type ManhuaCustomAssetRefDuty,
   type ManhuaCustomAssetRole,
 } from "@shared/manhuaCustomAssetRefs";
+import {
+  collectStaleAssetSheetBlockIds,
+  evaluateManhuaAssetScriptAlignment,
+  purgeStaleCustomAssetRefsForCanon,
+} from "@shared/manhuaAssetScriptSync";
 import { resolveManhuaCustomAssetSeed } from "@shared/manhuaCustomAssetSeed";
 import { absolutizeManhuaAssetUrl } from "@shared/manhuaKeyartEditFusion";
 import {
@@ -167,7 +174,6 @@ import {
   patchPromptForRetakeVariable,
   type ManhuaRetakeVariable,
 } from "@shared/manhuaDirectingWorkflow";
-import type { ManhuaCustomAssetRefDuty } from "@shared/manhuaCustomAssetRefs";
 import { listWardrobePropContinuity } from "@shared/manhuaWardrobePropContinuity";
 import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
 import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
@@ -1547,6 +1553,66 @@ export default function OmniCanvas() {
     });
   }, [writerConfirmed, writerPack, writerFocusEpisode, projectBible?.assetCanon]);
 
+  const assetScriptAlign = useMemo(
+    () =>
+      evaluateManhuaAssetScriptAlignment({
+        assetCanon: projectBible?.assetCanon,
+        customRefs: customAssetRefs,
+        assetBlocks: blocks.filter(
+          (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
+        ),
+      }),
+    [projectBible?.assetCanon, customAssetRefs, blocks],
+  );
+
+  /** 剧本表变了：自动清掉对不上的旧生成设定图（上传保留），并提示按剧本重出 */
+  const lastAssetStalePurgeFpRef = useRef("");
+  useEffect(() => {
+    if (!writerConfirmed || !projectBible?.assetCanon) return;
+    if (assetScriptAlign.aligned) {
+      lastAssetStalePurgeFpRef.current = assetScriptAlign.fingerprint;
+      return;
+    }
+    if (lastAssetStalePurgeFpRef.current === assetScriptAlign.fingerprint) return;
+    lastAssetStalePurgeFpRef.current = assetScriptAlign.fingerprint;
+    const purged = purgeStaleCustomAssetRefsForCanon(
+      customAssetRefs,
+      projectBible.assetCanon,
+    );
+    const removeIds = new Set(
+      collectStaleAssetSheetBlockIds(blocks, projectBible.assetCanon),
+    );
+    if (purged.removedCount > 0) setCustomAssetRefs(purged.refs);
+    if (removeIds.size > 0) {
+      const nextBlocks = blocks.filter((b) => !removeIds.has(b.id));
+      const nextEdges = edges.filter(
+        (e) => !removeIds.has(e.fromId) && !removeIds.has(e.toId),
+      );
+      setBlocks(nextBlocks);
+      setEdges(nextEdges);
+      saveCanvasState(nextBlocks, nextEdges);
+    }
+    if (purged.removedCount > 0 || removeIds.size > 0) {
+      setWorkflowPhase("assets");
+      toast.message("已清掉与现稿不符的旧设定图", {
+        description: "请到资产设定点「按剧本重出设定图」生成新人物/场景",
+      });
+      pushDebug("assetScriptStale:autoPurge", {
+        level: "warn",
+        detail: `refs=${purged.removedCount} sheets=${removeIds.size} fp=${assetScriptAlign.fingerprint.slice(0, 80)}`,
+      });
+    }
+  }, [
+    writerConfirmed,
+    projectBible?.assetCanon,
+    assetScriptAlign.aligned,
+    assetScriptAlign.fingerprint,
+    customAssetRefs,
+    blocks,
+    edges,
+    pushDebug,
+  ]);
+
   const optimizeCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
   const expandWriterMutation = trpc.mvAnalysis.expandManhuaWriterPack.useMutation();
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
@@ -2341,6 +2407,13 @@ export default function OmniCanvas() {
     }
     // 确认编剧 = 以新剧情铺链；先剥尽旧工厂产物，避免旧系列多集坞/英文4镜残留
     const cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges);
+    // 旧「我的角色/场景」生成垫图若不跟新剧本表，会把门禁误报已齐并藏掉「生成全部」
+    const purgedRefs = purgeStaleCustomAssetRefsForCanon(customAssetRefs, canon, {
+      forceAllGenerated: true,
+    });
+    if (purgedRefs.removedCount > 0) {
+      setCustomAssetRefs(purgedRefs.refs);
+    }
     const next = {
       blocks: [...cleaned.blocks, ...spawned.blocks],
       edges: [...cleaned.edges, ...spawned.edges],
@@ -2370,13 +2443,16 @@ export default function OmniCanvas() {
     // 确认剧本后先进资产设定：从剧本表自动出缺的角色/场景设定图，再进分镜
     setWorkflowPhase("assets");
     toast.success(
-      `已确认剧情并锁定编剧表（${tips.join("·")}）。正在从剧本出角色/场景设定图…`,
+      `已确认剧情并锁定编剧表（${tips.join("·")}${
+        purgedRefs.removedCount > 0 ? `·已清旧设定图${purgedRefs.removedCount}` : ""
+      }）。正在从剧本出角色/场景设定图…`,
     );
     window.setTimeout(() => {
       void confirmAssetsAutoRef.current({
         assetCanonOverride: canon,
         episodeIndexOverride: continuity.episodeIndex,
         topicOverride: topicForSpawn,
+        forceRegenerate: true,
       });
     }, 80);
   }, [
@@ -2408,6 +2484,7 @@ export default function OmniCanvas() {
     writerFocusEpisode,
     blocks,
     edges,
+    customAssetRefs,
     remapDockSelectionAfterSpawn,
     pushDebug,
   ]);
@@ -2651,7 +2728,16 @@ export default function OmniCanvas() {
     (id: string, role: ManhuaCustomAssetRef["role"]) => {
       setCustomAssetRefs((prev) =>
         normalizeManhuaCustomAssetRefs(
-          prev.map((r) => (r.id === id ? { ...r, role } : r)),
+          prev.map((r) =>
+            r.id === id
+              ? {
+                  ...r,
+                  role,
+                  // 换分栏后按新角色自动填用途，仍可在下拉手改
+                  refDuty: defaultManhuaCustomAssetRefDuty(role),
+                }
+              : r,
+          ),
         ),
       );
     },
@@ -2816,37 +2902,79 @@ export default function OmniCanvas() {
       assetCanonOverride?: NonNullable<typeof projectBible>["assetCanon"];
       episodeIndexOverride?: number;
       topicOverride?: string;
+      /** 清掉旧生成设定图并强制按现稿重出（重扩写/用户点「按剧本重出」） */
+      forceRegenerate?: boolean;
     }) => {
       const assetCanon = opts?.assetCanonOverride ?? projectBible?.assetCanon;
       const episodeIndex = opts?.episodeIndexOverride ?? writerFocusEpisode;
       const topic = String(opts?.topicOverride || factoryTopic || "").trim();
+      const forceRegenerate = Boolean(opts?.forceRegenerate);
       const writerMainSceneId =
         assetCanon?.episodeMainSceneId[episodeIndex] || assetCanon?.locations[0]?.id || "";
       // 按剧本出资产：主场景跟编剧表；清掉未列入场景表的库示范场景（如 scene_06 皇宫大殿）
       if (writerMainSceneId) {
         setFactorySceneId(writerMainSceneId);
       }
-      if (assetCanon?.locations?.length) {
-        const locIds = new Set(assetCanon.locations.map((l) => l.id));
-        const locNames = assetCanon.locations.map((l) => l.nameZh).filter(Boolean);
-        setCustomAssetRefs((prev) =>
-          prev.filter((r) => {
-            if (r.role !== "scene") return true;
-            const seed = String(r.seedLibraryId || "").trim();
-            if (seed && locIds.has(seed)) return true;
-            const label = String(r.labelZh || "").trim();
-            if (label && locNames.some((n) => label.includes(n) || n.includes(label))) return true;
-            if (/^scene_\d+/i.test(seed)) return false;
-            return true;
+
+      let workingRefs = customAssetRefs;
+      let canvasBlocks = blocks;
+      let canvasEdges = edges;
+      const align = evaluateManhuaAssetScriptAlignment({
+        assetCanon,
+        customRefs: workingRefs,
+        assetBlocks: canvasBlocks.filter(
+          (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
+        ),
+      });
+      const shouldPurge =
+        forceRegenerate || Boolean(assetCanon && !align.aligned);
+      if (shouldPurge) {
+        const purged = purgeStaleCustomAssetRefsForCanon(workingRefs, assetCanon, {
+          forceAllGenerated: forceRegenerate,
+        });
+        workingRefs = purged.refs;
+        if (purged.removedCount > 0) {
+          setCustomAssetRefs(purged.refs);
+        }
+        const removeIds = new Set(
+          collectStaleAssetSheetBlockIds(canvasBlocks, assetCanon, {
+            forceAllSheets: forceRegenerate,
           }),
         );
+        if (removeIds.size > 0) {
+          if (abortRef.current) abortRef.current.abort();
+          canvasBlocks = canvasBlocks.filter((b) => !removeIds.has(b.id));
+          canvasEdges = canvasEdges.filter(
+            (e) => !removeIds.has(e.fromId) && !removeIds.has(e.toId),
+          );
+          setBlocks(canvasBlocks);
+          setEdges(canvasEdges);
+          saveCanvasState(canvasBlocks, canvasEdges);
+        }
+      } else if (assetCanon?.locations?.length) {
+        const locIds = new Set(assetCanon.locations.map((l) => l.id));
+        const locNames = assetCanon.locations.map((l) => l.nameZh).filter(Boolean);
+        const filtered = workingRefs.filter((r) => {
+          if (r.role !== "scene") return true;
+          const seed = String(r.seedLibraryId || "").trim();
+          if (seed && locIds.has(seed)) return true;
+          const label = String(r.labelZh || "").trim();
+          if (label && locNames.some((n) => label.includes(n) || n.includes(label))) return true;
+          if (/^scene_\d+/i.test(seed)) return false;
+          return true;
+        });
+        if (filtered.length !== workingRefs.length) {
+          workingRefs = filtered;
+          setCustomAssetRefs(filtered);
+        }
       }
+
       const sceneId =
         writerMainSceneId ||
         factorySceneId ||
         recommendedScene?.id ||
         "";
-      const assetBlocks = blocks.filter(
+      const assetBlocks = canvasBlocks.filter(
         (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
       );
       const gateInput = {
@@ -2855,7 +2983,7 @@ export default function OmniCanvas() {
         sceneId,
         artStyleId: factoryArtStyleId,
         topic,
-        customRefs: customAssetRefs,
+        customRefs: workingRefs,
         assetCanon,
         episodeIndex,
         episodes: writerPack?.episodes?.map((ep) => ({
@@ -2924,8 +3052,18 @@ export default function OmniCanvas() {
       const hasEpisodeSheetMedia = assetBlocks.some((b) =>
         Boolean(b.outputUrl || b.outputUrls?.[0]),
       );
-      // 仅「垫图分栏齐」不够：本集设定图墙仍空时必须继续出角色/场景卡，避免空态写「按剧本补」却点不到
-      if (gate.ready && hasEpisodeSheetMedia) {
+      const alignAfterPurge = evaluateManhuaAssetScriptAlignment({
+        assetCanon,
+        customRefs: workingRefs,
+        assetBlocks,
+      });
+      // 强制重出 / 与现稿不对齐时绝不早退进分镜
+      if (
+        !forceRegenerate &&
+        alignAfterPurge.aligned &&
+        gate.ready &&
+        hasEpisodeSheetMedia
+      ) {
         syncExistingSheetsToMyLibrary();
         setWorkflowPhase("storyboard");
         toast.message(
@@ -2941,7 +3079,7 @@ export default function OmniCanvas() {
       }
 
       const plans = planManhuaAssetImageSpawns(gateInput, {
-        forceEpisodeSheets: !hasEpisodeSheetMedia,
+        forceEpisodeSheets: forceRegenerate || !hasEpisodeSheetMedia,
       });
       if (!plans.length) {
         toast.message(
@@ -2964,7 +3102,7 @@ export default function OmniCanvas() {
         detail: `plans=${plans.length} · viaCanon=${gate.viaWriterCanon} · missingCast=${gate.missingCastIds.length}`,
       });
       try {
-        let working = [...blocks];
+        let working = [...canvasBlocks];
         /** 资产图固定左上：角色一行、场景一行；禁止再贴到画布最右 */
         const ASSET_ORIGIN_X = 60;
         const CHAR_SHEET_Y = 80;
@@ -3001,7 +3139,7 @@ export default function OmniCanvas() {
         };
         working = packAssetSheetPositions(working);
         setBlocks(working);
-        saveCanvasState(working, edges);
+        saveCanvasState(working, canvasEdges);
         // 视口滚到左上资产带，别让人去右边找
         setFocusBlockId(
           plans[0]?.id ||
@@ -3041,7 +3179,7 @@ export default function OmniCanvas() {
             continue;
           }
           setBlocks(working);
-          saveCanvasState(working, edges);
+          saveCanvasState(working, canvasEdges);
           if (i === 0) setFocusBlockId(plan.id);
           setFactoryProgress(
             plan.kind === "charsheet"
@@ -3068,7 +3206,7 @@ export default function OmniCanvas() {
               : b,
           );
           setBlocks(working);
-          saveCanvasState(working, edges);
+          saveCanvasState(working, canvasEdges);
           ingestSheetToMyLibrary(plan, out.outputUrl || out.outputUrls?.[0]);
           if (out.outputUrl || out.outputUrls?.[0]) {
             pushDebug("confirmAssetsFromScript:engine", {
@@ -3079,7 +3217,7 @@ export default function OmniCanvas() {
         }
         working = packAssetSheetPositions(working);
         setBlocks(working);
-        saveCanvasState(working, edges);
+        saveCanvasState(working, canvasEdges);
         setFocusBlockId(
           working.find((b) => b.id.startsWith("charsheet-"))?.id ||
             working.find((b) => b.id.startsWith("sceneplate-"))?.id ||
@@ -3087,6 +3225,7 @@ export default function OmniCanvas() {
         );
         const nextGate = evaluateManhuaAssetImageGate({
           ...gateInput,
+          customRefs: workingRefs,
           assetBlocks: working.filter(
             (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
           ),
@@ -4030,6 +4169,10 @@ export default function OmniCanvas() {
                   assetsSkipped={assetsSkipped}
                   onAssetsSkippedChange={setAssetsSkipped}
                   onConfirmAssetsAndPrepareImages={confirmAssetsAndPrepareImages}
+                  onRegenerateAssetsFromScript={() =>
+                    void confirmAssetsAndPrepareImages({ forceRegenerate: true })
+                  }
+                  assetScriptStaleHintZh={assetScriptAlign.hintZh}
                   stylePack={stylePack}
                   onStylePackChange={setStylePack}
                   customAssetRefs={customAssetRefs}
@@ -5529,12 +5672,6 @@ export default function OmniCanvas() {
               </div>
             </div>
             ) : null}
-
-            <p className="mt-3 max-w-4xl text-[11px] leading-5 text-white/40">
-              更高画质档位即将开放 · 文生 / 图生 / 参考生已就绪，待开放；当前单次成片固定 10s。
-              {" · "}
-              各集成片就绪后，在下方成片坞一键合成长片（含配乐）。
-            </p>
 
             <div id="manhua-clip-dock-zone" className="mt-4 max-w-4xl scroll-mt-44">
               <ManhuaClipDock
