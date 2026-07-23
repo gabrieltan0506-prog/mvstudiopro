@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   extractManhuaPerformanceCue,
+  extractManhuaSpeakerAtTag,
   extractPerformanceCuesFromScript,
+  formatManhuaLockedDialogueLine,
   formatManhuaPerformanceInjectBlock,
   mergeManhuaPerformanceCue,
   stripQuotedDialogueFromAction,
@@ -23,10 +25,23 @@ describe("manhuaPerformancePrompt dialogue split", () => {
     expect(cue.microExpressionZh || cue.bodyBeatZh).toBeTruthy();
   });
 
+  it("formats locked dialogue with speaker at-tag and expression", () => {
+    expect(
+      formatManhuaLockedDialogueLine({
+        speakerAtTag: "@角色5",
+        dialogueZh: "拿着",
+        emotionZh: "决绝",
+        microExpressionZh: "目光钉死",
+        voiceToneZh: "短促命令",
+      }),
+    ).toBe("@角色5（情绪：决绝｜微表情：目光钉死｜语气：短促命令）：「拿着」");
+    expect(extractManhuaSpeakerAtTag("@角色4 退半步：「你早就知道了？」")).toBe("@角色4");
+  });
+
   it("key_art omits dialogue literal; clip keeps it", () => {
     const cue = mergeManhuaPerformanceCue(
       undefined,
-      "沙哑沉重：「是我对不住你。」下颌绷紧，不敢对视",
+      "@角色1 沙哑沉重：「是我对不住你。」下颌绷紧，不敢对视",
     );
     const key = formatManhuaPerformanceInjectBlock(cue, { stage: "key_art", shotIndex: 1 });
     expect(key).toContain("【人物表演·静帧");
@@ -36,6 +51,8 @@ describe("manhuaPerformancePrompt dialogue split", () => {
 
     const clip = formatManhuaPerformanceInjectBlock(cue, { stage: "clip", shotIndex: 2 });
     expect(clip).toContain("是我对不住你");
+    expect(clip).toContain("@角色1");
+    expect(clip).toContain("对白锁定（人物+表情+台词·引擎有声）");
     expect(clip).toContain("气口");
     expect(clip).toMatch(/禁止字幕|禁止烧/);
   });

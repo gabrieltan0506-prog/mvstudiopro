@@ -43,6 +43,12 @@ import {
   resolvePreviousSegmentClipUrl,
 } from "@shared/manhuaClipContinuity";
 import { resolveClipSegmentIndex } from "@shared/manhuaScriptWorkbench";
+import { parseManhuaCanvasAssetAtTag } from "@shared/manhuaAssetLockRegistry";
+import { parseManhuaSheetPropSubTagsFromPrompt } from "@shared/manhuaSheetPropSubTags";
+import {
+  formatManhuaClipDirectorCueFaceLine,
+  parseManhuaClipDirectorCardSummary,
+} from "@shared/manhuaClipDirectorCard";
 import { CanvasImageEditMaskPainter } from "@/components/canvas/CanvasImageEditMaskPainter";
 import { trpc } from "@/lib/trpc";
 import {
@@ -915,6 +921,69 @@ export default function FreeformCanvas({
                 </div>
 
                 <CanvasBlockUploadBanner block={block} />
+                {(() => {
+                  const assetAt = parseManhuaCanvasAssetAtTag(block.prompt);
+                  const isAssetSheet =
+                    Boolean(assetAt) ||
+                    /^(charsheet|sceneplate|propplate|propsheet|prop)-/.test(
+                      String(block.id || ""),
+                    );
+                  if (!isAssetSheet) return null;
+                  const roleWall = String(block.id || "").startsWith("charsheet-")
+                    ? "角色墙"
+                    : String(block.id || "").startsWith("sceneplate-")
+                      ? "场景墙"
+                      : "道具墙";
+                  const labelFromPrompt =
+                    String(block.prompt || "").match(
+                      /【画布资产@】@(?:角色|场景|道具)\d+=([^\n]+)/,
+                    )?.[1] ||
+                    String(block.prompt || "")
+                      .split("\n")
+                      .find((ln) => ln.trim() && !ln.includes("【画布资产@】"))
+                      ?.trim()
+                      .slice(0, 18) ||
+                    "";
+                  const sheetPropSubs = String(block.id || "").startsWith("charsheet-")
+                    ? parseManhuaSheetPropSubTagsFromPrompt(block.prompt)
+                    : [];
+                  return (
+                    <div className="space-y-1 border-b border-violet-400/25 bg-violet-500/[0.08] px-3 py-2 text-[10px] leading-4">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="rounded bg-violet-400/30 px-1.5 py-0.5 text-[9px] font-semibold text-violet-50">
+                          {roleWall}
+                        </span>
+                        <span className="rounded bg-cyan-500/25 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-cyan-50">
+                          {assetAt || "@待编号"}
+                        </span>
+                        {labelFromPrompt ? (
+                          <span className="truncate text-white/75">{labelFromPrompt}</span>
+                        ) : null}
+                      </div>
+                      {sheetPropSubs.length ? (
+                        <div className="flex flex-wrap gap-1">
+                          {sheetPropSubs.map((s) => (
+                            <span
+                              key={`${s.subTag}-${s.propTag}`}
+                              className="rounded border border-amber-300/35 bg-amber-500/15 px-1.5 py-0.5 font-mono text-[9px] text-amber-50/95"
+                              title={`${s.labelZh} · 跨集锁 ${s.propTag}`}
+                            >
+                              {s.subTag}
+                              <span className="mx-0.5 text-white/35">=</span>
+                              {s.propTag}
+                              <span className="ml-1 font-sans text-white/55">{s.labelZh}</span>
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="text-white/45">
+                        {sheetPropSubs.length
+                          ? "定妆特写格已编全局道具号；跨集同号锁定，勿另造"
+                          : "画布展开资产：静帧 / 成片导戏用此编号锁定"}
+                      </div>
+                    </div>
+                  );
+                })()}
                 {String(block.id || "").startsWith("keyart-") ? (
                   <div className="border-b border-white/10 px-3 py-1.5 text-[10px] leading-4 text-white/65">
                     {block.imageMode === "edit" && block.refImageUrl ? (
@@ -928,6 +997,64 @@ export default function FreeformCanvas({
                     ) : (
                       <span className="text-amber-200/85">未垫图锁资产 · 不可出成片</span>
                     )}
+                  </div>
+                ) : null}
+                {String(block.id || "").startsWith("clip-") ? (
+                  <div
+                    data-manhua-clip-director-face
+                    className="space-y-1.5 border-b border-cyan-400/25 bg-cyan-500/[0.07] px-3 py-2 text-[10px] leading-4 text-cyan-50/90"
+                  >
+                    {(() => {
+                      const card = parseManhuaClipDirectorCardSummary(block.prompt);
+                      const seg =
+                        card.segmentIndex ??
+                        resolveClipSegmentIndex(block.id, block.prompt);
+                      const dur = card.durationSec ?? 15;
+                      const chips = [
+                        ...card.castTags.slice(0, 4),
+                        ...card.sceneTags.slice(0, 2),
+                      ];
+                      const extra =
+                        card.castTags.length + card.sceneTags.length - chips.length;
+                      return (
+                        <>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="rounded bg-cyan-400/30 px-1.5 py-0.5 font-semibold text-cyan-50">
+                              第{String(seg).padStart(2, "0")}段 · {dur}s
+                            </span>
+                            {chips.map((t) => (
+                              <span
+                                key={t}
+                                className="rounded bg-black/35 px-1.5 py-0.5 font-mono text-[10px] text-cyan-100/90"
+                              >
+                                {t}
+                              </span>
+                            ))}
+                            {extra > 0 ? (
+                              <span className="text-white/40">+{extra}</span>
+                            ) : null}
+                          </div>
+                          {card.microExpressionZh ? (
+                            <div className="text-white/70">
+                              微表情：{card.microExpressionZh}
+                            </div>
+                          ) : null}
+                          {card.cueRows.length ? (
+                            <ul className="space-y-0.5 font-mono text-[9px] leading-snug text-white/65">
+                              {card.cueRows.slice(0, 4).map((row, idx) => (
+                                <li key={`${row.startSec}-${idx}`}>
+                                  {formatManhuaClipDirectorCueFaceLine(row)}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <div className="text-white/45">
+                              段成片导戏单将显示在此（秒位 · @角色 · @场景 · 表情）
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 ) : null}
 
@@ -1127,7 +1254,11 @@ export default function FreeformCanvas({
                           <label className="flex items-center gap-2 text-[11px] text-white/70">
                             <span className="shrink-0 text-white/45">模型</span>
                             <select
-                              value={block.videoModel}
+                              value={
+                                block.videoModel === "seedance-2.0"
+                                  ? "seedance-2.0"
+                                  : "seedance-2.0-fast"
+                              }
                               onChange={(e) =>
                                 patchOne(block.id, { videoModel: e.target.value as CanvasBlock["videoModel"] })
                               }
@@ -1142,10 +1273,8 @@ export default function FreeformCanvas({
                           </label>
                           <div className="text-[10px] leading-5 text-white/50">
                             {block.videoModel === "seedance-2.0"
-                              ? "成片·标准：文生 / 图生，默认约 15s"
-                              : block.videoModel === "seedance-2.0-fast"
-                                ? "成片·快速：更快更省，默认约 15s"
-                                : "默认成片引擎：有参考图时做微动减法"}
+                              ? "成片·标准：多图参考 + 运镜/动作/对白，约 4–15s"
+                              : "成片·快速：多图参考 + 运镜/动作/对白，更快更省"}
                           </div>
                           <div className="rounded-lg border border-dashed border-amber-400/30 bg-amber-500/5 px-2 py-1.5 text-[10px] leading-5 text-amber-100/85">
                             Seedance 2.5 Coming soon on MV Studio Pro

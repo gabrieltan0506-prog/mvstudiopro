@@ -1,7 +1,6 @@
 /**
  * 剧本工作台：左=本集资产 · 中=一集剧本+按段静帧 · 右=预览 · 底=集/段时间线
- * 一集：10–12 段 × 每段 3–4 关键静帧；每段一条成片（Fast 15s / Omni 10s）。
- * 方案 C：静帧与按秒导戏单锁定前，成片 CTA 保持禁用。
+ * 一集：10–12 段 × 每段 3–4 关键静帧；每段一条成片（Seedance ≤15s，按时长合计钳制）。
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
@@ -215,19 +214,24 @@ type Props = {
     priceLabelZh: string;
   };
 
-  /** 生成当前选中片段（该镜静帧若缺则先出 + 该片段成片） */
+  /** 生成当前选中段（段内缺静帧则先补 + 该段一条成片） */
   onSpawnAndRunClip?: () => void;
   onGenerateFragment?: (opts: {
+    /** 段号 1-based（工厂按段出一条成片） */
     shotIndex: number;
     keyartId?: string;
     clipId?: string;
   }) => void;
-  /** 本集所有缺成片/质检失败的片段依次生成 */
-  onGenerateMissingFragments?: (shotIndexes: number[]) => void;
+  /** 本集缺成片/质检失败的段号依次生成 */
+  onGenerateMissingFragments?: (segmentIndexes: number[]) => void;
   /** 资产锁定后：一次生成本集全部分镜静帧（主路径） */
   onGenerateAllEpisodeKeyarts?: () => void;
-  /** 画布按「文案→静帧→成片」左→右可读对齐 */
+  /** 画布竖排：资产行 → 静帧行 → 成片提示词行 */
   onLayoutReadableChain?: () => void;
+  /** 确保本集段成片节点已铺好（审阅提示词前） */
+  onEnsureSegmentClips?: () => void;
+  /** 写回段成片节点 prompt（审阅编辑） */
+  onUpdateClipPrompt?: (clipId: string, prompt: string) => void;
   onResumeFromFailure?: () => void;
   /** 从编导反推强制重跑本集静帧（覆盖旧图；工作台主路径入口） */
   onRerunKeyartsFromReverse?: () => void;
@@ -363,6 +367,8 @@ export default function ManhuaScriptWorkbench({
   onGenerateMissingFragments,
   onGenerateAllEpisodeKeyarts,
   onLayoutReadableChain,
+  onEnsureSegmentClips,
+  onUpdateClipPrompt,
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
   onRerunKeyartShot,
@@ -393,8 +399,10 @@ export default function ManhuaScriptWorkbench({
     artStyleId === "photoreal" ? "photoreal" : "cg_drama";
   const [shotIndex, setShotIndex] = useState(0);
   const [visualBriefConfirmed, setVisualBriefConfirmed] = useState(false);
+  const [clipPromptReviewOpen, setClipPromptReviewOpen] = useState(false);
   useEffect(() => {
     setVisualBriefConfirmed(false);
+    setClipPromptReviewOpen(false);
   }, [focusEpisode, topic, seriesTitle]);
   /** 中栏：分镜 | 运镜画板 | 一体参考板 | 粗剪 */
   const [scriptTab, setScriptTab] = useState<"shots" | "path" | "board" | "edit">("shots");
@@ -753,6 +761,19 @@ export default function ManhuaScriptWorkbench({
       })
       .map((seg) => seg.index);
   }, [segments, episodeClips, legacyClip]);
+  const segmentClipReviewList = useMemo(() => {
+    return segments.map((seg) => {
+      const segClip =
+        episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === seg.index) ||
+        (seg.index === 1 ? legacyClip : undefined);
+      return {
+        segmentIndex: seg.index,
+        durationSec: seg.durationSec,
+        clip: segClip,
+        shotIndexes: seg.shots.map((s) => s.index),
+      };
+    });
+  }, [segments, episodeClips, legacyClip]);
   const selectedSorted = useMemo(
     () => [...selectedShotIndexes].sort((a, b) => a - b),
     [selectedShotIndexes],
@@ -846,6 +867,21 @@ export default function ManhuaScriptWorkbench({
     if (episodeMainScene?.nameZh) return "";
     return sceneId;
   }, [customAssetRefs, episodeMainScene?.nameZh, sceneId]);
+  const characterSheetUrlById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const b of blocks) {
+      if (!b.id.startsWith("charsheet-")) continue;
+      const url = mediaUrl(b);
+      if (!url) continue;
+      const seed = b.id.replace(/^charsheet-/, "");
+      map[seed] = url;
+      const canonHit = assetCanon?.characters.find(
+        (c) => c.id === seed || b.id.includes(c.id),
+      );
+      if (canonHit) map[canonHit.id] = url;
+    }
+    return map;
+  }, [blocks, assetCanon]);
   const assetLockRegistry = useMemo(
     () =>
       buildManhuaAssetLockRegistry({
@@ -854,8 +890,18 @@ export default function ManhuaScriptWorkbench({
         sceneId: lockSceneId,
         propIds,
         customRefs: customAssetRefs,
+        assetCanon,
+        characterSheetUrlById,
       }),
-    [characterIds, activeArtStyleId, lockSceneId, propIds, customAssetRefs],
+    [
+      characterIds,
+      activeArtStyleId,
+      lockSceneId,
+      propIds,
+      customAssetRefs,
+      assetCanon,
+      characterSheetUrlById,
+    ],
   );
   const outlineComplete = Boolean(canRun);
   /** 方案 B：剧本确认 + 角色/场景锁定 + 角色图/场景图齐，才可进分镜出片 */
@@ -942,6 +988,25 @@ export default function ManhuaScriptWorkbench({
     if (!hint) return false;
     toast.error("还不能跑", { description: hint });
     return true;
+  };
+  const clipPromptReviewUnlocked = Boolean(
+    stillsReadyEnough && keyartsPixelLocked && !clipGateHint,
+  );
+  const openClipPromptReview = () => {
+    if (!stillsReadyEnough) {
+      toast.error("还不能跑", { description: "请先出齐关键静帧" });
+      return;
+    }
+    if (!keyartsPixelLocked) {
+      toast.error("还不能跑", {
+        description: "关键静帧须带资产垫图锁后才能审阅成片提示词",
+      });
+      return;
+    }
+    if (refuseIfBlocked(clipGateHint)) return;
+    onEnsureSegmentClips?.();
+    setClipPromptReviewOpen(true);
+    if (activePhase !== "storyboard") setActivePhase("storyboard");
   };
   const runGenerateFragment = () => {
     if (refuseIfBlocked(clipGateHint)) return;
@@ -1287,13 +1352,28 @@ export default function ManhuaScriptWorkbench({
               ) : null}
               <button
                 type="button"
+                data-manhua-action="review-clip-prompts"
+                disabled={Boolean(factoryBusy)}
+                onClick={openClipPromptReview}
+                className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45"
+                title={
+                  clipGateHint ||
+                  (!clipPromptReviewUnlocked
+                    ? "静帧齐且垫图锁通过后可审阅各段成片提示词"
+                    : "先审阅段成片提示词，再按段生成")
+                }
+              >
+                审阅成片提示词
+              </button>
+              <button
+                type="button"
                 data-manhua-action="generate-fragment"
                 disabled={Boolean(factoryBusy)}
                 onClick={runGenerateFragment}
                 className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/75 hover:bg-white/[0.08] disabled:opacity-45"
                 title={
                   clipGateHint ||
-                  `当前镜 ${String(activeShotNo).padStart(2, "0")}：缺静帧则只补本镜再出片`
+                  `当前第 ${String(activeSegNo).padStart(2, "0")} 段（含镜 ${String(activeShotNo).padStart(2, "0")}）：缺静帧则只补本段再出片`
                 }
               >
                 {`生成第 ${String(activeSegNo).padStart(2, "0")} 段成片`}
@@ -1310,9 +1390,9 @@ export default function ManhuaScriptWorkbench({
                 onLayoutReadableChain();
               }}
               className="rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/70 hover:bg-white/[0.08] disabled:opacity-45"
-              title="画布按文案→静帧→成片从左到右对齐"
+              title="画布竖排：角色墙→场景墙→静帧列→段成片（每段约15s卡面读秒轴）"
             >
-              对齐画布流水线
+              对齐画布竖排
             </button>
           ) : null}
           {onGenerateMissingFragments && selectedSorted.length > 0 ? (
@@ -2007,20 +2087,47 @@ export default function ManhuaScriptWorkbench({
                 >
                   <div className="text-[11px] font-semibold text-cyan-50/90">资产锁编号</div>
                   <p className="mt-0.5 text-[10px] leading-4 text-white/45">
-                    静帧改图会按这些编号对照垫图/融图；没有编号垫图的静帧不能出成片。
+                    静帧改图会按这些编号对照垫图/融图；定妆特写格自动进全局道具号（跨集同号）。没有编号垫图的静帧不能出成片。
                   </p>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {assetLockRegistry.slots.map((s) => (
                       <span
-                        key={s.tag}
+                        key={`${s.tag}:${s.id}`}
                         className="rounded-md border border-cyan-300/35 bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-50"
-                        title={s.labelZh}
+                        title={s.subTag ? `${s.labelZh} · ${s.subTag}` : s.labelZh}
                       >
                         {s.tag}
                         <span className="ml-1 font-normal text-white/50">{s.labelZh}</span>
+                        {s.subTag ? (
+                          <span className="ml-1 font-mono text-[9px] font-normal text-amber-100/80">
+                            {s.subTag}
+                          </span>
+                        ) : null}
                       </span>
                     ))}
                   </div>
+                  {assetLockRegistry.sheetPropSlots.length ? (
+                    <div className="mt-2 border-t border-cyan-400/20 pt-1.5">
+                      <div className="text-[10px] font-semibold text-amber-50/90">
+                        定妆特写·道具子编号
+                      </div>
+                      <p className="mt-0.5 text-[10px] leading-4 text-white/40">
+                        特写格自动编入 @道具N；子号标明挂在哪张定妆卡，跨集勿漂移。
+                      </p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {assetLockRegistry.sheetPropSlots.map((sp) => (
+                          <span
+                            key={`${sp.subTag}:${sp.propId}`}
+                            className="rounded border border-amber-300/35 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9px] text-amber-50/95"
+                            title={`${sp.propNameZh} · ${sp.characterNameZh}`}
+                          >
+                            {sp.subTag}={sp.propTag}
+                            <span className="ml-1 font-sans text-white/50">{sp.propNameZh}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {onGenerateCustomAssetFromLibrary || onShareAssetToLibraryChange ? (
@@ -2091,7 +2198,8 @@ export default function ManhuaScriptWorkbench({
                   {
                     role: "prop" as const,
                     titleZh: "我的服装道具",
-                    hintZh: "上传服装/道具参考，或基于库生成。与角色、场景分栏。",
+                    hintZh:
+                      "上传独立服装/道具参考（每行 3 张）。角色定妆卡里已含部分服化道，不必重复上传。",
                     border: "border-amber-400/30 bg-amber-500/[0.07]",
                     titleCls: "text-amber-50/90",
                     btnCls:
@@ -2154,7 +2262,7 @@ export default function ManhuaScriptWorkbench({
                       </div>
                     </div>
                     {refs.length ? (
-                      <div className="mt-2 grid gap-2 sm:grid-cols-2 md:grid-cols-3">
+                      <div className="mt-2 grid grid-cols-3 gap-2">
                         {refs.map((ref) => {
                           const lockTag =
                             assetLockRegistry.slots.find((s) => s.path === ref.url)?.tag ||
@@ -2343,7 +2451,9 @@ export default function ManhuaScriptWorkbench({
               </div>
             ) : null}
 
-            {assetCanon?.locations.length || assetCanon?.characters.length ? (
+            {assetCanon?.locations.length ||
+            assetCanon?.characters.length ||
+            assetCanon?.props.length ? (
               <div
                 data-manhua-writer-canon
                 className="mt-3 rounded-xl border border-amber-400/25 bg-amber-500/[0.07] p-3"
@@ -2355,25 +2465,72 @@ export default function ManhuaScriptWorkbench({
                   {episodeMainScene
                     ? ` · 本集主场景「${episodeMainScene.nameZh}」`
                     : ""}
+                  。竖排每行 3 个；人物定妆卡已含部分服化道细节。
                 </p>
-                {assetCanon?.locations.length ? (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {assetCanon.locations.slice(0, 8).map((loc) => {
-                      const isMain = episodeMainScene?.id === loc.id;
-                      return (
+                {assetCanon?.characters.length ? (
+                  <div className="mt-2">
+                    <div className="mb-1 text-[9px] font-semibold text-white/40">人物</div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {assetCanon.characters.map((ch, i) => {
+                        const isMain = i === 0 || /主/.test(String(ch.nameZh || ""));
+                        return (
+                          <span
+                            key={ch.id}
+                            className={`truncate rounded-md border px-2 py-1.5 text-[10px] ${
+                              isMain
+                                ? "border-amber-300/45 bg-amber-500/20 text-amber-50"
+                                : "border-white/10 bg-white/[0.03] text-white/65"
+                            }`}
+                            title={ch.nameZh}
+                          >
+                            {isMain ? "主 · " : ""}
+                            {ch.nameZh}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+                {assetCanon?.props.length ? (
+                  <div className="mt-2">
+                    <div className="mb-1 text-[9px] font-semibold text-white/40">
+                      道具 · 服装（独立条目；角色卡内服化另见定妆）
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {assetCanon.props.map((it) => (
                         <span
-                          key={loc.id}
-                          className={`rounded-md border px-2 py-0.5 text-[10px] ${
-                            isMain
-                              ? "border-amber-300/45 bg-amber-500/20 text-amber-50"
-                              : "border-white/10 bg-white/[0.03] text-white/55"
-                          }`}
+                          key={it.id}
+                          className="truncate rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-[10px] text-white/60"
+                          title={it.nameZh}
                         >
-                          {isMain ? "主 · " : ""}
-                          {loc.nameZh}
+                          {it.nameZh}
                         </span>
-                      );
-                    })}
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {assetCanon?.locations.length ? (
+                  <div className="mt-2">
+                    <div className="mb-1 text-[9px] font-semibold text-white/40">场景池</div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {assetCanon.locations.map((loc) => {
+                        const isMain = episodeMainScene?.id === loc.id;
+                        return (
+                          <span
+                            key={loc.id}
+                            className={`truncate rounded-md border px-2 py-1.5 text-[10px] ${
+                              isMain
+                                ? "border-amber-300/45 bg-amber-500/20 text-amber-50"
+                                : "border-white/10 bg-white/[0.03] text-white/55"
+                            }`}
+                            title={loc.nameZh}
+                          >
+                            {isMain ? "主 · " : ""}
+                            {loc.nameZh}
+                          </span>
+                        );
+                      })}
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -3318,8 +3475,95 @@ export default function ManhuaScriptWorkbench({
                 })}
               </div>
               <p className="mt-2 text-[10px] leading-snug text-white/35">
-                确认简报 → 静帧锁脸服场 → 本段一轮成片吃多镜表演（对白秒位+微表情）；改台词只重出本段，勿整集重烧。
+                确认简报 → 静帧锁脸服场 → 审阅段成片提示词 → 本段一轮成片吃多镜表演；改台词只重出本段，勿整集重烧。
               </p>
+              {clipPromptReviewOpen ? (
+                <div
+                  data-manhua-clip-prompt-review
+                  className="mt-2 max-h-[42vh] space-y-2 overflow-y-auto rounded-lg border border-cyan-400/30 bg-cyan-500/[0.06] p-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[11px] font-semibold text-cyan-50">
+                      段成片提示词（可改 · 约 {segments.length} 次调用）
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-white/55 hover:bg-white/5"
+                      onClick={() => setClipPromptReviewOpen(false)}
+                    >
+                      收起
+                    </button>
+                  </div>
+                  {segmentClipReviewList.map((row) => (
+                    <div
+                      key={`clip-prompt-seg-${row.segmentIndex}`}
+                      className="rounded-md border border-white/10 bg-black/30 p-1.5"
+                    >
+                      <div className="mb-1 flex flex-wrap items-center justify-between gap-1 text-[9px] text-white/55">
+                        <span>
+                          第 {String(row.segmentIndex).padStart(2, "0")} 段 · 约{" "}
+                          {row.durationSec}s · 镜{" "}
+                          {row.shotIndexes.map((n) => String(n).padStart(2, "0")).join("/")}
+                        </span>
+                        {row.clip?.id ? (
+                          <button
+                            type="button"
+                            className="text-cyan-100/80 hover:underline"
+                            onClick={() => focusBlockAndOpenCanvas(row.clip!.id)}
+                          >
+                            画布节点
+                          </button>
+                        ) : (
+                          <span className="text-amber-100/70">尚未铺节点</span>
+                        )}
+                      </div>
+                      <textarea
+                        data-manhua-clip-prompt={row.segmentIndex}
+                        disabled={!row.clip?.id || !onUpdateClipPrompt || factoryBusy}
+                        value={row.clip?.prompt || ""}
+                        onChange={(e) => {
+                          if (row.clip?.id) onUpdateClipPrompt?.(row.clip.id, e.target.value);
+                        }}
+                        rows={5}
+                        className="w-full resize-y rounded border border-white/10 bg-black/40 px-1.5 py-1 font-mono text-[10px] leading-snug text-white/80 disabled:opacity-40"
+                        placeholder={
+                          row.clip?.id
+                            ? "段成片提示词"
+                            : "点「审阅」时会先铺段节点；若仍空请对齐画布竖排"
+                        }
+                      />
+                    </div>
+                  ))}
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    <button
+                      type="button"
+                      data-manhua-action="generate-after-prompt-review"
+                      disabled={Boolean(factoryBusy)}
+                      onClick={() => {
+                        setClipPromptReviewOpen(false);
+                        runGenerateFragment();
+                      }}
+                      className="rounded-md border border-cyan-300/40 bg-cyan-500/20 px-2 py-1 text-[10px] font-semibold text-cyan-50 disabled:opacity-40"
+                    >
+                      确认并生成本段
+                    </button>
+                    {onGenerateMissingFragments ? (
+                      <button
+                        type="button"
+                        disabled={Boolean(factoryBusy) || !missingFragmentIndexes.length}
+                        onClick={() => {
+                          if (refuseIfBlocked(clipGateHint)) return;
+                          setClipPromptReviewOpen(false);
+                          onGenerateMissingFragments(missingFragmentIndexes);
+                        }}
+                        className="rounded-md border border-white/15 bg-white/[0.06] px-2 py-1 text-[10px] font-semibold text-white/75 disabled:opacity-40"
+                      >
+                        确认并生成缺段
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
             </>
           ) : scriptTab === "board" ? (
             <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-0.5">
@@ -3705,15 +3949,21 @@ export default function ManhuaScriptWorkbench({
         </aside>
       </div>
 
-      <ManhuaRoughEditTimeline
-        clips={roughClips}
-        activeShotIndex={activeShotNo}
-        onSelectShot={(idx) => {
-          const i = shots.findIndex((s) => s.index === idx);
-          if (i >= 0) setShotIndex(i);
-        }}
-        onReorder={setRoughShotOrder}
-      />
+      <div className="shrink-0 border-t border-white/8 px-2.5 pt-1.5 md:px-3">
+        <p className="mb-1 text-[9px] text-white/40">
+          粗剪按镜排序 · 约 {segments.length} 段成片（{segments.length} 次调用）· 段时长合计约{" "}
+          {Math.round(segments.reduce((n, s) => n + s.durationSec, 0))}s
+        </p>
+        <ManhuaRoughEditTimeline
+          clips={roughClips}
+          activeShotIndex={activeShotNo}
+          onSelectShot={(idx) => {
+            const i = shots.findIndex((s) => s.index === idx);
+            if (i >= 0) setShotIndex(i);
+          }}
+          onReorder={setRoughShotOrder}
+        />
+      </div>
 
       {/* 底胶片：片段条为主（对标阿硕），集切换为次 */}
       <div
@@ -3728,7 +3978,7 @@ export default function ManhuaScriptWorkbench({
               片段
               {missingFragmentIndexes.length ? (
                 <span className="ml-1.5 text-[9px] font-normal text-amber-100/70">
-                  缺 {missingFragmentIndexes.length} 片
+                  缺 {missingFragmentIndexes.length} 段
                 </span>
               ) : (
                 <span className="ml-1.5 text-[9px] font-normal text-emerald-100/60">齐</span>
@@ -3745,10 +3995,16 @@ export default function ManhuaScriptWorkbench({
                   type="button"
                   data-manhua-action="select-missing-fragments"
                   disabled={!missingFragmentIndexes.length}
-                  onClick={() => setSelectedShotIndexes(missingFragmentIndexes)}
+                  onClick={() =>
+                    setSelectedShotIndexes(
+                      segments
+                        .filter((seg) => missingFragmentIndexes.includes(seg.index))
+                        .flatMap((seg) => seg.shots.map((s) => s.index)),
+                    )
+                  }
                   className="rounded border border-white/12 px-1.5 py-0.5 text-[9px] text-white/55 hover:bg-white/[0.06] disabled:opacity-35"
                 >
-                  勾选缺片
+                  勾选缺段
                 </button>
                 <button
                   type="button"
@@ -3953,9 +4209,9 @@ export default function ManhuaScriptWorkbench({
                         });
                       }}
                       className="w-full border-t border-white/10 bg-white/[0.04] py-0.5 text-[8px] font-semibold text-cyan-100/80 hover:bg-cyan-500/15 disabled:opacity-35"
-                      title={clipGateHint || "重跑本段：缺静帧先补本镜再出片"}
+                      title={clipGateHint || "重跑本段：缺静帧先补段内镜再出一条成片"}
                     >
-                      生成本镜成片
+                      生成本段成片
                     </button>
                   ) : null}
                 </div>

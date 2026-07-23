@@ -10,9 +10,11 @@ import {
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
   MANHUA_SEGMENT_DEFAULT,
   manhuaSegmentDurationSec,
+  parseManhuaClipTargetDurationSec,
   parseWorkbenchShotsFromText,
   resolveClipSegmentIndex,
   resolveKeyartShotIndex,
+  resolveSegmentClipDurationSec,
   resolveWorkbenchShotAssetMount,
   workbenchShotTotalSec,
 } from "./manhuaScriptWorkbench";
@@ -68,26 +70,43 @@ describe("manhuaScriptWorkbench", () => {
     );
   });
 
-  it("groups shots into segments with Seedance 15s / Omni 10s", () => {
+  it("groups shots into segments; duration = sum of shot lengths clamped", () => {
     const shots = parseWorkbenchShotsFromText(
       ["1. 开门建立空间", "2. 走近形成压力", "3. 递出证物", "4. 反应特写", "5. 转身离开"].join(
         "\n",
       ),
     );
-    // 有分镜表：按每段 3 镜切，不注水到默认 12 段
+    // 有分镜表：按每段 3 镜切，不注水到默认 12 段；镜长缺省 5 → 段 15 + 10
     const segsFast = groupShotsIntoSegments(shots, {
       videoModel: MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
     });
     expect(segsFast.length).toBe(2);
+    expect(segsFast[0]?.durationSec).toBe(15);
+    expect(segsFast[1]?.durationSec).toBe(10);
     expect(manhuaSegmentDurationSec("seedance-2.0-fast")).toBe(15);
     expect(manhuaSegmentDurationSec("gemini-omni-flash")).toBe(10);
-    expect(workbenchShotTotalSec(shots, "seedance-2.0-fast")).toBe(30);
+    expect(workbenchShotTotalSec(shots, "seedance-2.0-fast")).toBe(25);
     expect(workbenchShotTotalSec(shots, "gemini-omni-flash")).toBe(20);
-    // 默认骨架：12 段 × 15s = 180s
+    // 默认骨架：12 段 ×（3 镜×5s 钳 15）= 180s
     expect(workbenchShotTotalSec([], "seedance-2.0-fast")).toBe(180);
     expect(
       groupShotsIntoSegments([], { videoModel: "seedance-2.0-fast" }).length,
     ).toBe(MANHUA_SEGMENT_DEFAULT);
+  });
+
+  it("parses clip target duration from inject prompt", () => {
+    expect(parseManhuaClipTargetDurationSec("目标时长：约 12 秒（允许 ±1 秒）")).toBe(12);
+    expect(
+      resolveSegmentClipDurationSec(
+        [
+          { durationSec: 4 },
+          { durationSec: 4 },
+          { durationSec: 4 },
+        ],
+        "seedance-2.0-fast",
+      ),
+    ).toBe(12);
+    expect(resolveSegmentClipDurationSec([{ durationSec: 99 }], "seedance-2.0-fast")).toBe(15);
   });
 
   it("formats shot inject with cast lock and resolves keyart shot index", () => {

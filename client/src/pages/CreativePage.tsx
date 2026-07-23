@@ -189,9 +189,9 @@ export default function CreativePage() {
       
       let finalVideoUrl = "";
 
-      // 有静帧时做减法：只指挥运镜+微动+氛围（JSON 长文留给生图阶段）
+      // 成片提示词原样进引擎（已废除微动三件套减法；仅去导演名）
       const motionPrompt = compileI2VMotionPrompt(prompt, { hasReferenceImage: true });
-      setPipelineNote(`图生视频已做减法：${motionPrompt}`);
+      setPipelineNote(`图生视频提示词已就绪（${motionPrompt.length}字）`);
 
       if (videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast") {
         const seedanceUrl = withLongJobsFlyDirect("/api/jobs?op=seedanceI2V");

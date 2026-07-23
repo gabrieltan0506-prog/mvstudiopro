@@ -55,7 +55,9 @@ import {
   replaceManhuaEpisodeChain,
   resolveFactoryResumeStage,
   resolveManhuaEpisodeSpawnContinuity,
+  ensureManhuaFragmentClips,
   layoutManhuaEpisodeReadableChain,
+  collectManhuaCharacterSheetUrlById,
   countExpectedManhuaKeyartShots,
   runManhuaDramaFactoryPipeline,
   sanitizeManhuaRecapUpstreamLinks,
@@ -1490,6 +1492,7 @@ export default function OmniCanvas() {
           artStyleId: factoryArtStyleId,
           videoReverseOutputMode: factoryReverseMode,
           customRefs: customAssetRefs,
+          assetCanon: projectBible?.assetCanon,
         });
         const changed = next.some((b, i) => {
           const p = prev[i];
@@ -1987,6 +1990,7 @@ export default function OmniCanvas() {
         wardrobePropContinuityIds: hardCast?.wardrobePropContinuityIds ?? selectedWardrobeIds,
         videoReverseOutputMode: factoryReverseMode,
         customRefs: customAssetRefs,
+        assetCanon: projectBible?.assetCanon,
         stylePack,
         writerContext: focusCtx,
         includeDirectorCraft: Boolean(focusCtx) || directorUnlocked,
@@ -1998,7 +2002,13 @@ export default function OmniCanvas() {
       });
       spawned = {
         ...spawned,
-        blocks: layoutManhuaEpisodeReadableChain(spawned.blocks, writerFocusEpisode),
+        blocks: layoutManhuaEpisodeReadableChain(spawned.blocks, writerFocusEpisode, {
+          assetCanon: projectBible?.assetCanon,
+          characterSheetUrlById: collectManhuaCharacterSheetUrlById(
+            spawned.blocks,
+            projectBible?.assetCanon,
+          ),
+        }),
       };
       if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
         setFactoryGenreId(spawned.resolvedGenreId);
@@ -2425,6 +2435,7 @@ export default function OmniCanvas() {
       wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
       videoReverseOutputMode: factoryReverseMode,
       customRefs: customAssetRefs,
+      assetCanon: projectBible?.assetCanon,
       writerContext: composeWriterPackFactoryContext(writerPack, continuity.episodeIndex, {
         assetCanonAddonZh: formatWriterAssetCanonFactoryAddon(canon, continuity.episodeIndex),
       }),
@@ -2635,6 +2646,7 @@ export default function OmniCanvas() {
       wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
       videoReverseOutputMode: factoryReverseMode,
       customRefs: customAssetRefs,
+      assetCanon: projectBible?.assetCanon,
       episodes: episodes.map((ep) => ({
         index: ep.index,
         title: ep.title,
@@ -3251,7 +3263,17 @@ export default function OmniCanvas() {
             });
           }
         }
-        working = packAssetSheetPositions(working);
+        working = layoutManhuaEpisodeReadableChain(
+          packAssetSheetPositions(working),
+          writerFocusEpisode,
+          {
+            assetCanon: projectBible?.assetCanon,
+            characterSheetUrlById: collectManhuaCharacterSheetUrlById(
+              working,
+              projectBible?.assetCanon,
+            ),
+          },
+        );
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
         setFocusBlockId(
@@ -3268,7 +3290,7 @@ export default function OmniCanvas() {
         });
         if (nextGate.ready) {
           setWorkflowPhase("storyboard");
-          toast.message("角色图 / 场景图已齐，已写入对应分栏，可出关键静帧");
+          toast.message("角色图 / 场景图已齐，已按竖排对齐画布，可出关键静帧");
           pushDebug("confirmAssetsFromScript:ok", {
             level: "ok",
             detail: `plans=${plans.length}`,
@@ -3451,6 +3473,7 @@ export default function OmniCanvas() {
             artStyleId: factoryArtStyleId,
             videoReverseOutputMode: factoryReverseMode,
             customRefs: customAssetRefs,
+            assetCanon: projectBible?.assetCanon,
           });
           setBlocks(workingBlocks);
           saveCanvasState(workingBlocks, workingEdges);
@@ -4492,6 +4515,7 @@ export default function OmniCanvas() {
                         artStyleId: factoryArtStyleId,
                         videoReverseOutputMode: factoryReverseMode,
                         customRefs: customAssetRefs,
+                        assetCanon: projectBible?.assetCanon,
                       });
                       setEdges((eds) => {
                         saveCanvasState(next, eds);
@@ -4531,8 +4555,8 @@ export default function OmniCanvas() {
                   }}
                   onGenerateFragment={({ shotIndex }) => {
                     const pad = String(shotIndex).padStart(2, "0");
-                    toast.message(`生成片段成片 ${pad}`, {
-                      description: "缺本镜静帧时只补本镜，不整集重跑。",
+                    toast.message(`生成第 ${pad} 段成片`, {
+                      description: "缺段内静帧时只补本段，不整集重跑。",
                     });
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
@@ -4541,27 +4565,85 @@ export default function OmniCanvas() {
                       fragmentShotIndex: shotIndex,
                     });
                   }}
-                  onLayoutReadableChain={() => {
+                  onEnsureSegmentClips={() => {
                     setBlocks((prev) => {
-                      const next = layoutManhuaEpisodeReadableChain(prev, writerFocusEpisode);
+                      const sheetUrls = collectManhuaCharacterSheetUrlById(
+                        prev,
+                        projectBible?.assetCanon,
+                      );
+                      const layoutOpts = {
+                        assetCanon: projectBible?.assetCanon,
+                        characterSheetUrlById: sheetUrls,
+                      };
+                      const ensured = ensureManhuaFragmentClips(
+                        prev,
+                        edges,
+                        writerFocusEpisode,
+                        layoutOpts,
+                      );
+                      const next = layoutManhuaEpisodeReadableChain(
+                        ensured.blocks,
+                        writerFocusEpisode,
+                        layoutOpts,
+                      );
+                      setEdges(() => {
+                        saveCanvasState(next, ensured.edges);
+                        return ensured.edges;
+                      });
+                      return next;
+                    });
+                  }}
+                  onUpdateClipPrompt={(clipId, prompt) => {
+                    setBlocks((prev) => {
+                      const next = prev.map((b) =>
+                        b.id === clipId ? { ...b, prompt, error: undefined } : b,
+                      );
                       setEdges((eds) => {
                         saveCanvasState(next, eds);
                         return eds;
                       });
                       return next;
                     });
-                    toast.message("已对齐画布流水线", {
-                      description: "左文案 → 中静帧竖排 → 右同镜成片",
+                  }}
+                  onLayoutReadableChain={() => {
+                    setBlocks((prev) => {
+                      const sheetUrls = collectManhuaCharacterSheetUrlById(
+                        prev,
+                        projectBible?.assetCanon,
+                      );
+                      const layoutOpts = {
+                        assetCanon: projectBible?.assetCanon,
+                        characterSheetUrlById: sheetUrls,
+                      };
+                      const ensured = ensureManhuaFragmentClips(
+                        prev,
+                        edges,
+                        writerFocusEpisode,
+                        layoutOpts,
+                      );
+                      const next = layoutManhuaEpisodeReadableChain(
+                        ensured.blocks,
+                        writerFocusEpisode,
+                        layoutOpts,
+                      );
+                      setEdges(() => {
+                        saveCanvasState(next, ensured.edges);
+                        return ensured.edges;
+                      });
+                      return next;
+                    });
+                    toast.message("已对齐画布竖排模块", {
+                      description: "资产带（含@编号与定妆特写·道具子号）→ 静帧每列约5镜 → 段成片同理分列",
                     });
                   }}
-                  onGenerateMissingFragments={(shotIndexes) => {
-                    if (!shotIndexes.length) {
-                      toast.message("本集片段已齐，无需补跑");
+                  onGenerateMissingFragments={(segmentIndexes) => {
+                    if (!segmentIndexes.length) {
+                      toast.message("本集段成片已齐，无需补跑");
                       return;
                     }
                     if (
                       !window.confirm(
-                        `将依次生成第${writerFocusEpisode}集缺片：${shotIndexes
+                        `将依次生成第${writerFocusEpisode}集缺段：${segmentIndexes
                           .map((n) => String(n).padStart(2, "0"))
                           .join("、")}。继续？`,
                       )
@@ -4572,7 +4654,7 @@ export default function OmniCanvas() {
                     ensureStudioSpawned(factoryTopic);
                     void runFactory("clip", {
                       episodeIndexes: [writerFocusEpisode],
-                      fragmentShotIndexes: shotIndexes,
+                      fragmentShotIndexes: segmentIndexes,
                     });
                   }}
                   onResumeFromFailure={() => {
@@ -5758,6 +5840,7 @@ export default function OmniCanvas() {
                       wardrobePropContinuityIds: selectedWardrobeIds,
                       videoReverseOutputMode: factoryReverseMode,
                       customRefs: customAssetRefs,
+                      assetCanon: projectBible?.assetCanon,
                       writerContext: focusCtx,
                       includeDirectorCraft: true,
                       episodeIndex: continuity.episodeIndex,

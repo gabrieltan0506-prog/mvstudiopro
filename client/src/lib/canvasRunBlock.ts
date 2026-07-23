@@ -9,6 +9,7 @@ import {
 } from "./omniCanvasApi";
 import {
   compileI2VMotionPrompt,
+  isManhuaSeedanceDirectorPrompt,
   extractPlainImagePrompt,
   fallbackEnglishFromJson,
   prepareJsonDirectorImageJob,
@@ -33,7 +34,9 @@ import {
 import {
   MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
   MANHUA_KEYART_NO_TEXT_EN,
+  parseManhuaClipTargetDurationSec,
 } from "@shared/manhuaScriptWorkbench";
+import { clampSeedanceOpenRouterDuration } from "@shared/seedanceOpenRouterModels";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
 import {
   buildManhuaFactoryOptimizeBrief,
@@ -304,6 +307,8 @@ async function runSeedance20(
     imageUrls?: string[];
     videoUrls?: string[];
     version?: "2.0" | "2.0-fast";
+    /** 段目标秒数；缺省从 prompt「目标时长」解析，再钳 4–15 */
+    duration?: number;
   },
 ): Promise<string> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
@@ -312,6 +317,10 @@ async function runSeedance20(
   const imageUrls = (opts?.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const videoUrls = (opts?.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const version = opts?.version === "2.0-fast" ? "2.0-fast" : "2.0";
+  const fromPrompt = parseManhuaClipTargetDurationSec(prompt);
+  const duration = clampSeedanceOpenRouterDuration(
+    opts?.duration ?? fromPrompt ?? undefined,
+  );
   const res = await withFlyHealthGate(probeOrigin, () =>
     fetch(seedanceUrl, {
       method: "POST",
@@ -324,7 +333,8 @@ async function runSeedance20(
         videoUrls: videoUrls.length ? videoUrls.slice(0, 3) : undefined,
         resolution: version === "2.0-fast" ? "720p" : "720p",
         aspectRatio,
-        duration: 15,
+        duration,
+        // 产品口径：只用引擎自带 Audio on，暂不另开后期配音 API
         generateAudio: true,
         version,
       }),
@@ -712,21 +722,20 @@ export async function runCanvasBlock(
     const followStillPrompt = String(mergedPrompt || "").includes("参考静帧")
       ? mergedPrompt
       : `${mergedPrompt}\n\n${MANHUA_VIDEO_FOLLOW_STILL_ZH}`;
+    const seedanceDirectorSource = continuityVideoUrl
+      ? `${followStillPrompt}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}`
+      : followStillPrompt;
+    // 导戏单原样进 Seedance（已废除微动三件套）；clip 不用路径配方覆盖正文
+    const isClip = block.id.startsWith("clip-");
     const motionPrompt = stripManhuaPromptSlop(
-      compileI2VMotionPrompt(
-        continuityVideoUrl
-          ? `${followStillPrompt}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}`
-          : followStillPrompt,
-        {
-          hasReferenceImage: Boolean(stillRef || continuityVideoUrl || fusionStillUrls.length),
-          pathCameraRecipeId: block.pathCameraRecipeId,
-          pathAnnotationJson: block.pathAnnotationJson,
-        },
-      ),
+      compileI2VMotionPrompt(seedanceDirectorSource, {
+        pathCameraRecipeId: isClip ? undefined : block.pathCameraRecipeId,
+        pathAnnotationJson: isClip ? undefined : block.pathAnnotationJson,
+      }),
     );
     const videoModel = block.videoModel || "seedance-2.0-fast";
     console.info(
-      `[canvasRunBlock] video · id=${block.id} · videoModel=${videoModel} · stills=${[stillRef, ...fusionStillUrls].filter(Boolean).length} · continuity=${Boolean(continuityVideoUrl)}`,
+      `[canvasRunBlock] video · id=${block.id} · videoModel=${videoModel} · stills=${[stillRef, ...fusionStillUrls].filter(Boolean).length} · continuity=${Boolean(continuityVideoUrl)} · directorPass=${isManhuaSeedanceDirectorPrompt(motionPrompt)} · promptChars=${motionPrompt.length}`,
     );
     let url = "";
     if (videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast") {
@@ -771,6 +780,10 @@ export async function runCanvasBlock(
         imageUrls: httpsImages.length ? httpsImages : undefined,
         videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
         version: videoModel === "seedance-2.0-fast" ? "2.0-fast" : "2.0",
+        duration:
+          parseManhuaClipTargetDurationSec(motionPrompt) ??
+          parseManhuaClipTargetDurationSec(block.prompt) ??
+          undefined,
       });
     } else {
       // omni_edit / 续编：有上游成片时用 edit；否则段内静帧 I2V / 多图 reference_to_video

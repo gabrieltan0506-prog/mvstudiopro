@@ -1,44 +1,30 @@
 ---
 id: seedance-i2v-motion
 name: Seedance图生视频微动
-description: 有静帧时做减法；公式=运镜+主体微动+氛围；调度/空镜/阶段拆分
-version: 2026-07-16c
+description: 已退役。禁止「运镜+微动+氛围」三件套减法；成片用完整导戏单。
+version: 2026-07-23-retired
 defaultEnabled: false
 ---
 
-# Seedance 图生视频微动 Skill
+# Seedance 图生视频 · 已退役 Skill
 
-## 用途
-**仅 /canvas · Creative**（不进 `/platform` Skill 池与路由）。静帧已经锁死光影与构图时，**禁止**把整段电影感 JSON/长形容词再贴一遍。
+## 状态：退役（禁止再用）
 
-样本：`json.mp4` 第四阶段 · [info-2570](https://www.super-i.cn/info-2570.html) · 调度公式见 [info-2917](https://www.super-i.cn/info-2917.html) · 空镜五要素 [info-2881](https://www.super-i.cn/info-2881.html)。  
-运行时：`compileI2VMotionPrompt`（`shared/jsonDirectorMiddleware.ts`）。
+旧版把有静帧的成片 prompt **压成**：
 
-## 万能微动公式（硬）
 `[镜头运动] + [主体微动] + [环境氛围]`
 
-### 镜头运动（择一）
-- Slow cinematic zoom out / zoom in  
-- Gentle push-in · Slow pan left/right · Locked-off static · Subtle handheld  
+这在概念层就不合格：会丢掉导戏单、对白秒位、`@角色N` 锁与动作轨迹。  
+运行时 `compileI2VMotionPrompt` **已废除该减法**；仅路径运镜配方/标注仍可编译为分阶段时段句。
 
-### 主体微动（优先微动，拒鬼畜）
-- hair in wind · subtle breathing · coat fabric · glancing eyes · tiny hand gesture  
-- **少写** Running / Fighting 等大幅动作（易崩）；打斗另按阶段拆 2–3 秒因果链  
+## 现行口径
 
-### 环境氛围
-- dust floating · rain falling · soft haze · neon flicker · sparse snow  
+1. 漫剧 / Canvas 成片：整段导戏单进 Seedance（含对白锁、按秒单、引擎 Audio on）。
+2. 禁止再教模型或代码「有静帧就只写三句微动」。
+3. 身份靠参考图 + `@角色/@场景/@道具`；叙事靠导戏正文，不靠空话公式。
 
-**正确例：** `Slow cinematic zoom out, wind blowing the dust, horse breathing, subtle coat movement.`  
-**错误例：** 再堆「赛博朋克、霓虹、8k、电影感大师杰作……」
+## 代码真源
 
-## 无参考图 / 多镜故事时
-可用组合公式（2917）：  
-`【摄影参数及画面质感】+【整体情绪】+【角色描述】+【场景描述/调度说明】+【画面内容】`  
-仍须**成稿去导演名**；长故事按 clip 拆，下一镜以**已接受成片尾帧**为准续写（勿盲 extend 原 prompt）。
-
-## 空镜（2881）
-空镜至少写清：拍摄主体 · 主体状态 · 动态细节 · 光线氛围 · 镜头运动。空镜服务于叙事停顿，不是装饰填充。
-
-## 资产锁定（Seedance 实战）
-角色四视图 / 场景图 / 参考视频角色分离：身份、环境、动作、运镜节奏勿混进同一句糊话。  
-与 `json-director-middleware` 分工：先 JSON 出稳静帧，再用本 Skill 出视频句。
+- `shared/jsonDirectorMiddleware.ts` → `compileI2VMotionPrompt`（原样放行）
+- `shared/manhuaScriptWorkbench.ts` → `formatWorkbenchSegmentClipInjectBlock`
+- `client/src/lib/canvasRunBlock.ts` → `runSeedance20`

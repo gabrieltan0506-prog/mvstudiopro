@@ -260,10 +260,8 @@ export function cloudDraftBlocksToCanvas(blocks: ManhuaCloudDraftPayload["canvas
       pathAnnotationJson: raw.pathAnnotationJson,
       textModel: "gpt-5.6-sol",
       imageModel: "gpt-image-2",
-      // 云草稿 schema 不落 videoModel：主成片默认 Fast；改写节点仍 Omni
-      videoModel: String(raw.id || "").startsWith("omni_edit-")
-        ? "gemini-omni-flash"
-        : "seedance-2.0-fast",
+      // 云草稿 schema 不落 videoModel：成片一律 Seedance Fast（不再恢复 Omni）
+      videoModel: "seedance-2.0-fast",
       imageBatchCount: 1,
       uploadedAssets: [],
     } as CanvasBlock;

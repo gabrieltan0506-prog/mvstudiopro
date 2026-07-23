@@ -159,7 +159,8 @@ export function defaultManhuaDeliveryPackage(opts?: {
       needMeStem: true,
       dialogueLanguage: locale,
       loudnessTargetHint: "对话清晰优先；音乐床不盖过人声。",
-      notesZh: "对白以可拍表「」为准；群杂可后配。",
+      notesZh:
+        "对白以可拍表「」为准；成片有声用引擎同轮 Audio，暂不另做后期配音；群杂如需再后补。",
     },
     qcChecklistZh: [
       "画幅与安全区：竖屏主体不贴边裁切",

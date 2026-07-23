@@ -168,7 +168,7 @@ export const CANVAS_KIND_META: Record<
   },
   video: {
     label: "视频生成",
-    hint: "Gemini Omini / Seedance：有参考图时自动做运镜+微动+氛围减法",
+    hint: "成片引擎：有参考图时做运镜+微动+氛围减法",
     icon: Video,
     color: "from-sky-500/30 to-cyan-600/10",
   },
@@ -199,10 +199,10 @@ export const IMAGE_MODEL_OPTIONS: Array<{ id: CanvasImageModel; label: string }>
   { id: "gpt-image-2", label: "官方出图" },
 ];
 
+/** 产品成片仅 Seedance 标准 / 快速（CG 多图参考+运镜对白；不再暴露改写引擎） */
 export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }> = [
   { id: "seedance-2.0-fast", label: "成片·快速（默认）" },
   { id: "seedance-2.0", label: "成片·标准" },
-  { id: "gemini-omni-flash", label: "成片·改写" },
 ];
 
 /** 工厂主成片默认；与 shared MANHUA_FACTORY_DEFAULT_VIDEO_MODEL 对齐 */
@@ -211,7 +211,7 @@ export const DEFAULT_CANVAS_VIDEO_MODEL: CanvasVideoModel = "seedance-2.0-fast";
 export const SPAWN_KIND_OPTIONS: Array<{ kind: CanvasBlockKind; label: string; hint: string }> = [
   { kind: "text", label: "文本生成", hint: "脚本、广告词、品牌文案" },
   { kind: "image", label: "图片生成", hint: "JSON 导演中台→生图" },
-  { kind: "video", label: "视频生成", hint: "Seedance/Omini · I2V 微动公式" },
+  { kind: "video", label: "视频生成", hint: "成片引擎 · 多图参考 + 运镜/动作/对白" },
   { kind: "video_reverse", label: "编导分镜/反推", hint: "有片拉片 / 无片按节拍补全" },
   { kind: "copy_organize", label: "整理文案", hint: "结构化发布稿" },
 ];
@@ -255,17 +255,18 @@ export function normalizeCanvasVideoModel(raw: unknown): CanvasVideoModel {
   const key = String(raw || "").trim();
   if (key === "seedance-2.0-fast") return "seedance-2.0-fast";
   if (key === "seedance-2.0") return "seedance-2.0";
-  if (key === "gemini-omni-flash" || key === "veo-3.1") return "gemini-omni-flash";
+  // 旧 Omni / Veo 会话一律迁到成片·快速（产品不再提供改写引擎）
+  if (key === "gemini-omni-flash" || key === "veo-3.1") return DEFAULT_CANVAS_VIDEO_MODEL;
   return DEFAULT_CANVAS_VIDEO_MODEL;
 }
 
 /**
- * 工厂主成片 clip-*：旧会话若仍挂 Omni，迁到默认 Fast（omni_edit-* 保留改写引擎）。
+ * 视频节点：非 Seedance 标准/快速一律迁到默认 Fast（含旧 omni_edit-*）。
  */
 export function migrateFactoryClipVideoModel(block: CanvasBlock): CanvasBlock {
-  const id = String(block.id || "");
-  // 仅主成片 clip-*；omni_edit-* 不走此分支
-  if (!id.startsWith("clip-")) return block;
+  if (block.kind !== "video" && !String(block.id || "").startsWith("clip-") && !String(block.id || "").startsWith("omni_edit-")) {
+    return block;
+  }
   if (block.videoModel === "seedance-2.0" || block.videoModel === "seedance-2.0-fast") {
     return block;
   }

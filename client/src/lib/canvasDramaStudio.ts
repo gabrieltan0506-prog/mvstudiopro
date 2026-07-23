@@ -16,6 +16,11 @@ import {
 import { loadCanvasDocumentTexts } from "./canvasDocumentText";
 import { reviewManhuaClipQuality } from "./manhuaClipQuality";
 import { isManhuaClipQualityInfraFailure } from "@shared/manhuaClipQuality";
+import {
+  assignManhuaCanvasAssetAtTags,
+  type ManhuaAssetLockRegistry,
+} from "@shared/manhuaAssetLockRegistry";
+import type { ManhuaWriterAssetCanon } from "@shared/manhuaWriterAssetCanon";
 import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
 import { mapWithConcurrency } from "./canvasUpload";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
@@ -99,6 +104,7 @@ import {
   resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
   resolveKeyartShotIndex,
+  resolveSegmentClipDurationSec,
   resolveSegmentIndexFromShotIndex,
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
@@ -245,6 +251,8 @@ export type SpawnManhuaDramaStudioOpts = {
   dynastyWardrobeIds?: string[];
   /** 用户上传/基于库参考生成的参考图（勾选角色后进静帧融图） */
   customRefs?: ManhuaCustomAssetRef[];
+  /** 系列人物/道具表：定妆特写格进资产锁 @道具 子编号 */
+  assetCanon?: ManhuaWriterAssetCanon | null;
   /** 剧本跟随身份锁（时代/族裔/服饰；来自 CastBundle） */
   identityLockZh?: string;
   /** 角色/场景统一画风：仿真人 / CG 漫剧 */
@@ -743,6 +751,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     sceneId,
     propIds,
     customRefs: opts.customRefs,
+    assetCanon: opts.assetCanon,
   });
   keyArt.prompt = buildManhuaKeyartSlimPrompt({
     artStyleId: opts.artStyleId,
@@ -772,7 +781,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     .filter(Boolean)
     .join("\n\n");
   clip.parentId = keyArt.id;
-  /** 工厂主成片默认 Seedance 2.0 Fast（15s/段）；用户可改 Omni（10s/段） */
+  /** 工厂主成片仅 Seedance 标准 / 快速（默认 Fast；CG 多图参考） */
   clip.videoModel = MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
   clip.aspectRatio = "9:16";
   if (pathCameraRecipeIds[0]) clip.pathCameraRecipeId = pathCameraRecipeIds[0];
@@ -789,22 +798,10 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
       .join("\n\n");
   }
 
-  /** Gemini Omni · 自然语言视频改写（可选）；主成片默认不走 Omni */
-  const omniEdit = defaultCanvasBlock("video", originX + gapX * (col0 + 6), originY);
-  omniEdit.id = makeFactoryStageId("omni_edit", episodeIndex);
-  const omniBase =
-    "在保留角色身份与主构图的前提下，按自然语言改写上一镜视频：加强微表情与运镜层次，不要重拍成无关场景。画面风格对齐参考片。";
-  omniEdit.prompt = [omniBase, artStyleBlock, pathCameraBlock, actionCameraBlock, motionBlock]
-    .filter(Boolean)
-    .join("\n\n");
-  omniEdit.parentId = clip.id;
-  omniEdit.videoModel = "gemini-omni-flash";
-  omniEdit.aspectRatio = "9:16";
-
   let promoCover: CanvasBlock | null = null;
   const promoLayout = promoCoverIds[0] ? getPromoCoverLayoutById(promoCoverIds[0]) : null;
   if (promoLayout) {
-    promoCover = defaultCanvasBlock("image", originX + gapX * (col0 + 7), originY);
+    promoCover = defaultCanvasBlock("image", originX + gapX * (col0 + 6), originY);
     promoCover.id = makeFactoryStageId("promo_cover", episodeIndex);
     promoCover.prompt = [
       buildPromoCoverPrompt(promoLayout, {
@@ -829,7 +826,6 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     reverse,
     keyArt,
     clip,
-    omniEdit,
     promoCover,
   ].filter(Boolean) as CanvasBlock[];
   const blocks = rawBlocks.map((b) => stampEpisodeMeta(b, episodeIndex, episodeTitle));
@@ -839,7 +835,6 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     { fromId: beats.id, toId: reverse.id },
     { fromId: reverse.id, toId: keyArt.id },
     { fromId: keyArt.id, toId: clip.id },
-    { fromId: clip.id, toId: omniEdit.id },
   ];
   if (promoCover) edges.push({ fromId: keyArt.id, toId: promoCover.id });
 
@@ -986,6 +981,7 @@ export function applyFactoryPrefsToBlocks(
     stylePack?: ManhuaStylePack | null;
     videoReverseOutputMode?: "zh" | "en" | "compact";
     customRefs?: ManhuaCustomAssetRef[];
+    assetCanon?: ManhuaWriterAssetCanon | null;
   },
 ): CanvasBlock[] {
   const craftBlock = buildCraftShotInjectBlock(opts.craftShotIds || []);
@@ -1075,6 +1071,7 @@ export function applyFactoryPrefsToBlocks(
         sceneId: opts.sceneId,
         propIds: opts.propIds,
         customRefs: opts.customRefs,
+        assetCanon: opts.assetCanon,
       });
       const slimCore = buildManhuaKeyartSlimPrompt({
         artStyleId: opts.artStyleId,
@@ -1207,13 +1204,17 @@ export function applyFactoryPrefsToBlocks(
         ]
           .filter(Boolean)
           .join("\n\n"),
+        videoModel: (
+          b.videoModel === "seedance-2.0" || b.videoModel === "seedance-2.0-fast"
+            ? b.videoModel
+            : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL
+        ) as CanvasBlock["videoModel"],
         ...(b.id.startsWith("clip-")
           ? {
-              videoModel: (b.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL) as CanvasBlock["videoModel"],
               pathCameraRecipeId: pathRecipeId || undefined,
               pathAnnotationJson: opts.pathAnnotationJson,
             }
-          : { videoModel: "gemini-omni-flash" as const }),
+          : {}),
       };
     }
     if (b.id.startsWith("recap_card-")) {
@@ -1437,6 +1438,11 @@ export function ensureManhuaFragmentClips(
   blocks: CanvasBlock[],
   edges: CanvasEdge[],
   episodeIndex?: number | null,
+  opts?: {
+    assetCanon?: ManhuaWriterAssetCanon | null;
+    characterSheetUrlById?: Record<string, string> | null;
+    registry?: ManhuaAssetLockRegistry | null;
+  },
 ): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
   const ep =
     typeof episodeIndex === "number" && episodeIndex >= 1
@@ -1529,7 +1535,7 @@ export function ensureManhuaFragmentClips(
         MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip,
         formatWorkbenchSegmentClipInjectBlock({
           segmentIndex: globalSeg,
-          durationSec: manhuaSegmentDurationSec(defaultModel),
+          durationSec: seg.durationSec,
           shots: seg.shots,
           sceneHintZh: extractManhuaSceneHintFromPrompt(primary.prompt),
           intentZh,
@@ -1543,7 +1549,22 @@ export function ensureManhuaFragmentClips(
         .join("\n\n"),
     );
     if (existing) {
+      // 已有段成片：刷新导戏 prompt（对白锁/@角色），保留已生成成片 URL
       keepSegClipIds.add(existing.id);
+      clipBySeg.set(globalSeg, {
+        ...existing,
+        prompt: segPrompt,
+        parentId: primary.id,
+        refImageUrl: segUrls[0] || mediaUrlOf(primary) || existing.refImageUrl,
+        editFusionUrls: segUrls.slice(1).slice(0, 15),
+        videoModel:
+          existing.videoModel === "seedance-2.0" ||
+          existing.videoModel === "seedance-2.0-fast"
+            ? existing.videoModel
+            : defaultModel === "seedance-2.0" || defaultModel === "seedance-2.0-fast"
+              ? defaultModel
+              : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
+      });
       continue;
     }
     const clone: CanvasBlock = {
@@ -1562,7 +1583,10 @@ export function ensureManhuaFragmentClips(
       manhuaClipQuality: undefined,
       refImageUrl: segUrls[0] || mediaUrlOf(primary) || primary.refImageUrl,
       editFusionUrls: segUrls.slice(1).slice(0, 15),
-      videoModel: defaultModel === "gemini-omni-flash" ? "gemini-omni-flash" : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
+      videoModel:
+        defaultModel === "seedance-2.0" || defaultModel === "seedance-2.0-fast"
+          ? defaultModel
+          : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
       aspectRatio: template.aspectRatio || "9:16",
       episodeIndex: ep,
       episodeTitle: primary.episodeTitle || template.episodeTitle,
@@ -1578,11 +1602,17 @@ export function ensureManhuaFragmentClips(
     ...(legacyClip && keepSegClipIds.size ? [legacyClip.id] : []),
   ]);
 
+  const refreshedById = new Map(
+    [...clipBySeg.values()].map((c) => [c.id, c] as const),
+  );
+
   let nextBlocks = [
     ...blocks.filter((b) => !staleClipIds.has(b.id)),
     ...nextExtras,
   ].map((b) => {
     if (!b.id.startsWith("clip-") || !sameEpisode(b) || !keepSegClipIds.has(b.id)) return b;
+    const refreshed = refreshedById.get(b.id);
+    if (refreshed) return refreshed;
     const localSeg = resolveClipLocalSegmentIndex(b.id, b.prompt, ep);
     const seg = segments.find((s) => s.index === localSeg);
     const segKeyarts = (seg?.shots || [])
@@ -1619,28 +1649,96 @@ export function ensureManhuaFragmentClips(
     nextEdges.push({ fromId: primary.id, toId: clip.id });
   }
 
-  const laid = layoutManhuaEpisodeReadableChain(nextBlocks, ep);
+  const laid = layoutManhuaEpisodeReadableChain(nextBlocks, ep, {
+    assetCanon: opts?.assetCanon,
+    characterSheetUrlById: opts?.characterSheetUrlById,
+    registry: opts?.registry,
+  });
   return { blocks: laid, edges: nextEdges };
 }
 
+/** 静帧/成片竖排模块：每列最多几镜（约 13 镜 → 3 列） */
+export const MANHUA_LAYOUT_STACK_PER_COL = 5;
+
+function placeManhuaStackColumns(
+  items: CanvasBlock[],
+  originX: number,
+  originY: number,
+  gapX: number,
+  gapY: number,
+  perCol: number,
+  pos: Map<string, { x: number; y: number }>,
+): { cols: number; rows: number } {
+  const n = items.length;
+  if (!n) return { cols: 0, rows: 0 };
+  const per = Math.max(1, Math.floor(perCol));
+  items.forEach((b, i) => {
+    const col = Math.floor(i / per);
+    const row = i % per;
+    pos.set(b.id, { x: originX + col * gapX, y: originY + row * gapY });
+  });
+  return {
+    cols: Math.ceil(n / per),
+    rows: Math.min(per, n),
+  };
+}
+
 /**
- * 画布可读铺板（左→右）：故事→设定→节拍→反推 → 竖排静帧 → 右侧同镜成片。
- * 对齐竞品「一眼看懂文→图→视频」流水线，不改节点语义。
+ * 画布竖排模块（+顶栏文案）——对标阿硕可读链，不抄品牌：
+ * 0 顶栏：故事→设定→节拍→反推
+ * 1 角色墙（@角色N，每行最多 4）
+ * 2 场景墙（@场景N，分行，不与角色混排）
+ * 3 道具墙（弱化一行）
+ * 4 静帧：每列最多 5 镜竖排
+ * 5 成片：每段约 15s 一卡，同理分列（卡面读秒轴）
+ * 只改坐标 + 资产@标，不重生成。
  */
+/** 从定妆卡节点收集 wa_char_* → HTTPS，供特写格 @道具 子编号挂图 */
+export function collectManhuaCharacterSheetUrlById(
+  blocks: CanvasBlock[],
+  assetCanon?: ManhuaWriterAssetCanon | null,
+): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const b of blocks) {
+    if (!b.id.startsWith("charsheet-")) continue;
+    const url = String(b.outputUrl || b.outputUrls?.[0] || "").trim();
+    if (!url) continue;
+    const seed = b.id.replace(/^charsheet-/, "");
+    map[seed] = url;
+    const hit = assetCanon?.characters.find(
+      (c) => c.id === seed || b.id.includes(c.id),
+    );
+    if (hit) map[hit.id] = url;
+  }
+  return map;
+}
+
 export function layoutManhuaEpisodeReadableChain(
   blocks: CanvasBlock[],
   episodeIndex?: number | null,
-  opts?: { originX?: number; originY?: number; colGap?: number; rowGap?: number },
+  opts?: {
+    originX?: number;
+    originY?: number;
+    colGap?: number;
+    rowGap?: number;
+    stackPerCol?: number;
+    assetCanon?: ManhuaWriterAssetCanon | null;
+    characterSheetUrlById?: Record<string, string> | null;
+    registry?: ManhuaAssetLockRegistry | null;
+  },
 ): CanvasBlock[] {
   const ep =
     typeof episodeIndex === "number" && episodeIndex >= 1
       ? Math.floor(episodeIndex)
       : getBlockEpisodeIndex(blocks.find((b) => b.id.startsWith("reverse-") || b.id.startsWith("story-")) || blocks[0]!) ??
         1;
-  const originX = opts?.originX ?? 80;
-  const originY = opts?.originY ?? 80;
-  const gapX = opts?.colGap ?? 340;
-  const gapY = opts?.rowGap ?? 220;
+  const originX = opts?.originX ?? 60;
+  const originY = opts?.originY ?? 60;
+  const gapX = opts?.colGap ?? 300;
+  const gapY = opts?.rowGap ?? 380;
+  const stackPer = opts?.stackPerCol ?? MANHUA_LAYOUT_STACK_PER_COL;
+  const assetsPerRow = 4;
+  const assetRowGap = Math.round(gapY * 0.72);
   const sameEpisode = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === ep;
 
   const pick = (prefix: string) =>
@@ -1652,34 +1750,96 @@ export function layoutManhuaEpisodeReadableChain(
     pick("beats")[0],
     pick("reverse")[0],
   ].filter(Boolean) as CanvasBlock[];
-  const keyarts = pick("keyart").sort(sortKeyartBlocks);
-  const clips = pick("clip").sort(sortKeyartBlocks);
-  if (!textCols.length && !keyarts.length) return blocks;
 
-  const pos = new Map<string, { x: number; y: number }>();
-  textCols.forEach((b, i) => {
-    pos.set(b.id, { x: originX + gapX * i, y: originY });
-  });
-  const keyCol = textCols.length;
-  const clipCol = keyCol + 1;
-  keyarts.forEach((k, i) => {
-    pos.set(k.id, { x: originX + gapX * keyCol, y: originY + i * gapY });
-  });
-  for (const c of clips) {
-    const seg = resolveClipSegmentIndex(c.id, c.prompt);
-    const row = keyarts.findIndex(
-      (k) =>
-        resolveSegmentIndexFromShotIndex(resolveKeyartShotIndex(k.id, k.prompt)) === seg,
-    );
-    pos.set(c.id, {
-      x: originX + gapX * clipCol,
-      y: originY + Math.max(0, row) * gapY,
-    });
+  const charWall = blocks
+    .filter((b) => b.id.startsWith("charsheet-") && sameEpisode(b))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const sceneWall = blocks
+    .filter((b) => b.id.startsWith("sceneplate-") && sameEpisode(b))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const propWall = blocks
+    .filter(
+      (b) =>
+        sameEpisode(b) &&
+        (b.id.startsWith("propplate-") ||
+          b.id.startsWith("propsheet-") ||
+          b.id.startsWith("prop-")),
+    )
+    .sort((a, b) => a.id.localeCompare(b.id));
+  // 无集号孤儿：挂到对应墙末尾，仍分行
+  for (const b of blocks) {
+    if (getBlockEpisodeIndex(b) != null) continue;
+    if (b.id.startsWith("charsheet-") && !charWall.some((x) => x.id === b.id)) {
+      charWall.push(b);
+    } else if (b.id.startsWith("sceneplate-") && !sceneWall.some((x) => x.id === b.id)) {
+      sceneWall.push(b);
+    } else if (
+      (b.id.startsWith("propplate-") ||
+        b.id.startsWith("propsheet-") ||
+        b.id.startsWith("prop-")) &&
+      !propWall.some((x) => x.id === b.id)
+    ) {
+      propWall.push(b);
+    }
   }
 
-  return blocks.map((b) => {
+  const keyarts = pick("keyart").sort(sortKeyartBlocks);
+  const clips = pick("clip").sort(
+    (a, b) =>
+      resolveClipSegmentIndex(a.id, a.prompt) - resolveClipSegmentIndex(b.id, b.prompt),
+  );
+
+  const hasAssets = charWall.length + sceneWall.length + propWall.length > 0;
+  if (!textCols.length && !keyarts.length && !hasAssets) return blocks;
+
+  const pos = new Map<string, { x: number; y: number }>();
+  const placeWall = (list: CanvasBlock[], startY: number) => {
+    list.forEach((b, i) => {
+      const col = i % assetsPerRow;
+      const row = Math.floor(i / assetsPerRow);
+      pos.set(b.id, {
+        x: originX + gapX * col,
+        y: startY + row * Math.round(gapY * 0.85),
+      });
+    });
+    const rows = list.length ? Math.ceil(list.length / assetsPerRow) : 0;
+    return startY + (rows ? rows * Math.round(gapY * 0.85) + Math.round(assetRowGap * 0.35) : 0);
+  };
+
+  const textY = originY;
+  textCols.forEach((b, i) => {
+    pos.set(b.id, { x: originX + gapX * i, y: textY });
+  });
+  let cursorY = originY + (textCols.length ? Math.round(gapY * 0.55) : 0);
+  cursorY = placeWall(charWall, cursorY);
+  cursorY = placeWall(sceneWall, cursorY);
+  cursorY = placeWall(propWall, cursorY);
+  const keyartY = cursorY;
+
+  const keyStack = placeManhuaStackColumns(
+    keyarts,
+    originX,
+    keyartY,
+    gapX,
+    gapY,
+    stackPer,
+    pos,
+  );
+  const clipY = keyartY + (keyStack.rows ? keyStack.rows * gapY + Math.round(gapY * 0.25) : 0);
+  placeManhuaStackColumns(clips, originX, clipY, gapX, gapY, stackPer, pos);
+
+  const positioned = blocks.map((b) => {
     const p = pos.get(b.id);
     return p ? { ...b, x: p.x, y: p.y } : b;
+  });
+  const sheetUrls =
+    opts?.characterSheetUrlById ||
+    collectManhuaCharacterSheetUrlById(positioned, opts?.assetCanon);
+  // 盖 @角色/@场景/@道具；有系列表时定妆卡特写格再编 @道具N 子号（跨集锁）
+  return assignManhuaCanvasAssetAtTags(positioned, {
+    registry: opts?.registry,
+    assetCanon: opts?.assetCanon,
+    characterSheetUrlById: sheetUrls,
   });
 }
 
@@ -2022,7 +2182,19 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
           kept,
           formatWorkbenchSegmentClipInjectBlock({
             segmentIndex: globalSeg,
-            durationSec: manhuaSegmentDurationSec(model),
+            durationSec: resolveSegmentClipDurationSec(
+              segShots.length
+                ? segShots
+                : [
+                    {
+                      index: (localSeg - 1) * MANHUA_KEYARTS_PER_SEGMENT_MIN + 1,
+                      durationSec: 0,
+                      cameraZh: "",
+                      actionZh: "",
+                    },
+                  ],
+              model,
+            ),
             shots: segShots.length
               ? segShots
               : [
@@ -2219,8 +2391,12 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       i += 1;
       continue;
     }
-    // 旧画布缺 videoModel / 仍挂 Omni 的主成片：迁默认 Seedance Fast（omni_edit 不动）
-    if (block.id.startsWith("clip-") && !block.id.startsWith("omni_edit-")) {
+    // 旧画布缺 videoModel / 仍挂 Omni：一律迁 Seedance Fast（含遗留 omni_edit-*）
+    if (
+      block.kind === "video" ||
+      block.id.startsWith("clip-") ||
+      block.id.startsWith("omni_edit-")
+    ) {
       const nextModel =
         block.videoModel === "seedance-2.0" || block.videoModel === "seedance-2.0-fast"
           ? block.videoModel
