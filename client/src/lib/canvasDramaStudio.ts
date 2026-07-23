@@ -1603,7 +1603,7 @@ export function ensureManhuaFragmentClips(
   ]);
 
   const refreshedById = new Map(
-    [...clipBySeg.values()].map((c) => [c.id, c] as const),
+    Array.from(clipBySeg.values()).map((c) => [c.id, c] as const),
   );
 
   let nextBlocks = [

@@ -152,11 +152,12 @@ export function formatManhuaSheetPropSubTagsLockBlock(
     "【定妆特写·道具子编号·跨集锁】",
     "特写格道具进全局 @道具N；换集仍用同一号，禁止漂移另造。",
   ];
-  for (const [propTag, list] of [...byProp.entries()].sort((a, b) =>
+  const propRows = Array.from(byProp.entries()).sort((a, b) =>
     a[0].localeCompare(b[0], undefined, { numeric: true }),
-  )) {
+  );
+  for (const [propTag, list] of propRows) {
     const name = list[0]!.propNameZh;
-    const subs = list.map((s) => s.subTag).join("、");
+    const subs = list.map((slot) => slot.subTag).join("、");
     lines.push(`${propTag}=${name} ← ${subs}`);
   }
   return lines.join("\n");
