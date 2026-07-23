@@ -14,6 +14,7 @@ import {
   MANHUA_LEARN_BATCH_MAX,
   MANHUA_LEARN_BATCH_MIN,
   MANHUA_LEARN_CHECKPOINT_SEC,
+  MANHUA_LEARN_CONSECUTIVE_FAIL_STOP,
   MANHUA_LEARN_EPISODE_RETRY_MAX,
   MANHUA_LEARN_MAX_DURATION_SEC,
 } from "./manhuaTemplateLearnSeries.js";
@@ -67,12 +68,12 @@ export function getManhuaLearnPipelineMeta(): ManhuaLearnPipelineMeta {
     analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
     analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
     summaryZh:
-      `单集或合集均可。成片最长约 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟；整集分段学，每满约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟合并写入分集 JSON（中断可续）。失败最多重试 ${MANHUA_LEARN_EPISODE_RETRY_MAX} 次后停止本轮。凑满约 16 集后再出总分析。`,
+      `有合集 id 时优先展开多集；成片最长约 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟。整集按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟打点写入 JSON（中断可续，已学不重下）。下片失败跳下一集，连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次才停本轮。凑满约 16 集后再出总分析。`,
     stepsZh: [
-      "解析可学剧集列表",
-      `按序采本轮剧集（短链有几集采几集；长合集约 ${MANHUA_LEARN_BATCH_MIN}–${MANHUA_LEARN_BATCH_MAX} 集）`,
-      `逐集：下片 → 按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟分片（语音/抽帧/读帧）→ 每片合并写入 JSON → 整集完成后再删视频`,
-      `单集/分片失败最多重试 ${MANHUA_LEARN_EPISODE_RETRY_MAX} 次，仍失败则停止本轮`,
+      "解析可学剧集列表（有合集 id 优先展开多集）",
+      `按序采本轮剧集（短链有几集采几集；长合集约 ${MANHUA_LEARN_BATCH_MIN}–${MANHUA_LEARN_BATCH_MAX} 集）；已学完的集跳过`,
+      `逐集：下片 → 按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟分片学习并合并 JSON → 整集完成后再删视频`,
+      `下片/学习失败则跳下一集（权限不足会标注）；连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次停止本轮`,
       "累计分集摘要（本页即时可见）",
       `同一系列累计 ≥${MANHUA_LEARN_ANALYSIS_MIN} 集（目标约 ${MANHUA_LEARN_ANALYSIS_TARGET}）才出总分析提案`,
       "你确认后再批准进库；未批准不会进编剧室可选库",

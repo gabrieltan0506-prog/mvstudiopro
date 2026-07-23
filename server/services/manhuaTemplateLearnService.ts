@@ -22,6 +22,7 @@ import {
   MANHUA_LEARN_ANALYSIS_TARGET,
   MANHUA_LEARN_BATCH_DEFAULT,
   MANHUA_LEARN_CHECKPOINT_SEC,
+  MANHUA_LEARN_CONSECUTIVE_FAIL_STOP,
   MANHUA_LEARN_EPISODE_RETRY_MAX,
   MANHUA_LEARN_MAX_DURATION_SEC,
   canEmitManhuaLearnAnalysis,
@@ -58,9 +59,11 @@ import {
   signGsUriV4ReadUrl,
 } from "./gcs.js";
 import {
+  buildDouyinMixCandidateUrls,
   isDouyinSingleVideoUrl,
   listedSingleEpisodeFromUrl,
   mapManhuaLearnFetchError,
+  MANHUA_LEARN_FETCH_ERR,
 } from "../../shared/manhuaLearnYtdlp.js";
 import {
   assertYtdlpCookieReadyForUrl,
@@ -309,16 +312,61 @@ async function downloadVideo(url: string, workDir: string): Promise<string> {
 
 type ListedEpisode = { index: number; url: string; title: string };
 
-async function listOrderedEpisodes(
-  sourceUrl: string,
+function parseFlatPlaylistEntries(
+  data: {
+    title?: string;
+    entries?: Array<{
+      playlist_index?: number;
+      title?: string;
+      url?: string;
+      webpage_url?: string;
+      id?: string;
+    } | null>;
+  },
+  fallbackUrl: string,
+  titleHint?: string,
+): ListedEpisode[] {
+  const entries = Array.isArray(data.entries) ? data.entries.filter(Boolean) : [];
+  if (entries.length > 0) {
+    const out: ListedEpisode[] = [];
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i]!;
+      const index = Math.max(1, Math.floor(Number(e.playlist_index) || i + 1));
+      let epUrl = String(e.webpage_url || e.url || "").trim();
+      if (!epUrl && e.id) {
+        const id = String(e.id).trim();
+        epUrl = /^https?:\/\//i.test(id)
+          ? id
+          : /^\d+$/.test(id)
+            ? `https://www.douyin.com/video/${id}`
+            : String(e.url || "").trim();
+      }
+      if (!epUrl || !/^https?:\/\//i.test(epUrl)) continue;
+      out.push({
+        index,
+        url: epUrl,
+        title: String(e.title || `第${index}集`).trim() || `第${index}集`,
+      });
+    }
+    out.sort((a, b) => a.index - b.index);
+    const seen = new Set<number>();
+    return out.filter((e) => {
+      if (seen.has(e.index)) return false;
+      seen.add(e.index);
+      return true;
+    });
+  }
+  return listedSingleEpisodeFromUrl(
+    fallbackUrl,
+    String(data.title || titleHint || "第1集").trim() || "第1集",
+  );
+}
+
+async function listPlaylistViaYtdlp(
+  playlistUrl: string,
   titleHint?: string,
 ): Promise<ListedEpisode[]> {
-  // 单集成片页：不必 --flat-playlist（抖音常因此先撞登录态）
-  if (isDouyinSingleVideoUrl(sourceUrl)) {
-    return listedSingleEpisodeFromUrl(sourceUrl, titleHint);
-  }
-
-  assertYtdlpCookieReadyForUrl(sourceUrl);
+  assertYtdlpCookieReadyForUrl(playlistUrl);
   const cookies = await openYtdlpCookieSession();
   try {
     const data = (await execYtdlpJson([
@@ -326,12 +374,9 @@ async function listOrderedEpisodes(
       "--flat-playlist",
       "-J",
       "--no-warnings",
-      sourceUrl,
+      playlistUrl,
     ])) as {
-      _type?: string;
       title?: string;
-      webpage_url?: string;
-      url?: string;
       entries?: Array<{
         playlist_index?: number;
         title?: string;
@@ -340,39 +385,48 @@ async function listOrderedEpisodes(
         id?: string;
       } | null>;
     };
-    const entries = Array.isArray(data.entries) ? data.entries.filter(Boolean) : [];
-    if (entries.length > 0) {
-      const out: ListedEpisode[] = [];
-      for (let i = 0; i < entries.length; i++) {
-        const e = entries[i]!;
-        const index = Math.max(1, Math.floor(Number(e.playlist_index) || i + 1));
-        let epUrl = String(e.webpage_url || e.url || "").trim();
-        if (!epUrl && e.id) {
-          epUrl = String(e.url || e.id).trim();
-        }
-        if (!epUrl || !/^https?:\/\//i.test(epUrl)) continue;
-        out.push({
-          index,
-          url: epUrl,
-          title: String(e.title || `第${index}集`).trim() || `第${index}集`,
-        });
-      }
-      out.sort((a, b) => a.index - b.index);
-      const seen = new Set<number>();
-      return out.filter((e) => {
-        if (seen.has(e.index)) return false;
-        seen.add(e.index);
-        return true;
-      });
-    }
-    return listedSingleEpisodeFromUrl(
-      sourceUrl,
-      String(data.title || titleHint || "第1集").trim() || "第1集",
-    );
-  } catch (e) {
-    throw new Error(mapManhuaLearnFetchError(e));
+    return parseFlatPlaylistEntries(data, playlistUrl, titleHint);
   } finally {
     await cookies.cleanup();
+  }
+}
+
+/**
+ * B：有数字 mixId 时优先展开合集多集；失败再回退成片/单集 URL。
+ */
+async function listOrderedEpisodes(
+  sourceUrl: string,
+  titleHint?: string,
+  mixId?: string,
+): Promise<ListedEpisode[]> {
+  const mixCandidates = buildDouyinMixCandidateUrls(String(mixId || ""));
+  for (const mixUrl of mixCandidates) {
+    try {
+      const listed = await listPlaylistViaYtdlp(mixUrl, titleHint);
+      if (listed.length > 1) {
+        console.info(
+          `[manhuaTemplateLearn] mix expand ok: mixId entries=${listed.length} via ${mixUrl.slice(0, 60)}`,
+        );
+        return listed;
+      }
+    } catch (e) {
+      console.warn(
+        "[manhuaTemplateLearn] mix expand failed:",
+        mixUrl.slice(0, 80),
+        e instanceof Error ? e.message : e,
+      );
+    }
+  }
+
+  // 单集成片页：不必 --flat-playlist（抖音常因此先撞登录态）
+  if (isDouyinSingleVideoUrl(sourceUrl)) {
+    return listedSingleEpisodeFromUrl(sourceUrl, titleHint);
+  }
+
+  try {
+    return await listPlaylistViaYtdlp(sourceUrl, titleHint);
+  } catch (e) {
+    throw new Error(mapManhuaLearnFetchError(e));
   }
 }
 
@@ -759,10 +813,14 @@ export async function runManhuaTemplateLearn(
       MANHUA_LEARN_STAGE.list,
       manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.list),
     );
-    const listed = await listOrderedEpisodes(url, title);
+    const listed = await listOrderedEpisodes(url, title, input.mixId);
     if (!listed.length) {
       throw new Error("无法解析任何可学剧集，请换合集页或成片链接重试");
     }
+    await progress(
+      MANHUA_LEARN_STAGE.list,
+      `已解析 ${listed.length} 集${input.mixId && listed.length > 1 ? "（合集展开）" : ""}`,
+    );
 
     const seriesClassify = classifyManhuaLearnTitle(title || "未命名合集");
     let prog =
@@ -780,6 +838,11 @@ export async function runManhuaTemplateLearn(
         tagLabelsZh: seriesClassify.tagLabelsZh,
       } satisfies ManhuaLearnSeriesProgress);
 
+    // 与 GCS 已完成 digest 对齐，避免同链接重复下片撑爆容量/触发限流
+    const existingDigests = await loadAllDigests(seriesKey);
+    const completeIndexes = existingDigests
+      .filter(isManhuaLearnEpisodeComplete)
+      .map((d) => d.episodeIndex);
     prog = {
       ...prog,
       sourceUrl: url,
@@ -789,7 +852,15 @@ export async function runManhuaTemplateLearn(
       dramaKind: seriesClassify.dramaKind,
       categoryLabelZh: seriesClassify.categoryLabelZh,
       tagLabelsZh: seriesClassify.tagLabelsZh,
+      learnedEpisodeIndexes: Array.from(
+        new Set([...prog.learnedEpisodeIndexes, ...completeIndexes]),
+      ).sort((a, b) => a - b),
+      updatedAt: new Date().toISOString(),
     };
+    await writeJsonGcs(
+      `manhua-template-learn/series/${seriesKey}/progress.json`,
+      prog,
+    );
 
     const listedIndexes = listed.map((e) => e.index);
     const batchIndexes = pickNextEpisodeIndexes({
@@ -865,87 +936,94 @@ export async function runManhuaTemplateLearn(
     const byIndex = new Map(listed.map((e) => [e.index, e]));
     const batchLearnedIndexes: number[] = [];
     const episodeFailNotes: string[] = [];
-    const downloadRetryMax = Math.max(1, MANHUA_LEARN_EPISODE_RETRY_MAX);
+    const consecutiveStop = Math.max(1, MANHUA_LEARN_CONSECUTIVE_FAIL_STOP);
+    let consecutiveFails = 0;
+
     for (const idx of batchIndexes) {
       const ep = byIndex.get(idx);
       if (!ep) continue;
       const existing = await readJsonGcs<ManhuaLearnEpisodeDigest>(
         episodeObjectName(seriesKey, idx),
       );
-      let lastErrZh = "";
-      let digest: ManhuaLearnEpisodeDigest | null = null;
-      let stopWithoutRetry = false;
-      for (let attempt = 1; attempt <= downloadRetryMax; attempt++) {
-        try {
-          if (attempt > 1) {
-            await progress(
-              MANHUA_LEARN_STAGE.download,
-              `第 ${idx} 集整集重试 ${attempt}/${downloadRetryMax}…`,
-            );
-          }
-          digest = await learnOneEpisode({
-            ep,
-            titleHint: prog.titleHint,
-            rootTmp,
-            existing,
-            onProgress: input.onProgress,
-            onCheckpoint: async (partial) => {
-              await writeJsonGcs(episodeObjectName(seriesKey, idx), partial);
-            },
-          });
-          await writeJsonGcs(episodeObjectName(seriesKey, idx), digest);
-          break;
-        } catch (e) {
-          const rawMsg = e instanceof Error ? e.message : String(e || "");
-          lastErrZh = mapManhuaLearnFetchError(e);
-          // 分片重试耗尽 / 策略跳过：直接停本轮（检查点已落盘）
-          stopWithoutRetry =
-            /连续 \d+ 次失败|超过 \d+ 分钟|策略外片|搜索页|已保留此前检查点/.test(
-              `${lastErrZh}\n${rawMsg}`,
-            );
-          console.warn(
-            "[manhuaTemplateLearn] ep fail:",
-            idx,
-            `attempt=${attempt}/${downloadRetryMax}`,
-            lastErrZh,
+
+      // 已学完：跳过，不重下（防容量/限流）
+      if (existing && isManhuaLearnEpisodeComplete(existing)) {
+        consecutiveFails = 0;
+        if (!prog.learnedEpisodeIndexes.includes(idx)) {
+          prog.learnedEpisodeIndexes = Array.from(
+            new Set([...prog.learnedEpisodeIndexes, idx]),
+          ).sort((a, b) => a - b);
+          prog.updatedAt = new Date().toISOString();
+          await writeJsonGcs(
+            `manhua-template-learn/series/${seriesKey}/progress.json`,
+            prog,
           );
-          await progress(
-            MANHUA_LEARN_STAGE.failed,
-            stopWithoutRetry
-              ? `第 ${idx} 集失败：${lastErrZh}`
-              : `第 ${idx} 集失败（${attempt}/${downloadRetryMax}）：${lastErrZh}`,
+        }
+        await progress(
+          MANHUA_LEARN_STAGE.persist,
+          `第 ${idx} 集已学过，跳过重复学习`,
+        );
+        continue;
+      }
+
+      try {
+        const digest = await learnOneEpisode({
+          ep,
+          titleHint: prog.titleHint,
+          rootTmp,
+          existing,
+          onProgress: input.onProgress,
+          onCheckpoint: async (partial) => {
+            await writeJsonGcs(episodeObjectName(seriesKey, idx), partial);
+          },
+        });
+        await writeJsonGcs(episodeObjectName(seriesKey, idx), digest);
+        if (!isManhuaLearnEpisodeComplete(digest)) {
+          throw new Error(`第 ${idx} 集未学完（检查点已保留，可续学）`);
+        }
+        consecutiveFails = 0;
+        batchLearnedIndexes.push(idx);
+        prog.learnedEpisodeIndexes = Array.from(
+          new Set([...prog.learnedEpisodeIndexes, idx]),
+        ).sort((a, b) => a - b);
+        prog.updatedAt = new Date().toISOString();
+        await writeJsonGcs(
+          `manhua-template-learn/series/${seriesKey}/progress.json`,
+          prog,
+        );
+        await progress(
+          MANHUA_LEARN_STAGE.persist,
+          `第 ${idx} 集整集学完（约 ${Math.round((digest.durationSec || 0) / 60)} 分钟 · 本轮新增 ${batchLearnedIndexes.length}）`,
+        );
+      } catch (e) {
+        const errZh = mapManhuaLearnFetchError(e);
+        const isPerm = errZh === MANHUA_LEARN_FETCH_ERR.permissionDenied
+          || /权限不足/.test(errZh);
+        const note = isPerm
+          ? `第 ${idx} 集权限不足，已跳过`
+          : `第 ${idx} 集失败已跳过：${errZh}`;
+        episodeFailNotes.push(note);
+        consecutiveFails += 1;
+        console.warn(
+          "[manhuaTemplateLearn] skip ep → next:",
+          idx,
+          `consecutiveFails=${consecutiveFails}/${consecutiveStop}`,
+          errZh,
+        );
+        await progress(MANHUA_LEARN_STAGE.failed, note);
+        if (consecutiveFails >= consecutiveStop) {
+          throw new Error(
+            `连续 ${consecutiveStop} 集学习失败，已停止本轮（列表共 ${listed.length} 集，本轮新增 ${batchLearnedIndexes.length} 集）。最近：${note}。检查点已保留，可稍后续学。`,
           );
-          if (stopWithoutRetry) break;
         }
       }
-      if (!digest || !isManhuaLearnEpisodeComplete(digest)) {
-        const note = lastErrZh
-          ? `第 ${idx} 集未学完：${lastErrZh}`
-          : `第 ${idx} 集未学完`;
-        episodeFailNotes.push(note);
-        throw new Error(
-          `${note}。已停止本轮学习（列表共 ${listed.length} 集，本轮完整学成 ${batchLearnedIndexes.length} 集）。检查点已保留，可稍后续学。`,
-        );
-      }
-      batchLearnedIndexes.push(idx);
-      prog.learnedEpisodeIndexes = Array.from(
-        new Set([...prog.learnedEpisodeIndexes, idx]),
-      ).sort((a, b) => a - b);
-      prog.updatedAt = new Date().toISOString();
-      await writeJsonGcs(
-        `manhua-template-learn/series/${seriesKey}/progress.json`,
-        prog,
-      );
-      await progress(
-        MANHUA_LEARN_STAGE.persist,
-        `第 ${idx} 集整集学完（约 ${Math.round((digest.durationSec || 0) / 60)} 分钟 · 本轮累计 ${batchLearnedIndexes.length}）`,
-      );
     }
 
     if (batchLearnedIndexes.length === 0 && batchIndexes.length > 0) {
       const last = episodeFailNotes[episodeFailNotes.length - 1] || "本轮未能成功采下新集";
+      // 全部跳过但未达连续停机阈值（例如只试了 1–2 集）→ 仍给失败终态，避免伪装成功
       throw new Error(
-        `${last}（尝试 ${batchIndexes.length} 集，列表共 ${listed.length} 集）。请检查成片链接、登录态或付费墙后重试。`,
+        `${last}（本轮尝试 ${batchIndexes.length} 集均未新增完整学习）。请换合集/成片或稍后重试。`,
       );
     }
 

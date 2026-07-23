@@ -36,8 +36,10 @@ export const MANHUA_LEARN_MAX_DURATION_SEC = 120 * 60;
 export const MANHUA_LEARN_CHECKPOINT_SEC = 10 * 60;
 /** @deprecated 使用 MANHUA_LEARN_CHECKPOINT_SEC */
 export const MANHUA_LEARN_ANALYZE_WINDOW_SEC = MANHUA_LEARN_CHECKPOINT_SEC;
-/** 单集/分片失败最多重试次数（含首次），耗尽则停止本轮 */
+/** 单集内分片失败最多重试次数（含首次） */
 export const MANHUA_LEARN_EPISODE_RETRY_MAX = 3;
+/** 连续多集下片/学习失败达到此次数则停止本轮（中间跳过，不立刻整轮报错） */
+export const MANHUA_LEARN_CONSECUTIVE_FAIL_STOP = 3;
 
 /** 一集内的 10 分钟（或末段不足）学习块 */
 export type ManhuaLearnEpisodeChunk = {
