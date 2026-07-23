@@ -40,10 +40,6 @@ import {
   isManhuaBibleOrBeatsBlockId,
   planManhuaFactoryOptimizeSource,
 } from "@shared/manhuaFactoryTextOptimize";
-import {
-  assertOpenAiImagePromptWithinLimit,
-  compactManhuaKeyartImagePrompt,
-} from "@shared/manhuaKeyartPromptCompact";
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
@@ -492,11 +488,9 @@ export async function runCanvasBlock(
     throw new Error("请先填写提示词，或连接上游方块传递内容 / 上传 TXT·MD 文档");
   }
 
-  // 关键静帧：本镜 prompt 已含分镜注入+画风/角色硬锁；再叠整份反推上游易超 OpenAI 32k
-  const isKeyartBlock = block.id.startsWith("keyart-");
   const mergedPrompt = formatCanvasUpstreamPrompt(
     prompt || "请根据上游内容完成本步骤生成。",
-    isKeyartBlock ? [] : effectiveTexts,
+    effectiveTexts,
   );
 
   if (block.kind === "text" || block.kind === "copy_organize") {
@@ -646,18 +640,11 @@ export async function runCanvasBlock(
         ? `${String(mergedPrompt || "").trim()}\n\n${noTextTail}`
         : await resolveImagePromptViaJsonDirector(deps, mergedPrompt, ar, imageModel);
     // 关键静帧 / 定妆·场景禁字硬锁：直送路径已拼过则去重
-    let imagePrompt = noTextTail
+    const imagePrompt = noTextTail
       ? rawImagePrompt.includes(noTextTail)
         ? rawImagePrompt.trim()
         : `${rawImagePrompt.trim()}\n\n${noTextTail}`
       : rawImagePrompt;
-    // 关键静帧：出图前精简优化（不截断）；仍超上游硬上限则明确报错
-    if (isKeyart) {
-      imagePrompt = await compactManhuaKeyartImagePrompt(deps.optimizeCopy, imagePrompt, {
-        modelName: block.textModel,
-      });
-      assertOpenAiImagePromptWithinLimit(imagePrompt);
-    }
     /** 画布一律钉官方 OpenAI Image-2，失败即停；已移除 Nano Banana 2 */
     const pinOfficialOpenAi = true;
     const gptUserId = String(deps.userId || "");
