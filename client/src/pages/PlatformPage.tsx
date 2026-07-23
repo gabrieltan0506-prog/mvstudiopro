@@ -84,6 +84,13 @@ import {
 } from "@shared/graphicNoteReaderFacing";
 import { captureSupervisorTokenFromUrl, getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
+import {
+  manhuaLearnResultFromJobOutput,
+  manhuaLearnResultFromSnapshot,
+  readManhuaLearnFocusSeriesKey,
+  writeManhuaLearnFocusSeriesKey,
+  type ManhuaLearnResultUi,
+} from "@/lib/manhuaLearnResultUi";
 import type {
   GrowthAnalysisScores,
   GrowthMonetizationStrategy,
@@ -2014,34 +2021,11 @@ export default function PlatformPage() {
   const [manhuaLearnBusyKey, setManhuaLearnBusyKey] = useState<string | null>(null);
   const [manhuaPasteUrl, setManhuaPasteUrl] = useState("");
   const [manhuaPasteTitle, setManhuaPasteTitle] = useState("");
-  const [manhuaLearnResult, setManhuaLearnResult] = useState<{
-    seriesKey: string;
-    analysisReady: boolean;
-    learnedCount: number;
-    analysisMin: number;
-    analysisTarget: number;
-    batchLearned: number;
-    messageZh: string;
-    categoryLabelZh?: string;
-    tagLabelsZh?: string[];
-    digestsPreview: Array<{
-      episodeIndex: number;
-      title: string;
-      hookNoteZh: string;
-      transcriptPreview: string;
-      durationSec: number;
-      categoryLabelZh?: string;
-      tagLabelsZh?: string[];
-    }>;
-    proposal: {
-      id: string;
-      nameZh: string;
-      hook3sZh: string;
-      laneZh: string;
-      summaryZh: string;
-      card?: Record<string, unknown>;
-    } | null;
-  } | null>(null);
+  const [manhuaLearnFocusSeriesKey, setManhuaLearnFocusSeriesKey] = useState(() =>
+    readManhuaLearnFocusSeriesKey(),
+  );
+  const [manhuaLearnPanelCollapsed, setManhuaLearnPanelCollapsed] = useState(false);
+  const [manhuaLearnResult, setManhuaLearnResult] = useState<ManhuaLearnResultUi | null>(null);
   const visualReportRef = useRef<HTMLDivElement>(null);
   // Call 3 state — content blueprints and monetization
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
@@ -2411,6 +2395,53 @@ export default function PlatformPage() {
       retry: false,
     },
   );
+  const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApproved.useQuery(undefined, {
+    enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
+    staleTime: 60_000,
+    retry: 1,
+  });
+  const manhuaLearnSnapshotQuery = trpc.manhuaViralTemplate.getSeriesLearnSnapshot.useQuery(
+    {
+      seriesKey: manhuaLearnFocusSeriesKey,
+      supervisorToken: getSupervisorTrpcToken(),
+    },
+    {
+      enabled:
+        trendInsightTab === "ai_manhua" &&
+        manhuaLearnFocusSeriesKey.length >= 4 &&
+        Boolean(supervisorAccess || user?.role === "admin" || user?.role === "supervisor") &&
+        !manhuaLearnBusyKey,
+      staleTime: 15_000,
+      retry: false,
+    },
+  );
+
+  useEffect(() => {
+    const snap = manhuaLearnSnapshotQuery.data;
+    if (!snap || !manhuaLearnFocusSeriesKey) return;
+    setManhuaLearnResult((prev) => {
+      // 本轮 Job 刚写入的结果优先，避免 GCS 回显盖掉 batchLearned
+      if (prev && prev.seriesKey === manhuaLearnFocusSeriesKey && prev.batchLearned > 0) {
+        return prev;
+      }
+      return manhuaLearnResultFromSnapshot({
+        seriesKey: manhuaLearnFocusSeriesKey,
+        progress: snap.progress,
+        digestsPreview: (snap.digestsPreview || []).map((d) => ({
+          episodeIndex: d.episodeIndex,
+          title: d.title,
+          hookNoteZh: d.hookNoteZh,
+          transcriptPreview: d.transcriptPreview,
+          durationSec: d.durationSec,
+          categoryLabelZh: d.categoryLabelZh,
+          tagLabelsZh: d.tagLabelsZh,
+        })),
+        analysisReady: snap.analysisReady,
+        proposal: snap.proposal as Record<string, unknown> | null,
+      });
+    });
+    setManhuaLearnPanelCollapsed(false);
+  }, [manhuaLearnSnapshotQuery.data, manhuaLearnFocusSeriesKey]);
   const [allowBloggerTitle, setAllowBloggerTitle] = useState(() => readAllowBloggerTitleFromLs());
   /** 全案分析确认前：Skill/提示词优先级对话气泡 */
   const [fullAnalysisConfirmOpen, setFullAnalysisConfirmOpen] = useState(false);
@@ -3703,52 +3734,13 @@ export default function PlatformPage() {
   );
 
   const applyManhuaLearnJobOutput = useCallback((out: Record<string, unknown>) => {
-    const digestsRaw = Array.isArray(out.digestsPreview) ? out.digestsPreview : [];
-    const digestsPreview = digestsRaw
-      .map((d) => {
-        const row = d as Record<string, unknown>;
-        const tags = Array.isArray(row.tagLabelsZh)
-          ? row.tagLabelsZh.map((t) => String(t || "").trim()).filter(Boolean)
-          : [];
-        return {
-          episodeIndex: Math.max(0, Math.floor(Number(row.episodeIndex) || 0)),
-          title: String(row.title || "").trim(),
-          hookNoteZh: String(row.hookNoteZh || "").trim(),
-          transcriptPreview: String(row.transcriptPreview || "").trim(),
-          durationSec: Math.max(0, Number(row.durationSec) || 0),
-          categoryLabelZh: String(row.categoryLabelZh || "").trim() || undefined,
-          tagLabelsZh: tags.length ? tags : undefined,
-        };
-      })
-      .filter((d) => d.episodeIndex >= 1);
-    const proposalRaw = (out.proposal || null) as Record<string, unknown> | null;
-    const analysisReady = Boolean(out.analysisReady) && Boolean(proposalRaw?.id);
-    const seriesTags = Array.isArray(out.tagLabelsZh)
-      ? out.tagLabelsZh.map((t) => String(t || "").trim()).filter(Boolean)
-      : [];
-    setManhuaLearnResult({
-      seriesKey: String(out.seriesKey || "").trim(),
-      analysisReady,
-      learnedCount: Math.max(0, Math.floor(Number(out.learnedCount) || 0)),
-      analysisMin: Math.max(1, Math.floor(Number(out.analysisMin) || 16)),
-      analysisTarget: Math.max(1, Math.floor(Number(out.analysisTarget) || 20)),
-      batchLearned: Math.max(0, Math.floor(Number(out.batchLearned) || 0)),
-      messageZh: String(out.messageZh || "").trim(),
-      categoryLabelZh: String(out.categoryLabelZh || "").trim() || undefined,
-      tagLabelsZh: seriesTags.length ? seriesTags : undefined,
-      digestsPreview,
-      proposal:
-        analysisReady && proposalRaw
-          ? {
-              id: String(proposalRaw.id || "").trim(),
-              nameZh: String(proposalRaw.nameZh || out.nameZh || "系列节奏分析").trim(),
-              hook3sZh: String(proposalRaw.hook3sZh || "").trim(),
-              laneZh: String(proposalRaw.laneZh || "").trim(),
-              summaryZh: String(proposalRaw.summaryZh || "").trim(),
-              card: proposalRaw,
-            }
-          : null,
-    });
+    const next = manhuaLearnResultFromJobOutput(out);
+    setManhuaLearnResult(next);
+    setManhuaLearnPanelCollapsed(false);
+    if (next.seriesKey) {
+      setManhuaLearnFocusSeriesKey(next.seriesKey);
+      writeManhuaLearnFocusSeriesKey(next.seriesKey);
+    }
   }, []);
 
   const runManhuaTemplateLearnCloud = useCallback(
@@ -3877,11 +3869,16 @@ export default function PlatformPage() {
             : prev,
         );
         void manhuaViralProposalsQuery.refetch();
+        void manhuaViralApprovedQuery.refetch();
       } catch (e) {
         toast.error(sanitizePlatformUserMessage(e instanceof Error ? e.message : String(e)));
       }
     },
-    [approveManhuaViralTemplateMutation, manhuaViralProposalsQuery],
+    [
+      approveManhuaViralTemplateMutation,
+      manhuaViralProposalsQuery,
+      manhuaViralApprovedQuery,
+    ],
   );
 
   // Stage 1 Mutation: 战略看板（除 handleAnalyze 外通常不单独触发；成功时不保留 debug，仅失败时保留）
@@ -9205,7 +9202,25 @@ export default function PlatformPage() {
                         </div>
                       ) : null}
 
-                      {manhuaLearnResult ? (
+                      {manhuaLearnFocusSeriesKey && manhuaLearnPanelCollapsed ? (
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300/20 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-50/80">
+                          <span>
+                            已折叠学习结果
+                            {manhuaLearnResult
+                              ? ` · 已学完 ${manhuaLearnResult.learnedCount} 集`
+                              : ""}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setManhuaLearnPanelCollapsed(false)}
+                            className="rounded-md border border-amber-300/35 px-2.5 py-1 text-[10px] text-amber-50 hover:bg-amber-500/20"
+                          >
+                            展开学习结果
+                          </button>
+                        </div>
+                      ) : null}
+
+                      {manhuaLearnResult && !manhuaLearnPanelCollapsed ? (
                         <div className="mt-3 space-y-2 rounded-xl border border-amber-300/25 bg-amber-500/10 px-3 py-2.5 text-[11px] text-amber-50/90">
                           <div className="font-semibold">
                             学习结果
@@ -9214,6 +9229,17 @@ export default function PlatformPage() {
                               : manhuaLearnResult.seriesKey
                                 ? ` · ${manhuaLearnResult.seriesKey}`
                                 : ""}
+                          </div>
+                          <div className="flex flex-wrap gap-2 text-[10px]">
+                            <span className="rounded-full border border-amber-300/30 bg-black/25 px-2 py-0.5">
+                              待学习{" "}
+                              {typeof manhuaLearnResult.pendingCount === "number"
+                                ? manhuaLearnResult.pendingCount
+                                : "—"}
+                            </span>
+                            <span className="rounded-full border border-emerald-300/30 bg-black/25 px-2 py-0.5 text-emerald-100/85">
+                              已学完 {manhuaLearnResult.learnedCount}
+                            </span>
                           </div>
                           {(manhuaLearnResult.categoryLabelZh
                             || (manhuaLearnResult.tagLabelsZh?.length || 0) > 0) ? (
@@ -9236,8 +9262,10 @@ export default function PlatformPage() {
                           <p className="text-amber-100/70">
                             进度 {manhuaLearnResult.learnedCount}/
                             {manhuaLearnResult.analysisMin} 集（目标约{" "}
-                            {manhuaLearnResult.analysisTarget}）· 本轮新增{" "}
-                            {manhuaLearnResult.batchLearned}
+                            {manhuaLearnResult.analysisTarget}）
+                            {manhuaLearnResult.batchLearned > 0
+                              ? ` · 本轮新增 ${manhuaLearnResult.batchLearned}`
+                              : " · 云端进度"}
                             {manhuaLearnResult.analysisReady
                               ? " · 已达分析门槛"
                               : " · 未满门槛可继续学"}
@@ -9315,7 +9343,7 @@ export default function PlatformPage() {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => setManhuaLearnResult(null)}
+                                  onClick={() => setManhuaLearnPanelCollapsed(true)}
                                   className="rounded-md border border-white/15 px-2.5 py-1 text-[10px] text-white/60 hover:bg-white/5"
                                 >
                                   收起面板
@@ -9326,13 +9354,45 @@ export default function PlatformPage() {
                             <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
-                                onClick={() => setManhuaLearnResult(null)}
+                                onClick={() => setManhuaLearnPanelCollapsed(true)}
                                 className="rounded-md border border-white/15 px-2.5 py-1 text-[10px] text-white/60 hover:bg-white/5"
                               >
                                 收起面板
                               </button>
                             </div>
                           )}
+                        </div>
+                      ) : null}
+
+                      {manhuaViralApprovedQuery.data?.groups?.length ? (
+                        <div className="mt-3 rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-3 py-2.5 text-[10px] text-emerald-50/85">
+                          <div className="mb-1 font-semibold text-emerald-50/95">
+                            模板库（已批准 · 编剧室可选）
+                          </div>
+                          <p className="mb-2 text-[10px] leading-4 text-emerald-50/55">
+                            学习提案批准后会出现在此；到 /canvas 编剧室点选即可注入节奏骨架。
+                          </p>
+                          <div className="space-y-2">
+                            {manhuaViralApprovedQuery.data.groups.map((group) => (
+                              <div key={group.laneZh}>
+                                <div className="mb-1 text-[10px] font-semibold text-emerald-100/50">
+                                  {group.laneZh}
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {group.items.map((tpl) => (
+                                    <span
+                                      key={tpl.id}
+                                      title={tpl.summaryZh}
+                                      className="rounded-lg border border-emerald-300/25 bg-black/25 px-2 py-1 text-[10px] text-emerald-50/80"
+                                    >
+                                      <span className="font-semibold">{tpl.nameZh}</span>
+                                      <span className="ml-1 text-emerald-50/40">{tpl.id}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       ) : null}
 
