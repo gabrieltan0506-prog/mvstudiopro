@@ -28,7 +28,12 @@ describe("manhuaFactoryUserErrors", () => {
       formatManhuaFactoryUserError(
         "关键静帧改图失败：OpenAI edits HTTP 400: Invalid 'prompt': string too long. Expected a string with maximum length 32000",
       ),
-    ).toMatch(/过长|精简|缩短/);
+    ).toMatch(/过长|缩短/);
+    expect(
+      formatManhuaFactoryUserError(
+        "关键静帧改图失败：关键静帧说明过长（约 40000 字，上限 32000）。系统不会截断，也不会再额外调用文案优化。",
+      ),
+    ).toMatch(/过长|缩短|不会再额外/);
   });
 
   it("does not pretend every keyart failure is pad-access", () => {

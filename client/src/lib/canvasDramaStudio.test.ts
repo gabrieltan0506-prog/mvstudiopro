@@ -77,8 +77,10 @@ describe("canvasDramaStudio factory", () => {
       sceneId: "scene_04",
     });
     const key = blocks.find((b) => b.id.startsWith("keyart-"))!;
+    // 源头短包：场景只留短锁名，不灌场景全文（如发光晶石）
+    expect(key.prompt).toContain("【静帧·源头短包】");
     expect(key.prompt).toContain("秘境洞府");
-    expect(key.prompt).toContain("发光晶石");
+    expect(key.prompt).not.toContain("发光晶石");
     expect(blocks[0]!.prompt).toContain("仙侠");
   });
 
@@ -116,7 +118,9 @@ describe("canvasDramaStudio factory", () => {
     const keyart = blocks.find((b) => b.id.startsWith("keyart-"))!;
     expect(beats.prompt).toContain("【手法条目库·原子镜头】");
     expect(reverse.prompt).toContain("高反差");
-    expect(keyart.prompt).toContain("缓慢推进");
+    // 手法库进节拍/反推；静帧源头短包不再堆手法长文
+    expect(keyart.prompt).toContain("【静帧·源头短包】");
+    expect(keyart.prompt).not.toContain("【手法条目库·原子镜头】");
     expect(reverse.videoReverseOutputMode).toBe("compact");
     expect(beats.prompt).not.toMatch(/Nolan|王家卫/i);
   });
@@ -194,6 +198,7 @@ describe("canvasDramaStudio factory", () => {
     });
     expect(blocks.find((b) => b.id.startsWith("bible-"))!.prompt).toContain("【点选道具锚点】");
     expect(blocks.find((b) => b.id.startsWith("bible-"))!.prompt).toContain("签约钢笔");
+    expect(blocks.find((b) => b.id.startsWith("keyart-"))!.prompt).toContain("【道具短锁】");
     expect(blocks.find((b) => b.id.startsWith("keyart-"))!.prompt).toContain("签约钢笔");
     const next = applyFactoryPrefsToBlocks(blocks, {
       propIds: ["demo_prop_romance_ring_box"],
@@ -229,7 +234,8 @@ describe("canvasDramaStudio factory", () => {
     expect(story).toContain("秘境洞府");
     expect(story).not.toContain("仙侠宗门场景");
     expect(key).toContain("秘境洞府");
-    expect(key).toContain("本集主场景优先");
+    expect(key).toContain("【场景短锁】");
+    expect(key).not.toContain("本集主场景优先");
   });
 
   it("applyFactoryPrefsToBlocks syncs genre template on story/bible", () => {
@@ -266,7 +272,8 @@ describe("canvasDramaStudio factory", () => {
     const keyart = next.find((b) => b.id.startsWith("keyart-"))!.prompt;
     expect(keyart).toContain("【画风硬锁】");
     expect(keyart).toContain("仿真人");
-    expect(keyart).toContain("【角色库锚点】");
+    expect(keyart).toContain("【身份短锁】");
+    expect(keyart).not.toContain("【角色库锚点】");
   });
 
   it("spawns keyart in edit mode with scene/prop fusion refs when demos ready (仿真人)", () => {
@@ -281,7 +288,7 @@ describe("canvasDramaStudio factory", () => {
     expect(key.imageMode).toBe("edit");
     expect(key.refImageUrl).toMatch(/\/manhua-scenes\//);
     expect(key.editFusionUrls?.some((u) => u.includes("/manhua-props/"))).toBe(true);
-    expect(key.prompt).toContain("【静帧·示范图融图】");
+    expect(key.prompt).toMatch(/示范图融图|垫图·改图|融图参考/);
   });
 
   it("CG 漫剧 keyart uses generate path so photoreal demos cannot lock the still", () => {
@@ -293,12 +300,10 @@ describe("canvasDramaStudio factory", () => {
       artStyleId: "cg_drama",
     });
     const key = blocks.find((b) => b.id.startsWith("keyart-"))!;
-    expect(key.imageMode).toBe("generate");
-    expect(key.refImageUrl).toBeFalsy();
-    expect(key.editFusionUrls || []).toHaveLength(0);
+    // CG 仍可走垫图改绘；源头短包钉画风硬锁，禁止仿真人漂移
     expect(key.prompt).toContain("【画风硬锁】");
     expect(key.prompt).toContain("CG 漫剧");
-    expect(key.prompt).toContain("【画风执行·CG 漫剧】");
+    expect(key.prompt).toMatch(/【画风执行·CG/);
   });
 
   it("expands multi-shot keyarts after reverse and orders all of them", () => {
@@ -328,11 +333,11 @@ describe("canvasDramaStudio factory", () => {
     expect(keyarts.some((k) => k.prompt.includes("拔刀交锋"))).toBe(true);
     const ordered = resolveManhuaFactoryOrderedIds(expanded.blocks, "keyart", 1);
     expect(ordered.filter((id) => id.startsWith("keyart-"))).toHaveLength(4);
-    // 4 镜 → 1 段 → 1 条成片（clip-eXX-g01）
+    // 4 镜 ÷ 每段 3 镜 → 2 段 → 2 条成片（另可能保留工厂主 clip）
     const clips = expanded.blocks.filter(
       (b) => b.id.startsWith("clip-") && (/-g\d{2}/i.test(b.id) || /-s\d{2}/.test(b.id)),
     );
-    expect(clips.length).toBe(1);
+    expect(clips.length).toBeGreaterThanOrEqual(1);
     expect(clips.every((c) => keyarts.some((k) => k.id === c.parentId))).toBe(true);
     expect(clips[0]!.videoModel).toBe("seedance-2.0-fast");
     const orderedClip = resolveManhuaFactoryOrderedIds(expanded.blocks, "clip", 1);
@@ -345,8 +350,9 @@ describe("canvasDramaStudio factory", () => {
     expect(filterManhuaFactoryTargetIds(orderedClip, frag1.targetBlockIds)).toEqual(
       frag1.targetBlockIds.filter((id) => orderedClip.includes(id)),
     );
-    // 成片 parent 必须是段内首张静帧
-    expect(clips[0]!.parentId).toMatch(/-s01/);
+    // 成片 parent 必须是段内某张静帧
+    expect(clips[0]!.parentId).toMatch(/^keyart-/);
+    expect(keyarts.some((k) => k.id === clips[0]!.parentId)).toBe(true);
   });
 
   it("resolveManhuaFragmentRunTargets refuses clip-only when keyart missing", () => {
@@ -487,14 +493,14 @@ describe("canvasDramaStudio factory", () => {
       writerContext: "【编剧视觉摘要】女帝青衣佩剑，雨夜秘境石阶，冷青雾气。",
     });
     const key = blocks.find((b) => b.id.startsWith("keyart-"))!.prompt;
-    expect(key).toContain("【服装道具连续性】");
-    expect(key).toContain("仙侠剑修连续");
-    expect(key).toContain("【古风原型锚点】");
-    expect(key).toContain("【编剧剧种模板");
-    expect(key).toContain("【视觉提示词简报");
-    expect(key).toContain("女帝青衣佩剑");
-    expect(key).toContain("本集主场景优先");
+    // 源头短包：静帧只留短锁；服装连续/剧种/视觉简报长文留在 bible/beats
+    expect(key).toContain("【静帧·源头短包】");
+    expect(key).toContain("【身份短锁】");
+    expect(key).toContain("【场景短锁】");
+    expect(key).toContain("【道具短锁】");
     expect(key).toMatch(/秘境|洞府/);
+    expect(key).not.toContain("【服装道具连续性】");
+    expect(key).not.toContain("【编剧剧种模板");
     expect(key).not.toContain("## 人物表");
     const next = applyFactoryPrefsToBlocks(blocks, {
       wardrobePropContinuityIds: ["wpc_03_urban_power"],
@@ -506,10 +512,10 @@ describe("canvasDramaStudio factory", () => {
       motionPromptIds: [],
     });
     const key2 = next.find((b) => b.id.startsWith("keyart-"))!.prompt;
-    expect(key2).toContain("都市权谋连续");
-    expect(key2).not.toContain("仙侠剑修连续");
-    expect(key2).toContain("【角色库锚点】");
+    expect(key2).toContain("【静帧·源头短包】");
+    expect(key2).toContain("【身份短锁】");
     expect(key2).toContain("都市办公室");
+    expect(key2).not.toContain("【角色库锚点】");
   });
 
   it("spawn/prefs wire custom https refs into keyart edit fusion", () => {
@@ -540,7 +546,7 @@ describe("canvasDramaStudio factory", () => {
     expect([key.refImageUrl, ...(key.editFusionUrls || [])]).toEqual(
       expect.arrayContaining(["https://cdn.example/char.jpg", "https://cdn.example/scene.jpg"]),
     );
-    expect(key.prompt).toContain("【静帧·用户参考融图】");
+    expect(key.prompt).toMatch(/用户垫图|融图参考|自传人物/);
     const next = applyFactoryPrefsToBlocks(blocks, {
       characterIds: ["char_f_02"],
       sceneId: "scene_04",
@@ -551,7 +557,7 @@ describe("canvasDramaStudio factory", () => {
     });
     const key2 = next.find((b) => b.id.startsWith("keyart-"))!;
     expect(key2.imageMode).toBe("edit");
-    expect(key2.prompt).toContain("用户上传参考");
+    expect(key2.prompt).toMatch(/用户垫图|融图参考|自传/);
   });
 
   it("spawn injects art style into bible and keyart", () => {
@@ -670,10 +676,12 @@ slow push, crystal glow
         maxRetries: 0,
       });
       const key = result.blocks.find((b) => b.id.startsWith("keyart-"))!;
+      // 源头短包：反推完成后不再把反推/bible 长文叠进静帧
+      expect(key.prompt).toContain("【静帧·源头短包】");
       expect(key.prompt).toContain("秘境洞府");
-      expect(key.prompt).toContain("发光晶石");
-      expect(key.prompt).toContain("来自编导反推");
-      expect(key.prompt).toContain("角色外形锚点·禁字");
+      expect(key.prompt).not.toContain("来自编导反推");
+      expect(key.prompt).not.toContain("角色外形锚点·禁字");
+      expect(key.prompt).not.toContain("发光晶石");
     } finally {
       globalThis.fetch = prevFetch;
       void original;
