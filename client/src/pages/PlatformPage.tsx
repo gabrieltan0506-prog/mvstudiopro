@@ -87,11 +87,15 @@ import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs"
 import {
   manhuaLearnResultFromFailure,
   manhuaLearnResultFromJobOutput,
+  manhuaLearnResultFromLocalFallback,
   manhuaLearnResultFromSnapshot,
+  manhuaLearnResultFromStart,
+  mergeManhuaLearnLiveProgress,
   readManhuaLearnFocusSeriesKey,
   writeManhuaLearnFocusSeriesKey,
   type ManhuaLearnResultUi,
 } from "@/lib/manhuaLearnResultUi";
+import { getManhuaLearnPipelineMeta } from "@shared/manhuaTemplateLearnPipeline";
 import type {
   GrowthAnalysisScores,
   GrowthMonetizationStrategy,
@@ -3722,21 +3726,57 @@ export default function PlatformPage() {
   const copyManhuaLocalLearnFallback = useCallback(
     async (row: { url?: string | null; mixName?: string | null }, reasonZh: string) => {
       const learnCmd = buildManhuaLocalLearnCmd(row);
+      const title = String(row.mixName || "").trim();
+      const url = String(row.url || "").trim();
+      let copied = false;
       try {
         await navigator.clipboard.writeText(learnCmd);
-        toast.message("已回退本机学习", {
-          description: `${reasonZh}。命令已复制，请在本机终端粘贴执行。`,
-        });
+        copied = true;
       } catch {
-        toast.message("已回退本机学习", { description: `${reasonZh}\n${learnCmd}` });
+        copied = false;
       }
+      setManhuaLearnResult((prev) =>
+        manhuaLearnResultFromLocalFallback({
+          reasonZh: copied
+            ? reasonZh
+            : `${reasonZh}（未能自动复制，请手动复制下方命令）`,
+          cmd: learnCmd,
+          url,
+          title,
+          prev,
+        }),
+      );
+      setManhuaLearnPanelCollapsed(false);
+      toast.message("学习进度已更新", {
+        description: copied
+          ? "已回退本机学习：命令已复制，步骤见下方面板。"
+          : "已回退本机学习：步骤与命令见下方面板。",
+      });
     },
     [buildManhuaLocalLearnCmd],
   );
 
   const applyManhuaLearnJobOutput = useCallback((out: Record<string, unknown>) => {
     const next = manhuaLearnResultFromJobOutput(out);
-    setManhuaLearnResult(next);
+    setManhuaLearnResult((prev) => {
+      const mergedLines = [
+        ...(prev?.progressLines || []),
+        ...(next.progressLines || []),
+      ];
+      // 去重：同 stage+detail 相邻只留一条
+      const progressLines: NonNullable<ManhuaLearnResultUi["progressLines"]> = [];
+      for (const line of mergedLines) {
+        const last = progressLines[progressLines.length - 1];
+        if (last && last.stage === line.stage && last.detailZh === line.detailZh) continue;
+        progressLines.push(line);
+      }
+      return {
+        ...next,
+        startedAtIso: prev?.startedAtIso || next.startedAtIso,
+        progressLines: progressLines.slice(-40),
+        liveLabelZh: next.liveLabelZh || prev?.liveLabelZh,
+      };
+    });
     setManhuaLearnPanelCollapsed(false);
     if (next.seriesKey) {
       setManhuaLearnFocusSeriesKey(next.seriesKey);
@@ -3790,6 +3830,11 @@ export default function PlatformPage() {
         return;
       }
       setManhuaLearnBusyKey(busyKey);
+      const startUi = manhuaLearnResultFromStart({ channel: "cloud", url, title });
+      setManhuaLearnResult(startUi);
+      setManhuaLearnPanelCollapsed(false);
+      setManhuaLearnFocusSeriesKey(startUi.seriesKey);
+      writeManhuaLearnFocusSeriesKey(startUi.seriesKey);
       try {
         const { jobId } = await createJob({
           type: "video",
@@ -3806,22 +3851,31 @@ export default function PlatformPage() {
             },
           },
         });
-        toast.message("云端学节奏已入队", {
-          description: "按剧集顺序采 8–10 集；学完删视频。结果将显示在本页。",
+        toast.message("云端学节奏已开始", {
+          description: "进度见下方面板（解析 → 下片 → 语音 → 抽帧 → 读帧）。",
         });
-        const job = await pollJobUntilTerminal(jobId, { maxWaitMs: 95 * 60_000 });
+        const job = await pollJobUntilTerminal(jobId, {
+          maxWaitMs: 95 * 60_000,
+          onPoll: (tick) => {
+            setManhuaLearnResult((prev) =>
+              mergeManhuaLearnLiveProgress(prev, {
+                status: tick.status,
+                output: tick.output,
+              }),
+            );
+          },
+        });
         if (job.status !== "succeeded") {
           const errZh = sanitizePlatformUserMessage(job.error || "云端学习失败");
-          const fail = manhuaLearnResultFromFailure({
-            errorZh: errZh,
-            url,
-            title,
-          });
-          setManhuaLearnResult(fail);
-          setManhuaLearnPanelCollapsed(false);
-          setManhuaLearnFocusSeriesKey(fail.seriesKey);
-          writeManhuaLearnFocusSeriesKey(fail.seriesKey);
-          toast.error("学习未完成", { description: `${errZh}（原因已显示在下方学习结果）` });
+          setManhuaLearnResult((prev) =>
+            manhuaLearnResultFromFailure({
+              errorZh: errZh,
+              url,
+              title,
+              prev,
+            }),
+          );
+          toast.error("学习未完成", { description: `${errZh}（进度与原因见下方面板）` });
           await copyManhuaLocalLearnFallback(row, errZh);
           return;
         }
@@ -3833,22 +3887,21 @@ export default function PlatformPage() {
             description: "请在下方查看后再决定是否批准进库。",
           });
         } else {
-          toast.message("本轮学习结果已展示", {
+          toast.message("本轮学习结束", {
             description: String(out.messageZh || "分集结果见下方；凑满后再出总分析。"),
           });
         }
       } catch (e) {
         const msg = sanitizePlatformUserMessage(e instanceof Error ? e.message : String(e));
-        const fail = manhuaLearnResultFromFailure({
-          errorZh: msg || "云端入队失败",
-          url,
-          title,
-        });
-        setManhuaLearnResult(fail);
-        setManhuaLearnPanelCollapsed(false);
-        setManhuaLearnFocusSeriesKey(fail.seriesKey);
-        writeManhuaLearnFocusSeriesKey(fail.seriesKey);
-        toast.error("学习未完成", { description: `${fail.errorZh}（原因已显示在下方）` });
+        setManhuaLearnResult((prev) =>
+          manhuaLearnResultFromFailure({
+            errorZh: msg || "云端入队失败",
+            url,
+            title,
+            prev,
+          }),
+        );
+        toast.error("学习未完成", { description: `${msg || "云端入队失败"}（进度见下方面板）` });
         await copyManhuaLocalLearnFallback(row, msg || "云端入队失败");
       } finally {
         setManhuaLearnBusyKey(null);
@@ -9127,7 +9180,7 @@ export default function PlatformPage() {
                         <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-2.5">
                           <div className="text-[11px] font-semibold text-[#c9c0e6]/90">贴链接学节奏</div>
                           <p className="mt-0.5 text-[10px] text-[#c9c0e6]/45">
-                            单集成片或合集页都可以。有几集学几集；凑满约 16 集再出总分析提案，看完再决定是否进库。
+                            {getManhuaLearnPipelineMeta().summaryZh}
                           </p>
                           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                             <input
@@ -9242,19 +9295,61 @@ export default function PlatformPage() {
                       {manhuaLearnResult && !manhuaLearnPanelCollapsed ? (
                         <div
                           className={`mt-3 space-y-2 rounded-xl border px-3 py-2.5 text-[11px] ${
-                            manhuaLearnResult.errorZh
+                            manhuaLearnResult.errorZh || manhuaLearnResult.liveStatus === "failed"
                               ? "border-rose-300/35 bg-rose-500/10 text-rose-50/90"
-                              : "border-amber-300/25 bg-amber-500/10 text-amber-50/90"
+                              : manhuaLearnResult.liveStatus === "running" ||
+                                  manhuaLearnResult.liveStatus === "queued"
+                                ? "border-sky-300/30 bg-sky-500/10 text-sky-50/90"
+                                : manhuaLearnResult.liveStatus === "local"
+                                  ? "border-violet-300/30 bg-violet-500/10 text-violet-50/90"
+                                  : "border-amber-300/25 bg-amber-500/10 text-amber-50/90"
                           }`}
                         >
                           <div className="font-semibold">
-                            {manhuaLearnResult.errorZh ? "学习未完成" : "学习结果"}
+                            {manhuaLearnResult.liveStatus === "running" ||
+                            manhuaLearnResult.liveStatus === "queued"
+                              ? "学习进行中"
+                              : manhuaLearnResult.liveStatus === "local"
+                                ? "本机学习"
+                                : manhuaLearnResult.errorZh || manhuaLearnResult.liveStatus === "failed"
+                                  ? "学习未完成"
+                                  : "学习结果"}
+                            {manhuaLearnResult.channel === "cloud"
+                              ? " · 云端"
+                              : manhuaLearnResult.channel === "local"
+                                ? " · 本机"
+                                : ""}
                             {!manhuaLearnResult.errorZh && manhuaLearnResult.proposal?.nameZh
                               ? ` · ${manhuaLearnResult.proposal.nameZh}`
-                              : !manhuaLearnResult.errorZh && manhuaLearnResult.seriesKey
-                                ? ` · ${manhuaLearnResult.seriesKey}`
-                                : ""}
+                              : ""}
                           </div>
+                          {manhuaLearnResult.liveLabelZh ? (
+                            <p className="text-[10px] opacity-90">
+                              当前：{manhuaLearnResult.liveLabelZh}
+                            </p>
+                          ) : null}
+                          {(manhuaLearnResult.progressLines?.length || 0) > 0 ? (
+                            <div className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-white/10 bg-black/25 px-2 py-1.5 text-[10px] opacity-90">
+                              <div className="font-semibold opacity-95">学习进度</div>
+                              {(manhuaLearnResult.progressLines || []).map((line, i) => (
+                                <div
+                                  key={`${line.atIso}-${line.stage}-${i}`}
+                                  className="border-t border-white/5 pt-1 first:border-0 first:pt-0"
+                                >
+                                  <span className="opacity-50">
+                                    {line.atIso
+                                      ? new Date(line.atIso).toLocaleTimeString("zh-CN", {
+                                          hour: "2-digit",
+                                          minute: "2-digit",
+                                          second: "2-digit",
+                                        })
+                                      : ""}
+                                  </span>{" "}
+                                  {line.detailZh}
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
                           {manhuaLearnResult.errorZh ? (
                             <p className="text-rose-100/80">{manhuaLearnResult.errorZh}</p>
                           ) : null}

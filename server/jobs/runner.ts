@@ -54,6 +54,7 @@ import {
   claimNextGrowthCampAnalyzeJob,
   claimNextQueuedJob,
   claimNextPdfExportJob,
+  getJobById,
   markJobFailed,
   markJobSucceeded,
   patchJobRunningProgress,
@@ -290,19 +291,78 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
 
   if (input.action === "manhua_template_learn") {
     const { runManhuaTemplateLearn } = await import("../services/manhuaTemplateLearnService");
+    const {
+      MANHUA_LEARN_STAGE,
+      appendManhuaLearnProgressLine,
+      manhuaLearnStageLabelZh,
+    } = await import("../../shared/manhuaTemplateLearnPipeline.js");
+    const reportLearnProgress = async (phase: string, detailZh: string) => {
+      const label = manhuaLearnStageLabelZh(phase, detailZh);
+      let learnProgressLog = appendManhuaLearnProgressLine(undefined, phase, label);
+      if (jobId) {
+        try {
+          const job = await getJobById(jobId);
+          const prevOut =
+            job?.output && typeof job.output === "object" && !Array.isArray(job.output)
+              ? (job.output as Record<string, unknown>)
+              : {};
+          const prevLog = Array.isArray(prevOut.learnProgressLog)
+            ? (prevOut.learnProgressLog as Parameters<typeof appendManhuaLearnProgressLine>[0])
+            : undefined;
+          learnProgressLog = appendManhuaLearnProgressLine(prevLog, phase, label);
+          await patchJobRunningProgress(jobId, {
+            analysisStage: `manhua_learn_${phase}`,
+            analysisStageLabel: label,
+            learnChannel: "cloud",
+            learnProgressLog,
+          });
+          return;
+        } catch {
+          /* fall through */
+        }
+      }
+      await progress?.patch({
+        analysisStage: `manhua_learn_${phase}`,
+        analysisStageLabel: label,
+        learnChannel: "cloud",
+        learnProgressLog,
+      } as any);
+    };
+    await reportLearnProgress(MANHUA_LEARN_STAGE.queued, "云端学节奏已入队，正在启动…");
     const result = await runManhuaTemplateLearn({
       url: typeof params.url === "string" ? params.url : undefined,
       title: typeof params.title === "string" ? params.title : undefined,
       mixId: typeof params.mixId === "string" ? params.mixId : undefined,
       rank: typeof params.rank === "number" ? params.rank : undefined,
       batchSize: typeof params.batchSize === "number" ? params.batchSize : undefined,
-      onProgress: async (phase, detailZh) => {
-        await progress?.patch({
-          analysisStage: `manhua_learn_${phase}`,
-          analysisStageLabel: detailZh,
-        });
-      },
+      onProgress: reportLearnProgress,
     });
+    let learnProgressLog: ReturnType<typeof appendManhuaLearnProgressLine> | undefined;
+    if (jobId) {
+      try {
+        const job = await getJobById(jobId);
+        const prevOut =
+          job?.output && typeof job.output === "object" && !Array.isArray(job.output)
+            ? (job.output as Record<string, unknown>)
+            : {};
+        if (Array.isArray(prevOut.learnProgressLog)) {
+          learnProgressLog = appendManhuaLearnProgressLine(
+            prevOut.learnProgressLog as Parameters<typeof appendManhuaLearnProgressLine>[0],
+            MANHUA_LEARN_STAGE.done,
+            manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.done),
+          );
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!learnProgressLog) {
+      learnProgressLog = appendManhuaLearnProgressLine(
+        undefined,
+        MANHUA_LEARN_STAGE.done,
+        manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.done),
+      );
+    }
     return {
       provider: "manhua-template-learn",
       output: {
@@ -310,6 +370,10 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         proposalId: result.proposal?.id || null,
         nameZh: result.proposal?.nameZh || null,
         status: result.proposal?.status || null,
+        learnChannel: "cloud",
+        analysisStage: `manhua_learn_${MANHUA_LEARN_STAGE.done}`,
+        analysisStageLabel: manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.done),
+        learnProgressLog,
       },
     };
   }
