@@ -138,6 +138,14 @@ export type CanvasBlock = {
    * 用户「仍采用」后 quality.userAcceptedDespiteQc=true 才可合成。
    */
   manhuaClipQuality?: ManhuaClipQualityReport;
+  /** 本段成片抽取的尾帧 HTTPS（续拍硬锚） */
+  lastFrameUrl?: string;
+  /** 轻量重拍状态：单变量 + 次数 */
+  manhuaRetake?: {
+    variable: "camera" | "performance" | "lighting" | "reference" | "duration" | "framing";
+    attempt: number;
+    maxAttempts: number;
+  };
 };
 
 export type CanvasEdge = { fromId: string; toId: string };
@@ -303,6 +311,17 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
         ? Math.floor(block.episodeIndex)
         : undefined,
     episodeTitle: block.episodeTitle ? String(block.episodeTitle).trim().slice(0, 120) || undefined : undefined,
+    lastFrameUrl:
+      typeof block.lastFrameUrl === "string" && /^https?:\/\//i.test(block.lastFrameUrl.trim())
+        ? block.lastFrameUrl.trim()
+        : undefined,
+    manhuaRetake: block.manhuaRetake
+      ? {
+          variable: block.manhuaRetake.variable,
+          attempt: Math.max(1, Math.floor(block.manhuaRetake.attempt || 1)),
+          maxAttempts: Math.max(1, Math.floor(block.manhuaRetake.maxAttempts || 3)),
+        }
+      : undefined,
   };
 }
 

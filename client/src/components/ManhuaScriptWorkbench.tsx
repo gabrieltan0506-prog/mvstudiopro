@@ -44,12 +44,19 @@ import {
   type ManhuaWriterAssetCanon,
 } from "@shared/manhuaWriterAssetCanon";
 import {
+  MANHUA_CUSTOM_ASSET_REF_DUTY_LABEL_ZH,
   MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH,
   MANHUA_CUSTOM_ASSET_ROLES,
   summarizeCustomAssetRefsZh,
   type ManhuaCustomAssetRef,
+  type ManhuaCustomAssetRefDuty,
   type ManhuaCustomAssetRole,
 } from "@shared/manhuaCustomAssetRefs";
+import type { ManhuaDeliveryPackage } from "@shared/manhuaDeliveryPackage";
+import { syncDeliveryPackageSubtitleEnabled } from "@shared/manhuaDeliveryPackage";
+import type { ManhuaCineVocabLocale } from "@shared/manhuaCineVocabBank";
+import type { ManhuaRetakeVariable } from "@shared/manhuaDirectingWorkflow";
+import { MANHUA_REF_DUTIES } from "@shared/manhuaDirectingWorkflow";
 import {
   areManhuaKeyartsPixelLocked,
   buildManhuaAssetLockRegistry,
@@ -174,7 +181,15 @@ type Props = {
     role?: ManhuaCustomAssetRole,
   ) => void | Promise<void>;
   onCustomAssetRoleChange?: (id: string, role: ManhuaCustomAssetRef["role"]) => void;
+  onCustomAssetDutyChange?: (id: string, duty: ManhuaCustomAssetRefDuty | null) => void;
   onRemoveCustomAsset?: (id: string) => void;
+  /** 段意图写回可拍表（工作台编辑） */
+  onSegmentIntentChange?: (segmentIndex: number, intentZh: string) => void;
+  deliveryPackage?: ManhuaDeliveryPackage | null;
+  onDeliveryPackageChange?: (next: ManhuaDeliveryPackage) => void;
+  cineVocabLocale?: ManhuaCineVocabLocale;
+  onCineVocabLocaleChange?: (locale: ManhuaCineVocabLocale) => void;
+  onRetakeClip?: (clipBlockId: string, variable: ManhuaRetakeVariable) => void;
   /** 基于当前库选条目生成新参考（库仅为种子） */
   onGenerateCustomAssetFromLibrary?: (opts: {
     role: ManhuaCustomAssetRole;
@@ -320,7 +335,14 @@ export default function ManhuaScriptWorkbench({
   customAssetRefs = [],
   onUploadCustomAssets,
   onCustomAssetRoleChange,
+  onCustomAssetDutyChange,
   onRemoveCustomAsset,
+  onSegmentIntentChange,
+  deliveryPackage = null,
+  onDeliveryPackageChange,
+  cineVocabLocale,
+  onCineVocabLocaleChange,
+  onRetakeClip,
   onGenerateCustomAssetFromLibrary,
   shareAssetToLibrary = false,
   onShareAssetToLibraryChange,
@@ -855,6 +877,9 @@ export default function ManhuaScriptWorkbench({
       beatCount: buildManhuaSecondCueSheet({
         segment: {
           index: seg.index,
+          intentZh:
+            String(seg.shots.find((s) => s.intentZh)?.intentZh || "").trim() ||
+            "让观众感到局势或人物关系变化",
           dialogueZh: seg.shots.find((s) => s.dialogueZh)?.dialogueZh || "",
           performanceZh: seg.shots.find((s) => s.emotionZh)?.emotionZh || "",
           sceneZh: "",
@@ -2076,6 +2101,31 @@ export default function ManhuaScriptWorkbench({
                                   删除
                                 </button>
                               </div>
+                              {onCustomAssetDutyChange ? (
+                                <label className="flex items-center gap-1 text-[9px] text-white/40">
+                                  职责
+                                  <select
+                                    value={ref.refDuty || ""}
+                                    onChange={(e) => {
+                                      const v = e.target.value.trim();
+                                      onCustomAssetDutyChange(
+                                        ref.id,
+                                        (MANHUA_REF_DUTIES as readonly string[]).includes(v)
+                                          ? (v as ManhuaCustomAssetRefDuty)
+                                          : null,
+                                      );
+                                    }}
+                                    className="min-w-0 flex-1 rounded border border-white/12 bg-black/40 px-1 py-0.5 text-[9px] text-white/75"
+                                  >
+                                    <option value="">未标注</option>
+                                    {MANHUA_REF_DUTIES.map((d) => (
+                                      <option key={d} value={d}>
+                                        {MANHUA_CUSTOM_ASSET_REF_DUTY_LABEL_ZH[d]}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                              ) : null}
                             </div>
                           </div>
                           );
@@ -2440,12 +2490,25 @@ export default function ManhuaScriptWorkbench({
               setFineCutByShot((prev) => ({ ...prev, [shotIndex]: trim }));
             }}
             subtitleEnabled={editSubtitleEnabled}
-            onSubtitleEnabledChange={setEditSubtitleEnabled}
+            onSubtitleEnabledChange={(next) => {
+              setEditSubtitleEnabled(next);
+              if (deliveryPackage && onDeliveryPackageChange) {
+                onDeliveryPackageChange(syncDeliveryPackageSubtitleEnabled(deliveryPackage, next));
+              }
+            }}
             motionPromptIds={editMotionPromptIds}
             onMotionPromptIdsChange={setEditMotionPromptIds}
             shotMedia={editShotMedia}
             factoryBusy={factoryBusy}
             dockSelectedIds={dockSelectedIds}
+            deliveryPackage={deliveryPackage}
+            onDeliveryPackageChange={(next) => {
+              onDeliveryPackageChange?.(next);
+              setEditSubtitleEnabled(Boolean(next.subtitle.needSubtitles));
+            }}
+            cineVocabLocale={cineVocabLocale}
+            onCineVocabLocaleChange={onCineVocabLocaleChange}
+            onRetakeClip={onRetakeClip}
             onToggleDockClip={(clipBlockId, selected) => {
               if (!onDockSelectedIdsChange) return;
               const next = new Set(dockSelectedIds || []);
@@ -2795,13 +2858,31 @@ export default function ManhuaScriptWorkbench({
           }
         >
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-            <div className="text-[12px] font-semibold text-white/85">
-              第 {String(activeSegNo).padStart(2, "0")} 段
-              {story?.episodeTitle ? ` · ${story.episodeTitle}` : ""}
-              <span className="ml-2 font-normal text-white/40">
-                {activeSegment?.durationSec ?? 15}s · 静帧 {activeShot?.index ?? "—"}/
-                {shots.length || 1} · {episodeVideoModel}
-              </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[12px] font-semibold text-white/85">
+                第 {String(activeSegNo).padStart(2, "0")} 段
+                {story?.episodeTitle ? ` · ${story.episodeTitle}` : ""}
+                <span className="ml-2 font-normal text-white/40">
+                  {activeSegment?.durationSec ?? 15}s · 静帧 {activeShot?.index ?? "—"}/
+                  {shots.length || 1} · {episodeVideoModel}
+                </span>
+              </div>
+              {onSegmentIntentChange ? (
+                <label className="mt-1.5 flex max-w-xl flex-col gap-0.5">
+                  <span className="text-[9px] font-medium text-cyan-100/70">本段意图（观众应感到什么）</span>
+                  <input
+                    data-manhua-segment-intent={activeSegNo}
+                    value={String(
+                      activeSegment?.shots.find((s) => s.intentZh)?.intentZh ||
+                        activeShot?.intentZh ||
+                        "",
+                    )}
+                    onChange={(e) => onSegmentIntentChange(activeSegNo, e.target.value)}
+                    placeholder="例：压迫感逼近，旧盟从硬撑到松口"
+                    className="w-full rounded-md border border-cyan-400/25 bg-black/40 px-2 py-1 text-[11px] text-white/85 placeholder:text-white/30"
+                  />
+                </label>
+              ) : null}
             </div>
             <div className="flex flex-wrap gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
               {(

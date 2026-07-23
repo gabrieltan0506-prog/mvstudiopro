@@ -1,8 +1,13 @@
 /**
- * 单集 10–12 段 × 15s 可拍表：对白 / 表演 / 场景配色 / 角色 / 服化道 / 光影运镜。
+ * 单集 10–12 段 × 15s 可拍表：意图 / 对白 / 表演 / 场景配色 / 角色 / 服化道 / 光影运镜。
  * 禁止灌水：缺字段、寒暄对白、段间高度重复、对白过稀 → 质量不通过。
  * 数值与 `manhuaScriptWorkbench` 的 MANHUA_SEGMENT_MIN/MAX/DEFAULT / 15s 对齐。
  */
+
+import {
+  compileManhuaDirectedSegmentPrompt,
+  stripManhuaPromptSlop,
+} from "./manhuaDirectingWorkflow.js";
 
 /** 推荐段数（扩写默认目标） */
 export const MANHUA_EPISODE_SEGMENT_COUNT = 12;
@@ -17,6 +22,8 @@ export const MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES = 3;
 
 export type ManhuaEpisodeSegmentBeat = {
   index: number;
+  /** 本段单一意图：观众应感到什么（导戏硬锚） */
+  intentZh: string;
   dialogueZh: string;
   /** 表情 / 肢体 / 情绪起伏（可拍表演） */
   performanceZh: string;
@@ -51,6 +58,7 @@ const FIELD_KEYS: Array<{
   key: keyof Omit<ManhuaEpisodeSegmentBeat, "index">;
   aliases: string[];
 }> = [
+  { key: "intentZh", aliases: ["意图", "本段意图", "戏剧意图", "观众感受"] },
   { key: "dialogueZh", aliases: ["对白", "台词", "对话"] },
   { key: "performanceZh", aliases: ["表演", "表情肢体", "情绪表演", "表情", "肢体"] },
   { key: "sceneZh", aliases: ["场景", "地点", "场次"] },
@@ -119,6 +127,7 @@ function pickDialogueField(block: string): string {
 function emptyBeat(index: number): ManhuaEpisodeSegmentBeat {
   return {
     index,
+    intentZh: "",
     dialogueZh: "",
     performanceZh: "",
     sceneZh: "",
@@ -258,6 +267,11 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
       );
       break;
     }
+    const intent = String(beat.intentZh || "").trim();
+    if (intent.length < 4) {
+      issues.push(`段${String(i).padStart(2, "0")} 缺本段意图：须写清观众应感到什么`);
+      break;
+    }
     const perf = String(beat.performanceZh || "").trim();
     if (perf.length < 8 || !PERFORMANCE_CUE_RE.test(perf)) {
       issues.push(
@@ -310,9 +324,11 @@ export function formatManhuaEpisodeSegmentPlanPromptBlock(
     `### 十至十二段可拍表`,
     `（硬性：至少 ${MANHUA_EPISODE_SEGMENT_COUNT_MIN} 段、至多 ${MANHUA_EPISODE_SEGMENT_COUNT_MAX} 段；推荐 ${n} 段；每段约 ${durationSec} 秒；整集约 ${minSec}–${maxSec} 秒。禁止寒暄灌水、禁止段间复制粘贴。）`,
     `每一段必须用下列字段（缺一不可）：`,
+    `- 意图：一句「观众应感到什么」（单一戏剧意图）；机位/光/表演只服务这一句。`,
     `- 对白：至少 ${MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES} 句直角引号「」（推荐 3–4 句），须推动关系/信息/冲突；禁止两句口号撑满 ${durationSec} 秒。`,
     `- 表演：写清表情、肢体与情绪起伏（可拍），与对白气口对齐；禁止只写抽象词如「很生气」。`,
     `#### 段01`,
+    `- 意图：`,
     `- 对白：`,
     `- 表演：`,
     `- 场景：`,
@@ -320,7 +336,7 @@ export function formatManhuaEpisodeSegmentPlanPromptBlock(
     `- 角色：`,
     `- 服装道具：`,
     `- 光影运镜：`,
-    `（段02…段${String(n).padStart(2, "0")} 同结构；若只写到段10亦可，但不得少于10段；跨段须有信息增量与场面变化。）`,
+    `（段02…段${String(n).padStart(2, "0")} 同结构；若只写到段10亦可，但不得少于10段；跨段须有信息增量与场面变化。禁止把后段钩子提前写进本段对白。）`,
   ].join("\n");
 }
 
@@ -345,6 +361,7 @@ export function buildManhuaEpisodeSegmentPlanFixtureMarkdown(): string {
     const k = i + 1;
     return [
       `#### 段${n}`,
+      `- 意图：压迫感逼近，旧盟从硬撑到松口`,
       `- 对白：「把玉珏交出来——第${k}次。」「你再装傻，我就掀了这屏风。」「……拿去，别碰她。」`,
       `- 表演：逼近方眉心紧、握拳指节发白；对方先冷笑再眼神一颤，后退半步攥袖。`,
       `- 场景：${scene}`,
@@ -357,25 +374,85 @@ export function buildManhuaEpisodeSegmentPlanFixtureMarkdown(): string {
   return ["### 十至十二段可拍表", ...blocks].join("\n");
 }
 
-/** 把可拍表压成工厂节拍提示（不编造缺失段） */
+/**
+ * 把某段「意图」写回可拍表 markdown（有则替换，无则在段标题后插入）。
+ * 找不到 #### 段NN 时原样返回。
+ */
+export function upsertManhuaSegmentIntentInMarkdown(
+  markdown: string,
+  segmentIndex: number,
+  intentZh: string,
+): string {
+  const src = String(markdown || "");
+  const idx = Math.max(1, Math.floor(segmentIndex));
+  const intent = String(intentZh || "").trim().slice(0, 80);
+  if (!intent) return src;
+  const pad = String(idx).padStart(2, "0");
+  const headerRe = new RegExp(
+    `(#{2,4}\\s*段\\s*0*${idx}\\b[^\\n]*\\n)([\\s\\S]*?)(?=#{2,4}\\s*段\\s*\\d|$)`,
+    "i",
+  );
+  const m = src.match(headerRe);
+  if (!m || m.index == null) return src;
+  const header = m[1] || "";
+  let body = m[2] || "";
+  if (/(?:^|\n)\s*[-*·]?\s*(?:意图|本段意图|戏剧意图|观众感受)\s*[:：]/.test(body)) {
+    body = body.replace(
+      /((?:^|\n)\s*[-*·]?\s*(?:意图|本段意图|戏剧意图|观众感受)\s*[:：]\s*)([^\n]*)/i,
+      `$1${intent}`,
+    );
+  } else {
+    body = `- 意图：${intent}\n${body.replace(/^\n*/, "")}`;
+  }
+  return src.slice(0, m.index) + header + body + src.slice(m.index + m[0].length);
+}
+
+/** 从可拍表取某段意图（供工作台/成片注入） */
+export function getManhuaSegmentIntentZh(
+  plan: ManhuaEpisodeSegmentPlan | null | undefined,
+  segmentIndex: number,
+): string {
+  const idx = Math.max(1, Math.floor(segmentIndex));
+  const hit = (plan?.segments || []).find((s) => s.index === idx);
+  return String(hit?.intentZh || "").trim();
+}
+
+/** 把可拍表压成工厂节拍提示（不编造缺失段；含意图 + 节拍防火墙 + 去空话） */
 export function formatManhuaEpisodeSegmentPlanBeatsBlock(
   plan: ManhuaEpisodeSegmentPlan | null | undefined,
 ): string {
-  const segs = plan?.segments || [];
+  const segs = (plan?.segments || []).slice().sort((a, b) => a.index - b.index);
   if (!segs.length) return "";
-  const lines = segs
-    .slice()
-    .sort((a, b) => a.index - b.index)
-    .map((s) => {
-      const i = String(s.index).padStart(2, "0");
-      return [
-        `【段${i}·${MANHUA_EPISODE_SEGMENT_DURATION_SEC}s】`,
+  const lines = segs.map((s, idx) => {
+    const already = segs
+      .slice(0, idx)
+      .map((p) => `段${p.index}:${p.intentZh || String(p.dialogueZh || "").slice(0, 24)}`)
+      .join("；")
+      .slice(0, 280);
+    const later = segs
+      .slice(idx + 1, idx + 3)
+      .map((p) => `段${p.index}:${p.intentZh || "后段冲突"}`)
+      .join("；")
+      .slice(0, 200);
+    const body = stripManhuaPromptSlop(
+      [
         `对白：${s.dialogueZh}`,
         `表演：${s.performanceZh}`,
         `场景：${s.sceneZh}｜配色：${s.paletteZh}`,
         `角色：${s.castZh}｜服化道：${s.wardrobePropZh}`,
         `光影运镜：${s.lightingCameraZh}`,
-      ].join("\n");
-    });
+      ].join("\n"),
+    );
+    return [
+      `【段${String(s.index).padStart(2, "0")}·${MANHUA_EPISODE_SEGMENT_DURATION_SEC}s】`,
+      compileManhuaDirectedSegmentPrompt({
+        segmentIndex: s.index,
+        intentZh: s.intentZh,
+        thisBeatZh: body,
+        alreadyHappenedZh: already,
+        reservedForLaterZh: later,
+      }),
+    ].join("\n");
+  });
   return `【已确认十至十二段可拍表·禁止改写成灌水】\n${lines.join("\n\n")}`;
 }

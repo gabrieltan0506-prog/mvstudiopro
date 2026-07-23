@@ -46,6 +46,15 @@ import {
   summarizeManhuaEditQcBoard,
   type ManhuaEditShotMedia,
 } from "@shared/manhuaEditQcExport";
+import type { ManhuaDeliveryPackage } from "@shared/manhuaDeliveryPackage";
+import type { ManhuaCineVocabLocale } from "@shared/manhuaCineVocabBank";
+import type { ManhuaRetakeVariable } from "@shared/manhuaDirectingWorkflow";
+import {
+  formatManhuaRetakeHintZh,
+  suggestManhuaRetakeVariable,
+  MANHUA_RETAKE_VARIABLE_LABEL_ZH,
+} from "@shared/manhuaDirectingWorkflow";
+import ManhuaDeliveryEditSection from "@/components/ManhuaDeliveryEditSection";
 
 type Props = {
   roughClips: ManhuaRoughCutClip[];
@@ -72,7 +81,13 @@ type Props = {
   onReworkFailedClips?: (shotIndexes: number[]) => void;
   onReworkStill?: (shotIndex: number) => void;
   onAcceptDespiteQc?: (clipBlockId: string) => void;
+  /** 质检失败：单变量轻量重拍（真返工） */
+  onRetakeClip?: (clipBlockId: string, variable: ManhuaRetakeVariable) => void;
   onOpenClipDock?: () => void;
+  deliveryPackage?: ManhuaDeliveryPackage | null;
+  onDeliveryPackageChange?: (next: ManhuaDeliveryPackage) => void;
+  cineVocabLocale?: ManhuaCineVocabLocale;
+  onCineVocabLocaleChange?: (locale: ManhuaCineVocabLocale) => void;
 };
 
 function TrackRow({
@@ -147,7 +162,12 @@ export default function ManhuaEditMultitrackPanel({
   onReworkFailedClips,
   onReworkStill,
   onAcceptDespiteQc,
+  onRetakeClip,
   onOpenClipDock,
+  deliveryPackage,
+  onDeliveryPackageChange,
+  cineVocabLocale,
+  onCineVocabLocaleChange,
 }: Props) {
   const [motionCat, setMotionCat] = useState<MotionPromptCategory>("logo");
   const { totalSec, tracks } = buildManhuaEditMultitrack({
@@ -562,6 +582,34 @@ export default function ManhuaEditMultitrackPanel({
               ) : null}
               {activeQc.gate === "failed" &&
               activeQc.clipBlockId &&
+              onRetakeClip &&
+              activeQc.quality?.summary ? (
+                <button
+                  type="button"
+                  disabled={factoryBusy}
+                  data-manhua-action="retake-single-variable"
+                  onClick={() => {
+                    const variable = suggestManhuaRetakeVariable(activeQc.quality!.summary);
+                    onRetakeClip(activeQc.clipBlockId!, variable);
+                  }}
+                  className="rounded border border-fuchsia-400/40 bg-fuchsia-500/15 px-2 py-0.5 text-[9px] font-semibold text-fuchsia-50 disabled:opacity-45"
+                  title={formatManhuaRetakeHintZh(
+                    suggestManhuaRetakeVariable(activeQc.quality.summary),
+                    1,
+                    3,
+                  )}
+                >
+                  按建议只改「
+                  {
+                    MANHUA_RETAKE_VARIABLE_LABEL_ZH[
+                      suggestManhuaRetakeVariable(activeQc.quality.summary)
+                    ]
+                  }
+                  」重拍
+                </button>
+              ) : null}
+              {activeQc.gate === "failed" &&
+              activeQc.clipBlockId &&
               onAcceptDespiteQc &&
               !activeQc.quality?.userAcceptedDespiteQc ? (
                 <button
@@ -579,6 +627,15 @@ export default function ManhuaEditMultitrackPanel({
           <p className="mt-1.5 text-[10px] text-white/35">点选片段查看该镜质检</p>
         )}
       </div>
+
+      {deliveryPackage && onDeliveryPackageChange ? (
+        <ManhuaDeliveryEditSection
+          deliveryPackage={deliveryPackage}
+          onChange={onDeliveryPackageChange}
+          cineVocabLocale={cineVocabLocale}
+          onCineVocabLocaleChange={onCineVocabLocaleChange}
+        />
+      ) : null}
 
       {/* 导出 → 成片坞 */}
       <div

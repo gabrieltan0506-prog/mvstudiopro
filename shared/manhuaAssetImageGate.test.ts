@@ -173,6 +173,8 @@ describe("manhuaAssetImageGate", () => {
     const plans = planManhuaAssetImageSpawns({ assetCanon, episodeIndex: 1, topic: "鹤归" });
     expect(plans.some((p) => p.id.includes("wa_char_shen"))).toBe(true);
     expect(plans.some((p) => p.id.includes("wa_scene_miao"))).toBe(true);
+    // 外形字段过薄 → 仍走旧半身定妆
+    expect(plans.find((p) => p.id.includes("wa_char_shen"))?.layout).toBe("single");
 
     const ready = evaluateManhuaAssetImageGate({
       assetCanon,
@@ -184,5 +186,78 @@ describe("manhuaAssetImageGate", () => {
     });
     expect(ready.ready).toBe(true);
     expect(ready.viaWriterCanon).toBe(true);
+  });
+
+  it("hero sheet + four-view scene when fields/episodes qualify", () => {
+    const assetCanon = {
+      characters: [
+        {
+          id: "wa_char_shence",
+          role: "character" as const,
+          nameZh: "沈策",
+          lookZh: "二十四岁，浓眉窄眼，右眉尾短疤；旧玄甲外罩深灰披风，左腕缠皮护腕",
+          motiveZh: "洗清父亲通敌罪名",
+          promptZh: "原创角色定妆肖像：沈策",
+        },
+        {
+          id: "wa_char_liumin",
+          role: "character" as const,
+          nameZh: "流民",
+          lookZh: "破衣褴褛的边民一群挤在关前",
+          motiveZh: "求生",
+          promptZh: "群像",
+        },
+      ],
+      props: [
+        {
+          id: "wa_prop_yupei",
+          role: "prop" as const,
+          nameZh: "双鱼玉佩",
+          lookZh: "半佩温玉",
+          motiveZh: "父辈信物",
+          promptZh: "玉佩",
+        },
+      ],
+      locations: [
+        {
+          id: "wa_scene_liangcang",
+          role: "scene" as const,
+          nameZh: "边军粮仓",
+          lookZh: "木梁低压、三重铜锁",
+          motiveZh: "空仓反差",
+          promptZh: "原创场景空镜·边军粮仓",
+        },
+        {
+          id: "wa_scene_fenghuo",
+          role: "scene" as const,
+          nameZh: "烽火岭",
+          lookZh: "狼烟柴堆",
+          motiveZh: "风大",
+          promptZh: "原创场景空镜·烽火岭",
+        },
+      ],
+      episodeMainSceneId: { 1: "wa_scene_liangcang", 2: "wa_scene_liangcang" },
+    };
+    const episodes = [
+      { index: 1, body: "沈策入边军粮仓验毒。" },
+      { index: 2, body: "两人潜回边军粮仓取账，再上烽火岭。" },
+    ];
+    const plans = planManhuaAssetImageSpawns(
+      { assetCanon, episodeIndex: 1, topic: "雪关", episodes },
+      { forceEpisodeSheets: true },
+    );
+    const hero = plans.find((p) => p.id.includes("wa_char_shence"));
+    const crowd = plans.find((p) => p.id.includes("wa_char_liumin"));
+    const granary = plans.find((p) => p.id.includes("wa_scene_liangcang"));
+    const ridge = plans.find((p) => p.id.includes("wa_scene_fenghuo"));
+    expect(hero?.layout).toBe("heroSheet");
+    expect(hero?.prompt).toContain("三视图");
+    expect(hero?.prompt).toContain("双鱼玉佩");
+    expect(crowd?.layout).toBe("single");
+    expect(crowd?.prompt).not.toContain("三视图");
+    expect(granary?.layout).toBe("grid2x2");
+    expect(granary?.prompt).toContain("2×2");
+    // 烽火岭仅 1 集 → 不额外补四视角卡（主场景已是粮仓）
+    expect(ridge).toBeUndefined();
   });
 });

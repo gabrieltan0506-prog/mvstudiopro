@@ -256,6 +256,10 @@ export type ExportManhuaProjectZipOpts = {
   assetBaseUrl?: string;
   /** 编剧室已确认剧情包 Markdown（整包进 zip 根目录） */
   writerPackMarkdown?: string;
+  /** 成色/字幕/配音交付包 Markdown（剪辑台编辑后） */
+  deliveryPackageMarkdown?: string;
+  /** 多语言可拍词表对照表 */
+  cineVocabTableMarkdown?: string;
   /** 成片坞「合成长片」结果 URL，有则写入 README / manifest */
   finalVideoUrl?: string | null;
 };
@@ -454,6 +458,14 @@ export async function exportManhuaProjectZip(
   if (writerMd) {
     zip.file("writer-pack.md", writerMd);
   }
+  const deliveryMd = String(opts.deliveryPackageMarkdown || "").trim();
+  if (deliveryMd) {
+    zip.file("交付包.md", deliveryMd);
+  }
+  const vocabMd = String(opts.cineVocabTableMarkdown || "").trim();
+  if (vocabMd) {
+    zip.file("可拍词表-多语言.md", vocabMd);
+  }
 
   const summary = summarizeManhuaDockExport(selected);
   const playlistLines = [
@@ -465,6 +477,8 @@ export async function exportManhuaProjectZip(
     `画风：${opts.artStyleId || "（默认）"}`,
     `主场景：${opts.sceneId || "（未选）"}`,
     writerMd ? "编剧包：`writer-pack.md`" : "编剧包：（未附）",
+    deliveryMd ? "交付包：`交付包.md`" : "交付包：（未附）",
+    vocabMd ? "可拍词表：`可拍词表-多语言.md`" : "",
     "",
     "## 分集清单",
     ...summary.byEpisode.map((ep) => {

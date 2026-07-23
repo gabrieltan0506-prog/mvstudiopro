@@ -46,6 +46,8 @@ export type ManhuaDistillShot = {
   actionZh: string;
   dialogueZh?: string;
   emotionZh?: string;
+  /** 所属段意图（可拍表） */
+  intentZh?: string;
   keyframeRole?: ManhuaKeyframeRole;
 };
 
@@ -182,6 +184,7 @@ export function buildWorkbenchShotsFromSegmentPlan(
         emotionZh:
           beat.performanceZh ||
           (beat.dialogueZh ? "贴合对白施压/反应" : undefined),
+        intentZh: String(beat.intentZh || "").trim() || undefined,
         keyframeRole: role,
       });
     }

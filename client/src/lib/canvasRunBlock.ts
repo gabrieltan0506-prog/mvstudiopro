@@ -34,6 +34,7 @@ import {
   MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
   MANHUA_KEYART_NO_TEXT_EN,
 } from "@shared/manhuaScriptWorkbench";
+import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
@@ -427,6 +428,8 @@ export async function runCanvasBlock(
   outputText?: string;
   outputUrl?: string;
   outputUrls?: string[];
+  /** 成片抽尾帧（HTTPS）供续拍硬锚 */
+  lastFrameUrl?: string;
   /** 实际出图像素引擎（若曾静默回退会改写，便于 Debug 对照） */
   imageModel?: CanvasBlock["imageModel"];
 }> {
@@ -657,13 +660,17 @@ export async function runCanvasBlock(
     const followStillPrompt = String(mergedPrompt || "").includes("参考静帧")
       ? mergedPrompt
       : `${mergedPrompt}\n\n${MANHUA_VIDEO_FOLLOW_STILL_ZH}`;
-    const motionPrompt = compileI2VMotionPrompt(
-      continuityVideoUrl ? `${followStillPrompt}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}` : followStillPrompt,
-      {
-        hasReferenceImage: Boolean(stillRef || continuityVideoUrl || fusionStillUrls.length),
-        pathCameraRecipeId: block.pathCameraRecipeId,
-        pathAnnotationJson: block.pathAnnotationJson,
-      },
+    const motionPrompt = stripManhuaPromptSlop(
+      compileI2VMotionPrompt(
+        continuityVideoUrl
+          ? `${followStillPrompt}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}`
+          : followStillPrompt,
+        {
+          hasReferenceImage: Boolean(stillRef || continuityVideoUrl || fusionStillUrls.length),
+          pathCameraRecipeId: block.pathCameraRecipeId,
+          pathAnnotationJson: block.pathAnnotationJson,
+        },
+      ),
     );
     const videoModel = block.videoModel || "seedance-2.0-fast";
     console.info(
@@ -738,7 +745,25 @@ export async function runCanvasBlock(
         },
       );
     }
-    return { outputUrl: url };
+    let lastFrameUrl: string | undefined;
+    if (url && /^https?:\/\//i.test(url) && block.id.startsWith("clip-")) {
+      try {
+        const { frames } = await extractVideoTailFramesFromUrl(url, {
+          frameCount: 1,
+          tailWindowSec: MANHUA_CLIP_TAIL_WINDOW_SEC,
+        });
+        const raw = frames.map((f) => f.dataUrl).filter(Boolean);
+        const https = await toHttpsImageUrls(deps, raw);
+        lastFrameUrl = https[https.length - 1];
+      } catch (err) {
+        console.warn(
+          `[canvasRunBlock] clip lastFrame extract failed · ${
+            err instanceof Error ? err.message.slice(0, 120) : "unknown"
+          }`,
+        );
+      }
+    }
+    return { outputUrl: url, lastFrameUrl };
   }
 
   throw new Error("未知方块类型");
