@@ -40,10 +40,7 @@ import {
   isManhuaBibleOrBeatsBlockId,
   planManhuaFactoryOptimizeSource,
 } from "@shared/manhuaFactoryTextOptimize";
-import {
-  assertOpenAiImagePromptWithinLimit,
-  compactManhuaKeyartImagePrompt,
-} from "@shared/manhuaKeyartPromptCompact";
+import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
@@ -646,14 +643,13 @@ export async function runCanvasBlock(
         ? `${String(mergedPrompt || "").trim()}\n\n${noTextTail}`
         : await resolveImagePromptViaJsonDirector(deps, mergedPrompt, ar, imageModel);
     // 关键静帧 / 定妆·场景禁字硬锁：直送路径已拼过则去重
-    let imagePrompt = noTextTail
+    const imagePrompt = noTextTail
       ? rawImagePrompt.includes(noTextTail)
         ? rawImagePrompt.trim()
         : `${rawImagePrompt.trim()}\n\n${noTextTail}`
       : rawImagePrompt;
-    // 关键静帧：仅 prompt>32k 时用 Terra 拆段提取→合并（不截断）；仍超则报错停住
+    // 源头短包控长；不做二次文案 API。理论上仍超硬上限则报错停住
     if (isKeyart) {
-      imagePrompt = await compactManhuaKeyartImagePrompt(deps.optimizeCopy, imagePrompt);
       assertOpenAiImagePromptWithinLimit(imagePrompt);
     }
     /** 画布一律钉官方 OpenAI Image-2，失败即停；已移除 Nano Banana 2 */
