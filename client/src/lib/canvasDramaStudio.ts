@@ -114,20 +114,34 @@ import {
   type ManhuaKeyartEditPlan,
 } from "@shared/manhuaKeyartEditFusion";
 import type { ManhuaCustomAssetRef } from "@shared/manhuaCustomAssetRefs";
+import {
+  attachManhuaKeyartShotInject,
+  buildManhuaKeyartSlimEditAddon,
+  buildManhuaKeyartSlimPrompt,
+  stripManhuaKeyartShotInject,
+} from "@shared/manhuaKeyartSlimPrompt";
 
+/** 把 edit 计划的垫图/融图挂到节点；prompt 已是完整短包时不再叠长文 */
 function applyKeyartEditPlanToBlock(
   block: CanvasBlock,
   plan: ManhuaKeyartEditPlan,
+  opts?: { promptAlreadyFinal?: boolean },
 ): CanvasBlock {
-  let prompt = stripMarkedSection(block.prompt, "【静帧·示范图融图】");
-  prompt = stripMarkedSection(prompt, "【静帧·用户参考融图】");
-  prompt = stripMarkedSection(prompt, "【静帧·人物库垫图·改图】");
-  prompt = stripMarkedSection(prompt, "【静帧·用户垫图·改图】");
-  prompt = stripMarkedSection(prompt, "【静帧·人物库垫图·Image-2 Edit】");
-  prompt = stripMarkedSection(prompt, "【静帧·用户垫图·Image-2 Edit】");
-  prompt = stripMarkedSection(prompt, "【静帧·设定卡身份锁】");
-  prompt = stripMarkedSection(prompt, "【资产锁·编号对照·必守】");
-  prompt = [prompt, plan.editPromptAddonZh].filter(Boolean).join("\n\n");
+  let prompt = String(block.prompt || "");
+  if (!opts?.promptAlreadyFinal) {
+    prompt = stripMarkedSection(prompt, "【静帧·示范图融图】");
+    prompt = stripMarkedSection(prompt, "【静帧·用户参考融图】");
+    prompt = stripMarkedSection(prompt, "【静帧·人物库垫图·改图】");
+    prompt = stripMarkedSection(prompt, "【静帧·用户垫图·改图】");
+    prompt = stripMarkedSection(prompt, "【静帧·人物库垫图·Image-2 Edit】");
+    prompt = stripMarkedSection(prompt, "【静帧·用户垫图·Image-2 Edit】");
+    prompt = stripMarkedSection(prompt, "【静帧·设定卡身份锁】");
+    prompt = stripMarkedSection(prompt, "【资产锁·编号对照·必守】");
+    // 源头短包路径：融图说明已在 slim 内；旧肥节点兜底才追加短 addon
+    if (!prompt.includes("【静帧·源头短包】")) {
+      prompt = [prompt, buildManhuaKeyartSlimEditAddon(plan)].filter(Boolean).join("\n\n");
+    }
+  }
   if (plan.canEdit && plan.refImageUrl) {
     return {
       ...block,
@@ -721,32 +735,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
 
   const keyArt = defaultCanvasBlock("image", originX + gapX * (col0 + 4), originY);
   keyArt.id = makeFactoryStageId("keyart", episodeIndex);
-  const keyArtBase = usePack
-    ? buildManhuaStagePromptWithGenre("key_art", stageOpts)
-    : MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
-  const sceneDemoAtSpawn = composeManhuaSceneDemoAnchorBlock(sceneId);
-  // 静帧必须确定性带上角色/服装/道具/场景示范，不能只靠 bible 跑完再 enrich
-  keyArt.prompt = [
-    keyArtBase,
-    characterBlock,
-    ancientBlock,
-    ancientFormulaBlock,
-    dynastyWardrobeBlock,
-    wardrobeBlock,
-    craftShotBlock,
-    narrativeLightingBlock,
-    maleMicroBlock,
-    artStyleBlock,
-    stylePackBlock,
-    sceneDemoAtSpawn,
-    propAnchorBlock,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-  keyArt.parentId = reverse.id;
-  /** 成片底图默认 Image-2；有示范图则 edit/融图套场景道具 */
-  keyArt.imageModel = "gpt-image-2";
-  keyArt.aspectRatio = "9:16";
+  // 源头短包：不把角色/场景/剧种长文写进每张静帧（避免 expand 克隆肥 base）
   const keyartEditPlan = planManhuaKeyartEditFusion({
     characterIds,
     ancientArchetypeIds,
@@ -755,7 +744,20 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     propIds,
     customRefs: opts.customRefs,
   });
-  Object.assign(keyArt, applyKeyartEditPlanToBlock(keyArt, keyartEditPlan));
+  keyArt.prompt = buildManhuaKeyartSlimPrompt({
+    artStyleId: opts.artStyleId,
+    characterIds,
+    ancientArchetypeIds,
+    sceneId,
+    propIds,
+    customRefs: opts.customRefs,
+    editPlan: keyartEditPlan,
+  });
+  keyArt.parentId = reverse.id;
+  /** 成片底图默认 Image-2；有示范图则 edit/融图套场景道具 */
+  keyArt.imageModel = "gpt-image-2";
+  keyArt.aspectRatio = "9:16";
+  Object.assign(keyArt, applyKeyartEditPlanToBlock(keyArt, keyartEditPlan, { promptAlreadyFinal: true }));
 
   const clip = defaultCanvasBlock("video", originX + gapX * (col0 + 5), originY);
   clip.id = makeFactoryStageId("clip", episodeIndex);
@@ -1047,7 +1049,55 @@ export function applyFactoryPrefsToBlocks(
       b.id.startsWith("beats-") ||
       b.id.startsWith("keyart-");
 
-    if (b.id.startsWith("beats-") || b.id.startsWith("reverse-") || b.id.startsWith("keyart-")) {
+    // 关键静帧：prefs 一律重写为源头短包（保留本镜分镜段），不再叠角色/场景长文
+    if (b.id.startsWith("keyart-")) {
+      const shotIdx = resolveKeyartShotIndex(b.id, b.prompt);
+      const shotStub: ManhuaWorkbenchShot | null =
+        shotIdx >= 1
+          ? {
+              index: shotIdx,
+              durationSec: 5,
+              cameraZh: "",
+              actionZh: "",
+              dialogueZh: "",
+              emotionZh: "",
+            }
+          : null;
+      // 尽量保留已有分镜注入原文（避免 prefs 防抖冲掉动作描写）
+      const keptShot = (() => {
+        const m = String(b.prompt || "").match(/【分镜\s*\d+·静帧[\s\S]*$/i);
+        return m ? m[0].trim() : "";
+      })();
+      const editPlan = planManhuaKeyartEditFusion({
+        characterIds: prefsCharacterIds,
+        ancientArchetypeIds: prefsAncientIds,
+        artStyleId: opts.artStyleId,
+        sceneId: opts.sceneId,
+        propIds: opts.propIds,
+        customRefs: opts.customRefs,
+      });
+      const slimCore = buildManhuaKeyartSlimPrompt({
+        artStyleId: opts.artStyleId,
+        characterIds: prefsCharacterIds,
+        ancientArchetypeIds: prefsAncientIds,
+        sceneId: opts.sceneId,
+        propIds: opts.propIds,
+        customRefs: opts.customRefs,
+        editPlan,
+      });
+      const nextPrompt = keptShot
+        ? `${slimCore}\n\n${keptShot}`
+        : shotStub
+          ? attachManhuaKeyartShotInject(slimCore, shotStub)
+          : slimCore;
+      return applyKeyartEditPlanToBlock(
+        { ...b, prompt: nextPrompt },
+        editPlan,
+        { promptAlreadyFinal: true },
+      );
+    }
+
+    if (b.id.startsWith("beats-") || b.id.startsWith("reverse-")) {
       let base = stripInjectBlock(b.prompt, "【手法条目库·原子镜头】");
       base = stripMarkedSection(base, "【路径运镜配方】");
       base = stripMarkedSection(base, "【动作运镜配方】");
@@ -1058,16 +1108,6 @@ export function applyFactoryPrefsToBlocks(
       if (syncScene) {
         base = stripMarkedSection(base, "【漫剧场景资产库");
         base = stripMarkedSection(base, "【场景示范图锚点】");
-        if (b.id.startsWith("keyart-")) {
-          base = stripMarkedSection(base, "【本集主场景优先】");
-          base = stripMarkedSection(base, "【画风硬锁】");
-          base = stripMarkedSection(base, "【角色库锚点】");
-          base = stripMarkedSection(base, "【古风原型锚点】");
-          base = stripMarkedSection(base, "【古风角色公式】");
-          base = stripMarkedSection(base, "【朝代服饰锚点");
-          base = stripMarkedSection(base, "【服装道具连续性】");
-          base = stripMarkedSection(base, "【静帧·示范图融图】");
-        }
       }
       base = stripMarkedSection(base, "【点选道具锚点】");
       base = stripMarkedSection(base, "【参考职责】");
@@ -1076,52 +1116,23 @@ export function applyFactoryPrefsToBlocks(
         genreBlock && syncGenre ? genreBlock : "",
         sceneBlock && syncScene ? sceneBlock : "",
         sceneDemoBlock && syncScene ? sceneDemoBlock : "",
-        b.id.startsWith("keyart-") && scene
-          ? `【本集主场景优先】${scene.nameZh}\n直接吸收其生图提示词与核心元素，角色必须融入场景：\n${scene.promptZh}`
-          : "",
-        b.id.startsWith("keyart-") && characterBlock ? characterBlock : "",
-        b.id.startsWith("keyart-") && ancientBlock ? ancientBlock : "",
-        b.id.startsWith("keyart-") && ancientFormulaBlock ? ancientFormulaBlock : "",
-        b.id.startsWith("keyart-") && dynastyWardrobeBlock ? dynastyWardrobeBlock : "",
-        b.id.startsWith("keyart-") && wardrobeBlock ? wardrobeBlock : "",
         craftBlock,
-        !b.id.startsWith("keyart-") ? pathCameraBlock : "",
-        !b.id.startsWith("keyart-") ? actionCameraBlock : "",
-        !b.id.startsWith("keyart-") ? cineVocabBlock : "",
+        pathCameraBlock,
+        actionCameraBlock,
+        cineVocabBlock,
         narrativeLightingBlock,
-        (b.id.startsWith("beats-") || b.id.startsWith("keyart-")) && maleMicroBlock
-          ? maleMicroBlock
-          : "",
-        b.id.startsWith("keyart-") ? artStyleBlock : "",
-        (b.id.startsWith("keyart-") || b.id.startsWith("clip-") || b.id.startsWith("beats-"))
-          && stylePackBlock
+        b.id.startsWith("beats-") && maleMicroBlock ? maleMicroBlock : "",
+        (b.id.startsWith("beats-") || b.id.startsWith("clip-")) && stylePackBlock
           ? stylePackBlock
           : "",
-        (b.id.startsWith("beats-") || b.id.startsWith("keyart-")) && propAnchorBlock
-          ? propAnchorBlock
-          : "",
-        (b.id.startsWith("keyart-") || b.id.startsWith("clip-")) && referenceDutyBlock
-          ? referenceDutyBlock
-          : "",
+        b.id.startsWith("beats-") && propAnchorBlock ? propAnchorBlock : "",
+        referenceDutyBlock && b.id.startsWith("clip-") ? referenceDutyBlock : "",
       ].filter(Boolean);
-      const merged: CanvasBlock = {
+      return {
         ...b,
         prompt: stripManhuaPromptSlop(parts.join("\n\n")),
         ...(b.id.startsWith("reverse-") ? { videoReverseOutputMode: reverseMode } : {}),
       };
-      if (b.id.startsWith("keyart-")) {
-        // 静帧身份只认人物库预览 / 用户上传；不用本集生成定妆
-        const editPlan = planManhuaKeyartEditFusion({
-          characterIds: prefsCharacterIds,
-          ancientArchetypeIds: prefsAncientIds,
-          artStyleId: opts.artStyleId,
-          sceneId: opts.sceneId,
-          propIds: opts.propIds,
-          customRefs: opts.customRefs,
-        });
-        return applyKeyartEditPlanToBlock(merged, editPlan);
-      }
-      return merged;
     }
     if (b.id.startsWith("story-") || b.id.startsWith("bible-")) {
       let base = b.prompt;
@@ -1717,7 +1728,10 @@ export function expandManhuaShotKeyartsAfterReverse(
 
   const keepIds = new Set<string>();
   const extras: CanvasBlock[] = [];
-  const basePrompt = stripShotInjectSection(primary.prompt);
+  // 源头短包核：去掉分镜段后复用；旧肥节点若无短包标记，仍 strip 旧分镜以免叠两段分镜
+  const basePrompt = primary.prompt.includes("【静帧·源头短包】")
+    ? stripManhuaKeyartShotInject(primary.prompt)
+    : stripShotInjectSection(primary.prompt);
 
   for (const shot of shots) {
     const existing = existingByShot.get(shot.index);
@@ -1735,7 +1749,7 @@ export function expandManhuaShotKeyartsAfterReverse(
       x: primary.x + Math.min(shot.index, 3) * 28,
       y: primary.y + (shot.index - 1) * 36,
       parentId: reverse.id,
-      prompt: [basePrompt, formatWorkbenchShotInjectBlock(shot)].filter(Boolean).join("\n\n"),
+      prompt: attachManhuaKeyartShotInject(basePrompt, shot),
       status: "idle",
       outputUrl: undefined,
       outputUrls: [],
@@ -1757,11 +1771,13 @@ export function expandManhuaShotKeyartsAfterReverse(
       const shotIdx = resolveKeyartShotIndex(b.id, b.prompt);
       const shot = shots.find((s) => s.index === shotIdx);
       if (!shot) return b;
-      const base = stripShotInjectSection(b.prompt);
+      const base = b.prompt.includes("【静帧·源头短包】")
+        ? stripManhuaKeyartShotInject(b.prompt)
+        : stripShotInjectSection(b.prompt);
       // 只更新分镜注入文案，保留 status / outputUrl
       return {
         ...b,
-        prompt: [base, formatWorkbenchShotInjectBlock(shot)].filter(Boolean).join("\n\n"),
+        prompt: attachManhuaKeyartShotInject(base, shot),
       };
     });
   nextBlocks = [...nextBlocks, ...extras];
@@ -1954,18 +1970,9 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
   if (!keyArtHint && !seedanceHint && !bibleText && !shots.length) return working;
   return working.map((b) => {
     if (!sameEpisode(b)) return b;
-    if (b.id.startsWith("keyart-") && (keyArtHint || bibleText)) {
-      // 保留铺节点时写入的场景资产库 / 剧种块，只追加反推与角色卡
-      const kept = stripFactoryEnrichSections(b.prompt) || MANHUA_DRAMA_DEFAULT_PROMPTS.key_art;
-      const parts = [
-        kept,
-        keyArtHint ? `【来自编导反推】\n${keyArtHint}` : "",
-        // 角色锚点只取外形句，避免整段设定卡诱导多格文字排版
-        bibleText
-          ? `【角色外形锚点·禁字】\n${bibleText.slice(0, 400)}\n${MANHUA_KEYART_NO_TEXT_LOCK}`
-          : "",
-      ].filter(Boolean);
-      return { ...b, prompt: parts.join("\n\n") };
+    if (b.id.startsWith("keyart-")) {
+      // 源头短包：反推/bible 长文不再叠进静帧（身份靠垫图+短锁，画面靠本镜分镜）
+      return b;
     }
     if (b.id.startsWith("clip-")) {
       const epClip = getBlockEpisodeIndex(b) ?? ep ?? 1;
