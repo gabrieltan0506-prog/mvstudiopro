@@ -2757,6 +2757,11 @@ export default function OmniCanvas() {
         customRefs: customAssetRefs,
         assetCanon,
         episodeIndex,
+        episodes: writerPack?.episodes?.map((ep) => ({
+          index: ep.index,
+          body: ep.body,
+          title: ep.title,
+        })),
         assetBlocks,
       };
       const gate = evaluateManhuaAssetImageGate(gateInput);
@@ -3020,6 +3025,7 @@ export default function OmniCanvas() {
       runDeps,
       selectedCharacterIds,
       writerFocusEpisode,
+      writerPack?.episodes,
     ],
   );
 

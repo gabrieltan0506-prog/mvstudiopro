@@ -24,6 +24,13 @@ import {
   type ManhuaWriterAssetCanon,
 } from "./manhuaWriterAssetCanon.js";
 import { composeManhuaWriterCanonSheetPrompt } from "./manhuaDirectorDistill.js";
+import {
+  composeManhuaHeroCharacterSheetPrompt,
+  isManhuaHeroCharacterAnchor,
+  pickPropsForCharacterSheet,
+  resolveManhuaScenePlatePrompt,
+  type ManhuaEpisodeBodyRef,
+} from "./manhuaMultiViewAssetSheets.js";
 
 /** 库原型文案里的「男主/女主」只作气质参考，出图前抹掉性别硬锁词 */
 function stripArchetypeGenderLockZh(text: string): string {
@@ -47,6 +54,8 @@ export type ManhuaAssetImageGateInput = {
   assetCanon?: ManhuaWriterAssetCanon | null;
   /** 当前集号：决定主场景 */
   episodeIndex?: number;
+  /** 全系列分集体：用于判定场景是否跨集（≥2 集 → 四视角拼板） */
+  episodes?: ManhuaEpisodeBodyRef[] | null;
   /** 画布上已有的角色设定卡 / 场景设定图节点 */
   assetBlocks?: Array<{
     id: string;
@@ -212,6 +221,8 @@ export type ManhuaAssetImageSpawnPlan = {
   kind: "charsheet" | "sceneplate";
   prompt: string;
   labelZh: string;
+  /** single=旧单张；grid2x2=跨集场景四视角；heroSheet=主角设定板 */
+  layout?: "single" | "grid2x2" | "heroSheet";
 };
 
 /** 缺图时铺设定卡/场景设定图节点（仅预填；是否扣费运行由调用方决定） */
@@ -263,36 +274,57 @@ export function planManhuaAssetImageSpawns(
       ) {
         const sceneExisting = findAssetBlock(blocks, "sceneplate-", id);
         if (!blockHasMedia(sceneExisting)) {
+          const resolved = resolveManhuaScenePlatePrompt({
+            sceneNameZh: fromCanon.nameZh,
+            scenePromptZh: fromCanon.lookZh || fromCanon.promptZh || fromCanon.nameZh,
+            topic,
+            artStyleLabelZh: artStyle.labelZh,
+            artStylePromptZh: artStyle.promptZh,
+            location: fromCanon,
+            episodes: input.episodes,
+            buildSingle: buildManhuaScenePlateGenPrompt,
+          });
           plans.push({
             id: sceneExisting?.id || `sceneplate-${id}`,
             kind: "sceneplate",
-            prompt: buildManhuaScenePlateGenPrompt({
-              sceneNameZh: fromCanon.nameZh,
-              scenePromptZh: fromCanon.lookZh || fromCanon.promptZh || fromCanon.nameZh,
-              topic,
-              artStyleLabelZh: artStyle.labelZh,
-              artStylePromptZh: artStyle.promptZh,
-            }),
+            prompt: resolved.prompt,
             labelZh: fromCanon.nameZh,
+            layout: resolved.layout,
           });
         }
         continue;
       }
+      const hero = isManhuaHeroCharacterAnchor(fromCanon);
+      const prompt = hero
+        ? composeManhuaHeroCharacterSheetPrompt({
+            nameZh: fromCanon.nameZh,
+            aliasZh: fromCanon.aliasZh,
+            lookZh: fromCanon.lookZh,
+            motiveZh: fromCanon.motiveZh,
+            noteZh: fromCanon.noteZh,
+            basePromptZh: fromCanon.promptZh,
+            artStyleLabelZh: artStyle.labelZh,
+            artStylePromptZh: artStyle.promptZh,
+            topic,
+            props: pickPropsForCharacterSheet(fromCanon, canon?.props),
+          })
+        : composeManhuaWriterCanonSheetPrompt({
+            nameZh: fromCanon.nameZh,
+            aliasZh: fromCanon.aliasZh,
+            lookZh: fromCanon.lookZh,
+            motiveZh: fromCanon.motiveZh,
+            noteZh: fromCanon.noteZh,
+            basePromptZh: fromCanon.promptZh,
+            artStyleLabelZh: artStyle.labelZh,
+            artStylePromptZh: artStyle.promptZh,
+            topic,
+          });
       plans.push({
         id: existing?.id || `charsheet-${id}`,
         kind: "charsheet",
-        prompt: composeManhuaWriterCanonSheetPrompt({
-          nameZh: fromCanon.nameZh,
-          aliasZh: fromCanon.aliasZh,
-          lookZh: fromCanon.lookZh,
-          motiveZh: fromCanon.motiveZh,
-          noteZh: fromCanon.noteZh,
-          basePromptZh: fromCanon.promptZh,
-          artStyleLabelZh: artStyle.labelZh,
-          artStylePromptZh: artStyle.promptZh,
-          topic,
-        }),
+        prompt,
         labelZh: fromCanon.nameZh,
+        layout: hero ? "heroSheet" : "single",
       });
       continue;
     }
@@ -321,27 +353,55 @@ export function planManhuaAssetImageSpawns(
           String(c.noteZh || "").includes(arch.id) ||
           String(c.lookZh || "").includes(arch.nameZh),
       );
+      const sheetName = scriptMatch?.nameZh || arch.nameZh;
+      const sheetLook = scriptMatch?.lookZh || lookZh;
+      const sheetMotive = scriptMatch?.motiveZh;
+      const sheetNote = [
+        scriptMatch?.noteZh,
+        arch.atmosphereZh,
+        "性别与年龄以本集剧本人物表为准；库原型只借服化道与气质，勿因刀客/将军/女帝等名锁定生理性别。",
+      ]
+        .filter(Boolean)
+        .join("；");
+      const hero = isManhuaHeroCharacterAnchor({
+        nameZh: sheetName,
+        lookZh: sheetLook,
+        motiveZh: sheetMotive,
+        noteZh: sheetNote,
+      });
+      const prompt = hero
+        ? composeManhuaHeroCharacterSheetPrompt({
+            nameZh: sheetName,
+            aliasZh: scriptMatch?.aliasZh,
+            lookZh: sheetLook,
+            motiveZh: sheetMotive,
+            noteZh: sheetNote,
+            basePromptZh: scriptMatch?.promptZh || basePromptZh,
+            artStyleLabelZh: artStyle.labelZh,
+            artStylePromptZh: artStyle.promptZh,
+            topic,
+            props: pickPropsForCharacterSheet(
+              { nameZh: sheetName, aliasZh: scriptMatch?.aliasZh, lookZh: sheetLook },
+              canon?.props,
+            ),
+          })
+        : composeManhuaWriterCanonSheetPrompt({
+            nameZh: sheetName,
+            aliasZh: scriptMatch?.aliasZh,
+            lookZh: sheetLook,
+            motiveZh: sheetMotive,
+            noteZh: sheetNote,
+            basePromptZh: scriptMatch?.promptZh || basePromptZh,
+            artStyleLabelZh: artStyle.labelZh,
+            artStylePromptZh: artStyle.promptZh,
+            topic,
+          });
       plans.push({
         id: existing?.id || `charsheet-${id}`,
         kind: "charsheet",
-        prompt: composeManhuaWriterCanonSheetPrompt({
-          nameZh: scriptMatch?.nameZh || arch.nameZh,
-          aliasZh: scriptMatch?.aliasZh,
-          lookZh: scriptMatch?.lookZh || lookZh,
-          motiveZh: scriptMatch?.motiveZh,
-          noteZh: [
-            scriptMatch?.noteZh,
-            arch.atmosphereZh,
-            "性别与年龄以本集剧本人物表为准；库原型只借服化道与气质，勿因刀客/将军/女帝等名锁定生理性别。",
-          ]
-            .filter(Boolean)
-            .join("；"),
-          basePromptZh: scriptMatch?.promptZh || basePromptZh,
-          artStyleLabelZh: artStyle.labelZh,
-          artStylePromptZh: artStyle.promptZh,
-          topic,
-        }),
-        labelZh: scriptMatch?.nameZh || arch.nameZh,
+        prompt,
+        labelZh: sheetName,
+        layout: hero ? "heroSheet" : "single",
       });
       continue;
     }
@@ -376,17 +436,22 @@ export function planManhuaAssetImageSpawns(
     const sceneId = sceneIdForForce;
     if (main) {
       const existing = findAssetBlock(blocks, "sceneplate-", main.id);
+      const resolved = resolveManhuaScenePlatePrompt({
+        sceneNameZh: main.nameZh,
+        scenePromptZh: main.promptZh,
+        topic,
+        artStyleLabelZh: artStyle.labelZh,
+        artStylePromptZh: artStyle.promptZh,
+        location: main,
+        episodes: input.episodes,
+        buildSingle: buildManhuaScenePlateGenPrompt,
+      });
       plans.push({
         id: existing?.id || `sceneplate-${main.id}`,
         kind: "sceneplate",
-        prompt: buildManhuaScenePlateGenPrompt({
-          sceneNameZh: main.nameZh,
-          scenePromptZh: main.promptZh,
-          topic,
-          artStyleLabelZh: artStyle.labelZh,
-          artStylePromptZh: artStyle.promptZh,
-        }),
+        prompt: resolved.prompt,
         labelZh: main.nameZh,
+        layout: resolved.layout,
       });
     } else {
       const scene = getManhuaSceneTemplate(sceneId);
@@ -403,8 +468,36 @@ export function planManhuaAssetImageSpawns(
             artStylePromptZh: artStyle.promptZh,
           }),
           labelZh: scene.nameZh,
+          layout: "single",
         });
       }
+    }
+  }
+
+  // 跨集场景（非本集主场景）也补四视角参考卡，供视频换角度锁空间
+  if (forceEpisodeSheets && canon?.locations?.length && input.episodes?.length) {
+    for (const loc of canon.locations) {
+      if (plans.some((p) => p.kind === "sceneplate" && p.id.includes(loc.id))) continue;
+      const resolved = resolveManhuaScenePlatePrompt({
+        sceneNameZh: loc.nameZh,
+        scenePromptZh: loc.promptZh,
+        topic,
+        artStyleLabelZh: artStyle.labelZh,
+        artStylePromptZh: artStyle.promptZh,
+        location: loc,
+        episodes: input.episodes,
+        buildSingle: buildManhuaScenePlateGenPrompt,
+      });
+      if (resolved.layout !== "grid2x2") continue;
+      const existing = findAssetBlock(blocks, "sceneplate-", loc.id);
+      if (blockHasMedia(existing)) continue;
+      plans.push({
+        id: existing?.id || `sceneplate-${loc.id}`,
+        kind: "sceneplate",
+        prompt: resolved.prompt,
+        labelZh: loc.nameZh,
+        layout: "grid2x2",
+      });
     }
   }
 
