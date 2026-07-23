@@ -11,12 +11,12 @@ export function formatManhuaFactoryUserError(raw: string): string {
     /too_big|expected string to have <=\s*12000|maximum["']?\s*:\s*12000/i.test(msg) ||
     (/sourceText/i.test(msg) && /too_big|Too big/i.test(msg))
   ) {
-    return "文案过长，系统无法一次处理完。请缩短剧本或分集后再生成（设定圣经/节拍已支持更长并拆两次请求）。";
+    return "文案过长，系统无法一次处理完。设定圣经/节拍会自动分段生成；若仍失败，请刷新后重试或分集再生成。";
   }
   if (/too_big|Too big: expected string/i.test(msg)) {
     return "提交内容超出长度限制，请缩短后再试";
   }
-  if (/上限\s*32000|过长（\d+ 字，上限/i.test(msg)) {
+  if (/自动分段上限|过长（约 \d+ 字）|过长（\d+ 字，上限/i.test(msg)) {
     return msg.length > 180 ? msg.slice(0, 180) : msg;
   }
 
@@ -43,7 +43,7 @@ export function formatManhuaFactoryUserError(raw: string): string {
   // 剥掉 Zod JSON 阵列外壳，只留可读句
   if (msg.includes('"code"') && msg.includes("path")) {
     if (/sourceText/i.test(msg)) {
-      return "文案字段校验失败（可能过长）。请缩短后重试，或拆成两集生成。";
+      return "文案字段校验失败（可能过长）。设定圣经/节拍会自动分段；若仍失败请刷新后重试。";
     }
     return "输入校验未通过，请检查剧本与资产是否齐全后重试";
   }

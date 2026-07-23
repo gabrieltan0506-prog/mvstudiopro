@@ -521,7 +521,7 @@ export async function runCanvasBlock(
     const baseBrief =
       block.kind === "copy_organize" ? `整理文案结构。\n${brief}` : brief;
 
-    // 漫剧 bible / beats：总上限 32k，超约 16k 拆两次请求，不截断原文
+    // 漫剧 bible / beats：超约 16k 自动拆成 2～N 次请求拼接，不截断、不要求用户手动拆
     if (isManhuaBibleOrBeatsBlockId(block.id)) {
       const plan = planManhuaFactoryOptimizeSource(sourceText);
       if (plan.overLimitZh) {

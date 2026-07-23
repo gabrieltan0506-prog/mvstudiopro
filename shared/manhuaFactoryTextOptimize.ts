@@ -1,22 +1,25 @@
 /**
  * 漫剧工厂 bible / beats 文案优化：
- * - 总输入上限 32000（不截断丢弃）
- * - 超过约 16000 时拆成两次请求（每段约 16–18k），再拼接成稿
+ * - 自动侦测长度：超过单次软上限则拆成 2、3、4…N 次请求，再拼接成稿
+ * - 不截断丢弃原文；用户无需手动拆剧本
+ * - 单次请求仍受 API sourceText 上限约束（见 CHUNK_HARD / routers）
  */
 
-/** optimizeCustomCopy 对漫剧 bible/beats 放宽后的上限 */
+/** 单次 optimizeCustomCopy 请求的安全上限（与 routers max 对齐，分片后每段须低于此） */
 export const MANHUA_FACTORY_OPTIMIZE_SOURCE_MAX = 32_000;
-/** 单次请求目标上限：超过则拆两次 */
+/** 单次请求目标软上限：超过则继续拆下一段 */
 export const MANHUA_FACTORY_OPTIMIZE_CHUNK_SOFT = 16_000;
-/** 拆分时允许的单段上限（给段落边界一点余量） */
+/** 拆分时允许的单段硬上限（给段落边界一点余量） */
 export const MANHUA_FACTORY_OPTIMIZE_CHUNK_HARD = 18_000;
+/** 自动分段次数上限（防极端超长拖垮额度；约 16k×本值） */
+export const MANHUA_FACTORY_OPTIMIZE_MAX_PARTS = 12;
 
 export function isManhuaBibleOrBeatsBlockId(blockId: string): boolean {
   const id = String(blockId || "");
   return id.startsWith("bible-") || id.startsWith("beats-");
 }
 
-/** 在软上限附近按段落/换行切开，避免硬切半句；绝不丢字 */
+/** 在软上限附近按段落/换行切开，避免硬切半句；绝不丢字；可产出任意多段 */
 export function splitManhuaFactoryOptimizeSource(
   sourceText: string,
   opts?: { softMax?: number; hardMax?: number },
@@ -59,23 +62,24 @@ export type ManhuaFactoryOptimizePlan = {
   /** 是否拆成多次 */
   split: boolean;
   chunks: string[];
-  /** 超过产品总上限时的说明（调用方应报错，勿静默截断） */
+  /** 极端过长（超过自动分段上限）时的说明；调用方应报错，勿静默截断 */
   overLimitZh: string | null;
 };
 
 export function planManhuaFactoryOptimizeSource(sourceText: string): ManhuaFactoryOptimizePlan {
   const text = String(sourceText || "");
-  if (text.length > MANHUA_FACTORY_OPTIMIZE_SOURCE_MAX) {
+  const chunks = splitManhuaFactoryOptimizeSource(text);
+  if (chunks.length > MANHUA_FACTORY_OPTIMIZE_MAX_PARTS) {
+    const approx = MANHUA_FACTORY_OPTIMIZE_CHUNK_SOFT * MANHUA_FACTORY_OPTIMIZE_MAX_PARTS;
     return {
-      split: false,
-      chunks: [text],
-      overLimitZh: `设定圣经/节拍文案过长（${text.length} 字，上限 ${MANHUA_FACTORY_OPTIMIZE_SOURCE_MAX}）。请缩短剧本或分集后再生成，系统不会截断内容。`,
+      split: true,
+      chunks,
+      overLimitZh: `设定圣经/节拍文案过长（约 ${text.length} 字），已超出自动分段上限（最多 ${MANHUA_FACTORY_OPTIMIZE_MAX_PARTS} 次、约 ${approx} 字）。请分集后再生成，系统不会截断内容。`,
     };
   }
-  const chunks = splitManhuaFactoryOptimizeSource(text);
   return {
     split: chunks.length > 1,
-    chunks,
+    chunks: chunks.length ? chunks : [text],
     overLimitZh: null,
   };
 }
@@ -94,12 +98,15 @@ export function buildManhuaFactoryOptimizeBrief(input: {
   if (i === 1) {
     return [
       base,
-      `【分段生成 1/${n}】本段只处理原文前半；输出完整可用的 Markdown 前半稿，勿写「未完待续」以外的省略说明。`,
+      `【分段生成 1/${n}】本段只处理原文第 1 段；输出完整可用的 Markdown 第 1 段成稿，勿写「未完待续」以外的省略说明。`,
     ].join("\n");
   }
+  const isLast = i >= n;
   return [
     base,
-    `【分段生成 ${i}/${n}】承接上一段成稿，只处理原文剩余部分；输出应能与上一段无缝衔接的后半 Markdown，不要重复上一段已写完的大段内容。`,
+    isLast
+      ? `【分段生成 ${i}/${n}】承接上一段成稿，处理原文最后一段；输出应能与上一段无缝衔接的 Markdown，不要重复上一段已写完的大段内容。`
+      : `【分段生成 ${i}/${n}】承接上一段成稿，只处理原文第 ${i} 段；输出应能与上一段无缝衔接的 Markdown，不要重复上一段已写完的大段内容。`,
     prev
       ? `【上一段成稿尾部（供衔接，勿整段照抄）】\n${prev.slice(-3500)}`
       : "",
