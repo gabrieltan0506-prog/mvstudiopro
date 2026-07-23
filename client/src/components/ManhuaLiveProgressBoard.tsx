@@ -90,17 +90,19 @@ export default function ManhuaLiveProgressBoard({
           const label =
             total > 1 ? `${baseLabel} ${done}/${total}` : baseLabel;
           const thumb = stageBlocks.map(mediaOf).find(Boolean);
+          // 仅全部出齐才标绿；部分完成绝不能伪装「已完成」
+          const status =
+            done >= total && total > 0
+              ? "ready"
+              : running
+                ? "running"
+                : anyErr && done < total
+                  ? "error"
+                  : done > 0 && done < total
+                    ? "running"
+                    : "idle";
           stages[stage] = {
-            status:
-              done >= total && total > 0
-                ? "ready"
-                : running
-                  ? "running"
-                  : anyErr && done === 0
-                    ? "error"
-                    : done > 0
-                      ? "ready"
-                      : "idle",
+            status,
             thumb,
             label,
           };

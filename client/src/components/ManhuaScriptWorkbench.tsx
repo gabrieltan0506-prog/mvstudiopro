@@ -3755,9 +3755,10 @@ export default function ManhuaScriptWorkbench({
         </div>
         <div className="flex gap-2 overflow-x-auto pb-0.5">
           {filmstripShots.map((shot, i) => {
-              const shotKey =
-                episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
-                episodeKeyarts[i];
+              // 严格按镜号；禁止用列表下标顶替（缺镜时会把下一镜图错绑到本格）
+              const shotKey = episodeKeyarts.find(
+                (b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index,
+              );
               const shotClip =
                 episodeClips.find(
                   (b) =>

@@ -40,4 +40,19 @@ describe("manhuaKeyartProgress", () => {
     expect(formatManhuaKeyartProgressZh(c, 1)).toMatch(/静帧已出 0\/13/);
     expect(formatManhuaKeyartProgressZh(c, 1)).not.toMatch(/16\/17|13\/1/);
   });
+
+  it("uses expectedTotal so one node cannot fake 1/1 complete", () => {
+    const blocks = [
+      {
+        id: "keyart-e01-x",
+        status: "done",
+        outputUrl: "https://cdn.example/a.png",
+        episodeIndex: 1,
+      },
+    ];
+    const c = countManhuaKeyartProgress(blocks, 1, epOf, 12);
+    expect(c.total).toBe(12);
+    expect(c.done).toBe(1);
+    expect(formatManhuaKeyartProgressZh(c, 1)).toMatch(/静帧已出 1\/12/);
+  });
 });

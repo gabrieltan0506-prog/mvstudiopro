@@ -147,17 +147,30 @@ export function trySaveLocalCanvas(
     storage.setItem(CANVAS_LS_KEY, JSON.stringify({ blocks: slim, edges }));
     return true;
   } catch {
-    // 配额仍满：再砍静帧 URL，只留节点壳 + 剧本侧由其它键负责
+    // 配额仍满：优先保住关键静帧成图与垫图；砍视频壳字段与超长文本
     try {
-      const shell = slim.map((b) => ({
-        ...b,
-        outputUrl: undefined,
-        outputUrls: [] as string[],
-        refImageUrl: undefined,
-        outputText: b.kind === "text" || b.kind === "copy_organize" || b.kind === "video_reverse"
-          ? String(b.outputText || "").slice(0, 8_000) || undefined
-          : undefined,
-      }));
+      const shell = slim.map((b) => {
+        const isKeyart = String(b.id || "").startsWith("keyart-");
+        if (isKeyart) {
+          return {
+            ...b,
+            outputText: undefined,
+            uploadedAssets: [],
+            // 保留 outputUrl / refImageUrl / editFusionUrls，避免刷新后全空再触发改图失败
+          };
+        }
+        return {
+          ...b,
+          outputUrl: undefined,
+          outputUrls: [] as string[],
+          refImageUrl: undefined,
+          editFusionUrls: [] as string[],
+          outputText:
+            b.kind === "text" || b.kind === "copy_organize" || b.kind === "video_reverse"
+              ? String(b.outputText || "").slice(0, 4_000) || undefined
+              : undefined,
+        };
+      });
       storage.setItem(CANVAS_LS_KEY, JSON.stringify({ blocks: shell, edges }));
       return true;
     } catch {

@@ -1357,6 +1357,14 @@ function stripShotInjectSection(prompt: string): string {
   return stripMarkedSection(String(prompt || ""), "【分镜");
 }
 
+/** 本集分镜表预期静帧张数（反推/节拍解析；用于进度分母，避免未展开时显示 1/1） */
+export function countExpectedManhuaKeyartShots(
+  blocks: CanvasBlock[],
+  episodeIndex: number | null | undefined,
+): number {
+  return resolveShotsForEpisodeKeyarts(blocks, episodeIndex).length;
+}
+
 function resolveShotsForEpisodeKeyarts(
   blocks: CanvasBlock[],
   episodeIndex: number | null | undefined,

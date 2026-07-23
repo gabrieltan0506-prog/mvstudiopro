@@ -21,12 +21,16 @@ export function countManhuaKeyartProgress(
   }>,
   episodeIndex: number,
   getEpisodeIndex: (b: { id: string; episodeIndex?: number | null }) => number | null | undefined,
+  /** 分镜表预期张数；大于节点数时用来避免「1/1 假完成」 */
+  expectedTotal?: number,
 ): ManhuaKeyartProgressCounts {
   const ep = Math.max(1, Math.floor(episodeIndex) || 1);
   const epKeys = blocks.filter(
     (b) => b.id.startsWith("keyart-") && (getEpisodeIndex(b) ?? 1) === ep,
   );
-  const total = epKeys.length;
+  const nodeTotal = epKeys.length;
+  const expect = Math.max(0, Math.floor(expectedTotal || 0));
+  const total = Math.max(nodeTotal, expect);
   const done = epKeys.filter((b) => Boolean(b.outputUrl || b.outputUrls?.[0])).length;
   const failed = epKeys.filter(
     (b) => b.status === "error" || (Boolean(b.error) && !b.outputUrl && !b.outputUrls?.[0]),
