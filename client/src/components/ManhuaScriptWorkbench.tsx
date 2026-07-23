@@ -63,6 +63,7 @@ import {
 } from "@shared/manhuaAssetLockRegistry";
 import {
   collectManhuaCharacterTagsFromPrompt,
+  resolveManhuaVoiceExtractWindow,
   type ManhuaCharacterVoiceLock,
 } from "@shared/manhuaCharacterVoiceLock";
 import {
@@ -2150,8 +2151,8 @@ export default function ManhuaScriptWorkbench({
                       角色声线参考（人手提取）
                     </div>
                     <p className="mt-0.5 text-[10px] leading-4 text-white/40">
-                      有声成片出对白后，抠声挂到 @角色；后续成片自动带参考音。BGM
-                      仍后期自叠。
+                      有声成片出对白后，按导戏秒轴抠该角色对白窗挂到
+                      @角色；多人同框按时长最多挂 3 路。BGM 仍后期自叠。
                     </p>
                     {characterVoiceLocks.length ? (
                       <div className="mt-1 flex flex-wrap gap-1">
@@ -2200,22 +2201,27 @@ export default function ManhuaScriptWorkbench({
                               const label =
                                 assetLockRegistry.byRole.character.find((s) => s.tag === tag)
                                   ?.labelZh || tag;
+                              const win = resolveManhuaVoiceExtractWindow(clip.prompt, tag);
                               return (
                                 <button
                                   key={`${clip.id}-${tag}`}
                                   type="button"
+                                  title={win.labelZh}
                                   className="rounded border border-emerald-400/30 bg-black/30 px-1.5 py-0.5 text-[9px] text-emerald-50/90 hover:bg-emerald-500/15"
                                   onClick={() =>
                                     void onExtractCharacterVoice({
                                       clipId: clip.id,
                                       characterTag: tag,
                                       labelZh: label,
-                                      startSec: 0,
-                                      durationSec: 8,
+                                      startSec: win.startSec,
+                                      durationSec: win.durationSec,
                                     })
                                   }
                                 >
-                                  从段{resolveClipSegmentIndex(clip.id, clip.prompt)}抠 {tag}
+                                  段{resolveClipSegmentIndex(clip.id, clip.prompt)}·{tag}
+                                  <span className="ml-1 text-white/40">
+                                    {win.startSec}–{win.endSec}s
+                                  </span>
                                 </button>
                               );
                             });

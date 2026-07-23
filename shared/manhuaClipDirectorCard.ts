@@ -113,22 +113,40 @@ export function parseManhuaClipDirectorCardSummary(
     });
   }
 
-  // 导戏单「分镜N｜…｜约0–4s」回退
+  // 导戏单「分镜N｜…｜约0–4s」回退（头行 + 后续缩进/对白行一并取 @角色）
   if (!cueRows.length) {
-    const shotRe =
-      /分镜(\d+)[｜|][^｜\n]*[｜|][^｜\n]*[｜|]约(\d+(?:\.\d+)?)[–-](\d+(?:\.\d+)?)s[^\n]*/g;
-    let m: RegExpExecArray | null;
-    while ((m = shotRe.exec(raw)) && cueRows.length < 6) {
-      const line = m[0];
+    const shotHeadRe =
+      /^分镜(\d+)[｜|][^｜\n]*[｜|][^｜\n]*[｜|]约(\d+(?:\.\d+)?)[–-](\d+(?:\.\d+)?)s[^\n]*$/;
+    for (let i = 0; i < lines.length && cueRows.length < 6; i++) {
+      const head = shotHeadRe.exec(String(lines[i] || "").trim());
+      if (!head) continue;
+      const chunk: string[] = [lines[i]!];
+      let j = i + 1;
+      while (j < lines.length) {
+        const ln = lines[j]!;
+        if (shotHeadRe.test(ln.trim()) || /^【/.test(ln.trim())) break;
+        if (
+          /^\s/.test(ln) ||
+          /^(说话人|对白|动作|场面|微表情|情绪|光影|交接)/.test(ln.trim())
+        ) {
+          chunk.push(ln);
+          j++;
+          continue;
+        }
+        break;
+      }
+      i = j - 1;
+      const blob = chunk.join("\n");
       cueRows.push({
-        startSec: Number(m[2]),
-        endSec: Number(m[3]),
-        roleLabelZh: `镜${m[1]}`,
-        castTags: tagsOf(/@角色\d+/g, line),
-        sceneTags: tagsOf(/@场景\d+/g, line),
+        startSec: Number(head[2]),
+        endSec: Number(head[3]),
+        roleLabelZh: `镜${head[1]}`,
+        castTags: tagsOf(/@角色\d+/g, blob),
+        sceneTags: tagsOf(/@场景\d+/g, blob),
         microOrActionZh: (
-          line.match(/微表情差[：:]\s*([^｜|\n]{2,28})/)?.[1] ||
-          line.match(/场面动作[：:]\s*([^｜|\n]{2,28})/)?.[1] ||
+          blob.match(/微表情差[：:]\s*([^｜|\n]{2,28})/)?.[1] ||
+          blob.match(/场面动作[：:]\s*([^｜|\n]{2,28})/)?.[1] ||
+          blob.match(/对白[^：\n]*[：:][^\n「]*「([^」]{1,20})/)?.[1] ||
           ""
         ).slice(0, 28),
       });

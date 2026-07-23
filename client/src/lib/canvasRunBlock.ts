@@ -46,7 +46,7 @@ import {
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import {
   formatManhuaCharacterVoiceLockBlock,
-  pickManhuaVoiceAudioUrlsForPrompt,
+  planManhuaVoiceAudioForPrompt,
   type ManhuaCharacterVoiceLock,
 } from "@shared/manhuaCharacterVoiceLock";
 
@@ -788,17 +788,15 @@ export async function runCanvasBlock(
       // Seedance 首图：有上一段末帧时用末帧作起幅主参考，否则用本段首静帧
       const seedStill = tailFrames[tailFrames.length - 1] || stillRef;
       const voiceLocks = deps.characterVoiceLocks || [];
-      const voiceAudioUrls = pickManhuaVoiceAudioUrlsForPrompt(motionPrompt, voiceLocks);
-      const voiceBlock = formatManhuaCharacterVoiceLockBlock(
-        voiceLocks.filter((l) => voiceAudioUrls.includes(l.audioUrl)),
-      );
+      const voicePlan = planManhuaVoiceAudioForPrompt(motionPrompt, voiceLocks);
+      const voiceBlock = formatManhuaCharacterVoiceLockBlock(voiceLocks, voicePlan);
       const seedancePrompt = voiceBlock
         ? `${motionPrompt}\n\n${voiceBlock}`.trim()
         : motionPrompt;
       url = await runSeedance20(seedancePrompt, seedStill, ar, {
         imageUrls: httpsImages.length ? httpsImages : undefined,
         videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
-        audioUrls: voiceAudioUrls.length ? voiceAudioUrls : undefined,
+        audioUrls: voicePlan.audioUrls.length ? voicePlan.audioUrls : undefined,
         version: videoModel === "seedance-2.0-fast" ? "2.0-fast" : "2.0",
         duration:
           parseManhuaClipTargetDurationSec(motionPrompt) ??

@@ -45,6 +45,8 @@ import {
 import { resolveClipSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import { parseManhuaCanvasAssetAtTag } from "@shared/manhuaAssetLockRegistry";
 import { parseManhuaSheetPropSubTagsFromPrompt } from "@shared/manhuaSheetPropSubTags";
+import type { ManhuaCharacterVoiceLock } from "@shared/manhuaCharacterVoiceLock";
+import { resolveOmniMaterialUrl, uploadFileToSignedUrl } from "@/lib/omniCanvasApi";
 import {
   formatManhuaClipDirectorCueFaceLine,
   parseManhuaClipDirectorCardSummary,
@@ -84,6 +86,13 @@ type FreeformCanvasProps = {
   focusEpisode?: number | null;
   /** 限制「添加节点」菜单；默认 SPAWN_KIND_OPTIONS 全量 */
   spawnKinds?: CanvasBlockKind[];
+  /** 角色声线参考（按 @角色 挂到定妆卡） */
+  characterVoiceLocks?: ManhuaCharacterVoiceLock[];
+  onReplaceCharacterVoiceAudio?: (input: {
+    characterTag: string;
+    audioUrl: string;
+    labelZh?: string;
+  }) => void;
 };
 
 type SpawnMenuState = { anchorBlockId: string; x: number; y: number } | null;
@@ -318,6 +327,8 @@ export default function FreeformCanvas({
   presentation = "full",
   focusEpisode = null,
   spawnKinds,
+  characterVoiceLocks = [],
+  onReplaceCharacterVoiceAudio,
 }: FreeformCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const toolbarFileInputRef = useRef<HTMLInputElement>(null);
@@ -947,6 +958,10 @@ export default function FreeformCanvas({
                   const sheetPropSubs = String(block.id || "").startsWith("charsheet-")
                     ? parseManhuaSheetPropSubTagsFromPrompt(block.prompt)
                     : [];
+                  const voiceLock =
+                    String(block.id || "").startsWith("charsheet-") && assetAt
+                      ? characterVoiceLocks.find((v) => v.characterTag === assetAt)
+                      : undefined;
                   return (
                     <div className="space-y-1 border-b border-violet-400/25 bg-violet-500/[0.08] px-3 py-2 text-[10px] leading-4">
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -974,6 +989,72 @@ export default function FreeformCanvas({
                               <span className="ml-1 font-sans text-white/55">{s.labelZh}</span>
                             </span>
                           ))}
+                        </div>
+                      ) : null}
+                      {String(block.id || "").startsWith("charsheet-") && assetAt ? (
+                        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                          {voiceLock?.audioUrl ? (
+                            <audio
+                              controls
+                              preload="none"
+                              src={voiceLock.audioUrl}
+                              className="h-7 max-w-full flex-1"
+                            />
+                          ) : (
+                            <span className="text-white/40">未挂声线参考</span>
+                          )}
+                          {onReplaceCharacterVoiceAudio ? (
+                            <label className="cursor-pointer rounded border border-emerald-400/35 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] text-emerald-50/90 hover:bg-emerald-500/20">
+                              {voiceLock ? "换声样" : "上传声样"}
+                              <input
+                                type="file"
+                                accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,.mp3,.wav"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  e.target.value = "";
+                                  if (!file || !assetAt) return;
+                                  void (async () => {
+                                    try {
+                                      const safeName = (file.name || "voice.mp3").replace(
+                                        /[^a-z0-9._-]/gi,
+                                        "-",
+                                      );
+                                      const signed = await getSignedUrlMutation.mutateAsync({
+                                        fileName: file.name || "voice.mp3",
+                                        mimeType: file.type || "audio/mpeg",
+                                        objectName: `canvas/audio/${Date.now()}-${safeName}`,
+                                      });
+                                      await uploadFileToSignedUrl({
+                                        file,
+                                        uploadUrl: signed.uploadUrl,
+                                        headers: signed.requiredHeaders,
+                                      });
+                                      if (!signed.gcsUri) {
+                                        throw new Error("上传成功但未拿到存储地址");
+                                      }
+                                      const audioUrl = await resolveOmniMaterialUrl(signed.gcsUri);
+                                      if (!/^https:\/\//i.test(audioUrl)) {
+                                        throw new Error("上传成功但未拿到可播放地址");
+                                      }
+                                      onReplaceCharacterVoiceAudio({
+                                        characterTag: assetAt,
+                                        audioUrl,
+                                        labelZh: labelFromPrompt || assetAt,
+                                      });
+                                      toast.message("声样已更新", {
+                                        description: `${assetAt} 已换参考音`,
+                                      });
+                                    } catch (err) {
+                                      toast.message(
+                                        err instanceof Error ? err.message : "声样上传失败",
+                                      );
+                                    }
+                                  })();
+                                }}
+                              />
+                            </label>
+                          ) : null}
                         </div>
                       ) : null}
                       <div className="text-white/45">
