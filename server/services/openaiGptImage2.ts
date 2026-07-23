@@ -70,8 +70,14 @@ function resolveQuality(raw?: string): "low" | "medium" | "high" {
 }
 
 async function downloadUrl(url: string): Promise<Buffer> {
+  let host = "";
+  try {
+    host = new URL(url).host;
+  } catch {
+    host = "invalid-url";
+  }
   const r = await fetch(url, { signal: AbortSignal.timeout(60_000) });
-  if (!r.ok) throw new Error(`OpenAI ref download HTTP ${r.status}`);
+  if (!r.ok) throw new Error(`OpenAI ref download HTTP ${r.status} · host=${host}`);
   return Buffer.from(await r.arrayBuffer());
 }
 

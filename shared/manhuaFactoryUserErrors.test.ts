@@ -17,6 +17,18 @@ describe("manhuaFactoryUserErrors", () => {
     ).toMatch(/参考底图|定妆/);
   });
 
+  it("maps keyart edit failure with download reason", () => {
+    expect(
+      formatManhuaFactoryUserError("关键静帧改图失败：OpenAI ref download HTTP 403"),
+    ).toMatch(/下载失败|预览/);
+  });
+
+  it("does not pretend every keyart failure is pad-access", () => {
+    const out = formatManhuaFactoryUserError("关键静帧改图失败：出图繁忙请稍后");
+    expect(out).toMatch(/繁忙|失败/);
+    expect(out).not.toMatch(/一律|必须垫图不可访问/);
+  });
+
   it("labels stages from block ids", () => {
     expect(manhuaFactoryStageLabelFromBlockId("bible-e01-x")).toBe("设定圣经");
     expect(manhuaFactoryStageLabelFromBlockId("keyart-e01-s01")).toBe("关键静帧");

@@ -71,22 +71,51 @@ export default function ManhuaLiveProgressBoard({
       const title = list.find((b) => b.episodeTitle)?.episodeTitle;
       const stages: EpRow["stages"] = {};
       for (const stage of TRACK_STAGES) {
-        const b = list.find((x) => stageKeyFromBlockId(x.id) === stage);
-        const label = MANHUA_FACTORY_STAGE_LABEL_ZH[stage] || stage;
-        if (!b) {
-          stages[stage] = { status: "idle", label };
+        const stageBlocks = list.filter((x) => stageKeyFromBlockId(x.id) === stage);
+        const b = stageBlocks[0];
+        const baseLabel = MANHUA_FACTORY_STAGE_LABEL_ZH[stage] || stage;
+        if (!stageBlocks.length) {
+          stages[stage] = { status: "idle", label: baseLabel };
+          continue;
+        }
+        // 关键静帧/成片多节点：汇总已出张数，避免只看第一张导致「页面不同步」
+        if (stage === "keyart" || stage === "clip") {
+          const total = stageBlocks.length;
+          const done = stageBlocks.filter((x) => Boolean(mediaOf(x))).length;
+          const anyRunning = stageBlocks.some((x) => x.status === "running");
+          const anyErr = stageBlocks.some((x) => x.status === "error" || Boolean(x.error));
+          const running =
+            anyRunning ||
+            (factoryBusy && ep === focusEpisode && done < total && !(anyErr && done === 0));
+          const label =
+            total > 1 ? `${baseLabel} ${done}/${total}` : baseLabel;
+          const thumb = stageBlocks.map(mediaOf).find(Boolean);
+          stages[stage] = {
+            status:
+              done >= total && total > 0
+                ? "ready"
+                : running
+                  ? "running"
+                  : anyErr && done === 0
+                    ? "error"
+                    : done > 0
+                      ? "ready"
+                      : "idle",
+            thumb,
+            label,
+          };
           continue;
         }
         const hasOut = Boolean(
-          mediaOf(b) || (b.outputText || "").trim() || b.status === "done",
+          mediaOf(b) || (b?.outputText || "").trim() || b?.status === "done",
         );
-        const err = Boolean(b.error || b.status === "error");
+        const err = Boolean(b?.error || b?.status === "error");
         const running =
-          b.status === "running" || (factoryBusy && !hasOut && !err && ep === focusEpisode);
+          b?.status === "running" || (factoryBusy && !hasOut && !err && ep === focusEpisode);
         stages[stage] = {
           status: err ? "error" : hasOut ? "ready" : running ? "running" : "idle",
-          thumb: stage === "keyart" || stage === "clip" ? mediaOf(b) : undefined,
-          label,
+          thumb: undefined,
+          label: baseLabel,
         };
       }
       return { ep, title, stages };
@@ -200,7 +229,9 @@ export default function ManhuaLiveProgressBoard({
                           {st === "running" ? (
                             <Loader2 className="h-3 w-3 animate-spin" />
                           ) : null}
-                          {cell?.label?.slice(0, 2) || stage}
+                          {cell?.label && /\d+\/\d+/.test(cell.label)
+                            ? cell.label
+                            : cell?.label?.slice(0, 2) || stage}
                         </button>
                       );
                     })}

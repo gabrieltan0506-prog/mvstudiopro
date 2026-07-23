@@ -3637,6 +3637,23 @@ export default function OmniCanvas() {
                   });
                 }
               },
+              onStageDone: (id, _index, _total, label) => {
+                if (label === MANHUA_FACTORY_STAGE_LABEL_ZH.keyart || id.startsWith("keyart-")) {
+                  const epKeys = workingBlocks.filter(
+                    (b) =>
+                      b.id.startsWith("keyart-") &&
+                      (getBlockEpisodeIndex(b) ?? 1) === episodeIndex,
+                  );
+                  const doneN = epKeys.filter(
+                    (b) => Boolean(b.outputUrl || b.outputUrls?.[0]),
+                  ).length;
+                  setFactoryProgress(
+                    `第${episodeIndex}集 · 静帧已出 ${doneN}/${Math.max(epKeys.length, 1)}`,
+                  );
+                  return;
+                }
+                setFactoryProgress(`第${episodeIndex}集 · 已完成 · ${label}`);
+              },
               onStageSkip: (_id, label) => {
                 setFactoryProgress(`第${episodeIndex}集 · 跳过已完成 · ${label}`);
                 pushDebug("factoryStage:skip", {
@@ -3651,7 +3668,7 @@ export default function OmniCanvas() {
                   detail: `ep${episodeIndex} · ${label} · attempt=${attempt} · ${message.slice(0, 160)}`,
                 });
                 toast.message(`瞬时失败，自动重试 ${attempt}`, {
-                  description: `${label}：${message.slice(0, 120)}`,
+                  description: `${label}：${formatManhuaFactoryUserError(message).slice(0, 120)}`,
                 });
               },
             });
@@ -3677,9 +3694,15 @@ export default function OmniCanvas() {
               });
               const stageZh = manhuaFactoryStageLabelFromBlockId(lastError.id);
               const friendly = formatManhuaFactoryUserError(lastError.message);
-              toast.error(`${stageZh}未完成`, {
-                description: friendly,
-              });
+              const failN = result.errors.length;
+              const keyartFail =
+                failN > 1 && result.errors.every((e) => e.id.startsWith("keyart-"));
+              toast.error(
+                keyartFail ? `关键静帧 ${failN} 张未出成` : `${stageZh}未完成`,
+                {
+                  description: friendly,
+                },
+              );
             }
           }
         }

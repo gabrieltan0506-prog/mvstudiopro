@@ -667,11 +667,16 @@ export async function runCanvasBlock(
       }
     } catch (primaryErr) {
       const reason =
-        primaryErr instanceof Error ? primaryErr.message.slice(0, 160) : "生图失败";
+        primaryErr instanceof Error ? primaryErr.message.slice(0, 220) : "生图失败";
       console.warn(`[canvasRunBlock] image failed · id=${block.id} · ${reason}`);
-      if (isAssetSheet) throw new Error("角色/场景设定图生成失败，请稍后重试");
-      if (isKeyart) throw new Error("关键静帧改图失败，请确认人物库垫图可访问后重试");
-      throw new Error("图片生成失败，请稍后重试");
+      if (isAssetSheet) {
+        throw new Error(`角色/场景设定图生成失败：${reason}`);
+      }
+      if (isKeyart) {
+        // 保留上游原因，便于 toast 映射；勿一律说成「垫图不可访问」
+        throw new Error(`关键静帧改图失败：${reason}`);
+      }
+      throw new Error(`图片生成失败：${reason}`);
     }
     const filtered = urls.filter(Boolean);
     if (!filtered.length) throw new Error("图片生成返回为空");
