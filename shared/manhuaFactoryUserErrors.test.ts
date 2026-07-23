@@ -23,6 +23,14 @@ describe("manhuaFactoryUserErrors", () => {
     ).toMatch(/下载失败|预览/);
   });
 
+  it("maps keyart prompt-too-long OpenAI 400", () => {
+    expect(
+      formatManhuaFactoryUserError(
+        "关键静帧改图失败：OpenAI edits HTTP 400: Invalid 'prompt': string too long. Expected a string with maximum length 32000",
+      ),
+    ).toMatch(/过长|缩短|压缩/);
+  });
+
   it("does not pretend every keyart failure is pad-access", () => {
     const out = formatManhuaFactoryUserError("关键静帧改图失败：出图繁忙请稍后");
     expect(out).toMatch(/繁忙|失败/);

@@ -11098,8 +11098,9 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         };
 
         const { resolveOpenAiGptImage2Model } = await import("./services/openaiGptImage2.js");
+        const { clampOpenAiImagePrompt } = await import("../shared/openaiImagePromptClamp.js");
         addField("model", resolveOpenAiGptImage2Model());
-        addField("prompt", input.prompt);
+        addField("prompt", clampOpenAiImagePrompt(String(input.prompt || "")));
         if (input.size) addField("size", input.size);
         if (input.quality) addField("quality", input.quality);
         if (input.output_format) addField("output_format", input.output_format);

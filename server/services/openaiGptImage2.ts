@@ -6,6 +6,7 @@
  * - OPENAI_IMAGE_API_KEY 或 OPENAI_API_KEY
  * - OPENAI_GPT_IMAGE2_MODEL（可选；默认钉 gpt-image-2-2026-04-21）
  */
+import { clampOpenAiImagePrompt } from "../../shared/openaiImagePromptClamp.js";
 import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
 import { uploadBufferToPlatformStorage } from "./evolinkGptImage2.js";
 
@@ -238,10 +239,17 @@ export async function postOpenAiGptImage2AndUpload(
   const aspectRatio = opts.aspectRatio ?? "9:16";
   const size = resolveOpenAiSize(aspectRatio, opts.size);
   const quality = resolveQuality(opts.quality);
-  const promptTrimmed = enforceSimplifiedChineseImagePrompt(String(prompt || "").trim());
+  const promptSimplified = enforceSimplifiedChineseImagePrompt(String(prompt || "").trim());
+  const promptTrimmed = clampOpenAiImagePrompt(promptSimplified);
   if (!promptTrimmed) {
     appendImageFlowLog(L, "[GPT-IMAGE-2·OpenAI] prompt 为空，跳过");
     return null;
+  }
+  if (promptTrimmed.length < promptSimplified.length) {
+    appendImageFlowLog(
+      L,
+      `[GPT-IMAGE-2·OpenAI] prompt 超长已截断 · ${promptSimplified.length}→${promptTrimmed.length}`,
+    );
   }
 
   const refs = (opts.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean).slice(0, 16);

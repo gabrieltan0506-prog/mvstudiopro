@@ -40,6 +40,7 @@ import {
   isManhuaBibleOrBeatsBlockId,
   planManhuaFactoryOptimizeSource,
 } from "@shared/manhuaFactoryTextOptimize";
+import { clampOpenAiImagePrompt } from "@shared/openaiImagePromptClamp";
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
@@ -488,9 +489,11 @@ export async function runCanvasBlock(
     throw new Error("请先填写提示词，或连接上游方块传递内容 / 上传 TXT·MD 文档");
   }
 
+  // 关键静帧：本镜 prompt 已含分镜注入+画风/角色硬锁；再叠整份反推上游易超 OpenAI 32k
+  const isKeyartBlock = block.id.startsWith("keyart-");
   const mergedPrompt = formatCanvasUpstreamPrompt(
     prompt || "请根据上游内容完成本步骤生成。",
-    effectiveTexts,
+    isKeyartBlock ? [] : effectiveTexts,
   );
 
   if (block.kind === "text" || block.kind === "copy_organize") {
@@ -640,11 +643,13 @@ export async function runCanvasBlock(
         ? `${String(mergedPrompt || "").trim()}\n\n${noTextTail}`
         : await resolveImagePromptViaJsonDirector(deps, mergedPrompt, ar, imageModel);
     // 关键静帧 / 定妆·场景禁字硬锁：直送路径已拼过则去重
-    const imagePrompt = noTextTail
+    const imagePromptRaw = noTextTail
       ? rawImagePrompt.includes(noTextTail)
         ? rawImagePrompt.trim()
         : `${rawImagePrompt.trim()}\n\n${noTextTail}`
       : rawImagePrompt;
+    // OpenAI edits/generations 硬上限 32000；超长优先保尾部硬锁与本镜分镜
+    const imagePrompt = clampOpenAiImagePrompt(imagePromptRaw);
     /** 画布一律钉官方 OpenAI Image-2，失败即停；已移除 Nano Banana 2 */
     const pinOfficialOpenAi = true;
     const gptUserId = String(deps.userId || "");
