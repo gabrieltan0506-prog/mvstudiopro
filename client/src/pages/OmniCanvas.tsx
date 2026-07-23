@@ -3962,6 +3962,34 @@ export default function OmniCanvas() {
     ],
   );
 
+  const handleReplaceCharacterVoiceAudio = useCallback(
+    (input: { characterTag: string; audioUrl: string; labelZh?: string }) => {
+      const characterTag = String(input.characterTag || "").trim();
+      const audioUrl = String(input.audioUrl || "").trim();
+      if (!characterTag || !/^https:\/\//i.test(audioUrl)) return;
+      setCharacterVoiceLocks((prev) => {
+        const existing = prev.find((x) => x.characterTag === characterTag);
+        const lock: ManhuaCharacterVoiceLock = {
+          id: existing?.id || makeManhuaCharacterVoiceLockId(),
+          characterTag,
+          characterId: existing?.characterId,
+          labelZh: String(input.labelZh || existing?.labelZh || characterTag).trim().slice(0, 40),
+          audioUrl,
+          sourceVideoUrl: existing?.sourceVideoUrl,
+          sourceClipId: existing?.sourceClipId,
+          startSec: existing?.startSec,
+          durationSec: existing?.durationSec,
+          createdAt: Date.now(),
+        };
+        return normalizeManhuaCharacterVoiceLocks([
+          ...prev.filter((x) => x.characterTag !== characterTag),
+          lock,
+        ]);
+      });
+    },
+    [],
+  );
+
   const resumeFromFailure = useCallback(() => {
     const episodeIndexes = resolveRunEpisodeIndexes();
     const forceFromStageByEpisode: Partial<Record<number, ManhuaFactoryStageKey>> = {};
@@ -4535,6 +4563,8 @@ export default function OmniCanvas() {
                         spawnKinds={
                           manhuaCanvasPresentation === "media" ? ["image", "video"] : undefined
                         }
+                        characterVoiceLocks={characterVoiceLocks}
+                        onReplaceCharacterVoiceAudio={handleReplaceCharacterVoiceAudio}
                       />
                     </div>
                   }
@@ -4831,6 +4861,18 @@ export default function OmniCanvas() {
                     });
                     toast.message("已采用此片", {
                       description: "可在成片坞勾选并参与长片合成。",
+                    });
+                  }}
+                  onApplyClipEditTrim={(clipBlockId, trim) => {
+                    setBlocks((prev) => {
+                      const next = prev.map((b) =>
+                        b.id === clipBlockId ? { ...b, manhuaEditTrim: trim } : b,
+                      );
+                      setEdges((eds) => {
+                        saveCanvasState(next, eds);
+                        return eds;
+                      });
+                      return next;
                     });
                   }}
                 />
@@ -5367,6 +5409,8 @@ export default function OmniCanvas() {
                         spawnKinds={
                           manhuaCanvasPresentation === "media" ? ["image", "video"] : undefined
                         }
+                        characterVoiceLocks={characterVoiceLocks}
+                        onReplaceCharacterVoiceAudio={handleReplaceCharacterVoiceAudio}
                       />
                     </div>
                   </div>
@@ -6107,6 +6151,8 @@ export default function OmniCanvas() {
             runDeps={runDeps}
             focusBlockId={focusBlockId}
             onFocusBlockConsumed={() => setFocusBlockId(null)}
+            characterVoiceLocks={characterVoiceLocks}
+            onReplaceCharacterVoiceAudio={handleReplaceCharacterVoiceAudio}
           />
           </div>
           ) : null}

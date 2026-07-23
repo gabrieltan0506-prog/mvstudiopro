@@ -66,6 +66,9 @@ type Props = {
   onReorder?: (orderedShotIndexes: number[]) => void;
   fineCutByShot: ManhuaFineCutByShot;
   onFineCutChange: (shotIndex: number, trim: ManhuaFineCutTrim) => void;
+  /** 一键气口建议切点（本集有成片的镜） */
+  onSuggestAutoCuts?: () => void | Promise<void>;
+  suggestAutoCutsBusy?: boolean;
   subtitleEnabled?: boolean;
   onSubtitleEnabledChange?: (next: boolean) => void;
   motionPromptIds: string[];
@@ -149,6 +152,8 @@ export default function ManhuaEditMultitrackPanel({
   onReorder,
   fineCutByShot,
   onFineCutChange,
+  onSuggestAutoCuts,
+  suggestAutoCutsBusy = false,
   subtitleEnabled = false,
   onSubtitleEnabledChange,
   motionPromptIds,
@@ -247,9 +252,22 @@ export default function ManhuaEditMultitrackPanel({
           </div>
           <p className="mt-1 max-w-xl text-[10px] leading-relaxed text-white/40">
             多轨预览：静帧 / 成片 / 对白 / 字幕。可调进出点；字幕只生成轨数据，默认不烧进成片。
+            建议切点：气口 + 导戏秒轴对齐，写入成片后合成会真裁切。
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
+          {onSuggestAutoCuts ? (
+            <button
+              type="button"
+              disabled={suggestAutoCutsBusy || factoryBusy}
+              onClick={() => void onSuggestAutoCuts()}
+              className="inline-flex items-center gap-1 rounded-md border border-emerald-400/35 bg-emerald-500/15 px-2 py-1 text-[10px] text-emerald-50/95 hover:bg-emerald-500/25 disabled:opacity-40"
+              title="分析成片气口，自动建议各镜进出点"
+            >
+              <Sparkles className="h-3 w-3" />
+              {suggestAutoCutsBusy ? "分析气口…" : "建议切点"}
+            </button>
+          ) : null}
           {stages.map((s) => (
             <span
               key={s.id}
@@ -300,7 +318,19 @@ export default function ManhuaEditMultitrackPanel({
         data-manhua-edit-section="fine-cut"
         className="rounded-lg border border-violet-400/20 bg-violet-500/[0.06] p-2.5"
       >
-        <div className="text-[10px] font-semibold text-violet-100/90">细剪 · 进出点</div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-[10px] font-semibold text-violet-100/90">细剪 · 进出点</div>
+          {onSuggestAutoCuts ? (
+            <button
+              type="button"
+              disabled={suggestAutoCutsBusy || factoryBusy}
+              onClick={() => void onSuggestAutoCuts()}
+              className="text-[9px] text-emerald-200/80 underline-offset-2 hover:underline disabled:opacity-40"
+            >
+              {suggestAutoCutsBusy ? "正在按气口分析…" : "按气口重算建议"}
+            </button>
+          ) : null}
+        </div>
         {activeClip && activeTrim ? (
           <div className="mt-2 flex flex-wrap items-end gap-3">
             <div>

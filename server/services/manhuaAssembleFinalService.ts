@@ -178,23 +178,72 @@ export async function runManhuaAssembleFinal(
 
   if (Array.isArray(raw.sceneVideos) && raw.sceneVideos.length) {
     sceneVideos = raw.sceneVideos
-      .map((row, i) => ({
-        sceneIndex: Math.max(1, Math.floor(Number(row?.sceneIndex) || i + 1)),
-        url: s(row?.url).trim(),
-        duration: s(row?.duration).trim() || "15s",
-        stillImageUrl: s(row?.stillImageUrl).trim() || undefined,
-        stillDuration: s(row?.stillDuration).trim() || undefined,
-      }))
+      .map((row, i) => {
+        const trimIn = Number((row as { trimInSec?: number })?.trimInSec);
+        const trimOut = Number((row as { trimOutSec?: number })?.trimOutSec);
+        const hasTrim =
+          Number.isFinite(trimIn) && Number.isFinite(trimOut) && trimOut - trimIn >= 0.5;
+        return {
+          sceneIndex: Math.max(1, Math.floor(Number(row?.sceneIndex) || i + 1)),
+          url: s(row?.url).trim(),
+          duration: s(row?.duration).trim() || "15s",
+          stillImageUrl: s(row?.stillImageUrl).trim() || undefined,
+          stillDuration: s(row?.stillDuration).trim() || undefined,
+          trimInSec: hasTrim ? trimIn : undefined,
+          trimOutSec: hasTrim ? trimOut : undefined,
+        };
+      })
       .filter((row) => Boolean(row.url));
   } else {
     const clipsRaw = Array.isArray(raw.clips) ? raw.clips : [];
-    const clips: ManhuaAssembleClipInput[] = clipsRaw.map((row) => ({
-      episodeIndex: Math.floor(Number(row?.episodeIndex) || 0),
-      episodeTitle: s(row?.episodeTitle).trim() || undefined,
-      clipUrl: s(row?.clipUrl || (row as { url?: string })?.url).trim() || undefined,
-      keyartUrl: s(row?.keyartUrl || (row as { stillImageUrl?: string })?.stillImageUrl).trim() || undefined,
-      durationSec: Number(row?.durationSec) || undefined,
-    }));
+    const clips: ManhuaAssembleClipInput[] = clipsRaw.map((row) => {
+      const piecesRaw = Array.isArray((row as { shotPieces?: unknown[] }).shotPieces)
+        ? (row as { shotPieces: unknown[] }).shotPieces
+        : [];
+      const shotPieces = piecesRaw
+        .map((p) => {
+          const o = p as {
+            shotIndex?: number;
+            trimInSec?: number;
+            trimOutSec?: number;
+            durationSec?: number;
+          };
+          return {
+            shotIndex: Math.floor(Number(o?.shotIndex) || 0),
+            trimInSec: Number(o?.trimInSec),
+            trimOutSec: Number(o?.trimOutSec),
+            durationSec: Number(o?.durationSec) || undefined,
+          };
+        })
+        .filter(
+          (p) =>
+            p.shotIndex >= 1 &&
+            Number.isFinite(p.trimInSec) &&
+            Number.isFinite(p.trimOutSec) &&
+            p.trimOutSec - p.trimInSec >= 0.5,
+        );
+      const trimIn = Number((row as { trimInSec?: number }).trimInSec);
+      const trimOut = Number((row as { trimOutSec?: number }).trimOutSec);
+      return {
+        episodeIndex: Math.floor(Number(row?.episodeIndex) || 0),
+        episodeTitle: s(row?.episodeTitle).trim() || undefined,
+        clipUrl: s(row?.clipUrl || (row as { url?: string })?.url).trim() || undefined,
+        keyartUrl:
+          s(row?.keyartUrl || (row as { stillImageUrl?: string })?.stillImageUrl).trim() ||
+          undefined,
+        durationSec: Number(row?.durationSec) || undefined,
+        segmentIndex: Math.floor(Number((row as { segmentIndex?: number }).segmentIndex) || 0) || undefined,
+        trimInSec:
+          Number.isFinite(trimIn) && Number.isFinite(trimOut) && trimOut - trimIn >= 0.5
+            ? trimIn
+            : undefined,
+        trimOutSec:
+          Number.isFinite(trimIn) && Number.isFinite(trimOut) && trimOut - trimIn >= 0.5
+            ? trimOut
+            : undefined,
+        shotPieces: shotPieces.length ? shotPieces : undefined,
+      };
+    });
     const episodeIndexes = Array.isArray(raw.episodeIndexes)
       ? raw.episodeIndexes.map((n) => Math.floor(Number(n) || 0)).filter((n) => n >= 1)
       : undefined;
@@ -357,6 +406,8 @@ export async function runManhuaAssembleFinal(
       duration: sv.duration,
       stillImageUrl: sv.stillImageUrl,
       stillDuration: sv.stillDuration,
+      trimInSec: sv.trimInSec,
+      trimOutSec: sv.trimOutSec,
     })),
     musicUrl: musicUrl || undefined,
     musicVolume,

@@ -8,6 +8,9 @@ export interface SceneVideoInput {
   stillDuration?: string | number;
   voiceUrl?: string;
   includeVoice?: boolean;
+  /** 源片裁切入点（秒）；与 trimOutSec 同时有效时 ffmpeg 真裁切 */
+  trimInSec?: number;
+  trimOutSec?: number;
 }
 
 export interface RenderWorkflowInput {

@@ -2,7 +2,7 @@
  * 剧本工作台：左=本集资产 · 中=一集剧本+按段静帧 · 右=预览 · 底=集/段时间线
  * 一集：10–12 段 × 每段 3–4 关键静帧；每段一条成片（Seedance ≤15s，按时长合计钳制）。
  */
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -63,6 +63,7 @@ import {
 } from "@shared/manhuaAssetLockRegistry";
 import {
   collectManhuaCharacterTagsFromPrompt,
+  resolveManhuaVoiceExtractWindow,
   type ManhuaCharacterVoiceLock,
 } from "@shared/manhuaCharacterVoiceLock";
 import {
@@ -121,6 +122,8 @@ import {
   saveManhuaWorkbenchBPersist,
 } from "@shared/manhuaShotAnglePersist";
 import { toast } from "sonner";
+import { suggestManhuaClipCuts } from "@/lib/manhuaEditAutoCutApi";
+import { parseFineCutByShot } from "@shared/manhuaEditFineCut";
 
 type WorkflowPhaseId = "outline" | "assets" | "storyboard" | "edit";
 
@@ -253,6 +256,11 @@ type Props = {
   onRerunKeyartShot?: (blockId: string, shotIndex: number) => void;
   /** 质检软拦：用户仍采用当前镜成片进入成片坞 */
   onAcceptClipDespiteQc?: (clipBlockId: string) => void;
+  /** 建议切点后写入成片节点，供合成 ffmpeg 真裁切 */
+  onApplyClipEditTrim?: (
+    clipBlockId: string,
+    trim: NonNullable<CanvasBlock["manhuaEditTrim"]>,
+  ) => void;
   /** 成片坞勾选集（剪辑阶段可改） */
   dockSelectedIds?: Set<string>;
   onDockSelectedIdsChange?: (next: Set<string>) => void;
@@ -390,6 +398,7 @@ export default function ManhuaScriptWorkbench({
   onRerunKeyartsFromReverse,
   onRerunKeyartShot,
   onAcceptClipDespiteQc,
+  onApplyClipEditTrim,
   dockSelectedIds,
   onDockSelectedIdsChange,
   onFocusBlock,
@@ -431,6 +440,8 @@ export default function ManhuaScriptWorkbench({
   const [roughShotOrder, setRoughShotOrder] = useState<number[]>([]);
   /** 细剪进出点 */
   const [fineCutByShot, setFineCutByShot] = useState<ManhuaFineCutByShot>({});
+  /** 气口建议切点分析中 */
+  const [suggestAutoCutsBusy, setSuggestAutoCutsBusy] = useState(false);
   /** 剪辑台字幕轨：开则生成轨数据，默认不烧字 */
   const [editSubtitleEnabled, setEditSubtitleEnabled] = useState(false);
   /** 包装动效（motionPromptBank id） */
@@ -651,6 +662,82 @@ export default function ManhuaScriptWorkbench({
       };
     });
   }, [roughClips, episodeClips, episodeKeyarts, legacyClip, keyart]);
+
+  const handleSuggestAutoCuts = useCallback(async () => {
+    if (suggestAutoCutsBusy || factoryBusy) return;
+    type CutGroup = {
+      videoUrl: string;
+      clipBlockId: string;
+      directorPrompt: string;
+      shots: Array<{ shotIndex: number; durationSec: number }>;
+    };
+    const groups = new Map<string, CutGroup>();
+    for (const media of editShotMedia) {
+      const url = String(media.outputUrl || "").trim();
+      const clipBlockId = String(media.clipBlockId || "").trim();
+      if (!/^https:\/\//i.test(url) || !clipBlockId) continue;
+      const rough = roughClips.find((c) => c.shotIndex === media.shotIndex);
+      if (!rough) continue;
+      const clipBlock =
+        episodeClips.find((b) => b.id === clipBlockId) ||
+        (legacyClip?.id === clipBlockId ? legacyClip : undefined);
+      const g = groups.get(clipBlockId) || {
+        videoUrl: url,
+        clipBlockId,
+        directorPrompt: String(clipBlock?.prompt || ""),
+        shots: [],
+      };
+      g.shots.push({ shotIndex: rough.shotIndex, durationSec: rough.durationSec });
+      groups.set(clipBlockId, g);
+    }
+    if (!groups.size) {
+      toast.message("请先生成有声段成片，再建议切点");
+      return;
+    }
+    setSuggestAutoCutsBusy(true);
+    toast.message("正在按气口与导戏秒轴分析切点…", {
+      description: `${groups.size} 段成片`,
+    });
+    try {
+      const merged: ManhuaFineCutByShot = { ...fineCutByShot };
+      const labels: string[] = [];
+      for (const g of Array.from(groups.values())) {
+        const out = await suggestManhuaClipCuts({
+          videoUrl: g.videoUrl,
+          shots: g.shots,
+          directorPrompt: g.directorPrompt,
+        });
+        const parsed = parseFineCutByShot(out.fineCutByShot);
+        for (const [k, trim] of Object.entries(parsed)) {
+          merged[Number(k)] = trim;
+        }
+        if (out.segmentLabelZh) labels.push(out.segmentLabelZh);
+        onApplyClipEditTrim?.(g.clipBlockId, {
+          inSec: out.segmentTrim.inSec,
+          outSec: out.segmentTrim.outSec,
+          shotPieces: out.shotPieces,
+          updatedAt: Date.now(),
+        });
+      }
+      setFineCutByShot(merged);
+      toast.message("切点已写入并挂到成片", {
+        description: labels[0] || `已更新 ${Object.keys(merged).length} 镜 · 合成将按此裁切`,
+      });
+    } catch (e) {
+      toast.message(e instanceof Error ? e.message : "切点分析失败");
+    } finally {
+      setSuggestAutoCutsBusy(false);
+    }
+  }, [
+    suggestAutoCutsBusy,
+    factoryBusy,
+    editShotMedia,
+    roughClips,
+    fineCutByShot,
+    episodeClips,
+    legacyClip,
+    onApplyClipEditTrim,
+  ]);
 
   useEffect(() => {
     // 新分镜到来时，为缺失镜号补推荐机位
@@ -2150,8 +2237,8 @@ export default function ManhuaScriptWorkbench({
                       角色声线参考（人手提取）
                     </div>
                     <p className="mt-0.5 text-[10px] leading-4 text-white/40">
-                      有声成片出对白后，抠声挂到 @角色；后续成片自动带参考音。BGM
-                      仍后期自叠。
+                      有声成片出对白后，按导戏秒轴抠该角色对白窗挂到
+                      @角色；多人同框按时长最多挂 3 路。BGM 仍后期自叠。
                     </p>
                     {characterVoiceLocks.length ? (
                       <div className="mt-1 flex flex-wrap gap-1">
@@ -2200,22 +2287,27 @@ export default function ManhuaScriptWorkbench({
                               const label =
                                 assetLockRegistry.byRole.character.find((s) => s.tag === tag)
                                   ?.labelZh || tag;
+                              const win = resolveManhuaVoiceExtractWindow(clip.prompt, tag);
                               return (
                                 <button
                                   key={`${clip.id}-${tag}`}
                                   type="button"
+                                  title={win.labelZh}
                                   className="rounded border border-emerald-400/30 bg-black/30 px-1.5 py-0.5 text-[9px] text-emerald-50/90 hover:bg-emerald-500/15"
                                   onClick={() =>
                                     void onExtractCharacterVoice({
                                       clipId: clip.id,
                                       characterTag: tag,
                                       labelZh: label,
-                                      startSec: 0,
-                                      durationSec: 8,
+                                      startSec: win.startSec,
+                                      durationSec: win.durationSec,
                                     })
                                   }
                                 >
-                                  从段{resolveClipSegmentIndex(clip.id, clip.prompt)}抠 {tag}
+                                  段{resolveClipSegmentIndex(clip.id, clip.prompt)}·{tag}
+                                  <span className="ml-1 text-white/40">
+                                    {win.startSec}–{win.endSec}s
+                                  </span>
                                 </button>
                               );
                             });
@@ -2858,6 +2950,8 @@ export default function ManhuaScriptWorkbench({
             onFineCutChange={(shotIndex: number, trim: ManhuaFineCutTrim) => {
               setFineCutByShot((prev) => ({ ...prev, [shotIndex]: trim }));
             }}
+            onSuggestAutoCuts={() => void handleSuggestAutoCuts()}
+            suggestAutoCutsBusy={suggestAutoCutsBusy}
             subtitleEnabled={editSubtitleEnabled}
             onSubtitleEnabledChange={(next) => {
               setEditSubtitleEnabled(next);

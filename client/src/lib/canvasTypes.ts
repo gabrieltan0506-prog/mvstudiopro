@@ -146,6 +146,21 @@ export type CanvasBlock = {
     attempt: number;
     maxAttempts: number;
   };
+  /**
+   * 剪辑台写入的成片裁切：合成长片 ffmpeg 真吃这些秒位。
+   * segment：整段包络；shotPieces：按导戏窗映射后的绝对秒切片（优先）。
+   */
+  manhuaEditTrim?: {
+    inSec: number;
+    outSec: number;
+    shotPieces?: Array<{
+      shotIndex: number;
+      trimInSec: number;
+      trimOutSec: number;
+      durationSec: number;
+    }>;
+    updatedAt?: number;
+  };
 };
 
 export type CanvasEdge = { fromId: string; toId: string };
@@ -323,6 +338,44 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
           maxAttempts: Math.max(1, Math.floor(block.manhuaRetake.maxAttempts || 3)),
         }
       : undefined,
+    manhuaEditTrim: (() => {
+      const t = block.manhuaEditTrim;
+      if (!t || typeof t !== "object") return undefined;
+      const inSec = Number(t.inSec);
+      const outSec = Number(t.outSec);
+      if (!Number.isFinite(inSec) || !Number.isFinite(outSec) || outSec - inSec < 0.5) {
+        return undefined;
+      }
+      const shotPieces = Array.isArray(t.shotPieces)
+        ? t.shotPieces
+            .map((p) => ({
+              shotIndex: Math.floor(Number(p?.shotIndex) || 0),
+              trimInSec: Number(p?.trimInSec),
+              trimOutSec: Number(p?.trimOutSec),
+              durationSec: Number(p?.durationSec) || 0,
+            }))
+            .filter(
+              (p) =>
+                p.shotIndex >= 1 &&
+                Number.isFinite(p.trimInSec) &&
+                Number.isFinite(p.trimOutSec) &&
+                p.trimOutSec - p.trimInSec >= 0.5,
+            )
+            .map((p) => ({
+              ...p,
+              durationSec:
+                p.durationSec > 0
+                  ? p.durationSec
+                  : Math.round((p.trimOutSec - p.trimInSec) * 10) / 10,
+            }))
+        : undefined;
+      return {
+        inSec,
+        outSec,
+        shotPieces: shotPieces?.length ? shotPieces : undefined,
+        updatedAt: Number(t.updatedAt) || undefined,
+      };
+    })(),
   };
 }
 
