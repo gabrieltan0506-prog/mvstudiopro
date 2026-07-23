@@ -44,6 +44,7 @@ import {
 } from "@shared/manhuaClipContinuity";
 import { resolveClipSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import { parseManhuaCanvasAssetAtTag } from "@shared/manhuaAssetLockRegistry";
+import { parseManhuaSheetPropSubTagsFromPrompt } from "@shared/manhuaSheetPropSubTags";
 import {
   formatManhuaClipDirectorCueFaceLine,
   parseManhuaClipDirectorCardSummary,
@@ -943,6 +944,9 @@ export default function FreeformCanvas({
                       ?.trim()
                       .slice(0, 18) ||
                     "";
+                  const sheetPropSubs = String(block.id || "").startsWith("charsheet-")
+                    ? parseManhuaSheetPropSubTagsFromPrompt(block.prompt)
+                    : [];
                   return (
                     <div className="space-y-1 border-b border-violet-400/25 bg-violet-500/[0.08] px-3 py-2 text-[10px] leading-4">
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -956,8 +960,26 @@ export default function FreeformCanvas({
                           <span className="truncate text-white/75">{labelFromPrompt}</span>
                         ) : null}
                       </div>
+                      {sheetPropSubs.length ? (
+                        <div className="flex flex-wrap gap-1">
+                          {sheetPropSubs.map((s) => (
+                            <span
+                              key={`${s.subTag}-${s.propTag}`}
+                              className="rounded border border-amber-300/35 bg-amber-500/15 px-1.5 py-0.5 font-mono text-[9px] text-amber-50/95"
+                              title={`${s.labelZh} · 跨集锁 ${s.propTag}`}
+                            >
+                              {s.subTag}
+                              <span className="mx-0.5 text-white/35">=</span>
+                              {s.propTag}
+                              <span className="ml-1 font-sans text-white/55">{s.labelZh}</span>
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                       <div className="text-white/45">
-                        画布展开资产：静帧 / 成片导戏用此编号锁定
+                        {sheetPropSubs.length
+                          ? "定妆特写格已编全局道具号；跨集同号锁定，勿另造"
+                          : "画布展开资产：静帧 / 成片导戏用此编号锁定"}
                       </div>
                     </div>
                   );

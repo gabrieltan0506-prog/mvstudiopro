@@ -16,7 +16,11 @@ import {
 import { loadCanvasDocumentTexts } from "./canvasDocumentText";
 import { reviewManhuaClipQuality } from "./manhuaClipQuality";
 import { isManhuaClipQualityInfraFailure } from "@shared/manhuaClipQuality";
-import { assignManhuaCanvasAssetAtTags } from "@shared/manhuaAssetLockRegistry";
+import {
+  assignManhuaCanvasAssetAtTags,
+  type ManhuaAssetLockRegistry,
+} from "@shared/manhuaAssetLockRegistry";
+import type { ManhuaWriterAssetCanon } from "@shared/manhuaWriterAssetCanon";
 import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
 import { mapWithConcurrency } from "./canvasUpload";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
@@ -247,6 +251,8 @@ export type SpawnManhuaDramaStudioOpts = {
   dynastyWardrobeIds?: string[];
   /** 用户上传/基于库参考生成的参考图（勾选角色后进静帧融图） */
   customRefs?: ManhuaCustomAssetRef[];
+  /** 系列人物/道具表：定妆特写格进资产锁 @道具 子编号 */
+  assetCanon?: ManhuaWriterAssetCanon | null;
   /** 剧本跟随身份锁（时代/族裔/服饰；来自 CastBundle） */
   identityLockZh?: string;
   /** 角色/场景统一画风：仿真人 / CG 漫剧 */
@@ -745,6 +751,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     sceneId,
     propIds,
     customRefs: opts.customRefs,
+    assetCanon: opts.assetCanon,
   });
   keyArt.prompt = buildManhuaKeyartSlimPrompt({
     artStyleId: opts.artStyleId,
@@ -974,6 +981,7 @@ export function applyFactoryPrefsToBlocks(
     stylePack?: ManhuaStylePack | null;
     videoReverseOutputMode?: "zh" | "en" | "compact";
     customRefs?: ManhuaCustomAssetRef[];
+    assetCanon?: ManhuaWriterAssetCanon | null;
   },
 ): CanvasBlock[] {
   const craftBlock = buildCraftShotInjectBlock(opts.craftShotIds || []);
@@ -1063,6 +1071,7 @@ export function applyFactoryPrefsToBlocks(
         sceneId: opts.sceneId,
         propIds: opts.propIds,
         customRefs: opts.customRefs,
+        assetCanon: opts.assetCanon,
       });
       const slimCore = buildManhuaKeyartSlimPrompt({
         artStyleId: opts.artStyleId,
@@ -1429,6 +1438,11 @@ export function ensureManhuaFragmentClips(
   blocks: CanvasBlock[],
   edges: CanvasEdge[],
   episodeIndex?: number | null,
+  opts?: {
+    assetCanon?: ManhuaWriterAssetCanon | null;
+    characterSheetUrlById?: Record<string, string> | null;
+    registry?: ManhuaAssetLockRegistry | null;
+  },
 ): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
   const ep =
     typeof episodeIndex === "number" && episodeIndex >= 1
@@ -1635,7 +1649,11 @@ export function ensureManhuaFragmentClips(
     nextEdges.push({ fromId: primary.id, toId: clip.id });
   }
 
-  const laid = layoutManhuaEpisodeReadableChain(nextBlocks, ep);
+  const laid = layoutManhuaEpisodeReadableChain(nextBlocks, ep, {
+    assetCanon: opts?.assetCanon,
+    characterSheetUrlById: opts?.characterSheetUrlById,
+    registry: opts?.registry,
+  });
   return { blocks: laid, edges: nextEdges };
 }
 
@@ -1675,6 +1693,26 @@ function placeManhuaStackColumns(
  * 5 成片：每段约 15s 一卡，同理分列（卡面读秒轴）
  * 只改坐标 + 资产@标，不重生成。
  */
+/** 从定妆卡节点收集 wa_char_* → HTTPS，供特写格 @道具 子编号挂图 */
+export function collectManhuaCharacterSheetUrlById(
+  blocks: CanvasBlock[],
+  assetCanon?: ManhuaWriterAssetCanon | null,
+): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const b of blocks) {
+    if (!b.id.startsWith("charsheet-")) continue;
+    const url = String(b.outputUrl || b.outputUrls?.[0] || "").trim();
+    if (!url) continue;
+    const seed = b.id.replace(/^charsheet-/, "");
+    map[seed] = url;
+    const hit = assetCanon?.characters.find(
+      (c) => c.id === seed || b.id.includes(c.id),
+    );
+    if (hit) map[hit.id] = url;
+  }
+  return map;
+}
+
 export function layoutManhuaEpisodeReadableChain(
   blocks: CanvasBlock[],
   episodeIndex?: number | null,
@@ -1684,6 +1722,9 @@ export function layoutManhuaEpisodeReadableChain(
     colGap?: number;
     rowGap?: number;
     stackPerCol?: number;
+    assetCanon?: ManhuaWriterAssetCanon | null;
+    characterSheetUrlById?: Record<string, string> | null;
+    registry?: ManhuaAssetLockRegistry | null;
   },
 ): CanvasBlock[] {
   const ep =
@@ -1791,7 +1832,15 @@ export function layoutManhuaEpisodeReadableChain(
     const p = pos.get(b.id);
     return p ? { ...b, x: p.x, y: p.y } : b;
   });
-  return assignManhuaCanvasAssetAtTags(positioned);
+  const sheetUrls =
+    opts?.characterSheetUrlById ||
+    collectManhuaCharacterSheetUrlById(positioned, opts?.assetCanon);
+  // 盖 @角色/@场景/@道具；有系列表时定妆卡特写格再编 @道具N 子号（跨集锁）
+  return assignManhuaCanvasAssetAtTags(positioned, {
+    registry: opts?.registry,
+    assetCanon: opts?.assetCanon,
+    characterSheetUrlById: sheetUrls,
+  });
 }
 
 function mediaUrlOf(b?: CanvasBlock): string | undefined {

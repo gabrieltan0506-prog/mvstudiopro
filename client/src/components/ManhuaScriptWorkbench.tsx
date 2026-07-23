@@ -867,6 +867,21 @@ export default function ManhuaScriptWorkbench({
     if (episodeMainScene?.nameZh) return "";
     return sceneId;
   }, [customAssetRefs, episodeMainScene?.nameZh, sceneId]);
+  const characterSheetUrlById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const b of blocks) {
+      if (!b.id.startsWith("charsheet-")) continue;
+      const url = mediaUrl(b);
+      if (!url) continue;
+      const seed = b.id.replace(/^charsheet-/, "");
+      map[seed] = url;
+      const canonHit = assetCanon?.characters.find(
+        (c) => c.id === seed || b.id.includes(c.id),
+      );
+      if (canonHit) map[canonHit.id] = url;
+    }
+    return map;
+  }, [blocks, assetCanon]);
   const assetLockRegistry = useMemo(
     () =>
       buildManhuaAssetLockRegistry({
@@ -875,8 +890,18 @@ export default function ManhuaScriptWorkbench({
         sceneId: lockSceneId,
         propIds,
         customRefs: customAssetRefs,
+        assetCanon,
+        characterSheetUrlById,
       }),
-    [characterIds, activeArtStyleId, lockSceneId, propIds, customAssetRefs],
+    [
+      characterIds,
+      activeArtStyleId,
+      lockSceneId,
+      propIds,
+      customAssetRefs,
+      assetCanon,
+      characterSheetUrlById,
+    ],
   );
   const outlineComplete = Boolean(canRun);
   /** 方案 B：剧本确认 + 角色/场景锁定 + 角色图/场景图齐，才可进分镜出片 */
@@ -2062,20 +2087,47 @@ export default function ManhuaScriptWorkbench({
                 >
                   <div className="text-[11px] font-semibold text-cyan-50/90">资产锁编号</div>
                   <p className="mt-0.5 text-[10px] leading-4 text-white/45">
-                    静帧改图会按这些编号对照垫图/融图；没有编号垫图的静帧不能出成片。
+                    静帧改图会按这些编号对照垫图/融图；定妆特写格自动进全局道具号（跨集同号）。没有编号垫图的静帧不能出成片。
                   </p>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {assetLockRegistry.slots.map((s) => (
                       <span
-                        key={s.tag}
+                        key={`${s.tag}:${s.id}`}
                         className="rounded-md border border-cyan-300/35 bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-50"
-                        title={s.labelZh}
+                        title={s.subTag ? `${s.labelZh} · ${s.subTag}` : s.labelZh}
                       >
                         {s.tag}
                         <span className="ml-1 font-normal text-white/50">{s.labelZh}</span>
+                        {s.subTag ? (
+                          <span className="ml-1 font-mono text-[9px] font-normal text-amber-100/80">
+                            {s.subTag}
+                          </span>
+                        ) : null}
                       </span>
                     ))}
                   </div>
+                  {assetLockRegistry.sheetPropSlots.length ? (
+                    <div className="mt-2 border-t border-cyan-400/20 pt-1.5">
+                      <div className="text-[10px] font-semibold text-amber-50/90">
+                        定妆特写·道具子编号
+                      </div>
+                      <p className="mt-0.5 text-[10px] leading-4 text-white/40">
+                        特写格自动编入 @道具N；子号标明挂在哪张定妆卡，跨集勿漂移。
+                      </p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {assetLockRegistry.sheetPropSlots.map((sp) => (
+                          <span
+                            key={`${sp.subTag}:${sp.propId}`}
+                            className="rounded border border-amber-300/35 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9px] text-amber-50/95"
+                            title={`${sp.propNameZh} · ${sp.characterNameZh}`}
+                          >
+                            {sp.subTag}={sp.propTag}
+                            <span className="ml-1 font-sans text-white/50">{sp.propNameZh}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {onGenerateCustomAssetFromLibrary || onShareAssetToLibraryChange ? (

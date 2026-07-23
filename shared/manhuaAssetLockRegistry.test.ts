@@ -6,6 +6,8 @@ import {
   isManhuaKeyartPixelLocked,
   parseManhuaCanvasAssetAtTag,
 } from "./manhuaAssetLockRegistry";
+import { parseManhuaSheetPropSubTagsFromPrompt } from "./manhuaSheetPropSubTags";
+import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon";
 
 describe("manhuaAssetLockRegistry", () => {
   it("numbers upload character/scene/prop as @角色/@场景/@道具", () => {
@@ -69,6 +71,61 @@ describe("manhuaAssetLockRegistry", () => {
     expect(parseManhuaCanvasAssetAtTag(stamped[2]!.prompt)).toBe("@道具1");
     expect(parseManhuaCanvasAssetAtTag(stamped[3]!.prompt)).toBeNull();
     expect(stamped[0]!.prompt).toContain("女主定妆");
+  });
+
+  it("auto-numbers sheet inset props as @道具N with sub tags", () => {
+    const canon: ManhuaWriterAssetCanon = {
+      characters: [
+        {
+          id: "wa_char_hero",
+          role: "character",
+          nameZh: "沈少主",
+          lookZh: "腰佩玉佩",
+          promptZh: "沈少主",
+        },
+      ],
+      props: [
+        {
+          id: "wa_prop_jade",
+          role: "prop",
+          nameZh: "玉佩",
+          lookZh: "白玉",
+          noteZh: "沈少主",
+          promptZh: "玉佩",
+        },
+      ],
+      locations: [],
+      episodeMainSceneId: {},
+    };
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "wa_char_hero",
+          url: "https://cdn.example/hero.jpg",
+          role: "character",
+          source: "generated",
+          labelZh: "沈少主",
+        },
+      ],
+      assetCanon: canon,
+      characterSheetUrlById: {
+        wa_char_hero: "https://cdn.example/hero-sheet.jpg",
+      },
+    });
+    expect(reg.sheetPropSlots.length).toBeGreaterThanOrEqual(1);
+    expect(reg.byRole.prop.some((p) => p.id === "wa_prop_jade" && p.fromSheetInset)).toBe(
+      true,
+    );
+    expect(reg.promptBlockZh).toContain("定妆特写");
+    expect(reg.sheetPropSlots[0]?.subTag).toMatch(/@角色\d+·道具\d+/);
+
+    const stamped = assignManhuaCanvasAssetAtTags(
+      [{ id: "charsheet-wa_char_hero", prompt: "定妆卡" }],
+      { registry: reg, assetCanon: canon },
+    );
+    const subs = parseManhuaSheetPropSubTagsFromPrompt(stamped[0]!.prompt);
+    expect(subs.length).toBeGreaterThanOrEqual(1);
+    expect(subs[0]?.propTag).toMatch(/^@道具\d+$/);
   });
 
   it("requires edit+ref for pixel lock", () => {

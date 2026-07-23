@@ -57,6 +57,7 @@ import {
   resolveManhuaEpisodeSpawnContinuity,
   ensureManhuaFragmentClips,
   layoutManhuaEpisodeReadableChain,
+  collectManhuaCharacterSheetUrlById,
   countExpectedManhuaKeyartShots,
   runManhuaDramaFactoryPipeline,
   sanitizeManhuaRecapUpstreamLinks,
@@ -1491,6 +1492,7 @@ export default function OmniCanvas() {
           artStyleId: factoryArtStyleId,
           videoReverseOutputMode: factoryReverseMode,
           customRefs: customAssetRefs,
+          assetCanon: projectBible?.assetCanon,
         });
         const changed = next.some((b, i) => {
           const p = prev[i];
@@ -1988,6 +1990,7 @@ export default function OmniCanvas() {
         wardrobePropContinuityIds: hardCast?.wardrobePropContinuityIds ?? selectedWardrobeIds,
         videoReverseOutputMode: factoryReverseMode,
         customRefs: customAssetRefs,
+        assetCanon: projectBible?.assetCanon,
         stylePack,
         writerContext: focusCtx,
         includeDirectorCraft: Boolean(focusCtx) || directorUnlocked,
@@ -1999,7 +2002,13 @@ export default function OmniCanvas() {
       });
       spawned = {
         ...spawned,
-        blocks: layoutManhuaEpisodeReadableChain(spawned.blocks, writerFocusEpisode),
+        blocks: layoutManhuaEpisodeReadableChain(spawned.blocks, writerFocusEpisode, {
+          assetCanon: projectBible?.assetCanon,
+          characterSheetUrlById: collectManhuaCharacterSheetUrlById(
+            spawned.blocks,
+            projectBible?.assetCanon,
+          ),
+        }),
       };
       if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
         setFactoryGenreId(spawned.resolvedGenreId);
@@ -2426,6 +2435,7 @@ export default function OmniCanvas() {
       wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
       videoReverseOutputMode: factoryReverseMode,
       customRefs: customAssetRefs,
+      assetCanon: projectBible?.assetCanon,
       writerContext: composeWriterPackFactoryContext(writerPack, continuity.episodeIndex, {
         assetCanonAddonZh: formatWriterAssetCanonFactoryAddon(canon, continuity.episodeIndex),
       }),
@@ -2636,6 +2646,7 @@ export default function OmniCanvas() {
       wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
       videoReverseOutputMode: factoryReverseMode,
       customRefs: customAssetRefs,
+      assetCanon: projectBible?.assetCanon,
       episodes: episodes.map((ep) => ({
         index: ep.index,
         title: ep.title,
@@ -3255,6 +3266,13 @@ export default function OmniCanvas() {
         working = layoutManhuaEpisodeReadableChain(
           packAssetSheetPositions(working),
           writerFocusEpisode,
+          {
+            assetCanon: projectBible?.assetCanon,
+            characterSheetUrlById: collectManhuaCharacterSheetUrlById(
+              working,
+              projectBible?.assetCanon,
+            ),
+          },
         );
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
@@ -3455,6 +3473,7 @@ export default function OmniCanvas() {
             artStyleId: factoryArtStyleId,
             videoReverseOutputMode: factoryReverseMode,
             customRefs: customAssetRefs,
+            assetCanon: projectBible?.assetCanon,
           });
           setBlocks(workingBlocks);
           saveCanvasState(workingBlocks, workingEdges);
@@ -4496,6 +4515,7 @@ export default function OmniCanvas() {
                         artStyleId: factoryArtStyleId,
                         videoReverseOutputMode: factoryReverseMode,
                         customRefs: customAssetRefs,
+                        assetCanon: projectBible?.assetCanon,
                       });
                       setEdges((eds) => {
                         saveCanvasState(next, eds);
@@ -4547,10 +4567,24 @@ export default function OmniCanvas() {
                   }}
                   onEnsureSegmentClips={() => {
                     setBlocks((prev) => {
-                      const ensured = ensureManhuaFragmentClips(prev, edges, writerFocusEpisode);
+                      const sheetUrls = collectManhuaCharacterSheetUrlById(
+                        prev,
+                        projectBible?.assetCanon,
+                      );
+                      const layoutOpts = {
+                        assetCanon: projectBible?.assetCanon,
+                        characterSheetUrlById: sheetUrls,
+                      };
+                      const ensured = ensureManhuaFragmentClips(
+                        prev,
+                        edges,
+                        writerFocusEpisode,
+                        layoutOpts,
+                      );
                       const next = layoutManhuaEpisodeReadableChain(
                         ensured.blocks,
                         writerFocusEpisode,
+                        layoutOpts,
                       );
                       setEdges(() => {
                         saveCanvasState(next, ensured.edges);
@@ -4573,10 +4607,24 @@ export default function OmniCanvas() {
                   }}
                   onLayoutReadableChain={() => {
                     setBlocks((prev) => {
-                      const ensured = ensureManhuaFragmentClips(prev, edges, writerFocusEpisode);
+                      const sheetUrls = collectManhuaCharacterSheetUrlById(
+                        prev,
+                        projectBible?.assetCanon,
+                      );
+                      const layoutOpts = {
+                        assetCanon: projectBible?.assetCanon,
+                        characterSheetUrlById: sheetUrls,
+                      };
+                      const ensured = ensureManhuaFragmentClips(
+                        prev,
+                        edges,
+                        writerFocusEpisode,
+                        layoutOpts,
+                      );
                       const next = layoutManhuaEpisodeReadableChain(
                         ensured.blocks,
                         writerFocusEpisode,
+                        layoutOpts,
                       );
                       setEdges(() => {
                         saveCanvasState(next, ensured.edges);
@@ -4585,7 +4633,7 @@ export default function OmniCanvas() {
                       return next;
                     });
                     toast.message("已对齐画布竖排模块", {
-                      description: "资产带（含@编号）→ 静帧每列约5镜 → 段成片同理分列",
+                      description: "资产带（含@编号与定妆特写·道具子号）→ 静帧每列约5镜 → 段成片同理分列",
                     });
                   }}
                   onGenerateMissingFragments={(segmentIndexes) => {
@@ -5792,6 +5840,7 @@ export default function OmniCanvas() {
                       wardrobePropContinuityIds: selectedWardrobeIds,
                       videoReverseOutputMode: factoryReverseMode,
                       customRefs: customAssetRefs,
+                      assetCanon: projectBible?.assetCanon,
                       writerContext: focusCtx,
                       includeDirectorCraft: true,
                       episodeIndex: continuity.episodeIndex,

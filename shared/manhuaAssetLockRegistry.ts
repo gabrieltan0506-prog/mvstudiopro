@@ -1,7 +1,8 @@
 /**
  * 漫剧资产锁编号（对齐 Skill：角色/场景/道具分离 + 路径编号思路）。
  * 给静帧 Edit 提示与 UI 角标用：@角色1 / @场景1 / @道具1。
- * 编号只对「可下载垫图/融图」资产计数；未落盘不进表。
+ * 定妆特写格自动进 @道具N + @角色K·道具i 子号（跨集同号）。
+ * 编号：有垫图/融图进表；特写格逻辑号也可进表（logical://）。
  */
 import { getManhuaCharacterDisplayName, getManhuaCharacterPreviewUrl } from "./manhuaCharacterAssetLibrary.js";
 import {
@@ -15,6 +16,13 @@ import {
   type ManhuaCustomAssetRef,
   type ManhuaCustomAssetRole,
 } from "./manhuaCustomAssetRefs.js";
+import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon.js";
+import {
+  buildManhuaSheetPropSubSlots,
+  formatManhuaSheetPropSubTagsLockBlock,
+  stampManhuaSheetPropSubTagsOnPrompt,
+  type ManhuaSheetPropSubSlot,
+} from "./manhuaSheetPropSubTags.js";
 
 export type ManhuaAssetLockSlot = {
   /** 如 @角色1 */
@@ -24,6 +32,11 @@ export type ManhuaAssetLockSlot = {
   id: string;
   labelZh: string;
   path: string;
+  /** 定妆特写：父角色 @角色K */
+  parentCharacterTag?: string;
+  /** 定妆特写：@角色K·道具i */
+  subTag?: string;
+  fromSheetInset?: boolean;
 };
 
 export type ManhuaAssetLockRegistry = {
@@ -31,6 +44,8 @@ export type ManhuaAssetLockRegistry = {
   byRole: Record<ManhuaCustomAssetRole, ManhuaAssetLockSlot[]>;
   /** 写入静帧 prompt：编号对照表 */
   promptBlockZh: string;
+  /** 定妆特写格 → 道具子编号（跨集锁） */
+  sheetPropSlots: ManhuaSheetPropSubSlot[];
 };
 
 const ROLE_TAG_PREFIX: Record<ManhuaCustomAssetRole, string> = {
@@ -39,13 +54,19 @@ const ROLE_TAG_PREFIX: Record<ManhuaCustomAssetRole, string> = {
   prop: "道具",
 };
 
-function uniqByPath(slots: ManhuaAssetLockSlot[]): ManhuaAssetLockSlot[] {
-  const seen = new Set<string>();
+function uniqSlots(slots: ManhuaAssetLockSlot[]): ManhuaAssetLockSlot[] {
+  const seenId = new Set<string>();
+  const seenPath = new Set<string>();
   const out: ManhuaAssetLockSlot[] = [];
   for (const s of slots) {
+    const id = String(s.id || "").trim();
     const path = String(s.path || "").trim();
-    if (!path || seen.has(path)) continue;
-    seen.add(path);
+    if (!path) continue;
+    if (id && seenId.has(id)) continue;
+    // 同一定妆卡 URL 可挂多件特写道具：特写格按 id 去重，其它按 path
+    if (!s.fromSheetInset && path && seenPath.has(path)) continue;
+    if (id) seenId.add(id);
+    if (path) seenPath.add(path);
     out.push(s);
   }
   return out;
@@ -54,6 +75,7 @@ function uniqByPath(slots: ManhuaAssetLockSlot[]): ManhuaAssetLockSlot[] {
 /**
  * 按 角色 → 场景 → 道具 建编号表。
  * 人物：上传优先，再补库预览；场景/道具同理。
+ * 定妆特写格：自动编入 @道具N + @角色K·道具i（跨集同号）。
  */
 export function buildManhuaAssetLockRegistry(opts?: {
   characterIds?: string[] | null;
@@ -61,6 +83,10 @@ export function buildManhuaAssetLockRegistry(opts?: {
   sceneId?: string | null;
   propIds?: string[] | null;
   customRefs?: ManhuaCustomAssetRef[] | null;
+  /** 系列人物/道具表：用于特写格子编号 */
+  assetCanon?: ManhuaWriterAssetCanon | null;
+  /** wa_char_* → 定妆卡 HTTPS */
+  characterSheetUrlById?: Record<string, string> | null;
 }): ManhuaAssetLockRegistry {
   const draft: ManhuaAssetLockSlot[] = [];
 
@@ -69,6 +95,9 @@ export function buildManhuaAssetLockRegistry(opts?: {
     id: string,
     labelZh: string,
     path: string,
+    extra?: Partial<
+      Pick<ManhuaAssetLockSlot, "parentCharacterTag" | "subTag" | "fromSheetInset">
+    >,
   ) => {
     const p = String(path || "").trim();
     if (!p) return;
@@ -80,6 +109,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
       id: String(id || "").trim() || `${role}_${index}`,
       labelZh: String(labelZh || ROLE_TAG_PREFIX[role]).trim().slice(0, 40),
       path: p,
+      ...extra,
     });
   };
 
@@ -142,12 +172,40 @@ export function buildManhuaAssetLockRegistry(opts?: {
     }
   }
 
+  // 定妆特写格 → 先按人物表序估 @角色，再写入道具草稿（最终 tag 在下方重编号后回填）
+  const canonChars = opts?.assetCanon?.characters || [];
+  const draftCharTagById: Record<string, string> = {};
+  const draftChars = draft.filter((s) => s.role === "character");
+  canonChars.forEach((ch, i) => {
+    const hit =
+      draftChars.find((s) => s.id === ch.id || s.id.includes(ch.id)) ||
+      draftChars[i];
+    draftCharTagById[ch.id] = hit?.tag || `@角色${i + 1}`;
+  });
+  const sheetDraft = buildManhuaSheetPropSubSlots({
+    assetCanon: opts?.assetCanon,
+    characterTagById: draftCharTagById,
+    sheetUrlByCharacterId: opts?.characterSheetUrlById,
+  });
+  const existingPropIds = new Set(
+    draft.filter((s) => s.role === "prop").map((s) => s.id),
+  );
+  for (const sp of sheetDraft) {
+    if (existingPropIds.has(sp.propId)) continue;
+    existingPropIds.add(sp.propId);
+    pushRole("prop", sp.propId, sp.propNameZh, sp.path, {
+      fromSheetInset: true,
+      parentCharacterTag: sp.parentCharacterTag,
+      subTag: sp.subTag,
+    });
+  }
+
   const counters: Record<ManhuaCustomAssetRole, number> = {
     character: 0,
     scene: 0,
     prop: 0,
   };
-  const slots = uniqByPath(draft).map((s) => {
+  const slots = uniqSlots(draft).map((s) => {
     counters[s.role] += 1;
     const index = counters[s.role];
     return { ...s, index, tag: `@${ROLE_TAG_PREFIX[s.role]}${index}` };
@@ -159,19 +217,53 @@ export function buildManhuaAssetLockRegistry(opts?: {
     prop: slots.filter((s) => s.role === "prop"),
   };
 
-  const lines = slots.map(
-    (s) => `${s.tag}=${s.labelZh}（${ROLE_TAG_PREFIX[s.role]}参考图）`,
-  );
+  // 用最终 @角色 / @道具 重算子编号（跨集稳定：propId 排序）
+  const finalCharTagById: Record<string, string> = {};
+  for (const ch of canonChars) {
+    const hit = byRole.character.find(
+      (s) => s.id === ch.id || s.id.includes(ch.id) || ch.id.includes(s.id),
+    );
+    if (hit) finalCharTagById[ch.id] = hit.tag;
+  }
+  const sheetPropSlots = buildManhuaSheetPropSubSlots({
+    assetCanon: opts?.assetCanon,
+    characterTagById: finalCharTagById,
+    sheetUrlByCharacterId: opts?.characterSheetUrlById,
+  }).map((sp) => {
+    const propSlot = byRole.prop.find((s) => s.id === sp.propId);
+    return propSlot ? { ...sp, propTag: propSlot.tag } : sp;
+  });
+  // 回填 prop slot 的 subTag（取该道具首次挂靠的子号）
+  for (const sp of sheetPropSlots) {
+    const slot = byRole.prop.find((s) => s.id === sp.propId);
+    if (!slot) continue;
+    slot.parentCharacterTag = sp.parentCharacterTag;
+    slot.subTag = sp.subTag;
+    slot.fromSheetInset = true;
+  }
+
+  const lines = slots.map((s) => {
+    const kind = s.fromSheetInset
+      ? "定妆特写格"
+      : `${ROLE_TAG_PREFIX[s.role]}参考图`;
+    const sub = s.subTag ? ` · ${s.subTag}` : "";
+    return `${s.tag}=${s.labelZh}（${kind}${sub}）`;
+  });
+  const sheetBlock = formatManhuaSheetPropSubTagsLockBlock(sheetPropSlots);
   const promptBlockZh = slots.length
     ? [
         "【资产锁·编号对照·必守】",
         "以下编号对应已挂载的垫图/融图参考（按序号吸收外形与场景，禁止另造新脸/新场/新道具）：",
         ...lines,
         "分镜动作须兑现上述编号资产；关系镜须同框画出已锁角色。",
-      ].join("\n")
+        "定妆特写格道具：优先用全局 @道具N 跨集锁定；子号 @角色K·道具i 标明挂在哪张定妆卡。",
+        sheetBlock,
+      ]
+        .filter(Boolean)
+        .join("\n")
     : "";
 
-  return { slots, byRole, promptBlockZh };
+  return { slots, byRole, promptBlockZh, sheetPropSlots };
 }
 
 const CANVAS_ASSET_AT_MARK = "【画布资产@】";
@@ -233,9 +325,14 @@ export function assignManhuaCanvasAssetAtTags<
   T extends { id: string; prompt: string },
 >(
   blocks: T[],
-  opts?: { registry?: ManhuaAssetLockRegistry | null },
+  opts?: {
+    registry?: ManhuaAssetLockRegistry | null;
+    assetCanon?: ManhuaWriterAssetCanon | null;
+    characterSheetUrlById?: Record<string, string> | null;
+  },
 ): T[] {
   const reg = opts?.registry || null;
+  let sheetSlots = reg?.sheetPropSlots || [];
   const counters: Record<ManhuaCustomAssetRole, number> = {
     character: 0,
     scene: 0,
@@ -296,13 +393,45 @@ export function assignManhuaCanvasAssetAtTags<
     });
   }
 
+  // 定妆特写格：无 registry.sheetPropSlots 时用系列表自动编 @道具N + 子号
+  if (!sheetSlots.length && opts?.assetCanon?.props?.length) {
+    const built = buildManhuaAssetLockRegistry({
+      assetCanon: opts.assetCanon,
+      characterSheetUrlById: opts.characterSheetUrlById,
+    });
+    sheetSlots = built.sheetPropSlots;
+  }
+  if (sheetSlots.length) {
+    const charsheets = assetBlocks.filter((b) => b.id.startsWith("charsheet-"));
+    sheetSlots = sheetSlots.map((sp) => {
+      const block =
+        charsheets.find((b) => {
+          const seed = canvasAssetSeedId(b.id);
+          return (
+            seed === sp.characterId ||
+            b.id.includes(sp.characterId) ||
+            sp.characterId.includes(seed)
+          );
+        }) || null;
+      const parent = block ? stampById.get(block.id)?.tag : undefined;
+      if (!parent || parent === sp.parentCharacterTag) return sp;
+      return {
+        ...sp,
+        parentCharacterTag: parent,
+        subTag: `${parent}·道具${sp.localIndex}`,
+      };
+    });
+  }
+
   return blocks.map((b) => {
     const stamp = stampById.get(b.id);
     if (!stamp) return b;
-    return {
-      ...b,
-      prompt: stampManhuaCanvasAssetAtTag(b.prompt, stamp.tag, stamp.labelZh),
-    };
+    let prompt = stampManhuaCanvasAssetAtTag(b.prompt, stamp.tag, stamp.labelZh);
+    // 定妆卡：盖章特写格 → @道具 子编号（跨集锁）
+    if (b.id.startsWith("charsheet-") && sheetSlots.length) {
+      prompt = stampManhuaSheetPropSubTagsOnPrompt(prompt, sheetSlots, stamp.tag);
+    }
+    return { ...b, prompt };
   });
 }
 

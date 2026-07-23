@@ -25,6 +25,7 @@ import {
   type ManhuaCustomAssetRef,
 } from "./manhuaCustomAssetRefs.js";
 import { buildManhuaAssetLockRegistry } from "./manhuaAssetLockRegistry.js";
+import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon.js";
 
 export type ManhuaKeyartEditRef = {
   id: string;
@@ -110,6 +111,10 @@ export function planManhuaKeyartEditFusion(opts?: {
   propIds?: string[] | null;
   /** 用户上传并勾选角色的参考图（HTTPS）；generated 不进人物身份 */
   customRefs?: ManhuaCustomAssetRef[] | null;
+  /** 系列人物/道具表：定妆特写格进 @道具N 子编号（跨集锁） */
+  assetCanon?: ManhuaWriterAssetCanon | null;
+  /** wa_char_* → 定妆卡 HTTPS */
+  characterSheetUrlById?: Record<string, string> | null;
   /**
    * @deprecated 关键静帧不再用本集生成设定卡做身份锁；保留参数以免旧调用炸掉。
    */
@@ -262,6 +267,8 @@ export function planManhuaKeyartEditFusion(opts?: {
     sceneId: opts?.sceneId,
     propIds: opts?.propIds,
     customRefs: opts?.customRefs,
+    assetCanon: opts?.assetCanon,
+    characterSheetUrlById: opts?.characterSheetUrlById,
   });
 
   const refLabelsZh = ready.map((r) => r.labelZh).filter(Boolean);
