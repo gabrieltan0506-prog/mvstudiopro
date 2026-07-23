@@ -32,6 +32,10 @@ import {
   manhuaFactoryStageLabelFromBlockId,
 } from "@shared/manhuaFactoryUserErrors";
 import {
+  countManhuaKeyartProgress,
+  formatManhuaKeyartProgressZh,
+} from "@shared/manhuaKeyartProgress";
+import {
   MANHUA_ASSET_SHARE_CONSENT_HINT_ZH,
   MANHUA_ASSET_STILL_FULL_CREDITS,
   MANHUA_ASSET_STILL_SHARE_HALF_CREDITS,
@@ -52,6 +56,7 @@ import {
   resolveFactoryResumeStage,
   resolveManhuaEpisodeSpawnContinuity,
   layoutManhuaEpisodeReadableChain,
+  countExpectedManhuaKeyartShots,
   runManhuaDramaFactoryPipeline,
   sanitizeManhuaRecapUpstreamLinks,
   spawnManhuaDramaStudio,
@@ -3325,6 +3330,8 @@ export default function OmniCanvas() {
         fragmentShotIndex?: number;
         /** 依次生成多个片段（缺片批量）。 */
         fragmentShotIndexes?: number[];
+        /** true：覆盖重出本集全部关键静帧；默认只补失败/缺失 */
+        overwriteKeyarts?: boolean;
       },
     ) => {
       if (factoryBusy) return;
@@ -3571,6 +3578,22 @@ export default function OmniCanvas() {
                 break outer;
               }
             }
+            const keyartExpectedTotal = countExpectedManhuaKeyartShots(
+              workingBlocks,
+              episodeIndex,
+            );
+            const keyartProgressZh = () => {
+              const counts = countManhuaKeyartProgress(
+                workingBlocks,
+                episodeIndex,
+                getBlockEpisodeIndex,
+                keyartExpectedTotal,
+              );
+              return {
+                counts,
+                text: formatManhuaKeyartProgressZh(counts, episodeIndex),
+              };
+            };
             const result = await runManhuaDramaFactoryPipeline({
               deps: runDeps,
               blocks: workingBlocks,
@@ -3582,6 +3605,7 @@ export default function OmniCanvas() {
               fragmentShotIndex,
               shotContinuity,
               skipDone: true,
+              overwriteKeyarts: opts?.overwriteKeyarts === true,
               signal: ac.signal,
               onBlocksChange: (next) => {
                 workingBlocks = next;
@@ -3619,6 +3643,15 @@ export default function OmniCanvas() {
                         ...(stageBlock.editFusionUrls || []),
                       ].filter(Boolean).length
                     : 0;
+                // 关键静帧：只显示「已成功出图张数」，绝不用流水线 16/17 冒充进度
+                if (label === MANHUA_FACTORY_STAGE_LABEL_ZH.keyart || id.startsWith("keyart-")) {
+                  const { counts, text } = keyartProgressZh();
+                  setFactoryProgress(text);
+                  pushDebug("factoryStage:start", {
+                    detail: `ep${episodeIndex} · keyart done=${counts.done}/${counts.total} fail=${counts.failed} · batch=${index + 1}/${total} · id=${id}`,
+                  });
+                  return;
+                }
                 setFactoryProgress(
                   fragmentPad
                     ? `第${episodeIndex}集 · 第${fragmentPad}段 · ${index + 1}/${total} · ${label}`
@@ -3627,42 +3660,48 @@ export default function OmniCanvas() {
                 pushDebug("factoryStage:start", {
                   detail: `ep${episodeIndex} · seg=${fragmentPad || "—"} · ${index + 1}/${total} · ${label} · videoModel=${videoModel} · stillRefs=${stillRefs} · id=${id}`,
                 });
-                // 静帧批量并行时每张都 toast 会刷屏
-                if (label !== MANHUA_FACTORY_STAGE_LABEL_ZH.keyart) {
-                  toast.message(`第${episodeIndex}集 ${index + 1}/${total}`, {
-                    description:
-                      videoModel !== "—"
-                        ? `${label} · ${videoModel}`
-                        : label,
-                  });
-                }
+                toast.message(`第${episodeIndex}集 ${index + 1}/${total}`, {
+                  description:
+                    videoModel !== "—"
+                      ? `${label} · ${videoModel}`
+                      : label,
+                });
               },
               onStageDone: (id, _index, _total, label) => {
                 if (label === MANHUA_FACTORY_STAGE_LABEL_ZH.keyart || id.startsWith("keyart-")) {
-                  const epKeys = workingBlocks.filter(
-                    (b) =>
-                      b.id.startsWith("keyart-") &&
-                      (getBlockEpisodeIndex(b) ?? 1) === episodeIndex,
-                  );
-                  const doneN = epKeys.filter(
-                    (b) => Boolean(b.outputUrl || b.outputUrls?.[0]),
-                  ).length;
-                  setFactoryProgress(
-                    `第${episodeIndex}集 · 静帧已出 ${doneN}/${Math.max(epKeys.length, 1)}`,
-                  );
+                  setFactoryProgress(keyartProgressZh().text);
                   return;
                 }
                 setFactoryProgress(`第${episodeIndex}集 · 已完成 · ${label}`);
               },
+              onStageError: (id, label, message) => {
+                if (label === MANHUA_FACTORY_STAGE_LABEL_ZH.keyart || id.startsWith("keyart-")) {
+                  setFactoryProgress(keyartProgressZh().text);
+                  pushDebug("factoryStage:error", {
+                    level: "warn",
+                    detail: `ep${episodeIndex} · ${id} · ${message.slice(0, 160)}`,
+                  });
+                  return;
+                }
+                setFactoryProgress(`第${episodeIndex}集 · ${label}失败`);
+              },
               onStageSkip: (_id, label) => {
-                setFactoryProgress(`第${episodeIndex}集 · 跳过已完成 · ${label}`);
+                if (label === MANHUA_FACTORY_STAGE_LABEL_ZH.keyart) {
+                  setFactoryProgress(keyartProgressZh().text);
+                } else {
+                  setFactoryProgress(`第${episodeIndex}集 · 跳过已完成 · ${label}`);
+                }
                 pushDebug("factoryStage:skip", {
                   level: "warn",
                   detail: `ep${episodeIndex} · ${label}`,
                 });
               },
               onStageRetry: (_id, label, attempt, message) => {
-                setFactoryProgress(`第${episodeIndex}集 · 重试 ${attempt} · ${label}`);
+                if (label === MANHUA_FACTORY_STAGE_LABEL_ZH.keyart) {
+                  setFactoryProgress(`${keyartProgressZh().text} · 重试 ${attempt}`);
+                } else {
+                  setFactoryProgress(`第${episodeIndex}集 · 重试 ${attempt} · ${label}`);
+                }
                 pushDebug("factoryStage:retry", {
                   level: "warn",
                   detail: `ep${episodeIndex} · ${label} · attempt=${attempt} · ${message.slice(0, 160)}`,
@@ -4442,7 +4481,7 @@ export default function OmniCanvas() {
                         promoCoverLayoutIds: selectedPromoLayoutIds,
                         actionCameraRecipeIds: selectedActionRecipeIds,
                         cineVocabIds: selectedCineVocabIds,
-            cineVocabLocale: factoryCineVocabLocale,
+                        cineVocabLocale: factoryCineVocabLocale,
                         wardrobePropContinuityIds: selectedWardrobeIds,
                         sceneId,
                         propIds: factoryPropIds,
@@ -4458,9 +4497,34 @@ export default function OmniCanvas() {
                         saveCanvasState(next, eds);
                         return eds;
                       });
+                      // 用刷新后的 next 计数，避免闭包旧 blocks 导致「跳过张数」不准
+                      const epKeys = next.filter(
+                        (b) =>
+                          b.id.startsWith("keyart-") &&
+                          (getBlockEpisodeIndex(b) ?? 1) === writerFocusEpisode,
+                      );
+                      const already = epKeys.filter((b) =>
+                        Boolean(b.outputUrl || b.outputUrls?.[0]),
+                      ).length;
+                      const expected = Math.max(
+                        epKeys.length,
+                        countExpectedManhuaKeyartShots(next, writerFocusEpisode),
+                      );
+                      if (already > 0) {
+                        const need = Math.max(0, expected - already);
+                        queueMicrotask(() => {
+                          toast.message(
+                            need > 0
+                              ? `已出 ${already}/${expected} 张将跳过，本次补 ${need} 张失败/空白`
+                              : `已出 ${already}/${expected} 张将跳过；本集静帧已齐`,
+                            {
+                              description: "要从头覆盖全部静帧，请用「重出静帧」。",
+                            },
+                          );
+                        });
+                      }
                       return next;
                     });
-                    // 故事→反推→按镜展开→一次跑齐本集全部静帧（已完成的跳过）
                     void runFactory("keyart", {
                       episodeIndexes: [writerFocusEpisode],
                     });
@@ -4552,10 +4616,11 @@ export default function OmniCanvas() {
                     }
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
-                    toast.message(`第${writerFocusEpisode}集 · 从反推重出静帧`);
+                    toast.message(`第${writerFocusEpisode}集 · 从反推覆盖重出全部静帧`);
                     void runFactory("keyart", {
                       forceFromStage: "reverse",
                       episodeIndexes: [writerFocusEpisode],
+                      overwriteKeyarts: true,
                     });
                   }}
                   onRerunKeyartShot={(blockId, shotIndex) => {
@@ -4573,6 +4638,8 @@ export default function OmniCanvas() {
                       forceFromStage: "keyart",
                       episodeIndexes: [writerFocusEpisode],
                       targetBlockIds: [blockId],
+                      // 名单镜：允许覆盖该镜已有图
+                      overwriteKeyarts: false,
                     });
                   }}
                   dockSelectedIds={dockSelectedIds}

@@ -39,6 +39,8 @@ export type ManhuaCloudDraftCanvasBlock = {
   outputUrl?: string;
   outputUrls?: string[];
   refImageUrl?: string;
+  /** 关键静帧融图参考（含站点相对 /manhua-* 路径） */
+  editFusionUrls?: string[];
   imageMode?: string;
   aspectRatio?: string;
   pathCameraRecipeId?: string;
@@ -64,9 +66,22 @@ function isHttpUrl(u: unknown): u is string {
   return /^https?:\/\//i.test(s);
 }
 
+/** HTTPS 或站点内漫剧资产相对路径（垫图/融图必须能落盘，否则重开页就丢参考） */
+function isPersistableAssetUrl(u: unknown): u is string {
+  const s = String(u || "").trim();
+  if (!s || s.startsWith("blob:") || s.startsWith("data:")) return false;
+  if (/^https?:\/\//i.test(s)) return true;
+  return (
+    s.startsWith("/manhua-") ||
+    s.startsWith("/assets/") ||
+    s.startsWith("/demo/") ||
+    s.startsWith("/public/")
+  );
+}
+
 function keepImageUrls(urls: unknown): string[] {
   if (!Array.isArray(urls)) return [];
-  return urls.map((u) => String(u || "").trim()).filter(isHttpUrl).slice(0, 16);
+  return urls.map((u) => String(u || "").trim()).filter(isPersistableAssetUrl).slice(0, 16);
 }
 
 /** 是否为成片/视频节点（云端不存其产物） */
@@ -120,13 +135,20 @@ export function sanitizeManhuaCloudDraftBlock(raw: unknown): ManhuaCloudDraftCan
       outputText: undefined,
       outputUrl: undefined,
       outputUrls: [],
-      refImageUrl: isHttpUrl(b.refImageUrl) ? String(b.refImageUrl).trim() : undefined,
+      refImageUrl: isPersistableAssetUrl(b.refImageUrl)
+        ? String(b.refImageUrl).trim()
+        : undefined,
     };
   }
 
   const outputUrls = keepImageUrls(b.outputUrls);
-  const outputUrl = isHttpUrl(b.outputUrl) ? String(b.outputUrl).trim() : outputUrls[0];
-  const refImageUrl = isHttpUrl(b.refImageUrl) ? String(b.refImageUrl).trim() : undefined;
+  const outputUrl = isPersistableAssetUrl(b.outputUrl)
+    ? String(b.outputUrl).trim()
+    : outputUrls[0];
+  const refImageUrl = isPersistableAssetUrl(b.refImageUrl)
+    ? String(b.refImageUrl).trim()
+    : undefined;
+  const editFusionUrls = keepImageUrls(b.editFusionUrls).filter((u) => u !== refImageUrl).slice(0, 15);
   const outputText =
     kind === "text" || kind === "copy_organize" || kind === "video_reverse"
       ? String(b.outputText || "").slice(0, 200_000) || undefined
@@ -138,6 +160,7 @@ export function sanitizeManhuaCloudDraftBlock(raw: unknown): ManhuaCloudDraftCan
     outputUrl,
     outputUrls: outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
     refImageUrl,
+    editFusionUrls: editFusionUrls.length ? editFusionUrls : undefined,
   };
 }
 

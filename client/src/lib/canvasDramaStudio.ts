@@ -138,6 +138,22 @@ function applyKeyartEditPlanToBlock(
       editFusionUrls: plan.editFusionUrls,
     };
   }
+  // 新计划暂时算不出垫图时：绝不能清空节点上已有垫图（重跑 prefs 一刷会全军覆没）
+  const existingRef = String(block.refImageUrl || "").trim();
+  const existingFusion = (block.editFusionUrls || [])
+    .map((u) => String(u || "").trim())
+    .filter(Boolean);
+  if (existingRef || existingFusion.length) {
+    const ref = existingRef || existingFusion[0]!;
+    return {
+      ...block,
+      prompt,
+      imageModel: "gpt-image-2",
+      imageMode: "edit",
+      refImageUrl: ref,
+      editFusionUrls: existingFusion.filter((u) => u !== ref).slice(0, 15),
+    };
+  }
   // 无垫图：不静默改文生；保留 generate 标记，运行时会硬失败并提示补人物库
   return {
     ...block,
@@ -1341,6 +1357,14 @@ function stripShotInjectSection(prompt: string): string {
   return stripMarkedSection(String(prompt || ""), "【分镜");
 }
 
+/** 本集分镜表预期静帧张数（反推/节拍解析；用于进度分母，避免未展开时显示 1/1） */
+export function countExpectedManhuaKeyartShots(
+  blocks: CanvasBlock[],
+  episodeIndex: number | null | undefined,
+): number {
+  return resolveShotsForEpisodeKeyarts(blocks, episodeIndex).length;
+}
+
 function resolveShotsForEpisodeKeyarts(
   blocks: CanvasBlock[],
   episodeIndex: number | null | undefined,
@@ -1675,55 +1699,38 @@ export function expandManhuaShotKeyartsAfterReverse(
   const primary = existingKeyarts[0];
   if (!primary) return { blocks, edges };
 
+  // 同镜多节点：优先保留已有产出图的那张，避免补镜时再克隆空节点把已出图挤掉
   const existingByShot = new Map<number, CanvasBlock>();
   for (const keyart of existingKeyarts) {
     const shotIndex = resolveKeyartShotIndex(keyart.id, keyart.prompt);
-    if (!existingByShot.has(shotIndex)) existingByShot.set(shotIndex, keyart);
+    const prev = existingByShot.get(shotIndex);
+    if (!prev) {
+      existingByShot.set(shotIndex, keyart);
+      continue;
+    }
+    const preferNew = mediaUrlOf(keyart) && !mediaUrlOf(prev);
+    if (preferNew) existingByShot.set(shotIndex, keyart);
   }
 
-  // 已有每镜静帧时同步到当前反推：补齐注入，并删除旧反推遗留的多余/重复静帧。
-  if (shots.every((shot) => existingByShot.has(shot.index))) {
-    const keepIds = new Set(shots.map((shot) => existingByShot.get(shot.index)!.id));
-    const removedIds = new Set(existingKeyarts.filter((b) => !keepIds.has(b.id)).map((b) => b.id));
-    const nextBlocks = blocks.filter((b) => !removedIds.has(b.id)).map((b) => {
-      if (!b.id.startsWith("keyart-") || !sameEpisode(b)) return b;
-      const shotIdx = resolveKeyartShotIndex(b.id, b.prompt);
-      const shot = shots.find((s) => s.index === shotIdx);
-      if (!shot) return b;
-      const base = stripShotInjectSection(b.prompt);
-      return { ...b, prompt: [base, formatWorkbenchShotInjectBlock(shot)].filter(Boolean).join("\n\n") };
-    });
-    const nextEdges = edges.filter((edge) => !removedIds.has(edge.fromId) && !removedIds.has(edge.toId));
-    return ensureManhuaFragmentClips(nextBlocks, nextEdges, ep ?? 1);
-  }
-
-  const basePrompt = stripShotInjectSection(primary.prompt);
-  const shot1 = shots[0]!;
-  const primaryPad = String(shot1.index).padStart(2, "0");
-  // 主静帧补上 -s01 镜号，避免与后续镜错位、UI 误绑
-  const primaryId =
-    /-s\d{2}(?:-|$)/.test(primary.id)
-      ? primary.id
-      : makeCanvasBlockId(
-          ep != null
-            ? `keyart-e${String(ep).padStart(2, "0")}-s${primaryPad}`
-            : `keyart-s${primaryPad}`,
-        );
-  const primaryUpdated: CanvasBlock = {
-    ...primary,
-    id: primaryId,
-    prompt: [basePrompt, formatWorkbenchShotInjectBlock(shot1)].filter(Boolean).join("\n\n"),
-  };
-
+  const keepIds = new Set<string>();
   const extras: CanvasBlock[] = [];
-  for (let i = 1; i < shots.length; i++) {
-    const shot = shots[i]!;
+  const basePrompt = stripShotInjectSection(primary.prompt);
+
+  for (const shot of shots) {
+    const existing = existingByShot.get(shot.index);
+    if (existing) {
+      keepIds.add(existing.id);
+      continue;
+    }
+    // 只为缺失镜号新建空节点；绝不重造已有镜（会丢掉已出图）
     const pad = String(shot.index).padStart(2, "0");
-    const clone: CanvasBlock = {
+    extras.push({
       ...primary,
-      id: makeCanvasBlockId(ep != null ? `keyart-e${String(ep).padStart(2, "0")}-s${pad}` : `keyart-s${pad}`),
-      x: primary.x + Math.min(i, 3) * 28,
-      y: primary.y + i * 36,
+      id: makeCanvasBlockId(
+        ep != null ? `keyart-e${String(ep).padStart(2, "0")}-s${pad}` : `keyart-s${pad}`,
+      ),
+      x: primary.x + Math.min(shot.index, 3) * 28,
+      y: primary.y + (shot.index - 1) * 36,
       parentId: reverse.id,
       prompt: [basePrompt, formatWorkbenchShotInjectBlock(shot)].filter(Boolean).join("\n\n"),
       status: "idle",
@@ -1733,30 +1740,41 @@ export function expandManhuaShotKeyartsAfterReverse(
       error: undefined,
       episodeIndex: primary.episodeIndex ?? ep ?? undefined,
       episodeTitle: primary.episodeTitle,
-    };
-    extras.push(clone);
+    });
   }
 
-  const nextBlocks = [
-    ...blocks
-      .filter((b) => b.id !== primary.id)
-      .map((b) => (b.parentId === primary.id ? { ...b, parentId: primaryId } : b)),
-    primaryUpdated,
-    ...extras,
-  ];
+  const removedIds = new Set(
+    existingKeyarts.filter((b) => !keepIds.has(b.id)).map((b) => b.id),
+  );
 
-  // reverse → 各镜静帧；顺带改写指向旧 primary id 的边
-  let nextEdges = edges
-    .filter((e) => !(e.fromId === reverse.id && e.toId.startsWith("keyart-")))
-    .map((e) => ({
-      ...e,
-      fromId: e.fromId === primary.id ? primaryId : e.fromId,
-      toId: e.toId === primary.id ? primaryId : e.toId,
-    }));
+  let nextBlocks = blocks
+    .filter((b) => !removedIds.has(b.id))
+    .map((b) => {
+      if (!b.id.startsWith("keyart-") || !sameEpisode(b) || !keepIds.has(b.id)) return b;
+      const shotIdx = resolveKeyartShotIndex(b.id, b.prompt);
+      const shot = shots.find((s) => s.index === shotIdx);
+      if (!shot) return b;
+      const base = stripShotInjectSection(b.prompt);
+      // 只更新分镜注入文案，保留 status / outputUrl
+      return {
+        ...b,
+        prompt: [base, formatWorkbenchShotInjectBlock(shot)].filter(Boolean).join("\n\n"),
+      };
+    });
+  nextBlocks = [...nextBlocks, ...extras];
+
+  let nextEdges = edges.filter(
+    (edge) => !removedIds.has(edge.fromId) && !removedIds.has(edge.toId),
+  );
+  nextEdges = nextEdges.filter(
+    (e) => !(e.fromId === reverse.id && e.toId.startsWith("keyart-")),
+  );
+  const keyartIds = nextBlocks
+    .filter((b) => b.id.startsWith("keyart-") && sameEpisode(b))
+    .map((b) => b.id);
   nextEdges = [
     ...nextEdges,
-    { fromId: reverse.id, toId: primaryId },
-    ...extras.map((k) => ({ fromId: reverse.id, toId: k.id })),
+    ...keyartIds.map((id) => ({ fromId: reverse.id, toId: id })),
   ];
 
   return ensureManhuaFragmentClips(nextBlocks, nextEdges, ep ?? 1);
@@ -1769,14 +1787,19 @@ export function stageKeyFromBlockId(blockId: string): ManhuaFactoryStageKey | nu
   return null;
 }
 
+/** 静帧/成片：有产出 URL 即视为已完成（不依赖 status，避免云同步/中断后 status 不准又重烧） */
+function blockHasMediaOutput(block: CanvasBlock): boolean {
+  return Boolean(block.outputUrl || (block.outputUrls && block.outputUrls.length));
+}
+
 function blockLooksDone(block: CanvasBlock): boolean {
+  if (block.kind === "image" || block.kind === "video" || block.id.startsWith("keyart-") || block.id.startsWith("clip-")) {
+    return blockHasMediaOutput(block);
+  }
   if (block.status === "done") {
-    if (block.kind === "image" || block.kind === "video") {
-      return Boolean(block.outputUrl || (block.outputUrls && block.outputUrls.length));
-    }
     return Boolean(block.outputText?.trim());
   }
-  return false;
+  return Boolean(block.outputText?.trim()) && block.status !== "error";
 }
 
 /** 从反推 Markdown 抽可给静帧/成片用的短提示 */
@@ -2051,6 +2074,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   onBlocksChange?: (blocks: CanvasBlock[]) => void;
   onStageStart?: (blockId: string, index: number, total: number, label: string) => void;
   onStageDone?: (blockId: string, index: number, total: number, label: string) => void;
+  /** 单节点最终失败（含关键静帧批量中的一张） */
+  onStageError?: (blockId: string, label: string, message: string) => void;
   onStageSkip?: (blockId: string, label: string) => void;
   onStageRetry?: (blockId: string, label: string, attempt: number, message: string) => void;
   signal?: AbortSignal;
@@ -2059,6 +2084,12 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     keyartFromPrevStill?: boolean;
     clipFromPrevTail?: boolean;
   };
+  /**
+   * true：覆盖重出本批全部关键静帧（无视已有图）。
+   * 默认 false：已有产出图的静帧一律跳过，只补失败/缺失。
+   * （forceFromStage 不再强迫已出静帧重烧）
+   */
+  overwriteKeyarts?: boolean;
 }): Promise<ManhuaFactoryPipelineResult> {
   // 默认不因单镜失败停整链（多镜一次出齐）；仅显式 stopOnError:true 才断
   const stopOnError = opts.stopOnError === true;
@@ -2203,8 +2234,11 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       type KeyartJob = { index: number; id: string };
       const jobs: KeyartJob[] = [];
       let j = i;
-      const keyartForce =
-        forceIdx >= 0 && MANHUA_FACTORY_STAGE_ORDER.indexOf("keyart") >= forceIdx;
+      const overwriteKeyarts = opts.overwriteKeyarts === true;
+      const targeted =
+        resolvedTargetIds && resolvedTargetIds.length
+          ? new Set(resolvedTargetIds.filter((id) => id.startsWith("keyart-")))
+          : null;
       while (j < orderedIds.length && orderedIds[j]!.startsWith("keyart-")) {
         const kid = orderedIds[j]!;
         const kb = working.find((b) => b.id === kid);
@@ -2212,7 +2246,10 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           j += 1;
           continue;
         }
-        if (skipDone && !keyartForce && blockLooksDone(kb)) {
+        // 默认：有图就跳过。仅 overwrite 或显式点名单镜重出时才重烧已出图。
+        const mustOverwriteThis =
+          overwriteKeyarts || (targeted != null && targeted.has(kid));
+        if (skipDone && !mustOverwriteThis && blockLooksDone(kb)) {
           skippedIds.push(kid);
           opts.onStageSkip?.(kid, MANHUA_FACTORY_STAGE_LABEL_ZH.keyart);
           j += 1;
@@ -2225,6 +2262,37 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         i = j;
         continue;
       }
+
+      // 开跑前闸门：缺垫图的单镜直接失败；若整批都缺则中止，避免同错刷屏
+      const padMissingMsg =
+        "关键静帧缺少人物/场景参考底图。请到资产设定确认定妆与场景空镜（或上传参考）后再生成。";
+      const runnableJobs: KeyartJob[] = [];
+      for (const job of jobs) {
+        const kb = working.find((b) => b.id === job.id);
+        const hasPad =
+          Boolean(String(kb?.refImageUrl || "").trim()) ||
+          Boolean((kb?.editFusionUrls || []).some(Boolean));
+        if (hasPad) {
+          runnableJobs.push(job);
+          continue;
+        }
+        publish(
+          working.map((b) =>
+            b.id === job.id ? { ...b, status: "error" as const, error: padMissingMsg } : b,
+          ),
+        );
+        if (!errors.some((e) => e.id === job.id)) {
+          errors.push({ id: job.id, message: padMissingMsg });
+        }
+        opts.onStageError?.(job.id, MANHUA_FACTORY_STAGE_LABEL_ZH.keyart, padMissingMsg);
+      }
+      if (!runnableJobs.length) {
+        i = j;
+        continue;
+      }
+      // 后续只跑有垫图的镜头
+      jobs.length = 0;
+      jobs.push(...runnableJobs);
 
       const batchParallel = jobs.length >= 2;
       const concurrency = batchParallel ? MANHUA_KEYART_PARALLEL_CONCURRENCY : 1;
@@ -2242,18 +2310,14 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             : b,
         ),
       );
-      for (const job of jobs) {
-        opts.onStageStart?.(
-          job.id,
-          job.index,
-          orderedIds.length,
-          MANHUA_FACTORY_STAGE_LABEL_ZH.keyart,
-        );
-      }
+      // 进度用「本批静帧张数」；只在单镜真正开跑时回调一次（避免批头+单镜双调闪烁）
+      const keyartBatchTotal = jobs.length;
 
-      await mapWithConcurrency(jobs, concurrency, async (job) => {
+      await mapWithConcurrency(jobs, concurrency, async (job, jobOrdinal) => {
         const kid = job.id;
         const kLabel = MANHUA_FACTORY_STAGE_LABEL_ZH.keyart;
+        const localIndex = typeof jobOrdinal === "number" ? jobOrdinal : jobs.findIndex((j) => j.id === kid);
+        opts.onStageStart?.(kid, Math.max(0, localIndex), keyartBatchTotal, kLabel);
         let lastMessage = "生成失败";
         let succeeded = false;
         for (let attempt = 0; attempt <= defaultMaxRetries; attempt++) {
@@ -2265,11 +2329,22 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             const current = working.find((b) => b.id === kid);
             if (!current) throw new Error("静帧节点不存在");
             const visionImages = collectVisionImages(kid, working, edges);
-            /** 文生静帧勿挂上游 nearestRef，否则会被当成 edits 且易超时 */
-            let runBlockPayload: CanvasBlock =
-              current.imageMode === "edit" && current.refImageUrl
-                ? current
-                : { ...current, refImageUrl: undefined, editFusionUrls: [] };
+            /** 有垫图/融图就走改图；勿因 imageMode 被 prefs 误标 generate 而清空参考 */
+            const padUrl =
+              String(current.refImageUrl || "").trim() ||
+              String((current.editFusionUrls || []).find(Boolean) || "").trim();
+            const fusionKeep = (current.editFusionUrls || [])
+              .map((u) => String(u || "").trim())
+              .filter((u) => u && u !== padUrl)
+              .slice(0, 15);
+            let runBlockPayload: CanvasBlock = padUrl
+              ? {
+                  ...current,
+                  imageMode: "edit",
+                  refImageUrl: padUrl,
+                  editFusionUrls: fusionKeep,
+                }
+              : { ...current, refImageUrl: undefined, editFusionUrls: [] };
             const epForShot = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
             const shotForCont = resolveKeyartShotIndex(runBlockPayload.id, runBlockPayload.prompt);
 
@@ -2322,7 +2397,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             next = enrichDownstreamPrompts(next, kid);
             publish(next);
             completedIds.push(kid);
-            opts.onStageDone?.(kid, job.index, orderedIds.length, kLabel);
+            opts.onStageDone?.(kid, Math.max(0, localIndex), keyartBatchTotal, kLabel);
             succeeded = true;
             break;
           } catch (e: unknown) {
@@ -2356,6 +2431,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           if (!errors.some((e) => e.id === kid)) {
             errors.push({ id: kid, message: lastMessage });
           }
+          opts.onStageError?.(kid, kLabel, lastMessage);
         }
       });
 

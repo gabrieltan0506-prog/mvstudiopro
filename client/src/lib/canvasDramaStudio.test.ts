@@ -988,6 +988,17 @@ slow dolly in, soft rain, trembling hand
     const expanded = expandManhuaShotKeyartsAfterReverse(primed, spawned.edges, reverseId);
     const keyarts = expanded.blocks.filter((b) => b.id.startsWith("keyart-"));
     expect(keyarts.length).toBeGreaterThanOrEqual(3);
+    // 批量闸门要求有垫图；测试补上站点相对参考，避免未挂垫图被预检拦下
+    const withPads = expanded.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? {
+            ...b,
+            imageMode: "edit" as const,
+            refImageUrl: "/manhua-scenes/pad.webp",
+            editFusionUrls: ["/manhua-props/pad.png"],
+          }
+        : b,
+    );
 
     const doneOrder: string[] = [];
     const inFlightPeaks: number[] = [];
@@ -1008,7 +1019,7 @@ slow dolly in, soft rain, trembling hand
       const deps: CanvasRunDeps = { optimizeCopy: async () => "" };
       await runManhuaDramaFactoryPipeline({
         deps,
-        blocks: expanded.blocks,
+        blocks: withPads,
         edges: expanded.edges,
         untilStage: "keyart",
         forceFromStage: "keyart",
@@ -1048,6 +1059,141 @@ slow dolly in, soft rain, trembling hand
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("rerun skips keyarts that already have images even with forceFromStage", async () => {
+    const spawned = spawnManhuaDramaStudio({ topic: "宫廷夺嫡", episodeIndex: 1 });
+    const reverseId = spawned.blocks.find((b) => b.id.startsWith("reverse-"))!.id;
+    const primed = spawned.blocks.map((b) => {
+      if (b.id.startsWith("story-") || b.id.startsWith("bible-") || b.id.startsWith("beats-")) {
+        return { ...b, status: "done" as const, outputText: "上游已完成" };
+      }
+      if (b.id.startsWith("reverse-")) {
+        return { ...b, status: "done" as const, outputText: "1. 入殿\n2. 对峙\n3. 退场" };
+      }
+      return b;
+    });
+    const expanded = expandManhuaShotKeyartsAfterReverse(primed, spawned.edges, reverseId);
+    const keyarts = expanded.blocks.filter((b) => b.id.startsWith("keyart-"));
+    expect(keyarts.length).toBeGreaterThanOrEqual(3);
+    const withPartial = expanded.blocks.map((b) => {
+      if (!b.id.startsWith("keyart-")) return b;
+      const shot = resolveKeyartShotIndex(b.id, b.prompt);
+      const withPad = {
+        ...b,
+        imageMode: "edit" as const,
+        refImageUrl: "/manhua-scenes/pad.webp",
+        editFusionUrls: ["/manhua-props/pad.png"],
+      };
+      if (shot === 1) {
+        return {
+          ...withPad,
+          status: "done" as const,
+          outputUrl: "https://cdn.example/s01.png",
+        };
+      }
+      if (shot === 2) {
+        return {
+          ...withPad,
+          status: "error" as const,
+          error: "改图失败",
+          outputUrl: undefined,
+        };
+      }
+      return { ...withPad, status: "idle" as const, outputUrl: undefined };
+    });
+
+    const spy = vi.spyOn(canvasRunBlock, "runCanvasBlock").mockImplementation(async (_deps, block) => {
+      if (!block.id.startsWith("keyart-")) return { outputText: "skip" };
+      return { outputUrl: `https://cdn.example/${block.id}.png` };
+    });
+
+    try {
+      const result = await runManhuaDramaFactoryPipeline({
+        deps: { optimizeCopy: async () => "" },
+        blocks: withPartial,
+        edges: expanded.edges,
+        untilStage: "keyart",
+        forceFromStage: "keyart",
+        skipDone: true,
+        maxRetries: 0,
+      });
+      const keyartCalls = spy.mock.calls.filter(([_, b]) => b.id.startsWith("keyart-"));
+      expect(
+        keyartCalls.every(([_, b]) => resolveKeyartShotIndex(b.id, b.prompt) !== 1),
+      ).toBe(true);
+      expect(
+        keyartCalls.some(([_, b]) => resolveKeyartShotIndex(b.id, b.prompt) === 2),
+      ).toBe(true);
+      expect(
+        result.skippedIds.some((id) => {
+          const b = withPartial.find((x) => x.id === id);
+          return b ? resolveKeyartShotIndex(b.id, b.prompt) === 1 : false;
+        }),
+      ).toBe(true);
+      const s01 = result.blocks.find(
+        (b) => b.id.startsWith("keyart-") && resolveKeyartShotIndex(b.id, b.prompt) === 1,
+      );
+      expect(s01?.outputUrl).toBe("https://cdn.example/s01.png");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("prefs refresh keeps existing keyart pad when new plan has no base", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      ancientArchetypeIds: ["arch_rain_jianghu_dao"],
+      sceneId: "scene_07",
+      propIds: ["demo_prop_ancient_jade"],
+      artStyleId: "photoreal",
+    });
+    const keyed = blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? {
+            ...b,
+            imageMode: "edit" as const,
+            refImageUrl: "/manhua-scenes/keep.webp",
+            editFusionUrls: ["/manhua-props/keep.png"],
+          }
+        : b,
+    );
+    // 故意不传 scene/prop，模拟 prefs 瞬时算不出底图
+    const next = applyFactoryPrefsToBlocks(keyed, {
+      ancientArchetypeIds: ["arch_rain_jianghu_dao"],
+      artStyleId: "photoreal",
+    });
+    const key = next.find((b) => b.id.startsWith("keyart-"))!;
+    expect(key.imageMode).toBe("edit");
+    expect(key.refImageUrl).toBe("/manhua-scenes/keep.webp");
+    expect(key.editFusionUrls).toContain("/manhua-props/keep.png");
+  });
+
+  it("expand only adds missing shots and keeps existing media", () => {
+    const spawned = spawnManhuaDramaStudio({ topic: "雨夜江湖", episodeIndex: 1 });
+    const reverse = spawned.blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const withTwo = spawned.blocks.map((b) =>
+      b.id === reverse.id
+        ? { ...b, status: "done" as const, outputText: "1. 推门\n2. 对峙" }
+        : b,
+    );
+    const first = expandManhuaShotKeyartsAfterReverse(withTwo, spawned.edges, reverse.id);
+    const marked = first.blocks.map((b) =>
+      b.id.startsWith("keyart-") && resolveKeyartShotIndex(b.id, b.prompt) === 1
+        ? { ...b, status: "done" as const, outputUrl: "https://cdn.example/keep.png" }
+        : b,
+    );
+    const grown = marked.map((b) =>
+      b.id === reverse.id
+        ? { ...b, outputText: "1. 推门\n2. 对峙\n3. 拔刀\n4. 收刀" }
+        : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(grown, first.edges, reverse.id);
+    const keys = expanded.blocks.filter((b) => b.id.startsWith("keyart-"));
+    expect(keys.length).toBe(4);
+    const s01 = keys.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === 1);
+    expect(s01?.outputUrl).toBe("https://cdn.example/keep.png");
+    expect(keys.filter((b) => resolveKeyartShotIndex(b.id, b.prompt) === 1)).toHaveLength(1);
   });
 });
 

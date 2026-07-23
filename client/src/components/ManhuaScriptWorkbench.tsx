@@ -59,6 +59,7 @@ import type { ManhuaRetakeVariable } from "@shared/manhuaDirectingWorkflow";
 import { MANHUA_REF_DUTIES } from "@shared/manhuaDirectingWorkflow";
 import {
   areManhuaKeyartsPixelLocked,
+  isManhuaKeyartPixelLocked,
   buildManhuaAssetLockRegistry,
 } from "@shared/manhuaAssetLockRegistry";
 import {
@@ -987,10 +988,17 @@ export default function ManhuaScriptWorkbench({
     const stages = ["story", "bible", "beats", "reverse", "keyart", "clip"] as const;
     return stages.map((stage) => {
       if (stage === "keyart") {
-        const has = episodeKeyarts.some((b) => Boolean(mediaUrl(b)));
+        // 须出齐且垫图锁过，才算阶段完成；禁止「有一张图就打勾」
+        const has =
+          shots.length > 0
+            ? episodeStillCount >= shots.length && keyartsPixelLocked
+            : episodeStillCount > 0 && keyartsPixelLocked;
         return {
           stage,
-          label: MANHUA_FACTORY_STAGE_LABEL_ZH[stage],
+          label:
+            episodeKeyarts.length > 1
+              ? `${MANHUA_FACTORY_STAGE_LABEL_ZH[stage]} ${episodeStillCount}/${Math.max(shots.length, episodeKeyarts.length, 1)}`
+              : MANHUA_FACTORY_STAGE_LABEL_ZH[stage],
           has,
           blockId: activeKeyart?.id || episodeKeyarts[0]?.id,
         };
@@ -1015,7 +1023,18 @@ export default function ManhuaScriptWorkbench({
         blockId: b?.id,
       };
     });
-  }, [blocks, focusEpisode, episodeKeyarts, episodeClips, activeKeyart?.id, activeClip?.id, legacyClip?.id]);
+  }, [
+    blocks,
+    focusEpisode,
+    episodeKeyarts,
+    episodeClips,
+    activeKeyart?.id,
+    activeClip?.id,
+    legacyClip?.id,
+    episodeStillCount,
+    shots.length,
+    keyartsPixelLocked,
+  ]);
   const storyboardReadyEnough =
     assetsComplete && (shots.length > 0 || Boolean(episodeStillCount));
 
@@ -3034,7 +3053,10 @@ export default function ManhuaScriptWorkbench({
                   <div className="text-[11px] font-semibold text-cyan-50/90">视觉简报（出图前确认）</div>
                   <span className="text-[9px] text-white/40">
                     {visualBriefConfirmed ? "已确认" : "未确认"} · 静帧 {episodeStillCount}/
-                    {Math.max(shots.length, 1)}
+                    {Math.max(episodeKeyarts.length, shots.length, 1)}
+                    {episodeKeyarts.some((b) => b.status === "error")
+                      ? ` · 失败 ${episodeKeyarts.filter((b) => b.status === "error").length}`
+                      : ""}
                   </span>
                 </div>
                 <div className="mt-1.5 grid max-h-28 gap-1 overflow-y-auto text-[10px] leading-4 text-white/65">
@@ -3092,17 +3114,34 @@ export default function ManhuaScriptWorkbench({
               <div className="mt-1.5 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
                 {shots.map((shot, i) => {
                   const on = i === Math.min(shotIndex, shots.length - 1);
-                  const shotKey =
-                    episodeKeyarts.find(
-                      (b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index,
-                    ) || episodeKeyarts[i];
+                  // 严格按镜号对齐；禁止用列表下标顶替，避免有图/失败状态错位
+                  const shotKey = episodeKeyarts.find(
+                    (b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index,
+                  );
                   const thumb = mediaUrl(shotKey);
+                  const keyartFailed =
+                    Boolean(shotKey) &&
+                    (shotKey!.status === "error" || Boolean(shotKey!.error)) &&
+                    !thumb;
+                  const keyartRunning = shotKey?.status === "running" && !thumb;
+                  const keyartUnlocked = Boolean(thumb && shotKey && !isManhuaKeyartPixelLocked(shotKey));
                   return (
                     <div
                       key={shot.index}
                       data-manhua-shot={shot.index}
                       data-manhua-active={on ? "true" : "false"}
                       data-manhua-keyart-url={thumb || ""}
+                      data-manhua-keyart-status={
+                        keyartUnlocked
+                          ? "unlocked"
+                          : thumb
+                            ? "ready"
+                            : keyartFailed
+                              ? "error"
+                              : keyartRunning
+                                ? "running"
+                                : "idle"
+                      }
                       className={`flex w-full items-stretch rounded-lg border text-left transition ${
                         on
                           ? "border-cyan-400/50 bg-cyan-500/15"
@@ -3114,9 +3153,35 @@ export default function ManhuaScriptWorkbench({
                         onClick={() => setShotIndex(i)}
                         className="flex min-w-0 flex-1 gap-2 px-2 py-2 text-left"
                       >
-                        <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-dashed border-amber-400/35 bg-amber-500/10">
+                        <div
+                          className={`relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-dashed bg-amber-500/10 ${
+                            keyartFailed || keyartUnlocked
+                              ? "border-red-400/55"
+                              : "border-amber-400/35"
+                          }`}
+                          title={
+                            keyartUnlocked
+                              ? "有图但未带资产垫图锁，不能直接出成片；请重出该镜静帧"
+                              : undefined
+                          }
+                        >
                           {thumb ? (
-                            <img src={thumb} alt="" className="h-full w-full object-cover" />
+                            <>
+                              <img src={thumb} alt="" className="h-full w-full object-cover" />
+                              {keyartUnlocked ? (
+                                <span className="absolute inset-x-0 bottom-0 bg-red-900/75 px-0.5 py-px text-center text-[7px] font-semibold text-red-50">
+                                  未锁
+                                </span>
+                              ) : null}
+                            </>
+                          ) : keyartFailed ? (
+                            <div className="flex h-full items-center justify-center px-0.5 text-center text-[8px] font-semibold leading-tight text-red-100/90">
+                              失败
+                            </div>
+                          ) : keyartRunning ? (
+                            <div className="flex h-full items-center justify-center text-[8px] text-amber-100/80">
+                              …
+                            </div>
                           ) : (
                             <div className="flex h-full flex-col items-center justify-center gap-0.5 px-0.5 text-center text-amber-100/80">
                               <span className="text-[9px] font-semibold">
@@ -3701,6 +3766,9 @@ export default function ManhuaScriptWorkbench({
             <span className="text-[9px] text-white/35">
               已出静帧 {episodeKeyarts.filter((b) => mediaUrl(b)).length}/
               {Math.max(episodeKeyarts.length, shots.length, 1)}
+              {episodeKeyarts.filter((b) => b.status === "error" && !mediaUrl(b)).length
+                ? ` · 失败 ${episodeKeyarts.filter((b) => b.status === "error" && !mediaUrl(b)).length}`
+                : ""}
             </span>
             <div className="flex gap-1 overflow-x-auto">
               {episodeIndexes.map((ep) => {
@@ -3727,9 +3795,10 @@ export default function ManhuaScriptWorkbench({
         </div>
         <div className="flex gap-2 overflow-x-auto pb-0.5">
           {filmstripShots.map((shot, i) => {
-              const shotKey =
-                episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index) ||
-                episodeKeyarts[i];
+              // 严格按镜号；禁止用列表下标顶替（缺镜时会把下一镜图错绑到本格）
+              const shotKey = episodeKeyarts.find(
+                (b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index,
+              );
               const shotClip =
                 episodeClips.find(
                   (b) =>
@@ -3749,6 +3818,9 @@ export default function ManhuaScriptWorkbench({
               const clipFailed =
                 shotClip?.manhuaClipQuality?.status === "failed" && !clipAccepted;
               const stillOk = Boolean(thumb);
+              const stillUnlocked = Boolean(
+                thumb && shotKey && !isManhuaKeyartPixelLocked(shotKey),
+              );
               const clipOk = Boolean(mediaUrl(shotClip));
               const statusLabel = clipPassed
                 ? "片✓"
@@ -3756,10 +3828,12 @@ export default function ManhuaScriptWorkbench({
                   ? "已采用"
                   : clipFailed
                     ? "质检"
-                    : stillOk
-                      ? "图✓"
-                      : "待出";
-              const pairLabel = `${stillOk ? "图✓" : "图—"} ${clipOk ? "片✓" : "片—"}`;
+                    : stillUnlocked
+                      ? "未锁"
+                      : stillOk
+                        ? "图✓"
+                        : "待出";
+              const pairLabel = `${stillUnlocked ? "未锁" : stillOk ? "图✓" : "图—"} ${clipOk ? "片✓" : "片—"}`;
               const on = i === Math.min(shotIndex, Math.max(shots.length, 1) - 1);
               const dur = shot.durationSec || 5;
               const needsRetry = !clipPassed;
@@ -3800,18 +3874,38 @@ export default function ManhuaScriptWorkbench({
                     data-manhua-active={on ? "true" : "false"}
                     data-manhua-keyart-url={thumb || ""}
                     data-manhua-fragment-status={
-                      clipPassed ? "clip" : clipFailed ? "qc-failed" : thumb ? "keyart" : "idle"
+                      clipPassed
+                        ? "clip"
+                        : clipFailed
+                          ? "qc-failed"
+                          : stillUnlocked
+                            ? "keyart-unlocked"
+                            : thumb
+                              ? "keyart"
+                              : "idle"
                     }
                     onClick={() => setShotIndex(i)}
                     className="block w-full text-left"
+                    title={
+                      stillUnlocked
+                        ? "有图但未带资产垫图锁，不能直接出成片；请重出该镜静帧"
+                        : undefined
+                    }
                   >
                     <div
-                      className={`aspect-video ${
+                      className={`relative aspect-video ${
                         thumb ? "bg-black/70" : "border border-dashed border-amber-400/30 bg-amber-500/10"
                       }`}
                     >
                       {thumb ? (
-                        <img src={thumb} alt="" className="h-full w-full object-cover" />
+                        <>
+                          <img src={thumb} alt="" className="h-full w-full object-cover" />
+                          {stillUnlocked ? (
+                            <span className="absolute inset-x-0 bottom-0 bg-red-900/75 px-0.5 py-px text-center text-[8px] font-semibold text-red-50">
+                              未锁
+                            </span>
+                          ) : null}
+                        </>
                       ) : (
                         <div className="flex h-full flex-col items-center justify-center gap-0.5 text-amber-100/85">
                           <span className="text-[11px] font-semibold">

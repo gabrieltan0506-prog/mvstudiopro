@@ -93,6 +93,14 @@ function isHttpUrl(u: unknown): boolean {
   return /^https?:\/\//i.test(String(u || "").trim());
 }
 
+/** 本机落盘可保留的资产 URL：HTTPS + 站点内 /manhua-* 垫图路径 */
+function isPersistableAssetUrl(u: unknown): boolean {
+  const s = String(u || "").trim();
+  if (!s || s.startsWith("blob:") || s.startsWith("data:")) return false;
+  if (/^https?:\/\//i.test(s)) return true;
+  return s.startsWith("/manhua-") || s.startsWith("/assets/") || s.startsWith("/demo/");
+}
+
 /** 本机落盘瘦身：去视频产物与 blob，降低多集撑爆配额 */
 export function slimBlocksForLocalPersist(blocks: CanvasBlock[]): CanvasBlock[] {
   return blocks.map((b) => {
@@ -106,18 +114,24 @@ export function slimBlocksForLocalPersist(blocks: CanvasBlock[]): CanvasBlock[] 
         error: undefined,
       };
     }
-    const outputUrls = (b.outputUrls || []).filter(isHttpUrl).slice(0, 8);
-    const outputUrl = isHttpUrl(b.outputUrl) ? String(b.outputUrl).trim() : outputUrls[0];
+    const outputUrls = (b.outputUrls || []).filter(isPersistableAssetUrl).slice(0, 8);
+    const outputUrl = isPersistableAssetUrl(b.outputUrl)
+      ? String(b.outputUrl).trim()
+      : outputUrls[0];
     return {
       ...b,
       outputUrl,
       outputUrls: outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
-      refImageUrl: isHttpUrl(b.refImageUrl) ? String(b.refImageUrl).trim() : undefined,
+      refImageUrl: isPersistableAssetUrl(b.refImageUrl)
+        ? String(b.refImageUrl).trim()
+        : undefined,
       uploadedAssets: [],
       uploadFailures: undefined,
-      editMaskUrl: isHttpUrl(b.editMaskUrl) ? b.editMaskUrl : undefined,
-      editFusionUrls: (b.editFusionUrls || []).filter(isHttpUrl).slice(0, 8),
-      lastFrameUrl: isHttpUrl(b.lastFrameUrl) ? String(b.lastFrameUrl).trim() : undefined,
+      editMaskUrl: isPersistableAssetUrl(b.editMaskUrl) ? String(b.editMaskUrl).trim() : undefined,
+      editFusionUrls: (b.editFusionUrls || []).filter(isPersistableAssetUrl).slice(0, 15),
+      lastFrameUrl: isPersistableAssetUrl(b.lastFrameUrl)
+        ? String(b.lastFrameUrl).trim()
+        : undefined,
       manhuaRetake: b.manhuaRetake,
     };
   });
@@ -133,17 +147,30 @@ export function trySaveLocalCanvas(
     storage.setItem(CANVAS_LS_KEY, JSON.stringify({ blocks: slim, edges }));
     return true;
   } catch {
-    // 配额仍满：再砍静帧 URL，只留节点壳 + 剧本侧由其它键负责
+    // 配额仍满：优先保住关键静帧成图与垫图；砍视频壳字段与超长文本
     try {
-      const shell = slim.map((b) => ({
-        ...b,
-        outputUrl: undefined,
-        outputUrls: [] as string[],
-        refImageUrl: undefined,
-        outputText: b.kind === "text" || b.kind === "copy_organize" || b.kind === "video_reverse"
-          ? String(b.outputText || "").slice(0, 8_000) || undefined
-          : undefined,
-      }));
+      const shell = slim.map((b) => {
+        const isKeyart = String(b.id || "").startsWith("keyart-");
+        if (isKeyart) {
+          return {
+            ...b,
+            outputText: undefined,
+            uploadedAssets: [],
+            // 保留 outputUrl / refImageUrl / editFusionUrls，避免刷新后全空再触发改图失败
+          };
+        }
+        return {
+          ...b,
+          outputUrl: undefined,
+          outputUrls: [] as string[],
+          refImageUrl: undefined,
+          editFusionUrls: [] as string[],
+          outputText:
+            b.kind === "text" || b.kind === "copy_organize" || b.kind === "video_reverse"
+              ? String(b.outputText || "").slice(0, 4_000) || undefined
+              : undefined,
+        };
+      });
       storage.setItem(CANVAS_LS_KEY, JSON.stringify({ blocks: shell, edges }));
       return true;
     } catch {
@@ -226,6 +253,7 @@ export function cloudDraftBlocksToCanvas(blocks: ManhuaCloudDraftPayload["canvas
       outputUrl: raw.outputUrl,
       outputUrls: raw.outputUrls || [],
       refImageUrl: raw.refImageUrl,
+      editFusionUrls: raw.editFusionUrls || [],
       imageMode: raw.imageMode === "edit" ? "edit" : "generate",
       aspectRatio: raw.aspectRatio === "16:9" ? "16:9" : "9:16",
       pathCameraRecipeId: raw.pathCameraRecipeId,
