@@ -25,11 +25,11 @@ export function formatManhuaFactoryUserError(raw: string): string {
   }
   if (/关键静帧改图失败/i.test(msg)) {
     if (
-      /string too long|maximum length 32000|prompt.*too long|Invalid 'prompt'|精简后仍过长|no truncate/i.test(
+      /string too long|maximum length 32000|prompt.*too long|Invalid 'prompt'|精简后仍过长|放行上限|no truncate/i.test(
         msg,
       )
     ) {
-      return "关键静帧失败：本镜说明过长。系统会先精简再出图；若仍失败，请缩短该镜分镜描述后重试（不会截断原文硬送）。";
+      return "关键静帧失败：本镜说明过长。超过上限会先精简到约 2.4–2.8 万字再出图；若仍失败，请缩短该镜分镜描述后重试（不会截断原文硬送）。";
     }
     if (/ref download HTTP|downloadUrl|垫图.*下载|Unable to download|could not be downloaded/i.test(msg)) {
       return "关键静帧失败：参考底图下载失败。请到资产设定点开定妆/场景预览确认能打开，再重出静帧。";

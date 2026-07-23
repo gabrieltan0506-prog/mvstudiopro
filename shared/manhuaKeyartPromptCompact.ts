@@ -3,7 +3,7 @@
  * - 模型钉死 gpt-5.6-terra
  * - 仅当输入超过 32000 时：拆段提取 → 合并成一条
  * - ≤32000：原样出图，不做精简
- * - 合并后仍 >32000：报错停住，禁止静默裁字
+ * - 精简后落在 24k–28k（≤28000）即放行；仍 >28000 报错停住，禁止静默裁字
  */
 
 import {
@@ -18,18 +18,25 @@ export const OPENAI_IMAGE_PROMPT_HARD_MAX = 32_000;
 /** 关键静帧精简优化固定模型（产品已选定 Terra） */
 export const MANHUA_KEYART_PROMPT_COMPACT_MODEL = "gpt-5.6-terra" as const;
 
-/** 合并成稿目标：须低于硬上限，留禁字/融图余量 */
-export const MANHUA_KEYART_PROMPT_COMPACT_TARGET = 28_000;
+/** 精简目标中枢（24k–28k 区间中部） */
+export const MANHUA_KEYART_PROMPT_COMPACT_TARGET = 26_000;
+
+/** 精简后放行上限：≤此值即可送出图 */
+export const MANHUA_KEYART_PROMPT_COMPACT_PASS_MAX = 28_000;
+
+/** 精简目标下限（brief 提示，非硬拒） */
+export const MANHUA_KEYART_PROMPT_COMPACT_PASS_MIN = 24_000;
 
 export function needsManhuaKeyartPromptCompact(prompt: string): boolean {
   return String(prompt || "").trim().length > OPENAI_IMAGE_PROMPT_HARD_MAX;
 }
 
+/** 精简后校验：≤28k 放行；禁止静默截断 */
 export function assertOpenAiImagePromptWithinLimit(prompt: string): void {
   const n = String(prompt || "").trim().length;
-  if (n > OPENAI_IMAGE_PROMPT_HARD_MAX) {
+  if (n > MANHUA_KEYART_PROMPT_COMPACT_PASS_MAX) {
     throw new Error(
-      `关键静帧说明精简后仍过长（约 ${n} 字，上限 ${OPENAI_IMAGE_PROMPT_HARD_MAX}）。请缩短本镜分镜描述后重试，系统不会截断内容。`,
+      `关键静帧说明精简后仍过长（约 ${n} 字，放行上限 ${MANHUA_KEYART_PROMPT_COMPACT_PASS_MAX}）。请缩短本镜分镜描述后重试，系统不会截断内容。`,
     );
   }
 }
@@ -41,7 +48,7 @@ export function buildManhuaKeyartPromptCompactBrief(opts?: {
   partTotal?: number;
 }): string {
   const target = Math.min(
-    OPENAI_IMAGE_PROMPT_HARD_MAX,
+    MANHUA_KEYART_PROMPT_COMPACT_PASS_MAX,
     Math.max(2000, opts?.targetMax ?? MANHUA_KEYART_PROMPT_COMPACT_TARGET),
   );
   const mode = opts?.mode || "merge";
@@ -58,7 +65,7 @@ export function buildManhuaKeyartPromptCompactBrief(opts?: {
   }
   return [
     "你是漫剧关键静帧提示精简助手。把下列分段要点合并成**一条**可直接用于参考图改图的中文提示词。",
-    `硬性：输出总长必须 ≤${target} 字；只输出提示词正文，不要解释。`,
+    `硬性：输出总长必须落在 ${MANHUA_KEYART_PROMPT_COMPACT_PASS_MIN}–${MANHUA_KEYART_PROMPT_COMPACT_PASS_MAX} 字（目标约 ${target} 字）；只输出提示词正文，不要解释。`,
     "必须保留：本镜动作构图、人物身份一致、场景与光色、画风硬锁、禁字/无字幕、融图/垫图相关句。",
     "删除重复与剧情旁白；手法用中性标签，不写导演名/供应商/模型名。",
   ].join("\n");
@@ -99,7 +106,8 @@ async function extractParts(
 }
 
 /**
- * 出图前：仅输入 >32000 时拆段提取→合并成一条；钉 Terra；不截断。
+ * 出图前：仅输入 >32000 时拆段提取→合并；钉 Terra；不截断。
+ * 合并结果 ≤28000（24k–28k 放行带）即返回。
  */
 export async function compactManhuaKeyartImagePrompt(
   optimizeCopy: ManhuaKeyartCompactOptimize,
@@ -112,7 +120,7 @@ export async function compactManhuaKeyartImagePrompt(
   if (!needsManhuaKeyartPromptCompact(text)) return text;
 
   const target = Math.min(
-    OPENAI_IMAGE_PROMPT_HARD_MAX,
+    MANHUA_KEYART_PROMPT_COMPACT_PASS_MAX,
     Math.max(2000, opts?.targetMax ?? MANHUA_KEYART_PROMPT_COMPACT_TARGET),
   );
   const modelName = MANHUA_KEYART_PROMPT_COMPACT_MODEL;
@@ -124,7 +132,6 @@ export async function compactManhuaKeyartImagePrompt(
     );
   }
 
-  // 要点汇总若仍超单次优化上限：再提取一轮压短（仍不截断原文）
   for (let round = 0; round < 3; round++) {
     const mergedSource = extracts.join("\n\n---\n\n");
     if (mergedSource.length <= OPENAI_IMAGE_PROMPT_HARD_MAX) {
@@ -144,13 +151,20 @@ export async function compactManhuaKeyartImagePrompt(
           `关键静帧说明过长（约 ${text.length} 字），合并精简失败。请缩短本镜分镜描述后重试，系统不会截断内容。`,
         );
       }
-      return merged;
+      // 24k–28k 放行：≤28000 即出图
+      if (merged.length <= MANHUA_KEYART_PROMPT_COMPACT_PASS_MAX) {
+        return merged;
+      }
+      // 仍超放行上限：把合并稿再当输入继续压（不截断）
+      extracts = await extractParts(optimizeCopy, merged, modelName);
+      if (!extracts.length) break;
+      continue;
     }
     extracts = await extractParts(optimizeCopy, mergedSource, modelName);
     if (!extracts.length) break;
   }
 
   throw new Error(
-    `关键静帧说明过长（约 ${text.length} 字），拆段精简后仍无法压到 ${OPENAI_IMAGE_PROMPT_HARD_MAX} 字以内。请缩短本镜分镜描述后重试，系统不会截断内容。`,
+    `关键静帧说明过长（约 ${text.length} 字），拆段精简后仍无法压到 ${MANHUA_KEYART_PROMPT_COMPACT_PASS_MAX} 字以内（放行带 ${MANHUA_KEYART_PROMPT_COMPACT_PASS_MIN}–${MANHUA_KEYART_PROMPT_COMPACT_PASS_MAX}）。请缩短本镜分镜描述后重试，系统不会截断内容。`,
   );
 }
