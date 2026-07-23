@@ -16,6 +16,10 @@ import {
   normalizeManhuaCustomAssetRefs,
   type ManhuaCustomAssetRef,
 } from "./manhuaCustomAssetRefs.js";
+import {
+  normalizeManhuaCharacterVoiceLocks,
+  type ManhuaCharacterVoiceLock,
+} from "./manhuaCharacterVoiceLock.js";
 import { parseManhuaStylePack, type ManhuaStylePack } from "./manhuaStylePack.js";
 import {
   normalizeManhuaDeliveryPackage,
@@ -45,6 +49,8 @@ export type ManhuaWriterSession = {
   workflowPhase: "outline" | "assets" | "storyboard" | "edit";
   /** 用户上传/基于库参考生成的参考图（HTTPS + 勾选角色） */
   customAssetRefs: ManhuaCustomAssetRef[];
+  /** 从有声成片抠出的角色声线参考（按 @角色N） */
+  characterVoiceLocks: ManhuaCharacterVoiceLock[];
   /** 生成资产图时授权匿名进库（半价） */
   shareAssetToLibrary: boolean;
   /** 审定节奏模板 id（tpl_*）；扩写注入用 */
@@ -116,6 +122,7 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     assetsSkipped: Boolean(input.assetsSkipped),
     workflowPhase,
     customAssetRefs: normalizeManhuaCustomAssetRefs(input.customAssetRefs),
+    characterVoiceLocks: normalizeManhuaCharacterVoiceLocks(input.characterVoiceLocks),
     shareAssetToLibrary: Boolean(input.shareAssetToLibrary),
     viralTemplateId: String(input.viralTemplateId || "").trim().slice(0, 64),
     stylePack: parseManhuaStylePack(input.stylePack) || null,

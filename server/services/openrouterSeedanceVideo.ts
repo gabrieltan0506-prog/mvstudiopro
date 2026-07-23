@@ -73,6 +73,8 @@ export function buildOpenRouterSeedanceSubmitBody(input: {
   prompt: string;
   imageUrl?: string;
   imageUrls?: string[];
+  /** 角色声线参考 mp3（最多 3；进 input_references） */
+  audioUrls?: string[];
   aspectRatio?: string;
   duration?: number;
   quality?: string;
@@ -87,6 +89,9 @@ export function buildOpenRouterSeedanceSubmitBody(input: {
     ...(String(input.imageUrl || "").trim() ? [String(input.imageUrl).trim()] : []),
   ];
   const uniqueImages = Array.from(new Set(images));
+  const audioUrls = Array.from(
+    new Set((input.audioUrls || []).map((u) => String(u || "").trim()).filter(Boolean)),
+  ).slice(0, 3);
 
   const body: Record<string, unknown> = {
     model,
@@ -97,7 +102,9 @@ export function buildOpenRouterSeedanceSubmitBody(input: {
     generate_audio: input.generateAudio !== false,
   };
 
-  if (uniqueImages.length === 1) {
+  const inputReferences: Array<Record<string, unknown>> = [];
+  if (uniqueImages.length === 1 && !audioUrls.length) {
+    // 单图且无声线参考：走首帧 I2V
     body.frame_images = [
       {
         type: "image_url",
@@ -105,11 +112,28 @@ export function buildOpenRouterSeedanceSubmitBody(input: {
         frame_type: "first_frame",
       },
     ];
-  } else if (uniqueImages.length > 1) {
-    body.input_references = uniqueImages.slice(0, 4).map((url) => ({
+  } else if (uniqueImages.length === 1 && audioUrls.length) {
+    // 有声线参考时改走 reference（首帧图 + 参考音）
+    inputReferences.push({
       type: "image_url",
-      image_url: { url },
-    }));
+      image_url: { url: uniqueImages[0] },
+    });
+  } else if (uniqueImages.length > 1) {
+    for (const url of uniqueImages.slice(0, 4)) {
+      inputReferences.push({
+        type: "image_url",
+        image_url: { url },
+      });
+    }
+  }
+  for (const url of audioUrls) {
+    inputReferences.push({
+      type: "audio_url",
+      audio_url: { url },
+    });
+  }
+  if (inputReferences.length) {
+    body.input_references = inputReferences;
   }
 
   return body;
@@ -156,6 +180,7 @@ export type OpenRouterSeedanceRunInput = {
   prompt: string;
   imageUrl?: string;
   imageUrls?: string[];
+  audioUrls?: string[];
   aspectRatio?: string;
   duration?: number;
   quality?: string;
@@ -188,6 +213,7 @@ export async function runOpenRouterSeedanceVideo(input: OpenRouterSeedanceRunInp
     prompt,
     imageUrl: input.imageUrl,
     imageUrls: input.imageUrls,
+    audioUrls: input.audioUrls,
     aspectRatio: input.aspectRatio,
     duration: input.duration,
     quality: input.quality,

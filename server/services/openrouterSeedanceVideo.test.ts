@@ -43,4 +43,20 @@ describe("buildOpenRouterSeedanceSubmitBody", () => {
     expect(Array.isArray(body.input_references)).toBe(true);
     expect((body.input_references as unknown[]).length).toBe(2);
   });
+
+  it("puts audio_url into input_references alongside still", () => {
+    const body = buildOpenRouterSeedanceSubmitBody({
+      variant: "2.0-fast",
+      prompt: "@角色1 说你好",
+      imageUrl: "https://cdn.example/still.jpg",
+      audioUrls: ["https://cdn.example/voice.mp3"],
+      generateAudio: true,
+      duration: 8,
+    });
+    expect(body.generate_audio).toBe(true);
+    expect(body.frame_images).toBeUndefined();
+    const refs = body.input_references as Array<Record<string, unknown>>;
+    expect(refs.some((r) => r.type === "image_url")).toBe(true);
+    expect(refs.some((r) => r.type === "audio_url")).toBe(true);
+  });
 });

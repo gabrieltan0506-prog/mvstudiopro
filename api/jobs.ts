@@ -3165,6 +3165,48 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
      * 已去掉产品侧 Mini 选项；仅 `probe=1` 内部探针可走 EvoLink Mini。
      * 2.5 仍走独立 op=seedance25。
      */
+    /** 从有声成片抠参考音色 mp3（挂到 @角色 声线锁） */
+    if (op === "extractClipAudio") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const videoUrl = s(b.videoUrl || q.videoUrl || "").trim();
+      const startSec = Number(b.startSec ?? q.startSec ?? 0);
+      const durationSec = Number(b.durationSec ?? q.durationSec ?? 8);
+      if (!/^https:\/\//i.test(videoUrl)) {
+        return res.status(400).json({ ok: false, error: "请提供成片 HTTPS 地址" });
+      }
+      try {
+        const { extractManhuaClipAudioToGcs } = await import(
+          "../server/services/manhuaExtractClipAudio.js"
+        );
+        const out = await extractManhuaClipAudioToGcs({
+          videoUrl,
+          startSec,
+          durationSec,
+        });
+        return res.status(200).json({
+          ok: true,
+          audioUrl: out.audioUrl,
+          gcsUri: out.gcsUri,
+          startSec: out.startSec,
+          durationSec: out.durationSec,
+          bytes: out.bytes,
+        });
+      } catch (e: any) {
+        const msg = String(e?.message || "extract_failed");
+        return res.status(502).json({
+          ok: false,
+          error:
+            /ffmpeg|ENOENT/i.test(msg)
+              ? "音频提取失败，请稍后重试"
+              : msg.includes("download")
+                ? "成片下载失败，请稍后重试"
+                : "音频提取失败，请稍后重试",
+        });
+      }
+    }
+
     if (op === "seedanceI2V") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -3224,6 +3266,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             prompt,
             imageUrl,
             imageUrls,
+            audioUrls,
             quality: resolution,
             aspectRatio,
             duration: typeof duration === "number" ? duration : 15,
