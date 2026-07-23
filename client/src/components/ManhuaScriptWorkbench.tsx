@@ -859,7 +859,6 @@ export default function ManhuaScriptWorkbench({
   const outlineComplete = Boolean(canRun);
   /** 方案 B：剧本确认 + 角色/场景锁定 + 角色图/场景图齐，才可进分镜出片 */
   const assetsComplete = assetGate.ready && !assetScriptStaleHintZh;
-  const canGenerateFragment = outlineComplete && assetsComplete;
   const productionProgress = useMemo((): ManhuaProductionProgress => {
     const segmentCount = segments.length;
     const segmentPlanReady = segmentCount >= MANHUA_SEGMENT_MIN;
