@@ -4,7 +4,11 @@
  * 静帧路径不使用对白字面。
  */
 
-import { extractManhuaPerformanceCue } from "./manhuaPerformancePrompt.js";
+import {
+  extractManhuaPerformanceCue,
+  extractManhuaSpeakerAtTag,
+  formatManhuaLockedDialogueLine,
+} from "./manhuaPerformancePrompt.js";
 import type { ManhuaWorkbenchShot } from "./manhuaScriptWorkbench.js";
 
 export type ManhuaDialogueTimelineBeat = {
@@ -18,6 +22,8 @@ export type ManhuaDialogueTimelineBeat = {
   emotionZh: string;
   microExpressionZh: string;
   voiceToneZh: string;
+  /** 说话人 @角色N */
+  speakerAtTag: string;
 };
 
 function resolveShotDialogue(shot: ManhuaWorkbenchShot): string {
@@ -62,6 +68,7 @@ export function buildManhuaDialogueTimelineBeats(
     const endSec = Math.round(Math.min(dur, (i + 1) * slot) * 10) / 10;
     const durationBeat = Math.round((endSec - startSec) * 10) / 10;
     const fromAction = extractManhuaPerformanceCue(s.actionZh);
+    const dialogueZh = resolveShotDialogue(s);
     return {
       shotIndex: s.index,
       startSec,
@@ -69,12 +76,17 @@ export function buildManhuaDialogueTimelineBeats(
       durationSec: durationBeat > 0 ? durationBeat : slot,
       cameraZh: String(s.cameraZh || "").trim(),
       actionZh: String(s.actionZh || "").trim().slice(0, 120),
-      dialogueZh: resolveShotDialogue(s),
+      dialogueZh,
       emotionZh: String(s.emotionZh || fromAction.emotionZh || "").trim().slice(0, 48),
       microExpressionZh: String(s.microExpressionZh || fromAction.microExpressionZh || "")
         .trim()
         .slice(0, 64),
       voiceToneZh: String(s.voiceToneZh || fromAction.voiceToneZh || "").trim().slice(0, 40),
+      speakerAtTag: extractManhuaSpeakerAtTag(
+        s.dialogueZh,
+        s.actionZh,
+        fromAction.speakerAtTag,
+      ),
     };
   });
 }
@@ -106,13 +118,21 @@ export function formatManhuaDialogueTimelineBlock(
         ? "开场建立"
         : `自镜${beats[i - 1]!.shotIndex}切到镜${b.shotIndex}（承接落点）`;
     const head = `分镜${b.shotIndex}｜${frame}｜${b.durationSec}秒｜约${b.startSec}–${b.endSec}s｜切镜：${cut}`;
-    const voiceLine = b.dialogueZh
-      ? `配音/对白（须出声+口型同步，语气${b.voiceToneZh || "贴合情绪"}）：「${b.dialogueZh}」`
+    const lockedDialogue = formatManhuaLockedDialogueLine({
+      speakerAtTag: b.speakerAtTag,
+      dialogueZh: b.dialogueZh,
+      emotionZh: b.emotionZh,
+      microExpressionZh: b.microExpressionZh,
+      voiceToneZh: b.voiceToneZh,
+    });
+    const voiceLine = lockedDialogue
+      ? `配音/对白（须出声+口型同步，人物锁+表情一体）：${lockedDialogue}`
       : "配音：本镜无台词，保留环境气口/呼吸，勿乱加旁白";
     const bodyParts = [
       b.cameraZh ? `运镜：${b.cameraZh}（写清起幅→落幅）` : "运镜：承接上镜做可读微动",
       sceneHint ? `场景：${sceneHint}` : "",
       b.actionZh ? `场面动作：${b.actionZh}` : "",
+      b.speakerAtTag ? `说话人锁：${b.speakerAtTag}` : "",
       b.microExpressionZh ? `微表情差：${b.microExpressionZh}` : "",
       voiceLine,
       b.emotionZh ? `情绪弧：${b.emotionZh}` : "",

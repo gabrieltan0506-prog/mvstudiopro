@@ -48,7 +48,7 @@ describe("manhuaClipDialogueTimeline", () => {
           index: 5,
           durationSec: 0,
           cameraZh: "近景，微推",
-          actionZh: "握拳",
+          actionZh: "@角色2 握拳对峙",
           dialogueZh: "放开！",
           emotionZh: "怒",
           microExpressionZh: "咬牙",
@@ -65,8 +65,8 @@ describe("manhuaClipDialogueTimeline", () => {
     expect(block).toContain("运镜：");
     expect(block).toContain("场景：古宅廊下");
     expect(block).toContain("配音/对白");
-    expect(block).toContain("放开");
-    expect(block).toContain("咬牙");
+    expect(block).toContain("@角色2（情绪：怒｜微表情：咬牙｜语气：压嗓）：「放开！」");
+    expect(block).toContain("说话人锁：@角色2");
     expect(block).toContain("只重出本段");
     expect(MANHUA_CROSS_SHOT_CONTINUITY_LOCK).toMatch(/换脸|服装|跳棚/);
     expect(MANHUA_SEEDANCE_AUDIO_DIRECTOR_LOCK).toMatch(/配音|口型|时间轴/);
@@ -88,7 +88,7 @@ describe("manhuaClipDialogueTimeline", () => {
           index: 1,
           durationSec: 0,
           cameraZh: "近景",
-          actionZh: "递出玉佩",
+          actionZh: "@角色5 递出玉佩",
           dialogueZh: "拿着",
           emotionZh: "决绝",
           microExpressionZh: "目光钉死",
@@ -97,7 +97,7 @@ describe("manhuaClipDialogueTimeline", () => {
           index: 2,
           durationSec: 0,
           cameraZh: "中景",
-          actionZh: "握紧后退",
+          actionZh: "@角色4 握紧后退",
           dialogueZh: "你早就知道了？",
           emotionZh: "不信",
         },
@@ -108,7 +108,10 @@ describe("manhuaClipDialogueTimeline", () => {
     expect(text).toContain("约0–7.5s");
     expect(text).toContain("切镜：");
     expect(text).toContain("场景：雨夜巷口");
-    expect(text).toContain("配音台词顺序核验");
+    expect(text).toContain("对白顺序（人物锁+表情一体）");
+    expect(text).toContain("@角色5（情绪：决绝｜微表情：目光钉死）：「拿着」");
+    expect(text).toContain("@角色4（情绪：不信）：「你早就知道了？」");
+    expect(text).toContain("配音锁定（人物+表情+台词）");
     expect(text).toContain("成片配音与导戏硬锁");
     expect(text).toContain("只重出本段");
     expect(text).toContain("跨镜连续硬锁");

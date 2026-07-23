@@ -10,7 +10,11 @@ export type ManhuaPerformanceCue = {
   voiceToneZh: string;
   microExpressionZh: string;
   bodyBeatZh: string;
+  /** 说话人资产锁，如 @角色5；成片对白须与表情同锁 */
+  speakerAtTag?: string;
 };
+
+const SPEAKER_AT_RE = /@角色\d+/;
 
 const DIALOGUE_RE =
   /[「『"“]([^」』"”]{1,48})[」』"”]|台词[：:]\s*([^\n。；;]{1,48})/;
@@ -43,6 +47,53 @@ function firstMatch(text: string, re: RegExp): string {
   return clean(m[0] || "").slice(0, 48);
 }
 
+/** 从动作/台词/多段文本里取首个 @角色N（说话人锁） */
+export function extractManhuaSpeakerAtTag(
+  ...texts: Array<string | undefined | null>
+): string {
+  for (const raw of texts) {
+    const m = String(raw || "").match(SPEAKER_AT_RE);
+    if (m?.[0]) return m[0];
+  }
+  return "";
+}
+
+/** 去掉台词前缀上的 @角色N / 引号外壳，便于再包一层锁定行 */
+export function stripManhuaSpeakerAtPrefix(dialogueZh: string): string {
+  return clean(String(dialogueZh || ""))
+    .replace(/^@角色\d+\s*[：:｜|（(]?\s*/, "")
+    .replace(/^[「『"“]|[」』"”]$/g, "")
+    .trim();
+}
+
+/**
+ * 对白 + 人物锁 + 表情语气整合为一行（成片导戏用）。
+ * 例：@角色5（情绪：决绝｜微表情：下颌绷紧｜语气：压嗓）：「拿着。」
+ */
+export function formatManhuaLockedDialogueLine(input: {
+  speakerAtTag?: string;
+  dialogueZh?: string;
+  emotionZh?: string;
+  microExpressionZh?: string;
+  voiceToneZh?: string;
+}): string {
+  const dialogue = stripManhuaSpeakerAtPrefix(String(input.dialogueZh || ""));
+  if (!dialogue) return "";
+  const speaker =
+    String(input.speakerAtTag || "").trim() ||
+    extractManhuaSpeakerAtTag(input.dialogueZh);
+  const bits = [
+    input.emotionZh ? `情绪：${clean(input.emotionZh).slice(0, 48)}` : "",
+    input.microExpressionZh
+      ? `微表情：${clean(input.microExpressionZh).slice(0, 64)}`
+      : "",
+    input.voiceToneZh ? `语气：${clean(input.voiceToneZh).slice(0, 40)}` : "",
+  ].filter(Boolean);
+  const perform = bits.length ? `（${bits.join("｜")}）` : "";
+  if (speaker) return `${speaker}${perform}：「${dialogue}」`;
+  return bits.length ? `${perform}：「${dialogue}」` : `「${dialogue}」`;
+}
+
 /** 从分镜动作行 / 剧本句抽出表演线索 */
 export function extractManhuaPerformanceCue(
   raw: string | undefined | null,
@@ -55,6 +106,7 @@ export function extractManhuaPerformanceCue(
       voiceToneZh: "",
       microExpressionZh: "",
       bodyBeatZh: "",
+      speakerAtTag: "",
     };
   }
   const dialogueZh = firstMatch(t, DIALOGUE_RE);
@@ -68,6 +120,7 @@ export function extractManhuaPerformanceCue(
     voiceToneZh,
     microExpressionZh,
     bodyBeatZh,
+    speakerAtTag: extractManhuaSpeakerAtTag(t),
   };
 }
 
@@ -84,6 +137,10 @@ export function mergeManhuaPerformanceCue(
     microExpressionZh:
       clean(base?.microExpressionZh || "") || fromAction.microExpressionZh,
     bodyBeatZh: clean(base?.bodyBeatZh || "") || fromAction.bodyBeatZh,
+    speakerAtTag:
+      clean(base?.speakerAtTag || "") ||
+      fromAction.speakerAtTag ||
+      extractManhuaSpeakerAtTag(base?.dialogueZh, actionOrScript),
   });
 }
 
@@ -156,12 +213,18 @@ export function formatManhuaPerformanceInjectBlock(
   }
 
   if (!hasManhuaPerformanceCue(cue)) return "";
+  const lockedLine = formatManhuaLockedDialogueLine(cue);
   const lines: string[] = [
     `【人物表演·成片台词${shot}】`,
-    "硬锁：台词只驱动口型与气口，禁止字幕、气泡、旁白条或任何可读字形烧进画面。",
+    "硬锁：台词只驱动口型与气口，禁止字幕、气泡、旁白条或任何可读字形烧进画面；说话人必须用 @角色N 锁定，表情与台词同属该人。",
   ];
-  if (cue.dialogueZh) {
+  if (lockedLine) {
+    lines.push(`配音锁定（人物+表情+台词）：${lockedLine}`);
+  } else if (cue.dialogueZh) {
     lines.push(`台词（口型气口依据）：「${cue.dialogueZh}」`);
+  }
+  if (cue.speakerAtTag) {
+    lines.push(`说话人锁：${cue.speakerAtTag}（口型只动此人脸，禁串戏换人）`);
   }
   if (cue.voiceToneZh) {
     lines.push(`说话语气：${cue.voiceToneZh}`);

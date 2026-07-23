@@ -4,6 +4,8 @@
 
 import {
   extractManhuaPerformanceCue,
+  extractManhuaSpeakerAtTag,
+  formatManhuaLockedDialogueLine,
   formatManhuaPerformanceInjectBlock,
   mergeManhuaPerformanceCue,
   stripQuotedDialogueFromAction,
@@ -670,24 +672,60 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
       "承接段内首张静帧构图做可读微动",
   );
   const lead = input.shots[0];
-  /** 成片对白：字段优先，缺则从动作行「」抽取；本轮 Seedance 必演口型气口 */
-  const dialogueChain = input.shots
+  /** 成片对白：字段优先，缺则从动作行「」抽取；与 @角色N + 表情整合成锁行 */
+  const dialogueShots = input.shots
     .map((s) => {
-      const direct = String(s.dialogueZh || "").trim();
-      if (direct) return direct;
-      return extractManhuaPerformanceCue(s.actionZh).dialogueZh;
+      const fromAction = extractManhuaPerformanceCue(s.actionZh);
+      const dialogueZh =
+        String(s.dialogueZh || "").trim() || fromAction.dialogueZh;
+      if (!dialogueZh) return null;
+      const speakerAtTag = extractManhuaSpeakerAtTag(
+        s.dialogueZh,
+        s.actionZh,
+        fromAction.speakerAtTag,
+      );
+      return {
+        dialogueZh,
+        speakerAtTag,
+        emotionZh: String(s.emotionZh || fromAction.emotionZh || "").trim(),
+        microExpressionZh: String(
+          s.microExpressionZh || fromAction.microExpressionZh || "",
+        ).trim(),
+        voiceToneZh: String(s.voiceToneZh || fromAction.voiceToneZh || "").trim(),
+        lockedLine: formatManhuaLockedDialogueLine({
+          speakerAtTag,
+          dialogueZh,
+          emotionZh: s.emotionZh || fromAction.emotionZh,
+          microExpressionZh: s.microExpressionZh || fromAction.microExpressionZh,
+          voiceToneZh: s.voiceToneZh || fromAction.voiceToneZh,
+        }),
+      };
     })
     .filter(Boolean)
-    .slice(0, 4);
+    .slice(0, 4) as Array<{
+    dialogueZh: string;
+    speakerAtTag: string;
+    emotionZh: string;
+    microExpressionZh: string;
+    voiceToneZh: string;
+    lockedLine: string;
+  }>;
+  const dialogueChain = dialogueShots.map((d) => d.dialogueZh);
+  const lockedDialogueChain = dialogueShots
+    .map((d) => d.lockedLine)
+    .filter(Boolean);
+  const leadDialogue = dialogueShots[0];
   const performance = formatManhuaPerformanceInjectBlock(
     mergeManhuaPerformanceCue(
       {
-        dialogueZh: dialogueChain[0] || lead?.dialogueZh,
-        emotionZh: lead?.emotionZh,
-        voiceToneZh: lead?.voiceToneZh,
-        microExpressionZh: lead?.microExpressionZh,
+        dialogueZh: leadDialogue?.dialogueZh || lead?.dialogueZh,
+        emotionZh: lead?.emotionZh || leadDialogue?.emotionZh,
+        voiceToneZh: lead?.voiceToneZh || leadDialogue?.voiceToneZh,
+        microExpressionZh:
+          lead?.microExpressionZh || leadDialogue?.microExpressionZh,
+        speakerAtTag: leadDialogue?.speakerAtTag,
       },
-      action,
+      `${lead?.actionZh || ""}\n${action}`,
     ),
     { stage: "clip", shotIndex: seg },
   );
@@ -725,10 +763,10 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
       segment: {
         index: seg,
         intentZh: intentZh || "让观众感到局势或人物关系变化",
-        dialogueZh: dialogueChain[0] || "",
+        dialogueZh: leadDialogue?.lockedLine || dialogueChain[0] || "",
         sceneZh: String(input.sceneHintZh || "").trim(),
         paletteZh: "",
-        castZh: "",
+        castZh: lockedDialogueChain.map((l) => l.match(/@角色\d+/)?.[0] || "").filter(Boolean).join("、"),
         wardrobePropZh: "",
         lightingCameraZh: camera,
         performanceZh: String(lead?.emotionZh || "").trim(),
@@ -751,8 +789,8 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
       segmentIndex: seg,
       sceneHintZh: input.sceneHintZh,
     }),
-    dialogueChain.length
-      ? `对白顺序：${dialogueChain.map((d) => `「${d}」`).join(" → ")}`
+    lockedDialogueChain.length
+      ? `对白顺序（人物锁+表情一体）：${lockedDialogueChain.join(" → ")}`
       : "",
     performance,
     `动作轨迹（道具交互与站位起止连续）：${action}`,
@@ -774,7 +812,11 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     .join("\n");
   // 防火墙只吃短摘要，完整成片正文放 extra，避免被 900 字截断丢掉硬锁
   const beatSummary = [
-    dialogueChain[0] ? `对白：${dialogueChain[0]}` : "",
+    lockedDialogueChain[0]
+      ? `对白：${lockedDialogueChain[0]}`
+      : dialogueChain[0]
+        ? `对白：${dialogueChain[0]}`
+        : "",
     `动作：${action.slice(0, 160)}`,
     `运镜：${camera.slice(0, 80)}`,
     input.sceneHintZh ? `场景：${String(input.sceneHintZh).trim().slice(0, 60)}` : "",

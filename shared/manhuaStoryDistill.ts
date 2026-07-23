@@ -17,6 +17,10 @@ import {
   formatManhuaDirectingCoherenceBlock,
   formatManhuaEnsembleActionHierarchyBlock,
 } from "./manhuaDirectorDistill.js";
+import {
+  extractManhuaSpeakerAtTag,
+  formatManhuaLockedDialogueLine,
+} from "./manhuaPerformancePrompt.js";
 
 /** 与工作台静帧口径对齐（避免与 manhuaScriptWorkbench 循环依赖） */
 export const MANHUA_DISTILL_KEYARTS_PER_SEGMENT_MIN = 3;
@@ -269,9 +273,17 @@ export function formatManhuaSecondCueSheetBlock(
       head,
       `  场景：${b.sceneZh || "本场"}｜服化道：${b.wardrobePropZh || "连续"}`,
       `  动作：${b.actionZh || "可读动作"}`,
-      b.dialogueZh
-        ? `  对白（须出声）：「${b.dialogueZh}」${b.emotionZh ? `｜情绪：${b.emotionZh}` : ""}`
-        : `  对白：本镜无台词，保留气口${b.emotionZh ? `｜情绪：${b.emotionZh}` : ""}`,
+      (() => {
+        const locked = formatManhuaLockedDialogueLine({
+          speakerAtTag: extractManhuaSpeakerAtTag(b.actionZh, b.dialogueZh),
+          dialogueZh: b.dialogueZh,
+          emotionZh: b.emotionZh,
+        });
+        if (!locked) {
+          return `  对白：本镜无台词，保留气口${b.emotionZh ? `｜情绪：${b.emotionZh}` : ""}`;
+        }
+        return `  对白（须出声·人物锁+表情）：${locked}`;
+      })(),
       `  光影运镜：${b.lightingCameraZh || b.cameraZh}`,
       `  交接：${b.handoffOutZh}`,
     ].join("\n");
