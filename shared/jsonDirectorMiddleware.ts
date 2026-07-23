@@ -351,10 +351,38 @@ export type CompileI2VMotionPromptOpts = {
   pathAnnotationJson?: unknown;
 };
 
+/** 漫剧段成片导戏单：须整段喂 Seedance，禁止压成三句微动口令 */
+export function isManhuaSeedanceDirectorPrompt(raw: string): boolean {
+  const t = String(raw || "");
+  if (
+    /【视频生成导戏单/.test(t) ||
+    /【第\s*\d+\s*段·成片】/.test(t) ||
+    /【节拍防火墙】/.test(t) ||
+    /对白顺序（人物锁/.test(t) ||
+    /【按秒导戏单/.test(t) ||
+    /【成片配音与导戏硬锁】/.test(t) ||
+    /配音锁定（人物\+表情\+台词）/.test(t) ||
+    /@角色\d+（情绪[：:]/.test(t) ||
+    /目标时长：约\s*\d/.test(t)
+  ) {
+    return true;
+  }
+  // clip 节点常见长中文导戏（含对白/分镜/@角色）也整段放行
+  return (
+    t.length >= 400 &&
+    /对白|导戏|分镜|口型|运镜|@角色/.test(t) &&
+    !/(cyberpunk|masterpiece|8k|neon\s+masterpiece)/i.test(t)
+  );
+}
+
+/** Seedance 导戏单保留上限（勿砍掉对白锁） */
+export const MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS = 8000;
+
 /**
  * 图生视频提示词编译：有参考图时强制做减法。
  * 公式：[镜头运动] + [主体微动] + [环境氛围]
  * 有路径配方/标注时优先用分阶段时段句。
+ * 例外：漫剧段成片导戏单（含 @角色N 对白锁）必须原样放行。
  */
 export function compileI2VMotionPrompt(
   rawPrompt: string,
@@ -375,6 +403,11 @@ export function compileI2VMotionPrompt(
     return "缓慢电影感推进，主体呼吸微动自然，气氛柔和。";
   }
 
+  // 漫剧工厂成片：导戏单/对白锁/按秒单必须进 Seedance，禁止压成微动三件套
+  if (isManhuaSeedanceDirectorPrompt(raw)) {
+    return raw.slice(0, MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS);
+  }
+
   // 必须像「运镜口令」本身，不能仅因含 cinematic/dust 形容词就原样放行长文
   const alreadyMotionLike =
     raw.length <= 160 &&
@@ -386,9 +419,10 @@ export function compileI2VMotionPrompt(
 
   if (alreadyMotionLike) return raw;
 
-  // 中文路径时段句 / 红蓝双轨句直接放行
+  // 中文路径时段句 / 红蓝双轨句 / 按秒导戏时段 直接放行
   if (
     /^\d+[–-]\d+秒[：:]/m.test(raw) ||
+    /^\d+[–-]\d+(?:\.\d+)?s[｜|]/m.test(raw) ||
     /【路径】|【动作】|红蓝双轨|人物节拍|镜头节拍/.test(raw) ||
     /^\d+-\d+s:\s*camera/i.test(raw) ||
     /One primary path move/i.test(raw)

@@ -9,6 +9,7 @@ import {
 } from "./omniCanvasApi";
 import {
   compileI2VMotionPrompt,
+  isManhuaSeedanceDirectorPrompt,
   extractPlainImagePrompt,
   fallbackEnglishFromJson,
   prepareJsonDirectorImageJob,
@@ -720,21 +721,28 @@ export async function runCanvasBlock(
     const followStillPrompt = String(mergedPrompt || "").includes("参考静帧")
       ? mergedPrompt
       : `${mergedPrompt}\n\n${MANHUA_VIDEO_FOLLOW_STILL_ZH}`;
+    const seedanceDirectorSource = continuityVideoUrl
+      ? `${followStillPrompt}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}`
+      : followStillPrompt;
+    // 漫剧导戏单（含 @角色N 对白锁）必须整段进 Seedance；不可压成三句微动口令
     const motionPrompt = stripManhuaPromptSlop(
-      compileI2VMotionPrompt(
-        continuityVideoUrl
-          ? `${followStillPrompt}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}`
-          : followStillPrompt,
-        {
-          hasReferenceImage: Boolean(stillRef || continuityVideoUrl || fusionStillUrls.length),
-          pathCameraRecipeId: block.pathCameraRecipeId,
-          pathAnnotationJson: block.pathAnnotationJson,
-        },
-      ),
+      isManhuaSeedanceDirectorPrompt(seedanceDirectorSource) ||
+        block.id.startsWith("clip-")
+        ? compileI2VMotionPrompt(seedanceDirectorSource, {
+            hasReferenceImage: Boolean(stillRef || continuityVideoUrl || fusionStillUrls.length),
+            // clip 不用路径配方覆盖整段导戏单
+            pathCameraRecipeId: undefined,
+            pathAnnotationJson: undefined,
+          })
+        : compileI2VMotionPrompt(seedanceDirectorSource, {
+            hasReferenceImage: Boolean(stillRef || continuityVideoUrl || fusionStillUrls.length),
+            pathCameraRecipeId: block.pathCameraRecipeId,
+            pathAnnotationJson: block.pathAnnotationJson,
+          }),
     );
     const videoModel = block.videoModel || "seedance-2.0-fast";
     console.info(
-      `[canvasRunBlock] video · id=${block.id} · videoModel=${videoModel} · stills=${[stillRef, ...fusionStillUrls].filter(Boolean).length} · continuity=${Boolean(continuityVideoUrl)}`,
+      `[canvasRunBlock] video · id=${block.id} · videoModel=${videoModel} · stills=${[stillRef, ...fusionStillUrls].filter(Boolean).length} · continuity=${Boolean(continuityVideoUrl)} · directorPass=${isManhuaSeedanceDirectorPrompt(motionPrompt)} · promptChars=${motionPrompt.length}`,
     );
     let url = "";
     if (videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast") {

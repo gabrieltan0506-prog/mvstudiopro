@@ -67,6 +67,36 @@ describe("jsonDirectorMiddleware", () => {
     expect(compileI2VMotionPrompt(p, { hasReferenceImage: true })).toBe(p);
   });
 
+  it("keeps manhua segment director sheet with locked @角色 dialogue for Seedance", async () => {
+    const { formatWorkbenchSegmentClipInjectBlock } = await import(
+      "../../shared/manhuaScriptWorkbench.js"
+    );
+    const sheet = formatWorkbenchSegmentClipInjectBlock({
+      segmentIndex: 1,
+      durationSec: 12,
+      sceneHintZh: "边关烽火台",
+      shots: [
+        {
+          index: 1,
+          durationSec: 4,
+          cameraZh: "近景微推",
+          actionZh: "@角色5 亮火信",
+          dialogueZh: "拿着。",
+          emotionZh: "决绝",
+          microExpressionZh: "下颌绷紧",
+          voiceToneZh: "压嗓",
+        },
+      ],
+    });
+    const motion = compileI2VMotionPrompt(`${sheet}\n\n【参考静帧】对齐`, {
+      hasReferenceImage: true,
+    });
+    expect(motion.length).toBeGreaterThan(400);
+    expect(motion).toContain("@角色5（情绪：决绝｜微表情：下颌绷紧｜语气：压嗓）：「拿着。」");
+    expect(motion).toContain("视频生成导戏单");
+    expect(motion).not.toMatch(/^缓慢推进；/);
+  });
+
   it("extractPlainImagePrompt strips fences", () => {
     expect(extractPlainImagePrompt("```\nHello world shot\n```")).toBe("Hello world shot");
   });

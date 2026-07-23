@@ -1535,7 +1535,22 @@ export function ensureManhuaFragmentClips(
         .join("\n\n"),
     );
     if (existing) {
+      // 已有段成片：刷新导戏 prompt（对白锁/@角色），保留已生成成片 URL
       keepSegClipIds.add(existing.id);
+      clipBySeg.set(globalSeg, {
+        ...existing,
+        prompt: segPrompt,
+        parentId: primary.id,
+        refImageUrl: segUrls[0] || mediaUrlOf(primary) || existing.refImageUrl,
+        editFusionUrls: segUrls.slice(1).slice(0, 15),
+        videoModel:
+          existing.videoModel === "seedance-2.0" ||
+          existing.videoModel === "seedance-2.0-fast"
+            ? existing.videoModel
+            : defaultModel === "seedance-2.0" || defaultModel === "seedance-2.0-fast"
+              ? defaultModel
+              : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
+      });
       continue;
     }
     const clone: CanvasBlock = {
@@ -1573,11 +1588,17 @@ export function ensureManhuaFragmentClips(
     ...(legacyClip && keepSegClipIds.size ? [legacyClip.id] : []),
   ]);
 
+  const refreshedById = new Map(
+    [...clipBySeg.values()].map((c) => [c.id, c] as const),
+  );
+
   let nextBlocks = [
     ...blocks.filter((b) => !staleClipIds.has(b.id)),
     ...nextExtras,
   ].map((b) => {
     if (!b.id.startsWith("clip-") || !sameEpisode(b) || !keepSegClipIds.has(b.id)) return b;
+    const refreshed = refreshedById.get(b.id);
+    if (refreshed) return refreshed;
     const localSeg = resolveClipLocalSegmentIndex(b.id, b.prompt, ep);
     const seg = segments.find((s) => s.index === localSeg);
     const segKeyarts = (seg?.shots || [])
