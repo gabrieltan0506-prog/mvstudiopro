@@ -24,7 +24,26 @@ export function formatManhuaFactoryUserError(raw: string): string {
     return "关键静帧需要人物/场景参考底图才能生成。请先锁定角色并出齐定妆与场景空镜，或上传人物参考后再试。";
   }
   if (/关键静帧改图失败/i.test(msg)) {
-    return "关键静帧生成失败：参考底图可能无法访问，请确认定妆/场景图已出齐后重试。";
+    if (/ref download HTTP|downloadUrl|垫图.*下载|Unable to download|could not be downloaded/i.test(msg)) {
+      return "关键静帧失败：参考底图下载失败。请到资产设定点开定妆/场景预览确认能打开，再重出静帧。";
+    }
+    if (/Credits 不足|积分不足|PAYMENT_REQUIRED/i.test(msg)) {
+      return "关键静帧失败：算力不足，请充值或稍后再试。";
+    }
+    if (/timeout|超时|ETIMEDOUT|AbortError/i.test(msg)) {
+      return "关键静帧失败：出图超时，请稍后重试该镜（已出成功的会保留）。";
+    }
+    if (/content[_ ]?policy|safety|被拒绝|moderation/i.test(msg)) {
+      return "关键静帧失败：画面内容未通过审核，请改分镜描述或换参考图后重试。";
+    }
+    if (/HTTP 429|rate limit|负载|繁忙/i.test(msg)) {
+      return "关键静帧失败：出图繁忙，请稍候再点「生成关键静帧」。";
+    }
+    const tail = msg.replace(/^.*?关键静帧改图失败[：:]\s*/i, "").trim();
+    if (tail && tail.length < 140 && !/GPT-Image|OpenAI|OpenRouter/i.test(tail)) {
+      return `关键静帧生成失败：${tail}`;
+    }
+    return "关键静帧生成失败。请确认定妆/场景参考能打开后，再重出失败的镜头。";
   }
   if (/请先确认剧本大纲/i.test(msg)) return msg;
   if (/请先锁定人物|请先锁定场景|请先出齐/i.test(msg)) return msg;
