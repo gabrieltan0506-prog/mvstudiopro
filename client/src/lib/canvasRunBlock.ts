@@ -334,6 +334,7 @@ async function runSeedance20(
         resolution: version === "2.0-fast" ? "720p" : "720p",
         aspectRatio,
         duration,
+        // 产品口径：只用引擎自带 Audio on，暂不另开后期配音 API
         generateAudio: true,
         version,
       }),

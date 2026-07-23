@@ -64,12 +64,13 @@ describe("manhuaClipDialogueTimeline", () => {
     expect(block).toContain("切镜：开场建立");
     expect(block).toContain("运镜：");
     expect(block).toContain("场景：古宅廊下");
-    expect(block).toContain("配音/对白");
+    expect(block).toMatch(/对白（引擎自带有声/);
     expect(block).toContain("@角色2（情绪：怒｜微表情：咬牙｜语气：压嗓）：「放开！」");
     expect(block).toContain("说话人锁：@角色2");
     expect(block).toContain("只重出本段");
+    expect(block).toMatch(/禁止后期另录配音|Audio on/);
     expect(MANHUA_CROSS_SHOT_CONTINUITY_LOCK).toMatch(/换脸|服装|跳棚/);
-    expect(MANHUA_SEEDANCE_AUDIO_DIRECTOR_LOCK).toMatch(/配音|口型|时间轴/);
+    expect(MANHUA_SEEDANCE_AUDIO_DIRECTOR_LOCK).toMatch(/引擎同轮出声|口型|时间轴|禁止另开后期配音/);
   });
 
   it("extracts scene name from keyart prompt", () => {
@@ -111,11 +112,11 @@ describe("manhuaClipDialogueTimeline", () => {
     expect(text).toContain("对白顺序（人物锁+表情一体）");
     expect(text).toContain("@角色5（情绪：决绝｜微表情：目光钉死）：「拿着」");
     expect(text).toContain("@角色4（情绪：不信）：「你早就知道了？」");
-    expect(text).toContain("配音锁定（人物+表情+台词）");
-    expect(text).toContain("成片配音与导戏硬锁");
+    expect(text).toContain("对白锁定（人物+表情+台词·引擎有声）");
+    expect(text).toContain("成片有声与导戏硬锁");
     expect(text).toContain("只重出本段");
     expect(text).toContain("跨镜连续硬锁");
     expect(text).toMatch(/换脸|服装/);
-    expect(text).toContain("有声配音");
+    expect(text).toMatch(/引擎自带对白有声|引擎有声对白/);
   });
 });

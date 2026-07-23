@@ -216,10 +216,10 @@ export function formatManhuaPerformanceInjectBlock(
   const lockedLine = formatManhuaLockedDialogueLine(cue);
   const lines: string[] = [
     `【人物表演·成片台词${shot}】`,
-    "硬锁：台词只驱动口型与气口，禁止字幕、气泡、旁白条或任何可读字形烧进画面；说话人必须用 @角色N 锁定，表情与台词同属该人。",
+    "硬锁：台词只驱动口型与气口，禁止字幕、气泡、旁白条或任何可读字形烧进画面；说话人必须用 @角色N 锁定，表情与台词同属该人；有声靠成片引擎同轮出声，勿后期另配。",
   ];
   if (lockedLine) {
-    lines.push(`配音锁定（人物+表情+台词）：${lockedLine}`);
+    lines.push(`对白锁定（人物+表情+台词·引擎有声）：${lockedLine}`);
   } else if (cue.dialogueZh) {
     lines.push(`台词（口型气口依据）：「${cue.dialogueZh}」`);
   }

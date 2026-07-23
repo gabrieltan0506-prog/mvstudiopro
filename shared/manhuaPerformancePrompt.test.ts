@@ -52,7 +52,7 @@ describe("manhuaPerformancePrompt dialogue split", () => {
     const clip = formatManhuaPerformanceInjectBlock(cue, { stage: "clip", shotIndex: 2 });
     expect(clip).toContain("是我对不住你");
     expect(clip).toContain("@角色1");
-    expect(clip).toContain("配音锁定（人物+表情+台词）");
+    expect(clip).toContain("对白锁定（人物+表情+台词·引擎有声）");
     expect(clip).toContain("气口");
     expect(clip).toMatch(/禁止字幕|禁止烧/);
   });

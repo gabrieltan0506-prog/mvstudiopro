@@ -360,8 +360,8 @@ export function isManhuaSeedanceDirectorPrompt(raw: string): boolean {
     /【节拍防火墙】/.test(t) ||
     /对白顺序（人物锁/.test(t) ||
     /【按秒导戏单/.test(t) ||
-    /【成片配音与导戏硬锁】/.test(t) ||
-    /配音锁定（人物\+表情\+台词）/.test(t) ||
+    /【成片(?:配音|有声)与导戏硬锁】/.test(t) ||
+    /(?:配音|对白)锁定（人物\+表情\+台词/.test(t) ||
     /@角色\d+（情绪[：:]/.test(t) ||
     /目标时长：约\s*\d/.test(t)
   ) {
