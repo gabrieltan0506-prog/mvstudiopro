@@ -12,14 +12,18 @@
  *   pnpm run manhua:template-learn -- --video ./local.mp4 --title "已有成片"
  *
  * 依赖：本机 yt-dlp、ffmpeg/ffprobe。
- * 语音分析（方案 A，默认）：本机 PUT → GCS → Fly `/api/google?op=manhuaAudioClimaxScan`（Gemini 3.5 Flash）。
- * 读帧分析（默认）：本机 PUT 帧 → GCS → Fly `manhuaTemplateFrameScan`（GPT-5.6 Terra · high）→ 自动填提案，仍待人审。
+ * 抖音下片登录态：与 Fly 趋势采集同源（DOUYIN_COOKIE / DOUYIN_COOKIE_BACKUP）；
+ *   或 MANHUA_LEARN_YTDLP_COOKIES_FILE=Netscape cookies.txt；
+ *   或 MANHUA_LEARN_YTDLP_COOKIES_FROM_BROWSER=chrome。
+ * 语音分析（方案 A，默认）：本机 PUT → GCS → Fly `/api/google?op=manhuaAudioClimaxScan`。
+ * 读帧分析（默认）：本机 PUT 帧 → GCS → Fly `manhuaTemplateFrameScan`→ 自动填提案，仍待人审。
  * 可选本机直打：MANHUA_LEARN_LOCAL_GEMINI=1 / MANHUA_LEARN_LOCAL_TERRA=1。
  * 语音失败则静音检测估高潮；读帧失败则保留「待读帧」草案。
  *
  * 环境：
  *   MANHUA_LEARN_FLY_ORIGIN=https://mvstudiopro.fly.dev  （或 api.mvstudiopro.com）
  *   MANHUA_LEARN_VIA_FLY=0  关闭 Fly 通路
+ *   DOUYIN_COOKIE=…  （与 Fly secrets 同名即可本机复用）
  */
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
@@ -52,6 +56,13 @@ import {
   isGeminiAudioAvailable,
   type ManhuaDramaAudioScanResult,
 } from "../server/gemini-audio.js";
+import { mapManhuaLearnFetchError } from "../shared/manhuaLearnYtdlp.js";
+import {
+  assertYtdlpCookieReadyForUrl,
+  openYtdlpCookieSession,
+  runYtdlp,
+  throwMappedYtdlpFailure,
+} from "../server/services/manhuaLearnYtdlpRuntime.js";
 
 function logLearnStage(stage: string, detailZh?: string) {
   console.log(`[learn·${stage}] ${manhuaLearnStageLabelZh(stage, detailZh)}`);
@@ -497,21 +508,34 @@ async function extractFrames(
 
 async function downloadVideo(url: string, workDir: string): Promise<string> {
   await fs.mkdir(workDir, { recursive: true });
-  const outTpl = path.join(workDir, "source.%(ext)s");
-  console.log("[learn] yt-dlp 下载…", url.slice(0, 120));
-  const code = await run("yt-dlp", [
-    "-f",
-    "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best",
-    "--merge-output-format",
-    "mp4",
-    "-o",
-    outTpl,
-    "--no-playlist",
-    "--max-filesize",
-    "180M",
-    url,
-  ]);
-  if (code !== 0) throw new Error("yt-dlp 下载失败（请确认本机已安装且链接可访问）");
+  if (/douyin\.com\/search\//i.test(url)) {
+    throw new Error("当前是搜索页链接，请改用成片/合集页地址后再学节奏");
+  }
+  assertYtdlpCookieReadyForUrl(url);
+  const cookies = await openYtdlpCookieSession();
+  try {
+    const outTpl = path.join(workDir, "source.%(ext)s");
+    console.log("[learn] 下载成片…", url.slice(0, 120), cookies.hasCookies ? "(已带登录态)" : "");
+    const { code, stderr } = await runYtdlp([
+      ...cookies.args,
+      "-f",
+      "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best",
+      "--merge-output-format",
+      "mp4",
+      "-o",
+      outTpl,
+      "--no-playlist",
+      "--max-filesize",
+      "180M",
+      "--no-warnings",
+      url,
+    ]);
+    if (code !== 0) throwMappedYtdlpFailure(stderr);
+  } catch (e) {
+    throw new Error(mapManhuaLearnFetchError(e));
+  } finally {
+    await cookies.cleanup();
+  }
   const files = await fs.readdir(workDir);
   const vid = files.find((f) => /\.(mp4|webm|mkv)$/i.test(f));
   if (!vid) throw new Error("下载完成但未找到视频文件");

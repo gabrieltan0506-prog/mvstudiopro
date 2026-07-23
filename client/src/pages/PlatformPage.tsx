@@ -74,6 +74,7 @@ import { getLoginUrl } from "@/const";
 import { appendPollDebugLine, createJob, getJob, pollJobUntilTerminal } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
+import { shouldSkipLocalLearnFallback } from "@shared/manhuaLearnYtdlp";
 import type { AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
 import { buildBlueOceanLexicon } from "@shared/blueOceanLexicon";
 import { appendFashionEditorialCharacterGuidance } from "@shared/platformFashionEditorialCharacter";
@@ -3876,7 +3877,10 @@ export default function PlatformPage() {
             }),
           );
           toast.error("学习未完成", { description: `${errZh}（进度与原因见下方面板）` });
-          await copyManhuaLocalLearnFallback(row, errZh);
+          // 登录态类失败：本机同样缺/同凭证，回退只会重复报错
+          if (!shouldSkipLocalLearnFallback(errZh)) {
+            await copyManhuaLocalLearnFallback(row, errZh);
+          }
           return;
         }
         const out = (job.output || {}) as Record<string, unknown>;
@@ -3902,7 +3906,9 @@ export default function PlatformPage() {
           }),
         );
         toast.error("学习未完成", { description: `${msg || "云端入队失败"}（进度见下方面板）` });
-        await copyManhuaLocalLearnFallback(row, msg || "云端入队失败");
+        if (!shouldSkipLocalLearnFallback(msg || "")) {
+          await copyManhuaLocalLearnFallback(row, msg || "云端入队失败");
+        }
       } finally {
         setManhuaLearnBusyKey(null);
       }
