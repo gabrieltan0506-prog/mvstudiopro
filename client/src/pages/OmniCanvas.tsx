@@ -28,6 +28,10 @@ import {
 import { resolveManhuaCustomAssetSeed } from "@shared/manhuaCustomAssetSeed";
 import { absolutizeManhuaAssetUrl } from "@shared/manhuaKeyartEditFusion";
 import {
+  formatManhuaFactoryUserError,
+  manhuaFactoryStageLabelFromBlockId,
+} from "@shared/manhuaFactoryUserErrors";
+import {
   MANHUA_ASSET_SHARE_CONSENT_HINT_ZH,
   MANHUA_ASSET_STILL_FULL_CREDITS,
   MANHUA_ASSET_STILL_SHARE_HALF_CREDITS,
@@ -1786,11 +1790,15 @@ export default function OmniCanvas() {
                 response: msg,
               });
             }
-            if (!canRetry) throw e;
+            if (!canRetry) {
+              throw new Error(formatManhuaFactoryUserError(msg));
+            }
             await new Promise((r) => setTimeout(r, 1200 * attempt));
           }
         }
-        throw lastErr instanceof Error ? lastErr : new Error("optimizeCopy failed");
+        throw lastErr instanceof Error
+          ? new Error(formatManhuaFactoryUserError(lastErr.message))
+          : new Error("文案生成失败，请稍后重试");
       },
       uploadImageFile: async (file) => {
         const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
@@ -3657,15 +3665,20 @@ export default function OmniCanvas() {
               });
               stageStartedAtRef.current = null;
             }
-            // 单镜/单片段失败不拦后续镜——继续出齐本集分镜
+            // 单镜/单片段失败不拦后续镜——继续出齐本集分镜；但必须立刻用人话提示（不靠 debug）
             if (result.errors.length) {
               lastError = result.errors[0]!;
+              const rawDetail = result.errors
+                .map((e) => `${e.id}:${e.message}`)
+                .join(" · ");
               pushDebug("factoryRun:shotError", {
                 level: "warn",
-                detail: result.errors
-                  .map((e) => `${e.id}:${e.message}`)
-                  .join(" · ")
-                  .slice(0, 280),
+                detail: rawDetail.slice(0, 280),
+              });
+              const stageZh = manhuaFactoryStageLabelFromBlockId(lastError.id);
+              const friendly = formatManhuaFactoryUserError(lastError.message);
+              toast.error(`${stageZh}未完成`, {
+                description: friendly,
               });
             }
           }
@@ -3686,15 +3699,18 @@ export default function OmniCanvas() {
           );
         } else if (lastError && completed === 0) {
           const errStage = stageKeyFromBlockId(lastError.id);
+          const stageZh =
+            (errStage && MANHUA_FACTORY_STAGE_LABEL_ZH[errStage]) ||
+            manhuaFactoryStageLabelFromBlockId(lastError.id);
+          const friendly = formatManhuaFactoryUserError(lastError.message || "");
           pushDebug("factoryRun:error", {
             level: "error",
             ms: Date.now() - runStartedAt,
             detail: `${errStage || "unknown"} · ${lastError.message || ""}`,
           });
-          toast.error(
-            `${errStage ? MANHUA_FACTORY_STAGE_LABEL_ZH[errStage] : "生成"}失败：${lastError.message || ""}`,
-          );
+          toast.error(`${stageZh}失败`, { description: friendly });
         } else if (lastError) {
+          const friendly = formatManhuaFactoryUserError(lastError.message);
           pushDebug("factoryRun:partial", {
             level: "warn",
             ms: Date.now() - runStartedAt,
@@ -3703,7 +3719,7 @@ export default function OmniCanvas() {
           toast.message(
             `已跑完可跑节点：新跑 ${completed}` + (skipped ? ` · 跳过 ${skipped}` : ""),
             {
-              description: `部分失败：${lastError.message.slice(0, 120)}。可单独重出失败镜。`,
+              description: `部分未完成：${friendly}。可单独重出失败步骤。`,
             },
           );
         } else {
@@ -3728,7 +3744,9 @@ export default function OmniCanvas() {
             description: "已完成片段保留；可改设定后继续测。",
           });
         } else {
-          toast.error(msg);
+          toast.error("生成失败", {
+            description: formatManhuaFactoryUserError(msg),
+          });
         }
         setFactoryProgress("");
       } finally {

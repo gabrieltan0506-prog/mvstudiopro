@@ -35,6 +35,11 @@ import {
   MANHUA_KEYART_NO_TEXT_EN,
 } from "@shared/manhuaScriptWorkbench";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
+import {
+  buildManhuaFactoryOptimizeBrief,
+  isManhuaBibleOrBeatsBlockId,
+  planManhuaFactoryOptimizeSource,
+} from "@shared/manhuaFactoryTextOptimize";
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
@@ -513,9 +518,38 @@ export async function runCanvasBlock(
         ? "你是创作助手：根据原文直接输出可发布的完整 Markdown 文案，语气专业、有画面感。"
         : "你是创作助手：深度优化并输出可直接发布的完整 Markdown（含标题、正文、平台适配要点）。";
     const sourceText = mergedPrompt.length >= 10 ? mergedPrompt : `${mergedPrompt}\n（请补全为完整创作文案）`;
+    const baseBrief =
+      block.kind === "copy_organize" ? `整理文案结构。\n${brief}` : brief;
+
+    // 漫剧 bible / beats：超约 16k 自动拆成 2～N 次请求拼接，不截断、不要求用户手动拆
+    if (isManhuaBibleOrBeatsBlockId(block.id)) {
+      const plan = planManhuaFactoryOptimizeSource(sourceText);
+      if (plan.overLimitZh) {
+        throw new Error(plan.overLimitZh);
+      }
+      const parts: string[] = [];
+      let previousMarkdown = "";
+      for (let i = 0; i < plan.chunks.length; i++) {
+        const chunk = plan.chunks[i]!;
+        const partMarkdown = await deps.optimizeCopy({
+          sourceText: chunk,
+          optimizationBrief: buildManhuaFactoryOptimizeBrief({
+            baseBrief,
+            partIndex: i + 1,
+            partTotal: plan.chunks.length,
+            previousMarkdown,
+          }),
+          modelName: model,
+        });
+        parts.push(String(partMarkdown || "").trim());
+        previousMarkdown = parts[parts.length - 1] || "";
+      }
+      return { outputText: parts.filter(Boolean).join("\n\n") };
+    }
+
     const text = await deps.optimizeCopy({
       sourceText,
-      optimizationBrief: block.kind === "copy_organize" ? `整理文案结构。\n${brief}` : brief,
+      optimizationBrief: baseBrief,
       modelName: model,
     });
     return { outputText: text };
@@ -561,18 +595,24 @@ export async function runCanvasBlock(
     if (isEdit && editRef && !/^https?:\/\//i.test(editRef)) {
       // 关键静帧禁止降级纯文生（曾漂成无关主体）；须可下载的 HTTPS 垫图
       if (isKeyart || keyartNeedsLibraryEdit) {
-        throw new Error("关键静帧需要人物库垫图（可访问的 HTTPS 底图），请先从人物库锁定角色后重试");
+        throw new Error(
+          "关键静帧需要可访问的参考底图。请先出齐角色定妆与场景空镜（或上传人物/场景参考）后再生成。",
+        );
       }
-      throw new Error("微调模式需要可访问的底图 URL（HTTPS）");
+      throw new Error("微调模式需要可访问的底图，请重新上传参考图后重试");
     }
     if (isEdit && !editRef) {
       if (isKeyart || keyartNeedsLibraryEdit) {
-        throw new Error("关键静帧须先垫人物库/上传参考图再改图，禁止无底图纯文生");
+        throw new Error(
+          "关键静帧必须基于人物/场景参考图生成，不能无底图直接出。请先锁定角色并出设定图，或上传人物参考。",
+        );
       }
       throw new Error("微调模式需要底图：请先上传图片，或先文生图后再点「微调这张图」");
     }
     if (isKeyart && !isEdit) {
-      throw new Error("关键静帧须走人物库垫图 + 改图；请先从人物库锁定角色（或上传人物参考）");
+      throw new Error(
+        "关键静帧必须挂上人物/场景参考后再生成。请回到资产设定确认定妆与空镜已齐，或上传人物参考。",
+      );
     }
     const fusionUrls = absolutizeManhuaAssetUrls(
       (block.editFusionUrls || [])

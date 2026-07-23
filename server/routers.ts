@@ -7895,8 +7895,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     optimizeCustomCopy: protectedProcedure
       .input(
         z.object({
-          sourceText: z.string().min(10).max(12000),
-          optimizationBrief: z.string().max(4000).optional(),
+          /** 单次请求上限；漫剧 bible/beats 超长由客户端按 ~16k 自动拆成 N 次，不截断原文 */
+          sourceText: z.string().min(10).max(32000),
+          optimizationBrief: z.string().max(8000).optional(),
           visionContext: z.string().max(8000).optional(),
           includeLiveTrends: z.boolean().optional(),
           liveTrendWindowDays: z.number().int().min(3).max(15).optional(),

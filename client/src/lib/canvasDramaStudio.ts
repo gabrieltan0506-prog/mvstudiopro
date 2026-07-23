@@ -2287,6 +2287,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                 };
               }
             } else if (batchParallel && shotCont.keyartFromPrevStill) {
+              // 批量并行不能拿上一镜静帧作硬底（上一镜可能未完成），
+              // 但绝不能清空已有人物/场景融图改成纯文生——会与关键静帧硬锁冲突。
               const basePrompt = String(runBlockPayload.prompt || "");
               if (
                 !basePrompt.includes("同集静帧一致性") &&
@@ -2294,9 +2296,6 @@ export async function runManhuaDramaFactoryPipeline(opts: {
               ) {
                 runBlockPayload = {
                   ...runBlockPayload,
-                  imageMode: "generate",
-                  refImageUrl: undefined,
-                  editFusionUrls: [],
                   prompt: `${basePrompt}\n\n${MANHUA_KEYART_BATCH_SOFT_CONTINUITY_ZH}`,
                 };
               }
