@@ -4506,13 +4506,17 @@ export default function OmniCanvas() {
                       const already = epKeys.filter((b) =>
                         Boolean(b.outputUrl || b.outputUrls?.[0]),
                       ).length;
+                      const expected = Math.max(
+                        epKeys.length,
+                        countExpectedManhuaKeyartShots(next, writerFocusEpisode),
+                      );
                       if (already > 0) {
-                        const need = Math.max(0, epKeys.length - already);
+                        const need = Math.max(0, expected - already);
                         queueMicrotask(() => {
                           toast.message(
                             need > 0
-                              ? `已出 ${already} 张将跳过，本次补失败/空白镜头`
-                              : `已出 ${already} 张将跳过；若镜数有新增会只补新镜`,
+                              ? `已出 ${already}/${expected} 张将跳过，本次补 ${need} 张失败/空白`
+                              : `已出 ${already}/${expected} 张将跳过；本集静帧已齐`,
                             {
                               description: "要从头覆盖全部静帧，请用「重出静帧」。",
                             },

@@ -5,12 +5,14 @@ import { useMemo } from "react";
 import { Loader2, Square } from "lucide-react";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
+  countExpectedManhuaKeyartShots,
   getBlockEpisodeIndex,
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   MANHUA_FACTORY_STAGE_ORDER,
   stageKeyFromBlockId,
   type ManhuaFactoryStageKey,
 } from "@/lib/canvasDramaStudio";
+import { areManhuaKeyartsPixelLocked } from "@shared/manhuaAssetLockRegistry";
 
 const TRACK_STAGES: ManhuaFactoryStageKey[] = [
   "story",
@@ -80,25 +82,33 @@ export default function ManhuaLiveProgressBoard({
         }
         // 关键静帧/成片多节点：汇总已出张数，避免只看第一张导致「页面不同步」
         if (stage === "keyart" || stage === "clip") {
-          const total = stageBlocks.length;
+          const expect =
+            stage === "keyart"
+              ? Math.max(stageBlocks.length, countExpectedManhuaKeyartShots(blocks, ep))
+              : stageBlocks.length;
+          const total = Math.max(stageBlocks.length, expect);
           const done = stageBlocks.filter((x) => Boolean(mediaOf(x))).length;
           const anyRunning = stageBlocks.some((x) => x.status === "running");
           const anyErr = stageBlocks.some((x) => x.status === "error" || Boolean(x.error));
+          const pixelLocked =
+            stage !== "keyart" ||
+            areManhuaKeyartsPixelLocked(stageBlocks, { minCount: Math.max(1, expect) });
           const running =
             anyRunning ||
             (factoryBusy && ep === focusEpisode && done < total && !(anyErr && done === 0));
           const label =
             total > 1 ? `${baseLabel} ${done}/${total}` : baseLabel;
           const thumb = stageBlocks.map(mediaOf).find(Boolean);
-          // 仅全部出齐才标绿；部分完成绝不能伪装「已完成」
+          // 仅「张数出齐 + 静帧垫图锁过」才标绿；部分完成绝不能伪装「已完成」
+          const allDone = done >= total && total > 0 && pixelLocked;
           const status =
-            done >= total && total > 0
+            allDone
               ? "ready"
               : running
                 ? "running"
                 : anyErr && done < total
                   ? "error"
-                  : done > 0 && done < total
+                  : done > 0 && (!allDone || done < total)
                     ? "running"
                     : "idle";
           stages[stage] = {

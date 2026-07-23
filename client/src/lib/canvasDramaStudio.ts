@@ -2310,14 +2310,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             : b,
         ),
       );
-      // 进度用「本批静帧张数」而非整条流水线节点序号（避免 16/17 被误读成已出 16 张）
+      // 进度用「本批静帧张数」；只在单镜真正开跑时回调一次（避免批头+单镜双调闪烁）
       const keyartBatchTotal = jobs.length;
-      opts.onStageStart?.(
-        jobs[0]!.id,
-        0,
-        keyartBatchTotal,
-        MANHUA_FACTORY_STAGE_LABEL_ZH.keyart,
-      );
 
       await mapWithConcurrency(jobs, concurrency, async (job, jobOrdinal) => {
         const kid = job.id;

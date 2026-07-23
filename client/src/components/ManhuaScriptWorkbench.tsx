@@ -3818,6 +3818,9 @@ export default function ManhuaScriptWorkbench({
               const clipFailed =
                 shotClip?.manhuaClipQuality?.status === "failed" && !clipAccepted;
               const stillOk = Boolean(thumb);
+              const stillUnlocked = Boolean(
+                thumb && shotKey && !isManhuaKeyartPixelLocked(shotKey),
+              );
               const clipOk = Boolean(mediaUrl(shotClip));
               const statusLabel = clipPassed
                 ? "片✓"
@@ -3825,10 +3828,12 @@ export default function ManhuaScriptWorkbench({
                   ? "已采用"
                   : clipFailed
                     ? "质检"
-                    : stillOk
-                      ? "图✓"
-                      : "待出";
-              const pairLabel = `${stillOk ? "图✓" : "图—"} ${clipOk ? "片✓" : "片—"}`;
+                    : stillUnlocked
+                      ? "未锁"
+                      : stillOk
+                        ? "图✓"
+                        : "待出";
+              const pairLabel = `${stillUnlocked ? "未锁" : stillOk ? "图✓" : "图—"} ${clipOk ? "片✓" : "片—"}`;
               const on = i === Math.min(shotIndex, Math.max(shots.length, 1) - 1);
               const dur = shot.durationSec || 5;
               const needsRetry = !clipPassed;
@@ -3869,18 +3874,38 @@ export default function ManhuaScriptWorkbench({
                     data-manhua-active={on ? "true" : "false"}
                     data-manhua-keyart-url={thumb || ""}
                     data-manhua-fragment-status={
-                      clipPassed ? "clip" : clipFailed ? "qc-failed" : thumb ? "keyart" : "idle"
+                      clipPassed
+                        ? "clip"
+                        : clipFailed
+                          ? "qc-failed"
+                          : stillUnlocked
+                            ? "keyart-unlocked"
+                            : thumb
+                              ? "keyart"
+                              : "idle"
                     }
                     onClick={() => setShotIndex(i)}
                     className="block w-full text-left"
+                    title={
+                      stillUnlocked
+                        ? "有图但未带资产垫图锁，不能直接出成片；请重出该镜静帧"
+                        : undefined
+                    }
                   >
                     <div
-                      className={`aspect-video ${
+                      className={`relative aspect-video ${
                         thumb ? "bg-black/70" : "border border-dashed border-amber-400/30 bg-amber-500/10"
                       }`}
                     >
                       {thumb ? (
-                        <img src={thumb} alt="" className="h-full w-full object-cover" />
+                        <>
+                          <img src={thumb} alt="" className="h-full w-full object-cover" />
+                          {stillUnlocked ? (
+                            <span className="absolute inset-x-0 bottom-0 bg-red-900/75 px-0.5 py-px text-center text-[8px] font-semibold text-red-50">
+                              未锁
+                            </span>
+                          ) : null}
+                        </>
                       ) : (
                         <div className="flex h-full flex-col items-center justify-center gap-0.5 text-amber-100/85">
                           <span className="text-[11px] font-semibold">
