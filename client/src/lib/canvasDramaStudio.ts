@@ -99,6 +99,7 @@ import {
   resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
   resolveKeyartShotIndex,
+  resolveSegmentClipDurationSec,
   resolveSegmentIndexFromShotIndex,
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
@@ -1529,7 +1530,7 @@ export function ensureManhuaFragmentClips(
         MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip,
         formatWorkbenchSegmentClipInjectBlock({
           segmentIndex: globalSeg,
-          durationSec: manhuaSegmentDurationSec(defaultModel),
+          durationSec: seg.durationSec,
           shots: seg.shots,
           sceneHintZh: extractManhuaSceneHintFromPrompt(primary.prompt),
           intentZh,
@@ -1624,8 +1625,12 @@ export function ensureManhuaFragmentClips(
 }
 
 /**
- * 画布可读铺板（左→右）：故事→设定→节拍→反推 → 竖排静帧 → 右侧同镜成片。
- * 对齐竞品「一眼看懂文→图→视频」流水线，不改节点语义。
+ * 画布竖排三行（+顶栏文案）：
+ * 0 顶栏：故事→设定→节拍→反推（窄带）
+ * 1 资产行：角色 / 道具 / 场景 横向一排
+ * 2 静帧行：关键静帧横向一排
+ * 3 成片行：段成片提示词框横向一排
+ * 只改坐标，不改节点语义 / 不重生成。
  */
 export function layoutManhuaEpisodeReadableChain(
   blocks: CanvasBlock[],
@@ -1637,10 +1642,10 @@ export function layoutManhuaEpisodeReadableChain(
       ? Math.floor(episodeIndex)
       : getBlockEpisodeIndex(blocks.find((b) => b.id.startsWith("reverse-") || b.id.startsWith("story-")) || blocks[0]!) ??
         1;
-  const originX = opts?.originX ?? 80;
-  const originY = opts?.originY ?? 80;
-  const gapX = opts?.colGap ?? 340;
-  const gapY = opts?.rowGap ?? 220;
+  const originX = opts?.originX ?? 60;
+  const originY = opts?.originY ?? 60;
+  const gapX = opts?.colGap ?? 300;
+  const gapY = opts?.rowGap ?? 420;
   const sameEpisode = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === ep;
 
   const pick = (prefix: string) =>
@@ -1652,30 +1657,63 @@ export function layoutManhuaEpisodeReadableChain(
     pick("beats")[0],
     pick("reverse")[0],
   ].filter(Boolean) as CanvasBlock[];
+
+  const assetRow = [
+    ...blocks
+      .filter((b) => b.id.startsWith("charsheet-") && sameEpisode(b))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    ...blocks
+      .filter(
+        (b) =>
+          sameEpisode(b) &&
+          (b.id.startsWith("propplate-") ||
+            b.id.startsWith("propsheet-") ||
+            b.id.startsWith("prop-")),
+      )
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    ...blocks
+      .filter((b) => b.id.startsWith("sceneplate-") && sameEpisode(b))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  ];
+  // 无集号的资产（全局角色/场景）也并入第一行，避免仍散落在旧坐标
+  const assetOrphans = blocks.filter(
+    (b) =>
+      (b.id.startsWith("charsheet-") ||
+        b.id.startsWith("sceneplate-") ||
+        b.id.startsWith("propplate-") ||
+        b.id.startsWith("propsheet-") ||
+        b.id.startsWith("prop-")) &&
+      getBlockEpisodeIndex(b) == null &&
+      !assetRow.some((x) => x.id === b.id),
+  );
+  const assets = [...assetRow, ...assetOrphans];
+
   const keyarts = pick("keyart").sort(sortKeyartBlocks);
-  const clips = pick("clip").sort(sortKeyartBlocks);
-  if (!textCols.length && !keyarts.length) return blocks;
+  const clips = pick("clip").sort(
+    (a, b) =>
+      resolveClipSegmentIndex(a.id, a.prompt) - resolveClipSegmentIndex(b.id, b.prompt),
+  );
+
+  if (!textCols.length && !keyarts.length && !assets.length) return blocks;
 
   const pos = new Map<string, { x: number; y: number }>();
+  const textY = originY;
+  const assetY = originY + (textCols.length ? Math.round(gapY * 0.55) : 0);
+  const keyartY = assetY + (assets.length ? gapY : 0);
+  const clipY = keyartY + (keyarts.length ? gapY : 0);
+
   textCols.forEach((b, i) => {
-    pos.set(b.id, { x: originX + gapX * i, y: originY });
+    pos.set(b.id, { x: originX + gapX * i, y: textY });
   });
-  const keyCol = textCols.length;
-  const clipCol = keyCol + 1;
+  assets.forEach((b, i) => {
+    pos.set(b.id, { x: originX + gapX * i, y: assetY });
+  });
   keyarts.forEach((k, i) => {
-    pos.set(k.id, { x: originX + gapX * keyCol, y: originY + i * gapY });
+    pos.set(k.id, { x: originX + gapX * i, y: keyartY });
   });
-  for (const c of clips) {
-    const seg = resolveClipSegmentIndex(c.id, c.prompt);
-    const row = keyarts.findIndex(
-      (k) =>
-        resolveSegmentIndexFromShotIndex(resolveKeyartShotIndex(k.id, k.prompt)) === seg,
-    );
-    pos.set(c.id, {
-      x: originX + gapX * clipCol,
-      y: originY + Math.max(0, row) * gapY,
-    });
-  }
+  clips.forEach((c, i) => {
+    pos.set(c.id, { x: originX + gapX * i, y: clipY });
+  });
 
   return blocks.map((b) => {
     const p = pos.get(b.id);
@@ -2022,7 +2060,19 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
           kept,
           formatWorkbenchSegmentClipInjectBlock({
             segmentIndex: globalSeg,
-            durationSec: manhuaSegmentDurationSec(model),
+            durationSec: resolveSegmentClipDurationSec(
+              segShots.length
+                ? segShots
+                : [
+                    {
+                      index: (localSeg - 1) * MANHUA_KEYARTS_PER_SEGMENT_MIN + 1,
+                      durationSec: 0,
+                      cameraZh: "",
+                      actionZh: "",
+                    },
+                  ],
+              model,
+            ),
             shots: segShots.length
               ? segShots
               : [

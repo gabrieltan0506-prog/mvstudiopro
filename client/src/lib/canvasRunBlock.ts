@@ -33,7 +33,9 @@ import {
 import {
   MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
   MANHUA_KEYART_NO_TEXT_EN,
+  parseManhuaClipTargetDurationSec,
 } from "@shared/manhuaScriptWorkbench";
+import { clampSeedanceOpenRouterDuration } from "@shared/seedanceOpenRouterModels";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
 import {
   buildManhuaFactoryOptimizeBrief,
@@ -304,6 +306,8 @@ async function runSeedance20(
     imageUrls?: string[];
     videoUrls?: string[];
     version?: "2.0" | "2.0-fast";
+    /** 段目标秒数；缺省从 prompt「目标时长」解析，再钳 4–15 */
+    duration?: number;
   },
 ): Promise<string> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
@@ -312,6 +316,10 @@ async function runSeedance20(
   const imageUrls = (opts?.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const videoUrls = (opts?.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const version = opts?.version === "2.0-fast" ? "2.0-fast" : "2.0";
+  const fromPrompt = parseManhuaClipTargetDurationSec(prompt);
+  const duration = clampSeedanceOpenRouterDuration(
+    opts?.duration ?? fromPrompt ?? undefined,
+  );
   const res = await withFlyHealthGate(probeOrigin, () =>
     fetch(seedanceUrl, {
       method: "POST",
@@ -324,7 +332,7 @@ async function runSeedance20(
         videoUrls: videoUrls.length ? videoUrls.slice(0, 3) : undefined,
         resolution: version === "2.0-fast" ? "720p" : "720p",
         aspectRatio,
-        duration: 15,
+        duration,
         generateAudio: true,
         version,
       }),
@@ -771,6 +779,10 @@ export async function runCanvasBlock(
         imageUrls: httpsImages.length ? httpsImages : undefined,
         videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
         version: videoModel === "seedance-2.0-fast" ? "2.0-fast" : "2.0",
+        duration:
+          parseManhuaClipTargetDurationSec(motionPrompt) ??
+          parseManhuaClipTargetDurationSec(block.prompt) ??
+          undefined,
       });
     } else {
       // omni_edit / 续编：有上游成片时用 edit；否则段内静帧 I2V / 多图 reference_to_video

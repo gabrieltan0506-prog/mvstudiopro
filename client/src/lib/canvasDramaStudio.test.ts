@@ -365,29 +365,54 @@ describe("canvasDramaStudio factory", () => {
     expect(onlyClip.targetBlockIds).toEqual([]);
   });
 
-  it("layoutManhuaEpisodeReadableChain puts clips to the right of same-shot keyarts", () => {
+  it("layoutManhuaEpisodeReadableChain stacks asset / keyart / clip rows", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "江湖刀客雨夜客栈",
       episodeIndex: 1,
     });
     const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
-    const withReverse = blocks.map((b) =>
+    const withAssets = blocks.map((b) =>
       b.id === reverse.id
         ? { ...b, status: "done" as const, outputText: "1. 推门\n2. 对峙\n3. 拔刀" }
         : b,
     );
-    const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+    const withSheets = [
+      ...withAssets,
+      {
+        ...withAssets[0]!,
+        id: "charsheet-hero",
+        kind: "image" as const,
+        x: 0,
+        y: 0,
+        prompt: "角色",
+        episodeIndex: 1,
+      },
+      {
+        ...withAssets[0]!,
+        id: "sceneplate-inn",
+        kind: "image" as const,
+        x: 0,
+        y: 0,
+        prompt: "场景",
+        episodeIndex: 1,
+      },
+    ];
+    const expanded = expandManhuaShotKeyartsAfterReverse(withSheets, edges, reverse.id);
     const laid = layoutManhuaEpisodeReadableChain(expanded.blocks, 1);
-    const keyarts = laid.filter((b) => b.id.startsWith("keyart-")).sort((a, b) => a.y - b.y);
-    const clips = laid.filter(
-      (b) => b.id.startsWith("clip-") && (/-g\d{2}/i.test(b.id) || /-s\d{2}/.test(b.id)),
-    );
+    const assets = laid
+      .filter((b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"))
+      .sort((a, b) => a.x - b.x);
+    const keyarts = laid.filter((b) => b.id.startsWith("keyart-")).sort((a, b) => a.x - b.x);
+    const clips = laid
+      .filter((b) => b.id.startsWith("clip-") && (/-g\d{2}/i.test(b.id) || /-s\d{2}/.test(b.id)))
+      .sort((a, b) => a.x - b.x);
+    expect(assets.length).toBeGreaterThanOrEqual(2);
     expect(keyarts.length).toBeGreaterThanOrEqual(2);
-    expect(keyarts[1]!.y).toBeGreaterThan(keyarts[0]!.y);
-    for (const clip of clips) {
-      const key = keyarts.find((k) => k.id === clip.parentId);
-      expect(key).toBeTruthy();
-      expect(clip.x).toBeGreaterThan(key!.x);
+    expect(keyarts[0]!.y).toBeGreaterThan(assets[0]!.y);
+    expect(keyarts.every((k) => k.y === keyarts[0]!.y)).toBe(true);
+    expect(keyarts[1]!.x).toBeGreaterThan(keyarts[0]!.x);
+    if (clips.length >= 1) {
+      expect(clips[0]!.y).toBeGreaterThan(keyarts[0]!.y);
     }
   });
 

@@ -55,6 +55,7 @@ import {
   replaceManhuaEpisodeChain,
   resolveFactoryResumeStage,
   resolveManhuaEpisodeSpawnContinuity,
+  ensureManhuaFragmentClips,
   layoutManhuaEpisodeReadableChain,
   countExpectedManhuaKeyartShots,
   runManhuaDramaFactoryPipeline,
@@ -3251,7 +3252,10 @@ export default function OmniCanvas() {
             });
           }
         }
-        working = packAssetSheetPositions(working);
+        working = layoutManhuaEpisodeReadableChain(
+          packAssetSheetPositions(working),
+          writerFocusEpisode,
+        );
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
         setFocusBlockId(
@@ -3268,7 +3272,7 @@ export default function OmniCanvas() {
         });
         if (nextGate.ready) {
           setWorkflowPhase("storyboard");
-          toast.message("角色图 / 场景图已齐，已写入对应分栏，可出关键静帧");
+          toast.message("角色图 / 场景图已齐，已按竖排对齐画布，可出关键静帧");
           pushDebug("confirmAssetsFromScript:ok", {
             level: "ok",
             detail: `plans=${plans.length}`,
@@ -4531,8 +4535,8 @@ export default function OmniCanvas() {
                   }}
                   onGenerateFragment={({ shotIndex }) => {
                     const pad = String(shotIndex).padStart(2, "0");
-                    toast.message(`生成片段成片 ${pad}`, {
-                      description: "缺本镜静帧时只补本镜，不整集重跑。",
+                    toast.message(`生成第 ${pad} 段成片`, {
+                      description: "缺段内静帧时只补本段，不整集重跑。",
                     });
                     setFactoryRunScope("focus");
                     ensureStudioSpawned(factoryTopic);
@@ -4541,27 +4545,57 @@ export default function OmniCanvas() {
                       fragmentShotIndex: shotIndex,
                     });
                   }}
-                  onLayoutReadableChain={() => {
+                  onEnsureSegmentClips={() => {
                     setBlocks((prev) => {
-                      const next = layoutManhuaEpisodeReadableChain(prev, writerFocusEpisode);
+                      const ensured = ensureManhuaFragmentClips(prev, edges, writerFocusEpisode);
+                      const next = layoutManhuaEpisodeReadableChain(
+                        ensured.blocks,
+                        writerFocusEpisode,
+                      );
+                      setEdges(() => {
+                        saveCanvasState(next, ensured.edges);
+                        return ensured.edges;
+                      });
+                      return next;
+                    });
+                  }}
+                  onUpdateClipPrompt={(clipId, prompt) => {
+                    setBlocks((prev) => {
+                      const next = prev.map((b) =>
+                        b.id === clipId ? { ...b, prompt, error: undefined } : b,
+                      );
                       setEdges((eds) => {
                         saveCanvasState(next, eds);
                         return eds;
                       });
                       return next;
                     });
-                    toast.message("已对齐画布流水线", {
-                      description: "左文案 → 中静帧竖排 → 右同镜成片",
+                  }}
+                  onLayoutReadableChain={() => {
+                    setBlocks((prev) => {
+                      const ensured = ensureManhuaFragmentClips(prev, edges, writerFocusEpisode);
+                      const next = layoutManhuaEpisodeReadableChain(
+                        ensured.blocks,
+                        writerFocusEpisode,
+                      );
+                      setEdges(() => {
+                        saveCanvasState(next, ensured.edges);
+                        return ensured.edges;
+                      });
+                      return next;
+                    });
+                    toast.message("已对齐画布竖排", {
+                      description: "资产行 → 关键静帧行 → 段成片提示词行",
                     });
                   }}
-                  onGenerateMissingFragments={(shotIndexes) => {
-                    if (!shotIndexes.length) {
-                      toast.message("本集片段已齐，无需补跑");
+                  onGenerateMissingFragments={(segmentIndexes) => {
+                    if (!segmentIndexes.length) {
+                      toast.message("本集段成片已齐，无需补跑");
                       return;
                     }
                     if (
                       !window.confirm(
-                        `将依次生成第${writerFocusEpisode}集缺片：${shotIndexes
+                        `将依次生成第${writerFocusEpisode}集缺段：${segmentIndexes
                           .map((n) => String(n).padStart(2, "0"))
                           .join("、")}。继续？`,
                       )
@@ -4572,7 +4606,7 @@ export default function OmniCanvas() {
                     ensureStudioSpawned(factoryTopic);
                     void runFactory("clip", {
                       episodeIndexes: [writerFocusEpisode],
-                      fragmentShotIndexes: shotIndexes,
+                      fragmentShotIndexes: segmentIndexes,
                     });
                   }}
                   onResumeFromFailure={() => {
