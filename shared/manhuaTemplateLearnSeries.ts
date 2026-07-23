@@ -1,5 +1,6 @@
 /**
- * 漫剧合集多集学习：每轮顺序采 8–10 集；累计 ≥16（目标凑满约 20）才出一张节奏分析提案。
+ * 漫剧节奏学习：单集或合集均可；每轮顺序采（短链有几集采几集，长合集约 8–10）。
+ * 累计 ≥16（目标约 20）才出一张总分析提案；不足也可先看分集结果。
  * 只借结构/节奏；成稿不写外部剧名。
  */
 
@@ -81,7 +82,10 @@ export function clampManhuaLearnBatchSize(raw?: number): number {
   return Math.max(MANHUA_LEARN_BATCH_MIN, Math.min(MANHUA_LEARN_BATCH_MAX, n));
 }
 
-/** 按剧集顺序从未学索引里取本轮 8–10 集 */
+/**
+ * 按剧集顺序从未学索引里取本轮批次。
+ * 单集/短合集：有几集采几集（不强制凑满 8）；长合集默认 8–10。
+ */
 export function pickNextEpisodeIndexes(input: {
   listedIndexes: number[];
   learnedIndexes: number[];
@@ -92,7 +96,12 @@ export function pickNextEpisodeIndexes(input: {
     .filter((i) => Number.isFinite(i) && i >= 1 && !learned.has(i))
     .sort((a, b) => a - b);
   if (!pending.length) return [];
-  const batch = clampManhuaLearnBatchSize(input.batchSize);
+  const raw = Math.floor(Number(input.batchSize));
+  const preferred = Number.isFinite(raw) && raw > 0
+    ? raw
+    : clampManhuaLearnBatchSize(undefined);
+  // 剩余不足一批时吃光剩余（单集=1）
+  const batch = Math.max(1, Math.min(preferred, pending.length, MANHUA_LEARN_BATCH_MAX));
   return pending.slice(0, batch);
 }
 

@@ -17,6 +17,8 @@ export type ManhuaLearnResultUi = {
   analysisTarget: number;
   batchLearned: number;
   messageZh: string;
+  /** 云端学习失败时填写；有值则面板以错误态展示 */
+  errorZh?: string;
   categoryLabelZh?: string;
   tagLabelsZh?: string[];
   listedEpisodeCount?: number;
@@ -39,6 +41,34 @@ export type ManhuaLearnResultUi = {
     card?: Record<string, unknown>;
   } | null;
 };
+
+/** 失败也落面板，避免只 toast / 复制本机命令却看不见原因 */
+export function manhuaLearnResultFromFailure(input: {
+  errorZh: string;
+  url?: string;
+  title?: string;
+  seriesKey?: string;
+}): ManhuaLearnResultUi {
+  const errorZh = String(input.errorZh || "云端学习失败").trim().slice(0, 400);
+  const titleHint = String(input.title || "").trim().slice(0, 40);
+  const urlHint = String(input.url || "").trim().slice(0, 80);
+  const seriesKey =
+    String(input.seriesKey || "").trim() ||
+    `fail_${Date.now().toString(36)}`;
+  const context = [titleHint, urlHint].filter(Boolean).join(" · ");
+  return {
+    seriesKey,
+    analysisReady: false,
+    learnedCount: 0,
+    analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
+    analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
+    batchLearned: 0,
+    messageZh: context ? `${errorZh}（${context}）` : errorZh,
+    errorZh,
+    digestsPreview: [],
+    proposal: null,
+  };
+}
 
 export function readManhuaLearnFocusSeriesKey(): string {
   try {

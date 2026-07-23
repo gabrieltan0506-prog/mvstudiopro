@@ -85,6 +85,7 @@ import {
 import { captureSupervisorTokenFromUrl, getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
 import {
+  manhuaLearnResultFromFailure,
   manhuaLearnResultFromJobOutput,
   manhuaLearnResultFromSnapshot,
   readManhuaLearnFocusSeriesKey,
@@ -3810,10 +3811,18 @@ export default function PlatformPage() {
         });
         const job = await pollJobUntilTerminal(jobId, { maxWaitMs: 95 * 60_000 });
         if (job.status !== "succeeded") {
-          await copyManhuaLocalLearnFallback(
-            row,
-            sanitizePlatformUserMessage(job.error || "云端学习失败"),
-          );
+          const errZh = sanitizePlatformUserMessage(job.error || "云端学习失败");
+          const fail = manhuaLearnResultFromFailure({
+            errorZh: errZh,
+            url,
+            title,
+          });
+          setManhuaLearnResult(fail);
+          setManhuaLearnPanelCollapsed(false);
+          setManhuaLearnFocusSeriesKey(fail.seriesKey);
+          writeManhuaLearnFocusSeriesKey(fail.seriesKey);
+          toast.error("学习未完成", { description: `${errZh}（原因已显示在下方学习结果）` });
+          await copyManhuaLocalLearnFallback(row, errZh);
           return;
         }
         const out = (job.output || {}) as Record<string, unknown>;
@@ -3825,11 +3834,21 @@ export default function PlatformPage() {
           });
         } else {
           toast.message("本轮学习结果已展示", {
-            description: String(out.messageZh || "累计未满分析门槛，可继续学节奏。"),
+            description: String(out.messageZh || "分集结果见下方；凑满后再出总分析。"),
           });
         }
       } catch (e) {
         const msg = sanitizePlatformUserMessage(e instanceof Error ? e.message : String(e));
+        const fail = manhuaLearnResultFromFailure({
+          errorZh: msg || "云端入队失败",
+          url,
+          title,
+        });
+        setManhuaLearnResult(fail);
+        setManhuaLearnPanelCollapsed(false);
+        setManhuaLearnFocusSeriesKey(fail.seriesKey);
+        writeManhuaLearnFocusSeriesKey(fail.seriesKey);
+        toast.error("学习未完成", { description: `${fail.errorZh}（原因已显示在下方）` });
         await copyManhuaLocalLearnFallback(row, msg || "云端入队失败");
       } finally {
         setManhuaLearnBusyKey(null);
@@ -9108,14 +9127,14 @@ export default function PlatformPage() {
                         <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-2.5">
                           <div className="text-[11px] font-semibold text-[#c9c0e6]/90">贴链接学节奏</div>
                           <p className="mt-0.5 text-[10px] text-[#c9c0e6]/45">
-                            粘贴合集页或单集链接；合集按剧集顺序采样。学习与分析立刻出现在下方面板，看完再决定是否进库。
+                            单集成片或合集页都可以。有几集学几集；凑满约 16 集再出总分析提案，看完再决定是否进库。
                           </p>
                           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                             <input
                               type="url"
                               value={manhuaPasteUrl}
                               onChange={(e) => setManhuaPasteUrl(e.target.value)}
-                              placeholder="https://… 合集或单集链接"
+                              placeholder="https://… 单集成片或合集页"
                               className="min-w-0 flex-1 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1.5 text-[11px] text-white placeholder:text-white/30"
                             />
                             <input
@@ -9221,17 +9240,26 @@ export default function PlatformPage() {
                       ) : null}
 
                       {manhuaLearnResult && !manhuaLearnPanelCollapsed ? (
-                        <div className="mt-3 space-y-2 rounded-xl border border-amber-300/25 bg-amber-500/10 px-3 py-2.5 text-[11px] text-amber-50/90">
+                        <div
+                          className={`mt-3 space-y-2 rounded-xl border px-3 py-2.5 text-[11px] ${
+                            manhuaLearnResult.errorZh
+                              ? "border-rose-300/35 bg-rose-500/10 text-rose-50/90"
+                              : "border-amber-300/25 bg-amber-500/10 text-amber-50/90"
+                          }`}
+                        >
                           <div className="font-semibold">
-                            学习结果
-                            {manhuaLearnResult.proposal?.nameZh
+                            {manhuaLearnResult.errorZh ? "学习未完成" : "学习结果"}
+                            {!manhuaLearnResult.errorZh && manhuaLearnResult.proposal?.nameZh
                               ? ` · ${manhuaLearnResult.proposal.nameZh}`
-                              : manhuaLearnResult.seriesKey
+                              : !manhuaLearnResult.errorZh && manhuaLearnResult.seriesKey
                                 ? ` · ${manhuaLearnResult.seriesKey}`
                                 : ""}
                           </div>
+                          {manhuaLearnResult.errorZh ? (
+                            <p className="text-rose-100/80">{manhuaLearnResult.errorZh}</p>
+                          ) : null}
                           <div className="flex flex-wrap gap-2 text-[10px]">
-                            <span className="rounded-full border border-amber-300/30 bg-black/25 px-2 py-0.5">
+                            <span className="rounded-full border border-white/15 bg-black/25 px-2 py-0.5">
                               待学习{" "}
                               {typeof manhuaLearnResult.pendingCount === "number"
                                 ? manhuaLearnResult.pendingCount

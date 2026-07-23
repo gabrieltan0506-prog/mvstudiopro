@@ -1,7 +1,7 @@
 /**
- * 漫剧节奏模板 · 合集多集学习。
- * 每轮按剧集顺序采 8–10 集 → 语音+抽帧+读帧 → 立刻删本地视频；
- * 同一合集累计 ≥16 集（目标约 20）才合成一张提案。
+ * 漫剧节奏模板 · 单集或合集学习。
+ * 每轮按剧集顺序采（短合集有几集采几集；长合集约 8–10）→ 语音+抽帧+读帧 → 立刻删本地视频；
+ * 同一系列累计 ≥16 集（目标约 20）才合成一张提案；不足也可先看分集学习结果。
  */
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
@@ -574,10 +574,8 @@ export async function runManhuaTemplateLearn(
   try {
     await progress("list", "正在解析剧集列表…");
     const listed = await listOrderedEpisodes(url);
-    if (listed.length < MANHUA_LEARN_ANALYSIS_MIN) {
-      throw new Error(
-        `合集可解析集数不足（${listed.length}＜${MANHUA_LEARN_ANALYSIS_MIN}）。请贴合集页链接，或确认该剧至少有 ${MANHUA_LEARN_ANALYSIS_MIN} 集可采。`,
-      );
+    if (!listed.length) {
+      throw new Error("无法解析任何可学剧集，请换合集页或成片链接重试");
     }
 
     const seriesClassify = classifyManhuaLearnTitle(title || "未命名合集");
@@ -653,7 +651,28 @@ export async function runManhuaTemplateLearn(
           workId,
         };
       }
-      throw new Error("该合集可学剧集已学完，但仍未凑满分析门槛（请换合集或检查解析集数）");
+      // 单集/短合集：可学剧集已吃完仍不足总分析门槛 → 成功回显分集结果，不抛错
+      return {
+        seriesKey,
+        analysisReady: false,
+        learnedCount: digests.length,
+        analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
+        analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
+        batchLearned: 0,
+        batchIndexes: [],
+        listedEpisodeCount: listed.length,
+        digestsPreview: digests.map(toDigestPreview),
+        categoryLabelZh: prog.categoryLabelZh,
+        tagLabelsZh: prog.tagLabelsZh,
+        proposal: null,
+        proposalGcsUri: null,
+        visionFilled: false,
+        messageZh:
+          digests.length > 0
+            ? `该链接可学剧集已学完（累计 ${digests.length} 集，列表共 ${listed.length} 集）。分集结果见下方；总分析需约 ${MANHUA_LEARN_ANALYSIS_MIN} 集，可换更长合集继续学。`
+            : `该链接暂无可再学剧集（列表 ${listed.length} 集）。请换合集/成片链接重试。`,
+        workId,
+      };
     }
 
     const byIndex = new Map(listed.map((e) => [e.index, e]));
@@ -695,6 +714,10 @@ export async function runManhuaTemplateLearn(
     const ready = canEmitManhuaLearnAnalysis(learnedCount);
 
     if (!ready) {
+      const singleOrShort =
+        listed.length < MANHUA_LEARN_ANALYSIS_MIN
+          ? `当前链接共 ${listed.length} 集（单集也可学）。`
+          : "";
       return {
         seriesKey,
         analysisReady: false,
@@ -710,7 +733,10 @@ export async function runManhuaTemplateLearn(
         proposal: null,
         proposalGcsUri: null,
         visionFilled: false,
-        messageZh: `本轮学了 ${batchLearnedIndexes.length} 集（视频已删），累计 ${learnedCount}/${MANHUA_LEARN_ANALYSIS_MIN}（目标 ${MANHUA_LEARN_ANALYSIS_TARGET}）。分集结果已可在网页查看；凑满后再出总分析，是否进库由你决定。`,
+        messageZh:
+          batchLearnedIndexes.length > 0
+            ? `本轮学了 ${batchLearnedIndexes.length} 集（视频已删），累计 ${learnedCount}/${MANHUA_LEARN_ANALYSIS_MIN}（目标 ${MANHUA_LEARN_ANALYSIS_TARGET}）。${singleOrShort}分集结果见下方；凑满后再出总分析，是否进库由你决定。`
+            : `本轮未能成功采下新集（列表 ${listed.length} 集，已累计 ${learnedCount}）。${singleOrShort}请换链接或稍后重试。`,
         workId,
       };
     }
