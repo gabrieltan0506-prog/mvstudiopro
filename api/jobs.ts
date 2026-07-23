@@ -3165,6 +3165,49 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
      * 已去掉产品侧 Mini 选项；仅 `probe=1` 内部探针可走 EvoLink Mini。
      * 2.5 仍走独立 op=seedance25。
      */
+    /** 成片静音检测 → 建议细剪进出点（MVP，无大模型） */
+    if (op === "suggestClipCuts") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const videoUrl = s(b.videoUrl || q.videoUrl || "").trim();
+      if (!/^https:\/\//i.test(videoUrl)) {
+        return res.status(400).json({ ok: false, error: "请提供成片 HTTPS 地址" });
+      }
+      const rawShots = Array.isArray(b.shots) ? b.shots : [];
+      const shots = rawShots
+        .map((row: any) => ({
+          shotIndex: Math.floor(Number(row?.shotIndex) || 0),
+          durationSec: Number(row?.durationSec) || 0,
+        }))
+        .filter((row: { shotIndex: number; durationSec: number }) => row.shotIndex >= 1);
+      try {
+        const { suggestManhuaClipCutsFromVideo } = await import(
+          "../server/services/manhuaSuggestClipCuts.js"
+        );
+        const out = await suggestManhuaClipCutsFromVideo({ videoUrl, shots });
+        return res.status(200).json({
+          ok: true,
+          durationSec: out.durationSec,
+          speechRegions: out.speechRegions,
+          segmentTrim: out.segmentTrim,
+          segmentLabelZh: out.segmentLabelZh,
+          fineCutByShot: out.fineCutByShot,
+        });
+      } catch (e: any) {
+        const msg = String(e?.message || "suggest_failed");
+        return res.status(502).json({
+          ok: false,
+          error:
+            /ffmpeg|ffprobe|ENOENT/i.test(msg)
+              ? "切点分析失败，请稍后重试"
+              : msg.includes("download")
+                ? "成片下载失败，请稍后重试"
+                : "切点分析失败，请稍后重试",
+        });
+      }
+    }
+
     /** 从有声成片抠参考音色 mp3（挂到 @角色 声线锁） */
     if (op === "extractClipAudio") {
       if (req.method !== "POST") {

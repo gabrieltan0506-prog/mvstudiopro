@@ -2,7 +2,7 @@
  * 剧本工作台：左=本集资产 · 中=一集剧本+按段静帧 · 右=预览 · 底=集/段时间线
  * 一集：10–12 段 × 每段 3–4 关键静帧；每段一条成片（Seedance ≤15s，按时长合计钳制）。
  */
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -121,6 +121,8 @@ import {
   saveManhuaWorkbenchBPersist,
 } from "@shared/manhuaShotAnglePersist";
 import { toast } from "sonner";
+import { suggestManhuaClipCuts } from "@/lib/manhuaEditAutoCutApi";
+import { parseFineCutByShot } from "@shared/manhuaEditFineCut";
 
 type WorkflowPhaseId = "outline" | "assets" | "storyboard" | "edit";
 
@@ -431,6 +433,8 @@ export default function ManhuaScriptWorkbench({
   const [roughShotOrder, setRoughShotOrder] = useState<number[]>([]);
   /** 细剪进出点 */
   const [fineCutByShot, setFineCutByShot] = useState<ManhuaFineCutByShot>({});
+  /** 气口建议切点分析中 */
+  const [suggestAutoCutsBusy, setSuggestAutoCutsBusy] = useState(false);
   /** 剪辑台字幕轨：开则生成轨数据，默认不烧字 */
   const [editSubtitleEnabled, setEditSubtitleEnabled] = useState(false);
   /** 包装动效（motionPromptBank id） */
@@ -651,6 +655,60 @@ export default function ManhuaScriptWorkbench({
       };
     });
   }, [roughClips, episodeClips, episodeKeyarts, legacyClip, keyart]);
+
+  const handleSuggestAutoCuts = useCallback(async () => {
+    if (suggestAutoCutsBusy || factoryBusy) return;
+    const groups = new Map<
+      string,
+      Array<{ shotIndex: number; durationSec: number }>
+    >();
+    for (const media of editShotMedia) {
+      const url = String(media.outputUrl || "").trim();
+      if (!/^https:\/\//i.test(url)) continue;
+      const rough = roughClips.find((c) => c.shotIndex === media.shotIndex);
+      if (!rough) continue;
+      const list = groups.get(url) || [];
+      list.push({ shotIndex: rough.shotIndex, durationSec: rough.durationSec });
+      groups.set(url, list);
+    }
+    if (!groups.size) {
+      toast.message("请先生成有声段成片，再建议切点");
+      return;
+    }
+    setSuggestAutoCutsBusy(true);
+    toast.message("正在按气口分析切点…", {
+      description: `${groups.size} 段成片`,
+    });
+    try {
+      const merged: ManhuaFineCutByShot = { ...fineCutByShot };
+      const labels: string[] = [];
+      for (const [videoUrl, shotRows] of Array.from(groups.entries())) {
+        const out = await suggestManhuaClipCuts({
+          videoUrl,
+          shots: shotRows,
+        });
+        const parsed = parseFineCutByShot(out.fineCutByShot);
+        for (const [k, trim] of Object.entries(parsed)) {
+          merged[Number(k)] = trim;
+        }
+        if (out.segmentLabelZh) labels.push(out.segmentLabelZh);
+      }
+      setFineCutByShot(merged);
+      toast.message("切点建议已写入", {
+        description: labels[0] || `已更新 ${Object.keys(merged).length} 镜`,
+      });
+    } catch (e) {
+      toast.message(e instanceof Error ? e.message : "切点分析失败");
+    } finally {
+      setSuggestAutoCutsBusy(false);
+    }
+  }, [
+    suggestAutoCutsBusy,
+    factoryBusy,
+    editShotMedia,
+    roughClips,
+    fineCutByShot,
+  ]);
 
   useEffect(() => {
     // 新分镜到来时，为缺失镜号补推荐机位
@@ -2858,6 +2916,8 @@ export default function ManhuaScriptWorkbench({
             onFineCutChange={(shotIndex: number, trim: ManhuaFineCutTrim) => {
               setFineCutByShot((prev) => ({ ...prev, [shotIndex]: trim }));
             }}
+            onSuggestAutoCuts={() => void handleSuggestAutoCuts()}
+            suggestAutoCutsBusy={suggestAutoCutsBusy}
             subtitleEnabled={editSubtitleEnabled}
             onSubtitleEnabledChange={(next) => {
               setEditSubtitleEnabled(next);
