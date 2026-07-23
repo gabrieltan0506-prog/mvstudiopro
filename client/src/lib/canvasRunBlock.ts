@@ -44,6 +44,11 @@ import {
   planManhuaFactoryOptimizeSource,
 } from "@shared/manhuaFactoryTextOptimize";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
+import {
+  formatManhuaCharacterVoiceLockBlock,
+  pickManhuaVoiceAudioUrlsForPrompt,
+  type ManhuaCharacterVoiceLock,
+} from "@shared/manhuaCharacterVoiceLock";
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
@@ -63,6 +68,8 @@ export type CanvasRunDeps = {
   uploadImageFile?: (file: File) => Promise<string>;
   /** 入队 jobs 时写入 userId（与 assemble 一致；可空串） */
   userId?: string;
+  /** 角色声线参考（从有声成片抠出）；成片时按 @角色 挂 audio_url */
+  characterVoiceLocks?: ManhuaCharacterVoiceLock[] | null;
 };
 
 function dataUrlToJpegFile(dataUrl: string, name: string): File | null {
@@ -306,6 +313,8 @@ async function runSeedance20(
   opts?: {
     imageUrls?: string[];
     videoUrls?: string[];
+    /** 角色声线参考 mp3（最多 3） */
+    audioUrls?: string[];
     version?: "2.0" | "2.0-fast";
     /** 段目标秒数；缺省从 prompt「目标时长」解析，再钳 4–15 */
     duration?: number;
@@ -316,6 +325,7 @@ async function runSeedance20(
   const probeOrigin = flyHealthProbeOriginForUrl(seedanceUrl);
   const imageUrls = (opts?.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const videoUrls = (opts?.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const audioUrls = (opts?.audioUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const version = opts?.version === "2.0-fast" ? "2.0-fast" : "2.0";
   const fromPrompt = parseManhuaClipTargetDurationSec(prompt);
   const duration = clampSeedanceOpenRouterDuration(
@@ -331,6 +341,7 @@ async function runSeedance20(
         imageUrl: imageUrl || imageUrls[0] || undefined,
         imageUrls: imageUrls.length ? imageUrls.slice(0, 6) : undefined,
         videoUrls: videoUrls.length ? videoUrls.slice(0, 3) : undefined,
+        audioUrls: audioUrls.length ? audioUrls.slice(0, 3) : undefined,
         resolution: version === "2.0-fast" ? "720p" : "720p",
         aspectRatio,
         duration,
@@ -776,9 +787,18 @@ export async function runCanvasBlock(
       const httpsImages = await toHttpsImageUrls(deps, imageUrls.slice(0, 6));
       // Seedance 首图：有上一段末帧时用末帧作起幅主参考，否则用本段首静帧
       const seedStill = tailFrames[tailFrames.length - 1] || stillRef;
-      url = await runSeedance20(motionPrompt, seedStill, ar, {
+      const voiceLocks = deps.characterVoiceLocks || [];
+      const voiceAudioUrls = pickManhuaVoiceAudioUrlsForPrompt(motionPrompt, voiceLocks);
+      const voiceBlock = formatManhuaCharacterVoiceLockBlock(
+        voiceLocks.filter((l) => voiceAudioUrls.includes(l.audioUrl)),
+      );
+      const seedancePrompt = voiceBlock
+        ? `${motionPrompt}\n\n${voiceBlock}`.trim()
+        : motionPrompt;
+      url = await runSeedance20(seedancePrompt, seedStill, ar, {
         imageUrls: httpsImages.length ? httpsImages : undefined,
         videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
+        audioUrls: voiceAudioUrls.length ? voiceAudioUrls : undefined,
         version: videoModel === "seedance-2.0-fast" ? "2.0-fast" : "2.0",
         duration:
           parseManhuaClipTargetDurationSec(motionPrompt) ??

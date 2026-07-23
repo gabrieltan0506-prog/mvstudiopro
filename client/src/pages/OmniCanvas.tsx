@@ -109,6 +109,12 @@ import {
   loadManhuaWriterSessionFromStorage,
   saveManhuaWriterSessionToStorage,
 } from "@shared/manhuaWriterSession";
+import {
+  makeManhuaCharacterVoiceLockId,
+  normalizeManhuaCharacterVoiceLocks,
+  type ManhuaCharacterVoiceLock,
+} from "@shared/manhuaCharacterVoiceLock";
+import { extractManhuaClipAudio } from "@/lib/manhuaCharacterVoiceApi";
 import type { ManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
 import {
   MANHUA_CLOUD_DRAFT_SYNC_DEBOUNCE_MS,
@@ -508,6 +514,9 @@ export default function OmniCanvas() {
   );
   const [customAssetRefs, setCustomAssetRefs] = useState<ManhuaCustomAssetRef[]>(() =>
     normalizeManhuaCustomAssetRefs(initialWriterSession?.customAssetRefs),
+  );
+  const [characterVoiceLocks, setCharacterVoiceLocks] = useState<ManhuaCharacterVoiceLock[]>(() =>
+    normalizeManhuaCharacterVoiceLocks(initialWriterSession?.characterVoiceLocks),
   );
   const [stylePack, setStylePack] = useState(() => initialWriterSession?.stylePack ?? null);
   const [shareAssetToLibrary, setShareAssetToLibrary] = useState(
@@ -1049,6 +1058,7 @@ export default function OmniCanvas() {
         assetsSkipped,
         workflowPhase,
         customAssetRefs,
+        characterVoiceLocks,
         shareAssetToLibrary,
         viralTemplateId,
         stylePack,
@@ -1069,6 +1079,7 @@ export default function OmniCanvas() {
     assetsSkipped,
     workflowPhase,
     customAssetRefs,
+    characterVoiceLocks,
     shareAssetToLibrary,
     viralTemplateId,
     stylePack,
@@ -1091,6 +1102,9 @@ export default function OmniCanvas() {
     setManhuaUiMode(session.manhuaUiMode === "form" ? "form" : "workbench");
     setAssetsSkipped(Boolean(session.assetsSkipped));
     setCustomAssetRefs(normalizeManhuaCustomAssetRefs(session.customAssetRefs));
+    setCharacterVoiceLocks(
+      normalizeManhuaCharacterVoiceLocks(session.characterVoiceLocks),
+    );
     setStylePack(session.stylePack ?? null);
     setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
     setViralTemplateId(String(session.viralTemplateId || "").trim());
@@ -1232,6 +1246,7 @@ export default function OmniCanvas() {
       assetsSkipped,
       workflowPhase,
       customAssetRefs,
+      characterVoiceLocks,
       shareAssetToLibrary,
       viralTemplateId,
       deliveryPackage,
@@ -1275,6 +1290,7 @@ export default function OmniCanvas() {
     assetsSkipped,
     workflowPhase,
     customAssetRefs,
+    characterVoiceLocks,
     shareAssetToLibrary,
     viralTemplateId,
     deliveryPackage,
@@ -1756,6 +1772,7 @@ export default function OmniCanvas() {
   const runDeps = useMemo<CanvasRunDeps>(
     () => ({
       userId: user?.id ? String(user.id) : "",
+      characterVoiceLocks,
       optimizeCopy: async ({ sourceText, optimizationBrief, modelName }) => {
         const t0 = Date.now();
         const reqPreview = [
@@ -1818,7 +1835,14 @@ export default function OmniCanvas() {
         return asset.url;
       },
     }),
-    [optimizeCopyMutation, getSignedUrlMutation, debugMode, pushDebug, user?.id],
+    [
+      optimizeCopyMutation,
+      getSignedUrlMutation,
+      debugMode,
+      pushDebug,
+      user?.id,
+      characterVoiceLocks,
+    ],
   );
 
   /** Terra：中文运镜说明润色（编剧大师人设） */
@@ -2149,6 +2173,7 @@ export default function OmniCanvas() {
       setWriterConfirmBlockers([]);
       // 新剧本立刻落盘并覆盖本机+云端旧稿，避免刷新后又被旧云草稿盖回
       const clientUpdatedAt = new Date().toISOString();
+      setCharacterVoiceLocks([]);
       const writerSession = {
         topic,
         brief,
@@ -2162,6 +2187,7 @@ export default function OmniCanvas() {
         assetsSkipped: false,
         workflowPhase: "outline" as const,
         customAssetRefs: [] as ManhuaCustomAssetRef[],
+        characterVoiceLocks: [] as ManhuaCharacterVoiceLock[],
         shareAssetToLibrary,
         viralTemplateId,
       };
@@ -4306,6 +4332,62 @@ export default function OmniCanvas() {
                   stylePack={stylePack}
                   onStylePackChange={setStylePack}
                   customAssetRefs={customAssetRefs}
+                  characterVoiceLocks={characterVoiceLocks}
+                  onExtractCharacterVoice={async ({
+                    clipId,
+                    characterTag,
+                    labelZh,
+                    startSec,
+                    durationSec,
+                  }) => {
+                    const clip = blocks.find((b) => b.id === clipId);
+                    const videoUrl = String(
+                      clip?.outputUrl || clip?.outputUrls?.[0] || "",
+                    ).trim();
+                    if (!clip || !/^https:\/\//i.test(videoUrl)) {
+                      toast.message("请先选出片成功的段成片");
+                      return;
+                    }
+                    try {
+                      toast.message("正在提取声线…", {
+                        description: `${characterTag} · 约数秒`,
+                      });
+                      const out = await extractManhuaClipAudio({
+                        videoUrl,
+                        startSec,
+                        durationSec,
+                      });
+                      const lock: ManhuaCharacterVoiceLock = {
+                        id: makeManhuaCharacterVoiceLockId(),
+                        characterTag,
+                        labelZh: labelZh || characterTag,
+                        audioUrl: out.audioUrl,
+                        sourceVideoUrl: videoUrl,
+                        sourceClipId: clipId,
+                        startSec: out.startSec,
+                        durationSec: out.durationSec,
+                        createdAt: Date.now(),
+                      };
+                      setCharacterVoiceLocks((prev) =>
+                        normalizeManhuaCharacterVoiceLocks([
+                          ...prev.filter((x) => x.characterTag !== characterTag),
+                          lock,
+                        ]),
+                      );
+                      toast.message("声线已锁定", {
+                        description: `${characterTag} 已挂参考音，后续成片自动带入`,
+                      });
+                    } catch (e) {
+                      toast.message(
+                        e instanceof Error ? e.message : "声线提取失败",
+                      );
+                    }
+                  }}
+                  onRemoveCharacterVoice={(id) => {
+                    setCharacterVoiceLocks((prev) =>
+                      prev.filter((x) => x.id !== id),
+                    );
+                  }}
                   onUploadCustomAssets={uploadCustomAssetFiles}
                   onCustomAssetRoleChange={setCustomAssetRole}
                   onCustomAssetDutyChange={setCustomAssetDuty}

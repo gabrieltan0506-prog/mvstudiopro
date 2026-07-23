@@ -62,6 +62,10 @@ import {
   buildManhuaAssetLockRegistry,
 } from "@shared/manhuaAssetLockRegistry";
 import {
+  collectManhuaCharacterTagsFromPrompt,
+  type ManhuaCharacterVoiceLock,
+} from "@shared/manhuaCharacterVoiceLock";
+import {
   groupShotsIntoSegments,
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
@@ -184,6 +188,16 @@ type Props = {
   onStylePackChange?: (pack: ManhuaStylePack | null) => void;
   /** 用户上传 / 基于库参考生成的参考图（人物 / 场景 / 道具分栏） */
   customAssetRefs?: ManhuaCustomAssetRef[];
+  /** 从有声成片抠出的角色声线参考 */
+  characterVoiceLocks?: ManhuaCharacterVoiceLock[];
+  onExtractCharacterVoice?: (input: {
+    clipId: string;
+    characterTag: string;
+    labelZh?: string;
+    startSec?: number;
+    durationSec?: number;
+  }) => void | Promise<void>;
+  onRemoveCharacterVoice?: (id: string) => void;
   onUploadCustomAssets?: (
     files: FileList | File[],
     role?: ManhuaCustomAssetRole,
@@ -348,6 +362,9 @@ export default function ManhuaScriptWorkbench({
   stylePack = null,
   onStylePackChange,
   customAssetRefs = [],
+  characterVoiceLocks = [],
+  onExtractCharacterVoice,
+  onRemoveCharacterVoice,
   onUploadCustomAssets,
   onCustomAssetRoleChange,
   onCustomAssetDutyChange,
@@ -2128,6 +2145,84 @@ export default function ManhuaScriptWorkbench({
                       </div>
                     </div>
                   ) : null}
+                  <div className="mt-2 border-t border-cyan-400/20 pt-1.5">
+                    <div className="text-[10px] font-semibold text-emerald-50/90">
+                      角色声线参考（人手提取）
+                    </div>
+                    <p className="mt-0.5 text-[10px] leading-4 text-white/40">
+                      有声成片出对白后，抠声挂到 @角色；后续成片自动带参考音。BGM
+                      仍后期自叠。
+                    </p>
+                    {characterVoiceLocks.length ? (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {characterVoiceLocks.map((v) => (
+                          <span
+                            key={v.id}
+                            className="inline-flex items-center gap-1 rounded border border-emerald-300/35 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[9px] text-emerald-50/95"
+                          >
+                            {v.characterTag}
+                            <span className="font-sans text-white/50">{v.labelZh}</span>
+                            {onRemoveCharacterVoice ? (
+                              <button
+                                type="button"
+                                className="text-white/40 hover:text-white/80"
+                                onClick={() => onRemoveCharacterVoice(v.id)}
+                                aria-label={`移除 ${v.characterTag} 声线`}
+                              >
+                                ×
+                              </button>
+                            ) : null}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-[10px] text-white/35">尚未挂声线</p>
+                    )}
+                    {onExtractCharacterVoice ? (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {blocks
+                          .filter(
+                            (b) =>
+                              b.id.startsWith("clip-") &&
+                              (getBlockEpisodeIndex(b) ?? 1) === focusEpisode &&
+                              Boolean(b.outputUrl || b.outputUrls?.[0]),
+                          )
+                          .slice(0, 6)
+                          .flatMap((clip) => {
+                            const tags = collectManhuaCharacterTagsFromPrompt(clip.prompt);
+                            const charTags =
+                              tags.length > 0
+                                ? tags
+                                : assetLockRegistry.byRole.character
+                                    .map((s) => s.tag)
+                                    .slice(0, 2);
+                            return charTags.map((tag) => {
+                              const label =
+                                assetLockRegistry.byRole.character.find((s) => s.tag === tag)
+                                  ?.labelZh || tag;
+                              return (
+                                <button
+                                  key={`${clip.id}-${tag}`}
+                                  type="button"
+                                  className="rounded border border-emerald-400/30 bg-black/30 px-1.5 py-0.5 text-[9px] text-emerald-50/90 hover:bg-emerald-500/15"
+                                  onClick={() =>
+                                    void onExtractCharacterVoice({
+                                      clipId: clip.id,
+                                      characterTag: tag,
+                                      labelZh: label,
+                                      startSec: 0,
+                                      durationSec: 8,
+                                    })
+                                  }
+                                >
+                                  从段{resolveClipSegmentIndex(clip.id, clip.prompt)}抠 {tag}
+                                </button>
+                              );
+                            });
+                          })}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
               {onGenerateCustomAssetFromLibrary || onShareAssetToLibraryChange ? (
