@@ -252,7 +252,7 @@ export default function ManhuaEditMultitrackPanel({
           </div>
           <p className="mt-1 max-w-xl text-[10px] leading-relaxed text-white/40">
             多轨预览：静帧 / 成片 / 对白 / 字幕。可调进出点；字幕只生成轨数据，默认不烧进成片。
-            气口建议：按有声区间收紧进出点，可再手改。
+            建议切点：气口 + 导戏秒轴对齐，写入成片后合成会真裁切。
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">

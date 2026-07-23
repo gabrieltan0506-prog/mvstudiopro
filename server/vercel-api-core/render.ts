@@ -27,26 +27,68 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
   const transition = String(input.transition || "cut").trim().toLowerCase();
   const size = resolutionToSize(input.resolution);
   const sceneFiles: string[] = [];
-  const durations = input.sceneVideos.flatMap((x) => {
-    const base = [parseDurationSeconds(x?.duration, 8)];
-    if (String(x?.stillImageUrl || "").trim()) {
-      base.push(parseDurationSeconds(x?.stillDuration, 1.5));
-    }
-    return base;
-  });
+  const durations: number[] = [];
 
   for (let i = 0; i < input.sceneVideos.length; i += 1) {
-    const url = String(input.sceneVideos[i]?.url || "").trim();
+    const scene = input.sceneVideos[i]!;
+    const url = String(scene?.url || "").trim();
     if (!url) throw new Error(`missing_scene_video_url_${i + 1}`);
+    const rawPath = path.join(tmpDir, `scene-${String(i + 1).padStart(2, "0")}-src.mp4`);
     const filePath = path.join(tmpDir, `scene-${String(i + 1).padStart(2, "0")}.mp4`);
-    await downloadFileToPath(url, filePath);
-    sceneFiles.push(filePath);
+    await downloadFileToPath(url, rawPath);
 
-    const stillImageUrl = String(input.sceneVideos[i]?.stillImageUrl || "").trim();
+    const trimIn = Number(scene.trimInSec);
+    const trimOut = Number(scene.trimOutSec);
+    const hasTrim =
+      Number.isFinite(trimIn) && Number.isFinite(trimOut) && trimOut - trimIn >= 0.5;
+    const clipDur = hasTrim
+      ? Math.round((trimOut - trimIn) * 10) / 10
+      : parseDurationSeconds(scene.duration, 8);
+    if (hasTrim) {
+      await runFfmpeg([
+        "-y",
+        "-ss",
+        String(Math.max(0, trimIn)),
+        "-i",
+        rawPath,
+        "-t",
+        String(clipDur),
+        "-vf",
+        `scale=${size.width}:${size.height}:force_original_aspect_ratio=decrease,pad=${size.width}:${size.height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-movflags",
+        "+faststart",
+        "-an",
+        filePath,
+      ]);
+    } else {
+      await runFfmpeg([
+        "-y",
+        "-i",
+        rawPath,
+        "-vf",
+        `scale=${size.width}:${size.height}:force_original_aspect_ratio=decrease,pad=${size.width}:${size.height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-movflags",
+        "+faststart",
+        "-an",
+        filePath,
+      ]);
+    }
+    sceneFiles.push(filePath);
+    durations.push(clipDur);
+
+    const stillImageUrl = String(scene?.stillImageUrl || "").trim();
     if (stillImageUrl) {
       const stillPath = path.join(tmpDir, `scene-${String(i + 1).padStart(2, "0")}-still.jpg`);
       const stillVideoPath = path.join(tmpDir, `scene-${String(i + 1).padStart(2, "0")}-still.mp4`);
-      const stillDuration = parseDurationSeconds(input.sceneVideos[i]?.stillDuration, 1.5);
+      const stillDuration = parseDurationSeconds(scene?.stillDuration, 1.5);
       await downloadFileToPath(stillImageUrl, stillPath);
       await runFfmpeg([
         "-y",
@@ -68,6 +110,7 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
         stillVideoPath,
       ]);
       sceneFiles.push(stillVideoPath);
+      durations.push(stillDuration);
     }
   }
 

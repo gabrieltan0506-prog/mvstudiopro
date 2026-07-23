@@ -255,6 +255,11 @@ type Props = {
   onRerunKeyartShot?: (blockId: string, shotIndex: number) => void;
   /** 质检软拦：用户仍采用当前镜成片进入成片坞 */
   onAcceptClipDespiteQc?: (clipBlockId: string) => void;
+  /** 建议切点后写入成片节点，供合成 ffmpeg 真裁切 */
+  onApplyClipEditTrim?: (
+    clipBlockId: string,
+    trim: NonNullable<CanvasBlock["manhuaEditTrim"]>,
+  ) => void;
   /** 成片坞勾选集（剪辑阶段可改） */
   dockSelectedIds?: Set<string>;
   onDockSelectedIdsChange?: (next: Set<string>) => void;
@@ -392,6 +397,7 @@ export default function ManhuaScriptWorkbench({
   onRerunKeyartsFromReverse,
   onRerunKeyartShot,
   onAcceptClipDespiteQc,
+  onApplyClipEditTrim,
   dockSelectedIds,
   onDockSelectedIdsChange,
   onFocusBlock,
@@ -658,44 +664,63 @@ export default function ManhuaScriptWorkbench({
 
   const handleSuggestAutoCuts = useCallback(async () => {
     if (suggestAutoCutsBusy || factoryBusy) return;
-    const groups = new Map<
-      string,
-      Array<{ shotIndex: number; durationSec: number }>
-    >();
+    type CutGroup = {
+      videoUrl: string;
+      clipBlockId: string;
+      directorPrompt: string;
+      shots: Array<{ shotIndex: number; durationSec: number }>;
+    };
+    const groups = new Map<string, CutGroup>();
     for (const media of editShotMedia) {
       const url = String(media.outputUrl || "").trim();
-      if (!/^https:\/\//i.test(url)) continue;
+      const clipBlockId = String(media.clipBlockId || "").trim();
+      if (!/^https:\/\//i.test(url) || !clipBlockId) continue;
       const rough = roughClips.find((c) => c.shotIndex === media.shotIndex);
       if (!rough) continue;
-      const list = groups.get(url) || [];
-      list.push({ shotIndex: rough.shotIndex, durationSec: rough.durationSec });
-      groups.set(url, list);
+      const clipBlock =
+        episodeClips.find((b) => b.id === clipBlockId) ||
+        (legacyClip?.id === clipBlockId ? legacyClip : undefined);
+      const g = groups.get(clipBlockId) || {
+        videoUrl: url,
+        clipBlockId,
+        directorPrompt: String(clipBlock?.prompt || ""),
+        shots: [],
+      };
+      g.shots.push({ shotIndex: rough.shotIndex, durationSec: rough.durationSec });
+      groups.set(clipBlockId, g);
     }
     if (!groups.size) {
       toast.message("请先生成有声段成片，再建议切点");
       return;
     }
     setSuggestAutoCutsBusy(true);
-    toast.message("正在按气口分析切点…", {
+    toast.message("正在按气口与导戏秒轴分析切点…", {
       description: `${groups.size} 段成片`,
     });
     try {
       const merged: ManhuaFineCutByShot = { ...fineCutByShot };
       const labels: string[] = [];
-      for (const [videoUrl, shotRows] of Array.from(groups.entries())) {
+      for (const g of Array.from(groups.values())) {
         const out = await suggestManhuaClipCuts({
-          videoUrl,
-          shots: shotRows,
+          videoUrl: g.videoUrl,
+          shots: g.shots,
+          directorPrompt: g.directorPrompt,
         });
         const parsed = parseFineCutByShot(out.fineCutByShot);
         for (const [k, trim] of Object.entries(parsed)) {
           merged[Number(k)] = trim;
         }
         if (out.segmentLabelZh) labels.push(out.segmentLabelZh);
+        onApplyClipEditTrim?.(g.clipBlockId, {
+          inSec: out.segmentTrim.inSec,
+          outSec: out.segmentTrim.outSec,
+          shotPieces: out.shotPieces,
+          updatedAt: Date.now(),
+        });
       }
       setFineCutByShot(merged);
-      toast.message("切点建议已写入", {
-        description: labels[0] || `已更新 ${Object.keys(merged).length} 镜`,
+      toast.message("切点已写入并挂到成片", {
+        description: labels[0] || `已更新 ${Object.keys(merged).length} 镜 · 合成将按此裁切`,
       });
     } catch (e) {
       toast.message(e instanceof Error ? e.message : "切点分析失败");
@@ -708,6 +733,9 @@ export default function ManhuaScriptWorkbench({
     editShotMedia,
     roughClips,
     fineCutByShot,
+    episodeClips,
+    legacyClip,
+    onApplyClipEditTrim,
   ]);
 
   useEffect(() => {

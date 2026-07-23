@@ -1,5 +1,5 @@
 /**
- * 成片静音检测 → 建议细剪进出点（MVP，无大模型）。
+ * 成片静音检测 → 建议细剪进出点（导戏秒轴窗优先，无大模型）。
  */
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
@@ -7,9 +7,12 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import {
+  buildManhuaAssembleShotPieces,
   suggestManhuaFineCutFromSpeechRegions,
   suggestManhuaFineCutsForSegmentShots,
+  type ManhuaAssembleShotPiece,
   type ManhuaSpeechRegion,
+  type ManhuaShotTimeWindow,
 } from "../../shared/manhuaEditAutoCut.js";
 import { speechRegionsFromSilenceDetectLog } from "../../shared/manhuaTemplateLearnFramePlan.js";
 import type { ManhuaFineCutByShot, ManhuaFineCutTrim } from "../../shared/manhuaEditFineCut.js";
@@ -18,8 +21,10 @@ const execFileAsync = promisify(execFile);
 
 export type ManhuaSuggestClipCutsInput = {
   videoUrl: string;
-  /** 段内镜列表（有则按镜映射本地进出点） */
+  /** 段内镜列表 */
   shots?: Array<{ shotIndex: number; durationSec: number }>;
+  /** 段成片导戏 prompt（秒轴对齐） */
+  directorPrompt?: string | null;
 };
 
 export type ManhuaSuggestClipCutsResult = {
@@ -28,6 +33,9 @@ export type ManhuaSuggestClipCutsResult = {
   segmentTrim: ManhuaFineCutTrim;
   segmentLabelZh: string;
   fineCutByShot: ManhuaFineCutByShot;
+  windows: ManhuaShotTimeWindow[];
+  windowSource: "cue" | "even" | "mixed";
+  shotPieces: ManhuaAssembleShotPiece[];
 };
 
 async function downloadVideoToTemp(videoUrl: string, destPath: string): Promise<void> {
@@ -120,15 +128,40 @@ export async function suggestManhuaClipCutsFromVideo(
           speechRegions,
           videoDurationSec: durationSec,
           shots,
+          directorPrompt: input.directorPrompt,
         })
-      : { fineCutByShot: {} as ManhuaFineCutByShot, segmentSuggest: segment };
+      : {
+          fineCutByShot: {} as ManhuaFineCutByShot,
+          segmentSuggest: segment,
+          windows: [] as ManhuaShotTimeWindow[],
+          windowSource: "even" as const,
+        };
+
+    const shotPieces = shots.length
+      ? buildManhuaAssembleShotPieces({
+          videoDurationSec: durationSec,
+          fineCutByShot: mapped.fineCutByShot,
+          windows: mapped.windows,
+          shots,
+        })
+      : [];
+
+    const cueHint =
+      mapped.windowSource === "cue"
+        ? "·已对齐导戏秒轴"
+        : mapped.windowSource === "mixed"
+          ? "·部分对齐导戏"
+          : "";
 
     return {
       durationSec,
       speechRegions,
-      segmentTrim: segment.trim,
-      segmentLabelZh: segment.labelZh,
+      segmentTrim: mapped.segmentSuggest.trim,
+      segmentLabelZh: `${mapped.segmentSuggest.labelZh}${cueHint}`,
       fineCutByShot: mapped.fineCutByShot,
+      windows: mapped.windows,
+      windowSource: mapped.windowSource,
+      shotPieces,
     };
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);

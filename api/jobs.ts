@@ -3181,11 +3181,16 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           durationSec: Number(row?.durationSec) || 0,
         }))
         .filter((row: { shotIndex: number; durationSec: number }) => row.shotIndex >= 1);
+      const directorPrompt = s(b.directorPrompt || q.directorPrompt || "").trim();
       try {
         const { suggestManhuaClipCutsFromVideo } = await import(
           "../server/services/manhuaSuggestClipCuts.js"
         );
-        const out = await suggestManhuaClipCutsFromVideo({ videoUrl, shots });
+        const out = await suggestManhuaClipCutsFromVideo({
+          videoUrl,
+          shots,
+          directorPrompt: directorPrompt || undefined,
+        });
         return res.status(200).json({
           ok: true,
           durationSec: out.durationSec,
@@ -3193,6 +3198,9 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           segmentTrim: out.segmentTrim,
           segmentLabelZh: out.segmentLabelZh,
           fineCutByShot: out.fineCutByShot,
+          windows: out.windows,
+          windowSource: out.windowSource,
+          shotPieces: out.shotPieces,
         });
       } catch (e: any) {
         const msg = String(e?.message || "suggest_failed");

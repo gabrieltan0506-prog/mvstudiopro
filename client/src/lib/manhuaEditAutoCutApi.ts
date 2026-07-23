@@ -3,15 +3,19 @@
  */
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import type { ManhuaFineCutByShot, ManhuaFineCutTrim } from "@shared/manhuaEditFineCut";
+import type { ManhuaAssembleShotPiece } from "@shared/manhuaEditAutoCut";
 
 export async function suggestManhuaClipCuts(input: {
   videoUrl: string;
   shots?: Array<{ shotIndex: number; durationSec: number }>;
+  directorPrompt?: string;
 }): Promise<{
   durationSec: number;
   segmentTrim: ManhuaFineCutTrim;
   segmentLabelZh: string;
   fineCutByShot: ManhuaFineCutByShot;
+  shotPieces: ManhuaAssembleShotPiece[];
+  windowSource: "cue" | "even" | "mixed";
 }> {
   const url = withLongJobsFlyDirect("/api/jobs?op=suggestClipCuts");
   const res = await fetch(url, {
@@ -21,6 +25,7 @@ export async function suggestManhuaClipCuts(input: {
     body: JSON.stringify({
       videoUrl: input.videoUrl,
       shots: input.shots || [],
+      directorPrompt: input.directorPrompt || "",
     }),
   });
   const json = (await res.json().catch(() => ({}))) as {
@@ -29,6 +34,8 @@ export async function suggestManhuaClipCuts(input: {
     segmentTrim?: ManhuaFineCutTrim;
     segmentLabelZh?: string;
     fineCutByShot?: ManhuaFineCutByShot;
+    shotPieces?: ManhuaAssembleShotPiece[];
+    windowSource?: "cue" | "even" | "mixed";
     error?: string;
   };
   if (!res.ok || !json.segmentTrim) {
@@ -38,8 +45,9 @@ export async function suggestManhuaClipCuts(input: {
     durationSec: Number(json.durationSec) || 0,
     segmentTrim: json.segmentTrim,
     segmentLabelZh: String(json.segmentLabelZh || "").trim() || "已生成建议切点",
-    fineCutByShot: json.fineCutByShot && typeof json.fineCutByShot === "object"
-      ? json.fineCutByShot
-      : {},
+    fineCutByShot:
+      json.fineCutByShot && typeof json.fineCutByShot === "object" ? json.fineCutByShot : {},
+    shotPieces: Array.isArray(json.shotPieces) ? json.shotPieces : [],
+    windowSource: json.windowSource || "even",
   };
 }

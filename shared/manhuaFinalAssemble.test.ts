@@ -24,6 +24,36 @@ describe("manhuaFinalAssemble", () => {
     expect(plan.skippedEpisodes).toEqual([]);
   });
 
+  it("expands multi-segment clips and shotPieces with trim", () => {
+    const plan = buildManhuaAssemblePlan([
+      {
+        episodeIndex: 1,
+        segmentIndex: 1,
+        clipUrl: "https://x/ep1-s1.mp4",
+        keyartUrl: "https://x/k1.jpg",
+        shotPieces: [
+          { shotIndex: 1, trimInSec: 0.5, trimOutSec: 3.5, durationSec: 3 },
+          { shotIndex: 2, trimInSec: 4, trimOutSec: 7, durationSec: 3 },
+        ],
+      },
+      {
+        episodeIndex: 1,
+        segmentIndex: 2,
+        clipUrl: "https://x/ep1-s2.mp4",
+        trimInSec: 1,
+        trimOutSec: 9,
+      },
+    ]);
+    expect(plan.episodeIndexes).toEqual([1]);
+    expect(plan.sceneVideos).toHaveLength(3);
+    expect(plan.sceneVideos[0]?.trimInSec).toBe(0.5);
+    expect(plan.sceneVideos[0]?.trimOutSec).toBe(3.5);
+    expect(plan.sceneVideos[0]?.duration).toBe("3s");
+    expect(plan.sceneVideos[2]?.url).toBe("https://x/ep1-s2.mp4");
+    expect(plan.sceneVideos[2]?.trimInSec).toBe(1);
+    expect(plan.sceneVideos[2]?.duration).toBe("8s");
+  });
+
   it("filters by episodeIndexes and records skip when clip missing", () => {
     const plan = buildManhuaAssemblePlan(
       [
