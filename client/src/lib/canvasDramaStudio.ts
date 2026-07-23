@@ -138,6 +138,22 @@ function applyKeyartEditPlanToBlock(
       editFusionUrls: plan.editFusionUrls,
     };
   }
+  // 新计划暂时算不出垫图时：绝不能清空节点上已有垫图（重跑 prefs 一刷会全军覆没）
+  const existingRef = String(block.refImageUrl || "").trim();
+  const existingFusion = (block.editFusionUrls || [])
+    .map((u) => String(u || "").trim())
+    .filter(Boolean);
+  if (existingRef || existingFusion.length) {
+    const ref = existingRef || existingFusion[0]!;
+    return {
+      ...block,
+      prompt,
+      imageModel: "gpt-image-2",
+      imageMode: "edit",
+      refImageUrl: ref,
+      editFusionUrls: existingFusion.filter((u) => u !== ref).slice(0, 15),
+    };
+  }
   // 无垫图：不静默改文生；保留 generate 标记，运行时会硬失败并提示补人物库
   return {
     ...block,
@@ -2239,6 +2255,37 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         continue;
       }
 
+      // 开跑前闸门：缺垫图的单镜直接失败；若整批都缺则中止，避免同错刷屏
+      const padMissingMsg =
+        "关键静帧缺少人物/场景参考底图。请到资产设定确认定妆与场景空镜（或上传参考）后再生成。";
+      const runnableJobs: KeyartJob[] = [];
+      for (const job of jobs) {
+        const kb = working.find((b) => b.id === job.id);
+        const hasPad =
+          Boolean(String(kb?.refImageUrl || "").trim()) ||
+          Boolean((kb?.editFusionUrls || []).some(Boolean));
+        if (hasPad) {
+          runnableJobs.push(job);
+          continue;
+        }
+        publish(
+          working.map((b) =>
+            b.id === job.id ? { ...b, status: "error" as const, error: padMissingMsg } : b,
+          ),
+        );
+        if (!errors.some((e) => e.id === job.id)) {
+          errors.push({ id: job.id, message: padMissingMsg });
+        }
+        opts.onStageError?.(job.id, MANHUA_FACTORY_STAGE_LABEL_ZH.keyart, padMissingMsg);
+      }
+      if (!runnableJobs.length) {
+        i = j;
+        continue;
+      }
+      // 后续只跑有垫图的镜头
+      jobs.length = 0;
+      jobs.push(...runnableJobs);
+
       const batchParallel = jobs.length >= 2;
       const concurrency = batchParallel ? MANHUA_KEYART_PARALLEL_CONCURRENCY : 1;
       const {
@@ -2280,11 +2327,22 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             const current = working.find((b) => b.id === kid);
             if (!current) throw new Error("静帧节点不存在");
             const visionImages = collectVisionImages(kid, working, edges);
-            /** 文生静帧勿挂上游 nearestRef，否则会被当成 edits 且易超时 */
-            let runBlockPayload: CanvasBlock =
-              current.imageMode === "edit" && current.refImageUrl
-                ? current
-                : { ...current, refImageUrl: undefined, editFusionUrls: [] };
+            /** 有垫图/融图就走改图；勿因 imageMode 被 prefs 误标 generate 而清空参考 */
+            const padUrl =
+              String(current.refImageUrl || "").trim() ||
+              String((current.editFusionUrls || []).find(Boolean) || "").trim();
+            const fusionKeep = (current.editFusionUrls || [])
+              .map((u) => String(u || "").trim())
+              .filter((u) => u && u !== padUrl)
+              .slice(0, 15);
+            let runBlockPayload: CanvasBlock = padUrl
+              ? {
+                  ...current,
+                  imageMode: "edit",
+                  refImageUrl: padUrl,
+                  editFusionUrls: fusionKeep,
+                }
+              : { ...current, refImageUrl: undefined, editFusionUrls: [] };
             const epForShot = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
             const shotForCont = resolveKeyartShotIndex(runBlockPayload.id, runBlockPayload.prompt);
 

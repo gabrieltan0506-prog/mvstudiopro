@@ -988,6 +988,17 @@ slow dolly in, soft rain, trembling hand
     const expanded = expandManhuaShotKeyartsAfterReverse(primed, spawned.edges, reverseId);
     const keyarts = expanded.blocks.filter((b) => b.id.startsWith("keyart-"));
     expect(keyarts.length).toBeGreaterThanOrEqual(3);
+    // 批量闸门要求有垫图；测试补上站点相对参考，避免未挂垫图被预检拦下
+    const withPads = expanded.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? {
+            ...b,
+            imageMode: "edit" as const,
+            refImageUrl: "/manhua-scenes/pad.webp",
+            editFusionUrls: ["/manhua-props/pad.png"],
+          }
+        : b,
+    );
 
     const doneOrder: string[] = [];
     const inFlightPeaks: number[] = [];
@@ -1008,7 +1019,7 @@ slow dolly in, soft rain, trembling hand
       const deps: CanvasRunDeps = { optimizeCopy: async () => "" };
       await runManhuaDramaFactoryPipeline({
         deps,
-        blocks: expanded.blocks,
+        blocks: withPads,
         edges: expanded.edges,
         untilStage: "keyart",
         forceFromStage: "keyart",
@@ -1068,17 +1079,28 @@ slow dolly in, soft rain, trembling hand
     const withPartial = expanded.blocks.map((b) => {
       if (!b.id.startsWith("keyart-")) return b;
       const shot = resolveKeyartShotIndex(b.id, b.prompt);
+      const withPad = {
+        ...b,
+        imageMode: "edit" as const,
+        refImageUrl: "/manhua-scenes/pad.webp",
+        editFusionUrls: ["/manhua-props/pad.png"],
+      };
       if (shot === 1) {
         return {
-          ...b,
+          ...withPad,
           status: "done" as const,
           outputUrl: "https://cdn.example/s01.png",
         };
       }
       if (shot === 2) {
-        return { ...b, status: "error" as const, error: "改图失败", outputUrl: undefined };
+        return {
+          ...withPad,
+          status: "error" as const,
+          error: "改图失败",
+          outputUrl: undefined,
+        };
       }
-      return { ...b, status: "idle" as const, outputUrl: undefined };
+      return { ...withPad, status: "idle" as const, outputUrl: undefined };
     });
 
     const spy = vi.spyOn(canvasRunBlock, "runCanvasBlock").mockImplementation(async (_deps, block) => {
@@ -1116,6 +1138,35 @@ slow dolly in, soft rain, trembling hand
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("prefs refresh keeps existing keyart pad when new plan has no base", () => {
+    const { blocks } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      ancientArchetypeIds: ["arch_rain_jianghu_dao"],
+      sceneId: "scene_07",
+      propIds: ["demo_prop_ancient_jade"],
+      artStyleId: "photoreal",
+    });
+    const keyed = blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? {
+            ...b,
+            imageMode: "edit" as const,
+            refImageUrl: "/manhua-scenes/keep.webp",
+            editFusionUrls: ["/manhua-props/keep.png"],
+          }
+        : b,
+    );
+    // 故意不传 scene/prop，模拟 prefs 瞬时算不出底图
+    const next = applyFactoryPrefsToBlocks(keyed, {
+      ancientArchetypeIds: ["arch_rain_jianghu_dao"],
+      artStyleId: "photoreal",
+    });
+    const key = next.find((b) => b.id.startsWith("keyart-"))!;
+    expect(key.imageMode).toBe("edit");
+    expect(key.refImageUrl).toBe("/manhua-scenes/keep.webp");
+    expect(key.editFusionUrls).toContain("/manhua-props/keep.png");
   });
 
   it("expand only adds missing shots and keeps existing media", () => {

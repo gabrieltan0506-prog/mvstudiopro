@@ -56,6 +56,24 @@ describe("manhuaCloudDraft", () => {
     expect(b?.outputUrl).toBeUndefined();
   });
 
+  it("keeps site-relative manhua pad refs for keyart rerun", () => {
+    const b = sanitizeManhuaCloudDraftBlock({
+      id: "keyart-e01-s01-a",
+      kind: "image",
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 360,
+      prompt: "静帧",
+      imageMode: "edit",
+      refImageUrl: "/manhua-scenes/scene_07.webp",
+      editFusionUrls: ["/manhua-props/jade.png", "blob:https://local/x"],
+      status: "idle",
+    });
+    expect(b?.refImageUrl).toBe("/manhua-scenes/scene_07.webp");
+    expect(b?.editFusionUrls).toEqual(["/manhua-props/jade.png"]);
+  });
+
   it("round-trips payload with writer pack", () => {
     const payload = buildManhuaCloudDraftPayload({
       clientUpdatedAt: "2026-07-20T06:00:00.000Z",

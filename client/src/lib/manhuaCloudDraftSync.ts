@@ -93,6 +93,14 @@ function isHttpUrl(u: unknown): boolean {
   return /^https?:\/\//i.test(String(u || "").trim());
 }
 
+/** 本机落盘可保留的资产 URL：HTTPS + 站点内 /manhua-* 垫图路径 */
+function isPersistableAssetUrl(u: unknown): boolean {
+  const s = String(u || "").trim();
+  if (!s || s.startsWith("blob:") || s.startsWith("data:")) return false;
+  if (/^https?:\/\//i.test(s)) return true;
+  return s.startsWith("/manhua-") || s.startsWith("/assets/") || s.startsWith("/demo/");
+}
+
 /** 本机落盘瘦身：去视频产物与 blob，降低多集撑爆配额 */
 export function slimBlocksForLocalPersist(blocks: CanvasBlock[]): CanvasBlock[] {
   return blocks.map((b) => {
@@ -106,18 +114,24 @@ export function slimBlocksForLocalPersist(blocks: CanvasBlock[]): CanvasBlock[] 
         error: undefined,
       };
     }
-    const outputUrls = (b.outputUrls || []).filter(isHttpUrl).slice(0, 8);
-    const outputUrl = isHttpUrl(b.outputUrl) ? String(b.outputUrl).trim() : outputUrls[0];
+    const outputUrls = (b.outputUrls || []).filter(isPersistableAssetUrl).slice(0, 8);
+    const outputUrl = isPersistableAssetUrl(b.outputUrl)
+      ? String(b.outputUrl).trim()
+      : outputUrls[0];
     return {
       ...b,
       outputUrl,
       outputUrls: outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
-      refImageUrl: isHttpUrl(b.refImageUrl) ? String(b.refImageUrl).trim() : undefined,
+      refImageUrl: isPersistableAssetUrl(b.refImageUrl)
+        ? String(b.refImageUrl).trim()
+        : undefined,
       uploadedAssets: [],
       uploadFailures: undefined,
-      editMaskUrl: isHttpUrl(b.editMaskUrl) ? b.editMaskUrl : undefined,
-      editFusionUrls: (b.editFusionUrls || []).filter(isHttpUrl).slice(0, 8),
-      lastFrameUrl: isHttpUrl(b.lastFrameUrl) ? String(b.lastFrameUrl).trim() : undefined,
+      editMaskUrl: isPersistableAssetUrl(b.editMaskUrl) ? String(b.editMaskUrl).trim() : undefined,
+      editFusionUrls: (b.editFusionUrls || []).filter(isPersistableAssetUrl).slice(0, 8),
+      lastFrameUrl: isPersistableAssetUrl(b.lastFrameUrl)
+        ? String(b.lastFrameUrl).trim()
+        : undefined,
       manhuaRetake: b.manhuaRetake,
     };
   });
@@ -226,6 +240,7 @@ export function cloudDraftBlocksToCanvas(blocks: ManhuaCloudDraftPayload["canvas
       outputUrl: raw.outputUrl,
       outputUrls: raw.outputUrls || [],
       refImageUrl: raw.refImageUrl,
+      editFusionUrls: raw.editFusionUrls || [],
       imageMode: raw.imageMode === "edit" ? "edit" : "generate",
       aspectRatio: raw.aspectRatio === "16:9" ? "16:9" : "9:16",
       pathCameraRecipeId: raw.pathCameraRecipeId,
