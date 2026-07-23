@@ -194,6 +194,12 @@ import {
   writerPackLooksReady,
   type ManhuaWriterPack,
 } from "@shared/manhuaWriterRoom";
+import {
+  getManhuaViralTemplate,
+  listApprovedManhuaViralTemplatesGrouped,
+  type ManhuaViralTemplateCard,
+  type ManhuaViralTemplateLane,
+} from "@shared/manhuaViralTemplateBank";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
 import {
@@ -462,8 +468,9 @@ export default function OmniCanvas() {
   const [factoryAdvancedOpen, setFactoryAdvancedOpen] = useState(false);
   const [factoryProgress, setFactoryProgress] = useState<string>("");
   const [writerBrief, setWriterBrief] = useState(() => initialWriterSession?.brief || "");
-  /** 节奏模板已停用：扩写只靠题材/补充条件，不再注入审定骨架 */
-  const [viralTemplateId, setViralTemplateId] = useState("");
+  const [viralTemplateId, setViralTemplateId] = useState(
+    () => String(initialWriterSession?.viralTemplateId || "").trim(),
+  );
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(() =>
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
   );
@@ -1075,7 +1082,7 @@ export default function OmniCanvas() {
     setCustomAssetRefs(normalizeManhuaCustomAssetRefs(session.customAssetRefs));
     setStylePack(session.stylePack ?? null);
     setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
-    setViralTemplateId("");
+    setViralTemplateId(String(session.viralTemplateId || "").trim());
     if (session.deliveryPackage) {
       setDeliveryPackage(
         normalizeManhuaDeliveryPackage(session.deliveryPackage, {
@@ -2073,9 +2080,9 @@ export default function OmniCanvas() {
       .filter(Boolean)
       .join("\n\n");
     const mergedBrief = [brief, designInject].filter(Boolean).join("\n\n");
-    const reqPreview = `topic=${topic}\nepisodes=${count}\nbrief:\n${mergedBrief.slice(0, 4000)}\nviralTemplate=off`;
+    const reqPreview = `topic=${topic}\nepisodes=${count}\nbrief:\n${mergedBrief.slice(0, 4000)}\nviralTemplate=${viralTemplateId || "off"}`;
     pushDebug("expandWriterPack:start", {
-      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count} overwriteOld=1 viralTemplate=off`,
+      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count} overwriteOld=1 viralTemplate=${viralTemplateId || "off"}`,
       request: reqPreview,
     });
     /** 服务端 300s；客户端略宽一点，超时必须解锁，避免旧稿挂着却一直「正在扩写」 */
@@ -2086,8 +2093,7 @@ export default function OmniCanvas() {
           topic,
           brief: mergedBrief || undefined,
           episodeCount: count,
-          // 节奏模板停用：不注入边关/系统/操作等粗糙骨架
-          viralTemplateId: undefined,
+          viralTemplateId: viralTemplateId || undefined,
         }),
         new Promise<never>((_, reject) => {
           window.setTimeout(() => {
@@ -2134,7 +2140,7 @@ export default function OmniCanvas() {
         workflowPhase: "outline" as const,
         customAssetRefs: [] as ManhuaCustomAssetRef[],
         shareAssetToLibrary,
-        viralTemplateId: "",
+        viralTemplateId,
       };
       const factoryPrefs = {
         topic,
@@ -2169,7 +2175,7 @@ export default function OmniCanvas() {
       pushDebug("expandWriterPack:ok", {
         level: "ok",
         ms: Date.now() - t0,
-        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount} · overwritten=1 · viralTemplate=off`,
+        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount} · overwritten=1 · viralTemplate=${viralTemplateId || "off"}`,
         request: reqPreview,
         response: `${pack.seriesTitle || ""}\n${pack.logline || ""}\n${epDigest}`.slice(0, 8000),
       });
@@ -2213,6 +2219,22 @@ export default function OmniCanvas() {
     artStyleManual,
     syncCloudDraftPayload,
   ]);
+
+  const viralTemplatesRemoteQuery = trpc.manhuaViralTemplate.listApproved.useQuery(undefined, {
+    staleTime: 60_000,
+    retry: 1,
+  });
+  const viralTemplateGrouped = useMemo(() => {
+    const remote = viralTemplatesRemoteQuery.data?.groups;
+    if (remote && remote.length > 0) {
+      return remote as Array<{ laneZh: ManhuaViralTemplateLane; items: ManhuaViralTemplateCard[] }>;
+    }
+    return listApprovedManhuaViralTemplatesGrouped();
+  }, [viralTemplatesRemoteQuery.data]);
+  const selectedViralTemplate = useMemo(() => {
+    const extras = viralTemplateGrouped.flatMap((g) => g.items);
+    return getManhuaViralTemplate(viralTemplateId, extras);
+  }, [viralTemplateId, viralTemplateGrouped]);
 
   const importWriterRoomFromText = useCallback(
     (raw: string) => {
@@ -4134,7 +4156,11 @@ export default function OmniCanvas() {
                   artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
                   projectBibleSummary={summarizeManhuaProjectBible(projectBible)}
                   assetCanon={projectBible?.assetCanon}
-                  viralTemplateLabelZh={undefined}
+                  viralTemplateLabelZh={
+                    selectedViralTemplate
+                      ? `${selectedViralTemplate.nameZh}（${selectedViralTemplate.laneZh}）`
+                      : undefined
+                  }
                   bibleBoundEpisodes={projectBible?.cast.boundEpisodeIndexes}
                   pathTrackLabelZh={pathTrackStatus.labelZh}
                   narrativeLightingLabelZh={narrativeLightingLabelZh}
@@ -4646,11 +4672,52 @@ export default function OmniCanvas() {
                 placeholder={"例：\n主角隐忍多年后归来\n对手是旧日盟友\n每集结尾必须留下未揭的局"}
                 className="mt-1 w-full resize-y rounded-xl border border-white/15 bg-black/50 px-3.5 py-2.5 text-sm leading-6 text-white placeholder:text-white/30 outline-none focus:border-emerald-400/55 disabled:opacity-50"
               />
-              <div className="mt-3" data-manhua-viral-template="off">
-                <label className="block text-[11px] text-white/45">扩写方式</label>
+              <div className="mt-3" data-manhua-viral-template>
+                <label className="block text-[11px] text-white/45">节奏模板（可选）</label>
                 <p className="mt-0.5 text-[10px] leading-4 text-white/35">
-                  按题材与补充条件自由扩写；粗粒度节奏模板已停用，避免把故事框死。
+                  审定骨架：前 3 秒钩子 + 约 180 秒节拍格；只借结构，不写外部剧名。不选则按题材自由扩写。
                 </p>
+                <div className="mt-2 space-y-2">
+                  {viralTemplateGrouped.map((group) => (
+                    <div key={group.laneZh}>
+                      <div className="mb-1 text-[10px] font-semibold text-white/40">
+                        {group.laneZh}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {group.items.map((tpl) => {
+                          const on = viralTemplateId === tpl.id;
+                          return (
+                            <button
+                              key={tpl.id}
+                              type="button"
+                              disabled={writerBusy || factoryBusy}
+                              title={tpl.summaryZh}
+                              onClick={() => {
+                                setViralTemplateId((prev) => (prev === tpl.id ? "" : tpl.id));
+                                setWriterConfirmed(false);
+                              }}
+                              className={`rounded-lg border px-2.5 py-1.5 text-left text-[11px] disabled:opacity-50 ${
+                                on
+                                  ? "border-amber-300/45 bg-amber-500/20 text-amber-50"
+                                  : "border-white/12 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]"
+                              }`}
+                            >
+                              <div className="font-semibold">{tpl.nameZh}</div>
+                              <div className="mt-0.5 max-w-[11rem] truncate text-[9px] text-white/40">
+                                {tpl.hook3sZh}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {selectedViralTemplate ? (
+                  <p className="mt-1.5 text-[10px] text-amber-100/70">
+                    已选「{selectedViralTemplate.nameZh}」· 扩写时注入节拍与密度建议
+                  </p>
+                ) : null}
               </div>
               <div className="mt-3 flex flex-wrap items-end gap-2.5">
                 <div>
