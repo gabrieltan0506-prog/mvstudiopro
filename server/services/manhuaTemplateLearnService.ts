@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn, execFile } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
   buildAdaptiveFramePlan,
@@ -51,6 +51,18 @@ import {
   uploadBufferToGcs,
   signGsUriV4ReadUrl,
 } from "./gcs.js";
+import {
+  isDouyinSingleVideoUrl,
+  listedSingleEpisodeFromUrl,
+  mapManhuaLearnFetchError,
+} from "../../shared/manhuaLearnYtdlp.js";
+import {
+  assertYtdlpCookieReadyForUrl,
+  execYtdlpJson,
+  openYtdlpCookieSession,
+  runYtdlp,
+  throwMappedYtdlpFailure,
+} from "./manhuaLearnYtdlpRuntime.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -143,10 +155,6 @@ export async function getManhuaSeriesLearnSnapshot(seriesKey: string): Promise<{
   return { progress, digestsPreview, analysisReady, proposal };
 }
 
-function ytDlpBin(): string {
-  return String(process.env.YOUTUBE_DL_PATH || "yt-dlp").trim() || "yt-dlp";
-}
-
 function gcsBucketHint(): string {
   return String(
     process.env.GCS_BUCKET_NAME
@@ -155,23 +163,6 @@ function gcsBucketHint(): string {
       || process.env.GOOGLE_CLOUD_STORAGE_BUCKET
       || "mv-studio-pro-vertex-video-temp",
   ).trim();
-}
-
-function run(cmd: string, args: string[]): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
-    let stderr = "";
-    child.stderr?.on("data", (d) => {
-      stderr += String(d);
-    });
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code !== 0 && stderr) {
-        console.warn(`[manhuaTemplateLearn] ${cmd} exit=${code}:`, stderr.slice(0, 400));
-      }
-      resolve(code ?? 1);
-    });
-  });
 }
 
 function seriesKeyFrom(input: { url: string; mixId?: string; title?: string }): string {
@@ -278,20 +269,28 @@ async function downloadVideo(url: string, workDir: string): Promise<string> {
   if (/douyin\.com\/search\//i.test(url)) {
     throw new Error("当前是搜索页链接，请改用成片/合集页地址后再学节奏");
   }
-  const outTpl = path.join(workDir, "source.%(ext)s");
-  const code = await run(ytDlpBin(), [
-    "-f",
-    "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best",
-    "--merge-output-format",
-    "mp4",
-    "-o",
-    outTpl,
-    "--no-playlist",
-    "--max-filesize",
-    "180M",
-    url,
-  ]);
-  if (code !== 0) throw new Error("成片下载失败，请确认链接可访问或稍后重试");
+  assertYtdlpCookieReadyForUrl(url);
+  const cookies = await openYtdlpCookieSession();
+  try {
+    const outTpl = path.join(workDir, "source.%(ext)s");
+    const { code, stderr } = await runYtdlp([
+      ...cookies.args,
+      "-f",
+      "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best",
+      "--merge-output-format",
+      "mp4",
+      "-o",
+      outTpl,
+      "--no-playlist",
+      "--max-filesize",
+      "180M",
+      "--no-warnings",
+      url,
+    ]);
+    if (code !== 0) throwMappedYtdlpFailure(stderr);
+  } finally {
+    await cookies.cleanup();
+  }
   const files = await fs.readdir(workDir);
   const vid = files.find((f) => /\.(mp4|webm|mkv)$/i.test(f));
   if (!vid) throw new Error("下载完成但未找到视频文件");
@@ -300,60 +299,71 @@ async function downloadVideo(url: string, workDir: string): Promise<string> {
 
 type ListedEpisode = { index: number; url: string; title: string };
 
-async function listOrderedEpisodes(sourceUrl: string): Promise<ListedEpisode[]> {
-  const { stdout } = await execFileAsync(
-    ytDlpBin(),
-    ["--flat-playlist", "-J", "--no-warnings", sourceUrl],
-    { maxBuffer: 32 * 1024 * 1024 },
-  );
-  const data = JSON.parse(String(stdout || "{}")) as {
-    _type?: string;
-    title?: string;
-    webpage_url?: string;
-    url?: string;
-    entries?: Array<{
-      playlist_index?: number;
+async function listOrderedEpisodes(
+  sourceUrl: string,
+  titleHint?: string,
+): Promise<ListedEpisode[]> {
+  // 单集成片页：不必 --flat-playlist（抖音常因此先撞登录态）
+  if (isDouyinSingleVideoUrl(sourceUrl)) {
+    return listedSingleEpisodeFromUrl(sourceUrl, titleHint);
+  }
+
+  assertYtdlpCookieReadyForUrl(sourceUrl);
+  const cookies = await openYtdlpCookieSession();
+  try {
+    const data = (await execYtdlpJson([
+      ...cookies.args,
+      "--flat-playlist",
+      "-J",
+      "--no-warnings",
+      sourceUrl,
+    ])) as {
+      _type?: string;
       title?: string;
-      url?: string;
       webpage_url?: string;
-      id?: string;
-    } | null>;
-  };
-  const entries = Array.isArray(data.entries) ? data.entries.filter(Boolean) : [];
-  if (entries.length > 0) {
-    const out: ListedEpisode[] = [];
-    for (let i = 0; i < entries.length; i++) {
-      const e = entries[i]!;
-      const index = Math.max(1, Math.floor(Number(e.playlist_index) || i + 1));
-      let epUrl = String(e.webpage_url || e.url || "").trim();
-      if (!epUrl && e.id) {
-        // 抖音等可能只给 id；交给 yt-dlp 原合集+索引不可靠，尽量拼 webpage
-        epUrl = String(e.url || e.id).trim();
+      url?: string;
+      entries?: Array<{
+        playlist_index?: number;
+        title?: string;
+        url?: string;
+        webpage_url?: string;
+        id?: string;
+      } | null>;
+    };
+    const entries = Array.isArray(data.entries) ? data.entries.filter(Boolean) : [];
+    if (entries.length > 0) {
+      const out: ListedEpisode[] = [];
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i]!;
+        const index = Math.max(1, Math.floor(Number(e.playlist_index) || i + 1));
+        let epUrl = String(e.webpage_url || e.url || "").trim();
+        if (!epUrl && e.id) {
+          epUrl = String(e.url || e.id).trim();
+        }
+        if (!epUrl || !/^https?:\/\//i.test(epUrl)) continue;
+        out.push({
+          index,
+          url: epUrl,
+          title: String(e.title || `第${index}集`).trim() || `第${index}集`,
+        });
       }
-      if (!epUrl || !/^https?:\/\//i.test(epUrl)) continue;
-      out.push({
-        index,
-        url: epUrl,
-        title: String(e.title || `第${index}集`).trim() || `第${index}集`,
+      out.sort((a, b) => a.index - b.index);
+      const seen = new Set<number>();
+      return out.filter((e) => {
+        if (seen.has(e.index)) return false;
+        seen.add(e.index);
+        return true;
       });
     }
-    out.sort((a, b) => a.index - b.index);
-    // 去重 index
-    const seen = new Set<number>();
-    return out.filter((e) => {
-      if (seen.has(e.index)) return false;
-      seen.add(e.index);
-      return true;
-    });
+    return listedSingleEpisodeFromUrl(
+      sourceUrl,
+      String(data.title || titleHint || "第1集").trim() || "第1集",
+    );
+  } catch (e) {
+    throw new Error(mapManhuaLearnFetchError(e));
+  } finally {
+    await cookies.cleanup();
   }
-  // 单集
-  return [
-    {
-      index: 1,
-      url: sourceUrl,
-      title: String(data.title || "第1集").trim() || "第1集",
-    },
-  ];
 }
 
 async function readJsonGcs<T>(objectName: string): Promise<T | null> {
@@ -595,7 +605,7 @@ export async function runManhuaTemplateLearn(
       MANHUA_LEARN_STAGE.list,
       manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.list),
     );
-    const listed = await listOrderedEpisodes(url);
+    const listed = await listOrderedEpisodes(url, title);
     if (!listed.length) {
       throw new Error("无法解析任何可学剧集，请换合集页或成片链接重试");
     }
