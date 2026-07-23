@@ -709,6 +709,7 @@ export async function runManhuaTemplateLearn(
 
     const byIndex = new Map(listed.map((e) => [e.index, e]));
     const batchLearnedIndexes: number[] = [];
+    const episodeFailNotes: string[] = [];
     for (const idx of batchIndexes) {
       const ep = byIndex.get(idx);
       if (!ep) continue;
@@ -732,13 +733,26 @@ export async function runManhuaTemplateLearn(
           `manhua-template-learn/series/${seriesKey}/progress.json`,
           prog,
         );
-      } catch (e) {
-        console.warn(
-          "[manhuaTemplateLearn] skip ep:",
-          idx,
-          e instanceof Error ? e.message : e,
+        await progress(
+          MANHUA_LEARN_STAGE.persist,
+          `第 ${idx} 集已写入摘要（累计本轮 ${batchLearnedIndexes.length}）`,
         );
+      } catch (e) {
+        const errZh = mapManhuaLearnFetchError(e);
+        const note = `第 ${idx} 集失败：${errZh}`;
+        episodeFailNotes.push(note);
+        console.warn("[manhuaTemplateLearn] skip ep:", idx, errZh);
+        // 必须上屏：以前只 console.warn，Job 仍 succeeded → 面板像「突然停了」
+        await progress(MANHUA_LEARN_STAGE.failed, note);
       }
+    }
+
+    // 本轮一张都没学成 → Job 失败（勿伪装成功，否则前台无错误、快照还会盖成「尚无已学分集」）
+    if (batchLearnedIndexes.length === 0 && batchIndexes.length > 0) {
+      const last = episodeFailNotes[episodeFailNotes.length - 1] || "本轮未能成功采下新集";
+      throw new Error(
+        `${last}（尝试 ${batchIndexes.length} 集，列表共 ${listed.length} 集）。请检查成片链接、登录态或付费墙后重试。`,
+      );
     }
 
     const digests = await loadAllDigests(seriesKey);
@@ -749,6 +763,10 @@ export async function runManhuaTemplateLearn(
       const singleOrShort =
         listed.length < MANHUA_LEARN_ANALYSIS_MIN
           ? `当前链接共 ${listed.length} 集（单集也可学）。`
+          : "";
+      const failHint =
+        episodeFailNotes.length > 0
+          ? ` 另有 ${episodeFailNotes.length} 集未成功（见进度日志）。`
           : "";
       return {
         seriesKey,
@@ -766,9 +784,7 @@ export async function runManhuaTemplateLearn(
         proposalGcsUri: null,
         visionFilled: false,
         messageZh:
-          batchLearnedIndexes.length > 0
-            ? `本轮学了 ${batchLearnedIndexes.length} 集（视频已删），累计 ${learnedCount}/${MANHUA_LEARN_ANALYSIS_MIN}（目标 ${MANHUA_LEARN_ANALYSIS_TARGET}）。${singleOrShort}分集结果见下方；凑满后再出总分析，是否进库由你决定。`
-            : `本轮未能成功采下新集（列表 ${listed.length} 集，已累计 ${learnedCount}）。${singleOrShort}请换链接或稍后重试。`,
+          `本轮学了 ${batchLearnedIndexes.length} 集（视频已删），累计 ${learnedCount}/${MANHUA_LEARN_ANALYSIS_MIN}（目标 ${MANHUA_LEARN_ANALYSIS_TARGET}）。${singleOrShort}${failHint}分集结果见下方；凑满后再出总分析，是否进库由你决定。`,
         workId,
       };
     }
