@@ -651,11 +651,9 @@ export async function runCanvasBlock(
         ? rawImagePrompt.trim()
         : `${rawImagePrompt.trim()}\n\n${noTextTail}`
       : rawImagePrompt;
-    // 关键静帧：出图前精简优化（不截断）；仍超上游硬上限则明确报错
+    // 关键静帧：仅 prompt>32k 时用 Terra 拆段提取→合并（不截断）；仍超则报错停住
     if (isKeyart) {
-      imagePrompt = await compactManhuaKeyartImagePrompt(deps.optimizeCopy, imagePrompt, {
-        modelName: block.textModel,
-      });
+      imagePrompt = await compactManhuaKeyartImagePrompt(deps.optimizeCopy, imagePrompt);
       assertOpenAiImagePromptWithinLimit(imagePrompt);
     }
     /** 画布一律钉官方 OpenAI Image-2，失败即停；已移除 Nano Banana 2 */
