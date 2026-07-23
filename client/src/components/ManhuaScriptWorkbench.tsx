@@ -855,6 +855,7 @@ export default function ManhuaScriptWorkbench({
       beatCount: buildManhuaSecondCueSheet({
         segment: {
           index: seg.index,
+          intentZh: "",
           dialogueZh: seg.shots.find((s) => s.dialogueZh)?.dialogueZh || "",
           performanceZh: seg.shots.find((s) => s.emotionZh)?.emotionZh || "",
           sceneZh: "",

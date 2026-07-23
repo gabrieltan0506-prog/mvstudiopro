@@ -2777,7 +2777,12 @@ export default function OmniCanvas() {
       }
       setAssetsSkipped(false);
       const ingestSheetToMyLibrary = (
-        plan: { id: string; kind: "charsheet" | "sceneplate"; labelZh: string },
+        plan: {
+          id: string;
+          kind: "charsheet" | "sceneplate";
+          labelZh: string;
+          layout?: "single" | "grid2x2" | "heroSheet";
+        },
         url: string | null | undefined,
       ) => {
         const u = String(url || "").trim();
@@ -2791,6 +2796,7 @@ export default function OmniCanvas() {
             role: plan.kind === "charsheet" ? "character" : "scene",
             labelZh: plan.labelZh,
             seedLibraryId,
+            refDuty: plan.kind === "charsheet" ? "identity" : "space",
           }),
         );
       };
@@ -3203,6 +3209,51 @@ export default function OmniCanvas() {
             );
             const forceFromStage =
               opts?.forceFromStageByEpisode?.[episodeIndex] ?? opts?.forceFromStage;
+            // 片段续拍：须挂上一段已接受成片；同集链式深度有上限（超限须设定板重锚）
+            if (
+              untilStage === "clip" &&
+              typeof fragmentShotIndex === "number" &&
+              fragmentShotIndex > 1
+            ) {
+              const {
+                canContinueManhuaChain,
+                manhuaContinuationRequiresLastFrame,
+              } = await import("@shared/manhuaDirectingWorkflow");
+              const priorDone = workingBlocks
+                .filter(
+                  (b) =>
+                    b.id.startsWith("clip-") &&
+                    (getBlockEpisodeIndex(b) ?? 1) === episodeIndex &&
+                    b.status === "done" &&
+                    Boolean(b.outputUrl || b.outputUrls?.[0]),
+                )
+                .sort((a, b) => a.id.localeCompare(b.id));
+              const lastAccepted = priorDone[priorDone.length - 1];
+              const cont = manhuaContinuationRequiresLastFrame({
+                acceptedClipUrl: lastAccepted?.outputUrl || lastAccepted?.outputUrls?.[0],
+                lastFrameUrl: lastAccepted?.outputUrl || lastAccepted?.outputUrls?.[0],
+              });
+              if (!cont.ok) {
+                toast.message(cont.hintZh || "请先完成上一段成片再续拍");
+                pushDebug("continuation:blocked", {
+                  level: "warn",
+                  detail: cont.hintZh || "no-last-frame",
+                });
+                break outer;
+              }
+              const chain = canContinueManhuaChain({
+                sceneKey: `ep${episodeIndex}`,
+                depth: Math.max(0, priorDone.length),
+              });
+              if (!chain.ok) {
+                toast.message(chain.reasonZh || "请先用设定板重锚再续拍");
+                pushDebug("continuation:chain-cap", {
+                  level: "warn",
+                  detail: chain.reasonZh || "chain-cap",
+                });
+                break outer;
+              }
+            }
             const result = await runManhuaDramaFactoryPipeline({
               deps: runDeps,
               blocks: workingBlocks,

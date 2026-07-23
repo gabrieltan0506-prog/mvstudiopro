@@ -17,6 +17,24 @@ export type ManhuaCustomAssetRoleOrUnset = ManhuaCustomAssetRole | "unset";
 
 export type ManhuaCustomAssetSource = "upload" | "generated";
 
+/** 成片垫图职责（与人物/场景/道具分栏正交） */
+export type ManhuaCustomAssetRefDuty =
+  | "identity"
+  | "space"
+  | "motion"
+  | "first_frame"
+  | "last_frame"
+  | "style";
+
+export const MANHUA_CUSTOM_ASSET_REF_DUTY_LABEL_ZH: Record<ManhuaCustomAssetRefDuty, string> = {
+  identity: "身份锁",
+  space: "空间锁",
+  motion: "运动参考",
+  first_frame: "首帧",
+  last_frame: "尾帧",
+  style: "画风参考",
+};
+
 export type ManhuaCustomAssetRef = {
   id: string;
   /** HTTPS 可读地址（GCS 等） */
@@ -27,6 +45,8 @@ export type ManhuaCustomAssetRef = {
   source?: ManhuaCustomAssetSource;
   /** 生成时参考的库资产 id（可选） */
   seedLibraryId?: string;
+  /** 视频生成时的参考职责 */
+  refDuty?: ManhuaCustomAssetRefDuty | null;
 };
 
 export const MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH: Record<ManhuaCustomAssetRoleOrUnset, string> = {
@@ -172,6 +192,19 @@ export function normalizeManhuaCustomAssetRefs(
     });
     const source =
       o.source === "generated" || o.source === "upload" ? o.source : undefined;
+    const refDutyRaw = String(o.refDuty || "").trim();
+    const refDuty = (
+      [
+        "identity",
+        "space",
+        "motion",
+        "first_frame",
+        "last_frame",
+        "style",
+      ] as const
+    ).includes(refDutyRaw as ManhuaCustomAssetRefDuty)
+      ? (refDutyRaw as ManhuaCustomAssetRefDuty)
+      : undefined;
     out.push({
       id,
       url,
@@ -183,6 +216,7 @@ export function normalizeManhuaCustomAssetRefs(
       labelZh,
       source,
       seedLibraryId,
+      refDuty: refDuty || null,
     });
     if (out.length >= max) break;
   }
@@ -277,6 +311,7 @@ export function upsertGeneratedManhuaCustomAssetRef(
     role: ManhuaCustomAssetRole;
     labelZh?: string;
     seedLibraryId?: string;
+    refDuty?: ManhuaCustomAssetRefDuty | null;
   },
 ): ManhuaCustomAssetRef[] {
   const url = String(input.url || "").trim();
@@ -307,6 +342,16 @@ export function upsertGeneratedManhuaCustomAssetRef(
     source: "generated",
     seedLibraryId:
       seedLibraryId || (matchIdx >= 0 ? base[matchIdx]!.seedLibraryId : undefined),
+    refDuty:
+      input.refDuty !== undefined
+        ? input.refDuty
+        : matchIdx >= 0
+          ? base[matchIdx]!.refDuty
+          : role === "character"
+            ? "identity"
+            : role === "scene"
+              ? "space"
+              : null,
   };
   if (matchIdx >= 0) {
     const copy = [...base];

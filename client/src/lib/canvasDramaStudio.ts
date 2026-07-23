@@ -2533,9 +2533,18 @@ export async function runManhuaDramaFactoryPipeline(opts: {
           });
           if (report.status !== "passed") {
             const infra = isManhuaClipQualityInfraFailure(report);
-            const tip = infra
+            let tip = infra
               ? `整集质检暂不可用：${report.summary}`
               : `整集质检提醒：${report.summary}（成片可播；可点「仍采用」进坞）`;
+            if (!infra) {
+              try {
+                const { formatManhuaRetakeHintZh, suggestManhuaRetakeVariable } =
+                  await import("@shared/manhuaDirectingWorkflow");
+                tip = `${tip} · ${formatManhuaRetakeHintZh(suggestManhuaRetakeVariable(report.summary), 1, 3)}`;
+              } catch {
+                /* ignore */
+              }
+            }
             working = working.map((b) =>
               b.id === first.id
                 ? {

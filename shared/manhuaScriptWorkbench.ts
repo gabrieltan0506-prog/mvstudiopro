@@ -650,6 +650,7 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     buildManhuaSecondCueSheet({
       segment: {
         index: seg,
+        intentZh: "",
         dialogueZh: dialogueChain[0] || "",
         sceneZh: String(input.sceneHintZh || "").trim(),
         paletteZh: "",

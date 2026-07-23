@@ -81,6 +81,7 @@ describe("manhuaEpisodeSegmentPlan", () => {
   it("rejects only two dialogue quotes in a 15s segment", () => {
     const two = [
       "#### 段01",
+      "- 意图：羞辱与隐忍对撞",
       "- 对白：「罪户只配吃风。」「断粮的人才想杀人。」",
       "- 表演：马县丞踢瓮冷笑；苏照雪接种子时眼神一凛、肩线绷紧。",
       "- 场景：开荒村破屋",
@@ -106,6 +107,7 @@ describe("manhuaEpisodeSegmentPlan", () => {
     expect(block).toMatch(/10/);
     expect(block).toMatch(/12/);
     expect(block).toMatch(/15 秒/);
+    expect(block).toMatch(/意图/);
     expect(block).toMatch(/对白/);
     expect(block).toMatch(/表演/);
     expect(block).toMatch(/3–4/);

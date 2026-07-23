@@ -22,6 +22,12 @@ import {
   type ManhuaClipDockItem,
 } from "@/lib/manhuaProjectExport";
 import { MANHUA_DRAFT_EXPORT_HINT_ZH } from "@shared/manhuaCloudDraft";
+import {
+  defaultManhuaDeliveryPackage,
+  formatManhuaDeliveryPackageMarkdown,
+  summarizeManhuaDeliveryPackageProgress,
+} from "@shared/manhuaDeliveryPackage";
+import { formatCineVocabMultilingualTable } from "@shared/manhuaCineVocabBank";
 
 type Props = {
   blocks: CanvasBlock[];
@@ -114,6 +120,35 @@ export default function ManhuaClipDock({
     }
     return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
   }, [items]);
+
+  const deliveryPkg = useMemo(
+    () =>
+      defaultManhuaDeliveryPackage({
+        seriesTitle: seriesTitle || topic,
+        episodeIndexes: byEpisode.map(([ep]) => ep),
+        locale: "zh",
+      }),
+    [seriesTitle, topic, byEpisode],
+  );
+  const deliveryProgress = useMemo(
+    () => summarizeManhuaDeliveryPackageProgress(deliveryPkg),
+    [deliveryPkg],
+  );
+
+  const handleDownloadDeliveryPack = () => {
+    const md = [
+      formatManhuaDeliveryPackageMarkdown(deliveryPkg),
+      "",
+      formatCineVocabMultilingualTable(),
+    ].join("\n");
+    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `交付包-${(seriesTitle || topic || "manhua").slice(0, 24)}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const toggle = (id: string) => {
     const next = new Set(selectedIds);
@@ -247,6 +282,19 @@ export default function ManhuaClipDock({
                 </span>
               ) : null}
             </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-white/55">
+                {deliveryProgress.labelZh}
+              </span>
+              <button
+                type="button"
+                onClick={handleDownloadDeliveryPack}
+                className="inline-flex items-center gap-1 rounded-md border border-cyan-400/30 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-medium text-cyan-50 hover:bg-cyan-500/18"
+              >
+                <Download className="h-3 w-3" />
+                下载交付包（成色/字幕/配音 + 多语言词表）
+              </button>
+            </div>
             <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
               <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-white/60">
                 {summary.episodeCount || 0} 集
