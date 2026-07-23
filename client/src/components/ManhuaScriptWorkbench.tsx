@@ -2146,7 +2146,8 @@ export default function ManhuaScriptWorkbench({
                   {
                     role: "prop" as const,
                     titleZh: "我的服装道具",
-                    hintZh: "上传服装/道具参考，或基于库生成。与角色、场景分栏。",
+                    hintZh:
+                      "上传独立服装/道具参考（每行 3 张）。角色定妆卡里已含部分服化道，不必重复上传。",
                     border: "border-amber-400/30 bg-amber-500/[0.07]",
                     titleCls: "text-amber-50/90",
                     btnCls:
@@ -2209,7 +2210,7 @@ export default function ManhuaScriptWorkbench({
                       </div>
                     </div>
                     {refs.length ? (
-                      <div className="mt-2 grid gap-2 sm:grid-cols-2 md:grid-cols-3">
+                      <div className="mt-2 grid grid-cols-3 gap-2">
                         {refs.map((ref) => {
                           const lockTag =
                             assetLockRegistry.slots.find((s) => s.path === ref.url)?.tag ||
@@ -2398,7 +2399,9 @@ export default function ManhuaScriptWorkbench({
               </div>
             ) : null}
 
-            {assetCanon?.locations.length || assetCanon?.characters.length ? (
+            {assetCanon?.locations.length ||
+            assetCanon?.characters.length ||
+            assetCanon?.props.length ? (
               <div
                 data-manhua-writer-canon
                 className="mt-3 rounded-xl border border-amber-400/25 bg-amber-500/[0.07] p-3"
@@ -2410,25 +2413,72 @@ export default function ManhuaScriptWorkbench({
                   {episodeMainScene
                     ? ` · 本集主场景「${episodeMainScene.nameZh}」`
                     : ""}
+                  。竖排每行 3 个；人物定妆卡已含部分服化道细节。
                 </p>
-                {assetCanon?.locations.length ? (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {assetCanon.locations.slice(0, 8).map((loc) => {
-                      const isMain = episodeMainScene?.id === loc.id;
-                      return (
+                {assetCanon?.characters.length ? (
+                  <div className="mt-2">
+                    <div className="mb-1 text-[9px] font-semibold text-white/40">人物</div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {assetCanon.characters.map((ch, i) => {
+                        const isMain = i === 0 || /主/.test(String(ch.nameZh || ""));
+                        return (
+                          <span
+                            key={ch.id}
+                            className={`truncate rounded-md border px-2 py-1.5 text-[10px] ${
+                              isMain
+                                ? "border-amber-300/45 bg-amber-500/20 text-amber-50"
+                                : "border-white/10 bg-white/[0.03] text-white/65"
+                            }`}
+                            title={ch.nameZh}
+                          >
+                            {isMain ? "主 · " : ""}
+                            {ch.nameZh}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+                {assetCanon?.props.length ? (
+                  <div className="mt-2">
+                    <div className="mb-1 text-[9px] font-semibold text-white/40">
+                      道具 · 服装（独立条目；角色卡内服化另见定妆）
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {assetCanon.props.map((it) => (
                         <span
-                          key={loc.id}
-                          className={`rounded-md border px-2 py-0.5 text-[10px] ${
-                            isMain
-                              ? "border-amber-300/45 bg-amber-500/20 text-amber-50"
-                              : "border-white/10 bg-white/[0.03] text-white/55"
-                          }`}
+                          key={it.id}
+                          className="truncate rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5 text-[10px] text-white/60"
+                          title={it.nameZh}
                         >
-                          {isMain ? "主 · " : ""}
-                          {loc.nameZh}
+                          {it.nameZh}
                         </span>
-                      );
-                    })}
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {assetCanon?.locations.length ? (
+                  <div className="mt-2">
+                    <div className="mb-1 text-[9px] font-semibold text-white/40">场景池</div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {assetCanon.locations.map((loc) => {
+                        const isMain = episodeMainScene?.id === loc.id;
+                        return (
+                          <span
+                            key={loc.id}
+                            className={`truncate rounded-md border px-2 py-1.5 text-[10px] ${
+                              isMain
+                                ? "border-amber-300/45 bg-amber-500/20 text-amber-50"
+                                : "border-white/10 bg-white/[0.03] text-white/55"
+                            }`}
+                            title={loc.nameZh}
+                          >
+                            {isMain ? "主 · " : ""}
+                            {loc.nameZh}
+                          </span>
+                        );
+                      })}
+                    </div>
                   </div>
                 ) : null}
               </div>
