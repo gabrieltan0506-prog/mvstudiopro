@@ -595,18 +595,24 @@ export async function runCanvasBlock(
     if (isEdit && editRef && !/^https?:\/\//i.test(editRef)) {
       // 关键静帧禁止降级纯文生（曾漂成无关主体）；须可下载的 HTTPS 垫图
       if (isKeyart || keyartNeedsLibraryEdit) {
-        throw new Error("关键静帧需要人物库垫图（可访问的 HTTPS 底图），请先从人物库锁定角色后重试");
+        throw new Error(
+          "关键静帧需要可访问的参考底图。请先出齐角色定妆与场景空镜（或上传人物/场景参考）后再生成。",
+        );
       }
-      throw new Error("微调模式需要可访问的底图 URL（HTTPS）");
+      throw new Error("微调模式需要可访问的底图，请重新上传参考图后重试");
     }
     if (isEdit && !editRef) {
       if (isKeyart || keyartNeedsLibraryEdit) {
-        throw new Error("关键静帧须先垫人物库/上传参考图再改图，禁止无底图纯文生");
+        throw new Error(
+          "关键静帧必须基于人物/场景参考图生成，不能无底图直接出。请先锁定角色并出设定图，或上传人物参考。",
+        );
       }
       throw new Error("微调模式需要底图：请先上传图片，或先文生图后再点「微调这张图」");
     }
     if (isKeyart && !isEdit) {
-      throw new Error("关键静帧须走人物库垫图 + 改图；请先从人物库锁定角色（或上传人物参考）");
+      throw new Error(
+        "关键静帧必须挂上人物/场景参考后再生成。请回到资产设定确认定妆与空镜已齐，或上传人物参考。",
+      );
     }
     const fusionUrls = absolutizeManhuaAssetUrls(
       (block.editFusionUrls || [])

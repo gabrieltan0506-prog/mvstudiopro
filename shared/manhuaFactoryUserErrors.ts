@@ -1,0 +1,69 @@
+/**
+ * 工厂失败 → 普通用户可读文案（不依赖 debug 面板；不泄漏供应商/模型名）。
+ */
+
+export function formatManhuaFactoryUserError(raw: string): string {
+  const msg = String(raw || "").trim();
+  if (!msg) return "生成失败，请稍后重试";
+
+  // Zod / tRPC 校验原文（debug 里常见 too_big）
+  if (
+    /too_big|expected string to have <=\s*12000|maximum["']?\s*:\s*12000/i.test(msg) ||
+    (/sourceText/i.test(msg) && /too_big|Too big/i.test(msg))
+  ) {
+    return "文案过长，系统无法一次处理完。请缩短剧本或分集后再生成（设定圣经/节拍已支持更长并拆两次请求）。";
+  }
+  if (/too_big|Too big: expected string/i.test(msg)) {
+    return "提交内容超出长度限制，请缩短后再试";
+  }
+  if (/上限\s*32000|过长（\d+ 字，上限/i.test(msg)) {
+    return msg.length > 180 ? msg.slice(0, 180) : msg;
+  }
+
+  if (/关键静帧须走|禁止无底图纯文生|需要人物库垫图|须先垫人物/i.test(msg)) {
+    return "关键静帧需要人物/场景参考底图才能生成。请先锁定角色并出齐定妆与场景空镜，或上传人物参考后再试。";
+  }
+  if (/关键静帧改图失败/i.test(msg)) {
+    return "关键静帧生成失败：参考底图可能无法访问，请确认定妆/场景图已出齐后重试。";
+  }
+  if (/请先确认剧本大纲/i.test(msg)) return msg;
+  if (/请先锁定人物|请先锁定场景|请先出齐/i.test(msg)) return msg;
+  if (/还不能生成|还不能跑/i.test(msg)) return msg;
+  if (/已取消/i.test(msg)) return "已取消生成";
+  if (/Credits 不足|积分不足/i.test(msg)) {
+    return "算力不足，请充值或稍后再试";
+  }
+  if (/成片生成失败|成片网关超时/i.test(msg)) {
+    return "成片生成失败或超时，请稍后重试该段";
+  }
+  if (/UNAUTHORIZED|Unauthorized|登录/i.test(msg)) {
+    return "登录状态已失效，请刷新页面后重试";
+  }
+
+  // 剥掉 Zod JSON 阵列外壳，只留可读句
+  if (msg.includes('"code"') && msg.includes("path")) {
+    if (/sourceText/i.test(msg)) {
+      return "文案字段校验失败（可能过长）。请缩短后重试，或拆成两集生成。";
+    }
+    return "输入校验未通过，请检查剧本与资产是否齐全后重试";
+  }
+
+  // 去掉节点 id 前缀：bible-e01-xxx: message
+  const stripped = msg.replace(/^[a-z]+-e\d+-[a-z0-9-]+:\s*/i, "").trim();
+  const out = stripped || msg;
+  return out.length > 200 ? `${out.slice(0, 200)}…` : out;
+}
+
+/** 从工厂节点 id 推阶段中文名 */
+export function manhuaFactoryStageLabelFromBlockId(blockId: string): string {
+  const id = String(blockId || "");
+  if (id.startsWith("bible-")) return "设定圣经";
+  if (id.startsWith("beats-")) return "节拍表";
+  if (id.startsWith("story-")) return "故事大纲";
+  if (id.startsWith("reverse-")) return "编导反推";
+  if (id.startsWith("keyart-")) return "关键静帧";
+  if (id.startsWith("clip-")) return "成片";
+  if (id.startsWith("charsheet-")) return "角色定妆";
+  if (id.startsWith("sceneplate-")) return "场景空镜";
+  return "生成";
+}

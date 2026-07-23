@@ -1028,13 +1028,22 @@ slow dolly in, soft rain, trembling hand
       expect(doneOrder.length).toBeGreaterThanOrEqual(3);
       expect(doneOrder[0]).toMatch(/-s02/);
       expect(Math.max(...inFlightPeaks)).toBeGreaterThanOrEqual(2);
-      // 批量并行不应把上一镜静帧硬塞成 edit 底图
+      // 批量并行：可加软一致提示；若节点已有垫图/融图，不得改成 generate 并清空 refs
       const keyartCalls = spy.mock.calls.filter(([_, b]) => b.id.startsWith("keyart-"));
-      expect(keyartCalls.every(([_, b]) => b.imageMode !== "edit")).toBe(true);
       expect(
         keyartCalls.some(
           ([_, b]) => String(b.prompt || "").includes("同集静帧一致性"),
         ),
+      ).toBe(true);
+      expect(
+        keyartCalls
+          .filter(([_, b]) => String(b.prompt || "").includes("同集静帧一致性"))
+          .every(([_, b]) => {
+            const hasPad =
+              Boolean(b.refImageUrl) || Boolean(b.editFusionUrls && b.editFusionUrls.length);
+            if (!hasPad) return true;
+            return b.imageMode === "edit";
+          }),
       ).toBe(true);
     } finally {
       spy.mockRestore();
