@@ -128,7 +128,7 @@ export function slimBlocksForLocalPersist(blocks: CanvasBlock[]): CanvasBlock[] 
       uploadedAssets: [],
       uploadFailures: undefined,
       editMaskUrl: isPersistableAssetUrl(b.editMaskUrl) ? String(b.editMaskUrl).trim() : undefined,
-      editFusionUrls: (b.editFusionUrls || []).filter(isPersistableAssetUrl).slice(0, 8),
+      editFusionUrls: (b.editFusionUrls || []).filter(isPersistableAssetUrl).slice(0, 15),
       lastFrameUrl: isPersistableAssetUrl(b.lastFrameUrl)
         ? String(b.lastFrameUrl).trim()
         : undefined,

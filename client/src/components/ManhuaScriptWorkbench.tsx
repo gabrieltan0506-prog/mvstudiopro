@@ -59,6 +59,7 @@ import type { ManhuaRetakeVariable } from "@shared/manhuaDirectingWorkflow";
 import { MANHUA_REF_DUTIES } from "@shared/manhuaDirectingWorkflow";
 import {
   areManhuaKeyartsPixelLocked,
+  isManhuaKeyartPixelLocked,
   buildManhuaAssetLockRegistry,
 } from "@shared/manhuaAssetLockRegistry";
 import {
@@ -987,10 +988,17 @@ export default function ManhuaScriptWorkbench({
     const stages = ["story", "bible", "beats", "reverse", "keyart", "clip"] as const;
     return stages.map((stage) => {
       if (stage === "keyart") {
-        const has = episodeKeyarts.some((b) => Boolean(mediaUrl(b)));
+        // 须出齐且垫图锁过，才算阶段完成；禁止「有一张图就打勾」
+        const has =
+          shots.length > 0
+            ? episodeStillCount >= shots.length && keyartsPixelLocked
+            : episodeStillCount > 0 && keyartsPixelLocked;
         return {
           stage,
-          label: MANHUA_FACTORY_STAGE_LABEL_ZH[stage],
+          label:
+            episodeKeyarts.length > 1
+              ? `${MANHUA_FACTORY_STAGE_LABEL_ZH[stage]} ${episodeStillCount}/${Math.max(shots.length, episodeKeyarts.length, 1)}`
+              : MANHUA_FACTORY_STAGE_LABEL_ZH[stage],
           has,
           blockId: activeKeyart?.id || episodeKeyarts[0]?.id,
         };
@@ -1015,7 +1023,18 @@ export default function ManhuaScriptWorkbench({
         blockId: b?.id,
       };
     });
-  }, [blocks, focusEpisode, episodeKeyarts, episodeClips, activeKeyart?.id, activeClip?.id, legacyClip?.id]);
+  }, [
+    blocks,
+    focusEpisode,
+    episodeKeyarts,
+    episodeClips,
+    activeKeyart?.id,
+    activeClip?.id,
+    legacyClip?.id,
+    episodeStillCount,
+    shots.length,
+    keyartsPixelLocked,
+  ]);
   const storyboardReadyEnough =
     assetsComplete && (shots.length > 0 || Boolean(episodeStillCount));
 
@@ -3105,6 +3124,7 @@ export default function ManhuaScriptWorkbench({
                     (shotKey!.status === "error" || Boolean(shotKey!.error)) &&
                     !thumb;
                   const keyartRunning = shotKey?.status === "running" && !thumb;
+                  const keyartUnlocked = Boolean(thumb && shotKey && !isManhuaKeyartPixelLocked(shotKey));
                   return (
                     <div
                       key={shot.index}
@@ -3112,7 +3132,15 @@ export default function ManhuaScriptWorkbench({
                       data-manhua-active={on ? "true" : "false"}
                       data-manhua-keyart-url={thumb || ""}
                       data-manhua-keyart-status={
-                        thumb ? "ready" : keyartFailed ? "error" : keyartRunning ? "running" : "idle"
+                        keyartUnlocked
+                          ? "unlocked"
+                          : thumb
+                            ? "ready"
+                            : keyartFailed
+                              ? "error"
+                              : keyartRunning
+                                ? "running"
+                                : "idle"
                       }
                       className={`flex w-full items-stretch rounded-lg border text-left transition ${
                         on
@@ -3127,13 +3155,25 @@ export default function ManhuaScriptWorkbench({
                       >
                         <div
                           className={`relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-dashed bg-amber-500/10 ${
-                            keyartFailed
+                            keyartFailed || keyartUnlocked
                               ? "border-red-400/55"
                               : "border-amber-400/35"
                           }`}
+                          title={
+                            keyartUnlocked
+                              ? "有图但未带资产垫图锁，不能直接出成片；请重出该镜静帧"
+                              : undefined
+                          }
                         >
                           {thumb ? (
-                            <img src={thumb} alt="" className="h-full w-full object-cover" />
+                            <>
+                              <img src={thumb} alt="" className="h-full w-full object-cover" />
+                              {keyartUnlocked ? (
+                                <span className="absolute inset-x-0 bottom-0 bg-red-900/75 px-0.5 py-px text-center text-[7px] font-semibold text-red-50">
+                                  未锁
+                                </span>
+                              ) : null}
+                            </>
                           ) : keyartFailed ? (
                             <div className="flex h-full items-center justify-center px-0.5 text-center text-[8px] font-semibold leading-tight text-red-100/90">
                               失败
