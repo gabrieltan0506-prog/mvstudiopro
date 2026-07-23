@@ -16,6 +16,7 @@ import {
 import { loadCanvasDocumentTexts } from "./canvasDocumentText";
 import { reviewManhuaClipQuality } from "./manhuaClipQuality";
 import { isManhuaClipQualityInfraFailure } from "@shared/manhuaClipQuality";
+import { assignManhuaCanvasAssetAtTags } from "@shared/manhuaAssetLockRegistry";
 import { runCanvasBlock, type CanvasRunDeps } from "./canvasRunBlock";
 import { mapWithConcurrency } from "./canvasUpload";
 import { MANHUA_DRAMA_DEFAULT_PROMPTS } from "@shared/videoReversePrompt";
@@ -1617,18 +1618,50 @@ export function ensureManhuaFragmentClips(
   return { blocks: laid, edges: nextEdges };
 }
 
+/** 静帧/成片竖排模块：每列最多几镜（约 13 镜 → 3 列） */
+export const MANHUA_LAYOUT_STACK_PER_COL = 5;
+
+function placeManhuaStackColumns(
+  items: CanvasBlock[],
+  originX: number,
+  originY: number,
+  gapX: number,
+  gapY: number,
+  perCol: number,
+  pos: Map<string, { x: number; y: number }>,
+): { cols: number; rows: number } {
+  const n = items.length;
+  if (!n) return { cols: 0, rows: 0 };
+  const per = Math.max(1, Math.floor(perCol));
+  items.forEach((b, i) => {
+    const col = Math.floor(i / per);
+    const row = i % per;
+    pos.set(b.id, { x: originX + col * gapX, y: originY + row * gapY });
+  });
+  return {
+    cols: Math.ceil(n / per),
+    rows: Math.min(per, n),
+  };
+}
+
 /**
- * 画布竖排三行（+顶栏文案）：
- * 0 顶栏：故事→设定→节拍→反推（窄带）
- * 1 资产行：角色 / 道具 / 场景 横向一排
- * 2 静帧行：关键静帧横向一排
- * 3 成片行：段成片提示词框横向一排
- * 只改坐标，不改节点语义 / 不重生成。
+ * 画布竖排模块（+顶栏文案）：
+ * 0 顶栏：故事→设定→节拍→反推（窄带横排）
+ * 1 资产带：角色 / 道具 / 场景（横排，并打上 @编号）
+ * 2 静帧模块：每列最多 5 镜竖排，多列并排（便于缩放）
+ * 3 成片模块：段成片提示词同理竖排分列
+ * 只改坐标 + 资产@标，不重生成。
  */
 export function layoutManhuaEpisodeReadableChain(
   blocks: CanvasBlock[],
   episodeIndex?: number | null,
-  opts?: { originX?: number; originY?: number; colGap?: number; rowGap?: number },
+  opts?: {
+    originX?: number;
+    originY?: number;
+    colGap?: number;
+    rowGap?: number;
+    stackPerCol?: number;
+  },
 ): CanvasBlock[] {
   const ep =
     typeof episodeIndex === "number" && episodeIndex >= 1
@@ -1638,7 +1671,8 @@ export function layoutManhuaEpisodeReadableChain(
   const originX = opts?.originX ?? 60;
   const originY = opts?.originY ?? 60;
   const gapX = opts?.colGap ?? 300;
-  const gapY = opts?.rowGap ?? 420;
+  const gapY = opts?.rowGap ?? 380;
+  const stackPer = opts?.stackPerCol ?? MANHUA_LAYOUT_STACK_PER_COL;
   const sameEpisode = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === ep;
 
   const pick = (prefix: string) =>
@@ -1668,7 +1702,6 @@ export function layoutManhuaEpisodeReadableChain(
       .filter((b) => b.id.startsWith("sceneplate-") && sameEpisode(b))
       .sort((a, b) => a.id.localeCompare(b.id)),
   ];
-  // 无集号的资产（全局角色/场景）也并入第一行，避免仍散落在旧坐标
   const assetOrphans = blocks.filter(
     (b) =>
       (b.id.startsWith("charsheet-") ||
@@ -1693,7 +1726,6 @@ export function layoutManhuaEpisodeReadableChain(
   const textY = originY;
   const assetY = originY + (textCols.length ? Math.round(gapY * 0.55) : 0);
   const keyartY = assetY + (assets.length ? gapY : 0);
-  const clipY = keyartY + (keyarts.length ? gapY : 0);
 
   textCols.forEach((b, i) => {
     pos.set(b.id, { x: originX + gapX * i, y: textY });
@@ -1701,17 +1733,23 @@ export function layoutManhuaEpisodeReadableChain(
   assets.forEach((b, i) => {
     pos.set(b.id, { x: originX + gapX * i, y: assetY });
   });
-  keyarts.forEach((k, i) => {
-    pos.set(k.id, { x: originX + gapX * i, y: keyartY });
-  });
-  clips.forEach((c, i) => {
-    pos.set(c.id, { x: originX + gapX * i, y: clipY });
-  });
+  const keyStack = placeManhuaStackColumns(
+    keyarts,
+    originX,
+    keyartY,
+    gapX,
+    gapY,
+    stackPer,
+    pos,
+  );
+  const clipY = keyartY + (keyStack.rows ? keyStack.rows * gapY + Math.round(gapY * 0.25) : 0);
+  placeManhuaStackColumns(clips, originX, clipY, gapX, gapY, stackPer, pos);
 
-  return blocks.map((b) => {
+  const positioned = blocks.map((b) => {
     const p = pos.get(b.id);
     return p ? { ...b, x: p.x, y: p.y } : b;
   });
+  return assignManhuaCanvasAssetAtTags(positioned);
 }
 
 function mediaUrlOf(b?: CanvasBlock): string | undefined {

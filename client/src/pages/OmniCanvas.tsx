@@ -4584,8 +4584,8 @@ export default function OmniCanvas() {
                       });
                       return next;
                     });
-                    toast.message("已对齐画布竖排", {
-                      description: "资产行 → 关键静帧行 → 段成片提示词行",
+                    toast.message("已对齐画布竖排模块", {
+                      description: "资产带（含@编号）→ 静帧每列约5镜 → 段成片同理分列",
                     });
                   }}
                   onGenerateMissingFragments={(segmentIndexes) => {

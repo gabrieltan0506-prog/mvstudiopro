@@ -362,15 +362,18 @@ describe("canvasDramaStudio factory", () => {
     expect(onlyClip.targetBlockIds).toEqual([]);
   });
 
-  it("layoutManhuaEpisodeReadableChain stacks asset / keyart / clip rows", () => {
+  it("layoutManhuaEpisodeReadableChain stacks keyarts in columns of 5 and stamps @ tags", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "江湖刀客雨夜客栈",
       episodeIndex: 1,
     });
     const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const shotLines = Array.from({ length: 13 }, (_, i) => `${i + 1}. 节拍动作${i + 1}`).join(
+      "\n",
+    );
     const withAssets = blocks.map((b) =>
       b.id === reverse.id
-        ? { ...b, status: "done" as const, outputText: "1. 推门\n2. 对峙\n3. 拔刀" }
+        ? { ...b, status: "done" as const, outputText: shotLines }
         : b,
     );
     const withSheets = [
@@ -399,18 +402,23 @@ describe("canvasDramaStudio factory", () => {
     const assets = laid
       .filter((b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"))
       .sort((a, b) => a.x - b.x);
-    const keyarts = laid.filter((b) => b.id.startsWith("keyart-")).sort((a, b) => a.x - b.x);
-    const clips = laid
-      .filter((b) => b.id.startsWith("clip-") && (/-g\d{2}/i.test(b.id) || /-s\d{2}/.test(b.id)))
-      .sort((a, b) => a.x - b.x);
+    const keyarts = laid
+      .filter((b) => b.id.startsWith("keyart-"))
+      .sort(
+        (a, b) =>
+          resolveKeyartShotIndex(a.id, a.prompt) - resolveKeyartShotIndex(b.id, b.prompt),
+      );
     expect(assets.length).toBeGreaterThanOrEqual(2);
-    expect(keyarts.length).toBeGreaterThanOrEqual(2);
+    expect(assets[0]!.prompt).toMatch(/【画布资产@】@角色/);
+    expect(assets.find((b) => b.id.startsWith("sceneplate-"))!.prompt).toMatch(
+      /【画布资产@】@场景/,
+    );
+    expect(keyarts.length).toBeGreaterThanOrEqual(6);
+    // 同列竖排：前 5 镜同 x、y 递增；第 6 镜换列
+    expect(keyarts[1]!.y).toBeGreaterThan(keyarts[0]!.y);
+    expect(keyarts[1]!.x).toBe(keyarts[0]!.x);
+    expect(keyarts[5]!.x).toBeGreaterThan(keyarts[0]!.x);
     expect(keyarts[0]!.y).toBeGreaterThan(assets[0]!.y);
-    expect(keyarts.every((k) => k.y === keyarts[0]!.y)).toBe(true);
-    expect(keyarts[1]!.x).toBeGreaterThan(keyarts[0]!.x);
-    if (clips.length >= 1) {
-      expect(clips[0]!.y).toBeGreaterThan(keyarts[0]!.y);
-    }
   });
 
   it("ensureManhuaFragmentClips lays one clip per segment and targets a single fragment", () => {

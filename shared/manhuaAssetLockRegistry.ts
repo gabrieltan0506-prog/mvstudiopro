@@ -174,6 +174,138 @@ export function buildManhuaAssetLockRegistry(opts?: {
   return { slots, byRole, promptBlockZh };
 }
 
+const CANVAS_ASSET_AT_MARK = "【画布资产@】";
+
+/** 从画布资产节点 prompt 读出 @角色N / @场景N / @道具N */
+export function parseManhuaCanvasAssetAtTag(
+  prompt: string | null | undefined,
+): string | null {
+  const m = String(prompt || "").match(
+    /【画布资产@】\s*(@(?:角色|场景|道具)\d+)/,
+  );
+  return m?.[1] || null;
+}
+
+export function stampManhuaCanvasAssetAtTag(
+  prompt: string,
+  tag: string,
+  labelZh?: string,
+): string {
+  const tagClean = String(tag || "").trim();
+  if (!/^@(?:角色|场景|道具)\d+$/.test(tagClean)) return String(prompt || "");
+  const body = String(prompt || "")
+    .replace(/【画布资产@】[^\n]*(?:\n|$)/g, "")
+    .trim();
+  const label = String(labelZh || "").trim().slice(0, 40);
+  const line = label ? `${tagClean}=${label}` : tagClean;
+  return `${CANVAS_ASSET_AT_MARK}${line}\n${body}`.trim();
+}
+
+function canvasAssetRoleFromBlockId(
+  id: string,
+): ManhuaCustomAssetRole | null {
+  if (id.startsWith("charsheet-")) return "character";
+  if (id.startsWith("sceneplate-")) return "scene";
+  if (
+    id.startsWith("propplate-") ||
+    id.startsWith("propsheet-") ||
+    id.startsWith("prop-")
+  ) {
+    return "prop";
+  }
+  return null;
+}
+
+function canvasAssetSeedId(blockId: string): string {
+  return blockId
+    .replace(/^charsheet-/, "")
+    .replace(/^sceneplate-/, "")
+    .replace(/^propplate-/, "")
+    .replace(/^propsheet-/, "")
+    .replace(/^prop-/, "");
+}
+
+/**
+ * 给画布上的人物/场景/道具节点打上稳定 @编号（写入 prompt 首行），
+ * 便于用户在静帧/成片里用 @ 锁定资产。优先对齐 registry 槽位。
+ */
+export function assignManhuaCanvasAssetAtTags<
+  T extends { id: string; prompt: string },
+>(
+  blocks: T[],
+  opts?: { registry?: ManhuaAssetLockRegistry | null },
+): T[] {
+  const reg = opts?.registry || null;
+  const counters: Record<ManhuaCustomAssetRole, number> = {
+    character: 0,
+    scene: 0,
+    prop: 0,
+  };
+  const usedRegIds = new Set<string>();
+
+  const assetBlocks = blocks
+    .filter((b) => canvasAssetRoleFromBlockId(b.id))
+    .sort((a, b) => {
+      const ra = canvasAssetRoleFromBlockId(a.id)!;
+      const rb = canvasAssetRoleFromBlockId(b.id)!;
+      const order = { character: 0, prop: 1, scene: 2 } as const;
+      if (order[ra] !== order[rb]) return order[ra] - order[rb];
+      return a.id.localeCompare(b.id);
+    });
+
+  const stampById = new Map<string, { tag: string; labelZh: string }>();
+  for (const b of assetBlocks) {
+    const role = canvasAssetRoleFromBlockId(b.id)!;
+    const seed = canvasAssetSeedId(b.id);
+    const fromReg = reg?.byRole[role].find(
+      (s) => !usedRegIds.has(s.id) && (s.id === seed || s.id === b.id || seed.includes(s.id)),
+    );
+    let tag: string;
+    let labelZh: string;
+    if (fromReg) {
+      usedRegIds.add(fromReg.id);
+      tag = fromReg.tag;
+      labelZh = fromReg.labelZh;
+    } else {
+      counters[role] += 1;
+      tag = `@${ROLE_TAG_PREFIX[role]}${counters[role]}`;
+      const fromLine = String(b.prompt || "").match(/【画布资产@】@\S+=([^\n]+)/);
+      labelZh = fromLine?.[1]?.trim() || seed || ROLE_TAG_PREFIX[role];
+    }
+    stampById.set(b.id, { tag, labelZh });
+  }
+
+  // 无 registry 时按角色内顺序重编号，保证 @角色1… 连续
+  if (!reg) {
+    const byRoleLists: Record<ManhuaCustomAssetRole, typeof assetBlocks> = {
+      character: [],
+      scene: [],
+      prop: [],
+    };
+    for (const b of assetBlocks) {
+      byRoleLists[canvasAssetRoleFromBlockId(b.id)!]!.push(b);
+    }
+    (["character", "prop", "scene"] as const).forEach((role) => {
+      byRoleLists[role].forEach((b, i) => {
+        const prev = stampById.get(b.id)!;
+        stampById.set(b.id, {
+          tag: `@${ROLE_TAG_PREFIX[role]}${i + 1}`,
+          labelZh: prev.labelZh,
+        });
+      });
+    });
+  }
+
+  return blocks.map((b) => {
+    const stamp = stampById.get(b.id);
+    if (!stamp) return b;
+    return {
+      ...b,
+      prompt: stampManhuaCanvasAssetAtTag(b.prompt, stamp.tag, stamp.labelZh),
+    };
+  });
+}
+
 /** 关键静帧是否具备像素级资产锁（Edit + 垫图），而非仅有成图 URL */
 export function isManhuaKeyartPixelLocked(block: {
   id?: string;

@@ -1365,7 +1365,7 @@ export default function ManhuaScriptWorkbench({
                 onLayoutReadableChain();
               }}
               className="rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/70 hover:bg-white/[0.08] disabled:opacity-45"
-              title="画布竖排：资产行 → 静帧行 → 成片提示词行"
+              title="画布竖排模块：资产带（@编号）→ 静帧每列约5镜 → 段成片分列"
             >
               对齐画布竖排
             </button>

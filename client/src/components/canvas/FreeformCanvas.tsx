@@ -43,6 +43,7 @@ import {
   resolvePreviousSegmentClipUrl,
 } from "@shared/manhuaClipContinuity";
 import { resolveClipSegmentIndex } from "@shared/manhuaScriptWorkbench";
+import { parseManhuaCanvasAssetAtTag } from "@shared/manhuaAssetLockRegistry";
 import { CanvasImageEditMaskPainter } from "@/components/canvas/CanvasImageEditMaskPainter";
 import { trpc } from "@/lib/trpc";
 import {
@@ -915,6 +916,25 @@ export default function FreeformCanvas({
                 </div>
 
                 <CanvasBlockUploadBanner block={block} />
+                {(() => {
+                  const assetAt = parseManhuaCanvasAssetAtTag(block.prompt);
+                  const isAssetSheet =
+                    Boolean(assetAt) ||
+                    /^(charsheet|sceneplate|propplate|propsheet|prop)-/.test(
+                      String(block.id || ""),
+                    );
+                  if (!isAssetSheet) return null;
+                  return (
+                    <div className="flex flex-wrap items-center gap-1.5 border-b border-white/10 px-3 py-1.5 text-[10px] leading-4">
+                      <span className="rounded bg-cyan-500/25 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-cyan-50">
+                        {assetAt || "@待编号"}
+                      </span>
+                      <span className="text-white/50">
+                        静帧提示词里用此编号锁定资产
+                      </span>
+                    </div>
+                  );
+                })()}
                 {String(block.id || "").startsWith("keyart-") ? (
                   <div className="border-b border-white/10 px-3 py-1.5 text-[10px] leading-4 text-white/65">
                     {block.imageMode === "edit" && block.refImageUrl ? (
