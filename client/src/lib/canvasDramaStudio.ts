@@ -320,7 +320,10 @@ export function parseEpisodeIndexFromBlockId(blockId: string): number | null {
   return Number.isFinite(n) && n >= 1 ? n : null;
 }
 
-export function getBlockEpisodeIndex(block: Pick<CanvasBlock, "id" | "episodeIndex">): number | null {
+export function getBlockEpisodeIndex(block: {
+  id: string;
+  episodeIndex?: number | null;
+}): number | null {
   if (typeof block.episodeIndex === "number" && block.episodeIndex >= 1) {
     return Math.floor(block.episodeIndex);
   }
