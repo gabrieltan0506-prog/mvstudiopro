@@ -11098,8 +11098,16 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         };
 
         const { resolveOpenAiGptImage2Model } = await import("./services/openaiGptImage2.js");
+        const { OPENAI_IMAGE_PROMPT_HARD_MAX } = await import("../shared/manhuaKeyartPromptCompact.js");
+        const editPrompt = String(input.prompt || "").trim();
+        if (editPrompt.length > OPENAI_IMAGE_PROMPT_HARD_MAX) {
+          return {
+            ok: false as const,
+            error: `prompt too long: ${editPrompt.length}>${OPENAI_IMAGE_PROMPT_HARD_MAX} (no truncate)`,
+          };
+        }
         addField("model", resolveOpenAiGptImage2Model());
-        addField("prompt", input.prompt);
+        addField("prompt", editPrompt);
         if (input.size) addField("size", input.size);
         if (input.quality) addField("quality", input.quality);
         if (input.output_format) addField("output_format", input.output_format);

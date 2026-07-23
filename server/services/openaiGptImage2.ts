@@ -6,6 +6,7 @@
  * - OPENAI_IMAGE_API_KEY 或 OPENAI_API_KEY
  * - OPENAI_GPT_IMAGE2_MODEL（可选；默认钉 gpt-image-2-2026-04-21）
  */
+import { OPENAI_IMAGE_PROMPT_HARD_MAX } from "../../shared/manhuaKeyartPromptCompact.js";
 import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
 import { uploadBufferToPlatformStorage } from "./evolinkGptImage2.js";
 
@@ -241,6 +242,13 @@ export async function postOpenAiGptImage2AndUpload(
   const promptTrimmed = enforceSimplifiedChineseImagePrompt(String(prompt || "").trim());
   if (!promptTrimmed) {
     appendImageFlowLog(L, "[GPT-IMAGE-2·OpenAI] prompt 为空，跳过");
+    return null;
+  }
+  // 不截断：超上游硬上限直接失败（关键静帧应在客户端先精简）
+  if (promptTrimmed.length > OPENAI_IMAGE_PROMPT_HARD_MAX) {
+    const msg = `OpenAI prompt too long: ${promptTrimmed.length}>${OPENAI_IMAGE_PROMPT_HARD_MAX} (no truncate)`;
+    appendImageFlowLog(L, `[GPT-IMAGE-2·OpenAI] ${msg}`);
+    if (opts.captureError) opts.captureError.message = msg;
     return null;
   }
 

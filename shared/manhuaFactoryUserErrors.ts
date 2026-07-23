@@ -24,6 +24,13 @@ export function formatManhuaFactoryUserError(raw: string): string {
     return "关键静帧需要人物/场景参考底图才能生成。请先锁定角色并出齐定妆与场景空镜，或上传人物参考后再试。";
   }
   if (/关键静帧改图失败/i.test(msg)) {
+    if (
+      /string too long|maximum length 32000|prompt.*too long|Invalid 'prompt'|精简后仍过长|no truncate/i.test(
+        msg,
+      )
+    ) {
+      return "关键静帧失败：本镜说明过长。系统会先精简再出图；若仍失败，请缩短该镜分镜描述后重试（不会截断原文硬送）。";
+    }
     if (/ref download HTTP|downloadUrl|垫图.*下载|Unable to download|could not be downloaded/i.test(msg)) {
       return "关键静帧失败：参考底图下载失败。请到资产设定点开定妆/场景预览确认能打开，再重出静帧。";
     }
