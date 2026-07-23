@@ -1127,7 +1127,11 @@ export default function FreeformCanvas({
                           <label className="flex items-center gap-2 text-[11px] text-white/70">
                             <span className="shrink-0 text-white/45">模型</span>
                             <select
-                              value={block.videoModel}
+                              value={
+                                block.videoModel === "seedance-2.0"
+                                  ? "seedance-2.0"
+                                  : "seedance-2.0-fast"
+                              }
                               onChange={(e) =>
                                 patchOne(block.id, { videoModel: e.target.value as CanvasBlock["videoModel"] })
                               }
@@ -1142,10 +1146,8 @@ export default function FreeformCanvas({
                           </label>
                           <div className="text-[10px] leading-5 text-white/50">
                             {block.videoModel === "seedance-2.0"
-                              ? "成片·标准：文生 / 图生，默认约 15s"
-                              : block.videoModel === "seedance-2.0-fast"
-                                ? "成片·快速：更快更省，默认约 15s"
-                                : "默认成片引擎：有参考图时做微动减法"}
+                              ? "成片·标准：多图参考 + 运镜/动作/对白，约 4–15s"
+                              : "成片·快速：多图参考 + 运镜/动作/对白，更快更省"}
                           </div>
                           <div className="rounded-lg border border-dashed border-amber-400/30 bg-amber-500/5 px-2 py-1.5 text-[10px] leading-5 text-amber-100/85">
                             Seedance 2.5 Coming soon on MV Studio Pro

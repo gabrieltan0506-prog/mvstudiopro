@@ -773,7 +773,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     .filter(Boolean)
     .join("\n\n");
   clip.parentId = keyArt.id;
-  /** 工厂主成片默认 Seedance 2.0 Fast（15s/段）；用户可改 Omni（10s/段） */
+  /** 工厂主成片仅 Seedance 标准 / 快速（默认 Fast；CG 多图参考） */
   clip.videoModel = MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
   clip.aspectRatio = "9:16";
   if (pathCameraRecipeIds[0]) clip.pathCameraRecipeId = pathCameraRecipeIds[0];
@@ -790,22 +790,10 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
       .join("\n\n");
   }
 
-  /** Gemini Omni · 自然语言视频改写（可选）；主成片默认不走 Omni */
-  const omniEdit = defaultCanvasBlock("video", originX + gapX * (col0 + 6), originY);
-  omniEdit.id = makeFactoryStageId("omni_edit", episodeIndex);
-  const omniBase =
-    "在保留角色身份与主构图的前提下，按自然语言改写上一镜视频：加强微表情与运镜层次，不要重拍成无关场景。画面风格对齐参考片。";
-  omniEdit.prompt = [omniBase, artStyleBlock, pathCameraBlock, actionCameraBlock, motionBlock]
-    .filter(Boolean)
-    .join("\n\n");
-  omniEdit.parentId = clip.id;
-  omniEdit.videoModel = "gemini-omni-flash";
-  omniEdit.aspectRatio = "9:16";
-
   let promoCover: CanvasBlock | null = null;
   const promoLayout = promoCoverIds[0] ? getPromoCoverLayoutById(promoCoverIds[0]) : null;
   if (promoLayout) {
-    promoCover = defaultCanvasBlock("image", originX + gapX * (col0 + 7), originY);
+    promoCover = defaultCanvasBlock("image", originX + gapX * (col0 + 6), originY);
     promoCover.id = makeFactoryStageId("promo_cover", episodeIndex);
     promoCover.prompt = [
       buildPromoCoverPrompt(promoLayout, {
@@ -830,7 +818,6 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     reverse,
     keyArt,
     clip,
-    omniEdit,
     promoCover,
   ].filter(Boolean) as CanvasBlock[];
   const blocks = rawBlocks.map((b) => stampEpisodeMeta(b, episodeIndex, episodeTitle));
@@ -840,7 +827,6 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     { fromId: beats.id, toId: reverse.id },
     { fromId: reverse.id, toId: keyArt.id },
     { fromId: keyArt.id, toId: clip.id },
-    { fromId: clip.id, toId: omniEdit.id },
   ];
   if (promoCover) edges.push({ fromId: keyArt.id, toId: promoCover.id });
 
@@ -1208,13 +1194,17 @@ export function applyFactoryPrefsToBlocks(
         ]
           .filter(Boolean)
           .join("\n\n"),
+        videoModel: (
+          b.videoModel === "seedance-2.0" || b.videoModel === "seedance-2.0-fast"
+            ? b.videoModel
+            : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL
+        ) as CanvasBlock["videoModel"],
         ...(b.id.startsWith("clip-")
           ? {
-              videoModel: (b.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL) as CanvasBlock["videoModel"],
               pathCameraRecipeId: pathRecipeId || undefined,
               pathAnnotationJson: opts.pathAnnotationJson,
             }
-          : { videoModel: "gemini-omni-flash" as const }),
+          : {}),
       };
     }
     if (b.id.startsWith("recap_card-")) {
@@ -1563,7 +1553,10 @@ export function ensureManhuaFragmentClips(
       manhuaClipQuality: undefined,
       refImageUrl: segUrls[0] || mediaUrlOf(primary) || primary.refImageUrl,
       editFusionUrls: segUrls.slice(1).slice(0, 15),
-      videoModel: defaultModel === "gemini-omni-flash" ? "gemini-omni-flash" : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
+      videoModel:
+        defaultModel === "seedance-2.0" || defaultModel === "seedance-2.0-fast"
+          ? defaultModel
+          : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
       aspectRatio: template.aspectRatio || "9:16",
       episodeIndex: ep,
       episodeTitle: primary.episodeTitle || template.episodeTitle,
@@ -2269,8 +2262,12 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       i += 1;
       continue;
     }
-    // 旧画布缺 videoModel / 仍挂 Omni 的主成片：迁默认 Seedance Fast（omni_edit 不动）
-    if (block.id.startsWith("clip-") && !block.id.startsWith("omni_edit-")) {
+    // 旧画布缺 videoModel / 仍挂 Omni：一律迁 Seedance Fast（含遗留 omni_edit-*）
+    if (
+      block.kind === "video" ||
+      block.id.startsWith("clip-") ||
+      block.id.startsWith("omni_edit-")
+    ) {
       const nextModel =
         block.videoModel === "seedance-2.0" || block.videoModel === "seedance-2.0-fast"
           ? block.videoModel

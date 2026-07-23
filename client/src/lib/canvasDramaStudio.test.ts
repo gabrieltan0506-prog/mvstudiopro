@@ -52,22 +52,20 @@ describe("canvasDramaStudio factory", () => {
     expect(bible?.prompt || "").toContain("齐胸襦裙");
   });
 
-  it("spawns seven linked stages with topic (含 Omni 视频改写)", () => {
+  it("spawns six linked stages with topic (成片仅 Seedance，不再铺改写节点)", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "星际车站离别",
     });
-    expect(blocks).toHaveLength(7);
-    expect(edges).toHaveLength(6);
+    expect(blocks).toHaveLength(6);
+    expect(edges).toHaveLength(5);
     for (const stage of MANHUA_FACTORY_STAGE_ORDER) {
-      if (stage === "recap_card") continue; // 仅第3集起铺板
+      if (stage === "recap_card" || stage === "omni_edit") continue;
       expect(blocks.some((b) => b.id.startsWith(`${stage}-`))).toBe(true);
     }
+    expect(blocks.some((b) => b.id.startsWith("omni_edit-"))).toBe(false);
     expect(blocks[0]!.prompt).toContain("星际车站离别");
     const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
     expect(clip.videoModel).toBe("seedance-2.0-fast");
-    const omni = blocks.find((b) => b.id.startsWith("omni_edit-"))!;
-    expect(omni.videoModel).toBe("gemini-omni-flash");
-    expect(omni.parentId).toMatch(/^clip-/);
   });
 
   it("spawns with genre+scene injects scene asset into key art", () => {
@@ -96,15 +94,14 @@ describe("canvasDramaStudio factory", () => {
     expect(bible.prompt).toContain("【角色库锚点】");
   });
 
-  it("injects motion prompt craft into clip and omni_edit", () => {
+  it("injects motion prompt craft into clip", () => {
     const { blocks } = spawnManhuaDramaStudio({
       topic: "产品拆解种草",
       motionPromptIds: ["product_05_exploded_view"],
     });
     const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
-    const omni = blocks.find((b) => b.id.startsWith("omni_edit-"))!;
     expect(clip.prompt).toContain("爆炸拆解");
-    expect(omni.prompt).toContain("【包装动效手法】");
+    expect(clip.prompt).toContain("【包装动效手法】");
   });
 
   it("injects craft shot bank into beats / reverse / keyart", () => {
@@ -796,9 +793,9 @@ slow dolly in, soft rain, trembling hand
     });
     expect(episodeCount).toBe(3);
     expect(episodeIndexes).toEqual([1, 2, 3]);
-    // 7+7+8（第3集多前情提要 recap_card；recap 不连 story，故边仍为 6×3）
-    expect(blocks).toHaveLength(22);
-    expect(edges).toHaveLength(18);
+    // 6+6+7（第3集多前情提要 recap_card；不再铺 omni_edit；每集 5 条边）
+    expect(blocks).toHaveLength(19);
+    expect(edges).toHaveLength(15);
 
     const stories = blocks.filter((b) => b.id.startsWith("story-"));
     expect(stories).toHaveLength(3);
@@ -816,7 +813,7 @@ slow dolly in, soft rain, trembling hand
     expect(blocks.some((b) => b.id.startsWith("recap_card-e03-"))).toBe(true);
 
     const ep2 = filterBlocksByEpisode(blocks, 2);
-    expect(ep2).toHaveLength(7);
+    expect(ep2).toHaveLength(6);
     expect(resolveManhuaFactoryOrderedIds(blocks, "clip", 2).every((id) => id.includes("-e02-"))).toBe(
       true,
     );
@@ -959,8 +956,8 @@ slow dolly in, soft rain, trembling hand
     });
     const merged = replaceManhuaEpisodeChain(series.blocks, series.edges, respawn, 2);
     expect(merged.blocks.find((b) => b.id === ep1StoryBefore.id)).toBeTruthy();
-    expect(merged.blocks.filter((b) => getBlockEpisodeIndex(b) === 1)).toHaveLength(7);
-    expect(merged.blocks.filter((b) => getBlockEpisodeIndex(b) === 2)).toHaveLength(7);
+    expect(merged.blocks.filter((b) => getBlockEpisodeIndex(b) === 1)).toHaveLength(6);
+    expect(merged.blocks.filter((b) => getBlockEpisodeIndex(b) === 2)).toHaveLength(6);
     const ep2Story = merged.blocks.find((b) => b.id.startsWith("story-e02-"))!;
     expect(ep2Story.prompt).toContain("【上集钩子】钩A");
     expect(ep2Story.episodeTitle).toBe("二改");

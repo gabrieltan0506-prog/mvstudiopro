@@ -65,8 +65,8 @@ describe("manhua series MVP acceptance (jobstodo §6)", () => {
     const ep3Ids = resolveManhuaFactoryOrderedIds(blocks, "clip", 3);
     expect(ep3Ids[0]).toMatch(/^recap_card-e03-/);
     expect(ep3Ids).toHaveLength(7); // recap_card + 六段至 clip
-    expect(filterBlocksByEpisode(blocks, 1)).toHaveLength(7);
-    expect(filterBlocksByEpisode(blocks, 3)).toHaveLength(8);
+    expect(filterBlocksByEpisode(blocks, 1)).toHaveLength(6);
+    expect(filterBlocksByEpisode(blocks, 3)).toHaveLength(7);
   });
 
   it("成片坞勾选 → 导出 zip 含 manifest 与 ep 目录", async () => {
@@ -95,6 +95,8 @@ describe("manhua series MVP acceptance (jobstodo §6)", () => {
         episodeTitle: "冷光之后",
         outputUrl: "https://cdn.example/ep2.mp4",
         status: "done" as const,
+        videoModel: "seedance-2.0-fast" as const,
+        manhuaClipQuality: { status: "passed" as const, summary: "ok" },
       };
       const pendingStory = {
         ...defaultCanvasBlock("text", 0, 0),
