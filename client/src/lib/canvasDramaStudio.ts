@@ -1666,11 +1666,13 @@ function placeManhuaStackColumns(
 }
 
 /**
- * 画布竖排模块（+顶栏文案）：
- * 0 顶栏：故事→设定→节拍→反推（窄带横排）
- * 1 资产带：角色 / 道具 / 场景（横排，并打上 @编号）
- * 2 静帧模块：每列最多 5 镜竖排，多列并排（便于缩放）
- * 3 成片模块：段成片提示词同理竖排分列
+ * 画布竖排模块（+顶栏文案）——对标阿硕可读链，不抄品牌：
+ * 0 顶栏：故事→设定→节拍→反推
+ * 1 角色墙（@角色N，每行最多 4）
+ * 2 场景墙（@场景N，分行，不与角色混排）
+ * 3 道具墙（弱化一行）
+ * 4 静帧：每列最多 5 镜竖排
+ * 5 成片：每段约 15s 一卡，同理分列（卡面读秒轴）
  * 只改坐标 + 资产@标，不重生成。
  */
 export function layoutManhuaEpisodeReadableChain(
@@ -1694,6 +1696,8 @@ export function layoutManhuaEpisodeReadableChain(
   const gapX = opts?.colGap ?? 300;
   const gapY = opts?.rowGap ?? 380;
   const stackPer = opts?.stackPerCol ?? MANHUA_LAYOUT_STACK_PER_COL;
+  const assetsPerRow = 4;
+  const assetRowGap = Math.round(gapY * 0.72);
   const sameEpisode = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === ep;
 
   const pick = (prefix: string) =>
@@ -1706,34 +1710,37 @@ export function layoutManhuaEpisodeReadableChain(
     pick("reverse")[0],
   ].filter(Boolean) as CanvasBlock[];
 
-  const assetRow = [
-    ...blocks
-      .filter((b) => b.id.startsWith("charsheet-") && sameEpisode(b))
-      .sort((a, b) => a.id.localeCompare(b.id)),
-    ...blocks
-      .filter(
-        (b) =>
-          sameEpisode(b) &&
-          (b.id.startsWith("propplate-") ||
-            b.id.startsWith("propsheet-") ||
-            b.id.startsWith("prop-")),
-      )
-      .sort((a, b) => a.id.localeCompare(b.id)),
-    ...blocks
-      .filter((b) => b.id.startsWith("sceneplate-") && sameEpisode(b))
-      .sort((a, b) => a.id.localeCompare(b.id)),
-  ];
-  const assetOrphans = blocks.filter(
-    (b) =>
-      (b.id.startsWith("charsheet-") ||
-        b.id.startsWith("sceneplate-") ||
-        b.id.startsWith("propplate-") ||
+  const charWall = blocks
+    .filter((b) => b.id.startsWith("charsheet-") && sameEpisode(b))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const sceneWall = blocks
+    .filter((b) => b.id.startsWith("sceneplate-") && sameEpisode(b))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const propWall = blocks
+    .filter(
+      (b) =>
+        sameEpisode(b) &&
+        (b.id.startsWith("propplate-") ||
+          b.id.startsWith("propsheet-") ||
+          b.id.startsWith("prop-")),
+    )
+    .sort((a, b) => a.id.localeCompare(b.id));
+  // 无集号孤儿：挂到对应墙末尾，仍分行
+  for (const b of blocks) {
+    if (getBlockEpisodeIndex(b) != null) continue;
+    if (b.id.startsWith("charsheet-") && !charWall.some((x) => x.id === b.id)) {
+      charWall.push(b);
+    } else if (b.id.startsWith("sceneplate-") && !sceneWall.some((x) => x.id === b.id)) {
+      sceneWall.push(b);
+    } else if (
+      (b.id.startsWith("propplate-") ||
         b.id.startsWith("propsheet-") ||
         b.id.startsWith("prop-")) &&
-      getBlockEpisodeIndex(b) == null &&
-      !assetRow.some((x) => x.id === b.id),
-  );
-  const assets = [...assetRow, ...assetOrphans];
+      !propWall.some((x) => x.id === b.id)
+    ) {
+      propWall.push(b);
+    }
+  }
 
   const keyarts = pick("keyart").sort(sortKeyartBlocks);
   const clips = pick("clip").sort(
@@ -1741,19 +1748,33 @@ export function layoutManhuaEpisodeReadableChain(
       resolveClipSegmentIndex(a.id, a.prompt) - resolveClipSegmentIndex(b.id, b.prompt),
   );
 
-  if (!textCols.length && !keyarts.length && !assets.length) return blocks;
+  const hasAssets = charWall.length + sceneWall.length + propWall.length > 0;
+  if (!textCols.length && !keyarts.length && !hasAssets) return blocks;
 
   const pos = new Map<string, { x: number; y: number }>();
-  const textY = originY;
-  const assetY = originY + (textCols.length ? Math.round(gapY * 0.55) : 0);
-  const keyartY = assetY + (assets.length ? gapY : 0);
+  const placeWall = (list: CanvasBlock[], startY: number) => {
+    list.forEach((b, i) => {
+      const col = i % assetsPerRow;
+      const row = Math.floor(i / assetsPerRow);
+      pos.set(b.id, {
+        x: originX + gapX * col,
+        y: startY + row * Math.round(gapY * 0.85),
+      });
+    });
+    const rows = list.length ? Math.ceil(list.length / assetsPerRow) : 0;
+    return startY + (rows ? rows * Math.round(gapY * 0.85) + Math.round(assetRowGap * 0.35) : 0);
+  };
 
+  const textY = originY;
   textCols.forEach((b, i) => {
     pos.set(b.id, { x: originX + gapX * i, y: textY });
   });
-  assets.forEach((b, i) => {
-    pos.set(b.id, { x: originX + gapX * i, y: assetY });
-  });
+  let cursorY = originY + (textCols.length ? Math.round(gapY * 0.55) : 0);
+  cursorY = placeWall(charWall, cursorY);
+  cursorY = placeWall(sceneWall, cursorY);
+  cursorY = placeWall(propWall, cursorY);
+  const keyartY = cursorY;
+
   const keyStack = placeManhuaStackColumns(
     keyarts,
     originX,

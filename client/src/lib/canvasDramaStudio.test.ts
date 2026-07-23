@@ -413,6 +413,10 @@ describe("canvasDramaStudio factory", () => {
     expect(assets.find((b) => b.id.startsWith("sceneplate-"))!.prompt).toMatch(
       /【画布资产@】@场景/,
     );
+    // 角色墙与场景墙分行：场景 y 必须低于角色（不再混在同一横排）
+    const hero = laid.find((b) => b.id === "charsheet-hero")!;
+    const inn = laid.find((b) => b.id === "sceneplate-inn")!;
+    expect(inn.y).toBeGreaterThan(hero.y);
     expect(keyarts.length).toBeGreaterThanOrEqual(6);
     // 同列竖排：前 5 镜同 x、y 递增；第 6 镜换列
     expect(keyarts[1]!.y).toBeGreaterThan(keyarts[0]!.y);

@@ -44,6 +44,10 @@ import {
 } from "@shared/manhuaClipContinuity";
 import { resolveClipSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import { parseManhuaCanvasAssetAtTag } from "@shared/manhuaAssetLockRegistry";
+import {
+  formatManhuaClipDirectorCueFaceLine,
+  parseManhuaClipDirectorCardSummary,
+} from "@shared/manhuaClipDirectorCard";
 import { CanvasImageEditMaskPainter } from "@/components/canvas/CanvasImageEditMaskPainter";
 import { trpc } from "@/lib/trpc";
 import {
@@ -924,14 +928,37 @@ export default function FreeformCanvas({
                       String(block.id || ""),
                     );
                   if (!isAssetSheet) return null;
+                  const roleWall = String(block.id || "").startsWith("charsheet-")
+                    ? "角色墙"
+                    : String(block.id || "").startsWith("sceneplate-")
+                      ? "场景墙"
+                      : "道具墙";
+                  const labelFromPrompt =
+                    String(block.prompt || "").match(
+                      /【画布资产@】@(?:角色|场景|道具)\d+=([^\n]+)/,
+                    )?.[1] ||
+                    String(block.prompt || "")
+                      .split("\n")
+                      .find((ln) => ln.trim() && !ln.includes("【画布资产@】"))
+                      ?.trim()
+                      .slice(0, 18) ||
+                    "";
                   return (
-                    <div className="flex flex-wrap items-center gap-1.5 border-b border-white/10 px-3 py-1.5 text-[10px] leading-4">
-                      <span className="rounded bg-cyan-500/25 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-cyan-50">
-                        {assetAt || "@待编号"}
-                      </span>
-                      <span className="text-white/50">
-                        静帧提示词里用此编号锁定资产
-                      </span>
+                    <div className="space-y-1 border-b border-violet-400/25 bg-violet-500/[0.08] px-3 py-2 text-[10px] leading-4">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="rounded bg-violet-400/30 px-1.5 py-0.5 text-[9px] font-semibold text-violet-50">
+                          {roleWall}
+                        </span>
+                        <span className="rounded bg-cyan-500/25 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-cyan-50">
+                          {assetAt || "@待编号"}
+                        </span>
+                        {labelFromPrompt ? (
+                          <span className="truncate text-white/75">{labelFromPrompt}</span>
+                        ) : null}
+                      </div>
+                      <div className="text-white/45">
+                        画布展开资产：静帧 / 成片导戏用此编号锁定
+                      </div>
                     </div>
                   );
                 })()}
@@ -948,6 +975,64 @@ export default function FreeformCanvas({
                     ) : (
                       <span className="text-amber-200/85">未垫图锁资产 · 不可出成片</span>
                     )}
+                  </div>
+                ) : null}
+                {String(block.id || "").startsWith("clip-") ? (
+                  <div
+                    data-manhua-clip-director-face
+                    className="space-y-1.5 border-b border-cyan-400/25 bg-cyan-500/[0.07] px-3 py-2 text-[10px] leading-4 text-cyan-50/90"
+                  >
+                    {(() => {
+                      const card = parseManhuaClipDirectorCardSummary(block.prompt);
+                      const seg =
+                        card.segmentIndex ??
+                        resolveClipSegmentIndex(block.id, block.prompt);
+                      const dur = card.durationSec ?? 15;
+                      const chips = [
+                        ...card.castTags.slice(0, 4),
+                        ...card.sceneTags.slice(0, 2),
+                      ];
+                      const extra =
+                        card.castTags.length + card.sceneTags.length - chips.length;
+                      return (
+                        <>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="rounded bg-cyan-400/30 px-1.5 py-0.5 font-semibold text-cyan-50">
+                              第{String(seg).padStart(2, "0")}段 · {dur}s
+                            </span>
+                            {chips.map((t) => (
+                              <span
+                                key={t}
+                                className="rounded bg-black/35 px-1.5 py-0.5 font-mono text-[10px] text-cyan-100/90"
+                              >
+                                {t}
+                              </span>
+                            ))}
+                            {extra > 0 ? (
+                              <span className="text-white/40">+{extra}</span>
+                            ) : null}
+                          </div>
+                          {card.microExpressionZh ? (
+                            <div className="text-white/70">
+                              微表情：{card.microExpressionZh}
+                            </div>
+                          ) : null}
+                          {card.cueRows.length ? (
+                            <ul className="space-y-0.5 font-mono text-[9px] leading-snug text-white/65">
+                              {card.cueRows.slice(0, 4).map((row, idx) => (
+                                <li key={`${row.startSec}-${idx}`}>
+                                  {formatManhuaClipDirectorCueFaceLine(row)}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <div className="text-white/45">
+                              段成片导戏单将显示在此（秒位 · @角色 · @场景 · 表情）
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 ) : null}
 
