@@ -503,6 +503,9 @@ describe("canvasDramaStudio factory", () => {
     expect(p0).toMatch(/@角色1|@场景1/);
     expect(p0).toContain("【出片Image硬绑】");
     expect(p0).not.toMatch(/节拍防火墙|古风服化参考|视频生成导戏单|按秒导戏单/);
+    expect(p0).not.toMatch(/画风：/);
+    const bindLines = (p0.match(/@角色\d+\|/g) || []).length;
+    expect(bindLines).toBeLessThanOrEqual(4);
     expect(String(segClips[0]?.refImageUrl || "")).toMatch(/^https:\/\//);
     const frag = resolveManhuaFragmentRunTargets(ensured.blocks, 1, 2);
     expect(frag.clipId).toBeTruthy();
