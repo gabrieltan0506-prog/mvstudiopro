@@ -2,7 +2,7 @@
  * 剧本工作台：左=本集资产 · 中=一集剧本+按段静帧 · 右=预览 · 底=集/段时间线
  * 一集：10–12 段 × 每段 3–4 关键静帧；每段一条成片（Seedance ≤15s，按时长合计钳制）。
  */
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -478,12 +478,9 @@ export default function ManhuaScriptWorkbench({
     editSubtitleEnabled,
     editMotionPromptIds,
   ]);
-  /**
-   * 右栏本集画布：未出片默认开；有成片后自动收起让出检查空间；用户可再开。
-   * 镜头一多时避免画布长期占满右栏。
-   */
+  /** 右栏本集画布：阿硕 C2 分镜有静帧时强制常开；其余阶段仍可随成片收合 */
   const [canvasDockOpen, setCanvasDockOpen] = useState(true);
-  /** 运镜静帧画板：同样不常占位，有成片后默认收起 */
+  /** 运镜静帧画板：有成片后默认收起，避免占中栏 */
   const [pathBoardOpen, setPathBoardOpen] = useState(true);
   /** 胶片多选：生成所选 */
   const [selectedShotIndexes, setSelectedShotIndexes] = useState<number[]>([]);
@@ -779,24 +776,36 @@ export default function ManhuaScriptWorkbench({
   const previewIsVideo = Boolean(playableClipUrl);
   const annotateStillUrl = mediaUrl(activeKeyart) || anyKeyartUrl;
 
-  /** 切镜 / 成片出现：未出片展开，已出片收起；用户点开后可临时查看，再切镜会重新按规则收合 */
+  /** 切镜 / 成片：分镜有静帧时画布常开（阿硕 C2）；否则未出片展开、已出片收起 */
   useEffect(() => {
     if (!dockCanvas) return;
+    if (activePhase === "storyboard" && episodeStillCount > 0) {
+      setCanvasDockOpen(true);
+      return;
+    }
     setCanvasDockOpen(!playableClipUrl);
-  }, [dockCanvas, playableClipUrl, activeShotNo]);
+  }, [dockCanvas, playableClipUrl, activeShotNo, activePhase, episodeStillCount]);
 
   useEffect(() => {
     setPathBoardOpen(!playableClipUrl);
   }, [playableClipUrl, activeShotNo]);
 
   const openCanvasDock = () => setCanvasDockOpen(true);
-  const closeCanvasDock = () => setCanvasDockOpen(false);
-  // 阿硕 C2：分镜有静帧后默认展开右栏大画布，禁止缩成预览条
+  const closeCanvasDock = () => {
+    // 分镜有静帧时禁止收起——右栏就是主预览
+    if (activePhase === "storyboard" && episodeStillCount > 0) return;
+    setCanvasDockOpen(false);
+  };
+  // 阿硕 C2：首次进分镜且有静帧 → 自动铺段节点 + 写入垫图锁提示词
+  const autoLaidClipLocksRef = useRef(false);
   useEffect(() => {
-    if (activePhase === "storyboard" && episodeStillCount > 0) {
-      setCanvasDockOpen(true);
-    }
-  }, [activePhase, episodeStillCount]);
+    if (activePhase !== "storyboard" || episodeStillCount <= 0) return;
+    setCanvasDockOpen(true);
+    if (autoLaidClipLocksRef.current) return;
+    if (!onReviewClipPromptsOnCanvas) return;
+    autoLaidClipLocksRef.current = true;
+    onReviewClipPromptsOnCanvas({ segmentIndex: activeSegNo });
+  }, [activePhase, episodeStillCount, activeSegNo, onReviewClipPromptsOnCanvas]);
   const focusBlockAndOpenCanvas = (blockId: string) => {
     if (!blockId) return;
     setCanvasDockOpen(true);
@@ -3077,20 +3086,32 @@ export default function ManhuaScriptWorkbench({
         </div>
       ) : null}
 
-      {/* 阿硕工作流：左本集资产｜中片段脚本｜右本集画布；窄屏保持桌面比例并横移 */}
+      {/* 阿硕工作流：左本集资产｜中片段脚本｜右本集画布；外层给定高，内层再横移，避免画布高度塌缩 */}
       <div
         data-manhua-phase-panel="storyboard"
         className={
           activePhase !== "storyboard"
             ? "hidden"
-            : immersive
-              ? showCanvasDock
-                ? // 阿硕 C2：左窄资产 · 中图卡 · 右画布占主视觉
-                  "grid min-h-0 min-w-[1360px] flex-1 grid-cols-[152px_minmax(200px,0.36fr)_minmax(720px,2.2fr)] overflow-x-auto overflow-y-hidden"
-                : "grid min-h-0 min-w-[1120px] flex-1 grid-cols-[168px_minmax(280px,0.7fr)_minmax(420px,1.1fr)] overflow-x-auto overflow-y-hidden"
-              : "flex min-h-0 flex-1 overflow-hidden"
+            : "flex min-h-0 flex-1 flex-col overflow-hidden"
         }
       >
+        <div
+          className={
+            immersive
+              ? "min-h-0 flex-1 overflow-x-auto overflow-y-hidden"
+              : "flex min-h-0 flex-1 overflow-hidden"
+          }
+        >
+          <div
+            className={
+              immersive
+                ? showCanvasDock
+                  ? // 阿硕 C2：左窄资产 · 中图卡 · 右画布占主视觉（h-full 吃满外层定高）
+                    "grid h-full min-h-0 min-w-[1360px] grid-cols-[152px_minmax(200px,0.36fr)_minmax(720px,2.2fr)]"
+                  : "grid h-full min-h-0 min-w-[1120px] grid-cols-[168px_minmax(280px,0.7fr)_minmax(420px,1.1fr)]"
+                : "flex h-full min-h-0 w-full overflow-hidden"
+            }
+          >
         {/* 左：本片段挂载（随胶片切换）+ 本集其他 */}
         <aside
           data-manhua-column="assets"
@@ -3098,7 +3119,7 @@ export default function ManhuaScriptWorkbench({
           data-manhua-shot-mount-cast={String(mountedCastCount)}
           className={
             immersive
-              ? "min-h-0 overflow-y-auto border-r border-white/10 p-2"
+              ? "h-full min-h-0 overflow-y-auto border-r border-white/10 p-2"
               : "min-h-0 w-[180px] shrink-0 overflow-y-auto border-r border-white/10 p-2"
           }
         >
@@ -3352,7 +3373,7 @@ export default function ManhuaScriptWorkbench({
           data-manhua-column="script"
           className={
             immersive
-              ? "flex min-h-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5"
+              ? "flex h-full min-h-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5"
               : "flex min-h-0 w-[min(28vw,300px)] shrink-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5"
           }
         >
@@ -3366,7 +3387,7 @@ export default function ManhuaScriptWorkbench({
                   {shots.length || 1} · {episodeVideoModel}
                 </span>
               </div>
-              {onSegmentIntentChange ? (
+              {onSegmentIntentChange && episodeStillCount === 0 ? (
                 <label className="mt-1.5 flex max-w-xl flex-col gap-0.5">
                   <span className="text-[9px] font-medium text-cyan-100/70">本段意图（观众应感到什么）</span>
                   <input
@@ -3417,75 +3438,92 @@ export default function ManhuaScriptWorkbench({
 
           {scriptTab === "shots" ? (
             <>
-              <p className="mt-2 max-h-14 shrink-0 overflow-y-auto rounded-lg border border-white/8 bg-black/30 px-2.5 py-2 text-[11px] leading-relaxed text-white/55">
-                {(
-                  story?.outputText ||
-                  story?.prompt ||
-                  topic ||
-                  "铺板并跑过故事节点后，此处显示本集摘要。"
-                ).slice(0, 360)}
-              </p>
-
-              <div
-                data-manhua-visual-brief-gate
-                data-manhua-stills-ready={stillsReadyEnough ? "true" : "false"}
-                className="mt-2 shrink-0 rounded-lg border border-cyan-400/30 bg-cyan-500/[0.07] px-2.5 py-2"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-[11px] font-semibold text-cyan-50/90">视觉简报</div>
-                  <span className="text-[9px] text-white/40">
-                    {stillsReadyEnough
-                      ? "静帧已垫图锁"
-                      : keyartsPixelLocked
-                        ? "垫图锁过·张数未齐"
-                        : "待垫图改图"}{" "}
-                    · 静帧 {episodeStillCount}/
+              {/* 有静帧后收起文字墙，只留图卡 + 一行状态（阿硕 C2） */}
+              {episodeStillCount > 0 ? (
+                <div
+                  data-manhua-visual-brief-gate
+                  data-manhua-stills-ready={stillsReadyEnough ? "true" : "false"}
+                  className="mt-1.5 flex shrink-0 flex-wrap items-center justify-between gap-1.5 rounded-md border border-cyan-400/25 bg-cyan-500/[0.06] px-2 py-1"
+                >
+                  <span className="text-[10px] text-cyan-50/85">
+                    静帧 {episodeStillCount}/
                     {Math.max(episodeKeyarts.length, shots.length, 1)}
+                    {stillsReadyEnough
+                      ? " · 已垫图锁"
+                      : keyartsPixelLocked
+                        ? " · 垫图锁过·张数未齐"
+                        : " · 待垫图改图"}
                     {episodeKeyarts.some((b) => b.status === "error")
                       ? ` · 失败 ${episodeKeyarts.filter((b) => b.status === "error").length}`
                       : ""}
                   </span>
+                  <span className="text-[9px] text-white/35">点图卡 → 右栏居中</span>
                 </div>
-                <div className="mt-1.5 grid max-h-28 gap-1 overflow-y-auto text-[10px] leading-4 text-white/65">
-                  {visualBrief.pathLabelZh ? (
-                    <div>运镜：{visualBrief.pathLabelZh}</div>
-                  ) : null}
-                  {visualBrief.actionLabelZh ? (
-                    <div>动作轨：{visualBrief.actionLabelZh}</div>
-                  ) : null}
-                  {visualBrief.scenes[0] ? (
-                    <div>场景：{visualBrief.scenes.slice(0, 2).join(" · ")}</div>
-                  ) : null}
-                  {visualBrief.cameras[0] ? (
-                    <div>镜头：{visualBrief.cameras.slice(0, 2).join(" · ")}</div>
-                  ) : null}
-                  {(() => {
-                    const ang = getManhuaCameraAngle(shotAngleByIndex[activeShotNo]);
-                    return ang ? <div>机位：{ang.nameZh} · {ang.techHintZh}</div> : null;
-                  })()}
-                  {visualBrief.motions[0] ? (
-                    <div>动作：{visualBrief.motions.slice(0, 2).join(" · ")}</div>
-                  ) : null}
-                  {visualBrief.events[0] ? (
-                    <div>事件：{visualBrief.events.slice(0, 2).join(" · ")}</div>
-                  ) : null}
-                  {visualBrief.performanceLines?.[0] ? (
-                    <div>表演：{visualBrief.performanceLines.slice(0, 2).join(" ｜ ")}</div>
-                  ) : null}
-                </div>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {onGenerateAllEpisodeKeyarts ? (
-                    <button
-                      type="button"
-                      disabled={Boolean(factoryBusy)}
-                      onClick={runGenerateAllKeyarts}
-                      className="rounded-md border border-cyan-300/40 bg-cyan-500/15 px-2 py-1 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-40"
-                    >
-                      生成关键静帧
-                    </button>
-                  ) : null}
-                </div>
-              </div>
+              ) : (
+                <>
+                  <p className="mt-2 max-h-14 shrink-0 overflow-y-auto rounded-lg border border-white/8 bg-black/30 px-2.5 py-2 text-[11px] leading-relaxed text-white/55">
+                    {(
+                      story?.outputText ||
+                      story?.prompt ||
+                      topic ||
+                      "铺板并跑过故事节点后，此处显示本集摘要。"
+                    ).slice(0, 360)}
+                  </p>
+
+                  <div
+                    data-manhua-visual-brief-gate
+                    data-manhua-stills-ready="false"
+                    className="mt-2 shrink-0 rounded-lg border border-cyan-400/30 bg-cyan-500/[0.07] px-2.5 py-2"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-[11px] font-semibold text-cyan-50/90">视觉简报</div>
+                      <span className="text-[9px] text-white/40">
+                        {keyartsPixelLocked ? "垫图锁过·张数未齐" : "待垫图改图"} · 静帧 0/
+                        {Math.max(episodeKeyarts.length, shots.length, 1)}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 grid max-h-28 gap-1 overflow-y-auto text-[10px] leading-4 text-white/65">
+                      {visualBrief.pathLabelZh ? (
+                        <div>运镜：{visualBrief.pathLabelZh}</div>
+                      ) : null}
+                      {visualBrief.actionLabelZh ? (
+                        <div>动作轨：{visualBrief.actionLabelZh}</div>
+                      ) : null}
+                      {visualBrief.scenes[0] ? (
+                        <div>场景：{visualBrief.scenes.slice(0, 2).join(" · ")}</div>
+                      ) : null}
+                      {visualBrief.cameras[0] ? (
+                        <div>镜头：{visualBrief.cameras.slice(0, 2).join(" · ")}</div>
+                      ) : null}
+                      {(() => {
+                        const ang = getManhuaCameraAngle(shotAngleByIndex[activeShotNo]);
+                        return ang ? <div>机位：{ang.nameZh} · {ang.techHintZh}</div> : null;
+                      })()}
+                      {visualBrief.motions[0] ? (
+                        <div>动作：{visualBrief.motions.slice(0, 2).join(" · ")}</div>
+                      ) : null}
+                      {visualBrief.events[0] ? (
+                        <div>事件：{visualBrief.events.slice(0, 2).join(" · ")}</div>
+                      ) : null}
+                      {visualBrief.performanceLines?.[0] ? (
+                        <div>表演：{visualBrief.performanceLines.slice(0, 2).join(" ｜ ")}</div>
+                      ) : null}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {onGenerateAllEpisodeKeyarts ? (
+                        <button
+                          type="button"
+                          disabled={Boolean(factoryBusy)}
+                          onClick={runGenerateAllKeyarts}
+                          className="rounded-md border border-cyan-300/40 bg-cyan-500/15 px-2 py-1 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-40"
+                        >
+                          生成关键静帧
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                </>
+              )}
               <div className="mt-2 shrink-0 text-[11px] font-semibold text-white/70">
                 分镜（{shots.length}）· 当前第 {activeShot?.index ?? "—"} 镜
               </div>
@@ -3952,7 +3990,7 @@ export default function ManhuaScriptWorkbench({
           data-manhua-preview-url={finalVideoUrl || previewUrl || ""}
           className={
             immersive
-              ? "flex min-h-0 flex-col p-1.5 md:p-2"
+              ? "flex h-full min-h-0 flex-col p-1.5 md:p-2"
               : showCanvasDock
                 ? "flex min-h-0 min-w-0 flex-1 flex-col p-2"
                 : "flex min-h-0 w-[min(42vw,480px)] shrink-0 flex-col p-2 md:p-2.5"
@@ -3965,16 +4003,22 @@ export default function ManhuaScriptWorkbench({
             <div className="flex flex-wrap items-center gap-1.5">
               {dockCanvas ? (
                 showCanvasDock ? (
-                  <button
-                    type="button"
-                    data-manhua-action="close-canvas-dock"
-                    onClick={closeCanvasDock}
-                    className="inline-flex items-center gap-1 rounded-md border border-white/12 px-2 py-0.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
-                    title="收起画布，腾出空间检查成片"
-                  >
-                    <X className="h-3 w-3" />
-                    收起画布
-                  </button>
+                  activePhase === "storyboard" && episodeStillCount > 0 ? (
+                    <span className="rounded-md border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-100/80">
+                      主预览常开
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      data-manhua-action="close-canvas-dock"
+                      onClick={closeCanvasDock}
+                      className="inline-flex items-center gap-1 rounded-md border border-white/12 px-2 py-0.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
+                      title="收起画布，腾出空间检查成片"
+                    >
+                      <X className="h-3 w-3" />
+                      收起画布
+                    </button>
+                  )
                 ) : (
                   <button
                     type="button"
@@ -4224,6 +4268,8 @@ export default function ManhuaScriptWorkbench({
             ) : null}
           </div>
         </aside>
+          </div>
+        </div>
       </div>
 
       <div className="shrink-0 border-t border-white/8 px-2.5 pt-1.5 md:px-3">

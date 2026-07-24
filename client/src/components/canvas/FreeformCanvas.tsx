@@ -850,7 +850,7 @@ export default function FreeformCanvas({
     <div
       data-freeform-canvas-root
       className={`flex gap-0 overflow-hidden rounded-[28px] border border-white/10 bg-[#05080f]/90 ${
-        fillContainer ? "h-full min-h-0" : "min-h-[720px]"
+        fillContainer ? "h-full min-h-0 w-full" : "min-h-[720px]"
       }`}
     >
       <input
