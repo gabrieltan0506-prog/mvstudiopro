@@ -1694,7 +1694,13 @@ export default function ManhuaScriptWorkbench({
 
       <div
         data-manhua-draft-retention-hint
-        className="shrink-0 border-b border-white/8 bg-white/[0.03] px-3 py-1.5 text-[10px] leading-relaxed text-white/45"
+        className={
+          // 沉浸分镜把高度留给三栏画布；提示缩成单行
+          immersive
+            ? "shrink-0 truncate border-b border-white/8 bg-white/[0.03] px-3 py-0.5 text-[9px] text-white/35"
+            : "shrink-0 border-b border-white/8 bg-white/[0.03] px-3 py-1.5 text-[10px] leading-relaxed text-white/45"
+        }
+        title={MANHUA_DRAFT_RETENTION_HINT_ZH}
       >
         {MANHUA_DRAFT_RETENTION_HINT_ZH}
       </div>
@@ -4276,7 +4282,7 @@ export default function ManhuaScriptWorkbench({
         data-manhua-filmstrip
         data-manhua-keyart-ready={episodeKeyarts.filter((b) => mediaUrl(b)).length}
         data-manhua-shot-count={Math.max(episodeKeyarts.length, shots.length, 1)}
-        className="shrink-0 border-t border-white/10 bg-[#080b12] px-2.5 py-1.5 md:px-3"
+        className="max-h-[132px] shrink-0 overflow-hidden border-t border-white/10 bg-[#080b12] px-2.5 py-1 md:px-3"
       >
         <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -4524,8 +4530,14 @@ export default function ManhuaScriptWorkbench({
               );
             })}
         </div>
-        {/* 集缩略（窄条，不抢片段胶片） */}
-        <div className="mt-2 hidden gap-1.5 overflow-x-auto border-t border-white/5 pt-2 sm:flex">
+        {/* 集缩略：沉浸分镜隐藏，避免再吃底栏高度；非沉浸宽屏仍显示 */}
+        <div
+          className={
+            immersive
+              ? "hidden"
+              : "mt-2 hidden gap-1.5 overflow-x-auto border-t border-white/5 pt-2 sm:flex"
+          }
+        >
           {episodeIndexes.map((ep) => {
             const epKeys = keyartsForEpisode(blocks, ep);
             const epClips = blocks.filter(

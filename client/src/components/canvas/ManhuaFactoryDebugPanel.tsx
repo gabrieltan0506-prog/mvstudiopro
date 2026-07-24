@@ -19,6 +19,11 @@ type Props = {
   entries: ManhuaFactoryDebugEntry[];
   injectSummary: string;
   onClear: () => void;
+  /**
+   * 沉浸工作台：浮层展示，禁止插入文档流把下方三栏/画布高度挤塌。
+   * 普通长页仍用 in-flow。
+   */
+  overlay?: boolean;
 };
 
 function levelClass(level: ManhuaFactoryDebugLevel): string {
@@ -48,12 +53,20 @@ export default function ManhuaFactoryDebugPanel({
   entries,
   injectSummary,
   onClear,
+  overlay = false,
 }: Props) {
   const [openId, setOpenId] = useState<string | null>(null);
   if (!enabled) return null;
 
   return (
-    <div className="mb-4 rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+    <div
+      data-manhua-factory-debug={overlay ? "overlay" : "flow"}
+      className={
+        overlay
+          ? "fixed left-3 right-3 top-[4.75rem] z-[60] max-h-[min(42vh,380px)] overflow-y-auto rounded-2xl border border-[#2b1f52] bg-[#140b31]/96 p-3 shadow-[0_16px_48px_rgba(0,0,0,0.55)] backdrop-blur-md"
+          : "mb-4 rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4"
+      }
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#ff7fd5]">
           Canvas Factory Debug · B
