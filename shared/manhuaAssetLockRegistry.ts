@@ -388,14 +388,31 @@ export function resolveManhuaAssetImageBindRows(
     .filter((r) => isBindableAssetPath(r.path));
 }
 
-/** 剥提示词里误写的 http(s) 行/片段，避免前台/节点审阅泄漏 */
+/**
+ * 剥用户可见文案里的网址/站点相对资源路径（含历史误写入的 |https…、预览图：/manhua-…）。
+ * 垫图地址只许留在后台 path 表与 API imageUrls。
+ */
 export function stripManhuaAssetUrlsFromPrompt(text: string | null | undefined): string {
   return String(text || "")
-    .replace(/https?:\/\/[^\s|】]+/gi, "")
-    .replace(/\|(?:https?:)?\/[^\s|】]*/gi, "")
+    // 整段 http(s)
+    .replace(/https?:\/\/[^\s|】"'<>]+/gi, "")
+    // 管道尾部误挂的 path / url：|https… 或 |/manhua-…
+    .replace(/\|(?:https?:\/\/|\/)[^\s|】"'<>]*/gi, "")
+    // 独立站点相对资源
+    .replace(/(?:^|[\s：:])(\/manhua-[^\s|】"'<>]+)/gim, "")
+    // 旧角色库「预览图：/…」或「预览图：https…」
+    .replace(/预览图：\s*\S+/g, "")
+    // data: / blob: 也不给用户看
+    .replace(/\b(?:data:image|blob:)[^\s|】"'<>]+/gi, "")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
     .trim();
+}
+
+/** 成片节点：强制清洗后再给人看/落盘 */
+export function sanitizeManhuaClipPromptForUi(text: string | null | undefined): string {
+  return stripManhuaAssetUrlsFromPrompt(text);
 }
 
 export function extractManhuaMentionedAssetTags(prompt: string | null | undefined): string[] {

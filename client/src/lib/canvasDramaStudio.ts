@@ -20,9 +20,23 @@ import {
   assignManhuaCanvasAssetAtTags,
   buildManhuaAssetLockRegistry,
   formatManhuaAssetImageBindBlock,
+  sanitizeManhuaClipPromptForUi,
   stripManhuaAssetUrlsFromPrompt,
   type ManhuaAssetLockRegistry,
 } from "@shared/manhuaAssetLockRegistry";
+
+/** 清洗画布上所有成片节点提示词里的网址/资源路径（历史误写一次清掉） */
+export function sanitizeManhuaClipBlocksPrompts(blocks: CanvasBlock[]): CanvasBlock[] {
+  let changed = false;
+  const next = blocks.map((b) => {
+    if (!b.id.startsWith("clip-")) return b;
+    const cleaned = sanitizeManhuaClipPromptForUi(b.prompt);
+    if (cleaned === String(b.prompt || "").trim()) return b;
+    changed = true;
+    return { ...b, prompt: cleaned };
+  });
+  return changed ? next : blocks;
+}
 import type { ManhuaWriterAssetCanon } from "@shared/manhuaWriterAssetCanon";
 import {
   extractManhuaSegmentDialogueQuotes,

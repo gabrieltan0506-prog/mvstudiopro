@@ -64,6 +64,7 @@ import {
   collectManhuaCharacterSheetUrlById,
   countExpectedManhuaKeyartShots,
   runManhuaDramaFactoryPipeline,
+  sanitizeManhuaClipBlocksPrompts,
   sanitizeManhuaRecapUpstreamLinks,
   spawnManhuaDramaStudio,
   spawnManhuaDramaStudioSeries,
@@ -1905,15 +1906,31 @@ export default function OmniCanvas() {
     (next: CanvasBlock[] | ((prev: CanvasBlock[]) => CanvasBlock[])) => {
       setBlocks((cur) => {
         const resolved = typeof next === "function" ? next(cur) : next;
+        const cleaned = sanitizeManhuaClipBlocksPrompts(resolved);
         setEdges((edges) => {
-          saveCanvasState(resolved, edges);
+          saveCanvasState(cleaned, edges);
           return edges;
         });
-        return resolved;
+        return cleaned;
       });
     },
     [],
   );
+
+  // 进页一次：清掉历史成片节点里误写的网址（裸奔）
+  useEffect(() => {
+    setBlocks((cur) => {
+      const cleaned = sanitizeManhuaClipBlocksPrompts(cur);
+      if (cleaned === cur) return cur;
+      setEdges((edges) => {
+        saveCanvasState(cleaned, edges);
+        return edges;
+      });
+      return cleaned;
+    });
+    // 仅挂载时跑一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleEdgesChange = useCallback((next: CanvasEdge[]) => {
     setEdges(next);

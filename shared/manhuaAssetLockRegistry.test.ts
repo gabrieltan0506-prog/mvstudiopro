@@ -182,6 +182,11 @@ describe("manhuaAssetLockRegistry", () => {
     expect(stripManhuaAssetUrlsFromPrompt(`${block}\nhttps://leak.example/x.jpg`)).not.toMatch(
       /https?:\/\//,
     );
+    expect(
+      stripManhuaAssetUrlsFromPrompt(
+        "@角色1|id=c1|label=女主|https://cdn.example/a.jpg\n预览图：/manhua-characters/x.jpg",
+      ),
+    ).not.toMatch(/https?:\/\/|\/manhua-|预览图：/);
   });
 
   it("requires edit+ref for pixel lock", () => {

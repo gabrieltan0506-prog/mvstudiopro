@@ -43,7 +43,10 @@ import {
   resolvePreviousSegmentClipUrl,
 } from "@shared/manhuaClipContinuity";
 import { resolveClipSegmentIndex } from "@shared/manhuaScriptWorkbench";
-import { parseManhuaCanvasAssetAtTag } from "@shared/manhuaAssetLockRegistry";
+import {
+  parseManhuaCanvasAssetAtTag,
+  sanitizeManhuaClipPromptForUi,
+} from "@shared/manhuaAssetLockRegistry";
 import { parseManhuaSheetPropSubTagsFromPrompt } from "@shared/manhuaSheetPropSubTags";
 import type { ManhuaCharacterVoiceLock } from "@shared/manhuaCharacterVoiceLock";
 import { resolveOmniMaterialUrl, uploadFileToSignedUrl } from "@/lib/omniCanvasApi";
@@ -1586,8 +1589,19 @@ export default function FreeformCanvas({
 
                     <div className="mb-1.5 text-[10px] uppercase tracking-wider text-white/40">提示词</div>
                     <textarea
-                      value={block.prompt}
-                      onChange={(e) => patchOne(block.id, { prompt: e.target.value })}
+                      value={
+                        block.id.startsWith("clip-")
+                          ? sanitizeManhuaClipPromptForUi(block.prompt)
+                          : block.prompt
+                      }
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        patchOne(block.id, {
+                          prompt: block.id.startsWith("clip-")
+                            ? sanitizeManhuaClipPromptForUi(next)
+                            : next,
+                        });
+                      }}
                       rows={mediaOnly ? 6 : 4}
                       className="min-h-[72px] w-full shrink-0 resize-none rounded-xl border border-white/10 bg-black/35 px-2.5 py-2 text-xs leading-6 text-white outline-none focus:border-primary/40"
                       placeholder={
