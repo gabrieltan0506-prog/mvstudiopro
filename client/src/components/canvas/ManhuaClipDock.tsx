@@ -672,18 +672,38 @@ export default function ManhuaClipDock({
                             loading="lazy"
                           />
                         ) : null}
-                        <span className="min-w-0 flex-1 truncate text-[11px] text-white/75">
-                          {it.label}
-                          {readyItem
-                            ? it.kind === "text"
-                              ? " · md"
-                              : it.stage === "clip" || it.stage === "omni_edit"
-                                ? " · mp4"
-                                : " · 图"
-                            : clipPendingDecision
-                              ? " · 待决定"
-                              : " · 待跑"}
-                        </span>
+                        {onFocusBlock ? (
+                          <button
+                            type="button"
+                            onClick={() => onFocusBlock(it.blockId)}
+                            className="min-w-0 flex-1 truncate text-left text-[11px] text-white/75 hover:text-cyan-50"
+                            title="在画布高亮此节点"
+                          >
+                            {it.label}
+                            {readyItem
+                              ? it.kind === "text"
+                                ? " · md"
+                                : it.stage === "clip" || it.stage === "omni_edit"
+                                  ? " · mp4"
+                                  : " · 图"
+                              : clipPendingDecision
+                                ? " · 待决定"
+                                : " · 待跑"}
+                          </button>
+                        ) : (
+                          <span className="min-w-0 flex-1 truncate text-[11px] text-white/75">
+                            {it.label}
+                            {readyItem
+                              ? it.kind === "text"
+                                ? " · md"
+                                : it.stage === "clip" || it.stage === "omni_edit"
+                                  ? " · mp4"
+                                  : " · 图"
+                              : clipPendingDecision
+                                ? " · 待决定"
+                                : " · 待跑"}
+                          </span>
+                        )}
                         {it.stage === "clip" && it.clipQuality?.status === "passed" ? (
                           <span className="inline-flex items-center gap-0.5 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] text-emerald-100">
                             <CheckCircle2 className="h-2.5 w-2.5" />

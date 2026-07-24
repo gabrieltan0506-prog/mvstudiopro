@@ -74,6 +74,7 @@ import {
 import { shouldAttachManhuaPreviouslyOn } from "@shared/manhuaEpisodeRecap";
 import {
   resolveClipLocalSegmentIndex,
+  resolveClipSegmentIndex,
   resolveKeyartShotIndex,
   resolveSegmentIndexFromShotIndex,
 } from "@shared/manhuaScriptWorkbench";
@@ -545,9 +546,15 @@ export default function OmniCanvas() {
     (blockId?: string) => {
       if (blockId) {
         const block = blocks.find((b) => b.id === blockId);
-        const isMedia = block?.kind === "image" || block?.kind === "video";
-        setManhuaCanvasPresentation(isMedia ? "media" : "all");
-        setFocusBlockId(blockId);
+        const presentMedia =
+          String(blockId).startsWith("clip-") ||
+          String(blockId).startsWith("keyart-") ||
+          block?.kind === "image" ||
+          block?.kind === "video";
+        setManhuaCanvasPresentation(presentMedia ? "media" : "all");
+        // 同 id 再点也要重新触发 FreeformCanvas focus effect
+        setFocusBlockId(null);
+        window.setTimeout(() => setFocusBlockId(blockId), 0);
       }
       // 工作台右栏画布若已收起，点节点时自动展开
       window.setTimeout(() => {
@@ -3214,13 +3221,14 @@ export default function OmniCanvas() {
         working = packAssetSheetPositions(working);
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
-        // 视口滚到左上资产带，别让人去右边找
-        setFocusBlockId(
-          plans[0]?.id ||
+        // 视口滚到左上资产带并高亮，别让人去右边找
+        {
+          const focusAssetId =
+            plans[0]?.id ||
             working.find((b) => b.id.startsWith("charsheet-"))?.id ||
-            working.find((b) => b.id.startsWith("sceneplate-"))?.id ||
-            null,
-        );
+            working.find((b) => b.id.startsWith("sceneplate-"))?.id;
+          if (focusAssetId) openManhuaFactoryCanvas(focusAssetId);
+        }
         for (let i = 0; i < plans.length; i++) {
           const plan = plans[i]!;
           if (ac.signal.aborted) break;
@@ -3254,7 +3262,7 @@ export default function OmniCanvas() {
           }
           setBlocks(working);
           saveCanvasState(working, canvasEdges);
-          if (i === 0) setFocusBlockId(plan.id);
+          if (i === 0) openManhuaFactoryCanvas(plan.id);
           setFactoryProgress(
             plan.kind === "charsheet"
               ? `角色图 · ${plan.labelZh}`
@@ -3302,11 +3310,12 @@ export default function OmniCanvas() {
         );
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
-        setFocusBlockId(
-          working.find((b) => b.id.startsWith("charsheet-"))?.id ||
-            working.find((b) => b.id.startsWith("sceneplate-"))?.id ||
-            null,
-        );
+        {
+          const focusAssetId =
+            working.find((b) => b.id.startsWith("charsheet-"))?.id ||
+            working.find((b) => b.id.startsWith("sceneplate-"))?.id;
+          if (focusAssetId) openManhuaFactoryCanvas(focusAssetId);
+        }
         const nextGate = evaluateManhuaAssetImageGate({
           ...gateInput,
           customRefs: workingRefs,
@@ -4549,8 +4558,9 @@ export default function OmniCanvas() {
                     </label>
                   }
                   previewCanvas={
-                    <div className="absolute inset-0 overflow-auto">
+                    <div className="absolute inset-0 overflow-hidden">
                       <FreeformCanvas
+                        fillContainer
                         blocks={blocks}
                         edges={edges}
                         onBlocksChange={handleBlocksChange}
@@ -4704,6 +4714,52 @@ export default function OmniCanvas() {
                       });
                       return next;
                     });
+                  }}
+                  onReviewClipPromptsOnCanvas={(opts) => {
+                    const wantSeg = Math.max(1, opts?.segmentIndex ?? 1);
+                    let focusId = "";
+                    setBlocks((prev) => {
+                      const sheetUrls = collectManhuaCharacterSheetUrlById(
+                        prev,
+                        projectBible?.assetCanon,
+                      );
+                      const layoutOpts = {
+                        assetCanon: projectBible?.assetCanon,
+                        characterSheetUrlById: sheetUrls,
+                      };
+                      const ensured = ensureManhuaFragmentClips(
+                        prev,
+                        edges,
+                        writerFocusEpisode,
+                        layoutOpts,
+                      );
+                      const next = layoutManhuaEpisodeReadableChain(
+                        ensured.blocks,
+                        writerFocusEpisode,
+                        layoutOpts,
+                      );
+                      setEdges(() => {
+                        saveCanvasState(next, ensured.edges);
+                        return ensured.edges;
+                      });
+                      const epClips = next.filter(
+                        (b) =>
+                          String(b.id || "").startsWith("clip-") &&
+                          (getBlockEpisodeIndex(b) ?? 1) === writerFocusEpisode,
+                      );
+                      focusId =
+                        epClips.find(
+                          (b) => resolveClipSegmentIndex(b.id, b.prompt) === wantSeg,
+                        )?.id ||
+                        epClips[0]?.id ||
+                        "";
+                      return next;
+                    });
+                    // 等 layout 写入后再 focus，才能滚到真实坐标并高亮
+                    window.setTimeout(() => {
+                      if (focusId) openManhuaFactoryCanvas(focusId);
+                      else openManhuaFactoryCanvas();
+                    }, 120);
                   }}
                   onUpdateClipPrompt={(clipId, prompt) => {
                     setBlocks((prev) => {

@@ -247,6 +247,11 @@ type Props = {
   onLayoutReadableChain?: () => void;
   /** 确保本集段成片节点已铺好（审阅提示词前） */
   onEnsureSegmentClips?: () => void;
+  /**
+   * 审阅成片提示词主路径：铺段节点 + 竖排后，聚焦并高亮目标段节点到视口中央。
+   * 有此回调时优先走它，避免「先 focus 再 layout」滚到空白区。
+   */
+  onReviewClipPromptsOnCanvas?: (opts?: { segmentIndex?: number }) => void;
   /** 写回段成片节点 prompt（审阅编辑） */
   onUpdateClipPrompt?: (clipId: string, prompt: string) => void;
   onResumeFromFailure?: () => void;
@@ -393,6 +398,7 @@ export default function ManhuaScriptWorkbench({
   onGenerateAllEpisodeKeyarts,
   onLayoutReadableChain,
   onEnsureSegmentClips,
+  onReviewClipPromptsOnCanvas,
   onUpdateClipPrompt,
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
@@ -786,8 +792,27 @@ export default function ManhuaScriptWorkbench({
   const openCanvasDock = () => setCanvasDockOpen(true);
   const closeCanvasDock = () => setCanvasDockOpen(false);
   const focusBlockAndOpenCanvas = (blockId: string) => {
+    if (!blockId) return;
     setCanvasDockOpen(true);
     onFocusBlock?.(blockId);
+  };
+  /** 胶片 / 分镜列表：切镜后立刻把对应静帧或段成片滚入画布并高亮 */
+  const selectShotAndFocusCanvas = (shotListIndex: number) => {
+    const i = Math.max(0, Math.min(shotListIndex, Math.max(shots.length, 1) - 1));
+    setShotIndex(i);
+    const shot = shots[i];
+    if (!shot) {
+      openCanvasDock();
+      return;
+    }
+    const keyart = episodeKeyarts.find(
+      (b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index,
+    );
+    const segNo = resolveSegmentIndexFromShotIndex(shot.index);
+    const clipBlock =
+      episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === segNo) ||
+      null;
+    focusBlockAndOpenCanvas(clipBlock?.id || keyart?.id || "");
   };
 
   const showCanvasDock = dockCanvas && canvasDockOpen;
@@ -1096,22 +1121,25 @@ export default function ManhuaScriptWorkbench({
       return;
     }
     if (activePhase !== "storyboard") setActivePhase("storyboard");
-    // 先铺段成片节点并竖排，再开审阅；主战场在画布，不只在工作台折叠区
-    onEnsureSegmentClips?.();
-    onLayoutReadableChain?.();
     setClipPromptReviewOpen(true);
-    const focusId =
-      episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === activeSegNo)?.id ||
-      episodeClips[0]?.id ||
-      episodeKeyarts.find((b) => mediaUrl(b))?.id ||
-      "";
-    if (focusId) {
-      focusBlockAndOpenCanvas(focusId);
+    openCanvasDock();
+    if (onReviewClipPromptsOnCanvas) {
+      // 布局完成后再居中高亮，禁止先 focus 再甩节点到画布底
+      onReviewClipPromptsOnCanvas({ segmentIndex: activeSegNo });
     } else {
-      openCanvasDock();
+      onEnsureSegmentClips?.();
+      onLayoutReadableChain?.();
+      const focusId =
+        episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === activeSegNo)?.id ||
+        episodeClips[0]?.id ||
+        episodeKeyarts.find((b) => mediaUrl(b))?.id ||
+        "";
+      window.setTimeout(() => {
+        if (focusId) focusBlockAndOpenCanvas(focusId);
+      }, 160);
     }
-    toast.message("已在画布铺段提示词节点", {
-      description: "请直接在画布查看/改提示词；出片仍须垫图改图锁定",
+    toast.message("已定位到成片提示词节点", {
+      description: "画布会滚到该段并高亮；可直接改提示词",
     });
   };
   const runGenerateFragment = () => {
@@ -2063,7 +2091,10 @@ export default function ManhuaScriptWorkbench({
                                 key={item.id}
                                 type="button"
                                 data-manhua-sheet-id={item.id}
-                                onClick={() => onFocusBlock?.(item.id)}
+                                onClick={() => {
+                                  if (!item.id) return;
+                                  focusBlockAndOpenCanvas(item.id);
+                                }}
                                 className="flex w-[88px] flex-col overflow-hidden rounded-lg border border-emerald-300/35 bg-black/40 text-left hover:border-emerald-200/60"
                                 title={`定位：${item.labelZh}`}
                               >
@@ -3490,8 +3521,9 @@ export default function ManhuaScriptWorkbench({
                     >
                       <button
                         type="button"
-                        onClick={() => setShotIndex(i)}
+                        onClick={() => selectShotAndFocusCanvas(i)}
                         className="flex min-w-0 flex-1 gap-2 px-2 py-2 text-left"
+                        title="选中本镜并在画布高亮对应节点"
                       >
                         <div
                           className={`relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-dashed bg-amber-500/10 ${
@@ -4323,12 +4355,12 @@ export default function ManhuaScriptWorkbench({
                               ? "keyart"
                               : "idle"
                     }
-                    onClick={() => setShotIndex(i)}
+                    onClick={() => selectShotAndFocusCanvas(i)}
                     className="block w-full text-left"
                     title={
                       stillUnlocked
                         ? "有图但未垫图改图（缺参考图或非改图模式），不能出成片；请重出该镜静帧"
-                        : undefined
+                        : "选中本镜并在画布高亮对应节点"
                     }
                   >
                     <div
