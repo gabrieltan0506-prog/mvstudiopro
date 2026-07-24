@@ -334,6 +334,8 @@ export default function FreeformCanvas({
   const toolbarFileInputRef = useRef<HTMLInputElement>(null);
   const pendingUploadBlockIdRef = useRef<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** 外部 focus 时短暂高亮，避免只滚过去却看不见点了哪张 */
+  const [pulseHighlightId, setPulseHighlightId] = useState<string | null>(null);
   const [spawnMenu, setSpawnMenu] = useState<SpawnMenuState>(null);
   const [toolbarMenu, setToolbarMenu] = useState<ToolbarMenuState>(null);
   const [dragState, setDragState] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
@@ -342,6 +344,7 @@ export default function FreeformCanvas({
   const [maskBusyId, setMaskBusyId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ blockId: string; done: number; total: number } | null>(null);
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
+  const focusMissSinceRef = useRef<number | null>(null);
 
   const mediaOnly = presentation === "media";
   const spawnOptions = useMemo(() => {
@@ -375,20 +378,46 @@ export default function FreeformCanvas({
   const blockMap = useMemo(() => new Map(blocks.map((b) => [b.id, b])), [blocks]);
 
   useEffect(() => {
-    if (!focusBlockId) return;
-    const block = blockMap.get(focusBlockId);
-    if (!block) {
-      onFocusBlockConsumed?.();
+    if (!focusBlockId) {
+      focusMissSinceRef.current = null;
       return;
     }
+    const block = blockMap.get(focusBlockId);
+    if (!block) {
+      // 审阅刚铺节点时 layout 尚未进 state：等下一轮，勿立刻 consume
+      if (focusMissSinceRef.current == null) focusMissSinceRef.current = Date.now();
+      if (Date.now() - focusMissSinceRef.current > 2500) {
+        focusMissSinceRef.current = null;
+        onFocusBlockConsumed?.();
+      }
+      return;
+    }
+    focusMissSinceRef.current = null;
     setSelectedId(focusBlockId);
+    setPulseHighlightId(focusBlockId);
     const canvas = canvasRef.current;
     if (canvas) {
-      const targetLeft = Math.max(0, block.x - 80);
-      const targetTop = Math.max(0, block.y - 60);
+      const targetLeft = Math.max(
+        0,
+        block.x - Math.max(24, (canvas.clientWidth - block.width) / 2),
+      );
+      const targetTop = Math.max(
+        0,
+        block.y - Math.max(24, (canvas.clientHeight - block.height) / 2),
+      );
       canvas.scrollTo({ left: targetLeft, top: targetTop, behavior: "smooth" });
     }
+    // 再 DOM 居中一次，避免外层 overflow 容器仍停在空白区
+    window.requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-canvas-block-id="${CSS.escape(focusBlockId)}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    });
+    const pulseTimer = window.setTimeout(() => {
+      setPulseHighlightId((id) => (id === focusBlockId ? null : id));
+    }, 3200);
     onFocusBlockConsumed?.();
+    return () => window.clearTimeout(pulseTimer);
   }, [focusBlockId, blockMap, onFocusBlockConsumed]);
 
   const getViewportSpawnPosition = useCallback((width: number, height: number, staggerIndex: number) => {
@@ -849,6 +878,7 @@ export default function FreeformCanvas({
             const meta = CANVAS_KIND_META[block.kind];
             const Icon = meta.icon;
             const selected = selectedId === block.id;
+            const pulsed = pulseHighlightId === block.id;
             const visionCount = collectVisionImages(block.id, blocks, edges).length;
             const documentCount = collectDocumentAssets(block.id, blocks, edges).length;
             const upstreamHandoff = collectUpstreamHandoff(block.id, blocks, edges);
@@ -862,8 +892,14 @@ export default function FreeformCanvas({
             return (
               <div
                 key={block.id}
+                data-canvas-block-id={block.id}
+                data-canvas-block-pulse={pulsed ? "true" : "false"}
                 className={`absolute flex flex-col overflow-hidden rounded-2xl border bg-gradient-to-br ${meta.color} backdrop-blur-md transition-shadow ${
-                  selected ? "border-primary/60 shadow-[0_0_0_2px_rgba(var(--primary),0.25)]" : "border-white/12"
+                  pulsed
+                    ? "z-30 border-cyan-300 shadow-[0_0_0_3px_rgba(34,211,238,0.65)] ring-2 ring-cyan-200/80"
+                    : selected
+                      ? "z-20 border-cyan-300/70 shadow-[0_0_0_2px_rgba(34,211,238,0.35)]"
+                      : "border-white/12"
                 }`}
                 style={{ left: block.x, top: block.y, width: block.width, height: block.height }}
                 onClick={() => setSelectedId(block.id)}

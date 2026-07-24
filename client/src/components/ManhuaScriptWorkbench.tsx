@@ -247,6 +247,11 @@ type Props = {
   onLayoutReadableChain?: () => void;
   /** 确保本集段成片节点已铺好（审阅提示词前） */
   onEnsureSegmentClips?: () => void;
+  /**
+   * 审阅成片提示词主路径：铺段节点 + 竖排后，聚焦并高亮目标段节点到视口中央。
+   * 有此回调时优先走它，避免「先 focus 再 layout」滚到空白区。
+   */
+  onReviewClipPromptsOnCanvas?: (opts?: { segmentIndex?: number }) => void;
   /** 写回段成片节点 prompt（审阅编辑） */
   onUpdateClipPrompt?: (clipId: string, prompt: string) => void;
   onResumeFromFailure?: () => void;
@@ -393,6 +398,7 @@ export default function ManhuaScriptWorkbench({
   onGenerateAllEpisodeKeyarts,
   onLayoutReadableChain,
   onEnsureSegmentClips,
+  onReviewClipPromptsOnCanvas,
   onUpdateClipPrompt,
   onResumeFromFailure,
   onRerunKeyartsFromReverse,
@@ -1096,22 +1102,25 @@ export default function ManhuaScriptWorkbench({
       return;
     }
     if (activePhase !== "storyboard") setActivePhase("storyboard");
-    // 先铺段成片节点并竖排，再开审阅；主战场在画布，不只在工作台折叠区
-    onEnsureSegmentClips?.();
-    onLayoutReadableChain?.();
     setClipPromptReviewOpen(true);
-    const focusId =
-      episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === activeSegNo)?.id ||
-      episodeClips[0]?.id ||
-      episodeKeyarts.find((b) => mediaUrl(b))?.id ||
-      "";
-    if (focusId) {
-      focusBlockAndOpenCanvas(focusId);
+    openCanvasDock();
+    if (onReviewClipPromptsOnCanvas) {
+      // 布局完成后再居中高亮，禁止先 focus 再甩节点到画布底
+      onReviewClipPromptsOnCanvas({ segmentIndex: activeSegNo });
     } else {
-      openCanvasDock();
+      onEnsureSegmentClips?.();
+      onLayoutReadableChain?.();
+      const focusId =
+        episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === activeSegNo)?.id ||
+        episodeClips[0]?.id ||
+        episodeKeyarts.find((b) => mediaUrl(b))?.id ||
+        "";
+      window.setTimeout(() => {
+        if (focusId) focusBlockAndOpenCanvas(focusId);
+      }, 160);
     }
-    toast.message("已在画布铺段提示词节点", {
-      description: "请直接在画布查看/改提示词；出片仍须垫图改图锁定",
+    toast.message("已定位到成片提示词节点", {
+      description: "画布会滚到该段并高亮；可直接改提示词",
     });
   };
   const runGenerateFragment = () => {
