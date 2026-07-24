@@ -76,7 +76,7 @@ describe("manhuaScriptWorkbench", () => {
         "\n",
       ),
     );
-    // 有分镜表：按每段 3 镜切，不注水到默认 12 段；镜长缺省 5 → 段 15 + 10
+    // 有分镜表：按每段 3 镜切，不注水到默认 6 段；镜长缺省 5 → 段 15 + 10
     const segsFast = groupShotsIntoSegments(shots, {
       videoModel: MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
     });
@@ -87,8 +87,8 @@ describe("manhuaScriptWorkbench", () => {
     expect(manhuaSegmentDurationSec("gemini-omni-flash")).toBe(10);
     expect(workbenchShotTotalSec(shots, "seedance-2.0-fast")).toBe(25);
     expect(workbenchShotTotalSec(shots, "gemini-omni-flash")).toBe(20);
-    // 默认骨架：12 段 ×（3 镜×5s 钳 15）= 180s
-    expect(workbenchShotTotalSec([], "seedance-2.0-fast")).toBe(180);
+    // 默认骨架：6 段 ×（3 镜×5s 钳 15）= 90s
+    expect(workbenchShotTotalSec([], "seedance-2.0-fast")).toBe(90);
     expect(
       groupShotsIntoSegments([], { videoModel: "seedance-2.0-fast" }).length,
     ).toBe(MANHUA_SEGMENT_DEFAULT);

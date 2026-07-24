@@ -74,16 +74,19 @@ export const MANHUA_OMNI_SEGMENT_DURATION_SEC = 10;
 /** Seedance 2.0 / Fast 每段成片秒数 */
 export const MANHUA_SEEDANCE_SEGMENT_DURATION_SEC = 15;
 
-/** 一集默认段数（推荐 12×15s ≈ 180s；允许 10–12） */
-export const MANHUA_SEGMENT_DEFAULT = 12;
-/** 一集最少段数 */
-export const MANHUA_SEGMENT_MIN = 10;
-/** 一集最多段数 */
-export const MANHUA_SEGMENT_MAX = 12;
+/**
+ * 一集段数（预算期）：5–6 ×15s ≈ 75–90s。
+ * 成熟后再扩到 10–12；勿在未成熟时默认拉满成片 API。
+ */
+export const MANHUA_SEGMENT_DEFAULT = 6;
+/** 一集最少段数（预算期） */
+export const MANHUA_SEGMENT_MIN = 5;
+/** 一集最多段数（预算期；成熟期可再放开到 12） */
+export const MANHUA_SEGMENT_MAX = 6;
 /** 一集建议最短时长（秒，按 Seedance 段长估算） */
-export const MANHUA_EPISODE_TARGET_MIN_SEC = 150;
+export const MANHUA_EPISODE_TARGET_MIN_SEC = 75;
 /** 一集默认目标时长（秒） */
-export const MANHUA_EPISODE_TARGET_DEFAULT_SEC = 180;
+export const MANHUA_EPISODE_TARGET_DEFAULT_SEC = 90;
 /** 每段关键静帧上限（起幅/戏核/桥接/落幅） */
 export const MANHUA_KEYARTS_PER_SEGMENT_MAX = 4;
 /** 每段关键静帧下限（默认骨架：起幅/戏核/落幅） */
@@ -156,7 +159,7 @@ export type ManhuaWorkbenchSegment = {
   shots: ManhuaWorkbenchShot[];
 };
 
-/** 将分镜列表收成段：无分镜时默认 12 段 × 3 静帧；有分镜表则按每段下限切，不强行注水 */
+/** 将分镜列表收成段：无分镜时默认 6 段 × 3 静帧；有分镜表则按每段下限切，不强行注水 */
 export function groupShotsIntoSegments(
   shots: ManhuaWorkbenchShot[],
   opts?: { videoModel?: string | null; segmentCount?: number; padToDefaultEpisode?: boolean },
@@ -218,8 +221,8 @@ export function resolveSegmentIndexFromShotIndex(shotIndex: number): number {
 }
 
 /**
- * 全集连续段号：第 2 集第 1 段 → 13（默认每集 12 段）。
- * 成片 id 的 -gNN 用此编号，便于跨集参考上一段（13←12）。
+ * 全集连续段号：第 2 集第 1 段 → 7（预算期默认每集 6 段）。
+ * 成片 id 的 -gNN 用此编号，便于跨集参考上一段（7←6）。
  */
 export function manhuaGlobalSegmentIndex(
   episodeIndex: number,
@@ -389,7 +392,7 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
     .slice(0, MANHUA_SHOT_KEYART_MAX);
 }
 
-/** 从节拍 / 反推正文拆出多镜；失败则回落为「12 段 × 3 静帧」骨架 */
+/** 从节拍 / 反推正文拆出多镜；失败则回落为「6 段 × 3 静帧」骨架 */
 export function parseWorkbenchShotsFromText(raw: string | undefined | null): ManhuaWorkbenchShot[] {
   const text = String(raw || "").trim();
   if (!text) return defaultWorkbenchShots();

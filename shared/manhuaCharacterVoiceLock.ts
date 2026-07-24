@@ -330,8 +330,9 @@ export type ManhuaEpisodeSegmentPromptRow = {
 };
 
 export type ManhuaCrossSegmentVoiceGateResult = {
+  /** 恒为 true：语音/配乐可后期改，缺参考音不挡出片 */
   ok: boolean;
-  /** 本段有对白 + 同集更早段已出场 → 必须锁 */
+  /** 本段有对白 + 同集更早段已出场 → 建议可挂（非硬锁） */
   requiredTags: string[];
   missingTags: string[];
   messageZh: string;
@@ -364,9 +365,9 @@ export function listManhuaSpeakingTagsInPrompt(
 }
 
 /**
- * 同集跨段声线硬门禁。
- * required = 本段有对白 ∩ 同集更早段已出场（任意 @角色 提及）。
- * 缺 HTTPS 声线 → ok=false。
+ * 同集跨段声线软提示（不挡出片）。
+ * 初登场无参考音、新旧段人物交替时硬锁易误杀；语音/配乐后期可改，故 ok 恒为 true。
+ * missingTags 仅供 UI 可选挂载提示。
  */
 export function evaluateManhuaCrossSegmentVoiceGate(input: {
   localSegmentIndex: number;
@@ -410,9 +411,9 @@ export function evaluateManhuaCrossSegmentVoiceGate(input: {
   }
 
   return {
-    ok: false,
+    ok: true,
     requiredTags,
     missingTags,
-    messageZh: `第${localSeg}段：${missingTags.join("、")} 为本集跨段再出场且有对白，须先锁定声线参考后再出片（同集首次出场不强制）。`,
+    messageZh: `第${localSeg}段：${missingTags.join("、")} 可挂声线参考（可选）；缺音不挡出片，语音/配乐后期可改。`,
   };
 }

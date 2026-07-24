@@ -1,6 +1,6 @@
 /**
  * 剧本工作台：左=本集资产 · 中=一集剧本+按段静帧 · 右=预览 · 底=集/段时间线
- * 一集：10–12 段 × 每段 3–4 关键静帧；每段一条成片（Seedance ≤15s，按时长合计钳制）。
+ * 一集：5–6 段 × 每段 3–4 关键静帧；每段一条成片（Seedance ≤15s，按时长合计钳制）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
@@ -551,7 +551,7 @@ export default function ManhuaScriptWorkbench({
     const reverseText = reverse?.outputText || reverse?.prompt || "";
     const beatsText = beats?.outputText || beats?.prompt || "";
     const storyText = story?.outputText || story?.prompt || "";
-    // 方案 C：十至十二段可拍表优先编译为每段 3 静帧（起幅/戏核/落幅）
+    // 方案 C：五至六段可拍表优先编译为每段 3 静帧（起幅/戏核/落幅）
     const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(
       `${storyText}\n${beatsText}\n${reverseText}`,
     );
@@ -2349,8 +2349,8 @@ export default function ManhuaScriptWorkbench({
                       角色声线参考（人手提取）
                     </div>
                     <p className="mt-0.5 text-[10px] leading-4 text-white/40">
-                      同集跨段再出场且有对白 → 必须先挂声线，否则禁止出片；同集首次出场不强制。有声成片后按秒轴抠对白窗挂到
-                      @角色；多人同框最多 3 路。BGM 仍后期自叠。
+                      声线参考可选：有则挂到 @角色 更稳；缺音不挡出片（初登场常无参考音）。语音/配乐后期可改；多人同框最多
+                      3 路进引擎。
                     </p>
                     {characterVoiceLocks.length ? (
                       <div className="mt-1 flex flex-wrap gap-1">
@@ -3999,23 +3999,23 @@ export default function ManhuaScriptWorkbench({
                               className={`rounded px-1 py-px text-[8px] font-semibold ${
                                 voiceGate.requiredTags.length === 0
                                   ? "bg-white/10 text-white/45"
-                                  : voiceGate.ok
+                                  : voiceGate.missingTags.length === 0
                                     ? "bg-emerald-500/25 text-emerald-50"
-                                    : "bg-red-500/25 text-red-50"
+                                    : "bg-white/10 text-white/45"
                               }`}
                               title={
                                 voiceGate.requiredTags.length
-                                  ? voiceGate.ok
-                                    ? `跨段声线已锁：${voiceGate.requiredTags.join("、")}`
-                                    : voiceGate.messageZh
-                                  : "同集首次出场不强制声线"
+                                  ? voiceGate.missingTags.length === 0
+                                    ? `已挂声线：${voiceGate.requiredTags.join("、")}`
+                                    : voiceGate.messageZh || "声线可选，缺音不挡出片"
+                                  : "声线可选；初登场常无参考音"
                               }
                             >
                               {voiceGate.requiredTags.length === 0
-                                ? "声线·首段免锁"
-                                : voiceGate.ok
-                                  ? "跨段声线✓"
-                                  : "跨段声线缺失"}
+                                ? "声线·可选"
+                                : voiceGate.missingTags.length === 0
+                                  ? "声线已挂"
+                                  : "声线未挂·不挡"}
                             </span>
                             <span
                               className={`rounded px-1 py-px text-[8px] font-semibold ${

@@ -511,7 +511,7 @@ describe("canvasDramaStudio factory", () => {
     expect(filterManhuaFactoryTargetIds(ordered, frag.targetBlockIds)).toEqual([frag.clipId]);
   });
 
-  it("episode 2 first segment clip uses global g13", () => {
+  it("episode 2 first segment clip uses global g07 (6 segs/ep)", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "续集客栈余波",
       episodeIndex: 2,
@@ -534,7 +534,7 @@ describe("canvasDramaStudio factory", () => {
     );
     const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 2);
     const clips = ensured.blocks.filter((b) => b.id.startsWith("clip-") && /-g\d{2,}/i.test(b.id));
-    expect(clips.some((c) => /-g13(?:-|$)/i.test(c.id))).toBe(true);
+    expect(clips.some((c) => /-g07(?:-|$)/i.test(c.id))).toBe(true);
     expect(clips[0]?.prompt || "").toMatch(/【连续】|承上段末帧/);
     expect(clips[0]?.prompt || "").not.toMatch(/古风服化参考|节拍防火墙/);
   });

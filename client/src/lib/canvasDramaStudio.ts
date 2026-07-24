@@ -1542,7 +1542,7 @@ export function ensureManhuaFragmentClips(
     registry?: ManhuaAssetLockRegistry | null;
     /** 我的角色/场景垫图职责 → 成片路径不再灌长职责墙 */
     customRefs?: ManhuaCustomAssetRef[] | null;
-    /** 十至十二段可拍表：缺镜对白时灌秒轴 */
+    /** 五至六段可拍表：缺镜对白时灌秒轴 */
     segmentPlan?: ManhuaEpisodeSegmentPlan | null;
     /** 人物造型套（服装子类） */
     characterLookSets?: ManhuaCharacterLookSet[] | null;
@@ -2870,7 +2870,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         const shotCont = normalizeManhuaShotContinuityPrefs(opts.shotContinuity);
         // 静帧硬接力已在上方 keyart 并行批次处理；此处串行路径不会再出现 keyart
 
-        // 段成片 ← 上一段成片（末帧/视频参考，全集连续编号：g13←g12）
+        // 段成片 ← 上一段成片（末帧/视频参考，全集连续编号：g07←g06）
         if (stage === "clip") {
           const epForSeg = getBlockEpisodeIndex(runBlockPayload) ?? opts.episodeIndex ?? 1;
           const rawSeg = resolveClipSegmentIndex(blockId, runBlockPayload.prompt);

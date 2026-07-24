@@ -24,7 +24,7 @@ describe("manhuaEpisodeQualityPrompt", () => {
     expect(block).toContain("动作轨迹");
     expect(block).toContain("场景渲染");
     expect(block).toContain("场面变化");
-    expect(MANHUA_DIALOGUE_DENSITY_BLOCK).toMatch(/12–20/);
+    expect(MANHUA_DIALOGUE_DENSITY_BLOCK).toMatch(/6–12/);
     expect(MANHUA_PROP_IN_FRAME_BLOCK).toMatch(/入画/);
     expect(MANHUA_CAMERA_TRAJECTORY_BLOCK).toMatch(/起幅/);
     expect(MANHUA_ACTION_TRAJECTORY_BLOCK).toMatch(/接触点|动作链/);
@@ -34,15 +34,15 @@ describe("manhuaEpisodeQualityPrompt", () => {
 
   it("narrative engine includes episode quality by default", () => {
     const block = composeManhuaNarrativeEngineBlock();
-    expect(block).toContain("三分钟");
+    expect(block).toMatch(/预算期|75–90/);
     expect(block).toContain("对白密度");
     expect(block).toContain("场景渲染");
     expect(block).toContain("场面变化");
   });
 
-  it("default prompts target ~180s and denser craft", () => {
-    expect(MANHUA_DRAMA_DEFAULT_PROMPTS.story_brief).toMatch(/180/);
-    expect(MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats).toMatch(/12 段|动作链|互动/);
+  it("default prompts target ~75–90s and denser craft", () => {
+    expect(MANHUA_DRAMA_DEFAULT_PROMPTS.story_brief).toMatch(/75–90|90/);
+    expect(MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats).toMatch(/5–6 段|6 段|动作链|互动/);
     expect(MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip).toMatch(/15s|秒轴|@Image/);
     expect(MANHUA_DRAMA_DEFAULT_PROMPTS.video_reverse).toMatch(/动作链|互动|天气/);
   });

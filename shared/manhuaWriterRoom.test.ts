@@ -66,9 +66,9 @@ describe("manhuaWriterRoom", () => {
     expect(p).toContain("正好输出 3 集");
     expect(p).toContain("片尾钩子");
     expect(p).toContain("【道具示范库】");
-    expect(p).toMatch(/12 段/);
+    expect(p).toMatch(/5–6 段|6 段/);
     expect(p).toMatch(/15 秒/);
-    expect(p).toContain("十至十二段可拍表");
+    expect(p).toContain("五至六段可拍表");
     expect(p).toContain("故事发动机");
     expect(p).toContain("整体影像风格");
     expect(p).toMatch(/权谋|商战|甜宠|古风/);

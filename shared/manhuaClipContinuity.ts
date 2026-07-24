@@ -1,7 +1,7 @@
 /**
  * 短剧多段连续：下一段成片参考上一段成片末 3–5 秒帧 + 本段静帧。
  * Seedance 2.0 约 15s 一镜到底，段间只能靠末段画面衔接，否则连续性断裂。
- * 段号按全集连续（第 2 集第 1 段 = g13，参考 g12）。
+ * 段号按全集连续（预算期每集 6 段：第 2 集第 1 段 = g07，参考 g06）。
  */
 
 import {
@@ -62,7 +62,7 @@ function httpsDoneUrl(block: ContinuityClipLike): string | undefined {
 
 /**
  * 取「全局段号 − 1」的已完成成片 URL（同集上一段，或跨集时上一集末段）。
- * 例：生成 g13（第 2 集第 1 段）→ 参考 g12。
+ * 例：生成 g07（第 2 集第 1 段）→ 参考 g06。
  */
 export function resolvePreviousSegmentClipUrl(
   blocks: ContinuityClipLike[],

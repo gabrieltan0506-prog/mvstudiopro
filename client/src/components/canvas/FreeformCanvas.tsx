@@ -609,7 +609,7 @@ export default function FreeformCanvas({
         nearestRef && nearestRef !== block.refImageUrl
           ? { ...block, refImageUrl: nearestRef }
           : block;
-      // 手点 clip：上一段成片（全集连续编号 g13←g12）供末帧/视频参考
+      // 手点 clip：上一段成片（全集连续编号 g07←g06）供末帧/视频参考
       if (block.id.startsWith("clip-") && !runBlockPayload.refVideoUrl) {
         const ep = getBlockEpisodeIndex(runBlockPayload) ?? 1;
         const seg = resolveClipSegmentIndex(runBlockPayload.id, runBlockPayload.prompt);
@@ -1237,23 +1237,23 @@ export default function FreeformCanvas({
                               className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
                                 voiceGate.requiredTags.length === 0
                                   ? "bg-white/10 text-white/45"
-                                  : voiceGate.ok
+                                  : voiceGate.missingTags.length === 0
                                     ? "bg-emerald-500/30 text-emerald-50"
-                                    : "bg-red-500/30 text-red-50"
+                                    : "bg-white/10 text-white/45"
                               }`}
                               title={
                                 voiceGate.requiredTags.length
-                                  ? voiceGate.ok
-                                    ? `跨段声线已锁：${voiceGate.requiredTags.join("、")}`
-                                    : voiceGate.messageZh
-                                  : "同集首次出场不强制声线"
+                                  ? voiceGate.missingTags.length === 0
+                                    ? `已挂声线：${voiceGate.requiredTags.join("、")}`
+                                    : voiceGate.messageZh || "声线可选，缺音不挡出片"
+                                  : "声线可选；初登场常无参考音"
                               }
                             >
                               {voiceGate.requiredTags.length === 0
-                                ? "声线·首段免锁"
-                                : voiceGate.ok
-                                  ? "跨段声线✓"
-                                  : "跨段声线缺失"}
+                                ? "声线·可选"
+                                : voiceGate.missingTags.length === 0
+                                  ? "声线已挂"
+                                  : "声线未挂·不挡"}
                             </span>
                             {chips.map((t) => (
                               <span

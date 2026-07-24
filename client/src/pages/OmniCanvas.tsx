@@ -5199,7 +5199,7 @@ export default function OmniCanvas() {
               <div className="mt-3" data-manhua-viral-template>
                 <label className="block text-[11px] text-white/45">节奏模板（可选）</label>
                 <p className="mt-0.5 text-[10px] leading-4 text-white/35">
-                  审定骨架：前 3 秒钩子 + 约 180 秒节拍格；只借结构，不写外部剧名。不选则按题材自由扩写。
+                  审定骨架：前 3 秒钩子 + 约 75–90 秒节拍格；只借结构，不写外部剧名。不选则按题材自由扩写。
                 </p>
                 <div className="mt-2 space-y-2">
                   {viralTemplateGrouped.map((group) => (

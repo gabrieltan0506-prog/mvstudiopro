@@ -8,23 +8,23 @@ import {
 } from "./manhuaEpisodeSegmentPlan";
 
 describe("manhuaEpisodeSegmentPlan", () => {
-  it("parses 12 segments and passes quality", () => {
+  it("parses 6 segments and passes quality", () => {
     const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(buildManhuaEpisodeSegmentPlanFixtureMarkdown());
-    expect(plan.segments).toHaveLength(12);
+    expect(plan.segments).toHaveLength(6);
     const q = evaluateManhuaEpisodeSegmentPlanQuality(plan);
     expect(q.ok).toBe(true);
-    expect(q.readyCount).toBe(12);
+    expect(q.readyCount).toBe(6);
   });
 
-  it("accepts 10 contiguous ready segments", () => {
+  it("accepts 5 contiguous ready segments", () => {
     const md = buildManhuaEpisodeSegmentPlanFixtureMarkdown()
-      .split(/\n#### 段11/)[0]!
+      .split(/\n#### 段06/)[0]!
       .trim();
     const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(md);
-    expect(plan.segments.length).toBeGreaterThanOrEqual(10);
+    expect(plan.segments.length).toBeGreaterThanOrEqual(5);
     const q = evaluateManhuaEpisodeSegmentPlanQuality(plan);
     expect(q.ok).toBe(true);
-    expect(q.readyCount).toBe(10);
+    expect(q.readyCount).toBe(5);
   });
 
   it("rejects filler dialogue and missing fields", () => {
@@ -103,10 +103,10 @@ describe("manhuaEpisodeSegmentPlan", () => {
     void plan;
   });
 
-  it("prompt block asks for 10–12 ×15s and performance", () => {
+  it("prompt block asks for 5–6 ×15s and performance", () => {
     const block = formatManhuaEpisodeSegmentPlanPromptBlock();
-    expect(block).toMatch(/10/);
-    expect(block).toMatch(/12/);
+    expect(block).toMatch(/5/);
+    expect(block).toMatch(/6/);
     expect(block).toMatch(/15 秒/);
     expect(block).toMatch(/意图/);
     expect(block).toMatch(/对白/);

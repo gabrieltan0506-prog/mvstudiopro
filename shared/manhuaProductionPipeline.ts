@@ -1,6 +1,6 @@
 /**
  * 漫剧工厂方案 C：产品可调用流水线（非 Agent 对话手册）。
- * 题材 → Sol 剧本 → 资产锁定 → 10–12 段可拍表 → 每段 3–4 关键静帧 → 按秒导戏单 →（门禁后）视频。
+ * 题材 → Sol 剧本 → 资产锁定 → 5–6 段可拍表 → 每段 3–4 关键静帧 → 按秒导戏单 →（门禁后）视频。
  */
 
 export type ManhuaProductionStepId =
@@ -20,7 +20,7 @@ export const MANHUA_PRODUCTION_STEPS: ReadonlyArray<{
   { id: "topic", label: "题材", hint: "一句话题材与补充条件" },
   { id: "screenplay", label: "剧本", hint: "扩写可拍连载包并对白密度过关" },
   { id: "asset_lock", label: "资产锁定", hint: "角色脸 / 服化道 / 场景光影锁定" },
-  { id: "segment_plan", label: "可拍表", hint: "10–12 段 × 每段约 15 秒" },
+  { id: "segment_plan", label: "可拍表", hint: "5–6 段 × 每段约 15 秒" },
   { id: "keyart", label: "关键静帧", hint: "每段 3–4 张（起幅 / 戏核 / 落幅）" },
   { id: "cue_sheet", label: "导戏单", hint: "按秒对白·情绪·动作·运镜" },
   { id: "video", label: "成片", hint: "静帧与导戏单锁定后再出视频" },

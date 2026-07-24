@@ -106,7 +106,7 @@ describe("manhuaCharacterVoiceLock", () => {
     expect(collectManhuaCharacterTagsFromPrompt(longPrompt)).toContain("@角色4");
   });
 
-  it("cross-segment voice gate: 2nd appearance with dialogue requires lock", () => {
+  it("cross-segment voice gate: missing lock is soft tip, never blocks", () => {
     const seg1 =
       "【第1段·15s】客栈\n0–7.5s：@角色1，抬手，说「站住」。近景。\n7.5–15s：@角色2，后退，说「别冲动」。中景。";
     const seg2 =
@@ -121,9 +121,9 @@ describe("manhuaCharacterVoiceLock", () => {
       ],
       voiceLocks: [],
     });
-    expect(miss.ok).toBe(false);
+    expect(miss.ok).toBe(true);
     expect(miss.missingTags).toContain("@角色1");
-    expect(miss.messageZh).toMatch(/跨段再出场/);
+    expect(miss.messageZh).toMatch(/不挡出片|可选/);
 
     const ok = evaluateManhuaCrossSegmentVoiceGate({
       localSegmentIndex: 2,
