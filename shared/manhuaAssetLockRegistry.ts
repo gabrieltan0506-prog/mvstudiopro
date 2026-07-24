@@ -29,6 +29,7 @@ import {
   type ManhuaCharacterLookSet,
   type ManhuaWardrobeSubSlot,
 } from "./manhuaCharacterLookSets.js";
+import { stripManhuaClipForbiddenBoards } from "./manhuaClipPromptSanitize.js";
 
 export type ManhuaAssetLockSlot = {
   /** 如 @角色1 */
@@ -394,18 +395,26 @@ function isBindableAssetPath(path: string): boolean {
 /**
  * 节点/前台可审：只写 tag + id + 名，**禁止写网址**。
  * 出片时用 id 在后台 path 表解析垫图，再绑 @Image。
+ * `allowedIds`：本段出场白名单；有则只输出命中槽（禁止整集灌进 15s）。
  */
 export function formatManhuaAssetImageBindBlock(
   registry: ManhuaAssetLockRegistry | null | undefined,
   maxSlots = 12,
-  opts?: { activeLookSetIds?: string[] | null },
+  opts?: {
+    activeLookSetIds?: string[] | null;
+    allowedIds?: string[] | null;
+  },
 ): string {
   const activeLooks = new Set(
     (opts?.activeLookSetIds || []).map((x) => String(x || "").trim()).filter(Boolean),
   );
+  const allowed = new Set(
+    (opts?.allowedIds || []).map((x) => String(x || "").trim()).filter(Boolean),
+  );
   const rows = (registry?.slots || [])
     .filter((s) => isBindableAssetPath(s.path))
     .filter((s) => {
+      if (allowed.size && !allowed.has(String(s.id || "").trim())) return false;
       if (s.role !== "wardrobe") return true;
       // 有本段造型手选时：只带启用套；否则带全部已挂图服装
       if (!activeLooks.size) return true;
@@ -420,6 +429,105 @@ export function formatManhuaAssetImageBindBlock(
     return `${s.tag}|id=${id}|label=${label}|kind=${kind}`;
   });
   return [ASSET_IMAGE_BIND_MARK, ...lines].join("\n");
+}
+
+/** 15s 段成片：本段出场资产 id（角色≤4、场景 1、道具仅点名） */
+export type ManhuaSegmentClipAllowedAssets = {
+  characterIds: string[];
+  sceneIds: string[];
+  propIds: string[];
+  /** 写入对照的全部 id（含服装若挂在角色上则由 activeLook 另控） */
+  allowedIds: string[];
+};
+
+/**
+ * 从本段文案池点名角色/场景/道具；点不到角色时软取前 N（≤4），禁止回落全员。
+ * 道具未点名则不灌；场景优先文案匹配，否则用本集主场景 1 个。
+ */
+export function resolveManhuaSegmentClipAllowedAssets(input: {
+  haystack: string;
+  registry: ManhuaAssetLockRegistry | null | undefined;
+  assetCanon?: ManhuaWriterAssetCanon | null;
+  mainSceneId?: string | null;
+  /** 同框人数推断，默认 2，封顶 4 */
+  castCount?: number;
+}): ManhuaSegmentClipAllowedAssets {
+  const hay = String(input.haystack || "");
+  const reg = input.registry;
+  const castCap = Math.max(1, Math.min(4, Math.floor(input.castCount ?? 2)));
+  const chars = reg?.byRole.character || [];
+  const scenes = reg?.byRole.scene || [];
+  const props = reg?.byRole.prop || [];
+
+  const nameHit = (label: string) => {
+    const n = String(label || "").trim();
+    return n.length >= 2 && hay.includes(n);
+  };
+  const canonNameHit = (id: string, role: "character" | "scene" | "prop") => {
+    const list =
+      role === "character"
+        ? input.assetCanon?.characters
+        : role === "scene"
+          ? input.assetCanon?.locations
+          : input.assetCanon?.props;
+    const a = (list || []).find((x) => x.id === id);
+    if (!a) return false;
+    if (nameHit(a.nameZh)) return true;
+    if (a.aliasZh && nameHit(a.aliasZh)) return true;
+    return false;
+  };
+
+  let characterIds = chars
+    .filter((s) => nameHit(s.labelZh) || canonNameHit(s.id, "character"))
+    .map((s) => s.id);
+  // 秒轴/@角色N 命中 tag
+  const mentionedTags = extractManhuaMentionedAssetTags(hay);
+  if (mentionedTags.length) {
+    for (const s of chars) {
+      if (mentionedTags.includes(s.tag) && !characterIds.includes(s.id)) {
+        characterIds.push(s.id);
+      }
+    }
+  }
+  if (!characterIds.length) {
+    characterIds = chars.slice(0, castCap).map((s) => s.id);
+  } else {
+    characterIds = characterIds.slice(0, castCap);
+  }
+
+  let sceneIds = scenes
+    .filter((s) => nameHit(s.labelZh) || canonNameHit(s.id, "scene"))
+    .map((s) => s.id);
+  if (mentionedTags.length) {
+    for (const s of scenes) {
+      if (mentionedTags.includes(s.tag) && !sceneIds.includes(s.id)) {
+        sceneIds.push(s.id);
+      }
+    }
+  }
+  if (!sceneIds.length) {
+    const main = String(input.mainSceneId || "").trim();
+    const hit = main ? scenes.find((s) => s.id === main) : scenes[0];
+    if (hit) sceneIds = [hit.id];
+  } else {
+    sceneIds = sceneIds.slice(0, 1);
+  }
+
+  let propIds = props
+    .filter((s) => nameHit(s.labelZh) || canonNameHit(s.id, "prop"))
+    .map((s) => s.id);
+  if (mentionedTags.length) {
+    for (const s of props) {
+      if (mentionedTags.includes(s.tag) && !propIds.includes(s.id)) {
+        propIds.push(s.id);
+      }
+    }
+  }
+  // 未点名不灌全库道具
+  propIds = propIds.slice(0, 3);
+
+  const allowedIds = [...characterIds, ...sceneIds, ...propIds];
+  return { characterIds, sceneIds, propIds, allowedIds };
 }
 
 /**
@@ -515,9 +623,9 @@ export function stripManhuaAssetUrlsFromPrompt(text: string | null | undefined):
     .trim();
 }
 
-/** 成片节点：强制清洗后再给人看/落盘 */
+/** 成片节点：强制清洗后再给人看/落盘（剥规则墙/画风废话 + 网址） */
 export function sanitizeManhuaClipPromptForUi(text: string | null | undefined): string {
-  return stripManhuaAssetUrlsFromPrompt(text);
+  return stripManhuaAssetUrlsFromPrompt(stripManhuaClipForbiddenBoards(String(text || "")));
 }
 
 export function extractManhuaMentionedAssetTags(prompt: string | null | undefined): string[] {

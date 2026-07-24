@@ -10,6 +10,8 @@ import {
   parseManhuaCanvasAssetAtTag,
   planManhuaClipSeedanceImageBind,
   resolveManhuaAssetImageBindRows,
+  resolveManhuaSegmentClipAllowedAssets,
+  sanitizeManhuaClipPromptForUi,
   stripManhuaAssetUrlsFromPrompt,
 } from "./manhuaAssetLockRegistry";
 import { parseManhuaSheetPropSubTagsFromPrompt } from "./manhuaSheetPropSubTags";
@@ -187,6 +189,110 @@ describe("manhuaAssetLockRegistry", () => {
         "@角色1|id=c1|label=女主|https://cdn.example/a.jpg\n预览图：/manhua-characters/x.jpg",
       ),
     ).not.toMatch(/https?:\/\/|\/manhua-|预览图：/);
+  });
+
+  it("segment clip allowed assets: name-hit chars + one scene; no full cast/props dump", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "c_jian",
+          url: "https://cdn.example/jian.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "黑衣剑客",
+        },
+        {
+          id: "c_bai",
+          url: "https://cdn.example/bai.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "白衣女子",
+        },
+        {
+          id: "c_xian",
+          url: "https://cdn.example/xian.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "马县丞",
+        },
+        {
+          id: "c4",
+          url: "https://cdn.example/c4.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "赵十三",
+        },
+        {
+          id: "c5",
+          url: "https://cdn.example/c5.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "韩廷玉",
+        },
+        {
+          id: "s_bridge",
+          url: "https://cdn.example/bridge.jpg",
+          role: "scene",
+          source: "upload",
+          labelZh: "断月桥",
+        },
+        {
+          id: "s_cang",
+          url: "https://cdn.example/cang.jpg",
+          role: "scene",
+          source: "upload",
+          labelZh: "雪关粮仓",
+        },
+        {
+          id: "p_knife",
+          url: "https://cdn.example/knife.jpg",
+          role: "prop",
+          source: "upload",
+          labelZh: "玄铁缺口刀",
+        },
+        {
+          id: "p_yu",
+          url: "https://cdn.example/yu.jpg",
+          role: "prop",
+          source: "upload",
+          labelZh: "半枚双鱼玉佩",
+        },
+      ],
+    });
+    const hay =
+      "【第1段·15s】断月桥\n0–5s：黑衣剑客踩灭箭火，白衣女子取账册。";
+    const allowed = resolveManhuaSegmentClipAllowedAssets({
+      haystack: hay,
+      registry: reg,
+      mainSceneId: "s_cang",
+      castCount: 2,
+    });
+    expect(allowed.characterIds).toEqual(
+      expect.arrayContaining(["c_jian", "c_bai"]),
+    );
+    expect(allowed.characterIds).not.toContain("c_xian");
+    expect(allowed.characterIds.length).toBeLessThanOrEqual(2);
+    expect(allowed.sceneIds).toEqual(["s_bridge"]);
+    expect(allowed.propIds).toEqual([]);
+    const block = formatManhuaAssetImageBindBlock(reg, 12, {
+      allowedIds: allowed.allowedIds,
+    });
+    expect(block).toContain("黑衣剑客");
+    expect(block).toContain("断月桥");
+    expect(block).not.toContain("马县丞");
+    expect(block).not.toContain("雪关粮仓");
+    expect(block).not.toContain("玄铁缺口刀");
+  });
+
+  it("sanitizeManhuaClipPromptForUi strips 画风 lines", () => {
+    const raw = [
+      "【第1段·15s】断月桥",
+      "0–15s：@角色1，拔刀。近景。",
+      "画风：CG 漫剧",
+    ].join("\n");
+    const out = sanitizeManhuaClipPromptForUi(raw);
+    expect(out).toContain("【第1段·15s】");
+    expect(out).not.toMatch(/画风：/);
   });
 
   it("requires edit+ref for pixel lock", () => {
