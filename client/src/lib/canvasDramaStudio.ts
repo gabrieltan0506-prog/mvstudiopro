@@ -24,19 +24,12 @@ import {
   stripManhuaAssetUrlsFromPrompt,
   type ManhuaAssetLockRegistry,
 } from "@shared/manhuaAssetLockRegistry";
-
-/** 清洗画布上所有成片节点提示词里的网址/资源路径（历史误写一次清掉） */
-export function sanitizeManhuaClipBlocksPrompts(blocks: CanvasBlock[]): CanvasBlock[] {
-  let changed = false;
-  const next = blocks.map((b) => {
-    if (!b.id.startsWith("clip-")) return b;
-    const cleaned = sanitizeManhuaClipPromptForUi(b.prompt);
-    if (cleaned === String(b.prompt || "").trim()) return b;
-    changed = true;
-    return { ...b, prompt: cleaned };
-  });
-  return changed ? next : blocks;
-}
+import {
+  formatManhuaSegmentActiveLookLine,
+  getManhuaSegmentLookBinding,
+  resolveActiveLookSetIdsForSegment,
+  type ManhuaCharacterLookSet,
+} from "@shared/manhuaCharacterLookSets";
 import type { ManhuaWriterAssetCanon } from "@shared/manhuaWriterAssetCanon";
 import {
   extractManhuaSegmentDialogueQuotes,
@@ -148,6 +141,51 @@ import {
   buildManhuaKeyartSlimPrompt,
   stripManhuaKeyartShotInject,
 } from "@shared/manhuaKeyartSlimPrompt";
+
+/** 同集各段 prompt（clip 优先，缺则 keyart）供跨段声线门禁 */
+export function collectManhuaEpisodeSegmentPromptsForVoiceGate(
+  blocks: CanvasBlock[],
+  episodeIndex: number,
+): Array<{ localSegmentIndex: number; prompt: string }> {
+  const ep = Math.max(1, Math.floor(Number(episodeIndex) || 1));
+  const clipBySeg = new Map<number, string>();
+  const keyartBySeg = new Map<number, string>();
+  for (const b of blocks) {
+    if ((getBlockEpisodeIndex(b) ?? 1) !== ep) continue;
+    if (b.id.startsWith("clip-")) {
+      const local = resolveClipLocalSegmentIndex(b.id, b.prompt, ep);
+      const p = String(b.prompt || "");
+      const prev = clipBySeg.get(local) || "";
+      if (p.length >= prev.length) clipBySeg.set(local, p);
+    } else if (b.id.startsWith("keyart-")) {
+      const shot = resolveKeyartShotIndex(b.id, b.prompt);
+      const local = resolveSegmentIndexFromShotIndex(shot);
+      const p = String(b.prompt || "");
+      const prev = keyartBySeg.get(local) || "";
+      if (p.length >= prev.length) keyartBySeg.set(local, p);
+    }
+  }
+  const segs = new Set<number>([...clipBySeg.keys(), ...keyartBySeg.keys()]);
+  return Array.from(segs)
+    .sort((a, b) => a - b)
+    .map((localSegmentIndex) => ({
+      localSegmentIndex,
+      prompt: clipBySeg.get(localSegmentIndex) || keyartBySeg.get(localSegmentIndex) || "",
+    }));
+}
+
+/** 清洗画布上所有成片节点提示词里的网址/资源路径（历史误写一次清掉） */
+export function sanitizeManhuaClipBlocksPrompts(blocks: CanvasBlock[]): CanvasBlock[] {
+  let changed = false;
+  const next = blocks.map((b) => {
+    if (!b.id.startsWith("clip-")) return b;
+    const cleaned = sanitizeManhuaClipPromptForUi(b.prompt);
+    if (cleaned === String(b.prompt || "").trim()) return b;
+    changed = true;
+    return { ...b, prompt: cleaned };
+  });
+  return changed ? next : blocks;
+}
 
 /** 把 edit 计划的垫图/融图挂到节点；prompt 已是完整短包时不再叠长文 */
 function applyKeyartEditPlanToBlock(
@@ -1513,6 +1551,10 @@ export function ensureManhuaFragmentClips(
     customRefs?: ManhuaCustomAssetRef[] | null;
     /** 十至十二段可拍表：缺镜对白时灌秒轴 */
     segmentPlan?: ManhuaEpisodeSegmentPlan | null;
+    /** 人物造型套（服装子类） */
+    characterLookSets?: ManhuaCharacterLookSet[] | null;
+    /** 段手选造型 e集:s段 → characterId → lookSetId */
+    segmentLookBindings?: Record<string, Record<string, string>> | null;
   },
 ): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
   const ep =
@@ -1574,9 +1616,14 @@ export function ensureManhuaFragmentClips(
       assetCanon: opts?.assetCanon,
       characterSheetUrlById: opts?.characterSheetUrlById,
       customRefs: opts?.customRefs,
+      characterLookSets: opts?.characterLookSets,
     });
-  const assetLockBlock = formatManhuaAssetImageBindBlock(lockRegistry);
   const segmentPlan = resolveSegmentPlanForEpisodeClips(blocks, ep, opts?.segmentPlan);
+  const lookSets = opts?.characterLookSets || [];
+  const charTagById: Record<string, string> = {};
+  for (const s of lockRegistry.byRole.character) {
+    if (s.id) charTagById[s.id] = s.tag;
+  }
 
   for (const seg of segments) {
     const segKeyarts = seg.shots
@@ -1602,8 +1649,35 @@ export function ensureManhuaFragmentClips(
       planBeat?.performanceZh,
     );
     const padLockBlock = segUrls.length
-      ? `【垫图】本段静帧${segUrls.length}张（出片顺序：上段末帧→资产定妆→本段静帧，按序绑@Image）`
+      ? `【垫图】本段静帧${segUrls.length}张（出片顺序：上段末帧→资产定妆/服装→本段静帧，按序绑@Image）`
       : "【垫图·缺失】禁止出片";
+    const segBinding = getManhuaSegmentLookBinding(
+      opts?.segmentLookBindings,
+      ep,
+      seg.index,
+    );
+    const activeLookIds = resolveActiveLookSetIdsForSegment({
+      lookSets,
+      binding: segBinding,
+      fallbackCharacterIds: lockRegistry.byRole.character.map((c) => c.id),
+    });
+    const assetLockBlock = formatManhuaAssetImageBindBlock(lockRegistry, 12, {
+      activeLookSetIds: activeLookIds,
+    });
+    const lookLine = formatManhuaSegmentActiveLookLine({
+      lookSets,
+      binding:
+        Object.keys(segBinding).length > 0
+          ? segBinding
+          : Object.fromEntries(
+              lockRegistry.byRole.character.map((c) => {
+                const first = lookSets.find((l) => l.characterId === c.id);
+                return first ? [c.id, first.id] : null;
+              }).filter(Boolean) as Array<[string, string]>,
+            ),
+      wardrobeSlots: lockRegistry.wardrobeSlots,
+      characterTagById: charTagById,
+    });
     const segPrompt = stripManhuaAssetUrlsFromPrompt(
       stripManhuaClipForbiddenBoards(
         stripManhuaPromptSlop(
@@ -1622,6 +1696,7 @@ export function ensureManhuaFragmentClips(
             }),
             padLockBlock,
             assetLockBlock,
+            lookLine,
             continuityAddon,
             artLock,
           ]

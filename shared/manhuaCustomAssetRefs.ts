@@ -11,7 +11,12 @@ import {
   MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
 } from "./manhuaScriptWorkbench.js";
 
-export const MANHUA_CUSTOM_ASSET_ROLES = ["character", "scene", "prop"] as const;
+export const MANHUA_CUSTOM_ASSET_ROLES = [
+  "character",
+  "scene",
+  "prop",
+  "wardrobe",
+] as const;
 export type ManhuaCustomAssetRole = (typeof MANHUA_CUSTOM_ASSET_ROLES)[number];
 export type ManhuaCustomAssetRoleOrUnset = ManhuaCustomAssetRole | "unset";
 
@@ -42,6 +47,7 @@ export function defaultManhuaCustomAssetRefDuty(
   if (role === "character") return "identity";
   if (role === "scene") return "space";
   if (role === "prop") return "style";
+  if (role === "wardrobe") return "identity";
   return null;
 }
 
@@ -62,7 +68,8 @@ export type ManhuaCustomAssetRef = {
 export const MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH: Record<ManhuaCustomAssetRoleOrUnset, string> = {
   character: "人物",
   scene: "场景",
-  prop: "服装道具",
+  prop: "道具",
+  wardrobe: "服装",
   unset: "未勾选",
 };
 
@@ -105,7 +112,7 @@ export function normalizeManhuaCustomAssetRole(
   raw: unknown,
 ): ManhuaCustomAssetRoleOrUnset {
   const s = String(raw || "").trim();
-  if (s === "character" || s === "scene" || s === "prop") return s;
+  if (s === "character" || s === "scene" || s === "prop" || s === "wardrobe") return s;
   return "unset";
 }
 
@@ -113,7 +120,7 @@ export function normalizeManhuaCustomAssetRole(
 export function stripManhuaCustomAssetLabelPrefix(labelZh: string | undefined | null): string {
   return String(labelZh || "")
     .trim()
-    .replace(/^新(?:人物|场景|服装道具)·/, "");
+    .replace(/^新(?:人物|场景|服装道具|服装|道具)·/, "");
 }
 
 /**
@@ -144,6 +151,13 @@ export function inferManhuaCustomAssetRole(opts: {
     seed.startsWith("prop_")
   ) {
     return "prop";
+  }
+  if (
+    seed.startsWith("wardrobe_") ||
+    seed.startsWith("wa_wardrobe") ||
+    seed.startsWith("look_")
+  ) {
+    return "wardrobe";
   }
   if (
     seed.startsWith("char_") ||
@@ -304,7 +318,10 @@ export function taggedManhuaCustomAssetRefs(
 ): Array<ManhuaCustomAssetRef & { role: ManhuaCustomAssetRole }> {
   return normalizeManhuaCustomAssetRefs(refs).filter(
     (r): r is ManhuaCustomAssetRef & { role: ManhuaCustomAssetRole } =>
-      r.role === "character" || r.role === "scene" || r.role === "prop",
+      r.role === "character" ||
+      r.role === "scene" ||
+      r.role === "prop" ||
+      r.role === "wardrobe",
   );
 }
 
@@ -332,10 +349,12 @@ export function summarizeCustomAssetRefsZh(
   const nChar = tagged.filter((r) => r.role === "character").length;
   const nScene = tagged.filter((r) => r.role === "scene").length;
   const nProp = tagged.filter((r) => r.role === "prop").length;
+  const nWardrobe = tagged.filter((r) => r.role === "wardrobe").length;
   const parts: string[] = [];
   if (nChar) parts.push(`人物 ${nChar}`);
   if (nScene) parts.push(`场景 ${nScene}`);
-  if (nProp) parts.push(`服装道具 ${nProp}`);
+  if (nWardrobe) parts.push(`服装 ${nWardrobe}`);
+  if (nProp) parts.push(`道具 ${nProp}`);
   return parts.join(" · ");
 }
 

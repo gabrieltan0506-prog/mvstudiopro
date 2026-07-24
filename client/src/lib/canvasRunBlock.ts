@@ -57,10 +57,19 @@ import {
 } from "@shared/manhuaFactoryTextOptimize";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import {
+  evaluateManhuaCrossSegmentVoiceGate,
   formatManhuaCharacterVoiceLockBlock,
   planManhuaVoiceAudioForPrompt,
   type ManhuaCharacterVoiceLock,
+  type ManhuaEpisodeSegmentPromptRow,
 } from "@shared/manhuaCharacterVoiceLock";
+import { resolveClipLocalSegmentIndex } from "@shared/manhuaScriptWorkbench";
+
+function episodeIndexFromClipBlockId(blockId: string): number {
+  const m = String(blockId || "").match(/-e(\d{2})(?:-|$)/i);
+  if (m?.[1]) return Math.max(1, parseInt(m[1], 10));
+  return 1;
+}
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
@@ -87,6 +96,13 @@ export type CanvasRunDeps = {
    * 节点只存 @角色N|id=…|label=…，这里再转成可下载 URL。
    */
   manhuaAssetPathById?: Record<string, string> | null;
+  /**
+   * 同集跨段声线门禁：返回该集各段 prompt（含 clip/keyart）。
+   * 缺省则跳过硬门禁（仅调试）；生产路径须注入。
+   */
+  getManhuaEpisodeSegmentPromptsForVoiceGate?: (
+    episodeIndex: number,
+  ) => ManhuaEpisodeSegmentPromptRow[];
 };
 
 function dataUrlToJpegFile(dataUrl: string, name: string): File | null {
@@ -758,6 +774,20 @@ export async function runCanvasBlock(
       .filter((u) => u && !looksLikeVideo(u));
     // 段成片：禁止再叠「参考静帧/连续性」聊天墙；身份靠 @Image + 秒轴短指令
     const isClip = block.id.startsWith("clip-");
+    // 同集跨段声线硬门禁：再出场有对白必须已挂参考音
+    if (isClip && typeof deps.getManhuaEpisodeSegmentPromptsForVoiceGate === "function") {
+      const ep = episodeIndexFromClipBlockId(block.id);
+      const localSeg = resolveClipLocalSegmentIndex(block.id, block.prompt, ep);
+      const gate = evaluateManhuaCrossSegmentVoiceGate({
+        localSegmentIndex: localSeg,
+        currentPrompt: block.prompt || mergedPrompt,
+        episodeSegmentPrompts: deps.getManhuaEpisodeSegmentPromptsForVoiceGate(ep) || [],
+        voiceLocks: deps.characterVoiceLocks,
+      });
+      if (!gate.ok) {
+        throw new Error(gate.messageZh || "跨段再出场角色须先锁定声线");
+      }
+    }
     const seedanceDirectorSource = isClip
       ? mergedPrompt
       : String(mergedPrompt || "").includes("参考静帧")

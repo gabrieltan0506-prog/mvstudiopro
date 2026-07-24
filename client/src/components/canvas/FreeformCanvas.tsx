@@ -34,6 +34,7 @@ import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, takeFilesFrom
 import { loadCanvasDocumentTexts } from "@/lib/canvasDocumentText";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
 import {
+  collectManhuaEpisodeSegmentPromptsForVoiceGate,
   getBlockEpisodeIndex,
   sanitizeManhuaRecapUpstreamLinks,
 } from "@/lib/canvasDramaStudio";
@@ -48,7 +49,11 @@ import {
   sanitizeManhuaClipPromptForUi,
 } from "@shared/manhuaAssetLockRegistry";
 import { parseManhuaSheetPropSubTagsFromPrompt } from "@shared/manhuaSheetPropSubTags";
-import type { ManhuaCharacterVoiceLock } from "@shared/manhuaCharacterVoiceLock";
+import {
+  evaluateManhuaCrossSegmentVoiceGate,
+  type ManhuaCharacterVoiceLock,
+} from "@shared/manhuaCharacterVoiceLock";
+import { resolveClipLocalSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import { resolveOmniMaterialUrl, uploadFileToSignedUrl } from "@/lib/omniCanvasApi";
 import {
   formatManhuaClipDirectorCueFaceLine,
@@ -1187,6 +1192,19 @@ export default function FreeformCanvas({
                       const imageBindLocked = /【资产·Image对照】/.test(
                         String(block.prompt || ""),
                       );
+                      const epIdx = getBlockEpisodeIndex(block) ?? 1;
+                      const localSeg = resolveClipLocalSegmentIndex(
+                        block.id,
+                        block.prompt,
+                        epIdx,
+                      );
+                      const voiceGate = evaluateManhuaCrossSegmentVoiceGate({
+                        localSegmentIndex: localSeg,
+                        currentPrompt: String(block.prompt || ""),
+                        episodeSegmentPrompts:
+                          collectManhuaEpisodeSegmentPromptsForVoiceGate(blocks, epIdx),
+                        voiceLocks: characterVoiceLocks,
+                      });
                       return (
                         <>
                           <div className="flex flex-wrap items-center gap-1.5">
@@ -1210,6 +1228,28 @@ export default function FreeformCanvas({
                               }`}
                             >
                               {imageBindLocked ? "Image对照✓" : "Image对照缺失"}
+                            </span>
+                            <span
+                              className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                                voiceGate.requiredTags.length === 0
+                                  ? "bg-white/10 text-white/45"
+                                  : voiceGate.ok
+                                    ? "bg-emerald-500/30 text-emerald-50"
+                                    : "bg-red-500/30 text-red-50"
+                              }`}
+                              title={
+                                voiceGate.requiredTags.length
+                                  ? voiceGate.ok
+                                    ? `跨段声线已锁：${voiceGate.requiredTags.join("、")}`
+                                    : voiceGate.messageZh
+                                  : "同集首次出场不强制声线"
+                              }
+                            >
+                              {voiceGate.requiredTags.length === 0
+                                ? "声线·首段免锁"
+                                : voiceGate.ok
+                                  ? "跨段声线✓"
+                                  : "跨段声线缺失"}
                             </span>
                             {chips.map((t) => (
                               <span

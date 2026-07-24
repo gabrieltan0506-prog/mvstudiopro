@@ -32,6 +32,10 @@ import {
   buildManhuaAssetPathById,
 } from "@shared/manhuaAssetLockRegistry";
 import {
+  normalizeManhuaCharacterLookSets,
+  normalizeManhuaSegmentLookBindings,
+} from "@shared/manhuaCharacterLookSets";
+import {
   formatManhuaFactoryUserError,
   manhuaFactoryStageLabelFromBlockId,
 } from "@shared/manhuaFactoryUserErrors";
@@ -62,6 +66,7 @@ import {
   ensureManhuaFragmentClips,
   layoutManhuaEpisodeReadableChain,
   collectManhuaCharacterSheetUrlById,
+  collectManhuaEpisodeSegmentPromptsForVoiceGate,
   countExpectedManhuaKeyartShots,
   runManhuaDramaFactoryPipeline,
   sanitizeManhuaClipBlocksPrompts,
@@ -368,6 +373,8 @@ export default function OmniCanvas() {
   const bootCast = bootBible?.cast;
   const bootManual = bootBible?.manualOverrides;
   const [blocks, setBlocks] = useState<CanvasBlock[]>(initial.blocks);
+  const blocksRef = useRef(blocks);
+  blocksRef.current = blocks;
   const [edges, setEdges] = useState<CanvasEdge[]>(initial.edges);
   const [factoryBusy, setFactoryBusy] = useState(false);
   /** 剧本工作台优先；已确认编剧时强制工作台（旧 session 若停在表单会像「UI 没改」） */
@@ -526,6 +533,12 @@ export default function OmniCanvas() {
   );
   const [characterVoiceLocks, setCharacterVoiceLocks] = useState<ManhuaCharacterVoiceLock[]>(() =>
     normalizeManhuaCharacterVoiceLocks(initialWriterSession?.characterVoiceLocks),
+  );
+  const [characterLookSets, setCharacterLookSets] = useState(() =>
+    normalizeManhuaCharacterLookSets(initialWriterSession?.characterLookSets),
+  );
+  const [segmentLookBindings, setSegmentLookBindings] = useState(() =>
+    normalizeManhuaSegmentLookBindings(initialWriterSession?.segmentLookBindings),
   );
   const [stylePack, setStylePack] = useState(() => initialWriterSession?.stylePack ?? null);
   const [shareAssetToLibrary, setShareAssetToLibrary] = useState(
@@ -1120,6 +1133,10 @@ export default function OmniCanvas() {
     setCharacterVoiceLocks(
       normalizeManhuaCharacterVoiceLocks(session.characterVoiceLocks),
     );
+    setCharacterLookSets(normalizeManhuaCharacterLookSets(session.characterLookSets));
+    setSegmentLookBindings(
+      normalizeManhuaSegmentLookBindings(session.segmentLookBindings),
+    );
     setStylePack(session.stylePack ?? null);
     setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
     setViralTemplateId(String(session.viralTemplateId || "").trim());
@@ -1262,6 +1279,8 @@ export default function OmniCanvas() {
       workflowPhase,
       customAssetRefs,
       characterVoiceLocks,
+      characterLookSets,
+      segmentLookBindings,
       shareAssetToLibrary,
       viralTemplateId,
       deliveryPackage,
@@ -1792,6 +1811,7 @@ export default function OmniCanvas() {
       sceneId: factorySceneId,
       propIds: factoryPropIds,
       customRefs: customAssetRefs,
+      characterLookSets,
       assetCanon: projectBible?.assetCanon,
       characterSheetUrlById: collectManhuaCharacterSheetUrlById(
         blocks,
@@ -1805,6 +1825,7 @@ export default function OmniCanvas() {
     factorySceneId,
     factoryPropIds,
     customAssetRefs,
+    characterLookSets,
     projectBible?.assetCanon,
     blocks,
   ]);
@@ -1814,6 +1835,8 @@ export default function OmniCanvas() {
       userId: user?.id ? String(user.id) : "",
       characterVoiceLocks,
       manhuaAssetPathById,
+      getManhuaEpisodeSegmentPromptsForVoiceGate: (episodeIndex) =>
+        collectManhuaEpisodeSegmentPromptsForVoiceGate(blocksRef.current, episodeIndex),
       optimizeCopy: async ({ sourceText, optimizationBrief, modelName }) => {
         const t0 = Date.now();
         const reqPreview = [
@@ -4451,6 +4474,10 @@ export default function OmniCanvas() {
                   stylePack={stylePack}
                   onStylePackChange={setStylePack}
                   customAssetRefs={customAssetRefs}
+                  characterLookSets={characterLookSets}
+                  onCharacterLookSetsChange={setCharacterLookSets}
+                  segmentLookBindings={segmentLookBindings}
+                  onSegmentLookBindingsChange={setSegmentLookBindings}
                   characterVoiceLocks={characterVoiceLocks}
                   onExtractCharacterVoice={async ({
                     clipId,
@@ -4784,6 +4811,8 @@ export default function OmniCanvas() {
                         characterSheetUrlById: sheetUrls,
                         customRefs: customAssetRefs,
                         segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
+                        characterLookSets,
+                        segmentLookBindings,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -4820,6 +4849,8 @@ export default function OmniCanvas() {
                         characterSheetUrlById: sheetUrls,
                         customRefs: customAssetRefs,
                         segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
+                        characterLookSets,
+                        segmentLookBindings,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -4882,6 +4913,8 @@ export default function OmniCanvas() {
                         characterSheetUrlById: sheetUrls,
                         customRefs: customAssetRefs,
                         segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
+                        characterLookSets,
+                        segmentLookBindings,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
