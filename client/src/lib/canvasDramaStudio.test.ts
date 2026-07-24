@@ -100,7 +100,8 @@ describe("canvasDramaStudio factory", () => {
       motionPromptIds: ["product_05_exploded_view"],
     });
     const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
-    expect(clip.prompt).toMatch(/【成片占位】|画风：/);
+    expect(clip.prompt).toContain("【成片占位】");
+    expect(clip.prompt).not.toMatch(/画风：/);
     expect(clip.prompt).not.toContain("【包装动效手法】");
     expect(clip.prompt).not.toContain("古风服化参考");
   });

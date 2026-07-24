@@ -845,13 +845,9 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
 
   const clip = defaultCanvasBlock("video", originX + gapX * (col0 + 5), originY);
   clip.id = makeFactoryStageId("clip", episodeIndex);
-  // 成片正文由 ensureManhuaFragmentClips 写秒轴短指令；此处只占位，禁止灌规则墙/古风板
-  clip.prompt = [
-    "【成片占位】铺段/审阅后写入秒轴短指令；身份靠垫图@Image，勿在此堆规则墙。",
-    artStyle ? `画风：${artStyle.labelZh}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  // 成片正文由 ensureManhuaFragmentClips 写秒轴短指令；此处只占位，禁止灌规则墙/画风废话
+  clip.prompt =
+    "【成片占位】铺段/审阅后写入秒轴短指令；身份靠垫图@Image，勿在此堆规则墙。";
   clip.parentId = keyArt.id;
   /** 工厂主成片仅 Seedance 标准 / 快速（默认 Fast；CG 多图参考） */
   clip.videoModel = MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
@@ -1238,17 +1234,13 @@ export function applyFactoryPrefsToBlocks(
       };
     }
     if (b.id.startsWith("clip-")) {
-      // 禁止 prefs 回灌古风板/规则墙；旧肥稿直接打成可审壳，逼用户重审阅秒轴
+      // 禁止 prefs 回灌古风板/规则墙/画风废话；图锁了画风就锁了
       const cleaned = stripManhuaAssetUrlsFromPrompt(
         stripManhuaClipForbiddenBoards(String(b.prompt || "")),
       );
-      const artLine = `画风：${artStyle.labelZh}`;
-      const hasArt = /^画风：/m.test(cleaned);
       return {
         ...b,
-        prompt: stripManhuaPromptSlop(
-          [cleaned, hasArt ? "" : artLine].filter(Boolean).join("\n"),
-        ),
+        prompt: stripManhuaPromptSlop(cleaned),
         videoModel: (
           b.videoModel === "seedance-2.0" || b.videoModel === "seedance-2.0-fast"
             ? b.videoModel
@@ -1484,28 +1476,6 @@ function makeSegmentClipId(
   return makeCanvasBlockId(`clip-g${pad}`);
 }
 
-function extractArtStyleLockFromPrompt(prompt: string | undefined | null): string {
-  const m = String(prompt || "").match(/【(?:画风硬锁|成片画风)】[\s\S]*?(?=\n\n【|\n*$)/);
-  return String(m?.[0] || "").trim().replace(/^【画风硬锁】/, "【成片画风】");
-}
-
-/** 成片只挂画风一行，不搬静帧侧长锁 */
-function extractArtStyleOneLineFromPrompt(prompt: string | undefined | null): string {
-  const lock = extractArtStyleLockFromPrompt(prompt);
-  if (!lock) {
-    if (/CG|漫剧|仿真人/.test(String(prompt || ""))) {
-      return "画风：CG 漫剧";
-    }
-    return "";
-  }
-  const body = lock
-    .replace(/^【[^】]+】\s*/, "")
-    .split(/\n/)
-    .map((s) => s.trim())
-    .find((s) => s.length >= 2);
-  return body ? `画风：${body.slice(0, 80)}` : "画风：CG 漫剧";
-}
-
 function resolveSegmentPlanForEpisodeClips(
   blocks: CanvasBlock[],
   episodeIndex: number,
@@ -1640,9 +1610,6 @@ export function ensureManhuaFragmentClips(
     const segUrls = segKeyarts.map((k) => mediaUrlOf(k)).filter(Boolean) as string[];
     const globalSeg = manhuaGlobalSegmentIndex(ep, seg.index);
     const existing = clipBySeg.get(globalSeg);
-    const artLock =
-      extractArtStyleOneLineFromPrompt(primary.prompt) ||
-      extractArtStyleOneLineFromPrompt(template.prompt);
     const continuityAddon = globalSeg >= 2 ? "【连续】承上段末帧脸服场，勿跳棚。" : "";
     const intentZh = String(seg.shots.find((s) => s.intentZh)?.intentZh || "").trim();
     const planBeat = segmentPlan?.segments.find((s) => s.index === seg.index);
@@ -1721,7 +1688,6 @@ export function ensureManhuaFragmentClips(
             bindPreview,
             lookLine,
             continuityAddon,
-            artLock,
           ]
             .filter(Boolean)
             .join("\n"),
@@ -2398,10 +2364,6 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
         const m = String(b.prompt || "").match(/【垫图[^\n]*/);
         return m?.[0]?.trim() || "";
       })();
-      const keptArt = (() => {
-        const m = String(b.prompt || "").match(/^画风：[^\n]+/m);
-        return m?.[0]?.trim() || "";
-      })();
       return {
         ...b,
         prompt: stripManhuaClipForbiddenBoards(
@@ -2417,7 +2379,6 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
               keptPad,
               keptAssetBind,
               globalSeg >= 2 ? "【连续】承上段末帧脸服场，勿跳棚。" : "",
-              keptArt,
             ]
               .filter(Boolean)
               .join("\n"),
@@ -2895,7 +2856,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
               ),
             };
           }
-          // 段内全部静帧作多图参考：图是什么画风，成片就跟什么（不靠猜）
+          // 段内静帧作多图参考：画风跟图走，提示词不再复述画风
           const segKeyarts = working
             .filter(
               (b) =>
@@ -2907,18 +2868,10 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             .sort(sortKeyartBlocks);
           const segUrls = segKeyarts.map((b) => mediaUrlOf(b)).filter(Boolean) as string[];
           if (segUrls.length) {
-            const artLock = extractArtStyleLockFromPrompt(segKeyarts[0]?.prompt);
-            const basePrompt = String(runBlockPayload.prompt || "");
             runBlockPayload = {
               ...runBlockPayload,
               refImageUrl: segUrls[0],
               editFusionUrls: segUrls.slice(1).slice(0, 15),
-              prompt:
-                artLock &&
-                !basePrompt.includes("画风硬锁") &&
-                !basePrompt.includes("成片画风")
-                  ? `${basePrompt}\n\n${artLock}`
-                  : basePrompt,
             };
           }
         }
