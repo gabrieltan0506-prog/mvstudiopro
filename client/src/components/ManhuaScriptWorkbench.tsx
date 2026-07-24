@@ -1085,23 +1085,34 @@ export default function ManhuaScriptWorkbench({
     toast.error("还不能跑", { description: hint });
     return true;
   };
-  /** 审阅提示词：静帧齐+垫图锁即可；不套用「满 10 段才烧片」门槛 */
-  const clipPromptReviewUnlocked = Boolean(stillsCountReady && keyartsPixelLocked);
+  /**
+   * 审阅提示词（阿硕/OiiOii：有静帧图 → 铺段节点到画布看提示词）。
+   * 只卡「有没有图」；垫图锁只拦真正出片，不拦审阅与画布展示。
+   */
+  const clipPromptReviewUnlocked = episodeStillCount > 0;
   const openClipPromptReview = () => {
-    if (!stillsCountReady) {
-      toast.error("还不能跑", { description: "请先出齐关键静帧" });
+    if (episodeStillCount <= 0) {
+      toast.error("还不能跑", { description: "请先出关键静帧，有图后再审阅提示词" });
       return;
     }
-    if (!keyartsPixelLocked) {
-      toast.error("还不能跑", {
-        description:
-          "关键静帧须垫图改图锁定（改图 + 定妆/场景参考）后才能审阅；仅有成图不够",
-      });
-      return;
-    }
-    onEnsureSegmentClips?.();
-    setClipPromptReviewOpen(true);
     if (activePhase !== "storyboard") setActivePhase("storyboard");
+    // 先铺段成片节点并竖排，再开审阅；主战场在画布，不只在工作台折叠区
+    onEnsureSegmentClips?.();
+    onLayoutReadableChain?.();
+    setClipPromptReviewOpen(true);
+    const focusId =
+      episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === activeSegNo)?.id ||
+      episodeClips[0]?.id ||
+      episodeKeyarts.find((b) => mediaUrl(b))?.id ||
+      "";
+    if (focusId) {
+      focusBlockAndOpenCanvas(focusId);
+    } else {
+      openCanvasDock();
+    }
+    toast.message("已在画布铺段提示词节点", {
+      description: "请直接在画布查看/改提示词；出片仍须垫图改图锁定",
+    });
   };
   const runGenerateFragment = () => {
     if (refuseIfBlocked(clipGateHint)) return;
@@ -1452,8 +1463,8 @@ export default function ManhuaScriptWorkbench({
                 className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45"
                 title={
                   !clipPromptReviewUnlocked
-                    ? "静帧张数齐且每张为垫图改图后，可审阅各段成片提示词"
-                    : "先审阅段成片提示词，再按段生成"
+                    ? "先出关键静帧；有图即可审阅并在画布展示段提示词"
+                    : "铺到画布审阅段提示词；确认后再出片"
                 }
               >
                 审阅成片提示词
