@@ -232,7 +232,14 @@ export function appendManhuaClipEngineOptics(prompt: string): string {
     : fromTail.length
       ? fromTail
       : labeled;
-  const meaningful = camBits.filter((c) => c && c !== "近景微动");
+  // 无实质运镜动势时不灌光学（微动/空景别不算）
+  const meaningful = camBits.filter(
+    (c) =>
+      c &&
+      !/^(?:近景)?微动$/.test(c) &&
+      !/^(?:近景|中景|全景|特写|中近景)$/.test(c) &&
+      /推|拉|摇|移|跟|升|降|环绕|手持|固定|平视|仰|俯|甩|急/.test(c),
+  );
   if (!meaningful.length) return raw;
   const line = formatRecommendedCineOpticsLine(meaningful.join("；"));
   if (!line) return raw;
