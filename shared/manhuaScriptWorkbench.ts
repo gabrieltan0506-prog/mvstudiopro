@@ -621,10 +621,29 @@ export function hydrateWorkbenchShotsWithSegmentDialogue(
   shots: ManhuaWorkbenchShot[],
   dialogueLines?: string[] | null,
   performanceZh?: string | null,
+  opts?: {
+    /** 姓名 → @角色N（来自本段真锁资产，禁止瞎挂库序） */
+    speakerTagByNameZh?: Record<string, string> | null;
+  },
 ): ManhuaWorkbenchShot[] {
   const list = Array.isArray(shots) ? shots : [];
+  const tagByName = opts?.speakerTagByNameZh || {};
+  const resolveSpeakerTag = (line: string, actionZh: string, fallback: string) => {
+    const fromAt = extractManhuaSpeakerAtTag(line, actionZh, fallback);
+    if (fromAt) return fromAt;
+    const name =
+      line.match(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*[「『"“]/)?.[1] ||
+      line.match(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[「『"“]/)?.[1] ||
+      "";
+    const n = String(name || "").trim();
+    if (n && tagByName[n]) return tagByName[n];
+    for (const [k, tag] of Object.entries(tagByName)) {
+      if (k.length >= 2 && (line.includes(k) || actionZh.includes(k))) return tag;
+    }
+    return "";
+  };
   const lines = (dialogueLines || [])
-    .map((d) => stripManhuaSpeakerAtPrefix(String(d || "")))
+    .map((d) => String(d || "").trim())
     .filter((d) => d.length >= 1)
     .slice(0, 8);
   if (!list.length || !lines.length) return list;
@@ -634,18 +653,32 @@ export function hydrateWorkbenchShotsWithSegmentDialogue(
     const fromAction = extractManhuaPerformanceCue(s.actionZh);
     const existing =
       String(s.dialogueZh || "").trim() || fromAction.dialogueZh;
-    if (existing) return s;
+    if (existing) {
+      const speakerAtTag = resolveSpeakerTag(
+        existing,
+        String(s.actionZh || ""),
+        fromAction.speakerAtTag || "",
+      );
+      if (!speakerAtTag || /@角色\d+/.test(s.actionZh || "")) return s;
+      return {
+        ...s,
+        actionZh: `${speakerAtTag} ${String(s.actionZh || "").trim()}`.trim(),
+      };
+    }
     const line = lines[lineCursor] || lines[lines.length - 1];
     if (!line) return s;
     lineCursor += 1;
-    const speakerAtTag = extractManhuaSpeakerAtTag(
+    const speakerAtTag = resolveSpeakerTag(
       line,
-      s.actionZh,
-      fromAction.speakerAtTag,
+      String(s.actionZh || ""),
+      fromAction.speakerAtTag || "",
+    );
+    const dialogueOnly = stripManhuaSpeakerAtPrefix(
+      line.replace(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*/, ""),
     );
     return {
       ...s,
-      dialogueZh: line,
+      dialogueZh: dialogueOnly || stripManhuaSpeakerAtPrefix(line),
       emotionZh: String(s.emotionZh || perf.emotionZh || fromAction.emotionZh || "").trim() || undefined,
       microExpressionZh:
         String(
@@ -700,6 +733,8 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
   segmentDialogueLines?: string[] | null;
   /** 可拍表表演行：灌对白时补情绪/微表情 */
   segmentPerformanceZh?: string | null;
+  /** 姓名 → @角色N，对白挂真说话人 */
+  speakerTagByNameZh?: Record<string, string> | null;
 }): string {
   const seg = Math.max(1, Math.floor(input.segmentIndex));
   const dur =
@@ -710,6 +745,7 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     input.shots,
     input.segmentDialogueLines,
     input.segmentPerformanceZh,
+    { speakerTagByNameZh: input.speakerTagByNameZh },
   );
   const scene = String(input.sceneHintZh || "").trim();
   const timeline = formatManhuaDialogueTimelineBlock(shots, dur, {

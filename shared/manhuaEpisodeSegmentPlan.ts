@@ -144,23 +144,62 @@ export function countManhuaSegmentDialogueQuotes(dialogueZh: string): number {
   return extractManhuaSegmentDialogueQuotes(dialogueZh).length;
 }
 
-/** 从可拍表对白字段抽出「」句，供成片秒轴灌入 */
+/**
+ * 从可拍表对白字段抽出「」句，供成片秒轴灌入。
+ * 若原文有「苏照雪：「…」」说话人，保留为 `苏照雪：「…」`，禁止只剩光秃台词导致锁错脸。
+ */
 export function extractManhuaSegmentDialogueQuotes(dialogueZh: string): string[] {
   const t = String(dialogueZh || "");
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const push = (line: string) => {
+    const s = String(line || "").trim();
+    if (s.length < 1 || seen.has(s)) return;
+    seen.add(s);
+    out.push(s);
+  };
+  // 优先：姓名：「台词」 / 姓名:「台词」
+  const withSpeaker = t.matchAll(
+    /([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*「([^」]{1,80})」/g,
+  );
+  for (const m of withSpeaker) {
+    const name = String(m[1] || "").trim();
+    const quote = String(m[2] || "").trim();
+    if (name && quote) push(`${name}：「${quote}」`);
+  }
+  const withSpeakerCurly = t.matchAll(
+    /([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*[\u201c“]([^\u201d”]{1,80})[\u201d”]/g,
+  );
+  for (const m of withSpeakerCurly) {
+    const name = String(m[1] || "").trim();
+    const quote = String(m[2] || "").trim();
+    if (name && quote) push(`${name}：「${quote}」`);
+  }
+  if (out.length) return out.slice(0, 8);
+
+  // 回落：无说话人时只抽引号句
   const cn = t.match(/「([^」]{1,80})」/g) || [];
   const curly = t.match(/[\u201c“]([^\u201d”]{1,80})[\u201d”]/g) || [];
   const en = t.match(/"([^"]{1,80})"/g) || [];
-  const seen = new Set<string>();
-  const out: string[] = [];
   for (const raw of [...cn, ...curly, ...en]) {
     const inner = String(raw || "")
       .replace(/^[「『"“\u201c]|[」』"”\u201d]$/g, "")
       .trim();
-    if (inner.length < 1 || seen.has(inner)) continue;
-    seen.add(inner);
-    out.push(inner);
+    if (inner.length < 1) continue;
+    push(inner);
   }
   return out.slice(0, 8);
+}
+
+/** 从 `苏照雪：「台词」` 或行首姓名抽出说话人名 */
+export function extractManhuaDialogueSpeakerName(
+  dialogueZh: string | null | undefined,
+): string {
+  const t = String(dialogueZh || "").trim();
+  const m =
+    t.match(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*[「『"“]/) ||
+    t.match(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[「『"“]/);
+  return String(m?.[1] || "").trim();
 }
 
 /** 从「#### 段01」或「#### 段 1」块解析 */

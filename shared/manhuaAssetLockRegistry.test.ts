@@ -12,6 +12,7 @@ import {
   resolveManhuaAssetImageBindRows,
   resolveManhuaSegmentClipAllowedAssets,
   sanitizeManhuaClipPromptForUi,
+  splitManhuaCastZhNames,
   stripManhuaAssetUrlsFromPrompt,
 } from "./manhuaAssetLockRegistry";
 import { parseManhuaSheetPropSubTagsFromPrompt } from "./manhuaSheetPropSubTags";
@@ -189,6 +190,65 @@ describe("manhuaAssetLockRegistry", () => {
         "@角色1|id=c1|label=女主|https://cdn.example/a.jpg\n预览图：/manhua-characters/x.jpg",
       ),
     ).not.toMatch(/https?:\/\/|\/manhua-|预览图：/);
+  });
+
+  it("never soft-locks library order when cast names miss (no 马县丞 fake)", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "cust_ma",
+          url: "https://cdn.example/ma.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "马县丞",
+        },
+        {
+          id: "cust_su",
+          url: "https://cdn.example/su.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "苏文谦",
+        },
+        {
+          id: "cust_xue",
+          url: "https://cdn.example/xue.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "苏照雪",
+        },
+        {
+          id: "cust_zhao",
+          url: "https://cdn.example/zhao.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "赵十三",
+        },
+      ],
+    });
+    // 秒轴只有描述词、可拍表点名苏文谦/苏照雪 → 必须锁真名，禁止库序前两人
+    const allowed = resolveManhuaSegmentClipAllowedAssets({
+      haystack:
+        "【第1段·15s】断月桥\n黑衣剑客踩灭箭火，白衣女子取账。说「你取账，我断绳」。",
+      castZh: "苏文谦断绳；苏照雪取账",
+      registry: reg,
+      castCount: 2,
+    });
+    expect(splitManhuaCastZhNames("苏文谦断绳；苏照雪取账")).toEqual(
+      expect.arrayContaining(["苏文谦", "苏照雪"]),
+    );
+    expect(allowed.characterIds).toEqual(
+      expect.arrayContaining(["cust_su", "cust_xue"]),
+    );
+    expect(allowed.characterIds).not.toContain("cust_ma");
+    expect(allowed.mode).toBe("matched");
+    const empty = resolveManhuaSegmentClipAllowedAssets({
+      haystack: "夜雨桥板，火箭钉入。",
+      castZh: "",
+      registry: reg,
+      castCount: 2,
+    });
+    expect(empty.characterIds).toEqual([]);
+    expect(empty.mode).toBe("empty");
   });
 
   it("segment clip allowed assets: name-hit chars + one scene; no full cast/props dump", () => {
