@@ -204,6 +204,27 @@ export function extractManhuaDialogueSpeakerName(
   return String(m?.[1] || "").trim();
 }
 
+/**
+ * 可拍表缺「角色：」时，从对白说话人补出场名单（供锁脸与 UI 预填）。
+ * 有 castZh 则原样返回；禁止编造未出现的人名。
+ */
+export function inferManhuaCastZhFromDialogue(
+  castZh: string | null | undefined,
+  dialogueZh: string | null | undefined,
+): string {
+  const existing = String(castZh || "").trim();
+  if (existing) return existing;
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const line of extractManhuaSegmentDialogueQuotes(dialogueZh)) {
+    const n = extractManhuaDialogueSpeakerName(line);
+    if (n.length < 2 || seen.has(n)) continue;
+    seen.add(n);
+    names.push(n);
+  }
+  return names.slice(0, 4).join("；");
+}
+
 /** 从「#### 段01」或「#### 段 1」块解析 */
 export function parseManhuaEpisodeSegmentPlanFromMarkdown(md: string): ManhuaEpisodeSegmentPlan {
   const text = String(md || "");
@@ -390,7 +411,7 @@ export function formatManhuaEpisodeSegmentPlanPromptBlock(
     `- 表演：`,
     `- 场景：`,
     `- 配色风格：`,
-    `- 角色：`,
+    `- 角色：（写真名，如「苏文谦；苏照雪」；禁止只写黑衣剑客这类描述词）`,
     `- 服装道具：`,
     `- 光影运镜：`,
     `（段02…段${String(n).padStart(2, "0")} 同结构；至少 ${MANHUA_EPISODE_SEGMENT_COUNT_MIN} 段、至多 ${MANHUA_EPISODE_SEGMENT_COUNT_MAX} 段；跨段须有信息增量与场面变化。禁止把后段钩子提前写进本段对白。）`,
@@ -454,6 +475,37 @@ export function upsertManhuaSegmentIntentInMarkdown(
     );
   } else {
     body = `- 意图：${intent}\n${body.replace(/^\n*/, "")}`;
+  }
+  return src.slice(0, m.index) + header + body + src.slice(m.index + m[0].length);
+}
+
+/**
+ * 把某段「角色：」写回可拍表 markdown（有则替换，无则在段标题后插入）。
+ */
+export function upsertManhuaSegmentCastInMarkdown(
+  markdown: string,
+  segmentIndex: number,
+  castZh: string,
+): string {
+  const src = String(markdown || "");
+  const idx = Math.max(1, Math.floor(segmentIndex));
+  const cast = String(castZh || "").trim().slice(0, 80);
+  // 允许清空：用户删光出场行时写回空字段
+  const headerRe = new RegExp(
+    `(#{2,4}\\s*段\\s*0*${idx}\\b[^\\n]*\\n)([\\s\\S]*?)(?=#{2,4}\\s*段\\s*\\d|$)`,
+    "i",
+  );
+  const m = src.match(headerRe);
+  if (!m || m.index == null) return src;
+  const header = m[1] || "";
+  let body = m[2] || "";
+  if (/(?:^|\n)\s*[-*·]?\s*(?:角色|出演|人物)\s*[:：]/.test(body)) {
+    body = body.replace(
+      /((?:^|\n)\s*[-*·]?\s*(?:角色|出演|人物)\s*[:：]\s*)([^\n]*)/i,
+      `$1${cast}`,
+    );
+  } else {
+    body = `- 角色：${cast}\n${body.replace(/^\n*/, "")}`;
   }
   return src.slice(0, m.index) + header + body + src.slice(m.index + m[0].length);
 }

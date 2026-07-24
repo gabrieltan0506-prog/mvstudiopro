@@ -44,6 +44,7 @@ import {
 } from "@shared/manhuaClipContinuity";
 import { resolveClipSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import {
+  parseManhuaAssetImageBindBlock,
   parseManhuaCanvasAssetAtTag,
   sanitizeManhuaClipPromptForUi,
 } from "@shared/manhuaAssetLockRegistry";
@@ -131,10 +132,23 @@ function isManhuaAssetVisualBlock(block: CanvasBlock): boolean {
   );
 }
 
+/** 成片节点：把 @角色N 显示成对照表里的人名，避免技术编号墙 */
+function friendlyManhuaAssetChipLabel(tag: string, prompt: string): string {
+  const hit = parseManhuaAssetImageBindBlock(prompt).find((r) => r.tag === tag);
+  const label = String(hit?.labelZh || "").trim();
+  if (label) return label;
+  if (tag.startsWith("@角色")) return `人物${tag.replace("@角色", "")}`;
+  if (tag.startsWith("@场景")) return `场景${tag.replace("@场景", "")}`;
+  if (tag.startsWith("@道具")) return `道具${tag.replace("@道具", "")}`;
+  if (tag.startsWith("@服装")) return `服装${tag.replace("@服装", "")}`;
+  return tag.replace(/^@/, "");
+}
+
 /** 成片节点中区：本段垫图缩略图为主，秒轴提示词降级 */
 function CanvasClipPadVisualBody({ block }: { block: CanvasBlock }) {
+  const prompt = String(block.prompt || "");
   const tags = Array.from(
-    new Set(String(block.prompt || "").match(/@(?:角色|场景|道具)\d+/g) || []),
+    new Set(prompt.match(/@(?:角色|场景|道具)\d+/g) || []),
   ).slice(0, 8);
   const urls = Array.from(
     new Set(
@@ -158,13 +172,14 @@ function CanvasClipPadVisualBody({ block }: { block: CanvasBlock }) {
         {tags.map((t) => (
           <span
             key={t}
-            className="rounded bg-black/35 px-1.5 py-0.5 font-mono text-[10px] text-cyan-100/90"
+            className="rounded bg-black/35 px-1.5 py-0.5 text-[10px] text-cyan-100/90"
+            title={t}
           >
-            {t}
+            {friendlyManhuaAssetChipLabel(t, prompt)}
           </span>
         ))}
         {!tags.length ? (
-          <span className="text-[10px] text-white/35">审阅后显示本段角色/场景/道具</span>
+          <span className="text-[10px] text-white/35">点「审阅成片提示词」后显示本段出场</span>
         ) : null}
       </div>
       {urls.length ? (
@@ -179,8 +194,8 @@ function CanvasClipPadVisualBody({ block }: { block: CanvasBlock }) {
           ))}
         </div>
       ) : (
-        <div className="flex min-h-[100px] flex-1 items-center justify-center rounded-xl border border-dashed border-white/15 bg-black/25 text-[11px] text-white/35">
-          本段静帧出图后显示在此
+        <div className="flex min-h-[100px] flex-1 items-center justify-center rounded-xl border border-dashed border-white/15 bg-black/25 px-3 text-center text-[11px] leading-relaxed text-white/40">
+          先出本段关键静帧，垫图会出现在这里
         </div>
       )}
     </div>
@@ -405,10 +420,12 @@ function CanvasAssetVisualBody({
           {roleWall}
         </span>
         <span
-          className="rounded bg-cyan-500/25 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-cyan-50"
+          className="rounded bg-cyan-500/25 px-1.5 py-0.5 text-[11px] font-semibold text-cyan-50"
           title={idChip}
         >
-          {assetAt || shortId}
+          {assetAt
+            ? friendlyManhuaAssetChipLabel(assetAt, String(block.prompt || ""))
+            : shortId}
         </span>
       </div>
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/40">
@@ -1197,7 +1214,7 @@ export default function FreeformCanvas({
                                   : "bg-amber-500/25 text-amber-50"
                               }`}
                             >
-                              {padLocked ? "垫图锁✓" : "垫图锁缺失"}
+                              {padLocked ? "垫图已挂" : "待挂垫图"}
                             </span>
                             <span
                               className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
@@ -1206,7 +1223,7 @@ export default function FreeformCanvas({
                                   : "bg-amber-500/25 text-amber-50"
                               }`}
                             >
-                              {imageBindLocked ? "Image对照✓" : "Image对照缺失"}
+                              {imageBindLocked ? "出场对照已挂" : "出场对照未挂"}
                             </span>
                             <span
                               className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
@@ -1233,9 +1250,10 @@ export default function FreeformCanvas({
                             {chips.map((t) => (
                               <span
                                 key={t}
-                                className="rounded bg-black/35 px-1.5 py-0.5 font-mono text-[10px] text-cyan-100/90"
+                                className="rounded bg-black/35 px-1.5 py-0.5 text-[10px] text-cyan-100/90"
+                                title={t}
                               >
-                                {t}
+                                {friendlyManhuaAssetChipLabel(t, String(block.prompt || ""))}
                               </span>
                             ))}
                             {extra > 0 ? (
@@ -1255,7 +1273,7 @@ export default function FreeformCanvas({
                   <div className="flex min-h-0 flex-col overflow-hidden p-3">
                     {!mediaOnly ? (
                     <div className="mb-2 space-y-2 rounded-xl border border-white/10 bg-black/25 p-2">
-                      <div className="text-[10px] uppercase tracking-wider text-white/40">方块设置</div>
+                      <div className="text-[10px] tracking-wider text-white/40">节点设置</div>
                       {block.kind === "text" || block.kind === "copy_organize" ? (
                         <label className="flex items-center gap-2 text-[11px] text-white/70">
                           <span className="shrink-0 text-white/45">模型</span>
@@ -1440,7 +1458,7 @@ export default function FreeformCanvas({
                       {block.kind === "video" ? (
                         <>
                           <label className="flex items-center gap-2 text-[11px] text-white/70">
-                            <span className="shrink-0 text-white/45">模型</span>
+                            <span className="shrink-0 text-white/45">成片档位</span>
                             <select
                               value={
                                 block.videoModel === "seedance-2.0"
@@ -1465,13 +1483,13 @@ export default function FreeformCanvas({
                               : "成片·快速：多图参考 + 运镜/动作/对白，更快更省"}
                           </div>
                           <div className="rounded-lg border border-dashed border-amber-400/30 bg-amber-500/5 px-2 py-1.5 text-[10px] leading-5 text-amber-100/85">
-                            Seedance 2.5 Coming soon on MV Studio Pro
+                            更高画质档位即将上线
                           </div>
                         </>
                       ) : null}
                       {block.kind === "video_reverse" ? (
                         <div className="text-[10px] leading-5 text-white/50">
-                          浏览器本地抽帧 → Gemini 3.1 Pro 拉片（≤120s）。输出分镜表 + Seedance 微动句。YouTube 请用本机脚本下载后上传。
+                          在浏览器本地抽帧后自动拉片（约 2 分钟内）。输出分镜表与微动成片句。网络视频请先下载到本机再上传。
                         </div>
                       ) : null}
                       {(block.kind === "text" ||
@@ -1524,8 +1542,8 @@ export default function FreeformCanvas({
                     {String(block.id || "").startsWith("clip-") ? (
                       <CanvasClipPadVisualBody block={block} />
                     ) : null}
-                    <div className="mb-1.5 shrink-0 text-[10px] uppercase tracking-wider text-white/40">
-                      {String(block.id || "").startsWith("clip-") ? "秒轴提示词（次要）" : "提示词"}
+                    <div className="mb-1.5 shrink-0 text-[10px] tracking-wider text-white/40">
+                      {String(block.id || "").startsWith("clip-") ? "秒轴说明（可微调）" : "提示词"}
                     </div>
                     <textarea
                       value={
@@ -1548,7 +1566,7 @@ export default function FreeformCanvas({
                       }
                       placeholder={
                         String(block.id || "").startsWith("clip-")
-                          ? "秒轴短指令；身份靠上方垫图与 @Image"
+                          ? "写清谁在做什么、镜头怎么动；人物与场景跟上方垫图走"
                           : documentCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
                             ? "例：请把文档中 part1 与 part2 去重，整理成语意通顺、条理分明的详尽正文…"
                             : visionCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
