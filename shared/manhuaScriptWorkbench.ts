@@ -18,7 +18,10 @@ import {
   recommendManhuaCameraAngleFromText,
 } from "./manhuaCameraAngleBank.js";
 import { normalizeManhuaShotCameraLanguage } from "./manhuaCameraLanguageZh.js";
-import { formatManhuaDialogueTimelineBlock } from "./manhuaClipDialogueTimeline.js";
+import {
+  formatManhuaClipSceneLightBoard,
+  formatManhuaDialogueTimelineBlock,
+} from "./manhuaClipDialogueTimeline.js";
 import { formatManhuaKeyframeImage2Prompt } from "./manhuaStoryDistill.js";
 import { stripManhuaPromptSlop } from "./manhuaDirectingWorkflow.js";
 import {
@@ -723,8 +726,14 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
   shots: ManhuaWorkbenchShot[];
   cameraZh?: string;
   actionZh?: string;
-  /** 本段场景一句（地点/天气），写入秒轴「场：」 */
+  /** 本段场景名（地点），写入段头与【场景锁】 */
   sceneHintZh?: string;
+  /** 场景补充说明（陈设/天气/空间），可与 sceneHint 合并 */
+  sceneDetailZh?: string;
+  paletteZh?: string;
+  lightingCameraZh?: string;
+  /** 本段场景资产 tag，如 @场景1 */
+  sceneTag?: string;
   intentZh?: string;
   alreadyHappenedZh?: string;
   reservedForLaterZh?: string;
@@ -748,16 +757,26 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     { speakerTagByNameZh: input.speakerTagByNameZh },
   );
   const scene = String(input.sceneHintZh || "").trim();
+  const palette = String(input.paletteZh || "").trim();
+  const lighting = String(input.lightingCameraZh || "").trim();
+  const headBoard = formatManhuaClipSceneLightBoard({
+    segmentIndex: seg,
+    durationSec: dur,
+    sceneHintZh: scene,
+    sceneDetailZh: input.sceneDetailZh,
+    paletteZh: palette,
+    lightingCameraZh: lighting,
+    sceneTag: input.sceneTag,
+  });
   const timeline = formatManhuaDialogueTimelineBlock(shots, dur, {
     segmentIndex: seg,
     sceneHintZh: scene,
+    lightingCameraZh: lighting,
+    paletteZh: palette,
   });
-  // Seedance 短指令：段头 + 场景一句 + 秒轴；资产/@Image 绑定由 ensure / 出片侧挂
-  const head = scene
-    ? `【第${seg}段·${dur}s】${scene}`
-    : `【第${seg}段·${dur}s】`;
+  // 段头场景锁 + 光影氛围 + 秒轴（动作/运镜轨迹/景别）；资产/@Image 由 ensure 挂
   return stripManhuaClipForbiddenBoards(
-    stripManhuaPromptSlop([head, timeline].join("\n")),
+    stripManhuaPromptSlop([headBoard, timeline].join("\n")),
   );
 }
 

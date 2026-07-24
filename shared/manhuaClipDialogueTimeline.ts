@@ -37,10 +37,13 @@ function resolveShotDialogue(shot: ManhuaWorkbenchShot): string {
 function framingHint(cameraZh: string): string {
   const c = String(cameraZh || "");
   if (/特写|大特写/.test(c)) return "特写";
-  if (/近景|中近景/.test(c)) return "近景";
-  if (/中全景|中远|远景|全景/.test(c)) return "中远景";
+  if (/中近景/.test(c)) return "中近景";
+  if (/近景/.test(c)) return "近景";
+  if (/中全景|中远景/.test(c)) return "中远景";
+  if (/远景|全景/.test(c)) return "全景";
   if (/中景/.test(c)) return "中景";
-  return c.trim() || "近景";
+  // 无景别词时默认近景；禁止把动作原文当成景别
+  return "近景";
 }
 
 /** 从静帧/成片 prompt 抽出主场景名（写入导戏单） */
@@ -110,22 +113,68 @@ function resolveBeatCameraMoveZh(cameraZh: string, actionZh: string): string {
   return [frame || "近景", name].filter(Boolean).join("·") || "近景微动";
 }
 
+/** 从运镜句抽出景别（全景/中景/近景…） */
+export function extractManhuaFramingLabelZh(cameraZh: string, actionZh = ""): string {
+  return framingHint(`${cameraZh || ""} ${actionZh || ""}`.trim());
+}
+
+/** 运镜轨迹：去掉已单列的景别词，保留推拉摇移等动势 */
+function cameraTrajectoryZh(cameraZh: string, actionZh: string): string {
+  const raw = resolveBeatCameraMoveZh(cameraZh, actionZh);
+  const frame = extractManhuaFramingLabelZh(cameraZh, actionZh);
+  let move = raw
+    .replace(new RegExp(frame.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "")
+    .replace(/[·•|｜]/g, " ")
+    .replace(/^[，,、\s]+|[，,、\s]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!move || move === frame) {
+    // 仍无动势时，用原句或默认微动
+    move = /推|拉|摇|移|跟|升|降|环绕|手持|固定|微动|平视|仰|俯/.test(raw)
+      ? raw.replace(frame, "").replace(/^[，,、\s]+/, "").trim() || "固定微动"
+      : "固定微动";
+  }
+  return move.slice(0, 48);
+}
+
 /**
- * Seedance 风格秒轴（短指令，非聊天表格）：
- * `0–5s：@角色2 抬头，眼眶发红，说「…」。近景微推。`
- * 身份靠垫图/@Image；此处只调度可见动作、对白、运镜。
- * 光学 mm/快门出片时另转。
+ * Seedance 秒轴：每镜必须列出动作轨迹 / 运镜轨迹 / 景别，并可带光与氛围。
+ * 例：`0–5s：动作轨迹：…。运镜轨迹：缓推。景别：近景。光：侧逆。氛围：压迫。@角色2说「…」。`
+ * 身份靠垫图/@Image；光学 mm/快门出片时另转。
  */
 export function formatManhuaDialogueTimelineBlock(
   shots: ManhuaWorkbenchShot[],
   durationSec: number,
-  opts?: { segmentIndex?: number; sceneHintZh?: string },
+  opts?: {
+    segmentIndex?: number;
+    sceneHintZh?: string;
+    /** 段级光影/运镜（可拍表），拆到各镜光/氛围兜底 */
+    lightingCameraZh?: string;
+    paletteZh?: string;
+  },
 ): string {
   const beats = buildManhuaDialogueTimelineBeats(shots, durationSec);
   if (!beats.length) return "本段暂无分镜。";
+  const segLight = String(opts?.lightingCameraZh || "").trim();
+  const segPalette = String(opts?.paletteZh || "").trim();
+  const lightFallback =
+    segLight
+      .split(/[；;|｜]/)
+      .map((s) => s.trim())
+      .find((s) => /光|灯|逆|侧|顶|火|烛|霓虹|阴|亮|暗/.test(s)) ||
+    (segLight ? segLight.slice(0, 36) : "");
+  const moodFallback =
+    segPalette.slice(0, 36) ||
+    segLight
+      .split(/[；;|｜]/)
+      .map((s) => s.trim())
+      .find((s) => /氛围|压迫|紧张|冷|暖|雨|夜|肃|诡/.test(s)) ||
+    "";
+
   return beats
     .map((b) => {
-      const cam = resolveBeatCameraMoveZh(b.cameraZh, b.actionZh);
+      const frame = extractManhuaFramingLabelZh(b.cameraZh, b.actionZh);
+      const traj = cameraTrajectoryZh(b.cameraZh, b.actionZh);
       const speaker = b.speakerAtTag;
       let action = String(b.actionZh || "")
         .replace(/[「『"“][^」』"”]{0,200}[」』"”]/g, "")
@@ -133,20 +182,61 @@ export function formatManhuaDialogueTimelineBlock(
         .replace(/\s+/g, " ")
         .trim();
       if (!action) action = "承接上镜动作";
-      // 可见表情优先；情绪名词只在无微表情时落到可见词（不硬截断，按镜内表演写全）
       const visible =
         String(b.microExpressionZh || "").trim() ||
         String(b.emotionZh || "").trim();
       const line = stripManhuaSpeakerAtPrefix(b.dialogueZh).trim();
+      const light = lightFallback;
+      const mood = moodFallback || visible;
       const bits = [
+        `动作轨迹：${action}${visible ? `，${visible}` : ""}`,
+        `运镜轨迹：${traj}`,
+        `景别：${frame}`,
+        light ? `光：${light}` : "",
+        mood ? `氛围：${mood}` : "",
         speaker || "",
-        action,
-        visible,
         line ? `说「${line}」` : "",
       ].filter(Boolean);
-      return `${b.startSec}–${b.endSec}s：${bits.join("，")}。${cam}。`;
+      return `${b.startSec}–${b.endSec}s：${bits.join("。")}。`;
     })
     .join("\n");
+}
+
+/**
+ * 段头场景锁 + 光影景别氛围（短板，非规则墙）。
+ * 场景必须说明地点/天气/关键陈设，并提示锁垫图/@场景。
+ */
+export function formatManhuaClipSceneLightBoard(input: {
+  segmentIndex: number;
+  durationSec: number;
+  sceneHintZh?: string | null;
+  sceneDetailZh?: string | null;
+  paletteZh?: string | null;
+  lightingCameraZh?: string | null;
+  sceneTag?: string | null;
+}): string {
+  const seg = Math.max(1, Math.floor(input.segmentIndex));
+  const dur =
+    typeof input.durationSec === "number" && input.durationSec > 0
+      ? Math.round(input.durationSec * 10) / 10
+      : 15;
+  const sceneName = String(input.sceneHintZh || "").trim();
+  const detail = String(input.sceneDetailZh || "").trim();
+  const palette = String(input.paletteZh || "").trim();
+  const lighting = String(input.lightingCameraZh || "").trim();
+  const sceneTag = String(input.sceneTag || "").trim();
+  const head = sceneName
+    ? `【第${seg}段·${dur}s】${sceneName}`
+    : `【第${seg}段·${dur}s】`;
+  const sceneBody = [sceneName, detail].filter(Boolean).join("｜") || "本段主场（须与垫图场一致）";
+  const sceneLock = `【场景锁】${sceneBody}${
+    palette ? `；配色：${palette}` : ""
+  }。地点材质光色锁本段垫图${sceneTag ? `与${sceneTag}` : ""}，禁止跳棚换地。`;
+  const lightBoard = `【光影·景别·氛围】${
+    [lighting, palette ? `配色${palette}` : ""].filter(Boolean).join("｜") ||
+    "按秒轴各镜：光 / 景别 / 氛围执行"
+  }。`;
+  return [head, sceneLock, lightBoard].join("\n");
 }
 
 /** 跨镜/跨段防崩：脸、服装、场景 */

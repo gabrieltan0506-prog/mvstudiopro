@@ -41,7 +41,7 @@ describe("manhuaClipDialogueTimeline", () => {
     expect(beats[0]?.microExpressionZh).toContain("下颌");
   });
 
-  it("formats short second-axis with camera / action / locked dialogue", () => {
+  it("formats second-axis with action/camera tracks and framing", () => {
     const block = formatManhuaDialogueTimelineBlock(
       [
         {
@@ -56,11 +56,23 @@ describe("manhuaClipDialogueTimeline", () => {
         },
       ],
       15,
-      { segmentIndex: 2, sceneHintZh: "古宅廊下" },
+      {
+        segmentIndex: 2,
+        sceneHintZh: "古宅廊下",
+        lightingCameraZh: "侧逆光压暗",
+        paletteZh: "冷青",
+      },
     );
-    expect(block).toMatch(/^0–15s：@角色2，握拳对峙，咬牙，说「放开！」。近景，微推。$/);
+    expect(block).toContain("0–15s：");
+    expect(block).toContain("动作轨迹：握拳对峙，咬牙");
+    expect(block).toContain("运镜轨迹：");
+    expect(block).toContain("景别：近景");
+    expect(block).toContain("光：侧逆光压暗");
+    expect(block).toContain("氛围：冷青");
+    expect(block).toContain("@角色2");
+    expect(block).toContain("说「放开！」");
     expect(block).not.toContain("视频生成导戏单");
-    expect(block).not.toMatch(/场：|运镜：|表情：|衔接：|\d+mm|快门/);
+    expect(block).not.toMatch(/衔接：|\d+mm|快门/);
     expect(MANHUA_CROSS_SHOT_CONTINUITY_LOCK).toMatch(/换脸|服装|跳棚/);
     expect(MANHUA_SEEDANCE_AUDIO_DIRECTOR_LOCK).toMatch(/引擎同轮出声|口型|时间轴|禁止另开后期配音/);
   });
@@ -71,11 +83,14 @@ describe("manhuaClipDialogueTimeline", () => {
     ).toBe("古宅廊下");
   });
 
-  it("segment clip inject keeps short second-axis locks", () => {
+  it("segment clip inject locks scene/light and lists tracks per beat", () => {
     const text = formatWorkbenchSegmentClipInjectBlock({
       segmentIndex: 1,
       durationSec: 15,
       sceneHintZh: "雨夜巷口",
+      lightingCameraZh: "湿漉侧光",
+      paletteZh: "青灰",
+      sceneTag: "@场景1",
       shots: [
         {
           index: 1,
@@ -97,10 +112,17 @@ describe("manhuaClipDialogueTimeline", () => {
       ],
     });
     expect(text).toContain("【第1段·15s】雨夜巷口");
-    expect(text).toContain("0–7.5s：@角色5，递出玉佩，目光钉死，说「拿着」。近景。");
-    expect(text).toContain("7.5–15s：@角色4，握紧后退，不信，说「你早就知道了？」。中景。");
+    expect(text).toContain("【场景锁】");
+    expect(text).toContain("@场景1");
+    expect(text).toContain("【光影·景别·氛围】");
+    expect(text).toContain("动作轨迹：");
+    expect(text).toContain("运镜轨迹：");
+    expect(text).toContain("景别：近景");
+    expect(text).toContain("景别：中景");
+    expect(text).toContain("说「拿着」");
+    expect(text).toContain("说「你早就知道了？」");
     expect(text).not.toContain("视频生成导戏单");
     expect(text).not.toContain("跨镜连续硬锁");
-    expect(text).not.toMatch(/场：|运镜：|表情：|衔接：|\d+mm|快门/);
+    expect(text).not.toMatch(/衔接：|\d+mm|快门/);
   });
 });

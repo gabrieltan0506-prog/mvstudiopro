@@ -17,11 +17,15 @@ import {
 import { extractManhuaSegmentDialogueQuotes } from "./manhuaEpisodeSegmentPlan";
 
 describe("manhua clip prompt slim (Seedance skill style)", () => {
-  it("writes compact second-axis: who/visible/action/say/camera — not chat forms", () => {
+  it("writes second-axis with action/camera tracks, framing, scene+light lock", () => {
     const text = formatWorkbenchSegmentClipInjectBlock({
       segmentIndex: 1,
       durationSec: 15,
       sceneHintZh: "雨夜回廊",
+      sceneDetailZh: "湿石回廊，檐水滴落",
+      paletteZh: "冷青主色，烛金辅",
+      lightingCameraZh: "侧逆光压暗；中景推至近景",
+      sceneTag: "@场景1",
       shots: [
         {
           index: 1,
@@ -45,13 +49,15 @@ describe("manhua clip prompt slim (Seedance skill style)", () => {
       ],
     });
     expect(text).toContain("【第1段·15s】雨夜回廊");
-    expect(text).toContain(
-      "0–7.5s：@角色2，猛地抬头，眼眶发红，说「从前说过的话，都不算数了？」。近景微推。",
-    );
-    expect(text).toContain(
-      "7.5–15s：@角色1，攥拳别开脸，下颌绷紧，说「是我对不住你。」。中景。",
-    );
-    expect(text).not.toMatch(/场：|运镜：|动作：|表情：|对白：|衔接：/);
+    expect(text).toContain("【场景锁】");
+    expect(text).toContain("湿石回廊");
+    expect(text).toContain("@场景1");
+    expect(text).toContain("【光影·景别·氛围】");
+    expect(text).toContain("动作轨迹：");
+    expect(text).toContain("运镜轨迹：");
+    expect(text).toContain("景别：");
+    expect(text).toContain("说「从前说过的话，都不算数了？」");
+    expect(text).toContain("说「是我对不住你。」");
     expect(text).not.toMatch(/古风服化参考|arch_|节拍防火墙|成片预演硬锁|\d+mm|快门/);
     expect(text).not.toMatch(/情绪：委屈｜微表情/);
   });

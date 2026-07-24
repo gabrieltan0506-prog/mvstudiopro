@@ -1643,10 +1643,14 @@ export function ensureManhuaFragmentClips(
     const dialogueLines = planBeat
       ? extractManhuaSegmentDialogueQuotes(planBeat.dialogueZh)
       : [];
-    const sceneHintZh =
-      extractManhuaSceneHintFromPrompt(primary.prompt) ||
-      String(planBeat?.sceneZh || "").trim() ||
-      undefined;
+    const sceneFromKeyart = extractManhuaSceneHintFromPrompt(primary.prompt);
+    const sceneFromPlan = String(planBeat?.sceneZh || "").trim();
+    // 可拍表场景优先；静帧抽到的地名作补充说明
+    const sceneHintZh = sceneFromPlan || sceneFromKeyart || undefined;
+    const sceneDetailZh =
+      sceneFromPlan && sceneFromKeyart && sceneFromPlan !== sceneFromKeyart
+        ? sceneFromKeyart
+        : undefined;
     const padLockBlock = segUrls.length
       ? `【垫图】本段静帧${segUrls.length}张（出片顺序：上段末帧→资产定妆/服装→本段静帧，按序绑@Image）`
       : "【垫图·缺失】禁止出片";
@@ -1698,12 +1702,20 @@ export function ensureManhuaFragmentClips(
       planBeat?.performanceZh,
       { speakerTagByNameZh },
     );
-    // 审阅可见：本集段号用 local；身份锁写本段 Image 对照 + 出片硬绑预览
+    const sceneTag =
+      segAssets.sceneIds
+        .map((id) => lockRegistry.byRole.scene.find((s) => s.id === id)?.tag)
+        .find(Boolean) || "";
+    // 审阅可见：场景锁 + 光影景别氛围 + 秒轴轨迹；身份锁写本段 Image 对照
     const timelineBlock = formatWorkbenchSegmentClipInjectBlock({
       segmentIndex: seg.index,
       durationSec: seg.durationSec,
       shots: hydratedShots,
       sceneHintZh,
+      sceneDetailZh,
+      paletteZh: planBeat?.paletteZh,
+      lightingCameraZh: planBeat?.lightingCameraZh,
+      sceneTag: sceneTag || undefined,
       intentZh: intentZh || String(planBeat?.intentZh || "").trim() || undefined,
       segmentDialogueLines: dialogueLines,
       segmentPerformanceZh: planBeat?.performanceZh,
