@@ -2241,26 +2241,46 @@ export default function ManhuaScriptWorkbench({
                   data-manhua-asset-lock-tags
                   className="rounded-xl border border-cyan-400/30 bg-cyan-500/[0.08] px-3 py-2"
                 >
-                  <div className="text-[11px] font-semibold text-cyan-50/90">资产锁编号</div>
+                  <div className="text-[11px] font-semibold text-cyan-50/90">
+                    资产锁 · Image 对照
+                  </div>
                   <p className="mt-0.5 text-[10px] leading-4 text-white/45">
-                    @角色/@场景/@道具 供导戏与对照表使用。出片真正卡的是「垫图锁」：静帧须改图模式并挂定妆/场景参考图；只有成图、未垫图改图不能出成片。
+                    每条必须有 id + 图路径。出片顺序：上段末帧 → 下表定妆/场/道具 → 本段静帧，并写成
+                    @角色N=@ImageK。静帧仍须改图模式挂垫图，否则禁止出成片。
                   </p>
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {assetLockRegistry.slots.map((s) => (
-                      <span
-                        key={`${s.tag}:${s.id}`}
-                        className="rounded-md border border-cyan-300/35 bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-50"
-                        title={s.subTag ? `${s.labelZh} · ${s.subTag}` : s.labelZh}
-                      >
-                        {s.tag}
-                        <span className="ml-1 font-normal text-white/50">{s.labelZh}</span>
-                        {s.subTag ? (
-                          <span className="ml-1 font-mono text-[9px] font-normal text-amber-100/80">
-                            {s.subTag}
-                          </span>
-                        ) : null}
-                      </span>
-                    ))}
+                  <div className="mt-1.5 flex flex-col gap-1">
+                    {assetLockRegistry.slots.map((s) => {
+                      const pathShort = String(s.path || "").replace(/^https?:\/\/[^/]+/i, "");
+                      const hasPath = Boolean(String(s.path || "").trim());
+                      return (
+                        <div
+                          key={`${s.tag}:${s.id}`}
+                          className="rounded-md border border-cyan-300/35 bg-black/35 px-1.5 py-1 text-[10px] text-cyan-50"
+                          title={s.path}
+                        >
+                          <div className="flex flex-wrap items-baseline gap-x-1.5">
+                            <span className="font-semibold">{s.tag}</span>
+                            <span className="font-normal text-white/55">{s.labelZh}</span>
+                            <span className="font-mono text-[9px] text-amber-100/85">
+                              id={s.id}
+                            </span>
+                            {s.subTag ? (
+                              <span className="font-mono text-[9px] text-amber-100/70">
+                                {s.subTag}
+                              </span>
+                            ) : null}
+                            {!hasPath ? (
+                              <span className="text-[9px] font-semibold text-red-200">无图路径</span>
+                            ) : null}
+                          </div>
+                          {hasPath ? (
+                            <div className="mt-0.5 truncate font-mono text-[9px] text-white/40">
+                              {pathShort || s.path}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
                   {assetLockRegistry.sheetPropSlots.length ? (
                     <div className="mt-2 border-t border-cyan-400/20 pt-1.5">
@@ -3792,7 +3812,7 @@ export default function ManhuaScriptWorkbench({
                         const hasPad =
                           Boolean(String(row.clip?.refImageUrl || "").trim()) ||
                           /【垫图】|【像素垫图锁/.test(p);
-                        const hasAssetLock = /【资产】|【资产锁/.test(p);
+                        const hasAssetLock = /【资产·Image对照】|【资产】|【资产锁/.test(p);
                         const hasDuty = /【参考职责】/.test(p);
                         const tags = p.match(/@(?:角色|场景|道具)\d+/g) || [];
                         return (
@@ -3816,7 +3836,7 @@ export default function ManhuaScriptWorkbench({
                                   : "bg-amber-500/20 text-amber-50"
                               }`}
                             >
-                              {hasAssetLock ? "资产编号锁✓" : "资产编号待补"}
+                              {hasAssetLock ? "Image对照✓" : "Image对照缺失"}
                             </span>
                             <span
                               className={`rounded px-1 py-px text-[8px] font-semibold ${

@@ -19,7 +19,7 @@ import { isManhuaClipQualityInfraFailure } from "@shared/manhuaClipQuality";
 import {
   assignManhuaCanvasAssetAtTags,
   buildManhuaAssetLockRegistry,
-  formatManhuaAssetLockShortBlock,
+  formatManhuaAssetImageBindBlock,
   type ManhuaAssetLockRegistry,
 } from "@shared/manhuaAssetLockRegistry";
 import type { ManhuaWriterAssetCanon } from "@shared/manhuaWriterAssetCanon";
@@ -1170,7 +1170,7 @@ export function applyFactoryPrefsToBlocks(
       };
     }
     if (b.id.startsWith("clip-")) {
-      // 禁止 prefs 回灌古风板/角色长文/运镜墙；只保秒轴短指令 + 画风一行
+      // 禁止 prefs 回灌古风板/角色长文/运镜墙；只保秒轴 + Image 对照 + 画风一行
       let base = stripManhuaClipForbiddenBoards(String(b.prompt || ""));
       base = stripInjectBlock(base, "【包装动效手法】");
       for (const mark of [
@@ -1186,6 +1186,8 @@ export function applyFactoryPrefsToBlocks(
         "【参考职责】",
         "【镜头连续性】",
         "【跨段转场】",
+        "【资产锁·编号对照",
+        "【资产】",
       ]) {
         base = stripMarkedSection(base, mark);
       }
@@ -1556,7 +1558,7 @@ export function ensureManhuaFragmentClips(
       characterSheetUrlById: opts?.characterSheetUrlById,
       customRefs: opts?.customRefs,
     });
-  const assetLockBlock = formatManhuaAssetLockShortBlock(lockRegistry);
+  const assetLockBlock = formatManhuaAssetImageBindBlock(lockRegistry);
   const segmentPlan = resolveSegmentPlanForEpisodeClips(blocks, ep, opts?.segmentPlan);
 
   for (const seg of segments) {
@@ -1583,7 +1585,7 @@ export function ensureManhuaFragmentClips(
       planBeat?.performanceZh,
     );
     const padLockBlock = segUrls.length
-      ? `【垫图】${segUrls.length}张（出片按序绑@Image）`
+      ? `【垫图】本段静帧${segUrls.length}张（出片顺序：上段末帧→资产定妆→本段静帧，按序绑@Image）`
       : "【垫图·缺失】禁止出片";
     const segPrompt = stripManhuaClipForbiddenBoards(
       stripManhuaPromptSlop(
@@ -2225,6 +2227,21 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
         actionZh: "",
       } as ManhuaWorkbenchShot;
       const useShots = segShots.length ? segShots : [fallbackShot];
+      // 反推回灌秒轴时保留已写的 Image 对照 / 垫图说明，禁止又变回「只有名字」
+      const keptAssetBind = (() => {
+        const m = String(b.prompt || "").match(
+          /【资产·Image对照】[\s\S]*?(?=\n【(?!资产·Image对照)|$)/,
+        );
+        return m?.[0]?.trim() || "";
+      })();
+      const keptPad = (() => {
+        const m = String(b.prompt || "").match(/【垫图[^\n]*/);
+        return m?.[0]?.trim() || "";
+      })();
+      const keptArt = (() => {
+        const m = String(b.prompt || "").match(/^画风：[^\n]+/m);
+        return m?.[0]?.trim() || "";
+      })();
       return {
         ...b,
         prompt: stripManhuaClipForbiddenBoards(
@@ -2237,7 +2254,10 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
                 sceneHintZh: sceneFromKeyart || undefined,
                 intentZh,
               }),
+              keptPad,
+              keptAssetBind,
               globalSeg >= 2 ? "【连续】承上段末帧脸服场，勿跳棚。" : "",
+              keptArt,
             ]
               .filter(Boolean)
               .join("\n"),

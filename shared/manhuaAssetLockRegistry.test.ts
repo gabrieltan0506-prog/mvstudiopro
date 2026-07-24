@@ -3,8 +3,11 @@ import {
   areManhuaKeyartsPixelLocked,
   assignManhuaCanvasAssetAtTags,
   buildManhuaAssetLockRegistry,
+  formatManhuaAssetImageBindBlock,
   isManhuaKeyartPixelLocked,
+  parseManhuaAssetImageBindBlock,
   parseManhuaCanvasAssetAtTag,
+  planManhuaClipSeedanceImageBind,
 } from "./manhuaAssetLockRegistry";
 import { parseManhuaSheetPropSubTagsFromPrompt } from "./manhuaSheetPropSubTags";
 import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon";
@@ -126,6 +129,47 @@ describe("manhuaAssetLockRegistry", () => {
     const subs = parseManhuaSheetPropSubTagsFromPrompt(stamped[0]!.prompt);
     expect(subs.length).toBeGreaterThanOrEqual(1);
     expect(subs[0]?.propTag).toMatch(/^@道具\d+$/);
+  });
+
+  it("writes parseable Image bind table with id+path and plans @角色=@Image", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "c1",
+          url: "https://cdn.example/char.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "女主",
+        },
+        {
+          id: "s1",
+          url: "https://cdn.example/scene.jpg",
+          role: "scene",
+          source: "upload",
+          labelZh: "大殿",
+        },
+      ],
+    });
+    const block = formatManhuaAssetImageBindBlock(reg);
+    expect(block).toContain("【资产·Image对照】");
+    expect(block).toContain("@角色1|id=c1|label=女主|https://cdn.example/char.jpg");
+    expect(block).toContain("@场景1|id=s1|");
+    const rows = parseManhuaAssetImageBindBlock(block);
+    expect(rows).toHaveLength(2);
+    const plan = planManhuaClipSeedanceImageBind({
+      assetRows: rows,
+      stillUrls: ["https://cdn.example/still.jpg"],
+      tailUrls: ["https://cdn.example/tail.jpg"],
+      mentionedTags: ["@角色1"],
+      maxImages: 6,
+    });
+    expect(plan.imageUrls[0]).toBe("https://cdn.example/tail.jpg");
+    expect(plan.entries.some((e) => e.kind === "asset" && e.roleTag === "@角色1")).toBe(
+      true,
+    );
+    expect(plan.bindLineZh).toMatch(/@角色1=@Image\d+/);
+    expect(plan.bindLineZh).toContain("id=c1");
+    expect(plan.bindLineZh).toMatch(/@Image\d+=本段静帧/);
   });
 
   it("requires edit+ref for pixel lock", () => {

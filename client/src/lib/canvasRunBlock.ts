@@ -39,7 +39,15 @@ import {
 import { clampSeedanceOpenRouterDuration } from "@shared/seedanceOpenRouterModels";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
 import { appendManhuaClipEngineOptics } from "@shared/manhuaCineOpticsBank";
-import { formatManhuaClipImageRoleBindLine } from "@shared/manhuaAssetLockRegistry";
+import {
+  extractManhuaMentionedAssetTags,
+  formatManhuaClipImageRoleBindLine,
+  formatManhuaClipSeedanceBindLineFromEntries,
+  parseManhuaAssetImageBindBlock,
+  planManhuaClipSeedanceImageBind,
+  type ManhuaClipSeedanceImageBindEntry,
+} from "@shared/manhuaAssetLockRegistry";
+import { absolutizeManhuaAssetUrl } from "@shared/manhuaKeyartEditFusion";
 import {
   buildManhuaFactoryOptimizeBrief,
   isManhuaBibleOrBeatsBlockId,
@@ -95,6 +103,14 @@ async function toHttpsImageUrls(
     if (/^https?:\/\//i.test(u)) {
       out.push(u);
       continue;
+    }
+    // 库内定妆/场景相对路径 → 站点绝对 HTTPS，否则 Seedance 吃不到
+    if (u.startsWith("/")) {
+      const abs = absolutizeManhuaAssetUrl(u);
+      if (/^https?:\/\//i.test(abs)) {
+        out.push(abs);
+        continue;
+      }
     }
     if (u.startsWith("data:image/") && deps.uploadImageFile) {
       const file = dataUrlToJpegFile(u, `continuity-tail-${i}.jpg`);
@@ -787,23 +803,53 @@ export async function runCanvasBlock(
           );
         }
       }
-      const imageUrls: string[] = [];
-      const pushUnique = (u?: string) => {
-        const s = String(u || "").trim();
-        if (s && !imageUrls.includes(s)) imageUrls.push(s);
-      };
-      // 末段帧优先：拼接起幅；再补本段静帧
-      for (const f of tailFrames) pushUnique(f);
-      for (const u of stillPool) pushUnique(u);
-      const httpsImages = await toHttpsImageUrls(deps, imageUrls.slice(0, 6));
+      const assetRows = isClip
+        ? parseManhuaAssetImageBindBlock(block.prompt || motionPrompt).map((r) => ({
+            ...r,
+            path: absolutizeManhuaAssetUrl(r.path) || r.path,
+          }))
+        : [];
+      const mentionedTags = isClip
+        ? extractManhuaMentionedAssetTags(motionPrompt)
+        : [];
+      const absStills = stillPool
+        .map((u) => absolutizeManhuaAssetUrl(u) || u)
+        .filter((u) => /^https?:\/\//i.test(u) || u.startsWith("data:image/"));
+      // 成片硬绑：末帧 → 资产定妆(含 id/path) → 本段静帧
+      const bindPlan = isClip
+        ? planManhuaClipSeedanceImageBind({
+            assetRows: assetRows.filter((r) => /^https?:\/\//i.test(r.path)),
+            stillUrls: absStills,
+            tailUrls: tailFrames,
+            mentionedTags,
+            maxImages: 6,
+          })
+        : null;
+      const rawPool = bindPlan?.imageUrls?.length
+        ? bindPlan.imageUrls
+        : [...tailFrames, ...absStills];
+      const httpsImages = await toHttpsImageUrls(deps, rawPool.slice(0, 6));
+      const keptEntries: ManhuaClipSeedanceImageBindEntry[] = [];
+      if (bindPlan?.entries.length) {
+        for (const e of bindPlan.entries) {
+          const abs = absolutizeManhuaAssetUrl(e.url) || e.url;
+          const hit = httpsImages.find((h) => h === abs || h === e.url);
+          if (!hit) continue;
+          keptEntries.push({ ...e, url: hit, imageIndex: keptEntries.length + 1 });
+        }
+      }
       // Seedance 首图：有上一段末帧时用末帧作起幅主参考，否则用本段首静帧
-      const seedStill = tailFrames[tailFrames.length - 1] || stillRef;
+      const seedStill =
+        keptEntries.find((e) => e.kind === "tail")?.url ||
+        httpsImages[0] ||
+        stillRef;
       const voiceLocks = deps.characterVoiceLocks || [];
       const voicePlan = planManhuaVoiceAudioForPrompt(motionPrompt, voiceLocks);
       const voiceBlock = formatManhuaCharacterVoiceLockBlock(voiceLocks, voicePlan);
       const imageBind = isClip
-        ? formatManhuaClipImageRoleBindLine(httpsImages.length, {
-            tailCount: tailFrames.length,
+        ? formatManhuaClipSeedanceBindLineFromEntries(keptEntries) ||
+          formatManhuaClipImageRoleBindLine(httpsImages.length, {
+            tailCount: Math.min(tailFrames.length, 2),
           })
         : "";
       // 声线块压成一行标签，避免再灌聊天墙
@@ -821,6 +867,9 @@ export async function runCanvasBlock(
         .filter(Boolean)
         .join("\n")
         .trim();
+      console.info(
+        `[canvasRunBlock] clip image-bind · assets=${assetRows.length} · kept=${keptEntries.length} · urls=${httpsImages.length} · bind=${String(imageBind).slice(0, 180)}`,
+      );
       url = await runSeedance20(seedancePrompt, seedStill, ar, {
         imageUrls: httpsImages.length ? httpsImages : undefined,
         videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,

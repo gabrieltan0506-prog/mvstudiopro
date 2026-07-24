@@ -3,7 +3,12 @@ import {
   appendManhuaClipEngineOptics,
   stripManhuaClipEngineOpticsForUi,
 } from "./manhuaCineOpticsBank";
-import { formatManhuaClipImageRoleBindLine } from "./manhuaAssetLockRegistry";
+import {
+  formatManhuaAssetImageBindBlock,
+  formatManhuaClipImageRoleBindLine,
+  planManhuaClipSeedanceImageBind,
+  buildManhuaAssetLockRegistry,
+} from "./manhuaAssetLockRegistry";
 import {
   formatWorkbenchSegmentClipInjectBlock,
   hydrateWorkbenchShotsWithSegmentDialogue,
@@ -71,14 +76,37 @@ describe("manhua clip prompt slim (Seedance skill style)", () => {
     expect(text).toContain("说「你再装傻。」");
   });
 
-  it("strips ancient boards; @Image bind line matches Seedance role formula", () => {
+  it("strips ancient boards; asset Image bind carries id+path not name-only", () => {
     expect(
       stripManhuaClipForbiddenBoards("正文\n【古风服化参考】arch_x 长文"),
     ).not.toMatch(/古风服化|arch_/);
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "hero",
+          url: "https://cdn.example/hero.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "少主",
+        },
+      ],
+    });
+    const bind = formatManhuaAssetImageBindBlock(reg);
+    expect(bind).toContain("id=hero");
+    expect(bind).toContain("https://cdn.example/hero.jpg");
+    const plan = planManhuaClipSeedanceImageBind({
+      assetRows: [
+        {
+          tag: "@角色1",
+          id: "hero",
+          labelZh: "少主",
+          path: "https://cdn.example/hero.jpg",
+        },
+      ],
+      stillUrls: ["https://cdn.example/k.jpg"],
+    });
+    expect(plan.bindLineZh).toContain("@角色1=@Image1");
     expect(formatManhuaClipImageRoleBindLine(3)).toContain("@Image1、@Image2、@Image3");
-    expect(formatManhuaClipImageRoleBindLine(3, { tailCount: 1 })).toContain(
-      "@Image1承接上段起幅",
-    );
   });
 
   it("engine optics stay out of UI", () => {

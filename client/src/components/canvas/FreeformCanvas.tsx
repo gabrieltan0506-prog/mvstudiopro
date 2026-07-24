@@ -1181,6 +1181,9 @@ export default function FreeformCanvas({
                       const padLocked =
                         Boolean(String(block.refImageUrl || "").trim()) ||
                         /【垫图】|【像素垫图锁/.test(String(block.prompt || ""));
+                      const imageBindLocked = /【资产·Image对照】/.test(
+                        String(block.prompt || ""),
+                      );
                       return (
                         <>
                           <div className="flex flex-wrap items-center gap-1.5">
@@ -1195,6 +1198,15 @@ export default function FreeformCanvas({
                               }`}
                             >
                               {padLocked ? "垫图锁✓" : "垫图锁缺失"}
+                            </span>
+                            <span
+                              className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                                imageBindLocked
+                                  ? "bg-emerald-500/30 text-emerald-50"
+                                  : "bg-amber-500/25 text-amber-50"
+                              }`}
+                            >
+                              {imageBindLocked ? "Image对照✓" : "Image对照缺失"}
                             </span>
                             {chips.map((t) => (
                               <span

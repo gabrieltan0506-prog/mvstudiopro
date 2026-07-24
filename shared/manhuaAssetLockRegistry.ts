@@ -266,20 +266,206 @@ export function buildManhuaAssetLockRegistry(opts?: {
   return { slots, byRole, promptBlockZh, sheetPropSlots };
 }
 
-/** 成片用短编号对照：一行 @角色N=名 …（不含服化板/长规则） */
+const ASSET_IMAGE_BIND_MARK = "【资产·Image对照】";
+
+export type ManhuaAssetImageBindRow = {
+  tag: string;
+  id: string;
+  labelZh: string;
+  path: string;
+};
+
+export type ManhuaClipSeedanceImageBindEntry = {
+  imageIndex: number;
+  kind: "tail" | "asset" | "still";
+  url: string;
+  roleTag?: string;
+  assetId?: string;
+  labelZh?: string;
+};
+
+export type ManhuaClipSeedanceImageBindPlan = {
+  imageUrls: string[];
+  entries: ManhuaClipSeedanceImageBindEntry[];
+  /** 写入 Seedance 的硬绑句 */
+  bindLineZh: string;
+};
+
+function isBindableAssetPath(path: string): boolean {
+  const p = String(path || "").trim();
+  if (!p || p.startsWith("logical://")) return false;
+  return /^https?:\/\//i.test(p) || p.startsWith("/") || p.startsWith("data:image/");
+}
+
+/** 节点可审：每行 tag|id|label|path，出片可解析并真绑 @Image */
+export function formatManhuaAssetImageBindBlock(
+  registry: ManhuaAssetLockRegistry | null | undefined,
+  maxSlots = 12,
+): string {
+  const rows = (registry?.slots || [])
+    .filter((s) => isBindableAssetPath(s.path))
+    .slice(0, Math.max(1, maxSlots));
+  if (!rows.length) return "";
+  const lines = rows.map((s) => {
+    const label = String(s.labelZh || "").replace(/[|\n]/g, " ").trim() || ROLE_TAG_PREFIX[s.role];
+    const id = String(s.id || "").replace(/[|\n]/g, "").trim() || "unknown";
+    return `${s.tag}|id=${id}|label=${label}|${String(s.path).trim()}`;
+  });
+  return [ASSET_IMAGE_BIND_MARK, ...lines].join("\n");
+}
+
+/**
+ * @deprecated 用 formatManhuaAssetImageBindBlock；保留别名以免旧调用丢对照。
+ * 现在也写 Image 对照（含 id/path），不再只写名字。
+ */
 export function formatManhuaAssetLockShortBlock(
   registry: ManhuaAssetLockRegistry | null | undefined,
   maxSlots = 12,
 ): string {
-  const slots = (registry?.slots || []).slice(0, Math.max(1, maxSlots));
-  if (!slots.length) return "";
-  const parts = slots.map((s) => `${s.tag}=${s.labelZh}`);
-  return `【资产】${parts.join(" ")}`;
+  return formatManhuaAssetImageBindBlock(registry, maxSlots);
+}
+
+export function parseManhuaAssetImageBindBlock(
+  prompt: string | null | undefined,
+): ManhuaAssetImageBindRow[] {
+  const raw = String(prompt || "");
+  const idx = raw.indexOf(ASSET_IMAGE_BIND_MARK);
+  if (idx < 0) {
+    // 兼容旧「【资产】@角色1=名」——无 path，无法硬绑
+    return [];
+  }
+  const body = raw.slice(idx + ASSET_IMAGE_BIND_MARK.length);
+  const end = body.search(/\n【/);
+  const section = (end >= 0 ? body.slice(0, end) : body).trim();
+  const rows: ManhuaAssetImageBindRow[] = [];
+  for (const line of section.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("【")) continue;
+    // @角色1|id=c1|label=女主|https://...
+    const m = t.match(
+      /^(@(?:角色|场景|道具)\d+)\|id=([^|]+)\|label=([^|]*)\|(.+)$/,
+    );
+    if (!m) continue;
+    const path = String(m[4] || "").trim();
+    if (!isBindableAssetPath(path)) continue;
+    rows.push({
+      tag: m[1]!,
+      id: String(m[2] || "").trim(),
+      labelZh: String(m[3] || "").trim(),
+      path,
+    });
+  }
+  return rows;
+}
+
+export function extractManhuaMentionedAssetTags(prompt: string | null | undefined): string[] {
+  const found = String(prompt || "").match(/@(?:角色|场景|道具)\d+/g) || [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const t of found) {
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
 }
 
 /**
- * 出片时按实际 imageUrls 顺序写 @ImageN 职责（Seedance 官方绑图语法）。
- * tailCount>0 时前几张是上段末帧起幅，其后才是本段静帧。
+ * 出片硬绑：上段末帧 → 资产定妆/场/道具（按秒轴提及优先）→ 本段静帧。
+ * 配额默认 6；保证至少留 1 张静帧位（有静帧时）。
+ */
+export function planManhuaClipSeedanceImageBind(input: {
+  assetRows: ManhuaAssetImageBindRow[];
+  stillUrls: string[];
+  tailUrls?: string[];
+  mentionedTags?: string[] | null;
+  maxImages?: number;
+}): ManhuaClipSeedanceImageBindPlan {
+  const max = Math.max(1, Math.min(6, Math.floor(input.maxImages ?? 6)));
+  const tails = (input.tailUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const stills = (input.stillUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const mentioned = new Set(
+    (input.mentionedTags || []).map((t) => String(t || "").trim()).filter(Boolean),
+  );
+
+  const reserveStill = stills.length ? 1 : 0;
+  const maxTail = Math.min(tails.length, Math.max(0, max - reserveStill - 1));
+  // 至少给资产留 1 位（若有资产且总配额够）
+  const takeTail = Math.min(tails.length, maxTail > 0 ? Math.min(2, maxTail) : 0);
+  const roomAfterTail = max - takeTail;
+  const assetBudget = Math.max(0, roomAfterTail - reserveStill);
+
+  const roleOrder = (tag: string) => {
+    if (tag.startsWith("@角色")) return 0;
+    if (tag.startsWith("@场景")) return 1;
+    return 2;
+  };
+  const sortedAssets = [...input.assetRows].sort((a, b) => {
+    const am = mentioned.has(a.tag) ? 0 : 1;
+    const bm = mentioned.has(b.tag) ? 0 : 1;
+    if (am !== bm) return am - bm;
+    const ro = roleOrder(a.tag) - roleOrder(b.tag);
+    if (ro !== 0) return ro;
+    return a.tag.localeCompare(b.tag, "zh");
+  });
+
+  const entries: ManhuaClipSeedanceImageBindEntry[] = [];
+  const push = (e: Omit<ManhuaClipSeedanceImageBindEntry, "imageIndex">) => {
+    if (entries.length >= max) return;
+    if (entries.some((x) => x.url === e.url)) return;
+    entries.push({ ...e, imageIndex: entries.length + 1 });
+  };
+
+  for (let i = 0; i < takeTail; i++) {
+    push({ kind: "tail", url: tails[i]!, labelZh: "上段末帧起幅" });
+  }
+  let assetsTaken = 0;
+  for (const row of sortedAssets) {
+    if (assetsTaken >= assetBudget) break;
+    push({
+      kind: "asset",
+      url: row.path,
+      roleTag: row.tag,
+      assetId: row.id,
+      labelZh: row.labelZh,
+    });
+    assetsTaken += 1;
+  }
+  for (const u of stills) {
+    push({ kind: "still", url: u, labelZh: "本段静帧" });
+  }
+
+  const bindLineZh = formatManhuaClipSeedanceBindLineFromEntries(entries);
+
+  return {
+    imageUrls: entries.map((e) => e.url),
+    entries,
+    bindLineZh,
+  };
+}
+
+/** 由已定序 entries 生成 Seedance 硬绑句（含 @角色N=@ImageK 与 id） */
+export function formatManhuaClipSeedanceBindLineFromEntries(
+  entries: ManhuaClipSeedanceImageBindEntry[],
+): string {
+  const bits = entries.map((e, i) => {
+    const img = `@Image${e.imageIndex || i + 1}`;
+    if (e.kind === "tail") return `${img}承接上段起幅`;
+    if (e.kind === "asset") {
+      const idBit = e.assetId ? ` id=${e.assetId}` : "";
+      const name = e.labelZh ? `（${e.labelZh}）` : "";
+      return `${e.roleTag}=${img}${name}${idBit}`;
+    }
+    return `${img}=本段静帧`;
+  });
+  return bits.length
+    ? `${bits.join("；")}。只按秒轴改动作/口型/运镜，脸服场锁上表@Image。`
+    : "";
+}
+
+/**
+ * 出片时按实际 imageUrls 顺序写 @ImageN 职责（无资产对照时的回退）。
+ * 有资产对照时请用 planManhuaClipSeedanceImageBind.bindLineZh。
  */
 export function formatManhuaClipImageRoleBindLine(
   imageCount: number,
