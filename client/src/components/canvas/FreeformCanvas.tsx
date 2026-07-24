@@ -93,6 +93,8 @@ type FreeformCanvasProps = {
     audioUrl: string;
     labelZh?: string;
   }) => void;
+  /** 嵌入工作台右栏时占满父级高度，由内部画布单独滚动 */
+  fillContainer?: boolean;
 };
 
 type SpawnMenuState = { anchorBlockId: string; x: number; y: number } | null;
@@ -329,6 +331,8 @@ export default function FreeformCanvas({
   spawnKinds,
   characterVoiceLocks = [],
   onReplaceCharacterVoiceAudio,
+  /** 嵌入工作台右栏时占满容器，禁止外层再套一层 overflow 双滚动 */
+  fillContainer = false,
 }: FreeformCanvasProps) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const toolbarFileInputRef = useRef<HTMLInputElement>(null);
@@ -377,6 +381,17 @@ export default function FreeformCanvas({
 
   const blockMap = useMemo(() => new Map(blocks.map((b) => [b.id, b])), [blocks]);
 
+  /** absolute 节点不撑开滚动区；按节点包围盒扩世界，才能滚到竖排底部 */
+  const worldSize = useMemo(() => {
+    let w = 3600;
+    let h = 2400;
+    for (const b of visibleBlocks) {
+      w = Math.max(w, Math.ceil(b.x + b.width + 200));
+      h = Math.max(h, Math.ceil(b.y + b.height + 200));
+    }
+    return { w, h };
+  }, [visibleBlocks]);
+
   useEffect(() => {
     if (!focusBlockId) {
       focusMissSinceRef.current = null;
@@ -397,27 +412,39 @@ export default function FreeformCanvas({
     setPulseHighlightId(focusBlockId);
     const canvas = canvasRef.current;
     if (canvas) {
+      const pad = 28;
+      const fitsX = block.width + pad * 2 <= canvas.clientWidth;
+      const fitsY = block.height + pad * 2 <= canvas.clientHeight;
       const targetLeft = Math.max(
         0,
-        block.x - Math.max(24, (canvas.clientWidth - block.width) / 2),
+        fitsX ? block.x - (canvas.clientWidth - block.width) / 2 : block.x - pad,
       );
       const targetTop = Math.max(
         0,
-        block.y - Math.max(24, (canvas.clientHeight - block.height) / 2),
+        fitsY ? block.y - (canvas.clientHeight - block.height) / 2 : block.y - pad,
       );
       canvas.scrollTo({ left: targetLeft, top: targetTop, behavior: "smooth" });
     }
-    // 再 DOM 居中一次，避免外层 overflow 容器仍停在空白区
-    window.requestAnimationFrame(() => {
-      document
-        .querySelector(`[data-canvas-block-id="${CSS.escape(focusBlockId)}"]`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    // 双 rAF：等世界尺寸/布局 paint 后再 DOM 居中
+    let cancelled = false;
+    const raf = window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        if (cancelled) return;
+        const el = document.querySelector(
+          `[data-canvas-block-id="${CSS.escape(focusBlockId)}"]`,
+        ) as HTMLElement | null;
+        el?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      });
     });
     const pulseTimer = window.setTimeout(() => {
       setPulseHighlightId((id) => (id === focusBlockId ? null : id));
-    }, 3200);
+    }, 4000);
     onFocusBlockConsumed?.();
-    return () => window.clearTimeout(pulseTimer);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(pulseTimer);
+    };
   }, [focusBlockId, blockMap, onFocusBlockConsumed]);
 
   const getViewportSpawnPosition = useCallback((width: number, height: number, staggerIndex: number) => {
@@ -820,7 +847,12 @@ export default function FreeformCanvas({
   };
 
   return (
-    <div className="flex min-h-[720px] gap-0 overflow-hidden rounded-[28px] border border-white/10 bg-[#05080f]/90">
+    <div
+      data-freeform-canvas-root
+      className={`flex gap-0 overflow-hidden rounded-[28px] border border-white/10 bg-[#05080f]/90 ${
+        fillContainer ? "h-full min-h-0" : "min-h-[720px]"
+      }`}
+    >
       <input
         ref={toolbarFileInputRef}
         type="file"
@@ -854,9 +886,22 @@ export default function FreeformCanvas({
         </button>
       </aside>
 
-      {/* 无限画布 */}
-      <div ref={canvasRef} className="relative flex-1 overflow-auto">
-        <svg className="pointer-events-none absolute inset-0 h-[2400px] w-[3600px]">
+      {/* 无限画布：唯一滚动层；世界尺寸随节点包围盒扩展 */}
+      <div
+        ref={canvasRef}
+        data-freeform-canvas-scroll
+        className="relative min-h-0 flex-1 overflow-auto"
+      >
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-0 top-0"
+          style={{ width: worldSize.w, height: worldSize.h }}
+        />
+        <svg
+          className="pointer-events-none absolute left-0 top-0"
+          width={worldSize.w}
+          height={worldSize.h}
+        >
           {visibleEdges.map((e) => renderEdge(e.fromId, e.toId))}
         </svg>
         <div className="relative h-[2400px] w-[3600px]">

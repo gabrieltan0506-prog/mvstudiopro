@@ -3221,13 +3221,14 @@ export default function OmniCanvas() {
         working = packAssetSheetPositions(working);
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
-        // 视口滚到左上资产带，别让人去右边找
-        setFocusBlockId(
-          plans[0]?.id ||
+        // 视口滚到左上资产带并高亮，别让人去右边找
+        {
+          const focusAssetId =
+            plans[0]?.id ||
             working.find((b) => b.id.startsWith("charsheet-"))?.id ||
-            working.find((b) => b.id.startsWith("sceneplate-"))?.id ||
-            null,
-        );
+            working.find((b) => b.id.startsWith("sceneplate-"))?.id;
+          if (focusAssetId) openManhuaFactoryCanvas(focusAssetId);
+        }
         for (let i = 0; i < plans.length; i++) {
           const plan = plans[i]!;
           if (ac.signal.aborted) break;
@@ -3261,7 +3262,7 @@ export default function OmniCanvas() {
           }
           setBlocks(working);
           saveCanvasState(working, canvasEdges);
-          if (i === 0) setFocusBlockId(plan.id);
+          if (i === 0) openManhuaFactoryCanvas(plan.id);
           setFactoryProgress(
             plan.kind === "charsheet"
               ? `角色图 · ${plan.labelZh}`
@@ -3309,11 +3310,12 @@ export default function OmniCanvas() {
         );
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
-        setFocusBlockId(
-          working.find((b) => b.id.startsWith("charsheet-"))?.id ||
-            working.find((b) => b.id.startsWith("sceneplate-"))?.id ||
-            null,
-        );
+        {
+          const focusAssetId =
+            working.find((b) => b.id.startsWith("charsheet-"))?.id ||
+            working.find((b) => b.id.startsWith("sceneplate-"))?.id;
+          if (focusAssetId) openManhuaFactoryCanvas(focusAssetId);
+        }
         const nextGate = evaluateManhuaAssetImageGate({
           ...gateInput,
           customRefs: workingRefs,
@@ -4556,8 +4558,9 @@ export default function OmniCanvas() {
                     </label>
                   }
                   previewCanvas={
-                    <div className="absolute inset-0 overflow-auto">
+                    <div className="absolute inset-0 overflow-hidden">
                       <FreeformCanvas
+                        fillContainer
                         blocks={blocks}
                         edges={edges}
                         onBlocksChange={handleBlocksChange}

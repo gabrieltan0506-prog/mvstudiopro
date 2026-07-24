@@ -792,8 +792,27 @@ export default function ManhuaScriptWorkbench({
   const openCanvasDock = () => setCanvasDockOpen(true);
   const closeCanvasDock = () => setCanvasDockOpen(false);
   const focusBlockAndOpenCanvas = (blockId: string) => {
+    if (!blockId) return;
     setCanvasDockOpen(true);
     onFocusBlock?.(blockId);
+  };
+  /** 胶片 / 分镜列表：切镜后立刻把对应静帧或段成片滚入画布并高亮 */
+  const selectShotAndFocusCanvas = (shotListIndex: number) => {
+    const i = Math.max(0, Math.min(shotListIndex, Math.max(shots.length, 1) - 1));
+    setShotIndex(i);
+    const shot = shots[i];
+    if (!shot) {
+      openCanvasDock();
+      return;
+    }
+    const keyart = episodeKeyarts.find(
+      (b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index,
+    );
+    const segNo = resolveSegmentIndexFromShotIndex(shot.index);
+    const clipBlock =
+      episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === segNo) ||
+      null;
+    focusBlockAndOpenCanvas(clipBlock?.id || keyart?.id || "");
   };
 
   const showCanvasDock = dockCanvas && canvasDockOpen;
@@ -2072,7 +2091,10 @@ export default function ManhuaScriptWorkbench({
                                 key={item.id}
                                 type="button"
                                 data-manhua-sheet-id={item.id}
-                                onClick={() => onFocusBlock?.(item.id)}
+                                onClick={() => {
+                                  if (!item.id) return;
+                                  focusBlockAndOpenCanvas(item.id);
+                                }}
                                 className="flex w-[88px] flex-col overflow-hidden rounded-lg border border-emerald-300/35 bg-black/40 text-left hover:border-emerald-200/60"
                                 title={`定位：${item.labelZh}`}
                               >
@@ -3499,8 +3521,9 @@ export default function ManhuaScriptWorkbench({
                     >
                       <button
                         type="button"
-                        onClick={() => setShotIndex(i)}
+                        onClick={() => selectShotAndFocusCanvas(i)}
                         className="flex min-w-0 flex-1 gap-2 px-2 py-2 text-left"
+                        title="选中本镜并在画布高亮对应节点"
                       >
                         <div
                           className={`relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-dashed bg-amber-500/10 ${
@@ -4332,12 +4355,12 @@ export default function ManhuaScriptWorkbench({
                               ? "keyart"
                               : "idle"
                     }
-                    onClick={() => setShotIndex(i)}
+                    onClick={() => selectShotAndFocusCanvas(i)}
                     className="block w-full text-left"
                     title={
                       stillUnlocked
                         ? "有图但未垫图改图（缺参考图或非改图模式），不能出成片；请重出该镜静帧"
-                        : undefined
+                        : "选中本镜并在画布高亮对应节点"
                     }
                   >
                     <div
