@@ -3021,9 +3021,13 @@ export default function OmniCanvas() {
             ? `${assetShareBillingUi.priceLabelZh} · 参考「${seed.labelZh}」`
             : `${assetShareBillingUi.priceLabelZh} · 按文案生成（库中无近似参考图）`,
         });
+        const stillRole =
+          opts.role === "character" || opts.role === "scene" || opts.role === "prop"
+            ? opts.role
+            : "prop"; // wardrobe → prop（出图 API 无服装独立 role）
         const res = await generateAssetStillMutation.mutateAsync({
           prompt,
-          role: opts.role,
+          role: stillRole,
           shareToLibrary: shareAssetToLibrary,
           labelZh: `新${roleZh}·${seed.labelZh}`,
           aspectRatio: "9:16",
