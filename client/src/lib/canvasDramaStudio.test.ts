@@ -455,6 +455,8 @@ describe("canvasDramaStudio factory", () => {
       (b) => b.id.startsWith("clip-") && (/-g\d{2,}/i.test(b.id) || /-s\d{2,}/.test(b.id)),
     );
     expect(segClips.length).toBe(2);
+    expect(segClips[0]?.prompt || "").toMatch(/【像素垫图锁/);
+    expect(String(segClips[0]?.refImageUrl || "")).toMatch(/^https:\/\//);
     const frag = resolveManhuaFragmentRunTargets(ensured.blocks, 1, 2);
     expect(frag.clipId).toBeTruthy();
     expect(frag.forceFromStage).toBe("clip");

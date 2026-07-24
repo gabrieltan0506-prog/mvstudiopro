@@ -791,6 +791,12 @@ export default function ManhuaScriptWorkbench({
 
   const openCanvasDock = () => setCanvasDockOpen(true);
   const closeCanvasDock = () => setCanvasDockOpen(false);
+  // 阿硕 C2：分镜有静帧后默认展开右栏大画布，禁止缩成预览条
+  useEffect(() => {
+    if (activePhase === "storyboard" && episodeStillCount > 0) {
+      setCanvasDockOpen(true);
+    }
+  }, [activePhase, episodeStillCount]);
   const focusBlockAndOpenCanvas = (blockId: string) => {
     if (!blockId) return;
     setCanvasDockOpen(true);
@@ -3077,10 +3083,11 @@ export default function ManhuaScriptWorkbench({
         className={
           activePhase !== "storyboard"
             ? "hidden"
-            :             immersive
+            : immersive
               ? showCanvasDock
-                ? "grid min-h-0 min-w-[1280px] flex-1 grid-cols-[200px_minmax(300px,0.85fr)_minmax(480px,1.35fr)] overflow-x-auto overflow-y-hidden"
-                : "grid min-h-0 min-w-[1120px] flex-1 grid-cols-[220px_minmax(420px,1fr)_minmax(380px,440px)] overflow-x-auto overflow-y-hidden"
+                ? // 阿硕 C2：左窄资产 · 中图卡 · 右画布占主视觉
+                  "grid min-h-0 min-w-[1360px] flex-1 grid-cols-[152px_minmax(200px,0.36fr)_minmax(720px,2.2fr)] overflow-x-auto overflow-y-hidden"
+                : "grid min-h-0 min-w-[1120px] flex-1 grid-cols-[168px_minmax(280px,0.7fr)_minmax(420px,1.1fr)] overflow-x-auto overflow-y-hidden"
               : "flex min-h-0 flex-1 overflow-hidden"
         }
       >
@@ -3091,8 +3098,8 @@ export default function ManhuaScriptWorkbench({
           data-manhua-shot-mount-cast={String(mountedCastCount)}
           className={
             immersive
-              ? "min-h-0 overflow-y-auto border-r border-white/10 p-2.5"
-              : "min-h-0 w-[240px] shrink-0 overflow-y-auto border-r border-white/10 p-2.5"
+              ? "min-h-0 overflow-y-auto border-r border-white/10 p-2"
+              : "min-h-0 w-[180px] shrink-0 overflow-y-auto border-r border-white/10 p-2"
           }
         >
           <div className="mb-2.5 space-y-2">
@@ -3340,13 +3347,13 @@ export default function ManhuaScriptWorkbench({
           </button>
         </aside>
 
-        {/* 中：片段脚本 */}
+        {/* 中：分镜图卡（阿硕 C2：图为主、文为辅；右栏才是主预览） */}
         <section
           data-manhua-column="script"
           className={
             immersive
-              ? "flex min-h-0 flex-col overflow-hidden border-r border-white/10 p-2.5 md:p-3"
-              : "flex min-h-0 min-w-[360px] flex-1 flex-col overflow-hidden border-r border-white/10 p-2.5 md:p-3"
+              ? "flex min-h-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5"
+              : "flex min-h-0 w-[min(28vw,300px)] shrink-0 flex-col overflow-hidden border-r border-white/10 p-2 md:p-2.5"
           }
         >
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
@@ -3482,7 +3489,7 @@ export default function ManhuaScriptWorkbench({
               <div className="mt-2 shrink-0 text-[11px] font-semibold text-white/70">
                 分镜（{shots.length}）· 当前第 {activeShot?.index ?? "—"} 镜
               </div>
-              <div className="mt-1.5 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
+              <div className="mt-1.5 min-h-0 flex-1 space-y-2 overflow-y-auto pr-0.5">
                 {shots.map((shot, i) => {
                   const on = i === Math.min(shotIndex, shots.length - 1);
                   // 严格按镜号对齐；禁止用列表下标顶替，避免有图/失败状态错位
@@ -3513,23 +3520,23 @@ export default function ManhuaScriptWorkbench({
                                 ? "running"
                                 : "idle"
                       }
-                      className={`flex w-full items-stretch rounded-lg border text-left transition ${
+                      className={`w-full overflow-hidden rounded-lg border text-left transition ${
                         on
-                          ? "border-cyan-400/50 bg-cyan-500/15"
-                          : "border-white/10 bg-white/[0.03] hover:border-white/20"
+                          ? "border-cyan-300/70 bg-cyan-500/15 ring-1 ring-cyan-300/50"
+                          : "border-white/10 bg-white/[0.03] hover:border-white/25"
                       }`}
                     >
                       <button
                         type="button"
                         onClick={() => selectShotAndFocusCanvas(i)}
-                        className="flex min-w-0 flex-1 gap-2 px-2 py-2 text-left"
+                        className="block w-full text-left"
                         title="选中本镜并在画布高亮对应节点"
                       >
                         <div
-                          className={`relative h-14 w-10 shrink-0 overflow-hidden rounded-md border border-dashed bg-amber-500/10 ${
+                          className={`relative aspect-[3/4] w-full overflow-hidden bg-amber-500/10 ${
                             keyartFailed || keyartUnlocked
-                              ? "border-red-400/55"
-                              : "border-amber-400/35"
+                              ? "ring-1 ring-inset ring-red-400/55"
+                              : ""
                           }`}
                           title={
                             keyartUnlocked
@@ -3541,41 +3548,45 @@ export default function ManhuaScriptWorkbench({
                             <>
                               <img src={thumb} alt="" className="h-full w-full object-cover" />
                               {keyartUnlocked ? (
-                                <span className="absolute inset-x-0 bottom-0 bg-red-900/75 px-0.5 py-px text-center text-[7px] font-semibold text-red-50">
-                                  未锁
+                                <span className="absolute inset-x-0 bottom-0 bg-red-900/80 px-1 py-0.5 text-center text-[9px] font-semibold text-red-50">
+                                  未垫图锁
                                 </span>
-                              ) : null}
+                              ) : (
+                                <span className="absolute left-1 top-1 rounded bg-emerald-600/90 px-1 py-px text-[8px] font-semibold text-white">
+                                  已锁
+                                </span>
+                              )}
                             </>
                           ) : keyartFailed ? (
-                            <div className="flex h-full items-center justify-center px-0.5 text-center text-[8px] font-semibold leading-tight text-red-100/90">
+                            <div className="flex h-full items-center justify-center text-[11px] font-semibold text-red-100/90">
                               失败
                             </div>
                           ) : keyartRunning ? (
-                            <div className="flex h-full items-center justify-center text-[8px] text-amber-100/80">
-                              …
+                            <div className="flex h-full items-center justify-center text-[11px] text-amber-100/80">
+                              出图中…
                             </div>
                           ) : (
-                            <div className="flex h-full flex-col items-center justify-center gap-0.5 px-0.5 text-center text-amber-100/80">
-                              <span className="text-[9px] font-semibold">
+                            <div className="flex h-full flex-col items-center justify-center gap-1 text-amber-100/80">
+                              <span className="text-[14px] font-semibold">
                                 {String(shot.index).padStart(2, "0")}
                               </span>
-                              <span className="text-[7px] leading-tight">待出图</span>
+                              <span className="text-[9px]">待出分镜图</span>
                             </div>
                           )}
+                          <span className="absolute right-1 top-1 rounded bg-black/65 px-1 py-px text-[9px] font-semibold text-white/90">
+                            {shot.durationSec}s
+                          </span>
                         </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2">
+                        <div className="space-y-0.5 px-1.5 py-1.5">
+                          <div className="flex items-center justify-between gap-1">
                             <span className="text-[11px] font-semibold text-white/90">
-                              分镜 {shot.index}
-                              <span className="ml-2 font-normal text-white/45">
-                                {shot.durationSec}s
-                              </span>
+                              分镜 {String(shot.index).padStart(2, "0")}
                             </span>
                             {on ? (
                               <Sparkles className="h-3.5 w-3.5 shrink-0 text-cyan-200" />
                             ) : null}
                           </div>
-                          <div className="mt-0.5 text-[10px] text-cyan-100/70">
+                          <div className="truncate text-[9px] text-cyan-100/65">
                             {(() => {
                               const ang = getManhuaCameraAngle(shotAngleByIndex[shot.index]);
                               return ang
@@ -3583,7 +3594,7 @@ export default function ManhuaScriptWorkbench({
                                 : shot.cameraZh;
                             })()}
                           </div>
-                          <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-white/70">
+                          <div className="line-clamp-1 text-[10px] leading-snug text-white/60">
                             {shot.actionZh}
                           </div>
                           {on ? (
@@ -3678,11 +3689,11 @@ export default function ManhuaScriptWorkbench({
                             if (refuseIfBlocked(keyartGateHint)) return;
                             onRerunKeyartShot(shotKey.id, shot.index);
                           }}
-                          className="flex w-11 shrink-0 flex-col items-center justify-center gap-1 border-l border-white/10 text-[9px] text-amber-100/75 hover:bg-amber-500/10 disabled:opacity-35"
+                          className="flex w-full items-center justify-center gap-1 border-t border-white/10 py-1 text-[9px] text-amber-100/75 hover:bg-amber-500/10 disabled:opacity-35"
                           title={keyartGateHint || `只重出第 ${shot.index} 镜，保留其他镜头`}
                         >
-                          <RefreshCw className="h-3.5 w-3.5" />
-                          单镜
+                          <RefreshCw className="h-3 w-3" />
+                          单镜重出
                         </button>
                       ) : null}
                     </div>
@@ -3732,6 +3743,57 @@ export default function ManhuaScriptWorkbench({
                           <span className="text-amber-100/70">尚未铺节点</span>
                         )}
                       </div>
+                      {(() => {
+                        const p = String(row.clip?.prompt || "");
+                        const hasPad =
+                          Boolean(String(row.clip?.refImageUrl || "").trim()) ||
+                          /【像素垫图锁/.test(p);
+                        const hasAssetLock = /【资产锁/.test(p);
+                        const hasDuty = /【参考职责】/.test(p);
+                        const tags = p.match(/@(?:角色|场景|道具)\d+/g) || [];
+                        return (
+                          <div
+                            data-manhua-clip-lock-chips={row.segmentIndex}
+                            className="mb-1 flex flex-wrap gap-1"
+                          >
+                            <span
+                              className={`rounded px-1 py-px text-[8px] font-semibold ${
+                                hasPad
+                                  ? "bg-emerald-500/25 text-emerald-50"
+                                  : "bg-red-500/25 text-red-50"
+                              }`}
+                            >
+                              {hasPad ? "垫图锁✓" : "垫图锁缺失"}
+                            </span>
+                            <span
+                              className={`rounded px-1 py-px text-[8px] font-semibold ${
+                                hasAssetLock
+                                  ? "bg-emerald-500/25 text-emerald-50"
+                                  : "bg-amber-500/20 text-amber-50"
+                              }`}
+                            >
+                              {hasAssetLock ? "资产编号锁✓" : "资产编号待补"}
+                            </span>
+                            <span
+                              className={`rounded px-1 py-px text-[8px] font-semibold ${
+                                hasDuty
+                                  ? "bg-emerald-500/25 text-emerald-50"
+                                  : "bg-white/10 text-white/45"
+                              }`}
+                            >
+                              {hasDuty ? "参考职责✓" : "参考职责—"}
+                            </span>
+                            {tags.slice(0, 6).map((t) => (
+                              <span
+                                key={`${row.segmentIndex}-${t}`}
+                                className="rounded border border-cyan-400/30 bg-cyan-500/10 px-1 py-px font-mono text-[8px] text-cyan-50/90"
+                              >
+                                {t}
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })()}
                       <textarea
                         data-manhua-clip-prompt={row.segmentIndex}
                         disabled={!row.clip?.id || !onUpdateClipPrompt || factoryBusy}
@@ -3890,15 +3952,15 @@ export default function ManhuaScriptWorkbench({
           data-manhua-preview-url={finalVideoUrl || previewUrl || ""}
           className={
             immersive
-              ? "flex min-h-0 flex-col p-2 md:p-2.5"
+              ? "flex min-h-0 flex-col p-1.5 md:p-2"
               : showCanvasDock
-                ? "flex min-h-0 w-[min(56vw,640px)] shrink-0 flex-col p-2.5"
-                : "flex min-h-0 w-[440px] shrink-0 flex-col p-2.5 md:p-3"
+                ? "flex min-h-0 min-w-0 flex-1 flex-col p-2"
+                : "flex min-h-0 w-[min(42vw,480px)] shrink-0 flex-col p-2 md:p-2.5"
           }
         >
           <div className="mb-1.5 flex shrink-0 flex-wrap items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-white/90">
-              {showCanvasDock ? "本集画布" : previewIsVideo || finalVideoUrl ? "视频结果" : "预览"}
+              {showCanvasDock ? "本集画布（主预览）" : previewIsVideo || finalVideoUrl ? "视频结果" : "预览"}
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               {dockCanvas ? (

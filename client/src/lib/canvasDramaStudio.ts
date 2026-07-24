@@ -18,6 +18,7 @@ import { reviewManhuaClipQuality } from "./manhuaClipQuality";
 import { isManhuaClipQualityInfraFailure } from "@shared/manhuaClipQuality";
 import {
   assignManhuaCanvasAssetAtTags,
+  buildManhuaAssetLockRegistry,
   type ManhuaAssetLockRegistry,
 } from "@shared/manhuaAssetLockRegistry";
 import type { ManhuaWriterAssetCanon } from "@shared/manhuaWriterAssetCanon";
@@ -1442,6 +1443,8 @@ export function ensureManhuaFragmentClips(
     assetCanon?: ManhuaWriterAssetCanon | null;
     characterSheetUrlById?: Record<string, string> | null;
     registry?: ManhuaAssetLockRegistry | null;
+    /** 我的角色/场景垫图职责 → 写入段成片【参考职责】 */
+    customRefs?: ManhuaCustomAssetRef[] | null;
   },
 ): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
   const ep =
@@ -1497,6 +1500,16 @@ export function ensureManhuaFragmentClips(
   const defaultModel =
     (template.kind === "video" && template.videoModel) || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
 
+  const lockRegistry =
+    opts?.registry ||
+    buildManhuaAssetLockRegistry({
+      assetCanon: opts?.assetCanon,
+      characterSheetUrlById: opts?.characterSheetUrlById,
+      customRefs: opts?.customRefs,
+    });
+  const referenceDutyBlock = formatCustomAssetRefsDutyBlock(opts?.customRefs || []);
+  const assetLockBlock = String(lockRegistry.promptBlockZh || "").trim();
+
   for (const seg of segments) {
     const segKeyarts = seg.shots
       .map((s) => keyartByShot.get(s.index))
@@ -1530,6 +1543,22 @@ export function ensureManhuaFragmentClips(
       .join("；")
       .slice(0, 200);
     const intentZh = String(seg.shots.find((s) => s.intentZh)?.intentZh || "").trim();
+    const atTags = Array.from(
+      new Set(
+        segKeyarts.flatMap(
+          (k) => String(k.prompt || "").match(/@(?:角色|场景|道具)\d+/g) || [],
+        ),
+      ),
+    ).slice(0, 12);
+    const padLockBlock = segUrls.length
+      ? [
+          "【像素垫图锁·必守】",
+          `本段挂 ${segUrls.length} 张关键静帧作参考图（首帧 + 融图）；脸服场以垫图为准，禁止无垫图纯文生视频。`,
+          atTags.length ? `须兑现编号：${atTags.join(" ")}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "【像素垫图锁·缺失】本段尚无可用静帧，禁止出片。";
     const segPrompt = stripManhuaPromptSlop(
       [
         MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip,
@@ -1541,7 +1570,10 @@ export function ensureManhuaFragmentClips(
           intentZh,
           alreadyHappenedZh: already,
           reservedForLaterZh: later,
+          referenceDutyBlock,
         }),
+        assetLockBlock,
+        padLockBlock,
         continuityAddon,
         artLock,
       ]
@@ -1725,6 +1757,8 @@ export function layoutManhuaEpisodeReadableChain(
     assetCanon?: ManhuaWriterAssetCanon | null;
     characterSheetUrlById?: Record<string, string> | null;
     registry?: ManhuaAssetLockRegistry | null;
+    /** 透传给 ensure 路径；layout 本身不消费 */
+    customRefs?: ManhuaCustomAssetRef[] | null;
   },
 ): CanvasBlock[] {
   const ep =
