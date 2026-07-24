@@ -1150,7 +1150,7 @@ export default function FreeformCanvas({
                   <div className="border-b border-white/10 px-3 py-1.5 text-[10px] leading-4 text-white/65">
                     {block.imageMode === "edit" && block.refImageUrl ? (
                       <>
-                        <span className="font-semibold text-emerald-200/90">资产锁</span>
+                        <span className="font-semibold text-emerald-200/90">垫图锁</span>
                         <span className="ml-1 text-white/55">
                           {(String(block.prompt || "").match(/@(?:角色|场景|道具)\d+/g) || []).join(" ") ||
                             "已挂垫图改图"}
@@ -1178,11 +1178,23 @@ export default function FreeformCanvas({
                       ];
                       const extra =
                         card.castTags.length + card.sceneTags.length - chips.length;
+                      const padLocked =
+                        Boolean(String(block.refImageUrl || "").trim()) ||
+                        /【像素垫图锁·必守】/.test(String(block.prompt || ""));
                       return (
                         <>
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span className="rounded bg-cyan-400/30 px-1.5 py-0.5 font-semibold text-cyan-50">
                               第{String(seg).padStart(2, "0")}段 · {dur}s
+                            </span>
+                            <span
+                              className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                                padLocked
+                                  ? "bg-emerald-500/30 text-emerald-50"
+                                  : "bg-amber-500/25 text-amber-50"
+                              }`}
+                            >
+                              {padLocked ? "垫图锁✓" : "垫图锁缺失"}
                             </span>
                             {chips.map((t) => (
                               <span

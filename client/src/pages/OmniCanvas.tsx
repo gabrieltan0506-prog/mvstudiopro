@@ -4696,6 +4696,7 @@ export default function OmniCanvas() {
                       const layoutOpts = {
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
+                        customRefs: customAssetRefs,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -4726,6 +4727,7 @@ export default function OmniCanvas() {
                       const layoutOpts = {
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
+                        customRefs: customAssetRefs,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -4782,6 +4784,7 @@ export default function OmniCanvas() {
                       const layoutOpts = {
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
+                        customRefs: customAssetRefs,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
