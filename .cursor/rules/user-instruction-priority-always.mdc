@@ -10,8 +10,8 @@ alwaysApply: true
 **开场必读（按序）**
 
 1. 本文件 + 其他 `alwaysApply` rules（尤其 `git-pr-workflow-always`、`deployment-boundaries-always`、`frontend-no-tech-leak-always`）
-2. **产品目标与进度知识库**：[`.cursor/knowledge/README.md`](../knowledge/README.md) → `manhua-factory-brief.md` + `PROGRESS.md` 最新日
-3. 再搜代码 / 过期 `docs/2026Jul*`（后者只考古，不当本周 KPI）
+2. **产品知识库**（详见 `knowledge-base-always`）：[`.cursor/knowledge/README.md`](../knowledge/README.md) → brief + PROGRESS；七月交接见 `downloads-jul2026-index.md`
+3. 再搜代码；Downloads/`docs/2026Jul*` 只考古，与 brief 冲突时信 brief
 
 动漫剧成片、画布、可拍表前：至少读完 `manhua-factory-brief.md` §2–5。
 

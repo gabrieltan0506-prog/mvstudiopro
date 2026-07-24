@@ -4,12 +4,13 @@
 
 | 文件 | 用途 |
 |---|---|
-| [`manhua-factory-brief.md`](./manhua-factory-brief.md) | 漫剧工厂：目标、硬口径、已完成、待办、关键代码路径 |
+| [`manhua-factory-brief.md`](./manhua-factory-brief.md) | 漫剧工厂：目标、硬口径、验收、UI、关键代码路径 |
 | [`PROGRESS.md`](./PROGRESS.md) | 滚动进度（按日追加；合并后更新） |
+| [`downloads-jul2026-index.md`](./downloads-jul2026-index.md) | `~/Downloads/2026Jul01–24` 约 78 篇 md 的分类索引 + 周摘要 |
 
-**开场顺序（硬，与 alwaysApply 一致）**
+**开场顺序（硬，与 `knowledge-base-always` / `user-instruction-priority` 一致）**
 
-1. `.cursor/rules/user-instruction-priority-always.mdc` 及同目录其他 always 规则  
-2. 本目录 `manhua-factory-brief.md` + `PROGRESS.md` 最新日  
-3. 任务相关 skill（如 `.cursor/skills/manhua-visual-narrative`）  
-4. 再搜代码；勿把过期 `docs/2026Jul16/*tdl*` 当现行目标
+1. alwaysApply rules（含本知识库强制读）  
+2. `manhua-factory-brief.md` + `PROGRESS.md` 最新日  
+3. 需要七月考古 → `downloads-jul2026-index.md` 再下钻 Downloads  
+4. 任务相关 skill；勿把过期 `docs/2026Jul16/*tdl*` 当现行目标
