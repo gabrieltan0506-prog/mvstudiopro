@@ -4609,6 +4609,7 @@ export default function ManhuaScriptWorkbench({
           })}
         </div>
       </div>
+      </div>
     </div>
   );
 }
