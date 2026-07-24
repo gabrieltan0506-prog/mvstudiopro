@@ -72,7 +72,8 @@ function stripSectionByPrefix(text: string, prefix: string): string {
 }
 
 /**
- * 剥成片禁用板。对旧肥稿会尽量只留秒轴 / 垫图 / Image对照 / 造型 / 连续 / 画风一行。
+ * 剥成片禁用板。对旧肥稿只留秒轴 / 垫图 / Image对照 / 造型 / 连续。
+ * 画风跟垫图走，成片提示词禁止再写「画风：…」。
  */
 export function stripManhuaClipForbiddenBoards(text: string): string {
   let t = String(text || "");
@@ -93,12 +94,13 @@ export function stripManhuaClipForbiddenBoards(text: string): string {
     .replace(/\barch_[a-z0-9_]+\b/gi, "")
     .replace(/\/manhua-[^\s|】"'<>]+/gi, "")
     .replace(/\n*【引擎光学】[^\n]*/g, "")
+    .replace(/(^|\n)画风：[^\n]*/g, "$1")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
   if (!isManhuaClipPromptLegacyFat(t)) return t;
 
-  // 仍肥：只拼可保留碎片
+  // 仍肥：只拼可保留碎片（不要画风行）
   const timeline = t.match(
     /【第\d+段·[\d.]+s】[\s\S]*?(?=\n【(?!第\d+段·[\d.]+s)|$)/,
   )?.[0];
@@ -107,18 +109,16 @@ export function stripManhuaClipForbiddenBoards(text: string): string {
   const bind = t.match(/【出片Image硬绑】[\s\S]*?(?=\n【|$)/)?.[0] || "";
   const look = t.match(/【本段造型】[^\n]*/)?.[0] || "";
   const cont = t.match(/【连续】[^\n]*/)?.[0] || "";
-  const art = t.match(/^画风：[^\n]+/m)?.[0] || "";
   const slimTimeline =
     timeline && !isManhuaClipPromptLegacyFat(timeline) ? timeline.trim() : "";
   if (slimTimeline) {
-    return [slimTimeline, pad, asset, bind, look, cont, art].filter(Boolean).join("\n");
+    return [slimTimeline, pad, asset, bind, look, cont].filter(Boolean).join("\n");
   }
   return [
     "【成片占位】旧规则墙已清除；请再点「审阅成片提示词」重写秒轴短指令与人物/场景 Image 锁。",
     pad,
     asset,
     bind,
-    art,
   ]
     .filter(Boolean)
     .join("\n");

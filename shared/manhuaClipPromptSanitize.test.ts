@@ -56,4 +56,16 @@ describe("manhuaClipPromptSanitize", () => {
     expect(out).not.toMatch(/节拍防火墙|古风服化|视频生成导戏单|按秒导戏单|成片预演|路径运镜|点选道具|arch_rain/);
     expect(isManhuaClipPromptLegacyFat(out)).toBe(false);
   });
+
+  it("strips 画风 lines from clip prompts", () => {
+    const withArt = [
+      "【第1段·15s】雨夜桥板",
+      "0–15s：@角色1，拔刀。近景。",
+      "【垫图】本段静帧3张",
+      "画风：CG 漫剧",
+    ].join("\n");
+    const out = stripManhuaClipForbiddenBoards(withArt);
+    expect(out).toContain("【第1段·15s】");
+    expect(out).not.toMatch(/画风：/);
+  });
 });
