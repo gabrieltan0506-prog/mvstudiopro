@@ -131,6 +131,62 @@ function isManhuaAssetVisualBlock(block: CanvasBlock): boolean {
   );
 }
 
+/** 成片节点中区：本段垫图缩略图为主，秒轴提示词降级 */
+function CanvasClipPadVisualBody({ block }: { block: CanvasBlock }) {
+  const tags = Array.from(
+    new Set(String(block.prompt || "").match(/@(?:角色|场景|道具)\d+/g) || []),
+  ).slice(0, 8);
+  const urls = Array.from(
+    new Set(
+      [
+        String(block.refImageUrl || "").trim(),
+        ...(block.editFusionUrls || []).map((u) => String(u || "").trim()),
+        ...(block.outputUrls || []).map((u) => String(u || "").trim()),
+        String(block.outputUrl || "").trim(),
+      ].filter((u) => /^https?:\/\//i.test(u) || u.startsWith("data:image")),
+    ),
+  ).slice(0, 8);
+  return (
+    <div
+      data-manhua-clip-pad-visual
+      className="mb-2 min-h-0 flex-1 space-y-1.5 overflow-hidden"
+    >
+      <div className="flex flex-wrap items-center gap-1">
+        <span className="rounded bg-cyan-400/30 px-1.5 py-0.5 text-[9px] font-semibold text-cyan-50">
+          本段垫图
+        </span>
+        {tags.map((t) => (
+          <span
+            key={t}
+            className="rounded bg-black/35 px-1.5 py-0.5 font-mono text-[10px] text-cyan-100/90"
+          >
+            {t}
+          </span>
+        ))}
+        {!tags.length ? (
+          <span className="text-[10px] text-white/35">审阅后显示本段角色/场景/道具</span>
+        ) : null}
+      </div>
+      {urls.length ? (
+        <div className="grid min-h-0 flex-1 grid-cols-3 gap-1 overflow-hidden">
+          {urls.map((u, i) => (
+            <div
+              key={`${u.slice(0, 48)}-${i}`}
+              className="relative aspect-square overflow-hidden rounded-lg border border-white/10 bg-black/40"
+            >
+              <img src={u} alt={`垫图${i + 1}`} className="h-full w-full object-cover" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="flex min-h-[100px] flex-1 items-center justify-center rounded-xl border border-dashed border-white/15 bg-black/25 text-[11px] text-white/35">
+          本段静帧出图后显示在此
+        </div>
+      )}
+    </div>
+  );
+}
+
 function fileNameFromUrl(url: string | null | undefined): string {
   const raw = String(url || "").trim();
   if (!raw) return "";
@@ -1465,7 +1521,12 @@ export default function FreeformCanvas({
                       </div>
                     ) : null}
 
-                    <div className="mb-1.5 shrink-0 text-[10px] uppercase tracking-wider text-white/40">提示词</div>
+                    {String(block.id || "").startsWith("clip-") ? (
+                      <CanvasClipPadVisualBody block={block} />
+                    ) : null}
+                    <div className="mb-1.5 shrink-0 text-[10px] uppercase tracking-wider text-white/40">
+                      {String(block.id || "").startsWith("clip-") ? "秒轴提示词（次要）" : "提示词"}
+                    </div>
                     <textarea
                       value={
                         block.id.startsWith("clip-")
@@ -1480,13 +1541,19 @@ export default function FreeformCanvas({
                             : next,
                         });
                       }}
-                      className="min-h-0 w-full flex-1 resize-none rounded-xl border border-white/10 bg-black/35 px-2.5 py-2 text-xs leading-6 text-white outline-none focus:border-primary/40"
+                      className={
+                        String(block.id || "").startsWith("clip-")
+                          ? "h-28 w-full shrink-0 resize-y rounded-xl border border-white/10 bg-black/35 px-2.5 py-2 text-[11px] leading-5 text-white/85 outline-none focus:border-primary/40"
+                          : "min-h-0 w-full flex-1 resize-none rounded-xl border border-white/10 bg-black/35 px-2.5 py-2 text-xs leading-6 text-white outline-none focus:border-primary/40"
+                      }
                       placeholder={
-                        documentCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
-                          ? "例：请把文档中 part1 与 part2 去重，整理成语意通顺、条理分明的详尽正文…"
-                          : visionCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
-                            ? "例：帮我识别所有图片内容，归纳整理成文档，重复部分去掉，标题清晰、内容详尽…"
-                            : meta.hint
+                        String(block.id || "").startsWith("clip-")
+                          ? "秒轴短指令；身份靠上方垫图与 @Image"
+                          : documentCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
+                            ? "例：请把文档中 part1 与 part2 去重，整理成语意通顺、条理分明的详尽正文…"
+                            : visionCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
+                              ? "例：帮我识别所有图片内容，归纳整理成文档，重复部分去掉，标题清晰、内容详尽…"
+                              : meta.hint
                       }
                     />
                     {upstreamHandoff.length ? (
