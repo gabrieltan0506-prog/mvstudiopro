@@ -1012,7 +1012,10 @@ export default function ManhuaScriptWorkbench({
   const assetsComplete = assetGate.ready && !assetScriptStaleHintZh;
   const productionProgress = useMemo((): ManhuaProductionProgress => {
     const segmentCount = segments.length;
-    const segmentPlanReady = segmentCount >= MANHUA_SEGMENT_MIN;
+    // 满 10 段为完整可拍表；静帧已按现有段出齐时，不得再卡「至少 10 段」拦审阅/出片
+    const segmentPlanReady =
+      segmentCount >= MANHUA_SEGMENT_MIN ||
+      (segmentCount >= 1 && stillsReadyEnough);
     const keyartsReady = stillsReadyEnough;
     const cueSheets = segments.map((seg) => ({
       segmentIndex: seg.index,
@@ -1093,11 +1096,10 @@ export default function ManhuaScriptWorkbench({
     toast.error("还不能跑", { description: hint });
     return true;
   };
-  const clipPromptReviewUnlocked = Boolean(
-    stillsReadyEnough && keyartsPixelLocked && !clipGateHint,
-  );
+  /** 审阅提示词：静帧齐+垫图锁即可；不套用「满 10 段才烧片」门槛 */
+  const clipPromptReviewUnlocked = Boolean(stillsCountReady && keyartsPixelLocked);
   const openClipPromptReview = () => {
-    if (!stillsReadyEnough) {
+    if (!stillsCountReady) {
       toast.error("还不能跑", { description: "请先出齐关键静帧" });
       return;
     }
@@ -1107,7 +1109,6 @@ export default function ManhuaScriptWorkbench({
       });
       return;
     }
-    if (refuseIfBlocked(clipGateHint)) return;
     onEnsureSegmentClips?.();
     setClipPromptReviewOpen(true);
     if (activePhase !== "storyboard") setActivePhase("storyboard");
@@ -1461,10 +1462,9 @@ export default function ManhuaScriptWorkbench({
                 onClick={openClipPromptReview}
                 className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45"
                 title={
-                  clipGateHint ||
-                  (!clipPromptReviewUnlocked
+                  !clipPromptReviewUnlocked
                     ? "静帧齐且垫图锁通过后可审阅各段成片提示词"
-                    : "先审阅段成片提示词，再按段生成")
+                    : "先审阅段成片提示词，再按段生成"
                 }
               >
                 审阅成片提示词

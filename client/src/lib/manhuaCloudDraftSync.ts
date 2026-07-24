@@ -305,8 +305,22 @@ export function buildManhuaCloudDraftGcsUploadBody(opts: {
   });
 }
 
+function formatCloudDraftDirectError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e || "直传失败");
+  // GCS PUT / 网关常返回空 body；上层若误 .json() 会抛此错——对用户给业务句
+  if (
+    /Unexpected end of JSON|is not valid JSON|Failed to execute 'json'|JSON\.parse/i.test(
+      msg,
+    )
+  ) {
+    return "云草稿直传响应异常，将改用备用通道";
+  }
+  return msg.slice(0, 160) || "直传失败";
+}
+
 /**
  * 浏览器 → GCS 签名 PUT → commit；失败时由调用方降级 upsert。
+ * 注意：GCS 成功响应多为空 body，禁止对 PUT Response 调 .json()。
  */
 export async function uploadManhuaCloudDraftViaGcsDirect(opts: {
   userId: number;
@@ -322,28 +336,46 @@ export async function uploadManhuaCloudDraftViaGcsDirect(opts: {
     payload: opts.payload,
   });
   try {
-    const prepared = await opts.prepare();
+    let prepared: {
+      uploadUrl: string;
+      requiredHeaders?: Record<string, string>;
+    };
+    try {
+      prepared = await opts.prepare();
+    } catch (e) {
+      return { ok: false, error: formatCloudDraftDirectError(e) };
+    }
+    const uploadUrl = String(prepared?.uploadUrl || "").trim();
+    if (!/^https:\/\//i.test(uploadUrl)) {
+      return { ok: false, error: "云草稿上传地址无效" };
+    }
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       ...(prepared.requiredHeaders || {}),
     };
-    const putRes = await fetch(prepared.uploadUrl, {
+    const putRes = await fetch(uploadUrl, {
       method: "PUT",
       headers,
       body,
     });
+    // 必须消费 body（常为空），且绝不用 .json()
+    await putRes.text().catch(() => "");
     if (!putRes.ok) {
       return {
         ok: false,
         error: `直传失败 ${putRes.status}`,
       };
     }
-    await opts.commit();
+    try {
+      await opts.commit();
+    } catch (e) {
+      return { ok: false, error: formatCloudDraftDirectError(e) };
+    }
     return { ok: true };
   } catch (e) {
     return {
       ok: false,
-      error: e instanceof Error ? e.message : "直传失败",
+      error: formatCloudDraftDirectError(e),
     };
   }
 }
