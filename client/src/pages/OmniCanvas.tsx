@@ -1684,6 +1684,8 @@ export default function OmniCanvas() {
   ]);
 
   const optimizeCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
+  const canvasTerraVisionMutation = trpc.mvAnalysis.canvasTerraVisionMarkdown.useMutation();
+  const canvasTerraVideoReverseMutation = trpc.mvAnalysis.canvasTerraVideoReverse.useMutation();
   const expandWriterMutation = trpc.mvAnalysis.expandManhuaWriterPack.useMutation();
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
 
@@ -1889,6 +1891,23 @@ export default function OmniCanvas() {
           ? new Error(formatManhuaFactoryUserError(lastErr.message))
           : new Error("文案生成失败，请稍后重试");
       },
+      canvasTerraVisionMarkdown: async ({ prompt, images }) => {
+        const res = await canvasTerraVisionMutation.mutateAsync({ prompt, images });
+        const md = String(res.markdown || "").trim();
+        if (!md) throw new Error("多图分析返回为空");
+        return md;
+      },
+      canvasTerraVideoReverse: async ({ userHint, images, outputMode, targetEngine }) => {
+        const res = await canvasTerraVideoReverseMutation.mutateAsync({
+          userHint,
+          images,
+          outputMode,
+          targetEngine,
+        });
+        const md = String(res.markdown || "").trim();
+        if (!md) throw new Error("视频反推返回为空");
+        return md;
+      },
       uploadImageFile: async (file) => {
         const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
         const asset = await uploadOneCanvasAsset({
@@ -1901,6 +1920,8 @@ export default function OmniCanvas() {
     }),
     [
       optimizeCopyMutation,
+      canvasTerraVisionMutation,
+      canvasTerraVideoReverseMutation,
       getSignedUrlMutation,
       debugMode,
       pushDebug,

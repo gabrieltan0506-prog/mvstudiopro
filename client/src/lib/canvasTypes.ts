@@ -4,7 +4,7 @@ import type { ManhuaClipQualityReport } from "@shared/manhuaClipQuality";
 
 export type CanvasBlockKind = "text" | "image" | "video" | "copy_organize" | "video_reverse";
 
-/** 画布文本主力：GPT-5.6 Sol / Terra；Gemini 仅保留选项（知识截止约 2025-01-01，偏旧）。 */
+/** 画布文本主力：GPT-5.6 Terra；Sol 可选；Gemini 仅 fallback/旧选项。 */
 export type CanvasTextModel =
   | "gpt-5.6-sol"
   | "gpt-5.6-terra"
@@ -12,11 +12,11 @@ export type CanvasTextModel =
   | "gpt-5.5"
   | "gpt-5.4";
 
-export const DEFAULT_CANVAS_TEXT_MODEL: CanvasTextModel = "gpt-5.6-sol";
+export const DEFAULT_CANVAS_TEXT_MODEL: CanvasTextModel = "gpt-5.6-terra";
 
 const CANVAS_TEXT_MODEL_IDS: CanvasTextModel[] = [
-  "gpt-5.6-sol",
   "gpt-5.6-terra",
+  "gpt-5.6-sol",
   "gemini-3.1-pro",
   "gpt-5.5",
   "gpt-5.4",
@@ -202,9 +202,9 @@ export const CANVAS_KIND_META: Record<
 };
 
 export const TEXT_MODEL_OPTIONS: Array<{ id: CanvasTextModel; label: string }> = [
-  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol（主力）" },
-  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-  { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro（旧）" },
+  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra（主力）" },
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+  { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro（备用）" },
   { id: "gpt-5.5", label: "GPT 5.5" },
   { id: "gpt-5.4", label: "GPT 5.4" },
 ];
@@ -223,12 +223,11 @@ export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }>
 /** 工厂主成片默认；与 shared MANHUA_FACTORY_DEFAULT_VIDEO_MODEL 对齐 */
 export const DEFAULT_CANVAS_VIDEO_MODEL: CanvasVideoModel = "seedance-2.0-fast";
 
+/** 自由画布「添加节点」：不露出 text/copy_organize（工厂内部仍用 text 跑剧本） */
 export const SPAWN_KIND_OPTIONS: Array<{ kind: CanvasBlockKind; label: string; hint: string }> = [
-  { kind: "text", label: "文本生成", hint: "脚本、广告词、品牌文案" },
   { kind: "image", label: "图片生成", hint: "JSON 导演中台→生图" },
   { kind: "video", label: "视频生成", hint: "成片引擎 · 多图参考 + 运镜/动作/对白" },
   { kind: "video_reverse", label: "编导分镜/反推", hint: "有片拉片 / 无片按节拍补全" },
-  { kind: "copy_organize", label: "整理文案", hint: "结构化发布稿" },
 ];
 
 export function makeCanvasBlockId(prefix = "block") {

@@ -553,27 +553,21 @@ export default function FreeformCanvas({
   );
 
   const openToolbarUpload = useCallback(() => {
-    const id = spawnFromToolbar("text");
+    const id = spawnFromToolbar("image");
     pendingUploadBlockIdRef.current = id;
     window.setTimeout(() => toolbarFileInputRef.current?.click(), 0);
   }, [spawnFromToolbar]);
 
-  /** 自由画布：一键铺「文案 → 静帧 → 成片」可读链 */
-  const spawnTextImageVideoChain = useCallback(() => {
+  /** 自由画布：一键铺「静帧 → 成片」可读链（不再铺文本节点） */
+  const spawnImageVideoChain = useCallback(() => {
     setToolbarMenu(null);
-    const text = defaultCanvasBlock("text", 80, 120);
-    text.id = makeCanvasBlockId("text");
-    text.prompt = "写一段可拍画面（场景、人物动作、运镜）";
-    const image = defaultCanvasBlock("image", 420, 120, text.id);
+    const image = defaultCanvasBlock("image", 120, 120);
     image.id = makeCanvasBlockId("image");
-    const video = defaultCanvasBlock("video", 760, 120, image.id);
+    image.prompt = "可拍画面：场景、人物动作、运镜清晰";
+    const video = defaultCanvasBlock("video", 520, 120, image.id);
     video.id = makeCanvasBlockId("video");
-    onBlocksChange((prev) => [...prev, text, image, video]);
-    onEdgesChange([
-      ...edges,
-      { fromId: text.id, toId: image.id },
-      { fromId: image.id, toId: video.id },
-    ]);
+    onBlocksChange((prev) => [...prev, image, video]);
+    onEdgesChange([...edges, { fromId: image.id, toId: video.id }]);
     setSelectedId(image.id);
   }, [edges, onBlocksChange, onEdgesChange]);
 
@@ -978,14 +972,24 @@ export default function FreeformCanvas({
                     onChange={(e) => patchOne(block.id, { kind: e.target.value as CanvasBlockKind })}
                     className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
                   >
-                    {(mediaOnly
-                      ? spawnOptions
-                      : SPAWN_KIND_OPTIONS
-                    ).map((o) => (
-                      <option key={o.kind} value={o.kind}>
-                        {o.label}
-                      </option>
-                    ))}
+                    {(() => {
+                      const base = mediaOnly ? spawnOptions : SPAWN_KIND_OPTIONS;
+                      const kinds = base.some((o) => o.kind === block.kind)
+                        ? base
+                        : [
+                            {
+                              kind: block.kind,
+                              label: CANVAS_KIND_META[block.kind].label,
+                              hint: CANVAS_KIND_META[block.kind].hint,
+                            },
+                            ...base,
+                          ];
+                      return kinds.map((o) => (
+                        <option key={o.kind} value={o.kind}>
+                          {o.label}
+                        </option>
+                      ));
+                    })()}
                   </select>
                   <button
                     type="button"
@@ -1784,12 +1788,12 @@ export default function FreeformCanvas({
             <button
               type="button"
               className="flex w-full items-start gap-2 rounded-xl px-2 py-2 text-left hover:bg-white/10"
-              onClick={spawnTextImageVideoChain}
+              onClick={spawnImageVideoChain}
             >
               <Clapperboard className="mt-0.5 h-4 w-4 shrink-0 text-fuchsia-300" />
               <div>
-                <div className="text-sm font-medium text-white">文案→静帧→成片</div>
-                <div className="text-[11px] text-white/45">一键铺三条链，左到右跑通</div>
+                <div className="text-sm font-medium text-white">静帧→成片</div>
+                <div className="text-[11px] text-white/45">一键铺图片与视频链</div>
               </div>
             </button>
             <button

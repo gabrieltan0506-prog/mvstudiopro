@@ -7987,6 +7987,83 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
       }),
 
+    /** Canvas 多图视觉：Terra official_only；客户端失败再回退 Gemini */
+    canvasTerraVisionMarkdown: protectedProcedure
+      .input(
+        z.object({
+          prompt: z.string().min(1).max(12000),
+          images: z
+            .array(
+              z.object({
+                url: z.string().min(8).max(6_000_000),
+                mimeType: z.string().max(80).optional(),
+              }),
+            )
+            .min(1)
+            .max(16),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        try {
+          const { runCanvasTerraVisionMarkdown } = await import("./services/canvasTerraMultimodal");
+          const result = await runCanvasTerraVisionMarkdown(input);
+          return { ok: true as const, ...result };
+        } catch (error) {
+          const { CANVAS_TERRA_MULTIMODAL_CAPACITY_MESSAGE } = await import(
+            "./services/canvasTerraMultimodal.js"
+          );
+          const raw = error instanceof Error ? error.message : String(error);
+          throw new TRPCError({
+            code: "SERVICE_UNAVAILABLE",
+            message: /算力|OPENAI|api\.openai|缺少/.test(raw)
+              ? CANVAS_TERRA_MULTIMODAL_CAPACITY_MESSAGE
+              : raw.slice(0, 200) || CANVAS_TERRA_MULTIMODAL_CAPACITY_MESSAGE,
+          });
+        }
+      }),
+
+    /** Canvas 有帧反推：Terra official_only；客户端失败再回退 Gemini */
+    canvasTerraVideoReverse: protectedProcedure
+      .input(
+        z.object({
+          userHint: z.string().max(8000).optional(),
+          images: z
+            .array(
+              z.object({
+                url: z.string().min(8).max(6_000_000),
+                mimeType: z.string().max(80).optional(),
+              }),
+            )
+            .min(1)
+            .max(24),
+          outputMode: z.enum(["zh", "en", "compact"]).optional(),
+          targetEngine: z.string().max(40).optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        try {
+          const { runCanvasTerraVideoReverse } = await import("./services/canvasTerraMultimodal");
+          const result = await runCanvasTerraVideoReverse({
+            userHint: input.userHint || "",
+            images: input.images,
+            outputMode: input.outputMode,
+            targetEngine: input.targetEngine,
+          });
+          return { ok: true as const, ...result };
+        } catch (error) {
+          const { CANVAS_TERRA_MULTIMODAL_CAPACITY_MESSAGE } = await import(
+            "./services/canvasTerraMultimodal.js"
+          );
+          const raw = error instanceof Error ? error.message : String(error);
+          throw new TRPCError({
+            code: "SERVICE_UNAVAILABLE",
+            message: /算力|OPENAI|api\.openai|缺少/.test(raw)
+              ? CANVAS_TERRA_MULTIMODAL_CAPACITY_MESSAGE
+              : raw.slice(0, 200) || CANVAS_TERRA_MULTIMODAL_CAPACITY_MESSAGE,
+          });
+        }
+      }),
+
     getPlatformContent: publicProcedure
       .input(z.object({
         context: z.string().optional(),
