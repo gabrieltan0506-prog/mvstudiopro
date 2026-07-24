@@ -17,10 +17,10 @@ export type ManhuaWorkbenchActionGateInput = {
   >;
   assetScriptStaleHintZh?: string | null;
   factoryBusy?: boolean;
-  /** 成片类动作额外门槛 */
+  /** 成片类动作额外门槛（可拍表/导戏单等） */
   videoBurnHintZh?: string | null;
+  /** 本集静帧张数齐且每张均为 edit+垫图（垫图锁） */
   stillsReadyEnough?: boolean;
-  visualBriefConfirmed?: boolean;
 };
 
 /** 返回 null 表示可跑；非空为用户可见原因 */
@@ -55,16 +55,29 @@ export function explainManhuaKeyartActionGate(
   return null;
 }
 
+/**
+ * 成片门：静帧已垫图锁齐时，不再回卡完整资产设定门。
+ * 垫图锁 = imageMode=edit + refImageUrl，不是查 @编号文案。
+ */
 export function explainManhuaClipActionGate(
   input: ManhuaWorkbenchActionGateInput,
 ): string | null {
-  const base = explainManhuaKeyartActionGate(input);
+  if (input.factoryBusy) return "当前正在生成，请稍候或先点「中断生成」";
+  if (!input.outlineComplete) return "还不能生成成片：请先确认剧本大纲";
+
+  if (input.stillsReadyEnough) {
+    if (input.videoBurnHintZh) return `还不能生成成片：${input.videoBurnHintZh}`;
+    return null;
+  }
+
+  const base = explainManhuaKeyartActionGate({
+    ...input,
+    videoBurnHintZh: null,
+    stillsReadyEnough: false,
+  });
   if (base) return base.replace(/关键静帧/g, "成片");
   if (input.videoBurnHintZh) return `还不能生成成片：${input.videoBurnHintZh}`;
-  if (!input.stillsReadyEnough && !input.visualBriefConfirmed) {
-    return "还不能生成成片：请先点「生成关键静帧」出齐本集静帧";
-  }
-  return null;
+  return "还不能生成成片：请先点「生成关键静帧」出齐本集静帧（须垫图改图，不能只纯文生）";
 }
 
 export function explainManhuaEnterStoryboardGate(
@@ -77,6 +90,5 @@ export function explainManhuaEnterStoryboardGate(
     ...input,
     videoBurnHintZh: null,
     stillsReadyEnough: true,
-    visualBriefConfirmed: true,
   });
 }
