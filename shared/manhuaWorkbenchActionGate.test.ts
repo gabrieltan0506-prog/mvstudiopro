@@ -48,8 +48,33 @@ describe("manhuaWorkbenchActionGate", () => {
       outlineComplete: true,
       assetGate: readyGate,
       stillsReadyEnough: false,
-      visualBriefConfirmed: false,
     });
-    expect(msg).toMatch(/关键静帧/);
+    expect(msg).toMatch(/关键静帧|垫图/);
+  });
+
+  it("clip gate skips full assetGate when stills already pixel-locked", () => {
+    const msg = explainManhuaClipActionGate({
+      outlineComplete: true,
+      assetGate: {
+        ...readyGate,
+        castLocked: false,
+        castImagesReady: false,
+        sceneLocked: false,
+        sceneImageReady: false,
+      },
+      assetScriptStaleHintZh: "剧本人物已变",
+      stillsReadyEnough: true,
+    });
+    expect(msg).toBeNull();
+  });
+
+  it("clip gate still surfaces burn hint when stills ready", () => {
+    const msg = explainManhuaClipActionGate({
+      outlineComplete: true,
+      assetGate: readyGate,
+      stillsReadyEnough: true,
+      videoBurnHintZh: "请先确认按秒导戏单",
+    });
+    expect(msg).toMatch(/导戏单/);
   });
 });

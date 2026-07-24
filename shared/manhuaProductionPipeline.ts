@@ -57,14 +57,13 @@ export function resolveManhuaProductionActiveStep(
   return "topic";
 }
 
-/** 是否允许烧视频（默认禁止：须资产+可拍表+静帧+导戏单） */
+/**
+ * 是否允许烧视频。
+ * 静帧已垫图锁齐 + 导戏单就绪即可出片（含单段试片）；
+ * 资产设定满锁 / 可拍表满 10 段为理想全集路径，不再硬拦已锁静帧的出片。
+ */
 export function canManhuaBurnVideo(p: ManhuaProductionProgress): boolean {
-  return (
-    p.assetsLocked &&
-    p.segmentPlanReady &&
-    p.keyartsReady &&
-    p.cueSheetReady
-  );
+  return Boolean(p.keyartsReady && p.cueSheetReady);
 }
 
 export function buildManhuaProductionStepStates(

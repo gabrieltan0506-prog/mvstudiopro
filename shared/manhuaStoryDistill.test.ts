@@ -61,7 +61,7 @@ describe("manhuaStoryDistill", () => {
     expect(formatManhuaScreenplayEnginePromptBlock()).toContain("故事发动机");
   });
 
-  it("locks video until assets+plan+keyart+cue ready", () => {
+  it("locks video until keyart+cue ready; allows burn without full asset/10-seg lock", () => {
     const locked = canManhuaBurnVideo({
       hasTopic: true,
       hasScreenplay: true,
@@ -72,6 +72,17 @@ describe("manhuaStoryDistill", () => {
       hasClip: false,
     });
     expect(locked).toBe(false);
+    expect(
+      canManhuaBurnVideo({
+        hasTopic: true,
+        hasScreenplay: true,
+        assetsLocked: false,
+        segmentPlanReady: false,
+        keyartsReady: true,
+        cueSheetReady: true,
+        hasClip: false,
+      }),
+    ).toBe(true);
     const steps = buildManhuaProductionStepStates({
       hasTopic: true,
       hasScreenplay: true,

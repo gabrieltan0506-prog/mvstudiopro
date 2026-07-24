@@ -424,10 +424,8 @@ export default function ManhuaScriptWorkbench({
   const activeArtStyleId: ManhuaArtStyleId =
     artStyleId === "photoreal" ? "photoreal" : "cg_drama";
   const [shotIndex, setShotIndex] = useState(0);
-  const [visualBriefConfirmed, setVisualBriefConfirmed] = useState(false);
   const [clipPromptReviewOpen, setClipPromptReviewOpen] = useState(false);
   useEffect(() => {
-    setVisualBriefConfirmed(false);
     setClipPromptReviewOpen(false);
   }, [focusEpisode, topic, seriesTitle]);
   /** 中栏：分镜 | 运镜画板 | 一体参考板 | 粗剪 */
@@ -588,10 +586,6 @@ export default function ManhuaScriptWorkbench({
     minCount: shots.length > 0 ? shots.length : 1,
   });
   const stillsReadyEnough = stillsCountReady && keyartsPixelLocked;
-
-  useEffect(() => {
-    if (stillsReadyEnough) setVisualBriefConfirmed(true);
-  }, [stillsReadyEnough]);
 
   const totalSec = workbenchShotTotalSec(shots, episodeVideoModel);
 
@@ -1062,17 +1056,13 @@ export default function ManhuaScriptWorkbench({
   const videoBurnUnlocked = canManhuaBurnVideo(productionProgress);
   const videoBurnHint = videoBurnUnlocked
     ? null
-    : !productionProgress.assetsLocked
-      ? "请先锁定资产并出齐参考图"
-      : !productionProgress.segmentPlanReady
-        ? `可拍表不足：至少 ${MANHUA_SEGMENT_MIN} 段`
-        : !stillsCountReady
-          ? `请先出齐关键静帧（每段至少 ${MANHUA_KEYARTS_PER_SEGMENT_MIN} 张）`
-          : !keyartsPixelLocked
-            ? "关键静帧须带资产垫图改图（见 @角色/@场景/@道具 编号）后才能出成片"
-            : !productionProgress.keyartsReady
-              ? "请先完成带资产锁的关键静帧"
-              : "请先确认按秒导戏单（静帧锁定后自动生成）";
+    : !stillsCountReady
+      ? `请先出齐关键静帧（每段至少 ${MANHUA_KEYARTS_PER_SEGMENT_MIN} 张）`
+      : !keyartsPixelLocked
+        ? "关键静帧须垫图改图锁定（改图模式 + 定妆/场景参考图），纯文生成的图不能出成片"
+        : !productionProgress.keyartsReady
+          ? "请先完成垫图改图锁定的关键静帧"
+          : "请先确认按秒导戏单（静帧锁定后自动生成）";
 
   /** 门槛只用于点击时报错，禁止拿来把按钮静默变灰 */
   const keyartGateHint = explainManhuaKeyartActionGate({
@@ -1088,7 +1078,6 @@ export default function ManhuaScriptWorkbench({
     factoryBusy,
     videoBurnHintZh: videoBurnHint,
     stillsReadyEnough,
-    visualBriefConfirmed,
   });
   const fragmentGateHint = keyartGateHint;
   const refuseIfBlocked = (hint: string | null): boolean => {
@@ -1096,22 +1085,34 @@ export default function ManhuaScriptWorkbench({
     toast.error("还不能跑", { description: hint });
     return true;
   };
-  /** 审阅提示词：静帧齐+垫图锁即可；不套用「满 10 段才烧片」门槛 */
-  const clipPromptReviewUnlocked = Boolean(stillsCountReady && keyartsPixelLocked);
+  /**
+   * 审阅提示词（阿硕/OiiOii：有静帧图 → 铺段节点到画布看提示词）。
+   * 只卡「有没有图」；垫图锁只拦真正出片，不拦审阅与画布展示。
+   */
+  const clipPromptReviewUnlocked = episodeStillCount > 0;
   const openClipPromptReview = () => {
-    if (!stillsCountReady) {
-      toast.error("还不能跑", { description: "请先出齐关键静帧" });
+    if (episodeStillCount <= 0) {
+      toast.error("还不能跑", { description: "请先出关键静帧，有图后再审阅提示词" });
       return;
     }
-    if (!keyartsPixelLocked) {
-      toast.error("还不能跑", {
-        description: "关键静帧须带资产垫图锁后才能审阅成片提示词",
-      });
-      return;
-    }
-    onEnsureSegmentClips?.();
-    setClipPromptReviewOpen(true);
     if (activePhase !== "storyboard") setActivePhase("storyboard");
+    // 先铺段成片节点并竖排，再开审阅；主战场在画布，不只在工作台折叠区
+    onEnsureSegmentClips?.();
+    onLayoutReadableChain?.();
+    setClipPromptReviewOpen(true);
+    const focusId =
+      episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === activeSegNo)?.id ||
+      episodeClips[0]?.id ||
+      episodeKeyarts.find((b) => mediaUrl(b))?.id ||
+      "";
+    if (focusId) {
+      focusBlockAndOpenCanvas(focusId);
+    } else {
+      openCanvasDock();
+    }
+    toast.message("已在画布铺段提示词节点", {
+      description: "请直接在画布查看/改提示词；出片仍须垫图改图锁定",
+    });
   };
   const runGenerateFragment = () => {
     if (refuseIfBlocked(clipGateHint)) return;
@@ -1307,7 +1308,6 @@ export default function ManhuaScriptWorkbench({
   const runGenerateAllKeyarts = () => {
     if (refuseIfBlocked(keyartGateHint)) return;
     setActivePhase("storyboard");
-    setVisualBriefConfirmed(true);
     onGenerateAllEpisodeKeyarts?.();
   };
 
@@ -1463,8 +1463,8 @@ export default function ManhuaScriptWorkbench({
                 className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45"
                 title={
                   !clipPromptReviewUnlocked
-                    ? "静帧齐且垫图锁通过后可审阅各段成片提示词"
-                    : "先审阅段成片提示词，再按段生成"
+                    ? "先出关键静帧；有图即可审阅并在画布展示段提示词"
+                    : "铺到画布审阅段提示词；确认后再出片"
                 }
               >
                 审阅成片提示词
@@ -2191,7 +2191,7 @@ export default function ManhuaScriptWorkbench({
                 >
                   <div className="text-[11px] font-semibold text-cyan-50/90">资产锁编号</div>
                   <p className="mt-0.5 text-[10px] leading-4 text-white/45">
-                    静帧改图会按这些编号对照垫图/融图；定妆特写格自动进全局道具号（跨集同号）。没有编号垫图的静帧不能出成片。
+                    @角色/@场景/@道具 供导戏与对照表使用。出片真正卡的是「垫图锁」：静帧须改图模式并挂定妆/场景参考图；只有成图、未垫图改图不能出成片。
                   </p>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {assetLockRegistry.slots.map((s) => (
@@ -3073,9 +3073,7 @@ export default function ManhuaScriptWorkbench({
               onApplySync={onAdvisorApplySync}
               onUpdateBeatsText={onAdvisorUpdateBeatsText}
               onUpdateStoryText={onAdvisorUpdateStoryText}
-              onConfirmVisualBrief={() => setVisualBriefConfirmed(true)}
               onRequestKeyarts={() => {
-                setVisualBriefConfirmed(true);
                 onGenerateAllEpisodeKeyarts?.();
               }}
               onRequestClips={(shotIndexes) => {
@@ -3392,13 +3390,18 @@ export default function ManhuaScriptWorkbench({
 
               <div
                 data-manhua-visual-brief-gate
-                data-manhua-brief-confirmed={visualBriefConfirmed ? "true" : "false"}
+                data-manhua-stills-ready={stillsReadyEnough ? "true" : "false"}
                 className="mt-2 shrink-0 rounded-lg border border-cyan-400/30 bg-cyan-500/[0.07] px-2.5 py-2"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-[11px] font-semibold text-cyan-50/90">视觉简报（出图前确认）</div>
+                  <div className="text-[11px] font-semibold text-cyan-50/90">视觉简报</div>
                   <span className="text-[9px] text-white/40">
-                    {visualBriefConfirmed ? "已确认" : "未确认"} · 静帧 {episodeStillCount}/
+                    {stillsReadyEnough
+                      ? "静帧已垫图锁"
+                      : keyartsPixelLocked
+                        ? "垫图锁过·张数未齐"
+                        : "待垫图改图"}{" "}
+                    · 静帧 {episodeStillCount}/
                     {Math.max(episodeKeyarts.length, shots.length, 1)}
                     {episodeKeyarts.some((b) => b.status === "error")
                       ? ` · 失败 ${episodeKeyarts.filter((b) => b.status === "error").length}`
@@ -3433,15 +3436,6 @@ export default function ManhuaScriptWorkbench({
                   ) : null}
                 </div>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    data-manhua-action="confirm-visual-brief"
-                    disabled={factoryBusy}
-                    onClick={() => setVisualBriefConfirmed(true)}
-                    className="rounded-md border border-cyan-300/40 bg-cyan-500/20 px-2 py-1 text-[10px] font-semibold text-cyan-50 disabled:opacity-40"
-                  >
-                    确认简报
-                  </button>
                   {onGenerateAllEpisodeKeyarts ? (
                     <button
                       type="button"
@@ -3507,7 +3501,7 @@ export default function ManhuaScriptWorkbench({
                           }`}
                           title={
                             keyartUnlocked
-                              ? "有图但未带资产垫图锁，不能直接出成片；请重出该镜静帧"
+                              ? "有图但未垫图改图（缺参考图或非改图模式），不能出成片；请重出该镜静帧"
                               : undefined
                           }
                         >
@@ -4333,7 +4327,7 @@ export default function ManhuaScriptWorkbench({
                     className="block w-full text-left"
                     title={
                       stillUnlocked
-                        ? "有图但未带资产垫图锁，不能直接出成片；请重出该镜静帧"
+                        ? "有图但未垫图改图（缺参考图或非改图模式），不能出成片；请重出该镜静帧"
                         : undefined
                     }
                   >

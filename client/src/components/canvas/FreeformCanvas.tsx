@@ -1076,7 +1076,7 @@ export default function FreeformCanvas({
                         </span>
                       </>
                     ) : (
-                      <span className="text-amber-200/85">未垫图锁资产 · 不可出成片</span>
+                      <span className="text-amber-200/85">未垫图改图（须改图+参考图）· 不可出成片</span>
                     )}
                   </div>
                 ) : null}
