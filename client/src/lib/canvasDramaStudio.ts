@@ -177,7 +177,10 @@ export function collectManhuaEpisodeSegmentPromptsForVoiceGate(
       if (p.length >= prev.length) keyartBySeg.set(local, p);
     }
   }
-  const segs = new Set<number>([...clipBySeg.keys(), ...keyartBySeg.keys()]);
+  const segs = new Set<number>([
+    ...Array.from(clipBySeg.keys()),
+    ...Array.from(keyartBySeg.keys()),
+  ]);
   return Array.from(segs)
     .sort((a, b) => a - b)
     .map((localSegmentIndex) => ({

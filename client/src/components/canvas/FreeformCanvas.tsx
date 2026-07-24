@@ -8,7 +8,6 @@ import {
   CANVAS_BLOCK_MIN_WIDTH,
   CANVAS_KIND_META,
   CANVAS_UPLOAD_ACCEPT,
-  CANVAS_UPLOAD_FORMAT_HINT,
   collectDocumentAssets,
   collectUpstreamHandoff,
   collectUpstreamTexts,
@@ -48,15 +47,12 @@ import {
   parseManhuaCanvasAssetAtTag,
   sanitizeManhuaClipPromptForUi,
 } from "@shared/manhuaAssetLockRegistry";
-import { parseManhuaSheetPropSubTagsFromPrompt } from "@shared/manhuaSheetPropSubTags";
 import {
   evaluateManhuaCrossSegmentVoiceGate,
   type ManhuaCharacterVoiceLock,
 } from "@shared/manhuaCharacterVoiceLock";
 import { resolveClipLocalSegmentIndex } from "@shared/manhuaScriptWorkbench";
-import { resolveOmniMaterialUrl, uploadFileToSignedUrl } from "@/lib/omniCanvasApi";
 import {
-  formatManhuaClipDirectorCueFaceLine,
   parseManhuaClipDirectorCardSummary,
 } from "@shared/manhuaClipDirectorCard";
 import { CanvasImageEditMaskPainter } from "@/components/canvas/CanvasImageEditMaskPainter";
@@ -68,7 +64,6 @@ import {
   Sparkles,
   Upload,
   X,
-  FileText,
   CheckCircle2,
   XCircle,
 } from "lucide-react";
@@ -129,6 +124,25 @@ function assetKindLabel(kind: ReturnType<typeof inferCanvasAssetKindFromFileName
   return "图片";
 }
 
+/** 关键静帧 / 定妆 / 场景 / 道具：画布只展示图 + ID，不重复整段提示词 */
+function isManhuaAssetVisualBlock(block: CanvasBlock): boolean {
+  return /^(keyart|charsheet|sceneplate|propplate|propsheet|prop)-/i.test(
+    String(block.id || ""),
+  );
+}
+
+function fileNameFromUrl(url: string | null | undefined): string {
+  const raw = String(url || "").trim();
+  if (!raw) return "";
+  try {
+    const path = new URL(raw, "https://local.invalid").pathname;
+    const base = path.split("/").pop() || "";
+    return decodeURIComponent(base).slice(0, 48);
+  } catch {
+    return raw.slice(0, 48);
+  }
+}
+
 function CanvasBlockUploadBanner({ block }: { block: CanvasBlock }) {
   const phase = block.uploadPhase ?? "idle";
   const message = block.uploadStatusMessage?.trim();
@@ -172,6 +186,10 @@ function CanvasBlockUploadBanner({ block }: { block: CanvasBlock }) {
   return null;
 }
 
+/**
+ * 右侧窄栏：上传只留按钮区对应的文件名列表 + 紧凑生成结果。
+ * 不再占半屏空预览，空间留给左侧提示词。
+ */
 function CanvasBlockPreviewPanel({
   block,
   isUploading,
@@ -192,134 +210,163 @@ function CanvasBlockPreviewPanel({
     Boolean(block.outputText?.trim()) ||
     displayOutputs.length > 0 ||
     (block.kind === "video" && Boolean(block.outputUrl));
-  const hasUploadContent = uploading || assets.length > 0 || failures.length > 0;
   const progressPct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto">
+    <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-auto">
       {uploading ? (
-        <div className="flex min-h-[180px] flex-1 flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-amber-400/45 bg-amber-500/15 px-4 py-6 text-center">
-          <LoaderCircle className="h-10 w-10 animate-spin text-amber-100" aria-hidden />
-          <div className="text-sm font-semibold text-amber-50">
-            {message || (total > 0 ? `正在上传 ${done}/${total}` : "正在上传…")}
+        <div className="rounded-lg border border-amber-400/35 bg-amber-500/10 px-2 py-1.5">
+          <div className="flex items-center gap-1.5 text-[10px] font-medium text-amber-50">
+            <LoaderCircle className="h-3 w-3 shrink-0 animate-spin" aria-hidden />
+            <span className="truncate">
+              {message || (total > 0 ? `上传中 ${done}/${total}` : "上传中…")}
+            </span>
           </div>
           {total > 0 ? (
-            <div className="w-full max-w-[200px]">
-              <div className="h-2 overflow-hidden rounded-full bg-amber-950/60">
-                <div
-                  className="h-full rounded-full bg-amber-300 transition-all duration-300"
-                  style={{ width: `${progressPct}%` }}
-                />
-              </div>
-              <div className="mt-1 text-[10px] text-amber-200/80">{progressPct}%</div>
+            <div className="mt-1 h-1 overflow-hidden rounded-full bg-amber-950/50">
+              <div
+                className="h-full rounded-full bg-amber-300 transition-all"
+                style={{ width: `${progressPct}%` }}
+              />
             </div>
           ) : null}
         </div>
       ) : null}
 
       {!uploading && failures.length > 0 ? (
-        <div className="space-y-1.5 rounded-xl border border-red-400/35 bg-red-500/15 p-2.5">
-          <div className="text-[11px] font-semibold text-red-100">上传失败</div>
+        <div className="space-y-1 rounded-lg border border-red-400/30 bg-red-500/10 px-2 py-1.5">
           {failures.map((fail) => (
-            <div key={`preview-fail-${fail.fileName}`} className="text-[10px] leading-5 text-red-50/95">
-              <span className="font-medium">{fail.fileName}</span>
-              <span className="text-red-200/90"> · {fail.error}</span>
+            <div key={`preview-fail-${fail.fileName}`} className="truncate text-[10px] text-red-50/95">
+              {fail.fileName}
+              <span className="text-red-200/80"> · 失败</span>
             </div>
           ))}
         </div>
       ) : null}
 
       {!uploading && assets.length > 0 ? (
-        <div className="space-y-2 rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-[11px] font-semibold text-emerald-100">已上传素材</div>
-            <div className="rounded-full bg-emerald-400/20 px-2 py-0.5 text-[10px] text-emerald-100">
-              {assets.length} 个
-            </div>
-          </div>
-          <div className="space-y-2">
-            {assets.map((asset) => {
-              const kind = asset.kind ?? inferCanvasAssetKindFromFileName(asset.fileName) ?? "image";
-              const previewSrc = asset.previewUrl || asset.url;
-              return (
-                <div
-                  key={asset.id}
-                  className="overflow-hidden rounded-lg border border-emerald-400/20 bg-black/40"
-                >
-                  {kind === "image" ? (
-                    <img
-                      src={previewSrc}
-                      alt={asset.fileName}
-                      className="max-h-[180px] w-full bg-black/50 object-contain"
-                    />
-                  ) : kind === "video" ? (
-                    <video
-                      src={previewSrc}
-                      controls
-                      playsInline
-                      className="max-h-[180px] w-full bg-black"
-                    />
-                  ) : (
-                    <div className="flex items-center gap-3 px-3 py-5">
-                      <FileText className="h-9 w-9 shrink-0 text-amber-200" aria-hidden />
-                      <div className="min-w-0">
-                        <div className="truncate text-[12px] font-medium text-white/95">{asset.fileName}</div>
-                        <div className="text-[10px] text-amber-200/80">文档 · 已上传成功</div>
-                      </div>
-                    </div>
-                  )}
-                  <div className="border-t border-white/10 bg-black/30 px-2 py-1 text-[10px] text-white/65">
-                    <span className="truncate">{asset.fileName}</span>
-                    <span className="text-emerald-300/90"> · 上传成功</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {(block.kind === "image" || block.kind === "video" || block.kind === "video_reverse") &&
-          !hasGeneratedOutput ? (
-            <p className="text-center text-[10px] text-emerald-200/90">素材已就绪，点击顶部「运行」开始生成</p>
-          ) : null}
-        </div>
+        <ul className="space-y-1 rounded-lg border border-emerald-400/25 bg-emerald-500/10 px-2 py-1.5">
+          {assets.map((asset) => {
+            const kind = asset.kind ?? inferCanvasAssetKindFromFileName(asset.fileName) ?? "image";
+            return (
+              <li
+                key={asset.id}
+                className="flex min-w-0 items-start gap-1 text-[10px] leading-4 text-emerald-50/95"
+                title={asset.fileName}
+              >
+                <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-emerald-300" aria-hidden />
+                <span className="min-w-0 flex-1 break-all">
+                  {asset.fileName}
+                  <span className="text-emerald-200/70"> · {assetKindLabel(kind)}</span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
       ) : null}
 
       {block.status === "error" && block.error ? (
-        <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-2.5 py-2 text-[11px] text-red-100">
-          生成失败：{block.error}
+        <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-2 py-1.5 text-[10px] leading-4 text-red-100">
+          {block.error}
         </div>
       ) : null}
 
       {hasGeneratedOutput ? (
-        <div className="space-y-2">
-          <div className="text-[10px] uppercase tracking-wider text-white/40">生成结果</div>
+        <div className="space-y-1.5">
+          <div className="text-[9px] uppercase tracking-wider text-white/35">结果</div>
           {block.outputText ? (
-            <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-lg border border-white/10 bg-black/30 p-2 text-[11px] leading-5 text-white/85">
+            <pre className="max-h-24 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-black/30 p-1.5 text-[10px] leading-4 text-white/80">
               {block.outputText}
             </pre>
           ) : null}
           {block.kind === "image" && displayOutputs.length > 0 ? (
-            <div className={`grid gap-1.5 ${displayOutputs.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+            <div className={`grid gap-1 ${displayOutputs.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
               {displayOutputs.map((url, idx) => (
                 <img
                   key={`${url}-${idx}`}
                   src={url}
                   alt={`output-${idx + 1}`}
-                  className="max-h-[160px] w-full rounded-lg border border-white/10 object-contain"
+                  className="max-h-20 w-full rounded-md border border-white/10 object-cover"
                 />
               ))}
             </div>
           ) : null}
           {block.outputUrl && block.kind === "video" ? (
-            <video src={block.outputUrl} controls className="max-h-[180px] w-full rounded-lg border border-white/10" />
+            <div className="space-y-1">
+              <div className="truncate text-[10px] text-white/55" title={block.outputUrl}>
+                {fileNameFromUrl(block.outputUrl) || "成片已生成"}
+              </div>
+              <video
+                src={block.outputUrl}
+                controls
+                className="max-h-24 w-full rounded-md border border-white/10"
+              />
+            </div>
           ) : null}
         </div>
       ) : null}
 
-      {!uploading && !hasUploadContent && !hasGeneratedOutput && block.status !== "error" ? (
-        <div className="flex min-h-[180px] flex-1 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-white/15 bg-black/25 px-4 text-center">
-          <Upload className="h-9 w-9 text-white/25" aria-hidden />
-          <p className="text-xs font-medium text-white/45">上传后在此预览</p>
-          <p className="text-[10px] leading-5 text-white/30">左侧点「上传素材」· 支持图片 / 视频 / 文档</p>
+      {!uploading && assets.length === 0 && !hasGeneratedOutput && block.status !== "error" ? (
+        <p className="text-[10px] leading-4 text-white/30">上传后显示文件名</p>
+      ) : null}
+    </div>
+  );
+}
+
+/** 关键静帧 / 场景 / 道具 / 定妆：只留图 + ID */
+function CanvasAssetVisualBody({
+  block,
+  displayOutputs,
+}: {
+  block: CanvasBlock;
+  displayOutputs: string[];
+}) {
+  const assetAt = parseManhuaCanvasAssetAtTag(block.prompt);
+  const idChip =
+    assetAt ||
+    (String(block.id || "").match(/^(keyart|charsheet|sceneplate|propplate|propsheet|prop)-(.+)$/i)?.[0]
+      ? String(block.id)
+      : block.id);
+  const shortId = assetAt || String(block.id || "").replace(/^[a-z]+-/i, "").slice(0, 22);
+  const roleWall = String(block.id || "").startsWith("charsheet-")
+    ? "角色"
+    : String(block.id || "").startsWith("sceneplate-")
+      ? "场景"
+      : String(block.id || "").startsWith("keyart-")
+        ? "关键静帧"
+        : "道具";
+  const imgUrl =
+    displayOutputs[0] ||
+    block.outputUrl ||
+    block.refImageUrl ||
+    block.uploadedAssets.find((a) => (a.kind ?? "image") === "image")?.url ||
+    "";
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="rounded bg-violet-400/30 px-1.5 py-0.5 text-[9px] font-semibold text-violet-50">
+          {roleWall}
+        </span>
+        <span
+          className="rounded bg-cyan-500/25 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-cyan-50"
+          title={idChip}
+        >
+          {assetAt || shortId}
+        </span>
+      </div>
+      <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/40">
+        {imgUrl ? (
+          <img src={imgUrl} alt={shortId} className="h-full w-full object-contain" />
+        ) : (
+          <div className="flex h-full min-h-[120px] items-center justify-center text-[11px] text-white/35">
+            暂无图片
+          </div>
+        )}
+      </div>
+      {block.status === "error" && block.error ? (
+        <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-2 py-1 text-[10px] text-red-100">
+          {block.error}
         </div>
       ) : null}
     </div>
@@ -338,10 +385,11 @@ export default function FreeformCanvas({
   focusEpisode = null,
   spawnKinds,
   characterVoiceLocks = [],
-  onReplaceCharacterVoiceAudio,
+  onReplaceCharacterVoiceAudio: _onReplaceCharacterVoiceAudio,
   /** 嵌入工作台右栏时占满容器，禁止外层再套一层 overflow 双滚动 */
   fillContainer = false,
 }: FreeformCanvasProps) {
+  void _onReplaceCharacterVoiceAudio;
   const canvasRef = useRef<HTMLDivElement>(null);
   const toolbarFileInputRef = useRef<HTMLInputElement>(null);
   const pendingUploadBlockIdRef = useRef<string | null>(null);
@@ -933,9 +981,6 @@ export default function FreeformCanvas({
             const displayOutputs =
               block.outputUrls?.length ? block.outputUrls : block.outputUrl ? [block.outputUrl] : [];
             const isUploading = uploadBusyId === block.id;
-            const uploadLabel = isUploading
-              ? `上传中 ${uploadProgress?.blockId === block.id ? `${uploadProgress.done}/${uploadProgress.total}` : "…"}`
-              : "上传素材";
             return (
               <div
                 key={block.id}
@@ -1025,154 +1070,28 @@ export default function FreeformCanvas({
                 </div>
 
                 <CanvasBlockUploadBanner block={block} />
-                {(() => {
-                  const assetAt = parseManhuaCanvasAssetAtTag(block.prompt);
-                  const isAssetSheet =
-                    Boolean(assetAt) ||
-                    /^(charsheet|sceneplate|propplate|propsheet|prop)-/.test(
-                      String(block.id || ""),
-                    );
-                  if (!isAssetSheet) return null;
-                  const roleWall = String(block.id || "").startsWith("charsheet-")
-                    ? "角色墙"
-                    : String(block.id || "").startsWith("sceneplate-")
-                      ? "场景墙"
-                      : "道具墙";
-                  const labelFromPrompt =
-                    String(block.prompt || "").match(
-                      /【画布资产@】@(?:角色|场景|道具)\d+=([^\n]+)/,
-                    )?.[1] ||
-                    String(block.prompt || "")
-                      .split("\n")
-                      .find((ln) => ln.trim() && !ln.includes("【画布资产@】"))
-                      ?.trim()
-                      .slice(0, 18) ||
-                    "";
-                  const sheetPropSubs = String(block.id || "").startsWith("charsheet-")
-                    ? parseManhuaSheetPropSubTagsFromPrompt(block.prompt)
-                    : [];
-                  const voiceLock =
-                    String(block.id || "").startsWith("charsheet-") && assetAt
-                      ? characterVoiceLocks.find((v) => v.characterTag === assetAt)
-                      : undefined;
-                  return (
-                    <div className="space-y-1 border-b border-violet-400/25 bg-violet-500/[0.08] px-3 py-2 text-[10px] leading-4">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="rounded bg-violet-400/30 px-1.5 py-0.5 text-[9px] font-semibold text-violet-50">
-                          {roleWall}
-                        </span>
-                        <span className="rounded bg-cyan-500/25 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-cyan-50">
-                          {assetAt || "@待编号"}
-                        </span>
-                        {labelFromPrompt ? (
-                          <span className="truncate text-white/75">{labelFromPrompt}</span>
-                        ) : null}
-                      </div>
-                      {sheetPropSubs.length ? (
-                        <div className="flex flex-wrap gap-1">
-                          {sheetPropSubs.map((s) => (
-                            <span
-                              key={`${s.subTag}-${s.propTag}`}
-                              className="rounded border border-amber-300/35 bg-amber-500/15 px-1.5 py-0.5 font-mono text-[9px] text-amber-50/95"
-                              title={`${s.labelZh} · 跨集锁 ${s.propTag}`}
-                            >
-                              {s.subTag}
-                              <span className="mx-0.5 text-white/35">=</span>
-                              {s.propTag}
-                              <span className="ml-1 font-sans text-white/55">{s.labelZh}</span>
+                {isManhuaAssetVisualBlock(block) ? (
+                  <>
+                    {String(block.id || "").startsWith("keyart-") ? (
+                      <div className="border-b border-white/10 px-3 py-1 text-[10px] leading-4 text-white/65">
+                        {block.imageMode === "edit" && block.refImageUrl ? (
+                          <>
+                            <span className="font-semibold text-emerald-200/90">垫图锁</span>
+                            <span className="ml-1 font-mono text-white/55">
+                              {(String(block.prompt || "").match(/@(?:角色|场景|道具)\d+/g) || []).join(
+                                " ",
+                              ) || "已挂"}
                             </span>
-                          ))}
-                        </div>
-                      ) : null}
-                      {String(block.id || "").startsWith("charsheet-") && assetAt ? (
-                        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                          {voiceLock?.audioUrl ? (
-                            <audio
-                              controls
-                              preload="none"
-                              src={voiceLock.audioUrl}
-                              className="h-7 max-w-full flex-1"
-                            />
-                          ) : (
-                            <span className="text-white/40">未挂声线参考</span>
-                          )}
-                          {onReplaceCharacterVoiceAudio ? (
-                            <label className="cursor-pointer rounded border border-emerald-400/35 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] text-emerald-50/90 hover:bg-emerald-500/20">
-                              {voiceLock ? "换声样" : "上传声样"}
-                              <input
-                                type="file"
-                                accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,.mp3,.wav"
-                                className="hidden"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  e.target.value = "";
-                                  if (!file || !assetAt) return;
-                                  void (async () => {
-                                    try {
-                                      const safeName = (file.name || "voice.mp3").replace(
-                                        /[^a-z0-9._-]/gi,
-                                        "-",
-                                      );
-                                      const signed = await getSignedUrlMutation.mutateAsync({
-                                        fileName: file.name || "voice.mp3",
-                                        mimeType: file.type || "audio/mpeg",
-                                        objectName: `canvas/audio/${Date.now()}-${safeName}`,
-                                      });
-                                      await uploadFileToSignedUrl({
-                                        file,
-                                        uploadUrl: signed.uploadUrl,
-                                        headers: signed.requiredHeaders,
-                                      });
-                                      if (!signed.gcsUri) {
-                                        throw new Error("上传成功但未拿到存储地址");
-                                      }
-                                      const audioUrl = await resolveOmniMaterialUrl(signed.gcsUri);
-                                      if (!/^https:\/\//i.test(audioUrl)) {
-                                        throw new Error("上传成功但未拿到可播放地址");
-                                      }
-                                      onReplaceCharacterVoiceAudio({
-                                        characterTag: assetAt,
-                                        audioUrl,
-                                        labelZh: labelFromPrompt || assetAt,
-                                      });
-                                      toast.message("声样已更新", {
-                                        description: `${assetAt} 已换参考音`,
-                                      });
-                                    } catch (err) {
-                                      toast.message(
-                                        err instanceof Error ? err.message : "声样上传失败",
-                                      );
-                                    }
-                                  })();
-                                }}
-                              />
-                            </label>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      <div className="text-white/45">
-                        {sheetPropSubs.length
-                          ? "定妆特写格已编全局道具号；跨集同号锁定，勿另造"
-                          : "画布展开资产：静帧 / 成片导戏用此编号锁定"}
+                          </>
+                        ) : (
+                          <span className="text-amber-200/85">未垫图改图 · 不可出成片</span>
+                        )}
                       </div>
-                    </div>
-                  );
-                })()}
-                {String(block.id || "").startsWith("keyart-") ? (
-                  <div className="border-b border-white/10 px-3 py-1.5 text-[10px] leading-4 text-white/65">
-                    {block.imageMode === "edit" && block.refImageUrl ? (
-                      <>
-                        <span className="font-semibold text-emerald-200/90">垫图锁</span>
-                        <span className="ml-1 text-white/55">
-                          {(String(block.prompt || "").match(/@(?:角色|场景|道具)\d+/g) || []).join(" ") ||
-                            "已挂垫图改图"}
-                        </span>
-                      </>
-                    ) : (
-                      <span className="text-amber-200/85">未垫图改图（须改图+参考图）· 不可出成片</span>
-                    )}
-                  </div>
-                ) : null}
+                    ) : null}
+                    <CanvasAssetVisualBody block={block} displayOutputs={displayOutputs} />
+                  </>
+                ) : (
+                  <>
                 {String(block.id || "").startsWith("clip-") ? (
                   <div
                     data-manhua-clip-director-face
@@ -1267,24 +1186,6 @@ export default function FreeformCanvas({
                               <span className="text-white/40">+{extra}</span>
                             ) : null}
                           </div>
-                          {card.microExpressionZh ? (
-                            <div className="text-white/70">
-                              微表情：{card.microExpressionZh}
-                            </div>
-                          ) : null}
-                          {card.cueRows.length ? (
-                            <ul className="space-y-0.5 font-mono text-[9px] leading-snug text-white/65">
-                              {card.cueRows.slice(0, 4).map((row, idx) => (
-                                <li key={`${row.startSec}-${idx}`}>
-                                  {formatManhuaClipDirectorCueFaceLine(row)}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <div className="text-white/45">
-                              段成片导戏单将显示在此（秒位 · @角色 · @场景 · 表情）
-                            </div>
-                          )}
                         </>
                       );
                     })()}
@@ -1292,12 +1193,10 @@ export default function FreeformCanvas({
                 ) : null}
 
                 <div
-                  className={`grid min-h-0 flex-1 divide-x divide-white/10 ${
-                    mediaOnly ? "grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]" : "grid-cols-[1fr_1fr]"
-                  }`}
+                  className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(7.5rem,9rem)] divide-x divide-white/10"
                 >
-                  {/* 左：设置 + 提示词 */}
-                  <div className="flex min-h-0 flex-col overflow-auto p-3">
+                  {/* 左：设置 + 提示词（主区） */}
+                  <div className="flex min-h-0 flex-col overflow-hidden p-3">
                     {!mediaOnly ? (
                     <div className="mb-2 space-y-2 rounded-xl border border-white/10 bg-black/25 p-2">
                       <div className="text-[10px] uppercase tracking-wider text-white/40">方块设置</div>
@@ -1534,7 +1433,7 @@ export default function FreeformCanvas({
                       ) : null}
                     </div>
                     ) : (
-                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <div className="mb-2 shrink-0">
                         <select
                           value={block.aspectRatio}
                           onChange={(e) =>
@@ -1545,93 +1444,28 @@ export default function FreeformCanvas({
                           <option value="9:16">9:16</option>
                           <option value="16:9">16:9</option>
                         </select>
-                        <label
-                          htmlFor={`canvas-upload-${block.id}`}
-                          onClick={(e) => e.stopPropagation()}
-                          onPointerDown={(e) => e.stopPropagation()}
-                          className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] ${
-                            isUploading
-                              ? "border-amber-400/35 bg-amber-500/10 text-amber-100"
-                              : "border-white/10 bg-black/40 text-white/70"
-                          }`}
-                        >
-                          {isUploading ? (
-                            <LoaderCircle className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Upload className="h-3 w-3" />
-                          )}
-                          上传
-                        </label>
-                        <input
-                          id={`canvas-upload-${block.id}`}
-                          type="file"
-                          accept={CANVAS_UPLOAD_ACCEPT}
-                          multiple
-                          className="sr-only"
-                          disabled={isUploading}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => {
-                            const picked = takeFilesFromInput(e.target);
-                            if (picked.length) void uploadFilesForBlock(block.id, picked);
-                          }}
-                        />
                       </div>
                     )}
 
-                    {!mediaOnly ? (
-                    <div className="mb-2 shrink-0 space-y-2">
-                      <div className="text-[10px] uppercase tracking-wider text-white/40">素材上传</div>
-                      <div className="flex flex-wrap gap-2">
-                        {(block.kind === "image" ||
-                          block.kind === "video" ||
-                          block.kind === "video_reverse") && (
-                          <select
-                            value={block.aspectRatio}
-                            onChange={(e) =>
-                              patchOne(block.id, { aspectRatio: e.target.value as "9:16" | "16:9" })
-                            }
-                            className="rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-white"
-                          >
-                            <option value="9:16">9:16</option>
-                            <option value="16:9">16:9</option>
-                          </select>
-                        )}
-                        <label
-                          htmlFor={`canvas-upload-full-${block.id}`}
-                          onClick={(e) => e.stopPropagation()}
-                          onPointerDown={(e) => e.stopPropagation()}
-                          className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2 py-1 text-[10px] hover:text-white ${
-                            isUploading
-                              ? "border-amber-400/35 bg-amber-500/10 text-amber-100 pointer-events-none opacity-60"
-                              : "border-white/10 bg-black/40 text-white/70"
-                          }`}
+                    {(block.kind === "image" ||
+                      block.kind === "video" ||
+                      block.kind === "video_reverse") &&
+                    !mediaOnly ? (
+                      <div className="mb-2 shrink-0">
+                        <select
+                          value={block.aspectRatio}
+                          onChange={(e) =>
+                            patchOne(block.id, { aspectRatio: e.target.value as "9:16" | "16:9" })
+                          }
+                          className="rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-white"
                         >
-                          {isUploading ? (
-                            <LoaderCircle className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Upload className="h-3 w-3" />
-                          )}
-                          {uploadLabel}
-                        </label>
-                        <input
-                          id={`canvas-upload-full-${block.id}`}
-                          type="file"
-                          accept={CANVAS_UPLOAD_ACCEPT}
-                          multiple
-                          className="sr-only"
-                          disabled={isUploading}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => {
-                            const picked = takeFilesFromInput(e.target);
-                            if (picked.length) void uploadFilesForBlock(block.id, picked);
-                          }}
-                        />
+                          <option value="9:16">9:16</option>
+                          <option value="16:9">16:9</option>
+                        </select>
                       </div>
-                      <p className="text-[10px] leading-5 text-white/40">{CANVAS_UPLOAD_FORMAT_HINT}</p>
-                    </div>
                     ) : null}
 
-                    <div className="mb-1.5 text-[10px] uppercase tracking-wider text-white/40">提示词</div>
+                    <div className="mb-1.5 shrink-0 text-[10px] uppercase tracking-wider text-white/40">提示词</div>
                     <textarea
                       value={
                         block.id.startsWith("clip-")
@@ -1646,8 +1480,7 @@ export default function FreeformCanvas({
                             : next,
                         });
                       }}
-                      rows={mediaOnly ? 6 : 4}
-                      className="min-h-[72px] w-full shrink-0 resize-none rounded-xl border border-white/10 bg-black/35 px-2.5 py-2 text-xs leading-6 text-white outline-none focus:border-primary/40"
+                      className="min-h-0 w-full flex-1 resize-none rounded-xl border border-white/10 bg-black/35 px-2.5 py-2 text-xs leading-6 text-white outline-none focus:border-primary/40"
                       placeholder={
                         documentCount > 0 && (block.kind === "text" || block.kind === "copy_organize")
                           ? "例：请把文档中 part1 与 part2 去重，整理成语意通顺、条理分明的详尽正文…"
@@ -1667,15 +1500,38 @@ export default function FreeformCanvas({
                     ) : null}
                   </div>
 
-                  {/* 右：素材预览 + 生成结果（方块内主视觉） */}
-                  <div className="flex min-h-0 flex-col p-3">
-                    <div className="mb-2 shrink-0 text-[10px] uppercase tracking-wider text-white/40">
-                      {isUploading || (block.uploadPhase ?? "idle") === "uploading"
-                        ? "上传中"
-                        : block.uploadedAssets.length > 0
-                          ? "素材预览"
-                          : "预览 / 输出"}
-                    </div>
+                  {/* 右：窄栏上传按钮 + 文件名 + 紧凑结果 */}
+                  <div className="flex min-h-0 w-full flex-col gap-1.5 p-2">
+                    <label
+                      htmlFor={`canvas-upload-rail-${block.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      className={`inline-flex shrink-0 cursor-pointer items-center justify-center gap-1 rounded-lg border px-2 py-1.5 text-[10px] font-medium ${
+                        isUploading
+                          ? "pointer-events-none border-amber-400/35 bg-amber-500/10 text-amber-100 opacity-70"
+                          : "border-white/15 bg-white/10 text-white/85 hover:bg-white/15"
+                      }`}
+                    >
+                      {isUploading ? (
+                        <LoaderCircle className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Upload className="h-3 w-3" />
+                      )}
+                      上传
+                    </label>
+                    <input
+                      id={`canvas-upload-rail-${block.id}`}
+                      type="file"
+                      accept={CANVAS_UPLOAD_ACCEPT}
+                      multiple
+                      className="sr-only"
+                      disabled={isUploading}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        const picked = takeFilesFromInput(e.target);
+                        if (picked.length) void uploadFilesForBlock(block.id, picked);
+                      }}
+                    />
                     <CanvasBlockPreviewPanel
                       block={block}
                       isUploading={isUploading}
@@ -1683,6 +1539,9 @@ export default function FreeformCanvas({
                     />
                   </div>
                 </div>
+
+                  </>
+                )}
 
                 {selected ? (
                   <button

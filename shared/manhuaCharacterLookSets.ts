@@ -85,8 +85,8 @@ export function normalizeManhuaCharacterLookSets(raw: unknown): ManhuaCharacterL
     byChar.set(characterId, list);
   }
   const out: ManhuaCharacterLookSet[] = [];
-  for (const list of byChar.values()) {
-    list.sort((a, b) => a.index - b.index);
+  for (const list of Array.from(byChar.values())) {
+    list.sort((a: ManhuaCharacterLookSet, b: ManhuaCharacterLookSet) => a.index - b.index);
     out.push(...list);
   }
   return out;

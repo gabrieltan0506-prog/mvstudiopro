@@ -148,9 +148,14 @@ export function planManhuaKeyartEditFusion(opts?: {
   for (const c of customTagged) {
     const roleLabel =
       c.role === "character" ? "人物" : c.role === "scene" ? "场景" : "服装道具";
+    // wardrobe 并入 prop 槽（静帧 edit 无独立服装 role）
+    const editRole: ManhuaKeyartEditRef["role"] =
+      c.role === "character" || c.role === "scene" || c.role === "prop"
+        ? c.role
+        : "prop";
     refs.push({
       id: c.id,
-      role: c.role,
+      role: editRole,
       labelZh: c.labelZh || `自传·${roleLabel}`,
       path: c.url,
     });
