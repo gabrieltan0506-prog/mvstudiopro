@@ -4029,16 +4029,36 @@ export default function OmniCanvas() {
     canvasMode === "manhua" && manhuaUiMode === "workbench";
 
   return (
-    <div className="min-h-dvh bg-transparent text-white">
+    <div
+      className={
+        immersiveWorkbench
+          ? "flex h-dvh flex-col overflow-hidden bg-transparent text-white"
+          : "min-h-dvh bg-transparent text-white"
+      }
+    >
       <Navbar />
       <main
         className={
-          immersiveWorkbench ? "px-0 pb-0 pt-16" : "px-4 pb-10 pt-24 md:px-6"
+          immersiveWorkbench
+            ? "flex min-h-0 flex-1 flex-col overflow-hidden px-0 pb-0 pt-16"
+            : "px-4 pb-10 pt-24 md:px-6"
         }
       >
-        <div className={immersiveWorkbench ? "mx-auto w-full max-w-none" : "mx-auto max-w-[1920px]"}>
-          <div className={immersiveWorkbench ? "mb-0 px-3 py-1 md:px-4" : "mb-5"}>
-            <div className="flex flex-wrap items-center justify-between gap-3">
+        <div
+          className={
+            immersiveWorkbench
+              ? "mx-auto flex min-h-0 w-full max-w-none flex-1 flex-col"
+              : "mx-auto max-w-[1920px]"
+          }
+        >
+          <div
+            className={
+              immersiveWorkbench
+                ? "mb-0 flex min-h-0 flex-1 flex-col px-3 py-1 md:px-4"
+                : "mb-5"
+            }
+          >
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
               {immersiveWorkbench ? (
                 <div className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-white/45">
                   <span className="font-medium text-white/70">剧本工作室</span>
@@ -4128,14 +4148,24 @@ export default function OmniCanvas() {
               </div>
             </div>
             {canShowCanvasDebug && debugMode ? (
-              <div className="mt-4">
+              immersiveWorkbench ? (
                 <ManhuaFactoryDebugPanel
+                  overlay
                   enabled={debugMode}
                   entries={debugLog}
                   injectSummary={debugInjectSummary}
                   onClear={() => setDebugLog([])}
                 />
-              </div>
+              ) : (
+                <div className="mt-4">
+                  <ManhuaFactoryDebugPanel
+                    enabled={debugMode}
+                    entries={debugLog}
+                    injectSummary={debugInjectSummary}
+                    onClear={() => setDebugLog([])}
+                  />
+                </div>
+              )
             ) : null}
             {!(
               canvasMode === "manhua" &&
@@ -4293,7 +4323,8 @@ export default function OmniCanvas() {
                 id="manhua-workbench-zone"
                 className={
                   immersiveWorkbench
-                    ? "relative h-[calc(100dvh-4.75rem)] w-full overflow-hidden"
+                    ? // 吃满页头以下剩余视口，禁止再用 100dvh 死高与上方 Debug/工具条叠算
+                      "relative min-h-0 w-full flex-1 overflow-hidden"
                     : "-mx-3 scroll-mt-24 overflow-x-auto px-3"
                 }
               >
