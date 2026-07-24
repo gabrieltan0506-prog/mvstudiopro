@@ -438,96 +438,156 @@ export type ManhuaSegmentClipAllowedAssets = {
   propIds: string[];
   /** 写入对照的全部 id（含服装若挂在角色上则由 activeLook 另控） */
   allowedIds: string[];
+  /** matched=剧本/可拍表点名；empty=点不到（宁缺勿假锁库序前几人） */
+  mode: "matched" | "empty";
 };
 
+function textHasName(hay: string, name: string): boolean {
+  const n = String(name || "").trim();
+  return n.length >= 2 && hay.includes(n);
+}
+
+/** 可拍表「角色：」拆名：按顿号/分号/逗号/与/和 切开 */
+export function splitManhuaCastZhNames(castZh: string | null | undefined): string[] {
+  const raw = String(castZh || "").trim();
+  if (!raw) return [];
+  return raw
+    .split(/[；;、，,/|/与和\n]+/)
+    .map((s) =>
+      s
+        .replace(/（[^）]*）|\([^)]*\)/g, "")
+        .replace(
+          /(?:逼近|后退|冷笑|站定|拔刀|取账|断绳|持弩|说|道|出场|登场).*$/u,
+          "",
+        )
+        .trim(),
+    )
+    .filter((s) => s.length >= 2 && s.length <= 16);
+}
+
+function lookTokenHits(hay: string, lookBlob: string): number {
+  const blob = String(lookBlob || "");
+  if (!hay || !blob) return 0;
+  // 外形描述词：至少两个命中才算（防「衣」「人」误锁）
+  const tokens = [
+    "黑衣",
+    "白衣",
+    "红衣",
+    "青衣",
+    "玄甲",
+    "剑客",
+    "刀客",
+    "女侠",
+    "女子",
+    "公子",
+    "县丞",
+    "摄政",
+    "护甲",
+    "兵卒",
+  ].filter((t) => blob.includes(t) && hay.includes(t));
+  return tokens.length;
+}
+
 /**
- * 从本段文案池点名角色/场景/道具；点不到角色时软取前 N（≤4），禁止回落全员。
- * 道具未点名则不灌；场景优先文案匹配，否则用本集主场景 1 个。
+ * 从本段剧本/可拍表点名角色/场景/道具。
+ * 优先 castZh 真名；其次文案名/别名/外形词；**禁止**点不中时软取库序前 N（那会锁成马县丞这种假角）。
  */
 export function resolveManhuaSegmentClipAllowedAssets(input: {
   haystack: string;
+  /** 可拍表「角色：」原文，最高优先 */
+  castZh?: string | null;
+  wardrobePropZh?: string | null;
   registry: ManhuaAssetLockRegistry | null | undefined;
   assetCanon?: ManhuaWriterAssetCanon | null;
   mainSceneId?: string | null;
-  /** 同框人数推断，默认 2，封顶 4 */
+  /** 同框人数上限，默认 4 */
   castCount?: number;
 }): ManhuaSegmentClipAllowedAssets {
-  const hay = String(input.haystack || "");
+  const castZh = String(input.castZh || "").trim();
+  const wardrobePropZh = String(input.wardrobePropZh || "").trim();
+  const hay = [castZh, wardrobePropZh, String(input.haystack || "")]
+    .filter(Boolean)
+    .join("\n");
   const reg = input.registry;
-  const castCap = Math.max(1, Math.min(4, Math.floor(input.castCount ?? 2)));
+  const castCap = Math.max(1, Math.min(4, Math.floor(input.castCount ?? 4)));
   const chars = reg?.byRole.character || [];
   const scenes = reg?.byRole.scene || [];
   const props = reg?.byRole.prop || [];
-
-  const nameHit = (label: string) => {
-    const n = String(label || "").trim();
-    return n.length >= 2 && hay.includes(n);
-  };
-  const canonNameHit = (id: string, role: "character" | "scene" | "prop") => {
-    const list =
-      role === "character"
-        ? input.assetCanon?.characters
-        : role === "scene"
-          ? input.assetCanon?.locations
-          : input.assetCanon?.props;
-    const a = (list || []).find((x) => x.id === id);
-    if (!a) return false;
-    if (nameHit(a.nameZh)) return true;
-    if (a.aliasZh && nameHit(a.aliasZh)) return true;
-    return false;
-  };
-
-  let characterIds = chars
-    .filter((s) => nameHit(s.labelZh) || canonNameHit(s.id, "character"))
-    .map((s) => s.id);
-  // 秒轴/@角色N 命中 tag
   const mentionedTags = extractManhuaMentionedAssetTags(hay);
-  if (mentionedTags.length) {
-    for (const s of chars) {
-      if (mentionedTags.includes(s.tag) && !characterIds.includes(s.id)) {
-        characterIds.push(s.id);
+  const castNames = splitManhuaCastZhNames(castZh);
+
+  const canonOf = (id: string) =>
+    (input.assetCanon?.characters || []).find((c) => c.id === id);
+
+  type Scored = { id: string; score: number };
+  const scored: Scored[] = [];
+  for (const s of chars) {
+    const canon = canonOf(s.id);
+    const names = [s.labelZh, canon?.nameZh, canon?.aliasZh].filter(Boolean) as string[];
+    let score = 0;
+    for (const n of names) {
+      if (castNames.some((cn) => cn === n || cn.includes(n) || n.includes(cn))) {
+        score = Math.max(score, 100);
+      } else if (castZh && textHasName(castZh, n)) {
+        score = Math.max(score, 90);
+      } else if (textHasName(hay, n)) {
+        score = Math.max(score, 70);
       }
     }
+    if (mentionedTags.includes(s.tag)) score = Math.max(score, 85);
+    const lookBlob = [s.labelZh, canon?.lookZh, canon?.nameZh].filter(Boolean).join("｜");
+    const lookHits = lookTokenHits(hay, lookBlob);
+    if (lookHits >= 2) score = Math.max(score, 55 + lookHits * 5);
+    if (score > 0) scored.push({ id: s.id, score });
   }
-  if (!characterIds.length) {
-    characterIds = chars.slice(0, castCap).map((s) => s.id);
-  } else {
-    characterIds = characterIds.slice(0, castCap);
-  }
+  scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+  // 只收真命中：cast/名命中优先；外形词命中须 ≥55 且没有更高分假阳性时才用
+  const characterIds = scored
+    .filter((x) => x.score >= 55)
+    .slice(0, castCap)
+    .map((x) => x.id);
 
   let sceneIds = scenes
-    .filter((s) => nameHit(s.labelZh) || canonNameHit(s.id, "scene"))
+    .filter((s) => {
+      const loc = (input.assetCanon?.locations || []).find((l) => l.id === s.id);
+      return (
+        textHasName(hay, s.labelZh) ||
+        (loc?.nameZh && textHasName(hay, loc.nameZh)) ||
+        (loc?.aliasZh && textHasName(hay, loc.aliasZh)) ||
+        mentionedTags.includes(s.tag)
+      );
+    })
     .map((s) => s.id);
-  if (mentionedTags.length) {
-    for (const s of scenes) {
-      if (mentionedTags.includes(s.tag) && !sceneIds.includes(s.id)) {
-        sceneIds.push(s.id);
-      }
-    }
-  }
   if (!sceneIds.length) {
     const main = String(input.mainSceneId || "").trim();
-    const hit = main ? scenes.find((s) => s.id === main) : scenes[0];
+    const hit = main ? scenes.find((s) => s.id === main) : undefined;
+    // 仅当文案完全点不到场景时，才回落本集主场景（场景可共用；角色绝不可假锁）
     if (hit) sceneIds = [hit.id];
   } else {
     sceneIds = sceneIds.slice(0, 1);
   }
 
+  const propHay = [wardrobePropZh, hay].join("\n");
   let propIds = props
-    .filter((s) => nameHit(s.labelZh) || canonNameHit(s.id, "prop"))
-    .map((s) => s.id);
-  if (mentionedTags.length) {
-    for (const s of props) {
-      if (mentionedTags.includes(s.tag) && !propIds.includes(s.id)) {
-        propIds.push(s.id);
-      }
-    }
-  }
-  // 未点名不灌全库道具
-  propIds = propIds.slice(0, 3);
+    .filter((s) => {
+      const p = (input.assetCanon?.props || []).find((x) => x.id === s.id);
+      return (
+        textHasName(propHay, s.labelZh) ||
+        (p?.nameZh && textHasName(propHay, p.nameZh)) ||
+        mentionedTags.includes(s.tag)
+      );
+    })
+    .map((s) => s.id)
+    .slice(0, 3);
 
   const allowedIds = [...characterIds, ...sceneIds, ...propIds];
-  return { characterIds, sceneIds, propIds, allowedIds };
+  return {
+    characterIds,
+    sceneIds,
+    propIds,
+    allowedIds,
+    mode: characterIds.length ? "matched" : "empty",
+  };
 }
 
 /**

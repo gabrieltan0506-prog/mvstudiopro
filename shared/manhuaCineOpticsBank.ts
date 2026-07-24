@@ -212,7 +212,13 @@ export function appendManhuaClipEngineOptics(prompt: string): string {
   const raw = String(prompt || "").trim();
   if (!raw) return raw;
   if (/【引擎光学】/.test(raw) || /\d+mm\s*f\//.test(raw)) return raw;
-  // 新秒轴：`0–5s：…动作…。近景微推。` → 取句末运镜；兼容旧「运镜：」字段
+  // 秒轴：`运镜轨迹：…` + `景别：…`；兼容旧句末运镜 /「运镜：」
+  const fromTracks = Array.from(
+    raw.matchAll(/运镜轨迹[：:]([^。\n]{1,48})/g),
+  ).map((m) => String(m[1] || "").trim());
+  const fromFrames = Array.from(raw.matchAll(/景别[：:]([^。\n]{1,24})/g)).map((m) =>
+    String(m[1] || "").trim(),
+  );
   const fromTail = Array.from(
     raw.matchAll(
       /(?:^|\n)\d+(?:\.\d+)?[–-]\d+(?:\.\d+)?s[：:][^。\n]+。\s*([^。\n]{2,40})。/g,
@@ -221,8 +227,19 @@ export function appendManhuaClipEngineOptics(prompt: string): string {
   const labeled = Array.from(raw.matchAll(/运镜[：:]([^｜\n。]{1,48})/g)).map((m) =>
     String(m[1] || "").trim(),
   );
-  const camBits = fromTail.length ? fromTail : labeled;
-  const meaningful = camBits.filter((c) => c && c !== "近景微动");
+  const camBits = fromTracks.length
+    ? fromTracks.map((t, i) => [fromFrames[i], t].filter(Boolean).join("，"))
+    : fromTail.length
+      ? fromTail
+      : labeled;
+  // 无实质运镜动势时不灌光学（微动/空景别不算）
+  const meaningful = camBits.filter(
+    (c) =>
+      c &&
+      !/^(?:近景)?微动$/.test(c) &&
+      !/^(?:近景|中景|全景|特写|中近景)$/.test(c) &&
+      /推|拉|摇|移|跟|升|降|环绕|手持|固定|平视|仰|俯|甩|急/.test(c),
+  );
   if (!meaningful.length) return raw;
   const line = formatRecommendedCineOpticsLine(meaningful.join("；"));
   if (!line) return raw;

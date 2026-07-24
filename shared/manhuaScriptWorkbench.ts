@@ -18,7 +18,10 @@ import {
   recommendManhuaCameraAngleFromText,
 } from "./manhuaCameraAngleBank.js";
 import { normalizeManhuaShotCameraLanguage } from "./manhuaCameraLanguageZh.js";
-import { formatManhuaDialogueTimelineBlock } from "./manhuaClipDialogueTimeline.js";
+import {
+  formatManhuaClipSceneLightBoard,
+  formatManhuaDialogueTimelineBlock,
+} from "./manhuaClipDialogueTimeline.js";
 import { formatManhuaKeyframeImage2Prompt } from "./manhuaStoryDistill.js";
 import { stripManhuaPromptSlop } from "./manhuaDirectingWorkflow.js";
 import {
@@ -621,10 +624,29 @@ export function hydrateWorkbenchShotsWithSegmentDialogue(
   shots: ManhuaWorkbenchShot[],
   dialogueLines?: string[] | null,
   performanceZh?: string | null,
+  opts?: {
+    /** 姓名 → @角色N（来自本段真锁资产，禁止瞎挂库序） */
+    speakerTagByNameZh?: Record<string, string> | null;
+  },
 ): ManhuaWorkbenchShot[] {
   const list = Array.isArray(shots) ? shots : [];
+  const tagByName = opts?.speakerTagByNameZh || {};
+  const resolveSpeakerTag = (line: string, actionZh: string, fallback: string) => {
+    const fromAt = extractManhuaSpeakerAtTag(line, actionZh, fallback);
+    if (fromAt) return fromAt;
+    const name =
+      line.match(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*[「『"“]/)?.[1] ||
+      line.match(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[「『"“]/)?.[1] ||
+      "";
+    const n = String(name || "").trim();
+    if (n && tagByName[n]) return tagByName[n];
+    for (const [k, tag] of Object.entries(tagByName)) {
+      if (k.length >= 2 && (line.includes(k) || actionZh.includes(k))) return tag;
+    }
+    return "";
+  };
   const lines = (dialogueLines || [])
-    .map((d) => stripManhuaSpeakerAtPrefix(String(d || "")))
+    .map((d) => String(d || "").trim())
     .filter((d) => d.length >= 1)
     .slice(0, 8);
   if (!list.length || !lines.length) return list;
@@ -634,18 +656,32 @@ export function hydrateWorkbenchShotsWithSegmentDialogue(
     const fromAction = extractManhuaPerformanceCue(s.actionZh);
     const existing =
       String(s.dialogueZh || "").trim() || fromAction.dialogueZh;
-    if (existing) return s;
+    if (existing) {
+      const speakerAtTag = resolveSpeakerTag(
+        existing,
+        String(s.actionZh || ""),
+        fromAction.speakerAtTag || "",
+      );
+      if (!speakerAtTag || /@角色\d+/.test(s.actionZh || "")) return s;
+      return {
+        ...s,
+        actionZh: `${speakerAtTag} ${String(s.actionZh || "").trim()}`.trim(),
+      };
+    }
     const line = lines[lineCursor] || lines[lines.length - 1];
     if (!line) return s;
     lineCursor += 1;
-    const speakerAtTag = extractManhuaSpeakerAtTag(
+    const speakerAtTag = resolveSpeakerTag(
       line,
-      s.actionZh,
-      fromAction.speakerAtTag,
+      String(s.actionZh || ""),
+      fromAction.speakerAtTag || "",
+    );
+    const dialogueOnly = stripManhuaSpeakerAtPrefix(
+      line.replace(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*/, ""),
     );
     return {
       ...s,
-      dialogueZh: line,
+      dialogueZh: dialogueOnly || stripManhuaSpeakerAtPrefix(line),
       emotionZh: String(s.emotionZh || perf.emotionZh || fromAction.emotionZh || "").trim() || undefined,
       microExpressionZh:
         String(
@@ -690,8 +726,14 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
   shots: ManhuaWorkbenchShot[];
   cameraZh?: string;
   actionZh?: string;
-  /** 本段场景一句（地点/天气），写入秒轴「场：」 */
+  /** 本段场景名（地点），写入段头与【场景锁】 */
   sceneHintZh?: string;
+  /** 场景补充说明（陈设/天气/空间），可与 sceneHint 合并 */
+  sceneDetailZh?: string;
+  paletteZh?: string;
+  lightingCameraZh?: string;
+  /** 本段场景资产 tag，如 @场景1 */
+  sceneTag?: string;
   intentZh?: string;
   alreadyHappenedZh?: string;
   reservedForLaterZh?: string;
@@ -700,6 +742,8 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
   segmentDialogueLines?: string[] | null;
   /** 可拍表表演行：灌对白时补情绪/微表情 */
   segmentPerformanceZh?: string | null;
+  /** 姓名 → @角色N，对白挂真说话人 */
+  speakerTagByNameZh?: Record<string, string> | null;
 }): string {
   const seg = Math.max(1, Math.floor(input.segmentIndex));
   const dur =
@@ -710,18 +754,29 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
     input.shots,
     input.segmentDialogueLines,
     input.segmentPerformanceZh,
+    { speakerTagByNameZh: input.speakerTagByNameZh },
   );
   const scene = String(input.sceneHintZh || "").trim();
+  const palette = String(input.paletteZh || "").trim();
+  const lighting = String(input.lightingCameraZh || "").trim();
+  const headBoard = formatManhuaClipSceneLightBoard({
+    segmentIndex: seg,
+    durationSec: dur,
+    sceneHintZh: scene,
+    sceneDetailZh: input.sceneDetailZh,
+    paletteZh: palette,
+    lightingCameraZh: lighting,
+    sceneTag: input.sceneTag,
+  });
   const timeline = formatManhuaDialogueTimelineBlock(shots, dur, {
     segmentIndex: seg,
     sceneHintZh: scene,
+    lightingCameraZh: lighting,
+    paletteZh: palette,
   });
-  // Seedance 短指令：段头 + 场景一句 + 秒轴；资产/@Image 绑定由 ensure / 出片侧挂
-  const head = scene
-    ? `【第${seg}段·${dur}s】${scene}`
-    : `【第${seg}段·${dur}s】`;
+  // 段头场景锁 + 光影氛围 + 秒轴（动作/运镜轨迹/景别）；资产/@Image 由 ensure 挂
   return stripManhuaClipForbiddenBoards(
-    stripManhuaPromptSlop([head, timeline].join("\n")),
+    stripManhuaPromptSlop([headBoard, timeline].join("\n")),
   );
 }
 

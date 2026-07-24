@@ -27,6 +27,7 @@ import {
   resolveManhuaSegmentClipAllowedAssets,
   parseManhuaAssetImageBindBlock,
   sanitizeManhuaClipPromptForUi,
+  splitManhuaCastZhNames,
   stripManhuaAssetUrlsFromPrompt,
   type ManhuaAssetLockRegistry,
 } from "@shared/manhuaAssetLockRegistry";
@@ -1466,6 +1467,30 @@ function makeShotBlockId(
   return makeCanvasBlockId(`${stage}-s${pad}`);
 }
 
+function splitCastHintCount(castZh: string | null | undefined): number {
+  const n = splitManhuaCastZhNames(castZh).length;
+  return n > 0 ? Math.min(4, n) : 1;
+}
+
+/** 本段已锁角色 id → 姓名/@别名 映射到 @角色N，供对白挂说话人 */
+function buildSpeakerTagByNameZh(
+  registry: ManhuaAssetLockRegistry | null | undefined,
+  assetCanon: ManhuaWriterAssetCanon | null | undefined,
+  characterIds: string[],
+): Record<string, string> {
+  const allow = new Set(characterIds);
+  const out: Record<string, string> = {};
+  for (const s of registry?.byRole.character || []) {
+    if (!allow.has(s.id)) continue;
+    const canon = (assetCanon?.characters || []).find((c) => c.id === s.id);
+    for (const name of [s.labelZh, canon?.nameZh, canon?.aliasZh]) {
+      const n = String(name || "").trim();
+      if (n.length >= 2) out[n] = s.tag;
+    }
+  }
+  return out;
+}
+
 /** segmentIndex = 全集连续段号（ep2 首段 = 13） */
 function makeSegmentClipId(
   episodeIndex: number | null | undefined,
@@ -1618,41 +1643,33 @@ export function ensureManhuaFragmentClips(
     const dialogueLines = planBeat
       ? extractManhuaSegmentDialogueQuotes(planBeat.dialogueZh)
       : [];
-    const hydratedShots = hydrateWorkbenchShotsWithSegmentDialogue(
-      seg.shots,
-      dialogueLines,
-      planBeat?.performanceZh,
-    );
+    const sceneFromKeyart = extractManhuaSceneHintFromPrompt(primary.prompt);
+    const sceneFromPlan = String(planBeat?.sceneZh || "").trim();
+    // 可拍表场景优先；静帧抽到的地名作补充说明
+    const sceneHintZh = sceneFromPlan || sceneFromKeyart || undefined;
+    const sceneDetailZh =
+      sceneFromPlan && sceneFromKeyart && sceneFromPlan !== sceneFromKeyart
+        ? sceneFromKeyart
+        : undefined;
     const padLockBlock = segUrls.length
       ? `【垫图】本段静帧${segUrls.length}张（出片顺序：上段末帧→资产定妆/服装→本段静帧，按序绑@Image）`
       : "【垫图·缺失】禁止出片";
-    const sceneHintZh =
-      extractManhuaSceneHintFromPrompt(primary.prompt) ||
-      String(planBeat?.sceneZh || "").trim() ||
-      undefined;
-    // 审阅可见：本集段号用 local；身份锁写本段 Image 对照 + 出片硬绑预览
-    const timelineBlock = formatWorkbenchSegmentClipInjectBlock({
-      segmentIndex: seg.index,
-      durationSec: seg.durationSec,
-      shots: hydratedShots,
-      sceneHintZh,
-      intentZh: intentZh || String(planBeat?.intentZh || "").trim() || undefined,
-      segmentDialogueLines: dialogueLines,
-      segmentPerformanceZh: planBeat?.performanceZh,
-    });
+    // 先按可拍表「角色」+ 剧本文案真锁本段出场，再灌秒轴（禁止先软取库序前两人）
     const haystack = [
-      timelineBlock,
+      String(planBeat?.castZh || ""),
+      String(planBeat?.wardrobePropZh || ""),
       sceneHintZh || "",
       String(planBeat?.sceneZh || ""),
       String(planBeat?.dialogueZh || ""),
       String(planBeat?.intentZh || ""),
       String(planBeat?.performanceZh || ""),
-      ...hydratedShots.flatMap((s) => [
+      ...seg.shots.flatMap((s) => [
         s.actionZh,
         s.cameraZh,
         s.dialogueZh,
         s.intentZh,
       ]),
+      ...dialogueLines,
       ...segKeyarts.map((k) => String(k.prompt || "")),
     ]
       .filter(Boolean)
@@ -1660,16 +1677,49 @@ export function ensureManhuaFragmentClips(
     const castCount = Math.min(
       4,
       Math.max(
-        2,
-        ...hydratedShots.map((s) => inferWorkbenchShotCastCount(String(s.actionZh || ""))),
+        1,
+        ...seg.shots.map((s) => inferWorkbenchShotCastCount(String(s.actionZh || ""))),
+        splitCastHintCount(planBeat?.castZh),
       ),
     );
     const segAssets = resolveManhuaSegmentClipAllowedAssets({
       haystack,
+      castZh: planBeat?.castZh,
+      wardrobePropZh: planBeat?.wardrobePropZh,
       registry: lockRegistry,
       assetCanon: opts?.assetCanon,
       mainSceneId: mainScene?.id,
       castCount,
+    });
+    const speakerTagByNameZh = buildSpeakerTagByNameZh(
+      lockRegistry,
+      opts?.assetCanon,
+      segAssets.characterIds,
+    );
+    const hydratedShots = hydrateWorkbenchShotsWithSegmentDialogue(
+      seg.shots,
+      dialogueLines,
+      planBeat?.performanceZh,
+      { speakerTagByNameZh },
+    );
+    const sceneTag =
+      segAssets.sceneIds
+        .map((id) => lockRegistry.byRole.scene.find((s) => s.id === id)?.tag)
+        .find(Boolean) || "";
+    // 审阅可见：场景锁 + 光影景别氛围 + 秒轴轨迹；身份锁写本段 Image 对照
+    const timelineBlock = formatWorkbenchSegmentClipInjectBlock({
+      segmentIndex: seg.index,
+      durationSec: seg.durationSec,
+      shots: hydratedShots,
+      sceneHintZh,
+      sceneDetailZh,
+      paletteZh: planBeat?.paletteZh,
+      lightingCameraZh: planBeat?.lightingCameraZh,
+      sceneTag: sceneTag || undefined,
+      intentZh: intentZh || String(planBeat?.intentZh || "").trim() || undefined,
+      segmentDialogueLines: dialogueLines,
+      segmentPerformanceZh: planBeat?.performanceZh,
+      speakerTagByNameZh,
     });
     const segBinding = getManhuaSegmentLookBinding(
       opts?.segmentLookBindings,
@@ -1714,6 +1764,9 @@ export function ensureManhuaFragmentClips(
       const mentioned = [
         ...extractManhuaMentionedAssetTags(timelineBlock),
         ...extractManhuaMentionedAssetTags(assetLockBlock),
+        ...segAssets.characterIds
+          .map((id) => charTagById[id])
+          .filter(Boolean),
       ];
       const plan = planManhuaClipSeedanceImageBind({
         assetRows: rows,
