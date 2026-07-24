@@ -5,6 +5,8 @@ alwaysApply: true
 
 # Git / PR 工作流（本倉庫）
 
+> **覆盖关系**：用户明文指令优先于下列门禁。详见 [`user-instruction-priority-always.mdc`](./user-instruction-priority-always.mdc)。
+
 - **完成一小段代碼後**：在**功能分支**上 commit 並立刻 **`git push`**（遠端備份、可繼續開發）；**不要**每推一次就開 PR。
 - **開 PR 時機**：攒到**一整塊模塊**告一段落後，再用 **`gh pr create`**（或 GitHub 網頁）對準 **`main`**；不要 **`git push origin main`** 把改動直接推到主線。
 - **例外**（僅在用戶**明文**說「直推 main / 緊急熱修 / 不要 PR」時）：才可直推 `main`，並在回覆裡說明原因。
