@@ -3,8 +3,14 @@ import {
   areManhuaKeyartsPixelLocked,
   assignManhuaCanvasAssetAtTags,
   buildManhuaAssetLockRegistry,
+  buildManhuaAssetPathById,
+  formatManhuaAssetImageBindBlock,
   isManhuaKeyartPixelLocked,
+  parseManhuaAssetImageBindBlock,
   parseManhuaCanvasAssetAtTag,
+  planManhuaClipSeedanceImageBind,
+  resolveManhuaAssetImageBindRows,
+  stripManhuaAssetUrlsFromPrompt,
 } from "./manhuaAssetLockRegistry";
 import { parseManhuaSheetPropSubTagsFromPrompt } from "./manhuaSheetPropSubTags";
 import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon";
@@ -126,6 +132,61 @@ describe("manhuaAssetLockRegistry", () => {
     const subs = parseManhuaSheetPropSubTagsFromPrompt(stamped[0]!.prompt);
     expect(subs.length).toBeGreaterThanOrEqual(1);
     expect(subs[0]?.propTag).toMatch(/^@道具\d+$/);
+  });
+
+  it("prompt bind table has id only (no URL); path resolves offline for @角色=@Image", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "c1",
+          url: "https://cdn.example/char.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "女主",
+        },
+        {
+          id: "s1",
+          url: "https://cdn.example/scene.jpg",
+          role: "scene",
+          source: "upload",
+          labelZh: "大殿",
+        },
+      ],
+    });
+    const block = formatManhuaAssetImageBindBlock(reg);
+    expect(block).toContain("【资产·Image对照】");
+    expect(block).toContain("@角色1|id=c1|label=女主");
+    expect(block).not.toMatch(/https?:\/\//);
+    expect(block).not.toContain("cdn.example");
+    const pathById = buildManhuaAssetPathById(reg);
+    expect(pathById.c1).toBe("https://cdn.example/char.jpg");
+    const rows = resolveManhuaAssetImageBindRows(
+      parseManhuaAssetImageBindBlock(block),
+      pathById,
+    );
+    expect(rows).toHaveLength(2);
+    const plan = planManhuaClipSeedanceImageBind({
+      assetRows: rows,
+      stillUrls: ["https://cdn.example/still.jpg"],
+      tailUrls: ["https://cdn.example/tail.jpg"],
+      mentionedTags: ["@角色1"],
+      maxImages: 6,
+    });
+    expect(plan.imageUrls[0]).toBe("https://cdn.example/tail.jpg");
+    expect(plan.entries.some((e) => e.kind === "asset" && e.roleTag === "@角色1")).toBe(
+      true,
+    );
+    expect(plan.bindLineZh).toMatch(/@角色1=@Image\d+/);
+    expect(plan.bindLineZh).toContain("id=c1");
+    expect(plan.bindLineZh).not.toMatch(/https?:\/\//);
+    expect(stripManhuaAssetUrlsFromPrompt(`${block}\nhttps://leak.example/x.jpg`)).not.toMatch(
+      /https?:\/\//,
+    );
+    expect(
+      stripManhuaAssetUrlsFromPrompt(
+        "@角色1|id=c1|label=女主|https://cdn.example/a.jpg\n预览图：/manhua-characters/x.jpg",
+      ),
+    ).not.toMatch(/https?:\/\/|\/manhua-|预览图：/);
   });
 
   it("requires edit+ref for pixel lock", () => {

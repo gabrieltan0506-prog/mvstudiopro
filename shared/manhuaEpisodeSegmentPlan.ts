@@ -1,7 +1,8 @@
 /**
- * 单集 10–12 段 × 15s 可拍表：意图 / 对白 / 表演 / 场景配色 / 角色 / 服化道 / 光影运镜。
+ * 单集预算期 5–6 段 × 15s 可拍表：意图 / 对白 / 表演 / 场景配色 / 角色 / 服化道 / 光影运镜。
  * 禁止灌水：缺字段、寒暄对白、段间高度重复、对白过稀 → 质量不通过。
  * 数值与 `manhuaScriptWorkbench` 的 MANHUA_SEGMENT_MIN/MAX/DEFAULT / 15s 对齐。
+ * 成熟后再扩 10–12 段。
  */
 
 import {
@@ -9,13 +10,13 @@ import {
   stripManhuaPromptSlop,
 } from "./manhuaDirectingWorkflow.js";
 
-/** 推荐段数（扩写默认目标） */
-export const MANHUA_EPISODE_SEGMENT_COUNT = 12;
-export const MANHUA_EPISODE_SEGMENT_COUNT_MIN = 10;
-export const MANHUA_EPISODE_SEGMENT_COUNT_MAX = 12;
+/** 推荐段数（扩写默认目标·预算期） */
+export const MANHUA_EPISODE_SEGMENT_COUNT = 6;
+export const MANHUA_EPISODE_SEGMENT_COUNT_MIN = 5;
+export const MANHUA_EPISODE_SEGMENT_COUNT_MAX = 6;
 export const MANHUA_EPISODE_SEGMENT_DURATION_SEC = 15;
-export const MANHUA_EPISODE_SEGMENT_TARGET_SEC = 180;
-export const MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC = 150;
+export const MANHUA_EPISODE_SEGMENT_TARGET_SEC = 90;
+export const MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC = 75;
 
 /** 每段约 15s：至少 3 句「」对白（推荐 3–4） */
 export const MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES = 3;
@@ -140,11 +141,26 @@ function emptyBeat(index: number): ManhuaEpisodeSegmentBeat {
 
 /** 统计对白行内直角/弯引号句数 */
 export function countManhuaSegmentDialogueQuotes(dialogueZh: string): number {
+  return extractManhuaSegmentDialogueQuotes(dialogueZh).length;
+}
+
+/** 从可拍表对白字段抽出「」句，供成片秒轴灌入 */
+export function extractManhuaSegmentDialogueQuotes(dialogueZh: string): string[] {
   const t = String(dialogueZh || "");
-  const cn = t.match(/「[^」]{1,80}」/g) || [];
-  const curly = t.match(/[\u201c“][^\u201d”]{1,80}[\u201d”]/g) || [];
-  const en = t.match(/"[^"]{1,80}"/g) || [];
-  return new Set([...cn, ...curly, ...en].map((s) => s.trim())).size;
+  const cn = t.match(/「([^」]{1,80})」/g) || [];
+  const curly = t.match(/[\u201c“]([^\u201d”]{1,80})[\u201d”]/g) || [];
+  const en = t.match(/"([^"]{1,80})"/g) || [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of [...cn, ...curly, ...en]) {
+    const inner = String(raw || "")
+      .replace(/^[「『"“\u201c]|[」』"”\u201d]$/g, "")
+      .trim();
+    if (inner.length < 1 || seen.has(inner)) continue;
+    seen.add(inner);
+    out.push(inner);
+  }
+  return out.slice(0, 8);
 }
 
 /** 从「#### 段01」或「#### 段 1」块解析 */
@@ -309,7 +325,7 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
   };
 }
 
-/** 编剧扩写 prompt 用的十至十二段表头说明（禁灌水） */
+/** 编剧扩写 prompt 用的五至六段表头说明（禁灌水·预算期） */
 export function formatManhuaEpisodeSegmentPlanPromptBlock(
   segmentCount = MANHUA_EPISODE_SEGMENT_COUNT,
   durationSec = MANHUA_EPISODE_SEGMENT_DURATION_SEC,
@@ -321,8 +337,8 @@ export function formatManhuaEpisodeSegmentPlanPromptBlock(
   const minSec = MANHUA_EPISODE_SEGMENT_COUNT_MIN * durationSec;
   const maxSec = MANHUA_EPISODE_SEGMENT_COUNT_MAX * durationSec;
   return [
-    `### 十至十二段可拍表`,
-    `（硬性：至少 ${MANHUA_EPISODE_SEGMENT_COUNT_MIN} 段、至多 ${MANHUA_EPISODE_SEGMENT_COUNT_MAX} 段；推荐 ${n} 段；每段约 ${durationSec} 秒；整集约 ${minSec}–${maxSec} 秒。禁止寒暄灌水、禁止段间复制粘贴。）`,
+    `### 五至六段可拍表`,
+    `（硬性：至少 ${MANHUA_EPISODE_SEGMENT_COUNT_MIN} 段、至多 ${MANHUA_EPISODE_SEGMENT_COUNT_MAX} 段；推荐 ${n} 段；每段约 ${durationSec} 秒；整集约 ${minSec}–${maxSec} 秒。预算期勿写满十多段；禁止寒暄灌水、禁止段间复制粘贴。）`,
     `每一段必须用下列字段（缺一不可）：`,
     `- 意图：一句「观众应感到什么」（单一戏剧意图）；机位/光/表演只服务这一句。`,
     `- 对白：至少 ${MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES} 句直角引号「」（推荐 3–4 句），须推动关系/信息/冲突；禁止两句口号撑满 ${durationSec} 秒。`,
@@ -336,11 +352,11 @@ export function formatManhuaEpisodeSegmentPlanPromptBlock(
     `- 角色：`,
     `- 服装道具：`,
     `- 光影运镜：`,
-    `（段02…段${String(n).padStart(2, "0")} 同结构；若只写到段10亦可，但不得少于10段；跨段须有信息增量与场面变化。禁止把后段钩子提前写进本段对白。）`,
+    `（段02…段${String(n).padStart(2, "0")} 同结构；至少 ${MANHUA_EPISODE_SEGMENT_COUNT_MIN} 段、至多 ${MANHUA_EPISODE_SEGMENT_COUNT_MAX} 段；跨段须有信息增量与场面变化。禁止把后段钩子提前写进本段对白。）`,
   ].join("\n");
 }
 
-/** 单测夹具：12 段合格可拍表（禁止当产品灌水生成器用） */
+/** 单测夹具：6 段合格可拍表（禁止当产品灌水生成器用） */
 export function buildManhuaEpisodeSegmentPlanFixtureMarkdown(): string {
   const scenes = [
     "雨夜回廊",
@@ -349,12 +365,6 @@ export function buildManhuaEpisodeSegmentPlanFixtureMarkdown(): string {
     "山神破庙",
     "雨夜回廊侧门",
     "偏殿屏风后",
-    "湖堤石阶",
-    "破庙香案前",
-    "回廊转角",
-    "偏殿门槛",
-    "湖面栈桥",
-    "破庙外阶",
   ];
   const blocks = scenes.map((scene, i) => {
     const n = String(i + 1).padStart(2, "0");
@@ -371,7 +381,7 @@ export function buildManhuaEpisodeSegmentPlanFixtureMarkdown(): string {
       `- 光影运镜：侧逆光压暗；中景推至近景`,
     ].join("\n");
   });
-  return ["### 十至十二段可拍表", ...blocks].join("\n");
+  return ["### 五至六段可拍表", ...blocks].join("\n");
 }
 
 /**
@@ -454,5 +464,5 @@ export function formatManhuaEpisodeSegmentPlanBeatsBlock(
       }),
     ].join("\n");
   });
-  return `【已确认十至十二段可拍表·禁止改写成灌水】\n${lines.join("\n\n")}`;
+  return `【已确认五至六段可拍表·禁止改写成灌水】\n${lines.join("\n\n")}`;
 }

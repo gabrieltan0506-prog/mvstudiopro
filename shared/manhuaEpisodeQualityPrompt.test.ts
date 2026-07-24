@@ -24,7 +24,7 @@ describe("manhuaEpisodeQualityPrompt", () => {
     expect(block).toContain("动作轨迹");
     expect(block).toContain("场景渲染");
     expect(block).toContain("场面变化");
-    expect(MANHUA_DIALOGUE_DENSITY_BLOCK).toMatch(/12–20/);
+    expect(MANHUA_DIALOGUE_DENSITY_BLOCK).toMatch(/6–12/);
     expect(MANHUA_PROP_IN_FRAME_BLOCK).toMatch(/入画/);
     expect(MANHUA_CAMERA_TRAJECTORY_BLOCK).toMatch(/起幅/);
     expect(MANHUA_ACTION_TRAJECTORY_BLOCK).toMatch(/接触点|动作链/);
@@ -34,16 +34,16 @@ describe("manhuaEpisodeQualityPrompt", () => {
 
   it("narrative engine includes episode quality by default", () => {
     const block = composeManhuaNarrativeEngineBlock();
-    expect(block).toContain("三分钟");
+    expect(block).toMatch(/预算期|75–90/);
     expect(block).toContain("对白密度");
     expect(block).toContain("场景渲染");
     expect(block).toContain("场面变化");
   });
 
-  it("default prompts target ~180s and denser craft", () => {
-    expect(MANHUA_DRAMA_DEFAULT_PROMPTS.story_brief).toMatch(/180/);
-    expect(MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats).toMatch(/12 段|动作链|互动/);
-    expect(MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip).toMatch(/15 秒|天气|打斗/);
+  it("default prompts target ~75–90s and denser craft", () => {
+    expect(MANHUA_DRAMA_DEFAULT_PROMPTS.story_brief).toMatch(/75–90|90/);
+    expect(MANHUA_DRAMA_DEFAULT_PROMPTS.episode_beats).toMatch(/5–6 段|6 段|动作链|互动/);
+    expect(MANHUA_DRAMA_DEFAULT_PROMPTS.seedance_clip).toMatch(/15s|秒轴|@Image/);
     expect(MANHUA_DRAMA_DEFAULT_PROMPTS.video_reverse).toMatch(/动作链|互动|天气/);
   });
 
@@ -62,17 +62,15 @@ describe("manhuaEpisodeQualityPrompt", () => {
         },
       ],
     });
-    expect(text).toContain("视频生成导戏单");
-    expect(text).toContain("拿着");
-    expect(text).toContain("动作轨迹");
-    expect(text).toMatch(/道具入画|道具须入画/);
-    expect(text).toContain("跨镜连续硬锁");
-    expect(text).toContain("只重出本段");
-    expect(text).toContain("多拍动作链");
-    expect(text).toContain("成片配音与导戏硬锁");
+    expect(text).toContain("【第2段·15s】");
+    expect(text).toContain("说「拿着」");
+    expect(text).toContain("说「你早就知道了？」");
+    expect(text).toMatch(/中景。|近景。/);
+    expect(text).not.toContain("视频生成导戏单");
+    expect(text).not.toContain("跨镜连续硬锁");
   });
 
-  it("injects weather and fight-shift cues when actions escalate", () => {
+  it("shot inject still carries weather/fight cues; clip stays short second-axis", () => {
     const shot = formatWorkbenchShotInjectBlock({
       index: 8,
       durationSec: 0,
@@ -103,7 +101,8 @@ describe("manhuaEpisodeQualityPrompt", () => {
         },
       ],
     });
-    expect(clip).toContain("戏种跳变");
-    expect(clip).toContain("天气/氛围");
+    expect(clip).toContain("你听我说");
+    expect(clip).toMatch(/拔刀打斗|雨丝/);
+    expect(clip).not.toContain("戏种跳变");
   });
 });

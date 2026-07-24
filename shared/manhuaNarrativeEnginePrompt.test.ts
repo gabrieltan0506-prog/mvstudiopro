@@ -24,7 +24,7 @@ describe("manhuaNarrativeEnginePrompt", () => {
     expect(MANHUA_PLOT_ENGINE_BLOCK).toContain("代价");
   });
 
-  it("first shot clip inject has 3s hook lock", () => {
+  it("first shot clip inject is short second-axis without preflight wall", () => {
     const clip = formatWorkbenchClipInjectBlock({
       index: 1,
       durationSec: 3,
@@ -32,9 +32,10 @@ describe("manhuaNarrativeEnginePrompt", () => {
       actionZh: "电梯门开，灯全亮",
       emotionZh: "震惊",
     });
-    expect(clip).toContain("前三秒");
-    expect(clip).toContain("推荐运镜");
-    expect(clip).toContain("成片预演硬锁");
+    expect(clip).toContain("【第1段·3s】");
+    expect(clip).toMatch(/电梯门开.*过肩。/);
+    expect(clip).not.toContain("成片预演硬锁");
+    expect(clip).not.toContain("节拍防火墙");
   });
 
   it("enriches fear emotion into visible action", () => {

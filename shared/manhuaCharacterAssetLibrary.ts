@@ -1166,14 +1166,12 @@ export function buildManhuaCharacterClipboardText(
   const c = getManhuaCharacterById(id);
   if (!c) return "";
   const style = getManhuaArtStylePreset(opts?.artStyleId);
-  const preview = getManhuaCharacterPreviewUrl(c.id);
   return [
     `${c.nameZh}（${c.gender === "female" ? "女主" : "男主"}·${c.jobZh}${c.age ? `·${c.age}岁` : ""}）`,
     `气质：${c.temperamentTags.join("·")}`,
     `画风：${style.labelZh}`,
     style.promptZh,
     `提示词：${c.promptZh}`,
-    preview ? `预览图：${preview}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -1192,8 +1190,7 @@ export function buildManhuaCharacterPromptBlock(
     const tags = c.temperamentTags.join("·");
     const age = c.age ? `${c.age}岁` : "";
     const display = getManhuaCharacterDisplayName(c.id, { artStyleId: style.id });
-    const preview = getManhuaCharacterPreviewUrl(c.id, { artStyleId: style.id });
-    const previewLine = preview ? `\n预览图：${preview}` : "";
+    // 定妆图只走 Edit 垫图 URL，禁止把路径写进用户可见提示词
     const stage = getManhuaCharacterLifeStage(c);
     const roleLabel =
       stage === "elder"
@@ -1210,7 +1207,7 @@ export function buildManhuaCharacterPromptBlock(
     const bone = isPhotoreal ? `\n${formatPhotorealFaceShapeBlock(c.id, c.gender)}` : "";
     const life = isPhotoreal ? photorealLifeStagePromptBlock(stage) : "";
     const lifeLine = life ? `\n${life}` : "";
-    return `${i + 1}. ${display}（${roleLabel}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}${bone}${lifeLine}${previewLine}`;
+    return `${i + 1}. ${display}（${roleLabel}·${c.jobZh}${age ? "·" + age : ""}）气质：${tags}\n提示词：${c.promptZh}${bone}${lifeLine}`;
   });
   const identity = String(opts?.identityLockZh || "").trim();
   const castLock =

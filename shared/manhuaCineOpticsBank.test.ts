@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  appendManhuaClipEngineOptics,
   formatRecommendedCineOpticsLine,
   recommendManhuaCineOpticsFromText,
+  stripManhuaClipEngineOpticsForUi,
 } from "./manhuaCineOpticsBank";
 import { formatWorkbenchSegmentClipInjectBlock } from "./manhuaScriptWorkbench";
 
@@ -31,7 +33,7 @@ describe("manhuaCineOpticsBank", () => {
     expect(formatRecommendedCineOpticsLine("随便聊聊天")).toBe("");
   });
 
-  it("injects optics only when segment has 运镜/景别 cues", () => {
+  it("keeps optics out of stored clip inject; appends only for engine", () => {
     const withCam = formatWorkbenchSegmentClipInjectBlock({
       segmentIndex: 1,
       durationSec: 15,
@@ -44,8 +46,12 @@ describe("manhuaCineOpticsBank", () => {
         },
       ],
     });
-    expect(withCam).toContain("光学·");
-    expect(withCam).toMatch(/50mm/);
+    expect(withCam).not.toContain("光学·");
+    expect(withCam).not.toMatch(/\d+mm/);
+    expect(withCam).toMatch(/近景，平视，微推。$/m);
+    const eng = appendManhuaClipEngineOptics(withCam);
+    expect(eng).toMatch(/【引擎光学】\d+mm/);
+    expect(stripManhuaClipEngineOpticsForUi(eng)).not.toMatch(/\d+mm/);
 
     const noCam = formatWorkbenchSegmentClipInjectBlock({
       segmentIndex: 2,
@@ -59,7 +65,7 @@ describe("manhuaCineOpticsBank", () => {
         },
       ],
     });
-    // 无运镜信号时不应硬塞光学行
-    expect(noCam).not.toContain("光学·");
+    expect(noCam).toMatch(/近景微动。$/m);
+    expect(appendManhuaClipEngineOptics(noCam)).not.toMatch(/【引擎光学】/);
   });
 });

@@ -1,10 +1,15 @@
 /**
  * 角色声线参考锁：从有声成片抠 mp3，挂到 @角色N，后续 Seedance 用 audio_url 参考音色。
- * 非永久 voice_id；需人手提取，跨段可能仍漂。
+ * 非永久 voice_id；需人手提取。
  *
- * 多人同框策略（硬）：
+ * 同集跨段硬门禁（产品边界）：
+ * - 段 ≈ 15s；同集约 5–6 段
+ * - 本段有对白的 @角色，若在同集更早段已出场 → 必须已挂声线，否则禁止出片
+ * - 同集首次出场不强制；隔很多集偶发 1～2 次不在本门禁（只扫同集段）
+ *
+ * 多人同框挂载策略：
  * - 只挂「本段有对白」的角色声线
- * - 按对白时长加权排序，最多 3 条（Seedance 上限）
+ * - 按对白时长加权排序，最多 3 条（引擎上限）
  * - 超限角色写入 deferred，prompt 注明勿串音
  */
 
@@ -302,7 +307,7 @@ export function formatManhuaCharacterVoiceLockBlock(
       }));
   const lines = [
     "【角色声线参考·跨段锁】",
-    "下列音频为已提取的角色声样；成片引擎作参考音色，非永久声线库。BGM 仍后期自叠。",
+    "下列为已提取声样；成片作参考音色。同集跨段再出场且有对白者必须已挂，禁止靠模型另造。",
     "多人同框：只挂本段有对白的角色，按时长优先，最多 3 路；未挂角色禁止串用别人声线。",
     ...attached.map(
       (l) =>
@@ -317,4 +322,98 @@ export function formatManhuaCharacterVoiceLockBlock(
     );
   }
   return lines.join("\n");
+}
+
+export type ManhuaEpisodeSegmentPromptRow = {
+  localSegmentIndex: number;
+  prompt: string;
+};
+
+export type ManhuaCrossSegmentVoiceGateResult = {
+  /** 恒为 true：语音/配乐可后期改，缺参考音不挡出片 */
+  ok: boolean;
+  /** 本段有对白 + 同集更早段已出场 → 建议可挂（非硬锁） */
+  requiredTags: string[];
+  missingTags: string[];
+  messageZh: string;
+};
+
+/** 本段有对白权重的 @角色（无秒轴权重时退回「说「」行上的 @角色） */
+export function listManhuaSpeakingTagsInPrompt(
+  prompt: string | null | undefined,
+): string[] {
+  const weights = measureManhuaDialogueWeightByTag(prompt);
+  const fromWeight = Array.from(weights.entries())
+    .filter(([, w]) => w > 0)
+    .map(([t]) => t);
+  if (fromWeight.length) {
+    return fromWeight.sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true }),
+    );
+  }
+  const raw = String(prompt || "");
+  const tags = new Set<string>();
+  const re = /@角色\d+[^\n]{0,40}说「[^」]+」/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw))) {
+    const t = m[0]!.match(/@角色\d+/)?.[0];
+    if (t) tags.add(t);
+  }
+  return Array.from(tags).sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true }),
+  );
+}
+
+/**
+ * 同集跨段声线软提示（不挡出片）。
+ * 初登场无参考音、新旧段人物交替时硬锁易误杀；语音/配乐后期可改，故 ok 恒为 true。
+ * missingTags 仅供 UI 可选挂载提示。
+ */
+export function evaluateManhuaCrossSegmentVoiceGate(input: {
+  localSegmentIndex: number;
+  currentPrompt: string;
+  episodeSegmentPrompts: ManhuaEpisodeSegmentPromptRow[];
+  voiceLocks?: ManhuaCharacterVoiceLock[] | null;
+}): ManhuaCrossSegmentVoiceGateResult {
+  const localSeg = Math.max(1, Math.floor(Number(input.localSegmentIndex) || 1));
+  const speaking = listManhuaSpeakingTagsInPrompt(input.currentPrompt);
+  if (!speaking.length) {
+    return { ok: true, requiredTags: [], missingTags: [], messageZh: "" };
+  }
+
+  const earlierTags = new Set<string>();
+  for (const row of input.episodeSegmentPrompts || []) {
+    const idx = Math.max(1, Math.floor(Number(row.localSegmentIndex) || 0));
+    if (idx < 1 || idx >= localSeg) continue;
+    for (const t of collectManhuaCharacterTagsFromPrompt(row.prompt)) {
+      earlierTags.add(t);
+    }
+  }
+
+  const requiredTags = speaking.filter((t) => earlierTags.has(t));
+  if (!requiredTags.length) {
+    return { ok: true, requiredTags: [], missingTags: [], messageZh: "" };
+  }
+
+  const locked = new Set(
+    (input.voiceLocks || [])
+      .filter((l) => /^https:\/\//i.test(String(l.audioUrl || "")))
+      .map((l) => l.characterTag),
+  );
+  const missingTags = requiredTags.filter((t) => !locked.has(t));
+  if (!missingTags.length) {
+    return {
+      ok: true,
+      requiredTags,
+      missingTags: [],
+      messageZh: "",
+    };
+  }
+
+  return {
+    ok: true,
+    requiredTags,
+    missingTags,
+    messageZh: `第${localSeg}段：${missingTags.join("、")} 可挂声线参考（可选）；缺音不挡出片，语音/配乐后期可改。`,
+  };
 }

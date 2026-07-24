@@ -26,6 +26,11 @@ import {
   type ManhuaDeliveryPackage,
 } from "./manhuaDeliveryPackage.js";
 import type { ManhuaCineVocabLocale } from "./manhuaCineVocabBank.js";
+import {
+  normalizeManhuaCharacterLookSets,
+  normalizeManhuaSegmentLookBindings,
+  type ManhuaCharacterLookSet,
+} from "./manhuaCharacterLookSets.js";
 
 export const MANHUA_WRITER_SESSION_FORMAT = "mv-manhua-writer-session-v1" as const;
 export const MANHUA_WRITER_SESSION_LS_KEY = "mv-manhua-writer-session-v1";
@@ -63,6 +68,10 @@ export type ManhuaWriterSession = {
   cineVocabLocale: ManhuaCineVocabLocale;
   /** 链式深度：重锚后忽略该场景此前成片数 */
   chainIgnoreByScene: Record<string, number>;
+  /** 人物造型套（每人最多 3；服装为人物子类） */
+  characterLookSets: ManhuaCharacterLookSet[];
+  /** 段手选造型：`e{集}:s{段}` → characterId → lookSetId */
+  segmentLookBindings: Record<string, Record<string, string>>;
 };
 
 export type ManhuaWriterSessionPartial = Partial<Omit<ManhuaWriterSession, "format">> & {
@@ -145,6 +154,8 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
       }
       return out;
     })(),
+    characterLookSets: normalizeManhuaCharacterLookSets(input.characterLookSets),
+    segmentLookBindings: normalizeManhuaSegmentLookBindings(input.segmentLookBindings),
   };
 }
 

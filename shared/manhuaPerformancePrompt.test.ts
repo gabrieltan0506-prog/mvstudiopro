@@ -85,7 +85,9 @@ describe("manhuaPerformancePrompt dialogue split", () => {
       durationSec: 15,
       shots: shots.slice(0, 2),
     });
-    expect(clip).toMatch(/段内对白链|台词（口型气口依据）|从前说过的话|是我对不住你/);
+    expect(clip).toMatch(/从前说过的话|是我对不住你/);
+    expect(clip).toMatch(/\d+[–-]\d+s：/);
+    expect(clip).toContain("说「");
     expect(formatWorkbenchClipInjectBlock(shots[1]!)).toContain("是我对不住你");
   });
 

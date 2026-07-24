@@ -328,6 +328,12 @@ export type CompileI2VMotionPromptOpts = {
 export function isManhuaSeedanceDirectorPrompt(raw: string): boolean {
   const t = String(raw || "");
   return (
+    /【第\s*\d+\s*段·(?:约)?\d+(?:\.\d+)?s】/.test(t) ||
+    /【垫图】/.test(t) ||
+    /【像素垫图锁/.test(t) ||
+    /【资产】/.test(t) ||
+    /【资产锁·编号对照/.test(t) ||
+    /@Image\d+/.test(t) ||
     /【视频生成导戏单/.test(t) ||
     /【第\s*\d+\s*段·成片】/.test(t) ||
     /【节拍防火墙】/.test(t) ||
@@ -336,7 +342,8 @@ export function isManhuaSeedanceDirectorPrompt(raw: string): boolean {
     /【成片(?:配音|有声)与导戏硬锁】/.test(t) ||
     /(?:配音|对白)锁定（人物\+表情\+台词/.test(t) ||
     /@角色\d+（情绪[：:]/.test(t) ||
-    /目标时长：约\s*\d/.test(t)
+    /目标时长：约\s*\d/.test(t) ||
+    /\d+(?:\.\d+)?[–-]\d+(?:\.\d+)?s[｜|]/.test(t)
   );
 }
 

@@ -5,9 +5,9 @@
 import {
   extractManhuaPerformanceCue,
   extractManhuaSpeakerAtTag,
-  formatManhuaLockedDialogueLine,
   formatManhuaPerformanceInjectBlock,
   mergeManhuaPerformanceCue,
+  stripManhuaSpeakerAtPrefix,
   stripQuotedDialogueFromAction,
   type ManhuaPerformanceCue,
 } from "./manhuaPerformancePrompt.js";
@@ -17,24 +17,20 @@ import {
   getManhuaCameraAngle,
   recommendManhuaCameraAngleFromText,
 } from "./manhuaCameraAngleBank.js";
-import { formatRecommendedCineOpticsLine } from "./manhuaCineOpticsBank.js";
 import { normalizeManhuaShotCameraLanguage } from "./manhuaCameraLanguageZh.js";
+import { formatManhuaDialogueTimelineBlock } from "./manhuaClipDialogueTimeline.js";
+import { formatManhuaKeyframeImage2Prompt } from "./manhuaStoryDistill.js";
+import { stripManhuaPromptSlop } from "./manhuaDirectingWorkflow.js";
 import {
-  formatManhuaDialogueTimelineBlock,
-  MANHUA_CROSS_SHOT_CONTINUITY_LOCK,
-  MANHUA_SEEDANCE_AUDIO_DIRECTOR_LOCK,
-} from "./manhuaClipDialogueTimeline.js";
-import { MANHUA_CLIP_PREFLIGHT_BLOCK } from "./manhuaNarrativeEnginePrompt.js";
-import {
-  buildManhuaSecondCueSheet,
-  formatManhuaKeyframeImage2Prompt,
-  formatManhuaSecondCueSheetBlock,
-} from "./manhuaStoryDistill.js";
-import { compileManhuaDirectedSegmentPrompt, stripManhuaPromptSlop } from "./manhuaDirectingWorkflow.js";
+  isManhuaClipPromptLegacyFat,
+  stripManhuaClipForbiddenBoards,
+} from "./manhuaClipPromptSanitize.js";
 import {
   clampSeedanceOpenRouterDuration,
   SEEDANCE_OPENROUTER_DURATION,
 } from "./seedanceOpenRouterModels.js";
+
+export { isManhuaClipPromptLegacyFat, stripManhuaClipForbiddenBoards };
 
 export type ManhuaWorkbenchShot = {
   index: number;
@@ -78,16 +74,19 @@ export const MANHUA_OMNI_SEGMENT_DURATION_SEC = 10;
 /** Seedance 2.0 / Fast 每段成片秒数 */
 export const MANHUA_SEEDANCE_SEGMENT_DURATION_SEC = 15;
 
-/** 一集默认段数（推荐 12×15s ≈ 180s；允许 10–12） */
-export const MANHUA_SEGMENT_DEFAULT = 12;
-/** 一集最少段数 */
-export const MANHUA_SEGMENT_MIN = 10;
-/** 一集最多段数 */
-export const MANHUA_SEGMENT_MAX = 12;
+/**
+ * 一集段数（预算期）：5–6 ×15s ≈ 75–90s。
+ * 成熟后再扩到 10–12；勿在未成熟时默认拉满成片 API。
+ */
+export const MANHUA_SEGMENT_DEFAULT = 6;
+/** 一集最少段数（预算期） */
+export const MANHUA_SEGMENT_MIN = 5;
+/** 一集最多段数（预算期；成熟期可再放开到 12） */
+export const MANHUA_SEGMENT_MAX = 6;
 /** 一集建议最短时长（秒，按 Seedance 段长估算） */
-export const MANHUA_EPISODE_TARGET_MIN_SEC = 150;
+export const MANHUA_EPISODE_TARGET_MIN_SEC = 75;
 /** 一集默认目标时长（秒） */
-export const MANHUA_EPISODE_TARGET_DEFAULT_SEC = 180;
+export const MANHUA_EPISODE_TARGET_DEFAULT_SEC = 90;
 /** 每段关键静帧上限（起幅/戏核/桥接/落幅） */
 export const MANHUA_KEYARTS_PER_SEGMENT_MAX = 4;
 /** 每段关键静帧下限（默认骨架：起幅/戏核/落幅） */
@@ -142,7 +141,11 @@ export function resolveSegmentClipDurationSec(
 export function parseManhuaClipTargetDurationSec(
   prompt: string | null | undefined,
 ): number | null {
-  const m = String(prompt || "").match(/目标时长[：:]\s*约?\s*(\d+(?:\.\d+)?)\s*秒/);
+  const raw = String(prompt || "");
+  const m =
+    raw.match(/【第\s*\d+\s*段·(?:约)?(\d+(?:\.\d+)?)s】/) ||
+    raw.match(/目标时长[：:]\s*约?\s*(\d+(?:\.\d+)?)\s*秒/) ||
+    raw.match(/本段一条成片约\s*(\d+(?:\.\d+)?)\s*秒/);
   if (!m?.[1]) return null;
   const n = Number(m[1]);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -156,7 +159,7 @@ export type ManhuaWorkbenchSegment = {
   shots: ManhuaWorkbenchShot[];
 };
 
-/** 将分镜列表收成段：无分镜时默认 12 段 × 3 静帧；有分镜表则按每段下限切，不强行注水 */
+/** 将分镜列表收成段：无分镜时默认 6 段 × 3 静帧；有分镜表则按每段下限切，不强行注水 */
 export function groupShotsIntoSegments(
   shots: ManhuaWorkbenchShot[],
   opts?: { videoModel?: string | null; segmentCount?: number; padToDefaultEpisode?: boolean },
@@ -218,8 +221,8 @@ export function resolveSegmentIndexFromShotIndex(shotIndex: number): number {
 }
 
 /**
- * 全集连续段号：第 2 集第 1 段 → 13（默认每集 12 段）。
- * 成片 id 的 -gNN 用此编号，便于跨集参考上一段（13←12）。
+ * 全集连续段号：第 2 集第 1 段 → 7（预算期默认每集 6 段）。
+ * 成片 id 的 -gNN 用此编号，便于跨集参考上一段（7←6）。
  */
 export function manhuaGlobalSegmentIndex(
   episodeIndex: number,
@@ -389,7 +392,7 @@ function parseShotRowsFromText(raw: string): ParsedShotRow[] {
     .slice(0, MANHUA_SHOT_KEYART_MAX);
 }
 
-/** 从节拍 / 反推正文拆出多镜；失败则回落为「12 段 × 3 静帧」骨架 */
+/** 从节拍 / 反推正文拆出多镜；失败则回落为「6 段 × 3 静帧」骨架 */
 export function parseWorkbenchShotsFromText(raw: string | undefined | null): ManhuaWorkbenchShot[] {
   const text = String(raw || "").trim();
   if (!text) return defaultWorkbenchShots();
@@ -611,6 +614,57 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
     .join("\n");
 }
 
+/**
+ * 可拍表对白句灌进缺 dialogueZh 的 shots（输出仍走 formatManhuaLockedDialogueLine）。
+ */
+export function hydrateWorkbenchShotsWithSegmentDialogue(
+  shots: ManhuaWorkbenchShot[],
+  dialogueLines?: string[] | null,
+  performanceZh?: string | null,
+): ManhuaWorkbenchShot[] {
+  const list = Array.isArray(shots) ? shots : [];
+  const lines = (dialogueLines || [])
+    .map((d) => stripManhuaSpeakerAtPrefix(String(d || "")))
+    .filter((d) => d.length >= 1)
+    .slice(0, 8);
+  if (!list.length || !lines.length) return list;
+  const perf = extractManhuaPerformanceCue(performanceZh || "");
+  let lineCursor = 0;
+  return list.map((s) => {
+    const fromAction = extractManhuaPerformanceCue(s.actionZh);
+    const existing =
+      String(s.dialogueZh || "").trim() || fromAction.dialogueZh;
+    if (existing) return s;
+    const line = lines[lineCursor] || lines[lines.length - 1];
+    if (!line) return s;
+    lineCursor += 1;
+    const speakerAtTag = extractManhuaSpeakerAtTag(
+      line,
+      s.actionZh,
+      fromAction.speakerAtTag,
+    );
+    return {
+      ...s,
+      dialogueZh: line,
+      emotionZh: String(s.emotionZh || perf.emotionZh || fromAction.emotionZh || "").trim() || undefined,
+      microExpressionZh:
+        String(
+          s.microExpressionZh ||
+            perf.microExpressionZh ||
+            fromAction.microExpressionZh ||
+            "",
+        ).trim() || undefined,
+      voiceToneZh:
+        String(s.voiceToneZh || perf.voiceToneZh || fromAction.voiceToneZh || "").trim() ||
+        undefined,
+      // 说话人写进动作行前缀，供秒轴 extractManhuaSpeakerAtTag
+      actionZh: speakerAtTag && !/@角色\d+/.test(s.actionZh || "")
+        ? `${speakerAtTag} ${String(s.actionZh || "").trim()}`.trim()
+        : s.actionZh,
+    };
+  });
+}
+
 /** 写入单镜成片 prompt（兼容旧「一镜一片」）；新路径用 formatWorkbenchSegmentClipInjectBlock */
 export function formatWorkbenchClipInjectBlock(shot: ManhuaWorkbenchShot): string {
   const action = String(shot.actionZh || "").trim() || "落实本镜节拍中的关键动作与道具交互";
@@ -621,219 +675,54 @@ export function formatWorkbenchClipInjectBlock(shot: ManhuaWorkbenchShot): strin
       typeof shot.durationSec === "number" && shot.durationSec > 0
         ? shot.durationSec
         : manhuaSegmentDurationSec(MANHUA_FACTORY_DEFAULT_VIDEO_MODEL),
-    shots: [shot],
-    cameraZh: camera,
-    actionZh: action,
+    shots: [{ ...shot, cameraZh: camera, actionZh: action }],
   });
 }
 
-/** 一段一条成片：时长按模型；动作串联段内静帧；挂意图 + 节拍防火墙 + 去空话 */
+/**
+ * 一段一条成片：按秒排场/运镜/动作/表情情绪/对白/衔接。
+ * 垫图锁 / @编号对照 / 画风一行由 ensure 另挂；光学 mm/快门出片时引擎侧转换。
+ * 禁止防火墙/古风板/上游全文灌水；不加硬字数截断。
+ */
 export function formatWorkbenchSegmentClipInjectBlock(input: {
   segmentIndex: number;
   durationSec: number;
   shots: ManhuaWorkbenchShot[];
   cameraZh?: string;
   actionZh?: string;
-  /** 本段场景一句（地点/天气），写入导戏单 */
+  /** 本段场景一句（地点/天气），写入秒轴「场：」 */
   sceneHintZh?: string;
-  /** 本段单一意图；缺省取 shots[0].intentZh */
   intentZh?: string;
-  /** 更早段摘要（已发生） */
   alreadyHappenedZh?: string;
-  /** 留给后段 */
   reservedForLaterZh?: string;
-  /** 参考职责块（可选） */
   referenceDutyBlock?: string;
+  /** 可拍表对白句：shots 缺 dialogueZh 时灌入 */
+  segmentDialogueLines?: string[] | null;
+  /** 可拍表表演行：灌对白时补情绪/微表情 */
+  segmentPerformanceZh?: string | null;
 }): string {
   const seg = Math.max(1, Math.floor(input.segmentIndex));
   const dur =
     typeof input.durationSec === "number" && input.durationSec > 0
       ? Math.round(input.durationSec * 10) / 10
       : manhuaSegmentDurationSec(MANHUA_FACTORY_DEFAULT_VIDEO_MODEL);
-  const intentZh =
-    String(input.intentZh || "").trim() ||
-    String(input.shots.find((s) => s.intentZh)?.intentZh || "").trim();
-  const shotLines = input.shots
-    .map((s) => {
-      const a = String(s.actionZh || "").trim();
-      const c = String(s.cameraZh || "").trim();
-      return a ? `镜${s.index}${c ? `（${c}）` : ""}：${a}` : "";
-    })
-    .filter(Boolean)
-    .slice(0, MANHUA_KEYARTS_PER_SEGMENT_MAX);
-  const action = stripManhuaPromptSlop(
-    String(input.actionZh || "").trim() ||
-      shotLines.join(" → ") ||
-      "落实本段节拍中的关键动作与道具交互",
+  const shots = hydrateWorkbenchShotsWithSegmentDialogue(
+    input.shots,
+    input.segmentDialogueLines,
+    input.segmentPerformanceZh,
   );
-  const camera = stripManhuaPromptSlop(
-    String(input.cameraZh || "").trim() ||
-      String(input.shots[0]?.cameraZh || "").trim() ||
-      "承接段内首张静帧构图做可读微动",
-  );
-  const lead = input.shots[0];
-  /** 成片对白：字段优先，缺则从动作行「」抽取；与 @角色N + 表情整合成锁行 */
-  const dialogueShots = input.shots
-    .map((s) => {
-      const fromAction = extractManhuaPerformanceCue(s.actionZh);
-      const dialogueZh =
-        String(s.dialogueZh || "").trim() || fromAction.dialogueZh;
-      if (!dialogueZh) return null;
-      const speakerAtTag = extractManhuaSpeakerAtTag(
-        s.dialogueZh,
-        s.actionZh,
-        fromAction.speakerAtTag,
-      );
-      return {
-        dialogueZh,
-        speakerAtTag,
-        emotionZh: String(s.emotionZh || fromAction.emotionZh || "").trim(),
-        microExpressionZh: String(
-          s.microExpressionZh || fromAction.microExpressionZh || "",
-        ).trim(),
-        voiceToneZh: String(s.voiceToneZh || fromAction.voiceToneZh || "").trim(),
-        lockedLine: formatManhuaLockedDialogueLine({
-          speakerAtTag,
-          dialogueZh,
-          emotionZh: s.emotionZh || fromAction.emotionZh,
-          microExpressionZh: s.microExpressionZh || fromAction.microExpressionZh,
-          voiceToneZh: s.voiceToneZh || fromAction.voiceToneZh,
-        }),
-      };
-    })
-    .filter(Boolean)
-    .slice(0, 4) as Array<{
-    dialogueZh: string;
-    speakerAtTag: string;
-    emotionZh: string;
-    microExpressionZh: string;
-    voiceToneZh: string;
-    lockedLine: string;
-  }>;
-  const dialogueChain = dialogueShots.map((d) => d.dialogueZh);
-  const lockedDialogueChain = dialogueShots
-    .map((d) => d.lockedLine)
-    .filter(Boolean);
-  const leadDialogue = dialogueShots[0];
-  const performance = formatManhuaPerformanceInjectBlock(
-    mergeManhuaPerformanceCue(
-      {
-        dialogueZh: leadDialogue?.dialogueZh || lead?.dialogueZh,
-        emotionZh: lead?.emotionZh || leadDialogue?.emotionZh,
-        voiceToneZh: lead?.voiceToneZh || leadDialogue?.voiceToneZh,
-        microExpressionZh:
-          lead?.microExpressionZh || leadDialogue?.microExpressionZh,
-        speakerAtTag: leadDialogue?.speakerAtTag,
-      },
-      `${lead?.actionZh || ""}\n${action}`,
-    ),
-    { stage: "clip", shotIndex: seg },
-  );
-  const emotionBlob = input.shots
-    .map((s) => [s.emotionZh, s.microExpressionZh].filter(Boolean).join(" "))
-    .filter(Boolean)
-    .join(" ");
-  const opticsQuery = `${camera} ${action} ${emotionBlob}`;
-  const camMove = formatRecommendedCameraMoveLine(opticsQuery);
-  const angleEntry =
-    getManhuaCameraAngle(lead?.cameraAngleId) ||
-    recommendManhuaCameraAngleFromText(`${camera} ${action} ${lead?.emotionZh || ""}`);
-  const camAngle = formatManhuaCameraAngleLine(angleEntry);
-  // 仅当运镜/景别可解析时注入；推不出则不写（避免默认光学废话）
-  const opticsLine = formatRecommendedCineOpticsLine(opticsQuery);
-  const hookLock =
-    seg === 1 ? "首段硬锁：前三秒内须出现问题/异常/冲突之一；禁止平淡开场。" : "";
-  const actionBlob = `${action}\n${shotLines.join("\n")}`;
-  const hasWeatherShift = /雨|雪|风|雷|乌云|晴转|骤雨|湿|水花|天色/.test(actionBlob);
-  const hasFightShift = /打斗|对打|格挡|挥拳|拔刀|夺|推开|撞开|追逐|扭打|爆发/.test(actionBlob);
-  const hasMultiCast = input.shots.some((s) => inferWorkbenchShotCastCount(s.actionZh) >= 2);
-  const dynamicsLines = [
-    hasMultiCast
-      ? "人物互动：段内落实主角与他人的轴线变化（对视→接触→站位推移），禁止旁人静止背景板。"
-      : "",
-    hasWeatherShift
-      ? "天气/氛围：若有晴转雨等突变，成片须演绎变化过程（第一滴雨/云影/湿反光），禁止硬切已湿透。"
-      : "",
-    hasFightShift
-      ? "戏种跳变：对白转剧烈动作时，中间用可见引爆点接上；前半口型气口、后半动作发力，节奏分明。"
-      : "同场多事件：段内可有多拍动作链（A→B→C），上镜落点接下镜起幅，勿只做单一定格微动。",
-  ].filter(Boolean);
-  const cueSheet = formatManhuaSecondCueSheetBlock(
-    buildManhuaSecondCueSheet({
-      segment: {
-        index: seg,
-        intentZh: intentZh || "让观众感到局势或人物关系变化",
-        dialogueZh: leadDialogue?.lockedLine || dialogueChain[0] || "",
-        sceneZh: String(input.sceneHintZh || "").trim(),
-        paletteZh: "",
-        castZh: lockedDialogueChain.map((l) => l.match(/@角色\d+/)?.[0] || "").filter(Boolean).join("、"),
-        wardrobePropZh: "",
-        lightingCameraZh: camera,
-        performanceZh: String(lead?.emotionZh || "").trim(),
-      },
-      shots: input.shots,
-      durationSec: dur,
-    }),
-    { segmentIndex: seg },
-  );
-  const sceneLine = String(input.sceneHintZh || "").trim()
-    ? `场景：${String(input.sceneHintZh).trim().slice(0, 80)}`
-    : "";
-  const bodyLines = [
-    `【第 ${seg} 段·成片】`,
-    `目标时长：约 ${dur} 秒（允许 ±1 秒，上限 ${SEEDANCE_OPENROUTER_DURATION.max}）；本段一条成片，勿按单镜短秒裁切。`,
-    hookLock,
-    sceneLine,
-    shotLines.length ? `段内静帧节拍（人物/道具/动作顺序）：\n${shotLines.join("\n")}` : "",
-    formatManhuaDialogueTimelineBlock(input.shots, dur, {
-      segmentIndex: seg,
-      sceneHintZh: input.sceneHintZh,
-    }),
-    lockedDialogueChain.length
-      ? `对白顺序（人物锁+表情一体）：${lockedDialogueChain.join(" → ")}`
-      : "",
-    performance,
-    `动作轨迹（道具交互与站位起止连续）：${action}`,
-    `运镜（起幅→落幅，与动作分行）：${camera}`,
-    camAngle,
-    camMove,
-    opticsLine,
-    cueSheet,
-    ...dynamicsLines,
-    MANHUA_SEEDANCE_AUDIO_DIRECTOR_LOCK,
-    MANHUA_CROSS_SHOT_CONTINUITY_LOCK,
-    MANHUA_CLIP_PREFLIGHT_BLOCK,
-    "【参考静帧】脸、发型、服装、场景材质必须以本段参考静帧为准；上一段末帧若有则承接站位与光向。",
-    "本段须同时产出：引擎自带对白有声 + 口型气口 + 切镜运镜 + 场面动作；禁止哑巴空镜灌时长；暂不另做后期配音。",
-    "禁止换脸、换装、跳棚；不新增无关角色；成片画面无新增可读字幕。",
-    "质量抽检：引擎有声对白对齐秒位；脸服场连续；微表情差可读；道具入画；运镜起落与切镜清楚。",
-  ]
-    .filter(Boolean)
-    .join("\n");
-  // 防火墙只吃短摘要，完整成片正文放 extra，避免被 900 字截断丢掉硬锁
-  const beatSummary = [
-    lockedDialogueChain[0]
-      ? `对白：${lockedDialogueChain[0]}`
-      : dialogueChain[0]
-        ? `对白：${dialogueChain[0]}`
-        : "",
-    `动作：${action.slice(0, 160)}`,
-    `运镜：${camera.slice(0, 80)}`,
-    input.sceneHintZh ? `场景：${String(input.sceneHintZh).trim().slice(0, 60)}` : "",
-  ]
-    .filter(Boolean)
-    .join("；");
-  return compileManhuaDirectedSegmentPrompt({
+  const scene = String(input.sceneHintZh || "").trim();
+  const timeline = formatManhuaDialogueTimelineBlock(shots, dur, {
     segmentIndex: seg,
-    intentZh,
-    thisBeatZh: beatSummary,
-    alreadyHappenedZh: input.alreadyHappenedZh,
-    reservedForLaterZh: input.reservedForLaterZh,
-    extraBlocks: [
-      stripManhuaPromptSlop(bodyLines),
-      String(input.referenceDutyBlock || "").trim(),
-    ].filter(Boolean),
+    sceneHintZh: scene,
   });
+  // Seedance 短指令：段头 + 场景一句 + 秒轴；资产/@Image 绑定由 ensure / 出片侧挂
+  const head = scene
+    ? `【第${seg}段·${dur}s】${scene}`
+    : `【第${seg}段·${dur}s】`;
+  return stripManhuaClipForbiddenBoards(
+    stripManhuaPromptSlop([head, timeline].join("\n")),
+  );
 }
 
 /** 从 keyart / clip 节点 id 或静帧 prompt 解析分镜号（默认 1） */

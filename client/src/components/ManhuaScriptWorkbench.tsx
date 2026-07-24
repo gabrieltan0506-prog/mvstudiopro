@@ -1,6 +1,6 @@
 /**
  * 剧本工作台：左=本集资产 · 中=一集剧本+按段静帧 · 右=预览 · 底=集/段时间线
- * 一集：10–12 段 × 每段 3–4 关键静帧；每段一条成片（Seedance ≤15s，按时长合计钳制）。
+ * 一集：5–6 段 × 每段 3–4 关键静帧；每段一条成片（Seedance ≤15s，按时长合计钳制）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
+  collectManhuaEpisodeSegmentPromptsForVoiceGate,
   getBlockEpisodeIndex,
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   stageKeyFromBlockId,
@@ -62,7 +63,17 @@ import {
   buildManhuaAssetLockRegistry,
 } from "@shared/manhuaAssetLockRegistry";
 import {
+  ensureDefaultLookSetsForCharacters,
+  getManhuaSegmentLookBinding,
+  listManhuaLookSetsForCharacter,
+  MANHUA_LOOK_SETS_PER_CHARACTER_MAX,
+  setManhuaSegmentLookBinding,
+  upsertManhuaCharacterLookSet,
+  type ManhuaCharacterLookSet,
+} from "@shared/manhuaCharacterLookSets";
+import {
   collectManhuaCharacterTagsFromPrompt,
+  evaluateManhuaCrossSegmentVoiceGate,
   resolveManhuaVoiceExtractWindow,
   type ManhuaCharacterVoiceLock,
 } from "@shared/manhuaCharacterVoiceLock";
@@ -72,6 +83,7 @@ import {
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
   MANHUA_SEGMENT_MIN,
   parseWorkbenchShotsFromText,
+  resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
   resolveKeyartShotIndex,
   resolveSegmentIndexFromShotIndex,
@@ -189,8 +201,14 @@ type Props = {
   /** 产品化风格包（色卡 + 光影构图 DNA） */
   stylePack?: ManhuaStylePack | null;
   onStylePackChange?: (pack: ManhuaStylePack | null) => void;
-  /** 用户上传 / 基于库参考生成的参考图（人物 / 场景 / 道具分栏） */
+  /** 用户上传 / 基于库参考生成的参考图（人物 / 场景 / 服装 / 道具分栏） */
   customAssetRefs?: ManhuaCustomAssetRef[];
+  /** 人物造型套（每人最多 3；服装为子类） */
+  characterLookSets?: ManhuaCharacterLookSet[];
+  onCharacterLookSetsChange?: (next: ManhuaCharacterLookSet[]) => void;
+  /** 段手选造型绑定 */
+  segmentLookBindings?: Record<string, Record<string, string>>;
+  onSegmentLookBindingsChange?: (next: Record<string, Record<string, string>>) => void;
   /** 从有声成片抠出的角色声线参考 */
   characterVoiceLocks?: ManhuaCharacterVoiceLock[];
   onExtractCharacterVoice?: (input: {
@@ -375,6 +393,10 @@ export default function ManhuaScriptWorkbench({
   stylePack = null,
   onStylePackChange,
   customAssetRefs = [],
+  characterLookSets = [],
+  onCharacterLookSetsChange,
+  segmentLookBindings = {},
+  onSegmentLookBindingsChange,
   characterVoiceLocks = [],
   onExtractCharacterVoice,
   onRemoveCharacterVoice,
@@ -515,7 +537,8 @@ export default function ManhuaScriptWorkbench({
         .filter((b) => b.id.startsWith("clip-") && (getBlockEpisodeIndex(b) ?? 1) === focusEpisode)
         .sort(
           (a, b) =>
-            resolveClipSegmentIndex(a.id, a.prompt) - resolveClipSegmentIndex(b.id, b.prompt) ||
+            resolveClipLocalSegmentIndex(a.id, a.prompt, focusEpisode) -
+              resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) ||
             a.id.localeCompare(b.id),
         ),
     [blocks, focusEpisode],
@@ -528,7 +551,7 @@ export default function ManhuaScriptWorkbench({
     const reverseText = reverse?.outputText || reverse?.prompt || "";
     const beatsText = beats?.outputText || beats?.prompt || "";
     const storyText = story?.outputText || story?.prompt || "";
-    // 方案 C：十至十二段可拍表优先编译为每段 3 静帧（起幅/戏核/落幅）
+    // 方案 C：五至六段可拍表优先编译为每段 3 静帧（起幅/戏核/落幅）
     const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(
       `${storyText}\n${beatsText}\n${reverseText}`,
     );
@@ -644,7 +667,7 @@ export default function ManhuaScriptWorkbench({
       const shotClip =
         episodeClips.find(
           (b) =>
-            resolveClipSegmentIndex(b.id, b.prompt) ===
+            resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) ===
             resolveSegmentIndexFromShotIndex(c.shotIndex),
         ) || (resolveSegmentIndexFromShotIndex(c.shotIndex) === 1 ? legacyClip : undefined);
       const shotKeyart =
@@ -762,8 +785,9 @@ export default function ManhuaScriptWorkbench({
     episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === activeShotNo) ||
     (activeShotNo === 1 ? keyart : undefined);
   const activeClip =
-    episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === activeSegNo) ||
-    (activeSegNo === 1 ? legacyClip : undefined);
+    episodeClips.find(
+      (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === activeSegNo,
+    ) || (activeSegNo === 1 ? legacyClip : undefined);
   const clip = activeClip || legacyClip;
   const clipQuality = clip?.manhuaClipQuality;
   const clipVideoUrl = mediaUrl(clip);
@@ -825,8 +849,9 @@ export default function ManhuaScriptWorkbench({
     );
     const segNo = resolveSegmentIndexFromShotIndex(shot.index);
     const clipBlock =
-      episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === segNo) ||
-      null;
+      episodeClips.find(
+        (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === segNo,
+      ) || null;
     focusBlockAndOpenCanvas(clipBlock?.id || keyart?.id || "");
   };
 
@@ -891,19 +916,21 @@ export default function ManhuaScriptWorkbench({
     return segments
       .filter((seg) => {
         const segClip =
-          episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === seg.index) ||
-          (seg.index === 1 ? legacyClip : undefined);
+          episodeClips.find(
+            (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === seg.index,
+          ) || (seg.index === 1 ? legacyClip : undefined);
         const playable = Boolean(mediaUrl(segClip));
         const failed = segClip?.manhuaClipQuality?.status === "failed";
         return !playable || failed;
       })
       .map((seg) => seg.index);
-  }, [segments, episodeClips, legacyClip]);
+  }, [segments, episodeClips, legacyClip, focusEpisode]);
   const segmentClipReviewList = useMemo(() => {
     return segments.map((seg) => {
       const segClip =
-        episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === seg.index) ||
-        (seg.index === 1 ? legacyClip : undefined);
+        episodeClips.find(
+          (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === seg.index,
+        ) || (seg.index === 1 ? legacyClip : undefined);
       return {
         segmentIndex: seg.index,
         durationSec: seg.durationSec,
@@ -911,7 +938,7 @@ export default function ManhuaScriptWorkbench({
         shotIndexes: seg.shots.map((s) => s.index),
       };
     });
-  }, [segments, episodeClips, legacyClip]);
+  }, [segments, episodeClips, legacyClip, focusEpisode]);
   const selectedSorted = useMemo(
     () => [...selectedShotIndexes].sort((a, b) => a - b),
     [selectedShotIndexes],
@@ -1020,6 +1047,20 @@ export default function ManhuaScriptWorkbench({
     }
     return map;
   }, [blocks, assetCanon]);
+  const resolvedLookSets = useMemo(
+    () =>
+      ensureDefaultLookSetsForCharacters(
+        characterLookSets,
+        [
+          ...(characterIds || []),
+          ...(assetCanon?.characters || []).map((c) => c.id),
+        ],
+        Object.fromEntries(
+          (assetCanon?.characters || []).map((c) => [c.id, c.nameZh]),
+        ),
+      ),
+    [characterLookSets, characterIds, assetCanon],
+  );
   const assetLockRegistry = useMemo(
     () =>
       buildManhuaAssetLockRegistry({
@@ -1030,6 +1071,7 @@ export default function ManhuaScriptWorkbench({
         customRefs: customAssetRefs,
         assetCanon,
         characterSheetUrlById,
+        characterLookSets: resolvedLookSets,
       }),
     [
       characterIds,
@@ -1039,6 +1081,7 @@ export default function ManhuaScriptWorkbench({
       customAssetRefs,
       assetCanon,
       characterSheetUrlById,
+      resolvedLookSets,
     ],
   );
   const outlineComplete = Boolean(canRun);
@@ -1145,7 +1188,9 @@ export default function ManhuaScriptWorkbench({
       onEnsureSegmentClips?.();
       onLayoutReadableChain?.();
       const focusId =
-        episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === activeSegNo)?.id ||
+        episodeClips.find(
+          (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === activeSegNo,
+        )?.id ||
         episodeClips[0]?.id ||
         episodeKeyarts.find((b) => mediaUrl(b))?.id ||
         "";
@@ -2241,26 +2286,41 @@ export default function ManhuaScriptWorkbench({
                   data-manhua-asset-lock-tags
                   className="rounded-xl border border-cyan-400/30 bg-cyan-500/[0.08] px-3 py-2"
                 >
-                  <div className="text-[11px] font-semibold text-cyan-50/90">资产锁编号</div>
+                  <div className="text-[11px] font-semibold text-cyan-50/90">
+                    资产锁 · Image 对照
+                  </div>
                   <p className="mt-0.5 text-[10px] leading-4 text-white/45">
-                    @角色/@场景/@道具 供导戏与对照表使用。出片真正卡的是「垫图锁」：静帧须改图模式并挂定妆/场景参考图；只有成图、未垫图改图不能出成片。
+                    前台只显示编号与名称；出片时在后台按 id 挂垫图并写成 @角色N=@ImageK。静帧仍须改图模式挂垫图，否则禁止出成片。
                   </p>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {assetLockRegistry.slots.map((s) => (
-                      <span
-                        key={`${s.tag}:${s.id}`}
-                        className="rounded-md border border-cyan-300/35 bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-50"
-                        title={s.subTag ? `${s.labelZh} · ${s.subTag}` : s.labelZh}
-                      >
-                        {s.tag}
-                        <span className="ml-1 font-normal text-white/50">{s.labelZh}</span>
-                        {s.subTag ? (
+                    {assetLockRegistry.slots.map((s) => {
+                      const hasPad = Boolean(String(s.path || "").trim());
+                      return (
+                        <span
+                          key={`${s.tag}:${s.id}`}
+                          className="rounded-md border border-cyan-300/35 bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-50"
+                          title={s.subTag ? `${s.labelZh} · ${s.subTag}` : s.labelZh}
+                        >
+                          {s.tag}
+                          <span className="ml-1 font-normal text-white/50">{s.labelZh}</span>
                           <span className="ml-1 font-mono text-[9px] font-normal text-amber-100/80">
-                            {s.subTag}
+                            id={s.id}
                           </span>
-                        ) : null}
-                      </span>
-                    ))}
+                          {s.subTag ? (
+                            <span className="ml-1 font-mono text-[9px] font-normal text-amber-100/70">
+                              {s.subTag}
+                            </span>
+                          ) : null}
+                          <span
+                            className={`ml-1 text-[9px] font-semibold ${
+                              hasPad ? "text-emerald-200/90" : "text-red-200"
+                            }`}
+                          >
+                            {hasPad ? "已挂图" : "缺图"}
+                          </span>
+                        </span>
+                      );
+                    })}
                   </div>
                   {assetLockRegistry.sheetPropSlots.length ? (
                     <div className="mt-2 border-t border-cyan-400/20 pt-1.5">
@@ -2289,8 +2349,8 @@ export default function ManhuaScriptWorkbench({
                       角色声线参考（人手提取）
                     </div>
                     <p className="mt-0.5 text-[10px] leading-4 text-white/40">
-                      有声成片出对白后，按导戏秒轴抠该角色对白窗挂到
-                      @角色；多人同框按时长最多挂 3 路。BGM 仍后期自叠。
+                      声线参考可选：有则挂到 @角色 更稳；缺音不挡出片（初登场常无参考音）。语音/配乐后期可改；多人同框最多
+                      3 路进引擎。
                     </p>
                     {characterVoiceLocks.length ? (
                       <div className="mt-1 flex flex-wrap gap-1">
@@ -2435,17 +2495,30 @@ export default function ManhuaScriptWorkbench({
                     genLabelZh: "基于库生成新场景",
                   },
                   {
-                    role: "prop" as const,
-                    titleZh: "我的服装道具",
+                    role: "wardrobe" as const,
+                    titleZh: "我的服装（造型子类）",
                     hintZh:
-                      "上传独立服装/道具参考（每行 3 张）。角色定妆卡里已含部分服化道，不必重复上传。",
+                      "上传换装/妆造参考，编入造型套后按段手选启用。每人最多 3 套；换装不改脸号。",
+                    border: "border-rose-400/30 bg-rose-500/[0.07]",
+                    titleCls: "text-rose-50/90",
+                    btnCls:
+                      "border-rose-300/40 bg-rose-500/15 text-rose-50 hover:bg-rose-500/25",
+                    seedReady: Boolean(characterIds[0] || ancientArchetypeIds[0]),
+                    seedId: characterIds[0] || ancientArchetypeIds[0] || "",
+                    genLabelZh: "基于库生成新服装",
+                  },
+                  {
+                    role: "prop" as const,
+                    titleZh: "我的道具",
+                    hintZh:
+                      "上传独立道具参考（每行 3 张）。可挂进造型套搭配；定妆卡特写格另有 @道具 子号。",
                     border: "border-amber-400/30 bg-amber-500/[0.07]",
                     titleCls: "text-amber-50/90",
                     btnCls:
                       "border-amber-300/40 bg-amber-500/15 text-amber-50 hover:bg-amber-500/25",
                     seedReady: Boolean(propIds[0]),
                     seedId: propIds[0] || "",
-                    genLabelZh: "基于库生成新服装道具",
+                    genLabelZh: "基于库生成新道具",
                   },
                 ] as const
               ).map((sec) => {
@@ -2655,6 +2728,100 @@ export default function ManhuaScriptWorkbench({
                 </div>
               ) : null}
             </div>
+
+            {onCharacterLookSetsChange ? (
+              <div
+                data-manhua-look-sets
+                className="mt-3 rounded-xl border border-rose-400/25 bg-rose-500/[0.06] p-3"
+              >
+                <div className="text-[11px] font-semibold text-rose-50/90">
+                  造型套（每人最多 {MANHUA_LOOK_SETS_PER_CHARACTER_MAX} 套）
+                </div>
+                <p className="mt-0.5 text-[10px] leading-4 text-white/45">
+                  妆造/服装挂进套后，分镜里按段手选启用；换装改套，不改 @角色 脸号。网址不展示。
+                </p>
+                <div className="mt-2 space-y-2">
+                  {assetLockRegistry.byRole.character.slice(0, 4).map((ch) => {
+                    const sets = listManhuaLookSetsForCharacter(resolvedLookSets, ch.id);
+                    const wardrobeRefs = customAssetRefs.filter((r) => r.role === "wardrobe");
+                    return (
+                      <div
+                        key={ch.id}
+                        className="rounded-lg border border-white/10 bg-black/25 px-2 py-1.5"
+                      >
+                        <div className="text-[10px] font-semibold text-cyan-50/90">
+                          {ch.tag} · {ch.labelZh}
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {Array.from({ length: MANHUA_LOOK_SETS_PER_CHARACTER_MAX }, (_, i) => {
+                            const idx = i + 1;
+                            const ls =
+                              sets.find((s) => s.index === idx) ||
+                              ({
+                                id: "",
+                                characterId: ch.id,
+                                index: idx,
+                                labelZh: `造型${idx}`,
+                              } as ManhuaCharacterLookSet);
+                            return (
+                              <div
+                                key={`${ch.id}-${idx}`}
+                                className="min-w-[9rem] flex-1 rounded border border-rose-300/25 bg-rose-500/10 px-1.5 py-1"
+                              >
+                                <input
+                                  value={ls.labelZh}
+                                  onChange={(e) =>
+                                    onCharacterLookSetsChange(
+                                      upsertManhuaCharacterLookSet(resolvedLookSets, {
+                                        ...ls,
+                                        characterId: ch.id,
+                                        index: idx,
+                                        labelZh: e.target.value,
+                                      }),
+                                    )
+                                  }
+                                  className="w-full rounded border border-white/10 bg-black/40 px-1 py-0.5 text-[10px] text-rose-50 outline-none"
+                                  placeholder={`造型${idx}`}
+                                />
+                                <select
+                                  value={ls.wardrobeRefId || ls.lookRefId || ""}
+                                  onChange={(e) => {
+                                    const refId = e.target.value;
+                                    onCharacterLookSetsChange(
+                                      upsertManhuaCharacterLookSet(resolvedLookSets, {
+                                        ...ls,
+                                        characterId: ch.id,
+                                        index: idx,
+                                        wardrobeRefId: refId || undefined,
+                                        lookRefId: refId || undefined,
+                                      }),
+                                    );
+                                  }}
+                                  className="mt-1 w-full rounded border border-white/10 bg-black/40 px-1 py-0.5 text-[9px] text-white/70"
+                                >
+                                  <option value="">挂服装图…</option>
+                                  {wardrobeRefs.map((r) => (
+                                    <option key={r.id} value={r.id}>
+                                      {r.labelZh || r.id.slice(0, 12)}
+                                    </option>
+                                  ))}
+                                </select>
+                                <div className="mt-0.5 font-mono text-[8px] text-white/35">
+                                  {assetLockRegistry.wardrobeSlots.find(
+                                    (w) => w.lookSetId === ls.id,
+                                  )?.wardrobeTag || `@服装?`}{" "}
+                                  · id={ls.id || "待建"}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
 
             {onArtStyleChange ? (
               <div
@@ -3791,10 +3958,20 @@ export default function ManhuaScriptWorkbench({
                         const p = String(row.clip?.prompt || "");
                         const hasPad =
                           Boolean(String(row.clip?.refImageUrl || "").trim()) ||
-                          /【像素垫图锁/.test(p);
-                        const hasAssetLock = /【资产锁/.test(p);
+                          /【垫图】|【像素垫图锁/.test(p);
+                        const hasAssetLock = /【资产·Image对照】|【资产】|【资产锁/.test(p);
                         const hasDuty = /【参考职责】/.test(p);
                         const tags = p.match(/@(?:角色|场景|道具)\d+/g) || [];
+                        const voiceGate = evaluateManhuaCrossSegmentVoiceGate({
+                          localSegmentIndex: row.segmentIndex,
+                          currentPrompt: p,
+                          episodeSegmentPrompts:
+                            collectManhuaEpisodeSegmentPromptsForVoiceGate(
+                              blocks,
+                              focusEpisode,
+                            ),
+                          voiceLocks: characterVoiceLocks,
+                        });
                         return (
                           <div
                             data-manhua-clip-lock-chips={row.segmentIndex}
@@ -3816,7 +3993,29 @@ export default function ManhuaScriptWorkbench({
                                   : "bg-amber-500/20 text-amber-50"
                               }`}
                             >
-                              {hasAssetLock ? "资产编号锁✓" : "资产编号待补"}
+                              {hasAssetLock ? "Image对照✓" : "Image对照缺失"}
+                            </span>
+                            <span
+                              className={`rounded px-1 py-px text-[8px] font-semibold ${
+                                voiceGate.requiredTags.length === 0
+                                  ? "bg-white/10 text-white/45"
+                                  : voiceGate.missingTags.length === 0
+                                    ? "bg-emerald-500/25 text-emerald-50"
+                                    : "bg-white/10 text-white/45"
+                              }`}
+                              title={
+                                voiceGate.requiredTags.length
+                                  ? voiceGate.missingTags.length === 0
+                                    ? `已挂声线：${voiceGate.requiredTags.join("、")}`
+                                    : voiceGate.messageZh || "声线可选，缺音不挡出片"
+                                  : "声线可选；初登场常无参考音"
+                              }
+                            >
+                              {voiceGate.requiredTags.length === 0
+                                ? "声线·可选"
+                                : voiceGate.missingTags.length === 0
+                                  ? "声线已挂"
+                                  : "声线未挂·不挡"}
                             </span>
                             <span
                               className={`rounded px-1 py-px text-[8px] font-semibold ${
@@ -3841,7 +4040,10 @@ export default function ManhuaScriptWorkbench({
                       <textarea
                         data-manhua-clip-prompt={row.segmentIndex}
                         disabled={!row.clip?.id || !onUpdateClipPrompt || factoryBusy}
-                        value={row.clip?.prompt || ""}
+                        value={String(row.clip?.prompt || "").replace(
+                          /\n*【引擎光学】[^\n]*/g,
+                          "",
+                        )}
                         onChange={(e) => {
                           if (row.clip?.id) onUpdateClipPrompt?.(row.clip.id, e.target.value);
                         }}
@@ -4370,7 +4572,7 @@ export default function ManhuaScriptWorkbench({
               const shotClip =
                 episodeClips.find(
                   (b) =>
-                    resolveClipSegmentIndex(b.id, b.prompt) ===
+                    resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) ===
                     resolveSegmentIndexFromShotIndex(shot.index),
                 ) ||
                 (resolveSegmentIndexFromShotIndex(shot.index) === 1 ? legacyClip : undefined);

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   collectManhuaCharacterTagsFromPrompt,
+  evaluateManhuaCrossSegmentVoiceGate,
+  listManhuaSpeakingTagsInPrompt,
   normalizeManhuaCharacterVoiceLocks,
   pickManhuaVoiceAudioUrlsForPrompt,
   planManhuaVoiceAudioForPrompt,
@@ -102,5 +104,58 @@ describe("manhuaCharacterVoiceLock", () => {
       plan.audioUrls,
     );
     expect(collectManhuaCharacterTagsFromPrompt(longPrompt)).toContain("@角色4");
+  });
+
+  it("cross-segment voice gate: missing lock is soft tip, never blocks", () => {
+    const seg1 =
+      "【第1段·15s】客栈\n0–7.5s：@角色1，抬手，说「站住」。近景。\n7.5–15s：@角色2，后退，说「别冲动」。中景。";
+    const seg2 =
+      "【第2段·15s】客栈\n0–15s：@角色1，逼近，说「跟我走」。近景。";
+    expect(listManhuaSpeakingTagsInPrompt(seg2)).toContain("@角色1");
+    const miss = evaluateManhuaCrossSegmentVoiceGate({
+      localSegmentIndex: 2,
+      currentPrompt: seg2,
+      episodeSegmentPrompts: [
+        { localSegmentIndex: 1, prompt: seg1 },
+        { localSegmentIndex: 2, prompt: seg2 },
+      ],
+      voiceLocks: [],
+    });
+    expect(miss.ok).toBe(true);
+    expect(miss.missingTags).toContain("@角色1");
+    expect(miss.messageZh).toMatch(/不挡出片|可选/);
+
+    const ok = evaluateManhuaCrossSegmentVoiceGate({
+      localSegmentIndex: 2,
+      currentPrompt: seg2,
+      episodeSegmentPrompts: [
+        { localSegmentIndex: 1, prompt: seg1 },
+        { localSegmentIndex: 2, prompt: seg2 },
+      ],
+      voiceLocks: [
+        {
+          id: "v1",
+          characterTag: "@角色1",
+          labelZh: "甲",
+          audioUrl: "https://cdn.example/a.mp3",
+          createdAt: 1,
+        },
+      ],
+    });
+    expect(ok.ok).toBe(true);
+    expect(ok.missingTags).toEqual([]);
+  });
+
+  it("cross-segment voice gate: first appearance in episode is not required", () => {
+    const seg1 =
+      "【第1段·15s】客栈\n0–15s：@角色1，抬头，说「你好」。近景。";
+    const gate = evaluateManhuaCrossSegmentVoiceGate({
+      localSegmentIndex: 1,
+      currentPrompt: seg1,
+      episodeSegmentPrompts: [{ localSegmentIndex: 1, prompt: seg1 }],
+      voiceLocks: [],
+    });
+    expect(gate.ok).toBe(true);
+    expect(gate.requiredTags).toEqual([]);
   });
 });

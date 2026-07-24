@@ -76,7 +76,7 @@ describe("manhuaScriptWorkbench", () => {
         "\n",
       ),
     );
-    // 有分镜表：按每段 3 镜切，不注水到默认 12 段；镜长缺省 5 → 段 15 + 10
+    // 有分镜表：按每段 3 镜切，不注水到默认 6 段；镜长缺省 5 → 段 15 + 10
     const segsFast = groupShotsIntoSegments(shots, {
       videoModel: MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
     });
@@ -87,8 +87,8 @@ describe("manhuaScriptWorkbench", () => {
     expect(manhuaSegmentDurationSec("gemini-omni-flash")).toBe(10);
     expect(workbenchShotTotalSec(shots, "seedance-2.0-fast")).toBe(25);
     expect(workbenchShotTotalSec(shots, "gemini-omni-flash")).toBe(20);
-    // 默认骨架：12 段 ×（3 镜×5s 钳 15）= 180s
-    expect(workbenchShotTotalSec([], "seedance-2.0-fast")).toBe(180);
+    // 默认骨架：6 段 ×（3 镜×5s 钳 15）= 90s
+    expect(workbenchShotTotalSec([], "seedance-2.0-fast")).toBe(90);
     expect(
       groupShotsIntoSegments([], { videoModel: "seedance-2.0-fast" }).length,
     ).toBe(MANHUA_SEGMENT_DEFAULT);
@@ -131,7 +131,7 @@ describe("manhuaScriptWorkbench", () => {
     expect(resolveClipSegmentIndex("clip-e02-g13-xyz", "")).toBe(13);
   });
 
-  it("formats segment clip inject with duration and follow-still lock", () => {
+  it("formats segment clip inject as short second-axis card", () => {
     const block = formatWorkbenchSegmentClipInjectBlock({
       segmentIndex: 1,
       durationSec: 15,
@@ -146,21 +146,17 @@ describe("manhuaScriptWorkbench", () => {
         },
       ],
     });
-    expect(block).toContain("【第 1 段·成片】");
-    expect(block).toContain("约 15 秒");
-    expect(block).toContain("红色裁员文件夹");
-    expect(block).toContain("参考静帧");
-    expect(block).toContain("本段意图");
-    expect(block).toContain("节拍防火墙");
-    expect(block).toMatch(/哑巴空镜|空镜/);
-    // 兼容旧入口
+    expect(block).toContain("【第1段·15s】");
+    expect(block).toMatch(/0–15s：.*红色裁员文件夹.*全景缓慢推近。/);
+    expect(block).not.toContain("节拍防火墙");
+    expect(block).not.toContain("成片预演硬锁");
     const legacy = formatWorkbenchClipInjectBlock({
       index: 1,
       durationSec: 15,
       cameraZh: "全景",
       actionZh: "推门",
     });
-    expect(legacy).toContain("【第 1 段·成片】");
+    expect(legacy).toContain("【第1段·15s】");
   });
 
   it("resolves per-shot asset mount from named cast or soft dual roles", () => {

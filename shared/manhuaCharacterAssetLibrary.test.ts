@@ -89,7 +89,7 @@ describe("manhuaCharacterAssetLibrary", () => {
     expect(block).toContain("【角色库锚点】");
     expect(block).toContain("【画风】");
     expect(block).toContain("CG 漫剧");
-    expect(block).toContain("预览图：/manhua-characters/char_f_07.jpg");
+    expect(block).not.toMatch(/预览图：|\/manhua-characters\/|https?:\/\//);
     expect(getManhuaCharacterPreviewUrl("char_f_07")).toBe("/manhua-characters/char_f_07.jpg");
   });
 

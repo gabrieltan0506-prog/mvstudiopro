@@ -38,6 +38,18 @@ import {
 } from "@shared/manhuaScriptWorkbench";
 import { clampSeedanceOpenRouterDuration } from "@shared/seedanceOpenRouterModels";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
+import { appendManhuaClipEngineOptics } from "@shared/manhuaCineOpticsBank";
+import {
+  extractManhuaMentionedAssetTags,
+  formatManhuaClipImageRoleBindLine,
+  formatManhuaClipSeedanceBindLineFromEntries,
+  parseManhuaAssetImageBindBlock,
+  planManhuaClipSeedanceImageBind,
+  resolveManhuaAssetImageBindRows,
+  stripManhuaAssetUrlsFromPrompt,
+  type ManhuaClipSeedanceImageBindEntry,
+} from "@shared/manhuaAssetLockRegistry";
+import { absolutizeManhuaAssetUrl } from "@shared/manhuaKeyartEditFusion";
 import {
   buildManhuaFactoryOptimizeBrief,
   isManhuaBibleOrBeatsBlockId,
@@ -48,11 +60,24 @@ import {
   formatManhuaCharacterVoiceLockBlock,
   planManhuaVoiceAudioForPrompt,
   type ManhuaCharacterVoiceLock,
+  type ManhuaEpisodeSegmentPromptRow,
 } from "@shared/manhuaCharacterVoiceLock";
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
 } as const;
+
+const CANVAS_TERRA_PRIMARY_MODEL = "gpt-5.6-terra" as const;
+const CANVAS_GEMINI_FALLBACK_MODEL = GEMINI_MODEL_MAP["gemini-3.1-pro"];
+
+function resolveCanvasTextPrimaryModel(textModel: string | undefined): string {
+  const m = String(textModel || "").trim();
+  if (m === "gpt-5.6-sol" || m === "gpt-5.5" || m === "gpt-5.4" || m === "gpt-5.6-terra") {
+    return m;
+  }
+  // 含显式 gemini：仍先 Terra，Gemini 仅 fallback
+  return CANVAS_TERRA_PRIMARY_MODEL;
+}
 
 /** 客户端轮询上限：须略大于 worker CANVAS_GPT_IMAGE2_JOB_TIMEOUT_MS（默认 10min） */
 const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 12 * 60_000;
@@ -64,12 +89,35 @@ export type CanvasRunDeps = {
     /** 画布文本模型：gpt-5.6-sol / gpt-5.6-terra / gpt-5.5 / gpt-5.4 */
     modelName?: string;
   }) => Promise<string>;
+  /** Terra 多图视觉（官方专线）；缺省则直接走 Gemini fallback */
+  canvasTerraVisionMarkdown?: (input: {
+    prompt: string;
+    images: Array<{ url: string; mimeType?: string }>;
+  }) => Promise<string>;
+  /** Terra 有帧反推（官方专线）；缺省则直接走 Gemini fallback */
+  canvasTerraVideoReverse?: (input: {
+    userHint: string;
+    images: Array<{ url: string; mimeType?: string }>;
+    outputMode?: VideoReverseOutputMode;
+    targetEngine?: string;
+  }) => Promise<string>;
   /** 把 dataURL/本地图上传为 HTTPS，供 Evolink/Seedance 引用（可选） */
   uploadImageFile?: (file: File) => Promise<string>;
   /** 入队 jobs 时写入 userId（与 assemble 一致；可空串） */
   userId?: string;
   /** 角色声线参考（从有声成片抠出）；成片时按 @角色 挂 audio_url */
   characterVoiceLocks?: ManhuaCharacterVoiceLock[] | null;
+  /**
+   * 资产 id→垫图 path（仅出片后台用，勿写进用户可见 prompt）。
+   * 节点只存 @角色N|id=…|label=…，这里再转成可下载 URL。
+   */
+  manhuaAssetPathById?: Record<string, string> | null;
+  /**
+   * @deprecated 声线不再硬门禁；保留字段以免旧调用方类型炸。
+   */
+  getManhuaEpisodeSegmentPromptsForVoiceGate?: (
+    episodeIndex: number,
+  ) => ManhuaEpisodeSegmentPromptRow[];
 };
 
 function dataUrlToJpegFile(dataUrl: string, name: string): File | null {
@@ -93,6 +141,14 @@ async function toHttpsImageUrls(
     if (/^https?:\/\//i.test(u)) {
       out.push(u);
       continue;
+    }
+    // 库内定妆/场景相对路径 → 站点绝对 HTTPS，否则 Seedance 吃不到
+    if (u.startsWith("/")) {
+      const abs = absolutizeManhuaAssetUrl(u);
+      if (/^https?:\/\//i.test(abs)) {
+        out.push(abs);
+        continue;
+      }
     }
     if (u.startsWith("data:image/") && deps.uploadImageFile) {
       const file = dataUrlToJpegFile(u, `continuity-tail-${i}.jpg`);
@@ -229,24 +285,85 @@ export type CanvasUpstreamContext = {
   texts: string[];
 };
 
-async function runCanvasVisionMarkdown(prompt: string, images: CanvasVisionImage[]): Promise<string> {
+async function runCanvasVisionMarkdownGemini(
+  prompt: string,
+  images: CanvasVisionImage[],
+): Promise<string> {
   const resp = await fetch("/api/google?op=canvasVisionMarkdown", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       prompt,
       images,
-      model: "gemini-3.1-pro-preview",
+      model: CANVAS_GEMINI_FALLBACK_MODEL,
     }),
   });
-  const json = (await resp.json()) as { ok?: boolean; markdown?: string; error?: string; message?: string };
+  const json = (await resp.json()) as {
+    ok?: boolean;
+    markdown?: string;
+    error?: string;
+    message?: string;
+  };
   if (!resp.ok || !json.ok) throw new Error(json.error || json.message || "多图视觉分析失败");
   const md = String(json.markdown || "").trim();
   if (!md) throw new Error("多图分析返回为空");
   return md;
 }
 
+async function runCanvasVisionMarkdown(
+  deps: CanvasRunDeps,
+  prompt: string,
+  images: CanvasVisionImage[],
+): Promise<string> {
+  const payload = images
+    .map((i) => ({
+      url: String(i.url || "").trim(),
+      mimeType: i.mimeType || "image/jpeg",
+    }))
+    .filter((i) => i.url);
+  if (typeof deps.canvasTerraVisionMarkdown === "function" && payload.length) {
+    try {
+      const md = String(
+        await deps.canvasTerraVisionMarkdown({ prompt, images: payload }),
+      ).trim();
+      if (md) return md;
+    } catch {
+      // Terra 失败 → Gemini
+    }
+  }
+  return runCanvasVisionMarkdownGemini(prompt, images);
+}
+
+async function runVideoReversePromptGemini(
+  userHint: string,
+  images: Array<{ url: string; mimeType?: string }>,
+  mode: VideoReverseOutputMode,
+): Promise<string> {
+  const resp = await fetch("/api/google?op=videoReversePrompt", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      userHint: userHint || "反推分镜与微动提示词",
+      images,
+      model: CANVAS_GEMINI_FALLBACK_MODEL,
+      targetEngine: "seedance-2.0",
+      outputMode: mode,
+    }),
+  });
+  const json = (await resp.json()) as {
+    ok?: boolean;
+    markdown?: string;
+    error?: string;
+    message?: string;
+  };
+  if (!resp.ok || !json.ok) throw new Error(json.error || json.message || "视频反推失败");
+  const md = String(json.markdown || "").trim();
+  if (!md) throw new Error("视频反推返回为空");
+  return md;
+}
+
 async function runVideoReversePrompt(
+  deps: CanvasRunDeps,
   userHint: string,
   videoUrl: string | undefined,
   fallbackImages: CanvasVisionImage[],
@@ -263,47 +380,59 @@ async function runVideoReversePrompt(
     });
     images = frames.map((f) => ({ url: f.dataUrl, mimeType: f.mimeType }));
   } else if (fallbackImages.length) {
-    images = fallbackImages.map((i) => ({
-      url: i.url || "",
-      mimeType: i.mimeType || "image/jpeg",
-    })).filter((i) => i.url);
+    images = fallbackImages
+      .map((i) => ({
+        url: i.url || "",
+        mimeType: i.mimeType || "image/jpeg",
+      }))
+      .filter((i) => i.url);
   }
 
-  // 无片/无帧：仍可根据上游节拍文案生成编导分镜表（工厂自动跑必需）
+  const noFramePrompt = [
+    VIDEO_REVERSE_SYSTEM_PROMPT,
+    "没有参考帧时，请仅根据用户节拍/故事补全输出。",
+    "",
+    buildVideoReverseUserPrompt({
+      userHint: userHint || "根据上游节拍补全八维编导分镜表与微动句",
+      outputMode: mode,
+      targetEngine: "seedance-2.0",
+    }),
+  ].join("\n");
+
+  // 无片/无帧：Terra 文本优先 → Gemini
   if (!images.length) {
-    const md = await runGeminiScript(
-      [
-        VIDEO_REVERSE_SYSTEM_PROMPT,
-        "没有参考帧时，请仅根据用户节拍/故事补全输出。",
-        "",
-        buildVideoReverseUserPrompt({
-          userHint: userHint || "根据上游节拍补全八维编导分镜表与 Seedance 微动句",
-          outputMode: mode,
-          targetEngine: "seedance-2.0",
-        }),
-      ].join("\n"),
-      GEMINI_MODEL_MAP["gemini-3.1-pro"],
-    );
+    try {
+      const md = await deps.optimizeCopy({
+        sourceText: noFramePrompt,
+        optimizationBrief:
+          "你是影视编导助手：根据原文直接输出完整 Markdown 分镜表与微动句，不要 JSON。",
+        modelName: CANVAS_TERRA_PRIMARY_MODEL,
+      });
+      if (String(md || "").trim()) return String(md).trim();
+    } catch {
+      // fall through
+    }
+    const md = await runGeminiScript(noFramePrompt, CANVAS_GEMINI_FALLBACK_MODEL);
     if (!md.trim()) throw new Error("无片反推返回为空");
     return md.trim();
   }
 
-  const resp = await fetch("/api/google?op=videoReversePrompt", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      userHint: userHint || "反推分镜与 Seedance 微动提示词",
-      images,
-      model: "gemini-3.1-pro-preview",
-      targetEngine: "seedance-2.0",
-      outputMode: mode,
-    }),
-  });
-  const json = (await resp.json()) as { ok?: boolean; markdown?: string; error?: string; message?: string };
-  if (!resp.ok || !json.ok) throw new Error(json.error || json.message || "视频反推失败");
-  const md = String(json.markdown || "").trim();
-  if (!md) throw new Error("视频反推返回为空");
-  return md;
+  if (typeof deps.canvasTerraVideoReverse === "function") {
+    try {
+      const md = String(
+        await deps.canvasTerraVideoReverse({
+          userHint: userHint || "反推分镜与微动提示词",
+          images,
+          outputMode: mode,
+          targetEngine: "seedance-2.0",
+        }),
+      ).trim();
+      if (md) return md;
+    } catch {
+      // Terra 失败 → Gemini
+    }
+  }
+  return runVideoReversePromptGemini(userHint, images, mode);
 }
 
 async function runSeedance20(
@@ -483,6 +612,7 @@ export async function runCanvasBlock(
       refTexts,
     );
     const text = await runVideoReversePrompt(
+      deps,
       hint,
       uploadedVideoUrl,
       visionImages,
@@ -510,11 +640,12 @@ export async function runCanvasBlock(
     throw new Error("请先填写提示词，或连接上游方块传递内容 / 上传 TXT·MD 文档");
   }
 
-  // 关键静帧：本镜 prompt 已含分镜注入+画风/角色硬锁；再叠整份反推上游易超 OpenAI 32k
+  // 关键静帧 / 段成片：本节点 prompt 已含导戏；禁止再拼上游 keyart/设定全文（古风板×N）
   const isKeyartBlock = block.id.startsWith("keyart-");
+  const isClipBlock = block.id.startsWith("clip-");
   const mergedPrompt = formatCanvasUpstreamPrompt(
     prompt || "请根据上游内容完成本步骤生成。",
-    isKeyartBlock ? [] : effectiveTexts,
+    isKeyartBlock || isClipBlock ? [] : effectiveTexts,
   );
 
   if (block.kind === "text" || block.kind === "copy_organize") {
@@ -523,20 +654,11 @@ export async function runCanvasBlock(
         block.kind === "copy_organize"
           ? `${mergedPrompt}\n\n请识别所有图片内容，归纳整理成 Markdown 文档：重复部分去掉，标题清晰，内容详尽，条理分明。`
           : mergedPrompt;
-      const text = await runCanvasVisionMarkdown(visionPrompt, visionImages);
+      const text = await runCanvasVisionMarkdown(deps, visionPrompt, visionImages);
       return { outputText: text };
     }
 
-    const model = block.textModel;
-    if (model === "gemini-3.1-pro") {
-      const text = await runGeminiScript(
-        block.kind === "copy_organize"
-          ? `请整理以下内容为结构化 Markdown 发布稿（含标题、分段、平台要点）：\n\n${mergedPrompt}`
-          : mergedPrompt,
-        GEMINI_MODEL_MAP["gemini-3.1-pro"],
-      );
-      return { outputText: text };
-    }
+    const model = resolveCanvasTextPrimaryModel(block.textModel);
     const brief =
       model === "gpt-5.6-terra" || model === "gpt-5.4"
         ? "你是创作助手：根据原文直接输出可发布的完整 Markdown 文案，语气专业、有画面感。"
@@ -544,6 +666,10 @@ export async function runCanvasBlock(
     const sourceText = mergedPrompt.length >= 10 ? mergedPrompt : `${mergedPrompt}\n（请补全为完整创作文案）`;
     const baseBrief =
       block.kind === "copy_organize" ? `整理文案结构。\n${brief}` : brief;
+    const geminiSource =
+      block.kind === "copy_organize"
+        ? `请整理以下内容为结构化 Markdown 发布稿（含标题、分段、平台要点）：\n\n${mergedPrompt}`
+        : mergedPrompt;
 
     // 漫剧 bible / beats：超约 16k 自动拆成 2～N 次请求拼接，不截断、不要求用户手动拆
     if (isManhuaBibleOrBeatsBlockId(block.id)) {
@@ -551,31 +677,44 @@ export async function runCanvasBlock(
       if (plan.overLimitZh) {
         throw new Error(plan.overLimitZh);
       }
-      const parts: string[] = [];
-      let previousMarkdown = "";
-      for (let i = 0; i < plan.chunks.length; i++) {
-        const chunk = plan.chunks[i]!;
-        const partMarkdown = await deps.optimizeCopy({
-          sourceText: chunk,
-          optimizationBrief: buildManhuaFactoryOptimizeBrief({
-            baseBrief,
-            partIndex: i + 1,
-            partTotal: plan.chunks.length,
-            previousMarkdown,
-          }),
-          modelName: model,
-        });
-        parts.push(String(partMarkdown || "").trim());
-        previousMarkdown = parts[parts.length - 1] || "";
+      try {
+        const parts: string[] = [];
+        let previousMarkdown = "";
+        for (let i = 0; i < plan.chunks.length; i++) {
+          const chunk = plan.chunks[i]!;
+          const partMarkdown = await deps.optimizeCopy({
+            sourceText: chunk,
+            optimizationBrief: buildManhuaFactoryOptimizeBrief({
+              baseBrief,
+              partIndex: i + 1,
+              partTotal: plan.chunks.length,
+              previousMarkdown,
+            }),
+            modelName: model,
+          });
+          parts.push(String(partMarkdown || "").trim());
+          previousMarkdown = parts[parts.length - 1] || "";
+        }
+        const joined = parts.filter(Boolean).join("\n\n");
+        if (joined) return { outputText: joined };
+      } catch {
+        // Terra/GPT 失败 → Gemini
       }
-      return { outputText: parts.filter(Boolean).join("\n\n") };
+      const text = await runGeminiScript(geminiSource, CANVAS_GEMINI_FALLBACK_MODEL);
+      return { outputText: text };
     }
 
-    const text = await deps.optimizeCopy({
-      sourceText,
-      optimizationBrief: baseBrief,
-      modelName: model,
-    });
+    try {
+      const text = await deps.optimizeCopy({
+        sourceText,
+        optimizationBrief: baseBrief,
+        modelName: model,
+      });
+      if (String(text || "").trim()) return { outputText: String(text).trim() };
+    } catch {
+      // Terra/GPT 失败 → Gemini
+    }
+    const text = await runGeminiScript(geminiSource, CANVAS_GEMINI_FALLBACK_MODEL);
     return { outputText: text };
   }
 
@@ -730,20 +869,30 @@ export async function runCanvasBlock(
     const fusionStillUrls = (block.editFusionUrls || [])
       .map((u) => String(u || "").trim())
       .filter((u) => u && !looksLikeVideo(u));
-    const followStillPrompt = String(mergedPrompt || "").includes("参考静帧")
-      ? mergedPrompt
-      : `${mergedPrompt}\n\n${MANHUA_VIDEO_FOLLOW_STILL_ZH}`;
-    const seedanceDirectorSource = continuityVideoUrl
-      ? `${followStillPrompt}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}`
-      : followStillPrompt;
-    // 导戏单原样进 Seedance（已废除微动三件套）；clip 不用路径配方覆盖正文
+    // 段成片：禁止再叠「参考静帧/连续性」聊天墙；身份靠 @Image + 秒轴短指令
+    // 声线/配乐不硬锁：缺参考音不挡出片（初登场无音、后期可改）
     const isClip = block.id.startsWith("clip-");
-    const motionPrompt = stripManhuaPromptSlop(
-      compileI2VMotionPrompt(seedanceDirectorSource, {
+    const seedanceDirectorSource = isClip
+      ? mergedPrompt
+      : String(mergedPrompt || "").includes("参考静帧")
+        ? mergedPrompt
+        : `${mergedPrompt}\n\n${MANHUA_VIDEO_FOLLOW_STILL_ZH}`;
+    const withContinuity =
+      !isClip && continuityVideoUrl
+        ? `${seedanceDirectorSource}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}`
+        : seedanceDirectorSource;
+    // 导戏单原样进 Seedance（已废除微动三件套）；clip 不用路径配方覆盖正文
+    const compiledMotion = stripManhuaPromptSlop(
+      compileI2VMotionPrompt(withContinuity, {
         pathCameraRecipeId: isClip ? undefined : block.pathCameraRecipeId,
         pathAnnotationJson: isClip ? undefined : block.pathAnnotationJson,
       }),
     );
+    // 光学 mm/快门：仅出片时由运镜句自动转换，不写回节点/前台审阅
+    // 成片正文剥网址：垫图 URL 只走 imageUrls，不进提示词
+    const motionPrompt = isClip
+      ? stripManhuaAssetUrlsFromPrompt(appendManhuaClipEngineOptics(compiledMotion))
+      : compiledMotion;
     const videoModel = block.videoModel || "seedance-2.0-fast";
     console.info(
       `[canvasRunBlock] video · id=${block.id} · videoModel=${videoModel} · stills=${[stillRef, ...fusionStillUrls].filter(Boolean).length} · continuity=${Boolean(continuityVideoUrl)} · directorPass=${isManhuaSeedanceDirectorPrompt(motionPrompt)} · promptChars=${motionPrompt.length}`,
@@ -776,23 +925,77 @@ export async function runCanvasBlock(
           );
         }
       }
-      const imageUrls: string[] = [];
-      const pushUnique = (u?: string) => {
-        const s = String(u || "").trim();
-        if (s && !imageUrls.includes(s)) imageUrls.push(s);
-      };
-      // 末段帧优先：拼接起幅；再补本段静帧
-      for (const f of tailFrames) pushUnique(f);
-      for (const u of stillPool) pushUnique(u);
-      const httpsImages = await toHttpsImageUrls(deps, imageUrls.slice(0, 6));
+      // 节点只含 id；path 从 deps 后台表解析，绝不依赖提示词里的网址
+      const assetRows = isClip
+        ? resolveManhuaAssetImageBindRows(
+            parseManhuaAssetImageBindBlock(block.prompt || motionPrompt),
+            deps.manhuaAssetPathById,
+          ).map((r) => ({
+            ...r,
+            path: absolutizeManhuaAssetUrl(r.path) || r.path,
+          }))
+        : [];
+      const mentionedTags = isClip
+        ? extractManhuaMentionedAssetTags(motionPrompt)
+        : [];
+      const absStills = stillPool
+        .map((u) => absolutizeManhuaAssetUrl(u) || u)
+        .filter((u) => /^https?:\/\//i.test(u) || u.startsWith("data:image/"));
+      // 成片硬绑：末帧 → 资产定妆 → 本段静帧（URL 只进 API imageUrls）
+      const bindPlan = isClip
+        ? planManhuaClipSeedanceImageBind({
+            assetRows: assetRows.filter((r) => /^https?:\/\//i.test(r.path)),
+            stillUrls: absStills,
+            tailUrls: tailFrames,
+            mentionedTags,
+            maxImages: 6,
+          })
+        : null;
+      const rawPool = bindPlan?.imageUrls?.length
+        ? bindPlan.imageUrls
+        : [...tailFrames, ...absStills];
+      const httpsImages = await toHttpsImageUrls(deps, rawPool.slice(0, 6));
+      const keptEntries: ManhuaClipSeedanceImageBindEntry[] = [];
+      if (bindPlan?.entries.length) {
+        for (const e of bindPlan.entries) {
+          const abs = absolutizeManhuaAssetUrl(e.url) || e.url;
+          const hit = httpsImages.find((h) => h === abs || h === e.url);
+          if (!hit) continue;
+          keptEntries.push({ ...e, url: hit, imageIndex: keptEntries.length + 1 });
+        }
+      }
       // Seedance 首图：有上一段末帧时用末帧作起幅主参考，否则用本段首静帧
-      const seedStill = tailFrames[tailFrames.length - 1] || stillRef;
+      const seedStill =
+        keptEntries.find((e) => e.kind === "tail")?.url ||
+        httpsImages[0] ||
+        stillRef;
       const voiceLocks = deps.characterVoiceLocks || [];
       const voicePlan = planManhuaVoiceAudioForPrompt(motionPrompt, voiceLocks);
       const voiceBlock = formatManhuaCharacterVoiceLockBlock(voiceLocks, voicePlan);
-      const seedancePrompt = voiceBlock
-        ? `${motionPrompt}\n\n${voiceBlock}`.trim()
-        : motionPrompt;
+      const imageBind = isClip
+        ? formatManhuaClipSeedanceBindLineFromEntries(keptEntries) ||
+          formatManhuaClipImageRoleBindLine(httpsImages.length, {
+            tailCount: Math.min(tailFrames.length, 2),
+          })
+        : "";
+      // 声线块压成一行标签，避免再灌聊天墙
+      const voiceOneLine = voiceBlock
+        ? voiceBlock
+            .split("\n")
+            .filter((ln) => /@角色\d+=/.test(ln))
+            .join("；")
+        : "";
+      const seedancePrompt = [
+        imageBind,
+        motionPrompt,
+        voiceOneLine ? `【声线】${voiceOneLine}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .trim();
+      console.info(
+        `[canvasRunBlock] clip image-bind · assets=${assetRows.length} · kept=${keptEntries.length} · urls=${httpsImages.length} · bind=${String(imageBind).slice(0, 180)}`,
+      );
       url = await runSeedance20(seedancePrompt, seedStill, ar, {
         imageUrls: httpsImages.length ? httpsImages : undefined,
         videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,

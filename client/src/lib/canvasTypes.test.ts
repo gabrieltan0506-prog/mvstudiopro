@@ -4,10 +4,26 @@ import {
   collectUpstreamBlockIds,
   collectUpstreamTexts,
   collectVisionImages,
+  DEFAULT_CANVAS_TEXT_MODEL,
   defaultCanvasBlock,
   resolveBlockHandoffText,
   resolveNearestUpstreamImageUrl,
+  SPAWN_KIND_OPTIONS,
 } from "./canvasTypes";
+
+describe("canvas spawn + defaults", () => {
+  it("hides text/copy_organize from spawn menu but keeps kinds for factory", () => {
+    expect(SPAWN_KIND_OPTIONS.map((o) => o.kind)).toEqual([
+      "image",
+      "video",
+      "video_reverse",
+    ]);
+    expect(defaultCanvasBlock("text", 0, 0).kind).toBe("text");
+    expect(defaultCanvasBlock("copy_organize", 0, 0).kind).toBe("copy_organize");
+    expect(DEFAULT_CANVAS_TEXT_MODEL).toBe("gpt-5.6-terra");
+    expect(defaultCanvasBlock("text", 0, 0).textModel).toBe("gpt-5.6-terra");
+  });
+});
 
 describe("canvas upstream handoff", () => {
   it("prefers outputText over prompt when resolving handoff", () => {

@@ -94,14 +94,15 @@ describe("canvasDramaStudio factory", () => {
     expect(bible.prompt).toContain("【角色库锚点】");
   });
 
-  it("injects motion prompt craft into clip", () => {
+  it("spawn clip stays placeholder; motion craft does not pollute clip prompt", () => {
     const { blocks } = spawnManhuaDramaStudio({
       topic: "产品拆解种草",
       motionPromptIds: ["product_05_exploded_view"],
     });
     const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
-    expect(clip.prompt).toContain("爆炸拆解");
-    expect(clip.prompt).toContain("【包装动效手法】");
+    expect(clip.prompt).toMatch(/【成片占位】|画风：/);
+    expect(clip.prompt).not.toContain("【包装动效手法】");
+    expect(clip.prompt).not.toContain("古风服化参考");
   });
 
   it("injects craft shot bank into beats / reverse / keyart", () => {
@@ -129,26 +130,27 @@ describe("canvasDramaStudio factory", () => {
     expect(beats.prompt).toContain("高反差");
   });
 
-  it("auto-injects path + action camera for fight topic when ids omitted", () => {
+  it("auto-injects path + action camera into beats for fight topic (not clip walls)", () => {
     const { blocks } = spawnManhuaDramaStudio({
       topic: "江湖刀光打斗交锋",
       writerContext: "雨夜客栈拔刀交锋，比武闪避",
     });
     const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
     const beats = blocks.find((b) => b.id.startsWith("beats-"))!;
-    expect(clip.prompt).toContain("【路径运镜配方】");
-    expect(clip.prompt).toContain("【动作运镜配方】");
+    expect(clip.prompt).not.toContain("【路径运镜配方】");
+    expect(clip.prompt).not.toContain("【动作运镜配方】");
     expect(beats.prompt).toMatch(/打斗|动作运镜|路径运镜/);
   });
 
-  it("auto-injects path + action for multi-person body motion / match topic", () => {
+  it("multi-person body motion injects path/action into beats, not clip prompt", () => {
     const { blocks } = spawnManhuaDramaStudio({
       topic: "校园球赛决赛",
       writerContext: "多人同框冲刺与肢体移位，观众围观",
     });
     const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
-    expect(clip.prompt).toContain("【路径运镜配方】");
-    expect(clip.prompt).toContain("【动作运镜配方】");
+    const beats = blocks.find((b) => b.id.startsWith("beats-"))!;
+    expect(clip.prompt).not.toContain("【路径运镜配方】");
+    expect(beats.prompt).toMatch(/路径运镜|动作运镜/);
   });
 
   it("expanded multi-shot keyarts keep scene and character inject", () => {
@@ -207,10 +209,10 @@ describe("canvasDramaStudio factory", () => {
     expect(bible).not.toContain("签约钢笔");
   });
 
-  it("factory text stages default to gpt-5.6-sol", () => {
+  it("factory text stages default to gpt-5.6-terra", () => {
     const { blocks } = spawnManhuaDramaStudio({ topic: "仙侠逆袭" });
     for (const prefix of ["story-", "bible-", "beats-"] as const) {
-      expect(blocks.find((b) => b.id.startsWith(prefix))!.textModel).toBe("gpt-5.6-sol");
+      expect(blocks.find((b) => b.id.startsWith(prefix))!.textModel).toBe("gpt-5.6-terra");
     }
   });
 
@@ -450,12 +452,56 @@ describe("canvasDramaStudio factory", () => {
         ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
         : b,
     );
-    const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1);
+    const withSheets = [
+      ...withKeyarts,
+      {
+        ...withKeyarts[0]!,
+        id: "charsheet-hero",
+        kind: "image" as const,
+        prompt: "定妆",
+        outputUrl: "https://cdn.example/hero.jpg",
+        outputUrls: ["https://cdn.example/hero.jpg"],
+        status: "done" as const,
+      },
+      {
+        ...withKeyarts[0]!,
+        id: "sceneplate-bridge",
+        kind: "image" as const,
+        prompt: "场景",
+        outputUrl: "https://cdn.example/bridge.jpg",
+        outputUrls: ["https://cdn.example/bridge.jpg"],
+        status: "done" as const,
+      },
+    ];
+    const ensured = ensureManhuaFragmentClips(withSheets, expanded.edges, 1, {
+      customRefs: [
+        {
+          id: "hero",
+          url: "https://cdn.example/hero.jpg",
+          role: "character",
+          source: "generated",
+          labelZh: "剑客",
+        },
+        {
+          id: "bridge",
+          url: "https://cdn.example/bridge.jpg",
+          role: "scene",
+          source: "generated",
+          labelZh: "雨桥",
+        },
+      ],
+    });
     const segClips = ensured.blocks.filter(
       (b) => b.id.startsWith("clip-") && (/-g\d{2,}/i.test(b.id) || /-s\d{2,}/.test(b.id)),
     );
     expect(segClips.length).toBe(2);
-    expect(segClips[0]?.prompt || "").toMatch(/【像素垫图锁/);
+    const p0 = segClips[0]?.prompt || "";
+    expect(p0).toMatch(/【垫图】|【像素垫图锁/);
+    expect(p0).toMatch(/【第\d+段·[\d.]+s】/);
+    expect(p0).toContain("【资产·Image对照】");
+    expect(p0).toMatch(/@角色1|@场景1/);
+    expect(p0).toContain("【出片Image硬绑】");
+    expect(p0).not.toMatch(/节拍防火墙|古风服化参考|视频生成导戏单|按秒导戏单/);
     expect(String(segClips[0]?.refImageUrl || "")).toMatch(/^https:\/\//);
     const frag = resolveManhuaFragmentRunTargets(ensured.blocks, 1, 2);
     expect(frag.clipId).toBeTruthy();
@@ -465,7 +511,7 @@ describe("canvasDramaStudio factory", () => {
     expect(filterManhuaFactoryTargetIds(ordered, frag.targetBlockIds)).toEqual([frag.clipId]);
   });
 
-  it("episode 2 first segment clip uses global g13", () => {
+  it("episode 2 first segment clip uses global g07 (6 segs/ep)", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "续集客栈余波",
       episodeIndex: 2,
@@ -488,8 +534,9 @@ describe("canvasDramaStudio factory", () => {
     );
     const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 2);
     const clips = ensured.blocks.filter((b) => b.id.startsWith("clip-") && /-g\d{2,}/i.test(b.id));
-    expect(clips.some((c) => /-g13(?:-|$)/i.test(c.id))).toBe(true);
-    expect(clips[0]?.prompt || "").toMatch(/镜头连续性|跨段转场/);
+    expect(clips.some((c) => /-g07(?:-|$)/i.test(c.id))).toBe(true);
+    expect(clips[0]?.prompt || "").toMatch(/【连续】|承上段末帧/);
+    expect(clips[0]?.prompt || "").not.toMatch(/古风服化参考|节拍防火墙/);
   });
 
   it("removes stale keyarts when a rerun returns fewer shots", () => {

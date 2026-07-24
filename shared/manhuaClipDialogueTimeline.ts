@@ -8,8 +8,9 @@
 import {
   extractManhuaPerformanceCue,
   extractManhuaSpeakerAtTag,
-  formatManhuaLockedDialogueLine,
+  stripManhuaSpeakerAtPrefix,
 } from "./manhuaPerformancePrompt.js";
+import { recommendManhuaCameraMoveFromText } from "./manhuaCameraMoveBank.js";
 import type { ManhuaWorkbenchShot } from "./manhuaScriptWorkbench.js";
 
 export type ManhuaDialogueTimelineBeat = {
@@ -29,8 +30,8 @@ export type ManhuaDialogueTimelineBeat = {
 
 function resolveShotDialogue(shot: ManhuaWorkbenchShot): string {
   const direct = String(shot.dialogueZh || "").trim();
-  if (direct) return direct.slice(0, 80);
-  return extractManhuaPerformanceCue(shot.actionZh).dialogueZh.slice(0, 80);
+  if (direct) return direct;
+  return extractManhuaPerformanceCue(shot.actionZh).dialogueZh;
 }
 
 function framingHint(cameraZh: string): string {
@@ -76,13 +77,13 @@ export function buildManhuaDialogueTimelineBeats(
       endSec,
       durationSec: durationBeat > 0 ? durationBeat : slot,
       cameraZh: String(s.cameraZh || "").trim(),
-      actionZh: String(s.actionZh || "").trim().slice(0, 120),
+      actionZh: String(s.actionZh || "").trim(),
       dialogueZh,
-      emotionZh: String(s.emotionZh || fromAction.emotionZh || "").trim().slice(0, 48),
-      microExpressionZh: String(s.microExpressionZh || fromAction.microExpressionZh || "")
-        .trim()
-        .slice(0, 64),
-      voiceToneZh: String(s.voiceToneZh || fromAction.voiceToneZh || "").trim().slice(0, 40),
+      emotionZh: String(s.emotionZh || fromAction.emotionZh || "").trim(),
+      microExpressionZh: String(
+        s.microExpressionZh || fromAction.microExpressionZh || "",
+      ).trim(),
+      voiceToneZh: String(s.voiceToneZh || fromAction.voiceToneZh || "").trim(),
       speakerAtTag: extractManhuaSpeakerAtTag(
         s.dialogueZh,
         s.actionZh,
@@ -92,8 +93,28 @@ export function buildManhuaDialogueTimelineBeats(
   });
 }
 
+/** 运镜：景别+动势（用户说法）；禁止灌词库长解释 / mm / 快门 */
+function resolveBeatCameraMoveZh(cameraZh: string, actionZh: string): string {
+  const raw = String(cameraZh || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (raw) return raw;
+  // 无运镜字段时：有景别/机位信号才补推荐名，否则只写「近景微动」
+  const signal = `${actionZh}`;
+  if (!/特写|近景|中景|全景|远景|仰|俯|推|拉|跟|环绕|过肩|手持/.test(signal)) {
+    return "近景微动";
+  }
+  const frame = framingHint(signal);
+  const move = recommendManhuaCameraMoveFromText(signal);
+  const name = String(move.nameZh || "").trim();
+  return [frame || "近景", name].filter(Boolean).join("·") || "近景微动";
+}
+
 /**
- * Seedance 视频生成导戏单：时间 / 配音台词 / 场景动作 / 切镜 / 运镜 一次写全。
+ * Seedance 风格秒轴（短指令，非聊天表格）：
+ * `0–5s：@角色2 抬头，眼眶发红，说「…」。近景微推。`
+ * 身份靠垫图/@Image；此处只调度可见动作、对白、运镜。
+ * 光学 mm/快门出片时另转。
  */
 export function formatManhuaDialogueTimelineBlock(
   shots: ManhuaWorkbenchShot[],
@@ -101,52 +122,31 @@ export function formatManhuaDialogueTimelineBlock(
   opts?: { segmentIndex?: number; sceneHintZh?: string },
 ): string {
   const beats = buildManhuaDialogueTimelineBeats(shots, durationSec);
-  const sceneHint = String(opts?.sceneHintZh || "").trim();
-  if (!beats.length) {
-    return [
-      "【视频生成导戏单·一轮】",
-      "本段暂无分镜：请先写节拍后再生成；改对白只重出本段，禁止整集重烧。",
-    ].join("\n");
-  }
-  const seg =
-    typeof opts?.segmentIndex === "number" && opts.segmentIndex >= 1
-      ? `第${opts.segmentIndex}段`
-      : "本段";
-  const lines = beats.map((b, i) => {
-    const frame = framingHint(b.cameraZh);
-    const cut =
-      i === 0
-        ? "开场建立"
-        : `自镜${beats[i - 1]!.shotIndex}切到镜${b.shotIndex}（承接落点）`;
-    const head = `分镜${b.shotIndex}｜${frame}｜${b.durationSec}秒｜约${b.startSec}–${b.endSec}s｜切镜：${cut}`;
-    const lockedDialogue = formatManhuaLockedDialogueLine({
-      speakerAtTag: b.speakerAtTag,
-      dialogueZh: b.dialogueZh,
-      emotionZh: b.emotionZh,
-      microExpressionZh: b.microExpressionZh,
-      voiceToneZh: b.voiceToneZh,
-    });
-    const voiceLine = lockedDialogue
-      ? `对白（引擎自带有声+口型同步，人物锁+表情一体）：${lockedDialogue}`
-      : "对白：本镜无台词，保留环境气口/呼吸，勿乱加旁白或后期另配";
-    const bodyParts = [
-      b.cameraZh ? `运镜：${b.cameraZh}（写清起幅→落幅）` : "运镜：承接上镜做可读微动",
-      sceneHint ? `场景：${sceneHint}` : "",
-      b.actionZh ? `场面动作：${b.actionZh}` : "",
-      b.speakerAtTag ? `说话人锁：${b.speakerAtTag}` : "",
-      b.microExpressionZh ? `微表情差：${b.microExpressionZh}` : "",
-      voiceLine,
-      b.emotionZh ? `情绪弧：${b.emotionZh}` : "",
-    ].filter(Boolean);
-    return `${head}\n  ${bodyParts.join("\n  ")}`;
-  });
-  return [
-    `【视频生成导戏单·${seg}·一轮】`,
-    `本段一条成片约 ${durationSec} 秒：画面与对白有声同一轮生成（引擎 Audio on）；禁止后期另录配音轨。`,
-    "每镜写清：时间轴｜切镜｜运镜起落｜场景｜动作/微表情｜对白台词与语气。按秒执行，勿只演画面哑巴戏。",
-    "画面零字幕、零气泡；对白只走口型与引擎自带声轨。改台词只重出本段，勿整集重烧。",
-    ...lines,
-  ].join("\n");
+  if (!beats.length) return "本段暂无分镜。";
+  return beats
+    .map((b) => {
+      const cam = resolveBeatCameraMoveZh(b.cameraZh, b.actionZh);
+      const speaker = b.speakerAtTag;
+      let action = String(b.actionZh || "")
+        .replace(/[「『"“][^」』"”]{0,200}[」』"”]/g, "")
+        .replace(/@角色\d+/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!action) action = "承接上镜动作";
+      // 可见表情优先；情绪名词只在无微表情时落到可见词（不硬截断，按镜内表演写全）
+      const visible =
+        String(b.microExpressionZh || "").trim() ||
+        String(b.emotionZh || "").trim();
+      const line = stripManhuaSpeakerAtPrefix(b.dialogueZh).trim();
+      const bits = [
+        speaker || "",
+        action,
+        visible,
+        line ? `说「${line}」` : "",
+      ].filter(Boolean);
+      return `${b.startSec}–${b.endSec}s：${bits.join("，")}。${cam}。`;
+    })
+    .join("\n");
 }
 
 /** 跨镜/跨段防崩：脸、服装、场景 */

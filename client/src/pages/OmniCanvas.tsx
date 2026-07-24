@@ -28,6 +28,14 @@ import {
 import { resolveManhuaCustomAssetSeed } from "@shared/manhuaCustomAssetSeed";
 import { absolutizeManhuaAssetUrl } from "@shared/manhuaKeyartEditFusion";
 import {
+  buildManhuaAssetLockRegistry,
+  buildManhuaAssetPathById,
+} from "@shared/manhuaAssetLockRegistry";
+import {
+  normalizeManhuaCharacterLookSets,
+  normalizeManhuaSegmentLookBindings,
+} from "@shared/manhuaCharacterLookSets";
+import {
   formatManhuaFactoryUserError,
   manhuaFactoryStageLabelFromBlockId,
 } from "@shared/manhuaFactoryUserErrors";
@@ -58,8 +66,10 @@ import {
   ensureManhuaFragmentClips,
   layoutManhuaEpisodeReadableChain,
   collectManhuaCharacterSheetUrlById,
+  collectManhuaEpisodeSegmentPromptsForVoiceGate,
   countExpectedManhuaKeyartShots,
   runManhuaDramaFactoryPipeline,
+  sanitizeManhuaClipBlocksPrompts,
   sanitizeManhuaRecapUpstreamLinks,
   spawnManhuaDramaStudio,
   spawnManhuaDramaStudioSeries,
@@ -187,7 +197,10 @@ import {
   normalizeManhuaDeliveryPackage,
   type ManhuaDeliveryPackage,
 } from "@shared/manhuaDeliveryPackage";
-import { upsertManhuaSegmentIntentInMarkdown } from "@shared/manhuaEpisodeSegmentPlan";
+import {
+  parseManhuaEpisodeSegmentPlanFromMarkdown,
+  upsertManhuaSegmentIntentInMarkdown,
+} from "@shared/manhuaEpisodeSegmentPlan";
 import {
   patchPromptForRetakeVariable,
   type ManhuaRetakeVariable,
@@ -360,6 +373,8 @@ export default function OmniCanvas() {
   const bootCast = bootBible?.cast;
   const bootManual = bootBible?.manualOverrides;
   const [blocks, setBlocks] = useState<CanvasBlock[]>(initial.blocks);
+  const blocksRef = useRef(blocks);
+  blocksRef.current = blocks;
   const [edges, setEdges] = useState<CanvasEdge[]>(initial.edges);
   const [factoryBusy, setFactoryBusy] = useState(false);
   /** 剧本工作台优先；已确认编剧时强制工作台（旧 session 若停在表单会像「UI 没改」） */
@@ -518,6 +533,12 @@ export default function OmniCanvas() {
   );
   const [characterVoiceLocks, setCharacterVoiceLocks] = useState<ManhuaCharacterVoiceLock[]>(() =>
     normalizeManhuaCharacterVoiceLocks(initialWriterSession?.characterVoiceLocks),
+  );
+  const [characterLookSets, setCharacterLookSets] = useState(() =>
+    normalizeManhuaCharacterLookSets(initialWriterSession?.characterLookSets),
+  );
+  const [segmentLookBindings, setSegmentLookBindings] = useState(() =>
+    normalizeManhuaSegmentLookBindings(initialWriterSession?.segmentLookBindings),
   );
   const [stylePack, setStylePack] = useState(() => initialWriterSession?.stylePack ?? null);
   const [shareAssetToLibrary, setShareAssetToLibrary] = useState(
@@ -1112,6 +1133,10 @@ export default function OmniCanvas() {
     setCharacterVoiceLocks(
       normalizeManhuaCharacterVoiceLocks(session.characterVoiceLocks),
     );
+    setCharacterLookSets(normalizeManhuaCharacterLookSets(session.characterLookSets));
+    setSegmentLookBindings(
+      normalizeManhuaSegmentLookBindings(session.segmentLookBindings),
+    );
     setStylePack(session.stylePack ?? null);
     setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
     setViralTemplateId(String(session.viralTemplateId || "").trim());
@@ -1254,6 +1279,8 @@ export default function OmniCanvas() {
       workflowPhase,
       customAssetRefs,
       characterVoiceLocks,
+      characterLookSets,
+      segmentLookBindings,
       shareAssetToLibrary,
       viralTemplateId,
       deliveryPackage,
@@ -1657,6 +1684,8 @@ export default function OmniCanvas() {
   ]);
 
   const optimizeCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
+  const canvasTerraVisionMutation = trpc.mvAnalysis.canvasTerraVisionMarkdown.useMutation();
+  const canvasTerraVideoReverseMutation = trpc.mvAnalysis.canvasTerraVideoReverse.useMutation();
   const expandWriterMutation = trpc.mvAnalysis.expandManhuaWriterPack.useMutation();
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
 
@@ -1776,10 +1805,40 @@ export default function OmniCanvas() {
     ],
   );
 
+  /** 仅出片后台：id→垫图 path，绝不写入节点提示词 */
+  const manhuaAssetPathById = useMemo(() => {
+    const reg = buildManhuaAssetLockRegistry({
+      characterIds: selectedCharacterIds,
+      artStyleId: factoryArtStyleId,
+      sceneId: factorySceneId,
+      propIds: factoryPropIds,
+      customRefs: customAssetRefs,
+      characterLookSets,
+      assetCanon: projectBible?.assetCanon,
+      characterSheetUrlById: collectManhuaCharacterSheetUrlById(
+        blocks,
+        projectBible?.assetCanon,
+      ),
+    });
+    return buildManhuaAssetPathById(reg);
+  }, [
+    selectedCharacterIds,
+    factoryArtStyleId,
+    factorySceneId,
+    factoryPropIds,
+    customAssetRefs,
+    characterLookSets,
+    projectBible?.assetCanon,
+    blocks,
+  ]);
+
   const runDeps = useMemo<CanvasRunDeps>(
     () => ({
       userId: user?.id ? String(user.id) : "",
       characterVoiceLocks,
+      manhuaAssetPathById,
+      getManhuaEpisodeSegmentPromptsForVoiceGate: (episodeIndex) =>
+        collectManhuaEpisodeSegmentPromptsForVoiceGate(blocksRef.current, episodeIndex),
       optimizeCopy: async ({ sourceText, optimizationBrief, modelName }) => {
         const t0 = Date.now();
         const reqPreview = [
@@ -1832,6 +1891,23 @@ export default function OmniCanvas() {
           ? new Error(formatManhuaFactoryUserError(lastErr.message))
           : new Error("文案生成失败，请稍后重试");
       },
+      canvasTerraVisionMarkdown: async ({ prompt, images }) => {
+        const res = await canvasTerraVisionMutation.mutateAsync({ prompt, images });
+        const md = String(res.markdown || "").trim();
+        if (!md) throw new Error("多图分析返回为空");
+        return md;
+      },
+      canvasTerraVideoReverse: async ({ userHint, images, outputMode, targetEngine }) => {
+        const res = await canvasTerraVideoReverseMutation.mutateAsync({
+          userHint,
+          images,
+          outputMode,
+          targetEngine,
+        });
+        const md = String(res.markdown || "").trim();
+        if (!md) throw new Error("视频反推返回为空");
+        return md;
+      },
       uploadImageFile: async (file) => {
         const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
         const asset = await uploadOneCanvasAsset({
@@ -1844,11 +1920,14 @@ export default function OmniCanvas() {
     }),
     [
       optimizeCopyMutation,
+      canvasTerraVisionMutation,
+      canvasTerraVideoReverseMutation,
       getSignedUrlMutation,
       debugMode,
       pushDebug,
       user?.id,
       characterVoiceLocks,
+      manhuaAssetPathById,
     ],
   );
 
@@ -1871,15 +1950,31 @@ export default function OmniCanvas() {
     (next: CanvasBlock[] | ((prev: CanvasBlock[]) => CanvasBlock[])) => {
       setBlocks((cur) => {
         const resolved = typeof next === "function" ? next(cur) : next;
+        const cleaned = sanitizeManhuaClipBlocksPrompts(resolved);
         setEdges((edges) => {
-          saveCanvasState(resolved, edges);
+          saveCanvasState(cleaned, edges);
           return edges;
         });
-        return resolved;
+        return cleaned;
       });
     },
     [],
   );
+
+  // 进页一次：清掉历史成片节点里误写的网址（裸奔）
+  useEffect(() => {
+    setBlocks((cur) => {
+      const cleaned = sanitizeManhuaClipBlocksPrompts(cur);
+      if (cleaned === cur) return cur;
+      setEdges((edges) => {
+        saveCanvasState(cleaned, edges);
+        return edges;
+      });
+      return cleaned;
+    });
+    // 仅挂载时跑一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleEdgesChange = useCallback((next: CanvasEdge[]) => {
     setEdges(next);
@@ -4400,6 +4495,10 @@ export default function OmniCanvas() {
                   stylePack={stylePack}
                   onStylePackChange={setStylePack}
                   customAssetRefs={customAssetRefs}
+                  characterLookSets={characterLookSets}
+                  onCharacterLookSetsChange={setCharacterLookSets}
+                  segmentLookBindings={segmentLookBindings}
+                  onSegmentLookBindingsChange={setSegmentLookBindings}
                   characterVoiceLocks={characterVoiceLocks}
                   onExtractCharacterVoice={async ({
                     clipId,
@@ -4724,10 +4823,17 @@ export default function OmniCanvas() {
                         prev,
                         projectBible?.assetCanon,
                       );
+                      const epBody =
+                        writerPack?.episodes.find((e) => e.index === writerFocusEpisode)?.body ||
+                        "";
+                      const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         customRefs: customAssetRefs,
+                        segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
+                        characterLookSets,
+                        segmentLookBindings,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -4755,10 +4861,17 @@ export default function OmniCanvas() {
                         prev,
                         projectBible?.assetCanon,
                       );
+                      const epBody =
+                        writerPack?.episodes.find((e) => e.index === writerFocusEpisode)?.body ||
+                        "";
+                      const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         customRefs: customAssetRefs,
+                        segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
+                        characterLookSets,
+                        segmentLookBindings,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -4812,10 +4925,17 @@ export default function OmniCanvas() {
                         prev,
                         projectBible?.assetCanon,
                       );
+                      const epBody =
+                        writerPack?.episodes.find((e) => e.index === writerFocusEpisode)?.body ||
+                        "";
+                      const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         customRefs: customAssetRefs,
+                        segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
+                        characterLookSets,
+                        segmentLookBindings,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -5079,7 +5199,7 @@ export default function OmniCanvas() {
               <div className="mt-3" data-manhua-viral-template>
                 <label className="block text-[11px] text-white/45">节奏模板（可选）</label>
                 <p className="mt-0.5 text-[10px] leading-4 text-white/35">
-                  审定骨架：前 3 秒钩子 + 约 180 秒节拍格；只借结构，不写外部剧名。不选则按题材自由扩写。
+                  审定骨架：前 3 秒钩子 + 约 75–90 秒节拍格；只借结构，不写外部剧名。不选则按题材自由扩写。
                 </p>
                 <div className="mt-2 space-y-2">
                   {viralTemplateGrouped.map((group) => (
