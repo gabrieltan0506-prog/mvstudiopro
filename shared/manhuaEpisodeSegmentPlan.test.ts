@@ -4,6 +4,8 @@ import {
   evaluateManhuaEpisodeSegmentPlanQuality,
   formatManhuaEpisodeSegmentPlanPromptBlock,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
+  inferManhuaCastZhFromDialogue,
+  upsertManhuaSegmentCastInMarkdown,
   upsertManhuaSegmentIntentInMarkdown,
 } from "./manhuaEpisodeSegmentPlan";
 
@@ -121,5 +123,24 @@ describe("manhuaEpisodeSegmentPlan", () => {
     const next = upsertManhuaSegmentIntentInMarkdown(md, 2, "新意图·试探转硬碰");
     const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(next);
     expect(plan.segments.find((s) => s.index === 2)?.intentZh).toContain("新意图");
+  });
+
+  it("infers cast from dialogue speakers when 角色 empty", () => {
+    expect(
+      inferManhuaCastZhFromDialogue(
+        "",
+        "苏文谦：「你取账。」苏照雪：「我断绳。」",
+      ),
+    ).toContain("苏文谦");
+    expect(
+      inferManhuaCastZhFromDialogue("已有名单", "苏文谦：「你取账。」"),
+    ).toBe("已有名单");
+  });
+
+  it("upserts segment cast into markdown and re-parses", () => {
+    const md = buildManhuaEpisodeSegmentPlanFixtureMarkdown();
+    const next = upsertManhuaSegmentCastInMarkdown(md, 1, "苏文谦、苏照雪");
+    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(next);
+    expect(plan.segments.find((s) => s.index === 1)?.castZh).toContain("苏文谦");
   });
 });

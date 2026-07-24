@@ -199,6 +199,7 @@ import {
 } from "@shared/manhuaDeliveryPackage";
 import {
   parseManhuaEpisodeSegmentPlanFromMarkdown,
+  upsertManhuaSegmentCastInMarkdown,
   upsertManhuaSegmentIntentInMarkdown,
 } from "@shared/manhuaEpisodeSegmentPlan";
 import {
@@ -2970,6 +2971,48 @@ export default function OmniCanvas() {
     [writerFocusEpisode],
   );
 
+  const handleSegmentCastChange = useCallback(
+    (segmentIndex: number, castZh: string) => {
+      const cast = String(castZh || "").trim().slice(0, 80);
+      const ep = writerFocusEpisode;
+      setWriterPack((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          episodes: prev.episodes.map((e) =>
+            e.index === ep
+              ? {
+                  ...e,
+                  body: upsertManhuaSegmentCastInMarkdown(e.body || "", segmentIndex, cast),
+                }
+              : e,
+          ),
+        };
+      });
+      setBlocks((prev) => {
+        const next = prev.map((b) => {
+          if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
+          const stage = stageKeyFromBlockId(b.id);
+          if (stage !== "story" && stage !== "beats" && stage !== "reverse") return b;
+          const base = b.outputText || b.prompt || "";
+          const updated = upsertManhuaSegmentCastInMarkdown(base, segmentIndex, cast);
+          if (updated === base) return b;
+          return {
+            ...b,
+            outputText: b.outputText != null ? updated : b.outputText,
+            prompt: b.outputText != null ? b.prompt : updated,
+          };
+        });
+        setEdges((eds) => {
+          saveCanvasState(next, eds);
+          return eds;
+        });
+        return next;
+      });
+    },
+    [writerFocusEpisode],
+  );
+
   const removeCustomAssetRef = useCallback((id: string) => {
     setCustomAssetRefs((prev) => prev.filter((r) => r.id !== id));
   }, []);
@@ -4563,6 +4606,7 @@ export default function OmniCanvas() {
                   onCustomAssetRoleChange={setCustomAssetRole}
                   onCustomAssetDutyChange={setCustomAssetDuty}
                   onSegmentIntentChange={handleSegmentIntentChange}
+                  onSegmentCastChange={handleSegmentCastChange}
                   deliveryPackage={deliveryPackage}
                   onDeliveryPackageChange={(next) =>
                     setDeliveryPackage(

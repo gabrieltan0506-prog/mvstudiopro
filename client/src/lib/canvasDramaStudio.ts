@@ -43,6 +43,7 @@ import {
 } from "@shared/manhuaWriterAssetCanon";
 import {
   extractManhuaSegmentDialogueQuotes,
+  inferManhuaCastZhFromDialogue,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
   type ManhuaEpisodeSegmentPlan,
 } from "@shared/manhuaEpisodeSegmentPlan";
@@ -1674,17 +1675,22 @@ export function ensureManhuaFragmentClips(
     ]
       .filter(Boolean)
       .join("\n");
+    // 可拍表缺「角色：」时，用对白「姓名：」说话人补真名，避免只剩描述词对不齐
+    const effectiveCastZh = inferManhuaCastZhFromDialogue(
+      planBeat?.castZh,
+      [String(planBeat?.dialogueZh || ""), ...dialogueLines].filter(Boolean).join("\n"),
+    );
     const castCount = Math.min(
       4,
       Math.max(
         1,
         ...seg.shots.map((s) => inferWorkbenchShotCastCount(String(s.actionZh || ""))),
-        splitCastHintCount(planBeat?.castZh),
+        splitCastHintCount(effectiveCastZh || planBeat?.castZh),
       ),
     );
     const segAssets = resolveManhuaSegmentClipAllowedAssets({
       haystack,
-      castZh: planBeat?.castZh,
+      castZh: effectiveCastZh || planBeat?.castZh,
       wardrobePropZh: planBeat?.wardrobePropZh,
       registry: lockRegistry,
       assetCanon: opts?.assetCanon,

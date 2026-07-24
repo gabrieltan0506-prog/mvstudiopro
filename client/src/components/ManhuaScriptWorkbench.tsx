@@ -17,7 +17,7 @@ import {
   Square,
   X,
 } from "lucide-react";
-import type { CanvasBlock } from "@/lib/canvasTypes";
+import { VIDEO_MODEL_OPTIONS, type CanvasBlock } from "@/lib/canvasTypes";
 import {
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
   getBlockEpisodeIndex,
@@ -105,7 +105,10 @@ import {
   buildWorkbenchShotsFromSegmentPlan,
   evaluateManhuaCueSheetReady,
 } from "@shared/manhuaStoryDistill";
-import { parseManhuaEpisodeSegmentPlanFromMarkdown } from "@shared/manhuaEpisodeSegmentPlan";
+import {
+  inferManhuaCastZhFromDialogue,
+  parseManhuaEpisodeSegmentPlanFromMarkdown,
+} from "@shared/manhuaEpisodeSegmentPlan";
 import { applyShotDialoguesFromText } from "@shared/manhuaShotDialoguePersist";
 import { summarizeManhuaVisualBriefForUi } from "@shared/manhuaScriptVisualBrief";
 import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
@@ -228,6 +231,8 @@ type Props = {
   onRemoveCustomAsset?: (id: string) => void;
   /** 段意图写回可拍表（工作台编辑） */
   onSegmentIntentChange?: (segmentIndex: number, intentZh: string) => void;
+  /** 段出场角色写回可拍表（工作台编辑） */
+  onSegmentCastChange?: (segmentIndex: number, castZh: string) => void;
   deliveryPackage?: ManhuaDeliveryPackage | null;
   onDeliveryPackageChange?: (next: ManhuaDeliveryPackage) => void;
   cineVocabLocale?: ManhuaCineVocabLocale;
@@ -405,6 +410,7 @@ export default function ManhuaScriptWorkbench({
   onCustomAssetDutyChange,
   onRemoveCustomAsset,
   onSegmentIntentChange,
+  onSegmentCastChange,
   deliveryPackage = null,
   onDeliveryPackageChange,
   cineVocabLocale,
@@ -583,9 +589,29 @@ export default function ManhuaScriptWorkbench({
 
   const episodeVideoModel =
     episodeClips[0]?.videoModel || legacyClip?.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+  const episodeVideoLabelZh =
+    VIDEO_MODEL_OPTIONS.find((m) => m.id === episodeVideoModel)?.label || "成片";
   const segments = useMemo(
     () => groupShotsIntoSegments(shots, { videoModel: episodeVideoModel }),
     [shots, episodeVideoModel],
+  );
+  const shootablePlan = useMemo(
+    () =>
+      parseManhuaEpisodeSegmentPlanFromMarkdown(
+        [
+          story?.outputText || story?.prompt || "",
+          beats?.outputText || beats?.prompt || "",
+          reverse?.outputText || reverse?.prompt || "",
+        ].join("\n"),
+      ),
+    [
+      story?.outputText,
+      story?.prompt,
+      beats?.outputText,
+      beats?.prompt,
+      reverse?.outputText,
+      reverse?.prompt,
+    ],
   );
 
   const visualBrief = useMemo(() => {
@@ -1165,7 +1191,7 @@ export default function ManhuaScriptWorkbench({
   const fragmentGateHint = keyartGateHint;
   const refuseIfBlocked = (hint: string | null): boolean => {
     if (!hint) return false;
-    toast.error("还不能跑", { description: hint });
+    toast.error("还差一步", { description: hint });
     return true;
   };
   /**
@@ -1175,7 +1201,7 @@ export default function ManhuaScriptWorkbench({
   const clipPromptReviewUnlocked = episodeStillCount > 0;
   const openClipPromptReview = () => {
     if (episodeStillCount <= 0) {
-      toast.error("还不能跑", { description: "请先出关键静帧，有图后再审阅提示词" });
+      toast.error("还差一步", { description: "请先出关键静帧，有图后再审阅提示词" });
       return;
     }
     if (activePhase !== "storyboard") setActivePhase("storyboard");
@@ -1342,12 +1368,12 @@ export default function ManhuaScriptWorkbench({
 
   const selectPhase = (phase: WorkflowPhaseId) => {
     if ((phase === "storyboard" || phase === "edit") && !outlineComplete) {
-      toast.error("还不能进分镜", { description: "请先确认剧本大纲" });
+      toast.error("还差一步", { description: "请先确认剧本大纲" });
       setActivePhase("outline");
       return;
     }
     if (phase === "assets" && !outlineComplete) {
-      toast.error("还不能进资产设定", { description: "请先确认剧本大纲" });
+      toast.error("还差一步", { description: "请先确认剧本大纲" });
       setActivePhase("outline");
       return;
     }
@@ -1371,7 +1397,7 @@ export default function ManhuaScriptWorkbench({
 
   const enterStoryboard = () => {
     if (!outlineComplete) {
-      toast.error("还不能进分镜", { description: "请先确认剧本大纲" });
+      toast.error("还差一步", { description: "请先确认剧本大纲" });
       setActivePhase("outline");
       return;
     }
@@ -1407,7 +1433,7 @@ export default function ManhuaScriptWorkbench({
     if (nextCta.kind === "confirm_outline") {
       selectPhase(nextCta.targetPhase);
       if (!writerPackReady || !onConfirmOutline) {
-        toast.error("还不能跑", {
+        toast.error("还差一步", {
           description: "请先在「改题材」扩写或导入剧本，再确认大纲",
         });
         return;
@@ -1460,7 +1486,7 @@ export default function ManhuaScriptWorkbench({
             <div className="truncate text-[13px] font-semibold text-white/95">
               {seriesTitle || topic || "剧本工作室"}
               <span className="ml-2 text-[11px] font-normal text-white/40">
-                第{focusEpisode}集 · {segments.length} 段 · 约 {totalSec}s · {episodeVideoModel}
+                第{focusEpisode}集 · {segments.length} 段 · 约 {totalSec}s · {episodeVideoLabelZh}
                 {artStyleLabelZh ? ` · ${artStyleLabelZh}` : ""}
               </span>
             </div>
@@ -1618,7 +1644,7 @@ export default function ManhuaScriptWorkbench({
               onClick={() => {
                 if (refuseIfBlocked(clipGateHint)) return;
                 if (!stillsReadyEnough) {
-                  toast.error("还不能跑", {
+                  toast.error("还差一步", {
                     description: "请先点「生成关键静帧」出齐本集静帧",
                   });
                   return;
@@ -2032,11 +2058,11 @@ export default function ManhuaScriptWorkbench({
                     disabled={Boolean(factoryBusy)}
                     onClick={() => {
                       if (!outlineComplete) {
-                        toast.error("还不能跑", { description: "请先确认剧本大纲" });
+                        toast.error("还差一步", { description: "请先确认剧本大纲" });
                         return;
                       }
                       if (!assetGate.castLocked || !assetGate.sceneLocked) {
-                        toast.error("还不能跑", {
+                        toast.error("还差一步", {
                           description: !assetGate.castLocked
                             ? "请先锁定人物（剧本人物表或勾选人物参考）"
                             : "请先锁定场景（剧本场景表或勾选场景参考）",
@@ -2287,30 +2313,30 @@ export default function ManhuaScriptWorkbench({
                   className="rounded-xl border border-cyan-400/30 bg-cyan-500/[0.08] px-3 py-2"
                 >
                   <div className="text-[11px] font-semibold text-cyan-50/90">
-                    资产锁 · Image 对照
+                    本集出场对照
                   </div>
                   <p className="mt-0.5 text-[10px] leading-4 text-white/45">
-                    前台只显示编号与名称；出片时在后台按 id 挂垫图并写成 @角色N=@ImageK。静帧仍须改图模式挂垫图，否则禁止出成片。
+                    人名与场景会跟垫图一一对应。关键静帧请先挂上参考图，再出成片。
                   </p>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {assetLockRegistry.slots.map((s) => {
                       const hasPad = Boolean(String(s.path || "").trim());
+                      const kindZh =
+                        s.role === "character"
+                          ? "人物"
+                          : s.role === "scene"
+                            ? "场景"
+                            : s.role === "prop"
+                              ? "道具"
+                              : "服装";
                       return (
                         <span
                           key={`${s.tag}:${s.id}`}
                           className="rounded-md border border-cyan-300/35 bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-50"
-                          title={s.subTag ? `${s.labelZh} · ${s.subTag}` : s.labelZh}
+                          title={s.labelZh}
                         >
-                          {s.tag}
-                          <span className="ml-1 font-normal text-white/50">{s.labelZh}</span>
-                          <span className="ml-1 font-mono text-[9px] font-normal text-amber-100/80">
-                            id={s.id}
-                          </span>
-                          {s.subTag ? (
-                            <span className="ml-1 font-mono text-[9px] font-normal text-amber-100/70">
-                              {s.subTag}
-                            </span>
-                          ) : null}
+                          <span className="font-normal text-white/45">{kindZh}</span>
+                          <span className="ml-1 font-normal text-white/85">{s.labelZh}</span>
                           <span
                             className={`ml-1 text-[9px] font-semibold ${
                               hasPad ? "text-emerald-200/90" : "text-red-200"
@@ -2325,20 +2351,20 @@ export default function ManhuaScriptWorkbench({
                   {assetLockRegistry.sheetPropSlots.length ? (
                     <div className="mt-2 border-t border-cyan-400/20 pt-1.5">
                       <div className="text-[10px] font-semibold text-amber-50/90">
-                        定妆特写·道具子编号
+                        定妆特写·随身道具
                       </div>
                       <p className="mt-0.5 text-[10px] leading-4 text-white/40">
-                        特写格自动编入 @道具N；子号标明挂在哪张定妆卡，跨集勿漂移。
+                        特写道具会挂到对应人物定妆上，换集时请保持同一套。
                       </p>
                       <div className="mt-1 flex flex-wrap gap-1">
                         {assetLockRegistry.sheetPropSlots.map((sp) => (
                           <span
                             key={`${sp.subTag}:${sp.propId}`}
-                            className="rounded border border-amber-300/35 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9px] text-amber-50/95"
+                            className="rounded border border-amber-300/35 bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-50/95"
                             title={`${sp.propNameZh} · ${sp.characterNameZh}`}
                           >
-                            {sp.subTag}={sp.propTag}
-                            <span className="ml-1 font-sans text-white/50">{sp.propNameZh}</span>
+                            {sp.propNameZh}
+                            <span className="ml-1 text-white/50">{sp.characterNameZh}</span>
                           </span>
                         ))}
                       </div>
@@ -2346,11 +2372,10 @@ export default function ManhuaScriptWorkbench({
                   ) : null}
                   <div className="mt-2 border-t border-cyan-400/20 pt-1.5">
                     <div className="text-[10px] font-semibold text-emerald-50/90">
-                      角色声线参考（人手提取）
+                      角色声线参考（可选）
                     </div>
                     <p className="mt-0.5 text-[10px] leading-4 text-white/40">
-                      声线参考可选：有则挂到 @角色 更稳；缺音不挡出片（初登场常无参考音）。语音/配乐后期可改；多人同框最多
-                      3 路进引擎。
+                      有参考音更稳，没有也能先出片。语音与配乐之后还能改；同框最多 3 人带声。
                     </p>
                     {characterVoiceLocks.length ? (
                       <div className="mt-1 flex flex-wrap gap-1">
@@ -3557,24 +3582,57 @@ export default function ManhuaScriptWorkbench({
                 {story?.episodeTitle ? ` · ${story.episodeTitle}` : ""}
                 <span className="ml-2 font-normal text-white/40">
                   {activeSegment?.durationSec ?? 15}s · 静帧 {activeShot?.index ?? "—"}/
-                  {shots.length || 1} · {episodeVideoModel}
+                  {shots.length || 1} · {episodeVideoLabelZh}
                 </span>
               </div>
-              {onSegmentIntentChange && episodeStillCount === 0 ? (
-                <label className="mt-1.5 flex max-w-xl flex-col gap-0.5">
-                  <span className="text-[9px] font-medium text-cyan-100/70">本段意图（观众应感到什么）</span>
-                  <input
-                    data-manhua-segment-intent={activeSegNo}
-                    value={String(
-                      activeSegment?.shots.find((s) => s.intentZh)?.intentZh ||
-                        activeShot?.intentZh ||
-                        "",
-                    )}
-                    onChange={(e) => onSegmentIntentChange(activeSegNo, e.target.value)}
-                    placeholder="例：压迫感逼近，旧盟从硬撑到松口"
-                    className="w-full rounded-md border border-cyan-400/25 bg-black/40 px-2 py-1 text-[11px] text-white/85 placeholder:text-white/30"
-                  />
-                </label>
+              {episodeStillCount === 0 ? (
+                <div className="mt-1.5 flex max-w-xl flex-col gap-1.5">
+                  {onSegmentIntentChange ? (
+                    <label className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-cyan-100/70">
+                        本段意图（观众应感到什么）
+                      </span>
+                      <input
+                        data-manhua-segment-intent={activeSegNo}
+                        value={String(
+                          activeSegment?.shots.find((s) => s.intentZh)?.intentZh ||
+                            activeShot?.intentZh ||
+                            shootablePlan.segments.find((s) => s.index === activeSegNo)
+                              ?.intentZh ||
+                            "",
+                        )}
+                        onChange={(e) => onSegmentIntentChange(activeSegNo, e.target.value)}
+                        placeholder="例：压迫感逼近，旧盟从硬撑到松口"
+                        className="w-full rounded-md border border-cyan-400/25 bg-black/40 px-2 py-1 text-[11px] text-white/85 placeholder:text-white/30"
+                      />
+                    </label>
+                  ) : null}
+                  {onSegmentCastChange ? (
+                    <label className="flex flex-col gap-0.5">
+                      <span className="text-[9px] font-medium text-cyan-100/70">
+                        本段出场（写真名，用顿号分开）
+                      </span>
+                      <input
+                        data-manhua-segment-cast={activeSegNo}
+                        value={String(
+                          shootablePlan.segments.find((s) => s.index === activeSegNo)?.castZh ||
+                            inferManhuaCastZhFromDialogue(
+                              "",
+                              shootablePlan.segments.find((s) => s.index === activeSegNo)
+                                ?.dialogueZh || "",
+                            ) ||
+                            "",
+                        )}
+                        onChange={(e) => onSegmentCastChange(activeSegNo, e.target.value)}
+                        placeholder="例：苏文谦、苏照雪"
+                        className="w-full rounded-md border border-cyan-400/25 bg-black/40 px-2 py-1 text-[11px] text-white/85 placeholder:text-white/30"
+                      />
+                      <span className="text-[9px] leading-4 text-white/35">
+                        写资产库真名，成片才锁对人脸；只写「黑衣剑客」容易对错。
+                      </span>
+                    </label>
+                  ) : null}
+                </div>
               ) : null}
             </div>
             <div className="flex flex-wrap gap-1 rounded-lg border border-white/10 bg-black/30 p-0.5">
