@@ -216,7 +216,7 @@ export function inferManhuaCastZhFromDialogue(
   if (existing) return existing;
   const names: string[] = [];
   const seen = new Set<string>();
-  for (const line of extractManhuaSegmentDialogueQuotes(dialogueZh)) {
+  for (const line of extractManhuaSegmentDialogueQuotes(String(dialogueZh || ""))) {
     const n = extractManhuaDialogueSpeakerName(line);
     if (n.length < 2 || seen.has(n)) continue;
     seen.add(n);
