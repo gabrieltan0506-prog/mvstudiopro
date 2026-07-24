@@ -83,6 +83,7 @@ import {
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
   MANHUA_SEGMENT_MIN,
   parseWorkbenchShotsFromText,
+  resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
   resolveKeyartShotIndex,
   resolveSegmentIndexFromShotIndex,
@@ -536,7 +537,8 @@ export default function ManhuaScriptWorkbench({
         .filter((b) => b.id.startsWith("clip-") && (getBlockEpisodeIndex(b) ?? 1) === focusEpisode)
         .sort(
           (a, b) =>
-            resolveClipSegmentIndex(a.id, a.prompt) - resolveClipSegmentIndex(b.id, b.prompt) ||
+            resolveClipLocalSegmentIndex(a.id, a.prompt, focusEpisode) -
+              resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) ||
             a.id.localeCompare(b.id),
         ),
     [blocks, focusEpisode],
@@ -665,7 +667,7 @@ export default function ManhuaScriptWorkbench({
       const shotClip =
         episodeClips.find(
           (b) =>
-            resolveClipSegmentIndex(b.id, b.prompt) ===
+            resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) ===
             resolveSegmentIndexFromShotIndex(c.shotIndex),
         ) || (resolveSegmentIndexFromShotIndex(c.shotIndex) === 1 ? legacyClip : undefined);
       const shotKeyart =
@@ -783,8 +785,9 @@ export default function ManhuaScriptWorkbench({
     episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === activeShotNo) ||
     (activeShotNo === 1 ? keyart : undefined);
   const activeClip =
-    episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === activeSegNo) ||
-    (activeSegNo === 1 ? legacyClip : undefined);
+    episodeClips.find(
+      (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === activeSegNo,
+    ) || (activeSegNo === 1 ? legacyClip : undefined);
   const clip = activeClip || legacyClip;
   const clipQuality = clip?.manhuaClipQuality;
   const clipVideoUrl = mediaUrl(clip);
@@ -846,8 +849,9 @@ export default function ManhuaScriptWorkbench({
     );
     const segNo = resolveSegmentIndexFromShotIndex(shot.index);
     const clipBlock =
-      episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === segNo) ||
-      null;
+      episodeClips.find(
+        (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === segNo,
+      ) || null;
     focusBlockAndOpenCanvas(clipBlock?.id || keyart?.id || "");
   };
 
@@ -912,19 +916,21 @@ export default function ManhuaScriptWorkbench({
     return segments
       .filter((seg) => {
         const segClip =
-          episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === seg.index) ||
-          (seg.index === 1 ? legacyClip : undefined);
+          episodeClips.find(
+            (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === seg.index,
+          ) || (seg.index === 1 ? legacyClip : undefined);
         const playable = Boolean(mediaUrl(segClip));
         const failed = segClip?.manhuaClipQuality?.status === "failed";
         return !playable || failed;
       })
       .map((seg) => seg.index);
-  }, [segments, episodeClips, legacyClip]);
+  }, [segments, episodeClips, legacyClip, focusEpisode]);
   const segmentClipReviewList = useMemo(() => {
     return segments.map((seg) => {
       const segClip =
-        episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === seg.index) ||
-        (seg.index === 1 ? legacyClip : undefined);
+        episodeClips.find(
+          (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === seg.index,
+        ) || (seg.index === 1 ? legacyClip : undefined);
       return {
         segmentIndex: seg.index,
         durationSec: seg.durationSec,
@@ -932,7 +938,7 @@ export default function ManhuaScriptWorkbench({
         shotIndexes: seg.shots.map((s) => s.index),
       };
     });
-  }, [segments, episodeClips, legacyClip]);
+  }, [segments, episodeClips, legacyClip, focusEpisode]);
   const selectedSorted = useMemo(
     () => [...selectedShotIndexes].sort((a, b) => a - b),
     [selectedShotIndexes],
@@ -1182,7 +1188,9 @@ export default function ManhuaScriptWorkbench({
       onEnsureSegmentClips?.();
       onLayoutReadableChain?.();
       const focusId =
-        episodeClips.find((b) => resolveClipSegmentIndex(b.id, b.prompt) === activeSegNo)?.id ||
+        episodeClips.find(
+          (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === activeSegNo,
+        )?.id ||
         episodeClips[0]?.id ||
         episodeKeyarts.find((b) => mediaUrl(b))?.id ||
         "";
@@ -4564,7 +4572,7 @@ export default function ManhuaScriptWorkbench({
               const shotClip =
                 episodeClips.find(
                   (b) =>
-                    resolveClipSegmentIndex(b.id, b.prompt) ===
+                    resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) ===
                     resolveSegmentIndexFromShotIndex(shot.index),
                 ) ||
                 (resolveSegmentIndexFromShotIndex(shot.index) === 1 ? legacyClip : undefined);

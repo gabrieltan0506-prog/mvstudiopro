@@ -452,12 +452,56 @@ describe("canvasDramaStudio factory", () => {
         ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
         : b,
     );
-    const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1);
+    const withSheets = [
+      ...withKeyarts,
+      {
+        ...withKeyarts[0]!,
+        id: "charsheet-hero",
+        kind: "image" as const,
+        prompt: "定妆",
+        outputUrl: "https://cdn.example/hero.jpg",
+        outputUrls: ["https://cdn.example/hero.jpg"],
+        status: "done" as const,
+      },
+      {
+        ...withKeyarts[0]!,
+        id: "sceneplate-bridge",
+        kind: "image" as const,
+        prompt: "场景",
+        outputUrl: "https://cdn.example/bridge.jpg",
+        outputUrls: ["https://cdn.example/bridge.jpg"],
+        status: "done" as const,
+      },
+    ];
+    const ensured = ensureManhuaFragmentClips(withSheets, expanded.edges, 1, {
+      customRefs: [
+        {
+          id: "hero",
+          url: "https://cdn.example/hero.jpg",
+          role: "character",
+          source: "generated",
+          labelZh: "剑客",
+        },
+        {
+          id: "bridge",
+          url: "https://cdn.example/bridge.jpg",
+          role: "scene",
+          source: "generated",
+          labelZh: "雨桥",
+        },
+      ],
+    });
     const segClips = ensured.blocks.filter(
       (b) => b.id.startsWith("clip-") && (/-g\d{2,}/i.test(b.id) || /-s\d{2,}/.test(b.id)),
     );
     expect(segClips.length).toBe(2);
-    expect(segClips[0]?.prompt || "").toMatch(/【垫图】|【像素垫图锁/);
+    const p0 = segClips[0]?.prompt || "";
+    expect(p0).toMatch(/【垫图】|【像素垫图锁/);
+    expect(p0).toMatch(/【第\d+段·[\d.]+s】/);
+    expect(p0).toContain("【资产·Image对照】");
+    expect(p0).toMatch(/@角色1|@场景1/);
+    expect(p0).toContain("【出片Image硬绑】");
+    expect(p0).not.toMatch(/节拍防火墙|古风服化参考|视频生成导戏单|按秒导戏单/);
     expect(String(segClips[0]?.refImageUrl || "")).toMatch(/^https:\/\//);
     const frag = resolveManhuaFragmentRunTargets(ensured.blocks, 1, 2);
     expect(frag.clipId).toBeTruthy();

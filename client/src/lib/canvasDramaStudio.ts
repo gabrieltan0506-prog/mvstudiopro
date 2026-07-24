@@ -19,7 +19,12 @@ import { isManhuaClipQualityInfraFailure } from "@shared/manhuaClipQuality";
 import {
   assignManhuaCanvasAssetAtTags,
   buildManhuaAssetLockRegistry,
+  buildManhuaAssetPathById,
+  extractManhuaMentionedAssetTags,
   formatManhuaAssetImageBindBlock,
+  planManhuaClipSeedanceImageBind,
+  resolveManhuaAssetImageBindRows,
+  parseManhuaAssetImageBindBlock,
   sanitizeManhuaClipPromptForUi,
   stripManhuaAssetUrlsFromPrompt,
   type ManhuaAssetLockRegistry,
@@ -30,7 +35,10 @@ import {
   resolveActiveLookSetIdsForSegment,
   type ManhuaCharacterLookSet,
 } from "@shared/manhuaCharacterLookSets";
-import type { ManhuaWriterAssetCanon } from "@shared/manhuaWriterAssetCanon";
+import {
+  resolveEpisodeMainScene,
+  type ManhuaWriterAssetCanon,
+} from "@shared/manhuaWriterAssetCanon";
 import {
   extractManhuaSegmentDialogueQuotes,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
@@ -91,7 +99,12 @@ import {
   formatCineVocabInjectBlock,
   type ManhuaCineVocabLocale,
 } from "@shared/manhuaCineVocabBank";
-import { formatCustomAssetRefsDutyBlock } from "@shared/manhuaCustomAssetRefs";
+import {
+  formatCustomAssetRefsDutyBlock,
+  normalizeManhuaCustomAssetRefs,
+  upsertGeneratedManhuaCustomAssetRef,
+  type ManhuaCustomAssetRef,
+} from "@shared/manhuaCustomAssetRefs";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
 import {
   buildManhuaCameraMoveInjectBlock,
@@ -134,7 +147,6 @@ import {
   planManhuaKeyartEditFusion,
   type ManhuaKeyartEditPlan,
 } from "@shared/manhuaKeyartEditFusion";
-import type { ManhuaCustomAssetRef } from "@shared/manhuaCustomAssetRefs";
 import {
   attachManhuaKeyartShotInject,
   buildManhuaKeyartSlimEditAddon,
@@ -1223,35 +1235,16 @@ export function applyFactoryPrefsToBlocks(
       };
     }
     if (b.id.startsWith("clip-")) {
-      // 禁止 prefs 回灌古风板/角色长文/运镜墙；只保秒轴 + Image 对照 + 画风一行
-      let base = stripManhuaAssetUrlsFromPrompt(
+      // 禁止 prefs 回灌古风板/规则墙；旧肥稿直接打成可审壳，逼用户重审阅秒轴
+      const cleaned = stripManhuaAssetUrlsFromPrompt(
         stripManhuaClipForbiddenBoards(String(b.prompt || "")),
       );
-      base = stripInjectBlock(base, "【包装动效手法】");
-      for (const mark of [
-        "【路径运镜配方】",
-        "【动作运镜配方】",
-        "【画风硬锁】",
-        "【成片画风】",
-        "【角色库锚点】",
-        "【古风原型锚点】",
-        "【古风角色公式】",
-        "【服装道具连续性】",
-        "【点选道具锚点】",
-        "【参考职责】",
-        "【镜头连续性】",
-        "【跨段转场】",
-        "【资产锁·编号对照",
-        "【资产】",
-      ]) {
-        base = stripMarkedSection(base, mark);
-      }
       const artLine = `画风：${artStyle.labelZh}`;
-      const hasArt = /^画风：/m.test(base);
+      const hasArt = /^画风：/m.test(cleaned);
       return {
         ...b,
         prompt: stripManhuaPromptSlop(
-          [base, hasArt ? "" : artLine].filter(Boolean).join("\n"),
+          [cleaned, hasArt ? "" : artLine].filter(Boolean).join("\n"),
         ),
         videoModel: (
           b.videoModel === "seedance-2.0" || b.videoModel === "seedance-2.0-fast"
@@ -1610,14 +1603,24 @@ export function ensureManhuaFragmentClips(
   const defaultModel =
     (template.kind === "video" && template.videoModel) || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
 
+  const canvasRefs = collectManhuaCustomRefsFromCanvasAssetBlocks(blocks, opts?.assetCanon);
+  const mergedCustomRefs = normalizeManhuaCustomAssetRefs([
+    ...(opts?.customRefs || []),
+    ...canvasRefs,
+  ]);
+  const mainScene = resolveEpisodeMainScene(opts?.assetCanon, ep);
   const lockRegistry =
     opts?.registry ||
     buildManhuaAssetLockRegistry({
       assetCanon: opts?.assetCanon,
       characterSheetUrlById: opts?.characterSheetUrlById,
-      customRefs: opts?.customRefs,
+      customRefs: mergedCustomRefs,
       characterLookSets: opts?.characterLookSets,
+      characterIds: (opts?.assetCanon?.characters || []).map((c) => c.id),
+      sceneId: mainScene?.id,
+      propIds: (opts?.assetCanon?.props || []).map((p) => p.id),
     });
+  const assetPathById = buildManhuaAssetPathById(lockRegistry);
   const segmentPlan = resolveSegmentPlanForEpisodeClips(blocks, ep, opts?.segmentPlan);
   const lookSets = opts?.characterLookSets || [];
   const charTagById: Record<string, string> = {};
@@ -1678,24 +1681,41 @@ export function ensureManhuaFragmentClips(
       wardrobeSlots: lockRegistry.wardrobeSlots,
       characterTagById: charTagById,
     });
+    // 审阅可见：本集段号用 local；身份锁写 Image 对照 + 出片硬绑预览
+    const timelineBlock = formatWorkbenchSegmentClipInjectBlock({
+      segmentIndex: seg.index,
+      durationSec: seg.durationSec,
+      shots: hydratedShots,
+      sceneHintZh:
+        extractManhuaSceneHintFromPrompt(primary.prompt) ||
+        String(planBeat?.sceneZh || "").trim() ||
+        undefined,
+      intentZh: intentZh || String(planBeat?.intentZh || "").trim() || undefined,
+      segmentDialogueLines: dialogueLines,
+      segmentPerformanceZh: planBeat?.performanceZh,
+    });
+    const bindPreview = (() => {
+      const rows = resolveManhuaAssetImageBindRows(
+        parseManhuaAssetImageBindBlock(assetLockBlock),
+        assetPathById,
+      );
+      if (!rows.length && !segUrls.length) return "";
+      const plan = planManhuaClipSeedanceImageBind({
+        assetRows: rows,
+        stillUrls: segUrls,
+        mentionedTags: extractManhuaMentionedAssetTags(timelineBlock),
+      });
+      const line = String(plan.bindLineZh || "").trim();
+      return line ? `【出片Image硬绑】\n${line}` : "";
+    })();
     const segPrompt = stripManhuaAssetUrlsFromPrompt(
       stripManhuaClipForbiddenBoards(
         stripManhuaPromptSlop(
           [
-            formatWorkbenchSegmentClipInjectBlock({
-              segmentIndex: globalSeg,
-              durationSec: seg.durationSec,
-              shots: hydratedShots,
-              sceneHintZh:
-                extractManhuaSceneHintFromPrompt(primary.prompt) ||
-                String(planBeat?.sceneZh || "").trim() ||
-                undefined,
-              intentZh: intentZh || String(planBeat?.intentZh || "").trim() || undefined,
-              segmentDialogueLines: dialogueLines,
-              segmentPerformanceZh: planBeat?.performanceZh,
-            }),
+            timelineBlock,
             padLockBlock,
             assetLockBlock,
+            bindPreview,
             lookLine,
             continuityAddon,
             artLock,
@@ -1868,6 +1888,49 @@ export function collectManhuaCharacterSheetUrlById(
     if (hit) map[hit.id] = url;
   }
   return map;
+}
+
+/**
+ * 画布上已出图的定妆/场景/道具 → 合成 customRefs（审阅成片时补进 Image 对照，不依赖会话是否已 sync）。
+ */
+export function collectManhuaCustomRefsFromCanvasAssetBlocks(
+  blocks: CanvasBlock[],
+  assetCanon?: ManhuaWriterAssetCanon | null,
+): ManhuaCustomAssetRef[] {
+  let refs: ManhuaCustomAssetRef[] = [];
+  for (const b of blocks) {
+    const url = String(b.outputUrl || b.outputUrls?.[0] || "").trim();
+    if (!/^https:\/\//i.test(url)) continue;
+    let role: "character" | "scene" | "prop" | null = null;
+    let seed = "";
+    if (b.id.startsWith("charsheet-")) {
+      role = "character";
+      seed = b.id.replace(/^charsheet-/, "");
+    } else if (b.id.startsWith("sceneplate-")) {
+      role = "scene";
+      seed = b.id.replace(/^sceneplate-/, "");
+    } else if (b.id.startsWith("propplate-") || b.id.startsWith("propsheet-")) {
+      role = "prop";
+      seed = b.id.replace(/^(?:propplate|propsheet)-/, "");
+    } else {
+      continue;
+    }
+    const labelZh =
+      (role === "character"
+        ? assetCanon?.characters.find((c) => c.id === seed || b.id.includes(c.id))?.nameZh
+        : role === "scene"
+          ? assetCanon?.locations.find((l) => l.id === seed || b.id.includes(l.id))?.nameZh
+          : assetCanon?.props.find((p) => p.id === seed || b.id.includes(p.id))?.nameZh) ||
+      (role === "character" ? "角色定妆" : role === "scene" ? "场景参考" : "道具参考");
+    refs = upsertGeneratedManhuaCustomAssetRef(refs, {
+      url,
+      role,
+      labelZh,
+      seedLibraryId: seed,
+      refDuty: role === "character" ? "identity" : role === "scene" ? "space" : "style",
+    });
+  }
+  return normalizeManhuaCustomAssetRefs(refs);
 }
 
 export function layoutManhuaEpisodeReadableChain(
@@ -2342,7 +2405,7 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
           stripManhuaPromptSlop(
             [
               formatWorkbenchSegmentClipInjectBlock({
-                segmentIndex: globalSeg,
+                segmentIndex: localSeg,
                 durationSec: resolveSegmentClipDurationSec(useShots, model),
                 shots: useShots,
                 sceneHintZh: sceneFromKeyart || undefined,

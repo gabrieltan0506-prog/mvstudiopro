@@ -22,9 +22,15 @@ import { formatManhuaDialogueTimelineBlock } from "./manhuaClipDialogueTimeline.
 import { formatManhuaKeyframeImage2Prompt } from "./manhuaStoryDistill.js";
 import { stripManhuaPromptSlop } from "./manhuaDirectingWorkflow.js";
 import {
+  isManhuaClipPromptLegacyFat,
+  stripManhuaClipForbiddenBoards,
+} from "./manhuaClipPromptSanitize.js";
+import {
   clampSeedanceOpenRouterDuration,
   SEEDANCE_OPENROUTER_DURATION,
 } from "./seedanceOpenRouterModels.js";
+
+export { isManhuaClipPromptLegacyFat, stripManhuaClipForbiddenBoards };
 
 export type ManhuaWorkbenchShot = {
   index: number;
@@ -603,15 +609,6 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
   ]
     .filter(Boolean)
     .join("\n");
-}
-
-/** 成片禁止当锁定手段灌入的服化板/原型 id */
-export function stripManhuaClipForbiddenBoards(text: string): string {
-  return String(text || "")
-    .replace(/\n*【古风服化参考】[\s\S]*?(?=\n【|\s*$)/g, "")
-    .replace(/\barch_[a-z0-9_]+\b/gi, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
 
 /**
