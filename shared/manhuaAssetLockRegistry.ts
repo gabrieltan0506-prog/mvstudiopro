@@ -266,6 +266,43 @@ export function buildManhuaAssetLockRegistry(opts?: {
   return { slots, byRole, promptBlockZh, sheetPropSlots };
 }
 
+/** 成片用短编号对照：一行 @角色N=名 …（不含服化板/长规则） */
+export function formatManhuaAssetLockShortBlock(
+  registry: ManhuaAssetLockRegistry | null | undefined,
+  maxSlots = 12,
+): string {
+  const slots = (registry?.slots || []).slice(0, Math.max(1, maxSlots));
+  if (!slots.length) return "";
+  const parts = slots.map((s) => `${s.tag}=${s.labelZh}`);
+  return `【资产】${parts.join(" ")}`;
+}
+
+/**
+ * 出片时按实际 imageUrls 顺序写 @ImageN 职责（Seedance 官方绑图语法）。
+ * tailCount>0 时前几张是上段末帧起幅，其后才是本段静帧。
+ */
+export function formatManhuaClipImageRoleBindLine(
+  imageCount: number,
+  opts?: { tailCount?: number },
+): string {
+  const n = Math.max(0, Math.min(9, Math.floor(imageCount)));
+  if (n < 1) return "";
+  const tail = Math.max(0, Math.min(n - 1, Math.floor(opts?.tailCount || 0)));
+  if (tail > 0) {
+    const tailTags = Array.from({ length: tail }, (_, i) => `@Image${i + 1}`).join("、");
+    const stillTags = Array.from(
+      { length: n - tail },
+      (_, i) => `@Image${tail + i + 1}`,
+    ).join("、");
+    return `${tailTags}承接上段起幅；${stillTags}锁定本段脸服场；只按秒轴改动作/口型/运镜。`;
+  }
+  if (n === 1) {
+    return `@Image1锁定主体脸服场；只按秒轴改动作/口型/运镜。`;
+  }
+  const tags = Array.from({ length: n }, (_, i) => `@Image${i + 1}`).join("、");
+  return `${tags}为参考图，严格保持各自脸服场；只按秒轴改动作/口型/运镜。`;
+}
+
 const CANVAS_ASSET_AT_MARK = "【画布资产@】";
 
 /** 从画布资产节点 prompt 读出 @角色N / @场景N / @道具N */

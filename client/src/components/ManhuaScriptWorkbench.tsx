@@ -3791,8 +3791,8 @@ export default function ManhuaScriptWorkbench({
                         const p = String(row.clip?.prompt || "");
                         const hasPad =
                           Boolean(String(row.clip?.refImageUrl || "").trim()) ||
-                          /【像素垫图锁/.test(p);
-                        const hasAssetLock = /【资产锁/.test(p);
+                          /【垫图】|【像素垫图锁/.test(p);
+                        const hasAssetLock = /【资产】|【资产锁/.test(p);
                         const hasDuty = /【参考职责】/.test(p);
                         const tags = p.match(/@(?:角色|场景|道具)\d+/g) || [];
                         return (
@@ -3841,7 +3841,10 @@ export default function ManhuaScriptWorkbench({
                       <textarea
                         data-manhua-clip-prompt={row.segmentIndex}
                         disabled={!row.clip?.id || !onUpdateClipPrompt || factoryBusy}
-                        value={row.clip?.prompt || ""}
+                        value={String(row.clip?.prompt || "").replace(
+                          /\n*【引擎光学】[^\n]*/g,
+                          "",
+                        )}
                         onChange={(e) => {
                           if (row.clip?.id) onUpdateClipPrompt?.(row.clip.id, e.target.value);
                         }}

@@ -91,9 +91,9 @@ describe("jsonDirectorMiddleware", () => {
     const motion = compileI2VMotionPrompt(`${sheet}\n\n【参考静帧】对齐`, {
       hasReferenceImage: true,
     });
-    expect(motion.length).toBeGreaterThan(400);
-    expect(motion).toContain("@角色5（情绪：决绝｜微表情：下颌绷紧｜语气：压嗓）：「拿着。」");
-    expect(motion).toContain("视频生成导戏单");
+    expect(motion).toContain("【第1段·12s】边关烽火台");
+    expect(motion).toContain("0–12s：@角色5，亮火信，下颌绷紧，说「拿着。」。近景微推。");
+    expect(motion).not.toContain("视频生成导戏单");
     expect(motion).not.toMatch(/^缓慢推进；/);
   });
 

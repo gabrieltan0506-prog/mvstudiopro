@@ -37,7 +37,10 @@ function tagsOf(re: RegExp, text: string): string[] {
   return uniqTags(Array.from(String(text || "").matchAll(re)).map((m) => m[0]));
 }
 
-const CUE_HEAD_RE = /^(\d+(?:\.\d+)?)[–-](\d+(?:\.\d+)?)s[｜|]([^｜\n]*)[｜|]?([^\n]*)$/;
+/** `0–5s：@角色2 抬头，眼眶发红，说「…」。近景微推。` */
+const CUE_HEAD_RE =
+  /^(\d+(?:\.\d+)?)[–-](\d+(?:\.\d+)?)s[：:](.+?)。\s*([^。\n]{1,40})。?$/;
+const CUE_PIPE_RE = /^(\d+(?:\.\d+)?)[–-](\d+(?:\.\d+)?)s[｜|]/;
 
 /** 从成片 prompt 抽出卡面可读摘要 */
 export function parseManhuaClipDirectorCardSummary(
@@ -45,10 +48,14 @@ export function parseManhuaClipDirectorCardSummary(
 ): ManhuaClipDirectorCardSummary {
   const raw = String(prompt || "");
   const seg =
+    raw.match(/【第\s*(\d+)\s*段·(\d+(?:\.\d+)?)s】/) ||
+    raw.match(/【第\s*(\d+)\s*段·约\d+(?:\.\d+)?s】/) ||
     raw.match(/【第\s*(\d+)\s*段·成片】/) ||
     raw.match(/【按秒导戏单·第0*(\d+)段/) ||
     raw.match(/【视频生成导戏单·第(\d+)段/);
   const dur =
+    raw.match(/【第\s*\d+\s*段·(\d+(?:\.\d+)?)s】/) ||
+    raw.match(/【第\s*\d+\s*段·约(\d+(?:\.\d+)?)s】/) ||
     raw.match(/目标时长：约\s*(\d+(?:\.\d+)?)\s*秒/) ||
     raw.match(/本段一条成片约\s*(\d+(?:\.\d+)?)\s*秒/) ||
     raw.match(/【按秒导戏单·第\d+段·(\d+)s】/);
@@ -58,56 +65,43 @@ export function parseManhuaClipDirectorCardSummary(
   const propTags = tagsOf(/@道具\d+/g, raw);
 
   const microFromLock =
-    raw.match(/微表情[：:]\s*([^｜|\n」]{2,40})/)?.[1] ||
-    raw.match(/微表情差[：:]\s*([^\n]{2,40})/)?.[1] ||
-    raw.match(/微表情过程[：:]\s*([^\n]{2,40})/)?.[1] ||
+    raw.match(/微表情[=：:]\s*([^｜|\n」]{2,40})/)?.[1] ||
+    raw.match(/眼眶发红|下颌绷紧|咬下唇|咬牙|泪未落/)?.[0] ||
     "";
 
   const cueRows: ManhuaClipDirectorCueRow[] = [];
   const lines = raw.split(/\r?\n/);
   for (let i = 0; i < lines.length && cueRows.length < 6; i++) {
-    const head = CUE_HEAD_RE.exec(String(lines[i] || "").trim());
-    if (!head) continue;
-    const chunk: string[] = [lines[i]!];
-    let j = i + 1;
-    while (j < lines.length) {
-      const ln = lines[j]!;
-      if (CUE_HEAD_RE.test(ln.trim()) || /^【/.test(ln.trim())) break;
-      if (/^\s/.test(ln) || /^(场景|动作|对白|光影|交接)/.test(ln.trim())) {
-        chunk.push(ln);
-        j++;
-        continue;
-      }
-      break;
+    const line = String(lines[i] || "").trim();
+    const head = CUE_HEAD_RE.exec(line);
+    if (head) {
+      const body = String(head[3] || "");
+      const cam = String(head[4] || "").trim();
+      cueRows.push({
+        startSec: Number(head[1]),
+        endSec: Number(head[2]),
+        roleLabelZh: cam.slice(0, 12) || "运镜",
+        castTags: tagsOf(/@角色\d+/g, body),
+        sceneTags: tagsOf(/@场景\d+/g, body),
+        microOrActionZh: String(
+          body.match(/「([^」]{1,20})」/)?.[1] ||
+            body.replace(/@角色\d+/g, "").replace(/说$/, "").trim() ||
+            "节拍",
+        )
+          .trim()
+          .slice(0, 28),
+      });
+      continue;
     }
-    i = j - 1;
-    const blob = chunk.join("\n");
-    const action =
-      blob.match(/动作[：:]\s*([^\n]{2,80})/)?.[1] ||
-      blob.match(/场面动作[：:]\s*([^\n]{2,80})/)?.[1] ||
-      "";
-    const dialogueLock =
-      blob.match(/对白[^：\n]*[：:]\s*([^\n]{2,100})/)?.[1] || "";
-    const emotion =
-      dialogueLock.match(/情绪[：:]([^｜|\n）」]{1,24})/)?.[1] ||
-      blob.match(/情绪[：:]\s*([^｜|\n]{1,24})/)?.[1] ||
-      "";
-    const micro =
-      blob.match(/微表情[：:]\s*([^｜|\n]{2,28})/)?.[1] ||
-      emotion ||
-      String(action || "")
-        .replace(/@角色\d+/g, "")
-        .replace(/@场景\d+/g, "")
-        .replace(/@道具\d+/g, "")
-        .trim()
-        .slice(0, 28);
+    if (!CUE_PIPE_RE.test(line)) continue;
+    const pipe = CUE_PIPE_RE.exec(line)!;
     cueRows.push({
-      startSec: Number(head[1]),
-      endSec: Number(head[2]),
-      roleLabelZh: String(head[3] || "").trim().slice(0, 12),
-      castTags: tagsOf(/@角色\d+/g, blob),
-      sceneTags: tagsOf(/@场景\d+/g, blob),
-      microOrActionZh: String(micro || head[4] || head[3] || "节拍")
+      startSec: Number(pipe[1]),
+      endSec: Number(pipe[2]),
+      roleLabelZh: "运镜",
+      castTags: tagsOf(/@角色\d+/g, line),
+      sceneTags: tagsOf(/@场景\d+/g, line),
+      microOrActionZh: String(line.match(/「([^」]{1,20})」/)?.[1] || "节拍")
         .trim()
         .slice(0, 28),
     });

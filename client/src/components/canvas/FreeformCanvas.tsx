@@ -1180,7 +1180,7 @@ export default function FreeformCanvas({
                         card.castTags.length + card.sceneTags.length - chips.length;
                       const padLocked =
                         Boolean(String(block.refImageUrl || "").trim()) ||
-                        /【像素垫图锁·必守】/.test(String(block.prompt || ""));
+                        /【垫图】|【像素垫图锁/.test(String(block.prompt || ""));
                       return (
                         <>
                           <div className="flex flex-wrap items-center gap-1.5">

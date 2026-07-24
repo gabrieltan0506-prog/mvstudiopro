@@ -201,5 +201,41 @@ export function recommendManhuaCineOpticsFromText(
 export function formatRecommendedCineOpticsLine(raw: string): string {
   const combo = recommendManhuaCineOpticsFromText(raw);
   if (!combo) return "";
-  return `光学·${combo.nameZh}：${combo.focalMm}mm · f/${combo.apertureF} · ${combo.dofZh}（成对）；快门约 ${combo.shutterHintZh || "1/50"}。${combo.promptZh}`;
+  // 短行：给引擎；勿复读 promptZh 灌水
+  return `${combo.focalMm}mm f/${combo.apertureF} ${combo.dofZh} 快门${combo.shutterHintZh || "1/50"}`;
+}
+
+/**
+ * 出片时把秒轴运镜句转成光学数值，只进引擎请求，不写回节点/前台。
+ */
+export function appendManhuaClipEngineOptics(prompt: string): string {
+  const raw = String(prompt || "").trim();
+  if (!raw) return raw;
+  if (/【引擎光学】/.test(raw) || /\d+mm\s*f\//.test(raw)) return raw;
+  // 新秒轴：`0–5s：…动作…。近景微推。` → 取句末运镜；兼容旧「运镜：」字段
+  const fromTail = Array.from(
+    raw.matchAll(
+      /(?:^|\n)\d+(?:\.\d+)?[–-]\d+(?:\.\d+)?s[：:][^。\n]+。\s*([^。\n]{2,40})。/g,
+    ),
+  ).map((m) => String(m[1] || "").trim());
+  const labeled = Array.from(raw.matchAll(/运镜[：:]([^｜\n。]{1,48})/g)).map((m) =>
+    String(m[1] || "").trim(),
+  );
+  const camBits = fromTail.length ? fromTail : labeled;
+  const meaningful = camBits.filter((c) => c && c !== "近景微动");
+  if (!meaningful.length) return raw;
+  const line = formatRecommendedCineOpticsLine(meaningful.join("；"));
+  if (!line) return raw;
+  return `${raw}\n【引擎光学】${line}`;
+}
+
+/** 前台审阅：剥光学数值 */
+export function stripManhuaClipEngineOpticsForUi(prompt: string): string {
+  return String(prompt || "")
+    .replace(/\n*【引擎光学】[^\n]*/g, "")
+    .replace(/\n*【引擎光学·出片专用】[\s\S]*?(?=\n【|\s*$)/g, "")
+    .replace(/\n*光学·[^\n]*/g, "")
+    .replace(/\n*\d+mm\s*f\/[^\n]*/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }

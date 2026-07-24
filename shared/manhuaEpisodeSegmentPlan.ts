@@ -140,11 +140,26 @@ function emptyBeat(index: number): ManhuaEpisodeSegmentBeat {
 
 /** 统计对白行内直角/弯引号句数 */
 export function countManhuaSegmentDialogueQuotes(dialogueZh: string): number {
+  return extractManhuaSegmentDialogueQuotes(dialogueZh).length;
+}
+
+/** 从可拍表对白字段抽出「」句，供成片秒轴灌入 */
+export function extractManhuaSegmentDialogueQuotes(dialogueZh: string): string[] {
   const t = String(dialogueZh || "");
-  const cn = t.match(/「[^」]{1,80}」/g) || [];
-  const curly = t.match(/[\u201c“][^\u201d”]{1,80}[\u201d”]/g) || [];
-  const en = t.match(/"[^"]{1,80}"/g) || [];
-  return new Set([...cn, ...curly, ...en].map((s) => s.trim())).size;
+  const cn = t.match(/「([^」]{1,80})」/g) || [];
+  const curly = t.match(/[\u201c“]([^\u201d”]{1,80})[\u201d”]/g) || [];
+  const en = t.match(/"([^"]{1,80})"/g) || [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of [...cn, ...curly, ...en]) {
+    const inner = String(raw || "")
+      .replace(/^[「『"“\u201c]|[」』"”\u201d]$/g, "")
+      .trim();
+    if (inner.length < 1 || seen.has(inner)) continue;
+    seen.add(inner);
+    out.push(inner);
+  }
+  return out.slice(0, 8);
 }
 
 /** 从「#### 段01」或「#### 段 1」块解析 */

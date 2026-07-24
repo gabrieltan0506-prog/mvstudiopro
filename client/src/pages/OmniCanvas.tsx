@@ -187,7 +187,10 @@ import {
   normalizeManhuaDeliveryPackage,
   type ManhuaDeliveryPackage,
 } from "@shared/manhuaDeliveryPackage";
-import { upsertManhuaSegmentIntentInMarkdown } from "@shared/manhuaEpisodeSegmentPlan";
+import {
+  parseManhuaEpisodeSegmentPlanFromMarkdown,
+  upsertManhuaSegmentIntentInMarkdown,
+} from "@shared/manhuaEpisodeSegmentPlan";
 import {
   patchPromptForRetakeVariable,
   type ManhuaRetakeVariable,
@@ -4724,10 +4727,15 @@ export default function OmniCanvas() {
                         prev,
                         projectBible?.assetCanon,
                       );
+                      const epBody =
+                        writerPack?.episodes.find((e) => e.index === writerFocusEpisode)?.body ||
+                        "";
+                      const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         customRefs: customAssetRefs,
+                        segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -4755,10 +4763,15 @@ export default function OmniCanvas() {
                         prev,
                         projectBible?.assetCanon,
                       );
+                      const epBody =
+                        writerPack?.episodes.find((e) => e.index === writerFocusEpisode)?.body ||
+                        "";
+                      const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         customRefs: customAssetRefs,
+                        segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -4812,10 +4825,15 @@ export default function OmniCanvas() {
                         prev,
                         projectBible?.assetCanon,
                       );
+                      const epBody =
+                        writerPack?.episodes.find((e) => e.index === writerFocusEpisode)?.body ||
+                        "";
+                      const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
                       const layoutOpts = {
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
                         customRefs: customAssetRefs,
+                        segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,

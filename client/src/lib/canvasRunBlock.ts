@@ -38,6 +38,8 @@ import {
 } from "@shared/manhuaScriptWorkbench";
 import { clampSeedanceOpenRouterDuration } from "@shared/seedanceOpenRouterModels";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
+import { appendManhuaClipEngineOptics } from "@shared/manhuaCineOpticsBank";
+import { formatManhuaClipImageRoleBindLine } from "@shared/manhuaAssetLockRegistry";
 import {
   buildManhuaFactoryOptimizeBrief,
   isManhuaBibleOrBeatsBlockId,
@@ -510,11 +512,12 @@ export async function runCanvasBlock(
     throw new Error("请先填写提示词，或连接上游方块传递内容 / 上传 TXT·MD 文档");
   }
 
-  // 关键静帧：本镜 prompt 已含分镜注入+画风/角色硬锁；再叠整份反推上游易超 OpenAI 32k
+  // 关键静帧 / 段成片：本节点 prompt 已含导戏；禁止再拼上游 keyart/设定全文（古风板×N）
   const isKeyartBlock = block.id.startsWith("keyart-");
+  const isClipBlock = block.id.startsWith("clip-");
   const mergedPrompt = formatCanvasUpstreamPrompt(
     prompt || "请根据上游内容完成本步骤生成。",
-    isKeyartBlock ? [] : effectiveTexts,
+    isKeyartBlock || isClipBlock ? [] : effectiveTexts,
   );
 
   if (block.kind === "text" || block.kind === "copy_organize") {
@@ -730,20 +733,28 @@ export async function runCanvasBlock(
     const fusionStillUrls = (block.editFusionUrls || [])
       .map((u) => String(u || "").trim())
       .filter((u) => u && !looksLikeVideo(u));
-    const followStillPrompt = String(mergedPrompt || "").includes("参考静帧")
-      ? mergedPrompt
-      : `${mergedPrompt}\n\n${MANHUA_VIDEO_FOLLOW_STILL_ZH}`;
-    const seedanceDirectorSource = continuityVideoUrl
-      ? `${followStillPrompt}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}`
-      : followStillPrompt;
-    // 导戏单原样进 Seedance（已废除微动三件套）；clip 不用路径配方覆盖正文
+    // 段成片：禁止再叠「参考静帧/连续性」聊天墙；身份靠 @Image + 秒轴短指令
     const isClip = block.id.startsWith("clip-");
-    const motionPrompt = stripManhuaPromptSlop(
-      compileI2VMotionPrompt(seedanceDirectorSource, {
+    const seedanceDirectorSource = isClip
+      ? mergedPrompt
+      : String(mergedPrompt || "").includes("参考静帧")
+        ? mergedPrompt
+        : `${mergedPrompt}\n\n${MANHUA_VIDEO_FOLLOW_STILL_ZH}`;
+    const withContinuity =
+      !isClip && continuityVideoUrl
+        ? `${seedanceDirectorSource}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}`
+        : seedanceDirectorSource;
+    // 导戏单原样进 Seedance（已废除微动三件套）；clip 不用路径配方覆盖正文
+    const compiledMotion = stripManhuaPromptSlop(
+      compileI2VMotionPrompt(withContinuity, {
         pathCameraRecipeId: isClip ? undefined : block.pathCameraRecipeId,
         pathAnnotationJson: isClip ? undefined : block.pathAnnotationJson,
       }),
     );
+    // 光学 mm/快门：仅出片时由运镜句自动转换，不写回节点/前台审阅
+    const motionPrompt = isClip
+      ? appendManhuaClipEngineOptics(compiledMotion)
+      : compiledMotion;
     const videoModel = block.videoModel || "seedance-2.0-fast";
     console.info(
       `[canvasRunBlock] video · id=${block.id} · videoModel=${videoModel} · stills=${[stillRef, ...fusionStillUrls].filter(Boolean).length} · continuity=${Boolean(continuityVideoUrl)} · directorPass=${isManhuaSeedanceDirectorPrompt(motionPrompt)} · promptChars=${motionPrompt.length}`,
@@ -790,9 +801,26 @@ export async function runCanvasBlock(
       const voiceLocks = deps.characterVoiceLocks || [];
       const voicePlan = planManhuaVoiceAudioForPrompt(motionPrompt, voiceLocks);
       const voiceBlock = formatManhuaCharacterVoiceLockBlock(voiceLocks, voicePlan);
-      const seedancePrompt = voiceBlock
-        ? `${motionPrompt}\n\n${voiceBlock}`.trim()
-        : motionPrompt;
+      const imageBind = isClip
+        ? formatManhuaClipImageRoleBindLine(httpsImages.length, {
+            tailCount: tailFrames.length,
+          })
+        : "";
+      // 声线块压成一行标签，避免再灌聊天墙
+      const voiceOneLine = voiceBlock
+        ? voiceBlock
+            .split("\n")
+            .filter((ln) => /@角色\d+=/.test(ln))
+            .join("；")
+        : "";
+      const seedancePrompt = [
+        imageBind,
+        motionPrompt,
+        voiceOneLine ? `【声线】${voiceOneLine}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .trim();
       url = await runSeedance20(seedancePrompt, seedStill, ar, {
         imageUrls: httpsImages.length ? httpsImages : undefined,
         videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
