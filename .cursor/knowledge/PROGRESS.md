@@ -21,8 +21,13 @@
 
 | 项 | 状态 |
 |---|---|
-| #969 | OPEN：`user-instruction-priority-always` + 本知识库（叠 `fix/pr967-deploy-hotfix`） |
+| #969 | OPEN：协作 rules + 知识库 + **Downloads 七月索引**（`fix/pr967-deploy-hotfix`） |
 | 线上旧草稿成片提示词 | 合入代码后需用户再点「审阅成片提示词」重铺才干净 |
+
+### 知识库增量（同日）
+
+- 已消化 `~/Downloads/2026Jul01`–`24` 全部交接 md（约 78）：分类见 `downloads-jul2026-index.md`  
+- alwaysApply：`knowledge-base-always.mdc` 强制开场读 brief / PROGRESS / 七月索引
 
 ### 已知缺口（下一刀候选）
 
