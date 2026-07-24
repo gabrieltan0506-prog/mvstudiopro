@@ -28,6 +28,10 @@ import {
 import { resolveManhuaCustomAssetSeed } from "@shared/manhuaCustomAssetSeed";
 import { absolutizeManhuaAssetUrl } from "@shared/manhuaKeyartEditFusion";
 import {
+  buildManhuaAssetLockRegistry,
+  buildManhuaAssetPathById,
+} from "@shared/manhuaAssetLockRegistry";
+import {
   formatManhuaFactoryUserError,
   manhuaFactoryStageLabelFromBlockId,
 } from "@shared/manhuaFactoryUserErrors";
@@ -1779,10 +1783,36 @@ export default function OmniCanvas() {
     ],
   );
 
+  /** 仅出片后台：id→垫图 path，绝不写入节点提示词 */
+  const manhuaAssetPathById = useMemo(() => {
+    const reg = buildManhuaAssetLockRegistry({
+      characterIds: selectedCharacterIds,
+      artStyleId: factoryArtStyleId,
+      sceneId: factorySceneId,
+      propIds: factoryPropIds,
+      customRefs: customAssetRefs,
+      assetCanon: projectBible?.assetCanon,
+      characterSheetUrlById: collectManhuaCharacterSheetUrlById(
+        blocks,
+        projectBible?.assetCanon,
+      ),
+    });
+    return buildManhuaAssetPathById(reg);
+  }, [
+    selectedCharacterIds,
+    factoryArtStyleId,
+    factorySceneId,
+    factoryPropIds,
+    customAssetRefs,
+    projectBible?.assetCanon,
+    blocks,
+  ]);
+
   const runDeps = useMemo<CanvasRunDeps>(
     () => ({
       userId: user?.id ? String(user.id) : "",
       characterVoiceLocks,
+      manhuaAssetPathById,
       optimizeCopy: async ({ sourceText, optimizationBrief, modelName }) => {
         const t0 = Date.now();
         const reqPreview = [
@@ -1852,6 +1882,7 @@ export default function OmniCanvas() {
       pushDebug,
       user?.id,
       characterVoiceLocks,
+      manhuaAssetPathById,
     ],
   );
 

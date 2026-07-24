@@ -76,7 +76,7 @@ describe("manhua clip prompt slim (Seedance skill style)", () => {
     expect(text).toContain("说「你再装傻。」");
   });
 
-  it("strips ancient boards; asset Image bind carries id+path not name-only", () => {
+  it("strips ancient boards; asset Image bind is id-only in prompt (no URL leak)", () => {
     expect(
       stripManhuaClipForbiddenBoards("正文\n【古风服化参考】arch_x 长文"),
     ).not.toMatch(/古风服化|arch_/);
@@ -93,7 +93,7 @@ describe("manhua clip prompt slim (Seedance skill style)", () => {
     });
     const bind = formatManhuaAssetImageBindBlock(reg);
     expect(bind).toContain("id=hero");
-    expect(bind).toContain("https://cdn.example/hero.jpg");
+    expect(bind).not.toMatch(/https?:\/\/|cdn\.example/);
     const plan = planManhuaClipSeedanceImageBind({
       assetRows: [
         {
@@ -106,6 +106,7 @@ describe("manhua clip prompt slim (Seedance skill style)", () => {
       stillUrls: ["https://cdn.example/k.jpg"],
     });
     expect(plan.bindLineZh).toContain("@角色1=@Image1");
+    expect(plan.bindLineZh).not.toMatch(/https?:\/\//);
     expect(formatManhuaClipImageRoleBindLine(3)).toContain("@Image1、@Image2、@Image3");
   });
 

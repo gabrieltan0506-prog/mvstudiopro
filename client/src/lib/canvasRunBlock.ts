@@ -45,6 +45,8 @@ import {
   formatManhuaClipSeedanceBindLineFromEntries,
   parseManhuaAssetImageBindBlock,
   planManhuaClipSeedanceImageBind,
+  resolveManhuaAssetImageBindRows,
+  stripManhuaAssetUrlsFromPrompt,
   type ManhuaClipSeedanceImageBindEntry,
 } from "@shared/manhuaAssetLockRegistry";
 import { absolutizeManhuaAssetUrl } from "@shared/manhuaKeyartEditFusion";
@@ -80,6 +82,11 @@ export type CanvasRunDeps = {
   userId?: string;
   /** 角色声线参考（从有声成片抠出）；成片时按 @角色 挂 audio_url */
   characterVoiceLocks?: ManhuaCharacterVoiceLock[] | null;
+  /**
+   * 资产 id→垫图 path（仅出片后台用，勿写进用户可见 prompt）。
+   * 节点只存 @角色N|id=…|label=…，这里再转成可下载 URL。
+   */
+  manhuaAssetPathById?: Record<string, string> | null;
 };
 
 function dataUrlToJpegFile(dataUrl: string, name: string): File | null {
@@ -768,8 +775,9 @@ export async function runCanvasBlock(
       }),
     );
     // 光学 mm/快门：仅出片时由运镜句自动转换，不写回节点/前台审阅
+    // 成片正文剥网址：垫图 URL 只走 imageUrls，不进提示词
     const motionPrompt = isClip
-      ? appendManhuaClipEngineOptics(compiledMotion)
+      ? stripManhuaAssetUrlsFromPrompt(appendManhuaClipEngineOptics(compiledMotion))
       : compiledMotion;
     const videoModel = block.videoModel || "seedance-2.0-fast";
     console.info(
@@ -803,8 +811,12 @@ export async function runCanvasBlock(
           );
         }
       }
+      // 节点只含 id；path 从 deps 后台表解析，绝不依赖提示词里的网址
       const assetRows = isClip
-        ? parseManhuaAssetImageBindBlock(block.prompt || motionPrompt).map((r) => ({
+        ? resolveManhuaAssetImageBindRows(
+            parseManhuaAssetImageBindBlock(block.prompt || motionPrompt),
+            deps.manhuaAssetPathById,
+          ).map((r) => ({
             ...r,
             path: absolutizeManhuaAssetUrl(r.path) || r.path,
           }))
@@ -815,7 +827,7 @@ export async function runCanvasBlock(
       const absStills = stillPool
         .map((u) => absolutizeManhuaAssetUrl(u) || u)
         .filter((u) => /^https?:\/\//i.test(u) || u.startsWith("data:image/"));
-      // 成片硬绑：末帧 → 资产定妆(含 id/path) → 本段静帧
+      // 成片硬绑：末帧 → 资产定妆 → 本段静帧（URL 只进 API imageUrls）
       const bindPlan = isClip
         ? planManhuaClipSeedanceImageBind({
             assetRows: assetRows.filter((r) => /^https?:\/\//i.test(r.path)),

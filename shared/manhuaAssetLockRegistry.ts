@@ -297,7 +297,10 @@ function isBindableAssetPath(path: string): boolean {
   return /^https?:\/\//i.test(p) || p.startsWith("/") || p.startsWith("data:image/");
 }
 
-/** 节点可审：每行 tag|id|label|path，出片可解析并真绑 @Image */
+/**
+ * 节点/前台可审：只写 tag + id + 名，**禁止写网址**。
+ * 出片时用 id 在后台 path 表解析垫图，再绑 @Image。
+ */
 export function formatManhuaAssetImageBindBlock(
   registry: ManhuaAssetLockRegistry | null | undefined,
   maxSlots = 12,
@@ -309,14 +312,13 @@ export function formatManhuaAssetImageBindBlock(
   const lines = rows.map((s) => {
     const label = String(s.labelZh || "").replace(/[|\n]/g, " ").trim() || ROLE_TAG_PREFIX[s.role];
     const id = String(s.id || "").replace(/[|\n]/g, "").trim() || "unknown";
-    return `${s.tag}|id=${id}|label=${label}|${String(s.path).trim()}`;
+    return `${s.tag}|id=${id}|label=${label}`;
   });
   return [ASSET_IMAGE_BIND_MARK, ...lines].join("\n");
 }
 
 /**
  * @deprecated 用 formatManhuaAssetImageBindBlock；保留别名以免旧调用丢对照。
- * 现在也写 Image 对照（含 id/path），不再只写名字。
  */
 export function formatManhuaAssetLockShortBlock(
   registry: ManhuaAssetLockRegistry | null | undefined,
@@ -325,15 +327,30 @@ export function formatManhuaAssetLockShortBlock(
   return formatManhuaAssetImageBindBlock(registry, maxSlots);
 }
 
+/** 从 registry 抽出后台用 path 表（勿写入用户可见 prompt） */
+export function buildManhuaAssetPathById(
+  registry: ManhuaAssetLockRegistry | null | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const s of registry?.slots || []) {
+    const id = String(s.id || "").trim();
+    const path = String(s.path || "").trim();
+    if (!id || !isBindableAssetPath(path)) continue;
+    out[id] = path;
+  }
+  return out;
+}
+
+/**
+ * 解析节点对照行。新格式无网址；旧格式若误带了 path 会丢掉（防泄漏进下游文案）。
+ * path 须由 resolveManhuaAssetImageBindRows 用后台表补齐。
+ */
 export function parseManhuaAssetImageBindBlock(
   prompt: string | null | undefined,
 ): ManhuaAssetImageBindRow[] {
   const raw = String(prompt || "");
   const idx = raw.indexOf(ASSET_IMAGE_BIND_MARK);
-  if (idx < 0) {
-    // 兼容旧「【资产】@角色1=名」——无 path，无法硬绑
-    return [];
-  }
+  if (idx < 0) return [];
   const body = raw.slice(idx + ASSET_IMAGE_BIND_MARK.length);
   const end = body.search(/\n【/);
   const section = (end >= 0 ? body.slice(0, end) : body).trim();
@@ -341,21 +358,44 @@ export function parseManhuaAssetImageBindBlock(
   for (const line of section.split("\n")) {
     const t = line.trim();
     if (!t || t.startsWith("【")) continue;
-    // @角色1|id=c1|label=女主|https://...
+    // 新：@角色1|id=c1|label=女主
+    // 旧（兼容读 id，忽略尾部 url）：@角色1|id=c1|label=女主|https://...
     const m = t.match(
-      /^(@(?:角色|场景|道具)\d+)\|id=([^|]+)\|label=([^|]*)\|(.+)$/,
+      /^(@(?:角色|场景|道具)\d+)\|id=([^|]+)\|label=([^|]*)(?:\|.*)?$/,
     );
     if (!m) continue;
-    const path = String(m[4] || "").trim();
-    if (!isBindableAssetPath(path)) continue;
     rows.push({
       tag: m[1]!,
       id: String(m[2] || "").trim(),
       labelZh: String(m[3] || "").trim(),
-      path,
+      path: "",
     });
   }
   return rows;
+}
+
+/** 后台：用 id→path 表给对照行补齐可下载垫图地址 */
+export function resolveManhuaAssetImageBindRows(
+  rows: ManhuaAssetImageBindRow[],
+  pathById: Record<string, string> | null | undefined,
+): ManhuaAssetImageBindRow[] {
+  const map = pathById || {};
+  return rows
+    .map((r) => {
+      const path = String(map[r.id] || r.path || "").trim();
+      return { ...r, path };
+    })
+    .filter((r) => isBindableAssetPath(r.path));
+}
+
+/** 剥提示词里误写的 http(s) 行/片段，避免前台/节点审阅泄漏 */
+export function stripManhuaAssetUrlsFromPrompt(text: string | null | undefined): string {
+  return String(text || "")
+    .replace(/https?:\/\/[^\s|】]+/gi, "")
+    .replace(/\|(?:https?:)?\/[^\s|】]*/gi, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 export function extractManhuaMentionedAssetTags(prompt: string | null | undefined): string[] {

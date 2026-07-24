@@ -20,6 +20,7 @@ import {
   assignManhuaCanvasAssetAtTags,
   buildManhuaAssetLockRegistry,
   formatManhuaAssetImageBindBlock,
+  stripManhuaAssetUrlsFromPrompt,
   type ManhuaAssetLockRegistry,
 } from "@shared/manhuaAssetLockRegistry";
 import type { ManhuaWriterAssetCanon } from "@shared/manhuaWriterAssetCanon";
@@ -1171,7 +1172,9 @@ export function applyFactoryPrefsToBlocks(
     }
     if (b.id.startsWith("clip-")) {
       // 禁止 prefs 回灌古风板/角色长文/运镜墙；只保秒轴 + Image 对照 + 画风一行
-      let base = stripManhuaClipForbiddenBoards(String(b.prompt || ""));
+      let base = stripManhuaAssetUrlsFromPrompt(
+        stripManhuaClipForbiddenBoards(String(b.prompt || "")),
+      );
       base = stripInjectBlock(base, "【包装动效手法】");
       for (const mark of [
         "【路径运镜配方】",
@@ -1587,28 +1590,30 @@ export function ensureManhuaFragmentClips(
     const padLockBlock = segUrls.length
       ? `【垫图】本段静帧${segUrls.length}张（出片顺序：上段末帧→资产定妆→本段静帧，按序绑@Image）`
       : "【垫图·缺失】禁止出片";
-    const segPrompt = stripManhuaClipForbiddenBoards(
-      stripManhuaPromptSlop(
-        [
-          formatWorkbenchSegmentClipInjectBlock({
-            segmentIndex: globalSeg,
-            durationSec: seg.durationSec,
-            shots: hydratedShots,
-            sceneHintZh:
-              extractManhuaSceneHintFromPrompt(primary.prompt) ||
-              String(planBeat?.sceneZh || "").trim() ||
-              undefined,
-            intentZh: intentZh || String(planBeat?.intentZh || "").trim() || undefined,
-            segmentDialogueLines: dialogueLines,
-            segmentPerformanceZh: planBeat?.performanceZh,
-          }),
-          padLockBlock,
-          assetLockBlock,
-          continuityAddon,
-          artLock,
-        ]
-          .filter(Boolean)
-          .join("\n"),
+    const segPrompt = stripManhuaAssetUrlsFromPrompt(
+      stripManhuaClipForbiddenBoards(
+        stripManhuaPromptSlop(
+          [
+            formatWorkbenchSegmentClipInjectBlock({
+              segmentIndex: globalSeg,
+              durationSec: seg.durationSec,
+              shots: hydratedShots,
+              sceneHintZh:
+                extractManhuaSceneHintFromPrompt(primary.prompt) ||
+                String(planBeat?.sceneZh || "").trim() ||
+                undefined,
+              intentZh: intentZh || String(planBeat?.intentZh || "").trim() || undefined,
+              segmentDialogueLines: dialogueLines,
+              segmentPerformanceZh: planBeat?.performanceZh,
+            }),
+            padLockBlock,
+            assetLockBlock,
+            continuityAddon,
+            artLock,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        ),
       ),
     );
     if (existing) {
@@ -2232,7 +2237,7 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
         const m = String(b.prompt || "").match(
           /【资产·Image对照】[\s\S]*?(?=\n【(?!资产·Image对照)|$)/,
         );
-        return m?.[0]?.trim() || "";
+        return stripManhuaAssetUrlsFromPrompt(m?.[0]?.trim() || "");
       })();
       const keptPad = (() => {
         const m = String(b.prompt || "").match(/【垫图[^\n]*/);

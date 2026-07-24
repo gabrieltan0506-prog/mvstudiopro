@@ -2245,40 +2245,35 @@ export default function ManhuaScriptWorkbench({
                     资产锁 · Image 对照
                   </div>
                   <p className="mt-0.5 text-[10px] leading-4 text-white/45">
-                    每条必须有 id + 图路径。出片顺序：上段末帧 → 下表定妆/场/道具 → 本段静帧，并写成
-                    @角色N=@ImageK。静帧仍须改图模式挂垫图，否则禁止出成片。
+                    前台只显示编号与名称；出片时在后台按 id 挂垫图并写成 @角色N=@ImageK。静帧仍须改图模式挂垫图，否则禁止出成片。
                   </p>
-                  <div className="mt-1.5 flex flex-col gap-1">
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {assetLockRegistry.slots.map((s) => {
-                      const pathShort = String(s.path || "").replace(/^https?:\/\/[^/]+/i, "");
-                      const hasPath = Boolean(String(s.path || "").trim());
+                      const hasPad = Boolean(String(s.path || "").trim());
                       return (
-                        <div
+                        <span
                           key={`${s.tag}:${s.id}`}
-                          className="rounded-md border border-cyan-300/35 bg-black/35 px-1.5 py-1 text-[10px] text-cyan-50"
-                          title={s.path}
+                          className="rounded-md border border-cyan-300/35 bg-black/35 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-50"
+                          title={s.subTag ? `${s.labelZh} · ${s.subTag}` : s.labelZh}
                         >
-                          <div className="flex flex-wrap items-baseline gap-x-1.5">
-                            <span className="font-semibold">{s.tag}</span>
-                            <span className="font-normal text-white/55">{s.labelZh}</span>
-                            <span className="font-mono text-[9px] text-amber-100/85">
-                              id={s.id}
+                          {s.tag}
+                          <span className="ml-1 font-normal text-white/50">{s.labelZh}</span>
+                          <span className="ml-1 font-mono text-[9px] font-normal text-amber-100/80">
+                            id={s.id}
+                          </span>
+                          {s.subTag ? (
+                            <span className="ml-1 font-mono text-[9px] font-normal text-amber-100/70">
+                              {s.subTag}
                             </span>
-                            {s.subTag ? (
-                              <span className="font-mono text-[9px] text-amber-100/70">
-                                {s.subTag}
-                              </span>
-                            ) : null}
-                            {!hasPath ? (
-                              <span className="text-[9px] font-semibold text-red-200">无图路径</span>
-                            ) : null}
-                          </div>
-                          {hasPath ? (
-                            <div className="mt-0.5 truncate font-mono text-[9px] text-white/40">
-                              {pathShort || s.path}
-                            </div>
                           ) : null}
-                        </div>
+                          <span
+                            className={`ml-1 text-[9px] font-semibold ${
+                              hasPad ? "text-emerald-200/90" : "text-red-200"
+                            }`}
+                          >
+                            {hasPad ? "已挂图" : "缺图"}
+                          </span>
+                        </span>
                       );
                     })}
                   </div>
