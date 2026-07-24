@@ -5,6 +5,7 @@ import {
   cloudDraftBlocksToCanvas,
   serializeCloudDraftForUpload,
   slimBlocksForLocalPersist,
+  uploadManhuaCloudDraftViaGcsDirect,
 } from "./manhuaCloudDraftSync";
 import { buildManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
 import type { CanvasBlock } from "@/lib/canvasTypes";
@@ -136,5 +137,29 @@ describe("manhuaCloudDraftSync dual-path", () => {
     ]);
     expect(slim[0]?.outputUrl).toBeUndefined();
     expect(slim[1]?.outputUrl).toContain("k.jpg");
+  });
+
+  it("maps empty-JSON fetch errors to a soft direct-upload failure", async () => {
+    const payload = buildManhuaCloudDraftPayload({
+      clientUpdatedAt: "2026-07-24T00:00:00.000Z",
+      writerSession: { topic: "x" },
+      blocks: [],
+      edges: [],
+    });
+    const out = await uploadManhuaCloudDraftViaGcsDirect({
+      userId: 1,
+      payload,
+      prepare: async () => {
+        throw new Error(
+          "Failed to execute 'json' on 'Response': Unexpected end of JSON input",
+        );
+      },
+      commit: async () => ({}),
+    });
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.error).toMatch(/备用通道|响应异常/);
+      expect(out.error).not.toMatch(/Unexpected end of JSON/);
+    }
   });
 });
