@@ -158,17 +158,19 @@ export function extractManhuaSegmentDialogueQuotes(dialogueZh: string): string[]
     seen.add(s);
     out.push(s);
   };
-  // 优先：姓名：「台词」 / 姓名:「台词」
-  const withSpeaker = t.matchAll(
-    /([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*「([^」]{1,80})」/g,
+  // 优先：姓名：「台词」 / 姓名:「台词」（Array.from 兼容 Fly tsc 旧 target）
+  const withSpeaker = Array.from(
+    t.matchAll(/([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*「([^」]{1,80})」/g),
   );
   for (const m of withSpeaker) {
     const name = String(m[1] || "").trim();
     const quote = String(m[2] || "").trim();
     if (name && quote) push(`${name}：「${quote}」`);
   }
-  const withSpeakerCurly = t.matchAll(
-    /([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*[\u201c“]([^\u201d”]{1,80})[\u201d”]/g,
+  const withSpeakerCurly = Array.from(
+    t.matchAll(
+      /([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*[\u201c“]([^\u201d”]{1,80})[\u201d”]/g,
+    ),
   );
   for (const m of withSpeakerCurly) {
     const name = String(m[1] || "").trim();

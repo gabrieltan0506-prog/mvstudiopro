@@ -457,7 +457,7 @@ export function splitManhuaCastZhNames(castZh: string | null | undefined): strin
       s
         .replace(/（[^）]*）|\([^)]*\)/g, "")
         .replace(
-          /(?:逼近|后退|冷笑|站定|拔刀|取账|断绳|持弩|说|道|出场|登场).*$/u,
+          /(?:逼近|后退|冷笑|站定|拔刀|取账|断绳|持弩|说|道|出场|登场).*$/,
           "",
         )
         .trim(),
