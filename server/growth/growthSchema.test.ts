@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseGrowthAnalysisScores } from "@shared/growth";
 import type { GrowthAnalysisScores, GrowthPlatform } from "@shared/growth";
 import { buildGrowthSnapshotFromCollections, PLATFORM_LABELS } from "./growthSchema";
 import type { PlatformTrendCollection } from "./trendCollector";
@@ -41,7 +42,8 @@ function createCollection(platform: GrowthPlatform, items: number, authors: numb
 
 describe("buildGrowthSnapshotFromCollections", () => {
   it("keeps growth handoff platform aligned with sorted platform recommendations", () => {
-    const analysis: GrowthAnalysisScores = {
+    /** 缺省字段交给 schema 补齐；手写整份 30 字段的 fixture 只会跟着改名飘 */
+    const analysis: GrowthAnalysisScores = parseGrowthAnalysisScores({
       composition: 82,
       color: 78,
       lighting: 74,
@@ -51,7 +53,7 @@ describe("buildGrowthSnapshotFromCollections", () => {
       improvements: ["还需要更聚焦一个主问题"],
       platforms: ["快手", "抖音"],
       summary: "适合先跑强钩子版本，再延展方法拆解。",
-    };
+    });
 
     const snapshot = buildGrowthSnapshotFromCollections({
       analysis,

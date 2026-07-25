@@ -8,6 +8,7 @@ import {
   uploadManhuaCloudDraftViaGcsDirect,
 } from "./manhuaCloudDraftSync";
 import { buildManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
+import { buildManhuaWriterSession } from "@shared/manhuaWriterSession";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 
 describe("manhuaCloudDraftSync dual-path", () => {
@@ -20,7 +21,7 @@ describe("manhuaCloudDraftSync dual-path", () => {
     });
     const choice = chooseManhuaDraftHydrate({
       cloud,
-      localWriter: { format: "mv-manhua-writer-session-v1", topic: "本机题材" } as never,
+      localWriter: buildManhuaWriterSession({ topic: "本机题材" }),
       localCanvas: { blocks: [], edges: [] },
       localPrefs: {},
       localClientUpdatedAt: "2026-07-20T10:00:00.000Z",
@@ -32,20 +33,7 @@ describe("manhuaCloudDraftSync dual-path", () => {
   it("uses local when cloud missing (本机权限可用时仍可恢复)", () => {
     const choice = chooseManhuaDraftHydrate({
       cloud: null,
-      localWriter: {
-        format: "mv-manhua-writer-session-v1",
-        topic: "仅本机",
-        brief: "",
-        episodeCount: 3,
-        focusEpisode: 1,
-        writerPack: null,
-        writerConfirmed: false,
-        directorUnlocked: false,
-        projectBible: null,
-        manhuaUiMode: "workbench",
-        assetsSkipped: false,
-        workflowPhase: "outline",
-      },
+      localWriter: buildManhuaWriterSession({ topic: "仅本机", episodeCount: 3 }),
       localCanvas: { blocks: [], edges: [] },
       localPrefs: { topic: "仅本机" },
       localClientUpdatedAt: "2026-07-20T09:00:00.000Z",

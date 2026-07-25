@@ -592,7 +592,7 @@ describe("分镜静帧按秒段锁定", () => {
   it("每张静帧绑到自己那几秒，且不吃掉末帧席位", () => {
     const plan = planManhuaClipSeedanceImageBind({
       assetRows: [
-        { tag: "@角色1", id: "c1", path: "https://x/a.jpg", labelZh: "沈照野", kind: "角色" },
+        { tag: "@角色1", id: "c1", path: "https://x/a.jpg", labelZh: "沈照野" },
       ],
       stillUrls: ["https://x/s1.jpg", "https://x/s2.jpg", "https://x/s3.jpg"],
       stillSlotsZh: ["0–5s", "5–10s", "10–15s"],

@@ -31,11 +31,12 @@ function createCollection(platform: GrowthPlatform, suffix: string): PlatformTre
       targetPerRun: 1,
       referenceMinItems: 1,
       referenceMaxItems: 1,
-      collectorMode: "test",
+      collectorMode: "seed",
       industryCounts: {},
       ageCounts: {},
       contentCounts: {},
     },
+    notes: [],
   };
 }
 
@@ -168,6 +169,6 @@ describe("growth store split + gzip layout", () => {
     expect(loaded.collections?.douyin?.items?.length).toBe(1);
     expect(loaded.collections?.bilibili?.items?.length).toBe(1);
     expect(loaded.collections?.xiaohongshu?.items?.length).toBe(1);
-    expect(growthPlatformValues).toEqual(expect.arrayContaining(TEST_PLATFORMS));
+    expect(growthPlatformValues).toEqual(expect.arrayContaining([...TEST_PLATFORMS]));
   });
 });

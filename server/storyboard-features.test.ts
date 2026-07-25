@@ -32,7 +32,7 @@ function createAuthContext(role: "user" | "admin" = "user"): { ctx: TrpcContext 
     } as TrpcContext["req"],
     res: {
       clearCookie: () => {},
-    } as TrpcContext["res"],
+    } as unknown as TrpcContext["res"],
     clientDisconnected: new AbortController().signal,
   };
 

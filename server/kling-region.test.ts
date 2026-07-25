@@ -25,7 +25,7 @@ function stubEnv(patch: Partial<Record<(typeof ENV_KEYS)[number], string | undef
 }
 
 afterEach(() => {
-  for (const [key, value] of saved) {
+  for (const [key, value] of Array.from(saved.entries())) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }

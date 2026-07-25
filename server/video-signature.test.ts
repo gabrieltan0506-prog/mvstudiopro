@@ -75,12 +75,13 @@ describe("Video Signature Service", () => {
     });
 
     it("remix video should be eligible for reward", () => {
+      const isEligibleSource = (source: "original" | "remix" | "reupload") =>
+        source === "original" || source === "remix";
       const verified = true;
-      const source = "remix";
       const score = 90;
-      const isEligible = verified && (source === "original" || source === "remix");
-      const shouldReward = isEligible && score >= 85;
+      const shouldReward = verified && isEligibleSource("remix") && score >= 85;
       expect(shouldReward).toBe(true);
+      expect(isEligibleSource("reupload")).toBe(false);
     });
   });
 });

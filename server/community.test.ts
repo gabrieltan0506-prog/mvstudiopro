@@ -32,7 +32,7 @@ vi.mock("./db", () => ({
 vi.mock("./db-extended", () => ({
   toggleVideoLike: vi.fn().mockResolvedValue({ liked: true, totalLikes: 5 }),
   getVideoLikeStatus: vi.fn().mockResolvedValue({ liked: false, totalLikes: 4 }),
-  getUserCommentLikes: vi.fn().mockResolvedValue([1, 3]),
+  getUserCommentLikes: vi.fn().mockResolvedValue(new Set([1, 3])),
 }));
 
 import {
@@ -105,8 +105,9 @@ describe("Community: Comments & Sharing", () => {
     });
 
     it("should get user's liked comment IDs", async () => {
-      const likedIds = await getUserCommentLikes([1, 2, 3], 100);
-      expect(likedIds).toEqual([1, 3]);
+      const likedIds = await getUserCommentLikes(100);
+      expect(getUserCommentLikes).toHaveBeenCalledWith(100);
+      expect(Array.from(likedIds)).toEqual([1, 3]);
     });
   });
 
