@@ -7,6 +7,7 @@
 import {
   MANHUA_EPISODE_SEGMENT_DURATION_SEC,
   getManhuaEpisodeLengthTier,
+  manhuaEpisodeDensityFloors,
   manhuaEpisodeSegmentsForTier,
 } from "./manhuaEpisodeSegmentPlan.js";
 
@@ -42,7 +43,7 @@ export type ManhuaViralTemplateBeat = {
 };
 
 export type ManhuaViralTemplateDensityHints = {
-  /** 建议正文最少字（长档 180s 口径；短档由门禁按段数折算） */
+  /** 建议正文最少字（卡片按长档 12 段填；注入时按目标档段数折算） */
   minBodyChars: number;
   /** 建议「」对白句数 */
   minDialogueLines: number;
@@ -314,6 +315,9 @@ export function listApprovedManhuaViralTemplatesGrouped(
   })).filter((g) => g.items.length > 0);
 }
 
+/** 卡片里的骨架与密度都按长档 12 段填写，折算短档时以它为分母 */
+const LONG_TIER_SEGMENTS = manhuaEpisodeSegmentsForTier("long");
+
 /**
  * 把模板节拍格套到目标段数上。
  *
@@ -342,6 +346,26 @@ export function fitManhuaViralBeatGridToSegments(
   }));
 }
 
+/**
+ * 把卡片的密度建议套到目标段数上，并抬到门禁线。
+ *
+ * 卡片里的 8 句对白是长档口径的手写估值，而门禁按每段 3 句算，长档要 30 句。
+ * 直接把 8 句发给编剧，他写完就卡门禁，退回来重写——写多少都在门禁线下。
+ */
+export function fitManhuaViralDensityHintsToSegments(
+  hints: ManhuaViralTemplateDensityHints,
+  segments: number,
+): ManhuaViralTemplateDensityHints {
+  const want = Math.max(1, Math.floor(segments));
+  const floors = manhuaEpisodeDensityFloors(want * MANHUA_EPISODE_SEGMENT_DURATION_SEC);
+  const scale = want / LONG_TIER_SEGMENTS;
+  return {
+    minBodyChars: Math.max(floors.minBody, Math.round(hints.minBodyChars * scale)),
+    minDialogueLines: Math.max(floors.minDlg, Math.round(hints.minDialogueLines * scale)),
+    minLocationHits: Math.max(floors.minLoc, hints.minLocationHits),
+  };
+}
+
 /** 由完整卡片生成编剧扩写注入块 */
 export function formatManhuaViralTemplateWriterAddonFromCard(
   tpl: ManhuaViralTemplateCard | null | undefined,
@@ -353,7 +377,7 @@ export function formatManhuaViralTemplateWriterAddonFromCard(
   const beats = fitManhuaViralBeatGridToSegments(tpl.beatGrid, segments)
     .map((b) => `- ${b.atSec}s｜${b.conflictZh}｜${b.visualZh}`)
     .join("\n");
-  const d = tpl.densityHints;
+  const d = fitManhuaViralDensityHintsToSegments(tpl.densityHints, segments);
   return [
     "【节奏模板·骨架建议】",
     `模板：${tpl.nameZh}（${tpl.laneZh}）`,

@@ -28,7 +28,7 @@ function createAuthContext() {
     } as TrpcContext["req"],
     res: {
       clearCookie: () => {},
-    } as TrpcContext["res"],
+    } as unknown as TrpcContext["res"],
     clientDisconnected: new AbortController().signal,
   };
   return ctx;
@@ -76,30 +76,29 @@ describe("Stripe Products Configuration", () => {
   });
 });
 
+/**
+ * caller 是 Proxy，任何键都会返回函数——`caller.stripe.随便写` 也能 toBeDefined。
+ * 旧断言查的四个名字（status/createSubscription/purchaseCredits/history）路由里根本没有，
+ * 却一路绿灯。改查 `_def.procedures` 的真实键名，写错才会红。
+ */
 describe("Stripe Router", () => {
-  it("stripe.status route exists on appRouter", () => {
+  const procedureNames = Object.keys(appRouter._def.procedures)
+    .filter((k) => k.startsWith("stripe."))
+    .map((k) => k.slice("stripe.".length));
+
+  it.each([
+    "getPlans",
+    "getSubscription",
+    "createCheckoutSession",
+    "createCreditPackCheckout",
+    "cancelSubscription",
+    "getTransactions",
+  ])("stripe.%s route exists on appRouter", (name) => {
+    expect(procedureNames).toContain(name);
+  });
+
+  it("caller 能拿到 stripe 子路由", () => {
     const caller = appRouter.createCaller(createAuthContext());
     expect(caller.stripe).toBeDefined();
-    expect(caller.stripe.status).toBeDefined();
-  });
-
-  it("stripe.createSubscription route exists", () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    expect(caller.stripe.createSubscription).toBeDefined();
-  });
-
-  it("stripe.purchaseCredits route exists", () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    expect(caller.stripe.purchaseCredits).toBeDefined();
-  });
-
-  it("stripe.cancelSubscription route exists", () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    expect(caller.stripe.cancelSubscription).toBeDefined();
-  });
-
-  it("stripe.history route exists", () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    expect(caller.stripe.history).toBeDefined();
   });
 });

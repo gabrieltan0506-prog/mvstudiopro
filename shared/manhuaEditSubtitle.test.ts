@@ -4,8 +4,8 @@ import { buildManhuaSubtitleCues, formatManhuaSubtitleSrt } from "./manhuaEditSu
 
 describe("manhuaEditSubtitle", () => {
   const shots = [
-    { index: 1, durationSec: 5, dialogueZh: "你回来了", actionZh: "推门" },
-    { index: 2, durationSec: 5, actionZh: "对视" },
+    { index: 1, durationSec: 5, cameraZh: "中景平视", dialogueZh: "你回来了", actionZh: "推门" },
+    { index: 2, durationSec: 5, cameraZh: "近景过肩", actionZh: "对视" },
   ];
 
   it("builds cues only when enabled and dialogue present", () => {

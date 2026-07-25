@@ -14,6 +14,7 @@ import {
   exportManhuaProjectZip,
 } from "./manhuaProjectExport";
 import { defaultCanvasBlock } from "./canvasTypes";
+import { emptyManhuaClipQualityChecks } from "@shared/manhuaClipQuality";
 import { composeWriterPackFactoryContext, type ManhuaWriterPack } from "@shared/manhuaWriterRoom";
 
 function fakePack(): ManhuaWriterPack {
@@ -96,7 +97,15 @@ describe("manhua series MVP acceptance (jobstodo §6)", () => {
         outputUrl: "https://cdn.example/ep2.mp4",
         status: "done" as const,
         videoModel: "seedance-2.0-fast" as const,
-        manhuaClipQuality: { status: "passed" as const, summary: "ok" },
+        manhuaClipQuality: {
+          status: "passed" as const,
+          summary: "ok",
+          checks: emptyManhuaClipQualityChecks(),
+          failedKeys: [],
+          raw: "",
+          attempts: 1,
+          reviewedAt: "2026-07-20T10:00:00.000Z",
+        },
       };
       const pendingStory = {
         ...defaultCanvasBlock("text", 0, 0),

@@ -39,27 +39,25 @@ export function resolveGrowthCampExtractScanEngine(): GrowthCampStrategistEngine
   return { modelName: model as GrowthCampModel, provider: "vertex", label: "Gemini 3.5 Flash" };
 }
 
+export type GrowthCampPhase2InvokeOpts = {
+  model: "pro";
+  provider: GrowthCampStrategistEngine["provider"];
+  modelName: GrowthCampModel;
+  reasoningEffort?: typeof GROWTH_CAMP_PHASE2_REASONING_EFFORT;
+  max_tokens?: number;
+};
+
 /** invokeLLM 参数：Phase 2 Sol 固定 high + 128k；其它 openai 模型保持兼容。 */
-export function growthCampPhase2InvokeOpts(engine: GrowthCampStrategistEngine) {
+export function growthCampPhase2InvokeOpts(
+  engine: GrowthCampStrategistEngine,
+): GrowthCampPhase2InvokeOpts {
   const base = {
     model: "pro" as const,
     provider: engine.provider,
     modelName: engine.modelName,
   };
   if (engine.provider !== "openai") return base;
-  // Phase 2 统一 Sol：high + 128k（旧 gpt-5.5 别名也会 resolve 到 Sol）
-  if (
-    engine.modelName === GROWTH_CAMP_PHASE2_MODEL
-    || engine.modelName === "gpt-5.5"
-    || engine.modelName === "gemini-3.5-flash"
-  ) {
-    return {
-      ...base,
-      modelName: GROWTH_CAMP_PHASE2_MODEL,
-      reasoningEffort: GROWTH_CAMP_PHASE2_REASONING_EFFORT,
-      max_tokens: GROWTH_CAMP_PHASE2_MAX_TOKENS,
-    };
-  }
+  // Phase 2 统一 Sol：high + 128k（旧 gpt-5.5 / gemini 别名也会 resolve 到 Sol）
   return {
     ...base,
     modelName: GROWTH_CAMP_PHASE2_MODEL,

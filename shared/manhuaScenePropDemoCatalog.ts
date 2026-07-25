@@ -954,7 +954,8 @@ export function listManhuaDemoAssets(opts?: {
  */
 export function pickDailyManhuaDemoBatch(
   alreadyDoneIds: Set<string>,
-  quota: Partial<typeof MANHUA_DAILY_DEMO_QUOTA> = {},
+  /** 默认值带 `as const`，直接 Partial 会把调用方锁死在 3/3/1/1 这组字面量上 */
+  quota: Partial<Record<keyof typeof MANHUA_DAILY_DEMO_QUOTA, number>> = {},
 ): ManhuaDemoAsset[] {
   const q = { ...MANHUA_DAILY_DEMO_QUOTA, ...quota };
   const pending = listManhuaDemoAssets().filter((a) => !alreadyDoneIds.has(a.id));

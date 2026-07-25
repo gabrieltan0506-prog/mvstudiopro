@@ -30,7 +30,7 @@ description: 爆款漫剧情报分析与节奏模板持续学习：链接拆解�
 
 ## 爆款底层三逻辑（写作与选题时对照）
 
-1. **产能与试错**：低成本高频出片，同一爽点模板可快速变体；工厂侧用编剧室 → 六段链路批量铺板。
+1. **产能与试错**：低成本高频出片，同一爽点模板可快速变体；工厂侧用编剧室 → 分段链路批量铺板（短档 6 段 · 长档 12 段，画布可切）。
 2. **IP / 类型势能**：成熟题材标签降低冷启动；选题优先「类型可识别 + 标题钩子一眼懂」。
 3. **前 3 秒情绪**：开篇必须视觉钩子 + 冲突句；之后密铺可视觉化反转/升级。
 
@@ -63,7 +63,10 @@ description: 爆款漫剧情报分析与节奏模板持续学习：链接拆解�
 
 1. 落盘：`docs/manhua-template-lab/proposals/<id>.json`
 2. `id`：`tpl_` + 英文蛇形短词（稳定、可复现）
-3. `nameZh` / `laneZh` / `hook3sZh` / `beatGrid`（约 180s，每 10–15s 一条）/ `scenePoolHints` / `castShape` / `densityHints` / `sourceRefs`
+3. `nameZh` / `laneZh` / `hook3sZh` / `beatGrid` / `scenePoolHints` / `castShape` / `densityHints` / `sourceRefs`
+   - `beatGrid` 与 `densityHints` **一律按长档填满**：12 拍 × 15s = 180s，`atSec` 取 0/15/…/165；正文字数按 12 段口径写。
+   - **不要**为 90 秒档另写一张卡。短档由 `fitManhuaViralBeatGridToSegments` / `fitManhuaViralDensityHintsToSegments` 在注入编剧时抽稀重算（必留开场与片尾钩子）。
+   - `densityHints` 只是下限的**建议值**；注入时会被抬到 `manhuaEpisodeDensityFloors` 的门禁线，写低了不生效。
 4. `status` 固定为 `"proposed"`
 5. `laneZh` 必须是审定库允许的赛道之一：`爽文逆袭` | `古言种田` | `系统觉醒` | `甜宠` | `悬疑权谋` | `搞笑沙雕` | `游戏竞技`
 6. 在 `docs/manhua-template-lab/CHANGELOG.md` 追加一行（日期 | proposed | id | 备注）
@@ -97,7 +100,7 @@ description: 爆款漫剧情报分析与节奏模板持续学习：链接拆解�
 
 | 外部步骤 | 本仓库 |
 |----------|--------|
-| 剧本 + 分镜 | `/canvas` 编剧室 → 六段链路 |
+| 剧本 + 分镜 | `/canvas` 编剧室 → 分段链路（档位见 `MANHUA_EPISODE_LENGTH_TIERS`） |
 | 节奏模板 | `listApprovedManhuaViralTemplates` → 扩写 `viralTemplateId` |
 | 静帧 / 成片 | key_art / Seedance（探针规则见仓库 seedance-probe） |
 | 题材→场景/手法 | `manhuaSceneAssetLibrary` / `craftShotBank` |
