@@ -30,15 +30,6 @@ import {
   formatManhuaSubtitleSrt,
 } from "@shared/manhuaEditSubtitle";
 import {
-  MANHUA_EDIT_MOTION_CATEGORIES,
-  MANHUA_EDIT_MOTION_MAX,
-  listManhuaEditMotionEntries,
-  manhuaEditMotionCategoryLabel,
-  manhuaEditMotionInjectPreview,
-  toggleManhuaEditMotionId,
-} from "@shared/manhuaEditMotionPick";
-import type { MotionPromptCategory } from "@shared/motionPromptBank";
-import {
   MANHUA_EDIT_QC_ROWS,
   buildManhuaEditShotQcBoard,
   manhuaEditExportableClipIds,
@@ -71,8 +62,6 @@ type Props = {
   suggestAutoCutsBusy?: boolean;
   subtitleEnabled?: boolean;
   onSubtitleEnabledChange?: (next: boolean) => void;
-  motionPromptIds: string[];
-  onMotionPromptIdsChange: (ids: string[]) => void;
   /** 本集各镜成片/静帧质检原料 */
   shotMedia: ManhuaEditShotMedia[];
   factoryBusy?: boolean;
@@ -156,8 +145,6 @@ export default function ManhuaEditMultitrackPanel({
   suggestAutoCutsBusy = false,
   subtitleEnabled = false,
   onSubtitleEnabledChange,
-  motionPromptIds,
-  onMotionPromptIdsChange,
   shotMedia,
   factoryBusy,
   dockSelectedIds,
@@ -174,7 +161,6 @@ export default function ManhuaEditMultitrackPanel({
   cineVocabLocale,
   onCineVocabLocaleChange,
 }: Props) {
-  const [motionCat, setMotionCat] = useState<MotionPromptCategory>("logo");
   const { totalSec, tracks } = buildManhuaEditMultitrack({
     roughClips,
     shots,
@@ -195,8 +181,6 @@ export default function ManhuaEditMultitrackPanel({
     [roughClips, shots, fineCutByShot, subtitleEnabled],
   );
   const srtPreview = useMemo(() => formatManhuaSubtitleSrt(cues), [cues]);
-  const motionEntries = listManhuaEditMotionEntries(motionCat);
-  const motionInject = manhuaEditMotionInjectPreview(motionPromptIds);
   const qcRows = useMemo(() => buildManhuaEditShotQcBoard(shotMedia), [shotMedia]);
   const qcSummary = useMemo(() => summarizeManhuaEditQcBoard(qcRows), [qcRows]);
   const exportableIds = useMemo(() => manhuaEditExportableClipIds(qcRows), [qcRows]);
@@ -438,67 +422,6 @@ export default function ManhuaEditMultitrackPanel({
           )}
         </div>
       ) : null}
-
-      {/* 包装动效 */}
-      <div
-        data-manhua-edit-section="motion"
-        className="rounded-lg border border-amber-400/15 bg-amber-500/[0.04] p-2.5"
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1 text-[10px] font-semibold text-amber-100/90">
-            <Sparkles className="h-3.5 w-3.5" />
-            包装动效
-            <span className="font-normal text-white/35">
-              可选 · 最多 {MANHUA_EDIT_MOTION_MAX} 条
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {MANHUA_EDIT_MOTION_CATEGORIES.map((cat) => (
-              <button
-                key={cat}
-                type="button"
-                onClick={() => setMotionCat(cat)}
-                className={`rounded border px-1.5 py-0.5 text-[8px] ${
-                  motionCat === cat
-                    ? "border-amber-400/40 bg-amber-500/20 text-amber-50"
-                    : "border-white/10 bg-black/30 text-white/45"
-                }`}
-              >
-                {manhuaEditMotionCategoryLabel(cat)}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-1">
-          {motionEntries.map((e) => {
-            const on = motionPromptIds.includes(e.id);
-            return (
-              <button
-                key={e.id}
-                type="button"
-                title={`${e.effectZh}\n${e.whenToUseZh}`}
-                onClick={() =>
-                  onMotionPromptIdsChange(toggleManhuaEditMotionId(motionPromptIds, e.id))
-                }
-                className={`rounded border px-1.5 py-0.5 text-[9px] ${
-                  on
-                    ? "border-amber-400/45 bg-amber-500/25 text-amber-50"
-                    : "border-white/10 bg-black/40 text-white/55 hover:border-white/25"
-                }`}
-              >
-                {e.nameZh}
-              </button>
-            );
-          })}
-        </div>
-        {motionInject ? (
-          <pre className="mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap rounded border border-white/10 bg-black/40 p-2 text-[9px] leading-relaxed text-white/45">
-            {motionInject}
-          </pre>
-        ) : (
-          <p className="mt-1.5 text-[10px] text-white/35">未选包装；成片可按题材自动建议</p>
-        )}
-      </div>
 
       {/* 质检 + 返工 */}
       <div

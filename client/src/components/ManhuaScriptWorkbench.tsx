@@ -492,8 +492,6 @@ export default function ManhuaScriptWorkbench({
   const [suggestAutoCutsBusy, setSuggestAutoCutsBusy] = useState(false);
   /** 剪辑台字幕轨：开则生成轨数据，默认不烧字 */
   const [editSubtitleEnabled, setEditSubtitleEnabled] = useState(false);
-  /** 包装动效（motionPromptBank id） */
-  const [editMotionPromptIds, setEditMotionPromptIds] = useState<string[]>([]);
   const bPersistKey = manhuaWorkbenchBPersistKey(topic || seriesTitle || "manhua", focusEpisode);
   useEffect(() => {
     const hit = loadManhuaWorkbenchBPersist(bPersistKey);
@@ -504,7 +502,6 @@ export default function ManhuaScriptWorkbench({
       setFineCutByShot(hit.fineCutByShot);
     }
     setEditSubtitleEnabled(Boolean(hit.subtitleEnabled));
-    if (hit.motionPromptIds?.length) setEditMotionPromptIds(hit.motionPromptIds);
   }, [bPersistKey]);
   useEffect(() => {
     saveManhuaWorkbenchBPersist(bPersistKey, {
@@ -512,7 +509,6 @@ export default function ManhuaScriptWorkbench({
       roughShotOrder,
       fineCutByShot,
       subtitleEnabled: editSubtitleEnabled,
-      motionPromptIds: editMotionPromptIds,
     });
   }, [
     bPersistKey,
@@ -520,7 +516,6 @@ export default function ManhuaScriptWorkbench({
     roughShotOrder,
     fineCutByShot,
     editSubtitleEnabled,
-    editMotionPromptIds,
   ]);
   /** 右栏本集画布：阿硕 C2 分镜有静帧时强制常开；其余阶段仍可随成片收合 */
   const [canvasDockOpen, setCanvasDockOpen] = useState(true);
@@ -3377,8 +3372,6 @@ export default function ManhuaScriptWorkbench({
                 onDeliveryPackageChange(syncDeliveryPackageSubtitleEnabled(deliveryPackage, next));
               }
             }}
-            motionPromptIds={editMotionPromptIds}
-            onMotionPromptIdsChange={setEditMotionPromptIds}
             shotMedia={editShotMedia}
             factoryBusy={factoryBusy}
             dockSelectedIds={dockSelectedIds}
