@@ -89,6 +89,7 @@ import {
   resolveSegmentIndexFromShotIndex,
   resolveWorkbenchShotAssetMount,
   workbenchShotTotalSec,
+  type ManhuaWorkbenchSegment,
   type ManhuaWorkbenchShot,
 } from "@shared/manhuaScriptWorkbench";
 import {
@@ -931,13 +932,6 @@ export default function ManhuaScriptWorkbench({
     shotMount.expectedCastCount > mountedCastCount
       ? shotMount.expectedCastCount - mountedCastCount
       : 0;
-  const filmstripShots = useMemo(
-    () =>
-      shots.length
-        ? shots
-        : ([{ index: 1, durationSec: 5, cameraZh: "", actionZh: "" }] as ManhuaWorkbenchShot[]),
-    [shots],
-  );
   const missingFragmentIndexes = useMemo(() => {
     return segments
       .filter((seg) => {
@@ -969,10 +963,61 @@ export default function ManhuaScriptWorkbench({
     () => [...selectedShotIndexes].sort((a, b) => a - b),
     [selectedShotIndexes],
   );
-  const toggleShotSelected = (shotIndex: number) => {
-    setSelectedShotIndexes((prev) =>
-      prev.includes(shotIndex) ? prev.filter((n) => n !== shotIndex) : [...prev, shotIndex],
-    );
+  /**
+   * 底胶片按「段」列：一格 = 一次成片调用。镜留在中栏段内列表。
+   * 之前按镜列 13 格却标「片段 01–13」，且每格都挂出片按钮——同段三格点哪个
+   * 都入队同一段，13 个按钮实际只有 5 个动作。
+   */
+  const filmstripSegments = useMemo(() => {
+    const list: ManhuaWorkbenchSegment[] = segments.length
+      ? segments
+      : [{ index: 1, durationSec: 15, shots: [] }];
+    return list.map((seg) => {
+      const segClip =
+        episodeClips.find(
+          (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === seg.index,
+        ) || (seg.index === 1 ? legacyClip : undefined);
+      const keyarts = seg.shots.map((s) =>
+        episodeKeyarts.find((b) => resolveKeyartShotIndex(b.id, b.prompt) === s.index),
+      );
+      const withImage = keyarts.filter((b) => Boolean(mediaUrl(b)));
+      const beat = shootablePlan.segments.find((s) => s.index === seg.index);
+      return {
+        index: seg.index,
+        durationSec: seg.durationSec,
+        shotIndexes: seg.shots.map((s) => s.index),
+        shotCount: seg.shots.length,
+        stillReady: withImage.length,
+        // 有图但没走垫图改图 → 不能出成片，需重出该镜静帧
+        unlockedCount: withImage.filter((b) => b && !isManhuaKeyartPixelLocked(b)).length,
+        clip: segClip,
+        // 段封面用段内首张已出静帧；缺图留占位，不挂假图
+        thumb: withImage.length ? mediaUrl(withImage[0]) : "",
+        firstKeyartId: withImage[0]?.id || keyarts.find(Boolean)?.id || "",
+        sceneZh: String(beat?.sceneZh || "").trim(),
+      };
+    });
+  }, [segments, episodeClips, episodeKeyarts, legacyClip, focusEpisode, shootablePlan]);
+  /** 勾选数按「段」报，避免显示成镜数（13）让人以为要出 13 条片 */
+  const selectedSegmentCount = useMemo(
+    () => new Set(selectedShotIndexes.map((n) => resolveSegmentIndexFromShotIndex(n))).size,
+    [selectedShotIndexes],
+  );
+  /** 段级勾选：整段的镜一起进出选区，与「生成所选成片」的段级语义对齐 */
+  const toggleSegmentSelected = (shotIndexes: number[]) => {
+    setSelectedShotIndexes((prev) => {
+      const allIn = shotIndexes.length > 0 && shotIndexes.every((n) => prev.includes(n));
+      return allIn
+        ? prev.filter((n) => !shotIndexes.includes(n))
+        : [...prev, ...shotIndexes.filter((n) => !prev.includes(n))];
+    });
+  };
+  /** 点段卡：选中段首镜并把该段成片（或首张静帧）滚进画布 */
+  const selectSegmentAndFocusCanvas = (shotIndexes: number[]) => {
+    const first = shotIndexes[0];
+    if (typeof first !== "number") return;
+    const listIndex = shots.findIndex((s) => s.index === first);
+    selectShotAndFocusCanvas(listIndex >= 0 ? listIndex : 0);
   };
   const assetGate = useMemo(
     () =>
@@ -1630,10 +1675,16 @@ export default function ManhuaScriptWorkbench({
               className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45"
               title={
                 clipGateHint ||
-                `依次生成已勾选段：${selectedSorted.map((n) => String(resolveSegmentIndexFromShotIndex(n)).padStart(2, "0")).join("、")}`
+                `依次生成已勾选段：${Array.from(
+                  new Set(
+                    selectedSorted.map((n) =>
+                      String(resolveSegmentIndexFromShotIndex(n)).padStart(2, "0"),
+                    ),
+                  ),
+                ).join("、")}`
               }
             >
-              生成所选成片 {selectedSorted.length}
+              生成所选成片 {selectedSegmentCount} 段
             </button>
           ) : null}
           {onGenerateMissingFragments && (missingFragmentIndexes.length > 0 || stillsReadyEnough) ? (
@@ -4544,7 +4595,10 @@ export default function ManhuaScriptWorkbench({
         <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <div className="text-[11px] font-semibold text-white/75">
-              片段
+              成片段
+              <span className="ml-1 text-[9px] font-normal text-white/40">
+                {filmstripSegments.length} 段 · 共 {totalSec}s · 一格一次出片
+              </span>
               {missingFragmentIndexes.length ? (
                 <span className="ml-1.5 text-[9px] font-normal text-amber-100/70">
                   缺 {missingFragmentIndexes.length} 段
@@ -4552,9 +4606,9 @@ export default function ManhuaScriptWorkbench({
               ) : (
                 <span className="ml-1.5 text-[9px] font-normal text-emerald-100/60">齐</span>
               )}
-              {selectedSorted.length ? (
+              {selectedSegmentCount ? (
                 <span className="ml-1.5 text-[9px] font-normal text-cyan-100/70">
-                  已选 {selectedSorted.length}
+                  已选 {selectedSegmentCount} 段
                 </span>
               ) : null}
             </div>
@@ -4619,173 +4673,159 @@ export default function ManhuaScriptWorkbench({
           </div>
         </div>
         <div className="flex gap-2 overflow-x-auto pb-0.5">
-          {filmstripShots.map((shot, i) => {
-              // 严格按镜号；禁止用列表下标顶替（缺镜时会把下一镜图错绑到本格）
-              const shotKey = episodeKeyarts.find(
-                (b) => resolveKeyartShotIndex(b.id, b.prompt) === shot.index,
-              );
-              const shotClip =
-                episodeClips.find(
-                  (b) =>
-                    resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) ===
-                    resolveSegmentIndexFromShotIndex(shot.index),
-                ) ||
-                (resolveSegmentIndexFromShotIndex(shot.index) === 1 ? legacyClip : undefined);
-              const thumb = mediaUrl(shotKey);
-              const clipPassed =
-                shotClip?.status === "done" &&
-                shotClip.manhuaClipQuality?.status === "passed" &&
-                Boolean(mediaUrl(shotClip));
-              const clipAccepted =
-                shotClip?.manhuaClipQuality?.status === "failed" &&
-                shotClip.manhuaClipQuality.userAcceptedDespiteQc &&
-                Boolean(mediaUrl(shotClip));
-              const clipFailed =
-                shotClip?.manhuaClipQuality?.status === "failed" && !clipAccepted;
-              const stillOk = Boolean(thumb);
-              const stillUnlocked = Boolean(
-                thumb && shotKey && !isManhuaKeyartPixelLocked(shotKey),
-              );
-              const clipOk = Boolean(mediaUrl(shotClip));
-              const statusLabel = clipPassed
-                ? "片✓"
-                : clipAccepted
-                  ? "已采用"
-                  : clipFailed
-                    ? "质检"
-                    : stillUnlocked
-                      ? "未锁"
-                      : stillOk
-                        ? "图✓"
-                        : "待出";
-              const pairLabel = `${stillUnlocked ? "未锁" : stillOk ? "图✓" : "图—"} ${clipOk ? "片✓" : "片—"}`;
-              const on = i === Math.min(shotIndex, Math.max(shots.length, 1) - 1);
-              const dur = shot.durationSec || 5;
-              const needsRetry = !clipPassed;
-              const checked = selectedShotIndexes.includes(shot.index);
-              return (
-                <div
-                  key={`shot-${shot.index}`}
-                  data-manhua-fragment-checked={checked ? "true" : "false"}
-                  className={`relative w-[100px] shrink-0 overflow-hidden rounded-md border text-left ${
-                    checked
-                      ? "border-cyan-300/70 ring-1 ring-cyan-400/45"
-                      : on
-                        ? "border-white/70 ring-1 ring-white/40"
-                        : clipPassed
-                          ? "border-emerald-400/35"
-                          : clipAccepted
-                            ? "border-amber-400/40"
-                          : clipFailed
-                            ? "border-amber-400/35"
-                            : "border-white/12"
-                  }`}
+          {filmstripSegments.map((seg) => {
+            const clipUrl = mediaUrl(seg.clip);
+            const qc = seg.clip?.manhuaClipQuality;
+            const clipPassed = seg.clip?.status === "done" && qc?.status === "passed" && Boolean(clipUrl);
+            const clipAccepted =
+              qc?.status === "failed" && qc.userAcceptedDespiteQc && Boolean(clipUrl);
+            const clipFailed = qc?.status === "failed" && !clipAccepted;
+            const stillsShort = seg.stillReady < seg.shotCount;
+            // 有图但未垫图改图 → 出片会跑偏，先重出该段静帧
+            const hasUnlocked = seg.unlockedCount > 0;
+            const on = seg.index === activeSegNo;
+            const checked =
+              seg.shotIndexes.length > 0 &&
+              seg.shotIndexes.every((n) => selectedShotIndexes.includes(n));
+            const statusLabel = clipPassed
+              ? "片✓"
+              : clipAccepted
+                ? "已采用"
+                : clipFailed
+                  ? "质检"
+                  : hasUnlocked
+                    ? "未锁"
+                    : stillsShort
+                      ? "缺静帧"
+                      : "待出片";
+            const statusTone = clipPassed
+              ? "bg-emerald-500/90 text-white"
+              : clipAccepted
+                ? "bg-amber-500/85 text-black"
+                : clipFailed
+                  ? "bg-rose-500/90 text-white"
+                  : hasUnlocked
+                    ? "bg-red-800/85 text-red-50"
+                    : "bg-amber-500/85 text-black";
+            return (
+              <div
+                key={`seg-${seg.index}`}
+                data-manhua-filmstrip-segment={seg.index}
+                data-manhua-active={on ? "true" : "false"}
+                data-manhua-fragment-checked={checked ? "true" : "false"}
+                data-manhua-fragment-status={
+                  clipPassed
+                    ? "clip"
+                    : clipFailed
+                      ? "qc-failed"
+                      : hasUnlocked
+                        ? "keyart-unlocked"
+                        : stillsShort
+                          ? "idle"
+                          : "keyart"
+                }
+                className={`relative w-[132px] shrink-0 overflow-hidden rounded-md border text-left ${
+                  checked
+                    ? "border-cyan-300/70 ring-1 ring-cyan-400/45"
+                    : on
+                      ? "border-white/70 ring-1 ring-white/40"
+                      : clipPassed
+                        ? "border-emerald-400/35"
+                        : clipAccepted || clipFailed
+                          ? "border-amber-400/40"
+                          : "border-white/12"
+                }`}
+              >
+                <label
+                  className="absolute right-1 top-1 z-10 flex h-4 w-4 cursor-pointer items-center justify-center rounded border border-white/30 bg-black/65"
+                  title="勾选整段，可批量「生成所选成片」"
                 >
-                  <label
-                    className="absolute right-1 top-1 z-10 flex h-4 w-4 cursor-pointer items-center justify-center rounded border border-white/30 bg-black/65"
-                    title="勾选后可批量生成所选"
+                  <input
+                    type="checkbox"
+                    data-manhua-fragment-check={seg.index}
+                    checked={checked}
+                    onChange={() => toggleSegmentSelected(seg.shotIndexes)}
+                    className="h-3 w-3 accent-cyan-400"
+                  />
+                </label>
+                <button
+                  type="button"
+                  data-manhua-keyart-url={seg.thumb || ""}
+                  onClick={() => selectSegmentAndFocusCanvas(seg.shotIndexes)}
+                  className="block w-full text-left"
+                  title={
+                    hasUnlocked
+                      ? "本段有静帧未垫图改图，出成片会跑偏；请重出该段静帧"
+                      : "选中本段并在画布高亮对应成片节点"
+                  }
+                >
+                  <div
+                    className={`relative aspect-video ${
+                      seg.thumb
+                        ? "bg-black/70"
+                        : "border border-dashed border-amber-400/30 bg-amber-500/10"
+                    }`}
                   >
-                    <input
-                      type="checkbox"
-                      data-manhua-fragment-check={shot.index}
-                      checked={checked}
-                      onChange={() => toggleShotSelected(shot.index)}
-                      className="h-3 w-3 accent-cyan-400"
-                    />
-                  </label>
+                    {seg.thumb ? (
+                      <img src={seg.thumb} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full flex-col items-center justify-center gap-0.5 text-amber-100/85">
+                        <span className="text-[11px] font-semibold">
+                          第{String(seg.index).padStart(2, "0")}段
+                        </span>
+                        <span className="text-[8px]">待出静帧</span>
+                      </div>
+                    )}
+                    <span
+                      className={`absolute left-1 top-1 rounded px-1 py-0.5 text-[8px] font-semibold ${statusTone}`}
+                    >
+                      {statusLabel}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between px-1 py-0.5 text-[9px] text-white/70">
+                    <span className="font-semibold">
+                      第{String(seg.index).padStart(2, "0")}段
+                    </span>
+                    <span className="text-white/45">{seg.durationSec}s</span>
+                  </div>
+                  {seg.sceneZh ? (
+                    <div
+                      className="truncate px-1 text-[8px] text-cyan-100/60"
+                      title={seg.sceneZh}
+                    >
+                      {seg.sceneZh}
+                    </div>
+                  ) : null}
+                  <div className="border-t border-white/8 px-1 py-0.5 text-[8px] text-white/45">
+                    静帧 {seg.stillReady}/{Math.max(seg.shotCount, 1)}
+                    {hasUnlocked ? ` · ${seg.unlockedCount} 未锁` : ""}
+                  </div>
+                </button>
+                {!clipPassed && onGenerateFragment ? (
                   <button
                     type="button"
-                    data-manhua-filmstrip-shot={shot.index}
-                    data-manhua-active={on ? "true" : "false"}
-                    data-manhua-keyart-url={thumb || ""}
-                    data-manhua-fragment-status={
-                      clipPassed
-                        ? "clip"
-                        : clipFailed
-                          ? "qc-failed"
-                          : stillUnlocked
-                            ? "keyart-unlocked"
-                            : thumb
-                              ? "keyart"
-                              : "idle"
-                    }
-                    onClick={() => selectShotAndFocusCanvas(i)}
-                    className="block w-full text-left"
-                    title={
-                      stillUnlocked
-                        ? "有图但未垫图改图（缺参考图或非改图模式），不能出成片；请重出该镜静帧"
-                        : "选中本镜并在画布高亮对应节点"
-                    }
+                    data-manhua-action="retry-fragment"
+                    data-manhua-retry-segment={seg.index}
+                    disabled={Boolean(factoryBusy)}
+                    onClick={() => {
+                      if (refuseIfBlocked(clipGateHint)) return;
+                      setActivePhase("storyboard");
+                      selectSegmentAndFocusCanvas(seg.shotIndexes);
+                      onGenerateFragment({
+                        shotIndex: seg.index,
+                        keyartId: seg.firstKeyartId || undefined,
+                        clipId: seg.clip?.id,
+                      });
+                    }}
+                    className="w-full border-t border-white/10 bg-white/[0.04] py-0.5 text-[8px] font-semibold text-cyan-100/80 hover:bg-cyan-500/15 disabled:opacity-35"
+                    title={clipGateHint || `生成第 ${seg.index} 段成片（约 ${seg.durationSec}s）`}
                   >
-                    <div
-                      className={`relative aspect-video ${
-                        thumb ? "bg-black/70" : "border border-dashed border-amber-400/30 bg-amber-500/10"
-                      }`}
-                    >
-                      {thumb ? (
-                        <>
-                          <img src={thumb} alt="" className="h-full w-full object-cover" />
-                          {stillUnlocked ? (
-                            <span className="absolute inset-x-0 bottom-0 bg-red-900/75 px-0.5 py-px text-center text-[8px] font-semibold text-red-50">
-                              未锁
-                            </span>
-                          ) : null}
-                        </>
-                      ) : (
-                        <div className="flex h-full flex-col items-center justify-center gap-0.5 text-amber-100/85">
-                          <span className="text-[11px] font-semibold">
-                            {String(shot.index).padStart(2, "0")}
-                          </span>
-                          <span className="text-[8px]">待出图</span>
-                        </div>
-                      )}
-                      <span
-                        className={`absolute left-1 top-1 rounded px-1 py-0.5 text-[8px] font-semibold ${
-                          clipPassed
-                            ? "bg-emerald-500/90 text-white"
-                            : clipFailed
-                              ? "bg-rose-500/90 text-white"
-                              : thumb
-                                ? "bg-amber-500/85 text-black"
-                                : "bg-amber-500/80 text-black"
-                        }`}
-                      >
-                        {statusLabel === "待出" ? "待出图" : statusLabel}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between px-1 py-0.5 text-[9px] text-white/65">
-                      <span>片段 {String(shot.index).padStart(2, "0")}</span>
-                      <span className="text-white/40">{dur.toFixed(1)}s</span>
-                    </div>
-                    <div className="border-t border-white/8 px-1 py-0.5 text-[8px] text-white/45">
-                      {pairLabel}
-                    </div>
+                    {clipUrl ? "重出本段成片" : "生成本段成片"}
                   </button>
-                  {needsRetry && onGenerateFragment ? (
-                    <button
-                      type="button"
-                      data-manhua-action="retry-fragment"
-                      data-manhua-retry-shot={shot.index}
-                      disabled={Boolean(factoryBusy)}
-                      onClick={() => {
-                        if (refuseIfBlocked(clipGateHint)) return;
-                        setActivePhase("storyboard");
-                        setShotIndex(i);
-                        onGenerateFragment({
-                          shotIndex: resolveSegmentIndexFromShotIndex(shot.index),
-                          keyartId: shotKey?.id,
-                          clipId: shotClip?.id,
-                        });
-                      }}
-                      className="w-full border-t border-white/10 bg-white/[0.04] py-0.5 text-[8px] font-semibold text-cyan-100/80 hover:bg-cyan-500/15 disabled:opacity-35"
-                      title={clipGateHint || "重跑本段：缺静帧先补段内镜再出一条成片"}
-                    >
-                      生成本段成片
-                    </button>
-                  ) : null}
-                </div>
-              );
-            })}
+                ) : null}
+              </div>
+            );
+          })}
         </div>
         {/* 集缩略：沉浸分镜隐藏，避免再吃底栏高度；非沉浸宽屏仍显示 */}
         <div
