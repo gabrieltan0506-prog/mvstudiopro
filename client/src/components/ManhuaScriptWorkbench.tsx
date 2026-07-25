@@ -117,6 +117,7 @@ import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
 import { MANHUA_DRAFT_RETENTION_HINT_ZH } from "@shared/manhuaCloudDraft";
 import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
 import ManhuaPromptAssetChips from "@/components/ManhuaPromptAssetChips";
+import ManhuaPromptMentionEditor from "@/components/ManhuaPromptMentionEditor";
 import { downloadRemoteFile } from "@/lib/downloadRemoteFile";
 import ManhuaRoughEditTimeline from "@/components/ManhuaRoughEditTimeline";
 import ManhuaStylePackPanel from "@/components/ManhuaStylePackPanel";
@@ -4230,21 +4231,19 @@ export default function ManhuaScriptWorkbench({
                               </button>
                             </div>
                             {raw ? (
-                              <textarea
-                                data-manhua-clip-prompt={row.segmentIndex}
+                              <ManhuaPromptMentionEditor
+                                segmentIndex={row.segmentIndex}
                                 disabled={
                                   !row.clip?.id || !onUpdateClipPrompt || factoryBusy
                                 }
                                 value={promptText}
-                                onChange={(e) => {
-                                  if (row.clip?.id)
-                                    onUpdateClipPrompt?.(row.clip.id, e.target.value);
+                                onChange={(next) => {
+                                  if (row.clip?.id) onUpdateClipPrompt?.(row.clip.id, next);
                                 }}
-                                rows={5}
-                                className="w-full resize-y rounded border border-white/10 bg-black/40 px-1.5 py-1 font-mono text-[10px] leading-snug text-white/80 disabled:opacity-40"
+                                thumbUrlByAssetId={chipThumbByAssetId}
                                 placeholder={
                                   row.clip?.id
-                                    ? "段成片提示词"
+                                    ? "段成片提示词（输入 @ 挑本段人物/场景/道具）"
                                     : "点「审阅」时会先铺段节点；若仍空请对齐画布竖排"
                                 }
                               />

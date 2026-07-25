@@ -212,10 +212,15 @@ export function appendManhuaClipEngineOptics(prompt: string): string {
   const raw = String(prompt || "").trim();
   if (!raw) return raw;
   if (/【引擎光学】/.test(raw) || /\d+mm\s*f\//.test(raw)) return raw;
-  // 秒轴：`运镜轨迹：…` + `景别：…`；兼容旧句末运镜 /「运镜：」
-  const fromTracks = Array.from(
-    raw.matchAll(/运镜轨迹[：:]([^。\n]{1,48})/g),
+  // 顺叙白描：`0–5s：<机位子句>；…`；兼容旧的 `运镜轨迹：…` 字段式
+  const fromProse = Array.from(
+    raw.matchAll(/(?:^|\n)\d+(?:\.\d+)?[–-]\d+(?:\.\d+)?s[：:]([^；。\n]{2,48})；/g),
   ).map((m) => String(m[1] || "").trim());
+  const fromTracks = fromProse.length
+    ? fromProse
+    : Array.from(raw.matchAll(/运镜轨迹[：:]([^。\n]{1,48})/g)).map((m) =>
+        String(m[1] || "").trim(),
+      );
   const fromFrames = Array.from(raw.matchAll(/景别[：:]([^。\n]{1,24})/g)).map((m) =>
     String(m[1] || "").trim(),
   );

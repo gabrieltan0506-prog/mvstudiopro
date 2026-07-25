@@ -21,6 +21,58 @@ export const MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC = 75;
 /** 每段约 15s：至少 3 句「」对白（推荐 3–4） */
 export const MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES = 3;
 
+/**
+ * 单集时长档位。
+ *
+ * 段长恒定 15s，切档只改「一集几段」：短档 4–6 段、长档 10–12 段。
+ * 密度门禁与节拍格都按 targetSec 推算，因此加档位不需要另写一套阈值。
+ */
+export type ManhuaEpisodeLengthTierId = "short" | "long";
+
+export type ManhuaEpisodeLengthTier = {
+  id: ManhuaEpisodeLengthTierId;
+  labelZh: string;
+  /** 该档的目标秒数：门禁与节拍格都以它为准 */
+  targetSec: number;
+  minSec: number;
+  segmentMin: number;
+  segmentMax: number;
+};
+
+export const MANHUA_EPISODE_LENGTH_TIERS: readonly ManhuaEpisodeLengthTier[] = [
+  {
+    id: "short",
+    labelZh: "60–90 秒",
+    targetSec: MANHUA_EPISODE_SEGMENT_TARGET_SEC,
+    minSec: 60,
+    segmentMin: 4,
+    segmentMax: MANHUA_EPISODE_SEGMENT_COUNT_MAX,
+  },
+  {
+    id: "long",
+    labelZh: "150–180 秒",
+    targetSec: 180,
+    minSec: 150,
+    segmentMin: 10,
+    segmentMax: 12,
+  },
+];
+
+export const MANHUA_EPISODE_LENGTH_TIER_DEFAULT: ManhuaEpisodeLengthTierId = "short";
+
+export function getManhuaEpisodeLengthTier(
+  id: string | null | undefined,
+): ManhuaEpisodeLengthTier {
+  const hit = MANHUA_EPISODE_LENGTH_TIERS.find((t) => t.id === id);
+  return hit || MANHUA_EPISODE_LENGTH_TIERS[0];
+}
+
+/** 该档一集几段（节拍格按它降采样） */
+export function manhuaEpisodeSegmentsForTier(id: string | null | undefined): number {
+  const tier = getManhuaEpisodeLengthTier(id);
+  return Math.max(1, Math.round(tier.targetSec / MANHUA_EPISODE_SEGMENT_DURATION_SEC));
+}
+
 export type ManhuaEpisodeSegmentBeat = {
   index: number;
   /** 本段单一意图：观众应感到什么（导戏硬锚） */
@@ -405,6 +457,12 @@ export function formatManhuaEpisodeSegmentPlanPromptBlock(
     `- 意图：一句「观众应感到什么」（单一戏剧意图）；机位/光/表演只服务这一句。`,
     `- 对白：至少 ${MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES} 句直角引号「」（推荐 3–4 句），须推动关系/信息/冲突；禁止两句口号撑满 ${durationSec} 秒。`,
     `- 表演：写清表情、肢体与情绪起伏（可拍），与对白气口对齐；禁止只写抽象词如「很生气」。`,
+    /**
+     * 这几栏原文会被直接拼进视频生成提示词，中间不再过模型润色。写成「推近」
+     * 「他很紧张」这种词条，成片就只能拿到词条；写成可看见的画面，成片才有画面。
+     */
+    `- 光影运镜：写成看得见的镜头动作，含机位高度、景别与动势走向（例：「贴桥板低机位，全景缓推至中近景，火光从画左扫过侧脸」）；禁止只写「推近」「特写」这类孤零零的词条。`,
+    `- 段内白描：把本段拆成约 ${Math.max(2, Math.round(durationSec / 5))} 个 5 秒左右的镜头，每镜一句连贯白描，写清「谁做了什么、镜头怎么动、光怎么变」，像描述一段已经拍好的画面；禁止写成「动作：X／运镜：Y」的字段表。`,
     `#### 段01`,
     `- 意图：`,
     `- 对白：`,
@@ -414,6 +472,7 @@ export function formatManhuaEpisodeSegmentPlanPromptBlock(
     `- 角色：（写真名，如「苏文谦；苏照雪」；禁止只写黑衣剑客这类描述词）`,
     `- 服装道具：`,
     `- 光影运镜：`,
+    `- 段内白描：`,
     `（段02…段${String(n).padStart(2, "0")} 同结构；至少 ${MANHUA_EPISODE_SEGMENT_COUNT_MIN} 段、至多 ${MANHUA_EPISODE_SEGMENT_COUNT_MAX} 段；跨段须有信息增量与场面变化。禁止把后段钩子提前写进本段对白。）`,
   ].join("\n");
 }

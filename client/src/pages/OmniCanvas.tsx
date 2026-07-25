@@ -197,6 +197,10 @@ import {
   type ManhuaDeliveryPackage,
 } from "@shared/manhuaDeliveryPackage";
 import {
+  MANHUA_EPISODE_LENGTH_TIERS,
+  MANHUA_EPISODE_LENGTH_TIER_DEFAULT,
+  type ManhuaEpisodeLengthTierId,
+  getManhuaEpisodeLengthTier,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
   upsertManhuaSegmentCastInMarkdown,
   upsertManhuaSegmentIntentInMarkdown,
@@ -222,6 +226,7 @@ import {
   deriveSeriesTitleFromTopic,
   importManhuaWriterPackFromText,
   isPlaceholderSeriesTitle,
+  spliceManhuaWriterPackFromEpisode,
   writerPackLooksReady,
   type ManhuaWriterPack,
 } from "@shared/manhuaWriterRoom";
@@ -510,6 +515,16 @@ export default function OmniCanvas() {
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(() =>
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
   );
+  /** 单集时长档位：段长恒定 15s，切档只改一集几段 */
+  const [writerLengthTierId, setWriterLengthTierId] = useState<ManhuaEpisodeLengthTierId>(
+    MANHUA_EPISODE_LENGTH_TIER_DEFAULT,
+  );
+  /**
+   * 改写起点：0 = 全部重写；否则只重写第 N 集起（可再指定集内第几段）。
+   * 已出片的段落按付费资产处理——起点之前一律不动，起点之后归档不删除。
+   */
+  const [writerFromEpisode, setWriterFromEpisode] = useState(0);
+  const [writerFromSegment, setWriterFromSegment] = useState(1);
   const [writerBusy, setWriterBusy] = useState(false);
   /** 确认编剧失败时的门禁原因（页面常驻，不只 toast） */
   const [writerConfirmBlockers, setWriterConfirmBlockers] = useState<string[]>([]);
@@ -2214,6 +2229,14 @@ export default function OmniCanvas() {
           brief: mergedBrief || undefined,
           episodeCount: count,
           viralTemplateId: viralTemplateId || undefined,
+          lengthTierId: writerLengthTierId,
+          fromEpisode: writerFromEpisode || undefined,
+          fromSegment: writerFromEpisode > 0 ? writerFromSegment : undefined,
+          lockedEpisodeBody:
+            writerFromEpisode > 0 && writerFromSegment > 1
+              ? writerPack?.episodes.find((e) => e.index === writerFromEpisode)?.body ||
+                undefined
+              : undefined,
         }),
         new Promise<never>((_, reject) => {
           window.setTimeout(() => {
@@ -2221,7 +2244,12 @@ export default function OmniCanvas() {
           }, EXPAND_CLIENT_TIMEOUT_MS);
         }),
       ]);
-      const pack = res.pack;
+      // 局部改写：保留集沿用旧正文，资产表按名取并集，新角色照样进表
+      const pack = spliceManhuaWriterPackFromEpisode(
+        writerPack,
+        res.pack,
+        writerFromEpisode,
+      );
       if (isPlaceholderSeriesTitle(pack.seriesTitle)) {
         const fallback = deriveSeriesTitleFromTopic(topic);
         if (fallback) pack.seriesTitle = fallback;
@@ -2230,10 +2258,14 @@ export default function OmniCanvas() {
         toast.message("已生成草稿，建议检查每集片尾钩子是否完整");
       }
       // 新剧情包不应继续展示旧静帧/成片/多集坞（云草稿残留）
-      const cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges);
-      const nextBlocks = cleaned.removedCount > 0 ? cleaned.blocks : blocks;
-      const nextEdges = cleaned.removedCount > 0 ? cleaned.edges : edges;
-      if (cleaned.removedCount > 0) {
+      const cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges, {
+        fromEpisode: writerFromEpisode || undefined,
+        fromSegment: writerFromEpisode > 0 ? writerFromSegment : undefined,
+      });
+      const cleanedTouched = cleaned.removedCount > 0 || cleaned.archivedCount > 0;
+      const nextBlocks = cleanedTouched ? cleaned.blocks : blocks;
+      const nextEdges = cleanedTouched ? cleaned.edges : edges;
+      if (cleanedTouched) {
         if (abortRef.current) abortRef.current.abort();
         setBlocks(nextBlocks);
         setEdges(nextEdges);
@@ -2242,7 +2274,7 @@ export default function OmniCanvas() {
         setWorkflowPhase("outline");
       }
       setWriterPack(pack);
-      setWriterFocusEpisode(1);
+      setWriterFocusEpisode(writerFromEpisode || 1);
       setWriterConfirmBlockers([]);
       // 新剧本立刻落盘并覆盖本机+云端旧稿，避免刷新后又被旧云草稿盖回
       const clientUpdatedAt = new Date().toISOString();
@@ -2297,13 +2329,17 @@ export default function OmniCanvas() {
       pushDebug("expandWriterPack:ok", {
         level: "ok",
         ms: Date.now() - t0,
-        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount} · overwritten=1 · viralTemplate=${viralTemplateId || "off"}`,
+        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount} · archivedPaid=${cleaned.archivedCount} · overwritten=1 · viralTemplate=${viralTemplateId || "off"}`,
         request: reqPreview,
         response: `${pack.seriesTitle || ""}\n${pack.logline || ""}\n${epDigest}`.slice(0, 8000),
       });
       toast.success(
-        cleaned.removedCount > 0
-          ? `已扩写 ${pack.episodes.length} 集：新剧本已覆盖本机与云端旧稿，并清空旧分镜/成片`
+        cleaned.removedCount > 0 || cleaned.archivedCount > 0
+          ? `已扩写 ${pack.episodes.length} 集：新剧本已覆盖旧稿；旧工厂链已清${
+              cleaned.archivedCount > 0
+                ? `，${cleaned.archivedCount} 个已出图/已出片节点转为存档保留（不进新剧本垫图）`
+                : ""
+            }`
           : `已扩写 ${pack.episodes.length} 集：新剧本已覆盖本机与云端旧稿`,
       );
     } catch (e: unknown) {
@@ -2379,7 +2415,7 @@ export default function OmniCanvas() {
         return;
       }
       const cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges);
-      if (cleaned.removedCount > 0) {
+      if (cleaned.removedCount > 0 || cleaned.archivedCount > 0) {
         if (abortRef.current) abortRef.current.abort();
         setBlocks(cleaned.blocks);
         setEdges(cleaned.edges);
@@ -2405,7 +2441,7 @@ export default function OmniCanvas() {
       });
       toast.success(
         cleaned.removedCount > 0
-          ? `已导入 ${res.pack.episodes.length} 集《${res.pack.seriesTitle}》，并清空旧分镜/成片`
+          ? `已导入 ${res.pack.episodes.length} 集《${res.pack.seriesTitle}》；旧工厂链已清，已出图/已出片的节点转为存档保留`
           : `已导入 ${res.pack.episodes.length} 集《${res.pack.seriesTitle}》，确认后再进入编导`,
       );
     },
@@ -2444,7 +2480,7 @@ export default function OmniCanvas() {
       propsMd: writerPack.propsMd,
       locationsMd: writerPack.locationsMd,
       episodes: writerPack.episodes,
-      targetSec: 180,
+      targetSec: getManhuaEpisodeLengthTier(writerLengthTierId).targetSec,
     });
     if (!densityGate.ok) {
       setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
@@ -2641,7 +2677,7 @@ export default function OmniCanvas() {
       propsMd: writerPack.propsMd,
       locationsMd: writerPack.locationsMd,
       episodes: writerPack.episodes,
-      targetSec: 180,
+      targetSec: getManhuaEpisodeLengthTier(writerLengthTierId).targetSec,
     });
     if (!densityGate.ok) {
       setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
@@ -5295,6 +5331,61 @@ export default function OmniCanvas() {
                     ))}
                   </select>
                 </div>
+                <div>
+                  <label className="block text-[11px] text-white/45">单集时长</label>
+                  <select
+                    value={writerLengthTierId}
+                    onChange={(e) =>
+                      setWriterLengthTierId(e.target.value as ManhuaEpisodeLengthTierId)
+                    }
+                    disabled={writerBusy || factoryBusy}
+                    className="mt-1 rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                  >
+                    {MANHUA_EPISODE_LENGTH_TIERS.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.labelZh}（{t.segmentMin}–{t.segmentMax} 段）
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-white/45">改写范围</label>
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <select
+                      value={writerFromEpisode}
+                      onChange={(e) => {
+                        setWriterFromEpisode(Number(e.target.value) || 0);
+                        setWriterFromSegment(1);
+                      }}
+                      disabled={writerBusy || factoryBusy || !writerPack}
+                      className="rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                    >
+                      <option value={0}>全部重写</option>
+                      {Array.from({ length: writerEpisodeCount }, (_, i) => i + 1).map((n) => (
+                        <option key={n} value={n}>
+                          第 {n} 集起
+                        </option>
+                      ))}
+                    </select>
+                    {writerFromEpisode > 0 ? (
+                      <select
+                        value={writerFromSegment}
+                        onChange={(e) => setWriterFromSegment(Number(e.target.value) || 1)}
+                        disabled={writerBusy || factoryBusy}
+                        className="rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                      >
+                        {Array.from(
+                          { length: getManhuaEpisodeLengthTier(writerLengthTierId).segmentMax },
+                          (_, i) => i + 1,
+                        ).map((n) => (
+                          <option key={n} value={n}>
+                            第 {n} 段起
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
+                  </div>
+                </div>
                 <div className="flex flex-col gap-1">
                   <button
                     type="button"
@@ -5343,6 +5434,18 @@ export default function OmniCanvas() {
                 >
                   {writerConfirmed ? "已确认 · 先调资产" : "确认并进入资产设定"}
                 </button>
+                {writerFromEpisode > 0 ? (
+                  <div
+                    data-manhua-partial-rewrite-note
+                    className="basis-full rounded-xl border border-sky-400/30 bg-sky-500/10 px-3 py-2 text-[11px] leading-relaxed text-sky-50/90"
+                  >
+                    局部改写：第 {writerFromEpisode} 集第 {writerFromSegment} 段之前的剧本、静帧、成片全部保留不动。
+                    {writerFromSegment > 1
+                      ? `会把第 ${writerFromEpisode} 集旧正文交回作为约束，要求前 ${writerFromSegment - 1} 段剧情不变；模型偶有出入，改完请核对这一集前段与已有成片是否还对得上。`
+                      : "起点之后已出片的段落只归档、不删除，随时可在画布上找回。"}
+                    {" "}剧本若新增了人物或场景，进资产设定时会按名点出缺图的那几个。
+                  </div>
+                ) : null}
                 {writerConfirmBlockers.length > 0 && !writerConfirmed ? (
                   <div
                     data-manhua-writer-confirm-blockers

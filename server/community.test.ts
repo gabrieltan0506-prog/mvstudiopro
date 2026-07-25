@@ -26,9 +26,12 @@ vi.mock("./db", () => ({
     },
   ]),
   deleteVideoComment: vi.fn().mockResolvedValue(undefined),
+  toggleCommentLike: vi.fn().mockResolvedValue({ liked: true, totalLikes: 2 }),
+}));
+
+vi.mock("./db-extended", () => ({
   toggleVideoLike: vi.fn().mockResolvedValue({ liked: true, totalLikes: 5 }),
   getVideoLikeStatus: vi.fn().mockResolvedValue({ liked: false, totalLikes: 4 }),
-  toggleCommentLike: vi.fn().mockResolvedValue({ liked: true, totalLikes: 2 }),
   getUserCommentLikes: vi.fn().mockResolvedValue([1, 3]),
 }));
 
@@ -36,11 +39,9 @@ import {
   addVideoComment,
   getVideoComments,
   deleteVideoComment,
-  toggleVideoLike,
-  getVideoLikeStatus,
   toggleCommentLike,
-  getUserCommentLikes,
 } from "./db";
+import { getUserCommentLikes, getVideoLikeStatus, toggleVideoLike } from "./db-extended";
 
 describe("Community: Comments & Sharing", () => {
   beforeEach(() => {

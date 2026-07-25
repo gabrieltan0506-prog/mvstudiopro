@@ -149,8 +149,8 @@ describe("manhuaScriptWorkbench", () => {
     expect(block).toContain("【第1段·15s】");
     // 锁秒轴该有的内容，不锁字段拼接顺序（原先锁的是更早的「全景缓慢推近」紧凑写法）
     expect(block).toMatch(/0–15s：.*红色裁员文件夹/);
-    expect(block).toMatch(/运镜轨迹：.*缓慢推近/);
-    expect(block).toMatch(/景别：全景/);
+    expect(block).toMatch(/缓慢推近/);
+    expect(block).toMatch(/全景/);
     expect(block).not.toContain("节拍防火墙");
     expect(block).not.toContain("成片预演硬锁");
     const legacy = formatWorkbenchClipInjectBlock({

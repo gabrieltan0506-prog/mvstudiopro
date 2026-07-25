@@ -96,6 +96,11 @@ export function buildManhuaDialogueTimelineBeats(
   });
 }
 
+/** 顺句白描要靠逗号串起来；原文自带的句末标点会撞出「。。」 */
+function trimTrailPunct(text: string): string {
+  return String(text || "").trim().replace(/[。．.，,；;、\s]+$/, "");
+}
+
 /** 运镜：景别+动势（用户说法）；禁止灌词库长解释 / mm / 快门 */
 function resolveBeatCameraMoveZh(cameraZh: string, actionZh: string): string {
   const raw = String(cameraZh || "")
@@ -213,16 +218,25 @@ export function formatManhuaDialogueTimelineBlock(
     const line = stripManhuaSpeakerAtPrefix(b.dialogueZh).trim();
     // 光与氛围是段级常量，段头【光影·景别·氛围】已写；每镜再复读一遍，
     // 15s 三镜就让同一串配色出现五次，纯占 token 又稀释镜级信息。
+    /**
+     * 官方示例是「时间标记 + 顺句白描」，我们原先发的是「动作轨迹：X。运镜轨迹：
+     * Y。景别：Z。」这种字段表。信息量一样，但填空题式的标签会稀释画面感，
+     * 模型读到的更像表格而不是镜头。改成按「先架机位、再走动作、后落台词」顺叙。
+     */
+    // 机位先行、以分号收口：既是顺读的镜头交代，也让引擎光学能把它认回来
+    const camera = [frame, traj].filter(Boolean).map(trimTrailPunct).join("");
     const bits = [
-      `动作轨迹：${action}${micro ? `，${micro}` : ""}`,
-      `运镜轨迹：${traj}`,
-      `景别：${frame}`,
-      emotion ? `情绪：${emotion}` : "",
-      speaker || "",
+      trimTrailPunct(action),
+      micro ? trimTrailPunct(micro) : "",
+      emotion ? trimTrailPunct(emotion) : "",
       // 语气决定「怎么说」，是口型与气口的依据；只给台词内容等于让引擎自己猜演法
-      line ? `${tone ? `以${tone}` : ""}说「${line}」` : "",
+      line
+        ? `${speaker ? trimTrailPunct(speaker) : ""}${tone ? `以${trimTrailPunct(tone)}` : ""}说「${line}」`
+        : trimTrailPunct(speaker),
     ].filter(Boolean);
-    return `${b.startSec}–${b.endSec}s：${bits.join("。")}。`;
+    const head = `${b.startSec}–${b.endSec}s：`;
+    if (!bits.length) return `${head}${camera}。`;
+    return camera ? `${head}${camera}；${bits.join("，")}。` : `${head}${bits.join("，")}。`;
   });
 
   const sharedBits = [

@@ -4,6 +4,10 @@
  */
 
 import {
+  MANHUA_EPISODE_SEGMENT_DURATION_SEC,
+  MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES,
+  MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC,
+  MANHUA_EPISODE_SEGMENT_TARGET_SEC,
   evaluateManhuaEpisodeSegmentPlanQuality,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
 } from "./manhuaEpisodeSegmentPlan.js";
@@ -267,7 +271,7 @@ export function formatWriterAssetCanonFactoryAddon(
   return `${lock}\n库内示意仅可选参考，不得覆盖上表外形与道具材质。`;
 }
 
-/** 三分钟集密度门禁 */
+/** 单集密度门禁：门槛按目标秒数推算 */
 export type WriterDensityGateResult = {
   ok: boolean;
   errors: string[];
@@ -279,10 +283,34 @@ export type WriterDensityGateResult = {
   }[];
 };
 
-const MIN_BODY_CHARS = 280;
-/** 三分钟档：约 10 段 × 至少 3 句「」 */
-const MIN_DIALOGUE_LINES = 30;
+/** 每段正文字数下限；旧值 280 是「10 段 × 28 字」，按段数还原成每段口径 */
+const MIN_BODY_CHARS_PER_SEGMENT = 28;
 const MIN_LOCATION_HITS = 2;
+
+/**
+ * 按目标秒数推密度门槛。
+ *
+ * 旧代码把三分钟档（10 段）的 30 句写死成默认值，而成片实际是 5–6 段共 90 秒，
+ * 于是编剧被逼写出约一倍拍不出来的台词——多出来的那半永远进不了成片。
+ *
+ * 门槛取段数的 5/6，沿用原作者的留白比例（他把 12 段的三分钟档算作「约 10 段」）。
+ * 这样 180s 仍精确落回旧阈值 280 字 / 30 句，90s 则落到 5 段 × 3 句 = 15 句。
+ */
+function manhuaDensityFloors(targetSec: number): {
+  segments: number;
+  minBody: number;
+  minDlg: number;
+  minLoc: number;
+} {
+  const segs = Math.max(1, Math.floor(targetSec / MANHUA_EPISODE_SEGMENT_DURATION_SEC));
+  const gateSegs = Math.max(1, Math.round((segs * 5) / 6));
+  return {
+    segments: segs,
+    minBody: gateSegs * MIN_BODY_CHARS_PER_SEGMENT,
+    minDlg: gateSegs * MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES,
+    minLoc: gateSegs >= 5 ? MIN_LOCATION_HITS : 1,
+  };
+}
 
 export function countDialogueLines(text: string): number {
   const t = String(text || "");
@@ -301,14 +329,11 @@ export function countDialogueLines(text: string): number {
 export function evaluateWriterEpisodeDensity(input: {
   episodes: Array<{ index: number; body?: string; endHook?: string }>;
   locationsMd?: string | null;
-  /** 目标秒数；≥150 按三分钟档 */
+  /** 目标秒数；默认按成片实际长度 90s。门槛随之按段数推算 */
   targetSec?: number;
 }): WriterDensityGateResult {
-  const target = input.targetSec ?? 180;
-  const strict = target >= 150;
-  const minBody = strict ? MIN_BODY_CHARS : 160;
-  const minDlg = strict ? MIN_DIALOGUE_LINES : 4;
-  const minLoc = strict ? MIN_LOCATION_HITS : 1;
+  const target = input.targetSec ?? MANHUA_EPISODE_SEGMENT_TARGET_SEC;
+  const { minBody, minDlg, minLoc } = manhuaDensityFloors(target);
   const canon = buildManhuaWriterAssetCanon({
     locationsMd: input.locationsMd,
     episodes: input.episodes,
@@ -344,7 +369,7 @@ export function evaluateWriterEpisodeDensity(input: {
     }
     if (dlg < minDlg) {
       errors.push(
-        `第${ep.index}集有效对白约 ${dlg} 句，三分钟集至少 ${minDlg} 句（「」内短句）`,
+        `第${ep.index}集有效对白约 ${dlg} 句，约 ${target} 秒的集至少 ${minDlg} 句（「」内短句）`,
       );
     }
     if (locNames.length && locHits < minLoc) {
@@ -383,8 +408,9 @@ export function evaluateWriterPackAssetAndDensity(input: {
   if (canon.props.length < 1) {
     errors.push("道具表至少需要 1 件关键道具");
   }
-  // 预算期：额外要求 5–6 段可拍表（对白+表演/场景配色/角色/服化道/光影运镜），禁灌水
-  if ((input.targetSec ?? 180) >= 150) {
+  // 预算期：额外要求 5–6 段可拍表（对白+表演/场景配色/角色/服化道/光影运镜），禁灌水。
+  // 这道闸此前挂在 >=150 上，若只把 targetSec 改成 90 会被整个关掉，故改挂最短成片秒数。
+  if ((input.targetSec ?? MANHUA_EPISODE_SEGMENT_TARGET_SEC) >= MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC) {
     for (const ep of input.episodes || []) {
       const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(String(ep.body || ""));
       const q = evaluateManhuaEpisodeSegmentPlanQuality(plan);

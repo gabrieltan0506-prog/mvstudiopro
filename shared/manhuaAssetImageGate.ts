@@ -13,6 +13,7 @@ import { getAncientArchetypeById } from "./manhuaAncientArchetypeLibrary.js";
 import { buildAncientArchetypePrompt } from "./manhuaAncientDesignBoard.js";
 import { getManhuaSceneTemplate } from "./manhuaSceneAssetLibrary.js";
 import { buildManhuaScenePlateGenPrompt } from "./manhuaScriptVisualBrief.js";
+import { findManhuaAssetCoverageGaps } from "./manhuaAssetScriptSync.js";
 import {
   customRefsByRole,
   hasCustomCastAndScene,
@@ -124,8 +125,14 @@ export function collectManhuaIdentityImageUrls(
 export function evaluateManhuaAssetImageGate(
   input: ManhuaAssetImageGateInput,
 ): ManhuaAssetImageGateResult {
+  const canonForGate = input.assetCanon;
+  const hasCanon = Boolean(canonForGate?.characters?.length);
   const customReady = hasCustomCastAndScene(input.customRefs);
-  if (customReady) {
+  /**
+   * 有剧本表时不能因为「上传过人物+场景」就直接放行：扩写和导入外部剧本都会
+   * 加人加景，得按名字逐个点名，否则新角色一路裸奔到成片才发现没锁脸。
+   */
+  if (customReady && !hasCanon) {
     return {
       castLocked: true,
       sceneLocked: true,
@@ -167,8 +174,34 @@ export function evaluateManhuaAssetImageGate(
     Boolean(sceneId && getManhuaSceneTemplate(sceneId)) ||
     customScenes.length > 0;
 
+  const charSheetsWithMediaEarly = blocks.filter(
+    (blk) => blk.id.startsWith("charsheet-") && blockHasMedia(blk),
+  );
+  /**
+   * 老项目的定妆节点 id 跟人物表对不上（charsheet-ep1-a 之类），按名字点名会
+   * 全判成缺图、逼着重出一遍已经付过钱的设定图。只有当画布上一张都对不上时
+   * 才认定是老命名，退回按张数算；只要有一张对得上，就是新命名，逐个点名。
+   */
+  const legacySheetNaming =
+    hasCanon &&
+    charSheetsWithMediaEarly.length > 0 &&
+    !charSheetsWithMediaEarly.some((blk) =>
+      (canonForGate?.characters || []).some((c) => blk.id.includes(c.id)),
+    );
+  const coverageGaps = hasCanon && !legacySheetNaming
+    ? findManhuaAssetCoverageGaps({
+        assetCanon: canonForGate,
+        customRefs: input.customRefs,
+        assetBlocks: blocks.map((blk) => ({ id: blk.id, hasMedia: blockHasMedia(blk) })),
+      })
+    : [];
+  const castGaps = coverageGaps.filter((g) => g.role === "character");
+  const sceneGaps = coverageGaps.filter((g) => g.role === "scene");
+
   const missingCastIds: string[] = [];
-  if (!customChars.length) {
+  if (hasCanon && !legacySheetNaming) {
+    missingCastIds.push(...castGaps.map((g) => g.id));
+  } else if (!customChars.length) {
     for (const id of castIdsForGate) {
       const sheet = findAssetBlock(blocks, "charsheet-", id);
       if (!blockHasMedia(sheet)) missingCastIds.push(id);
@@ -186,16 +219,18 @@ export function evaluateManhuaAssetImageGate(
     castIdsForGate.length > 0 &&
     missingCastIds.length > 0 &&
     charSheetsWithMedia.length >= castIdsForGate.length;
-  const castImagesReady =
-    (castLocked && missingCastIds.length === 0) ||
-    customChars.length > 0 ||
-    canvasSheetsCoverCast;
+  const castImagesReady = hasCanon && !legacySheetNaming
+    ? castGaps.length === 0
+    : (castLocked && missingCastIds.length === 0) ||
+      customChars.length > 0 ||
+      canvasSheetsCoverCast;
 
   const scenePlate = sceneId ? findAssetBlock(blocks, "sceneplate-", sceneId) : undefined;
-  const sceneImageReady =
-    customScenes.length > 0 ||
-    blockHasMedia(scenePlate) ||
-    (sceneLocked && sceneSheetsWithMedia.length > 0);
+  const sceneImageReady = hasCanon && !legacySheetNaming
+    ? sceneGaps.length === 0
+    : customScenes.length > 0 ||
+      blockHasMedia(scenePlate) ||
+      (sceneLocked && sceneSheetsWithMedia.length > 0);
   const missingScene =
     (Boolean(mainScene) || Boolean(sceneId && getManhuaSceneTemplate(sceneId))) &&
     !customScenes.length &&
@@ -212,6 +247,12 @@ export function evaluateManhuaAssetImageGate(
     hintZh = "请勾选至少一张人物参考，或保证人物表可解析";
   } else if (!sceneLocked) {
     hintZh = "请保证场景表可解析，或勾选场景参考";
+  } else if (!castImagesReady && castGaps.length) {
+    const names = castGaps.map((g) => g.nameZh).filter(Boolean).slice(0, 4).join("、");
+    hintZh = `还有 ${castGaps.length} 位人物没有定妆图${names ? `（${names}）` : ""}，请生成或上传参考`;
+  } else if (!sceneImageReady && sceneGaps.length) {
+    const names = sceneGaps.map((g) => g.nameZh).filter(Boolean).slice(0, 4).join("、");
+    hintZh = `还有 ${sceneGaps.length} 个场景没有设定图${names ? `（${names}）` : ""}，请生成或上传参考`;
   } else if (!castImagesReady) {
     hintZh =
       "打开工作流「资产设定」，点右上角「生成本集角色/场景设定图」（或下方分区上传参考）";

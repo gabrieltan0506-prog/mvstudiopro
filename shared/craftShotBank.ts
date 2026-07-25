@@ -465,3 +465,81 @@ export function buildCraftShotInjectBlock(ids: string[]): string {
     ...lines,
   ].join("\n");
 }
+
+/**
+ * 段成片兜底补条：可拍表没写灯光/运镜时，按本段文本挑一条原子手法补上。
+ *
+ * 手法条目库过去只进节拍与反推节点，段成片提示词一条都吃不到；而段成片才是
+ * 真正发给引擎的那一份。这里只在本段确实缺光或缺运镜时补，避免和编剧已经
+ * 写好的调度打架。
+ */
+export function pickCraftShotForSegment(input: {
+  /** 本段情绪、场景、动作等可用于匹配的文本 */
+  segmentTextZh?: string | null;
+  /** 已有段级光影；有值则不补灯光条目 */
+  lightingZh?: string | null;
+  /** 已有运镜；有值则不补运镜条目 */
+  cameraZh?: string | null;
+}): CraftShotEntry[] {
+  const text = String(input.segmentTextZh || "").trim();
+  const needLight = !String(input.lightingZh || "").trim();
+  const needCamera = !String(input.cameraZh || "").trim();
+  if (!needLight && !needCamera) return [];
+  const wanted: CraftShotCategory[] = [];
+  if (needLight) wanted.push("lighting");
+  if (needCamera) wanted.push("camera");
+
+  const picked: CraftShotEntry[] = [];
+  for (const category of wanted) {
+    const pool = CRAFT_SHOT_BANK.filter((e) => e.category === category);
+    // 先按本段文本命中「何时用」，命中不到就退回该类第一条（稳定、可复现）
+    const hit =
+      (text &&
+        pool.find((e) =>
+          e.whenToUseZh
+            .split(/[、，,。;；]/)
+            .map((s) => s.trim())
+            .filter((s) => s.length >= 2)
+            .some((k) => text.includes(k)),
+        )) ||
+      pool[0];
+    if (hit) picked.push(hit);
+  }
+  return picked;
+}
+
+/** 段成片段头用：一行写完，别在秒轴前再堆一面规则墙 */
+export function formatCraftShotSegmentLine(entries: CraftShotEntry[]): string {
+  if (!entries.length) return "";
+  const bits = entries.map((e) => `${e.nameZh}（${e.craftSummaryZh}）`);
+  return `【手法补条】${bits.join("；")}`;
+}
+
+/**
+ * 编剧端可选镜头语汇表：让编剧写可拍表时从既有条目里挑，而不是自造词。
+ *
+ * 只给「名字 + 何时用」，不给英文像素锁——编剧不需要，塞进去只会占 token 并
+ * 诱导模型往成稿里写英文。同一套条目在段成片端兜底补条，两端说的是一种话。
+ */
+export function formatCraftShotWriterVocabBlock(
+  categories: CraftShotCategory[] = ["lighting", "camera", "emotion"],
+  perCategory = 6,
+): string {
+  const groups = categories
+    .map((category) => {
+      const pool = CRAFT_SHOT_BANK.filter((e) => e.category === category).slice(
+        0,
+        Math.max(1, perCategory),
+      );
+      if (!pool.length) return "";
+      const bits = pool.map((e) => `${e.nameZh}（${e.whenToUseZh}）`);
+      return `- ${CRAFT_SHOT_CATEGORY_LABEL_ZH[category]}：${bits.join("；")}`;
+    })
+    .filter(Boolean);
+  if (!groups.length) return "";
+  return [
+    "【可选镜头语汇】写「光影运镜」与「段内白描」时优先从下表取词，按剧情改写措辞即可；",
+    "不合用可自拟，但一律只写中文手法词，禁止导演名、片名、「某某风」。",
+    ...groups,
+  ].join("\n");
+}

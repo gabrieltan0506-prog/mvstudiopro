@@ -33,7 +33,7 @@ describe("manhuaNarrativeEnginePrompt", () => {
       emotionZh: "震惊",
     });
     expect(clip).toContain("【第1段·3s】");
-    expect(clip).toMatch(/电梯门开.*过肩。/);
+    expect(clip).toMatch(/过肩[^；\n]*；电梯门开/);
     expect(clip).not.toContain("成片预演硬锁");
     expect(clip).not.toContain("节拍防火墙");
   });

@@ -65,8 +65,8 @@ describe("manhuaEpisodeQualityPrompt", () => {
     expect(text).toContain("【第2段·15s】");
     expect(text).toContain("说「拿着」");
     expect(text).toContain("说「你早就知道了？」");
-    expect(text).toMatch(/景别：中景|景别：近景/);
-    expect(text).toContain("动作轨迹：");
+    expect(text).toMatch(/中景|近景/);
+    expect(text).not.toContain("动作轨迹：");
     expect(text).toContain("【场景锁】");
     expect(text).not.toContain("视频生成导戏单");
     expect(text).not.toContain("跨镜连续硬锁");

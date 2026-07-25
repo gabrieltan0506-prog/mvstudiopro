@@ -24,7 +24,11 @@ import {
   spawnManhuaDramaStudio,
   spawnManhuaDramaStudioSeries,
 } from "./canvasDramaStudio";
-import { collectVisionImages, resolveNearestUpstreamImageUrl } from "./canvasTypes";
+import {
+  collectVisionImages,
+  defaultCanvasBlock,
+  resolveNearestUpstreamImageUrl,
+} from "./canvasTypes";
 import * as canvasRunBlock from "./canvasRunBlock";
 import type { CanvasRunDeps } from "./canvasRunBlock";
 import { resolveKeyartShotIndex } from "@shared/manhuaScriptWorkbench";
@@ -1043,7 +1047,10 @@ slow dolly in, soft rain, trembling hand
     ];
     const cleaned = stripManhuaFactoryCanvasArtifacts(withAsset, edges);
     expect(cleaned.removedCount).toBeGreaterThan(0);
-    expect(cleaned.blocks.map((b) => b.id)).toEqual(["text-free-note"]);
+    // 人物定妆是整部剧共用资产，换剧本不清；过不过期交给剧本↔资产对齐扫描判
+    expect(cleaned.blocks.map((b) => b.id).sort()).toEqual(
+      ["charsheet-arch_old", "text-free-note"].sort(),
+    );
     expect(cleaned.edges).toHaveLength(0);
     expect(cleaned.blocks.some((b) => b.id.startsWith("keyart-"))).toBe(false);
   });
@@ -1284,4 +1291,60 @@ slow dolly in, soft rain, trembling hand
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe("局部改写起点", () => {
+  const blk = (id: string, episodeIndex: number, outputUrl?: string) => ({
+    ...defaultCanvasBlock("image", 0, 0),
+    id,
+    episodeIndex,
+    ...(outputUrl ? { outputUrl } : {}),
+  });
+
+  it("起点之前的集一律不动", () => {
+    const blocks = [
+      blk("keyart-e01-s01", 1, "https://x/a.jpg"),
+      blk("clip-e01-s01", 1, "https://x/a.mp4"),
+      blk("keyart-e03-s01", 3, "https://x/c.jpg"),
+    ];
+    const out = stripManhuaFactoryCanvasArtifacts(blocks, [], { fromEpisode: 3 });
+    expect(out.keptCount).toBeGreaterThan(0);
+    // 保留集：原样不动，不带归档标
+    expect(
+      out.blocks.find((b) => b.id === "keyart-e01-s01")?.archivedFromPreviousScript,
+    ).toBeFalsy();
+    expect(
+      out.blocks.find((b) => b.id === "clip-e01-s01")?.archivedFromPreviousScript,
+    ).toBeFalsy();
+    // 起点之后：已出图的静帧标归档留档，不白扔
+    expect(
+      out.blocks.find((b) => b.id === "keyart-e03-s01")?.archivedFromPreviousScript,
+    ).toBe(true);
+  });
+
+  it("集内起点：起点那一集的前几段也留着", () => {
+    const blocks = [
+      blk("keyart-e03-s01", 3, "https://x/a.jpg"),
+      blk("keyart-e03-s04", 3, "https://x/d.jpg"),
+    ];
+    const out = stripManhuaFactoryCanvasArtifacts(blocks, [], {
+      fromEpisode: 3,
+      fromSegment: 4,
+    });
+    expect(
+      out.blocks.find((b) => b.id === "keyart-e03-s01")?.archivedFromPreviousScript,
+    ).toBeFalsy();
+    expect(
+      out.blocks.find((b) => b.id === "keyart-e03-s04")?.archivedFromPreviousScript,
+    ).toBe(true);
+  });
+
+  it("起点之后已出片的段落归档而非删除", () => {
+    const blocks = [blk("clip-e03-s01", 3, "https://x/paid.mp4")];
+    const out = stripManhuaFactoryCanvasArtifacts(blocks, [], { fromEpisode: 3 });
+    expect(out.archivedCount).toBe(1);
+    const kept = out.blocks.find((b) => b.id === "clip-e03-s01");
+    expect(kept?.archivedFromPreviousScript).toBe(true);
+    expect(kept?.outputUrl).toBe("https://x/paid.mp4");
+  });
 });
