@@ -3258,6 +3258,44 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       }
     }
 
+    if (op === "manhuaCropSheet2x2") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const sheetUrl = s(b.sheetUrl || q.sheetUrl || "").trim();
+      if (!/^https:\/\//i.test(sheetUrl)) {
+        return res.status(400).json({ ok: false, error: "请提供拼板 HTTPS 地址" });
+      }
+      try {
+        const { cropManhuaSheet2x2ToGcs } = await import(
+          "../server/services/manhuaSheetGridCrop.js"
+        );
+        const tiles = await cropManhuaSheet2x2ToGcs({
+          sheetUrl,
+          objectPrefix: s(b.objectPrefix || q.objectPrefix || "").trim() || undefined,
+        });
+        return res.status(200).json({
+          ok: true,
+          tiles: tiles.map((t) => ({
+            slot: t.slot,
+            labelZh: t.labelZh,
+            url: t.url,
+            bytes: t.bytes,
+          })),
+        });
+      } catch (e: any) {
+        const msg = String(e?.message || "crop_failed");
+        return res.status(502).json({
+          ok: false,
+          error: /download/i.test(msg)
+            ? "拼板下载失败，请稍后重试"
+            : /too_small|invalid/i.test(msg)
+              ? "这张图不是四格拼板，无法切分"
+              : "拼板切分失败，请稍后重试",
+        });
+      }
+    }
+
     if (op === "seedanceI2V") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
