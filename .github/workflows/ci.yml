@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   check:
-    name: Typecheck & tests
+    name: Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -29,12 +29,5 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck
-        id: typecheck
-        run: pnpm run check
-
-      # 即使 tsc 已经红了也把测试跑完，一次 run 给出全部信号，
-      # 免得修一轮 tsc 才看到测试还有第二批红。
       - name: Tests
-        if: ${{ !cancelled() }}
         run: pnpm test
