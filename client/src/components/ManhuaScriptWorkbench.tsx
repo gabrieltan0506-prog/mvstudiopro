@@ -115,7 +115,6 @@ import { summarizeManhuaVisualBriefForUi } from "@shared/manhuaScriptVisualBrief
 import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
 import { MANHUA_DRAFT_RETENTION_HINT_ZH } from "@shared/manhuaCloudDraft";
 import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
-import ManhuaAgentAdvisorPanel from "@/components/ManhuaAgentAdvisorPanel";
 import ManhuaIntegratedAssetBoardPanel from "@/components/ManhuaIntegratedAssetBoardPanel";
 import ManhuaRoughEditTimeline from "@/components/ManhuaRoughEditTimeline";
 import ManhuaStylePackPanel from "@/components/ManhuaStylePackPanel";
@@ -322,10 +321,6 @@ type Props = {
   artStyleId?: ManhuaArtStyleId;
   onArtStyleChange?: (id: ManhuaArtStyleId) => void;
   /** 创作顾问：同步规划产物到工厂节点 */
-  onAdvisorApplySync?: (sync: ManhuaWorkbenchSyncPayload) => void;
-  onAdvisorUpdateBeatsText?: (text: string) => void;
-  onAdvisorUpdateStoryText?: (text: string) => void;
-  onAdvisorBusyChange?: (busy: boolean) => void;
   /** 机位选定写回反推/节拍（供工厂注入） */
   onUpsertShotAngles?: (angles: Record<number, string>) => void;
   /** 分镜台词写回（成片注入用；静帧不读字面） */
@@ -453,10 +448,6 @@ export default function ManhuaScriptWorkbench({
   onShotContinuityChange,
   artStyleId,
   onArtStyleChange,
-  onAdvisorApplySync,
-  onAdvisorUpdateBeatsText,
-  onAdvisorUpdateStoryText,
-  onAdvisorBusyChange,
   onUpsertShotAngles,
   onUpsertShotDialogues,
 }: Props) {
@@ -937,10 +928,6 @@ export default function ManhuaScriptWorkbench({
   const mountedPropIdSet = useMemo(() => new Set(shotMount.propIds), [shotMount.propIds]);
   const mountedCastCount =
     shotMount.characterIds.length + shotMount.ancientArchetypeIds.length;
-  const mountGap =
-    shotMount.expectedCastCount > mountedCastCount
-      ? shotMount.expectedCastCount - mountedCastCount
-      : 0;
   const missingFragmentIndexes = useMemo(() => {
     return segments
       .filter((seg) => {
@@ -3512,63 +3499,6 @@ export default function ManhuaScriptWorkbench({
               : "min-h-0 w-[180px] shrink-0 overflow-y-auto border-r border-white/10 p-2"
           }
         >
-          <div className="mb-2.5 space-y-2">
-            <ManhuaAgentAdvisorPanel
-              compact
-              topic={topic}
-              factoryBusy={factoryBusy}
-              onAdvisorBusyChange={onAdvisorBusyChange}
-              onApplySync={onAdvisorApplySync}
-              onUpdateBeatsText={onAdvisorUpdateBeatsText}
-              onUpdateStoryText={onAdvisorUpdateStoryText}
-              onRequestKeyarts={() => {
-                onGenerateAllEpisodeKeyarts?.();
-              }}
-              onRequestClips={(shotIndexes) => {
-                const idx = shotIndexes?.[0] ?? activeShotNo;
-                const keyarts = keyartsForEpisode(blocks, focusEpisode);
-                const keyart = keyarts.find(
-                  (k) => resolveKeyartShotIndex(k.id, k.prompt) === idx,
-                );
-                onGenerateFragment?.({
-                  shotIndex: resolveSegmentIndexFromShotIndex(idx),
-                  keyartId: keyart?.id,
-                });
-              }}
-            />
-            <ManhuaIntegratedAssetBoardPanel
-              compact
-              board={integratedBoard}
-              onCopyInjectSummary={(text) => {
-                void navigator.clipboard?.writeText(text).then(
-                  () => toast.success("已复制一体参考摘要"),
-                  () => toast.message(text.slice(0, 120)),
-                );
-              }}
-            />
-          </div>
-          <div className="mb-2 flex items-center justify-between">
-            <div className="min-w-0">
-              <div className="text-[12px] font-semibold text-white/85">
-                本片段挂载
-                <span className="ml-1 text-[10px] font-normal text-white/40">
-                  {String(activeShotNo).padStart(2, "0")}
-                </span>
-              </div>
-              <div className="mt-0.5 text-[9px] text-white/35">
-                {shotMount.mode === "matched" ? "按分镜文案点名" : "默认本集资产"}
-                {mountGap > 0 ? ` · 还缺 ${mountGap} 人同框` : ""}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => onOpenCharacterCard?.()}
-              className="shrink-0 text-[10px] text-cyan-200/80 underline-offset-2 hover:underline"
-            >
-              换造型
-            </button>
-          </div>
-
           <div className="text-[10px] font-semibold tracking-wide text-white/40">
             角色 · 上场 {mountedCastCount}/
             {(characters.length || 0) + (archetypes.length || 0)}
