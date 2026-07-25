@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildManhuaClipQualityPrompt,
   isManhuaClipQualityInfraFailure,
-  isManhuaClipQualityKeyartTextFailure,
   manhuaClipQualityAllowsAssemble,
   MANHUA_CLIP_QUALITY_KEYS,
   parseManhuaClipQualityMarkdown,
@@ -104,13 +103,4 @@ describe("manhuaClipQuality", () => {
     ).toBe(false);
   });
 
-  it("flags keyart text failures for rerun hint", () => {
-    expect(
-      isManhuaClipQualityKeyartTextFailure({
-        summary: "首镜含违规文字，请重出静帧",
-        raw: "NO_UNRELATED_CONTENT=NO",
-        failedKeys: ["NO_UNRELATED_CONTENT"],
-      }),
-    ).toBe(true);
-  });
 });

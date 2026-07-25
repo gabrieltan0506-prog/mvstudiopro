@@ -4,7 +4,7 @@ import {
   mapUiPlatformHintToNativeVariantId,
   pickCoverVariantFromVariants,
   type PlatformNativeVariant,
-} from "../../shared/platformNativeVariants";
+} from "./platformNativeVariants";
 
 const variants: PlatformNativeVariant[] = [
   {

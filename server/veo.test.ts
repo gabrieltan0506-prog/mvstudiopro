@@ -10,7 +10,7 @@ describe("Veo Video Generation", () => {
     expect(typeof result).toBe("boolean");
   });
 
-  it("generateVideo throws if GEMINI_API_KEY is not set", async () => {
+  it("generateVideo rejects when video credentials are missing", async () => {
     // Temporarily unset the key
     const originalKey = process.env.GEMINI_API_KEY;
     delete process.env.GEMINI_API_KEY;
@@ -22,7 +22,9 @@ describe("Veo Video Generation", () => {
     await expect(generateVideo({
       prompt: "test video",
       quality: "fast",
-    })).rejects.toThrow("GEMINI_API_KEY");
+      // 视频生成已从 Gemini API key 迁到 Vertex，缺凭证时抛的是 missing_env_VERTEX_*。
+      // 这里只锁「缺凭证必须硬失败」，不锁具体是哪个变量。
+    })).rejects.toThrow(/GEMINI_API_KEY|missing_env_VERTEX/);
 
     // Restore
     process.env.GEMINI_API_KEY = originalKey;
