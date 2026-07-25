@@ -337,8 +337,14 @@ function parseNumberEnv(name: string, fallback: number) {
 }
 
 function parsePreferredNumberEnv(preferredName: string, legacyName: string, fallback: number) {
-  const preferred = Number(process.env[preferredName] || "");
-  if (Number.isFinite(preferred)) return preferred;
+  // 未设置时 Number("") 是 0 且 isFinite(0) 为真，于是这里一路返回 0，
+  // legacy 名与 fallback 全都够不着，调用方再 clamp 一下就永远取到最小值。
+  // 必须先判空，才算「这个变量真的设了」。
+  const raw = String(process.env[preferredName] ?? "").trim();
+  if (raw) {
+    const preferred = Number(raw);
+    if (Number.isFinite(preferred)) return preferred;
+  }
   return parseNumberEnv(legacyName, fallback);
 }
 
