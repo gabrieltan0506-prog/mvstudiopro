@@ -1923,6 +1923,42 @@ async function pruneOldArchives(entries: TrendArchiveEntry[]) {
   return kept;
 }
 
+/**
+ * 热数据保留窗口。前台可选窗口最长 45 天（PLATFORM_WINDOW_DAYS），采集端却按
+ * GROWTH_TARGET_WINDOW_DAYS 一路攒到一年，douyin 的 current 文件因此涨到 92MB(gz)，
+ * 解压 JSON.parse 后接近 2GB 对象，每轮采集都要走一遍——V8 GC 常年占掉 1.5 个核。
+ */
+function getHotWindowDays() {
+  const raw = Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365;
+  return Math.max(30, raw);
+}
+
+/**
+ * 按 publishedAt 裁掉超出热窗口的条目。历史不会丢：archive/、history-ledger/
+ * 与 GitHub 冷备仍保有全量，这里只决定「每轮采集要 load 进内存的那份」有多大。
+ *
+ * 两条保险：缺少或无法解析 publishedAt 的条目一律保留（判不了年龄就不删）；
+ * 若裁剪后不足原量的 5%，视为日期字段异常，回退成按热度保留前 MIN_HOT_ITEMS 条，
+ * 避免某个平台改了时间格式就把整池清空。
+ */
+const MIN_HOT_ITEMS_ON_PRUNE_FALLBACK = 2000;
+
+export function pruneTrendItemsToHotWindow(
+  items: TrendItem[],
+  windowDays: number,
+  now: number = Date.now(),
+): TrendItem[] {
+  if (!items.length) return items;
+  const cutoff = now - Math.max(30, windowDays) * 24 * 60 * 60 * 1000;
+  const kept = items.filter((item) => {
+    const at = item.publishedAt ? new Date(item.publishedAt).getTime() : Number.NaN;
+    if (!Number.isFinite(at)) return true;
+    return at >= cutoff;
+  });
+  if (kept.length >= Math.ceil(items.length * 0.05)) return kept;
+  return sortItems(items).slice(0, MIN_HOT_ITEMS_ON_PRUNE_FALLBACK);
+}
+
 function mergeCollection(
   current: PlatformTrendCollection | undefined,
   incoming: PlatformTrendCollection,
@@ -1938,13 +1974,21 @@ function mergeCollection(
     if (existingKeys.has(key)) mergedCount += 1;
     else addedCount += 1;
   }
-  const mergedItems = dedupeTrendItems(current?.items || [], incoming.items || []);
+  const hotWindowDays = getHotWindowDays();
+  const mergedItems = pruneTrendItemsToHotWindow(
+    dedupeTrendItems(current?.items || [], incoming.items || []),
+    hotWindowDays,
+  );
   const mergedCollection: PlatformTrendCollection = {
     ...incoming,
     notes: Array.from(new Set([...(current?.notes || []), ...(incoming.notes || [])])),
     items: mergedItems,
     collectedAt: incoming.collectedAt,
-    windowDays: Math.max(current?.windowDays || 0, incoming.windowDays || 0),
+    // 原来取 max 只增不减，窗口收窄后就再也降不回来了
+    windowDays: Math.min(
+      hotWindowDays,
+      Math.max(current?.windowDays || 0, incoming.windowDays || 0) || hotWindowDays,
+    ),
   };
   return {
     collection: mergedCollection,
