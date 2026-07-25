@@ -26,6 +26,24 @@ export function stripManhuaStaleAssetBindForModel(text: string | null | undefine
     .trim();
 }
 
+/**
+ * 发给成片引擎前把符号换成官方约定。
+ *
+ * 火山引擎给 Seedance 定了一张符号表：（）音乐、<>音效、{}台词、【】字幕。
+ * 我们一直拿【】当段落标题，可它在引擎眼里的意思是「把这行烧进画面」——
+ * 和我们自己那条「画面禁止烧字幕」的硬锁正好打架。台词同理，官方要 {}。
+ *
+ * 只在出片这一步换：审阅面、节点存稿、以及一大批靠【】断段的解析正则
+ * （stripManhuaClipForbiddenBoards、声线锁的说「」抽取等）全部照旧，
+ * 历史节点也不会因为改口径而解析不动。
+ */
+export function renderManhuaClipPromptForSeedance(text: string | null | undefined): string {
+  return String(text || "")
+    .replace(/【([^】\n]{1,40})】/g, "[$1]")
+    .replace(/「([^」\n]{1,200})」/g, "{$1}")
+    .trim();
+}
+
 const FORBIDDEN_SECTION_PREFIXES = [
   "【节拍防火墙】",
   "【视频生成导戏单",

@@ -1,11 +1,42 @@
 import { describe, expect, it } from "vitest";
 import {
   isManhuaClipPromptLegacyFat,
+  renderManhuaClipPromptForSeedance,
   stripManhuaClipForbiddenBoards,
   stripManhuaStaleAssetBindForModel,
 } from "./manhuaClipPromptSanitize";
 
 describe("manhuaClipPromptSanitize", () => {
+  /**
+   * 官方符号表：（）音乐、<>音效、{}台词、【】字幕。拿【】当段落标题等于叫
+   * 引擎把「场景锁」这类内部字段烧进画面。
+   */
+  it("换成官方符号：【】不再当段落标题，台词走 {}", () => {
+    const out = renderManhuaClipPromptForSeedance(
+      [
+        "【第1段·15s】断月桥",
+        "【场景锁】断月桥；配色：墨蓝雨夜。",
+        "0–5s：动作轨迹：拔刀，眼神转硬。景别：近景。@角色2以压嗓说「站住」。",
+      ].join("\n"),
+    );
+
+    expect(out).not.toMatch(/[【】]/);
+    expect(out).not.toMatch(/[「」]/);
+    expect(out).toContain("[第1段·15s]断月桥");
+    expect(out).toContain("[场景锁]");
+    expect(out).toContain("以压嗓说{站住}");
+    // 正文一个字都不该丢
+    expect(out).toContain("墨蓝雨夜");
+    expect(out).toContain("动作轨迹：拔刀，眼神转硬");
+  });
+
+  it("只在出线那一步换：存稿仍靠【】断段与解析", () => {
+    const stored = "【第1段·15s】桥\n【垫图】本段静帧2张";
+    // 转换后的文本不该再喂回内部解析器——这里只验转换本身不改原串
+    expect(renderManhuaClipPromptForSeedance(stored)).not.toBe(stored);
+    expect(stored).toContain("【第1段·15s】");
+    expect(isManhuaClipPromptLegacyFat("【节拍防火墙】x")).toBe(true);
+  });
   it("detects legacy fat clip prompts", () => {
     expect(
       isManhuaClipPromptLegacyFat("【节拍防火墙】\n当前只拍第 1 段"),

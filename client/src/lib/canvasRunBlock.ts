@@ -42,7 +42,10 @@ import {
 } from "@shared/seedanceOpenRouterModels";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
 import { appendManhuaClipEngineOptics } from "@shared/manhuaCineOpticsBank";
-import { stripManhuaStaleAssetBindForModel } from "@shared/manhuaClipPromptSanitize";
+import {
+  renderManhuaClipPromptForSeedance,
+  stripManhuaStaleAssetBindForModel,
+} from "@shared/manhuaClipPromptSanitize";
 import {
   extractManhuaMentionedAssetTags,
   formatManhuaClipImageRoleBindLine,
@@ -470,7 +473,8 @@ async function runSeedance20(
       headers: { "Content-Type": "application/json" },
       credentials: "omit",
       body: JSON.stringify({
-        prompt,
+        // 换官方符号只在出线这一刻做：上面的时长解析等仍认【第N段·Xs】
+        prompt: renderManhuaClipPromptForSeedance(prompt),
         imageUrl: imageUrl || imageUrls[0] || undefined,
         imageUrls: imageUrls.length
           ? imageUrls.slice(0, SEEDANCE_REFERENCE_MAX.image)
