@@ -56,6 +56,10 @@ import {
   stripManhuaAssetUrlsFromPrompt,
   type ManhuaClipSeedanceImageBindEntry,
 } from "@shared/manhuaAssetLockRegistry";
+import {
+  resolveManhuaSceneTileUrl,
+  type ManhuaSceneTileSlot,
+} from "@shared/manhuaSceneTilePick";
 import { absolutizeManhuaAssetUrl } from "@shared/manhuaKeyartEditFusion";
 import {
   buildManhuaFactoryOptimizeBrief,
@@ -119,6 +123,11 @@ export type CanvasRunDeps = {
    * 节点只存 @角色N|id=…|label=…，这里再转成可下载 URL。
    */
   manhuaAssetPathById?: Record<string, string> | null;
+  /** 四视角拼板切片：段内按机位挑一格当场景垫图 */
+  manhuaAssetTileUrlsById?: Record<
+    string,
+    Partial<Record<ManhuaSceneTileSlot, string>>
+  > | null;
   /**
    * @deprecated 声线不再硬门禁；保留字段以免旧调用方类型炸。
    */
@@ -944,10 +953,17 @@ export async function runCanvasBlock(
         ? resolveManhuaAssetImageBindRows(
             parseManhuaAssetImageBindBlock(block.prompt || motionPrompt),
             deps.manhuaAssetPathById,
-          ).map((r) => ({
-            ...r,
-            path: absolutizeManhuaAssetUrl(r.path) || r.path,
-          }))
+          ).map((r) => {
+            const abs = absolutizeManhuaAssetUrl(r.path) || r.path;
+            /**
+             * 跨集场景挂的是四视角拼板切片，按本段机位换那一格：俯拍段喂平视图
+             * 等于让引擎自己想象俯视下的地面动线，空间锁就白锁了。
+             */
+            const tiles = deps.manhuaAssetTileUrlsById?.[r.id];
+            if (!tiles) return { ...r, path: abs };
+            const picked = resolveManhuaSceneTileUrl(abs, tiles, motionPrompt);
+            return { ...r, path: absolutizeManhuaAssetUrl(picked.url) || picked.url };
+          })
         : [];
       const mentionedTags = isClip
         ? extractManhuaMentionedAssetTags(motionPrompt)

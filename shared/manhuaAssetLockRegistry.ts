@@ -17,6 +17,7 @@ import {
   type ManhuaCustomAssetRole,
 } from "./manhuaCustomAssetRefs.js";
 import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon.js";
+import type { ManhuaSceneTileSlot } from "./manhuaSceneTilePick.js";
 import {
   buildManhuaSheetPropSubSlots,
   formatManhuaSheetPropSubTagsLockBlock,
@@ -47,6 +48,8 @@ export type ManhuaAssetLockSlot = {
   fromSheetInset?: boolean;
   /** identity=大头照只锁脸；look=全身照只锁妆造（一人拆两张时区分职责） */
   duty?: "identity" | "look" | null;
+  /** 四视角拼板切开后的四格（仅跨集场景）；段内按机位挑一格 */
+  tileUrls?: Partial<Record<ManhuaSceneTileSlot, string>> | null;
 };
 
 export type ManhuaAssetLockRegistry = {
@@ -111,7 +114,10 @@ export function buildManhuaAssetLockRegistry(opts?: {
     labelZh: string,
     path: string,
     extra?: Partial<
-      Pick<ManhuaAssetLockSlot, "parentCharacterTag" | "subTag" | "fromSheetInset" | "duty">
+      Pick<
+        ManhuaAssetLockSlot,
+        "parentCharacterTag" | "subTag" | "fromSheetInset" | "duty" | "tileUrls"
+      >
     >,
   ) => {
     const p = String(path || "").trim();
@@ -158,6 +164,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
       c.id,
       c.labelZh || (c.source === "generated" ? "场景参考" : "上传场景"),
       c.url,
+      { tileUrls: c.tileUrls ?? null },
     );
   }
   const sceneId = String(opts?.sceneId || "").trim();
@@ -375,6 +382,8 @@ export type ManhuaAssetImageBindRow = {
   path: string;
   /** identity=大头照只锁脸；look=全身照只锁妆造。缺省按整张人物参考处理 */
   duty?: "identity" | "look" | null;
+  /** 四视角切片；段内按机位替换 path */
+  tileUrls?: Partial<Record<ManhuaSceneTileSlot, string>> | null;
 };
 
 export type ManhuaClipSeedanceImageBindEntry = {
@@ -647,6 +656,22 @@ export function buildManhuaAssetPathById(
     const path = String(s.path || "").trim();
     if (!id || !isBindableAssetPath(path)) continue;
     out[id] = path;
+  }
+  return out;
+}
+
+/**
+ * 四视角切片表：段内按机位换图要用，和 buildManhuaAssetPathById 并行。
+ */
+export function buildManhuaAssetTileUrlsById(
+  registry: ManhuaAssetLockRegistry | null | undefined,
+): Record<string, Partial<Record<ManhuaSceneTileSlot, string>>> {
+  const out: Record<string, Partial<Record<ManhuaSceneTileSlot, string>>> = {};
+  for (const s of registry?.slots || []) {
+    const id = String(s.id || "").trim();
+    const tiles = s.tileUrls;
+    if (!id || !tiles || !Object.keys(tiles).length) continue;
+    out[id] = tiles;
   }
   return out;
 }

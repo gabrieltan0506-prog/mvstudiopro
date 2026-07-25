@@ -4,6 +4,7 @@
  */
 
 import { getAncientArchetypeById } from "./manhuaAncientArchetypeLibrary.js";
+import type { ManhuaSceneTileSlot } from "./manhuaSceneTilePick.js";
 import { getManhuaCharacterById } from "./manhuaCharacterAssetLibrary.js";
 import { getManhuaSceneTemplate, MANHUA_SCENE_ASSET_LIBRARY } from "./manhuaSceneAssetLibrary.js";
 import {
@@ -70,7 +71,34 @@ export type ManhuaCustomAssetRef = {
   seedLibraryId?: string;
   /** 视频生成时的参考职责 */
   refDuty?: ManhuaCustomAssetRefDuty | null;
+  /**
+   * 四视角拼板切开后的四格地址（仅跨集场景有）。
+   * url 存主视角当默认，段内按机位改挑其中一格——同一地点四个机位，
+   * 俯拍段喂平视图等于让引擎自己想象地面动线。
+   */
+  tileUrls?: Partial<Record<ManhuaSceneTileSlot, string>> | null;
 };
+
+const SCENE_TILE_SLOTS: ManhuaSceneTileSlot[] = [
+  "topLeft",
+  "topRight",
+  "bottomLeft",
+  "bottomRight",
+];
+
+/** 只收四个已知格子的 HTTPS 地址；存稿被手改过也不至于喂出脏 URL */
+function parseSceneTileUrls(
+  raw: unknown,
+): Partial<Record<ManhuaSceneTileSlot, string>> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const src = raw as Record<string, unknown>;
+  const out: Partial<Record<ManhuaSceneTileSlot, string>> = {};
+  for (const slot of SCENE_TILE_SLOTS) {
+    const u = String(src[slot] || "").trim();
+    if (isHttpsUrl(u)) out[slot] = u;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 
 export const MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH: Record<ManhuaCustomAssetRoleOrUnset, string> = {
   character: "人物",
@@ -278,6 +306,7 @@ export function normalizeManhuaCustomAssetRefs(
       seedLibraryId,
       // 未标注时按分栏自动填；手选过的原样保留
       refDuty: parsedDuty || defaultManhuaCustomAssetRefDuty(role),
+      tileUrls: parseSceneTileUrls((o as { tileUrls?: unknown }).tileUrls),
     });
     if (out.length >= max) break;
   }
@@ -378,6 +407,7 @@ export function upsertGeneratedManhuaCustomAssetRef(
     labelZh?: string;
     seedLibraryId?: string;
     refDuty?: ManhuaCustomAssetRefDuty | null;
+    tileUrls?: Partial<Record<ManhuaSceneTileSlot, string>> | null;
   },
 ): ManhuaCustomAssetRef[] {
   const url = String(input.url || "").trim();
@@ -408,6 +438,9 @@ export function upsertGeneratedManhuaCustomAssetRef(
     source: "generated",
     seedLibraryId:
       seedLibraryId || (matchIdx >= 0 ? base[matchIdx]!.seedLibraryId : undefined),
+    tileUrls:
+      parseSceneTileUrls(input.tileUrls) ??
+      (matchIdx >= 0 ? base[matchIdx]!.tileUrls : undefined),
     refDuty:
       input.refDuty !== undefined
         ? input.refDuty

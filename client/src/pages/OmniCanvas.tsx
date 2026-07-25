@@ -7,6 +7,7 @@ import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
 import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/lib/canvasTypes";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
 import { cropManhuaSheet2x2 } from "@/lib/manhuaSheetCropApi";
+import type { ManhuaSceneTileSlot } from "@shared/manhuaSceneTilePick";
 import {
   evaluateManhuaAssetImageGate,
   manhuaHeroFaceSheetId,
@@ -33,6 +34,7 @@ import { absolutizeManhuaAssetUrl } from "@shared/manhuaKeyartEditFusion";
 import {
   buildManhuaAssetLockRegistry,
   buildManhuaAssetPathById,
+  buildManhuaAssetTileUrlsById,
 } from "@shared/manhuaAssetLockRegistry";
 import {
   normalizeManhuaCharacterLookSets,
@@ -1814,8 +1816,8 @@ export default function OmniCanvas() {
     ],
   );
 
-  /** 仅出片后台：id→垫图 path，绝不写入节点提示词 */
-  const manhuaAssetPathById = useMemo(() => {
+  /** 仅出片后台：id→垫图 path 与四视角切片，绝不写入节点提示词 */
+  const manhuaAssetMaps = useMemo(() => {
     const reg = buildManhuaAssetLockRegistry({
       characterIds: selectedCharacterIds,
       artStyleId: factoryArtStyleId,
@@ -1829,7 +1831,10 @@ export default function OmniCanvas() {
         projectBible?.assetCanon,
       ),
     });
-    return buildManhuaAssetPathById(reg);
+    return {
+      pathById: buildManhuaAssetPathById(reg),
+      tileUrlsById: buildManhuaAssetTileUrlsById(reg),
+    };
   }, [
     selectedCharacterIds,
     factoryArtStyleId,
@@ -1845,7 +1850,8 @@ export default function OmniCanvas() {
     () => ({
       userId: user?.id ? String(user.id) : "",
       characterVoiceLocks,
-      manhuaAssetPathById,
+      manhuaAssetPathById: manhuaAssetMaps.pathById,
+      manhuaAssetTileUrlsById: manhuaAssetMaps.tileUrlsById,
       getManhuaEpisodeSegmentPromptsForVoiceGate: (episodeIndex) =>
         collectManhuaEpisodeSegmentPromptsForVoiceGate(blocksRef.current, episodeIndex),
       optimizeCopy: async ({ sourceText, optimizationBrief, modelName }) => {
@@ -1936,7 +1942,7 @@ export default function OmniCanvas() {
       pushDebug,
       user?.id,
       characterVoiceLocks,
-      manhuaAssetPathById,
+      manhuaAssetMaps,
     ],
   );
 
@@ -3260,12 +3266,15 @@ export default function OmniCanvas() {
          * 总比这一集没场景垫图强。
          */
         let refUrl = u;
+        let tileUrls: Partial<Record<ManhuaSceneTileSlot, string>> | null = null;
         if (plan.kind === "sceneplate" && plan.layout === "grid2x2") {
           try {
             const tiles = await cropManhuaSheet2x2({
               sheetUrl: u,
               objectPrefix: `manhua-scene-tiles/${seedLibraryId}`,
             });
+            // 四格全存：段内按机位挑；url 取主视角当默认（建立镜头的纵深）
+            tileUrls = Object.fromEntries(tiles.map((t) => [t.slot, t.url]));
             const main = tiles.find((t) => t.slot === "topLeft") || tiles[0];
             if (main?.url) refUrl = main.url;
           } catch (cropErr) {
@@ -3294,6 +3303,7 @@ export default function OmniCanvas() {
             labelZh: plan.labelZh,
             seedLibraryId,
             refDuty: plan.kind === "charsheet" ? charDuty : "space",
+            tileUrls,
           }),
         );
       };
