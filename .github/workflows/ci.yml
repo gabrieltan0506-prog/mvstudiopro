@@ -1,10 +1,9 @@
 name: CI
 
 on:
+  # 只在 PR 上跑。合并到 main 时再跑一遍是对同一份代码的重复验证，却会和
+  # Fly Deploy 抢 runner——两个任务同时排队，部署要等，卡住时还连带被取消。
   pull_request:
-  push:
-    branches:
-      - main
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
