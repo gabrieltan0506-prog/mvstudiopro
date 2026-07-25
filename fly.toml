@@ -38,6 +38,11 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   GROWTH_OFFLOAD_SINGLE_FILE_THRESHOLD_MB = '400'
   GROWTH_OFFLOAD_DIRECTORY_THRESHOLD_MB = '800'
   GROWTH_OFFLOAD_HOT_DATA_THRESHOLD_MB = '800'
+  # 热数据保留窗口。前台可选窗口最长 45 天（PLATFORM_WINDOW_DAYS = 3/7/15/30/45），
+  # 原来默认 365 天，douyin 的 current 文件因此涨到 92MB(gz)、解压后接近 2GB 对象，
+  # 每轮采集 parse/stringify 一遍，V8 GC 常年占掉 1.5 个核。90 天留了两倍余量。
+  # 历史不丢：archive/、history-ledger/ 与 GitHub 冷备仍是全量。
+  GROWTH_TARGET_WINDOW_DAYS = '90'
   GROWTH_SCHEDULER_INTERVAL_MINUTES = '15'
   GROWTH_SCHEDULER_CONCURRENCY = '2'
   GROWTH_BURST_INTERVAL_MINUTES = '10'
