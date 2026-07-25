@@ -223,6 +223,65 @@ describe("manhuaAssetLockRegistry", () => {
     expect(plan.entries[plan.entries.length - 1]?.kind).toBe("tail");
   });
 
+  /**
+   * 官方把「人脸与全身/服装拼在一张」列为 ID 漂移头号根因，主角因此拆两张。
+   * 分工措辞只在真的有两张时写：配角单张肖像同时锁脸与服化，写成
+   * 「面部特征参考」会暗示另有一张妆造图。
+   */
+  it("一人两张才写面部/妆造分工，单张肖像不写", () => {
+    const twoShot = planManhuaClipSeedanceImageBind({
+      assetRows: [
+        {
+          tag: "@角色1",
+          id: "f",
+          labelZh: "沈沧澜",
+          path: "https://cdn.example/face.jpg",
+          duty: "identity",
+        },
+        {
+          tag: "@角色2",
+          id: "b",
+          labelZh: "沈沧澜",
+          path: "https://cdn.example/body.jpg",
+          duty: "look",
+        },
+      ],
+      stillUrls: ["https://cdn.example/still.jpg"],
+      maxImages: 9,
+    });
+    // 大头照在前：锁脸最吃紧
+    expect(twoShot.imageUrls[0]).toBe("https://cdn.example/face.jpg");
+    expect(twoShot.bindLineZh).toContain("沈沧澜的面部特征参考@图片1");
+    expect(twoShot.bindLineZh).toContain("沈沧澜的妆造参考@图片2");
+
+    const oneShot = planManhuaClipSeedanceImageBind({
+      assetRows: [
+        {
+          tag: "@角色1",
+          id: "s",
+          labelZh: "马县丞",
+          path: "https://cdn.example/solo.jpg",
+          duty: "identity",
+        },
+      ],
+      stillUrls: ["https://cdn.example/still.jpg"],
+      maxImages: 9,
+    });
+    expect(oneShot.bindLineZh).toContain("马县丞@图片1");
+    expect(oneShot.bindLineZh).not.toContain("面部特征参考");
+  });
+
+  it("duty 经【资产·Image对照】往返不丢", () => {
+    const block = [
+      "【资产·Image对照】",
+      "@角色1|id=f|label=沈沧澜|kind=角色|duty=identity",
+      "@角色2|id=b|label=沈沧澜|kind=角色|duty=look",
+      "@场景1|id=s1|label=断月桥|kind=场景",
+    ].join("\n");
+    const rows = parseManhuaAssetImageBindBlock(block);
+    expect(rows.map((r) => r.duty)).toEqual(["identity", "look", null]);
+  });
+
   it("keeps the segment still and spends the rest on assets, not on a 2nd tail", () => {
     const assetRows = Array.from({ length: 8 }, (_, i) => ({
       id: `a${i + 1}`,

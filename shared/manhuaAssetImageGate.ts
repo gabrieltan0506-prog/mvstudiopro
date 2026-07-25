@@ -25,7 +25,8 @@ import {
 } from "./manhuaWriterAssetCanon.js";
 import { composeManhuaWriterCanonSheetPrompt } from "./manhuaDirectorDistill.js";
 import {
-  composeManhuaHeroCharacterSheetPrompt,
+  composeManhuaHeroFaceCloseupPrompt,
+  composeManhuaHeroFullBodyLookPrompt,
   isManhuaHeroCharacterAnchor,
   pickPropsForCharacterSheet,
   resolveManhuaScenePlatePrompt,
@@ -238,9 +239,26 @@ export type ManhuaAssetImageSpawnPlan = {
   kind: "charsheet" | "sceneplate";
   prompt: string;
   labelZh: string;
-  /** single=旧单张；grid2x2=跨集场景四视角；heroSheet=主角设定板 */
-  layout?: "single" | "grid2x2" | "heroSheet";
+  /**
+   * single=旧单张；grid2x2=跨集场景四视角；
+   * heroFace=主角大头照（锁脸）；heroLook=主角全身妆造（锁服化）。
+   * 主角拆两张是因为官方把人脸与全身拼在一张列为 ID 漂移头号根因。
+   */
+  layout?: "single" | "grid2x2" | "heroFace" | "heroLook";
 };
+
+/** 主角大头照节点 id：仍以 charsheet- 开头，让既有分栏/同步逻辑照旧命中 */
+export function manhuaHeroFaceSheetId(seedId: string): string {
+  return `charsheet-face-${seedId}`;
+}
+
+/** 从设定图节点 id 还原库资产 id（大头照与全身照同源） */
+export function seedIdFromManhuaSheetBlockId(blockId: string): string {
+  return String(blockId || "")
+    .replace(/^charsheet-face-/, "")
+    .replace(/^charsheet-/, "")
+    .replace(/^sceneplate-/, "");
+}
 
 /** 缺图时铺设定卡/场景设定图节点（仅预填；是否扣费运行由调用方决定） */
 export function planManhuaAssetImageSpawns(
@@ -312,8 +330,25 @@ export function planManhuaAssetImageSpawns(
         continue;
       }
       const hero = isManhuaHeroCharacterAnchor(fromCanon);
-      const prompt = hero
-        ? composeManhuaHeroCharacterSheetPrompt({
+      if (hero) {
+        // 大头照排在全身照之前：锁脸最吃紧，官方也要求重要素材前置
+        plans.push({
+          id: manhuaHeroFaceSheetId(id),
+          kind: "charsheet",
+          prompt: composeManhuaHeroFaceCloseupPrompt({
+            nameZh: fromCanon.nameZh,
+            aliasZh: fromCanon.aliasZh,
+            lookZh: fromCanon.lookZh,
+            artStyleLabelZh: artStyle.labelZh,
+            artStylePromptZh: artStyle.promptZh,
+          }),
+          labelZh: fromCanon.nameZh,
+          layout: "heroFace",
+        });
+        plans.push({
+          id: existing?.id || `charsheet-${id}`,
+          kind: "charsheet",
+          prompt: composeManhuaHeroFullBodyLookPrompt({
             nameZh: fromCanon.nameZh,
             aliasZh: fromCanon.aliasZh,
             lookZh: fromCanon.lookZh,
@@ -324,24 +359,28 @@ export function planManhuaAssetImageSpawns(
             artStylePromptZh: artStyle.promptZh,
             topic,
             props: pickPropsForCharacterSheet(fromCanon, canon?.props),
-          })
-        : composeManhuaWriterCanonSheetPrompt({
-            nameZh: fromCanon.nameZh,
-            aliasZh: fromCanon.aliasZh,
-            lookZh: fromCanon.lookZh,
-            motiveZh: fromCanon.motiveZh,
-            noteZh: fromCanon.noteZh,
-            basePromptZh: fromCanon.promptZh,
-            artStyleLabelZh: artStyle.labelZh,
-            artStylePromptZh: artStyle.promptZh,
-            topic,
-          });
+          }),
+          labelZh: fromCanon.nameZh,
+          layout: "heroLook",
+        });
+        continue;
+      }
       plans.push({
         id: existing?.id || `charsheet-${id}`,
         kind: "charsheet",
-        prompt,
+        prompt: composeManhuaWriterCanonSheetPrompt({
+          nameZh: fromCanon.nameZh,
+          aliasZh: fromCanon.aliasZh,
+          lookZh: fromCanon.lookZh,
+          motiveZh: fromCanon.motiveZh,
+          noteZh: fromCanon.noteZh,
+          basePromptZh: fromCanon.promptZh,
+          artStyleLabelZh: artStyle.labelZh,
+          artStylePromptZh: artStyle.promptZh,
+          topic,
+        }),
         labelZh: fromCanon.nameZh,
-        layout: hero ? "heroSheet" : "single",
+        layout: "single",
       });
       continue;
     }
@@ -386,8 +425,24 @@ export function planManhuaAssetImageSpawns(
         motiveZh: sheetMotive,
         noteZh: sheetNote,
       });
-      const prompt = hero
-        ? composeManhuaHeroCharacterSheetPrompt({
+      if (hero) {
+        plans.push({
+          id: manhuaHeroFaceSheetId(id),
+          kind: "charsheet",
+          prompt: composeManhuaHeroFaceCloseupPrompt({
+            nameZh: sheetName,
+            aliasZh: scriptMatch?.aliasZh,
+            lookZh: sheetLook,
+            artStyleLabelZh: artStyle.labelZh,
+            artStylePromptZh: artStyle.promptZh,
+          }),
+          labelZh: sheetName,
+          layout: "heroFace",
+        });
+        plans.push({
+          id: existing?.id || `charsheet-${id}`,
+          kind: "charsheet",
+          prompt: composeManhuaHeroFullBodyLookPrompt({
             nameZh: sheetName,
             aliasZh: scriptMatch?.aliasZh,
             lookZh: sheetLook,
@@ -401,24 +456,28 @@ export function planManhuaAssetImageSpawns(
               { nameZh: sheetName, aliasZh: scriptMatch?.aliasZh, lookZh: sheetLook },
               canon?.props,
             ),
-          })
-        : composeManhuaWriterCanonSheetPrompt({
-            nameZh: sheetName,
-            aliasZh: scriptMatch?.aliasZh,
-            lookZh: sheetLook,
-            motiveZh: sheetMotive,
-            noteZh: sheetNote,
-            basePromptZh: scriptMatch?.promptZh || basePromptZh,
-            artStyleLabelZh: artStyle.labelZh,
-            artStylePromptZh: artStyle.promptZh,
-            topic,
-          });
+          }),
+          labelZh: sheetName,
+          layout: "heroLook",
+        });
+        continue;
+      }
       plans.push({
         id: existing?.id || `charsheet-${id}`,
         kind: "charsheet",
-        prompt,
+        prompt: composeManhuaWriterCanonSheetPrompt({
+          nameZh: sheetName,
+          aliasZh: scriptMatch?.aliasZh,
+          lookZh: sheetLook,
+          motiveZh: sheetMotive,
+          noteZh: sheetNote,
+          basePromptZh: scriptMatch?.promptZh || basePromptZh,
+          artStyleLabelZh: artStyle.labelZh,
+          artStylePromptZh: artStyle.promptZh,
+          topic,
+        }),
         labelZh: sheetName,
-        layout: hero ? "heroSheet" : "single",
+        layout: "single",
       });
       continue;
     }

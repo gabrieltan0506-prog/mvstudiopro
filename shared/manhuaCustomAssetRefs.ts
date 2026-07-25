@@ -22,9 +22,15 @@ export type ManhuaCustomAssetRoleOrUnset = ManhuaCustomAssetRole | "unset";
 
 export type ManhuaCustomAssetSource = "upload" | "generated";
 
-/** 成片垫图职责（与人物/场景/道具分栏正交） */
+/**
+ * 成片垫图职责（与人物/场景/道具分栏正交）。
+ *
+ * identity 与 look 要分两张图：官方把「人脸与全身/服装拼在一张」列为
+ * ID 漂移的头号根因，同一人的多个角度会被认成多个主体。
+ */
 export type ManhuaCustomAssetRefDuty =
   | "identity"
+  | "look"
   | "space"
   | "motion"
   | "first_frame"
@@ -32,7 +38,8 @@ export type ManhuaCustomAssetRefDuty =
   | "style";
 
 export const MANHUA_CUSTOM_ASSET_REF_DUTY_LABEL_ZH: Record<ManhuaCustomAssetRefDuty, string> = {
-  identity: "锁脸·身份",
+  identity: "锁脸·大头照",
+  look: "锁妆造·全身",
   space: "锁场·空间",
   motion: "只参考动作",
   first_frame: "当首帧",
@@ -252,6 +259,7 @@ export function normalizeManhuaCustomAssetRefs(
     const parsedDuty = (
       [
         "identity",
+        "look",
         "space",
         "motion",
         "first_frame",
