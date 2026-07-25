@@ -244,6 +244,11 @@ type Props = {
     role: ManhuaCustomAssetRole;
     seedLibraryId: string;
   }) => void | Promise<void>;
+  /** 单补剧本表里某个还没图的角色/场景（左栏「待生成」卡） */
+  onGenerateCanonAssetSheet?: (opts: {
+    anchorId: string;
+    nameZh: string;
+  }) => void | Promise<void>;
   /** 授权进库半价（付费积分）；兑换码赠送积分路径由父级锁定强制进库 */
   shareAssetToLibrary?: boolean;
   onShareAssetToLibraryChange?: (next: boolean) => void;
@@ -418,6 +423,7 @@ export default function ManhuaScriptWorkbench({
   onCineVocabLocaleChange,
   onRetakeClip,
   onGenerateCustomAssetFromLibrary,
+  onGenerateCanonAssetSheet,
   shareAssetToLibrary = false,
   onShareAssetToLibraryChange,
   assetShareBilling,
@@ -1096,6 +1102,51 @@ export default function ManhuaScriptWorkbench({
       return a.kind === "charsheet" ? -1 : 1;
     });
   }, [blocks, assetCanon, customAssetRefs]);
+  /**
+   * 剧本表里点名、但还没有图的角色/场景。
+   * 只收 charsheet / sceneplate 两类——道具在 planManhuaAssetImageSpawns 里是并进角色卡的，
+   * 没有独立出图路径，列出来会变成点了没反应的死卡。
+   */
+  const pendingSheetAnchors = useMemo(() => {
+    if (!assetCanon) return [] as Array<{
+      anchorId: string;
+      kind: "charsheet" | "sceneplate";
+      nameZh: string;
+      lookZh: string;
+    }>;
+    const hasImage = (anchorId: string, kind: "charsheet" | "sceneplate") =>
+      episodeSheetGallery.some((g) => g.kind === kind && g.id.includes(anchorId)) ||
+      customAssetRefs.some(
+        (r) =>
+          String(r.seedLibraryId || "") === anchorId &&
+          /^https:\/\//i.test(String(r.url || "")),
+      );
+    const out: Array<{
+      anchorId: string;
+      kind: "charsheet" | "sceneplate";
+      nameZh: string;
+      lookZh: string;
+    }> = [];
+    for (const c of assetCanon.characters) {
+      if (hasImage(c.id, "charsheet")) continue;
+      out.push({
+        anchorId: c.id,
+        kind: "charsheet",
+        nameZh: c.nameZh,
+        lookZh: String(c.lookZh || "").trim(),
+      });
+    }
+    for (const l of assetCanon.locations) {
+      if (hasImage(l.id, "sceneplate")) continue;
+      out.push({
+        anchorId: l.id,
+        kind: "sceneplate",
+        nameZh: l.nameZh,
+        lookZh: String(l.lookZh || "").trim(),
+      });
+    }
+    return out;
+  }, [assetCanon, episodeSheetGallery, customAssetRefs]);
   const customSummaryZh = summarizeCustomAssetRefsZh(customAssetRefs);
   /** 编剧主场景优先：有本集主场景名时，勿用题材默认的皇宫大殿库 id 去挂示范锁 */
   const lockSceneId = useMemo(() => {
@@ -2195,12 +2246,18 @@ export default function ManhuaScriptWorkbench({
               <div>
                 <div className="text-[11px] font-semibold text-emerald-50/95">
                   本集设定图 · {episodeSheetGallery.length} 张
+                  {pendingSheetAnchors.length ? (
+                    <span className="ml-1 font-normal text-amber-200/80">
+                      · 待生成 {pendingSheetAnchors.length}
+                    </span>
+                  ) : null}
                 </div>
                 <p className="mt-0.5 text-[10px] leading-4 text-white/45">
-                  角色定妆与场景空镜分栏；点缩略图定位画布。生成后同步进下方「我的角色 / 我的场景」。
+                  角色定妆与场景空镜分栏；点缩略图定位画布，点虚线卡补这一张。生成后同步进下方「我的角色 /
+                  我的场景」。
                 </p>
               </div>
-              {episodeSheetGallery.length ? (
+              {episodeSheetGallery.length || pendingSheetAnchors.length ? (
                 <>
                   {(
                     [
@@ -2217,6 +2274,7 @@ export default function ManhuaScriptWorkbench({
                     ] as const
                   ).map((sec) => {
                     const items = episodeSheetGallery.filter((x) => x.kind === sec.kind);
+                    const pending = pendingSheetAnchors.filter((x) => x.kind === sec.kind);
                     return (
                       <div
                         key={sec.kind}
@@ -2226,8 +2284,13 @@ export default function ManhuaScriptWorkbench({
                         <div className="text-[10px] font-semibold text-emerald-50/80">
                           {sec.titleZh}
                           <span className="ml-1 font-normal text-white/40">· {items.length}</span>
+                          {pending.length ? (
+                            <span className="ml-1 font-normal text-amber-200/70">
+                              · 待生成 {pending.length}
+                            </span>
+                          ) : null}
                         </div>
-                        {items.length ? (
+                        {items.length || pending.length ? (
                           <div className="mt-1.5 flex flex-wrap gap-2">
                             {items.map((item) => (
                               <button
@@ -2252,6 +2315,35 @@ export default function ManhuaScriptWorkbench({
                                 </span>
                               </button>
                             ))}
+                            {pending.map((p) => (
+                              <button
+                                key={p.anchorId}
+                                type="button"
+                                data-manhua-action="generate-canon-sheet"
+                                data-manhua-pending-anchor={p.anchorId}
+                                disabled={factoryBusy || !onGenerateCanonAssetSheet}
+                                onClick={() => {
+                                  void onGenerateCanonAssetSheet?.({
+                                    anchorId: p.anchorId,
+                                    nameZh: p.nameZh,
+                                  });
+                                }}
+                                className="flex w-[88px] flex-col overflow-hidden rounded-lg border border-dashed border-amber-300/45 bg-amber-500/[0.07] text-left hover:border-amber-200/70 hover:bg-amber-500/15 disabled:opacity-40"
+                                title={
+                                  p.lookZh
+                                    ? `补图：${p.nameZh}｜${p.lookZh.slice(0, 60)}`
+                                    : `补图：${p.nameZh}`
+                                }
+                              >
+                                <span className="flex aspect-[3/4] w-full flex-col items-center justify-center gap-1 px-1 text-center text-amber-100/85">
+                                  <span className="text-[16px] leading-none">＋</span>
+                                  <span className="text-[9px] leading-3">待生成</span>
+                                </span>
+                                <span className="truncate px-1.5 py-1 text-[10px] font-semibold text-amber-50/90">
+                                  {p.nameZh}
+                                </span>
+                              </button>
+                            ))}
                           </div>
                         ) : (
                           <p className="mt-1 text-[10px] text-white/35">{sec.emptyZh}</p>
@@ -2259,6 +2351,27 @@ export default function ManhuaScriptWorkbench({
                       </div>
                     );
                   })}
+                  {pendingSheetAnchors.length ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-[10px] text-amber-100/70">
+                        虚线卡是剧本点名、还没出图的，点一张补一张；也可一次补齐。
+                      </p>
+                      <button
+                        type="button"
+                        data-manhua-action="spawn-episode-sheets"
+                        disabled={
+                          !outlineComplete ||
+                          !assetGate.castLocked ||
+                          !assetGate.sceneLocked ||
+                          factoryBusy
+                        }
+                        onClick={enterStoryboard}
+                        className="shrink-0 rounded-lg border border-violet-300/50 bg-violet-500/25 px-2.5 py-1 text-[11px] font-semibold text-violet-50 hover:bg-violet-500/40 disabled:opacity-45"
+                      >
+                        补齐 {pendingSheetAnchors.length} 张
+                      </button>
+                    </div>
+                  ) : null}
                 </>
               ) : (
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">

@@ -3127,11 +3127,17 @@ export default function OmniCanvas() {
       topicOverride?: string;
       /** 清掉旧生成设定图并强制按现稿重出（重扩写/用户点「按剧本重出」） */
       forceRegenerate?: boolean;
+      /**
+       * 只补编剧表里的某一个资产（左栏「待生成」卡点击）。
+       * 设了就不清旧图、不动其他资产、不跳阶段——只出这一张。
+       */
+      onlyAnchorId?: string;
     }) => {
       const assetCanon = opts?.assetCanonOverride ?? projectBible?.assetCanon;
       const episodeIndex = opts?.episodeIndexOverride ?? writerFocusEpisode;
       const topic = String(opts?.topicOverride || factoryTopic || "").trim();
       const forceRegenerate = Boolean(opts?.forceRegenerate);
+      const onlyAnchorId = String(opts?.onlyAnchorId || "").trim();
       const writerMainSceneId =
         assetCanon?.episodeMainSceneId[episodeIndex] || assetCanon?.locations[0]?.id || "";
       // 按剧本出资产：主场景跟编剧表；清掉未列入场景表的库示范场景（如 scene_06 皇宫大殿）
@@ -3150,7 +3156,7 @@ export default function OmniCanvas() {
         ),
       });
       const shouldPurge =
-        forceRegenerate || Boolean(assetCanon && !align.aligned);
+        !onlyAnchorId && (forceRegenerate || Boolean(assetCanon && !align.aligned));
       if (shouldPurge) {
         const purged = purgeStaleCustomAssetRefsForCanon(workingRefs, assetCanon, {
           forceAllGenerated: forceRegenerate,
@@ -3283,6 +3289,7 @@ export default function OmniCanvas() {
       // 强制重出 / 与现稿不对齐时绝不早退进分镜
       if (
         !forceRegenerate &&
+        !onlyAnchorId &&
         alignAfterPurge.aligned &&
         gate.ready &&
         hasEpisodeSheetMedia
@@ -3301,14 +3308,20 @@ export default function OmniCanvas() {
         return;
       }
 
-      const plans = planManhuaAssetImageSpawns(gateInput, {
-        forceEpisodeSheets: forceRegenerate || !hasEpisodeSheetMedia,
+      const plannedAll = planManhuaAssetImageSpawns(gateInput, {
+        // 单补时 gate 可能已 ready（其他资产齐），必须强制按剧本表出卡才拿得到这一张
+        forceEpisodeSheets: forceRegenerate || !hasEpisodeSheetMedia || Boolean(onlyAnchorId),
       });
+      const plans = onlyAnchorId
+        ? plannedAll.filter((p) => p.id.includes(onlyAnchorId))
+        : plannedAll;
       if (!plans.length) {
         toast.message(
-          hasEpisodeSheetMedia
-            ? gate.hintZh || "资产图未齐"
-            : "暂无可生成的设定图：请确认剧本人物/场景表，或到「我的角色 / 我的场景」上传参考",
+          onlyAnchorId
+            ? "这个资产已经有图了，可在画布上点它重出"
+            : hasEpisodeSheetMedia
+              ? gate.hintZh || "资产图未齐"
+              : "暂无可生成的设定图：请确认剧本人物/场景表，或到「我的角色 / 我的场景」上传参考",
         );
         return;
       }
@@ -3317,9 +3330,11 @@ export default function OmniCanvas() {
       abortRef.current = ac;
       setFactoryBusy(true);
       setFactoryProgress(
-        gate.viaWriterCanon
-          ? "从剧本出角色/场景设定图…"
-          : "准备角色/场景图…",
+        onlyAnchorId
+          ? `补「${plans[0]?.labelZh || "设定图"}」…`
+          : gate.viaWriterCanon
+            ? "从剧本出角色/场景设定图…"
+            : "准备角色/场景图…",
       );
       pushDebug("confirmAssetsFromScript:start", {
         detail: `plans=${plans.length} · viaCanon=${gate.viaWriterCanon} · missingCast=${gate.missingCastIds.length}`,
@@ -3454,6 +3469,8 @@ export default function OmniCanvas() {
         saveCanvasState(working, canvasEdges);
         {
           const focusAssetId =
+            // 单补：镜头停在刚补的那张，别跳回第一个角色
+            (onlyAnchorId ? plans[0]?.id : "") ||
             working.find((b) => b.id.startsWith("charsheet-"))?.id ||
             working.find((b) => b.id.startsWith("sceneplate-"))?.id;
           if (focusAssetId) openManhuaFactoryCanvas(focusAssetId);
@@ -3465,7 +3482,22 @@ export default function OmniCanvas() {
             (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
           ),
         });
-        if (nextGate.ready) {
+        if (onlyAnchorId) {
+          // 单补不改阶段：用户只是回填一张缺图，不该被推进/推回
+          const done = Boolean(
+            working.find((b) => b.id === plans[0]?.id)?.outputUrl ||
+              working.find((b) => b.id === plans[0]?.id)?.outputUrls?.[0],
+          );
+          toast.message(
+            done
+              ? `已补好「${plans[0]?.labelZh || "设定图"}」`
+              : `「${plans[0]?.labelZh || "设定图"}」没出图，可再点一次`,
+          );
+          pushDebug("confirmAssetsFromScript:single", {
+            level: done ? "ok" : "warn",
+            detail: `${plans[0]?.id || onlyAnchorId} · done=${done}`,
+          });
+        } else if (nextGate.ready) {
           setWorkflowPhase("storyboard");
           toast.message("角色图 / 场景图已齐，已按竖排对齐画布，可出关键静帧");
           pushDebug("confirmAssetsFromScript:ok", {
@@ -3483,7 +3515,7 @@ export default function OmniCanvas() {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "资产图生成失败";
         toast.error("角色/场景图未完成", { description: msg });
-        setWorkflowPhase("assets");
+        if (!onlyAnchorId) setWorkflowPhase("assets");
         pushDebug("confirmAssetsFromScript:error", { level: "error", detail: msg });
       } finally {
         setFactoryBusy(false);
@@ -4535,6 +4567,9 @@ export default function OmniCanvas() {
                   assetsSkipped={assetsSkipped}
                   onAssetsSkippedChange={setAssetsSkipped}
                   onConfirmAssetsAndPrepareImages={confirmAssetsAndPrepareImages}
+                  onGenerateCanonAssetSheet={({ anchorId }) =>
+                    confirmAssetsAndPrepareImages({ onlyAnchorId: anchorId })
+                  }
                   onRegenerateAssetsFromScript={() =>
                     void confirmAssetsAndPrepareImages({ forceRegenerate: true })
                   }
