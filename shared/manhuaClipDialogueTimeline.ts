@@ -154,9 +154,10 @@ function cameraTrajectoryZh(cameraZh: string, actionZh: string): string {
 }
 
 /**
- * Seedance 秒轴：每镜必须列出动作轨迹 / 运镜轨迹 / 景别，并可带光与氛围。
- * 例：`0–5s：动作轨迹：…。运镜轨迹：缓推。景别：近景。光：侧逆。氛围：压迫。@角色2说「…」。`
- * 身份靠垫图/@Image；光学 mm/快门出片时另转。
+ * Seedance 秒轴：每镜必须列出动作轨迹 / 运镜轨迹 / 景别，并带表演三维（情绪 /
+ * 微表情 / 语气）——只给台词内容不给演法，引擎只会念台词、不会演。
+ * 例：`0–5s：动作轨迹：握拳对峙，咬牙。运镜轨迹：微推。景别：近景。情绪：怒。@角色2以压嗓说「放开！」。`
+ * 身份靠垫图/@图片N；光学 mm/快门出片时另转。
  */
 export function formatManhuaDialogueTimelineBlock(
   shots: ManhuaWorkbenchShot[],
@@ -171,17 +172,24 @@ export function formatManhuaDialogueTimelineBlock(
 ): string {
   const beats = buildManhuaDialogueTimelineBeats(shots, durationSec);
   if (!beats.length) return "本段暂无分镜。";
-  const visibleOf = (b: ManhuaDialogueTimelineBeat) =>
-    String(b.microExpressionZh || "").trim() || String(b.emotionZh || "").trim();
+  const emotionOf = (b: ManhuaDialogueTimelineBeat) => String(b.emotionZh || "").trim();
+  const microOf = (b: ManhuaDialogueTimelineBeat) =>
+    String(b.microExpressionZh || "").trim();
+  const toneOf = (b: ManhuaDialogueTimelineBeat) => String(b.voiceToneZh || "").trim();
   /**
-   * 每镜微表情全同 = 段级默认灌进了每一镜（如三镜都写「眼神由惊转硬」）。
+   * 某一维全镜逐字相同 = 段级默认灌进了每一镜（如三镜都写「眼神由惊转硬」）。
    * 提到段头写一次，别在秒轴复读——复读会盖掉真正的镜间差异。
+   *
+   * 三维各自判定而非合成一个值：常见情况是情绪贯穿全段、微表情逐镜递进，
+   * 合起来一刀切会把递进的那一维也当成复读吞掉。
    */
-  const firstVisible = visibleOf(beats[0]!);
-  const sharedVisible =
-    beats.length > 1 && firstVisible && beats.every((b) => visibleOf(b) === firstVisible)
-      ? firstVisible
-      : "";
+  const pickShared = (of: (b: ManhuaDialogueTimelineBeat) => string) => {
+    const first = of(beats[0]!);
+    return beats.length > 1 && first && beats.every((b) => of(b) === first) ? first : "";
+  };
+  const sharedEmotion = pickShared(emotionOf);
+  const sharedMicro = pickShared(microOf);
+  const sharedTone = pickShared(toneOf);
 
   const lines = beats.map((b) => {
     const frame = extractManhuaFramingLabelZh(b.cameraZh, b.actionZh);
@@ -196,21 +204,35 @@ export function formatManhuaDialogueTimelineBlock(
       Boolean(String(b.cameraZh || "").trim()),
     );
     if (!action) action = "承接上镜动作";
-    const visible = sharedVisible ? "" : visibleOf(b);
+    // 微表情贴着动作走（眼神/下颌/喉结本就是可见动作细节）；情绪是驱动它的
+    // 内在状态，单列一栏。两者同值时只留微表情，它更具体。
+    const micro = sharedMicro ? "" : microOf(b);
+    const emotionRaw = sharedEmotion ? "" : emotionOf(b);
+    const emotion = emotionRaw && emotionRaw !== micro ? emotionRaw : "";
+    const tone = sharedTone ? "" : toneOf(b);
     const line = stripManhuaSpeakerAtPrefix(b.dialogueZh).trim();
     // 光与氛围是段级常量，段头【光影·景别·氛围】已写；每镜再复读一遍，
     // 15s 三镜就让同一串配色出现五次，纯占 token 又稀释镜级信息。
     const bits = [
-      `动作轨迹：${action}${visible ? `，${visible}` : ""}`,
+      `动作轨迹：${action}${micro ? `，${micro}` : ""}`,
       `运镜轨迹：${traj}`,
       `景别：${frame}`,
+      emotion ? `情绪：${emotion}` : "",
       speaker || "",
-      line ? `说「${line}」` : "",
+      // 语气决定「怎么说」，是口型与气口的依据；只给台词内容等于让引擎自己猜演法
+      line ? `${tone ? `以${tone}` : ""}说「${line}」` : "",
     ].filter(Boolean);
     return `${b.startSec}–${b.endSec}s：${bits.join("。")}。`;
   });
 
-  const toneLine = sharedVisible ? `【表演基调】${sharedVisible}（贯穿本段）。` : "";
+  const sharedBits = [
+    sharedEmotion ? `情绪：${sharedEmotion}` : "",
+    sharedMicro && sharedMicro !== sharedEmotion ? `微表情：${sharedMicro}` : "",
+    sharedTone ? `语气：${sharedTone}` : "",
+  ].filter(Boolean);
+  const toneLine = sharedBits.length
+    ? `【表演基调】${sharedBits.join("｜")}（贯穿本段）。`
+    : "";
   return [toneLine, ...lines].filter(Boolean).join("\n");
 }
 

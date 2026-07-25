@@ -67,6 +67,9 @@ describe("manhuaClipDialogueTimeline", () => {
     expect(block).toContain("动作轨迹：握拳对峙，咬牙");
     expect(block).toContain("运镜轨迹：");
     expect(block).toContain("景别：近景");
+    // 演技三维都要落到秒轴：只给台词内容，引擎只会念不会演
+    expect(block).toContain("情绪：怒");
+    expect(block).toContain("以压嗓说「放开！」");
     // 光与氛围归段头【光影·景别·氛围】写一次；秒轴复读只会让同一串配色刷屏
     expect(block).not.toContain("光：侧逆光压暗");
     expect(block).not.toContain("氛围：冷青");
@@ -120,7 +123,7 @@ describe("manhuaClipDialogueTimeline", () => {
     expect(block).not.toContain("墨蓝雨夜");
 
     // 三镜同一个微表情 → 提到段头写一次，秒轴不复读
-    expect(block).toContain("【表演基调】眼神由惊转硬（贯穿本段）。");
+    expect(block).toContain("【表演基调】微表情：眼神由惊转硬（贯穿本段）。");
     expect(block.match(/眼神由惊转硬/g)).toHaveLength(1);
 
     // 运镜栏已有权威值时，动作栏开头的运镜词要剥掉，别和运镜栏打架
@@ -143,6 +146,49 @@ describe("manhuaClipDialogueTimeline", () => {
     expect(block).not.toContain("【表演基调】");
     expect(block).toContain("眼眶发红");
     expect(block).toContain("下颌绷紧");
+  });
+
+  /**
+   * 表演三维分开判定：情绪常贯穿整段，微表情却逐镜递进。合成一个值去重会
+   * 把递进的那一维也当成复读吞掉，演技张力就被抹平了。
+   */
+  it("hoists only the dimension that actually repeats", () => {
+    const block = formatManhuaDialogueTimelineBlock(
+      [
+        {
+          index: 1,
+          durationSec: 5,
+          cameraZh: "近景",
+          actionZh: "攥紧衣角",
+          dialogueZh: "我没事。",
+          emotionZh: "隐忍",
+          microExpressionZh: "眼眶发红",
+          voiceToneZh: "气声",
+        },
+        {
+          index: 2,
+          durationSec: 5,
+          cameraZh: "中景",
+          actionZh: "别开脸",
+          dialogueZh: "你走吧。",
+          emotionZh: "隐忍",
+          microExpressionZh: "下颌绷紧",
+          voiceToneZh: "气声",
+        },
+      ],
+      10,
+    );
+
+    // 情绪与语气全段相同 → 段头写一次
+    expect(block).toContain("【表演基调】情绪：隐忍｜语气：气声（贯穿本段）。");
+    expect(block.match(/隐忍/g)).toHaveLength(1);
+    expect(block.match(/气声/g)).toHaveLength(1);
+    // 微表情逐镜不同 → 留在各自秒位，不能被一起吞掉
+    expect(block).toContain("眼眶发红");
+    expect(block).toContain("下颌绷紧");
+    // 语气已提到段头，秒轴不再重复挂在台词上
+    expect(block).toContain("说「我没事。」");
+    expect(block).not.toContain("以气声说");
   });
 
   it("never strips a real action that merely starts with a camera-ish verb", () => {
