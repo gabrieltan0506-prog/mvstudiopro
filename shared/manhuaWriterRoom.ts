@@ -83,6 +83,12 @@ export function buildManhuaWriterExpandPrompt(opts: {
   viralTemplateAddon?: string | null;
   /** 单集时长档位：决定节拍格抽到几拍、密度建议报哪个秒数 */
   lengthTierId?: string | null;
+  /** 局部改写：只重写第 N 集起，之前的集不许动 */
+  fromEpisode?: number | null;
+  /** 集内起点：起点那一集的前 N-1 段剧情必须原样保留 */
+  fromSegment?: number | null;
+  /** 起点那一集的旧正文；配合 fromSegment 锁住前几段 */
+  lockedEpisodeBody?: string | null;
 }): string {
   const topic = String(opts.topic || "").trim().slice(0, 500);
   const brief = String(opts.brief || "").trim().slice(0, 2000);
@@ -97,6 +103,31 @@ export function buildManhuaWriterExpandPrompt(opts: {
   const viralAddon =
     String(opts.viralTemplateAddon || "").trim() ||
     formatManhuaViralTemplateWriterAddon(opts.viralTemplateId, null, opts.lengthTierId);
+  /**
+   * 局部改写锁稿：保留段已经出过图、出过片，剧情一旦被改写就和画面对不上。
+   * 把旧正文原样交回并要求前几段逐字不动，比事后人工核对便宜得多。
+   */
+  const from = Math.max(0, Math.floor(Number(opts.fromEpisode) || 0));
+  const fromSeg = Math.max(1, Math.floor(Number(opts.fromSegment) || 1));
+  const lockedBody = String(opts.lockedEpisodeBody || "").trim().slice(0, 6000);
+  const partialBlock =
+    from > 0
+      ? [
+          "",
+          "【局部改写】",
+          `- 只重写第 ${from} 集及之后；第 1–${from - 1} 集已定稿，本次不要输出改动，但要保持人物关系与既定事实连贯。`,
+          ...(fromSeg > 1 && lockedBody
+            ? [
+                `- 第 ${from} 集的前 ${fromSeg - 1} 段已经出片，剧情必须逐字保留，只从第 ${fromSeg} 段往后改写。`,
+                `- 第 ${from} 集旧正文如下，前 ${fromSeg - 1} 段照抄，不得改台词、人物或场景：`,
+                "```",
+                lockedBody,
+                "```",
+              ]
+            : []),
+          "- 新增人物 / 场景 / 道具必须补进对应表，否则后续无法锁定外形。",
+        ].join("\n")
+      : "";
   return [
     "你是竖屏漫剧连载编剧。根据用户题材与补充条件，扩写成可拍的连载剧情包。",
     "硬规则：",
@@ -121,6 +152,7 @@ export function buildManhuaWriterExpandPrompt(opts: {
     purpose ? formatPlotPurposeCameraBlock(purpose) : "",
     pacing ? formatScenePacingBlock(pacing) : "",
     viralAddon,
+    partialBlock,
     "",
     "请严格按下列结构输出：",
     "",

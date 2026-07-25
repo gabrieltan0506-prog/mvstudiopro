@@ -7826,6 +7826,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           viralTemplateId: z.string().max(64).optional(),
           /** 单集时长档位：90s 半强度 / 180s 全长 */
           lengthTierId: z.string().max(32).optional(),
+          /** 局部改写起点：只重写第 N 集起（0/空 = 全部重写） */
+          fromEpisode: z.number().int().min(0).max(12).optional(),
+          /** 起点那一集内从第几段起改；>1 时须带 lockedEpisodeBody 锁住前几段 */
+          fromSegment: z.number().int().min(1).max(24).optional(),
+          /** 起点那一集的旧正文，供锁稿比对 */
+          lockedEpisodeBody: z.string().max(6000).optional(),
         }),
       )
       .mutation(async ({ input }) => {
@@ -7866,6 +7872,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           viralTemplateId: input.viralTemplateId,
           viralTemplateAddon: viralTemplateAddon || undefined,
           lengthTierId: input.lengthTierId,
+          fromEpisode: input.fromEpisode,
+          fromSegment: input.fromSegment,
+          lockedEpisodeBody: input.lockedEpisodeBody,
         });
         let markdown = "";
         try {

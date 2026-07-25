@@ -8,6 +8,7 @@ import {
   isPlaceholderSeriesTitle,
   parseManhuaWriterPack,
   writerPackLooksReady,
+  spliceManhuaWriterPackFromEpisode,
 } from "./manhuaWriterRoom";
 
 const SAMPLE = `## 系列标题
@@ -148,5 +149,74 @@ describe("manhuaWriterRoom", () => {
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.error).toMatch(/分集|第1集/);
+  });
+});
+
+describe("局部改写", () => {
+  const ep = (index: number, body: string) => ({
+    index,
+    title: `第${index}集`,
+    body,
+    endHook: `钩子${index}`,
+  });
+
+  it("保留集沿用旧正文，起点之后用新稿", () => {
+    const prev = {
+      seriesTitle: "旧",
+      logline: "旧",
+      charactersMd: "沈照野｜青衫",
+      propsMd: "",
+      locationsMd: "断桥｜石桥",
+      episodes: [ep(1, "旧一"), ep(2, "旧二"), ep(3, "旧三")],
+      rawMarkdown: "x",
+      episodeCount: 3,
+    };
+    const next = {
+      ...prev,
+      seriesTitle: "新",
+      charactersMd: "沈照野｜青衫\n裴砚舟｜玄甲",
+      episodes: [ep(1, "新一"), ep(2, "新二"), ep(3, "新三")],
+    };
+    const merged = spliceManhuaWriterPackFromEpisode(prev, next, 3);
+    expect(merged.episodes.map((e) => e.body)).toEqual(["旧一", "旧二", "新三"]);
+    expect(merged.seriesTitle).toBe("新");
+    // 扩写按剧情加人：新角色必须进表，否则后面锁不了脸
+    expect(merged.charactersMd).toContain("沈照野");
+    expect(merged.charactersMd).toContain("裴砚舟");
+  });
+
+  it("起点为 1 或无旧稿时整包换新", () => {
+    const next = {
+      seriesTitle: "新",
+      logline: "",
+      charactersMd: "",
+      propsMd: "",
+      locationsMd: "",
+      episodes: [ep(1, "新一")],
+      rawMarkdown: "x",
+      episodeCount: 1,
+    };
+    expect(spliceManhuaWriterPackFromEpisode(null, next, 3)).toBe(next);
+    expect(spliceManhuaWriterPackFromEpisode(next, next, 1)).toBe(next);
+  });
+
+  it("集内起点会把旧正文交回并要求前几段逐字保留", () => {
+    const p = buildManhuaWriterExpandPrompt({
+      topic: "权谋",
+      brief: "",
+      episodeCount: 3,
+      fromEpisode: 3,
+      fromSegment: 4,
+      lockedEpisodeBody: "第三集旧正文原文",
+    });
+    expect(p).toContain("【局部改写】");
+    expect(p).toContain("只重写第 3 集及之后");
+    expect(p).toContain("前 3 段已经出片");
+    expect(p).toContain("第三集旧正文原文");
+  });
+
+  it("全部重写时不注入局部改写段", () => {
+    const p = buildManhuaWriterExpandPrompt({ topic: "权谋", brief: "", episodeCount: 3 });
+    expect(p).not.toContain("【局部改写】");
   });
 });
