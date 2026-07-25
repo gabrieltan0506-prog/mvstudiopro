@@ -77,4 +77,25 @@ describe("manhuaWorkbenchActionGate", () => {
     });
     expect(msg).toMatch(/导戏单/);
   });
+
+  it("clip gate blocks on cast mismatch even when stills are ready", () => {
+    // 静帧齐 → 旧逻辑直接放行，于是拿库里无关的脸出片，白烧一次视频钱
+    const msg = explainManhuaClipActionGate({
+      outlineComplete: true,
+      assetGate: readyGate,
+      stillsReadyEnough: true,
+      segmentCastMismatchHintZh: "第 1 段的「沈沧澜」在已有资产里找不到对应的图",
+    });
+    expect(msg).toMatch(/沈沧澜/);
+  });
+
+  it("clip gate stays open when assets and script line up", () => {
+    const msg = explainManhuaClipActionGate({
+      outlineComplete: true,
+      assetGate: readyGate,
+      stillsReadyEnough: true,
+      segmentCastMismatchHintZh: null,
+    });
+    expect(msg).toBeNull();
+  });
 });

@@ -344,6 +344,94 @@ describe("manhuaAssetLockRegistry", () => {
     expect(block).not.toContain("玄铁缺口刀");
   });
 
+  it("flags mismatch instead of dumping an unrelated cast when nothing matches", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "c_xian",
+          url: "https://cdn.example/xian.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "马县丞",
+        },
+        {
+          id: "c_su",
+          url: "https://cdn.example/su.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "苏文谦",
+        },
+        {
+          id: "s_cang",
+          url: "https://cdn.example/cang.jpg",
+          role: "scene",
+          source: "upload",
+          labelZh: "雪关粮仓",
+        },
+      ],
+    });
+    // 剧本换成另一部戏、资产没跟着重出：可拍表点了名，库里一个都对不上
+    const allowed = resolveManhuaSegmentClipAllowedAssets({
+      haystack: "【第1段·15s】断月桥\n0–5s：燃烧的火箭钉入湿滑桥板，沈沧澜绷紧侧脸。",
+      castZh: "沈沧澜、黑衣剑客",
+      registry: reg,
+      castCount: 2,
+    });
+    expect(allowed.mode).toBe("mismatch");
+    expect(allowed.characterIds).toEqual([]);
+    expect(allowed.unmatchedCastNames).toEqual(["沈沧澜", "黑衣剑客"]);
+    // 空匹配曾被下游当成「不限制」，于是把全集资产整套喂进成片
+    const block = formatManhuaAssetImageBindBlock(reg, 8, {
+      allowedIds: allowed.allowedIds,
+    });
+    expect(block).not.toContain("马县丞");
+    expect(block).not.toContain("苏文谦");
+  });
+
+  it("keeps listing everything when the caller passes no allow filter", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "c_xian",
+          url: "https://cdn.example/xian.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "马县丞",
+        },
+      ],
+    });
+    expect(formatManhuaAssetImageBindBlock(reg, 8)).toContain("马县丞");
+  });
+
+  it("marks scene as fallback when the script names a place with no asset", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "c_jian",
+          url: "https://cdn.example/jian.jpg",
+          role: "character",
+          source: "upload",
+          labelZh: "黑衣剑客",
+        },
+        {
+          id: "s_cang",
+          url: "https://cdn.example/cang.jpg",
+          role: "scene",
+          source: "upload",
+          labelZh: "雪关粮仓",
+        },
+      ],
+    });
+    const allowed = resolveManhuaSegmentClipAllowedAssets({
+      haystack: "【第1段·15s】断月桥\n0–5s：黑衣剑客踩灭箭火。",
+      registry: reg,
+      mainSceneId: "s_cang",
+    });
+    // 场景可共用，不硬拦；但要让左栏能提示「断月桥没有对应图，用的是雪关粮仓」
+    expect(allowed.sceneIds).toEqual(["s_cang"]);
+    expect(allowed.sceneFallback).toBe(true);
+  });
+
   it("sanitizeManhuaClipPromptForUi strips 画风 lines", () => {
     const raw = [
       "【第1段·15s】断月桥",

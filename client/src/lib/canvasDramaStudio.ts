@@ -1550,7 +1550,12 @@ export function ensureManhuaFragmentClips(
     /** 段手选造型 e集:s段 → characterId → lookSetId */
     segmentLookBindings?: Record<string, Record<string, string>> | null;
   },
-): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
+): {
+  blocks: CanvasBlock[];
+  edges: CanvasEdge[];
+  /** 非空表示这些段的可拍表角色在资产库找不到，成片门禁应拦下 */
+  assetMismatch: { segmentIndexes: number[]; castNames: string[] } | null;
+} {
   const ep =
     typeof episodeIndex === "number" && episodeIndex >= 1
       ? episodeIndex
@@ -1564,8 +1569,12 @@ export function ensureManhuaFragmentClips(
     { videoModel: MANHUA_FACTORY_DEFAULT_VIDEO_MODEL },
   );
 
+  /** 可拍表点了名、资产库却一个都对不上的段：喂错脸会白烧钱，交给门禁拦 */
+  const castMismatchSegments: number[] = [];
+  const unmatchedCastNames = new Set<string>();
+
   const keyarts = blocks.filter((b) => b.id.startsWith("keyart-") && sameEpisode(b)).sort(sortKeyartBlocks);
-  if (!keyarts.length) return { blocks, edges };
+  if (!keyarts.length) return { blocks, edges, assetMismatch: null };
 
   const keyartByShot = new Map<number, CanvasBlock>();
   for (const keyart of keyarts) {
@@ -1697,6 +1706,10 @@ export function ensureManhuaFragmentClips(
       mainSceneId: mainScene?.id,
       castCount,
     });
+    if (segAssets.mode === "mismatch") {
+      castMismatchSegments.push(seg.index);
+      for (const n of segAssets.unmatchedCastNames) unmatchedCastNames.add(n);
+    }
     const speakerTagByNameZh = buildSpeakerTagByNameZh(
       lockRegistry,
       opts?.assetCanon,
@@ -1904,7 +1917,16 @@ export function ensureManhuaFragmentClips(
     characterSheetUrlById: opts?.characterSheetUrlById,
     registry: opts?.registry,
   });
-  return { blocks: laid, edges: nextEdges };
+  return {
+    blocks: laid,
+    edges: nextEdges,
+    assetMismatch: castMismatchSegments.length
+      ? {
+          segmentIndexes: castMismatchSegments,
+          castNames: Array.from(unmatchedCastNames),
+        }
+      : null,
+  };
 }
 
 /** 静帧/成片竖排模块：每列最多几镜（约 13 镜 → 3 列） */

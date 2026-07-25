@@ -481,14 +481,15 @@ describe("canvasDramaStudio factory", () => {
           url: "https://cdn.example/hero.jpg",
           role: "character",
           source: "generated",
-          labelZh: "剑客",
+          // 名字须与分镜文案（刀客推门进客栈）对得上，否则按新口径属错配、不再挂对照
+          labelZh: "刀客",
         },
         {
           id: "bridge",
           url: "https://cdn.example/bridge.jpg",
           role: "scene",
           source: "generated",
-          labelZh: "雨桥",
+          labelZh: "客栈",
         },
       ],
     });

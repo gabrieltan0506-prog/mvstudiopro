@@ -408,13 +408,19 @@ export function formatManhuaAssetImageBindBlock(
   const activeLooks = new Set(
     (opts?.activeLookSetIds || []).map((x) => String(x || "").trim()).filter(Boolean),
   );
+  /**
+   * 传了 allowedIds（哪怕是空数组）就是明确表态「本段只要这些」。
+   * 曾经按 allowed.size 判断，于是「一个都没匹配上」被当成「不限制」，
+   * 把全集资产整套塞进成片——喂错角色、还把真正要的场景挤出 @Image。
+   */
+  const hasAllowFilter = Array.isArray(opts?.allowedIds);
   const allowed = new Set(
     (opts?.allowedIds || []).map((x) => String(x || "").trim()).filter(Boolean),
   );
   const rows = (registry?.slots || [])
     .filter((s) => isBindableAssetPath(s.path))
     .filter((s) => {
-      if (allowed.size && !allowed.has(String(s.id || "").trim())) return false;
+      if (hasAllowFilter && !allowed.has(String(s.id || "").trim())) return false;
       if (s.role !== "wardrobe") return true;
       // 有本段造型手选时：只带启用套；否则带全部已挂图服装
       if (!activeLooks.size) return true;
@@ -438,8 +444,15 @@ export type ManhuaSegmentClipAllowedAssets = {
   propIds: string[];
   /** 写入对照的全部 id（含服装若挂在角色上则由 activeLook 另控） */
   allowedIds: string[];
-  /** matched=剧本/可拍表点名；empty=点不到（宁缺勿假锁库序前几人） */
-  mode: "matched" | "empty";
+  /**
+   * matched=剧本/可拍表点名；empty=本段本来就没人（空镜）；
+   * mismatch=可拍表点了名但资产库一个都对不上（多半是资产没跟着剧本重出）
+   */
+  mode: "matched" | "empty" | "mismatch";
+  /** 可拍表点了名却在资产库找不到的角色，用于左栏报错让人去补 */
+  unmatchedCastNames: string[];
+  /** 场景是回落本集主场景（而非文案点名命中）——文案里的地点可能没有对应图 */
+  sceneFallback: boolean;
 };
 
 function textHasName(hay: string, name: string): boolean {
@@ -521,12 +534,15 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
 
   type Scored = { id: string; score: number };
   const scored: Scored[] = [];
+  const matchedCastNames = new Set<string>();
   for (const s of chars) {
     const canon = canonOf(s.id);
     const names = [s.labelZh, canon?.nameZh, canon?.aliasZh].filter(Boolean) as string[];
     let score = 0;
     for (const n of names) {
-      if (castNames.some((cn) => cn === n || cn.includes(n) || n.includes(cn))) {
+      const castHit = castNames.find((cn) => cn === n || cn.includes(n) || n.includes(cn));
+      if (castHit) {
+        matchedCastNames.add(castHit);
         score = Math.max(score, 100);
       } else if (castZh && textHasName(castZh, n)) {
         score = Math.max(score, 90);
@@ -547,6 +563,7 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
     .slice(0, castCap)
     .map((x) => x.id);
 
+  let sceneFallback = false;
   let sceneIds = scenes
     .filter((s) => {
       const loc = (input.assetCanon?.locations || []).find((l) => l.id === s.id);
@@ -562,7 +579,10 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
     const main = String(input.mainSceneId || "").trim();
     const hit = main ? scenes.find((s) => s.id === main) : undefined;
     // 仅当文案完全点不到场景时，才回落本集主场景（场景可共用；角色绝不可假锁）
-    if (hit) sceneIds = [hit.id];
+    if (hit) {
+      sceneIds = [hit.id];
+      sceneFallback = true;
+    }
   } else {
     sceneIds = sceneIds.slice(0, 1);
   }
@@ -581,12 +601,20 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
     .slice(0, 3);
 
   const allowedIds = [...characterIds, ...sceneIds, ...propIds];
+  const unmatchedCastNames = castNames.filter((n) => !matchedCastNames.has(n));
   return {
     characterIds,
     sceneIds,
     propIds,
     allowedIds,
-    mode: characterIds.length ? "matched" : "empty",
+    // 点了名却一个都对不上 = 资产没跟着剧本重出，不是「本段没人」
+    mode: characterIds.length
+      ? "matched"
+      : castNames.length
+        ? "mismatch"
+        : "empty",
+    unmatchedCastNames,
+    sceneFallback,
   };
 }
 

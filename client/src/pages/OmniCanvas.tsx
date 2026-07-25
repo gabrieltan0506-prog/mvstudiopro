@@ -501,6 +501,11 @@ export default function OmniCanvas() {
   /** 侧栏进阶下拉默认折叠，降低信息密度 */
   const [factoryAdvancedOpen, setFactoryAdvancedOpen] = useState(false);
   const [factoryProgress, setFactoryProgress] = useState<string>("");
+  /** 可拍表点名的角色在资产库找不到：成片会喂错脸，出片门禁据此拦下 */
+  const [segmentCastMismatch, setSegmentCastMismatch] = useState<{
+    segmentIndexes: number[];
+    castNames: string[];
+  } | null>(null);
   const [writerBrief, setWriterBrief] = useState(() => initialWriterSession?.brief || "");
   const [viralTemplateId, setViralTemplateId] = useState(
     () => String(initialWriterSession?.viralTemplateId || "").trim(),
@@ -4534,6 +4539,15 @@ export default function OmniCanvas() {
                   }}
                   assetsSkipped={assetsSkipped}
                   onAssetsSkippedChange={setAssetsSkipped}
+                  segmentCastMismatchHintZh={
+                    segmentCastMismatch
+                      ? `第 ${segmentCastMismatch.segmentIndexes.join("、")} 段的${
+                          segmentCastMismatch.castNames.length
+                            ? `「${segmentCastMismatch.castNames.slice(0, 4).join("、")}」`
+                            : "角色"
+                        }在已有资产里找不到对应的图，现在出片会拿别人的脸顶上。请先在资产设定按剧本重出角色图`
+                      : null
+                  }
                   onConfirmAssetsAndPrepareImages={confirmAssetsAndPrepareImages}
                   onRegenerateAssetsFromScript={() =>
                     void confirmAssetsAndPrepareImages({ forceRegenerate: true })
@@ -4889,6 +4903,7 @@ export default function OmniCanvas() {
                         writerFocusEpisode,
                         layoutOpts,
                       );
+                      setSegmentCastMismatch(ensured.assetMismatch);
                       const next = layoutManhuaEpisodeReadableChain(
                         ensured.blocks,
                         writerFocusEpisode,
@@ -4927,6 +4942,7 @@ export default function OmniCanvas() {
                         writerFocusEpisode,
                         layoutOpts,
                       );
+                      setSegmentCastMismatch(ensured.assetMismatch);
                       const next = layoutManhuaEpisodeReadableChain(
                         ensured.blocks,
                         writerFocusEpisode,
@@ -4991,6 +5007,7 @@ export default function OmniCanvas() {
                         writerFocusEpisode,
                         layoutOpts,
                       );
+                      setSegmentCastMismatch(ensured.assetMismatch);
                       const next = layoutManhuaEpisodeReadableChain(
                         ensured.blocks,
                         writerFocusEpisode,
