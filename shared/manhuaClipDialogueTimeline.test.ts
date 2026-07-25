@@ -67,14 +67,106 @@ describe("manhuaClipDialogueTimeline", () => {
     expect(block).toContain("动作轨迹：握拳对峙，咬牙");
     expect(block).toContain("运镜轨迹：");
     expect(block).toContain("景别：近景");
-    expect(block).toContain("光：侧逆光压暗");
-    expect(block).toContain("氛围：冷青");
+    // 光与氛围归段头【光影·景别·氛围】写一次；秒轴复读只会让同一串配色刷屏
+    expect(block).not.toContain("光：侧逆光压暗");
+    expect(block).not.toContain("氛围：冷青");
     expect(block).toContain("@角色2");
     expect(block).toContain("说「放开！」");
     expect(block).not.toContain("视频生成导戏单");
     expect(block).not.toMatch(/衔接：|\d+mm|快门/);
     expect(MANHUA_CROSS_SHOT_CONTINUITY_LOCK).toMatch(/换脸|服装|跳棚/);
     expect(MANHUA_SEEDANCE_AUDIO_DIRECTOR_LOCK).toMatch(/引擎同轮出声|口型|时间轴|禁止另开后期配音/);
+  });
+
+  it("stops repeating segment-level light/palette/expression on every beat", () => {
+    // 取自线上第1段实测：三镜的光、氛围、微表情逐字相同，配色一段里出现五次
+    const shots = [
+      {
+        index: 1,
+        durationSec: 5,
+        cameraZh: "全景，平视，缓慢推近",
+        actionZh: "极速拉远，夜雨中燃烧的火箭死死钉入湿滑桥板，火星四溅",
+        dialogueZh: "箭上有火，账册在桥中央！",
+        microExpressionZh: "眼神由惊转硬",
+      },
+      {
+        index: 2,
+        durationSec: 5,
+        cameraZh: "中景，固定机位，三分构图",
+        actionZh: "手持微晃，黑衣剑客抬脚重踏踩灭箭火",
+        dialogueZh: "你取账，我断绳。",
+        microExpressionZh: "眼神由惊转硬",
+      },
+      {
+        index: 3,
+        durationSec: 5,
+        cameraZh: "中近景，轻微横移",
+        actionZh: "过肩跟拍，白衣女子在雨中拔出赤绳短剑",
+        dialogueZh: "桥上一个不留！",
+        microExpressionZh: "眼神由惊转硬",
+      },
+    ];
+    const block = formatManhuaDialogueTimelineBlock(shots, 15, {
+      segmentIndex: 1,
+      sceneHintZh: "断月桥",
+      lightingCameraZh: "火箭入画开场，贴桥板低机位推进",
+      paletteZh: "墨蓝雨夜、火焰橙红、湿木冷褐",
+    });
+
+    // 段级常量一次都不该出现在秒轴里
+    expect(block).not.toContain("光：");
+    expect(block).not.toContain("氛围：");
+    expect(block).not.toContain("贴桥板低机位推进");
+    expect(block).not.toContain("墨蓝雨夜");
+
+    // 三镜同一个微表情 → 提到段头写一次，秒轴不复读
+    expect(block).toContain("【表演基调】眼神由惊转硬（贯穿本段）。");
+    expect(block.match(/眼神由惊转硬/g)).toHaveLength(1);
+
+    // 运镜栏已有权威值时，动作栏开头的运镜词要剥掉，别和运镜栏打架
+    expect(block).not.toContain("动作轨迹：极速拉远");
+    expect(block).not.toContain("动作轨迹：手持微晃");
+    expect(block).not.toContain("动作轨迹：过肩跟拍");
+    expect(block).toContain("动作轨迹：夜雨中燃烧的火箭死死钉入湿滑桥板，火星四溅");
+    expect(block).toContain("运镜轨迹：");
+    expect(block).toContain("说「箭上有火，账册在桥中央！」");
+  });
+
+  it("keeps per-beat expression when the shots actually differ", () => {
+    const block = formatManhuaDialogueTimelineBlock(
+      [
+        { index: 1, durationSec: 5, cameraZh: "近景", actionZh: "抬头", microExpressionZh: "眼眶发红" },
+        { index: 2, durationSec: 5, cameraZh: "中景", actionZh: "后退", microExpressionZh: "下颌绷紧" },
+      ],
+      10,
+    );
+    expect(block).not.toContain("【表演基调】");
+    expect(block).toContain("眼眶发红");
+    expect(block).toContain("下颌绷紧");
+  });
+
+  it("never strips a real action that merely starts with a camera-ish verb", () => {
+    const block = formatManhuaDialogueTimelineBlock(
+      [
+        {
+          index: 1,
+          durationSec: 5,
+          cameraZh: "中景，固定",
+          // 「推开木门」是动作不是运镜，不能被当成运镜词剥掉
+          actionZh: "推开木门，跨过门槛",
+        },
+      ],
+      5,
+    );
+    expect(block).toContain("推开木门");
+  });
+
+  it("keeps the action camera word when there is no camera field to trust", () => {
+    const block = formatManhuaDialogueTimelineBlock(
+      [{ index: 1, durationSec: 5, cameraZh: "", actionZh: "极速拉远，火箭钉入桥板" }],
+      5,
+    );
+    expect(block).toContain("极速拉远");
   });
 
   it("extracts scene name from keyart prompt", () => {

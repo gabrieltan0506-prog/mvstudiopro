@@ -118,6 +118,22 @@ export function extractManhuaFramingLabelZh(cameraZh: string, actionZh = ""): st
   return framingHint(`${cameraZh || ""} ${actionZh || ""}`.trim());
 }
 
+/**
+ * 纯运镜词开头的短句：可拍表常把「极速拉远，」写进动作栏，
+ * 而运镜栏另有一套（缓慢推近），两条一起进提示词就是自相矛盾的指令。
+ * 整段头必须全是运镜词才剥，避免误伤「推开门」这类真动作。
+ */
+const CAMERA_ONLY_HEAD_RE =
+  /^[极缓轻慢快大小徐急]*(?:速)?(?:推近|推进|拉远|拉近|横移|平移|环绕|过肩跟拍|过肩|跟拍|手持微晃|手持|固定机位|固定|升格|降格|俯拍|仰拍|俯视|仰视|平视|微晃|摇镜|甩镜|变焦|长焦|广角|推|拉|摇|移|跟|升|降|俯|仰|晃)+$/;
+
+/** 动作栏若以纯运镜词起头，且运镜栏已有权威值，就把它剥掉 */
+function stripLeadingCameraDirection(actionZh: string, hasCameraField: boolean): string {
+  if (!hasCameraField) return actionZh;
+  const m = actionZh.match(/^([^，,。；;]{1,8})[，,]\s*([\s\S]+)$/);
+  if (!m) return actionZh;
+  return CAMERA_ONLY_HEAD_RE.test(m[1]!.trim()) ? m[2]!.trim() : actionZh;
+}
+
 /** 运镜轨迹：去掉已单列的景别词，保留推拉摇移等动势 */
 function cameraTrajectoryZh(cameraZh: string, actionZh: string): string {
   const raw = resolveBeatCameraMoveZh(cameraZh, actionZh);
@@ -155,51 +171,47 @@ export function formatManhuaDialogueTimelineBlock(
 ): string {
   const beats = buildManhuaDialogueTimelineBeats(shots, durationSec);
   if (!beats.length) return "本段暂无分镜。";
-  const segLight = String(opts?.lightingCameraZh || "").trim();
-  const segPalette = String(opts?.paletteZh || "").trim();
-  const lightFallback =
-    segLight
-      .split(/[；;|｜]/)
-      .map((s) => s.trim())
-      .find((s) => /光|灯|逆|侧|顶|火|烛|霓虹|阴|亮|暗/.test(s)) ||
-    (segLight ? segLight.slice(0, 36) : "");
-  const moodFallback =
-    segPalette.slice(0, 36) ||
-    segLight
-      .split(/[；;|｜]/)
-      .map((s) => s.trim())
-      .find((s) => /氛围|压迫|紧张|冷|暖|雨|夜|肃|诡/.test(s)) ||
-    "";
+  const visibleOf = (b: ManhuaDialogueTimelineBeat) =>
+    String(b.microExpressionZh || "").trim() || String(b.emotionZh || "").trim();
+  /**
+   * 每镜微表情全同 = 段级默认灌进了每一镜（如三镜都写「眼神由惊转硬」）。
+   * 提到段头写一次，别在秒轴复读——复读会盖掉真正的镜间差异。
+   */
+  const firstVisible = visibleOf(beats[0]!);
+  const sharedVisible =
+    beats.length > 1 && firstVisible && beats.every((b) => visibleOf(b) === firstVisible)
+      ? firstVisible
+      : "";
 
-  return beats
-    .map((b) => {
-      const frame = extractManhuaFramingLabelZh(b.cameraZh, b.actionZh);
-      const traj = cameraTrajectoryZh(b.cameraZh, b.actionZh);
-      const speaker = b.speakerAtTag;
-      let action = String(b.actionZh || "")
+  const lines = beats.map((b) => {
+    const frame = extractManhuaFramingLabelZh(b.cameraZh, b.actionZh);
+    const traj = cameraTrajectoryZh(b.cameraZh, b.actionZh);
+    const speaker = b.speakerAtTag;
+    let action = stripLeadingCameraDirection(
+      String(b.actionZh || "")
         .replace(/[「『"“][^」』"”]{0,200}[」』"”]/g, "")
         .replace(/@角色\d+/g, "")
         .replace(/\s+/g, " ")
-        .trim();
-      if (!action) action = "承接上镜动作";
-      const visible =
-        String(b.microExpressionZh || "").trim() ||
-        String(b.emotionZh || "").trim();
-      const line = stripManhuaSpeakerAtPrefix(b.dialogueZh).trim();
-      const light = lightFallback;
-      const mood = moodFallback || visible;
-      const bits = [
-        `动作轨迹：${action}${visible ? `，${visible}` : ""}`,
-        `运镜轨迹：${traj}`,
-        `景别：${frame}`,
-        light ? `光：${light}` : "",
-        mood ? `氛围：${mood}` : "",
-        speaker || "",
-        line ? `说「${line}」` : "",
-      ].filter(Boolean);
-      return `${b.startSec}–${b.endSec}s：${bits.join("。")}。`;
-    })
-    .join("\n");
+        .trim(),
+      Boolean(String(b.cameraZh || "").trim()),
+    );
+    if (!action) action = "承接上镜动作";
+    const visible = sharedVisible ? "" : visibleOf(b);
+    const line = stripManhuaSpeakerAtPrefix(b.dialogueZh).trim();
+    // 光与氛围是段级常量，段头【光影·景别·氛围】已写；每镜再复读一遍，
+    // 15s 三镜就让同一串配色出现五次，纯占 token 又稀释镜级信息。
+    const bits = [
+      `动作轨迹：${action}${visible ? `，${visible}` : ""}`,
+      `运镜轨迹：${traj}`,
+      `景别：${frame}`,
+      speaker || "",
+      line ? `说「${line}」` : "",
+    ].filter(Boolean);
+    return `${b.startSec}–${b.endSec}s：${bits.join("。")}。`;
+  });
+
+  const toneLine = sharedVisible ? `【表演基调】${sharedVisible}（贯穿本段）。` : "";
+  return [toneLine, ...lines].filter(Boolean).join("\n");
 }
 
 /**
@@ -232,9 +244,10 @@ export function formatManhuaClipSceneLightBoard(input: {
   const sceneLock = `【场景锁】${sceneBody}${
     palette ? `；配色：${palette}` : ""
   }。地点材质光色锁本段垫图${sceneTag ? `与${sceneTag}` : ""}，禁止跳棚换地。`;
+  // 光与氛围只在段头写一次，秒轴不再复读；缺段级光影时也别谎称「按秒轴各镜执行」
   const lightBoard = `【光影·景别·氛围】${
     [lighting, palette ? `配色${palette}` : ""].filter(Boolean).join("｜") ||
-    "按秒轴各镜：光 / 景别 / 氛围执行"
+    "沿用本段垫图的光色；景别按秒轴各镜执行"
   }。`;
   return [head, sceneLock, lightBoard].join("\n");
 }
