@@ -5,6 +5,9 @@ import {
   getCraftShotById,
   listCraftShotsByCategory,
   recommendCraftShotFromTopic,
+  pickCraftShotForSegment,
+  formatCraftShotSegmentLine,
+  formatCraftShotWriterVocabBlock,
 } from "./craftShotBank";
 
 describe("craftShotBank ⑧A", () => {
@@ -83,5 +86,44 @@ describe("craftShotBank ⑧A", () => {
 
   it("recommends craft from 谍战 keyword before 对峙泛词", () => {
     expect(recommendCraftShotFromTopic("谍战卧底情报对峙").craftShotId).toBe("light_07_top_cut");
+  });
+});
+
+describe("两端注入手法条目", () => {
+  it("缺光缺运镜时才补，已写好的不打架", () => {
+    const both = pickCraftShotForSegment({ segmentTextZh: "夜戏密谈" });
+    expect(both.map((e) => e.category).sort()).toEqual(["camera", "lighting"]);
+
+    const onlyCamera = pickCraftShotForSegment({
+      segmentTextZh: "夜戏密谈",
+      lightingZh: "火光贴桥板低机位",
+    });
+    expect(onlyCamera.map((e) => e.category)).toEqual(["camera"]);
+
+    const none = pickCraftShotForSegment({
+      segmentTextZh: "夜戏密谈",
+      lightingZh: "火光",
+      cameraZh: "缓推",
+    });
+    expect(none).toEqual([]);
+  });
+
+  it("段头补条只占一行，不堆规则墙", () => {
+    const line = formatCraftShotSegmentLine(
+      pickCraftShotForSegment({ segmentTextZh: "夜戏密谈" }),
+    );
+    expect(line.startsWith("【手法补条】")).toBe(true);
+    expect(line.split("\n")).toHaveLength(1);
+  });
+
+  it("编剧语汇表只给中文手法词，不泄漏英文像素锁", () => {
+    const block = formatCraftShotWriterVocabBlock();
+    expect(block).toContain("【可选镜头语汇】");
+    expect(block).toContain("灯光");
+    expect(block).toContain("运镜");
+    // craftLockEn 是给生图用的，编剧看到只会往成稿里写英文
+    for (const e of CRAFT_SHOT_BANK) {
+      if (e.craftLockEn) expect(block).not.toContain(e.craftLockEn);
+    }
   });
 });

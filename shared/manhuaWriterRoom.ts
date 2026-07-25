@@ -16,6 +16,7 @@ import {
   getManhuaScenePacingById,
 } from "./manhuaPlotPurposeCameraBank.js";
 import { formatManhuaViralTemplateWriterAddon } from "./manhuaViralTemplateBank.js";
+import { formatCraftShotWriterVocabBlock } from "./craftShotBank.js";
 import {
   formatManhuaEpisodeSegmentPlanBeatsBlock,
   formatManhuaEpisodeSegmentPlanPromptBlock,
@@ -152,6 +153,8 @@ export function buildManhuaWriterExpandPrompt(opts: {
     purpose ? formatPlotPurposeCameraBlock(purpose) : "",
     pacing ? formatScenePacingBlock(pacing) : "",
     viralAddon,
+    // 手法条目库同时供段成片兜底补条：两端取同一套词，成片才不会各说各话
+    formatCraftShotWriterVocabBlock(),
     partialBlock,
     "",
     "请严格按下列结构输出：",

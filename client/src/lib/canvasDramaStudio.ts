@@ -80,7 +80,12 @@ import {
   formatDynastyWardrobeInjectBlock,
   MANHUA_ANCIENT_CHARACTER_FORMULA_ZH,
 } from "@shared/manhuaDynastyWardrobeBank";
-import { buildCraftShotInjectBlock, recommendCraftShotFromTopic } from "@shared/craftShotBank";
+import {
+  buildCraftShotInjectBlock,
+  formatCraftShotSegmentLine,
+  pickCraftShotForSegment,
+  recommendCraftShotFromTopic,
+} from "@shared/craftShotBank";
 import {
   buildPathCameraInjectBlock,
   recommendPathCameraFromTopic,
@@ -1792,6 +1797,24 @@ export function ensureManhuaFragmentClips(
       segmentPerformanceZh: planBeat?.performanceZh,
       speakerTagByNameZh,
     });
+    /**
+     * 手法条目库过去只进节拍/反推节点，段成片一条都吃不到——而段成片才是真正
+     * 发给引擎的那份。可拍表缺光或缺运镜时才补，不跟编剧已写好的调度打架。
+     */
+    const craftLine = formatCraftShotSegmentLine(
+      pickCraftShotForSegment({
+        segmentTextZh: [
+          intentZh,
+          sceneHintZh,
+          planBeat?.performanceZh,
+          hydratedShots.map((sh) => sh.actionZh).join("，"),
+        ]
+          .filter(Boolean)
+          .join("；"),
+        lightingZh: planBeat?.lightingCameraZh,
+        cameraZh: hydratedShots.map((sh) => sh.cameraZh).filter(Boolean).join("，"),
+      }),
+    );
     const segBinding = getManhuaSegmentLookBinding(
       opts?.segmentLookBindings,
       ep,
@@ -1875,6 +1898,7 @@ export function ensureManhuaFragmentClips(
         stripManhuaPromptSlop(
           [
             timelineBlock,
+            craftLine,
             padLockBlock,
             assetLockBlock,
             bindPreview,
