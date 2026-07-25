@@ -99,6 +99,8 @@ export const MANHUA_LEARN_FETCH_ERR = {
   searchPage: "当前是搜索页链接，请改用合集或成片页地址后再学节奏",
   listFailed: "无法解析可学剧集，请换合集页或成片链接重试",
   downloadFailed: "成片下载失败，请确认链接可访问或稍后重试",
+  pageShapeChanged:
+    "该页面解析不出成片（对方改版或此链接形态不支持），不是凭证问题。请换单集成片页链接重试。",
 } as const;
 
 /** 弱启发：错误原文偶发含付费/会员等字样时标「权限不足」（不可靠，仍计入连续失败） */
@@ -131,19 +133,25 @@ export function mapManhuaLearnFetchError(raw: unknown): string {
   if (isManhuaLearnPermissionDeniedHint(joined)) {
     return MANHUA_LEARN_FETCH_ERR.permissionDenied;
   }
-  if (
-    /Fresh cookies|cookies?.*(needed|required)|Login required|请先登录|登录态|cookie/i.test(joined)
-  ) {
+  /**
+   * 只有真的登录信号才判「登录态」。
+   *
+   * 旧规则把 `Unable to extract` 之类的解析失败、以及正文里出现的任意 401/403 数字
+   * 都扣成「抖音登录态已失效」，于是 cookie 明明有效也被指着鼻子说过期，
+   * 用户去换一份新 cookie 也修不好——因为压根不是登录的问题。
+   * 命令行里带 `--cookies` 会让「cookie」一词出现在 stderr，故不能只凭这个词判定。
+   */
+  if (/Fresh cookies|cookies?\s*(are\s*)?(needed|required)|Login required|请先登录|登录态/i.test(joined)) {
     if (/Fresh cookies|needed|required|失效|过期|expired|invalid/i.test(joined)) {
       return MANHUA_LEARN_FETCH_ERR.douyinLoginStale;
     }
     return MANHUA_LEARN_FETCH_ERR.douyinLoginRequired;
   }
-  if (
-    /Unable to extract|Unsupported URL|No video formats|HTTP Error 401|HTTP Error 403/i.test(joined)
-    || /\b403\b|\b401\b/.test(joined)
-  ) {
+  if (/HTTP Error 401|HTTP Error 403|status code 401|status code 403/i.test(joined)) {
     return MANHUA_LEARN_FETCH_ERR.douyinLoginStale;
+  }
+  if (/Unable to extract|Unsupported URL|No video formats/i.test(joined)) {
+    return MANHUA_LEARN_FETCH_ERR.pageShapeChanged;
   }
   if (/Command failed:.*yt-dlp|yt-dlp/i.test(joined)) {
     return MANHUA_LEARN_FETCH_ERR.downloadFailed;
@@ -163,7 +171,10 @@ export function shouldSkipLocalLearnFallback(errorZh: string): boolean {
   const t = String(errorZh || "");
   return (
     t.includes("登录态")
+    // 站内会话失效被 sanitize 成「登录状态已失效」，不含「登录态」三字，旧规则漏了
+    || t.includes("登录状态")
     || t.includes("登录凭证")
+    || t.includes("重新登录")
     || t === MANHUA_LEARN_FETCH_ERR.douyinLoginRequired
     || t === MANHUA_LEARN_FETCH_ERR.douyinLoginStale
   );

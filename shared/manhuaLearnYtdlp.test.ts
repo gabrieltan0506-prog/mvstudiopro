@@ -62,6 +62,42 @@ describe("manhuaLearnYtdlp", () => {
     expect(buildDouyinMixCandidateUrls("重生漫剧开局")).toEqual([]);
   });
 
+  /** cookie 有效却被指着鼻子说过期，用户换几次 cookie 也修不好 */
+  it("解析失败不再冒充登录态失效", () => {
+    const raw =
+      "Command failed: /usr/local/bin/yt-dlp --cookies /tmp/dy.txt --flat-playlist -J\nERROR: [Douyin] 7648258717669918760: Unable to extract webpage data";
+    const mapped = mapManhuaLearnFetchError(raw);
+    expect(mapped).toBe(MANHUA_LEARN_FETCH_ERR.pageShapeChanged);
+    expect(mapped).not.toMatch(/登录态/);
+    // 换本机跑同一条命令结果一样，但这不是登录问题，回退仍应放行
+    expect(shouldSkipLocalLearnFallback(mapped)).toBe(false);
+  });
+
+  it("命令行里带 --cookies 不算登录信号", () => {
+    const raw =
+      "Command failed: yt-dlp --cookies /tmp/dy.txt https://www.douyin.com/video/1\nERROR: unable to download video data: timed out";
+    expect(mapManhuaLearnFetchError(raw)).not.toBe(MANHUA_LEARN_FETCH_ERR.douyinLoginStale);
+  });
+
+  /** 视频 id 里带 403 就判登录失效，属于误伤 */
+  it("正文里出现 401/403 数字不判登录态", () => {
+    const raw = "Command failed: yt-dlp https://www.douyin.com/video/7403000000000000000\nERROR: read timeout";
+    expect(mapManhuaLearnFetchError(raw)).toBe(MANHUA_LEARN_FETCH_ERR.downloadFailed);
+  });
+
+  it("真的 HTTP 401/403 仍判登录态", () => {
+    expect(mapManhuaLearnFetchError("ERROR: unable to download: HTTP Error 403: Forbidden")).toBe(
+      MANHUA_LEARN_FETCH_ERR.douyinLoginStale,
+    );
+  });
+
+  /** 站内会话失效的文案不含「登录态」三字，旧规则漏判，导致照样复制一条同样会失败的本机命令 */
+  it("站内会话失效也跳过本机回退", () => {
+    expect(
+      shouldSkipLocalLearnFallback("登录状态已失效，请刷新页面重新登录后再试（分析任务可能仍在后台运行）"),
+    ).toBe(true);
+  });
+
   it("maps paywall-like text to permission denied", () => {
     expect(isManhuaLearnPermissionDeniedHint("该集需付费解锁")).toBe(true);
     expect(mapManhuaLearnFetchError("需要购买后观看")).toBe(
