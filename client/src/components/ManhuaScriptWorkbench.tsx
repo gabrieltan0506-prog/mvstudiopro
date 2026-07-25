@@ -120,8 +120,6 @@ import ManhuaRoughEditTimeline from "@/components/ManhuaRoughEditTimeline";
 import ManhuaStylePackPanel from "@/components/ManhuaStylePackPanel";
 import type { ManhuaStylePack } from "@shared/manhuaStylePack";
 import ManhuaEditMultitrackPanel from "@/components/ManhuaEditMultitrackPanel";
-import type { ManhuaWorkbenchSyncPayload } from "@shared/manhuaAgentLoopSync";
-import { buildManhuaIntegratedAssetBoard } from "@shared/manhuaIntegratedAssetBoard";
 import {
   MANHUA_CAMERA_ANGLE_ORDER,
   formatManhuaCameraAngleLine,
