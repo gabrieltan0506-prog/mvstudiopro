@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - main
+  # 排队中被取消的 run 重跑不出 job（startup_failure），只能另起一次全新 run。
+  # 部署此前只认 push，卡住时除了往 main 推空提交没有别的办法。
+  workflow_dispatch:
 jobs:
   deploy:
     name: Deploy app
