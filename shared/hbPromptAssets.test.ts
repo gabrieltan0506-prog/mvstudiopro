@@ -11,7 +11,6 @@ import {
   buildHtmlPptDocument,
   recommendHtmlPptStyle,
 } from "./htmlPptMaker";
-import { SCENE_STEAL_PROMPT_BANK, buildSceneStealInjectBlock } from "./sceneStealPromptBank";
 import { getMotionPromptById } from "./motionPromptBank";
 import { PHOTOREAL_ANTI_AI_LOCK_ZH } from "./photorealCharacterPrompt";
 import { getManhuaArtStylePreset } from "./manhuaCharacterAssetLibrary";
@@ -83,9 +82,8 @@ describe("HB prompt assets", () => {
     expect(html).toContain("class=\"rank\"");
   });
 
-  it("scene steal bank + motion ids align", () => {
-    expect(SCENE_STEAL_PROMPT_BANK.length).toBe(3);
-    expect(buildSceneStealInjectBlock(["steal_01_titanic_bow"])).toContain("泰坦尼克");
+  it("scene steal entries live in the motion bank", () => {
+    expect(getMotionPromptById("steal_01_titanic_bow")?.nameZh).toContain("泰坦尼克");
     expect(getMotionPromptById("steal_03_portal_cross")?.category).toBe("scene_steal");
   });
 
