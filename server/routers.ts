@@ -7824,6 +7824,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           episodeCount: z.number().int().min(2).max(6).optional(),
           /** 审定节奏模板 id（tpl_*） */
           viralTemplateId: z.string().max(64).optional(),
+          /** 单集时长档位：90s 半强度 / 180s 全长 */
+          lengthTierId: z.string().max(32).optional(),
         }),
       )
       .mutation(async ({ input }) => {
@@ -7850,7 +7852,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         let viralTemplateAddon = "";
         try {
           const merged = await getMergedManhuaViralTemplate(input.viralTemplateId);
-          viralTemplateAddon = formatManhuaViralTemplateWriterAddonFromCard(merged);
+          viralTemplateAddon = formatManhuaViralTemplateWriterAddonFromCard(
+            merged,
+            input.lengthTierId,
+          );
         } catch {
           viralTemplateAddon = "";
         }
@@ -7860,6 +7865,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           episodeCount,
           viralTemplateId: input.viralTemplateId,
           viralTemplateAddon: viralTemplateAddon || undefined,
+          lengthTierId: input.lengthTierId,
         });
         let markdown = "";
         try {

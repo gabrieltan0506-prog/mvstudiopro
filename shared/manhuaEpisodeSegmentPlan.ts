@@ -21,6 +21,58 @@ export const MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC = 75;
 /** 每段约 15s：至少 3 句「」对白（推荐 3–4） */
 export const MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES = 3;
 
+/**
+ * 单集时长档位。
+ *
+ * 段长恒定 15s，切档只改「一集几段」：短档 4–6 段、长档 10–12 段。
+ * 密度门禁与节拍格都按 targetSec 推算，因此加档位不需要另写一套阈值。
+ */
+export type ManhuaEpisodeLengthTierId = "short" | "long";
+
+export type ManhuaEpisodeLengthTier = {
+  id: ManhuaEpisodeLengthTierId;
+  labelZh: string;
+  /** 该档的目标秒数：门禁与节拍格都以它为准 */
+  targetSec: number;
+  minSec: number;
+  segmentMin: number;
+  segmentMax: number;
+};
+
+export const MANHUA_EPISODE_LENGTH_TIERS: readonly ManhuaEpisodeLengthTier[] = [
+  {
+    id: "short",
+    labelZh: "60–90 秒",
+    targetSec: MANHUA_EPISODE_SEGMENT_TARGET_SEC,
+    minSec: 60,
+    segmentMin: 4,
+    segmentMax: MANHUA_EPISODE_SEGMENT_COUNT_MAX,
+  },
+  {
+    id: "long",
+    labelZh: "150–180 秒",
+    targetSec: 180,
+    minSec: 150,
+    segmentMin: 10,
+    segmentMax: 12,
+  },
+];
+
+export const MANHUA_EPISODE_LENGTH_TIER_DEFAULT: ManhuaEpisodeLengthTierId = "short";
+
+export function getManhuaEpisodeLengthTier(
+  id: string | null | undefined,
+): ManhuaEpisodeLengthTier {
+  const hit = MANHUA_EPISODE_LENGTH_TIERS.find((t) => t.id === id);
+  return hit || MANHUA_EPISODE_LENGTH_TIERS[0];
+}
+
+/** 该档一集几段（节拍格按它降采样） */
+export function manhuaEpisodeSegmentsForTier(id: string | null | undefined): number {
+  const tier = getManhuaEpisodeLengthTier(id);
+  return Math.max(1, Math.round(tier.targetSec / MANHUA_EPISODE_SEGMENT_DURATION_SEC));
+}
+
 export type ManhuaEpisodeSegmentBeat = {
   index: number;
   /** 本段单一意图：观众应感到什么（导戏硬锚） */

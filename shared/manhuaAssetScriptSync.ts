@@ -103,11 +103,66 @@ export function isAssetSheetBlockAlignedWithCanon(
   );
 }
 
+export type ManhuaAssetCoverageGap = {
+  role: "character" | "scene";
+  id: string;
+  nameZh: string;
+};
+
+/**
+ * 剧本表里有、却一张图都没有的人物/场景。
+ *
+ * 扩写会按剧情添人加景，导入的外部剧本更是随时冒出新角色。只比「张数够不够」
+ * 会把新人物漏过去：六个旧定妆挡住第七个新角色，后面锁脸就锁了个空。
+ */
+export function findManhuaAssetCoverageGaps(input: {
+  assetCanon?: ManhuaWriterAssetCanon | null;
+  customRefs?: ManhuaCustomAssetRef[] | null;
+  assetBlocks?: Array<{ id: string; hasMedia?: boolean }> | null;
+}): ManhuaAssetCoverageGap[] {
+  const canon = input.assetCanon;
+  if (!canon) return [];
+  const refs = input.customRefs || [];
+  const blocks = (input.assetBlocks || []).filter((b) => b.hasMedia !== false);
+  const seedIdHit = (kind: "charsheet" | "sceneplate", anchorId: string): boolean =>
+    blocks.some((b) => {
+      const parsed = extractAssetSheetSeedId(b.id);
+      if (parsed.kind !== kind || !parsed.seedId) return false;
+      return (
+        parsed.seedId === anchorId ||
+        parsed.seedId.includes(anchorId) ||
+        anchorId.includes(parsed.seedId)
+      );
+    });
+  const refHit = (role: "character" | "scene", anchorId: string, nameZh: string): boolean =>
+    refs.some((r) => {
+      if (r.role !== role) return false;
+      const seed = String(r.seedLibraryId || "").trim();
+      if (seed && (seed === anchorId || seed.includes(anchorId) || anchorId.includes(seed))) {
+        return true;
+      }
+      return labelMatchesName(r.labelZh, nameZh);
+    });
+
+  const gaps: ManhuaAssetCoverageGap[] = [];
+  for (const c of canon.characters || []) {
+    if (seedIdHit("charsheet", c.id) || refHit("character", c.id, c.nameZh)) continue;
+    gaps.push({ role: "character", id: c.id, nameZh: c.nameZh });
+  }
+  for (const l of canon.locations || []) {
+    if (seedIdHit("sceneplate", l.id) || refHit("scene", l.id, l.nameZh)) continue;
+    gaps.push({ role: "scene", id: l.id, nameZh: l.nameZh });
+  }
+  return gaps;
+}
+
 export type ManhuaAssetScriptAlignResult = {
   fingerprint: string;
   aligned: boolean;
   staleGeneratedRefCount: number;
   staleSheetBlockCount: number;
+  /** 剧本新增、还没有任何图的人物/场景 */
+  coverageGaps: ManhuaAssetCoverageGap[];
   /** 用户可见短句 */
   hintZh: string | null;
 };
@@ -115,7 +170,7 @@ export type ManhuaAssetScriptAlignResult = {
 export function evaluateManhuaAssetScriptAlignment(input: {
   assetCanon?: ManhuaWriterAssetCanon | null;
   customRefs?: ManhuaCustomAssetRef[] | null;
-  assetBlocks?: Array<{ id: string }> | null;
+  assetBlocks?: Array<{ id: string; hasMedia?: boolean }> | null;
 }): ManhuaAssetScriptAlignResult {
   const fingerprint = fingerprintManhuaWriterAssetCanon(input.assetCanon);
   const refs = input.customRefs || [];
@@ -126,6 +181,7 @@ export function evaluateManhuaAssetScriptAlignment(input: {
       aligned: true,
       staleGeneratedRefCount: 0,
       staleSheetBlockCount: 0,
+      coverageGaps: [],
       hintZh: null,
     };
   }
@@ -139,15 +195,27 @@ export function evaluateManhuaAssetScriptAlignment(input: {
   );
   const staleGeneratedRefCount = staleRefs.length;
   const staleSheetBlockCount = staleBlocks.length;
-  const aligned = staleGeneratedRefCount === 0 && staleSheetBlockCount === 0;
+  const coverageGaps = findManhuaAssetCoverageGaps({
+    assetCanon: input.assetCanon,
+    customRefs: refs,
+    assetBlocks: blocks,
+  });
+  const aligned =
+    staleGeneratedRefCount === 0 && staleSheetBlockCount === 0 && coverageGaps.length === 0;
+  let hintZh: string | null = null;
+  if (staleGeneratedRefCount > 0 || staleSheetBlockCount > 0) {
+    hintZh = `剧本人物/场景已变：有 ${staleGeneratedRefCount + staleSheetBlockCount} 项旧设定图与现稿不符，请清掉并按剧本重出`;
+  } else if (coverageGaps.length > 0) {
+    const names = coverageGaps.map((g) => g.nameZh).filter(Boolean).slice(0, 4).join("、");
+    hintZh = `剧本新增了 ${coverageGaps.length} 个还没有设定图的人物/场景${names ? `（${names}）` : ""}，请先补图再进分镜`;
+  }
   return {
     fingerprint,
     aligned,
     staleGeneratedRefCount,
     staleSheetBlockCount,
-    hintZh: aligned
-      ? null
-      : `剧本人物/场景已变：有 ${staleGeneratedRefCount + staleSheetBlockCount} 项旧设定图与现稿不符，请清掉并按剧本重出`,
+    coverageGaps,
+    hintZh,
   };
 }
 

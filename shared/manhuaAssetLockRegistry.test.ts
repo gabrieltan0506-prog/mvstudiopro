@@ -587,3 +587,29 @@ describe("manhuaAssetLockRegistry", () => {
     ).toBe(true);
   });
 });
+
+describe("分镜静帧按秒段锁定", () => {
+  it("每张静帧绑到自己那几秒，且不吃掉末帧席位", () => {
+    const plan = planManhuaClipSeedanceImageBind({
+      assetRows: [
+        { tag: "@角色1", id: "c1", path: "https://x/a.jpg", labelZh: "沈照野", kind: "角色" },
+      ],
+      stillUrls: ["https://x/s1.jpg", "https://x/s2.jpg", "https://x/s3.jpg"],
+      stillSlotsZh: ["0–5s", "5–10s", "10–15s"],
+      tailUrls: ["https://x/tail.jpg"],
+      maxImages: 6,
+    });
+    expect(plan.bindLineZh).toContain("锁定0–5s的画面构图、机位与光色");
+    expect(plan.bindLineZh).toContain("锁定5–10s");
+    expect(plan.bindLineZh).toContain("锁定10–15s");
+    expect(plan.entries.some((e) => e.kind === "tail")).toBe(true);
+  });
+
+  it("没有秒段信息时退回旧写法", () => {
+    const plan = planManhuaClipSeedanceImageBind({
+      assetRows: [],
+      stillUrls: ["https://x/s1.jpg"],
+    });
+    expect(plan.bindLineZh).toContain("为本段构图与光色基准");
+  });
+});

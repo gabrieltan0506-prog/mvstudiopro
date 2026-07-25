@@ -140,6 +140,14 @@ export type CanvasBlock = {
   manhuaClipQuality?: ManhuaClipQualityReport;
   /** 本段成片抽取的尾帧 HTTPS（续拍硬锚） */
   lastFrameUrl?: string;
+  /**
+   * 上一版剧本留下的产物：换剧本时不删、只归档。
+   *
+   * 视频生成是全链最贵的一步，静帧次之。旧做法是重扩写就把整条工厂链连同
+   * 已出片的节点一起删掉，云上文件还在但画布丢了引用，等于钱白烧。归档后
+   * 节点仍可预览下载、供后期剪辑取用，但不再被当作新剧本的垫图。
+   */
+  archivedFromPreviousScript?: boolean;
   /** 轻量重拍状态：单变量 + 次数 */
   manhuaRetake?: {
     variable: "camera" | "performance" | "lighting" | "reference" | "duration" | "framing";

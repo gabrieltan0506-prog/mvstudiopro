@@ -4,6 +4,12 @@
  * 成稿禁止竞品片名/台词抄袭；只借结构与中性手法标签。
  */
 
+import {
+  MANHUA_EPISODE_SEGMENT_DURATION_SEC,
+  getManhuaEpisodeLengthTier,
+  manhuaEpisodeSegmentsForTier,
+} from "./manhuaEpisodeSegmentPlan.js";
+
 export type ManhuaViralTemplateStatus = "proposed" | "approved" | "rejected";
 
 /** 赛道分组（UI 分类排布用） */
@@ -36,7 +42,7 @@ export type ManhuaViralTemplateBeat = {
 };
 
 export type ManhuaViralTemplateDensityHints = {
-  /** 建议正文最少字（约 180s） */
+  /** 建议正文最少字（长档 180s 口径；短档由门禁按段数折算） */
   minBodyChars: number;
   /** 建议「」对白句数 */
   minDialogueLines: number;
@@ -308,13 +314,43 @@ export function listApprovedManhuaViralTemplatesGrouped(
   })).filter((g) => g.items.length > 0);
 }
 
+/**
+ * 把模板节拍格套到目标段数上。
+ *
+ * 卡片里存的是长档骨架（12 拍 × 15s = 180s）。短档一集只有 6 段，若原样注入，
+ * 编剧会照着 165s 的弧线写，后半永远拍不出来。段长恒定 15s，所以这里只做两件事：
+ * 按目标段数等距抽稀（必留开场与片尾钩子），再按 15s 重打时间戳。
+ */
+export function fitManhuaViralBeatGridToSegments(
+  beatGrid: readonly ManhuaViralTemplateBeat[],
+  segments: number,
+): ManhuaViralTemplateBeat[] {
+  const src = beatGrid.slice(0, 16);
+  const want = Math.max(1, Math.floor(segments));
+  if (!src.length) return [];
+  const picked =
+    src.length <= want
+      ? src.slice()
+      : Array.from({ length: want }, (_, i) =>
+          src[
+            want === 1 ? 0 : Math.round((i * (src.length - 1)) / (want - 1))
+          ],
+        );
+  return picked.map((b, i) => ({
+    ...b,
+    atSec: i * MANHUA_EPISODE_SEGMENT_DURATION_SEC,
+  }));
+}
+
 /** 由完整卡片生成编剧扩写注入块 */
 export function formatManhuaViralTemplateWriterAddonFromCard(
   tpl: ManhuaViralTemplateCard | null | undefined,
+  lengthTierId?: string | null,
 ): string {
   if (!tpl || tpl.status !== "approved") return "";
-  const beats = tpl.beatGrid
-    .slice(0, 16)
+  const tier = getManhuaEpisodeLengthTier(lengthTierId);
+  const segments = manhuaEpisodeSegmentsForTier(tier.id);
+  const beats = fitManhuaViralBeatGridToSegments(tpl.beatGrid, segments)
     .map((b) => `- ${b.atSec}s｜${b.conflictZh}｜${b.visualZh}`)
     .join("\n");
   const d = tpl.densityHints;
@@ -329,7 +365,7 @@ export function formatManhuaViralTemplateWriterAddonFromCard(
     tpl.scenePoolHints.length
       ? `场景池关键词（写入场景表，勿写外部剧名）：${tpl.scenePoolHints.join("、")}`
       : "",
-    `密度建议（约180秒/集）：正文≥${d.minBodyChars}字；「」对白≥${d.minDialogueLines}句；场景表命中≥${d.minLocationHits}`,
+    `密度建议（约${tier.targetSec}秒/集·${segments}段）：正文≥${d.minBodyChars}字；「」对白≥${d.minDialogueLines}句；场景表命中≥${d.minLocationHits}`,
     beats ? `节拍格：\n${beats}` : "",
     "硬规则：只借结构与节奏；禁止抄外部剧名/台词/商标；成稿只写可拍动作与关系。",
   ]
@@ -341,6 +377,10 @@ export function formatManhuaViralTemplateWriterAddonFromCard(
 export function formatManhuaViralTemplateWriterAddon(
   id?: string | null,
   extras?: readonly ManhuaViralTemplateCard[] | null,
+  lengthTierId?: string | null,
 ): string {
-  return formatManhuaViralTemplateWriterAddonFromCard(getManhuaViralTemplate(id, extras));
+  return formatManhuaViralTemplateWriterAddonFromCard(
+    getManhuaViralTemplate(id, extras),
+    lengthTierId,
+  );
 }

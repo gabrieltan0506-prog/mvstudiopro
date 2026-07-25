@@ -7,6 +7,7 @@ import {
   composeManhuaPropDemoPromptBlock,
   recommendManhuaContentLanesFromTopic,
 } from "./manhuaScenePropDemoCatalog.js";
+import { parseWriterTableLine } from "./manhuaWriterAssetCanon.js";
 import { buildAncientArchetypePromptBlock } from "./manhuaAncientArchetypeLibrary.js";
 import {
   formatPlotPurposeCameraBlock,
@@ -80,6 +81,8 @@ export function buildManhuaWriterExpandPrompt(opts: {
   viralTemplateId?: string | null;
   /** 若已解析动态库卡片，直接注入（优先于仅 id 查种子库） */
   viralTemplateAddon?: string | null;
+  /** 单集时长档位：决定节拍格抽到几拍、密度建议报哪个秒数 */
+  lengthTierId?: string | null;
 }): string {
   const topic = String(opts.topic || "").trim().slice(0, 500);
   const brief = String(opts.brief || "").trim().slice(0, 2000);
@@ -93,7 +96,7 @@ export function buildManhuaWriterExpandPrompt(opts: {
   const pacing = getManhuaScenePacingById(opts.scenePacingId);
   const viralAddon =
     String(opts.viralTemplateAddon || "").trim() ||
-    formatManhuaViralTemplateWriterAddon(opts.viralTemplateId);
+    formatManhuaViralTemplateWriterAddon(opts.viralTemplateId, null, opts.lengthTierId);
   return [
     "你是竖屏漫剧连载编剧。根据用户题材与补充条件，扩写成可拍的连载剧情包。",
     "硬规则：",
@@ -240,6 +243,55 @@ export function parseManhuaWriterPack(
     episodes,
     rawMarkdown: md,
     episodeCount: n,
+  };
+}
+
+/** 按人物/场景名取并集：旧稿在前保设定不变，新稿里没见过的名字追加在后 */
+function mergeWriterTableMd(prevMd: string, nextMd: string): string {
+  const prevLines = String(prevMd || "").split("\n");
+  const nextLines = String(nextMd || "").split("\n");
+  if (!prevLines.some((l) => l.trim())) return nextMd;
+  const seen = new Set(
+    prevLines
+      .map((l) => parseWriterTableLine(l)?.nameZh)
+      .filter((n): n is string => Boolean(n)),
+  );
+  const added = nextLines.filter((l) => {
+    const name = parseWriterTableLine(l)?.nameZh;
+    return Boolean(name) && !seen.has(name!);
+  });
+  return added.length ? `${prevMd.trimEnd()}\n${added.join("\n")}` : prevMd;
+}
+
+/**
+ * 从第 fromEpisode 集起换稿：前面的集保留旧正文，从起点往后用新稿。
+ *
+ * 剧本按集存，没有段级结构，所以拼接的最小粒度就是一集。留下来的集必须连
+ * 正文一起留：只留成片不留剧本，后面重跑可拍表就会拿新剧情去对旧画面。
+ */
+export function spliceManhuaWriterPackFromEpisode(
+  prev: ManhuaWriterPack | null | undefined,
+  next: ManhuaWriterPack,
+  fromEpisode: number,
+): ManhuaWriterPack {
+  const from = Math.max(1, Math.floor(Number(fromEpisode) || 1));
+  if (from <= 1 || !prev?.episodes?.length) return next;
+  const keptEpisodes = prev.episodes.filter((e) => e.index < from);
+  if (!keptEpisodes.length) return next;
+  const rewritten = next.episodes.filter((e) => e.index >= from);
+  const episodes = [...keptEpisodes, ...rewritten].sort((a, b) => a.index - b.index);
+  /**
+   * 资产表取并集，不冻结旧表：扩写本来就会按剧情加人加景，冻住旧表新角色
+   * 就进不了人物表，后面资产扫描点名不到，等于没锁脸就开拍。同名以旧稿为准，
+   * 保留集里已经出过图的角色不会被改设定。
+   */
+  return {
+    ...next,
+    charactersMd: mergeWriterTableMd(prev.charactersMd, next.charactersMd),
+    propsMd: mergeWriterTableMd(prev.propsMd, next.propsMd),
+    locationsMd: mergeWriterTableMd(prev.locationsMd, next.locationsMd),
+    episodes,
+    episodeCount: episodes.length,
   };
 }
 

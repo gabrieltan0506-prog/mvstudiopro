@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   collectStaleAssetSheetBlockIds,
   evaluateManhuaAssetScriptAlignment,
+  findManhuaAssetCoverageGaps,
   fingerprintManhuaWriterAssetCanon,
   purgeStaleCustomAssetRefsForCanon,
 } from "./manhuaAssetScriptSync";
@@ -129,5 +130,72 @@ describe("manhuaAssetScriptSync", () => {
       { forceAllSheets: true },
     );
     expect(ids.sort()).toEqual(["charsheet-wa_c_shen", "sceneplate-wa_l_bridge"]);
+  });
+
+  it("扩写新增人物：旧资产没过期，但缺图必须报出来", () => {
+    const expanded: ManhuaWriterAssetCanon = {
+      ...canon,
+      characters: [
+        canon.characters[0]!,
+        {
+          id: "wa_c_pei",
+          role: "character",
+          nameZh: "裴砚舟",
+          lookZh: "玄甲披风",
+          promptZh: "裴砚舟 玄甲披风",
+        },
+      ],
+    };
+    const res = evaluateManhuaAssetScriptAlignment({
+      assetCanon: expanded,
+      customRefs: [],
+      assetBlocks: [
+        { id: "charsheet-wa_c_shen", hasMedia: true },
+        { id: "sceneplate-wa_l_bridge", hasMedia: true },
+      ],
+    });
+    expect(res.staleGeneratedRefCount).toBe(0);
+    expect(res.staleSheetBlockCount).toBe(0);
+    expect(res.aligned).toBe(false);
+    expect(res.coverageGaps.map((g) => g.nameZh)).toEqual(["裴砚舟"]);
+    expect(res.hintZh).toContain("裴砚舟");
+  });
+
+  it("自传参考按名字认领，认不到的人物仍算缺口", () => {
+    const expanded: ManhuaWriterAssetCanon = {
+      ...canon,
+      characters: [
+        canon.characters[0]!,
+        {
+          id: "wa_c_pei",
+          role: "character",
+          nameZh: "裴砚舟",
+          lookZh: "玄甲披风",
+          promptZh: "裴砚舟 玄甲披风",
+        },
+      ],
+    };
+    const gaps = findManhuaAssetCoverageGaps({
+      assetCanon: expanded,
+      customRefs: [
+        { id: "u1", role: "character", source: "upload", labelZh: "沈照野", url: "u" },
+        { id: "u2", role: "scene", source: "upload", labelZh: "断桥雨夜", url: "u" },
+      ] as never,
+      assetBlocks: [],
+    });
+    expect(gaps.map((g) => g.nameZh)).toEqual(["裴砚舟"]);
+  });
+
+  it("图齐时无缺口", () => {
+    const res = evaluateManhuaAssetScriptAlignment({
+      assetCanon: canon,
+      customRefs: [],
+      assetBlocks: [
+        { id: "charsheet-wa_c_shen", hasMedia: true },
+        { id: "sceneplate-wa_l_bridge", hasMedia: true },
+      ],
+    });
+    expect(res.aligned).toBe(true);
+    expect(res.coverageGaps).toEqual([]);
   });
 });

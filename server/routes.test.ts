@@ -19,7 +19,9 @@ function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[] }
   const clearedCookies: CookieCall[] = [];
   const user: AuthenticatedUser = {
     id: 1, openId: "test-user", email: "test@example.com", name: "Test User",
-    loginMethod: "manus", role: "user", createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date(),
+    loginMethod: "manus", role: "user", credits: 0, roleTag: "normal", contactWechat: null,
+    contactPhone: null, verifyStatus: "none", enterpriseTrialPaid: false,
+    createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date(),
   };
   const ctx: TrpcContext = {
     user,

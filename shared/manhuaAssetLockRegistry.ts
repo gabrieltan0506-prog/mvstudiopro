@@ -394,6 +394,8 @@ export type ManhuaClipSeedanceImageBindEntry = {
   assetId?: string;
   labelZh?: string;
   duty?: "identity" | "look" | null;
+  /** 静帧专用：这张分镜管的秒段，如 "0–5s" */
+  slotZh?: string | null;
 };
 
 export type ManhuaClipSeedanceImageBindPlan = {
@@ -771,6 +773,8 @@ export function extractManhuaMentionedAssetTags(prompt: string | null | undefine
 export function planManhuaClipSeedanceImageBind(input: {
   assetRows: ManhuaAssetImageBindRow[];
   stillUrls: string[];
+  /** 与 stillUrls 同序的分镜秒段（如 "0–5s"）：让每张静帧只管自己那几秒 */
+  stillSlotsZh?: Array<string | null> | null;
   tailUrls?: string[];
   mentionedTags?: string[] | null;
   maxImages?: number;
@@ -834,8 +838,20 @@ export function planManhuaClipSeedanceImageBind(input: {
     });
     assetsTaken += 1;
   }
-  for (const u of stills) {
-    push({ kind: "still", url: u, labelZh: "本段静帧" });
+  /**
+   * 静帧不能一律说「本段构图基准」：一段挂 2–3 张分镜时，每张都说同一句话，
+   * 模型无从判断哪张管哪几秒，等于把分镜降级成风格参考。带上秒段各管一段。
+   */
+  const slots = input.stillSlotsZh || [];
+  for (let i = 0; i < stills.length; i++) {
+    // 末帧那一席不能被静帧吃掉：没有起幅承接，段与段之间会跳戏
+    if (entries.length >= max - takeTail) break;
+    push({
+      kind: "still",
+      url: stills[i]!,
+      labelZh: "本段静帧",
+      slotZh: String(slots[i] || "").trim() || null,
+    });
   }
   for (let i = 0; i < takeTail; i++) {
     push({ kind: "tail", url: tails[i]!, labelZh: "上段末帧起幅" });
@@ -893,6 +909,7 @@ export function formatManhuaClipSeedanceBindLineFromEntries(
       }
       return `${subject}${img}${idBit}`;
     }
+    if (e.slotZh) return `${img}锁定${e.slotZh}的画面构图、机位与光色`;
     return `${img}为本段构图与光色基准`;
   });
   return bits.length

@@ -1043,7 +1043,10 @@ slow dolly in, soft rain, trembling hand
     ];
     const cleaned = stripManhuaFactoryCanvasArtifacts(withAsset, edges);
     expect(cleaned.removedCount).toBeGreaterThan(0);
-    expect(cleaned.blocks.map((b) => b.id)).toEqual(["text-free-note"]);
+    // 人物定妆是整部剧共用资产，换剧本不清；过不过期交给剧本↔资产对齐扫描判
+    expect(cleaned.blocks.map((b) => b.id).sort()).toEqual(
+      ["charsheet-arch_old", "text-free-note"].sort(),
+    );
     expect(cleaned.edges).toHaveLength(0);
     expect(cleaned.blocks.some((b) => b.id.startsWith("keyart-"))).toBe(false);
   });
