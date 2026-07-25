@@ -423,9 +423,20 @@ export function upsertGeneratedManhuaCustomAssetRef(
     return normalizeManhuaCustomAssetRefs(prev);
   }
   const base = normalizeManhuaCustomAssetRefs(prev);
+  /**
+   * 同一库资产现在可以挂两张分工不同的图：大头照锁脸、全身照锁妆造。
+   * 只按 seedLibraryId 去重会让后出的那张覆盖前一张，结果只剩全身照、
+   * 一张 identity 都不剩——锁脸没图，绑定句的分工措辞也不会出现。
+   * 所以两边都标了 identity/look 时，还要分工相同才算同一张。
+   */
+  const isSplitDuty = (d: ManhuaCustomAssetRefDuty | null | undefined) =>
+    d === "identity" || d === "look";
   const matchIdx = base.findIndex((r) => {
     if (r.url === url) return true;
     if (seedLibraryId && r.source === "generated" && r.seedLibraryId === seedLibraryId) {
+      if (isSplitDuty(input.refDuty) && isSplitDuty(r.refDuty)) {
+        return r.refDuty === input.refDuty;
+      }
       return true;
     }
     return false;

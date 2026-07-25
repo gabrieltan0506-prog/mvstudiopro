@@ -109,4 +109,43 @@ describe("manhuaCustomAssetRefs", () => {
     });
     expect(fixedPalace[0]?.role).toBe("scene");
   });
+
+  /**
+   * 主角拆两张后，两张图共用同一个 seedLibraryId。若只按它去重，后出的
+   * 全身照会覆盖大头照，结果一张 identity 都不剩——锁脸没图，绑定句的
+   * 「面部特征参考 / 妆造参考」分工也不会出现，整个拆图等于白做。
+   */
+  it("同一角色的大头照与全身照共存，旧拼版图被同分工的新图顶掉", () => {
+    let refs = upsertGeneratedManhuaCustomAssetRef([], {
+      url: "https://cdn.example/old-sheet.png",
+      role: "character",
+      labelZh: "沈沧澜",
+      seedLibraryId: "wa_char_shence",
+      refDuty: "identity",
+    });
+    refs = upsertGeneratedManhuaCustomAssetRef(refs, {
+      url: "https://cdn.example/face.png",
+      role: "character",
+      labelZh: "沈沧澜",
+      seedLibraryId: "wa_char_shence",
+      refDuty: "identity",
+    });
+    refs = upsertGeneratedManhuaCustomAssetRef(refs, {
+      url: "https://cdn.example/body.png",
+      role: "character",
+      labelZh: "沈沧澜",
+      seedLibraryId: "wa_char_shence",
+      refDuty: "look",
+    });
+
+    expect(refs).toHaveLength(2);
+    // 旧拼版图与大头照同为 identity → 被顶掉，不残留在垫图里
+    expect(refs.map((r) => r.url)).not.toContain("https://cdn.example/old-sheet.png");
+    expect(refs.find((r) => r.refDuty === "identity")?.url).toBe(
+      "https://cdn.example/face.png",
+    );
+    expect(refs.find((r) => r.refDuty === "look")?.url).toBe(
+      "https://cdn.example/body.png",
+    );
+  });
 });
