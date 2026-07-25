@@ -1,14 +1,29 @@
 ---
 name: motion-prompt-bank
-description: 短视频包装动效库施工手册（Logo/产品/数据/字幕）。把 shared/motionPromptBank 条目变成可验收动效时使用；前台不泄漏渲染栈名。
+description: 短视频包装动效库施工手册（Logo/产品/数据/字幕/电影抢镜）。把 shared/motionPromptBank 条目变成可验收动效时使用；前台不泄漏渲染栈名。
 ---
 
 # 包装动效库 · Agent 施工
 
 ## 何时用
 
-- 用户要短视频 **Logo / 产品广告 / 数据动画 / 字幕动效** 包装
+- 用户要短视频 **Logo / 产品广告 / 数据动画 / 字幕动效 / 电影抢镜** 包装
 - 需要从 `shared/motionPromptBank.ts` 选条目注入 Canvas 成片节点
+
+## 分类（以 `MotionPromptCategory` 为准）
+
+| `category` | 中文名 | 条数 |
+|---|---|---|
+| `caption` | 字幕动效 | 12 |
+| `logo` | Logo 动画 | 8 |
+| `data` | 数据动画 | 7 |
+| `product_ad` | 产品广告 | 7 |
+| `scene_steal` | 电影抢镜 | 3 |
+
+`scene_steal` 是真人闯入经典名场面并抢位的整段演出（船头张臂、雨夜亲吻、时空门穿越），
+属于**成片主体**而非片头片尾包装，选它时不要再叠其他包装条目。
+
+新增分类时同步改本表、`MOTION_PROMPT_CATEGORY_LABEL_ZH` 与 `shared/motionPromptBank.test.ts`。
 
 ## 不要做
 

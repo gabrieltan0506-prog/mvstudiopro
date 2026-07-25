@@ -39,7 +39,7 @@ description: >-
 1. `browser_tabs` list → 若已有 `mvstudiopro.com` 标签可复用，否则 `browser_navigate`。
 2. 默认入口（按任务改）：
    - 平台 / 顾问 / 选题：`https://www.mvstudiopro.com/platform`
-   - 画布 / 微调 / 工厂：`https://www.mvstudiopro.com/omni-canvas`（若 404 再试站点内实际路径）
+   - 画布 / 微调 / 漫剧工厂：`https://www.mvstudiopro.com/canvas`（路由真源 `client/src/App.tsx`；**没有** `/omni-canvas`）
 3. `browser_snapshot`：若已在登录页 → 停，等用户登录；若已进工作台 → 跳到 D。
 
 ### C. 等待用户
