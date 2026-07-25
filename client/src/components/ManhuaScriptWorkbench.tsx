@@ -115,7 +115,7 @@ import { summarizeManhuaVisualBriefForUi } from "@shared/manhuaScriptVisualBrief
 import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
 import { MANHUA_DRAFT_RETENTION_HINT_ZH } from "@shared/manhuaCloudDraft";
 import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
-import ManhuaIntegratedAssetBoardPanel from "@/components/ManhuaIntegratedAssetBoardPanel";
+import ManhuaPromptAssetChips from "@/components/ManhuaPromptAssetChips";
 import ManhuaRoughEditTimeline from "@/components/ManhuaRoughEditTimeline";
 import ManhuaStylePackPanel from "@/components/ManhuaStylePackPanel";
 import type { ManhuaStylePack } from "@shared/manhuaStylePack";
@@ -460,11 +460,25 @@ export default function ManhuaScriptWorkbench({
     artStyleId === "photoreal" ? "photoreal" : "cg_drama";
   const [shotIndex, setShotIndex] = useState(0);
   const [clipPromptReviewOpen, setClipPromptReviewOpen] = useState(false);
+  /** 默认药丸视图；按段记「谁被切到了原文编辑」 */
+  const [rawPromptSegments, setRawPromptSegments] = useState<Set<number>>(
+    () => new Set(),
+  );
+  /** 药丸缩略图：对照表只给 id，图得从已挂资产里配 */
+  const chipThumbByAssetId = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const r of customAssetRefs) {
+      const id = String(r?.id || "").trim();
+      const url = String(r?.url || "").trim();
+      if (id && url) out[id] = url;
+    }
+    return out;
+  }, [customAssetRefs]);
   useEffect(() => {
     setClipPromptReviewOpen(false);
   }, [focusEpisode, topic, seriesTitle]);
-  /** 中栏：分镜 | 运镜画板 | 一体参考板 | 粗剪 */
-  const [scriptTab, setScriptTab] = useState<"shots" | "path" | "board" | "edit">("shots");
+  /** 中栏：分镜 | 运镜画板 | 粗剪 */
+  const [scriptTab, setScriptTab] = useState<"shots" | "path" | "edit">("shots");
   /** 每镜机位密码（可点选覆盖推荐） */
   const [shotAngleByIndex, setShotAngleByIndex] = useState<Record<number, ManhuaCameraAngleId>>(
     {},
@@ -642,25 +656,6 @@ export default function ManhuaScriptWorkbench({
 
   const totalSec = workbenchShotTotalSec(shots, episodeVideoModel);
 
-  const integratedBoard = useMemo(
-    () =>
-      buildManhuaIntegratedAssetBoard({
-        characterIds,
-        ancientArchetypeIds,
-        sceneId,
-        propIds,
-        seriesTitle,
-        artStyleLabelZh,
-      }),
-    [
-      characterIds,
-      ancientArchetypeIds,
-      sceneId,
-      propIds,
-      seriesTitle,
-      artStyleLabelZh,
-    ],
-  );
 
   const stillIndexSet = useMemo(() => {
     const s = new Set<number>();
@@ -3761,7 +3756,6 @@ export default function ManhuaScriptWorkbench({
                 [
                   ["shots", "分镜"],
                   ["path", "运镜"],
-                  ["board", "参考板"],
                   ["edit", "粗剪"],
                 ] as const
               ).map(([id, label]) => (
@@ -3774,11 +3768,9 @@ export default function ManhuaScriptWorkbench({
                     scriptTab === id
                       ? id === "path"
                         ? "bg-sky-500/25 text-sky-50"
-                        : id === "board"
-                          ? "bg-amber-500/25 text-amber-50"
-                          : id === "edit"
-                            ? "bg-violet-500/25 text-violet-50"
-                            : "bg-white/12 text-white"
+                        : id === "edit"
+                        ? "bg-violet-500/25 text-violet-50"
+                        : "bg-white/12 text-white"
                       : "text-white/40 hover:text-white/70"
                   }`}
                 >
@@ -4213,24 +4205,63 @@ export default function ManhuaScriptWorkbench({
                           </div>
                         );
                       })()}
-                      <textarea
-                        data-manhua-clip-prompt={row.segmentIndex}
-                        disabled={!row.clip?.id || !onUpdateClipPrompt || factoryBusy}
-                        value={String(row.clip?.prompt || "").replace(
+                      {(() => {
+                        const promptText = String(row.clip?.prompt || "").replace(
                           /\n*【引擎光学】[^\n]*/g,
                           "",
-                        )}
-                        onChange={(e) => {
-                          if (row.clip?.id) onUpdateClipPrompt?.(row.clip.id, e.target.value);
-                        }}
-                        rows={5}
-                        className="w-full resize-y rounded border border-white/10 bg-black/40 px-1.5 py-1 font-mono text-[10px] leading-snug text-white/80 disabled:opacity-40"
-                        placeholder={
-                          row.clip?.id
-                            ? "段成片提示词"
-                            : "点「审阅」时会先铺段节点；若仍空请对齐画布竖排"
-                        }
-                      />
+                        );
+                        const raw = rawPromptSegments.has(row.segmentIndex);
+                        return (
+                          <>
+                            <div className="mb-1 flex items-center justify-end">
+                              <button
+                                type="button"
+                                data-manhua-prompt-view={raw ? "raw" : "chips"}
+                                onClick={() =>
+                                  setRawPromptSegments((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(row.segmentIndex)) {
+                                      next.delete(row.segmentIndex);
+                                    } else {
+                                      next.add(row.segmentIndex);
+                                    }
+                                    return next;
+                                  })
+                                }
+                                className="rounded border border-white/15 px-1.5 py-0.5 text-[9px] text-white/55 hover:bg-white/5"
+                              >
+                                {raw ? "看药丸视图" : "编辑原文"}
+                              </button>
+                            </div>
+                            {raw ? (
+                              <textarea
+                                data-manhua-clip-prompt={row.segmentIndex}
+                                disabled={
+                                  !row.clip?.id || !onUpdateClipPrompt || factoryBusy
+                                }
+                                value={promptText}
+                                onChange={(e) => {
+                                  if (row.clip?.id)
+                                    onUpdateClipPrompt?.(row.clip.id, e.target.value);
+                                }}
+                                rows={5}
+                                className="w-full resize-y rounded border border-white/10 bg-black/40 px-1.5 py-1 font-mono text-[10px] leading-snug text-white/80 disabled:opacity-40"
+                                placeholder={
+                                  row.clip?.id
+                                    ? "段成片提示词"
+                                    : "点「审阅」时会先铺段节点；若仍空请对齐画布竖排"
+                                }
+                              />
+                            ) : (
+                              <ManhuaPromptAssetChips
+                                prompt={promptText}
+                                thumbUrlByAssetId={chipThumbByAssetId}
+                                className="rounded border border-white/10 bg-black/30 px-1.5 py-1"
+                              />
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   ))}
                   <div className="flex flex-wrap gap-1.5 pt-0.5">
@@ -4264,21 +4295,6 @@ export default function ManhuaScriptWorkbench({
                 </div>
               ) : null}
             </>
-          ) : scriptTab === "board" ? (
-            <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-0.5">
-              <ManhuaIntegratedAssetBoardPanel
-                board={integratedBoard}
-                onCopyInjectSummary={(text) => {
-                  void navigator.clipboard?.writeText(text).then(
-                    () => toast.success("已复制一体参考摘要"),
-                    () => toast.message(text.slice(0, 120)),
-                  );
-                }}
-              />
-              <p className="mt-2 text-[10px] leading-snug text-white/35">
-                出图前一眼看齐角色、场景、道具；摘要可注入静帧提示词。
-              </p>
-            </div>
           ) : scriptTab === "edit" ? (
             <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-0.5">
               <ManhuaRoughEditTimeline
