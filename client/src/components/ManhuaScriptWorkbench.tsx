@@ -1831,7 +1831,7 @@ export default function ManhuaScriptWorkbench({
           阶段
         </span>
         {workflowPhases.map((phase, index) => (
-          <div key={phase.id} className="flex min-w-0 flex-1 items-center gap-1.5">
+          <div key={phase.id} className="flex shrink-0 flex-1 items-center gap-1.5">
             <button
               type="button"
               data-manhua-phase={phase.id}
@@ -1839,7 +1839,7 @@ export default function ManhuaScriptWorkbench({
                 phase.complete ? "complete" : phase.current ? "current" : "pending"
               }
               onClick={() => selectPhase(phase.id)}
-              className={`flex min-w-[100px] flex-1 items-center gap-2 rounded-md border px-2.5 py-1.5 text-left ${
+              className={`flex min-w-[132px] flex-1 items-center gap-2 rounded-md border px-2.5 py-1.5 text-left ${
                 phase.complete
                   ? "border-emerald-400/25 bg-emerald-500/[0.08] text-emerald-50"
                   : phase.current
@@ -1860,7 +1860,7 @@ export default function ManhuaScriptWorkbench({
               >
                 {phase.complete ? <CheckCircle2 className="h-3.5 w-3.5" /> : phase.index}
               </span>
-              <span className="truncate text-[11px] font-semibold">
+              <span className="whitespace-nowrap text-[11px] font-semibold">
                 {phase.id === "assets" ? "资产设定" : phase.label}
               </span>
               <span className="ml-auto shrink-0 text-[8px] opacity-60">
@@ -3842,9 +3842,6 @@ export default function ManhuaScriptWorkbench({
                               <span className="text-[9px]">待出分镜图</span>
                             </div>
                           )}
-                          <span className="absolute right-1 top-1 rounded bg-black/65 px-1 py-px text-[9px] font-semibold text-white/90">
-                            {shot.durationSec}s
-                          </span>
                         </div>
                         <div className="space-y-0.5 px-1.5 py-1.5">
                           <div className="flex items-center justify-between gap-1">

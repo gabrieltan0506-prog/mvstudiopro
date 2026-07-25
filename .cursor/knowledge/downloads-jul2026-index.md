@@ -1,6 +1,7 @@
 # Downloads · 2026 年 7 月交接 MD 索引（Agent 速读）
 
-> 源目录：`~/Downloads/2026Jul01` … `2026Jul24`（约 **78** 个 `.md`）。  
+> 源目录：`~/Downloads/2026Jul01` … `2026Jul23` + **`2026jul24`（小写 j）**，共 **78** 个 `.md`。  
+> 枚举时用 `ls -d ~/Downloads/2026[Jj]ul*` 或 `find -iname`，`2026Jul*` 会漏掉 Jul24。  
 > **现行产品真值**以 [`manhua-factory-brief.md`](./manhua-factory-brief.md) + [`PROGRESS.md`](./PROGRESS.md) 为准。  
 > 本文件只做**分类导航 + 周摘要**；冲突时信简报，不信旧 handoff。
 
@@ -10,6 +11,17 @@
 2. 读该线「现行要点」  
 3. 需要考古时再按周打开 Downloads 原件  
 4. 标注 ⚠ 的条目 = 已被后续 PR 推翻，勿当 KPI  
+
+## ⚠ 已被推翻的旧口径（原件里还写着，别照做）
+
+| Downloads 原文 | 出处 | 现行真值 |
+|---|---|---|
+| 「工厂主成片 = Gemini Omni，勿再默认 Seedance」 | Jul19 `hands-off-mj` §4.8 · Jul20 `hands-off` D1 · Jul20 `acceptance-eta` | 成片**只走 Seedance 标准/快速**（`MANHUA_FACTORY_DEFAULT_VIDEO_MODEL = seedance-2.0-fast`，Jul23 拍板） |
+| 「一集 6 段链 / 4 集连载 / 约 13 镜」 | Jul18 `jobstodo` · Jul23 `flow-canvas` | 预算期 **5–6 段 ×15s**，控 Seedance 账单（Jul24） |
+| 「两次开 PR ≥15 分钟」 | Jul20 `hands-off` §0.1b | **≥20 分钟**（`git-pr-workflow-always`） |
+| 「只许 push，不许开 PR / merge」 | Jul24 `jobs-codes-errors` §4.3 | 事故当时的临时收紧；**已被用户后续明文覆盖**（同日「推送，開ＰＲ吧」「幫我合上吧」）。以用户最新一条为准 |
+| 「废除微动三件套减法 → 完整导戏单原样放行」 | Jul23 `jobs-and-codes` §2.3 | 又收回：秒轴**短指令**，禁规则墙/导戏长文灌水（Jul24 #963–#967） |
+| 「声线必须齐才出片」 | Jul23 一带中间稿 | 语音 **0–3 可选，缺音不挡出片**（Jul24） |
 
 ---
 
@@ -27,7 +39,7 @@
 | 学节奏 | 榜单读帧→提案→批准进库；非抄阿硕商标 | Jul21 jobs；Jul22 craft |
 
 **原件优先读：**  
-`2026Jul19/hands-off-mj.md` · `2026Jul20/jobs-and-codes.md` · `2026Jul21/jobs-and-codes.md` · `2026Jul23/jobs-and-codes.md` · `2026Jul24/jobs-codes-errors.md`
+`2026Jul19/hands-off-mj.md` · `2026Jul20/jobs-and-codes.md` · `2026Jul21/jobs-and-codes.md` · `2026Jul23/jobs-and-codes.md` · `2026jul24/jobs-codes-errors.md`
 
 ### A2 · Platform `/platform`（内容创作 + 趋势）
 
@@ -127,7 +139,7 @@
 ## E. 源路径一览
 
 ```
-~/Downloads/2026Jul01 … 2026Jul24/
+~/Downloads/2026Jul01 … 2026Jul23/ + 2026jul24/
 ```
 
 仓库内镜像/过期副本可能在 `docs/2026Jul*`——**以 Downloads 当日账本 + 本知识库简报为准**。
