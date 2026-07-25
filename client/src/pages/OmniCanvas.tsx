@@ -6,6 +6,7 @@ import ManhuaClipDock from "@/components/canvas/ManhuaClipDock";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
 import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/lib/canvasTypes";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
+import { cropManhuaSheet2x2 } from "@/lib/manhuaSheetCropApi";
 import {
   evaluateManhuaAssetImageGate,
   manhuaHeroFaceSheetId,
@@ -3241,7 +3242,7 @@ export default function OmniCanvas() {
         return;
       }
       setAssetsSkipped(false);
-      const ingestSheetToMyLibrary = (
+      const ingestSheetToMyLibrary = async (
         plan: {
           id: string;
           kind: "charsheet" | "sceneplate";
@@ -3253,6 +3254,28 @@ export default function OmniCanvas() {
         const u = String(url || "").trim();
         if (!/^https:\/\//i.test(u)) return;
         const seedLibraryId = seedIdFromManhuaSheetBlockId(plan.id);
+        /**
+         * 四视角拼板整张不能当垫图：模型会把四格读成四个不同地点。切开只把
+         * 主视角挂成垫图；拼板本身仍留在节点输出里给人看。切失败就退回整张，
+         * 总比这一集没场景垫图强。
+         */
+        let refUrl = u;
+        if (plan.kind === "sceneplate" && plan.layout === "grid2x2") {
+          try {
+            const tiles = await cropManhuaSheet2x2({
+              sheetUrl: u,
+              objectPrefix: `manhua-scene-tiles/${seedLibraryId}`,
+            });
+            const main = tiles.find((t) => t.slot === "topLeft") || tiles[0];
+            if (main?.url) refUrl = main.url;
+          } catch (cropErr) {
+            console.warn(
+              `[canvas] scene sheet crop failed · ${
+                cropErr instanceof Error ? cropErr.message.slice(0, 120) : "unknown"
+              }`,
+            );
+          }
+        }
         /**
          * 主角拆两张：大头照锁脸、全身照锁妆造，绑定句按这个职责分工写。
          * 同步既有节点时拿不到 layout，改看有没有同源大头照——有就说明
@@ -3266,7 +3289,7 @@ export default function OmniCanvas() {
             : "identity";
         setCustomAssetRefs((prev) =>
           upsertGeneratedManhuaCustomAssetRef(prev, {
-            url: u,
+            url: refUrl,
             role: plan.kind === "charsheet" ? "character" : "scene",
             labelZh: plan.labelZh,
             seedLibraryId,
@@ -3275,7 +3298,7 @@ export default function OmniCanvas() {
         );
       };
       /** 已有画布设定图 → 同步进「我的角色 / 我的场景」分栏 */
-      const syncExistingSheetsToMyLibrary = () => {
+      const syncExistingSheetsToMyLibrary = async () => {
         for (const b of assetBlocks) {
           const url = b.outputUrl || b.outputUrls?.[0];
           if (!url) continue;
@@ -3291,7 +3314,12 @@ export default function OmniCanvas() {
               : assetCanon?.locations.find((l) => l.id === seedId || b.id.includes(l.id))
                   ?.nameZh) ||
             (kind === "charsheet" ? "角色定妆" : "场景参考");
-          ingestSheetToMyLibrary({ id: b.id, kind, labelZh }, url);
+          // 同步既有节点拿不到 plan.layout，看提示词里的四格版式指令认拼板
+          const layout =
+            kind === "sceneplate" && /2×2|四格/.test(String(b.prompt || ""))
+              ? ("grid2x2" as const)
+              : undefined;
+          await ingestSheetToMyLibrary({ id: b.id, kind, labelZh, layout }, url);
         }
       };
       const hasEpisodeSheetMedia = assetBlocks.some((b) =>
@@ -3310,7 +3338,7 @@ export default function OmniCanvas() {
         gate.ready &&
         hasEpisodeSheetMedia
       ) {
-        syncExistingSheetsToMyLibrary();
+        await syncExistingSheetsToMyLibrary();
         setWorkflowPhase("storyboard");
         toast.message(
           gate.viaCustomUpload
@@ -3430,7 +3458,7 @@ export default function OmniCanvas() {
             block = { ...block, prompt: plan.prompt, status: "idle", error: undefined };
             working = working.map((b) => (b.id === plan.id ? block! : b));
           } else {
-            ingestSheetToMyLibrary(plan, block.outputUrl || block.outputUrls?.[0]);
+            await ingestSheetToMyLibrary(plan, block.outputUrl || block.outputUrls?.[0]);
             continue;
           }
           setBlocks(working);
@@ -3462,7 +3490,7 @@ export default function OmniCanvas() {
           );
           setBlocks(working);
           saveCanvasState(working, canvasEdges);
-          ingestSheetToMyLibrary(plan, out.outputUrl || out.outputUrls?.[0]);
+          await ingestSheetToMyLibrary(plan, out.outputUrl || out.outputUrls?.[0]);
           if (out.outputUrl || out.outputUrls?.[0]) {
             pushDebug("confirmAssetsFromScript:engine", {
               level: "ok",
