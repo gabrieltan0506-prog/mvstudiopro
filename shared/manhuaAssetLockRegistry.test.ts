@@ -175,11 +175,15 @@ describe("manhuaAssetLockRegistry", () => {
       mentionedTags: ["@角色1"],
       maxImages: 6,
     });
-    expect(plan.imageUrls[0]).toBe("https://cdn.example/tail.jpg");
+    // 重要素材前置：被点名的角色资产占首位，上段末帧只管承接起幅、垫底
+    expect(plan.imageUrls[0]).toBe("https://cdn.example/char.jpg");
+    expect(plan.imageUrls[plan.imageUrls.length - 1]).toBe("https://cdn.example/tail.jpg");
     expect(plan.entries.some((e) => e.kind === "asset" && e.roleTag === "@角色1")).toBe(
       true,
     );
-    expect(plan.bindLineZh).toMatch(/@角色1=@Image\d+/);
+    // 官方指代式：主体名直接贴中文图号，不用 @角色N= 中转、不写英文 Image
+    expect(plan.bindLineZh).toMatch(/女主@图片\d+/);
+    expect(plan.bindLineZh).not.toMatch(/@Image/);
     expect(plan.bindLineZh).toContain("id=c1");
     expect(plan.bindLineZh).not.toMatch(/https?:\/\//);
     expect(stripManhuaAssetUrlsFromPrompt(`${block}\nhttps://leak.example/x.jpg`)).not.toMatch(
