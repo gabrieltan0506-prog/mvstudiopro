@@ -159,12 +159,6 @@ import ManhuaAssetWall from "@/components/ManhuaAssetWall";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { createJobSameOrigin, pollJobUntilTerminal } from "@/lib/jobs";
 import {
-  MOTION_PROMPT_BANK,
-  MOTION_PROMPT_CATEGORY_LABEL_ZH,
-  recommendMotionPromptFromTopic,
-  type MotionPromptCategory,
-} from "@shared/motionPromptBank";
-import {
   CRAFT_SHOT_BANK,
   CRAFT_SHOT_CATEGORY_LABEL_ZH,
   getCraftShotById,
@@ -462,11 +456,9 @@ export default function OmniCanvas() {
         (bootCast?.artStyleId && initialWriterSession?.writerConfirmed),
     ),
   );
-  const [factoryMotionId, setFactoryMotionId] = useState("");
   const [factoryCraftShotId, setFactoryCraftShotId] = useState("");
   /** 手选手法后不再被题材自动覆盖 */
   const [craftShotManual, setCraftShotManual] = useState(false);
-  const [motionManual, setMotionManual] = useState(false);
   const [factoryPathRecipeId, setFactoryPathRecipeId] = useState("");
   const [pathRecipeManual, setPathRecipeManual] = useState(false);
   const [factoryPathAnnotation, setFactoryPathAnnotation] = useState<ManhuaPathAnnotation | null>(
@@ -1002,17 +994,6 @@ export default function OmniCanvas() {
     }
   }, [recommendedCraft.craftShotId, craftShotManual]);
 
-  const recommendedMotion = useMemo(
-    () => recommendMotionPromptFromTopic(factoryTopic),
-    [factoryTopic],
-  );
-  useEffect(() => {
-    if (motionManual) return;
-    if (recommendedMotion.motionId) {
-      setFactoryMotionId(recommendedMotion.motionId);
-    }
-  }, [recommendedMotion.motionId, motionManual]);
-
   /** 运镜/动作推荐：题材 + 本集剧本（打斗/比赛/多人/肢体移位等） */
   const craftHintBlob = useMemo(() => {
     const parts = [factoryTopic.trim()];
@@ -1410,10 +1391,6 @@ export default function OmniCanvas() {
     propManual,
     wardrobeManual,
   ]);
-  const selectedMotionIds = useMemo(
-    () => (factoryMotionId.trim() ? [factoryMotionId.trim()] : []),
-    [factoryMotionId],
-  );
   const selectedCraftShotIds = useMemo(
     () => (factoryCraftShotId.trim() ? [factoryCraftShotId.trim()] : []),
     [factoryCraftShotId],
@@ -1476,7 +1453,6 @@ export default function OmniCanvas() {
       `cineVocab: ${selectedCineVocabIds.join(",") || "—"}`,
       `wardrobe: ${selectedWardrobeIds.join(",") || "—"}`,
       `promo: ${selectedPromoLayoutIds.join(",") || "—"}`,
-      `motion: ${selectedMotionIds.join(",") || "—"}`,
       `reverseMode: ${factoryReverseMode}`,
       `writerPack: ${writerPack ? `${writerPack.seriesTitle} · ${writerPack.episodes.length}ep · confirmed=${writerConfirmed}` : "—"}`,
       `progress: ${factoryProgress || "—"}`,
@@ -1505,9 +1481,7 @@ export default function OmniCanvas() {
     selectedMaleMicroIds,
     selectedCineVocabIds,
     selectedWardrobeIds,
-    selectedPromoLayoutIds,
-    selectedMotionIds,
-    factoryReverseMode,
+    selectedPromoLayoutIds,    factoryReverseMode,
     writerPack,
     writerConfirmed,
     factoryProgress,
@@ -1527,9 +1501,7 @@ export default function OmniCanvas() {
     const timer = window.setTimeout(() => {
       setBlocks((prev) => {
         const next = applyFactoryPrefsToBlocks(prev, {
-          craftShotIds: selectedCraftShotIds,
-          motionPromptIds: selectedMotionIds,
-          pathCameraRecipeIds: selectedPathRecipeIds,
+          craftShotIds: selectedCraftShotIds,          pathCameraRecipeIds: selectedPathRecipeIds,
           pathAnnotationJson: factoryPathAnnotation,
           narrativeLightingIds: selectedNarrativeLightingIds,
           maleHairstyleIds: selectedMaleHairstyleIds,
@@ -1570,9 +1542,7 @@ export default function OmniCanvas() {
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅跟工厂选择器
   }, [
-    factoryCraftShotId,
-    factoryMotionId,
-    factoryPathRecipeId,
+    factoryCraftShotId,    factoryPathRecipeId,
     factoryPathAnnotation,
     factoryNarrativeLightingId,
     factoryMaleHairstyleId,
@@ -1591,9 +1561,7 @@ export default function OmniCanvas() {
     factoryArtStyleId,
     factoryReverseMode,
     customAssetRefs,
-    selectedCraftShotIds,
-    selectedMotionIds,
-    selectedPathRecipeIds,
+    selectedCraftShotIds,    selectedPathRecipeIds,
     selectedNarrativeLightingIds,
     selectedMaleHairstyleIds,
     selectedMaleMicroIds,
@@ -1603,14 +1571,6 @@ export default function OmniCanvas() {
     selectedWardrobeIds,
     selectedCharacterIds,
   ]);
-  const motionGrouped = useMemo(() => {
-    const cats: MotionPromptCategory[] = ["logo", "product_ad", "data", "caption", "scene_steal"];
-    return cats.map((category) => ({
-      category,
-      label: MOTION_PROMPT_CATEGORY_LABEL_ZH[category],
-      items: MOTION_PROMPT_BANK.filter((e) => e.category === category),
-    }));
-  }, []);
   const craftShotGrouped = useMemo(() => {
     const cats: CraftShotCategory[] = ["lighting", "camera", "emotion", "transition"];
     return cats.map((category) => ({
@@ -2107,9 +2067,7 @@ export default function OmniCanvas() {
           hardCast?.identityLockZh ||
           factoryIdentityLockZh ||
           castBundle.identityLockZh,
-        artStyleId: factoryArtStyleId,
-        motionPromptIds: selectedMotionIds,
-        craftShotIds: selectedCraftShotIds,
+        artStyleId: factoryArtStyleId,        craftShotIds: selectedCraftShotIds,
         pathCameraRecipeIds: selectedPathRecipeIds,
         pathAnnotationJson: factoryPathAnnotation,
         narrativeLightingIds: selectedNarrativeLightingIds,
@@ -2180,9 +2138,7 @@ export default function OmniCanvas() {
       factoryIdentityLockZh,
       castBundle.identityLockZh,
       resolveHardCastForSpawn,
-      selectedCharacterIds,
-      selectedMotionIds,
-      selectedCraftShotIds,
+      selectedCharacterIds,      selectedCraftShotIds,
       selectedPathRecipeIds,
       factoryPathAnnotation,
       selectedNarrativeLightingIds,
@@ -2554,9 +2510,7 @@ export default function OmniCanvas() {
       characterIds: hardCast.characterIds,
       ancientArchetypeIds: hardCast.ancientArchetypeIds,
       identityLockZh: identityFromCanon || hardCast.identityLockZh,
-      artStyleId: factoryArtStyleId,
-      motionPromptIds: selectedMotionIds,
-      craftShotIds: selectedCraftShotIds,
+      artStyleId: factoryArtStyleId,      craftShotIds: selectedCraftShotIds,
       pathCameraRecipeIds: selectedPathRecipeIds,
       pathAnnotationJson: factoryPathAnnotation,
       narrativeLightingIds: selectedNarrativeLightingIds,
@@ -2647,9 +2601,7 @@ export default function OmniCanvas() {
     artStyleManual,
     sceneManual,
     propManual,
-    wardrobeManual,
-    selectedMotionIds,
-    selectedCraftShotIds,
+    wardrobeManual,    selectedCraftShotIds,
     selectedPathRecipeIds,
     factoryPathAnnotation,
     selectedNarrativeLightingIds,
@@ -2765,9 +2717,7 @@ export default function OmniCanvas() {
       characterIds: hardCast.characterIds,
       ancientArchetypeIds: hardCast.ancientArchetypeIds,
       identityLockZh: identityFromCanon || hardCast.identityLockZh,
-      artStyleId: factoryArtStyleId,
-      motionPromptIds: selectedMotionIds,
-      craftShotIds: selectedCraftShotIds,
+      artStyleId: factoryArtStyleId,      craftShotIds: selectedCraftShotIds,
       pathCameraRecipeIds: selectedPathRecipeIds,
       pathAnnotationJson: factoryPathAnnotation,
       narrativeLightingIds: selectedNarrativeLightingIds,
@@ -2823,9 +2773,7 @@ export default function OmniCanvas() {
     sceneManual,
     propManual,
     wardrobeManual,
-    writerFocusEpisode,
-    selectedMotionIds,
-    selectedCraftShotIds,
+    writerFocusEpisode,    selectedCraftShotIds,
     selectedPathRecipeIds,
     factoryPathAnnotation,
     selectedNarrativeLightingIds,
@@ -3666,9 +3614,7 @@ export default function OmniCanvas() {
             return;
           }
           workingBlocks = applyFactoryPrefsToBlocks(workingBlocks, {
-            craftShotIds: selectedCraftShotIds,
-            motionPromptIds: selectedMotionIds,
-            pathCameraRecipeIds: selectedPathRecipeIds,
+            craftShotIds: selectedCraftShotIds,            pathCameraRecipeIds: selectedPathRecipeIds,
             pathAnnotationJson: factoryPathAnnotation,
             narrativeLightingIds: selectedNarrativeLightingIds,
             maleHairstyleIds: selectedMaleHairstyleIds,
@@ -4078,9 +4024,7 @@ export default function OmniCanvas() {
       resolveRunEpisodeIndexes,
       pushDebug,
       selectedCharacterIds,
-      selectedCraftShotIds,
-      selectedMotionIds,
-      selectedPathRecipeIds,
+      selectedCraftShotIds,      selectedPathRecipeIds,
       selectedNarrativeLightingIds,
       selectedMaleHairstyleIds,
       selectedMaleMicroIds,
@@ -4843,9 +4787,7 @@ export default function OmniCanvas() {
                     // 出图前把角色/场景/服装/运镜锁进每镜静帧提示词
                     setBlocks((prev) => {
                       const next = applyFactoryPrefsToBlocks(prev, {
-                        craftShotIds: selectedCraftShotIds,
-                        motionPromptIds: selectedMotionIds,
-                        pathCameraRecipeIds: selectedPathRecipeIds,
+                        craftShotIds: selectedCraftShotIds,                        pathCameraRecipeIds: selectedPathRecipeIds,
                         pathAnnotationJson: factoryPathAnnotation,
                         narrativeLightingIds: selectedNarrativeLightingIds,
                         maleHairstyleIds: selectedMaleHairstyleIds,
@@ -6156,29 +6098,6 @@ export default function OmniCanvas() {
                             <option value="en">English</option>
                           </select>
                         </div>
-                        <div>
-                          <label className="block text-[11px] text-white/45">包装动效</label>
-                          <select
-                            value={factoryMotionId}
-                            onChange={(e) => {
-                              setMotionManual(true);
-                              setFactoryMotionId(e.target.value);
-                            }}
-                            disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                            className="mt-1 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
-                          >
-                            <option value="">不指定</option>
-                            {motionGrouped.map((g) => (
-                              <optgroup key={g.category} label={g.label}>
-                                {g.items.map((e) => (
-                                  <option key={e.id} value={e.id}>
-                                    {String(e.no).padStart(2, "0")} {e.nameZh}
-                                  </option>
-                                ))}
-                              </optgroup>
-                            ))}
-                          </select>
-                        </div>
                       </div>
                     </div>
                   ) : null}
@@ -6261,9 +6180,7 @@ export default function OmniCanvas() {
                       characterIds: selectedCharacterIds,
                       ancientArchetypeIds: factoryAncientArchetypeIds,
                       identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
-                      artStyleId: factoryArtStyleId,
-                      motionPromptIds: selectedMotionIds,
-                      craftShotIds: selectedCraftShotIds,
+                      artStyleId: factoryArtStyleId,                      craftShotIds: selectedCraftShotIds,
                       pathCameraRecipeIds: selectedPathRecipeIds,
                       pathAnnotationJson: factoryPathAnnotation,
                       narrativeLightingIds: selectedNarrativeLightingIds,
