@@ -196,6 +196,33 @@ describe("manhuaAssetLockRegistry", () => {
     ).not.toMatch(/https?:\/\/|\/manhua-|预览图：/);
   });
 
+  /**
+   * 官方规范：「图片N」指 content 数组里第 N 个 image_url。图号一旦和实际发图
+   * 错位，模型就会把 A 角色的脸贴到 B 身上——比不绑还糟。
+   */
+  it("图号严格对应实际发图顺序，且不留英文 Image", () => {
+    const plan = planManhuaClipSeedanceImageBind({
+      assetRows: [
+        { tag: "@角色1", id: "a", labelZh: "沈沧澜", path: "https://cdn.example/a.jpg" },
+        { tag: "@角色2", id: "b", labelZh: "苏照雪", path: "https://cdn.example/b.jpg" },
+        { tag: "@场景1", id: "s", labelZh: "断月桥", path: "https://cdn.example/s.jpg" },
+      ],
+      stillUrls: ["https://cdn.example/still.jpg"],
+      tailUrls: ["https://cdn.example/tail.jpg"],
+      maxImages: 9,
+    });
+
+    for (const e of plan.entries) {
+      expect(plan.imageUrls[e.imageIndex - 1]).toBe(e.url);
+    }
+    expect(plan.bindLineZh).not.toMatch(/@Image/i);
+    expect(plan.bindLineZh).toContain("沈沧澜@图片1");
+    expect(plan.bindLineZh).toContain("苏照雪@图片2");
+    expect(plan.bindLineZh).toContain("断月桥@图片3");
+    // 末帧垫底：优先级最低的素材不该占前排权重位
+    expect(plan.entries[plan.entries.length - 1]?.kind).toBe("tail");
+  });
+
   it("keeps the segment still and spends the rest on assets, not on a 2nd tail", () => {
     const assetRows = Array.from({ length: 8 }, (_, i) => ({
       id: `a${i + 1}`,
