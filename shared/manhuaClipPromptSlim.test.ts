@@ -53,9 +53,9 @@ describe("manhua clip prompt slim (Seedance skill style)", () => {
     expect(text).toContain("湿石回廊");
     expect(text).toContain("@场景1");
     expect(text).toContain("【光影·景别·氛围】");
-    expect(text).toContain("动作轨迹：");
-    expect(text).toContain("运镜轨迹：");
-    expect(text).toContain("景别：");
+    // 顺叙白描：不再是「动作轨迹：X。运镜轨迹：Y」字段表
+    expect(text).not.toContain("动作轨迹：");
+    expect(text).not.toContain("景别：");
     expect(text).toContain("说「从前说过的话，都不算数了？」");
     expect(text).toContain("说「是我对不住你。」");
     expect(text).not.toMatch(/古风服化参考|arch_|节拍防火墙|成片预演硬锁|\d+mm|快门/);

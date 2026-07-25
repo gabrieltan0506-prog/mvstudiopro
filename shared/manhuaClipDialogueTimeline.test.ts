@@ -64,11 +64,12 @@ describe("manhuaClipDialogueTimeline", () => {
       },
     );
     expect(block).toContain("0–15s：");
-    expect(block).toContain("动作轨迹：握拳对峙，咬牙");
-    expect(block).toContain("运镜轨迹：");
-    expect(block).toContain("景别：近景");
+    // 顺叙白描：先机位后动作，不再是字段表
+    expect(block).toContain("近景微推；握拳对峙，咬牙");
+    expect(block).not.toContain("动作轨迹：");
+    expect(block).not.toContain("景别：");
     // 演技三维都要落到秒轴：只给台词内容，引擎只会念不会演
-    expect(block).toContain("情绪：怒");
+    expect(block).toContain("怒");
     expect(block).toContain("以压嗓说「放开！」");
     // 光与氛围归段头【光影·景别·氛围】写一次；秒轴复读只会让同一串配色刷屏
     expect(block).not.toContain("光：侧逆光压暗");
@@ -127,11 +128,10 @@ describe("manhuaClipDialogueTimeline", () => {
     expect(block.match(/眼神由惊转硬/g)).toHaveLength(1);
 
     // 运镜栏已有权威值时，动作栏开头的运镜词要剥掉，别和运镜栏打架
-    expect(block).not.toContain("动作轨迹：极速拉远");
-    expect(block).not.toContain("动作轨迹：手持微晃");
-    expect(block).not.toContain("动作轨迹：过肩跟拍");
-    expect(block).toContain("动作轨迹：夜雨中燃烧的火箭死死钉入湿滑桥板，火星四溅");
-    expect(block).toContain("运镜轨迹：");
+    expect(block).not.toContain("极速拉远");
+    expect(block).not.toContain("手持微晃");
+    expect(block).not.toContain("过肩跟拍");
+    expect(block).toContain("夜雨中燃烧的火箭死死钉入湿滑桥板，火星四溅");
     expect(block).toContain("说「箭上有火，账册在桥中央！」");
   });
 
@@ -253,10 +253,9 @@ describe("manhuaClipDialogueTimeline", () => {
     expect(text).toContain("【场景锁】");
     expect(text).toContain("@场景1");
     expect(text).toContain("【光影·景别·氛围】");
-    expect(text).toContain("动作轨迹：");
-    expect(text).toContain("运镜轨迹：");
-    expect(text).toContain("景别：近景");
-    expect(text).toContain("景别：中景");
+    expect(text).not.toContain("动作轨迹：");
+    expect(text).toContain("近景");
+    expect(text).toContain("中景");
     expect(text).toContain("说「拿着」");
     expect(text).toContain("说「你早就知道了？」");
     expect(text).not.toContain("视频生成导戏单");

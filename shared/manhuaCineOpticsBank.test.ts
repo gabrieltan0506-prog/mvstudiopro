@@ -48,8 +48,8 @@ describe("manhuaCineOpticsBank", () => {
     });
     expect(withCam).not.toContain("光学·");
     expect(withCam).not.toMatch(/\d+mm/);
-    expect(withCam).toContain("景别：近景");
-    expect(withCam).toMatch(/运镜轨迹：.*微推/);
+    expect(withCam).toContain("近景");
+    expect(withCam).toMatch(/微推/);
     expect(withCam).toContain("【场景锁】");
     const eng = appendManhuaClipEngineOptics(withCam);
     expect(eng).toMatch(/【引擎光学】\d+mm/);
@@ -67,8 +67,8 @@ describe("manhuaCineOpticsBank", () => {
         },
       ],
     });
-    expect(noCam).toMatch(/运镜轨迹：/);
-    expect(noCam).toContain("景别：近景");
+    expect(noCam).toMatch(/近景微动|近景/);
+    expect(noCam).toContain("近景");
     expect(appendManhuaClipEngineOptics(noCam)).not.toMatch(/【引擎光学】/);
   });
 });
