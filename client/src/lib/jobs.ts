@@ -94,8 +94,9 @@ function resolveJobPollUrl(jobId: string): string {
 
 function formatJobFetchError(status: number, detail: string): Error {
   if (status === 401) {
+    // 带上 (401) 前缀，轮询层才能识别并做有限次重试；文案仍是给用户看的那句
     return new Error(
-      "登录状态已失效，无法查询分析进度。请刷新页面重新登录后再试（后台任务可能仍在运行）",
+      "(401) 登录状态已失效，无法查询分析进度。请刷新页面重新登录后再试（后台任务可能仍在运行）",
     );
   }
   // 始终带 (statusCode) 前缀，让 isTransientJobPollError 能正确分类（404 按瞬态处理）
@@ -163,17 +164,34 @@ function isTransientJobPollError(err: unknown): boolean {
 const MAX_404_RETRIES = 3;
 
 /**
+ * 401 也可能是假的：服务端鉴权要读一次用户表，库抖一下就回 401。
+ * 一次 401 就把最长 95 分钟的任务判死太脆，连续 3 次才认定登录真失效。
+ */
+const MAX_401_RETRIES = 3;
+
+/**
  * 供轮询使用：对单次 GET 做有限次退避重试（不 increment poll attempt，由 pollJobUntilTerminal 外层计数）
  */
 export async function getJobForPoll(jobId: string): Promise<JobResponse> {
   const maxAttempts = 6;
   let notFoundRetries = 0;
+  let unauthorizedRetries = 0;
   let lastErr: Error | undefined;
   for (let a = 1; a <= maxAttempts; a++) {
     try {
       return await getJob(jobId);
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
+      if (/\(401\)/.test(lastErr.message)) {
+        unauthorizedRetries += 1;
+        if (unauthorizedRetries < MAX_401_RETRIES) {
+          // 401 重试时间: 1s, 2s
+          await sleep(1000 * 2 ** (unauthorizedRetries - 1));
+          continue;
+        }
+        // 连续 3 次仍 401：认定登录确实失效，抛去掉状态码前缀的人话
+        throw new Error(lastErr.message.replace(/^\(401\)\s*/, ""));
+      }
       const is404 = /\(404\)/.test(lastErr.message) || /Job not found/i.test(lastErr.message);
       if (is404) {
         notFoundRetries += 1;

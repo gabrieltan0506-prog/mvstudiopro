@@ -14,6 +14,13 @@ const requireUser = t.middleware(async opts => {
   const { ctx, next } = opts;
 
   if (!ctx.user) {
+    // 库/上游连不上时凭证其实没问题，别让前台提示用户重新登录
+    if (ctx.authUnavailable) {
+      throw new TRPCError({
+        code: "SERVICE_UNAVAILABLE",
+        message: "服务暂时不可用，请稍后重试",
+      });
+    }
     throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
   }
 

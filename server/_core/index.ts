@@ -341,6 +341,10 @@ async function startServer() {
       const ctx = await createContext({ req: req as any, res: res as any } as any);
       if (job.userId !== "public") {
         if (!ctx.user) {
+          // 鉴权依赖抖动别判成登录失效：长任务轮询会据此重试，而不是直接判死
+          if (ctx.authUnavailable) {
+            return res.status(503).json({ error: "Auth store unavailable, retry" });
+          }
           return res.status(401).json({ error: "Unauthorized" });
         }
         if (

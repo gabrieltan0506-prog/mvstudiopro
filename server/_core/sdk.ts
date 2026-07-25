@@ -1,5 +1,5 @@
 import { AXIOS_TIMEOUT_MS, COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
-import { ForbiddenError } from "@shared/_core/errors";
+import { ForbiddenError, ServiceUnavailableError } from "@shared/_core/errors";
 import axios, { type AxiosInstance } from "axios";
 import { parse as parseCookieHeader } from "cookie";
 import type { Request } from "express";
@@ -47,6 +47,9 @@ function buildLocalDevUser(session: SessionPayload, signedInAt: Date): User {
     lastSignedIn: signedInAt,
   };
 }
+
+/** 「最后登录时间」最多多久写一次库（流水账，不值得每个请求一写） */
+const LAST_SIGNED_IN_THROTTLE_MS = 10 * 60_000;
 
 const EXCHANGE_TOKEN_PATH = `/webdev.v1.WebDevAuthPublicService/ExchangeToken`;
 const GET_USER_INFO_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfo`;
@@ -279,6 +282,27 @@ class SDKServer {
     } as GetUserInfoWithJwtResponse;
   }
 
+  /**
+   * 记录「最后登录时间」是流水账，不是鉴权的一部分。
+   *
+   * 原先每个请求都写一次库：轮询长任务时等于每几秒一次写入，撞上连接抖动的概率被放大，
+   * 而这一写失败还会把整个有效会话否掉。改成按 {@link LAST_SIGNED_IN_THROTTLE_MS} 节流，
+   * 且失败只记日志。
+   */
+  private async touchLastSignedIn(
+    openId: string,
+    previous: Date | null | undefined,
+    now: Date
+  ): Promise<void> {
+    const prevMs = previous instanceof Date ? previous.getTime() : 0;
+    if (prevMs && now.getTime() - prevMs < LAST_SIGNED_IN_THROTTLE_MS) return;
+    try {
+      await db.upsertUser({ openId, lastSignedIn: now });
+    } catch (error) {
+      console.warn("[Auth] lastSignedIn bookkeeping skipped:", String(error));
+    }
+  }
+
   async authenticateRequest(
     req: Request,
     options: { silentMissing?: boolean } = {}
@@ -296,7 +320,17 @@ class SDKServer {
 
     const sessionUserId = session.openId;
     const signedInAt = new Date();
-    let user = await db.getUserByOpenId(sessionUserId);
+    let user: Awaited<ReturnType<typeof db.getUserByOpenId>>;
+    try {
+      user = await db.getUserByOpenId(sessionUserId);
+    } catch (error) {
+      /**
+       * 库连不上 ≠ 凭证无效。会话 JWT 是本地验过的，这里把读库故障往上抛成 503，
+       * 免得前台把一次数据库抖动显示成「登录状态已失效」，把长任务的轮询也判死。
+       */
+      console.error("[Auth] User lookup failed (auth store unavailable):", error);
+      throw ServiceUnavailableError("Auth store unavailable");
+    }
 
     if (!user && !ENV.databaseUrl) {
       return buildLocalDevUser(session, signedInAt);
@@ -324,10 +358,7 @@ class SDKServer {
       throw ForbiddenError("User not found");
     }
 
-    await db.upsertUser({
-      openId: user.openId,
-      lastSignedIn: signedInAt,
-    });
+    await this.touchLastSignedIn(user.openId, user.lastSignedIn, signedInAt);
 
     return user;
   }
