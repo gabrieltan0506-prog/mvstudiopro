@@ -111,9 +111,9 @@ describe("manhua clip prompt slim (Seedance skill style)", () => {
       ],
       stillUrls: ["https://cdn.example/k.jpg"],
     });
-    expect(plan.bindLineZh).toContain("@角色1=@Image1");
+    expect(plan.bindLineZh).toContain("少主@图片1");
     expect(plan.bindLineZh).not.toMatch(/https?:\/\//);
-    expect(formatManhuaClipImageRoleBindLine(3)).toContain("@Image1、@Image2、@Image3");
+    expect(formatManhuaClipImageRoleBindLine(3)).toContain("@图片1、@图片2、@图片3");
   });
 
   it("engine optics stay out of UI", () => {

@@ -778,9 +778,9 @@ export function planManhuaClipSeedanceImageBind(input: {
     entries.push({ ...e, imageIndex: entries.length + 1 });
   };
 
-  for (let i = 0; i < takeTail; i++) {
-    push({ kind: "tail", url: tails[i]!, labelZh: "上段末帧起幅" });
-  }
+  // 官方「重要素材前置」：越需要精准参考的越靠前。角色/服装资产最难锁（ID 漂移
+  // 是主要失败模式），本段静帧次之（定构图与光色），上段末帧只管承接起幅、
+  // 优先级最低。原先把末帧排在第一位，等于让最不吃紧的素材占了最高权重位。
   let assetsTaken = 0;
   for (const row of sortedAssets) {
     if (assetsTaken >= assetBudget) break;
@@ -796,6 +796,9 @@ export function planManhuaClipSeedanceImageBind(input: {
   for (const u of stills) {
     push({ kind: "still", url: u, labelZh: "本段静帧" });
   }
+  for (let i = 0; i < takeTail; i++) {
+    push({ kind: "tail", url: tails[i]!, labelZh: "上段末帧起幅" });
+  }
 
   const bindLineZh = formatManhuaClipSeedanceBindLineFromEntries(entries);
 
@@ -806,48 +809,59 @@ export function planManhuaClipSeedanceImageBind(input: {
   };
 }
 
-/** 由已定序 entries 生成 Seedance 硬绑句（含 @角色N=@ImageK 与 id） */
+/**
+ * 由已定序 entries 生成 Seedance 硬绑句。
+ *
+ * 素材指代按官方规范写「@图片N」而非「@ImageN」：文档要求提示词必须用
+ * 「素材类型+序号」指代 content 数组里第 N 个同类素材，主体则用
+ * 「<主体>@<图片N>」把人和图绑死（例：张三@图片1）。英文 Image 不是
+ * 约定 token，模型对不上号。序号与实际发出的图序严格同序。
+ */
 export function formatManhuaClipSeedanceBindLineFromEntries(
   entries: ManhuaClipSeedanceImageBindEntry[],
+  /** 审阅面留 id 便于核对绑了谁；发给引擎时关掉，模型读不懂也浪费额度 */
+  opts?: { includeAssetId?: boolean },
 ): string {
+  const withId = opts?.includeAssetId !== false;
   const bits = entries.map((e, i) => {
-    const img = `@Image${e.imageIndex || i + 1}`;
+    const img = `@图片${e.imageIndex || i + 1}`;
     if (e.kind === "tail") return `${img}承接上段起幅`;
     if (e.kind === "asset") {
-      const idBit = e.assetId ? ` id=${e.assetId}` : "";
-      const name = e.labelZh ? `（${e.labelZh}）` : "";
-      return `${e.roleTag}=${img}${name}${idBit}`;
+      const idBit = withId && e.assetId ? ` id=${e.assetId}` : "";
+      // 官方主体绑定式：主体名直接贴图号，不走「@角色N=」中转
+      const subject = e.labelZh || e.roleTag || "";
+      return `${subject}${img}${idBit}`;
     }
-    return `${img}=本段静帧`;
+    return `${img}为本段构图与光色基准`;
   });
   return bits.length
-    ? `${bits.join("；")}。只按秒轴改动作/口型/运镜，脸服场锁上表@Image。`
+    ? `${bits.join("；")}。全程保持各主体脸、服、场与上表一致，只按秒轴改动作/口型/运镜。`
     : "";
 }
 
 /**
- * 出片时按实际 imageUrls 顺序写 @ImageN 职责（无资产对照时的回退）。
+ * 出片时按实际 imageUrls 顺序写「@图片N」职责（无资产对照时的回退）。
  * 有资产对照时请用 planManhuaClipSeedanceImageBind.bindLineZh。
  */
 export function formatManhuaClipImageRoleBindLine(
   imageCount: number,
   opts?: { tailCount?: number },
 ): string {
-  const n = Math.max(0, Math.min(9, Math.floor(imageCount)));
+  const n = Math.max(0, Math.min(SEEDANCE_REFERENCE_MAX.image, Math.floor(imageCount)));
   if (n < 1) return "";
   const tail = Math.max(0, Math.min(n - 1, Math.floor(opts?.tailCount || 0)));
   if (tail > 0) {
-    const tailTags = Array.from({ length: tail }, (_, i) => `@Image${i + 1}`).join("、");
+    const tailTags = Array.from({ length: tail }, (_, i) => `@图片${i + 1}`).join("、");
     const stillTags = Array.from(
       { length: n - tail },
-      (_, i) => `@Image${tail + i + 1}`,
+      (_, i) => `@图片${tail + i + 1}`,
     ).join("、");
     return `${tailTags}承接上段起幅；${stillTags}锁定本段脸服场；只按秒轴改动作/口型/运镜。`;
   }
   if (n === 1) {
-    return `@Image1锁定主体脸服场；只按秒轴改动作/口型/运镜。`;
+    return `@图片1锁定主体脸服场；只按秒轴改动作/口型/运镜。`;
   }
-  const tags = Array.from({ length: n }, (_, i) => `@Image${i + 1}`).join("、");
+  const tags = Array.from({ length: n }, (_, i) => `@图片${i + 1}`).join("、");
   return `${tags}为参考图，严格保持各自脸服场；只按秒轴改动作/口型/运镜。`;
 }
 

@@ -333,7 +333,7 @@ export function isManhuaSeedanceDirectorPrompt(raw: string): boolean {
     /【像素垫图锁/.test(t) ||
     /【资产】/.test(t) ||
     /【资产锁·编号对照/.test(t) ||
-    /@Image\d+/.test(t) ||
+    /@(?:图片|Image)\d+/.test(t) ||
     /【视频生成导戏单/.test(t) ||
     /【第\s*\d+\s*段·成片】/.test(t) ||
     /【节拍防火墙】/.test(t) ||
