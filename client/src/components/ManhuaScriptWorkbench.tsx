@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clapperboard,
   Focus,
+  Download,
   LayoutGrid,
   Loader2,
   Play,
@@ -116,6 +117,7 @@ import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
 import { MANHUA_DRAFT_RETENTION_HINT_ZH } from "@shared/manhuaCloudDraft";
 import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
 import ManhuaPromptAssetChips from "@/components/ManhuaPromptAssetChips";
+import { downloadRemoteFile } from "@/lib/downloadRemoteFile";
 import ManhuaRoughEditTimeline from "@/components/ManhuaRoughEditTimeline";
 import ManhuaStylePackPanel from "@/components/ManhuaStylePackPanel";
 import type { ManhuaStylePack } from "@shared/manhuaStylePack";
@@ -458,6 +460,7 @@ export default function ManhuaScriptWorkbench({
     artStyleId === "photoreal" ? "photoreal" : "cg_drama";
   const [shotIndex, setShotIndex] = useState(0);
   const [clipPromptReviewOpen, setClipPromptReviewOpen] = useState(false);
+  const [downloadBusy, setDownloadBusy] = useState(false);
   /** 默认药丸视图；按段记「谁被切到了原文编辑」 */
   const [rawPromptSegments, setRawPromptSegments] = useState<Set<number>>(
     () => new Set(),
@@ -4399,6 +4402,46 @@ export default function ManhuaScriptWorkbench({
               {showCanvasDock ? "本集画布（主预览）" : previewIsVideo || finalVideoUrl ? "视频结果" : "预览"}
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
+              {(() => {
+                /** 当前预览的产物：成片优先，否则静帧 */
+                const dlUrl = String(finalVideoUrl || previewUrl || "").trim();
+                if (!showCanvasDock && /^https?:\/\//i.test(dlUrl)) {
+                  const isVid = Boolean(finalVideoUrl || previewIsVideo);
+                  return (
+                    <button
+                      type="button"
+                      data-manhua-action="download-preview"
+                      disabled={downloadBusy}
+                      onClick={async () => {
+                        setDownloadBusy(true);
+                        try {
+                          const base = `${seriesTitle || topic || "漫剧"}-第${String(
+                            focusEpisode,
+                          ).padStart(2, "0")}集-第${String(activeSegNo).padStart(2, "0")}段`;
+                          const r = await downloadRemoteFile(dlUrl, base);
+                          if (r.via === "fallback") {
+                            toast.message("已在新标签页打开", {
+                              description: "直接下载被浏览器拦下，请在新页面右键另存。",
+                            });
+                          } else {
+                            toast.success(isVid ? "开始下载成片" : "开始下载静帧");
+                          }
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : "下载失败");
+                        } finally {
+                          setDownloadBusy(false);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 rounded-md border border-emerald-400/35 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-50 hover:bg-emerald-500/25 disabled:opacity-40"
+                      title={isVid ? "下载本段成片" : "下载这张静帧"}
+                    >
+                      <Download className="h-3 w-3" />
+                      {downloadBusy ? "下载中" : "下载"}
+                    </button>
+                  );
+                }
+                return null;
+              })()}
               {dockCanvas ? (
                 showCanvasDock ? (
                   activePhase === "storyboard" && episodeStillCount > 0 ? (
