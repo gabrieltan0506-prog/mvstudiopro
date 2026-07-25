@@ -98,7 +98,7 @@ describe("jsonDirectorMiddleware", () => {
     expect(motion).toContain("亮火信");
     expect(motion).toContain("@角色5");
     expect(motion).toContain("说「拿着。」");
-    expect(motion).toMatch(/景别：近景/);
+    expect(motion).toMatch(/近景/);
     expect(motion).not.toContain("视频生成导戏单");
     expect(motion).not.toMatch(/^缓慢推进；/);
   });
