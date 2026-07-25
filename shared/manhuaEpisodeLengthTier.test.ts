@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   MANHUA_EPISODE_LENGTH_TIERS,
   getManhuaEpisodeLengthTier,
+  manhuaEpisodeDensityFloors,
   manhuaEpisodeSegmentsForTier,
 } from "./manhuaEpisodeSegmentPlan";
 import {
   fitManhuaViralBeatGridToSegments,
+  fitManhuaViralDensityHintsToSegments,
   formatManhuaViralTemplateWriterAddon,
   getManhuaViralTemplate,
 } from "./manhuaViralTemplateBank";
@@ -56,5 +58,35 @@ describe("节拍格按档位缩放", () => {
     expect(short).toContain("约90秒/集·6段");
     expect(long).toContain("约180秒/集·12段");
     expect(short).not.toContain("165s");
+  });
+});
+
+describe("密度建议不得低于门禁", () => {
+  const hints = getManhuaViralTemplate("tpl_border_farm_revenge")!.densityHints;
+
+  /**
+   * 卡片手写的 8 句是长档估值，门禁按每段 3 句算要 30 句。
+   * 照卡片写完必然被退回，编剧永远摸不到门禁线。
+   */
+  it("对白建议抬到门禁线，而不是照抄卡片的 8 句", () => {
+    expect(hints.minDialogueLines).toBe(8);
+    expect(fitManhuaViralDensityHintsToSegments(hints, 12).minDialogueLines).toBe(
+      manhuaEpisodeDensityFloors(180).minDlg,
+    );
+    expect(fitManhuaViralDensityHintsToSegments(hints, 6).minDialogueLines).toBe(
+      manhuaEpisodeDensityFloors(90).minDlg,
+    );
+  });
+
+  it("正文字数按段数折算：长档 280 字、短档减半", () => {
+    expect(fitManhuaViralDensityHintsToSegments(hints, 12).minBodyChars).toBe(280);
+    expect(fitManhuaViralDensityHintsToSegments(hints, 6).minBodyChars).toBe(140);
+  });
+
+  it("注入块印的就是门禁那组数，两边不会各说各话", () => {
+    const short = formatManhuaViralTemplateWriterAddon("tpl_border_farm_revenge", null, "short");
+    const floors = manhuaEpisodeDensityFloors(90);
+    expect(short).toContain(`正文≥${floors.minBody}字`);
+    expect(short).toContain(`对白≥${floors.minDlg}句`);
   });
 });
