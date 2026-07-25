@@ -192,6 +192,29 @@ describe("manhuaAssetLockRegistry", () => {
     ).not.toMatch(/https?:\/\/|\/manhua-|预览图：/);
   });
 
+  it("keeps the segment still and spends the rest on assets, not on a 2nd tail", () => {
+    const assetRows = Array.from({ length: 8 }, (_, i) => ({
+      id: `a${i + 1}`,
+      tag: i < 4 ? `@角色${i + 1}` : i < 6 ? `@场景${i - 3}` : `@道具${i - 5}`,
+      labelZh: `资产${i + 1}`,
+      path: `https://cdn.example/asset${i + 1}.jpg`,
+    }));
+    const plan = planManhuaClipSeedanceImageBind({
+      assetRows,
+      stillUrls: ["https://cdn.example/still.jpg"],
+      tailUrls: ["https://cdn.example/tail1.jpg", "https://cdn.example/tail2.jpg"],
+      maxImages: 9,
+    });
+    expect(plan.imageUrls).toHaveLength(9);
+    // 末帧只留 1 席：第二张几乎只重复起幅信息，却要挤掉一个角色/场景/道具
+    expect(plan.entries.filter((e) => e.kind === "tail")).toHaveLength(1);
+    // 本段静帧是「这一段长什么样」的唯一依据，绝不能被挤掉
+    expect(plan.entries.filter((e) => e.kind === "still")).toHaveLength(1);
+    expect(plan.entries.filter((e) => e.kind === "asset")).toHaveLength(7);
+    // @ImageN 必须与实际发出的数组同序，否则模型拿到断裂的映射
+    expect(plan.entries.map((e) => e.imageIndex)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  });
+
   it("never soft-locks library order when cast names miss (no 马县丞 fake)", () => {
     const reg = buildManhuaAssetLockRegistry({
       customRefs: [

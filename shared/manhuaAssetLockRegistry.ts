@@ -30,6 +30,7 @@ import {
   type ManhuaWardrobeSubSlot,
 } from "./manhuaCharacterLookSets.js";
 import { stripManhuaClipForbiddenBoards } from "./manhuaClipPromptSanitize.js";
+import { SEEDANCE_REFERENCE_MAX } from "./seedanceOpenRouterModels.js";
 
 export type ManhuaAssetLockSlot = {
   /** 如 @角色1 */
@@ -711,19 +712,21 @@ export function planManhuaClipSeedanceImageBind(input: {
   mentionedTags?: string[] | null;
   maxImages?: number;
 }): ManhuaClipSeedanceImageBindPlan {
-  const max = Math.max(1, Math.min(6, Math.floor(input.maxImages ?? 6)));
+  const max = Math.max(
+    1,
+    Math.min(SEEDANCE_REFERENCE_MAX.image, Math.floor(input.maxImages ?? SEEDANCE_REFERENCE_MAX.image)),
+  );
   const tails = (input.tailUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const stills = (input.stillUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const mentioned = new Set(
     (input.mentionedTags || []).map((t) => String(t || "").trim()).filter(Boolean),
   );
 
+  // 本段静帧是「这一段长什么样」的唯一依据，永远占一席
   const reserveStill = stills.length ? 1 : 0;
-  const maxTail = Math.min(tails.length, Math.max(0, max - reserveStill - 1));
-  // 至少给资产留 1 位（若有资产且总配额够）
-  const takeTail = Math.min(tails.length, maxTail > 0 ? Math.min(2, maxTail) : 0);
-  const roomAfterTail = max - takeTail;
-  const assetBudget = Math.max(0, roomAfterTail - reserveStill);
+  // 末帧只留 1 席：第二张末帧几乎只是重复起幅信息，却要挤掉一个角色/场景/道具
+  const takeTail = Math.min(tails.length, max - reserveStill - 1 > 0 ? 1 : 0);
+  const assetBudget = Math.max(0, max - takeTail - reserveStill);
 
   const roleOrder = (tag: string) => {
     if (tag.startsWith("@角色")) return 0;

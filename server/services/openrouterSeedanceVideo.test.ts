@@ -59,4 +59,30 @@ describe("buildOpenRouterSeedanceSubmitBody", () => {
     expect(refs.some((r) => r.type === "image_url")).toBe(true);
     expect(refs.some((r) => r.type === "audio_url")).toBe(true);
   });
+
+  it("keeps all 9 reference images that the official API allows", () => {
+    const imageUrls = Array.from({ length: 9 }, (_, i) => `https://cdn.example/${i + 1}.jpg`);
+    const body = buildOpenRouterSeedanceSubmitBody({
+      variant: "2.0",
+      prompt: "@角色1=@Image3；@Image9=本段静帧",
+      imageUrls,
+    });
+    const refs = body.input_references as Array<Record<string, unknown>>;
+    // 曾经写死 slice(0,4)，把本段静帧和场景/道具静默丢掉，@ImageN 却照旧指向它们
+    expect(refs.filter((r) => r.type === "image_url")).toHaveLength(9);
+    expect(refs.at(-1)).toMatchObject({
+      image_url: { url: "https://cdn.example/9.jpg" },
+    });
+  });
+
+  it("clamps above the official 9-image ceiling", () => {
+    const imageUrls = Array.from({ length: 12 }, (_, i) => `https://cdn.example/${i + 1}.jpg`);
+    const body = buildOpenRouterSeedanceSubmitBody({
+      variant: "2.0",
+      prompt: "too many",
+      imageUrls,
+    });
+    const refs = body.input_references as Array<Record<string, unknown>>;
+    expect(refs.filter((r) => r.type === "image_url")).toHaveLength(9);
+  });
 });
