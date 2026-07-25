@@ -80,7 +80,6 @@ import {
   formatDynastyWardrobeInjectBlock,
   MANHUA_ANCIENT_CHARACTER_FORMULA_ZH,
 } from "@shared/manhuaDynastyWardrobeBank";
-import { buildMotionPromptInjectBlock } from "@shared/motionPromptBank";
 import { buildCraftShotInjectBlock, recommendCraftShotFromTopic } from "@shared/craftShotBank";
 import {
   buildPathCameraInjectBlock,
@@ -338,8 +337,6 @@ export type SpawnManhuaDramaStudioOpts = {
   artStyleId?: ManhuaArtStyleId | string;
   /** 产品化风格包：色卡 + 光影构图 DNA（注入静帧/成片） */
   stylePack?: ManhuaStylePack | null;
-  /** 包装动效库 id：注入微动成片 / 视频改写节点 */
-  motionPromptIds?: string[];
   /** 拍摄手法条目 id：注入节拍 / 反推 / 静帧 */
   craftShotIds?: string[];
   /** 路径运镜配方 id：注入节拍/反推/成片，并写入 clip.pathCameraRecipeId */
@@ -615,8 +612,6 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     : "";
   const propIds = (opts.propIds || []).map((id) => String(id || "").trim()).filter(Boolean).slice(0, 4);
   const propAnchorBlock = composeManhuaSelectedPropAnchorBlock(propIds);
-  const motionPromptIds = (opts.motionPromptIds || []).map((id) => String(id || "").trim()).filter(Boolean);
-  const motionBlock = buildMotionPromptInjectBlock(motionPromptIds);
   let craftShotIds = (opts.craftShotIds || []).map((id) => String(id || "").trim()).filter(Boolean);
   if (!craftShotIds.length) {
     const autoCraft = recommendCraftShotFromTopic(opts.topic).craftShotId;
@@ -1018,7 +1013,6 @@ export function applyFactoryPrefsToBlocks(
   blocks: CanvasBlock[],
   opts: {
     craftShotIds?: string[];
-    motionPromptIds?: string[];
     pathCameraRecipeIds?: string[];
     pathAnnotationJson?: unknown;
     narrativeLightingIds?: string[];
@@ -1046,7 +1040,6 @@ export function applyFactoryPrefsToBlocks(
   },
 ): CanvasBlock[] {
   const craftBlock = buildCraftShotInjectBlock(opts.craftShotIds || []);
-  const motionBlock = buildMotionPromptInjectBlock(opts.motionPromptIds || []);
   const pathCameraBlock = buildPathCameraInjectBlock(opts.pathCameraRecipeIds || []);
   const narrativeLightingBlock = buildNarrativeLightingInjectBlock(opts.narrativeLightingIds || []);
   const maleHairstyleBlock = buildMaleHairstyleInjectBlock(opts.maleHairstyleIds || []);
@@ -1262,7 +1255,7 @@ export function applyFactoryPrefsToBlocks(
       base = stripMarkedSection(base, "【成片画风】");
       return {
         ...b,
-        prompt: [base, artStyleBlockKeyart, pathCameraBlock, actionCameraBlock, motionBlock]
+        prompt: [base, artStyleBlockKeyart, pathCameraBlock, actionCameraBlock]
           .filter(Boolean)
           .join("\n\n"),
         videoModel: (

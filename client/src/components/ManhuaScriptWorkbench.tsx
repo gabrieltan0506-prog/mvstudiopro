@@ -492,8 +492,6 @@ export default function ManhuaScriptWorkbench({
   const [suggestAutoCutsBusy, setSuggestAutoCutsBusy] = useState(false);
   /** 剪辑台字幕轨：开则生成轨数据，默认不烧字 */
   const [editSubtitleEnabled, setEditSubtitleEnabled] = useState(false);
-  /** 包装动效（motionPromptBank id） */
-  const [editMotionPromptIds, setEditMotionPromptIds] = useState<string[]>([]);
   const bPersistKey = manhuaWorkbenchBPersistKey(topic || seriesTitle || "manhua", focusEpisode);
   useEffect(() => {
     const hit = loadManhuaWorkbenchBPersist(bPersistKey);
@@ -504,7 +502,6 @@ export default function ManhuaScriptWorkbench({
       setFineCutByShot(hit.fineCutByShot);
     }
     setEditSubtitleEnabled(Boolean(hit.subtitleEnabled));
-    if (hit.motionPromptIds?.length) setEditMotionPromptIds(hit.motionPromptIds);
   }, [bPersistKey]);
   useEffect(() => {
     saveManhuaWorkbenchBPersist(bPersistKey, {
@@ -512,7 +509,6 @@ export default function ManhuaScriptWorkbench({
       roughShotOrder,
       fineCutByShot,
       subtitleEnabled: editSubtitleEnabled,
-      motionPromptIds: editMotionPromptIds,
     });
   }, [
     bPersistKey,
@@ -520,7 +516,6 @@ export default function ManhuaScriptWorkbench({
     roughShotOrder,
     fineCutByShot,
     editSubtitleEnabled,
-    editMotionPromptIds,
   ]);
   /** 右栏本集画布：阿硕 C2 分镜有静帧时强制常开；其余阶段仍可随成片收合 */
   const [canvasDockOpen, setCanvasDockOpen] = useState(true);
@@ -3377,8 +3372,6 @@ export default function ManhuaScriptWorkbench({
                 onDeliveryPackageChange(syncDeliveryPackageSubtitleEnabled(deliveryPackage, next));
               }
             }}
-            motionPromptIds={editMotionPromptIds}
-            onMotionPromptIdsChange={setEditMotionPromptIds}
             shotMedia={editShotMedia}
             factoryBusy={factoryBusy}
             dockSelectedIds={dockSelectedIds}
@@ -3479,7 +3472,9 @@ export default function ManhuaScriptWorkbench({
               immersive
                 ? showCanvasDock
                   ? // 阿硕 C2：左窄资产 · 中图卡 · 右画布占主视觉（h-full 吃满外层定高）
-                    "grid h-full min-h-0 min-w-[1360px] grid-cols-[152px_minmax(200px,0.36fr)_minmax(720px,2.2fr)]"
+                    // 中栏原来是 0.36fr，1440 屏上只剩 200px，分镜标题被挤成一行两三个字、
+                    // 资产 chips 也铺不开；中栏才是读分镜改台词的地方，给够宽度。
+                    "grid h-full min-h-0 min-w-[1360px] grid-cols-[152px_minmax(400px,0.5fr)_minmax(640px,1fr)]"
                   : "grid h-full min-h-0 min-w-[1120px] grid-cols-[168px_minmax(280px,0.7fr)_minmax(420px,1.1fr)]"
                 : "flex h-full min-h-0 w-full overflow-hidden"
             }
@@ -4403,9 +4398,14 @@ export default function ManhuaScriptWorkbench({
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               {(() => {
-                /** 当前预览的产物：成片优先，否则静帧 */
+                /**
+                 * 当前预览的产物：成片优先，否则静帧。
+                 *
+                 * 不看画布坞开没开：分镜阶段主预览是常开的，若按坞状态收起
+                 * 按钮，最常用的那个状态反而永远下不了。
+                 */
                 const dlUrl = String(finalVideoUrl || previewUrl || "").trim();
-                if (!showCanvasDock && /^https?:\/\//i.test(dlUrl)) {
+                if (/^https?:\/\//i.test(dlUrl)) {
                   const isVid = Boolean(finalVideoUrl || previewIsVideo);
                   return (
                     <button

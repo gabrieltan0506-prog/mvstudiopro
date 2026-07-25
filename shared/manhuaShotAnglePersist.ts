@@ -11,7 +11,6 @@ import {
   parseFineCutByShot,
   type ManhuaFineCutByShot,
 } from "./manhuaEditFineCut.js";
-import { getMotionPromptById } from "./motionPromptBank.js";
 import type { ManhuaWorkbenchShot } from "./manhuaScriptWorkbench.js";
 
 const ANGLE_SECTION = "## 机位选定";
@@ -31,8 +30,6 @@ export type ManhuaWorkbenchBPersist = {
   fineCutByShot?: ManhuaFineCutByShot;
   /** 字幕轨开关：只生成轨数据，默认不烧字 */
   subtitleEnabled?: boolean;
-  /** 包装动效 id（motionPromptBank） */
-  motionPromptIds?: string[];
 };
 
 export function loadManhuaWorkbenchBPersist(key: string): ManhuaWorkbenchBPersist | null {
@@ -48,12 +45,6 @@ export function loadManhuaWorkbenchBPersist(key: string): ManhuaWorkbenchBPersis
         : [],
       fineCutByShot: parseFineCutByShot(parsed.fineCutByShot),
       subtitleEnabled: Boolean(parsed.subtitleEnabled),
-      motionPromptIds: Array.isArray(parsed.motionPromptIds)
-        ? parsed.motionPromptIds
-            .map(String)
-            .filter((id) => Boolean(getMotionPromptById(id)))
-            .slice(0, 2)
-        : [],
     };
   } catch {
     return null;

@@ -94,15 +94,13 @@ describe("canvasDramaStudio factory", () => {
     expect(bible.prompt).toContain("【角色库锚点】");
   });
 
-  it("spawn clip stays placeholder; motion craft does not pollute clip prompt", () => {
+  it("spawn clip stays placeholder; craft does not pollute clip prompt", () => {
     const { blocks } = spawnManhuaDramaStudio({
       topic: "产品拆解种草",
-      motionPromptIds: ["product_05_exploded_view"],
     });
     const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
     expect(clip.prompt).toContain("【成片占位】");
     expect(clip.prompt).not.toMatch(/画风：/);
-    expect(clip.prompt).not.toContain("【包装动效手法】");
     expect(clip.prompt).not.toContain("古风服化参考");
   });
 
@@ -184,7 +182,6 @@ describe("canvasDramaStudio factory", () => {
     const next = applyFactoryPrefsToBlocks(blocks, {
       craftShotIds: ["cam_06_intimate_cu"],
       videoReverseOutputMode: "en",
-      motionPromptIds: [],
     });
     const reverse = next.find((b) => b.id.startsWith("reverse-"))!;
     expect(reverse.videoReverseOutputMode).toBe("en");
@@ -203,7 +200,6 @@ describe("canvasDramaStudio factory", () => {
     const next = applyFactoryPrefsToBlocks(blocks, {
       propIds: ["demo_prop_romance_ring_box"],
       craftShotIds: [],
-      motionPromptIds: [],
     });
     const bible = next.find((b) => b.id.startsWith("bible-"))!.prompt;
     expect(bible).toContain("戒指盒");
@@ -227,7 +223,6 @@ describe("canvasDramaStudio factory", () => {
     const next = applyFactoryPrefsToBlocks(blocks, {
       sceneId: "scene_04",
       craftShotIds: [],
-      motionPromptIds: [],
     });
     const story = next.find((b) => b.id.startsWith("story-"))!.prompt;
     const key = next.find((b) => b.id.startsWith("keyart-"))!.prompt;
@@ -248,7 +243,6 @@ describe("canvasDramaStudio factory", () => {
       genreId: "urban",
       sceneId: "scene_12",
       craftShotIds: [],
-      motionPromptIds: [],
     });
     const story = next.find((b) => b.id.startsWith("story-"))!.prompt;
     expect(story).toContain("都市");
@@ -262,7 +256,6 @@ describe("canvasDramaStudio factory", () => {
       characterIds: ["char_f_01", "char_m_01"],
       artStyleId: "photoreal",
       craftShotIds: [],
-      motionPromptIds: [],
     });
     const bible = next.find((b) => b.id.startsWith("bible-"))!.prompt;
     expect(bible).toContain("【角色库锚点】");
@@ -597,7 +590,6 @@ describe("canvasDramaStudio factory", () => {
       genreId: "urban",
       sceneId: "scene_12",
       craftShotIds: [],
-      motionPromptIds: [],
     });
     const key2 = next.find((b) => b.id.startsWith("keyart-"))!.prompt;
     expect(key2).toContain("【静帧·源头短包】");
@@ -641,7 +633,6 @@ describe("canvasDramaStudio factory", () => {
       artStyleId: "photoreal",
       customRefs,
       craftShotIds: [],
-      motionPromptIds: [],
     });
     const key2 = next.find((b) => b.id.startsWith("keyart-"))!;
     expect(key2.imageMode).toBe("edit");
@@ -670,7 +661,6 @@ describe("canvasDramaStudio factory", () => {
     const next = applyFactoryPrefsToBlocks(blocks, {
       sceneId: "scene_04",
       craftShotIds: ["light_03_high_contrast"],
-      motionPromptIds: [],
     });
     const beats = next.find((b) => b.id.startsWith("beats-"))!.prompt;
     expect(beats).toContain("秘境洞府");
@@ -970,7 +960,6 @@ slow dolly in, soft rain, trembling hand
     const next = applyFactoryPrefsToBlocks(blocks, {
       artStyleId: "cg_drama",
       craftShotIds: [],
-      motionPromptIds: [],
     });
     const recap = next.find((b) => b.id.startsWith("recap_card-"))!.prompt;
     expect(recap).toContain("【画风硬锁】");
