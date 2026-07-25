@@ -239,6 +239,8 @@ type Props = {
   cineVocabLocale?: ManhuaCineVocabLocale;
   onCineVocabLocaleChange?: (locale: ManhuaCineVocabLocale) => void;
   onRetakeClip?: (clipBlockId: string, variable: ManhuaRetakeVariable) => void;
+  /** 可拍表点名的角色在资产库找不到；非空则拦住出片并在左栏红条提示 */
+  segmentCastMismatchHintZh?: string | null;
   /** 基于当前库选条目生成新参考（库仅为种子） */
   onGenerateCustomAssetFromLibrary?: (opts: {
     role: ManhuaCustomAssetRole;
@@ -422,6 +424,7 @@ export default function ManhuaScriptWorkbench({
   cineVocabLocale,
   onCineVocabLocaleChange,
   onRetakeClip,
+  segmentCastMismatchHintZh = null,
   onGenerateCustomAssetFromLibrary,
   onGenerateCanonAssetSheet,
   shareAssetToLibrary = false,
@@ -1283,6 +1286,7 @@ export default function ManhuaScriptWorkbench({
     factoryBusy,
     videoBurnHintZh: videoBurnHint,
     stillsReadyEnough,
+    segmentCastMismatchHintZh,
   });
   const fragmentGateHint = keyartGateHint;
   const refuseIfBlocked = (hint: string | null): boolean => {
@@ -2236,6 +2240,29 @@ export default function ManhuaScriptWorkbench({
                     立刻清掉旧图并重出
                   </button>
                 ) : null}
+              </div>
+            ) : null}
+
+            {segmentCastMismatchHintZh ? (
+              <div
+                data-manhua-cast-mismatch
+                className="mt-3 rounded-xl border border-rose-400/45 bg-rose-500/[0.12] p-3"
+              >
+                <div className="text-[11px] font-semibold text-rose-50">
+                  资产对不上剧本，已暂停出片
+                </div>
+                <p className="mt-1 text-[10px] leading-4 text-rose-50/80">
+                  {segmentCastMismatchHintZh}
+                </p>
+                <button
+                  type="button"
+                  data-manhua-action="regenerate-assets-from-script"
+                  disabled={factoryBusy || !onRegenerateAssetsFromScript}
+                  onClick={() => void onRegenerateAssetsFromScript?.()}
+                  className="mt-2 rounded-lg border border-rose-300/50 bg-rose-500/25 px-2.5 py-1 text-[11px] font-semibold text-rose-50 hover:bg-rose-500/40 disabled:opacity-45"
+                >
+                  按剧本重出角色图
+                </button>
               </div>
             ) : null}
 

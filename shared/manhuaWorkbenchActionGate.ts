@@ -19,6 +19,11 @@ export type ManhuaWorkbenchActionGateInput = {
   factoryBusy?: boolean;
   /** 成片类动作额外门槛（可拍表/导戏单等） */
   videoBurnHintZh?: string | null;
+  /**
+   * 可拍表点名的角色在资产库一个都对不上（资产没跟剧本重出）。
+   * 静帧齐了也必须拦：喂错脸的成片是白烧钱，而且看不出是喂错还是模型跑偏。
+   */
+  segmentCastMismatchHintZh?: string | null;
   /** 本集静帧张数齐且每张均为 edit+垫图（垫图锁） */
   stillsReadyEnough?: boolean;
 };
@@ -64,6 +69,9 @@ export function explainManhuaClipActionGate(
 ): string | null {
   if (input.factoryBusy) return "当前正在生成，请稍候或先点「中断生成」";
   if (!input.outlineComplete) return "还不能生成成片：请先确认剧本大纲";
+  // 静帧齐不代表喂的是对的脸：资产对不上剧本时，先拦住再说
+  const castMismatch = String(input.segmentCastMismatchHintZh || "").trim();
+  if (castMismatch) return `还不能生成成片：${castMismatch}`;
 
   if (input.stillsReadyEnough) {
     if (input.videoBurnHintZh) return `还不能生成成片：${input.videoBurnHintZh}`;
