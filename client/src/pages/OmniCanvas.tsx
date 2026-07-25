@@ -8,7 +8,9 @@ import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/l
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
 import {
   evaluateManhuaAssetImageGate,
+  manhuaHeroFaceSheetId,
   planManhuaAssetImageSpawns,
+  seedIdFromManhuaSheetBlockId,
 } from "@shared/manhuaAssetImageGate";
 import {
   buildManhuaCustomAssetGenFromLibraryPrompt,
@@ -3244,22 +3246,31 @@ export default function OmniCanvas() {
           id: string;
           kind: "charsheet" | "sceneplate";
           labelZh: string;
-          layout?: "single" | "grid2x2" | "heroSheet";
+          layout?: "single" | "grid2x2" | "heroFace" | "heroLook";
         },
         url: string | null | undefined,
       ) => {
         const u = String(url || "").trim();
         if (!/^https:\/\//i.test(u)) return;
-        const seedLibraryId = plan.id
-          .replace(/^charsheet-/, "")
-          .replace(/^sceneplate-/, "");
+        const seedLibraryId = seedIdFromManhuaSheetBlockId(plan.id);
+        /**
+         * 主角拆两张：大头照锁脸、全身照锁妆造，绑定句按这个职责分工写。
+         * 同步既有节点时拿不到 layout，改看有没有同源大头照——有就说明
+         * 这张是配套的全身照，否则是配角的单张定妆（仍算锁脸）。
+         */
+        const charDuty: "identity" | "look" = plan.id.startsWith("charsheet-face-")
+          ? "identity"
+          : plan.layout === "heroLook" ||
+              blocks.some((b) => b.id === manhuaHeroFaceSheetId(seedLibraryId))
+            ? "look"
+            : "identity";
         setCustomAssetRefs((prev) =>
           upsertGeneratedManhuaCustomAssetRef(prev, {
             url: u,
             role: plan.kind === "charsheet" ? "character" : "scene",
             labelZh: plan.labelZh,
             seedLibraryId,
-            refDuty: plan.kind === "charsheet" ? "identity" : "space",
+            refDuty: plan.kind === "charsheet" ? charDuty : "space",
           }),
         );
       };
@@ -3272,7 +3283,7 @@ export default function OmniCanvas() {
           const isChar = b.id.startsWith("charsheet-");
           if (!isScene && !isChar) continue;
           const kind = isScene ? ("sceneplate" as const) : ("charsheet" as const);
-          const seedId = b.id.replace(/^charsheet-/, "").replace(/^sceneplate-/, "");
+          const seedId = seedIdFromManhuaSheetBlockId(b.id);
           const labelZh =
             (kind === "charsheet"
               ? assetCanon?.characters.find((c) => c.id === seedId || b.id.includes(c.id))

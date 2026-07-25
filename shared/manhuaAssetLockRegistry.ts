@@ -45,6 +45,8 @@ export type ManhuaAssetLockSlot = {
   /** 定妆特写：@角色K·道具i */
   subTag?: string;
   fromSheetInset?: boolean;
+  /** identity=大头照只锁脸；look=全身照只锁妆造（一人拆两张时区分职责） */
+  duty?: "identity" | "look" | null;
 };
 
 export type ManhuaAssetLockRegistry = {
@@ -109,7 +111,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
     labelZh: string,
     path: string,
     extra?: Partial<
-      Pick<ManhuaAssetLockSlot, "parentCharacterTag" | "subTag" | "fromSheetInset">
+      Pick<ManhuaAssetLockSlot, "parentCharacterTag" | "subTag" | "fromSheetInset" | "duty">
     >,
   ) => {
     const p = String(path || "").trim();
@@ -134,6 +136,8 @@ export function buildManhuaAssetLockRegistry(opts?: {
       c.id,
       c.labelZh || (c.source === "generated" ? "角色定妆" : "上传人物"),
       c.url,
+      // 只认锁脸/锁妆造两种；其余职责（画风、首尾帧等）不影响人物绑定句写法
+      { duty: c.refDuty === "identity" || c.refDuty === "look" ? c.refDuty : null },
     );
   }
   for (const id of opts?.characterIds || []) {
@@ -369,6 +373,8 @@ export type ManhuaAssetImageBindRow = {
   id: string;
   labelZh: string;
   path: string;
+  /** identity=大头照只锁脸；look=全身照只锁妆造。缺省按整张人物参考处理 */
+  duty?: "identity" | "look" | null;
 };
 
 export type ManhuaClipSeedanceImageBindEntry = {
@@ -378,6 +384,7 @@ export type ManhuaClipSeedanceImageBindEntry = {
   roleTag?: string;
   assetId?: string;
   labelZh?: string;
+  duty?: "identity" | "look" | null;
 };
 
 export type ManhuaClipSeedanceImageBindPlan = {
@@ -433,7 +440,8 @@ export function formatManhuaAssetImageBindBlock(
     const label = String(s.labelZh || "").replace(/[|\n]/g, " ").trim() || ROLE_TAG_PREFIX[s.role];
     const id = String(s.id || "").replace(/[|\n]/g, "").trim() || "unknown";
     const kind = ROLE_TAG_PREFIX[s.role];
-    return `${s.tag}|id=${id}|label=${label}|kind=${kind}`;
+    const duty = s.duty === "identity" || s.duty === "look" ? `|duty=${s.duty}` : "";
+    return `${s.tag}|id=${id}|label=${label}|kind=${kind}${duty}`;
   });
   return [ASSET_IMAGE_BIND_MARK, ...lines].join("\n");
 }
@@ -660,17 +668,19 @@ export function parseManhuaAssetImageBindBlock(
   for (const line of section.split("\n")) {
     const t = line.trim();
     if (!t || t.startsWith("【")) continue;
-    // 新：@角色1|id=c1|label=女主
+    // 新：@角色1|id=c1|label=女主|kind=角色|duty=identity
     // 旧（兼容读 id，忽略尾部 url）：@角色1|id=c1|label=女主|https://...
     const m = t.match(
       /^(@(?:角色|场景|道具|服装)\d+)\|id=([^|]+)\|label=([^|]*)(?:\|kind=[^|]*)?(?:\|.*)?$/,
     );
     if (!m) continue;
+    const duty = t.match(/\|duty=(identity|look)\b/)?.[1] as "identity" | "look" | undefined;
     rows.push({
       tag: m[1]!,
       id: String(m[2] || "").trim(),
       labelZh: String(m[3] || "").trim(),
       path: "",
+      duty: duty ?? null,
     });
   }
   return rows;
@@ -762,13 +772,18 @@ export function planManhuaClipSeedanceImageBind(input: {
     if (tag.startsWith("@场景")) return 2;
     return 3;
   };
+  // 同一角色拆了大头照与全身照时，大头照先行：ID 漂移最难治，锁脸最吃紧
+  const dutyOrder = (duty: ManhuaAssetImageBindRow["duty"]) =>
+    duty === "identity" ? 0 : duty === "look" ? 1 : 0;
   const sortedAssets = [...input.assetRows].sort((a, b) => {
     const am = mentioned.has(a.tag) ? 0 : 1;
     const bm = mentioned.has(b.tag) ? 0 : 1;
     if (am !== bm) return am - bm;
     const ro = roleOrder(a.tag) - roleOrder(b.tag);
     if (ro !== 0) return ro;
-    return a.tag.localeCompare(b.tag, "zh");
+    const tag = a.tag.localeCompare(b.tag, "zh");
+    if (tag !== 0) return tag;
+    return dutyOrder(a.duty) - dutyOrder(b.duty);
   });
 
   const entries: ManhuaClipSeedanceImageBindEntry[] = [];
@@ -790,6 +805,7 @@ export function planManhuaClipSeedanceImageBind(input: {
       roleTag: row.tag,
       assetId: row.id,
       labelZh: row.labelZh,
+      duty: row.duty ?? null,
     });
     assetsTaken += 1;
   }
@@ -823,6 +839,21 @@ export function formatManhuaClipSeedanceBindLineFromEntries(
   opts?: { includeAssetId?: boolean },
 ): string {
   const withId = opts?.includeAssetId !== false;
+  /**
+   * 只有同一角色真的既有大头照又有全身照时才写「面部特征参考 / 妆造参考」。
+   * 配角只有单张定妆肖像（默认也标 identity），那一张同时锁脸和服化，
+   * 写成「面部特征参考」会暗示另有一张妆造图，反而误导。
+   */
+  const splitSubjects = new Set(
+    entries
+      .filter((e) => e.kind === "asset" && e.duty === "look" && e.labelZh)
+      .map((e) => e.labelZh!)
+      .filter((label) =>
+        entries.some(
+          (x) => x.kind === "asset" && x.duty === "identity" && x.labelZh === label,
+        ),
+      ),
+  );
   const bits = entries.map((e, i) => {
     const img = `@图片${e.imageIndex || i + 1}`;
     if (e.kind === "tail") return `${img}承接上段起幅`;
@@ -830,6 +861,11 @@ export function formatManhuaClipSeedanceBindLineFromEntries(
       const idBit = withId && e.assetId ? ` id=${e.assetId}` : "";
       // 官方主体绑定式：主体名直接贴图号，不走「@角色N=」中转
       const subject = e.labelZh || e.roleTag || "";
+      // 一人拆两张时按官方句式分工，别让模型拿全身照去对脸
+      if (splitSubjects.has(subject)) {
+        if (e.duty === "identity") return `${subject}的面部特征参考${img}${idBit}`;
+        if (e.duty === "look") return `${subject}的妆造参考${img}${idBit}`;
+      }
       return `${subject}${img}${idBit}`;
     }
     return `${img}为本段构图与光色基准`;
