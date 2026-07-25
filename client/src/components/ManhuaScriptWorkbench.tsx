@@ -4403,9 +4403,14 @@ export default function ManhuaScriptWorkbench({
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               {(() => {
-                /** 当前预览的产物：成片优先，否则静帧 */
+                /**
+                 * 当前预览的产物：成片优先，否则静帧。
+                 *
+                 * 不看画布坞开没开：分镜阶段主预览是常开的，若按坞状态收起
+                 * 按钮，最常用的那个状态反而永远下不了。
+                 */
                 const dlUrl = String(finalVideoUrl || previewUrl || "").trim();
-                if (!showCanvasDock && /^https?:\/\//i.test(dlUrl)) {
+                if (/^https?:\/\//i.test(dlUrl)) {
                   const isVid = Boolean(finalVideoUrl || previewIsVideo);
                   return (
                     <button
