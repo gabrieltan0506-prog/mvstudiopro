@@ -10,6 +10,22 @@ export function isManhuaClipPromptLegacyFat(text: string | null | undefined): bo
   return LEGACY_FAT_RE.test(String(text || ""));
 }
 
+/**
+ * 发给成片引擎前剥掉节点里存的【资产·Image对照】与【出片Image硬绑】。
+ *
+ * 出片时会按真正送进 API 的那几张图重算一份 @Image 硬绑放在提示词最前面；
+ * 节点里存的两块是「审阅那一刻」的快照，图有增减（上传失败、名额被挤）就会
+ * 和实算结果对不上。模型同时收到两套 @Image 映射只会挑错脸。
+ * 审阅面保留原样——那两块正是用来看清楚绑了谁的。
+ */
+export function stripManhuaStaleAssetBindForModel(text: string | null | undefined): string {
+  return String(text || "")
+    .replace(/(^|\n)【资产·Image对照】[\s\S]*?(?=\n【|$)/g, "$1")
+    .replace(/(^|\n)【出片Image硬绑】[\s\S]*?(?=\n【|$)/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 const FORBIDDEN_SECTION_PREFIXES = [
   "【节拍防火墙】",
   "【视频生成导戏单",

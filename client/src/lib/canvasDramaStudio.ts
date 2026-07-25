@@ -1661,9 +1661,6 @@ export function ensureManhuaFragmentClips(
       sceneFromPlan && sceneFromKeyart && sceneFromPlan !== sceneFromKeyart
         ? sceneFromKeyart
         : undefined;
-    const padLockBlock = segUrls.length
-      ? `【垫图】本段静帧${segUrls.length}张（出片顺序：上段末帧→资产定妆/服装→本段静帧，按序绑@Image）`
-      : "【垫图·缺失】禁止出片";
     // 先按可拍表「角色」+ 剧本文案真锁本段出场，再灌秒轴（禁止先软取库序前两人）
     const haystack = [
       String(planBeat?.castZh || ""),
@@ -1774,12 +1771,12 @@ export function ensureManhuaFragmentClips(
       wardrobeSlots: lockRegistry.wardrobeSlots,
       characterTagById: charTagById,
     });
-    const bindPreview = (() => {
+    const bindPlan = (() => {
       const rows = resolveManhuaAssetImageBindRows(
         parseManhuaAssetImageBindBlock(assetLockBlock),
         assetPathById,
       );
-      if (!rows.length && !segUrls.length) return "";
+      if (!rows.length && !segUrls.length) return null;
       const mentioned = [
         ...extractManhuaMentionedAssetTags(timelineBlock),
         ...extractManhuaMentionedAssetTags(assetLockBlock),
@@ -1787,14 +1784,25 @@ export function ensureManhuaFragmentClips(
           .map((id) => charTagById[id])
           .filter(Boolean),
       ];
-      const plan = planManhuaClipSeedanceImageBind({
+      return planManhuaClipSeedanceImageBind({
         assetRows: rows,
         stillUrls: segUrls,
         mentionedTags: mentioned,
       });
-      const line = String(plan.bindLineZh || "").trim();
-      return line ? `【出片Image硬绑】\n${line}` : "";
     })();
+    const bindLineZh = String(bindPlan?.bindLineZh || "").trim();
+    const bindPreview = bindLineZh ? `【出片Image硬绑】\n${bindLineZh}` : "";
+    /**
+     * 名额被末帧和资产占掉后，真正进 @Image 的静帧往往少于本段静帧总数。
+     * 早先直接写 segUrls.length，出现过「本段静帧3张」但只绑了 1 张的自相矛盾。
+     */
+    const boundStillCount =
+      bindPlan?.entries.filter((e) => e.kind === "still").length ?? 0;
+    const padLockBlock = !segUrls.length
+      ? "【垫图·缺失】禁止出片"
+      : boundStillCount >= segUrls.length
+        ? `【垫图】本段静帧${segUrls.length}张（出片顺序：上段末帧→资产定妆/服装→本段静帧，按序绑@Image）`
+        : `【垫图】本段静帧${segUrls.length}张，其中${boundStillCount}张按序绑@Image（出片顺序：上段末帧→资产定妆/服装→本段静帧）`;
     const segPrompt = stripManhuaAssetUrlsFromPrompt(
       stripManhuaClipForbiddenBoards(
         stripManhuaPromptSlop(

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isManhuaClipPromptLegacyFat,
   stripManhuaClipForbiddenBoards,
+  stripManhuaStaleAssetBindForModel,
 } from "./manhuaClipPromptSanitize";
 
 describe("manhuaClipPromptSanitize", () => {
@@ -67,5 +68,38 @@ describe("manhuaClipPromptSanitize", () => {
     const out = stripManhuaClipForbiddenBoards(withArt);
     expect(out).toContain("【第1段·15s】");
     expect(out).not.toMatch(/画风：/);
+  });
+
+  it("drops the stored asset/bind snapshots so only the runtime @Image map survives", () => {
+    // 取自线上第1段：节点里存的硬绑说 @Image5=韩廷玉，实算却只送得进 4 张
+    const stored = [
+      "【第1段·15s】断月桥",
+      "【场景锁】断月桥。地点材质光色锁本段垫图，禁止跳棚换地。",
+      "0–5s：动作轨迹：火箭钉入桥板。运镜轨迹：缓慢推近。景别：全景。",
+      "【垫图】本段静帧3张，其中1张按序绑@Image",
+      "【资产·Image对照】",
+      "@角色1|id=cust_mrwxm9q3_qcioz|label=马县丞|kind=角色",
+      "@角色2|id=cust_mrwxptnw_wnzlo|label=苏文谦|kind=角色",
+      "【出片Image硬绑】",
+      "@角色1=@Image1（马县丞） id=cust_mrwxm9q3_qcioz；@角色5=@Image5（韩廷玉）。",
+      "【本段造型】常服",
+    ].join("\n");
+
+    const out = stripManhuaStaleAssetBindForModel(stored);
+    expect(out).not.toContain("【资产·Image对照】");
+    expect(out).not.toContain("【出片Image硬绑】");
+    expect(out).not.toContain("cust_mrwxm9q3_qcioz");
+    expect(out).not.toContain("@Image5");
+    // 秒轴、场景锁、垫图说明、造型都要留住
+    expect(out).toContain("【第1段·15s】断月桥");
+    expect(out).toContain("【场景锁】");
+    expect(out).toContain("0–5s：动作轨迹：火箭钉入桥板");
+    expect(out).toContain("【垫图】本段静帧3张");
+    expect(out).toContain("【本段造型】常服");
+  });
+
+  it("leaves a prompt without the snapshots untouched", () => {
+    const clean = ["【第1段·15s】断月桥", "0–5s：动作轨迹：火箭钉入桥板。"].join("\n");
+    expect(stripManhuaStaleAssetBindForModel(clean)).toBe(clean);
   });
 });

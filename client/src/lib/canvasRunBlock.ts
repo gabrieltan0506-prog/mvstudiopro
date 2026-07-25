@@ -42,6 +42,7 @@ import {
 } from "@shared/seedanceOpenRouterModels";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
 import { appendManhuaClipEngineOptics } from "@shared/manhuaCineOpticsBank";
+import { stripManhuaStaleAssetBindForModel } from "@shared/manhuaClipPromptSanitize";
 import {
   extractManhuaMentionedAssetTags,
   formatManhuaClipImageRoleBindLine,
@@ -985,7 +986,9 @@ export async function runCanvasBlock(
       const voicePlan = planManhuaVoiceAudioForPrompt(motionPrompt, voiceLocks);
       const voiceBlock = formatManhuaCharacterVoiceLockBlock(voiceLocks, voicePlan);
       const imageBind = isClip
-        ? formatManhuaClipSeedanceBindLineFromEntries(keptEntries) ||
+        ? formatManhuaClipSeedanceBindLineFromEntries(keptEntries, {
+            includeAssetId: false,
+          }) ||
           formatManhuaClipImageRoleBindLine(httpsImages.length, {
             tailCount: Math.min(tailFrames.length, 2),
           })
@@ -997,9 +1000,11 @@ export async function runCanvasBlock(
             .filter((ln) => /@角色\d+=/.test(ln))
             .join("；")
         : "";
+      // imageBind 是按实际送进 API 的图现算的，为准；节点里存的那两块快照剥掉，
+      // 否则模型同时拿到两套 @Image 映射（还可能对不上）只会挑错脸
       const seedancePrompt = [
         imageBind,
-        motionPrompt,
+        isClip ? stripManhuaStaleAssetBindForModel(motionPrompt) : motionPrompt,
         voiceOneLine ? `【声线】${voiceOneLine}` : "",
       ]
         .filter(Boolean)

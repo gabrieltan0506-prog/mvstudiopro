@@ -809,12 +809,15 @@ export function planManhuaClipSeedanceImageBind(input: {
 /** 由已定序 entries 生成 Seedance 硬绑句（含 @角色N=@ImageK 与 id） */
 export function formatManhuaClipSeedanceBindLineFromEntries(
   entries: ManhuaClipSeedanceImageBindEntry[],
+  /** 审阅面留 id 便于核对绑了谁；发给引擎时关掉，模型读不懂也浪费额度 */
+  opts?: { includeAssetId?: boolean },
 ): string {
+  const withId = opts?.includeAssetId !== false;
   const bits = entries.map((e, i) => {
     const img = `@Image${e.imageIndex || i + 1}`;
     if (e.kind === "tail") return `${img}承接上段起幅`;
     if (e.kind === "asset") {
-      const idBit = e.assetId ? ` id=${e.assetId}` : "";
+      const idBit = withId && e.assetId ? ` id=${e.assetId}` : "";
       const name = e.labelZh ? `（${e.labelZh}）` : "";
       return `${e.roleTag}=${img}${name}${idBit}`;
     }
