@@ -48,6 +48,38 @@ export function isGrowthCampAnalyzeJobRecord(job: Pick<Job, "type" | "input">): 
   return isGrowthCampAnalyzeJob(job as Job);
 }
 
+/**
+ * 抢占一条 queued 任务：靠 `WHERE status='queued'` 做乐观锁，并以 RETURNING 判定是否真的抢到。
+ *
+ * 原写法不看更新影响了几行：两个 worker 同时选中同一条，第二个的 UPDATE 其实一行没改，
+ * 却照样 getJobById 拿到任务往下跑——同一个视频任务被执行两遍，钱烧两次。
+ */
+async function claimQueuedJobById(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  job: Pick<Job, "id" | "attempts">,
+  label: string,
+): Promise<NormalizedJob | null> {
+  try {
+    const claimed = await db
+      .update(jobs)
+      .set({
+        status: "running",
+        attempts: (job.attempts ?? 0) + 1,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(jobs.id, job.id), eq(jobs.status, "queued")))
+      .returning({ id: jobs.id });
+
+    // 一行没改 = 已被别的 worker 抢走，让调用方这轮空手而归，下一轮再取
+    if (claimed.length === 0) return null;
+
+    return await getJobById(job.id);
+  } catch (error) {
+    console.error(`[JobsRepo] ${label} update failed:`, error);
+    return null;
+  }
+}
+
 /** 成长营素材分析专用拾取：与平台 Stage2 / 选题生图等长任务分池，避免 queued 长时间无人认领。 */
 export async function claimNextGrowthCampAnalyzeJob(): Promise<NormalizedJob | null> {
   const db = await getDb();
@@ -74,21 +106,7 @@ export async function claimNextGrowthCampAnalyzeJob(): Promise<NormalizedJob | n
   const next = rows[0];
   if (!next || !isGrowthCampAnalyzeJob(next)) return null;
 
-  try {
-    await db
-      .update(jobs)
-      .set({
-        status: "running",
-        attempts: (next.attempts ?? 0) + 1,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(jobs.id, next.id), eq(jobs.status, "queued")));
-
-    return await getJobById(next.id);
-  } catch (error) {
-    console.error("[JobsRepo] claimNextGrowthCampAnalyzeJob update failed:", error);
-    return null;
-  }
+  return claimQueuedJobById(db, next, "claimNextGrowthCampAnalyzeJob");
 }
 
 /** 每次拾取時掃描前方若干個 queued，避免 Stage2 文案永遠卡在長時間 platform_topic_image 之後 */
@@ -191,21 +209,7 @@ export async function claimNextQueuedJobExcluding(excludeTypes: string[]): Promi
   if (rows.length === 0) return null;
 
   const next = rows[0];
-  try {
-    await db
-      .update(jobs)
-      .set({
-        status: "running",
-        attempts: (next.attempts ?? 0) + 1,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(jobs.id, next.id), eq(jobs.status, "queued")));
-
-    return await getJobById(next.id);
-  } catch (error) {
-    console.error("[JobsRepo] claimNextQueuedJobExcluding update failed:", error);
-    return null;
-  }
+  return claimQueuedJobById(db, next, "claimNextQueuedJobExcluding");
 }
 
 /** 专用 pdf_export 队列，避免长时间 page.pdf 阻塞 image/video/audio/platform。 */
@@ -229,21 +233,7 @@ export async function claimNextPdfExportJob(): Promise<NormalizedJob | null> {
   if (rows.length === 0) return null;
 
   const next = rows[0];
-  try {
-    await db
-      .update(jobs)
-      .set({
-        status: "running",
-        attempts: (next.attempts ?? 0) + 1,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(jobs.id, next.id), eq(jobs.status, "queued")));
-
-    return await getJobById(next.id);
-  } catch (error) {
-    console.error("[JobsRepo] claimNextPdfExportJob update failed:", error);
-    return null;
-  }
+  return claimQueuedJobById(db, next, "claimNextPdfExportJob");
 }
 
 export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
@@ -278,21 +268,7 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
 
   if (!preferred) return null;
 
-  try {
-    await db
-      .update(jobs)
-      .set({
-        status: "running",
-        attempts: (preferred.attempts ?? 0) + 1,
-        updatedAt: new Date(),
-      })
-      .where(and(eq(jobs.id, preferred.id), eq(jobs.status, "queued")));
-
-    return await getJobById(preferred.id);
-  } catch (error) {
-    console.error("[JobsRepo] claimNextQueuedJob update failed:", error);
-    return null;
-  }
+  return claimQueuedJobById(db, preferred, "claimNextQueuedJob");
 }
 
 /** 僅在「可能寫入過 DR 副選題暫存」的 platform job 終態時刪除 Neon 行；套裝須整 job（封面+2×4）跑完後才 markJobSucceeded，故不會在僅封面完成時刪。 */
