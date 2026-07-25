@@ -160,8 +160,12 @@ describe("Suno Router - Style Presets", () => {
     expect(costs).toHaveProperty("v4");
     expect(costs).toHaveProperty("v5");
     expect(costs).toHaveProperty("lyrics");
-    expect(costs.v4).toBe(CREDIT_COSTS.sunoMusicV4);
-    expect(costs.v5).toBe(CREDIT_COSTS.sunoMusicV5);
+    // 计费已从「按 V4/V5 模型分档」改成「单次购买 / 套餐内生成」，
+    // v4·v5 只是留给旧 UI 标签的别名。真正扣费口径见 jobs/runner。
+    expect(costs.singlePurchase).toBe(CREDIT_COSTS.audioSinglePurchase);
+    expect(costs.package).toBe(CREDIT_COSTS.audioPackageGeneration);
+    expect(costs.v4).toBe(CREDIT_COSTS.audioSinglePurchase);
+    expect(costs.v5).toBe(CREDIT_COSTS.audioPackageGeneration);
     expect(costs.lyrics).toBe(CREDIT_COSTS.sunoLyrics);
   });
 });

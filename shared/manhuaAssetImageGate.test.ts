@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   collectManhuaIdentityImageUrls,
   evaluateManhuaAssetImageGate,
+  manhuaHeroFaceSheetId,
   planManhuaAssetImageSpawns,
+  seedIdFromManhuaSheetBlockId,
 } from "./manhuaAssetImageGate";
 
 describe("manhuaAssetImageGate", () => {
@@ -272,13 +274,31 @@ describe("manhuaAssetImageGate", () => {
       { assetCanon, episodeIndex: 1, topic: "雪关", episodes },
       { forceEpisodeSheets: true },
     );
-    const hero = plans.find((p) => p.id.includes("wa_char_shence"));
+    const heroPlans = plans.filter((p) => p.id.includes("wa_char_shence"));
     const crowd = plans.find((p) => p.id.includes("wa_char_liumin"));
     const granary = plans.find((p) => p.id.includes("wa_scene_liangcang"));
     const ridge = plans.find((p) => p.id.includes("wa_scene_fenghuo"));
-    expect(hero?.layout).toBe("heroSheet");
-    expect(hero?.prompt).toContain("三视图");
-    expect(hero?.prompt).toContain("双鱼玉佩");
+
+    /**
+     * 主角拆两张：官方把「人脸与全身/服装拼在一张」列为 ID 漂移头号根因，
+     * 三视图更会让模型把同一人的多个角度认成多个主体。
+     */
+    const face = heroPlans.find((p) => p.layout === "heroFace");
+    const look = heroPlans.find((p) => p.layout === "heroLook");
+    expect(heroPlans).toHaveLength(2);
+    // 大头照排在全身照之前：锁脸最吃紧
+    expect(heroPlans[0]?.layout).toBe("heroFace");
+    expect(face?.id).toBe(manhuaHeroFaceSheetId("wa_char_shence"));
+    expect(seedIdFromManhuaSheetBlockId(face!.id)).toBe("wa_char_shence");
+    for (const p of heroPlans) {
+      // 旧板要求「右上：全身三视图并排」；现在必须是明令禁止，不是要求
+      expect(p.prompt).not.toMatch(/三视图并排/);
+      expect(p.prompt).toContain("禁止三视图");
+    }
+    expect(face?.prompt).toContain("只画头部大特写");
+    expect(look?.prompt).toContain("全身入画");
+    // 道具信息改由文本交代，不再另开细节特写格
+    expect(look?.prompt).toContain("双鱼玉佩");
     expect(crowd?.layout).toBe("single");
     expect(crowd?.prompt).not.toContain("三视图");
     expect(granary?.layout).toBe("grid2x2");

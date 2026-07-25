@@ -44,8 +44,12 @@ describe("manhuaProjectBible", () => {
     const again = parseManhuaProjectBible(JSON.parse(serializeManhuaProjectBible(bible)));
     expect(again?.seriesTitle).toBe("父辈拔刀成仇");
     expect(again?.cast.boundEpisodeIndexes).toEqual([1, 2, 3]);
-    expect(summarizeManhuaProjectBible(bible)).toMatch(/古风/);
-    expect(summarizeManhuaProjectBible(bible)).toMatch(/绑定集 1,2,3/);
+    const summary = summarizeManhuaProjectBible(bible);
+    expect(summary).toMatch(/古风/);
+    expect(summary).toMatch(/绑定集 1,2,3/);
+    expect(summary).toMatch(/画风 CG 漫剧/);
+    // 这行渲染在工作台标题下给创作者看，内部 id 不许露出来
+    expect(summary).not.toMatch(/cg_drama|arch_|char_|wpc_/);
   });
 
   it("都市轨保留 characterIds", () => {

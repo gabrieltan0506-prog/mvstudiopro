@@ -157,12 +157,3 @@ export function isManhuaClipQualityInfraFailure(
   return false;
 }
 
-/**
- * 历史：首镜带字会拦成片。静帧禁字已加固后不再用此闸门拦视频/进坞。
- * 保留函数以免旧调用方崩，恒为 false。
- */
-export function isManhuaClipQualityKeyartTextFailure(
-  _report: Pick<ManhuaClipQualityReport, "summary" | "raw" | "failedKeys">,
-): boolean {
-  return false;
-}

@@ -8,6 +8,7 @@ import {
   buildManhuaWriterAssetCanon,
   type ManhuaWriterAssetCanon,
 } from "./manhuaWriterAssetCanon.js";
+import { getManhuaArtStylePreset } from "./manhuaCharacterAssetLibrary.js";
 
 export const MANHUA_PROJECT_BIBLE_FORMAT = "mv-manhua-project-bible-v1" as const;
 
@@ -181,18 +182,25 @@ export function parseManhuaProjectBible(raw: unknown): ManhuaProjectBible | null
   }
 }
 
-/** UI / Debug 一行摘要 */
+/**
+ * UI 一行摘要（渲染在工作台系列标题下，普通创作者可见）。
+ * 只写人看得懂的中文与数量：内部 id（cg_drama / arch_xxx / char_xxx）一律不进这行。
+ */
 export function summarizeManhuaProjectBible(bible: ManhuaProjectBible | null | undefined): string {
   if (!bible) return "—";
   const canon = bible.assetCanon;
+  const isAncient = bible.cast.lane === "ancient";
+  // 有资产表也要留住轨道：早先一有 canon 就只剩「表人物·N」，古风/都市从摘要里消失
+  const laneBits = isAncient ? "古风" : "都市";
   const castBits = canon?.characters.length
     ? `表人物·${canon.characters.length}`
-    : bible.cast.lane === "ancient"
-      ? `古风·${bible.cast.ancientArchetypeIds.join(",") || "—"}`
-      : `人物·${bible.cast.characterIds.join(",") || "—"}`;
+    : isAncient
+      ? `原型·${bible.cast.ancientArchetypeIds.length || "—"}`
+      : `人物·${bible.cast.characterIds.length || "—"}`;
   const sceneBits = canon?.locations.length
     ? `场景池·${canon.locations.length}`
-    : `场景·${bible.cast.sceneId || "—"}`;
+    : `场景·${bible.cast.sceneId ? "已选" : "—"}`;
   const eps = bible.cast.boundEpisodeIndexes.join(",");
-  return `${bible.seriesTitle || bible.topic || "未命名"} · ${castBits} · ${sceneBits} · 画风 ${bible.cast.artStyleId || "—"} · 绑定集 ${eps}`;
+  const styleZh = getManhuaArtStylePreset(bible.cast.artStyleId).labelZh;
+  return `${bible.seriesTitle || bible.topic || "未命名"} · ${laneBits} · ${castBits} · ${sceneBits} · 画风 ${styleZh} · 绑定集 ${eps}`;
 }

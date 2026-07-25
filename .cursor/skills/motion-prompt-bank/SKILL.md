@@ -1,14 +1,35 @@
 ---
 name: motion-prompt-bank
-description: 短视频包装动效库施工手册（Logo/产品/数据/字幕）。把 shared/motionPromptBank 条目变成可验收动效时使用；前台不泄漏渲染栈名。
+description: 短视频包装动效库施工手册（Logo/产品/数据/字幕/电影抢镜）。把 shared/motionPromptBank 条目变成可验收动效时使用；前台不泄漏渲染栈名。
 ---
 
 # 包装动效库 · Agent 施工
 
 ## 何时用
 
-- 用户要短视频 **Logo / 产品广告 / 数据动画 / 字幕动效** 包装
-- 需要从 `shared/motionPromptBank.ts` 选条目注入 Canvas 成片节点
+- 用户要短视频 **Logo / 产品广告 / 数据动画 / 字幕动效 / 电影抢镜** 包装
+- 需要从 `shared/motionPromptBank.ts` 选条目注入包装节点
+
+## 归属：platform，不是 canvas
+
+本库是 **/platform** 侧能力。**不要**在 `/canvas`（漫剧工厂）里引用、挂选择器或下传 id——
+画布工厂设置里那个「包装动效」下拉框已按此口径摘除（#985）。
+画布的叙事镜头手法走 `craftShotBank`，两者不要互相借用。
+
+## 分类（以 `MotionPromptCategory` 为准）
+
+| `category` | 中文名 | 条数 |
+|---|---|---|
+| `caption` | 字幕动效 | 12 |
+| `logo` | Logo 动画 | 8 |
+| `data` | 数据动画 | 7 |
+| `product_ad` | 产品广告 | 7 |
+| `scene_steal` | 电影抢镜 | 3 |
+
+`scene_steal` 是真人闯入经典名场面并抢位的整段演出（船头张臂、雨夜亲吻、时空门穿越），
+属于**成片主体**而非片头片尾包装，选它时不要再叠其他包装条目。
+
+新增分类时同步改本表、`MOTION_PROMPT_CATEGORY_LABEL_ZH` 与 `shared/motionPromptBank.test.ts`。
 
 ## 不要做
 
@@ -26,7 +47,7 @@ description: 短视频包装动效库施工手册（Logo/产品/数据/字幕）
 ## 自动推荐
 - `recommendMotionPromptFromTopic(topic)`：题材关键词 → 1 条包装建议（可选手选覆盖）
 - 细项优先于泛词：如「电竞/RGB」先于「片头」；「揭晓/反转句」先于「字幕」
-- Canvas 工厂：未手选时自动写入；手选后锁定，可「恢复自动推荐」
+- 未手选时可按题材自动写入；手选后锁定，可「恢复自动推荐」
 
 ## 与产品边界
 

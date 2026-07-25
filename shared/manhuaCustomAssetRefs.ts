@@ -4,6 +4,7 @@
  */
 
 import { getAncientArchetypeById } from "./manhuaAncientArchetypeLibrary.js";
+import type { ManhuaSceneTileSlot } from "./manhuaSceneTilePick.js";
 import { getManhuaCharacterById } from "./manhuaCharacterAssetLibrary.js";
 import { getManhuaSceneTemplate, MANHUA_SCENE_ASSET_LIBRARY } from "./manhuaSceneAssetLibrary.js";
 import {
@@ -22,9 +23,15 @@ export type ManhuaCustomAssetRoleOrUnset = ManhuaCustomAssetRole | "unset";
 
 export type ManhuaCustomAssetSource = "upload" | "generated";
 
-/** 成片垫图职责（与人物/场景/道具分栏正交） */
+/**
+ * 成片垫图职责（与人物/场景/道具分栏正交）。
+ *
+ * identity 与 look 要分两张图：官方把「人脸与全身/服装拼在一张」列为
+ * ID 漂移的头号根因，同一人的多个角度会被认成多个主体。
+ */
 export type ManhuaCustomAssetRefDuty =
   | "identity"
+  | "look"
   | "space"
   | "motion"
   | "first_frame"
@@ -32,7 +39,8 @@ export type ManhuaCustomAssetRefDuty =
   | "style";
 
 export const MANHUA_CUSTOM_ASSET_REF_DUTY_LABEL_ZH: Record<ManhuaCustomAssetRefDuty, string> = {
-  identity: "锁脸·身份",
+  identity: "锁脸·大头照",
+  look: "锁妆造·全身",
   space: "锁场·空间",
   motion: "只参考动作",
   first_frame: "当首帧",
@@ -63,7 +71,34 @@ export type ManhuaCustomAssetRef = {
   seedLibraryId?: string;
   /** 视频生成时的参考职责 */
   refDuty?: ManhuaCustomAssetRefDuty | null;
+  /**
+   * 四视角拼板切开后的四格地址（仅跨集场景有）。
+   * url 存主视角当默认，段内按机位改挑其中一格——同一地点四个机位，
+   * 俯拍段喂平视图等于让引擎自己想象地面动线。
+   */
+  tileUrls?: Partial<Record<ManhuaSceneTileSlot, string>> | null;
 };
+
+const SCENE_TILE_SLOTS: ManhuaSceneTileSlot[] = [
+  "topLeft",
+  "topRight",
+  "bottomLeft",
+  "bottomRight",
+];
+
+/** 只收四个已知格子的 HTTPS 地址；存稿被手改过也不至于喂出脏 URL */
+function parseSceneTileUrls(
+  raw: unknown,
+): Partial<Record<ManhuaSceneTileSlot, string>> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const src = raw as Record<string, unknown>;
+  const out: Partial<Record<ManhuaSceneTileSlot, string>> = {};
+  for (const slot of SCENE_TILE_SLOTS) {
+    const u = String(src[slot] || "").trim();
+    if (isHttpsUrl(u)) out[slot] = u;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 
 export const MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH: Record<ManhuaCustomAssetRoleOrUnset, string> = {
   character: "人物",
@@ -252,6 +287,7 @@ export function normalizeManhuaCustomAssetRefs(
     const parsedDuty = (
       [
         "identity",
+        "look",
         "space",
         "motion",
         "first_frame",
@@ -270,6 +306,7 @@ export function normalizeManhuaCustomAssetRefs(
       seedLibraryId,
       // 未标注时按分栏自动填；手选过的原样保留
       refDuty: parsedDuty || defaultManhuaCustomAssetRefDuty(role),
+      tileUrls: parseSceneTileUrls((o as { tileUrls?: unknown }).tileUrls),
     });
     if (out.length >= max) break;
   }
@@ -370,6 +407,7 @@ export function upsertGeneratedManhuaCustomAssetRef(
     labelZh?: string;
     seedLibraryId?: string;
     refDuty?: ManhuaCustomAssetRefDuty | null;
+    tileUrls?: Partial<Record<ManhuaSceneTileSlot, string>> | null;
   },
 ): ManhuaCustomAssetRef[] {
   const url = String(input.url || "").trim();
@@ -385,9 +423,20 @@ export function upsertGeneratedManhuaCustomAssetRef(
     return normalizeManhuaCustomAssetRefs(prev);
   }
   const base = normalizeManhuaCustomAssetRefs(prev);
+  /**
+   * 同一库资产现在可以挂两张分工不同的图：大头照锁脸、全身照锁妆造。
+   * 只按 seedLibraryId 去重会让后出的那张覆盖前一张，结果只剩全身照、
+   * 一张 identity 都不剩——锁脸没图，绑定句的分工措辞也不会出现。
+   * 所以两边都标了 identity/look 时，还要分工相同才算同一张。
+   */
+  const isSplitDuty = (d: ManhuaCustomAssetRefDuty | null | undefined) =>
+    d === "identity" || d === "look";
   const matchIdx = base.findIndex((r) => {
     if (r.url === url) return true;
     if (seedLibraryId && r.source === "generated" && r.seedLibraryId === seedLibraryId) {
+      if (isSplitDuty(input.refDuty) && isSplitDuty(r.refDuty)) {
+        return r.refDuty === input.refDuty;
+      }
       return true;
     }
     return false;
@@ -400,6 +449,9 @@ export function upsertGeneratedManhuaCustomAssetRef(
     source: "generated",
     seedLibraryId:
       seedLibraryId || (matchIdx >= 0 ? base[matchIdx]!.seedLibraryId : undefined),
+    tileUrls:
+      parseSceneTileUrls(input.tileUrls) ??
+      (matchIdx >= 0 ? base[matchIdx]!.tileUrls : undefined),
     refDuty:
       input.refDuty !== undefined
         ? input.refDuty

@@ -92,7 +92,13 @@ describe("jsonDirectorMiddleware", () => {
       hasReferenceImage: true,
     });
     expect(motion).toContain("【第1段·12s】边关烽火台");
-    expect(motion).toContain("0–12s：@角色5，亮火信，下颌绷紧，说「拿着。」。近景微推。");
+    // 断言秒轴的稳定内容（时间码、动作、说话人、台词、景别），不锁整行拼法。
+    // 原先锁死的是更早的紧凑格式，字段一调整这条就变成假红灯。
+    expect(motion).toContain("0–12s：");
+    expect(motion).toContain("亮火信");
+    expect(motion).toContain("@角色5");
+    expect(motion).toContain("说「拿着。」");
+    expect(motion).toMatch(/景别：近景/);
     expect(motion).not.toContain("视频生成导戏单");
     expect(motion).not.toMatch(/^缓慢推进；/);
   });

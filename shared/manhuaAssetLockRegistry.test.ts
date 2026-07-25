@@ -175,11 +175,15 @@ describe("manhuaAssetLockRegistry", () => {
       mentionedTags: ["@角色1"],
       maxImages: 6,
     });
-    expect(plan.imageUrls[0]).toBe("https://cdn.example/tail.jpg");
+    // 重要素材前置：被点名的角色资产占首位，上段末帧只管承接起幅、垫底
+    expect(plan.imageUrls[0]).toBe("https://cdn.example/char.jpg");
+    expect(plan.imageUrls[plan.imageUrls.length - 1]).toBe("https://cdn.example/tail.jpg");
     expect(plan.entries.some((e) => e.kind === "asset" && e.roleTag === "@角色1")).toBe(
       true,
     );
-    expect(plan.bindLineZh).toMatch(/@角色1=@Image\d+/);
+    // 官方指代式：主体名直接贴中文图号，不用 @角色N= 中转、不写英文 Image
+    expect(plan.bindLineZh).toMatch(/女主@图片\d+/);
+    expect(plan.bindLineZh).not.toMatch(/@Image/);
     expect(plan.bindLineZh).toContain("id=c1");
     expect(plan.bindLineZh).not.toMatch(/https?:\/\//);
     expect(stripManhuaAssetUrlsFromPrompt(`${block}\nhttps://leak.example/x.jpg`)).not.toMatch(
@@ -190,6 +194,92 @@ describe("manhuaAssetLockRegistry", () => {
         "@角色1|id=c1|label=女主|https://cdn.example/a.jpg\n预览图：/manhua-characters/x.jpg",
       ),
     ).not.toMatch(/https?:\/\/|\/manhua-|预览图：/);
+  });
+
+  /**
+   * 官方规范：「图片N」指 content 数组里第 N 个 image_url。图号一旦和实际发图
+   * 错位，模型就会把 A 角色的脸贴到 B 身上——比不绑还糟。
+   */
+  it("图号严格对应实际发图顺序，且不留英文 Image", () => {
+    const plan = planManhuaClipSeedanceImageBind({
+      assetRows: [
+        { tag: "@角色1", id: "a", labelZh: "沈沧澜", path: "https://cdn.example/a.jpg" },
+        { tag: "@角色2", id: "b", labelZh: "苏照雪", path: "https://cdn.example/b.jpg" },
+        { tag: "@场景1", id: "s", labelZh: "断月桥", path: "https://cdn.example/s.jpg" },
+      ],
+      stillUrls: ["https://cdn.example/still.jpg"],
+      tailUrls: ["https://cdn.example/tail.jpg"],
+      maxImages: 9,
+    });
+
+    for (const e of plan.entries) {
+      expect(plan.imageUrls[e.imageIndex - 1]).toBe(e.url);
+    }
+    expect(plan.bindLineZh).not.toMatch(/@Image/i);
+    expect(plan.bindLineZh).toContain("沈沧澜@图片1");
+    expect(plan.bindLineZh).toContain("苏照雪@图片2");
+    expect(plan.bindLineZh).toContain("断月桥@图片3");
+    // 末帧垫底：优先级最低的素材不该占前排权重位
+    expect(plan.entries[plan.entries.length - 1]?.kind).toBe("tail");
+  });
+
+  /**
+   * 官方把「人脸与全身/服装拼在一张」列为 ID 漂移头号根因，主角因此拆两张。
+   * 分工措辞只在真的有两张时写：配角单张肖像同时锁脸与服化，写成
+   * 「面部特征参考」会暗示另有一张妆造图。
+   */
+  it("一人两张才写面部/妆造分工，单张肖像不写", () => {
+    const twoShot = planManhuaClipSeedanceImageBind({
+      assetRows: [
+        {
+          tag: "@角色1",
+          id: "f",
+          labelZh: "沈沧澜",
+          path: "https://cdn.example/face.jpg",
+          duty: "identity",
+        },
+        {
+          tag: "@角色2",
+          id: "b",
+          labelZh: "沈沧澜",
+          path: "https://cdn.example/body.jpg",
+          duty: "look",
+        },
+      ],
+      stillUrls: ["https://cdn.example/still.jpg"],
+      maxImages: 9,
+    });
+    // 大头照在前：锁脸最吃紧
+    expect(twoShot.imageUrls[0]).toBe("https://cdn.example/face.jpg");
+    expect(twoShot.bindLineZh).toContain("沈沧澜的面部特征参考@图片1");
+    expect(twoShot.bindLineZh).toContain("沈沧澜的妆造参考@图片2");
+
+    const oneShot = planManhuaClipSeedanceImageBind({
+      assetRows: [
+        {
+          tag: "@角色1",
+          id: "s",
+          labelZh: "马县丞",
+          path: "https://cdn.example/solo.jpg",
+          duty: "identity",
+        },
+      ],
+      stillUrls: ["https://cdn.example/still.jpg"],
+      maxImages: 9,
+    });
+    expect(oneShot.bindLineZh).toContain("马县丞@图片1");
+    expect(oneShot.bindLineZh).not.toContain("面部特征参考");
+  });
+
+  it("duty 经【资产·Image对照】往返不丢", () => {
+    const block = [
+      "【资产·Image对照】",
+      "@角色1|id=f|label=沈沧澜|kind=角色|duty=identity",
+      "@角色2|id=b|label=沈沧澜|kind=角色|duty=look",
+      "@场景1|id=s1|label=断月桥|kind=场景",
+    ].join("\n");
+    const rows = parseManhuaAssetImageBindBlock(block);
+    expect(rows.map((r) => r.duty)).toEqual(["identity", "look", null]);
   });
 
   it("keeps the segment still and spends the rest on assets, not on a 2nd tail", () => {

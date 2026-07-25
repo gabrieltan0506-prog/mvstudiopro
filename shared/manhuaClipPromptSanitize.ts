@@ -10,6 +10,40 @@ export function isManhuaClipPromptLegacyFat(text: string | null | undefined): bo
   return LEGACY_FAT_RE.test(String(text || ""));
 }
 
+/**
+ * 发给成片引擎前剥掉节点里存的【资产·Image对照】与【出片Image硬绑】。
+ *
+ * 出片时会按真正送进 API 的那几张图重算一份 @Image 硬绑放在提示词最前面；
+ * 节点里存的两块是「审阅那一刻」的快照，图有增减（上传失败、名额被挤）就会
+ * 和实算结果对不上。模型同时收到两套 @Image 映射只会挑错脸。
+ * 审阅面保留原样——那两块正是用来看清楚绑了谁的。
+ */
+export function stripManhuaStaleAssetBindForModel(text: string | null | undefined): string {
+  return String(text || "")
+    .replace(/(^|\n)【资产·Image对照】[\s\S]*?(?=\n【|$)/g, "$1")
+    .replace(/(^|\n)【出片Image硬绑】[\s\S]*?(?=\n【|$)/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * 发给成片引擎前把符号换成官方约定。
+ *
+ * 火山引擎给 Seedance 定了一张符号表：（）音乐、<>音效、{}台词、【】字幕。
+ * 我们一直拿【】当段落标题，可它在引擎眼里的意思是「把这行烧进画面」——
+ * 和我们自己那条「画面禁止烧字幕」的硬锁正好打架。台词同理，官方要 {}。
+ *
+ * 只在出片这一步换：审阅面、节点存稿、以及一大批靠【】断段的解析正则
+ * （stripManhuaClipForbiddenBoards、声线锁的说「」抽取等）全部照旧，
+ * 历史节点也不会因为改口径而解析不动。
+ */
+export function renderManhuaClipPromptForSeedance(text: string | null | undefined): string {
+  return String(text || "")
+    .replace(/【([^】\n]{1,40})】/g, "[$1]")
+    .replace(/「([^」\n]{1,200})」/g, "{$1}")
+    .trim();
+}
+
 const FORBIDDEN_SECTION_PREFIXES = [
   "【节拍防火墙】",
   "【视频生成导戏单",

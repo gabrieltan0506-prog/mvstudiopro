@@ -9,6 +9,10 @@ import {
   resolveManhuaProductionNowSummary,
 } from "./manhuaProductionPipeline";
 import {
+  MANHUA_KEYARTS_PER_SEGMENT_MIN,
+  MANHUA_SEGMENT_DEFAULT,
+} from "./manhuaScriptWorkbench";
+import {
   buildManhuaSecondCueSheet,
   buildWorkbenchShotsFromSegmentPlan,
   formatManhuaKeyframeImage2Prompt,
@@ -24,12 +28,15 @@ describe("manhuaStoryDistill", () => {
     expect(resolveKeyframeRoleInSegment(3, 3)).toBe("edit_out");
   });
 
-  it("builds 12×3 shots from segment plan with roles", () => {
+  it("builds 3 shots per segment with start/key/edit_out roles", () => {
     const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(
       buildManhuaEpisodeSegmentPlanFixtureMarkdown(),
     );
     const shots = buildWorkbenchShotsFromSegmentPlan(plan);
-    expect(shots).toHaveLength(36);
+    // 现行口径一集 5–6 段（MANHUA_SEGMENT_DEFAULT=6）；写死 12×3=36 是早期扩集设想的残留。
+    // 从 plan 推导，段数再调时这条不会又变成假红灯。
+    expect(plan.segments).toHaveLength(MANHUA_SEGMENT_DEFAULT);
+    expect(shots).toHaveLength(plan.segments.length * MANHUA_KEYARTS_PER_SEGMENT_MIN);
     expect(shots[0]?.keyframeRole).toBe("start");
     expect(shots[1]?.keyframeRole).toBe("key_action");
     expect(shots[2]?.keyframeRole).toBe("edit_out");

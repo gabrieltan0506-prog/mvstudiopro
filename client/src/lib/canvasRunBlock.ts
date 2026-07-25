@@ -43,6 +43,10 @@ import {
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
 import { appendManhuaClipEngineOptics } from "@shared/manhuaCineOpticsBank";
 import {
+  renderManhuaClipPromptForSeedance,
+  stripManhuaStaleAssetBindForModel,
+} from "@shared/manhuaClipPromptSanitize";
+import {
   extractManhuaMentionedAssetTags,
   formatManhuaClipImageRoleBindLine,
   formatManhuaClipSeedanceBindLineFromEntries,
@@ -52,6 +56,10 @@ import {
   stripManhuaAssetUrlsFromPrompt,
   type ManhuaClipSeedanceImageBindEntry,
 } from "@shared/manhuaAssetLockRegistry";
+import {
+  resolveManhuaSceneTileUrl,
+  type ManhuaSceneTileSlot,
+} from "@shared/manhuaSceneTilePick";
 import { absolutizeManhuaAssetUrl } from "@shared/manhuaKeyartEditFusion";
 import {
   buildManhuaFactoryOptimizeBrief,
@@ -115,6 +123,11 @@ export type CanvasRunDeps = {
    * 节点只存 @角色N|id=…|label=…，这里再转成可下载 URL。
    */
   manhuaAssetPathById?: Record<string, string> | null;
+  /** 四视角拼板切片：段内按机位挑一格当场景垫图 */
+  manhuaAssetTileUrlsById?: Record<
+    string,
+    Partial<Record<ManhuaSceneTileSlot, string>>
+  > | null;
   /**
    * @deprecated 声线不再硬门禁；保留字段以免旧调用方类型炸。
    */
@@ -469,7 +482,8 @@ async function runSeedance20(
       headers: { "Content-Type": "application/json" },
       credentials: "omit",
       body: JSON.stringify({
-        prompt,
+        // 换官方符号只在出线这一刻做：上面的时长解析等仍认【第N段·Xs】
+        prompt: renderManhuaClipPromptForSeedance(prompt),
         imageUrl: imageUrl || imageUrls[0] || undefined,
         imageUrls: imageUrls.length
           ? imageUrls.slice(0, SEEDANCE_REFERENCE_MAX.image)
@@ -939,10 +953,17 @@ export async function runCanvasBlock(
         ? resolveManhuaAssetImageBindRows(
             parseManhuaAssetImageBindBlock(block.prompt || motionPrompt),
             deps.manhuaAssetPathById,
-          ).map((r) => ({
-            ...r,
-            path: absolutizeManhuaAssetUrl(r.path) || r.path,
-          }))
+          ).map((r) => {
+            const abs = absolutizeManhuaAssetUrl(r.path) || r.path;
+            /**
+             * 跨集场景挂的是四视角拼板切片，按本段机位换那一格：俯拍段喂平视图
+             * 等于让引擎自己想象俯视下的地面动线，空间锁就白锁了。
+             */
+            const tiles = deps.manhuaAssetTileUrlsById?.[r.id];
+            if (!tiles) return { ...r, path: abs };
+            const picked = resolveManhuaSceneTileUrl(abs, tiles, motionPrompt);
+            return { ...r, path: absolutizeManhuaAssetUrl(picked.url) || picked.url };
+          })
         : [];
       const mentionedTags = isClip
         ? extractManhuaMentionedAssetTags(motionPrompt)
@@ -985,7 +1006,9 @@ export async function runCanvasBlock(
       const voicePlan = planManhuaVoiceAudioForPrompt(motionPrompt, voiceLocks);
       const voiceBlock = formatManhuaCharacterVoiceLockBlock(voiceLocks, voicePlan);
       const imageBind = isClip
-        ? formatManhuaClipSeedanceBindLineFromEntries(keptEntries) ||
+        ? formatManhuaClipSeedanceBindLineFromEntries(keptEntries, {
+            includeAssetId: false,
+          }) ||
           formatManhuaClipImageRoleBindLine(httpsImages.length, {
             tailCount: Math.min(tailFrames.length, 2),
           })
@@ -997,9 +1020,11 @@ export async function runCanvasBlock(
             .filter((ln) => /@角色\d+=/.test(ln))
             .join("；")
         : "";
+      // imageBind 是按实际送进 API 的图现算的，为准；节点里存的那两块快照剥掉，
+      // 否则模型同时拿到两套 @Image 映射（还可能对不上）只会挑错脸
       const seedancePrompt = [
         imageBind,
-        motionPrompt,
+        isClip ? stripManhuaStaleAssetBindForModel(motionPrompt) : motionPrompt,
         voiceOneLine ? `【声线】${voiceOneLine}` : "",
       ]
         .filter(Boolean)

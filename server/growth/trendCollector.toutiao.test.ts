@@ -114,7 +114,11 @@ describe("collectPlatformTrends toutiao", () => {
                 group_id: url.includes("user-token-2") ? "video-2" : "video-1",
                 title: "toutiao video item",
                 source: "video-user",
-                display_url: "https://www.toutiao.com/video/video-1/",
+                // 两个作者必须给不同的 display_url，否则会被按 URL 去重，
+                // video-2 永远进不来——那是采集器的正确行为，是 fixture 造错了
+                display_url: url.includes("user-token-2")
+                  ? "https://www.toutiao.com/video/video-2/"
+                  : "https://www.toutiao.com/video/video-1/",
                 comments_count: "3",
                 go_detail_count: "66",
                 article_genre: "video",
@@ -155,7 +159,7 @@ describe("collectPlatformTrends toutiao", () => {
     expect(result.items.some((item) => item.id === "ugc-1")).toBe(true);
     expect(result.items.some((item) => item.id === "video-1")).toBe(true);
     expect(result.items.some((item) => item.id === "hot-1")).toBe(true);
-    expect(result.items.some((item) => item.id === "video-2")).toBe(true);
+    expect(result.items.map((item) => item.id)).toContain("video-2");
     expect(result.stats.bucketCounts.toutiao_video_feed).toBeGreaterThanOrEqual(2);
     expect(result.stats.bucketCounts.toutiao_media_hot).toBeGreaterThanOrEqual(2);
     expect(result.stats.bucketCounts.toutiao_feed).toBeGreaterThanOrEqual(1);

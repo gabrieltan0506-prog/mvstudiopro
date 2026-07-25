@@ -10,6 +10,11 @@ import {
   cropImage2x2ToFiles,
 } from "./manhuaDemoSheet2x2";
 
+// cropImage2x2ToFiles 走 python3 + Pillow 切图。CI 的 runner 默认没装 Pillow，
+// 缺依赖时跳过切图用例，纯函数用例照跑。
+const hasPillow =
+  spawnSync("python3", ["-c", "import PIL"], { encoding: "utf8" }).status === 0;
+
 function fake(id: string, kind: "scene" | "prop" = "scene"): ManhuaDemoAsset {
   return {
     id,
@@ -50,7 +55,7 @@ describe("manhuaDemoSheet2x2", () => {
     expect(prompt).toMatch(/禁止可读文字|禁止.*水印/);
   });
 
-  it("crops a synthetic 2x2 sheet into four jpgs", () => {
+  it.skipIf(!hasPillow)("crops a synthetic 2x2 sheet into four jpgs", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "demo-2x2-"));
     const sheet = path.join(dir, "sheet.png");
     const py = `

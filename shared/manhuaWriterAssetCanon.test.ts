@@ -39,6 +39,13 @@ const denseBody = (sceneA: string, sceneB: string) =>
     `两人出庙，沿石径下行至${sceneB}。`,
     "「湖面起雾了。」云疏冷望向倒影。",
     "「若鹤不归呢？」她问。",
+    // 三分钟集的对白闸门要求 ≥30 句；原 fixture 只有 26 句，撑不起「dense pack」这个名字
+    "「鹤影就在湖心。」沈砚舟指向雾中。",
+    "「那不过是残荷倒影。」云疏冷不信。",
+    "「你听。」他侧耳。",
+    "「只有雨声。」她答。",
+    "「雨里有鹤鸣。」沈砚舟压低嗓音。",
+    "「少主又在说梦话。」云疏冷收剑转身。",
     "「那就改写宗门。」他回望破庙方向，又补一句：「今夜先回庙中。」",
     "「走。」云疏冷收剑，雾气吞没石桥。",
     "远处雷声掠过山脊，沈砚舟把鹤氅领口拢紧，心知今夜未必能安睡。",
@@ -116,6 +123,8 @@ describe("manhuaWriterAssetCanon", () => {
       ],
       targetSec: 180,
     });
+    // 先断言 errors 为空：失败时直接看到卡在哪条规则，而不是只有 false !== true
+    expect(ok.errors).toEqual([]);
     expect(ok.ok).toBe(true);
     expect(ok.canon.characters.length).toBeGreaterThanOrEqual(2);
     const lock = formatWriterAssetCanonIdentityLock(ok.canon, { episodeIndex: 1 });

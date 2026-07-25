@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   MOTION_PROMPT_BANK,
+  MOTION_PROMPT_CATEGORY_LABEL_ZH,
+  type MotionPromptCategory,
   buildMotionPromptInjectBlock,
   getMotionPromptById,
   listMotionPromptsByCategory,
@@ -8,12 +10,22 @@ import {
 } from "./motionPromptBank";
 
 describe("motionPromptBank", () => {
-  it("has four categories with expected counts", () => {
+  it("files every entry under a labelled category", () => {
     expect(listMotionPromptsByCategory("logo")).toHaveLength(8);
     expect(listMotionPromptsByCategory("product_ad")).toHaveLength(7);
     expect(listMotionPromptsByCategory("data")).toHaveLength(7);
     expect(listMotionPromptsByCategory("caption")).toHaveLength(12);
-    expect(MOTION_PROMPT_BANK).toHaveLength(34);
+    expect(listMotionPromptsByCategory("scene_steal")).toHaveLength(3);
+
+    // 各类之和须等于总数：新增一类却忘了归档时，这里会直接报出来，
+    // 而不是像原先那样只在硬编码的总数上红一行、让人以为改坏了库
+    const labelled = (
+      Object.keys(MOTION_PROMPT_CATEGORY_LABEL_ZH) as MotionPromptCategory[]
+    ).flatMap((c) => listMotionPromptsByCategory(c));
+    expect(labelled).toHaveLength(MOTION_PROMPT_BANK.length);
+    expect(new Set(MOTION_PROMPT_BANK.map((e) => e.id)).size).toBe(
+      MOTION_PROMPT_BANK.length,
+    );
   });
 
   it("looks up and builds inject block without vendor leak", () => {
