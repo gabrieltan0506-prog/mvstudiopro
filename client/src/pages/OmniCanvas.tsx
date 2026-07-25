@@ -6,9 +6,13 @@ import ManhuaClipDock from "@/components/canvas/ManhuaClipDock";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
 import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/lib/canvasTypes";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
+import { cropManhuaSheet2x2 } from "@/lib/manhuaSheetCropApi";
+import type { ManhuaSceneTileSlot } from "@shared/manhuaSceneTilePick";
 import {
   evaluateManhuaAssetImageGate,
+  manhuaHeroFaceSheetId,
   planManhuaAssetImageSpawns,
+  seedIdFromManhuaSheetBlockId,
 } from "@shared/manhuaAssetImageGate";
 import {
   buildManhuaCustomAssetGenFromLibraryPrompt,
@@ -30,6 +34,7 @@ import { absolutizeManhuaAssetUrl } from "@shared/manhuaKeyartEditFusion";
 import {
   buildManhuaAssetLockRegistry,
   buildManhuaAssetPathById,
+  buildManhuaAssetTileUrlsById,
 } from "@shared/manhuaAssetLockRegistry";
 import {
   normalizeManhuaCharacterLookSets,
@@ -1811,8 +1816,8 @@ export default function OmniCanvas() {
     ],
   );
 
-  /** 仅出片后台：id→垫图 path，绝不写入节点提示词 */
-  const manhuaAssetPathById = useMemo(() => {
+  /** 仅出片后台：id→垫图 path 与四视角切片，绝不写入节点提示词 */
+  const manhuaAssetMaps = useMemo(() => {
     const reg = buildManhuaAssetLockRegistry({
       characterIds: selectedCharacterIds,
       artStyleId: factoryArtStyleId,
@@ -1826,7 +1831,10 @@ export default function OmniCanvas() {
         projectBible?.assetCanon,
       ),
     });
-    return buildManhuaAssetPathById(reg);
+    return {
+      pathById: buildManhuaAssetPathById(reg),
+      tileUrlsById: buildManhuaAssetTileUrlsById(reg),
+    };
   }, [
     selectedCharacterIds,
     factoryArtStyleId,
@@ -1842,7 +1850,8 @@ export default function OmniCanvas() {
     () => ({
       userId: user?.id ? String(user.id) : "",
       characterVoiceLocks,
-      manhuaAssetPathById,
+      manhuaAssetPathById: manhuaAssetMaps.pathById,
+      manhuaAssetTileUrlsById: manhuaAssetMaps.tileUrlsById,
       getManhuaEpisodeSegmentPromptsForVoiceGate: (episodeIndex) =>
         collectManhuaEpisodeSegmentPromptsForVoiceGate(blocksRef.current, episodeIndex),
       optimizeCopy: async ({ sourceText, optimizationBrief, modelName }) => {
@@ -1933,7 +1942,7 @@ export default function OmniCanvas() {
       pushDebug,
       user?.id,
       characterVoiceLocks,
-      manhuaAssetPathById,
+      manhuaAssetMaps,
     ],
   );
 
@@ -3239,32 +3248,67 @@ export default function OmniCanvas() {
         return;
       }
       setAssetsSkipped(false);
-      const ingestSheetToMyLibrary = (
+      const ingestSheetToMyLibrary = async (
         plan: {
           id: string;
           kind: "charsheet" | "sceneplate";
           labelZh: string;
-          layout?: "single" | "grid2x2" | "heroSheet";
+          layout?: "single" | "grid2x2" | "heroFace" | "heroLook";
         },
         url: string | null | undefined,
       ) => {
         const u = String(url || "").trim();
         if (!/^https:\/\//i.test(u)) return;
-        const seedLibraryId = plan.id
-          .replace(/^charsheet-/, "")
-          .replace(/^sceneplate-/, "");
+        const seedLibraryId = seedIdFromManhuaSheetBlockId(plan.id);
+        /**
+         * 四视角拼板整张不能当垫图：模型会把四格读成四个不同地点。切开只把
+         * 主视角挂成垫图；拼板本身仍留在节点输出里给人看。切失败就退回整张，
+         * 总比这一集没场景垫图强。
+         */
+        let refUrl = u;
+        let tileUrls: Partial<Record<ManhuaSceneTileSlot, string>> | null = null;
+        if (plan.kind === "sceneplate" && plan.layout === "grid2x2") {
+          try {
+            const tiles = await cropManhuaSheet2x2({
+              sheetUrl: u,
+              objectPrefix: `manhua-scene-tiles/${seedLibraryId}`,
+            });
+            // 四格全存：段内按机位挑；url 取主视角当默认（建立镜头的纵深）
+            tileUrls = Object.fromEntries(tiles.map((t) => [t.slot, t.url]));
+            const main = tiles.find((t) => t.slot === "topLeft") || tiles[0];
+            if (main?.url) refUrl = main.url;
+          } catch (cropErr) {
+            console.warn(
+              `[canvas] scene sheet crop failed · ${
+                cropErr instanceof Error ? cropErr.message.slice(0, 120) : "unknown"
+              }`,
+            );
+          }
+        }
+        /**
+         * 主角拆两张：大头照锁脸、全身照锁妆造，绑定句按这个职责分工写。
+         * 同步既有节点时拿不到 layout，改看有没有同源大头照——有就说明
+         * 这张是配套的全身照，否则是配角的单张定妆（仍算锁脸）。
+         */
+        const charDuty: "identity" | "look" = plan.id.startsWith("charsheet-face-")
+          ? "identity"
+          : plan.layout === "heroLook" ||
+              blocks.some((b) => b.id === manhuaHeroFaceSheetId(seedLibraryId))
+            ? "look"
+            : "identity";
         setCustomAssetRefs((prev) =>
           upsertGeneratedManhuaCustomAssetRef(prev, {
-            url: u,
+            url: refUrl,
             role: plan.kind === "charsheet" ? "character" : "scene",
             labelZh: plan.labelZh,
             seedLibraryId,
-            refDuty: plan.kind === "charsheet" ? "identity" : "space",
+            refDuty: plan.kind === "charsheet" ? charDuty : "space",
+            tileUrls,
           }),
         );
       };
       /** 已有画布设定图 → 同步进「我的角色 / 我的场景」分栏 */
-      const syncExistingSheetsToMyLibrary = () => {
+      const syncExistingSheetsToMyLibrary = async () => {
         for (const b of assetBlocks) {
           const url = b.outputUrl || b.outputUrls?.[0];
           if (!url) continue;
@@ -3272,7 +3316,7 @@ export default function OmniCanvas() {
           const isChar = b.id.startsWith("charsheet-");
           if (!isScene && !isChar) continue;
           const kind = isScene ? ("sceneplate" as const) : ("charsheet" as const);
-          const seedId = b.id.replace(/^charsheet-/, "").replace(/^sceneplate-/, "");
+          const seedId = seedIdFromManhuaSheetBlockId(b.id);
           const labelZh =
             (kind === "charsheet"
               ? assetCanon?.characters.find((c) => c.id === seedId || b.id.includes(c.id))
@@ -3280,7 +3324,12 @@ export default function OmniCanvas() {
               : assetCanon?.locations.find((l) => l.id === seedId || b.id.includes(l.id))
                   ?.nameZh) ||
             (kind === "charsheet" ? "角色定妆" : "场景参考");
-          ingestSheetToMyLibrary({ id: b.id, kind, labelZh }, url);
+          // 同步既有节点拿不到 plan.layout，看提示词里的四格版式指令认拼板
+          const layout =
+            kind === "sceneplate" && /2×2|四格/.test(String(b.prompt || ""))
+              ? ("grid2x2" as const)
+              : undefined;
+          await ingestSheetToMyLibrary({ id: b.id, kind, labelZh, layout }, url);
         }
       };
       const hasEpisodeSheetMedia = assetBlocks.some((b) =>
@@ -3299,7 +3348,7 @@ export default function OmniCanvas() {
         gate.ready &&
         hasEpisodeSheetMedia
       ) {
-        syncExistingSheetsToMyLibrary();
+        await syncExistingSheetsToMyLibrary();
         setWorkflowPhase("storyboard");
         toast.message(
           gate.viaCustomUpload
@@ -3419,7 +3468,7 @@ export default function OmniCanvas() {
             block = { ...block, prompt: plan.prompt, status: "idle", error: undefined };
             working = working.map((b) => (b.id === plan.id ? block! : b));
           } else {
-            ingestSheetToMyLibrary(plan, block.outputUrl || block.outputUrls?.[0]);
+            await ingestSheetToMyLibrary(plan, block.outputUrl || block.outputUrls?.[0]);
             continue;
           }
           setBlocks(working);
@@ -3451,7 +3500,7 @@ export default function OmniCanvas() {
           );
           setBlocks(working);
           saveCanvasState(working, canvasEdges);
-          ingestSheetToMyLibrary(plan, out.outputUrl || out.outputUrls?.[0]);
+          await ingestSheetToMyLibrary(plan, out.outputUrl || out.outputUrls?.[0]);
           if (out.outputUrl || out.outputUrls?.[0]) {
             pushDebug("confirmAssetsFromScript:engine", {
               level: "ok",
@@ -4676,64 +4725,6 @@ export default function OmniCanvas() {
                   onWorkflowPhaseChange={setWorkflowPhase}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
-                  onAdvisorApplySync={(sync) => {
-                    const ep = writerFocusEpisode;
-                    handleBlocksChange((prev) =>
-                      prev.map((b) => {
-                        if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
-                        const stage = stageKeyFromBlockId(b.id);
-                        if (stage === "story" && sync.storyText) {
-                          return {
-                            ...b,
-                            outputText: sync.storyText,
-                            status: "done" as const,
-                          };
-                        }
-                        if (stage === "beats" && sync.beatsMarkdown) {
-                          return {
-                            ...b,
-                            outputText: sync.beatsMarkdown,
-                            status: "done" as const,
-                          };
-                        }
-                        if (stage === "reverse" && sync.beatsMarkdown) {
-                          const reverseBody = [
-                            sync.scriptText && `## 剧本\n${sync.scriptText}`,
-                            sync.beatsMarkdown,
-                          ]
-                            .filter(Boolean)
-                            .join("\n\n");
-                          return {
-                            ...b,
-                            outputText: reverseBody,
-                            status: "done" as const,
-                          };
-                        }
-                        return b;
-                      }),
-                    );
-                  }}
-                  onAdvisorUpdateBeatsText={(text) => {
-                    const ep = writerFocusEpisode;
-                    handleBlocksChange((prev) =>
-                      prev.map((b) => {
-                        if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
-                        const stage = stageKeyFromBlockId(b.id);
-                        if (stage !== "beats" && stage !== "reverse") return b;
-                        return { ...b, outputText: text, status: "done" as const };
-                      }),
-                    );
-                  }}
-                  onAdvisorUpdateStoryText={(text) => {
-                    const ep = writerFocusEpisode;
-                    handleBlocksChange((prev) =>
-                      prev.map((b) => {
-                        if ((getBlockEpisodeIndex(b) ?? 1) !== ep) return b;
-                        if (stageKeyFromBlockId(b.id) !== "story") return b;
-                        return { ...b, outputText: text, status: "done" as const };
-                      }),
-                    );
-                  }}
                   onUpsertShotAngles={(angles) => {
                     const ep = writerFocusEpisode;
                     handleBlocksChange((prev) =>

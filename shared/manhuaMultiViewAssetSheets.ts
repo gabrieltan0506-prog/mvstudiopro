@@ -147,7 +147,106 @@ export function buildManhuaSceneFourViewGridPrompt(opts: {
     .join("\n");
 }
 
-/** D1：主角设定板——左主图 + 右三视图 + 配色/道具细节区（单张 9:16） */
+/**
+ * D1-a：主角大头照——只有脸，专供引擎锁 ID。
+ *
+ * 官方「人物 ID 漂移」根因第一条就是参考图混用：把人脸、全身姿态、服装、
+ * 细节格拼在同一张里，模型会把同一个人的不同角度认成好几个主体，画面里
+ * 因此冒出两个一模一样的人。解法是大头照 + 全身照分开两张。
+ */
+export function composeManhuaHeroFaceCloseupPrompt(input: {
+  nameZh: string;
+  aliasZh?: string;
+  lookZh?: string;
+  artStyleLabelZh?: string;
+  artStylePromptZh?: string;
+}): string {
+  const tag = [input.nameZh, input.aliasZh].filter(Boolean).join("/");
+  const look = String(input.lookZh || "").trim();
+  return [
+    "生成一张竖版（9:16）单人「面部特征参考图」：只画头部大特写，正面平视，占画面主体。",
+    "仅保留面部与发型轮廓；肩颈只留极少，背景纯净单色或极浅景深，禁止任何环境陈设。",
+    "表情中性、无夸张情绪，眼睛看镜头——供后续视频锁定同一张脸，不是表演定妆。",
+    "只能有一个人；禁止三视图、禁止多角度并排、禁止分格拼版、禁止侧脸背面小图。",
+    look ? `五官与发型依据：${look}` : "",
+    `（隐藏身份·不必画出：${tag || "主角"}）`,
+    input.artStyleLabelZh ? `【画风】${input.artStyleLabelZh}` : "",
+    String(input.artStylePromptZh || "").trim(),
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * D1-b：主角全身妆造照——单人独立全身，专供引擎锁服化。
+ *
+ * 服饰道具的形制材质写进提示词文本，不再另开细节特写格：那些格子就是
+ * 官方点名的「参考图混用」，会把服装图和人脸图挤在一张里互相干扰。
+ */
+export function composeManhuaHeroFullBodyLookPrompt(input: {
+  nameZh: string;
+  aliasZh?: string;
+  lookZh?: string;
+  motiveZh?: string;
+  noteZh?: string;
+  basePromptZh?: string;
+  artStyleLabelZh?: string;
+  artStylePromptZh?: string;
+  topic?: string;
+  props?: Array<Pick<ManhuaWriterAssetAnchor, "nameZh" | "lookZh" | "motiveZh">>;
+}): string {
+  const tag = [input.nameZh, input.aliasZh].filter(Boolean).join("/");
+  const look = String(input.lookZh || "").trim();
+  const motive = String(input.motiveZh || "").trim();
+  const note = String(input.noteZh || "").trim();
+  const palette = extractWardrobePaletteTokensZh(look);
+  const propLines = (input.props || [])
+    .slice(0, 3)
+    .map((p) => {
+      const detail = [p.lookZh, p.motiveZh].filter(Boolean).join("；");
+      return `- ${p.nameZh}${detail ? `：${detail}` : ""}`;
+    })
+    .join("\n");
+  const base = String(input.basePromptZh || "")
+    .trim()
+    .replace(/原创角色设定卡·?/g, "原创角色全身定妆，")
+    .replace(/设定卡/g, "全身定妆");
+  return [
+    "生成一张竖版（9:16）单人「全身妆造参考图」：一个人、一个正面站姿、全身入画，从头到脚完整。",
+    "干净棚拍感背景，光线均匀让服装款式与材质看得清；姿态自然放松，不做大动作。",
+    "只能有一个人、只有一个角度；禁止三视图、禁止正侧背并排、禁止分格拼版、禁止另加细节特写小图。",
+    look ? `请画出的外形与服化：${look}` : "",
+    palette.length ? `服装主色调：${palette.join("、")}。` : "",
+    propLines
+      ? `随身道具须穿戴/持握在身上并看得出材质形制：\n${propLines}`
+      : "若外形句含佩饰、武器、包袋，须穿戴在身上并看得出材质形制。",
+    motive || note
+      ? `（隐藏说明·绝不能写成海报句：${[motive, note].filter(Boolean).join("；")}）`
+      : "",
+    `（隐藏身份·不必画出：${tag || "主角"}）`,
+    base,
+    input.artStyleLabelZh ? `【画风】${input.artStyleLabelZh}` : "",
+    String(input.artStylePromptZh || "").trim(),
+    input.topic
+      ? `（隐藏题材氛围·绝不能写成标题或书法大字：${input.topic.slice(0, 80)}）`
+      : "",
+    "贯穿全系列同一身份；换脸、换服、换发色会破坏连载锁定。",
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * D1（旧）：主角设定板——左主图 + 右三视图 + 配色/道具细节区（单张 9:16）。
+ *
+ * @deprecated 三视图 + 细节格拼版正是官方「ID 漂移」根因（参考图混用），
+ * 出片一律改用 composeManhuaHeroFaceCloseupPrompt + FullBodyLookPrompt 两张。
+ * 仅保留给「给人看的设定板」这类非引擎用途。
+ */
 export function composeManhuaHeroCharacterSheetPrompt(input: {
   nameZh: string;
   aliasZh?: string;
