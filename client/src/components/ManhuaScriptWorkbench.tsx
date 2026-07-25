@@ -3479,7 +3479,9 @@ export default function ManhuaScriptWorkbench({
               immersive
                 ? showCanvasDock
                   ? // 阿硕 C2：左窄资产 · 中图卡 · 右画布占主视觉（h-full 吃满外层定高）
-                    "grid h-full min-h-0 min-w-[1360px] grid-cols-[152px_minmax(200px,0.36fr)_minmax(720px,2.2fr)]"
+                    // 中栏原来是 0.36fr，1440 屏上只剩 200px，分镜标题被挤成一行两三个字、
+                    // 资产 chips 也铺不开；中栏才是读分镜改台词的地方，给够宽度。
+                    "grid h-full min-h-0 min-w-[1360px] grid-cols-[152px_minmax(400px,0.5fr)_minmax(640px,1fr)]"
                   : "grid h-full min-h-0 min-w-[1120px] grid-cols-[168px_minmax(280px,0.7fr)_minmax(420px,1.1fr)]"
                 : "flex h-full min-h-0 w-full overflow-hidden"
             }
