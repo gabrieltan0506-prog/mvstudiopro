@@ -72,6 +72,57 @@ async function getTeamMembership(userId: number) {
   return membership.length > 0 ? membership[0] : null;
 }
 
+type DbHandle = NonNullable<Awaited<ReturnType<typeof getDb>>>;
+
+/**
+ * 个人余额原子扣减：够不够由 SQL 的 WHERE 判，不在 JS 里比大小。
+ *
+ * 原写法是「读余额 → JS 比大小 → 写回一个算好的数」。两个请求同时进来都读到 100，
+ * 都算出 100-40=60 写回，扣了两次却只少 40——白送一次。neon-http 驱动没有跨语句事务，
+ * 所以必须收敛成单条带条件的 UPDATE。
+ *
+ * @returns 扣减后的余额；余额不足或被并发抢先时返回 null（此时一分未扣）
+ */
+async function tryDeductPersonalCredits(
+  db: DbHandle,
+  userId: number,
+  cost: number,
+): Promise<number | null> {
+  const rows = await db
+    .update(creditBalances)
+    .set({
+      balance: sql`${creditBalances.balance} - ${cost}`,
+      lifetimeSpent: sql`${creditBalances.lifetimeSpent} + ${cost}`,
+    })
+    .where(and(eq(creditBalances.userId, userId), sql`${creditBalances.balance} >= ${cost}`))
+    .returning({ balance: creditBalances.balance });
+  return rows.length ? Number(rows[0].balance) : null;
+}
+
+/** 团队额度原子扣减；余额不足或被并发抢先时返回 null（同 {@link tryDeductPersonalCredits}） */
+async function tryDeductTeamCredits(
+  db: DbHandle,
+  memberId: number,
+  cost: number,
+): Promise<{ allocated: number; used: number } | null> {
+  const rows = await db
+    .update(teamMembers)
+    .set({ usedCredits: sql`${teamMembers.usedCredits} + ${cost}` })
+    .where(
+      and(
+        eq(teamMembers.id, memberId),
+        sql`${teamMembers.allocatedCredits} - ${teamMembers.usedCredits} >= ${cost}`,
+      ),
+    )
+    .returning({
+      allocated: teamMembers.allocatedCredits,
+      used: teamMembers.usedCredits,
+    });
+  return rows.length
+    ? { allocated: Number(rows[0].allocated), used: Number(rows[0].used) }
+    : null;
+}
+
 // ─── 扣费（支持个人帐户 + 团队额度） ────────────────
 export async function deductCredits(
   userId: number,
@@ -93,18 +144,10 @@ export async function deductCredits(
 
   const cost = CREDIT_COSTS[action];
 
-  // 1. 先尝试从个人帐户扣费
+  // 1. 先尝试从个人帐户扣费（先确保余额行存在，否则条件 UPDATE 会扑空）
   const balance = await getOrCreateBalance(userId);
-  if (balance.balance >= cost) {
-    // 个人帐户余额充足，直接扣除
-    const newBalance = balance.balance - cost;
-    const newLifetimeSpent = balance.lifetimeSpent + cost;
-
-    await db
-      .update(creditBalances)
-      .set({ balance: newBalance, lifetimeSpent: newLifetimeSpent })
-      .where(eq(creditBalances.userId, userId));
-
+  const newBalance = await tryDeductPersonalCredits(db, userId, cost);
+  if (newBalance !== null) {
     await db.insert(creditTransactions).values({
       userId,
       amount: -cost,
@@ -135,15 +178,9 @@ export async function deductCredits(
   // 2. 个人帐户不足，尝试从团队分配额度扣费
   const membership = await getTeamMembership(userId);
   if (membership) {
-    const availableTeamCredits = membership.allocatedCredits - membership.usedCredits;
-    if (availableTeamCredits >= cost) {
-      // 从团队额度扣除
-      const newUsed = membership.usedCredits + cost;
-
-      await db
-        .update(teamMembers)
-        .set({ usedCredits: newUsed })
-        .where(eq(teamMembers.id, membership.id));
+    const team = await tryDeductTeamCredits(db, membership.id, cost);
+    if (team) {
+      const remainingAllocation = team.allocated - team.used;
 
       // 记录使用日志
       await db.insert(stripeUsageLogs).values({
@@ -152,7 +189,7 @@ export async function deductCredits(
         creditsCost: cost,
         isFreeQuota: 0,
         description: description ?? `${action} generation (团队额度)`,
-        balanceAfter: membership.allocatedCredits - newUsed,
+        balanceAfter: remainingAllocation,
         metadata: JSON.stringify({
           source: "team",
           teamId: membership.teamId,
@@ -166,13 +203,13 @@ export async function deductCredits(
         userId,
         action: "credits_used",
         description: `使用 ${cost} Credits 进行 ${action}`,
-        metadata: JSON.stringify({ action, cost, remainingAllocation: availableTeamCredits - cost }),
+        metadata: JSON.stringify({ action, cost, remainingAllocation }),
       });
 
       return {
         success: true,
         cost,
-        remainingBalance: availableTeamCredits - cost,
+        remainingBalance: remainingAllocation,
         source: "team" as const,
         teamId: membership.teamId,
         teamMemberId: membership.id,
@@ -215,16 +252,10 @@ export async function deductCreditsAmount(
     };
   }
 
+  // 先确保余额行存在，否则条件 UPDATE 会扑空
   const balance = await getOrCreateBalance(userId);
-  if (balance.balance >= cost) {
-    const newBalance = balance.balance - cost;
-    const newLifetimeSpent = balance.lifetimeSpent + cost;
-
-    await db
-      .update(creditBalances)
-      .set({ balance: newBalance, lifetimeSpent: newLifetimeSpent })
-      .where(eq(creditBalances.userId, userId));
-
+  const newBalance = await tryDeductPersonalCredits(db, userId, cost);
+  if (newBalance !== null) {
     await db.insert(creditTransactions).values({
       userId,
       amount: -cost,
@@ -254,14 +285,9 @@ export async function deductCreditsAmount(
 
   const membership = await getTeamMembership(userId);
   if (membership) {
-    const availableTeamCredits = membership.allocatedCredits - membership.usedCredits;
-    if (availableTeamCredits >= cost) {
-      const newUsed = membership.usedCredits + cost;
-
-      await db
-        .update(teamMembers)
-        .set({ usedCredits: newUsed })
-        .where(eq(teamMembers.id, membership.id));
+    const team = await tryDeductTeamCredits(db, membership.id, cost);
+    if (team) {
+      const remainingAllocation = team.allocated - team.used;
 
       await db.insert(stripeUsageLogs).values({
         userId,
@@ -269,7 +295,7 @@ export async function deductCreditsAmount(
         creditsCost: cost,
         isFreeQuota: 0,
         description: description ?? `${action} (${cost} cr, 团队额度)`,
-        balanceAfter: membership.allocatedCredits - newUsed,
+        balanceAfter: remainingAllocation,
         metadata: JSON.stringify({
           source: "team",
           teamId: membership.teamId,
@@ -282,13 +308,13 @@ export async function deductCreditsAmount(
         userId,
         action: "credits_used",
         description: `使用 ${cost} Credits 进行 ${action}`,
-        metadata: JSON.stringify({ action, cost, remainingAllocation: availableTeamCredits - cost }),
+        metadata: JSON.stringify({ action, cost, remainingAllocation }),
       });
 
       return {
         success: true,
         cost,
-        remainingBalance: availableTeamCredits - cost,
+        remainingBalance: remainingAllocation,
         source: "team" as const,
         teamId: membership.teamId,
         teamMemberId: membership.id,
