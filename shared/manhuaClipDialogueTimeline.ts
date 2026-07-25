@@ -118,6 +118,22 @@ export function extractManhuaFramingLabelZh(cameraZh: string, actionZh = ""): st
   return framingHint(`${cameraZh || ""} ${actionZh || ""}`.trim());
 }
 
+/**
+ * 纯运镜词开头的短句：可拍表常把「极速拉远，」写进动作栏，
+ * 而运镜栏另有一套（缓慢推近），两条一起进提示词就是自相矛盾的指令。
+ * 整段头必须全是运镜词才剥，避免误伤「推开门」这类真动作。
+ */
+const CAMERA_ONLY_HEAD_RE =
+  /^[极缓轻慢快大小徐急]*(?:速)?(?:推近|推进|拉远|拉近|横移|平移|环绕|过肩跟拍|过肩|跟拍|手持微晃|手持|固定机位|固定|升格|降格|俯拍|仰拍|俯视|仰视|平视|微晃|摇镜|甩镜|变焦|长焦|广角|推|拉|摇|移|跟|升|降|俯|仰|晃)+$/;
+
+/** 动作栏若以纯运镜词起头，且运镜栏已有权威值，就把它剥掉 */
+function stripLeadingCameraDirection(actionZh: string, hasCameraField: boolean): string {
+  if (!hasCameraField) return actionZh;
+  const m = actionZh.match(/^([^，,。；;]{1,8})[，,]\s*([\s\S]+)$/);
+  if (!m) return actionZh;
+  return CAMERA_ONLY_HEAD_RE.test(m[1]!.trim()) ? m[2]!.trim() : actionZh;
+}
+
 /** 运镜轨迹：去掉已单列的景别词，保留推拉摇移等动势 */
 function cameraTrajectoryZh(cameraZh: string, actionZh: string): string {
   const raw = resolveBeatCameraMoveZh(cameraZh, actionZh);
@@ -138,9 +154,10 @@ function cameraTrajectoryZh(cameraZh: string, actionZh: string): string {
 }
 
 /**
- * Seedance 秒轴：每镜必须列出动作轨迹 / 运镜轨迹 / 景别，并可带光与氛围。
- * 例：`0–5s：动作轨迹：…。运镜轨迹：缓推。景别：近景。光：侧逆。氛围：压迫。@角色2说「…」。`
- * 身份靠垫图/@Image；光学 mm/快门出片时另转。
+ * Seedance 秒轴：每镜必须列出动作轨迹 / 运镜轨迹 / 景别，并带表演三维（情绪 /
+ * 微表情 / 语气）——只给台词内容不给演法，引擎只会念台词、不会演。
+ * 例：`0–5s：动作轨迹：握拳对峙，咬牙。运镜轨迹：微推。景别：近景。情绪：怒。@角色2以压嗓说「放开！」。`
+ * 身份靠垫图/@图片N；光学 mm/快门出片时另转。
  */
 export function formatManhuaDialogueTimelineBlock(
   shots: ManhuaWorkbenchShot[],
@@ -155,51 +172,68 @@ export function formatManhuaDialogueTimelineBlock(
 ): string {
   const beats = buildManhuaDialogueTimelineBeats(shots, durationSec);
   if (!beats.length) return "本段暂无分镜。";
-  const segLight = String(opts?.lightingCameraZh || "").trim();
-  const segPalette = String(opts?.paletteZh || "").trim();
-  const lightFallback =
-    segLight
-      .split(/[；;|｜]/)
-      .map((s) => s.trim())
-      .find((s) => /光|灯|逆|侧|顶|火|烛|霓虹|阴|亮|暗/.test(s)) ||
-    (segLight ? segLight.slice(0, 36) : "");
-  const moodFallback =
-    segPalette.slice(0, 36) ||
-    segLight
-      .split(/[；;|｜]/)
-      .map((s) => s.trim())
-      .find((s) => /氛围|压迫|紧张|冷|暖|雨|夜|肃|诡/.test(s)) ||
-    "";
+  const emotionOf = (b: ManhuaDialogueTimelineBeat) => String(b.emotionZh || "").trim();
+  const microOf = (b: ManhuaDialogueTimelineBeat) =>
+    String(b.microExpressionZh || "").trim();
+  const toneOf = (b: ManhuaDialogueTimelineBeat) => String(b.voiceToneZh || "").trim();
+  /**
+   * 某一维全镜逐字相同 = 段级默认灌进了每一镜（如三镜都写「眼神由惊转硬」）。
+   * 提到段头写一次，别在秒轴复读——复读会盖掉真正的镜间差异。
+   *
+   * 三维各自判定而非合成一个值：常见情况是情绪贯穿全段、微表情逐镜递进，
+   * 合起来一刀切会把递进的那一维也当成复读吞掉。
+   */
+  const pickShared = (of: (b: ManhuaDialogueTimelineBeat) => string) => {
+    const first = of(beats[0]!);
+    return beats.length > 1 && first && beats.every((b) => of(b) === first) ? first : "";
+  };
+  const sharedEmotion = pickShared(emotionOf);
+  const sharedMicro = pickShared(microOf);
+  const sharedTone = pickShared(toneOf);
 
-  return beats
-    .map((b) => {
-      const frame = extractManhuaFramingLabelZh(b.cameraZh, b.actionZh);
-      const traj = cameraTrajectoryZh(b.cameraZh, b.actionZh);
-      const speaker = b.speakerAtTag;
-      let action = String(b.actionZh || "")
+  const lines = beats.map((b) => {
+    const frame = extractManhuaFramingLabelZh(b.cameraZh, b.actionZh);
+    const traj = cameraTrajectoryZh(b.cameraZh, b.actionZh);
+    const speaker = b.speakerAtTag;
+    let action = stripLeadingCameraDirection(
+      String(b.actionZh || "")
         .replace(/[「『"“][^」』"”]{0,200}[」』"”]/g, "")
         .replace(/@角色\d+/g, "")
         .replace(/\s+/g, " ")
-        .trim();
-      if (!action) action = "承接上镜动作";
-      const visible =
-        String(b.microExpressionZh || "").trim() ||
-        String(b.emotionZh || "").trim();
-      const line = stripManhuaSpeakerAtPrefix(b.dialogueZh).trim();
-      const light = lightFallback;
-      const mood = moodFallback || visible;
-      const bits = [
-        `动作轨迹：${action}${visible ? `，${visible}` : ""}`,
-        `运镜轨迹：${traj}`,
-        `景别：${frame}`,
-        light ? `光：${light}` : "",
-        mood ? `氛围：${mood}` : "",
-        speaker || "",
-        line ? `说「${line}」` : "",
-      ].filter(Boolean);
-      return `${b.startSec}–${b.endSec}s：${bits.join("。")}。`;
-    })
-    .join("\n");
+        .trim(),
+      Boolean(String(b.cameraZh || "").trim()),
+    );
+    if (!action) action = "承接上镜动作";
+    // 微表情贴着动作走（眼神/下颌/喉结本就是可见动作细节）；情绪是驱动它的
+    // 内在状态，单列一栏。两者同值时只留微表情，它更具体。
+    const micro = sharedMicro ? "" : microOf(b);
+    const emotionRaw = sharedEmotion ? "" : emotionOf(b);
+    const emotion = emotionRaw && emotionRaw !== micro ? emotionRaw : "";
+    const tone = sharedTone ? "" : toneOf(b);
+    const line = stripManhuaSpeakerAtPrefix(b.dialogueZh).trim();
+    // 光与氛围是段级常量，段头【光影·景别·氛围】已写；每镜再复读一遍，
+    // 15s 三镜就让同一串配色出现五次，纯占 token 又稀释镜级信息。
+    const bits = [
+      `动作轨迹：${action}${micro ? `，${micro}` : ""}`,
+      `运镜轨迹：${traj}`,
+      `景别：${frame}`,
+      emotion ? `情绪：${emotion}` : "",
+      speaker || "",
+      // 语气决定「怎么说」，是口型与气口的依据；只给台词内容等于让引擎自己猜演法
+      line ? `${tone ? `以${tone}` : ""}说「${line}」` : "",
+    ].filter(Boolean);
+    return `${b.startSec}–${b.endSec}s：${bits.join("。")}。`;
+  });
+
+  const sharedBits = [
+    sharedEmotion ? `情绪：${sharedEmotion}` : "",
+    sharedMicro && sharedMicro !== sharedEmotion ? `微表情：${sharedMicro}` : "",
+    sharedTone ? `语气：${sharedTone}` : "",
+  ].filter(Boolean);
+  const toneLine = sharedBits.length
+    ? `【表演基调】${sharedBits.join("｜")}（贯穿本段）。`
+    : "";
+  return [toneLine, ...lines].filter(Boolean).join("\n");
 }
 
 /**
@@ -232,9 +266,10 @@ export function formatManhuaClipSceneLightBoard(input: {
   const sceneLock = `【场景锁】${sceneBody}${
     palette ? `；配色：${palette}` : ""
   }。地点材质光色锁本段垫图${sceneTag ? `与${sceneTag}` : ""}，禁止跳棚换地。`;
+  // 光与氛围只在段头写一次，秒轴不再复读；缺段级光影时也别谎称「按秒轴各镜执行」
   const lightBoard = `【光影·景别·氛围】${
     [lighting, palette ? `配色${palette}` : ""].filter(Boolean).join("｜") ||
-    "按秒轴各镜：光 / 景别 / 氛围执行"
+    "沿用本段垫图的光色；景别按秒轴各镜执行"
   }。`;
   return [head, sceneLock, lightBoard].join("\n");
 }
