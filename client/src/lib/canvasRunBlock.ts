@@ -36,7 +36,10 @@ import {
   MANHUA_KEYART_NO_TEXT_EN,
   parseManhuaClipTargetDurationSec,
 } from "@shared/manhuaScriptWorkbench";
-import { clampSeedanceOpenRouterDuration } from "@shared/seedanceOpenRouterModels";
+import {
+  clampSeedanceOpenRouterDuration,
+  SEEDANCE_REFERENCE_MAX,
+} from "@shared/seedanceOpenRouterModels";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
 import { appendManhuaClipEngineOptics } from "@shared/manhuaCineOpticsBank";
 import {
@@ -468,9 +471,15 @@ async function runSeedance20(
       body: JSON.stringify({
         prompt,
         imageUrl: imageUrl || imageUrls[0] || undefined,
-        imageUrls: imageUrls.length ? imageUrls.slice(0, 6) : undefined,
-        videoUrls: videoUrls.length ? videoUrls.slice(0, 3) : undefined,
-        audioUrls: audioUrls.length ? audioUrls.slice(0, 3) : undefined,
+        imageUrls: imageUrls.length
+          ? imageUrls.slice(0, SEEDANCE_REFERENCE_MAX.image)
+          : undefined,
+        videoUrls: videoUrls.length
+          ? videoUrls.slice(0, SEEDANCE_REFERENCE_MAX.video)
+          : undefined,
+        audioUrls: audioUrls.length
+          ? audioUrls.slice(0, SEEDANCE_REFERENCE_MAX.audio)
+          : undefined,
         resolution: version === "2.0-fast" ? "720p" : "720p",
         aspectRatio,
         duration,
@@ -948,13 +957,16 @@ export async function runCanvasBlock(
             stillUrls: absStills,
             tailUrls: tailFrames,
             mentionedTags,
-            maxImages: 6,
+            maxImages: SEEDANCE_REFERENCE_MAX.image,
           })
         : null;
       const rawPool = bindPlan?.imageUrls?.length
         ? bindPlan.imageUrls
         : [...tailFrames, ...absStills];
-      const httpsImages = await toHttpsImageUrls(deps, rawPool.slice(0, 6));
+      const httpsImages = await toHttpsImageUrls(
+        deps,
+        rawPool.slice(0, SEEDANCE_REFERENCE_MAX.image),
+      );
       const keptEntries: ManhuaClipSeedanceImageBindEntry[] = [];
       if (bindPlan?.entries.length) {
         for (const e of bindPlan.entries) {

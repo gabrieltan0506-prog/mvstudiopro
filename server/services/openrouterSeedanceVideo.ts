@@ -8,6 +8,7 @@ import {
   normalizeSeedanceOpenRouterAspectRatio,
   normalizeSeedanceOpenRouterQuality,
   resolveSeedanceOpenRouterModelId,
+  SEEDANCE_REFERENCE_MAX,
   type SeedanceOpenRouterVariant,
 } from "../../shared/seedanceOpenRouterModels.js";
 import { buildOpenRouterAuthHeaders, getOpenRouterApiKey } from "./openrouterGptImage2.js";
@@ -91,7 +92,7 @@ export function buildOpenRouterSeedanceSubmitBody(input: {
   const uniqueImages = Array.from(new Set(images));
   const audioUrls = Array.from(
     new Set((input.audioUrls || []).map((u) => String(u || "").trim()).filter(Boolean)),
-  ).slice(0, 3);
+  ).slice(0, SEEDANCE_REFERENCE_MAX.audio);
 
   const body: Record<string, unknown> = {
     model,
@@ -119,7 +120,9 @@ export function buildOpenRouterSeedanceSubmitBody(input: {
       image_url: { url: uniqueImages[0] },
     });
   } else if (uniqueImages.length > 1) {
-    for (const url of uniqueImages.slice(0, 4)) {
+    // 官方多模态参考上限 9 张；早先写死 4 会把本段静帧和场景/道具静默丢掉，
+    // 提示词里的 @ImageN 却照旧指向没发出去的图，导致脸/服/场锁不住。
+    for (const url of uniqueImages.slice(0, SEEDANCE_REFERENCE_MAX.image)) {
       inputReferences.push({
         type: "image_url",
         image_url: { url },

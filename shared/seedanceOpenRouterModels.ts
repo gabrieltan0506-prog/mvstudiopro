@@ -16,6 +16,13 @@ export const SEEDANCE_OPENROUTER_MODELS = {
 /** 与 EvoLink 2.0 时长口径对齐：4–15s，产品默认 15 */
 export const SEEDANCE_OPENROUTER_DURATION = { min: 4, max: 15, default: 15 } as const;
 
+/**
+ * Seedance 2.0 多模态参考的官方上限：图 9 / 视频 3 / 音频 3。
+ * prompt 里用 @image1~@image9 引用，序号必须与实际发出的数组同序。
+ * 别再各处拍脑袋写 4 或 6——喂图不计费（计费只看输出分辨率×时长），砍名额纯亏一致性。
+ */
+export const SEEDANCE_REFERENCE_MAX = { image: 9, video: 3, audio: 3 } as const;
+
 /** 产品可选：标准 / 快速。`2.0-mini` 仅内部探针解析用，不对产品暴露。 */
 export type SeedanceProductVersion = "2.0" | "2.0-fast" | "2.0-mini" | "2.5";
 
