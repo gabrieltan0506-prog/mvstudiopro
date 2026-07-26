@@ -343,3 +343,44 @@ export function buildManhuaScenePlateGenPrompt(opts: {
     .filter(Boolean)
     .join("\n");
 }
+
+/**
+ * 道具单件参考图生图提示。
+ *
+ * 道具原先只并进角色定妆卡的特写格，于是它没有自己的 URL：段内绑图时
+ * 要么拿到那张角色卡（等于和脸共用一张，反倒把脸的权重摊薄），要么是
+ * logical:// 占位被过滤掉，等于压根没锁。所以这里出独立单件图。
+ *
+ * 单件、单角度、干净背景：多角度拼图是 ID 漂移头号根因，角色卡刚按这个
+ * 理由拆成大头照 + 全身照，道具不能再走回拼图那条路。
+ */
+export function buildManhuaPropPlateGenPrompt(opts: {
+  propNameZh: string;
+  propPromptZh?: string;
+  /** 这件道具归谁用：只作隐藏说明，画面不要出现人 */
+  ownerNameZh?: string;
+  topic?: string;
+  artStyleLabelZh?: string;
+  artStylePromptZh?: string;
+}): string {
+  const name = String(opts.propNameZh || "").trim() || "关键道具";
+  const propPrompt = String(opts.propPromptZh || "").trim();
+  const owner = String(opts.ownerNameZh || "").trim();
+  const topic = String(opts.topic || "").trim();
+  const styleLabel = String(opts.artStyleLabelZh || "").trim();
+  const stylePrompt = String(opts.artStylePromptZh || "").trim();
+  return [
+    "生成一张竖版单件道具参考（9:16）：只画这一件道具，居中占画面主体，四分之三主视角，材质、纹样、磨损与配色看得清。",
+    "背景用干净的浅色或深色渐变，不要环境、不要人物、不要手、不要多角度并排或分格拼图，只要这一件的正面主视角。",
+    `（隐藏道具名·不必画出：${name}）`,
+    propPrompt ? `请画出的道具视觉：${propPrompt}` : "",
+    owner ? `（隐藏归属·画面不要出现人：${owner}随身之物）` : "",
+    topic ? `（隐藏题材氛围·绝不能写成标题：${topic.slice(0, 120)}）` : "",
+    styleLabel ? `【画风】${styleLabel}` : "",
+    stylePrompt || "",
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}

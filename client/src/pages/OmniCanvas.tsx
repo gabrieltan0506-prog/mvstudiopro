@@ -3240,7 +3240,7 @@ export default function OmniCanvas() {
       const ingestSheetToMyLibrary = async (
         plan: {
           id: string;
-          kind: "charsheet" | "sceneplate";
+          kind: "charsheet" | "sceneplate" | "propsheet";
           labelZh: string;
           layout?: "single" | "grid2x2" | "heroFace" | "heroLook";
         },
@@ -3288,31 +3288,53 @@ export default function OmniCanvas() {
         setCustomAssetRefs((prev) =>
           upsertGeneratedManhuaCustomAssetRef(prev, {
             url: refUrl,
-            role: plan.kind === "charsheet" ? "character" : "scene",
+            role:
+              plan.kind === "charsheet"
+                ? "character"
+                : plan.kind === "propsheet"
+                  ? "prop"
+                  : "scene",
             labelZh: plan.labelZh,
             seedLibraryId,
-            refDuty: plan.kind === "charsheet" ? charDuty : "space",
+            refDuty:
+              plan.kind === "charsheet"
+                ? charDuty
+                : plan.kind === "propsheet"
+                  ? "style"
+                  : "space",
             tileUrls,
           }),
         );
       };
-      /** 已有画布设定图 → 同步进「我的角色 / 我的场景」分栏 */
+      /** 已有画布设定图 → 同步进「我的角色 / 我的场景 / 我的道具」分栏 */
       const syncExistingSheetsToMyLibrary = async () => {
         for (const b of assetBlocks) {
           const url = b.outputUrl || b.outputUrls?.[0];
           if (!url) continue;
           const isScene = b.id.startsWith("sceneplate-");
           const isChar = b.id.startsWith("charsheet-");
-          if (!isScene && !isChar) continue;
-          const kind = isScene ? ("sceneplate" as const) : ("charsheet" as const);
+          const isProp = b.id.startsWith("propsheet-");
+          if (!isScene && !isChar && !isProp) continue;
+          const kind = isScene
+            ? ("sceneplate" as const)
+            : isProp
+              ? ("propsheet" as const)
+              : ("charsheet" as const);
           const seedId = seedIdFromManhuaSheetBlockId(b.id);
           const labelZh =
             (kind === "charsheet"
               ? assetCanon?.characters.find((c) => c.id === seedId || b.id.includes(c.id))
                   ?.nameZh
-              : assetCanon?.locations.find((l) => l.id === seedId || b.id.includes(l.id))
-                  ?.nameZh) ||
-            (kind === "charsheet" ? "角色定妆" : "场景参考");
+              : kind === "propsheet"
+                ? assetCanon?.props.find((p) => p.id === seedId || b.id.includes(p.id))
+                    ?.nameZh
+                : assetCanon?.locations.find((l) => l.id === seedId || b.id.includes(l.id))
+                    ?.nameZh) ||
+            (kind === "charsheet"
+              ? "角色定妆"
+              : kind === "propsheet"
+                ? "道具参考"
+                : "场景参考");
           // 同步既有节点拿不到 plan.layout，看提示词里的四格版式指令认拼板
           const layout =
             kind === "sceneplate" && /2×2|四格/.test(String(b.prompt || ""))

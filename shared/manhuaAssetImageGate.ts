@@ -12,7 +12,10 @@ import {
 import { getAncientArchetypeById } from "./manhuaAncientArchetypeLibrary.js";
 import { buildAncientArchetypePrompt } from "./manhuaAncientDesignBoard.js";
 import { getManhuaSceneTemplate } from "./manhuaSceneAssetLibrary.js";
-import { buildManhuaScenePlateGenPrompt } from "./manhuaScriptVisualBrief.js";
+import {
+  buildManhuaPropPlateGenPrompt,
+  buildManhuaScenePlateGenPrompt,
+} from "./manhuaScriptVisualBrief.js";
 import { findManhuaAssetCoverageGaps } from "./manhuaAssetScriptSync.js";
 import {
   customRefsByRole,
@@ -22,6 +25,7 @@ import {
 } from "./manhuaCustomAssetRefs.js";
 import {
   resolveEpisodeMainScene,
+  type ManhuaWriterAssetAnchor,
   type ManhuaWriterAssetCanon,
 } from "./manhuaWriterAssetCanon.js";
 import { composeManhuaWriterCanonSheetPrompt } from "./manhuaDirectorDistill.js";
@@ -277,7 +281,7 @@ export function evaluateManhuaAssetImageGate(
 
 export type ManhuaAssetImageSpawnPlan = {
   id: string;
-  kind: "charsheet" | "sceneplate";
+  kind: "charsheet" | "sceneplate" | "propsheet";
   prompt: string;
   labelZh: string;
   /**
@@ -298,7 +302,30 @@ export function seedIdFromManhuaSheetBlockId(blockId: string): string {
   return String(blockId || "")
     .replace(/^charsheet-face-/, "")
     .replace(/^charsheet-/, "")
-    .replace(/^sceneplate-/, "");
+    .replace(/^sceneplate-/, "")
+    .replace(/^propsheet-/, "");
+}
+
+/**
+ * 一个系列最多出几张单件道具图。
+ *
+ * 道具表能列十几件（一碗面、一封信都算），全出等于白烧钱；段内绑图本来也只收前 3 件。
+ * 留 6 张的余量：够覆盖跨集反复出现的那几件信物，又不至于把额度铺满。
+ */
+export const MANHUA_PROP_SHEET_MAX = 6;
+
+/**
+ * 值得单独出图的道具：得有名字、有可画的外形句。
+ * 「一封信」这种没外形描述的出来就是通用素材，锁了反而误导。
+ *
+ * 导出给左栏共用：占位格与出图计划必须同一把尺，否则会列出点了没反应的死卡。
+ */
+export function shouldSpawnManhuaPropPlate(prop: ManhuaWriterAssetAnchor): boolean {
+  const name = String(prop.nameZh || "").trim();
+  if (name.length < 2) return false;
+  // lookZh 是道具的生图主锚；一句都没有时画出来就是通用素材，锁了反而误导
+  if (String(prop.lookZh || "").trim().length >= 3) return true;
+  return String(prop.promptZh || "").trim().length >= 6;
 }
 
 /** 缺图时铺设定卡/场景设定图节点（仅预填；是否扣费运行由调用方决定） */
@@ -618,8 +645,61 @@ export function planManhuaAssetImageSpawns(
     }
   }
 
+  /**
+   * 关键道具单件图。
+   *
+   * 从前道具只并进角色定妆卡的特写格，段内绑图时它没有自己的 URL：要么拿到那张
+   * 角色卡（等于和脸共用一张，把锁脸的权重摊薄），要么是 logical:// 占位被过滤，
+   * 于是「道具锁定」一直只是文字点名。出独立图才能真进 @Image 对照。
+   *
+   * 只在补齐设定图这条路上出（forceEpisodeSheets）：道具不进 ready 门禁，
+   * 别让缺一件信物卡住整条出片线。
+   */
+  if (forceEpisodeSheets && canon?.props?.length) {
+    const ownerNameById = new Map<string, string>();
+    for (const ch of canon.characters || []) {
+      for (const p of pickPropsForCharacterSheet(ch, canon.props)) {
+        if (!ownerNameById.has(p.id)) ownerNameById.set(p.id, ch.nameZh);
+      }
+    }
+    let spawned = 0;
+    for (const prop of canon.props) {
+      if (spawned >= MANHUA_PROP_SHEET_MAX) break;
+      if (!shouldSpawnManhuaPropPlate(prop)) continue;
+      const existing = findAssetBlock(blocks, "propsheet-", prop.id);
+      if (blockHasMedia(existing)) continue;
+      // 用户自己上传/生成过同名道具时不重复烧
+      if (
+        customRefsByRole(input.customRefs, "prop").some(
+          (r) =>
+            String(r.seedLibraryId || "") === prop.id ||
+            String(r.labelZh || "").trim() === String(prop.nameZh || "").trim(),
+        )
+      ) {
+        continue;
+      }
+      spawned += 1;
+      plans.push({
+        id: existing?.id || `propsheet-${prop.id}`,
+        kind: "propsheet",
+        prompt: buildManhuaPropPlateGenPrompt({
+          propNameZh: prop.nameZh,
+          propPromptZh: prop.promptZh || prop.lookZh,
+          ownerNameZh: ownerNameById.get(prop.id),
+          topic,
+          artStyleLabelZh: artStyle.labelZh,
+          artStylePromptZh: artStyle.promptZh,
+        }),
+        labelZh: prop.nameZh,
+        layout: "single",
+      });
+    }
+  }
+
+  // 定妆最吃紧排前，场景次之，道具垫后：官方也要求重要素材前置
+  const kindRank = { charsheet: 0, sceneplate: 1, propsheet: 2 } as const;
   return plans.sort((a, b) => {
     if (a.kind === b.kind) return a.id.localeCompare(b.id);
-    return a.kind === "charsheet" ? -1 : 1;
+    return kindRank[a.kind] - kindRank[b.kind];
   });
 }

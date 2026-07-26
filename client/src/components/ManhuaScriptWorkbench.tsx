@@ -39,7 +39,11 @@ import {
   getManhuaDemoAssetPublicUrl,
   listManhuaDemoAssetsForSceneTemplate,
 } from "@shared/manhuaScenePropDemoCatalog";
-import { evaluateManhuaAssetImageGate } from "@shared/manhuaAssetImageGate";
+import {
+  evaluateManhuaAssetImageGate,
+  MANHUA_PROP_SHEET_MAX,
+  shouldSpawnManhuaPropPlate,
+} from "@shared/manhuaAssetImageGate";
 import {
   resolveEpisodeMainScene,
   type ManhuaWriterAssetCanon,
@@ -142,6 +146,29 @@ import { suggestManhuaClipCuts } from "@/lib/manhuaEditAutoCutApi";
 import { parseFineCutByShot } from "@shared/manhuaEditFineCut";
 
 type WorkflowPhaseId = "outline" | "assets" | "storyboard" | "edit";
+
+/** 剧本设定表能出图的三类；与 planManhuaAssetImageSpawns 的 kind 对齐 */
+type ManhuaCanonSheetKind = "charsheet" | "sceneplate" | "propsheet";
+
+/** 定妆最吃紧排前，场景次之，道具垫后 */
+const CANON_SHEET_KIND_ORDER: ManhuaCanonSheetKind[] = [
+  "charsheet",
+  "sceneplate",
+  "propsheet",
+];
+
+const CANON_SHEET_SECTIONS: Array<{ kind: ManhuaCanonSheetKind; titleZh: string }> = [
+  { kind: "charsheet", titleZh: "本集定妆" },
+  { kind: "sceneplate", titleZh: "本集场景" },
+  { kind: "propsheet", titleZh: "关键道具" },
+];
+
+type ManhuaPendingSheetAnchor = {
+  anchorId: string;
+  kind: ManhuaCanonSheetKind;
+  nameZh: string;
+  lookZh: string;
+};
 
 type Props = {
   blocks: CanvasBlock[];
@@ -1039,11 +1066,11 @@ export default function ManhuaScriptWorkbench({
     () => resolveEpisodeMainScene(assetCanon, focusEpisode),
     [assetCanon, focusEpisode],
   );
-  /** 本集画布设定图 +「我的角色/场景」已勾选图（避免场景墙空着但分栏有图） */
+  /** 本集画布设定图 +「我的角色/场景/道具」已勾选图（避免场景墙空着但分栏有图） */
   const episodeSheetGallery = useMemo(() => {
     const items: Array<{
       id: string;
-      kind: "charsheet" | "sceneplate";
+      kind: ManhuaCanonSheetKind;
       labelZh: string;
       url: string;
     }> = [];
@@ -1051,20 +1078,27 @@ export default function ManhuaScriptWorkbench({
     for (const b of blocks) {
       const isChar = b.id.startsWith("charsheet-");
       const isScene = b.id.startsWith("sceneplate-");
-      if (!isChar && !isScene) continue;
+      const isProp = b.id.startsWith("propsheet-");
+      if (!isChar && !isScene && !isProp) continue;
       const url = mediaUrl(b);
       if (!url || seenUrl.has(url)) continue;
       seenUrl.add(url);
-      const seedId = b.id.replace(/^charsheet-/, "").replace(/^sceneplate-/, "");
+      const seedId = b.id
+        .replace(/^charsheet-/, "")
+        .replace(/^sceneplate-/, "")
+        .replace(/^propsheet-/, "");
       const labelZh = isChar
         ? assetCanon?.characters.find((c) => c.id === seedId || b.id.includes(c.id))?.nameZh ||
           "角色定妆"
-        : assetCanon?.locations.find((l) => l.id === seedId || b.id.includes(l.id))?.nameZh ||
-          getManhuaSceneTemplate(seedId)?.nameZh ||
-          "场景参考";
+        : isProp
+          ? assetCanon?.props.find((p) => p.id === seedId || b.id.includes(p.id))?.nameZh ||
+            "道具参考"
+          : assetCanon?.locations.find((l) => l.id === seedId || b.id.includes(l.id))?.nameZh ||
+            getManhuaSceneTemplate(seedId)?.nameZh ||
+            "场景参考";
       items.push({
         id: b.id,
-        kind: isChar ? "charsheet" : "sceneplate",
+        kind: isChar ? "charsheet" : isProp ? "propsheet" : "sceneplate",
         labelZh,
         url,
       });
@@ -1072,46 +1106,41 @@ export default function ManhuaScriptWorkbench({
     for (const ref of customAssetRefs) {
       const url = String(ref.url || "").trim();
       if (!/^https:\/\//i.test(url) || seenUrl.has(url)) continue;
-      if (ref.role !== "character" && ref.role !== "scene") continue;
+      if (ref.role !== "character" && ref.role !== "scene" && ref.role !== "prop") continue;
       seenUrl.add(url);
-      const kind = ref.role === "scene" ? ("sceneplate" as const) : ("charsheet" as const);
+      const kind: ManhuaCanonSheetKind =
+        ref.role === "scene" ? "sceneplate" : ref.role === "prop" ? "propsheet" : "charsheet";
       items.push({
         id: `${kind}-custom-${ref.id}`,
         kind,
-        labelZh: ref.labelZh || (kind === "sceneplate" ? "场景参考" : "角色定妆"),
+        labelZh:
+          ref.labelZh ||
+          (kind === "sceneplate" ? "场景参考" : kind === "propsheet" ? "道具参考" : "角色定妆"),
         url,
       });
     }
     return items.sort((a, b) => {
       if (a.kind === b.kind) return a.labelZh.localeCompare(b.labelZh, "zh");
-      return a.kind === "charsheet" ? -1 : 1;
+      return CANON_SHEET_KIND_ORDER.indexOf(a.kind) - CANON_SHEET_KIND_ORDER.indexOf(b.kind);
     });
   }, [blocks, assetCanon, customAssetRefs]);
   /**
-   * 剧本表里点名、但还没有图的角色/场景。
-   * 只收 charsheet / sceneplate 两类——道具在 planManhuaAssetImageSpawns 里是并进角色卡的，
-   * 没有独立出图路径，列出来会变成点了没反应的死卡。
+   * 剧本表里点名、但还没有图的角色/场景/道具。
+   *
+   * 道具从前不收：那会儿它只并进角色定妆卡的特写格，没有独立出图路径，
+   * 列出来是点了没反应的死卡。现在 planManhuaAssetImageSpawns 会出 propsheet-，
+   * 占位格点下去真能补图，才敢一起列。
    */
   const pendingSheetAnchors = useMemo(() => {
-    if (!assetCanon) return [] as Array<{
-      anchorId: string;
-      kind: "charsheet" | "sceneplate";
-      nameZh: string;
-      lookZh: string;
-    }>;
-    const hasImage = (anchorId: string, kind: "charsheet" | "sceneplate") =>
+    if (!assetCanon) return [] as ManhuaPendingSheetAnchor[];
+    const hasImage = (anchorId: string, kind: ManhuaCanonSheetKind) =>
       episodeSheetGallery.some((g) => g.kind === kind && g.id.includes(anchorId)) ||
       customAssetRefs.some(
         (r) =>
           String(r.seedLibraryId || "") === anchorId &&
           /^https:\/\//i.test(String(r.url || "")),
       );
-    const out: Array<{
-      anchorId: string;
-      kind: "charsheet" | "sceneplate";
-      nameZh: string;
-      lookZh: string;
-    }> = [];
+    const out: ManhuaPendingSheetAnchor[] = [];
     for (const c of assetCanon.characters) {
       if (hasImage(c.id, "charsheet")) continue;
       out.push({
@@ -1128,6 +1157,28 @@ export default function ManhuaScriptWorkbench({
         kind: "sceneplate",
         nameZh: l.nameZh,
         lookZh: String(l.lookZh || "").trim(),
+      });
+    }
+    /** 与出图计划同一把尺：那边不出的这边也别列，否则又是点不动的死卡 */
+    for (const p of (assetCanon.props || [])
+      .filter(shouldSpawnManhuaPropPlate)
+      .slice(0, MANHUA_PROP_SHEET_MAX)) {
+      if (hasImage(p.id, "propsheet")) continue;
+      if (
+        customAssetRefs.some(
+          (r) =>
+            r.role === "prop" &&
+            String(r.labelZh || "").trim() === String(p.nameZh || "").trim() &&
+            /^https:\/\//i.test(String(r.url || "")),
+        )
+      ) {
+        continue;
+      }
+      out.push({
+        anchorId: p.id,
+        kind: "propsheet",
+        nameZh: p.nameZh,
+        lookZh: String(p.lookZh || "").trim(),
       });
     }
     return out;
@@ -2287,8 +2338,8 @@ export default function ManhuaScriptWorkbench({
                   ) : null}
                 </div>
                 <p className="mt-0.5 text-[10px] leading-4 text-white/45">
-                  角色定妆与场景空镜分栏；点缩略图定位画布，点虚线卡补这一张。生成后同步进下方「我的角色 /
-                  我的场景」。
+                  角色定妆、场景空镜、关键道具分栏；点缩略图定位画布，点虚线卡补这一张。生成后同步进下方「我的角色
+                  / 我的场景 / 我的道具」。
                 </p>
               </div>
               {episodeSheetGallery.length || pendingSheetAnchors.length ? (
@@ -2304,6 +2355,11 @@ export default function ManhuaScriptWorkbench({
                         kind: "sceneplate" as const,
                         titleZh: "场景空镜",
                         emptyZh: "本集尚无场景空镜",
+                      },
+                      {
+                        kind: "propsheet" as const,
+                        titleZh: "关键道具",
+                        emptyZh: "本集尚无道具单件图",
                       },
                     ] as const
                   ).map((sec) => {
@@ -3526,12 +3582,7 @@ export default function ManhuaScriptWorkbench({
           */}
           {episodeSheetGallery.length || pendingSheetAnchors.length ? (
             <div data-manhua-storyboard-canon-assets className="mb-2.5 space-y-2">
-              {(
-                [
-                  { kind: "charsheet" as const, titleZh: "本集定妆" },
-                  { kind: "sceneplate" as const, titleZh: "本集场景" },
-                ] as const
-              ).map((sec) => {
+              {CANON_SHEET_SECTIONS.map((sec) => {
                 const items = episodeSheetGallery.filter((x) => x.kind === sec.kind);
                 const pending = pendingSheetAnchors.filter((x) => x.kind === sec.kind);
                 if (!items.length && !pending.length) return null;
@@ -3722,6 +3773,13 @@ export default function ManhuaScriptWorkbench({
             ) : null}
           </div>
 
+          {/*
+            题材库内的通用道具（传家玉佩、金步摇发簪之类）。剧本自己有道具表时
+            这一栏得让位：上面「关键道具」列的才是本剧要锁的那几件，两栏并排都叫
+            「道具」只会让人以为库内那三件已经锁上了——它们跟这部戏没关系。
+          */}
+          {assetCanon?.props?.length ? null : (
+          <>
           <div className="mt-3 text-[10px] font-semibold tracking-wide text-white/40">
             道具 · 上场 {shotMount.propIds.length}/{props.length}
           </div>
@@ -3765,6 +3823,8 @@ export default function ManhuaScriptWorkbench({
               </button>
             ) : null}
           </div>
+          </>
+          )}
 
           <button
             type="button"

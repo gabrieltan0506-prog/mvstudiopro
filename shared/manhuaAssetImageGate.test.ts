@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   collectManhuaIdentityImageUrls,
   evaluateManhuaAssetImageGate,
+  MANHUA_PROP_SHEET_MAX,
   manhuaHeroFaceSheetId,
   planManhuaAssetImageSpawns,
   seedIdFromManhuaSheetBlockId,
+  shouldSpawnManhuaPropPlate,
 } from "./manhuaAssetImageGate";
 
 describe("manhuaAssetImageGate", () => {
@@ -305,5 +307,147 @@ describe("manhuaAssetImageGate", () => {
     expect(granary?.prompt).toContain("2×2");
     // 烽火岭仅 1 集 → 不额外补四视角卡（主场景已是粮仓）
     expect(ridge).toBeUndefined();
+  });
+});
+
+/**
+ * 道具从前只并进角色定妆卡的特写格，于是它没有自己的 URL：段内绑图要么拿到
+ * 那张角色卡（等于和脸共用一张，把锁脸权重摊薄），要么是 logical:// 占位被过滤，
+ * 「道具锁定」一直只是文字点名。这一组盯的是「真出了单件图」。
+ */
+describe("关键道具单件图", () => {
+  const canonWithProps = {
+    characters: [
+      {
+        id: "wa_char_shen",
+        role: "character" as const,
+        nameZh: "沈砚舟",
+        lookZh: "玄色鹤氅",
+        promptZh: "原创角色设定卡·沈砚舟",
+      },
+    ],
+    props: [
+      {
+        id: "wa_prop_yupei",
+        role: "prop" as const,
+        nameZh: "双鱼玉佩",
+        lookZh: "半佩温玉，鱼尾断口带血沁",
+        motiveZh: "父辈信物",
+        promptZh: "玉佩",
+      },
+      // 只有名字没有外形句：画出来就是通用素材，锁了反而误导
+      { id: "wa_prop_xin", role: "prop" as const, nameZh: "信", lookZh: "", promptZh: "" },
+    ],
+    locations: [
+      {
+        id: "wa_scene_miao",
+        role: "scene" as const,
+        nameZh: "山神破庙",
+        lookZh: "断梁神像",
+        promptZh: "原创场景空镜·山神破庙",
+      },
+    ],
+    episodeMainSceneId: { 1: "wa_scene_miao" },
+  } as any;
+
+  it("补齐设定图时给有外形句的道具出单件图", () => {
+    const plans = planManhuaAssetImageSpawns(
+      { assetCanon: canonWithProps, episodeIndex: 1, topic: "鹤归" },
+      { forceEpisodeSheets: true },
+    );
+    const jade = plans.find((p) => p.kind === "propsheet");
+    expect(jade?.id).toBe("propsheet-wa_prop_yupei");
+    expect(jade?.labelZh).toBe("双鱼玉佩");
+    expect(seedIdFromManhuaSheetBlockId(jade!.id)).toBe("wa_prop_yupei");
+    // 单件、单角度：多角度拼图是 ID 漂移头号根因，道具不能走回那条路
+    expect(jade?.prompt).toContain("只画这一件道具");
+    expect(jade?.prompt).toMatch(/不要多角度并排|分格拼图/);
+    // 归属只作隐藏说明，画面不要出现人
+    expect(jade?.prompt).toContain("沈砚舟");
+    expect(jade?.prompt).toContain("画面不要出现人");
+  });
+
+  it("没外形句的道具不出图（占位格会变成点了没反应的死卡）", () => {
+    const plans = planManhuaAssetImageSpawns(
+      { assetCanon: canonWithProps, episodeIndex: 1 },
+      { forceEpisodeSheets: true },
+    );
+    expect(plans.some((p) => p.id.includes("wa_prop_xin"))).toBe(false);
+    expect(shouldSpawnManhuaPropPlate(canonWithProps.props[1])).toBe(false);
+    expect(shouldSpawnManhuaPropPlate(canonWithProps.props[0])).toBe(true);
+  });
+
+  it("道具垫在定妆与场景之后：重要素材前置", () => {
+    const plans = planManhuaAssetImageSpawns(
+      { assetCanon: canonWithProps, episodeIndex: 1 },
+      { forceEpisodeSheets: true },
+    );
+    const kinds = plans.map((p) => p.kind);
+    expect(kinds.indexOf("propsheet")).toBe(kinds.length - 1);
+    expect(kinds.indexOf("charsheet")).toBeLessThan(kinds.indexOf("propsheet"));
+  });
+
+  it("道具不进 ready 门禁：缺一件信物不该卡住整条出片线", () => {
+    const input = {
+      assetCanon: canonWithProps,
+      episodeIndex: 1,
+      assetBlocks: [
+        { id: "charsheet-wa_char_shen", outputUrl: "https://cdn.example/c.jpg" },
+        { id: "sceneplate-wa_scene_miao", outputUrl: "https://cdn.example/s.jpg" },
+      ],
+    };
+    // 定妆与场景齐了就算齐，玉佩还没画不影响
+    expect(evaluateManhuaAssetImageGate(input).ready).toBe(true);
+    expect(planManhuaAssetImageSpawns(input)).toEqual([]);
+    // 主动点「补齐设定图」时才补那一件
+    expect(
+      planManhuaAssetImageSpawns(input, { forceEpisodeSheets: true }).map((p) => p.kind),
+    ).toEqual(["propsheet"]);
+  });
+
+  it("已出过图 / 用户自己传过同名道具时不重复烧", () => {
+    const withBlock = planManhuaAssetImageSpawns(
+      {
+        assetCanon: canonWithProps,
+        episodeIndex: 1,
+        assetBlocks: [
+          { id: "propsheet-wa_prop_yupei", outputUrl: "https://cdn.example/jade.jpg" },
+        ],
+      },
+      { forceEpisodeSheets: true },
+    );
+    expect(withBlock.some((p) => p.kind === "propsheet")).toBe(false);
+
+    const withUpload = planManhuaAssetImageSpawns(
+      {
+        assetCanon: canonWithProps,
+        episodeIndex: 1,
+        customRefs: [
+          {
+            id: "cust_jade",
+            url: "https://cdn.example/mine.jpg",
+            role: "prop",
+            labelZh: "双鱼玉佩",
+          },
+        ],
+      },
+      { forceEpisodeSheets: true },
+    );
+    expect(withUpload.some((p) => p.kind === "propsheet")).toBe(false);
+  });
+
+  it("道具再多也只出前若干张，别把额度铺满", () => {
+    const many = Array.from({ length: MANHUA_PROP_SHEET_MAX + 4 }, (_, i) => ({
+      id: `wa_prop_${i}`,
+      role: "prop" as const,
+      nameZh: `信物${i}`,
+      lookZh: "描金缠枝纹，边角磨损",
+      promptZh: "信物",
+    }));
+    const plans = planManhuaAssetImageSpawns(
+      { assetCanon: { ...canonWithProps, props: many }, episodeIndex: 1 },
+      { forceEpisodeSheets: true },
+    );
+    expect(plans.filter((p) => p.kind === "propsheet")).toHaveLength(MANHUA_PROP_SHEET_MAX);
   });
 });
