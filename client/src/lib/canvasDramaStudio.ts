@@ -527,7 +527,15 @@ export function replaceManhuaEpisodeChain(
   };
 }
 
-/** 漫剧工厂产物（含角色/场景设定图、宣发封面）；自由画布节点不在此列 */
+/**
+ * 整部剧共用的设定图：角色定妆、场景空镜、道具单件。
+ * 换剧本不清、不随集号裁——重出一遍就是重烧一遍钱。
+ */
+export function isManhuaSeriesAssetBlockId(id: string): boolean {
+  return /^(charsheet|sceneplate|propsheet|propplate)-/.test(String(id || ""));
+}
+
+/** 漫剧工厂产物（含角色/场景/道具设定图、宣发封面）；自由画布节点不在此列 */
 export function isManhuaFactoryArtifactBlock(
   block: Pick<CanvasBlock, "id">,
 ): boolean {
@@ -535,7 +543,7 @@ export function isManhuaFactoryArtifactBlock(
   if (!id) return false;
   if (stageKeyFromBlockId(id)) return true;
   if (id.startsWith("promo_cover-")) return true;
-  if (id.startsWith("charsheet-") || id.startsWith("sceneplate-")) return true;
+  if (isManhuaSeriesAssetBlockId(id)) return true;
   // 旧链偶发无后缀：story / keyart
   if ((MANHUA_FACTORY_STAGE_ORDER as readonly string[]).includes(id)) return true;
   return false;
@@ -576,8 +584,8 @@ export function stripManhuaFactoryCanvasArtifacts(
   const fromSegment = Math.max(1, Math.floor(Number(opts?.fromSegment) || 1));
   let keptCount = 0;
   const inScope = (b: CanvasBlock): boolean => {
-    // 人物/场景资产是整部剧共用的，不随换剧本清掉
-    if (b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-")) return false;
+    // 人物/场景/道具资产是整部剧共用的，不随换剧本清掉
+    if (isManhuaSeriesAssetBlockId(b.id)) return false;
     const ep = getBlockEpisodeIndex(b);
     if (typeof ep === "number" && ep < fromEpisode) {
       keptCount += 1;

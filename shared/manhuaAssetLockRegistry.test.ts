@@ -852,3 +852,131 @@ describe("挑完资产要落进对照表", () => {
     expect(parseManhuaAssetImageBindBlock(next)).toHaveLength(2);
   });
 })
+
+/**
+ * 道具有了自己的单件图之后，特写格草稿得让位。
+ *
+ * 草稿按 canon 的 wa_prop_* 编号，真图那行的槽 id 却是 cust_*：只比 id 会漏，
+ * 于是同一件道具出两行——一行是自己的单件图，一行是那张角色定妆卡的 URL。
+ * 模型两张都当参考，等于把锁脸的权重摊给了道具。
+ */
+describe("道具单件图 vs 定妆特写格草稿", () => {
+  const canon = {
+    characters: [
+      {
+        id: "wa_char_shen",
+        role: "character" as const,
+        nameZh: "沈砚舟",
+        lookZh: "玄色鹤氅，腰悬双鱼玉佩",
+        promptZh: "沈砚舟",
+      },
+    ],
+    props: [
+      {
+        id: "wa_prop_yupei",
+        role: "prop" as const,
+        nameZh: "双鱼玉佩",
+        lookZh: "半佩温玉",
+        promptZh: "玉佩",
+      },
+    ],
+    locations: [],
+    episodeMainSceneId: {},
+  } as unknown as ManhuaWriterAssetCanon;
+
+  const sheetUrlByCharacterId = { wa_char_shen: "https://cdn.example/shen-sheet.jpg" };
+
+  it("没有单件图时仍走特写格：拿到的是那张定妆卡，锁不住道具本体", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      assetCanon: canon,
+      characterSheetUrlById: sheetUrlByCharacterId,
+    });
+    const props = reg.slots.filter((s) => s.role === "prop");
+    expect(props).toHaveLength(1);
+    expect(props[0]?.path).toBe(sheetUrlByCharacterId.wa_char_shen);
+  });
+
+  it("有了单件图就只留一行，且指向道具自己的图", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      assetCanon: canon,
+      characterSheetUrlById: sheetUrlByCharacterId,
+      customRefs: [
+        {
+          id: "cust_jade",
+          url: "https://cdn.example/jade.jpg",
+          role: "prop",
+          source: "generated",
+          labelZh: "双鱼玉佩",
+          seedLibraryId: "wa_prop_yupei",
+        },
+      ],
+    });
+    const props = reg.slots.filter((s) => s.role === "prop");
+    expect(props).toHaveLength(1);
+    expect(props[0]?.path).toBe("https://cdn.example/jade.jpg");
+    // 单件图进得了后台 path 表，才是真锁；从前的 logical:// 占位会被直接过滤掉
+    expect(buildManhuaAssetPathById(reg)[props[0]!.id]).toBe("https://cdn.example/jade.jpg");
+  });
+
+  it("只对得上名字（seedLibraryId 缺）也算同一件，不重复占号", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      assetCanon: canon,
+      characterSheetUrlById: sheetUrlByCharacterId,
+      customRefs: [
+        {
+          id: "cust_jade",
+          url: "https://cdn.example/jade.jpg",
+          role: "prop",
+          source: "upload",
+          labelZh: "双鱼玉佩",
+        },
+      ],
+    });
+    expect(reg.slots.filter((s) => s.role === "prop")).toHaveLength(1);
+  });
+
+  it("段内点名道具时，绑的是道具单件图而不是那张角色定妆卡", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      assetCanon: canon,
+      characterSheetUrlById: sheetUrlByCharacterId,
+      customRefs: [
+        {
+          id: "cust_shen",
+          url: "https://cdn.example/shen-face.jpg",
+          role: "character",
+          source: "generated",
+          labelZh: "沈砚舟",
+          seedLibraryId: "wa_char_shen",
+        },
+        {
+          id: "cust_jade",
+          url: "https://cdn.example/jade.jpg",
+          role: "prop",
+          source: "generated",
+          labelZh: "双鱼玉佩",
+          seedLibraryId: "wa_prop_yupei",
+        },
+      ],
+    });
+    const allowed = resolveManhuaSegmentClipAllowedAssets({
+      registry: reg,
+      assetCanon: canon,
+      castZh: "沈砚舟",
+      haystack: "沈砚舟摩过腰间双鱼玉佩，指节收紧。",
+    });
+    expect(allowed.propIds).toHaveLength(1);
+    const bind = formatManhuaAssetImageBindBlock(reg, 12, { allowedIds: allowed.allowedIds });
+    const rows = resolveManhuaAssetImageBindRows(
+      parseManhuaAssetImageBindBlock(bind),
+      buildManhuaAssetPathById(reg),
+    );
+    const jade = rows.find((r) => r.tag.startsWith("@道具"));
+    expect(jade?.path).toBe("https://cdn.example/jade.jpg");
+    const plan = planManhuaClipSeedanceImageBind({
+      assetRows: rows,
+      stillUrls: ["https://cdn.example/still1.jpg"],
+      mentionedTags: [jade!.tag],
+    });
+    expect(plan.entries.some((e) => e.url === "https://cdn.example/jade.jpg")).toBe(true);
+  });
+});

@@ -224,11 +224,27 @@ export function buildManhuaAssetLockRegistry(opts?: {
     characterTagById: draftCharTagById,
     sheetUrlByCharacterId: opts?.characterSheetUrlById,
   });
+  /**
+   * 已有真图的道具不再补特写格草稿。
+   *
+   * 草稿按 canon 的 wa_prop_* 编号，真图那行的槽 id 却是 cust_*：只比 id 会漏，
+   * 于是同一件道具出两行——一行是自己的单件图，一行是那张角色定妆卡的 URL。
+   * 模型两张都当参考，等于把锁脸的权重摊给了道具。所以连 seedLibraryId 与名字一起比。
+   */
   const existingPropIds = new Set(
     draft.filter((s) => s.role === "prop").map((s) => s.id),
   );
+  const propSeedTaken = new Set<string>();
+  for (const c of customProps) {
+    const seed = String(c.seedLibraryId || "").trim();
+    if (seed) propSeedTaken.add(seed);
+    const label = String(c.labelZh || "").trim();
+    if (label) propSeedTaken.add(`name:${label}`);
+  }
   for (const sp of sheetDraft) {
     if (existingPropIds.has(sp.propId)) continue;
+    if (propSeedTaken.has(sp.propId)) continue;
+    if (propSeedTaken.has(`name:${String(sp.propNameZh || "").trim()}`)) continue;
     existingPropIds.add(sp.propId);
     pushRole("prop", sp.propId, sp.propNameZh, sp.path, {
       fromSheetInset: true,
