@@ -241,6 +241,8 @@ type Props = {
   onRetakeClip?: (clipBlockId: string, variable: ManhuaRetakeVariable) => void;
   /** 可拍表点名的角色在资产库找不到；非空则拦住出片并在左栏红条提示 */
   segmentCastMismatchHintZh?: string | null;
+  /** 有人在场却没绑上任何角色定妆图；非空则拦住出片并在左栏提示去补图 */
+  segmentNoFaceLockHintZh?: string | null;
   /** 基于当前库选条目生成新参考（库仅为种子） */
   onGenerateCustomAssetFromLibrary?: (opts: {
     role: ManhuaCustomAssetRole;
@@ -421,6 +423,7 @@ export default function ManhuaScriptWorkbench({
   onCineVocabLocaleChange,
   onRetakeClip,
   segmentCastMismatchHintZh = null,
+  segmentNoFaceLockHintZh = null,
   onGenerateCustomAssetFromLibrary,
   onGenerateCanonAssetSheet,
   shareAssetToLibrary = false,
@@ -1266,6 +1269,7 @@ export default function ManhuaScriptWorkbench({
     videoBurnHintZh: videoBurnHint,
     stillsReadyEnough,
     segmentCastMismatchHintZh,
+    segmentNoFaceLockHintZh,
   });
   const fragmentGateHint = keyartGateHint;
   const refuseIfBlocked = (hint: string | null): boolean => {
@@ -2241,6 +2245,30 @@ export default function ManhuaScriptWorkbench({
                   className="mt-2 rounded-lg border border-rose-300/50 bg-rose-500/25 px-2.5 py-1 text-[11px] font-semibold text-rose-50 hover:bg-rose-500/40 disabled:opacity-45"
                 >
                   按剧本重出角色图
+                </button>
+              </div>
+            ) : null}
+
+            {/* 与上面那条分开：那是「图对不上名字」要重出，这是「还没出图」要生成 */}
+            {segmentNoFaceLockHintZh ? (
+              <div
+                data-manhua-no-face-lock
+                className="mt-3 rounded-xl border border-amber-400/45 bg-amber-500/[0.12] p-3"
+              >
+                <div className="text-[11px] font-semibold text-amber-50">
+                  还没锁脸，已暂停出片
+                </div>
+                <p className="mt-1 text-[10px] leading-4 text-amber-50/80">
+                  {segmentNoFaceLockHintZh}
+                </p>
+                <button
+                  type="button"
+                  data-manhua-action="prepare-images-for-face-lock"
+                  disabled={factoryBusy || !onConfirmAssetsAndPrepareImages}
+                  onClick={() => void onConfirmAssetsAndPrepareImages?.()}
+                  className="mt-2 rounded-lg border border-amber-300/50 bg-amber-500/25 px-2.5 py-1 text-[11px] font-semibold text-amber-50 hover:bg-amber-500/40 disabled:opacity-45"
+                >
+                  出齐定妆图
                 </button>
               </div>
             ) : null}
@@ -3491,6 +3519,87 @@ export default function ManhuaScriptWorkbench({
               : "min-h-0 w-[180px] shrink-0 overflow-y-auto border-r border-white/10 p-2"
           }
         >
+          {/*
+            剧本本人的定妆与场景。这一栏原先只列题材原型（「雨夜江湖刀客」之类），
+            剧本里的角色一张都不在，看着满满当当其实一张脸都没锁——
+            成片于是每段自己捏一张，十段十个人。缺图的留可点占位格，就地补。
+          */}
+          {episodeSheetGallery.length || pendingSheetAnchors.length ? (
+            <div data-manhua-storyboard-canon-assets className="mb-2.5 space-y-2">
+              {(
+                [
+                  { kind: "charsheet" as const, titleZh: "本集定妆" },
+                  { kind: "sceneplate" as const, titleZh: "本集场景" },
+                ] as const
+              ).map((sec) => {
+                const items = episodeSheetGallery.filter((x) => x.kind === sec.kind);
+                const pending = pendingSheetAnchors.filter((x) => x.kind === sec.kind);
+                if (!items.length && !pending.length) return null;
+                return (
+                  <div key={sec.kind}>
+                    <div className="text-[10px] font-semibold tracking-wide text-white/40">
+                      {sec.titleZh} · {items.length}
+                      {pending.length ? (
+                        <span className="ml-1 text-amber-200/75">待出 {pending.length}</span>
+                      ) : null}
+                    </div>
+                    <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+                      {items.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          data-manhua-canon-sheet={item.id}
+                          onClick={() => {
+                            if (item.id) focusBlockAndOpenCanvas(item.id);
+                          }}
+                          className="overflow-hidden rounded-lg border border-emerald-300/40 bg-black/40 text-left hover:border-emerald-200/70"
+                          title={`定位：${item.labelZh}`}
+                        >
+                          <img
+                            src={item.url}
+                            alt=""
+                            className="aspect-square w-full object-cover object-top"
+                            loading="lazy"
+                          />
+                          <div className="truncate px-1 py-0.5 text-[9px] text-white/80">
+                            {item.labelZh}
+                          </div>
+                        </button>
+                      ))}
+                      {pending.map((p) => (
+                        <button
+                          key={p.anchorId}
+                          type="button"
+                          data-manhua-pending-anchor={p.anchorId}
+                          disabled={factoryBusy || !onGenerateCanonAssetSheet}
+                          onClick={() => {
+                            void onGenerateCanonAssetSheet?.({
+                              anchorId: p.anchorId,
+                              nameZh: p.nameZh,
+                            });
+                          }}
+                          className="overflow-hidden rounded-lg border border-dashed border-amber-300/45 bg-amber-500/[0.07] text-left hover:bg-amber-500/15 disabled:opacity-40"
+                          title={
+                            p.lookZh
+                              ? `补这一张：${p.nameZh}｜${p.lookZh.slice(0, 60)}`
+                              : `补这一张：${p.nameZh}`
+                          }
+                        >
+                          <span className="flex aspect-square w-full items-center justify-center text-[14px] leading-none text-amber-100/80">
+                            ＋
+                          </span>
+                          <div className="truncate px-1 py-0.5 text-[9px] font-semibold text-amber-50/90">
+                            {p.nameZh}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+
           <div className="text-[10px] font-semibold tracking-wide text-white/40">
             角色 · 上场 {mountedCastCount}/
             {(characters.length || 0) + (archetypes.length || 0)}
@@ -4241,9 +4350,17 @@ export default function ManhuaScriptWorkbench({
                                   if (row.clip?.id) onUpdateClipPrompt?.(row.clip.id, next);
                                 }}
                                 thumbUrlByAssetId={chipThumbByAssetId}
+                                registry={assetLockRegistry}
+                                assetCanon={assetCanon}
+                                onRequestGenerateAsset={(c) => {
+                                  toast.info(`「${c.labelZh}」还没有定妆图`, {
+                                    description: "正在按剧本补这一张，出图后回来敲 @ 就能挂上",
+                                  });
+                                  void onConfirmAssetsAndPrepareImages?.();
+                                }}
                                 placeholder={
                                   row.clip?.id
-                                    ? "段成片提示词（输入 @ 挑本段人物/场景/道具）"
+                                    ? "段成片提示词（输入 @ 挑本集人物/场景/道具）"
                                     : "点「审阅」时会先铺段节点；若仍空请对齐画布竖排"
                                 }
                               />

@@ -16,7 +16,10 @@ import {
   type ManhuaCustomAssetRef,
   type ManhuaCustomAssetRole,
 } from "./manhuaCustomAssetRefs.js";
-import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon.js";
+import type {
+  ManhuaWriterAssetAnchor,
+  ManhuaWriterAssetCanon,
+} from "./manhuaWriterAssetCanon.js";
 import type { ManhuaSceneTileSlot } from "./manhuaSceneTilePick.js";
 import {
   buildManhuaSheetPropSubSlots,
@@ -405,10 +408,24 @@ export type ManhuaClipSeedanceImageBindPlan = {
   bindLineZh: string;
 };
 
-function isBindableAssetPath(path: string): boolean {
+export function isBindableAssetPath(path: string): boolean {
   const p = String(path || "").trim();
   if (!p || p.startsWith("logical://")) return false;
   return /^https?:\/\//i.test(p) || p.startsWith("/") || p.startsWith("data:image/");
+}
+
+/** 对照表一行的唯一写法：新增/改写都走这里，防两处格式漂移 */
+function formatManhuaAssetImageBindLine(row: {
+  tag: string;
+  id: string;
+  labelZh: string;
+  kind: string;
+  duty?: "identity" | "look" | null;
+}): string {
+  const label = String(row.labelZh || "").replace(/[|\n]/g, " ").trim() || row.kind;
+  const id = String(row.id || "").replace(/[|\n]/g, "").trim() || "unknown";
+  const duty = row.duty === "identity" || row.duty === "look" ? `|duty=${row.duty}` : "";
+  return `${row.tag}|id=${id}|label=${label}|kind=${row.kind}${duty}`;
 }
 
 /**
@@ -447,14 +464,160 @@ export function formatManhuaAssetImageBindBlock(
     })
     .slice(0, Math.max(1, maxSlots));
   if (!rows.length) return "";
-  const lines = rows.map((s) => {
-    const label = String(s.labelZh || "").replace(/[|\n]/g, " ").trim() || ROLE_TAG_PREFIX[s.role];
-    const id = String(s.id || "").replace(/[|\n]/g, "").trim() || "unknown";
-    const kind = ROLE_TAG_PREFIX[s.role];
-    const duty = s.duty === "identity" || s.duty === "look" ? `|duty=${s.duty}` : "";
-    return `${s.tag}|id=${id}|label=${label}|kind=${kind}${duty}`;
-  });
+  const lines = rows.map((s) =>
+    formatManhuaAssetImageBindLine({
+      tag: s.tag,
+      id: s.id,
+      labelZh: s.labelZh,
+      kind: ROLE_TAG_PREFIX[s.role],
+      duty: s.duty,
+    }),
+  );
   return [ASSET_IMAGE_BIND_MARK, ...lines].join("\n");
+}
+
+/** 编辑框敲 @ 时列出来的一条可挂资产 */
+export type ManhuaMentionCandidate = {
+  /** 已入册资产才有编号；待出图的为空串，只能点去生成 */
+  tag: string;
+  assetId: string;
+  labelZh: string;
+  kind: string;
+  duty?: "identity" | "look" | null;
+  role: ManhuaCustomAssetRole;
+  /** 有可用垫图：选了才真锁得住脸/场，也才允许插进正文 */
+  ready: boolean;
+  /** 已经写在本段对照表里 */
+  bound: boolean;
+  /** 剧本点了名、资产库还没这张图；列出来是为了能点去补 */
+  pending: boolean;
+};
+
+/** 角色排最前：段里最常要换的是谁在演，其次才是穿什么、在哪 */
+const MENTION_ROLE_ORDER: ManhuaCustomAssetRole[] = [
+  "character",
+  "wardrobe",
+  "scene",
+  "prop",
+];
+
+/**
+ * `@` 的候选来自**整集资产库 + 剧本设定表**，不是这段提示词已有的对照表。
+ *
+ * 曾经反着接：候选解析自提示词自带的对照表，于是资产一张没绑时候选恒为空，
+ * 面板永远不弹——偏偏那正是最需要挑图的时刻，且不给任何提示。
+ *
+ * 还得把设定表一起纳进来：registry 的槽只从「已有 HTTPS 图的参考」和库内角色长出来，
+ * 剧本刚写出的新角色在出图之前一个槽都没有。只列 registry 的话，
+ * 新角色照样是空列表，`@` 仍旧哑火。这类先给 pending 条目占位，
+ * 让人看得见「这人存在、只是还没画」，点一下就去补图。
+ */
+export function buildManhuaMentionCandidates(input: {
+  registry: ManhuaAssetLockRegistry | null | undefined;
+  prompt: string | null | undefined;
+  assetCanon?: ManhuaWriterAssetCanon | null;
+}): ManhuaMentionCandidate[] {
+  const boundTags = new Set(
+    parseManhuaAssetImageBindBlock(input.prompt).map((r) => r.tag),
+  );
+  const seenTag = new Set<string>();
+  const seenId = new Set<string>();
+  const out: ManhuaMentionCandidate[] = [];
+  for (const s of input.registry?.slots || []) {
+    const tag = String(s.tag || "").trim();
+    if (!tag || seenTag.has(tag)) continue;
+    seenTag.add(tag);
+    const id = String(s.id || "").trim();
+    if (id) seenId.add(id);
+    out.push({
+      tag,
+      assetId: id,
+      labelZh: String(s.labelZh || "").trim() || ROLE_TAG_PREFIX[s.role],
+      kind: ROLE_TAG_PREFIX[s.role],
+      duty: s.duty ?? null,
+      role: s.role,
+      ready: isBindableAssetPath(s.path),
+      bound: boundTags.has(tag),
+      pending: false,
+    });
+  }
+
+  const canonGroups: Array<[ManhuaCustomAssetRole, ManhuaWriterAssetAnchor[]]> = [
+    ["character", input.assetCanon?.characters || []],
+    ["scene", input.assetCanon?.locations || []],
+    ["prop", input.assetCanon?.props || []],
+  ];
+  for (const [role, anchors] of canonGroups) {
+    for (const a of anchors) {
+      const id = String(a?.id || "").trim();
+      const nameZh = String(a?.nameZh || "").trim();
+      if (!id || !nameZh || seenId.has(id)) continue;
+      // 名字已经有槽了（id 命名不同但指同一人）就不再重复占位
+      if (out.some((c) => c.labelZh === nameZh)) continue;
+      seenId.add(id);
+      out.push({
+        tag: "",
+        assetId: id,
+        labelZh: nameZh,
+        kind: ROLE_TAG_PREFIX[role],
+        duty: null,
+        role,
+        ready: false,
+        bound: false,
+        pending: true,
+      });
+    }
+  }
+
+  return out.sort((a, b) => {
+    const ro = MENTION_ROLE_ORDER.indexOf(a.role) - MENTION_ROLE_ORDER.indexOf(b.role);
+    if (ro !== 0) return ro;
+    // 同类里有图的排前面：能直接锁的先给，待出图的沉底
+    if (a.ready !== b.ready) return a.ready ? -1 : 1;
+    if (a.tag && b.tag) return a.tag.localeCompare(b.tag, "zh");
+    return a.labelZh.localeCompare(b.labelZh, "zh");
+  });
+}
+
+/**
+ * 把一条资产写进（或更新）提示词自带的对照表。
+ *
+ * 只插 `@角色2` 而不落表是没用的：出片时靠对照表把 tag 解析成 id→垫图，
+ * 表里没有这一行，标签就是句没人认的暗号，脸照样锁不住。所以挑完必须同步落表。
+ */
+export function upsertManhuaPromptAssetBindRow(
+  prompt: string | null | undefined,
+  row: {
+    tag: string;
+    assetId: string;
+    labelZh: string;
+    kind: string;
+    duty?: "identity" | "look" | null;
+  },
+): string {
+  const text = String(prompt || "");
+  const line = formatManhuaAssetImageBindLine({
+    tag: row.tag,
+    id: row.assetId,
+    labelZh: row.labelZh,
+    kind: row.kind,
+    duty: row.duty,
+  });
+  const idx = text.indexOf(ASSET_IMAGE_BIND_MARK);
+  if (idx < 0) {
+    // 表还不存在：附在末尾。解析靠 \n【 收边，末尾追加不会吃掉后文
+    const base = text.replace(/\s+$/, "");
+    return `${base}${base ? "\n\n" : ""}${ASSET_IMAGE_BIND_MARK}\n${line}`;
+  }
+  const head = text.slice(0, idx + ASSET_IMAGE_BIND_MARK.length);
+  const body = text.slice(idx + ASSET_IMAGE_BIND_MARK.length);
+  const end = body.search(/\n【/);
+  const section = end >= 0 ? body.slice(0, end) : body;
+  const tail = end >= 0 ? body.slice(end) : "";
+  const kept = section
+    .split("\n")
+    .filter((l) => l.trim() && !l.trim().startsWith(`${row.tag}|`));
+  return `${head}\n${[...kept, line].join("\n")}${tail}`;
 }
 
 /** 15s 段成片：本段出场资产 id（角色≤4、场景 1、道具仅点名） */
@@ -636,6 +799,57 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
     unmatchedCastNames,
     sceneFallback,
   };
+}
+
+/** 本段点名对上了资产、却没有可用垫图的缺口 */
+export type ManhuaSegmentAssetBindGap = {
+  /** 对上了 id 但没有可用图的角色名 */
+  characterNamesZh: string[];
+  /** 对上了 id 但没有可用图的场景名 */
+  sceneNamesZh: string[];
+  /** 文案点名的地点没图、实际回落到的主场景名；null 表示没回落 */
+  sceneFallbackToZh: string | null;
+};
+
+/**
+ * 「点名对上了 id」不等于「锁得住脸」：定妆图还没出时 path 是 logical:// 占位，
+ * 会被 isBindableAssetPath 滤掉，整块资产对照随之消失。此时 mode 仍是 matched，
+ * 既有的 mismatch 红条不亮、出片门禁照样放行，成片只剩静帧撑着——脸和场都没锁，
+ * 钱照烧。这里把这段落差按名字报出来，让人知道该去补谁。
+ */
+export function findManhuaSegmentAssetBindGap(
+  registry: ManhuaAssetLockRegistry | null | undefined,
+  allowed: Pick<
+    ManhuaSegmentClipAllowedAssets,
+    "characterIds" | "sceneIds" | "sceneFallback"
+  >,
+): ManhuaSegmentAssetBindGap {
+  const bindablePathById = buildManhuaAssetPathById(registry);
+  const nameById: Record<string, string> = {};
+  for (const s of registry?.slots || []) {
+    const id = String(s.id || "").trim();
+    if (id) nameById[id] = String(s.labelZh || "").trim();
+  }
+  // 无名槽宁可不报：把 cust_mrwxm9q3_qcioz 甩到前台不如不提
+  const unboundNames = (ids: string[]) =>
+    ids
+      .filter((id) => !bindablePathById[id])
+      .map((id) => nameById[id] || "")
+      .filter(Boolean);
+  const fallbackSceneId = allowed.sceneIds[0] || "";
+  return {
+    characterNamesZh: unboundNames(allowed.characterIds),
+    sceneNamesZh: unboundNames(allowed.sceneIds),
+    sceneFallbackToZh:
+      allowed.sceneFallback && fallbackSceneId ? nameById[fallbackSceneId] || null : null,
+  };
+}
+
+/** 场景回落只是提示，不算缺口；缺口专指「该锁的脸/场没有图」 */
+export function hasManhuaSegmentAssetBindGap(
+  gap: ManhuaSegmentAssetBindGap | null | undefined,
+): boolean {
+  return Boolean(gap && (gap.characterNamesZh.length || gap.sceneNamesZh.length));
 }
 
 /**

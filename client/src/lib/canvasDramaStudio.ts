@@ -1615,6 +1615,11 @@ export function ensureManhuaFragmentClips(
   edges: CanvasEdge[];
   /** 非空表示这些段的可拍表角色在资产库找不到，成片门禁应拦下 */
   assetMismatch: { segmentIndexes: number[]; castNames: string[] } | null;
+  /**
+   * 非空表示这些段有人在场却没绑上任何角色垫图——出片不锁脸。
+   * 与 assetMismatch 互斥：那边是「图对不上名字」，这边多半是「还没出图」。
+   */
+  assetNoFaceLock: { segmentIndexes: number[]; castNames: string[] } | null;
 } {
   const ep =
     typeof episodeIndex === "number" && episodeIndex >= 1
@@ -1632,9 +1637,13 @@ export function ensureManhuaFragmentClips(
   /** 可拍表点了名、资产库却一个都对不上的段：喂错脸会白烧钱，交给门禁拦 */
   const castMismatchSegments: number[] = [];
   const unmatchedCastNames = new Set<string>();
+  /** 有人在场却一行角色都没绑上的段：出片不锁脸，同样得拦 */
+  const faceUnlockedSegments: number[] = [];
+  const faceUnlockedCastNames = new Set<string>();
 
   const keyarts = blocks.filter((b) => b.id.startsWith("keyart-") && !b.archivedFromPreviousScript && sameEpisode(b)).sort(sortKeyartBlocks);
-  if (!keyarts.length) return { blocks, edges, assetMismatch: null };
+  if (!keyarts.length)
+    return { blocks, edges, assetMismatch: null, assetNoFaceLock: null };
 
   const keyartByShot = new Map<number, CanvasBlock>();
   for (const keyart of keyarts) {
@@ -1829,6 +1838,23 @@ export function ensureManhuaFragmentClips(
       activeLookSetIds: activeLookIds,
       allowedIds: segAssets.allowedIds,
     });
+    /**
+     * 有人在场却一行角色都没绑：这段成片不锁脸，模型会自己捏一张。
+     * mismatch 那条另有红条报，这里只收剩下的——多半是设定图还没出，
+     * 而静帧齐了就放行的门禁根本看不见这种情况，钱照烧、脸每段一变。
+     */
+    const segNeedsFace =
+      splitManhuaCastZhNames(effectiveCastZh || planBeat?.castZh || "").length > 0 ||
+      dialogueLines.length > 0;
+    const segHasFaceLock = parseManhuaAssetImageBindBlock(assetLockBlock).some((r) =>
+      r.tag.startsWith("@角色"),
+    );
+    if (segNeedsFace && !segHasFaceLock && segAssets.mode !== "mismatch") {
+      faceUnlockedSegments.push(seg.index);
+      for (const n of splitManhuaCastZhNames(effectiveCastZh || planBeat?.castZh || "")) {
+        faceUnlockedCastNames.add(n);
+      }
+    }
     const lookLine = formatManhuaSegmentActiveLookLine({
       lookSets,
       binding:
@@ -2023,6 +2049,12 @@ export function ensureManhuaFragmentClips(
       ? {
           segmentIndexes: castMismatchSegments,
           castNames: Array.from(unmatchedCastNames),
+        }
+      : null,
+    assetNoFaceLock: faceUnlockedSegments.length
+      ? {
+          segmentIndexes: faceUnlockedSegments,
+          castNames: Array.from(faceUnlockedCastNames),
         }
       : null,
   };
