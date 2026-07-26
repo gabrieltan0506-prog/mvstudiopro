@@ -4,7 +4,10 @@ import {
   assignManhuaCanvasAssetAtTags,
   buildManhuaAssetLockRegistry,
   buildManhuaAssetPathById,
+  buildManhuaMentionCandidates,
+  findManhuaSegmentAssetBindGap,
   formatManhuaAssetImageBindBlock,
+  hasManhuaSegmentAssetBindGap,
   isManhuaKeyartPixelLocked,
   parseManhuaAssetImageBindBlock,
   parseManhuaCanvasAssetAtTag,
@@ -14,6 +17,7 @@ import {
   sanitizeManhuaClipPromptForUi,
   splitManhuaCastZhNames,
   stripManhuaAssetUrlsFromPrompt,
+  upsertManhuaPromptAssetBindRow,
 } from "./manhuaAssetLockRegistry";
 import { parseManhuaSheetPropSubTagsFromPrompt } from "./manhuaSheetPropSubTags";
 import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon";
@@ -543,6 +547,112 @@ describe("manhuaAssetLockRegistry", () => {
     // 场景可共用，不硬拦；但要让左栏能提示「断月桥没有对应图，用的是雪关粮仓」
     expect(allowed.sceneIds).toEqual(["s_cang"]);
     expect(allowed.sceneFallback).toBe(true);
+    expect(findManhuaSegmentAssetBindGap(reg, allowed).sceneFallbackToZh).toBe("雪关粮仓");
+  });
+
+  it("names the matched characters that still have no usable image", () => {
+    // 直接搭 registry：logical:// 的参考过不了 normalizeManhuaCustomAssetRefs 的
+    // isHttpsUrl，走 builder 造不出「有槽但没图」的角色。这里验的是函数契约本身
+    const slots = [
+      {
+        tag: "@角色1",
+        role: "character" as const,
+        index: 1,
+        id: "c_shen",
+        labelZh: "沈沧澜",
+        path: "logical://sheet/c_shen",
+      },
+      {
+        tag: "@场景1",
+        role: "scene" as const,
+        index: 1,
+        id: "s_bridge",
+        labelZh: "断月桥",
+        path: "https://cdn.example/bridge.jpg",
+      },
+    ];
+    const reg = {
+      slots,
+      byRole: {
+        character: slots.filter((s) => s.role === "character"),
+        scene: slots.filter((s) => s.role === "scene"),
+        prop: [],
+        wardrobe: [],
+      },
+      promptBlockZh: "",
+      sheetPropSlots: [],
+      wardrobeSlots: [],
+    };
+    const allowed = resolveManhuaSegmentClipAllowedAssets({
+      haystack: "【第1段·15s】断月桥\n0–5s：沈沧澜绷紧侧脸。",
+      castZh: "沈沧澜",
+      registry: reg,
+      castCount: 1,
+    });
+    // 名字对上了 id，所以既有的 mismatch 红条不会亮、出片门禁照样放行
+    expect(allowed.mode).toBe("matched");
+    // 可对照表里一个角色都没有——这一段出片其实没锁脸
+    expect(
+      formatManhuaAssetImageBindBlock(reg, 8, { allowedIds: allowed.allowedIds }),
+    ).not.toContain("沈沧澜");
+
+    const gap = findManhuaSegmentAssetBindGap(reg, allowed);
+    expect(gap.characterNamesZh).toEqual(["沈沧澜"]);
+    expect(gap.sceneNamesZh).toEqual([]);
+    expect(hasManhuaSegmentAssetBindGap(gap)).toBe(true);
+  });
+
+  it("reports no gap once every matched asset has a real image", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "c_shen",
+          url: "https://cdn.example/shen.jpg",
+          role: "character",
+          source: "generated",
+          labelZh: "沈沧澜",
+        },
+        {
+          id: "s_bridge",
+          url: "https://cdn.example/bridge.jpg",
+          role: "scene",
+          source: "upload",
+          labelZh: "断月桥",
+        },
+      ],
+    });
+    const allowed = resolveManhuaSegmentClipAllowedAssets({
+      haystack: "【第1段·15s】断月桥\n0–5s：沈沧澜绷紧侧脸。",
+      castZh: "沈沧澜",
+      registry: reg,
+      castCount: 1,
+    });
+    const gap = findManhuaSegmentAssetBindGap(reg, allowed);
+    expect(hasManhuaSegmentAssetBindGap(gap)).toBe(false);
+    expect(gap.sceneFallbackToZh).toBeNull();
+  });
+
+  it("stays quiet on empty segments that legitimately have nobody", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "s_bridge",
+          url: "https://cdn.example/bridge.jpg",
+          role: "scene",
+          source: "upload",
+          labelZh: "断月桥",
+        },
+      ],
+    });
+    // 空镜段：可拍表没点名，本来就不该报缺脸
+    const allowed = resolveManhuaSegmentClipAllowedAssets({
+      haystack: "【第2段·15s】断月桥\n0–5s：雨点砸在空桥板上。",
+      registry: reg,
+    });
+    expect(allowed.mode).toBe("empty");
+    expect(hasManhuaSegmentAssetBindGap(findManhuaSegmentAssetBindGap(reg, allowed))).toBe(
+      false,
+    );
   });
 
   it("sanitizeManhuaClipPromptForUi strips 画风 lines", () => {
@@ -613,3 +723,132 @@ describe("分镜静帧按秒段锁定", () => {
     expect(plan.bindLineZh).toContain("为本段构图与光色基准");
   });
 });
+
+describe("@ 唤起：候选来自资产库，不是提示词自己", () => {
+  const reg = buildManhuaAssetLockRegistry({
+    customRefs: [
+      {
+        id: "c_shen",
+        url: "https://cdn.example/shen.jpg",
+        role: "character",
+        source: "generated",
+        labelZh: "沈沧澜",
+      },
+      {
+        id: "s_bridge",
+        url: "https://cdn.example/bridge.jpg",
+        role: "scene",
+        source: "upload",
+        labelZh: "断月桥",
+      },
+    ],
+  });
+  const anchor = (id: string, role: "character" | "scene", nameZh: string) => ({
+    id,
+    role,
+    nameZh,
+    lookZh: "",
+    promptZh: "",
+  });
+  // 方昭妃只在剧本里，定妆图还没出：registry 不会有她的槽
+  const canon = {
+    characters: [anchor("wa_char_shen", "character", "沈沧澜"), anchor("wa_char_fang", "character", "方昭妃")],
+    props: [],
+    locations: [anchor("wa_scene_bridge", "scene", "断月桥")],
+    episodeMainSceneId: {},
+  };
+
+  it("提示词一张图都没绑时照样列得出候选", () => {
+    // 老实现从提示词自带对照表取候选，这里必然为空、面板永不弹——
+    // 偏偏这正是最需要挑图的时刻
+    const list = buildManhuaMentionCandidates({
+      registry: reg,
+      prompt: "【第1段·15s】断月桥\n0–5s：雨夜，有人立在桥头。",
+    });
+    expect(list.length).toBeGreaterThan(0);
+    expect(list.map((c) => c.labelZh)).toContain("沈沧澜");
+    expect(list.every((c) => c.bound === false)).toBe(true);
+  });
+
+  it("剧本刚写出、还没出图的角色也列，标成待出图", () => {
+    const list = buildManhuaMentionCandidates({ registry: reg, prompt: "", assetCanon: canon });
+    const fang = list.find((c) => c.labelZh === "方昭妃");
+    expect(fang).toBeTruthy();
+    expect(fang?.ready).toBe(false);
+    expect(fang?.pending).toBe(true);
+    // 没有槽就没有编号，只能点去补图，不能插进正文
+    expect(fang?.tag).toBe("");
+  });
+
+  it("同名的不因设定表再占一格", () => {
+    const list = buildManhuaMentionCandidates({ registry: reg, prompt: "", assetCanon: canon });
+    expect(list.filter((c) => c.labelZh === "沈沧澜")).toHaveLength(1);
+    expect(list.find((c) => c.labelZh === "沈沧澜")?.ready).toBe(true);
+  });
+
+  it("角色排在场景前，待出图的沉到同类末尾", () => {
+    const list = buildManhuaMentionCandidates({ registry: reg, prompt: "", assetCanon: canon });
+    const kinds = list.map((c) => c.kind);
+    expect(kinds.indexOf("角色")).toBeLessThan(kinds.indexOf("场景"));
+    const chars = list.filter((c) => c.kind === "角色");
+    expect(chars[0]?.ready).toBe(true);
+    expect(chars[chars.length - 1]?.pending).toBe(true);
+  });
+
+  it("已在对照表里的标出 bound，避免重复插一遍", () => {
+    const prompt = ["【资产·Image对照】", "@角色1|id=c_shen|label=沈沧澜|kind=角色"].join(
+      "\n",
+    );
+    const list = buildManhuaMentionCandidates({ registry: reg, prompt });
+    expect(list.find((c) => c.assetId === "c_shen")?.bound).toBe(true);
+    expect(list.find((c) => c.assetId === "s_bridge")?.bound).toBe(false);
+  });
+});
+
+describe("挑完资产要落进对照表", () => {
+  const row = {
+    tag: "@角色1",
+    assetId: "c_shen",
+    labelZh: "沈沧澜",
+    kind: "角色",
+    duty: "identity" as const,
+  };
+
+  it("表还不存在时新建，且解析得回来", () => {
+    const next = upsertManhuaPromptAssetBindRow("【第1段·15s】断月桥\n0–5s：拔刀。", row);
+    const parsed = parseManhuaAssetImageBindBlock(next);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]).toMatchObject({ tag: "@角色1", id: "c_shen", duty: "identity" });
+    // 正文一个字不能丢
+    expect(next).toContain("0–5s：拔刀。");
+  });
+
+  it("已有表时追加，不冲掉旧行", () => {
+    const base = ["【资产·Image对照】", "@场景1|id=s_bridge|label=断月桥|kind=场景"].join(
+      "\n",
+    );
+    const parsed = parseManhuaAssetImageBindBlock(upsertManhuaPromptAssetBindRow(base, row));
+    expect(parsed.map((r) => r.id).sort()).toEqual(["c_shen", "s_bridge"]);
+  });
+
+  it("同一个 tag 改写而不是插两行", () => {
+    const once = upsertManhuaPromptAssetBindRow("", row);
+    const twice = upsertManhuaPromptAssetBindRow(once, { ...row, labelZh: "沈沧澜·改" });
+    const parsed = parseManhuaAssetImageBindBlock(twice);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.labelZh).toBe("沈沧澜·改");
+  });
+
+  it("不吃掉对照表后面的段落", () => {
+    const base = [
+      "【资产·Image对照】",
+      "@场景1|id=s_bridge|label=断月桥|kind=场景",
+      "【出片Image硬绑】",
+      "沈沧澜@图片1。",
+    ].join("\n");
+    const next = upsertManhuaPromptAssetBindRow(base, row);
+    expect(next).toContain("【出片Image硬绑】");
+    expect(next).toContain("沈沧澜@图片1。");
+    expect(parseManhuaAssetImageBindBlock(next)).toHaveLength(2);
+  });
+})

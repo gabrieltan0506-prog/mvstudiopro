@@ -24,6 +24,12 @@ export type ManhuaWorkbenchActionGateInput = {
    * 静帧齐了也必须拦：喂错脸的成片是白烧钱，而且看不出是喂错还是模型跑偏。
    */
   segmentCastMismatchHintZh?: string | null;
+  /**
+   * 有人在场却一张角色垫图都没绑上的段（多半是设定图还没出）。
+   * 与 segmentCastMismatchHintZh 分开报：一个是「图对不上名字」，一个是「还没出图」，
+   * 补救动作不同，混成一句话会把人指去错的按钮。
+   */
+  segmentNoFaceLockHintZh?: string | null;
   /** 本集静帧张数齐且每张均为 edit+垫图（垫图锁） */
   stillsReadyEnough?: boolean;
 };
@@ -63,6 +69,9 @@ export function explainManhuaKeyartActionGate(
 /**
  * 成片门：静帧已垫图锁齐时，不再回卡完整资产设定门。
  * 垫图锁 = imageMode=edit + refImageUrl，不是查 @编号文案。
+ *
+ * 但「静帧齐」只管构图，不管脸：段里一张角色垫图都没绑时，模型每段自己捏一张脸，
+ * 十段十个人。这两种资产缺口必须在短路之前拦，否则最贵的一步恰好是没人看的一步。
  */
 export function explainManhuaClipActionGate(
   input: ManhuaWorkbenchActionGateInput,
@@ -72,6 +81,8 @@ export function explainManhuaClipActionGate(
   // 静帧齐不代表喂的是对的脸：资产对不上剧本时，先拦住再说
   const castMismatch = String(input.segmentCastMismatchHintZh || "").trim();
   if (castMismatch) return `还不能生成成片：${castMismatch}`;
+  const noFaceLock = String(input.segmentNoFaceLockHintZh || "").trim();
+  if (noFaceLock) return `还不能生成成片：${noFaceLock}`;
 
   if (input.stillsReadyEnough) {
     if (input.videoBurnHintZh) return `还不能生成成片：${input.videoBurnHintZh}`;

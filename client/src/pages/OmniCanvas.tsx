@@ -508,6 +508,11 @@ export default function OmniCanvas() {
     segmentIndexes: number[];
     castNames: string[];
   } | null>(null);
+  /** 有人在场却一张角色垫图都没绑上：成片不锁脸，每段一张新面孔 */
+  const [segmentNoFaceLock, setSegmentNoFaceLock] = useState<{
+    segmentIndexes: number[];
+    castNames: string[];
+  } | null>(null);
   const [writerBrief, setWriterBrief] = useState(() => initialWriterSession?.brief || "");
   const [viralTemplateId, setViralTemplateId] = useState(
     () => String(initialWriterSession?.viralTemplateId || "").trim(),
@@ -4609,6 +4614,15 @@ export default function OmniCanvas() {
                         }在已有资产里找不到对应的图，现在出片会拿别人的脸顶上。请先在资产设定按剧本重出角色图`
                       : null
                   }
+                  segmentNoFaceLockHintZh={
+                    segmentNoFaceLock
+                      ? `第 ${segmentNoFaceLock.segmentIndexes.join("、")} 段还没绑上任何角色定妆图${
+                          segmentNoFaceLock.castNames.length
+                            ? `（本段有「${segmentNoFaceLock.castNames.slice(0, 4).join("、")}」出场）`
+                            : ""
+                        }，现在出片不锁脸，每段都会换一张脸。请先在资产设定点「生成全部」出齐定妆图`
+                      : null
+                  }
                   onConfirmAssetsAndPrepareImages={confirmAssetsAndPrepareImages}
                   onGenerateCanonAssetSheet={({ anchorId }) =>
                     confirmAssetsAndPrepareImages({ onlyAnchorId: anchorId })
@@ -4908,6 +4922,7 @@ export default function OmniCanvas() {
                         layoutOpts,
                       );
                       setSegmentCastMismatch(ensured.assetMismatch);
+                      setSegmentNoFaceLock(ensured.assetNoFaceLock);
                       const next = layoutManhuaEpisodeReadableChain(
                         ensured.blocks,
                         writerFocusEpisode,
@@ -4947,6 +4962,7 @@ export default function OmniCanvas() {
                         layoutOpts,
                       );
                       setSegmentCastMismatch(ensured.assetMismatch);
+                      setSegmentNoFaceLock(ensured.assetNoFaceLock);
                       const next = layoutManhuaEpisodeReadableChain(
                         ensured.blocks,
                         writerFocusEpisode,
@@ -5012,6 +5028,7 @@ export default function OmniCanvas() {
                         layoutOpts,
                       );
                       setSegmentCastMismatch(ensured.assetMismatch);
+                      setSegmentNoFaceLock(ensured.assetNoFaceLock);
                       const next = layoutManhuaEpisodeReadableChain(
                         ensured.blocks,
                         writerFocusEpisode,

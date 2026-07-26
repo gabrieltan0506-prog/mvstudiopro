@@ -98,4 +98,34 @@ describe("manhuaWorkbenchActionGate", () => {
     });
     expect(msg).toBeNull();
   });
+
+  it("clip gate blocks when nobody's face is bound even though stills are ready", () => {
+    // 线上实况：五段静帧全齐，对照表却一行角色都没有——门禁放行，
+    // 于是每段模型自己捏脸，十段十个人，钱花完才看得出来
+    const msg = explainManhuaClipActionGate({
+      outlineComplete: true,
+      assetGate: readyGate,
+      stillsReadyEnough: true,
+      segmentNoFaceLockHintZh:
+        "第 1、2 段还没绑上任何角色定妆图，出片不锁脸",
+    });
+    expect(msg).toMatch(/不锁脸/);
+  });
+
+  it("clip gate keeps the two asset failures worded apart", () => {
+    // 「图对不上名字」要去重出设定图，「还没出图」要去生成——指错按钮等于白忙
+    const mismatch = explainManhuaClipActionGate({
+      outlineComplete: true,
+      assetGate: readyGate,
+      stillsReadyEnough: true,
+      segmentCastMismatchHintZh: "第 1 段的「沈沧澜」在已有资产里找不到对应的图",
+    });
+    const noLock = explainManhuaClipActionGate({
+      outlineComplete: true,
+      assetGate: readyGate,
+      stillsReadyEnough: true,
+      segmentNoFaceLockHintZh: "第 1 段还没绑上任何角色定妆图，出片不锁脸",
+    });
+    expect(mismatch).not.toBe(noLock);
+  });
 });
