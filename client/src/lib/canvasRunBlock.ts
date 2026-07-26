@@ -41,6 +41,7 @@ import {
   SEEDANCE_REFERENCE_MAX,
 } from "@shared/seedanceOpenRouterModels";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
+import { formatManhuaEditCraftDirectives } from "@shared/manhuaEditCraftDirectives";
 import { appendManhuaClipEngineOptics } from "@shared/manhuaCineOpticsBank";
 import {
   renderManhuaClipPromptForSeedance,
@@ -1020,12 +1021,23 @@ export async function runCanvasBlock(
             .filter((ln) => /@角色\d+=/.test(ln))
             .join("；")
         : "";
+      /**
+       * 剪辑手法只在这里拼，不写回节点：审阅面那一栏要读的是谁在做什么，
+       * 把「切点卡情绪、景别拉反差、别乱转场、补音效」逐条铺上去会把秒轴淹掉。
+       */
+      const editCraft = isClip
+        ? formatManhuaEditCraftDirectives({
+            prompt: motionPrompt,
+            shotCount: keptEntries.filter((e) => e.kind === "still").length,
+          })
+        : "";
       // imageBind 是按实际送进 API 的图现算的，为准；节点里存的那两块快照剥掉，
       // 否则模型同时拿到两套 @Image 映射（还可能对不上）只会挑错脸
       const seedancePrompt = [
         imageBind,
         isClip ? stripManhuaStaleAssetBindForModel(motionPrompt) : motionPrompt,
         voiceOneLine ? `【声线】${voiceOneLine}` : "",
+        editCraft,
       ]
         .filter(Boolean)
         .join("\n")

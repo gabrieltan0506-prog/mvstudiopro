@@ -133,4 +133,22 @@ describe("manhuaClipPromptSanitize", () => {
     const clean = ["【第1段·15s】断月桥", "0–5s：动作轨迹：火箭钉入桥板。"].join("\n");
     expect(stripManhuaStaleAssetBindForModel(clean)).toBe(clean);
   });
+
+  it("剪辑手法块不该糊在审阅面上", () => {
+    // 这一层是出片那一刻现拼的：人在审阅栏要读的是谁在做什么，不是怎么剪
+    const raw = [
+      "【第1段·15s】断月桥",
+      "0–5s：中景，她说「我不会认输」。",
+      "【剪辑手法】",
+      "切点卡情绪不卡秒；关键台词落地后停约 0.2 秒再切。",
+      "本段同一场景内一律直切，禁止转场特效。",
+      "【连续】接上段末帧。",
+    ].join("\n");
+    const out = stripManhuaClipForbiddenBoards(raw);
+    expect(out).toContain("0–5s：中景");
+    expect(out).not.toContain("剪辑手法");
+    expect(out).not.toContain("0.2 秒");
+    // 后面的板不能被顺手吃掉
+    expect(out).toContain("【连续】");
+  });
 });
