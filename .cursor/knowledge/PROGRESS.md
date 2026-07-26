@@ -52,6 +52,45 @@
 
 ---
 
+## 2026-07-26
+
+### 已合入 main
+
+| PR | 内容 | Deploy |
+|---|---|---|
+| #994 | growth 冷备 cron 每小时 → 每 2 小时 | 绿 |
+| #995 | 热数据保留窗口 365 → 90 天（`pruneTrendItemsToHotWindow`） | 绿 |
+
+> 07-25 那批（#974–#993，画布工作台改版 / 分档 60-90s·150-180s / 局部改写归档 / 假 401 修复）
+> 明细见 `~/Downloads/2026Jul25/jobs-and-code-byOpus5.md`。
+
+### 踩坑：fly.toml 的 `[env]` 会被同名 secret 静默盖掉
+
+**#995 合了但没生效**——`GROWTH_TARGET_WINDOW_DAYS` 存在同名 Fly secret（值 365），
+优先级高于 `[env]`，裁剪逻辑空转十小时，douyin 热文件 88.3 → 88.7MB 不降反升。
+排查发现共 **30 个键**被 secret 接管，其中 23 个值与 `fly.toml` 不同，方向还是混的
+（页数被调高、并发与超时被调低）。
+
+**处置**：`fly secrets set GROWTH_TARGET_WINDOW_DAYS=90 DOUYIN_TREND_PAGES=24`，
+并把 `fly.toml` 全部对齐线上实际值 + 逐行标注「secret 接管」。
+
+**给后来人**：改 `fly.toml` 的 `[env]` 前先 `fly secrets list` 查同名键；
+验证一律用 `fly ssh console -C 'printenv KEY'` 看运行时真值，不要看 machine config。
+
+### 采集强度现状
+
+`DOUYIN_TREND_PAGES` 40 → 24（每页 12 条，约 480 → 288 条/轮，15 分钟一轮）。
+`GROWTH_FORCE_BURST_*` 是死配置：`UNTIL` 停在 2026-03-27，
+`isForceBurstActive` 的 `> Date.now()` 让它早已失效，可清理。
+`KUAISHOU_PRIVATE_PAGES` secret 写 30，但代码 `Math.min(6,…)` 夹住，实际 6。
+
+### 下一步
+
+- 观察几轮 merge 后 douyin 热文件是否随 90 天窗口回落
+- 15 分钟负载稳定 < 1.5、内存 < 5GB 时，可把 `performance-4x` 降到 `2x`（约省 $79/月）
+
+---
+
 ## 如何更新本文件
 
 合完 PR 或用户改口径后，在**当日**下追加表格行；下一自然日新开 `## YYYY-MM-DD`。  

@@ -21,19 +21,22 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
     CACHEBUST = "2026-07-12-tsc-mab-sheetkind-1"
 
 [env]
+  # ⚠ Fly secret 的优先级高于这里的 [env]：同名键一律以 secret 为准，改本文件不生效。
+  # 标了「secret 接管」的键值已对齐线上实际（2026-07-26 由 fly ssh console printenv 抄回），
+  # 只作存档，改它们必须走 `fly secrets set`。secret 值不可读回，只能看键名与运行时 env。
   GROWTH_STORE_DIR = '/data/growth'
   GROWTH_LEGACY_STORE_FILE = '/data/growth-trends.json'
   # 10GB VM：V8 堆須單獨調大；僅升 Fly RAM 不改此值仍會在舊上限觸頂 OOM。
   # 8GB 堆 + ~2GB 非堆（讀檔、Chromium、原生）；仍吃緊時宜縮快照或再升 VM。
-  NODE_OPTIONS = '--max-old-space-size=8192'
-  DOUYIN_CREATOR_CENTER_ENABLED = '0'
-  DOUYIN_CREATOR_INDEX_ENABLED = '0'
-  DISABLE_GROWTH_TREND_SCHEDULER = '0'
-  GROWTH_ENABLE_BACKFILL_BOOTSTRAP = '1'
-  GROWTH_ENABLE_LIVE_BACKFILL_BOOTSTRAP = '1'
+  NODE_OPTIONS = '--max-old-space-size=8192'  # secret 接管
+  DOUYIN_CREATOR_CENTER_ENABLED = '1'  # secret 接管
+  DOUYIN_CREATOR_INDEX_ENABLED = '1'  # secret 接管
+  DISABLE_GROWTH_TREND_SCHEDULER = '0'  # secret 接管
+  GROWTH_ENABLE_BACKFILL_BOOTSTRAP = '1'  # secret 接管
+  GROWTH_ENABLE_LIVE_BACKFILL_BOOTSTRAP = '1'  # secret 接管
   GROWTH_WRITE_DERIVED_PLATFORM_FILES = '1'
   GROWTH_DISABLE_HISTORY_LEDGER_UPDATES = '0'
-  GROWTH_MAIL_DIGEST_INTERVAL_MINUTES = '15'
+  GROWTH_MAIL_DIGEST_INTERVAL_MINUTES = '60'  # secret 接管
   GROWTH_GITHUB_COLD_STORE_BASE_URL = 'https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-cold-store-latest'
   GROWTH_OFFLOAD_SINGLE_FILE_THRESHOLD_MB = '400'
   GROWTH_OFFLOAD_DIRECTORY_THRESHOLD_MB = '800'
@@ -42,14 +45,16 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   # 原来默认 365 天，douyin 的 current 文件因此涨到 92MB(gz)、解压后接近 2GB 对象，
   # 每轮采集 parse/stringify 一遍，V8 GC 常年占掉 1.5 个核。90 天留了两倍余量。
   # 历史不丢：archive/、history-ledger/ 与 GitHub 冷备仍是全量。
-  GROWTH_TARGET_WINDOW_DAYS = '90'
+  # #995 只改这里没生效：同名 secret 当时是 365，把它盖掉了，裁剪空转了十小时。
+  # 2026-07-26 已 `fly secrets set GROWTH_TARGET_WINDOW_DAYS=90` 真正落地。
+  GROWTH_TARGET_WINDOW_DAYS = '90'  # secret 接管
   GROWTH_SCHEDULER_INTERVAL_MINUTES = '15'
   GROWTH_SCHEDULER_CONCURRENCY = '2'
-  GROWTH_BURST_INTERVAL_MINUTES = '10'
-  GROWTH_PLATFORM_RUN_TIMEOUT_MS = '600000'
+  GROWTH_BURST_INTERVAL_MINUTES = '15'  # secret 接管
+  GROWTH_PLATFORM_RUN_TIMEOUT_MS = '90000'  # secret 接管
   GROWTH_DOUYIN_PLATFORM_RUN_TIMEOUT_MS = '600000'
   GROWTH_KUAISHOU_PLATFORM_RUN_TIMEOUT_MS = '600000'
-  GROWTH_BACKFILL_PLATFORM_TIMEOUT_MS = '600000'
+  GROWTH_BACKFILL_PLATFORM_TIMEOUT_MS = '600000'  # secret 接管
   GROWTH_LIVE_WINDOW_START_HOUR = '7'
   GROWTH_LIVE_WINDOW_END_HOUR = '1'
   GROWTH_BACKFILL_WINDOW_START_HOUR = '1'
@@ -60,26 +65,29 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   GROWTH_BACKFILL_FAST_START = '1'
   GROWTH_HISTORY_BACKFILL_INTERVAL_MS = '300000'
   GROWTH_HISTORY_BACKFILL_WINDOW_DAYS = '45'
-  GROWTH_BACKFILL_STEP_TARGET = '5'
-  GROWTH_BACKFILL_STEP_FALLBACK = '3'
-  GROWTH_LIVE_BACKFILL_STEP_TARGET = '6'
-  GROWTH_LIVE_BACKFILL_STEP_FALLBACK = '4'
+  GROWTH_BACKFILL_STEP_TARGET = '2'  # secret 接管
+  GROWTH_BACKFILL_STEP_FALLBACK = '1'  # secret 接管
+  GROWTH_LIVE_BACKFILL_STEP_TARGET = '3'  # secret 接管
+  GROWTH_LIVE_BACKFILL_STEP_FALLBACK = '2'  # secret 接管
   GROWTH_BACKFILL_PLATFORM_CONCURRENCY = '2'
   GROWTH_BACKFILL_FAST_START_MAX_ROUNDS = '4'
   GROWTH_HISTORY_LEDGER_BATCH_ROUNDS = '2'
-  GROWTH_BACKFILL_STORE_SIZE_LIMIT_MB = '512'
-  GROWTH_FORCE_BURST_PLATFORMS = ''
-  GROWTH_FORCE_BURST_UNTIL = ''
-  DOUYIN_TREND_PAGES = '12'
-  KUAISHOU_PRIVATE_PAGES = '4'
-  KUAISHOU_PRIVATE_CONCURRENCY = '2'
-  KUAISHOU_TREND_PAGES = '8'
-  KUAISHOU_SEARCH_PAGES = '6'
-  KUAISHOU_SEARCH_CONCURRENCY = '3'
-  KUAISHOU_SEARCH_USER_PAGES = '2'
-  KUAISHOU_SEARCH_USER_LIMIT = '16'
-  KUAISHOU_SEARCH_USER_KEYWORD_LIMIT = '10'
-  KUAISHOU_TREND_KEYWORD_LIMIT = '16'
+  GROWTH_BACKFILL_STORE_SIZE_LIMIT_MB = '512'  # secret 接管
+  # 这两条是某次冲量补数据留下的，UNTIL 已过期，isForceBurstActive 里的
+  # `FORCE_BURST_UNTIL_MS > Date.now()` 让它自 2026-03-27 起就不再生效，属可清理的死配置。
+  GROWTH_FORCE_BURST_PLATFORMS = 'douyin,kuaishou,bilibili,xiaohongshu,toutiao'  # secret 接管
+  GROWTH_FORCE_BURST_UNTIL = '2026-03-27T01:00:00+08:00'  # secret 接管（已过期）
+  # 每页 12 条，2026-07-26 由 40 降到 24（约 480→288 条/轮，每 15 分钟一轮）。
+  DOUYIN_TREND_PAGES = '24'  # secret 接管
+  KUAISHOU_PRIVATE_PAGES = '30'  # secret 接管（代码里 Math.min(6,…) 夹住，实际只有 6）
+  KUAISHOU_PRIVATE_CONCURRENCY = '1'  # secret 接管
+  KUAISHOU_TREND_PAGES = '12'  # secret 接管
+  KUAISHOU_SEARCH_PAGES = '8'  # secret 接管
+  KUAISHOU_SEARCH_CONCURRENCY = '2'  # secret 接管
+  KUAISHOU_SEARCH_USER_PAGES = '4'  # secret 接管
+  KUAISHOU_SEARCH_USER_LIMIT = '20'  # secret 接管
+  KUAISHOU_SEARCH_USER_KEYWORD_LIMIT = '8'  # secret 接管
+  KUAISHOU_TREND_KEYWORD_LIMIT = '24'  # secret 接管
   KUAISHOU_RECO_PAGES = '3'
   GROWTH_KUAISHOU_SEARCH_KEYWORD_LIMIT = '16'
   GROWTH_KUAISHOU_SEARCH_PAGES = '6'
@@ -99,8 +107,8 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   GROWTH_TOUTIAO_SEARCH_CONCURRENCY = '1'
   GROWTH_TOUTIAO_AUTHOR_LIMIT = '4'
   GROWTH_TOUTIAO_PROFILE_PAGES = '2'
-  GROWTH_SCHEDULER_STALE_FORCE_RUN_MS = '600000'
-  GCS_PDF_EXPORT_BUCKET = 'mv-studio-pro-vertex-video-temp'
+  GROWTH_SCHEDULER_STALE_FORCE_RUN_MS = '1200000'  # secret 接管
+  GCS_PDF_EXPORT_BUCKET = 'mv-studio-pro-vertex-video-temp'  # secret 接管
   # 歷史表 stripe_usage_logs（計次審計，非 Stripe Checkout）：暫停讀寫時大師腳本不依賴該表，避免 DB/遷移未完成時阻斷「生成脚本」。
   DISABLE_STRIPE_USAGE_LOGS = '1'
   # 平台選題封面/2×4：預設 GCS。若要 Fly 卷請設 PLATFORM_TOPIC_IMAGE_USE_FLY_VOLUME=1（勿依賴 PLATFORM_TOPIC_IMAGE_STORAGE）。
