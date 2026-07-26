@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   manhuaAssetChipDutyLabelZh,
   type ManhuaPromptAssetMeta,
@@ -18,6 +19,23 @@ const KIND_TONE: Record<string, string> = {
   场景: "text-sky-200",
   道具: "text-emerald-200",
 };
+
+const PICKER_W = 288;
+const PICKER_MAX_H = 224;
+
+/**
+ * 面板必须挂到 body：审阅栏是 `max-h-[42vh] overflow-y-auto` 的滚动容器，
+ * 绝对定位的下拉会被它整条裁掉——面板明明开着，屏幕上一片空白。
+ * 这里按输入框位置算固定坐标，下方不够就翻到上方，并夹回视口内。
+ */
+function pickerPosition(anchor: DOMRect): { left: number; top: number } {
+  const gap = 4;
+  const below = anchor.bottom + gap;
+  const flip = below + PICKER_MAX_H > window.innerHeight - 8;
+  const top = flip ? Math.max(8, anchor.top - PICKER_MAX_H - gap) : below;
+  const left = Math.max(8, Math.min(anchor.left, window.innerWidth - PICKER_W - 8));
+  return { left, top };
+}
 
 /**
  * 段成片提示词编辑框：敲 `@` 列出本集所有可锁的人物/场景/道具，挑一个就真锁上。
@@ -58,6 +76,7 @@ export default function ManhuaPromptMentionEditor({
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const [mention, setMention] = useState<{ at: number; query: string } | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
+  const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
 
   const candidates = useMemo(
     () => buildManhuaMentionCandidates({ registry, prompt: value, assetCanon }),
@@ -80,6 +99,31 @@ export default function ManhuaPromptMentionEditor({
   const syncMention = (el: HTMLTextAreaElement) => {
     setMention(readMentionQuery(el.value, el.selectionStart ?? 0));
   };
+
+  const trackAnchor = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    setAnchor(pickerPosition(el.getBoundingClientRect()));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!mention) {
+      setAnchor(null);
+      return;
+    }
+    trackAnchor();
+  }, [mention, trackAnchor]);
+
+  // 审阅栏本身会滚：面板固定在 body 上，不跟着重算就会飘在原地
+  useEffect(() => {
+    if (!mention) return;
+    window.addEventListener("scroll", trackAnchor, true);
+    window.addEventListener("resize", trackAnchor);
+    return () => {
+      window.removeEventListener("scroll", trackAnchor, true);
+      window.removeEventListener("resize", trackAnchor);
+    };
+  }, [mention, trackAnchor]);
 
   const pick = (c: ManhuaMentionCandidate) => {
     const el = ref.current;
@@ -148,19 +192,30 @@ export default function ManhuaPromptMentionEditor({
         onBlur={() => window.setTimeout(() => setMention(null), 160)}
         className="w-full resize-y rounded border border-white/10 bg-black/40 px-1.5 py-1 font-mono text-[10px] leading-snug text-white/80 disabled:opacity-40"
       />
-      {emptyHint ? (
-        <div
-          data-manhua-mention-picker="empty"
-          className="absolute left-1 top-full z-30 mt-1 w-64 rounded border border-white/15 bg-[#12141a] px-2 py-1.5 text-[10px] leading-4 text-white/55 shadow-xl"
-        >
-          本集还没有可挂的人物或场景。先在左栏「资产设定」点「生成全部」，出图后这里就能挑。
-        </div>
-      ) : null}
-      {open ? (
-        <div
-          data-manhua-mention-picker="open"
-          className="absolute left-1 top-full z-30 mt-1 max-h-56 w-72 overflow-auto rounded border border-white/15 bg-[#12141a] p-1 shadow-xl"
-        >
+      {emptyHint && anchor
+        ? createPortal(
+            <div
+              data-manhua-mention-picker="empty"
+              style={{ left: anchor.left, top: anchor.top, width: PICKER_W }}
+              className="fixed z-[60] rounded border border-white/15 bg-[#12141a] px-2 py-1.5 text-[10px] leading-4 text-white/55 shadow-xl"
+            >
+              本集还没有可挂的人物或场景。先在左栏「资产设定」点「生成全部」，出图后这里就能挑。
+            </div>,
+            document.body,
+          )
+        : null}
+      {open && anchor
+        ? createPortal(
+            <div
+              data-manhua-mention-picker="open"
+              style={{
+                left: anchor.left,
+                top: anchor.top,
+                width: PICKER_W,
+                maxHeight: PICKER_MAX_H,
+              }}
+              className="fixed z-[60] overflow-auto rounded border border-white/15 bg-[#12141a] p-1 shadow-xl"
+            >
           <div className="px-1 pb-1 text-[9px] text-white/40">
             本集可挂资产 · ↑↓ 选，回车插入 · 灰的先去出图
           </div>
@@ -198,8 +253,10 @@ export default function ManhuaPromptMentionEditor({
               </button>
             );
           })}
-        </div>
-      ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
