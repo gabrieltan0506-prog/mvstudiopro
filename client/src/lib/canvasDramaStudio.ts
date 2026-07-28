@@ -2330,7 +2330,7 @@ export function layoutManhuaEpisodeReadableChain(
 }
 
 function mediaUrlOf(
-  b?: Pick<CanvasBlock, "outputUrl" | "outputUrls"> | null,
+  b?: Partial<Pick<CanvasBlock, "outputUrl" | "outputUrls">> | null,
 ): string | undefined {
   if (!b) return undefined;
   return b.outputUrl || b.outputUrls?.[0] || undefined;
