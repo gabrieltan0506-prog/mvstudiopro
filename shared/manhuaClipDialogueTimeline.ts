@@ -10,7 +10,10 @@ import {
   extractManhuaSpeakerAtTag,
   stripManhuaSpeakerAtPrefix,
 } from "./manhuaPerformancePrompt.js";
-import { recommendManhuaCameraMoveFromText } from "./manhuaCameraMoveBank.js";
+import {
+  matchManhuaCameraMoveByNameZh,
+  recommendManhuaCameraMoveFromText,
+} from "./manhuaCameraMoveBank.js";
 import type { ManhuaWorkbenchShot } from "./manhuaScriptWorkbench.js";
 
 export type ManhuaDialogueTimelineBeat = {
@@ -139,6 +142,27 @@ function stripLeadingCameraDirection(actionZh: string, hasCameraField: boolean):
   return CAMERA_ONLY_HEAD_RE.test(m[1]!.trim()) ? m[2]!.trim() : actionZh;
 }
 
+/**
+ * 两拍时序展开：单镜 ≥4s 且解析到带 sequenceZh 的库内条目（可拍表点名或推荐兜底），
+ * 机位子句写成「先A，后B」时序，不再只落「推拉结合」这类孤零零标签。
+ * 可拍表自己写了时序标记（先/后/再/接着）时原样放行，不替编剧改调度。
+ */
+function resolveBeatCameraSequenceZh(
+  cameraZh: string,
+  actionZh: string,
+  durationSec: number,
+): string | null {
+  if (durationSec < 4) return null;
+  const raw = String(cameraZh || "").trim();
+  if (/先|后|再|接着|然后/.test(raw)) return null;
+  const entry = raw
+    ? matchManhuaCameraMoveByNameZh(raw)
+    : recommendManhuaCameraMoveFromText(actionZh);
+  const seq = entry?.sequenceZh;
+  if (!seq) return null;
+  return `先${trimTrailPunct(seq[0].replace(/^先/, ""))}，后${trimTrailPunct(seq[1].replace(/^[后再]/, ""))}`;
+}
+
 /** 运镜轨迹：去掉已单列的景别词，保留推拉摇移等动势 */
 function cameraTrajectoryZh(cameraZh: string, actionZh: string): string {
   const raw = resolveBeatCameraMoveZh(cameraZh, actionZh);
@@ -224,7 +248,10 @@ export function formatManhuaDialogueTimelineBlock(
      * 模型读到的更像表格而不是镜头。改成按「先架机位、再走动作、后落台词」顺叙。
      */
     // 机位先行、以分号收口：既是顺读的镜头交代，也让引擎光学能把它认回来
-    const camera = [frame, traj].filter(Boolean).map(trimTrailPunct).join("");
+    const seqZh = resolveBeatCameraSequenceZh(b.cameraZh, b.actionZh, b.durationSec);
+    const camera = seqZh
+      ? [frame, seqZh].filter(Boolean).join("·")
+      : [frame, traj].filter(Boolean).map(trimTrailPunct).join("");
     const bits = [
       trimTrailPunct(action),
       micro ? trimTrailPunct(micro) : "",

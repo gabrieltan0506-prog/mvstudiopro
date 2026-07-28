@@ -215,6 +215,62 @@ describe("manhuaClipDialogueTimeline", () => {
     expect(block).toContain("极速拉远");
   });
 
+  it("expands inherently two-phase camera moves into a timed two-beat sequence", () => {
+    const block = formatManhuaDialogueTimelineBlock(
+      [
+        {
+          index: 1,
+          durationSec: 5,
+          cameraZh: "中景，推拉结合",
+          actionZh: "@角色2 握拳对峙",
+          dialogueZh: "放开！",
+          emotionZh: "怒",
+        },
+      ],
+      5,
+    );
+    // 不再只落「推拉结合」标签：单镜 ≥4s 展开成「先A，后B」时序
+    expect(block).toContain("中景·先缓推贴近主体，后匀速拉远还原；");
+    expect(block).not.toContain("中景推拉结合；");
+  });
+
+  it("keeps writer's own sequenced camera text as-is (no re-expansion)", () => {
+    const block = formatManhuaDialogueTimelineBlock(
+      [
+        {
+          index: 1,
+          durationSec: 5,
+          cameraZh: "全景，先环绕半周看清局势，再推近到面部",
+          actionZh: "环视灵力流向",
+        },
+      ],
+      5,
+    );
+    expect(block).toContain("先环绕半周看清局势，再推近到面部");
+    expect(block).not.toContain("先先");
+  });
+
+  it("does not expand single-phase moves or sub-4s beats", () => {
+    const single = formatManhuaDialogueTimelineBlock(
+      [{ index: 1, durationSec: 5, cameraZh: "近景，微推", actionZh: "抬头" }],
+      5,
+    );
+    expect(single).toContain("近景微推；");
+    expect(single).not.toMatch(/先.+，后.+；/);
+
+    // 15s 五镜 = 每镜 3s，不足 4s 不展开
+    const short = formatManhuaDialogueTimelineBlock(
+      Array.from({ length: 5 }, (_, i) => ({
+        index: i + 1,
+        durationSec: 3,
+        cameraZh: "中景，推拉结合",
+        actionZh: "对峙",
+      })),
+      15,
+    );
+    expect(short).not.toContain("先缓推贴近主体");
+  });
+
   it("extracts scene name from keyart prompt", () => {
     expect(
       extractManhuaSceneHintFromPrompt("前言\n【本集主场景优先】古宅廊下\n直接吸收"),
