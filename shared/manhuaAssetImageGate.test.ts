@@ -308,6 +308,116 @@ describe("manhuaAssetImageGate", () => {
     // 烽火岭仅 1 集 → 不额外补四视角卡（主场景已是粮仓）
     expect(ridge).toBeUndefined();
   });
+
+  it("C 主配分级：主角(男女主级)出脸+全身两张，配角出单张全身", () => {
+    const rich = (age: string, motive: string) => ({
+      look: `${age}岁，眉眼利落、发束整齐；玄黑窄袖劲装外罩披风`,
+      motive,
+    });
+    const a = rich("26", "查清父亲旧案，与恋人活着离开棋局");
+    const b = rich("24", "洗清家族污名，不让爱情成为筹码");
+    const c = rich("52", "保住家族与二十年前最后的证据");
+    const assetCanon = {
+      characters: [
+        {
+          id: "wa_char_shen",
+          role: "character" as const,
+          nameZh: "沈沧澜",
+          lookZh: a.look,
+          motiveZh: a.motive,
+          promptZh: "原创角色定妆肖像：沈沧澜",
+        },
+        {
+          id: "wa_char_lu",
+          role: "character" as const,
+          nameZh: "陆清和",
+          lookZh: b.look,
+          motiveZh: b.motive,
+          promptZh: "原创角色定妆肖像：陆清和",
+        },
+        {
+          id: "wa_char_qi",
+          role: "character" as const,
+          nameZh: "沈岐山",
+          lookZh: c.look,
+          motiveZh: c.motive,
+          promptZh: "原创角色定妆肖像：沈岐山",
+        },
+      ],
+      props: [],
+      locations: [
+        {
+          id: "wa_scene_qiao",
+          role: "scene" as const,
+          nameZh: "断月桥",
+          lookZh: "雨夜断桥",
+          promptZh: "原创场景空镜·断月桥",
+        },
+      ],
+      episodeMainSceneId: { 1: "wa_scene_qiao" },
+    };
+    // 男女主提及远多于父辈配角
+    const episodes = [
+      {
+        index: 1,
+        body: "沈沧澜与陆清和在断月桥重逢，沈沧澜护住陆清和，陆清和出剑。沈岐山远远看着。",
+      },
+      { index: 2, body: "沈沧澜、陆清和潜入取账，沈岐山迟疑。" },
+    ];
+    const plans = planManhuaAssetImageSpawns(
+      { assetCanon, episodeIndex: 1, topic: "山河", episodes },
+      { forceEpisodeSheets: true },
+    );
+    const shen = plans.filter((p) => p.id.includes("wa_char_shen"));
+    const lu = plans.filter((p) => p.id.includes("wa_char_lu"));
+    const qi = plans.filter((p) => p.id.includes("wa_char_qi"));
+    // 男女主：脸 + 全身两张
+    expect(shen.map((p) => p.layout).sort()).toEqual(["heroFace", "heroLook"]);
+    expect(lu.map((p) => p.layout).sort()).toEqual(["heroFace", "heroLook"]);
+    // 配角(沈岐山)：只出单张全身，无脸特写
+    expect(qi).toHaveLength(1);
+    expect(qi[0]?.layout).toBe("heroLook");
+    expect(plans.some((p) => p.id === manhuaHeroFaceSheetId("wa_char_qi"))).toBe(false);
+  });
+
+  it("C：显式指定男女主(leadCharacterIds)时以其为主角，覆盖提及次数", () => {
+    const assetCanon = {
+      characters: [
+        {
+          id: "wa_char_shen",
+          role: "character" as const,
+          nameZh: "沈沧澜",
+          lookZh: "26岁，眉眼利落、发束整齐；玄黑窄袖劲装外罩披风",
+          motiveZh: "查清父亲旧案",
+          promptZh: "原创角色定妆肖像：沈沧澜",
+        },
+        {
+          id: "wa_char_qi",
+          role: "character" as const,
+          nameZh: "沈岐山",
+          lookZh: "52岁，鬓角霜白、左眉短疤；深青官袍内藏软甲",
+          motiveZh: "保住家族最后的证据",
+          promptZh: "原创角色定妆肖像：沈岐山",
+        },
+      ],
+      props: [],
+      locations: [
+        { id: "wa_scene_qiao", role: "scene" as const, nameZh: "断月桥", lookZh: "雨夜断桥", promptZh: "断月桥" },
+      ],
+      episodeMainSceneId: { 1: "wa_scene_qiao" },
+    };
+    const episodes = [{ index: 1, body: "沈沧澜反复出现在断月桥，沈沧澜又出现，沈岐山只一笔。" }];
+    // 显式把沈岐山设为主角
+    const plans = planManhuaAssetImageSpawns(
+      { assetCanon, episodeIndex: 1, episodes, leadCharacterIds: ["wa_char_qi"] },
+      { forceEpisodeSheets: true },
+    );
+    const shen = plans.filter((p) => p.id.includes("wa_char_shen"));
+    const qi = plans.filter((p) => p.id.includes("wa_char_qi"));
+    expect(qi.map((p) => p.layout).sort()).toEqual(["heroFace", "heroLook"]);
+    expect(shen).toHaveLength(1);
+    expect(shen[0]?.layout).toBe("heroLook");
+  });
 });
 
 /**

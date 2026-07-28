@@ -7,6 +7,7 @@ import {
   isManhuaHeroCharacterAnchor,
   locationNeedsFourViewGrid,
   pickPropsForCharacterSheet,
+  resolveManhuaLeadCharacterIds,
   resolveManhuaScenePlatePrompt,
 } from "./manhuaMultiViewAssetSheets";
 
@@ -48,6 +49,37 @@ describe("manhuaMultiViewAssetSheets", () => {
         motiveZh: "守关",
       }),
     ).toBe(false);
+  });
+
+  it("resolveManhuaLeadCharacterIds：按跨集提及取男女主，配角不入主角", () => {
+    const chars = [
+      { id: "c_shen", nameZh: "沈沧澜" },
+      { id: "c_lu", nameZh: "陆清和" },
+      { id: "c_qi", nameZh: "沈岐山" },
+      { id: "c_crowd", nameZh: "玄甲卫" },
+    ];
+    const episodes = [
+      { index: 1, body: "沈沧澜与陆清和重逢，沈沧澜护住陆清和。沈岐山远看。" },
+      { index: 2, body: "沈沧澜、陆清和取账，沈岐山迟疑。玄甲卫一句带过。" },
+    ];
+    const leads = resolveManhuaLeadCharacterIds(chars, episodes);
+    expect(leads.has("c_shen")).toBe(true);
+    expect(leads.has("c_lu")).toBe(true);
+    expect(leads.has("c_qi")).toBe(false);
+    expect(leads.size).toBe(2);
+  });
+
+  it("resolveManhuaLeadCharacterIds：显式男女主优先；无正文退化为人物表前二", () => {
+    const chars = [
+      { id: "c_shen", nameZh: "沈沧澜" },
+      { id: "c_qi", nameZh: "沈岐山" },
+    ];
+    // 显式指定沈岐山为主角
+    expect(
+      Array.from(resolveManhuaLeadCharacterIds(chars, [], { explicitLeadIds: ["c_qi"] })),
+    ).toEqual(["c_qi"]);
+    // 无正文、无显式 → 人物表前二
+    expect(resolveManhuaLeadCharacterIds(chars, null).size).toBe(2);
   });
 
   it("builds 2x2 four-view scene prompt (A1)", () => {
