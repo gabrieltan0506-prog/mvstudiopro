@@ -20,6 +20,10 @@ import {
   normalizeManhuaCharacterVoiceLocks,
   type ManhuaCharacterVoiceLock,
 } from "./manhuaCharacterVoiceLock.js";
+import {
+  normalizeManhuaAudioReferenceLock,
+  type ManhuaAudioReferenceLock,
+} from "./manhuaAudioReferenceLock.js";
 import { parseManhuaStylePack, type ManhuaStylePack } from "./manhuaStylePack.js";
 import {
   normalizeManhuaDeliveryPackage,
@@ -56,6 +60,8 @@ export type ManhuaWriterSession = {
   customAssetRefs: ManhuaCustomAssetRef[];
   /** 从有声成片抠出的角色声线参考（按 @角色N） */
   characterVoiceLocks: ManhuaCharacterVoiceLock[];
+  /** 参考音频·全集参考（软·可选）：BGM 与对白口音基准；不硬锁、不挡出片 */
+  audioReferenceLock: ManhuaAudioReferenceLock | null;
   /** 生成资产图时授权匿名进库（半价） */
   shareAssetToLibrary: boolean;
   /** 审定节奏模板 id（tpl_*）；扩写注入用 */
@@ -132,6 +138,7 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     workflowPhase,
     customAssetRefs: normalizeManhuaCustomAssetRefs(input.customAssetRefs),
     characterVoiceLocks: normalizeManhuaCharacterVoiceLocks(input.characterVoiceLocks),
+    audioReferenceLock: normalizeManhuaAudioReferenceLock(input.audioReferenceLock),
     shareAssetToLibrary: Boolean(input.shareAssetToLibrary),
     viralTemplateId: String(input.viralTemplateId || "").trim().slice(0, 64),
     stylePack: parseManhuaStylePack(input.stylePack) || null,

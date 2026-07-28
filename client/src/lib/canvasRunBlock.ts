@@ -74,6 +74,11 @@ import {
   type ManhuaCharacterVoiceLock,
   type ManhuaEpisodeSegmentPromptRow,
 } from "@shared/manhuaCharacterVoiceLock";
+import {
+  formatManhuaAudioReferenceLockBlock,
+  resolveManhuaAccentAudioUrl,
+  type ManhuaAudioReferenceLock,
+} from "@shared/manhuaAudioReferenceLock";
 
 const GEMINI_MODEL_MAP = {
   "gemini-3.1-pro": "gemini-3.1-pro-preview",
@@ -119,6 +124,8 @@ export type CanvasRunDeps = {
   userId?: string;
   /** 角色声线参考（从有声成片抠出）；成片时按 @角色 挂 audio_url */
   characterVoiceLocks?: ManhuaCharacterVoiceLock[] | null;
+  /** 参考音频·全集参考（软·可选）：BGM/对白口音基准；不硬锁、不挡出片 */
+  audioReferenceLock?: ManhuaAudioReferenceLock | null;
   /**
    * 资产 id→垫图 path（仅出片后台用，勿写进用户可见 prompt）。
    * 节点只存 @角色N|id=…|label=…，这里再转成可下载 URL。
@@ -1006,6 +1013,15 @@ export async function runCanvasBlock(
       const voiceLocks = deps.characterVoiceLocks || [];
       const voicePlan = planManhuaVoiceAudioForPrompt(motionPrompt, voiceLocks);
       const voiceBlock = formatManhuaCharacterVoiceLockBlock(voiceLocks, voicePlan);
+      // 参考音频·全集参考（软）：BGM/口音文本注入 + 无角色声线时口音兜底 audio_url
+      const audioRefLock = deps.audioReferenceLock || null;
+      const audioRefBlock = formatManhuaAudioReferenceLockBlock(audioRefLock);
+      const accentFallbackUrl = resolveManhuaAccentAudioUrl(audioRefLock);
+      const seedanceAudioUrls = voicePlan.audioUrls.length
+        ? voicePlan.audioUrls
+        : accentFallbackUrl
+          ? [accentFallbackUrl]
+          : [];
       const imageBind = isClip
         ? formatManhuaClipSeedanceBindLineFromEntries(keptEntries, {
             includeAssetId: false,
@@ -1037,6 +1053,7 @@ export async function runCanvasBlock(
         imageBind,
         isClip ? stripManhuaStaleAssetBindForModel(motionPrompt) : motionPrompt,
         voiceOneLine ? `【声线】${voiceOneLine}` : "",
+        audioRefBlock,
         editCraft,
       ]
         .filter(Boolean)
@@ -1048,7 +1065,7 @@ export async function runCanvasBlock(
       url = await runSeedance20(seedancePrompt, seedStill, ar, {
         imageUrls: httpsImages.length ? httpsImages : undefined,
         videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
-        audioUrls: voicePlan.audioUrls.length ? voicePlan.audioUrls : undefined,
+        audioUrls: seedanceAudioUrls.length ? seedanceAudioUrls : undefined,
         version: videoModel === "seedance-2.0-fast" ? "2.0-fast" : "2.0",
         duration:
           parseManhuaClipTargetDurationSec(motionPrompt) ??
