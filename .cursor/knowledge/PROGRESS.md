@@ -211,6 +211,19 @@
 douyin 文件应从 93MB 量级显著下降。原「失败平台一次性回补裁剪」待办消解——没有失败平台，
 全是假成功。
 
+### 晚间收工（#1000–#1005）
+
+| PR | 内容 | Deploy / 备注 |
+|---|---|---|
+| #1000 | growth merge 放行热窗裁剪 | 绿；21:32 SSH：五家均为 window=90，douyin ≈50MB |
+| #1001 | 运镜两拍时序 | 绿 |
+| #1002 | 成片 `@` 面板 + 提及连边 | 绿 |
+| #1003 | 成片另起横带 + seedLibraryId 认亲 + 独白补名 | 合入后 Deploy **红**（tsc） |
+| #1004 | `mediaUrlOf` Partial 热修 | 绿 |
+| #1005 | `fly.toml` 对齐 performance-2x / 8GB | **OPEN**（Deploy 曾把 2x 顶回 4x；现场已再 scale 回 2x） |
+
+交接全文：`~/Downloads/2026Jul28/jobs-and-codes.md`。
+
 ---
 
 ## 如何更新本文件

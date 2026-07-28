@@ -1,0 +1,32 @@
+---
+description: 开 PR / push 前必须本地跑 tsc（与相关 vitest）；禁止只靠 Deploy 发现类型错
+alwaysApply: true
+---
+
+# 本地验证门禁（硬）
+
+> **覆盖关系**：用户明文指令优先。详见 [`user-instruction-priority-always.mdc`](./user-instruction-priority-always.mdc)。
+
+## 何时必跑（硬）
+
+在 **`git push` 功能分支**、或 **`gh pr create`**、或回报「改好了 / Deploy 该绿」之前，必须先在本机跑通：
+
+1. **`pnpm check`**（`tsc --noEmit`）——与 Fly Docker 里 `pnpm build`→`tsc` 同门槛；**禁止**只跑过某一文件的 vitest 就宣称可合。
+2. **相关 vitest**：改到的模块对应 `*.test.ts`（至少 `-t` 过滤相关用例）；触及共享工厂 / 画布布局时，跑对应 `canvasDramaStudio` / `shared/*` 测试，勿只信手改。
+
+## 回报口径（硬）
+
+- 回复里写清：**跑了哪些命令、通过/失败**（例：`pnpm check` ✅；`vitest … -t layout…` ✅）。
+- **没跑就不要说「可合 / Deploy 该绿」**；若被打断未跑完，先补跑再 push / 开 PR。
+- Deploy 红若是 `tsc`——视为本门禁未守：热修分支同样先 `pnpm check` 再推。
+
+## 例外
+
+- 纯文档 / rules / `PROGRESS` / Downloads 交接 md、且不含 TS 改动：可只跳过 vitest；有 TS/共享逻辑改动则不可跳。
+- 用户本轮明文说「先推别测 / 跳过本地验证」：可跳，并在回复点明依据。
+
+## 反例
+
+- ❌ 改完 `canvasDramaStudio.ts` 只 push，等 Fly 构建报 TS2345  
+- ❌ 只跑了一个 `vitest -t` 过滤用例，没跑 `pnpm check` 就开 PR  
+- ✅ `pnpm check` + 相关 vitest 绿 → 再 push / `gh pr create`
