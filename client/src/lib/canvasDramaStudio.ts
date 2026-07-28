@@ -2049,8 +2049,9 @@ export function ensureManhuaFragmentClips(
   }
 
   /**
-   * 提及才连：本段秒轴/对照表里真出现的 @角色N…，把对应资产节点连到该段成片——
-   * 画布上看得见「这段锁了谁」。不全连：资产一多全连就是蜘蛛网。
+   * 相关才连：本段秒轴/对照表里真出现的资产（@角色N 提及，或真名在白描/台词里
+   * 出镜——用户从没敲过 @ 时真名就是「相关」的唯一信号），把对应资产节点连到
+   * 该段成片——画布上看得见「这段锁了谁」。仍不整集全连：资产一多就是蜘蛛网。
    * 换剧本清理由 stripManhuaFactoryCanvasArtifacts 按 removedIds 收边，语义不变。
    */
   {
@@ -2061,7 +2062,20 @@ export function ensureManhuaFragmentClips(
       const clip = clipBySeg.get(manhuaGlobalSegmentIndex(ep, seg.index));
       if (!clip) continue;
       const fromIds = new Set<string>();
-      for (const tag of extractManhuaMentionedAssetTags(clip.prompt)) {
+      const promptText = String(clip.prompt || "");
+      const relatedTags = extractManhuaMentionedAssetTags(promptText);
+      for (const s of lockRegistry.slots) {
+        const label = String(s.labelZh || "").trim();
+        if (
+          s.tag &&
+          label.length >= 2 &&
+          !relatedTags.includes(s.tag) &&
+          promptText.includes(label)
+        ) {
+          relatedTags.push(s.tag);
+        }
+      }
+      for (const tag of relatedTags) {
         const slot = slotByTag.get(tag);
         const slotPath = String(slot?.path || "").trim();
         const slotPathBindable = Boolean(slotPath) && isBindableAssetPath(slotPath);

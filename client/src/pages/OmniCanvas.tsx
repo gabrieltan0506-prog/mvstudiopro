@@ -1834,11 +1834,15 @@ export default function OmniCanvas() {
    */
   const manhuaCanvasMention = useMemo(() => {
     const registry = manhuaAssetMaps.registry;
+    /**
+     * 缩略图用全量 id→path（pathById 不过滤协议）：槽位图大量是同源相对路径
+     * （/api/…、/growth/…），只收 https 会把它们全滤掉、面板一排灰。
+     * logical:// 这类不可渲染的协议才排除。
+     */
     const thumbUrlByAssetId: Record<string, string> = {};
-    for (const s of registry.slots) {
-      const id = String(s.id || "").trim();
-      const p = String(s.path || "").trim();
-      if (id && /^https?:\/\//.test(p)) thumbUrlByAssetId[id] = p;
+    for (const [id, p] of Object.entries(manhuaAssetMaps.pathById)) {
+      const path = String(p || "").trim();
+      if (id && path && !path.startsWith("logical://")) thumbUrlByAssetId[id] = path;
     }
     for (const r of customAssetRefs) {
       const id = String(r?.id || "").trim();
