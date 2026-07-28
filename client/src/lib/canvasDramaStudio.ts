@@ -22,6 +22,8 @@ import {
   buildManhuaAssetPathById,
   extractManhuaMentionedAssetTags,
   formatManhuaAssetImageBindBlock,
+  isBindableAssetPath,
+  parseManhuaCanvasAssetAtTag,
   planManhuaClipSeedanceImageBind,
   resolveManhuaAssetImageBindRows,
   resolveManhuaSegmentClipAllowedAssets,
@@ -111,6 +113,7 @@ import {
   normalizeManhuaCustomAssetRefs,
   upsertGeneratedManhuaCustomAssetRef,
   type ManhuaCustomAssetRef,
+  type ManhuaCustomAssetRole,
 } from "@shared/manhuaCustomAssetRefs";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
 import {
@@ -2045,6 +2048,67 @@ export function ensureManhuaFragmentClips(
     nextEdges.push({ fromId: primary.id, toId: clip.id });
   }
 
+  /**
+   * 提及才连：本段秒轴/对照表里真出现的 @角色N…，把对应资产节点连到该段成片——
+   * 画布上看得见「这段锁了谁」。不全连：资产一多全连就是蜘蛛网。
+   * 换剧本清理由 stripManhuaFactoryCanvasArtifacts 按 removedIds 收边，语义不变。
+   */
+  {
+    const slotByTag = new Map(lockRegistry.slots.map((s) => [s.tag, s]));
+    const edgeKeys = new Set(nextEdges.map((e) => `${e.fromId}->${e.toId}`));
+    const assetNodes = nextBlocks.filter((b) => canvasAssetNodeSeed(b.id));
+    for (const seg of segments) {
+      const clip = clipBySeg.get(manhuaGlobalSegmentIndex(ep, seg.index));
+      if (!clip) continue;
+      const fromIds = new Set<string>();
+      for (const tag of extractManhuaMentionedAssetTags(clip.prompt)) {
+        const slot = slotByTag.get(tag);
+        const slotPath = String(slot?.path || "").trim();
+        const slotPathBindable = Boolean(slotPath) && isBindableAssetPath(slotPath);
+        for (const b of assetNodes) {
+          if (fromIds.has(b.id)) continue;
+          // ① 节点 prompt 已盖【画布资产@】章（过往 layout 产物）：编号直对
+          if (parseManhuaCanvasAssetAtTag(b.prompt) === tag) {
+            fromIds.add(b.id);
+            continue;
+          }
+          if (!slot) continue;
+          const hit = canvasAssetNodeSeed(b.id)!;
+          // ② 同栏内 id 互指（canon/库 id、charsheet-face 同源拆分、随机尾 id 包含）
+          if (
+            hit.role === slot.role &&
+            (hit.seed === slot.id ||
+              b.id === slot.id ||
+              hit.seed.includes(slot.id) ||
+              slot.id.includes(hit.seed))
+          ) {
+            fromIds.add(b.id);
+            continue;
+          }
+          // ③ 节点出图地址与槽位垫图同一张（上传/本集生成图）
+          if (slotPathBindable && mediaUrlOf(b) === slotPath) fromIds.add(b.id);
+        }
+        // ④ 无资产前缀的自由上传图节点：只能靠同一张图 URL 认亲
+        if (slot && slotPathBindable) {
+          for (const b of nextBlocks) {
+            if (fromIds.has(b.id) || canvasAssetNodeSeed(b.id)) continue;
+            if (b.kind !== "image" || b.id.startsWith("keyart-") || b.id.startsWith("clip-")) {
+              continue;
+            }
+            if (mediaUrlOf(b) === slotPath) fromIds.add(b.id);
+          }
+        }
+      }
+      for (const fromId of Array.from(fromIds)) {
+        if (fromId === clip.id) continue;
+        const key = `${fromId}->${clip.id}`;
+        if (edgeKeys.has(key)) continue;
+        edgeKeys.add(key);
+        nextEdges.push({ fromId, toId: clip.id });
+      }
+    }
+  }
+
   const laid = layoutManhuaEpisodeReadableChain(nextBlocks, ep, {
     assetCanon: opts?.assetCanon,
     characterSheetUrlById: opts?.characterSheetUrlById,
@@ -2302,6 +2366,26 @@ export function layoutManhuaEpisodeReadableChain(
 function mediaUrlOf(b?: CanvasBlock): string | undefined {
   if (!b) return undefined;
   return b.outputUrl || b.outputUrls?.[0] || undefined;
+}
+
+/**
+ * 画布资产节点 id → { role, seed }（识别范围对齐 assignManhuaCanvasAssetAtTags：
+ * charsheet-face/charsheet/sceneplate/wardrobeplate/wardrobe/propplate/propsheet/prop）。
+ */
+function canvasAssetNodeSeed(id: string): { role: ManhuaCustomAssetRole; seed: string } | null {
+  const m = String(id || "").match(
+    /^(charsheet-face|charsheet|sceneplate|wardrobeplate|wardrobe|propplate|propsheet|prop)-(.+)$/,
+  );
+  if (!m) return null;
+  const prefix = m[1]!;
+  const role: ManhuaCustomAssetRole = prefix.startsWith("charsheet")
+    ? "character"
+    : prefix === "sceneplate"
+      ? "scene"
+      : prefix.startsWith("wardrobe")
+        ? "wardrobe"
+        : "prop";
+  return { role, seed: m[2]! };
 }
 
 /**
