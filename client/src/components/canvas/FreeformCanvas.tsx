@@ -35,7 +35,9 @@ import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
 import {
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
   getBlockEpisodeIndex,
+  resolveManhuaClipRelatedAssetNodeIds,
   sanitizeManhuaRecapUpstreamLinks,
+  syncManhuaClipAssetEdges,
 } from "@/lib/canvasDramaStudio";
 import {
   MANHUA_CLIP_CONTINUITY_HINT_ZH,
@@ -1564,9 +1566,24 @@ export default function FreeformCanvas({
                       <ManhuaPromptMentionEditor
                         segmentIndex={resolveClipSegmentIndex(block.id, block.prompt)}
                         value={sanitizeManhuaClipPromptForUi(block.prompt)}
-                        onChange={(next) =>
-                          patchOne(block.id, { prompt: sanitizeManhuaClipPromptForUi(next) })
-                        }
+                        onChange={(next) => {
+                          const cleaned = sanitizeManhuaClipPromptForUi(next);
+                          patchOne(block.id, { prompt: cleaned });
+                          /**
+                           * @ 选完只改对照表不够：人/场/道节点都要接到这段成片，
+                           * 否则画布上永远只剩静帧→成片一条线，看着像没锁。
+                           */
+                          if (manhuaMention.registry) {
+                            const fromIds = resolveManhuaClipRelatedAssetNodeIds({
+                              clipPrompt: cleaned,
+                              blocks,
+                              registry: manhuaMention.registry,
+                            });
+                            onEdgesChange(
+                              syncManhuaClipAssetEdges(edges, block.id, fromIds),
+                            );
+                          }
+                        }}
                         rows={6}
                         placeholder="写清谁在做什么、镜头怎么动；敲 @ 锁本集人物/场景/道具"
                         registry={manhuaMention.registry}

@@ -2049,64 +2049,23 @@ export function ensureManhuaFragmentClips(
   }
 
   /**
-   * 提及才连：本段秒轴/对照表里真出现的 @角色N…，把对应资产节点连到该段成片——
-   * 画布上看得见「这段锁了谁」。不全连：资产一多全连就是蜘蛛网。
-   * 换剧本清理由 stripManhuaFactoryCanvasArtifacts 按 removedIds 收边，语义不变。
+   * 对照表里锁了谁，就连谁：角色 / 场景 / 道具节点都接到本段成片。
+   * 以前只靠正文 @ 提及 + cust_* 对 id，于是经常只剩 keyart→clip 一条线——
+   * Image 对照表明明有三行，画布上看着却像没锁。
    */
   {
-    const slotByTag = new Map(lockRegistry.slots.map((s) => [s.tag, s]));
-    const edgeKeys = new Set(nextEdges.map((e) => `${e.fromId}->${e.toId}`));
-    const assetNodes = nextBlocks.filter((b) => canvasAssetNodeSeed(b.id));
+    let edgesAcc = nextEdges;
     for (const seg of segments) {
       const clip = clipBySeg.get(manhuaGlobalSegmentIndex(ep, seg.index));
       if (!clip) continue;
-      const fromIds = new Set<string>();
-      for (const tag of extractManhuaMentionedAssetTags(clip.prompt)) {
-        const slot = slotByTag.get(tag);
-        const slotPath = String(slot?.path || "").trim();
-        const slotPathBindable = Boolean(slotPath) && isBindableAssetPath(slotPath);
-        for (const b of assetNodes) {
-          if (fromIds.has(b.id)) continue;
-          // ① 节点 prompt 已盖【画布资产@】章（过往 layout 产物）：编号直对
-          if (parseManhuaCanvasAssetAtTag(b.prompt) === tag) {
-            fromIds.add(b.id);
-            continue;
-          }
-          if (!slot) continue;
-          const hit = canvasAssetNodeSeed(b.id)!;
-          // ② 同栏内 id 互指（canon/库 id、charsheet-face 同源拆分、随机尾 id 包含）
-          if (
-            hit.role === slot.role &&
-            (hit.seed === slot.id ||
-              b.id === slot.id ||
-              hit.seed.includes(slot.id) ||
-              slot.id.includes(hit.seed))
-          ) {
-            fromIds.add(b.id);
-            continue;
-          }
-          // ③ 节点出图地址与槽位垫图同一张（上传/本集生成图）
-          if (slotPathBindable && mediaUrlOf(b) === slotPath) fromIds.add(b.id);
-        }
-        // ④ 无资产前缀的自由上传图节点：只能靠同一张图 URL 认亲
-        if (slot && slotPathBindable) {
-          for (const b of nextBlocks) {
-            if (fromIds.has(b.id) || canvasAssetNodeSeed(b.id)) continue;
-            if (b.kind !== "image" || b.id.startsWith("keyart-") || b.id.startsWith("clip-")) {
-              continue;
-            }
-            if (mediaUrlOf(b) === slotPath) fromIds.add(b.id);
-          }
-        }
-      }
-      for (const fromId of Array.from(fromIds)) {
-        if (fromId === clip.id) continue;
-        const key = `${fromId}->${clip.id}`;
-        if (edgeKeys.has(key)) continue;
-        edgeKeys.add(key);
-        nextEdges.push({ fromId, toId: clip.id });
-      }
+      const fromIds = resolveManhuaClipRelatedAssetNodeIds({
+        clipPrompt: clip.prompt,
+        blocks: nextBlocks,
+        registry: lockRegistry,
+      });
+      edgesAcc = syncManhuaClipAssetEdges(edgesAcc, clip.id, fromIds);
     }
+    nextEdges = edgesAcc;
   }
 
   const laid = layoutManhuaEpisodeReadableChain(nextBlocks, ep, {
@@ -2165,7 +2124,7 @@ function placeManhuaStackColumns(
  * 2 场景墙（@场景N，分行，不与角色混排）
  * 3 道具墙（弱化一行）
  * 4 静帧：每列最多 5 镜竖排
- * 5 成片：每段约 15s 一卡，同理分列（卡面读秒轴）
+ * 5 成片：另起一条横带，按段号 1→N 单列竖排（不跟静帧同分列挨在一起）
  * 只改坐标 + 资产@标，不重生成。
  */
 /** 从定妆卡节点收集 wa_char_* → HTTPS，供特写格 @道具 子编号挂图 */
@@ -2345,8 +2304,15 @@ export function layoutManhuaEpisodeReadableChain(
     stackPer,
     pos,
   );
-  const clipY = keyartY + (keyStack.rows ? keyStack.rows * gapY + Math.round(gapY * 0.25) : 0);
-  placeManhuaStackColumns(clips, originX, clipY, gapX, gapY, stackPer, pos);
+  /**
+   * 成片另起一条横带：以前跟静帧同分列、只隔 0.25 行距，看起来像同一列往下连。
+   * 现在拉开带距，再按段号 1→N 单列竖排——视频生成文本框自成一块，不贴静帧。
+   */
+  const clipBandGap = Math.round(gapY * 0.9);
+  const clipY =
+    keyartY + (keyStack.rows ? keyStack.rows * gapY + clipBandGap : clipBandGap);
+  const clipStackPer = Math.max(clips.length, 1);
+  placeManhuaStackColumns(clips, originX, clipY, gapX, gapY, clipStackPer, pos);
 
   const positioned = blocks.map((b) => {
     const p = pos.get(b.id);
@@ -2363,7 +2329,9 @@ export function layoutManhuaEpisodeReadableChain(
   });
 }
 
-function mediaUrlOf(b?: CanvasBlock): string | undefined {
+function mediaUrlOf(
+  b?: Pick<CanvasBlock, "outputUrl" | "outputUrls"> | null,
+): string | undefined {
   if (!b) return undefined;
   return b.outputUrl || b.outputUrls?.[0] || undefined;
 }
@@ -2372,7 +2340,9 @@ function mediaUrlOf(b?: CanvasBlock): string | undefined {
  * 画布资产节点 id → { role, seed }（识别范围对齐 assignManhuaCanvasAssetAtTags：
  * charsheet-face/charsheet/sceneplate/wardrobeplate/wardrobe/propplate/propsheet/prop）。
  */
-function canvasAssetNodeSeed(id: string): { role: ManhuaCustomAssetRole; seed: string } | null {
+export function canvasAssetNodeSeed(
+  id: string,
+): { role: ManhuaCustomAssetRole; seed: string } | null {
   const m = String(id || "").match(
     /^(charsheet-face|charsheet|sceneplate|wardrobeplate|wardrobe|propplate|propsheet|prop)-(.+)$/,
   );
@@ -2386,6 +2356,114 @@ function canvasAssetNodeSeed(id: string): { role: ManhuaCustomAssetRole; seed: s
         ? "wardrobe"
         : "prop";
   return { role, seed: m[2]! };
+}
+
+function slotMatchesAssetNode(
+  slot: {
+    id: string;
+    role: ManhuaCustomAssetRole;
+    path: string;
+    labelZh?: string;
+    seedLibraryId?: string | null;
+  },
+  block: Pick<CanvasBlock, "id" | "prompt"> &
+    Partial<Pick<CanvasBlock, "outputUrl" | "outputUrls">>,
+  tag: string,
+): boolean {
+  if (parseManhuaCanvasAssetAtTag(block.prompt) === tag) return true;
+  const hit = canvasAssetNodeSeed(block.id);
+  if (!hit || hit.role !== slot.role) return false;
+  const seed = String(slot.seedLibraryId || "").trim();
+  const slotId = String(slot.id || "").trim();
+  if (seed && (hit.seed === seed || hit.seed.includes(seed) || seed.includes(hit.seed))) {
+    return true;
+  }
+  if (
+    slotId &&
+    (hit.seed === slotId ||
+      block.id === slotId ||
+      hit.seed.includes(slotId) ||
+      slotId.includes(hit.seed))
+  ) {
+    return true;
+  }
+  const slotPath = String(slot.path || "").trim();
+  if (slotPath && isBindableAssetPath(slotPath) && mediaUrlOf(block) === slotPath) return true;
+  const label = String(slot.labelZh || "").trim();
+  if (label.length >= 2 && String(block.prompt || "").includes(label)) return true;
+  return false;
+}
+
+/**
+ * 成片提示词里锁了的资产 → 画布上对应节点 id。
+ * 以【资产·Image对照】为准（@ 选完就落表）；正文 @提及 / 真名出镜作补充。
+ */
+export function resolveManhuaClipRelatedAssetNodeIds(input: {
+  clipPrompt: string | null | undefined;
+  blocks: Array<
+    Pick<CanvasBlock, "id" | "kind" | "prompt"> &
+      Partial<Pick<CanvasBlock, "outputUrl" | "outputUrls">>
+  >;
+  registry: ManhuaAssetLockRegistry | null | undefined;
+}): string[] {
+  const registry = input.registry;
+  if (!registry?.slots?.length) return [];
+  const promptText = String(input.clipPrompt || "");
+  const tags = new Set<string>([
+    ...parseManhuaAssetImageBindBlock(promptText).map((r) => r.tag),
+    ...extractManhuaMentionedAssetTags(promptText),
+  ]);
+  for (const s of registry.slots) {
+    const label = String(s.labelZh || "").trim();
+    if (s.tag && label.length >= 2 && promptText.includes(label)) tags.add(s.tag);
+  }
+  if (!tags.size) return [];
+
+  const slotByTag = new Map(registry.slots.map((s) => [s.tag, s]));
+  const fromIds = new Set<string>();
+  const assetNodes = input.blocks.filter((b) => canvasAssetNodeSeed(b.id));
+
+  for (const tag of Array.from(tags)) {
+    const slot = slotByTag.get(tag);
+    if (!slot) continue;
+    for (const b of assetNodes) {
+      if (fromIds.has(b.id)) continue;
+      if (slotMatchesAssetNode(slot, b, tag)) fromIds.add(b.id);
+    }
+    const slotPath = String(slot.path || "").trim();
+    if (!slotPath || !isBindableAssetPath(slotPath)) continue;
+    for (const b of input.blocks) {
+      if (fromIds.has(b.id) || canvasAssetNodeSeed(b.id)) continue;
+      if (b.kind !== "image" || b.id.startsWith("keyart-") || b.id.startsWith("clip-")) continue;
+      if (mediaUrlOf(b) === slotPath) fromIds.add(b.id);
+    }
+  }
+  return Array.from(fromIds);
+}
+
+/**
+ * 按对照表重挂「资产节点 → 这段成片」的边；静帧→成片等其它边不动。
+ * 敲 @ 改提示词时也要走这里，否则画布上永远只有铺段时留下的那一条线。
+ */
+export function syncManhuaClipAssetEdges(
+  edges: CanvasEdge[],
+  clipId: string,
+  assetFromIds: string[],
+): CanvasEdge[] {
+  const clip = String(clipId || "").trim();
+  if (!clip) return edges;
+  const kept = edges.filter((e) => !(e.toId === clip && canvasAssetNodeSeed(e.fromId)));
+  const keys = new Set(kept.map((e) => `${e.fromId}->${e.toId}`));
+  const next = [...kept];
+  for (const fromId of assetFromIds) {
+    const from = String(fromId || "").trim();
+    if (!from || from === clip) continue;
+    const key = `${from}->${clip}`;
+    if (keys.has(key)) continue;
+    keys.add(key);
+    next.push({ fromId: from, toId: clip });
+  }
+  return next;
 }
 
 /**

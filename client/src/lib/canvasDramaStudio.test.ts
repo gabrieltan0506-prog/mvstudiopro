@@ -14,6 +14,7 @@ import {
   layoutManhuaEpisodeReadableChain,
   manhuaEpisodeHasFactoryChain,
   replaceManhuaEpisodeChain,
+  resolveManhuaClipRelatedAssetNodeIds,
   stripManhuaFactoryCanvasArtifacts,
   resolveFactoryResumeStage,
   resolveManhuaEpisodeSpawnContinuity,
@@ -23,7 +24,9 @@ import {
   sanitizeManhuaRecapUpstreamLinks,
   spawnManhuaDramaStudio,
   spawnManhuaDramaStudioSeries,
+  syncManhuaClipAssetEdges,
 } from "./canvasDramaStudio";
+import { buildManhuaAssetLockRegistry } from "@shared/manhuaAssetLockRegistry";
 import {
   collectVisionImages,
   defaultCanvasBlock,
@@ -31,7 +34,10 @@ import {
 } from "./canvasTypes";
 import * as canvasRunBlock from "./canvasRunBlock";
 import type { CanvasRunDeps } from "./canvasRunBlock";
-import { resolveKeyartShotIndex } from "@shared/manhuaScriptWorkbench";
+import {
+  resolveClipSegmentIndex,
+  resolveKeyartShotIndex,
+} from "@shared/manhuaScriptWorkbench";
 
 describe("canvasDramaStudio factory", () => {
   it("does not hard-apply dynasty wardrobe from topic text", () => {
@@ -423,6 +429,22 @@ describe("canvasDramaStudio factory", () => {
     expect(keyarts[1]!.x).toBe(keyarts[0]!.x);
     expect(keyarts[5]!.x).toBeGreaterThan(keyarts[0]!.x);
     expect(keyarts[0]!.y).toBeGreaterThan(assets[0]!.y);
+
+    // 成片另起横带：单列竖排，不跟静帧同分列贴在一起
+    const clips = laid
+      .filter((b) => b.id.startsWith("clip-") && (/-g\d{2,}/i.test(b.id) || /-s\d{2,}/.test(b.id)))
+      .sort(
+        (a, b) =>
+          resolveClipSegmentIndex(a.id, a.prompt) - resolveClipSegmentIndex(b.id, b.prompt),
+      );
+    expect(clips.length).toBeGreaterThanOrEqual(2);
+    const keyartMaxY = Math.max(...keyarts.map((k) => k.y));
+    expect(clips[0]!.y).toBeGreaterThan(keyartMaxY);
+    // 单列：各段同 x，y 随段号递增
+    for (let i = 1; i < clips.length; i++) {
+      expect(clips[i]!.x).toBe(clips[0]!.x);
+      expect(clips[i]!.y).toBeGreaterThan(clips[i - 1]!.y);
+    }
   });
 
   it("ensureManhuaFragmentClips lays one clip per segment and targets a single fragment", () => {
@@ -599,6 +621,100 @@ describe("canvasDramaStudio factory", () => {
     }
     // 边不得重复
     expect(edgeKeys.length).toBe(edgeSet.size);
+  });
+
+  it("对照表锁了人/场/道时三条线都接到成片（cust_* 靠 seedLibraryId 认亲）", () => {
+    const registry = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "cust_hero",
+          url: "https://cdn.example/hero.jpg",
+          role: "character",
+          source: "generated",
+          labelZh: "沈沧澜",
+          seedLibraryId: "wa_char_shen",
+        },
+        {
+          id: "cust_scene",
+          url: "https://cdn.example/bridge.jpg",
+          role: "scene",
+          source: "generated",
+          labelZh: "断月桥",
+          seedLibraryId: "wa_scene_bridge",
+        },
+        {
+          id: "cust_prop",
+          url: "https://cdn.example/jade.jpg",
+          role: "prop",
+          source: "generated",
+          labelZh: "双鱼玉佩",
+          seedLibraryId: "wa_prop_yupei",
+        },
+      ],
+    });
+    const blocks: Array<{
+      id: string;
+      kind: "image" | "video";
+      prompt: string;
+      outputUrl?: string;
+      outputUrls?: string[];
+    }> = [
+      {
+        id: "charsheet-wa_char_shen",
+        kind: "image",
+        prompt: "定妆",
+        outputUrl: "https://cdn.example/hero.jpg",
+        outputUrls: ["https://cdn.example/hero.jpg"],
+      },
+      {
+        id: "sceneplate-wa_scene_bridge",
+        kind: "image",
+        prompt: "场景",
+        outputUrl: "https://cdn.example/bridge.jpg",
+        outputUrls: ["https://cdn.example/bridge.jpg"],
+      },
+      {
+        id: "propsheet-wa_prop_yupei",
+        kind: "image",
+        prompt: "道具",
+        outputUrl: "https://cdn.example/jade.jpg",
+        outputUrls: ["https://cdn.example/jade.jpg"],
+      },
+      {
+        id: "clip-e01-g01",
+        kind: "video",
+        prompt: [
+          "0–5s：沈沧澜摩过腰间双鱼玉佩。",
+          "【资产·Image对照】",
+          "@角色1|id=cust_hero|label=沈沧澜|kind=角色|duty=identity",
+          "@场景1|id=cust_scene|label=断月桥|kind=场景",
+          "@道具1|id=cust_prop|label=双鱼玉佩|kind=道具",
+        ].join("\n"),
+        outputUrls: [],
+      },
+    ];
+    const fromIds = resolveManhuaClipRelatedAssetNodeIds({
+      clipPrompt: blocks[3]!.prompt,
+      blocks,
+      registry,
+    });
+    expect(fromIds.sort()).toEqual(
+      [
+        "charsheet-wa_char_shen",
+        "propsheet-wa_prop_yupei",
+        "sceneplate-wa_scene_bridge",
+      ].sort(),
+    );
+    const edges = syncManhuaClipAssetEdges(
+      [{ fromId: "keyart-e01-s01", toId: "clip-e01-g01" }],
+      "clip-e01-g01",
+      fromIds,
+    );
+    const keys = new Set(edges.map((e) => `${e.fromId}->${e.toId}`));
+    expect(keys.has("keyart-e01-s01->clip-e01-g01")).toBe(true);
+    expect(keys.has("charsheet-wa_char_shen->clip-e01-g01")).toBe(true);
+    expect(keys.has("sceneplate-wa_scene_bridge->clip-e01-g01")).toBe(true);
+    expect(keys.has("propsheet-wa_prop_yupei->clip-e01-g01")).toBe(true);
   });
 
   it("episode 2 first segment clip uses global g07 (6 segs/ep)", () => {

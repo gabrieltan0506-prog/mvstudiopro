@@ -486,7 +486,7 @@ export function formatManhuaEpisodeSegmentPlanPromptBlock(
     `（硬性：至少 ${MANHUA_EPISODE_SEGMENT_COUNT_MIN} 段、至多 ${MANHUA_EPISODE_SEGMENT_COUNT_MAX} 段；推荐 ${n} 段；每段约 ${durationSec} 秒；整集约 ${minSec}–${maxSec} 秒。预算期勿写满十多段；禁止寒暄灌水、禁止段间复制粘贴。）`,
     `每一段必须用下列字段（缺一不可）：`,
     `- 意图：一句「观众应感到什么」（单一戏剧意图）；机位/光/表演只服务这一句。`,
-    `- 对白：至少 ${MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES} 句直角引号「」（推荐 3–4 句），须推动关系/信息/冲突；禁止两句口号撑满 ${durationSec} 秒。`,
+    `- 对白：至少 ${MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES} 句直角引号「」（推荐 3–4 句），须推动关系/信息/冲突；禁止两句口号撑满 ${durationSec} 秒。每句带说话人（写法：苏照雪：「…」或 @角色N「…」），群戏尤其必须带——不带名字的台词成片里锁不到脸、口型没人认领。`,
     `- 表演：写清表情、肢体与情绪起伏（可拍），与对白气口对齐；禁止只写抽象词如「很生气」。`,
     /**
      * 这几栏原文会被直接拼进视频生成提示词，中间不再过模型润色。写成「推近」
