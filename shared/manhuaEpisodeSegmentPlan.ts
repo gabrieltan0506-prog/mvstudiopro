@@ -308,6 +308,30 @@ export function inferManhuaCastZhFromDialogue(
   return names.slice(0, 4).join("；");
 }
 
+/**
+ * 意图兜底：某段缺「意图」但对白+表演齐全时，从对白+表演自动概括一句
+ * 「观众应感到什么」，让门禁不再因单缺意图卡住、导戏也拿得到锚。
+ * 机器概括（够用可改）；不改写用户原文，仅在解析时补进 plan。
+ */
+export function deriveManhuaSegmentIntentFallbackZh(
+  beat: Pick<ManhuaEpisodeSegmentBeat, "dialogueZh" | "performanceZh">,
+): string {
+  const quotes = extractManhuaSegmentDialogueQuotes(beat.dialogueZh || "");
+  // 取末句对白（多为本段落点/情绪高点）去掉说话人名，作情绪落点
+  const lastQuote = quotes.length
+    ? String(quotes[quotes.length - 1] || "").replace(/^[^「『"“:：]{1,12}\s*[：:]\s*/, "").replace(/[「『」』"“”]/g, "").trim()
+    : "";
+  const perf = String(beat.performanceZh || "")
+    .split(/[；;。\n]/)[0]
+    ?.trim()
+    .slice(0, 40);
+  const hook = lastQuote ? lastQuote.slice(0, 28) : "";
+  if (hook && perf) return `让观众抓住本段落点「${hook}」，随${perf}的情绪推进`.slice(0, 60);
+  if (hook) return `让观众抓住本段落点：「${hook}」`.slice(0, 60);
+  if (perf) return `让观众感到本段情绪推进：${perf}`.slice(0, 60);
+  return "";
+}
+
 /** 从「#### 段01」或「#### 段 1」块解析 */
 export function parseManhuaEpisodeSegmentPlanFromMarkdown(md: string): ManhuaEpisodeSegmentPlan {
   const text = String(md || "");
@@ -325,6 +349,14 @@ export function parseManhuaEpisodeSegmentPlanFromMarkdown(md: string): ManhuaEpi
         continue;
       }
       beat[field.key] = pickField(block, field.aliases);
+    }
+    // 意图兜底：缺意图但对白+表演齐全 → 自动概括一句，永不因单缺意图卡门禁
+    if (
+      !String(beat.intentZh || "").trim() &&
+      String(beat.dialogueZh || "").trim() &&
+      String(beat.performanceZh || "").trim()
+    ) {
+      beat.intentZh = deriveManhuaSegmentIntentFallbackZh(beat);
     }
     segments.push(beat);
   }

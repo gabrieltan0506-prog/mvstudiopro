@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildManhuaEpisodeSegmentPlanFixtureMarkdown,
+  deriveManhuaSegmentIntentFallbackZh,
   evaluateManhuaEpisodeSegmentPlanQuality,
   formatManhuaEpisodeSegmentPlanPromptBlock,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
@@ -16,6 +17,49 @@ describe("manhuaEpisodeSegmentPlan", () => {
     const q = evaluateManhuaEpisodeSegmentPlanQuality(plan);
     expect(q.ok).toBe(true);
     expect(q.readyCount).toBe(6);
+  });
+
+  it("意图兜底：缺意图但对白+表演齐 → 解析时自动补意图、门禁不再卡", () => {
+    // 造 5 段：字段齐全但都不写「意图」
+    const seg = (n: number, spk: string, line: string, scene: string) =>
+      [
+        `#### 段${String(n).padStart(2, "0")}`,
+        `- 对白：`,
+        `  - ${spk}：「${line}」`,
+        `  - 对手：「${line}，你听清了没有。」`,
+        `  - ${spk}：「今夜过后再说，别回头。」`,
+        `- 表演：${spk}咬肌隆起、呼吸短促，却先护住对方；对手眼神由惊转硬。`,
+        `- 场景：${scene}`,
+        `- 配色风格：墨蓝雨夜、火焰橙红`,
+        `- 角色：${spk}、对手`,
+        `- 服装道具：玄黑劲装、长剑`,
+        `- 光影运镜：低机位贴身推进，焦点落在${spk}侧脸`,
+      ].join("\n");
+    const md = [
+      seg(1, "沈沧澜", "账册在桥中央，我断绳", "断月桥"),
+      seg(2, "陆清和", "他们认得你的剑路", "断月桥"),
+      seg(3, "沈沧澜", "先活过今夜", "苍云客栈"),
+      seg(4, "陆清和", "玉扣为何能合上", "苍云客栈"),
+      seg(5, "沈沧澜", "刀该回头见血", "废驿档房"),
+    ].join("\n\n");
+    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(md);
+    expect(plan.segments).toHaveLength(5);
+    // 每段意图都被自动补上（≥4 字）
+    for (const s of plan.segments) {
+      expect(s.intentZh.length).toBeGreaterThanOrEqual(4);
+    }
+    const q = evaluateManhuaEpisodeSegmentPlanQuality(plan);
+    expect(q.ok).toBe(true);
+    expect(q.readyCount).toBe(5);
+  });
+
+  it("deriveManhuaSegmentIntentFallbackZh：无对白无表演 → 空串", () => {
+    expect(deriveManhuaSegmentIntentFallbackZh({ dialogueZh: "", performanceZh: "" })).toBe("");
+    const s = deriveManhuaSegmentIntentFallbackZh({
+      dialogueZh: "沈沧澜：「别回头。」",
+      performanceZh: "咬肌隆起、呼吸短促",
+    });
+    expect(s.length).toBeGreaterThanOrEqual(4);
   });
 
   it("accepts 5 contiguous ready segments", () => {
