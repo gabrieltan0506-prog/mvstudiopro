@@ -27,6 +27,7 @@ import {
   syncManhuaClipAssetEdges,
 } from "./canvasDramaStudio";
 import { buildManhuaAssetLockRegistry } from "@shared/manhuaAssetLockRegistry";
+import { parseManhuaEpisodeSegmentPlanFromMarkdown } from "@shared/manhuaEpisodeSegmentPlan";
 import {
   collectVisionImages,
   defaultCanvasBlock,
@@ -533,6 +534,69 @@ describe("canvasDramaStudio factory", () => {
     expect(frag.targetBlockIds).toEqual([frag.clipId]);
     const ordered = resolveManhuaFactoryOrderedIds(ensured.blocks, "clip", 1);
     expect(filterManhuaFactoryTargetIds(ordered, frag.targetBlockIds)).toEqual([frag.clipId]);
+  });
+
+  it("ensureManhuaFragmentClips 拆假锁：有人出场但对照为空 → 不写 @图片N 锁定构图假硬绑", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id
+        ? {
+            ...b,
+            status: "done" as const,
+            outputText:
+              "1. 黑衣剑客推门进客栈，黑衣剑客：「你来了。」\n2. 油灯下对峙，黑衣剑客：「刀在何处？」\n3. 拔刀交锋\n4. 雨夜收刀\n5. 撑伞离去留钩子",
+          }
+        : b.id.startsWith("keyart-")
+          ? { ...b, status: "done" as const, outputUrl: "https://example.com/k1.jpg" }
+          : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+    const withKeyarts = expanded.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        : b,
+    );
+    // 可拍表点了「黑衣剑客」，资产库却只有对不上的「都市白领」→ 段有人却锁不到脸
+    const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(
+      [
+        "## 段 01",
+        "角色：黑衣剑客",
+        "对白：黑衣剑客：「你来了。」",
+        "场景：客栈",
+        "",
+        "## 段 02",
+        "角色：黑衣剑客",
+        "对白：黑衣剑客：「刀在何处？」",
+        "场景：客栈",
+      ].join("\n"),
+    );
+    const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1, {
+      segmentPlan,
+      customRefs: [
+        {
+          id: "stranger",
+          url: "https://cdn.example/stranger.jpg",
+          role: "character",
+          source: "generated",
+          // 故意与分镜文案（黑衣剑客）对不上：对照应为空、按新口径属未锁脸
+          labelZh: "都市白领",
+        },
+      ],
+    });
+    const segClips = ensured.blocks.filter(
+      (b) => b.id.startsWith("clip-") && (/-g\d{2,}/i.test(b.id) || /-s\d{2,}/.test(b.id)),
+    );
+    expect(segClips.length).toBeGreaterThanOrEqual(1);
+    const p0 = segClips[0]?.prompt || "";
+    // 未锁脸：不得出现「@图片N锁定…画面构图」这类静帧假硬绑，也不得挂【出片Image硬绑】
+    expect(p0).not.toMatch(/@图片\d+锁定.*(画面构图|构图)/);
+    expect(p0).not.toContain("【出片Image硬绑】");
+    // 应改挂【待锁·未锁脸】提示
+    expect(p0).toContain("【待锁·未锁脸】");
   });
 
   it("ensureManhuaFragmentClips links @-mentioned asset nodes to segment clips only", () => {

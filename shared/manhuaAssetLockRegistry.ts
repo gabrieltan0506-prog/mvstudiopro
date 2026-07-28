@@ -747,34 +747,41 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
   const canonOf = (id: string) =>
     (input.assetCanon?.characters || []).find((c) => c.id === id);
 
-  type Scored = { id: string; score: number };
+  type Scored = { id: string; nameScore: number; lookHits: number };
   const scored: Scored[] = [];
   const matchedCastNames = new Set<string>();
   for (const s of chars) {
     const canon = canonOf(s.id);
     const names = [s.labelZh, canon?.nameZh, canon?.aliasZh].filter(Boolean) as string[];
-    let score = 0;
+    /**
+     * A 口径（对白说话人真名桥接）：只有「真名 / 文案名 / @tag」这类**身份**命中
+     * 才计入 nameScore，据此锁角色。外形词（黑衣、剑客…）单列 lookHits，
+     * **绝不单独锁人**——否则「黑衣剑客」会撞到 lookZh 带黑衣的另一角，
+     * 把刚拆掉的假锁换个形式放回来、每段还锁错人。
+     */
+    let nameScore = 0;
     for (const n of names) {
       const castHit = castNames.find((cn) => cn === n || cn.includes(n) || n.includes(cn));
       if (castHit) {
         matchedCastNames.add(castHit);
-        score = Math.max(score, 100);
+        nameScore = Math.max(nameScore, 100);
       } else if (castZh && textHasName(castZh, n)) {
-        score = Math.max(score, 90);
+        nameScore = Math.max(nameScore, 90);
       } else if (textHasName(hay, n)) {
-        score = Math.max(score, 70);
+        nameScore = Math.max(nameScore, 70);
       }
     }
-    if (mentionedTags.includes(s.tag)) score = Math.max(score, 85);
+    if (mentionedTags.includes(s.tag)) nameScore = Math.max(nameScore, 85);
     const lookBlob = [s.labelZh, canon?.lookZh, canon?.nameZh].filter(Boolean).join("｜");
     const lookHits = lookTokenHits(hay, lookBlob);
-    if (lookHits >= 2) score = Math.max(score, 55 + lookHits * 5);
-    if (score > 0) scored.push({ id: s.id, score });
+    if (nameScore > 0) scored.push({ id: s.id, nameScore, lookHits });
   }
-  scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
-  // 只收真命中：cast/名命中优先；外形词命中须 ≥55 且没有更高分假阳性时才用
+  // 真名分优先；外形词仅作同分排序，不作独立锁定依据
+  scored.sort(
+    (a, b) => b.nameScore - a.nameScore || b.lookHits - a.lookHits || a.id.localeCompare(b.id),
+  );
   const characterIds = scored
-    .filter((x) => x.score >= 55)
+    .filter((x) => x.nameScore >= 70)
     .slice(0, castCap)
     .map((x) => x.id);
 

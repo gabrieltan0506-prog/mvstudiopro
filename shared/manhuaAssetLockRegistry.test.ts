@@ -20,6 +20,7 @@ import {
   upsertManhuaPromptAssetBindRow,
 } from "./manhuaAssetLockRegistry";
 import { parseManhuaSheetPropSubTagsFromPrompt } from "./manhuaSheetPropSubTags";
+import { inferManhuaCastZhFromDialogue } from "./manhuaEpisodeSegmentPlan";
 import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon";
 
 describe("manhuaAssetLockRegistry", () => {
@@ -978,5 +979,64 @@ describe("道具单件图 vs 定妆特写格草稿", () => {
       mentionedTags: [jade!.tag],
     });
     expect(plan.entries.some((e) => e.url === "https://cdn.example/jade.jpg")).toBe(true);
+  });
+});
+
+/**
+ * L2(A) 对白说话人真名桥接：只有真名/文案名/@tag 命中才锁角色；
+ * 外形词（玄色鹤氅…）单独出现绝不锁人——否则「描述词→锁错人」＝假锁复活。
+ */
+describe("L2(A) 描述词不单独锁人 · 真名才桥接", () => {
+  const canon = {
+    characters: [
+      {
+        id: "wa_char_shen",
+        role: "character" as const,
+        nameZh: "沈砚舟",
+        lookZh: "玄色鹤氅，腰悬双鱼玉佩",
+        promptZh: "沈砚舟",
+      },
+    ],
+    props: [],
+    locations: [],
+    episodeMainSceneId: {},
+  } as unknown as ManhuaWriterAssetCanon;
+
+  const buildReg = () =>
+    buildManhuaAssetLockRegistry({
+      assetCanon: canon,
+      customRefs: [
+        {
+          id: "cust_shen",
+          url: "https://cdn.example/shen-face.jpg",
+          role: "character",
+          source: "generated",
+          labelZh: "沈砚舟",
+          seedLibraryId: "wa_char_shen",
+        },
+      ],
+    });
+
+  it("只出现外形词、没点真名 → 不锁角色（不制造假锁）", () => {
+    const allowed = resolveManhuaSegmentClipAllowedAssets({
+      registry: buildReg(),
+      assetCanon: canon,
+      // 旁白只有外形词「玄色鹤氅」，既无 castZh 真名也无对白说话人
+      haystack: "【第1段·15s】0–5s：玄色鹤氅的身影踩灭箭火，腰悬双鱼玉佩。",
+    });
+    expect(allowed.characterIds).toEqual([]);
+  });
+
+  it("对白说话人真名（沈砚舟：「…」）→ 桥接锁到定妆人", () => {
+    const dialogue = "沈砚舟：「你终于来了。」";
+    const allowed = resolveManhuaSegmentClipAllowedAssets({
+      registry: buildReg(),
+      assetCanon: canon,
+      // 可拍表缺「角色：」时，说话人真名经 inferManhuaCastZhFromDialogue 补进 castZh
+      castZh: inferManhuaCastZhFromDialogue(null, dialogue),
+      haystack: `【第1段·15s】0–5s：玄色鹤氅的身影推门。${dialogue}`,
+    });
+    expect(allowed.characterIds).toEqual(["cust_shen"]);
+    expect(allowed.mode).toBe("matched");
   });
 });
