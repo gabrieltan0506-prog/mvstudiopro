@@ -60,6 +60,36 @@
 |---|---|---|
 | #994 | growth 冷备 cron 每小时 → 每 2 小时 | 绿 |
 | #995 | 热数据保留窗口 365 → 90 天（`pruneTrendItemsToHotWindow`） | 绿 |
+| #996 | `fly.toml` 对齐线上真值：30 个 `[env]` 键被同名 secret 静默接管 | 绿 |
+| #997 | `@` 改读资产库；不锁脸的成片被拦下 | 绿 |
+| #998 | `@` 面板改挂 body；后期剪辑手法进出片提示词、不进审阅面 | 绿 |
+| #999 | 关键道具出单件图（`propsheet-`），才真锁得住 | 绿 |
+
+### 画布资产锁定这三刀（#997–#999）的共同根因
+
+都是**接错了地方**，不是逻辑写错：
+
+| 症状 | 接错在哪 |
+|---|---|
+| 敲 `@` 没反应 | 候选读的是「这段提示词自己的对照表」；资产一张没绑时它恒为空，偏偏那正是最需要挑图的时刻 |
+| 面板有 30 条候选却看不见 | `absolute` 面板被审阅面 `overflow-y-auto` 容器裁掉；改 `createPortal` 挂 `body` + `fixed` |
+| 道具没锁定 | `pickPropsForCharacterSheet` 把道具烧进**角色定妆卡的特写格**，道具没有自己的 URL：要么共用角色卡（摊薄锁脸权重），要么 `logical://` 被 `isBindableAssetPath` 滤掉 |
+
+顺带补上的门禁：段里点了名的角色一个都没绑脸时**拦住出片**（`assetNoFaceLock`），
+并把「还没出图」与「图对不上名字」分开报——混成一句话时没人知道该去补图还是改名。
+这条也一并关掉了 07-25 交接里那个「资产解析不到路径时静默不绑」的待办。
+
+### 出片提示词加了一层「怎么剪」（#998）
+
+`shared/manhuaEditCraftDirectives.ts`：切点卡情绪不卡秒、同场景景别要有反差、
+转场只在换场景用、音效补流畅度。两个设计点：
+
+- **按段裁剪，不当常量墙灌**：单镜段不讲切镜（讲了反而诱导模型自己加一刀），
+  无台词段不讲台词落点。
+- **景别反差靠跨度判不靠字面**：「近景→中近景」字面不同但跨度只有 1，剪出来照样原地踏步，照抓。
+
+只在出片那一刻拼进提示词，**不写回节点**——`【剪辑手法】` 进了
+`FORBIDDEN_SECTION_PREFIXES`，审阅面那一栏人要读的是谁在做什么、说什么。
 
 > 07-25 那批（#974–#993，画布工作台改版 / 分档 60-90s·150-180s / 局部改写归档 / 假 401 修复）
 > 明细见 `~/Downloads/2026Jul25/jobs-and-code-byOpus5.md`。
@@ -84,10 +114,102 @@
 `isForceBurstActive` 的 `> Date.now()` 让它早已失效，可清理。
 `KUAISHOU_PRIVATE_PAGES` secret 写 30，但代码 `Math.min(6,…)` 夹住，实际 6。
 
-### 下一步
+---
 
-- 观察几轮 merge 后 douyin 热文件是否随 90 天窗口回落
-- 15 分钟负载稳定 < 1.5、内存 < 5GB 时，可把 `performance-4x` 降到 `2x`（约省 $79/月）
+## 2026-07-28
+
+本日未合 PR；开场按 `knowledge-base-always` 复核线上真值 + 补抽从没抽过的几个参考视频。
+
+### 07-26 那三条观察项的结论
+
+| 项 | 结论 |
+|---|---|
+| 三家平台连续 12h 没 merge | **已自愈**。5 个 `*.current.json.gz` 今日 09:56 全部刷新 |
+| 探针是否真按 480p 计费 | **本来就对**。`SEEDANCE_PROBE_DEFAULT_QUALITY='480p'`，工厂探针 env 默认 `2.0-mini` / `480p` / 5s，与 `seedance-probe-always` 一致 |
+| `performance-4x` 能不能降 `2x` | **条件已满足**：15 分钟负载 1.14（< 1.5），内存 3.3 / 9.9GB（< 5GB），4 vCPU。约省 $79/月 |
+
+### douyin 热文件为什么还是 88.7MB（真因，与猜测不同）
+
+两天过去仍是 93,035,343 字节。查文件头：
+
+```
+"updatedAt":"2026-07-28T09:55:11Z"          ← 外层壳每轮都在重写
+"collection":{"collectedAt":"2026-07-26T08:25:15Z","windowDays":365,...}
+```
+
+**douyin 自 07-26 16:25(CST) 起没有一次成功采集**。裁剪只挂在 `mergeCollection` 上，
+而外层壳的重写路径不经过裁剪 —— 于是采集失败的平台会**永久保留 365 天的旧载荷**，
+`updatedAt` 每轮照跳，看着像在更新。
+
+排除过的假设：`publishedAt` 缺失导致无法按日期裁 —— 实测空值只有 **147 / 609,896**（0.02%），
+不是原因。单平台 61 万条也说明就算裁到 90 天，量级本身仍偏大。
+
+**两条待办**（互相独立）：
+1. douyin 采集连续失败 2 天，需查失败原因（trend 数据对产品也已过期）
+2. 裁剪不该只在采集成功时才跑；采集失败的平台需要一次性回补裁剪，否则永远卡在旧窗口
+
+### 参考视频抽帧补齐
+
+`~/Downloads/2026Jul28/frames/`（脚本同目录 `extract-frames.sh`，已抽过的自动跳过）。
+本轮补的是从没抽过的 6 个：`d1` `d2` `json` `tooth`（Jul16）、`man`（Jul18）、`jobs`（Jul20）、
+`t1` `test1`（Jul21），共 1167 帧 + 88 个场景切点。
+`c1/c2`（Jul22 已 6fps 超密 3648 帧）、`pr`/`trace`/`feel`/`sd25` 跳过。
+
+无 OCR 工具（tesseract / pytesseract 都没有）。改用 **字幕条裁切拼长图**读内容：
+`sheets/<tag>-NN.jpg`，一张图 16 句，比逐帧读省两个数量级。
+
+### `json.mp4` 的可用结论（抖音「三步掌握 JSON 生图」）
+
+跟「提示词很笨、没有电影感」这条抱怨直接对上：
+
+1. **先定美学再写词**：挑一部喜欢的片 → 拆它的拍摄条件（画幅 21:9、色彩底色、
+   相机预设如柯达胶片风 / 富士冷美感）→ 复刻。
+2. **参数写成结构化块**，跨镜恒定，只换人物与环境：可见键有
+   `aspect_ratio` / `camera_settings{camera,lens,film_stock}` / `style` /
+   `lighting{type,quality}` / `attire` / `pose` / 渲染质量、「不允许数码锐化」。
+   我们这边这一层是靠**垫图**承担的（brief §2「有垫图后禁止再写画风」），比写文字更硬。
+3. **运镜要分解成时序**：「先做环绕再做推进，最后剪在一起」。
+   **这条我们还没有** —— 现在每镜只出一个孤零零的运镜词（`近景微推`），
+   `MANHUA_CAMERA_MOVE_ORDER` 里虽有「推拉结合」也只是个标签，不是两拍时序。
+
+其余：`tooth.mp4` 是聊天记录体短剧（另一种内容形态，非漫剧管线）；
+`d1.mp4` 是 CG 漫剧成片样片；`d2.mp4` 是起承转合 + 六栏分镜表教学（此前已部分入 craft）。
+
+### 傍晚补抽消化（Jul18–21 四条样片）+ Jul25/26 账本
+
+- `man`（Jul18）`jobs`（Jul20）`t1`/`test1`（Jul21）：同 IP（凌霄宗修仙）**漫剧成片样片**，
+  三要素：右上竖排节拍标签（拦截/袭击/英雄救美，几秒一换）+ 底部短句对白 + 10s 内景别强反差。
+  与 #998 剪辑手法方向互证，作节拍标签线参考样本。至此 Jul16–26 十二支 mp4 全部有密集帧。
+- 补读 Jul25 `add-on.md`（#988 分镜秒段锁）、Jul26 `jobs-milstones-codes.md`（#994–999）。
+- #999 已 MERGED（07-26 11:53Z），当前无 OPEN PR。
+
+### ⚠ 纠正今早两条结论（douyin 真因，与猜测不同·其二）
+
+今早「三家平台已自愈，5 个 current.json.gz 全部刷新」**看错了地方**——那是外壳
+`updatedAt`/文件 mtime，每轮都跳；`collection.collectedAt` 才是真采集时间：
+
+| 平台 | collectedAt | windowDays | 状态 |
+|---|---|---|---|
+| xiaohongshu | 07-28 新鲜 | **90** | ✅ 唯一逃脱（07-26 重启瞬间文件缺席，防缩保护 inert，一次性写入 90 天档） |
+| douyin | 07-26 冻结 | 365 | ❌ 卡旧窗 |
+| kuaishou / bilibili / toutiao | 07-25 冻结 | 365 | ❌ 卡旧窗 |
+
+**真因**：`writeStore` 的「防缩保护」（`allowLowerTotals` 默认 false，`nextCount < existingCount`
+就把**旧集合整体换回**）vs #995 热窗裁剪对撞。调度器状态里每家 `failureCount=0`、
+`lastSuccessAt` 新鲜——**采集一直是成功的**，merged 池被 prune 裁小后在落盘前一刻被换回旧档。
+07-26 16:25 正是 `GROWTH_TARGET_WINDOW_DAYS` secret 改成 90 的时刻：之前 prune(365) 不裁、
+保护不触发；之后 prune(90) 裁小、保护每天把裁剪结果换回去。douyin 每轮还在 parse+重写
+93MB 旧载荷，#995 想省的 GC 一点没省到。
+
+**修法**（本分支 `fix/growth-merge-prune-lower-totals`）：merge 语义下池子只会因裁剪变小
+（dedupe 只增不减），故 `mergeTrendCollectionsWithOptions` 显式
+`writeStore(next, { allowLowerTotals: true })`；mergeStats 加 `prunedFromCount` 可观测。
+防缩保护对其他 writeStore 调用方（恢复/直写）保留默认。顺带修 `trendAdaptiveConfig`
+固定 `.next` 临时名并发写 ENOENT 竞态（vitest 并行 worker 实踩）。
+
+**上线后预期**：下一轮 merge（≤15 分钟）四家平台 collectedAt 跟进、windowDays→90，
+douyin 文件应从 93MB 量级显著下降。原「失败平台一次性回补裁剪」待办消解——没有失败平台，
+全是假成功。
 
 ---
 
