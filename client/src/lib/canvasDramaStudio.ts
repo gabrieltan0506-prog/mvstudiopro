@@ -22,6 +22,7 @@ import {
   buildManhuaAssetPathById,
   extractManhuaMentionedAssetTags,
   formatManhuaAssetImageBindBlock,
+  formatManhuaClipSeedanceBindLineFromEntries,
   isBindableAssetPath,
   parseManhuaCanvasAssetAtTag,
   planManhuaClipSeedanceImageBind,
@@ -1866,6 +1867,13 @@ export function ensureManhuaFragmentClips(
         faceUnlockedCastNames.add(n);
       }
     }
+    /**
+     * 拆假锁：有人出场却没锁到定妆（@角色对照为空）时，禁止拿本段静帧
+     * 冒充「@图片N锁定构图」当成已锁——那只锁了构图，脸/服/场全没绑，
+     * 出片必每段换脸。mismatch（点名对不上库）与「设定图还没出」都算未锁脸；
+     * 两者各有红条另报，这里只负责别把误导性硬绑写进提示词正文。
+     */
+    const segHasCastNoFaceLock = segNeedsFace && !segHasFaceLock;
     const lookLine = formatManhuaSegmentActiveLookLine({
       lookSets,
       binding:
@@ -1917,19 +1925,36 @@ export function ensureManhuaFragmentClips(
         mentionedTags: mentioned,
       });
     })();
-    const bindLineZh = String(bindPlan?.bindLineZh || "").trim();
-    const bindPreview = bindLineZh ? `【出片Image硬绑】\n${bindLineZh}` : "";
+    /**
+     * 未锁脸时只保留真·资产绑定（@场景/@道具 若命中），把静帧那几条
+     * 「@图片N锁定构图」剔掉——它们正是让人误以为"锁上了"的假锁。
+     */
+    const bindEntriesForOutput = segHasCastNoFaceLock
+      ? (bindPlan?.entries ?? []).filter((e) => e.kind === "asset")
+      : (bindPlan?.entries ?? []);
+    const bindLineZh = segHasCastNoFaceLock
+      ? formatManhuaClipSeedanceBindLineFromEntries(bindEntriesForOutput).trim()
+      : String(bindPlan?.bindLineZh || "").trim();
+    const waitLockNote = segHasCastNoFaceLock
+      ? "【待锁·未锁脸】本段有人物出场，但@角色对照为空、未锁定定妆：请在成片框敲 @ 锁本段人物/场景，或补齐设定图后重出静帧；未锁前请勿出片（否则每段换脸）。"
+      : "";
+    const bindPreview = segHasCastNoFaceLock
+      ? [waitLockNote, bindLineZh].filter(Boolean).join("\n")
+      : bindLineZh
+        ? `【出片Image硬绑】\n${bindLineZh}`
+        : "";
     /**
      * 名额被末帧和资产占掉后，真正进「@图片N」的静帧往往少于本段静帧总数。
      * 早先直接写 segUrls.length，出现过「本段静帧3张」但只绑了 1 张的自相矛盾。
      */
-    const boundStillCount =
-      bindPlan?.entries.filter((e) => e.kind === "still").length ?? 0;
+    const boundStillCount = bindEntriesForOutput.filter((e) => e.kind === "still").length;
     const padLockBlock = !segUrls.length
       ? "【垫图·缺失】禁止出片"
-      : boundStillCount >= segUrls.length
-        ? `【垫图】本段静帧${segUrls.length}张（出片顺序：资产定妆/服装→本段静帧→上段末帧，按序绑@图片N）`
-        : `【垫图】本段静帧${segUrls.length}张，其中${boundStillCount}张按序绑@图片N（出片顺序：资产定妆/服装→本段静帧→上段末帧）`;
+      : segHasCastNoFaceLock
+        ? `【垫图】本段静帧${segUrls.length}张（未锁定定妆前不作出片参考）`
+        : boundStillCount >= segUrls.length
+          ? `【垫图】本段静帧${segUrls.length}张（出片顺序：资产定妆/服装→本段静帧→上段末帧，按序绑@图片N）`
+          : `【垫图】本段静帧${segUrls.length}张，其中${boundStillCount}张按序绑@图片N（出片顺序：资产定妆/服装→本段静帧→上段末帧）`;
     const segPrompt = stripManhuaAssetUrlsFromPrompt(
       stripManhuaClipForbiddenBoards(
         stripManhuaPromptSlop(
