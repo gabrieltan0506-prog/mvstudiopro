@@ -135,8 +135,10 @@ export type ManhuaEpisodeSegmentPlanQuality = {
 const FILLER_DIALOGUE_RE =
   /^(嗯+|啊+|哦+|好的|是的|对啊|哈哈+|今天天气|你好啊|在吗|没事|随便|加油|晚安|早啊)[.。!！?？…]*$/i;
 
+// 可拍表演线索：表情 / 面部 / 肢体动作 / 情绪起伏。词表宁宽勿窄——
+// 真实表演几乎必含身体或面部动作词；只写「很生气」这类纯抽象仍会被 length + 词表拦下。
 const PERFORMANCE_CUE_RE =
-  /表情|眼神|眉|嘴角|咬唇|咬牙|泪|哽|颤|冷笑|怒|慌|沉|握拳|攥|指|推|退|逼近|侧身|抬头|低头|转身|跪|扑|甩|肢体|情绪|气口/;
+  /表情|眼|眉|嘴|唇|齿|咬|牙|泪|哽|颤|抖|震|笑|怒|慌|沉|惊|僵|滞|顿|绷|松|垂|扬|皱|瞪|盯|避|躲|迟疑|停顿|呼吸|气口|握|攥|拳|指|掌|手|腕|臂|肩|背|胸|膝|腿|脚|步|身|头|面|脸|推|拉|退|逼近|侧|抬|低|转|跪|扑|甩|扶|挡|护|拦|按|抓|伸|俯|仰|靠|撞|踢|踩|跃|挥|拨|顶|肢体|情绪/;
 
 const FIELD_KEYS: Array<{
   key: keyof Omit<ManhuaEpisodeSegmentBeat, "index">;
@@ -487,10 +489,12 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
     );
   }
 
+  // 只有「全集仅 1 个场景」才算空壳复读；2 个主场景（如 追杀→室内）是紧凑短剧的
+  // 合理空间结构，不该被误杀（否则逼作者无意义换场、反伤连贯）。
   const uniqueScenes = new Set(seenScene.map((s) => s.replace(/\s+/g, ""))).size;
-  if (readyCount >= minRequired && uniqueScenes <= 2) {
+  if (readyCount >= minRequired && uniqueScenes < 2) {
     issues.push(
-      `场景几乎不换场：${minRequired}–${maxRequired} 段须有空间/氛围递进，禁止同一空壳场景复读`,
+      `场景几乎不换场：${minRequired}–${maxRequired} 段全在同一场景复读，须有空间/氛围递进`,
     );
   }
 

@@ -53,6 +53,86 @@ describe("manhuaEpisodeSegmentPlan", () => {
     expect(q.readyCount).toBe(5);
   });
 
+  it("表演词表宽容：呼吸/紧咬/伸手/按住手腕 等真表演不再被判「过薄」", () => {
+    const seg = (n: number, d1: string, d2: string, d3: string, perf: string, scene: string) =>
+      [
+        `#### 段${String(n).padStart(2, "0")}`,
+        `- 意图：让观众揪心，信任压过生死`,
+        `- 对白：`,
+        `  - 沈沧澜：「${d1}」`,
+        `  - 陆清和：「${d2}」`,
+        `  - 沈沧澜：「${d3}」`,
+        `- 表演：${perf}`,
+        `- 场景：${scene}`,
+        `- 配色风格：墨蓝雨夜`,
+        `- 角色：沈沧澜、陆清和`,
+        `- 服装道具：玄黑劲装、长剑`,
+        `- 光影运镜：低机位贴身推进`,
+      ].join("\n");
+    const md = [
+      seg(1, "你取账，我断绳，别回头。", "说好一起走，不是各自送死。", "先活过今夜。", "沈沧澜呼吸短促，齿关紧咬，替她接下弩箭，右手虎口裂开见血。", "断月桥"),
+      seg(2, "玉扣为何能合上？", "我娘临终说这是救命债。", "同一件东西，两家两种谎。", "陆清和伸手阻拦，却被按住手腕，暗格露出路线图。", "苍云客栈"),
+      seg(3, "他们认得你的剑路。", "先躲开这波弩箭。", "账册不能落他们手里。", "两人脚步一滞，随后并肩后撤。", "废驿档房"),
+      seg(4, "后墙窄门只能过两人。", "你先走，我断后。", "别回头找我。", "他俯身扶她穿过窄门，肩背绷紧。", "边军营寨"),
+      seg(5, "从这步起我们是叛徒。", "名字是仇家给的。", "选择才是自己的。", "她抱紧账册，靠近他肩侧仍警觉。", "御河水门"),
+    ].join("\n\n");
+    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(md);
+    const q = evaluateManhuaEpisodeSegmentPlanQuality(plan);
+    expect(q.ok).toBe(true);
+    expect(q.readyCount).toBe(5);
+  });
+
+  it("场景变化：2 个主场景（追杀→室内）通过；全集仅 1 场景才判不换场", () => {
+    const seg = (n: number, d1: string, d2: string, d3: string, scene: string) =>
+      [
+        `#### 段${String(n).padStart(2, "0")}`,
+        `- 意图：让观众揪心，信任压过生死`,
+        `- 对白：`,
+        `  - 沈沧澜：「${d1}」`,
+        `  - 陆清和：「${d2}」`,
+        `  - 沈沧澜：「${d3}」`,
+        `- 表演：沈沧澜呼吸短促、咬肌隆起，伸手护住她；陆清和眼神由惊转硬。`,
+        `- 场景：${scene}`,
+        `- 配色风格：墨蓝雨夜`,
+        `- 角色：沈沧澜、陆清和`,
+        `- 服装道具：玄黑劲装、长剑`,
+        `- 光影运镜：低机位贴身推进`,
+      ].join("\n");
+    const lines = [
+      ["你取账，我断绳。", "说好一起走。", "先活过今夜。"],
+      ["玉扣为何能合？", "这是救命债。", "两家两种谎。"],
+      ["他们认得剑路。", "先躲这波弩。", "账册不能丢。"],
+      ["窄门只过两人。", "你先走我断后。", "别回头找我。"],
+      ["从此我们是叛徒。", "名字是仇家给的。", "选择是自己的。"],
+    ];
+    // 两场景：前 2 段桥、后 3 段客栈
+    const twoScene = [
+      seg(1, ...(lines[0] as [string, string, string]), "断月桥"),
+      seg(2, ...(lines[1] as [string, string, string]), "断月桥"),
+      seg(3, ...(lines[2] as [string, string, string]), "苍云客栈"),
+      seg(4, ...(lines[3] as [string, string, string]), "苍云客栈"),
+      seg(5, ...(lines[4] as [string, string, string]), "苍云客栈"),
+    ].join("\n\n");
+    const q2 = evaluateManhuaEpisodeSegmentPlanQuality(
+      parseManhuaEpisodeSegmentPlanFromMarkdown(twoScene),
+    );
+    expect(q2.ok).toBe(true);
+
+    // 全集仅 1 场景 → 判不换场
+    const oneScene = [
+      seg(1, ...(lines[0] as [string, string, string]), "断月桥"),
+      seg(2, ...(lines[1] as [string, string, string]), "断月桥"),
+      seg(3, ...(lines[2] as [string, string, string]), "断月桥"),
+      seg(4, ...(lines[3] as [string, string, string]), "断月桥"),
+      seg(5, ...(lines[4] as [string, string, string]), "断月桥"),
+    ].join("\n\n");
+    const q1 = evaluateManhuaEpisodeSegmentPlanQuality(
+      parseManhuaEpisodeSegmentPlanFromMarkdown(oneScene),
+    );
+    expect(q1.ok).toBe(false);
+    expect(q1.issues.some((s) => s.includes("不换场"))).toBe(true);
+  });
+
   it("deriveManhuaSegmentIntentFallbackZh：无对白无表演 → 空串", () => {
     expect(deriveManhuaSegmentIntentFallbackZh({ dialogueZh: "", performanceZh: "" })).toBe("");
     const s = deriveManhuaSegmentIntentFallbackZh({
