@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildManhuaWriterAssetCanon,
+  collectWriterCharacterNames,
   countDialogueLines,
+  detectManhuaCanonWriterDrift,
   evaluateWriterPackAssetAndDensity,
   formatWriterAssetCanonIdentityLock,
   parseWriterTableLine,
@@ -131,5 +133,39 @@ describe("manhuaWriterAssetCanon", () => {
     expect(lock).toMatch(/沈砚舟/);
     expect(lock).toMatch(/双鹤玉扣/);
     expect(lock).toMatch(/本集主场景：山神破庙/);
+  });
+});
+
+describe("detectManhuaCanonWriterDrift · 旧 bible 与现剧本换角检测", () => {
+  const bibleCanon = buildManhuaWriterAssetCanon({ charactersMd: CHARACTERS_MD });
+
+  it("同一剧本人物表 → 不漂移（overlap 高）", () => {
+    const d = detectManhuaCanonWriterDrift(bibleCanon, CHARACTERS_MD);
+    expect(d.drifted).toBe(false);
+    expect(d.overlap).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it("剧本已换主角（沈沧澜/陆清和）而 bible 仍是旧角 → 漂移", () => {
+    const newScript = `
+- 沈沧澜／兰七｜玄黑劲装｜查父案｜与陆清和恋人｜越痛越克制
+- 陆清和／禾九｜月白劲装｜洗陆家冤｜沈沧澜恋人｜主动出剑
+`.trim();
+    const d = detectManhuaCanonWriterDrift(bibleCanon, newScript);
+    expect(d.drifted).toBe(true);
+    expect(d.overlap).toBeLessThan(0.5);
+    // 旧 bible 角色应被列为「只在 bible」（提示会烧错角色）
+    expect(d.onlyInBible).toContain("沈砚舟");
+  });
+
+  it("bible 为空或剧本为空 → 不判漂移", () => {
+    expect(detectManhuaCanonWriterDrift(null, CHARACTERS_MD).drifted).toBe(false);
+    expect(detectManhuaCanonWriterDrift(bibleCanon, "").drifted).toBe(false);
+  });
+
+  it("collectWriterCharacterNames 取名+别名", () => {
+    const names = collectWriterCharacterNames(CHARACTERS_MD);
+    expect(names).toContain("沈砚舟");
+    expect(names).toContain("沈少主");
+    expect(names).toContain("云疏冷");
   });
 });

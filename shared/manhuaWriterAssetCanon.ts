@@ -207,6 +207,76 @@ export function buildManhuaWriterAssetCanon(input: {
   return { characters, props, locations, episodeMainSceneId };
 }
 
+/** 从人物表 md 取角色名集合（含别名） */
+export function collectWriterCharacterNames(
+  charactersMd: string | null | undefined,
+): string[] {
+  const names = new Set<string>();
+  for (const line of String(charactersMd || "").split(/\n/)) {
+    const parsed = parseWriterTableLine(line);
+    if (!parsed) continue;
+    if (parsed.nameZh) names.add(parsed.nameZh);
+    if (parsed.aliasZh) names.add(parsed.aliasZh);
+  }
+  return Array.from(names);
+}
+
+export type ManhuaCanonWriterDrift = {
+  /** 已锁定 bible 的角色与现剧本人物表明显不一致 */
+  drifted: boolean;
+  /** 已锁 bible 里的角色名 */
+  bibleCast: string[];
+  /** 现剧本人物表角色名（含别名） */
+  writerCast: string[];
+  /** 交集 / 较小集合（0–1） */
+  overlap: number;
+  /** 只在 bible（旧设定图仍指向的角色） */
+  onlyInBible: string[];
+};
+
+function normName(s: string): string {
+  return String(s || "").replace(/\s+/g, "").toLowerCase();
+}
+
+function looseNameHit(name: string, pool: string[]): boolean {
+  const n = normName(name);
+  if (!n) return false;
+  return pool.some((p) => {
+    const q = normName(p);
+    return q && (q === n || q.includes(n) || n.includes(q));
+  });
+}
+
+/**
+ * 检测「已锁定资产 bible」与「现剧本人物表」是否发生角色漂移。
+ * 用途：剧本换了主角却没重新过门禁/确认时，「按剧本重出设定图」会用旧 canon
+ * 默默出旧角色——本函数供 UI 明确警示，避免烧错角色的图。
+ *
+ * 判定：两边都非空、且交集占较小集合不到一半 → drifted。
+ */
+export function detectManhuaCanonWriterDrift(
+  bibleCanon: Pick<ManhuaWriterAssetCanon, "characters"> | null | undefined,
+  charactersMd: string | null | undefined,
+): ManhuaCanonWriterDrift {
+  const bibleCast = (bibleCanon?.characters || [])
+    .map((c) => String(c.nameZh || "").trim())
+    .filter(Boolean);
+  const writerCast = collectWriterCharacterNames(charactersMd);
+  if (!bibleCast.length || !writerCast.length) {
+    return { drifted: false, bibleCast, writerCast, overlap: 1, onlyInBible: [] };
+  }
+  const inBothFromBible = bibleCast.filter((n) => looseNameHit(n, writerCast));
+  const onlyInBible = bibleCast.filter((n) => !looseNameHit(n, writerCast));
+  const overlap = inBothFromBible.length / Math.min(bibleCast.length, writerCast.length);
+  return {
+    drifted: overlap < 0.5,
+    bibleCast,
+    writerCast,
+    overlap: Math.round(overlap * 100) / 100,
+    onlyInBible,
+  };
+}
+
 export function getWriterCanonScene(
   canon: ManhuaWriterAssetCanon | null | undefined,
   sceneId?: string | null,
