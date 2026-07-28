@@ -82,6 +82,7 @@ import {
   resolveManhuaVoiceExtractWindow,
   type ManhuaCharacterVoiceLock,
 } from "@shared/manhuaCharacterVoiceLock";
+import { type ManhuaAudioReferenceLock } from "@shared/manhuaAudioReferenceLock";
 import {
   groupShotsIntoSegments,
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
@@ -242,6 +243,9 @@ type Props = {
   onSegmentLookBindingsChange?: (next: Record<string, Record<string, string>>) => void;
   /** 从有声成片抠出的角色声线参考 */
   characterVoiceLocks?: ManhuaCharacterVoiceLock[];
+  /** 参考音频·全集参考（软·可选）：BGM/对白口音基准；不硬锁、不挡出片 */
+  audioReferenceLock?: ManhuaAudioReferenceLock | null;
+  onAudioReferenceLockChange?: (next: ManhuaAudioReferenceLock | null) => void;
   onExtractCharacterVoice?: (input: {
     clipId: string;
     characterTag: string;
@@ -436,6 +440,8 @@ export default function ManhuaScriptWorkbench({
   segmentLookBindings = {},
   onSegmentLookBindingsChange,
   characterVoiceLocks = [],
+  audioReferenceLock = null,
+  onAudioReferenceLockChange,
   onExtractCharacterVoice,
   onRemoveCharacterVoice,
   onUploadCustomAssets,
@@ -2706,6 +2712,84 @@ export default function ManhuaScriptWorkbench({
                       </div>
                     ) : null}
                   </div>
+                  {onAudioReferenceLockChange ? (
+                    <div className="mt-2 border-t border-cyan-400/20 pt-1.5">
+                      <div className="text-[10px] font-semibold text-sky-50/90">
+                        参考音频（BGM / 对白口音）· 可选
+                      </div>
+                      <p className="mt-0.5 text-[10px] leading-4 text-white/40">
+                        软参考，不硬锁、不挡出片：填背景音乐与对白口音基准，成片配乐/口音尽量对齐；后期还能改。角色专属音色仍用上方「角色声线参考」。
+                      </p>
+                      <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                        <label className="flex flex-col gap-0.5">
+                          <span className="text-[9px] text-white/45">背景音乐参考（https 音频链接，可空）</span>
+                          <input
+                            type="url"
+                            inputMode="url"
+                            placeholder="https://…/bgm.mp3"
+                            defaultValue={audioReferenceLock?.bgmUrl || ""}
+                            className="rounded border border-white/12 bg-black/40 px-1.5 py-1 font-mono text-[10px] text-white/85 outline-none focus:border-sky-400/50"
+                            onBlur={(e) =>
+                              onAudioReferenceLockChange({
+                                ...(audioReferenceLock || {}),
+                                bgmUrl: e.target.value.trim(),
+                                updatedAt: Date.now(),
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="flex flex-col gap-0.5">
+                          <span className="text-[9px] text-white/45">BGM 风格说明（如「古风弦乐·紧张推进」）</span>
+                          <input
+                            type="text"
+                            placeholder="古风弦乐·紧张推进"
+                            defaultValue={audioReferenceLock?.bgmNoteZh || ""}
+                            className="rounded border border-white/12 bg-black/40 px-1.5 py-1 text-[10px] text-white/85 outline-none focus:border-sky-400/50"
+                            onBlur={(e) =>
+                              onAudioReferenceLockChange({
+                                ...(audioReferenceLock || {}),
+                                bgmNoteZh: e.target.value.trim(),
+                                updatedAt: Date.now(),
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="flex flex-col gap-0.5">
+                          <span className="text-[9px] text-white/45">对白口音基准（https 音频链接，可空）</span>
+                          <input
+                            type="url"
+                            inputMode="url"
+                            placeholder="https://…/accent.mp3"
+                            defaultValue={audioReferenceLock?.accentUrl || ""}
+                            className="rounded border border-white/12 bg-black/40 px-1.5 py-1 font-mono text-[10px] text-white/85 outline-none focus:border-sky-400/50"
+                            onBlur={(e) =>
+                              onAudioReferenceLockChange({
+                                ...(audioReferenceLock || {}),
+                                accentUrl: e.target.value.trim(),
+                                updatedAt: Date.now(),
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="flex flex-col gap-0.5">
+                          <span className="text-[9px] text-white/45">口音说明（如「北方官话·沉稳」）</span>
+                          <input
+                            type="text"
+                            placeholder="北方官话·沉稳"
+                            defaultValue={audioReferenceLock?.accentNoteZh || ""}
+                            className="rounded border border-white/12 bg-black/40 px-1.5 py-1 text-[10px] text-white/85 outline-none focus:border-sky-400/50"
+                            onBlur={(e) =>
+                              onAudioReferenceLockChange({
+                                ...(audioReferenceLock || {}),
+                                accentNoteZh: e.target.value.trim(),
+                                updatedAt: Date.now(),
+                              })
+                            }
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {onGenerateCustomAssetFromLibrary || onShareAssetToLibraryChange ? (

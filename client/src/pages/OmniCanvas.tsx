@@ -133,6 +133,10 @@ import {
   normalizeManhuaCharacterVoiceLocks,
   type ManhuaCharacterVoiceLock,
 } from "@shared/manhuaCharacterVoiceLock";
+import {
+  normalizeManhuaAudioReferenceLock,
+  type ManhuaAudioReferenceLock,
+} from "@shared/manhuaAudioReferenceLock";
 import { extractManhuaClipAudio } from "@/lib/manhuaCharacterVoiceApi";
 import type { ManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
 import {
@@ -559,6 +563,9 @@ export default function OmniCanvas() {
   );
   const [characterVoiceLocks, setCharacterVoiceLocks] = useState<ManhuaCharacterVoiceLock[]>(() =>
     normalizeManhuaCharacterVoiceLocks(initialWriterSession?.characterVoiceLocks),
+  );
+  const [audioReferenceLock, setAudioReferenceLock] = useState<ManhuaAudioReferenceLock | null>(
+    () => normalizeManhuaAudioReferenceLock(initialWriterSession?.audioReferenceLock),
   );
   const [characterLookSets, setCharacterLookSets] = useState(() =>
     normalizeManhuaCharacterLookSets(initialWriterSession?.characterLookSets),
@@ -1102,6 +1109,7 @@ export default function OmniCanvas() {
         workflowPhase,
         customAssetRefs,
         characterVoiceLocks,
+        audioReferenceLock,
         shareAssetToLibrary,
         viralTemplateId,
         stylePack,
@@ -1123,6 +1131,7 @@ export default function OmniCanvas() {
     workflowPhase,
     customAssetRefs,
     characterVoiceLocks,
+    audioReferenceLock,
     shareAssetToLibrary,
     viralTemplateId,
     stylePack,
@@ -1147,6 +1156,9 @@ export default function OmniCanvas() {
     setCustomAssetRefs(normalizeManhuaCustomAssetRefs(session.customAssetRefs));
     setCharacterVoiceLocks(
       normalizeManhuaCharacterVoiceLocks(session.characterVoiceLocks),
+    );
+    setAudioReferenceLock(
+      normalizeManhuaAudioReferenceLock(session.audioReferenceLock),
     );
     setCharacterLookSets(normalizeManhuaCharacterLookSets(session.characterLookSets));
     setSegmentLookBindings(
@@ -1294,6 +1306,7 @@ export default function OmniCanvas() {
       workflowPhase,
       customAssetRefs,
       characterVoiceLocks,
+      audioReferenceLock,
       characterLookSets,
       segmentLookBindings,
       shareAssetToLibrary,
@@ -1340,6 +1353,7 @@ export default function OmniCanvas() {
     workflowPhase,
     customAssetRefs,
     characterVoiceLocks,
+    audioReferenceLock,
     shareAssetToLibrary,
     viralTemplateId,
     deliveryPackage,
@@ -1869,6 +1883,7 @@ export default function OmniCanvas() {
     () => ({
       userId: user?.id ? String(user.id) : "",
       characterVoiceLocks,
+      audioReferenceLock,
       manhuaAssetPathById: manhuaAssetMaps.pathById,
       manhuaAssetTileUrlsById: manhuaAssetMaps.tileUrlsById,
       getManhuaEpisodeSegmentPromptsForVoiceGate: (episodeIndex) =>
@@ -1961,6 +1976,7 @@ export default function OmniCanvas() {
       pushDebug,
       user?.id,
       characterVoiceLocks,
+      audioReferenceLock,
       manhuaAssetMaps,
     ],
   );
@@ -2323,6 +2339,7 @@ export default function OmniCanvas() {
       // 新剧本立刻落盘并覆盖本机+云端旧稿，避免刷新后又被旧云草稿盖回
       const clientUpdatedAt = new Date().toISOString();
       setCharacterVoiceLocks([]);
+      setAudioReferenceLock(null);
       const writerSession = {
         topic,
         brief,
@@ -2337,6 +2354,7 @@ export default function OmniCanvas() {
         workflowPhase: "outline" as const,
         customAssetRefs: [] as ManhuaCustomAssetRef[],
         characterVoiceLocks: [] as ManhuaCharacterVoiceLock[],
+        audioReferenceLock: null as ManhuaAudioReferenceLock | null,
         shareAssetToLibrary,
         viralTemplateId,
       };
@@ -4700,6 +4718,10 @@ export default function OmniCanvas() {
                   segmentLookBindings={segmentLookBindings}
                   onSegmentLookBindingsChange={setSegmentLookBindings}
                   characterVoiceLocks={characterVoiceLocks}
+                  audioReferenceLock={audioReferenceLock}
+                  onAudioReferenceLockChange={(next) =>
+                    setAudioReferenceLock(normalizeManhuaAudioReferenceLock(next))
+                  }
                   onExtractCharacterVoice={async ({
                     clipId,
                     characterTag,
