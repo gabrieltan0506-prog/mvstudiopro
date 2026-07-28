@@ -35,6 +35,11 @@ export type ManhuaCameraMoveEntry = {
   promptZh: string;
   /** 情绪关键词（推荐匹配） */
   emotionTags: readonly string[];
+  /**
+   * 两拍时序（可选）：本就是两段的运镜给「先A，后B」的拆解句，
+   * 秒轴单镜 ≥4s 时展开成时序，不再只落一个孤零零的标签词。
+   */
+  sequenceZh?: readonly [string, string];
 };
 
 export const MANHUA_CAMERA_MOVE_ORDER: readonly ManhuaCameraMoveId[] = [
@@ -85,6 +90,7 @@ export const MANHUA_CAMERA_MOVE_BANK: readonly ManhuaCameraMoveEntry[] = [
     whenToUseZh: "开场建场、宫殿/都市尺度、转场。",
     promptZh: "镜头垂直向上或向下缓慢移动，展现垂直空间气势。",
     emotionTags: ["宏大", "建场", "震撼"],
+    sequenceZh: ["先垂直升起拉开空间尺度", "再缓降落回人物"],
   },
   {
     id: "cam_04_handheld",
@@ -103,6 +109,7 @@ export const MANHUA_CAMERA_MOVE_BANK: readonly ManhuaCameraMoveEntry[] = [
     whenToUseZh: "硬切转场、信息突转、动作衔接。",
     promptZh: "镜头快速向左或向右横甩，强动态模糊，作转场。",
     emotionTags: ["突转", "眩晕", "转场"],
+    sequenceZh: ["先在主体起幅定住", "再瞬间横甩到落幅"],
   },
   {
     id: "cam_06_pov",
@@ -202,6 +209,7 @@ export const MANHUA_CAMERA_MOVE_BANK: readonly ManhuaCameraMoveEntry[] = [
     whenToUseZh: "反应镜、双人视线对切、信息对撞。",
     promptZh: "快速切入切换：从 A 切到 B，增强节奏与紧张感。",
     emotionTags: ["对切", "反应", "节奏"],
+    sequenceZh: ["先定住 A 机位", "再快切到 B 的反应"],
   },
   {
     id: "cam_17_slowmo",
@@ -211,6 +219,7 @@ export const MANHUA_CAMERA_MOVE_BANK: readonly ManhuaCameraMoveEntry[] = [
     whenToUseZh: "关键落点、决绝转身、泪落瞬间。",
     promptZh: "以慢动作拍摄角色关键动作，强化情绪落点。",
     emotionTags: ["决绝", "泪", "落点", "诗意"],
+    sequenceZh: ["先常速走向动作", "进落点时放慢"],
   },
   {
     id: "cam_18_push_pull",
@@ -220,6 +229,7 @@ export const MANHUA_CAMERA_MOVE_BANK: readonly ManhuaCameraMoveEntry[] = [
     whenToUseZh: "情绪转折、关系远近变化。",
     promptZh: "镜头先推进再拉远，或先拉远再推进，强化叙事节奏。",
     emotionTags: ["转折", "关系", "节奏"],
+    sequenceZh: ["先缓推贴近主体", "再匀速拉远还原"],
   },
 ];
 
@@ -228,6 +238,13 @@ const BY_ID = new Map(MANHUA_CAMERA_MOVE_BANK.map((e) => [e.id, e]));
 export function getManhuaCameraMove(id: string | null | undefined): ManhuaCameraMoveEntry | null {
   if (!id) return null;
   return BY_ID.get(id as ManhuaCameraMoveId) || null;
+}
+
+/** 运镜句里点名了库内条目名（如「推拉结合」）时认回该条目；自由文本不认，保持原样 */
+export function matchManhuaCameraMoveByNameZh(text: string | null | undefined): ManhuaCameraMoveEntry | null {
+  const t = String(text || "");
+  if (!t) return null;
+  return MANHUA_CAMERA_MOVE_BANK.find((e) => t.includes(e.nameZh)) || null;
 }
 
 /** 按情绪/动作文本推荐 1 条运镜 */

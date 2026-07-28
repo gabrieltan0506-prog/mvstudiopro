@@ -3,6 +3,7 @@ import {
   MANHUA_CAMERA_MOVE_BANK,
   MANHUA_CAMERA_MOVE_ORDER,
   buildManhuaCameraMoveInjectBlock,
+  matchManhuaCameraMoveByNameZh,
   recommendManhuaCameraMoveFromText,
 } from "./manhuaCameraMoveBank";
 
@@ -23,5 +24,28 @@ describe("manhuaCameraMoveBank", () => {
     expect(block).toContain("【运镜词库】");
     expect(block).toContain("过肩");
     expect(block).not.toMatch(/东山|公众号|RunningHub|rhTV/i);
+  });
+
+  it("天然两段的运镜带两拍时序句，单动势条目不带", () => {
+    const withSeq = MANHUA_CAMERA_MOVE_BANK.filter((e) => e.sequenceZh).map((e) => e.id);
+    expect(withSeq.sort()).toEqual([
+      "cam_03_crane",
+      "cam_05_whip_pan",
+      "cam_16_cut_in",
+      "cam_17_slowmo",
+      "cam_18_push_pull",
+    ]);
+    for (const e of MANHUA_CAMERA_MOVE_BANK) {
+      if (e.sequenceZh) {
+        expect(e.sequenceZh).toHaveLength(2);
+        expect(e.sequenceZh[0]).not.toMatch(/模型|Seedance/i);
+      }
+    }
+  });
+
+  it("按条目名认回库内条目；自由运镜文本不误认", () => {
+    expect(matchManhuaCameraMoveByNameZh("中景推拉结合")?.id).toBe("cam_18_push_pull");
+    expect(matchManhuaCameraMoveByNameZh("贴桥板低机位，全景缓推至中近景")).toBeNull();
+    expect(matchManhuaCameraMoveByNameZh("")).toBeNull();
   });
 });
