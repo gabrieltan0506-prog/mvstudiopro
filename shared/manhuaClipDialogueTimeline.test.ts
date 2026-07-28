@@ -318,4 +318,65 @@ describe("manhuaClipDialogueTimeline", () => {
     expect(text).not.toContain("跨镜连续硬锁");
     expect(text).not.toMatch(/衔接：|\d+mm|快门/);
   });
+
+  it("backfills the segment's single speaker onto untagged lines (monologue scene)", () => {
+    // 独角戏段：编剧只给第一句点了名，后面光秃「」句也归同一人——
+    // 否则「说『…』」没有主语，口型与锁脸都挂不上。
+    const block = formatManhuaDialogueTimelineBlock(
+      [
+        {
+          index: 1,
+          durationSec: 5,
+          cameraZh: "近景，微推",
+          actionZh: "@角色1 握剑而立",
+          dialogueZh: "今晚过桥。",
+        },
+        {
+          index: 2,
+          durationSec: 5,
+          cameraZh: "中景，固定",
+          actionZh: "抬眼望向桥那头",
+          dialogueZh: "谁拦谁死。",
+        },
+      ],
+      10,
+      { segmentIndex: 1 },
+    );
+    expect(block).toContain("@角色1说「今晚过桥。」");
+    expect(block).toContain("@角色1说「谁拦谁死。」");
+  });
+
+  it("leaves untagged lines alone when the segment has multiple speakers", () => {
+    // 群戏不猜说话人——猜错比不写更糟；该场景靠编剧引导点名。
+    const block = formatManhuaDialogueTimelineBlock(
+      [
+        {
+          index: 1,
+          durationSec: 5,
+          cameraZh: "近景",
+          actionZh: "@角色1 递出玉佩",
+          dialogueZh: "拿着。",
+        },
+        {
+          index: 2,
+          durationSec: 5,
+          cameraZh: "中景",
+          actionZh: "@角色2 握紧后退",
+          dialogueZh: "你早就知道了？",
+        },
+        {
+          index: 3,
+          durationSec: 5,
+          cameraZh: "全景",
+          actionZh: "两人对峙，风卷起衣摆",
+          dialogueZh: "都别动。",
+        },
+      ],
+      15,
+      { segmentIndex: 1 },
+    );
+    expect(block).toContain("说「都别动。」");
+    expect(block).not.toContain("@角色1说「都别动。」");
+    expect(block).not.toContain("@角色2说「都别动。」");
+  });
 });

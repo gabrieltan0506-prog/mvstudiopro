@@ -71,7 +71,7 @@ export function buildManhuaDialogueTimelineBeats(
       : 15;
   const n = list.length;
   const slot = dur / n;
-  return list.map((s, i) => {
+  const beats = list.map((s, i) => {
     const startSec = Math.round(i * slot * 10) / 10;
     const endSec = Math.round(Math.min(dur, (i + 1) * slot) * 10) / 10;
     const durationBeat = Math.round((endSec - startSec) * 10) / 10;
@@ -97,6 +97,21 @@ export function buildManhuaDialogueTimelineBeats(
       ),
     };
   });
+  /**
+   * 独白补名：整段只有一位开口者时，没点名的台词也归到他头上。
+   * 光秃「说『…』」句在成片里没有主语，口型与锁脸都挂不上；
+   * 多人对戏不猜——猜错比不写更糟，靠编剧引导点名（manhuaEpisodeSegmentPlan）。
+   */
+  const speakers = new Set(
+    beats.filter((b) => b.dialogueZh && b.speakerAtTag).map((b) => b.speakerAtTag),
+  );
+  if (speakers.size === 1) {
+    const only = Array.from(speakers)[0]!;
+    for (const b of beats) {
+      if (b.dialogueZh && !b.speakerAtTag) b.speakerAtTag = only;
+    }
+  }
+  return beats;
 }
 
 /** 顺句白描要靠逗号串起来；原文自带的句末标点会撞出「。。」 */
