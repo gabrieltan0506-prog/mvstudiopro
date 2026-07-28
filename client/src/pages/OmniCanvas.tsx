@@ -120,6 +120,7 @@ import {
   type ManhuaProjectBible,
 } from "@shared/manhuaProjectBible";
 import {
+  detectManhuaCanonWriterDrift,
   evaluateWriterPackAssetAndDensity,
   formatWriterAssetCanonFactoryAddon,
   formatWriterAssetCanonIdentityLock,
@@ -1642,6 +1643,21 @@ export default function OmniCanvas() {
       }),
     [projectBible?.assetCanon, customAssetRefs, blocks],
   );
+
+  /**
+   * canon↔现剧本人物表 漂移：已锁 bible 是旧剧本角色，但剧本已换角。
+   * 此时「按剧本重出」仍会用旧 canon 出旧角色——给出明确警示与正确路径。
+   */
+  const canonWriterDriftHintZh = useMemo(() => {
+    const drift = detectManhuaCanonWriterDrift(
+      projectBible?.assetCanon,
+      writerPack?.charactersMd,
+    );
+    if (!drift.drifted) return "";
+    const oldNames = drift.onlyInBible.slice(0, 4).join("、") || drift.bibleCast.slice(0, 4).join("、");
+    const newNames = drift.writerCast.slice(0, 4).join("、");
+    return `已锁定的角色设定图还停在旧剧本（${oldNames}），但现在的剧本主角是（${newNames}）。此时点「按剧本重出设定图」仍会出旧角色。请先把每集可拍表补齐「意图」等字段、让剧本过门禁，再点上方「确认并进入资产设定」按新剧本重建角色，才会出对人。`;
+  }, [projectBible?.assetCanon, writerPack?.charactersMd]);
 
   /** 剧本表变了：自动清掉对不上的旧生成设定图（上传保留），并提示按剧本重出 */
   const lastAssetStalePurgeFpRef = useRef("");
@@ -4710,6 +4726,7 @@ export default function OmniCanvas() {
                     void confirmAssetsAndPrepareImages({ forceRegenerate: true })
                   }
                   assetScriptStaleHintZh={assetScriptAlign.hintZh}
+                  canonWriterDriftHintZh={canonWriterDriftHintZh}
                   stylePack={stylePack}
                   onStylePackChange={setStylePack}
                   customAssetRefs={customAssetRefs}

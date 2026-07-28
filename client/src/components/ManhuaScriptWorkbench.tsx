@@ -230,6 +230,8 @@ type Props = {
   onRegenerateAssetsFromScript?: () => void | Promise<void>;
   /** 剧本人物/场景与当前设定图不对齐时的提示 */
   assetScriptStaleHintZh?: string | null;
+  /** 已锁 canon 与现剧本人物表换角漂移（重出会出旧角色）时的强警示 */
+  canonWriterDriftHintZh?: string | null;
   /** 产品化风格包（色卡 + 光影构图 DNA） */
   stylePack?: ManhuaStylePack | null;
   onStylePackChange?: (pack: ManhuaStylePack | null) => void;
@@ -432,6 +434,7 @@ export default function ManhuaScriptWorkbench({
   onConfirmAssetsAndPrepareImages,
   onRegenerateAssetsFromScript,
   assetScriptStaleHintZh = null,
+  canonWriterDriftHintZh = null,
   stylePack = null,
   onStylePackChange,
   customAssetRefs = [],
@@ -2260,6 +2263,16 @@ export default function ManhuaScriptWorkbench({
                 </button>
               </div>
             </div>
+
+            {canonWriterDriftHintZh ? (
+              <div
+                data-manhua-canon-drift-banner
+                className="mt-3 rounded-xl border border-rose-400/50 bg-rose-500/15 px-3 py-2.5"
+              >
+                <p className="text-[12px] font-semibold text-rose-50">⚠ 角色对不上：设定图还是旧剧本的人</p>
+                <p className="mt-1 text-[11px] leading-5 text-rose-50/85">{canonWriterDriftHintZh}</p>
+              </div>
+            ) : null}
 
             {assetScriptStaleHintZh ? (
               <div
