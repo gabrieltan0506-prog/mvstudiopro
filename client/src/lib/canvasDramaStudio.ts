@@ -1806,6 +1806,7 @@ export function ensureManhuaFragmentClips(
     // 审阅可见：场景锁 + 光影景别氛围 + 秒轴轨迹；身份锁写本段 Image 对照
     const timelineBlock = formatWorkbenchSegmentClipInjectBlock({
       segmentIndex: seg.index,
+      totalSegments: segments.length,
       durationSec: seg.durationSec,
       shots: hydratedShots,
       sceneHintZh,
