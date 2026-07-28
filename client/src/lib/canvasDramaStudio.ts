@@ -2124,7 +2124,7 @@ function placeManhuaStackColumns(
  * 2 场景墙（@场景N，分行，不与角色混排）
  * 3 道具墙（弱化一行）
  * 4 静帧：每列最多 5 镜竖排
- * 5 成片：每段约 15s 一卡，同理分列（卡面读秒轴）
+ * 5 成片：另起一条横带，按段号 1→N 单列竖排（不跟静帧同分列挨在一起）
  * 只改坐标 + 资产@标，不重生成。
  */
 /** 从定妆卡节点收集 wa_char_* → HTTPS，供特写格 @道具 子编号挂图 */
@@ -2304,8 +2304,15 @@ export function layoutManhuaEpisodeReadableChain(
     stackPer,
     pos,
   );
-  const clipY = keyartY + (keyStack.rows ? keyStack.rows * gapY + Math.round(gapY * 0.25) : 0);
-  placeManhuaStackColumns(clips, originX, clipY, gapX, gapY, stackPer, pos);
+  /**
+   * 成片另起一条横带：以前跟静帧同分列、只隔 0.25 行距，看起来像同一列往下连。
+   * 现在拉开带距，再按段号 1→N 单列竖排——视频生成文本框自成一块，不贴静帧。
+   */
+  const clipBandGap = Math.round(gapY * 0.9);
+  const clipY =
+    keyartY + (keyStack.rows ? keyStack.rows * gapY + clipBandGap : clipBandGap);
+  const clipStackPer = Math.max(clips.length, 1);
+  placeManhuaStackColumns(clips, originX, clipY, gapX, gapY, clipStackPer, pos);
 
   const positioned = blocks.map((b) => {
     const p = pos.get(b.id);

@@ -34,7 +34,10 @@ import {
 } from "./canvasTypes";
 import * as canvasRunBlock from "./canvasRunBlock";
 import type { CanvasRunDeps } from "./canvasRunBlock";
-import { resolveKeyartShotIndex } from "@shared/manhuaScriptWorkbench";
+import {
+  resolveClipSegmentIndex,
+  resolveKeyartShotIndex,
+} from "@shared/manhuaScriptWorkbench";
 
 describe("canvasDramaStudio factory", () => {
   it("does not hard-apply dynasty wardrobe from topic text", () => {
@@ -426,6 +429,22 @@ describe("canvasDramaStudio factory", () => {
     expect(keyarts[1]!.x).toBe(keyarts[0]!.x);
     expect(keyarts[5]!.x).toBeGreaterThan(keyarts[0]!.x);
     expect(keyarts[0]!.y).toBeGreaterThan(assets[0]!.y);
+
+    // 成片另起横带：单列竖排，不跟静帧同分列贴在一起
+    const clips = laid
+      .filter((b) => b.id.startsWith("clip-") && (/-g\d{2,}/i.test(b.id) || /-s\d{2,}/.test(b.id)))
+      .sort(
+        (a, b) =>
+          resolveClipSegmentIndex(a.id, a.prompt) - resolveClipSegmentIndex(b.id, b.prompt),
+      );
+    expect(clips.length).toBeGreaterThanOrEqual(2);
+    const keyartMaxY = Math.max(...keyarts.map((k) => k.y));
+    expect(clips[0]!.y).toBeGreaterThan(keyartMaxY);
+    // 单列：各段同 x，y 随段号递增
+    for (let i = 1; i < clips.length; i++) {
+      expect(clips[i]!.x).toBe(clips[0]!.x);
+      expect(clips[i]!.y).toBeGreaterThan(clips[i - 1]!.y);
+    }
   });
 
   it("ensureManhuaFragmentClips lays one clip per segment and targets a single fragment", () => {
