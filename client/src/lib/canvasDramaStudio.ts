@@ -2049,21 +2049,24 @@ export function ensureManhuaFragmentClips(
   }
 
   /**
-   * 对照表里锁了谁，就连谁：角色 / 场景 / 道具节点都接到本段成片。
-   * 以前只靠正文 @ 提及 + cust_* 对 id，于是经常只剩 keyart→clip 一条线——
-   * Image 对照表明明有三行，画布上看着却像没锁。
+   * 提及才连（#1002）：本段秒轴/对照表里真出现的 @角色N…，把对应资产节点连到该段成片。
+   * 匹配逻辑抽到 resolveManhuaClipRelatedAssetNodeIds，供铺段与敲 @ 共用——不在这里重写一套。
+   * 增量只补 seedLibraryId（cust_* 槽 ↔ charsheet-wa_* 节点）认亲。
    */
   {
     let edgesAcc = nextEdges;
     for (const seg of segments) {
       const clip = clipBySeg.get(manhuaGlobalSegmentIndex(ep, seg.index));
       if (!clip) continue;
-      const fromIds = resolveManhuaClipRelatedAssetNodeIds({
-        clipPrompt: clip.prompt,
-        blocks: nextBlocks,
-        registry: lockRegistry,
-      });
-      edgesAcc = syncManhuaClipAssetEdges(edgesAcc, clip.id, fromIds);
+      edgesAcc = syncManhuaClipAssetEdges(
+        edgesAcc,
+        clip.id,
+        resolveManhuaClipRelatedAssetNodeIds({
+          clipPrompt: clip.prompt,
+          blocks: nextBlocks,
+          registry: lockRegistry,
+        }),
+      );
     }
     nextEdges = edgesAcc;
   }
@@ -2340,9 +2343,7 @@ function mediaUrlOf(
  * 画布资产节点 id → { role, seed }（识别范围对齐 assignManhuaCanvasAssetAtTags：
  * charsheet-face/charsheet/sceneplate/wardrobeplate/wardrobe/propplate/propsheet/prop）。
  */
-export function canvasAssetNodeSeed(
-  id: string,
-): { role: ManhuaCustomAssetRole; seed: string } | null {
+function canvasAssetNodeSeed(id: string): { role: ManhuaCustomAssetRole; seed: string } | null {
   const m = String(id || "").match(
     /^(charsheet-face|charsheet|sceneplate|wardrobeplate|wardrobe|propplate|propsheet|prop)-(.+)$/,
   );
@@ -2358,45 +2359,9 @@ export function canvasAssetNodeSeed(
   return { role, seed: m[2]! };
 }
 
-function slotMatchesAssetNode(
-  slot: {
-    id: string;
-    role: ManhuaCustomAssetRole;
-    path: string;
-    labelZh?: string;
-    seedLibraryId?: string | null;
-  },
-  block: Pick<CanvasBlock, "id" | "prompt"> &
-    Partial<Pick<CanvasBlock, "outputUrl" | "outputUrls">>,
-  tag: string,
-): boolean {
-  if (parseManhuaCanvasAssetAtTag(block.prompt) === tag) return true;
-  const hit = canvasAssetNodeSeed(block.id);
-  if (!hit || hit.role !== slot.role) return false;
-  const seed = String(slot.seedLibraryId || "").trim();
-  const slotId = String(slot.id || "").trim();
-  if (seed && (hit.seed === seed || hit.seed.includes(seed) || seed.includes(hit.seed))) {
-    return true;
-  }
-  if (
-    slotId &&
-    (hit.seed === slotId ||
-      block.id === slotId ||
-      hit.seed.includes(slotId) ||
-      slotId.includes(hit.seed))
-  ) {
-    return true;
-  }
-  const slotPath = String(slot.path || "").trim();
-  if (slotPath && isBindableAssetPath(slotPath) && mediaUrlOf(block) === slotPath) return true;
-  const label = String(slot.labelZh || "").trim();
-  if (label.length >= 2 && String(block.prompt || "").includes(label)) return true;
-  return false;
-}
-
 /**
- * 成片提示词里锁了的资产 → 画布上对应节点 id。
- * 以【资产·Image对照】为准（@ 选完就落表）；正文 @提及 / 真名出镜作补充。
+ * #1002「提及才连」的资产节点解析——抽出来给铺段与敲 @ 共用。
+ * 相对 #1002 只多一步：slot.seedLibraryId ↔ 节点 seed（cust_* 槽对 wa_* 节点）。
  */
 export function resolveManhuaClipRelatedAssetNodeIds(input: {
   clipPrompt: string | null | undefined;
@@ -2409,14 +2374,8 @@ export function resolveManhuaClipRelatedAssetNodeIds(input: {
   const registry = input.registry;
   if (!registry?.slots?.length) return [];
   const promptText = String(input.clipPrompt || "");
-  const tags = new Set<string>([
-    ...parseManhuaAssetImageBindBlock(promptText).map((r) => r.tag),
-    ...extractManhuaMentionedAssetTags(promptText),
-  ]);
-  for (const s of registry.slots) {
-    const label = String(s.labelZh || "").trim();
-    if (s.tag && label.length >= 2 && promptText.includes(label)) tags.add(s.tag);
-  }
+  // #1002：正文/对照表里的 @角色N…；对照表行若已被写成 @标签也会被 extract 扫到
+  const tags = new Set<string>(extractManhuaMentionedAssetTags(promptText));
   if (!tags.size) return [];
 
   const slotByTag = new Map(registry.slots.map((s) => [s.tag, s]));
@@ -2425,25 +2384,52 @@ export function resolveManhuaClipRelatedAssetNodeIds(input: {
 
   for (const tag of Array.from(tags)) {
     const slot = slotByTag.get(tag);
-    if (!slot) continue;
+    const slotPath = String(slot?.path || "").trim();
+    const slotPathBindable = Boolean(slotPath) && isBindableAssetPath(slotPath);
+    const seedLib = String(slot?.seedLibraryId || "").trim();
     for (const b of assetNodes) {
       if (fromIds.has(b.id)) continue;
-      if (slotMatchesAssetNode(slot, b, tag)) fromIds.add(b.id);
+      // ① 节点 prompt 已盖【画布资产@】章
+      if (parseManhuaCanvasAssetAtTag(b.prompt) === tag) {
+        fromIds.add(b.id);
+        continue;
+      }
+      if (!slot) continue;
+      const hit = canvasAssetNodeSeed(b.id)!;
+      // ② 同栏 id 互指（#1002）+ seedLibraryId（cust_* ↔ wa_*）
+      if (
+        hit.role === slot.role &&
+        (hit.seed === slot.id ||
+          b.id === slot.id ||
+          hit.seed.includes(slot.id) ||
+          slot.id.includes(hit.seed) ||
+          (seedLib &&
+            (hit.seed === seedLib ||
+              hit.seed.includes(seedLib) ||
+              seedLib.includes(hit.seed))))
+      ) {
+        fromIds.add(b.id);
+        continue;
+      }
+      // ③ 节点出图地址与槽位垫图同一张
+      if (slotPathBindable && mediaUrlOf(b) === slotPath) fromIds.add(b.id);
     }
-    const slotPath = String(slot.path || "").trim();
-    if (!slotPath || !isBindableAssetPath(slotPath)) continue;
-    for (const b of input.blocks) {
-      if (fromIds.has(b.id) || canvasAssetNodeSeed(b.id)) continue;
-      if (b.kind !== "image" || b.id.startsWith("keyart-") || b.id.startsWith("clip-")) continue;
-      if (mediaUrlOf(b) === slotPath) fromIds.add(b.id);
+    // ④ 无资产前缀的自由上传图：靠同一张图 URL
+    if (slot && slotPathBindable) {
+      for (const b of input.blocks) {
+        if (fromIds.has(b.id) || canvasAssetNodeSeed(b.id)) continue;
+        if (b.kind !== "image" || b.id.startsWith("keyart-") || b.id.startsWith("clip-")) {
+          continue;
+        }
+        if (mediaUrlOf(b) === slotPath) fromIds.add(b.id);
+      }
     }
   }
   return Array.from(fromIds);
 }
 
 /**
- * 按对照表重挂「资产节点 → 这段成片」的边；静帧→成片等其它边不动。
- * 敲 @ 改提示词时也要走这里，否则画布上永远只有铺段时留下的那一条线。
+ * 敲 @ 改提示词时重挂「资产→成片」边（#1002 铺段连边的编辑态复用）；静帧→成片不动。
  */
 export function syncManhuaClipAssetEdges(
   edges: CanvasEdge[],
