@@ -722,6 +722,8 @@ export function formatWorkbenchClipInjectBlock(shot: ManhuaWorkbenchShot): strin
  */
 export function formatWorkbenchSegmentClipInjectBlock(input: {
   segmentIndex: number;
+  /** 全集段数，用于秒轴节拍功能判弧位（缺省按 segmentIndex 兜底） */
+  totalSegments?: number;
   durationSec: number;
   shots: ManhuaWorkbenchShot[];
   cameraZh?: string;
@@ -770,6 +772,8 @@ export function formatWorkbenchSegmentClipInjectBlock(input: {
   });
   const timeline = formatManhuaDialogueTimelineBlock(shots, dur, {
     segmentIndex: seg,
+    totalSegments: input.totalSegments,
+    intentZh: input.intentZh,
     sceneHintZh: scene,
     lightingCameraZh: lighting,
     paletteZh: palette,

@@ -203,11 +203,69 @@ function cameraTrajectoryZh(cameraZh: string, actionZh: string): string {
  * 例：`0–5s：动作轨迹：握拳对峙，咬牙。运镜轨迹：微推。景别：近景。情绪：怒。@角色2以压嗓说「放开！」。`
  * 身份靠垫图/@图片N；光学 mm/快门出片时另转。
  */
+/**
+ * 节拍功能词库：短剧秒轴叙事功能标签（固定顺序，UI 与秒轴正文共用一套）。
+ * 对齐样片右上角的节拍提示：开场先抛钩子，段间翻面走转折，末段留悬念。
+ */
+export const MANHUA_BEAT_FUNCTION_VOCAB_ZH = [
+  "开场钩子",
+  "建置",
+  "冲突升级",
+  "信息揭示",
+  "转折",
+  "情绪高点",
+  "悬念钩子",
+] as const;
+export type ManhuaBeatFunctionZh = (typeof MANHUA_BEAT_FUNCTION_VOCAB_ZH)[number];
+
+/** 带对白且命中这些线索时判「信息揭示」——真相/身份/证据类翻牌拍 */
+const BEAT_REVEAL_CUE_RE = /揭|真相|原来|发现|身份|秘密|竟是|其实|证据|账册|反转|识破/;
+
+/**
+ * 判定单拍在段/集里的叙事功能（纯函数，可单测）：
+ * - 开场钩子：全集第 1 段第 1 拍（前 3 秒抛冲突）
+ * - 悬念钩子：全集末段末拍（留钩子）
+ * - 信息揭示：带对白且命中揭示线索（真相/身份/证据…）
+ * - 转折：非末段的末拍（段间递进的翻面）
+ * - 其余按段在集里的位置：前段建置 / 中段冲突升级 / 后段情绪高点
+ */
+export function resolveManhuaBeatFunctionZh(input: {
+  globalSegmentIndex: number;
+  totalSegments: number;
+  /** 段内拍序，0-based */
+  beatIndex: number;
+  beatCount: number;
+  hasDialogue?: boolean;
+  intentZh?: string | null;
+  /** 本拍动作/台词，用于揭示线索匹配 */
+  contextZh?: string | null;
+}): ManhuaBeatFunctionZh {
+  const seg = Math.max(1, Math.floor(input.globalSegmentIndex || 1));
+  const total = Math.max(seg, Math.floor(input.totalSegments || seg));
+  const bi = Math.max(0, Math.floor(input.beatIndex || 0));
+  const bc = Math.max(1, Math.floor(input.beatCount || 1));
+  const isFirstBeat = bi === 0;
+  const isLastBeat = bi === bc - 1;
+  if (seg === 1 && isFirstBeat) return "开场钩子";
+  if (seg === total && isLastBeat) return "悬念钩子";
+  const cueText = `${input.intentZh || ""}｜${input.contextZh || ""}`;
+  if (input.hasDialogue && BEAT_REVEAL_CUE_RE.test(cueText)) return "信息揭示";
+  if (seg < total && isLastBeat) return "转折";
+  const p = seg / total;
+  if (p <= 1 / 3) return "建置";
+  if (p <= 2 / 3) return "冲突升级";
+  return "情绪高点";
+}
+
 export function formatManhuaDialogueTimelineBlock(
   shots: ManhuaWorkbenchShot[],
   durationSec: number,
   opts?: {
     segmentIndex?: number;
+    /** 全集段数，用于判断段在集里的弧位（缺省按 segmentIndex 兜底） */
+    totalSegments?: number;
+    /** 本段单一意图（可拍表），供「信息揭示」线索匹配 */
+    intentZh?: string;
     sceneHintZh?: string;
     /** 段级光影/运镜（可拍表），拆到各镜光/氛围兜底 */
     lightingCameraZh?: string;
@@ -235,7 +293,7 @@ export function formatManhuaDialogueTimelineBlock(
   const sharedMicro = pickShared(microOf);
   const sharedTone = pickShared(toneOf);
 
-  const lines = beats.map((b) => {
+  const lines = beats.map((b, i) => {
     const frame = extractManhuaFramingLabelZh(b.cameraZh, b.actionZh);
     const traj = cameraTrajectoryZh(b.cameraZh, b.actionZh);
     const speaker = b.speakerAtTag;
@@ -276,7 +334,17 @@ export function formatManhuaDialogueTimelineBlock(
         ? `${speaker ? trimTrailPunct(speaker) : ""}${tone ? `以${trimTrailPunct(tone)}` : ""}说「${line}」`
         : trimTrailPunct(speaker),
     ].filter(Boolean);
-    const head = `${b.startSec}–${b.endSec}s：`;
+    const fn = resolveManhuaBeatFunctionZh({
+      globalSegmentIndex: opts?.segmentIndex ?? 1,
+      totalSegments: opts?.totalSegments ?? opts?.segmentIndex ?? 1,
+      beatIndex: i,
+      beatCount: beats.length,
+      hasDialogue: Boolean(line),
+      intentZh: opts?.intentZh,
+      contextZh: `${b.actionZh || ""}｜${b.dialogueZh || ""}`,
+    });
+    // 节拍功能标进秒轴正文（〔…〕），紧跟时间头之后、运镜之前，与样片右上角节拍对齐
+    const head = `${b.startSec}–${b.endSec}s：〔${fn}〕`;
     if (!bits.length) return `${head}${camera}。`;
     return camera ? `${head}${camera}；${bits.join("，")}。` : `${head}${bits.join("，")}。`;
   });

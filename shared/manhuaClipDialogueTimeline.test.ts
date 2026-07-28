@@ -3,6 +3,8 @@ import {
   buildManhuaDialogueTimelineBeats,
   extractManhuaSceneHintFromPrompt,
   formatManhuaDialogueTimelineBlock,
+  resolveManhuaBeatFunctionZh,
+  MANHUA_BEAT_FUNCTION_VOCAB_ZH,
   MANHUA_CROSS_SHOT_CONTINUITY_LOCK,
   MANHUA_SEEDANCE_AUDIO_DIRECTOR_LOCK,
 } from "./manhuaClipDialogueTimeline";
@@ -269,6 +271,62 @@ describe("manhuaClipDialogueTimeline", () => {
       15,
     );
     expect(short).not.toContain("先缓推贴近主体");
+  });
+
+  describe("节拍功能进秒轴（C）", () => {
+    it("resolveManhuaBeatFunctionZh 按弧位/线索判功能", () => {
+      // 全集第1段第1拍 → 开场钩子
+      expect(
+        resolveManhuaBeatFunctionZh({ globalSegmentIndex: 1, totalSegments: 6, beatIndex: 0, beatCount: 3 }),
+      ).toBe("开场钩子");
+      // 末段末拍 → 悬念钩子
+      expect(
+        resolveManhuaBeatFunctionZh({ globalSegmentIndex: 6, totalSegments: 6, beatIndex: 2, beatCount: 3 }),
+      ).toBe("悬念钩子");
+      // 带对白且命中揭示线索 → 信息揭示
+      expect(
+        resolveManhuaBeatFunctionZh({
+          globalSegmentIndex: 3,
+          totalSegments: 6,
+          beatIndex: 1,
+          beatCount: 3,
+          hasDialogue: true,
+          contextZh: "他掏出账册，账册就是证据",
+        }),
+      ).toBe("信息揭示");
+      // 非末段末拍 → 转折
+      expect(
+        resolveManhuaBeatFunctionZh({ globalSegmentIndex: 2, totalSegments: 6, beatIndex: 2, beatCount: 3 }),
+      ).toBe("转折");
+      // 弧位兜底：前段建置 / 中段升级 / 后段高点
+      expect(
+        resolveManhuaBeatFunctionZh({ globalSegmentIndex: 2, totalSegments: 6, beatIndex: 0, beatCount: 3 }),
+      ).toBe("建置");
+      expect(
+        resolveManhuaBeatFunctionZh({ globalSegmentIndex: 4, totalSegments: 6, beatIndex: 0, beatCount: 3 }),
+      ).toBe("冲突升级");
+      expect(
+        resolveManhuaBeatFunctionZh({ globalSegmentIndex: 5, totalSegments: 6, beatIndex: 0, beatCount: 3 }),
+      ).toBe("情绪高点");
+      // 词库里的每个值都合法
+      for (const v of MANHUA_BEAT_FUNCTION_VOCAB_ZH) expect(typeof v).toBe("string");
+    });
+
+    it("秒轴正文行首带〔功能〕标签，且不破坏时间头", () => {
+      const block = formatManhuaDialogueTimelineBlock(
+        [
+          { index: 1, durationSec: 5, cameraZh: "近景", actionZh: "推门而入", dialogueZh: "你来了。" },
+          { index: 2, durationSec: 5, cameraZh: "中景", actionZh: "拔刀" },
+          { index: 3, durationSec: 5, cameraZh: "全景", actionZh: "收刀离去" },
+        ],
+        15,
+        { segmentIndex: 1, totalSegments: 6, intentZh: "开场对峙" },
+      );
+      // 时间头保留、功能标签紧随其后
+      expect(block).toContain("0–5s：〔开场钩子〕");
+      // 每一拍都带一个功能标签
+      expect((block.match(/〔[^〕]+〕/g) || []).length).toBe(3);
+    });
   });
 
   it("extracts scene name from keyart prompt", () => {
