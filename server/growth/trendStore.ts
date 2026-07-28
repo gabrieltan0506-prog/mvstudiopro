@@ -72,6 +72,8 @@ export type TrendMergeStats = {
   afterDedup?: number;
   afterWindowFilter?: number;
   mergedAdded?: number;
+  /** merge 前池内条数：currentTotal 小于它 = 本轮热窗裁剪真把旧窗口裁下来了 */
+  prunedFromCount?: number;
 };
 
 export type TrendBackfillPlatformProgress = {
@@ -2298,6 +2300,7 @@ export async function mergeTrendCollectionsWithOptions(
       afterDedup: incoming.stats?.afterDedupCount ?? incoming.items.length,
       afterWindowFilter: incoming.stats?.afterWindowFilterCount,
       mergedAdded: merged.addedCount,
+      prunedFromCount: current.collections?.[platformKey]?.items?.length || 0,
     };
   }
 
@@ -2309,7 +2312,13 @@ export async function mergeTrendCollectionsWithOptions(
     await updateHistoryFromCollections(next, collections);
   }
 
-  const written = await writeStore(next);
+  // merge 语义下池子只会因热窗裁剪而变小：dedupe 只增不减（旧条目全保留、新条目按键并入），
+  // 唯一让 merged < existing 的就是 pruneTrendItemsToHotWindow 按窗口裁旧。
+  // writeStore 默认的「防缩保护」防的是坏采集轮擦空好池子——但坏轮（如只抓回 200 条）
+  // 在 merge 里只会并进大池，根本产不出更小的 next。保护若拦在这里，热窗裁剪（#995）
+  // 会被整体换回旧档：douyin/kuaishou/bilibili/toutiao 曾因此永久卡 365 天旧窗口、
+  // collectedAt 冻结，每轮还在 parse+重写 93MB 旧载荷。故 merge 路径显式放行。
+  const written = await writeStore(next, { allowLowerTotals: true });
   return {
     ...written,
     mergeStats,

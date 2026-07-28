@@ -82,9 +82,16 @@ async function readAdaptiveConfigFile(): Promise<AdaptiveConfigFile> {
   }
 }
 
+let adaptiveConfigWriteSeq = 0;
+
 async function writeAdaptiveConfigFile(next: AdaptiveConfigFile) {
   await ensureStoreDir();
-  const tempPath = `${ADAPTIVE_CONFIG_FILE}.next`;
+  // 固定 `.next` 临时名在并发写下会竞态：两个写者共用同一临时文件，
+  // 一方 rename 走后另一方 rename 必 ENOENT（vitest 并行 worker 实踩；
+  // 线上调度采集与手动 API 采集同平台并发时同理）。临时名带上调用序号，
+  // rename 本身同分区原子，后写覆盖先写即可（自适应配置本就是尽力而为）。
+  adaptiveConfigWriteSeq = (adaptiveConfigWriteSeq + 1) % 1_000_000;
+  const tempPath = `${ADAPTIVE_CONFIG_FILE}.${process.pid}.${adaptiveConfigWriteSeq}.next`;
   await fs.writeFile(tempPath, JSON.stringify(next, null, 2), "utf8");
   await fs.rename(tempPath, ADAPTIVE_CONFIG_FILE);
 }
