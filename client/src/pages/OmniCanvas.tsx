@@ -35,6 +35,7 @@ import {
   buildManhuaAssetLockRegistry,
   buildManhuaAssetPathById,
   buildManhuaAssetTileUrlsById,
+  type ManhuaMentionCandidate,
 } from "@shared/manhuaAssetLockRegistry";
 import {
   normalizeManhuaCharacterLookSets,
@@ -1812,6 +1813,7 @@ export default function OmniCanvas() {
       ),
     });
     return {
+      registry: reg,
       pathById: buildManhuaAssetPathById(reg),
       tileUrlsById: buildManhuaAssetTileUrlsById(reg),
     };
@@ -1825,6 +1827,37 @@ export default function OmniCanvas() {
     projectBible?.assetCanon,
     blocks,
   ]);
+
+  /**
+   * 画布成片节点的 @ 面板数据源：与工作台同一资产真源（manhuaAssetMaps 的 registry），
+   * 缩略图取槽位图 URL；点了没出图的候选 → 走工作台同一条补图链路。
+   */
+  const manhuaCanvasMention = useMemo(() => {
+    const registry = manhuaAssetMaps.registry;
+    const thumbUrlByAssetId: Record<string, string> = {};
+    for (const s of registry.slots) {
+      const id = String(s.id || "").trim();
+      const p = String(s.path || "").trim();
+      if (id && /^https?:\/\//.test(p)) thumbUrlByAssetId[id] = p;
+    }
+    for (const r of customAssetRefs) {
+      const id = String(r?.id || "").trim();
+      const url = String(r?.url || "").trim();
+      if (id && url) thumbUrlByAssetId[id] = url;
+    }
+    return {
+      registry,
+      assetCanon: projectBible?.assetCanon ?? null,
+      thumbUrlByAssetId,
+      onRequestGenerateAsset: (c: ManhuaMentionCandidate) => {
+        toast.info(`「${c.labelZh}」还没有定妆图`, {
+          description: "正在按剧本补这一张，出图后回来敲 @ 就能挂上",
+        });
+        void confirmAssetsAndPrepareImages?.();
+      },
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manhuaAssetMaps, customAssetRefs, projectBible?.assetCanon]);
 
   const runDeps = useMemo<CanvasRunDeps>(
     () => ({
@@ -4809,6 +4842,7 @@ export default function OmniCanvas() {
                         }
                         characterVoiceLocks={characterVoiceLocks}
                         onReplaceCharacterVoiceAudio={handleReplaceCharacterVoiceAudio}
+                        manhuaMention={manhuaCanvasMention}
                       />
                     </div>
                   }
@@ -5796,6 +5830,7 @@ export default function OmniCanvas() {
                         }
                         characterVoiceLocks={characterVoiceLocks}
                         onReplaceCharacterVoiceAudio={handleReplaceCharacterVoiceAudio}
+                        manhuaMention={manhuaCanvasMention}
                       />
                     </div>
                   </div>
@@ -6513,6 +6548,7 @@ export default function OmniCanvas() {
             onFocusBlockConsumed={() => setFocusBlockId(null)}
             characterVoiceLocks={characterVoiceLocks}
             onReplaceCharacterVoiceAudio={handleReplaceCharacterVoiceAudio}
+            manhuaMention={manhuaCanvasMention}
           />
           </div>
           ) : null}

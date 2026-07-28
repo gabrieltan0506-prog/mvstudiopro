@@ -513,6 +513,94 @@ describe("canvasDramaStudio factory", () => {
     expect(filterManhuaFactoryTargetIds(ordered, frag.targetBlockIds)).toEqual([frag.clipId]);
   });
 
+  it("ensureManhuaFragmentClips links @-mentioned asset nodes to segment clips only", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id
+        ? {
+            ...b,
+            status: "done" as const,
+            outputText:
+              "1. 刀客推门进客栈\n2. 油灯下对峙\n3. 拔刀交锋\n4. 雨夜收刀\n5. 撑伞离去留钩子",
+          }
+        : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+    const withKeyarts = expanded.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        : b,
+    );
+    const withSheets = [
+      ...withKeyarts,
+      {
+        ...withKeyarts[0]!,
+        id: "charsheet-hero",
+        kind: "image" as const,
+        prompt: "定妆",
+        outputUrl: "https://cdn.example/hero.jpg",
+        outputUrls: ["https://cdn.example/hero.jpg"],
+        status: "done" as const,
+      },
+      {
+        ...withKeyarts[0]!,
+        id: "sceneplate-bridge",
+        kind: "image" as const,
+        prompt: "场景",
+        outputUrl: "https://cdn.example/bridge.jpg",
+        outputUrls: ["https://cdn.example/bridge.jpg"],
+        status: "done" as const,
+      },
+    ];
+    const ensured = ensureManhuaFragmentClips(withSheets, expanded.edges, 1, {
+      customRefs: [
+        {
+          id: "hero",
+          url: "https://cdn.example/hero.jpg",
+          role: "character",
+          source: "generated",
+          labelZh: "刀客",
+        },
+        {
+          id: "bridge",
+          url: "https://cdn.example/bridge.jpg",
+          role: "scene",
+          source: "generated",
+          labelZh: "客栈",
+        },
+      ],
+    });
+    const segClips = ensured.blocks.filter(
+      (b) => b.id.startsWith("clip-") && (/-g\d{2,}/i.test(b.id) || /-s\d{2,}/.test(b.id)),
+    );
+    expect(segClips.length).toBe(2);
+    const edgeKeys = ensured.edges.map((e) => `${e.fromId}->${e.toId}`);
+    const edgeSet = new Set(edgeKeys);
+    const clip1 = segClips[0]!;
+    // 段1 文案点了刀客/客栈：定妆与场景节点必须连到段1成片（静帧来边照旧保留）
+    expect(clip1.prompt).toContain("@角色1");
+    expect(edgeSet.has(`charsheet-hero->${clip1.id}`)).toBe(true);
+    expect(edgeSet.has(`sceneplate-bridge->${clip1.id}`)).toBe(true);
+    expect(
+      ensured.edges.some((e) => e.toId === clip1.id && e.fromId.startsWith("keyart-")),
+    ).toBe(true);
+    // 只连提及的：没点名 @角色1/@场景1 的段不许糊上资产墙
+    for (const clip of segClips.slice(1)) {
+      if (!clip.prompt.includes("@角色1")) {
+        expect(edgeSet.has(`charsheet-hero->${clip.id}`)).toBe(false);
+      }
+      if (!clip.prompt.includes("@场景1")) {
+        expect(edgeSet.has(`sceneplate-bridge->${clip.id}`)).toBe(false);
+      }
+    }
+    // 边不得重复
+    expect(edgeKeys.length).toBe(edgeSet.size);
+  });
+
   it("episode 2 first segment clip uses global g07 (6 segs/ep)", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "续集客栈余波",

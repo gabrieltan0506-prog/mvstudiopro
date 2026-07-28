@@ -47,7 +47,11 @@ import {
   parseManhuaAssetImageBindBlock,
   parseManhuaCanvasAssetAtTag,
   sanitizeManhuaClipPromptForUi,
+  type ManhuaAssetLockRegistry,
+  type ManhuaMentionCandidate,
 } from "@shared/manhuaAssetLockRegistry";
+import type { ManhuaWriterAssetCanon } from "@shared/manhuaWriterAssetCanon";
+import ManhuaPromptMentionEditor from "@/components/ManhuaPromptMentionEditor";
 import {
   evaluateManhuaCrossSegmentVoiceGate,
   type ManhuaCharacterVoiceLock,
@@ -99,6 +103,16 @@ type FreeformCanvasProps = {
   }) => void;
   /** 嵌入工作台右栏时占满父级高度，由内部画布单独滚动 */
   fillContainer?: boolean;
+  /**
+   * 漫剧：成片 clip-* 节点的秒轴框接入 @ 资产面板（候选=本集资产库+设定表）。
+   * 不传时 clip 节点退回纯文本框（非漫剧画布不受影响）。
+   */
+  manhuaMention?: {
+    registry: ManhuaAssetLockRegistry | null;
+    assetCanon: ManhuaWriterAssetCanon | null;
+    thumbUrlByAssetId?: Record<string, string>;
+    onRequestGenerateAsset?: (candidate: ManhuaMentionCandidate) => void;
+  };
 };
 
 type SpawnMenuState = { anchorBlockId: string; x: number; y: number } | null;
@@ -461,6 +475,7 @@ export default function FreeformCanvas({
   onReplaceCharacterVoiceAudio: _onReplaceCharacterVoiceAudio,
   /** 嵌入工作台右栏时占满容器，禁止外层再套一层 overflow 双滚动 */
   fillContainer = false,
+  manhuaMention,
 }: FreeformCanvasProps) {
   void _onReplaceCharacterVoiceAudio;
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -1545,6 +1560,21 @@ export default function FreeformCanvas({
                     <div className="mb-1.5 shrink-0 text-[10px] tracking-wider text-white/40">
                       {String(block.id || "").startsWith("clip-") ? "秒轴说明（可微调）" : "提示词"}
                     </div>
+                    {String(block.id || "").startsWith("clip-") && manhuaMention ? (
+                      <ManhuaPromptMentionEditor
+                        segmentIndex={resolveClipSegmentIndex(block.id, block.prompt)}
+                        value={sanitizeManhuaClipPromptForUi(block.prompt)}
+                        onChange={(next) =>
+                          patchOne(block.id, { prompt: sanitizeManhuaClipPromptForUi(next) })
+                        }
+                        rows={6}
+                        placeholder="写清谁在做什么、镜头怎么动；敲 @ 锁本集人物/场景/道具"
+                        registry={manhuaMention.registry}
+                        assetCanon={manhuaMention.assetCanon}
+                        thumbUrlByAssetId={manhuaMention.thumbUrlByAssetId}
+                        onRequestGenerateAsset={manhuaMention.onRequestGenerateAsset}
+                      />
+                    ) : (
                     <textarea
                       value={
                         block.id.startsWith("clip-")
@@ -1574,6 +1604,7 @@ export default function FreeformCanvas({
                               : meta.hint
                       }
                     />
+                    )}
                     {upstreamHandoff.length ? (
                       <div
                         className="mt-2 rounded-lg border border-sky-400/25 bg-sky-500/10 px-2 py-1.5 text-[10px] leading-5 text-sky-100/90"
