@@ -44,6 +44,11 @@ export type ManhuaAssetLockSlot = {
   id: string;
   labelZh: string;
   path: string;
+  /**
+   * 编剧表 / 库资产 id（wa_char_* / wa_scene_* / wa_prop_*）。
+   * 槽位 id 常是 cust_*，画布节点却是 charsheet-wa_*——连边与认亲靠这个字段桥。
+   */
+  seedLibraryId?: string | null;
   /** 定妆特写：父角色 @角色K */
   parentCharacterTag?: string;
   /** 定妆特写：@角色K·道具i */
@@ -119,7 +124,12 @@ export function buildManhuaAssetLockRegistry(opts?: {
     extra?: Partial<
       Pick<
         ManhuaAssetLockSlot,
-        "parentCharacterTag" | "subTag" | "fromSheetInset" | "duty" | "tileUrls"
+        | "parentCharacterTag"
+        | "subTag"
+        | "fromSheetInset"
+        | "duty"
+        | "tileUrls"
+        | "seedLibraryId"
       >
     >,
   ) => {
@@ -146,7 +156,10 @@ export function buildManhuaAssetLockRegistry(opts?: {
       c.labelZh || (c.source === "generated" ? "角色定妆" : "上传人物"),
       c.url,
       // 只认锁脸/锁妆造两种；其余职责（画风、首尾帧等）不影响人物绑定句写法
-      { duty: c.refDuty === "identity" || c.refDuty === "look" ? c.refDuty : null },
+      {
+        duty: c.refDuty === "identity" || c.refDuty === "look" ? c.refDuty : null,
+        seedLibraryId: c.seedLibraryId || null,
+      },
     );
   }
   for (const id of opts?.characterIds || []) {
@@ -167,7 +180,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
       c.id,
       c.labelZh || (c.source === "generated" ? "场景参考" : "上传场景"),
       c.url,
-      { tileUrls: c.tileUrls ?? null },
+      { tileUrls: c.tileUrls ?? null, seedLibraryId: c.seedLibraryId || null },
     );
   }
   const sceneId = String(opts?.sceneId || "").trim();
@@ -187,6 +200,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
       c.id,
       c.labelZh || (c.source === "generated" ? "道具参考" : "上传道具"),
       c.url,
+      { seedLibraryId: c.seedLibraryId || null },
     );
   }
   if (!customProps.length) {
@@ -206,6 +220,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
       c.id,
       c.labelZh || (c.source === "generated" ? "服装造型" : "上传服装"),
       c.url,
+      { seedLibraryId: c.seedLibraryId || null },
     );
   }
 
@@ -250,6 +265,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
       fromSheetInset: true,
       parentCharacterTag: sp.parentCharacterTag,
       subTag: sp.subTag,
+      seedLibraryId: sp.propId,
     });
   }
 

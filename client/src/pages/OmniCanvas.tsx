@@ -74,6 +74,7 @@ import {
   collectManhuaCharacterSheetUrlById,
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
   countExpectedManhuaKeyartShots,
+  resolveManhuaClipRelatedAssetNodeIds,
   runManhuaDramaFactoryPipeline,
   sanitizeManhuaClipBlocksPrompts,
   sanitizeManhuaRecapUpstreamLinks,
@@ -81,6 +82,7 @@ import {
   spawnManhuaDramaStudioSeries,
   stageKeyFromBlockId,
   stripManhuaFactoryCanvasArtifacts,
+  syncManhuaClipAssetEdges,
   type ManhuaFactoryStageKey,
 } from "@/lib/canvasDramaStudio";
 import {
@@ -5056,9 +5058,16 @@ export default function OmniCanvas() {
                       const next = prev.map((b) =>
                         b.id === clipId ? { ...b, prompt, error: undefined } : b,
                       );
+                      // 工作台敲 @ 锁人/场/道时，同步把对应资产节点接到这段成片
+                      const fromIds = resolveManhuaClipRelatedAssetNodeIds({
+                        clipPrompt: prompt,
+                        blocks: next,
+                        registry: manhuaAssetMaps.registry,
+                      });
                       setEdges((eds) => {
-                        saveCanvasState(next, eds);
-                        return eds;
+                        const synced = syncManhuaClipAssetEdges(eds, clipId, fromIds);
+                        saveCanvasState(next, synced);
+                        return synced;
                       });
                       return next;
                     });
