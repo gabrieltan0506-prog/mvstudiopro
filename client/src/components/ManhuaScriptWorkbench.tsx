@@ -2698,12 +2698,20 @@ export default function ManhuaScriptWorkbench({
                      * 不能拿 items.id 直接算——里面还混着用户自传的 custom 卡，重出只管剧本表里的。
                      */
                     const pendingIdSet = new Set(pending.map((a) => a.anchorId));
+                    /**
+                     * 道具要跟出图计划同一把尺：canon 里可能写了十件，但计划只出
+                     * 前 MANHUA_PROP_SHEET_MAX 件符合条件的，按数量直报会写成
+                     * 「重出 10 张」而画廊只有 6 张。
+                     */
                     const canonAnchorIds = (
                       sec.kind === "charsheet"
                         ? assetCanon?.characters.map((c) => c.id)
                         : sec.kind === "sceneplate"
                           ? assetCanon?.locations.map((l) => l.id)
-                          : assetCanon?.props.map((p) => p.id)
+                          : (assetCanon?.props || [])
+                              .filter(shouldSpawnManhuaPropPlate)
+                              .slice(0, MANHUA_PROP_SHEET_MAX)
+                              .map((p) => p.id)
                     ) || [];
                     const doneAnchorIds = canonAnchorIds.filter((id) => !pendingIdSet.has(id));
                     const secRole: ManhuaCustomAssetRole =

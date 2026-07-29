@@ -709,16 +709,18 @@ export function planManhuaAssetImageSpawns(
         buildSingle: buildManhuaScenePlateGenPrompt,
       });
       const regenThis = isRegen(loc.id);
-      // 指定重出时不限四视角：单张空镜也要能按新提示词重来
-      if (!regenThis && resolved.layout !== "grid2x2") continue;
       const existing = findAssetBlock(blocks, "sceneplate-", loc.id);
       if (!regenThis && blockHasMedia(existing)) continue;
+      /**
+       * 只在一集里出现的场景也要出图：从前这里只放行四视角（≥2 集）的场景，
+       * 左栏却照样列它们的待生成占位，点「一键出 N 张」等于点空气。
+       */
       plans.push({
         id: existing?.id || `sceneplate-${loc.id}`,
         kind: "sceneplate",
         prompt: resolved.prompt,
         labelZh: loc.nameZh,
-        layout: "grid2x2",
+        layout: resolved.layout,
       });
     }
   }

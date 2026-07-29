@@ -3784,7 +3784,7 @@ export default function OmniCanvas() {
       if (!plans.length) {
         toast.message(
           isIncremental
-            ? "这些资产已经有图了，可在画布上点它重出"
+            ? "这几张暂时不在出图计划里（已有图或不出单件图），可在画布上点节点重出"
             : hasEpisodeSheetMedia
               ? gate.hintZh || "资产图未齐"
               : "暂无可生成的设定图：请确认剧本人物/场景表，或到「我的角色 / 我的场景」上传参考",
