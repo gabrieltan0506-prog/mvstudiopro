@@ -10,7 +10,7 @@
 import {
   manhuaLibraryAssetUseCredits,
   manhuaLibraryAssetUsePriceLabelZh,
-} from "./manhuaAssetSharePricing";
+} from "./manhuaAssetSharePricing.js";
 
 /** 用户写的改进描述上限：够说清「刻字去掉、改成女性、衣服压深」，又不至于顶爆提示词 */
 export const MANHUA_ASSET_REGEN_NOTE_MAX = 400;

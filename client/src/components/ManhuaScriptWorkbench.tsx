@@ -57,6 +57,12 @@ import {
   type ManhuaCustomAssetRefDuty,
   type ManhuaCustomAssetRole,
 } from "@shared/manhuaCustomAssetRefs";
+import {
+  MANHUA_ASSET_REGEN_NOTE_MAX,
+  manhuaAssetRegenPriceLabelZh,
+  normalizeManhuaAssetRegenNoteZh,
+  type ManhuaAssetRegenMode,
+} from "@shared/manhuaAssetRegenRequest";
 import type { ManhuaDeliveryPackage } from "@shared/manhuaDeliveryPackage";
 import { syncDeliveryPackageSubtitleEnabled } from "@shared/manhuaDeliveryPackage";
 import type { ManhuaCineVocabLocale } from "@shared/manhuaCineVocabBank";
@@ -292,7 +298,24 @@ type Props = {
    * 重出这一批**已有图**的资产（按新编译提示词重来）；「重出本类 N 张」按钮用。
    * 画布上点节点重跑只会复用旧 prompt，改不掉老毛病（如道具烧字）。
    */
-  onRegenerateSheets?: (anchorIds: string[]) => void | Promise<void>;
+  onRegenerateSheets?: (opts: {
+    anchorIds: string[];
+    /** 用户写的「哪里要改进」；接到这几张的提示词尾部 */
+    noteZh: string;
+    /** redraw=按描述重画；library=换成公有库里挑的那张（都另外扣积分） */
+    mode: ManhuaAssetRegenMode;
+    /** mode=library 时用户点选的库图 */
+    libraryImageUrl?: string;
+  }) => void | Promise<void>;
+  /** 公有参考库候选（按类给弹框里的「从库里挑一张」用） */
+  libraryPickerItems?: Array<{
+    publicId: string;
+    role: string;
+    imageUrl: string;
+    labelZh: string;
+  }>;
+  /** 打开弹框时按类拉库候选 */
+  onRequestLibraryPicker?: (role: ManhuaCustomAssetRole) => void;
   /** 资产暂存区条数（清图/重出前存的，可恢复） */
   assetStashCount?: number;
   /** 从暂存区恢复被清掉的资产图 */
@@ -477,6 +500,8 @@ export default function ManhuaScriptWorkbench({
   onGenerateCanonAssetSheet,
   onFillPendingSheets,
   onRegenerateSheets,
+  libraryPickerItems,
+  onRequestLibraryPicker,
   assetStashCount = 0,
   onRestoreAssetStash,
   onClearAssetStash,
@@ -1585,41 +1610,41 @@ export default function ManhuaScriptWorkbench({
         );
 
   /**
-   * 「重出本类 N 张」双重确认：重出只覆盖本类已出的图（不碰别类、不跳阶段），但同样烧积分，
-   * 所以也要先武装再点第二次。3 秒够——它不像全量那样会清空全部。
+   * 重出弹框（用户 2026-07-29 定）：点「重出」不再直接烧图，先让用户写清哪里要改进，
+   * 再选按描述重画、还是换成公有库里类似的那张。两条路都另外扣积分（1 张 15 / 2 张 20）。
+   * 弹框本身就是防误点闸门——不写描述也得多点一次「按描述重画」才会跑。
    */
-  const REGEN_CONFIRM_MS = 3000;
-  const [regenArm, setRegenArm] = useState<{ kind: string; at: number } | null>(null);
-  const [regenTick, setRegenTick] = useState(() => Date.now());
-  useEffect(() => {
-    if (!regenArm) return;
-    const timer = setInterval(() => setRegenTick(Date.now()), 250);
-    return () => clearInterval(timer);
-  }, [regenArm]);
-  const regenRemainSec = (kind: string) =>
-    !regenArm || regenArm.kind !== kind
-      ? 0
-      : Math.max(0, Math.ceil((regenArm.at + REGEN_CONFIRM_MS - regenTick) / 1000));
-  /** 重出统一入口：第一次武装并说清后果，3 秒后再点才真跑 */
-  const requestRegenerateSheets = (kind: string, titleZh: string, anchorIds: string[]) => {
-    if (!anchorIds.length || !onRegenerateSheets) return;
-    if (!regenArm || regenArm.kind !== kind) {
-      setRegenArm({ kind, at: Date.now() });
-      setRegenTick(Date.now());
-      const single = anchorIds.length === 1;
-      toast.message(single ? `确认重出「${titleZh}」？` : `确认重出${titleZh} ${anchorIds.length} 张？`, {
-        description: single
-          ? "只按最新提示词重画这一个，其他图一张都不动。3 秒后再点一次确认。"
-          : "会按最新提示词把这一类已出的图重画一遍（不动其他类）。3 秒后再点一次确认。",
+  const [regenDraft, setRegenDraft] = useState<{
+    key: string;
+    titleZh: string;
+    role: ManhuaCustomAssetRole;
+    anchorIds: string[];
+    noteZh: string;
+    /** 展开「从库里挑一张」的候选墙 */
+    picking: boolean;
+  } | null>(null);
+  const regenTileCount = regenDraft?.anchorIds.length || 1;
+  const openRegenDraft = (opts: {
+    key: string;
+    titleZh: string;
+    role: ManhuaCustomAssetRole;
+    anchorIds: string[];
+  }) => {
+    if (!opts.anchorIds.length || !onRegenerateSheets) return;
+    setRegenDraft({ ...opts, noteZh: "", picking: false });
+  };
+  const submitRegenDraft = (mode: ManhuaAssetRegenMode, libraryImageUrl?: string) => {
+    if (!regenDraft || !onRegenerateSheets) return;
+    const noteZh = normalizeManhuaAssetRegenNoteZh(regenDraft.noteZh);
+    if (mode === "redraw" && !noteZh) {
+      toast.message("先写一句哪里要改进", {
+        description: "例：封面上的字去掉、只留墨痕；或：这个角色是女性，脸要重画。",
       });
       return;
     }
-    if (regenRemainSec(kind) > 0) {
-      toast.message(`再等 ${regenRemainSec(kind)} 秒`, { description: "确认期未满，防误点" });
-      return;
-    }
-    setRegenArm(null);
-    void onRegenerateSheets(anchorIds);
+    const anchorIds = regenDraft.anchorIds;
+    setRegenDraft(null);
+    void onRegenerateSheets({ anchorIds, noteZh, mode, libraryImageUrl });
   };
 
   const enterStoryboard = () => {
@@ -2493,6 +2518,108 @@ export default function ManhuaScriptWorkbench({
                   / 我的场景 / 我的道具」。
                 </p>
               </div>
+              {regenDraft ? (
+                <div
+                  data-manhua-regen-draft
+                  className="rounded-xl border border-amber-300/35 bg-amber-500/[0.08] px-3 py-2"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[11px] font-semibold text-amber-50">
+                      重出「{regenDraft.titleZh}」
+                      {regenTileCount > 1 ? ` · ${regenTileCount} 张` : ""}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setRegenDraft(null)}
+                      className="rounded border border-white/15 px-2 py-0.5 text-[10px] text-white/60 hover:bg-white/[0.06]"
+                    >
+                      取消
+                    </button>
+                  </div>
+                  <textarea
+                    data-manhua-regen-note
+                    autoFocus
+                    value={regenDraft.noteZh}
+                    maxLength={MANHUA_ASSET_REGEN_NOTE_MAX}
+                    onChange={(e) =>
+                      setRegenDraft((prev) => (prev ? { ...prev, noteZh: e.target.value } : prev))
+                    }
+                    rows={2}
+                    placeholder="哪里要改进？例：账册封面上的字全部去掉，只留墨痕；或：这个角色是女性，脸要重画，服装不变。"
+                    className="mt-1.5 w-full rounded-lg border border-white/12 bg-black/40 px-2 py-1.5 text-[11px] leading-4 text-white/85 placeholder:text-white/30"
+                  />
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      data-manhua-action="regen-redraw"
+                      disabled={factoryBusy}
+                      onClick={() => submitRegenDraft("redraw")}
+                      className="rounded-lg border border-violet-300/50 bg-violet-500/25 px-2.5 py-1 text-[11px] font-semibold text-violet-50 hover:bg-violet-500/40 disabled:opacity-45"
+                    >
+                      按描述重画（{manhuaAssetRegenPriceLabelZh(regenTileCount, "redraw")}）
+                    </button>
+                    <button
+                      type="button"
+                      data-manhua-action="regen-pick-library"
+                      disabled={factoryBusy}
+                      onClick={() => {
+                        setRegenDraft((prev) =>
+                          prev ? { ...prev, picking: !prev.picking } : prev,
+                        );
+                        onRequestLibraryPicker?.(regenDraft.role);
+                      }}
+                      className="rounded-lg border border-white/15 px-2.5 py-1 text-[11px] text-white/75 hover:bg-white/[0.06] disabled:opacity-45"
+                    >
+                      {regenDraft.picking ? "收起库里候选" : "从库里挑一张…"}
+                    </button>
+                    <span className="text-[10px] text-white/40">
+                      两条路都另外扣积分；描述只影响这
+                      {regenTileCount > 1 ? ` ${regenTileCount} ` : "一"}张，其他图不动。
+                    </span>
+                  </div>
+                  {regenDraft.picking ? (
+                    <div className="mt-2">
+                      {(libraryPickerItems || []).filter((x) => x.role === regenDraft.role)
+                        .length ? (
+                        <div className="flex flex-wrap gap-2">
+                          {(libraryPickerItems || [])
+                            .filter((x) => x.role === regenDraft.role)
+                            .map((lib) => (
+                              <button
+                                key={lib.publicId}
+                                type="button"
+                                data-manhua-regen-library-pick={lib.publicId}
+                                disabled={factoryBusy || regenTileCount > 1}
+                                onClick={() => submitRegenDraft("library", lib.imageUrl)}
+                                className="w-[76px] overflow-hidden rounded-lg border border-white/15 bg-black/40 text-left hover:border-amber-200/60 disabled:opacity-40"
+                                title={`换成这张（${manhuaAssetRegenPriceLabelZh(1, "library")}）`}
+                              >
+                                <img
+                                  src={lib.imageUrl}
+                                  alt=""
+                                  className="aspect-[3/4] w-full object-cover object-top"
+                                  loading="lazy"
+                                />
+                                <span className="block truncate px-1 py-0.5 text-[9px] text-white/70">
+                                  {lib.labelZh}
+                                </span>
+                              </button>
+                            ))}
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-white/40">
+                          库里还没有同类可用的匿名资产，先用「按描述重画」。
+                        </p>
+                      )}
+                      {regenTileCount > 1 ? (
+                        <p className="mt-1 text-[10px] text-amber-100/70">
+                          换库里那张一次只能换一个：请从缩略图右上角的「重出…」单张进入。
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {episodeSheetGallery.length || pendingSheetAnchors.length ? (
                 <>
                   {(
@@ -2529,8 +2656,12 @@ export default function ManhuaScriptWorkbench({
                           : assetCanon?.props.map((p) => p.id)
                     ) || [];
                     const doneAnchorIds = canonAnchorIds.filter((id) => !pendingIdSet.has(id));
-                    const regenSec = regenRemainSec(sec.kind);
-                    const regenArmed = regenArm?.kind === sec.kind;
+                    const secRole: ManhuaCustomAssetRole =
+                      sec.kind === "sceneplate"
+                        ? "scene"
+                        : sec.kind === "propsheet"
+                          ? "prop"
+                          : "character";
                     return (
                       <div
                         key={sec.kind}
@@ -2573,25 +2704,25 @@ export default function ManhuaScriptWorkbench({
                             <button
                               type="button"
                               data-manhua-action={`regen-${sec.kind}`}
-                              data-manhua-regen-armed={regenArmed ? "true" : "false"}
                               disabled={
                                 !outlineComplete ||
                                 !assetGate.castLocked ||
                                 !assetGate.sceneLocked ||
-                                factoryBusy ||
-                                regenSec > 0
+                                factoryBusy
                               }
-                              onClick={() =>
-                                requestRegenerateSheets(sec.kind, sec.titleZh, doneAnchorIds)
-                              }
+                              onClick={() => {
+                                openRegenDraft({
+                                  key: sec.kind,
+                                  titleZh: sec.titleZh,
+                                  role: secRole,
+                                  anchorIds: doneAnchorIds,
+                                });
+                                onRequestLibraryPicker?.(secRole);
+                              }}
                               className="shrink-0 rounded border border-amber-300/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50 hover:bg-amber-500/30 disabled:opacity-40"
-                              title={`按最新提示词重画这 ${doneAnchorIds.length} 张${sec.titleZh}（只覆盖本类，不动其他类）`}
+                              title={`说明哪里要改进后重画这 ${doneAnchorIds.length} 张${sec.titleZh}（只覆盖本类，不动其他类）`}
                             >
-                              {regenArmed
-                                ? regenSec > 0
-                                  ? `确认重出（${regenSec}s）`
-                                  : "再点一次确认重出"
-                                : `重出${sec.titleZh} ${doneAnchorIds.length} 张`}
+                              重出{sec.titleZh} {doneAnchorIds.length} 张…
                             </button>
                           ) : null}
                         </div>
@@ -2607,8 +2738,7 @@ export default function ManhuaScriptWorkbench({
                                 !item.id.includes("-custom-") &&
                                 Boolean(onRegenerateSheets);
                               const oneKey = `${sec.kind}:${ownAnchorId}`;
-                              const oneSec = regenRemainSec(oneKey);
-                              const oneArmed = regenArm?.kind === oneKey;
+                              const oneOpen = regenDraft?.key === oneKey;
                               return (
                                 <div
                                   key={item.id}
@@ -2643,24 +2773,23 @@ export default function ManhuaScriptWorkbench({
                                         !outlineComplete ||
                                         !assetGate.castLocked ||
                                         !assetGate.sceneLocked ||
-                                        factoryBusy ||
-                                        oneSec > 0
+                                        factoryBusy
                                       }
-                                      onClick={() =>
-                                        requestRegenerateSheets(oneKey, item.labelZh, [
-                                          ownAnchorId,
-                                        ])
-                                      }
+                                      onClick={() => {
+                                        openRegenDraft({
+                                          key: oneKey,
+                                          titleZh: item.labelZh,
+                                          role: secRole,
+                                          anchorIds: [ownAnchorId],
+                                        });
+                                        onRequestLibraryPicker?.(secRole);
+                                      }}
                                       className={`absolute right-1 top-1 rounded border border-amber-300/50 bg-black/70 px-1 py-0.5 text-[9px] font-semibold text-amber-100 backdrop-blur hover:bg-amber-500/40 disabled:opacity-50 ${
-                                        oneArmed ? "" : "opacity-0 group-hover:opacity-100"
+                                        oneOpen ? "" : "opacity-0 group-hover:opacity-100"
                                       }`}
-                                      title={`只重画「${item.labelZh}」这一个（按最新提示词，不动其他）`}
+                                      title={`只重画「${item.labelZh}」这一个：先说哪里要改进`}
                                     >
-                                      {oneArmed
-                                        ? oneSec > 0
-                                          ? `确认（${oneSec}s）`
-                                          : "再点确认"
-                                        : "重出"}
+                                      重出…
                                     </button>
                                   ) : null}
                                 </div>

@@ -18,6 +18,10 @@ import {
 } from "./manhuaScriptVisualBrief.js";
 import { findManhuaAssetCoverageGaps } from "./manhuaAssetScriptSync.js";
 import {
+  appendManhuaAssetRegenNoteZh,
+  normalizeManhuaAssetRegenNoteZh,
+} from "./manhuaAssetRegenRequest.js";
+import {
   customRefsByRole,
   hasCustomCastAndScene,
   inferManhuaCustomAssetRole,
@@ -356,6 +360,11 @@ export function planManhuaAssetImageSpawns(
      * 复用旧 prompt，改不掉老毛病。
      */
     regenerateAnchorIds?: string[];
+    /**
+     * 用户在重出弹框里写的「哪里要改进」。只接到本轮重出那几张的提示词尾部，
+     * 补缺的新图不受影响——他描述的是眼前这张的毛病。
+     */
+    regenerateNoteZh?: string;
   },
 ): ManhuaAssetImageSpawnPlan[] {
   const gate = evaluateManhuaAssetImageGate(input);
@@ -768,6 +777,14 @@ export function planManhuaAssetImageSpawns(
   // 只能退回独立重画——那正是漂性别/漂脸的根因。
   const kindRank = { charsheet: 0, sceneplate: 1, propsheet: 2 } as const;
   const seedOf = (p: ManhuaAssetImageSpawnPlan) => seedIdFromManhuaSheetBlockId(p.id);
+  // 用户写的「哪里要改进」只压到本轮重出这几张上
+  const regenNoteZh = normalizeManhuaAssetRegenNoteZh(opts?.regenerateNoteZh);
+  if (regenNoteZh) {
+    for (const p of plans) {
+      if (!isRegen(seedOf(p))) continue;
+      p.prompt = appendManhuaAssetRegenNoteZh(p.prompt, regenNoteZh);
+    }
+  }
   return plans.sort((a, b) => {
     if (a.kind !== b.kind) return kindRank[a.kind] - kindRank[b.kind];
     const seedCmp = seedOf(a).localeCompare(seedOf(b));
