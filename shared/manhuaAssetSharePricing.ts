@@ -96,3 +96,27 @@ export function manhuaAssetStillPriceLabelZh(opts: {
   }
   return `${billing.credits} 积分`;
 }
+
+/**
+ * 消费侧：用户直接使用「公有参考库」里已回收的资产（去名匿名图）复用/融图的计价。
+ *
+ * 产品口径（用户定）：用库内资产生成——1 张 15 积分、2 张 20 积分。
+ * 正好对上主配分级：配角单张全身 = 1 张（15），主角脸特写+全身 = 2 张（20）。
+ * 超过两张：以「第二张增量」(20−15=5) 逐张叠加，保持「两张 20」锚点，避免多张暴涨。
+ */
+export const MANHUA_LIBRARY_ASSET_USE_CREDITS_ONE = 15;
+export const MANHUA_LIBRARY_ASSET_USE_CREDITS_TWO = 20;
+
+const MANHUA_LIBRARY_ASSET_USE_STEP =
+  MANHUA_LIBRARY_ASSET_USE_CREDITS_TWO - MANHUA_LIBRARY_ASSET_USE_CREDITS_ONE;
+
+export function manhuaLibraryAssetUseCredits(tileCount: number): number {
+  const n = Math.max(1, Math.floor(Number(tileCount) || 1));
+  if (n <= 1) return MANHUA_LIBRARY_ASSET_USE_CREDITS_ONE;
+  return MANHUA_LIBRARY_ASSET_USE_CREDITS_TWO + (n - 2) * MANHUA_LIBRARY_ASSET_USE_STEP;
+}
+
+export function manhuaLibraryAssetUsePriceLabelZh(tileCount: number): string {
+  const n = Math.max(1, Math.floor(Number(tileCount) || 1));
+  return `${manhuaLibraryAssetUseCredits(n)} 积分（用库内资产 · ${n} 张）`;
+}

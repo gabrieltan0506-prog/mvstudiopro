@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   MANHUA_ASSET_STILL_FULL_CREDITS,
   MANHUA_ASSET_STILL_SHARE_HALF_CREDITS,
+  MANHUA_LIBRARY_ASSET_USE_CREDITS_ONE,
+  MANHUA_LIBRARY_ASSET_USE_CREDITS_TWO,
   manhuaAssetStillCredits,
   manhuaAssetStillPriceLabelZh,
+  manhuaLibraryAssetUseCredits,
+  manhuaLibraryAssetUsePriceLabelZh,
   resolveManhuaAssetStillBilling,
 } from "./manhuaAssetSharePricing";
 
@@ -67,5 +71,30 @@ describe("manhuaAssetSharePricing", () => {
         remainingGiftedCredits: 10,
       }),
     ).toBe(MANHUA_ASSET_STILL_FULL_CREDITS);
+  });
+});
+
+describe("库内资产消费侧计价（1张15/2张20）", () => {
+  it("一张 15、两张 20", () => {
+    expect(manhuaLibraryAssetUseCredits(1)).toBe(15);
+    expect(manhuaLibraryAssetUseCredits(2)).toBe(20);
+    expect(MANHUA_LIBRARY_ASSET_USE_CREDITS_ONE).toBe(15);
+    expect(MANHUA_LIBRARY_ASSET_USE_CREDITS_TWO).toBe(20);
+  });
+
+  it("非法/零/负数按一张兜底", () => {
+    expect(manhuaLibraryAssetUseCredits(0)).toBe(15);
+    expect(manhuaLibraryAssetUseCredits(-3)).toBe(15);
+    expect(manhuaLibraryAssetUseCredits(Number.NaN)).toBe(15);
+  });
+
+  it("超过两张按第二张增量(+5/张)叠加，不暴涨", () => {
+    expect(manhuaLibraryAssetUseCredits(3)).toBe(25);
+    expect(manhuaLibraryAssetUseCredits(4)).toBe(30);
+  });
+
+  it("价签透出张数", () => {
+    expect(manhuaLibraryAssetUsePriceLabelZh(1)).toContain("15");
+    expect(manhuaLibraryAssetUsePriceLabelZh(2)).toMatch(/20.*2 张/);
   });
 });
