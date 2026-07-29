@@ -320,6 +320,10 @@ type Props = {
   assetStashCount?: number;
   /** 从暂存区恢复被清掉的资产图 */
   onRestoreAssetStash?: () => void;
+  /** 画布已出图但没进「我的角色/场景/道具」的设定卡，重新挂回 @ 号（不扣积分） */
+  onAdoptEpisodeSheets?: () => void;
+  /** 待认领张数：>0 说明有定妆图还没拿到 @ 槽位，静帧会锁不到这些脸 */
+  unadoptedSheetCount?: number;
   /** 清理暂存区（清空暂存的旧设定图） */
   onClearAssetStash?: () => void;
   /** 授权进库半价（付费积分）；兑换码赠送积分路径由父级锁定强制进库 */
@@ -504,6 +508,8 @@ export default function ManhuaScriptWorkbench({
   onRequestLibraryPicker,
   assetStashCount = 0,
   onRestoreAssetStash,
+  onAdoptEpisodeSheets,
+  unadoptedSheetCount = 0,
   onClearAssetStash,
   shareAssetToLibrary = false,
   onShareAssetToLibraryChange,
@@ -2367,6 +2373,18 @@ export default function ManhuaScriptWorkbench({
                     title="重出/误删前存下的旧设定图都在暂存区，点此把被清掉的救回画布"
                   >
                     暂存区救回 {assetStashCount} 张
+                  </button>
+                ) : null}
+                {unadoptedSheetCount > 0 && onAdoptEpisodeSheets ? (
+                  <button
+                    type="button"
+                    data-manhua-action="adopt-episode-sheets"
+                    disabled={Boolean(factoryBusy)}
+                    onClick={onAdoptEpisodeSheets}
+                    className="rounded-lg border border-cyan-300/50 bg-cyan-500/20 px-3 py-1.5 text-[12px] font-semibold text-cyan-50 hover:bg-cyan-500/30 disabled:opacity-45"
+                    title="这些设定图已经出好了，但还没挂上 @ 号，静帧锁不到它们的脸与场景。点此挂回，不重画、不扣积分"
+                  >
+                    认领 {unadoptedSheetCount} 张设定图（不扣积分）
                   </button>
                 ) : null}
                 <button

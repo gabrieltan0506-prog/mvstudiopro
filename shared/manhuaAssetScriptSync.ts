@@ -239,6 +239,79 @@ export function purgeStaleCustomAssetRefsForCanon(
   return { refs: next, removedCount: list.length - next.length };
 }
 
+export type ManhuaSheetAdoptionPlan = {
+  blockId: string;
+  kind: "charsheet" | "sceneplate" | "propsheet";
+  role: "character" | "scene" | "prop";
+  seedId: string;
+  labelZh: string;
+  url: string;
+  /** 四格拼板：认领时要先切图再挂主视角 */
+  layout?: "grid2x2";
+};
+
+/**
+ * 画布上已出图、却没进「我的角色 / 我的场景 / 我的道具」的设定图。
+ *
+ * 从前认领只挂在「资产已齐 → 早退进分镜」那一条分支上，而按剧本重出与增量补图
+ * 都绕开它，于是十张定妆只有最早那张有 @角色 槽位，其余人在静帧里锁不到脸。
+ * 道具更是一张都进不来：assetBlocks 过滤时就没收 propsheet-。
+ */
+export function planManhuaSheetAdoptions(input: {
+  blocks?: Array<{ id: string; prompt?: string; outputUrl?: string; outputUrls?: string[] }> | null;
+  customRefs?: ManhuaCustomAssetRef[] | null;
+  assetCanon?: ManhuaWriterAssetCanon | null;
+}): ManhuaSheetAdoptionPlan[] {
+  const refs = input.customRefs || [];
+  const canon = input.assetCanon;
+  const adopted = new Set<string>();
+  for (const r of refs) {
+    const seed = String(r.seedLibraryId || "").trim();
+    if (seed) adopted.add(`${r.role}:${seed}`);
+  }
+  const out: ManhuaSheetAdoptionPlan[] = [];
+  for (const b of input.blocks || []) {
+    const id = String(b.id || "");
+    const kind: ManhuaSheetAdoptionPlan["kind"] | null = id.startsWith("charsheet-")
+      ? "charsheet"
+      : id.startsWith("sceneplate-")
+        ? "sceneplate"
+        : id.startsWith("propsheet-")
+          ? "propsheet"
+          : null;
+    if (!kind) continue;
+    const url = String(b.outputUrl || b.outputUrls?.[0] || "").trim();
+    if (!/^https:\/\//i.test(url)) continue;
+    /**
+     * 主角的脸特写块是 charsheet-face-<seed>：去掉两层前缀才拿得到 seed，
+     * 否则 face 那张会带着 "face-" 去比对 canon，永远对不上、永远重复认领。
+     */
+    const seedId = id
+      .replace(/^charsheet-face-/, "")
+      .replace(/^(charsheet|sceneplate|propsheet)-/, "");
+    if (!seedId) continue;
+    const role =
+      kind === "charsheet" ? "character" : kind === "sceneplate" ? "scene" : "prop";
+    // 脸特写与全身照分工不同，两张都要挂，所以按 blockId 而非 seed 去重
+    const isFace = id.startsWith("charsheet-face-");
+    if (!isFace && adopted.has(`${role}:${seedId}`)) continue;
+    if (refs.some((r) => r.url === url)) continue;
+    const labelZh =
+      (kind === "charsheet"
+        ? canon?.characters.find((c) => c.id === seedId || seedId.includes(c.id))?.nameZh
+        : kind === "sceneplate"
+          ? canon?.locations.find((l) => l.id === seedId || seedId.includes(l.id))?.nameZh
+          : canon?.props.find((p) => p.id === seedId || seedId.includes(p.id))?.nameZh) ||
+      (kind === "charsheet" ? "角色定妆" : kind === "sceneplate" ? "场景参考" : "道具参考");
+    const layout =
+      kind === "sceneplate" && /2×2|四格/.test(String(b.prompt || ""))
+        ? ("grid2x2" as const)
+        : undefined;
+    out.push({ blockId: id, kind, role, seedId, labelZh, url, layout });
+  }
+  return out;
+}
+
 /** 返回应删除的设定图节点 id */
 export function collectStaleAssetSheetBlockIds(
   blocks: Array<{ id: string }> | null | undefined,
