@@ -473,11 +473,11 @@ describe("关键道具单件图", () => {
     expect(jade?.labelZh).toBe("双鱼玉佩");
     expect(seedIdFromManhuaSheetBlockId(jade!.id)).toBe("wa_prop_yupei");
     // 单件、单角度：多角度拼图是 ID 漂移头号根因，道具不能走回那条路
-    expect(jade?.prompt).toContain("只画这一件道具");
-    expect(jade?.prompt).toMatch(/不要多角度并排|分格拼图/);
-    // 归属只作隐藏说明，画面不要出现人
-    expect(jade?.prompt).toContain("沈砚舟");
-    expect(jade?.prompt).toContain("画面不要出现人");
+    expect(jade?.prompt).toContain("只有这一件器物");
+    expect(jade?.prompt).toMatch(/不做多角度并排|分格拼图/);
+    // 画面里不许有人；归属人名连提示词都不进（人名是烧标题的素材）
+    expect(jade?.prompt).toContain("没有人、没有手");
+    expect(jade?.prompt).not.toContain("沈砚舟");
   });
 
   it("没外形句的道具不出图（占位格会变成点了没反应的死卡）", () => {
@@ -568,8 +568,45 @@ describe("关键道具单件图", () => {
     });
     const jade = regen.find((p) => p.id === "propsheet-wa_prop_yupei");
     expect(jade).toBeTruthy();
-    // 重出的意义在于带上新加的禁烧字硬锁
-    expect(jade?.prompt).toContain("禁字硬锁");
+    // 重出的意义在于带上改好的软边界写法（静物摄影 + 素净表面），不再靠堆禁令
+    expect(jade?.prompt).toContain("博物馆藏品级静物摄影");
+    expect(jade?.prompt).toContain("素净的旧料本色");
+  });
+
+  it("regenerateNoteZh：用户写的改进描述只压到本轮重出那几张", () => {
+    const canon = {
+      ...canonWithProps,
+      props: [
+        canonWithProps.props[0],
+        {
+          id: "wa_prop_zhang",
+          role: "prop" as const,
+          nameZh: "旧账册",
+          lookZh: "麻纸封皮，边角卷曲",
+          promptZh: "账册",
+        },
+      ],
+    };
+    const plans = planManhuaAssetImageSpawns(
+      {
+        assetCanon: canon,
+        episodeIndex: 1,
+        assetBlocks: [
+          { id: "propsheet-wa_prop_zhang", outputUrl: "https://cdn.example/zhang.jpg" },
+        ],
+      },
+      {
+        forceEpisodeSheets: true,
+        regenerateAnchorIds: ["wa_prop_zhang"],
+        regenerateNoteZh: "封面上的字全部去掉，只留墨痕",
+      },
+    );
+    const regen = plans.find((p) => p.id === "propsheet-wa_prop_zhang");
+    expect(regen?.prompt).toContain("封面上的字全部去掉，只留墨痕");
+    // 同批里没被点名重出的（本来就缺图）不该被别人的修订描述污染
+    const other = plans.find((p) => p.id === "propsheet-wa_prop_yupei");
+    expect(other?.prompt).toBeTruthy();
+    expect(other?.prompt).not.toContain("封面上的字全部去掉");
   });
 
   it("regenerateNoteZh：用户写的改进描述只压到本轮重出那几张", () => {
