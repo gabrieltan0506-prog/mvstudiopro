@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   defaultWorkbenchShots,
+  scrubManhuaWorkbenchShotSlop,
+  isManhuaWorkbenchActionSlop,
+  isManhuaWorkbenchDialogueSlop,
   formatWorkbenchClipInjectBlock,
   formatWorkbenchSegmentClipInjectBlock,
   formatWorkbenchShotInjectBlock,
@@ -186,5 +189,44 @@ describe("manhuaScriptWorkbench", () => {
     });
     expect(dual.mode).toBe("matched");
     expect(dual.characterIds.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("scrub 清掉默认骨架假对白与模板动作，改用可拍表表演", () => {
+    expect(isManhuaWorkbenchDialogueSlop("别逼我。")).toBe(true);
+    expect(isManhuaWorkbenchActionSlop("第1段戏核：承接上镜落点，推进动作轨迹与关系变化")).toBe(
+      true,
+    );
+    const scrubbed = scrubManhuaWorkbenchShotSlop(
+      [
+        {
+          index: 1,
+          durationSec: 5,
+          cameraZh: "全景",
+          actionZh: "第1段起幅：开场建立场景纵深与人物站位；写清空间纵深与起幅机位",
+        },
+        {
+          index: 2,
+          durationSec: 5,
+          cameraZh: "中景",
+          actionZh: "第1段戏核：承接上镜落点，推进动作轨迹与关系变化；关键道具可读交互",
+          dialogueZh: "别逼我。",
+        },
+      ],
+      {
+        performanceZh: "踩灭桥板箭火；伸手取账册",
+        intentZh: "桥上争账",
+        sceneHintZh: "断月桥",
+      },
+    );
+    expect(scrubbed[0]?.actionZh).toContain("踩灭桥板箭火");
+    expect(scrubbed[0]?.actionZh).not.toMatch(/写清空间纵深|承接上镜落点/);
+    expect(scrubbed[1]?.dialogueZh).toBeUndefined();
+    expect(scrubbed[1]?.actionZh).toContain("取账册");
+  });
+
+  it("defaultWorkbenchShots 不再塞假对白与空间纵深空话", () => {
+    const shots = defaultWorkbenchShots();
+    expect(shots.some((s) => s.dialogueZh)).toBe(false);
+    expect(shots.some((s) => /写清空间纵深|别逼我/.test(s.actionZh))).toBe(false);
   });
 });

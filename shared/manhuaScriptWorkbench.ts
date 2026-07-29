@@ -418,47 +418,32 @@ export function parseWorkbenchShotsFromText(raw: string | undefined | null): Man
 
 export function defaultWorkbenchShots(seedAction?: string): ManhuaWorkbenchShot[] {
   const base = String(seedAction || "").trim();
+  /**
+   * 只有拿到真种子（反推/节拍原文）才写进动作；没有就留短占位，
+   * 成片路径会用 scrubManhuaWorkbenchShotSlop + 可拍表表演/对白盖掉。
+   * 禁止再灌「写清空间纵深」「别逼我」——那两句已经进过线上成片提示词。
+   */
   const beatSeeds = base
     ? [
         `开场交代：${base.slice(0, 80)}`,
-        "人物进场，情绪与关系落点",
-        "冲突或信息转折",
-        "钩子收束，留未解悬念",
+        `人物互动：${base.slice(0, 60)}`,
+        `冲突转折：${base.slice(0, 60)}`,
+        `收束留钩：${base.slice(0, 60)}`,
       ]
-    : [
-        "开场建立场景纵深与人物站位",
-        "人物互动并让关键道具第一次入画",
-        "冲突升级：动作轨迹与对白施压",
-        "集末钩子：道具/信息回扣，引导下一集",
-      ];
-  const dialogueSeeds = [
-    "你到底想怎样？",
-    "把东西交出来。",
-    "……你早就知道了？",
-    "别逼我。",
-    "这不是你的了。",
-    "跟我走。",
-  ];
+    : ["落实本镜人物站位与动作", "落实本镜人物互动与道具", "落实本镜冲突动作", "落实本镜收束动作"];
   const roleByInSeg = ["start", "key_action", "edit_out", "bridge"] as const;
   const total = MANHUA_SEGMENT_DEFAULT * MANHUA_KEYARTS_PER_SEGMENT_MIN;
   return Array.from({ length: total }, (_, i) => {
     const seg = Math.floor(i / MANHUA_KEYARTS_PER_SEGMENT_MIN) + 1;
     const inSeg = (i % MANHUA_KEYARTS_PER_SEGMENT_MIN) + 1;
     const role = roleByInSeg[inSeg - 1] || "key_action";
-    const withDialogue = inSeg === 2;
     return {
       index: i + 1,
       durationSec: 0,
       cameraZh: DEFAULT_CAMERAS[i % DEFAULT_CAMERAS.length]!,
-      actionZh:
-        inSeg === 1
-          ? `第${seg}段起幅：${beatSeeds[(seg - 1) % beatSeeds.length]}；写清空间纵深与起幅机位`
-          : inSeg === MANHUA_KEYARTS_PER_SEGMENT_MIN
-            ? `第${seg}段落幅：结束站位与视线，种下一段空间/道具线索`
-            : `第${seg}段戏核：承接上镜落点，推进动作轨迹与关系变化；关键道具可读交互`,
-      dialogueZh: withDialogue
-        ? dialogueSeeds[(seg + inSeg) % dialogueSeeds.length]
-        : undefined,
+      actionZh: beatSeeds[(seg - 1) % beatSeeds.length]!,
+      // 对白只来自可拍表/反推真句；默认骨架不再塞假台词
+      dialogueZh: undefined,
       keyframeRole: role,
     };
   });
@@ -615,6 +600,72 @@ export function formatWorkbenchShotInjectBlock(shot: ManhuaWorkbenchShot): strin
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/** 默认骨架灌进秒轴的假对白——有真台词时必须让位，不能占住镜位 */
+const MANHUA_WORKBENCH_DIALOGUE_SLOP = new Set([
+  "你到底想怎样？",
+  "把东西交出来。",
+  "……你早就知道了？",
+  "别逼我。",
+  "这不是你的了。",
+  "跟我走。",
+]);
+
+/**
+ * 默认骨架 / 解析失败时灌进 actionZh 的模板废话。
+ * 单独看像导戏，进秒轴就是「写清空间纵深与起幅机位」这种空话。
+ */
+const MANHUA_WORKBENCH_ACTION_SLOP_RE =
+  /写清空间纵深|承接上镜落点|推进动作轨迹与关系变化|开场建立场景纵深|种下一段空间[/／]道具线索|关键道具可读交互|人物进场，情绪与关系落点|第\d+段起幅|第\d+段戏核|第\d+段落幅/;
+
+export function isManhuaWorkbenchDialogueSlop(dialogueZh?: string | null): boolean {
+  const d = String(dialogueZh || "").trim();
+  return Boolean(d) && MANHUA_WORKBENCH_DIALOGUE_SLOP.has(d);
+}
+
+export function isManhuaWorkbenchActionSlop(actionZh?: string | null): boolean {
+  const a = String(actionZh || "").trim();
+  if (!a) return true;
+  return MANHUA_WORKBENCH_ACTION_SLOP_RE.test(a);
+}
+
+/**
+ * 成片灌秒轴前清掉默认骨架废话：假对白清空让真台词灌入；
+ * 模板动作改成可拍表表演/意图/场景落点，禁止「写清空间纵深」进引擎。
+ */
+export function scrubManhuaWorkbenchShotSlop(
+  shots: ManhuaWorkbenchShot[],
+  opts?: {
+    performanceZh?: string | null;
+    intentZh?: string | null;
+    sceneHintZh?: string | null;
+  },
+): ManhuaWorkbenchShot[] {
+  const list = Array.isArray(shots) ? shots : [];
+  if (!list.length) return list;
+  const perf = String(opts?.performanceZh || "")
+    .split(/[；;。\n]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 4);
+  const intent = String(opts?.intentZh || "").trim();
+  const scene = String(opts?.sceneHintZh || "").trim();
+  return list.map((s, i) => {
+    let dialogueZh = String(s.dialogueZh || "").trim() || undefined;
+    if (dialogueZh && isManhuaWorkbenchDialogueSlop(dialogueZh)) {
+      dialogueZh = undefined;
+    }
+    let actionZh = String(s.actionZh || "").trim();
+    if (isManhuaWorkbenchActionSlop(actionZh)) {
+      const fromPerf = perf[i] || perf[0] || "";
+      actionZh =
+        fromPerf ||
+        (intent ? `落实本段意图：${intent.slice(0, 48)}` : "") ||
+        (scene ? `在${scene}推进本镜动作与站位` : "") ||
+        "落实本镜人物动作与道具交互";
+    }
+    return { ...s, dialogueZh, actionZh };
+  });
 }
 
 /**
@@ -890,7 +941,8 @@ export function resolveWorkbenchShotAssetMount(input: {
       mode: "default",
       characterIds: characters.map((c) => c.id),
       ancientArchetypeIds: archetypes.map((a) => a.id),
-      propIds: props.map((p) => p.id),
+      // 角色可回落本集；道具不行——没点名就不挂，避免全家道具进成片
+      propIds: [],
       expectedCastCount,
     };
   }
@@ -899,7 +951,8 @@ export function resolveWorkbenchShotAssetMount(input: {
     mode: "matched",
     characterIds: softChar.length ? softChar : characters.map((c) => c.id),
     ancientArchetypeIds: softArch,
-    propIds: hitProp.length ? hitProp : props.map((p) => p.id),
+    // 点不到道具就空着，禁止回落本集全套（否则成片硬绑全家道具）
+    propIds: hitProp,
     expectedCastCount,
   };
 }
