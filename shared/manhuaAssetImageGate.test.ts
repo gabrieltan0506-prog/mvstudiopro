@@ -609,6 +609,42 @@ describe("关键道具单件图", () => {
     expect(other?.prompt).not.toContain("封面上的字全部去掉");
   });
 
+  it("regenerateNoteZh：用户写的改进描述只压到本轮重出那几张", () => {
+    const canon = {
+      ...canonWithProps,
+      props: [
+        canonWithProps.props[0],
+        {
+          id: "wa_prop_zhang",
+          role: "prop" as const,
+          nameZh: "旧账册",
+          lookZh: "麻纸封皮，边角卷曲",
+          promptZh: "账册",
+        },
+      ],
+    };
+    const plans = planManhuaAssetImageSpawns(
+      {
+        assetCanon: canon,
+        episodeIndex: 1,
+        assetBlocks: [
+          { id: "propsheet-wa_prop_zhang", outputUrl: "https://cdn.example/zhang.jpg" },
+        ],
+      },
+      {
+        forceEpisodeSheets: true,
+        regenerateAnchorIds: ["wa_prop_zhang"],
+        regenerateNoteZh: "封面上的字全部去掉，只留墨痕",
+      },
+    );
+    const regen = plans.find((p) => p.id === "propsheet-wa_prop_zhang");
+    expect(regen?.prompt).toContain("封面上的字全部去掉，只留墨痕");
+    // 同批里没被点名重出的（本来就缺图）不该被别人的修订描述污染
+    const other = plans.find((p) => p.id === "propsheet-wa_prop_yupei");
+    expect(other?.prompt).toBeTruthy();
+    expect(other?.prompt).not.toContain("封面上的字全部去掉");
+  });
+
   it("regenerateAnchorIds：用户自传过同名道具也不再挡重出", () => {
     const regen = planManhuaAssetImageSpawns(
       {
