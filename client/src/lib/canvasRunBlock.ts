@@ -16,6 +16,10 @@ import {
   type AspectRatio169Or916,
 } from "@shared/jsonDirectorMiddleware";
 import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
+import {
+  resolveOpenAiImageLaneForBlockId,
+  type OpenAiImageLane,
+} from "@shared/openaiImageLane";
 import { extractVideoFramesFromUrl, extractVideoTailFramesFromUrl } from "./extractVideoFrames";
 import {
   VIDEO_REVERSE_DEFAULT_INTERVAL_SEC,
@@ -239,6 +243,8 @@ async function runGptImage2(
     /** 关键静帧：只打官方 OpenAI，超时再入队一次，不回落 OpenRouter */
     openaiOnly?: boolean;
     userId?: string;
+    /** 设定图与静帧分走两把官方密钥 */
+    imageLane?: OpenAiImageLane;
   },
 ): Promise<string> {
   const refImageUrl = String(opts?.refImageUrl || "").trim();
@@ -259,6 +265,7 @@ async function runGptImage2(
         maskUrl: maskUrl || undefined,
         generalImageEdit: referenceImageUrls.length > 0,
         providerOverride: openaiOnly ? "openai" : undefined,
+        imageLane: opts?.imageLane,
       }),
     });
     const job = await pollJobUntilTerminal(jobId, {
@@ -295,6 +302,7 @@ async function runGptImage2Batch(
     maskUrl?: string;
     openaiOnly?: boolean;
     userId?: string;
+    imageLane?: OpenAiImageLane;
   },
   count: number,
 ): Promise<string[]> {
@@ -846,6 +854,8 @@ export async function runCanvasBlock(
     /** 画布一律钉官方 OpenAI Image-2，失败即停；已移除 Nano Banana 2 */
     const pinOfficialOpenAi = true;
     const gptUserId = String(deps.userId || "");
+    // 设定图与静帧分走两把官方密钥（本道打不通由服务端借另一把）
+    const imageLane = resolveOpenAiImageLaneForBlockId(block.id);
     const gptImageOpts = isEdit
       ? {
           refImageUrl: editRef,
@@ -853,10 +863,11 @@ export async function runCanvasBlock(
           maskUrl: maskUrl || undefined,
           openaiOnly: pinOfficialOpenAi,
           userId: gptUserId,
+          imageLane,
         }
       : pinOfficialOpenAi
-        ? { openaiOnly: true as const, userId: gptUserId }
-        : { refImageUrl: absRef(refUrl) || refUrl, userId: gptUserId };
+        ? { openaiOnly: true as const, userId: gptUserId, imageLane }
+        : { refImageUrl: absRef(refUrl) || refUrl, userId: gptUserId, imageLane };
     let urls: string[] = [];
     try {
       urls = await runGptImage2Batch(imagePrompt, ar, gptImageOpts, count);

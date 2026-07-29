@@ -4,6 +4,8 @@
  * worker 内再等上游，避免 Vercel / 浏览器长 HTTP。
  */
 
+import { normalizeOpenAiImageLane, type OpenAiImageLane } from "./openaiImageLane.js";
+
 export type CanvasGptImage2ProviderOverride = "openai" | "openrouter" | "auto";
 
 export type CanvasGptImage2JobParams = {
@@ -14,6 +16,8 @@ export type CanvasGptImage2JobParams = {
   generalImageEdit?: boolean;
   providerOverride?: CanvasGptImage2ProviderOverride;
   gcsSubdir?: string;
+  /** 设定图 / 静帧分走两把官方密钥 */
+  imageLane?: OpenAiImageLane;
 };
 
 export function buildCanvasGptImage2JobInput(params: {
@@ -25,6 +29,7 @@ export function buildCanvasGptImage2JobInput(params: {
   generalImageEdit?: boolean;
   providerOverride?: CanvasGptImage2ProviderOverride | string;
   gcsSubdir?: string;
+  imageLane?: OpenAiImageLane | string;
 }): {
   action: "canvas_gpt_image2";
   params: CanvasGptImage2JobParams;
@@ -49,6 +54,7 @@ export function buildCanvasGptImage2JobInput(params: {
       : undefined;
   const generalImageEdit =
     Boolean(params.generalImageEdit) || referenceImageUrls.length > 0;
+  const imageLane = normalizeOpenAiImageLane(params.imageLane);
 
   return {
     action: "canvas_gpt_image2",
@@ -59,6 +65,7 @@ export function buildCanvasGptImage2JobInput(params: {
       ...(maskUrl ? { maskUrl } : {}),
       ...(generalImageEdit ? { generalImageEdit: true } : {}),
       ...(providerOverride ? { providerOverride } : {}),
+      ...(imageLane ? { imageLane } : {}),
       gcsSubdir: String(params.gcsSubdir || "").trim() || "canvas-gpt-image2",
     },
   };

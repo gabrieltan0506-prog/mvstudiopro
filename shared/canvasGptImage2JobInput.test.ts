@@ -14,6 +14,14 @@ describe("buildCanvasGptImage2JobInput", () => {
     expect(input.params.providerOverride).toBe("openai");
     expect(input.params.gcsSubdir).toBe("canvas-gpt-image2");
     expect(input.params.generalImageEdit).toBeUndefined();
+    expect(input.params.imageLane).toBeUndefined();
+  });
+
+  it("带上生图分道（设定图走另一把密钥）", () => {
+    const asset = buildCanvasGptImage2JobInput({ prompt: "角色定妆", imageLane: "asset" });
+    expect(asset.params.imageLane).toBe("asset");
+    const bad = buildCanvasGptImage2JobInput({ prompt: "静帧", imageLane: "video" });
+    expect(bad.params.imageLane).toBeUndefined();
   });
 
   it("dedupes refs and marks generalImageEdit", () => {

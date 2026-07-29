@@ -102,6 +102,7 @@ export const manhuaAssetShareRouter = router({
           gcsSubdir: "manhua-asset-still",
           referenceImageUrls: refs,
           generalImageEdit: Boolean(refs?.length),
+          imageLane: "asset",
         });
         if (!imageUrl) {
           await refundCreditsForDeductAmount(

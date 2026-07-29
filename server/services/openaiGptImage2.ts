@@ -3,12 +3,17 @@
  * 供 canvasGptImage2 / 平台单帧像素链（不再走 EvoLink）。
  *
  * 环境变量：
- * - OPENAI_IMAGE_API_KEY 或 OPENAI_API_KEY
+ * - OPENAI_IMAGE_API_KEY 或 OPENAI_API_KEY（分道专钥见 openaiImageKeyPool）
  * - OPENAI_GPT_IMAGE2_MODEL（可选；默认钉 gpt-image-2-2026-04-21）
  */
 import { OPENAI_IMAGE_PROMPT_HARD_MAX } from "../../shared/manhuaKeyartPromptCompact.js";
+import type { OpenAiImageLane } from "../../shared/openaiImageLane.js";
 import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
 import { uploadBufferToPlatformStorage } from "./evolinkGptImage2.js";
+import {
+  resolveOpenAiImageKeyChain,
+  shouldRetryOpenAiImageWithOtherKey,
+} from "./openaiImageKeyPool.js";
 
 const OPENAI_BASE = String(process.env.OPENAI_API_BASE || "https://api.openai.com").replace(/\/$/, "");
 
@@ -38,22 +43,13 @@ function appendImageFlowLog(log: string[] | undefined, message: string): void {
   log.push(message);
 }
 
-function isValidOpenAiSkKey(raw: string): boolean {
-  // 官方密钥以 sk- 开头；过滤占位伪值（中文、[set]、空串等）
-  return /^sk-[A-Za-z0-9]/.test(raw);
+export function getOpenAiImageApiKey(lane?: OpenAiImageLane | null): string {
+  // 逐个校验：本道专钥若是无效占位，不得挡住可用的共用钥
+  return resolveOpenAiImageKeyChain(lane)[0]?.key || "";
 }
 
-export function getOpenAiImageApiKey(): string {
-  // 逐个校验：IMAGE 钥若是无效占位，不得挡住可用的 OPENAI_API_KEY
-  for (const candidate of [process.env.OPENAI_IMAGE_API_KEY, process.env.OPENAI_API_KEY]) {
-    const raw = String(candidate || "").trim();
-    if (isValidOpenAiSkKey(raw)) return raw;
-  }
-  return "";
-}
-
-export function isOpenAiGptImage2Configured(): boolean {
-  return Boolean(getOpenAiImageApiKey());
+export function isOpenAiGptImage2Configured(lane?: OpenAiImageLane | null): boolean {
+  return Boolean(getOpenAiImageApiKey(lane));
 }
 
 function resolveOpenAiSize(aspectRatio: "9:16" | "16:9", explicitSize?: string): string {
@@ -227,11 +223,13 @@ export async function postOpenAiGptImage2AndUpload(
     imageUrls?: string[];
     maskUrl?: string;
     captureError?: { message?: string };
+    /** 设定图与静帧分走两把密钥；本道打不通即换另一把 */
+    lane?: OpenAiImageLane | null;
   } = {},
 ): Promise<string | null> {
   const L = opts.flowLog;
-  const apiKey = getOpenAiImageApiKey();
-  if (!apiKey) {
+  const keyChain = resolveOpenAiImageKeyChain(opts.lane);
+  if (!keyChain.length) {
     appendImageFlowLog(L, "[GPT-IMAGE-2·OpenAI] OPENAI_IMAGE_API_KEY/OPENAI_API_KEY 缺失，跳过");
     return null;
   }
@@ -258,21 +256,31 @@ export async function postOpenAiGptImage2AndUpload(
 
   appendImageFlowLog(
     L,
-    `[GPT-IMAGE-2·OpenAI] ${refs.length ? "edits" : "generations"} · model=${model} · size=${size} · quality=${quality}${refs.length ? ` · refs=${refs.length}` : ""}`,
+    `[GPT-IMAGE-2·OpenAI] ${refs.length ? "edits" : "generations"} · model=${model} · size=${size} · quality=${quality}${refs.length ? ` · refs=${refs.length}` : ""} · lane=${opts.lane || "keyart"} · 可用钥=${keyChain.length}`,
   );
 
-  try {
-    const buffer = refs.length
-      ? await postEdits(apiKey, promptTrimmed, size, quality, refs, maskUrl, model, L)
-      : await postGenerations(apiKey, promptTrimmed, size, quality, model);
-    const publicUrl = await uploadBufferToPlatformStorage(buffer, gcsSubdir, L);
-    appendImageFlowLog(L, `[GPT-IMAGE-2·OpenAI] 成功 · ${String(publicUrl).slice(0, 160)}…`);
-    return publicUrl;
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    appendImageFlowLog(L, `[GPT-IMAGE-2·OpenAI] 异常 · ${msg}`);
-    console.warn("[openaiGptImage2]", msg);
-    if (opts.captureError) opts.captureError.message = msg;
-    return null;
+  let lastMessage = "";
+  for (let i = 0; i < keyChain.length; i++) {
+    const slot = keyChain[i]!;
+    try {
+      const buffer = refs.length
+        ? await postEdits(slot.key, promptTrimmed, size, quality, refs, maskUrl, model, L)
+        : await postGenerations(slot.key, promptTrimmed, size, quality, model);
+      const publicUrl = await uploadBufferToPlatformStorage(buffer, gcsSubdir, L);
+      appendImageFlowLog(
+        L,
+        `[GPT-IMAGE-2·OpenAI] 成功 · 钥=${slot.slot} · ${String(publicUrl).slice(0, 160)}…`,
+      );
+      return publicUrl;
+    } catch (e: unknown) {
+      lastMessage = e instanceof Error ? e.message : String(e);
+      appendImageFlowLog(L, `[GPT-IMAGE-2·OpenAI] 异常 · 钥=${slot.slot} · ${lastMessage}`);
+      console.warn("[openaiGptImage2]", slot.slot, lastMessage);
+      const hasNext = i + 1 < keyChain.length;
+      if (!hasNext || !shouldRetryOpenAiImageWithOtherKey(lastMessage)) break;
+      appendImageFlowLog(L, `[GPT-IMAGE-2·OpenAI] 换钥重试 → ${keyChain[i + 1]!.slot}`);
+    }
   }
+  if (opts.captureError) opts.captureError.message = lastMessage;
+  return null;
 }
