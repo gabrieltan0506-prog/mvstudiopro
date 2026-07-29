@@ -34,6 +34,7 @@ import {
   composeManhuaHeroFullBodyLookPrompt,
   isManhuaHeroCharacterAnchor,
   pickPropsForCharacterSheet,
+  resolveManhuaLeadCharacterIds,
   resolveManhuaScenePlatePrompt,
   type ManhuaEpisodeBodyRef,
 } from "./manhuaMultiViewAssetSheets.js";
@@ -62,6 +63,11 @@ export type ManhuaAssetImageGateInput = {
   episodeIndex?: number;
   /** 全系列分集体：用于判定场景是否跨集（≥2 集 → 四视角拼板） */
   episodes?: ManhuaEpisodeBodyRef[] | null;
+  /**
+   * C：显式男女主（canon 角色 id）。设了则这些为主角（脸+全身两张）；
+   * 未设则按跨集提及次数取前二为主角，其余配角出单张全身。
+   */
+  leadCharacterIds?: Array<string | null | undefined> | null;
   /** 画布上已有的角色设定卡 / 场景设定图节点 */
   assetBlocks?: Array<{
     id: string;
@@ -350,6 +356,15 @@ export function planManhuaAssetImageSpawns(
   const canon = input.assetCanon;
   const ep = Math.max(1, Math.floor(input.episodeIndex || 1));
 
+  // C：主角（男女主级）→ 脸+全身两张；配角 → 单张全身
+  const leadIds = resolveManhuaLeadCharacterIds(canon?.characters, input.episodes, {
+    explicitLeadIds: input.leadCharacterIds,
+  });
+  const leadNames = new Set(
+    (canon?.characters || [])
+      .filter((c) => leadIds.has(c.id))
+      .map((c) => c.nameZh),
+  );
   const writerCastIds = (canon?.characters || []).map((c) => c.id);
   const castIdsForSheets = writerCastIds.length
     ? writerCastIds
@@ -399,20 +414,23 @@ export function planManhuaAssetImageSpawns(
       }
       const hero = isManhuaHeroCharacterAnchor(fromCanon);
       if (hero) {
-        // 大头照排在全身照之前：锁脸最吃紧，官方也要求重要素材前置
-        plans.push({
-          id: manhuaHeroFaceSheetId(id),
-          kind: "charsheet",
-          prompt: composeManhuaHeroFaceCloseupPrompt({
-            nameZh: fromCanon.nameZh,
-            aliasZh: fromCanon.aliasZh,
-            lookZh: fromCanon.lookZh,
-            artStyleLabelZh: artStyle.labelZh,
-            artStylePromptZh: artStyle.promptZh,
-          }),
-          labelZh: fromCanon.nameZh,
-          layout: "heroFace",
-        });
+        // C：仅主角（男女主级）出脸特写；配角只出单张全身
+        if (leadIds.has(id)) {
+          // 大头照排在全身照之前：锁脸最吃紧，官方也要求重要素材前置
+          plans.push({
+            id: manhuaHeroFaceSheetId(id),
+            kind: "charsheet",
+            prompt: composeManhuaHeroFaceCloseupPrompt({
+              nameZh: fromCanon.nameZh,
+              aliasZh: fromCanon.aliasZh,
+              lookZh: fromCanon.lookZh,
+              artStyleLabelZh: artStyle.labelZh,
+              artStylePromptZh: artStyle.promptZh,
+            }),
+            labelZh: fromCanon.nameZh,
+            layout: "heroFace",
+          });
+        }
         plans.push({
           id: existing?.id || `charsheet-${id}`,
           kind: "charsheet",
@@ -494,19 +512,27 @@ export function planManhuaAssetImageSpawns(
         noteZh: sheetNote,
       });
       if (hero) {
-        plans.push({
-          id: manhuaHeroFaceSheetId(id),
-          kind: "charsheet",
-          prompt: composeManhuaHeroFaceCloseupPrompt({
-            nameZh: sheetName,
-            aliasZh: scriptMatch?.aliasZh,
-            lookZh: sheetLook,
-            artStyleLabelZh: artStyle.labelZh,
-            artStylePromptZh: artStyle.promptZh,
-          }),
-          labelZh: sheetName,
-          layout: "heroFace",
-        });
+        // C：主角（男女主级）才出脸特写；配角单张全身。
+        // 无编剧 canon（纯库/原型流）时无主配信号 → 保持旧行为（都出两张）。
+        const archIsLead =
+          leadIds.size === 0
+            ? true
+            : (scriptMatch?.id && leadIds.has(scriptMatch.id)) || leadNames.has(sheetName);
+        if (archIsLead) {
+          plans.push({
+            id: manhuaHeroFaceSheetId(id),
+            kind: "charsheet",
+            prompt: composeManhuaHeroFaceCloseupPrompt({
+              nameZh: sheetName,
+              aliasZh: scriptMatch?.aliasZh,
+              lookZh: sheetLook,
+              artStyleLabelZh: artStyle.labelZh,
+              artStylePromptZh: artStyle.promptZh,
+            }),
+            labelZh: sheetName,
+            layout: "heroFace",
+          });
+        }
         plans.push({
           id: existing?.id || `charsheet-${id}`,
           kind: "charsheet",

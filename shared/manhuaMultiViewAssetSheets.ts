@@ -71,6 +71,56 @@ export function isManhuaHeroCharacterAnchor(
   return true;
 }
 
+/**
+ * C：主角（男女主级）判定——只有主角出「脸特写 + 全身」两张锁 ID；
+ * 配角/群像出单张全身即可（用户口径：主角多图、配角单图）。
+ *
+ * 主角来源优先级：
+ * 1) 显式指定（男女主 explicitLeadIds，来自角色偏好里选定的主角）；
+ * 2) 否则按跨集正文提及次数排序，取前 maxLeads 名（默认 2）为主角。
+ * 提及为 0 的不算主角。名字/别名都计数。
+ */
+export function resolveManhuaLeadCharacterIds(
+  characters: Array<Pick<ManhuaWriterAssetAnchor, "id" | "nameZh" | "aliasZh">> | null | undefined,
+  episodes: ManhuaEpisodeBodyRef[] | null | undefined,
+  opts?: { explicitLeadIds?: Array<string | null | undefined> | null; maxLeads?: number },
+): Set<string> {
+  const chars = (characters || []).filter((c) => c && c.id);
+  if (!chars.length) return new Set();
+  const maxLeads = Math.max(1, Math.floor(opts?.maxLeads ?? 2));
+
+  // 1) 显式男女主：命中 canon 的直接采用
+  const explicit = (opts?.explicitLeadIds || [])
+    .map((s) => String(s || "").trim())
+    .filter(Boolean);
+  if (explicit.length) {
+    const byId = new Set(chars.map((c) => c.id));
+    const hit = explicit.filter((id) => byId.has(id));
+    if (hit.length) return new Set(hit.slice(0, maxLeads));
+  }
+
+  // 2) 跨集提及次数排序
+  const bodies = (episodes || [])
+    .map((e) => `${e.title || ""}\n${e.body || ""}`)
+    .join("\n");
+  if (!bodies.trim()) {
+    // 无正文可数：退化为人物表前 maxLeads 名（保持稳定，不空）
+    return new Set(chars.slice(0, maxLeads).map((c) => c.id));
+  }
+  const scored = chars.map((c, i) => {
+    const needles = [c.nameZh, c.aliasZh]
+      .map((s) => String(s || "").trim())
+      .filter((s) => s.length >= 2);
+    let count = 0;
+    for (const n of needles) count += bodies.split(n).length - 1;
+    return { id: c.id, count, order: i };
+  });
+  scored.sort((a, b) => b.count - a.count || a.order - b.order);
+  return new Set(
+    scored.filter((s) => s.count > 0).slice(0, maxLeads).map((s) => s.id),
+  );
+}
+
 /** 从外形句抽 3–5 个配色词，供设定板色条描述（不要求画面烧字） */
 export function extractWardrobePaletteTokensZh(lookZh: string, limit = 5): string[] {
   const raw = String(lookZh || "");
