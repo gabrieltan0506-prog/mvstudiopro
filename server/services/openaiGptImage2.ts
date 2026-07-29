@@ -271,6 +271,10 @@ export async function postOpenAiGptImage2AndUpload(
         L,
         `[GPT-IMAGE-2·OpenAI] 成功 · 钥=${slot.slot} · ${String(publicUrl).slice(0, 160)}…`,
       );
+      // 画布这条链不带 flowLog：分道与用钥只能靠服务端日志核验（勿打印密钥本体）
+      console.info(
+        `[openaiGptImage2] ok · lane=${opts.lane || "keyart"} · slot=${slot.slot} · attempt=${i + 1}/${keyChain.length} · ${refs.length ? "edits" : "generations"}`,
+      );
       return publicUrl;
     } catch (e: unknown) {
       lastMessage = e instanceof Error ? e.message : String(e);
