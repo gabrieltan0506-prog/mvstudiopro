@@ -135,8 +135,18 @@ export function planManhuaKeyartEditFusion(opts?: {
   const customProps = customRefsByRole(opts?.customRefs, "prop").filter(
     (c) => c.source !== "generated",
   );
-  const preferCustomScene = customScenes.length > 0;
-  const preferCustomProp = customProps.length > 0;
+  /**
+   * 本集自己出的场景空镜与道具设定图**算数**，不能因为 source=generated 就当没有。
+   *
+   * 从前这两个判断跟着上面的 generated 过滤走：本集六件道具明明已经出图并挂上 @ 号，
+   * customProps 仍是空的 → 回落去塞内置示范道具，于是【道具短锁】写的是
+   * 「传家玉佩、金步摇发簪、红金团扇。本镜尽量出现一次」，13 张静帧每张都挂着
+   * 一把和剧情无关的红团扇与玉佩。场景同理。
+   *
+   * 人物身份仍只认上传/库预览（generated 定妆易漂脸），那条不动。
+   */
+  const preferCustomScene = customRefsByRole(opts?.customRefs, "scene").length > 0;
+  const preferCustomProp = customRefsByRole(opts?.customRefs, "prop").length > 0;
   const ancientIds = (opts?.ancientArchetypeIds || [])
     .map((id) => String(id || "").trim())
     .filter(Boolean);

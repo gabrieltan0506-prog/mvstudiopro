@@ -10,7 +10,7 @@ import {
   getManhuaCharacterDisplayName,
   normalizeManhuaArtStyleId,
 } from "./manhuaCharacterAssetLibrary";
-import type { ManhuaCustomAssetRef } from "./manhuaCustomAssetRefs";
+import { customRefsByRole, type ManhuaCustomAssetRef } from "./manhuaCustomAssetRefs";
 import {
   planManhuaKeyartEditFusion,
   type ManhuaKeyartEditPlan,
@@ -71,11 +71,27 @@ export function buildManhuaKeyartSlimSceneLock(sceneId?: string | null): string 
   return `【场景短锁】${scene.nameZh}。环境材质光色承接本集主场景；角色融入场景，禁止跳棚。`;
 }
 
-export function buildManhuaKeyartSlimPropLock(propIds?: string[] | null): string {
-  const names = (propIds || [])
-    .map((id) => getManhuaDemoAsset(String(id || "").trim())?.nameZh)
-    .filter(Boolean)
-    .slice(0, 4);
+/**
+ * 本镜道具短锁。
+ *
+ * 本集自己出过道具设定图时**只认本集道具**：从前这里只查内置示范库，本集六件
+ * 道具已经出图挂号也照样写「传家玉佩、金步摇发簪、红金团扇。本镜尽量出现一次」，
+ * 于是每张静帧都被塞进一把和剧情无关的红团扇。
+ */
+export function buildManhuaKeyartSlimPropLock(
+  propIds?: string[] | null,
+  customRefs?: ManhuaCustomAssetRef[] | null,
+): string {
+  const episodeProps = customRefsByRole(customRefs, "prop")
+    .map((r) => String(r.labelZh || "").trim())
+    .filter(Boolean);
+  const names = (
+    episodeProps.length
+      ? episodeProps
+      : (propIds || [])
+          .map((id) => getManhuaDemoAsset(String(id || "").trim())?.nameZh)
+          .filter(Boolean)
+  ).slice(0, 4) as string[];
   if (!names.length) return "";
   return `【道具短锁】${names.join("、")}。本镜尽量出现一次可读交互或环境落点。`;
 }
@@ -137,7 +153,7 @@ export function buildManhuaKeyartSlimPrompt(input: ManhuaKeyartSlimPromptInput):
       artStyleId: input.artStyleId,
     }),
     buildManhuaKeyartSlimSceneLock(input.sceneId),
-    buildManhuaKeyartSlimPropLock(input.propIds),
+    buildManhuaKeyartSlimPropLock(input.propIds, input.customRefs),
     isCg
       ? "【画风执行·CG】半写实二次元/国乙厚涂；禁止仿真人皮肤与纪实摄影。"
       : "",
