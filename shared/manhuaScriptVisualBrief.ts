@@ -354,6 +354,17 @@ export function buildManhuaScenePlateGenPrompt(opts: {
  * 单件、单角度、干净背景：多角度拼图是 ID 漂移头号根因，角色卡刚按这个
  * 理由拆成大头照 + 全身照，道具不能再走回拼图那条路。
  */
+/**
+ * 天生带字的道具：账册、密信、令牌、朝笏、契券、印章这类，纸面/牌面就是主体，
+ * 模型默认会往上写汉字（用户 2026-07-29 验收发现道具图烧字）。命中就追加纸面留白硬锁。
+ */
+const PROP_TEXT_BEARING_RE =
+  /账册|账本|帐册|密信|信函|书信|文书|案卷|卷宗|档|令|笏|契|券|符|榜|册|卷|谱|状|折子|奏折|印|章|牌|匾|额|碑|旗|封条|名录|名册/;
+
+function isTextBearingProp(nameZh: string, propPromptZh: string): boolean {
+  return PROP_TEXT_BEARING_RE.test(`${nameZh}${propPromptZh}`);
+}
+
 export function buildManhuaPropPlateGenPrompt(opts: {
   propNameZh: string;
   propPromptZh?: string;
@@ -372,6 +383,12 @@ export function buildManhuaPropPlateGenPrompt(opts: {
   return [
     "生成一张竖版单件道具参考（9:16）：只画这一件道具，居中占画面主体，四分之三主视角，材质、纹样、磨损与配色看得清。",
     "背景用干净的浅色或深色渐变，不要环境、不要人物、不要手、不要多角度并排或分格拼图，只要这一件的正面主视角。",
+    // 通用禁字锁写的是「文件仅几何光斑或完全模糊」，可当账册/密信/令牌本身就是主体时
+    // 那句自相矛盾（主体不能整体模糊），模型照旧往纸面写汉字。这里补一条针对道具本体的硬锁。
+    "道具本体禁字硬锁：器物表面的刻字、题名、账目数字、印章印文、封条字样一律不得出现可辨认字形；只允许抽象墨痕、压印纹理、纹样与磨损，宁可留白也不要写字。",
+    isTextBearingProp(name, propPrompt)
+      ? "本件属文书/令牌类：纸面、封皮、牌面、笏面须留白，或只画墨色笔触的走势与深浅，笔画绝不能组成任何汉字、数字或篆印；把「写过字」只用墨迹层次与压痕暗示。"
+      : "",
     `（隐藏道具名·不必画出：${name}）`,
     propPrompt ? `请画出的道具视觉：${propPrompt}` : "",
     owner ? `（隐藏归属·画面不要出现人：${owner}随身之物）` : "",

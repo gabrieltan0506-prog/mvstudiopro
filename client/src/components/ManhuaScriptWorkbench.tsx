@@ -1558,6 +1558,26 @@ export default function ManhuaScriptWorkbench({
     setActivePhase(phase);
   };
 
+  /**
+   * 「生成全部」双重确认（用户 2026-07-29）：全量生成会按剧本重出全部设定图、清掉旧图，
+   * 误点一次就烧一整批积分（曾清掉 18 张）。改成先武装、强制等 5 秒、再点一次才放行。
+   */
+  const FULL_SPAWN_CONFIRM_MS = 5000;
+  const [fullSpawnArmAt, setFullSpawnArmAt] = useState<number | null>(null);
+  const [fullSpawnTick, setFullSpawnTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (fullSpawnArmAt == null) return;
+    const timer = setInterval(() => setFullSpawnTick(Date.now()), 250);
+    return () => clearInterval(timer);
+  }, [fullSpawnArmAt]);
+  const fullSpawnRemainSec =
+    fullSpawnArmAt == null
+      ? 0
+      : Math.max(
+          0,
+          Math.ceil((fullSpawnArmAt + FULL_SPAWN_CONFIRM_MS - fullSpawnTick) / 1000),
+        );
+
   const enterStoryboard = () => {
     if (!outlineComplete) {
       toast.error("还差一步", { description: "请先确认剧本大纲" });
@@ -1580,6 +1600,28 @@ export default function ManhuaScriptWorkbench({
     }
     if (refuseIfBlocked(keyartGateHint)) return;
     setActivePhase("storyboard");
+  };
+
+  /**
+   * 全量生成统一入口：先武装、强制等 5 秒、再点一次才真跑。
+   * 两个「生成全部」按钮都走这里，免得留后门。
+   */
+  const requestFullSpawn = () => {
+    if (fullSpawnArmAt == null) {
+      setFullSpawnArmAt(Date.now());
+      setFullSpawnTick(Date.now());
+      toast.message("确认要「全部生成」吗？", {
+        description:
+          "这会按剧本重出全部设定图、清掉已出的旧图。只想补缺图请点虚线卡或「补齐 N 张」。等 5 秒后再点一次确认。",
+      });
+      return;
+    }
+    if (fullSpawnRemainSec > 0) {
+      toast.message(`再等 ${fullSpawnRemainSec} 秒`, { description: "确认期未满，防误点" });
+      return;
+    }
+    setFullSpawnArmAt(null);
+    enterStoryboard();
   };
 
   const runGenerateAllKeyarts = () => {
@@ -2260,7 +2302,8 @@ export default function ManhuaScriptWorkbench({
                 <button
                   type="button"
                   data-manhua-action="confirm-assets"
-                  disabled={Boolean(factoryBusy)}
+                  data-manhua-full-spawn-armed={fullSpawnArmAt == null ? "false" : "true"}
+                  disabled={Boolean(factoryBusy) || fullSpawnRemainSec > 0}
                   onClick={() => {
                     if (
                       !keyartGateHint &&
@@ -2272,7 +2315,8 @@ export default function ManhuaScriptWorkbench({
                       return;
                     }
                     if (episodeSheetGallery.length === 0 || !assetsComplete) {
-                      enterStoryboard();
+                      // 全量生成会清旧图重出：走 5 秒双重确认，不直接放行
+                      requestFullSpawn();
                       return;
                     }
                     if (refuseIfBlocked(keyartGateHint)) return;
@@ -2284,10 +2328,10 @@ export default function ManhuaScriptWorkbench({
                     (stillsReadyEnough ? "进入分镜" : "生成关键静帧")
                   }
                 >
-                  {assetScriptStaleHintZh
-                    ? assetScriptStaleHintZh.includes("还没有设定图")
-                      ? "缺图待补 →"
-                      : "设定图与剧本不符 →"
+                  {fullSpawnArmAt != null
+                    ? fullSpawnRemainSec > 0
+                      ? `确认全部生成（${fullSpawnRemainSec}s）`
+                      : "再点一次确认全部生成"
                     : episodeSheetGallery.length === 0 || !assetsComplete
                       ? "生成全部"
                       : !stillsReadyEnough
@@ -2535,10 +2579,14 @@ export default function ManhuaScriptWorkbench({
                       !assetGate.sceneLocked ||
                       factoryBusy
                     }
-                    onClick={enterStoryboard}
+                    onClick={requestFullSpawn}
                     className="shrink-0 rounded-lg border border-violet-300/50 bg-violet-500/30 px-3 py-1.5 text-[12px] font-bold text-violet-50 hover:bg-violet-500/40 disabled:opacity-45"
                   >
-                    生成全部
+                    {fullSpawnArmAt != null
+                      ? fullSpawnRemainSec > 0
+                        ? `确认全部生成（${fullSpawnRemainSec}s）`
+                        : "再点一次确认全部生成"
+                      : "生成全部"}
                   </button>
                 </div>
               )}

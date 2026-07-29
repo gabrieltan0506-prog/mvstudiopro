@@ -1,10 +1,38 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildManhuaPropPlateGenPrompt,
   buildManhuaScenePlateGenPrompt,
   compileManhuaScriptVisualBrief,
   looksLikeRawScriptDump,
   summarizeManhuaVisualBriefForUi,
 } from "./manhuaScriptVisualBrief";
+
+describe("道具图禁字（修烧字 bug）", () => {
+  it("器物本体一律禁可辨认刻字/印文", () => {
+    const p = buildManhuaPropPlateGenPrompt({
+      propNameZh: "赤绳短剑",
+      propPromptZh: "窄刃短剑，剑柄缠赤绳",
+    });
+    expect(p).toContain("道具本体禁字硬锁");
+    expect(p).toContain("宁可留白也不要写字");
+  });
+
+  it("账册/密信/令牌这类文书道具追加纸面留白硬锁", () => {
+    for (const name of ["漕银账册", "双层密信", "巡察银令", "象牙色朝笏"]) {
+      const p = buildManhuaPropPlateGenPrompt({ propNameZh: name });
+      expect(p).toContain("本件属文书/令牌类");
+      expect(p).toContain("笔画绝不能组成任何汉字");
+    }
+  });
+
+  it("普通兵器不追加文书专用句", () => {
+    const p = buildManhuaPropPlateGenPrompt({
+      propNameZh: "残局棋盘",
+      propPromptZh: "木质棋盘，黑白子散落",
+    });
+    expect(p).not.toContain("本件属文书/令牌类");
+  });
+});
 
 describe("manhuaScriptVisualBrief", () => {
   it("compiles writer pack into visual brief instead of raw dump", () => {
