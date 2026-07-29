@@ -286,6 +286,12 @@ type Props = {
     anchorId: string;
     nameZh: string;
   }) => void | Promise<void>;
+  /** 补齐这一批缺图的资产（只出这几张、不清已出）；「补齐 N 张」按钮用 */
+  onFillPendingSheets?: (anchorIds: string[]) => void | Promise<void>;
+  /** 资产暂存区条数（清图/重出前存的，可救回） */
+  assetStashCount?: number;
+  /** 从暂存区救回被清掉的资产图 */
+  onRestoreAssetStash?: () => void;
   /** 授权进库半价（付费积分）；兑换码赠送积分路径由父级锁定强制进库 */
   shareAssetToLibrary?: boolean;
   onShareAssetToLibraryChange?: (next: boolean) => void;
@@ -462,6 +468,9 @@ export default function ManhuaScriptWorkbench({
   segmentNoFaceLockHintZh = null,
   onGenerateCustomAssetFromLibrary,
   onGenerateCanonAssetSheet,
+  onFillPendingSheets,
+  assetStashCount = 0,
+  onRestoreAssetStash,
   shareAssetToLibrary = false,
   onShareAssetToLibraryChange,
   assetShareBilling,
@@ -2226,6 +2235,17 @@ export default function ManhuaScriptWorkbench({
                     按剧本重出设定图
                   </button>
                 ) : null}
+                {assetStashCount > 0 && onRestoreAssetStash ? (
+                  <button
+                    type="button"
+                    data-manhua-action="restore-asset-stash"
+                    onClick={onRestoreAssetStash}
+                    className="rounded-lg border border-emerald-300/50 bg-emerald-500/20 px-3 py-1.5 text-[12px] font-semibold text-emerald-50 hover:bg-emerald-500/30"
+                    title="重出/误删前存下的旧设定图都在暂存区，点此把被清掉的救回画布"
+                  >
+                    暂存区救回 {assetStashCount} 张
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   data-manhua-action="confirm-assets"
@@ -2254,7 +2274,9 @@ export default function ManhuaScriptWorkbench({
                   }
                 >
                   {assetScriptStaleHintZh
-                    ? "设定图已过期"
+                    ? assetScriptStaleHintZh.includes("还没有设定图")
+                      ? "缺图待补 →"
+                      : "设定图与剧本不符 →"
                     : episodeSheetGallery.length === 0 || !assetsComplete
                       ? "生成全部"
                       : !stillsReadyEnough
@@ -2467,15 +2489,21 @@ export default function ManhuaScriptWorkbench({
                       </p>
                       <button
                         type="button"
-                        data-manhua-action="spawn-episode-sheets"
+                        data-manhua-action="fill-pending-sheets"
                         disabled={
                           !outlineComplete ||
                           !assetGate.castLocked ||
                           !assetGate.sceneLocked ||
                           factoryBusy
                         }
-                        onClick={enterStoryboard}
+                        onClick={() => {
+                          // 只补这几张缺的、绝不清已出（名副其实：N=真实要出的张数）
+                          const ids = pendingSheetAnchors.map((a) => a.anchorId);
+                          if (onFillPendingSheets) void onFillPendingSheets(ids);
+                          else enterStoryboard();
+                        }}
                         className="shrink-0 rounded-lg border border-violet-300/50 bg-violet-500/25 px-2.5 py-1 text-[11px] font-semibold text-violet-50 hover:bg-violet-500/40 disabled:opacity-45"
+                        title="只生成这几张还没出的图，不动已出的（不会清全量重出）"
                       >
                         补齐 {pendingSheetAnchors.length} 张
                       </button>

@@ -55,6 +55,18 @@ import {
   MANHUA_ASSET_STILL_SHARE_HALF_CREDITS,
   manhuaAssetStillPriceLabelZh,
 } from "@shared/manhuaAssetSharePricing";
+import {
+  anonymizeManhuaLibraryLabelZh,
+  decideManhuaAssetRecycle,
+  type ManhuaAssetRecycleRole,
+} from "@shared/manhuaAssetRecycle";
+import {
+  MANHUA_ASSET_STASH_STORAGE_KEY,
+  mergeManhuaAssetStash,
+  parseManhuaAssetStash,
+  type ManhuaAssetStashEntry,
+  type ManhuaAssetStashRole,
+} from "@shared/manhuaAssetStash";
 import { uploadCanvasFilesParallel } from "@/lib/canvasUpload";
 import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
@@ -400,6 +412,17 @@ export default function OmniCanvas() {
   const [immersiveExtrasOpen, setImmersiveExtrasOpen] = useState(false);
   /** 角色库 / 资产墙改抽屉，避免长期占主流程 */
   const [manhuaAssetDrawer, setManhuaAssetDrawer] = useState<null | "characters" | "assets">(null);
+  /** 资产暂存区条数（清图/重出前存的，可救回）；boot 时从本地读 */
+  const [assetStashCount, setAssetStashCount] = useState<number>(() => {
+    if (typeof window === "undefined") return 0;
+    try {
+      return parseManhuaAssetStash(
+        window.localStorage.getItem(MANHUA_ASSET_STASH_STORAGE_KEY),
+      ).length;
+    } catch {
+      return 0;
+    }
+  });
   /** 确认编剧后的专案 Bible（系列级真相；≠ 工厂节点 bible-*） */
   const [projectBible, setProjectBible] = useState<ManhuaProjectBible | null>(() => bootBible);
   const [factoryTopic, setFactoryTopic] = useState(
@@ -653,6 +676,12 @@ export default function OmniCanvas() {
     retry: 1,
   });
   const generateAssetStillMutation = trpc.manhuaAssetShare.generateAssetStill.useMutation();
+  const contributeToLibraryMutation =
+    trpc.manhuaAssetShare.contributeToLibrary.useMutation();
+  const contributeToLibraryRef = useRef(contributeToLibraryMutation.mutateAsync);
+  useEffect(() => {
+    contributeToLibraryRef.current = contributeToLibraryMutation.mutateAsync;
+  }, [contributeToLibraryMutation.mutateAsync]);
   const assetShareQuote = trpc.manhuaAssetShare.quote.useQuery(
     { shareToLibrary: shareAssetToLibrary },
     {
@@ -3202,6 +3231,122 @@ export default function OmniCanvas() {
   );
 
   /** 从剧本表（或自传/库）锁资产：有图则复用，缺图才生成；齐后进分镜 */
+  /** 清图/重出前把带成品图的资产块并入暂存区（本地持久，可救回） */
+  const stashManhuaAssetBlocksBeforePurge = useCallback(
+    (
+      removed: CanvasBlock[],
+      assetCanon?: NonNullable<typeof projectBible>["assetCanon"] | null,
+    ) => {
+      if (typeof window === "undefined") return;
+      const incoming: Partial<ManhuaAssetStashEntry>[] = [];
+      for (const b of removed) {
+        const url = b.outputUrl || b.outputUrls?.[0];
+        if (!url || !/^https:\/\//i.test(url)) continue;
+        if (
+          !b.id.startsWith("charsheet-") &&
+          !b.id.startsWith("sceneplate-") &&
+          !b.id.startsWith("propsheet-")
+        ) {
+          continue;
+        }
+        const role: ManhuaAssetStashRole = b.id.startsWith("sceneplate-")
+          ? "scene"
+          : b.id.startsWith("propsheet-")
+            ? "prop"
+            : "character";
+        const seedId = seedIdFromManhuaSheetBlockId(b.id);
+        const labelZh =
+          (role === "character"
+            ? assetCanon?.characters.find((c) => c.id === seedId || b.id.includes(c.id))?.nameZh
+            : role === "prop"
+              ? assetCanon?.props.find((p) => p.id === seedId || b.id.includes(p.id))?.nameZh
+              : assetCanon?.locations.find((l) => l.id === seedId || b.id.includes(l.id))
+                  ?.nameZh) || undefined;
+        incoming.push({
+          blockId: b.id,
+          role,
+          imageUrl: url,
+          outputUrls: b.outputUrls,
+          labelZh,
+          prompt: b.prompt,
+        });
+      }
+      if (!incoming.length) return;
+      try {
+        const prev = parseManhuaAssetStash(
+          window.localStorage.getItem(MANHUA_ASSET_STASH_STORAGE_KEY),
+        );
+        const merged = mergeManhuaAssetStash(prev, incoming);
+        window.localStorage.setItem(
+          MANHUA_ASSET_STASH_STORAGE_KEY,
+          JSON.stringify(merged),
+        );
+        setAssetStashCount(merged.length);
+        toast.message(`已存入暂存区（${incoming.length} 张）`, {
+          description: "万一清错了，可在资产设定点「暂存区救回」找回",
+        });
+      } catch {
+        /* 暂存失败不影响主流程 */
+      }
+    },
+    [],
+  );
+
+  /** 从暂存区救回资产块：本地不存在的重新加回画布 */
+  const restoreManhuaAssetsFromStash = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const stash = parseManhuaAssetStash(
+      window.localStorage.getItem(MANHUA_ASSET_STASH_STORAGE_KEY),
+    );
+    if (!stash.length) {
+      toast.message("暂存区是空的");
+      return;
+    }
+    setBlocks((prev) => {
+      const haveIds = new Set(prev.map((b) => b.id));
+      const haveUrls = new Set(
+        prev.map((b) => b.outputUrl || b.outputUrls?.[0]).filter(Boolean) as string[],
+      );
+      const CHAR_Y = 80;
+      const SCENE_Y = 520;
+      const PROP_Y = 960;
+      const GAP = 380;
+      let c = 0;
+      let s = 0;
+      let p = 0;
+      const revived: CanvasBlock[] = [];
+      for (const e of stash) {
+        if (haveIds.has(e.blockId) || haveUrls.has(e.imageUrl)) continue;
+        const isScene = e.role === "scene";
+        const isProp = e.role === "prop";
+        const y = isScene ? SCENE_Y : isProp ? PROP_Y : CHAR_Y;
+        const col = isScene ? s++ : isProp ? p++ : c++;
+        const blk = defaultCanvasBlock("image", 60 + col * GAP, y);
+        blk.id = e.blockId;
+        blk.prompt = e.prompt || "";
+        blk.aspectRatio = "9:16";
+        blk.imageModel = "gpt-image-2";
+        blk.imageMode = "generate";
+        blk.outputUrl = e.imageUrl;
+        if (e.outputUrls?.length) blk.outputUrls = e.outputUrls;
+        blk.status = "done";
+        blk.width = 360;
+        blk.height = 400;
+        revived.push(blk);
+      }
+      if (!revived.length) {
+        toast.message("暂存区里的图当前都还在，无需救回");
+        return prev;
+      }
+      const next = [...prev, ...revived];
+      saveCanvasState(next, edges);
+      toast.success(`已从暂存区救回 ${revived.length} 张`, {
+        description: "重新敲 @ 即可把它们挂回段落",
+      });
+      return next;
+    });
+  }, [edges]);
+
   const confirmAssetsAndPrepareImages = useCallback(
     async (opts?: {
       assetCanonOverride?: NonNullable<typeof projectBible>["assetCanon"];
@@ -3214,12 +3359,30 @@ export default function OmniCanvas() {
        * 设了就不清旧图、不动其他资产、不跳阶段——只出这一张。
        */
       onlyAnchorId?: string;
+      /**
+       * 只补编剧表里这一批缺图的资产（「补齐 N 张」按钮）。
+       * 与 onlyAnchorId 同性质：只出这几张、绝不清已出、不跳阶段——
+       * 让「补齐 N 张」名副其实（N=真实要出的张数），根治误点清全量。
+       */
+      onlyAnchorIds?: string[];
     }) => {
       const assetCanon = opts?.assetCanonOverride ?? projectBible?.assetCanon;
       const episodeIndex = opts?.episodeIndexOverride ?? writerFocusEpisode;
       const topic = String(opts?.topicOverride || factoryTopic || "").trim();
       const forceRegenerate = Boolean(opts?.forceRegenerate);
-      const onlyAnchorId = String(opts?.onlyAnchorId || "").trim();
+      const onlyAnchorIdList = (opts?.onlyAnchorIds || [])
+        .map((s) => String(s || "").trim())
+        .filter(Boolean);
+      const onlyAnchorId =
+        String(opts?.onlyAnchorId || "").trim() || (onlyAnchorIdList.length === 1 ? onlyAnchorIdList[0]! : "");
+      /** 增量补图（单张或多张）：一律不清旧图、不跳阶段 */
+      const isIncremental = Boolean(onlyAnchorId) || onlyAnchorIdList.length > 0;
+      const anchorIdMatch = (planId: string) =>
+        onlyAnchorIdList.length > 0
+          ? onlyAnchorIdList.some((a) => planId.includes(a))
+          : onlyAnchorId
+            ? planId.includes(onlyAnchorId)
+            : true;
       const writerMainSceneId =
         assetCanon?.episodeMainSceneId[episodeIndex] || assetCanon?.locations[0]?.id || "";
       // 按剧本出资产：主场景跟编剧表；清掉未列入场景表的库示范场景（如 scene_06 皇宫大殿）
@@ -3238,7 +3401,7 @@ export default function OmniCanvas() {
         ),
       });
       const shouldPurge =
-        !onlyAnchorId && (forceRegenerate || Boolean(assetCanon && !align.aligned));
+        !isIncremental && (forceRegenerate || Boolean(assetCanon && !align.aligned));
       if (shouldPurge) {
         const purged = purgeStaleCustomAssetRefsForCanon(workingRefs, assetCanon, {
           forceAllGenerated: forceRegenerate,
@@ -3254,6 +3417,11 @@ export default function OmniCanvas() {
         );
         if (removeIds.size > 0) {
           if (abortRef.current) abortRef.current.abort();
+          // 清图前先存进暂存区：误清/重出可救回（防「手贱」）
+          stashManhuaAssetBlocksBeforePurge(
+            canvasBlocks.filter((b) => removeIds.has(b.id)),
+            assetCanon,
+          );
           canvasBlocks = canvasBlocks.filter((b) => !removeIds.has(b.id));
           canvasEdges = canvasEdges.filter(
             (e) => !removeIds.has(e.fromId) && !removeIds.has(e.toId),
@@ -3433,7 +3601,7 @@ export default function OmniCanvas() {
       // 强制重出 / 与现稿不对齐时绝不早退进分镜
       if (
         !forceRegenerate &&
-        !onlyAnchorId &&
+        !isIncremental &&
         alignAfterPurge.aligned &&
         gate.ready &&
         hasEpisodeSheetMedia
@@ -3453,16 +3621,16 @@ export default function OmniCanvas() {
       }
 
       const plannedAll = planManhuaAssetImageSpawns(gateInput, {
-        // 单补时 gate 可能已 ready（其他资产齐），必须强制按剧本表出卡才拿得到这一张
-        forceEpisodeSheets: forceRegenerate || !hasEpisodeSheetMedia || Boolean(onlyAnchorId),
+        // 单补/补齐时 gate 可能已 ready（其他资产齐），必须强制按剧本表出卡才拿得到这几张
+        forceEpisodeSheets: forceRegenerate || !hasEpisodeSheetMedia || isIncremental,
       });
-      const plans = onlyAnchorId
-        ? plannedAll.filter((p) => p.id.includes(onlyAnchorId))
+      const plans = isIncremental
+        ? plannedAll.filter((p) => anchorIdMatch(p.id))
         : plannedAll;
       if (!plans.length) {
         toast.message(
-          onlyAnchorId
-            ? "这个资产已经有图了，可在画布上点它重出"
+          isIncremental
+            ? "这些资产已经有图了，可在画布上点它重出"
             : hasEpisodeSheetMedia
               ? gate.hintZh || "资产图未齐"
               : "暂无可生成的设定图：请确认剧本人物/场景表，或到「我的角色 / 我的场景」上传参考",
@@ -3474,8 +3642,8 @@ export default function OmniCanvas() {
       abortRef.current = ac;
       setFactoryBusy(true);
       setFactoryProgress(
-        onlyAnchorId
-          ? `补「${plans[0]?.labelZh || "设定图"}」…`
+        isIncremental
+          ? `补齐 ${plans.length} 张（${plans[0]?.labelZh || "设定图"}…）`
           : gate.viaWriterCanon
             ? "从剧本出角色/场景设定图…"
             : "准备角色/场景图…",
@@ -3590,12 +3758,37 @@ export default function OmniCanvas() {
           );
           setBlocks(working);
           saveCanvasState(working, canvasEdges);
-          await ingestSheetToMyLibrary(plan, out.outputUrl || out.outputUrls?.[0]);
-          if (out.outputUrl || out.outputUrls?.[0]) {
+          const outUrl = out.outputUrl || out.outputUrls?.[0];
+          await ingestSheetToMyLibrary(plan, outUrl);
+          if (outUrl) {
             pushDebug("confirmAssetsFromScript:engine", {
               level: "ok",
               detail: `${plan.kind}:${plan.labelZh} · ${out.imageModel || "gpt-image-2"}`,
             });
+            // 自动入库：出图成功 → 去名匿名进公有库（半成品被 decide 拦掉，不入库）
+            const recycleRole: ManhuaAssetRecycleRole =
+              plan.kind === "charsheet"
+                ? "character"
+                : plan.kind === "propsheet"
+                  ? "prop"
+                  : "scene";
+            if (decideManhuaAssetRecycle({ hasImage: true }).recycle) {
+              const canonProperNames = [
+                ...(assetCanon?.characters ?? []).map((c) => c.nameZh),
+                ...(assetCanon?.locations ?? []).map((l) => l.nameZh),
+                ...(assetCanon?.props ?? []).map((p) => p.nameZh),
+              ].filter(Boolean);
+              const anonLabel = anonymizeManhuaLibraryLabelZh(
+                plan.labelZh,
+                canonProperNames,
+                recycleRole,
+              );
+              void contributeToLibraryRef
+                .current({ role: recycleRole, imageUrl: outUrl, labelZh: anonLabel })
+                .catch(() => {
+                  /* 入库失败不影响出图；静默 */
+                });
+            }
           }
         }
         working = layoutManhuaEpisodeReadableChain(
@@ -3613,8 +3806,8 @@ export default function OmniCanvas() {
         saveCanvasState(working, canvasEdges);
         {
           const focusAssetId =
-            // 单补：镜头停在刚补的那张，别跳回第一个角色
-            (onlyAnchorId ? plans[0]?.id : "") ||
+            // 增量补：镜头停在刚补的那张，别跳回第一个角色
+            (isIncremental ? plans[0]?.id : "") ||
             working.find((b) => b.id.startsWith("charsheet-"))?.id ||
             working.find((b) => b.id.startsWith("sceneplate-"))?.id;
           if (focusAssetId) openManhuaFactoryCanvas(focusAssetId);
@@ -3626,20 +3819,22 @@ export default function OmniCanvas() {
             (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
           ),
         });
-        if (onlyAnchorId) {
-          // 单补不改阶段：用户只是回填一张缺图，不该被推进/推回
-          const done = Boolean(
-            working.find((b) => b.id === plans[0]?.id)?.outputUrl ||
-              working.find((b) => b.id === plans[0]?.id)?.outputUrls?.[0],
-          );
+        if (isIncremental) {
+          // 增量补不改阶段：用户只是回填缺图，不该被推进/推回
+          const doneCount = plans.filter((p) =>
+            Boolean(
+              working.find((b) => b.id === p.id)?.outputUrl ||
+                working.find((b) => b.id === p.id)?.outputUrls?.[0],
+            ),
+          ).length;
           toast.message(
-            done
-              ? `已补好「${plans[0]?.labelZh || "设定图"}」`
-              : `「${plans[0]?.labelZh || "设定图"}」没出图，可再点一次`,
+            doneCount >= plans.length
+              ? `已补齐 ${plans.length} 张`
+              : `补齐 ${doneCount}/${plans.length} 张，没出的可再点一次`,
           );
-          pushDebug("confirmAssetsFromScript:single", {
-            level: done ? "ok" : "warn",
-            detail: `${plans[0]?.id || onlyAnchorId} · done=${done}`,
+          pushDebug("confirmAssetsFromScript:incremental", {
+            level: doneCount >= plans.length ? "ok" : "warn",
+            detail: `done=${doneCount}/${plans.length}`,
           });
         } else if (nextGate.ready) {
           setWorkflowPhase("storyboard");
@@ -3659,7 +3854,7 @@ export default function OmniCanvas() {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "资产图生成失败";
         toast.error("角色/场景图未完成", { description: msg });
-        if (!onlyAnchorId) setWorkflowPhase("assets");
+        if (!isIncremental) setWorkflowPhase("assets");
         pushDebug("confirmAssetsFromScript:error", { level: "error", detail: msg });
       } finally {
         setFactoryBusy(false);
@@ -3681,6 +3876,7 @@ export default function OmniCanvas() {
       recommendedScene?.id,
       runDeps,
       selectedCharacterIds,
+      stashManhuaAssetBlocksBeforePurge,
       writerFocusEpisode,
       writerPack?.episodes,
     ],
@@ -4725,8 +4921,13 @@ export default function OmniCanvas() {
                       : null
                   }
                   onConfirmAssetsAndPrepareImages={confirmAssetsAndPrepareImages}
+                  assetStashCount={assetStashCount}
+                  onRestoreAssetStash={restoreManhuaAssetsFromStash}
                   onGenerateCanonAssetSheet={({ anchorId }) =>
                     confirmAssetsAndPrepareImages({ onlyAnchorId: anchorId })
+                  }
+                  onFillPendingSheets={(anchorIds) =>
+                    confirmAssetsAndPrepareImages({ onlyAnchorIds: anchorIds })
                   }
                   onRegenerateAssetsFromScript={() =>
                     void confirmAssetsAndPrepareImages({ forceRegenerate: true })
