@@ -24,6 +24,7 @@ import {
   normalizeManhuaAudioReferenceLock,
   type ManhuaAudioReferenceLock,
 } from "./manhuaAudioReferenceLock.js";
+import { detectManhuaCanonWriterDrift } from "./manhuaWriterAssetCanon.js";
 import { parseManhuaStylePack, type ManhuaStylePack } from "./manhuaStylePack.js";
 import {
   normalizeManhuaDeliveryPackage,
@@ -185,13 +186,44 @@ export function parseManhuaWriterSession(raw: unknown): ManhuaWriterSession | nu
   return buildManhuaWriterSession(o);
 }
 
+/**
+ * 加载草稿自愈：当 `projectBible` 的 canon 与现 `writerPack` 人物表换角漂移时，
+ * 不信任旧 bible（否则「按剧本重出/锁脸」会照旧角色出图——正是老角色阴魂不散的根因）。
+ *
+ * 剧本本体（writerPack）始终保留；仅把漂移的 bible 置空并退回未确认，交由
+ * 「确认并进入资产设定」按现稿重建。返回 `healed` 供 UI 决定是否提示用户重新确认。
+ *
+ * 触发场景：本地/云端草稿里 writerPack 已换角但 bible 没重建（云草稿常把一周前的
+ * 旧 bible 回灌，盖掉本地刚重建的新 canon）。
+ */
+export function healManhuaWriterSessionCanonDrift(
+  session: ManhuaWriterSession | null,
+): { session: ManhuaWriterSession | null; healed: boolean } {
+  if (!session) return { session, healed: false };
+  const drift = detectManhuaCanonWriterDrift(
+    session.projectBible?.assetCanon ?? null,
+    session.writerPack?.charactersMd ?? null,
+  );
+  if (!drift.drifted) return { session, healed: false };
+  return {
+    healed: true,
+    session: {
+      ...session,
+      projectBible: null,
+      writerConfirmed: false,
+      directorUnlocked: false,
+      workflowPhase: "outline",
+    },
+  };
+}
+
 export function loadManhuaWriterSessionFromStorage(
   storage: Pick<Storage, "getItem"> = localStorage,
 ): ManhuaWriterSession | null {
   try {
     const raw = storage.getItem(MANHUA_WRITER_SESSION_LS_KEY);
     if (!raw) return null;
-    return parseManhuaWriterSession(raw);
+    return healManhuaWriterSessionCanonDrift(parseManhuaWriterSession(raw)).session;
   } catch {
     return null;
   }

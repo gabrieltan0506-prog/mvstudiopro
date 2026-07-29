@@ -126,6 +126,7 @@ import {
   formatWriterAssetCanonIdentityLock,
 } from "@shared/manhuaWriterAssetCanon";
 import {
+  healManhuaWriterSessionCanonDrift,
   loadManhuaWriterSessionFromStorage,
   saveManhuaWriterSessionToStorage,
 } from "@shared/manhuaWriterSession";
@@ -1139,7 +1140,12 @@ export default function OmniCanvas() {
   ]);
 
   const applyCloudDraftToUi = useCallback((draft: ManhuaCloudDraftPayload) => {
-    const session = draft.writerSession;
+    // 云草稿常把一周前的旧 bible 回灌，盖掉本地已换角的新剧本 → 换角漂移时弃用旧 bible。
+    const healed = healManhuaWriterSessionCanonDrift(draft.writerSession);
+    const session = healed.session ?? draft.writerSession;
+    if (healed.healed) {
+      toast.warning("检测到剧本已换角，旧角色设定图不再沿用；请重新「确认并进入资产设定」按现稿重建角色");
+    }
     const nextBlocks = cloudDraftBlocksToCanvas(draft.canvas.blocks);
     const nextEdges = draft.canvas.edges as CanvasEdge[];
     setBlocks(nextBlocks);
