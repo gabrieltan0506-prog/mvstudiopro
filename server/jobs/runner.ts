@@ -27,6 +27,7 @@ import {
   type FalKlingEndpoint,
 } from "../kling/fal-proxy";
 import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "../gemini-image";
+import { normalizeOpenAiImageLane } from "../../shared/openaiImageLane.js";
 import { appRouter, buildPlatformContent, slimBuildPlatformContentDiagnosticsForJob } from "../routers";
 import { invokeLLM, extractJsonString, type FileContent } from "../_core/llm";
 import { deleteGcsObject } from "../services/gcs";
@@ -863,6 +864,8 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
       typeof params.gcsSubdir === "string" && params.gcsSubdir.trim()
         ? params.gcsSubdir.trim()
         : "canvas-gpt-image2";
+    // 设定图 / 静帧分走两把官方密钥（画布出图都从这条长任务走，勿只接同步 op）
+    const imageLane = normalizeOpenAiImageLane(params.imageLane) ?? undefined;
 
     const { generateGptImage2FromRawEnglishPrompt } = await import("../services/proxyImageService.js");
     const captureError: {
@@ -881,6 +884,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
       maskUrl: maskUrl || undefined,
       generalImageEdit: referenceImageUrls.length > 0 || generalImageEdit,
       providerOverride,
+      imageLane,
       captureError,
     });
     if (!imageUrl) {
