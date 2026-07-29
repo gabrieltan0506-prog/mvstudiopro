@@ -2429,7 +2429,18 @@ export default function ManhuaScriptWorkbench({
                   本集设定图 · {episodeSheetGallery.length} 张
                   {pendingSheetAnchors.length ? (
                     <span className="ml-1 font-normal text-amber-200/80">
-                      · 待生成 {pendingSheetAnchors.length}
+                      · 待生成 {pendingSheetAnchors.length}（
+                      {[
+                        ["人物", "charsheet" as const],
+                        ["场景", "sceneplate" as const],
+                        ["道具", "propsheet" as const],
+                      ]
+                        .map(
+                          ([zh, kind]) =>
+                            `${zh} ${pendingSheetAnchors.filter((x) => x.kind === kind).length}`,
+                        )
+                        .join(" · ")}
+                      ）
                     </span>
                   ) : null}
                 </div>
@@ -2467,13 +2478,36 @@ export default function ManhuaScriptWorkbench({
                         data-manhua-episode-sheets-kind={sec.kind}
                         className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2"
                       >
-                        <div className="text-[10px] font-semibold text-emerald-50/80">
-                          {sec.titleZh}
-                          <span className="ml-1 font-normal text-white/40">· {items.length}</span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="text-[10px] font-semibold text-emerald-50/80">
+                            {sec.titleZh}
+                            <span className="ml-1 font-normal text-white/40">· {items.length}</span>
+                            {pending.length ? (
+                              <span className="ml-1 font-normal text-amber-200/70">
+                                · 待生成 {pending.length}
+                              </span>
+                            ) : null}
+                          </div>
+                          {/* 分类一键补齐：人物/场景/道具各自成批出，免得几十个逐张点 */}
                           {pending.length ? (
-                            <span className="ml-1 font-normal text-amber-200/70">
-                              · 待生成 {pending.length}
-                            </span>
+                            <button
+                              type="button"
+                              data-manhua-action={`fill-pending-${sec.kind}`}
+                              disabled={
+                                !outlineComplete ||
+                                !assetGate.castLocked ||
+                                !assetGate.sceneLocked ||
+                                factoryBusy ||
+                                !onFillPendingSheets
+                              }
+                              onClick={() => {
+                                void onFillPendingSheets?.(pending.map((a) => a.anchorId));
+                              }}
+                              className="shrink-0 rounded border border-violet-300/45 bg-violet-500/20 px-2 py-0.5 text-[9px] font-semibold text-violet-50 hover:bg-violet-500/35 disabled:opacity-40"
+                              title={`一键出这 ${pending.length} 张${sec.titleZh}（只补缺图，不动已出的）`}
+                            >
+                              一键出{sec.titleZh} {pending.length} 张
+                            </button>
                           ) : null}
                         </div>
                         {items.length || pending.length ? (
