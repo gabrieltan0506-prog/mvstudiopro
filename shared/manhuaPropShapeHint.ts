@@ -49,8 +49,17 @@ export function normalizeManhuaPropShapeHintZh(raw: unknown): string {
   return s.endsWith("。") ? s : `${s}。`;
 }
 
-/** 写进生图提示词的那一行；空串表示这件道具没有可用形制，别硬塞。 */
+/**
+ * 写进生图提示词的那一行；空串表示这件道具没有可用形制，别硬塞。
+ *
+ * 尾巴那句「比例优先于构图」是必需的：朝笏实测被画成 3:1 的砧板，
+ * 因为 9:16 竖幅会诱使模型把主体撑满画面，把细长器物越画越宽。
+ */
 export function formatManhuaPropShapeHintLineZh(hintZh: string): string {
   const s = normalizeManhuaPropShapeHintZh(hintZh);
-  return s ? `实物形制（按实物来画，不要凭想象改形状）：${s}` : "";
+  if (!s) return "";
+  return [
+    `实物形制（按实物来画，不要凭想象改形状）：${s}`,
+    "真实长宽比优先于构图饱满：细长的器物就画得细长，四周该是背景就让它是背景，不要为了填满画幅把它加宽变粗。",
+  ].join("\n");
 }

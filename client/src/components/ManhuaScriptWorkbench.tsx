@@ -1623,6 +1623,12 @@ export default function ManhuaScriptWorkbench({
     /** 展开「从库里挑一张」的候选墙 */
     picking: boolean;
   } | null>(null);
+  /** 点缩略图先放大看清，再决定定位画布还是重出（缩略图 88px 看不出形制对不对） */
+  const [sheetPreview, setSheetPreview] = useState<{
+    id: string;
+    url: string;
+    labelZh: string;
+  } | null>(null);
   const regenTileCount = regenDraft?.anchorIds.length || 1;
   const openRegenDraft = (opts: {
     key: string;
@@ -1635,13 +1641,8 @@ export default function ManhuaScriptWorkbench({
   };
   const submitRegenDraft = (mode: ManhuaAssetRegenMode, libraryImageUrl?: string) => {
     if (!regenDraft || !onRegenerateSheets) return;
+    // 不填也能重出：这时就按当下的提示词（含联网核对的形制）重画一版
     const noteZh = normalizeManhuaAssetRegenNoteZh(regenDraft.noteZh);
-    if (mode === "redraw" && !noteZh) {
-      toast.message("先写一句哪里要改进", {
-        description: "例：封面上的字去掉、只留墨痕；或：这个角色是女性，脸要重画。",
-      });
-      return;
-    }
     const anchorIds = regenDraft.anchorIds;
     setRegenDraft(null);
     void onRegenerateSheets({ anchorIds, noteZh, mode, libraryImageUrl });
@@ -2518,6 +2519,47 @@ export default function ManhuaScriptWorkbench({
                   / 我的场景 / 我的道具」。
                 </p>
               </div>
+              {sheetPreview ? (
+                <div
+                  className="fixed inset-0 z-[75] flex flex-col items-center justify-center gap-3 bg-black/85 px-4 py-6"
+                  onClick={() => setSheetPreview(null)}
+                >
+                  <img
+                    src={sheetPreview.url}
+                    alt={sheetPreview.labelZh}
+                    onClick={(e) => e.stopPropagation()}
+                    className="max-h-[78vh] max-w-full rounded-xl border border-white/15 object-contain"
+                  />
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="flex flex-wrap items-center gap-2 rounded-lg bg-black/70 px-3 py-1.5"
+                    >
+                    <span className="text-[12px] font-semibold text-white/90">
+                      {sheetPreview.labelZh}
+                    </span>
+                    {sheetPreview.id ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const id = sheetPreview.id;
+                          setSheetPreview(null);
+                          focusBlockAndOpenCanvas(id);
+                        }}
+                        className="rounded border border-white/20 px-2 py-0.5 text-[11px] text-white/80 hover:bg-white/[0.08]"
+                      >
+                        在画布中定位
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setSheetPreview(null)}
+                      className="rounded border border-white/15 px-2 py-0.5 text-[11px] text-white/60 hover:bg-white/[0.06]"
+                    >
+                      关闭
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               {regenDraft ? (
                 // 居中浮层：卡片在页面下方时，内联面板会落在视野外，看着就像点了没反应
                 <div
@@ -2551,7 +2593,7 @@ export default function ManhuaScriptWorkbench({
                       setRegenDraft((prev) => (prev ? { ...prev, noteZh: e.target.value } : prev))
                     }
                     rows={2}
-                    placeholder="哪里要改进？例：账册封面上的字全部去掉，只留墨痕；或：这个角色是女性，脸要重画，服装不变。"
+                    placeholder="想改哪里就写一句（可留空直接重出）。例：这件是长条扁平、略向内微弯的象牙板；或：这个角色是女性，脸要重画，服装不变。"
                     className="mt-1.5 w-full rounded-lg border border-white/12 bg-black/40 px-2 py-1.5 text-[11px] leading-4 text-white/85 placeholder:text-white/30"
                   />
                   <div className="mt-1.5 flex flex-wrap items-center gap-2">
@@ -2562,7 +2604,8 @@ export default function ManhuaScriptWorkbench({
                       onClick={() => submitRegenDraft("redraw")}
                       className="rounded-lg border border-violet-300/50 bg-violet-500/25 px-2.5 py-1 text-[11px] font-semibold text-violet-50 hover:bg-violet-500/40 disabled:opacity-45"
                     >
-                      按描述重画（{manhuaAssetRegenPriceLabelZh(regenTileCount, "redraw")}）
+                      {normalizeManhuaAssetRegenNoteZh(regenDraft.noteZh) ? "按描述重画" : "直接重出"}
+                      （{manhuaAssetRegenPriceLabelZh(regenTileCount, "redraw")}）
                     </button>
                     <button
                       type="button"
@@ -2754,12 +2797,15 @@ export default function ManhuaScriptWorkbench({
                                   <button
                                     type="button"
                                     data-manhua-sheet-id={item.id}
-                                    onClick={() => {
-                                      if (!item.id) return;
-                                      focusBlockAndOpenCanvas(item.id);
-                                    }}
+                                    onClick={() =>
+                                      setSheetPreview({
+                                        id: item.id,
+                                        url: item.url,
+                                        labelZh: item.labelZh,
+                                      })
+                                    }
                                     className="flex w-full flex-col text-left"
-                                    title={`定位：${item.labelZh}`}
+                                    title={`放大看「${item.labelZh}」`}
                                   >
                                     <img
                                       src={item.url}
@@ -3358,7 +3404,15 @@ export default function ManhuaScriptWorkbench({
                             <img
                               src={ref.url}
                               alt=""
-                              className="aspect-[3/4] w-full object-cover object-top"
+                              onClick={() =>
+                                setSheetPreview({
+                                  id: "",
+                                  url: ref.url,
+                                  labelZh: ref.labelZh || "参考图",
+                                })
+                              }
+                              title="点开放大看"
+                              className="aspect-[3/4] w-full cursor-zoom-in object-cover object-top"
                               loading="lazy"
                             />
                             <div className="space-y-1.5 p-2">
@@ -3459,7 +3513,15 @@ export default function ManhuaScriptWorkbench({
                           <img
                             src={ref.url}
                             alt=""
-                            className="aspect-[3/4] w-full object-cover object-top"
+                            onClick={() =>
+                              setSheetPreview({
+                                id: "",
+                                url: ref.url,
+                                labelZh: ref.labelZh || "参考图",
+                              })
+                            }
+                            title="点开放大看"
+                            className="aspect-[3/4] w-full cursor-zoom-in object-cover object-top"
                             loading="lazy"
                           />
                           <div className="space-y-1.5 p-2">
