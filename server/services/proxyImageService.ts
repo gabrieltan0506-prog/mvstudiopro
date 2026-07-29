@@ -31,6 +31,7 @@ import {
   isEvolinkModerationFailure,
   postEvolinkGptImage2AndUpload,
 } from "./evolinkGptImage2.js";
+import type { OpenAiImageLane } from "../../shared/openaiImageLane.js";
 import {
   isOpenAiGptImage2Configured,
   postOpenAiGptImage2AndUpload,
@@ -1150,6 +1151,10 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
    */
   providerOverride?: "openai" | "openrouter" | "auto";
   /**
+   * 生图分道：`asset` 走设定图专钥，`keyart` 走静帧专钥；本道打不通自动借另一把。
+   */
+  imageLane?: OpenAiImageLane | null;
+  /**
    * 出参：失败时回填供上层做「快速失败 / 用户提示」。
    * `moderationBlocked` 为 true 表示内容审核拦截（换脸时即「参考人像被拦截」），属用户可纠正错误，**不应**继续重试。
    */
@@ -1190,7 +1195,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const providerMode = String(options.providerOverride || process.env.GPT_IMAGE2_PROVIDER || "auto")
     .trim()
     .toLowerCase();
-  const openaiReady = isOpenAiGptImage2Configured();
+  const openaiReady = isOpenAiGptImage2Configured(options.imageLane ?? null);
   const openrouterReady = isOpenRouterGptImage2Configured();
   const tryOpenAi = providerMode !== "openrouter" && openaiReady;
   const tryOpenRouter = providerMode !== "openai" && openrouterReady;
@@ -1228,6 +1233,7 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       imageUrls: hasRef ? refImageUrls : undefined,
       maskUrl: hasRef ? maskUrl : undefined,
       captureError: err,
+      lane: options.imageLane ?? null,
     });
     if (url) {
       appendImageFlowLog(L, "[单帧·OpenAI] GPT-IMAGE-2 成功，已落库");

@@ -3009,6 +3009,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         providerRaw === "openai" || providerRaw === "openrouter" || providerRaw === "auto"
           ? (providerRaw as "openai" | "openrouter" | "auto")
           : undefined;
+      const laneRaw = s(b.imageLane || "").trim().toLowerCase();
+      const imageLane = laneRaw === "asset" || laneRaw === "keyart" ? laneRaw : undefined;
       try {
         const { generateGptImage2FromRawEnglishPrompt } = await import("../server/services/proxyImageService.js");
         const captureError: {
@@ -3028,6 +3030,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           // Canvas：有参考图即按通用改图，勿注入平台封面换脸指令
           generalImageEdit: referenceImageUrls.length > 0 || generalImageEdit,
           providerOverride,
+          imageLane,
           captureError,
         });
         if (!imageUrl) {
