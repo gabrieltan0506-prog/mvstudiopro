@@ -137,18 +137,19 @@ describe("healManhuaWriterSessionCanonDrift · 云草稿旧 bible 回灌自愈",
     "- 沈沧澜／兰七｜二十六岁，玄黑劲装外罩暗蓝披风｜查父案｜与陆清和恋人｜越痛越克制\n" +
     "- 陆清和／禾九｜二十四岁，月白劲装配绛红护腕｜洗陆家冤｜沈沧澜恋人｜主动出剑";
 
+  const oldPack = {
+    seriesTitle: "雪关同心局",
+    logline: "旧稿",
+    charactersMd: OLD_CHARS,
+    propsMd: "双鱼玉佩",
+    locationsMd: "边军粮仓",
+    episodes: [{ index: 1, title: "旧1", body: "裴砚舟入粮仓", endHook: "钩" }],
+    rawMarkdown: "",
+    episodeCount: 1,
+  };
   const oldBible = buildManhuaProjectBible({
     topic: "朝堂江湖权谋",
-    pack: {
-      seriesTitle: "雪关同心局",
-      logline: "旧稿",
-      charactersMd: OLD_CHARS,
-      propsMd: "双鱼玉佩",
-      locationsMd: "边军粮仓",
-      episodes: [{ index: 1, title: "旧1", body: "裴砚舟入粮仓", endHook: "钩" }],
-      rawMarkdown: "",
-      episodeCount: 1,
-    },
+    pack: oldPack,
     cast: {
       lane: "ancient",
       characterIds: [],
