@@ -4,6 +4,7 @@ import {
   evaluateManhuaAssetScriptAlignment,
   findManhuaAssetCoverageGaps,
   fingerprintManhuaWriterAssetCanon,
+  planManhuaSheetAdoptions,
   purgeStaleCustomAssetRefsForCanon,
 } from "./manhuaAssetScriptSync";
 import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon";
@@ -197,5 +198,104 @@ describe("manhuaAssetScriptSync", () => {
     });
     expect(res.aligned).toBe(true);
     expect(res.coverageGaps).toEqual([]);
+  });
+
+  describe("planManhuaSheetAdoptions", () => {
+    it("已出图但没进我的角色/场景/道具的，全部要认领（含道具）", () => {
+      const canonWithProp: ManhuaWriterAssetCanon = {
+        ...canon,
+        props: [
+          {
+            id: "wa_p_hu",
+            role: "prop",
+            nameZh: "象牙色朝笏",
+            lookZh: "细长微弯",
+            promptZh: "象牙色朝笏",
+          },
+        ],
+      };
+      const plans = planManhuaSheetAdoptions({
+        blocks: [
+          { id: "charsheet-wa_c_shen", outputUrl: "https://x/c.png" },
+          { id: "sceneplate-wa_l_bridge", outputUrl: "https://x/s.png" },
+          { id: "propsheet-wa_p_hu", outputUrl: "https://x/p.png" },
+        ],
+        customRefs: [],
+        assetCanon: canonWithProp,
+      });
+      expect(plans.map((p) => p.role)).toEqual(["character", "scene", "prop"]);
+      expect(plans.map((p) => p.labelZh)).toEqual([
+        "沈照野",
+        "断桥雨夜",
+        "象牙色朝笏",
+      ]);
+    });
+
+    it("已认领的不重复挂（幂等）", () => {
+      const plans = planManhuaSheetAdoptions({
+        blocks: [{ id: "charsheet-wa_c_shen", outputUrl: "https://x/c.png" }],
+        customRefs: [
+          {
+            id: "r1",
+            role: "character",
+            source: "generated",
+            seedLibraryId: "wa_c_shen",
+            labelZh: "沈照野",
+            url: "https://x/c.png",
+          },
+        ] as never,
+        assetCanon: canon,
+      });
+      expect(plans).toEqual([]);
+    });
+
+    it("主角脸特写与全身照各挂一张：face 块不被全身照的 seed 吃掉", () => {
+      const plans = planManhuaSheetAdoptions({
+        blocks: [
+          { id: "charsheet-wa_c_shen", outputUrl: "https://x/body.png" },
+          { id: "charsheet-face-wa_c_shen", outputUrl: "https://x/face.png" },
+        ],
+        customRefs: [
+          {
+            id: "r1",
+            role: "character",
+            source: "generated",
+            seedLibraryId: "wa_c_shen",
+            labelZh: "沈照野",
+            url: "https://x/body.png",
+          },
+        ] as never,
+        assetCanon: canon,
+      });
+      expect(plans.map((p) => p.blockId)).toEqual(["charsheet-face-wa_c_shen"]);
+      expect(plans[0]!.seedId).toBe("wa_c_shen");
+    });
+
+    it("没出图的空卡不认领", () => {
+      const plans = planManhuaSheetAdoptions({
+        blocks: [
+          { id: "charsheet-wa_c_shen" },
+          { id: "sceneplate-wa_l_bridge", outputUrls: [] },
+        ],
+        customRefs: [],
+        assetCanon: canon,
+      });
+      expect(plans).toEqual([]);
+    });
+
+    it("四格拼板标出 grid2x2，认领时才会切图挂主视角", () => {
+      const plans = planManhuaSheetAdoptions({
+        blocks: [
+          {
+            id: "sceneplate-wa_l_bridge",
+            prompt: "四格 2×2 版式：同一场景四个机位",
+            outputUrl: "https://x/s.png",
+          },
+        ],
+        customRefs: [],
+        assetCanon: canon,
+      });
+      expect(plans[0]!.layout).toBe("grid2x2");
+    });
   });
 });

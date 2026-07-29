@@ -28,6 +28,7 @@ import {
 import {
   collectStaleAssetSheetBlockIds,
   evaluateManhuaAssetScriptAlignment,
+  planManhuaSheetAdoptions,
   purgeStaleCustomAssetRefsForCanon,
 } from "@shared/manhuaAssetScriptSync";
 import { resolveManhuaCustomAssetSeed } from "@shared/manhuaCustomAssetSeed";
@@ -3457,6 +3458,75 @@ export default function OmniCanvas() {
     });
   }, []);
 
+  /** 已出图却没拿到 @ 槽位的设定卡张数：>0 时左栏给出「认领」入口 */
+  const unadoptedSheetCount = useMemo(
+    () =>
+      planManhuaSheetAdoptions({
+        blocks,
+        customRefs: customAssetRefs,
+        assetCanon: projectBible?.assetCanon,
+      }).length,
+    [blocks, customAssetRefs, projectBible?.assetCanon],
+  );
+
+  /**
+   * 重新认领本集设定图：把画布上已出图、却没进「我的角色 / 我的场景 / 我的道具」
+   * 的设定卡挂回 @ 号。纯本地改绑，不重画、不扣积分。
+   *
+   * 留这个手动入口是因为认领一旦漏掉，症状是静帧里的人脸悄悄换人，
+   * 门禁不报错、只有出完图才看得出来，用户需要一个能自己修的按钮。
+   */
+  const adoptEpisodeSheetsToMyLibrary = useCallback(async () => {
+    const assetCanon = projectBible?.assetCanon;
+    const plans = planManhuaSheetAdoptions({
+      blocks,
+      customRefs: customAssetRefs,
+      assetCanon,
+    });
+    if (!plans.length) {
+      toast.message("本集设定图都已挂上 @ 号，无需认领");
+      return;
+    }
+    let adopted = 0;
+    for (const plan of plans) {
+      let refUrl = plan.url;
+      let tileUrls: Partial<Record<ManhuaSceneTileSlot, string>> | null = null;
+      if (plan.layout === "grid2x2") {
+        try {
+          const tiles = await cropManhuaSheet2x2({
+            sheetUrl: plan.url,
+            objectPrefix: `manhua-scene-tiles/${plan.seedId}`,
+          });
+          tileUrls = Object.fromEntries(tiles.map((t) => [t.slot, t.url]));
+          const main = tiles.find((t) => t.slot === "topLeft") || tiles[0];
+          if (main?.url) refUrl = main.url;
+        } catch {
+          /* 切图失败就挂整张：总比这一集没垫图强 */
+        }
+      }
+      const charDuty: "identity" | "look" = plan.blockId.startsWith("charsheet-face-")
+        ? "identity"
+        : blocks.some((b) => b.id === manhuaHeroFaceSheetId(plan.seedId))
+          ? "look"
+          : "identity";
+      setCustomAssetRefs((prev) =>
+        upsertGeneratedManhuaCustomAssetRef(prev, {
+          url: refUrl,
+          role: plan.role,
+          labelZh: plan.labelZh,
+          seedLibraryId: plan.seedId,
+          refDuty:
+            plan.role === "character" ? charDuty : plan.role === "prop" ? "style" : "space",
+          tileUrls,
+        }),
+      );
+      adopted += 1;
+    }
+    toast.success(`已认领 ${adopted} 张设定图`, {
+      description: "已写进我的角色 / 我的场景 / 我的道具，静帧现在能锁到这些脸与场景",
+    });
+  }, [blocks, customAssetRefs, projectBible?.assetCanon]);
+
   const confirmAssetsAndPrepareImages = useCallback(
     async (opts?: {
       assetCanonOverride?: NonNullable<typeof projectBible>["assetCanon"];
@@ -3581,34 +3651,6 @@ export default function OmniCanvas() {
       const assetBlocks = canvasBlocks.filter(
         (b) => b.id.startsWith("charsheet-") || b.id.startsWith("sceneplate-"),
       );
-      const gateInput = {
-        characterIds: selectedCharacterIds,
-        ancientArchetypeIds: factoryAncientArchetypeIds,
-        sceneId,
-        artStyleId: factoryArtStyleId,
-        topic,
-        customRefs: workingRefs,
-        assetCanon,
-        episodeIndex,
-        episodes: writerPack?.episodes?.map((ep) => ({
-          index: ep.index,
-          body: ep.body,
-          title: ep.title,
-        })),
-        assetBlocks,
-      };
-      const gate = evaluateManhuaAssetImageGate(gateInput);
-      if (!gate.castLocked || !gate.sceneLocked) {
-        toast.message(
-          gate.viaWriterCanon
-            ? "剧本人物/场景表不完整，无法自动出设定图"
-            : "请上传并勾选人物与场景，或先确认含人物表的剧本",
-        );
-        setWorkflowPhase("assets");
-        setManhuaAssetDrawer(!gate.castLocked ? "characters" : "assets");
-        return;
-      }
-      setAssetsSkipped(false);
       const ingestSheetToMyLibrary = async (
         plan: {
           id: string;
@@ -3657,64 +3699,85 @@ export default function OmniCanvas() {
               blocks.some((b) => b.id === manhuaHeroFaceSheetId(seedLibraryId))
             ? "look"
             : "identity";
-        setCustomAssetRefs((prev) =>
-          upsertGeneratedManhuaCustomAssetRef(prev, {
-            url: refUrl,
-            role:
-              plan.kind === "charsheet"
-                ? "character"
-                : plan.kind === "propsheet"
-                  ? "prop"
-                  : "scene",
-            labelZh: plan.labelZh,
-            seedLibraryId,
-            refDuty:
-              plan.kind === "charsheet"
-                ? charDuty
-                : plan.kind === "propsheet"
-                  ? "style"
-                  : "space",
-            tileUrls,
-          }),
-        );
+        const upsertInput = {
+          url: refUrl,
+          role:
+            plan.kind === "charsheet"
+              ? ("character" as const)
+              : plan.kind === "propsheet"
+                ? ("prop" as const)
+                : ("scene" as const),
+          labelZh: plan.labelZh,
+          seedLibraryId,
+          refDuty:
+            plan.kind === "charsheet"
+              ? charDuty
+              : plan.kind === "propsheet"
+                ? ("style" as const)
+                : ("space" as const),
+          tileUrls,
+        };
+        // 本地快照同步跟上：下面的门禁/对齐判断读的是 workingRefs，不是 React state
+        workingRefs = upsertGeneratedManhuaCustomAssetRef(workingRefs, upsertInput);
+        setCustomAssetRefs((prev) => upsertGeneratedManhuaCustomAssetRef(prev, upsertInput));
       };
-      /** 已有画布设定图 → 同步进「我的角色 / 我的场景 / 我的道具」分栏 */
+      /**
+       * 已有画布设定图 → 同步进「我的角色 / 我的场景 / 我的道具」分栏。
+       *
+       * 必须在每条路径开头都跑一次：只挂在「资产已齐 → 早退」那一支时，按剧本重出
+       * 与增量补图全都绕过它，十张定妆只有最早那张拿到 @角色 槽位，其余人在静帧里
+       * 锁不到脸——门禁只查节点有没有图，照样放行，钱花完才看出喂错了脸。
+       */
       const syncExistingSheetsToMyLibrary = async () => {
-        for (const b of assetBlocks) {
-          const url = b.outputUrl || b.outputUrls?.[0];
-          if (!url) continue;
-          const isScene = b.id.startsWith("sceneplate-");
-          const isChar = b.id.startsWith("charsheet-");
-          const isProp = b.id.startsWith("propsheet-");
-          if (!isScene && !isChar && !isProp) continue;
-          const kind = isScene
-            ? ("sceneplate" as const)
-            : isProp
-              ? ("propsheet" as const)
-              : ("charsheet" as const);
-          const seedId = seedIdFromManhuaSheetBlockId(b.id);
-          const labelZh =
-            (kind === "charsheet"
-              ? assetCanon?.characters.find((c) => c.id === seedId || b.id.includes(c.id))
-                  ?.nameZh
-              : kind === "propsheet"
-                ? assetCanon?.props.find((p) => p.id === seedId || b.id.includes(p.id))
-                    ?.nameZh
-                : assetCanon?.locations.find((l) => l.id === seedId || b.id.includes(l.id))
-                    ?.nameZh) ||
-            (kind === "charsheet"
-              ? "角色定妆"
-              : kind === "propsheet"
-                ? "道具参考"
-                : "场景参考");
-          // 同步既有节点拿不到 plan.layout，看提示词里的四格版式指令认拼板
-          const layout =
-            kind === "sceneplate" && /2×2|四格/.test(String(b.prompt || ""))
-              ? ("grid2x2" as const)
-              : undefined;
-          await ingestSheetToMyLibrary({ id: b.id, kind, labelZh, layout }, url);
+        const adoptions = planManhuaSheetAdoptions({
+          blocks: canvasBlocks,
+          customRefs: workingRefs,
+          assetCanon,
+        });
+        for (const plan of adoptions) {
+          await ingestSheetToMyLibrary(
+            {
+              id: plan.blockId,
+              kind: plan.kind,
+              labelZh: plan.labelZh,
+              layout: plan.layout,
+            },
+            plan.url,
+          );
         }
+        return adoptions.length;
       };
+      // 先认领再判对齐：refs 缺人会让下面的门禁与「已齐」判断都基于残缺名单
+      await syncExistingSheetsToMyLibrary();
+
+      const gateInput = {
+        characterIds: selectedCharacterIds,
+        ancientArchetypeIds: factoryAncientArchetypeIds,
+        sceneId,
+        artStyleId: factoryArtStyleId,
+        topic,
+        customRefs: workingRefs,
+        assetCanon,
+        episodeIndex,
+        episodes: writerPack?.episodes?.map((ep) => ({
+          index: ep.index,
+          body: ep.body,
+          title: ep.title,
+        })),
+        assetBlocks,
+      };
+      const gate = evaluateManhuaAssetImageGate(gateInput);
+      if (!gate.castLocked || !gate.sceneLocked) {
+        toast.message(
+          gate.viaWriterCanon
+            ? "剧本人物/场景表不完整，无法自动出设定图"
+            : "请上传并勾选人物与场景，或先确认含人物表的剧本",
+        );
+        setWorkflowPhase("assets");
+        setManhuaAssetDrawer(!gate.castLocked ? "characters" : "assets");
+        return;
+      }
+      setAssetsSkipped(false);
       const hasEpisodeSheetMedia = assetBlocks.some((b) =>
         Boolean(b.outputUrl || b.outputUrls?.[0]),
       );
@@ -3731,7 +3794,6 @@ export default function OmniCanvas() {
         gate.ready &&
         hasEpisodeSheetMedia
       ) {
-        await syncExistingSheetsToMyLibrary();
         setWorkflowPhase("storyboard");
         toast.message(
           gate.viaCustomUpload
@@ -5178,6 +5240,8 @@ export default function OmniCanvas() {
                   onConfirmAssetsAndPrepareImages={confirmAssetsAndPrepareImages}
                   assetStashCount={assetStashCount}
                   onRestoreAssetStash={restoreManhuaAssetsFromStash}
+                  onAdoptEpisodeSheets={() => void adoptEpisodeSheetsToMyLibrary()}
+                  unadoptedSheetCount={unadoptedSheetCount}
                   onClearAssetStash={clearManhuaAssetStash}
                   onGenerateCanonAssetSheet={({ anchorId }) =>
                     confirmAssetsAndPrepareImages({ onlyAnchorId: anchorId })
