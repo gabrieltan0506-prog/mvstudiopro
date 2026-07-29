@@ -288,6 +288,11 @@ type Props = {
   }) => void | Promise<void>;
   /** 补齐这一批缺图的资产（只出这几张、不清已出）；「补齐 N 张」按钮用 */
   onFillPendingSheets?: (anchorIds: string[]) => void | Promise<void>;
+  /**
+   * 重出这一批**已有图**的资产（按新编译提示词重来）；「重出本类 N 张」按钮用。
+   * 画布上点节点重跑只会复用旧 prompt，改不掉老毛病（如道具烧字）。
+   */
+  onRegenerateSheets?: (anchorIds: string[]) => void | Promise<void>;
   /** 资产暂存区条数（清图/重出前存的，可恢复） */
   assetStashCount?: number;
   /** 从暂存区恢复被清掉的资产图 */
@@ -471,6 +476,7 @@ export default function ManhuaScriptWorkbench({
   onGenerateCustomAssetFromLibrary,
   onGenerateCanonAssetSheet,
   onFillPendingSheets,
+  onRegenerateSheets,
   assetStashCount = 0,
   onRestoreAssetStash,
   onClearAssetStash,
@@ -1578,6 +1584,41 @@ export default function ManhuaScriptWorkbench({
           Math.ceil((fullSpawnArmAt + FULL_SPAWN_CONFIRM_MS - fullSpawnTick) / 1000),
         );
 
+  /**
+   * 「重出本类 N 张」双重确认：重出只覆盖本类已出的图（不碰别类、不跳阶段），但同样烧积分，
+   * 所以也要先武装再点第二次。3 秒够——它不像全量那样会清空全部。
+   */
+  const REGEN_CONFIRM_MS = 3000;
+  const [regenArm, setRegenArm] = useState<{ kind: string; at: number } | null>(null);
+  const [regenTick, setRegenTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (!regenArm) return;
+    const timer = setInterval(() => setRegenTick(Date.now()), 250);
+    return () => clearInterval(timer);
+  }, [regenArm]);
+  const regenRemainSec = (kind: string) =>
+    !regenArm || regenArm.kind !== kind
+      ? 0
+      : Math.max(0, Math.ceil((regenArm.at + REGEN_CONFIRM_MS - regenTick) / 1000));
+  /** 重出统一入口：第一次武装并说清后果，3 秒后再点才真跑 */
+  const requestRegenerateSheets = (kind: string, titleZh: string, anchorIds: string[]) => {
+    if (!anchorIds.length || !onRegenerateSheets) return;
+    if (!regenArm || regenArm.kind !== kind) {
+      setRegenArm({ kind, at: Date.now() });
+      setRegenTick(Date.now());
+      toast.message(`确认重出${titleZh} ${anchorIds.length} 张？`, {
+        description: "会按最新提示词把这一类已出的图重画一遍（不动其他类）。3 秒后再点一次确认。",
+      });
+      return;
+    }
+    if (regenRemainSec(kind) > 0) {
+      toast.message(`再等 ${regenRemainSec(kind)} 秒`, { description: "确认期未满，防误点" });
+      return;
+    }
+    setRegenArm(null);
+    void onRegenerateSheets(anchorIds);
+  };
+
   const enterStoryboard = () => {
     if (!outlineComplete) {
       toast.error("还差一步", { description: "请先确认剧本大纲" });
@@ -2472,6 +2513,21 @@ export default function ManhuaScriptWorkbench({
                   ).map((sec) => {
                     const items = episodeSheetGallery.filter((x) => x.kind === sec.kind);
                     const pending = pendingSheetAnchors.filter((x) => x.kind === sec.kind);
+                    /**
+                     * 本类「已出图」的剧本锚点：重出用这批。
+                     * 不能拿 items.id 直接算——里面还混着用户自传的 custom 卡，重出只管剧本表里的。
+                     */
+                    const pendingIdSet = new Set(pending.map((a) => a.anchorId));
+                    const canonAnchorIds = (
+                      sec.kind === "charsheet"
+                        ? assetCanon?.characters.map((c) => c.id)
+                        : sec.kind === "sceneplate"
+                          ? assetCanon?.locations.map((l) => l.id)
+                          : assetCanon?.props.map((p) => p.id)
+                    ) || [];
+                    const doneAnchorIds = canonAnchorIds.filter((id) => !pendingIdSet.has(id));
+                    const regenSec = regenRemainSec(sec.kind);
+                    const regenArmed = regenArm?.kind === sec.kind;
                     return (
                       <div
                         key={sec.kind}
@@ -2507,6 +2563,32 @@ export default function ManhuaScriptWorkbench({
                               title={`一键出这 ${pending.length} 张${sec.titleZh}（只补缺图，不动已出的）`}
                             >
                               一键出{sec.titleZh} {pending.length} 张
+                            </button>
+                          ) : null}
+                          {/* 重出本类：提示词改好后（例：道具禁烧字）已出的旧图要能按新词重画 */}
+                          {doneAnchorIds.length && onRegenerateSheets ? (
+                            <button
+                              type="button"
+                              data-manhua-action={`regen-${sec.kind}`}
+                              data-manhua-regen-armed={regenArmed ? "true" : "false"}
+                              disabled={
+                                !outlineComplete ||
+                                !assetGate.castLocked ||
+                                !assetGate.sceneLocked ||
+                                factoryBusy ||
+                                regenSec > 0
+                              }
+                              onClick={() =>
+                                requestRegenerateSheets(sec.kind, sec.titleZh, doneAnchorIds)
+                              }
+                              className="shrink-0 rounded border border-amber-300/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-semibold text-amber-50 hover:bg-amber-500/30 disabled:opacity-40"
+                              title={`按最新提示词重画这 ${doneAnchorIds.length} 张${sec.titleZh}（只覆盖本类，不动其他类）`}
+                            >
+                              {regenArmed
+                                ? regenSec > 0
+                                  ? `确认重出（${regenSec}s）`
+                                  : "再点一次确认重出"
+                                : `重出${sec.titleZh} ${doneAnchorIds.length} 张`}
                             </button>
                           ) : null}
                         </div>
