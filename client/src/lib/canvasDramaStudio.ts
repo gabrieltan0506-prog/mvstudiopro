@@ -2159,6 +2159,16 @@ export function collectManhuaCharacterSheetUrlById(
   assetCanon?: ManhuaWriterAssetCanon | null,
 ): Record<string, string> {
   const map: Record<string, string> = {};
+  /**
+   * 同一角色可能同时有脸特写（`charsheet-face-`）与全身（`charsheet-`）两张。
+   * 原实现按数组顺序后者覆盖前者，锁脸到底用哪张全凭块顺序——不确定，且全身图里
+   * 脸只占很小像素，被选中就锁不住脸。
+   *
+   * 现在显式定序：canonical id 优先用脸特写；**没有脸特写时退回全身图**——
+   * 配角只出单张全身，也必须能锁脸（用户 2026-07-29：画布全身也要锁脸）。
+   */
+  const faceByCanon: Record<string, string> = {};
+  const bodyByCanon: Record<string, string> = {};
   for (const b of blocks) {
     if (!b.id.startsWith("charsheet-")) continue;
     const url = String(b.outputUrl || b.outputUrls?.[0] || "").trim();
@@ -2166,9 +2176,18 @@ export function collectManhuaCharacterSheetUrlById(
     const seed = b.id.replace(/^charsheet-/, "");
     map[seed] = url;
     const hit = assetCanon?.characters.find(
-      (c) => c.id === seed || b.id.includes(c.id),
+      (c) => c.id === seed || c.id === seed.replace(/^face-/, "") || b.id.includes(c.id),
     );
-    if (hit) map[hit.id] = url;
+    if (!hit) continue;
+    if (b.id.startsWith("charsheet-face-")) faceByCanon[hit.id] = url;
+    else bodyByCanon[hit.id] = url;
+  }
+  const canonIds = Array.from(
+    new Set(Object.keys(bodyByCanon).concat(Object.keys(faceByCanon))),
+  );
+  for (const id of canonIds) {
+    const picked = faceByCanon[id] || bodyByCanon[id];
+    if (picked) map[id] = picked;
   }
   return map;
 }

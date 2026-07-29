@@ -3715,6 +3715,22 @@ export default function OmniCanvas() {
         for (let i = 0; i < plans.length; i++) {
           const plan = plans[i]!;
           if (ac.signal.aborted) break;
+          /**
+           * A：主角脸特写以同角色全身图为底图裁切放大（走 edit + refImageUrl），
+           * 不再独立重画——独立两次生成连性别都能漂（陆清和曾「全身女·脸特写男」）。
+           * 底图没出就跳过这张，绝不退回独立重画。
+           */
+          let deriveRefUrl = "";
+          if (plan.deriveFromSheetId) {
+            const src = working.find((b) => b.id === plan.deriveFromSheetId);
+            deriveRefUrl = String(src?.outputUrl || src?.outputUrls?.[0] || "").trim();
+            if (!deriveRefUrl) {
+              toast.message(`跳过 ${plan.labelZh} 的脸特写`, {
+                description: "全身图还没出，脸特写要以它为底图才不会漂脸",
+              });
+              continue;
+            }
+          }
           let block = working.find((b) => b.id === plan.id);
           if (!block) {
             const isChar = plan.kind === "charsheet";
@@ -3730,14 +3746,22 @@ export default function OmniCanvas() {
             block.prompt = plan.prompt;
             block.aspectRatio = "9:16";
             block.imageModel = "gpt-image-2";
-            block.imageMode = "generate";
-            block.refImageUrl = undefined;
+            block.imageMode = deriveRefUrl ? "edit" : "generate";
+            block.refImageUrl = deriveRefUrl || undefined;
             block.width = 360;
             block.height = 400;
             working = packAssetSheetPositions([...working, block]);
             block = working.find((b) => b.id === plan.id)!;
           } else if (!(block.outputUrl || block.outputUrls?.[0])) {
-            block = { ...block, prompt: plan.prompt, status: "idle", error: undefined };
+            block = {
+              ...block,
+              prompt: plan.prompt,
+              status: "idle",
+              error: undefined,
+              ...(deriveRefUrl
+                ? { imageMode: "edit" as const, refImageUrl: deriveRefUrl }
+                : {}),
+            };
             working = working.map((b) => (b.id === plan.id ? block! : b));
           } else {
             await ingestSheetToMyLibrary(plan, block.outputUrl || block.outputUrls?.[0]);
