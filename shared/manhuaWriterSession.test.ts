@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildManhuaProjectBible } from "./manhuaProjectBible";
 import {
   buildManhuaWriterSession,
+  healManhuaWriterSessionCanonDrift,
   parseManhuaWriterSession,
   serializeManhuaWriterSession,
   MANHUA_WRITER_SESSION_FORMAT,
@@ -125,5 +126,100 @@ describe("manhuaWriterSession", () => {
 
   it("rejects unknown format", () => {
     expect(parseManhuaWriterSession({ format: "nope" })).toBeNull();
+  });
+});
+
+describe("healManhuaWriterSessionCanonDrift · 云草稿旧 bible 回灌自愈", () => {
+  const OLD_CHARS =
+    "- 裴砚舟/陆舟｜二十七岁，眉骨浅疤，深灰劲装｜洗父冤｜裴镇岳之子｜越痛越克制\n" +
+    "- 苏照雪/照雪｜二十四岁，月白劲装｜寻真相｜裴砚舟恋人｜主动出剑";
+  const NEW_CHARS =
+    "- 沈沧澜／兰七｜二十六岁，玄黑劲装外罩暗蓝披风｜查父案｜与陆清和恋人｜越痛越克制\n" +
+    "- 陆清和／禾九｜二十四岁，月白劲装配绛红护腕｜洗陆家冤｜沈沧澜恋人｜主动出剑";
+
+  const oldBible = buildManhuaProjectBible({
+    topic: "朝堂江湖权谋",
+    pack: {
+      seriesTitle: "雪关同心局",
+      logline: "旧稿",
+      charactersMd: OLD_CHARS,
+      propsMd: "双鱼玉佩",
+      locationsMd: "边军粮仓",
+      episodes: [{ index: 1, title: "旧1", body: "裴砚舟入粮仓", endHook: "钩" }],
+      rawMarkdown: "",
+      episodeCount: 1,
+    },
+    cast: {
+      lane: "ancient",
+      characterIds: [],
+      ancientArchetypeIds: [],
+      artStyleId: "cg_manhua",
+      propIds: [],
+      wardrobePropContinuityIds: [],
+    },
+    focusEpisode: 1,
+  });
+
+  const newPack = {
+    seriesTitle: "山河不许共白头",
+    logline: "新稿",
+    charactersMd: NEW_CHARS,
+    propsMd: "双鱼玉佩",
+    locationsMd: "断月桥",
+    episodes: [{ index: 1, title: "桥上爱侣", body: "沈沧澜与陆清和重逢", endHook: "钩" }],
+    rawMarkdown: "",
+    episodeCount: 1,
+  };
+
+  it("换角漂移：弃用旧 bible + 退回未确认，剧本保留", () => {
+    const session = buildManhuaWriterSession({
+      topic: "朝堂江湖权谋",
+      writerPack: newPack,
+      writerConfirmed: true,
+      directorUnlocked: true,
+      workflowPhase: "assets",
+      projectBible: oldBible,
+    });
+    const { session: healed, healed: didHeal } = healManhuaWriterSessionCanonDrift(session);
+    expect(didHeal).toBe(true);
+    expect(healed?.projectBible).toBeNull();
+    expect(healed?.writerConfirmed).toBe(false);
+    expect(healed?.directorUnlocked).toBe(false);
+    expect(healed?.workflowPhase).toBe("outline");
+    // 剧本本体绝不丢
+    expect(healed?.writerPack?.seriesTitle).toBe("山河不许共白头");
+    expect(healed?.writerPack?.charactersMd).toContain("沈沧澜");
+  });
+
+  it("bible 与现稿一致：不动、healed=false", () => {
+    const goodBible = buildManhuaProjectBible({
+      topic: "朝堂江湖权谋",
+      pack: newPack,
+      cast: {
+        lane: "ancient",
+        characterIds: [],
+        ancientArchetypeIds: [],
+        artStyleId: "cg_manhua",
+        propIds: [],
+        wardrobePropContinuityIds: [],
+      },
+      focusEpisode: 1,
+    });
+    const session = buildManhuaWriterSession({
+      topic: "朝堂江湖权谋",
+      writerPack: newPack,
+      writerConfirmed: true,
+      directorUnlocked: true,
+      workflowPhase: "assets",
+      projectBible: goodBible,
+    });
+    const { session: healed, healed: didHeal } = healManhuaWriterSessionCanonDrift(session);
+    expect(didHeal).toBe(false);
+    expect(healed?.projectBible).not.toBeNull();
+    expect(healed?.writerConfirmed).toBe(true);
+  });
+
+  it("null session → 原样返回", () => {
+    expect(healManhuaWriterSessionCanonDrift(null)).toEqual({ session: null, healed: false });
   });
 });
