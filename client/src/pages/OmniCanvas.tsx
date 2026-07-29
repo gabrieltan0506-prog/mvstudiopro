@@ -3283,7 +3283,7 @@ export default function OmniCanvas() {
         );
         setAssetStashCount(merged.length);
         toast.message(`已存入暂存区（${incoming.length} 张）`, {
-          description: "万一清错了，可在资产设定点「暂存区救回」找回",
+          description: "万一清错了，可在资产设定点「暂存区恢复」找回",
         });
       } catch {
         /* 暂存失败不影响主流程 */
@@ -3335,17 +3335,31 @@ export default function OmniCanvas() {
         revived.push(blk);
       }
       if (!revived.length) {
-        toast.message("暂存区里的图当前都还在，无需救回");
+        toast.message("暂存区里的图当前都还在，无需恢复");
         return prev;
       }
       const next = [...prev, ...revived];
       saveCanvasState(next, edges);
-      toast.success(`已从暂存区救回 ${revived.length} 张`, {
+      toast.success(`已从暂存区恢复 ${revived.length} 张`, {
         description: "重新敲 @ 即可把它们挂回段落",
       });
       return next;
     });
   }, [edges]);
+
+  /** 清理暂存区：清空本地暂存的旧设定图（不影响画布现有图） */
+  const clearManhuaAssetStash = useCallback(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.removeItem(MANHUA_ASSET_STASH_STORAGE_KEY);
+    } catch {
+      /* 忽略 */
+    }
+    setAssetStashCount(0);
+    toast.message("已清理暂存区", {
+      description: "暂存的旧设定图已清空；画布上现有的图不受影响",
+    });
+  }, []);
 
   const confirmAssetsAndPrepareImages = useCallback(
     async (opts?: {
@@ -4923,6 +4937,7 @@ export default function OmniCanvas() {
                   onConfirmAssetsAndPrepareImages={confirmAssetsAndPrepareImages}
                   assetStashCount={assetStashCount}
                   onRestoreAssetStash={restoreManhuaAssetsFromStash}
+                  onClearAssetStash={clearManhuaAssetStash}
                   onGenerateCanonAssetSheet={({ anchorId }) =>
                     confirmAssetsAndPrepareImages({ onlyAnchorId: anchorId })
                   }

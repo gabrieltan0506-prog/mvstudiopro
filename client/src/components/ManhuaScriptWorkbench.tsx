@@ -288,10 +288,12 @@ type Props = {
   }) => void | Promise<void>;
   /** 补齐这一批缺图的资产（只出这几张、不清已出）；「补齐 N 张」按钮用 */
   onFillPendingSheets?: (anchorIds: string[]) => void | Promise<void>;
-  /** 资产暂存区条数（清图/重出前存的，可救回） */
+  /** 资产暂存区条数（清图/重出前存的，可恢复） */
   assetStashCount?: number;
-  /** 从暂存区救回被清掉的资产图 */
+  /** 从暂存区恢复被清掉的资产图 */
   onRestoreAssetStash?: () => void;
+  /** 清理暂存区（清空暂存的旧设定图） */
+  onClearAssetStash?: () => void;
   /** 授权进库半价（付费积分）；兑换码赠送积分路径由父级锁定强制进库 */
   shareAssetToLibrary?: boolean;
   onShareAssetToLibraryChange?: (next: boolean) => void;
@@ -471,6 +473,7 @@ export default function ManhuaScriptWorkbench({
   onFillPendingSheets,
   assetStashCount = 0,
   onRestoreAssetStash,
+  onClearAssetStash,
   shareAssetToLibrary = false,
   onShareAssetToLibraryChange,
   assetShareBilling,
