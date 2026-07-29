@@ -435,7 +435,6 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
 
   let readyCount = 0;
   const seenDialogue: string[] = [];
-  const seenScene: string[] = [];
 
   // 从段 1 连续验收到 max；允许在 [min,max] 提前收束
   for (let i = 1; i <= maxRequired; i++) {
@@ -479,7 +478,6 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
       break;
     }
     seenDialogue.push(beat.dialogueZh);
-    seenScene.push(beat.sceneZh);
     readyCount += 1;
   }
 
@@ -489,12 +487,16 @@ export function evaluateManhuaEpisodeSegmentPlanQuality(
     );
   }
 
-  // 只有「全集仅 1 个场景」才算空壳复读；2 个主场景（如 追杀→室内）是紧凑短剧的
-  // 合理空间结构，不该被误杀（否则逼作者无意义换场、反伤连贯）。
-  const uniqueScenes = new Set(seenScene.map((s) => s.replace(/\s+/g, ""))).size;
+  // 换场判定按「全集所有段」的场景算，而非只看前 minRequired–maxRequired 窗口：
+  // 高潮集常把决战集中在同一主场景、结尾才切一笔（如 御河水门×9 → 芦苇渡口×1），
+  // 这是正当空间结构；只有「整集从头到尾仅 1 个场景」才算空壳复读。
+  const allScenes = segments
+    .map((s) => String(s.sceneZh || "").replace(/\s+/g, ""))
+    .filter(Boolean);
+  const uniqueScenes = new Set(allScenes).size;
   if (readyCount >= minRequired && uniqueScenes < 2) {
     issues.push(
-      `场景几乎不换场：${minRequired}–${maxRequired} 段全在同一场景复读，须有空间/氛围递进`,
+      `场景几乎不换场：整集所有段都在同一场景复读，须有空间/氛围递进`,
     );
   }
 

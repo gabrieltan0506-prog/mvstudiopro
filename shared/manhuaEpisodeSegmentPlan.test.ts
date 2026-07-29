@@ -104,6 +104,7 @@ describe("manhuaEpisodeSegmentPlan", () => {
       ["他们认得剑路。", "先躲这波弩。", "账册不能丢。"],
       ["窄门只过两人。", "你先走我断后。", "别回头找我。"],
       ["从此我们是叛徒。", "名字是仇家给的。", "选择是自己的。"],
+      ["水门就在前面。", "闸口有暗哨。", "等潮声起再动。"],
     ];
     // 两场景：前 2 段桥、后 3 段客栈
     const twoScene = [
@@ -131,6 +132,21 @@ describe("manhuaEpisodeSegmentPlan", () => {
     );
     expect(q1.ok).toBe(false);
     expect(q1.issues.some((s) => s.includes("不换场"))).toBe(true);
+
+    // 高潮集模式：前 5 段集中在决战场，末段才切一笔 → 换场按全集算，应通过
+    const climaxThenSwitch = [
+      seg(1, ...(lines[0] as [string, string, string]), "御河水门"),
+      seg(2, ...(lines[1] as [string, string, string]), "御河水门"),
+      seg(3, ...(lines[2] as [string, string, string]), "御河水门"),
+      seg(4, ...(lines[3] as [string, string, string]), "御河水门"),
+      seg(5, ...(lines[4] as [string, string, string]), "御河水门"),
+      seg(6, ...(lines[5] as [string, string, string]), "芦苇渡口"),
+    ].join("\n\n");
+    const qc = evaluateManhuaEpisodeSegmentPlanQuality(
+      parseManhuaEpisodeSegmentPlanFromMarkdown(climaxThenSwitch),
+    );
+    expect(qc.issues.some((s) => s.includes("不换场"))).toBe(false);
+    expect(qc.ok).toBe(true);
   });
 
   it("deriveManhuaSegmentIntentFallbackZh：无对白无表演 → 空串", () => {
