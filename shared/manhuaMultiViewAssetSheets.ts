@@ -121,6 +121,76 @@ export function resolveManhuaLeadCharacterIds(
   );
 }
 
+/**
+ * 剧本性别硬锁：从人物表自动读出性别，写进设定图提示词。
+ *
+ * 根因（用户 2026-07-29 验收）：设定图提示词只写「二十四岁、长发、杏眼、劲装」这类
+ * 中性外形，一个字没提性别 → 武侠劲装角色会被画成男相，主角脸特写与全身图各画各的，
+ * 就出现「全身是女、脸特写是男」。剧本里明写「陆镇渊之女、沈沧澜恋人」，系统就该自己读出来。
+ *
+ * 只认**描述本角色自身**的强特征（`X之女`／`X之子`／`公子`／`姑娘`…）；
+ * 刻意不收「父亲/母亲/兄/弟/姐/妹」——那些多半在讲别人（「被父亲当作继承人培养」
+ * 里的父亲是她爹，不是她），收了会把女主判成男。
+ */
+const SELF_FEMALE_STRONG_RE =
+  /之女|嫡女|独女|长女|次女|之母|姑娘|少女|女子|女侠|女将|女官|皇后|太后|贵妃|王妃|妃子|公主|郡主|夫人|小姐|她/g;
+// 刻意不收「王爷/摄政王/将军」这类头衔：多半在讲角色效忠的对象
+// （「摄政王亲兵」里的摄政王是别人），收了会把亲兵、侍女判成男。
+const SELF_MALE_STRONG_RE = /之子|嫡子|独子|长子|次子|之父|公子|少爷|男子|太子|世子|皇子|他/g;
+/** 弱信号：仅在强信号打平或缺失时用来定夺 */
+const WEAK_FEMALE_RE = /裙|钗|簪|胭脂|柳眉|杏眼|婢|绣/g;
+const WEAK_MALE_RE = /短须|胡须|髭|喉结|盟弟|盟兄/g;
+
+function countRe(blob: string, re: RegExp): number {
+  const m = blob.match(re);
+  return m ? m.length : 0;
+}
+
+/**
+ * 按剧本推断角色性别；判不出返回 null（此时提示词不写性别，绝不瞎猜）。
+ */
+export function inferManhuaCharacterGenderZh(
+  character: Pick<
+    ManhuaWriterAssetAnchor,
+    "nameZh" | "aliasZh" | "lookZh" | "motiveZh" | "noteZh"
+  >,
+): "女" | "男" | null {
+  const blob = [
+    character.nameZh,
+    character.aliasZh,
+    character.lookZh,
+    character.motiveZh,
+    character.noteZh,
+  ]
+    .map((s) => String(s || ""))
+    .join("；")
+    // 「其他/他们/他人/她们」不是性别信号，先剔掉免得干扰
+    .replace(/其他|他们|他人|她们/g, "");
+  if (!blob.trim()) return null;
+  const f = countRe(blob, SELF_FEMALE_STRONG_RE);
+  const m = countRe(blob, SELF_MALE_STRONG_RE);
+  if (f > m) return "女";
+  if (m > f) return "男";
+  const wf = countRe(blob, WEAK_FEMALE_RE);
+  const wm = countRe(blob, WEAK_MALE_RE);
+  if (wf > wm) return "女";
+  if (wm > wf) return "男";
+  return null;
+}
+
+/** 性别硬锁句：没读出性别就返回空串，不瞎写 */
+function genderLockLineZh(
+  genderZh: "女" | "男" | null | undefined,
+  scope: "face" | "body",
+): string {
+  if (genderZh !== "女" && genderZh !== "男") return "";
+  const other = genderZh === "女" ? "男" : "女";
+  if (scope === "face") {
+    return `性别硬锁：本角色是${genderZh}性——脸型、五官、眉眼与气质须明确读作${genderZh}性，禁止画成${other}性或中性难辨。`;
+  }
+  return `性别硬锁：本角色是${genderZh}性——身形比例与服装版型须为${genderZh}性，禁止画成${other}性。`;
+}
+
 /** 从外形句抽 3–5 个配色词，供设定板色条描述（不要求画面烧字） */
 export function extractWardrobePaletteTokensZh(lookZh: string, limit = 5): string[] {
   const raw = String(lookZh || "");
@@ -208,6 +278,8 @@ export function composeManhuaHeroFaceCloseupPrompt(input: {
   nameZh: string;
   aliasZh?: string;
   lookZh?: string;
+  /** 剧本读出的性别；缺省则不写性别句 */
+  genderZh?: "女" | "男" | null;
   artStyleLabelZh?: string;
   artStylePromptZh?: string;
 }): string {
@@ -218,6 +290,7 @@ export function composeManhuaHeroFaceCloseupPrompt(input: {
     "仅保留面部与发型轮廓；肩颈只留极少，背景纯净单色或极浅景深，禁止任何环境陈设。",
     "表情中性、无夸张情绪，眼睛看镜头——供后续视频锁定同一张脸，不是表演定妆。",
     "只能有一个人；禁止三视图、禁止多角度并排、禁止分格拼版、禁止侧脸背面小图。",
+    genderLockLineZh(input.genderZh, "face"),
     look ? `五官与发型依据：${look}` : "",
     `（隐藏身份·不必画出：${tag || "主角"}）`,
     input.artStyleLabelZh ? `【画风】${input.artStyleLabelZh}` : "",
@@ -239,6 +312,8 @@ export function composeManhuaHeroFullBodyLookPrompt(input: {
   nameZh: string;
   aliasZh?: string;
   lookZh?: string;
+  /** 剧本读出的性别；缺省则不写性别句 */
+  genderZh?: "女" | "男" | null;
   motiveZh?: string;
   noteZh?: string;
   basePromptZh?: string;
@@ -267,6 +342,7 @@ export function composeManhuaHeroFullBodyLookPrompt(input: {
     "生成一张竖版（9:16）单人「全身妆造参考图」：一个人、一个正面站姿、全身入画，从头到脚完整。",
     "干净棚拍感背景，光线均匀让服装款式与材质看得清；姿态自然放松，不做大动作。",
     "只能有一个人、只有一个角度；禁止三视图、禁止正侧背并排、禁止分格拼版、禁止另加细节特写小图。",
+    genderLockLineZh(input.genderZh, "body"),
     look ? `请画出的外形与服化：${look}` : "",
     palette.length ? `服装主色调：${palette.join("、")}。` : "",
     propLines
@@ -283,6 +359,45 @@ export function composeManhuaHeroFullBodyLookPrompt(input: {
       ? `（隐藏题材氛围·绝不能写成标题或书法大字：${input.topic.slice(0, 80)}）`
       : "",
     "贯穿全系列同一身份；换脸、换服、换发色会破坏连载锁定。",
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
+    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * D1-c（A 方案 · 用户 2026-07-29 选定）：脸特写**从已出的全身图**裁切放大得来，
+ * 不再独立重画一张脸。
+ *
+ * 为什么改：脸特写与全身图原先是两次互不参考的独立生成，连性别都能漂
+ * （陆清和「全身是女、脸特写是男」）。改成以全身图为唯一依据后，脸天然是同一张，
+ * 又保留「单出一张高清大头照供引擎锁 ID」的好处——全身图里脸只占很小像素，
+ * 直接拿全身图锁脸并不稳。
+ *
+ * 调用方须把该角色的全身图作为参考图/改图底图传入，本函数只产文本指令。
+ */
+export function composeManhuaHeroFaceFromBodyPrompt(input: {
+  nameZh: string;
+  aliasZh?: string;
+  lookZh?: string;
+  genderZh?: "女" | "男" | null;
+  artStyleLabelZh?: string;
+  artStylePromptZh?: string;
+}): string {
+  const tag = [input.nameZh, input.aliasZh].filter(Boolean).join("/");
+  const look = String(input.lookZh || "").trim();
+  return [
+    "以参考图中的人物为唯一依据，输出一张竖版（9:16）「面部特征参考图」：把其头部裁切并放大到占画面主体，正面平视。",
+    "身份硬锁：必须与参考图是同一个人——五官比例、脸型、眉眼、发型、发色、肤色、妆造一律照搬，禁止重新设计脸、禁止换人、禁止美颜改骨相。",
+    "只保留面部与发型轮廓；肩颈只留极少，背景换成纯净单色或极浅景深，去掉全身服装与环境陈设。",
+    "表情中性、无夸张情绪，眼睛看镜头——供后续视频锁定同一张脸。",
+    "只能有一个人；禁止三视图、禁止多角度并排、禁止分格拼版、禁止另加侧脸背面小图。",
+    genderLockLineZh(input.genderZh, "face"),
+    look ? `（比对用外形依据·不得据此改脸：${look}）` : "",
+    `（隐藏身份·不必画出：${tag || "主角"}）`,
+    input.artStyleLabelZh ? `【画风】${input.artStyleLabelZh}` : "",
+    String(input.artStylePromptZh || "").trim(),
     MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
     MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
   ]

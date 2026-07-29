@@ -288,8 +288,10 @@ describe("manhuaAssetImageGate", () => {
     const face = heroPlans.find((p) => p.layout === "heroFace");
     const look = heroPlans.find((p) => p.layout === "heroLook");
     expect(heroPlans).toHaveLength(2);
-    // 大头照排在全身照之前：锁脸最吃紧
-    expect(heroPlans[0]?.layout).toBe("heroFace");
+    // A：全身照先出，脸特写再从这张全身图裁切放大（两张独立生成会漂性别/漂脸）
+    expect(heroPlans[0]?.layout).toBe("heroLook");
+    expect(heroPlans[1]?.layout).toBe("heroFace");
+    expect(face?.deriveFromSheetId).toBe(look?.id);
     expect(face?.id).toBe(manhuaHeroFaceSheetId("wa_char_shence"));
     expect(seedIdFromManhuaSheetBlockId(face!.id)).toBe("wa_char_shence");
     for (const p of heroPlans) {
@@ -297,7 +299,8 @@ describe("manhuaAssetImageGate", () => {
       expect(p.prompt).not.toMatch(/三视图并排/);
       expect(p.prompt).toContain("禁止三视图");
     }
-    expect(face?.prompt).toContain("只画头部大特写");
+    expect(face?.prompt).toContain("必须与参考图是同一个人");
+    expect(face?.prompt).toContain("禁止重新设计脸");
     expect(look?.prompt).toContain("全身入画");
     // 道具信息改由文本交代，不再另开细节特写格
     expect(look?.prompt).toContain("双鱼玉佩");

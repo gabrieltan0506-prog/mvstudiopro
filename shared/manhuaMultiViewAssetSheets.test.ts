@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   buildManhuaSceneFourViewGridPrompt,
   composeManhuaHeroCharacterSheetPrompt,
+  composeManhuaHeroFaceCloseupPrompt,
+  composeManhuaHeroFaceFromBodyPrompt,
+  composeManhuaHeroFullBodyLookPrompt,
   countEpisodesMentioningLocation,
   extractWardrobePaletteTokensZh,
+  inferManhuaCharacterGenderZh,
   isManhuaHeroCharacterAnchor,
   locationNeedsFourViewGrid,
   pickPropsForCharacterSheet,
@@ -160,5 +164,76 @@ describe("manhuaMultiViewAssetSheets", () => {
       ],
     );
     expect(props.map((p) => p.nameZh)).toContain("双鱼玉佩");
+  });
+});
+
+describe("按剧本硬锁性别（修「全身是女·脸特写是男」）", () => {
+  /** 用户 2026-07-29 现场翻车的真实人物表两行 */
+  const luQingHe = {
+    nameZh: "陆清和",
+    aliasZh: "禾九",
+    lookZh: "二十四岁，长发编入一根赤绳，杏眼冷亮；月白交领劲装配绛红护腕",
+    motiveZh: "找到账册替陆家洗清通敌污名，不让爱情成为家族筹码",
+    noteZh: "陆镇渊之女、沈沧澜恋人，被父亲当作陆家继承人培养",
+  };
+  const shenCangLan = {
+    nameZh: "沈沧澜",
+    aliasZh: "兰七",
+    lookZh: "二十六岁，高束黑发，眉骨利落，右手虎口旧伤；玄黑窄袖劲装外罩暗蓝披风",
+    motiveZh: "查清父亲为何依附摄政王，与陆清和活着离开权力棋局",
+    noteZh: "沈岐山之子、陆清和恋人，与陆镇渊两家有旧仇",
+  };
+
+  it("「X之女」判女：不被「被父亲当作继承人」这类他人称谓带偏", () => {
+    expect(inferManhuaCharacterGenderZh(luQingHe)).toBe("女");
+  });
+
+  it("「X之子」判男", () => {
+    expect(inferManhuaCharacterGenderZh(shenCangLan)).toBe("男");
+  });
+
+  it("判不出性别时返回 null，绝不瞎猜", () => {
+    expect(
+      inferManhuaCharacterGenderZh({
+        nameZh: "玄甲卫",
+        lookZh: "玄色重甲，覆面",
+        motiveZh: "奉命围捕",
+        noteZh: "摄政王亲兵",
+      }),
+    ).toBeNull();
+  });
+
+  it("性别句写进全身图与脸特写两张提示词", () => {
+    const g = inferManhuaCharacterGenderZh(luQingHe);
+    const body = composeManhuaHeroFullBodyLookPrompt({ ...luQingHe, genderZh: g });
+    const face = composeManhuaHeroFaceCloseupPrompt({ ...luQingHe, genderZh: g });
+    expect(body).toContain("性别硬锁：本角色是女性");
+    expect(face).toContain("性别硬锁：本角色是女性");
+    expect(face).toContain("禁止画成男性");
+  });
+
+  it("性别缺省时不写性别句（不硬塞）", () => {
+    expect(composeManhuaHeroFullBodyLookPrompt(luQingHe)).not.toContain("性别硬锁");
+  });
+});
+
+describe("A 方案：脸特写从全身图裁切（不再各画各的）", () => {
+  const input = {
+    nameZh: "陆清和",
+    aliasZh: "禾九",
+    lookZh: "二十四岁，长发编入一根赤绳，杏眼冷亮；月白交领劲装配绛红护腕",
+    genderZh: "女" as const,
+  };
+
+  it("要求照搬参考图同一张脸、禁止重新设计", () => {
+    const p = composeManhuaHeroFaceFromBodyPrompt(input);
+    expect(p).toContain("以参考图中的人物为唯一依据");
+    expect(p).toContain("必须与参考图是同一个人");
+    expect(p).toContain("禁止重新设计脸");
+    expect(p).toContain("性别硬锁：本角色是女性");
+  });
+
+  it("外形句只作比对、不得据此改脸", () => {
+    expect(composeManhuaHeroFaceFromBodyPrompt(input)).toContain("不得据此改脸");
   });
 });

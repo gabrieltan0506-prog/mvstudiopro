@@ -30,8 +30,9 @@ import {
 } from "./manhuaWriterAssetCanon.js";
 import { composeManhuaWriterCanonSheetPrompt } from "./manhuaDirectorDistill.js";
 import {
-  composeManhuaHeroFaceCloseupPrompt,
+  composeManhuaHeroFaceFromBodyPrompt,
   composeManhuaHeroFullBodyLookPrompt,
+  inferManhuaCharacterGenderZh,
   isManhuaHeroCharacterAnchor,
   pickPropsForCharacterSheet,
   resolveManhuaLeadCharacterIds,
@@ -296,6 +297,12 @@ export type ManhuaAssetImageSpawnPlan = {
    * 主角拆两张是因为官方把人脸与全身拼在一张列为 ID 漂移头号根因。
    */
   layout?: "single" | "grid2x2" | "heroFace" | "heroLook";
+  /**
+   * A 方案：本张须以该节点已出的图为底图/参考图生成（主角脸特写 ← 同角色全身图）。
+   * 调用方须先跑完被依赖的那张，再把其成品图作为参考图喂进来；拿不到图就跳过本张，
+   * 别退回独立重画——独立画就是性别/脸漂的根因。
+   */
+  deriveFromSheetId?: string;
 };
 
 /** 主角大头照节点 id：仍以 charsheet- 开头，让既有分栏/同步逻辑照旧命中 */
@@ -414,30 +421,17 @@ export function planManhuaAssetImageSpawns(
       }
       const hero = isManhuaHeroCharacterAnchor(fromCanon);
       if (hero) {
-        // C：仅主角（男女主级）出脸特写；配角只出单张全身
-        if (leadIds.has(id)) {
-          // 大头照排在全身照之前：锁脸最吃紧，官方也要求重要素材前置
-          plans.push({
-            id: manhuaHeroFaceSheetId(id),
-            kind: "charsheet",
-            prompt: composeManhuaHeroFaceCloseupPrompt({
-              nameZh: fromCanon.nameZh,
-              aliasZh: fromCanon.aliasZh,
-              lookZh: fromCanon.lookZh,
-              artStyleLabelZh: artStyle.labelZh,
-              artStylePromptZh: artStyle.promptZh,
-            }),
-            labelZh: fromCanon.nameZh,
-            layout: "heroFace",
-          });
-        }
+        const genderZh = inferManhuaCharacterGenderZh(fromCanon);
+        const bodyId = existing?.id || `charsheet-${id}`;
+        // A：全身照先出，脸特写再从这张全身图裁切放大（同一张脸，不再各画各的）
         plans.push({
-          id: existing?.id || `charsheet-${id}`,
+          id: bodyId,
           kind: "charsheet",
           prompt: composeManhuaHeroFullBodyLookPrompt({
             nameZh: fromCanon.nameZh,
             aliasZh: fromCanon.aliasZh,
             lookZh: fromCanon.lookZh,
+            genderZh,
             motiveZh: fromCanon.motiveZh,
             noteZh: fromCanon.noteZh,
             basePromptZh: fromCanon.promptZh,
@@ -449,6 +443,24 @@ export function planManhuaAssetImageSpawns(
           labelZh: fromCanon.nameZh,
           layout: "heroLook",
         });
+        // C：仅主角（男女主级）出脸特写；配角只出单张全身
+        if (leadIds.has(id)) {
+          plans.push({
+            id: manhuaHeroFaceSheetId(id),
+            kind: "charsheet",
+            prompt: composeManhuaHeroFaceFromBodyPrompt({
+              nameZh: fromCanon.nameZh,
+              aliasZh: fromCanon.aliasZh,
+              lookZh: fromCanon.lookZh,
+              genderZh,
+              artStyleLabelZh: artStyle.labelZh,
+              artStylePromptZh: artStyle.promptZh,
+            }),
+            labelZh: fromCanon.nameZh,
+            layout: "heroFace",
+            deriveFromSheetId: bodyId,
+          });
+        }
         continue;
       }
       plans.push({
@@ -518,28 +530,23 @@ export function planManhuaAssetImageSpawns(
           leadIds.size === 0
             ? true
             : (scriptMatch?.id && leadIds.has(scriptMatch.id)) || leadNames.has(sheetName);
-        if (archIsLead) {
-          plans.push({
-            id: manhuaHeroFaceSheetId(id),
-            kind: "charsheet",
-            prompt: composeManhuaHeroFaceCloseupPrompt({
-              nameZh: sheetName,
-              aliasZh: scriptMatch?.aliasZh,
-              lookZh: sheetLook,
-              artStyleLabelZh: artStyle.labelZh,
-              artStylePromptZh: artStyle.promptZh,
-            }),
-            labelZh: sheetName,
-            layout: "heroFace",
-          });
-        }
+        // 性别以剧本人物表为准；库原型只借服化道气质，不锁生理性别
+        const archGenderZh = inferManhuaCharacterGenderZh({
+          nameZh: sheetName,
+          aliasZh: scriptMatch?.aliasZh,
+          lookZh: sheetLook,
+          motiveZh: sheetMotive,
+          noteZh: scriptMatch?.noteZh,
+        });
+        const archBodyId = existing?.id || `charsheet-${id}`;
         plans.push({
-          id: existing?.id || `charsheet-${id}`,
+          id: archBodyId,
           kind: "charsheet",
           prompt: composeManhuaHeroFullBodyLookPrompt({
             nameZh: sheetName,
             aliasZh: scriptMatch?.aliasZh,
             lookZh: sheetLook,
+            genderZh: archGenderZh,
             motiveZh: sheetMotive,
             noteZh: sheetNote,
             basePromptZh: scriptMatch?.promptZh || basePromptZh,
@@ -554,6 +561,23 @@ export function planManhuaAssetImageSpawns(
           labelZh: sheetName,
           layout: "heroLook",
         });
+        if (archIsLead) {
+          plans.push({
+            id: manhuaHeroFaceSheetId(id),
+            kind: "charsheet",
+            prompt: composeManhuaHeroFaceFromBodyPrompt({
+              nameZh: sheetName,
+              aliasZh: scriptMatch?.aliasZh,
+              lookZh: sheetLook,
+              genderZh: archGenderZh,
+              artStyleLabelZh: artStyle.labelZh,
+              artStylePromptZh: artStyle.promptZh,
+            }),
+            labelZh: sheetName,
+            layout: "heroFace",
+            deriveFromSheetId: archBodyId,
+          });
+        }
         continue;
       }
       plans.push({
@@ -722,10 +746,17 @@ export function planManhuaAssetImageSpawns(
     }
   }
 
-  // 定妆最吃紧排前，场景次之，道具垫后：官方也要求重要素材前置
+  // 定妆最吃紧排前，场景次之，道具垫后：官方也要求重要素材前置。
+  // 同一角色内：全身照必须排在「从全身图派生的脸特写」之前，否则脸特写跑到前面就拿不到底图，
+  // 只能退回独立重画——那正是漂性别/漂脸的根因。
   const kindRank = { charsheet: 0, sceneplate: 1, propsheet: 2 } as const;
+  const seedOf = (p: ManhuaAssetImageSpawnPlan) => seedIdFromManhuaSheetBlockId(p.id);
   return plans.sort((a, b) => {
-    if (a.kind === b.kind) return a.id.localeCompare(b.id);
-    return kindRank[a.kind] - kindRank[b.kind];
+    if (a.kind !== b.kind) return kindRank[a.kind] - kindRank[b.kind];
+    const seedCmp = seedOf(a).localeCompare(seedOf(b));
+    if (seedCmp !== 0) return seedCmp;
+    const derivedCmp = (a.deriveFromSheetId ? 1 : 0) - (b.deriveFromSheetId ? 1 : 0);
+    if (derivedCmp !== 0) return derivedCmp;
+    return a.id.localeCompare(b.id);
   });
 }
