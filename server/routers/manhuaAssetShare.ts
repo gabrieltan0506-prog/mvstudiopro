@@ -157,6 +157,41 @@ export const manhuaAssetShareRouter = router({
       }
     }),
 
+  /**
+   * 自动入库：资产图生成成功后，去名匿名收录进公有参考库（用户 2026-07-29 口径「直接自动入库」）。
+   * 不额外扣费（生成时已计价）；同一 imageUrl 去重，避免重出/重扫时重复入库。
+   * 半成品由客户端 `decideManhuaAssetRecycle` 拦掉，不会调到这里。
+   */
+  contributeToLibrary: protectedProcedure
+    .input(
+      z.object({
+        role: roleSchema,
+        imageUrl: z.string().url(),
+        labelZh: z.string().max(80).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) return { ok: false as const, publicId: null as string | null, deduped: false };
+      const existing = await db
+        .select({ publicId: manhuaCommunityAssets.publicId })
+        .from(manhuaCommunityAssets)
+        .where(eq(manhuaCommunityAssets.imageUrl, input.imageUrl))
+        .limit(1);
+      if (existing.length) {
+        return { ok: true as const, publicId: existing[0]!.publicId, deduped: true };
+      }
+      const publicId = makePublicId();
+      await db.insert(manhuaCommunityAssets).values({
+        publicId,
+        role: input.role as ManhuaAssetStillRole,
+        imageUrl: input.imageUrl,
+        labelZh: String(input.labelZh || "").trim().slice(0, 80) || null,
+        contributorUserId: ctx.user.id,
+      });
+      return { ok: true as const, publicId, deduped: false };
+    }),
+
   /** 匿名社区参考库（不含贡献者信息） */
   listCommunity: publicProcedure
     .input(
