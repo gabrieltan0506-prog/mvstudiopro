@@ -676,10 +676,8 @@ export default function OmniCanvas() {
     retry: 1,
   });
   const generateAssetStillMutation = trpc.manhuaAssetShare.generateAssetStill.useMutation();
-  /** 重出（按库档 15/20 计价）与「换用库里那张」 */
-  const regenerateAssetStillMutation =
-    trpc.manhuaAssetShare.regenerateAssetStill.useMutation();
-  const useLibraryAssetMutation = trpc.manhuaAssetShare.useLibraryAsset.useMutation();
+  /** 重出 / 换库图的扣费（按库档 15/20）；生图仍走画布长任务，别用同步接口撞网关 120s */
+  const chargeAssetRegenMutation = trpc.manhuaAssetShare.chargeAssetRegen.useMutation();
   /** 重出弹框里「从库里挑一张」的候选；按类拉取 */
   const [libraryPickerRole, setLibraryPickerRole] =
     useState<ManhuaCustomAssetRole | null>(null);
@@ -3346,10 +3344,10 @@ export default function OmniCanvas() {
           ? "prop"
           : "character";
       try {
-        const res = await useLibraryAssetMutation.mutateAsync({
+        const res = await chargeAssetRegenMutation.mutateAsync({
           role,
-          imageUrl: url,
           tileCount: 1,
+          mode: "library",
         });
         stashManhuaAssetBlocksBeforePurge([target], projectBible?.assetCanon);
         handleBlocksChange((prev) =>
@@ -3381,7 +3379,7 @@ export default function OmniCanvas() {
       openManhuaFactoryCanvas,
       projectBible?.assetCanon,
       stashManhuaAssetBlocksBeforePurge,
-      useLibraryAssetMutation,
+      chargeAssetRegenMutation,
       user?.id,
     ],
   );
@@ -3782,6 +3780,8 @@ export default function OmniCanvas() {
       pushDebug("confirmAssetsFromScript:start", {
         detail: `plans=${plans.length} · viaCanon=${gate.viaWriterCanon} · missingCast=${gate.missingCastIds.length}`,
       });
+      /** 重出但没出图的：结算时要排除（已把旧图放回，不能收钱） */
+      const regenFailedIds = new Set<string>();
       try {
         let working = [...canvasBlocks];
         /** 资产图固定左上：角色一行、场景一行；禁止再贴到画布最右 */
@@ -3897,55 +3897,57 @@ export default function OmniCanvas() {
           setBlocks(working);
           saveCanvasState(working, canvasEdges);
           if (i === 0) openManhuaFactoryCanvas(plan.id);
-          setFactoryProgress(
-            plan.kind === "charsheet"
-              ? `角色图 · ${plan.labelZh}`
-              : `场景图 · ${plan.labelZh}`,
-          );
+          const planKindZh =
+            plan.kind === "charsheet" ? "角色图" : plan.kind === "propsheet" ? "道具图" : "场景图";
+          setFactoryProgress(`${planKindZh} · ${plan.labelZh}`);
           toast.message(
-            plan.kind === "charsheet"
-              ? `正在出角色图：${plan.labelZh}`
-              : `正在出场景图：${plan.labelZh}`,
+            `${isRegenPlan(plan.id) ? "正在重出" : "正在出"}${planKindZh}：${plan.labelZh}`,
           );
-          /**
-           * 重出走「用库内资产」同档计价（1 张 15 / 2 张 20，用户 2026-07-29 定），
-           * 因此不能走画布常规通道扣全价，改打专用接口，再把图写回这个节点。
-           */
           const regenRoleForBilling =
             plan.kind === "charsheet"
               ? ("character" as const)
               : plan.kind === "propsheet"
                 ? ("prop" as const)
                 : ("scene" as const);
-          const out = isRegenPlan(plan.id)
-            ? await regenerateAssetStillMutation
-                .mutateAsync({
-                  prompt: block.prompt,
-                  role: regenRoleForBilling,
-                  tileCount: regenTileCount,
-                  labelZh: plan.labelZh,
-                  aspectRatio: "9:16",
-                  referenceImageUrl: deriveRefUrl || prevSheetUrl || undefined,
-                })
-                .then((res) => ({
-                  outputUrl: String(res.imageUrl || "").trim(),
-                  outputUrls: [] as string[],
-                  imageModel: "gpt-image-2" as const,
-                }))
-            : await runCanvasBlock(runDeps, block, { visionImages: [], texts: [] });
+          /**
+           * 重出也走画布这条「入队 + 轮询」长任务：同步接口打 GPT-Image-2 会撞网关 120s
+           * 上限（实测 502），图没出还把旧图清了。旧图当垫图，避免重画时身份漂走。
+           */
+          const out = await runCanvasBlock(
+            runDeps,
+            isRegenPlan(plan.id) && !deriveRefUrl && prevSheetUrl
+              ? { ...block, imageMode: "edit" as const, refImageUrl: prevSheetUrl }
+              : block,
+            { visionImages: [], texts: [] },
+          );
+          const regenFailed =
+            isRegenPlan(plan.id) && !(out.outputUrl || out.outputUrls?.[0]) && Boolean(prevSheetUrl);
           working = working.map((b) =>
             b.id === plan.id
               ? {
                   ...b,
                   ...out,
-                  status: out.outputUrl || out.outputUrls?.[0] ? ("done" as const) : ("error" as const),
+                  // 重出没出图就把旧图放回去：用户点的是「改进这张」，不该反被清成空卡
+                  ...(regenFailed
+                    ? { outputUrl: prevSheetUrl, outputUrls: [] as string[] }
+                    : {}),
+                  status:
+                    out.outputUrl || out.outputUrls?.[0] || regenFailed
+                      ? ("done" as const)
+                      : ("error" as const),
                   error:
-                    out.outputUrl || out.outputUrls?.[0]
+                    out.outputUrl || out.outputUrls?.[0] || regenFailed
                       ? undefined
                       : "角色/场景图未返回可用地址",
                 }
               : b,
           );
+          if (regenFailed) {
+            regenFailedIds.add(plan.id);
+            toast.error(`重出失败：${plan.labelZh}`, {
+              description: "已保留原图，未扣积分。可改一下描述再试一次。",
+            });
+          }
           setBlocks(working);
           saveCanvasState(working, canvasEdges);
           const outUrl = out.outputUrl || out.outputUrls?.[0];
@@ -3978,6 +3980,44 @@ export default function OmniCanvas() {
                 .catch(() => {
                   /* 入库失败不影响出图；静默 */
                 });
+            }
+          }
+        }
+        /**
+         * 重出扣费放在**出图之后**，按真实出图张数结算（1 张 15 / 2 张 20，超出每张 +5）。
+         * 先扣后生成会在生图失败时留下一笔要退的账，退款接口一开就能被刷；没拿到图就不收，
+         * 这条账最干净。补缺图不走这里（那条仍是原有计费路径）。
+         */
+        if (regenerateAnchorIds.length) {
+          const paidPlans = plans.filter(
+            (p) =>
+              isRegenPlan(p.id) &&
+              Boolean(
+                working.find((b) => b.id === p.id)?.outputUrl ||
+                  working.find((b) => b.id === p.id)?.outputUrls?.[0],
+              ),
+          );
+          const paidTiles = paidPlans.filter((p) => !regenFailedIds.has(p.id)).length;
+          if (paidTiles > 0) {
+            const billRole =
+              paidPlans[0]?.kind === "sceneplate"
+                ? ("scene" as const)
+                : paidPlans[0]?.kind === "propsheet"
+                  ? ("prop" as const)
+                  : ("character" as const);
+            try {
+              const charge = await chargeAssetRegenMutation.mutateAsync({
+                role: billRole,
+                tileCount: paidTiles,
+                mode: "redraw",
+              });
+              toast.message(`重出完成 ${paidTiles} 张`, {
+                description: `已扣 ${charge.creditsCharged} 积分`,
+              });
+            } catch (e: unknown) {
+              toast.error("重出已完成，但扣费失败", {
+                description: e instanceof Error ? e.message : "请检查积分余额",
+              });
             }
           }
         }

@@ -356,13 +356,41 @@ export function buildManhuaScenePlateGenPrompt(opts: {
  */
 /**
  * 天生带字的道具：账册、密信、令牌、朝笏、契券、印章这类，纸面/牌面就是主体，
- * 模型默认会往上写汉字（用户 2026-07-29 验收发现道具图烧字）。命中就追加纸面留白硬锁。
+ * 模型默认会往上写汉字（用户 2026-07-29 验收发现道具图烧字）。命中就补一句纸面素净的正向描述。
  */
 const PROP_TEXT_BEARING_RE =
   /账册|账本|帐册|密信|信函|书信|文书|案卷|卷宗|档|令|笏|契|券|符|榜|册|卷|谱|状|折子|奏折|印|章|牌|匾|额|碑|旗|封条|名录|名册/;
 
 function isTextBearingProp(nameZh: string, propPromptZh: string): boolean {
   return PROP_TEXT_BEARING_RE.test(`${nameZh}${propPromptZh}`);
+}
+
+/**
+ * 从道具视觉句里剥掉叙事文本，只留外形材质。
+ *
+ * 2026-07-29 验收：道具图被烧上海报标题（「最亲的人却在骗你?」「一枚缺口，颠覆战局」）。
+ * 根因不是禁令不够狠，而是提示词把**可写的字**递到了模型手里——道具名、剧作功能、
+ * 题材氛围都是成句的中文，模型自然把它排成标题。堆更多「禁止标题大字」只会把
+ * 「标题」「海报」「书法」这些词重复喂进去，反而加强概念。
+ * 所以这里直接不给素材：功能句、名字前缀、以及旧的重复禁令一并剥掉。
+ */
+export function stripPropNarrativeFromVisualZh(
+  propPromptZh: string,
+  nameZh?: string,
+): string {
+  let s = String(propPromptZh || "").trim();
+  const name = String(nameZh || "").trim();
+  if (name) {
+    s = s.replace(new RegExp(`原创道具特写[·:：]?\\s*${name}[。;；]?`, "g"), "");
+    s = s.replace(new RegExp(`^${name}[。;；]\\s*`), "");
+  }
+  s = s.replace(/原创道具特写[·:：]?/g, "");
+  // 剧作功能 / 戏剧作用：纯叙事，画面用不上，留着就是标题素材
+  s = s.replace(/(剧作功能|戏剧功能|叙事功能|作用)[：:][^。；;\n]*[。；;\n]?/g, "");
+  // 旧模板自带的重复否定，交给统一的软边界句处理
+  s = s.replace(/禁止可读文字[。；;]?/g, "");
+  s = s.replace(/主体居中、材质可读、背景干净、竖屏9:16[。；;]?/g, "");
+  return s.replace(/\s{2,}/g, " ").replace(/^[，,。;；·\s]+/, "").trim();
 }
 
 export function buildManhuaPropPlateGenPrompt(opts: {
@@ -376,26 +404,25 @@ export function buildManhuaPropPlateGenPrompt(opts: {
 }): string {
   const name = String(opts.propNameZh || "").trim() || "关键道具";
   const propPrompt = String(opts.propPromptZh || "").trim();
-  const owner = String(opts.ownerNameZh || "").trim();
-  const topic = String(opts.topic || "").trim();
+  // ownerNameZh / topic 仍留在签名里给调用方，但**不进提示词**：人名与题材句就是烧标题的素材
   const styleLabel = String(opts.artStyleLabelZh || "").trim();
   const stylePrompt = String(opts.artStylePromptZh || "").trim();
+  /**
+   * 道具图走软边界：正面描述「博物馆藏品静物摄影」这一件器物本身，
+   * 不把道具名、剧作功能、题材氛围、归属人名递进去当写字素材（那是烧海报标题的根因），
+   * 也不再堆叠一长串「禁止标题/书法/印文」——重复否定只会把「标题」这个概念喂得更旺。
+   */
+  const visual = stripPropNarrativeFromVisualZh(propPrompt, name);
   return [
-    "生成一张竖版单件道具参考（9:16）：只画这一件道具，居中占画面主体，四分之三主视角，材质、纹样、磨损与配色看得清。",
-    "背景用干净的浅色或深色渐变，不要环境、不要人物、不要手、不要多角度并排或分格拼图，只要这一件的正面主视角。",
-    // 通用禁字锁写的是「文件仅几何光斑或完全模糊」，可当账册/密信/令牌本身就是主体时
-    // 那句自相矛盾（主体不能整体模糊），模型照旧往纸面写汉字。这里补一条针对道具本体的硬锁。
-    "道具本体禁字硬锁：器物表面的刻字、题名、账目数字、印章印文、封条字样一律不得出现可辨认字形；只允许抽象墨痕、压印纹理、纹样与磨损，宁可留白也不要写字。",
+    "拍一张竖版单件器物静物照（9:16）：博物馆藏品级静物摄影，只有这一件器物与背景光，居中占画面主体，四分之三主视角，材质、纹样、磨损与配色看得清。",
+    "背景是干净的浅色或深色渐变；画面里没有人、没有手、没有环境陈设，不做多角度并排或分格拼图，只要这一件的正面主视角。",
+    "器物表面保持素净的旧料本色：纸是泛黄空白的旧纸，木见木纹，铜有包浆，绢见织纹；岁月只用磨损、压痕、水渍、褪色来讲。",
     isTextBearingProp(name, propPrompt)
-      ? "本件属文书/令牌类：纸面、封皮、牌面、笏面须留白，或只画墨色笔触的走势与深浅，笔画绝不能组成任何汉字、数字或篆印；把「写过字」只用墨迹层次与压痕暗示。"
+      ? "这类纸面、封皮、牌面、笏面一律留白：想暗示「用过、写过」，就用墨色晕染的深浅、压痕与折痕来暗示。"
       : "",
-    `（隐藏道具名·不必画出：${name}）`,
-    propPrompt ? `请画出的道具视觉：${propPrompt}` : "",
-    owner ? `（隐藏归属·画面不要出现人：${owner}随身之物）` : "",
-    topic ? `（隐藏题材氛围·绝不能写成标题：${topic.slice(0, 120)}）` : "",
+    visual ? `器物外形与材质：${visual}` : "",
     styleLabel ? `【画风】${styleLabel}` : "",
     stylePrompt || "",
-    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
     MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
   ]
     .filter(Boolean)
