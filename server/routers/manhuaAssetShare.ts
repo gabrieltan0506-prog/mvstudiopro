@@ -17,6 +17,7 @@ import {
   resolveManhuaAssetStillBilling,
   type ManhuaAssetStillRole,
 } from "../../shared/manhuaAssetSharePricing";
+import { quoteManhuaAssetRegenCredits } from "../../shared/manhuaAssetRegenRequest";
 import { generateGptImage2FromRawEnglishPrompt } from "../services/proxyImageService";
 
 function makePublicId(): string {
@@ -190,6 +191,136 @@ export const manhuaAssetShareRouter = router({
         contributorUserId: ctx.user.id,
       });
       return { ok: true as const, publicId, deduped: false };
+    }),
+
+  /**
+   * 重出设定图：用户写明哪里要改进，按修订后的提示词重画。
+   *
+   * 计价与常规资产图不同（用户 2026-07-29 定）：走「用库内资产」同档——1 张 15、2 张 20，
+   * 超出每张 +5；不吃授权进库半价那套（本来就已经是低档价）。重出成功后照旧匿名进库。
+   */
+  regenerateAssetStill: protectedProcedure
+    .input(
+      z.object({
+        prompt: z.string().min(8).max(8000),
+        role: roleSchema,
+        /** 本次重出的张数，用于 15/20 分档 */
+        tileCount: z.number().int().min(1).max(24),
+        labelZh: z.string().max(80).optional(),
+        aspectRatio: z.enum(["9:16", "16:9"]).optional(),
+        /** 旧图或库里挑的那张：当垫图，避免重画时身份漂走 */
+        referenceImageUrl: z.string().url().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const cost = quoteManhuaAssetRegenCredits(input.tileCount);
+      const role = input.role as ManhuaAssetStillRole;
+      let deduct: Awaited<ReturnType<typeof deductCreditsAmount>>;
+      try {
+        deduct = await deductCreditsAmount(
+          ctx.user.id,
+          cost,
+          "manhuaAssetStill",
+          `漫剧资产图·${role}·重出（${input.tileCount} 张）`,
+        );
+      } catch (e: unknown) {
+        throw new TRPCError({
+          code: "PAYMENT_REQUIRED",
+          message: e instanceof Error ? e.message : "积分不足",
+        });
+      }
+      const refs = input.referenceImageUrl ? [input.referenceImageUrl] : undefined;
+      try {
+        const imageUrl = await generateGptImage2FromRawEnglishPrompt({
+          englishPrompt: input.prompt,
+          aspectRatio: input.aspectRatio === "16:9" ? "16:9" : "9:16",
+          gcsSubdir: "manhua-asset-still",
+          referenceImageUrls: refs,
+          generalImageEdit: Boolean(refs?.length),
+        });
+        if (!imageUrl) {
+          await refundCreditsForDeductAmount(
+            ctx.user.id,
+            "漫剧资产图重出失败退还",
+            deduct,
+            "manhuaAssetStill",
+          );
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "资产图重出失败，积分已退还",
+          });
+        }
+        // 重出成品照旧匿名进库（生成时已计价，入库不再收费）；同 URL 去重
+        const db = await getDb();
+        if (db) {
+          const existing = await db
+            .select({ publicId: manhuaCommunityAssets.publicId })
+            .from(manhuaCommunityAssets)
+            .where(eq(manhuaCommunityAssets.imageUrl, imageUrl))
+            .limit(1);
+          if (!existing.length) {
+            await db.insert(manhuaCommunityAssets).values({
+              publicId: makePublicId(),
+              role,
+              imageUrl,
+              labelZh: String(input.labelZh || "").trim().slice(0, 80) || null,
+              contributorUserId: ctx.user.id,
+            });
+          }
+        }
+        return {
+          imageUrl,
+          creditsCharged: deduct.cost,
+          role,
+          tileCount: input.tileCount,
+        };
+      } catch (e: unknown) {
+        if (e instanceof TRPCError) throw e;
+        await refundCreditsForDeductAmount(
+          ctx.user.id,
+          "漫剧资产图重出异常退还",
+          deduct,
+          "manhuaAssetStill",
+        );
+        const msg = e instanceof Error ? e.message : "资产图重出失败";
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: /积分已退还/.test(msg) ? msg : `${msg}（积分已退还）`,
+        });
+      }
+    }),
+
+  /**
+   * 换用公有库里那张：不生图，但照收费——拿走的是别人贡献的成品。
+   * 只扣费并回报单价，图片写回哪个位置由客户端处理。
+   */
+  useLibraryAsset: protectedProcedure
+    .input(
+      z.object({
+        role: roleSchema,
+        imageUrl: z.string().url(),
+        tileCount: z.number().int().min(1).max(24),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const cost = quoteManhuaAssetRegenCredits(input.tileCount);
+      const deduct = await deductCreditsAmount(
+        ctx.user.id,
+        cost,
+        "manhuaAssetStill",
+        `漫剧资产图·${input.role}·用库内资产（${input.tileCount} 张）`,
+      ).catch((e: unknown) => {
+        throw new TRPCError({
+          code: "PAYMENT_REQUIRED",
+          message: e instanceof Error ? e.message : "积分不足",
+        });
+      });
+      return {
+        ok: true as const,
+        imageUrl: input.imageUrl,
+        creditsCharged: deduct.cost,
+        role: input.role as ManhuaAssetStillRole,
+      };
     }),
 
   /** 匿名社区参考库（不含贡献者信息） */
