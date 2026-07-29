@@ -4,6 +4,7 @@ import {
   MANHUA_KEYART_PARALLEL_CONCURRENCY,
   applyFactoryPrefsToBlocks,
   applyTopicToFactoryStory,
+  collectManhuaCharacterSheetUrlById,
   ensureManhuaFragmentClips,
   expandManhuaShotKeyartsAfterReverse,
   extractFactoryMotionHints,
@@ -1614,5 +1615,43 @@ describe("局部改写起点", () => {
     const kept = out.blocks.find((b) => b.id === "clip-e03-s01");
     expect(kept?.archivedFromPreviousScript).toBe(true);
     expect(kept?.outputUrl).toBe("https://x/paid.mp4");
+  });
+});
+
+describe("锁脸选图：优先脸特写，没有就用全身（画布全身也锁脸）", () => {
+  const canon = {
+    characters: [
+      { id: "wa_char_a", role: "character", nameZh: "陆清和", lookZh: "月白劲装", promptZh: "x" },
+      { id: "wa_char_b", role: "character", nameZh: "韩伯", lookZh: "灰布短褂", promptZh: "x" },
+    ],
+    props: [],
+    locations: [],
+    episodeMainSceneId: {},
+  } as unknown as Parameters<typeof collectManhuaCharacterSheetUrlById>[1];
+
+  const sheet = (id: string, url: string) =>
+    ({ id, outputUrl: url }) as unknown as Parameters<
+      typeof collectManhuaCharacterSheetUrlById
+    >[0][number];
+
+  it("两张都在时锁脸取脸特写（不受块顺序影响）", () => {
+    const bodyFirst = collectManhuaCharacterSheetUrlById(
+      [sheet("charsheet-wa_char_a", "https://x/body.png"), sheet("charsheet-face-wa_char_a", "https://x/face.png")],
+      canon,
+    );
+    const faceFirst = collectManhuaCharacterSheetUrlById(
+      [sheet("charsheet-face-wa_char_a", "https://x/face.png"), sheet("charsheet-wa_char_a", "https://x/body.png")],
+      canon,
+    );
+    expect(bodyFirst.wa_char_a).toBe("https://x/face.png");
+    expect(faceFirst.wa_char_a).toBe("https://x/face.png");
+  });
+
+  it("配角只有单张全身时，全身图照样锁脸", () => {
+    const map = collectManhuaCharacterSheetUrlById(
+      [sheet("charsheet-wa_char_b", "https://x/hanbo-body.png")],
+      canon,
+    );
+    expect(map.wa_char_b).toBe("https://x/hanbo-body.png");
   });
 });
