@@ -255,12 +255,21 @@ export function resolveManhuaCustomAssetDisplayLabelZh(opts: {
   return label ? label.slice(0, 40) : undefined;
 }
 
+/**
+ * 一集设定图的容量下限：8 名人物（主角脸+全身各一张）+ 6 处场景 + 6 件道具，
+ * 从前默认 16 条，认领到第十六张就 break，后面的人一个也挂不上 @ 号。
+ */
+export const MANHUA_CUSTOM_ASSET_REFS_MAX = 48;
+
 /** 清洗并截断用户上传参考列表（只留 HTTPS）；并按 seed/标签纠偏角色分栏 */
 export function normalizeManhuaCustomAssetRefs(
   raw: unknown,
   opts?: { max?: number },
 ): ManhuaCustomAssetRef[] {
-  const max = Math.max(1, Math.min(24, opts?.max ?? 16));
+  const max = Math.max(
+    1,
+    Math.min(MANHUA_CUSTOM_ASSET_REFS_MAX, opts?.max ?? MANHUA_CUSTOM_ASSET_REFS_MAX),
+  );
   if (!Array.isArray(raw)) return [];
   const out: ManhuaCustomAssetRef[] = [];
   const seen = new Set<string>();

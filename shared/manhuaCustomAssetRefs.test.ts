@@ -148,4 +148,53 @@ describe("manhuaCustomAssetRefs", () => {
       "https://cdn.example/body.png",
     );
   });
+
+  it("一集全量设定图（8人+6场景+6道具）都装得下，不在第十六张截断", () => {
+    let refs: ReturnType<typeof normalizeManhuaCustomAssetRefs> = [];
+    // 8 名人物，其中两位主角脸与全身各一张 → 10 条
+    const chars = ["沈沧澜", "陆清和", "沈岐山", "苏问蝉", "陆镇渊", "萧承弼", "韩伯", "玄甲卫"];
+    chars.forEach((nameZh, i) => {
+      refs = upsertGeneratedManhuaCustomAssetRef(refs, {
+        url: `https://cdn.example/char-${i}-body.png`,
+        role: "character",
+        labelZh: nameZh,
+        seedLibraryId: `wa_char_${i}`,
+        refDuty: i < 2 ? "look" : "identity",
+      });
+      if (i < 2) {
+        refs = upsertGeneratedManhuaCustomAssetRef(refs, {
+          url: `https://cdn.example/char-${i}-face.png`,
+          role: "character",
+          labelZh: nameZh,
+          seedLibraryId: `wa_char_${i}`,
+          refDuty: "identity",
+        });
+      }
+    });
+    for (let i = 0; i < 6; i += 1) {
+      refs = upsertGeneratedManhuaCustomAssetRef(refs, {
+        url: `https://cdn.example/scene-${i}.png`,
+        role: "scene",
+        labelZh: `场景${i}`,
+        seedLibraryId: `wa_scene_${i}`,
+        refDuty: "space",
+      });
+    }
+    for (let i = 0; i < 6; i += 1) {
+      refs = upsertGeneratedManhuaCustomAssetRef(refs, {
+        url: `https://cdn.example/prop-${i}.png`,
+        role: "prop",
+        labelZh: `道具${i}`,
+        seedLibraryId: `wa_prop_${i}`,
+        refDuty: "style",
+      });
+    }
+
+    expect(refs).toHaveLength(22);
+    expect(refs.filter((r) => r.role === "character")).toHaveLength(10);
+    expect(refs.filter((r) => r.role === "scene")).toHaveLength(6);
+    expect(refs.filter((r) => r.role === "prop")).toHaveLength(6);
+    // 最后挂上的道具没有被容量截掉
+    expect(refs.map((r) => r.url)).toContain("https://cdn.example/prop-5.png");
+  });
 });

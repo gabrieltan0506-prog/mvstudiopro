@@ -3487,7 +3487,12 @@ export default function OmniCanvas() {
       toast.message("本集设定图都已挂上 @ 号，无需认领");
       return;
     }
-    let adopted = 0;
+    /**
+     * 逐条累积在本地快照上，最后一次写回 state：
+     * 报数要按真正进了库的张数，不能按 plans.length——从前容量满了照样报「已认领 17 张」，
+     * 实际只挂上十一张，用户以为齐了，出静帧才发现有人没锁脸。
+     */
+    let nextRefs = customAssetRefs;
     for (const plan of plans) {
       let refUrl = plan.url;
       let tileUrls: Partial<Record<ManhuaSceneTileSlot, string>> | null = null;
@@ -3509,21 +3514,28 @@ export default function OmniCanvas() {
         : blocks.some((b) => b.id === manhuaHeroFaceSheetId(plan.seedId))
           ? "look"
           : "identity";
-      setCustomAssetRefs((prev) =>
-        upsertGeneratedManhuaCustomAssetRef(prev, {
-          url: refUrl,
-          role: plan.role,
-          labelZh: plan.labelZh,
-          seedLibraryId: plan.seedId,
-          refDuty:
-            plan.role === "character" ? charDuty : plan.role === "prop" ? "style" : "space",
-          tileUrls,
-        }),
-      );
-      adopted += 1;
+      nextRefs = upsertGeneratedManhuaCustomAssetRef(nextRefs, {
+        url: refUrl,
+        role: plan.role,
+        labelZh: plan.labelZh,
+        seedLibraryId: plan.seedId,
+        refDuty: plan.role === "character" ? charDuty : plan.role === "prop" ? "style" : "space",
+        tileUrls,
+      });
     }
+    const adopted = Math.max(0, nextRefs.length - customAssetRefs.length);
+    setCustomAssetRefs(nextRefs);
+    if (!adopted) {
+      toast.error("认领没能写进素材库", {
+        description: "素材库可能已满，请先清掉用不到的参考图再试",
+      });
+      return;
+    }
+    const missed = plans.length - adopted;
     toast.success(`已认领 ${adopted} 张设定图`, {
-      description: "已写进我的角色 / 我的场景 / 我的道具，静帧现在能锁到这些脸与场景",
+      description: missed
+        ? `还有 ${missed} 张没能挂上，素材库快满了，清掉用不到的参考图再点一次`
+        : "已写进我的角色 / 我的场景 / 我的道具，静帧现在能锁到这些脸与场景",
     });
   }, [blocks, customAssetRefs, projectBible?.assetCanon]);
 
