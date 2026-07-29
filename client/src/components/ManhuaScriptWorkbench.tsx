@@ -1606,8 +1606,11 @@ export default function ManhuaScriptWorkbench({
     if (!regenArm || regenArm.kind !== kind) {
       setRegenArm({ kind, at: Date.now() });
       setRegenTick(Date.now());
-      toast.message(`确认重出${titleZh} ${anchorIds.length} 张？`, {
-        description: "会按最新提示词把这一类已出的图重画一遍（不动其他类）。3 秒后再点一次确认。",
+      const single = anchorIds.length === 1;
+      toast.message(single ? `确认重出「${titleZh}」？` : `确认重出${titleZh} ${anchorIds.length} 张？`, {
+        description: single
+          ? "只按最新提示词重画这一个，其他图一张都不动。3 秒后再点一次确认。"
+          : "会按最新提示词把这一类已出的图重画一遍（不动其他类）。3 秒后再点一次确认。",
       });
       return;
     }
@@ -2594,29 +2597,75 @@ export default function ManhuaScriptWorkbench({
                         </div>
                         {items.length || pending.length ? (
                           <div className="mt-1.5 flex flex-wrap gap-2">
-                            {items.map((item) => (
-                              <button
-                                key={item.id}
-                                type="button"
-                                data-manhua-sheet-id={item.id}
-                                onClick={() => {
-                                  if (!item.id) return;
-                                  focusBlockAndOpenCanvas(item.id);
-                                }}
-                                className="flex w-[88px] flex-col overflow-hidden rounded-lg border border-emerald-300/35 bg-black/40 text-left hover:border-emerald-200/60"
-                                title={`定位：${item.labelZh}`}
-                              >
-                                <img
-                                  src={item.url}
-                                  alt=""
-                                  className="aspect-[3/4] w-full object-cover object-top"
-                                  loading="lazy"
-                                />
-                                <span className="truncate px-1.5 py-1 text-[10px] text-white/85">
-                                  {item.labelZh}
-                                </span>
-                              </button>
-                            ))}
+                            {items.map((item) => {
+                              // 单个重出用剧本锚点，不用 block id：hero 的 charsheet-face-* 也要落回本人
+                              const ownAnchorId =
+                                canonAnchorIds.find((id) => item.id.includes(id)) || "";
+                              // 用户自传的参考图不给重出——那是他自己的素材，不该被系统覆盖
+                              const canRegenOne =
+                                Boolean(ownAnchorId) &&
+                                !item.id.includes("-custom-") &&
+                                Boolean(onRegenerateSheets);
+                              const oneKey = `${sec.kind}:${ownAnchorId}`;
+                              const oneSec = regenRemainSec(oneKey);
+                              const oneArmed = regenArm?.kind === oneKey;
+                              return (
+                                <div
+                                  key={item.id}
+                                  className="group relative w-[88px] overflow-hidden rounded-lg border border-emerald-300/35 bg-black/40 hover:border-emerald-200/60"
+                                >
+                                  <button
+                                    type="button"
+                                    data-manhua-sheet-id={item.id}
+                                    onClick={() => {
+                                      if (!item.id) return;
+                                      focusBlockAndOpenCanvas(item.id);
+                                    }}
+                                    className="flex w-full flex-col text-left"
+                                    title={`定位：${item.labelZh}`}
+                                  >
+                                    <img
+                                      src={item.url}
+                                      alt=""
+                                      className="aspect-[3/4] w-full object-cover object-top"
+                                      loading="lazy"
+                                    />
+                                    <span className="truncate px-1.5 py-1 text-[10px] text-white/85">
+                                      {item.labelZh}
+                                    </span>
+                                  </button>
+                                  {canRegenOne ? (
+                                    <button
+                                      type="button"
+                                      data-manhua-action="regen-one-sheet"
+                                      data-manhua-regen-anchor={ownAnchorId}
+                                      disabled={
+                                        !outlineComplete ||
+                                        !assetGate.castLocked ||
+                                        !assetGate.sceneLocked ||
+                                        factoryBusy ||
+                                        oneSec > 0
+                                      }
+                                      onClick={() =>
+                                        requestRegenerateSheets(oneKey, item.labelZh, [
+                                          ownAnchorId,
+                                        ])
+                                      }
+                                      className={`absolute right-1 top-1 rounded border border-amber-300/50 bg-black/70 px-1 py-0.5 text-[9px] font-semibold text-amber-100 backdrop-blur hover:bg-amber-500/40 disabled:opacity-50 ${
+                                        oneArmed ? "" : "opacity-0 group-hover:opacity-100"
+                                      }`}
+                                      title={`只重画「${item.labelZh}」这一个（按最新提示词，不动其他）`}
+                                    >
+                                      {oneArmed
+                                        ? oneSec > 0
+                                          ? `确认（${oneSec}s）`
+                                          : "再点确认"
+                                        : "重出"}
+                                    </button>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
                             {pending.map((p) => (
                               <button
                                 key={p.anchorId}
