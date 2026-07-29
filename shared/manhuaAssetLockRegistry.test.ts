@@ -545,10 +545,88 @@ describe("manhuaAssetLockRegistry", () => {
       registry: reg,
       mainSceneId: "s_cang",
     });
-    // 场景可共用，不硬拦；但要让左栏能提示「断月桥没有对应图，用的是雪关粮仓」
+    // 未显式传 sceneZh 时：文案点不到库内场景 → 可回落主场景并标 fallback
     expect(allowed.sceneIds).toEqual(["s_cang"]);
     expect(allowed.sceneFallback).toBe(true);
     expect(findManhuaSegmentAssetBindGap(reg, allowed).sceneFallbackToZh).toBe("雪关粮仓");
+  });
+
+  it("可拍表场景名强制对齐 @场景：有同名锁同名，没有就空着，绝不挂错处", () => {
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "s_bridge",
+          url: "https://cdn.example/bridge.jpg",
+          role: "scene",
+          source: "upload",
+          labelZh: "断月桥",
+        },
+        {
+          id: "s_reed",
+          url: "https://cdn.example/reed.jpg",
+          role: "scene",
+          source: "upload",
+          labelZh: "芦苇渡口",
+        },
+        {
+          id: "p_ledger",
+          url: "https://cdn.example/ledger.jpg",
+          role: "prop",
+          source: "upload",
+          labelZh: "漕银账册",
+        },
+        {
+          id: "p_letter",
+          url: "https://cdn.example/letter.jpg",
+          role: "prop",
+          source: "upload",
+          labelZh: "双层密信",
+        },
+        {
+          id: "p_seal",
+          url: "https://cdn.example/seal.jpg",
+          role: "prop",
+          source: "upload",
+          labelZh: "火漆母模",
+        },
+      ],
+    });
+    // 静帧全文污染了芦苇渡口 + 全家道具，可拍表却写断月桥 / 账册
+    const pollutedHay =
+      "【第1段·15s】断月桥\n融图参考：芦苇渡口、双层密信、火漆母模、半枚同盟玉扣、漕银账册";
+    const allowed = resolveManhuaSegmentClipAllowedAssets({
+      haystack: pollutedHay,
+      sceneZh: "断月桥",
+      wardrobePropZh: "湿衣；账册",
+      propHaystack: "服装道具：湿衣；账册\n对白：箭上有火，账册在桥中央！",
+      registry: reg,
+      mainSceneId: "s_reed",
+    });
+    expect(allowed.sceneIds).toEqual(["s_bridge"]);
+    expect(allowed.sceneFallback).toBe(false);
+    expect(allowed.propIds).toEqual(["p_ledger"]);
+    expect(allowed.propIds).not.toContain("p_letter");
+    expect(allowed.propIds).not.toContain("p_seal");
+
+    // 可拍表写断月桥，库里只有芦苇渡口 → 宁可不挂，也不要错绑
+    const missing = resolveManhuaSegmentClipAllowedAssets({
+      haystack: pollutedHay,
+      sceneZh: "断月桥",
+      registry: buildManhuaAssetLockRegistry({
+        customRefs: [
+          {
+            id: "s_reed",
+            url: "https://cdn.example/reed.jpg",
+            role: "scene",
+            source: "upload",
+            labelZh: "芦苇渡口",
+          },
+        ],
+      }),
+      mainSceneId: "s_reed",
+    });
+    expect(missing.sceneIds).toEqual([]);
+    expect(missing.sceneFallback).toBe(false);
   });
 
   it("names the matched characters that still have no usable image", () => {

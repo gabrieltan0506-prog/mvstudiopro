@@ -30,6 +30,7 @@ import {
   resolveManhuaSegmentClipAllowedAssets,
   parseManhuaAssetImageBindBlock,
   sanitizeManhuaClipPromptForUi,
+  sceneLabelMatchesHintZh,
   splitManhuaCastZhNames,
   stripManhuaAssetUrlsFromPrompt,
   type ManhuaAssetLockRegistry,
@@ -133,6 +134,7 @@ import {
   formatWorkbenchShotInjectBlock,
   groupShotsIntoSegments,
   hydrateWorkbenchShotsWithSegmentDialogue,
+  scrubManhuaWorkbenchShotSlop,
   inferWorkbenchShotCastCount,
   manhuaGlobalSegmentIndex,
   manhuaSegmentDurationSec,
@@ -1775,10 +1777,27 @@ export function ensureManhuaFragmentClips(
         splitCastHintCount(effectiveCastZh || planBeat?.castZh),
       ),
     );
+    /**
+     * 道具只拿可拍表服化道 + 对白 + 表演去撞名，不把静帧全文塞进 propHay——
+     * 静帧一旦列过全家道具（或旧污染还在），密信/火漆/玉扣会全中，账册反而丢。
+     */
+    const propHaystack = [
+      String(planBeat?.wardrobePropZh || ""),
+      String(planBeat?.dialogueZh || ""),
+      String(planBeat?.performanceZh || ""),
+      String(planBeat?.intentZh || ""),
+      sceneHintZh || "",
+      ...dialogueLines,
+      ...seg.shots.flatMap((s) => [s.actionZh, s.dialogueZh, s.intentZh]),
+    ]
+      .filter(Boolean)
+      .join("\n");
     const segAssets = resolveManhuaSegmentClipAllowedAssets({
       haystack,
       castZh: effectiveCastZh || planBeat?.castZh,
       wardrobePropZh: planBeat?.wardrobePropZh,
+      sceneZh: sceneFromPlan || sceneFromKeyart || undefined,
+      propHaystack,
       registry: lockRegistry,
       assetCanon: opts?.assetCanon,
       mainSceneId: mainScene?.id,
@@ -1794,15 +1813,28 @@ export function ensureManhuaFragmentClips(
       segAssets.characterIds,
     );
     const hydratedShots = hydrateWorkbenchShotsWithSegmentDialogue(
-      seg.shots,
+      scrubManhuaWorkbenchShotSlop(seg.shots, {
+        performanceZh: planBeat?.performanceZh,
+        intentZh: planBeat?.intentZh || intentZh,
+        sceneHintZh,
+      }),
       dialogueLines,
       planBeat?.performanceZh,
       { speakerTagByNameZh },
     );
+    const sceneSlot = segAssets.sceneIds
+      .map((id) => lockRegistry.byRole.scene.find((s) => s.id === id))
+      .find(Boolean);
+    /**
+     * 二次门闩：@场景 标签的地名必须对得上【场景锁】正文。
+     * 对不上就宁可不挂 tag，别再写出「断月桥 … 与@场景2」而 @场景2=芦苇渡口。
+     */
     const sceneTag =
-      segAssets.sceneIds
-        .map((id) => lockRegistry.byRole.scene.find((s) => s.id === id)?.tag)
-        .find(Boolean) || "";
+      sceneSlot &&
+      (!sceneHintZh ||
+        sceneLabelMatchesHintZh(sceneSlot.labelZh, sceneHintZh))
+        ? sceneSlot.tag
+        : "";
     // 审阅可见：场景锁 + 光影景别氛围 + 秒轴轨迹；身份锁写本段 Image 对照
     const timelineBlock = formatWorkbenchSegmentClipInjectBlock({
       segmentIndex: seg.index,

@@ -675,6 +675,34 @@ function textHasName(hay: string, name: string): boolean {
   return n.length >= 2 && hay.includes(n);
 }
 
+/**
+ * 道具名命中：全文匹配，或文案里的短名对上资产长名（「账册」→「漕银账册」）。
+ * 只在可拍表/对白窄 haystack 上用，别拿静帧全文跑——静帧一旦列过全家道具就会全中。
+ */
+export function textHasPropName(hay: string, name: string): boolean {
+  const n = String(name || "").trim();
+  const h = String(hay || "");
+  if (n.length < 2 || !h) return false;
+  if (h.includes(n)) return true;
+  // 取资产名末 2～4 字：账册 / 玉扣 / 朝笏 / 密信 …
+  for (let len = Math.min(4, n.length); len >= 2; len -= 1) {
+    const tail = n.slice(-len);
+    if (h.includes(tail)) return true;
+  }
+  return false;
+}
+
+/** 场景名是否与可拍表地点同一处（允许互为子串：断月桥／夜·断月桥） */
+export function sceneLabelMatchesHintZh(
+  labelZh: string | null | undefined,
+  sceneZh: string | null | undefined,
+): boolean {
+  const a = String(labelZh || "").trim();
+  const b = String(sceneZh || "").trim();
+  if (a.length < 2 || b.length < 2) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
 /** 可拍表「角色：」拆名：按顿号/分号/逗号/与/和 切开 */
 export function splitManhuaCastZhNames(castZh: string | null | undefined): string[] {
   const raw = String(castZh || "").trim();
@@ -725,6 +753,17 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
   /** 可拍表「角色：」原文，最高优先 */
   castZh?: string | null;
   wardrobePropZh?: string | null;
+  /**
+   * 可拍表「场景：」原文。有则强制与 @场景 对齐：点到哪处就锁哪处，
+   * 点不到同名图就空着——禁止回落挂成另一处（断月桥戏绑芦苇渡口那种）。
+   */
+  sceneZh?: string | null;
+  /**
+   * 道具专用窄文案（可拍表服化道 + 对白 + 表演）。
+   * 不传时回落 wardrobePropZh+haystack；传了就**不再**用静帧全文——
+   * 静帧一旦列过全家道具，密信/火漆/玉扣会全中，账册反而锁不到。
+   */
+  propHaystack?: string | null;
   registry: ManhuaAssetLockRegistry | null | undefined;
   assetCanon?: ManhuaWriterAssetCanon | null;
   mainSceneId?: string | null;
@@ -733,7 +772,8 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
 }): ManhuaSegmentClipAllowedAssets {
   const castZh = String(input.castZh || "").trim();
   const wardrobePropZh = String(input.wardrobePropZh || "").trim();
-  const hay = [castZh, wardrobePropZh, String(input.haystack || "")]
+  const sceneZh = String(input.sceneZh || "").trim();
+  const hay = [castZh, wardrobePropZh, sceneZh, String(input.haystack || "")]
     .filter(Boolean)
     .join("\n");
   const reg = input.registry;
@@ -786,37 +826,57 @@ export function resolveManhuaSegmentClipAllowedAssets(input: {
     .map((x) => x.id);
 
   let sceneFallback = false;
-  let sceneIds = scenes
-    .filter((s) => {
+  let sceneIds: string[] = [];
+  if (sceneZh) {
+    /**
+     * 可拍表写了地点 → 只锁同名场景。文案里顺带提到别处（或静帧污染了多处地名）
+     * 也不能改绑；库里没有同名图就空着，宁可【场景锁】只写文字，也不挂错 @场景。
+     */
+    const preferred = scenes.find((s) => {
       const loc = (input.assetCanon?.locations || []).find((l) => l.id === s.id);
       return (
-        textHasName(hay, s.labelZh) ||
-        (loc?.nameZh && textHasName(hay, loc.nameZh)) ||
-        (loc?.aliasZh && textHasName(hay, loc.aliasZh)) ||
-        mentionedTags.includes(s.tag)
+        sceneLabelMatchesHintZh(s.labelZh, sceneZh) ||
+        sceneLabelMatchesHintZh(loc?.nameZh, sceneZh) ||
+        sceneLabelMatchesHintZh(loc?.aliasZh, sceneZh)
       );
-    })
-    .map((s) => s.id);
-  if (!sceneIds.length) {
-    const main = String(input.mainSceneId || "").trim();
-    const hit = main ? scenes.find((s) => s.id === main) : undefined;
-    // 仅当文案完全点不到场景时，才回落本集主场景（场景可共用；角色绝不可假锁）
-    if (hit) {
-      sceneIds = [hit.id];
-      sceneFallback = true;
-    }
+    });
+    if (preferred) sceneIds = [preferred.id];
   } else {
-    sceneIds = sceneIds.slice(0, 1);
+    sceneIds = scenes
+      .filter((s) => {
+        const loc = (input.assetCanon?.locations || []).find((l) => l.id === s.id);
+        return (
+          textHasName(hay, s.labelZh) ||
+          (loc?.nameZh && textHasName(hay, loc.nameZh)) ||
+          (loc?.aliasZh && textHasName(hay, loc.aliasZh)) ||
+          mentionedTags.includes(s.tag)
+        );
+      })
+      .map((s) => s.id);
+    if (!sceneIds.length) {
+      const main = String(input.mainSceneId || "").trim();
+      const hit = main ? scenes.find((s) => s.id === main) : undefined;
+      // 仅当文案完全点不到场景时，才回落本集主场景（场景可共用；角色绝不可假锁）
+      if (hit) {
+        sceneIds = [hit.id];
+        sceneFallback = true;
+      }
+    } else {
+      sceneIds = sceneIds.slice(0, 1);
+    }
   }
 
-  const propHay = [wardrobePropZh, hay].join("\n");
+  const propHay = String(input.propHaystack || "").trim()
+    ? String(input.propHaystack)
+    : [wardrobePropZh, hay].join("\n");
+  const propMentioned = extractManhuaMentionedAssetTags(propHay);
   let propIds = props
     .filter((s) => {
       const p = (input.assetCanon?.props || []).find((x) => x.id === s.id);
       return (
-        textHasName(propHay, s.labelZh) ||
-        (p?.nameZh && textHasName(propHay, p.nameZh)) ||
-        mentionedTags.includes(s.tag)
+        textHasPropName(propHay, s.labelZh) ||
+        (p?.nameZh && textHasPropName(propHay, p.nameZh)) ||
+        propMentioned.includes(s.tag)
       );
     })
     .map((s) => s.id)
