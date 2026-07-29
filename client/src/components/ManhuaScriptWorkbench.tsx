@@ -692,13 +692,18 @@ export default function ManhuaScriptWorkbench({
     });
   }, [story?.outputText, story?.prompt, reverse?.outputText, reverse?.prompt, topic]);
   const episodeStillCount = episodeKeyarts.filter((b) => mediaUrl(b)).length;
+  // A（用户 2026-07-29）：静帧门禁按「一镜一张」的实际分镜节点数算，不用「段×3」估算硬顶。
+  // 已铺出静帧节点后，目标 = 实际已铺节点数（旧稿 13 张不该被新 plan 段×3=18 判成缺 5 张）；
+  // 尚未铺任何静帧节点时，才用分镜数（段×3）排队首次生成。
+  const expectedStillCount =
+    episodeKeyarts.length > 0 ? episodeKeyarts.length : shots.length;
   const stillsCountReady =
-    shots.length > 0
-      ? episodeStillCount >= shots.length
+    expectedStillCount > 0
+      ? episodeStillCount >= expectedStillCount
       : episodeStillCount > 0;
   /** Skill：资产须垫图改图锁定；仅有成图 URL 不算可烧成片 */
   const keyartsPixelLocked = areManhuaKeyartsPixelLocked(episodeKeyarts, {
-    minCount: shots.length > 0 ? shots.length : 1,
+    minCount: expectedStillCount > 0 ? expectedStillCount : 1,
   });
   const stillsReadyEnough = stillsCountReady && keyartsPixelLocked;
 
@@ -1429,15 +1434,18 @@ export default function ManhuaScriptWorkbench({
     return stages.map((stage) => {
       if (stage === "keyart") {
         // 须出齐且垫图锁过，才算阶段完成；禁止「有一张图就打勾」
+        // A：目标按「一镜一张」的实际已铺节点数算（未铺时才用段×3 分镜数排队）
+        const expected =
+          episodeKeyarts.length > 0 ? episodeKeyarts.length : shots.length;
         const has =
-          shots.length > 0
-            ? episodeStillCount >= shots.length && keyartsPixelLocked
+          expected > 0
+            ? episodeStillCount >= expected && keyartsPixelLocked
             : episodeStillCount > 0 && keyartsPixelLocked;
         return {
           stage,
           label:
             episodeKeyarts.length > 1
-              ? `${MANHUA_FACTORY_STAGE_LABEL_ZH[stage]} ${episodeStillCount}/${Math.max(shots.length, episodeKeyarts.length, 1)}`
+              ? `${MANHUA_FACTORY_STAGE_LABEL_ZH[stage]} ${episodeStillCount}/${Math.max(expected, 1)}`
               : MANHUA_FACTORY_STAGE_LABEL_ZH[stage],
           has,
           blockId: activeKeyart?.id || episodeKeyarts[0]?.id,
@@ -4085,7 +4093,7 @@ export default function ManhuaScriptWorkbench({
                 >
                   <span className="text-[10px] text-cyan-50/85">
                     静帧 {episodeStillCount}/
-                    {Math.max(episodeKeyarts.length, shots.length, 1)}
+                    {Math.max(expectedStillCount, 1)}
                     {stillsReadyEnough
                       ? " · 已垫图锁"
                       : keyartsPixelLocked
@@ -4117,7 +4125,7 @@ export default function ManhuaScriptWorkbench({
                       <div className="text-[11px] font-semibold text-cyan-50/90">视觉简报</div>
                       <span className="text-[9px] text-white/40">
                         {keyartsPixelLocked ? "垫图锁过·张数未齐" : "待垫图改图"} · 静帧 0/
-                        {Math.max(episodeKeyarts.length, shots.length, 1)}
+                        {Math.max(expectedStillCount, 1)}
                       </span>
                     </div>
                     <div className="mt-1.5 grid max-h-28 gap-1 overflow-y-auto text-[10px] leading-4 text-white/65">
@@ -5075,7 +5083,7 @@ export default function ManhuaScriptWorkbench({
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[9px] text-white/35">
               已出静帧 {episodeKeyarts.filter((b) => mediaUrl(b)).length}/
-              {Math.max(episodeKeyarts.length, shots.length, 1)}
+              {Math.max(expectedStillCount, 1)}
               {episodeKeyarts.filter((b) => b.status === "error" && !mediaUrl(b)).length
                 ? ` · 失败 ${episodeKeyarts.filter((b) => b.status === "error" && !mediaUrl(b)).length}`
                 : ""}
