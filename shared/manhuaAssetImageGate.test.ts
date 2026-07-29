@@ -308,8 +308,48 @@ describe("manhuaAssetImageGate", () => {
     expect(crowd?.prompt).not.toContain("三视图");
     expect(granary?.layout).toBe("grid2x2");
     expect(granary?.prompt).toContain("2×2");
-    // 烽火岭仅 1 集 → 不额外补四视角卡（主场景已是粮仓）
-    expect(ridge).toBeUndefined();
+    // 烽火岭仅 1 集 → 出单张空镜；从前这里直接跳过，左栏占位点了没反应
+    expect(ridge?.layout).toBe("single");
+    expect(ridge?.prompt).not.toContain("2×2");
+  });
+
+  it("单集出现的场景也进出图计划：点『一键出场景空镜 N 张』不能是死按钮", () => {
+    const loc = (id: string, nameZh: string) => ({
+      id,
+      role: "scene" as const,
+      nameZh,
+      lookZh: "夜雾压水面",
+      motiveZh: "藏身",
+      promptZh: `原创场景空镜·${nameZh}`,
+    });
+    const assetCanon = {
+      characters: [
+        {
+          id: "wa_char_shen",
+          role: "character" as const,
+          nameZh: "沈砚舟",
+          lookZh: "玄色鹤氅",
+          promptZh: "原创角色设定卡·沈砚舟",
+        },
+      ],
+      props: [],
+      locations: [loc("wa_scene_kezhan", "苍云客栈"), loc("wa_scene_qiao", "断月桥")],
+      episodeMainSceneId: { 1: "wa_scene_kezhan" },
+    };
+    const plans = planManhuaAssetImageSpawns(
+      {
+        assetCanon,
+        episodeIndex: 1,
+        topic: "雪关",
+        episodes: [{ index: 1, body: "两人在苍云客栈会面，夜里走断月桥。" }],
+        assetBlocks: [{ id: "sceneplate-wa_scene_kezhan", outputUrl: "https://cdn.example/k.jpg" }],
+      },
+      { forceEpisodeSheets: true },
+    );
+    const bridge = plans.find((p) => p.id.includes("wa_scene_qiao"));
+    expect(bridge?.kind).toBe("sceneplate");
+    // 已出图的客栈不重复烧
+    expect(plans.some((p) => p.id.includes("wa_scene_kezhan"))).toBe(false);
   });
 
   it("C 主配分级：主角(男女主级)出脸+全身两张，配角出单张全身", () => {
