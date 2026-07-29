@@ -2519,9 +2519,15 @@ export default function ManhuaScriptWorkbench({
                 </p>
               </div>
               {regenDraft ? (
+                // 居中浮层：卡片在页面下方时，内联面板会落在视野外，看着就像点了没反应
+                <div
+                  className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 px-4 py-6"
+                  onClick={() => setRegenDraft(null)}
+                >
                 <div
                   data-manhua-regen-draft
-                  className="rounded-xl border border-amber-300/35 bg-amber-500/[0.08] px-3 py-2"
+                  onClick={(e) => e.stopPropagation()}
+                  className="max-h-full w-full max-w-lg overflow-y-auto rounded-xl border border-amber-300/35 bg-[#12100c] px-3 py-2 shadow-2xl"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-[11px] font-semibold text-amber-50">
@@ -2613,11 +2619,12 @@ export default function ManhuaScriptWorkbench({
                       )}
                       {regenTileCount > 1 ? (
                         <p className="mt-1 text-[10px] text-amber-100/70">
-                          换库里那张一次只能换一个：请从缩略图右上角的「重出…」单张进入。
+                          换库里那张一次只能换一个：请从缩略图右下角的「改这张」单张进入。
                         </p>
                       ) : null}
                     </div>
                   ) : null}
+                </div>
                 </div>
               ) : null}
               {episodeSheetGallery.length || pendingSheetAnchors.length ? (
@@ -2784,7 +2791,7 @@ export default function ManhuaScriptWorkbench({
                                         });
                                         onRequestLibraryPicker?.(secRole);
                                       }}
-                                      className={`absolute right-1 top-1 rounded border border-amber-300/50 bg-black/75 px-1 py-0.5 text-[9px] font-semibold text-amber-100 backdrop-blur hover:bg-amber-500/40 disabled:opacity-50 ${
+                                      className={`absolute bottom-6 right-1 rounded border border-amber-300/50 bg-black/75 px-1 py-0.5 text-[9px] font-semibold text-amber-100 backdrop-blur hover:bg-amber-500/40 disabled:opacity-50 ${
                                         oneOpen ? "ring-1 ring-amber-200/70" : ""
                                       }`}
                                       title={`只改「${item.labelZh}」这一张：写一句哪里要改进，或从库里挑一张换`}

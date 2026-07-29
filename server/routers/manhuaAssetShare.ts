@@ -19,6 +19,8 @@ import {
 } from "../../shared/manhuaAssetSharePricing";
 import { quoteManhuaAssetRegenCredits } from "../../shared/manhuaAssetRegenRequest";
 import { generateGptImage2FromRawEnglishPrompt } from "../services/proxyImageService";
+import { lookupManhuaPropShapeHintsZh } from "../services/manhuaPropShapeLookup";
+import { MANHUA_PROP_SHAPE_LOOKUP_MAX } from "../../shared/manhuaPropShapeHint";
 
 function makePublicId(): string {
   return `cma_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -287,5 +289,20 @@ export const manhuaAssetShareRouter = router({
           labelZh: String(r.labelZh || "").trim() || "社区参考",
         })),
       };
+    }),
+
+  /**
+   * 道具实物形制联网核对：出图前问一句该器物长什么样，查不到的键不返回。
+   * 形制不许前台自己编——画错朝笏这类事故要退款（用户 2026-07-29）。
+   */
+  lookupPropShapes: protectedProcedure
+    .input(
+      z.object({
+        namesZh: z.array(z.string().min(1).max(40)).min(1).max(MANHUA_PROP_SHAPE_LOOKUP_MAX),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const hints = await lookupManhuaPropShapeHintsZh(input.namesZh);
+      return { hints };
     }),
 });
