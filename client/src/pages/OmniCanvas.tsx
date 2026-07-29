@@ -3379,6 +3379,12 @@ export default function OmniCanvas() {
        * 让「补齐 N 张」名副其实（N=真实要出的张数），根治误点清全量。
        */
       onlyAnchorIds?: string[];
+      /**
+       * 「重出本类 N 张」：这些 anchor 即使已有成品图，也按**新编译的提示词**重出。
+       * 画布上点节点重跑只会复用旧 prompt，改不掉老毛病（如道具烧字）。
+       * 与增量同性质：不清别的资产、不跳阶段。
+       */
+      regenerateAnchorIds?: string[];
     }) => {
       const assetCanon = opts?.assetCanonOverride ?? projectBible?.assetCanon;
       const episodeIndex = opts?.episodeIndexOverride ?? writerFocusEpisode;
@@ -3387,16 +3393,23 @@ export default function OmniCanvas() {
       const onlyAnchorIdList = (opts?.onlyAnchorIds || [])
         .map((s) => String(s || "").trim())
         .filter(Boolean);
+      const regenerateAnchorIds = (opts?.regenerateAnchorIds || [])
+        .map((s) => String(s || "").trim())
+        .filter(Boolean);
       const onlyAnchorId =
         String(opts?.onlyAnchorId || "").trim() || (onlyAnchorIdList.length === 1 ? onlyAnchorIdList[0]! : "");
-      /** 增量补图（单张或多张）：一律不清旧图、不跳阶段 */
-      const isIncremental = Boolean(onlyAnchorId) || onlyAnchorIdList.length > 0;
+      /** 增量补图/重出（单张或多张）：一律不清旧图、不跳阶段 */
+      const isIncremental =
+        Boolean(onlyAnchorId) || onlyAnchorIdList.length > 0 || regenerateAnchorIds.length > 0;
+      /** 本轮限定处理的 anchor（补缺 + 重出合起来） */
+      const scopedAnchorIds = Array.from(
+        new Set(onlyAnchorIdList.concat(onlyAnchorId ? [onlyAnchorId] : []).concat(regenerateAnchorIds)),
+      );
       const anchorIdMatch = (planId: string) =>
-        onlyAnchorIdList.length > 0
-          ? onlyAnchorIdList.some((a) => planId.includes(a))
-          : onlyAnchorId
-            ? planId.includes(onlyAnchorId)
-            : true;
+        scopedAnchorIds.length > 0 ? scopedAnchorIds.some((a) => planId.includes(a)) : true;
+      /** 这张是否属于「已有图也要重出」 */
+      const isRegenPlan = (planId: string) =>
+        regenerateAnchorIds.some((a) => planId.includes(a));
       const writerMainSceneId =
         assetCanon?.episodeMainSceneId[episodeIndex] || assetCanon?.locations[0]?.id || "";
       // 按剧本出资产：主场景跟编剧表；清掉未列入场景表的库示范场景（如 scene_06 皇宫大殿）
@@ -3637,6 +3650,7 @@ export default function OmniCanvas() {
       const plannedAll = planManhuaAssetImageSpawns(gateInput, {
         // 单补/补齐时 gate 可能已 ready（其他资产齐），必须强制按剧本表出卡才拿得到这几张
         forceEpisodeSheets: forceRegenerate || !hasEpisodeSheetMedia || isIncremental,
+        regenerateAnchorIds,
       });
       const plans = isIncremental
         ? plannedAll.filter((p) => anchorIdMatch(p.id))
@@ -3752,12 +3766,16 @@ export default function OmniCanvas() {
             block.height = 400;
             working = packAssetSheetPositions([...working, block]);
             block = working.find((b) => b.id === plan.id)!;
-          } else if (!(block.outputUrl || block.outputUrls?.[0])) {
+          } else if (!(block.outputUrl || block.outputUrls?.[0]) || isRegenPlan(plan.id)) {
+            // 已有图 + 指定重出 → 按新编译的提示词重跑（清掉旧产物，别让 UI 显示成已完成）
             block = {
               ...block,
               prompt: plan.prompt,
               status: "idle",
               error: undefined,
+              ...(isRegenPlan(plan.id)
+                ? { outputUrl: undefined, outputUrls: undefined }
+                : {}),
               ...(deriveRefUrl
                 ? { imageMode: "edit" as const, refImageUrl: deriveRefUrl }
                 : {}),
@@ -4967,6 +4985,9 @@ export default function OmniCanvas() {
                   }
                   onFillPendingSheets={(anchorIds) =>
                     confirmAssetsAndPrepareImages({ onlyAnchorIds: anchorIds })
+                  }
+                  onRegenerateSheets={(anchorIds) =>
+                    confirmAssetsAndPrepareImages({ regenerateAnchorIds: anchorIds })
                   }
                   onRegenerateAssetsFromScript={() =>
                     void confirmAssetsAndPrepareImages({ forceRegenerate: true })

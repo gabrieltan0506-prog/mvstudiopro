@@ -549,6 +549,48 @@ describe("关键道具单件图", () => {
     expect(withUpload.some((p) => p.kind === "propsheet")).toBe(false);
   });
 
+  it("regenerateAnchorIds：已有图的道具也按新提示词重出（修烧字用）", () => {
+    const args = {
+      assetCanon: canonWithProps,
+      episodeIndex: 1,
+      assetBlocks: [{ id: "propsheet-wa_prop_yupei", outputUrl: "https://cdn.example/jade.jpg" }],
+    };
+    // 不点名重出 → 已有图就跳过
+    expect(
+      planManhuaAssetImageSpawns(args, { forceEpisodeSheets: true }).some(
+        (p) => p.id === "propsheet-wa_prop_yupei",
+      ),
+    ).toBe(false);
+    // 点名重出 → 重新编译提示词进计划
+    const regen = planManhuaAssetImageSpawns(args, {
+      forceEpisodeSheets: true,
+      regenerateAnchorIds: ["wa_prop_yupei"],
+    });
+    const jade = regen.find((p) => p.id === "propsheet-wa_prop_yupei");
+    expect(jade).toBeTruthy();
+    // 重出的意义在于带上新加的禁烧字硬锁
+    expect(jade?.prompt).toContain("禁字硬锁");
+  });
+
+  it("regenerateAnchorIds：用户自传过同名道具也不再挡重出", () => {
+    const regen = planManhuaAssetImageSpawns(
+      {
+        assetCanon: canonWithProps,
+        episodeIndex: 1,
+        customRefs: [
+          {
+            id: "cust_jade",
+            url: "https://cdn.example/mine.jpg",
+            role: "prop",
+            labelZh: "双鱼玉佩",
+          },
+        ],
+      },
+      { forceEpisodeSheets: true, regenerateAnchorIds: ["wa_prop_yupei"] },
+    );
+    expect(regen.some((p) => p.id === "propsheet-wa_prop_yupei")).toBe(true);
+  });
+
   it("道具再多也只出前若干张，别把额度铺满", () => {
     const many = Array.from({ length: MANHUA_PROP_SHEET_MAX + 4 }, (_, i) => ({
       id: `wa_prop_${i}`,

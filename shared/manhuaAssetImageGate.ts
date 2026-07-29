@@ -350,10 +350,20 @@ export function planManhuaAssetImageSpawns(
      * 避免「我的角色/场景」垫图已齐 → gate.ready，却永远 plan=[]、按钮变成「进入分镜」。
      */
     forceEpisodeSheets?: boolean;
+    /**
+     * 指定这些 anchor **即使已有成品图也重新编译提示词并重出**（「重出本类 N 张」用）。
+     * 场景：提示词修好了（如道具禁烧字），旧图得按新 prompt 重出；画布上点节点重跑只会
+     * 复用旧 prompt，改不掉老毛病。
+     */
+    regenerateAnchorIds?: string[];
   },
 ): ManhuaAssetImageSpawnPlan[] {
   const gate = evaluateManhuaAssetImageGate(input);
   const forceEpisodeSheets = Boolean(opts?.forceEpisodeSheets);
+  const regenIds = new Set(
+    (opts?.regenerateAnchorIds || []).map((s) => String(s || "").trim()).filter(Boolean),
+  );
+  const isRegen = (id: string) => regenIds.has(String(id || "").trim());
   if (!forceEpisodeSheets && (gate.viaCustomUpload || gate.ready)) return [];
 
   const artStyle = getManhuaArtStylePreset(input.artStyleId);
@@ -382,8 +392,10 @@ export function planManhuaAssetImageSpawns(
         .map((id) => String(id || "").trim())
         .filter(Boolean);
   const missingCastIds = forceEpisodeSheets
-    ? castIdsForSheets.filter((id) => !blockHasMedia(findAssetBlock(blocks, "charsheet-", id)))
-    : gate.missingCastIds;
+    ? castIdsForSheets.filter(
+        (id) => isRegen(id) || !blockHasMedia(findAssetBlock(blocks, "charsheet-", id)),
+      )
+    : Array.from(new Set(gate.missingCastIds.concat(castIdsForSheets.filter(isRegen))));
 
   for (const id of missingCastIds) {
     const existing = findAssetBlock(blocks, "charsheet-", id);
@@ -682,9 +694,11 @@ export function planManhuaAssetImageSpawns(
         episodes: input.episodes,
         buildSingle: buildManhuaScenePlateGenPrompt,
       });
-      if (resolved.layout !== "grid2x2") continue;
+      const regenThis = isRegen(loc.id);
+      // 指定重出时不限四视角：单张空镜也要能按新提示词重来
+      if (!regenThis && resolved.layout !== "grid2x2") continue;
       const existing = findAssetBlock(blocks, "sceneplate-", loc.id);
-      if (blockHasMedia(existing)) continue;
+      if (!regenThis && blockHasMedia(existing)) continue;
       plans.push({
         id: existing?.id || `sceneplate-${loc.id}`,
         kind: "sceneplate",
@@ -717,9 +731,12 @@ export function planManhuaAssetImageSpawns(
       if (spawned >= MANHUA_PROP_SHEET_MAX) break;
       if (!shouldSpawnManhuaPropPlate(prop)) continue;
       const existing = findAssetBlock(blocks, "propsheet-", prop.id);
-      if (blockHasMedia(existing)) continue;
+      // 指定重出时：已有图也要按新提示词重来（例：修掉道具烧字）
+      const regenThis = isRegen(prop.id);
+      if (!regenThis && blockHasMedia(existing)) continue;
       // 用户自己上传/生成过同名道具时不重复烧
       if (
+        !regenThis &&
         customRefsByRole(input.customRefs, "prop").some(
           (r) =>
             String(r.seedLibraryId || "") === prop.id ||
