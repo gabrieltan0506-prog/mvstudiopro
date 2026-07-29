@@ -365,6 +365,11 @@ export function planManhuaAssetImageSpawns(
      * 补缺的新图不受影响——他描述的是眼前这张的毛病。
      */
     regenerateNoteZh?: string;
+    /**
+     * `道具名 → 实物形制句`，由服务端联网核对后传进来（见 manhuaPropShapeLookup）。
+     * 缺哪件就少一行；形制不许在这里凭常识补，画错器物是要退款的。
+     */
+    propShapeHintsZh?: Record<string, string>;
   },
 ): ManhuaAssetImageSpawnPlan[] {
   const gate = evaluateManhuaAssetImageGate(input);
@@ -765,6 +770,7 @@ export function planManhuaAssetImageSpawns(
           topic,
           artStyleLabelZh: artStyle.labelZh,
           artStylePromptZh: artStyle.promptZh,
+          shapeHintZh: opts?.propShapeHintsZh?.[prop.nameZh],
         }),
         labelZh: prop.nameZh,
         layout: "single",

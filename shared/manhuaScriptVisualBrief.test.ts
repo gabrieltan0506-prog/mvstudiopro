@@ -37,12 +37,19 @@ describe("道具图软边界（修烧海报标题 bug）", () => {
     expect(p).not.toContain("朝堂江湖权谋恩仇记");
   });
 
-  it("文书/令牌类补一句纸面留白的正向描述", () => {
+  it("文书/令牌类补一句纸面材质的正向描述", () => {
     for (const name of ["漕银账册", "双层密信", "巡察银令", "象牙色朝笏"]) {
       const p = buildManhuaPropPlateGenPrompt({ propNameZh: name });
-      expect(p).toContain("一律留白");
-      expect(p).toContain("压痕与折痕");
+      expect(p).toContain("只见材质本身");
+      expect(p).toContain("折痕与水渍的深浅晕染");
     }
+  });
+
+  /** 2026-07-29 验收：朝笏被画成一张纸——旧句只说「纸面、封皮」，把形制带偏了。 */
+  it("不再拿纸面、封皮去描述所有文书类器物（朝笏被带成纸的根因）", () => {
+    const hu = buildManhuaPropPlateGenPrompt({ propNameZh: "象牙色朝笏" });
+    expect(hu).not.toContain("纸面");
+    expect(hu).not.toContain("封皮");
   });
 
   it("普通器物不追加文书专用句", () => {
@@ -50,7 +57,20 @@ describe("道具图软边界（修烧海报标题 bug）", () => {
       propNameZh: "残局棋盘",
       propPromptZh: "木质棋盘，黑白子散落",
     });
-    expect(p).not.toContain("一律留白");
+    expect(p).not.toContain("只见材质本身");
+  });
+
+  /**
+   * 2026-07-29 验收：象牙色朝笏被画上「空白，不…」。
+   * 中文段里凡出现「留白 / 空白 / 写字」这类元指令，模型就照着写到器物表面上。
+   */
+  it("中文段不出现留白、空白、写字这类元指令（模型会照着画上去）", () => {
+    for (const name of ["象牙色朝笏", "双层密信", "残局棋盘"]) {
+      const zh = buildManhuaPropPlateGenPrompt({ propNameZh: name }).split(
+        "STRICT NO TEXT",
+      )[0]!;
+      expect(zh).not.toMatch(/留白|空白|写字|写过|文字|汉字/);
+    }
   });
 });
 
@@ -128,7 +148,8 @@ describe("manhuaScriptVisualBrief", () => {
     });
     expect(p).toContain("主场景空镜参考");
     expect(p).toContain("秘境洞府");
-    expect(p).toContain("禁字硬锁");
     expect(p).toContain("STRICT NO TEXT");
+    // 中文段里的「禁止标题/绝不能写成标题」这类元指令实测会被画上去
+    expect(p.split("STRICT NO TEXT")[0]).not.toMatch(/标题|禁字|可读字/);
   });
 });

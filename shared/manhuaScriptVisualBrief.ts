@@ -19,6 +19,7 @@ import {
   MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
   MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
 } from "./manhuaScriptWorkbench.js";
+import { formatManhuaPropShapeHintLineZh } from "./manhuaPropShapeHint.js";
 
 const CAMERA_RE =
   /远景|大远景|全景|中全景|中景|中近景|近景|特写|大特写|过肩|双人镜|推近|推进|拉远|横移|环绕|俯拍|仰拍|跟拍|手持|固定机位|一镜到底|甩镜|微推|缓慢推|反向平移|红蓝双轨|缓慢推进/;
@@ -330,14 +331,11 @@ export function buildManhuaScenePlateGenPrompt(opts: {
   const styleLabel = String(opts.artStyleLabelZh || "").trim();
   const stylePrompt = String(opts.artStylePromptZh || "").trim();
   return [
-    "生成一张竖版漫剧主场景空镜参考（9:16）：环境层次与纵深清楚，可互动物件可读。",
-    "按场景本体来画；场景名、大纲、对白作隐藏说明，禁止标题大字、书法、路牌可读字。可有远处剪影，少占满人物特写。",
-    `（隐藏场景名·不必画出：${name}）`,
-    scenePrompt ? `请画出的场景视觉：${scenePrompt}` : "",
-    topic ? `（隐藏题材氛围·绝不能写成标题：${topic.slice(0, 120)}）` : "",
+    "生成一张竖版漫剧主场景空镜参考（9:16）：环境层次与纵深清楚，陈设与材质看得清。",
+    "只按场景本体来画：光线、材质、陈设与纵深撑起画面；可有远处剪影，不要人物特写占满。",
+    scenePrompt ? `请画出的场景视觉：${name} —— ${scenePrompt}` : `请画出的场景视觉：${name}`,
     styleLabel ? `【画风】${styleLabel}` : "",
     stylePrompt || "",
-    MANHUA_ASSET_SHEET_SOFT_NO_TEXT_ZH,
     MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
   ]
     .filter(Boolean)
@@ -364,6 +362,7 @@ const PROP_TEXT_BEARING_RE =
 function isTextBearingProp(nameZh: string, propPromptZh: string): boolean {
   return PROP_TEXT_BEARING_RE.test(`${nameZh}${propPromptZh}`);
 }
+
 
 /**
  * 从道具视觉句里剥掉叙事文本，只留外形材质。
@@ -401,6 +400,11 @@ export function buildManhuaPropPlateGenPrompt(opts: {
   topic?: string;
   artStyleLabelZh?: string;
   artStylePromptZh?: string;
+  /**
+   * 实物形制（已由服务端联网核对）。
+   * 空串就不出这一行——形制宁缺勿错，Agent 不许凭常识补。
+   */
+  shapeHintZh?: string;
 }): string {
   const name = String(opts.propNameZh || "").trim() || "关键道具";
   const propPrompt = String(opts.propPromptZh || "").trim();
@@ -416,9 +420,10 @@ export function buildManhuaPropPlateGenPrompt(opts: {
   return [
     "拍一张竖版单件器物静物照（9:16）：博物馆藏品级静物摄影，只有这一件器物与背景光，居中占画面主体，四分之三主视角，材质、纹样、磨损与配色看得清。",
     "背景是干净的浅色或深色渐变；画面里没有人、没有手、没有环境陈设，不做多角度并排或分格拼图，只要这一件的正面主视角。",
-    "器物表面保持素净的旧料本色：纸是泛黄空白的旧纸，木见木纹，铜有包浆，绢见织纹；岁月只用磨损、压痕、水渍、褪色来讲。",
+    "器物表面保持素净的旧料本色：纸见泛黄纤维，木见木纹，铜有包浆，绢见织纹；岁月只用磨损、压痕、水渍、褪色来讲。",
+    formatManhuaPropShapeHintLineZh(opts.shapeHintZh || ""),
     isTextBearingProp(name, propPrompt)
-      ? "这类纸面、封皮、牌面、笏面一律留白：想暗示「用过、写过」，就用墨色晕染的深浅、压痕与折痕来暗示。"
+      ? "器物表面只见材质本身：纤维走向或细密直纹、边角磨圆、折痕与水渍的深浅晕染，以及压过的凹痕。"
       : "",
     visual ? `器物外形与材质：${visual}` : "",
     styleLabel ? `【画风】${styleLabel}` : "",

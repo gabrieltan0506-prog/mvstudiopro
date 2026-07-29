@@ -14,6 +14,7 @@ import {
   planManhuaAssetImageSpawns,
   seedIdFromManhuaSheetBlockId,
 } from "@shared/manhuaAssetImageGate";
+import { MANHUA_PROP_SHAPE_LOOKUP_MAX } from "@shared/manhuaPropShapeHint";
 import {
   buildManhuaCustomAssetGenFromLibraryPrompt,
   defaultManhuaCustomAssetRefDuty,
@@ -678,6 +679,8 @@ export default function OmniCanvas() {
   const generateAssetStillMutation = trpc.manhuaAssetShare.generateAssetStill.useMutation();
   /** 重出 / 换库图的扣费（按库档 15/20）；生图仍走画布长任务，别用同步接口撞网关 120s */
   const chargeAssetRegenMutation = trpc.manhuaAssetShare.chargeAssetRegen.useMutation();
+  /** 道具实物形制联网核对：出图前问一句该器物长什么样（查不到就不写，绝不猜） */
+  const lookupPropShapesMutation = trpc.manhuaAssetShare.lookupPropShapes.useMutation();
   /** 重出弹框里「从库里挑一张」的候选；按类拉取 */
   const [libraryPickerRole, setLibraryPickerRole] =
     useState<ManhuaCustomAssetRole | null>(null);
@@ -3742,11 +3745,33 @@ export default function OmniCanvas() {
         return;
       }
 
+      /**
+       * 道具形制先联网核对：朝笏被画成一张纸就是因为没人告诉模型它长什么样。
+       * 查不到的道具照旧出图，只是少一行形制——不让检索挡住生成。
+       */
+      let propShapeHintsZh: Record<string, string> = {};
+      const propNamesToLookup = (assetCanon?.props || [])
+        .map((p) => String(p.nameZh || "").trim())
+        .filter(Boolean)
+        .slice(0, MANHUA_PROP_SHAPE_LOOKUP_MAX);
+      if (propNamesToLookup.length) {
+        try {
+          setFactoryProgress("核对道具实物形制…");
+          const res = await lookupPropShapesMutation.mutateAsync({ namesZh: propNamesToLookup });
+          propShapeHintsZh = res.hints || {};
+          pushDebug("propShapeLookup", {
+            detail: `asked=${propNamesToLookup.length} · got=${Object.keys(propShapeHintsZh).length}`,
+          });
+        } catch (e: unknown) {
+          console.warn("[propShapeLookup]", e instanceof Error ? e.message : String(e));
+        }
+      }
       const plannedAll = planManhuaAssetImageSpawns(gateInput, {
         // 单补/补齐时 gate 可能已 ready（其他资产齐），必须强制按剧本表出卡才拿得到这几张
         forceEpisodeSheets: forceRegenerate || !hasEpisodeSheetMedia || isIncremental,
         regenerateAnchorIds,
         regenerateNoteZh: opts?.regenerateNoteZh,
+        propShapeHintsZh,
       });
       const plans = isIncremental
         ? plannedAll.filter((p) => anchorIdMatch(p.id))
