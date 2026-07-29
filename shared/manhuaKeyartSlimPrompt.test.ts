@@ -98,4 +98,46 @@ describe("image/video prompt size risk (post-slim)", () => {
     // Seedance 侧未见 32k 硬拒；若上游再肥，应另做成片短包（本 PR 先稳住静帧）。
     expect(merged.length).toBeLessThan(20_000);
   });
+
+  it("本集有道具设定图时，道具短锁只写本集道具，不再塞内置示范道具", () => {
+    const episodePropRefs = [
+      {
+        id: "r1",
+        url: "https://cdn.example/prop-1.png",
+        role: "prop" as const,
+        labelZh: "半枚同盟玉扣",
+        seedLibraryId: "wa_prop_yukou",
+        source: "generated" as const,
+        refDuty: "style" as const,
+      },
+      {
+        id: "r2",
+        url: "https://cdn.example/prop-2.png",
+        role: "prop" as const,
+        labelZh: "象牙色朝笏",
+        seedLibraryId: "wa_prop_chaohu",
+        source: "generated" as const,
+        refDuty: "style" as const,
+      },
+    ];
+
+    const withEpisodeProps = buildManhuaKeyartSlimPrompt({
+      artStyleId: "cg_drama",
+      characterIds: ["char_f_01", "char_m_01"],
+      sceneId: "scene_04",
+      propIds: ["demo_prop_romance_ring_box"],
+      customRefs: episodePropRefs,
+    });
+    expect(withEpisodeProps).toContain("【道具短锁】半枚同盟玉扣、象牙色朝笏");
+    expect(withEpisodeProps).not.toContain("戒指盒");
+
+    // 没有本集道具图时仍回落内置示范，老流程不受影响
+    const demoOnly = buildManhuaKeyartSlimPrompt({
+      artStyleId: "cg_drama",
+      characterIds: ["char_f_01", "char_m_01"],
+      sceneId: "scene_04",
+      propIds: ["demo_prop_romance_ring_box"],
+    });
+    expect(demoOnly).toContain("【道具短锁】丝绒戒指盒");
+  });
 });
