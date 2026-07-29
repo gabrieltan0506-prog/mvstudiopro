@@ -36,10 +36,11 @@ describe("manhuaPropShapeHint", () => {
     expect(out.endsWith("。")).toBe(true);
   });
 
-  it("成行时带上「按实物来画」；没形制就不出这一行", () => {
-    expect(formatManhuaPropShapeHintLineZh("细长微弯的窄板，两面素净")).toBe(
-      "实物形制（按实物来画，不要凭想象改形状）：细长微弯的窄板，两面素净。",
-    );
+  it("成行时带上「按实物来画」与「比例优先于构图」；没形制就不出这一行", () => {
+    const line = formatManhuaPropShapeHintLineZh("细长微弯的窄板，两面素净");
+    expect(line).toContain("实物形制（按实物来画，不要凭想象改形状）：细长微弯的窄板，两面素净。");
+    // 朝笏被画成 3:1 砧板：9:16 竖幅诱使模型撑满画面，必须点明比例优先
+    expect(line).toContain("真实长宽比优先于构图饱满");
     expect(formatManhuaPropShapeHintLineZh("UNKNOWN")).toBe("");
   });
 });

@@ -67,6 +67,7 @@ import { trpc } from "@/lib/trpc";
 import {
   Clapperboard,
   LoaderCircle,
+  Maximize2,
   Plus,
   Sparkles,
   Upload,
@@ -286,6 +287,7 @@ function CanvasBlockPreviewPanel({
   isUploading: boolean;
   displayOutputs: string[];
 }) {
+  const openPreview = React.useContext(CanvasImagePreviewCtx);
   const phase = block.uploadPhase ?? "idle";
   const uploading = isUploading || phase === "uploading";
   const done = block.uploadProgressDone ?? 0;
@@ -369,12 +371,19 @@ function CanvasBlockPreviewPanel({
           {block.kind === "image" && displayOutputs.length > 0 ? (
             <div className={`grid gap-1 ${displayOutputs.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
               {displayOutputs.map((url, idx) => (
-                <img
-                  key={`${url}-${idx}`}
-                  src={url}
-                  alt={`output-${idx + 1}`}
-                  className="max-h-20 w-full rounded-md border border-white/10 object-cover"
-                />
+                <div key={`${url}-${idx}`} className="relative">
+                  <img
+                    src={url}
+                    alt={`output-${idx + 1}`}
+                    title="双击放大"
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      openPreview?.({ url, labelZh: `结果${idx + 1}` });
+                    }}
+                    className="max-h-20 w-full cursor-zoom-in rounded-md border border-white/10 object-cover"
+                  />
+                  <CanvasImageZoomButton url={url} labelZh={`结果${idx + 1}`} />
+                </div>
               ))}
             </div>
           ) : null}
@@ -400,6 +409,30 @@ function CanvasBlockPreviewPanel({
   );
 }
 
+type CanvasImagePreview = { url: string; labelZh?: string };
+
+/** 画布节点里点「放大」用；节点拖动逻辑在 pointerdown，所以放大只挂按钮与双击 */
+const CanvasImagePreviewCtx = React.createContext<((p: CanvasImagePreview) => void) | null>(null);
+
+function CanvasImageZoomButton({ url, labelZh }: CanvasImagePreview) {
+  const openPreview = React.useContext(CanvasImagePreviewCtx);
+  if (!openPreview) return null;
+  return (
+    <button
+      type="button"
+      title="放大看"
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        openPreview({ url, labelZh });
+      }}
+      className="absolute bottom-1.5 right-1.5 z-[2] rounded-md border border-white/25 bg-black/70 p-1 text-white/85 hover:bg-black/85"
+    >
+      <Maximize2 className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
 /** 关键静帧 / 场景 / 道具 / 定妆：只留图 + ID */
 function CanvasAssetVisualBody({
   block,
@@ -408,6 +441,7 @@ function CanvasAssetVisualBody({
   block: CanvasBlock;
   displayOutputs: string[];
 }) {
+  const openPreview = React.useContext(CanvasImagePreviewCtx);
   const assetAt = parseManhuaCanvasAssetAtTag(block.prompt);
   const idChip =
     assetAt ||
@@ -446,7 +480,19 @@ function CanvasAssetVisualBody({
       </div>
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/40">
         {imgUrl ? (
-          <img src={imgUrl} alt={shortId} className="h-full w-full object-contain" />
+          <>
+            <img
+              src={imgUrl}
+              alt={shortId}
+              title="双击放大"
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                openPreview?.({ url: imgUrl, labelZh: shortId });
+              }}
+              className="h-full w-full cursor-zoom-in object-contain"
+            />
+            <CanvasImageZoomButton url={imgUrl} labelZh={shortId} />
+          </>
         ) : (
           <div className="flex h-full min-h-[120px] items-center justify-center text-[11px] text-white/35">
             暂无图片
@@ -489,6 +535,8 @@ export default function FreeformCanvas({
   const [spawnMenu, setSpawnMenu] = useState<SpawnMenuState>(null);
   const [toolbarMenu, setToolbarMenu] = useState<ToolbarMenuState>(null);
   const [dragState, setDragState] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
+  const [imagePreview, setImagePreview] = useState<CanvasImagePreview | null>(null);
+  const openImagePreview = useCallback((p: CanvasImagePreview) => setImagePreview(p), []);
   const [resizeState, setResizeState] = useState<ResizeState>(null);
   const [uploadBusyId, setUploadBusyId] = useState<string | null>(null);
   const [maskBusyId, setMaskBusyId] = useState<string | null>(null);
@@ -987,12 +1035,51 @@ export default function FreeformCanvas({
   };
 
   return (
+    <CanvasImagePreviewCtx.Provider value={openImagePreview}>
     <div
       data-freeform-canvas-root
       className={`flex gap-0 overflow-hidden rounded-[28px] border border-white/10 bg-[#05080f]/90 ${
         fillContainer ? "h-full min-h-0 w-full" : "min-h-[720px]"
       }`}
     >
+      {imagePreview ? (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/85 p-6"
+          onClick={() => setImagePreview(null)}
+        >
+          <div className="flex max-h-full w-full max-w-4xl flex-col items-center gap-2">
+            <img
+              src={imagePreview.url}
+              alt=""
+              onClick={(e) => e.stopPropagation()}
+              className="max-h-[80vh] w-auto max-w-full rounded-xl border border-white/15 object-contain"
+            />
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-2 rounded-lg bg-black/70 px-3 py-1.5"
+            >
+              <span className="text-[12px] font-semibold text-white/90">
+                {imagePreview.labelZh || "放大预览"}
+              </span>
+              <a
+                href={imagePreview.url}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded border border-white/20 px-2 py-0.5 text-[11px] text-white/80 hover:bg-white/[0.08]"
+              >
+                原图新窗口
+              </a>
+              <button
+                type="button"
+                onClick={() => setImagePreview(null)}
+                className="rounded border border-white/20 px-2 py-0.5 text-[11px] text-white/80 hover:bg-white/[0.08]"
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <input
         ref={toolbarFileInputRef}
         type="file"
@@ -1803,5 +1890,6 @@ export default function FreeformCanvas({
         </>
       ) : null}
     </div>
+    </CanvasImagePreviewCtx.Provider>
   );
 }
