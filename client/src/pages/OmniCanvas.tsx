@@ -676,6 +676,25 @@ export default function OmniCanvas() {
     retry: 1,
   });
   const generateAssetStillMutation = trpc.manhuaAssetShare.generateAssetStill.useMutation();
+  /** 重出（按库档 15/20 计价）与「换用库里那张」 */
+  const regenerateAssetStillMutation =
+    trpc.manhuaAssetShare.regenerateAssetStill.useMutation();
+  const useLibraryAssetMutation = trpc.manhuaAssetShare.useLibraryAsset.useMutation();
+  /** 重出弹框里「从库里挑一张」的候选；按类拉取 */
+  const [libraryPickerRole, setLibraryPickerRole] =
+    useState<ManhuaCustomAssetRole | null>(null);
+  const libraryPickerQuery = trpc.manhuaAssetShare.listCommunity.useQuery(
+    {
+      role:
+        libraryPickerRole === "scene"
+          ? "scene"
+          : libraryPickerRole === "character"
+            ? "character"
+            : "prop",
+      limit: 24,
+    },
+    { enabled: Boolean(libraryPickerRole), staleTime: 30_000 },
+  );
   const contributeToLibraryMutation =
     trpc.manhuaAssetShare.contributeToLibrary.useMutation();
   const contributeToLibraryRef = useRef(contributeToLibraryMutation.mutateAsync);
@@ -3292,6 +3311,82 @@ export default function OmniCanvas() {
     [],
   );
 
+  /**
+   * 换用公有库里挑的那张：不生图，但照收费（拿走的是别人贡献的成品，用户 2026-07-29 口径）。
+   * 扣费成功才把图写回该锚点的设定图节点；旧图先进暂存区，手滑了还能恢复。
+   */
+  const swapManhuaAssetSheetFromLibrary = useCallback(
+    async (anchorId: string, libraryImageUrl?: string) => {
+      const url = String(libraryImageUrl || "").trim();
+      const anchor = String(anchorId || "").trim();
+      if (!anchor || !/^https:\/\//i.test(url)) {
+        toast.message("请先在库里点选一张");
+        return;
+      }
+      if (!user?.id) {
+        toast.message("请先登录后再使用库内资产");
+        return;
+      }
+      const target = blocks.find(
+        (b) =>
+          (b.id.startsWith("charsheet-") ||
+            b.id.startsWith("sceneplate-") ||
+            b.id.startsWith("propsheet-")) &&
+          b.id.includes(anchor) &&
+          // 主角有全身与脸特写两块，换库图只落到主块，不动派生的脸
+          !b.id.startsWith("charsheet-face-"),
+      );
+      if (!target) {
+        toast.message("没找到这个资产的设定图节点");
+        return;
+      }
+      const role: ManhuaAssetRecycleRole = target.id.startsWith("sceneplate-")
+        ? "scene"
+        : target.id.startsWith("propsheet-")
+          ? "prop"
+          : "character";
+      try {
+        const res = await useLibraryAssetMutation.mutateAsync({
+          role,
+          imageUrl: url,
+          tileCount: 1,
+        });
+        stashManhuaAssetBlocksBeforePurge([target], projectBible?.assetCanon);
+        handleBlocksChange((prev) =>
+          prev.map((b) =>
+            b.id === target.id
+              ? {
+                  ...b,
+                  outputUrl: url,
+                  outputUrls: [],
+                  status: "done" as const,
+                  error: undefined,
+                }
+              : b,
+          ),
+        );
+        openManhuaFactoryCanvas(target.id);
+        toast.message("已换成库内资产", {
+          description: `已扣 ${res.creditsCharged} 积分；原图已进暂存区，可恢复`,
+        });
+      } catch (e: unknown) {
+        toast.error("换用库内资产失败", {
+          description: e instanceof Error ? e.message : "请稍后重试",
+        });
+      }
+    },
+    [
+      blocks,
+      handleBlocksChange,
+      openManhuaFactoryCanvas,
+      projectBible?.assetCanon,
+      stashManhuaAssetBlocksBeforePurge,
+      useLibraryAssetMutation,
+      user?.id,
+    ],
+  );
+
+
   /** 从暂存区救回资产块：本地不存在的重新加回画布 */
   const restoreManhuaAssetsFromStash = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -3385,6 +3480,8 @@ export default function OmniCanvas() {
        * 与增量同性质：不清别的资产、不跳阶段。
        */
       regenerateAnchorIds?: string[];
+      /** 用户在重出弹框写的「哪里要改进」；只压到重出那几张的提示词尾部 */
+      regenerateNoteZh?: string;
     }) => {
       const assetCanon = opts?.assetCanonOverride ?? projectBible?.assetCanon;
       const episodeIndex = opts?.episodeIndexOverride ?? writerFocusEpisode;
@@ -3651,10 +3748,16 @@ export default function OmniCanvas() {
         // 单补/补齐时 gate 可能已 ready（其他资产齐），必须强制按剧本表出卡才拿得到这几张
         forceEpisodeSheets: forceRegenerate || !hasEpisodeSheetMedia || isIncremental,
         regenerateAnchorIds,
+        regenerateNoteZh: opts?.regenerateNoteZh,
       });
       const plans = isIncremental
         ? plannedAll.filter((p) => anchorIdMatch(p.id))
         : plannedAll;
+      /**
+       * 重出档位按**真实张数**算，不按锚点数：主角一个人就有全身 + 脸特写两张，
+       * 按锚点算会少收（2 张收成 15）。
+       */
+      const regenTileCount = Math.max(1, plans.filter((p) => isRegenPlan(p.id)).length);
       if (!plans.length) {
         toast.message(
           isIncremental
@@ -3734,6 +3837,12 @@ export default function OmniCanvas() {
            * 不再独立重画——独立两次生成连性别都能漂（陆清和曾「全身女·脸特写男」）。
            * 底图没出就跳过这张，绝不退回独立重画。
            */
+          /** 重出前先抓住旧图：等下要当垫图，免得重画时身份漂走 */
+          const prevSheetUrl = String(
+            working.find((b) => b.id === plan.id)?.outputUrl ||
+              working.find((b) => b.id === plan.id)?.outputUrls?.[0] ||
+              "",
+          ).trim();
           let deriveRefUrl = "";
           if (plan.deriveFromSheetId) {
             const src = working.find((b) => b.id === plan.deriveFromSheetId);
@@ -3798,7 +3907,32 @@ export default function OmniCanvas() {
               ? `正在出角色图：${plan.labelZh}`
               : `正在出场景图：${plan.labelZh}`,
           );
-          const out = await runCanvasBlock(runDeps, block, { visionImages: [], texts: [] });
+          /**
+           * 重出走「用库内资产」同档计价（1 张 15 / 2 张 20，用户 2026-07-29 定），
+           * 因此不能走画布常规通道扣全价，改打专用接口，再把图写回这个节点。
+           */
+          const regenRoleForBilling =
+            plan.kind === "charsheet"
+              ? ("character" as const)
+              : plan.kind === "propsheet"
+                ? ("prop" as const)
+                : ("scene" as const);
+          const out = isRegenPlan(plan.id)
+            ? await regenerateAssetStillMutation
+                .mutateAsync({
+                  prompt: block.prompt,
+                  role: regenRoleForBilling,
+                  tileCount: regenTileCount,
+                  labelZh: plan.labelZh,
+                  aspectRatio: "9:16",
+                  referenceImageUrl: deriveRefUrl || prevSheetUrl || undefined,
+                })
+                .then((res) => ({
+                  outputUrl: String(res.imageUrl || "").trim(),
+                  outputUrls: [] as string[],
+                  imageModel: "gpt-image-2" as const,
+                }))
+            : await runCanvasBlock(runDeps, block, { visionImages: [], texts: [] });
           working = working.map((b) =>
             b.id === plan.id
               ? {
@@ -4986,9 +5120,20 @@ export default function OmniCanvas() {
                   onFillPendingSheets={(anchorIds) =>
                     confirmAssetsAndPrepareImages({ onlyAnchorIds: anchorIds })
                   }
-                  onRegenerateSheets={(anchorIds) =>
-                    confirmAssetsAndPrepareImages({ regenerateAnchorIds: anchorIds })
+                  libraryPickerItems={libraryPickerQuery.data?.items || []}
+                  onRequestLibraryPicker={(role) =>
+                    setLibraryPickerRole(role === "wardrobe" ? "prop" : role)
                   }
+                  onRegenerateSheets={async ({ anchorIds, noteZh, mode, libraryImageUrl }) => {
+                    if (mode === "library") {
+                      await swapManhuaAssetSheetFromLibrary(anchorIds[0] || "", libraryImageUrl);
+                      return;
+                    }
+                    await confirmAssetsAndPrepareImages({
+                      regenerateAnchorIds: anchorIds,
+                      regenerateNoteZh: noteZh,
+                    });
+                  }}
                   onRegenerateAssetsFromScript={() =>
                     void confirmAssetsAndPrepareImages({ forceRegenerate: true })
                   }
