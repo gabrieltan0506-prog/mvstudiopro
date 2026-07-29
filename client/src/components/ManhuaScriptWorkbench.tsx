@@ -2784,12 +2784,12 @@ export default function ManhuaScriptWorkbench({
                                         });
                                         onRequestLibraryPicker?.(secRole);
                                       }}
-                                      className={`absolute right-1 top-1 rounded border border-amber-300/50 bg-black/70 px-1 py-0.5 text-[9px] font-semibold text-amber-100 backdrop-blur hover:bg-amber-500/40 disabled:opacity-50 ${
-                                        oneOpen ? "" : "opacity-0 group-hover:opacity-100"
+                                      className={`absolute right-1 top-1 rounded border border-amber-300/50 bg-black/75 px-1 py-0.5 text-[9px] font-semibold text-amber-100 backdrop-blur hover:bg-amber-500/40 disabled:opacity-50 ${
+                                        oneOpen ? "ring-1 ring-amber-200/70" : ""
                                       }`}
-                                      title={`只重画「${item.labelZh}」这一个：先说哪里要改进`}
+                                      title={`只改「${item.labelZh}」这一张：写一句哪里要改进，或从库里挑一张换`}
                                     >
-                                      重出…
+                                      改这张
                                     </button>
                                   ) : null}
                                 </div>
