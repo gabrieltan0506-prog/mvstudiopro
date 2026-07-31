@@ -1,7 +1,8 @@
 # Downloads · 2026 年 7 月交接 MD 索引（Agent 速读）
 
-> 源目录：`~/Downloads/2026Jul01` … `2026Jul23` + **`2026jul24`（小写 j）**，共 **78** 个 `.md`。  
-> 枚举时用 `ls -d ~/Downloads/2026[Jj]ul*` 或 `find -iname`，`2026Jul*` 会漏掉 Jul24。  
+> 源目录：`~/Downloads/2026Jul01` … `2026Jul30`（**缺 Jul27**；Jul14 无 md/mp4）。  
+> 2026-07-31 复扫：约 **104** 个 `.md`、**80** 个 `.mp4`（mp4 止于 Jul21）。  
+> 枚举时用 `ls -d ~/Downloads/2026[Jj]ul*`；旧注「小写 jul24」已并入常规 `2026Jul24`。  
 > **现行产品真值**以 [`manhua-factory-brief.md`](./manhua-factory-brief.md) + [`PROGRESS.md`](./PROGRESS.md) 为准。  
 > 本文件只做**分类导航 + 周摘要**；冲突时信简报，不信旧 handoff。
 
@@ -111,6 +112,20 @@
 - **现行验收**见 `manhua-factory-brief.md` §2–4  
 - **标签：** manhua · canvas · infra  
 
+### W6 · 07-25 … 07-30 · 锁定四刀 + 雁门定稿
+
+| 日 | 优先读 | 要点 |
+|---|---|---|
+| Jul25 | `add-on.md` · `jobs-and-code-byOpus5.md` | 分镜秒段锁一带 |
+| Jul26 | `jobs-milstones-codes.md` | #994–999 |
+| Jul28 | `jobs-and-codes.md` · `hands-off.md` · `remain.md` | #1000–#1005；趋势裁剪；运镜两拍；frames/ |
+| Jul29 | `jobs-and-undo.md` · `wusha-v*.md` | #1012–#1031 全日；小说 v4–v6 |
+| Jul30 | **`jobs-and-reports.md`** · **`雁门照山河_*优化定稿.md`** | #1032–#1035；明日主线画布+锁定；剧情优化定稿现行真值 |
+
+**⚠ Jul30 勿当产品 KPI：** `盲派八字*`、`3-6岁儿童养育指南*`。  
+**小说真值：** `雁门照山河_小说三卷优化定稿.md`（覆盖更早的 `wusha-v6` / 连字符初版）。  
+**MP4：** Jul16–21 漫剧样片（`d1`/`c1`/`man`/`jobs`/`feel`…）；Jul15 小红书课；帧见 `2026Jul28/frames/`。
+
 ---
 
 ## C. 文件类型速查
@@ -139,7 +154,7 @@
 ## E. 源路径一览
 
 ```
-~/Downloads/2026Jul01 … 2026Jul23/ + 2026jul24/
+~/Downloads/2026Jul01 … 2026Jul30/（缺 2026Jul27）
 ```
 
 仓库内镜像/过期副本可能在 `docs/2026Jul*`——**以 Downloads 当日账本 + 本知识库简报为准**。

@@ -19,6 +19,7 @@ import {
   buildManhuaCustomAssetGenFromLibraryPrompt,
   defaultManhuaCustomAssetRefDuty,
   makeManhuaCustomAssetId,
+  MANHUA_CUSTOM_ASSET_REFS_MAX,
   normalizeManhuaCustomAssetRefs,
   upsertGeneratedManhuaCustomAssetRef,
   type ManhuaCustomAssetRef,
@@ -3458,16 +3459,20 @@ export default function OmniCanvas() {
     });
   }, []);
 
-  /** 已出图却没拿到 @ 槽位的设定卡张数：>0 时左栏给出「认领」入口 */
-  const unadoptedSheetCount = useMemo(
-    () =>
-      planManhuaSheetAdoptions({
-        blocks,
-        customRefs: customAssetRefs,
-        assetCanon: projectBible?.assetCanon,
-      }).length,
-    [blocks, customAssetRefs, projectBible?.assetCanon],
-  );
+  /**
+   * 已出图却没拿到 @ 槽位、且库还能装下的设定卡张数。
+   * 按钮数字按「还能认领几张」报，避免库已满仍显示「认领 17 张」。
+   */
+  const unadoptedSheetCount = useMemo(() => {
+    const plans = planManhuaSheetAdoptions({
+      blocks,
+      customRefs: customAssetRefs,
+      assetCanon: projectBible?.assetCanon,
+    });
+    if (!plans.length) return 0;
+    const room = Math.max(0, MANHUA_CUSTOM_ASSET_REFS_MAX - customAssetRefs.length);
+    return Math.min(plans.length, room);
+  }, [blocks, customAssetRefs, projectBible?.assetCanon]);
 
   /**
    * 重新认领本集设定图：把画布上已出图、却没进「我的角色 / 我的场景 / 我的道具」

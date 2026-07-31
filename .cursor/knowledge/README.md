@@ -6,7 +6,7 @@
 |---|---|
 | [`manhua-factory-brief.md`](./manhua-factory-brief.md) | 漫剧工厂：目标、硬口径、验收、UI、关键代码路径 |
 | [`PROGRESS.md`](./PROGRESS.md) | 滚动进度（按日追加；合并后更新） |
-| [`downloads-jul2026-index.md`](./downloads-jul2026-index.md) | `~/Downloads/2026Jul01–24` 约 78 篇 md 的分类索引 + 周摘要 |
+| [`downloads-jul2026-index.md`](./downloads-jul2026-index.md) | `~/Downloads/2026Jul01–30`（约 104 md / 80 mp4）分类索引 + 周摘要 |
 
 **开场顺序（硬，与 `knowledge-base-always` / `user-instruction-priority` 一致）**
 

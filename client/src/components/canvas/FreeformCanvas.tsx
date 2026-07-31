@@ -34,6 +34,8 @@ import { loadCanvasDocumentTexts } from "@/lib/canvasDocumentText";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
 import {
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
+  countManhuaClipAssetEdges,
+  expectedMinManhuaClipAssetEdges,
   getBlockEpisodeIndex,
   resolveManhuaClipRelatedAssetNodeIds,
   sanitizeManhuaRecapUpstreamLinks,
@@ -69,6 +71,7 @@ import {
   LoaderCircle,
   Maximize2,
   Plus,
+  Search,
   Sparkles,
   Upload,
   X,
@@ -76,6 +79,33 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+
+/** 左栏节点列表标题（学参考画布：可读名 + 类型，不泄供应商） */
+function freeformNodeListLabel(block: CanvasBlock): string {
+  const id = String(block.id || "");
+  const promptHead = String(block.prompt || "")
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l && !l.startsWith("【"))
+    ?.slice(0, 18);
+  if (id.startsWith("charsheet-face-")) return `脸·${promptHead || id.replace(/^charsheet-face-/, "").slice(0, 12)}`;
+  if (id.startsWith("charsheet-")) return `角色·${promptHead || id.replace(/^charsheet-/, "").slice(0, 12)}`;
+  if (id.startsWith("sceneplate-")) return `场景·${promptHead || id.replace(/^sceneplate-/, "").slice(0, 12)}`;
+  if (id.startsWith("propsheet-")) return `道具·${promptHead || id.replace(/^propsheet-/, "").slice(0, 12)}`;
+  if (id.startsWith("keyart-")) {
+    const m = id.match(/s(\d+)/i);
+    return m ? `静帧 s${m[1]}` : `静帧·${promptHead || "分镜"}`;
+  }
+  if (id.startsWith("clip-")) {
+    const m = id.match(/g(\d+)/i);
+    return m ? `成片 第${String(Number(m[1])).padStart(2, "0")}段` : `成片·${promptHead || "片段"}`;
+  }
+  return `${CANVAS_KIND_META[block.kind]?.label || "节点"}·${promptHead || id.slice(0, 14)}`;
+}
+
+function isCanvasAssetSheetId(id: string): boolean {
+  return /^(charsheet-|sceneplate-|propsheet-)/.test(String(id || ""));
+}
 
 type BlocksUpdater = CanvasBlock[] | ((prev: CanvasBlock[]) => CanvasBlock[]);
 
@@ -541,6 +571,10 @@ export default function FreeformCanvas({
   const [uploadBusyId, setUploadBusyId] = useState<string | null>(null);
   const [maskBusyId, setMaskBusyId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ blockId: string; done: number; total: number } | null>(null);
+  /** 左栏：画布节点列表 / 资产设定卡（对照参考图 IA，不抄皮肤） */
+  const [leftRailTab, setLeftRailTab] = useState<"canvas" | "assets">("canvas");
+  const [leftRailQuery, setLeftRailQuery] = useState("");
+  const [viewportPct, setViewportPct] = useState(100);
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const focusMissSinceRef = useRef<number | null>(null);
 
@@ -575,6 +609,37 @@ export default function FreeformCanvas({
 
   const blockMap = useMemo(() => new Map(blocks.map((b) => [b.id, b])), [blocks]);
 
+  const leftRailNodes = useMemo(() => {
+    const q = leftRailQuery.trim().toLowerCase();
+    let list = visibleBlocks;
+    if (leftRailTab === "assets") {
+      list = list.filter((b) => isCanvasAssetSheetId(b.id));
+    }
+    if (q) {
+      list = list.filter((b) => {
+        const label = freeformNodeListLabel(b).toLowerCase();
+        return label.includes(q) || b.id.toLowerCase().includes(q) || String(b.prompt || "").toLowerCase().includes(q);
+      });
+    }
+    return list;
+  }, [visibleBlocks, leftRailTab, leftRailQuery]);
+
+  const focusNodeFromList = useCallback((id: string) => {
+    setSelectedId(id);
+    setPulseHighlightId(id);
+    requestAnimationFrame(() => {
+      const root = canvasRef.current;
+      if (!root) return;
+      const el = root.querySelector(
+        `[data-canvas-block-id="${CSS.escape(id)}"]`,
+      ) as HTMLElement | null;
+      el?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    });
+    window.setTimeout(() => {
+      setPulseHighlightId((cur) => (cur === id ? null : cur));
+    }, 1600);
+  }, []);
+
   /** absolute 节点不撑开滚动区；按节点包围盒扩世界，才能滚到竖排底部 */
   const worldSize = useMemo(() => {
     let w = 3600;
@@ -585,6 +650,25 @@ export default function FreeformCanvas({
     }
     return { w, h };
   }, [visibleBlocks]);
+
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const update = () => {
+      const pctW = el.clientWidth / Math.max(1, worldSize.w);
+      const pctH = el.clientHeight / Math.max(1, worldSize.h);
+      const pct = Math.round(Math.min(pctW, pctH) * 100);
+      setViewportPct(Math.max(1, Math.min(100, pct)));
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro?.disconnect();
+    };
+  }, [worldSize.w, worldSize.h, visibleBlocks.length]);
 
   useEffect(() => {
     if (!focusBlockId) {
@@ -1023,13 +1107,15 @@ export default function FreeformCanvas({
     const x2 = b.x;
     const y2 = b.y + 44;
     const mx = (from.x + x2) / 2;
+    const isAssetBind =
+      isCanvasAssetSheetId(fromId) && String(toId).startsWith("clip-");
     return (
       <path
         key={`${fromId}-${toId}`}
         d={`M ${from.x} ${from.y} C ${mx} ${from.y}, ${mx} ${y2}, ${x2} ${y2}`}
         fill="none"
-        stroke="rgba(255,255,255,0.16)"
-        strokeWidth={2}
+        stroke={isAssetBind ? "rgba(103, 232, 249, 0.45)" : "rgba(255,255,255,0.16)"}
+        strokeWidth={isAssetBind ? 2.5 : 2}
       />
     );
   };
@@ -1094,30 +1180,114 @@ export default function FreeformCanvas({
         }}
       />
 
-      {/* 左侧工具栏 */}
-      <aside className="flex w-14 shrink-0 flex-col items-center gap-3 border-r border-white/10 bg-black/30 py-4">
-        <button
-          type="button"
-          title="添加功能"
-          onClick={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            setToolbarMenu({
-              x: rect.right + 8,
-              y: rect.top,
-              anchorCenterY: rect.top + rect.height / 2,
-            });
-          }}
-          className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-black shadow-lg transition hover:scale-105"
-        >
-          <Plus className="h-5 w-5" />
-        </button>
+      {/* 左侧：+ 工具 + 画布/资产节点列表（对照参考图 IA） */}
+      <aside className="flex w-[13.5rem] shrink-0 flex-col border-r border-white/10 bg-black/35">
+        <div className="flex items-center gap-2 border-b border-white/10 px-2.5 py-2.5">
+          <button
+            type="button"
+            title="添加功能"
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setToolbarMenu({
+                x: rect.right + 8,
+                y: rect.top,
+                anchorCenterY: rect.top + rect.height / 2,
+              });
+            }}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-black shadow-lg transition hover:scale-105"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+          <div className="flex min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 p-0.5">
+            {(
+              [
+                ["canvas", "画布"],
+                ["assets", "资产"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setLeftRailTab(id)}
+                className={`min-w-0 flex-1 rounded-md px-1.5 py-1 text-[11px] font-medium transition ${
+                  leftRailTab === id
+                    ? "bg-white/15 text-white"
+                    : "text-white/45 hover:text-white/75"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="border-b border-white/10 px-2.5 py-2">
+          <label className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-black/40 px-2 py-1.5">
+            <Search className="h-3.5 w-3.5 shrink-0 text-white/35" />
+            <input
+              value={leftRailQuery}
+              onChange={(e) => setLeftRailQuery(e.target.value)}
+              placeholder={leftRailTab === "assets" ? "搜设定卡" : "搜节点"}
+              className="min-w-0 flex-1 bg-transparent text-[11px] text-white outline-none placeholder:text-white/30"
+            />
+          </label>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
+          {leftRailNodes.length === 0 ? (
+            <p className="px-2 py-6 text-center text-[11px] text-white/35">
+              {leftRailTab === "assets" ? "暂无角色/场景/道具卡" : "暂无节点"}
+            </p>
+          ) : (
+            leftRailNodes.map((b) => {
+              const meta = CANVAS_KIND_META[b.kind];
+              const Icon = meta.icon;
+              const active = selectedId === b.id;
+              const thumb =
+                b.outputUrl || b.outputUrls?.[0] || b.refImageUrl || "";
+              return (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => focusNodeFromList(b.id)}
+                  className={`mb-1 flex w-full items-center gap-2 rounded-xl px-1.5 py-1.5 text-left transition ${
+                    active
+                      ? "bg-cyan-400/15 ring-1 ring-cyan-300/40"
+                      : "hover:bg-white/[0.06]"
+                  }`}
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-black/40">
+                    {thumb && (b.kind === "image" || b.kind === "video") ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={thumb} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <Icon className="h-3.5 w-3.5 text-white/55" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[11px] font-medium text-white/90">
+                      {freeformNodeListLabel(b)}
+                    </div>
+                    <div className="truncate text-[10px] text-white/35">{meta.label}</div>
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+        <div className="border-t border-white/10 px-3 py-2 text-[10px] text-white/40">
+          共 {leftRailNodes.length}
+          {leftRailQuery.trim() || leftRailTab === "assets"
+            ? ` / ${visibleBlocks.length}`
+            : ""}{" "}
+          节点
+        </div>
       </aside>
 
       {/* 无限画布：唯一滚动层；世界尺寸随节点包围盒扩展 */}
+      <div className="relative min-h-0 flex-1">
       <div
         ref={canvasRef}
         data-freeform-canvas-scroll
-        className="relative min-h-0 flex-1 overflow-auto"
+        className="absolute inset-0 overflow-auto"
       >
         <div
           aria-hidden
@@ -1292,6 +1462,11 @@ export default function FreeformCanvas({
                       const imageBindLocked = /【资产·Image对照】/.test(
                         String(block.prompt || ""),
                       );
+                      const bindRowCount = parseManhuaAssetImageBindBlock(
+                        String(block.prompt || ""),
+                      ).length;
+                      const assetEdgeCount = countManhuaClipAssetEdges(edges, block.id);
+                      const assetEdgeMin = expectedMinManhuaClipAssetEdges(bindRowCount);
                       const epIdx = getBlockEpisodeIndex(block) ?? 1;
                       const localSeg = resolveClipLocalSegmentIndex(
                         block.id,
@@ -1329,6 +1504,18 @@ export default function FreeformCanvas({
                             >
                               {imageBindLocked ? "出场对照已挂" : "出场对照未挂"}
                             </span>
+                            {assetEdgeMin > 0 ? (
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
+                                  assetEdgeCount >= assetEdgeMin
+                                    ? "bg-emerald-500/30 text-emerald-50"
+                                    : "bg-amber-500/25 text-amber-50"
+                                }`}
+                                title="成片与角色/场景/道具设定卡的连线数"
+                              >
+                                资产边 {assetEdgeCount}/{assetEdgeMin}
+                              </span>
+                            ) : null}
                             <span
                               className={`rounded px-1.5 py-0.5 text-[9px] font-semibold ${
                                 voiceGate.requiredTags.length === 0
@@ -1586,6 +1773,16 @@ export default function FreeformCanvas({
                               ? "成片·标准：多图参考 + 运镜/动作/对白，约 4–15s"
                               : "成片·快速：多图参考 + 运镜/动作/对白，更快更省"}
                           </div>
+                          <div className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[10px] font-medium tracking-wide text-white/70">
+                            {block.aspectRatio || "9:16"}
+                            {" · "}
+                            {parseManhuaClipDirectorCardSummary(block.prompt).durationSec ?? 15}s
+                            {" · "}
+                            1 条
+                            {String(block.id).startsWith("clip-")
+                              ? ` · 资产边 ${countManhuaClipAssetEdges(edges, block.id)}`
+                              : ""}
+                          </div>
                           <div className="rounded-lg border border-dashed border-amber-400/30 bg-amber-500/5 px-2 py-1.5 text-[10px] leading-5 text-amber-100/85">
                             更高画质档位即将上线
                           </div>
@@ -1785,6 +1982,10 @@ export default function FreeformCanvas({
             );
           })}
         </div>
+      </div>
+      <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 rounded-full border border-white/15 bg-black/70 px-3 py-1 text-[11px] font-medium text-white/75 shadow-lg backdrop-blur">
+        视野 {viewportPct}%
+      </div>
       </div>
 
       {/* 引用生成菜单 */}

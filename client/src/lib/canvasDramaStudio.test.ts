@@ -5,8 +5,11 @@ import {
   applyFactoryPrefsToBlocks,
   applyTopicToFactoryStory,
   collectManhuaCharacterSheetUrlById,
+  collectManhuaCustomRefsFromCanvasAssetBlocks,
+  countManhuaClipAssetEdges,
   ensureManhuaFragmentClips,
   expandManhuaShotKeyartsAfterReverse,
+  expectedMinManhuaClipAssetEdges,
   extractFactoryMotionHints,
   filterBlocksByEpisode,
   getBlockEpisodeIndex,
@@ -780,6 +783,96 @@ describe("canvasDramaStudio factory", () => {
     expect(keys.has("charsheet-wa_char_shen->clip-e01-g01")).toBe(true);
     expect(keys.has("sceneplate-wa_scene_bridge->clip-e01-g01")).toBe(true);
     expect(keys.has("propsheet-wa_prop_yupei->clip-e01-g01")).toBe(true);
+    expect(countManhuaClipAssetEdges(edges, "clip-e01-g01")).toBe(3);
+    expect(expectedMinManhuaClipAssetEdges(3)).toBe(3);
+  });
+
+  it("collectManhuaCustomRefs：脸特写剥 face- 前缀，duty 分 identity/look", () => {
+    const refs = collectManhuaCustomRefsFromCanvasAssetBlocks(
+      [
+        {
+          id: "charsheet-face-wa_char_shen",
+          kind: "image",
+          prompt: "脸",
+          outputUrl: "https://cdn.example/face.jpg",
+        },
+        {
+          id: "charsheet-wa_char_shen",
+          kind: "image",
+          prompt: "全身",
+          outputUrl: "https://cdn.example/body.jpg",
+        },
+      ] as any,
+      {
+        characters: [{ id: "wa_char_shen", nameZh: "沈沧澜" }],
+        locations: [],
+        props: [],
+      } as any,
+    );
+    const face = refs.find((r) => r.url.includes("face"));
+    const body = refs.find((r) => r.url.includes("body"));
+    expect(face?.seedLibraryId).toBe("wa_char_shen");
+    expect(face?.refDuty).toBe("identity");
+    expect(body?.seedLibraryId).toBe("wa_char_shen");
+    expect(body?.refDuty).toBe("look");
+    expect(face?.labelZh).toBe("沈沧澜");
+  });
+
+  it("成片连边不因画布节点上漂号的 @场景N 错绑到别的场景板", () => {
+    const registry = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "cust_bridge",
+          url: "https://cdn.example/bridge.jpg",
+          role: "scene",
+          source: "generated",
+          labelZh: "断月桥",
+          seedLibraryId: "wa_scene_bridge",
+        },
+        {
+          id: "cust_gate",
+          url: "https://cdn.example/gate.jpg",
+          role: "scene",
+          source: "generated",
+          labelZh: "御河水门",
+          seedLibraryId: "wa_scene_gate",
+        },
+      ],
+    });
+    const bridgeTag = registry.slots.find((s) => s.id === "cust_bridge")!.tag;
+    const gateTag = registry.slots.find((s) => s.id === "cust_gate")!.tag;
+    // 号漂：御河水门节点误挂了断月桥的 tag（与线上 @场景4 漂号同构）
+    const blocks = [
+      {
+        id: "sceneplate-wa_scene_gate",
+        kind: "image" as const,
+        prompt: `【画布资产@】${bridgeTag}=wa_scene_gate\n御河水门空间卡`,
+        outputUrl: "https://cdn.example/gate.jpg",
+      },
+      {
+        id: "sceneplate-wa_scene_bridge",
+        kind: "image" as const,
+        prompt: `【画布资产@】${gateTag}=wa_scene_bridge\n断月桥空镜`,
+        outputUrl: "https://cdn.example/bridge.jpg",
+      },
+      {
+        id: "clip-e01-g01",
+        kind: "video" as const,
+        prompt: [
+          "【第1段·15s】断月桥",
+          "【场景锁】断月桥",
+          "【资产·Image对照】",
+          `${bridgeTag}|id=cust_bridge|label=断月桥|kind=场景`,
+        ].join("\n"),
+      },
+    ];
+    const fromIds = resolveManhuaClipRelatedAssetNodeIds({
+      clipPrompt: blocks[2]!.prompt,
+      blocks,
+      registry,
+    });
+    expect(fromIds).toContain("sceneplate-wa_scene_bridge");
+    expect(fromIds).not.toContain("sceneplate-wa_scene_gate");
   });
 
   it("episode 2 first segment clip uses global g07 (6 segs/ep)", () => {
