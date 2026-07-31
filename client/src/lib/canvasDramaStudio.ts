@@ -21,8 +21,10 @@ import {
   buildManhuaAssetLockRegistry,
   buildManhuaAssetPathById,
   extractManhuaMentionedAssetTags,
+  findManhuaSegmentAssetBindGap,
   formatManhuaAssetImageBindBlock,
   formatManhuaClipSeedanceBindLineFromEntries,
+  hasManhuaSegmentAssetBindGap,
   isBindableAssetPath,
   parseManhuaCanvasAssetAtTag,
   planManhuaClipSeedanceImageBind,
@@ -1891,13 +1893,40 @@ export function ensureManhuaFragmentClips(
     const segNeedsFace =
       splitManhuaCastZhNames(effectiveCastZh || planBeat?.castZh || "").length > 0 ||
       dialogueLines.length > 0;
-    const segHasFaceLock = parseManhuaAssetImageBindBlock(assetLockBlock).some((r) =>
-      r.tag.startsWith("@角色"),
+    const bindRowsForFace = parseManhuaAssetImageBindBlock(assetLockBlock);
+    const lockedCastLabels = new Set(
+      bindRowsForFace
+        .filter((r) => r.tag.startsWith("@角色"))
+        .map((r) => String(r.labelZh || "").trim())
+        .filter(Boolean),
     );
-    if (segNeedsFace && !segHasFaceLock && segAssets.mode !== "mismatch") {
+    const castNamesNeeded = splitManhuaCastZhNames(
+      effectiveCastZh || planBeat?.castZh || "",
+    );
+    /** 可拍表每个真名都要在对照表里有对应 @角色；只锁一人不算本段已锁脸 */
+    const missingCastFaceNames = castNamesNeeded.filter((n) => {
+      if (lockedCastLabels.has(n)) return false;
+      return !Array.from(lockedCastLabels).some(
+        (lb) => lb.includes(n) || n.includes(lb),
+      );
+    });
+    const segHasFaceLock =
+      bindRowsForFace.some((r) => r.tag.startsWith("@角色")) &&
+      missingCastFaceNames.length === 0;
+    const bindGap = findManhuaSegmentAssetBindGap(lockRegistry, segAssets);
+    if (
+      segAssets.mode !== "mismatch" &&
+      (hasManhuaSegmentAssetBindGap(bindGap) ||
+        (segNeedsFace && !segHasFaceLock) ||
+        missingCastFaceNames.length > 0)
+    ) {
       faceUnlockedSegments.push(seg.index);
-      for (const n of splitManhuaCastZhNames(effectiveCastZh || planBeat?.castZh || "")) {
-        faceUnlockedCastNames.add(n);
+      for (const n of [
+        ...castNamesNeeded,
+        ...missingCastFaceNames,
+        ...bindGap.characterNamesZh,
+      ]) {
+        if (n) faceUnlockedCastNames.add(n);
       }
     }
     /**
@@ -2237,9 +2266,13 @@ export function collectManhuaCustomRefsFromCanvasAssetBlocks(
     if (!/^https:\/\//i.test(url)) continue;
     let role: "character" | "scene" | "prop" | null = null;
     let seed = "";
-    if (b.id.startsWith("charsheet-")) {
+    const isFace = b.id.startsWith("charsheet-face-");
+    if (isFace || b.id.startsWith("charsheet-")) {
       role = "character";
-      seed = b.id.replace(/^charsheet-/, "");
+      // 与 planManhuaSheetAdoptions 一致：先剥 face- 再剥 charsheet-，避免 seed 残留 face-
+      seed = b.id
+        .replace(/^charsheet-face-/, "")
+        .replace(/^charsheet-/, "");
     } else if (b.id.startsWith("sceneplate-")) {
       role = "scene";
       seed = b.id.replace(/^sceneplate-/, "");
@@ -2251,17 +2284,18 @@ export function collectManhuaCustomRefsFromCanvasAssetBlocks(
     }
     const labelZh =
       (role === "character"
-        ? assetCanon?.characters.find((c) => c.id === seed || b.id.includes(c.id))?.nameZh
+        ? assetCanon?.characters.find((c) => c.id === seed || seed.includes(c.id))?.nameZh
         : role === "scene"
-          ? assetCanon?.locations.find((l) => l.id === seed || b.id.includes(l.id))?.nameZh
-          : assetCanon?.props.find((p) => p.id === seed || b.id.includes(p.id))?.nameZh) ||
+          ? assetCanon?.locations.find((l) => l.id === seed || seed.includes(l.id))?.nameZh
+          : assetCanon?.props.find((p) => p.id === seed || seed.includes(p.id))?.nameZh) ||
       (role === "character" ? "角色定妆" : role === "scene" ? "场景参考" : "道具参考");
     refs = upsertGeneratedManhuaCustomAssetRef(refs, {
       url,
       role,
       labelZh,
       seedLibraryId: seed,
-      refDuty: role === "character" ? "identity" : role === "scene" ? "space" : "style",
+      refDuty:
+        role === "character" ? (isFace ? "identity" : "look") : role === "scene" ? "space" : "style",
     });
   }
   return normalizeManhuaCustomAssetRefs(refs);
@@ -2445,9 +2479,13 @@ function slotMatchesAssetNode(
   },
   block: Pick<CanvasBlock, "id" | "prompt"> &
     Partial<Pick<CanvasBlock, "outputUrl" | "outputUrls">>,
-  tag: string,
+  _tag: string,
 ): boolean {
-  if (parseManhuaCanvasAssetAtTag(block.prompt) === tag) return true;
+  /**
+   * 禁止只靠画布节点上的 @场景N 认亲：素材库重排后号会漂
+   *（线上踩过：御河水门节点仍写 @场景4，成片对照 @场景4 已是断月桥 → 错连边）。
+   * 认亲顺序：seedLibraryId / slot.id / 图 URL / 节点文案里的真名标签。
+   */
   const hit = canvasAssetNodeSeed(block.id);
   if (!hit || hit.role !== slot.role) return false;
   const seed = String(slot.seedLibraryId || "").trim();
@@ -2486,14 +2524,14 @@ export function resolveManhuaClipRelatedAssetNodeIds(input: {
   const registry = input.registry;
   if (!registry?.slots?.length) return [];
   const promptText = String(input.clipPrompt || "");
+  /**
+   * 只认对照表 + 正文 @提及。不再用「全文出现真名就加 tag」——
+   * 配色/旁白里扫到别的地名，会把未锁场景也连上边。
+   */
   const tags = new Set<string>([
     ...parseManhuaAssetImageBindBlock(promptText).map((r) => r.tag),
     ...extractManhuaMentionedAssetTags(promptText),
   ]);
-  for (const s of registry.slots) {
-    const label = String(s.labelZh || "").trim();
-    if (s.tag && label.length >= 2 && promptText.includes(label)) tags.add(s.tag);
-  }
   if (!tags.size) return [];
 
   const slotByTag = new Map(registry.slots.map((s) => [s.tag, s]));
@@ -2541,6 +2579,26 @@ export function syncManhuaClipAssetEdges(
     next.push({ fromId: from, toId: clip });
   }
   return next;
+}
+
+/**
+ * 统计「资产节点 → 成片」边数（不含静帧→成片）。
+ * 验收：本段对照表有几类资产，边应 ≥ min(3, 本段绑定数)；可核验。
+ */
+export function countManhuaClipAssetEdges(
+  edges: CanvasEdge[],
+  clipId: string,
+): number {
+  const clip = String(clipId || "").trim();
+  if (!clip) return 0;
+  return edges.filter((e) => e.toId === clip && Boolean(canvasAssetNodeSeed(e.fromId))).length;
+}
+
+/** 本段期望的最少资产边：对照表行数与 3 取小；空镜可 1 */
+export function expectedMinManhuaClipAssetEdges(bindRowCount: number): number {
+  const n = Math.max(0, Math.floor(bindRowCount));
+  if (n <= 0) return 0;
+  return Math.min(3, n);
 }
 
 /**
@@ -2821,6 +2879,13 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
   )
     .trim()
     .slice(0, 700);
+  const beatsText = String(
+    working.find((b) => b.id.startsWith("beats-") && sameEpisode(b))?.outputText || "",
+  ).trim();
+  const segmentPlan =
+    parseManhuaEpisodeSegmentPlanFromMarkdown(beatsText) ||
+    parseManhuaEpisodeSegmentPlanFromMarkdown(bibleText) ||
+    parseManhuaEpisodeSegmentPlanFromMarkdown(md);
   const shots = resolveShotsForEpisodeKeyarts(working, ep ?? 1);
   if (!keyArtHint && !seedanceHint && !bibleText && !shots.length) return working;
   return working.map((b) => {
@@ -2833,6 +2898,7 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
       const epClip = getBlockEpisodeIndex(b) ?? ep ?? 1;
       const localSeg = resolveClipLocalSegmentIndex(b.id, b.prompt, epClip);
       const globalSeg = manhuaGlobalSegmentIndex(epClip, localSeg);
+      const planBeat = segmentPlan?.segments.find((s) => s.index === localSeg);
       const segShots = shots.filter(
         (s) => resolveSegmentIndexFromShotIndex(s.index) === localSeg,
       );
@@ -2849,14 +2915,30 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
           )
           .map((k) => (k ? extractManhuaSceneHintFromPrompt(k.prompt) : ""))
           .find(Boolean) || extractManhuaSceneHintFromPrompt(b.prompt);
-      const intentZh = String(segShots.find((s) => s.intentZh)?.intentZh || "").trim();
+      // 可拍表 sceneZh 优先，禁止反推重铺时被静帧错场地名盖掉
+      const sceneFromPlan = String(planBeat?.sceneZh || "").trim();
+      const sceneHintZh = sceneFromPlan || sceneFromKeyart || undefined;
+      const sceneDetailZh =
+        sceneFromPlan && sceneFromKeyart && sceneFromPlan !== sceneFromKeyart
+          ? sceneFromKeyart
+          : undefined;
+      const intentZh = String(
+        planBeat?.intentZh || segShots.find((s) => s.intentZh)?.intentZh || "",
+      ).trim();
       const fallbackShot = {
         index: (localSeg - 1) * MANHUA_KEYARTS_PER_SEGMENT_MIN + 1,
         durationSec: 0,
         cameraZh: "",
         actionZh: "",
       } as ManhuaWorkbenchShot;
-      const useShots = segShots.length ? segShots : [fallbackShot];
+      const useShots = scrubManhuaWorkbenchShotSlop(
+        segShots.length ? segShots : [fallbackShot],
+        {
+          performanceZh: planBeat?.performanceZh,
+          intentZh: planBeat?.intentZh || intentZh,
+          sceneHintZh,
+        },
+      );
       // 反推回灌秒轴时保留已写的 Image 对照 / 垫图说明，禁止又变回「只有名字」
       const keptAssetBind = (() => {
         const m = String(b.prompt || "").match(
@@ -2877,7 +2959,8 @@ function enrichDownstreamPrompts(working: CanvasBlock[], justFinishedId: string)
                 segmentIndex: localSeg,
                 durationSec: resolveSegmentClipDurationSec(useShots, model),
                 shots: useShots,
-                sceneHintZh: sceneFromKeyart || undefined,
+                sceneHintZh,
+                sceneDetailZh,
                 intentZh,
               }),
               keptPad,

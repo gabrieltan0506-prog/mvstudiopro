@@ -3,6 +3,7 @@ import {
   buildManhuaCustomAssetGenFromLibraryPrompt,
   hasCustomCastAndScene,
   inferManhuaCustomAssetRole,
+  MANHUA_CUSTOM_ASSET_REFS_MAX,
   normalizeManhuaCustomAssetRefs,
   taggedManhuaCustomAssetRefs,
   upsertGeneratedManhuaCustomAssetRef,
@@ -196,5 +197,19 @@ describe("manhuaCustomAssetRefs", () => {
     expect(refs.filter((r) => r.role === "prop")).toHaveLength(6);
     // 最后挂上的道具没有被容量截掉
     expect(refs.map((r) => r.url)).toContain("https://cdn.example/prop-5.png");
+  });
+
+  it("第 49 条 normalize 截断，容量恒为 48", () => {
+    const roles = ["character", "scene", "prop"] as const;
+    const raw = Array.from({ length: 60 }, (_, i) => ({
+      id: `id_${i}`,
+      url: `https://cdn.example/r-${i}.jpg`,
+      role: roles[i % 3]!,
+    }));
+    const refs = normalizeManhuaCustomAssetRefs(raw);
+    expect(MANHUA_CUSTOM_ASSET_REFS_MAX).toBe(48);
+    expect(refs).toHaveLength(48);
+    expect(refs[0]!.url).toBe("https://cdn.example/r-0.jpg");
+    expect(refs.map((r) => r.url)).not.toContain("https://cdn.example/r-59.jpg");
   });
 });
