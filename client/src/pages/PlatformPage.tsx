@@ -149,8 +149,6 @@ import {
 } from "@shared/decisionIntelTopicPicks";
 import {
   PLATFORM_SKILL_MASTER_READONLY,
-  PLATFORM_TOPIC_EXPAND_MAX,
-  PLATFORM_TOPIC_EXPAND_MIN,
   PLATFORM_TOPIC_SHORTLIST_DEFAULT,
   PLATFORM_TOPIC_SHORTLIST_MAX,
   platformTopicShortlistTotalCredits,
@@ -2468,10 +2466,8 @@ export default function PlatformPage() {
   const [pendingFullAnalysisLabels, setPendingFullAnalysisLabels] = useState("");
   /** 选题初选 20 → 勾选 5–6 → 扩写 */
   const [topicShortlist, setTopicShortlist] = useState<PlatformTopicShortlistItem[]>([]);
-  const [selectedShortlistIds, setSelectedShortlistIds] = useState<Set<string>>(new Set());
   const [topicShortlistCount, setTopicShortlistCount] = useState(PLATFORM_TOPIC_SHORTLIST_DEFAULT);
   const generateTopicShortlistMutation = trpc.mvAnalysis.generatePlatformTopicShortlist.useMutation();
-  const expandTopicPicksMutation = trpc.mvAnalysis.expandPlatformTopicPicks.useMutation();
   const topicShortlistPrice = platformTopicShortlistTotalCredits({
     count: topicShortlistCount,
     baseCredits: CREDIT_COSTS.platformTopicShortlist,
@@ -2954,8 +2950,7 @@ export default function PlatformPage() {
           <div className="min-w-0 flex-1">
             <div className="text-lg font-bold text-white md:text-xl">选题初选</div>
             <p className="mt-1 text-[13px] leading-snug text-gray-300">
-              先填背景再生成。默认 {PLATFORM_TOPIC_SHORTLIST_DEFAULT} 条；扩写正式文案{" "}
-              {CREDIT_COSTS.platformTopicExpand} 点/次（最多 {PLATFORM_TOPIC_EXPAND_MAX} 条）。
+              先填背景再生成。默认 {PLATFORM_TOPIC_SHORTLIST_DEFAULT} 条；选题可直接拿去下方执行区出封面与分镜。
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-gray-300">
               <span>条数</span>
@@ -2978,11 +2973,7 @@ export default function PlatformPage() {
           </div>
           <button
             type="button"
-            disabled={
-              !isAuthenticated ||
-              generateTopicShortlistMutation.isPending ||
-              expandTopicPicksMutation.isPending
-            }
+            disabled={!isAuthenticated || generateTopicShortlistMutation.isPending}
             onClick={() => {
               void (async () => {
                 if (!focusPrompt.trim()) {
@@ -3006,9 +2997,6 @@ export default function PlatformPage() {
                   });
                   const topics = res.topics || [];
                   setTopicShortlist(topics);
-                  setSelectedShortlistIds(
-                    new Set(topics.slice(0, PLATFORM_TOPIC_EXPAND_MAX).map((t) => t.id)),
-                  );
                   if (!topics.length) {
                     toast.error(
                       "初选未返回选题（可能超时或模型空回）。请稍后重试；若刚扣点请联系管理员核对。",
@@ -3044,93 +3032,15 @@ export default function PlatformPage() {
         {topicShortlist.length > 0 ? (
           <>
             <div className="mt-3 max-h-[320px] space-y-1.5 overflow-y-auto pr-1">
-              {topicShortlist.map((t) => {
-                const on = selectedShortlistIds.has(t.id);
-                return (
-                  <label
-                    key={t.id}
-                    className={`flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 text-[12px] ${
-                      on
-                        ? "border-[#49e6ff]/50 bg-[#49e6ff]/10 text-white"
-                        : "border-white/10 bg-black/20 text-gray-300"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      checked={on}
-                      onChange={() => {
-                        setSelectedShortlistIds((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(t.id)) next.delete(t.id);
-                          else if (next.size < PLATFORM_TOPIC_EXPAND_MAX) next.add(t.id);
-                          else toast.message(`最多勾选 ${PLATFORM_TOPIC_EXPAND_MAX} 条`);
-                          return next;
-                        });
-                      }}
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="font-semibold text-white/95">{t.title}</span>
-                      <span className="mt-0.5 block text-gray-400">{t.conveyGoal}</span>
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={
-                  expandTopicPicksMutation.isPending ||
-                  selectedShortlistIds.size < PLATFORM_TOPIC_EXPAND_MIN ||
-                  selectedShortlistIds.size > PLATFORM_TOPIC_EXPAND_MAX
-                }
-                onClick={() => {
-                  void (async () => {
-                    const picks = topicShortlist.filter((t) => selectedShortlistIds.has(t.id));
-                    if (picks.length < PLATFORM_TOPIC_EXPAND_MIN) {
-                      toast.message(`请至少勾选 ${PLATFORM_TOPIC_EXPAND_MIN} 条`);
-                      return;
-                    }
-                    try {
-                      const res = await expandTopicPicksMutation.mutateAsync({
-                        context: focusPrompt.trim() || undefined,
-                        enabledSkillIds: Array.from(enabledPlatformSkillIds),
-                        allowBloggerTitle,
-                        picks,
-                      });
-                      const bps = res.contentBlueprints || [];
-                      setPlatformContent((prev: any) => ({
-                        ...(prev && typeof prev === "object" ? prev : {}),
-                        contentBlueprints: bps,
-                        monetizationLanes: Array.isArray(prev?.monetizationLanes)
-                          ? prev.monetizationLanes
-                          : [],
-                      }));
-                      toast.success(`已扩写 ${bps.length} 条正式文案（含图文页结构）`);
-                      scrollToPlatformExecutionCopy();
-                    } catch (err) {
-                      toast.error(err instanceof Error ? err.message : "扩写失败");
-                    }
-                  })();
-                }}
-                className="rounded-xl border border-emerald-400/50 bg-emerald-500/25 px-5 py-3 text-base font-black tracking-wide text-emerald-50 shadow-[0_8px_28px_rgba(16,185,129,0.25)] disabled:opacity-50"
-              >
-                {expandTopicPicksMutation.isPending
-                  ? "扩写中…"
-                  : `选题扩写（${selectedShortlistIds.size}/${PLATFORM_TOPIC_EXPAND_MAX}）`}
-              </button>
-              <button
-                type="button"
-                disabled={generateTopicShortlistMutation.isPending}
-                onClick={() => {
-                  setSelectedShortlistIds(new Set());
-                  toast.message("已清空勾选；可再点生成换一批");
-                }}
-                className="rounded-lg border border-white/15 px-3 py-2 text-[12px] text-gray-300"
-              >
-                清空勾选
-              </button>
+              {topicShortlist.map((t) => (
+                <div
+                  key={t.id}
+                  className="rounded-md border border-white/10 bg-black/20 px-2.5 py-2 text-[12px] text-gray-300"
+                >
+                  <span className="font-semibold text-white/95">{t.title}</span>
+                  <span className="mt-0.5 block text-gray-400">{t.conveyGoal}</span>
+                </div>
+              ))}
             </div>
           </>
         ) : null}
@@ -8439,7 +8349,6 @@ export default function PlatformPage() {
       });
       const topics = res.topics || [];
       setTopicShortlist(topics);
-      setSelectedShortlistIds(new Set(topics.slice(0, PLATFORM_TOPIC_EXPAND_MAX).map((t) => t.id)));
       setCreateStep("result");
       if (workbenchUserKey) {
         pushRecentTask(workbenchUserKey, {
