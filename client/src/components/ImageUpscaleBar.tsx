@@ -2,10 +2,12 @@ import { useState, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import {
-  imageUpscaleCreditRangeHint,
+  imageUpscaleTotalCredits,
   type ImageUpscaleBaseCreditKey,
 } from "@shared/plans";
 import { Loader2 } from "lucide-react";
+
+type UpscaleFactor = "x2" | "x4";
 
 export type ImageUpscaleBarProps = {
   imageUrl: string | null | undefined;
@@ -13,8 +15,13 @@ export type ImageUpscaleBarProps = {
   className?: string;
   style?: React.CSSProperties;
   compact?: boolean;
-  /** newImageUrl: 放大后图片 URL；factor: "2×" */
+  /** newImageUrl: 放大后图片 URL；factor: "2×" | "4×" */
   onUpscaled?: (newImageUrl: string, factor?: string) => void;
+};
+
+const FACTOR_LABEL: Record<UpscaleFactor, string> = {
+  x2: "2×",
+  x4: "4×",
 };
 
 export function ImageUpscaleBar({
@@ -26,14 +33,16 @@ export function ImageUpscaleBar({
   onUpscaled,
 }: ImageUpscaleBarProps) {
   const utils = trpc.useUtils();
-  const [activeFactor, setActiveFactor] = useState<"x2" | null>(null);
-  const activeFactorRef = useRef<"x2" | null>(null);
+  const [activeFactor, setActiveFactor] = useState<UpscaleFactor | null>(null);
+  const activeFactorRef = useRef<UpscaleFactor | null>(null);
 
   const mut = trpc.vertexImage.upscale.useMutation({
     onSuccess: async (data) => {
+      const factor = activeFactorRef.current;
+      const label = factor ? FACTOR_LABEL[factor] : "高清";
       if (data.success && data.imageUrl) {
-        toast.success("高清放大完成（2×）");
-        onUpscaled?.(data.imageUrl, "2×");
+        toast.success(`高清放大完成（${label}）`);
+        onUpscaled?.(data.imageUrl, label);
         await utils.stripe.getSubscription.invalidate().catch(() => undefined);
       } else {
         toast.error(String((data as { error?: string }).error || "放大失败"));
@@ -51,20 +60,23 @@ export function ImageUpscaleBar({
   const url = String(imageUrl || "").trim();
   if (!url) return null;
 
-  const r2 = imageUpscaleCreditRangeHint("x2");
+  const cost2 = imageUpscaleTotalCredits(baseCreditKey, "x2");
+  const cost4 = imageUpscaleTotalCredits(baseCreditKey, "x4");
 
   const btnBase =
     "inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/90 transition hover:bg-white/10 disabled:opacity-45";
 
-  function handleClick() {
+  function handleClick(factor: UpscaleFactor) {
     if (activeFactor) return;
+    const label = FACTOR_LABEL[factor];
+    const cost = factor === "x2" ? cost2 : cost4;
     const confirmed = window.confirm(
-      "放大（2×）后将直接替换原图，无法还原。\n请先右键保存原图，再继续。\n\n确定放大吗？",
+      `放大（${label}）后将直接替换原图，无法还原。\n请先右键保存原图，再继续。\n约消耗 ${cost} 积分。\n\n确定放大吗？`,
     );
     if (!confirmed) return;
-    activeFactorRef.current = "x2";
-    setActiveFactor("x2");
-    mut.mutate({ imageUrl: url, upscaleFactor: "x2", baseCreditKey });
+    activeFactorRef.current = factor;
+    setActiveFactor(factor);
+    mut.mutate({ imageUrl: url, upscaleFactor: factor, baseCreditKey });
   }
 
   return (
@@ -79,13 +91,27 @@ export function ImageUpscaleBar({
         ...style,
       }}
     >
-      <span style={{ fontSize: 12, opacity: 0.72, fontWeight: 700 }}>放大</span>
-      <button type="button" className={btnBase} disabled={!!activeFactor} onClick={handleClick}>
+      <span style={{ fontSize: 12, opacity: 0.72, fontWeight: 700 }}>高清放大</span>
+      <button
+        type="button"
+        className={btnBase}
+        disabled={!!activeFactor}
+        onClick={() => handleClick("x2")}
+      >
         {activeFactor === "x2" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
         2×
       </button>
+      <button
+        type="button"
+        className={btnBase}
+        disabled={!!activeFactor}
+        onClick={() => handleClick("x4")}
+      >
+        {activeFactor === "x4" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+        4×
+      </button>
       <span style={{ fontSize: 11, opacity: 0.55, width: "100%", flexBasis: "100%" }}>
-        单次约 {r2.min}～{r2.max} 积分（2×，视原图计费基准）
+        约 {cost2} 积分（2×）/ {cost4} 积分（4×）
       </span>
     </div>
   );
