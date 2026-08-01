@@ -150,6 +150,7 @@ import {
 import {
   PLATFORM_SKILL_MASTER_READONLY,
   PLATFORM_TOPIC_SHORTLIST_DEFAULT,
+  PLATFORM_TOPIC_TOP_PICK_COUNT,
   PLATFORM_TOPIC_SHORTLIST_MAX,
   platformTopicShortlistTotalCredits,
   type PlatformTopicShortlistItem,
@@ -2464,9 +2465,36 @@ export default function PlatformPage() {
   /** 全案分析确认前：Skill/提示词优先级对话气泡 */
   const [fullAnalysisConfirmOpen, setFullAnalysisConfirmOpen] = useState(false);
   const [pendingFullAnalysisLabels, setPendingFullAnalysisLabels] = useState("");
-  /** 选题初选 20 → 勾选 5–6 → 扩写 */
+  /** 选题初选 20–30 条 → 用户自己挑 → 可改标题 → 单条扩写 */
   const [topicShortlist, setTopicShortlist] = useState<PlatformTopicShortlistItem[]>([]);
   const [topicShortlistCount, setTopicShortlistCount] = useState(PLATFORM_TOPIC_SHORTLIST_DEFAULT);
+  /** 正在改标题的初选条目 id 与草稿文字（改完才扩写） */
+  const [editingShortlistTopicId, setEditingShortlistTopicId] = useState<string | null>(null);
+  const [editingShortlistTitle, setEditingShortlistTitle] = useState("");
+  /** 初选里点「就写这条」的选题：由下方 effect 交给单条执行文案链路（同一选题首次免费） */
+  const [pendingShortlistTopic, setPendingShortlistTopic] = useState<PlatformTopicShortlistItem | null>(
+    null,
+  );
+  const startEditingShortlistTitle = useCallback((topic: PlatformTopicShortlistItem) => {
+    setEditingShortlistTopicId(topic.id);
+    setEditingShortlistTitle(topic.title);
+  }, []);
+  const cancelEditingShortlistTitle = useCallback(() => {
+    setEditingShortlistTopicId(null);
+    setEditingShortlistTitle("");
+  }, []);
+  const commitEditingShortlistTitle = useCallback(() => {
+    const id = editingShortlistTopicId;
+    if (!id) return;
+    const next = editingShortlistTitle.trim().slice(0, 120);
+    if (next.length < 4) {
+      toast.error("标题至少 4 个字");
+      return;
+    }
+    setTopicShortlist((prev) => prev.map((t) => (t.id === id ? { ...t, title: next } : t)));
+    setEditingShortlistTopicId(null);
+    setEditingShortlistTitle("");
+  }, [editingShortlistTitle, editingShortlistTopicId]);
   const generateTopicShortlistMutation = trpc.mvAnalysis.generatePlatformTopicShortlist.useMutation();
   const topicShortlistPrice = platformTopicShortlistTotalCredits({
     count: topicShortlistCount,
@@ -2950,11 +2978,12 @@ export default function PlatformPage() {
           <div className="min-w-0 flex-1">
             <div className="text-lg font-bold text-white md:text-xl">选题初选</div>
             <p className="mt-1 text-[13px] leading-snug text-gray-300">
-              先填背景再生成。默认 {PLATFORM_TOPIC_SHORTLIST_DEFAULT} 条；选题可直接拿去下方执行区出封面与分镜。
+              先填背景再生成。默认 {PLATFORM_TOPIC_SHORTLIST_DEFAULT} 条，想自己挑就选 20–30 条；
+              <strong className="text-white/90">这步只出题</strong>，挑哪条、标题改成什么都由你定，确认后才写文案与封面。
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-gray-300">
               <span>条数</span>
-              {([6, 12, 20] as const).map((n) => (
+              {([6, 12, 20, 25, 30] as const).map((n) => (
                 <button
                   key={n}
                   type="button"
@@ -3031,14 +3060,106 @@ export default function PlatformPage() {
         </div>
         {topicShortlist.length > 0 ? (
           <>
-            <div className="mt-3 max-h-[320px] space-y-1.5 overflow-y-auto pr-1">
-              {topicShortlist.map((t) => (
+            <p className="mt-3 text-[12px] leading-snug text-gray-400">
+              已按爆款概率 + 评论区热度排序，前 {PLATFORM_TOPIC_TOP_PICK_COUNT} 条标了「优先」，只是给你参考顺序。
+              <strong className="text-white/90">挑哪条你说了算</strong>：标题不满意可以点「改标题」直接改，改完再点「就写这条」，才会生成文案与封面。
+            </p>
+            <div className="mt-2 max-h-[360px] space-y-1.5 overflow-y-auto pr-1">
+              {topicShortlist.map((t, i) => (
                 <div
                   key={t.id}
-                  className="rounded-md border border-white/10 bg-black/20 px-2.5 py-2 text-[12px] text-gray-300"
+                  className={`rounded-md border px-2.5 py-2 text-[12px] ${
+                    t.isTopPick
+                      ? "border-[#fde047]/40 bg-[#fde047]/8 text-gray-200"
+                      : "border-white/10 bg-black/20 text-gray-300"
+                  }`}
                 >
-                  <span className="font-semibold text-white/95">{t.title}</span>
-                  <span className="mt-0.5 block text-gray-400">{t.conveyGoal}</span>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <span className="mr-1.5 text-[11px] font-bold text-gray-500">{i + 1}.</span>
+                      {t.isTopPick ? (
+                        <span className="mr-1.5 rounded bg-[#fde047]/20 px-1.5 py-0.5 text-[10px] font-bold text-[#fde047]">
+                          优先
+                        </span>
+                      ) : null}
+                      {editingShortlistTopicId === t.id ? (
+                        <input
+                          value={editingShortlistTitle}
+                          autoFocus
+                          maxLength={120}
+                          onChange={(e) => setEditingShortlistTitle(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              commitEditingShortlistTitle();
+                            }
+                            if (e.key === "Escape") cancelEditingShortlistTitle();
+                          }}
+                          className="w-full rounded border border-[#49e6ff]/40 bg-black/40 px-2 py-1 text-[12px] font-semibold text-white outline-none"
+                          aria-label="修改选题标题"
+                        />
+                      ) : (
+                        <span className="font-semibold text-white/95">{t.title}</span>
+                      )}
+                      {typeof t.commentHeat === "number" && editingShortlistTopicId !== t.id ? (
+                        <span
+                          className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                            t.commentHeat >= 70
+                              ? "bg-[#ff8fab]/20 text-[#ffb3c6]"
+                              : "bg-white/10 text-gray-400"
+                          }`}
+                          title="预估评论区热度：大家想不想在评论里说话"
+                        >
+                          评论热 {t.commentHeat}
+                        </span>
+                      ) : null}
+                      <span className="mt-0.5 block text-gray-400">{t.conveyGoal}</span>
+                      {t.viralReason ? (
+                        <span className="mt-0.5 block text-[11px] text-[#8cefff]/70">
+                          {typeof t.viralScore === "number" ? `${t.viralScore} 分 · ` : ""}
+                          {t.viralReason}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {editingShortlistTopicId === t.id ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={commitEditingShortlistTitle}
+                            className="rounded-lg border border-[#49e6ff]/50 bg-[#49e6ff]/20 px-2 py-1.5 text-[11px] font-bold text-[#b8f4ff]"
+                          >
+                            存标题
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEditingShortlistTitle}
+                            className="rounded-lg border border-white/15 px-2 py-1.5 text-[11px] text-gray-400"
+                          >
+                            取消
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => startEditingShortlistTitle(t)}
+                            className="rounded-lg border border-white/15 px-2 py-1.5 text-[11px] text-gray-300"
+                          >
+                            改标题
+                          </button>
+                          <button
+                            type="button"
+                            disabled={Boolean(generatingStrategicMapTopicKey) || Boolean(pendingShortlistTopic)}
+                            onClick={() => setPendingShortlistTopic(t)}
+                            className="rounded-lg border border-emerald-400/50 bg-emerald-500/20 px-2.5 py-1.5 text-[11px] font-bold text-emerald-50 disabled:opacity-40"
+                          >
+                            就写这条
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -8067,6 +8188,21 @@ export default function PlatformPage() {
       allowBloggerTitle,
     ],
   );
+
+  /**
+   * 初选点「就写这条」后才写文案：走单条执行文案链路（同一选题首次免费），
+   * 不批量扩写，避免一次点下去烧掉整批积分。
+   */
+  useEffect(() => {
+    if (!pendingShortlistTopic) return;
+    const topic = pendingShortlistTopic;
+    setPendingShortlistTopic(null);
+    void handleQuickHotTopicToExecution({
+      title: topic.title,
+      whyHot: topic.conveyGoal,
+      howToUse: topic.hookSketch,
+    });
+  }, [pendingShortlistTopic, handleQuickHotTopicToExecution]);
 
   const handleStrategicMapRegenerateTopicCopy = useCallback(
     async (pick: DecisionIntelTopicPick) => {

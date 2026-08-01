@@ -7,13 +7,16 @@ import type { PlatformSkillLane } from "./platformSkillRouter.js";
 
 /** 默认生成条数（含在基础积分内） */
 export const PLATFORM_TOPIC_SHORTLIST_DEFAULT = 6;
-/** 单次最多可生成（超出默认部分按条另计费） */
-export const PLATFORM_TOPIC_SHORTLIST_MAX = 20;
+/** 单次最多可生成（超出默认部分按条另计费）；20–30 条是「只出题、由用户挑」的常用档 */
+export const PLATFORM_TOPIC_SHORTLIST_MAX = 30;
 /** @deprecated 使用 DEFAULT；保留别名避免旧引用断裂 */
 export const PLATFORM_TOPIC_SHORTLIST_COUNT = PLATFORM_TOPIC_SHORTLIST_DEFAULT;
 
 export const PLATFORM_TOPIC_EXPAND_MIN = 1;
 export const PLATFORM_TOPIC_EXPAND_MAX = 20;
+
+/** 初选按爆款概率排序后，前 N 条标为「优先」——用户先看这几条再决定写不写文案 */
+export const PLATFORM_TOPIC_TOP_PICK_COUNT = 5;
 
 /** 小红书评论区生活化钩子：≤3 个汉字/字符，禁止整句预约话术 */
 export const PLATFORM_COMMENT_HOOK_MAX_CHARS = 3;
@@ -82,6 +85,14 @@ export const platformTopicShortlistItemSchema = z.object({
   commentHook: z.string().min(1).max(PLATFORM_COMMENT_HOOK_MAX_CHARS).optional(),
   /** 关联的官方活动 / 话题名（如 #城市漫步指南） */
   linkedCampaigns: z.array(z.string().min(1).max(80)).max(4).optional(),
+  /** 爆款概率 0–100：趋势命中 + 反差 + 共鸣 的综合估计，用于排序 */
+  viralScore: z.number().min(0).max(100).optional(),
+  /** 为什么可能爆（≤24 字，给人看的一句） */
+  viralReason: z.string().max(24).optional(),
+  /** 评论区热度 0–100：这条发出去大家想不想留言（与 viralScore 分开判断） */
+  commentHeat: z.number().min(0).max(100).optional(),
+  /** 排序后是否进前 {@link PLATFORM_TOPIC_TOP_PICK_COUNT} */
+  isTopPick: z.boolean().optional(),
 });
 
 export type PlatformTopicShortlistItem = z.infer<typeof platformTopicShortlistItemSchema>;
@@ -190,6 +201,29 @@ export function ensureAuthorityCiteInCopy(params: {
   const base = String(params.copywriting || "").trim();
   const merged = base ? `${base}\n\n${cite}` : cite;
   return { copywriting: merged, patched: true };
+}
+
+/** 排序权重：爆款概率为主，评论区热度为辅 */
+export const PLATFORM_TOPIC_COMMENT_HEAT_WEIGHT = 0.3;
+
+/**
+ * 按「爆款概率 + 评论区热度」降序排序，并把前 {@link PLATFORM_TOPIC_TOP_PICK_COUNT} 条标为优先。
+ * 没给分的按 50 处理，保持原有相对顺序（稳定排序）。
+ */
+export function rankTopicShortlistByViralScore<
+  T extends { viralScore?: number; commentHeat?: number; isTopPick?: boolean },
+>(items: T[], topCount = PLATFORM_TOPIC_TOP_PICK_COUNT): T[] {
+  const scored = items.map((item, index) => {
+    const viral = Number.isFinite(Number(item.viralScore)) ? Number(item.viralScore) : 50;
+    const heat = Number.isFinite(Number(item.commentHeat)) ? Number(item.commentHeat) : 50;
+    return {
+      item,
+      index,
+      score: viral * (1 - PLATFORM_TOPIC_COMMENT_HEAT_WEIGHT) + heat * PLATFORM_TOPIC_COMMENT_HEAT_WEIGHT,
+    };
+  });
+  scored.sort((a, b) => (b.score - a.score) || (a.index - b.index));
+  return scored.map(({ item }, i) => ({ ...item, isTopPick: i < topCount }));
 }
 
 /**
