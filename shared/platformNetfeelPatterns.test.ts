@@ -50,4 +50,14 @@ describe("platformNetfeelPatterns", () => {
     expect(blob).toMatch(/deform_tension|变形/);
     expect(blob).not.toMatch(/OpenAI|GPT-|Gemini|EvoLink/i);
   });
+
+  it("requires expression/action to match copy tension and premium palette", () => {
+    const cover = composePlatformNetfeelCoverGuidance();
+    const hint = composePlatformNetfeelImageSkillHint();
+    expect(cover).toMatch(/张口大吃/);
+    expect(cover).toMatch(/香槟金|暖琥珀/);
+    expect(cover).toMatch(/发呆|证件照/);
+    expect(hint).toMatch(/文案=表情|同档/);
+    expect(hint).toMatch(/香槟金|暖琥珀/);
+  });
 });

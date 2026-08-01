@@ -181,7 +181,25 @@ ${lines.join("\n")}
 表达：像朋友转述，不像培训讲师念稿。`;
 }
 
-/** 封面出图：网感壳 + 变形字（2B） */
+/**
+ * 夸张文案 ↔ 夸张表情/动作同拍（用户 2026-08-01 明文）+ 高级不俗配色。
+ * 注入封面出图 / Skill 短约束 / Stage2 网感壳。
+ */
+export function composePlatformNetfeelExpressionMatchGuidance(): string {
+  return `【网感封面·文案张力 = 表情动作张力·硬门槛】
+有人物时：**屏上文字有多拧/多夸张，人物表情与肢体必须同档位配合**，禁止「大字很野 + 人发呆望窗外/证件照微笑」。
+同拍配对（择一写进画面，勿说明书堆叠）：
+- 吃喝/减脂/午餐反差 → **张口大吃、鼓腮咀嚼、叉子怼嘴、满足眯眼或夸张惊喜**，身体微前倾「正在发生」
+- 反常识断言 → 瞪大眼不信、错愕张嘴、坏笑摇头、探身递证据
+- 数字拧巴/步骤结果 → 手指比数、点桌、亮手机屏幕证据 + 笃定或得意表情
+- 抽象冲击壳 → 失衡/跳跃/夸张递物，表情仍须可读情绪
+**禁止**：冷脸大片、望景发呆、正襟危坐、端杯假笑与夸张标题同框。
+【高级不俗·配色字效】
+停滑靠构图与表情，不靠廉价霓虹贴纸感。配色偏**杂志高级**：米白/象牙白主字 + **单一**香槟金或暖琥珀提亮杀伤词（可细笔刷下划线）；侧栏关键词用克制白/浅金描边。
+**避免**：荧光粉绿撞色墙、厚塑料贴纸字、三色以上抢戏、便利店价签堆叠感。变形字可有轻微厚描边/立体，但气质要精致可读。`;
+}
+
+/** 封面出图：网感壳 + 变形字（2B）+ 表情同拍 + 高级不俗 */
 export function composePlatformNetfeelCoverGuidance(): string {
   const shells = PLATFORM_NETFEEL_COVER_SHELLS.map(
     (s) => `- ${s.id}（${s.labelZh}）：${s.visualHint}`,
@@ -189,8 +207,9 @@ export function composePlatformNetfeelCoverGuidance(): string {
   return `【网感封面壳·A1 密度课对齐】
 竖版信息流封面须从下列壳中**选一主壳**（同批六条轮换，禁止六条同壳）：
 ${shells}
-版式张力（用户口径 2B）：允许侧栏大字、背后竖排关键词、黄/霓虹提亮块、主词**轻微变形/厚描边/立体感**以增强停滑；主信息仍服务 coverHeadline，**禁止**百科多图标墙与 CTA 墙。
-画面优先：真人怼镜有戏表情 + 烟火气场域或抽象冲击二选一；禁正襟危坐培训脸。
+版式张力（用户口径 2B）：允许侧栏大字、背后竖排关键词、**克制**暖金/琥珀提亮块、主词**轻微变形/厚描边/立体感**以增强停滑；主信息仍服务 coverHeadline，**禁止**百科多图标墙与 CTA 墙。
+${composePlatformNetfeelExpressionMatchGuidance()}
+画面优先：真人**正在做事**的有戏表情（含张口大吃等）+ 烟火气场域或抽象冲击二选一；禁正襟危坐培训脸。
 屏内字：中国大陆简体；杀伤字 2–6 个提亮。`;
 }
 
@@ -215,5 +234,5 @@ export function composePlatformNetfeelFullcaseGuidance(): string {
 
 /** 出图短约束（拼进 composePlatformImageSkillHints） */
 export function composePlatformNetfeelImageSkillHint(): string {
-  return `【网感封面·A1壳】从 flank_keyword / steps_result / truth_vertical / big_topic_warn / question_fork / life_stall_vibe / abstract_stunt / deform_tension 选一主壳；允许厚描边与轻微变形字增张力；黄/霓虹提亮 2–6 字；烟火气场域或抽象冲击；禁培训坐姿脸与说明书墙；主句必须是 coverHeadline。`;
+  return `【网感封面·A1壳】从 flank_keyword / steps_result / truth_vertical / big_topic_warn / question_fork / life_stall_vibe / abstract_stunt / deform_tension 选一主壳；主句=coverHeadline。【文案=表情】文字多拧则人物须同档动作表情（吃喝向：张口大吃/鼓腮/叉子怼嘴；反常识：错愕坏笑；禁望窗外发呆）。【高级不俗】米白+单一香槟金/暖琥珀提亮，忌荧光粉绿贴纸俗气；侧栏/竖排可有，但精致可读。`;
 }

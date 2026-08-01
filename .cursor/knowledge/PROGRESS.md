@@ -269,6 +269,8 @@ douyin 文件应从 93MB 量级显著下降。原「失败平台一次性回补�
 
 全案网感：`shared/platformNetfeelPatterns.ts`——烟火气/反差/幽默标题句式 + A1 封面壳（含变形字张力）；注入 Stage2/初选/决策智库/封面出图；trendStore **小红书主、B站+抖音辅**。样本课 `~/Downloads/2026Aug01/A1-netfeel-highlights.md`。
 
+网感封面补刀：夸张文案须同档表情动作（张口大吃等）；配色高级不俗（米白+香槟金/暖琥珀，忌荧光俗气）。
+
 ---
 
 ## 如何更新本文件
