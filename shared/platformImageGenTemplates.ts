@@ -138,23 +138,27 @@ const KIT = {
   } satisfies PlatformImageGenAestheticKit,
 };
 
+/** 上传底图后按用户说明微调（须传图） */
+export const PLATFORM_IMAGE_GEN_SELF_EDIT_ID = "pig_upload_self_edit" as const;
+
 export const PLATFORM_IMAGE_GEN_TEMPLATES: readonly PlatformImageGenTemplate[] = [
   // —— 海报排版 ——
   {
-    id: "pig_city_type_poster",
+    id: PLATFORM_IMAGE_GEN_SELF_EDIT_ID,
     group: "poster",
-    labelZh: "城市名地标海报",
-    blurbZh: "大字即构图 · 地标缝进字形",
-    capabilityZh: "做城市名旅行海报：城市名大字占满画面，地标无缝嵌进字母",
-    needsReference: false,
-    aspectHint: "4:5",
+    labelZh: "上传图片自行编辑",
+    blurbZh: "上传底图 · 只写要改的点",
+    capabilityZh: "上传自己的图，用一句话说明要改哪里；其余构图与身份尽量保持不变",
+    needsReference: true,
+    aspectHint: "3:4",
     sceneZh:
-      "干净现代的排版旅行海报。城市名「[[主体]]」以粗黑体大写无衬线横贯画面宽度，字母内部或负空间无缝融入该城市地标剪影与天际线。底部一行小字国家/旅行短句。气质像精品旅行杂志跨页，而非旅游网站 banner。",
+      "基于用户上传的原图做定向编辑。用户要求改动：「[[主体]]」。只改点名的部分；人物五官身份、整体构图与光影气质尽量保持与原图一致。禁止另起炉灶画成无关题材，禁止加水印与乱码字。",
     aesthetic: {
-      ...KIT.cleanBright,
-      paletteZh: "从城市气质提取主色（如海岸青、古城赭、都会灰蓝）+ 大面积留白",
-      typographyZh: "城市名即主视觉；底部一句细体副文；禁止贴纸式多行口号",
-      compositionZh: "字形占满宽度，地标嵌字内；上下呼吸留白对称克制",
+      ...KIT.photoSoft,
+      typographyZh: "除非用户明确要求加字，否则画面不新增标题字",
+      compositionZh: "继承原图构图重心，勿大幅改裁切与透视",
+      qualityLockZh: "编辑后仍保持原图清晰度与材质可读",
+      negativeZh: "禁止改五官身份、跑题重画、水印、乱码字、无关贴纸墙",
     },
   },
   {
@@ -180,26 +184,6 @@ export const PLATFORM_IMAGE_GEN_TEMPLATES: readonly PlatformImageGenTemplate[] =
     sceneZh:
       "基于参考图锁脸生成明亮清爽图文封面，标题气质「[[主体]]」：大面积高明度纯净色场，主体自底部大胆裁切，只保留最有记忆点的局部。顶部大号手写感标题，中部一行副文。文字主动但不遮五官。像小红书/杂志封面成品，而非拼贴草稿。",
     aesthetic: KIT.cleanBright,
-  },
-  {
-    id: "pig_mono_watercolor_travel",
-    group: "poster",
-    labelZh: "单色水彩旅行海报",
-    blurbZh: "复古水彩 · 细线墨迹",
-    capabilityZh: "做复古单色水彩旅行海报：城市剪影 + 细墨线 + 优雅留白",
-    needsReference: false,
-    aspectHint: "4:5",
-    sceneZh:
-      "极简复古水彩旅行海报，主题「[[主体]]」。整幅仅用优雅单色水彩与细墨线表现地标、街道与天空层次；标题区优雅书写城市名。气质像独立书店手绘海报，而非照片滤镜。",
-    aesthetic: {
-      paletteZh: "单一优雅主色（靛蓝/赭石/松绿择一）+ 纸白留白",
-      lightingZh: "水彩晕染自然明暗，无需棚拍光感",
-      typographyZh: "细墨线手写或铅字标题，忌粗黑网感大字",
-      textureZh: "水彩纸纹、墨迹飞白、淡渍",
-      compositionZh: "地标剪影 + 大留白；竖幅优雅",
-      qualityLockZh: "印刷海报级水彩质感，边缘干净",
-      negativeZh: "禁止照片写实、霓虹、贴纸拼贴、水印、多色花哨",
-    },
   },
 
   // —— 产品电商 ——

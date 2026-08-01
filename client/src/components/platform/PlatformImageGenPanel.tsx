@@ -5,7 +5,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Image as ImageIcon, Loader2, Sparkles, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import {
+  PLATFORM_IMAGE_GEN_SELF_EDIT_ID,
   buildPlatformImageGenPrompt,
+  getPlatformImageGenTemplate,
   listPlatformImageGenByGroup,
   mapPlatformImageGenAspectForApi,
   type PlatformImageGenAspectHint,
@@ -40,6 +42,7 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
   const chargeStepMutation = trpc.workflow.chargeStep.useMutation();
   const refundStepMutation = trpc.workflow.refundStep.useMutation();
   const uploadRefMutation = trpc.mvAnalysis.uploadCoverReferencePhoto.useMutation();
+  const selfEditMode = activeId === PLATFORM_IMAGE_GEN_SELF_EDIT_ID;
 
   useEffect(() => {
     return () => {
@@ -53,6 +56,11 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
     setAspectHint(t.aspectHint);
     setDraft(buildPlatformImageGenPrompt(t.id, { subjectHint }));
     setError(null);
+  };
+
+  const applySelfEdit = () => {
+    const t = getPlatformImageGenTemplate(PLATFORM_IMAGE_GEN_SELF_EDIT_ID);
+    if (t) applyTemplate(t);
   };
 
   const refreshDraftFromHint = () => {
@@ -108,9 +116,9 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
       if (refPreview?.startsWith("blob:")) URL.revokeObjectURL(refPreview);
       setRefUrl(url);
       setRefPreview(URL.createObjectURL(file));
-      toast.success("参考图已上传");
+      toast.success(selfEditMode ? "底图已上传，可填写要改的点" : "参考图已上传");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "参考图上传失败");
+      toast.error(e instanceof Error ? e.message : "图片上传失败");
     } finally {
       setUploading(false);
     }
@@ -136,7 +144,7 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
       return;
     }
     if (needsReference && !refUrl) {
-      toast.error("该模板需要先上传参考图");
+      toast.error(selfEditMode ? "请先上传要编辑的图片" : "该模板需要先上传参考图");
       return;
     }
     setBusy(true);
@@ -203,13 +211,33 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
           <div>
             <div className="text-sm font-semibold text-white/85">文生图与海报模板</div>
             <p className="mt-0.5 text-[10px] text-white/40">
-              按用途分类点选；每套含完整审美配套（色板/光影/字体/材质/构图）。带「·图」须先上传参考图。
+              可先「上传图片自行编辑」，或按用途点选模板。带「·图」须先上传图片。
             </p>
           </div>
           <span className="rounded-full border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-100/80">
             约 {IMAGE_GEN_CREDITS} 积分 / 张
           </span>
         </div>
+
+        <button
+          type="button"
+          disabled={disabled || busy}
+          onClick={applySelfEdit}
+          className={`mt-3 flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition disabled:opacity-40 ${
+            selfEditMode
+              ? "border-cyan-400/50 bg-cyan-500/15"
+              : "border-emerald-400/35 bg-emerald-500/10 hover:border-emerald-300/50"
+          }`}
+        >
+          <Upload className="mt-0.5 h-4 w-4 shrink-0 text-emerald-200/90" />
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-semibold text-white/90">上传图片自行编辑</div>
+            <p className="mt-0.5 text-[10px] leading-snug text-white/55">
+              上传底图，在下方写清「只改什么、其他保持不变」，再生成。适合改色、换背景、加小细节。
+            </p>
+          </div>
+          <span className="shrink-0 text-[9px] text-white/40">·图</span>
+        </button>
 
         <div className="mt-3 space-y-3">
           {groups.map(({ group, items }) => (
@@ -218,7 +246,9 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
                 {group.labelZh}
               </div>
               <div className="grid gap-1.5 sm:grid-cols-2">
-                {items.map((t) => {
+                {items
+                  .filter((t) => t.id !== PLATFORM_IMAGE_GEN_SELF_EDIT_ID)
+                  .map((t) => {
                   const on = activeId === t.id;
                   return (
                     <button
@@ -259,14 +289,18 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
       <div className="grid gap-3 lg:grid-cols-[1fr_minmax(220px,0.9fr)]">
         <div className="space-y-2">
           <label className="block text-[11px] font-semibold text-white/55">
-            主体 / 品牌名（写入模板占位）
+            {selfEditMode ? "要改的点（写入编辑说明）" : "主体 / 品牌名（写入模板占位）"}
             <input
               type="text"
               value={subjectHint}
               disabled={disabled || busy}
               onChange={(e) => setSubjectHint(e.target.value)}
               onBlur={refreshDraftFromHint}
-              placeholder="如：可口可乐、东京、夏季跑鞋发布…"
+              placeholder={
+                selfEditMode
+                  ? "如：丝带改成红色，脸与发型不动；背景换成浅灰…"
+                  : "如：可口可乐、夏季跑鞋发布…"
+              }
               className="mt-1 w-full rounded-lg border border-white/12 bg-black/40 px-3 py-2 text-[12px] text-white/85 outline-none placeholder:text-white/30 focus:border-cyan-400/40"
             />
           </label>
@@ -296,7 +330,9 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
               {busy ? "正在生成…" : "生成图片"}
             </button>
             {needsReference && !refUrl ? (
-              <span className="text-[10px] text-amber-200/75">请先上传参考图</span>
+              <span className="text-[10px] text-amber-200/75">
+                {selfEditMode ? "请先上传要编辑的图片" : "请先上传参考图"}
+              </span>
             ) : null}
             <span className="text-[10px] text-white/35">
               出图画幅：{mapPlatformImageGenAspectForApi(aspectHint)}（模板建议 {aspectHint}）
@@ -308,7 +344,9 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
         </div>
 
         <div className="space-y-2">
-          <div className="text-[11px] font-semibold text-white/55">参考图（可选 / 模板要求时必填）</div>
+          <div className="text-[11px] font-semibold text-white/55">
+            {selfEditMode ? "要编辑的图片（必填）" : "参考图（可选 / 模板要求时必填）"}
+          </div>
           {refPreview ? (
             <div className="relative overflow-hidden rounded-lg border border-white/12">
               <img src={refPreview} alt="" className="max-h-48 w-full object-contain bg-black/40" />
@@ -317,7 +355,7 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
                 disabled={busy || uploading}
                 onClick={clearRef}
                 className="absolute right-2 top-2 rounded-full border border-white/20 bg-black/60 p-1 text-white/80 hover:bg-black/80"
-                aria-label="清除参考图"
+                aria-label={selfEditMode ? "清除底图" : "清除参考图"}
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -334,7 +372,11 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
                 <Upload className="h-5 w-5 text-white/40" />
               )}
               <span className="text-[11px] text-white/55">
-                {uploading ? "上传中…" : "点击上传参考图"}
+                {uploading
+                  ? "上传中…"
+                  : selfEditMode
+                    ? "点击上传要编辑的图片"
+                    : "点击上传参考图"}
               </span>
               <input
                 type="file"
