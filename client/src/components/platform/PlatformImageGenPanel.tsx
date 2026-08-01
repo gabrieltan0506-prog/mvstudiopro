@@ -14,6 +14,7 @@ import {
   type PlatformImageGenTemplate,
 } from "@shared/platformImageGenTemplates";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 import { createJobSameOrigin, pollJobUntilTerminal } from "@/lib/jobs";
 import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
 import { trpc } from "@/lib/trpc";
@@ -348,17 +349,31 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
             {selfEditMode ? "要编辑的图片（必填）" : "参考图（可选 / 模板要求时必填）"}
           </div>
           {refPreview ? (
-            <div className="relative overflow-hidden rounded-lg border border-white/12">
-              <img src={refPreview} alt="" className="max-h-48 w-full object-contain bg-black/40" />
-              <button
-                type="button"
-                disabled={busy || uploading}
-                onClick={clearRef}
-                className="absolute right-2 top-2 rounded-full border border-white/20 bg-black/60 p-1 text-white/80 hover:bg-black/80"
-                aria-label={selfEditMode ? "清除底图" : "清除参考图"}
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+            <div className="space-y-2">
+              <div className="relative overflow-hidden rounded-lg border border-white/12">
+                <img src={refPreview} alt="" className="max-h-48 w-full object-contain bg-black/40" />
+                <button
+                  type="button"
+                  disabled={busy || uploading}
+                  onClick={clearRef}
+                  className="absolute right-2 top-2 rounded-full border border-white/20 bg-black/60 p-1 text-white/80 hover:bg-black/80"
+                  aria-label={selfEditMode ? "清除底图" : "清除参考图"}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              {refUrl ? (
+                <ImageUpscaleBar
+                  imageUrl={refUrl}
+                  baseCreditKey="platformRefImage"
+                  compact
+                  onUpscaled={(url) => {
+                    if (refPreview?.startsWith("blob:")) URL.revokeObjectURL(refPreview);
+                    setRefUrl(url);
+                    setRefPreview(url);
+                  }}
+                />
+              ) : null}
             </div>
           ) : (
             <label
@@ -409,14 +424,21 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
             )}
           </div>
           {resultUrl ? (
-            <a
-              href={resultUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-block text-[11px] text-cyan-200/80 underline-offset-2 hover:underline"
-            >
-              在新标签打开原图
-            </a>
+            <div className="space-y-2">
+              <a
+                href={resultUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-block text-[11px] text-cyan-200/80 underline-offset-2 hover:underline"
+              >
+                在新标签打开原图
+              </a>
+              <ImageUpscaleBar
+                imageUrl={resultUrl}
+                baseCreditKey="platformRefImage"
+                onUpscaled={(url) => setResultUrl(url)}
+              />
+            </div>
           ) : null}
         </div>
       </div>

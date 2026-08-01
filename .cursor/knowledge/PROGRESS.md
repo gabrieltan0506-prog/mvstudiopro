@@ -263,6 +263,10 @@ douyin 文件应从 93MB 量级显著下降。原「失败平台一次性回补�
 
 本地：`pnpm check` ✅；相关 vitest 105 ✅。
 
+## 2026-08-01
+
+平台文生图：生成结果 / 上传底图接入「高清放大」2×·4×（`ImageUpscaleBar`，计费 `platformRefImage`）；条本身补齐 4×。rules：收回默认代合，须用户明文才可 `gh pr merge`。
+
 ---
 
 ## 如何更新本文件
