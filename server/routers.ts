@@ -86,6 +86,10 @@ import {
   needsReviewSafeVoice,
 } from "../shared/platformCreatorInsightFraming.js";
 import {
+  PLATFORM_TREND_PRIORITY_FOR_FULLCASE,
+  composePlatformTrendPriorityGuidance,
+} from "../shared/platformNetfeelPatterns.js";
+import {
   PLATFORM_CULTURAL_MATERIAL_DIVERSITY_GUIDANCE,
   needsCulturalMaterialDiversity,
 } from "../shared/platformCulturalMaterialDiversity.js";
@@ -1443,11 +1447,14 @@ export async function buildPlatformContent(params: {
       evidenceItems,
       decisionWindowDays,
     );
+    /** 小红书主参考：多留样本；B站/抖音辅参考；其余保持 8 */
+    const sampleCap =
+      platform === "xiaohongshu" ? 12 : platform === "bilibili" || platform === "douyin" ? 10 : 8;
     const titleFromSamples = highEngagementSamples.map((h) => h.title).filter(Boolean);
     const recentTitles =
       titleFromSamples.length > 0
-        ? titleFromSamples.slice(0, 8)
-        : evidenceItems.slice(0, 8).map((item) => item?.title).filter(Boolean);
+        ? titleFromSamples.slice(0, sampleCap)
+        : evidenceItems.slice(0, sampleCap).map((item) => item?.title).filter(Boolean);
     const tagCandidates = deriveTagCandidatesFromTrendSamples(
       [
         ...highEngagementSamples,
@@ -1466,7 +1473,7 @@ export async function buildPlatformContent(params: {
       trendSampleEngagementNote:
         "highEngagementSamples 来自 trendStore 抓取样本在本窗口内的「评论/转发加权互动 × 时效 × 同账号爆发」排序（与企业/投流样本已尽量剔除）。请对齐其钩子与节奏偏好；禁止字面抄袭标题。非真实点击率。",
       growthPotentialRankedCount: growthDebugKept,
-      highEngagementSamples: highEngagementSamples.slice(0, 8),
+      highEngagementSamples: highEngagementSamples.slice(0, sampleCap),
       recentTitles,
       /** trendStore 标签/标题碎片 → 蓝海二级词种子（数据驱动，不强行凑数） */
       tagCandidates,
@@ -1601,9 +1608,14 @@ export async function buildPlatformContent(params: {
           weixinChannelsDouyinHotRef,
           blueOceanLexicon,
           blueOceanUsagePolicy: BLUE_OCEAN_USAGE_POLICY,
+          /** 全案 trend 权重：小红书主、B站/抖音辅 */
+          trendPlatformPriority: {
+            ...PLATFORM_TREND_PRIORITY_FOR_FULLCASE,
+            guidance: composePlatformTrendPriorityGuidance(),
+          },
           /** 与 dynamicDecisionChain 内 trendSampleEngagementNote 同源，便于模型扫读 */
           trendEngagementAlignmentPolicy:
-            "dynamicDecisionChain 中 highEngagementSamples 为抓取样本的高互动/增长潜力参考（非用户账号实测CTR或转化）。contentBlueprints 的 title/hook/copywriting/detailedScript 须在完整人设（职业、身份、兴趣、爱好、专长）约束下对齐其钩子结构与内容节拍；可借鉴切口与张力，热点与样本仅作参考，须改写为贴合本人设的表达，禁止字面抄袭标题或正文，禁止硬套无关热梗。",
+            "dynamicDecisionChain 中 highEngagementSamples 为抓取样本的高互动/增长潜力参考（非用户账号实测CTR或转化）。contentBlueprints 的 title/hook/copywriting/detailedScript 须在完整人设（职业、身份、兴趣、爱好、专长）约束下对齐其钩子结构与内容节拍；**优先**对齐 xiaohongshu 样本钩子，并同时参考 bilibili 与 douyin；可借鉴切口与张力，热点与样本仅作参考，须改写为贴合本人设的表达，禁止字面抄袭标题或正文，禁止硬套无关热梗。",
           /** Responses Pro 深度选题优化结果：六维方向包；正式文案须对齐且拉开差异 */
           proTopicOptimizeBrief: proTopicOptimizeBrief?.ok ? proTopicOptimizeBrief : null,
           recentUserTopicTitles,
@@ -1655,12 +1667,13 @@ ${PLATFORM_STAGE2_VOICE_GUIDANCE}
 5.强冲突场景与深层热点转译（Cinematic Scenes & Deep Trend Remix）：结合文案、上下文与 snapshot / 动态链中可援引的趋势与热点，设计**极具视觉识别度的热门切口**；${PLATFORM_COPY_VIVID_SCENES_GUIDANCE} 热点梗**建议经解构与重塑**，使其贴合用户的**职业、身份与美学基因**；本条为**软约束**：不强制与某一高互动样本逐条绑定，但须在人设各维上讲得通，**不建议**为凑热点而脱钩。
 6.长尾常青与搜索流量（Long-tail Evergreen & Search Traffic）：面向**可持续吃长尾流量**的常青选题——围绕用户赛道里**高搜索意图、低时效衰减**的真实问题/关键词（如「如何…」「…怎么选」「…避坑」「…对比」等），设计可被反复搜索与收藏的实用内容；**建议**明确给出该平台可布局的**搜索关键词**与可系列化的子选题方向，便于沉淀为 IP 资产。
 【资安要求】：若内容与人设脱钩或使用泛化模板，则视为不合格。须恰好 **6** 条。
-【动态决策链要求】：在判断四个平台的标题、呈现形式、内容节奏时，**优先**读取 dynamicDecisionChain。抖音 / 快手使用近 5 天样本，B站 / 小红书使用近 15 天样本。快平台更重近期节奏与强钩子，慢平台更重 7-15 天持续讨论度与搜索沉淀，**不建议**混成同一判断。
+【动态决策链要求】：在判断四个平台的标题、呈现形式、内容节奏时，**优先**读取 dynamicDecisionChain 与 user JSON 的 trendPlatformPriority。抖音 / 快手使用近 5 天样本，B站 / 小红书使用近 15 天样本。快平台更重近期节奏与强钩子，慢平台更重 7-15 天持续讨论度与搜索沉淀，**不建议**混成同一判断。
+${composePlatformTrendPriorityGuidance()}
 【高互动样本对齐（抓取数据 · 非实测CTR/转化）】：每条 dynamicDecisionChain 附有 highEngagementSamples（由 trendStore 样本经「评论/转发加权互动 × 时效 × 同账号爆发」排序；已尽量剔除企业号与明显投流笔记——见 trendSampleEngagementNote）。请：
-(1) 在 title、hook、copywriting、detailedScript、publishingAdvice 中体现与之同构的「好奇缺口、反常识断言、具体数字/场景、情绪递进」——**适配该用户本人设（职业、身份、兴趣、爱好、专长）**，而非泛化稿；热点结构须**改写**落地到本人设；
+(1) **先读 xiaohongshu**，再读 bilibili 与 douyin，在 title、hook、copywriting、detailedScript、publishingAdvice 中体现与之同构的「好奇缺口、反常识断言、具体数字/场景、情绪递进、烟火气口语」——**适配该用户本人设（职业、身份、兴趣、爱好、专长）**，而非泛化稿；热点结构须**改写**落地到本人设；
 (2) **优先**借鉴切口、句式节奏与信息密度，**不建议**字面抄袭 sample 标题或洗稿；
-(3) 若某平台 highEngagementSamples 为空或仅含 engagementProxyFallback，则结合 recentTitles 与 topBuckets，仍须保持上述对齐意图；
-(4) user JSON 顶层的 trendEngagementAlignmentPolicy 与上条一体遵循。
+(3) 若某平台 highEngagementSamples 为空或仅含 engagementProxyFallback，则结合 recentTitles 与 topBuckets，仍须保持上述对齐意图；小红书空窗时以 B站+抖音顶上，但仍保持网感烟火气；
+(4) user JSON 顶层的 trendEngagementAlignmentPolicy / trendPlatformPriority 与上条一体遵循。
 
 【蓝海词与标签推演】：须读取 user JSON 的 blueOceanLexicon（flat / grouped）与 blueOceanUsagePolicy，以及 platformMenu[].blueOceanWords、dynamicDecisionChain[].tagCandidates。${BLUE_OCEAN_USAGE_POLICY} 维度 6（长尾常青）优先覆盖 secondary 与 tagCandidates。每条 blueprint 须输出 highlightKeywords（本条实际使用的蓝海/高亮词 2–6 个）。
 
