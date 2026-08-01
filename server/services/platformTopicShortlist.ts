@@ -45,6 +45,77 @@ function extractJsonObject(raw: string): unknown {
   }
 }
 
+/** 趋势样本读盘上限：读不到就降级，不让初选卡死 */
+const SHORTLIST_TREND_READ_TIMEOUT_MS = 25_000;
+
+type ShortlistTrendBrief = {
+  platform: "xiaohongshu" | "bilibili" | "douyin";
+  role: "主参考" | "辅参考";
+  hotTitles: string[];
+  hotTags: string[];
+};
+
+/**
+ * 初选前先查 trendStore 热门：小红书主、B站+抖音辅。
+ * 只取标题与高频标签给模型当**改写素材**，不做引用来源；读失败返回空数组。
+ */
+async function readShortlistTrendBriefs(): Promise<ShortlistTrendBrief[]> {
+  const platforms = [
+    { platform: "xiaohongshu" as const, role: "主参考" as const, titleCap: 24 },
+    { platform: "bilibili" as const, role: "辅参考" as const, titleCap: 12 },
+    { platform: "douyin" as const, role: "辅参考" as const, titleCap: 12 },
+  ];
+  try {
+    const { readTrendStoreForPlatforms } = await import("../growth/trendStore.js");
+    const store = await Promise.race([
+      readTrendStoreForPlatforms(
+        platforms.map((p) => p.platform),
+        { preferDerivedFiles: true },
+      ),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), SHORTLIST_TREND_READ_TIMEOUT_MS)),
+    ]);
+    if (!store) {
+      console.warn("[generatePlatformTopicShortlist] trendStore 读取超时，本次不带热门样本");
+      return [];
+    }
+    const briefs: ShortlistTrendBrief[] = [];
+    for (const { platform, role, titleCap } of platforms) {
+      const items = (store.collections as Record<string, { items?: unknown[] } | undefined>)?.[platform]?.items;
+      if (!Array.isArray(items) || !items.length) continue;
+      const rows = items as Array<Record<string, unknown>>;
+      const ranked = [...rows].sort(
+        (a, b) => Number(b.hotValue || b.likes || 0) - Number(a.hotValue || a.likes || 0),
+      );
+      const hotTitles = ranked
+        .map((r) => String(r.title || "").trim())
+        .filter(Boolean)
+        .slice(0, titleCap);
+      const tagFreq = new Map<string, number>();
+      for (const r of ranked.slice(0, 600)) {
+        for (const t of Array.isArray(r.tags) ? (r.tags as unknown[]) : []) {
+          const tag = String(t || "").trim();
+          if (!tag) continue;
+          tagFreq.set(tag, (tagFreq.get(tag) || 0) + 1);
+        }
+      }
+      const hotTags = Array.from(tagFreq.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 12)
+        .map(([tag]) => tag);
+      if (hotTitles.length) briefs.push({ platform, role, hotTitles, hotTags });
+    }
+    return briefs;
+  } catch (err) {
+    console.warn(
+      `[generatePlatformTopicShortlist] trendStore 读取失败: ${err instanceof Error ? err.message : String(err)}`.slice(
+        0,
+        200,
+      ),
+    );
+    return [];
+  }
+}
+
 async function resolvePoolAndPrompt(params: {
   userId: number | string;
   enabledSkillIds?: string[] | null;
@@ -108,6 +179,7 @@ export async function generatePlatformTopicShortlist(params: {
     platform: "xiaohongshu",
     featuredOnly: true,
   });
+  const trendBriefs = await readShortlistTrendBriefs();
   const campaignBrief = featuredCampaigns.slice(0, 10).map((c) => ({
     name: c.name,
     category: c.category,
@@ -129,6 +201,11 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
 8. 要有生活画面与烟火气，不是方法论课；优先把官方活动话题与人设方向结合（暑假生活/城市漫步/好物测评/运动日常/读书笔记等）；标题可用 [关键词]｜双拍、自嘲幽默、季节钉子。
 9. 同批至少 **60%** 选题 primaryLane=contrast 或标题明显含数字拧巴/结果颠倒/身份错位；禁止整批评「××的正确打开方式」「××注意事项」这类正确无聊题。
 10. 钩子气质优先对齐小红书信息流网感，并兼顾 B站/抖音节奏（trend 以小红书为主、B站抖音为辅）。
+11. **先读 trendHot 再动笔（硬）**：user JSON 的 \`trendHot\` 是各平台当前热门标题与高频标签（小红书主、B站/抖音辅）。必须先从中找出**正在被讨论的生活话题与情绪**，再改写成本人设能讲的选题。
+   - 方向一律取**生活化、趣味化、幽默风趣、容易引起共鸣**：日常场景里的小尴尬、小执念、明知不对还是会做的事、朋友之间会互相转发的那种。
+   - **禁止照抄** trendHot 的标题字面；只借话题与情绪。
+   - **改不动就别硬套**：某条热门与本人设八竿子打不着时直接放弃，不要强行嫁接成四不像。
+12. **反论文腔（硬）**：title 与 hookSketch 要像人说话——口语、有画面、有情绪。禁止「浅析／探究／指南／全解析／方法论／正确打开方式／注意事项／深度解读」这类腔调；禁止把名词堆成学术标题。写完自检一句：这条出现在信息流里，用户是会停下来还是直接划走？会划走就重写。
 输出：{ "topics": [ ...恰好${targetCount}条 ] }`;
 
   const user = JSON.stringify({
@@ -139,6 +216,7 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
     avoidTitles: (params.existingTitles || []).slice(0, 40),
     skillsBrief: skillsBlock.slice(0, 8000),
     officialCampaigns: campaignBrief,
+    trendHot: trendBriefs,
   });
 
   const res = await invokeLLM({
