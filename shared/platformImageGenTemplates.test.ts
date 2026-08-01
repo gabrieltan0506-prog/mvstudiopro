@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PLATFORM_IMAGE_GEN_GROUP_ORDER,
+  PLATFORM_IMAGE_GEN_SELF_EDIT_ID,
   PLATFORM_IMAGE_GEN_TEMPLATES,
   buildPlatformImageGenPrompt,
   listPlatformImageGenByGroup,
@@ -77,5 +78,18 @@ describe("platformImageGenTemplates", () => {
         `${t.labelZh} ${t.blurbZh} ${t.capabilityZh} ${t.sceneZh} ${Object.values(t.aesthetic).join(" ")}`,
     ).join("\n");
     expect(blob).not.toMatch(/canghe|prompthero|mkimage|promptalot|gpt-image2\.canghe|GPT-|Claude|OpenAI/i);
+  });
+
+  it("drops city landmark / mono watercolor travel posters; keeps upload self-edit", () => {
+    const ids = PLATFORM_IMAGE_GEN_TEMPLATES.map((t) => t.id);
+    const labels = PLATFORM_IMAGE_GEN_TEMPLATES.map((t) => t.labelZh);
+    expect(ids).not.toContain("pig_city_type_poster");
+    expect(ids).not.toContain("pig_mono_watercolor_travel");
+    expect(labels).not.toContain("城市名地标海报");
+    expect(labels).not.toContain("单色水彩旅行海报");
+    expect(ids).toContain(PLATFORM_IMAGE_GEN_SELF_EDIT_ID);
+    const self = PLATFORM_IMAGE_GEN_TEMPLATES.find((t) => t.id === PLATFORM_IMAGE_GEN_SELF_EDIT_ID)!;
+    expect(self.needsReference).toBe(true);
+    expect(self.labelZh).toBe("上传图片自行编辑");
   });
 });
