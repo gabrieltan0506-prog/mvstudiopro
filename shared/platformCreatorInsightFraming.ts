@@ -3,9 +3,12 @@
  * 面向任意赛道（知识、审美、健康、教育、职场等），禁止写成仅适配某一固定人设的硬编码。
  */
 
+import { composePlatformNetfeelFullcaseGuidance } from "./platformNetfeelPatterns";
+
 /**
  * 高反差选题 + 高点击封面短钩（全案 Stage2 / 选题初选 / 决策智库 / 封面出图共用）。
  * 精简是为了停滑与点击，不是恐吓砍字。
+ * 网感句式/封面壳见 platformNetfeelPatterns（烟火气·反差·幽默；小红书主、B站抖音辅）。
  */
 export const PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE = `【高反差选题 + 高点击封面·硬门槛】
 1. **title（选题）**：须具备「高反差 / 反认知 / 反常识 / 猎奇缺口」至少一种，让人想点开。气质对标（改写到本人设，勿照抄）：
@@ -13,9 +16,11 @@ export const PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE = `【高反差选题 + 高�
    - 「来到上海，我以为是到了美国，这里有全国最贵的……」
    - 「他天天打游戏，放榜怎么考上了北大？」
    title 约 12–28 字可带悬念省略号；禁止「××的正确打开方式」「××注意事项」「××机制概述」等正确无聊题。
-2. **coverHeadline（竖版封面主句）**：约 **10–18 字** 高点击短钩——数字拧巴 / 结果颠倒 / 身份错位 / 信息悬念；屏上最多 2 行大字，只提亮 2–6 字重点色。**禁止**把长 title 原样印满屏，也禁止百科副标与 CTA 墙。
+2. **coverHeadline（竖版封面主句）**：约 **10–18 字** 高点击短钩——数字拧巴 / 结果颠倒 / 身份错位 / 信息悬念；屏上最多 2 行有效信息轴，可叠侧栏/竖排关键词与**轻微变形厚描边**增张力（仍须可读）；只提亮 2–6 字重点色。**禁止**把长 title 原样印满屏，也禁止百科副标与 CTA 墙。
 3. **同批配额**：6 条方案中至少 **4 条** title 明显含反差/反常识/数字拧巴；platformVariants 三平台的 coverHeadline **不得三句雷同**，且每句都能单独停滑。
-4. **封面与选题分工**：title 负责「想点开」；coverHeadline 负责「信息流第一眼」——更短、更拧、更有画面。`;
+4. **封面与选题分工**：title 负责「想点开」；coverHeadline 负责「信息流第一眼」——更短、更拧、更有画面。
+
+${composePlatformNetfeelFullcaseGuidance()}`;
 
 /** 吸睛标题 + 钩子 + 半成品方案 + 咨询 CTA（Stage2 / 自定义选题 / 决策智库共用） */
 export const PLATFORM_HOOK_SOLUTION_CONSULTATION_GUIDANCE = `【选题商业闭环·强烈建议·软边界】每条选题**高度需求**让目标用户「停滑 → 共鸣 → 觉得你懂我 → 想进一步问你」，而不是只堆知识。

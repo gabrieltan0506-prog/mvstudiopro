@@ -105,9 +105,10 @@ export async function optimizeStage2TopicsWithPro(params: {
 任务：在用户看到六条正式选题之前，先做「深度选题优化」。
 必须：
 1) 严格使用用户所选 windowDays=${params.windowDays} 天窗口内的热点消化结果（见 user JSON trendDigest）
-2) 结合人设，给出恰好 6 个互不雷同的方向（对应六维）
-3) 主动避开 recentUserTitles / 同质母题，禁止复读前几天已出过的标题切口
-4) workingTitle 只是工作标题草案，最终文案由下游再写；你要保证角度差异够大
+2) **trend 权重**：优先消化 xiaohongshu 样本钩子，并同时参考 bilibili 与 douyin；三者都用，禁止只盯一个平台
+3) 结合人设，给出恰好 6 个互不雷同的方向（对应六维）；workingTitle 须有生活烟火气或强反差/幽默吸睛，活泼生动，禁止论文腔
+4) 主动避开 recentUserTitles / 同质母题，禁止复读前几天已出过的标题切口
+5) workingTitle 只是工作标题草案，最终文案由下游再写；你要保证角度差异够大
 禁止：空壳「创作者/博主」套话；抄 trend 样本原标题；六条同情绪同场景。`;
 
   const input = JSON.stringify({
@@ -115,6 +116,10 @@ export async function optimizeStage2TopicsWithPro(params: {
     windowDays: params.windowDays,
     requestedPlatforms: params.requestedPlatforms,
     trendDigest: params.trendDigest,
+    trendPlatformPriority: {
+      primary: ["xiaohongshu"],
+      secondary: ["bilibili", "douyin"],
+    },
     stage1SeedTitles: seeds,
     recentUserTitles: recent,
     dimensions: DIM_NAMES.map((name, i) => ({ dimIndex: i + 1, name })),

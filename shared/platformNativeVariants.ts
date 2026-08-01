@@ -4,6 +4,7 @@
 
 import { routePlatformSkillIds } from "./platformSkillRouter";
 import { PLATFORM_BUILTIN_SKILL_IDS } from "./platformSkills";
+import { composePlatformNetfeelImageSkillHint } from "./platformNetfeelPatterns";
 
 export const PLATFORM_NATIVE_VARIANT_IDS = [
   "xiaohongshu",
@@ -235,9 +236,10 @@ export function composePlatformImageSkillHints(
   const forceCover = opts?.forceCoverShortCopy !== false;
   if (forceCover || on("cover-stop-scroll")) {
     parts.push(
-      "【封面出图·高点击短钩】coverHeadline 约 10–18 字，须带数字反差/反常识/猎奇缺口（例：天天打游戏怎么考上北大）；屏上最多 2 行大字；只提亮 2–6 字重点色；禁止论文式长 hook/CTA 墙；有人物禁坐姿上课脸——表情多元、姿势可夸张（错愕/坏笑/失衡/网球发球/登顶等）；同批勿全坐着；**场景服饰防穿帮**：发球穿网球运动装，禁止外套大衣打网球；屏内字简体中文；有参考人像须锁脸。",
+      "【封面出图·高点击短钩】coverHeadline 约 10–18 字，须带数字反差/反常识/猎奇缺口（例：天天打游戏怎么考上北大）；主信息轴清晰；允许侧栏/竖排关键词与轻微变形厚描边增张力；只提亮 2–6 字重点色；禁止论文式长 hook/CTA 墙；有人物禁坐姿上课脸——表情多元、姿势可夸张（错愕/坏笑/失衡/网球发球/登顶等）；同批勿全坐着；**场景服饰防穿帮**：发球穿网球运动装，禁止外套大衣打网球；屏内字简体中文；有参考人像须锁脸。",
       "【封面出图·清单蓝海（x1/x3）】选题含清单/必备/带娃/攻略时：优先 flat lay 神器墙或行李箱 POV + 大数字件数 + 结果钉（安静/不踩雷/省事/建议收藏）；杀伤词可用必備/清單/保姆級/被問爆/無廣；禁论文腔封面。",
       "【封面出图·医学高赞（mk/mk1/mk3）】医学/急救/机制向：壳三选一——①大数字选题包（100个/谁写谁火/选一个就行+收藏角标）②屏幕证据种草（MSD大众版或3D怼镜+3D讲清原理）③漫画/八卦钩（好员工黑化/不当切片课）；禁病名分型论文封面与空白大褂证件照。",
+      composePlatformNetfeelImageSkillHint(),
     );
   }
   if (on("vivid-anti-boring")) {

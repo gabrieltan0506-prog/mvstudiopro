@@ -129,7 +129,7 @@ ${PLATFORM_CULTURAL_PERSON_ROTATION_HARD}
 请产出：
 1) mabVariants：为 id 序 ${ids} 各写 1 个吸睛标题。utilize 与 explore 主轴必须不同人/不同场域；explore 优先《藏海传》式热播或烟火生活；**禁止两条都古典文人或都苏轼系**。
 2) personalization：3 个延伸方向——优先生活/热播/关系；古典人物从三苏与唐宋八大家**轮换**，同人勿复读；可用数字钩子。
-3) topicStructureExamples：4 组 title + structure——四人/四局不撞；至少 2 条放松向生活或热播；至多 1 条古典文人主容器；至少一条含半成品解法。禁止四条里出现两次苏轼/苏东坡。`;
+3) topicStructureExamples：4 组 title + structure——四人/四局不撞；至少 2 条放松向生活或热播（优先烟火气场景：工位/便利店/夏天多喝/加班边界）；至少 2 条强反差或幽默吸睛（可用 [关键词]｜双拍结构）；至多 1 条古典文人主容器；至少一条含半成品解法。禁止四条里出现两次苏轼/苏东坡。表达活泼生动，像信息流口语，禁止论文腔。`;
 
   const raw = await callDecisionIntelGpt55StructuredJson({
     taskSystemInstruction: system,

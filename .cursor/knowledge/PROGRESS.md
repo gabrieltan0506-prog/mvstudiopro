@@ -267,6 +267,8 @@ douyin 文件应从 93MB 量级显著下降。原「失败平台一次性回补�
 
 平台文生图：生成结果 / 上传底图接入「高清放大」2×·4×（`ImageUpscaleBar`，计费 `platformRefImage`）；条本身补齐 4×。rules：收回默认代合，须用户明文才可 `gh pr merge`。
 
+全案网感：`shared/platformNetfeelPatterns.ts`——烟火气/反差/幽默标题句式 + A1 封面壳（含变形字张力）；注入 Stage2/初选/决策智库/封面出图；trendStore **小红书主、B站+抖音辅**。样本课 `~/Downloads/2026Aug01/A1-netfeel-highlights.md`。
+
 ---
 
 ## 如何更新本文件
