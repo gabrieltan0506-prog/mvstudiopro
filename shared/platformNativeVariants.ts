@@ -5,6 +5,10 @@
 import { routePlatformSkillIds } from "./platformSkillRouter";
 import { PLATFORM_BUILTIN_SKILL_IDS } from "./platformSkills";
 import { composePlatformNetfeelImageSkillHint } from "./platformNetfeelPatterns";
+import {
+  PLATFORM_COVER_HEADLINE_MAX_CHARS,
+  clampPlatformCoverHeadline,
+} from "./platformCreatorInsightFraming";
 
 export const PLATFORM_NATIVE_VARIANT_IDS = [
   "xiaohongshu",
@@ -35,7 +39,7 @@ export const PLATFORM_NATIVE_VARIANT_LABEL_ZH: Record<string, string> = {
 
 /** Stage2 / 扩写：要求输出 platformVariants 的硬约束摘要（Skill md 已详述时仍可短提醒） */
 export const PLATFORM_NATIVE_VARIANTS_SCHEMA_HINT = `【platformVariants·必须】每条 contentBlueprint 须含 platformVariants 数组，恰好覆盖 xiaohongshu、bilibili、weixin_channels 三项。
-每项字段：platform, format, hook, coverHeadline(约10–18字高点击短钩), coverSubline(可选≤18字), tags(3–8), blueOceanKeywords(1–3且三平台子集不同), reuseMainCopy。
+每项字段：platform, format, hook, coverHeadline(最多${PLATFORM_COVER_HEADLINE_MAX_CHARS}字高点击短钩，超则精简), coverSubline(可选≤18字), tags(3–8), blueOceanKeywords(1–3且三平台子集不同), reuseMainCopy。
 - **图文配额**：全案 6 条中至少 3 条主 format=图文；主 format=图文时 xiaohongshu.format 必须=图文且 reuseMainCopy=false。
 - 小红书：主 format=短视频时可为短视频 reuseMainCopy=true；tags/蓝海可偏女性向生活词。
 - B站、视频号：默认 format=短视频。
@@ -74,7 +78,9 @@ export function normalizePlatformVariants(raw: unknown): PlatformNativeVariant[]
       platform,
       format: String(r.format || "").trim() || "短视频",
       hook: String(r.hook || r.openingHook || "").trim(),
-      coverHeadline: String(r.coverHeadline || r.coverTitle || r.headline || "").trim().slice(0, 20),
+      coverHeadline: clampPlatformCoverHeadline(
+        String(r.coverHeadline || r.coverTitle || r.headline || ""),
+      ),
       coverSubline: String(r.coverSubline || r.subline || "").trim().slice(0, 24) || undefined,
       tags,
       blueOceanKeywords,
@@ -192,7 +198,7 @@ export function composePlatformCoverNativeVisualDirective(
       : `【平台母语·小红书短视频封面】主句偏情绪停滑、种草感；明快生活场域；主句大而少字，禁止百科堆字。`;
   }
   if (id === "bilibili") {
-    return `【平台母语·B站封面】主句偏知识反差/信息缺口（约10–18字高点击短钩）；略偏清晰信息密度与「想点开搞懂」；禁止空泛鸡汤与多图标清单栏。`;
+    return `【平台母语·B站封面】主句偏知识反差/信息缺口（最多${PLATFORM_COVER_HEADLINE_MAX_CHARS}字高点击短钩，超则精简）；略偏清晰信息密度与「想点开搞懂」；禁止空泛鸡汤与多图标清单栏。`;
   }
   if (id === "weixin_channels") {
     return `【平台母语·视频号封面】主句偏生活一句人话、温暖易转发；私域聊天感而非广告腔；光影有温度，禁止审讯室/葬礼感暗调。`;
@@ -236,7 +242,7 @@ export function composePlatformImageSkillHints(
   const forceCover = opts?.forceCoverShortCopy !== false;
   if (forceCover || on("cover-stop-scroll")) {
     parts.push(
-      "【封面出图·高点击短钩】coverHeadline 约 10–18 字，须带反差/猎奇/好奇缺口；A1 壳与配色池轮换（暖黄/品红/真相红/吸睛绿/黑金/桃/玫瑰金/蓝/香槟金等，勿锁死单色）；允许侧栏/竖排/变形字；有人物须文案同档表情动作（张口大吃/竖指/错愕等）；禁望窗外发呆；屏内字简体中文；有参考人像须锁脸。",
+      `【封面出图·高点击短钩】coverHeadline 最多 ${PLATFORM_COVER_HEADLINE_MAX_CHARS} 字（超则精简）；须带反差/猎奇/好奇缺口；A1 壳与配色池轮换（暖黄/品红/真相红/吸睛绿/黑金/桃/玫瑰金/蓝/香槟金等，勿锁死单色）；允许侧栏/竖排/变形字；字勿挤成一团；有人物须文案同档表情动作（张口大吃/竖指/错愕等）；禁望窗外发呆；屏内字简体中文；有参考人像须锁脸。`,
       "【封面出图·清单蓝海（x1/x3）】选题含清单/必备/带娃/攻略时：优先 flat lay 神器墙或行李箱 POV + 大数字件数 + 结果钉（安静/不踩雷/省事/建议收藏）；杀伤词可用必備/清單/保姆級/被問爆/無廣；禁论文腔封面。",
       "【封面出图·医学高赞（mk/mk1/mk3）】医学/急救/机制向：壳三选一——①大数字选题包（100个/谁写谁火/选一个就行+收藏角标）②屏幕证据种草（MSD大众版或3D怼镜+3D讲清原理）③漫画/八卦钩（好员工黑化/不当切片课）；禁病名分型论文封面与空白大褂证件照。",
       composePlatformNetfeelImageSkillHint(),

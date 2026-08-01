@@ -296,7 +296,7 @@ export async function expandPlatformTopicPicks(params: {
 ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
 硬约束：
 - title/hook/copywriting/detailedScript/format/suitablePlatforms/actionableSteps/publishingAdvice/highlightKeywords/commentHooks/graphicNotePages/platformVariants
-- platformVariants 必须覆盖 xiaohongshu/bilibili/weixin_channels，各含约 10–18 字 coverHeadline（高点击短钩，互不雷同）
+- platformVariants 必须覆盖 xiaohongshu/bilibili/weixin_channels，各含最多 13 字 coverHeadline（高点击短钩，超则精简，互不雷同）
 - 保留初选 title 的反差杀伤力，可微调拧得更紧；禁止改回正确无聊题
 - format 优先用「${pick.formatHint}」
 - commentHooks：1–3 个，每个≤3个汉字生活词（想要/求带/慢生活…），禁止「预约诊断通话」整句

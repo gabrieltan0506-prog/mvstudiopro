@@ -5,6 +5,21 @@
 
 import { composePlatformNetfeelFullcaseGuidance } from "./platformNetfeelPatterns";
 
+/** 竖版封面主句硬上限（含标点/竖线）；超过必须精简。用户 2026-08-01 明文。 */
+export const PLATFORM_COVER_HEADLINE_MAX_CHARS = 13 as const;
+
+/** 封面主句字数（按 Unicode 码点计，含｜、，等） */
+export function countPlatformCoverHeadlineChars(raw: string): number {
+  return Array.from(String(raw || "").trim().replace(/\s+/g, "")).length;
+}
+
+/** 超过 {@link PLATFORM_COVER_HEADLINE_MAX_CHARS} 则截断；生成侧应先改写精简，截断仅兜底。 */
+export function clampPlatformCoverHeadline(raw: string): string {
+  const chars = Array.from(String(raw || "").trim().replace(/\s+/g, ""));
+  if (chars.length <= PLATFORM_COVER_HEADLINE_MAX_CHARS) return chars.join("");
+  return chars.slice(0, PLATFORM_COVER_HEADLINE_MAX_CHARS).join("");
+}
+
 /**
  * 高反差选题 + 高点击封面短钩（全案 Stage2 / 选题初选 / 决策智库 / 封面出图共用）。
  * 精简是为了停滑与点击，不是恐吓砍字。
@@ -16,7 +31,7 @@ export const PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE = `【高反差选题 + 高�
    - 「来到上海，我以为是到了美国，这里有全国最贵的……」
    - 「他天天打游戏，放榜怎么考上了北大？」
    title 约 12–28 字可带悬念省略号；禁止「××的正确打开方式」「××注意事项」「××机制概述」等正确无聊题。
-2. **coverHeadline（竖版封面主句）**：约 **10–18 字** 高点击短钩——数字拧巴 / 结果颠倒 / 身份错位 / 信息悬念；屏上最多 2 行有效信息轴，可叠侧栏/竖排关键词与**轻微变形厚描边**增张力（仍须可读）；只提亮 2–6 字重点色。**禁止**把长 title 原样印满屏，也禁止百科副标与 CTA 墙。
+2. **coverHeadline（竖版封面主句）**：**最多 ${PLATFORM_COVER_HEADLINE_MAX_CHARS} 字**（含标点/｜；超了必须精简，禁止硬塞长句）。高点击短钩——数字拧巴 / 结果颠倒 / 身份错位 / 信息悬念；屏上留白舒展、不挤；可叠侧栏/竖排关键词与**轻微变形厚描边**增张力（仍须可读）；只提亮 2–6 字重点色。**禁止**把长 title 原样印满屏，也禁止百科副标与 CTA 墙。
 3. **同批配额**：6 条方案中至少 **4 条** title 明显含反差/反常识/数字拧巴；platformVariants 三平台的 coverHeadline **不得三句雷同**，且每句都能单独停滑。
 4. **封面与选题分工**：title 负责「想点开」；coverHeadline 负责「信息流第一眼」——更短、更拧、更有画面。
 

@@ -159,8 +159,8 @@ export const PLATFORM_NETFEEL_TITLE_PATTERNS: PlatformNetfeelTitlePattern[] = [
     labelZh: "开放好奇·先做N件事",
     skeleton: "[欲望目标]，[反常识别做]｜先做[N]件事",
     vibeExamples: [
-      "想吃瘦，别减主食｜先做三件事",
-      "想睡饱，别再硬扛｜先做两件事",
+      "想吃瘦｜别减主食做三事",
+      "想睡饱｜别硬扛先做两事",
     ],
   },
   {
