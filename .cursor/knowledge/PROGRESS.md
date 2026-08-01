@@ -267,11 +267,13 @@ douyin 文件应从 93MB 量级显著下降。原「失败平台一次性回补�
 
 平台文生图：生成结果 / 上传底图接入「高清放大」2×·4×（`ImageUpscaleBar`，计费 `platformRefImage`）；条本身补齐 4×。rules：收回默认代合，须用户明文才可 `gh pr merge`。
 
-全案网感：`shared/platformNetfeelPatterns.ts`——烟火气/反差/幽默标题句式 + A1 封面壳（含变形字张力）；注入 Stage2/初选/决策智库/封面出图；trendStore **小红书主、B站+抖音辅**。样本课 `~/Downloads/2026Aug01/A1-netfeel-highlights.md`。
+全案网感：`shared/platformNetfeelPatterns.ts`——烟火气/反差/幽默标题句式 + A1 封面壳；注入 Stage2/初选/决策智库/封面出图；trendStore **小红书主、B站+抖音辅**。样本课 `~/Downloads/2026Aug01/A1-netfeel-highlights.md`。
 
 网感封面补刀：夸张文案须同档表情动作；**A1 抽帧全量**壳+配色池轮换（黄/粉/红/绿/黑金/桃/玫瑰金/蓝/香槟等），禁止锁死单色。
 
 封面主句硬限：**最多 13 字**（含标点；超则精简）；`clampPlatformCoverHeadline` 兜底。
+
+网感壳人工过审（用户拍板）：**纳入**侧栏夹字（字可轻压肩背）、类目大字+弱背景小字层、粉系双行紧排，及原好看七类；**剔除**并写进 `PLATFORM_NETFEEL_REJECTED_SHELLS`：飞人跳伞抽象摆拍、立体变形花字墙、答案剧透封面、字号过小、荧光撞色侧栏。对照图 `~/Downloads/2026Aug01/netfeel-aesthetic-{GOOD,BAD}.png`。
 
 ---
 

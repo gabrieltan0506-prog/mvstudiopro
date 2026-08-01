@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   PLATFORM_NETFEEL_ACCENT_PALETTE,
   PLATFORM_NETFEEL_COVER_SHELLS,
+  PLATFORM_NETFEEL_REJECTED_SHELLS,
   PLATFORM_NETFEEL_TITLE_PATTERNS,
   PLATFORM_TREND_PRIORITY_FOR_FULLCASE,
   composePlatformNetfeelCoverGuidance,
@@ -22,13 +23,14 @@ describe("platformNetfeelPatterns", () => {
     expect(PLATFORM_NETFEEL_TITLE_PATTERNS.length).toBeGreaterThanOrEqual(10);
   });
 
-  it("exposes full A1 cover shells including template-row shells", () => {
+  it("exposes only the human-approved A1 cover shells", () => {
     const ids = PLATFORM_NETFEEL_COVER_SHELLS.map((s) => s.id);
     for (const id of [
       "flank_keyword",
       "truth_vertical",
       "life_stall_vibe",
-      "deform_tension",
+      "big_topic_warn",
+      "beauty_pink_dual",
       "simple_recolor",
       "pip_eye_green",
       "knowledge_black_gold",
@@ -36,6 +38,18 @@ describe("platformNetfeelPatterns", () => {
     ]) {
       expect(ids).toContain(id);
     }
+    expect(ids).not.toContain("abstract_stunt");
+    expect(ids).not.toContain("deform_tension");
+  });
+
+  it("keeps rejected shells documented so they are not reused", () => {
+    const ids = PLATFORM_NETFEEL_REJECTED_SHELLS.map((s) => s.id);
+    expect(ids).toContain("abstract_stunt");
+    expect(ids).toContain("deform_tension");
+    expect(ids).toContain("answer_spoiler");
+    const cover = composePlatformNetfeelCoverGuidance();
+    expect(cover).toMatch(/已剔除/);
+    expect(cover).toMatch(/剧透/);
   });
 
   it("exposes multi-accent palette (not single locked red)", () => {
