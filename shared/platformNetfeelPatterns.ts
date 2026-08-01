@@ -159,8 +159,8 @@ export const PLATFORM_NETFEEL_TITLE_PATTERNS: PlatformNetfeelTitlePattern[] = [
     labelZh: "开放好奇·先做N件事",
     skeleton: "[欲望目标]，[反常识别做]｜先做[N]件事",
     vibeExamples: [
-      "想吃瘦，别减主食｜先做三件事",
-      "想睡饱，别再硬扛｜先做两件事",
+      "想吃瘦｜别减主食做三事",
+      "想睡饱｜别硬扛先做两事",
     ],
   },
   {
@@ -190,8 +190,7 @@ export type PlatformNetfeelCoverShellId =
   | "big_topic_warn"
   | "question_fork"
   | "life_stall_vibe"
-  | "abstract_stunt"
-  | "deform_tension"
+  | "beauty_pink_dual"
   | "simple_recolor"
   | "pip_eye_green"
   | "knowledge_black_gold"
@@ -211,7 +210,8 @@ export const PLATFORM_NETFEEL_COVER_SHELLS: PlatformNetfeelCoverShell[] = [
     id: "flank_keyword",
     labelZh: "左右竖排关键词夹人脸",
     preferredAccents: ["hot_pink_flank", "peach", "rose_gold"],
-    visualHint: "人脸居中；左右/上下侧栏 2 字级粗描边大字；中部色块短钩；表情有戏。",
+    visualHint:
+      "人脸居中；左右/上下侧栏 2 字级粗描边大字；中部色块短钩；侧栏字可轻压肩背增张力（勿遮眼口）；表情有戏。",
   },
   {
     id: "steps_result",
@@ -229,7 +229,8 @@ export const PLATFORM_NETFEEL_COVER_SHELLS: PlatformNetfeelCoverShell[] = [
     id: "big_topic_warn",
     labelZh: "类目大字+因果钉子",
     preferredAccents: ["champagne_amber", "sky_cobalt", "peach"],
-    visualHint: "顶栏类目大字（养生/职场等）+ 因果/反差杀伤句；忌病名恐吓墙。",
+    visualHint:
+      "顶栏类目大字（养生/职场等）+ 因果/反差杀伤句；可带弱一档的背景小字层做信息密度（透明度/字号明显低于主句）；忌病名恐吓墙。",
   },
   {
     id: "question_fork",
@@ -244,16 +245,11 @@ export const PLATFORM_NETFEEL_COVER_SHELLS: PlatformNetfeelCoverShell[] = [
     visualHint: "便利店货架/家装/哄娃客厅证据画面；粗标+描边副句；禁空书房讲课脸。",
   },
   {
-    id: "abstract_stunt",
-    labelZh: "抽象营销夸张动作",
-    preferredAccents: ["sky_cobalt", "hot_pink_flank", "champagne_amber"],
-    visualHint: "飞人/跳伞感/夸张递物冲击定格；短钩一句；同批最多 1–2 条。",
-  },
-  {
-    id: "deform_tension",
-    labelZh: "变形文字张力",
-    preferredAccents: ["rose_gold", "truth_crimson", "champagne_amber"],
-    visualHint: "主词厚描边/轻微倾斜/立体渐变；可读；禁满屏花字墙。",
+    id: "beauty_pink_dual",
+    labelZh: "冻龄双行·粉系紧凑",
+    preferredAccents: ["peach", "hot_pink_flank", "rose_gold"],
+    visualHint:
+      "上下两行紧排短句（各 ≤6 字），粉/桃系托底；人脸占中，双行贴脸但不压五官；忌三行以上。",
   },
   {
     id: "simple_recolor",
@@ -280,6 +276,50 @@ export const PLATFORM_NETFEEL_COVER_SHELLS: PlatformNetfeelCoverShell[] = [
     visualHint: "便利店/市井货架+黄底粗标+白描边副句；人物表情夸张同档。",
   },
 ];
+
+/**
+ * A1 抽帧里被人工审美否掉的壳（2026-08-01 用户过审）。
+ * 保留 id 与理由，避免后续再被当「网感参考」捡回来。
+ */
+export const PLATFORM_NETFEEL_REJECTED_SHELLS: {
+  id: string;
+  labelZh: string;
+  reasonZh: string;
+}[] = [
+  {
+    id: "abstract_stunt",
+    labelZh: "跳伞/高空飞人抽象冲击",
+    reasonZh: "表情过度夸张、动作抽象僵硬，不像真人在做事。",
+  },
+  {
+    id: "deform_tension",
+    labelZh: "变形文字墙",
+    reasonZh: "主词变形立体到吃掉画面，人物退成背景。",
+  },
+  {
+    id: "answer_spoiler",
+    labelZh: "答案剧透版",
+    reasonZh: "把「三件事」逐条写在封面上，看完不必点进来。",
+  },
+  {
+    id: "tiny_type",
+    labelZh: "字号过小",
+    reasonZh: "缩略图尺寸下主句读不出，丢掉停滑冲击。",
+  },
+  {
+    id: "neon_flank",
+    labelZh: "荧光撞色侧栏",
+    reasonZh: "荧光粉绿贴纸感偏俗，拉低品相。",
+  },
+];
+
+function composeRejectedShellGuidance(): string {
+  const lines = PLATFORM_NETFEEL_REJECTED_SHELLS.map(
+    (s) => `- ${s.labelZh}（${s.id}）：${s.reasonZh}`,
+  ).join("\n");
+  return `【已剔除·禁止复现的封面做法】
+${lines}`;
+}
 
 function composeAccentPaletteGuidance(): string {
   const lines = PLATFORM_NETFEEL_ACCENT_PALETTE.map(
@@ -319,9 +359,9 @@ export function composePlatformNetfeelExpressionMatchGuidance(): string {
 - 步骤/数字 → 比数、点桌、怼屏幕证据 + 笃定/得意
 - 抽象冲击 → 失衡/跳跃/夸张递物，情绪可读
 - 简约/情绪条 → 递物怼镜或坏笑「挖到宝」感
-**禁止**：冷脸大片、望景发呆、正襟危坐与夸张标题同框。
+**禁止**：冷脸大片、望景发呆、正襟危坐与夸张标题同框；也禁另一头的「每块面部肌肉都在用力」的过度夸张。
 ${composeAccentPaletteGuidance()}
-主字偏米白/象牙白；杀伤词用本条选定强调色（黄底块/侧栏粉/竖排红/吸睛绿/黑金/桃/玫瑰金/蓝/香槟金等）；可细笔刷下划线。变形字可有重量，须精致可读。`;
+主字偏米白/象牙白；杀伤词用本条选定强调色（黄底块/侧栏粉/竖排红/吸睛绿/黑金/桃/玫瑰金/蓝/香槟金等）；可细笔刷下划线。字重可厚，但**禁止把主词做成立体变形花字**。`;
 }
 
 /** 封面出图：A1 全壳 + 表情同拍 + 配色池 */
@@ -333,8 +373,9 @@ export function composePlatformNetfeelCoverGuidance(): string {
   return `【网感封面壳·A1 抽帧全量对齐】
 竖版信息流封面须从下列壳中**选一主壳**（同批六条轮换，禁止六条同壳；模板行与封面行都要用上）：
 ${shells}
-版式：侧栏大字 / 背后竖排 / 黄底粗标 / 绿杀伤句 / 黑金大数字 / 变形字张力均可；主信息服务 coverHeadline；禁百科多图标墙与 CTA 墙。
-画面：真人**正在做事** + 烟火气场域（便利店/家装/哄娃/餐厅）或抽象冲击；禁培训坐姿脸。
+版式：侧栏大字 / 背后竖排 / 黄底粗标 / 绿杀伤句 / 黑金大数字 / 粉系双行均可；主信息服务 coverHeadline；禁百科多图标墙与 CTA 墙。
+画面：真人**正在做事** + 烟火气场域（便利店/家装/哄娃/餐厅）；禁培训坐姿脸，也禁飞人跳伞类抽象摆拍。
+${composeRejectedShellGuidance()}
 ${composePlatformNetfeelExpressionMatchGuidance()}
 屏内字：中国大陆简体；杀伤字 2–6 个提亮。`;
 }
@@ -359,5 +400,6 @@ export function composePlatformNetfeelFullcaseGuidance(): string {
 
 /** 出图短约束 */
 export function composePlatformNetfeelImageSkillHint(): string {
-  return `【网感封面·A1全量】壳轮换：flank_keyword/steps_result/truth_vertical/big_topic_warn/question_fork/life_stall_vibe/abstract_stunt/deform_tension/simple_recolor/pip_eye_green/knowledge_black_gold/manga_bold_stall；主句=coverHeadline。【配色池轮换】暖黄块/品红侧栏/真相红/吸睛绿/黑金/走心红/水蜜桃/玫瑰金/天蓝钴蓝/香槟琥珀——按壳选色，同批勿锁死单色；忌俗艳番茄红与荧光粉绿贴纸墙。【文案=表情】张口大吃/竖指/错愕坏笑/递物怼镜等；禁望窗外发呆。【好奇/价值钉】可用先做N件事、又挖到宝了、刷到就是赚到等开放环。`;
+  const shellIds = PLATFORM_NETFEEL_COVER_SHELLS.map((s) => s.id).join("/");
+  return `【网感封面·A1 过审集】壳轮换：${shellIds}；主句=coverHeadline。【配色池轮换】暖黄块/品红侧栏/真相红/吸睛绿/黑金/走心红/水蜜桃/玫瑰金/天蓝钴蓝/香槟琥珀——按壳选色，同批勿锁死单色；忌俗艳番茄红与荧光粉绿贴纸墙。【文案=表情】张口大吃/竖指/错愕坏笑/递物怼镜等；禁望窗外发呆，也禁面部过度用力。【好奇/价值钉】可用先做N件事、又挖到宝了、刷到就是赚到等开放环。【已剔除】飞人跳伞抽象摆拍、立体变形花字墙、封面写全答案剧透、字号过小、荧光撞色侧栏。`;
 }

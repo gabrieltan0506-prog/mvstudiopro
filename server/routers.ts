@@ -1706,7 +1706,7 @@ ${composePlatformTrendPriorityGuidance()}
        "[图8] 想要清单？评论区打「饭后散步」"
    - publishingAdvice（发布时机或平台设置建议，例如“蹭小红书RED新生代大赛热点，修改小红书简介为‘用东方审美重构健康叙事’”等具体设置。）
    - highlightKeywords（字符串数组：本条实际嵌入的蓝海词/高亮搜索词 2–6 个，须来自 blueOceanLexicon 或 tagCandidates，禁止堆砌无关标签）
-   - platformVariants（**必须**：数组，覆盖 xiaohongshu / bilibili / weixin_channels；每项含 platform、format、hook、coverHeadline(约10–18字高点击短钩)、coverSubline、tags、blueOceanKeywords(1–3且三平台不同)、reuseMainCopy。主文案一套，三平台只差这三块+标签。**当主 format=图文时，xiaohongshu.format 必须=图文且 reuseMainCopy=false**。主 format=短视频时小红书可为短视频 reuseMainCopy=true。B站与视频号默认短视频。视频号参照 weixinChannelsDouyinHotRef。）
+   - platformVariants（**必须**：数组，覆盖 xiaohongshu / bilibili / weixin_channels；每项含 platform、format、hook、coverHeadline(最多13字高点击短钩，超则精简)、coverSubline、tags、blueOceanKeywords(1–3且三平台不同)、reuseMainCopy。主文案一套，三平台只差这三块+标签。**当主 format=图文时，xiaohongshu.format 必须=图文且 reuseMainCopy=false**。主 format=短视频时小红书可为短视频 reuseMainCopy=true。B站与视频号默认短视频。视频号参照 weixinChannelsDouyinHotRef。）
    - executionDetails（执行细节，**建议**极度具体）：
      * environmentAndWardrobe（拍摄环境 + 服装道具描述，须写出**具体场所与氛围**（可参考博物馆、户外景区、泳池、球场、音乐厅、餐厅、大排档等生动场域，须贴合人设），例如："市立博物馆青铜器展厅侧光位，穿深色高定西装/丝绸衬衫，面料有羊毛或缎面质感，可点缀腕表或翡翠，整体呈 VOGUE/ELLE 时尚编辑大片气质"；**强监管赛道避免听诊器/CT 屏等临床强锚点**）
      * lightingAndCamera（灯光 + 机位，**高度需求专业影视手法**：写清主光方向/质感/色温/明暗比、运镜意图与情绪服务关系；可借用高反差建筑光、温暖魔术时刻、光晕剪影、雾霾大光域、霓虹溢光、精密冷光、天气即光、动机窗光、剧集人物主光等——按段落选用一种主手法。**禁止**点名导演/片名或写「某某味/致敬」。例如："窗侧动机光 + 伦勃朗补光，色温偏暖，明暗比 4:1，轮廓光勾勒西装质感；手机固定支架正面对拍"）
@@ -1966,7 +1966,7 @@ ${composePlatformTrendPriorityGuidance()}
 【体裁】${formatHint}
 ${craftDirective}
 ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
-【本条封面】platformVariants 三平台 coverHeadline 各写一句约 10–18 字高点击短钩（反差/反常识/数字拧巴），互不雷同；出图时只印该主句（+可选副标），禁止把长 title 印满屏。
+【本条封面】platformVariants 三平台 coverHeadline 各写一句最多 13 字高点击短钩（反差/反常识/数字拧巴；超则精简），互不雷同；出图时只印该主句（+可选副标），禁止把长 title 印满屏。
 ${styleDirective}
 輸出格式必須嚴格為：
 { "blueprint": { "title": "...", "format": "短视频 或 图文", "hook": "...", "copywriting": "（≥200字完整正文）", "suitablePlatforms": ["小红书","B站","视频号"], "actionableSteps": [...], "detailedScript": "（短视频：约1.5–2分钟、硬上限≤2分半时间轴，口播勿注水；图文：8–12页丰富大纲）", "publishingAdvice": "...", "highlightKeywords": [...], "platformVariants": [{"platform":"xiaohongshu","format":"图文或短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...],"reuseMainCopy":false},{"platform":"bilibili","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]},{"platform":"weixin_channels","format":"短视频","hook":"...","coverHeadline":"...","tags":[...],"blueOceanKeywords":[...]}], "executionDetails": { "environmentAndWardrobe": "...", "lightingAndCamera": "...", "stepByStepScript": [...] } } }
