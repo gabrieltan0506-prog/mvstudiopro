@@ -5532,8 +5532,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
           allowBloggerTitle: z.boolean().optional(),
           existingTitles: z.array(z.string().max(200)).max(60).optional(),
-          /** 生成条数，默认 6，最大 20；第 7 条起另计费 */
-          count: z.number().int().min(1).max(20).optional(),
+          /** 生成条数，默认 6，最大 30；第 7 条起另计费 */
+          count: z.number().int().min(1).max(30).optional(),
           stage1Seeds: z
             .array(
               z.object({

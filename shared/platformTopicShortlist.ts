@@ -7,8 +7,8 @@ import type { PlatformSkillLane } from "./platformSkillRouter.js";
 
 /** 默认生成条数（含在基础积分内） */
 export const PLATFORM_TOPIC_SHORTLIST_DEFAULT = 6;
-/** 单次最多可生成（超出默认部分按条另计费） */
-export const PLATFORM_TOPIC_SHORTLIST_MAX = 20;
+/** 单次最多可生成（超出默认部分按条另计费）；20–30 条是「只出题、由用户挑」的常用档 */
+export const PLATFORM_TOPIC_SHORTLIST_MAX = 30;
 /** @deprecated 使用 DEFAULT；保留别名避免旧引用断裂 */
 export const PLATFORM_TOPIC_SHORTLIST_COUNT = PLATFORM_TOPIC_SHORTLIST_DEFAULT;
 
@@ -89,6 +89,8 @@ export const platformTopicShortlistItemSchema = z.object({
   viralScore: z.number().min(0).max(100).optional(),
   /** 为什么可能爆（≤24 字，给人看的一句） */
   viralReason: z.string().max(24).optional(),
+  /** 评论区热度 0–100：这条发出去大家想不想留言（与 viralScore 分开判断） */
+  commentHeat: z.number().min(0).max(100).optional(),
   /** 排序后是否进前 {@link PLATFORM_TOPIC_TOP_PICK_COUNT} */
   isTopPick: z.boolean().optional(),
 });
@@ -201,18 +203,25 @@ export function ensureAuthorityCiteInCopy(params: {
   return { copywriting: merged, patched: true };
 }
 
+/** 排序权重：爆款概率为主，评论区热度为辅 */
+export const PLATFORM_TOPIC_COMMENT_HEAT_WEIGHT = 0.3;
+
 /**
- * 按爆款概率降序排序，并把前 {@link PLATFORM_TOPIC_TOP_PICK_COUNT} 条标为优先。
+ * 按「爆款概率 + 评论区热度」降序排序，并把前 {@link PLATFORM_TOPIC_TOP_PICK_COUNT} 条标为优先。
  * 没给分的按 50 处理，保持原有相对顺序（稳定排序）。
  */
 export function rankTopicShortlistByViralScore<
-  T extends { viralScore?: number; isTopPick?: boolean },
+  T extends { viralScore?: number; commentHeat?: number; isTopPick?: boolean },
 >(items: T[], topCount = PLATFORM_TOPIC_TOP_PICK_COUNT): T[] {
-  const scored = items.map((item, index) => ({
-    item,
-    index,
-    score: Number.isFinite(Number(item.viralScore)) ? Number(item.viralScore) : 50,
-  }));
+  const scored = items.map((item, index) => {
+    const viral = Number.isFinite(Number(item.viralScore)) ? Number(item.viralScore) : 50;
+    const heat = Number.isFinite(Number(item.commentHeat)) ? Number(item.commentHeat) : 50;
+    return {
+      item,
+      index,
+      score: viral * (1 - PLATFORM_TOPIC_COMMENT_HEAT_WEIGHT) + heat * PLATFORM_TOPIC_COMMENT_HEAT_WEIGHT,
+    };
+  });
   scored.sort((a, b) => (b.score - a.score) || (a.index - b.index));
   return scored.map(({ item }, i) => ({ ...item, isTopPick: i < topCount }));
 }

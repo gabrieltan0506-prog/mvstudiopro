@@ -54,6 +54,8 @@ type ShortlistTrendBrief = {
   role: "主参考" | "辅参考";
   hotTitles: string[];
   hotTags: string[];
+  /** 评论区最热的一批：不看总热度，只看「大家有多想留言」 */
+  commentHotTitles: Array<{ title: string; comments: number; commentPerThousandLikes: number | null }>;
 };
 
 /**
@@ -103,7 +105,21 @@ async function readShortlistTrendBriefs(): Promise<ShortlistTrendBrief[]> {
         .sort((a, b) => b[1] - a[1])
         .slice(0, 12)
         .map(([tag]) => tag);
-      if (hotTitles.length) briefs.push({ platform, role, hotTitles, hotTags });
+      // 评论区热度：按评论数排，并给出「每千赞带来多少评论」——纯高赞但没人说话的不算热
+      const commentHotTitles = [...rows]
+        .filter((r) => Number(r.comments || 0) > 0 && String(r.title || "").trim())
+        .sort((a, b) => Number(b.comments || 0) - Number(a.comments || 0))
+        .slice(0, 12)
+        .map((r) => {
+          const comments = Number(r.comments || 0);
+          const likes = Number(r.likes || 0);
+          return {
+            title: String(r.title || "").trim(),
+            comments,
+            commentPerThousandLikes: likes > 0 ? Math.round((comments / likes) * 1000) : null,
+          };
+        });
+      if (hotTitles.length) briefs.push({ platform, role, hotTitles, hotTags, commentHotTitles });
     }
     return briefs;
   } catch (err) {
@@ -209,7 +225,11 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
 12. **反论文腔（硬）**：title 与 hookSketch 要像人说话——口语、有画面、有情绪。禁止「浅析／探究／指南／全解析／方法论／正确打开方式／注意事项／深度解读」这类腔调；禁止把名词堆成学术标题。写完自检一句：这条出现在信息流里，用户是会停下来还是直接划走？会划走就重写。
 13. **本轮只出选题，不写文案（硬）**：不要输出正文、脚本、分镜或封面提示词。用户先挑，挑中哪条再单独去写文案与封面。
 14. **每条必须给爆款概率**：\`viralScore\`（0–100 整数）与 \`viralReason\`（≤24 字，一句人话说清为什么可能爆）。打分只看三件事——① 是否踩中 \`trendHot\` 里正在被讨论的话题或情绪（命中越准分越高）；② 反差/好奇缺口是否够拧；③ 是否容易引起共鸣、让人想转发给朋友。**分数要拉开**，不要全给 70–80；明显平庸的就给低分。
-输出：{ "topics": [ ...恰好${targetCount}条，每条含 viralScore 与 viralReason ] }`;
+15. **每条还要给评论区热度**：\`commentHeat\`（0–100 整数）——这条发出去，**评论区会不会有人抢着说话**。参考 \`trendHot[].commentHotTitles\`（按评论数排的样本，\`commentPerThousandLikes\` 是每千赞带来的评论数，这个值高说明是「大家真的想留言」而不只是点赞收藏）。
+   高分特征：能站队但不撕裂、有争议但安全；有具体问题可回答；能让人晒自己的经历/家里/同款；求链接求教程求配方；有明确可对号入座的身份（久坐党/带娃的/租房的）。
+   低分特征：只能「学到了」然后划走的科普；说完就没下文的结论帖；没有让人接话的口子。
+   \`commentHeat\` 与 \`viralScore\` **要分开判断**——有的题很容易转发但没人留言，有的题不见得爆但评论区会炸；两个分数不必一致。
+输出：{ "topics": [ ...恰好${targetCount}条，每条含 viralScore / viralReason / commentHeat ] }`;
 
   const user = JSON.stringify({
     personaContext: String(params.context || "").slice(0, 6000),
@@ -225,7 +245,8 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
   const res = await invokeLLM({
     provider: "openai",
     modelName: getPlatformStage2OpenAiModel(),
-    max_tokens: 12000,
+    // 20–30 条时输出会明显变长，按条数抬上限，避免 JSON 被截断解析失败
+    max_tokens: Math.min(24000, 12000 + Math.max(0, targetCount - 12) * 600),
     temperature: 0.7,
     response_format: { type: "json_object" },
     messages: [
@@ -304,6 +325,10 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
         return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : undefined;
       })(),
       viralReason: String(r.viralReason || "").trim().slice(0, 24) || undefined,
+      commentHeat: (() => {
+        const n = Math.round(Number(r.commentHeat));
+        return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : undefined;
+      })(),
     };
     const checked = platformTopicShortlistItemSchema.safeParse(item);
     if (checked.success) {
@@ -344,6 +369,7 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
       lanes: topics.map((t) => t.primaryLane),
       trendPlatforms: trendBriefs.map((b) => `${b.platform}:${b.hotTitles.length}`),
       viralScores: topics.map((t) => t.viralScore ?? null),
+      commentHeats: topics.map((t) => t.commentHeat ?? null),
     },
   };
 }

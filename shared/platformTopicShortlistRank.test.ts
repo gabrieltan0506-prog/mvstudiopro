@@ -32,4 +32,20 @@ describe("rankTopicShortlistByViralScore", () => {
     ] as Array<{ id: string; viralScore?: number; isTopPick?: boolean }>);
     expect(ranked.map((r) => r.id)).toEqual(["high", "no-score-1", "no-score-2", "low"]);
   });
+
+  it("lets comment heat break a tie between equally viral topics", () => {
+    const ranked = rankTopicShortlistByViralScore([
+      { id: "quiet", viralScore: 80, commentHeat: 20 },
+      { id: "chatty", viralScore: 80, commentHeat: 95 },
+    ] as Array<{ id: string; viralScore?: number; commentHeat?: number; isTopPick?: boolean }>);
+    expect(ranked.map((r) => r.id)).toEqual(["chatty", "quiet"]);
+  });
+
+  it("keeps viral score dominant over comment heat", () => {
+    const ranked = rankTopicShortlistByViralScore([
+      { id: "hot-comments", viralScore: 50, commentHeat: 100 },
+      { id: "big-viral", viralScore: 95, commentHeat: 0 },
+    ] as Array<{ id: string; viralScore?: number; commentHeat?: number; isTopPick?: boolean }>);
+    expect(ranked.map((r) => r.id)).toEqual(["big-viral", "hot-comments"]);
+  });
 });
