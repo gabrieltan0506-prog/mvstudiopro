@@ -15,6 +15,9 @@ export const PLATFORM_TOPIC_SHORTLIST_COUNT = PLATFORM_TOPIC_SHORTLIST_DEFAULT;
 export const PLATFORM_TOPIC_EXPAND_MIN = 1;
 export const PLATFORM_TOPIC_EXPAND_MAX = 20;
 
+/** 初选按爆款概率排序后，前 N 条标为「优先」——用户先看这几条再决定写不写文案 */
+export const PLATFORM_TOPIC_TOP_PICK_COUNT = 5;
+
 /** 小红书评论区生活化钩子：≤3 个汉字/字符，禁止整句预约话术 */
 export const PLATFORM_COMMENT_HOOK_MAX_CHARS = 3;
 
@@ -82,6 +85,12 @@ export const platformTopicShortlistItemSchema = z.object({
   commentHook: z.string().min(1).max(PLATFORM_COMMENT_HOOK_MAX_CHARS).optional(),
   /** 关联的官方活动 / 话题名（如 #城市漫步指南） */
   linkedCampaigns: z.array(z.string().min(1).max(80)).max(4).optional(),
+  /** 爆款概率 0–100：趋势命中 + 反差 + 共鸣 的综合估计，用于排序 */
+  viralScore: z.number().min(0).max(100).optional(),
+  /** 为什么可能爆（≤24 字，给人看的一句） */
+  viralReason: z.string().max(24).optional(),
+  /** 排序后是否进前 {@link PLATFORM_TOPIC_TOP_PICK_COUNT} */
+  isTopPick: z.boolean().optional(),
 });
 
 export type PlatformTopicShortlistItem = z.infer<typeof platformTopicShortlistItemSchema>;
@@ -190,6 +199,22 @@ export function ensureAuthorityCiteInCopy(params: {
   const base = String(params.copywriting || "").trim();
   const merged = base ? `${base}\n\n${cite}` : cite;
   return { copywriting: merged, patched: true };
+}
+
+/**
+ * 按爆款概率降序排序，并把前 {@link PLATFORM_TOPIC_TOP_PICK_COUNT} 条标为优先。
+ * 没给分的按 50 处理，保持原有相对顺序（稳定排序）。
+ */
+export function rankTopicShortlistByViralScore<
+  T extends { viralScore?: number; isTopPick?: boolean },
+>(items: T[], topCount = PLATFORM_TOPIC_TOP_PICK_COUNT): T[] {
+  const scored = items.map((item, index) => ({
+    item,
+    index,
+    score: Number.isFinite(Number(item.viralScore)) ? Number(item.viralScore) : 50,
+  }));
+  scored.sort((a, b) => (b.score - a.score) || (a.index - b.index));
+  return scored.map(({ item }, i) => ({ ...item, isTopPick: i < topCount }));
 }
 
 /**

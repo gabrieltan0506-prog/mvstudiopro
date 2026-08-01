@@ -16,6 +16,7 @@ import {
   ensureAuthorityCiteInCopy,
   normalizeCommentHook,
   platformTopicShortlistItemSchema,
+  rankTopicShortlistByViralScore,
   type PlatformTopicShortlistItem,
 } from "../../shared/platformTopicShortlist.js";
 import { ensureMedicalResourceCiteInCopy } from "../../shared/medicalResourceLibrary.js";
@@ -61,9 +62,9 @@ type ShortlistTrendBrief = {
  */
 async function readShortlistTrendBriefs(): Promise<ShortlistTrendBrief[]> {
   const platforms = [
-    { platform: "xiaohongshu" as const, role: "主参考" as const, titleCap: 24 },
-    { platform: "bilibili" as const, role: "辅参考" as const, titleCap: 12 },
-    { platform: "douyin" as const, role: "辅参考" as const, titleCap: 12 },
+    { platform: "xiaohongshu" as const, role: "主参考" as const, titleCap: 30 },
+    { platform: "bilibili" as const, role: "辅参考" as const, titleCap: 20 },
+    { platform: "douyin" as const, role: "辅参考" as const, titleCap: 20 },
   ];
   try {
     const { readTrendStoreForPlatforms } = await import("../growth/trendStore.js");
@@ -206,7 +207,9 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
    - **禁止照抄** trendHot 的标题字面；只借话题与情绪。
    - **改不动就别硬套**：某条热门与本人设八竿子打不着时直接放弃，不要强行嫁接成四不像。
 12. **反论文腔（硬）**：title 与 hookSketch 要像人说话——口语、有画面、有情绪。禁止「浅析／探究／指南／全解析／方法论／正确打开方式／注意事项／深度解读」这类腔调；禁止把名词堆成学术标题。写完自检一句：这条出现在信息流里，用户是会停下来还是直接划走？会划走就重写。
-输出：{ "topics": [ ...恰好${targetCount}条 ] }`;
+13. **本轮只出选题，不写文案（硬）**：不要输出正文、脚本、分镜或封面提示词。用户先挑，挑中哪条再单独去写文案与封面。
+14. **每条必须给爆款概率**：\`viralScore\`（0–100 整数）与 \`viralReason\`（≤24 字，一句人话说清为什么可能爆）。打分只看三件事——① 是否踩中 \`trendHot\` 里正在被讨论的话题或情绪（命中越准分越高）；② 反差/好奇缺口是否够拧；③ 是否容易引起共鸣、让人想转发给朋友。**分数要拉开**，不要全给 70–80；明显平庸的就给低分。
+输出：{ "topics": [ ...恰好${targetCount}条，每条含 viralScore 与 viralReason ] }`;
 
   const user = JSON.stringify({
     personaContext: String(params.context || "").slice(0, 6000),
@@ -296,6 +299,11 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
             .filter((s) => s && s !== "[object Object]")
             .slice(0, 4)
         : undefined,
+      viralScore: (() => {
+        const n = Math.round(Number(r.viralScore));
+        return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : undefined;
+      })(),
+      viralReason: String(r.viralReason || "").trim().slice(0, 24) || undefined,
     };
     const checked = platformTopicShortlistItemSchema.safeParse(item);
     if (checked.success) {
@@ -312,10 +320,12 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
     }
   }
 
-  const topics = dedupeTopicShortlist(normalized, {
-    existingTitles: params.existingTitles,
-    max: targetCount,
-  });
+  const topics = rankTopicShortlistByViralScore(
+    dedupeTopicShortlist(normalized, {
+      existingTitles: params.existingTitles,
+      max: targetCount,
+    }),
+  );
 
   if (!topics.length) {
     throw new TRPCError({
@@ -332,6 +342,8 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
       afterDedupe: topics.length,
       targetCount,
       lanes: topics.map((t) => t.primaryLane),
+      trendPlatforms: trendBriefs.map((b) => `${b.platform}:${b.hotTitles.length}`),
+      viralScores: topics.map((t) => t.viralScore ?? null),
     },
   };
 }
