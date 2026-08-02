@@ -1315,6 +1315,11 @@ export async function buildPlatformContent(params: {
   recentUserTopicTitles?: string[] | null;
   /** 为 false 时跳过 Responses Pro 深度选题优化（默认开启） */
   enableProTopicOptimize?: boolean;
+  /**
+   * 全案短链：只生成 monetizationLanes（1–2 条），跳过六维 contentBlueprints。
+   * 供选题初选路径并行补齐「商业化建议」栏，避免再烧整包 Stage2 文案。
+   */
+  monetizationOnly?: boolean;
 }): Promise<{
   data: z.infer<typeof platformContentResponseSchema>;
   diagnostics: Record<string, unknown>;
@@ -1324,6 +1329,7 @@ export async function buildPlatformContent(params: {
     at: new Date().toISOString(),
     windowDays: params.windowDays,
     requestedPlatforms: params.requestedPlatforms,
+    monetizationOnly: Boolean(params.monetizationOnly),
     contextLen: String(params.context || "").length,
     platformMenuCount: Array.isArray(params.platformMenu) ? params.platformMenu.length : 0,
     stage2MaxOutputTokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
@@ -2047,6 +2053,46 @@ ${styleDirective}
       return [];
     }
   };
+
+  // 全案短链：仅变现路径（跳过六维文案，避免与选题初选/扩写抢写 contentBlueprints）
+  if (params.monetizationOnly) {
+    const rawMonetizationOnly = await invokeMonetizationLlm();
+    const rawMlOnly = Array.isArray(rawMonetizationOnly) ? rawMonetizationOnly : [];
+    const monetizationCoercedOnly = (rawMlOnly as unknown[]).map((item: unknown) => {
+      if (item != null && typeof item === "object" && !Array.isArray(item)) return item as Record<string, unknown>;
+      if (typeof item === "string") {
+        return { title: "", fitReason: item, offerShape: "", revenueModes: [] as string[], firstValidation: "" };
+      }
+      return { title: "", fitReason: "", offerShape: "", revenueModes: [] as string[], firstValidation: "" };
+    });
+    const partialOnly = normalizePlatformContentKeys({
+      contentBlueprints: [],
+      monetizationLanes: monetizationCoercedOnly,
+    });
+    diagnostics.llmPath = "openai_monetization_only";
+    diagnostics.blueprintCountCollected = 0;
+    diagnostics.monetizationCountAfterCoerce = monetizationCoercedOnly.length;
+    diagnostics.stage2SubStepsSummary = `2-monetization · ${rawMlOnly.length > 0 ? "✅" : "⚠️空"}`;
+    const parsedOnly = platformContentResponseSchema.safeParse({
+      contentBlueprints: [],
+      monetizationLanes: Array.isArray(partialOnly.monetizationLanes)
+        ? partialOnly.monetizationLanes
+        : monetizationCoercedOnly,
+    });
+    if (parsedOnly.success) {
+      return {
+        data: attachTitleVariantsToPlatformContent(parsedOnly.data),
+        diagnostics: { ...diagnostics, zodPath: "monetization_only_ok" },
+      };
+    }
+    return {
+      data: attachTitleVariantsToPlatformContent({
+        contentBlueprints: [],
+        monetizationLanes: monetizationCoercedOnly as any[],
+      }),
+      diagnostics: { ...diagnostics, zodPath: "monetization_only_fallback" },
+    };
+  }
 
   // 6 個維度並行 + 1 個 monetizationLanes 並行（共 7 個並行 LLM 呼叫）
   // 每條 blueprint 完成後立即回呼 onBlueprintGenerated
@@ -7478,6 +7524,148 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           },
         });
         return { jobId, status: "queued" as const };
+      }),
+
+    /**
+     * 全案短链补齐「商业化建议可落地」：只跑 monetizationLanes（1–2 条），不写六条文案、不另扣 Stage2 整包积分。
+     * 须已登录；与选题初选并行由前端调用。
+     */
+    generatePlatformMonetizationLanes: protectedProcedure
+      .input(
+        z.object({
+          context: z.string().optional(),
+          windowDays: z.union([z.literal(3), z.literal(7), z.literal(15), z.literal(30), z.literal(45)]),
+          platformMenu: z.array(z.any()).optional(),
+          snapshotSummary: z.record(z.string(), z.any()),
+          strategicDashboard: z.record(z.string(), z.any()).optional(),
+          stage2LlmMode: zPlatformCopyLlmModeInput,
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          allowBloggerTitle: z.boolean().optional(),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const t0 = Date.now();
+        const MONETIZATION_TIMEOUT_MS = Math.min(PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS, 240_000);
+        try {
+          const requestedPlatforms = normalizePlatforms([
+            ...((input.snapshotSummary?.platformSnapshots || []) as Array<{ platform?: string }>).map((item) =>
+              String(item?.platform || ""),
+            ),
+            ...((input.platformMenu || []) as Array<{ platform?: string }>).map((item) =>
+              String(item?.platform || ""),
+            ),
+          ]);
+          const platforms =
+            requestedPlatforms.length > 0
+              ? requestedPlatforms
+              : (["xiaohongshu", "bilibili", "douyin", "kuaishou"] as string[]);
+          const storeNull = {
+            collections: {},
+            history: null,
+            backfill: null,
+          } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
+          const store = await Promise.race([
+            readTrendStoreForPlatforms(platforms as any[], {
+              preferDerivedFiles: true,
+              preferFlyLive: true,
+            }),
+            new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) =>
+              setTimeout(() => resolve(storeNull), 20_000),
+            ),
+          ]).catch(() => storeNull);
+
+          const stage1Handoff = buildStage1StrategicHandoffForStage2(
+            input.strategicDashboard,
+            input.snapshotSummary,
+          );
+          const stage2LlmModeOverride =
+            input.stage2LlmMode === "vertex" || input.stage2LlmMode === "openai"
+              ? input.stage2LlmMode
+              : undefined;
+          const dash = input.strategicDashboard as Record<string, unknown> | undefined;
+          const skillRouteContext = [
+            input.context,
+            typeof dash?.headline === "string" ? dash.headline : "",
+            typeof dash?.subheadline === "string" ? dash.subheadline : "",
+            typeof dash?.personaSummary === "string" ? dash.personaSummary : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+            .slice(0, 4000);
+
+          type RaceDone = {
+            kind: "done";
+            data: z.infer<typeof platformContentResponseSchema>;
+            diagnostics: Record<string, unknown>;
+          };
+          type RaceTimeout = { kind: "timeout" };
+          const raced = await Promise.race([
+            buildPlatformContent({
+              snapshot: input.snapshotSummary,
+              platformMenu: input.platformMenu || [],
+              context: input.context,
+              windowDays: Number(input.windowDays),
+              requestedPlatforms: platforms,
+              store,
+              abortSignal: ctx.clientDisconnected,
+              stage1Handoff,
+              stage2LlmModeOverride: stage2LlmModeOverride ?? null,
+              userId: ctx.user?.id ?? null,
+              enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+              allowBloggerTitle: Boolean(input.allowBloggerTitle),
+              skillRouteMode: "all",
+              skillRouteContext,
+              platformSkillsPrompt: "",
+              monetizationOnly: true,
+              enableProTopicOptimize: false,
+            }).then(
+              (r): RaceDone => ({
+                kind: "done",
+                data: r.data,
+                diagnostics: r.diagnostics,
+              }),
+            ),
+            new Promise<RaceTimeout>((resolve) => {
+              setTimeout(() => resolve({ kind: "timeout" }), MONETIZATION_TIMEOUT_MS);
+            }),
+          ]);
+
+          if (raced.kind === "timeout") {
+            return {
+              success: false,
+              monetizationLanes: [] as unknown[],
+              debug: {
+                route: "mvAnalysis.generatePlatformMonetizationLanes",
+                totalMs: Date.now() - t0,
+                error: `timeout_${MONETIZATION_TIMEOUT_MS}ms`,
+              },
+            };
+          }
+
+          const lanes = Array.isArray(raced.data.monetizationLanes) ? raced.data.monetizationLanes : [];
+          return {
+            success: lanes.length > 0,
+            monetizationLanes: lanes,
+            debug: {
+              route: "mvAnalysis.generatePlatformMonetizationLanes",
+              totalMs: Date.now() - t0,
+              count: lanes.length,
+              ...(raced.diagnostics || {}),
+            },
+          };
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          console.error("[generatePlatformMonetizationLanes]", msg);
+          return {
+            success: false,
+            monetizationLanes: [] as unknown[],
+            debug: {
+              route: "mvAnalysis.generatePlatformMonetizationLanes",
+              totalMs: Date.now() - t0,
+              error: msg,
+            },
+          };
+        }
       }),
 
     /**

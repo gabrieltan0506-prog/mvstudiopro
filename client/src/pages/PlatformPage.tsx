@@ -2119,7 +2119,7 @@ export default function PlatformPage() {
     if (platformDashboard && !platformContent) {
       return "战略看板已就绪。若流程中断，可点下方手动「生成专属文案」继续。";
     }
-    return `点击「开始全案分析」：先读小红书 trendStore（B站+抖音辅），生成 ${PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT}–${PLATFORM_TOPIC_SHORTLIST_MAX} 条选题初选；你挑选后再点「就写这条」扩写（不含决策智库）。`;
+    return `点击「开始全案分析」：生成 ${PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT}–${PLATFORM_TOPIC_SHORTLIST_MAX} 条选题初选，并并行整理平台优先级与商业化路径；你挑选后再点「就写这条」扩写（不含决策智库）。`;
   }, [
     isContentLoading,
     contentLoadingText,
@@ -2507,13 +2507,15 @@ export default function PlatformPage() {
   /** 选题初选 20–30 条 → 用户自己挑 → 可改标题 → 单条扩写（全案默认 20） */
   const [topicShortlist, setTopicShortlist] = useState<PlatformTopicShortlistItem[]>([]);
   const [topicShortlistCount, setTopicShortlistCount] = useState(PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT);
-  /** 全案选题过程日志（进 Debug 面板；失败时按钮下方也可见末行） */
+  /** 全案过程日志：选题初选 · 扩写 · 封面/分镜出图（进顶部 Debug；失败时按钮下方也可见末行） */
   const [shortlistDebugLines, setShortlistDebugLines] = useState<string[]>([]);
   const [shortlistLastError, setShortlistLastError] = useState<string | null>(null);
   const pushShortlistDebug = useCallback((line: string) => {
     const stamp = new Date().toLocaleTimeString("zh-CN", { hour12: false });
-    setShortlistDebugLines((prev) => [...prev.slice(-80), `[${stamp}] ${line}`]);
+    setShortlistDebugLines((prev) => [...prev.slice(-160), `[${stamp}] ${line}`]);
   }, []);
+  /** 出图快照 / Job 轮询 → 镜像进全案 Debug（按 opId / jobId 去重，避免刷屏） */
+  const fullcaseImageDebugSigByKeyRef = useRef<Map<string, string>>(new Map());
   /** 正在改标题的初选条目 id 与草稿文字（改完才扩写） */
   const [editingShortlistTopicId, setEditingShortlistTopicId] = useState<string | null>(null);
   const [editingShortlistTitle, setEditingShortlistTitle] = useState("");
@@ -2673,6 +2675,51 @@ export default function PlatformPage() {
   const [platformImageGenFlowSnapshots, setPlatformImageGenFlowSnapshots] = useState<PlatformImageGenFlowSnapshot[]>(
     [],
   );
+  /** 封面 / 分镜出图步骤同步写入顶部「全案 Debug」（原先只埋在下方失败流水） */
+  useEffect(() => {
+    const kindLabel = (kind: PlatformImageGenFlowSnapshot["kind"]) => {
+      switch (kind) {
+        case "batch_topic_frames":
+          return "封面批量";
+        case "batch_composite_2x4":
+          return "分镜/图文批量";
+        case "batch_cover_composite_bundle":
+          return "封面加分镜";
+        case "composite_2x4":
+          return "分镜/图文";
+        case "batch_topic_frames_failed":
+          return "封面失败";
+        case "composite_2x4_failed":
+          return "分镜失败";
+        default:
+          return String(kind);
+      }
+    };
+    for (const snap of platformImageGenFlowSnapshots) {
+      const opKey = String(snap.meta?.localOpId || snap.at || "").trim() || snap.kind;
+      const last = snap.lines[snap.lines.length - 1] || "";
+      if (!last.trim()) continue;
+      const sig = `${snap.lines.length}|${last}`;
+      if (fullcaseImageDebugSigByKeyRef.current.get(`snap:${opKey}`) === sig) continue;
+      fullcaseImageDebugSigByKeyRef.current.set(`snap:${opKey}`, sig);
+      const short = last.replace(/^\d{4}-\d{2}-\d{2}T[^\s]+\s+/, "").slice(0, 160);
+      const pending = snap.meta?.pending === true ? "⏳ " : "";
+      pushShortlistDebug(`${pending}出图·${kindLabel(snap.kind)} ${short}`);
+    }
+  }, [platformImageGenFlowSnapshots, pushShortlistDebug]);
+  useEffect(() => {
+    const traces = [topicImageJobPollTrace, compositeJobPollTrace].filter(Boolean) as ClientJobPollTrace[];
+    for (const t of traces) {
+      const step = t.imageGenStep || t.currentStep || t.translationStep || "";
+      if (!step && !t.terminalStatus) continue;
+      const sig = `${step}|${t.terminalStatus || "run"}|${t.translationStep || ""}`;
+      const key = `job:${t.jobId}`;
+      if (fullcaseImageDebugSigByKeyRef.current.get(key) === sig) continue;
+      fullcaseImageDebugSigByKeyRef.current.set(key, sig);
+      const tail = t.terminalStatus ? ` · ${t.terminalStatus}` : "";
+      pushShortlistDebug(`出图·轮询 ${t.label} · ${step || "进行中"}${tail}`);
+    }
+  }, [topicImageJobPollTrace, compositeJobPollTrace, pushShortlistDebug]);
   /** 2×4 / 小红书合成进行中：由 live log 粗略推进度标签 */
   const compositePendingUxHints = useMemo(() => {
     const map: Record<string, string> = {};
@@ -4469,6 +4516,10 @@ export default function PlatformPage() {
       console.warn("[PlatformPage] dashboard mutation error:", error.message);
     },
   });
+
+  /** 全案短链：只补 monetizationLanes，不重跑六条文案 */
+  const generatePlatformMonetizationLanesMutation =
+    trpc.mvAnalysis.generatePlatformMonetizationLanes.useMutation();
 
   const generateVisualReportMutation = trpc.mvAnalysis.generateVisualReport.useMutation();
 
@@ -7994,6 +8045,80 @@ export default function PlatformPage() {
     [platformDashboard],
   );
 
+  /** 全局主人公照片：扩写区与编导区共用同一份状态，禁止只藏在下方 */
+  const renderGlobalProtagonistPhotoBlock = (opts?: { className?: string }) => (
+    <div
+      className={
+        opts?.className ??
+        "rounded-xl border border-[#c4b5fd]/35 bg-[#6a5cff]/10 px-4 py-3"
+      }
+    >
+      <div className="flex flex-wrap items-start gap-3">
+        {globalCoverReferencePhotoUrl ? (
+          <img
+            src={globalCoverReferencePhotoUrl}
+            alt="全局主人公"
+            className="h-14 w-14 shrink-0 rounded-lg object-cover ring-1 ring-[#c4b5fd]/50"
+          />
+        ) : (
+          <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-dashed border-[#c4b5fd]/40 text-[#c4b5fd]/70">
+            <UserRound className="h-5 w-5" aria-hidden />
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold text-white">全局主人公照片（出图前先上传）</div>
+          <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
+            套用全部选题的封面、编导分镜表与图文笔记解说人物：
+            <strong className="text-white/80">锁脸</strong>
+            ，衣着可随场景微调。单卡可另传照片覆盖。封面失败时也靠这张脸继续出分镜。
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <label
+              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[#6a5cff]/45 bg-[#6a5cff]/20 px-2.5 py-1.5 text-[11px] font-bold text-[#c4b5fd] transition hover:bg-[#6a5cff]/30 ${
+                globalCoverRefUploading ? "cursor-wait opacity-70" : ""
+              }`}
+            >
+              {globalCoverRefUploading ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  上传中…
+                </>
+              ) : (
+                <>
+                  <UserRound className="h-3 w-3" aria-hidden />
+                  {globalCoverReferencePhotoUrl ? "更换全局照片" : "上传全局主人公照片"}
+                </>
+              )}
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                disabled={globalCoverRefUploading}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  if (f) void handleUploadGlobalCoverReferencePhoto(f);
+                }}
+              />
+            </label>
+            {globalCoverReferencePhotoUrl ? (
+              <button
+                type="button"
+                onClick={() => setGlobalCoverReferencePhotoUrl(null)}
+                className="rounded-md border border-white/15 px-2 py-1 text-[10px] font-medium text-gray-400 transition hover:border-white/30 hover:text-gray-200"
+              >
+                移除
+              </button>
+            ) : null}
+          </div>
+          <p className="mt-1.5 text-[10px] leading-tight text-amber-300/70">
+            请仅上传本人或已获授权人物的照片（着装得体、成年）；请勿上传他人、未成年或不雅照片。
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+
   /**
    * 全案「就写这条」扩写结果：文案 + 旧 Stage2 同套出图接线（一键套装 / 仅封面 / 分镜或图文）。
    * 必须挂在选题列表正下方，禁止只留「去下方」空链。
@@ -8018,18 +8143,20 @@ export default function PlatformPage() {
         id={`${domId}-expanded`}
         className="mt-5 scroll-mt-24 rounded-2xl border border-emerald-400/40 bg-[rgba(16,185,129,0.1)] px-4 py-4"
       >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-lg font-bold text-white sm:text-xl">
-              <Sparkles className="h-5 w-5 shrink-0 text-emerald-300" />
-              专属选题与文案 · {cards.length} 条
-            </div>
-            <p className="mt-1 text-[12px] leading-snug text-emerald-100/70">
-              文案与出图同一套执行卡：可一键套装，也可单独出封面 / 编导分镜或图文。刷新可恢复，不用切「内容创作」。
-            </p>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-lg font-bold text-white sm:text-xl">
+            <Sparkles className="h-5 w-5 shrink-0 text-emerald-300" />
+            专属选题与文案 · {cards.length} 条
           </div>
-          {cards.length > 0 ? (
-            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
+          <p className="mt-1 text-[12px] leading-snug text-emerald-100/70">
+            先上传主人公照片锁脸，再出封面 / 编导分镜或图文。文案与出图同页，刷新可恢复。
+          </p>
+        </div>
+
+        {cards.length > 0 ? (
+          <div className="mt-3 space-y-3">
+            {renderGlobalProtagonistPhotoBlock()}
+            <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap">
               <button
                 type="button"
                 disabled={genBusy || !isAuthenticated}
@@ -8093,8 +8220,8 @@ export default function PlatformPage() {
                 一键封面加分镜
               </button>
             </div>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
 
         <div className="mt-4 max-h-[900px] space-y-4 overflow-y-auto pr-1">
           {cards.map((item, bi) => {
@@ -8685,6 +8812,104 @@ export default function PlatformPage() {
       : PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT;
   }, [topicShortlistCount]);
 
+  /**
+   * 全案确认后并行补齐：平台优先级看板 + 商业化路径（不覆盖选题扩写文案）。
+   * 与 generatePlatformTopicShortlist 并行；失败只写 Debug，不阻断初选。
+   */
+  const runFullcaseDashboardAndMonetization = useCallback(async () => {
+    const ctx = focusPrompt.trim() || undefined;
+    pushShortlistDebug("并行：快照 → 平台优先级看板 → 商业化路径…");
+    setIsDashboardLoading(true);
+    try {
+      const snapRes = await growthSnapshotQuery.refetch();
+      const snap = snapRes.data?.snapshot;
+      if (!snap) {
+        pushShortlistDebug("❌ 并行看板：快照为空，跳过平台优先级/变现");
+        return;
+      }
+      lastStage2InputRef.current = {
+        snapshotSummary: snap as Record<string, unknown>,
+        windowDays: selectedWindowDays,
+      };
+      const platforms =
+        selectedTrendPlatforms.length > 0
+          ? selectedTrendPlatforms
+          : (["xiaohongshu", "bilibili", "douyin", "kuaishou"] as typeof selectedTrendPlatforms);
+
+      const dashResult = await getPlatformDashboardMutation.mutateAsync({
+        context: ctx,
+        windowDays: selectedWindowDays,
+        snapshotSummary: snap as Record<string, unknown>,
+        copyLlmMode: "openai" as const,
+        requestedPlatforms: platforms,
+      });
+      const dash = dashResult.platformDashboard as PlatformDashboard | null;
+      if (!dash) {
+        const err =
+          typeof (dashResult as { debug?: { error?: string } }).debug?.error === "string"
+            ? String((dashResult as { debug: { error: string } }).debug.error)
+            : "empty";
+        pushShortlistDebug(`❌ 平台看板未返回 · ${err.slice(0, 100)}`);
+        return;
+      }
+      setPlatformDashboard(dash);
+      pushShortlistDebug(
+        `✅ 平台优先级 · platformMenu=${Array.isArray(dash.platformMenu) ? dash.platformMenu.length : 0}`,
+      );
+      writePlatformVisualReportPersist({
+        platformDashboard: dash,
+        windowDays: String(selectedWindowDays),
+      });
+
+      setIsContentLoading(true);
+      setContentLoadingText("正在推演可落地商业化路径…");
+      try {
+        const mon = await generatePlatformMonetizationLanesMutation.mutateAsync({
+          context: ctx,
+          windowDays: selectedWindowDays,
+          platformMenu: dash.platformMenu || [],
+          snapshotSummary: snap as Record<string, unknown>,
+          strategicDashboard: dash as unknown as Record<string, unknown>,
+          stage2LlmMode: "openai" as const,
+          enabledSkillIds: Array.from(enabledPlatformSkillIds),
+          allowBloggerTitle,
+        });
+        const lanes = Array.isArray(mon.monetizationLanes) ? mon.monetizationLanes : [];
+        if (lanes.length > 0) {
+          setPlatformContent((prev) => ({
+            contentBlueprints: Array.isArray(prev?.contentBlueprints) ? prev!.contentBlueprints : [],
+            monetizationLanes: lanes as PlatformDashboard["monetizationLanes"],
+          }));
+          pushShortlistDebug(`✅ 商业化路径 ${lanes.length} 条已写入`);
+        } else {
+          const err =
+            typeof (mon as { debug?: { error?: string } }).debug?.error === "string"
+              ? String((mon as { debug: { error: string } }).debug.error)
+              : "empty";
+          pushShortlistDebug(`❌ 商业化路径空 · ${err.slice(0, 100)}`);
+        }
+      } finally {
+        setIsContentLoading(false);
+        setContentLoadingText("等待战略看板就绪…");
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      pushShortlistDebug(`❌ 并行看板/变现失败：${msg.slice(0, 140)}`);
+    } finally {
+      setIsDashboardLoading(false);
+    }
+  }, [
+    allowBloggerTitle,
+    enabledPlatformSkillIds,
+    focusPrompt,
+    generatePlatformMonetizationLanesMutation,
+    getPlatformDashboardMutation,
+    growthSnapshotQuery,
+    pushShortlistDebug,
+    selectedTrendPlatforms,
+    selectedWindowDays,
+  ]);
+
   const handleAnalyze = async () => {
     if (!focusPrompt.trim()) {
       setPersonaFieldErrors({ freeform: "请先填写人物背景" });
@@ -8710,6 +8935,8 @@ export default function PlatformPage() {
     pushShortlistDebug(`全案确认：请求 ${n} 条选题初选（小红书主 / B站+抖音辅）`);
     pushShortlistDebug(`人设长度 ${focusPrompt.trim().length} 字 · Skill ${enabledPlatformSkillIds.size} 项`);
     scrollToPlatformSection("platform-fullcase-shortlist-results");
+    // 与选题初选并行：补齐平台优先级 + 商业化（不阻断初选）
+    void runFullcaseDashboardAndMonetization();
     const t0 = Date.now();
     const heartbeat = window.setInterval(() => {
       const sec = Math.round((Date.now() - t0) / 1000);
@@ -9638,8 +9865,9 @@ export default function PlatformPage() {
           <DialogHeader>
             <DialogTitle className="text-white">开始全案分析前确认</DialogTitle>
             <DialogDescription className="text-[#b7add8]">
-              先读小红书 trendStore，再参考 B站与抖音，结合你的人物背景生成{" "}
-              {pendingFullAnalysisLabels || PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT} 条选题初选（只出题）。
+              结合人物背景生成{" "}
+              {pendingFullAnalysisLabels || PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT}{" "}
+              条选题初选，并并行整理平台优先级与可落地商业化建议。
             </DialogDescription>
           </DialogHeader>
           <div className="flex items-start gap-3 rounded-2xl border border-[#49e6ff]/25 bg-[#49e6ff]/8 px-3 py-3">
@@ -9649,7 +9877,10 @@ export default function PlatformPage() {
             <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-black/35 px-3 py-2.5 text-[12px] leading-relaxed text-gray-200">
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8cefff]">智能提醒</p>
               <p>
-                本步<strong className="text-white">不直接写六条文案</strong>：出题后由你挑选（可改标题），再点「就写这条」才扩写与封面。
+                本步<strong className="text-white">先出选题初选</strong>
+                （不直接写六条文案）；同时后台补齐
+                <strong className="text-white">平台优先级</strong>与
+                <strong className="text-white">商业化路径</strong>。挑选后再点「就写这条」扩写与出图。
               </p>
               <p className="mt-1.5 text-[#b8f4ff]">
                 条数可在选题区改成 25 / 30；当前将生成{" "}
@@ -9675,7 +9906,7 @@ export default function PlatformPage() {
               }{" "}
               积分
             </strong>
-            （选题初选；扩写在「就写这条」时另计）。请勿关闭页面。
+            （选题初选；平台优先级与商业化路径含在本步；扩写在「就写这条」时另计）。请勿关闭页面。
           </div>
           <div className="flex flex-wrap justify-end gap-2 pt-1">
             <button
@@ -9789,8 +10020,9 @@ export default function PlatformPage() {
               </button>
             </div>
             <p className="mt-1 text-[11px] leading-relaxed text-[#c9c0e6]/65">
-              过程：确认 → 本机趋势 → 初选 → 勾选扩写 → 文案钉在选题下方同页（不跳 Tab）。
-              Fly：generatePlatformTopicShortlist / expandPlatformTopicPicks / empty content。
+              过程：确认 → 初选（并行：快照→平台优先级看板→商业化路径）→ 勾选扩写 → 文案钉选题下方。
+              Fly：generatePlatformTopicShortlist / getPlatformDashboard / generatePlatformMonetizationLanes /
+              expandPlatformTopicPicks。
             </p>
             <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[#b8f4ff]/80">
               <span>shortlistPending={String(generateTopicShortlistMutation.isPending)}</span>
@@ -13242,72 +13474,7 @@ export default function PlatformPage() {
                       </a>
                     ) : null}
                   </div>
-                  {platformTopicCount > 0 ? (
-                    <div className="rounded-xl border border-[#c4b5fd]/35 bg-[#6a5cff]/10 px-4 py-3">
-                      <div className="flex flex-wrap items-start gap-3">
-                        {globalCoverReferencePhotoUrl ? (
-                          <img
-                            src={globalCoverReferencePhotoUrl}
-                            alt="全局主人公"
-                            className="h-14 w-14 shrink-0 rounded-lg object-cover ring-1 ring-[#c4b5fd]/50"
-                          />
-                        ) : (
-                          <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg border border-dashed border-[#c4b5fd]/40 text-[#c4b5fd]/70">
-                            <UserRound className="h-5 w-5" aria-hidden />
-                          </span>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold text-white">全局主人公照片（推荐先上传）</div>
-                          <p className="mt-0.5 text-[11px] leading-snug text-gray-400">
-                            套用全部选题的封面、编导分镜表与图文笔记解说人物：<strong className="text-white/80">锁脸</strong>
-                            ，衣着可随场景微调。单卡可另传照片覆盖。
-                          </p>
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <label
-                              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[#6a5cff]/45 bg-[#6a5cff]/20 px-2.5 py-1.5 text-[11px] font-bold text-[#c4b5fd] transition hover:bg-[#6a5cff]/30 ${
-                                globalCoverRefUploading ? "cursor-wait opacity-70" : ""
-                              }`}
-                            >
-                              {globalCoverRefUploading ? (
-                                <>
-                                  <Loader2 className="h-3 w-3 animate-spin" />
-                                  上传中…
-                                </>
-                              ) : (
-                                <>
-                                  <UserRound className="h-3 w-3" aria-hidden />
-                                  {globalCoverReferencePhotoUrl ? "更换全局照片" : "上传全局主人公照片"}
-                                </>
-                              )}
-                              <input
-                                type="file"
-                                accept="image/png,image/jpeg,image/webp"
-                                className="hidden"
-                                disabled={globalCoverRefUploading}
-                                onChange={(e) => {
-                                  const f = e.target.files?.[0];
-                                  e.target.value = "";
-                                  if (f) void handleUploadGlobalCoverReferencePhoto(f);
-                                }}
-                              />
-                            </label>
-                            {globalCoverReferencePhotoUrl ? (
-                              <button
-                                type="button"
-                                onClick={() => setGlobalCoverReferencePhotoUrl(null)}
-                                className="rounded-md border border-white/15 px-2 py-1 text-[10px] font-medium text-gray-400 transition hover:border-white/30 hover:text-gray-200"
-                              >
-                                移除
-                              </button>
-                            ) : null}
-                          </div>
-                          <p className="mt-1.5 text-[10px] leading-tight text-amber-300/70">
-                            请仅上传本人或已获授权人物的照片（着装得体、成年）；请勿上传他人、未成年或不雅照片。
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
+                  {platformTopicCount > 0 ? renderGlobalProtagonistPhotoBlock() : null}
                   {platformTopicCount > 0 ? (
                     <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap lg:justify-end">
                         <button
@@ -14563,7 +14730,9 @@ export default function PlatformPage() {
                     </div>
                   ) : monetizationCards.length === 0 ? (
                     <div className="col-span-2 flex h-32 w-full flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#c9c0e6]">
-                      没有生成相关变现路径
+                      {hasAnalyzed
+                        ? "本轮未写出变现路径（可再点「开始全案分析」重试）"
+                        : "完成全案分析后显示可落地商业化建议"}
                     </div>
                   ) : (
                     monetizationCards.map((item) => (
