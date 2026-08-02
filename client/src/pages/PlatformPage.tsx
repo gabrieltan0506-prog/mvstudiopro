@@ -2907,91 +2907,24 @@ export default function PlatformPage() {
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  const platformMainPersonaTopicsPanel = (
-    <div className="space-y-4">
-      <PlatformStructuredPersonaForm
-        id="platform-persona-focus"
-        value={structuredPersona}
-        onChange={(next) => {
-          setStructuredPersona(next);
-          // 结构化为 canonical：未 override 时同步序列化到 focusPrompt
-          if (!freeformOverride) {
-            setFocusPrompt(composeFocusPromptFromPersona(next));
-          }
-          setPersonaFieldErrors({});
-        }}
-        freeform={focusPrompt}
-        onFreeformChange={(v) => {
-          setFocusPrompt(v);
-          const composed = composeFocusPromptFromPersona(structuredPersona);
-          setFreeformOverride(v.trim() !== composed.trim());
-          setPersonaFieldErrors({});
-        }}
-        errors={personaFieldErrors}
-        voiceSlot={
-          <VoiceInputButton
-            onTranscript={(t) => {
-              setFocusPrompt((prev) => (prev ? `${prev} ${t}` : t));
-              setFreeformOverride(true);
-            }}
-            onDebugLog={addVoiceDebug}
-            size={26}
-          />
-        }
-      />
-      {freeformOverride ? (
-        <button
-          type="button"
-          className="rounded-lg border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.08)] px-3 py-2 text-[12px] font-semibold text-[#8cefff]"
-          onClick={() => {
-            const composed = composeFocusPromptFromPersona(structuredPersona);
-            setFocusPrompt(composed);
-            setFreeformOverride(false);
-            toast.success("已由结构化字段重新生成完整描述");
-          }}
-        >
-          由结构化内容生成完整描述
-        </button>
-      ) : null}
-
-      <div className="rounded-2xl border border-[#10B981]/35 bg-[#10B981]/10 px-4 py-3.5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="text-[13px] font-semibold text-white">
-              Skill · 已启用 {enabledPlatformSkillIds.size}
-              {platformSkillRecommend.labels.length
-                ? ` · 推荐 ${platformSkillRecommend.labels.length}`
-                : ""}
-            </div>
-            <p className="mt-1 text-[12px] leading-snug text-gray-300">
-              核心已默认开启。推荐原因：匹配你的人物背景
-              {platformSkillRecommend.lane !== "default" ? `（赛道 ${platformSkillRecommend.lane}）` : ""}
-              。建议加开：
-              <span className="text-[#a7f3d0]">
-                {platformSkillRecommend.labels.length
-                  ? platformSkillRecommend.labels.join(" · ")
-                  : "暂无额外赛道（保持核心即可）"}
-              </span>
-            </p>
-            <p className="mt-1 text-[11px] text-[#c9c0e6]/50">选题初选约 1–2 分钟；全案文案更久，点数见主按钮。</p>
-          </div>
-          <button
-            type="button"
-            onClick={applyPlatformSkillRecommend}
-            className="shrink-0 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-[11px] font-semibold text-[#c9c0e6] hover:bg-white/10"
-          >
-            采纳推荐（次级）
-          </button>
-        </div>
-      </div>
-
+  /** 选题初选卡片：可多处挂载（须各自独立 React 节点 + 不同 domId，禁止复用同一 element） */
+  const renderTopicShortlistSection = (domId: string, opts?: { showGenerateButton?: boolean }) => {
+    const showGenerateButton = opts?.showGenerateButton !== false;
+    return (
       <div
-        id="platform-topic-shortlist"
+        id={domId}
         className="rounded-2xl border border-[#49e6ff]/35 bg-[#49e6ff]/8 px-4 py-4 scroll-mt-24"
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="text-lg font-bold text-white md:text-xl">选题初选</div>
+            <div className="text-lg font-bold text-white md:text-xl">
+              选题初选
+              {topicShortlist.length > 0 ? (
+                <span className="ml-2 text-base font-black text-[#8cefff]">
+                  · 已出 {topicShortlist.length} 条
+                </span>
+              ) : null}
+            </div>
             <p className="mt-1 text-[13px] leading-snug text-gray-300">
               全案默认 {PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT} 条（可读 25/30）；先读小红书 trendStore，再参考 B站与抖音。
               <strong className="text-white/90">这步只出题</strong>，挑哪条、标题改成什么都由你定，确认后才写文案与封面。
@@ -3000,7 +2933,7 @@ export default function PlatformPage() {
               <span>条数</span>
               {([6, 12, 20, 25, 30] as const).map((n) => (
                 <button
-                  key={n}
+                  key={`${domId}-n-${n}`}
                   type="button"
                   onClick={() => setTopicShortlistCount(n)}
                   className={`rounded border px-2.5 py-1 font-semibold ${
@@ -3019,74 +2952,83 @@ export default function PlatformPage() {
               ))}
             </div>
           </div>
-          <button
-            type="button"
-            disabled={!isAuthenticated || generateTopicShortlistMutation.isPending}
-            onClick={() => {
-              void (async () => {
-                if (!focusPrompt.trim()) {
-                  toast.error("请先填写上方「人物背景与创作诉求」，再生成初选");
-                  scrollToPlatformSection("platform-persona-focus");
-                  return;
-                }
-                try {
-                  const existingTitles = [
-                    ...(platformContent?.contentBlueprints || []).map((b: { title?: string }) =>
-                      String(b?.title || ""),
-                    ),
-                    ...topicShortlist.map((t) => t.title),
-                  ].filter(Boolean);
-                  const res = await generateTopicShortlistMutation.mutateAsync({
-                    context: focusPrompt.trim() || undefined,
-                    enabledSkillIds: Array.from(enabledPlatformSkillIds),
-                    allowBloggerTitle,
-                    existingTitles,
-                    count: topicShortlistCount,
-                  });
-                  const topics = res.topics || [];
-                  setTopicShortlist(topics);
-                  if (!topics.length) {
-                    toast.error(
-                      "初选未返回选题（可能超时或模型空回）。请稍后重试；若刚扣点请联系管理员核对。",
-                    );
+          {showGenerateButton ? (
+            <button
+              type="button"
+              disabled={!isAuthenticated || generateTopicShortlistMutation.isPending}
+              onClick={() => {
+                void (async () => {
+                  if (!focusPrompt.trim()) {
+                    toast.error("请先填写上方「人物背景与创作诉求」，再生成初选");
+                    scrollToPlatformSection("platform-persona-focus");
                     return;
                   }
-                  toast.success(
-                    `已生成 ${topics.length} 条初选${
-                      res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""
-                    }`,
-                  );
-                } catch (err) {
-                  const msg = err instanceof Error ? err.message : String(err);
-                  const friendly =
-                    msg.includes("Unexpected token") ||
-                    msg.includes("is not valid JSON") ||
-                    msg.includes("An error o") ||
-                    msg.includes("timeout") ||
-                    msg.includes("504")
-                      ? "算力紧张或请求超时，请稍后重试选题初选"
-                      : msg || "初选生成失败";
-                  toast.error(friendly);
-                }
-              })();
-            }}
-            className="shrink-0 rounded-xl border border-[#49e6ff]/50 bg-[#49e6ff]/20 px-4 py-2.5 text-[14px] font-bold text-[#b8f4ff] disabled:opacity-50"
-          >
-            {generateTopicShortlistMutation.isPending
-              ? "生成中…"
-              : `生成 ${topicShortlistCount} 条初选（${topicShortlistPrice.total} 点）`}
-          </button>
+                  try {
+                    const existingTitles = [
+                      ...(platformContent?.contentBlueprints || []).map((b: { title?: string }) =>
+                        String(b?.title || ""),
+                      ),
+                      ...topicShortlist.map((t) => t.title),
+                    ].filter(Boolean);
+                    const res = await generateTopicShortlistMutation.mutateAsync({
+                      context: focusPrompt.trim() || undefined,
+                      enabledSkillIds: Array.from(enabledPlatformSkillIds),
+                      allowBloggerTitle,
+                      existingTitles,
+                      count: topicShortlistCount,
+                    });
+                    const topics = res.topics || [];
+                    setTopicShortlist(topics);
+                    if (!topics.length) {
+                      toast.error(
+                        "初选未返回选题（可能超时或模型空回）。请稍后重试；若刚扣点请联系管理员核对。",
+                      );
+                      return;
+                    }
+                    toast.success(
+                      `已生成 ${topics.length} 条初选${
+                        res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""
+                      }`,
+                    );
+                    scrollToPlatformSection(domId);
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    const friendly =
+                      msg.includes("Unexpected token") ||
+                      msg.includes("is not valid JSON") ||
+                      msg.includes("An error o") ||
+                      msg.includes("timeout") ||
+                      msg.includes("504")
+                        ? "算力紧张或请求超时，请稍后重试选题初选"
+                        : msg || "初选生成失败";
+                    toast.error(friendly);
+                  }
+                })();
+              }}
+              className="shrink-0 rounded-xl border border-[#49e6ff]/50 bg-[#49e6ff]/20 px-4 py-2.5 text-[14px] font-bold text-[#b8f4ff] disabled:opacity-50"
+            >
+              {generateTopicShortlistMutation.isPending
+                ? "生成中…"
+                : `生成 ${topicShortlistCount} 条初选（${topicShortlistPrice.total} 点）`}
+            </button>
+          ) : null}
         </div>
+        {generateTopicShortlistMutation.isPending ? (
+          <div className="mt-3 flex items-center gap-2 text-sm text-[#8cefff]">
+            <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+            正在读取小红书 / B站 / 抖音热点并生成约 {topicShortlistCount} 条选题…
+          </div>
+        ) : null}
         {topicShortlist.length > 0 ? (
           <>
             <p className="mt-3 text-[12px] leading-snug text-gray-400">
               已按爆款概率 + 评论区热度排序，前 {PLATFORM_TOPIC_TOP_PICK_COUNT} 条标了「优先」，只是给你参考顺序。
               <strong className="text-white/90">挑哪条你说了算</strong>：标题不满意可以点「改标题」直接改，改完再点「就写这条」，才会生成文案与封面。
             </p>
-            <div className="mt-2 max-h-[360px] space-y-1.5 overflow-y-auto pr-1">
+            <div className="mt-2 max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
               {topicShortlist.map((t, i) => (
                 <div
-                  key={t.id}
+                  key={`${domId}-${t.id}`}
                   className={`rounded-md border px-2.5 py-2 text-[12px] ${
                     t.isTopPick
                       ? "border-[#fde047]/40 bg-[#fde047]/8 text-gray-200"
@@ -3183,8 +3125,95 @@ export default function PlatformPage() {
               ))}
             </div>
           </>
+        ) : !generateTopicShortlistMutation.isPending ? (
+          <p className="mt-3 text-[12px] text-gray-500">
+            点「开始全案分析」或右侧「生成初选」后，约 {PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT}–{PLATFORM_TOPIC_SHORTLIST_MAX}{" "}
+            条选题会出现在这里。
+          </p>
         ) : null}
       </div>
+    );
+  };
+
+  const platformMainPersonaTopicsPanel = (
+    <div className="space-y-4">
+      <PlatformStructuredPersonaForm
+        id="platform-persona-focus"
+        value={structuredPersona}
+        onChange={(next) => {
+          setStructuredPersona(next);
+          // 结构化为 canonical：未 override 时同步序列化到 focusPrompt
+          if (!freeformOverride) {
+            setFocusPrompt(composeFocusPromptFromPersona(next));
+          }
+          setPersonaFieldErrors({});
+        }}
+        freeform={focusPrompt}
+        onFreeformChange={(v) => {
+          setFocusPrompt(v);
+          const composed = composeFocusPromptFromPersona(structuredPersona);
+          setFreeformOverride(v.trim() !== composed.trim());
+          setPersonaFieldErrors({});
+        }}
+        errors={personaFieldErrors}
+        voiceSlot={
+          <VoiceInputButton
+            onTranscript={(t) => {
+              setFocusPrompt((prev) => (prev ? `${prev} ${t}` : t));
+              setFreeformOverride(true);
+            }}
+            onDebugLog={addVoiceDebug}
+            size={26}
+          />
+        }
+      />
+      {freeformOverride ? (
+        <button
+          type="button"
+          className="rounded-lg border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.08)] px-3 py-2 text-[12px] font-semibold text-[#8cefff]"
+          onClick={() => {
+            const composed = composeFocusPromptFromPersona(structuredPersona);
+            setFocusPrompt(composed);
+            setFreeformOverride(false);
+            toast.success("已由结构化字段重新生成完整描述");
+          }}
+        >
+          由结构化内容生成完整描述
+        </button>
+      ) : null}
+
+      <div className="rounded-2xl border border-[#10B981]/35 bg-[#10B981]/10 px-4 py-3.5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-semibold text-white">
+              Skill · 已启用 {enabledPlatformSkillIds.size}
+              {platformSkillRecommend.labels.length
+                ? ` · 推荐 ${platformSkillRecommend.labels.length}`
+                : ""}
+            </div>
+            <p className="mt-1 text-[12px] leading-snug text-gray-300">
+              核心已默认开启。推荐原因：匹配你的人物背景
+              {platformSkillRecommend.lane !== "default" ? `（赛道 ${platformSkillRecommend.lane}）` : ""}
+              。建议加开：
+              <span className="text-[#a7f3d0]">
+                {platformSkillRecommend.labels.length
+                  ? platformSkillRecommend.labels.join(" · ")
+                  : "暂无额外赛道（保持核心即可）"}
+              </span>
+            </p>
+            <p className="mt-1 text-[11px] text-[#c9c0e6]/50">选题初选约 1–2 分钟；挑完再扩写，点数见主按钮。</p>
+          </div>
+          <button
+            type="button"
+            onClick={applyPlatformSkillRecommend}
+            className="shrink-0 rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-[11px] font-semibold text-[#c9c0e6] hover:bg-white/10"
+          >
+            采纳推荐（次级）
+          </button>
+        </div>
+      </div>
+
+      {renderTopicShortlistSection("platform-topic-shortlist")}
     </div>
   );
 
@@ -7914,6 +7943,10 @@ export default function PlatformPage() {
     setTopicShortlistCount(n);
     setCreateStep("topics");
     setHasAnalyzed(true);
+    // 结果钉在按钮下方；同时切到内容创作，避免选题只出现在上方被滚走看不见
+    applyPlatformMode("create", { skipDirtyCheck: true, history: "replace" });
+    setCustomWorkspaceTab("copy");
+    scrollToPlatformSection("platform-fullcase-shortlist-results");
     try {
       trackPlatformFunnel("fullcase_start", { mode: "create", handler: "generateTopicShortlist", count: n });
       trackPlatformFunnel("topic_shortlist_start", { count: n });
@@ -7931,7 +7964,8 @@ export default function PlatformPage() {
       const topics = res.topics || [];
       setTopicShortlist(topics);
       setCreateStep("result");
-      scrollToPlatformSection("platform-topic-shortlist");
+      // 等 DOM 挂上结果卡再滚
+      window.setTimeout(() => scrollToPlatformSection("platform-fullcase-shortlist-results"), 80);
       if (workbenchUserKey) {
         pushRecentTask(workbenchUserKey, {
           mode: "create",
@@ -7946,7 +7980,7 @@ export default function PlatformPage() {
         return;
       }
       toast.success(
-        `已生成 ${topics.length} 条初选${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；请挑选后再点「就写这条」扩写。`,
+        `已生成 ${topics.length} 条初选${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；请在下方列表挑选或改标题，再点「就写这条」。`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -11251,19 +11285,26 @@ export default function PlatformPage() {
                   )}
                 </div>
                 <p className="mt-2 max-w-xl text-[11px] leading-5 text-white/38">
-                  点击后会基于你的背景生成<strong className="text-white/80">平台优先级、切入方向、选题文案与分镜脚本</strong>；扣款在<strong className="text-[#fef08a]">后台任务入队时</strong>。封面图、编导分镜图与决策智库报告需<strong className="text-white/70">另行加购</strong>。
-                  {hasAnalyzed ? (
+                  点击后先出约 <strong className="text-white/80">{PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT}–{PLATFORM_TOPIC_SHORTLIST_MAX} 条选题初选</strong>
+                  （小红书主、B站+抖音辅）；选题会出现在<strong className="text-[#8cefff]">本按钮下方</strong>。
+                  你挑选或改标题后点「就写这条」才扩写。决策智库需另行加购。
+                  {topicShortlist.length > 0 ? (
                     <>
                       {" "}
                       <a
-                        href="#platform-stage2-copy"
+                        href="#platform-fullcase-shortlist-results"
                         className="font-semibold text-[#93c5fd] underline underline-offset-2 hover:text-white"
                       >
-                        跳至生成区
+                        跳至选题列表（已出 {topicShortlist.length} 条）
                       </a>
                     </>
                   ) : null}
                 </p>
+                <div className="mt-4">
+                  {renderTopicShortlistSection("platform-fullcase-shortlist-results", {
+                    showGenerateButton: false,
+                  })}
+                </div>
               </div>
             </div>
           </div>
@@ -12312,9 +12353,18 @@ export default function PlatformPage() {
                       <p className="mt-1 text-xs text-gray-500">批量：一键生成封面套装、一键生成编导分镜套装、一键生成封面加编导分镜。</p>
                     </div>
                   </div>
-                  <div className="space-y-4">
-                    {platformMainPersonaTopicsPanel}
-                    {platformSkillsAccessoryPanel}
+                  <div className="space-y-3">
+                    <p className="text-[12px] leading-relaxed text-[#c9c0e6]/55">
+                      选题初选请在上方「开始全案分析」按钮下方操作与挑选；此处专做封面 / 编导分镜出图。
+                    </p>
+                    {topicShortlist.length > 0 ? (
+                      <a
+                        href="#platform-fullcase-shortlist-results"
+                        className="inline-flex text-[12px] font-semibold text-[#8cefff] underline underline-offset-2"
+                      >
+                        已有 {topicShortlist.length} 条选题 · 回到列表挑选 →
+                      </a>
+                    ) : null}
                   </div>
                   {platformTopicCount > 0 ? (
                     <div className="rounded-xl border border-[#c4b5fd]/35 bg-[#6a5cff]/10 px-4 py-3">
