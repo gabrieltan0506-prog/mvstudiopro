@@ -74,16 +74,21 @@ export function buildCreatePrimaryCta(input: CreateCtaInput): PlatformPrimaryCta
     baseCredits: CREDIT_COSTS.platformTopicShortlist,
     extraPerTopic: CREDIT_COSTS.platformTopicShortlistExtra,
   });
-  const stage2Credits = CREDIT_COSTS.platformStage2Copywriting;
-
-  if (input.createStep === "topics" || input.createStep === "persona" || input.createStep === "skills") {
+  // 全案主路径一律先出选题初选（20–30 常用）；文案扩写只在用户点「就写这条」后发生
+  if (
+    input.createStep === "topics" ||
+    input.createStep === "persona" ||
+    input.createStep === "skills" ||
+    input.createStep === "copy" ||
+    input.createStep === "output"
+  ) {
     const disabled =
       !input.isAuthenticated || !input.focusPrompt.trim() || input.shortlistPending;
     return {
       mode: "create",
       label: input.shortlistPending
         ? "选题生成中…"
-        : `生成 ${shortlistPrice.count} 条选题 · 预计 ${shortlistPrice.total} 点`,
+        : `全案分析：生成 ${shortlistPrice.count} 条选题 · 预计 ${shortlistPrice.total} 点`,
       credits: shortlistPrice.total,
       creditsLabel: `${shortlistPrice.total} 点`,
       disabled,
@@ -100,32 +105,12 @@ export function buildCreatePrimaryCta(input: CreateCtaInput): PlatformPrimaryCta
     };
   }
 
-  if (input.createStep === "copy" || input.createStep === "output") {
-    return {
-      mode: "create",
-      label: input.fullcaseBusy
-        ? "全案生成中…"
-        : `生成选题与文案 · 预计 ${stage2Credits} 点`,
-      credits: stage2Credits,
-      creditsLabel: `${stage2Credits} 点`,
-      disabled: !input.isAuthenticated || !input.focusPrompt.trim() || input.fullcaseBusy,
-      disabledReason: !input.isAuthenticated
-        ? "请先登录"
-        : !input.focusPrompt.trim()
-          ? "请先填写人物背景"
-          : input.fullcaseBusy
-            ? "全案任务进行中"
-            : undefined,
-      busy: input.fullcaseBusy,
-      confirmKind: "fullcase_stage2",
-      handlerKey: "handleAnalyze",
-    };
-  }
-
   // result
   return {
     mode: "create",
-    label: input.hasTopicResults ? "查看结果 / 继续扩写" : `生成 ${shortlistPrice.count} 条选题 · 预计 ${shortlistPrice.total} 点`,
+    label: input.hasTopicResults
+      ? "查看选题 / 继续挑题扩写"
+      : `全案分析：生成 ${shortlistPrice.count} 条选题 · 预计 ${shortlistPrice.total} 点`,
     credits: shortlistPrice.total,
     creditsLabel: `${shortlistPrice.total} 点`,
     disabled: !input.isAuthenticated || (!input.hasTopicResults && !input.focusPrompt.trim()),
@@ -226,10 +211,10 @@ export function describePlatformCtaMatrix(): Array<{
   return [
     {
       mode: "create",
-      labelExample: "生成 N 条选题 · 预计 X 点 / 生成选题与文案 · 预计 Y 点",
-      creditsSource: "CREDIT_COSTS.platformTopicShortlist(+Extra) / platformStage2Copywriting",
+      labelExample: "全案分析：生成 N 条选题 · 预计 X 点（挑完再扩写）",
+      creditsSource: "CREDIT_COSTS.platformTopicShortlist(+Extra)；扩写走单条就写这条",
       confirmKind: "topic_shortlist",
-      handlerKey: "generateTopicShortlist | handleAnalyze",
+      handlerKey: "generateTopicShortlist",
     },
     {
       mode: "trend",

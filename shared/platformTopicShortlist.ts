@@ -5,9 +5,11 @@
 import { z } from "zod";
 import type { PlatformSkillLane } from "./platformSkillRouter.js";
 
-/** 默认生成条数（含在基础积分内） */
+/** 计价「含在基础积分内」的条数（勿与全案默认条数混淆） */
 export const PLATFORM_TOPIC_SHORTLIST_DEFAULT = 6;
-/** 单次最多可生成（超出默认部分按条另计费）；20–30 条是「只出题、由用户挑」的常用档 */
+/** 全案主路径默认条数：小红书主 + B站/抖音辅 → 只出题，用户挑完再扩写 */
+export const PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT = 20;
+/** 单次最多可生成（超出计价默认部分按条另计费）；20–30 条是全案常用档 */
 export const PLATFORM_TOPIC_SHORTLIST_MAX = 30;
 /** @deprecated 使用 DEFAULT；保留别名避免旧引用断裂 */
 export const PLATFORM_TOPIC_SHORTLIST_COUNT = PLATFORM_TOPIC_SHORTLIST_DEFAULT;
