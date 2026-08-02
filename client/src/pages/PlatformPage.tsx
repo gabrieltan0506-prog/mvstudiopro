@@ -70,7 +70,7 @@ import {
 } from "@/lib/platformVisualReportPersist";
 import { DecisionIntelLockedDemoPreview } from "@/components/DecisionIntelLockedDemoPreview";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
-import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
+import { type IpProfile } from "@/components/IpProfileModal";
 import { useAuth } from "@/_core/hooks/useAuth";
 import TrialWatermarkImage from "@/components/TrialWatermarkImage";
 import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
@@ -1098,16 +1098,11 @@ function buildPlatformSceneText(item: {
   return promptText;
 }
 
-/** 将 IP 基因库 + 仪表盘「精神气质与内容身份」注入封面生图链，并叠加国际时尚大片人物造型 */
-function buildCoverPersonaContextForImageGen(personaSummary: string, ipProfile: IpProfile): string {
+/** 封面生图：只用人物背景摘要（不再注入无数据支撑的「企业 IP 基因」推测字段） */
+function buildCoverPersonaContextForImageGen(personaSummary: string, _ipProfile?: IpProfile): string {
   const parts: string[] = [];
   const ps = String(personaSummary || "").trim();
   if (ps) parts.push(`【精神气质与内容身份】${ps.slice(0, 600)}`);
-  if (isIpProfileReady(ipProfile)) {
-    parts.push(
-      `【IP 视觉与商业基因】行业身份：${ipProfile.industry.trim()}；核心优势：${ipProfile.advantage.trim()}；目标受众：${ipProfile.audience.trim()}；旗舰交付：${ipProfile.flagship.trim()}${ipProfile.taboos.trim() ? `；品牌禁忌（绝对避让）：${ipProfile.taboos.trim()}` : ""}`,
-    );
-  }
   return appendFashionEditorialCharacterGuidance(parts.join("\n").trim(), { maxChars: 3800, lang: "zh" });
 }
 
@@ -2933,28 +2928,6 @@ export default function PlatformPage() {
           setPersonaFieldErrors({});
         }}
         errors={personaFieldErrors}
-        ipReady={isIpProfileReady(readIpProfile())}
-        onIpGeneFill={() => {
-          const profile = readIpProfile();
-          if (isIpProfileReady(profile)) {
-            const next = {
-              identity: profile.industry || structuredPersona.identity,
-              domain: profile.advantage || structuredPersona.domain,
-              audience: profile.audience || structuredPersona.audience,
-              businessGoal: profile.flagship || structuredPersona.businessGoal,
-            };
-            setStructuredPersona(next);
-            setFocusPrompt(composeFocusPromptFromPersona(next));
-            setFreeformOverride(false);
-            toast.success("已用企业 IP 基因快填");
-          } else {
-            toast.message("请先载入企业 IP 基因后再快填");
-            document.getElementById("platform-persona-focus-fullcase")?.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            });
-          }
-        }}
         voiceSlot={
           <VoiceInputButton
             onTranscript={(t) => {
@@ -6415,12 +6388,14 @@ export default function PlatformPage() {
     }
   }, [canExportCustomCopyPdf, customCopyPdfPayload, downloadCustomCopyPdfMutation]);
 
-  // ── B 端 IP 基因库（拦截弹窗，共享组件 IpProfileModal）─────────────────────
-  // 落地需求：handleAnalyze 启动前必须先填齐 IP 护城河 + 高客单锚点，
-  // 否则弹「靛青色」拦截弹窗，强制用户校准战略预设。
-  // ipProfile 同步写 localStorage(`ipProfile.v1`)，GodView 一键深潜也会读它注入 prompt。
-  const [ipProfile, setIpProfile] = useState<IpProfile>(() => readIpProfile());
-  const [showIpModal, setShowIpModal] = useState(false);
+  /** /platform 不再展示或写入企业 IP 基因；保留空壳仅兼容既有函数签名 */
+  const ipProfile: IpProfile = {
+    industry: "",
+    advantage: "",
+    audience: "",
+    flagship: "",
+    taboos: "",
+  };
 
   const [qaJobId, setQaJobId] = useState<string | null>(null);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
@@ -7696,7 +7671,7 @@ export default function PlatformPage() {
     () =>
       cleanUserCopy(
         platformDashboard?.personaSummary || "",
-        "在「自定义创作」选题初选上方填写人物背景与创作诉求（与全案共用），并载入 IP 基因；我们会结合近窗口样本，给出平台优先级、切入方向与可落地建议。",
+        "在「自定义创作」选题初选上方填写人物背景与创作诉求（与全案共用）；结合近窗口 trendStore 样本，给出可挑选的选题与可落地建议。",
       ),
     [platformDashboard],
   );
@@ -8824,14 +8799,6 @@ export default function PlatformPage() {
   return (
     <div className="min-h-screen bg-transparent text-[#f7f2ff]">
       <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}@keyframes mvspPlatformOrb{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(12px,-10px) scale(1.07)}}@keyframes coverGenWaitCarouselProgress{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselProg{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselGlow{0%,100%{opacity:0.4}50%{opacity:0.92}}`}</style>
-
-      {/* B 端 IP 基因库 · 靛青色拦截弹窗（共享组件 IpProfileModal） */}
-      <IpProfileModal
-        open={showIpModal}
-        value={ipProfile}
-        onChange={setIpProfile}
-        onClose={() => setShowIpModal(false)}
-      />
 
       <Dialog open={fullAnalysisConfirmOpen} onOpenChange={setFullAnalysisConfirmOpen}>
         <DialogContent className="max-w-lg border border-[#49e6ff]/25 bg-[#0a0618] text-white sm:max-w-lg">
@@ -10751,7 +10718,7 @@ export default function PlatformPage() {
                 supervisorAccess={Boolean(supervisorAccess || user?.role === "supervisor" || user?.role === "admin")}
                 disabled={customNoteBusy || customTopicBusy || customMattingBusy}
                 personaSummary={personaSummary}
-                ipProfile={ipProfile}
+                ipProfile={undefined}
                 trendPlatforms={
                   snapshot?.platformSnapshots
                     ?.slice(0, 4)
@@ -11124,40 +11091,6 @@ export default function PlatformPage() {
                 ))}
               </div>
 
-              {/* IP 基因库入口（已填则显示战略锚点摘要 + 编辑按钮；未填则提示载入） */}
-              <button
-                type="button"
-                onClick={() => setShowIpModal(true)}
-                className={`mt-5 w-full rounded-2xl border px-5 py-4 text-left transition ${
-                  isIpProfileReady(ipProfile)
-                    ? "border-[#6366F1]/40 bg-[linear-gradient(135deg,rgba(79,70,229,0.18),rgba(99,102,241,0.10))] hover:border-[#818CF8]/60"
-                    : "border-[#FCD34D]/30 bg-[rgba(252,211,77,0.06)] hover:border-[#FCD34D]/60 animate-[pulseHighlight_2.4s_ease-in-out_infinite]"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[11px] uppercase tracking-[0.22em] text-[#A5B4FC] mb-1">
-                      {isIpProfileReady(ipProfile) ? "企业 IP 基因（已锁定）" : "尚未载入企业 IP 基因"}
-                    </div>
-                    {isIpProfileReady(ipProfile) ? (
-                      <div className="text-[13px] leading-6 text-white truncate">
-                        <span className="text-[#A5B4FC]">{ipProfile.industry}</span>
-                        <span className="mx-2 text-white/30">·</span>
-                        <span className="text-white/85">{ipProfile.advantage}</span>
-                        <span className="mx-2 text-white/30">·</span>
-                        <span className="text-[#FCD34D]">{ipProfile.flagship}</span>
-                      </div>
-                    ) : (
-                      <div className="text-[13px] leading-6 text-white/85">
-                        点此校准护城河 / 高客单锚点 → AI 推演会在 80% 篇幅锁定你的转化路径
-                      </div>
-                    )}
-                  </div>
-                  <div className="text-xs font-semibold text-[#A5B4FC] whitespace-nowrap">
-                    {isIpProfileReady(ipProfile) ? "编辑 →" : "载入 →"}
-                  </div>
-                </div>
-              </button>
             </div>
 
             <div id={PLATFORM_SECTION_TREND_RUN_ID} className="scroll-mt-20 grid gap-4">
