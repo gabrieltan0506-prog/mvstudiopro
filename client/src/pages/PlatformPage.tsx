@@ -7833,7 +7833,8 @@ export default function PlatformPage() {
       const reportWindowDays = toVisualReportWindowDays(selectedWindowDays);
       const dataUrl = await toPng(visualReportRef.current, {
         pixelRatio: 2,
-        backgroundColor: visualReportTheme === "dark" ? "#080618" : "#fff5f0",
+        // 与 VisualReportTemplate 爱马仕橙页底中间调对齐，避免 PNG 四周露紫边
+        backgroundColor: visualReportTheme === "dark" ? "#E4B8A8" : "#F3E0D6",
       });
       const link = document.createElement("a");
       link.download = `mvstudiopro-trend-report-${reportWindowDays}d-${visualReportTheme}.png`;

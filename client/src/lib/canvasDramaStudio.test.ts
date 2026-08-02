@@ -434,6 +434,10 @@ describe("canvasDramaStudio factory", () => {
     expect(keyarts[1]!.x).toBe(keyarts[0]!.x);
     expect(keyarts[5]!.x).toBeGreaterThan(keyarts[0]!.x);
     expect(keyarts[0]!.y).toBeGreaterThan(assets[0]!.y);
+    // 缩略尺寸：右栏一眼看全，不再用默认 420×360
+    expect(keyarts[0]!.width).toBeLessThanOrEqual(180);
+    expect(keyarts[0]!.height).toBeLessThanOrEqual(230);
+    expect(hero.width).toBeLessThanOrEqual(160);
 
     // 成片另起横带：单列竖排，不跟静帧同分列贴在一起
     const clips = laid

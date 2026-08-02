@@ -2181,6 +2181,19 @@ export function ensureManhuaFragmentClips(
 /** 静帧/成片竖排模块：每列最多几镜（约 13 镜 → 3 列） */
 export const MANHUA_LAYOUT_STACK_PER_COL = 5;
 
+/** 工作台右栏可读链：缩略竖排默认间距（节点可缩，整集须一眼可见） */
+export const MANHUA_LAYOUT_COMPACT_COL_GAP = 176;
+export const MANHUA_LAYOUT_COMPACT_ROW_GAP = 230;
+/** 静帧 / 成片缩略尺寸（约 3:4） */
+export const MANHUA_LAYOUT_MEDIA_W = 156;
+export const MANHUA_LAYOUT_MEDIA_H = 208;
+/** 定妆 / 场景 / 道具墙缩略 */
+export const MANHUA_LAYOUT_ASSET_W = 132;
+export const MANHUA_LAYOUT_ASSET_H = 176;
+/** 顶栏文案链缩略 */
+export const MANHUA_LAYOUT_TEXT_W = 168;
+export const MANHUA_LAYOUT_TEXT_H = 120;
+
 function placeManhuaStackColumns(
   items: CanvasBlock[],
   originX: number,
@@ -2204,6 +2217,32 @@ function placeManhuaStackColumns(
   };
 }
 
+function manhuaLayoutCompactSizeFor(b: CanvasBlock): { width: number; height: number } | null {
+  const id = String(b.id || "");
+  if (
+    id.startsWith("charsheet-") ||
+    id.startsWith("sceneplate-") ||
+    id.startsWith("propplate-") ||
+    id.startsWith("propsheet-") ||
+    id.startsWith("prop-") ||
+    id.startsWith("wardrobe")
+  ) {
+    return { width: MANHUA_LAYOUT_ASSET_W, height: MANHUA_LAYOUT_ASSET_H };
+  }
+  if (id.startsWith("keyart-") || id.startsWith("clip-")) {
+    return { width: MANHUA_LAYOUT_MEDIA_W, height: MANHUA_LAYOUT_MEDIA_H };
+  }
+  if (
+    id.startsWith("story-") ||
+    id.startsWith("bible-") ||
+    id.startsWith("beats-") ||
+    id.startsWith("reverse-")
+  ) {
+    return { width: MANHUA_LAYOUT_TEXT_W, height: MANHUA_LAYOUT_TEXT_H };
+  }
+  return null;
+}
+
 /**
  * 画布竖排模块（+顶栏文案）——对标阿硕可读链，不抄品牌：
  * 0 顶栏：故事→设定→节拍→反推
@@ -2212,7 +2251,7 @@ function placeManhuaStackColumns(
  * 3 道具墙（弱化一行）
  * 4 静帧：每列最多 5 镜竖排
  * 5 成片：另起一条横带，按段号 1→N 单列竖排（不跟静帧同分列挨在一起）
- * 只改坐标 + 资产@标，不重生成。
+ * 改坐标 + 缩略宽高 + 资产@标，不重生成。
  */
 /** 从定妆卡节点收集 wa_char_* → HTTPS，供特写格 @道具 子编号挂图 */
 export function collectManhuaCharacterSheetUrlById(
@@ -2322,10 +2361,10 @@ export function layoutManhuaEpisodeReadableChain(
       ? Math.floor(episodeIndex)
       : getBlockEpisodeIndex(blocks.find((b) => b.id.startsWith("reverse-") || b.id.startsWith("story-")) || blocks[0]!) ??
         1;
-  const originX = opts?.originX ?? 60;
-  const originY = opts?.originY ?? 60;
-  const gapX = opts?.colGap ?? 300;
-  const gapY = opts?.rowGap ?? 380;
+  const originX = opts?.originX ?? 40;
+  const originY = opts?.originY ?? 40;
+  const gapX = opts?.colGap ?? MANHUA_LAYOUT_COMPACT_COL_GAP;
+  const gapY = opts?.rowGap ?? MANHUA_LAYOUT_COMPACT_ROW_GAP;
   const stackPer = opts?.stackPerCol ?? MANHUA_LAYOUT_STACK_PER_COL;
   const assetsPerRow = 4;
   const assetRowGap = Math.round(gapY * 0.72);
@@ -2427,7 +2466,11 @@ export function layoutManhuaEpisodeReadableChain(
 
   const positioned = blocks.map((b) => {
     const p = pos.get(b.id);
-    return p ? { ...b, x: p.x, y: p.y } : b;
+    if (!p) return b;
+    const size = manhuaLayoutCompactSizeFor(b);
+    return size
+      ? { ...b, x: p.x, y: p.y, width: size.width, height: size.height }
+      : { ...b, x: p.x, y: p.y };
   });
   const sheetUrls =
     opts?.characterSheetUrlById ||
@@ -2441,10 +2484,10 @@ export function layoutManhuaEpisodeReadableChain(
 }
 
 function mediaUrlOf(
-  b?: Partial<Pick<CanvasBlock, "outputUrl" | "outputUrls">> | null,
+  b?: Partial<Pick<CanvasBlock, "outputUrl" | "outputUrls" | "refImageUrl">> | null,
 ): string | undefined {
   if (!b) return undefined;
-  return b.outputUrl || b.outputUrls?.[0] || undefined;
+  return b.outputUrl || b.outputUrls?.[0] || b.refImageUrl || undefined;
 }
 
 /**

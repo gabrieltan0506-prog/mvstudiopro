@@ -59,7 +59,12 @@ const PLATFORM_ICONS: Record<string, string> = {
   weixin_channels: "💬",
 };
 
-const C = ["#3eedff","#bf5fff","#ff4fb8","#ffdd44","#44f0a0","#ff7050","#6699ff","#ff9944","#ff66cc","#aaffaa"];
+/** 色块条：高饱和冷暖跳色；刻意避开咖啡/陶土底，避免与爱马仕橙页底撞色看不清 */
+const C = ["#0ea5b7","#7c3aed","#db2777","#ca8a04","#059669","#2563eb","#c026d3","#ea580c","#0891b2","#4d7c0f"];
+/** 页底爱马仕橙系（浅咖啡 → 浅红），偏哑光高级感，不做荧光橙 */
+const HERMES_PAGE_BG =
+  "linear-gradient(168deg, #EDE4D8 0%, #E8D0C0 38%, #E4B8A8 72%, #DC9E90 100%)";
+const HERMES_ACCENT = "#B85C38";
 
 function safeTxt(item: any): string {
   if (!item) return "";
@@ -91,21 +96,30 @@ function parseGrowthPercentString(growth: string): number | null {
 export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
   function VisualReportTemplate({ data }, ref) {
     const isDark = data.theme === "dark";
-    const bg      = isDark ? "#0d0820" : "#faf8ff";
-    const cardBg  = isDark ? "#160d2e" : "#ffffff";
-    const border  = isDark ? "#2a1a4e" : "#e2d8f4";
-    const txt     = isDark ? "#eeeaf8" : "#1a0a2e";
-    const muted   = isDark ? "#8a78b5" : "#7060a0";
-    const trackBg = isDark ? "#1a0c36" : "#f0e8ff";
-    const tagBg   = isDark ? "#1e0d40" : "#f0e8ff";
-    const tagClr  = isDark ? "#bf5fff" : "#7030c8";
-    const tagBdr  = isDark ? "#3a1a66" : "#c8a8e8";
+    // dark 主题在 /platform 趋势长图上改为爱马仕橙暖底（浅咖啡→浅红），正文深咖，条轨中性灰咖
+    const bg      = isDark ? HERMES_PAGE_BG : "linear-gradient(168deg, #F7F1EA 0%, #F3E0D6 100%)";
+    const cardBg  = isDark ? "rgba(255,249,242,0.94)" : "#ffffff";
+    const border  = isDark ? "rgba(140,90,70,0.28)" : "rgba(180,140,120,0.35)";
+    const txt     = isDark ? "#2A1810" : "#2A1810";
+    const muted   = isDark ? "#6B4E3D" : "#7A5C4A";
+    const trackBg = isDark ? "rgba(70,48,36,0.14)" : "rgba(70,48,36,0.10)";
+    const tagBg   = isDark ? "rgba(184,92,56,0.12)" : "rgba(184,92,56,0.08)";
+    const tagClr  = isDark ? HERMES_ACCENT : "#8B3A1F";
+    const tagBdr  = isDark ? "rgba(184,92,56,0.38)" : "rgba(184,92,56,0.28)";
+    const bodyTxt = isDark ? "#3D2A20" : "#3D2A20";
 
     const wrap: React.CSSProperties = { background: bg, color: txt, fontFamily: '"PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif', padding: "28px 32px 60px", minWidth: "900px", maxWidth: "1200px" };
-    const card = (extra?: React.CSSProperties): React.CSSProperties => ({ background: cardBg, border: `1px solid ${border}`, borderRadius: "12px", padding: "18px 20px", ...extra });
+    const card = (extra?: React.CSSProperties): React.CSSProperties => ({
+      background: cardBg,
+      border: `1px solid ${border}`,
+      borderRadius: "12px",
+      padding: "18px 20px",
+      boxShadow: isDark ? "0 8px 28px rgba(80,40,24,0.08)" : "0 4px 16px rgba(80,40,24,0.05)",
+      ...extra,
+    });
     const ct = (color: string): React.CSSProperties => ({ fontSize: "14px", fontWeight: 700, marginBottom: "13px", color: txt, display: "flex", alignItems: "center", gap: "8px" });
     const dot = (color: string): React.CSSProperties => ({ width: "8px", height: "8px", borderRadius: "50%", flexShrink: 0, background: color });
-    const sec: React.CSSProperties = { fontSize: "13px", fontWeight: 700, color: muted, letterSpacing: "1px", margin: "20px 0 10px", borderLeft: `3px solid ${C[1]}`, paddingLeft: "10px" };
+    const sec: React.CSSProperties = { fontSize: "13px", fontWeight: 700, color: muted, letterSpacing: "1px", margin: "20px 0 10px", borderLeft: `3px solid ${HERMES_ACCENT}`, paddingLeft: "10px" };
 
     // progress bar row
     const barRow = (label: string, fillPct: number, color: string, valueTxt?: string, tagTxt?: string, tagColors?: { bg: string; color: string }) => (
@@ -122,12 +136,12 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
     );
 
     const STATUS_CYCLE = [
-      { label: "高热", bg: "#3a0e2a", color: "#ff4fb8" },
-      { label: "高热", bg: "#3a0e2a", color: "#ff4fb8" },
-      { label: "偏强", bg: "#2a2a0e", color: "#ffdd44" },
-      { label: "升温", bg: "#0e2a1a", color: "#44f0a0" },
-      { label: "新爆", bg: "#1e0a40", color: "#bf5fff" },
-      { label: "稳态", bg: "#1a1a2a", color: "#6699ff" },
+      { label: "高热", bg: "rgba(190,40,90,0.12)", color: "#be185d" },
+      { label: "高热", bg: "rgba(190,40,90,0.12)", color: "#be185d" },
+      { label: "偏强", bg: "rgba(160,120,20,0.14)", color: "#a16207" },
+      { label: "升温", bg: "rgba(20,120,80,0.12)", color: "#047857" },
+      { label: "新爆", bg: "rgba(100,40,160,0.12)", color: "#6d28d9" },
+      { label: "稳态", bg: "rgba(30,80,160,0.12)", color: "#1d4ed8" },
     ];
 
     return (
@@ -137,7 +151,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
         <div style={{ display: "flex", alignItems: "baseline", gap: "16px", marginBottom: "6px", paddingBottom: "14px", borderBottom: `1px solid ${border}` }}>
           <h1 style={{ fontSize: "26px", fontWeight: 800, letterSpacing: "0.5px" }}>{data.reportTitle}</h1>
           <span style={{ fontSize: "12px", color: muted }}>数据区间 · {data.dateRange}</span>
-          <span style={{ display: "inline-block", fontSize: "11px", background: tagBg, color: C[0], border: `1px solid ${tagBdr}`, borderRadius: "4px", padding: "2px 8px", marginLeft: "6px" }}>实时数据版</span>
+          <span style={{ display: "inline-block", fontSize: "11px", background: tagBg, color: tagClr, border: `1px solid ${tagBdr}`, borderRadius: "4px", padding: "2px 8px", marginLeft: "6px" }}>实时数据版</span>
         </div>
 
         {/* TAG ROW */}
@@ -182,19 +196,19 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
         {/* ── 蓝海词 · Blue Ocean Keywords（全局；空时仍占位，避免整栏消失）── */}
         <>
           <div style={sec}>🌊 蓝海词 · Blue Ocean Keywords</div>
-          <div style={{ background: isDark ? "rgba(62,237,255,0.05)" : "rgba(14,120,140,0.05)", border: `1px solid ${isDark ? "rgba(62,237,255,0.22)" : "rgba(14,120,140,0.3)"}`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
+          <div style={{ background: "rgba(184,92,56,0.06)", border: `1px solid rgba(184,92,56,0.22)`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
             {(data.globalBlueOceanWords?.length || 0) > 0 ? (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "14px" }}>
                 {(data.globalBlueOceanWords || []).map((bow, bi) => (
-                  <div key={bi} style={{ background: isDark ? "rgba(62,237,255,0.04)" : "rgba(14,120,140,0.04)", border: `1px solid ${isDark ? "rgba(62,237,255,0.18)" : "rgba(14,120,140,0.2)"}`, borderRadius: "8px", padding: "12px 14px" }}>
+                  <div key={bi} style={{ background: "rgba(255,249,242,0.75)", border: `1px solid rgba(140,90,70,0.18)`, borderRadius: "8px", padding: "12px 14px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-                      <span style={{ fontSize: "10px", color: isDark ? "rgba(62,237,255,0.6)" : "#1a8a9a", fontWeight: 600, letterSpacing: "0.06em" }}>一级</span>
-                      <span style={{ fontSize: "13px", fontWeight: 800, color: isDark ? "#3eedff" : "#0e788c", background: isDark ? "rgba(62,237,255,0.12)" : "rgba(14,120,140,0.1)", border: `1px solid ${isDark ? "rgba(62,237,255,0.35)" : "rgba(14,120,140,0.35)"}`, borderRadius: "5px", padding: "2px 10px" }}>{bow.primary}</span>
+                      <span style={{ fontSize: "10px", color: muted, fontWeight: 600, letterSpacing: "0.06em" }}>一级</span>
+                      <span style={{ fontSize: "13px", fontWeight: 800, color: HERMES_ACCENT, background: "rgba(184,92,56,0.10)", border: `1px solid rgba(184,92,56,0.32)`, borderRadius: "5px", padding: "2px 10px" }}>{bow.primary}</span>
                     </div>
                     {bow.secondary && bow.secondary.length > 0 && (
                       <div style={{ display: "flex", flexWrap: "wrap" as const, gap: "5px", paddingLeft: "8px" }}>
                         {bow.secondary.map((s2, si) => (
-                          <span key={si} style={{ fontSize: "11px", color: isDark ? "#a5f3fc" : "#1a6a78", background: isDark ? "rgba(62,237,255,0.07)" : "rgba(14,120,140,0.07)", border: `1px solid ${isDark ? "rgba(62,237,255,0.2)" : "rgba(14,120,140,0.2)"}`, borderRadius: "4px", padding: "2px 8px" }}>{s2}</span>
+                          <span key={si} style={{ fontSize: "11px", color: bodyTxt, background: "rgba(70,48,36,0.06)", border: `1px solid rgba(70,48,36,0.14)`, borderRadius: "4px", padding: "2px 8px" }}>{s2}</span>
                         ))}
                       </div>
                     )}
@@ -213,7 +227,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
         {(data.aiManhuaRising?.entries?.length || 0) > 0 && (
           <>
             <div style={sec}>🎬 AI 漫剧 · {data.aiManhuaRising!.windowDays} 天飙升榜</div>
-            <div style={{ background: isDark ? "rgba(255,79,184,0.05)" : "rgba(180,40,100,0.04)", border: `1px solid ${isDark ? "rgba(255,79,184,0.25)" : "rgba(180,40,100,0.25)"}`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
+            <div style={{ background: "rgba(184,92,56,0.06)", border: `1px solid rgba(184,92,56,0.22)`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
               <div style={{ fontSize: "11px", color: muted, marginBottom: "12px", lineHeight: 1.6 }}>{data.aiManhuaRising!.note}</div>
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 {data.aiManhuaRising!.entries.slice(0, 8).map((row, idx) => {
@@ -236,7 +250,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                       ? `+${(row.delta7d / 10000).toFixed(1)}万`
                       : `+${row.delta7d}`;
                   return (
-                    <div key={row.mixId || idx} style={{ display: "grid", gridTemplateColumns: "28px 1fr 72px 72px 48px", gap: "10px", alignItems: "center", padding: "8px 10px", background: isDark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)", borderRadius: "8px" }}>
+                    <div key={row.mixId || idx} style={{ display: "grid", gridTemplateColumns: "28px 1fr 72px 72px 48px", gap: "10px", alignItems: "center", padding: "8px 10px", background: "rgba(255,249,242,0.7)", borderRadius: "8px" }}>
                       <span style={{ fontSize: "12px", fontWeight: 800, color: muted }}>#{idx + 1}</span>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontSize: "13px", fontWeight: 700, color: txt, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -277,7 +291,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                   {(data.trafficSupport || []).length === 0 ? (
                     <div style={{ fontSize: "12px", color: muted }}>当前无重大官方活动</div>
                   ) : (data.trafficSupport || []).map((item, i) => (
-                    <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "9px", fontSize: "12px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.6" }}>
+                    <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "9px", fontSize: "12px", color: bodyTxt, lineHeight: "1.6" }}>
                       <span style={{ color: C[5], fontWeight: 700, minWidth: "18px" }}>{i + 1}</span>
                       <span style={{ wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(item)}</span>
                     </div>
@@ -290,7 +304,7 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                   {(data.hotFestivals || []).length === 0 ? (
                     <div style={{ fontSize: "12px", color: muted }}>当前无显着节日热点</div>
                   ) : (data.hotFestivals || []).map((item, i) => (
-                    <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "9px", fontSize: "12px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.6" }}>
+                    <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "9px", fontSize: "12px", color: bodyTxt, lineHeight: "1.6" }}>
                       <span style={{ color: C[2], fontWeight: 700 }}>•</span>
                       <span style={{ wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(item)}</span>
                     </div>
@@ -421,15 +435,15 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                 </div>
                 {pl.trafficBoosters.length > 0 && (
                   <>
-                    <div style={{ fontSize: "11px", fontWeight: 700, color: "#ff9944", marginBottom: "8px" }}>🚀 流量扶持活动</div>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: C[5], marginBottom: "8px" }}>🚀 流量扶持活动</div>
                     {pl.trafficBoosters.map((b, bi) => (
                       <div key={bi} style={{ display: "flex", gap: "9px", alignItems: "flex-start", marginBottom: "8px", fontSize: "12px" }}>
-                        <span style={{ color: "#ff9944", fontWeight: 700, minWidth: "18px", flexShrink: 0 }}>{bi + 1}</span>
+                        <span style={{ color: C[5], fontWeight: 700, minWidth: "18px", flexShrink: 0 }}>{bi + 1}</span>
                         <div style={{ flex: 1 }}>
                           <div style={{ height: "6px", background: trackBg, borderRadius: "99px", overflow: "hidden", marginBottom: "3px" }}>
-                            <div style={{ height: "100%", borderRadius: "99px", background: "linear-gradient(90deg,#ff9944,#ffdd44)", width: `${Math.max(100 - bi * 18, 30)}%` }} />
+                            <div style={{ height: "100%", borderRadius: "99px", background: `linear-gradient(90deg,${C[5]},${C[0]})`, width: `${Math.max(100 - bi * 18, 30)}%` }} />
                           </div>
-                          <div style={{ fontSize: "11px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(b)}</div>
+                          <div style={{ fontSize: "11px", color: bodyTxt, lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(b)}</div>
                         </div>
                       </div>
                     ))}
@@ -437,14 +451,14 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                 )}
                 {pl.hotTopics.length > 0 && (
                   <>
-                    <div style={{ fontSize: "11px", fontWeight: 700, color: "#ffdd44", marginTop: "10px", marginBottom: "8px" }}>🔥 热门赛道</div>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: C[3], marginTop: "10px", marginBottom: "8px" }}>🔥 热门赛道</div>
                     {pl.hotTopics.map((tp, ti) => {
                       const st = STATUS_CYCLE[ti % STATUS_CYCLE.length];
                       const barW = Math.max(100 - ti * 8, 40);
                       const color = C[ti % C.length];
                       return (
                         <div key={ti} style={{ display: "flex", flexDirection: "column", gap: "4px", marginBottom: "10px" }}>
-                          <div style={{ fontSize: "12px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(tp)}</div>
+                          <div style={{ fontSize: "12px", color: bodyTxt, lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(tp)}</div>
                           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                             <div style={{ flex: 1, height: "8px", background: trackBg, borderRadius: "99px", overflow: "hidden" }}>
                               <div style={{ height: "100%", borderRadius: "99px", background: color, width: `${barW}%` }} />
@@ -459,21 +473,21 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                 )}
                 {/* ── 蓝海词 · Blue Ocean Keywords ── */}
                 {pl.blueOceanWords && pl.blueOceanWords.length > 0 && (
-                  <div style={{ marginTop: "14px", borderTop: `1px solid ${isDark ? "#1e3a4a" : "#b8e8f0"}`, paddingTop: "12px" }}>
-                    <div style={{ fontSize: "11px", fontWeight: 700, color: "#3eedff", marginBottom: "8px" }}>
+                  <div style={{ marginTop: "14px", borderTop: "1px solid rgba(140,90,70,0.22)", paddingTop: "12px" }}>
+                    <div style={{ fontSize: "11px", fontWeight: 700, color: HERMES_ACCENT, marginBottom: "8px" }}>
                       🌊 蓝海词 · Blue Ocean Keywords
                     </div>
                     {pl.blueOceanWords.map((bow, bi) => (
                       <div key={bi} style={{ marginBottom: "10px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "5px" }}>
-                          <span style={{ fontSize: "12px", fontWeight: 800, color: "#3eedff", background: "rgba(62,237,255,0.1)", border: "1px solid rgba(62,237,255,0.35)", borderRadius: "6px", padding: "2px 10px", whiteSpace: "nowrap" }}>
+                          <span style={{ fontSize: "12px", fontWeight: 800, color: HERMES_ACCENT, background: "rgba(184,92,56,0.10)", border: "1px solid rgba(184,92,56,0.32)", borderRadius: "6px", padding: "2px 10px", whiteSpace: "nowrap" }}>
                             一级：{bow.primary}
                           </span>
                         </div>
                         {bow.secondary && bow.secondary.length > 0 && (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: "5px", paddingLeft: "8px" }}>
                             {bow.secondary.map((s2, si) => (
-                              <span key={si} style={{ fontSize: "11px", color: isDark ? "#a5f3fc" : "#1e7a8a", background: "rgba(62,237,255,0.06)", border: "1px solid rgba(62,237,255,0.22)", borderRadius: "4px", padding: "1px 8px", whiteSpace: "nowrap" }}>
+                              <span key={si} style={{ fontSize: "11px", color: bodyTxt, background: "rgba(70,48,36,0.06)", border: "1px solid rgba(70,48,36,0.14)", borderRadius: "4px", padding: "1px 8px", whiteSpace: "nowrap" }}>
                                 {s2}
                               </span>
                             ))}
@@ -505,15 +519,15 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                     </div>
                     {pl.trafficBoosters.length > 0 && (
                       <>
-                        <div style={{ fontSize: "11px", fontWeight: 700, color: "#ff9944", marginBottom: "8px" }}>🚀 流量扶持活动</div>
+                        <div style={{ fontSize: "11px", fontWeight: 700, color: C[5], marginBottom: "8px" }}>🚀 流量扶持活动</div>
                         {pl.trafficBoosters.map((b, bi) => (
                           <div key={bi} style={{ display: "flex", gap: "9px", alignItems: "flex-start", marginBottom: "8px", fontSize: "12px" }}>
-                            <span style={{ color: "#ff9944", fontWeight: 700, minWidth: "18px", flexShrink: 0 }}>{bi + 1}</span>
+                            <span style={{ color: C[5], fontWeight: 700, minWidth: "18px", flexShrink: 0 }}>{bi + 1}</span>
                             <div style={{ flex: 1 }}>
                               <div style={{ height: "6px", background: trackBg, borderRadius: "99px", overflow: "hidden", marginBottom: "3px" }}>
-                                <div style={{ height: "100%", borderRadius: "99px", background: "linear-gradient(90deg,#ff9944,#ffdd44)", width: `${Math.max(100 - bi * 18, 30)}%` }} />
+                                <div style={{ height: "100%", borderRadius: "99px", background: `linear-gradient(90deg,${C[5]},${C[0]})`, width: `${Math.max(100 - bi * 18, 30)}%` }} />
                               </div>
-                              <div style={{ fontSize: "11px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(b)}</div>
+                              <div style={{ fontSize: "11px", color: bodyTxt, lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(b)}</div>
                             </div>
                           </div>
                         ))}
@@ -521,15 +535,15 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                     )}
                     {pl.cashRewards.length > 0 && (
                       <>
-                        <div style={{ fontSize: "11px", fontWeight: 700, color: "#44f0a0", marginTop: "10px", marginBottom: "8px" }}>💰 现金奖励任务</div>
+                        <div style={{ fontSize: "11px", fontWeight: 700, color: C[4], marginTop: "10px", marginBottom: "8px" }}>💰 现金奖励任务</div>
                         {pl.cashRewards.map((rw, ri) => (
                           <div key={ri} style={{ display: "flex", gap: "9px", alignItems: "flex-start", marginBottom: "8px", fontSize: "12px" }}>
-                            <span style={{ color: "#44f0a0", fontWeight: 700, minWidth: "18px", flexShrink: 0 }}>💎</span>
+                            <span style={{ color: C[4], fontWeight: 700, minWidth: "18px", flexShrink: 0 }}>💎</span>
                             <div style={{ flex: 1 }}>
                               <div style={{ height: "6px", background: trackBg, borderRadius: "99px", overflow: "hidden", marginBottom: "3px" }}>
-                                <div style={{ height: "100%", borderRadius: "99px", background: "linear-gradient(90deg,#44f0a0,#3eedff)", width: `${Math.max(100 - ri * 22, 30)}%` }} />
+                                <div style={{ height: "100%", borderRadius: "99px", background: `linear-gradient(90deg,${C[4]},${C[0]})`, width: `${Math.max(100 - ri * 22, 30)}%` }} />
                               </div>
-                              <div style={{ fontSize: "11px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(rw)}</div>
+                              <div style={{ fontSize: "11px", color: bodyTxt, lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(rw)}</div>
                             </div>
                           </div>
                         ))}
@@ -537,14 +551,14 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                     )}
                     {pl.hotTopics.length > 0 && (
                       <>
-                        <div style={{ fontSize: "11px", fontWeight: 700, color: "#ffdd44", marginTop: "10px", marginBottom: "8px" }}>🔥 热门赛道</div>
+                        <div style={{ fontSize: "11px", fontWeight: 700, color: C[3], marginTop: "10px", marginBottom: "8px" }}>🔥 热门赛道</div>
                         {pl.hotTopics.map((tp, ti) => {
                           const st = STATUS_CYCLE[ti % STATUS_CYCLE.length];
                           const barW = Math.max(100 - ti * 8, 40);
                           const color = C[ti % C.length];
                           return (
                             <div key={ti} style={{ display: "flex", flexDirection: "column", gap: "4px", marginBottom: "10px" }}>
-                              <div style={{ fontSize: "12px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(tp)}</div>
+                              <div style={{ fontSize: "12px", color: bodyTxt, lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(tp)}</div>
                               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                                 <div style={{ flex: 1, height: "8px", background: trackBg, borderRadius: "99px", overflow: "hidden" }}>
                                   <div style={{ height: "100%", borderRadius: "99px", background: color, width: `${barW}%` }} />
@@ -559,19 +573,19 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                     )}
                     {/* ── 蓝海词 · Blue Ocean Keywords ── */}
                     {pl.blueOceanWords && pl.blueOceanWords.length > 0 && (
-                      <div style={{ marginTop: "12px", borderTop: `1px solid ${isDark ? "#1e3a4a" : "#b8e8f0"}`, paddingTop: "10px" }}>
-                        <div style={{ fontSize: "11px", fontWeight: 700, color: "#3eedff", marginBottom: "7px" }}>
+                      <div style={{ marginTop: "12px", borderTop: "1px solid rgba(140,90,70,0.22)", paddingTop: "10px" }}>
+                        <div style={{ fontSize: "11px", fontWeight: 700, color: HERMES_ACCENT, marginBottom: "7px" }}>
                           🌊 蓝海词
                         </div>
                         {pl.blueOceanWords.map((bow, bi) => (
                           <div key={bi} style={{ marginBottom: "8px" }}>
-                            <span style={{ fontSize: "11px", fontWeight: 800, color: "#3eedff", background: "rgba(62,237,255,0.08)", border: "1px solid rgba(62,237,255,0.3)", borderRadius: "5px", padding: "1px 8px", display: "inline-block", marginBottom: "4px" }}>
+                            <span style={{ fontSize: "11px", fontWeight: 800, color: HERMES_ACCENT, background: "rgba(184,92,56,0.10)", border: "1px solid rgba(184,92,56,0.30)", borderRadius: "5px", padding: "1px 8px", display: "inline-block", marginBottom: "4px" }}>
                               一级：{bow.primary}
                             </span>
                             {bow.secondary && bow.secondary.length > 0 && (
                               <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", paddingLeft: "6px" }}>
                                 {bow.secondary.map((s2, si) => (
-                                  <span key={si} style={{ fontSize: "10px", color: isDark ? "#a5f3fc" : "#1e7a8a", background: "rgba(62,237,255,0.05)", border: "1px solid rgba(62,237,255,0.18)", borderRadius: "3px", padding: "1px 6px" }}>
+                                  <span key={si} style={{ fontSize: "10px", color: bodyTxt, background: "rgba(70,48,36,0.06)", border: "1px solid rgba(70,48,36,0.14)", borderRadius: "3px", padding: "1px 6px" }}>
                                     {s2}
                                   </span>
                                 ))}

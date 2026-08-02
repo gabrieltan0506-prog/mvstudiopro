@@ -170,6 +170,16 @@ import {
   uploadManhuaCloudDraftViaGcsDirect,
 } from "@/lib/manhuaCloudDraftSync";
 import {
+  cacheCanvasMediaToLocalStore,
+  rehydrateBlocksFromLocalMedia,
+  scheduleCacheCanvasMediaToLocalStore,
+} from "@/lib/manhuaLocalMediaStore";
+import {
+  MANHUA_CLIP_AUTO_DOWNLOAD_HINT_ZH,
+  collectPendingClipAutoDownloads,
+  runPendingClipAutoDownloads,
+} from "@/lib/manhuaClipAutoDownload";
+import {
   loadManhuaShotContinuityPrefs,
   saveManhuaShotContinuityPrefs,
   type ManhuaShotContinuityPrefs,
@@ -1201,6 +1211,19 @@ export default function OmniCanvas() {
     const nextEdges = draft.canvas.edges as CanvasEdge[];
     setBlocks(nextBlocks);
     setEdges(nextEdges);
+    // 云端仍是 https：旁路写入本机库，并尽量立刻用本机 blob 回灌显示
+    scheduleCacheCanvasMediaToLocalStore(nextBlocks);
+    void (async () => {
+      await cacheCanvasMediaToLocalStore(nextBlocks);
+      const hydrated = await rehydrateBlocksFromLocalMedia(nextBlocks);
+      setBlocks((cur) => {
+        // 仅当用户尚未改稿时回灌，避免覆盖新出图
+        const sameLen = cur.length === nextBlocks.length;
+        const sameIds =
+          sameLen && cur.every((b, i) => b.id === nextBlocks[i]?.id);
+        return sameIds ? hydrated : cur;
+      });
+    })();
     setFactoryTopic(session.topic || "");
     setWriterBrief(session.brief || "");
     setWriterEpisodeCount(clampWriterEpisodeCount(session.episodeCount));
@@ -2084,8 +2107,9 @@ export default function OmniCanvas() {
     [],
   );
 
-  // 进页一次：清掉历史成片节点里误写的网址（裸奔）
+  // 进页一次：清掉历史成片节点里误写的网址（裸奔）+ 本机媒体库回灌
   useEffect(() => {
+    let cancelled = false;
     setBlocks((cur) => {
       const cleaned = sanitizeManhuaClipBlocksPrompts(cur);
       if (cleaned === cur) return cur;
@@ -2095,6 +2119,38 @@ export default function OmniCanvas() {
       });
       return cleaned;
     });
+    void (async () => {
+      const boot = blocksRef.current;
+      scheduleCacheCanvasMediaToLocalStore(boot);
+      await cacheCanvasMediaToLocalStore(boot);
+      if (cancelled) return;
+      const hydrated = await rehydrateBlocksFromLocalMedia(blocksRef.current);
+      if (cancelled) return;
+      setBlocks((cur) => {
+        // 指针/过期 https → blob:；若无变化则保持引用
+        let changed = cur.length !== hydrated.length;
+        if (!changed) {
+          for (let i = 0; i < cur.length; i++) {
+            if (
+              cur[i]?.outputUrl !== hydrated[i]?.outputUrl ||
+              cur[i]?.refImageUrl !== hydrated[i]?.refImageUrl
+            ) {
+              changed = true;
+              break;
+            }
+          }
+        }
+        if (!changed) return cur;
+        setEdges((edges) => {
+          saveCanvasState(hydrated, edges);
+          return edges;
+        });
+        return hydrated;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
     // 仅挂载时跑一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2106,6 +2162,48 @@ export default function OmniCanvas() {
       return cur;
     });
   }, []);
+
+  /** 成片新出完 → 强制自动下载到本机（云端不成片仓） */
+  const clipAutoDlPrevRef = useRef<CanvasBlock[] | null>(null);
+  const clipAutoDlQueueRef = useRef(Promise.resolve());
+  useEffect(() => {
+    const prev = clipAutoDlPrevRef.current;
+    clipAutoDlPrevRef.current = blocks;
+    if (prev == null) return; // 首帧只建基线，避免打开旧稿连下历史片
+    const seriesTitle =
+      String(writerPack?.seriesTitle || "").trim() ||
+      String(factoryTopic || "").trim() ||
+      "漫剧";
+    const pending = collectPendingClipAutoDownloads({
+      prev,
+      next: blocks,
+      seriesTitle,
+    });
+    if (!pending.length) return;
+    clipAutoDlQueueRef.current = clipAutoDlQueueRef.current
+      .then(async () => {
+        const r = await runPendingClipAutoDownloads(pending);
+        if (r.attempted <= 0) return;
+        if (r.ok > 0 || r.fallback > 0) {
+          toast.success(
+            r.attempted === 1
+              ? "成片已自动下载到本机"
+              : `已自动下载 ${r.ok + r.fallback} 段成片到本机`,
+            { description: MANHUA_CLIP_AUTO_DOWNLOAD_HINT_ZH },
+          );
+        }
+        if (r.failed > 0 && r.ok + r.fallback === 0) {
+          toast.error("成片自动下载失败", {
+            description: "请点预览旁「下载」手动保存到本机，勿只靠页面预览。",
+          });
+        } else if (r.failed > 0) {
+          toast.message("部分成片需手动下载", {
+            description: "请点预览旁「下载」补存失败的段。",
+          });
+        }
+      })
+      .catch(() => undefined);
+  }, [blocks, writerPack?.seriesTitle, factoryTopic]);
 
   const stageChipStatus = useMemo(() => {
     const scoped = filterBlocksByEpisode(blocks, writerFocusEpisode);
@@ -4872,6 +4970,42 @@ export default function OmniCanvas() {
   const immersiveWorkbench =
     canvasMode === "manhua" && manhuaUiMode === "workbench";
 
+  /** 进工作台时若静帧仍是默认大卡，自动缩略竖排一次，右栏才能一眼看全 */
+  const immersiveAutoCompactKeyRef = useRef("");
+  useEffect(() => {
+    if (!immersiveWorkbench) return;
+    const key = `${writerFocusEpisode}`;
+    const oversized = blocksRef.current.some((b) => {
+      if ((getBlockEpisodeIndex(b) ?? 1) !== writerFocusEpisode) return false;
+      const id = String(b.id || "");
+      if (
+        !id.startsWith("keyart-") &&
+        !id.startsWith("clip-") &&
+        !id.startsWith("charsheet-") &&
+        !id.startsWith("sceneplate-")
+      ) {
+        return false;
+      }
+      return b.width > 220 || b.height > 280;
+    });
+    if (!oversized) return;
+    if (immersiveAutoCompactKeyRef.current === key) return;
+    immersiveAutoCompactKeyRef.current = key;
+    setBlocks((prev) => {
+      const sheetUrls = collectManhuaCharacterSheetUrlById(prev, projectBible?.assetCanon);
+      return layoutManhuaEpisodeReadableChain(prev, writerFocusEpisode, {
+        assetCanon: projectBible?.assetCanon,
+        characterSheetUrlById: sheetUrls,
+        customRefs: customAssetRefs,
+      });
+    });
+  }, [
+    immersiveWorkbench,
+    writerFocusEpisode,
+    projectBible?.assetCanon,
+    customAssetRefs,
+  ]);
+
   return (
     <div
       className={
@@ -5707,7 +5841,8 @@ export default function OmniCanvas() {
                       return next;
                     });
                     toast.message("已对齐画布竖排模块", {
-                      description: "资产带（含@编号与定妆特写·道具子号）→ 静帧每列约5镜 → 段成片同理分列",
+                      description:
+                        "资产带 → 静帧左→右多列竖排（缩略）→ 段成片另起横带；右栏可点「看全图」",
                     });
                   }}
                   onGenerateMissingFragments={(segmentIndexes) => {
