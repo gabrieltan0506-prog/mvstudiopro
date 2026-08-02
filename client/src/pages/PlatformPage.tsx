@@ -70,7 +70,7 @@ import {
 } from "@/lib/platformVisualReportPersist";
 import { DecisionIntelLockedDemoPreview } from "@/components/DecisionIntelLockedDemoPreview";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
-import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
+import { type IpProfile } from "@/components/IpProfileModal";
 import { useAuth } from "@/_core/hooks/useAuth";
 import TrialWatermarkImage from "@/components/TrialWatermarkImage";
 import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
@@ -154,8 +154,10 @@ import {
 import {
   PLATFORM_SKILL_MASTER_READONLY,
   PLATFORM_TOPIC_SHORTLIST_DEFAULT,
+  PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT,
   PLATFORM_TOPIC_TOP_PICK_COUNT,
   PLATFORM_TOPIC_SHORTLIST_MAX,
+  clampTopicShortlistCount,
   platformTopicShortlistTotalCredits,
   type PlatformTopicShortlistItem,
 } from "@shared/platformTopicShortlist";
@@ -1096,16 +1098,11 @@ function buildPlatformSceneText(item: {
   return promptText;
 }
 
-/** 将 IP 基因库 + 仪表盘「精神气质与内容身份」注入封面生图链，并叠加国际时尚大片人物造型 */
-function buildCoverPersonaContextForImageGen(personaSummary: string, ipProfile: IpProfile): string {
+/** 封面生图：只用人物背景摘要（不再注入无数据支撑的「企业 IP 基因」推测字段） */
+function buildCoverPersonaContextForImageGen(personaSummary: string, _ipProfile?: IpProfile): string {
   const parts: string[] = [];
   const ps = String(personaSummary || "").trim();
   if (ps) parts.push(`【精神气质与内容身份】${ps.slice(0, 600)}`);
-  if (isIpProfileReady(ipProfile)) {
-    parts.push(
-      `【IP 视觉与商业基因】行业身份：${ipProfile.industry.trim()}；核心优势：${ipProfile.advantage.trim()}；目标受众：${ipProfile.audience.trim()}；旗舰交付：${ipProfile.flagship.trim()}${ipProfile.taboos.trim() ? `；品牌禁忌（绝对避让）：${ipProfile.taboos.trim()}` : ""}`,
-    );
-  }
   return appendFashionEditorialCharacterGuidance(parts.join("\n").trim(), { maxChars: 3800, lang: "zh" });
 }
 
@@ -2117,7 +2114,7 @@ export default function PlatformPage() {
     if (platformDashboard && !platformContent) {
       return "战略看板已就绪。若流程中断，可点下方手动「生成专属文案」继续。";
     }
-    return `点击「开始全案分析」：先按所选周期用 Pro 深度优化选题，再生成六条文案（入队扣 ${CREDIT_COSTS.platformStage2Copywriting} 积分，含 Pro 优化不加收；不含封面/分镜/决策智库）。`;
+    return `点击「开始全案分析」：先读小红书 trendStore（B站+抖音辅），生成 ${PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT}–${PLATFORM_TOPIC_SHORTLIST_MAX} 条选题初选；你挑选后再点「就写这条」扩写（不含决策智库）。`;
   }, [
     isContentLoading,
     contentLoadingText,
@@ -2502,9 +2499,9 @@ export default function PlatformPage() {
   /** 全案分析确认前：Skill/提示词优先级对话气泡 */
   const [fullAnalysisConfirmOpen, setFullAnalysisConfirmOpen] = useState(false);
   const [pendingFullAnalysisLabels, setPendingFullAnalysisLabels] = useState("");
-  /** 选题初选 20–30 条 → 用户自己挑 → 可改标题 → 单条扩写 */
+  /** 选题初选 20–30 条 → 用户自己挑 → 可改标题 → 单条扩写（全案默认 20） */
   const [topicShortlist, setTopicShortlist] = useState<PlatformTopicShortlistItem[]>([]);
-  const [topicShortlistCount, setTopicShortlistCount] = useState(PLATFORM_TOPIC_SHORTLIST_DEFAULT);
+  const [topicShortlistCount, setTopicShortlistCount] = useState(PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT);
   /** 正在改标题的初选条目 id 与草稿文字（改完才扩写） */
   const [editingShortlistTopicId, setEditingShortlistTopicId] = useState<string | null>(null);
   const [editingShortlistTitle, setEditingShortlistTitle] = useState("");
@@ -2931,28 +2928,6 @@ export default function PlatformPage() {
           setPersonaFieldErrors({});
         }}
         errors={personaFieldErrors}
-        ipReady={isIpProfileReady(readIpProfile())}
-        onIpGeneFill={() => {
-          const profile = readIpProfile();
-          if (isIpProfileReady(profile)) {
-            const next = {
-              identity: profile.industry || structuredPersona.identity,
-              domain: profile.advantage || structuredPersona.domain,
-              audience: profile.audience || structuredPersona.audience,
-              businessGoal: profile.flagship || structuredPersona.businessGoal,
-            };
-            setStructuredPersona(next);
-            setFocusPrompt(composeFocusPromptFromPersona(next));
-            setFreeformOverride(false);
-            toast.success("已用企业 IP 基因快填");
-          } else {
-            toast.message("请先载入企业 IP 基因后再快填");
-            document.getElementById("platform-persona-focus-fullcase")?.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            });
-          }
-        }}
         voiceSlot={
           <VoiceInputButton
             onTranscript={(t) => {
@@ -3010,12 +2985,15 @@ export default function PlatformPage() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-[#49e6ff]/35 bg-[#49e6ff]/8 px-4 py-4">
+      <div
+        id="platform-topic-shortlist"
+        className="rounded-2xl border border-[#49e6ff]/35 bg-[#49e6ff]/8 px-4 py-4 scroll-mt-24"
+      >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="text-lg font-bold text-white md:text-xl">选题初选</div>
             <p className="mt-1 text-[13px] leading-snug text-gray-300">
-              先填背景再生成。默认 {PLATFORM_TOPIC_SHORTLIST_DEFAULT} 条，想自己挑就选 20–30 条；
+              全案默认 {PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT} 条（可读 25/30）；先读小红书 trendStore，再参考 B站与抖音。
               <strong className="text-white/90">这步只出题</strong>，挑哪条、标题改成什么都由你定，确认后才写文案与封面。
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-gray-300">
@@ -3032,7 +3010,11 @@ export default function PlatformPage() {
                   }`}
                 >
                   {n}
-                  {n > PLATFORM_TOPIC_SHORTLIST_DEFAULT ? "·加量" : "·默认"}
+                  {n === PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT
+                    ? "·全案"
+                    : n > PLATFORM_TOPIC_SHORTLIST_DEFAULT
+                      ? "·加量"
+                      : "·少出"}
                 </button>
               ))}
             </div>
@@ -6406,12 +6388,14 @@ export default function PlatformPage() {
     }
   }, [canExportCustomCopyPdf, customCopyPdfPayload, downloadCustomCopyPdfMutation]);
 
-  // ── B 端 IP 基因库（拦截弹窗，共享组件 IpProfileModal）─────────────────────
-  // 落地需求：handleAnalyze 启动前必须先填齐 IP 护城河 + 高客单锚点，
-  // 否则弹「靛青色」拦截弹窗，强制用户校准战略预设。
-  // ipProfile 同步写 localStorage(`ipProfile.v1`)，GodView 一键深潜也会读它注入 prompt。
-  const [ipProfile, setIpProfile] = useState<IpProfile>(() => readIpProfile());
-  const [showIpModal, setShowIpModal] = useState(false);
+  /** /platform 不再展示或写入企业 IP 基因；保留空壳仅兼容既有函数签名 */
+  const ipProfile: IpProfile = {
+    industry: "",
+    advantage: "",
+    audience: "",
+    flagship: "",
+    taboos: "",
+  };
 
   const [qaJobId, setQaJobId] = useState<string | null>(null);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
@@ -7687,7 +7671,7 @@ export default function PlatformPage() {
     () =>
       cleanUserCopy(
         platformDashboard?.personaSummary || "",
-        "在「自定义创作」选题初选上方填写人物背景与创作诉求（与全案共用），并载入 IP 基因；我们会结合近窗口样本，给出平台优先级、切入方向与可落地建议。",
+        "在「自定义创作」选题初选上方填写人物背景与创作诉求（与全案共用）；结合近窗口 trendStore 样本，给出可挑选的选题与可落地建议。",
       ),
     [platformDashboard],
   );
@@ -7902,122 +7886,75 @@ export default function PlatformPage() {
     }
   };
 
+  /** 全案分析主路径：确认后出 20–30 条选题初选（trendStore 小红书主 + B站/抖音辅），不直接烧六条文案 */
+  const resolveFullcaseShortlistCount = useCallback(() => {
+    const n = clampTopicShortlistCount(topicShortlistCount);
+    return n >= PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT
+      ? n
+      : PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT;
+  }, [topicShortlistCount]);
+
   const handleAnalyze = async () => {
-    // ── B 端拦截：必须先注入 IP 基因库（行业身份 / 优势 / 受众 / 旗舰交付）
-    if (!isIpProfileReady(ipProfile)) {
-      setShowIpModal(true);
-      toast.message("启动战略推演前，请先载入企业专属 IP 基因");
+    if (!focusPrompt.trim()) {
+      setPersonaFieldErrors({ freeform: "请先填写人物背景" });
+      setCreateStep("persona");
+      scrollToPlatformSection("platform-persona-focus");
+      toast.error("请先填写人物背景与创作诉求");
       return;
     }
-
-    if (!selectedTrendPlatforms.length) {
-      toast.error("请至少选择一个分析平台");
-      return;
-    }
-
-    const selectedPlatformLabels = selectedTrendPlatforms
-      .map((key) => TREND_PLATFORM_OPTIONS.find((item) => item.key === key)?.label)
-      .filter(Boolean)
-      .join("、");
-
-    setPendingFullAnalysisLabels(selectedPlatformLabels);
+    const n = resolveFullcaseShortlistCount();
+    setTopicShortlistCount(n);
+    setPendingFullAnalysisLabels(String(n));
     setFullAnalysisConfirmOpen(true);
   };
 
   const runFullAnalysisAfterConfirm = async () => {
     setFullAnalysisConfirmOpen(false);
-    const selectedPlatformLabels = pendingFullAnalysisLabels;
-
-    /** 本輪 Stage1/2 使用此字串（與輸入框內容一致即可；不再自動清空輸入框）。 */
-    const capturedJudgment = String(focusPrompt || "").trim();
-
-    platformAnalysisEpochRef.current += 1;
-    void trpcUtils.mvAnalysis.getGrowthSnapshot.cancel();
-    queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
-
-    setAskResult(null);
-    setPlatformDashboard(null);
-    setDashboardDebug(null);
-    setIsDashboardLoading(false);
-    setPlatformContent(null);
-    setContentDebug(null);
-    setIsContentLoading(false);
-    setStage2Failed(false);
-    setContentJobError(null);
-    setContentJobPollTrace(null);
-    setElapsedTime(0);
-    setPlatformImageMap({});
-    setPlatformStoryboardSheetMap({});
-    setPlatformXhsNoteMap({});
-    setSceneJobIds({});
-    setPendingCompositeSheet(null);
-    compositeSheetLivePollCtxRef.current = null;
-    setPlatformImageGenFlowSnapshots([]);
-    setCoverWaitCarouselEngaged(false);
-    setCoverLoadRetriedIds(() => new Set());
-    setCompositeLoadRetriedKeys(() => new Set());
-    setCoverSilentRetryIds(() => new Set());
-    setBatchGeneratingCoverIds(() => new Set());
-    setIsSequentialCoverBatchGenerating(false);
-    setTopicImageJobPollTrace(null);
-    setCompositeJobPollTrace(null);
-    coverImageCacheBustTriedRef.current = new Set();
-
-    void trpcUtils.mvAnalysis.getLatestDecisionIntelligenceReport.invalidate();
-    void trpcUtils.mvAnalysis.getDecisionIntelligencePricing.invalidate();
-    generateDecisionIntelMutation.reset();
-
-    const result = await growthSnapshotQuery.refetch();
-    if (!result.data?.snapshot) {
-      toast.error("平台分析暂时没有返回结果");
-      return;
-    }
+    const n = resolveFullcaseShortlistCount();
+    setTopicShortlistCount(n);
+    setCreateStep("topics");
     setHasAnalyzed(true);
-    toast.success(
-      `快照已就绪（${selectedPlatformLabels || "所选平台"}），正在生成战略看板与专属文案…`,
-    );
-
-    const snap = result.data.snapshot;
-    const snapSummary = snap as Record<string, unknown>;
-    setIsDashboardLoading(true);
     try {
-      const dashResult = await getPlatformDashboardMutation.mutateAsync({
-        context: capturedJudgment || undefined,
-        windowDays: selectedWindowDays,
-        snapshotSummary: snap as any,
-        copyLlmMode: "openai" as const,
-        requestedPlatforms: selectedTrendPlatforms,
+      trackPlatformFunnel("fullcase_start", { mode: "create", handler: "generateTopicShortlist", count: n });
+      trackPlatformFunnel("topic_shortlist_start", { count: n });
+      const existingTitles = [
+        ...(platformContent?.contentBlueprints || []).map((b: { title?: string }) => String(b?.title || "")),
+        ...topicShortlist.map((t) => t.title),
+      ].filter(Boolean);
+      const res = await generateTopicShortlistMutation.mutateAsync({
+        context: focusPrompt.trim() || undefined,
+        enabledSkillIds: Array.from(enabledPlatformSkillIds),
+        allowBloggerTitle,
+        existingTitles,
+        count: n,
       });
-
-      if (!dashResult.platformDashboard) {
-        console.warn("[PlatformPage] Stage 1 AI 解析失败:", dashResult.debug?.error);
-        toast.error(
-          `战略看板生成失败：AI 数据格式异常，请重试 (${String((dashResult.debug as { error?: unknown })?.error ?? "未知")})`,
-        );
+      const topics = res.topics || [];
+      setTopicShortlist(topics);
+      setCreateStep("result");
+      scrollToPlatformSection("platform-topic-shortlist");
+      if (workbenchUserKey) {
+        pushRecentTask(workbenchUserKey, {
+          mode: "create",
+          label: `全案选题初选 ${topics.length} 条`,
+          credits: Number(res.chargedCredits) || undefined,
+        });
+        setRecentTasks(readRecentTasks(workbenchUserKey));
+      }
+      trackPlatformFunnel("topic_shortlist_done", { count: topics.length });
+      if (!topics.length) {
+        toast.error("初选未返回选题，请稍后重试");
         return;
       }
-
-      const dash = dashResult.platformDashboard as unknown as PlatformDashboard;
-      setPlatformDashboard(dash);
-      setContentJobError(null);
-      setStage2Failed(false);
-      setPlatformContent(null);
-      setContentDebug(null);
-      lastStage2InputRef.current = {
-        snapshotSummary: snapSummary,
-        windowDays: selectedWindowDays,
-      };
-      setIsDashboardLoading(false);
-
-      await enqueueAndPollExclusiveContent(dash, snapSummary, selectedWindowDays, capturedJudgment);
-    } catch (e) {
-      console.warn("[PlatformPage] handleAnalyze chain error:", e);
-      const msg = e instanceof Error ? e.message : String(e);
-      if (!String(msg).includes("文案生成失败")) {
-        toast.error(`分析中断：${msg}`);
-      }
-    } finally {
-      setIsDashboardLoading(false);
+      toast.success(
+        `已生成 ${topics.length} 条初选${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；请挑选后再点「就写这条」扩写。`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(
+        msg.includes("timeout") || msg.includes("504")
+          ? "算力紧张或请求超时，请稍后重试选题初选"
+          : msg || "全案选题初选失败",
+      );
     }
   };
 
@@ -8525,7 +8462,8 @@ export default function PlatformPage() {
       trackPlatformFunnel("cta_disabled", { reason: "empty_persona" });
       return;
     }
-    trackPlatformFunnel("topic_shortlist_start", { count: topicShortlistCount });
+    const count = clampTopicShortlistCount(topicShortlistCount);
+    trackPlatformFunnel("topic_shortlist_start", { count });
     try {
       const existingTitles = [
         ...(platformContent?.contentBlueprints || []).map((b: { title?: string }) => String(b?.title || "")),
@@ -8536,11 +8474,12 @@ export default function PlatformPage() {
         enabledSkillIds: Array.from(enabledPlatformSkillIds),
         allowBloggerTitle,
         existingTitles,
-        count: topicShortlistCount,
+        count,
       });
       const topics = res.topics || [];
       setTopicShortlist(topics);
       setCreateStep("result");
+      scrollToPlatformSection("platform-topic-shortlist");
       if (workbenchUserKey) {
         pushRecentTask(workbenchUserKey, {
           mode: "create",
@@ -8555,7 +8494,7 @@ export default function PlatformPage() {
         return;
       }
       toast.success(
-        `已生成 ${topics.length} 条初选${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}`,
+        `已生成 ${topics.length} 条初选${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；挑完再点「就写这条」。`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -8575,6 +8514,7 @@ export default function PlatformPage() {
     allowBloggerTitle,
     topicShortlistPrice.total,
     scrollToPlatformSection,
+    workbenchUserKey,
   ]);
 
   const recordCtaDisabled = useCallback(
@@ -8860,21 +8800,13 @@ export default function PlatformPage() {
     <div className="min-h-screen bg-transparent text-[#f7f2ff]">
       <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}@keyframes mvspPlatformOrb{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(12px,-10px) scale(1.07)}}@keyframes coverGenWaitCarouselProgress{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselProg{from{transform:scaleX(0)}to{transform:scaleX(1)}}@keyframes platformCarouselGlow{0%,100%{opacity:0.4}50%{opacity:0.92}}`}</style>
 
-      {/* B 端 IP 基因库 · 靛青色拦截弹窗（共享组件 IpProfileModal） */}
-      <IpProfileModal
-        open={showIpModal}
-        value={ipProfile}
-        onChange={setIpProfile}
-        onClose={() => setShowIpModal(false)}
-      />
-
       <Dialog open={fullAnalysisConfirmOpen} onOpenChange={setFullAnalysisConfirmOpen}>
         <DialogContent className="max-w-lg border border-[#49e6ff]/25 bg-[#0a0618] text-white sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="text-white">开始全案分析前确认</DialogTitle>
             <DialogDescription className="text-[#b7add8]">
-              基于{pendingFullAnalysisLabels || "所选平台"}近 {selectedWindowDays}{" "}
-              天样本 + 你的人物背景与创作诉求。
+              先读小红书 trendStore，再参考 B站与抖音，结合你的人物背景生成{" "}
+              {pendingFullAnalysisLabels || PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT} 条选题初选（只出题）。
             </DialogDescription>
           </DialogHeader>
           <div className="flex items-start gap-3 rounded-2xl border border-[#49e6ff]/25 bg-[#49e6ff]/8 px-3 py-3">
@@ -8884,12 +8816,14 @@ export default function PlatformPage() {
             <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-black/35 px-3 py-2.5 text-[12px] leading-relaxed text-gray-200">
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8cefff]">智能提醒</p>
               <p>
-                核心 Skill 已默认开启；将按你的背景<strong className="text-white">智能推荐</strong>
-                赛道 Skill（可在生成前一键采纳）。不必翻完整 Skill 墙。
+                本步<strong className="text-white">不直接写六条文案</strong>：出题后由你挑选（可改标题），再点「就写这条」才扩写与封面。
               </p>
               <p className="mt-1.5 text-[#b8f4ff]">
-                出六条前会先用 <strong className="text-white">Pro 深度优化选题</strong>
-                （对齐你选的 {selectedWindowDays} 天热点并避开近期复读）。
+                条数可在选题区改成 25 / 30；当前将生成{" "}
+                <strong className="text-white">
+                  {pendingFullAnalysisLabels || PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT}
+                </strong>{" "}
+                条。
               </p>
               <p className="mt-2 text-[10px] leading-snug text-gray-500 whitespace-pre-wrap">
                 {PLATFORM_USER_PROMPT_OVERRIDES_SKILLS_RULE}
@@ -8897,8 +8831,18 @@ export default function PlatformPage() {
             </div>
           </div>
           <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[12px] leading-relaxed text-amber-50/90">
-            入队扣除 <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 积分</strong>
-            （含 Pro 选题优化，不加收）。不含封面图、编导分镜图、决策智库报告。全程可能更久，请勿关闭页面。
+            预计扣除{" "}
+            <strong className="text-[#fef08a]">
+              {
+                platformTopicShortlistTotalCredits({
+                  count: Number(pendingFullAnalysisLabels) || PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT,
+                  baseCredits: CREDIT_COSTS.platformTopicShortlist,
+                  extraPerTopic: CREDIT_COSTS.platformTopicShortlistExtra,
+                }).total
+              }{" "}
+              积分
+            </strong>
+            （选题初选；扩写在「就写这条」时另计）。请勿关闭页面。
           </div>
           <div className="flex flex-wrap justify-end gap-2 pt-1">
             <button
@@ -8914,7 +8858,7 @@ export default function PlatformPage() {
               className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/35 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-4 py-2 text-[12px] font-semibold text-white"
             >
               <Sparkles className="h-3.5 w-3.5" />
-              确认开始
+              确认开始选题初选
             </button>
           </div>
         </DialogContent>
@@ -10774,7 +10718,7 @@ export default function PlatformPage() {
                 supervisorAccess={Boolean(supervisorAccess || user?.role === "supervisor" || user?.role === "admin")}
                 disabled={customNoteBusy || customTopicBusy || customMattingBusy}
                 personaSummary={personaSummary}
-                ipProfile={ipProfile}
+                ipProfile={undefined}
                 trendPlatforms={
                   snapshot?.platformSnapshots
                     ?.slice(0, 4)
@@ -11147,40 +11091,6 @@ export default function PlatformPage() {
                 ))}
               </div>
 
-              {/* IP 基因库入口（已填则显示战略锚点摘要 + 编辑按钮；未填则提示载入） */}
-              <button
-                type="button"
-                onClick={() => setShowIpModal(true)}
-                className={`mt-5 w-full rounded-2xl border px-5 py-4 text-left transition ${
-                  isIpProfileReady(ipProfile)
-                    ? "border-[#6366F1]/40 bg-[linear-gradient(135deg,rgba(79,70,229,0.18),rgba(99,102,241,0.10))] hover:border-[#818CF8]/60"
-                    : "border-[#FCD34D]/30 bg-[rgba(252,211,77,0.06)] hover:border-[#FCD34D]/60 animate-[pulseHighlight_2.4s_ease-in-out_infinite]"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[11px] uppercase tracking-[0.22em] text-[#A5B4FC] mb-1">
-                      {isIpProfileReady(ipProfile) ? "企业 IP 基因（已锁定）" : "尚未载入企业 IP 基因"}
-                    </div>
-                    {isIpProfileReady(ipProfile) ? (
-                      <div className="text-[13px] leading-6 text-white truncate">
-                        <span className="text-[#A5B4FC]">{ipProfile.industry}</span>
-                        <span className="mx-2 text-white/30">·</span>
-                        <span className="text-white/85">{ipProfile.advantage}</span>
-                        <span className="mx-2 text-white/30">·</span>
-                        <span className="text-[#FCD34D]">{ipProfile.flagship}</span>
-                      </div>
-                    ) : (
-                      <div className="text-[13px] leading-6 text-white/85">
-                        点此校准护城河 / 高客单锚点 → AI 推演会在 80% 篇幅锁定你的转化路径
-                      </div>
-                    )}
-                  </div>
-                  <div className="text-xs font-semibold text-[#A5B4FC] whitespace-nowrap">
-                    {isIpProfileReady(ipProfile) ? "编辑 →" : "载入 →"}
-                  </div>
-                </div>
-              </button>
             </div>
 
             <div id={PLATFORM_SECTION_TREND_RUN_ID} className="scroll-mt-20 grid gap-4">
@@ -11301,17 +11211,28 @@ export default function PlatformPage() {
                   <button
                     type="button"
                     onClick={() => void handleAnalyze()}
-                    disabled={growthSnapshotQuery.isFetching}
+                    disabled={generateTopicShortlistMutation.isPending}
                     className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_40px_rgba(73,230,255,0.18)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {growthSnapshotQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    {generateTopicShortlistMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-4 w-4" />
+                    )}
                     开始全案分析
                   </button>
                   <span
                     className="inline-flex shrink-0 items-center rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-2 text-xs font-black tabular-nums tracking-tight text-[#fef08a] shadow-[0_0_20px_rgba(251,191,36,0.12)]"
-                    title="含平台优先级、切入方向、选题文案与分镜脚本；任务入队时扣除右侧积分（不含封面图、编导分镜图与决策智库报告）"
+                    title="全案先出选题初选（默认20条，可读25/30）；小红书主、B站+抖音辅。挑完再扩写。"
                   >
-                    {CREDIT_COSTS.platformStage2Copywriting} 积分
+                    {
+                      platformTopicShortlistTotalCredits({
+                        count: resolveFullcaseShortlistCount(),
+                        baseCredits: CREDIT_COSTS.platformTopicShortlist,
+                        extraPerTopic: CREDIT_COSTS.platformTopicShortlistExtra,
+                      }).total
+                    }{" "}
+                    积分
                   </span>
                   {hasAnalyzed ? (
                     <div className="rounded-full border border-[#2f2260] bg-[#130b31] px-4 py-2 text-xs text-[#8cefff]">
@@ -11741,10 +11662,10 @@ export default function PlatformPage() {
                   <span className="text-base font-black tracking-tight text-white sm:text-lg">全案分析 · 扣费说明</span>
                 </div>
                 <div className="min-w-0 flex-1 text-sm leading-7 text-[#ffe4c4]">
-                  「开始全案分析」会基于你填写的人物背景与 IP 基因，结合近 {selectedWindowDays} 天窗口样本，写入<strong className="text-white">平台优先级、切入方向、选题文案与分镜脚本</strong>。任务<strong className="text-white">入队时</strong>扣除{" "}
-                  <strong className="text-[#fef08a]">{CREDIT_COSTS.platformStage2Copywriting} 积分</strong>。
-                  <strong className="text-white">不含</strong>封面图、编导分镜图与 MV Studio Pro AI 决策智库报告（均需另购）。
-                  任务失败、逾时或结果不满意，<strong className="text-red-200">积分不予退还</strong>。若之后点「重新生成」，<strong className="text-[#fef08a]">再扣 {CREDIT_COSTS.platformStage2Copywriting} 积分</strong>。
+                  「开始全案分析」会基于你的人物背景，先读<strong className="text-white">小红书 trendStore</strong>（B站+抖音辅），生成默认{" "}
+                  <strong className="text-white">{PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT} 条</strong>选题初选（可读 25/30）。
+                  <strong className="text-white">这步只出题</strong>，按选题初选计价扣除积分；你挑选并点「就写这条」后才扩写文案与封面。
+                  <strong className="text-white">不含</strong>决策智库报告（另购）。任务失败或结果不满意，<strong className="text-red-200">积分不予退还</strong>。
                 </div>
               </div>
             </div>

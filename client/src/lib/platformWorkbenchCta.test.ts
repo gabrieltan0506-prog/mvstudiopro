@@ -24,6 +24,22 @@ describe("platformWorkbenchCta", () => {
     expect(cta.disabled).toBe(false);
   });
 
+  it("create copy/output steps also go shortlist first (not Stage2 six-copy)", () => {
+    const cta = buildCreatePrimaryCta({
+      createStep: "copy",
+      focusPrompt: "身份：创作者",
+      topicShortlistCount: 20,
+      isAuthenticated: true,
+      shortlistPending: false,
+      fullcaseBusy: false,
+      customNoteBusy: false,
+      hasTopicResults: false,
+    });
+    expect(cta.handlerKey).toBe("generateTopicShortlist");
+    expect(cta.confirmKind).toBe("topic_shortlist");
+    expect(cta.label).toContain("20");
+  });
+
   it("trend CTA requires single platform", () => {
     const bad = buildTrendPrimaryCta({
       selectedPlatformCount: 0,
