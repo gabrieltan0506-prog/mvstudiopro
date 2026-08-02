@@ -62,7 +62,10 @@ type ShortlistTrendBrief = {
  * 初选前先查 trendStore 热门：小红书主、B站+抖音辅。
  * 只取标题与高频标签给模型当**改写素材**，不做引用来源；读失败返回空数组。
  */
-async function readShortlistTrendBriefs(): Promise<ShortlistTrendBrief[]> {
+async function readShortlistTrendBriefs(): Promise<{
+  briefs: ShortlistTrendBrief[];
+  status: "ok" | "timeout" | "error" | "empty";
+}> {
   const platforms = [
     { platform: "xiaohongshu" as const, role: "主参考" as const, titleCap: 30 },
     { platform: "bilibili" as const, role: "辅参考" as const, titleCap: 20 },
@@ -79,7 +82,7 @@ async function readShortlistTrendBriefs(): Promise<ShortlistTrendBrief[]> {
     ]);
     if (!store) {
       console.warn("[generatePlatformTopicShortlist] trendStore 读取超时，本次不带热门样本");
-      return [];
+      return { briefs: [], status: "timeout" };
     }
     const briefs: ShortlistTrendBrief[] = [];
     for (const { platform, role, titleCap } of platforms) {
@@ -121,7 +124,7 @@ async function readShortlistTrendBriefs(): Promise<ShortlistTrendBrief[]> {
         });
       if (hotTitles.length) briefs.push({ platform, role, hotTitles, hotTags, commentHotTitles });
     }
-    return briefs;
+    return { briefs, status: briefs.length ? "ok" : "empty" };
   } catch (err) {
     console.warn(
       `[generatePlatformTopicShortlist] trendStore 读取失败: ${err instanceof Error ? err.message : String(err)}`.slice(
@@ -129,7 +132,7 @@ async function readShortlistTrendBriefs(): Promise<ShortlistTrendBrief[]> {
         200,
       ),
     );
-    return [];
+    return { briefs: [], status: "error" };
   }
 }
 
@@ -154,7 +157,7 @@ export async function generatePlatformTopicShortlist(params: {
   allowBloggerTitle?: boolean;
   existingTitles?: string[];
   stage1Seeds?: Array<{ title?: string; hook?: string }>;
-  /** 生成条数，默认 6，最大 20 */
+  /** 生成条数，默认 6，最大见 PLATFORM_TOPIC_SHORTLIST_MAX */
   count?: number | null;
 }): Promise<{ topics: PlatformTopicShortlistItem[]; diagnostics: Record<string, unknown> }> {
   const targetCount = clampTopicShortlistCount(params.count ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT);
@@ -196,7 +199,7 @@ export async function generatePlatformTopicShortlist(params: {
     platform: "xiaohongshu",
     featuredOnly: true,
   });
-  const trendBriefs = await readShortlistTrendBriefs();
+  const { briefs: trendBriefs, status: trendStatus } = await readShortlistTrendBriefs();
   const campaignBrief = featuredCampaigns.slice(0, 10).map((c) => ({
     name: c.name,
     category: c.category,
@@ -242,25 +245,46 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
     trendHot: trendBriefs,
   });
 
-  const res = await invokeLLM({
-    provider: "openai",
-    modelName: getPlatformStage2OpenAiModel(),
-    // 20–30 条时输出会明显变长，按条数抬上限，避免 JSON 被截断解析失败
-    max_tokens: Math.min(24000, 12000 + Math.max(0, targetCount - 12) * 600),
-    temperature: 0.7,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    reasoningEffort: "high",
-  });
+  const maxTokens = Math.min(24000, 12000 + Math.max(0, targetCount - 12) * 600);
+  const invokeShortlist = async (reasoningEffort: "high" | "medium" | "minimal") =>
+    invokeLLM({
+      provider: "openai",
+      modelName: getPlatformStage2OpenAiModel(),
+      // 20–30 条时输出会明显变长，按条数抬上限，避免 JSON 被截断解析失败
+      max_tokens: maxTokens,
+      temperature: 0.7,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      reasoningEffort,
+    });
 
-  const llmText = extractFirstChoicePlainText(res).trim();
+  // 初选 20 条 + reasoning high 易耗尽预算导致 content 空（Fly 已见 empty content + health 抖）
+  let reasoningUsed: "medium" | "minimal" = "medium";
+  let emptyRetried = false;
+  let res = await invokeShortlist("medium");
+  let llmText = extractFirstChoicePlainText(res).trim();
   if (!llmText) {
+    emptyRetried = true;
+    reasoningUsed = "minimal";
+    console.warn(
+      "[generatePlatformTopicShortlist] 首次空回（medium），降到 minimal 重试一次",
+    );
+    res = await invokeShortlist("minimal");
+    llmText = extractFirstChoicePlainText(res).trim();
+  }
+  if (!llmText) {
+    console.error(
+      "[generatePlatformTopicShortlist] 两次空回 · finish_reason=",
+      (res as { choices?: Array<{ finish_reason?: string }> })?.choices?.[0]?.finish_reason,
+      "· trendStatus=",
+      trendStatus,
+    );
     throw new TRPCError({
       code: "INTERNAL_SERVER_ERROR",
-      message: "选题初选模型返回空内容，请稍后重试（Evolink GPT-5.6）",
+      message: "选题初选模型返回空内容（已自动重试），请稍后重试",
     });
   }
   const parsed = extractJsonObject(llmText) as { topics?: unknown } | null;
@@ -367,7 +391,10 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
       afterDedupe: topics.length,
       targetCount,
       lanes: topics.map((t) => t.primaryLane),
+      trendStatus,
       trendPlatforms: trendBriefs.map((b) => `${b.platform}:${b.hotTitles.length}`),
+      reasoningUsed,
+      emptyRetried,
       viralScores: topics.map((t) => t.viralScore ?? null),
       commentHeats: topics.map((t) => t.commentHeat ?? null),
     },

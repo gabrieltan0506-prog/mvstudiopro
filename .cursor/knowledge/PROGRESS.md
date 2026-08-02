@@ -295,6 +295,8 @@ A1 4fps 重抽帧过审：留下 G1–G7 + 优化后 B1（暖色细笔刷箭头�
 
 画布右栏可读链：进工作台自动缩略竖排（左→右多列）+「看全图」缩放；中栏静帧取图回退 `refImageUrl`。分支 `fix/canvas-fit-all-vertical-media`（验通后再开 PR）。
 
+全案选题空回：Fly 见 `trendStore 超时` + `empty content` → #1049 初选改 medium、空回 minimal 重试；Debug 面板写过程（`fix/fullcase-shortlist-empty-retry-debug`）。
+
 ---
 
 ## 如何更新本文件
