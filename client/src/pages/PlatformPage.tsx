@@ -2008,7 +2008,7 @@ export default function PlatformPage() {
   const [visualReportTheme] = useState<VisualReportTheme>("dark");
   const [isVisualReportLoading, setIsVisualReportLoading] = useState(false);
   const [isVisualReportDownloading, setIsVisualReportDownloading] = useState(false);
-  /** 平台趋势区子 Tab：总览（多平台报表）/ AI 漫剧专区 */
+  /** 平台趋势区子 Tab：指定平台分析 / AI 漫剧专区 */
   const [trendInsightTab, setTrendInsightTab] = useState<"overview" | "ai_manhua">("overview");
   /** AI 漫剧专区内：抖音 / 快手子榜（随上方趋势平台筛选自动切换） */
   const [aiManhuaPlatformTab, setAiManhuaPlatformTab] = useState<"douyin" | "kuaishou">("douyin");
@@ -9272,7 +9272,7 @@ export default function PlatformPage() {
                       }`}
                     >
                       <BarChart3 className="h-3.5 w-3.5 shrink-0" />
-                      总览 · 多平台报表
+                      指定平台分析
                     </button>
                     <button
                       type="button"

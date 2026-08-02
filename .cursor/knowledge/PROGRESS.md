@@ -279,6 +279,12 @@ douyin 文件应从 93MB 量级显著下降。原「失败平台一次性回补�
 
 评论区热度指标：初选每条再出 `commentHeat`（0–100），trend 简报补 `commentHotTitles`（按评论数排，附每千赞评论数）喂模型判断；排序改为 `viralScore×0.7 + commentHeat×0.3`，卡片显示「评论热 NN」。
 
+## 2026-08-02
+
+平台趋势 Tab 文案：「总览·多平台报表」→「指定平台分析」。
+
+A1 4fps 重抽帧过审：留下 G1–G7 + 优化后 B1（暖色细笔刷箭头，禁荧光）/ B3（私人笔记刊头，禁假杂志品牌）；剔除 `strike_negation` / `gold_vertical_money` / `ratio_compare_beauty` 进 REJECTED。示意 `~/Downloads/2026Aug01/netfeel-newshells-{GOOD,BAD}.png`、`netfeel-B1-B3-optimized.png`。
+
 ---
 
 ## 如何更新本文件

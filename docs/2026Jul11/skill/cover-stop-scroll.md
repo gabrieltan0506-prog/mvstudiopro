@@ -2,7 +2,7 @@
 id: cover-stop-scroll
 name: 封面停滑与信息层级
 description: 竖版少字提亮（只标重点色）；有人物禁坐姿上课脸，须多样表情姿势；吸小红书作者清爽排版为我所用
-version: 2026-08-01a
+version: 2026-08-02b
 defaultEnabled: true
 ---
 
@@ -98,6 +98,29 @@ defaultEnabled: true
 5. **life_stall_vibe**：便利店/家装/哄娃烟火气证据画面  
 6. **beauty_pink_dual**：上下两行短句紧排 + 粉/桃系托底（各 ≤6 字，忌三行以上）  
 7. **simple_recolor / pip_eye_green / knowledge_black_gold / manga_bold_stall**：模板行同批轮换
+
+### A1 重抽帧补记（2026-08-02 · 4fps/326 帧 · 人工过审）
+示意对照：`~/Downloads/2026Aug01/netfeel-newshells-{GOOD,BAD}.png`、`netfeel-B1-B3-optimized.png`。
+
+**留下（G1–G7 + 优化后的 B1/B3）**  
+1. **growth_vertical_triad** 竖排三段词 + 底部结果条  
+2. **howto_hand_english** 英文手写体压中文错落大字  
+3. **neon_arrow_question**（B1 优化）暖色细笔刷箭头 + 问句钉；**禁**荧光绿荧光笔贴纸  
+4. **slash_wrap_product** `\短句/` 斜杠夹字 + 手持实物  
+5. **food_taste_frame** 食物大图 + 白框手写感叹  
+6. **count_haul_number** 数字件数好物墙  
+7. **arrow_annotate_dual** 左右大字夹人 + 细箭头注解  
+8. **warm_letgo_four** 暖光四字 + 温柔副句  
+9. **magazine_masthead**（B3 优化）私人笔记刊头（private notes · 年份）；**禁**假杂志品牌/条码期号墙  
+
+**过审剔除（写进 REJECTED）**  
+- `strike_negation` 划线否定：作业批改感、缩略图难读  
+- `gold_vertical_money` 黑金财富词：土豪暴富感  
+- `ratio_compare_beauty` 比例/前后对比：医美硬广感  
+
+### 排版手法（与壳正交，每张挑 1–2 个）
+斜杠夹字、中英双语条、暖色细笔刷箭头、英文手写压中文、画中画证据（≤1/4 画面）、双层标签条、私人笔记刊头小字。  
+边界：禁荧光绿贴纸与假杂志品牌名；英文只作装饰；主句仍 ≤13 字一眼读完。
 
 ### 已剔除（2026-08-01 人工审美否决，禁止复现）
 - `abstract_stunt` 跳伞/高空飞人抽象冲击：表情过度夸张、动作僵硬  

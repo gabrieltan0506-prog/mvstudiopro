@@ -4,6 +4,7 @@ import {
   PLATFORM_NETFEEL_COVER_SHELLS,
   PLATFORM_NETFEEL_REJECTED_SHELLS,
   PLATFORM_NETFEEL_TITLE_PATTERNS,
+  PLATFORM_NETFEEL_TYPE_DEVICES,
   PLATFORM_TREND_PRIORITY_FOR_FULLCASE,
   composePlatformNetfeelCoverGuidance,
   composePlatformNetfeelFullcaseGuidance,
@@ -42,11 +43,55 @@ describe("platformNetfeelPatterns", () => {
     expect(ids).not.toContain("deform_tension");
   });
 
+  it("keeps the 2026-08-02 approved re-extraction shells and drops the kicked ones", () => {
+    const ids = PLATFORM_NETFEEL_COVER_SHELLS.map((s) => s.id);
+    for (const id of [
+      "growth_vertical_triad",
+      "howto_hand_english",
+      "neon_arrow_question",
+      "slash_wrap_product",
+      "food_taste_frame",
+      "count_haul_number",
+      "arrow_annotate_dual",
+      "warm_letgo_four",
+      "magazine_masthead",
+    ]) {
+      expect(ids).toContain(id);
+    }
+    expect(ids).not.toContain("strike_negation");
+    expect(ids).not.toContain("gold_vertical_money");
+    expect(ids).not.toContain("ratio_compare_beauty");
+    // B1/B3 优化口径写进 hint
+    const b1 = PLATFORM_NETFEEL_COVER_SHELLS.find((s) => s.id === "neon_arrow_question");
+    expect(b1?.visualHint).toMatch(/桃|玫瑰金|暖琥珀/);
+    expect(b1?.visualHint).toMatch(/荧光绿|荧光黄/);
+    const b3 = PLATFORM_NETFEEL_COVER_SHELLS.find((s) => s.id === "magazine_masthead");
+    expect(b3?.visualHint).toMatch(/私人笔记/);
+    expect(b3?.visualHint).toMatch(/Forbes|Fortune/);
+  });
+
+  it("offers type devices that stay subordinate to the headline", () => {
+    const ids = PLATFORM_NETFEEL_TYPE_DEVICES.map((d) => d.id);
+    expect(ids).toContain("slash_wrap");
+    expect(ids).toContain("warm_arrow_annotate");
+    expect(ids).toContain("private_notes_masthead");
+    expect(ids).toContain("bilingual_subtitle");
+    expect(ids).toContain("picture_in_picture");
+    expect(ids).not.toContain("strike_negation_word");
+    expect(ids).not.toContain("neon_arrow_annotate");
+    const cover = composePlatformNetfeelCoverGuidance();
+    expect(cover).toMatch(/挑 \*\*1–2 个\*\*/);
+    expect(cover).toMatch(/neon_flank/);
+  });
+
   it("keeps rejected shells documented so they are not reused", () => {
     const ids = PLATFORM_NETFEEL_REJECTED_SHELLS.map((s) => s.id);
     expect(ids).toContain("abstract_stunt");
     expect(ids).toContain("deform_tension");
     expect(ids).toContain("answer_spoiler");
+    expect(ids).toContain("strike_negation");
+    expect(ids).toContain("gold_vertical_money");
+    expect(ids).toContain("ratio_compare_beauty");
     const cover = composePlatformNetfeelCoverGuidance();
     expect(cover).toMatch(/已剔除/);
     expect(cover).toMatch(/剧透/);

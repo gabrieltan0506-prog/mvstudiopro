@@ -194,7 +194,16 @@ export type PlatformNetfeelCoverShellId =
   | "simple_recolor"
   | "pip_eye_green"
   | "knowledge_black_gold"
-  | "manga_bold_stall";
+  | "manga_bold_stall"
+  | "growth_vertical_triad"
+  | "howto_hand_english"
+  | "neon_arrow_question"
+  | "slash_wrap_product"
+  | "food_taste_frame"
+  | "count_haul_number"
+  | "arrow_annotate_dual"
+  | "warm_letgo_four"
+  | "magazine_masthead";
 
 export type PlatformNetfeelCoverShell = {
   id: PlatformNetfeelCoverShellId;
@@ -275,6 +284,124 @@ export const PLATFORM_NETFEEL_COVER_SHELLS: PlatformNetfeelCoverShell[] = [
     preferredAccents: ["warm_yellow_block", "heartfelt_red", "peach"],
     visualHint: "便利店/市井货架+黄底粗标+白描边副句；人物表情夸张同档。",
   },
+  {
+    id: "growth_vertical_triad",
+    labelZh: "竖排三段词+底部结果条",
+    preferredAccents: ["peach", "rose_gold", "champagne_amber"],
+    visualHint:
+      "右侧或左侧竖排三个短词分层排（如「女性/成长/手册」各 2–3 字）；底部一条窄色带写结果句（拒绝内耗）；人像半身托住，勿被字挤到边角。",
+  },
+  {
+    id: "howto_hand_english",
+    labelZh: "英文手写压中文错落大字",
+    preferredAccents: ["truth_crimson", "warm_yellow_block", "sky_cobalt"],
+    visualHint:
+      "顶部一行英文手写体（How To 之类）压在中文主词上方；中文两词错落排、字距咬合但不堆叠；英文只作装饰层，读不读得懂都不影响主句。",
+  },
+  {
+    id: "neon_arrow_question",
+    labelZh: "暖色细笔刷箭头+问句钉",
+    preferredAccents: ["peach", "rose_gold", "champagne_amber"],
+    visualHint:
+      "人像旁用**桃/玫瑰金/暖琥珀细笔刷箭头**（墨笔触感）轻点关键处；底部深色条压米白/暖黄问句；箭头只 1–2 处、细而克制。【硬禁】荧光绿/荧光黄荧光笔、贴纸堆、整块撞色侧栏（已剔除 neon_flank）。",
+  },
+  {
+    id: "slash_wrap_product",
+    labelZh: "斜杠夹字+手持实物",
+    preferredAccents: ["peach", "rose_gold", "warm_yellow_block"],
+    visualHint:
+      "顶部 `\\短句/` 手写斜杠夹住 4–6 字；人物手持实物怼镜；底部一句行动钉（就看它/直接冲）；斜杠字号不超过主句。",
+  },
+  {
+    id: "food_taste_frame",
+    labelZh: "食物大图+白框手写感叹",
+    preferredAccents: ["warm_yellow_block", "heartfelt_red", "peach"],
+    visualHint:
+      "近景食物占画面一半以上（热气/摆盘可见）；白底手写框写「还想再来N次!」类感叹；人物张口大吃或递碗，表情满足。",
+  },
+  {
+    id: "count_haul_number",
+    labelZh: "数字件数好物墙",
+    preferredAccents: ["champagne_amber", "peach", "sky_cobalt"],
+    visualHint:
+      "主句含具体件数（100件/7台/12样），数字明显大一号；可配 `\\小贵但超值/` 类态度短句；人物拆箱/展示，惊喜表情。",
+  },
+  {
+    id: "arrow_annotate_dual",
+    labelZh: "左右大字夹人+箭头注解",
+    preferredAccents: ["hot_pink_flank", "rose_gold", "truth_crimson"],
+    visualHint:
+      "左右两侧各一个 2 字大词夹住人脸；中间用细箭头引出一句做法注解（→ 一定要频繁）；注解字小两号，不与主词抢。",
+  },
+  {
+    id: "warm_letgo_four",
+    labelZh: "暖光四字+温柔副句",
+    preferredAccents: ["champagne_amber", "rose_gold", "peach"],
+    visualHint:
+      "暖光室内人像（灯下/窗边），四字主词横排居中偏下，下面一行温柔副句（是最善良的放生）；情绪向选题用，表情自然放松。",
+  },
+  {
+    id: "magazine_masthead",
+    labelZh: "私人笔记刊头风",
+    preferredAccents: ["rose_gold", "champagne_amber", "peach"],
+    visualHint:
+      "顶部一行**私人笔记感**英文小字（如 private notes · 2026），不作假杂志品牌名；暖窗光生活场景；主句衬线或细描边，奶油纸质留白；表情松弛可亲。【硬禁】Forbes/Fortune 式冷刊头、条码期号墙、商标感 logo。",
+  },
+];
+
+export type PlatformNetfeelTypeDeviceId =
+  | "slash_wrap"
+  | "bilingual_subtitle"
+  | "warm_arrow_annotate"
+  | "hand_english_over_cn"
+  | "picture_in_picture"
+  | "dual_label_bar"
+  | "private_notes_masthead";
+
+/**
+ * A1 重抽帧（4fps/326 帧）补记的排版手法：与「壳」正交，可叠在任一壳上轮换。
+ * 划线否定 / 荧光箭头 / 假杂志刊头已从手法池剔除（见 REJECTED）。
+ */
+export const PLATFORM_NETFEEL_TYPE_DEVICES: {
+  id: PlatformNetfeelTypeDeviceId;
+  labelZh: string;
+  hint: string;
+}[] = [
+  {
+    id: "slash_wrap",
+    labelZh: "斜杠夹字",
+    hint: "用手写斜杠把 4–6 字态度短句夹起来（\\小贵但超值/）；一张封面只用一次。",
+  },
+  {
+    id: "bilingual_subtitle",
+    labelZh: "中英双语条",
+    hint: "主句下方跟一行小号英文对照（7 台主流安卓 / 7 mainstream devices）；英文只作节奏装饰，勿承担信息。",
+  },
+  {
+    id: "warm_arrow_annotate",
+    labelZh: "暖色细笔刷箭头",
+    hint: "桃/玫瑰金/暖琥珀细笔刷箭头圈注关键处；1–2 处即可。禁荧光绿荧光笔与贴纸堆（已剔除 neon_flank）。",
+  },
+  {
+    id: "hand_english_over_cn",
+    labelZh: "英文手写压中文",
+    hint: "英文手写体压在中文主词上层做层次；中文可错落但**禁止**做成立体变形花字墙。",
+  },
+  {
+    id: "picture_in_picture",
+    labelZh: "画中画证据",
+    hint: "人像口播为主体，角落嵌一小块实拍/截图作证据；画中画不超过画面 1/4。",
+  },
+  {
+    id: "dual_label_bar",
+    labelZh: "双层标签条",
+    hint: "顶部叠两条窄标签：上条写类目（孩子学习），下条写结果或反差（主动权改变一切）。",
+  },
+  {
+    id: "private_notes_masthead",
+    labelZh: "私人笔记刊头小字",
+    hint: "顶部 private notes · 年份 一类私人笔记小字；暖光生活场景；禁假杂志品牌名与条码期号墙。",
+  },
 ];
 
 /**
@@ -310,6 +437,21 @@ export const PLATFORM_NETFEEL_REJECTED_SHELLS: {
     id: "neon_flank",
     labelZh: "荧光撞色侧栏",
     reasonZh: "荧光粉绿贴纸感偏俗，拉低品相。",
+  },
+  {
+    id: "strike_negation",
+    labelZh: "划线否定句反转",
+    reasonZh: "删除线缩略图难读，像作业批改，否定感压人（2026-08-02 过审踢）。",
+  },
+  {
+    id: "gold_vertical_money",
+    labelZh: "黑金竖排财富词",
+    reasonZh: "黑金堆砌易土豪暴富感，难压住品相（2026-08-02 过审踢）。",
+  },
+  {
+    id: "ratio_compare_beauty",
+    labelZh: "比例/前后对比标注",
+    reasonZh: "比例线/前后对比偏医美硬广，功利感过重（2026-08-02 过审踢）。",
   },
 ];
 
@@ -370,7 +512,17 @@ ${composeAccentPaletteGuidance()}
 主字偏米白/象牙白；杀伤词用本条选定强调色（黄底块/侧栏粉/竖排红/吸睛绿/黑金/桃/玫瑰金/蓝/香槟金等）；可细笔刷下划线。字重可厚，但**禁止把主词做成立体变形花字**。`;
 }
 
-/** 封面出图：A1 全壳 + 表情同拍 + 配色池 */
+function composeTypeDeviceGuidance(): string {
+  const lines = PLATFORM_NETFEEL_TYPE_DEVICES.map(
+    (d) => `- ${d.id}（${d.labelZh}）：${d.hint}`,
+  ).join("\n");
+  return `【排版手法·可叠在任一壳上·同批轮换】
+每张封面挑 **1–2 个**（不是全用），用来把两行字做出层次：
+${lines}
+叠加上限：主句仍须 ≤13 字且一眼读完；手法不得盖过人物与主句。`;
+}
+
+/** 封面出图：A1 全壳 + 排版手法 + 表情同拍 + 配色池 */
 export function composePlatformNetfeelCoverGuidance(): string {
   const shells = PLATFORM_NETFEEL_COVER_SHELLS.map(
     (s) =>
@@ -381,6 +533,7 @@ export function composePlatformNetfeelCoverGuidance(): string {
 ${shells}
 版式：侧栏大字 / 背后竖排 / 黄底粗标 / 绿杀伤句 / 黑金大数字 / 粉系双行均可；主信息服务 coverHeadline；禁百科多图标墙与 CTA 墙。
 画面：真人**正在做事** + 烟火气场域（便利店/家装/哄娃/餐厅）；禁培训坐姿脸，也禁飞人跳伞类抽象摆拍。
+${composeTypeDeviceGuidance()}
 ${composeRejectedShellGuidance()}
 ${composePlatformNetfeelExpressionMatchGuidance()}
 屏内字：中国大陆简体；杀伤字 2–6 个提亮。`;
@@ -406,5 +559,6 @@ export function composePlatformNetfeelFullcaseGuidance(): string {
 /** 出图短约束 */
 export function composePlatformNetfeelImageSkillHint(): string {
   const shellIds = PLATFORM_NETFEEL_COVER_SHELLS.map((s) => s.id).join("/");
-  return `【网感封面·A1 过审集】壳轮换：${shellIds}；主句=coverHeadline。【配色池轮换】暖黄块/品红侧栏/真相红/吸睛绿/黑金/走心红/水蜜桃/玫瑰金/天蓝钴蓝/香槟琥珀——按壳选色，同批勿锁死单色；忌俗艳番茄红与荧光粉绿贴纸墙。【文案=表情】张口大吃/竖指/错愕坏笑/递物怼镜等；禁望窗外发呆，也禁面部过度用力。【好奇/价值钉】可用先做N件事、又挖到宝了、刷到就是赚到等开放环。【已剔除】飞人跳伞抽象摆拍、立体变形花字墙、封面写全答案剧透、字号过小、荧光撞色侧栏。`;
+  const deviceLabels = PLATFORM_NETFEEL_TYPE_DEVICES.map((d) => d.labelZh).join("/");
+  return `【网感封面·A1 过审集】壳轮换：${shellIds}；主句=coverHeadline。【排版手法·每张挑1–2个】${deviceLabels}；荧光只做小面积标注、英文只作装饰层、画中画 ≤1/4 画面。【配色池轮换】暖黄块/品红侧栏/真相红/吸睛绿/黑金/走心红/水蜜桃/玫瑰金/天蓝钴蓝/香槟琥珀——按壳选色，同批勿锁死单色；忌俗艳番茄红与荧光粉绿贴纸墙。【文案=表情】张口大吃/竖指/错愕坏笑/递物怼镜等；禁望窗外发呆，也禁面部过度用力。【好奇/价值钉】可用先做N件事、又挖到宝了、刷到就是赚到等开放环。【已剔除】飞人跳伞抽象摆拍、立体变形花字墙、封面写全答案剧透、字号过小、荧光撞色侧栏。`;
 }
