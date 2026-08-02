@@ -153,6 +153,7 @@ import {
 } from "@shared/decisionIntelTopicPicks";
 import {
   PLATFORM_SKILL_MASTER_READONLY,
+  PLATFORM_TOPIC_EXPAND_MAX,
   PLATFORM_TOPIC_SHORTLIST_DEFAULT,
   PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT,
   PLATFORM_TOPIC_TOP_PICK_COUNT,
@@ -2512,10 +2513,8 @@ export default function PlatformPage() {
   /** 正在改标题的初选条目 id 与草稿文字（改完才扩写） */
   const [editingShortlistTopicId, setEditingShortlistTopicId] = useState<string | null>(null);
   const [editingShortlistTitle, setEditingShortlistTitle] = useState("");
-  /** 初选里点「就写这条」的选题：由下方 effect 交给单条执行文案链路（同一选题首次免费） */
-  const [pendingShortlistTopic, setPendingShortlistTopic] = useState<PlatformTopicShortlistItem | null>(
-    null,
-  );
+  /** 多选扩写：勾选 id；「就写这条」也会走同一 expand 接口 */
+  const [selectedShortlistIds, setSelectedShortlistIds] = useState<string[]>([]);
   const startEditingShortlistTitle = useCallback((topic: PlatformTopicShortlistItem) => {
     setEditingShortlistTopicId(topic.id);
     setEditingShortlistTitle(topic.title);
@@ -2537,6 +2536,7 @@ export default function PlatformPage() {
     setEditingShortlistTitle("");
   }, [editingShortlistTitle, editingShortlistTopicId]);
   const generateTopicShortlistMutation = trpc.mvAnalysis.generatePlatformTopicShortlist.useMutation();
+  const expandTopicPicksMutation = trpc.mvAnalysis.expandPlatformTopicPicks.useMutation();
   const topicShortlistPrice = platformTopicShortlistTotalCredits({
     count: topicShortlistCount,
     baseCredits: CREDIT_COSTS.platformTopicShortlist,
@@ -2914,6 +2914,101 @@ export default function PlatformPage() {
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
+  const toggleShortlistSelection = useCallback((id: string) => {
+    setSelectedShortlistIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.length >= PLATFORM_TOPIC_EXPAND_MAX) {
+        toast.error(`一次最多勾选 ${PLATFORM_TOPIC_EXPAND_MAX} 条再写文案`);
+        return prev;
+      }
+      return [...prev, id];
+    });
+  }, []);
+
+  /** 初选 → 正式文案：走 expandPlatformTopicPicks（不依赖战略看板） */
+  const expandShortlistPicks = useCallback(
+    async (picksIn: PlatformTopicShortlistItem[]) => {
+      const picks = picksIn.slice(0, PLATFORM_TOPIC_EXPAND_MAX);
+      if (!picks.length) {
+        toast.error("请先勾选至少一条选题");
+        return;
+      }
+      if (expandTopicPicksMutation.isPending) return;
+      const cost = CREDIT_COSTS.platformTopicExpand;
+      if (
+        !supervisorAccess &&
+        !window.confirm(`将为选中的 ${picks.length} 条选题扩写正式文案（${cost} 点）。是否继续？`)
+      ) {
+        return;
+      }
+      setShortlistLastError(null);
+      pushShortlistDebug(`扩写开始：${picks.length} 条 · expandPlatformTopicPicks`);
+      picks.forEach((p, i) => pushShortlistDebug(`  ${i + 1}. ${p.title.slice(0, 48)}`));
+      const t0 = Date.now();
+      const heartbeat = window.setInterval(() => {
+        pushShortlistDebug(`⏳ 扩写进行中… ${Math.round((Date.now() - t0) / 1000)}s`);
+      }, 15_000);
+      try {
+        const res = await expandTopicPicksMutation.mutateAsync({
+          context: focusPrompt.trim() || undefined,
+          enabledSkillIds: Array.from(enabledPlatformSkillIds),
+          allowBloggerTitle,
+          picks: picks.map((p) => ({
+            id: p.id,
+            title: p.title,
+            hookSketch: p.hookSketch,
+            conveyGoal: p.conveyGoal,
+            skillsUsed: p.skillsUsed,
+            primaryLane: p.primaryLane,
+            formatHint: p.formatHint,
+            dedupeKey: p.dedupeKey,
+            commentHook: p.commentHook,
+            linkedCampaigns: p.linkedCampaigns,
+          })),
+        });
+        const bps = Array.isArray(res.contentBlueprints) ? res.contentBlueprints : [];
+        setPlatformContent((prev) => ({
+          monetizationLanes: Array.isArray(prev?.monetizationLanes) ? prev!.monetizationLanes : [],
+          contentBlueprints: [
+            ...(Array.isArray(prev?.contentBlueprints) ? prev!.contentBlueprints : []),
+            ...(bps as any[]),
+          ],
+        }));
+        setCreateStep("result");
+        setSelectedShortlistIds([]);
+        pushShortlistDebug(
+          `✅ 扩写完成 ${bps.length} 条 · ${Math.round((Date.now() - t0) / 1000)}s · 扣点 ${res.chargedCredits ?? "—"}`,
+        );
+        toast.success(
+          `已扩写 ${bps.length} 条文案${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}，请到下方执行区继续出封面`,
+        );
+        window.setTimeout(() => scrollToPlatformSection("platform-stage2-copy"), 80);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const friendly =
+          msg.includes("timeout") || msg.includes("504")
+            ? "扩写超时，请少选几条或稍后重试"
+            : msg.includes("空内容")
+              ? "模型空回，请再试一次"
+              : msg || "扩写失败";
+        setShortlistLastError(friendly);
+        pushShortlistDebug(`❌ 扩写失败：${friendly}（已等 ${Math.round((Date.now() - t0) / 1000)}s）`);
+        toast.error(friendly);
+      } finally {
+        window.clearInterval(heartbeat);
+      }
+    },
+    [
+      expandTopicPicksMutation,
+      supervisorAccess,
+      pushShortlistDebug,
+      focusPrompt,
+      enabledPlatformSkillIds,
+      allowBloggerTitle,
+      scrollToPlatformSection,
+    ],
+  );
+
   /** 选题初选卡片：可多处挂载（须各自独立 React 节点 + 不同 domId，禁止复用同一 element） */
   const renderTopicShortlistSection = (domId: string, opts?: { showGenerateButton?: boolean }) => {
     const showGenerateButton = opts?.showGenerateButton !== false;
@@ -2986,6 +3081,7 @@ export default function PlatformPage() {
                     });
                     const topics = res.topics || [];
                     setTopicShortlist(topics);
+                    setSelectedShortlistIds([]);
                     if (!topics.length) {
                       toast.error(
                         "初选未返回选题（可能超时或模型空回）。请稍后重试；若刚扣点请联系管理员核对。",
@@ -3029,21 +3125,81 @@ export default function PlatformPage() {
         {topicShortlist.length > 0 ? (
           <>
             <p className="mt-3 text-[12px] leading-snug text-gray-400">
-              已按爆款概率 + 评论区热度排序，前 {PLATFORM_TOPIC_TOP_PICK_COUNT} 条标了「优先」，只是给你参考顺序。
-              <strong className="text-white/90">挑哪条你说了算</strong>：标题不满意可以点「改标题」直接改，改完再点「就写这条」，才会生成文案与封面。
+              已按爆款概率 + 评论区热度排序，前 {PLATFORM_TOPIC_TOP_PICK_COUNT} 条标了「优先」。
+              <strong className="text-white/90">可勾选多条</strong>
+              （最多 {PLATFORM_TOPIC_EXPAND_MAX}），再点「写选中的」；也可单条点「就写这条」。改标题后再写。
             </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const topIds = topicShortlist
+                    .filter((t) => t.isTopPick)
+                    .map((t) => t.id)
+                    .slice(0, PLATFORM_TOPIC_EXPAND_MAX);
+                  setSelectedShortlistIds(topIds);
+                }}
+                className="rounded-lg border border-white/15 px-2.5 py-1.5 text-[11px] text-gray-300"
+              >
+                勾选优先
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedShortlistIds([])}
+                className="rounded-lg border border-white/15 px-2.5 py-1.5 text-[11px] text-gray-400"
+              >
+                清空勾选
+              </button>
+              <button
+                type="button"
+                disabled={
+                  selectedShortlistIds.length === 0 || expandTopicPicksMutation.isPending
+                }
+                onClick={() => {
+                  const picks = topicShortlist.filter((t) => selectedShortlistIds.includes(t.id));
+                  void expandShortlistPicks(picks);
+                }}
+                className="rounded-lg border border-emerald-400/50 bg-emerald-500/20 px-3 py-1.5 text-[11px] font-bold text-emerald-50 disabled:opacity-40"
+              >
+                {expandTopicPicksMutation.isPending
+                  ? "扩写中…"
+                  : `写选中的 ${selectedShortlistIds.length || ""} 条（${CREDIT_COSTS.platformTopicExpand} 点）`}
+              </button>
+              <span className="text-[11px] text-gray-500">
+                已勾 {selectedShortlistIds.length}/{PLATFORM_TOPIC_EXPAND_MAX}
+              </span>
+            </div>
+            {expandTopicPicksMutation.isPending ? (
+              <div className="mt-2 flex items-center gap-2 text-sm text-emerald-200/90">
+                <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                正在扩写文案（串行，请勿刷新）…
+              </div>
+            ) : null}
             <div className="mt-2 max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
-              {topicShortlist.map((t, i) => (
+              {topicShortlist.map((t, i) => {
+                const checked = selectedShortlistIds.includes(t.id);
+                return (
                 <div
                   key={`${domId}-${t.id}`}
                   className={`rounded-md border px-2.5 py-2 text-[12px] ${
-                    t.isTopPick
+                    checked
+                      ? "border-emerald-400/50 bg-emerald-500/10 text-gray-200"
+                      : t.isTopPick
                       ? "border-[#fde047]/40 bg-[#fde047]/8 text-gray-200"
                       : "border-white/10 bg-black/20 text-gray-300"
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
+                    <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={expandTopicPicksMutation.isPending}
+                        onChange={() => toggleShortlistSelection(t.id)}
+                        className="mt-1 h-3.5 w-3.5 shrink-0 accent-emerald-400"
+                        aria-label={`勾选选题：${t.title}`}
+                      />
+                      <div className="min-w-0 flex-1">
                       <span className="mr-1.5 text-[11px] font-bold text-gray-500">{i + 1}.</span>
                       {t.isTopPick ? (
                         <span className="mr-1.5 rounded bg-[#fde047]/20 px-1.5 py-0.5 text-[10px] font-bold text-[#fde047]">
@@ -3063,6 +3219,7 @@ export default function PlatformPage() {
                             }
                             if (e.key === "Escape") cancelEditingShortlistTitle();
                           }}
+                          onClick={(e) => e.stopPropagation()}
                           className="w-full rounded border border-[#49e6ff]/40 bg-black/40 px-2 py-1 text-[12px] font-semibold text-white outline-none"
                           aria-label="修改选题标题"
                         />
@@ -3088,7 +3245,8 @@ export default function PlatformPage() {
                           {t.viralReason}
                         </span>
                       ) : null}
-                    </div>
+                      </div>
+                    </label>
                     <div className="flex shrink-0 items-center gap-1.5">
                       {editingShortlistTopicId === t.id ? (
                         <>
@@ -3118,8 +3276,8 @@ export default function PlatformPage() {
                           </button>
                           <button
                             type="button"
-                            disabled={Boolean(generatingStrategicMapTopicKey) || Boolean(pendingShortlistTopic)}
-                            onClick={() => setPendingShortlistTopic(t)}
+                            disabled={expandTopicPicksMutation.isPending}
+                            onClick={() => void expandShortlistPicks([t])}
                             className="rounded-lg border border-emerald-400/50 bg-emerald-500/20 px-2.5 py-1.5 text-[11px] font-bold text-emerald-50 disabled:opacity-40"
                           >
                             就写这条
@@ -3129,7 +3287,8 @@ export default function PlatformPage() {
                     </div>
                   </div>
                 </div>
-              ))}
+              );
+              })}
             </div>
           </>
         ) : !generateTopicShortlistMutation.isPending ? (
@@ -7955,11 +8114,15 @@ export default function PlatformPage() {
     pushShortlistDebug(`全案确认：请求 ${n} 条选题初选（小红书主 / B站+抖音辅）`);
     pushShortlistDebug(`人设长度 ${focusPrompt.trim().length} 字 · Skill ${enabledPlatformSkillIds.size} 项`);
     scrollToPlatformSection("platform-fullcase-shortlist-results");
+    const t0 = Date.now();
+    const heartbeat = window.setInterval(() => {
+      const sec = Math.round((Date.now() - t0) / 1000);
+      pushShortlistDebug(`⏳ 仍在等待服务端… ${sec}s（本机趋势→LLM；勿刷新）`);
+    }, 15_000);
     try {
       trackPlatformFunnel("fullcase_start", { mode: "create", handler: "generateTopicShortlist", count: n });
       trackPlatformFunnel("topic_shortlist_start", { count: n });
       pushShortlistDebug("调用 generatePlatformTopicShortlist…");
-      const t0 = Date.now();
       const existingTitles = [
         ...(platformContent?.contentBlueprints || []).map((b: { title?: string }) => String(b?.title || "")),
         ...topicShortlist.map((t) => t.title),
@@ -7974,6 +8137,7 @@ export default function PlatformPage() {
       const topics = res.topics || [];
       const ms = Date.now() - t0;
       setTopicShortlist(topics);
+      setSelectedShortlistIds([]);
       setCreateStep("result");
       pushShortlistDebug(
         `返回 topics=${topics.length} · 耗时 ${Math.round(ms / 1000)}s · 扣点 ${res.chargedCredits ?? "—"}`,
@@ -8017,8 +8181,10 @@ export default function PlatformPage() {
             ? "模型空回（服务端已自动重试仍失败），请再试一次"
             : msg || "全案选题初选失败";
       setShortlistLastError(friendly);
-      pushShortlistDebug(`❌ ${friendly}`);
+      pushShortlistDebug(`❌ ${friendly}（已等 ${Math.round((Date.now() - t0) / 1000)}s）`);
       toast.error(friendly);
+    } finally {
+      window.clearInterval(heartbeat);
     }
   };
 
@@ -8244,21 +8410,6 @@ export default function PlatformPage() {
       allowBloggerTitle,
     ],
   );
-
-  /**
-   * 初选点「就写这条」后才写文案：走单条执行文案链路（同一选题首次免费），
-   * 不批量扩写，避免一次点下去烧掉整批积分。
-   */
-  useEffect(() => {
-    if (!pendingShortlistTopic) return;
-    const topic = pendingShortlistTopic;
-    setPendingShortlistTopic(null);
-    void handleQuickHotTopicToExecution({
-      title: topic.title,
-      whyHot: topic.conveyGoal,
-      howToUse: topic.hookSketch,
-    });
-  }, [pendingShortlistTopic, handleQuickHotTopicToExecution]);
 
   const handleStrategicMapRegenerateTopicCopy = useCallback(
     async (pick: DecisionIntelTopicPick) => {
@@ -8545,6 +8696,7 @@ export default function PlatformPage() {
       });
       const topics = res.topics || [];
       setTopicShortlist(topics);
+      setSelectedShortlistIds([]);
       setCreateStep("result");
       scrollToPlatformSection("platform-topic-shortlist");
       pushShortlistDebug(
@@ -9041,11 +9193,13 @@ export default function PlatformPage() {
               </button>
             </div>
             <p className="mt-1 text-[11px] leading-relaxed text-[#c9c0e6]/65">
-              过程：确认 → 调 generatePlatformTopicShortlist → 写 topicShortlist → 钉在按钮下方。
-              Fly 对照关键字：generatePlatformTopicShortlist / empty content。
+              过程：确认 → 本机趋势 → 初选 LLM → 勾选/就写这条 → expandPlatformTopicPicks → 执行区。
+              Fly：generatePlatformTopicShortlist / expandPlatformTopicPicks / empty content。
             </p>
             <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[#b8f4ff]/80">
-              <span>pending={String(generateTopicShortlistMutation.isPending)}</span>
+              <span>shortlistPending={String(generateTopicShortlistMutation.isPending)}</span>
+              <span>expandPending={String(expandTopicPicksMutation.isPending)}</span>
+              <span>勾选={selectedShortlistIds.length}</span>
               <span>条数档={topicShortlistCount}</span>
               <span>已出={topicShortlist.length}</span>
               {shortlistLastError ? (
