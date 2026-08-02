@@ -243,7 +243,7 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
   });
 
   const maxTokens = Math.min(24000, 12000 + Math.max(0, targetCount - 12) * 600);
-  const invokeShortlist = async (reasoningEffort: "high" | "medium" | "minimal") =>
+  const invokeShortlist = () =>
     invokeLLM({
       provider: "openai",
       modelName: getPlatformStage2OpenAiModel(),
@@ -255,32 +255,20 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-      reasoningEffort,
+      // 产品口径：固定 medium，不用 minimal
+      reasoningEffort: "medium",
     });
 
-  // 初选 20 条 + reasoning high 易耗尽预算导致 content 空（Fly 已见 empty content + health 抖）
-  // 全案 20+ 条直接 minimal，缩短阻塞；≤12 条仍先 medium
-  const firstEffort: "medium" | "minimal" = targetCount >= 16 ? "minimal" : "medium";
-  let reasoningUsed: "medium" | "minimal" = firstEffort;
   let emptyRetried = false;
   console.info(
-    `[generatePlatformTopicShortlist] 开始 LLM count=${targetCount} reasoning=${firstEffort} trendStatus=${trendStatus} trendPlatforms=${trendBriefs.length}`,
+    `[generatePlatformTopicShortlist] 开始 LLM count=${targetCount} reasoning=medium trendStatus=${trendStatus} trendPlatforms=${trendBriefs.length}`,
   );
-  let res = await invokeShortlist(firstEffort);
+  let res = await invokeShortlist();
   let llmText = extractFirstChoicePlainText(res).trim();
-  if (!llmText && firstEffort !== "minimal") {
+  if (!llmText) {
     emptyRetried = true;
-    reasoningUsed = "minimal";
-    console.warn(
-      "[generatePlatformTopicShortlist] 首次空回（medium），降到 minimal 重试一次",
-    );
-    res = await invokeShortlist("minimal");
-    llmText = extractFirstChoicePlainText(res).trim();
-  } else if (!llmText && firstEffort === "minimal") {
-    emptyRetried = true;
-    console.warn("[generatePlatformTopicShortlist] minimal 空回，再试一次 medium");
-    reasoningUsed = "medium";
-    res = await invokeShortlist("medium");
+    console.warn("[generatePlatformTopicShortlist] 首次空回（medium），再以 medium 重试一次");
+    res = await invokeShortlist();
     llmText = extractFirstChoicePlainText(res).trim();
   }
   if (!llmText) {
@@ -401,7 +389,7 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
       lanes: topics.map((t) => t.primaryLane),
       trendStatus,
       trendPlatforms: trendBriefs.map((b) => `${b.platform}:${b.hotTitles.length}`),
-      reasoningUsed,
+      reasoningUsed: "medium",
       emptyRetried,
       viralScores: topics.map((t) => t.viralScore ?? null),
       commentHeats: topics.map((t) => t.commentHeat ?? null),
@@ -475,7 +463,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
       outputFormat: "json",
     });
 
-    const invokeExpand = async (reasoningEffort: "medium" | "minimal") =>
+    const invokeExpand = () =>
       invokeLLM({
         provider: "openai",
         modelName: getPlatformStage2OpenAiModel(),
@@ -486,17 +474,18 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
           { role: "system", content: system },
           { role: "user", content: user },
         ],
-        reasoningEffort,
+        // 产品口径：固定 medium，不用 minimal
+        reasoningEffort: "medium",
       });
 
     console.info(
-      `[expandPlatformTopicPicks] ${i + 1}/${uniquePicks.length} title=${pick.title.slice(0, 40)}`,
+      `[expandPlatformTopicPicks] ${i + 1}/${uniquePicks.length} title=${pick.title.slice(0, 40)} reasoning=medium`,
     );
-    let res = await invokeExpand("medium");
+    let res = await invokeExpand();
     let llmText = extractFirstChoicePlainText(res).trim();
     if (!llmText) {
-      console.warn(`[expandPlatformTopicPicks] 空回 medium，重试 minimal · ${i + 1}/${uniquePicks.length}`);
-      res = await invokeExpand("minimal");
+      console.warn(`[expandPlatformTopicPicks] 空回 medium，再以 medium 重试 · ${i + 1}/${uniquePicks.length}`);
+      res = await invokeExpand();
       llmText = extractFirstChoicePlainText(res).trim();
     }
 
