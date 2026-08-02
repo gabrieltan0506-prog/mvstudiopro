@@ -24,6 +24,13 @@ import {
   type CanvasBlockKind,
   type CanvasEdge,
 } from "@/lib/canvasTypes";
+import {
+  applyLocalMediaPointersToBlocks,
+  isLocalMediaPointer,
+  resolveUrlForCloudSync,
+  resolveUrlForLocalPersist,
+  scheduleCacheCanvasMediaToLocalStore,
+} from "@/lib/manhuaLocalMediaStore";
 
 export const MANHUA_CLOUD_DRAFT_LOCAL_AT_KEY = "mv-manhua-cloud-draft-local-at-v1";
 export const MANHUA_CLOUD_DRAFT_SYNC_DEBOUNCE_MS = 2500;
@@ -93,17 +100,26 @@ function isHttpUrl(u: unknown): boolean {
   return /^https?:\/\//i.test(String(u || "").trim());
 }
 
-/** 本机落盘可保留的资产 URL：HTTPS + 站点内 /manhua-* 垫图路径 */
+/** 本机落盘可保留：HTTPS / 站点垫图 / local-media 指针（二进制在 IndexedDB） */
 function isPersistableAssetUrl(u: unknown): boolean {
   const s = String(u || "").trim();
   if (!s || s.startsWith("blob:") || s.startsWith("data:")) return false;
+  if (isLocalMediaPointer(s)) return true;
   if (/^https?:\/\//i.test(s)) return true;
   return s.startsWith("/manhua-") || s.startsWith("/assets/") || s.startsWith("/demo/");
 }
 
-/** 本机落盘瘦身：去视频产物与 blob，降低多集撑爆配额 */
+function persistableLocalUrl(u: unknown): string | undefined {
+  const mapped = resolveUrlForLocalPersist(u);
+  if (mapped && isPersistableAssetUrl(mapped)) return mapped;
+  if (isPersistableAssetUrl(u)) return String(u).trim();
+  return undefined;
+}
+
+/** 本机落盘瘦身：去视频产物与 blob；已缓存图改写为 local-media: 指针 */
 export function slimBlocksForLocalPersist(blocks: CanvasBlock[]): CanvasBlock[] {
-  return blocks.map((b) => {
+  const pointed = applyLocalMediaPointersToBlocks(blocks);
+  return pointed.map((b) => {
     if (isManhuaCloudDraftVideoBlock(b)) {
       return {
         ...b,
@@ -114,25 +130,56 @@ export function slimBlocksForLocalPersist(blocks: CanvasBlock[]): CanvasBlock[] 
         error: undefined,
       };
     }
-    const outputUrls = (b.outputUrls || []).filter(isPersistableAssetUrl).slice(0, 8);
-    const outputUrl = isPersistableAssetUrl(b.outputUrl)
-      ? String(b.outputUrl).trim()
-      : outputUrls[0];
+    const outputUrls = (b.outputUrls || [])
+      .map((u) => persistableLocalUrl(u))
+      .filter((u): u is string => Boolean(u))
+      .slice(0, 8);
+    const outputUrl = persistableLocalUrl(b.outputUrl) || outputUrls[0];
     return {
       ...b,
       outputUrl,
       outputUrls: outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
-      refImageUrl: isPersistableAssetUrl(b.refImageUrl)
-        ? String(b.refImageUrl).trim()
-        : undefined,
+      refImageUrl: persistableLocalUrl(b.refImageUrl),
       uploadedAssets: [],
       uploadFailures: undefined,
-      editMaskUrl: isPersistableAssetUrl(b.editMaskUrl) ? String(b.editMaskUrl).trim() : undefined,
-      editFusionUrls: (b.editFusionUrls || []).filter(isPersistableAssetUrl).slice(0, 15),
-      lastFrameUrl: isPersistableAssetUrl(b.lastFrameUrl)
-        ? String(b.lastFrameUrl).trim()
-        : undefined,
+      editMaskUrl: persistableLocalUrl(b.editMaskUrl),
+      editFusionUrls: (b.editFusionUrls || [])
+        .map((u) => persistableLocalUrl(u))
+        .filter((u): u is string => Boolean(u))
+        .slice(0, 15),
+      lastFrameUrl: persistableLocalUrl(b.lastFrameUrl),
       manhuaRetake: b.manhuaRetake,
+    };
+  });
+}
+
+/** 云同步前：blob:/local-media: → 溯源 https（有则带上；无则留给本机库） */
+export function blocksForCloudDraftSync(blocks: CanvasBlock[]): CanvasBlock[] {
+  return blocks.map((b) => {
+    if (isManhuaCloudDraftVideoBlock(b)) {
+      return {
+        ...b,
+        outputUrl: undefined,
+        outputUrls: [],
+        refImageUrl: resolveUrlForCloudSync(b.refImageUrl),
+      };
+    }
+    const outputUrls = (b.outputUrls || [])
+      .map((u) => resolveUrlForCloudSync(u))
+      .filter((u): u is string => Boolean(u))
+      .slice(0, 8);
+    const outputUrl = resolveUrlForCloudSync(b.outputUrl) || outputUrls[0];
+    return {
+      ...b,
+      outputUrl,
+      outputUrls: outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
+      refImageUrl: resolveUrlForCloudSync(b.refImageUrl),
+      editFusionUrls: (b.editFusionUrls || [])
+        .map((u) => resolveUrlForCloudSync(u))
+        .filter((u): u is string => Boolean(u))
+        .slice(0, 15),
+      editMaskUrl: resolveUrlForCloudSync(b.editMaskUrl),
+      lastFrameUrl: resolveUrlForCloudSync(b.lastFrameUrl),
     };
   });
 }
@@ -142,6 +189,8 @@ export function trySaveLocalCanvas(
   edges: CanvasEdge[],
   storage: Pick<Storage, "setItem"> = localStorage,
 ): boolean {
+  // 旁路：尽快把仍有效的远端图写入本机媒体库（下次落盘可改写为指针）
+  scheduleCacheCanvasMediaToLocalStore(blocks);
   const slim = slimBlocksForLocalPersist(blocks);
   try {
     storage.setItem(CANVAS_LS_KEY, JSON.stringify({ blocks: slim, edges }));
@@ -276,10 +325,13 @@ export function buildLocalCloudDraftSnapshot(input: {
   factoryPrefs?: Record<string, unknown> | null;
   clientUpdatedAt?: string;
 }): ManhuaCloudDraftPayload {
+  const blocks = Array.isArray(input.blocks)
+    ? blocksForCloudDraftSync(input.blocks as CanvasBlock[])
+    : [];
   return buildManhuaCloudDraftPayload({
     clientUpdatedAt: input.clientUpdatedAt || new Date().toISOString(),
     writerSession: input.writerSession,
-    blocks: input.blocks,
+    blocks,
     edges: input.edges,
     factoryPrefs: input.factoryPrefs,
   });

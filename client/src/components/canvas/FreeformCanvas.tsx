@@ -41,6 +41,7 @@ import {
   sanitizeManhuaRecapUpstreamLinks,
   syncManhuaClipAssetEdges,
 } from "@/lib/canvasDramaStudio";
+import { tryLocalMediaDisplayForBlock } from "@/lib/manhuaLocalMediaStore";
 import {
   MANHUA_CLIP_CONTINUITY_HINT_ZH,
   MANHUA_CLIP_CROSS_SEGMENT_TRANSITION_HINT_ZH,
@@ -519,6 +520,14 @@ function CanvasAssetVisualBody({
                 e.stopPropagation();
                 openPreview?.({ url: imgUrl, labelZh: shortId });
               }}
+              onError={(e) => {
+                const el = e.currentTarget;
+                if (el.dataset.localRetry === "1") return;
+                el.dataset.localRetry = "1";
+                void tryLocalMediaDisplayForBlock(String(block.id || ""), "output").then((local) => {
+                  if (local) el.src = local;
+                });
+              }}
               className="h-full w-full cursor-zoom-in object-contain"
             />
             <CanvasImageZoomButton url={imgUrl} labelZh={shortId} />
@@ -574,9 +583,15 @@ export default function FreeformCanvas({
   /** 左栏：画布节点列表 / 资产设定卡（对照参考图 IA，不抄皮肤） */
   const [leftRailTab, setLeftRailTab] = useState<"canvas" | "assets">("canvas");
   const [leftRailQuery, setLeftRailQuery] = useState("");
+  /** 嵌入右栏时默认收起左轨，给竖排缩略更多横向空间 */
+  const [leftRailCollapsed, setLeftRailCollapsed] = useState(Boolean(fillContainer));
   const [viewportPct, setViewportPct] = useState(100);
+  /** 世界缩放：让本集全部节点缩进可视区（≠节点自身 width/height） */
+  const [viewScale, setViewScale] = useState(1);
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const focusMissSinceRef = useRef<number | null>(null);
+  const viewScaleRef = useRef(1);
+  viewScaleRef.current = viewScale;
 
   const mediaOnly = presentation === "media";
   const spawnOptions = useMemo(() => {
@@ -642,21 +657,57 @@ export default function FreeformCanvas({
 
   /** absolute 节点不撑开滚动区；按节点包围盒扩世界，才能滚到竖排底部 */
   const worldSize = useMemo(() => {
-    let w = 3600;
-    let h = 2400;
+    let w = 800;
+    let h = 600;
     for (const b of visibleBlocks) {
-      w = Math.max(w, Math.ceil(b.x + b.width + 200));
-      h = Math.max(h, Math.ceil(b.y + b.height + 200));
+      w = Math.max(w, Math.ceil(b.x + b.width + 48));
+      h = Math.max(h, Math.ceil(b.y + b.height + 48));
     }
     return { w, h };
   }, [visibleBlocks]);
+
+  const contentBounds = useMemo(() => {
+    if (!visibleBlocks.length) return { minX: 0, minY: 0, w: 1, h: 1 };
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const b of visibleBlocks) {
+      minX = Math.min(minX, b.x);
+      minY = Math.min(minY, b.y);
+      maxX = Math.max(maxX, b.x + b.width);
+      maxY = Math.max(maxY, b.y + b.height);
+    }
+    return {
+      minX: Number.isFinite(minX) ? minX : 0,
+      minY: Number.isFinite(minY) ? minY : 0,
+      w: Math.max(1, maxX - minX),
+      h: Math.max(1, maxY - minY),
+    };
+  }, [visibleBlocks]);
+
+  const fitAllInView = useCallback(() => {
+    const el = canvasRef.current;
+    if (!el || !visibleBlocks.length) {
+      setViewScale(1);
+      return;
+    }
+    const pad = 20;
+    const availW = Math.max(80, el.clientWidth - pad * 2);
+    const availH = Math.max(80, el.clientHeight - pad * 2);
+    const scale = Math.min(1, availW / contentBounds.w, availH / contentBounds.h);
+    setViewScale(Math.max(0.12, Math.round(scale * 1000) / 1000));
+    el.scrollTo({ left: 0, top: 0 });
+  }, [contentBounds.h, contentBounds.w, visibleBlocks.length]);
 
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
     const update = () => {
-      const pctW = el.clientWidth / Math.max(1, worldSize.w);
-      const pctH = el.clientHeight / Math.max(1, worldSize.h);
+      const scaledW = worldSize.w * viewScale;
+      const scaledH = worldSize.h * viewScale;
+      const pctW = el.clientWidth / Math.max(1, scaledW);
+      const pctH = el.clientHeight / Math.max(1, scaledH);
       const pct = Math.round(Math.min(pctW, pctH) * 100);
       setViewportPct(Math.max(1, Math.min(100, pct)));
     };
@@ -668,7 +719,19 @@ export default function FreeformCanvas({
       el.removeEventListener("scroll", update);
       ro?.disconnect();
     };
-  }, [worldSize.w, worldSize.h, visibleBlocks.length]);
+  }, [worldSize.w, worldSize.h, visibleBlocks.length, viewScale]);
+
+  /** 嵌入右栏：节点增减或容器尺寸变化时自动「看全图」 */
+  useEffect(() => {
+    if (!fillContainer) return;
+    const el = canvasRef.current;
+    if (!el) return;
+    const run = () => fitAllInView();
+    run();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(run) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, [fillContainer, fitAllInView, leftRailCollapsed, visibleBlocks.length]);
 
   useEffect(() => {
     if (!focusBlockId) {
@@ -690,16 +753,21 @@ export default function FreeformCanvas({
     setPulseHighlightId(focusBlockId);
     const canvas = canvasRef.current;
     if (canvas) {
+      const scale = viewScaleRef.current || 1;
       const pad = 28;
-      const fitsX = block.width + pad * 2 <= canvas.clientWidth;
-      const fitsY = block.height + pad * 2 <= canvas.clientHeight;
+      const bw = block.width * scale;
+      const bh = block.height * scale;
+      const bx = block.x * scale;
+      const by = block.y * scale;
+      const fitsX = bw + pad * 2 <= canvas.clientWidth;
+      const fitsY = bh + pad * 2 <= canvas.clientHeight;
       const targetLeft = Math.max(
         0,
-        fitsX ? block.x - (canvas.clientWidth - block.width) / 2 : block.x - pad,
+        fitsX ? bx - (canvas.clientWidth - bw) / 2 : bx - pad,
       );
       const targetTop = Math.max(
         0,
-        fitsY ? block.y - (canvas.clientHeight - block.height) / 2 : block.y - pad,
+        fitsY ? by - (canvas.clientHeight - bh) / 2 : by - pad,
       );
       canvas.scrollTo({ left: targetLeft, top: targetTop, behavior: "smooth" });
     }
@@ -1056,9 +1124,12 @@ export default function FreeformCanvas({
     const onMove = (e: PointerEvent) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
+      const scale = Math.max(0.01, viewScaleRef.current || 1);
       const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left - dragState.offsetX + canvas.scrollLeft;
-      const y = e.clientY - rect.top - dragState.offsetY + canvas.scrollTop;
+      const x =
+        (e.clientX - rect.left + canvas.scrollLeft) / scale - dragState.offsetX;
+      const y =
+        (e.clientY - rect.top + canvas.scrollTop) / scale - dragState.offsetY;
       onBlocksChange((prev) =>
         patchBlock(prev, dragState.id, {
           x: Math.max(8, x),
@@ -1078,8 +1149,9 @@ export default function FreeformCanvas({
   useEffect(() => {
     if (!resizeState) return;
     const onMove = (e: PointerEvent) => {
-      const dw = e.clientX - resizeState.startPointerX;
-      const dh = e.clientY - resizeState.startPointerY;
+      const scale = Math.max(0.01, viewScaleRef.current || 1);
+      const dw = (e.clientX - resizeState.startPointerX) / scale;
+      const dh = (e.clientY - resizeState.startPointerY) / scale;
       const width = Math.min(
         CANVAS_BLOCK_MAX_WIDTH,
         Math.max(CANVAS_BLOCK_MIN_WIDTH, Math.round(resizeState.startW + dw)),
@@ -1181,6 +1253,41 @@ export default function FreeformCanvas({
       />
 
       {/* 左侧：+ 工具 + 画布/资产节点列表（对照参考图 IA） */}
+      {leftRailCollapsed ? (
+        <aside className="flex w-11 shrink-0 flex-col items-center gap-2 border-r border-white/10 bg-black/35 py-2.5">
+          <button
+            type="button"
+            title="展开节点列表"
+            onClick={() => setLeftRailCollapsed(false)}
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/10 text-white/80 hover:bg-white/15"
+          >
+            <Search className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            title="添加功能"
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setToolbarMenu({
+                x: rect.right + 8,
+                y: rect.top,
+                anchorCenterY: rect.top + rect.height / 2,
+              });
+            }}
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-black shadow-lg transition hover:scale-105"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            title="看全图"
+            onClick={() => fitAllInView()}
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-cyan-300/35 bg-cyan-500/15 text-cyan-50 hover:bg-cyan-500/25"
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+          </button>
+        </aside>
+      ) : (
       <aside className="flex w-[13.5rem] shrink-0 flex-col border-r border-white/10 bg-black/35">
         <div className="flex items-center gap-2 border-b border-white/10 px-2.5 py-2.5">
           <button
@@ -1219,6 +1326,14 @@ export default function FreeformCanvas({
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            title="收起列表"
+            onClick={() => setLeftRailCollapsed(true)}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 text-white/50 hover:bg-white/[0.06] hover:text-white/80"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
         </div>
         <div className="border-b border-white/10 px-2.5 py-2">
           <label className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-black/40 px-2 py-1.5">
@@ -1281,6 +1396,7 @@ export default function FreeformCanvas({
           节点
         </div>
       </aside>
+      )}
 
       {/* 无限画布：唯一滚动层；世界尺寸随节点包围盒扩展 */}
       <div className="relative min-h-0 flex-1">
@@ -1289,6 +1405,21 @@ export default function FreeformCanvas({
         data-freeform-canvas-scroll
         className="absolute inset-0 overflow-auto"
       >
+        <div
+          className="relative"
+          style={{
+            width: Math.ceil(worldSize.w * viewScale),
+            height: Math.ceil(worldSize.h * viewScale),
+          }}
+        >
+        <div
+          className="absolute left-0 top-0 origin-top-left"
+          style={{
+            width: worldSize.w,
+            height: worldSize.h,
+            transform: `scale(${viewScale})`,
+          }}
+        >
         <div
           aria-hidden
           className="pointer-events-none absolute left-0 top-0"
@@ -1301,7 +1432,7 @@ export default function FreeformCanvas({
         >
           {visibleEdges.map((e) => renderEdge(e.fromId, e.toId))}
         </svg>
-        <div className="relative h-[2400px] w-[3600px]">
+        <div className="relative" style={{ width: worldSize.w, height: worldSize.h }}>
           {visibleBlocks.length === 0 ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-white/40">
               <Plus className="mb-3 h-10 w-10 opacity-30" />
@@ -1349,11 +1480,12 @@ export default function FreeformCanvas({
                   onPointerDown={(e) => {
                     if ((e.target as HTMLElement).closest("button,select,textarea,input,label")) return;
                     const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
-                    const canvas = canvasRef.current!;
+                    const scale = Math.max(0.01, viewScaleRef.current || 1);
                     setDragState({
                       id: block.id,
-                      offsetX: e.clientX - rect.left,
-                      offsetY: e.clientY - rect.top,
+                      // 屏幕偏移换算到世界坐标，配合 viewScale 拖动
+                      offsetX: (e.clientX - rect.left) / scale,
+                      offsetY: (e.clientY - rect.top) / scale,
                     });
                     e.preventDefault();
                   }}
@@ -1982,9 +2114,20 @@ export default function FreeformCanvas({
             );
           })}
         </div>
+        </div>
+        </div>
       </div>
-      <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 rounded-full border border-white/15 bg-black/70 px-3 py-1 text-[11px] font-medium text-white/75 shadow-lg backdrop-blur">
-        视野 {viewportPct}%
+      <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2">
+        <button
+          type="button"
+          onClick={() => fitAllInView()}
+          className="pointer-events-auto rounded-full border border-cyan-300/40 bg-cyan-500/20 px-3 py-1 text-[11px] font-semibold text-cyan-50 shadow-lg backdrop-blur hover:bg-cyan-500/30"
+        >
+          看全图
+        </button>
+        <div className="rounded-full border border-white/15 bg-black/70 px-3 py-1 text-[11px] font-medium text-white/75 shadow-lg backdrop-blur">
+          视野 {viewportPct}% · {Math.round(viewScale * 100)}%
+        </div>
       </div>
       </div>
 

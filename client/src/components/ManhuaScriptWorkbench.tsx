@@ -25,6 +25,7 @@ import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   stageKeyFromBlockId,
 } from "@/lib/canvasDramaStudio";
+import { tryLocalMediaDisplayForBlock } from "@/lib/manhuaLocalMediaStore";
 import {
   getManhuaCharacterById,
   getManhuaCharacterDisplayName,
@@ -419,7 +420,14 @@ function keyartsForEpisode(blocks: CanvasBlock[], episode: number): CanvasBlock[
 
 function mediaUrl(b?: CanvasBlock): string | undefined {
   if (!b) return undefined;
-  return b.outputUrl || b.outputUrls?.[0] || undefined;
+  // 成图优先（含 local-media: / blob:）；缺成图时回退垫图/融合参考
+  return (
+    b.outputUrl ||
+    b.outputUrls?.[0] ||
+    b.refImageUrl ||
+    b.editFusionUrls?.[0] ||
+    undefined
+  );
 }
 
 const CLIP_QUALITY_ROWS = [
@@ -4667,7 +4675,21 @@ export default function ManhuaScriptWorkbench({
                         >
                           {thumb ? (
                             <>
-                              <img src={thumb} alt="" className="h-full w-full object-cover" />
+                              <img
+                                src={thumb}
+                                alt=""
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  const el = e.currentTarget;
+                                  if (el.dataset.localRetry === "1") return;
+                                  el.dataset.localRetry = "1";
+                                  const id = shotKey?.id;
+                                  if (!id) return;
+                                  void tryLocalMediaDisplayForBlock(id, "output").then((local) => {
+                                    if (local) el.src = local;
+                                  });
+                                }}
+                              />
                               {keyartUnlocked ? (
                                 <span className="absolute inset-x-0 bottom-0 bg-red-900/80 px-1 py-0.5 text-center text-[9px] font-semibold text-red-50">
                                   未垫图锁
