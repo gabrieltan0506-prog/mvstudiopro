@@ -2979,10 +2979,17 @@ export default function PlatformPage() {
         pushShortlistDebug(
           `✅ 扩写完成 ${bps.length} 条 · ${Math.round((Date.now() - t0) / 1000)}s · 扣点 ${res.chargedCredits ?? "—"}`,
         );
+        pushShortlistDebug("同页展示：钉在选题初选下方（不跳内容创作）");
         toast.success(
-          `已扩写 ${bps.length} 条文案${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}，请到下方执行区继续出封面`,
+          `已扩写 ${bps.length} 条文案${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；已挂在本页选题列表下方`,
         );
-        window.setTimeout(() => scrollToPlatformSection("platform-stage2-copy"), 80);
+        // 全案入口在「平台趋势」：结果必须同页可见，禁止切 Tab（打 API 后跳走等于丢现场）
+        window.setTimeout(() => {
+          const anchor =
+            document.getElementById("platform-fullcase-shortlist-results-expanded") ||
+            document.getElementById("platform-topic-shortlist-expanded");
+          anchor?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 80);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         const friendly =
@@ -3290,6 +3297,62 @@ export default function PlatformPage() {
               );
               })}
             </div>
+            {Array.isArray(platformContent?.contentBlueprints) &&
+            platformContent!.contentBlueprints.length > 0 ? (
+              <div
+                id={`${domId}-expanded`}
+                className="mt-4 scroll-mt-24 rounded-xl border border-emerald-400/35 bg-emerald-500/10 px-3 py-3"
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <div className="text-[15px] font-bold text-emerald-50">
+                    已扩写文案 · {platformContent!.contentBlueprints.length} 条
+                  </div>
+                  <span className="text-[11px] text-emerald-100/60">就挂在本页选题下方，不用切 Tab</span>
+                </div>
+                <div className="mt-2 max-h-[560px] space-y-3 overflow-y-auto pr-1">
+                  {platformContent!.contentBlueprints.map((bp, bi) => {
+                    const row = bp as Record<string, unknown>;
+                    const title = String(row.title || `文案 ${bi + 1}`);
+                    const hook = String(row.hook || "");
+                    const copy = String(row.copywriting || "");
+                    const format = String(row.format || "");
+                    const hooks = Array.isArray(row.commentHooks)
+                      ? (row.commentHooks as unknown[]).map(String).filter(Boolean)
+                      : [];
+                    return (
+                      <article
+                        key={`${domId}-exp-${String(row.shortlistId || row.dedupeKey || bi)}-${bi}`}
+                        className="rounded-lg border border-white/10 bg-black/30 px-3 py-2.5"
+                      >
+                        <div className="text-[13px] font-semibold text-white">
+                          {bi + 1}. {title}
+                          {format ? (
+                            <span className="ml-2 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-medium text-gray-300">
+                              {format}
+                            </span>
+                          ) : null}
+                        </div>
+                        {hook ? (
+                          <p className="mt-1 text-[12px] leading-snug text-[#8cefff]/85">钩子：{hook}</p>
+                        ) : null}
+                        {copy ? (
+                          <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-gray-200">
+                            {copy}
+                          </p>
+                        ) : (
+                          <p className="mt-1.5 text-[12px] text-amber-200/80">正文为空（可再点就写这条重试）</p>
+                        )}
+                        {hooks.length ? (
+                          <p className="mt-1.5 text-[11px] text-gray-400">
+                            评论钩子：{hooks.slice(0, 4).join(" · ")}
+                          </p>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
           </>
         ) : !generateTopicShortlistMutation.isPending ? (
           <p className="mt-3 text-[12px] text-gray-500">
@@ -9193,7 +9256,7 @@ export default function PlatformPage() {
               </button>
             </div>
             <p className="mt-1 text-[11px] leading-relaxed text-[#c9c0e6]/65">
-              过程：确认 → 本机趋势 → 初选 LLM → 勾选/就写这条 → expandPlatformTopicPicks → 执行区。
+              过程：确认 → 本机趋势 → 初选 → 勾选扩写 → 文案钉在选题下方同页（不跳 Tab）。
               Fly：generatePlatformTopicShortlist / expandPlatformTopicPicks / empty content。
             </p>
             <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[#b8f4ff]/80">
