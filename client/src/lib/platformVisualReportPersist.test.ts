@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   clearPlatformVisualReportPersist,
   readPlatformVisualReportPersist,
+  slimPlatformDashboardForPersist,
   writePlatformVisualReportPersist,
 } from "./platformVisualReportPersist";
 import type { VisualReportData } from "@/components/VisualReportTemplate";
@@ -43,21 +44,50 @@ describe("platformVisualReportPersist", () => {
     const report = sampleReport();
     expect(
       writePlatformVisualReportPersist(
-        { visualReport: report, platformDashboard: { ok: true }, windowDays: "7" },
+        { visualReport: report, platformDashboard: { headline: "ok", huge: "x".repeat(10) }, windowDays: "7" },
         storage,
       ),
     ).toBe(true);
     const loaded = readPlatformVisualReportPersist(storage);
-    expect(loaded?.visualReport.reportTitle).toBe("测试趋势报告");
-    expect(loaded?.platformDashboard).toEqual({ ok: true });
+    expect(loaded?.visualReport?.reportTitle).toBe("测试趋势报告");
+    expect(loaded?.platformDashboard).toEqual({ headline: "ok" });
     expect(loaded?.windowDays).toBe("7");
   });
 
-  it("rejects malformed payload", () => {
+  it("merges dashboard-only write without wiping prior report", () => {
+    const storage = memoryStorage();
+    writePlatformVisualReportPersist({ visualReport: sampleReport() }, storage);
+    writePlatformVisualReportPersist({ platformDashboard: { headline: "后到看板" } }, storage);
+    const loaded = readPlatformVisualReportPersist(storage);
+    expect(loaded?.visualReport?.reportTitle).toBe("测试趋势报告");
+    expect((loaded?.platformDashboard as { headline?: string })?.headline).toBe("后到看板");
+  });
+
+  it("accepts dashboard-only persist", () => {
+    const storage = memoryStorage();
+    expect(
+      writePlatformVisualReportPersist({ platformDashboard: { topSignals: ["a"] } }, storage),
+    ).toBe(true);
+    const loaded = readPlatformVisualReportPersist(storage);
+    expect(loaded?.visualReport).toBeNull();
+    expect(loaded?.platformDashboard).toEqual({ topSignals: ["a"] });
+  });
+
+  it("rejects malformed payload with neither report nor dashboard", () => {
     const storage = memoryStorage({
       "mvstudiopro.platform.visualReport.v1": JSON.stringify({ v: 1, visualReport: { foo: 1 } }),
     });
     expect(readPlatformVisualReportPersist(storage)).toBeNull();
+  });
+
+  it("slim drops heavy fields", () => {
+    expect(
+      slimPlatformDashboardForPersist({
+        headline: "h",
+        contentBlueprints: [{ x: 1 }],
+        monetizationLanes: [],
+      }),
+    ).toEqual({ headline: "h" });
   });
 
   it("clear removes key", () => {

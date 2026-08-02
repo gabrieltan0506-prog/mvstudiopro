@@ -2024,9 +2024,21 @@ export default function PlatformPage() {
   const [isVisualReportLoading, setIsVisualReportLoading] = useState(false);
   const [isVisualReportDownloading, setIsVisualReportDownloading] = useState(false);
 
-  /** 有报表就写入本机：刷新后仍渲染（爱马仕橙底在 Template，不依赖重新生成） */
+  /** 进页再灌一次本机缓存（覆盖初始化竞态；看板/报表可分到） */
   useEffect(() => {
-    if (!visualReportData) return;
+    const boot = readPlatformVisualReportPersist();
+    if (!boot) return;
+    if (boot.visualReport) {
+      setVisualReportData((prev) => prev ?? boot.visualReport);
+    }
+    if (boot.platformDashboard != null) {
+      setPlatformDashboard((prev) => prev ?? (boot.platformDashboard as PlatformDashboard));
+    }
+  }, []);
+
+  /** 看板或报表任一更新即合并写入本机，刷新不丢 */
+  useEffect(() => {
+    if (!visualReportData && !platformDashboard) return;
     writePlatformVisualReportPersist({
       visualReport: visualReportData,
       platformDashboard,
@@ -7765,14 +7777,12 @@ export default function PlatformPage() {
     toast.success("快照已就绪，正在生成看板与 PNG 图文报表…");
 
     const snap = result.data.snapshot;
-    const personaContext = String(focusPrompt || "").trim().slice(0, 4000);
     setIsDashboardLoading(true);
     setIsVisualReportLoading(true);
     try {
-      // 平台趋势分析是独立功能：看板摘要 + PNG 图文报表并行；PNG 依赖 generateVisualReport（Evolink）
+      // 指定平台分析：只读窗口样本，不带入人物背景 / 创作诉求
       const [dashSettled, visualSettled] = await Promise.allSettled([
         getPlatformDashboardMutation.mutateAsync({
-          context: focusPrompt || undefined,
           windowDays: selectedWindowDays,
           snapshotSummary: snap as any,
           copyLlmMode: "openai" as const,
@@ -7782,19 +7792,25 @@ export default function PlatformPage() {
           windowDays: reportWindowDays,
           theme: visualReportTheme,
           platforms: visualPlatforms,
-          ...(personaContext ? { personaContext } : {}),
         }),
       ]);
 
       let hasDash = false;
       let hasReport = false;
       const errors: string[] = [];
+      let nextDash: PlatformDashboard | null = null;
+      let nextReport: VisualReportData | null = null;
 
       if (dashSettled.status === "fulfilled") {
         const dashResult = dashSettled.value;
         if (dashResult.platformDashboard) {
-          setPlatformDashboard(dashResult.platformDashboard as unknown as PlatformDashboard);
+          nextDash = dashResult.platformDashboard as unknown as PlatformDashboard;
+          setPlatformDashboard(nextDash);
           hasDash = true;
+          writePlatformVisualReportPersist({
+            platformDashboard: nextDash,
+            windowDays: String(selectedWindowDays),
+          });
         } else {
           errors.push(
             sanitizePlatformUserMessage(
@@ -7814,8 +7830,14 @@ export default function PlatformPage() {
           theme: visualReportTheme,
         });
         if (mappedReport) {
+          nextReport = mappedReport;
           setVisualReportData(mappedReport);
           hasReport = true;
+          writePlatformVisualReportPersist({
+            visualReport: mappedReport,
+            platformDashboard: nextDash,
+            windowDays: String(selectedWindowDays),
+          });
         } else {
           const softErr =
             typeof (visualSettled.value as { error?: unknown })?.error === "string"
@@ -7827,6 +7849,14 @@ export default function PlatformPage() {
         const msg =
           visualSettled.reason instanceof Error ? visualSettled.reason.message : String(visualSettled.reason);
         errors.push(sanitizePlatformUserMessage(msg, "PNG 图文报表生成失败，请稍后重试"));
+      }
+
+      if (hasDash && hasReport && nextReport) {
+        writePlatformVisualReportPersist({
+          visualReport: nextReport,
+          platformDashboard: nextDash,
+          windowDays: String(selectedWindowDays),
+        });
       }
 
       if (hasDash && hasReport) {
@@ -9060,21 +9090,8 @@ export default function PlatformPage() {
                   </span>
                 </div>
                 <p className="mb-4 text-xs text-[#c9c0e6]/55">
-                  单选平台与分析窗口后，使用右侧（或底部）主按钮开始分析。
+                  单选平台与分析窗口后，使用右侧（或底部）主按钮开始分析。按所选平台与窗口直接出趋势，不依赖人物背景。
                 </p>
-                {focusPrompt.trim() ? (
-                  <div className="mb-4 rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-[12px] text-[#c9c0e6]/80">
-                    已复用人物背景：
-                    <span className="text-white/90">
-                      {focusPrompt.trim().slice(0, 120)}
-                      {focusPrompt.trim().length > 120 ? "…" : ""}
-                    </span>
-                  </div>
-                ) : (
-                  <p className="mb-4 text-[12px] text-amber-200/80">
-                    尚未填写人物背景；可先到「内容创作」填写，或直接开始趋势分析。
-                  </p>
-                )}
 <div
             id="platform-custom-workspace-trends"
             className="mb-6 rounded-2xl border border-[#49e6ff]/20 bg-[linear-gradient(180deg,rgba(73,230,255,0.08),rgba(12,8,28,0.35))] p-5 scroll-mt-24"
