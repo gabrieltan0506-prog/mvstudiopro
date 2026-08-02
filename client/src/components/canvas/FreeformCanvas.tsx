@@ -1884,8 +1884,9 @@ export default function FreeformCanvas({
                             <span className="shrink-0 text-white/45">成片档位</span>
                             <select
                               value={
-                                block.videoModel === "seedance-2.0"
-                                  ? "seedance-2.0"
+                                block.videoModel === "seedance-2.0" ||
+                                block.videoModel === "minimax-hailuo-3"
+                                  ? block.videoModel
                                   : "seedance-2.0-fast"
                               }
                               onChange={(e) =>
@@ -1903,7 +1904,9 @@ export default function FreeformCanvas({
                           <div className="text-[10px] leading-5 text-white/50">
                             {block.videoModel === "seedance-2.0"
                               ? "成片·标准：多图参考 + 运镜/动作/对白，约 4–15s"
-                              : "成片·快速：多图参考 + 运镜/动作/对白，更快更省"}
+                              : block.videoModel === "minimax-hailuo-3"
+                                ? "成片·H3：2K 成片，多图参考 + 运镜/动作/对白，约 5–15s"
+                                : "成片·快速：多图参考 + 运镜/动作/对白，更快更省"}
                           </div>
                           <div className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[10px] font-medium tracking-wide text-white/70">
                             {block.aspectRatio || "9:16"}

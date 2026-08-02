@@ -38,7 +38,12 @@ export function normalizeCanvasImageModel(raw: unknown): CanvasImageModel {
   void raw;
   return "gpt-image-2";
 }
-export type CanvasVideoModel = "gemini-omni-flash" | "seedance-2.0" | "seedance-2.0-fast";
+export type CanvasVideoModel =
+  | "gemini-omni-flash"
+  | "seedance-2.0"
+  | "seedance-2.0-fast"
+  /** MiniMax H3 · OpenRouter minimax/hailuo-3（2K） */
+  | "minimax-hailuo-3";
 /** 文生图 vs 改图（EvoLink image_urls edit） */
 export type CanvasImageMode = "generate" | "edit";
 
@@ -222,10 +227,11 @@ export const IMAGE_MODEL_OPTIONS: Array<{ id: CanvasImageModel; label: string }>
   { id: "gpt-image-2", label: "官方出图" },
 ];
 
-/** 产品成片仅 Seedance 标准 / 快速（CG 多图参考+运镜对白；不再暴露改写引擎） */
+/** 产品成片：快速 / 标准 / H3（2K）；不再暴露改写引擎 */
 export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }> = [
   { id: "seedance-2.0-fast", label: "成片·快速（默认）" },
   { id: "seedance-2.0", label: "成片·标准" },
+  { id: "minimax-hailuo-3", label: "成片·H3（2K）" },
 ];
 
 /** 工厂主成片默认；与 shared MANHUA_FACTORY_DEFAULT_VIDEO_MODEL 对齐 */
@@ -277,19 +283,38 @@ export function normalizeCanvasVideoModel(raw: unknown): CanvasVideoModel {
   const key = String(raw || "").trim();
   if (key === "seedance-2.0-fast") return "seedance-2.0-fast";
   if (key === "seedance-2.0") return "seedance-2.0";
+  if (
+    key === "minimax-hailuo-3" ||
+    key === "hailuo-3" ||
+    key === "minimax/hailuo-3" ||
+    key === "minimax-h3"
+  ) {
+    return "minimax-hailuo-3";
+  }
   // 旧 Omni / Veo 会话一律迁到成片·快速（产品不再提供改写引擎）
   if (key === "gemini-omni-flash" || key === "veo-3.1") return DEFAULT_CANVAS_VIDEO_MODEL;
   return DEFAULT_CANVAS_VIDEO_MODEL;
 }
 
+/** 画布可选成片档位（快速 / 标准 / H3） */
+export function isCanvasProductVideoModel(
+  videoModel: string | null | undefined,
+): videoModel is Exclude<CanvasVideoModel, "gemini-omni-flash"> {
+  return (
+    videoModel === "seedance-2.0" ||
+    videoModel === "seedance-2.0-fast" ||
+    videoModel === "minimax-hailuo-3"
+  );
+}
+
 /**
- * 视频节点：非 Seedance 标准/快速一律迁到默认 Fast（含旧 omni_edit-*）。
+ * 视频节点：非产品成片档位一律迁到默认 Fast（含旧 omni_edit-*）。
  */
 export function migrateFactoryClipVideoModel(block: CanvasBlock): CanvasBlock {
   if (block.kind !== "video" && !String(block.id || "").startsWith("clip-") && !String(block.id || "").startsWith("omni_edit-")) {
     return block;
   }
-  if (block.videoModel === "seedance-2.0" || block.videoModel === "seedance-2.0-fast") {
+  if (isCanvasProductVideoModel(block.videoModel)) {
     return block;
   }
   return { ...block, videoModel: DEFAULT_CANVAS_VIDEO_MODEL };

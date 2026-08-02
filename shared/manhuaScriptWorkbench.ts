@@ -32,6 +32,12 @@ import {
   clampSeedanceOpenRouterDuration,
   SEEDANCE_OPENROUTER_DURATION,
 } from "./seedanceOpenRouterModels.js";
+import {
+  CANVAS_VIDEO_MODEL_HAILUO_H3,
+  clampHailuoOpenRouterDuration,
+  HAILUO_OPENROUTER_DURATION,
+  isCanvasHailuoH3VideoModel,
+} from "./hailuoOpenRouterModels.js";
 
 export { isManhuaClipPromptLegacyFat, stripManhuaClipForbiddenBoards };
 
@@ -120,7 +126,7 @@ export function resolveShotDurationSecForSegment(shot: {
 }
 
 /**
- * 一段成片目标秒数：段内镜长之和，再按模型钳制（Seedance 4–15；Omni ≤10）。
+ * 一段成片目标秒数：段内镜长之和，再按模型钳制（Seedance 4–15；H3 5–15；Omni ≤10）。
  * 不强制写死 15——短段可短于上限。
  */
 export function resolveSegmentClipDurationSec(
@@ -134,6 +140,11 @@ export function resolveSegmentClipDurationSec(
   if (m === "gemini-omni-flash") {
     const raw = sum > 0 ? sum : MANHUA_OMNI_SEGMENT_DURATION_SEC;
     return Math.min(MANHUA_OMNI_SEGMENT_DURATION_SEC, Math.max(4, raw));
+  }
+  if (isCanvasHailuoH3VideoModel(m) || m === CANVAS_VIDEO_MODEL_HAILUO_H3) {
+    return clampHailuoOpenRouterDuration(
+      sum > 0 ? sum : HAILUO_OPENROUTER_DURATION.default,
+    );
   }
   return clampSeedanceOpenRouterDuration(
     sum > 0 ? sum : SEEDANCE_OPENROUTER_DURATION.default,
