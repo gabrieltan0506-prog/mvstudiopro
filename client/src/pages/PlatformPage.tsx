@@ -2570,6 +2570,7 @@ export default function PlatformPage() {
           contentBlueprints: saved.contentBlueprints as any[],
         };
       });
+      setHasAnalyzed(true);
       pushShortlistDebug(`本机恢复：扩写文案 ${saved.contentBlueprints.length} 条（刷新不丢）`);
     } else if (saved.topics.length > 0) {
       pushShortlistDebug(`本机恢复：选题初选 ${saved.topics.length} 条`);
@@ -3086,19 +3087,22 @@ export default function PlatformPage() {
           };
         });
         setCreateStep("result");
+        setHasAnalyzed(true);
         setSelectedShortlistIds([]);
+        // 快照：visibleExecutionCards effect 会 sync；出图按钮点击前也会再 sync 一次
         pushShortlistDebug(
           `✅ 扩写完成 ${bps.length} 条 · ${Math.round((Date.now() - t0) / 1000)}s · 扣点 ${res.chargedCredits ?? "—"}`,
         );
-        pushShortlistDebug("同页展示：对齐 Stage2 执行卡，钉在选题下方（不跳内容创作）");
+        pushShortlistDebug("同页展示：文案卡上直接接一键套装/仅封面/分镜·图文（不跳内容创作）");
         toast.success(
-          `已扩写 ${bps.length} 条文案${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；已出现在本页选题下方「专属选题与文案」`,
+          `已扩写 ${bps.length} 条文案${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；本卡可出封面 / 分镜 / 图文`,
         );
         // 全案入口在「平台趋势」：结果必须同页可见，禁止切 Tab / 滚到内容创作执行区
         window.setTimeout(() => {
           const anchor =
             document.getElementById("platform-fullcase-shortlist-results-expanded") ||
-            document.getElementById("platform-topic-shortlist-expanded");
+            document.getElementById("platform-topic-shortlist-expanded") ||
+            document.getElementById("platform-stage2-copy");
           anchor?.scrollIntoView({ behavior: "smooth", block: "start" });
         }, 120);
       } catch (err) {
@@ -3415,90 +3419,7 @@ export default function PlatformPage() {
             条选题会出现在这里。
           </p>
         ) : null}
-        {/*
-          扩写结果：对齐旧全案 Stage2「一次六条文案」——同一套 mapContentBlueprintToExecutionCard，
-          钉在选题下方（钩子+正文默认展开，不必去内容创作或翻到编导区找）。
-        */}
-        {expandedBlueprintCount > 0 ? (
-          <div
-            id={`${domId}-expanded`}
-            className="mt-5 scroll-mt-24 rounded-2xl border border-emerald-400/40 bg-[rgba(16,185,129,0.1)] px-4 py-4"
-          >
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-2 text-lg font-bold text-white sm:text-xl">
-                  <Sparkles className="h-5 w-5 shrink-0 text-emerald-300" />
-                  专属选题与文案 · {expandedBlueprintCount} 条
-                </div>
-                <p className="mt-1 text-[12px] leading-snug text-emerald-100/70">
-                  与全案六条文案同一套执行卡数据；就挂在本页选题下方，刷新可恢复，不用切「内容创作」。
-                </p>
-              </div>
-            </div>
-            <div className="mt-4 max-h-[720px] space-y-4 overflow-y-auto pr-1">
-              {platformContent!.contentBlueprints.map((bp, bi) => {
-                const item = mapContentBlueprintToExecutionCard(bp as Record<string, unknown>, bi);
-                const cardAnchor = executionCardDomId(item.id);
-                return (
-                  <article
-                    key={`${domId}-stage2-${item.id}-${bi}`}
-                    className="rounded-2xl border border-white/12 bg-[rgba(18,13,43,0.75)] p-4 sm:p-5"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <h3 className="min-w-0 flex-1 text-lg font-bold leading-snug text-white sm:text-xl">
-                        {bi + 1}. {item.title}
-                      </h3>
-                      {item.format ? (
-                        <span className="shrink-0 rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
-                          {item.format}
-                        </span>
-                      ) : null}
-                    </div>
-                    {item.hook ? (
-                      <p className="mt-3 text-sm leading-relaxed text-[#8cefff]">
-                        <span className="font-semibold text-[#8cefff]/80">钩子 · </span>
-                        {item.hook}
-                      </p>
-                    ) : null}
-                    {item.copywriting ? (
-                      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-gray-200">
-                        {item.copywriting}
-                      </p>
-                    ) : (
-                      <p className="mt-3 text-sm text-amber-200/80">正文为空（可再点「就写这条」重试）</p>
-                    )}
-                    {item.publishingAdvice ? (
-                      <div className="mt-3 rounded-xl border border-[#fbbf24]/30 bg-[rgba(251,191,36,0.08)] px-3 py-2.5">
-                        <div className="text-[10px] font-semibold uppercase tracking-wide text-[#fcd34d]/90">
-                          发布时间 / 发布建议
-                        </div>
-                        <div className="mt-1 whitespace-pre-wrap text-sm leading-6 text-[#ffe9a8]">
-                          {item.publishingAdvice}
-                        </div>
-                      </div>
-                    ) : null}
-                    {item.detailedScript ? (
-                      <details className="mt-3 text-xs text-gray-400">
-                        <summary className="cursor-pointer select-none text-[13px] font-semibold text-[#ff9900]">
-                          ▶ 详细脚本与大纲（点击展开）
-                        </summary>
-                        <div className="mt-2 whitespace-pre-wrap rounded-lg bg-black/30 p-3 text-sm leading-relaxed text-[#d3caef]">
-                          {item.detailedScript}
-                        </div>
-                      </details>
-                    ) : null}
-                    <a
-                      href={`#${cardAnchor}`}
-                      className="mt-3 inline-flex text-[12px] font-semibold text-[#93c5fd] underline underline-offset-2 hover:text-white"
-                    >
-                      去下方出封面 / 分镜 →
-                    </a>
-                  </article>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
+        {/* 扩写文案 + 出图按钮：见 renderExpandedShortlistGenZone（接旧 Stage2 同套接线） */}
       </div>
     );
   };
@@ -8073,6 +7994,479 @@ export default function PlatformPage() {
     [platformDashboard],
   );
 
+  /**
+   * 全案「就写这条」扩写结果：文案 + 旧 Stage2 同套出图接线（一键套装 / 仅封面 / 分镜或图文）。
+   * 必须挂在选题列表正下方，禁止只留「去下方」空链。
+   */
+  const renderExpandedShortlistGenZone = (domId: string) => {
+    const bps = Array.isArray(platformContent?.contentBlueprints)
+      ? (platformContent!.contentBlueprints as Array<Record<string, unknown>>)
+      : [];
+    if (bps.length === 0) return null;
+    const cards = bps.map((bp, bi) => mapContentBlueprintToExecutionCard(bp, bi));
+    const genBusy =
+      isSequentialCoverBatchGenerating ||
+      isSequentialCompositeBatchGenerating ||
+      isSequentialCoverCompositeBundleBatchGenerating ||
+      compositeMutationBusy ||
+      coverCompositeBundleSceneId !== null ||
+      isDashboardLoading ||
+      isContentLoading;
+
+    return (
+      <div
+        id={`${domId}-expanded`}
+        className="mt-5 scroll-mt-24 rounded-2xl border border-emerald-400/40 bg-[rgba(16,185,129,0.1)] px-4 py-4"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 text-lg font-bold text-white sm:text-xl">
+              <Sparkles className="h-5 w-5 shrink-0 text-emerald-300" />
+              专属选题与文案 · {cards.length} 条
+            </div>
+            <p className="mt-1 text-[12px] leading-snug text-emerald-100/70">
+              文案与出图同一套执行卡：可一键套装，也可单独出封面 / 编导分镜或图文。刷新可恢复，不用切「内容创作」。
+            </p>
+          </div>
+          {cards.length > 0 ? (
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
+              <button
+                type="button"
+                disabled={genBusy || !isAuthenticated}
+                onClick={() => {
+                  if (!isAuthenticated) {
+                    toast.error("请先登录");
+                    return;
+                  }
+                  const scenes = cards.map((row) => ({ id: row.id }));
+                  const discountNote = supervisorAccess
+                    ? ""
+                    : `将为您一次性生成 ${cards.length} 个选题的竖版封面（套装 40×${cards.length}=${platformCoverBundleTotalCredits(cards.length)} 积分${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}）。是否继续？`;
+                  if (!supervisorAccess && !window.confirm(discountNote)) return;
+                  void (async () => {
+                    try {
+                      await syncPlatformExecutionBlueprintsSnapshotMutation.mutateAsync({
+                        contentBlueprints: cards.map(executionCardToSnapshotBlueprint),
+                      });
+                      await runSequentialCoverBatchGeneration(
+                        scenes,
+                        buildCoverPersonaContextForImageGen(personaSummary, ipProfile),
+                      );
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "封面套装发起失败");
+                    }
+                  })();
+                }}
+                className="inline-flex items-center justify-center gap-1.5 rounded-full border-2 border-[#ff4fb8]/55 bg-[#ff4fb8]/10 px-4 py-2 text-[12px] font-bold text-[#ff9fe0] transition hover:bg-[#ff4fb8]/18 disabled:opacity-50"
+              >
+                {isSequentialCoverBatchGenerating ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="h-3.5 w-3.5" />
+                )}
+                一键封面套装
+              </button>
+              <button
+                type="button"
+                disabled={genBusy || !isAuthenticated}
+                onClick={onBulkCompositeOneClick}
+                className="inline-flex items-center justify-center gap-1.5 rounded-full border-2 border-[#10B981] bg-[#10B981]/20 px-4 py-2 text-[12px] font-bold text-[#a7f3d0] transition hover:bg-[#10B981]/28 disabled:opacity-50"
+              >
+                {isSequentialCompositeBatchGenerating ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Layers className="h-3.5 w-3.5" />
+                )}
+                一键分镜/图文套装
+              </button>
+              <button
+                type="button"
+                disabled={genBusy || !isAuthenticated}
+                onClick={onBulkCoverCompositeBundleOneClick}
+                className="inline-flex items-center justify-center gap-1.5 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-4 py-2 text-[12px] font-bold text-white shadow-md transition hover:brightness-110 disabled:opacity-50"
+              >
+                {isSequentialCoverCompositeBundleBatchGenerating ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Package className="h-3.5 w-3.5" />
+                )}
+                一键封面加分镜
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-4 max-h-[900px] space-y-4 overflow-y-auto pr-1">
+          {cards.map((item, bi) => {
+            const isGraphicFormat = item.format === "图文" || item.format === "小红书";
+            const compositeKind = isGraphicFormat
+              ? ("xiaohongshu_dual_note" as const)
+              : ("storyboard_sheet_landscape" as const);
+            const is3x4 = compositeGridVariant === "3x4";
+            const compositeCost = isGraphicFormat
+              ? is3x4
+                ? CREDIT_COSTS.platformXhsDualNote3x4
+                : CREDIT_COSTS.platformXhsDualNote
+              : is3x4
+                ? CREDIT_COSTS.platformStoryboardSheet3x4
+                : CREDIT_COSTS.platformStoryboardSheet;
+            const compositeLabel = isGraphicFormat
+              ? is3x4
+                ? "小红书 3×4 十二格图文"
+                : "小红书 2×4 八格图文"
+              : is3x4
+                ? "3×4 十二格编导分镜表"
+                : "2×4 高定编导分镜表";
+            const CompositeIcon = isGraphicFormat ? Heart : Film;
+            const bundleCost = platformCoverCompositeBundleCreditsForFormatGrid(item.format, is3x4);
+            const normalCoverCost = CREDIT_COSTS.platformTopicFrameGraphic;
+            const isThisBundleLoading = coverCompositeBundleSceneId === item.id;
+            const isThisCompositeLoading =
+              compositeMutationBusy &&
+              pendingCompositeSheet?.sceneId === item.id &&
+              pendingCompositeSheet?.kind === compositeKind;
+            const coverUrl = platformImageMap[item.id] || "";
+            const sheetUrl =
+              (isGraphicFormat ? platformXhsNoteMap[item.id] : platformStoryboardSheetMap[item.id]) || "";
+
+            const runSingleCover = () => {
+              if (!isAuthenticated) {
+                toast.error("请先登录");
+                return;
+              }
+              if (!String(item.id || "").trim()) {
+                toast.error("选题缺少 ID，无法生成");
+                return;
+              }
+              if (
+                !supervisorAccess &&
+                !window.confirm(`将为本选题生成竖版封面，消耗 ${normalCoverCost} 积分，是否继续？`)
+              ) {
+                return;
+              }
+              markCoverGenerationStarted(item.id);
+              void runThrottledPlatformImageRequest(`shortlist-cover:${item.id}`, async () => {
+                await syncPlatformExecutionBlueprintsSnapshotMutation.mutateAsync({
+                  contentBlueprints: [executionCardToSnapshotBlueprint(item)],
+                });
+                return runEnqueueTopicImageAndPoll({
+                  topicHook: "",
+                  format: isGraphicFormat ? "图文" : "短视频",
+                  coverPersonaContext:
+                    buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim() || undefined,
+                  sceneId: item.id,
+                  referencePhotoUrl: resolveReferencePhotoForScene(item.id),
+                  pollDebugLabel: `扩写区单张封面 · ${item.id}`,
+                });
+              })
+                .then((res) => {
+                  const finalUrl = res.imageUrl ?? (res as { url?: string | null }).url ?? null;
+                  if (res.creationId != null) {
+                    setSceneJobIds((prev) => ({ ...prev, [item.id]: String(res.creationId) }));
+                  }
+                  if (res.success && finalUrl) {
+                    setPlatformImageMap((prev) => ({ ...prev, [item.id]: finalUrl }));
+                    toast.success("单张封面已生成");
+                  } else {
+                    toast.error(
+                      (res as { userFacingError?: string }).userFacingError || "单帧生图失败，可稍后重试。",
+                    );
+                  }
+                  markCoverGenerationFinished(item.id);
+                })
+                .catch((err) => {
+                  markCoverGenerationFinished(item.id);
+                  toast.error(err instanceof Error ? err.message : "操作失败");
+                });
+            };
+
+            const runSingleComposite = () => {
+              if (!isAuthenticated) {
+                toast.error("请先登录");
+                return;
+              }
+              if (
+                !supervisorAccess &&
+                !window.confirm(`将消耗 ${compositeCost} 积分，生成${compositeLabel}，是否继续？`)
+              ) {
+                return;
+              }
+              const supervisorTok = getSupervisorTrpcToken();
+              const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+              const compositeSupervisorExtras = {
+                ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
+                  ? { enableTopicCoverDeepResearchPro: true as const }
+                  : {}),
+                ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
+                ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
+              };
+              void (async () => {
+                try {
+                  await syncPlatformExecutionBlueprintsSnapshotMutation.mutateAsync({
+                    contentBlueprints: [executionCardToSnapshotBlueprint(item)],
+                  });
+                } catch {
+                  /* 出图前尽力同步；失败仍尝试入队 */
+                }
+                void runThrottledPlatformImageRequest(`shortlist-composite:${item.id}:${compositeKind}`, () =>
+                  generatePlatformCompositeSheetMutation.mutateAsync({
+                    sceneId: item.id,
+                    title: item.title,
+                    scriptContext: buildPlatformSheetScriptContext(item as any, {
+                      shootingTechniqueBrief:
+                        compositeKind === "xiaohongshu_dual_note"
+                          ? undefined
+                          : lastShootingTechniqueBriefRef.current.trim() || undefined,
+                      gridVariant: compositeGridVariant,
+                      sheetKind: compositeKind === "xiaohongshu_dual_note" ? "graphic" : "storyboard",
+                    }),
+                    kind: compositeKind,
+                    gridVariant: compositeGridVariant,
+                    executionDetails: buildPlatformExecutionDetailsPayload(item as any),
+                    shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
+                    ...optionalBoundCreationRecordId(),
+                    imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
+                    progressJobId: newPlatformCompositeProgressJobId(),
+                    ...compositeSupervisorExtras,
+                    compositeImageEngine: resolveReferencePhotoForScene(item.id)
+                      ? "gpt_image2"
+                      : platformComposite2x4Engine,
+                    ...(resolveReferencePhotoForScene(item.id)
+                      ? {
+                          referencePhotoUrl: resolveReferencePhotoForScene(item.id),
+                          referencePhotoFromApprovedCover: Boolean(
+                            String(platformImageMap[item.id] || "").trim() &&
+                              resolveReferencePhotoForScene(item.id) ===
+                                String(platformImageMap[item.id] || "").trim(),
+                          ),
+                        }
+                      : {}),
+                    enabledSkillIds: Array.from(enabledPlatformSkillIds),
+                    allowBloggerTitle,
+                  }),
+                ).catch((err) => toast.error(err instanceof Error ? err.message : "分镜/图文发起失败"));
+              })();
+            };
+
+            const runBundle = () => {
+              if (!isAuthenticated) {
+                toast.error("请先登录");
+                return;
+              }
+              if (!String(item.id || "").trim()) {
+                toast.error("选题缺少 ID，无法生成");
+                return;
+              }
+              const retailSum = CREDIT_COSTS.platformTopicFrameGraphic + compositeCost;
+              if (
+                !supervisorAccess &&
+                !window.confirm(
+                  `将消耗 ${bundleCost} 积分${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}，为本选题并发生成竖版封面与${compositeLabel}（散买合计 ${retailSum}）。是否继续？`,
+                )
+              ) {
+                return;
+              }
+              setCoverCompositeBundleSceneId(item.id);
+              const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
+              void runThrottledPlatformImageRequest(`shortlist-bundle:${item.id}`, async () => {
+                await syncPlatformExecutionBlueprintsSnapshotMutation.mutateAsync({
+                  contentBlueprints: [executionCardToSnapshotBlueprint(item)],
+                });
+                return runEnqueueTopicCoverCompositeBundleAndPoll({
+                  sceneId: item.id,
+                  coverPersonaContext: coverPersona || undefined,
+                  headlineTitle: item.title,
+                  compositeKind,
+                  scriptContext: buildPlatformSheetScriptContext(item as any, {
+                    shootingTechniqueBrief:
+                      compositeKind === "xiaohongshu_dual_note"
+                        ? undefined
+                        : lastShootingTechniqueBriefRef.current.trim() || undefined,
+                    gridVariant: compositeGridVariant,
+                    sheetKind: compositeKind === "xiaohongshu_dual_note" ? "graphic" : "storyboard",
+                  }),
+                  executionDetails: buildPlatformExecutionDetailsPayload(item as any),
+                  shootingTechniqueBrief: lastShootingTechniqueBriefRef.current.trim() || undefined,
+                  gridVariant: compositeGridVariant,
+                  pollDebugLabel: `扩写区套装 · ${item.id}`,
+                  referencePhotoUrl: resolveReferencePhotoForScene(item.id),
+                  compositeImageEngine: resolveReferencePhotoForScene(item.id)
+                    ? "gpt_image2"
+                    : platformComposite2x4Engine,
+                });
+              })
+                .then((res) => {
+                  if (res.creationId != null) {
+                    setSceneJobIds((prev) => ({ ...prev, [item.id]: String(res.creationId) }));
+                  }
+                  if (res.success && res.imageUrl) {
+                    setPlatformImageMap((prev) => ({ ...prev, [item.id]: res.imageUrl! }));
+                  }
+                  const compUrl = res.compositeImageUrl?.trim();
+                  if (compUrl && res.compositeKind) {
+                    if (
+                      res.compositeKind === "storyboard_sheet_portrait" ||
+                      res.compositeKind === "storyboard_sheet_landscape"
+                    ) {
+                      setPlatformStoryboardSheetMap((p) => ({ ...p, [item.id]: compUrl }));
+                    } else if (res.compositeKind === "xiaohongshu_dual_note") {
+                      setPlatformXhsNoteMap((p) => ({ ...p, [item.id]: compUrl }));
+                    }
+                  }
+                  if (res.success && res.imageUrl && res.compositeImageUrl) {
+                    toast.success(`套装已完成：封面 + ${compositeLabel}`);
+                  } else {
+                    toast.error("套装未完成，请重试或用「仅封面 / 分镜·图文」分步生成。");
+                  }
+                })
+                .catch((err) => toast.error(err instanceof Error ? err.message : "操作失败"))
+                .finally(() => setCoverCompositeBundleSceneId(null));
+            };
+
+            return (
+              <article
+                key={`${domId}-expand-gen-${item.id}-${bi}`}
+                className="rounded-2xl border border-white/12 bg-[rgba(18,13,43,0.75)] p-4 sm:p-5"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="min-w-0 flex-1 text-lg font-bold leading-snug text-white sm:text-xl">
+                    {bi + 1}. {item.title}
+                  </h3>
+                  {item.format ? (
+                    <span className="shrink-0 rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
+                      {item.format}
+                    </span>
+                  ) : null}
+                </div>
+                {item.hook ? (
+                  <p className="mt-3 text-sm leading-relaxed text-[#8cefff]">
+                    <span className="font-semibold text-[#8cefff]/80">钩子 · </span>
+                    {item.hook}
+                  </p>
+                ) : null}
+                {item.copywriting ? (
+                  <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-gray-200">
+                    {item.copywriting}
+                  </p>
+                ) : (
+                  <p className="mt-3 text-sm text-amber-200/80">正文为空（可再点「就写这条」重试）</p>
+                )}
+                {item.publishingAdvice ? (
+                  <div className="mt-3 rounded-xl border border-[#fbbf24]/30 bg-[rgba(251,191,36,0.08)] px-3 py-2.5">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-[#fcd34d]/90">
+                      发布时间 / 发布建议
+                    </div>
+                    <div className="mt-1 whitespace-pre-wrap text-sm leading-6 text-[#ffe9a8]">
+                      {item.publishingAdvice}
+                    </div>
+                  </div>
+                ) : null}
+                {item.detailedScript ? (
+                  <details className="mt-3 text-xs text-gray-400">
+                    <summary className="cursor-pointer select-none text-[13px] font-semibold text-[#ff9900]">
+                      ▶ 详细脚本与大纲（点击展开）
+                    </summary>
+                    <div className="mt-2 whitespace-pre-wrap rounded-lg bg-black/30 p-3 text-sm leading-relaxed text-[#d3caef]">
+                      {item.detailedScript}
+                    </div>
+                  </details>
+                ) : null}
+
+                {(coverUrl || sheetUrl) && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {coverUrl ? (
+                      <a
+                        href={coverUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block overflow-hidden rounded-lg border border-white/15"
+                      >
+                        <img src={coverUrl} alt="" className="h-28 w-auto object-cover" />
+                      </a>
+                    ) : null}
+                    {sheetUrl ? (
+                      <a
+                        href={sheetUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block overflow-hidden rounded-lg border border-white/15"
+                      >
+                        <img src={sheetUrl} alt="" className="h-28 w-auto object-cover" />
+                      </a>
+                    ) : null}
+                  </div>
+                )}
+
+                <div className="mt-4 flex flex-wrap gap-2 border-t border-white/10 pt-3">
+                  <button
+                    type="button"
+                    disabled={genBusy || !isAuthenticated || batchGeneratingCoverIds.has(item.id)}
+                    onClick={runBundle}
+                    className={`inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-3 py-2 text-xs font-bold text-white shadow-md transition hover:brightness-110 disabled:opacity-50 ${
+                      isThisBundleLoading ? "cursor-wait ring-2 ring-[#c4b5fd]/55" : ""
+                    }`}
+                  >
+                    {isThisBundleLoading ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        套装生成中…
+                      </>
+                    ) : (
+                      <>
+                        <Package className="h-3.5 w-3.5" />
+                        {`一键套装 · ${bundleCost} 点${PLATFORM_BUNDLE_NINE_DISCOUNT_LABEL}`}
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={genBusy || !isAuthenticated || batchGeneratingCoverIds.has(item.id)}
+                    onClick={runSingleCover}
+                    className="inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg border border-[#ff4fb8]/45 bg-[#ff4fb8]/12 px-3 py-2 text-xs font-bold text-[#ff9fe0] transition hover:bg-[#ff4fb8]/22 disabled:opacity-50"
+                  >
+                    {batchGeneratingCoverIds.has(item.id) ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        封面生成中…
+                      </>
+                    ) : (
+                      <>
+                        <Image className="h-3.5 w-3.5" />
+                        {`仅封面 · ${normalCoverCost} 点`}
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={genBusy || !isAuthenticated}
+                    onClick={runSingleComposite}
+                    className={`inline-flex min-h-[2.25rem] items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition disabled:opacity-50 ${
+                      isGraphicFormat
+                        ? "border-[#ff4fb8]/40 bg-[#ff4fb8]/10 text-[#ff9fe0] hover:bg-[#ff4fb8]/20"
+                        : "border-[#49e6ff]/40 bg-[#49e6ff]/10 text-[#8cefff] hover:bg-[#49e6ff]/20"
+                    } ${isThisCompositeLoading ? "cursor-wait ring-2 ring-white/30" : ""}`}
+                  >
+                    {isThisCompositeLoading ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        生成中…
+                      </>
+                    ) : (
+                      <>
+                        <CompositeIcon className="h-3.5 w-3.5" />
+                        {`${compositeLabel} · ${compositeCost} 点`}
+                      </>
+                    )}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   const isAnalyzing = growthSnapshotQuery.isFetching;
   const processingSteps = useMemo(
     () => buildPlatformProcessingSteps(selectedWindowDays, elapsedTime, focusPrompt),
@@ -10502,6 +10896,7 @@ export default function PlatformPage() {
           {customWorkspaceTab === "copy" || customWorkspaceTab === "topic" ? (
             <div className="mb-5 space-y-4">
               {platformMainPersonaTopicsPanel}
+              {renderExpandedShortlistGenZone("platform-topic-shortlist")}
               {platformSkillsAccessoryPanel}
             </div>
           ) : null}
@@ -11758,7 +12153,7 @@ export default function PlatformPage() {
                 </p>
                 {expandedBlueprintCount > 0 ? (
                   <div className="mt-2 rounded-xl border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50">
-                    已有 {expandedBlueprintCount} 条「专属选题与文案」钉在选题列表正下方（与旧全案六条文案同一套）——刷新也保留。
+                    已有 {expandedBlueprintCount} 条「专属选题与文案」钉在选题正下方——含一键套装 / 仅封面 / 分镜·图文，刷新也保留。
                     <a
                       href="#platform-fullcase-shortlist-results-expanded"
                       className="ml-2 underline underline-offset-2 hover:text-white"
@@ -11779,6 +12174,7 @@ export default function PlatformPage() {
                   {renderTopicShortlistSection("platform-fullcase-shortlist-results", {
                     showGenerateButton: false,
                   })}
+                  {renderExpandedShortlistGenZone("platform-fullcase-shortlist-results")}
                 </div>
               </div>
             </div>
@@ -12083,8 +12479,11 @@ export default function PlatformPage() {
           </section>
         ) : null}
 
-        {snapshot && platformDashboard ? (
+        {/* 有战略看板，或仅有扩写执行卡（全案选题→就写这条）时都要挂出封面/分镜区；禁止再被 platformDashboard 门闩挡死 */}
+        {(Boolean(snapshot && platformDashboard) || visibleExecutionCards.length > 0) ? (
           <section id="platform-report" className="mt-8 space-y-6">
+            {platformDashboard ? (
+              <>
             {/* 仅写入 PDF 快照：页面视觉隐藏，克隆后于导出前移除 hidden（含顾问台主标 + 四格摘要，避免报告缺头） */}
             <div
               data-pdf-only
@@ -12759,6 +13158,8 @@ export default function PlatformPage() {
                               ) : null}
                           </div>
           </div>
+              </>
+            ) : null}
 
             <section id="platform-stage2-copy" className="mt-2 scroll-mt-28 px-1" aria-label="专属选题与文案状态">
               <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-white/10 bg-[rgba(18,13,43,0.65)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">

@@ -22,9 +22,12 @@ import { toast } from "sonner";
 /** 创作台「图生视频」定价（与 chargeStep creditsOverride 一致） */
 const CREATIVE_VIDEO_CREDITS_VEO_31 = 54;
 const CREATIVE_VIDEO_CREDITS_SEEDANCE_20 = 118;
-/** 成片：Veo 8s / 54 cr；Seedance 2.0 10s / 118 cr（与 API 参数一致） */
+/** H3 2K · OpenRouter；暂与标准成片同档积分 */
+const CREATIVE_VIDEO_CREDITS_HAILUO_H3 = 118;
+/** 成片：Veo 8s / 54 cr；Seedance/H3 10s / 118 cr（与 API 参数一致） */
 const CREATIVE_VIDEO_DURATION_VEO_SEC = 8;
 const CREATIVE_VIDEO_DURATION_SEEDANCE_SEC = 10;
+const CREATIVE_VIDEO_DURATION_HAILUO_SEC = 10;
 
 export default function CreativePage() {
   const { user } = useAuth();
@@ -166,7 +169,9 @@ export default function CreativePage() {
   async function generateVideo() {
     if (!imageUrl) return;
     if (
-      (videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast") &&
+      (videoModel === "seedance-2.0" ||
+        videoModel === "seedance-2.0-fast" ||
+        videoModel === "minimax-hailuo-3") &&
       !isPaidUser
     ) {
       setError("成片档暂不开放给未付费用户，需购买积分包才能使用。");
@@ -180,9 +185,11 @@ export default function CreativePage() {
     let chargedCost = 0;
     try {
       const overrideCost =
-        videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast"
-          ? CREATIVE_VIDEO_CREDITS_SEEDANCE_20
-          : CREATIVE_VIDEO_CREDITS_VEO_31;
+        videoModel === "minimax-hailuo-3"
+          ? CREATIVE_VIDEO_CREDITS_HAILUO_H3
+          : videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast"
+            ? CREATIVE_VIDEO_CREDITS_SEEDANCE_20
+            : CREATIVE_VIDEO_CREDITS_VEO_31;
 
       const charge = await chargeStepMutation.mutateAsync({ step: "scene_video", quantity: 1, creditsOverride: overrideCost });
       chargedCost = charge.cost;
@@ -208,6 +215,38 @@ export default function CreativePage() {
               aspectRatio: videoAspect,
               duration: CREATIVE_VIDEO_DURATION_SEEDANCE_SEC,
               version: videoModel === "seedance-2.0-fast" ? "2.0-fast" : "2.0",
+            }),
+          }),
+        );
+        const text = await res.text();
+        let json: { videoUrl?: string; error?: string; message?: string } = {};
+        try {
+          json = JSON.parse(text) as typeof json;
+        } catch {
+          throw new Error(
+            /An error o|ROUTER_EXTERNAL/i.test(text)
+              ? "成片网关超时，请稍后重试"
+              : `成片生成失败：${text.slice(0, 160)}`,
+          );
+        }
+        if (!res.ok || !json.videoUrl) {
+          throw new Error(json.error || json.message || "成片生成失败");
+        }
+        finalVideoUrl = String(json.videoUrl);
+      } else if (videoModel === "minimax-hailuo-3") {
+        const hailuoUrl = withLongJobsFlyDirect("/api/jobs?op=hailuo3Video");
+        const probeOrigin = flyHealthProbeOriginForUrl(hailuoUrl);
+        const res = await withFlyHealthGate(probeOrigin, () =>
+          fetch(hailuoUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "omit",
+            body: JSON.stringify({
+              prompt: motionPrompt,
+              imageUrl,
+              aspectRatio: videoAspect,
+              duration: CREATIVE_VIDEO_DURATION_HAILUO_SEC,
+              generateAudio: true,
             }),
           }),
         );
@@ -362,6 +401,7 @@ export default function CreativePage() {
                       <option value="veo-3.1">Veo 3.1</option>
                       <option value="seedance-2.0">成片·标准（限付费）</option>
                       <option value="seedance-2.0-fast">成片·快速（限付费）</option>
+                      <option value="minimax-hailuo-3">成片·H3（2K · 限付费）</option>
                     </select>
                   </div>
                   
@@ -379,12 +419,16 @@ export default function CreativePage() {
                   
                   <div className="flex gap-2 items-center">
                     <label className="text-sm font-semibold text-white/80">画质：</label>
-                    <div className="text-sm font-semibold text-white/50 border border-white/10 bg-white/5 px-3 py-1.5 rounded-lg">720P</div>
+                    <div className="text-sm font-semibold text-white/50 border border-white/10 bg-white/5 px-3 py-1.5 rounded-lg">
+                      {videoModel === "minimax-hailuo-3" ? "2K" : "720P"}
+                    </div>
                   </div>
                   <div className="flex gap-2 items-center">
                     <label className="text-sm font-semibold text-white/80">时长</label>
                     <div className="text-sm font-semibold text-white/50 border border-white/10 bg-white/5 px-3 py-1.5 rounded-lg">
-                      {videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast"
+                      {videoModel === "seedance-2.0" ||
+                      videoModel === "seedance-2.0-fast" ||
+                      videoModel === "minimax-hailuo-3"
                         ? "10 秒"
                         : "8 秒"}
                     </div>

@@ -3299,6 +3299,59 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       }
     }
 
+    /**
+     * MiniMax H3（Hailuo 3）· OpenRouter POST /api/v1/videos。
+     * 画布 videoModel=minimax-hailuo-3；不走 EvoLink。
+     */
+    if (op === "hailuo3Video") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const prompt =
+        s(b.prompt || q.prompt || "").trim() || "Cinematic motion shot with stable camera and rich detail.";
+      const imageUrl = s(b.imageUrl || q.imageUrl || "").trim() || undefined;
+      const imageUrls = Array.isArray(b.imageUrls)
+        ? b.imageUrls.map((u: unknown) => s(u)).filter(Boolean)
+        : undefined;
+      const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9";
+      const generateAudio = !(
+        String(b.generateAudio ?? q.generateAudio ?? "1").trim() === "0" || b.generateAudio === false
+      );
+      try {
+        const { isOpenRouterHailuoConfigured, runOpenRouterHailuoVideo } = await import(
+          "../server/services/openrouterHailuoVideo.js"
+        );
+        if (!isOpenRouterHailuoConfigured()) {
+          return res.status(503).json({
+            ok: false,
+            error: "视频服务暂不可用，请稍后重试",
+          });
+        }
+        const { clampHailuoOpenRouterDuration } = await import("../shared/hailuoOpenRouterModels.js");
+        const duration = clampHailuoOpenRouterDuration(
+          b.duration ?? q.duration ?? b.durationSec ?? 10,
+        );
+        const out = await runOpenRouterHailuoVideo({
+          prompt,
+          imageUrl,
+          imageUrls,
+          aspectRatio,
+          duration,
+          generateAudio,
+        });
+        return res.status(200).json({
+          ok: true,
+          videoUrl: out.videoUrl,
+          provider: out.provider,
+          model: out.model,
+          version: out.version,
+          resolution: out.resolution,
+        });
+      } catch (e: any) {
+        return res.status(502).json({ ok: false, error: e?.message || "hailuo3_failed" });
+      }
+    }
+
     if (op === "seedanceI2V") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });

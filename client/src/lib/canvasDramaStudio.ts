@@ -8,6 +8,7 @@ import {
   collectUpstreamTexts,
   collectVisionImages,
   defaultCanvasBlock,
+  isCanvasProductVideoModel,
   makeCanvasBlockId,
   resolveNearestUpstreamImageUrl,
   type CanvasBlock,
@@ -1322,7 +1323,7 @@ export function applyFactoryPrefsToBlocks(
         ...b,
         prompt: stripManhuaPromptSlop(cleaned),
         videoModel: (
-          b.videoModel === "seedance-2.0" || b.videoModel === "seedance-2.0-fast"
+          isCanvasProductVideoModel(b.videoModel)
             ? b.videoModel
             : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL
         ) as CanvasBlock["videoModel"],
@@ -1342,7 +1343,7 @@ export function applyFactoryPrefsToBlocks(
           .filter(Boolean)
           .join("\n\n"),
         videoModel: (
-          b.videoModel === "seedance-2.0" || b.videoModel === "seedance-2.0-fast"
+          isCanvasProductVideoModel(b.videoModel)
             ? b.videoModel
             : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL
         ) as CanvasBlock["videoModel"],
@@ -2043,13 +2044,11 @@ export function ensureManhuaFragmentClips(
         parentId: primary.id,
         refImageUrl: segUrls[0] || mediaUrlOf(primary) || existing.refImageUrl,
         editFusionUrls: segUrls.slice(1).slice(0, 15),
-        videoModel:
-          existing.videoModel === "seedance-2.0" ||
-          existing.videoModel === "seedance-2.0-fast"
-            ? existing.videoModel
-            : defaultModel === "seedance-2.0" || defaultModel === "seedance-2.0-fast"
-              ? defaultModel
-              : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
+        videoModel: isCanvasProductVideoModel(existing.videoModel)
+          ? existing.videoModel
+          : isCanvasProductVideoModel(defaultModel)
+            ? defaultModel
+            : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
       });
       continue;
     }
@@ -2069,10 +2068,9 @@ export function ensureManhuaFragmentClips(
       manhuaClipQuality: undefined,
       refImageUrl: segUrls[0] || mediaUrlOf(primary) || primary.refImageUrl,
       editFusionUrls: segUrls.slice(1).slice(0, 15),
-      videoModel:
-        defaultModel === "seedance-2.0" || defaultModel === "seedance-2.0-fast"
-          ? defaultModel
-          : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
+      videoModel: isCanvasProductVideoModel(defaultModel)
+        ? defaultModel
+        : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
       aspectRatio: template.aspectRatio || "9:16",
       episodeIndex: ep,
       episodeTitle: primary.episodeTitle || template.episodeTitle,
@@ -3193,10 +3191,9 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       block.id.startsWith("clip-") ||
       block.id.startsWith("omni_edit-")
     ) {
-      const nextModel =
-        block.videoModel === "seedance-2.0" || block.videoModel === "seedance-2.0-fast"
-          ? block.videoModel
-          : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+      const nextModel = isCanvasProductVideoModel(block.videoModel)
+        ? block.videoModel
+        : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
       if (nextModel !== block.videoModel) {
         block = { ...block, videoModel: nextModel };
         working = working.map((b) => (b.id === blockId ? block! : b));

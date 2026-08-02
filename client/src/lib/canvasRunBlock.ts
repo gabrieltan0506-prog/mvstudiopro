@@ -44,6 +44,11 @@ import {
   clampSeedanceOpenRouterDuration,
   SEEDANCE_REFERENCE_MAX,
 } from "@shared/seedanceOpenRouterModels";
+import {
+  clampHailuoOpenRouterDuration,
+  HAILUO_REFERENCE_MAX,
+  isCanvasHailuoH3VideoModel,
+} from "@shared/hailuoOpenRouterModels";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
 import { formatManhuaEditCraftDirectives } from "@shared/manhuaEditCraftDirectives";
 import { appendManhuaClipEngineOptics } from "@shared/manhuaCineOpticsBank";
@@ -536,6 +541,55 @@ async function runSeedance20(
   return String(json.videoUrl);
 }
 
+/** MiniMax H3 · OpenRouter（2K；时长 5–15s） */
+async function runHailuo3(
+  prompt: string,
+  imageUrl: string | undefined,
+  aspectRatio: "9:16" | "16:9",
+  opts?: {
+    imageUrls?: string[];
+    duration?: number;
+  },
+): Promise<string> {
+  const hailuoUrl = withLongJobsFlyDirect("/api/jobs?op=hailuo3Video");
+  const probeOrigin = flyHealthProbeOriginForUrl(hailuoUrl);
+  const imageUrls = (opts?.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const fromPrompt = parseManhuaClipTargetDurationSec(prompt);
+  const duration = clampHailuoOpenRouterDuration(opts?.duration ?? fromPrompt ?? undefined);
+  const res = await withFlyHealthGate(probeOrigin, () =>
+    fetch(hailuoUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "omit",
+      body: JSON.stringify({
+        prompt: renderManhuaClipPromptForSeedance(prompt),
+        imageUrl: imageUrl || imageUrls[0] || undefined,
+        imageUrls: imageUrls.length
+          ? imageUrls.slice(0, HAILUO_REFERENCE_MAX.image)
+          : undefined,
+        aspectRatio,
+        duration,
+        generateAudio: true,
+      }),
+    }),
+  );
+  const text = await res.text();
+  let json: { videoUrl?: string; error?: string; message?: string; ok?: boolean } = {};
+  try {
+    json = JSON.parse(text) as typeof json;
+  } catch {
+    throw new Error(
+      /An error o|ROUTER_EXTERNAL/i.test(text)
+        ? "成片网关超时，请稍后重试（已尽量直连长任务 API）"
+        : `成片生成失败：${text.slice(0, 160)}`,
+    );
+  }
+  if (!res.ok || !json.videoUrl) {
+    throw new Error(json.error || json.message || "成片生成失败");
+  }
+  return String(json.videoUrl);
+}
+
 export const OMNI_CLIP_DURATION_SECONDS = 10;
 
 /** 成片跟静帧：正向约束，不堆「禁止真人」以免上游拒答 */
@@ -936,11 +990,12 @@ export async function runCanvasBlock(
       ? stripManhuaAssetUrlsFromPrompt(appendManhuaClipEngineOptics(compiledMotion))
       : compiledMotion;
     const videoModel = block.videoModel || "seedance-2.0-fast";
+    const useHailuoH3 = isCanvasHailuoH3VideoModel(videoModel);
     console.info(
       `[canvasRunBlock] video · id=${block.id} · videoModel=${videoModel} · stills=${[stillRef, ...fusionStillUrls].filter(Boolean).length} · continuity=${Boolean(continuityVideoUrl)} · directorPass=${isManhuaSeedanceDirectorPrompt(motionPrompt)} · promptChars=${motionPrompt.length}`,
     );
     let url = "";
-    if (videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast") {
+    if (videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast" || useHailuoH3) {
       // ~15s 一镜：下一段起幅必须吃上一段末 3–5s 帧，再叠本段静帧（配额≤6）
       const stillPool: string[] = [];
       if (stillRef) stillPool.push(stillRef);
@@ -997,15 +1052,16 @@ export async function runCanvasBlock(
             stillUrls: absStills,
             tailUrls: tailFrames,
             mentionedTags,
-            maxImages: SEEDANCE_REFERENCE_MAX.image,
+            maxImages: useHailuoH3 ? HAILUO_REFERENCE_MAX.image : SEEDANCE_REFERENCE_MAX.image,
           })
         : null;
       const rawPool = bindPlan?.imageUrls?.length
         ? bindPlan.imageUrls
         : [...tailFrames, ...absStills];
+      const maxRefImages = useHailuoH3 ? HAILUO_REFERENCE_MAX.image : SEEDANCE_REFERENCE_MAX.image;
       const httpsImages = await toHttpsImageUrls(
         deps,
-        rawPool.slice(0, SEEDANCE_REFERENCE_MAX.image),
+        rawPool.slice(0, maxRefImages),
       );
       const keptEntries: ManhuaClipSeedanceImageBindEntry[] = [];
       if (bindPlan?.entries.length) {
@@ -1073,16 +1129,25 @@ export async function runCanvasBlock(
       console.info(
         `[canvasRunBlock] clip image-bind · assets=${assetRows.length} · kept=${keptEntries.length} · urls=${httpsImages.length} · bind=${String(imageBind).slice(0, 180)}`,
       );
-      url = await runSeedance20(seedancePrompt, seedStill, ar, {
-        imageUrls: httpsImages.length ? httpsImages : undefined,
-        videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
-        audioUrls: seedanceAudioUrls.length ? seedanceAudioUrls : undefined,
-        version: videoModel === "seedance-2.0-fast" ? "2.0-fast" : "2.0",
-        duration:
-          parseManhuaClipTargetDurationSec(motionPrompt) ??
-          parseManhuaClipTargetDurationSec(block.prompt) ??
-          undefined,
-      });
+      const clipDuration =
+        parseManhuaClipTargetDurationSec(motionPrompt) ??
+        parseManhuaClipTargetDurationSec(block.prompt) ??
+        undefined;
+      if (useHailuoH3) {
+        // H3：OpenRouter 仅图参考（首帧 + input_references）；不传 Seedance 专属音/视频参考
+        url = await runHailuo3(seedancePrompt, seedStill, ar, {
+          imageUrls: httpsImages.length ? httpsImages : undefined,
+          duration: clipDuration,
+        });
+      } else {
+        url = await runSeedance20(seedancePrompt, seedStill, ar, {
+          imageUrls: httpsImages.length ? httpsImages : undefined,
+          videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
+          audioUrls: seedanceAudioUrls.length ? seedanceAudioUrls : undefined,
+          version: videoModel === "seedance-2.0-fast" ? "2.0-fast" : "2.0",
+          duration: clipDuration,
+        });
+      }
     } else {
       // omni_edit / 续编：有上游成片时用 edit；否则段内静帧 I2V / 多图 reference_to_video
       const isOmniEdit = block.id.startsWith("omni_edit-");
