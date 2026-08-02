@@ -68,6 +68,10 @@ import {
   readPlatformVisualReportPersist,
   writePlatformVisualReportPersist,
 } from "@/lib/platformVisualReportPersist";
+import {
+  readShortlistExpandPersist,
+  writeShortlistExpandPersist,
+} from "@/lib/platformShortlistExpandPersist";
 import { DecisionIntelLockedDemoPreview } from "@/components/DecisionIntelLockedDemoPreview";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 import { type IpProfile } from "@/components/IpProfileModal";
@@ -2515,6 +2519,8 @@ export default function PlatformPage() {
   const [editingShortlistTitle, setEditingShortlistTitle] = useState("");
   /** 多选扩写：勾选 id；「就写这条」也会走同一 expand 接口 */
   const [selectedShortlistIds, setSelectedShortlistIds] = useState<string[]>([]);
+  /** 烧积分结果本机恢复：按 userKey 只 hydrate 一次，避免覆盖刚打完的 API */
+  const shortlistExpandRestoredForKeyRef = useRef<string | null>(null);
   const startEditingShortlistTitle = useCallback((topic: PlatformTopicShortlistItem) => {
     setEditingShortlistTopicId(topic.id);
     setEditingShortlistTitle(topic.title);
@@ -2542,6 +2548,96 @@ export default function PlatformPage() {
     baseCredits: CREDIT_COSTS.platformTopicShortlist,
     extraPerTopic: CREDIT_COSTS.platformTopicShortlistExtra,
   });
+  const expandedBlueprintCount = Array.isArray(platformContent?.contentBlueprints)
+    ? platformContent!.contentBlueprints.length
+    : 0;
+
+  // 登录后恢复：选题 + 已扩写文案（刷新/误切 Tab 不丢烧积分结果）
+  useEffect(() => {
+    if (!workbenchUserKey) return;
+    if (shortlistExpandRestoredForKeyRef.current === workbenchUserKey) return;
+    shortlistExpandRestoredForKeyRef.current = workbenchUserKey;
+    const saved = readShortlistExpandPersist(workbenchUserKey);
+    if (!saved) return;
+    if (saved.topics.length > 0) {
+      setTopicShortlist((prev) => (prev.length > 0 ? prev : saved.topics));
+    }
+    if (saved.contentBlueprints.length > 0) {
+      setPlatformContent((prev) => {
+        if (Array.isArray(prev?.contentBlueprints) && prev!.contentBlueprints.length > 0) return prev;
+        return {
+          monetizationLanes: Array.isArray(prev?.monetizationLanes) ? prev!.monetizationLanes : [],
+          contentBlueprints: saved.contentBlueprints as any[],
+        };
+      });
+      pushShortlistDebug(`本机恢复：扩写文案 ${saved.contentBlueprints.length} 条（刷新不丢）`);
+    } else if (saved.topics.length > 0) {
+      pushShortlistDebug(`本机恢复：选题初选 ${saved.topics.length} 条`);
+    }
+  }, [workbenchUserKey, pushShortlistDebug]);
+
+  // 有结果就落盘；空状态不写，避免把已存文案冲掉
+  useEffect(() => {
+    if (!workbenchUserKey) return;
+    const bps = Array.isArray(platformContent?.contentBlueprints)
+      ? (platformContent!.contentBlueprints as Array<Record<string, unknown>>)
+      : [];
+    if (topicShortlist.length === 0 && bps.length === 0) return;
+    writeShortlistExpandPersist({
+      userKey: workbenchUserKey,
+      topics: topicShortlist,
+      contentBlueprints: bps,
+    });
+  }, [workbenchUserKey, topicShortlist, platformContent?.contentBlueprints]);
+
+  // 监管验收：?demoExpand=1 注入假文案，不烧积分，只验同页可见
+  useEffect(() => {
+    if (!supervisorAccess) return;
+    try {
+      const q = new URLSearchParams(window.location.search);
+      if (q.get("demoExpand") !== "1") return;
+      setHasAnalyzed(true);
+      setTopicShortlist([
+        {
+          id: "demo-topic-expand-1",
+          title: "验收用选题：晚间护肤三步清单",
+          hookSketch: "加班到点还要护肤？先收这三步",
+          conveyGoal: "让读者收藏并留言想要",
+          skillsUsed: ["生活节奏"],
+          primaryLane: "default",
+          formatHint: "图文",
+          dedupeKey: "demo:expand:1",
+          commentHook: "想要",
+          isTopPick: true,
+          viralScore: 88,
+          viralReason: "强收藏欲",
+          commentHeat: 76,
+        },
+      ]);
+      setPlatformContent({
+        monetizationLanes: [],
+        contentBlueprints: [
+          {
+            title: "验收用文案：晚间护肤三步清单",
+            hook: "加班到点还硬撑护肤？先把这三步钉在洗手台。",
+            copywriting:
+              "第一步：温水洗脸，别用热水烫脸。\n第二步：精华只涂需要的区域。\n第三步：面霜锁水，明天妆才服帖。\n\n收藏这篇，今晚就按顺序做一遍。",
+            format: "图文",
+            commentHooks: ["想要", "收藏", "同款"],
+            shortlistId: "demo-topic-expand-1",
+          },
+        ] as any,
+      });
+      pushShortlistDebug("验收注入 demoExpand=1：选题+文案已挂本页（不烧积分）");
+      window.setTimeout(() => {
+        document
+          .getElementById("platform-fullcase-shortlist-results-expanded")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 120);
+    } catch {
+      /* ignore */
+    }
+  }, [supervisorAccess, pushShortlistDebug]);
   /** 選題卡片分鏡/圖文網格：2×4（單張）或 3×4 十二格（後端分段生成再拼成一張長圖，降低糊字，定價另算）。 */
   const [compositeGridVariant, setCompositeGridVariant] = useState<"2x4" | "3x4">("2x4");
   const [pendingCompositeSheet, setPendingCompositeSheet] = useState<{
@@ -2979,10 +3075,17 @@ export default function PlatformPage() {
         pushShortlistDebug(
           `✅ 扩写完成 ${bps.length} 条 · ${Math.round((Date.now() - t0) / 1000)}s · 扣点 ${res.chargedCredits ?? "—"}`,
         );
+        pushShortlistDebug("同页展示：钉在选题初选下方（不跳内容创作）");
         toast.success(
-          `已扩写 ${bps.length} 条文案${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}，请到下方执行区继续出封面`,
+          `已扩写 ${bps.length} 条文案${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；已挂本页选题下方（刷新可恢复）`,
         );
-        window.setTimeout(() => scrollToPlatformSection("platform-stage2-copy"), 80);
+        // 全案入口在「平台趋势」：结果必须同页可见，禁止切 Tab（打 API 后跳走等于丢现场）
+        window.setTimeout(() => {
+          const anchor =
+            document.getElementById("platform-fullcase-shortlist-results-expanded") ||
+            document.getElementById("platform-topic-shortlist-expanded");
+          anchor?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 80);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         const friendly =
@@ -3296,6 +3399,62 @@ export default function PlatformPage() {
             点「开始全案分析」或右侧「生成初选」后，约 {PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT}–{PLATFORM_TOPIC_SHORTLIST_MAX}{" "}
             条选题会出现在这里。
           </p>
+        ) : null}
+        {/* 扩写结果独立于选题列表：有文案就钉在本卡下方，选题被清空也能看见 */}
+        {expandedBlueprintCount > 0 ? (
+          <div
+            id={`${domId}-expanded`}
+            className="mt-4 scroll-mt-24 rounded-xl border border-emerald-400/35 bg-emerald-500/10 px-3 py-3"
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div className="text-[15px] font-bold text-emerald-50">
+                已扩写文案 · {expandedBlueprintCount} 条
+              </div>
+              <span className="text-[11px] text-emerald-100/60">就挂在本页选题下方，不用切 Tab</span>
+            </div>
+            <div className="mt-2 max-h-[560px] space-y-3 overflow-y-auto pr-1">
+              {platformContent!.contentBlueprints.map((bp, bi) => {
+                const row = bp as Record<string, unknown>;
+                const title = String(row.title || `文案 ${bi + 1}`);
+                const hook = String(row.hook || "");
+                const copy = String(row.copywriting || "");
+                const format = String(row.format || "");
+                const hooks = Array.isArray(row.commentHooks)
+                  ? (row.commentHooks as unknown[]).map(String).filter(Boolean)
+                  : [];
+                return (
+                  <article
+                    key={`${domId}-exp-${String(row.shortlistId || row.dedupeKey || bi)}-${bi}`}
+                    className="rounded-lg border border-white/10 bg-black/30 px-3 py-2.5"
+                  >
+                    <div className="text-[13px] font-semibold text-white">
+                      {bi + 1}. {title}
+                      {format ? (
+                        <span className="ml-2 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-medium text-gray-300">
+                          {format}
+                        </span>
+                      ) : null}
+                    </div>
+                    {hook ? (
+                      <p className="mt-1 text-[12px] leading-snug text-[#8cefff]/85">钩子：{hook}</p>
+                    ) : null}
+                    {copy ? (
+                      <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-gray-200">
+                        {copy}
+                      </p>
+                    ) : (
+                      <p className="mt-1.5 text-[12px] text-amber-200/80">正文为空（可再点就写这条重试）</p>
+                    )}
+                    {hooks.length ? (
+                      <p className="mt-1.5 text-[11px] text-gray-400">
+                        评论钩子：{hooks.slice(0, 4).join(" · ")}
+                      </p>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          </div>
         ) : null}
       </div>
     );
@@ -9193,7 +9352,7 @@ export default function PlatformPage() {
               </button>
             </div>
             <p className="mt-1 text-[11px] leading-relaxed text-[#c9c0e6]/65">
-              过程：确认 → 本机趋势 → 初选 LLM → 勾选/就写这条 → expandPlatformTopicPicks → 执行区。
+              过程：确认 → 本机趋势 → 初选 → 勾选扩写 → 文案钉在选题下方同页（不跳 Tab）。
               Fly：generatePlatformTopicShortlist / expandPlatformTopicPicks / empty content。
             </p>
             <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[#b8f4ff]/80">
@@ -11542,7 +11701,29 @@ export default function PlatformPage() {
                       </a>
                     </>
                   ) : null}
+                  {expandedBlueprintCount > 0 ? (
+                    <>
+                      {" "}
+                      <a
+                        href="#platform-fullcase-shortlist-results-expanded"
+                        className="font-semibold text-emerald-200 underline underline-offset-2 hover:text-white"
+                      >
+                        跳至已扩写文案（{expandedBlueprintCount} 条）
+                      </a>
+                    </>
+                  ) : null}
                 </p>
+                {expandedBlueprintCount > 0 ? (
+                  <div className="mt-2 rounded-xl border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50">
+                    已有 {expandedBlueprintCount} 条正式文案钉在下方选题区——刷新本页也会保留。
+                    <a
+                      href="#platform-fullcase-shortlist-results-expanded"
+                      className="ml-2 underline underline-offset-2 hover:text-white"
+                    >
+                      立刻查看 ↓
+                    </a>
+                  </div>
+                ) : null}
                 <div className="mt-4 space-y-3">
                   {shortlistLastError ? (
                     <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2.5 text-[12px] leading-relaxed text-rose-100">
