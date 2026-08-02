@@ -16,11 +16,11 @@ export const MANHUA_CLOUD_DRAFT_RETENTION_DAYS = 30;
 
 /** 工作台常驻：暂存口径 + 定时导出提醒（用户可见，零技术泄漏） */
 export const MANHUA_DRAFT_RETENTION_HINT_ZH =
-  "登录后会暂存约 30 天的剧本、静帧与画布（不含成片视频）。请定时导出备份，勿只依赖自动保存。";
+  "登录后会暂存约 30 天的剧本、静帧与画布。成片出完会自动下载到本机，请以本机文件为准；页面预览会过期，勿当云端存档。";
 
 /** 成片坞导出旁短提示 */
 export const MANHUA_DRAFT_EXPORT_HINT_ZH =
-  "建议重要节点导出工程包；平台暂存约 30 天，成片视频不在云端保留。";
+  "成片出完会自动下载到本机；建议再导出工程包备份剧本与静帧。平台暂存约 30 天，不成片仓库。";
 
 export type ManhuaCloudDraftCanvasBlock = {
   id: string;

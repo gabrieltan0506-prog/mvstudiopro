@@ -287,6 +287,8 @@ A1 4fps 重抽帧过审：留下 G1–G7 + 优化后 B1（暖色细笔刷箭头�
 
 画布静帧防签名过期：`manhuaLocalMediaStore`（IndexedDB 本机媒体库）——出图后缓存二进制；本机草稿 JSON 改存 `local-media:v1/…` 指针；打开优先本机回灌 blob；`<img onError>` 再兜底本机。同期：右栏缩略竖排 +「看全图」缩放（`fix/canvas-fit-all-vertical-media`）。
 
+成片强制本机：段成片一出完自动下载到「下载」文件夹（`manhuaClipAutoDownload`）；刷新不重复下；文案写明以本机为准、页面预览会过期。
+
 画布右栏可读链：进工作台自动缩略竖排（左→右多列）+「看全图」缩放；中栏静帧取图回退 `refImageUrl`。分支 `fix/canvas-fit-all-vertical-media`（验通后再开 PR）。
 
 ---

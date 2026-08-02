@@ -175,6 +175,11 @@ import {
   scheduleCacheCanvasMediaToLocalStore,
 } from "@/lib/manhuaLocalMediaStore";
 import {
+  MANHUA_CLIP_AUTO_DOWNLOAD_HINT_ZH,
+  collectPendingClipAutoDownloads,
+  runPendingClipAutoDownloads,
+} from "@/lib/manhuaClipAutoDownload";
+import {
   loadManhuaShotContinuityPrefs,
   saveManhuaShotContinuityPrefs,
   type ManhuaShotContinuityPrefs,
@@ -2157,6 +2162,48 @@ export default function OmniCanvas() {
       return cur;
     });
   }, []);
+
+  /** 成片新出完 → 强制自动下载到本机（云端不成片仓） */
+  const clipAutoDlPrevRef = useRef<CanvasBlock[] | null>(null);
+  const clipAutoDlQueueRef = useRef(Promise.resolve());
+  useEffect(() => {
+    const prev = clipAutoDlPrevRef.current;
+    clipAutoDlPrevRef.current = blocks;
+    if (prev == null) return; // 首帧只建基线，避免打开旧稿连下历史片
+    const seriesTitle =
+      String(writerPack?.seriesTitle || "").trim() ||
+      String(factoryTopic || "").trim() ||
+      "漫剧";
+    const pending = collectPendingClipAutoDownloads({
+      prev,
+      next: blocks,
+      seriesTitle,
+    });
+    if (!pending.length) return;
+    clipAutoDlQueueRef.current = clipAutoDlQueueRef.current
+      .then(async () => {
+        const r = await runPendingClipAutoDownloads(pending);
+        if (r.attempted <= 0) return;
+        if (r.ok > 0 || r.fallback > 0) {
+          toast.success(
+            r.attempted === 1
+              ? "成片已自动下载到本机"
+              : `已自动下载 ${r.ok + r.fallback} 段成片到本机`,
+            { description: MANHUA_CLIP_AUTO_DOWNLOAD_HINT_ZH },
+          );
+        }
+        if (r.failed > 0 && r.ok + r.fallback === 0) {
+          toast.error("成片自动下载失败", {
+            description: "请点预览旁「下载」手动保存到本机，勿只靠页面预览。",
+          });
+        } else if (r.failed > 0) {
+          toast.message("部分成片需手动下载", {
+            description: "请点预览旁「下载」补存失败的段。",
+          });
+        }
+      })
+      .catch(() => undefined);
+  }, [blocks, writerPack?.seriesTitle, factoryTopic]);
 
   const stageChipStatus = useMemo(() => {
     const scoped = filterBlocksByEpisode(blocks, writerFocusEpisode);
