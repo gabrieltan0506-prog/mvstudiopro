@@ -46,8 +46,8 @@ function extractJsonObject(raw: string): unknown {
   }
 }
 
-/** 趋势样本读盘上限：读不到就降级，不让初选卡死 */
-const SHORTLIST_TREND_READ_TIMEOUT_MS = 25_000;
+/** 本机趋势读盘上限（不再打冷仓；仍加竞速以免偶发卡死） */
+const SHORTLIST_TREND_READ_TIMEOUT_MS = 5_000;
 
 type ShortlistTrendBrief = {
   platform: "xiaohongshu" | "bilibili" | "douyin";
@@ -59,8 +59,8 @@ type ShortlistTrendBrief = {
 };
 
 /**
- * 初选前先查 trendStore 热门：小红书主、B站+抖音辅。
- * 只取标题与高频标签给模型当**改写素材**，不做引用来源；读失败返回空数组。
+ * 初选前先查本机热门样本：小红书主、B站+抖音辅。
+ * 只读 volume 本地文件，**不打冷仓**；读失败返回空数组继续出题。
  */
 async function readShortlistTrendBriefs(): Promise<{
   briefs: ShortlistTrendBrief[];
@@ -72,21 +72,18 @@ async function readShortlistTrendBriefs(): Promise<{
     { platform: "douyin" as const, role: "辅参考" as const, titleCap: 20 },
   ];
   try {
-    const { readTrendStoreForPlatforms } = await import("../growth/trendStore.js");
-    const store = await Promise.race([
-      readTrendStoreForPlatforms(
-        platforms.map((p) => p.platform),
-        { preferDerivedFiles: true },
-      ),
+    const { readLocalTrendCollectionsForPlatforms } = await import("../growth/trendStore.js");
+    const collections = await Promise.race([
+      readLocalTrendCollectionsForPlatforms(platforms.map((p) => p.platform)),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), SHORTLIST_TREND_READ_TIMEOUT_MS)),
     ]);
-    if (!store) {
-      console.warn("[generatePlatformTopicShortlist] trendStore 读取超时，本次不带热门样本");
+    if (!collections) {
+      console.warn("[generatePlatformTopicShortlist] 本机趋势读取超时，本次不带热门样本");
       return { briefs: [], status: "timeout" };
     }
     const briefs: ShortlistTrendBrief[] = [];
     for (const { platform, role, titleCap } of platforms) {
-      const items = (store.collections as Record<string, { items?: unknown[] } | undefined>)?.[platform]?.items;
+      const items = collections[platform]?.items;
       if (!Array.isArray(items) || !items.length) continue;
       const rows = items as Array<Record<string, unknown>>;
       const ranked = [...rows].sort(
@@ -127,7 +124,7 @@ async function readShortlistTrendBriefs(): Promise<{
     return { briefs, status: briefs.length ? "ok" : "empty" };
   } catch (err) {
     console.warn(
-      `[generatePlatformTopicShortlist] trendStore 读取失败: ${err instanceof Error ? err.message : String(err)}`.slice(
+      `[generatePlatformTopicShortlist] 本机趋势读取失败: ${err instanceof Error ? err.message : String(err)}`.slice(
         0,
         200,
       ),
@@ -262,17 +259,28 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
     });
 
   // 初选 20 条 + reasoning high 易耗尽预算导致 content 空（Fly 已见 empty content + health 抖）
-  let reasoningUsed: "medium" | "minimal" = "medium";
+  // 全案 20+ 条直接 minimal，缩短阻塞；≤12 条仍先 medium
+  const firstEffort: "medium" | "minimal" = targetCount >= 16 ? "minimal" : "medium";
+  let reasoningUsed: "medium" | "minimal" = firstEffort;
   let emptyRetried = false;
-  let res = await invokeShortlist("medium");
+  console.info(
+    `[generatePlatformTopicShortlist] 开始 LLM count=${targetCount} reasoning=${firstEffort} trendStatus=${trendStatus} trendPlatforms=${trendBriefs.length}`,
+  );
+  let res = await invokeShortlist(firstEffort);
   let llmText = extractFirstChoicePlainText(res).trim();
-  if (!llmText) {
+  if (!llmText && firstEffort !== "minimal") {
     emptyRetried = true;
     reasoningUsed = "minimal";
     console.warn(
       "[generatePlatformTopicShortlist] 首次空回（medium），降到 minimal 重试一次",
     );
     res = await invokeShortlist("minimal");
+    llmText = extractFirstChoicePlainText(res).trim();
+  } else if (!llmText && firstEffort === "minimal") {
+    emptyRetried = true;
+    console.warn("[generatePlatformTopicShortlist] minimal 空回，再试一次 medium");
+    reasoningUsed = "medium";
+    res = await invokeShortlist("medium");
     llmText = extractFirstChoicePlainText(res).trim();
   }
   if (!llmText) {
@@ -425,16 +433,19 @@ export async function expandPlatformTopicPicks(params: {
     uniquePicks.push({ ...p, dedupeKey: key });
   }
 
-  const results = await Promise.all(
-    uniquePicks.map(async (pick) => {
-      const skillsPrompt = await resolvePoolAndPrompt({
-        userId: params.userId,
-        enabledSkillIds: params.enabledSkillIds,
-        skillIds: pick.skillsUsed,
-        allowBloggerTitle: params.allowBloggerTitle,
-      });
-      const isVideo = pick.formatHint === "短视频";
-      const system = `你是平台执行文案编辑。只输出一个 JSON 对象：{ "blueprint": { ... } }。
+  // 串行扩写：并行 + reasoning high 会把 Fly 单机堵死（health 红 + empty content）
+  const results: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < uniquePicks.length; i++) {
+    const pick = uniquePicks[i]!;
+    const skillsPrompt = await resolvePoolAndPrompt({
+      userId: params.userId,
+      enabledSkillIds: params.enabledSkillIds,
+      skillIds: pick.skillsUsed,
+      allowBloggerTitle: params.allowBloggerTitle,
+    });
+    const isVideo = pick.formatHint === "短视频";
+    // 系统/用户消息必须含小写 json（Responses API json_object 硬门槛）
+    const system = `你是平台执行文案编辑。只输出一个 json 对象：{ "blueprint": { ... } }。
 必须遵守挂载 Skill。本条赛道 primaryLane=${pick.primaryLane}。
 ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
 硬约束：
@@ -457,13 +468,15 @@ ${
 - 去临床恐吓；强监管赛道用优化表达
 conveyGoal（须兑现）：${pick.conveyGoal}`;
 
-      const user = JSON.stringify({
-        personaContext: String(params.context || "").slice(0, 5000),
-        pick,
-        skillsPrompt: skillsPrompt.slice(0, 14000),
-      });
+    const user = JSON.stringify({
+      personaContext: String(params.context || "").slice(0, 5000),
+      pick,
+      skillsPrompt: skillsPrompt.slice(0, 14000),
+      outputFormat: "json",
+    });
 
-      const res = await invokeLLM({
+    const invokeExpand = async (reasoningEffort: "medium" | "minimal") =>
+      invokeLLM({
         provider: "openai",
         modelName: getPlatformStage2OpenAiModel(),
         max_tokens: 16000,
@@ -473,93 +486,104 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
           { role: "system", content: system },
           { role: "user", content: user },
         ],
-        reasoningEffort: "high",
+        reasoningEffort,
       });
 
-      const parsed = extractJsonObject(extractFirstChoicePlainText(res)) as Record<string, unknown> | null;
-      let bp =
-        parsed && typeof parsed.blueprint === "object" && parsed.blueprint
-          ? (parsed.blueprint as Record<string, unknown>)
-          : parsed && (parsed.title || parsed.copywriting)
-            ? parsed
-            : null;
-      if (!bp) {
-        bp = {
-          title: pick.title,
-          format: pick.formatHint,
-          hook: pick.hookSketch,
-          copywriting: `${pick.conveyGoal}\n\n在这里我先分享一些可对照的生活动作。`,
-          detailedScript: "【封面】\n【图2】痛点\n【图3】分享要点\n【图4】清单\n【末页】评论钩子",
-          suitablePlatforms: ["小红书"],
-          actionableSteps: ["按图文页发布", "评论区置顶生活钩子"],
-          publishingAdvice: "优先小红书图文测收藏",
-        };
-      }
+    console.info(
+      `[expandPlatformTopicPicks] ${i + 1}/${uniquePicks.length} title=${pick.title.slice(0, 40)}`,
+    );
+    let res = await invokeExpand("medium");
+    let llmText = extractFirstChoicePlainText(res).trim();
+    if (!llmText) {
+      console.warn(`[expandPlatformTopicPicks] 空回 medium，重试 minimal · ${i + 1}/${uniquePicks.length}`);
+      res = await invokeExpand("minimal");
+      llmText = extractFirstChoicePlainText(res).trim();
+    }
 
-      bp.title = String(bp.title || pick.title);
-      bp.format = String(bp.format || pick.formatHint);
-      bp.hook = String(bp.hook || pick.hookSketch);
-      bp.skillsUsed = pick.skillsUsed;
-      bp.primaryLane = pick.primaryLane;
-      bp.conveyGoal = pick.conveyGoal;
-      bp.dedupeKey = pick.dedupeKey;
-      bp.shortlistId = pick.id;
-      const linkedCampaigns = Array.isArray(pick.linkedCampaigns)
-        ? pick.linkedCampaigns
-            .map((x) => {
-              if (typeof x === "string") return x.trim();
-              if (x && typeof x === "object") {
-                const o = x as Record<string, unknown>;
-                for (const k of ["name", "title", "label", "text", "campaign"]) {
-                  if (typeof o[k] === "string" && String(o[k]).trim()) return String(o[k]).trim();
-                }
+    const parsed = extractJsonObject(llmText) as Record<string, unknown> | null;
+    let bp =
+      parsed && typeof parsed.blueprint === "object" && parsed.blueprint
+        ? (parsed.blueprint as Record<string, unknown>)
+        : parsed && (parsed.title || parsed.copywriting)
+          ? parsed
+          : null;
+    if (!bp) {
+      console.warn(`[expandPlatformTopicPicks] 解析失败，用骨架兜底 · ${pick.title.slice(0, 40)}`);
+      bp = {
+        title: pick.title,
+        format: pick.formatHint,
+        hook: pick.hookSketch,
+        copywriting: `${pick.conveyGoal}\n\n在这里我先分享一些可对照的生活动作。`,
+        detailedScript: "【封面】\n【图2】痛点\n【图3】分享要点\n【图4】清单\n【末页】评论钩子",
+        suitablePlatforms: ["小红书"],
+        actionableSteps: ["按图文页发布", "评论区置顶生活钩子"],
+        publishingAdvice: "优先小红书图文测收藏",
+      };
+    }
+
+    bp.title = String(bp.title || pick.title);
+    bp.format = String(bp.format || pick.formatHint);
+    bp.hook = String(bp.hook || pick.hookSketch);
+    bp.skillsUsed = pick.skillsUsed;
+    bp.primaryLane = pick.primaryLane;
+    bp.conveyGoal = pick.conveyGoal;
+    bp.dedupeKey = pick.dedupeKey;
+    bp.shortlistId = pick.id;
+    const linkedCampaigns = Array.isArray(pick.linkedCampaigns)
+      ? pick.linkedCampaigns
+          .map((x) => {
+            if (typeof x === "string") return x.trim();
+            if (x && typeof x === "object") {
+              const o = x as Record<string, unknown>;
+              for (const k of ["name", "title", "label", "text", "campaign"]) {
+                if (typeof o[k] === "string" && String(o[k]).trim()) return String(o[k]).trim();
               }
-              return "";
-            })
-            .filter((s) => s && s !== "[object Object]")
-            .slice(0, 4)
-        : [];
-      bp.linkedCampaigns = linkedCampaigns;
-      if (linkedCampaigns.length) {
-        const tag = linkedCampaigns.join(" · ");
-        const prevAdvice = typeof bp.publishingAdvice === "string" ? bp.publishingAdvice.trim() : "";
-        bp.publishingAdvice = `${prevAdvice}\n官方活动：${tag}（发布时挂同名话题/参与创作者中心活动）`.trim();
-      }
-      bp.commentHooks = Array.isArray(bp.commentHooks)
-        ? (bp.commentHooks as unknown[]).map((x) => normalizeCommentHook(x)).slice(0, 4)
-        : [normalizeCommentHook(pick.commentHook)];
+            }
+            return "";
+          })
+          .filter((s) => s && s !== "[object Object]")
+          .slice(0, 4)
+      : [];
+    bp.linkedCampaigns = linkedCampaigns;
+    if (linkedCampaigns.length) {
+      const tag = linkedCampaigns.join(" · ");
+      const prevAdvice = typeof bp.publishingAdvice === "string" ? bp.publishingAdvice.trim() : "";
+      bp.publishingAdvice = `${prevAdvice}\n官方活动：${tag}（发布时挂同名话题/参与创作者中心活动）`.trim();
+    }
+    bp.commentHooks = Array.isArray(bp.commentHooks)
+      ? (bp.commentHooks as unknown[]).map((x) => normalizeCommentHook(x)).slice(0, 4)
+      : [normalizeCommentHook(pick.commentHook)];
 
-      const cite = ensureAuthorityCiteInCopy({
-        copywriting: String(bp.copywriting || ""),
-        lane: pick.primaryLane,
-        force: pick.skillsUsed.includes("authority-cite-endorsement") || pick.primaryLane === "fmcg",
+    const cite = ensureAuthorityCiteInCopy({
+      copywriting: String(bp.copywriting || ""),
+      lane: pick.primaryLane,
+      force: pick.skillsUsed.includes("authority-cite-endorsement") || pick.primaryLane === "fmcg",
+    });
+    bp.copywriting = cite.copywriting;
+    bp.authorityCitePatched = cite.patched;
+
+    const med = ensureMedicalResourceCiteInCopy({
+      copywriting: String(bp.copywriting || ""),
+      topic: `${bp.title || ""} ${bp.hook || ""}`,
+      force:
+        pick.skillsUsed.includes("medical-resource-library") ||
+        pick.primaryLane === "crossover",
+    });
+    bp.copywriting = med.copywriting;
+    if (med.patched) bp.authorityCitePatched = true;
+
+    const hooks = bp.commentHooks as string[];
+    if (!Array.isArray(bp.graphicNotePages) || (bp.graphicNotePages as unknown[]).length < 6) {
+      bp.graphicNotePages = buildGraphicNotePagesFromBlueprint({
+        title: String(bp.title),
+        hook: String(bp.hook),
+        copywriting: String(bp.copywriting),
+        commentHook: hooks[0],
       });
-      bp.copywriting = cite.copywriting;
-      bp.authorityCitePatched = cite.patched;
+    }
 
-      const med = ensureMedicalResourceCiteInCopy({
-        copywriting: String(bp.copywriting || ""),
-        topic: `${bp.title || ""} ${bp.hook || ""}`,
-        force:
-          pick.skillsUsed.includes("medical-resource-library") ||
-          pick.primaryLane === "crossover",
-      });
-      bp.copywriting = med.copywriting;
-      if (med.patched) bp.authorityCitePatched = true;
-
-      const hooks = bp.commentHooks as string[];
-      if (!Array.isArray(bp.graphicNotePages) || (bp.graphicNotePages as unknown[]).length < 6) {
-        bp.graphicNotePages = buildGraphicNotePagesFromBlueprint({
-          title: String(bp.title),
-          hook: String(bp.hook),
-          copywriting: String(bp.copywriting),
-          commentHook: hooks[0],
-        });
-      }
-
-      return bp;
-    }),
-  );
+    results.push(bp);
+  }
 
   return {
     contentBlueprints: results,

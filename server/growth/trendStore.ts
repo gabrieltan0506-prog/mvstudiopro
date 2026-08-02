@@ -1689,6 +1689,40 @@ export async function readTrendStoreForPlatforms(
   };
 }
 
+/**
+ * 选题初选专用：只读本机 volume 上的 platform-current / platforms 文件。
+ * **禁止**走 `readJsonWithGzipFallback` 冷仓下载（Fly 上会堵死 health + 把 LLM 拖到超时）。
+ */
+export async function readLocalTrendCollectionsForPlatforms(
+  platforms: GrowthPlatform[],
+): Promise<Partial<Record<GrowthPlatform, PlatformTrendCollection>>> {
+  const uniquePlatforms = Array.from(new Set(platforms.filter(Boolean)));
+  const entries = await Promise.all(
+    uniquePlatforms.map(async (platform) => {
+      const current = await readLocalJsonOrGzip<PlatformCurrentTruthFile>(getPlatformCurrentTruthFile(platform));
+      if (
+        current?.collection?.items?.length
+        && !isRecoveredCollectionSource(current.collection.source)
+      ) {
+        return [platform, current.collection] as const;
+      }
+      const derived = await readLocalJsonOrGzip<{ collection?: PlatformTrendCollection }>(
+        path.join(PLATFORM_DIR, `${platform}.json`),
+      );
+      if (
+        derived?.collection?.items?.length
+        && !isRecoveredCollectionSource(derived.collection.source)
+      ) {
+        return [platform, derived.collection] as const;
+      }
+      return [platform, undefined] as const;
+    }),
+  );
+  return Object.fromEntries(
+    entries.filter(([, collection]) => Boolean(collection)),
+  ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
+}
+
 export async function reconcileTrendHistoryState(options?: { force?: boolean }) {
   if (!options?.force && historyReconcilePromise) return historyReconcilePromise;
 
