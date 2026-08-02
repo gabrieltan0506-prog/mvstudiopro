@@ -64,6 +64,10 @@ import {
   toVisualReportWindowDays,
   type VisualReportTheme,
 } from "@/lib/visualReportMapper";
+import {
+  readPlatformVisualReportPersist,
+  writePlatformVisualReportPersist,
+} from "@/lib/platformVisualReportPersist";
 import { DecisionIntelLockedDemoPreview } from "@/components/DecisionIntelLockedDemoPreview";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
@@ -230,6 +234,12 @@ type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview";
 const COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR: PlatformImagePromptTranslator = "gpt54";
 
 /** 全用户：2×4 / 八格 **出图** 引擎选择（封面已固定 OpenAI 官方 Image-2） */
+/** 进页恢复最近一次趋势报表（与 VisualReportTemplate 爱马仕橙底一起渲染） */
+function bootPlatformTrendPersist() {
+  if (typeof window === "undefined") return null;
+  return readPlatformVisualReportPersist();
+}
+
 const PLATFORM_COMPOSITE_2X4_ENGINE_LS_KEY = "mvstudiopro.platform.composite2x4Engine.v1";
 type PlatformComposite2x4ImageEngine = "gpt_image2" | "nano_banana_2";
 
@@ -2001,13 +2011,28 @@ export default function PlatformPage() {
   }, [platformCopyLlmEngine]);
 
   // Separate state for dashboard — populated by the second call after snapshot loads
-  const [platformDashboard, setPlatformDashboard] = useState<PlatformDashboard | null>(null);
+  const [platformDashboard, setPlatformDashboard] = useState<PlatformDashboard | null>(() => {
+    const boot = bootPlatformTrendPersist();
+    return (boot?.platformDashboard as PlatformDashboard | null | undefined) ?? null;
+  });
   const [dashboardDebug, setDashboardDebug] = useState<Record<string, unknown> | null>(null);
   const [isDashboardLoading, setIsDashboardLoading] = useState(false);
-  const [visualReportData, setVisualReportData] = useState<VisualReportData | null>(null);
+  const [visualReportData, setVisualReportData] = useState<VisualReportData | null>(() => {
+    return bootPlatformTrendPersist()?.visualReport ?? null;
+  });
   const [visualReportTheme] = useState<VisualReportTheme>("dark");
   const [isVisualReportLoading, setIsVisualReportLoading] = useState(false);
   const [isVisualReportDownloading, setIsVisualReportDownloading] = useState(false);
+
+  /** 有报表就写入本机：刷新后仍渲染（爱马仕橙底在 Template，不依赖重新生成） */
+  useEffect(() => {
+    if (!visualReportData) return;
+    writePlatformVisualReportPersist({
+      visualReport: visualReportData,
+      platformDashboard,
+      windowDays: String(selectedWindowDays),
+    });
+  }, [visualReportData, platformDashboard, selectedWindowDays]);
   /** 平台趋势区子 Tab：指定平台分析 / AI 漫剧专区 */
   const [trendInsightTab, setTrendInsightTab] = useState<"overview" | "ai_manhua">("overview");
   /** AI 漫剧专区内：抖音 / 快手子榜（随上方趋势平台筛选自动切换） */
@@ -7719,10 +7744,9 @@ export default function PlatformPage() {
     queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
 
     setAskResult(null);
-    setPlatformDashboard(null);
+    // 重跑中保留上一份看板/报表；成功后再覆盖。失败也不致整页空白。
     setDashboardDebug(null);
     setIsDashboardLoading(false);
-    setVisualReportData(null);
     setIsVisualReportLoading(false);
     setPlatformContent(null);
     setContentDebug(null);
@@ -9331,7 +9355,7 @@ export default function PlatformPage() {
                             <div>
                               <div className="text-sm font-semibold text-[#6fffb0]">PNG 图文报表已就绪</div>
                               <p className="mt-1 text-[11px] text-[#c9c0e6]/60">
-                                多平台洞察 + 蓝海词；含漫剧摘要条（完整榜单见「AI 漫剧」Tab）。
+                                多平台洞察 + 蓝海词；本机已记住最近一份，刷新仍可看（含暖橙新底）。完整榜单见「AI 漫剧」Tab。
                               </p>
                             </div>
                             <button

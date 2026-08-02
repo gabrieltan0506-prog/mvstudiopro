@@ -75,6 +75,53 @@ function safeTxt(item: any): string {
   return String(item);
 }
 
+/** 正文分层：书名号/数字涨幅高亮划线，避免满屏同色灰字 */
+function renderRichText(text: string, accent: string): React.ReactNode {
+  const s = String(text || "");
+  if (!s) return null;
+  const chunks = s.split(/(「[^」]+」|『[^』]+』|\d+(?:\.\d+)?%|\+\d+(?:\.\d+)?%|增长\d+(?:\.\d+)?倍)/g);
+  return chunks.map((chunk, i) => {
+    if (!chunk) return null;
+    if (/^[「『]/.test(chunk) && /[」』]$/.test(chunk)) {
+      return (
+        <span
+          key={i}
+          style={{
+            color: accent,
+            fontWeight: 700,
+            borderBottom: `1.5px solid ${accent}`,
+            paddingBottom: 1,
+          }}
+        >
+          {chunk}
+        </span>
+      );
+    }
+    if (/^(\d+(?:\.\d+)?%|\+\d+(?:\.\d+)?%|增长\d+(?:\.\d+)?倍)$/.test(chunk)) {
+      return (
+        <span
+          key={i}
+          style={{
+            color: accent,
+            fontWeight: 800,
+            background: `${accent}1f`,
+            borderRadius: 3,
+            padding: "0 3px",
+          }}
+        >
+          {chunk}
+        </span>
+      );
+    }
+    return <span key={i}>{chunk}</span>;
+  });
+}
+
+function isKeyBullet(text: string, index: number): boolean {
+  if (index < 2) return true;
+  return /建议|重点|机会|优先|蓝海|爆发|必做|高热/.test(String(text || ""));
+}
+
 /** 解析「+72%」「增长1.5倍」「高热」「-3%」等为整数（用于条宽）；「高热」按 101 视为满条 */
 function parseGrowthPercentString(growth: string): number | null {
   const s = String(growth || "").trim();
@@ -175,16 +222,19 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                   : roleLabels[i] || "洞察";
                 const title = isObj ? safeTxt(insight.title || insight.name || "") : safeTxt(insight).slice(0, 48);
                 const desc = isObj ? safeTxt(insight.description || insight.desc || insight.content || "") : safeTxt(insight);
+                const accent = C[i % C.length];
                 return (
-                  <div key={i} style={card({ height: "auto", minHeight: 0, overflow: "visible", alignSelf: "start" })}>
-                    <div style={ct(C[i % C.length])}><div style={dot(C[i % C.length])} />{role}{i + 1}</div>
-                    {/* Short title — fully expanded, no truncation */}
-                    <div style={{ fontSize: "16px", fontWeight: 800, color: C[i % C.length], lineHeight: "1.35", marginBottom: "12px", wordBreak: "break-word", overflowWrap: "anywhere", whiteSpace: "normal" }}>
+                  <div key={i} style={card({ height: "auto", minHeight: 0, overflow: "visible", alignSelf: "start", borderTop: `3px solid ${accent}` })}>
+                    <div style={{ ...ct(accent), color: accent }}>
+                      <div style={dot(accent)} />
+                      <span style={{ color: accent }}>★</span>
+                      <span style={{ color: accent }}>{role}{i + 1}</span>
+                    </div>
+                    <div style={{ fontSize: "16px", fontWeight: 800, color: accent, lineHeight: "1.35", marginBottom: "10px", wordBreak: "break-word", overflowWrap: "anywhere", whiteSpace: "normal" }}>
                       {title}
                     </div>
-                    {/* Detailed description — full height unlocked */}
-                    <div style={{ fontSize: "11px", color: muted, lineHeight: "1.75", wordBreak: "break-word", overflowWrap: "anywhere", whiteSpace: "normal", height: "auto", minHeight: 0, paddingBottom: "8px" }}>
-                      {desc}
+                    <div style={{ fontSize: "11px", color: bodyTxt, lineHeight: "1.75", wordBreak: "break-word", overflowWrap: "anywhere", whiteSpace: "normal", height: "auto", minHeight: 0, paddingBottom: "8px" }}>
+                      {renderRichText(desc, accent)}
                     </div>
                   </div>
                 );
@@ -199,21 +249,45 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
           <div style={{ background: "rgba(184,92,56,0.06)", border: `1px solid rgba(184,92,56,0.22)`, borderRadius: "12px", padding: "16px 18px", marginBottom: "16px" }}>
             {(data.globalBlueOceanWords?.length || 0) > 0 ? (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "14px" }}>
-                {(data.globalBlueOceanWords || []).map((bow, bi) => (
-                  <div key={bi} style={{ background: "rgba(255,249,242,0.75)", border: `1px solid rgba(140,90,70,0.18)`, borderRadius: "8px", padding: "12px 14px" }}>
+                {(data.globalBlueOceanWords || []).map((bow, bi) => {
+                  const catColor = C[bi % C.length];
+                  return (
+                  <div key={bi} style={{ background: "rgba(255,249,242,0.75)", border: `1px solid rgba(140,90,70,0.18)`, borderLeft: `3px solid ${catColor}`, borderRadius: "8px", padding: "12px 14px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
                       <span style={{ fontSize: "10px", color: muted, fontWeight: 600, letterSpacing: "0.06em" }}>一级</span>
-                      <span style={{ fontSize: "13px", fontWeight: 800, color: HERMES_ACCENT, background: "rgba(184,92,56,0.10)", border: `1px solid rgba(184,92,56,0.32)`, borderRadius: "5px", padding: "2px 10px" }}>{bow.primary}</span>
+                      <span style={{ fontSize: "13px", fontWeight: 800, color: catColor, background: `${catColor}14`, border: `1px solid ${catColor}55`, borderRadius: "5px", padding: "2px 10px" }}>
+                        ★ {bow.primary}
+                      </span>
                     </div>
                     {bow.secondary && bow.secondary.length > 0 && (
                       <div style={{ display: "flex", flexWrap: "wrap" as const, gap: "5px", paddingLeft: "8px" }}>
-                        {bow.secondary.map((s2, si) => (
-                          <span key={si} style={{ fontSize: "11px", color: bodyTxt, background: "rgba(70,48,36,0.06)", border: `1px solid rgba(70,48,36,0.14)`, borderRadius: "4px", padding: "2px 8px" }}>{s2}</span>
-                        ))}
+                        {bow.secondary.map((s2, si) => {
+                          const chip = C[(bi + si + 1) % C.length];
+                          const hot = si < 2;
+                          return (
+                          <span
+                            key={si}
+                            style={{
+                              fontSize: "11px",
+                              color: chip,
+                              fontWeight: hot ? 700 : 500,
+                              background: `${chip}12`,
+                              border: `1px solid ${chip}40`,
+                              borderRadius: "4px",
+                              padding: "2px 8px",
+                              textDecoration: hot ? "underline" : undefined,
+                              textUnderlineOffset: 2,
+                            }}
+                          >
+                            {hot ? "★ " : ""}{s2}
+                          </span>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div style={{ fontSize: "12px", color: muted, lineHeight: 1.7 }}>
@@ -290,25 +364,46 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                   <div style={ct(C[5])}><div style={dot(C[5])} />🚀 当前官方流量扶持活动</div>
                   {(data.trafficSupport || []).length === 0 ? (
                     <div style={{ fontSize: "12px", color: muted }}>当前无重大官方活动</div>
-                  ) : (data.trafficSupport || []).map((item, i) => (
+                  ) : (data.trafficSupport || []).map((item, i) => {
+                    const line = safeTxt(item);
+                    const key = isKeyBullet(line, i);
+                    const accent = C[(5 + i) % C.length];
+                    return (
                     <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "9px", fontSize: "12px", color: bodyTxt, lineHeight: "1.6" }}>
-                      <span style={{ color: C[5], fontWeight: 700, minWidth: "18px" }}>{i + 1}</span>
-                      <span style={{ wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(item)}</span>
+                      <span style={{ color: accent, fontWeight: 800, minWidth: "22px" }}>{key ? "★" : i + 1}</span>
+                      <span style={{ wordBreak: "break-word", whiteSpace: "normal", color: key ? accent : bodyTxt, fontWeight: key ? 600 : 400 }}>
+                        {renderRichText(line, accent)}
+                      </span>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               {(data.hotFestivals?.length || 0) > 0 && (
                 <div style={card()}>
-                  <div style={ct(C[2])}><div style={dot(C[2])} />🔥 当期节日与社会热点</div>
+                  <div style={{ ...ct(C[2]), color: C[2] }}><div style={dot(C[2])} />🔥 当期节日与社会热点</div>
                   {(data.hotFestivals || []).length === 0 ? (
                     <div style={{ fontSize: "12px", color: muted }}>当前无显着节日热点</div>
-                  ) : (data.hotFestivals || []).map((item, i) => (
+                  ) : (data.hotFestivals || []).map((item, i) => {
+                    const line = safeTxt(item);
+                    const key = isKeyBullet(line, i);
+                    const accent = C[(2 + i) % C.length];
+                    return (
                     <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "9px", fontSize: "12px", color: bodyTxt, lineHeight: "1.6" }}>
-                      <span style={{ color: C[2], fontWeight: 700 }}>•</span>
-                      <span style={{ wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(item)}</span>
+                      <span style={{ color: accent, fontWeight: 800 }}>{key ? "★" : "•"}</span>
+                      <span style={{
+                        wordBreak: "break-word",
+                        whiteSpace: "normal",
+                        color: key ? accent : bodyTxt,
+                        fontWeight: key ? 600 : 400,
+                        borderBottom: key ? `1px solid ${accent}66` : undefined,
+                        paddingBottom: key ? 1 : undefined,
+                      }}>
+                        {renderRichText(line, accent)}
+                      </span>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -370,20 +465,28 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
               {/* Audiences & Biz */}
               {(data.audiencesAndBiz?.length || 0) > 0 && (
                 <div style={card()}>
-                  <div style={ct(C[2])}><div style={dot(C[2])} />目标人群与商业方向</div>
-                  {(data.audiencesAndBiz || []).map((ab, i) => (
+                  <div style={{ ...ct(C[2]), color: C[2] }}><div style={dot(C[2])} />★ 目标人群与商业方向</div>
+                  {(data.audiencesAndBiz || []).map((ab, i) => {
+                    const aAccent = C[i % C.length];
+                    const bAccent = C[(i + 3) % C.length];
+                    return (
                     <div key={i} style={{ marginBottom: "14px" }}>
-                      <div style={{ fontSize: "12px", color: muted, lineHeight: "1.6", marginBottom: "4px" }}>
-                        <span style={{ color: txt, fontWeight: 700 }}>目标人群 {i+1}</span><br />
-                        {safeTxt(ab.audience)}
+                      <div style={{ fontSize: "12px", color: bodyTxt, lineHeight: "1.6", marginBottom: "4px" }}>
+                        <span style={{ color: aAccent, fontWeight: 800 }}>★ 目标人群 {i + 1}</span><br />
+                        <span style={{ borderBottom: i === 0 ? `1.5px solid ${aAccent}` : undefined, paddingBottom: i === 0 ? 1 : undefined }}>
+                          {renderRichText(safeTxt(ab.audience), aAccent)}
+                        </span>
                       </div>
                       {i < (data.audiencesAndBiz?.length || 0) - 1 && <div style={{ height: "1px", background: border, margin: "8px 0" }} />}
-                      <div style={{ fontSize: "12px", color: C[4], lineHeight: "1.6" }}>
-                        <span style={{ color: txt, fontWeight: 700 }}>商业方向 {i+1}</span><br />
-                        {safeTxt(ab.bizDirection)}
+                      <div style={{ fontSize: "12px", color: bodyTxt, lineHeight: "1.6" }}>
+                        <span style={{ color: bAccent, fontWeight: 800 }}>商业方向 {i + 1}</span><br />
+                        <span style={{ color: bAccent, fontWeight: 600 }}>
+                          {renderRichText(safeTxt(ab.bizDirection), bAccent)}
+                        </span>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -401,17 +504,30 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
               {(data.topicExamples || []).map((ex, i) => {
                 const color = C[i % C.length];
                 const barW = Math.max(96 - i * 14, 30);
+                const conceptAccent = C[(i + 2) % C.length];
                 return (
-                  <div key={i} style={{ marginBottom: "13px" }}>
-                    <div style={{ fontSize: "13px", fontWeight: 700, color, marginBottom: "5px" }}>{safeTxt(ex.structure)}</div>
+                  <div key={i} style={{ marginBottom: "13px", borderLeft: `3px solid ${color}`, paddingLeft: "10px" }}>
+                    <div style={{ fontSize: "13px", fontWeight: 800, color, marginBottom: "5px" }}>
+                      {i < 2 ? "★ " : ""}{safeTxt(ex.structure)}
+                    </div>
                     <div style={{ height: "5px", background: trackBg, borderRadius: "99px", overflow: "hidden", marginBottom: "4px" }}>
                       <div style={{ height: "100%", borderRadius: "99px", background: color, width: `${barW}%` }} />
                     </div>
-                    <div style={{ fontSize: "11px", color: muted, lineHeight: "1.6" }}>
-                      {safeTxt(ex.concept)}
+                    <div style={{ fontSize: "11px", color: bodyTxt, lineHeight: "1.6" }}>
+                      {renderRichText(safeTxt(ex.concept), conceptAccent)}
                     </div>
                     {ex.realCase && (
-                      <div style={{ fontSize: "11px", color: txt, lineHeight: "1.6", marginTop: "3px", fontStyle: "italic" }}>
+                      <div style={{
+                        fontSize: "11px",
+                        color,
+                        lineHeight: "1.6",
+                        marginTop: "3px",
+                        fontWeight: 700,
+                        fontStyle: "italic",
+                        borderBottom: `1.5px solid ${color}`,
+                        display: "inline",
+                        paddingBottom: 1,
+                      }}>
                         「{safeTxt(ex.realCase)}」
                       </div>
                     )}
@@ -436,17 +552,24 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                 {pl.trafficBoosters.length > 0 && (
                   <>
                     <div style={{ fontSize: "11px", fontWeight: 700, color: C[5], marginBottom: "8px" }}>🚀 流量扶持活动</div>
-                    {pl.trafficBoosters.map((b, bi) => (
+                    {pl.trafficBoosters.map((b, bi) => {
+                      const line = safeTxt(b);
+                      const key = isKeyBullet(line, bi);
+                      const lineAccent = C[(5 + bi) % C.length];
+                      return (
                       <div key={bi} style={{ display: "flex", gap: "9px", alignItems: "flex-start", marginBottom: "8px", fontSize: "12px" }}>
-                        <span style={{ color: C[5], fontWeight: 700, minWidth: "18px", flexShrink: 0 }}>{bi + 1}</span>
+                        <span style={{ color: lineAccent, fontWeight: 800, minWidth: "18px", flexShrink: 0 }}>{key ? "★" : bi + 1}</span>
                         <div style={{ flex: 1 }}>
                           <div style={{ height: "6px", background: trackBg, borderRadius: "99px", overflow: "hidden", marginBottom: "3px" }}>
                             <div style={{ height: "100%", borderRadius: "99px", background: `linear-gradient(90deg,${C[5]},${C[0]})`, width: `${Math.max(100 - bi * 18, 30)}%` }} />
                           </div>
-                          <div style={{ fontSize: "11px", color: bodyTxt, lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(b)}</div>
+                          <div style={{ fontSize: "11px", color: key ? lineAccent : bodyTxt, fontWeight: key ? 600 : 400, lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>
+                            {renderRichText(line, lineAccent)}
+                          </div>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </>
                 )}
                 {pl.hotTopics.length > 0 && (
@@ -456,9 +579,21 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                       const st = STATUS_CYCLE[ti % STATUS_CYCLE.length];
                       const barW = Math.max(100 - ti * 8, 40);
                       const color = C[ti % C.length];
+                      const top = ti < 3;
                       return (
                         <div key={ti} style={{ display: "flex", flexDirection: "column", gap: "4px", marginBottom: "10px" }}>
-                          <div style={{ fontSize: "12px", color: bodyTxt, lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(tp)}</div>
+                          <div style={{
+                            fontSize: "12px",
+                            color,
+                            fontWeight: top ? 700 : 500,
+                            lineHeight: "1.5",
+                            wordBreak: "break-word",
+                            whiteSpace: "normal",
+                            textDecoration: top ? "underline" : undefined,
+                            textUnderlineOffset: 2,
+                          }}>
+                            {top ? "★ " : ""}{safeTxt(tp)}
+                          </div>
                           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                             <div style={{ flex: 1, height: "8px", background: trackBg, borderRadius: "99px", overflow: "hidden" }}>
                               <div style={{ height: "100%", borderRadius: "99px", background: color, width: `${barW}%` }} />
@@ -477,24 +612,42 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                     <div style={{ fontSize: "11px", fontWeight: 700, color: HERMES_ACCENT, marginBottom: "8px" }}>
                       🌊 蓝海词 · Blue Ocean Keywords
                     </div>
-                    {pl.blueOceanWords.map((bow, bi) => (
+                    {pl.blueOceanWords.map((bow, bi) => {
+                      const catColor = C[bi % C.length];
+                      return (
                       <div key={bi} style={{ marginBottom: "10px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "5px" }}>
-                          <span style={{ fontSize: "12px", fontWeight: 800, color: HERMES_ACCENT, background: "rgba(184,92,56,0.10)", border: "1px solid rgba(184,92,56,0.32)", borderRadius: "6px", padding: "2px 10px", whiteSpace: "nowrap" }}>
-                            一级：{bow.primary}
+                          <span style={{ fontSize: "12px", fontWeight: 800, color: catColor, background: `${catColor}14`, border: `1px solid ${catColor}55`, borderRadius: "6px", padding: "2px 10px", whiteSpace: "nowrap" }}>
+                            ★ 一级：{bow.primary}
                           </span>
                         </div>
                         {bow.secondary && bow.secondary.length > 0 && (
                           <div style={{ display: "flex", flexWrap: "wrap", gap: "5px", paddingLeft: "8px" }}>
-                            {bow.secondary.map((s2, si) => (
-                              <span key={si} style={{ fontSize: "11px", color: bodyTxt, background: "rgba(70,48,36,0.06)", border: "1px solid rgba(70,48,36,0.14)", borderRadius: "4px", padding: "1px 8px", whiteSpace: "nowrap" }}>
-                                {s2}
+                            {bow.secondary.map((s2, si) => {
+                              const chip = C[(bi + si + 1) % C.length];
+                              const hot = si < 2;
+                              return (
+                              <span key={si} style={{
+                                fontSize: "11px",
+                                color: chip,
+                                fontWeight: hot ? 700 : 500,
+                                background: `${chip}12`,
+                                border: `1px solid ${chip}40`,
+                                borderRadius: "4px",
+                                padding: "1px 8px",
+                                whiteSpace: "nowrap",
+                                textDecoration: hot ? "underline" : undefined,
+                                textUnderlineOffset: 2,
+                              }}>
+                                {hot ? "★ " : ""}{s2}
                               </span>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -520,33 +673,46 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                     {pl.trafficBoosters.length > 0 && (
                       <>
                         <div style={{ fontSize: "11px", fontWeight: 700, color: C[5], marginBottom: "8px" }}>🚀 流量扶持活动</div>
-                        {pl.trafficBoosters.map((b, bi) => (
+                        {pl.trafficBoosters.map((b, bi) => {
+                          const line = safeTxt(b);
+                          const key = isKeyBullet(line, bi);
+                          const lineAccent = C[(5 + bi) % C.length];
+                          return (
                           <div key={bi} style={{ display: "flex", gap: "9px", alignItems: "flex-start", marginBottom: "8px", fontSize: "12px" }}>
-                            <span style={{ color: C[5], fontWeight: 700, minWidth: "18px", flexShrink: 0 }}>{bi + 1}</span>
+                            <span style={{ color: lineAccent, fontWeight: 800, minWidth: "18px", flexShrink: 0 }}>{key ? "★" : bi + 1}</span>
                             <div style={{ flex: 1 }}>
                               <div style={{ height: "6px", background: trackBg, borderRadius: "99px", overflow: "hidden", marginBottom: "3px" }}>
                                 <div style={{ height: "100%", borderRadius: "99px", background: `linear-gradient(90deg,${C[5]},${C[0]})`, width: `${Math.max(100 - bi * 18, 30)}%` }} />
                               </div>
-                              <div style={{ fontSize: "11px", color: bodyTxt, lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(b)}</div>
+                              <div style={{ fontSize: "11px", color: key ? lineAccent : bodyTxt, fontWeight: key ? 600 : 400, lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>
+                                {renderRichText(line, lineAccent)}
+                              </div>
                             </div>
                           </div>
-                        ))}
+                          );
+                        })}
                       </>
                     )}
                     {pl.cashRewards.length > 0 && (
                       <>
                         <div style={{ fontSize: "11px", fontWeight: 700, color: C[4], marginTop: "10px", marginBottom: "8px" }}>💰 现金奖励任务</div>
-                        {pl.cashRewards.map((rw, ri) => (
+                        {pl.cashRewards.map((rw, ri) => {
+                          const line = safeTxt(rw);
+                          const lineAccent = C[(4 + ri) % C.length];
+                          return (
                           <div key={ri} style={{ display: "flex", gap: "9px", alignItems: "flex-start", marginBottom: "8px", fontSize: "12px" }}>
-                            <span style={{ color: C[4], fontWeight: 700, minWidth: "18px", flexShrink: 0 }}>💎</span>
+                            <span style={{ color: lineAccent, fontWeight: 800, minWidth: "18px", flexShrink: 0 }}>{ri < 2 ? "★" : "💎"}</span>
                             <div style={{ flex: 1 }}>
                               <div style={{ height: "6px", background: trackBg, borderRadius: "99px", overflow: "hidden", marginBottom: "3px" }}>
                                 <div style={{ height: "100%", borderRadius: "99px", background: `linear-gradient(90deg,${C[4]},${C[0]})`, width: `${Math.max(100 - ri * 22, 30)}%` }} />
                               </div>
-                              <div style={{ fontSize: "11px", color: bodyTxt, lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(rw)}</div>
+                              <div style={{ fontSize: "11px", color: ri < 2 ? lineAccent : bodyTxt, fontWeight: ri < 2 ? 600 : 400, lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>
+                                {renderRichText(line, lineAccent)}
+                              </div>
                             </div>
                           </div>
-                        ))}
+                          );
+                        })}
                       </>
                     )}
                     {pl.hotTopics.length > 0 && (
@@ -556,9 +722,21 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                           const st = STATUS_CYCLE[ti % STATUS_CYCLE.length];
                           const barW = Math.max(100 - ti * 8, 40);
                           const color = C[ti % C.length];
+                          const top = ti < 3;
                           return (
                             <div key={ti} style={{ display: "flex", flexDirection: "column", gap: "4px", marginBottom: "10px" }}>
-                              <div style={{ fontSize: "12px", color: bodyTxt, lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(tp)}</div>
+                              <div style={{
+                                fontSize: "12px",
+                                color,
+                                fontWeight: top ? 700 : 500,
+                                lineHeight: "1.5",
+                                wordBreak: "break-word",
+                                whiteSpace: "normal",
+                                textDecoration: top ? "underline" : undefined,
+                                textUnderlineOffset: 2,
+                              }}>
+                                {top ? "★ " : ""}{safeTxt(tp)}
+                              </div>
                               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                                 <div style={{ flex: 1, height: "8px", background: trackBg, borderRadius: "99px", overflow: "hidden" }}>
                                   <div style={{ height: "100%", borderRadius: "99px", background: color, width: `${barW}%` }} />
@@ -577,22 +755,39 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                         <div style={{ fontSize: "11px", fontWeight: 700, color: HERMES_ACCENT, marginBottom: "7px" }}>
                           🌊 蓝海词
                         </div>
-                        {pl.blueOceanWords.map((bow, bi) => (
+                        {pl.blueOceanWords.map((bow, bi) => {
+                          const catColor = C[bi % C.length];
+                          return (
                           <div key={bi} style={{ marginBottom: "8px" }}>
-                            <span style={{ fontSize: "11px", fontWeight: 800, color: HERMES_ACCENT, background: "rgba(184,92,56,0.10)", border: "1px solid rgba(184,92,56,0.30)", borderRadius: "5px", padding: "1px 8px", display: "inline-block", marginBottom: "4px" }}>
-                              一级：{bow.primary}
+                            <span style={{ fontSize: "11px", fontWeight: 800, color: catColor, background: `${catColor}14`, border: `1px solid ${catColor}55`, borderRadius: "5px", padding: "1px 8px", display: "inline-block", marginBottom: "4px" }}>
+                              ★ 一级：{bow.primary}
                             </span>
                             {bow.secondary && bow.secondary.length > 0 && (
                               <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", paddingLeft: "6px" }}>
-                                {bow.secondary.map((s2, si) => (
-                                  <span key={si} style={{ fontSize: "10px", color: bodyTxt, background: "rgba(70,48,36,0.06)", border: "1px solid rgba(70,48,36,0.14)", borderRadius: "3px", padding: "1px 6px" }}>
-                                    {s2}
+                                {bow.secondary.map((s2, si) => {
+                                  const chip = C[(bi + si + 1) % C.length];
+                                  const hot = si < 2;
+                                  return (
+                                  <span key={si} style={{
+                                    fontSize: "10px",
+                                    color: chip,
+                                    fontWeight: hot ? 700 : 500,
+                                    background: `${chip}12`,
+                                    border: `1px solid ${chip}40`,
+                                    borderRadius: "3px",
+                                    padding: "1px 6px",
+                                    textDecoration: hot ? "underline" : undefined,
+                                    textUnderlineOffset: 2,
+                                  }}>
+                                    {hot ? "★ " : ""}{s2}
                                   </span>
-                                ))}
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
