@@ -2502,6 +2502,13 @@ export default function PlatformPage() {
   /** 选题初选 20–30 条 → 用户自己挑 → 可改标题 → 单条扩写（全案默认 20） */
   const [topicShortlist, setTopicShortlist] = useState<PlatformTopicShortlistItem[]>([]);
   const [topicShortlistCount, setTopicShortlistCount] = useState(PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT);
+  /** 全案选题过程日志（进 Debug 面板；失败时按钮下方也可见末行） */
+  const [shortlistDebugLines, setShortlistDebugLines] = useState<string[]>([]);
+  const [shortlistLastError, setShortlistLastError] = useState<string | null>(null);
+  const pushShortlistDebug = useCallback((line: string) => {
+    const stamp = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    setShortlistDebugLines((prev) => [...prev.slice(-80), `[${stamp}] ${line}`]);
+  }, []);
   /** 正在改标题的初选条目 id 与草稿文字（改完才扩写） */
   const [editingShortlistTopicId, setEditingShortlistTopicId] = useState<string | null>(null);
   const [editingShortlistTitle, setEditingShortlistTitle] = useState("");
@@ -7943,13 +7950,16 @@ export default function PlatformPage() {
     setTopicShortlistCount(n);
     setCreateStep("topics");
     setHasAnalyzed(true);
-    // 结果钉在按钮下方；同时切到内容创作，避免选题只出现在上方被滚走看不见
-    applyPlatformMode("create", { skipDirtyCheck: true, history: "replace" });
-    setCustomWorkspaceTab("copy");
+    setShortlistLastError(null);
+    setShortlistDebugLines([]);
+    pushShortlistDebug(`全案确认：请求 ${n} 条选题初选（小红书主 / B站+抖音辅）`);
+    pushShortlistDebug(`人设长度 ${focusPrompt.trim().length} 字 · Skill ${enabledPlatformSkillIds.size} 项`);
     scrollToPlatformSection("platform-fullcase-shortlist-results");
     try {
       trackPlatformFunnel("fullcase_start", { mode: "create", handler: "generateTopicShortlist", count: n });
       trackPlatformFunnel("topic_shortlist_start", { count: n });
+      pushShortlistDebug("调用 generatePlatformTopicShortlist…");
+      const t0 = Date.now();
       const existingTitles = [
         ...(platformContent?.contentBlueprints || []).map((b: { title?: string }) => String(b?.title || "")),
         ...topicShortlist.map((t) => t.title),
@@ -7962,9 +7972,21 @@ export default function PlatformPage() {
         count: n,
       });
       const topics = res.topics || [];
+      const ms = Date.now() - t0;
       setTopicShortlist(topics);
       setCreateStep("result");
-      // 等 DOM 挂上结果卡再滚
+      pushShortlistDebug(
+        `返回 topics=${topics.length} · 耗时 ${Math.round(ms / 1000)}s · 扣点 ${res.chargedCredits ?? "—"}`,
+      );
+      if (res.diagnostics && typeof res.diagnostics === "object") {
+        const d = res.diagnostics as Record<string, unknown>;
+        pushShortlistDebug(
+          `诊断 raw=${String(d.rawCount ?? "—")} afterDedupe=${String(d.afterDedupe ?? "—")} trendStatus=${String(d.trendStatus ?? "—")} trend=${JSON.stringify(d.trendPlatforms ?? [])}`,
+        );
+        pushShortlistDebug(
+          `LLM reasoning=${String(d.reasoningUsed ?? "—")} emptyRetried=${String(d.emptyRetried ?? false)}`,
+        );
+      }
       window.setTimeout(() => scrollToPlatformSection("platform-fullcase-shortlist-results"), 80);
       if (workbenchUserKey) {
         pushRecentTask(workbenchUserKey, {
@@ -7976,19 +7998,27 @@ export default function PlatformPage() {
       }
       trackPlatformFunnel("topic_shortlist_done", { count: topics.length });
       if (!topics.length) {
+        const err = "初选未返回选题（topics 为空）";
+        setShortlistLastError(err);
+        pushShortlistDebug(`❌ ${err}`);
         toast.error("初选未返回选题，请稍后重试");
         return;
       }
+      pushShortlistDebug(`✅ 已在按钮下方展示 ${topics.length} 条，可改标题 / 就写这条`);
       toast.success(
         `已生成 ${topics.length} 条初选${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；请在下方列表挑选或改标题，再点「就写这条」。`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      toast.error(
+      const friendly =
         msg.includes("timeout") || msg.includes("504")
           ? "算力紧张或请求超时，请稍后重试选题初选"
-          : msg || "全案选题初选失败",
-      );
+          : msg.includes("空内容")
+            ? "模型空回（服务端已自动重试仍失败），请再试一次"
+            : msg || "全案选题初选失败";
+      setShortlistLastError(friendly);
+      pushShortlistDebug(`❌ ${friendly}`);
+      toast.error(friendly);
     }
   };
 
@@ -8497,12 +8527,15 @@ export default function PlatformPage() {
       return;
     }
     const count = clampTopicShortlistCount(topicShortlistCount);
+    setShortlistLastError(null);
+    pushShortlistDebug(`面板初选：请求 ${count} 条`);
     trackPlatformFunnel("topic_shortlist_start", { count });
     try {
       const existingTitles = [
         ...(platformContent?.contentBlueprints || []).map((b: { title?: string }) => String(b?.title || "")),
         ...topicShortlist.map((t) => t.title),
       ].filter(Boolean);
+      const t0 = Date.now();
       const res = await generateTopicShortlistMutation.mutateAsync({
         context: focusPrompt.trim() || undefined,
         enabledSkillIds: Array.from(enabledPlatformSkillIds),
@@ -8514,6 +8547,15 @@ export default function PlatformPage() {
       setTopicShortlist(topics);
       setCreateStep("result");
       scrollToPlatformSection("platform-topic-shortlist");
+      pushShortlistDebug(
+        `面板返回 topics=${topics.length} · ${Math.round((Date.now() - t0) / 1000)}s`,
+      );
+      if (res.diagnostics && typeof res.diagnostics === "object") {
+        const d = res.diagnostics as Record<string, unknown>;
+        pushShortlistDebug(
+          `诊断 trendStatus=${String(d.trendStatus ?? "—")} reasoning=${String(d.reasoningUsed ?? "—")} emptyRetried=${String(d.emptyRetried ?? false)}`,
+        );
+      }
       if (workbenchUserKey) {
         pushRecentTask(workbenchUserKey, {
           mode: "create",
@@ -8524,19 +8566,27 @@ export default function PlatformPage() {
       }
       trackPlatformFunnel("topic_shortlist_done", { count: topics.length });
       if (!topics.length) {
+        const err = "初选未返回选题（topics 为空）";
+        setShortlistLastError(err);
+        pushShortlistDebug(`❌ ${err}`);
         toast.error("初选未返回选题，请稍后重试");
         return;
       }
+      pushShortlistDebug(`✅ 面板已展示 ${topics.length} 条`);
       toast.success(
         `已生成 ${topics.length} 条初选${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；挑完再点「就写这条」。`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      toast.error(
+      const friendly =
         msg.includes("timeout") || msg.includes("504")
           ? "算力紧张或请求超时，请稍后重试选题初选"
-          : msg || "初选生成失败",
-      );
+          : msg.includes("空内容")
+            ? "模型空回（服务端已自动重试仍失败），请再试一次"
+            : msg || "初选生成失败";
+      setShortlistLastError(friendly);
+      pushShortlistDebug(`❌ ${friendly}`);
+      toast.error(friendly);
     }
   }, [
     focusPrompt,
@@ -8549,6 +8599,7 @@ export default function PlatformPage() {
     topicShortlistPrice.total,
     scrollToPlatformSection,
     workbenchUserKey,
+    pushShortlistDebug,
   ]);
 
   const recordCtaDisabled = useCallback(
@@ -8971,6 +9022,44 @@ export default function PlatformPage() {
             growthSnapshotNotes={snapshot?.status?.notes}
             className="mb-6"
           />
+        ) : null}
+        {canShowPlatformDebug && debugMode ? (
+          <div className="mb-6 rounded-2xl border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.06)] p-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8cefff]">
+                全案选题初选 Debug
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShortlistDebugLines([]);
+                  setShortlistLastError(null);
+                }}
+                className="text-[10px] text-white/30 hover:text-white/60"
+              >
+                清空
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-[#c9c0e6]/65">
+              过程：确认 → 调 generatePlatformTopicShortlist → 写 topicShortlist → 钉在按钮下方。
+              Fly 对照关键字：generatePlatformTopicShortlist / empty content。
+            </p>
+            <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[#b8f4ff]/80">
+              <span>pending={String(generateTopicShortlistMutation.isPending)}</span>
+              <span>条数档={topicShortlistCount}</span>
+              <span>已出={topicShortlist.length}</span>
+              {shortlistLastError ? (
+                <span className="text-rose-300">lastError={shortlistLastError.slice(0, 120)}</span>
+              ) : null}
+            </div>
+            {shortlistDebugLines.length === 0 ? (
+              <div className="mt-3 text-xs text-white/30">暂无记录；点「开始全案分析」后会写入步骤。</div>
+            ) : (
+              <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-white/10 bg-black/30 p-3 font-mono text-[11px] leading-5 text-[#d7d0ef]">
+                {shortlistDebugLines.join("\n")}
+              </pre>
+            )}
+          </div>
         ) : null}
         {canShowPlatformDebug && debugMode && (manhuaLearnJobPollTrace || manhuaLearnResult) ? (
           <div className="mb-6 rounded-[24px] border border-amber-300/25 bg-amber-500/5 p-5">
@@ -11300,7 +11389,15 @@ export default function PlatformPage() {
                     </>
                   ) : null}
                 </p>
-                <div className="mt-4">
+                <div className="mt-4 space-y-3">
+                  {shortlistLastError ? (
+                    <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2.5 text-[12px] leading-relaxed text-rose-100">
+                      选题初选失败：{shortlistLastError}
+                      <span className="mt-1 block text-[11px] text-rose-100/70">
+                        可开顶部 Debug 看完整过程；Fly 侧常见原因：trendStore 超时后模型空回。
+                      </span>
+                    </div>
+                  ) : null}
                   {renderTopicShortlistSection("platform-fullcase-shortlist-results", {
                     showGenerateButton: false,
                   })}
