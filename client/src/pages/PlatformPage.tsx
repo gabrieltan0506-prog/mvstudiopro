@@ -3086,18 +3086,20 @@ export default function PlatformPage() {
           };
         });
         setCreateStep("result");
+        setHasAnalyzed(true);
         setSelectedShortlistIds([]);
         pushShortlistDebug(
           `✅ 扩写完成 ${bps.length} 条 · ${Math.round((Date.now() - t0) / 1000)}s · 扣点 ${res.chargedCredits ?? "—"}`,
         );
-        pushShortlistDebug("同页展示：对齐 Stage2 执行卡，钉在选题下方（不跳内容创作）");
+        pushShortlistDebug("同页展示：文案+封面/分镜执行区（不依赖战略看板门闩，不跳内容创作）");
         toast.success(
-          `已扩写 ${bps.length} 条文案${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；已出现在本页选题下方「专属选题与文案」`,
+          `已扩写 ${bps.length} 条文案${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；下方可出封面 / 分镜 / 图文`,
         );
         // 全案入口在「平台趋势」：结果必须同页可见，禁止切 Tab / 滚到内容创作执行区
         window.setTimeout(() => {
           const anchor =
             document.getElementById("platform-fullcase-shortlist-results-expanded") ||
+            document.getElementById("platform-stage2-copy") ||
             document.getElementById("platform-topic-shortlist-expanded");
           anchor?.scrollIntoView({ behavior: "smooth", block: "start" });
         }, 120);
@@ -3438,7 +3440,6 @@ export default function PlatformPage() {
             <div className="mt-4 max-h-[720px] space-y-4 overflow-y-auto pr-1">
               {platformContent!.contentBlueprints.map((bp, bi) => {
                 const item = mapContentBlueprintToExecutionCard(bp as Record<string, unknown>, bi);
-                const cardAnchor = executionCardDomId(item.id);
                 return (
                   <article
                     key={`${domId}-stage2-${item.id}-${bi}`}
@@ -3488,10 +3489,10 @@ export default function PlatformPage() {
                       </details>
                     ) : null}
                     <a
-                      href={`#${cardAnchor}`}
-                      className="mt-3 inline-flex text-[12px] font-semibold text-[#93c5fd] underline underline-offset-2 hover:text-white"
+                      href="#platform-stage2-copy"
+                      className="mt-3 inline-flex text-[12px] font-semibold text-emerald-200 underline underline-offset-2 hover:text-white"
                     >
-                      去下方出封面 / 分镜 →
+                      去下方出封面 / 编导分镜 / 图文（同一页）→
                     </a>
                   </article>
                 );
@@ -12083,8 +12084,11 @@ export default function PlatformPage() {
           </section>
         ) : null}
 
-        {snapshot && platformDashboard ? (
+        {/* 有战略看板，或仅有扩写执行卡（全案选题→就写这条）时都要挂出封面/分镜区；禁止再被 platformDashboard 门闩挡死 */}
+        {(Boolean(snapshot && platformDashboard) || visibleExecutionCards.length > 0) ? (
           <section id="platform-report" className="mt-8 space-y-6">
+            {platformDashboard ? (
+              <>
             {/* 仅写入 PDF 快照：页面视觉隐藏，克隆后于导出前移除 hidden（含顾问台主标 + 四格摘要，避免报告缺头） */}
             <div
               data-pdf-only
@@ -12759,6 +12763,8 @@ export default function PlatformPage() {
                               ) : null}
                           </div>
           </div>
+              </>
+            ) : null}
 
             <section id="platform-stage2-copy" className="mt-2 scroll-mt-28 px-1" aria-label="专属选题与文案状态">
               <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-white/10 bg-[rgba(18,13,43,0.65)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
