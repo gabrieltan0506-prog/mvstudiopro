@@ -518,6 +518,9 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     bp.conveyGoal = pick.conveyGoal;
     bp.dedupeKey = pick.dedupeKey;
     bp.shortlistId = pick.id;
+    // 与旧 Stage2 六条文案同字段：执行卡 / 封面 / 分镜认 id·sceneId
+    bp.id = String(bp.id || bp.sceneId || pick.id);
+    bp.sceneId = String(bp.sceneId || bp.id || pick.id);
     const linkedCampaigns = Array.isArray(pick.linkedCampaigns)
       ? pick.linkedCampaigns
           .map((x) => {

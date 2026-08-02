@@ -3062,30 +3062,45 @@ export default function PlatformPage() {
             linkedCampaigns: p.linkedCampaigns,
           })),
         });
-        const bps = Array.isArray(res.contentBlueprints) ? res.contentBlueprints : [];
-        setPlatformContent((prev) => ({
-          monetizationLanes: Array.isArray(prev?.monetizationLanes) ? prev!.monetizationLanes : [],
-          contentBlueprints: [
-            ...(Array.isArray(prev?.contentBlueprints) ? prev!.contentBlueprints : []),
-            ...(bps as any[]),
-          ],
-        }));
+        // 对齐旧 Stage2 六条文案：写入 platformContent → contentExecutionCards → 执行卡
+        const bps = (Array.isArray(res.contentBlueprints) ? res.contentBlueprints : []).map(
+          (raw, i) => {
+            const bp = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+            const sid = String(bp.id || bp.sceneId || bp.shortlistId || `expand-${Date.now()}-${i}`);
+            return { ...bp, id: sid, sceneId: String(bp.sceneId || sid) };
+          },
+        );
+        setPlatformContent((prev) => {
+          const prevBps = Array.isArray(prev?.contentBlueprints) ? prev!.contentBlueprints : [];
+          const byId = new Map<string, Record<string, unknown>>();
+          for (const row of prevBps as Array<Record<string, unknown>>) {
+            const k = String(row.id || row.sceneId || row.shortlistId || "");
+            if (k) byId.set(k, row);
+          }
+          for (const row of bps) {
+            byId.set(String(row.id), row);
+          }
+          return {
+            monetizationLanes: Array.isArray(prev?.monetizationLanes) ? prev!.monetizationLanes : [],
+            contentBlueprints: Array.from(byId.values()) as any[],
+          };
+        });
         setCreateStep("result");
         setSelectedShortlistIds([]);
         pushShortlistDebug(
           `✅ 扩写完成 ${bps.length} 条 · ${Math.round((Date.now() - t0) / 1000)}s · 扣点 ${res.chargedCredits ?? "—"}`,
         );
-        pushShortlistDebug("同页展示：钉在选题初选下方（不跳内容创作）");
+        pushShortlistDebug("同页展示：对齐 Stage2 执行卡，钉在选题下方（不跳内容创作）");
         toast.success(
-          `已扩写 ${bps.length} 条文案${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；已挂本页选题下方（刷新可恢复）`,
+          `已扩写 ${bps.length} 条文案${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；已出现在本页选题下方「专属选题与文案」`,
         );
-        // 全案入口在「平台趋势」：结果必须同页可见，禁止切 Tab（打 API 后跳走等于丢现场）
+        // 全案入口在「平台趋势」：结果必须同页可见，禁止切 Tab / 滚到内容创作执行区
         window.setTimeout(() => {
           const anchor =
             document.getElementById("platform-fullcase-shortlist-results-expanded") ||
             document.getElementById("platform-topic-shortlist-expanded");
           anchor?.scrollIntoView({ behavior: "smooth", block: "start" });
-        }, 80);
+        }, 120);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         const friendly =
@@ -3400,56 +3415,84 @@ export default function PlatformPage() {
             条选题会出现在这里。
           </p>
         ) : null}
-        {/* 扩写结果独立于选题列表：有文案就钉在本卡下方，选题被清空也能看见 */}
+        {/*
+          扩写结果：对齐旧全案 Stage2「一次六条文案」——同一套 mapContentBlueprintToExecutionCard，
+          钉在选题下方（钩子+正文默认展开，不必去内容创作或翻到编导区找）。
+        */}
         {expandedBlueprintCount > 0 ? (
           <div
             id={`${domId}-expanded`}
-            className="mt-4 scroll-mt-24 rounded-xl border border-emerald-400/35 bg-emerald-500/10 px-3 py-3"
+            className="mt-5 scroll-mt-24 rounded-2xl border border-emerald-400/40 bg-[rgba(16,185,129,0.1)] px-4 py-4"
           >
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <div className="text-[15px] font-bold text-emerald-50">
-                已扩写文案 · {expandedBlueprintCount} 条
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <div className="flex items-center gap-2 text-lg font-bold text-white sm:text-xl">
+                  <Sparkles className="h-5 w-5 shrink-0 text-emerald-300" />
+                  专属选题与文案 · {expandedBlueprintCount} 条
+                </div>
+                <p className="mt-1 text-[12px] leading-snug text-emerald-100/70">
+                  与全案六条文案同一套执行卡数据；就挂在本页选题下方，刷新可恢复，不用切「内容创作」。
+                </p>
               </div>
-              <span className="text-[11px] text-emerald-100/60">就挂在本页选题下方，不用切 Tab</span>
             </div>
-            <div className="mt-2 max-h-[560px] space-y-3 overflow-y-auto pr-1">
+            <div className="mt-4 max-h-[720px] space-y-4 overflow-y-auto pr-1">
               {platformContent!.contentBlueprints.map((bp, bi) => {
-                const row = bp as Record<string, unknown>;
-                const title = String(row.title || `文案 ${bi + 1}`);
-                const hook = String(row.hook || "");
-                const copy = String(row.copywriting || "");
-                const format = String(row.format || "");
-                const hooks = Array.isArray(row.commentHooks)
-                  ? (row.commentHooks as unknown[]).map(String).filter(Boolean)
-                  : [];
+                const item = mapContentBlueprintToExecutionCard(bp as Record<string, unknown>, bi);
+                const cardAnchor = executionCardDomId(item.id);
                 return (
                   <article
-                    key={`${domId}-exp-${String(row.shortlistId || row.dedupeKey || bi)}-${bi}`}
-                    className="rounded-lg border border-white/10 bg-black/30 px-3 py-2.5"
+                    key={`${domId}-stage2-${item.id}-${bi}`}
+                    className="rounded-2xl border border-white/12 bg-[rgba(18,13,43,0.75)] p-4 sm:p-5"
                   >
-                    <div className="text-[13px] font-semibold text-white">
-                      {bi + 1}. {title}
-                      {format ? (
-                        <span className="ml-2 rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-medium text-gray-300">
-                          {format}
+                    <div className="flex items-start justify-between gap-3">
+                      <h3 className="min-w-0 flex-1 text-lg font-bold leading-snug text-white sm:text-xl">
+                        {bi + 1}. {item.title}
+                      </h3>
+                      {item.format ? (
+                        <span className="shrink-0 rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
+                          {item.format}
                         </span>
                       ) : null}
                     </div>
-                    {hook ? (
-                      <p className="mt-1 text-[12px] leading-snug text-[#8cefff]/85">钩子：{hook}</p>
+                    {item.hook ? (
+                      <p className="mt-3 text-sm leading-relaxed text-[#8cefff]">
+                        <span className="font-semibold text-[#8cefff]/80">钩子 · </span>
+                        {item.hook}
+                      </p>
                     ) : null}
-                    {copy ? (
-                      <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-gray-200">
-                        {copy}
+                    {item.copywriting ? (
+                      <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-gray-200">
+                        {item.copywriting}
                       </p>
                     ) : (
-                      <p className="mt-1.5 text-[12px] text-amber-200/80">正文为空（可再点就写这条重试）</p>
+                      <p className="mt-3 text-sm text-amber-200/80">正文为空（可再点「就写这条」重试）</p>
                     )}
-                    {hooks.length ? (
-                      <p className="mt-1.5 text-[11px] text-gray-400">
-                        评论钩子：{hooks.slice(0, 4).join(" · ")}
-                      </p>
+                    {item.publishingAdvice ? (
+                      <div className="mt-3 rounded-xl border border-[#fbbf24]/30 bg-[rgba(251,191,36,0.08)] px-3 py-2.5">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-[#fcd34d]/90">
+                          发布时间 / 发布建议
+                        </div>
+                        <div className="mt-1 whitespace-pre-wrap text-sm leading-6 text-[#ffe9a8]">
+                          {item.publishingAdvice}
+                        </div>
+                      </div>
                     ) : null}
+                    {item.detailedScript ? (
+                      <details className="mt-3 text-xs text-gray-400">
+                        <summary className="cursor-pointer select-none text-[13px] font-semibold text-[#ff9900]">
+                          ▶ 详细脚本与大纲（点击展开）
+                        </summary>
+                        <div className="mt-2 whitespace-pre-wrap rounded-lg bg-black/30 p-3 text-sm leading-relaxed text-[#d3caef]">
+                          {item.detailedScript}
+                        </div>
+                      </details>
+                    ) : null}
+                    <a
+                      href={`#${cardAnchor}`}
+                      className="mt-3 inline-flex text-[12px] font-semibold text-[#93c5fd] underline underline-offset-2 hover:text-white"
+                    >
+                      去下方出封面 / 分镜 →
+                    </a>
                   </article>
                 );
               })}
@@ -11708,14 +11751,14 @@ export default function PlatformPage() {
                         href="#platform-fullcase-shortlist-results-expanded"
                         className="font-semibold text-emerald-200 underline underline-offset-2 hover:text-white"
                       >
-                        跳至已扩写文案（{expandedBlueprintCount} 条）
+                        跳至专属选题与文案（{expandedBlueprintCount} 条）
                       </a>
                     </>
                   ) : null}
                 </p>
                 {expandedBlueprintCount > 0 ? (
                   <div className="mt-2 rounded-xl border border-emerald-400/40 bg-emerald-500/15 px-3 py-2 text-[12px] font-semibold text-emerald-50">
-                    已有 {expandedBlueprintCount} 条正式文案钉在下方选题区——刷新本页也会保留。
+                    已有 {expandedBlueprintCount} 条「专属选题与文案」钉在选题列表正下方（与旧全案六条文案同一套）——刷新也保留。
                     <a
                       href="#platform-fullcase-shortlist-results-expanded"
                       className="ml-2 underline underline-offset-2 hover:text-white"

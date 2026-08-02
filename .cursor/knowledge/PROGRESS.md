@@ -297,6 +297,8 @@ A1 4fps 重抽帧过审：留下 G1–G7 + 优化后 B1（暖色细笔刷箭头�
 
 全案选题空回：Fly 见 `trendStore 超时` + `empty content` → #1049 初选改 medium、空回 minimal 重试；Debug 面板写过程（`fix/fullcase-shortlist-empty-retry-debug`）。
 
+全案扩写落点（#1051 未合）：扩写成功后文案进 `platformContent`（与旧 Stage2 六条文案同路径），但展示曾挂在下方编导区/内容创作，趋势选题旁找不到。口径 B：保留「就写这条」，结果钉选题下方「专属选题与文案」卡（钩子+正文默认展开）+ 本机持久化；禁止跳内容创作。
+
 ---
 
 ## 如何更新本文件
