@@ -14,7 +14,7 @@ describe("craftShotBank ⑧A", () => {
   it("has categorized atomic craft entries", () => {
     expect(CRAFT_SHOT_BANK.length).toBeGreaterThanOrEqual(28);
     expect(listCraftShotsByCategory("lighting").length).toBe(8);
-    expect(listCraftShotsByCategory("camera").length).toBe(8);
+    expect(listCraftShotsByCategory("camera").length).toBe(10);
     expect(listCraftShotsByCategory("emotion").length).toBe(8);
     expect(listCraftShotsByCategory("transition").length).toBe(6);
   });

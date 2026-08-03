@@ -309,6 +309,12 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 用户硬口径（积分事故后）：**禁止**再用小云雀做连通探针（5s 约烧 130）；成败以小云雀创作历史为准，勿因我方 `fetch failed` / 没拿到链就当失败并重打。规则：`xyq-no-probe-burn-always.mdc`；`runXyqSeedance25Video` 改为轮询瞬时网络可续、GCS 镜像失败仍回上游 URL、超时/拉链失败带 `thread_id`/会话链并明示勿重复提交。画布会员门禁叠 #1057（`feat/canvas-seedance25-workflow`）。
 
+## 2026-08-04
+
+对照[小云雀 2.5 手册](https://bytedance.larkoffice.com/wiki/W5tHwoZIDi12dbk2z3KcFkuUnsf)：缺口表见 `xyq-seedance25-handbook-gaps.md`。核实「720°」= 短剧 Agent **全景场景球**（非手册内运镜按钮）；运镜库补 `环绕半周` / `全景环场一周`。
+
+成片·加长补齐（用户选 1/3/4）：秒级分镜 UI + 参考视/音频勾选（上传支持 audio）+ 延长/局部重拍工作模式（参考视频 + 自然语言指令，`shared/xyqSeedancePrompt.ts`）。未烧探针。首尾帧显式控件仍待做。
+
 ---
 
 ## 如何更新本文件

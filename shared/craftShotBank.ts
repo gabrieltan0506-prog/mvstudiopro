@@ -193,6 +193,26 @@ export const CRAFT_SHOT_BANK: readonly CraftShotEntry[] = [
     craftSummaryZh: "正反打干净；席间调度；金句落反应镜头。",
     craftLockEn: "clean shot-reverse, reaction on key line",
   },
+  {
+    id: "cam_09_orbit_half",
+    category: "camera",
+    no: 9,
+    nameZh: "环绕半周展空间",
+    effectZh: "绕主体缓转约半圈，先看清站位与环境再落脸。",
+    whenToUseZh: "对峙开场、进场立空间、群戏方位交代。",
+    craftSummaryZh: "软环绕半周；速度稳；先空间后面部；禁甩镜致晕。",
+    craftLockEn: "soft half-orbit around subject, space then face",
+  },
+  {
+    id: "cam_10_orbit_full_sphere",
+    category: "camera",
+    no: 10,
+    nameZh: "全景环场一周",
+    effectZh: "绕主体或场景做接近一圈的环场运镜，空间关系一次看全（对标「环场/全景环绕」观感；不是场景编辑器里的 720° 全景球）。",
+    whenToUseZh: "场景亮相、武器/礼服展示、舞台亮相、商品 360 观感。",
+    craftSummaryZh: "一镜环场一周；高度与半径锁定；主体始终可读；结尾可收脸或定格。",
+    craftLockEn: "full orbit / spherical surround path, locked radius, subject readable",
+  },
 
   // —— 情绪 ×8 ——
   {
@@ -391,6 +411,10 @@ const TOPIC_CRAFT_HINTS: Array<{ keys: string[]; preferIds: string[] }> = [
   { keys: ["密室", "黑客入侵", "信息战"], preferIds: ["light_07_top_cut", "cam_04_whip_insert", "emo_07_obsessive_calm"] },
   { keys: ["声先画后", "硬切卡点", "匹配切", "卡点", "硬切"], preferIds: ["tr_05_audio_lead", "tr_02_hard_cut_beat", "tr_01_match_cut"] },
   { keys: ["武侠", "江湖", "刀光", "比武"], preferIds: ["cam_03_track_follow", "tr_04_whip_bridge", "light_03_high_contrast"] },
+  {
+    keys: ["环绕", "环场", "720", "全景环绕", "一圈", "展空间", "亮相绕", "商品360", "礼服展示"],
+    preferIds: ["cam_10_orbit_full_sphere", "cam_09_orbit_half", "cam_07_wide_scale"],
+  },
   {
     keys: ["边塞", "边关", "烽火", "关隘", "出征", "发配", "罪妻", "开荒", "战神"],
     preferIds: ["cam_07_wide_scale", "light_03_high_contrast", "emo_08_solemn_quiet"],

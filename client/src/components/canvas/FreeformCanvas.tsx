@@ -1964,6 +1964,190 @@ export default function FreeformCanvas({
                               成片·加长仅正式会员；邀请码用户请用成片·快速
                             </div>
                           ) : null}
+                          {block.videoModel === "seedance-2.5" && canUseSeedance25 ? (
+                            <div className="space-y-2 rounded-lg border border-white/10 bg-white/[0.03] px-2 py-2">
+                              <label className="flex items-center gap-2 text-[11px] text-white/70">
+                                <span className="shrink-0 text-white/45">工作模式</span>
+                                <select
+                                  value={block.seedance25WorkMode || "generate"}
+                                  onChange={(e) =>
+                                    patchOne(block.id, {
+                                      seedance25WorkMode: e.target.value as
+                                        | "generate"
+                                        | "extend"
+                                        | "reshoot",
+                                    })
+                                  }
+                                  className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
+                                >
+                                  <option value="generate">新生成</option>
+                                  <option value="extend">延长（需参考视频）</option>
+                                  <option value="reshoot">局部重拍（需参考视频）</option>
+                                </select>
+                              </label>
+                              {(block.seedance25WorkMode === "reshoot" ||
+                                block.seedance25WorkMode === "extend") && (
+                                <div className="text-[10px] leading-5 text-white/45">
+                                  走参考视频 + 编辑指令；请先出片或下方勾选参考视频。不另烧探测积分。
+                                </div>
+                              )}
+                              {block.seedance25WorkMode === "reshoot" ? (
+                                <div className="flex items-center gap-2 text-[11px] text-white/70">
+                                  <span className="text-white/45">重拍秒段</span>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={29}
+                                    value={block.seedance25ReshootFromSec ?? 0}
+                                    onChange={(e) =>
+                                      patchOne(block.id, {
+                                        seedance25ReshootFromSec: Math.max(
+                                          0,
+                                          Math.floor(Number(e.target.value) || 0),
+                                        ),
+                                      })
+                                    }
+                                    className="w-14 rounded border border-white/10 bg-black/40 px-1 py-0.5 text-[11px] text-white"
+                                  />
+                                  <span>–</span>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={30}
+                                    value={block.seedance25ReshootToSec ?? 3}
+                                    onChange={(e) =>
+                                      patchOne(block.id, {
+                                        seedance25ReshootToSec: Math.max(
+                                          1,
+                                          Math.floor(Number(e.target.value) || 3),
+                                        ),
+                                      })
+                                    }
+                                    className="w-14 rounded border border-white/10 bg-black/40 px-1 py-0.5 text-[11px] text-white"
+                                  />
+                                  <span className="text-white/40">秒</span>
+                                </div>
+                              ) : null}
+                              <div>
+                                <div className="mb-1 text-[10px] text-white/45">
+                                  秒级分镜（可选，一行一段：0-5 | 画面）
+                                </div>
+                                <textarea
+                                  value={block.seedance25TimestampStoryboard || ""}
+                                  onChange={(e) =>
+                                    patchOne(block.id, {
+                                      seedance25TimestampStoryboard: e.target.value,
+                                    })
+                                  }
+                                  rows={3}
+                                  placeholder={"0-5 | 环绕半周展空间\n5-15 | 推近面部对白"}
+                                  className="w-full resize-y rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-[11px] leading-5 text-white placeholder:text-white/30"
+                                />
+                              </div>
+                              {(() => {
+                                const vids = (block.uploadedAssets || []).filter(
+                                  (a) =>
+                                    a.kind === "video" ||
+                                    /\.(mp4|mov|webm)(\?|$)/i.test(a.url || a.fileName || ""),
+                                );
+                                const auds = (block.uploadedAssets || []).filter(
+                                  (a) =>
+                                    a.kind === "audio" ||
+                                    /\.(mp3|wav|m4a|aac)(\?|$)/i.test(a.url || a.fileName || ""),
+                                );
+                                const selectedV = new Set(block.seedance25RefVideoUrls || []);
+                                const selectedA = new Set(block.seedance25RefAudioUrls || []);
+                                const toggle = (
+                                  set: Set<string>,
+                                  url: string,
+                                  max: number,
+                                  key: "seedance25RefVideoUrls" | "seedance25RefAudioUrls",
+                                ) => {
+                                  const next = new Set(set);
+                                  if (next.has(url)) next.delete(url);
+                                  else if (next.size < max) next.add(url);
+                                  patchOne(block.id, { [key]: Array.from(next) });
+                                };
+                                return (
+                                  <div className="space-y-1.5">
+                                    <div className="text-[10px] text-white/45">
+                                      参考视频（最多 3）· 先上传 MP4 再勾选
+                                      {block.outputUrl ? " · 已有成片也可直接延长/重拍" : ""}
+                                    </div>
+                                    {vids.length ? (
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {vids.slice(0, 8).map((a) => {
+                                          const on = selectedV.has(a.url);
+                                          return (
+                                            <button
+                                              key={a.id}
+                                              type="button"
+                                              title={a.fileName}
+                                              onClick={() =>
+                                                toggle(
+                                                  selectedV,
+                                                  a.url,
+                                                  3,
+                                                  "seedance25RefVideoUrls",
+                                                )
+                                              }
+                                              className={`max-w-[9rem] truncate rounded-md border px-2 py-1 text-[10px] ${
+                                                on
+                                                  ? "border-sky-300/80 bg-sky-500/15 text-sky-50"
+                                                  : "border-white/15 text-white/70"
+                                              }`}
+                                            >
+                                              {a.fileName || "视频"}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : (
+                                      <div className="text-[10px] text-white/35">
+                                        尚无上传视频；可用上方上传区添加 MP4
+                                      </div>
+                                    )}
+                                    <div className="text-[10px] text-white/45">
+                                      参考音频（最多 3）· 上传 MP3/WAV 后勾选
+                                    </div>
+                                    {auds.length ? (
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {auds.slice(0, 8).map((a) => {
+                                          const on = selectedA.has(a.url);
+                                          return (
+                                            <button
+                                              key={a.id}
+                                              type="button"
+                                              title={a.fileName}
+                                              onClick={() =>
+                                                toggle(
+                                                  selectedA,
+                                                  a.url,
+                                                  3,
+                                                  "seedance25RefAudioUrls",
+                                                )
+                                              }
+                                              className={`max-w-[9rem] truncate rounded-md border px-2 py-1 text-[10px] ${
+                                                on
+                                                  ? "border-emerald-300/80 bg-emerald-500/15 text-emerald-50"
+                                                  : "border-white/15 text-white/70"
+                                              }`}
+                                            >
+                                              {a.fileName || "音频"}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : (
+                                      <div className="text-[10px] text-white/35">
+                                        尚无上传音频；可与图片一并上传
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          ) : null}
                         </>
                       ) : null}
                       {block.kind === "video_reverse" ? (

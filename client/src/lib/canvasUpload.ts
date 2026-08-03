@@ -4,12 +4,14 @@ import { resolveOmniMaterialUrl, uploadFileToSignedUrl } from "./omniCanvasApi";
 const DOCUMENT_EXT = /\.(pdf|txt|md|markdown)$/i;
 const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif)$/i;
 const VIDEO_EXT = /\.(mp4|mov|webm|m4v)$/i;
+const AUDIO_EXT = /\.(mp3|wav|m4a|aac)$/i;
 
 export function inferCanvasAssetKind(file: File): CanvasAssetKind | null {
   const mime = String(file.type || "").toLowerCase();
   const name = file.name.toLowerCase();
   if (mime.startsWith("image/") || IMAGE_EXT.test(name)) return "image";
   if (mime.startsWith("video/") || VIDEO_EXT.test(name)) return "video";
+  if (mime.startsWith("audio/") || AUDIO_EXT.test(name)) return "audio";
   if (mime === "application/pdf" || mime.startsWith("text/") || DOCUMENT_EXT.test(name)) return "document";
   return null;
 }
@@ -29,6 +31,7 @@ export function inferCanvasAssetKindFromFileName(fileName: string): CanvasAssetK
   const lower = fileName.toLowerCase();
   if (IMAGE_EXT.test(lower)) return "image";
   if (VIDEO_EXT.test(lower)) return "video";
+  if (AUDIO_EXT.test(lower)) return "audio";
   if (DOCUMENT_EXT.test(lower)) return "document";
   return null;
 }
@@ -88,7 +91,13 @@ export async function uploadOneCanvasAsset(params: {
   const safeName = file.name.replace(/[^a-z0-9._-]/gi, "-");
   const mimeType =
     file.type ||
-    (kind === "video" ? "video/mp4" : kind === "document" ? "application/octet-stream" : "image/png");
+    (kind === "video"
+      ? "video/mp4"
+      : kind === "audio"
+        ? "audio/mpeg"
+        : kind === "document"
+          ? "application/octet-stream"
+          : "image/png");
 
   const signed = await getSignedUploadUrl({
     fileName: file.name,
