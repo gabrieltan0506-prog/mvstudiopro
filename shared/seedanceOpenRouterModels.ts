@@ -23,6 +23,9 @@ export const SEEDANCE_OPENROUTER_DURATION = { min: 4, max: 15, default: 15 } as 
  */
 export const SEEDANCE_REFERENCE_MAX = { image: 9, video: 3, audio: 3 } as const;
 
+export const SEEDANCE_25_COMING_SOON_LABEL_EN = "Seedance 2.5 Coming soon on MV Studio Pro";
+export const SEEDANCE_25_COMING_SOON_LABEL_ZH = "Seedance 2.5 即将登陆 MV Studio Pro";
+
 /** 产品可选：标准 / 快速。`2.0-mini` 仅内部探针解析用，不对产品暴露。 */
 export type SeedanceProductVersion = "2.0" | "2.0-fast" | "2.0-mini" | "2.5";
 
