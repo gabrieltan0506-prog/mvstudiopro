@@ -7,5 +7,6 @@ alwaysApply: true
 
 - **凡「视频生成测试探针 / factory probe / seedance-probe」一律用 Seedance 2.0 Mini · 480p**（时长默认约 5s）。
 - **禁止**把探针默认改成标准 `2.0`、`720p`/`1080p`、或 `2.5`（2.5 产品闸门未开时更禁止）。
+- **禁止**用小云雀 / `XYQ_ACCESS_KEY` / `Seedance_2.5` 做连通探针（会烧会员积分）；细则见 `xyq-no-probe-burn-always.mdc`。
 - 代码默认应对齐：`shared/seedanceEvolinkModels.ts` 的 `SEEDANCE_PROBE_DEFAULT_*`；工厂探针 env 默认 `CANVAS_PROBE_SEEDANCE_VERSION=2.0-mini`、`CANVAS_PROBE_SEEDANCE_QUALITY=480p`。
 - 仅当用户**明文**要求全价联调 / 验收成片画质时，才可临时改 version/quality，并在回复里写明原因与恢复计划。
