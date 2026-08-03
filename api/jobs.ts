@@ -3442,9 +3442,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             generateTypeRaw === undefined || generateTypeRaw === null || generateTypeRaw === ""
               ? undefined
               : Math.floor(Number(generateTypeRaw));
-          const workModeRaw = s(b.workMode || q.workMode || "generate").trim().toLowerCase();
-          const workMode =
-            workModeRaw === "extend" || workModeRaw === "reshoot" ? workModeRaw : "generate";
+          const { parseXyqSeedance25WorkMode } = await import("../shared/xyqSeedancePrompt.js");
+          const workMode = parseXyqSeedance25WorkMode(b.workMode || q.workMode || "generate");
           const out = await runXyqSeedance25Video({
             prompt,
             imageUrl,
@@ -3457,6 +3456,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             generateType: Number.isFinite(generateType as number) ? (generateType as number) : undefined,
             workMode,
             threadId: s(b.threadId || q.threadId || "").trim() || undefined,
+            upscaleResolution: s(b.upscaleResolution || q.upscaleResolution || "").trim() || undefined,
+            upscaleToolVersion: s(b.upscaleToolVersion || q.upscaleToolVersion || "").trim() || undefined,
           });
           return res.status(200).json({
             ok: true,
@@ -3614,9 +3615,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           generateTypeRaw === undefined || generateTypeRaw === null || generateTypeRaw === ""
             ? undefined
             : Math.floor(Number(generateTypeRaw));
-        const workModeRaw = s(b.workMode || q.workMode || "generate").trim().toLowerCase();
-        const workMode =
-          workModeRaw === "extend" || workModeRaw === "reshoot" ? workModeRaw : "generate";
+        const { parseXyqSeedance25WorkMode } = await import("../shared/xyqSeedancePrompt.js");
+        const workMode = parseXyqSeedance25WorkMode(b.workMode || q.workMode || "generate");
         const out = await runXyqSeedance25Video({
           prompt,
           imageUrl,
@@ -3629,6 +3629,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           generateType: Number.isFinite(generateType as number) ? (generateType as number) : undefined,
           workMode,
           threadId: s(b.threadId || q.threadId || "").trim() || undefined,
+          upscaleResolution: s(b.upscaleResolution || q.upscaleResolution || "").trim() || undefined,
+          upscaleToolVersion: s(b.upscaleToolVersion || q.upscaleToolVersion || "").trim() || undefined,
         });
         return res.status(200).json({
           ok: true,

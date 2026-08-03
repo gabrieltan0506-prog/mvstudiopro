@@ -45,7 +45,12 @@ import {
   SEEDANCE_REFERENCE_MAX,
 } from "@shared/seedanceOpenRouterModels";
 import { clampXyqSeedanceDuration, XYQ_REFERENCE_MAX } from "@shared/xyqSeedanceModels";
-import { composeXyqSeedance25Prompt } from "@shared/xyqSeedancePrompt";
+import {
+  composeXyqSeedance25Prompt,
+  parseXyqSeedance25WorkMode,
+  xyqWorkModeNeedsVideo,
+  type XyqSeedance25WorkMode,
+} from "@shared/xyqSeedancePrompt";
 import {
   canAccessSeedance25ByPlan,
   SEEDANCE_25_PAID_ONLY_LABEL_ZH,
@@ -485,7 +490,7 @@ type SeedanceProductVideoResult = {
   threadId?: string;
   webThreadLink?: string;
   route?: "video_part" | "nest";
-  workMode?: "generate" | "extend" | "reshoot";
+  workMode?: XyqSeedance25WorkMode;
 };
 
 async function runSeedanceProductVideo(
@@ -502,10 +507,11 @@ async function runSeedanceProductVideo(
     duration?: number;
     /** 2.5 首尾帧：1 */
     generateType?: number;
-    /** 2.5：新生成 / 延长 / 局部重拍（决定 video_part vs nest） */
-    workMode?: "generate" | "extend" | "reshoot";
+    /** 2.5 工作模式 → 服务端真路由 */
+    workMode?: XyqSeedance25WorkMode;
     /** nest 续聊 */
     threadId?: string;
+    upscaleResolution?: "720p" | "1080p" | "2k" | "4k";
   },
 ): Promise<SeedanceProductVideoResult> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
@@ -524,8 +530,7 @@ async function runSeedanceProductVideo(
       : clampSeedanceOpenRouterDuration(durationRaw);
   // 2.5 须带登录态，服务端校验正式会员
   const credentials = version === "2.5" ? "include" : "omit";
-  const workMode =
-    opts?.workMode === "extend" || opts?.workMode === "reshoot" ? opts.workMode : "generate";
+  const workMode = parseXyqSeedance25WorkMode(opts?.workMode);
   const res = await withFlyHealthGate(probeOrigin, () =>
     fetch(seedanceUrl, {
       method: "POST",
@@ -553,6 +558,9 @@ async function runSeedanceProductVideo(
         ...(typeof opts?.generateType === "number" ? { generateType: opts.generateType } : {}),
         ...(version === "2.5" ? { workMode } : {}),
         ...(version === "2.5" && opts?.threadId ? { threadId: opts.threadId } : {}),
+        ...(version === "2.5" && opts?.upscaleResolution
+          ? { upscaleResolution: opts.upscaleResolution }
+          : {}),
       }),
     }),
   );
@@ -565,7 +573,7 @@ async function runSeedanceProductVideo(
     threadId?: string;
     webThreadLink?: string;
     route?: "video_part" | "nest";
-    workMode?: "generate" | "extend" | "reshoot";
+    workMode?: XyqSeedance25WorkMode;
   } = {};
   try {
     json = JSON.parse(text) as typeof json;
@@ -584,10 +592,7 @@ async function runSeedanceProductVideo(
     threadId: json.threadId ? String(json.threadId) : undefined,
     webThreadLink: json.webThreadLink ? String(json.webThreadLink) : undefined,
     route: json.route === "nest" || json.route === "video_part" ? json.route : undefined,
-    workMode:
-      json.workMode === "extend" || json.workMode === "reshoot" || json.workMode === "generate"
-        ? json.workMode
-        : undefined,
+    workMode: json.workMode ? parseXyqSeedance25WorkMode(json.workMode) : undefined,
   };
 }
 
@@ -1210,7 +1215,7 @@ export async function runCanvasBlock(
         const userRefAudios = (block.seedance25RefAudioUrls || [])
           .map((u) => String(u || "").trim())
           .filter((u) => /^https?:\/\//i.test(u));
-        const workMode = block.seedance25WorkMode || "generate";
+        const workMode = parseXyqSeedance25WorkMode(block.seedance25WorkMode);
         const mergedVideoUrls = Array.from(
           new Set([
             ...userRefVideos,
@@ -1229,12 +1234,8 @@ export async function runCanvasBlock(
         const durationFor25 = clampXyqSeedanceDuration(clipDuration);
         let finalPrompt = seedancePrompt;
         if (useSeedance25) {
-          if ((workMode === "extend" || workMode === "reshoot") && !mergedVideoUrls.length) {
-            throw new Error(
-              workMode === "extend"
-                ? "延长需要参考视频：请先出片或上传/勾选参考视频"
-                : "局部重拍需要参考视频：请先出片或上传/勾选参考视频",
-            );
+          if (xyqWorkModeNeedsVideo(workMode) && !mergedVideoUrls.length) {
+            throw new Error("该模式需要参考视频：请先出片或上传/勾选参考视频");
           }
           finalPrompt = composeXyqSeedance25Prompt({
             basePrompt: seedancePrompt,
@@ -1274,6 +1275,7 @@ export async function runCanvasBlock(
           generateType,
           workMode: useSeedance25 ? workMode : undefined,
           threadId: useSeedance25 ? block.seedance25ThreadId : undefined,
+          upscaleResolution: useSeedance25 ? block.seedance25UpscaleResolution : undefined,
         });
         url = seedanceOut.videoUrl;
         if (useSeedance25) {

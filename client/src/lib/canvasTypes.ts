@@ -63,8 +63,14 @@ export type CanvasUploadedAsset = {
   mimeType?: string;
 };
 
-/** 成片·加长工作模式（延长/重拍靠参考视频 + 自然语言，非空壳 API） */
-export type CanvasSeedance25WorkMode = "generate" | "extend" | "reshoot";
+/** 成片·加长工作模式（与官方 CLI 路由对齐，非空壳） */
+export type CanvasSeedance25WorkMode =
+  | "generate"
+  | "extend"
+  | "reshoot"
+  | "remix"
+  | "upscale"
+  | "erase_subtitle";
 
 export type CanvasUploadFailure = {
   fileName: string;
@@ -160,6 +166,8 @@ export type CanvasBlock = {
   seedance25ThreadId?: string;
   /** 成片·加长：创作历史链接（失败时先查此链，勿重复提交） */
   seedance25WebThreadLink?: string;
+  /** 提升清晰度输出档：720p / 1080p / 2k / 4k */
+  seedance25UpscaleResolution?: "720p" | "1080p" | "2k" | "4k";
   /**
    * 漫剧成片智能质检（软拦）：failed 默认可预览、不进成片坞；
    * 用户「仍采用」后 quality.userAcceptedDespiteQc=true 才可合成。

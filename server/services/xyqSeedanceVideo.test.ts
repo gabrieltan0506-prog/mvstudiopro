@@ -5,8 +5,10 @@ import {
 } from "../../shared/xyqSeedanceModels";
 import {
   __xyqSeedanceTest,
+  buildXyqEraseSubtitleBody,
   buildXyqGenerateVideoBody,
   buildXyqNestEditBody,
+  buildXyqSuperResolutionBody,
 } from "./xyqSeedanceVideo";
 
 describe("buildXyqGenerateVideoBody", () => {
@@ -79,7 +81,40 @@ describe("buildXyqNestEditBody", () => {
   });
 
   it("rejects empty assets", () => {
-    expect(() => buildXyqNestEditBody({ message: "x", assetIds: [] })).toThrow(/参考视频/);
+    expect(() => buildXyqNestEditBody({ message: "x", assetIds: [] })).toThrow(/参考/);
+  });
+});
+
+describe("buildXyqSuperResolutionBody", () => {
+  it("uses mini_tool_param video_super_resolution_tool_param", () => {
+    const body = buildXyqSuperResolutionBody({
+      videoAssetId: "vid_sr",
+      outputResolution: "1080p",
+      toolVersion: "standard",
+    });
+    expect(body.agent_name).toBe(XYQ_VIDEO_PART_AGENT);
+    expect(body.message).toBe("提升视频清晰度");
+    expect(body.asset_ids).toBeUndefined();
+    const param = body.video_part_tool_param as any;
+    expect(param.mini_tool_param.tool_name).toBe("video_super_resolution");
+    expect(
+      param.mini_tool_param.tool_param.video_super_resolution_tool_param.video.pippit_asset_id,
+    ).toBe("vid_sr");
+    expect(
+      param.mini_tool_param.tool_param.video_super_resolution_tool_param.output_resolution,
+    ).toBe("1080p");
+  });
+});
+
+describe("buildXyqEraseSubtitleBody", () => {
+  it("uses mini_tool_param erase_video_subtitle_tool_param", () => {
+    const body = buildXyqEraseSubtitleBody({ videoAssetId: "vid_sub" });
+    expect(body.message).toBe("擦除视频字幕");
+    const param = body.video_part_tool_param as any;
+    expect(param.mini_tool_param.tool_name).toBe("erase_video_subtitle");
+    expect(
+      param.mini_tool_param.tool_param.erase_video_subtitle_tool_param.video.pippit_asset_id,
+    ).toBe("vid_sub");
   });
 });
 

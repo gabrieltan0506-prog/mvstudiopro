@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   buildXyqExtendInstruction,
+  buildXyqRemixInstruction,
   buildXyqReshootInstruction,
   composeXyqSeedance25Prompt,
   formatXyqTimestampStoryboardLines,
   hasXyqTimestampStoryboard,
+  parseXyqSeedance25WorkMode,
 } from "./xyqSeedancePrompt";
 
 describe("xyqSeedancePrompt", () => {
@@ -42,5 +44,14 @@ describe("xyqSeedancePrompt", () => {
       reshootToSec: 4,
     });
     expect(r).toContain("1-4");
+  });
+
+  it("compose remix / parse work modes", () => {
+    expect(buildXyqRemixInstruction("换成古装")).toMatch(/复刻/);
+    expect(parseXyqSeedance25WorkMode("upscale")).toBe("upscale");
+    expect(parseXyqSeedance25WorkMode("erase_subtitle")).toBe("erase_subtitle");
+    expect(composeXyqSeedance25Prompt({ basePrompt: "", workMode: "upscale", durationSec: 8 })).toMatch(
+      /清晰度/,
+    );
   });
 });
