@@ -42,6 +42,8 @@ export type CanvasVideoModel =
   | "gemini-omni-flash"
   | "seedance-2.0"
   | "seedance-2.0-fast"
+  /** Seedance 2.5 · 小云雀 A3（约 4–30s；Fly secrets） */
+  | "seedance-2.5"
   /** MiniMax H3 · OpenRouter minimax/hailuo-3（2K） */
   | "minimax-hailuo-3";
 /** 文生图 vs 改图（EvoLink image_urls edit） */
@@ -227,10 +229,11 @@ export const IMAGE_MODEL_OPTIONS: Array<{ id: CanvasImageModel; label: string }>
   { id: "gpt-image-2", label: "官方出图" },
 ];
 
-/** 产品成片：快速 / 标准 / H3（2K）；不再暴露改写引擎 */
+/** 产品成片：快速 / 标准 / 加长(2.5) / H3（2K）；不再暴露改写引擎 */
 export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }> = [
   { id: "seedance-2.0-fast", label: "成片·快速（默认）" },
   { id: "seedance-2.0", label: "成片·标准" },
+  { id: "seedance-2.5", label: "成片·加长" },
   { id: "minimax-hailuo-3", label: "成片·H3（2K）" },
 ];
 
@@ -283,6 +286,7 @@ export function normalizeCanvasVideoModel(raw: unknown): CanvasVideoModel {
   const key = String(raw || "").trim();
   if (key === "seedance-2.0-fast") return "seedance-2.0-fast";
   if (key === "seedance-2.0") return "seedance-2.0";
+  if (key === "seedance-2.5" || key === "2.5") return "seedance-2.5";
   if (
     key === "minimax-hailuo-3" ||
     key === "hailuo-3" ||
@@ -296,15 +300,22 @@ export function normalizeCanvasVideoModel(raw: unknown): CanvasVideoModel {
   return DEFAULT_CANVAS_VIDEO_MODEL;
 }
 
-/** 画布可选成片档位（快速 / 标准 / H3） */
+/** 画布可选成片档位（快速 / 标准 / 加长 / H3） */
 export function isCanvasProductVideoModel(
   videoModel: string | null | undefined,
 ): videoModel is Exclude<CanvasVideoModel, "gemini-omni-flash"> {
   return (
     videoModel === "seedance-2.0" ||
     videoModel === "seedance-2.0-fast" ||
+    videoModel === "seedance-2.5" ||
     videoModel === "minimax-hailuo-3"
   );
+}
+
+export function isCanvasSeedance25VideoModel(
+  videoModel: string | null | undefined,
+): boolean {
+  return String(videoModel || "").trim() === "seedance-2.5";
 }
 
 /**
