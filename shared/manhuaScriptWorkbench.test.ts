@@ -110,6 +110,8 @@ describe("manhuaScriptWorkbench", () => {
       ),
     ).toBe(12);
     expect(resolveSegmentClipDurationSec([{ durationSec: 99 }], "seedance-2.0-fast")).toBe(15);
+    expect(resolveSegmentClipDurationSec([{ durationSec: 30 }], "seedance-2.5")).toBe(30);
+    expect(resolveSegmentClipDurationSec([{ durationSec: 99 }], "seedance-2.5")).toBe(30);
   });
 
   it("formats shot inject with cast lock and resolves keyart shot index", () => {

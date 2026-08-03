@@ -33,6 +33,10 @@ import {
   SEEDANCE_OPENROUTER_DURATION,
 } from "./seedanceOpenRouterModels.js";
 import {
+  clampXyqSeedanceDuration,
+  XYQ_SEEDANCE_DURATION,
+} from "./xyqSeedanceModels.js";
+import {
   CANVAS_VIDEO_MODEL_HAILUO_H3,
   clampHailuoOpenRouterDuration,
   HAILUO_OPENROUTER_DURATION,
@@ -126,7 +130,7 @@ export function resolveShotDurationSecForSegment(shot: {
 }
 
 /**
- * 一段成片目标秒数：段内镜长之和，再按模型钳制（Seedance 4–15；H3 5–15；Omni ≤10）。
+ * 一段成片目标秒数：段内镜长之和，再按模型钳制（2.0 4–15；2.5 加长 4–30；H3 5–15；Omni ≤10）。
  * 不强制写死 15——短段可短于上限。
  */
 export function resolveSegmentClipDurationSec(
@@ -145,6 +149,9 @@ export function resolveSegmentClipDurationSec(
     return clampHailuoOpenRouterDuration(
       sum > 0 ? sum : HAILUO_OPENROUTER_DURATION.default,
     );
+  }
+  if (m === "seedance-2.5") {
+    return clampXyqSeedanceDuration(sum > 0 ? sum : XYQ_SEEDANCE_DURATION.default);
   }
   return clampSeedanceOpenRouterDuration(
     sum > 0 ? sum : SEEDANCE_OPENROUTER_DURATION.default,

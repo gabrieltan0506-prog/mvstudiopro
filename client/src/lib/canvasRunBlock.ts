@@ -44,6 +44,11 @@ import {
   clampSeedanceOpenRouterDuration,
   SEEDANCE_REFERENCE_MAX,
 } from "@shared/seedanceOpenRouterModels";
+import { clampXyqSeedanceDuration } from "@shared/xyqSeedanceModels";
+import {
+  canAccessSeedance25ByPlan,
+  SEEDANCE_25_PAID_ONLY_LABEL_ZH,
+} from "@shared/seedance25Access";
 import {
   clampHailuoOpenRouterDuration,
   HAILUO_REFERENCE_MAX,
@@ -151,6 +156,8 @@ export type CanvasRunDeps = {
   getManhuaEpisodeSegmentPromptsForVoiceGate?: (
     episodeIndex: number,
   ) => ManhuaEpisodeSegmentPromptRow[];
+  /** Stripe plan（free/pro/enterprise）；成片·加长正式会员门禁 */
+  userPlan?: string | null;
 };
 
 function dataUrlToJpegFile(dataUrl: string, name: string): File | null {
@@ -472,7 +479,7 @@ async function runVideoReversePrompt(
   return runVideoReversePromptGemini(userHint, images, mode);
 }
 
-async function runSeedance20(
+async function runSeedanceProductVideo(
   prompt: string,
   imageUrl: string | undefined,
   aspectRatio: "9:16" | "16:9",
@@ -481,8 +488,8 @@ async function runSeedance20(
     videoUrls?: string[];
     /** 角色声线参考 mp3（最多 3） */
     audioUrls?: string[];
-    version?: "2.0" | "2.0-fast";
-    /** 段目标秒数；缺省从 prompt「目标时长」解析，再钳 4–15 */
+    version?: "2.0" | "2.0-fast" | "2.5";
+    /** 段目标秒数；缺省从 prompt「目标时长」解析 */
     duration?: number;
   },
 ): Promise<string> {
@@ -492,16 +499,21 @@ async function runSeedance20(
   const imageUrls = (opts?.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const videoUrls = (opts?.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const audioUrls = (opts?.audioUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
-  const version = opts?.version === "2.0-fast" ? "2.0-fast" : "2.0";
+  const version =
+    opts?.version === "2.5" ? "2.5" : opts?.version === "2.0-fast" ? "2.0-fast" : "2.0";
   const fromPrompt = parseManhuaClipTargetDurationSec(prompt);
-  const duration = clampSeedanceOpenRouterDuration(
-    opts?.duration ?? fromPrompt ?? undefined,
-  );
+  const durationRaw = opts?.duration ?? fromPrompt ?? undefined;
+  const duration =
+    version === "2.5"
+      ? clampXyqSeedanceDuration(durationRaw)
+      : clampSeedanceOpenRouterDuration(durationRaw);
+  // 2.5 须带登录态，服务端校验正式会员
+  const credentials = version === "2.5" ? "include" : "omit";
   const res = await withFlyHealthGate(probeOrigin, () =>
     fetch(seedanceUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "omit",
+      credentials,
       body: JSON.stringify({
         // 换官方符号只在出线这一刻做：上面的时长解析等仍认【第N段·Xs】
         prompt: renderManhuaClipPromptForSeedance(prompt),
@@ -515,7 +527,7 @@ async function runSeedance20(
         audioUrls: audioUrls.length
           ? audioUrls.slice(0, SEEDANCE_REFERENCE_MAX.audio)
           : undefined,
-        resolution: version === "2.0-fast" ? "720p" : "720p",
+        resolution: "720p",
         aspectRatio,
         duration,
         // 产品口径：只用引擎自带 Audio on，暂不另开后期配音 API
@@ -991,11 +1003,20 @@ export async function runCanvasBlock(
       : compiledMotion;
     const videoModel = block.videoModel || "seedance-2.0-fast";
     const useHailuoH3 = isCanvasHailuoH3VideoModel(videoModel);
+    const useSeedance25 = videoModel === "seedance-2.5";
+    if (useSeedance25 && !canAccessSeedance25ByPlan(deps.userPlan)) {
+      throw new Error(SEEDANCE_25_PAID_ONLY_LABEL_ZH);
+    }
     console.info(
       `[canvasRunBlock] video · id=${block.id} · videoModel=${videoModel} · stills=${[stillRef, ...fusionStillUrls].filter(Boolean).length} · continuity=${Boolean(continuityVideoUrl)} · directorPass=${isManhuaSeedanceDirectorPrompt(motionPrompt)} · promptChars=${motionPrompt.length}`,
     );
     let url = "";
-    if (videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast" || useHailuoH3) {
+    if (
+      videoModel === "seedance-2.0" ||
+      videoModel === "seedance-2.0-fast" ||
+      useSeedance25 ||
+      useHailuoH3
+    ) {
       // ~15s 一镜：下一段起幅必须吃上一段末 3–5s 帧，再叠本段静帧（配额≤6）
       const stillPool: string[] = [];
       if (stillRef) stillPool.push(stillRef);
@@ -1140,11 +1161,16 @@ export async function runCanvasBlock(
           duration: clipDuration,
         });
       } else {
-        url = await runSeedance20(seedancePrompt, seedStill, ar, {
+        url = await runSeedanceProductVideo(seedancePrompt, seedStill, ar, {
           imageUrls: httpsImages.length ? httpsImages : undefined,
           videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
           audioUrls: seedanceAudioUrls.length ? seedanceAudioUrls : undefined,
-          version: videoModel === "seedance-2.0-fast" ? "2.0-fast" : "2.0",
+          version:
+            videoModel === "seedance-2.5"
+              ? "2.5"
+              : videoModel === "seedance-2.0-fast"
+                ? "2.0-fast"
+                : "2.0",
           duration: clipDuration,
         });
       }

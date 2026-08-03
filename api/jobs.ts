@@ -979,6 +979,35 @@ function getPublicAssetBaseUrl() {
   return s(process.env.OAUTH_SERVER_URL).trim() || "https://mvstudiopro.com";
 }
 
+/** 成片·加长(2.5)：须登录且 Stripe 正式会员（pro/enterprise）；邀请码积分用户不可用 */
+async function assertSeedance25PaidAccess(
+  req: VercelRequest,
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const { canAccessSeedance25ByPlan, SEEDANCE_25_PAID_ONLY_LABEL_ZH } = await import(
+    "../shared/seedance25Access.js"
+  );
+  try {
+    const { sdk } = await import("../server/_core/sdk.js");
+    const user = await sdk.authenticateRequest(req as any, { silentMissing: true });
+    const userId = Number((user as any)?.id);
+    if (!Number.isFinite(userId) || userId <= 0) {
+      return { ok: false, status: 401, error: "请先登录后再使用成片·加长" };
+    }
+    const { getUserPlan } = await import("../server/credits.js");
+    const plan = await getUserPlan(userId);
+    if (!canAccessSeedance25ByPlan(plan)) {
+      return { ok: false, status: 403, error: SEEDANCE_25_PAID_ONLY_LABEL_ZH };
+    }
+    return { ok: true };
+  } catch (e: any) {
+    const msg = String(e?.message || e || "");
+    if (/Invalid session|Forbidden|Unauthorized|未登录|登录/i.test(msg)) {
+      return { ok: false, status: 401, error: "请先登录后再使用成片·加长" };
+    }
+    throw e;
+  }
+}
+
 function buildBlobMediaUrlFromPath(pathname: string) {
   const normalized = s(pathname).replace(/^\/+/, "").trim();
   if (!normalized) return "";
@@ -3384,9 +3413,18 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (productVersion === "2.0-mini" && !isProbe) {
         productVersion = "2.0-fast";
       }
-      /** A3：2.5 仅 Fly secrets（SEEDANCE_25_ENABLED + XYQ_ACCESS_KEY）→ 小云雀；未开闸仍 Coming soon */
+      /** A3：2.5 → 小云雀；须正式会员；Fly secrets 未开仍 Coming soon */
       if (productVersion === "2.5") {
         const { SEEDANCE_25_COMING_SOON_LABEL_ZH } = await import("../shared/seedanceOpenRouterModels.js");
+        const access = await assertSeedance25PaidAccess(req);
+        if (!access.ok) {
+          return res.status(access.status).json({
+            ok: false,
+            error: access.error,
+            version: "2.5",
+            paidOnly: true,
+          });
+        }
         try {
           const { isXyqSeedance25Ready, runXyqSeedance25Video } = await import(
             "../server/services/xyqSeedanceVideo.js"
@@ -3524,14 +3562,22 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
     }
 
     /**
-     * Seedance 2.5 · A3 内部联调：Fly secrets `SEEDANCE_25_ENABLED=1` + `XYQ_ACCESS_KEY` → 小云雀。
-     * 产品闸门未开时对外仍 Coming soon。密钥不要写本机 .env。
+     * Seedance 2.5 · A3：Fly secrets + 小云雀；须正式会员（邀请码用户不可用）。
      */
     if (op === "seedance25") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
       const { SEEDANCE_25_COMING_SOON_LABEL_ZH } = await import("../shared/seedanceOpenRouterModels.js");
+      const access = await assertSeedance25PaidAccess(req);
+      if (!access.ok) {
+        return res.status(access.status).json({
+          ok: false,
+          error: access.error,
+          version: "2.5",
+          paidOnly: true,
+        });
+      }
       const prompt =
         s(b.prompt || q.prompt || "").trim() || "Cinematic motion shot with stable camera and rich detail.";
       const imageUrl = s(b.imageUrl || q.imageUrl || "").trim() || undefined;

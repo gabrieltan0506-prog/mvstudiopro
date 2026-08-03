@@ -20,12 +20,17 @@ import {
   SPAWN_KIND_OPTIONS,
   TEXT_MODEL_OPTIONS,
   VIDEO_MODEL_OPTIONS,
+  isCanvasSeedance25VideoModel,
   type CanvasBlock,
   type CanvasBlockKind,
   type CanvasEdge,
   type CanvasImageBatchCount,
   type CanvasUploadedAsset,
 } from "@/lib/canvasTypes";
+import {
+  canAccessSeedance25ByPlan,
+  SEEDANCE_25_PAID_ONLY_LABEL_ZH,
+} from "@shared/seedance25Access";
 import {
   CANVAS_IMAGE_BATCH_OPTIONS,
 } from "@/lib/canvasCredits";
@@ -589,9 +594,37 @@ export default function FreeformCanvas({
   /** 世界缩放：让本集全部节点缩进可视区（≠节点自身 width/height） */
   const [viewScale, setViewScale] = useState(1);
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
+  const subQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
+  const userPlan = (subQuery.data?.plan || "free") as string;
+  const canUseSeedance25 = canAccessSeedance25ByPlan(userPlan);
+  const videoModelOptions = useMemo(
+    () =>
+      canUseSeedance25
+        ? VIDEO_MODEL_OPTIONS
+        : VIDEO_MODEL_OPTIONS.filter((m) => m.id !== "seedance-2.5"),
+    [canUseSeedance25],
+  );
+  const runDepsWithPlan = useMemo(
+    () => ({ ...runDeps, userPlan }),
+    [runDeps, userPlan],
+  );
   const focusMissSinceRef = useRef<number | null>(null);
   const viewScaleRef = useRef(1);
   viewScaleRef.current = viewScale;
+
+  /** 邀请码/免费用户草稿里若残留加长档，降回快速 */
+  useEffect(() => {
+    if (canUseSeedance25 || subQuery.isLoading) return;
+    const has25 = blocks.some((b) => isCanvasSeedance25VideoModel(b.videoModel));
+    if (!has25) return;
+    onBlocksChange((prev) =>
+      prev.map((b) =>
+        isCanvasSeedance25VideoModel(b.videoModel)
+          ? { ...b, videoModel: "seedance-2.0-fast" }
+          : b,
+      ),
+    );
+  }, [blocks, canUseSeedance25, onBlocksChange, subQuery.isLoading]);
 
   const mediaOnly = presentation === "media";
   const spawnOptions = useMemo(() => {
@@ -976,7 +1009,7 @@ export default function FreeformCanvas({
             ? await loadCanvasDocumentTexts(collectDocumentAssets(blockId, safeBlocks, safeEdges))
             : [];
         const texts = [...collectUpstreamTexts(blockId, safeBlocks, safeEdges), ...docTexts];
-        const out = await runCanvasBlock(runDeps, runBlockPayload, { visionImages, texts });
+        const out = await runCanvasBlock(runDepsWithPlan, runBlockPayload, { visionImages, texts });
         patchOne(blockId, {
           status: "done",
           outputText: out.outputText,
@@ -990,7 +1023,7 @@ export default function FreeformCanvas({
         toast.error(msg);
       }
     },
-    [blocks, edges, onBlocksChange, onEdgesChange, patchOne, runDeps],
+    [blocks, edges, onBlocksChange, onEdgesChange, patchOne, runDepsWithPlan],
   );
 
   const uploadFilesForBlock = useCallback(
@@ -1885,16 +1918,22 @@ export default function FreeformCanvas({
                             <select
                               value={
                                 block.videoModel === "seedance-2.0" ||
+                                block.videoModel === "seedance-2.5" ||
                                 block.videoModel === "minimax-hailuo-3"
                                   ? block.videoModel
                                   : "seedance-2.0-fast"
                               }
-                              onChange={(e) =>
-                                patchOne(block.id, { videoModel: e.target.value as CanvasBlock["videoModel"] })
-                              }
+                              onChange={(e) => {
+                                const next = e.target.value as CanvasBlock["videoModel"];
+                                if (isCanvasSeedance25VideoModel(next) && !canUseSeedance25) {
+                                  toast.error(SEEDANCE_25_PAID_ONLY_LABEL_ZH);
+                                  return;
+                                }
+                                patchOne(block.id, { videoModel: next });
+                              }}
                               className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
                             >
-                              {VIDEO_MODEL_OPTIONS.map((m) => (
+                              {videoModelOptions.map((m) => (
                                 <option key={m.id} value={m.id}>
                                   {m.label}
                                 </option>
@@ -1904,9 +1943,11 @@ export default function FreeformCanvas({
                           <div className="text-[10px] leading-5 text-white/50">
                             {block.videoModel === "seedance-2.0"
                               ? "成片·标准：多图参考 + 运镜/动作/对白，约 4–15s"
-                              : block.videoModel === "minimax-hailuo-3"
-                                ? "成片·H3：2K 成片，多图参考 + 运镜/动作/对白，约 5–15s"
-                                : "成片·快速：多图参考 + 运镜/动作/对白，更快更省"}
+                              : block.videoModel === "seedance-2.5"
+                                ? "成片·加长：正式会员，约 4–30s（邀请码用户请用快速）"
+                                : block.videoModel === "minimax-hailuo-3"
+                                  ? "成片·H3：2K 成片，多图参考 + 运镜/动作/对白，约 5–15s"
+                                  : "成片·快速：多图参考 + 运镜/动作/对白，更快更省"}
                           </div>
                           <div className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[10px] font-medium tracking-wide text-white/70">
                             {block.aspectRatio || "9:16"}
@@ -1918,9 +1959,11 @@ export default function FreeformCanvas({
                               ? ` · 资产边 ${countManhuaClipAssetEdges(edges, block.id)}`
                               : ""}
                           </div>
-                          <div className="rounded-lg border border-dashed border-amber-400/30 bg-amber-500/5 px-2 py-1.5 text-[10px] leading-5 text-amber-100/85">
-                            更高画质档位即将上线
-                          </div>
+                          {!canUseSeedance25 ? (
+                            <div className="rounded-lg border border-dashed border-amber-400/30 bg-amber-500/5 px-2 py-1.5 text-[10px] leading-5 text-amber-100/85">
+                              成片·加长仅正式会员；邀请码用户请用成片·快速
+                            </div>
+                          ) : null}
                         </>
                       ) : null}
                       {block.kind === "video_reverse" ? (

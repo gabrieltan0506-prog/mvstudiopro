@@ -306,20 +306,36 @@ async function pollXyqVideoUrl(
   accessKey: string,
 ): Promise<string> {
   const started = Date.now();
+  let lastNetErr = "";
   while (Date.now() - started < MAX_POLL_MS) {
-    const data = await xyqJson<XyqThreadData>(
-      "/api/biz/v1/skill/get_thread",
-      { thread_id: threadId, run_id: runId },
-      accessKey,
-    );
-    const out = extractVideoDownloadUrl(data, runId);
-    if (out.downloadUrl) return out.downloadUrl;
-    if (out.failed) {
-      throw new Error(userFacingXyqError(out.errorMessage || "视频生成失败"));
+    try {
+      const data = await xyqJson<XyqThreadData>(
+        "/api/biz/v1/skill/get_thread",
+        { thread_id: threadId, run_id: runId },
+        accessKey,
+      );
+      lastNetErr = "";
+      const out = extractVideoDownloadUrl(data, runId);
+      if (out.downloadUrl) return out.downloadUrl;
+      if (out.failed) {
+        throw new Error(userFacingXyqError(out.errorMessage || "视频生成失败"));
+      }
+    } catch (e: any) {
+      const msg = String(e?.message || e || "");
+      // 瞬时网络抖动（含 fetch failed）不立刻当任务失败；小云雀可能已在出片
+      if (/fetch failed|ECONNRESET|ETIMEDOUT|network|AbortError|超时/i.test(msg) && !/视频生成失败|Run 失败|积分/i.test(msg)) {
+        lastNetErr = msg;
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+        continue;
+      }
+      throw e;
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
-  throw new Error(`视频生成超时（${Math.round(MAX_POLL_MS / 60_000)} 分钟）`);
+  const hint = lastNetErr ? `（末次网络：${lastNetErr.slice(0, 80)}）` : "";
+  throw new Error(
+    `视频生成超时（${Math.round(MAX_POLL_MS / 60_000)} 分钟）${hint}。请到小云雀创作历史确认是否已出片，勿重复提交。`,
+  );
 }
 
 export type XyqSeedanceRunInput = {
@@ -399,12 +415,34 @@ export async function runXyqSeedance25Video(input: XyqSeedanceRunInput): Promise
   const submit = await xyqJson<XyqRunData>("/api/biz/v1/skill/submit_run", body, accessKey);
   const threadId = String(submit.run?.thread_id || "").trim();
   const runId = String(submit.run?.run_id || "").trim();
+  const webThreadLink = String(submit.web_thread_link || "").trim() || undefined;
   if (!threadId || !runId) {
     throw new Error("视频服务未返回任务 ID");
   }
 
-  const sourceUrl = await pollXyqVideoUrl(threadId, runId, accessKey);
-  const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(sourceUrl);
+  let sourceUrl = "";
+  try {
+    sourceUrl = await pollXyqVideoUrl(threadId, runId, accessKey);
+  } catch (e: any) {
+    const base = String(e?.message || "视频结果拉取失败");
+    const sessionHint = webThreadLink
+      ? ` 会话：${webThreadLink}`
+      : ` thread_id=${threadId} run_id=${runId}`;
+    // 提交已成功时绝不假装「没生成」——避免用户重打双倍烧积分
+    throw new Error(
+      `${base}${sessionHint}。小云雀侧可能已出片，请先查创作历史，勿重复提交。`,
+    );
+  }
+
+  let videoUrl = sourceUrl;
+  try {
+    videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(sourceUrl);
+  } catch (mirrorErr: any) {
+    console.warn(
+      "[xyqSeedance] GCS mirror failed; returning upstream URL",
+      String(mirrorErr?.message || mirrorErr).slice(0, 200),
+    );
+  }
 
   return {
     videoUrl,
@@ -413,7 +451,7 @@ export async function runXyqSeedance25Video(input: XyqSeedanceRunInput): Promise
     version: "2.5",
     threadId,
     runId,
-    webThreadLink: String(submit.web_thread_link || "").trim() || undefined,
+    webThreadLink,
   };
 }
 
