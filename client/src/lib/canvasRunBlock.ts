@@ -44,7 +44,8 @@ import {
   clampSeedanceOpenRouterDuration,
   SEEDANCE_REFERENCE_MAX,
 } from "@shared/seedanceOpenRouterModels";
-import { clampXyqSeedanceDuration } from "@shared/xyqSeedanceModels";
+import { clampXyqSeedanceDuration, XYQ_REFERENCE_MAX } from "@shared/xyqSeedanceModels";
+import { composeXyqSeedance25Prompt } from "@shared/xyqSeedancePrompt";
 import {
   canAccessSeedance25ByPlan,
   SEEDANCE_25_PAID_ONLY_LABEL_ZH,
@@ -1161,10 +1162,51 @@ export async function runCanvasBlock(
           duration: clipDuration,
         });
       } else {
-        url = await runSeedanceProductVideo(seedancePrompt, seedStill, ar, {
+        const userRefVideos = (block.seedance25RefVideoUrls || [])
+          .map((u) => String(u || "").trim())
+          .filter((u) => /^https?:\/\//i.test(u));
+        const userRefAudios = (block.seedance25RefAudioUrls || [])
+          .map((u) => String(u || "").trim())
+          .filter((u) => /^https?:\/\//i.test(u));
+        const workMode = block.seedance25WorkMode || "generate";
+        const mergedVideoUrls = Array.from(
+          new Set([
+            ...userRefVideos,
+            ...(continuityVideoUrl ? [continuityVideoUrl] : []),
+            ...(workMode !== "generate" && block.outputUrl && looksLikeVideo(block.outputUrl)
+              ? [block.outputUrl]
+              : []),
+            ...(workMode !== "generate" && block.refVideoUrl && looksLikeVideo(block.refVideoUrl)
+              ? [block.refVideoUrl]
+              : []),
+          ]),
+        ).slice(0, useSeedance25 ? XYQ_REFERENCE_MAX.video : SEEDANCE_REFERENCE_MAX.video);
+        const mergedAudioUrls = Array.from(
+          new Set([...userRefAudios, ...seedanceAudioUrls]),
+        ).slice(0, useSeedance25 ? XYQ_REFERENCE_MAX.audio : SEEDANCE_REFERENCE_MAX.audio);
+        const durationFor25 = clampXyqSeedanceDuration(clipDuration);
+        let finalPrompt = seedancePrompt;
+        if (useSeedance25) {
+          if ((workMode === "extend" || workMode === "reshoot") && !mergedVideoUrls.length) {
+            throw new Error(
+              workMode === "extend"
+                ? "延长需要参考视频：请先出片或上传/勾选参考视频"
+                : "局部重拍需要参考视频：请先出片或上传/勾选参考视频",
+            );
+          }
+          finalPrompt = composeXyqSeedance25Prompt({
+            basePrompt: seedancePrompt,
+            workMode,
+            timestampStoryboard: block.seedance25TimestampStoryboard,
+            durationSec: durationFor25,
+            reshootFromSec: block.seedance25ReshootFromSec,
+            reshootToSec: block.seedance25ReshootToSec,
+          });
+        }
+        url = await runSeedanceProductVideo(finalPrompt, seedStill, ar, {
           imageUrls: httpsImages.length ? httpsImages : undefined,
-          videoUrls: continuityVideoUrl ? [continuityVideoUrl] : undefined,
-          audioUrls: seedanceAudioUrls.length ? seedanceAudioUrls : undefined,
+          videoUrls: mergedVideoUrls.length ? mergedVideoUrls : undefined,
+          audioUrls: mergedAudioUrls.length ? mergedAudioUrls : undefined,
           version:
             videoModel === "seedance-2.5"
               ? "2.5"

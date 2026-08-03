@@ -51,7 +51,7 @@ export type CanvasImageMode = "generate" | "edit";
 
 export type CanvasBlockStatus = "idle" | "running" | "done" | "error";
 
-export type CanvasAssetKind = "image" | "video" | "document";
+export type CanvasAssetKind = "image" | "video" | "document" | "audio";
 
 export type CanvasUploadedAsset = {
   id: string;
@@ -63,6 +63,9 @@ export type CanvasUploadedAsset = {
   mimeType?: string;
 };
 
+/** 成片·加长工作模式（延长/重拍靠参考视频 + 自然语言，非空壳 API） */
+export type CanvasSeedance25WorkMode = "generate" | "extend" | "reshoot";
+
 export type CanvasUploadFailure = {
   fileName: string;
   error: string;
@@ -72,10 +75,10 @@ export type CanvasUploadPhase = "idle" | "uploading" | "done" | "error";
 
 /** 画布上传：input accept + 用户可见格式说明 */
 export const CANVAS_UPLOAD_ACCEPT =
-  "image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,video/mp4,video/quicktime,video/webm,.pdf,.txt,.md,.markdown,.heic,.heif";
+  "image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,video/mp4,video/quicktime,video/webm,audio/mpeg,audio/mp4,audio/wav,audio/x-m4a,audio/aac,.mp3,.wav,.m4a,.aac,.pdf,.txt,.md,.markdown,.heic,.heif";
 
 export const CANVAS_UPLOAD_FORMAT_HINT =
-  "支持 JPG / PNG / WebP / GIF / HEIC、MP4 / MOV / WebM；文档 PDF / TXT / MD（供文本·整理文案方块引用）";
+  "支持 JPG / PNG / WebP / GIF / HEIC、MP4 / MOV / WebM、MP3 / WAV / M4A；文档 PDF / TXT / MD（供文本·整理文案方块引用）";
 
 export type CanvasImageBatchCount = 1 | 2 | 4;
 
@@ -140,6 +143,17 @@ export type CanvasBlock = {
   pathCameraRecipeId?: string;
   /** 静帧路径标注 JSON（视频节点 I2V 优先于配方） */
   pathAnnotationJson?: unknown;
+  /** 成片·加长：秒级时间戳分镜（多行 `0-5 | 画面`） */
+  seedance25TimestampStoryboard?: string;
+  /** 成片·加长：勾选的参考视频 URL（≤3） */
+  seedance25RefVideoUrls?: string[];
+  /** 成片·加长：勾选的参考音频 URL（≤3） */
+  seedance25RefAudioUrls?: string[];
+  /** 成片·加长：新生成 / 延长 / 局部重拍 */
+  seedance25WorkMode?: CanvasSeedance25WorkMode;
+  /** 局部重拍起止秒 */
+  seedance25ReshootFromSec?: number;
+  seedance25ReshootToSec?: number;
   /**
    * 漫剧成片智能质检（软拦）：failed 默认可预览、不进成片坞；
    * 用户「仍采用」后 quality.userAcceptedDespiteQc=true 才可合成。
@@ -531,7 +545,7 @@ export function collectUpstreamTexts(
 
 /** 仅图片可进多模态 vision；文档/视频绝不能误标为 image/* */
 export function isCanvasVisionImageAsset(asset: CanvasUploadedAsset): boolean {
-  if (asset.kind === "document" || asset.kind === "video") return false;
+  if (asset.kind === "document" || asset.kind === "video" || asset.kind === "audio") return false;
   if (asset.kind === "image") return true;
   const name = `${asset.fileName || ""} ${asset.url || ""}`;
   if (/\.(pdf|txt|md|markdown)(\?|$)/i.test(name)) return false;
