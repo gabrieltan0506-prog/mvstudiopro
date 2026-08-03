@@ -3384,6 +3384,51 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (productVersion === "2.0-mini" && !isProbe) {
         productVersion = "2.0-fast";
       }
+      /** A3：2.5 仅 Fly secrets（SEEDANCE_25_ENABLED + XYQ_ACCESS_KEY）→ 小云雀；未开闸仍 Coming soon */
+      if (productVersion === "2.5") {
+        const { SEEDANCE_25_COMING_SOON_LABEL_ZH } = await import("../shared/seedanceOpenRouterModels.js");
+        try {
+          const { isXyqSeedance25Ready, runXyqSeedance25Video } = await import(
+            "../server/services/xyqSeedanceVideo.js"
+          );
+          if (!isXyqSeedance25Ready()) {
+            return res.status(503).json({
+              ok: false,
+              error: SEEDANCE_25_COMING_SOON_LABEL_ZH,
+              comingSoon: true,
+              version: "2.5",
+            });
+          }
+          const generateTypeRaw = b.generateType ?? q.generateType;
+          const generateType =
+            generateTypeRaw === undefined || generateTypeRaw === null || generateTypeRaw === ""
+              ? undefined
+              : Math.floor(Number(generateTypeRaw));
+          const out = await runXyqSeedance25Video({
+            prompt,
+            imageUrl,
+            imageUrls,
+            videoUrls,
+            audioUrls,
+            aspectRatio: s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9",
+            duration: Number(b.duration ?? q.duration ?? b.durationSec ?? 15),
+            quality: s(b.resolution || q.resolution || "720p").trim() || "720p",
+            generateType: Number.isFinite(generateType as number) ? (generateType as number) : undefined,
+          });
+          return res.status(200).json({
+            ok: true,
+            videoUrl: out.videoUrl,
+            provider: out.provider,
+            model: out.model,
+            version: out.version,
+            threadId: out.threadId,
+            runId: out.runId,
+            webThreadLink: out.webThreadLink,
+          });
+        } catch (e: any) {
+          return res.status(502).json({ ok: false, error: e?.message || "seedance25_failed" });
+        }
+      }
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9";
       const generateAudio = !(
         String(b.generateAudio ?? q.generateAudio ?? "1").trim() === "0" || b.generateAudio === false
@@ -3479,30 +3524,14 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
     }
 
     /**
-     * Seedance 2.5（EvoLink · 文生/图生/参考生）——默认未开放。
-     * 公开闸门 SEEDANCE_25_PUBLICLY_ENABLED=false；联调可设 SEEDANCE_25_ENABLED=1。
+     * Seedance 2.5 · A3 内部联调：Fly secrets `SEEDANCE_25_ENABLED=1` + `XYQ_ACCESS_KEY` → 小云雀。
+     * 产品闸门未开时对外仍 Coming soon。密钥不要写本机 .env。
      */
     if (op === "seedance25") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
-      const {
-        isSeedance25Enabled,
-        isEvolinkSeedanceConfigured,
-        runEvolinkSeedanceVideo,
-      } = await import("../server/services/evolinkSeedanceVideo.js");
-      const { SEEDANCE_25_COMING_SOON_LABEL_EN } = await import("../shared/seedanceEvolinkModels.js");
-      if (!isSeedance25Enabled()) {
-        return res.status(503).json({
-          ok: false,
-          error: SEEDANCE_25_COMING_SOON_LABEL_EN,
-          comingSoon: true,
-          version: "2.5",
-        });
-      }
-      if (!isEvolinkSeedanceConfigured()) {
-        return res.status(500).json({ ok: false, error: "EVOLINK_API_KEY 未配置" });
-      }
+      const { SEEDANCE_25_COMING_SOON_LABEL_ZH } = await import("../shared/seedanceOpenRouterModels.js");
       const prompt =
         s(b.prompt || q.prompt || "").trim() || "Cinematic motion shot with stable camera and rich detail.";
       const imageUrl = s(b.imageUrl || q.imageUrl || "").trim() || undefined;
@@ -3515,32 +3544,43 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const audioUrls = Array.isArray(b.audioUrls)
         ? b.audioUrls.map((u: unknown) => s(u)).filter(Boolean)
         : undefined;
-      const resolution = s(b.resolution || q.resolution || "720p") === "480p" ? "480p" : "720p";
-      const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9";
-      const durationRaw = Number(b.duration ?? q.duration ?? b.durationSec ?? 15);
-      const generateAudio = !(String(b.generateAudio ?? q.generateAudio ?? "1").trim() === "0" || b.generateAudio === false);
-      const webSearch = b.webSearch === true || q.webSearch === "1";
       try {
-        const out = await runEvolinkSeedanceVideo({
+        const { isXyqSeedance25Ready, runXyqSeedance25Video } = await import(
+          "../server/services/xyqSeedanceVideo.js"
+        );
+        if (!isXyqSeedance25Ready()) {
+          return res.status(503).json({
+            ok: false,
+            error: SEEDANCE_25_COMING_SOON_LABEL_ZH,
+            comingSoon: true,
+            version: "2.5",
+          });
+        }
+        const generateTypeRaw = b.generateType ?? q.generateType;
+        const generateType =
+          generateTypeRaw === undefined || generateTypeRaw === null || generateTypeRaw === ""
+            ? undefined
+            : Math.floor(Number(generateTypeRaw));
+        const out = await runXyqSeedance25Video({
           prompt,
           imageUrl,
           imageUrls,
           videoUrls,
           audioUrls,
-          quality: resolution,
-          aspectRatio,
-          duration: Number.isFinite(durationRaw) ? durationRaw : 15,
-          generateAudio,
-          webSearch,
-          version: "2.5",
+          aspectRatio: s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9",
+          duration: Number(b.duration ?? q.duration ?? b.durationSec ?? 15),
+          quality: s(b.resolution || q.resolution || "720p").trim() || "720p",
+          generateType: Number.isFinite(generateType as number) ? (generateType as number) : undefined,
         });
         return res.status(200).json({
           ok: true,
           videoUrl: out.videoUrl,
           provider: out.provider,
           model: out.model,
-          mode: out.mode,
           version: out.version,
+          threadId: out.threadId,
+          runId: out.runId,
+          webThreadLink: out.webThreadLink,
         });
       } catch (e: any) {
         return res.status(502).json({ ok: false, error: e?.message || "seedance25_failed" });
