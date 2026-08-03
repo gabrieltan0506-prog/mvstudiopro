@@ -303,6 +303,10 @@ A1 4fps 重抽帧过审：留下 G1–G7 + 优化后 B1（暖色细笔刷箭头�
 
 全案确认后并行补齐平台优先级看板 + monetizationLanes（`generatePlatformMonetizationLanes`，不覆盖扩写文案、不另扣 Stage2 整包）。
 
+## 2026-08-03
+
+Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**，不写本机）+ `SEEDANCE_25_ENABLED=1` → `op=seedance25` / `seedanceI2V&version=2.5`；前台产品闸门仍 Coming soon。分支 `feat/xyq-seedance25-a3`。
+
 ---
 
 ## 如何更新本文件
