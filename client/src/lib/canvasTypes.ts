@@ -156,6 +156,10 @@ export type CanvasBlock = {
   seedance25ReshootToSec?: number;
   /** 成片·加长：显式首尾帧模式（generate_type=1；取参考图首张+末张） */
   seedance25FirstLastFrame?: boolean;
+  /** 成片·加长：上一轮会话 thread（局部重拍可续聊） */
+  seedance25ThreadId?: string;
+  /** 成片·加长：创作历史链接（失败时先查此链，勿重复提交） */
+  seedance25WebThreadLink?: string;
   /**
    * 漫剧成片智能质检（软拦）：failed 默认可预览、不进成片坞；
    * 用户「仍采用」后 quality.userAcceptedDespiteQc=true 才可合成。

@@ -3,7 +3,11 @@ import {
   XYQ_SEEDANCE_25_MODEL,
   XYQ_VIDEO_PART_AGENT,
 } from "../../shared/xyqSeedanceModels";
-import { __xyqSeedanceTest, buildXyqGenerateVideoBody } from "./xyqSeedanceVideo";
+import {
+  __xyqSeedanceTest,
+  buildXyqGenerateVideoBody,
+  buildXyqNestEditBody,
+} from "./xyqSeedanceVideo";
 
 describe("buildXyqGenerateVideoBody", () => {
   it("builds text-only Seedance_2.5 body", () => {
@@ -43,6 +47,48 @@ describe("buildXyqGenerateVideoBody", () => {
     const param = body.video_part_tool_param as Record<string, unknown>;
     expect(param.generate_type).toBeUndefined();
     expect(param.videos).toEqual([{ pippit_asset_id: "v1" }]);
+  });
+
+  it("extend mode never sets generate_type=1 even with two images", () => {
+    const body = buildXyqGenerateVideoBody({
+      prompt: "续写",
+      imageAssetIds: ["a1", "a2"],
+      videoAssetIds: ["v1"],
+      generateType: 1,
+      workMode: "extend",
+    });
+    const param = body.video_part_tool_param as Record<string, unknown>;
+    expect(param.generate_type).toBeUndefined();
+    expect(param.videos).toEqual([{ pippit_asset_id: "v1" }]);
+    expect(body.agent_name).toBe(XYQ_VIDEO_PART_AGENT);
+  });
+});
+
+describe("buildXyqNestEditBody", () => {
+  it("builds nest message+asset_ids without video_part_tool_param", () => {
+    const body = buildXyqNestEditBody({
+      message: "【局部重拍】仅重做 2-5 秒",
+      assetIds: ["vid_1", "img_1"],
+      threadId: "thr_prev",
+    });
+    expect(body.message).toContain("局部重拍");
+    expect(body.asset_ids).toEqual(["vid_1", "img_1"]);
+    expect(body.thread_id).toBe("thr_prev");
+    expect(body.agent_name).toBeUndefined();
+    expect(body.video_part_tool_param).toBeUndefined();
+  });
+
+  it("rejects empty assets", () => {
+    expect(() => buildXyqNestEditBody({ message: "x", assetIds: [] })).toThrow(/参考视频/);
+  });
+});
+
+describe("isXyqAllowedAudioUrl", () => {
+  it("allows mp3/wav only", () => {
+    expect(__xyqSeedanceTest.isXyqAllowedAudioUrl("https://x/a.mp3")).toBe(true);
+    expect(__xyqSeedanceTest.isXyqAllowedAudioUrl("https://x/a.wav")).toBe(true);
+    expect(__xyqSeedanceTest.isXyqAllowedAudioUrl("https://x/a.m4a")).toBe(false);
+    expect(__xyqSeedanceTest.isXyqAllowedAudioUrl("https://x/a.aac")).toBe(false);
   });
 });
 

@@ -317,6 +317,8 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 首尾帧显式控件：画布「首尾帧模式」→ `generateType=1`（参考图首/末张）。分支 `feat/seedance25-first-last-frame`。
 
+**真路由落地（防空壳验收）**：对齐官方 CLI——`generate`/`extend` → `video_part`（延长须 `videos[]`）；`reshoot` → nest 仅 `message+asset_ids`（无 `video_part_tool_param`）。`workMode` 经 jobs → `runXyqSeedance25Video`；会话链 `threadId`/`webThreadLink` 写回画布节点。缺口表已改写两条路由。
+
 ---
 
 ## 如何更新本文件

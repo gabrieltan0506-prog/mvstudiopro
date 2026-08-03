@@ -3518,6 +3518,12 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                 outputUrl: out.outputUrl,
                 outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : b.outputUrls),
                 lastFrameUrl: out.lastFrameUrl || b.lastFrameUrl,
+                ...(out.seedance25ThreadId
+                  ? { seedance25ThreadId: out.seedance25ThreadId }
+                  : {}),
+                ...(out.seedance25WebThreadLink
+                  ? { seedance25WebThreadLink: out.seedance25WebThreadLink }
+                  : {}),
                 error: undefined,
               }
             : b,

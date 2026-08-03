@@ -52,6 +52,13 @@ type XyqEnvelope<T> = {
   data?: T;
 };
 
+export type XyqSeedance25WorkMode = "generate" | "extend" | "reshoot";
+
+/**
+ * 模型直出（官方 generate-video）：agent = pippit_video_part_agent。
+ * 首尾帧：generate_type=1 + 两图按首/尾顺序。
+ * 续写：须带 videos[] 参考成片（CLI --video）。
+ */
 export function buildXyqGenerateVideoBody(input: {
   prompt: string;
   imageAssetIds?: string[];
@@ -62,6 +69,8 @@ export function buildXyqGenerateVideoBody(input: {
   resolution?: string;
   generateType?: number;
   model?: string;
+  /** 续写时禁止自动猜首尾帧 */
+  workMode?: XyqSeedance25WorkMode;
 }): Record<string, unknown> {
   const prompt = String(input.prompt || "").trim();
   const images = (input.imageAssetIds || []).slice(0, XYQ_REFERENCE_MAX.image).map((id) => ({
@@ -75,13 +84,19 @@ export function buildXyqGenerateVideoBody(input: {
   }));
 
   let generateType = input.generateType;
+  const mode = input.workMode || "generate";
   if (
+    mode === "generate" &&
     generateType == null &&
     images.length === 2 &&
     videos.length === 0 &&
     audios.length === 0
   ) {
-    generateType = 1; // 首尾帧
+    generateType = 1; // 首尾帧（官方 CLI --generate-type 1）
+  }
+  if (mode === "extend" || mode === "reshoot") {
+    // 续写/重拍不得误套首尾帧
+    if (generateType === 1) generateType = undefined;
   }
 
   const param: Record<string, unknown> = {
@@ -101,6 +116,28 @@ export function buildXyqGenerateVideoBody(input: {
     message: prompt,
     video_part_tool_param: param,
   };
+}
+
+/**
+ * Nest 会话编辑（官方 submit_run.py）：message + asset_ids，不带 video_part_tool_param。
+ * 用于局部重拍 / 复杂编辑（skill 场景 4），由平台 Agent 编排，非提示词空壳。
+ */
+export function buildXyqNestEditBody(input: {
+  message: string;
+  assetIds: string[];
+  threadId?: string;
+}): Record<string, unknown> {
+  const message = String(input.message || "").trim();
+  const assetIds = (input.assetIds || []).map((id) => String(id || "").trim()).filter(Boolean);
+  if (!message) throw new Error("请填写编辑说明");
+  if (!assetIds.length) throw new Error("局部重拍需要先上传参考视频");
+  const body: Record<string, unknown> = {
+    message,
+    asset_ids: assetIds,
+  };
+  const threadId = String(input.threadId || "").trim();
+  if (threadId) body.thread_id = threadId;
+  return body;
 }
 
 function userFacingXyqError(raw: string): string {
@@ -338,6 +375,18 @@ async function pollXyqVideoUrl(
   );
 }
 
+/** 官方 CLI 音频仅 mp3/wav */
+export function isXyqAllowedAudioUrl(url: string): boolean {
+  const u = String(url || "").trim().toLowerCase();
+  if (!u) return false;
+  try {
+    const path = new URL(u).pathname;
+    return /\.(mp3|wav)$/i.test(path);
+  } catch {
+    return /\.(mp3|wav)(\?|#|$)/i.test(u);
+  }
+}
+
 export type XyqSeedanceRunInput = {
   prompt: string;
   imageUrl?: string;
@@ -349,9 +398,17 @@ export type XyqSeedanceRunInput = {
   quality?: string;
   /** 1 = 首尾帧；缺省时两图无音视频自动按首尾帧 */
   generateType?: number;
+  /**
+   * generate = 模型直出（含首尾帧/秒级分镜）
+   * extend = 模型直出 + videos[] 续写（CLI --video）
+   * reshoot = nest 会话 message+asset_ids（官方局部编辑，非 video_part 空壳）
+   */
+  workMode?: XyqSeedance25WorkMode;
+  /** nest 续聊同一会话（可选） */
+  threadId?: string;
 };
 
-export async function runXyqSeedance25Video(input: XyqSeedanceRunInput): Promise<{
+export type XyqSeedanceRunResult = {
   videoUrl: string;
   model: string;
   provider: "xyq";
@@ -359,7 +416,68 @@ export async function runXyqSeedance25Video(input: XyqSeedanceRunInput): Promise
   threadId: string;
   runId: string;
   webThreadLink?: string;
-}> {
+  /** video_part = 模型直出；nest = 会话编排编辑 */
+  route: "video_part" | "nest";
+  workMode: XyqSeedance25WorkMode;
+};
+
+async function mirrorOrUpstream(sourceUrl: string): Promise<string> {
+  try {
+    return await mirrorSeedanceMp4ToGcsSignedUrl(sourceUrl);
+  } catch (mirrorErr: any) {
+    console.warn(
+      "[xyqSeedance] GCS mirror failed; returning upstream URL",
+      String(mirrorErr?.message || mirrorErr).slice(0, 200),
+    );
+    return sourceUrl;
+  }
+}
+
+async function submitAndPollXyq(input: {
+  body: Record<string, unknown>;
+  accessKey: string;
+  route: "video_part" | "nest";
+  workMode: XyqSeedance25WorkMode;
+}): Promise<XyqSeedanceRunResult> {
+  const submit = await xyqJson<XyqRunData>(
+    "/api/biz/v1/skill/submit_run",
+    input.body,
+    input.accessKey,
+  );
+  const threadId = String(submit.run?.thread_id || "").trim();
+  const runId = String(submit.run?.run_id || "").trim();
+  const webThreadLink = String(submit.web_thread_link || "").trim() || undefined;
+  if (!threadId || !runId) {
+    throw new Error("视频服务未返回任务 ID");
+  }
+
+  let sourceUrl = "";
+  try {
+    sourceUrl = await pollXyqVideoUrl(threadId, runId, input.accessKey);
+  } catch (e: any) {
+    const base = String(e?.message || "视频结果拉取失败");
+    const sessionHint = webThreadLink
+      ? ` 会话：${webThreadLink}`
+      : ` thread_id=${threadId} run_id=${runId}`;
+    throw new Error(
+      `${base}${sessionHint}。小云雀侧可能已出片，请先查创作历史，勿重复提交。`,
+    );
+  }
+
+  return {
+    videoUrl: await mirrorOrUpstream(sourceUrl),
+    model: XYQ_SEEDANCE_25_MODEL,
+    provider: "xyq",
+    version: "2.5",
+    threadId,
+    runId,
+    webThreadLink,
+    route: input.route,
+    workMode: input.workMode,
+  };
+}
+
+export async function runXyqSeedance25Video(input: XyqSeedanceRunInput): Promise<XyqSeedanceRunResult> {
   if (!isSeedance25Enabled()) {
     throw new Error("Seedance 2.5 即将登陆 MV Studio Pro");
   }
@@ -371,6 +489,9 @@ export async function runXyqSeedance25Video(input: XyqSeedanceRunInput): Promise
   const prompt = String(input.prompt || "").trim();
   if (!prompt) throw new Error("请填写视频提示词");
 
+  const workMode: XyqSeedance25WorkMode =
+    input.workMode === "extend" || input.workMode === "reshoot" ? input.workMode : "generate";
+
   const imageUrls = Array.from(
     new Set([
       ...(input.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean),
@@ -380,9 +501,22 @@ export async function runXyqSeedance25Video(input: XyqSeedanceRunInput): Promise
   const videoUrls = Array.from(
     new Set((input.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean)),
   ).slice(0, XYQ_REFERENCE_MAX.video);
-  const audioUrls = Array.from(
+  const rawAudioUrls = Array.from(
     new Set((input.audioUrls || []).map((u) => String(u || "").trim()).filter(Boolean)),
   ).slice(0, XYQ_REFERENCE_MAX.audio);
+  const rejectedAudio = rawAudioUrls.filter((u) => !isXyqAllowedAudioUrl(u));
+  if (rejectedAudio.length) {
+    throw new Error("参考音频仅支持 mp3 / wav（与官方上传白名单一致）");
+  }
+  const audioUrls = rawAudioUrls;
+
+  if ((workMode === "extend" || workMode === "reshoot") && !videoUrls.length) {
+    throw new Error(
+      workMode === "extend"
+        ? "延长需要参考视频：请先出片或上传参考视频"
+        : "局部重拍需要参考视频：请先出片或上传参考视频",
+    );
+  }
 
   const imageAssetIds: string[] = [];
   for (const u of imageUrls) {
@@ -397,10 +531,24 @@ export async function runXyqSeedance25Video(input: XyqSeedanceRunInput): Promise
     audioAssetIds.push(await uploadUrlToXyqAsset(u, accessKey, "audio"));
   }
 
+  // —— 局部重拍：官方 nest 会话（message + asset_ids），禁止假扮 video_part ——
+  if (workMode === "reshoot") {
+    const assetIds = [...videoAssetIds, ...imageAssetIds, ...audioAssetIds];
+    const body = buildXyqNestEditBody({
+      message: prompt,
+      assetIds,
+      threadId: input.threadId,
+    });
+    console.info(
+      `[xyqSeedance] route=nest workMode=reshoot assets=${assetIds.length} videos=${videoAssetIds.length}`,
+    );
+    return submitAndPollXyq({ body, accessKey, route: "nest", workMode });
+  }
+
+  // —— 生成 / 延长 / 首尾帧：官方 video_part 模型直出 ——
   const durationSec = clampXyqSeedanceDuration(input.duration);
   const ratio = normalizeXyqSeedanceRatio(input.aspectRatio);
   const resolution = normalizeXyqSeedanceResolution(input.quality);
-
   const body = buildXyqGenerateVideoBody({
     prompt,
     imageAssetIds,
@@ -409,54 +557,20 @@ export async function runXyqSeedance25Video(input: XyqSeedanceRunInput): Promise
     durationSec,
     ratio,
     resolution,
-    generateType: input.generateType,
+    generateType: workMode === "generate" ? input.generateType : undefined,
+    workMode,
   });
-
-  const submit = await xyqJson<XyqRunData>("/api/biz/v1/skill/submit_run", body, accessKey);
-  const threadId = String(submit.run?.thread_id || "").trim();
-  const runId = String(submit.run?.run_id || "").trim();
-  const webThreadLink = String(submit.web_thread_link || "").trim() || undefined;
-  if (!threadId || !runId) {
-    throw new Error("视频服务未返回任务 ID");
-  }
-
-  let sourceUrl = "";
-  try {
-    sourceUrl = await pollXyqVideoUrl(threadId, runId, accessKey);
-  } catch (e: any) {
-    const base = String(e?.message || "视频结果拉取失败");
-    const sessionHint = webThreadLink
-      ? ` 会话：${webThreadLink}`
-      : ` thread_id=${threadId} run_id=${runId}`;
-    // 提交已成功时绝不假装「没生成」——避免用户重打双倍烧积分
-    throw new Error(
-      `${base}${sessionHint}。小云雀侧可能已出片，请先查创作历史，勿重复提交。`,
-    );
-  }
-
-  let videoUrl = sourceUrl;
-  try {
-    videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(sourceUrl);
-  } catch (mirrorErr: any) {
-    console.warn(
-      "[xyqSeedance] GCS mirror failed; returning upstream URL",
-      String(mirrorErr?.message || mirrorErr).slice(0, 200),
-    );
-  }
-
-  return {
-    videoUrl,
-    model: XYQ_SEEDANCE_25_MODEL,
-    provider: "xyq",
-    version: "2.5",
-    threadId,
-    runId,
-    webThreadLink,
-  };
+  console.info(
+    `[xyqSeedance] route=video_part workMode=${workMode} images=${imageAssetIds.length} videos=${videoAssetIds.length} generate_type=${
+      (body.video_part_tool_param as Record<string, unknown>)?.generate_type ?? "none"
+    }`,
+  );
+  return submitAndPollXyq({ body, accessKey, route: "video_part", workMode });
 }
 
 /** 单测导出 */
 export const __xyqSeedanceTest = {
   extractVideoDownloadUrl,
   userFacingXyqError,
+  isXyqAllowedAudioUrl,
 };

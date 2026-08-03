@@ -1,8 +1,11 @@
 /**
  * 小云雀（XYQ / Pippit）Seedance 2.5 · 内部联调常量。
- * 产品闸门仍关；联调密钥只放 Fly secrets：SEEDANCE_25_ENABLED=1 + XYQ_ACCESS_KEY（勿写本机 .env）。
+ * 联调密钥只放 Fly secrets：SEEDANCE_25_ENABLED=1 + XYQ_ACCESS_KEY（勿写本机 .env）。
  *
- * CLI 对齐：`pippit-tool-cli generate-video --model Seedance_2.5`
+ * CLI 对齐：
+ * - 模型直出：`generate-video --model Seedance_2.5` → video_part_tool_param
+ * - 会话编辑：`submit_run --message … --asset-ids …`（无 video_part；局部重拍）
+ * - 参考上限：图≤9 / 视≤3 / 音≤3（mp3/wav）
  */
 
 export const XYQ_SEEDANCE_25_MODEL = "Seedance_2.5" as const;
