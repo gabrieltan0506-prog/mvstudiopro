@@ -2224,6 +2224,37 @@ export default function FreeformCanvas({
                                   </div>
                                 );
                               })()}
+                              {block.outputUrl &&
+                              /\.(mp4|mov|webm|m4v)(\?|$)/i.test(block.outputUrl) ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    patchOne(block.id, {
+                                      seedance25WorkMode: "extend",
+                                      seedance25RefVideoUrls: Array.from(
+                                        new Set([
+                                          ...(block.seedance25RefVideoUrls || []),
+                                          block.outputUrl!,
+                                        ]),
+                                      ).slice(0, 3),
+                                    })
+                                  }
+                                  className="w-full rounded-lg border border-white/15 bg-white/[0.04] px-2 py-1.5 text-[11px] text-white/80 hover:bg-white/[0.08]"
+                                >
+                                  用当前成片再延长一轮
+                                </button>
+                              ) : null}
+                              {block.seedance25WebThreadLink ? (
+                                <a
+                                  href={block.seedance25WebThreadLink}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="block truncate text-[10px] text-sky-200/80 underline-offset-2 hover:underline"
+                                  title="超时或拉取失败时先打开这里确认是否已出片，勿重复点生成"
+                                >
+                                  查看本轮创作记录（先确认再重试）
+                                </a>
+                              ) : null}
                             </div>
                           ) : null}
                         </>
