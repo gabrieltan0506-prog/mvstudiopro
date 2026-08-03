@@ -32,7 +32,7 @@ export function parseXyqSeedance25WorkMode(raw: unknown): XyqSeedance25WorkMode 
   return "generate";
 }
 
-/** 需要参考视频的模式 */
+/** 需要参考视频的模式（复刻可用外链代替本地参考视频） */
 export function xyqWorkModeNeedsVideo(mode: XyqSeedance25WorkMode): boolean {
   return (
     mode === "extend" ||
@@ -41,6 +41,16 @@ export function xyqWorkModeNeedsVideo(mode: XyqSeedance25WorkMode): boolean {
     mode === "upscale" ||
     mode === "erase_subtitle"
   );
+}
+
+/** 复刻允许：参考视频 或 可访问外链（抖音/成片页等） */
+export function xyqRemixHasSource(input: {
+  videoUrls?: string[];
+  sourceUrl?: string;
+}): boolean {
+  const hasVideo = (input.videoUrls || []).some((u) => /^https?:\/\//i.test(String(u || "").trim()));
+  const hasLink = /^https?:\/\//i.test(String(input.sourceUrl || "").trim());
+  return hasVideo || hasLink;
 }
 
 /** nest 会话模式（无 video_part_tool_param） */
@@ -134,15 +144,19 @@ export function buildXyqReshootInstruction(
   ].join("\n");
 }
 
-/** 视频复刻 / 风格迁移（nest 会话自然语言；须带参考视频 asset） */
-export function buildXyqRemixInstruction(userPrompt: string): string {
+/** 视频复刻 / 风格迁移（nest 会话自然语言；须带参考视频 asset 或外链） */
+export function buildXyqRemixInstruction(userPrompt: string, sourceUrl?: string): string {
   const body = String(userPrompt || "").trim();
+  const link = String(sourceUrl || "").trim();
   return [
     "【视频复刻】",
     "参考已提供的视频（及可选图/音频），复刻其节奏、运镜与叙事气质，生成一条新成片。",
     "角色外形与场景可按说明改写，但镜头语言与剪辑节奏要贴近参考片。",
+    link ? `参考成片链接：${link}` : "",
     body ? `复刻要求：\n${body}` : "复刻要求：保持参考片的镜头节奏与情绪弧，换成当前剧本主体。",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function composeXyqSeedance25Prompt(input: {
@@ -152,6 +166,8 @@ export function composeXyqSeedance25Prompt(input: {
   durationSec: number;
   reshootFromSec?: number;
   reshootToSec?: number;
+  /** 复刻外链（抖音等）；进 nest message，非空壳字段 */
+  sourceUrl?: string;
 }): string {
   const mode = input.workMode || "generate";
   const dur = input.durationSec;
@@ -180,6 +196,7 @@ export function composeXyqSeedance25Prompt(input: {
   if (mode === "remix") {
     return buildXyqRemixInstruction(
       mergeXyqTimestampIntoPrompt(input.basePrompt, input.timestampStoryboard, dur),
+      input.sourceUrl,
     );
   }
   return mergeXyqTimestampIntoPrompt(input.basePrompt, input.timestampStoryboard, dur);

@@ -2021,8 +2021,19 @@ export default function FreeformCanvas({
                                 </div>
                               )}
                               {block.seedance25WorkMode === "remix" && (
-                                <div className="text-[10px] leading-5 text-white/45">
-                                  视频复刻：按参考成片节奏与镜头气质重做一条；可在提示词里写改写要求。勿因超时重复点生成。
+                                <div className="space-y-1">
+                                  <div className="text-[10px] leading-5 text-white/45">
+                                    视频复刻：勾选参考视频，或粘贴成片链接；可在提示词写改写要求。勿因超时重复点生成。
+                                  </div>
+                                  <input
+                                    type="url"
+                                    value={block.seedance25SourceUrl || ""}
+                                    onChange={(e) =>
+                                      patchOne(block.id, { seedance25SourceUrl: e.target.value })
+                                    }
+                                    placeholder="可选：粘贴参考成片链接（https://…）"
+                                    className="w-full rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-[11px] text-white placeholder:text-white/30"
+                                  />
                                 </div>
                               )}
                               {block.seedance25WorkMode === "upscale" && (

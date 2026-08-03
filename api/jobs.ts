@@ -3458,6 +3458,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             threadId: s(b.threadId || q.threadId || "").trim() || undefined,
             upscaleResolution: s(b.upscaleResolution || q.upscaleResolution || "").trim() || undefined,
             upscaleToolVersion: s(b.upscaleToolVersion || q.upscaleToolVersion || "").trim() || undefined,
+            sourceUrl: s(b.sourceUrl || q.sourceUrl || "").trim() || undefined,
           });
           return res.status(200).json({
             ok: true,
@@ -3631,6 +3632,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           threadId: s(b.threadId || q.threadId || "").trim() || undefined,
           upscaleResolution: s(b.upscaleResolution || q.upscaleResolution || "").trim() || undefined,
           upscaleToolVersion: s(b.upscaleToolVersion || q.upscaleToolVersion || "").trim() || undefined,
+          sourceUrl: s(b.sourceUrl || q.sourceUrl || "").trim() || undefined,
         });
         return res.status(200).json({
           ok: true,
