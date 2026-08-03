@@ -319,6 +319,8 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 **真路由落地（防空壳验收）**：对齐官方 CLI——`generate`/`extend` → `video_part`（延长须 `videos[]`）；`reshoot` → nest 仅 `message+asset_ids`（无 `video_part_tool_param`）。`workMode` 经 jobs → `runXyqSeedance25Video`；会话链 `threadId`/`webThreadLink` 写回画布节点。缺口表已改写两条路由。
 
+#1059 已合。续：`remix`（nest 复刻）+ `upscale`/`erase_subtitle`（官方 mini_tool）画布工作模式；分支 `feat/seedance25-video-tools-remix`。惩罚皮肤加码 1000 组：`~/Downloads/2026Aug04b/`（A–Y×40）。
+
 ---
 
 ## 如何更新本文件

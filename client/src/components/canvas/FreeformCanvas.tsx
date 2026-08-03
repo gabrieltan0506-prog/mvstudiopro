@@ -1979,7 +1979,10 @@ export default function FreeformCanvas({
                                       seedance25WorkMode: e.target.value as
                                         | "generate"
                                         | "extend"
-                                        | "reshoot",
+                                        | "reshoot"
+                                        | "remix"
+                                        | "upscale"
+                                        | "erase_subtitle",
                                     })
                                   }
                                   className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
@@ -1987,6 +1990,9 @@ export default function FreeformCanvas({
                                   <option value="generate">新生成</option>
                                   <option value="extend">延长（需参考视频）</option>
                                   <option value="reshoot">局部重拍（需参考视频）</option>
+                                  <option value="remix">视频复刻（需参考视频）</option>
+                                  <option value="upscale">提升清晰度（需参考视频）</option>
+                                  <option value="erase_subtitle">擦除字幕（需参考视频）</option>
                                 </select>
                               </label>
                               {(block.seedance25WorkMode || "generate") === "generate" ? (
@@ -2012,6 +2018,44 @@ export default function FreeformCanvas({
                               {block.seedance25WorkMode === "reshoot" && (
                                 <div className="text-[10px] leading-5 text-white/45">
                                   局部重拍：按参考成片做会话编辑（指定秒段）。请先出片或下方勾选参考视频；勿因超时重复点生成。
+                                </div>
+                              )}
+                              {block.seedance25WorkMode === "remix" && (
+                                <div className="text-[10px] leading-5 text-white/45">
+                                  视频复刻：按参考成片节奏与镜头气质重做一条；可在提示词里写改写要求。勿因超时重复点生成。
+                                </div>
+                              )}
+                              {block.seedance25WorkMode === "upscale" && (
+                                <div className="space-y-1">
+                                  <div className="text-[10px] leading-5 text-white/45">
+                                    提升清晰度：对参考成片做画质增强（非重生成剧情）。
+                                  </div>
+                                  <label className="flex items-center gap-2 text-[11px] text-white/70">
+                                    <span className="text-white/45">输出清晰度</span>
+                                    <select
+                                      value={block.seedance25UpscaleResolution || "1080p"}
+                                      onChange={(e) =>
+                                        patchOne(block.id, {
+                                          seedance25UpscaleResolution: e.target.value as
+                                            | "720p"
+                                            | "1080p"
+                                            | "2k"
+                                            | "4k",
+                                        })
+                                      }
+                                      className="rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
+                                    >
+                                      <option value="720p">720p</option>
+                                      <option value="1080p">1080p</option>
+                                      <option value="2k">2K</option>
+                                      <option value="4k">4K</option>
+                                    </select>
+                                  </label>
+                                </div>
+                              )}
+                              {block.seedance25WorkMode === "erase_subtitle" && (
+                                <div className="text-[10px] leading-5 text-white/45">
+                                  擦除字幕：去掉参考成片上的硬字幕烧录。勿因超时重复点生成。
                                 </div>
                               )}
                               {block.seedance25WorkMode === "reshoot" ? (

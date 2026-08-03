@@ -17,13 +17,15 @@
 | 路由 | OpenAPI body | 用途 |
 |---|---|---|
 | **video_part** | `agent_name=pippit_video_part_agent` + `video_part_tool_param` | 新生成、首尾帧（`generate_type=1`）、延长（须 `videos[]`） |
-| **nest** | 仅 `message` + `asset_ids`（**无** `video_part_tool_param`） | 局部重拍 / 复杂会话编辑 |
+| **video_part mini_tool** | 同上，但 `mini_tool_param.tool_name` = `video_super_resolution` / `erase_video_subtitle` | 提升清晰度 / 擦字幕（官方 CLI） |
+| **nest** | 仅 `message` + `asset_ids`（**无** `video_part_tool_param`） | 局部重拍 / 视频复刻 |
 
 代码入口：`server/services/xyqSeedanceVideo.ts` → `runXyqSeedance25Video({ workMode })`  
 - `generate` / `extend` → `route: "video_part"`  
-- `reshoot` → `route: "nest"`  
+- `upscale` / `erase_subtitle` → `route: "video_part"` + mini_tool  
+- `reshoot` / `remix` → `route: "nest"`  
 
-验收时抓 `submit_run` body：局部重拍若仍带 `video_part_tool_param` = **空壳，不合格**。
+验收时抓 `submit_run` body：局部重拍/复刻若仍带 `video_part_tool_param` = **空壳，不合格**；超分须见 `video_super_resolution_tool_param`。
 
 ## 手册能力 → 我方状态
 
@@ -35,11 +37,14 @@
 | 首尾帧 | ✅ | ✅ 勾选 → 两图顺序 + `generate_type=1` | 仅 workMode=generate |
 | 局部重拍 | ✅ 独家 | ✅ nest `message+asset_ids` | **非**改提示词假扮 |
 | 视频延长 | ✅ | ✅ video_part + `videos[]` + 延长指令 | 单次 ≤30s；多轮可叠 |
+| 视频复刻 | ✅ | ✅ nest remix 工作模式 | 参考视频 + 复刻指令 |
+| 提升清晰度 | ✅ CLI | ✅ mini_tool `video_super_resolution` | 画布「提升清晰度」 |
+| 擦除字幕 | ✅ CLI | ✅ mini_tool `erase_video_subtitle` | 画布「擦除字幕」 |
 | 参考视频/音频 | ✅ | ✅ ≤3 视 / ≤3 音 | 上传 → `pippit_asset_id` |
 | 会话链回传 | — | ✅ `threadId` / `webThreadLink` 写回节点 | 超时先查创作历史，勿重打 |
 | 白模 / 3D 导演台 | ✅ 独家 | ❌ | 产品级，非本 API |
 | 720° 全景场景球 | 短剧 Agent | ❌ | 场景工具，非出片参数 |
-| 抖音链接复刻 | ✅ 独家 | ❌ | |
+| 抖音链接复刻 | ✅ 独家 | ⚠ 可 nest 自然语言带链 | 未做专用控件（防空壳） |
 | 绿幕 / 营销模板 | ✅ | ❌ | |
 | 千人角色库 | ✅ 独家 | ❌ 自有资产库 | |
 | 会员门禁 2.5 | — | ✅ pro/enterprise | |

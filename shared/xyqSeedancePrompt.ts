@@ -1,12 +1,57 @@
 /**
- * 成片·加长（小云雀 2.5）提示词辅助：秒级时间戳分镜、延长、局部重拍。
+ * 成片·加长（小云雀 2.5）提示词辅助：秒级时间戳分镜、延长、局部重拍、复刻。
  *
  * 路由由服务端 `runXyqSeedance25Video` 决定（勿只靠改文案假装能力）：
  * - generate / extend → video_part_tool_param（模型直出；延长须 videos[]）
- * - reshoot → nest submit_run（message + asset_ids，无 video_part）
+ * - reshoot / remix → nest submit_run（message + asset_ids，无 video_part）
+ * - upscale / erase_subtitle → video_part mini_tool_param（官方超分/擦字幕）
  */
 
-export type XyqSeedance25WorkMode = "generate" | "extend" | "reshoot";
+export type XyqSeedance25WorkMode =
+  | "generate"
+  | "extend"
+  | "reshoot"
+  | "remix"
+  | "upscale"
+  | "erase_subtitle";
+
+export const XYQ_SEEDANCE25_WORK_MODES: readonly XyqSeedance25WorkMode[] = [
+  "generate",
+  "extend",
+  "reshoot",
+  "remix",
+  "upscale",
+  "erase_subtitle",
+] as const;
+
+export function parseXyqSeedance25WorkMode(raw: unknown): XyqSeedance25WorkMode {
+  const m = String(raw || "").trim().toLowerCase();
+  if ((XYQ_SEEDANCE25_WORK_MODES as readonly string[]).includes(m)) {
+    return m as XyqSeedance25WorkMode;
+  }
+  return "generate";
+}
+
+/** 需要参考视频的模式 */
+export function xyqWorkModeNeedsVideo(mode: XyqSeedance25WorkMode): boolean {
+  return (
+    mode === "extend" ||
+    mode === "reshoot" ||
+    mode === "remix" ||
+    mode === "upscale" ||
+    mode === "erase_subtitle"
+  );
+}
+
+/** nest 会话模式（无 video_part_tool_param） */
+export function xyqWorkModeIsNest(mode: XyqSeedance25WorkMode): boolean {
+  return mode === "reshoot" || mode === "remix";
+}
+
+/** 官方 mini tool（超分/擦字幕） */
+export function xyqWorkModeIsMiniTool(mode: XyqSeedance25WorkMode): boolean {
+  return mode === "upscale" || mode === "erase_subtitle";
+}
 
 /** 正文是否已含秒级时间戳（如 `0-5秒` / `0-5s` / `00:00-00:05`） */
 export function hasXyqTimestampStoryboard(prompt: string): boolean {
@@ -89,6 +134,17 @@ export function buildXyqReshootInstruction(
   ].join("\n");
 }
 
+/** 视频复刻 / 风格迁移（nest 会话自然语言；须带参考视频 asset） */
+export function buildXyqRemixInstruction(userPrompt: string): string {
+  const body = String(userPrompt || "").trim();
+  return [
+    "【视频复刻】",
+    "参考已提供的视频（及可选图/音频），复刻其节奏、运镜与叙事气质，生成一条新成片。",
+    "角色外形与场景可按说明改写，但镜头语言与剪辑节奏要贴近参考片。",
+    body ? `复刻要求：\n${body}` : "复刻要求：保持参考片的镜头节奏与情绪弧，换成当前剧本主体。",
+  ].join("\n");
+}
+
 export function composeXyqSeedance25Prompt(input: {
   basePrompt: string;
   workMode?: XyqSeedance25WorkMode;
@@ -99,6 +155,13 @@ export function composeXyqSeedance25Prompt(input: {
 }): string {
   const mode = input.workMode || "generate";
   const dur = input.durationSec;
+  if (mode === "upscale") {
+    // 服务端用官方固定 message；此处仅作占位，避免空 prompt 被拦
+    return String(input.basePrompt || "").trim() || "提升视频清晰度";
+  }
+  if (mode === "erase_subtitle") {
+    return String(input.basePrompt || "").trim() || "擦除视频字幕";
+  }
   if (mode === "extend") {
     const merged = mergeXyqTimestampIntoPrompt(
       input.basePrompt,
@@ -112,6 +175,11 @@ export function composeXyqSeedance25Prompt(input: {
       mergeXyqTimestampIntoPrompt(input.basePrompt, input.timestampStoryboard, dur),
       input.reshootFromSec ?? 0,
       input.reshootToSec ?? 3,
+    );
+  }
+  if (mode === "remix") {
+    return buildXyqRemixInstruction(
+      mergeXyqTimestampIntoPrompt(input.basePrompt, input.timestampStoryboard, dur),
     );
   }
   return mergeXyqTimestampIntoPrompt(input.basePrompt, input.timestampStoryboard, dur);

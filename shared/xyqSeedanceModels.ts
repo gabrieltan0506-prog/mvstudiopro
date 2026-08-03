@@ -17,6 +17,32 @@ export const XYQ_SEEDANCE_DURATION = { min: 4, max: 30, default: 15 } as const;
 
 export const XYQ_REFERENCE_MAX = { image: 9, video: 3, audio: 3 } as const;
 
+/** 官方 video-super-resolution 输出档 */
+export const XYQ_UPSCALE_RESOLUTIONS = ["720p", "1080p", "2k", "4k"] as const;
+export type XyqUpscaleResolution = (typeof XYQ_UPSCALE_RESOLUTIONS)[number];
+
+export function normalizeXyqUpscaleResolution(raw: unknown): XyqUpscaleResolution {
+  const q = String(raw || "").trim().toLowerCase();
+  if ((XYQ_UPSCALE_RESOLUTIONS as readonly string[]).includes(q)) {
+    return q as XyqUpscaleResolution;
+  }
+  if (q === "1080" || q === "fhd") return "1080p";
+  if (q === "720") return "720p";
+  return "1080p";
+}
+
+/** 官方 --tool-version */
+export const XYQ_UPSCALE_TOOL_VERSIONS = ["standard", "professional_v1", "professional_v2"] as const;
+export type XyqUpscaleToolVersion = (typeof XYQ_UPSCALE_TOOL_VERSIONS)[number];
+
+export function normalizeXyqUpscaleToolVersion(raw: unknown): XyqUpscaleToolVersion {
+  const v = String(raw || "").trim().toLowerCase();
+  if ((XYQ_UPSCALE_TOOL_VERSIONS as readonly string[]).includes(v)) {
+    return v as XyqUpscaleToolVersion;
+  }
+  return "standard";
+}
+
 export function clampXyqSeedanceDuration(raw: unknown): number {
   const n = Math.floor(Number(raw));
   if (!Number.isFinite(n)) return XYQ_SEEDANCE_DURATION.default;
