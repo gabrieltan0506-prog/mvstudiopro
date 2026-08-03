@@ -48,6 +48,7 @@ import { clampXyqSeedanceDuration, XYQ_REFERENCE_MAX } from "@shared/xyqSeedance
 import {
   composeXyqSeedance25Prompt,
   parseXyqSeedance25WorkMode,
+  xyqRemixHasSource,
   xyqWorkModeNeedsVideo,
   type XyqSeedance25WorkMode,
 } from "@shared/xyqSeedancePrompt";
@@ -512,6 +513,7 @@ async function runSeedanceProductVideo(
     /** nest 续聊 */
     threadId?: string;
     upscaleResolution?: "720p" | "1080p" | "2k" | "4k";
+    sourceUrl?: string;
   },
 ): Promise<SeedanceProductVideoResult> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
@@ -561,6 +563,7 @@ async function runSeedanceProductVideo(
         ...(version === "2.5" && opts?.upscaleResolution
           ? { upscaleResolution: opts.upscaleResolution }
           : {}),
+        ...(version === "2.5" && opts?.sourceUrl ? { sourceUrl: opts.sourceUrl } : {}),
       }),
     }),
   );
@@ -1234,7 +1237,12 @@ export async function runCanvasBlock(
         const durationFor25 = clampXyqSeedanceDuration(clipDuration);
         let finalPrompt = seedancePrompt;
         if (useSeedance25) {
-          if (xyqWorkModeNeedsVideo(workMode) && !mergedVideoUrls.length) {
+          const sourceUrl = String(block.seedance25SourceUrl || "").trim();
+          if (workMode === "remix") {
+            if (!xyqRemixHasSource({ videoUrls: mergedVideoUrls, sourceUrl })) {
+              throw new Error("视频复刻需要参考视频或可访问的成片链接");
+            }
+          } else if (xyqWorkModeNeedsVideo(workMode) && !mergedVideoUrls.length) {
             throw new Error("该模式需要参考视频：请先出片或上传/勾选参考视频");
           }
           finalPrompt = composeXyqSeedance25Prompt({
@@ -1244,6 +1252,7 @@ export async function runCanvasBlock(
             durationSec: durationFor25,
             reshootFromSec: block.seedance25ReshootFromSec,
             reshootToSec: block.seedance25ReshootToSec,
+            sourceUrl,
           });
         }
         let outImages = httpsImages;
@@ -1276,6 +1285,9 @@ export async function runCanvasBlock(
           workMode: useSeedance25 ? workMode : undefined,
           threadId: useSeedance25 ? block.seedance25ThreadId : undefined,
           upscaleResolution: useSeedance25 ? block.seedance25UpscaleResolution : undefined,
+          sourceUrl: useSeedance25
+            ? String(block.seedance25SourceUrl || "").trim() || undefined
+            : undefined,
         });
         url = seedanceOut.videoUrl;
         if (useSeedance25) {

@@ -83,6 +83,16 @@ describe("buildXyqNestEditBody", () => {
   it("rejects empty assets", () => {
     expect(() => buildXyqNestEditBody({ message: "x", assetIds: [] })).toThrow(/参考/);
   });
+
+  it("allows link-only remix nest body", () => {
+    const body = buildXyqNestEditBody({
+      message: "【视频复刻】参考成片链接：https://example.com/v",
+      assetIds: [],
+      allowLinkOnly: true,
+    });
+    expect(body.asset_ids).toBeUndefined();
+    expect(String(body.message)).toContain("https://example.com/v");
+  });
 });
 
 describe("buildXyqSuperResolutionBody", () => {

@@ -168,6 +168,8 @@ export type CanvasBlock = {
   seedance25WebThreadLink?: string;
   /** 提升清晰度输出档：720p / 1080p / 2k / 4k */
   seedance25UpscaleResolution?: "720p" | "1080p" | "2k" | "4k";
+  /** 视频复刻：外链参考（抖音/成片页等 HTTPS） */
+  seedance25SourceUrl?: string;
   /**
    * 漫剧成片智能质检（软拦）：failed 默认可预览、不进成片坞；
    * 用户「仍采用」后 quality.userAcceptedDespiteQc=true 才可合成。
