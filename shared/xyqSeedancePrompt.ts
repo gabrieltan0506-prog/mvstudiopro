@@ -1,6 +1,9 @@
 /**
  * 成片·加长（小云雀 2.5）提示词辅助：秒级时间戳分镜、延长、局部重拍。
- * 延长/重拍走「参考视频 + 自然语言编辑指令」（OpenAPI 会话能力），非未文档化的空壳 generate_type。
+ *
+ * 路由由服务端 `runXyqSeedance25Video` 决定（勿只靠改文案假装能力）：
+ * - generate / extend → video_part_tool_param（模型直出；延长须 videos[]）
+ * - reshoot → nest submit_run（message + asset_ids，无 video_part）
  */
 
 export type XyqSeedance25WorkMode = "generate" | "extend" | "reshoot";

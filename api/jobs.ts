@@ -3442,6 +3442,9 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             generateTypeRaw === undefined || generateTypeRaw === null || generateTypeRaw === ""
               ? undefined
               : Math.floor(Number(generateTypeRaw));
+          const workModeRaw = s(b.workMode || q.workMode || "generate").trim().toLowerCase();
+          const workMode =
+            workModeRaw === "extend" || workModeRaw === "reshoot" ? workModeRaw : "generate";
           const out = await runXyqSeedance25Video({
             prompt,
             imageUrl,
@@ -3452,6 +3455,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             duration: Number(b.duration ?? q.duration ?? b.durationSec ?? 15),
             quality: s(b.resolution || q.resolution || "720p").trim() || "720p",
             generateType: Number.isFinite(generateType as number) ? (generateType as number) : undefined,
+            workMode,
+            threadId: s(b.threadId || q.threadId || "").trim() || undefined,
           });
           return res.status(200).json({
             ok: true,
@@ -3462,6 +3467,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             threadId: out.threadId,
             runId: out.runId,
             webThreadLink: out.webThreadLink,
+            route: out.route,
+            workMode: out.workMode,
           });
         } catch (e: any) {
           return res.status(502).json({ ok: false, error: e?.message || "seedance25_failed" });
@@ -3607,6 +3614,9 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           generateTypeRaw === undefined || generateTypeRaw === null || generateTypeRaw === ""
             ? undefined
             : Math.floor(Number(generateTypeRaw));
+        const workModeRaw = s(b.workMode || q.workMode || "generate").trim().toLowerCase();
+        const workMode =
+          workModeRaw === "extend" || workModeRaw === "reshoot" ? workModeRaw : "generate";
         const out = await runXyqSeedance25Video({
           prompt,
           imageUrl,
@@ -3617,6 +3627,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           duration: Number(b.duration ?? q.duration ?? b.durationSec ?? 15),
           quality: s(b.resolution || q.resolution || "720p").trim() || "720p",
           generateType: Number.isFinite(generateType as number) ? (generateType as number) : undefined,
+          workMode,
+          threadId: s(b.threadId || q.threadId || "").trim() || undefined,
         });
         return res.status(200).json({
           ok: true,
@@ -3627,6 +3639,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           threadId: out.threadId,
           runId: out.runId,
           webThreadLink: out.webThreadLink,
+          route: out.route,
+          workMode: out.workMode,
         });
       } catch (e: any) {
         return res.status(502).json({ ok: false, error: e?.message || "seedance25_failed" });

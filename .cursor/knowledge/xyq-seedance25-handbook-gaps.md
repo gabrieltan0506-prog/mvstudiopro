@@ -1,6 +1,6 @@
 # 小云雀 Seedance 2.5 手册对照缺口（2026-08-04）
 
-来源：[小云雀 Seedance 2.5 使用手册](https://bytedance.larkoffice.com/wiki/W5tHwoZIDi12dbk2z3KcFkuUnsf) + 公开评测文。
+来源：[小云雀 Seedance 2.5 使用手册](https://bytedance.larkoffice.com/wiki/W5tHwoZIDi12dbk2z3KcFkuUnsf) + 官方 CLI `@pippit-dev/cli` + 公开评测文。
 
 ## 「720°」是什么（已核实）
 
@@ -10,17 +10,33 @@
   - `cam_09_orbit_half` 环绕半周展空间
   - `cam_10_orbit_full_sphere` 全景环场一周
 
+## 两条真路由（验收硬点 · 禁止空壳）
+
+对齐官方 CLI / nest skill，**不可混充**：
+
+| 路由 | OpenAPI body | 用途 |
+|---|---|---|
+| **video_part** | `agent_name=pippit_video_part_agent` + `video_part_tool_param` | 新生成、首尾帧（`generate_type=1`）、延长（须 `videos[]`） |
+| **nest** | 仅 `message` + `asset_ids`（**无** `video_part_tool_param`） | 局部重拍 / 复杂会话编辑 |
+
+代码入口：`server/services/xyqSeedanceVideo.ts` → `runXyqSeedance25Video({ workMode })`  
+- `generate` / `extend` → `route: "video_part"`  
+- `reshoot` → `route: "nest"`  
+
+验收时抓 `submit_run` body：局部重拍若仍带 `video_part_tool_param` = **空壳，不合格**。
+
 ## 手册能力 → 我方状态
 
 | 能力 | 手册 | 我方 | 备注 |
 |---|---|---|---|
 | 30s 直出 | ✅ | ✅ 4–30s XYQ | 成片·加长 |
-| 多模态参考 | 图30/视10/音10 | 图9/视3/音3 | API 白名单上限，非 UI 单独面板 |
-| 秒级时间戳分镜 | ✅ | ✅ 画布「秒级分镜」+ `composeXyqSeedance25Prompt` | 2026-08-04 |
-| 首尾帧 | ✅ | ⚠️ 两图自动 generate_type | 缺显式控件（本次未做） |
-| 局部重拍 / 片段重拍 | ✅ 独家 | ✅ 工作模式「局部重拍」 | 参考视频 + 自然语言指令（OpenAPI 会话能力），非未文档化 generate_type |
-| 视频延长（→90/180s） | ✅ | ✅ 工作模式「延长」 | 单次仍 ≤30s 续写；多轮可叠；参考视频必填 |
-| 参考视频/音频上传勾选 | ✅ | ✅ ≤3 视 / ≤3 音 | 画布上传含 MP3/WAV |
+| 多模态参考 | 图30/视10/音10 | 图9/视3/音3 | API 白名单上限；音频仅 mp3/wav |
+| 秒级时间戳分镜 | ✅ | ✅ 画布「秒级分镜」+ `composeXyqSeedance25Prompt` | 进 prompt，无单独 API 字段 |
+| 首尾帧 | ✅ | ✅ 勾选 → 两图顺序 + `generate_type=1` | 仅 workMode=generate |
+| 局部重拍 | ✅ 独家 | ✅ nest `message+asset_ids` | **非**改提示词假扮 |
+| 视频延长 | ✅ | ✅ video_part + `videos[]` + 延长指令 | 单次 ≤30s；多轮可叠 |
+| 参考视频/音频 | ✅ | ✅ ≤3 视 / ≤3 音 | 上传 → `pippit_asset_id` |
+| 会话链回传 | — | ✅ `threadId` / `webThreadLink` 写回节点 | 超时先查创作历史，勿重打 |
 | 白模 / 3D 导演台 | ✅ 独家 | ❌ | 产品级，非本 API |
 | 720° 全景场景球 | 短剧 Agent | ❌ | 场景工具，非出片参数 |
 | 抖音链接复刻 | ✅ 独家 | ❌ | |
@@ -33,3 +49,4 @@
 1. **不烧小云雀探针**（见 `xyq-no-probe-burn-always`）。
 2. 能用提示词/运镜库/画布参数补的先补；独家产品台不做空壳山寨。
 3. 对外文案不泄漏 Seedance / 小云雀商品名（前台零技术泄漏）。
+4. 失败/超时以创作历史为准，禁止因本机 `fetch failed` 再打一枪。

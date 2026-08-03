@@ -1015,6 +1015,10 @@ export default function FreeformCanvas({
           outputText: out.outputText,
           outputUrl: out.outputUrl,
           outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : block.outputUrls),
+          ...(out.seedance25ThreadId ? { seedance25ThreadId: out.seedance25ThreadId } : {}),
+          ...(out.seedance25WebThreadLink
+            ? { seedance25WebThreadLink: out.seedance25WebThreadLink }
+            : {}),
         });
         toast.success("生成完成");
       } catch (e: unknown) {
@@ -1985,10 +1989,29 @@ export default function FreeformCanvas({
                                   <option value="reshoot">局部重拍（需参考视频）</option>
                                 </select>
                               </label>
-                              {(block.seedance25WorkMode === "reshoot" ||
-                                block.seedance25WorkMode === "extend") && (
+                              {(block.seedance25WorkMode || "generate") === "generate" ? (
+                                <label className="flex items-center gap-2 text-[11px] text-white/70">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(block.seedance25FirstLastFrame)}
+                                    onChange={(e) =>
+                                      patchOne(block.id, {
+                                        seedance25FirstLastFrame: e.target.checked,
+                                      })
+                                    }
+                                    className="rounded border-white/30"
+                                  />
+                                  <span>首尾帧模式（参考图首张=起幅，末张=落幅）</span>
+                                </label>
+                              ) : null}
+                              {block.seedance25WorkMode === "extend" && (
                                 <div className="text-[10px] leading-5 text-white/45">
-                                  走参考视频 + 编辑指令；请先出片或下方勾选参考视频。不另烧探测积分。
+                                  延长：上传/勾选参考成片后续写（单次约 4–30 秒）。请先出片或下方勾选参考视频；勿因超时重复点生成。
+                                </div>
+                              )}
+                              {block.seedance25WorkMode === "reshoot" && (
+                                <div className="text-[10px] leading-5 text-white/45">
+                                  局部重拍：按参考成片做会话编辑（指定秒段）。请先出片或下方勾选参考视频；勿因超时重复点生成。
                                 </div>
                               )}
                               {block.seedance25WorkMode === "reshoot" ? (

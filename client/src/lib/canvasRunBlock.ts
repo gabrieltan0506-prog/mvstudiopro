@@ -480,6 +480,14 @@ async function runVideoReversePrompt(
   return runVideoReversePromptGemini(userHint, images, mode);
 }
 
+type SeedanceProductVideoResult = {
+  videoUrl: string;
+  threadId?: string;
+  webThreadLink?: string;
+  route?: "video_part" | "nest";
+  workMode?: "generate" | "extend" | "reshoot";
+};
+
 async function runSeedanceProductVideo(
   prompt: string,
   imageUrl: string | undefined,
@@ -487,13 +495,19 @@ async function runSeedanceProductVideo(
   opts?: {
     imageUrls?: string[];
     videoUrls?: string[];
-    /** 角色声线参考 mp3（最多 3） */
+    /** 角色声线参考 mp3/wav（最多 3） */
     audioUrls?: string[];
     version?: "2.0" | "2.0-fast" | "2.5";
     /** 段目标秒数；缺省从 prompt「目标时长」解析 */
     duration?: number;
+    /** 2.5 首尾帧：1 */
+    generateType?: number;
+    /** 2.5：新生成 / 延长 / 局部重拍（决定 video_part vs nest） */
+    workMode?: "generate" | "extend" | "reshoot";
+    /** nest 续聊 */
+    threadId?: string;
   },
-): Promise<string> {
+): Promise<SeedanceProductVideoResult> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
   const seedanceUrl = withLongJobsFlyDirect("/api/jobs?op=seedanceI2V");
   const probeOrigin = flyHealthProbeOriginForUrl(seedanceUrl);
@@ -510,6 +524,8 @@ async function runSeedanceProductVideo(
       : clampSeedanceOpenRouterDuration(durationRaw);
   // 2.5 须带登录态，服务端校验正式会员
   const credentials = version === "2.5" ? "include" : "omit";
+  const workMode =
+    opts?.workMode === "extend" || opts?.workMode === "reshoot" ? opts.workMode : "generate";
   const res = await withFlyHealthGate(probeOrigin, () =>
     fetch(seedanceUrl, {
       method: "POST",
@@ -534,11 +550,23 @@ async function runSeedanceProductVideo(
         // 产品口径：只用引擎自带 Audio on，暂不另开后期配音 API
         generateAudio: true,
         version,
+        ...(typeof opts?.generateType === "number" ? { generateType: opts.generateType } : {}),
+        ...(version === "2.5" ? { workMode } : {}),
+        ...(version === "2.5" && opts?.threadId ? { threadId: opts.threadId } : {}),
       }),
     }),
   );
   const text = await res.text();
-  let json: { videoUrl?: string; error?: string; message?: string; ok?: boolean } = {};
+  let json: {
+    videoUrl?: string;
+    error?: string;
+    message?: string;
+    ok?: boolean;
+    threadId?: string;
+    webThreadLink?: string;
+    route?: "video_part" | "nest";
+    workMode?: "generate" | "extend" | "reshoot";
+  } = {};
   try {
     json = JSON.parse(text) as typeof json;
   } catch {
@@ -551,7 +579,16 @@ async function runSeedanceProductVideo(
   if (!res.ok || !json.videoUrl) {
     throw new Error(json.error || json.message || "成片生成失败");
   }
-  return String(json.videoUrl);
+  return {
+    videoUrl: String(json.videoUrl),
+    threadId: json.threadId ? String(json.threadId) : undefined,
+    webThreadLink: json.webThreadLink ? String(json.webThreadLink) : undefined,
+    route: json.route === "nest" || json.route === "video_part" ? json.route : undefined,
+    workMode:
+      json.workMode === "extend" || json.workMode === "reshoot" || json.workMode === "generate"
+        ? json.workMode
+        : undefined,
+  };
 }
 
 /** MiniMax H3 · OpenRouter（2K；时长 5–15s） */
@@ -694,6 +731,9 @@ export async function runCanvasBlock(
   lastFrameUrl?: string;
   /** 实际出图像素引擎（若曾静默回退会改写，便于 Debug 对照） */
   imageModel?: CanvasBlock["imageModel"];
+  /** 成片·加长会话链（供局部重拍续聊；勿当失败再打） */
+  seedance25ThreadId?: string;
+  seedance25WebThreadLink?: string;
 }> {
   const refTexts = upstream.texts.filter(Boolean);
   const prompt = block.prompt.trim();
@@ -1012,6 +1052,8 @@ export async function runCanvasBlock(
       `[canvasRunBlock] video · id=${block.id} · videoModel=${videoModel} · stills=${[stillRef, ...fusionStillUrls].filter(Boolean).length} · continuity=${Boolean(continuityVideoUrl)} · directorPass=${isManhuaSeedanceDirectorPrompt(motionPrompt)} · promptChars=${motionPrompt.length}`,
     );
     let url = "";
+    let seedance25ThreadId: string | undefined;
+    let seedance25WebThreadLink: string | undefined;
     if (
       videoModel === "seedance-2.0" ||
       videoModel === "seedance-2.0-fast" ||
@@ -1203,8 +1245,23 @@ export async function runCanvasBlock(
             reshootToSec: block.seedance25ReshootToSec,
           });
         }
-        url = await runSeedanceProductVideo(finalPrompt, seedStill, ar, {
-          imageUrls: httpsImages.length ? httpsImages : undefined,
+        let outImages = httpsImages;
+        let generateType: number | undefined;
+        // 首尾帧仅「新生成」；延长/重拍走参考视频，禁止误套 generate_type=1
+        if (
+          useSeedance25 &&
+          workMode === "generate" &&
+          block.seedance25FirstLastFrame
+        ) {
+          if (httpsImages.length < 2) {
+            throw new Error("首尾帧模式需要至少两张参考图（首张=起幅，末张=落幅）");
+          }
+          // 显式两图：首 + 末；中间参考去掉，避免服务端误判
+          outImages = [httpsImages[0]!, httpsImages[httpsImages.length - 1]!];
+          generateType = 1;
+        }
+        const seedanceOut = await runSeedanceProductVideo(finalPrompt, seedStill, ar, {
+          imageUrls: outImages.length ? outImages : undefined,
           videoUrls: mergedVideoUrls.length ? mergedVideoUrls : undefined,
           audioUrls: mergedAudioUrls.length ? mergedAudioUrls : undefined,
           version:
@@ -1214,7 +1271,20 @@ export async function runCanvasBlock(
                 ? "2.0-fast"
                 : "2.0",
           duration: clipDuration,
+          generateType,
+          workMode: useSeedance25 ? workMode : undefined,
+          threadId: useSeedance25 ? block.seedance25ThreadId : undefined,
         });
+        url = seedanceOut.videoUrl;
+        if (useSeedance25) {
+          console.info(
+            `[canvasRunBlock] seedance25 · route=${seedanceOut.route || "?"} · workMode=${
+              seedanceOut.workMode || workMode
+            } · thread=${seedanceOut.threadId || "-"}`,
+          );
+          seedance25ThreadId = seedanceOut.threadId;
+          seedance25WebThreadLink = seedanceOut.webThreadLink;
+        }
       }
     } else {
       // omni_edit / 续编：有上游成片时用 edit；否则段内静帧 I2V / 多图 reference_to_video
@@ -1259,7 +1329,12 @@ export async function runCanvasBlock(
         );
       }
     }
-    return { outputUrl: url, lastFrameUrl };
+    return {
+      outputUrl: url,
+      lastFrameUrl,
+      seedance25ThreadId,
+      seedance25WebThreadLink,
+    };
   }
 
   throw new Error("未知方块类型");

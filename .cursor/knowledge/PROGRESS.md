@@ -313,7 +313,11 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 对照[小云雀 2.5 手册](https://bytedance.larkoffice.com/wiki/W5tHwoZIDi12dbk2z3KcFkuUnsf)：缺口表见 `xyq-seedance25-handbook-gaps.md`。核实「720°」= 短剧 Agent **全景场景球**（非手册内运镜按钮）；运镜库补 `环绕半周` / `全景环场一周`。
 
-成片·加长补齐（用户选 1/3/4）：秒级分镜 UI + 参考视/音频勾选（上传支持 audio）+ 延长/局部重拍工作模式（参考视频 + 自然语言指令，`shared/xyqSeedancePrompt.ts`）。未烧探针。首尾帧显式控件仍待做。
+成片·加长补齐（用户选 1/3/4）：秒级分镜 UI + 参考视/音频勾选（上传支持 audio）+ 延长/局部重拍工作模式（参考视频 + 自然语言指令，`shared/xyqSeedancePrompt.ts`）。未烧探针。#1058 已合。
+
+首尾帧显式控件：画布「首尾帧模式」→ `generateType=1`（参考图首/末张）。分支 `feat/seedance25-first-last-frame`。
+
+**真路由落地（防空壳验收）**：对齐官方 CLI——`generate`/`extend` → `video_part`（延长须 `videos[]`）；`reshoot` → nest 仅 `message+asset_ids`（无 `video_part_tool_param`）。`workMode` 经 jobs → `runXyqSeedance25Video`；会话链 `threadId`/`webThreadLink` 写回画布节点。缺口表已改写两条路由。
 
 ---
 
