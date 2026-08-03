@@ -1985,6 +1985,19 @@ export default function FreeformCanvas({
                                   <option value="reshoot">局部重拍（需参考视频）</option>
                                 </select>
                               </label>
+                              <label className="flex items-center gap-2 text-[11px] text-white/70">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(block.seedance25FirstLastFrame)}
+                                  onChange={(e) =>
+                                    patchOne(block.id, {
+                                      seedance25FirstLastFrame: e.target.checked,
+                                    })
+                                  }
+                                  className="rounded border-white/30"
+                                />
+                                <span>首尾帧模式（参考图首张=起幅，末张=落幅）</span>
+                              </label>
                               {(block.seedance25WorkMode === "reshoot" ||
                                 block.seedance25WorkMode === "extend") && (
                                 <div className="text-[10px] leading-5 text-white/45">

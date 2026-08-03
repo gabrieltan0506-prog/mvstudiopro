@@ -492,6 +492,8 @@ async function runSeedanceProductVideo(
     version?: "2.0" | "2.0-fast" | "2.5";
     /** 段目标秒数；缺省从 prompt「目标时长」解析 */
     duration?: number;
+    /** 2.5 首尾帧：1 */
+    generateType?: number;
   },
 ): Promise<string> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
@@ -534,6 +536,7 @@ async function runSeedanceProductVideo(
         // 产品口径：只用引擎自带 Audio on，暂不另开后期配音 API
         generateAudio: true,
         version,
+        ...(typeof opts?.generateType === "number" ? { generateType: opts.generateType } : {}),
       }),
     }),
   );
@@ -1203,8 +1206,18 @@ export async function runCanvasBlock(
             reshootToSec: block.seedance25ReshootToSec,
           });
         }
+        let outImages = httpsImages;
+        let generateType: number | undefined;
+        if (useSeedance25 && block.seedance25FirstLastFrame) {
+          if (httpsImages.length < 2) {
+            throw new Error("首尾帧模式需要至少两张参考图（首张=起幅，末张=落幅）");
+          }
+          // 显式两图：首 + 末；中间参考去掉，避免服务端误判
+          outImages = [httpsImages[0]!, httpsImages[httpsImages.length - 1]!];
+          generateType = 1;
+        }
         url = await runSeedanceProductVideo(finalPrompt, seedStill, ar, {
-          imageUrls: httpsImages.length ? httpsImages : undefined,
+          imageUrls: outImages.length ? outImages : undefined,
           videoUrls: mergedVideoUrls.length ? mergedVideoUrls : undefined,
           audioUrls: mergedAudioUrls.length ? mergedAudioUrls : undefined,
           version:
@@ -1214,6 +1227,7 @@ export async function runCanvasBlock(
                 ? "2.0-fast"
                 : "2.0",
           duration: clipDuration,
+          generateType,
         });
       }
     } else {

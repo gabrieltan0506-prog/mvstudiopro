@@ -154,6 +154,8 @@ export type CanvasBlock = {
   /** 局部重拍起止秒 */
   seedance25ReshootFromSec?: number;
   seedance25ReshootToSec?: number;
+  /** 成片·加长：显式首尾帧模式（generate_type=1；取参考图首张+末张） */
+  seedance25FirstLastFrame?: boolean;
   /**
    * 漫剧成片智能质检（软拦）：failed 默认可预览、不进成片坞；
    * 用户「仍采用」后 quality.userAcceptedDespiteQc=true 才可合成。
