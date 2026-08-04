@@ -64,10 +64,7 @@ import {
   toVisualReportWindowDays,
   type VisualReportTheme,
 } from "@/lib/visualReportMapper";
-import {
-  readPlatformVisualReportPersist,
-  writePlatformVisualReportPersist,
-} from "@/lib/platformVisualReportPersist";
+import { clearPlatformVisualReportPersist } from "@/lib/platformVisualReportPersist";
 import {
   readShortlistExpandPersist,
   writeShortlistExpandPersist,
@@ -241,12 +238,6 @@ type PlatformImagePromptTranslator = "gpt54" | "vertex_gemini_3_flash_preview";
 const COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR: PlatformImagePromptTranslator = "gpt54";
 
 /** 全用户：2×4 / 八格 **出图** 引擎选择（封面已固定 OpenAI 官方 Image-2） */
-/** 进页恢复最近一次趋势报表（与 VisualReportTemplate 爱马仕橙底一起渲染） */
-function bootPlatformTrendPersist() {
-  if (typeof window === "undefined") return null;
-  return readPlatformVisualReportPersist();
-}
-
 const PLATFORM_COMPOSITE_2X4_ENGINE_LS_KEY = "mvstudiopro.platform.composite2x4Engine.v1";
 type PlatformComposite2x4ImageEngine = "gpt_image2" | "nano_banana_2";
 
@@ -2013,40 +2004,20 @@ export default function PlatformPage() {
   }, [platformCopyLlmEngine]);
 
   // Separate state for dashboard — populated by the second call after snapshot loads
-  const [platformDashboard, setPlatformDashboard] = useState<PlatformDashboard | null>(() => {
-    const boot = bootPlatformTrendPersist();
-    return (boot?.platformDashboard as PlatformDashboard | null | undefined) ?? null;
-  });
+  // 趋势分析不落本机：刷新即清空，避免旧报表/看板粘住挡住新结果
+  const [platformDashboard, setPlatformDashboard] = useState<PlatformDashboard | null>(null);
   const [dashboardDebug, setDashboardDebug] = useState<Record<string, unknown> | null>(null);
   const [isDashboardLoading, setIsDashboardLoading] = useState(false);
-  const [visualReportData, setVisualReportData] = useState<VisualReportData | null>(() => {
-    return bootPlatformTrendPersist()?.visualReport ?? null;
-  });
+  const [visualReportData, setVisualReportData] = useState<VisualReportData | null>(null);
   const [visualReportTheme] = useState<VisualReportTheme>("dark");
   const [isVisualReportLoading, setIsVisualReportLoading] = useState(false);
   const [isVisualReportDownloading, setIsVisualReportDownloading] = useState(false);
 
-  /** 进页再灌一次本机缓存（覆盖初始化竞态；看板/报表可分到） */
+  /** 清掉历史 localStorage 粘滞键（旧版「刷新不丢」） */
   useEffect(() => {
-    const boot = readPlatformVisualReportPersist();
-    if (!boot) return;
-    if (boot.visualReport) {
-      setVisualReportData((prev) => prev ?? boot.visualReport);
-    }
-    if (boot.platformDashboard != null) {
-      setPlatformDashboard((prev) => prev ?? (boot.platformDashboard as PlatformDashboard));
-    }
+    clearPlatformVisualReportPersist();
   }, []);
 
-  /** 看板或报表任一更新即合并写入本机，刷新不丢 */
-  useEffect(() => {
-    if (!visualReportData && !platformDashboard) return;
-    writePlatformVisualReportPersist({
-      visualReport: visualReportData,
-      platformDashboard,
-      windowDays: String(selectedWindowDays),
-    });
-  }, [visualReportData, platformDashboard, selectedWindowDays]);
   /** 平台趋势区子 Tab：指定平台分析 / AI 漫剧专区 */
   const [trendInsightTab, setTrendInsightTab] = useState<"overview" | "ai_manhua">("overview");
   /** AI 漫剧专区内：抖音 / 快手子榜（随上方趋势平台筛选自动切换） */
@@ -8658,7 +8629,11 @@ export default function PlatformPage() {
     queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
 
     setAskResult(null);
-    // 重跑中保留上一份看板/报表；成功后再覆盖。失败也不致整页空白。
+    // 重跑先清旧看板/报表，避免粘滞结果挡住新图展示
+    clearPlatformVisualReportPersist();
+    setPlatformDashboard(null);
+    setVisualReportData(null);
+    setTrendInsightTab("overview");
     setDashboardDebug(null);
     setIsDashboardLoading(false);
     setIsVisualReportLoading(false);
@@ -8709,10 +8684,6 @@ export default function PlatformPage() {
           nextDash = dashResult.platformDashboard as unknown as PlatformDashboard;
           setPlatformDashboard(nextDash);
           hasDash = true;
-          writePlatformVisualReportPersist({
-            platformDashboard: nextDash,
-            windowDays: String(selectedWindowDays),
-          });
         } else {
           errors.push(
             sanitizePlatformUserMessage(
@@ -8734,12 +8705,8 @@ export default function PlatformPage() {
         if (mappedReport) {
           nextReport = mappedReport;
           setVisualReportData(mappedReport);
+          setTrendInsightTab("overview");
           hasReport = true;
-          writePlatformVisualReportPersist({
-            visualReport: mappedReport,
-            platformDashboard: nextDash,
-            windowDays: String(selectedWindowDays),
-          });
         } else {
           const softErr =
             typeof (visualSettled.value as { error?: unknown })?.error === "string"
@@ -8751,14 +8718,6 @@ export default function PlatformPage() {
         const msg =
           visualSettled.reason instanceof Error ? visualSettled.reason.message : String(visualSettled.reason);
         errors.push(sanitizePlatformUserMessage(msg, "PNG 图文报表生成失败，请稍后重试"));
-      }
-
-      if (hasDash && hasReport && nextReport) {
-        writePlatformVisualReportPersist({
-          visualReport: nextReport,
-          platformDashboard: nextDash,
-          windowDays: String(selectedWindowDays),
-        });
       }
 
       if (hasDash && hasReport) {
@@ -8856,10 +8815,6 @@ export default function PlatformPage() {
       pushShortlistDebug(
         `✅ 平台优先级 · platformMenu=${Array.isArray(dash.platformMenu) ? dash.platformMenu.length : 0}`,
       );
-      writePlatformVisualReportPersist({
-        platformDashboard: dash,
-        windowDays: String(selectedWindowDays),
-      });
 
       setIsContentLoading(true);
       setContentLoadingText("正在推演可落地商业化路径…");
@@ -10421,7 +10376,7 @@ export default function PlatformPage() {
                             <div>
                               <div className="text-sm font-semibold text-[#6fffb0]">PNG 图文报表已就绪</div>
                               <p className="mt-1 text-[11px] text-[#c9c0e6]/60">
-                                多平台洞察 + 蓝海词；本机已记住最近一份，刷新仍可看（含暖橙新底）。完整榜单见「AI 漫剧」Tab。
+                                多平台洞察 + 蓝海词；刷新页面会清空，需重新分析。完整榜单见「AI 漫剧」Tab。
                               </p>
                             </div>
                             <button
