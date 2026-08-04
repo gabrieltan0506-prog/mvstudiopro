@@ -94,6 +94,8 @@ export function resolveManhuaSeedanceLayoutProfile(
 }
 
 /** 扩写前是否已选成片引擎（空 = 未选，须先选再扩写） */
-export function hasManhuaSeedanceLayoutChoice(videoModel?: string | null): boolean {
+export function hasManhuaSeedanceLayoutChoice(
+  videoModel?: string | null,
+): videoModel is ManhuaSeedanceLayoutVideoModel {
   return isManhuaSeedanceLayoutVideoModel(videoModel);
 }
