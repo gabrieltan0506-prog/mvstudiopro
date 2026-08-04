@@ -2371,7 +2371,7 @@ export default function OmniCanvas() {
         previousEndingHook: continuity.previousEndingHook,
         previouslyOnRecap: continuity.previouslyOnRecap,
         videoModel: hasManhuaSeedanceLayoutChoice(writerVideoModel)
-          ? writerVideoModel
+          ? (writerVideoModel as CanvasBlock["videoModel"])
           : undefined,
       });
       spawned = {
@@ -2457,6 +2457,8 @@ export default function OmniCanvas() {
       toast.error("请先选择成片引擎（快速 / 标准 / 加长）");
       return;
     }
+    /** 立刻收窄为成片三选一，避免 async/state 下空串回流导致 tsc 失败 */
+    const selectedVideoModel: ManhuaSeedanceLayoutVideoModel = writerVideoModel;
     // 重扩写：旧剧情包不再留备份，以新稿为准（先提醒再跑）
     if (writerPack) {
       const ok = window.confirm(
@@ -2480,9 +2482,9 @@ export default function OmniCanvas() {
       .filter(Boolean)
       .join("\n\n");
     const mergedBrief = [brief, designInject].filter(Boolean).join("\n\n");
-    const reqPreview = `topic=${topic}\nepisodes=${count}\nbrief:\n${mergedBrief.slice(0, 4000)}\nviralTemplate=${viralTemplateId || "off"}\nvideoModel=${writerVideoModel}`;
+    const reqPreview = `topic=${topic}\nepisodes=${count}\nbrief:\n${mergedBrief.slice(0, 4000)}\nviralTemplate=${viralTemplateId || "off"}\nvideoModel=${selectedVideoModel}`;
     pushDebug("expandWriterPack:start", {
-      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count} overwriteOld=1 viralTemplate=${viralTemplateId || "off"} videoModel=${writerVideoModel}`,
+      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count} overwriteOld=1 viralTemplate=${viralTemplateId || "off"} videoModel=${selectedVideoModel}`,
       request: reqPreview,
     });
     /** 服务端 300s；客户端略宽一点，超时必须解锁，避免旧稿挂着却一直「正在扩写」 */
@@ -2495,7 +2497,7 @@ export default function OmniCanvas() {
           episodeCount: count,
           viralTemplateId: viralTemplateId || undefined,
           lengthTierId: writerLengthTierId,
-          videoModel: writerVideoModel,
+          videoModel: selectedVideoModel,
           fromEpisode: writerFromEpisode || undefined,
           fromSegment: writerFromEpisode > 0 ? writerFromSegment : undefined,
           lockedEpisodeBody:
@@ -2563,7 +2565,7 @@ export default function OmniCanvas() {
         audioReferenceLock: null as ManhuaAudioReferenceLock | null,
         shareAssetToLibrary,
         viralTemplateId,
-        videoModel: writerVideoModel,
+        videoModel: selectedVideoModel,
       };
       const factoryPrefs = {
         topic,
@@ -2598,7 +2600,7 @@ export default function OmniCanvas() {
       pushDebug("expandWriterPack:ok", {
         level: "ok",
         ms: Date.now() - t0,
-        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount} · archivedPaid=${cleaned.archivedCount} · overwritten=1 · viralTemplate=${viralTemplateId || "off"} · videoModel=${writerVideoModel}`,
+        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount} · archivedPaid=${cleaned.archivedCount} · overwritten=1 · viralTemplate=${viralTemplateId || "off"} · videoModel=${selectedVideoModel}`,
         request: reqPreview,
         response: `${pack.seriesTitle || ""}\n${pack.logline || ""}\n${epDigest}`.slice(0, 8000),
       });
@@ -2860,7 +2862,7 @@ export default function OmniCanvas() {
       previousEndingHook: continuity.previousEndingHook,
       previouslyOnRecap: continuity.previouslyOnRecap,
       videoModel: hasManhuaSeedanceLayoutChoice(writerVideoModel)
-        ? writerVideoModel
+        ? (writerVideoModel as CanvasBlock["videoModel"])
         : undefined,
     });
     if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
@@ -2963,6 +2965,7 @@ export default function OmniCanvas() {
       toast.error("请先选择成片引擎（快速 / 标准 / 加长）");
       return;
     }
+    const selectedVideoModel: ManhuaSeedanceLayoutVideoModel = writerVideoModel;
     const densityGate = evaluateWriterPackAssetAndDensity({
       charactersMd: writerPack.charactersMd,
       propsMd: writerPack.propsMd,
@@ -3079,7 +3082,7 @@ export default function OmniCanvas() {
         }),
       includeDirectorCraft: true,
       maxEpisodes: MANHUA_SERIES_SPAWN_MAX,
-      videoModel: writerVideoModel,
+      videoModel: selectedVideoModel,
     });
     if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
       setFactoryGenreId(spawned.resolvedGenreId);
