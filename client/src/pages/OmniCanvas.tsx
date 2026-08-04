@@ -265,6 +265,12 @@ import {
   type ManhuaWriterPack,
 } from "@shared/manhuaWriterRoom";
 import {
+  hasManhuaSeedanceLayoutChoice,
+  MANHUA_SEEDANCE_LAYOUT_CHOICES,
+  resolveManhuaSeedanceLayoutProfile,
+  type ManhuaSeedanceLayoutVideoModel,
+} from "@shared/manhuaSeedanceLayout";
+import {
   getManhuaViralTemplate,
   listApprovedManhuaViralTemplatesGrouped,
   type ManhuaViralTemplateCard,
@@ -273,7 +279,7 @@ import {
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
 import {
-  MANHUA_SCREENWRITER_TERRA_MODEL,
+  MANHUA_SCREENWRITER_KIMI_MODEL,
   MANHUA_SCREENWRITER_TRANSLATE_BRIEF,
 } from "@shared/manhuaScreenwriterTranslate";
 import { trpc } from "@/lib/trpc";
@@ -565,9 +571,21 @@ export default function OmniCanvas() {
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(() =>
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
   );
-  /** 单集时长档位：段长恒定 15s，切档只改一集几段 */
+  /** 单集时长档位：段长恒定 15s，切档只改一集几段（2.5 时由成片引擎覆盖） */
   const [writerLengthTierId, setWriterLengthTierId] = useState<ManhuaEpisodeLengthTierId>(
     MANHUA_EPISODE_LENGTH_TIER_DEFAULT,
+  );
+  /** 开场必选成片引擎：决定扩写段数与铺板 clip.videoModel；空=未选 */
+  const [writerVideoModel, setWriterVideoModel] = useState<ManhuaSeedanceLayoutVideoModel | "">(
+    () => {
+      const v = String(initialWriterSession?.videoModel || "").trim();
+      if (v === "seedance-2.0-fast" || v === "seedance-2.0" || v === "seedance-2.5") return v;
+      return "";
+    },
+  );
+  const writerLayoutProfile = resolveManhuaSeedanceLayoutProfile(
+    writerVideoModel || undefined,
+    writerLengthTierId,
   );
   /**
    * 改写起点：0 = 全部重写；否则只重写第 N 集起（可再指定集内第几段）。
@@ -1248,6 +1266,12 @@ export default function OmniCanvas() {
     setStylePack(session.stylePack ?? null);
     setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
     setViralTemplateId(String(session.viralTemplateId || "").trim());
+    {
+      const v = String(session.videoModel || "").trim();
+      setWriterVideoModel(
+        v === "seedance-2.0-fast" || v === "seedance-2.0" || v === "seedance-2.5" ? v : "",
+      );
+    }
     if (session.deliveryPackage) {
       setDeliveryPackage(
         normalizeManhuaDeliveryPackage(session.deliveryPackage, {
@@ -1392,6 +1416,7 @@ export default function OmniCanvas() {
       segmentLookBindings,
       shareAssetToLibrary,
       viralTemplateId,
+      videoModel: writerVideoModel,
       deliveryPackage,
       cineVocabLocale: factoryCineVocabLocale,
       chainIgnoreByScene,
@@ -1437,6 +1462,7 @@ export default function OmniCanvas() {
     audioReferenceLock,
     shareAssetToLibrary,
     viralTemplateId,
+    writerVideoModel,
     deliveryPackage,
     factoryCineVocabLocale,
     chainIgnoreByScene,
@@ -2085,7 +2111,7 @@ export default function OmniCanvas() {
       const md = await runDeps.optimizeCopy({
         sourceText: src,
         optimizationBrief: MANHUA_SCREENWRITER_TRANSLATE_BRIEF,
-        modelName: MANHUA_SCREENWRITER_TERRA_MODEL,
+        modelName: MANHUA_SCREENWRITER_KIMI_MODEL,
       });
       return String(md || "").trim();
     },
@@ -2344,6 +2370,9 @@ export default function OmniCanvas() {
         endingHook: continuity.endingHook,
         previousEndingHook: continuity.previousEndingHook,
         previouslyOnRecap: continuity.previouslyOnRecap,
+        videoModel: hasManhuaSeedanceLayoutChoice(writerVideoModel)
+          ? writerVideoModel
+          : undefined,
       });
       spawned = {
         ...spawned,
@@ -2411,6 +2440,7 @@ export default function OmniCanvas() {
       writerConfirmed,
       writerPack,
       writerFocusEpisode,
+      writerVideoModel,
       projectBible?.assetCanon,
       remapDockSelectionAfterSpawn,
     ],
@@ -2421,6 +2451,10 @@ export default function OmniCanvas() {
     const brief = writerBrief.trim();
     if (!topic && !brief) {
       toast.error("请先填写题材，或至少写几句补充条件");
+      return;
+    }
+    if (!hasManhuaSeedanceLayoutChoice(writerVideoModel)) {
+      toast.error("请先选择成片引擎（快速 / 标准 / 加长）");
       return;
     }
     // 重扩写：旧剧情包不再留备份，以新稿为准（先提醒再跑）
@@ -2446,9 +2480,9 @@ export default function OmniCanvas() {
       .filter(Boolean)
       .join("\n\n");
     const mergedBrief = [brief, designInject].filter(Boolean).join("\n\n");
-    const reqPreview = `topic=${topic}\nepisodes=${count}\nbrief:\n${mergedBrief.slice(0, 4000)}\nviralTemplate=${viralTemplateId || "off"}`;
+    const reqPreview = `topic=${topic}\nepisodes=${count}\nbrief:\n${mergedBrief.slice(0, 4000)}\nviralTemplate=${viralTemplateId || "off"}\nvideoModel=${writerVideoModel}`;
     pushDebug("expandWriterPack:start", {
-      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count} overwriteOld=1 viralTemplate=${viralTemplateId || "off"}`,
+      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count} overwriteOld=1 viralTemplate=${viralTemplateId || "off"} videoModel=${writerVideoModel}`,
       request: reqPreview,
     });
     /** 服务端 300s；客户端略宽一点，超时必须解锁，避免旧稿挂着却一直「正在扩写」 */
@@ -2461,6 +2495,7 @@ export default function OmniCanvas() {
           episodeCount: count,
           viralTemplateId: viralTemplateId || undefined,
           lengthTierId: writerLengthTierId,
+          videoModel: writerVideoModel,
           fromEpisode: writerFromEpisode || undefined,
           fromSegment: writerFromEpisode > 0 ? writerFromSegment : undefined,
           lockedEpisodeBody:
@@ -2528,6 +2563,7 @@ export default function OmniCanvas() {
         audioReferenceLock: null as ManhuaAudioReferenceLock | null,
         shareAssetToLibrary,
         viralTemplateId,
+        videoModel: writerVideoModel,
       };
       const factoryPrefs = {
         topic,
@@ -2562,18 +2598,22 @@ export default function OmniCanvas() {
       pushDebug("expandWriterPack:ok", {
         level: "ok",
         ms: Date.now() - t0,
-        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount} · archivedPaid=${cleaned.archivedCount} · overwritten=1 · viralTemplate=${viralTemplateId || "off"}`,
+        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount} · archivedPaid=${cleaned.archivedCount} · overwritten=1 · viralTemplate=${viralTemplateId || "off"} · videoModel=${writerVideoModel}`,
         request: reqPreview,
         response: `${pack.seriesTitle || ""}\n${pack.logline || ""}\n${epDigest}`.slice(0, 8000),
       });
+      const layoutHint =
+        res.layout?.labelZh && res.layout?.segmentCount
+          ? `（${res.layout.labelZh} · ${res.layout.segmentCount}×${res.layout.durationSecPerSegment}s）`
+          : "";
       toast.success(
         cleaned.removedCount > 0 || cleaned.archivedCount > 0
-          ? `已扩写 ${pack.episodes.length} 集：新剧本已覆盖旧稿；旧工厂链已清${
+          ? `已扩写 ${pack.episodes.length} 集${layoutHint}：新剧本已覆盖旧稿；旧工厂链已清${
               cleaned.archivedCount > 0
                 ? `，${cleaned.archivedCount} 个已出图/已出片节点转为存档保留（不进新剧本垫图）`
                 : ""
             }`
-          : `已扩写 ${pack.episodes.length} 集：新剧本已覆盖本机与云端旧稿`,
+          : `已扩写 ${pack.episodes.length} 集${layoutHint}：新剧本已覆盖本机与云端旧稿`,
       );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "扩写失败";
@@ -2592,6 +2632,10 @@ export default function OmniCanvas() {
     factoryTopic,
     writerBrief,
     writerEpisodeCount,
+    writerLengthTierId,
+    writerVideoModel,
+    writerFromEpisode,
+    writerFromSegment,
     viralTemplateId,
     expandWriterMutation,
     selectedMaleHairstyleIds,
@@ -2708,12 +2752,16 @@ export default function OmniCanvas() {
       toast.error("请先扩写或导入剧本，并检查剧情包是否完整");
       return;
     }
+    if (!hasManhuaSeedanceLayoutChoice(writerVideoModel)) {
+      toast.error("请先选择成片引擎（快速 / 标准 / 加长）");
+      return;
+    }
     const densityGate = evaluateWriterPackAssetAndDensity({
       charactersMd: writerPack.charactersMd,
       propsMd: writerPack.propsMd,
       locationsMd: writerPack.locationsMd,
       episodes: writerPack.episodes,
-      targetSec: getManhuaEpisodeLengthTier(writerLengthTierId).targetSec,
+      targetSec: writerLayoutProfile.targetSec,
     });
     if (!densityGate.ok) {
       setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
@@ -2811,6 +2859,9 @@ export default function OmniCanvas() {
       endingHook: continuity.endingHook,
       previousEndingHook: continuity.previousEndingHook,
       previouslyOnRecap: continuity.previouslyOnRecap,
+      videoModel: hasManhuaSeedanceLayoutChoice(writerVideoModel)
+        ? writerVideoModel
+        : undefined,
     });
     if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
       setFactoryGenreId(spawned.resolvedGenreId);
@@ -2871,6 +2922,8 @@ export default function OmniCanvas() {
   }, [
     writerPack,
     factoryTopic,
+    writerVideoModel,
+    writerLayoutProfile,
     resolveHardCastForSpawn,
     recommendedScene?.id,
     femaleLeadManual,
@@ -2879,7 +2932,8 @@ export default function OmniCanvas() {
     artStyleManual,
     sceneManual,
     propManual,
-    wardrobeManual,    selectedCraftShotIds,
+    wardrobeManual,
+    selectedCraftShotIds,
     selectedPathRecipeIds,
     factoryPathAnnotation,
     selectedNarrativeLightingIds,
@@ -2905,12 +2959,16 @@ export default function OmniCanvas() {
       toast.error("请先扩写并检查剧情包是否完整");
       return;
     }
+    if (!hasManhuaSeedanceLayoutChoice(writerVideoModel)) {
+      toast.error("请先选择成片引擎（快速 / 标准 / 加长）");
+      return;
+    }
     const densityGate = evaluateWriterPackAssetAndDensity({
       charactersMd: writerPack.charactersMd,
       propsMd: writerPack.propsMd,
       locationsMd: writerPack.locationsMd,
       episodes: writerPack.episodes,
-      targetSec: getManhuaEpisodeLengthTier(writerLengthTierId).targetSec,
+      targetSec: writerLayoutProfile.targetSec,
     });
     if (!densityGate.ok) {
       setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
@@ -3021,6 +3079,7 @@ export default function OmniCanvas() {
         }),
       includeDirectorCraft: true,
       maxEpisodes: MANHUA_SERIES_SPAWN_MAX,
+      videoModel: writerVideoModel,
     });
     if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
       setFactoryGenreId(spawned.resolvedGenreId);
@@ -3037,11 +3096,13 @@ export default function OmniCanvas() {
     );
     setFactoryRunScope("dock");
     toast.success(
-      `已按集铺板 ${spawned.episodeCount} 行链（上集钩子已注入；第3集起含前情提要片头；坞已预勾选可跑）`,
+      `已按集铺板 ${spawned.episodeCount} 行链（${writerLayoutProfile.labelZh} · ${writerLayoutProfile.segmentCount}×${writerLayoutProfile.durationSecPerSegment}s；上集钩子已注入；第3集起含前情提要片头；坞已预勾选可跑）`,
     );
   }, [
     writerPack,
     factoryTopic,
+    writerVideoModel,
+    writerLayoutProfile,
     resolveHardCastForSpawn,
     recommendedScene?.id,
     femaleLeadManual,
@@ -6071,6 +6132,48 @@ export default function OmniCanvas() {
                 placeholder="例：女主权谋翻盘的情感连载，宫墙内外步步为营"
                 className="mt-1 w-full rounded-xl border border-white/15 bg-black/50 px-3.5 py-3 text-[15px] text-white placeholder:text-white/30 outline-none focus:border-emerald-400/55 focus:ring-1 focus:ring-emerald-400/25 disabled:opacity-50"
               />
+              <div className="mt-3" data-manhua-seedance-layout>
+                <label className="block text-[11px] text-white/45">成片引擎（必选）</label>
+                <p className="mt-0.5 text-[10px] leading-4 text-white/35">
+                  先选再扩写：决定一集几段、每段几秒，并写入后续铺板。
+                </p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {MANHUA_SEEDANCE_LAYOUT_CHOICES.map((c) => {
+                    const on = writerVideoModel === c.videoModel;
+                    return (
+                      <button
+                        key={c.videoModel}
+                        type="button"
+                        disabled={writerBusy || factoryBusy}
+                        title={c.layoutHintZh}
+                        onClick={() => {
+                          setWriterVideoModel(c.videoModel);
+                          setWriterConfirmed(false);
+                        }}
+                        className={`rounded-lg border px-2.5 py-1.5 text-left text-[11px] disabled:opacity-50 ${
+                          on
+                            ? "border-cyan-300/50 bg-cyan-500/20 text-cyan-50"
+                            : "border-white/12 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]"
+                        }`}
+                      >
+                        <div className="font-semibold">{c.labelZh}</div>
+                        <div className="mt-0.5 max-w-[14rem] text-[9px] leading-snug text-white/40">
+                          {c.layoutHintZh}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {hasManhuaSeedanceLayoutChoice(writerVideoModel) ? (
+                  <p className="mt-1.5 text-[10px] text-cyan-100/70">
+                    已选「{writerLayoutProfile.labelZh}」· {writerLayoutProfile.layoutHintZh}
+                  </p>
+                ) : (
+                  <p className="mt-1.5 text-[10px] text-amber-100/70">
+                    尚未选择成片引擎，无法扩写或按集铺板。
+                  </p>
+                )}
+              </div>
               <label className="mt-3 block text-[11px] text-white/45">补充条件（三到五句）</label>
               <textarea
                 value={writerBrief}
@@ -6149,23 +6252,32 @@ export default function OmniCanvas() {
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-[11px] text-white/45">单集时长</label>
-                  <select
-                    value={writerLengthTierId}
-                    onChange={(e) =>
-                      setWriterLengthTierId(e.target.value as ManhuaEpisodeLengthTierId)
-                    }
-                    disabled={writerBusy || factoryBusy}
-                    className="mt-1 rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
-                  >
-                    {MANHUA_EPISODE_LENGTH_TIERS.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.labelZh}（{t.segmentMin}–{t.segmentMax} 段）
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {writerVideoModel !== "seedance-2.5" ? (
+                  <div>
+                    <label className="block text-[11px] text-white/45">单集时长</label>
+                    <select
+                      value={writerLengthTierId}
+                      onChange={(e) =>
+                        setWriterLengthTierId(e.target.value as ManhuaEpisodeLengthTierId)
+                      }
+                      disabled={writerBusy || factoryBusy || !hasManhuaSeedanceLayoutChoice(writerVideoModel)}
+                      className="mt-1 rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                    >
+                      {MANHUA_EPISODE_LENGTH_TIERS.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.labelZh}（{t.segmentMin}–{t.segmentMax} 段）
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-[11px] text-white/45">段落布局</label>
+                    <div className="mt-1 rounded-lg border border-cyan-300/25 bg-cyan-500/10 px-2.5 py-2 text-xs text-cyan-50/90">
+                      4 段 × 约 30 秒
+                    </div>
+                  </div>
+                )}
                 <div>
                   <label className="block text-[11px] text-white/45">改写范围</label>
                   <div className="mt-1 flex items-center gap-1.5">
@@ -6193,7 +6305,7 @@ export default function OmniCanvas() {
                         className="rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
                       >
                         {Array.from(
-                          { length: getManhuaEpisodeLengthTier(writerLengthTierId).segmentMax },
+                          { length: writerLayoutProfile.segmentMax },
                           (_, i) => i + 1,
                         ).map((n) => (
                           <option key={n} value={n}>
@@ -6207,12 +6319,18 @@ export default function OmniCanvas() {
                 <div className="flex flex-col gap-1">
                   <button
                     type="button"
-                    disabled={writerBusy || factoryBusy}
+                    disabled={
+                      writerBusy ||
+                      factoryBusy ||
+                      !hasManhuaSeedanceLayoutChoice(writerVideoModel)
+                    }
                     onClick={() => void expandWriterRoom()}
                     title={
-                      writerPack
-                        ? "重新扩写将覆盖本机与云端旧剧情包，不再保留旧备份"
-                        : undefined
+                      !hasManhuaSeedanceLayoutChoice(writerVideoModel)
+                        ? "请先选择成片引擎"
+                        : writerPack
+                          ? "重新扩写将覆盖本机与云端旧剧情包，不再保留旧备份"
+                          : undefined
                     }
                     className={`inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold disabled:opacity-50 ${
                       writerPack
@@ -6284,8 +6402,18 @@ export default function OmniCanvas() {
                 ) : null}
                 <button
                   type="button"
-                  disabled={writerBusy || factoryBusy || !writerPack}
+                  disabled={
+                    writerBusy ||
+                    factoryBusy ||
+                    !writerPack ||
+                    !hasManhuaSeedanceLayoutChoice(writerVideoModel)
+                  }
                   onClick={confirmWriterSeriesSpawn}
+                  title={
+                    !hasManhuaSeedanceLayoutChoice(writerVideoModel)
+                      ? "请先选择成片引擎"
+                      : undefined
+                  }
                   className="inline-flex items-center gap-1.5 rounded-xl border border-white/12 bg-white/[0.04] px-3 py-2 text-xs font-medium text-white/60 hover:bg-white/[0.08] disabled:opacity-50"
                 >
                   按集铺板（最多 {MANHUA_SERIES_SPAWN_MAX}）

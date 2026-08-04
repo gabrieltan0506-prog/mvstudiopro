@@ -94,7 +94,7 @@ import {
   groupShotsIntoSegments,
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
-  MANHUA_SEGMENT_MIN,
+  manhuaSegmentCountBounds,
   parseWorkbenchShotsFromText,
   resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
@@ -670,8 +670,11 @@ export default function ManhuaScriptWorkbench({
       `${storyText}\n${beatsText}\n${reverseText}`,
     );
     const fromPlan = buildWorkbenchShotsFromSegmentPlan(plan);
+    const segMin = manhuaSegmentCountBounds(
+      episodeClips[0]?.videoModel || legacyClip?.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
+    ).min;
     let list: ManhuaWorkbenchShot[];
-    if (fromPlan.length >= MANHUA_SEGMENT_MIN * MANHUA_KEYARTS_PER_SEGMENT_MIN) {
+    if (fromPlan.length >= segMin * MANHUA_KEYARTS_PER_SEGMENT_MIN) {
       list = fromPlan as ManhuaWorkbenchShot[];
     } else if (reverseText.trim()) {
       list = parseWorkbenchShotsFromText(reverseText);
@@ -693,15 +696,23 @@ export default function ManhuaScriptWorkbench({
     reverse?.prompt,
     story?.outputText,
     story?.prompt,
+    episodeClips,
+    legacyClip?.videoModel,
   ]);
 
   const episodeVideoModel =
     episodeClips[0]?.videoModel || legacyClip?.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+  const episodeSegmentBounds = manhuaSegmentCountBounds(episodeVideoModel);
   const episodeVideoLabelZh =
     VIDEO_MODEL_OPTIONS.find((m) => m.id === episodeVideoModel)?.label || "成片";
   const segments = useMemo(
-    () => groupShotsIntoSegments(shots, { videoModel: episodeVideoModel }),
-    [shots, episodeVideoModel],
+    () =>
+      groupShotsIntoSegments(shots, {
+        videoModel: episodeVideoModel,
+        segmentCount: episodeSegmentBounds.default,
+        padToDefaultEpisode: true,
+      }),
+    [shots, episodeVideoModel, episodeSegmentBounds.default],
   );
   const shootablePlan = useMemo(
     () =>
@@ -1318,9 +1329,9 @@ export default function ManhuaScriptWorkbench({
   const assetsComplete = assetGate.ready && !assetScriptStaleHintZh;
   const productionProgress = useMemo((): ManhuaProductionProgress => {
     const segmentCount = segments.length;
-    // 满 10 段为完整可拍表；静帧已按现有段出齐时，不得再卡「至少 10 段」拦审阅/出片
+    // 2.0：默认 5–6 段；2.5：4 段即可。静帧已按现有段出齐时，不得再卡「至少 10 段」拦审阅/出片
     const segmentPlanReady =
-      segmentCount >= MANHUA_SEGMENT_MIN ||
+      segmentCount >= episodeSegmentBounds.min ||
       (segmentCount >= 1 && stillsReadyEnough);
     const keyartsReady = stillsReadyEnough;
     const cueSheets = segments.map((seg) => ({
@@ -1364,6 +1375,7 @@ export default function ManhuaScriptWorkbench({
     outlineComplete,
     assetsComplete,
     episodeClips,
+    episodeSegmentBounds.min,
   ]);
   const videoBurnUnlocked = canManhuaBurnVideo(productionProgress);
   const videoBurnHint = videoBurnUnlocked

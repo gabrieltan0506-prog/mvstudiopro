@@ -8003,7 +8003,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 扣 {@link CREDIT_COSTS.platformOptimizeCustomCopy} 积分/次。
      */
     /**
-     * /canvas 编剧室连载扩写：官方 Responses Pro（gpt-5.6-sol）→ Chat Completions 回退。
+     * /canvas 编剧室连载扩写：OpenRouter Kimi K3（reasoning max）。
+     * 须先选定成片引擎（2.0 / 2.0-fast / 2.5），按选型铺段数与秒数。
      * 不扣点（与原 geminiScript 扩写一致）。
      */
     expandManhuaWriterPack: protectedProcedure
@@ -8014,8 +8015,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           episodeCount: z.number().int().min(2).max(6).optional(),
           /** 审定节奏模板 id（tpl_*） */
           viralTemplateId: z.string().max(64).optional(),
-          /** 单集时长档位：90s 半强度 / 180s 全长 */
+          /** 单集时长档位：90s 半强度 / 180s 全长（2.5 时由 videoModel 覆盖段表） */
           lengthTierId: z.string().max(32).optional(),
+          /** 开场成片引擎：seedance-2.0-fast | seedance-2.0 | seedance-2.5 */
+          videoModel: z.enum(["seedance-2.0-fast", "seedance-2.0", "seedance-2.5"]),
           /** 局部改写起点：只重写第 N 集起（0/空 = 全部重写） */
           fromEpisode: z.number().int().min(0).max(12).optional(),
           /** 起点那一集内从第几段起改；>1 时须带 lockedEpisodeBody 锁住前几段 */
@@ -8039,18 +8042,25 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           parseManhuaWriterPack,
           writerPackLooksReady,
         } = await import("../shared/manhuaWriterRoom.js");
+        const { resolveManhuaSeedanceLayoutProfile } = await import(
+          "../shared/manhuaSeedanceLayout.js"
+        );
         const { formatManhuaViralTemplateWriterAddonFromCard } = await import(
           "../shared/manhuaViralTemplateBank.js"
         );
         const { getMergedManhuaViralTemplate } = await import("./services/manhuaViralTemplateStore.js");
         const { invokeGpt56ResponsesText } = await import("./services/gpt56ResponsesClient.js");
+        const { getOpenRouterKimiK3Model, OPENROUTER_KIMI_K3_REASONING_EFFORT } = await import(
+          "./services/openrouterKimiK3.js"
+        );
+        const layout = resolveManhuaSeedanceLayoutProfile(input.videoModel);
         const episodeCount = clampWriterEpisodeCount(input.episodeCount);
         let viralTemplateAddon = "";
         try {
           const merged = await getMergedManhuaViralTemplate(input.viralTemplateId);
           viralTemplateAddon = formatManhuaViralTemplateWriterAddonFromCard(
             merged,
-            input.lengthTierId,
+            input.lengthTierId || layout.lengthTierId,
           );
         } catch {
           viralTemplateAddon = "";
@@ -8061,7 +8071,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           episodeCount,
           viralTemplateId: input.viralTemplateId,
           viralTemplateAddon: viralTemplateAddon || undefined,
-          lengthTierId: input.lengthTierId,
+          lengthTierId: input.lengthTierId || layout.lengthTierId,
+          videoModel: layout.videoModel,
           fromEpisode: input.fromEpisode,
           fromSegment: input.fromSegment,
           lockedEpisodeBody: input.lockedEpisodeBody,
@@ -8070,8 +8081,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         try {
           markdown = await invokeGpt56ResponsesText({
             input: prompt,
+            modelName: getOpenRouterKimiK3Model(),
             reasoningMode: "pro",
-            reasoningEffort: "medium",
+            reasoningEffort: OPENROUTER_KIMI_K3_REASONING_EFFORT,
             store: false,
             timeoutMs: 300_000,
           });
@@ -8093,7 +8105,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           markdown,
           pack,
           ready: writerPackLooksReady(pack),
-          via: "gpt56_responses_pro" as const,
+          via: "openrouter_kimi_k3" as const,
+          videoModel: layout.videoModel,
+          layout: {
+            segmentCount: layout.segmentCount,
+            durationSecPerSegment: layout.durationSecPerSegment,
+            targetSec: layout.targetSec,
+            labelZh: layout.labelZh,
+          },
         };
       }),
 

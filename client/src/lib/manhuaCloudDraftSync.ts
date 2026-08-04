@@ -307,7 +307,7 @@ export function cloudDraftBlocksToCanvas(blocks: ManhuaCloudDraftPayload["canvas
       aspectRatio: raw.aspectRatio === "16:9" ? "16:9" : "9:16",
       pathCameraRecipeId: raw.pathCameraRecipeId,
       pathAnnotationJson: raw.pathAnnotationJson,
-      textModel: "gpt-5.6-terra",
+      textModel: "kimi-k3",
       imageModel: "gpt-image-2",
       // 云草稿 schema 不落 videoModel：成片一律 Seedance Fast（不再恢复 Omni）
       videoModel: "seedance-2.0-fast",

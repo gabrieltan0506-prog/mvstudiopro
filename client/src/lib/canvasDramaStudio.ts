@@ -394,6 +394,11 @@ export type SpawnManhuaDramaStudioOpts = {
   previouslyOnRecap?: string;
   /** 系列标题（前情提要静帧卡用） */
   seriesTitle?: string;
+  /**
+   * 编剧室开场选定的成片引擎（seedance-2.0-fast / 2.0 / 2.5）。
+   * 写入本集 clip.videoModel，决定后续段数与单段秒数。
+   */
+  videoModel?: CanvasBlock["videoModel"];
 };
 
 /** 同屏最多铺几条六段链（避积分爆） */
@@ -829,7 +834,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   story.prompt = [storyPrompt, narrativeEngineBlock].filter(Boolean).join("\n\n");
   story.width = 400;
   story.height = 320;
-  story.textModel = "gpt-5.6-terra";
+  story.textModel = "kimi-k3";
   // 故意不把 story.parentId / edge 接到 recap_card：提要文案已写入 story prompt，
   // 若挂上游会污染 text vision 与 keyart 的最近参考图。
 
@@ -851,7 +856,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     .filter(Boolean)
     .join("\n\n");
   bible.parentId = story.id;
-  bible.textModel = "gpt-5.6-terra";
+  bible.textModel = "kimi-k3";
 
   const beats = defaultCanvasBlock("text", originX + gapX * (col0 + 2), originY);
   beats.id = makeFactoryStageId("beats", episodeIndex);
@@ -873,7 +878,7 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     .filter(Boolean)
     .join("\n\n");
   beats.parentId = bible.id;
-  beats.textModel = "gpt-5.6-terra";
+  beats.textModel = "kimi-k3";
 
   const reverse = defaultCanvasBlock("video_reverse", originX + gapX * (col0 + 3), originY);
   reverse.id = makeFactoryStageId("reverse", episodeIndex);
@@ -932,8 +937,10 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
   clip.prompt =
     "【成片占位】铺段/审阅后写入秒轴短指令；身份靠垫图@图片N，勿在此堆规则墙。";
   clip.parentId = keyArt.id;
-  /** 工厂主成片仅 Seedance 标准 / 快速（默认 Fast；CG 多图参考） */
-  clip.videoModel = MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+  /** 成片引擎：优先编剧室开场选型，否则默认快速 */
+  clip.videoModel = isCanvasProductVideoModel(opts.videoModel)
+    ? opts.videoModel
+    : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
   clip.aspectRatio = "9:16";
   if (pathCameraRecipeIds[0]) clip.pathCameraRecipeId = pathCameraRecipeIds[0];
   if (opts.pathAnnotationJson != null) clip.pathAnnotationJson = opts.pathAnnotationJson;

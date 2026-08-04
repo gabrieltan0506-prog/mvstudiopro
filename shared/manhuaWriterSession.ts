@@ -67,6 +67,11 @@ export type ManhuaWriterSession = {
   shareAssetToLibrary: boolean;
   /** 审定节奏模板 id（tpl_*）；扩写注入用 */
   viralTemplateId: string;
+  /**
+   * 开场选定的成片引擎（seedance-2.0-fast / seedance-2.0 / seedance-2.5）。
+   * 空字符串 = 尚未选择，扩写前必须选定。
+   */
+  videoModel: string;
   /** 产品化风格包（资产阶段） */
   stylePack: ManhuaStylePack | null;
   /** 成色/字幕/配音交付包（剪辑台与成片坞同源） */
@@ -142,6 +147,11 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     audioReferenceLock: normalizeManhuaAudioReferenceLock(input.audioReferenceLock),
     shareAssetToLibrary: Boolean(input.shareAssetToLibrary),
     viralTemplateId: String(input.viralTemplateId || "").trim().slice(0, 64),
+    videoModel: (() => {
+      const v = String(input.videoModel || "").trim();
+      if (v === "seedance-2.0-fast" || v === "seedance-2.0" || v === "seedance-2.5") return v;
+      return "";
+    })(),
     stylePack: parseManhuaStylePack(input.stylePack) || null,
     deliveryPackage: input.deliveryPackage
       ? normalizeManhuaDeliveryPackage(input.deliveryPackage, {

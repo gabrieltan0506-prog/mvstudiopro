@@ -1,11 +1,13 @@
 /**
- * 漫剧工厂：运镜/镜头说明 → 通顺中文（GPT-5.6 Terra）
+ * 漫剧工厂：运镜/镜头说明 → 通顺中文（OpenRouter Kimi K3）
  * 人设：电影编剧与剧本创作大师；界面与 Seedance / I2V 共用中文运镜句。
  */
 
-export const MANHUA_SCREENWRITER_TERRA_MODEL = "gpt-5.6-terra" as const;
+export const MANHUA_SCREENWRITER_KIMI_MODEL = "moonshotai/kimi-k3" as const;
+/** @deprecated 与 {@link MANHUA_SCREENWRITER_KIMI_MODEL} 同值；旧导出名保留以免断链 */
+export const MANHUA_SCREENWRITER_TERRA_MODEL = MANHUA_SCREENWRITER_KIMI_MODEL;
 
-/** 给 optimizeCustomCopy / Terra 的优化 brief（非 system，拼进用户块） */
+/** 给 optimizeCustomCopy 的优化 brief（非 system，拼进用户块） */
 export const MANHUA_SCREENWRITER_TRANSLATE_BRIEF = [
   "你是电影编剧与剧本创作的大师，精通中西文化与文字表达，熟悉竖屏漫剧/短剧分镜与运镜术语。",
   "任务：把下列运镜/镜头/动作说明，润色成通顺、专业、可给中文剧组直接朗读与执行的中文。",

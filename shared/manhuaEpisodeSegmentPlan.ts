@@ -10,12 +10,17 @@ import {
   stripManhuaPromptSlop,
 } from "./manhuaDirectingWorkflow.js";
 
-/** 推荐段数（扩写默认目标·预算期） */
+/** 推荐段数（扩写默认目标·预算期 · Seedance 2.0） */
 export const MANHUA_EPISODE_SEGMENT_COUNT = 6;
-export const MANHUA_EPISODE_SEGMENT_COUNT_MIN = 5;
+/** 短档下限 4（与时长档 short.segmentMin 对齐；2.0 默认仍铺 5–6） */
+export const MANHUA_EPISODE_SEGMENT_COUNT_MIN = 4;
 export const MANHUA_EPISODE_SEGMENT_COUNT_MAX = 6;
+/** Seedance 2.5：4 段 × 30s */
+export const MANHUA_EPISODE_SEGMENT_COUNT_SEEDANCE_25 = 4;
 export const MANHUA_EPISODE_SEGMENT_DURATION_SEC = 15;
+export const MANHUA_EPISODE_SEGMENT_DURATION_SEEDANCE_25_SEC = 30;
 export const MANHUA_EPISODE_SEGMENT_TARGET_SEC = 90;
+export const MANHUA_EPISODE_SEGMENT_TARGET_SEEDANCE_25_SEC = 120;
 export const MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC = 75;
 
 /** 每段约 15s：至少 3 句「」对白（推荐 3–4） */
@@ -513,15 +518,21 @@ export function formatManhuaEpisodeSegmentPlanPromptBlock(
   segmentCount = MANHUA_EPISODE_SEGMENT_COUNT,
   durationSec = MANHUA_EPISODE_SEGMENT_DURATION_SEC,
 ): string {
-  const n = Math.max(
-    MANHUA_EPISODE_SEGMENT_COUNT_MIN,
-    Math.min(MANHUA_EPISODE_SEGMENT_COUNT_MAX, segmentCount),
-  );
-  const minSec = MANHUA_EPISODE_SEGMENT_COUNT_MIN * durationSec;
-  const maxSec = MANHUA_EPISODE_SEGMENT_COUNT_MAX * durationSec;
+  const isSeedance25 =
+    segmentCount === MANHUA_EPISODE_SEGMENT_COUNT_SEEDANCE_25 &&
+    durationSec === MANHUA_EPISODE_SEGMENT_DURATION_SEEDANCE_25_SEC;
+  const minSegs = isSeedance25
+    ? MANHUA_EPISODE_SEGMENT_COUNT_SEEDANCE_25
+    : MANHUA_EPISODE_SEGMENT_COUNT_MIN;
+  const maxSegs = isSeedance25
+    ? MANHUA_EPISODE_SEGMENT_COUNT_SEEDANCE_25
+    : MANHUA_EPISODE_SEGMENT_COUNT_MAX;
+  const n = Math.max(minSegs, Math.min(maxSegs, segmentCount));
+  const minSec = minSegs * durationSec;
+  const maxSec = maxSegs * durationSec;
   return [
-    `### 五至六段可拍表`,
-    `（硬性：至少 ${MANHUA_EPISODE_SEGMENT_COUNT_MIN} 段、至多 ${MANHUA_EPISODE_SEGMENT_COUNT_MAX} 段；推荐 ${n} 段；每段约 ${durationSec} 秒；整集约 ${minSec}–${maxSec} 秒。预算期勿写满十多段；禁止寒暄灌水、禁止段间复制粘贴。）`,
+    isSeedance25 ? `### 四段可拍表（成片·加长）` : `### 五至六段可拍表`,
+    `（硬性：至少 ${minSegs} 段、至多 ${maxSegs} 段；推荐 ${n} 段；每段约 ${durationSec} 秒；整集约 ${minSec}–${maxSec} 秒。预算期勿写满十多段；禁止寒暄灌水、禁止段间复制粘贴。）`,
     `每一段必须用下列字段（缺一不可）：`,
     `- 意图：一句「观众应感到什么」（单一戏剧意图）；机位/光/表演只服务这一句。`,
     `- 对白：至少 ${MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES} 句直角引号「」（推荐 3–4 句），须推动关系/信息/冲突；禁止两句口号撑满 ${durationSec} 秒。每句带说话人（写法：苏照雪：「…」或 @角色N「…」），群戏尤其必须带——不带名字的台词成片里锁不到脸、口型没人认领。`,
@@ -542,7 +553,7 @@ export function formatManhuaEpisodeSegmentPlanPromptBlock(
     `- 服装道具：`,
     `- 光影运镜：`,
     `- 段内白描：`,
-    `（段02…段${String(n).padStart(2, "0")} 同结构；至少 ${MANHUA_EPISODE_SEGMENT_COUNT_MIN} 段、至多 ${MANHUA_EPISODE_SEGMENT_COUNT_MAX} 段；跨段须有信息增量与场面变化。禁止把后段钩子提前写进本段对白。）`,
+    `（段02…段${String(n).padStart(2, "0")} 同结构；至少 ${minSegs} 段、至多 ${maxSegs} 段；跨段须有信息增量与场面变化。禁止把后段钩子提前写进本段对白。）`,
   ].join("\n");
 }
 

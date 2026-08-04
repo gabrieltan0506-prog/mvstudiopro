@@ -4,17 +4,22 @@ import type { ManhuaClipQualityReport } from "@shared/manhuaClipQuality";
 
 export type CanvasBlockKind = "text" | "image" | "video" | "copy_organize" | "video_reverse";
 
-/** 画布文本主力：GPT-5.6 Terra；Sol 可选；Gemini 仅 fallback/旧选项。 */
+/**
+ * 画布文本主力：OpenRouter Kimi K3（`kimi-k3`）；
+ * Terra/Sol/Gemini 保留为旧选项/备用。
+ */
 export type CanvasTextModel =
+  | "kimi-k3"
   | "gpt-5.6-sol"
   | "gpt-5.6-terra"
   | "gemini-3.1-pro"
   | "gpt-5.5"
   | "gpt-5.4";
 
-export const DEFAULT_CANVAS_TEXT_MODEL: CanvasTextModel = "gpt-5.6-terra";
+export const DEFAULT_CANVAS_TEXT_MODEL: CanvasTextModel = "kimi-k3";
 
 const CANVAS_TEXT_MODEL_IDS: CanvasTextModel[] = [
+  "kimi-k3",
   "gpt-5.6-terra",
   "gpt-5.6-sol",
   "gemini-3.1-pro",
@@ -25,7 +30,8 @@ const CANVAS_TEXT_MODEL_IDS: CanvasTextModel[] = [
 export function normalizeCanvasTextModel(raw: unknown): CanvasTextModel {
   const key = String(raw || "").trim();
   if ((CANVAS_TEXT_MODEL_IDS as string[]).includes(key)) return key as CanvasTextModel;
-  // 旧画布别名
+  // 旧画布别名 / OpenRouter slug
+  if (key === "moonshotai/kimi-k3" || key === "kimi" || key.endsWith("/kimi-k3")) return "kimi-k3";
   if (key === "gpt56sol" || key === "gpt-5.6") return "gpt-5.6-sol";
   if (key === "gpt56terra") return "gpt-5.6-terra";
   return DEFAULT_CANVAS_TEXT_MODEL;
@@ -247,11 +253,12 @@ export const CANVAS_KIND_META: Record<
 };
 
 export const TEXT_MODEL_OPTIONS: Array<{ id: CanvasTextModel; label: string }> = [
-  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra（主力）" },
-  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-  { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro（备用）" },
-  { id: "gpt-5.5", label: "GPT 5.5" },
-  { id: "gpt-5.4", label: "GPT 5.4" },
+  { id: "kimi-k3", label: "文案·主力" },
+  { id: "gpt-5.6-terra", label: "文案·备用 A" },
+  { id: "gpt-5.6-sol", label: "文案·备用 B" },
+  { id: "gemini-3.1-pro", label: "文案·备用 C" },
+  { id: "gpt-5.5", label: "文案·旧档" },
+  { id: "gpt-5.4", label: "文案·旧档 2" },
 ];
 
 /** 画布引擎展示：仅官方出图（已移除备选引擎） */

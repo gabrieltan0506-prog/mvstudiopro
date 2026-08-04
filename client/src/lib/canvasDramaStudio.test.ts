@@ -221,10 +221,10 @@ describe("canvasDramaStudio factory", () => {
     expect(bible).not.toContain("签约钢笔");
   });
 
-  it("factory text stages default to gpt-5.6-terra", () => {
+  it("factory text stages default to kimi-k3", () => {
     const { blocks } = spawnManhuaDramaStudio({ topic: "仙侠逆袭" });
     for (const prefix of ["story-", "bible-", "beats-"] as const) {
-      expect(blocks.find((b) => b.id.startsWith(prefix))!.textModel).toBe("gpt-5.6-terra");
+      expect(blocks.find((b) => b.id.startsWith(prefix))!.textModel).toBe("kimi-k3");
     }
   });
 
