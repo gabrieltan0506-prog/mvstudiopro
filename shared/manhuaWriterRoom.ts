@@ -353,6 +353,38 @@ export function writerPackLooksReady(pack: ManhuaWriterPack | null | undefined):
   return hooks.length >= Math.min(pack.episodes.length, 2);
 }
 
+/** 换剧备份 / 工程包：把剧情包打成可读 Markdown */
+export function formatManhuaWriterPackMarkdown(pack: ManhuaWriterPack | null | undefined): string {
+  if (!pack) return "";
+  const raw = String(pack.rawMarkdown || "").trim();
+  if (raw.length >= 80) return raw;
+  const eps = [...(pack.episodes || [])]
+    .sort((a, b) => a.index - b.index)
+    .map((ep) => {
+      const title = String(ep.title || "").trim() || `第${ep.index}集`;
+      const hook = String(ep.endHook || "").trim();
+      const body = String(ep.body || "").trim();
+      return [`### 第${ep.index}集 · ${title}`, hook ? `片尾钩子：${hook}` : "", body]
+        .filter(Boolean)
+        .join("\n\n");
+    })
+    .join("\n\n");
+  return [
+    `# ${String(pack.seriesTitle || "未命名系列").trim()}`,
+    String(pack.logline || "").trim(),
+    "## 人物",
+    String(pack.charactersMd || "").trim() || "（无）",
+    "## 道具",
+    String(pack.propsMd || "").trim() || "（无）",
+    "## 场景",
+    String(pack.locationsMd || "").trim() || "（无）",
+    "## 分集",
+    eps || "（无）",
+  ]
+    .filter((line, i, arr) => !(line === "" && arr[i - 1] === ""))
+    .join("\n\n");
+}
+
 /** 导入已有剧本：字符上限（约 8 万字） */
 export const MANHUA_WRITER_IMPORT_MAX_CHARS = 80_000;
 
