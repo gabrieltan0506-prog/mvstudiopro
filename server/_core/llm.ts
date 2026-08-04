@@ -116,7 +116,7 @@ export type InvokeParams = {
   /**
    * OpenAI 兼容网关选择：
    * - `auto`（默认）：GPT-5.6 官方 OpenAI → OpenRouter；非 5.6 仍可能走 Evolink
-   * - `official_only`：**仅** `api.openai.com`（禁止 Evolink / OpenRouter）——给 gpt-5.6-terra / 趋势报表
+   * - `official_only`：**仅** `api.openai.com`（禁止 Evolink / OpenRouter）——画布 Terra 多模态等专线
    */
   openAiGateway?: "auto" | "official_only";
 };
@@ -560,7 +560,7 @@ const resolveTarget = (
 
     /**
      * 平台全案 / Stage2 文案：**OpenAI 官方 GPT-5.6 Sol（主）→ OpenRouter（fallback）**。
-     * `official_only`：仅 api.openai.com（gpt-5.6-terra / 趋势报表）。
+     * `official_only`：仅 api.openai.com（画布 Terra 多模态等）；趋势报表用 auto 以便 OpenRouter fallback。
      * Refs:
      *   https://developers.openai.com/api/docs/models/gpt-5.6-sol
      *   https://openrouter.ai/openai/gpt-5.6-sol

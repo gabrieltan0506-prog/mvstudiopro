@@ -275,7 +275,7 @@ export function getPlatformStage2OpenAiModel(): string {
 
 /**
  * 平台趋势 PNG 报表（generateVisualReport）专用模型：默认 **gpt-5.6-terra**。
- * 调用方须 `openAiGateway: "official_only"` → **仅 api.openai.com**（禁止 Evolink / OpenRouter）。
+ * 调用方用 `openAiGateway: "auto"`：官方 api.openai.com 优先，失败再走 OpenRouter（`openai/gpt-5.6-terra`）。
  * 可用 `VISUAL_REPORT_OPENAI_MODEL` 覆盖。
  */
 export function getVisualReportOpenAiModel(): string {
