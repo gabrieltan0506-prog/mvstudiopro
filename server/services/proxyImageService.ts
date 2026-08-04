@@ -40,6 +40,7 @@ import {
   isOpenRouterGptImage2Configured,
   postOpenRouterGptImage2AndUpload,
 } from "./openrouterGptImage2.js";
+import { knowledgeCardImageQuality } from "../../shared/knowledgeCardPagination.js";
 
 const OHMYGPT_BASE = String(process.env.OHMYGPT_API_BASE || "https://api.ohmygpt.com/v1").replace(/\/$/, "");
 
@@ -1720,10 +1721,13 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         ...continuityRefs,
       ].filter((u, idx, arr) => arr.indexOf(u) === idx).slice(0, 4);
       const hasSheetRefs = refImageUrls.length > 0;
+      const knowledgeCardQuality = isKnowledgeCard
+        ? knowledgeCardImageQuality(Number(options.notePageTotal) || 0)
+        : undefined;
       appendImageFlowLog(
         L,
         isKnowledgeCard
-          ? `[图文笔记·步骤2] GPT-IMAGE-2 · 16:9 · quality=medium(2K) · gcsSubdir=${subdir} · 优先 OPENAI_IMAGE_API_KEY_ASSET → OpenRouter`
+          ? `[图文笔记·步骤2] GPT-IMAGE-2 · 16:9 · quality=${knowledgeCardQuality}(${knowledgeCardQuality === "high" ? "4K" : "2K"}) · total=${options.notePageTotal ?? "?"} · gcsSubdir=${subdir} · 优先 OPENAI_IMAGE_API_KEY_ASSET → OpenRouter`
           : `[2×4·步骤2] GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · ${
               hasSheetRefs ? "换脸·仅 OpenAI/OpenRouter（无 NB2）" : "仅 OpenAI/OpenRouter（无 NB2）"
             }`,
@@ -1753,7 +1757,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         appendImageFlowLog(
           L,
           isKnowledgeCard
-            ? `[图文笔记·主路径] ASSET 专钥 → OpenRouter · quality=medium · 16:9`
+            ? `[图文笔记·主路径] ASSET 专钥 → OpenRouter · quality=${knowledgeCardQuality} · 16:9`
             : `[2×4·主路径] OpenAI/OpenRouter GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
         );
       }
@@ -1772,10 +1776,10 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         referenceImageUrls: hasSheetRefs ? refImageUrls : undefined,
         // 分镜/图文锁脸指令已写入 promptForPixel；勿再叠封面换人 directive
         generalImageEdit: true,
-        // 知识卡：OPENAI_IMAGE_API_KEY_ASSET 优先，失败再 OpenRouter；2K 档用 medium
+        // 知识卡：ASSET 优先→OpenRouter；≤6 页 high≈4K，>6 页整套 medium≈2K
         providerOverride: isKnowledgeCard ? "auto" : undefined,
         imageLane: isKnowledgeCard ? "asset" : undefined,
-        qualityOverride: isKnowledgeCard ? "medium" : undefined,
+        qualityOverride: knowledgeCardQuality,
         captureError: gptCapture,
       });
 
@@ -1796,7 +1800,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           generalImageEdit: true,
           providerOverride: isKnowledgeCard ? "auto" : undefined,
           imageLane: isKnowledgeCard ? "asset" : undefined,
-          qualityOverride: isKnowledgeCard ? "medium" : undefined,
+          qualityOverride: knowledgeCardQuality,
           captureError: retryCapture,
         });
         if (!fromGpt && (retryCapture.moderationBlocked || isEvolinkModerationFailure(retryCapture.message))) {

@@ -15,6 +15,14 @@ export const KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS = 3200;
 export const KNOWLEDGE_CARD_CREDITS_FULL = 25;
 export const KNOWLEDGE_CARD_CREDITS_DISCOUNT = 20;
 export const KNOWLEDGE_CARD_FULL_PRICE_PAGES = 8;
+/** ≤ 此页数出图 4K（gpt-image-2 quality=high）；超过则整套一律 2K（medium） */
+export const KNOWLEDGE_CARD_4K_MAX_PAGES = 6;
+
+/** 知识卡出图像素质：总页数 ≤6 → high≈4K；>6 → medium≈2K。 */
+export function knowledgeCardImageQuality(pageTotal: number): "high" | "medium" {
+  const n = Math.max(0, Math.floor(Number(pageTotal) || 0));
+  return n > 0 && n <= KNOWLEDGE_CARD_4K_MAX_PAGES ? "high" : "medium";
+}
 
 /** @deprecated 仅兼容旧测试/文案；产品已取消 12 页硬顶 */
 export const KNOWLEDGE_CARD_HARD_MAX_PAGES = 12;

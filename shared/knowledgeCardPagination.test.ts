@@ -3,6 +3,7 @@ import {
   KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE,
   knowledgeCardCreditsForPageIndex,
   knowledgeCardCreditsForPages,
+  knowledgeCardImageQuality,
   planKnowledgeCardPages,
   shouldSkipKnowledgeCardDistill,
 } from "./knowledgeCardPagination";
@@ -33,6 +34,15 @@ describe("knowledgeCardCreditsForPageIndex", () => {
     expect(knowledgeCardCreditsForPageIndex(8)).toBe(25);
     expect(knowledgeCardCreditsForPageIndex(9)).toBe(20);
     expect(knowledgeCardCreditsForPageIndex(20)).toBe(20);
+  });
+});
+
+describe("knowledgeCardImageQuality", () => {
+  it("uses 4K (high) for 1–6 pages and 2K (medium) for every page when total > 6", () => {
+    expect(knowledgeCardImageQuality(1)).toBe("high");
+    expect(knowledgeCardImageQuality(6)).toBe("high");
+    expect(knowledgeCardImageQuality(7)).toBe("medium");
+    expect(knowledgeCardImageQuality(20)).toBe("medium");
   });
 });
 
