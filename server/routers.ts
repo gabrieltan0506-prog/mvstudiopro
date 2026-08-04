@@ -6776,7 +6776,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     prepareKnowledgeCardCopy: protectedProcedure
       .input(
         z.object({
-          sourceText: z.string().max(50000).optional(),
+          sourceText: z.string().max(400_000).optional(),
           forceDistill: z.boolean().optional(),
           /** 试对比：qwen/qwen3.8-max | moonshotai/kimi-k3 */
           distillModel: z.enum(["qwen/qwen3.8-max", "moonshotai/kimi-k3"]).optional(),
@@ -6807,6 +6807,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           distilledMarkdown: prepared.distilledMarkdown,
           skippedDistill: prepared.skippedDistill,
           extractionMethods: prepared.extractionMethods,
+          sourceChars: prepared.sourceChars,
           distillModel: prepared.distillModel,
           pageCount: plan.pageCount,
           credits: plan.credits,

@@ -46,20 +46,38 @@ async function withTempFile<T>(
 export async function extractDocxText(buffer: Buffer): Promise<string> {
   return withTempFile(buffer, "docx", async (filePath) => {
     const { stdout } = await execFileAsync("unzip", ["-p", filePath, "word/document.xml"], {
-      maxBuffer: 8 * 1024 * 1024,
+      maxBuffer: 32 * 1024 * 1024,
     });
 
     return normalizeText(decodeXmlEntities(stdout));
   });
 }
 
-export async function extractPdfText(buffer: Buffer): Promise<string> {
+/** 优先 pdftotext（整书可选中文字）；失败再退 strings。 */
+export async function extractPdfText(
+  buffer: Buffer,
+): Promise<{ text: string; method: "pdf_pdftotext" | "pdf_strings" | "none" }> {
   return withTempFile(buffer, "pdf", async (filePath) => {
-    const { stdout } = await execFileAsync("strings", [filePath], {
-      maxBuffer: 8 * 1024 * 1024,
-    });
-
-    return normalizeText(stdout);
+    try {
+      const { stdout } = await execFileAsync(
+        "pdftotext",
+        ["-layout", "-enc", "UTF-8", filePath, "-"],
+        { maxBuffer: 64 * 1024 * 1024 },
+      );
+      const text = normalizeText(stdout);
+      if (text.length >= 40) return { text, method: "pdf_pdftotext" };
+    } catch {
+      /* fall through */
+    }
+    try {
+      const { stdout } = await execFileAsync("strings", ["-n", "3", filePath], {
+        maxBuffer: 64 * 1024 * 1024,
+      });
+      const text = normalizeText(stdout);
+      return { text, method: text ? "pdf_strings" : "none" };
+    } catch {
+      return { text: "", method: "none" };
+    }
   });
 }
 
@@ -67,7 +85,7 @@ export async function extractPdfText(buffer: Buffer): Promise<string> {
 export async function extractPptxText(buffer: Buffer): Promise<string> {
   return withTempFile(buffer, "pptx", async (filePath) => {
     const { stdout: listing } = await execFileAsync("unzip", ["-l", filePath], {
-      maxBuffer: 8 * 1024 * 1024,
+      maxBuffer: 16 * 1024 * 1024,
     });
     const slideMatches = Array.from(listing.matchAll(/ppt\/slides\/slide\d+\.xml/g)).map((m) => m[0]);
     const slides = Array.from(new Set(slideMatches)).sort((a, b) => {
@@ -79,7 +97,7 @@ export async function extractPptxText(buffer: Buffer): Promise<string> {
     const parts: string[] = [];
     for (const slide of slides) {
       const { stdout } = await execFileAsync("unzip", ["-p", filePath, slide], {
-        maxBuffer: 8 * 1024 * 1024,
+        maxBuffer: 16 * 1024 * 1024,
       });
       const texts = Array.from(stdout.matchAll(/<a:t[^>]*>([^<]*)<\/a:t>/g)).map((m) =>
         decodeXmlEntities(m[1] || ""),
@@ -91,11 +109,13 @@ export async function extractPptxText(buffer: Buffer): Promise<string> {
   });
 }
 
+export type DocumentExtractMethod = "docx_xml" | "pdf_pdftotext" | "pdf_strings" | "pptx_xml" | "none";
+
 export async function extractDocumentText(params: {
   buffer: Buffer;
   mimeType: string;
   fileName?: string;
-}): Promise<{ text: string; method: "docx_xml" | "pdf_strings" | "pptx_xml" | "none" }> {
+}): Promise<{ text: string; method: DocumentExtractMethod }> {
   const fileName = String(params.fileName || "").toLowerCase();
   const mime = String(params.mimeType || "").toLowerCase();
 
@@ -108,8 +128,10 @@ export async function extractDocumentText(params: {
   }
 
   if (mime === "application/pdf" || fileName.endsWith(".pdf")) {
-    const text = await extractPdfText(params.buffer).catch(() => "");
-    return { text, method: text ? "pdf_strings" : "none" };
+    const pdf = await extractPdfText(params.buffer).catch(
+      () => ({ text: "", method: "none" as const }),
+    );
+    return { text: pdf.text, method: pdf.method };
   }
 
   if (

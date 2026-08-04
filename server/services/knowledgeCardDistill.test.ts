@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { KNOWLEDGE_CARD_DISTILL_MODEL } from "./knowledgeCardDistill";
+import {
+  KNOWLEDGE_CARD_DISTILL_MODEL,
+  splitSourceTextForDistill,
+  suggestKnowledgeCardMinSections,
+} from "./knowledgeCardDistill";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_KIMI,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
@@ -20,5 +24,27 @@ describe("knowledgeCardDistill model", () => {
 
   it("falls back on unknown id", () => {
     expect(resolveKnowledgeCardDistillModel("not-a-model")).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN);
+  });
+});
+
+describe("suggestKnowledgeCardMinSections", () => {
+  it("scales with source length so a book is not crushed to 1 section", () => {
+    expect(suggestKnowledgeCardMinSections(100)).toBeLessThanOrEqual(2);
+    expect(suggestKnowledgeCardMinSections(3000)).toBeGreaterThanOrEqual(4);
+    expect(suggestKnowledgeCardMinSections(50_000)).toBeGreaterThanOrEqual(20);
+    expect(suggestKnowledgeCardMinSections(120_000)).toBe(80);
+  });
+});
+
+describe("splitSourceTextForDistill", () => {
+  it("keeps short text as one chunk", () => {
+    expect(splitSourceTextForDistill("短文")).toEqual(["短文"]);
+  });
+
+  it("splits long text into multiple chunks", () => {
+    const body = "段落要点。\n\n".repeat(4000);
+    const chunks = splitSourceTextForDistill(body, 10_000);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.join("").length).toBeGreaterThan(9000);
   });
 });
