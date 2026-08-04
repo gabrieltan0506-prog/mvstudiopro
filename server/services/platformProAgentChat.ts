@@ -184,14 +184,13 @@ export async function chatPlatformProAgent(params: {
     inputParts,
     modelName: getPlatformStage2OpenAiModel(),
     reasoningMode: "pro",
-    reasoningEffort: "medium",
+    reasoningEffort: "max",
     store: false,
     abortSignal: params.abortSignal,
     timeoutMs: 240_000,
-    // 含文件时优先官方 Responses；失败再回退（回退可能丢 file）
-    fallbackChatCompletions: attCount === 0,
+    fallbackChatCompletions: true,
   });
   const reply = String(text || "").trim();
   if (!reply) throw new Error("Pro Agent 返回空内容");
-  return { reply: reply.slice(0, 12000), via: "responses_pro", attachmentCount: attCount };
+  return { reply: reply.slice(0, 12000), via: "kimi_k3_chat", attachmentCount: attCount };
 }

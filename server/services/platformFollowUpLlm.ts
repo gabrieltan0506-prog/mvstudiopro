@@ -1,5 +1,5 @@
 /**
- * 平台「深度追问 / 趋势续分析」：仅 Evolink GPT‑5.6 Sol（已取消 OhMyGPT / Gemini fallback）。
+ * 平台「深度追问 / 趋势续分析」：OpenRouter Kimi K3（reasoning max）。
  */
 import { extractFirstChoicePlainText, invokeLLM } from "../_core/llm.js";
 import {
@@ -7,8 +7,6 @@ import {
   resolvePlatformStage2OpenAiReasoningEffort,
 } from "../config/platformSwitches.js";
 import { resolveGemini35FlashCopywritingMaxOutputTokens } from "./gemini35FlashRuntime.js";
-
-const FOLLOW_UP_TEMPERATURE = 0.8;
 
 export function buildPlatformFollowUpSystemPrompt(windowDays: number): string {
   return `你是一位专业、克制、会直接给判断的平台策略顾问，也会把策略翻成用户马上能开拍、开写、开卖的动作。
@@ -113,7 +111,6 @@ export async function invokePlatformFollowUpGpt55(options: {
     provider: "openai",
     modelName: openaiModel,
     max_tokens: resolveGemini35FlashCopywritingMaxOutputTokens(),
-    temperature: FOLLOW_UP_TEMPERATURE,
     response_format: { type: "json_object" },
     reasoningEffort,
     messages: [
@@ -124,7 +121,7 @@ export async function invokePlatformFollowUpGpt55(options: {
   });
   const raw = extractFirstChoicePlainText(response).trim();
   if (!raw) {
-    throw new Error("Evolink GPT-5.6 Sol 深度追问返回空内容（已取消 Gemini fallback）");
+    throw new Error("深度追问返回空内容，请稍后重试");
   }
   return { raw, modelName: openaiModel, provider: "openai", fallbackUsed: false };
 }

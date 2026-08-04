@@ -1,8 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  getVisualReportOpenAiModel,
-  VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL,
-} from "../config/platformSwitches.js";
+import { getVisualReportOpenAiModel } from "../config/platformSwitches.js";
 import {
   isDirectOpenRouterModelSlug,
   OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL,
@@ -12,6 +9,7 @@ import {
   resolveOpenRouterChatTarget,
   toOpenRouterGpt56Model,
 } from "./gpt56CopywritingGateway.js";
+import { OPENROUTER_KIMI_K3_MODEL } from "./openrouterKimiK3.js";
 
 const ENV_KEYS = [
   "OPENAI_API_KEY",
@@ -84,10 +82,10 @@ describe("resolveGpt56CopywritingTarget", () => {
   });
 
   it("visual report defaults to OpenRouter Kimi K3", () => {
+    delete process.env.PLATFORM_OPENROUTER_MODEL;
     delete process.env.VISUAL_REPORT_OPENROUTER_MODEL;
     delete process.env.VISUAL_REPORT_OPENAI_MODEL;
-    expect(getVisualReportOpenAiModel()).toBe(VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL);
-    expect(VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL).toBe("moonshotai/kimi-k3");
+    expect(getVisualReportOpenAiModel()).toBe(OPENROUTER_KIMI_K3_MODEL);
   });
 
   it("official_only forces api.openai.com and never Evolink/OpenRouter", () => {

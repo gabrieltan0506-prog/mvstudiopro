@@ -1,26 +1,24 @@
 /**
- * 默认：Creator Growth **Stage 1 / Stage 2 全案文案** = **OpenAI 官方 GPT‑5.6 Sol**（失败回退 **OpenRouter openai/gpt-5.6-sol**）。
+ * 默认：Creator Growth **Stage 1 / Stage 2 全案文案** = **OpenRouter Kimi K3**（`moonshotai/kimi-k3`，`reasoning_effort=max`）。
  * **平台选题 / Canvas 生图** = **OpenAI 官方 gpt-image-2**（失败回退 **OpenRouter openai/gpt-image-2**）。**平台图 = GCS**。
- * 输出上限：文案 **64K**（`GEMINI_35_FLASH_COPYWRITING_MAX_OUTPUT_TOKENS` / `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`）。
+ * 输出上限：文案默认 **131072**（`PLATFORM_KIMI_K3_MAX_COMPLETION_TOKENS` / `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`）。
  * 暫時改回 Fly 卷：設 `PLATFORM_IMAGE_STORAGE=fly`。Gemini 文案退路：設 `PLATFORM_STAGE2_LLM=vertex`。对照：`PLATFORM_IMAGE_STORAGE=gcs`。
- * 文案模型：`PLATFORM_STAGE2_OPENAI_MODEL` / `EVOLINK_GPT56_SOL_MODEL`（默认 `gpt-5.6-sol`）；密钥：`OPENAI_API_KEY` 优先，无则 `OPENROUTER_API_KEY`。
+ * 文案模型：`PLATFORM_OPENROUTER_MODEL`（默认 `moonshotai/kimi-k3`）；密钥：`OPENROUTER_API_KEY`。
  *
- * **Vertex Stage 2 暫停：** {@link PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED} 為 `true` 時，`buildPlatformContent` 一律 **OpenAI**，忽略 `PLATFORM_STAGE2_LLM=vertex`。Vertex 恢復後請設 `PLATFORM_STAGE2_VERTEX_AVAILABLE=1`，或將該常數改 `false`。
+ * **Vertex Stage 2 暫停：** {@link PLATFORM_STAGE2_VERTEX_TEMPORARILY_DISABLED} 為 `true` 時，`buildPlatformContent` 一律走 OpenRouter 文案路徑，忽略 `PLATFORM_STAGE2_LLM=vertex`。Vertex 恢復後請設 `PLATFORM_STAGE2_VERTEX_AVAILABLE=1`，或將該常數改 `false`。
  *
  * **緊急避險：** 僅在需關閉 Vertex/平台 GCS 時，將 {@link PLATFORM_USE_GOOGLE_GCP} 設為 `false`，或設 `PLATFORM_WEEKEND_ESCAPE=1`（預設允許 GCP，與語音等其它 Google 能力無關）。
  *
- * **週末生存模式：** 當 {@link PLATFORM_WEEKEND_SURVIVAL_MODE_FORCE_OFF} 為 `true` 時**程式強制關閉**，不再讀 `PLATFORM_WEEKEND_SURVIVAL_MODE`。設為 `false` 後，佈署變數 `PLATFORM_WEEKEND_SURVIVAL_MODE=1`（或 `true`/`yes`/`on`）可再啟用，等同平台 GCP 避險（Stage2→OpenAI、2×4 英文化鎖 GPT 5.4 等）。**存圖驅動**仍依 {@link resolvePlatformImageStorageDriver}：預設 **GCS**，暫回 Fly 請設 `PLATFORM_IMAGE_STORAGE=fly`。
+ * **週末生存模式：** 當 {@link PLATFORM_WEEKEND_SURVIVAL_MODE_FORCE_OFF} 為 `true` 時**程式強制關閉**，不再讀 `PLATFORM_WEEKEND_SURVIVAL_MODE`。設為 `false` 後，佈署變數 `PLATFORM_WEEKEND_SURVIVAL_MODE=1`（或 `true`/`yes`/`on`）可再啟用，等同平台 GCP 避險（2×4 英文化鎖 GPT 5.4 等）。**存圖驅動**仍依 {@link resolvePlatformImageStorageDriver}：預設 **GCS**，暫回 Fly 請設 `PLATFORM_IMAGE_STORAGE=fly`。
  *
  * **Vertex Flash 英文化關閉（代碼保留）：** 設 `PLATFORM_VERTEX_FLASH_TRANSLATION=0`（或 `false`/`off`）或 `PLATFORM_VERTEX_FLASH_TRANSLATION_OFF=1`，則不調 Vertex Flash 譯英文／兜底；見 {@link isPlatformVertexFlashTranslationEnabled}。
  */
 
 import {
-  EVOLINK_CHAT_MODEL_GPT56_SOL,
-  EVOLINK_CHAT_MODEL_GPT56_TERRA,
-  getEvolinkGpt56SolModel,
-  getEvolinkGpt56TerraModel,
-  normalizeEvolinkChatModel,
-} from "../services/evolinkChatModel.js";
+  getOpenRouterKimiK3Model,
+  OPENROUTER_KIMI_K3_MODEL,
+  OPENROUTER_KIMI_K3_REASONING_EFFORT,
+} from "../services/openrouterKimiK3.js";
 
 export type PlatformStage2LlmMode = "openai" | "vertex";
 export type PlatformImageStorageDriver = "fly" | "gcs";
@@ -265,68 +263,53 @@ export function resolvePlatformStage2LlmMode(): PlatformStage2LlmMode {
 }
 
 /**
- * Creator Growth **Stage 1 / Stage 2 全案 / 战略看板 / 深度追问 / 自定义选题文案** 主路径固定 **OpenAI 官方 GPT‑5.6 Sol**。  
- * 官方失败或未配置 `OPENAI_API_KEY` 时由 `invokeOpenAI` / `resolveTarget` 改走 **OpenRouter openai/gpt-5.6-sol**。  
- * **生图：OpenAI gpt-image-2 → OpenRouter**。Gemini 文案退路：`PLATFORM_STAGE2_LLM=vertex`。
+ * Creator Growth **Stage 1 / Stage 2 全案 / 战略看板 / 深度追问 / 自定义选题文案**
+ * 主路径固定 **OpenRouter Kimi K3**（`moonshotai/kimi-k3`）。
+ * **生图仍：OpenAI gpt-image-2 → OpenRouter**。
  */
 export function getPlatformStage2OpenAiModel(): string {
-  return getEvolinkGpt56SolModel();
+  return getOpenRouterKimiK3Model();
 }
 
-/** 趋势 PNG 报表默认走 OpenRouter Kimi K3（https://openrouter.ai/moonshotai/kimi-k3） */
-export const VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL = "moonshotai/kimi-k3";
+/** @deprecated 与 {@link OPENROUTER_KIMI_K3_MODEL} 同值；保留旧导出名 */
+export const VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL = OPENROUTER_KIMI_K3_MODEL;
 
 /**
- * 平台趋势 PNG 报表（generateVisualReport）专用模型：默认 **moonshotai/kimi-k3**（OpenRouter 直连）。
- * 覆盖：`VISUAL_REPORT_OPENROUTER_MODEL` 或旧名 `VISUAL_REPORT_OPENAI_MODEL`。
+ * 平台趋势 PNG 报表（generateVisualReport）：OpenRouter Kimi K3。
  */
 export function getVisualReportOpenAiModel(): string {
-  const raw = String(
-    process.env.VISUAL_REPORT_OPENROUTER_MODEL ||
-      process.env.VISUAL_REPORT_OPENAI_MODEL ||
-      VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL,
-  ).trim();
-  return raw || VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL;
+  return getOpenRouterKimiK3Model();
 }
 
 /**
- * /platform 创作顾问免费问答默认模型：**gpt-5.6-terra**。
+ * /platform 创作顾问问答默认模型：OpenRouter Kimi K3。
  */
 export function getPlatformSkillQaOpenAiModel(): string {
-  return getEvolinkGpt56TerraModel();
-}
-
-/** 创作顾问问答推理强度：可用 `PLATFORM_SKILL_QA_REASONING_EFFORT` 全局覆盖；否则按模型默认。 */
-export function resolvePlatformSkillQaReasoningEffort(mode?: "terra" | "sol"):
-  | "none"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh" {
-  const raw = norm(process.env.PLATFORM_SKILL_QA_REASONING_EFFORT);
-  const allowed = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
-  if (allowed.has(raw)) return raw as ReturnType<typeof resolvePlatformSkillQaReasoningEffort>;
-  if (mode === "sol") return "high";
-  if (mode === "terra") return "medium";
-  // 未传 mode 的旧调用方（如动效PPT）保持 high
-  return "high";
+  return getOpenRouterKimiK3Model();
 }
 
 /**
- * 解析创作顾问问答模型：用户/管理者均可选 Sol 或 Terra（计费与免费额度不同）。
+ * 创作顾问问答推理强度：Kimi K3 固定 **max**（OpenRouter / 官方文档默认与最大档）。
+ * env `PLATFORM_SKILL_QA_REASONING_EFFORT=max|high|low` 可覆盖（Kimi 侧 low/high 视网关是否透传）。
+ */
+export function resolvePlatformSkillQaReasoningEffort(
+  _mode?: "terra" | "sol",
+): "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" {
+  const raw = norm(process.env.PLATFORM_SKILL_QA_REASONING_EFFORT);
+  if (raw === "max" || raw === "high" || raw === "low") return raw;
+  return OPENROUTER_KIMI_K3_REASONING_EFFORT;
+}
+
+/**
+ * 解析创作顾问问答模型：计费档位仍可读 Sol/Terra（UI 额度），**实际推理一律 Kimi K3**。
  */
 export function resolvePlatformSkillQaOpenAiModel(params: {
   requested?: string | null;
   /** @deprecated 不再强制一般用户 Terra；保留参数以免调用方报错 */
   isSupervisor?: boolean;
-}): PlatformSkillQaModelChoice {
-  const req = normalizeEvolinkChatModel(
-    params.requested || getEvolinkGpt56TerraModel(),
-    EVOLINK_CHAT_MODEL_GPT56_TERRA,
-  );
-  if (req === EVOLINK_CHAT_MODEL_GPT56_SOL) return EVOLINK_CHAT_MODEL_GPT56_SOL;
-  return EVOLINK_CHAT_MODEL_GPT56_TERRA;
+}): string {
+  void params;
+  return getOpenRouterKimiK3Model();
 }
 
 /** 创作顾问超额售价（API 成本估值积分 × 1.6；可用 env 覆盖成本基数） */
@@ -344,18 +327,21 @@ export function resolvePlatformSkillQaPaidCredits(mode: "terra" | "sol"): number
   return Math.max(1, Math.ceil(apiCost * 1.6 - 1e-9));
 }
 
-/** Stage 1 / Stage 2 文案 GPT‑5.6 推理强度：默认 **high**（结果优先；可用 `PLATFORM_STAGE2_OPENAI_REASONING_EFFORT` 下调）。 */
+/**
+ * Stage 1 / Stage 2 文案推理强度：Kimi K3 默认 **max**。
+ * 可用 `PLATFORM_STAGE2_OPENAI_REASONING_EFFORT=max|high|low` 覆盖。
+ */
 export function resolvePlatformStage2OpenAiReasoningEffort():
   | "none"
   | "minimal"
   | "low"
   | "medium"
   | "high"
-  | "xhigh" {
+  | "xhigh"
+  | "max" {
   const raw = norm(process.env.PLATFORM_STAGE2_OPENAI_REASONING_EFFORT);
-  const allowed = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
-  if (allowed.has(raw)) return raw as ReturnType<typeof resolvePlatformStage2OpenAiReasoningEffort>;
-  return "high";
+  if (raw === "max" || raw === "high" || raw === "low") return raw;
+  return OPENROUTER_KIMI_K3_REASONING_EFFORT;
 }
 
 /** 封面英文化 GPT‑5.4 JSON：默认 **medium**。 */
@@ -403,10 +389,10 @@ export function resolveGpt54CompositeTranslationMaxOutputTokens(): number {
 }
 
 /**
- * Stage 2 OpenAI **第二階** JSON 封裝：与文案主路径一致，固定 **gpt-5.6-sol**（官方 OpenAI → OpenRouter fallback）。
+ * Stage 2 **第二階** JSON 封裝：与文案主路径一致，固定 OpenRouter Kimi K3。
  */
 export function getPlatformStage2StructureOpenAiModel(): string {
-  return getEvolinkGpt56SolModel();
+  return getOpenRouterKimiK3Model();
 }
 
 /**

@@ -46,7 +46,7 @@ const HTML_PPT_THEME_SUGGEST_MAX_TOKENS = 8000;
 const CHUNK_SOFT_MAX = 6;
 const SINGLE_SHOT_MAX = 10;
 
-type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 async function invokeSolJson(
   system: string,
@@ -62,7 +62,6 @@ async function invokeSolJson(
     modelName: getPlatformStage2OpenAiModel(),
     reasoningEffort,
     max_tokens: maxTokens,
-    temperature: 0.55,
     messages: [
       { role: "system", content: system },
       { role: "user", content: userBlock },
@@ -84,10 +83,8 @@ async function invokeTerraJson(
   const response = await invokeLLM({
     provider: "openai",
     modelName: getPlatformSkillQaOpenAiModel(),
-    openAiGateway: "official_only",
     reasoningEffort,
     max_tokens: maxTokens,
-    temperature: 0.6,
     messages: [
       { role: "system", content: system },
       { role: "user", content: userBlock },
@@ -102,7 +99,7 @@ async function invokeSolWithEffortFallback(
   userBlock: string,
   parse: (raw: string) => unknown,
 ): Promise<unknown> {
-  const efforts: ReasoningEffort[] = ["high", "medium"];
+  const efforts: ReasoningEffort[] = ["max", "high"];
   let lastError: unknown;
   for (const reasoningEffort of efforts) {
     try {
@@ -114,7 +111,7 @@ async function invokeSolWithEffortFallback(
     } catch (err) {
       lastError = err;
       console.warn(
-        `[platformHtmlPptOutline] Sol 失败 (reasoning=${reasoningEffort}):`,
+        `[platformHtmlPptOutline] Kimi 失败 (reasoning=${reasoningEffort}):`,
         err instanceof Error ? err.message.slice(0, 240) : err,
       );
     }
@@ -277,9 +274,7 @@ export async function suggestHtmlPptThemes(
   });
   const configured = resolvePlatformSkillQaReasoningEffort();
   const efforts: ReasoningEffort[] =
-    configured === "high" || configured === "medium"
-      ? [configured, configured === "high" ? "medium" : "high"]
-      : ["medium", "high"];
+    configured === "low" || configured === "high" ? [configured, "max"] : ["max", "high"];
 
   let lastError: unknown;
   const model = getPlatformSkillQaOpenAiModel();
@@ -299,7 +294,7 @@ export async function suggestHtmlPptThemes(
     } catch (err) {
       lastError = err;
       console.warn(
-        "[suggestHtmlPptThemes] Terra 失败:",
+        "[suggestHtmlPptThemes] Kimi 失败:",
         err instanceof Error ? err.message.slice(0, 240) : err,
       );
     }

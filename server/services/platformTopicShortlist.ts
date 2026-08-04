@@ -248,26 +248,24 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
       provider: "openai",
       modelName: getPlatformStage2OpenAiModel(),
       // 20–30 条时输出会明显变长，按条数抬上限，避免 JSON 被截断解析失败
-      max_tokens: maxTokens,
-      temperature: 0.7,
+      max_tokens: Math.max(maxTokens, 24_000),
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-      // 产品口径：固定 medium，不用 minimal
-      reasoningEffort: "medium",
+      reasoningEffort: "max",
     });
 
   let emptyRetried = false;
   console.info(
-    `[generatePlatformTopicShortlist] 开始 LLM count=${targetCount} reasoning=medium trendStatus=${trendStatus} trendPlatforms=${trendBriefs.length}`,
+    `[generatePlatformTopicShortlist] 开始 LLM count=${targetCount} reasoning=max model=kimi-k3 trendStatus=${trendStatus} trendPlatforms=${trendBriefs.length}`,
   );
   let res = await invokeShortlist();
   let llmText = extractFirstChoicePlainText(res).trim();
   if (!llmText) {
     emptyRetried = true;
-    console.warn("[generatePlatformTopicShortlist] 首次空回（medium），再以 medium 重试一次");
+    console.warn("[generatePlatformTopicShortlist] 首次空回（max），再以 max 重试一次");
     res = await invokeShortlist();
     llmText = extractFirstChoicePlainText(res).trim();
   }

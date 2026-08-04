@@ -36,6 +36,10 @@ import {
   toOpenRouterGpt56Model,
 } from "../services/gpt56CopywritingGateway";
 import { getOpenRouterApiKey } from "../services/openrouterGptImage2";
+import {
+  isOpenRouterKimiK3Model,
+  OPENROUTER_KIMI_K3_REASONING_EFFORT,
+} from "../services/openrouterKimiK3";
 
 export type Role = "developer" | "system" | "user" | "assistant" | "tool" | "function";
 
@@ -107,8 +111,11 @@ export type InvokeParams = {
   response_format?: ResponseFormat;
   provider?: Provider;
   modelName?: string;
-  /** GPT-5 系：推理强度 {@link https://developers.openai.com/api/docs/guides/reasoning}；与 gpt-5.5 默认一致推 `medium`。 */
-  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  /**
+   * 推理强度：GPT-5 系见 OpenAI reasoning；Kimi K3 用 `max`（亦可 `low`/`high`）。
+   * {@link https://platform.kimi.ai/docs/guide/use-reasoning-effort}
+   */
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   /** When aborted (e.g. client disconnected), in-flight provider requests are cancelled. */
   abortSignal?: AbortSignal;
   /**
@@ -1159,15 +1166,27 @@ export function getOpenAiGpt5ReasoningEffortDiagnostics(): {
 
 async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target: LlmTarget): Promise<InvokeResult> {
   const normalizedResponseFormat = normalizeResponseFormat(params);
-  const supportsSamplingControls = !/^gpt-5(?:[.-]|$)/i.test(String(target.modelName || "").trim());
-  const isGpt5Family = /^gpt-5(?:[.-]|$)/i.test(String(target.modelName || "").trim());
+  const modelId = String(target.modelName || "").trim();
+  const isKimiK3 = isOpenRouterKimiK3Model(modelId);
+  /** Kimi K3：官方文档要求勿传 temperature/top_p（固定）；GPT-5 系亦不用采样控件 */
+  const supportsSamplingControls =
+    !isKimiK3 && !/^gpt-5(?:[.-]|$)/i.test(modelId) && !/^openai\/gpt-5/i.test(modelId);
+  const isGpt5Family = /^gpt-5(?:[.-]|$)/i.test(modelId) || /^openai\/gpt-5/i.test(modelId);
   /** gpt-5.5 官方默认 medium；JSON 与纯文本重试分别可用环境变量覆盖。 */
   const jsonReasoningFallback = parseGpt5ReasoningEffortEnv("OPENAI_GPT5_JSON_REASONING_EFFORT", "medium");
   const textReasoningFallback = parseGpt5ReasoningEffortEnv("OPENAI_GPT5_TEXT_REASONING_EFFORT", "medium");
   const wantsStructured =
     normalizedResponseFormat?.type === "json_object" || normalizedResponseFormat?.type === "json_schema";
   let reasoningEffort: string | undefined;
-  if (isGpt5Family) {
+  if (isKimiK3) {
+    const requested = String(params.reasoningEffort || "").trim().toLowerCase();
+    // Evolink/OpenRouter Kimi：最大档 max；非法档位（如 GPT 的 minimal）一律升为 max
+    if (requested === "low" || requested === "high" || requested === "max") {
+      reasoningEffort = requested;
+    } else {
+      reasoningEffort = OPENROUTER_KIMI_K3_REASONING_EFFORT;
+    }
+  } else if (isGpt5Family) {
     if (params.reasoningEffort) {
       reasoningEffort = params.reasoningEffort;
     } else if (wantsStructured) {
