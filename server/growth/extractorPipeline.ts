@@ -1,4 +1,8 @@
 import type { GrowthCampModel } from "@shared/growth";
+import {
+  OPENROUTER_KIMI_K3_MODEL,
+  OPENROUTER_KIMI_K3_REASONING_EFFORT,
+} from "../services/openrouterKimiK3.js";
 
 export function resolveGrowthCampExtractorModel() {
   return String(process.env.GROWTH_CAMP_EXTRACTOR_MODEL || "gemini-3.5-flash").trim()
@@ -11,17 +15,20 @@ export type GrowthCampStrategistEngine = {
   label: string;
 };
 
-/** Phase 2（抽帧视觉 + Markdown 总结 / 战略阶段）：GPT-5.6 Sol */
-export const GROWTH_CAMP_PHASE2_MODEL = "gpt-5.6-sol" as const;
-export const GROWTH_CAMP_PHASE2_REASONING_EFFORT = "high" as const;
+/**
+ * Phase 2（抽帧视觉 + Markdown 总结 / 战略阶段）：OpenRouter Kimi K3。
+ * （临时：Sol 官方额度不足 + OpenRouter OpenAI ToS）
+ */
+export const GROWTH_CAMP_PHASE2_MODEL = OPENROUTER_KIMI_K3_MODEL;
+export const GROWTH_CAMP_PHASE2_REASONING_EFFORT = OPENROUTER_KIMI_K3_REASONING_EFFORT;
 export const GROWTH_CAMP_PHASE2_MAX_TOKENS = 128_000;
 
-/** 成长营 Phase 2 引擎：GPT-5.6 Sol · reasoning=high · max_tokens=128k */
+/** 成长营 Phase 2 引擎：Kimi K3 · reasoning=max · max_tokens=128k */
 export function resolveGrowthCampPhase2Engine(): GrowthCampStrategistEngine {
   return {
     modelName: GROWTH_CAMP_PHASE2_MODEL,
     provider: "openai",
-    label: "GPT-5.6 Sol",
+    label: "文案主力",
   };
 }
 
@@ -47,7 +54,7 @@ export type GrowthCampPhase2InvokeOpts = {
   max_tokens?: number;
 };
 
-/** invokeLLM 参数：Phase 2 Sol 固定 high + 128k；其它 openai 模型保持兼容。 */
+/** invokeLLM 参数：Phase 2 Kimi 固定 max + 128k；其它 openai 模型保持兼容。 */
 export function growthCampPhase2InvokeOpts(
   engine: GrowthCampStrategistEngine,
 ): GrowthCampPhase2InvokeOpts {
@@ -57,7 +64,6 @@ export function growthCampPhase2InvokeOpts(
     modelName: engine.modelName,
   };
   if (engine.provider !== "openai") return base;
-  // Phase 2 统一 Sol：high + 128k（旧 gpt-5.5 / gemini 别名也会 resolve 到 Sol）
   return {
     ...base,
     modelName: GROWTH_CAMP_PHASE2_MODEL,
@@ -66,7 +72,7 @@ export function growthCampPhase2InvokeOpts(
   };
 }
 
-/** 成长营深度分析（Phase 2）引擎：默认 GPT-5.6 Sol；旧 gpt-5.5 / gemini 别名统一迁到 Sol。 */
+/** 成长营深度分析（Phase 2）引擎：默认 Kimi K3；旧 sol / gpt-5.5 / gemini 别名统一迁到 Kimi。 */
 export function resolveGrowthCampStrategistEngine(modelName?: string): GrowthCampStrategistEngine {
   const raw = String(
     modelName
@@ -77,15 +83,14 @@ export function resolveGrowthCampStrategistEngine(modelName?: string): GrowthCam
     .toLowerCase();
   if (
     raw === GROWTH_CAMP_PHASE2_MODEL
+    || raw === "kimi-k3"
+    || raw === "moonshotai/kimi-k3"
+    || raw.endsWith("/kimi-k3")
+    || raw === "gpt-5.6-sol"
     || raw === "gpt56sol"
     || raw === "gpt-5.6"
     || raw === "sol"
-  ) {
-    return resolveGrowthCampPhase2Engine();
-  }
-  // 旧配置/缓存别名 → 统一走 Phase 2 Sol（Gemini 仅保留后台语音 scan）
-  if (
-    raw === "gpt-5.5"
+    || raw === "gpt-5.5"
     || raw === "gpt55"
     || raw === "gemini-3.5-flash"
     || raw === "gemini-2.5-pro"
@@ -98,7 +103,7 @@ export function resolveGrowthCampStrategistEngine(modelName?: string): GrowthCam
 
 /**
  * 战略分析阶段模型（GROWTH_CAMP_FINAL_MODEL）
- * - 默认 gpt-5.6-sol（reasoning=high，max_tokens=128k）
+ * - 默认 moonshotai/kimi-k3（reasoning=max，max_tokens=128k）
  * - 语音 scan 仍走 resolveGrowthCampExtractScanEngine（Gemini 3.5 Flash）
  */
 export function resolveGrowthCampStrategistModel(modelName?: string): GrowthCampModel {
@@ -107,5 +112,5 @@ export function resolveGrowthCampStrategistModel(modelName?: string): GrowthCamp
 
 export function resolveGrowthCampPipelineMode(modelName?: string) {
   void resolveGrowthCampStrategistEngine(modelName);
-  return "extractor_plus_gpt56_sol_strategist";
+  return "extractor_plus_kimi_k3_strategist";
 }

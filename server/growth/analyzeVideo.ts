@@ -173,7 +173,7 @@ type StrategistRefinement = Partial<Pick<GrowthAnalysisScores,
   | "followUpPrompt"
 >>;
 
-// Stage 1（音频/语音 scan）默认 Gemini 3.5 Flash；Phase 2 抽帧视觉+总结固定 GPT-5.6 Sol（high / 128k）。
+// Stage 1（音频/语音 scan）默认 Gemini 3.5 Flash；Phase 2 抽帧视觉+总结固定 OpenRouter Kimi K3（max / 128k）。
 function growthCampFirstPassModel(): string {
   return resolveGrowthCampExtractorModel();
 }

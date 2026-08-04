@@ -23,8 +23,10 @@ export function growthPlatformsForStatsAggregationList(): (typeof growthPlatform
   return growthPlatformValues.filter((p) => isGrowthPlatformInStatsAggregate(p));
 }
 
-/** Phase2 主力 gpt-5.6-sol；gemini 仅语音 scan；gpt-5.5 兼容旧入参 */
+/** Phase2 主力 OpenRouter Kimi K3；gemini 仅语音 scan；gpt-5.6-sol / gpt-5.5 兼容旧入参 */
 export const growthCampModelValues = [
+  "moonshotai/kimi-k3",
+  "kimi-k3",
   "gpt-5.6-sol",
   "gemini-3.5-flash",
   "gpt-5.5",

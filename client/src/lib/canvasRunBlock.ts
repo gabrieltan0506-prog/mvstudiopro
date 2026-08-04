@@ -114,7 +114,11 @@ function resolveCanvasTextPrimaryModel(textModel: string | undefined): string {
   if (m === "kimi-k3" || m === "moonshotai/kimi-k3" || m.endsWith("/kimi-k3")) {
     return CANVAS_KIMI_PRIMARY_MODEL;
   }
-  if (m === "gpt-5.6-sol" || m === "gpt-5.5" || m === "gpt-5.4" || m === "gpt-5.6-terra") {
+  // 临时：Sol 官方额度空 + OpenRouter OpenAI ToS → 改走主力 Kimi
+  if (m === "gpt-5.6-sol" || m === "gpt-5.5" || m === "gpt-5.4") {
+    return CANVAS_KIMI_PRIMARY_MODEL;
+  }
+  if (m === "gpt-5.6-terra") {
     return m;
   }
   // 默认 / 含显式 gemini：主力 Kimi；Gemini 仅 fallback

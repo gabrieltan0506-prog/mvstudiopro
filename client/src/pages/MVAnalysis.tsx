@@ -560,7 +560,7 @@ const GROWTH_CAMP_ANALYSIS_PROFILE_LS = "mv-growth-camp-analysis-profile";
 const GROWTH_CAMP_EXTRACT_PROMPT_LS = "mv-growth-camp-extract-prompt";
 
 /** 成长营分析引擎（内部常量，不对用户展示模型名） */
-const GROWTH_CAMP_ANALYSIS_MODEL: GrowthCampModel = "gpt-5.6-sol";
+const GROWTH_CAMP_ANALYSIS_MODEL: GrowthCampModel = "moonshotai/kimi-k3";
 
 /** 仅 Debug 面板展示：提取模式链路说明 */
 const EXTRACT_PIPELINE_DEBUG_NOTE =

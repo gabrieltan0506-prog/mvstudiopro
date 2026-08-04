@@ -1,5 +1,9 @@
 /**
  * GPT-5.6 平台文案网关：OpenAI 官方优先，OpenRouter fallback。
+ *
+ * 临时（2026-08）：当前 OpenRouter 账号对 openai/gpt-5.6-* 返回 ToS 403，
+ * 且官方额度不足 → Sol 文案默认改走 OpenRouter Kimi K3。
+ * 恢复后设 `GPT56_COPY_USE_KIMI=0`。
  */
 
 import {
@@ -8,6 +12,7 @@ import {
   normalizeEvolinkChatModel,
 } from "./evolinkChatModel.js";
 import { getOpenRouterApiKey } from "./openrouterGptImage2.js";
+import { getOpenRouterKimiK3Model } from "./openrouterKimiK3.js";
 
 export const OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
 /** @deprecated 文案主路径已改 OpenRouter；保留常量供旧测/非 5.6 路径引用 */
@@ -84,6 +89,23 @@ export function resolveOpenRouterChatTarget(modelName: string): Gpt56Copywriting
   };
 }
 
+/**
+ * Sol/GPT-5.6 文案是否改走 Kimi（默认开）。
+ * `GPT56_COPY_USE_KIMI=0|false|off` 可恢复「官方 Sol → OpenRouter Sol」。
+ */
+export function shouldRouteGpt56CopywritingViaKimi(): boolean {
+  const raw = String(process.env.GPT56_COPY_USE_KIMI ?? "1").trim().toLowerCase();
+  return raw !== "0" && raw !== "false" && raw !== "off" && raw !== "no";
+}
+
+/** OpenRouter 侧 GPT-5.6 不可用时的文案 fallback 模型。 */
+export function resolveGpt56OpenRouterFallbackModel(modelNameHint?: string): string {
+  if (shouldRouteGpt56CopywritingViaKimi()) {
+    return getOpenRouterKimiK3Model();
+  }
+  return toOpenRouterGpt56Model(modelNameHint || getEvolinkGpt56SolModel());
+}
+
 export function getOpenRouterChatHeaders(): Record<string, string> {
   const referer = String(
     process.env.OPENROUTER_HTTP_REFERER || process.env.APP_URL || "https://www.mvstudiopro.com",
@@ -99,6 +121,10 @@ export function getOpenRouterChatHeaders(): Record<string, string> {
 
 /** 解析 GPT-5.6 文案应打的网关（不发请求）：官方 OpenAI → OpenRouter。 */
 export function resolveGpt56CopywritingTarget(modelNameHint?: string): Gpt56CopywritingTarget {
+  /** 临时：Sol 官方额度空 + OpenRouter OpenAI ToS → 直连 Kimi */
+  if (shouldRouteGpt56CopywritingViaKimi()) {
+    return resolveOpenRouterChatTarget(getOpenRouterKimiK3Model());
+  }
   const modelName = normalizeEvolinkChatModel(
     modelNameHint || getEvolinkGpt56SolModel(),
     EVOLINK_CHAT_MODEL_GPT56_SOL,

@@ -32,8 +32,8 @@ import {
   OPENROUTER_CHAT_COMPLETIONS_URL,
   resolveGpt56CopywritingTarget,
   resolveGpt56OfficialOnlyTarget,
+  resolveGpt56OpenRouterFallbackModel,
   resolveOpenRouterChatTarget,
-  toOpenRouterGpt56Model,
 } from "../services/gpt56CopywritingGateway";
 import { getOpenRouterApiKey } from "../services/openrouterGptImage2";
 import {
@@ -1320,15 +1320,20 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
       label,
     );
   } catch (primaryErr) {
-    // GPT-5.6 文案：官方 OpenAI 失败 → OpenRouter fallback（official_only 禁止）
+    // GPT-5.6 文案：官方 OpenAI 失败 → OpenRouter fallback（默认 Kimi；official_only 禁止）
     if (isOfficialEndpoint && isGpt56Family && !officialOnly) {
       const openrouterKey = getOpenRouterApiKey();
       if (openrouterKey) {
         const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
-        console.warn(`[OpenAI→OpenRouter] GPT-5.6 copywriting fallback after official OpenAI failure: ${msg.slice(0, 240)}`);
+        const fallbackModel = resolveGpt56OpenRouterFallbackModel(
+          String(payload.model || target.modelName || ""),
+        );
+        console.warn(
+          `[OpenAI→OpenRouter] GPT-5.6 copywriting fallback model=${fallbackModel} after official OpenAI failure: ${msg.slice(0, 240)}`,
+        );
         const orPayload = {
           ...payload,
-          model: toOpenRouterGpt56Model(String(payload.model || target.modelName || "gpt-5.6-sol")),
+          model: fallbackModel,
         };
         return await postChatCompletions(
           OPENROUTER_CHAT_COMPLETIONS_URL,

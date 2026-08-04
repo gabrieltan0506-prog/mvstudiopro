@@ -17,6 +17,7 @@ const ENV_KEYS = [
   "OPENROUTER_API_KEY",
   "EVOLINK_API_KEY",
   "PLATFORM_STAGE2_OPENAI_MODEL",
+  "GPT56_COPY_USE_KIMI",
 ] as const;
 
 describe("resolveGpt56CopywritingTarget", () => {
@@ -36,7 +37,19 @@ describe("resolveGpt56CopywritingTarget", () => {
     else process.env[key] = value;
   }
 
-  it("prefers official OpenAI when OPENAI_API_KEY is set", () => {
+  it("defaults to OpenRouter Kimi while GPT56_COPY_USE_KIMI is on", () => {
+    setEnv("GPT56_COPY_USE_KIMI", "1");
+    setEnv("OPENAI_API_KEY", "sk-official");
+    setEnv("OPENROUTER_API_KEY", "sk-or-fallback");
+    const t = resolveGpt56CopywritingTarget("gpt-5.6-sol");
+    expect(t.gateway).toBe("openrouter");
+    expect(t.apiUrl).toBe(OPENROUTER_CHAT_COMPLETIONS_URL);
+    expect(t.apiKey).toBe("sk-or-fallback");
+    expect(t.modelName).toBe(OPENROUTER_KIMI_K3_MODEL);
+  });
+
+  it("prefers official OpenAI when GPT56_COPY_USE_KIMI is off", () => {
+    setEnv("GPT56_COPY_USE_KIMI", "0");
     setEnv("OPENAI_API_KEY", "sk-official");
     setEnv("OPENROUTER_API_KEY", "sk-or-fallback");
     const t = resolveGpt56CopywritingTarget("gpt-5.6-sol");
@@ -46,7 +59,8 @@ describe("resolveGpt56CopywritingTarget", () => {
     expect(t.modelName).toBe("gpt-5.6-sol");
   });
 
-  it("falls back to OpenRouter when official key missing", () => {
+  it("falls back to OpenRouter Sol when Kimi gate off and official key missing", () => {
+    setEnv("GPT56_COPY_USE_KIMI", "0");
     setEnv("OPENAI_API_KEY", undefined);
     setEnv("OPENAI_CHAT_API_KEY", undefined);
     setEnv("OPENROUTER_API_KEY", "sk-or-only");
@@ -58,6 +72,7 @@ describe("resolveGpt56CopywritingTarget", () => {
   });
 
   it("throws when neither OpenAI nor OpenRouter key is configured", () => {
+    setEnv("GPT56_COPY_USE_KIMI", "0");
     setEnv("OPENAI_API_KEY", undefined);
     setEnv("OPENAI_CHAT_API_KEY", undefined);
     setEnv("OPENROUTER_API_KEY", undefined);

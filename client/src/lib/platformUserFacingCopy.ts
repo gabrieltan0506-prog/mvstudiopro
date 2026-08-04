@@ -13,7 +13,7 @@ export function sanitizePlatformUserMessage(raw: string, fallback = "操作暂�
   if (/积分不足|insufficient.?quota|dashboard\/billing/i.test(text)) {
     return "上游模型账户积分不足，请充值后再试（https://evolink.ai/dashboard/billing）";
   }
-  // 模型 deployment / 上游 404 —— 明确告知非积分问题；全案文案主路径为 OpenAI 官方 gpt-5.6-sol，失败改走 Evolink
+  // 模型 deployment / 上游 404 —— 明确告知非积分问题
   if (/模型暂不可用|非积分问题|Could not find an existing deployment|Specified model not found/i.test(text)) {
     return "文案模型暂不可用（非积分问题）；系统将尝试备用网关，请稍后重试";
   }

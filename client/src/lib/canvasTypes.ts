@@ -255,7 +255,8 @@ export const CANVAS_KIND_META: Record<
 export const TEXT_MODEL_OPTIONS: Array<{ id: CanvasTextModel; label: string }> = [
   { id: "kimi-k3", label: "文案·主力" },
   { id: "gpt-5.6-terra", label: "文案·备用 A" },
-  { id: "gpt-5.6-sol", label: "文案·备用 B" },
+  /** Sol 暂不可用：选项保留兼容旧画布，实际出字改走主力 */
+  { id: "gpt-5.6-sol", label: "文案·备用 B（暂走主力）" },
   { id: "gemini-3.1-pro", label: "文案·备用 C" },
   { id: "gpt-5.5", label: "文案·旧档" },
   { id: "gpt-5.4", label: "文案·旧档 2" },
