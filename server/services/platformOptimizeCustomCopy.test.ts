@@ -14,18 +14,25 @@ vi.mock("../_core/llm.js", () => ({
 }));
 
 vi.mock("../config/platformSwitches.js", () => ({
-  getPlatformStage2OpenAiModel: () => "gpt-5.5",
-  resolvePlatformStage2OpenAiReasoningEffort: () => "medium",
+  getPlatformStage2OpenAiModel: () => "moonshotai/kimi-k3",
+  resolvePlatformStage2OpenAiReasoningEffort: () => "max",
 }));
 
-vi.mock("./gemini35FlashRuntime.js", () => ({
-  resolveGemini35FlashCopywritingMaxOutputTokens: () => 65536,
-  resolvePlatformStage2GeminiModel: () => "gemini-3.1-pro-preview",
-  callGemini35FlashCopywriting: vi.fn(),
+vi.mock("./openrouterKimiK3.js", () => ({
+  OPENROUTER_KIMI_K3_REASONING_EFFORT: "max",
+  resolveOpenRouterKimiK3MaxCompletionTokens: () => 131072,
+}));
+
+vi.mock("./gpt56CopywritingGateway.js", () => ({
+  getOfficialOpenAiApiKey: () => "",
+  getEvolinkApiKey: () => "",
+}));
+
+vi.mock("./openrouterGptImage2.js", () => ({
+  getOpenRouterApiKey: () => "test-openrouter-key",
 }));
 
 import { extractFirstChoicePlainText, invokeLLM } from "../_core/llm.js";
-import { callGemini35FlashCopywriting } from "./gemini35FlashRuntime.js";
 import {
   OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE,
   optimizeCustomCopy,
@@ -35,7 +42,6 @@ import {
 describe("platformOptimizeCustomCopy", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.EVOLINK_API_KEY = "test-evolink-key";
   });
 
   it("parses fenced JSON from model output", () => {
@@ -52,7 +58,7 @@ describe("platformOptimizeCustomCopy", () => {
     );
   });
 
-  it("uses GPT-5.5 and returns structured result", async () => {
+  it("uses OpenRouter Kimi K3 and returns structured result", async () => {
     vi.mocked(invokeLLM).mockResolvedValueOnce({ choices: [{ message: { content: "" } }] } as never);
     vi.mocked(extractFirstChoicePlainText).mockReturnValueOnce(
       JSON.stringify({
@@ -69,30 +75,16 @@ describe("platformOptimizeCustomCopy", () => {
     });
 
     expect(result.optimizedMarkdown).toContain("优化稿");
-    expect(vi.mocked(invokeLLM).mock.calls[0]?.[0]).toMatchObject({ provider: "openai" });
     expect(vi.mocked(invokeLLM).mock.calls[0]?.[0]).toMatchObject({
-      max_tokens: 65536,
+      provider: "openai",
+      modelName: "moonshotai/kimi-k3",
+      reasoningEffort: "max",
+      max_tokens: 131072,
     });
   });
 
-  it("does not fall back to Gemini when Evolink GPT-5.6 fails", async () => {
-    vi.mocked(invokeLLM)
-      .mockRejectedValueOnce(new Error("Evolink returned non-JSON body"))
-      .mockRejectedValueOnce(new Error("Evolink returned non-JSON body"));
-
-    await expect(
-      optimizeCustomCopy({
-        sourceText: "这是一段足够长的测试文案，用于验证已取消 Gemini fallback。",
-      }),
-    ).rejects.toThrow(OPTIMIZE_CUSTOM_COPY_CAPACITY_MESSAGE);
-
-    expect(vi.mocked(callGemini35FlashCopywriting)).not.toHaveBeenCalled();
-  });
-
-  it("throws capacity message when Evolink fails twice", async () => {
-    vi.mocked(invokeLLM)
-      .mockRejectedValueOnce(new Error("Evolink returned non-JSON body"))
-      .mockRejectedValueOnce(new Error("Evolink returned non-JSON body"));
+  it("throws capacity message when Kimi fails", async () => {
+    vi.mocked(invokeLLM).mockRejectedValueOnce(new Error("OpenRouter returned non-JSON body"));
 
     await expect(
       optimizeCustomCopy({

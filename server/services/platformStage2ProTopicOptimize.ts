@@ -145,7 +145,7 @@ export async function optimizeStage2TopicsWithPro(params: {
       input,
       modelName: getPlatformStage2OpenAiModel(),
       reasoningMode: "pro",
-      reasoningEffort: "medium",
+      reasoningEffort: "max",
       store: false,
       jsonObject: true,
       abortSignal: params.abortSignal,
@@ -161,7 +161,7 @@ export async function optimizeStage2TopicsWithPro(params: {
         rawError: "pro_optimize_parse_failed",
       };
     }
-    return { ...normalized, via: "responses_pro" };
+    return { ...normalized, via: "kimi_k3_chat" };
   } catch (e) {
     return {
       ok: false,

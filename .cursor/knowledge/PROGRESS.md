@@ -327,6 +327,8 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 **清除角标工具（B·修补）**：`shared/aiCornerMarkRoi` + `server/services/eraseAiCornerMark`（ffmpeg delogo）+ jobs `eraseAiCornerMark`；画布成片·加长区「清除左上角标（后期修补）」——不裁画面、不烧上游积分。
 
+**平台文案全切 OpenRouter Kimi K3**：看板 / 趋势报表 / Skill QA / 追问 / 自定义优化 / HTML PPT / Pro Agent 等主路径 → `moonshotai/kimi-k3`，`reasoning_effort=max`，默认 `max_completion_tokens=131072`。Responses 调用遇 Kimi slug 直连 Chat Completions。分支 `feat/platform-kimi-k3-max`。
+
 ---
 
 ## 如何更新本文件

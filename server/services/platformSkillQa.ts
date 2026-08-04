@@ -34,7 +34,8 @@ export const PLATFORM_SKILL_QA_SOL_ACTION = "platformSkillQaSol";
 export const PLATFORM_SKILL_QA_IMAGE_ACTION = "platformSkillQaImage";
 
 /** 创作顾问问答输出上限（Terra/Sol 统一 32k） */
-const PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS = 32_000;
+/** Kimi K3：对齐文档默认量级（推理 token 计入） */
+const PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS = 131_072;
 
 export type PlatformSkillQaAskResult = {
   answer: string;
@@ -92,8 +93,9 @@ function qaActionForMode(mode: PlatformSkillQaBillingMode): string {
 }
 
 export function resolveSkillQaBillingMode(qaModel?: string | null): PlatformSkillQaBillingMode {
-  const m = resolvePlatformSkillQaOpenAiModel({ requested: qaModel });
-  return m.includes("sol") ? "sol" : "terra";
+  // 计费档位仍按 UI 选择的 Sol/Terra；实际推理模型一律 Kimi K3
+  const requested = String(qaModel || "").trim().toLowerCase();
+  return requested.includes("sol") ? "sol" : "terra";
 }
 
 /** 今日该模式已用次数（Terra 含旧 platformSkillQa 桶，避免刷次数） */
@@ -478,12 +480,10 @@ export async function askPlatformSkillQa(params: {
       const response = await invokeLLM({
         provider: "openai",
         modelName,
-        /** terra/sol 问答：仅 OpenAI 官方（禁止 Evolink） */
-        openAiGateway: "official_only",
+        /** OpenRouter Kimi K3 · reasoning max（slug 直连 OpenRouter） */
         max_tokens: PLATFORM_SKILL_QA_MAX_OUTPUT_TOKENS,
-        temperature: qaKind === "market_research" ? 0.45 : 0.7,
         response_format: { type: "json_object" },
-        reasoningEffort,
+        reasoningEffort: reasoningEffort === "low" || reasoningEffort === "high" ? reasoningEffort : "max",
         messages: [
           { role: "system", content: ASK_SYSTEM },
           { role: "user", content: userText },

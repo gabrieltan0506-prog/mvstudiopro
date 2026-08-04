@@ -26,6 +26,7 @@ import {
   resolveSupervisorTopicCoverPixelEngineInput,
   type PlatformStage2LlmMode,
 } from "./config/platformSwitches.js";
+import { resolveOpenRouterKimiK3MaxCompletionTokens } from "./services/openrouterKimiK3.js";
 import { storagePut, storageGet } from "./storage";
 import { usageRouter, incrementUsageCount } from "./routers/usage";
 import { phoneRouter } from "./routers/phone";
@@ -528,30 +529,25 @@ const PLATFORM_STAGE2_SYNC_LLM_TIMEOUT_MS = (() => {
 })();
 
 /**
- * Stage 2 `buildPlatformContent`：送進各家 API 的 **completion / max_output 上限**，與線路標籤無關。  
- * `PLATFORM_STAGE2_LLM=openai` 走 GPT，`vertex`/`gemini` 走 Gemini；**共用**環境變數 `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS`（勿與 Google Vertex AI 這條線名混淆）。預設 65536，上限 65536，下限 4096。
+ * Stage 2 / 看板等：OpenRouter Kimi K3 输出上限。  
+ * 默认 131072（文档默认）；可用 `PLATFORM_STAGE2_MAX_OUTPUT_TOKENS` 覆盖，封顶 1048576。
  */
-const STAGE2_SHARED_MAX_OUTPUT_TOKENS = (() => {
-  const raw = Number(process.env.PLATFORM_STAGE2_MAX_OUTPUT_TOKENS || "65536");
-  if (!Number.isFinite(raw) || raw < 4096) return 65536;
-  return Math.min(65536, Math.floor(raw));
-})();
+const STAGE2_SHARED_MAX_OUTPUT_TOKENS = resolveOpenRouterKimiK3MaxCompletionTokens(
+  "PLATFORM_STAGE2_MAX_OUTPUT_TOKENS",
+);
 
-/** Stage 1 / Stage 2 取樣溫度（GPT‑5 系 OpenAI 可能忽略 temperature，见 llm.ts）。 */
-const STAGE2_LLM_TEMPERATURE = 0.8;
-
-/** Stage 1 / Stage 2 / 深度追问：仅 Evolink GPT‑5.6 Sol；已取消 OhMyGPT / Gemini fallback。 */
+/** Stage 1 / Stage 2 / 深度追问：OpenRouter Kimi K3。 */
 function resolvePlatformCopyLlmMode(_input?: PlatformStage2LlmMode | null): PlatformStage2LlmMode {
   return "openai";
 }
 
-/** Stage 1 看板 / 趋势追问等：结构化 JSON 文案（仅 Evolink GPT‑5.6 Sol）。 */
+/** Stage 1 看板 / 趋势追问等：结构化 JSON 文案（OpenRouter Kimi K3 · reasoning max）。 */
 async function invokePlatformStructuredCopyLlm(options: {
   copyLlmMode: PlatformStage2LlmMode;
   systemInstruction: string;
   userText: string;
   abortSignal?: AbortSignal;
-  /** 覆寫 GPT‑5.6 推理檔位：空回重試時降到 low/minimal，逼模型把预算用于直接输出 JSON 而非耗尽在推理。 */
+  /** 覆寫推理檔位；Kimi 仅 max/high/low，非法值由 llm 升为 max */
   reasoningEffortOverride?: ReturnType<typeof resolvePlatformStage2OpenAiReasoningEffort>;
 }): Promise<string> {
   const modelName = getPlatformStage2OpenAiModel();
@@ -560,7 +556,6 @@ async function invokePlatformStructuredCopyLlm(options: {
     provider: "openai",
     modelName,
     max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
-    temperature: STAGE2_LLM_TEMPERATURE,
     response_format: { type: "json_object" },
     reasoningEffort,
     messages: [
@@ -571,14 +566,13 @@ async function invokePlatformStructuredCopyLlm(options: {
   });
   const text = extractFirstChoicePlainText(response).trim();
   if (text) return text;
-  // 空回时降推理档位再试一次（仍走 Evolink，不切 Gemini）
+  // 空回再试一次（Kimi 仍用 max；llm 会把非 max/high/low 升为 max）
   const retry = await invokeLLM({
     provider: "openai",
     modelName,
     max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
-    temperature: STAGE2_LLM_TEMPERATURE,
     response_format: { type: "json_object" },
-    reasoningEffort: "minimal",
+    reasoningEffort: "max",
     messages: [
       { role: "system", content: options.systemInstruction },
       { role: "user", content: options.userText },
@@ -1986,9 +1980,8 @@ ${styleDirective}
     const invoke = (effort?: OpenAiEffort) => invokeLLM({
       provider: "openai",
       modelName: openaiCreativeModel,
-      // 每條 blueprint 獨立 token 預算；給滿 65K headroom，避免 high 推理把輸出預算耗盡 → 空回。
+      // OpenRouter Kimi K3：文档默认 131072；推理 token 计入上限
       max_tokens: STAGE2_SHARED_MAX_OUTPUT_TOKENS,
-      temperature: STAGE2_LLM_TEMPERATURE,
       response_format: { type: "json_object" },
       messages: dimMessages,
       abortSignal: params.abortSignal,
@@ -1998,19 +1991,19 @@ ${styleDirective}
     try {
       let res = await invoke();
       let rawText = extractFirstChoicePlainText(res).trim();
-      // Retry if empty (reasoning budget exhaustion)
+      // Retry if empty（Kimi 仍用 max）
       if (!rawText) {
-        res = await invoke("minimal");
+        res = await invoke("max");
         rawText = extractFirstChoicePlainText(res).trim();
       }
       if (rawText) return parseSingleBlueprintRaw(rawText);
       console.warn(
-        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) Evolink GPT-5.6 空回（已取消 Gemini fallback）`,
+        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) OpenRouter Kimi K3 空回`,
       );
       return null;
     } catch (e) {
       console.warn(
-        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) Evolink GPT-5.6 failed:`,
+        `[buildPlatformContent] dim ${dimIndex + 1} (${dimName}) OpenRouter Kimi K3 failed:`,
         e instanceof Error ? e.message : e,
       );
       return null;
@@ -2033,17 +2026,15 @@ ${styleDirective}
       const res = await invokeLLM({
         provider: "openai",
         modelName: openaiCreativeModel,
-        // 變現條較短，但仍給足 headroom（16K）並走 high：fit 判斷需要策略推理。
-        max_tokens: Math.min(STAGE2_SHARED_MAX_OUTPUT_TOKENS, 16000),
-        temperature: STAGE2_LLM_TEMPERATURE,
+        max_tokens: Math.min(STAGE2_SHARED_MAX_OUTPUT_TOKENS, 32_000),
         response_format: { type: "json_object" },
         messages: monetizationMessages,
         abortSignal: params.abortSignal,
-        reasoningEffort: "high",
+        reasoningEffort: "max",
       });
       const rawText = extractFirstChoicePlainText(res).trim();
       if (rawText) return parseMonetizationRaw(rawText);
-      console.warn("[buildPlatformContent] monetization Evolink GPT-5.6 空回（已取消 Gemini fallback）");
+      console.warn("[buildPlatformContent] monetization OpenRouter Kimi K3 空回");
       return [];
     } catch (e) {
       console.warn(
@@ -4889,9 +4880,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               : {}),
           });
 
-          const visualReportMaxTokens = Math.min(
-            32_768,
-            Math.max(4096, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 16_384),
+          const visualReportMaxTokens = resolveOpenRouterKimiK3MaxCompletionTokens(
+            "VISUAL_REPORT_MAX_COMPLETION_TOKENS",
           );
           const visualReportUser = `${userPayload}\n\n【輸出】僅輸出一個合法 JSON 物件（禁止 markdown围栏與前言後語）；首尾字元為 { 與 }。`;
 
@@ -4906,10 +4896,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               response = await invokeLLM({
                 provider: "openai",
                 modelName: visualReportModel,
-                /** OpenRouter Kimi K3（vendor/model slug 直连，不走 GPT-5.6） */
+                /** OpenRouter Kimi K3 · reasoning max · 直连 */
                 response_format: { type: "json_object" },
                 max_tokens: visualReportMaxTokens,
-                temperature: 0.55,
+                reasoningEffort: "max",
                 messages: [
                   { role: "system", content: systemPrompt },
                   { role: "user", content: visualReportUser },

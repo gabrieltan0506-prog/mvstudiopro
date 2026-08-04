@@ -64,4 +64,22 @@ describe("invokeGpt56Responses", () => {
     expect(r.text).toBe("fallback-chat-text");
     expect(r.reasoningMode).toBe("standard");
   });
+
+  it("routes moonshotai/kimi-k3 straight to chat completions (no Responses)", async () => {
+    const { invokeLLM } = await import("../_core/llm.js");
+    const { invokeGpt56Responses } = await import("./gpt56ResponsesClient.js");
+    const r = await invokeGpt56Responses({
+      input: "ping",
+      modelName: "moonshotai/kimi-k3",
+      reasoningEffort: "max",
+    });
+    expect(r.via).toBe("chat_completions");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(vi.mocked(invokeLLM)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelName: "moonshotai/kimi-k3",
+        reasoningEffort: "max",
+      }),
+    );
+  });
 });

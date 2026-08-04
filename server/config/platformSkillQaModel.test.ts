@@ -4,40 +4,35 @@ import {
   resolvePlatformSkillQaPaidCredits,
   resolvePlatformSkillQaReasoningEffort,
 } from "./platformSwitches.js";
+import { OPENROUTER_KIMI_K3_MODEL } from "../services/openrouterKimiK3.js";
 
 describe("resolvePlatformSkillQaOpenAiModel", () => {
-  it("allows Sol for regular users", () => {
+  it("always routes to OpenRouter Kimi K3 regardless of Sol/Terra UI choice", () => {
     expect(
       resolvePlatformSkillQaOpenAiModel({
         requested: "gpt-5.6-sol",
         isSupervisor: false,
       }),
-    ).toBe("gpt-5.6-sol");
-  });
-
-  it("allows Sol for supervisor", () => {
+    ).toBe(OPENROUTER_KIMI_K3_MODEL);
     expect(
       resolvePlatformSkillQaOpenAiModel({
-        requested: "gpt-5.6-sol",
+        requested: "gpt-5.6-terra",
         isSupervisor: true,
       }),
-    ).toBe("gpt-5.6-sol");
-  });
-
-  it("defaults Terra when unset", () => {
+    ).toBe(OPENROUTER_KIMI_K3_MODEL);
     expect(
       resolvePlatformSkillQaOpenAiModel({
         requested: null,
         isSupervisor: false,
       }),
-    ).toBe("gpt-5.6-terra");
+    ).toBe(OPENROUTER_KIMI_K3_MODEL);
   });
 });
 
 describe("resolvePlatformSkillQaReasoningEffort", () => {
-  it("defaults Terra to medium and Sol to high", () => {
-    expect(resolvePlatformSkillQaReasoningEffort("terra")).toBe("medium");
-    expect(resolvePlatformSkillQaReasoningEffort("sol")).toBe("high");
+  it("defaults to max for Kimi K3", () => {
+    expect(resolvePlatformSkillQaReasoningEffort("terra")).toBe("max");
+    expect(resolvePlatformSkillQaReasoningEffort("sol")).toBe("max");
   });
 });
 

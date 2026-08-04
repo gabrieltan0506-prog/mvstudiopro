@@ -11,6 +11,11 @@ import {
   normalizeEvolinkChatModel,
 } from "./evolinkChatModel.js";
 import { getOfficialOpenAiApiKey } from "./gpt56CopywritingGateway.js";
+import {
+  isOpenRouterKimiK3Model,
+  OPENROUTER_KIMI_K3_REASONING_EFFORT,
+  resolveOpenRouterKimiK3MaxCompletionTokens,
+} from "./openrouterKimiK3.js";
 
 export const OPENAI_OFFICIAL_RESPONSES_URL = "https://api.openai.com/v1/responses";
 
@@ -168,10 +173,11 @@ async function postOfficialResponses(opts: InvokeGpt56ResponsesOpts): Promise<In
 }
 
 async function fallbackChatCompletions(opts: InvokeGpt56ResponsesOpts): Promise<InvokeGpt56ResponsesResult> {
-  const modelName = normalizeEvolinkChatModel(
-    opts.modelName || getEvolinkGpt56SolModel(),
-    EVOLINK_CHAT_MODEL_GPT56_SOL,
-  );
+  const rawModel = String(opts.modelName || "").trim();
+  const isKimi = isOpenRouterKimiK3Model(rawModel);
+  const modelName = isKimi
+    ? rawModel
+    : normalizeEvolinkChatModel(rawModel || getEvolinkGpt56SolModel(), EVOLINK_CHAT_MODEL_GPT56_SOL);
   const instructions = String(opts.instructions || "").trim();
   const parts = Array.isArray(opts.inputParts) ? opts.inputParts : [];
   const textFromParts = parts
@@ -187,7 +193,7 @@ async function fallbackChatCompletions(opts: InvokeGpt56ResponsesOpts): Promise<
     .map((p) => p.filename);
   const fileNote =
     fileNames.length > 0
-      ? `\n\n【附件】本次含文件：${fileNames.join("、")}（Chat Completions 回退无法完整解析 PDF/Office，请重试官方 Responses）。`
+      ? `\n\n【附件】本次含文件：${fileNames.join("、")}（Chat Completions 无法完整解析 PDF/Office；请改传关键页截图或纯文本摘要）。`
       : "";
   const userText = String(opts.input || textFromParts || "").trim() + fileNote;
   if (!userText.trim() && imageUrls.length === 0) throw new Error("Responses input is empty");
@@ -210,12 +216,20 @@ async function fallbackChatCompletions(opts: InvokeGpt56ResponsesOpts): Promise<
   if (instructions) messages.push({ role: "system", content: instructions });
   messages.push({ role: "user", content: userContent });
 
+  const reasoningEffort = isKimi
+    ? opts.reasoningEffort === "low" || opts.reasoningEffort === "high"
+      ? opts.reasoningEffort
+      : OPENROUTER_KIMI_K3_REASONING_EFFORT
+    : opts.reasoningEffort === "none"
+      ? "minimal"
+      : "medium";
+
   const response = await invokeLLM({
     provider: "openai",
     modelName,
-    max_tokens: 16_384,
-    temperature: 0.8,
-    reasoningEffort: opts.reasoningEffort === "none" ? "minimal" : "medium",
+    max_tokens: isKimi ? resolveOpenRouterKimiK3MaxCompletionTokens() : 16_384,
+    ...(isKimi ? {} : { temperature: 0.8 }),
+    reasoningEffort,
     messages: messages as Parameters<typeof invokeLLM>[0]["messages"],
     response_format: opts.jsonObject ? { type: "json_object" } : undefined,
     abortSignal: opts.abortSignal,
@@ -229,11 +243,15 @@ async function fallbackChatCompletions(opts: InvokeGpt56ResponsesOpts): Promise<
   };
 }
 
-/** 官方 Responses（可 Pro）→ 失败则 Chat Completions 标准模式 */
+/** 官方 Responses（可 Pro）→ 失败则 Chat Completions 标准模式。Kimi 直连 Chat Completions。 */
 export async function invokeGpt56Responses(opts: InvokeGpt56ResponsesOpts): Promise<InvokeGpt56ResponsesResult> {
   const hasParts = Array.isArray(opts.inputParts) && opts.inputParts.length > 0;
   const input = String(opts.input || "").trim();
   if (!hasParts && !input) throw new Error("Responses input is empty");
+
+  if (isOpenRouterKimiK3Model(opts.modelName)) {
+    return fallbackChatCompletions(opts);
+  }
 
   try {
     return await postOfficialResponses(opts);
