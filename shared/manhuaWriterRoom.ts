@@ -26,6 +26,7 @@ import {
   formatManhuaGlobalStylePromptRequestBlock,
   formatManhuaScreenplayEnginePromptBlock,
 } from "./manhuaStoryDistill.js";
+import { resolveManhuaSeedanceLayoutProfile } from "./manhuaSeedanceLayout.js";
 
 export const MANHUA_WRITER_EPISODE_MIN = 2;
 export const MANHUA_WRITER_EPISODE_MAX = 6;
@@ -84,6 +85,11 @@ export function buildManhuaWriterExpandPrompt(opts: {
   viralTemplateAddon?: string | null;
   /** 单集时长档位：决定节拍格抽到几拍、密度建议报哪个秒数 */
   lengthTierId?: string | null;
+  /**
+   * 开场选定的成片引擎：决定可拍表段数与单段秒数。
+   * `seedance-2.0` / `seedance-2.0-fast` → 5–6×15s；`seedance-2.5` → 4×30s。
+   */
+  videoModel?: string | null;
   /** 局部改写：只重写第 N 集起，之前的集不许动 */
   fromEpisode?: number | null;
   /** 集内起点：起点那一集的前 N-1 段剧情必须原样保留 */
@@ -101,9 +107,11 @@ export function buildManhuaWriterExpandPrompt(opts: {
   const ancientBlock = buildAncientArchetypePromptBlock(opts.ancientArchetypeIds || []);
   const purpose = getManhuaPlotPurposeById(opts.plotPurposeId);
   const pacing = getManhuaScenePacingById(opts.scenePacingId);
+  const layout = resolveManhuaSeedanceLayoutProfile(opts.videoModel);
+  const lengthTierForViral = opts.lengthTierId || layout.lengthTierId;
   const viralAddon =
     String(opts.viralTemplateAddon || "").trim() ||
-    formatManhuaViralTemplateWriterAddon(opts.viralTemplateId, null, opts.lengthTierId);
+    formatManhuaViralTemplateWriterAddon(opts.viralTemplateId, null, lengthTierForViral);
   /**
    * 局部改写锁稿：保留段已经出过图、出过片，剧情一旦被改写就和画面对不上。
    * 把旧正文原样交回并要求前几段逐字不动，比事后人工核对便宜得多。
@@ -129,23 +137,31 @@ export function buildManhuaWriterExpandPrompt(opts: {
           "- 新增人物 / 场景 / 道具必须补进对应表，否则后续无法锁定外形。",
         ].join("\n")
       : "";
+  const segMin = layout.segmentMin;
+  const segMax = layout.segmentMax;
+  const segDefault = layout.segmentCount;
+  const segDur = layout.durationSecPerSegment;
+  const targetSec = layout.targetSec;
+  const planTitle =
+    layout.videoModel === "seedance-2.5" ? "四段可拍表" : "五至六段可拍表";
   return [
     "你是竖屏漫剧连载编剧。根据用户题材与补充条件，扩写成可拍的连载剧情包。",
     "硬规则：",
     "1. 只输出 Markdown，不要代码围栏、不要道歉。",
     "2. 成稿禁止导演名、真实剧集/电影片名、「仿写某某」「致敬某某」。只写可拍的人物关系、权力结构与情绪节奏。",
-    "3. 单集目标约 75–90 秒 = 5–6 段 × 约 15 秒（推荐 6 段；预算期勿写满十多段）；对白/场面须撑满密度，禁止寒暄灌水与段间复制粘贴。对白一律用直角引号「」包裹（勿只用弯引号“”）。每段约15秒须至少 3 句「」对白（推荐 3–4 句），并写「表演」栏（表情/肢体/情绪起伏）；禁止两句口号撑满一段。",
+    `3. 成片档位已定：${layout.labelZh} → 单集目标约 ${targetSec} 秒 = ${segMin}–${segMax} 段 × 约 ${segDur} 秒（推荐 ${segDefault} 段）。对白/场面须撑满密度，禁止寒暄灌水与段间复制粘贴。对白一律用直角引号「」包裹（勿只用弯引号“”）。每段约 ${segDur} 秒须至少 3 句「」对白（推荐 3–4 句），并写「表演」栏（表情/肢体/情绪起伏）；禁止两句口号撑满一段。`,
     `4. 必须正好输出 ${n} 集；每一集结尾必须有「片尾钩子」（未揭答案、逼观众追下一集）。`,
     "5. 人物 / 道具 / 场景表要具体、可锁定外形与空间，禁止空泛。",
     "6. 道具表可参考下方示范库外观锚点改写，勿照抄剧名；权谋/商战可偏海外可读符号。",
     "7. 若提供古风原型设计板，人物外形与服饰层次须与之对齐。",
     "8. 「系列标题」必须是具体可传播的中文剧名（建议 4–24 字），禁止「未命名」「暂定」「一句话标题」等占位，也禁止只复述题材原文整段。",
     "9. 若提供节奏模板骨架：每集须大体覆盖节拍格冲突类型与场景池关键词，并对白/换场密度不低于模板建议；禁止照抄模板示例成外部剧名。",
-    "10. 每一集「本集剧情」之后必须输出完整「五至六段可拍表」（至少段01–段05，推荐到段06），字段见下文模板（含对白+表演）；缺段、缺字段、对白不足 3 句「」、表演过薄视为未完成。人物姓名/场景名必须与人物表·场景表一致，禁止另造皇宫大殿等未立场景。",
+    `10. 每一集「本集剧情」之后必须输出完整「${planTitle}」（正好 ${segDefault} 段：段01–段${String(segDefault).padStart(2, "0")}），字段见下文模板（含对白+表演）；缺段、缺字段、对白不足 3 句「」、表演过薄视为未完成。人物姓名/场景名必须与人物表·场景表一致，禁止另造皇宫大殿等未立场景。`,
     "11. 系列级须输出「整体影像风格」与「统一运镜风格」各一段，供后续静帧/成片共用。",
     "",
     formatManhuaScreenplayEnginePromptBlock(),
     "",
+    `【成片铺排】${layout.labelZh}｜${layout.layoutHintZh}`,
     `【用户题材】${topic || "（未填，请基于补充条件合理拟定）"}`,
     brief ? `【补充条件】\n${brief}` : "【补充条件】（无，请在合理范围内自行补全并保持克制）",
     propDemo,
@@ -182,8 +198,8 @@ export function buildManhuaWriterExpandPrompt(opts: {
         `## 第${ep}集`,
         "### 集标题",
         "### 本集剧情",
-        "（冲突、人物场、转折；可分段，勿灌水；须能支撑约 75–90 秒）",
-        formatManhuaEpisodeSegmentPlanPromptBlock(),
+        `（冲突、人物场、转折；可分段，勿灌水；须能支撑约 ${targetSec} 秒）`,
+        formatManhuaEpisodeSegmentPlanPromptBlock(segDefault, segDur),
         "### 片尾钩子",
         "（必须留下未解悬念或关系反转预兆）",
         "",

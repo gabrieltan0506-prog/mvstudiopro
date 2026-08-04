@@ -86,16 +86,22 @@ export const MANHUA_SINGLE_CLIP_DURATION_SEC = 15;
 export const MANHUA_OMNI_SEGMENT_DURATION_SEC = 10;
 /** Seedance 2.0 / Fast 每段成片秒数 */
 export const MANHUA_SEEDANCE_SEGMENT_DURATION_SEC = 15;
+/** Seedance 2.5（成片·加长）每段成片秒数 */
+export const MANHUA_SEEDANCE_25_SEGMENT_DURATION_SEC = 30;
 
 /**
- * 一集段数（预算期）：5–6 ×15s ≈ 75–90s。
+ * 一集段数（预算期）：
+ * - Seedance 2.0 / Fast：默认 5–6 ×15s ≈ 75–90s
+ * - Seedance 2.5：默认 4 ×30s = 120s
  * 成熟后再扩到 10–12；勿在未成熟时默认拉满成片 API。
  */
 export const MANHUA_SEGMENT_DEFAULT = 6;
-/** 一集最少段数（预算期） */
-export const MANHUA_SEGMENT_MIN = 5;
+/** 一集最少段数（短档可 4；2.0 产品默认仍铺 5–6） */
+export const MANHUA_SEGMENT_MIN = 4;
 /** 一集最多段数（预算期；成熟期可再放开到 12） */
 export const MANHUA_SEGMENT_MAX = 6;
+/** Seedance 2.5 固定 4 段 */
+export const MANHUA_SEEDANCE_25_SEGMENT_COUNT = 4;
 /** 一集建议最短时长（秒，按 Seedance 段长估算） */
 export const MANHUA_EPISODE_TARGET_MIN_SEC = 75;
 /** 一集默认目标时长（秒） */
@@ -111,9 +117,34 @@ export const MANHUA_SHOT_KEYART_MAX =
 /** 工厂默认成片模型（产品默认；探针仍可另用 Mini） */
 export const MANHUA_FACTORY_DEFAULT_VIDEO_MODEL = "seedance-2.0-fast" as const;
 
+export function isManhuaSeedance25VideoModel(videoModel?: string | null): boolean {
+  return String(videoModel || "").trim() === "seedance-2.5";
+}
+
+/** 按成片模型取段数上下限与默认 */
+export function manhuaSegmentCountBounds(videoModel?: string | null): {
+  min: number;
+  max: number;
+  default: number;
+} {
+  if (isManhuaSeedance25VideoModel(videoModel)) {
+    return {
+      min: MANHUA_SEEDANCE_25_SEGMENT_COUNT,
+      max: MANHUA_SEEDANCE_25_SEGMENT_COUNT,
+      default: MANHUA_SEEDANCE_25_SEGMENT_COUNT,
+    };
+  }
+  return {
+    min: MANHUA_SEGMENT_MIN,
+    max: MANHUA_SEGMENT_MAX,
+    default: MANHUA_SEGMENT_DEFAULT,
+  };
+}
+
 export function manhuaSegmentDurationSec(videoModel?: string | null): number {
   const m = String(videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL).trim();
   if (m === "gemini-omni-flash") return MANHUA_OMNI_SEGMENT_DURATION_SEC;
+  if (isManhuaSeedance25VideoModel(m)) return MANHUA_SEEDANCE_25_SEGMENT_DURATION_SEC;
   return MANHUA_SEEDANCE_SEGMENT_DURATION_SEC;
 }
 
@@ -150,8 +181,12 @@ export function resolveSegmentClipDurationSec(
       sum > 0 ? sum : HAILUO_OPENROUTER_DURATION.default,
     );
   }
-  if (m === "seedance-2.5") {
-    return clampXyqSeedanceDuration(sum > 0 ? sum : XYQ_SEEDANCE_DURATION.default);
+  if (isManhuaSeedance25VideoModel(m)) {
+    // 2.5 产品档：一集 4×30s；3×5s 骨架合计≤15 时抬到 30，不误用 XYQ 默认 15
+    if (sum <= 0 || sum <= MANHUA_SEEDANCE_SEGMENT_DURATION_SEC) {
+      return clampXyqSeedanceDuration(MANHUA_SEEDANCE_25_SEGMENT_DURATION_SEC);
+    }
+    return clampXyqSeedanceDuration(sum);
   }
   return clampSeedanceOpenRouterDuration(
     sum > 0 ? sum : SEEDANCE_OPENROUTER_DURATION.default,
@@ -194,9 +229,10 @@ export function groupShotsIntoSegments(
     index: i + 1,
   }));
   if (padToDefault || opts?.segmentCount != null) {
+    const bounds = manhuaSegmentCountBounds(opts?.videoModel);
     const targetSegs = Math.max(
       1,
-      Math.min(16, Math.floor(opts?.segmentCount ?? MANHUA_SEGMENT_DEFAULT)),
+      Math.min(16, Math.floor(opts?.segmentCount ?? bounds.default)),
     );
     const minTotal = targetSegs * per;
     while (list.length < minTotal) {

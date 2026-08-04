@@ -329,6 +329,8 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 **平台文案全切 OpenRouter Kimi K3**：看板 / 趋势报表 / Skill QA / 追问 / 自定义优化 / HTML PPT / Pro Agent 等主路径 → `moonshotai/kimi-k3`，`reasoning_effort=max`，默认 `max_completion_tokens=131072`。Responses 调用遇 Kimi slug 直连 Chat Completions。分支 `feat/platform-kimi-k3-max`。
 
+**编剧室开场先选成片引擎**：UI 三选一（快速/标准/加长）→ 2.0·Fast = 5–6×15s、2.5 = 4×30s；未选禁扩写/铺板；会话持久化 `videoModel`。剧本扩写 / 画布文本默认 / 运镜润色 → Kimi K3。分支 `feat/seedance25-4x30-segment-gate`（本地已验，待 push/PR）。
+
 ---
 
 ## 如何更新本文件

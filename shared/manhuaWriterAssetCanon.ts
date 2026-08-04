@@ -4,6 +4,8 @@
  */
 
 import {
+  MANHUA_EPISODE_SEGMENT_COUNT_MAX,
+  MANHUA_EPISODE_SEGMENT_COUNT_MIN,
   MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC,
   MANHUA_EPISODE_SEGMENT_TARGET_SEC,
   evaluateManhuaEpisodeSegmentPlanQuality,
@@ -453,10 +455,14 @@ export function evaluateWriterPackAssetAndDensity(input: {
   if ((input.targetSec ?? MANHUA_EPISODE_SEGMENT_TARGET_SEC) >= MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC) {
     for (const ep of input.episodes || []) {
       const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(String(ep.body || ""));
-      const q = evaluateManhuaEpisodeSegmentPlanQuality(plan);
+      // 4 段（Seedance 2.5 · 30s）与 5–6 段（2.0 · 15s）均可过关
+      const q = evaluateManhuaEpisodeSegmentPlanQuality(plan, {
+        min: MANHUA_EPISODE_SEGMENT_COUNT_MIN,
+        max: MANHUA_EPISODE_SEGMENT_COUNT_MAX,
+      });
       if (!q.ok) {
         errors.push(
-          `第${ep.index}集五至六段可拍表未过关（合格 ${q.readyCount}，至少 ${q.requiredCount}）：${
+          `第${ep.index}集可拍表未过关（合格 ${q.readyCount}，至少 ${q.requiredCount}）：${
             q.issues[0] || "缺表或缺字段"
           }`,
         );
