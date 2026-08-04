@@ -9,7 +9,7 @@ type DocumentAnalysisResult = {
   analysis: GrowthAnalysisScores;
   documentMeta: {
     fileUrl: string;
-    extractionMethod: "docx_xml" | "pdf_strings" | "none";
+    extractionMethod: "docx_xml" | "pdf_strings" | "pptx_xml" | "none";
     extractedTextPreview: string;
     provider: string;
     model: string;

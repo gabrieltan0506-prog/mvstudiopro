@@ -1154,6 +1154,8 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
    * 生图分道：`asset` 走设定图专钥，`keyart` 走静帧专钥；本道打不通自动借另一把。
    */
   imageLane?: OpenAiImageLane | null;
+  /** 覆盖默认 quality（知识卡用 medium≈2K 档控成本）。 */
+  qualityOverride?: GptImage2ApiQuality;
   /**
    * 出参：失败时回填供上层做「快速失败 / 用户提示」。
    * `moderationBlocked` 为 true 表示内容审核拦截（换脸时即「参考人像被拦截」），属用户可纠正错误，**不应**继续重试。
@@ -1220,16 +1222,23 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
     appendImageFlowLog(L, `[单帧·遮罩] mask_url 已附带 · ${maskUrl.slice(0, 96)}`);
   }
 
+  const qualityForCall: GptImage2ApiQuality =
+    options.qualityOverride === "low" ||
+    options.qualityOverride === "medium" ||
+    options.qualityOverride === "high"
+      ? options.qualityOverride
+      : GPT_IMAGE2_PORTRAIT_API_QUALITY;
+
   if (tryOpenAi) {
     appendImageFlowLog(
       L,
-      `[单帧·OpenAI] GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · size=${options.aspectRatio === "16:9" ? "1536x1024" : "1024x1536"} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}`,
+      `[单帧·OpenAI] GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · size=${options.aspectRatio === "16:9" ? "1536x1024" : "1024x1536"} · quality=${qualityForCall}${options.imageLane ? ` · lane=${options.imageLane}` : ""}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}`,
     );
     const err: { message?: string } = {};
     const url = await postOpenAiGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
       aspectRatio: options.aspectRatio,
       flowLog: L,
-      quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
+      quality: qualityForCall,
       imageUrls: hasRef ? refImageUrls : undefined,
       maskUrl: hasRef ? maskUrl : undefined,
       captureError: err,
@@ -1249,13 +1258,13 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   if (tryOpenRouter) {
     appendImageFlowLog(
       L,
-      `[单帧·OpenRouter] GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · quality=${GPT_IMAGE2_PORTRAIT_API_QUALITY}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}${tryOpenAi ? " · OpenAI失败后回落" : " · 强制/仅OpenRouter"}`,
+      `[单帧·OpenRouter] GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · quality=${qualityForCall}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}${tryOpenAi ? " · OpenAI失败后回落" : " · 强制/仅OpenRouter"}`,
     );
     const orErr: { message?: string } = {};
     const url = await postOpenRouterGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
       aspectRatio: options.aspectRatio,
       flowLog: L,
-      quality: GPT_IMAGE2_PORTRAIT_API_QUALITY,
+      quality: qualityForCall,
       imageUrls: hasRef ? refImageUrls : undefined,
       captureError: orErr,
     });
@@ -1418,8 +1427,11 @@ export async function generatePlatformCompositeSheetImage(options: {
   progressJobId?: string | null;
   /** 覆寫 2×4 出圖引擎；未傳則見 {@link resolvePlatformCompositeSheetImageEngine}（環境變數預設 gpt_image2 鏈）。 */
   compositeImageEngine?: PlatformCompositeSheetImageEngine;
-  /** 仅 single_page_knowledge_card：上篇 / 下篇分页（标题自动加「（上篇）/（下篇）」，仅取对应半篇内容）。 */
+  /** 仅 single_page_knowledge_card：旧上/下篇（兼容）。 */
   notePart?: import("./geminiPlatformCompositeTranslation.js").KnowledgeCardNotePart;
+  /** 仅 single_page_knowledge_card：1–12 页索引（优先于 notePart）。 */
+  notePageIndex?: number;
+  notePageTotal?: number;
   /**
    * 仅 3×4 分段拼接：本次生成是「长图」的第 index/total 段（storyboard/xhs）。
    * 注入连贯/同风格指令，确保各段拼接后接缝处风格一致；第 2 段起不再重复顶部总标题栏。
@@ -1541,7 +1553,9 @@ export async function generatePlatformCompositeSheetImage(options: {
   const { buildCoverTaskInputFromPipeline } = await import("./agenticCoverWorkflow.js");
   const drFromEnv = isCompositeSheetDeepResearchProEnabled();
   const runCompositeDrPro =
-    !options.forceSkipCompositeDeepResearchPro && (drFromAdmin || drFromEnv);
+    !isKnowledgeCard &&
+    !options.forceSkipCompositeDeepResearchPro &&
+    (drFromAdmin || drFromEnv);
 
   if (runCompositeDrPro) {
     appendImageFlowLog(
@@ -1602,10 +1616,18 @@ export async function generatePlatformCompositeSheetImage(options: {
 
       if (isKnowledgeCard) {
         const { buildSinglePageKnowledgeCardImagePrompt } = await import("./geminiPlatformCompositeTranslation.js");
-        promptForImage = buildSinglePageKnowledgeCardImagePrompt(scriptContextForPipeline, options.notePart);
+        promptForImage = buildSinglePageKnowledgeCardImagePrompt(scriptContextForPipeline, {
+          notePart: options.notePart,
+          notePageIndex: options.notePageIndex,
+          notePageTotal: options.notePageTotal,
+        });
         appendImageFlowLog(
           L,
-          `[单页知识卡片·步骤1] 中文 directive + Markdown 送 GPT-IMAGE-2 · 分页=${options.notePart ?? "整篇"} · 约 ${promptForImage.length} 字符`,
+          `[单页知识卡片·步骤1] 中文 directive + Markdown 送 OpenRouter GPT-IMAGE-2 · 分页=${
+            options.notePageIndex
+              ? `第${options.notePageIndex}/${options.notePageTotal ?? "?"}`
+              : options.notePart ?? "整篇"
+          } · 约 ${promptForImage.length} 字符`,
         );
         appendImageFlowLog(
           L,
@@ -1701,9 +1723,7 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
       appendImageFlowLog(
         L,
         isKnowledgeCard
-          ? `[图文笔记·步骤2] GPT-IMAGE-2 · 16:9 · gcsSubdir=${subdir} · ${
-              hasSheetRefs ? "换脸·仅 OpenAI/OpenRouter（无 NB2）" : "仅 OpenAI/OpenRouter（无 NB2）"
-            }`
+          ? `[图文笔记·步骤2] GPT-IMAGE-2 · 16:9 · quality=medium(2K) · gcsSubdir=${subdir} · 优先 OPENAI_IMAGE_API_KEY_ASSET → OpenRouter`
           : `[2×4·步骤2] GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY} · gcsSubdir=${subdir} · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · ${
               hasSheetRefs ? "换脸·仅 OpenAI/OpenRouter（无 NB2）" : "仅 OpenAI/OpenRouter（无 NB2）"
             }`,
@@ -1726,14 +1746,14 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         appendImageFlowLog(
           L,
           isKnowledgeCard
-            ? `[图文笔记·换脸] OpenAI/OpenRouter edit · 16:9 · 参考=${refImageUrls.length}张`
+            ? `[图文笔记·换脸] ASSET→OpenRouter edit · 16:9 · 参考=${refImageUrls.length}张`
             : `[2×4·步骤2a·换脸主力] OpenAI/OpenRouter GPT-IMAGE-2 edit · 16:9 · size=${GPT_IMAGE2_LANDSCAPE_SIZES[0]} · 参考=${refImageUrls.length}张${options.referencePhotoFromApprovedCover ? "(含封面脸锁)" : ""}${continuityRefs.length ? "+上段连贯" : ""}`,
         );
       } else {
         appendImageFlowLog(
           L,
           isKnowledgeCard
-            ? `[图文笔记·主路径] OpenAI/OpenRouter GPT-IMAGE-2 · 16:9`
+            ? `[图文笔记·主路径] ASSET 专钥 → OpenRouter · quality=medium · 16:9`
             : `[2×4·主路径] OpenAI/OpenRouter GPT-IMAGE-2 · 宽幅 16:9 · quality=${GPT_IMAGE2_COMPOSITE_2X4_API_QUALITY}`,
         );
       }
@@ -1752,6 +1772,10 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
         referenceImageUrls: hasSheetRefs ? refImageUrls : undefined,
         // 分镜/图文锁脸指令已写入 promptForPixel；勿再叠封面换人 directive
         generalImageEdit: true,
+        // 知识卡：OPENAI_IMAGE_API_KEY_ASSET 优先，失败再 OpenRouter；2K 档用 medium
+        providerOverride: isKnowledgeCard ? "auto" : undefined,
+        imageLane: isKnowledgeCard ? "asset" : undefined,
+        qualityOverride: isKnowledgeCard ? "medium" : undefined,
         captureError: gptCapture,
       });
 
@@ -1770,6 +1794,9 @@ MULTI-PART LONG SHEET (CRITICAL): This image is **part ${index + 1} of ${total}*
           flowLog: L,
           referenceImageUrls: refImageUrls,
           generalImageEdit: true,
+          providerOverride: isKnowledgeCard ? "auto" : undefined,
+          imageLane: isKnowledgeCard ? "asset" : undefined,
+          qualityOverride: isKnowledgeCard ? "medium" : undefined,
           captureError: retryCapture,
         });
         if (!fromGpt && (retryCapture.moderationBlocked || isEvolinkModerationFailure(retryCapture.message))) {

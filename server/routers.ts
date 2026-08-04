@@ -154,6 +154,8 @@ import {
   PLATFORM_MATTING_BATCH_COUNTS,
   type ImageUpscaleBaseCreditKey,
 } from "../shared/plans";
+import { knowledgeCardCreditsForPageIndex } from "../shared/knowledgeCardPagination";
+import { extractDocumentText } from "./growth/documentExtract";
 import { generateVideo, isVeoAvailable } from "./veo";
 import { isGeminiAudioAvailable, analyzeAudioWithGemini } from "./gemini-audio";
 import { executeProviderFallback } from "./services/provider-manager";
@@ -6743,6 +6745,75 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 单条散买：分镜 {@link CREDIT_COSTS.platformStoryboardSheet} cr、小红书八格 {@link CREDIT_COSTS.platformXhsDualNote} cr。
      * 一键套装：传 `bulkCompositePack` 时按 54×选题数 整数分拆扣费。
      */
+    /** 平台图文卡：多文件抽文（docx/pdf/pptx）+ 图片交 OCR 提练；不扣积分（含在页费）。 */
+    extractPlatformDocumentText: protectedProcedure
+      .input(
+        z.object({
+          files: z
+            .array(
+              z.object({
+                fileBase64: z.string().min(1).max(18_000_000),
+                mimeType: z.string().min(1).max(120),
+                fileName: z.string().max(240).optional(),
+              }),
+            )
+            .min(1)
+            .max(40),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const { extractKnowledgeCardUploads } = await import("./services/knowledgeCardDistill.js");
+        const extracted = await extractKnowledgeCardUploads(input.files);
+        return {
+          success: true as const,
+          text: extracted.documentText,
+          imageCount: extracted.imageDataUrls.length,
+          methods: extracted.methods,
+        };
+      }),
+
+    /** 平台图文卡：OCR + Qwen3.8 Max 提练精华（费用含在后续页费；本接口不扣积分）。 */
+    prepareKnowledgeCardCopy: protectedProcedure
+      .input(
+        z.object({
+          sourceText: z.string().max(50000).optional(),
+          forceDistill: z.boolean().optional(),
+          /** 试对比：qwen/qwen3.8-max | moonshotai/kimi-k3 */
+          distillModel: z.enum(["qwen/qwen3.8-max", "moonshotai/kimi-k3"]).optional(),
+          files: z
+            .array(
+              z.object({
+                fileBase64: z.string().min(1).max(18_000_000),
+                mimeType: z.string().min(1).max(120),
+                fileName: z.string().max(240).optional(),
+              }),
+            )
+            .max(40)
+            .optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const { prepareKnowledgeCardCopy } = await import("./services/knowledgeCardDistill.js");
+        const { planKnowledgeCardPages } = await import("../shared/knowledgeCardPagination.js");
+        const prepared = await prepareKnowledgeCardCopy({
+          sourceText: input.sourceText,
+          files: input.files,
+          forceDistill: input.forceDistill,
+          distillModel: input.distillModel,
+        });
+        const plan = planKnowledgeCardPages(prepared.distilledMarkdown);
+        return {
+          success: true as const,
+          distilledMarkdown: prepared.distilledMarkdown,
+          skippedDistill: prepared.skippedDistill,
+          extractionMethods: prepared.extractionMethods,
+          distillModel: prepared.distillModel,
+          pageCount: plan.pageCount,
+          credits: plan.credits,
+          pages: plan.pages,
+        };
+      }),
+
     generatePlatformCompositeSheet: protectedProcedure
       .input(
         z
@@ -6750,15 +6821,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             jobId: z.string().max(128).optional(),
             sceneId: z.string().min(1),
             title: z.string().min(1).max(220),
-            scriptContext: z.string().min(1).max(12000),
+            scriptContext: z.string().min(1).max(50000),
             kind: z.enum([
               "storyboard_sheet_portrait",
               "storyboard_sheet_landscape",
               "xiaohongshu_dual_note",
               "single_page_knowledge_card",
             ]),
-            /** 仅 single_page_knowledge_card：上篇 / 下篇分页（标题自动加「（上篇）/（下篇）」，仅取对应半篇内容）。 */
+            /** 仅 single_page_knowledge_card：旧上/下篇（兼容）。 */
             notePart: z.enum(["upper", "lower"]).optional(),
+            /** 仅 single_page_knowledge_card：页码（优先于 notePart）；第 9 页起八折，页数不封顶。 */
+            notePageIndex: z.number().int().min(1).max(80).optional(),
+            notePageTotal: z.number().int().min(1).max(80).optional(),
             /** 仅 storyboard_sheet_landscape / xiaohongshu_dual_note：2×4(默认) 或 3×4 十二格（后端分 2 段生成再 sharp 拼成一张长图，降低糊字）。 */
             gridVariant: z.enum(["2x4", "3x4"]).optional(),
             /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
@@ -6843,7 +6917,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           : input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
             ? (is3x4Grid ? CREDIT_COSTS.platformStoryboardSheet3x4 : CREDIT_COSTS.platformStoryboardSheet)
             : input.kind === "single_page_knowledge_card"
-              ? CREDIT_COSTS.platformSinglePageKnowledgeCard // 25/篇；上篇+下篇两次合计 50
+              ? knowledgeCardCreditsForPageIndex(
+                  input.notePageIndex ?? (input.notePart === "lower" ? 2 : 1),
+                )
               : (is3x4Grid ? CREDIT_COSTS.platformXhsDualNote3x4 : CREDIT_COSTS.platformXhsDualNote);
 
         if (!isAdminUser) {
@@ -6858,7 +6934,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             input.kind === "storyboard_sheet_portrait" || input.kind === "storyboard_sheet_landscape"
               ? `编导分镜图文参考（导演板编导；生图采用 GPT-IMAGE-2）· ${input.title.slice(0, 48)}`
               : input.kind === "single_page_knowledge_card"
-                ? `单页连贯图文知识卡片（双语编导；GPT-IMAGE-2 · 4K）· ${input.title.slice(0, 48)}`
+                ? `图文知识卡片第${input.notePageIndex ?? (input.notePart === "lower" ? 2 : 1)}页 · ${input.title.slice(0, 48)}`
                 : `小红书 2×4 八格图文参考（双语编导；GPT-IMAGE-2 · Vertex 2K 兜底）· ${input.title.slice(0, 48)}`;
           const bulkTag = compositePack
             ? ` · 编导分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
@@ -6954,6 +7030,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 referencePhotoFromApprovedCover: input.referencePhotoFromApprovedCover === true,
                 compositeImageEngine: input.compositeImageEngine,
                 notePart: input.notePart,
+                notePageIndex: input.notePageIndex,
+                notePageTotal: input.notePageTotal,
               });
 
               appendImageFlowLog(imageGenFlowLog, imageUrl ? "✓ generatePlatformCompositeSheet 完成" : "✗ 无 imageUrl（应已在上方抛错）");
@@ -7021,6 +7099,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             referencePhotoFromApprovedCover: input.referencePhotoFromApprovedCover === true,
             compositeImageEngine: input.compositeImageEngine,
             notePart: input.notePart,
+            notePageIndex: input.notePageIndex,
+            notePageTotal: input.notePageTotal,
           });
         } catch (error: any) {
           detachLiveProgress?.();

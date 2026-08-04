@@ -24,6 +24,7 @@ import {
 import { composePlatformCoverNativeVisualDirective } from "../../shared/platformNativeVariants.js";
 import { GRAPHIC_NOTE_READER_FACING_DIRECTIVE_ZH } from "../../shared/graphicNoteReaderFacing.js";
 import { BIAN_DAO_SHEET_BODY_DIRECTIVE_ZH } from "../../shared/bianDaoStoryboard.js";
+import { planKnowledgeCardPages } from "../../shared/knowledgeCardPagination.js";
 
 /** 舊 API 別名：歷史 `storyboard_sheet_portrait` 與橫版 16:9·2×4 分鏡表為同一產物，一律正規化為 `storyboard_sheet_landscape`。 */
 export function normalizeCompositeSheetKind(
@@ -394,111 +395,105 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
  * 以保留书法标题 / 大师写实摄影 + 文艺复兴手绘 / 山茶花蝴蝶洋牡丹装饰 / 宣纸暖色底等细腻美学
  * （中文直送 GPT-IMAGE-2，不经英文翻译）。与 2×4 八格路径互不影响。
  */
-export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH = `你是一位顶尖的归纳知识内容、规划整理的知识卡片设计师（Knowledge Card Visual Designer），精通解读 Markdown 文档，擅长把"文档内容"画成知识分解图。请把下方 Markdown 的详细内容做成**一整页连贯的单页图文知识卡片**（务必是"单页连贯"，而非 2×4 八格网格、也不是分镜表），用连贯的叙述把不同子标题的内容依序呈现。
+export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH = `你是一位顶尖的归纳知识内容、规划整理的知识卡片设计师（Knowledge Card Visual Designer），精通解读 Markdown 文档，擅长把"文档内容"画成知识分解图。请把下方 Markdown 切片做成**一整页连贯的单页图文知识卡片**（务必是"单页连贯"，而非 2×4 八格网格、也不是分镜表）。
 
 【任务目标】
-- 内容详尽充实、覆盖每个子标题的关键点、校对文稿保持正确；用简体中文解说，措辞通畅易懂、有趣可读。
+- 覆盖本页子标题的关键点，措辞通畅易懂；用简体中文解说。
 - 标题：采用书法楷书字体、金橙色字体并以淡蓝紫色描边包裹每个标题字，字体用渐变色，呈现优雅飘逸的美感。
-- 内文：务必印刷清晰、绝不可模糊；执行内文小字的清晰度优化，并把当前内文小字**放大一级**（字号比主题小一级），兼顾排版美观与可读性。
+- 内文：印刷清晰、绝不可模糊；字号足够大，兼顾排版美观与可读性。
 
-【信息密度·文字渲染（关键）】
-- 信息密度优先：内容务必**详尽充实、宁详勿略**，信息量对标排版成熟、字数密集的高质量图文笔记（参考密度只能更高、不能更少）。把每个子标题下的内容展开成 **5-9 条要点**，每条写成信息完整的短句（约 12-30 字，含定义 / 数字 / 方法 / 示例），覆盖该子标题的全部关键知识点，**不要为了简洁而删减内容**。
-- 在保证内容详尽的同时确保**字迹清晰**：每个文字块留足够留白、字号足够大，即使密集排布也要让每个汉字笔画清晰、不粘连、不变形、不重复、不缺笔。
-- 关键数据 / 百分比 / 方法步骤 / 示例都要完整渲染出来；每个汉字必须是**真实存在、写法正确**的规范简体字，严禁生造字、错字、半个字或火星文。
+【版式·疏朗留白（关键）】
+- **降低密度、多留白**：每页 **1 个主标题** + **有限要点**（每个子标题约 3–5 条短句即可），区块间距宽敞，勿堆字、勿贴边。
+- 不要为了塞满画布而扩写；宁可留白也不要挤成墙字。关键数据 / 方法可保留，次要展开可省略。
+- 每个汉字必须笔画清晰、不粘连、不变形；严禁生造字、错字、半个字或火星文。
 
 【视觉规范】
-- 主体构图：在中央或左上方放置文档的核心视觉意象；画面采用摄影大师写实风格 + 透视学审美 + 当代大师艺术手稿素描结合的精致画面。
-- 四周环绕模块：以均匀布局围绕主体，层递排列文档中各类详尽知识点。
-- 图标：每段详细内文配上立体透视的素描图标，加深各类知识的印象；图标要带有冲击力，多种色彩、强烈对比。
-- 连接结构：用贝聿铭大师风格的素描线稿与写实美学线条，以及大师彩绘的各色山茶花、不同种蝴蝶、洋牡丹作为视觉链接；知识点用生动的符号或精致图形串接表达；**不要使用内部边框，法式大师设计风格的立体透视素描边框只出现在最外层**；严格避免箭头重叠、视觉不混乱。
+- 主体构图：在中央或左上方放置本页核心视觉意象；摄影写实 + 透视学审美 + 艺术手稿素描结合。
+- 四周环绕模块：均匀布局、层递排列本页知识点；模块之间保留呼吸感。
+- 图标：每段内文配立体透视素描图标；色彩鲜明、对比清晰。
+- 连接结构：素描线稿与花卉/蝴蝶等点缀作视觉链接；**不要使用内部边框，立体透视素描边框只出现在最外层**；避免箭头重叠。
 
 【内容拆解】
-- 把文档分成若干子标题，均匀分配在卡片上，用优雅、叙述通畅的文字与细致图标解释每个子标题；排版合理、说明详细、文字印刷清晰正确。
-- 结尾需把关键重点详细凝练地收束（不要写出"总结"等小标题），直接呈现核心要点；**是否在结尾生成诗词 / 书法点睛金句，以下方【收尾】指令为准**。
+- 只呈现下方提供的本页切片；排版疏朗、说明清楚、文字印刷正确。
+- **是否在结尾生成诗词 / 书法点睛，以下方【收尾】指令为准**（默认多数页不写诗词）。
 
 【核心要求】
-- 风格混合：文艺复兴时期大师手绘艺术插画（透视学素描）+ 贝聿铭大师级绝美写实摄影立体风格图标，二者组合；整体如同用彩色画笔在画布上绘制，所有元素细腻有质感、强烈视觉冲击。
-- 构图布局：清晰完整、有逻辑，能自然引导读者视线；元素从左到右合理安排，填满画布以保证视觉均衡，不要过度居中。
-- 颜色：暖色调为主、清爽合理；背景采用爱马仕橙色到浅紫的渐变（亦可用宣纸/绢本底色，春天淡紫加粉色渐变色谱），圆角、阴影、适当字体层次的现代设计；**图文笔记中不要有任何灰色的图像**，图标与符号都要彩色、有视觉冲击力；注释文字用橙色书法楷书、浅蓝描边。
+- 风格混合：文艺复兴手绘插画（透视学素描）+ 绝美写实摄影立体图标；元素细腻有质感。
+- 构图：清晰有逻辑，引导视线；勿过度居中、勿填满每一个空隙。
+- 颜色：暖色调为主；背景可用爱马仕橙到浅紫渐变或宣纸/绢本底色；图标彩色；注释用橙色书法楷书、浅蓝描边。
 
-【输出格式】完整描述、内容连贯、文字详尽、简体中文印刷清晰正确 / 高清 4K / 横向 16:9 构图。若文档有难以理解之处，先在内部翻译成英文校对原意，再生成简体中文叙述。`;
+【输出格式】连贯疏朗、简体中文印刷清晰 / 高清 / 横向 16:9。`;
 
 /**
- * 英文「渲染外壳」：内容用中文（保美学），但用一段简短英文**强约束模型如何渲染中文字**——
- * 模型对英文 meta 指令解析最稳，可显著降低密集简体中文的乱码/重复/缺笔概率。
+ * 英文「渲染外壳」：疏朗留白 + 简体中文清晰渲染。
  */
-export const SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN = `TEXT RENDERING (CRITICAL): All on-image text is **Simplified Chinese**. The card must be **content-rich and information-dense** — include detailed bullet points, key data/percentages, methods and concise explanatory lines for EVERY section; do NOT thin out or omit content for the sake of brevity. AT THE SAME TIME render every Chinese glyph **crisp, print-clear and correctly-formed** — no garbled, duplicated, missing/broken strokes, no invented or wrong characters — by spacing blocks well and keeping font size adequate even when dense. Wide 16:9 landscape, ultra high-resolution. Do NOT add any English sentences onto the card except tiny optional accent keywords.`;
+export const SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN = `TEXT RENDERING (CRITICAL): All on-image text is **Simplified Chinese**. Prefer a **spacious, airy layout** — one main title, limited bullet points, generous whitespace between blocks; do NOT pack the canvas with dense walls of text. Render every Chinese glyph **crisp, print-clear and correctly-formed** — no garbled, duplicated, missing/broken strokes. Readable font size. Wide 16:9 landscape, ultra high-resolution. Do NOT add any English sentences onto the card except tiny optional accent keywords.`;
 
-/** 上篇 / 下篇：知识卡片分两页商业化用。`upper`=上篇（免费预览思路）、`lower`=下篇。 */
+/** @deprecated 旧客户端上/下篇；新路径用 notePageIndex 1..12 */
 export type KnowledgeCardNotePart = "upper" | "lower";
 
+export type KnowledgeCardPromptPaging = {
+  notePart?: KnowledgeCardNotePart;
+  /** 1-based 页码 */
+  notePageIndex?: number;
+  notePageTotal?: number;
+};
+
 /**
- * 把 Markdown 文稿按 `##` 子标题**对半切**成上篇 / 下篇（切不开则按长度对半）。
- * H1 文档大标题在两页都保留（作为各页标题来源）；上篇含 H1 + 前导段 + 前半子标题，下篇含 H1 + 后半子标题。
+ * 兼容旧上/下篇：映射为 plan 的前半 / 后半拼接（极短兼容期）。
  */
 export function splitKnowledgeCardMarkdown(scriptContext: string): { upper: string; lower: string } {
-  const full = String(scriptContext || "").trim();
-  if (!full) return { upper: "", lower: "" };
-
-  const lines = full.split(/\r?\n/);
-  // H1 文档大标题（首个 `# ` 行）
-  const h1 = lines.find((l) => /^#\s+/.test(l.trim()))?.trim() ?? "";
-
-  // 以 `## ` 子标题切块：preamble（首个 `## ` 之前的所有内容）+ 各子标题块
-  const sectionStarts: number[] = [];
-  lines.forEach((l, i) => {
-    if (/^##\s+/.test(l.trim())) sectionStarts.push(i);
-  });
-
-  if (sectionStarts.length >= 2) {
-    const preamble = lines.slice(0, sectionStarts[0]).join("\n").trim();
-    const sections: string[] = sectionStarts.map((start, idx) => {
-      const end = idx + 1 < sectionStarts.length ? sectionStarts[idx + 1] : lines.length;
-      return lines.slice(start, end).join("\n").trim();
-    });
-    const half = Math.ceil(sections.length / 2);
-    const upperSections = sections.slice(0, half);
-    const lowerSections = sections.slice(half);
-    const upper = [preamble, ...upperSections].filter(Boolean).join("\n\n").trim();
-    // 下篇保留 H1 大标题作为上下文，再接后半子标题
-    const lowerHead = h1 && !lowerSections[0]?.startsWith(h1) ? h1 : "";
-    const lower = [lowerHead, ...lowerSections].filter(Boolean).join("\n\n").trim();
-    return { upper, lower: lower || upper };
-  }
-
-  // 没有足够子标题：按字符长度对半切；下篇前补 H1
-  const mid = Math.ceil(full.length / 2);
-  const upper = full.slice(0, mid).trim();
-  const lowerBody = full.slice(mid).trim();
-  const lower = h1 ? `${h1}\n\n${lowerBody}`.trim() : lowerBody;
-  return { upper, lower };
+  const plan = planKnowledgeCardPages(scriptContext);
+  if (!plan.pages.length) return { upper: "", lower: "" };
+  if (plan.pages.length === 1) return { upper: plan.pages[0], lower: plan.pages[0] };
+  const half = Math.ceil(plan.pages.length / 2);
+  return {
+    upper: plan.pages.slice(0, half).join("\n\n").trim(),
+    lower: plan.pages.slice(half).join("\n\n").trim() || plan.pages[plan.pages.length - 1],
+  };
 }
 
 /**
- * **单页连贯图文知识卡片**（自定义文案专用）：组装**直接送 GPT-Image-2** 的 prompt。
- * 结构 = 中文艺术 directive（保美学）+ 上下篇分页指令（如有）+ Markdown 内容 + 英文渲染外壳（防乱码）。
- * 本路径**不经过英文翻译**，与小红书八格 {@link buildXhsNoteGeminiPrompt} 完全独立。
- *
- * @param notePart 传入 `upper`/`lower` 时，仅取对应半篇内容并在标题末尾标注「（上篇）」/「（下篇）」。不传则整篇。
+ * **单页连贯图文知识卡片**：中文 directive + 分页指令 + Markdown 切片 + 英文渲染外壳。
+ * 出图走 OpenRouter GPT-Image-2（调用方强制），不经英文翻译。
  */
 export function buildSinglePageKnowledgeCardImagePrompt(
   scriptContext: string,
-  notePart?: KnowledgeCardNotePart,
+  paging?: KnowledgeCardNotePart | KnowledgeCardPromptPaging,
 ): string {
-  const source =
-    notePart === "upper"
-      ? splitKnowledgeCardMarkdown(scriptContext).upper
-      : notePart === "lower"
-        ? splitKnowledgeCardMarkdown(scriptContext).lower
-        : String(scriptContext || "");
-  const slice = toSimplifiedChinese(source.slice(0, SCRIPT_SLICE));
+  const opts: KnowledgeCardPromptPaging =
+    paging === "upper" || paging === "lower" ? { notePart: paging } : paging && typeof paging === "object" ? paging : {};
 
-  const partDirective =
-    notePart === "upper"
-      ? `\n【分页·上篇】本页是该主题图文笔记的【上篇】（共上下两篇）。请在文档大标题的末尾追加「（上篇）」字样；**只**呈现下方提供的这半部分内容，做成一份完整、连贯、精致且**信息详尽**的单页知识卡片（内容只多不少、宁详勿略，把每个子标题充分展开；不要画出下篇内容，也不要写"未完待续"之外的占位）。\n【收尾·上篇】上篇结尾**不要**生成任何诗词、金句或书法点睛横幅；把底部版面同样用于详尽的知识点内容。`
-      : notePart === "lower"
-        ? `\n【分页·下篇】本页是该主题图文笔记的【下篇】（承接上篇，共上下两篇）。请在文档大标题的末尾追加「（下篇）」字样；**只**呈现下方提供的这半部分内容，做成一份完整、连贯、精致且**信息详尽**的单页知识卡片（内容只多不少、宁详勿略，把每个子标题充分展开），整体风格须与上篇保持一致。\n【收尾·下篇】下篇结尾请生成 **1 首当代诗词**阐释全文核心知识点，并配 1 句楷书书法点睛语横幅 + 诗意插图与视觉链接（不要写出"金句"二字），四周放置图标与相关视觉链接。`
-        : `\n【收尾】本页不生成诗词、金句或书法点睛横幅；版面全部用于详尽的知识点内容。`;
+  const plan = planKnowledgeCardPages(scriptContext);
+
+  let source = String(scriptContext || "");
+  let partDirective = `\n【收尾】本页不生成诗词、金句或书法点睛横幅；版面用于疏朗的知识点内容。`;
+
+  const pageIndex = Number(opts.notePageIndex);
+  if (Number.isFinite(pageIndex) && pageIndex >= 1 && plan.pages.length > 0) {
+    const total = Math.max(1, Number(opts.notePageTotal) || plan.pageCount || plan.pages.length);
+    const idx = Math.min(plan.pages.length, Math.max(1, Math.floor(pageIndex)));
+    source = plan.pages[idx - 1] || source;
+    const isLast = idx >= total || idx >= plan.pages.length;
+    partDirective = `\n【分页】本页是该主题图文笔记的第 ${idx}/${total} 页。请在文档大标题末尾追加「（第 ${idx}/${total} 页）」；**只**呈现下方本页切片，做成疏朗、连贯的单页知识卡片（多留白、有限要点；不要画其他页内容）。\n${
+      isLast
+        ? "【收尾·末页】可选生成 **一句** 短诗词或书法点睛横幅收束全文（不要长诗占版）；也可不写诗词，保持疏朗。"
+        : "【收尾】本页不要生成诗词或书法点睛横幅；底部版面留给知识点与留白。"
+    }`;
+  } else if (opts.notePart === "upper" || opts.notePart === "lower") {
+    // 旧客户端：映射到第 1 / 2 页语义
+    const split = splitKnowledgeCardMarkdown(scriptContext);
+    source = opts.notePart === "upper" ? split.upper : split.lower;
+    const label = opts.notePart === "upper" ? "上篇" : "下篇";
+    partDirective =
+      opts.notePart === "upper"
+        ? `\n【分页·兼容】本页标注「（${label}）」。只呈现下方切片；疏朗留白；不要诗词横幅。`
+        : `\n【分页·兼容】本页标注「（${label}）」。只呈现下方切片；疏朗留白。\n【收尾】可选一句短诗词点睛，勿占满版。`;
+  } else if (plan.pages.length === 1) {
+    source = plan.pages[0];
+  }
+
+  const slice = toSimplifiedChinese(source.slice(0, SCRIPT_SLICE));
 
   return `${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH}${partDirective}
 

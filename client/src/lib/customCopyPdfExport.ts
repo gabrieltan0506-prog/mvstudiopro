@@ -11,6 +11,8 @@ export type CustomCopyPdfPayload = {
   optimizeSummary?: string | null;
   imageUpperUrl?: string | null;
   imageLowerUrl?: string | null;
+  /** 多页知识卡结果（优先于 upper/lower） */
+  imageUrls?: string[] | null;
   exportedAt?: Date;
 };
 
@@ -72,13 +74,28 @@ export function buildCustomCopyPdfHtml(payload: CustomCopyPdfPayload): string {
     const title = summary ? `深度优化结果 · ${summary}` : "深度优化结果";
     sections.push(textBlock(title, payload.optimizeResult));
   }
-  if (payload.imageUpperUrl?.trim()) {
-    const upperTitle =
-      payload.kind === "single_page_knowledge_card" ? "图文卡片 · 上篇" : "生成图片";
-    sections.push(imageBlock(upperTitle, payload.imageUpperUrl));
-  }
-  if (payload.imageLowerUrl?.trim()) {
-    sections.push(imageBlock("图文卡片 · 下篇", payload.imageLowerUrl));
+
+  const multi =
+    Array.isArray(payload.imageUrls) && payload.imageUrls.length > 0
+      ? payload.imageUrls.map((u) => String(u || "").trim()).filter(Boolean)
+      : [];
+  if (multi.length > 0) {
+    multi.forEach((url, i) => {
+      const title =
+        payload.kind === "single_page_knowledge_card"
+          ? `图文卡片 · 第 ${i + 1}/${multi.length} 页`
+          : `生成图片 ${i + 1}`;
+      sections.push(imageBlock(title, url));
+    });
+  } else {
+    if (payload.imageUpperUrl?.trim()) {
+      const upperTitle =
+        payload.kind === "single_page_knowledge_card" ? "图文卡片 · 第 1 页" : "生成图片";
+      sections.push(imageBlock(upperTitle, payload.imageUpperUrl));
+    }
+    if (payload.imageLowerUrl?.trim()) {
+      sections.push(imageBlock("图文卡片 · 第 2 页", payload.imageLowerUrl));
+    }
   }
 
   const bodyContent = sections.filter(Boolean).join("\n");
@@ -167,11 +184,15 @@ export function buildCustomCopyPdfHtml(payload: CustomCopyPdfPayload): string {
 }
 
 export function hasCustomCopyPdfContent(payload: CustomCopyPdfPayload): boolean {
+  const multi = Array.isArray(payload.imageUrls)
+    ? payload.imageUrls.some((u) => String(u || "").trim())
+    : false;
   return Boolean(
     payload.sourceText.trim() ||
       payload.optimizeBrief?.trim() ||
       payload.optimizeResult?.trim() ||
       payload.imageUpperUrl?.trim() ||
-      payload.imageLowerUrl?.trim(),
+      payload.imageLowerUrl?.trim() ||
+      multi,
   );
 }
