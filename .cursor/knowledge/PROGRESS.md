@@ -323,6 +323,10 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 复刻外链 nest link-only → **#1061**。再延长一轮 + 创作记录入口 → **#1062**。  
 惩罚皮肤加码 1000 组进行中：`~/Downloads/2026Aug04b/`（A–Y×40）。
 
+**水印对照（实片）**：小云雀成片左上角有强制「AI生成」；OpenRouter `bytedance/seedance-2.0` 国际版同档 15s **无**该字样（样片 `~/Downloads/2026Aug04/openrouter-seedance20-15s-sandstorm.mp4`）。要无角标优先走 OpenRouter 2.0/2.0-fast；2.5 小云雀仍带标。
+
+**清除角标工具（B·修补）**：`shared/aiCornerMarkRoi` + `server/services/eraseAiCornerMark`（ffmpeg delogo）+ jobs `eraseAiCornerMark`；画布成片·加长区「清除左上角标（后期修补）」——不裁画面、不烧上游积分。
+
 ---
 
 ## 如何更新本文件
