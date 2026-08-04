@@ -1,7 +1,6 @@
 /**
- * /platform 趋势图文报表本机持久化：刷新不丢。
- * 只存 JSON 结构化数据；渲染走 VisualReportTemplate（含爱马仕橙暖底）。
- * 看板与 PNG 报表可分别到位：任一方就绪即写入，避免「只出了四格就刷新」整页空白。
+ * /platform 趋势图文报表本机键（已停用「刷新不丢」）。
+ * PlatformPage 进页/重跑会 clear；保留 read/write 仅供测试与一次性清旧数据。
  */
 
 import type { VisualReportData } from "@/components/VisualReportTemplate";
