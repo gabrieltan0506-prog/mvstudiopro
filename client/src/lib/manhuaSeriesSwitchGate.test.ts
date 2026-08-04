@@ -4,6 +4,7 @@ import {
   confirmManhuaSeriesSwitchWithBackup,
   inspectManhuaSeriesSwitchRisk,
   manhuaSeriesSwitchBackupConfirmZh,
+  resolveManhuaBackupSeriesLabel,
 } from "./manhuaSeriesSwitchGate";
 
 describe("manhuaSeriesSwitchGate", () => {
@@ -48,6 +49,32 @@ describe("manhuaSeriesSwitchGate", () => {
       confirmBackup: () => false,
     });
     expect(ok).toBe(false);
+  });
+
+  it("backup label prefers previous title and rejects incoming 正剧名", () => {
+    expect(
+      resolveManhuaBackupSeriesLabel({
+        writerPack: {
+          seriesTitle: "旧短剧",
+          logline: "",
+          charactersMd: "",
+          propsMd: "",
+          locationsMd: "",
+          episodes: [],
+          rawMarkdown: "x".repeat(80),
+          episodeCount: 0,
+        },
+        topic: "雁门照山河",
+        incomingSeriesTitle: "雁门照山河",
+      }),
+    ).toBe("旧短剧");
+    expect(
+      resolveManhuaBackupSeriesLabel({
+        previousSeriesTitle: "先前专案甲",
+        topic: "雁门照山河",
+        incomingSeriesTitle: "雁门照山河",
+      }),
+    ).toBe("先前专案甲");
   });
 
   it("requires clear confirm after successful backup", async () => {

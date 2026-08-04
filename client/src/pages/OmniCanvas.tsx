@@ -2480,6 +2480,9 @@ export default function OmniCanvas() {
           downloadManhuaSeriesSwitchBackup({
             writerPack,
             topic,
+            // 备份只用先前剧名；题材框若已改成新剧，不得盖掉备份名
+            previousSeriesTitle: writerPack?.seriesTitle || undefined,
+            incomingSeriesTitle: topic && topic !== writerPack?.seriesTitle ? topic : undefined,
             blocks,
             customAssetRefs,
             characterIds: selectedCharacterIds,
@@ -2487,7 +2490,7 @@ export default function OmniCanvas() {
             sceneId: factorySceneId || undefined,
           }),
         onBackupOk: (r) => {
-          toast.success(`旧专案备份已下载：${r.filename}`);
+          toast.success(`先前专案备份已下载：${r.filename}`);
         },
         onBackupFail: (msg) => {
           toast.error(`备份失败，已中止换剧：${msg}`);
@@ -2738,12 +2741,18 @@ export default function OmniCanvas() {
         blocks,
         customAssetRefs,
       });
+      const incomingSeriesTitle =
+        (text.match(/##\s*系列标题\s*\n+\s*([^\n#]+)/)?.[1] || "").trim() ||
+        (text.match(/系列[：:]\s*([^\n]+)/)?.[1] || "").trim() ||
+        undefined;
       const allowed = await confirmManhuaSeriesSwitchWithBackup({
         risk,
         download: () =>
           downloadManhuaSeriesSwitchBackup({
             writerPack,
             topic: factoryTopic.trim() || undefined,
+            previousSeriesTitle: writerPack?.seriesTitle || undefined,
+            incomingSeriesTitle,
             blocks,
             customAssetRefs,
             characterIds: selectedCharacterIds,
@@ -2751,7 +2760,7 @@ export default function OmniCanvas() {
             sceneId: factorySceneId || undefined,
           }),
         onBackupOk: (r) => {
-          toast.success(`旧专案备份已下载：${r.filename}`);
+          toast.success(`先前专案备份已下载：${r.filename}`);
         },
         onBackupFail: (msg) => {
           toast.error(`备份失败，已中止导入：${msg}`);
@@ -2870,13 +2879,20 @@ export default function OmniCanvas() {
       const r = await downloadManhuaSeriesSwitchBackup({
         writerPack,
         topic: factoryTopic.trim() || undefined,
+        previousSeriesTitle: writerPack?.seriesTitle || undefined,
+        // 手动备份：题材框若已改成新剧名，禁止拿它当备份名
+        incomingSeriesTitle:
+          factoryTopic.trim() &&
+          factoryTopic.trim() !== String(writerPack?.seriesTitle || "").trim()
+            ? factoryTopic.trim()
+            : undefined,
         blocks,
         customAssetRefs,
         characterIds: selectedCharacterIds,
         artStyleId: factoryArtStyleId,
         sceneId: factorySceneId || undefined,
       });
-      toast.success(`已下载专案备份：${r.filename}（${r.okCount} 项）`);
+      toast.success(`已下载先前专案备份：${r.filename}（${r.okCount} 项）`);
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "备份失败");
     }
@@ -6281,11 +6297,11 @@ export default function OmniCanvas() {
                 data-manhua-series-switch-gate
               >
                 <div className="text-[11px] font-semibold text-amber-50">
-                  换新剧前请先备份旧专案
+                  换新剧前请先备份「先前专案」
                 </div>
                 <p className="mt-1 text-[10px] leading-relaxed text-amber-50/75">
-                  旧剧本与人物/场景/造型多为付费生成。正确顺序：先下载备份 → 再清空 →
-                  最后才导入或扩写新剧。重扩写与导入时会自动弹出此门禁。
+                  旧剧本与人物/场景/造型多为付费生成。备份文件请用先前剧名命名，不要用正要开的新剧名。
+                  正确顺序：先下载备份 → 再清空 → 最后才导入或扩写新剧。
                 </p>
                 <button
                   type="button"
@@ -6293,7 +6309,7 @@ export default function OmniCanvas() {
                   onClick={() => void backupCurrentSeriesProject()}
                   className="mt-2 inline-flex items-center rounded-lg border border-amber-300/40 bg-amber-500/20 px-2.5 py-1.5 text-[11px] font-medium text-amber-50 hover:bg-amber-500/30 disabled:opacity-50"
                 >
-                  立即下载旧专案备份
+                  立即下载先前专案备份
                 </button>
               </div>
               <div className="mt-3" data-manhua-seedance-layout>

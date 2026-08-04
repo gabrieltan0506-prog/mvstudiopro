@@ -41,6 +41,57 @@ function slugPart(raw: string): string {
     .slice(0, 40);
 }
 
+function stampBackupSuffix(d = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+/**
+ * 备份文件名只用「先前专案」名，禁止用正要开的新剧名。
+ * 优先：显式 previousSeriesTitle → 旧 writerPack 标题 → topic（且都不得等于 incoming）。
+ */
+export function resolveManhuaBackupSeriesLabel(opts: {
+  previousSeriesTitle?: string | null;
+  writerPack?: ManhuaWriterPack | null;
+  topic?: string | null;
+  /** 正要换上的新剧名：禁止用作备份名 */
+  incomingSeriesTitle?: string | null;
+}): string {
+  const incoming = String(opts.incomingSeriesTitle || "").trim();
+  const candidates = [
+    String(opts.previousSeriesTitle || "").trim(),
+    String(opts.writerPack?.seriesTitle || "").trim(),
+    String(opts.topic || "").trim(),
+  ].filter(Boolean);
+  for (const c of candidates) {
+    if (!incoming || c !== incoming) return c;
+  }
+  return candidates[0] || "先前专案";
+}
+
+/**
+ * 让用户确认/改写「先前剧名」；若与新剧名相同则重问。
+ * 返回 null = 用户取消。
+ */
+export function askManhuaPreviousSeriesBackupLabel(
+  defaultLabel: string,
+  incomingSeriesTitle?: string | null,
+): string | null {
+  const incoming = String(incomingSeriesTitle || "").trim();
+  const fallback = String(defaultLabel || "").trim() || "先前专案";
+  const hint = incoming
+    ? `请填写「先前专案」备份名（勿填正要开的新剧「${incoming}」）`
+    : "请填写「先前专案」备份名（勿填正要开的新剧名）";
+  const raw = window.prompt(hint, fallback);
+  if (raw === null) return null;
+  const name = String(raw || "").trim() || fallback;
+  if (incoming && name === incoming) {
+    window.alert(`备份名不能与新剧「${incoming}」相同，请改用先前剧名`);
+    return askManhuaPreviousSeriesBackupLabel(fallback, incoming);
+  }
+  return name;
+}
+
 function triggerDownload(blob: Blob, filename: string) {
   const href = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -121,8 +172,9 @@ export function manhuaSeriesSwitchBackupConfirmZh(risk: ManhuaSeriesSwitchRisk):
     risk.summaryZh,
     "",
     "换新剧是基础操作：必须先把旧剧本与人物/场景/造型备份到本机，再清空，最后才导入或扩写新剧。",
+    "备份文件请用「先前剧名」命名，不要用正要开的新剧名。",
     "",
-    "确定 = 立即下载备份并继续",
+    "确定 = 填写先前剧名并下载备份",
     "取消 = 先不换剧",
   ].join("\n");
 }
@@ -140,6 +192,12 @@ export function manhuaSeriesSwitchClearConfirmZh(): string {
 export type DownloadManhuaSeriesSwitchBackupOpts = {
   writerPack?: ManhuaWriterPack | null;
   topic?: string;
+  /** 显式先前剧名（优先；备份 zip / README 只用这个口径） */
+  previousSeriesTitle?: string | null;
+  /** 正要开的新剧名：不得用作备份文件名 */
+  incomingSeriesTitle?: string | null;
+  /** 默认 true：弹出「先前专案名」确认，避免误用正剧名 */
+  askPreviousTitle?: boolean;
   blocks: CanvasBlock[];
   customAssetRefs?: ManhuaCustomAssetRef[] | null;
   characterIds?: string[];
@@ -160,10 +218,19 @@ export type DownloadManhuaSeriesSwitchBackupResult = {
 export async function downloadManhuaSeriesSwitchBackup(
   opts: DownloadManhuaSeriesSwitchBackupOpts,
 ): Promise<DownloadManhuaSeriesSwitchBackupResult> {
-  const seriesTitle =
-    String(opts.writerPack?.seriesTitle || "").trim() ||
-    String(opts.topic || "").trim() ||
-    "未命名专案";
+  const suggested = resolveManhuaBackupSeriesLabel({
+    previousSeriesTitle: opts.previousSeriesTitle,
+    writerPack: opts.writerPack,
+    topic: opts.topic,
+    incomingSeriesTitle: opts.incomingSeriesTitle,
+  });
+  const ask = opts.askPreviousTitle !== false;
+  const seriesTitle = ask
+    ? askManhuaPreviousSeriesBackupLabel(suggested, opts.incomingSeriesTitle)
+    : suggested;
+  if (!seriesTitle) {
+    throw new Error("已取消备份（未填写先前专案名）");
+  }
   const writerMd = formatManhuaWriterPackMarkdown(opts.writerPack);
   const dockItems = collectManhuaClipDockItems(opts.blocks, { includePendingStory: false });
   const exportableIds = selectExportableDockIds(dockItems);
@@ -175,6 +242,7 @@ export async function downloadManhuaSeriesSwitchBackup(
       items: dockItems,
       selectedIds: exportableIds,
       topic: opts.topic,
+      // 坞工程包文件名也跟先前专案名，避免被新剧名盖掉
       seriesTitle,
       characterIds: opts.characterIds,
       artStyleId: opts.artStyleId,
@@ -203,15 +271,21 @@ export async function downloadManhuaSeriesSwitchBackup(
   zip.file(
     "README.md",
     [
-      `# ${seriesTitle} · 换剧备份`,
+      `# ${seriesTitle} · 先前专案备份`,
       "",
       `导出时间：${new Date().toISOString()}`,
+      `备份专案名（先前剧名）：${seriesTitle}`,
+      opts.incomingSeriesTitle
+        ? `正要开的新剧（勿与备份混淆）：${String(opts.incomingSeriesTitle).trim()}`
+        : "",
       "",
       "本包含：剧本（writer-pack.md）、人物/场景/道具设定图（series-assets/）、上传参考（custom-refs/）。",
       "若同时导出了成片坞工程包，那是另一份 zip，请一并保管。",
       "",
-      "换新剧正确顺序：① 下载本备份 → ② 清空旧设定 → ③ 再导入/扩写新剧。",
-    ].join("\n"),
+      "换新剧正确顺序：① 下载本备份（用先前剧名）→ ② 清空旧设定 → ③ 再导入/扩写新剧。",
+    ]
+      .filter((line) => line !== undefined)
+      .join("\n"),
   );
 
   const seriesBlocks = opts.blocks.filter(
@@ -250,7 +324,10 @@ export async function downloadManhuaSeriesSwitchBackup(
     JSON.stringify(
       {
         format: "mv-manhua-series-switch-backup-v1",
+        /** 备份专案名 = 先前剧名，不是新剧名 */
         seriesTitle,
+        previousSeriesTitle: seriesTitle,
+        incomingSeriesTitle: String(opts.incomingSeriesTitle || "").trim() || undefined,
         topic: String(opts.topic || "").trim(),
         exportedAt: new Date().toISOString(),
         writerPack: Boolean(writerMd.trim()),
@@ -268,7 +345,7 @@ export async function downloadManhuaSeriesSwitchBackup(
   }
 
   const blob = await zip.generateAsync({ type: "blob" });
-  const filename = `mv-manhua-backup-${slugPart(seriesTitle) || "series"}.zip`;
+  const filename = `mv-manhua-backup-${slugPart(seriesTitle) || "先前专案"}-${stampBackupSuffix()}.zip`;
   triggerDownload(blob, filename);
   return {
     filename,
