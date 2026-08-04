@@ -70,7 +70,11 @@ export function mapGenerateVisualReportResult(
   const report = result.report;
   const windowDays = opts.windowDays;
 
-  const platformDetails = (Array.isArray(report.platformDetails) ? report.platformDetails : []).map(
+  const trackGrowthEarly = Array.isArray(report.trackGrowth)
+    ? (report.trackGrowth as VisualReportData["trackGrowth"])
+    : [];
+
+  let platformDetails = (Array.isArray(report.platformDetails) ? report.platformDetails : []).map(
     (p: Record<string, unknown>) => ({
       platform: String(p.platform || ""),
       displayName:
@@ -121,9 +125,37 @@ export function mapGenerateVisualReportResult(
     }),
   );
 
-  const trackGrowth = Array.isArray(report.trackGrowth)
-    ? (report.trackGrowth as VisualReportData["trackGrowth"])
-    : [];
+  // 右侧浅色平台卡依赖 platformDetails[0]；模型漏字段时用赛道名兜底，避免整栏空白
+  if (!platformDetails.length) {
+    const hotFromTracks = (trackGrowthEarly || [])
+      .map((t) => String(t?.name || "").trim())
+      .filter(Boolean)
+      .slice(0, 6);
+    platformDetails = [
+      {
+        platform: "xiaohongshu",
+        displayName: PLATFORM_NAMES.xiaohongshu,
+        trafficBoosters: [],
+        cashRewards: [],
+        hotTopics: hotFromTracks.length ? hotFromTracks : ["本窗热点待补充"],
+        blueOceanWords: [],
+      },
+    ];
+  } else {
+    platformDetails = platformDetails.map((pl) => {
+      if (pl.hotTopics.length) return pl;
+      const hotFromTracks = (trackGrowthEarly || [])
+        .map((t) => String(t?.name || "").trim())
+        .filter(Boolean)
+        .slice(0, 6);
+      return {
+        ...pl,
+        hotTopics: hotFromTracks.length ? hotFromTracks : pl.hotTopics,
+      };
+    });
+  }
+
+  const trackGrowth = trackGrowthEarly;
 
   const topicExamples: NonNullable<VisualReportData["topicExamples"]> = Array.isArray(
     report.topicExamples,
