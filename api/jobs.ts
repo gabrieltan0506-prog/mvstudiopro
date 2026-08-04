@@ -3290,6 +3290,45 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       }
     }
 
+    /** 成片左上角标后期修补（本地 ffmpeg，不走上游无标导出） */
+    if (op === "eraseAiCornerMark") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const videoUrl = s(b.videoUrl || q.videoUrl || "").trim();
+      if (!/^https:\/\//i.test(videoUrl)) {
+        return res.status(400).json({ ok: false, error: "请提供成片 HTTPS 地址" });
+      }
+      try {
+        const { eraseAiCornerMarkToGcs } = await import(
+          "../server/services/eraseAiCornerMark.js"
+        );
+        const out = await eraseAiCornerMarkToGcs({ videoUrl });
+        return res.status(200).json({
+          ok: true,
+          videoUrl: out.videoUrl,
+          gcsUri: out.gcsUri,
+          bytes: out.bytes,
+          width: out.width,
+          height: out.height,
+          roi: out.roi,
+        });
+      } catch (e: any) {
+        const msg = String(e?.message || "erase_failed");
+        return res.status(502).json({
+          ok: false,
+          error:
+            /ffmpeg|ffprobe|ENOENT/i.test(msg)
+              ? "清除角标失败，请稍后重试"
+              : /download/i.test(msg)
+                ? "成片下载失败，请稍后重试"
+                : /too_large/i.test(msg)
+                  ? "成片过大，请缩短后再试"
+                  : "清除角标失败，请稍后重试",
+        });
+      }
+    }
+
     if (op === "manhuaCropSheet2x2") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });

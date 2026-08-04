@@ -71,6 +71,7 @@ import {
   parseManhuaClipDirectorCardSummary,
 } from "@shared/manhuaClipDirectorCard";
 import { CanvasImageEditMaskPainter } from "@/components/canvas/CanvasImageEditMaskPainter";
+import { eraseAiCornerMark } from "@/lib/eraseAiCornerMarkApi";
 import { trpc } from "@/lib/trpc";
 import {
   Clapperboard,
@@ -583,6 +584,7 @@ export default function FreeformCanvas({
   const openImagePreview = useCallback((p: CanvasImagePreview) => setImagePreview(p), []);
   const [resizeState, setResizeState] = useState<ResizeState>(null);
   const [uploadBusyId, setUploadBusyId] = useState<string | null>(null);
+  const [eraseCornerBusyId, setEraseCornerBusyId] = useState<string | null>(null);
   const [maskBusyId, setMaskBusyId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ blockId: string; done: number; total: number } | null>(null);
   /** 左栏：画布节点列表 / 资产设定卡（对照参考图 IA，不抄皮肤） */
@@ -956,6 +958,35 @@ export default function FreeformCanvas({
       if (selectedId === id) setSelectedId(null);
     },
     [blocks, edges, onBlocksChange, onEdgesChange, selectedId],
+  );
+
+  const eraseCornerMarkForBlock = useCallback(
+    async (blockId: string) => {
+      const block = blocks.find((b) => b.id === blockId);
+      const src = String(block?.outputUrl || "").trim();
+      if (!block || !/^https:\/\//i.test(src) || !/\.(mp4|mov|webm|m4v)(\?|$)/i.test(src)) {
+        toast.error("请先生成成片后再清除角标");
+        return;
+      }
+      if (eraseCornerBusyId) return;
+      setEraseCornerBusyId(blockId);
+      try {
+        const out = await eraseAiCornerMark({ videoUrl: src });
+        const prevUrls = Array.isArray(block.outputUrls) ? block.outputUrls : [];
+        patchOne(blockId, {
+          outputUrl: out.videoUrl,
+          outputUrls: Array.from(new Set([out.videoUrl, ...prevUrls, src])).slice(0, 8),
+          status: "done",
+          error: undefined,
+        });
+        toast.success("已清除左上角标");
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? e.message : "清除角标失败");
+      } finally {
+        setEraseCornerBusyId(null);
+      }
+    },
+    [blocks, eraseCornerBusyId, patchOne],
   );
 
   const runBlock = useCallback(
@@ -2226,23 +2257,36 @@ export default function FreeformCanvas({
                               })()}
                               {block.outputUrl &&
                               /\.(mp4|mov|webm|m4v)(\?|$)/i.test(block.outputUrl) ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    patchOne(block.id, {
-                                      seedance25WorkMode: "extend",
-                                      seedance25RefVideoUrls: Array.from(
-                                        new Set([
-                                          ...(block.seedance25RefVideoUrls || []),
-                                          block.outputUrl!,
-                                        ]),
-                                      ).slice(0, 3),
-                                    })
-                                  }
-                                  className="w-full rounded-lg border border-white/15 bg-white/[0.04] px-2 py-1.5 text-[11px] text-white/80 hover:bg-white/[0.08]"
-                                >
-                                  用当前成片再延长一轮
-                                </button>
+                                <div className="space-y-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      patchOne(block.id, {
+                                        seedance25WorkMode: "extend",
+                                        seedance25RefVideoUrls: Array.from(
+                                          new Set([
+                                            ...(block.seedance25RefVideoUrls || []),
+                                            block.outputUrl!,
+                                          ]),
+                                        ).slice(0, 3),
+                                      })
+                                    }
+                                    className="w-full rounded-lg border border-white/15 bg-white/[0.04] px-2 py-1.5 text-[11px] text-white/80 hover:bg-white/[0.08]"
+                                  >
+                                    用当前成片再延长一轮
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={eraseCornerBusyId === block.id}
+                                    onClick={() => void eraseCornerMarkForBlock(block.id)}
+                                    className="w-full rounded-lg border border-amber-300/35 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-50/90 hover:bg-amber-500/15 disabled:opacity-50"
+                                    title="后期修补左上角标，不裁画面；非上游无标导出"
+                                  >
+                                    {eraseCornerBusyId === block.id
+                                      ? "正在清除角标…"
+                                      : "清除左上角标（后期修补）"}
+                                  </button>
+                                </div>
                               ) : null}
                               {block.seedance25WebThreadLink ? (
                                 <a
