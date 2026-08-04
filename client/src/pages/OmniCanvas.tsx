@@ -97,6 +97,7 @@ import {
   spawnManhuaDramaStudioSeries,
   stageKeyFromBlockId,
   stripManhuaFactoryCanvasArtifacts,
+  stripManhuaSeriesAssetsForNewProject,
   syncManhuaClipAssetEdges,
   type ManhuaFactoryStageKey,
 } from "@/lib/canvasDramaStudio";
@@ -104,6 +105,11 @@ import {
   collectManhuaClipDockItems,
   episodeIndexesFromDockSelection,
 } from "@/lib/manhuaProjectExport";
+import {
+  confirmManhuaSeriesSwitchWithBackup,
+  downloadManhuaSeriesSwitchBackup,
+  inspectManhuaSeriesSwitchRisk,
+} from "@/lib/manhuaSeriesSwitchGate";
 import { shouldAttachManhuaPreviouslyOn } from "@shared/manhuaEpisodeRecap";
 import {
   resolveClipLocalSegmentIndex,
@@ -2459,10 +2465,39 @@ export default function OmniCanvas() {
     }
     /** 立刻收窄为成片三选一，避免 async/state 下空串回流导致 tsc 失败 */
     const selectedVideoModel: ManhuaSeedanceLayoutVideoModel = writerVideoModel;
-    // 重扩写：旧剧情包不再留备份，以新稿为准（先提醒再跑）
-    if (writerPack) {
+    /** 全量换剧：先备份旧专案（剧本+付费设定图），再清空，避免新旧串味 */
+    const fullSeriesSwitch = !(writerFromEpisode > 0);
+    let clearSeriesAssetsAfterBackup = false;
+    if (fullSeriesSwitch) {
+      const risk = inspectManhuaSeriesSwitchRisk({
+        writerPack,
+        blocks,
+        customAssetRefs,
+      });
+      const allowed = await confirmManhuaSeriesSwitchWithBackup({
+        risk,
+        download: () =>
+          downloadManhuaSeriesSwitchBackup({
+            writerPack,
+            topic,
+            blocks,
+            customAssetRefs,
+            characterIds: selectedCharacterIds,
+            artStyleId: factoryArtStyleId,
+            sceneId: factorySceneId || undefined,
+          }),
+        onBackupOk: (r) => {
+          toast.success(`旧专案备份已下载：${r.filename}`);
+        },
+        onBackupFail: (msg) => {
+          toast.error(`备份失败，已中止换剧：${msg}`);
+        },
+      });
+      if (!allowed) return;
+      clearSeriesAssetsAfterBackup = risk.needsBackup;
+    } else if (writerPack) {
       const ok = window.confirm(
-        "重新扩写将以新剧本为准，覆盖本机与云端的旧剧情包（不再保留旧备份）。是否继续？",
+        "局部改写将覆盖起点之后的剧情；起点之前的剧本与已出片资产会保留。是否继续？",
       );
       if (!ok) return;
     }
@@ -2526,11 +2561,26 @@ export default function OmniCanvas() {
         toast.message("已生成草稿，建议检查每集片尾钩子是否完整");
       }
       // 新剧情包不应继续展示旧静帧/成片/多集坞（云草稿残留）
-      const cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges, {
+      let cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges, {
         fromEpisode: writerFromEpisode || undefined,
         fromSegment: writerFromEpisode > 0 ? writerFromSegment : undefined,
       });
-      const cleanedTouched = cleaned.removedCount > 0 || cleaned.archivedCount > 0;
+      if (clearSeriesAssetsAfterBackup) {
+        const seriesCleared = stripManhuaSeriesAssetsForNewProject(
+          cleaned.blocks,
+          cleaned.edges,
+        );
+        cleaned = {
+          ...cleaned,
+          blocks: seriesCleared.blocks,
+          edges: seriesCleared.edges,
+          removedCount: cleaned.removedCount + seriesCleared.removedCount,
+        };
+      }
+      const cleanedTouched =
+        cleaned.removedCount > 0 ||
+        cleaned.archivedCount > 0 ||
+        clearSeriesAssetsAfterBackup;
       const nextBlocks = cleanedTouched ? cleaned.blocks : blocks;
       const nextEdges = cleanedTouched ? cleaned.edges : edges;
       if (cleanedTouched) {
@@ -2639,6 +2689,9 @@ export default function OmniCanvas() {
     writerFromEpisode,
     writerFromSegment,
     viralTemplateId,
+    customAssetRefs,
+    selectedCharacterIds,
+    factorySceneId,
     expandWriterMutation,
     selectedMaleHairstyleIds,
     selectedMaleMicroIds,
@@ -2674,12 +2727,38 @@ export default function OmniCanvas() {
   }, [viralTemplateId, viralTemplateGrouped]);
 
   const importWriterRoomFromText = useCallback(
-    (raw: string) => {
+    async (raw: string) => {
       const text = String(raw || "").trim();
       if (!text) {
         toast.error("请先粘贴剧本，或选择 .txt / .md 文件");
         return;
       }
+      const risk = inspectManhuaSeriesSwitchRisk({
+        writerPack,
+        blocks,
+        customAssetRefs,
+      });
+      const allowed = await confirmManhuaSeriesSwitchWithBackup({
+        risk,
+        download: () =>
+          downloadManhuaSeriesSwitchBackup({
+            writerPack,
+            topic: factoryTopic.trim() || undefined,
+            blocks,
+            customAssetRefs,
+            characterIds: selectedCharacterIds,
+            artStyleId: factoryArtStyleId,
+            sceneId: factorySceneId || undefined,
+          }),
+        onBackupOk: (r) => {
+          toast.success(`旧专案备份已下载：${r.filename}`);
+        },
+        onBackupFail: (msg) => {
+          toast.error(`备份失败，已中止导入：${msg}`);
+        },
+      });
+      if (!allowed) return;
+
       const res = importManhuaWriterPackFromText(text, {
         topic: factoryTopic.trim() || undefined,
         episodeCount: writerEpisodeCount,
@@ -2693,8 +2772,24 @@ export default function OmniCanvas() {
         });
         return;
       }
-      const cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges);
-      if (cleaned.removedCount > 0 || cleaned.archivedCount > 0) {
+      let cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges);
+      if (risk.needsBackup) {
+        const seriesCleared = stripManhuaSeriesAssetsForNewProject(
+          cleaned.blocks,
+          cleaned.edges,
+        );
+        cleaned = {
+          ...cleaned,
+          blocks: seriesCleared.blocks,
+          edges: seriesCleared.edges,
+          removedCount: cleaned.removedCount + seriesCleared.removedCount,
+        };
+      }
+      if (
+        cleaned.removedCount > 0 ||
+        cleaned.archivedCount > 0 ||
+        risk.needsBackup
+      ) {
         if (abortRef.current) abortRef.current.abort();
         setBlocks(cleaned.blocks);
         setEdges(cleaned.edges);
@@ -2705,6 +2800,7 @@ export default function OmniCanvas() {
       setWriterPack(res.pack);
       setWriterConfirmed(false);
       setProjectBible(null);
+      setCustomAssetRefs([]);
       setWriterFocusEpisode(1);
       setWriterEpisodeCount(res.pack.episodeCount);
       setWriterImportDraft(text);
@@ -2719,12 +2815,23 @@ export default function OmniCanvas() {
         response: res.pack.episodes.map((ep) => `第${ep.index}集·${ep.title}`).join("\n"),
       });
       toast.success(
-        cleaned.removedCount > 0
-          ? `已导入 ${res.pack.episodes.length} 集《${res.pack.seriesTitle}》；旧工厂链已清，已出图/已出片的节点转为存档保留`
+        risk.needsBackup
+          ? `已导入 ${res.pack.episodes.length} 集《${res.pack.seriesTitle}》；旧专案已备份并清空设定，避免串味`
           : `已导入 ${res.pack.episodes.length} 集《${res.pack.seriesTitle}》，确认后再进入编导`,
       );
     },
-    [factoryTopic, writerEpisodeCount, blocks, edges, pushDebug],
+    [
+      factoryTopic,
+      writerEpisodeCount,
+      writerPack,
+      blocks,
+      edges,
+      customAssetRefs,
+      selectedCharacterIds,
+      factoryArtStyleId,
+      factorySceneId,
+      pushDebug,
+    ],
   );
 
   const onWriterImportFile = useCallback(
@@ -2741,13 +2848,47 @@ export default function OmniCanvas() {
       }
       try {
         const text = await file.text();
-        importWriterRoomFromText(text);
+        await importWriterRoomFromText(text);
       } catch {
         toast.error("读取文件失败，请改用粘贴导入");
       }
     },
     [importWriterRoomFromText],
   );
+
+  const backupCurrentSeriesProject = useCallback(async () => {
+    const risk = inspectManhuaSeriesSwitchRisk({
+      writerPack,
+      blocks,
+      customAssetRefs,
+    });
+    if (!risk.needsBackup) {
+      toast.message("当前没有可备份的剧本或已出图资产");
+      return;
+    }
+    try {
+      const r = await downloadManhuaSeriesSwitchBackup({
+        writerPack,
+        topic: factoryTopic.trim() || undefined,
+        blocks,
+        customAssetRefs,
+        characterIds: selectedCharacterIds,
+        artStyleId: factoryArtStyleId,
+        sceneId: factorySceneId || undefined,
+      });
+      toast.success(`已下载专案备份：${r.filename}（${r.okCount} 项）`);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "备份失败");
+    }
+  }, [
+    writerPack,
+    blocks,
+    customAssetRefs,
+    factoryTopic,
+    selectedCharacterIds,
+    factoryArtStyleId,
+    factorySceneId,
+  ]);
 
   const confirmWriterToDirector = useCallback(() => {
     if (!writerPack || !writerPackLooksReady(writerPack)) {
@@ -6135,6 +6276,26 @@ export default function OmniCanvas() {
                 placeholder="例：女主权谋翻盘的情感连载，宫墙内外步步为营"
                 className="mt-1 w-full rounded-xl border border-white/15 bg-black/50 px-3.5 py-3 text-[15px] text-white placeholder:text-white/30 outline-none focus:border-emerald-400/55 focus:ring-1 focus:ring-emerald-400/25 disabled:opacity-50"
               />
+              <div
+                className="mt-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2.5"
+                data-manhua-series-switch-gate
+              >
+                <div className="text-[11px] font-semibold text-amber-50">
+                  换新剧前请先备份旧专案
+                </div>
+                <p className="mt-1 text-[10px] leading-relaxed text-amber-50/75">
+                  旧剧本与人物/场景/造型多为付费生成。正确顺序：先下载备份 → 再清空 →
+                  最后才导入或扩写新剧。重扩写与导入时会自动弹出此门禁。
+                </p>
+                <button
+                  type="button"
+                  disabled={writerBusy || factoryBusy}
+                  onClick={() => void backupCurrentSeriesProject()}
+                  className="mt-2 inline-flex items-center rounded-lg border border-amber-300/40 bg-amber-500/20 px-2.5 py-1.5 text-[11px] font-medium text-amber-50 hover:bg-amber-500/30 disabled:opacity-50"
+                >
+                  立即下载旧专案备份
+                </button>
+              </div>
               <div className="mt-3" data-manhua-seedance-layout>
                 <label className="block text-[11px] text-white/45">成片引擎（必选）</label>
                 <p className="mt-0.5 text-[10px] leading-4 text-white/35">
@@ -6458,7 +6619,7 @@ export default function OmniCanvas() {
                     <button
                       type="button"
                       disabled={writerBusy || factoryBusy || !writerImportDraft.trim()}
-                      onClick={() => importWriterRoomFromText(writerImportDraft)}
+                      onClick={() => void importWriterRoomFromText(writerImportDraft)}
                       className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/[0.06] px-3 py-1.5 text-[11px] font-semibold text-white/80 hover:bg-white/[0.1] disabled:opacity-50"
                     >
                       导入为剧情包

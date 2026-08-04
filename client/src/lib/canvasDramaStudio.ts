@@ -583,6 +583,27 @@ export function manhuaBlockHasPaidOutput(block: CanvasBlock): boolean {
  *    的一步，静帧次之；从前这里连它们一起删，云上文件还在、画布却丢了
  *    引用，等于钱白烧，也断了「两集拼一集」这种后期用法。
  */
+/**
+ * 换新剧（已备份后）：清掉整部剧共用设定图，避免旧角色/场景/道具混进新剧。
+ * 调用方须先完成专案备份下载；本函数不负责导出。
+ */
+export function stripManhuaSeriesAssetsForNewProject(
+  blocks: CanvasBlock[],
+  edges: CanvasEdge[],
+): { blocks: CanvasBlock[]; edges: CanvasEdge[]; removedCount: number } {
+  const removedIds = new Set(
+    blocks.filter((b) => isManhuaSeriesAssetBlockId(b.id)).map((b) => b.id),
+  );
+  if (!removedIds.size) {
+    return { blocks, edges, removedCount: 0 };
+  }
+  return {
+    blocks: blocks.filter((b) => !removedIds.has(b.id)),
+    edges: edges.filter((e) => !removedIds.has(e.fromId) && !removedIds.has(e.toId)),
+    removedCount: removedIds.size,
+  };
+}
+
 export function stripManhuaFactoryCanvasArtifacts(
   blocks: CanvasBlock[],
   edges: CanvasEdge[],
