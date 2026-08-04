@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  getVisualReportOpenAiModel,
+  VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL,
+} from "../config/platformSwitches.js";
+import {
+  isDirectOpenRouterModelSlug,
   OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL,
   OPENROUTER_CHAT_COMPLETIONS_URL,
   resolveGpt56CopywritingTarget,
   resolveGpt56OfficialOnlyTarget,
+  resolveOpenRouterChatTarget,
   toOpenRouterGpt56Model,
 } from "./gpt56CopywritingGateway.js";
 
@@ -64,6 +70,24 @@ describe("resolveGpt56CopywritingTarget", () => {
     expect(toOpenRouterGpt56Model("gpt-5.6-sol")).toBe("openai/gpt-5.6-sol");
     expect(toOpenRouterGpt56Model("gpt-5.6-terra")).toBe("openai/gpt-5.6-terra");
     expect(toOpenRouterGpt56Model("openai/gpt-5.6-terra")).toBe("openai/gpt-5.6-terra");
+  });
+
+  it("detects direct OpenRouter vendor/model slugs (Kimi K3)", () => {
+    expect(isDirectOpenRouterModelSlug("moonshotai/kimi-k3")).toBe(true);
+    expect(isDirectOpenRouterModelSlug("openai/gpt-5.6-terra")).toBe(false);
+    expect(isDirectOpenRouterModelSlug("gpt-5.6-terra")).toBe(false);
+    setEnv("OPENROUTER_API_KEY", "sk-or-test-key");
+    const t = resolveOpenRouterChatTarget("moonshotai/kimi-k3");
+    expect(t.gateway).toBe("openrouter");
+    expect(t.apiUrl).toBe(OPENROUTER_CHAT_COMPLETIONS_URL);
+    expect(t.modelName).toBe("moonshotai/kimi-k3");
+  });
+
+  it("visual report defaults to OpenRouter Kimi K3", () => {
+    delete process.env.VISUAL_REPORT_OPENROUTER_MODEL;
+    delete process.env.VISUAL_REPORT_OPENAI_MODEL;
+    expect(getVisualReportOpenAiModel()).toBe(VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL);
+    expect(VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL).toBe("moonshotai/kimi-k3");
   });
 
   it("official_only forces api.openai.com and never Evolink/OpenRouter", () => {

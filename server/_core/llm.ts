@@ -24,6 +24,7 @@ import {
   getEvolinkApiKey,
   getOfficialOpenAiApiKey,
   getOpenRouterChatHeaders,
+  isDirectOpenRouterModelSlug,
   isEvolinkChatEndpoint,
   isOfficialOpenAiChatEndpoint,
   isOpenRouterChatEndpoint,
@@ -31,6 +32,7 @@ import {
   OPENROUTER_CHAT_COMPLETIONS_URL,
   resolveGpt56CopywritingTarget,
   resolveGpt56OfficialOnlyTarget,
+  resolveOpenRouterChatTarget,
   toOpenRouterGpt56Model,
 } from "../services/gpt56CopywritingGateway";
 import { getOpenRouterApiKey } from "../services/openrouterGptImage2";
@@ -558,9 +560,20 @@ const resolveTarget = (
     const candidate = String(explicitModelName || getOpenAiModelName(modelTier)).trim();
     const officialOnly = openAiGateway === "official_only";
 
+    /** 趋势报表等：`moonshotai/kimi-k3` 一类 slug 直连 OpenRouter，避免被归一成 GPT-5.6 */
+    if (isDirectOpenRouterModelSlug(candidate)) {
+      const gw = resolveOpenRouterChatTarget(candidate);
+      return {
+        provider: "openai",
+        apiUrl: gw.apiUrl,
+        apiKey: gw.apiKey,
+        modelName: gw.modelName,
+      };
+    }
+
     /**
      * 平台全案 / Stage2 文案：**OpenAI 官方 GPT-5.6 Sol（主）→ OpenRouter（fallback）**。
-     * `official_only`：仅 api.openai.com（画布 Terra 多模态等）；趋势报表用 auto 以便 OpenRouter fallback。
+     * `official_only`：仅 api.openai.com（画布 Terra 多模态等）。
      * Refs:
      *   https://developers.openai.com/api/docs/models/gpt-5.6-sol
      *   https://openrouter.ai/openai/gpt-5.6-sol

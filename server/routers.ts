@@ -4855,8 +4855,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 
         /**
-         * 平台趋势分析报表（独立功能）文案 JSON：默认 **gpt-5.6-terra**（见 getVisualReportOpenAiModel）。
-         * 官方 OpenAI 优先；额度/上游失败时走 OpenRouter `openai/gpt-5.6-terra`。
+         * 平台趋势分析报表（独立功能）文案 JSON：默认 OpenRouter **moonshotai/kimi-k3**
+         *（见 getVisualReportOpenAiModel / https://openrouter.ai/moonshotai/kimi-k3）。
          */
         const visualReportModel = getVisualReportOpenAiModel();
         const llmStartedAtMs = Date.now();
@@ -4906,12 +4906,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               response = await invokeLLM({
                 provider: "openai",
                 modelName: visualReportModel,
-                /** gpt-5.6-terra：官方优先，失败自动 OpenRouter fallback */
-                openAiGateway: "auto",
+                /** OpenRouter Kimi K3（vendor/model slug 直连，不走 GPT-5.6） */
                 response_format: { type: "json_object" },
                 max_tokens: visualReportMaxTokens,
                 temperature: 0.55,
-                reasoningEffort: "low",
                 messages: [
                   { role: "system", content: systemPrompt },
                   { role: "user", content: visualReportUser },
