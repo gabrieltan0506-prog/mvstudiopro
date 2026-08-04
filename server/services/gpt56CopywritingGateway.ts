@@ -54,6 +54,36 @@ export function toOpenRouterGpt56Model(modelName: string): string {
   return `openai/${raw}`;
 }
 
+/**
+ * 非 OpenAI GPT-5.6 的 OpenRouter `vendor/model` slug（如 `moonshotai/kimi-k3`）应直连 OpenRouter，
+ * 勿再走官方 OpenAI / Evolink 归一。
+ * `openai/gpt-5.6-*` 仍走「官方优先 → OpenRouter fallback」。
+ */
+export function isDirectOpenRouterModelSlug(raw?: string): boolean {
+  const s = String(raw || "").trim();
+  if (!s || !s.includes("/")) return false;
+  if (/^openai\/gpt-5\.6/i.test(s)) return false;
+  return /^[a-z0-9._-]+\/[a-z0-9._:-]+$/i.test(s);
+}
+
+/** 强制 OpenRouter chat completions（需 OPENROUTER_API_KEY）。 */
+export function resolveOpenRouterChatTarget(modelName: string): Gpt56CopywritingTarget {
+  const openrouterKey = getOpenRouterApiKey();
+  if (!openrouterKey) {
+    throw new Error("OPENROUTER_API_KEY 未配置：无法调用 OpenRouter 模型");
+  }
+  const raw = String(modelName || "").trim();
+  if (!raw) {
+    throw new Error("OpenRouter modelName 为空");
+  }
+  return {
+    gateway: "openrouter",
+    apiUrl: OPENROUTER_CHAT_COMPLETIONS_URL,
+    apiKey: openrouterKey,
+    modelName: raw,
+  };
+}
+
 export function getOpenRouterChatHeaders(): Record<string, string> {
   const referer = String(
     process.env.OPENROUTER_HTTP_REFERER || process.env.APP_URL || "https://www.mvstudiopro.com",

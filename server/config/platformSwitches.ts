@@ -273,16 +273,20 @@ export function getPlatformStage2OpenAiModel(): string {
   return getEvolinkGpt56SolModel();
 }
 
+/** 趋势 PNG 报表默认走 OpenRouter Kimi K3（https://openrouter.ai/moonshotai/kimi-k3） */
+export const VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL = "moonshotai/kimi-k3";
+
 /**
- * 平台趋势 PNG 报表（generateVisualReport）专用模型：默认 **gpt-5.6-terra**。
- * 调用方用 `openAiGateway: "auto"`：官方 api.openai.com 优先，失败再走 OpenRouter（`openai/gpt-5.6-terra`）。
- * 可用 `VISUAL_REPORT_OPENAI_MODEL` 覆盖。
+ * 平台趋势 PNG 报表（generateVisualReport）专用模型：默认 **moonshotai/kimi-k3**（OpenRouter 直连）。
+ * 覆盖：`VISUAL_REPORT_OPENROUTER_MODEL` 或旧名 `VISUAL_REPORT_OPENAI_MODEL`。
  */
 export function getVisualReportOpenAiModel(): string {
-  return normalizeEvolinkChatModel(
-    process.env.VISUAL_REPORT_OPENAI_MODEL || EVOLINK_CHAT_MODEL_GPT56_TERRA,
-    EVOLINK_CHAT_MODEL_GPT56_TERRA,
-  );
+  const raw = String(
+    process.env.VISUAL_REPORT_OPENROUTER_MODEL ||
+      process.env.VISUAL_REPORT_OPENAI_MODEL ||
+      VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL,
+  ).trim();
+  return raw || VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL;
 }
 
 /**
