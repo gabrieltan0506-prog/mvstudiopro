@@ -62,6 +62,7 @@ describe("resolveGpt56CopywritingTarget", () => {
 
   it("maps OpenRouter model slug", () => {
     expect(toOpenRouterGpt56Model("gpt-5.6-sol")).toBe("openai/gpt-5.6-sol");
+    expect(toOpenRouterGpt56Model("gpt-5.6-terra")).toBe("openai/gpt-5.6-terra");
     expect(toOpenRouterGpt56Model("openai/gpt-5.6-terra")).toBe("openai/gpt-5.6-terra");
   });
 

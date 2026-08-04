@@ -4856,6 +4856,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         /**
          * 平台趋势分析报表（独立功能）文案 JSON：默认 **gpt-5.6-terra**（见 getVisualReportOpenAiModel）。
+         * 官方 OpenAI 优先；额度/上游失败时走 OpenRouter `openai/gpt-5.6-terra`。
          */
         const visualReportModel = getVisualReportOpenAiModel();
         const llmStartedAtMs = Date.now();
@@ -4905,8 +4906,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               response = await invokeLLM({
                 provider: "openai",
                 modelName: visualReportModel,
-                /** gpt-5.6-terra：仅 api.openai.com，禁止 Evolink / OpenRouter */
-                openAiGateway: "official_only",
+                /** gpt-5.6-terra：官方优先，失败自动 OpenRouter fallback */
+                openAiGateway: "auto",
                 response_format: { type: "json_object" },
                 max_tokens: visualReportMaxTokens,
                 temperature: 0.55,
@@ -4949,7 +4950,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             } catch (attemptErr) {
               lastErr = attemptErr instanceof Error ? attemptErr.message : String(attemptErr);
               console.warn(
-                `[generateVisualReport] Evolink 第 ${attempt}/${VISUAL_REPORT_MAX_ATTEMPTS} 次失败: ${lastErr.slice(0, 240)}`,
+                `[generateVisualReport] LLM 第 ${attempt}/${VISUAL_REPORT_MAX_ATTEMPTS} 次失败: ${lastErr.slice(0, 240)}`,
               );
               parsed = {};
               rawBody = "";
