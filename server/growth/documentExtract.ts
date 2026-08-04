@@ -63,24 +63,61 @@ export async function extractPdfText(buffer: Buffer): Promise<string> {
   });
 }
 
+/** pptx：unzip 抽 ppt/slides/slide*.xml 内 `<a:t>` 文本。 */
+export async function extractPptxText(buffer: Buffer): Promise<string> {
+  return withTempFile(buffer, "pptx", async (filePath) => {
+    const { stdout: listing } = await execFileAsync("unzip", ["-l", filePath], {
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    const slideMatches = Array.from(listing.matchAll(/ppt\/slides\/slide\d+\.xml/g)).map((m) => m[0]);
+    const slides = Array.from(new Set(slideMatches)).sort((a, b) => {
+      const na = Number(a.match(/slide(\d+)/)?.[1] || 0);
+      const nb = Number(b.match(/slide(\d+)/)?.[1] || 0);
+      return na - nb;
+    });
+
+    const parts: string[] = [];
+    for (const slide of slides) {
+      const { stdout } = await execFileAsync("unzip", ["-p", filePath, slide], {
+        maxBuffer: 8 * 1024 * 1024,
+      });
+      const texts = Array.from(stdout.matchAll(/<a:t[^>]*>([^<]*)<\/a:t>/g)).map((m) =>
+        decodeXmlEntities(m[1] || ""),
+      );
+      const pageText = texts.join(" ").replace(/\s+/g, " ").trim();
+      if (pageText) parts.push(pageText);
+    }
+    return normalizeText(parts.join("\n\n"));
+  });
+}
+
 export async function extractDocumentText(params: {
   buffer: Buffer;
   mimeType: string;
   fileName?: string;
-}): Promise<{ text: string; method: "docx_xml" | "pdf_strings" | "none" }> {
+}): Promise<{ text: string; method: "docx_xml" | "pdf_strings" | "pptx_xml" | "none" }> {
   const fileName = String(params.fileName || "").toLowerCase();
+  const mime = String(params.mimeType || "").toLowerCase();
 
   if (
-    params.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     fileName.endsWith(".docx")
   ) {
     const text = await extractDocxText(params.buffer).catch(() => "");
     return { text, method: text ? "docx_xml" : "none" };
   }
 
-  if (params.mimeType === "application/pdf" || fileName.endsWith(".pdf")) {
+  if (mime === "application/pdf" || fileName.endsWith(".pdf")) {
     const text = await extractPdfText(params.buffer).catch(() => "");
     return { text, method: text ? "pdf_strings" : "none" };
+  }
+
+  if (
+    mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    fileName.endsWith(".pptx")
+  ) {
+    const text = await extractPptxText(params.buffer).catch(() => "");
+    return { text, method: text ? "pptx_xml" : "none" };
   }
 
   return { text: "", method: "none" };

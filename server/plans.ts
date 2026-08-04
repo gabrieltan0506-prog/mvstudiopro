@@ -269,7 +269,7 @@ export const CREDIT_COSTS = {
   platformStoryboardSheet: 60,
   /** 图文笔记·小红书 2×4 八格（`xiaohongshu_dual_note`）·**72** — 非分镜主表 */
   platformXhsDualNote: 72,
-  /** 单页连贯图文知识卡片（`single_page_knowledge_card`，自定义文案）·**25/篇** — 上篇+下篇两次生成合计 50 */
+  /** 单页连贯图文知识卡片 **25/页**（前 8 页）；第 9 页起 **20/页**；提练/OCR 含在页费 */
   platformSinglePageKnowledgeCard: 25,
   /** 自定义文案 · 深度优化（纯 LLM · 无出图） */
   platformOptimizeCustomCopy: 25,

@@ -131,6 +131,15 @@ import {
   hasCustomCopyPdfContent,
 } from "@/lib/customCopyPdfExport";
 import {
+  knowledgeCardCreditsForPages,
+  planKnowledgeCardPages,
+} from "@shared/knowledgeCardPagination";
+import {
+  KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS,
+  KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+  type KnowledgeCardDistillModelId,
+} from "@shared/knowledgeCardDistillModels";
+import {
   injectPlatformPdfSnapshotSanitizeIntoHead,
   optimizePdfSnapshotHtml,
 } from "@/lib/pdfHtmlOptimize";
@@ -194,6 +203,7 @@ import {
   Download,
   Eye,
   FileText,
+  Upload,
   Film,
   Flame,
   Globe,
@@ -2126,11 +2136,27 @@ export default function PlatformPage() {
   const [customNoteImageUpper, setCustomNoteImageUpper] = useState<string | null>(null);
   /** 知識卡片：下篇圖（分鏡圖不使用）。 */
   const [customNoteImageLower, setCustomNoteImageLower] = useState<string | null>(null);
+  /** 多页知识卡结果（1…N）。 */
+  const [customNoteImages, setCustomNoteImages] = useState<string[]>([]);
   const [customNoteError, setCustomNoteError] = useState<string | null>(null);
   /** 生成中（上篇/下篇/單張共用一個忙碌旗標）。 */
   const [customNoteBusy, setCustomNoteBusy] = useState(false);
   /** 進度提示：目前正在生成哪一篇（上篇/下篇），分鏡為 null。 */
   const [customNotePartInFlight, setCustomNotePartInFlight] = useState<"upper" | "lower" | null>(null);
+  /** 多页进度：第 i/N 页；null=非知识卡多页。 */
+  const [customNotePageProgress, setCustomNotePageProgress] = useState<{ i: number; n: number } | null>(null);
+  const [customNoteUploadBusy, setCustomNoteUploadBusy] = useState(false);
+  const [customNoteDistillModel, setCustomNoteDistillModel] = useState<KnowledgeCardDistillModelId>(() => {
+    try {
+      const raw = localStorage.getItem("mvs-knowledge-card-distill-model");
+      const hit = KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.find((o) => o.id === raw);
+      return hit?.id ?? KNOWLEDGE_CARD_DISTILL_MODEL_QWEN;
+    } catch {
+      return KNOWLEDGE_CARD_DISTILL_MODEL_QWEN;
+    }
+  });
+  /** 待随「生成」一并提练的上传文件（含图片 OCR）。 */
+  const customNotePendingFilesRef = useRef<Array<{ fileBase64: string; mimeType: string; fileName?: string }>>([]);
   /** 用戶自選生成類型：單頁連貫圖文知識卡片 or 2×4 分鏡圖 or 深度优化文案（自定義文案專用） */
   const [customNoteKind, setCustomNoteKind] = useState<
     "single_page_knowledge_card" | "storyboard_sheet_landscape" | "optimize_custom_copy"
@@ -5779,19 +5805,27 @@ export default function PlatformPage() {
 
   /** 自定義文案生成圖文筆記 — 獨立 mutation；回呼留空，全部流程在 handler 以 mutateAsync 串接控制。 */
   const generateCustomNoteMutation = trpc.mvAnalysis.generatePlatformCompositeSheet.useMutation();
+  const prepareKnowledgeCardCopyMutation = trpc.mvAnalysis.prepareKnowledgeCardCopy.useMutation();
+  const extractPlatformDocumentTextMutation = trpc.mvAnalysis.extractPlatformDocumentText.useMutation();
   const optimizeCustomCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
   const customOptimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy;
+  const customNoteKnowledgePlan = useMemo(
+    () => planKnowledgeCardPages(customNoteText),
+    [customNoteText],
+  );
+  const customNoteKnowledgeCredits = customNoteKnowledgePlan.credits || knowledgeCardCreditsForPages(customNoteKnowledgePlan.pageCount || 0);
 
   /**
    * 生成一張卡片：同步回 imageUrl 直接用；非同步回 progressJobId 則輪詢至終態取圖。
-   * @param notePart 知識卡片分頁（上篇/下篇）；分鏡圖傳 undefined。
+   * @param notePart 舊上/下篇兼容；新路径用 notePageIndex。
    */
   const generateCustomNoteOne = async (
     trimmed: string,
     kind: "single_page_knowledge_card" | "storyboard_sheet_landscape",
     notePart?: "upper" | "lower",
+    notePage?: { index: number; total: number },
   ): Promise<string> => {
-    const sceneId = `custom-note-${notePart ?? "single"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const sceneId = `custom-note-${notePage?.index ?? notePart ?? "single"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const progressJobId = newPlatformCompositeProgressJobId();
     const title = extractInfographicSubjectFromUserCopy(trimmed);
     const scriptContext =
@@ -5806,7 +5840,11 @@ export default function PlatformPage() {
       title,
       scriptContext,
       kind,
-      ...(notePart ? { notePart } : {}),
+      ...(notePage
+        ? { notePageIndex: notePage.index, notePageTotal: notePage.total }
+        : notePart
+          ? { notePart }
+          : {}),
       imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
       progressJobId,
       enabledSkillIds: Array.from(enabledPlatformSkillIds),
@@ -5861,6 +5899,8 @@ export default function PlatformPage() {
     }
     setCustomNoteImageUpper(null);
     setCustomNoteImageLower(null);
+    setCustomNoteImages([]);
+    setCustomNotePageProgress(null);
     setCustomNoteError(null);
     if (!overrides?.skipClearOptimize) {
       setCustomOptimizeResult(null);
@@ -5886,18 +5926,53 @@ export default function PlatformPage() {
         return;
       }
       if (kind === "single_page_knowledge_card") {
-        setCustomNotePartInFlight("upper");
-        const upper = await generateCustomNoteOne(trimmed, "single_page_knowledge_card", "upper");
-        setCustomNoteImageUpper(upper);
-        toast.success("上篇已生成，正在生成下篇…");
-        setCustomNotePartInFlight("lower");
-        const lower = await generateCustomNoteOne(trimmed, "single_page_knowledge_card", "lower");
-        setCustomNoteImageLower(lower);
-        toast.success("上篇＋下篇已生成");
+        setCustomNoteImages([]);
+        setCustomNoteImageUpper(null);
+        setCustomNoteImageLower(null);
+        const pendingFiles = customNotePendingFilesRef.current.slice();
+        const prepared = await prepareKnowledgeCardCopyMutation.mutateAsync({
+          sourceText: trimmed,
+          files: pendingFiles.length ? pendingFiles : undefined,
+          forceDistill: pendingFiles.length > 0,
+          distillModel: customNoteDistillModel,
+        });
+        const distilled = String(prepared.distilledMarkdown || "").trim();
+        if (!distilled) throw new Error("提练结果为空，请调整文案后重试");
+        setCustomNoteText(distilled);
+        customNotePendingFilesRef.current = [];
+        if (!prepared.skippedDistill) {
+          if (canConfigureStage2CopyEngine) {
+            const used = prepared.distillModel || customNoteDistillModel;
+            const label =
+              KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.find((o) => o.id === used)?.labelZh || used;
+            toast.success(`已提练精华（${label}），开始出图…`);
+          } else {
+            toast.success("已提练精华，开始出图…");
+          }
+        }
+        const plan = planKnowledgeCardPages(distilled);
+        const pages = plan.pages.length ? plan.pages : [distilled];
+        const total = pages.length;
+        const urls: string[] = [];
+        for (let i = 0; i < total; i++) {
+          setCustomNotePageProgress({ i: i + 1, n: total });
+          setCustomNotePartInFlight(i === 0 ? "upper" : "lower");
+          const url = await generateCustomNoteOne(distilled, "single_page_knowledge_card", undefined, {
+            index: i + 1,
+            total,
+          });
+          urls.push(url);
+          setCustomNoteImages([...urls]);
+          setCustomNoteImageUpper(urls[0] ?? null);
+          setCustomNoteImageLower(urls[1] ?? null);
+        }
+        toast.success(`已生成 ${total} 页图文笔记（约 ${plan.credits} 积分）`);
       } else {
         setCustomNotePartInFlight(null);
+        setCustomNotePageProgress(null);
         const img = await generateCustomNoteOne(trimmed, "storyboard_sheet_landscape", undefined);
         setCustomNoteImageUpper(img);
+        setCustomNoteImages([img]);
         toast.success("分鏡圖已生成");
       }
     } catch (e) {
@@ -5907,6 +5982,7 @@ export default function PlatformPage() {
     } finally {
       setCustomNoteBusy(false);
       setCustomNotePartInFlight(null);
+      setCustomNotePageProgress(null);
     }
   };
 
@@ -6697,6 +6773,7 @@ export default function PlatformPage() {
       optimizeSummary: customOptimizeSummary,
       imageUpperUrl: customNoteImageUpper,
       imageLowerUrl: customNoteImageLower,
+      imageUrls: customNoteImages.length ? customNoteImages : undefined,
     }),
     [
       customNoteKind,
@@ -6706,6 +6783,7 @@ export default function PlatformPage() {
       customOptimizeSummary,
       customNoteImageUpper,
       customNoteImageLower,
+      customNoteImages,
     ],
   );
 
@@ -11160,8 +11238,8 @@ export default function PlatformPage() {
                   step={2}
                   title="生成结果"
                   lines={["点击生成按钮，等待任务完成。", "图片或优化稿直接显示在本 Tab 下方。"]}
-                  active={Boolean(customNoteText.trim()) && !customNoteImageUpper && !customOptimizeResult}
-                  done={Boolean(customNoteImageUpper || customNoteImageLower || customOptimizeResult)}
+                  active={Boolean(customNoteText.trim()) && !customNoteImages.length && !customNoteImageUpper && !customOptimizeResult}
+                  done={Boolean(customNoteImages.length || customNoteImageUpper || customNoteImageLower || customOptimizeResult)}
                 />
               </div>
 
@@ -11170,7 +11248,7 @@ export default function PlatformPage() {
                 <div className="inline-flex flex-wrap rounded-xl border border-white/10 bg-black/35 p-0.5 gap-0.5">
                   <button
                     type="button"
-                    onClick={() => { setCustomNoteKind("single_page_knowledge_card"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); }}
+                    onClick={() => { setCustomNoteKind("single_page_knowledge_card"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteImages([]); setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); }}
                     disabled={customNoteBusy}
                     className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                       customNoteKind === "single_page_knowledge_card"
@@ -11183,7 +11261,7 @@ export default function PlatformPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setCustomNoteKind("storyboard_sheet_landscape"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); }}
+                    onClick={() => { setCustomNoteKind("storyboard_sheet_landscape"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteImages([]); setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); }}
                     disabled={customNoteBusy}
                     className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                       customNoteKind === "storyboard_sheet_landscape"
@@ -11196,7 +11274,7 @@ export default function PlatformPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setCustomNoteKind("optimize_custom_copy"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); }}
+                    onClick={() => { setCustomNoteKind("optimize_custom_copy"); setCustomNoteImageUpper(null); setCustomNoteImageLower(null); setCustomNoteImages([]); setCustomNoteError(null); setCustomOptimizeResult(null); setCustomOptimizeSummary(null); }}
                     disabled={customNoteBusy}
                     className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold transition disabled:opacity-50 ${
                       customNoteKind === "optimize_custom_copy"
@@ -11256,13 +11334,106 @@ export default function PlatformPage() {
                   customNoteKind === "optimize_custom_copy"
                     ? "粘贴待优化的封面文案、分镜描述或完整 Markdown…（建议 100–3000 字）"
                     : customNoteKind === "single_page_knowledge_card"
-                      ? "粘贴中文正文 / Markdown（主题写在正文标题里即可）…生成上篇 + 下篇两张"
+                      ? "粘贴中文正文 / Markdown，或上传文档/图片后自动提练…约 4–8 页图文笔记（页数随内容，第 9 页起八折）"
                       : "输入中文文案或分镜脚本，系统自动翻译并生成 2×4 编导分镜图…（建议 100–800 字）"
                 }
                 value={customNoteText}
                 onChange={(e) => setCustomNoteText(e.target.value)}
                 disabled={customNoteBusy}
               />
+              {customNoteKind === "single_page_knowledge_card" ? (
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-white/15 bg-black/30 px-3 py-1.5 text-xs font-semibold text-[#c9c0e6] transition hover:border-[#ff4fb8]/40 hover:text-white ${customNoteBusy || customNoteUploadBusy ? "opacity-50 pointer-events-none" : ""}`}>
+                    <Upload className="h-3.5 w-3.5" />
+                    {customNoteUploadBusy ? "读取中…" : "上传文档/图片（可多选）"}
+                    <input
+                      type="file"
+                      className="hidden"
+                      multiple
+                      accept=".pptx,.docx,.pdf,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/png,image/jpeg,image/webp"
+                      disabled={customNoteBusy || customNoteUploadBusy}
+                      onChange={(e) => {
+                        const list = Array.from(e.target.files || []);
+                        e.target.value = "";
+                        if (!list.length) return;
+                        void (async () => {
+                          setCustomNoteUploadBusy(true);
+                          try {
+                            const encoded: Array<{ fileBase64: string; mimeType: string; fileName?: string }> = [];
+                            for (const file of list) {
+                              const buf = await file.arrayBuffer();
+                              const bytes = new Uint8Array(buf);
+                              let binary = "";
+                              const chunk = 0x8000;
+                              for (let i = 0; i < bytes.length; i += chunk) {
+                                binary += String.fromCharCode(...Array.from(bytes.subarray(i, i + chunk)));
+                              }
+                              encoded.push({
+                                fileBase64: btoa(binary),
+                                mimeType: file.type || "application/octet-stream",
+                                fileName: file.name,
+                              });
+                            }
+                            customNotePendingFilesRef.current = [
+                              ...customNotePendingFilesRef.current,
+                              ...encoded,
+                            ];
+                            const docs = encoded.filter((f) => !String(f.mimeType).startsWith("image/") && !/\.(png|jpe?g|webp)$/i.test(f.fileName || ""));
+                            if (docs.length) {
+                              const res = await extractPlatformDocumentTextMutation.mutateAsync({ files: docs });
+                              const extracted = String(res.text || "").trim();
+                              if (extracted) {
+                                setCustomNoteText((prev) => (prev.trim() ? `${prev.trim()}\n\n${extracted}` : extracted));
+                              }
+                            }
+                            const imgN = encoded.length - docs.length;
+                            toast.success(
+                              `已加入 ${encoded.length} 个文件` +
+                                (docs.length ? "（文档文字已填入，可再编辑）" : "") +
+                                (imgN > 0 ? `；${imgN} 张图片将在生成时读图提练` : ""),
+                            );
+                          } catch (err) {
+                            toast.error(String((err as { message?: string })?.message || "读取文件失败"));
+                          } finally {
+                            setCustomNoteUploadBusy(false);
+                          }
+                        })();
+                      }}
+                    />
+                  </label>
+                  <span className="text-[11px] text-[#c9c0e6]/45">
+                    选择文件后会暂存，点生成时提练（图片走读图）
+                  </span>
+                  {canConfigureStage2CopyEngine ? (
+                    <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
+                      <span className="shrink-0">提练模型</span>
+                      <select
+                        className="rounded-md border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-semibold text-white focus:border-[#ff4fb8]/50 focus:outline-none"
+                        value={customNoteDistillModel}
+                        disabled={customNoteBusy || customNoteUploadBusy}
+                        onChange={(e) => {
+                          const next = e.target.value as KnowledgeCardDistillModelId;
+                          setCustomNoteDistillModel(next);
+                          try {
+                            localStorage.setItem("mvs-knowledge-card-distill-model", next);
+                          } catch {
+                            /* ignore */
+                          }
+                        }}
+                      >
+                        {KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.map((o) => (
+                          <option key={o.id} value={o.id}>
+                            {o.labelZh}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                  <span className="text-[11px] text-[#c9c0e6]/45">
+                    支持 pptx / docx / pdf / png / jpg；提练费用含在页费中
+                  </span>
+                </div>
+              ) : null}
               {customNoteKind === "optimize_custom_copy" ? (
                 <textarea
                   className="mt-3 w-full min-h-[96px] resize-y rounded-2xl border border-[#fbbf24]/20 bg-[rgba(251,191,36,0.04)] px-4 py-3 text-sm leading-relaxed text-white placeholder-[#6d6384] focus:border-[#fbbf24]/50 focus:outline-none focus:ring-1 focus:ring-[#fbbf24]/30 transition"
@@ -11290,7 +11461,7 @@ export default function PlatformPage() {
                   ) : customNoteKind === "optimize_custom_copy" ? (
                     <><Sparkles className="h-4 w-4" />深度优化文案（{customOptimizeCopyCost} 积分）</>
                   ) : customNoteKind === "single_page_knowledge_card" ? (
-                    <><Sparkles className="h-4 w-4" />生成图文卡片（上 + 下篇）</>
+                    <><Sparkles className="h-4 w-4" />生成图文笔记（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · {customNoteKnowledgeCredits || 25} 积分）</>
                   ) : (
                     <><Film className="h-4 w-4" />生成编导分镜图</>
                   )}
@@ -11301,6 +11472,8 @@ export default function PlatformPage() {
                     onClick={() => {
                       setCustomNoteImageUpper(null);
                       setCustomNoteImageLower(null);
+                      setCustomNoteImages([]);
+                      setCustomNotePageProgress(null);
                       setCustomNoteError(null);
                       setCustomOptimizeResult(null);
                       setCustomOptimizeSummary(null);
@@ -11308,6 +11481,7 @@ export default function PlatformPage() {
                       setCustomOptimizeBrief("");
                       setCustomNoteInfographicTemplateId(null);
                       setCustomNoteInfographicLabelZh(null);
+                      customNotePendingFilesRef.current = [];
                     }}
                     className="text-xs text-[#c9c0e6]/60 hover:text-white transition"
                   >
@@ -11342,11 +11516,11 @@ export default function PlatformPage() {
                   <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[#ff4fb8]" />
                   {customNoteKind === "optimize_custom_copy"
                     ? "正在深度优化文案，约需 30–90 秒…"
-                    : customNotePartInFlight === "upper"
-                    ? "正在生成【上篇】，约需 3–5 分钟…（之后自动接着生成下篇）"
-                    : customNotePartInFlight === "lower"
-                      ? "上篇已完成 ✓ 正在生成【下篇】，约需 3–5 分钟，请勿关闭页面…"
-                      : "正在生成图片，约需 3–5 分钟，请勿关闭页面…"}
+                    : customNotePageProgress
+                      ? `正在生成第 ${customNotePageProgress.i}/${customNotePageProgress.n} 页，请勿关闭页面…`
+                      : prepareKnowledgeCardCopyMutation.isPending
+                        ? "正在提练文案与读图要点…"
+                        : "正在生成图片，约需数分钟，请勿关闭页面…"}
                 </div>
               )}
 
@@ -11399,22 +11573,48 @@ export default function PlatformPage() {
                       className="inline-flex items-center gap-1.5 rounded-full border border-[#ff4fb8]/30 bg-[linear-gradient(135deg,#ff4fb8,#c026d3)] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
                     >
                       <Image className="h-3.5 w-3.5" />
-                      用优化稿生成图文卡片（50 积分）
+                      用优化稿生成图文笔记（按页计费）
                     </button>
                   </div>
                 </div>
               ) : null}
 
-              {(customNoteImageUpper || customNoteImageLower) && (
+              {(customNoteImages.length > 0 || customNoteImageUpper || customNoteImageLower) && (
                 <div className="mt-5 space-y-6">
-                  {customNoteImageUpper && (
-                    <div className="space-y-3">
+                  {customNoteKind === "single_page_knowledge_card" && (customNoteImages.length > 0 ? customNoteImages : [customNoteImageUpper, customNoteImageLower].filter(Boolean) as string[]).map((url, idx, arr) => (
+                    <div key={`kc-${idx}-${url.slice(-24)}`} className="space-y-3">
                       <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">
-                        {customNoteKind === "single_page_knowledge_card" ? "图文卡片 ·（上篇）" : "编导分镜图生成结果"}
+                        图文卡片 · 第 {idx + 1}/{arr.length} 页
                       </div>
                       <img
+                        src={url}
+                        alt={`图文知识卡片第 ${idx + 1} 页`}
+                        className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = "none";
+                          setCustomNoteError("图片加载失败，请确认图片 URL 是否有效");
+                        }}
+                      />
+                      <div className="flex justify-end">
+                        <a
+                          href={url}
+                          download={`knowledge-card-p${idx + 1}.png`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
+                        >
+                          <Download className="h-4 w-4" />
+                          下载第 {idx + 1} 页
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                  {customNoteKind !== "single_page_knowledge_card" && customNoteImageUpper && (
+                    <div className="space-y-3">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">编导分镜图生成结果</div>
+                      <img
                         src={customNoteImageUpper}
-                        alt={customNoteKind === "single_page_knowledge_card" ? "单页图文知识卡片（上篇）" : "2×4 编导分镜图"}
+                        alt="2×4 编导分镜图"
                         className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
                         onError={(e) => {
                           (e.target as HTMLImageElement).style.display = "none";
@@ -11424,39 +11624,13 @@ export default function PlatformPage() {
                       <div className="flex justify-end">
                         <a
                           href={customNoteImageUpper}
-                          download={customNoteKind === "single_page_knowledge_card" ? "knowledge-card-upper.png" : "storyboard-2x4.png"}
+                          download="storyboard-2x4.png"
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
                         >
                           <Download className="h-4 w-4" />
-                          下载{customNoteKind === "single_page_knowledge_card" ? "上篇" : "图片"}
-                        </a>
-                      </div>
-                    </div>
-                  )}
-                  {customNoteImageLower && (
-                    <div className="space-y-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[#ff9fe0]/70">图文卡片 ·（下篇）</div>
-                      <img
-                        src={customNoteImageLower}
-                        alt="单页图文知识卡片（下篇）"
-                        className="w-full rounded-2xl border border-white/10 object-contain shadow-[0_12px_48px_rgba(0,0,0,0.35)]"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = "none";
-                          setCustomNoteError("下篇图片加载失败，请确认图片 URL 是否有效");
-                        }}
-                      />
-                      <div className="flex justify-end">
-                        <a
-                          href={customNoteImageLower}
-                          download="knowledge-card-lower.png"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 rounded-full border border-[#49e6ff]/25 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(73,230,255,0.15)]"
-                        >
-                          <Download className="h-4 w-4" />
-                          下载下篇
+                          下载图片
                         </a>
                       </div>
                     </div>
