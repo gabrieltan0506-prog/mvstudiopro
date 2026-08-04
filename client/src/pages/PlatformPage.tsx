@@ -11,6 +11,7 @@ import { PlatformCreateStepRail } from "@/components/platform/PlatformCreateStep
 import { PlatformStickyCtaRail } from "@/components/platform/PlatformStickyCtaRail";
 import { PlatformCreateWorkbench } from "@/components/platform/PlatformCreateWorkbench";
 import { PlatformTrendWorkbench } from "@/components/platform/PlatformTrendWorkbench";
+import { PlatformTrendReportRail } from "@/components/platform/PlatformTrendReportRail";
 import { PlatformToolsWorkbench } from "@/components/platform/PlatformToolsWorkbench";
 import { PlatformStructuredPersonaForm } from "@/components/platform/PlatformStructuredPersonaForm";
 import { PlatformOutputTypePicker } from "@/components/platform/PlatformOutputTypePicker";
@@ -2012,6 +2013,8 @@ export default function PlatformPage() {
   const [visualReportTheme] = useState<VisualReportTheme>("dark");
   const [isVisualReportLoading, setIsVisualReportLoading] = useState(false);
   const [isVisualReportDownloading, setIsVisualReportDownloading] = useState(false);
+  /** 整段趋势独立分析（快照+看板+PNG）统一忙碌旗，避免只靠 isFetching 卡死「趋势分析中」 */
+  const [trendStandaloneBusy, setTrendStandaloneBusy] = useState(false);
 
   /** 清掉历史 localStorage 粘滞键（旧版「刷新不丢」） */
   useEffect(() => {
@@ -8635,8 +8638,9 @@ export default function PlatformPage() {
     setVisualReportData(null);
     setTrendInsightTab("overview");
     setDashboardDebug(null);
-    setIsDashboardLoading(false);
-    setIsVisualReportLoading(false);
+    setTrendStandaloneBusy(true);
+    setIsDashboardLoading(true);
+    setIsVisualReportLoading(true);
     setPlatformContent(null);
     setContentDebug(null);
     setIsContentLoading(false);
@@ -8645,18 +8649,16 @@ export default function PlatformPage() {
     setContentJobPollTrace(null);
     setElapsedTime(0);
 
-    const result = await growthSnapshotQuery.refetch();
-    if (!result.data?.snapshot) {
-      toast.error("平台趋势分析暂时没有返回结果");
-      return;
-    }
-    setHasAnalyzed(true);
-    toast.success("快照已就绪，正在生成看板与 PNG 图文报表…");
-
-    const snap = result.data.snapshot;
-    setIsDashboardLoading(true);
-    setIsVisualReportLoading(true);
     try {
+      const result = await growthSnapshotQuery.refetch();
+      if (!result.data?.snapshot) {
+        toast.error("平台趋势分析暂时没有返回结果");
+        return;
+      }
+      setHasAnalyzed(true);
+      toast.success("快照已就绪，正在生成看板与 PNG 图文报表…");
+
+      const snap = result.data.snapshot;
       // 指定平台分析：只读窗口样本，不带入人物背景 / 创作诉求
       const [dashSettled, visualSettled] = await Promise.allSettled([
         getPlatformDashboardMutation.mutateAsync({
@@ -8675,14 +8677,11 @@ export default function PlatformPage() {
       let hasDash = false;
       let hasReport = false;
       const errors: string[] = [];
-      let nextDash: PlatformDashboard | null = null;
-      let nextReport: VisualReportData | null = null;
 
       if (dashSettled.status === "fulfilled") {
         const dashResult = dashSettled.value;
         if (dashResult.platformDashboard) {
-          nextDash = dashResult.platformDashboard as unknown as PlatformDashboard;
-          setPlatformDashboard(nextDash);
+          setPlatformDashboard(dashResult.platformDashboard as unknown as PlatformDashboard);
           hasDash = true;
         } else {
           errors.push(
@@ -8703,7 +8702,6 @@ export default function PlatformPage() {
           theme: visualReportTheme,
         });
         if (mappedReport) {
-          nextReport = mappedReport;
           setVisualReportData(mappedReport);
           setTrendInsightTab("overview");
           hasReport = true;
@@ -8721,9 +8719,9 @@ export default function PlatformPage() {
       }
 
       if (hasDash && hasReport) {
-        toast.success("平台趋势分析报表已就绪，可下载 PNG 长图。");
+        toast.success("平台趋势分析报表已就绪：右侧浅色摘要 + 下方完整长图可下载。");
       } else if (hasReport) {
-        toast.success("PNG 趋势报表已就绪，可下载长图。");
+        toast.success("PNG 趋势报表已就绪：请看右侧浅色卡与下方完整长图。");
         if (errors[0]) toast.error(`看板摘要：${errors[0].slice(0, 100)}`);
       } else if (hasDash) {
         toast.error(
@@ -8732,10 +8730,19 @@ export default function PlatformPage() {
       } else {
         toast.error(errors[0] || "平台趋势分析失败，请稍后重试");
       }
+
+      if (hasReport) {
+        window.setTimeout(() => {
+          document
+            .getElementById("platform-trend-visual-report")
+            ?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 120);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(sanitizePlatformUserMessage(msg, "趋势分析失败，请稍后重试"));
     } finally {
+      setTrendStandaloneBusy(false);
       setIsDashboardLoading(false);
       setIsVisualReportLoading(false);
     }
@@ -9401,11 +9408,12 @@ export default function PlatformPage() {
       buildTrendPrimaryCta({
         selectedPlatformCount: selectedTrendPlatforms.length,
         isAuthenticated,
-        busy: isAnalyzing || isDashboardLoading || isVisualReportLoading,
+        busy: trendStandaloneBusy || isAnalyzing || isDashboardLoading || isVisualReportLoading,
       }),
     [
       selectedTrendPlatforms.length,
       isAuthenticated,
+      trendStandaloneBusy,
       isAnalyzing,
       isDashboardLoading,
       isVisualReportLoading,
@@ -9770,18 +9778,33 @@ export default function PlatformPage() {
     [],
   );
 
-  const stickyCtaNode = (
-    <PlatformStickyCtaRail
-      title={platformMode === "trend" ? "趋势分析" : platformMode === "tools" ? "工具操作" : "内容创作"}
-      label={activePrimaryCta.label}
-      creditsLabel={activePrimaryCta.creditsLabel}
-      disabled={activePrimaryCta.disabled}
-      disabledReason={activePrimaryCta.disabledReason}
-      busy={activePrimaryCta.busy}
-      onClick={() => runActivePrimaryCta()}
-      onDisabledAttempt={() => recordCtaDisabled()}
-    />
-  );
+  const scrollToTrendVisualReport = useCallback(() => {
+    document
+      .getElementById("platform-trend-visual-report")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  const stickyCtaNode =
+    platformMode === "trend" && visualReportData ? (
+      <PlatformTrendReportRail
+        data={visualReportData}
+        onScrollToFull={scrollToTrendVisualReport}
+        onDownload={() => void handleDownloadVisualReport()}
+        onRerun={() => void handleTrendStandaloneAnalyze()}
+        downloading={isVisualReportDownloading}
+      />
+    ) : (
+      <PlatformStickyCtaRail
+        title={platformMode === "trend" ? "趋势分析" : platformMode === "tools" ? "工具操作" : "内容创作"}
+        label={activePrimaryCta.label}
+        creditsLabel={activePrimaryCta.creditsLabel}
+        disabled={activePrimaryCta.disabled}
+        disabledReason={activePrimaryCta.disabledReason}
+        busy={activePrimaryCta.busy}
+        onClick={() => runActivePrimaryCta()}
+        onDisabledAttempt={() => recordCtaDisabled()}
+      />
+    );
 
   if (loading) {
     return (
@@ -10109,11 +10132,19 @@ export default function PlatformPage() {
                     <span className="rounded-full border border-[#c4b5fd]/35 bg-[rgba(196,181,253,0.12)] px-2.5 py-0.5 text-[10px] font-semibold text-[#ddd6fe]">
                       看板已就绪 · 专属文案生成中
                     </span>
+                  ) : visualReportData ? (
+                    <span className="rounded-full border border-[#6ee7b7]/35 bg-[rgba(52,211,153,0.1)] px-2.5 py-0.5 text-[10px] font-semibold text-[#6ee7b7]">
+                      报表已就绪
+                    </span>
+                  ) : platformDashboard && (isVisualReportLoading || trendStandaloneBusy) ? (
+                    <span className="rounded-full border border-[#49e6ff]/35 bg-[rgba(73,230,255,0.1)] px-2.5 py-0.5 text-[10px] font-semibold text-[#8cefff]">
+                      看板已出 · 图文报表生成中
+                    </span>
                   ) : platformDashboard ? (
                     <span className="rounded-full border border-[#6ee7b7]/35 bg-[rgba(52,211,153,0.1)] px-2.5 py-0.5 text-[10px] font-semibold text-[#6ee7b7]">
-                      已出报告 · 无需等全案文案
+                      看板已就绪
                     </span>
-                  ) : isAnalyzing || isDashboardLoading ? (
+                  ) : trendStandaloneBusy || isAnalyzing || isDashboardLoading || isVisualReportLoading ? (
                     <span className="rounded-full border border-[#49e6ff]/35 bg-[rgba(73,230,255,0.1)] px-2.5 py-0.5 text-[10px] font-semibold text-[#8cefff]">
                       生成中
                     </span>
@@ -10190,7 +10221,12 @@ export default function PlatformPage() {
               })}
             </div>
 
-            {!platformDashboard && !isAnalyzing && !isDashboardLoading && !isVisualReportLoading ? (
+            {!platformDashboard &&
+            !visualReportData &&
+            !trendStandaloneBusy &&
+            !isAnalyzing &&
+            !isDashboardLoading &&
+            !isVisualReportLoading ? (
               <div className="mt-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -10214,14 +10250,21 @@ export default function PlatformPage() {
               </div>
             ) : null}
 
-            {(isDashboardLoading || isVisualReportLoading || isAnalyzing) && !platformDashboard && !visualReportData ? (
+            {(trendStandaloneBusy || isDashboardLoading || isVisualReportLoading || isAnalyzing) &&
+            !visualReportData ? (
               <div className="mt-4 rounded-2xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.06)] p-4">
                 <div className="flex items-center gap-2 text-sm text-[#8cefff]">
                   <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                  正在读取近 {selectedWindowDays} 天样本，生成战略看板与含蓝海词的 PNG 图文报表…
+                  {platformDashboard
+                    ? "战略看板已出，正在生成右侧浅色摘要与含蓝海词的 PNG 图文报表…"
+                    : `正在读取近 ${selectedWindowDays} 天样本，生成战略看板与含蓝海词的 PNG 图文报表…`}
                 </div>
                 <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.08]">
-                  <div className="h-full w-2/5 animate-pulse rounded-full bg-gradient-to-r from-[#49e6ff] via-[#7d73ff] to-[#ff4fb8]" />
+                  <div
+                    className={`h-full animate-pulse rounded-full bg-gradient-to-r from-[#49e6ff] via-[#7d73ff] to-[#ff4fb8] ${
+                      platformDashboard ? "w-4/5" : "w-2/5"
+                    }`}
+                  />
                 </div>
               </div>
             ) : null}
@@ -10245,9 +10288,47 @@ export default function PlatformPage() {
               ))}
             </div>
 
-            {!platformDashboard && !snapshot && !isAnalyzing && !isDashboardLoading && !isVisualReportLoading ? (
+            {visualReportData ? (
+              <div
+                id="platform-trend-visual-report"
+                className="mt-4 scroll-mt-24 rounded-2xl border border-[#6fffb0]/20 bg-[rgba(111,255,176,0.06)] p-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-[#6fffb0]">浅色趋势分析报表已就绪</div>
+                    <p className="mt-1 text-[11px] text-[#c9c0e6]/60">
+                      右侧为摘要卡；下方为完整长图（含蓝海词）。刷新页面会清空，需重新分析。
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleDownloadVisualReport()}
+                    disabled={isVisualReportDownloading}
+                    className="inline-flex items-center gap-2 rounded-full border border-[#6fffb0]/25 bg-[rgba(111,255,176,0.10)] px-4 py-2 text-sm font-semibold text-[#6fffb0] transition hover:bg-[rgba(111,255,176,0.18)] disabled:opacity-60"
+                  >
+                    {isVisualReportDownloading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                    下载 PNG 图文报表
+                  </button>
+                </div>
+                <div className="mt-3 overflow-x-auto rounded-2xl border border-white/10">
+                  <VisualReportTemplate data={visualReportData} ref={visualReportRef} />
+                </div>
+              </div>
+            ) : null}
+
+            {!platformDashboard &&
+            !visualReportData &&
+            !snapshot &&
+            !trendStandaloneBusy &&
+            !isAnalyzing &&
+            !isDashboardLoading &&
+            !isVisualReportLoading ? (
               <p className="mt-4 text-xs leading-relaxed text-[#c9c0e6]/45">
-                启动分析后，上方四格会先出战略摘要；完成后可下载含蓝海词的 PNG 长图（平台趋势报表，不是决策智库全景）。
+                启动分析后，上方四格会先出战略摘要；完成后右侧出现浅色趋势摘要，下方可下载含蓝海词的 PNG 长图。
               </p>
             ) : null}
 
@@ -10371,32 +10452,9 @@ export default function PlatformPage() {
                       ) : null}
 
                       {visualReportData ? (
-                        <div className="mt-4 rounded-2xl border border-[#6fffb0]/20 bg-[rgba(111,255,176,0.06)] p-4">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <div className="text-sm font-semibold text-[#6fffb0]">PNG 图文报表已就绪</div>
-                              <p className="mt-1 text-[11px] text-[#c9c0e6]/60">
-                                多平台洞察 + 蓝海词；刷新页面会清空，需重新分析。完整榜单见「AI 漫剧」Tab。
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => void handleDownloadVisualReport()}
-                              disabled={isVisualReportDownloading}
-                              className="inline-flex items-center gap-2 rounded-full border border-[#6fffb0]/25 bg-[rgba(111,255,176,0.10)] px-4 py-2 text-sm font-semibold text-[#6fffb0] transition hover:bg-[rgba(111,255,176,0.18)] disabled:opacity-60"
-                            >
-                              {isVisualReportDownloading ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Download className="h-4 w-4" />
-                              )}
-                              下载 PNG 图文报表
-                            </button>
-                          </div>
-                          <div className="mt-3 overflow-x-auto rounded-2xl border border-white/10">
-                            <VisualReportTemplate data={visualReportData} ref={visualReportRef} />
-                          </div>
-                        </div>
+                        <p className="mt-3 text-[11px] text-[#c9c0e6]/55">
+                          完整浅色长图已在上方「浅色趋势分析报表」区；完整 AI 漫剧榜单见右侧 Tab。
+                        </p>
                       ) : null}
                     </>
                   ) : (

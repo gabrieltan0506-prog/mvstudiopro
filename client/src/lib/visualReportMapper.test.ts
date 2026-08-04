@@ -35,6 +35,25 @@ describe("mapGenerateVisualReportResult", () => {
     );
     expect(mapped?.globalBlueOceanWords?.some((b) => b.primary === "居家收纳")).toBe(true);
   });
+
+  it("synthesizes platformDetails from trackGrowth when model omits the card", () => {
+    const mapped = mapGenerateVisualReportResult(
+      {
+        report: {
+          reportTitle: "空平台明细兜底",
+          insightSummary: ["洞察一句"],
+          trackGrowth: [
+            { name: "周末短途", growth: "+18%", isHot: true },
+            { name: "咖啡探店", growth: "+9%", isHot: false },
+          ],
+          platformDetails: [],
+        },
+      },
+      { windowDays: "3", theme: "dark" },
+    );
+    expect(mapped?.platformDetails?.length).toBeGreaterThan(0);
+    expect(mapped?.platformDetails?.[0]?.hotTopics?.length).toBeGreaterThan(0);
+  });
 });
 
 describe("fallbackBlueOceanWords", () => {
