@@ -1434,6 +1434,11 @@ export async function generatePlatformCompositeSheetImage(options: {
   notePageIndex?: number;
   notePageTotal?: number;
   /**
+   * 仅 single_page_knowledge_card：图文可视化版式 id。
+   * 只进出图指令，绝不能拼进 `scriptContext`（那会被逐页切开当正文印出来）。
+   */
+  infographicTemplateId?: string;
+  /**
    * 仅 3×4 分段拼接：本次生成是「长图」的第 index/total 段（storyboard/xhs）。
    * 注入连贯/同风格指令，确保各段拼接后接缝处风格一致；第 2 段起不再重复顶部总标题栏。
    */
@@ -1630,6 +1635,7 @@ export async function generatePlatformCompositeSheetImage(options: {
           notePart: options.notePart,
           notePageIndex: options.notePageIndex,
           notePageTotal: options.notePageTotal,
+          infographicTemplateId: options.infographicTemplateId,
         });
         appendImageFlowLog(
           L,

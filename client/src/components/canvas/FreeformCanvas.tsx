@@ -1981,7 +1981,7 @@ export default function FreeformCanvas({
                               : block.videoModel === "seedance-2.5"
                                 ? "成片·加长：正式会员，约 4–30s（邀请码用户请用快速）"
                                 : block.videoModel === "minimax-hailuo-3"
-                                  ? "成片·H3：2K 成片，多图参考 + 运镜/动作/对白，约 5–15s"
+                                  ? "成片·H3：2K 成片，多图参考 + 运镜/动作/对白，固定 15s"
                                   : "成片·快速：多图参考 + 运镜/动作/对白，更快更省"}
                           </div>
                           <div className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[10px] font-medium tracking-wide text-white/70">

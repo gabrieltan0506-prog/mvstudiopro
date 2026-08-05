@@ -4,6 +4,7 @@ import {
   Search, Crown, BookOpen, Star, FileDown, Zap, Clock,
 } from "lucide-react";
 import { useIsMobile } from "@/hooks/useMobile";
+import { COMPETITOR_RESEARCH_BETA_LABEL_ZH } from "@/lib/competitorResearchBeta";
 
 // ─── 轮播功能动态 ───────────────────────────────────────────────────
 const CAROUSEL_CARDS = [
@@ -189,7 +190,7 @@ const CAROUSEL_CARDS = [
 
 const WORKFLOW_LINKS: { href: string; label: string }[] = [
   { href: "/platform", label: "平台创作" },
-  { href: "/research", label: "竞品调研" },
+  // 竞品调研内测中：暂不给链接（战略智库 /research?tab=god-view 不受影响，仍在售）
   { href: "/canvas", label: "Omini，Seedance 2.X画布" },
 ];
 
@@ -286,9 +287,9 @@ function MergedGodResearchCard({ isMobile }: { isMobile: boolean }) {
               <a href="/research?tab=god-view" style={{ fontSize: 13, fontWeight: 800, color: "#fb923c", textDecoration: "none" }}>
                 进入战略智库（Research Hub）→
               </a>
-              <a href="/research" style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.4)", textDecoration: "underline" }}>
-                打开竞品调研 Hub
-              </a>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.3)" }}>
+                竞品调研 · {COMPETITOR_RESEARCH_BETA_LABEL_ZH}
+              </span>
             </div>
           </div>
         </div>

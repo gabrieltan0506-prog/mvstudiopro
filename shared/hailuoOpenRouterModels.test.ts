@@ -15,11 +15,12 @@ describe("hailuoOpenRouterModels", () => {
     expect(isCanvasHailuoH3VideoModel("seedance-2.0")).toBe(false);
   });
 
-  it("clamps duration to OpenRouter 5–15", () => {
-    expect(clampHailuoOpenRouterDuration(4)).toBe(5);
-    expect(clampHailuoOpenRouterDuration(10)).toBe(10);
+  it("pins duration at 15s regardless of input", () => {
+    expect(clampHailuoOpenRouterDuration(4)).toBe(15);
+    expect(clampHailuoOpenRouterDuration(10)).toBe(15);
     expect(clampHailuoOpenRouterDuration(99)).toBe(15);
-    expect(clampHailuoOpenRouterDuration("x")).toBe(10);
+    expect(clampHailuoOpenRouterDuration("x")).toBe(15);
+    expect(clampHailuoOpenRouterDuration(undefined)).toBe(15);
   });
 
   it("normalizes aspect ratio", () => {

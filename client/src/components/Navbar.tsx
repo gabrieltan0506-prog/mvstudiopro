@@ -4,6 +4,10 @@ import { Link, useLocation } from "wouter";
 import { Menu, Film, LogOut, User, LayoutDashboard, Shield, ChevronDown, FolderOpen, Bot } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
+import {
+  canOpenCompetitorResearch,
+  COMPETITOR_RESEARCH_BETA_NOTE_ZH,
+} from "@/lib/competitorResearchBeta";
 import { requestOpenProAgent } from "@/components/PlatformProAgentDock";
 import {
   DropdownMenu,
@@ -20,10 +24,11 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 
-const NAV_ITEMS = [
+const NAV_ITEMS: Array<{ label: string; href: string; beta?: boolean }> = [
   { label: "平台创作", href: "/platform" },
   { label: "视频深度拆解", href: "/platform?tab=video" },
-  { label: "竞品调研", href: "/research" },
+  // 竞品调研内测中：一般用户只见标注不给链接，supervisor/admin 仍可进（见 competitorResearchBeta）
+  { label: "竞品调研", href: "/research", beta: true },
   { label: "Omini，Seedance 2.X画布", href: "/canvas" },
   { label: "套餐", href: "/pricing" },
 ];
@@ -62,6 +67,7 @@ export default function Navbar() {
   const navItems = showTestLab
     ? [...NAV_ITEMS, { label: "测试台", href: "/test-lab" }]
     : NAV_ITEMS;
+  const canOpenResearch = canOpenCompetitorResearch(user?.role) || hasSupervisorAccess();
 
   // 路由切换时自动关闭移动菜单（处理浏览器前进/后退、外部跳转回来等场景）
   useEffect(() => {
@@ -96,7 +102,19 @@ export default function Navbar() {
 
         {/* Desktop Nav */}
         <div className="hidden xl:flex items-center gap-0.5">
-          {navItems.map((item) => (
+          {navItems.map((item) =>
+            item.beta && !canOpenResearch ? (
+              <span
+                key={item.href}
+                title={COMPETITOR_RESEARCH_BETA_NOTE_ZH}
+                className="cursor-default px-3 py-2 text-sm font-medium text-muted-foreground/50"
+              >
+                {item.label}
+                <span className="ml-1.5 rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300/90">
+                  内测中
+                </span>
+              </span>
+            ) : (
             <Link
               key={item.href}
               href={item.href}
@@ -113,7 +131,8 @@ export default function Navbar() {
             >
               {item.label}
             </Link>
-          ))}
+            ),
+          )}
         </div>
 
         {/* Auth (desktop) · Pro Agent 贴管理者入口旁，勿用右下角悬浮 */}
@@ -225,7 +244,18 @@ export default function Navbar() {
               >
                 首页
               </Link>
-              {navItems.map((item) => (
+              {navItems.map((item) =>
+                item.beta && !canOpenResearch ? (
+                  <span
+                    key={item.href}
+                    className="block min-h-11 px-4 py-3 text-sm font-medium text-muted-foreground/50"
+                  >
+                    {item.label}
+                    <span className="ml-1.5 rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300/90">
+                      内测中
+                    </span>
+                  </span>
+                ) : (
                 <Link
                   key={item.href}
                   href={item.href}
@@ -243,7 +273,8 @@ export default function Navbar() {
                 >
                   {item.label}
                 </Link>
-              ))}
+                ),
+              )}
 
               {isAuthenticated && (
                 <div className="pt-3 mt-3 border-t border-border/50 space-y-1">

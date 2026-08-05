@@ -75,6 +75,15 @@ type KnowledgeCardDistillProfile = {
   minSectionsPerChunk: number;
   /** 单次统稿的输入字数上限；超出则先按 `##` 分组压一层（0 = 不分组）。统稿本身绝不跳过 */
   refineMaxChars: number;
+  /**
+   * 每个 `##` 小节要写多少条要点。
+   *
+   * 三档拿的是同一个目标节数，丰度差别全在节内：实测同一份 25k 源文，
+   * Kimi 每节约 191 字、Sol 约 158 字，而 Qwen 只有约 118 字（3904 字 / 33 节），
+   * 同样的「5–9 条」它总往下限压。轻量档单价最低，用户 2026-08-05 明文「便宜可以放宽点」，
+   * 因此给 Qwen 抬高条数区间，把节内写满，而不是靠多切节来凑字数。
+   */
+  bulletsPerSection: { min: number; max: number };
 };
 
 function envNum(key: string, fallback: number, min: number, max: number): number {
@@ -100,6 +109,7 @@ const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistill
     chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_SOL_CHUNK_RETRIES", 2, 0, 4),
     minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_SOL_MIN_SECTIONS", 3, 2, 24),
     refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_SOL_REFINE_MAX_CHARS", 24_000, 0, 120_000),
+    bulletsPerSection: { min: 5, max: 9 },
   },
   // 均衡：最快，段放大到 18k、并发 3，统稿用 max
   [KNOWLEDGE_CARD_DISTILL_MODEL_KIMI]: {
@@ -114,8 +124,9 @@ const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistill
     chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_CHUNK_RETRIES", 2, 0, 4),
     minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_MIN_SECTIONS", 4, 2, 24),
     refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_REFINE_MAX_CHARS", 40_000, 0, 120_000),
+    bulletsPerSection: { min: 5, max: 9 },
   },
-  // 轻量：最慢且压缩过度，段切小到 8k、抬每段节数下限，单次统稿输入压到最小
+  // 轻量：单价最低，压缩倾向最强 → 段切小到 8k、抬每段节数下限与节内条数，单次统稿输入压到最小
   [KNOWLEDGE_CARD_DISTILL_MODEL_QWEN]: {
     chunkThreshold: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_THRESHOLD", 9_000, 4_000, 40_000),
     chunkChars: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_CHARS", 8_000, 3_000, 20_000),
@@ -124,8 +135,10 @@ const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistill
     effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_QWEN_EFFORT_FINAL", "xhigh"),
     requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_TIMEOUT_MS", 240_000, 60_000, 480_000),
     chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_RETRIES", 2, 0, 4),
-    minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_MIN_SECTIONS", 4, 2, 24),
+    minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_MIN_SECTIONS", 5, 2, 24),
     refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_REFINE_MAX_CHARS", 14_000, 0, 120_000),
+    // 轻量档便宜，放宽写满：节内条数比另两档各抬 2 条，别把一节压成三条干标题
+    bulletsPerSection: { min: 7, max: 11 },
   },
 };
 
@@ -190,19 +203,33 @@ export function suggestKnowledgeCardMinSections(sourceChars: number): number {
   return Math.min(36, Math.max(5, Math.round(10 + 5.5 * Math.log2(n / 10_000))));
 }
 
+/** 三档默认的节内条数（Qwen 会按 profile 抬高，见 `bulletsPerSection`） */
+const DISTILL_DEFAULT_BULLETS = { min: 5, max: 9 } as const;
+
 /**
- * 每小节要点条数与举例要求：三档共用。
+ * 每小节要点条数与举例要求。
  *
- * 条数沿用 2026-06-27 定下的原始口径（详尽充实、宁详勿略、每子标题 5–9 条、含定义/数字/方法/示例）；
- * 2026-08-05 曾被改成「有限要点 3–5 条 + 多留白」，与「详尽 + 条列 + 举例」相悖，此处改回。
+ * 条数沿用 2026-06-27 定下的原始口径（详尽充实、宁详勿略、含定义/数字/方法/示例）；
+ * 2026-08-05 曾被改成「有限要点 3–5 条 + 多留白」，与「详尽 + 条列 + 举例」相悖，已改回。
+ * 区间按提练档位取（轻量档抬高，避免它把每节压成三条干标题）。
  */
-const DISTILL_SECTION_SHAPE = `每个 \`## 小节\` 内：
-   - **5–9 条**要点短句（每条约 12–30 字，信息完整、一条只讲一件事，能独立读懂）
+function distillSectionShape(bullets: { min: number; max: number }): string {
+  return `每个 \`## 小节\` 内：
+   - **${bullets.min}–${bullets.max} 条**要点短句（每条约 12–30 字，信息完整、一条只讲一件事，能独立读懂）
    - 每条尽量带上**定义 / 数字 / 方法步骤 / 示例**之一，不要写成空泛的概念名词
    - 该小节涉及方法/流程/判断标准时，**必须**至少一条以「例：」开头的具体例子（引用原文里的真实案例、数字、场景，不许编造）
    - 要点之间语意连贯，读完这一节就掌握一个完整概念；**不要为了简洁而删减关键信息**`;
+}
 
-function buildDistillSystem(minSections: number): string {
+function resolveDistillBullets(modelName?: string | null): { min: number; max: number } {
+  const profile = modelName
+    ? DISTILL_PROFILES[modelName as KnowledgeCardDistillModelId]
+    : undefined;
+  return profile?.bulletsPerSection ?? DISTILL_DEFAULT_BULLETS;
+}
+
+function buildDistillSystem(minSections: number, modelName?: string | null): string {
+  const bullets = resolveDistillBullets(modelName);
   return `你是知识卡片内容主编。任务：把用户提供的文稿/幻灯片抽字/图片 OCR 结果，提练成可直接做「疏朗图文知识卡片」的简体中文 Markdown（读图 OCR 与提练同时完成，不要只吐生文本）。
 
 **目标**：让没读过原文的人在几分钟内读懂这份材料**讲了什么、关键结论是什么、怎么用**。是**精选重点**，不是逐段搬运。
@@ -210,7 +237,7 @@ function buildDistillSystem(minSections: number): string {
 硬性要求：
 1. **抓主干**：优先保留核心论点、关键结论、可操作方法、决定性数据与对比、反直觉洞察。删掉铺垫、重复、寒暄、案例复述、广告水词、与主题无关的枝节。
 2. 结构：以 \`# 总标题\` 开头（总标题要点出全文主旨，不是书名照抄），下文用 \`## 小节\` 承载重点；小节标题本身就是一句有信息量的判断，不用「概述 / 背景介绍」这类空标题。
-3. ${DISTILL_SECTION_SHAPE}
+3. ${distillSectionShape(bullets)}
 4. **篇幅**：约 **${minSections}** 个 \`## 小节\`（可上下浮动 2 个）。宁可少而精，**禁止**为凑数把同一论点拆成多节，也禁止把整本压成两三节总括。
 5. **不要**把原文长段落原样倒进输出；**不要**注水扩写；**不要**「首先其次综上所述」公文腔。
 6. 只输出 Markdown 正文，不要 JSON、不要前言后记、不要解释你做了什么。`;
@@ -444,7 +471,10 @@ async function invokeEvolinkDistill(params: {
   const body: Record<string, unknown> = {
     model: params.modelName,
     messages: [
-      { role: "system", content: params.systemOverride || buildDistillSystem(params.minSections) },
+      {
+        role: "system",
+        content: params.systemOverride || buildDistillSystem(params.minSections, params.modelName),
+      },
       { role: "user", content: userContent },
     ],
     max_tokens: DISTILL_MAX_TOKENS,
@@ -526,7 +556,9 @@ async function invokeOpenRouterKimiDistill(params: {
         messages: [
           {
             role: "system",
-            content: params.systemOverride || buildDistillSystem(params.minSections),
+            content:
+              params.systemOverride ||
+              buildDistillSystem(params.minSections, KNOWLEDGE_CARD_DISTILL_MODEL_KIMI),
           },
           { role: "user", content: userContent },
         ],
@@ -651,7 +683,9 @@ function buildRefineSystem(
   minSections: number,
   stage: RefineStage,
   currentSections?: number,
+  modelName?: string | null,
 ): string {
+  const bullets = resolveDistillBullets(modelName);
   if (stage === "tighten") {
     return `你是知识卡片内容主编。下面这份知识卡片 Markdown **小节太多了**${
       currentSections ? `（当前 ${currentSections} 个 \`##\` 小节）` : ""
@@ -663,7 +697,7 @@ function buildRefineSystem(
 1. 把讲同一主题的多个小节**合并成一节**，标题取信息量最大的那句，正文只留最强的要点与例子。
 2. 删掉枝节、重复举例、只在局部成立的细节、可由其它小节推出的内容。
 3. 保住全局主线：\`# 总标题\` 点出主旨，小节按「是什么 → 为什么 → 怎么做 → 边界与例外」之类的自然顺序排列。
-4. ${DISTILL_SECTION_SHAPE}
+4. ${distillSectionShape(bullets)}
 5. 只输出 Markdown 正文，不要前言后记、不要解释你删了什么。`;
   }
 
@@ -684,7 +718,7 @@ function buildRefineSystem(
 硬性要求：
 ${mainline}
 2. **精选到 ${minSections} 个 \`## 小节\`**（硬指标，最多 ${minSections + 2} 个）：合并同义小节，删掉枝节、重复举例、只在原文局部成立的细节。**删内容是本步的职责**，不要为了「不丢东西」而堆节。
-3. ${DISTILL_SECTION_SHAPE}
+3. ${distillSectionShape(bullets)}
 4. 小节标题写成有信息量的一句判断，不要「概述 / 其他 / 补充」这类空标题。
 5. 去掉分段痕迹：「本段 / 以上 / 续上」这类过渡语、重复标题、空节。
 6. 只输出 Markdown 正文，不要前言后记、不要解释取舍过程。`;
@@ -746,6 +780,7 @@ async function refineOnce(params: {
         params.minSections,
         params.stage,
         countMarkdownSections(params.body),
+        params.modelName,
       ),
       timeoutMs: distillRefineTimeoutMs(params.modelName),
     });

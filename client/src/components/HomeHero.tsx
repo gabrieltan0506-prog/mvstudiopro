@@ -3,11 +3,13 @@ import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import FloatingVideoWatermark from "./FloatingVideoWatermark";
 import { useAuth } from "../_core/hooks/useAuth";
+import { COMPETITOR_RESEARCH_BETA_LABEL_ZH } from "@/lib/competitorResearchBeta";
 
 /** Hero 主能力入口（与导航一致） */
-const FLAGSHIP: { href: string; label: string; desc: string }[] = [
+const FLAGSHIP: { href: string; label: string; desc: string; beta?: boolean }[] = [
   { href: "/platform", label: "平台创作", desc: "趋势分析、选题文案与自定义工作台。" },
-  { href: "/research", label: "竞品调研", desc: "多平台调研与战略报告。" },
+  // 竞品调研内测中：首页只展示不给链接（用户 2026-08-05 明文，等 /canvas 修好再开放）
+  { href: "/research", label: "竞品调研", desc: "多平台调研与战略报告。", beta: true },
   { href: "/canvas", label: "创作画布", desc: "节点式生图、分镜与成片编排。" },
 ];
 
@@ -178,6 +180,17 @@ export default function HomeHero() {
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.2 + i * 0.08, duration: 0.4 }}
                 >
+                  {item.beta ? (
+                    <div className="home-liquid-glass block cursor-default rounded-2xl px-4 py-3 text-white/70">
+                      <div className="flex items-center gap-2 text-sm font-bold">
+                        {item.label}
+                        <span className="rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300/90">
+                          {COMPETITOR_RESEARCH_BETA_LABEL_ZH}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-[12px] leading-relaxed text-white/45">{item.desc}</div>
+                    </div>
+                  ) : (
                   <Link
                     href={item.href}
                     className="home-liquid-glass block rounded-2xl px-4 py-3 text-white no-underline transition hover:bg-white/[0.1]"
@@ -185,6 +198,7 @@ export default function HomeHero() {
                     <div className="text-sm font-bold">{item.label}</div>
                     <div className="mt-1 text-[12px] leading-relaxed text-white/60">{item.desc}</div>
                   </Link>
+                  )}
                 </motion.div>
               ))}
             </div>

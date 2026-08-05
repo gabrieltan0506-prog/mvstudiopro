@@ -15,6 +15,7 @@ import {
   type AspectRatio169Or916,
 } from "@shared/jsonDirectorMiddleware";
 import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
+import { HAILUO_OPENROUTER_FIXED_DURATION_SEC } from "@shared/hailuoOpenRouterModels";
 import { Sparkles, Image as ImageIcon, Video, LoaderCircle } from "lucide-react";
 import Image2TemplatePicker from "@/components/Image2TemplatePicker";
 import { toast } from "sonner";
@@ -24,10 +25,10 @@ const CREATIVE_VIDEO_CREDITS_VEO_31 = 54;
 const CREATIVE_VIDEO_CREDITS_SEEDANCE_20 = 118;
 /** H3 2K · OpenRouter；暂与标准成片同档积分 */
 const CREATIVE_VIDEO_CREDITS_HAILUO_H3 = 118;
-/** 成片：Veo 8s / 54 cr；Seedance/H3 10s / 118 cr（与 API 参数一致） */
+/** 成片：Veo 8s / 54 cr；Seedance 10s / 118 cr；H3 固定 15s（与 API 参数一致） */
 const CREATIVE_VIDEO_DURATION_VEO_SEC = 8;
 const CREATIVE_VIDEO_DURATION_SEEDANCE_SEC = 10;
-const CREATIVE_VIDEO_DURATION_HAILUO_SEC = 10;
+const CREATIVE_VIDEO_DURATION_HAILUO_SEC = HAILUO_OPENROUTER_FIXED_DURATION_SEC;
 
 export default function CreativePage() {
   const { user } = useAuth();
@@ -240,7 +241,8 @@ export default function CreativePage() {
           fetch(hailuoUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            credentials: "omit",
+            // 服务端已要求登录，必须带登录态，否则 401
+            credentials: "include",
             body: JSON.stringify({
               prompt: motionPrompt,
               imageUrl,
@@ -426,11 +428,11 @@ export default function CreativePage() {
                   <div className="flex gap-2 items-center">
                     <label className="text-sm font-semibold text-white/80">时长</label>
                     <div className="text-sm font-semibold text-white/50 border border-white/10 bg-white/5 px-3 py-1.5 rounded-lg">
-                      {videoModel === "seedance-2.0" ||
-                      videoModel === "seedance-2.0-fast" ||
-                      videoModel === "minimax-hailuo-3"
-                        ? "10 秒"
-                        : "8 秒"}
+                      {videoModel === "minimax-hailuo-3"
+                        ? `${CREATIVE_VIDEO_DURATION_HAILUO_SEC} 秒`
+                        : videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast"
+                          ? `${CREATIVE_VIDEO_DURATION_SEEDANCE_SEC} 秒`
+                          : `${CREATIVE_VIDEO_DURATION_VEO_SEC} 秒`}
                     </div>
                   </div>
                 </div>

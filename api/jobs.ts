@@ -979,13 +979,34 @@ function getPublicAssetBaseUrl() {
   return s(process.env.OAUTH_SERVER_URL).trim() || "https://mvstudiopro.com";
 }
 
-/** 成片·加长(2.5)：须登录且 Stripe 正式会员（pro/enterprise）；邀请码积分用户不可用 */
+/**
+ * 取当前登录用户；无 cookie / 校验失败一律返回 null（不抛），供各 op 做登录闸门。
+ *
+ * `sdk.authenticateRequest` 在缺 cookie 时是 **throw ForbiddenError**（不是返回 null），
+ * 所以这里必须包 try/catch，否则未登录请求会变成 500。
+ */
+async function resolveJobUser(
+  req: VercelRequest,
+): Promise<{ userId: number; role: string } | null> {
+  try {
+    const { sdk } = await import("../server/_core/sdk.js");
+    const user = await sdk.authenticateRequest(req as any, { silentMissing: true });
+    const userId = Number((user as any)?.id);
+    if (!Number.isFinite(userId) || userId <= 0) return null;
+    return { userId, role: String((user as any)?.role || "") };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 成片·加长(2.5)：8 月 8 日 00:00 (UTC+8) 起自动对**正式会员**（pro/enterprise）开放；
+ * 邀请码积分用户仍是 free，拿不到。上线前只有 supervisor/admin 可走（内部验收）。
+ */
 async function assertSeedance25PaidAccess(
   req: VercelRequest,
 ): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
-  const { canAccessSeedance25ByPlan, SEEDANCE_25_PAID_ONLY_LABEL_ZH } = await import(
-    "../shared/seedance25Access.js"
-  );
+  const { resolveSeedance25Access } = await import("../shared/seedance25Access.js");
   try {
     const { sdk } = await import("../server/_core/sdk.js");
     const user = await sdk.authenticateRequest(req as any, { silentMissing: true });
@@ -993,10 +1014,16 @@ async function assertSeedance25PaidAccess(
     if (!Number.isFinite(userId) || userId <= 0) {
       return { ok: false, status: 401, error: "请先登录后再使用成片·加长" };
     }
+    const role = String((user as any)?.role || "");
     const { getUserPlan } = await import("../server/credits.js");
     const plan = await getUserPlan(userId);
-    if (!canAccessSeedance25ByPlan(plan)) {
-      return { ok: false, status: 403, error: SEEDANCE_25_PAID_ONLY_LABEL_ZH };
+    const access = resolveSeedance25Access({ plan, role });
+    if (!access.allowed) {
+      return {
+        ok: false,
+        status: access.reason === "before_launch" ? 503 : 403,
+        error: access.message || "成片·加长暂不可用",
+      };
     }
     return { ok: true };
   } catch (e: any) {
@@ -3375,6 +3402,10 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
+      // 成片一段真金白银（2K · 15s），未登录不得起片
+      if (!(await resolveJobUser(req))) {
+        return res.status(401).json({ ok: false, error: "请先登录后再生成成片" });
+      }
       const prompt =
         s(b.prompt || q.prompt || "").trim() || "Cinematic motion shot with stable camera and rich detail.";
       const imageUrl = s(b.imageUrl || q.imageUrl || "").trim() || undefined;
@@ -3396,9 +3427,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           });
         }
         const { clampHailuoOpenRouterDuration } = await import("../shared/hailuoOpenRouterModels.js");
-        const duration = clampHailuoOpenRouterDuration(
-          b.duration ?? q.duration ?? b.durationSec ?? 10,
-        );
+        // H3 一律 15 秒：忽略请求体里的时长，避免调用方各传各的导致计费与产出不符
+        const duration = clampHailuoOpenRouterDuration();
         const out = await runOpenRouterHailuoVideo({
           prompt,
           imageUrl,

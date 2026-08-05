@@ -1,7 +1,7 @@
 import {
   SEEDANCE_25_COMING_SOON_LABEL_EN,
-  SEEDANCE_25_PUBLICLY_ENABLED,
   clampSeedanceDuration,
+  isSeedance25PubliclyEnabled,
   inferSeedanceMode,
   normalizeSeedanceQuality,
   parseSeedanceVersion,
@@ -22,9 +22,9 @@ export function isEvolinkSeedanceConfigured(): boolean {
   return Boolean(String(process.env.EVOLINK_API_KEY || "").trim());
 }
 
-/** 产品未开放；仅 SEEDANCE_25_ENABLED=1 时可走真实请求（联调）。 */
+/** 8 月 8 日 00:00 (UTC+8) 起自动开放；上线前仅 SEEDANCE_25_ENABLED=1 可走真实请求（内部联调）。 */
 export function isSeedance25Enabled(): boolean {
-  if (SEEDANCE_25_PUBLICLY_ENABLED) return true;
+  if (isSeedance25PubliclyEnabled()) return true;
   return /^(1|true|yes)$/i.test(String(process.env.SEEDANCE_25_ENABLED || ""));
 }
 
