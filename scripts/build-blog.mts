@@ -29,6 +29,8 @@ type Post = {
   keywords: string;
   html: string;
   readMinutes: number;
+  /** 分享卡片图：取正文第一张图，没有就退回站点图标 */
+  cover: string;
 };
 
 /** 解析 front matter：只认 `key: value`，够用且不引入 yaml 依赖 */
@@ -91,6 +93,18 @@ const CSS = `
   pre code { background: none; padding: 0; }
   hr { border: 0; border-top: 1px solid #23262e; margin: 40px 0; }
   em { color: #a9a9b6; }
+
+  /* 图片与视频：不加 max-width 的话，一张成片截图就能把版面撑破 */
+  img, video { max-width: 100%; height: auto; display: block;
+               border-radius: 8px; border: 1px solid #23262e; margin: 0 0 8px; }
+  figure { margin: 24px 0; }
+  figure img, figure video { margin-bottom: 8px; }
+  figcaption { font-size: 13px; color: #8b8b96; text-align: center; }
+  /* B 站 / YouTube 等外链视频：按 16:9 自适应，手机上也不会溢出 */
+  .video-embed { position: relative; padding-bottom: 56.25%; height: 0;
+                 margin: 24px 0; border-radius: 8px; overflow: hidden;
+                 border: 1px solid #23262e; }
+  .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid #23262e;
            font-size: 13px; color: #8b8b96; }
   footer a { margin-right: 16px; }
@@ -110,7 +124,9 @@ function layout(opts: {
   jsonLd: unknown;
   keywords?: string;
   body: string;
+  cover?: string;
 }): string {
+  const cover = opts.cover || `${SITE}/pwa-icon-512.png`;
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -126,9 +142,11 @@ ${opts.keywords ? `<meta name="keywords" content="${escapeHtml(opts.keywords)}">
 <meta property="og:url" content="${opts.canonical}">
 <meta property="og:title" content="${escapeHtml(opts.title)}">
 <meta property="og:description" content="${escapeHtml(opts.description)}">
+<meta property="og:image" content="${cover}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="${escapeHtml(opts.title)}">
 <meta name="twitter:description" content="${escapeHtml(opts.description)}">
+<meta name="twitter:image" content="${cover}">
 <link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
 <style>${CSS}</style>
 <script type="application/ld+json">
@@ -181,6 +199,15 @@ async function main(): Promise<void> {
     const html = await marked.parse(body.replace(/^#\s+.+$/m, "").trimStart());
     // 中文按字数估阅读时长，每分钟约 400 字
     const plain = body.replace(/[#>*`|\-]/g, "");
+    // 分享卡片图取正文第一张图。默认那个 PWA 图标做封面很难看，
+    // 而社交平台的点击率极依赖这张图。front matter 里写 cover 可覆盖。
+    const firstImg = body.match(/!\[[^\]]*\]\(([^)\s]+)/)?.[1];
+    const coverRaw = meta.cover || firstImg || "";
+    const cover = coverRaw
+      ? coverRaw.startsWith("http")
+        ? coverRaw
+        : `${SITE}${coverRaw.startsWith("/") ? "" : "/"}${coverRaw}`
+      : "";
     posts.push({
       slug,
       title,
@@ -189,6 +216,7 @@ async function main(): Promise<void> {
       keywords: meta.keywords || "",
       html,
       readMinutes: Math.max(1, Math.round(plain.length / 400)),
+      cover,
     });
   }
 
@@ -216,6 +244,7 @@ async function main(): Promise<void> {
             logo: { "@type": "ImageObject", url: `${SITE}/pwa-icon-512.png` },
           },
           ...(p.keywords ? { keywords: p.keywords } : {}),
+          ...(p.cover ? { image: p.cover } : {}),
         },
         {
           "@type": "BreadcrumbList",
@@ -238,7 +267,7 @@ ${p.html}
     await fs.writeFile(
       path.join(OUT, `${p.slug}.html`),
       layout({ title: `${p.title} · MV Studio Pro`, description: p.description,
-               canonical: url, jsonLd, keywords: p.keywords, body }),
+               canonical: url, jsonLd, keywords: p.keywords, body, cover: p.cover }),
       "utf-8",
     );
   }
