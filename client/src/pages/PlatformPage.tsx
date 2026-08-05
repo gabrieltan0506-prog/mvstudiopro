@@ -1948,6 +1948,23 @@ function PlatformIpDimensionGuide() {
   );
 }
 
+/**
+ * 上传文件时决定文本框既有文案要不要一并提练。
+ *
+ * 提练稿会写回文本框，所以下次上传若默认合并，就会把上一次的稿子混进这本新书
+ * （用户 2026-08-05：整本书的知识卡第 1 页出的是上一次残留的内容）。
+ */
+function resolveKnowledgeCardSourceText(existing: string, fileCount: number): string | undefined {
+  const text = String(existing || "").trim();
+  if (!text || fileCount <= 0) return text || undefined;
+  const merge = window.confirm(
+    `上方文本框已有约 ${text.length} 字文案。\n\n` +
+      `「确定」＝ 连同这段文案一起提练\n` +
+      `「取消」＝ 只提练新上传的 ${fileCount} 个文件（上方文案会被新的提练稿替换）`,
+  );
+  return merge ? text : undefined;
+}
+
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const [debugMode, setDebugMode] = useState(false);
@@ -5996,7 +6013,7 @@ export default function PlatformPage() {
         if (pendingFiles.length > 0 || !distilled) {
           setCustomNoteDistillPhase("distilling");
           distilled = await runKnowledgeCardDistill({
-            sourceText: trimmed || undefined,
+            sourceText: resolveKnowledgeCardSourceText(trimmed, pendingFiles.length),
             files: pendingFiles,
             onStatus: setCustomNoteUploadStatus,
           });
@@ -11473,7 +11490,10 @@ export default function PlatformPage() {
                             );
                             toast.message("正在提练（长文档较久），完成后会写入上方文本框…");
                             const distilled = await runKnowledgeCardDistill({
-                              sourceText: customNoteText.trim() || undefined,
+                              sourceText: resolveKnowledgeCardSourceText(
+                                customNoteText,
+                                allPending.length,
+                              ),
                               files: allPending,
                               onStatus: setCustomNoteUploadStatus,
                             });
