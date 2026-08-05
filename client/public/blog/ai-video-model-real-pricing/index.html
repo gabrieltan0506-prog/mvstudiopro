@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 视频生成实测：四个模型的真实单价，以及标价为什么会骗你 · MV Studio Pro</title>
+<meta name="description" content="实测 Seedance 2.0、MiniMax H3、HappyHorse 1.1 的真实单价——账单里读出来的数字，和官网标的「起价」差 67%。附可复用的按像素外推方法与两个不写在文档里的坑。">
+<meta name="keywords" content="AI视频生成,Seedance,MiniMax H3,HappyHorse,视频模型定价,成本实测">
+<link rel="canonical" href="https://www.mvstudiopro.com/blog/ai-video-model-real-pricing">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MV Studio Pro">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:url" content="https://www.mvstudiopro.com/blog/ai-video-model-real-pricing">
+<meta property="og:title" content="AI 视频生成实测：四个模型的真实单价，以及标价为什么会骗你 · MV Studio Pro">
+<meta property="og:description" content="实测 Seedance 2.0、MiniMax H3、HappyHorse 1.1 的真实单价——账单里读出来的数字，和官网标的「起价」差 67%。附可复用的按像素外推方法与两个不写在文档里的坑。">
+<meta property="og:image" content="https://www.mvstudiopro.com/blog-assets/poster-h3-2k-5s.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AI 视频生成实测：四个模型的真实单价，以及标价为什么会骗你 · MV Studio Pro">
+<meta name="twitter:description" content="实测 Seedance 2.0、MiniMax H3、HappyHorse 1.1 的真实单价——账单里读出来的数字，和官网标的「起价」差 67%。附可复用的按像素外推方法与两个不写在文档里的坑。">
+<meta name="twitter:image" content="https://www.mvstudiopro.com/blog-assets/poster-h3-2k-5s.jpg">
+<link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0f1115; color: #e6e6ea;
+    font: 16px/1.85 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 22px 96px; }
+  nav.top { font-size: 13px; color: #8b8b96; margin-bottom: 32px; }
+  nav.top a { color: #7fd1ff; text-decoration: none; }
+  nav.top a:hover { text-decoration: underline; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 12px; letter-spacing: -.01em; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-top: 8px; border-top: 1px solid #23262e; }
+  h3 { font-size: 17px; margin: 28px 0 10px; }
+  .meta { font-size: 13px; color: #8b8b96; margin-bottom: 36px; }
+  p { margin: 0 0 18px; }
+  ul, ol { margin: 0 0 18px; padding-left: 24px; }
+  li { margin: 6px 0; }
+  strong { color: #fff; }
+  a { color: #7fd1ff; }
+  blockquote {
+    margin: 0 0 22px; padding: 12px 18px; border-left: 3px solid #7fd1ff;
+    background: #161922; color: #b9b9c4; font-size: 15px;
+  }
+  blockquote p { margin: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 14.5px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid #23262e; text-align: left; }
+  th { color: #fff; background: #161922; font-weight: 600; }
+  code {
+    background: #1b1f28; padding: 2px 6px; border-radius: 4px;
+    font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  pre {
+    background: #161922; padding: 16px 18px; border-radius: 8px; overflow-x: auto;
+    margin: 0 0 22px; border: 1px solid #23262e;
+  }
+  pre code { background: none; padding: 0; }
+  hr { border: 0; border-top: 1px solid #23262e; margin: 40px 0; }
+  em { color: #a9a9b6; }
+
+  /* 图片与视频：不加 max-width 的话，一张成片截图就能把版面撑破 */
+  img, video { max-width: 100%; height: auto; display: block;
+               border-radius: 8px; border: 1px solid #23262e; margin: 0 0 8px; }
+  figure { margin: 24px 0; }
+  figure img, figure video { margin-bottom: 8px; }
+  figcaption { font-size: 13px; color: #8b8b96; text-align: center; }
+  /* B 站 / YouTube 等外链视频：按 16:9 自适应，手机上也不会溢出 */
+  .video-embed { position: relative; padding-bottom: 56.25%; height: 0;
+                 margin: 24px 0; border-radius: 8px; overflow: hidden;
+                 border: 1px solid #23262e; }
+  .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid #23262e;
+           font-size: 13px; color: #8b8b96; }
+  footer a { margin-right: 16px; }
+  .cards { display: grid; gap: 14px; margin: 28px 0 0; }
+  .card { display: block; padding: 18px 20px; background: #161922; border: 1px solid #23262e;
+          border-radius: 10px; text-decoration: none; color: inherit; }
+  .card:hover { border-color: #7fd1ff55; background: #1a1e28; }
+  .card h2 { margin: 0 0 8px; font-size: 18px; border: 0; padding: 0; color: #fff; }
+  .card p { margin: 0; font-size: 14px; color: #a9a9b6; }
+  .card .meta { margin: 10px 0 0; font-size: 12px; }
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Article",
+      "headline": "AI 视频生成实测：四个模型的真实单价，以及标价为什么会骗你",
+      "description": "实测 Seedance 2.0、MiniMax H3、HappyHorse 1.1 的真实单价——账单里读出来的数字，和官网标的「起价」差 67%。附可复用的按像素外推方法与两个不写在文档里的坑。",
+      "datePublished": "2026-08-05",
+      "dateModified": "2026-08-05",
+      "inLanguage": "zh-CN",
+      "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": "https://www.mvstudiopro.com/blog/ai-video-model-real-pricing"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://www.mvstudiopro.com/pwa-icon-512.png"
+        }
+      },
+      "keywords": "AI视频生成,Seedance,MiniMax H3,HappyHorse,视频模型定价,成本实测",
+      "image": "https://www.mvstudiopro.com/blog-assets/poster-h3-2k-5s.jpg"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "首页",
+          "item": "https://www.mvstudiopro.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "文章",
+          "item": "https://www.mvstudiopro.com/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "AI 视频生成实测：四个模型的真实单价，以及标价为什么会骗你",
+          "item": "https://www.mvstudiopro.com/blog/ai-video-model-real-pricing"
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+<nav class="top"><a href="/">首页</a> › <a href="/blog/">文章</a></nav>
+<article>
+<h1>AI 视频生成实测：四个模型的真实单价，以及标价为什么会骗你</h1>
+<p class="meta">2026-08-05 · 约 9 分钟</p>
+<blockquote>
+<p>2026-08-05 实测。所有数字来自真实调用后平台返回的账单字段，不是官网标价。
+文中每段视频都是当天真跑出来的，压缩后附在对应章节。</p>
+</blockquote>
+<p>做 AI 成片功能定价的时候，我发现一件事：<strong>模型页面上写的「起价」几乎没法用来算成本</strong>。</p>
+<p>拿 HappyHorse 1.1 举例，OpenRouter 页面写着 <code>from $0.0988/second</code>。我按这个数字算过一版定价，觉得它比 Seedance 便宜。实测跑了一段 3 秒 720p，账单回来是 <strong>$0.494</strong>——折合 $0.1647/秒，比标价高 67%。那个 <code>from</code> 是 480p 的价，而 480p 在实际业务里基本用不上。</p>
+<p>所以下面这些数字，全是我真金白银跑完之后从 <code>usage.cost</code> 里读出来的。</p>
+<h2>实测结果</h2>
+<table>
+<thead>
+<tr>
+<th>模型 / 档位</th>
+<th>实测单价</th>
+<th>怎么测的</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Seedance 2.0 · 480p</td>
+<td><strong>$0.067/秒</strong></td>
+<td>4 秒实扣 $0.269</td>
+</tr>
+<tr>
+<td>Seedance 2.0 · 720p</td>
+<td><strong>$0.1512/秒</strong></td>
+<td>与既有账单记录一致</td>
+</tr>
+<tr>
+<td>Seedance 2.0 · 1080p</td>
+<td><strong>$0.3402/秒</strong></td>
+<td>4 秒实扣 $1.3608</td>
+</tr>
+<tr>
+<td>Seedance 2.0 · 2K</td>
+<td>$0.605/秒</td>
+<td>按官方公式外推</td>
+</tr>
+<tr>
+<td>Seedance 2.0 · 4K</td>
+<td>$1.361/秒</td>
+<td>按官方公式外推</td>
+</tr>
+<tr>
+<td>MiniMax H3 · 2K</td>
+<td><strong>$0.130/秒</strong></td>
+<td>5 秒实扣 $0.65</td>
+</tr>
+<tr>
+<td>HappyHorse 1.1 · 720p</td>
+<td><strong>$0.1647/秒</strong></td>
+<td>3 秒实扣 $0.494</td>
+</tr>
+</tbody></table>
+<p>换成一段 15 秒的成片：</p>
+<ul>
+<li>Seedance 720p — $2.27</li>
+<li>MiniMax H3 2K — $1.95</li>
+<li>HappyHorse 720p — $2.47</li>
+<li>Seedance 1080p — $5.10</li>
+<li>Seedance 4K — <strong>$20.41</strong></li>
+</ul>
+<h2>这几段是真跑出来的</h2>
+<p>以下都是当天实际生成的片子，提示词一律是最简单的自然场景描述，没做任何挑选。
+为了页面加载压过码率，画质以账单和上面的表格为准。</p>
+<figure>
+  <video controls preload="none" poster="/blog-assets/poster-h3-2k-5s.jpg">
+    <source src="/blog-assets/h3-2k-5s.mp4" type="video/mp4">
+  </video>
+  <figcaption>MiniMax H3 · 2K · 5 秒 · 实扣 $0.65（$0.130/秒）</figcaption>
+</figure><figure>
+  <video controls preload="none" poster="/blog-assets/poster-seedance-1080p-4s.jpg">
+    <source src="/blog-assets/seedance-1080p-4s.mp4" type="video/mp4">
+  </video>
+  <figcaption>Seedance 2.0 · 1080p · 4 秒 · 实扣 $1.3608（$0.3402/秒，与公式推算完全一致）</figcaption>
+</figure><figure>
+  <video controls preload="none" poster="/blog-assets/poster-seedance-480p-4s.jpg">
+    <source src="/blog-assets/seedance-480p-4s.mp4" type="video/mp4">
+  </video>
+  <figcaption>Seedance 2.0 · 480p · 4 秒 · 实扣 $0.269（$0.067/秒，用它反推出了 token 单价）</figcaption>
+</figure><figure>
+  <video controls preload="none" poster="/blog-assets/poster-happyhorse-720p-3s.jpg">
+    <source src="/blog-assets/happyhorse-720p-3s.mp4" type="video/mp4">
+  </video>
+  <figcaption>HappyHorse 1.1 · 720p · 3 秒 · 实扣 $0.494（$0.1647/秒，是页面标价的 1.67 倍）</figcaption>
+</figure><h2>一个能省钱的发现：Seedance 的计费公式是公开的</h2>
+<p>Seedance 的模型页给了计费公式：</p>
+<pre><code>tokens = 输出视频高 × 宽 × 秒数 × 24 / 1024
+</code></pre>
+<p>这意味着<strong>不用把每个分辨率都跑一遍烧钱</strong>。我用实测的 4 秒 480p（$0.269）反推出 token 单价约 $7/M，套回 720p 得到 $0.1512/秒——和已知账单完全对上。为了确认公式可靠，我又实测了一次 4 秒 1080p，账单 $1.3608，正好是 $0.3402/秒，<strong>与公式推算分毫不差</strong>。</p>
+<p>验证两次都准之后，2K 和 4K 我就没再花钱试了。</p>
+<p>顺带一个结论：成本严格按像素线性涨。1080p 是 720p 的 2.25 倍，2K 是 4 倍，4K 是 9 倍。所以如果你要开放高画质档，<strong>售价必须同比例抬</strong>，否则高画质档会把毛利吃干——按同一个价卖 4K，等于每段倒贴二十美元。</p>
+<h2>4K 值不值得开</h2>
+<p>按 9 倍成本算，一段 15 秒 4K 要 $20.41。如果你想维持和 720p 一样的毛利率，售价得抬到九倍。这个价位在 C 端基本卖不动，而且生成时间长到容易撞轮询超时。</p>
+<p>我们的做法是开放到 2K，4K 留着但明确标价——愿意付的人自然会付，不愿意的不会误点。</p>
+<h2>两个不写在文档里的坑</h2>
+<p><strong>第一，音频审核会随机拦。</strong></p>
+<p>我跑 1080p 探针的第一次失败了，返回：</p>
+<pre><code>The request failed because the output audio may be related to copyright restrictions.
+</code></pre>
+<p>而我的提示词只有一句 <code>a calm sunrise over water</code>——没有任何音乐相关描述。是模型自己配的背景音乐被判可能侵权。换个提示词重跑就过了。</p>
+<p>这种失败上游不计费，但如果你的产品有扣费逻辑，<strong>必须保证失败会退款</strong>，否则用户付了钱拿不到片。而且这类错误不该提示用户「请修改文案」——他改不出来，原因在模型自己生成的音轨上。</p>
+<p><strong>第二，HappyHorse 原生带音轨。</strong></p>
+<p>我没传任何音频参数，把生成的片子下载下来用 ffprobe 一看：</p>
+<pre><code>codec_name=h264   codec_type=video  1280x720
+codec_name=aac    codec_type=audio  channels=2
+</code></pre>
+<p>一条 AAC 立体声轨。文档里没写这件事，官网 demo 又只有五秒，很容易误以为要自己配音。上面那段 HappyHorse 的片子打开声音就能听到——我没传任何音频相关的参数。</p>
+<h2>顺手比一下 HappyHorse 值不值得上</h2>
+<p>它在 OpenRouter 上 720p 卖 $0.1647/秒，比标准 Seedance 贵 9%、比快速档贵 36%、比 H3 贵 27% 而且分辨率更低（H3 是 2K）。单看性价比，不成立。</p>
+<p>它的真实卖点有三个：能出 1080p、<strong>3 秒起</strong>（Seedance 最短 4 秒、H3 固定 15 秒），以及支持 1 到 9 张参考图、号称角色跨帧更稳。做短切片和转场时 3 秒确实能省钱。</p>
+<p>另外同一个模型在不同聚合平台价差不小：EvoLink 上它 720p 报 $0.124–0.139/秒，比 OpenRouter 便宜约两成。<strong>同一个模型先比几家聚合商</strong>，这钱省得毫无技术难度。</p>
+<h2>给要做同类功能的人的建议</h2>
+<p>一、<strong>别信「起价」，跑一次读账单</strong>。一次探针几毛到一块美元，比定价错一个月便宜得多。</p>
+<p>二、<strong>找计费公式</strong>。有公式就能外推，不用每档都烧。没公式就只测你真要卖的那两三档。</p>
+<p>三、<strong>失败必须退款，而且错误分类要准</strong>。我们踩过一个更蠢的坑：余额耗尽的 429 和 provider 封禁的 403，因为错误信息里带 <code>violation</code> 一词，被判成了「内容审核拦截」，于是提示用户「请调整文案后再试」。用户改了三遍文案也没用——真实原因是我们的备用密钥没钱了。</p>
+<p>四、<strong>成本按像素线性涨，定价也要</strong>。这条最容易在开放高画质档时翻车。</p>
+<hr>
+<p><em>数据来自 2026-08-05 的真实调用，含 Seedance 2.0、MiniMax H3、HappyHorse 1.1 共七次成功出片。单价随上游调整会变，方法可复用。</em></p>
+
+</article>
+<footer>
+  <a href="/">MV Studio Pro 首页</a>
+  <a href="/blog/">全部文章</a>
+  <a href="/pricing">定价</a>
+</footer>
+</div>
+</body>
+</html>

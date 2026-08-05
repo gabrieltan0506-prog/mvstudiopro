@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>一万字文档做成图文卡，先提炼和不提炼差多少钱 · MV Studio Pro</title>
+<meta name="description" content="同一份一万字材料，直接出图是 9 页 264 积分的 2K，先提炼是 4 页 120 积分的 4K。附完整分页计费规则、三档模型的提炼输出实测，以及「省不回本就别劝用户花钱」的判定。">
+<meta name="keywords" content="图文知识卡,文档转图文笔记,AI提炼,内容成本,小红书图文">
+<link rel="canonical" href="https://www.mvstudiopro.com/blog/document-to-knowledge-cards-cost">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MV Studio Pro">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:url" content="https://www.mvstudiopro.com/blog/document-to-knowledge-cards-cost">
+<meta property="og:title" content="一万字文档做成图文卡，先提炼和不提炼差多少钱 · MV Studio Pro">
+<meta property="og:description" content="同一份一万字材料，直接出图是 9 页 264 积分的 2K，先提炼是 4 页 120 积分的 4K。附完整分页计费规则、三档模型的提炼输出实测，以及「省不回本就别劝用户花钱」的判定。">
+<meta property="og:image" content="https://www.mvstudiopro.com/pwa-icon-512.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="一万字文档做成图文卡，先提炼和不提炼差多少钱 · MV Studio Pro">
+<meta name="twitter:description" content="同一份一万字材料，直接出图是 9 页 264 积分的 2K，先提炼是 4 页 120 积分的 4K。附完整分页计费规则、三档模型的提炼输出实测，以及「省不回本就别劝用户花钱」的判定。">
+<meta name="twitter:image" content="https://www.mvstudiopro.com/pwa-icon-512.png">
+<link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0f1115; color: #e6e6ea;
+    font: 16px/1.85 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 22px 96px; }
+  nav.top { font-size: 13px; color: #8b8b96; margin-bottom: 32px; }
+  nav.top a { color: #7fd1ff; text-decoration: none; }
+  nav.top a:hover { text-decoration: underline; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 12px; letter-spacing: -.01em; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-top: 8px; border-top: 1px solid #23262e; }
+  h3 { font-size: 17px; margin: 28px 0 10px; }
+  .meta { font-size: 13px; color: #8b8b96; margin-bottom: 36px; }
+  p { margin: 0 0 18px; }
+  ul, ol { margin: 0 0 18px; padding-left: 24px; }
+  li { margin: 6px 0; }
+  strong { color: #fff; }
+  a { color: #7fd1ff; }
+  blockquote {
+    margin: 0 0 22px; padding: 12px 18px; border-left: 3px solid #7fd1ff;
+    background: #161922; color: #b9b9c4; font-size: 15px;
+  }
+  blockquote p { margin: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 14.5px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid #23262e; text-align: left; }
+  th { color: #fff; background: #161922; font-weight: 600; }
+  code {
+    background: #1b1f28; padding: 2px 6px; border-radius: 4px;
+    font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  pre {
+    background: #161922; padding: 16px 18px; border-radius: 8px; overflow-x: auto;
+    margin: 0 0 22px; border: 1px solid #23262e;
+  }
+  pre code { background: none; padding: 0; }
+  hr { border: 0; border-top: 1px solid #23262e; margin: 40px 0; }
+  em { color: #a9a9b6; }
+
+  /* 图片与视频：不加 max-width 的话，一张成片截图就能把版面撑破 */
+  img, video { max-width: 100%; height: auto; display: block;
+               border-radius: 8px; border: 1px solid #23262e; margin: 0 0 8px; }
+  figure { margin: 24px 0; }
+  figure img, figure video { margin-bottom: 8px; }
+  figcaption { font-size: 13px; color: #8b8b96; text-align: center; }
+  /* B 站 / YouTube 等外链视频：按 16:9 自适应，手机上也不会溢出 */
+  .video-embed { position: relative; padding-bottom: 56.25%; height: 0;
+                 margin: 24px 0; border-radius: 8px; overflow: hidden;
+                 border: 1px solid #23262e; }
+  .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid #23262e;
+           font-size: 13px; color: #8b8b96; }
+  footer a { margin-right: 16px; }
+  .cards { display: grid; gap: 14px; margin: 28px 0 0; }
+  .card { display: block; padding: 18px 20px; background: #161922; border: 1px solid #23262e;
+          border-radius: 10px; text-decoration: none; color: inherit; }
+  .card:hover { border-color: #7fd1ff55; background: #1a1e28; }
+  .card h2 { margin: 0 0 8px; font-size: 18px; border: 0; padding: 0; color: #fff; }
+  .card p { margin: 0; font-size: 14px; color: #a9a9b6; }
+  .card .meta { margin: 10px 0 0; font-size: 12px; }
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Article",
+      "headline": "一万字文档做成图文卡，先提炼和不提炼差多少钱",
+      "description": "同一份一万字材料，直接出图是 9 页 264 积分的 2K，先提炼是 4 页 120 积分的 4K。附完整分页计费规则、三档模型的提炼输出实测，以及「省不回本就别劝用户花钱」的判定。",
+      "datePublished": "2026-08-05",
+      "dateModified": "2026-08-05",
+      "inLanguage": "zh-CN",
+      "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": "https://www.mvstudiopro.com/blog/document-to-knowledge-cards-cost"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://www.mvstudiopro.com/pwa-icon-512.png"
+        }
+      },
+      "keywords": "图文知识卡,文档转图文笔记,AI提炼,内容成本,小红书图文"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "首页",
+          "item": "https://www.mvstudiopro.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "文章",
+          "item": "https://www.mvstudiopro.com/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "一万字文档做成图文卡，先提炼和不提炼差多少钱",
+          "item": "https://www.mvstudiopro.com/blog/document-to-knowledge-cards-cost"
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+<nav class="top"><a href="/">首页</a> › <a href="/blog/">文章</a></nav>
+<article>
+<h1>一万字文档做成图文卡，先提炼和不提炼差多少钱</h1>
+<p class="meta">2026-08-05 · 约 5 分钟</p>
+<blockquote>
+<p>2026-08-05。数字来自我们平台的真实分页与计费逻辑，不是估算。</p>
+</blockquote>
+<p>有个功能我们一直做错了：用户把一万字塞进文本框，我们直接给他出图。</p>
+<p>出多少页？按每页承载 1200 字算，<strong>9 页</strong>。而我们的规则是超过 6 页整套画质从 4K 降到 2K。所以他花了 264 积分，拿到 9 页 2K 的图。</p>
+<p>如果先做一次提炼，一万字压到约 3500 字，落成 <strong>4 页</strong>，120 积分，画质保持 4K。</p>
+<p><strong>同一份材料，9 页 264 积分的 2K，和 4 页 120 积分的 4K。</strong> 后者又便宜又清楚，而用户完全不知道有这条路。</p>
+<h2>完整的账</h2>
+<p>我们的分页规则是：每页上限 1200 字，最少 4 页，前 8 页满价（精细档 30 积分/页），第 9 页起折扣（24），超过 6 页整套降 2K。</p>
+<p>按这套规则算三档源文：</p>
+<table>
+<thead>
+<tr>
+<th>源文</th>
+<th>直接出图</th>
+<th>先提炼</th>
+<th>差额</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1 万字</td>
+<td>9 页 · <strong>264 积分</strong> · 2K</td>
+<td>约 3500 字 → 4 页 · <strong>120 积分</strong> · 4K</td>
+<td>省 144</td>
+</tr>
+<tr>
+<td>2 万字</td>
+<td>17 页 · <strong>456 积分</strong> · 2K</td>
+<td>约 5000 字 → 5 页 · <strong>150 积分</strong> · 4K</td>
+<td>省 306</td>
+</tr>
+<tr>
+<td>5 万字</td>
+<td>42 页 · <strong>1056 积分</strong> · 2K</td>
+<td>约 8000 字 → 7 页 · <strong>206 积分</strong> · 2K</td>
+<td>省 850</td>
+</tr>
+</tbody></table>
+<p>提炼本身要花钱（我们按档位收 30/40/50），但成本对用户来说不值一提——一万字那档扣掉 50 的提炼费，<strong>净省 94</strong>；五万字那档净省八百多。</p>
+<h2>为什么用户不会自己想到</h2>
+<p>因为「提炼要额外付费」这件事，直觉上像是<strong>多花钱</strong>。用户看到「先提炼，50 积分」的按钮，第一反应是跳过。</p>
+<p>所以弹窗不能写「是否需要提炼服务」，得把两条路的账直接摊开：</p>
+<pre><code>这段文字约 10,000 字。
+
+直接出图：约 9 页 · 264 积分 · 画质 2K
+先做提练：约 4 页 · 120 积分 + 提练费 50 · 画质 4K
+
+提练可省约 94 积分，画质还更高（超过 6 页会整套降到 2K）。
+
+点「确定」先提练（推荐），点「取消」按原文全量出图。
+</code></pre>
+<p>关键是让他看到「付 50 省 144」，而不是「付 50 买服务」。<strong>付钱的目的是省钱</strong>，这个逻辑成立，用户就不会犹豫。</p>
+<h2>一个必须守住的边界：省不回本就别劝</h2>
+<p>四千字上下的源文，提炼后页数压不下来多少（本来也就 4 页起），扣掉提炼费基本不赚。这时候还弹窗劝人花钱，就是纯粹的宰客，用户吃过一次就再也不信你的推荐了。</p>
+<p>我们的判定是净收益大于零才弹，否则安静地直接出图。代码里就一行：</p>
+<pre><code>if (tradeoff.saved &gt; 0) { 弹窗 }
+</code></pre>
+<h2>页数预估不能算错</h2>
+<p>弹窗说 4 页，实际出 6 页，这就从「帮用户省钱」变成了欺诈。</p>
+<p>这里有个工程细节：提炼后的字数没法直接预测，但<strong>页数受目标小节数约束</strong>。我们的目标节数是按源文字数对数增长的（字数每翻一倍才多约 5 节，1 万字约 10 节、9.5 万字约 28 节），按每节约 180 字反推总字数，再走同一套分页规则，实测与成稿吻合——九万五千字的书算出 5 页，实际成稿也是 5 页。</p>
+<p>更重要的是：<strong>这个预估函数必须前后端共用同一份实现</strong>。我们原来把它放在服务端，前端要算账就得复制一份逻辑，两边一旦漂移就会出现「弹窗说 4 页、服务端切 6 页」。所以我把它挪到了共享目录，两边引同一个函数。</p>
+<h2>顺带说提炼档位的差异</h2>
+<p>同一份 2.5 万字的材料，三个模型的提炼结果差别很大：</p>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>耗时</th>
+<th>输出</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>均衡（Kimi K3）</td>
+<td>43 秒</td>
+<td>7443 字 / 39 节</td>
+</tr>
+<tr>
+<td>精细（GPT-5.6 Sol）</td>
+<td>194 秒</td>
+<td>10129 字 / 64 节</td>
+</tr>
+<tr>
+<td>轻量（Qwen 3.8 Max）</td>
+<td>287 秒</td>
+<td>3904 字 / 33 节</td>
+</tr>
+</tbody></table>
+<p>轻量档最慢而且压缩最狠——每节只有约 118 字，精细档是 158 字、均衡档 191 字。它拿到同样的目标节数，却总把每节写到下限。</p>
+<p>我们的处理是给轻量档单独抬高节内要点条数（7–11 条，另两档 5–9 条），并把每段小节数下限从 4 提到 5。它单价最低，用户愿意用它就是图便宜，那就该让它把节内写满，而不是靠多切节来凑字数。</p>
+<h2>结论</h2>
+<p>如果你的产品按「产出量」计费（页数、张数、段数），那么<strong>任何能压缩产出量的预处理，都是可以单独收费的服务</strong>——前提是把省下来的钱明确算给用户看。</p>
+<p>用户不排斥付费，排斥的是不知道自己为什么付费。</p>
+<hr>
+<p><em>本文的分页与计价规则来自 MV Studio Pro 的图文知识卡功能。具体数字随定价调整会变，思路可复用。</em></p>
+
+</article>
+<footer>
+  <a href="/">MV Studio Pro 首页</a>
+  <a href="/blog/">全部文章</a>
+  <a href="/pricing">定价</a>
+</footer>
+</div>
+</body>
+</html>
