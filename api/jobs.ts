@@ -3481,6 +3481,10 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
+      // 成片一段真金白银（2K · 15s），未登录不得起片
+      if (!(await resolveJobUser(req))) {
+        return res.status(401).json({ ok: false, error: "请先登录后再生成成片" });
+      }
       const prompt =
         s(b.prompt || q.prompt || "").trim() || "Cinematic motion shot with stable camera and rich detail.";
       const imageUrl = s(b.imageUrl || q.imageUrl || "").trim() || undefined;

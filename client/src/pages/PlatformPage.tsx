@@ -53,10 +53,7 @@ import {
   type PlatformPrimaryCtaState,
 } from "@/lib/platformWorkbenchCta";
 import InfographicTemplatePicker from "@/components/InfographicTemplatePicker";
-import {
-  composeInfographicScriptContext,
-  extractInfographicSubjectFromUserCopy,
-} from "@shared/infographicNoteTemplates";
+import { extractInfographicSubjectFromUserCopy } from "@shared/infographicNoteTemplates";
 import { VisualReportTemplate, type VisualReportData } from "@/components/VisualReportTemplate";
 import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
 import {
@@ -5861,13 +5858,14 @@ export default function PlatformPage() {
     const sceneId = `custom-note-${notePage?.index ?? notePart ?? "single"}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const progressJobId = newPlatformCompositeProgressJobId();
     const title = extractInfographicSubjectFromUserCopy(trimmed);
-    const scriptContext =
-      kind === "single_page_knowledge_card" && customNoteInfographicTemplateId
-        ? composeInfographicScriptContext({
-            templateId: customNoteInfographicTemplateId,
-            userCopy: trimmed,
-          })
-        : trimmed;
+    /**
+     * 知识卡的 scriptContext 会被 `planKnowledgeCardPages` 逐页切开当**正文**渲染，
+     * 所以绝不能把版式块拼进来：`composeInfographicScriptContext` 的块以
+     * 「【图文可视化模板·X·仅版式】+ 版式元结构 + 内容锁定 + LAYOUT ONLY 英文 prompt」开头，
+     * 排在正文之前就整页印成模板说明书（用户 2026-08-05 选「左右对半对比」后第 1 页即是）。
+     * 版式意图只能走出图约束，不能当内容。
+     */
+    const scriptContext = trimmed;
     const res = await generateCustomNoteMutation.mutateAsync({
       sceneId,
       title,
@@ -5878,7 +5876,15 @@ export default function PlatformPage() {
         : notePart
           ? { notePart }
           : {}),
-      ...(kind === "single_page_knowledge_card" ? { distillModel: customNoteDistillModel } : {}),
+      ...(kind === "single_page_knowledge_card"
+        ? {
+            distillModel: customNoteDistillModel,
+            // 版式走独立字段进出图指令；拼进 scriptContext 会被当正文印出来
+            ...(customNoteInfographicTemplateId
+              ? { infographicTemplateId: customNoteInfographicTemplateId }
+              : {}),
+          }
+        : {}),
       imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
       progressJobId,
       enabledSkillIds: Array.from(enabledPlatformSkillIds),
