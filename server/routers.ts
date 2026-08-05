@@ -6902,6 +6902,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             distillModel: z
               .enum(["gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
               .optional(),
+            /**
+             * 仅 single_page_knowledge_card：图文可视化版式 id（`shared/infographicNoteTemplates`）。
+             *
+             * 只能走这个字段进**出图指令**，不可拼进 `scriptContext`：后者会被
+             * `planKnowledgeCardPages` 逐页切开当正文，版式块会被整页印成模板说明书
+             * （用户 2026-08-05 随机选版式跑轻量档，第 1 页即是）。
+             */
+            infographicTemplateId: z.string().max(64).optional(),
             /** 仅 storyboard_sheet_landscape / xiaohongshu_dual_note：2×4(默认) 或 3×4 十二格（后端分 2 段生成再 sharp 拼成一张长图，降低糊字）。 */
             gridVariant: z.enum(["2x4", "3x4"]).optional(),
             /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
@@ -7106,6 +7114,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 notePart: input.notePart,
                 notePageIndex: input.notePageIndex,
                 notePageTotal: input.notePageTotal,
+                infographicTemplateId: input.infographicTemplateId,
               });
 
               appendImageFlowLog(imageGenFlowLog, imageUrl ? "✓ generatePlatformCompositeSheet 完成" : "✗ 无 imageUrl（应已在上方抛错）");
@@ -7175,6 +7184,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             notePart: input.notePart,
             notePageIndex: input.notePageIndex,
             notePageTotal: input.notePageTotal,
+            infographicTemplateId: input.infographicTemplateId,
           });
         } catch (error: any) {
           detachLiveProgress?.();

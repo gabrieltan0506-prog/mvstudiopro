@@ -28,6 +28,7 @@ import {
   planKnowledgeCardPages,
   stripKnowledgeCardInternalDirectives,
 } from "../../shared/knowledgeCardPagination.js";
+import { getInfographicNoteTemplate } from "../../shared/infographicNoteTemplates.js";
 
 /** 舊 API 別名：歷史 `storyboard_sheet_portrait` 與橫版 16:9·2×4 分鏡表為同一產物，一律正規化為 `storyboard_sheet_landscape`。 */
 export function normalizeCompositeSheetKind(
@@ -444,7 +445,35 @@ export type KnowledgeCardPromptPaging = {
   /** 1-based 页码 */
   notePageIndex?: number;
   notePageTotal?: number;
+  /**
+   * 图文可视化版式 id（`shared/infographicNoteTemplates`）。
+   *
+   * 版式只能从这里进**出图指令**。曾经的做法是在前端把版式块拼在 `scriptContext` 前面，
+   * 但 `scriptContext` 会被 `planKnowledgeCardPages` 逐页切开当正文：
+   * 提练稿越短，那约 900 字的版式块在第 1 页里占比越大，模型就把
+   * 「SECTION 1–5 + 内容锁定·强制」当成要画的模块清单，整页印成模板说明书
+   * （用户 2026-08-05 用轻量档复现；同样的版式在精细/均衡档因正文更长而只当版式生效）。
+   */
+  infographicTemplateId?: string;
 };
+
+/**
+ * 版式指令段：中文说清「这是排版要求，不是内容」，英文段给绘图模型看构图。
+ * 放在 directive 区（正文切片之外），所以不参与分页、不会被当成要印的模块。
+ */
+function buildKnowledgeCardLayoutDirective(templateId?: string | null): string {
+  const id = String(templateId || "").trim();
+  if (!id) return "";
+  const t = getInfographicNoteTemplate(id);
+  if (!t) return "";
+  return `\n【版式·仅排版参考·不是内容】本页按「${t.labelZh}」的构图铺排：${t.blurbZh.replace(/（版式）$/, "")}。
+- 这段只描述**怎么排**，不是要画的内容；**严禁**把版式名称、模板说明、SECTION 编号、英文构图指令印到图上。
+- 屏内文字只能来自下方 Markdown 切片；画幅仍以本卡的横版 16:9 为准（忽略版式自带的竖版比例）。
+- Composition reference (layout only, never render these words): ${t.layoutPromptEn
+    .replace(/^LAYOUT ONLY\s*—\s*/i, "")
+    .replace(/\s*--ar\s+\d+:\d+\s*$/i, "")
+    .trim()}`;
+}
 
 /**
  * 兼容旧上/下篇：映射为 plan 的前半 / 后半拼接（极短兼容期）。
@@ -502,8 +531,9 @@ export function buildSinglePageKnowledgeCardImagePrompt(
   }
 
   const slice = toSimplifiedChinese(source.slice(0, SCRIPT_SLICE));
+  const layoutDirective = buildKnowledgeCardLayoutDirective(opts.infographicTemplateId);
 
-  return `${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH}${partDirective}
+  return `${SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH}${partDirective}${layoutDirective}
 
 【以下为 Markdown 文稿内容，请按上述要求生成单页连贯图文知识卡片（而非 2×4 八格）】：
 ${slice}

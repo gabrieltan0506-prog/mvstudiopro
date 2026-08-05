@@ -13,6 +13,7 @@ import {
   shouldSkipKnowledgeCardDistill,
   stripKnowledgeCardInternalDirectives,
 } from "./knowledgeCardPagination";
+import { composeInfographicScriptContext } from "./infographicNoteTemplates";
 import { composePlatformImageSkillHints } from "./platformNativeVariants";
 import {
   formatAssignedCraftTechniqueZh,
@@ -207,5 +208,24 @@ describe("stripKnowledgeCardInternalDirectives", () => {
     ].join("\n\n");
     const out = stripKnowledgeCardInternalDirectives(text);
     expect(out).toBe("# 用户文档\n\n正文。");
+  });
+
+  /**
+   * 用户 2026-08-05：随机选了「左右对半对比」版式跑轻量档，第 1 页整页印成
+   * 模板说明书（标题即版式名，六个模块即 SECTION 1–5 与「内容锁定·强制」）。
+   * 版式已改走出图指令，这里是防再犯的第二道闸。
+   */
+  it("drops the infographic layout block composed for image generation", () => {
+    const layoutBlock = composeInfographicScriptContext({
+      templateId: "infographic_rival_showdown",
+      userCopy: "# FDE 全书精华\n\n## 什么是 FDE\n\n现场交付工程师连接客户现场与产品。",
+    });
+    const out = stripKnowledgeCardInternalDirectives(layoutBlock);
+    expect(out).toContain("什么是 FDE");
+    expect(out).not.toContain("图文可视化模板");
+    expect(out).not.toContain("左右对半对比");
+    expect(out).not.toContain("P.A.M.S");
+    expect(out).not.toContain("LAYOUT ONLY");
+    expect(out).not.toContain("内容锁定");
   });
 });
