@@ -361,6 +361,22 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 **大文档改走 GCS 直传（#1091）**：知识卡上传超过 8MB 即前端取签名地址直传，只把 `gs://` 交给服务端（`prepareKnowledgeCardCopy.files` 现为 `fileBase64` / `gcsUri` 二选一）。此前 42MB 的 PDF base64 后 56MB，既超 18MB 请求体上限，连接也在读 body 阶段被掐断，前端却只报「算力紧张」。带百分比进度、断线自动重签名重传 3 次；分片续传（GCS resumable session）未做。
 
+## 2026-08-06
+
+**⚠ 事故：前台停更六小时（23:44 → 次日 05:0x）**。8/5 23:44 把博客生成挂进 `vercel.json` 的 `buildCommand`（`pnpm exec tsx scripts/build-blog.mts && …`）之后，Vercel **每一次**构建都失败——production 与 preview 全红，www 一直停在 22:34 那版。这六小时里 #1088–#1091 照常合进 `main`，Fly Deploy 全绿，**没有任何一处报红**，直到用户自己发现三件事：42MB 上传仍失败（浏览器跑的还是旧 bundle，仍走 base64）、`/blog` 与 `/llms.txt` 全 404、导航还是「Omini，Seedance 2.X画布」而非「一战成片」。
+
+- 定位方式：GitHub Deployments API 逐个查 state，断点精确落在 `b8f53893`（改 buildCommand 那一次）——它之前的 preview 成功，它自己和之后每一次失败。
+- 修法（#1092）：`buildCommand` 回到 `pnpm exec vite build`。博客 HTML 本就随代码提交，构建时不需要重新生成；新增文章改为**本地** `pnpm blog:build` 后连产物一起提交。
+- 教训（已固化成闸门，见下）：**合完 PR 只看 Fly Deploy 绿不绿是不够的**，www 是另一条通道，必须单独确认。
+
+**前台发版看门狗（#1093）**：新增 `.github/workflows/frontend-deploy-check.yml`。push 到 `main` 后等 Vercel production 结果，再核对正式域名能拿到 `/`、`/llms.txt`、`/robots.txt`、`/sitemap.xml`、`/blog/`，任一项不是 200 就报红。首跑即绿。
+
+**博客文章此前点进去是空壳（#1093）**：对外链接用的是 `/blog/<slug>`（不带扩展名），被 `vercel.json` 末尾的 SPA 兜底重写吃掉，返回 378KB 应用外壳，爬虫读到空 div——博客做出来的唯一目的（被 AI 检索引用）等于没实现。两层保险：加 `/blog/:slug`（不含扩展名）→ `/blog/:slug.html` 重写，排在兜底之前；每篇再输出一份 `<slug>/index.html`，文件系统在重写之前匹配。现四篇正式链接返回 12–16KB 正文。
+
+**sitemap 的 blog 段曾重复四遍**：清除旧段的正则写死 `<!-- blog:start -->`，而实际注释后面还跟着「由 … 生成，勿手改」，一次都没匹配上，脚本每跑一次就追加一段。已修并清干净，现共 13 条 URL。
+
+**GCS 直传实测（45.9MB PDF，真跑）**：签名 → 直传 HTTP 200 用时 **9.3 秒** → 服务端从 GCS 取回抽出 **172,500 字**并命中埋点标记 → 线上入口收 `gcsUri` 通过参数校验（停在登录关）。全程不碰大模型、不烧积分。过程中遇到一次签名请求空响应（www→Fly 健康检查抖动），前端那三次重试正好覆盖。浏览器里点选文件那一步 Agent 无法驱动（文件选择框能力被禁），UI 进度条需人工看一眼。
+
 ---
 
 ## 如何更新本文件
