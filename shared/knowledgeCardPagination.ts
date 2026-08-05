@@ -1,7 +1,13 @@
 /**
- * 单页图文知识卡片：本地分页（无 LLM）+ 积分（前 8 页满价，第 9 页起八折，不封顶）。
- * 上传/长文的提练与 OCR 在服务端另走文本/视觉模型；本模块只负责切页与计价。
+ * 单页图文知识卡片：本地分页（无 LLM）+ 积分（前 8 页满价，第 9 页起折扣，不封顶）。
+ * 页费按提练模型分档（见 knowledgeCardDistillModels）；本模块负责切页与计价。
  */
+
+import {
+  knowledgeCardPageCreditsForModel,
+  resolveKnowledgeCardDistillModel,
+  type KnowledgeCardDistillModelId,
+} from "./knowledgeCardDistillModels.js";
 
 export const KNOWLEDGE_CARD_TARGET_MIN_PAGES = 4;
 export const KNOWLEDGE_CARD_TARGET_MAX_PAGES = 8;
@@ -12,8 +18,10 @@ export const KNOWLEDGE_CARD_MIN_CHARS_FOR_TARGET_MIN = 480;
 /** 短贴文可跳过提练的字数上限（前端/路由启发式） */
 export const KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS = 3200;
 
-export const KNOWLEDGE_CARD_CREDITS_FULL = 25;
-export const KNOWLEDGE_CARD_CREDITS_DISCOUNT = 20;
+/** @deprecated 默认精细档满价；请用 knowledgeCardPageCreditsForModel */
+export const KNOWLEDGE_CARD_CREDITS_FULL = 30;
+/** @deprecated 默认精细档折扣；请用 knowledgeCardPageCreditsForModel */
+export const KNOWLEDGE_CARD_CREDITS_DISCOUNT = 24;
 export const KNOWLEDGE_CARD_FULL_PRICE_PAGES = 8;
 /** ≤ 此页数出图 4K（gpt-image-2 quality=high）；超过则整套一律 2K（medium） */
 export const KNOWLEDGE_CARD_4K_MAX_PAGES = 6;
@@ -32,26 +40,32 @@ export type KnowledgeCardPagePlan = {
   pageCount: number;
   credits: number;
   roundText: string;
+  distillModel: KnowledgeCardDistillModelId;
 };
 
-/** 整套 N 页合计积分（不封顶；前 8×25，其后×20）。 */
-export function knowledgeCardCreditsForPages(n: number): number {
+/** 整套 N 页合计积分（不封顶；前 8 满价，其后折扣；按提练模型分档）。 */
+export function knowledgeCardCreditsForPages(
+  n: number,
+  distillModel?: string | null,
+): number {
   const pages = Math.max(0, Math.floor(Number(n) || 0));
+  const { full, discount } = knowledgeCardPageCreditsForModel(distillModel);
   if (pages <= KNOWLEDGE_CARD_FULL_PRICE_PAGES) {
-    return pages * KNOWLEDGE_CARD_CREDITS_FULL;
+    return pages * full;
   }
-  return (
-    KNOWLEDGE_CARD_FULL_PRICE_PAGES * KNOWLEDGE_CARD_CREDITS_FULL +
-    (pages - KNOWLEDGE_CARD_FULL_PRICE_PAGES) * KNOWLEDGE_CARD_CREDITS_DISCOUNT
-  );
+  return KNOWLEDGE_CARD_FULL_PRICE_PAGES * full + (pages - KNOWLEDGE_CARD_FULL_PRICE_PAGES) * discount;
 }
 
 /** 第 pageIndex 页（1-based）单次扣费。 */
-export function knowledgeCardCreditsForPageIndex(pageIndex: number): number {
+export function knowledgeCardCreditsForPageIndex(
+  pageIndex: number,
+  distillModel?: string | null,
+): number {
   const i = Math.floor(Number(pageIndex) || 0);
   if (i < 1) return 0;
-  if (i <= KNOWLEDGE_CARD_FULL_PRICE_PAGES) return KNOWLEDGE_CARD_CREDITS_FULL;
-  return KNOWLEDGE_CARD_CREDITS_DISCOUNT;
+  const { full, discount } = knowledgeCardPageCreditsForModel(distillModel);
+  if (i <= KNOWLEDGE_CARD_FULL_PRICE_PAGES) return full;
+  return discount;
 }
 
 /** 已提练的短贴文可跳过再提练。 */
@@ -184,10 +198,14 @@ function resolveDesiredPageCount(charCount: number, sectionCount: number): numbe
  * 计划知识卡片分页（页数不封顶）。
  * 目标约 4–8；精华很长时可继续增页。
  */
-export function planKnowledgeCardPages(text: string): KnowledgeCardPagePlan {
+export function planKnowledgeCardPages(
+  text: string,
+  distillModel?: string | null,
+): KnowledgeCardPagePlan {
+  const model = resolveKnowledgeCardDistillModel(distillModel);
   const full = String(text || "").trim();
   if (!full) {
-    return { pages: [], pageCount: 0, credits: 0, roundText: "" };
+    return { pages: [], pageCount: 0, credits: 0, roundText: "", distillModel: model };
   }
 
   const parsed = parseMarkdownSections(full);
@@ -215,7 +233,8 @@ export function planKnowledgeCardPages(text: string): KnowledgeCardPagePlan {
   return {
     pages: finalPages,
     pageCount: finalPages.length,
-    credits: knowledgeCardCreditsForPages(finalPages.length),
+    credits: knowledgeCardCreditsForPages(finalPages.length, model),
     roundText: full,
+    distillModel: model,
   };
 }

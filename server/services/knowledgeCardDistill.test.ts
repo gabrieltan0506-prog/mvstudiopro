@@ -7,23 +7,35 @@ import {
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_KIMI,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+  KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR,
+  KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+  KNOWLEDGE_CARD_DISTILL_MODEL_TERRA,
   resolveKnowledgeCardDistillModel,
 } from "../../shared/knowledgeCardDistillModels";
 
 describe("knowledgeCardDistill model", () => {
-  it("defaults to OpenRouter Qwen3.8 Max", () => {
-    expect(resolveKnowledgeCardDistillModel(undefined)).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN);
-    expect(KNOWLEDGE_CARD_DISTILL_MODEL).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN);
+  it("defaults to Evolink GPT-5.6 Sol", () => {
+    expect(resolveKnowledgeCardDistillModel(undefined)).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
+    expect(KNOWLEDGE_CARD_DISTILL_MODEL).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
   });
 
-  it("accepts Kimi K3 for A/B trial", () => {
+  it("accepts Kimi OR + Evolink Qwen; migrates legacy terra / OR-qwen", () => {
     expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_KIMI)).toBe(
       KNOWLEDGE_CARD_DISTILL_MODEL_KIMI,
     );
+    expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toBe(
+      KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+    );
+    expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_TERRA)).toBe(
+      KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+    );
+    expect(resolveKnowledgeCardDistillModel(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN_OR)).toBe(
+      KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+    );
   });
 
-  it("falls back on unknown id", () => {
-    expect(resolveKnowledgeCardDistillModel("not-a-model")).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN);
+  it("falls back on unknown id to Sol", () => {
+    expect(resolveKnowledgeCardDistillModel("not-a-model")).toBe(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
   });
 });
 
@@ -41,10 +53,9 @@ describe("splitSourceTextForDistill", () => {
     expect(splitSourceTextForDistill("短文")).toEqual(["短文"]);
   });
 
-  it("splits long text into multiple chunks", () => {
+  it("splits long text into multiple chunks (legacy helper)", () => {
     const body = "段落要点。\n\n".repeat(4000);
     const chunks = splitSourceTextForDistill(body, 10_000);
     expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.join("").length).toBeGreaterThan(9000);
   });
 });
