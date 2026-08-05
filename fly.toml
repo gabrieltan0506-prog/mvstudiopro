@@ -36,7 +36,10 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   GROWTH_ENABLE_LIVE_BACKFILL_BOOTSTRAP = '1'  # secret 接管
   GROWTH_WRITE_DERIVED_PLATFORM_FILES = '1'
   GROWTH_DISABLE_HISTORY_LEDGER_UPDATES = '0'
-  GROWTH_MAIL_DIGEST_INTERVAL_MINUTES = '60'  # secret 接管
+  # 留空交给代码里的时段分档（白天 4 小时 / 18 点后 3 小时，见 trendMailDigest.ts）。
+  # 原为 '60'：注释虽写「secret 接管」，但 secret 删掉后这个明文值会顶上来，
+  # 结果分档逻辑被压住、线上仍每小时一封——2026-08-06 凌晨排查上传失败时发现。
+  GROWTH_MAIL_DIGEST_INTERVAL_MINUTES = ''
   GROWTH_GITHUB_COLD_STORE_BASE_URL = 'https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-cold-store-latest'
   GROWTH_OFFLOAD_SINGLE_FILE_THRESHOLD_MB = '400'
   GROWTH_OFFLOAD_DIRECTORY_THRESHOLD_MB = '800'
