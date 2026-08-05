@@ -1,0 +1,62 @@
+# MV Studio Pro
+# 营销页开放抓取，登录后的应用页与后台一律不收录。
+
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /supervisor
+Disallow: /dashboard
+Disallow: /payments
+Disallow: /team
+Disallow: /my-works
+Disallow: /my-reports
+Disallow: /test-lab
+Disallow: /workflow-nodes
+Disallow: /enterprise-agent
+Disallow: /login
+Disallow: /api/
+
+# ── AI 搜索爬虫：显式放行 ───────────────────────────────
+# 这些爬虫多数不执行 JavaScript，抓到的就是首屏 HTML，
+# 所以站点侧要保证 index.html 里有 <noscript> 正文与 JSON-LD。
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+User-agent: cohere-ai
+Allow: /
+
+Sitemap: https://www.mvstudiopro.com/sitemap.xml
