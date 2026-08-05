@@ -24,7 +24,10 @@ import {
 import { composePlatformCoverNativeVisualDirective } from "../../shared/platformNativeVariants.js";
 import { GRAPHIC_NOTE_READER_FACING_DIRECTIVE_ZH } from "../../shared/graphicNoteReaderFacing.js";
 import { BIAN_DAO_SHEET_BODY_DIRECTIVE_ZH } from "../../shared/bianDaoStoryboard.js";
-import { planKnowledgeCardPages } from "../../shared/knowledgeCardPagination.js";
+import {
+  planKnowledgeCardPages,
+  stripKnowledgeCardInternalDirectives,
+} from "../../shared/knowledgeCardPagination.js";
 
 /** 舊 API 別名：歷史 `storyboard_sheet_portrait` 與橫版 16:9·2×4 分鏡表為同一產物，一律正規化為 `storyboard_sheet_landscape`。 */
 export function normalizeCompositeSheetKind(
@@ -470,7 +473,8 @@ export function buildSinglePageKnowledgeCardImagePrompt(
 
   const plan = planKnowledgeCardPages(scriptContext);
 
-  let source = String(scriptContext || "");
+  // 未分页的兜底路径同样要剥内部约束，否则整页会画成手法卡说明书
+  let source = stripKnowledgeCardInternalDirectives(String(scriptContext || ""));
   let partDirective = `\n【收尾】本页不生成诗词、金句或书法点睛横幅；版面全部用于知识点模块。`;
 
   const pageIndex = Number(opts.notePageIndex);
