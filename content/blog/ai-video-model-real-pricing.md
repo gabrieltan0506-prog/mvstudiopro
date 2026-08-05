@@ -3,11 +3,13 @@ title: AI 视频生成实测：四个模型的真实单价，以及标价为什�
 description: 实测 Seedance 2.0、MiniMax H3、HappyHorse 1.1 的真实单价——账单里读出来的数字，和官网标的「起价」差 67%。附可复用的按像素外推方法与两个不写在文档里的坑。
 date: 2026-08-05
 keywords: AI视频生成,Seedance,MiniMax H3,HappyHorse,视频模型定价,成本实测
+cover: /blog-assets/poster-h3-2k-5s.jpg
 ---
 
 # AI 视频生成实测：四个模型的真实单价，以及标价为什么会骗你
 
 > 2026-08-05 实测。所有数字来自真实调用后平台返回的账单字段，不是官网标价。
+> 文中每段视频都是当天真跑出来的，压缩后附在对应章节。
 
 做 AI 成片功能定价的时候，我发现一件事：**模型页面上写的「起价」几乎没法用来算成本**。
 
@@ -34,6 +36,39 @@ keywords: AI视频生成,Seedance,MiniMax H3,HappyHorse,视频模型定价,成�
 - HappyHorse 720p — $2.47
 - Seedance 1080p — $5.10
 - Seedance 4K — **$20.41**
+
+## 这几段是真跑出来的
+
+以下都是当天实际生成的片子，提示词一律是最简单的自然场景描述，没做任何挑选。
+为了页面加载压过码率，画质以账单和上面的表格为准。
+
+<figure>
+  <video controls preload="none" poster="/blog-assets/poster-h3-2k-5s.jpg">
+    <source src="/blog-assets/h3-2k-5s.mp4" type="video/mp4">
+  </video>
+  <figcaption>MiniMax H3 · 2K · 5 秒 · 实扣 $0.65（$0.130/秒）</figcaption>
+</figure>
+
+<figure>
+  <video controls preload="none" poster="/blog-assets/poster-seedance-1080p-4s.jpg">
+    <source src="/blog-assets/seedance-1080p-4s.mp4" type="video/mp4">
+  </video>
+  <figcaption>Seedance 2.0 · 1080p · 4 秒 · 实扣 $1.3608（$0.3402/秒，与公式推算完全一致）</figcaption>
+</figure>
+
+<figure>
+  <video controls preload="none" poster="/blog-assets/poster-seedance-480p-4s.jpg">
+    <source src="/blog-assets/seedance-480p-4s.mp4" type="video/mp4">
+  </video>
+  <figcaption>Seedance 2.0 · 480p · 4 秒 · 实扣 $0.269（$0.067/秒，用它反推出了 token 单价）</figcaption>
+</figure>
+
+<figure>
+  <video controls preload="none" poster="/blog-assets/poster-happyhorse-720p-3s.jpg">
+    <source src="/blog-assets/happyhorse-720p-3s.mp4" type="video/mp4">
+  </video>
+  <figcaption>HappyHorse 1.1 · 720p · 3 秒 · 实扣 $0.494（$0.1647/秒，是页面标价的 1.67 倍）</figcaption>
+</figure>
 
 ## 一个能省钱的发现：Seedance 的计费公式是公开的
 
@@ -78,7 +113,7 @@ codec_name=h264   codec_type=video  1280x720
 codec_name=aac    codec_type=audio  channels=2
 ```
 
-一条 AAC 立体声轨。文档里没写这件事，官网 demo 又只有五秒，很容易误以为要自己配音。
+一条 AAC 立体声轨。文档里没写这件事，官网 demo 又只有五秒，很容易误以为要自己配音。上面那段 HappyHorse 的片子打开声音就能听到——我没传任何音频相关的参数。
 
 ## 顺手比一下 HappyHorse 值不值得上
 
