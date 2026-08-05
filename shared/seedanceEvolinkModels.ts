@@ -11,6 +11,12 @@
  * @see https://docs.evolink.ai/en/api-manual/video-series/seedance2.5/
  */
 
+import {
+  SEEDANCE_25_LAUNCH_DATE_LABEL_EN,
+  SEEDANCE_25_LAUNCH_DATE_LABEL_ZH,
+  isSeedance25Launched,
+} from "./seedance25Access.js";
+
 export const SEEDANCE_20_MODELS = {
   textToVideo: "seedance-2.0-text-to-video",
   imageToVideo: "seedance-2.0-image-to-video",
@@ -45,13 +51,17 @@ export const SEEDANCE_20_MINI_DURATION = { min: 4, max: 15, default: SEEDANCE_PR
 export const SEEDANCE_25_DURATION = { min: 4, max: 30, default: SEEDANCE_PRODUCT_DEFAULT_DURATION_SEC } as const;
 
 /**
- * 硬开关：EvoLink 正式上线 Seedance 2.5 前保持 false。
- * 内部联调可设环境变量 SEEDANCE_25_ENABLED=1（仅服务端）。
+ * 到 2026-08-08 00:00 (UTC+8) 自动放开（用户 2026-08-05 明文：对外宣称 8 月 8 日上线、到点自动可用）。
+ * 上线前内部联调设环境变量 SEEDANCE_25_ENABLED=1（仅服务端）。
+ *
+ * 写成函数而非常量：Fly 是长驻进程，常量会在启动时求值，跨过上线时刻也不会翻转。
  */
-export const SEEDANCE_25_PUBLICLY_ENABLED = false;
+export function isSeedance25PubliclyEnabled(now?: Date | number): boolean {
+  return isSeedance25Launched(now);
+}
 
-export const SEEDANCE_25_COMING_SOON_LABEL_EN = "Seedance 2.5 Coming soon on MV Studio Pro";
-export const SEEDANCE_25_COMING_SOON_LABEL_ZH = "Seedance 2.5 即将登陆 MV Studio Pro";
+export const SEEDANCE_25_COMING_SOON_LABEL_EN = `Seedance 2.5 launches ${SEEDANCE_25_LAUNCH_DATE_LABEL_EN} on MV Studio Pro`;
+export const SEEDANCE_25_COMING_SOON_LABEL_ZH = `Seedance 2.5 将于 ${SEEDANCE_25_LAUNCH_DATE_LABEL_ZH}上线 MV Studio Pro`;
 
 export function resolveSeedanceModelId(
   version: SeedanceEvolinkVersion,

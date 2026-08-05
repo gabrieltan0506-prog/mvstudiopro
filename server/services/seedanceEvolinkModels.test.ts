@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  SEEDANCE_25_PUBLICLY_ENABLED,
   clampSeedanceDuration,
   inferSeedanceMode,
+  isSeedance25PubliclyEnabled,
   resolveSeedanceModelId,
 } from "../../shared/seedanceEvolinkModels";
+import { SEEDANCE_25_LAUNCH_AT_MS } from "../../shared/seedance25Access";
 import { isSeedance25Enabled } from "./evolinkSeedanceVideo";
 
 describe("seedance evolink models", () => {
@@ -38,11 +39,21 @@ describe("seedance evolink models", () => {
     expect(inferSeedanceMode({ videoUrls: ["https://v"] })).toBe("reference_to_video");
   });
 
-  it("keeps Seedance 2.5 closed by default", () => {
-    expect(SEEDANCE_25_PUBLICLY_ENABLED).toBe(false);
+  // 用户 2026-08-05 明文：对外 8 月 8 日上线，到点自动开放
+  it("opens Seedance 2.5 automatically at the 8/8 launch moment", () => {
+    expect(isSeedance25PubliclyEnabled(SEEDANCE_25_LAUNCH_AT_MS - 60_000)).toBe(false);
+    expect(isSeedance25PubliclyEnabled(SEEDANCE_25_LAUNCH_AT_MS)).toBe(true);
+  });
+
+  it("before launch only opens with the internal env flag", () => {
     const prev = process.env.SEEDANCE_25_ENABLED;
     delete process.env.SEEDANCE_25_ENABLED;
-    expect(isSeedance25Enabled()).toBe(false);
+    // 上线后 isSeedance25Enabled() 恒为 true，此断言只在上线前有意义
+    if (!isSeedance25PubliclyEnabled()) {
+      expect(isSeedance25Enabled()).toBe(false);
+      process.env.SEEDANCE_25_ENABLED = "1";
+      expect(isSeedance25Enabled()).toBe(true);
+    }
     if (prev === undefined) delete process.env.SEEDANCE_25_ENABLED;
     else process.env.SEEDANCE_25_ENABLED = prev;
   });

@@ -979,13 +979,14 @@ function getPublicAssetBaseUrl() {
   return s(process.env.OAUTH_SERVER_URL).trim() || "https://mvstudiopro.com";
 }
 
-/** 成片·加长(2.5)：须登录且 Stripe 正式会员（pro/enterprise）；邀请码积分用户不可用 */
+/**
+ * 成片·加长(2.5)：8 月 8 日 00:00 (UTC+8) 起自动对**正式会员**（pro/enterprise）开放；
+ * 邀请码积分用户仍是 free，拿不到。上线前只有 supervisor/admin 可走（内部验收）。
+ */
 async function assertSeedance25PaidAccess(
   req: VercelRequest,
 ): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
-  const { canAccessSeedance25ByPlan, SEEDANCE_25_PAID_ONLY_LABEL_ZH } = await import(
-    "../shared/seedance25Access.js"
-  );
+  const { resolveSeedance25Access } = await import("../shared/seedance25Access.js");
   try {
     const { sdk } = await import("../server/_core/sdk.js");
     const user = await sdk.authenticateRequest(req as any, { silentMissing: true });
@@ -993,10 +994,16 @@ async function assertSeedance25PaidAccess(
     if (!Number.isFinite(userId) || userId <= 0) {
       return { ok: false, status: 401, error: "请先登录后再使用成片·加长" };
     }
+    const role = String((user as any)?.role || "");
     const { getUserPlan } = await import("../server/credits.js");
     const plan = await getUserPlan(userId);
-    if (!canAccessSeedance25ByPlan(plan)) {
-      return { ok: false, status: 403, error: SEEDANCE_25_PAID_ONLY_LABEL_ZH };
+    const access = resolveSeedance25Access({ plan, role });
+    if (!access.allowed) {
+      return {
+        ok: false,
+        status: access.reason === "before_launch" ? 503 : 403,
+        error: access.message || "成片·加长暂不可用",
+      };
     }
     return { ok: true };
   } catch (e: any) {

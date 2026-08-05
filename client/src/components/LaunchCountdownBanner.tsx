@@ -1,16 +1,21 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Rocket, PartyPopper } from "lucide-react";
+import {
+  SEEDANCE_25_COUNTDOWN_SUBTITLE_ZH,
+  SEEDANCE_25_COUNTDOWN_TITLE_ZH,
+  SEEDANCE_25_LAUNCHED_LABEL_ZH,
+  SEEDANCE_25_LAUNCH_AT_ISO,
+} from "@shared/seedance25Access";
 
 /**
- * Launch Countdown Banner
- * 
- * Shows a countdown timer from a fixed launch date (today 3PM + 7 days).
- * Precision: second-level countdown.
- * After countdown ends, shows "已正式上线" message.
+ * 首页上线倒计时（读秒）。
+ *
+ * 用户 2026-08-05 明文：对外宣称 **Seedance 2.5 于 8 月 8 日上线**，首页开始读秒；
+ * 到点自动对正式会员开放（见 `shared/seedance25Access.ts`），横幅同步换成已上线文案。
+ * 本处按用户明文授权对外写出引擎名，属前台零技术泄漏规则的显式例外。
  */
 
-// Launch date: Feb 26, 2026 15:00:00 CST (UTC+8)
-const LAUNCH_DATE = new Date("2026-02-26T15:00:00+08:00");
+const LAUNCH_DATE = new Date(SEEDANCE_25_LAUNCH_AT_ISO);
 
 interface TimeLeft {
   days: number;
@@ -55,7 +60,7 @@ export function LaunchCountdownBanner() {
     return (
       <div className="flex flex-row items-center justify-center gap-2 py-3.5 px-5 bg-green-500/10 border-b border-green-500/20">
         <PartyPopper size={18} className="text-yellow-400" />
-        <span className="text-green-500 text-base font-bold">MV Studio Pro 已正式上线！</span>
+        <span className="text-green-500 text-base font-bold">{SEEDANCE_25_LAUNCHED_LABEL_ZH}</span>
         <PartyPopper size={18} className="text-yellow-400" />
       </div>
     );
@@ -67,7 +72,9 @@ export function LaunchCountdownBanner() {
       <div className="relative py-4 px-5 flex flex-col items-center gap-2.5">
         <div className="flex flex-row items-center gap-2">
           <Rocket size={16} className="text-yellow-400" />
-          <span className="text-yellow-400 text-xs font-bold tracking-widest uppercase">正式上线倒计时</span>
+          <span className="text-yellow-400 text-xs font-bold tracking-widest uppercase">
+            {SEEDANCE_25_COUNTDOWN_TITLE_ZH}
+          </span>
           <Rocket size={16} className="text-yellow-400" />
         </div>
         <div className="flex flex-row items-center gap-1">
@@ -91,7 +98,9 @@ export function LaunchCountdownBanner() {
             <span className="text-white/50 text-[10px] font-semibold mt-0.5">秒</span>
           </div>
         </div>
-        <p className="text-white/50 text-[11px] text-center tracking-wide">全功能开放 · Stripe 支付上线 · AI 视频创作一站式体验</p>
+        <p className="text-white/50 text-[11px] text-center tracking-wide">
+          {SEEDANCE_25_COUNTDOWN_SUBTITLE_ZH}
+        </p>
       </div>
     </div>
   );
