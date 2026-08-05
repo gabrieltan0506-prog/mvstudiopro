@@ -308,6 +308,8 @@ ${cards}
 }
 
 main().catch((e) => {
-  console.error("[blog] 失败：", e);
-  process.exit(1);
+  // 不要 exit(1)：这个脚本挂在 vercel.json 的 buildCommand 最前面，
+  // 一旦非零退出会把整个前台构建带崩。博客生成失败最多是少几页静态文章，
+  // 不该连累首页与应用上线。
+  console.error("[blog] 生成失败，跳过（不阻断构建）：", e);
 });
