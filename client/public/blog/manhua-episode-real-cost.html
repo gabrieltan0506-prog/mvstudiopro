@@ -13,9 +13,11 @@
 <meta property="og:url" content="https://www.mvstudiopro.com/blog/manhua-episode-real-cost">
 <meta property="og:title" content="AI 漫剧一集的真实成本拆解，以及为什么按「集」定价会亏 · MV Studio Pro">
 <meta property="og:description" content="一集四到六段、每段独立计费，实测成本 9 到 13 美元。拆解静帧与成片各占多少、失败重试怎么算钱，以及服务端为什么根本认不出「这是同一集的第三段」。">
+<meta property="og:image" content="https://www.mvstudiopro.com/pwa-icon-512.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="AI 漫剧一集的真实成本拆解，以及为什么按「集」定价会亏 · MV Studio Pro">
 <meta name="twitter:description" content="一集四到六段、每段独立计费，实测成本 9 到 13 美元。拆解静帧与成片各占多少、失败重试怎么算钱，以及服务端为什么根本认不出「这是同一集的第三段」。">
+<meta name="twitter:image" content="https://www.mvstudiopro.com/pwa-icon-512.png">
 <link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
 <style>
   :root { color-scheme: light dark; }
@@ -56,6 +58,18 @@
   pre code { background: none; padding: 0; }
   hr { border: 0; border-top: 1px solid #23262e; margin: 40px 0; }
   em { color: #a9a9b6; }
+
+  /* 图片与视频：不加 max-width 的话，一张成片截图就能把版面撑破 */
+  img, video { max-width: 100%; height: auto; display: block;
+               border-radius: 8px; border: 1px solid #23262e; margin: 0 0 8px; }
+  figure { margin: 24px 0; }
+  figure img, figure video { margin-bottom: 8px; }
+  figcaption { font-size: 13px; color: #8b8b96; text-align: center; }
+  /* B 站 / YouTube 等外链视频：按 16:9 自适应，手机上也不会溢出 */
+  .video-embed { position: relative; padding-bottom: 56.25%; height: 0;
+                 margin: 24px 0; border-radius: 8px; overflow: hidden;
+                 border: 1px solid #23262e; }
+  .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid #23262e;
            font-size: 13px; color: #8b8b96; }
   footer a { margin-right: 16px; }

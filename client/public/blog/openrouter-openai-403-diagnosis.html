@@ -13,9 +13,11 @@
 <meta property="og:url" content="https://www.mvstudiopro.com/blog/openrouter-openai-403-diagnosis">
 <meta property="og:title" content="OpenRouter 把我们的 OpenAI 系全封了，排查与止血的完整过程 · MV Studio Pro">
 <meta property="og:description" content="同一把 key，Kimi 和 Qwen 正常，所有 OpenAI 模型一律 403 TOS，连强制走 Azure 也拒。记录如何在两小时内定位出这是账号级封禁而非配置问题，以及一个把余额不足误报成「内容审核」的坑。">
+<meta property="og:image" content="https://www.mvstudiopro.com/pwa-icon-512.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="OpenRouter 把我们的 OpenAI 系全封了，排查与止血的完整过程 · MV Studio Pro">
 <meta name="twitter:description" content="同一把 key，Kimi 和 Qwen 正常，所有 OpenAI 模型一律 403 TOS，连强制走 Azure 也拒。记录如何在两小时内定位出这是账号级封禁而非配置问题，以及一个把余额不足误报成「内容审核」的坑。">
+<meta name="twitter:image" content="https://www.mvstudiopro.com/pwa-icon-512.png">
 <link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
 <style>
   :root { color-scheme: light dark; }
@@ -56,6 +58,18 @@
   pre code { background: none; padding: 0; }
   hr { border: 0; border-top: 1px solid #23262e; margin: 40px 0; }
   em { color: #a9a9b6; }
+
+  /* 图片与视频：不加 max-width 的话，一张成片截图就能把版面撑破 */
+  img, video { max-width: 100%; height: auto; display: block;
+               border-radius: 8px; border: 1px solid #23262e; margin: 0 0 8px; }
+  figure { margin: 24px 0; }
+  figure img, figure video { margin-bottom: 8px; }
+  figcaption { font-size: 13px; color: #8b8b96; text-align: center; }
+  /* B 站 / YouTube 等外链视频：按 16:9 自适应，手机上也不会溢出 */
+  .video-embed { position: relative; padding-bottom: 56.25%; height: 0;
+                 margin: 24px 0; border-radius: 8px; overflow: hidden;
+                 border: 1px solid #23262e; }
+  .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid #23262e;
            font-size: 13px; color: #8b8b96; }
   footer a { margin-right: 16px; }
