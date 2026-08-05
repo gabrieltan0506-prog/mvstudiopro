@@ -193,6 +193,44 @@ function resolveDesiredPageCount(charCount: number, sectionCount: number): numbe
 }
 
 /**
+ * 出图链路会往 `scriptContext` 前面注入的内部约束块表头。
+ * 知识卡把 `scriptContext` 逐页切开当**正文**渲染，这些块一旦混进来就会被印上屏
+ * （用户 2026-08-05 收到的整本书知识卡，第 1 页整页是「封面出图短约束 / 壳轮换策略库」，
+ * 含 coverHeadline、A1 壳、mk1/mk3 等内部代号，正文从第 2 页才开始）。
+ * 注入点已在源头按 kind 关掉，这里是防再犯的第二道闸。
+ */
+const KNOWLEDGE_CARD_INTERNAL_DIRECTIVE_HEADS = [
+  "【Platform 出图短约束】",
+  "【本条图文·视觉气质手法卡】",
+  "【本条导演灵感画布·主手法卡】",
+  "【编导分镜·导演板",
+  "【人物造型·国际时尚大片】",
+  "【光影与机位约束",
+  "【剧情目的·镜头】",
+  "【戏种节奏】",
+  "【DeepResearch Pro",
+  "【3×4 跨段视觉真源】",
+];
+
+/** 剥掉混进知识卡正文的内部出图约束段；剥空则退回原文（宁可脏也不要空页）。 */
+export function stripKnowledgeCardInternalDirectives(text: string): string {
+  const full = String(text || "");
+  if (!full.trim()) return full;
+  if (!KNOWLEDGE_CARD_INTERNAL_DIRECTIVE_HEADS.some((h) => full.includes(h))) {
+    return full;
+  }
+  const kept = full
+    .split(/\n\s*\n/)
+    .filter((block) => {
+      const head = block.trimStart();
+      return !KNOWLEDGE_CARD_INTERNAL_DIRECTIVE_HEADS.some((h) => head.startsWith(h));
+    })
+    .join("\n\n")
+    .trim();
+  return kept || full;
+}
+
+/**
  * 计划知识卡片分页（页数不封顶）。
  * 16:9 横版一页承载数个小节，目标约 4–8 页；精华很长时可继续增页。
  */
@@ -201,7 +239,7 @@ export function planKnowledgeCardPages(
   distillModel?: string | null,
 ): KnowledgeCardPagePlan {
   const model = resolveKnowledgeCardDistillModel(distillModel);
-  const full = String(text || "").trim();
+  const full = stripKnowledgeCardInternalDirectives(String(text || "")).trim();
   if (!full) {
     return { pages: [], pageCount: 0, credits: 0, roundText: "", distillModel: model };
   }
