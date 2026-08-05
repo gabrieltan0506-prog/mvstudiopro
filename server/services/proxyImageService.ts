@@ -1202,14 +1202,23 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const openrouterReady = isOpenRouterGptImage2Configured();
   const tryOpenAi = providerMode !== "openrouter" && openaiReady;
   const tryOpenRouter = providerMode !== "openai" && openrouterReady;
+  /**
+   * EvoLink 作中间备胎：2026-08-05 实测 OpenRouter 的整个 OpenAI 系
+   * （`openai/gpt-image-2`、`gpt-5.6-*`、连 `gpt-4o-mini`）对本账号一律
+   * 403「violation of provider Terms Of Service」，连强制走 Azure 端点也拒，
+   * 等于原来的唯一备胎是死的，官方一挂就全断。
+   * `providerOverride` 指定了某一家时不插队，保持调用方的显式意图。
+   */
+  const evolinkReady = isEvolinkGptImage2Configured();
+  const tryEvolink = providerMode !== "openai" && providerMode !== "openrouter" && evolinkReady;
   if (options.captureError) {
     options.captureError.openaiConfigured = openaiReady;
     options.captureError.openrouterConfigured = openrouterReady;
   }
-  if (!tryOpenAi && !tryOpenRouter) {
+  if (!tryOpenAi && !tryEvolink && !tryOpenRouter) {
     appendImageFlowLog(
       L,
-      `[单帧] 无可走供应商 · mode=${providerMode || "auto"} · openai=${openaiReady} · openrouter=${openrouterReady}`,
+      `[单帧] 无可走供应商 · mode=${providerMode || "auto"} · openai=${openaiReady} · evolink=${evolinkReady} · openrouter=${openrouterReady}`,
     );
     if (options.captureError) {
       options.captureError.message = "Neither OPENAI_API_KEY nor OPENROUTER_API_KEY is configured";
@@ -1254,6 +1263,30 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
       options.captureError.message = err.message;
     }
     appendImageFlowLog(L, `[单帧·OpenAI] 失败 · ${String(err.message || "empty").slice(0, 160)}`);
+  }
+
+  if (tryEvolink) {
+    appendImageFlowLog(
+      L,
+      `[单帧·EvoLink] GPT-IMAGE-2${hasRef ? " edit" : ""} · ${options.aspectRatio} · quality=${qualityForCall}${hasRef ? ` · 参考=${refImageUrls.length}张` : ""}${tryOpenAi ? " · OpenAI失败后回落" : ""}`,
+    );
+    const evoErr: { message?: string } = {};
+    const url = await postEvolinkGptImage2AndUpload(finalPrompt, options.gcsSubdir, {
+      aspectRatio: options.aspectRatio,
+      flowLog: L,
+      quality: qualityForCall,
+      imageUrls: hasRef ? refImageUrls : undefined,
+      maskUrl: hasRef ? maskUrl : undefined,
+      captureError: evoErr,
+    });
+    if (url) {
+      appendImageFlowLog(L, "[单帧·EvoLink] GPT-IMAGE-2 成功，已落库");
+      return url;
+    }
+    if (options.captureError && evoErr.message) {
+      options.captureError.message = evoErr.message;
+    }
+    appendImageFlowLog(L, `[单帧·EvoLink] 失败 · ${String(evoErr.message || "empty").slice(0, 160)}`);
   }
 
   if (tryOpenRouter) {
