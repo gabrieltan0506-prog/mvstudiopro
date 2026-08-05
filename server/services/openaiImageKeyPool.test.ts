@@ -54,6 +54,22 @@ describe("resolveOpenAiImageKeyChain", () => {
     ]);
   });
 
+  /**
+   * 线上就是这个配置：只有 ASSET 一把专钥，KEYART 不配（用户 2026-08-05 明文：
+   * 不配 KEYART，ASSET 出不来就直接跳 EvoLink）。两条道都必须只用 ASSET，
+   * 谁都不许再掉到没钱的通用钥上。
+   */
+  it("只配 ASSET 时，两条道都只用它，出不来即交给下一家供应商", () => {
+    process.env.OPENAI_IMAGE_API_KEY_ASSET = "sk-assetkey";
+    process.env.OPENAI_IMAGE_API_KEY = "sk-sharedkey";
+    process.env.OPENAI_API_KEY = "sk-sharedkey";
+
+    for (const lane of ["asset", "keyart"] as const) {
+      const chain = resolveOpenAiImageKeyChain(lane);
+      expect(chain.map((c) => c.slot)).toEqual(["OPENAI_IMAGE_API_KEY_ASSET"]);
+    }
+  });
+
   it("一把专钥都没配才退回共用钥（保持旧行为）", () => {
     process.env.OPENAI_IMAGE_API_KEY = "sk-sharedkey";
     expect(resolveOpenAiImageKeyChain("asset").map((c) => c.slot)).toEqual([
