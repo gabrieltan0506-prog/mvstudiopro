@@ -333,6 +333,12 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 **换新剧门禁（产品常驻）**：重扩写/导入前检测旧剧本与付费设定图 → 强制下载备份 → 再清空人物/场景/道具设定 → 才换新剧；编剧室常驻提醒条 +「立即下载旧专案备份」。分支 `feat/series-switch-export-gate`。
 
+## 2026-08-05
+
+**图文知识卡提练**：#1074–#1077 已合（多页上传 / 分档计价 / 上传即写框）。长书（FDE PDF ~94k 字）Sol/Kimi/Qwen 均失败：Evolink **HTTP 524** 被映射成「算力紧张」；根因是一气呵成撞上游超时，不是页数上限。
+
+热修分支 `fix/knowledge-card-long-distill-timeout`：>12k 字后台分段提练再合并；纯文本走 `direct.evolink.ai`；524/Abort 文案改为「文档较长，提练超时」；上传 catch 友好映射。
+
 ---
 
 ## 如何更新本文件

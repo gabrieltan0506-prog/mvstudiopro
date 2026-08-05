@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL,
+  mergeDistilledMarkdownChunks,
   splitSourceTextForDistill,
   suggestKnowledgeCardMinSections,
 } from "./knowledgeCardDistill";
@@ -53,9 +54,24 @@ describe("splitSourceTextForDistill", () => {
     expect(splitSourceTextForDistill("短文")).toEqual(["短文"]);
   });
 
-  it("splits long text into multiple chunks (legacy helper)", () => {
+  it("splits long text into multiple chunks", () => {
     const body = "段落要点。\n\n".repeat(4000);
     const chunks = splitSourceTextForDistill(body, 10_000);
     expect(chunks.length).toBeGreaterThan(1);
+  });
+});
+
+describe("mergeDistilledMarkdownChunks", () => {
+  it("keeps first title and concatenates section bodies", () => {
+    const merged = mergeDistilledMarkdownChunks([
+      "# 总题\n\n## A\n- 1",
+      "# 总题\n\n## B\n- 2",
+      "## C\n- 3",
+    ]);
+    expect(merged.startsWith("# 总题")).toBe(true);
+    expect(merged).toContain("## A");
+    expect(merged).toContain("## B");
+    expect(merged).toContain("## C");
+    expect(merged.match(/^# /gm)?.length).toBe(1);
   });
 });

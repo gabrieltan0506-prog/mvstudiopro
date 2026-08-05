@@ -1,6 +1,7 @@
 /**
- * 图文知识卡片：上传/长文 → 一次完成读文/读图 OCR + 提练 → Markdown。
- * 默认 Evolink GPT-5.6 Sol；备用 OpenRouter Kimi K3；备选 Evolink Qwen3.8 Max。
+ * 图文知识卡片：上传/长文 → 读文/读图 OCR + 提练 → Markdown。
+ * 三档并列：Evolink GPT-5.6 Sol / OpenRouter Kimi K3 / Evolink Qwen3.8 Max。
+ * 长书超过阈值时后台分段提练再合并（避免上游 524）；产品面仍是一次上传写框。
  * 提练/OCR 成本含在页费中，本模块不单独扣积分。
  *
  * @see https://evolink.ai/gpt-5-6
@@ -25,6 +26,9 @@ import { getOpenRouterApiKey } from "./openrouterGptImage2.js";
 import { extractDocumentText } from "../growth/documentExtract.js";
 
 export const KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE = "算力紧张，请稍后再试";
+/** Evolink/OR 网关 524 或本端 Abort：长书一气呵成常见 */
+export const KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE =
+  "文档较长，提练超时，请稍后重试；超长书会自动分段提练后再合并";
 
 /** @deprecated 用 resolveKnowledgeCardDistillModel */
 export const KNOWLEDGE_CARD_DISTILL_MODEL = resolveKnowledgeCardDistillModel(
@@ -34,6 +38,21 @@ export const KNOWLEDGE_CARD_DISTILL_MODEL = resolveKnowledgeCardDistillModel(
 const DISTILL_MAX_TOKENS = Math.min(
   Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_MAX_TOKENS) || 32_768, 4096),
   65_536,
+);
+
+/** 超过此长度则后台分段提练再合并（对用户仍是一次上传→写框） */
+const DISTILL_CHUNK_THRESHOLD = Math.min(
+  Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_CHUNK_THRESHOLD) || 12_000, 6_000),
+  40_000,
+);
+const DISTILL_CHUNK_CHARS = Math.min(
+  Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_CHUNK_CHARS) || 10_000, 4_000),
+  20_000,
+);
+/** 分段并发；单机 Fly 用 2，避免把健康检查拖死 */
+const DISTILL_CHUNK_CONCURRENCY = Math.min(
+  Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_CHUNK_CONCURRENCY) || 2, 1),
+  3,
 );
 
 /** GPT-5.6 Sol（Evolink）：`reasoning_effort` = xhigh */
@@ -51,13 +70,21 @@ const DISTILL_REASONING_EFFORT_KIMI = "high" as const;
  */
 const DISTILL_REASONING_EFFORT_QWEN = "xhigh" as const;
 
-/** 多模态（含图 OCR）走 api；纯文本也可走 direct，统一用 api 更稳 */
+/** 多模态（含图 OCR）走 api.evolink.ai */
 const EVOLINK_CHAT_URL = String(
   process.env.EVOLINK_CHAT_COMPLETIONS_URL ||
     (process.env.EVOLINK_API_BASE
       ? `${String(process.env.EVOLINK_API_BASE).replace(/\/$/, "")}/v1/chat/completions`
       : "") ||
     "https://api.evolink.ai/v1/chat/completions",
+).trim();
+
+/**
+ * 纯文本长连接优先 direct（Evolink 文档：长文/长推理更稳，减少 CF 524）。
+ * 有附图时仍走 api。
+ */
+const EVOLINK_DIRECT_CHAT_URL = String(
+  process.env.EVOLINK_DIRECT_CHAT_COMPLETIONS_URL || "https://direct.evolink.ai/v1/chat/completions",
 ).trim();
 
 /**
@@ -168,8 +195,8 @@ export async function extractKnowledgeCardUploads(files: KnowledgeCardUploadFile
   };
 }
 
-/** @deprecated 产品改为一气呵成，不再对外分块提练；测试仍可引用。 */
-export function splitSourceTextForDistill(text: string, chunkChars = 10_000): string[] {
+/** 长书分段提练：按段落边界切开，避免 Evolink/OR 单请求 524。 */
+export function splitSourceTextForDistill(text: string, chunkChars = DISTILL_CHUNK_CHARS): string[] {
   const s = String(text || "").trim();
   if (!s) return [];
   if (s.length <= chunkChars) return [s];
@@ -189,13 +216,45 @@ export function splitSourceTextForDistill(text: string, chunkChars = 10_000): st
   return parts;
 }
 
+/** 合并多段提练 Markdown：保留首个 # 标题，后续只拼 ## 小节。 */
+export function mergeDistilledMarkdownChunks(parts: string[]): string {
+  const cleaned = parts.map((p) => String(p || "").trim()).filter(Boolean);
+  if (!cleaned.length) return "";
+  if (cleaned.length === 1) return cleaned[0]!;
+
+  let title = "";
+  const sections: string[] = [];
+  for (let i = 0; i < cleaned.length; i++) {
+    const raw = cleaned[i]!;
+    const lines = raw.split("\n");
+    let bodyStart = 0;
+    if (lines[0]?.match(/^#\s+/)) {
+      if (!title) title = lines[0]!.trim();
+      bodyStart = 1;
+      while (bodyStart < lines.length && !lines[bodyStart]!.trim()) bodyStart++;
+    }
+    const body = lines.slice(bodyStart).join("\n").trim();
+    if (body) sections.push(body);
+  }
+  const head = title || "# 知识要点";
+  return [head, "", ...sections].join("\n").trim();
+}
+
+function isTimeoutUpstream(status: number, body: string): boolean {
+  if (status === 524 || status === 504 || status === 408) return true;
+  return /524:\s*A timeout|timeout occurred|Gateway Time-out|Cloudflare/i.test(String(body || ""));
+}
+
 function mapDistillUpstreamError(status: number, body: string): Error {
   const t = String(body || "");
   if (status === 402 || /insufficient|credit|余额|积分不足|quota/i.test(t)) {
     return new Error("提练账户额度不足，请稍后重试或联系管理员");
   }
   if (status === 404 && /guardrail|privacy|data policy|No endpoints/i.test(t)) {
-    return new Error("当前提练通道不可用，请改用提练·主力后重试");
+    return new Error("当前提练通道不可用，请改用其他提练档位后重试");
+  }
+  if (isTimeoutUpstream(status, t)) {
+    return new Error(KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE);
   }
   if (status === 429 || /rate.?limit/i.test(t)) {
     return new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
@@ -204,6 +263,19 @@ function mapDistillUpstreamError(status: number, body: string): Error {
     return new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
   }
   return new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
+}
+
+function distillFetchTimeoutMs(): number {
+  return Math.min(Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_TIMEOUT_MS) || 180_000, 60_000), 480_000);
+}
+
+function mapFetchAbortError(err: unknown): Error {
+  const name = err instanceof Error ? err.name : "";
+  const msg = err instanceof Error ? err.message : String(err);
+  if (name === "TimeoutError" || name === "AbortError" || /aborted due to timeout|The operation was aborted/i.test(msg)) {
+    return new Error(KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE);
+  }
+  return err instanceof Error ? err : new Error(msg);
 }
 
 function buildDistillUserContent(params: {
@@ -228,7 +300,7 @@ function buildDistillUserContent(params: {
   return userContent;
 }
 
-/** Evolink：GPT-5.6 Sol / Qwen3.8 Max（含图 OCR 走 api.evolink.ai）。 */
+/** Evolink：GPT-5.6 Sol / Qwen3.8 Max（有图走 api；纯文本走 direct 降 524）。 */
 async function invokeEvolinkDistill(params: {
   sourceText: string;
   imageDataUrls: string[];
@@ -257,26 +329,33 @@ async function invokeEvolinkDistill(params: {
     body.reasoning_effort = DISTILL_REASONING_EFFORT_GPT;
   }
 
-  const res = await fetch(EVOLINK_CHAT_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    signal: AbortSignal.timeout(
-      Math.min(Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_TIMEOUT_MS) || 240_000, 60_000), 480_000),
-    ),
-    body: JSON.stringify(body),
-  });
+  const url = params.imageDataUrls.length > 0 ? EVOLINK_CHAT_URL : EVOLINK_DIRECT_CHAT_URL;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      signal: AbortSignal.timeout(distillFetchTimeoutMs()),
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw mapFetchAbortError(err);
+  }
   const raw = await res.text();
   if (!res.ok) {
-    console.warn(`[knowledgeCardDistill] Evolink ${params.modelName} HTTP ${res.status}: ${raw.slice(0, 400)}`);
+    console.warn(
+      `[knowledgeCardDistill] Evolink ${params.modelName} HTTP ${res.status} via ${url.includes("direct") ? "direct" : "api"}: ${raw.slice(0, 400)}`,
+    );
     throw mapDistillUpstreamError(res.status, raw);
   }
   let json: unknown;
   try {
     json = JSON.parse(raw);
   } catch {
+    if (isTimeoutUpstream(res.status, raw)) throw new Error(KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE);
     throw new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
   }
   const out = extractFirstChoicePlainText(json as Parameters<typeof extractFirstChoicePlainText>[0]).trim();
@@ -296,26 +375,29 @@ async function invokeOpenRouterKimiDistill(params: {
   if (!key) throw new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
 
   const userContent = buildDistillUserContent(params) as MessageContent[];
-  const res = await fetch(OPENROUTER_CHAT_COMPLETIONS_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      ...getOpenRouterChatHeaders(),
-    },
-    signal: AbortSignal.timeout(
-      Math.min(Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_TIMEOUT_MS) || 240_000, 60_000), 480_000),
-    ),
-    body: JSON.stringify({
-      model: KNOWLEDGE_CARD_DISTILL_MODEL_KIMI,
-      messages: [
-        { role: "system", content: buildDistillSystem(params.minSections) },
-        { role: "user", content: userContent },
-      ],
-      max_tokens: DISTILL_MAX_TOKENS,
-      reasoning_effort: DISTILL_REASONING_EFFORT_KIMI,
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(OPENROUTER_CHAT_COMPLETIONS_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        ...getOpenRouterChatHeaders(),
+      },
+      signal: AbortSignal.timeout(distillFetchTimeoutMs()),
+      body: JSON.stringify({
+        model: KNOWLEDGE_CARD_DISTILL_MODEL_KIMI,
+        messages: [
+          { role: "system", content: buildDistillSystem(params.minSections) },
+          { role: "user", content: userContent },
+        ],
+        max_tokens: DISTILL_MAX_TOKENS,
+        reasoning_effort: DISTILL_REASONING_EFFORT_KIMI,
+      }),
+    });
+  } catch (err) {
+    throw mapFetchAbortError(err);
+  }
   const raw = await res.text();
   if (!res.ok) {
     console.warn(`[knowledgeCardDistill] OpenRouter Kimi HTTP ${res.status}: ${raw.slice(0, 400)}`);
@@ -325,6 +407,7 @@ async function invokeOpenRouterKimiDistill(params: {
   try {
     json = JSON.parse(raw);
   } catch {
+    if (isTimeoutUpstream(res.status, raw)) throw new Error(KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE);
     throw new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
   }
   const out = extractFirstChoicePlainText(json as Parameters<typeof extractFirstChoicePlainText>[0]).trim();
@@ -350,6 +433,49 @@ async function invokeDistillLlm(params: {
   return invokeEvolinkDistill({ ...params, modelName: KNOWLEDGE_CARD_DISTILL_MODEL_SOL });
 }
 
+/** 短文一次；长文分段并发提练后合并（产品面仍是「上传→自动写框」一次完成）。 */
+async function invokeDistillLlmPossiblyChunked(params: {
+  sourceText: string;
+  imageDataUrls: string[];
+  modelName: KnowledgeCardDistillModelId;
+  minSectionsTotal: number;
+}): Promise<string> {
+  const text = String(params.sourceText || "").trim();
+  const urls = params.imageDataUrls;
+  if (!text || text.length <= DISTILL_CHUNK_THRESHOLD) {
+    return invokeDistillLlm({
+      sourceText: text,
+      imageDataUrls: urls,
+      modelName: params.modelName,
+      minSections: params.minSectionsTotal,
+    });
+  }
+
+  const chunks = splitSourceTextForDistill(text, DISTILL_CHUNK_CHARS);
+  console.info(
+    `[knowledgeCardDistill] long doc ${text.length} chars → ${chunks.length} chunks (threshold=${DISTILL_CHUNK_THRESHOLD}, model=${params.modelName})`,
+  );
+
+  const outputs: string[] = new Array(chunks.length);
+  for (let i = 0; i < chunks.length; i += DISTILL_CHUNK_CONCURRENCY) {
+    const batchIdx = chunks.slice(i, i + DISTILL_CHUNK_CONCURRENCY).map((_, j) => i + j);
+    await Promise.all(
+      batchIdx.map(async (idx) => {
+        const chunk = chunks[idx]!;
+        const minSec = Math.max(2, Math.min(24, suggestKnowledgeCardMinSections(chunk.length)));
+        outputs[idx] = await invokeDistillLlm({
+          sourceText: chunk,
+          // 附图只挂第一段，避免每段重复烧视觉
+          imageDataUrls: idx === 0 ? urls : [],
+          modelName: params.modelName,
+          minSections: minSec,
+        });
+      }),
+    );
+  }
+  return mergeDistilledMarkdownChunks(outputs);
+}
+
 export type PrepareKnowledgeCardCopyResult = {
   distilledMarkdown: string;
   skippedDistill: boolean;
@@ -359,9 +485,9 @@ export type PrepareKnowledgeCardCopyResult = {
 };
 
 /**
- * 合并文本框 + 上传 → **一次** OCR/提练 → 可分页 Markdown。
+ * 合并文本框 + 上传 → OCR/提练 → 可分页 Markdown。
  * 短贴文且无上传：跳过提练。
- * 不再分块/分批调用模型（用户要求一气呵成）。
+ * 长书（>~12k 字）后台分段提练再合并；产品面仍是一次上传自动写框。
  */
 export async function prepareKnowledgeCardCopy(input: {
   sourceText?: string;
@@ -376,7 +502,7 @@ export async function prepareKnowledgeCardCopy(input: {
     : { documentText: "", imageDataUrls: [] as string[], methods: [] as string[] };
 
   const pasted = String(input.sourceText || "").trim();
-  // 有上传时：以本次抽文+附图为准做一气呵成提练；文本框旧「生 OCR」不重复灌入（避免 100+ 页原文假分页）
+  // 有上传时：以本次抽文+附图为准；文本框旧「生 OCR」不重复灌入（避免 100+ 页原文假分页）
   const mergedRaw = files.length
     ? [extracted.documentText, pasted.length <= 3200 ? pasted : ""].filter(Boolean).join("\n\n").trim() ||
       extracted.documentText ||
@@ -411,11 +537,11 @@ export async function prepareKnowledgeCardCopy(input: {
   const minSectionsTotal = suggestKnowledgeCardMinSections(Math.max(mergedRaw.length, sourceChars));
 
   try {
-    const distilled = await invokeDistillLlm({
+    const distilled = await invokeDistillLlmPossiblyChunked({
       sourceText: mergedRaw,
       imageDataUrls: urls,
       modelName,
-      minSections: minSectionsTotal,
+      minSectionsTotal,
     });
     if (mergedRaw.length >= 8000 && distilled.length < Math.min(800, mergedRaw.length * 0.02)) {
       throw new Error("提练结果过短，疑似过度压缩，请重试");
@@ -430,7 +556,7 @@ export async function prepareKnowledgeCardCopy(input: {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn("[knowledgeCardDistill] failed:", msg.slice(0, 320));
-    if (/过短|未能从文件|请先输入|额度不足|通道不可用|未配置/.test(msg)) {
+    if (/过短|未能从文件|请先输入|额度不足|通道不可用|未配置|超时/.test(msg)) {
       throw new Error(msg);
     }
     throw new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
