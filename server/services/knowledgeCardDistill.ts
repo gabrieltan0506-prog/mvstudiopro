@@ -107,7 +107,9 @@ const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistill
     chunkChars: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_CHUNK_CHARS", 18_000, 4_000, 32_000),
     concurrency: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_CONCURRENCY", 3, 1, 5),
     effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_KIMI_EFFORT_CHUNK", "high"),
-    effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_KIMI_EFFORT_FINAL", "max"),
+    // 探针：max + 1.8 万字合并稿的统稿必定超时（顶档想太久），改用 high；
+    // 分段阶段同样用 high 处理 1.8 万字从未超时，质量足够定主线。
+    effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_KIMI_EFFORT_FINAL", "high"),
     requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_TIMEOUT_MS", 180_000, 60_000, 480_000),
     chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_CHUNK_RETRIES", 2, 0, 4),
     minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_MIN_SECTIONS", 4, 2, 24),

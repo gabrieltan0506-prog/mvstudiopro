@@ -95,12 +95,13 @@ describe("per-model distill profiles", () => {
     expect(kimi.concurrency).toBeGreaterThanOrEqual(sol.concurrency);
     expect(qwen.minSectionsPerChunk).toBeGreaterThan(sol.minSectionsPerChunk);
 
-    // 分段抽要点用中档，统稿用各模型顶档（Kimi 无 xhigh，顶档是 max）
+    // 分段抽要点用中档，统稿抬档（各家枚举不同：Evolink 顶档 xhigh，OpenRouter 是 high|max）
     expect(sol.effortChunk).toBe("medium");
     expect(sol.effortFinal).toBe("xhigh");
     expect(qwen.effortChunk).toBe("medium");
     expect(qwen.effortFinal).toBe("xhigh");
-    expect(kimi.effortFinal).toBe("max");
+    // Kimi 顶档 max 配长合并稿的统稿必超时（探针实测）→ 统稿用 high
+    expect(kimi.effortFinal).toBe("high");
 
     for (const p of [sol, kimi, qwen]) {
       expect(p.chunkRetries).toBeGreaterThanOrEqual(1);
