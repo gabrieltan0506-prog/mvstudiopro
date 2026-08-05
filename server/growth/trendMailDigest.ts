@@ -14,11 +14,40 @@ import {
 import { sendMailWithAttachments } from "../services/smtp-mailer";
 import { nowShanghaiIso } from "./time";
 
-const MAIL_DIGEST_INTERVAL_MINUTES = Math.max(
-  15,
-  Number(process.env.GROWTH_MAIL_DIGEST_INTERVAL_MINUTES || 60) || 60,
-);
-const MAIL_DIGEST_INTERVAL_MS = MAIL_DIGEST_INTERVAL_MINUTES * 60 * 1000;
+/**
+ * 汇总邮件间隔：按上海时间分两档（用户 2026-08-05 明文）。
+ *
+ * 这台机器是单进程 Node、双核，导出数据与打包附件是同步活，一跑就把事件循环占住，
+ * 健康检查和用户的出图请求会一起卡。原来每小时一封，白天正好撞在创作高峰上，
+ * 因此把白天拉长到 4 小时，只在夜里收紧到 3 小时。
+ *
+ * - 00:00–17:59 → 4 小时一次
+ * - 18:00–23:59 → 3 小时一次
+ *
+ * `GROWTH_MAIL_DIGEST_INTERVAL_MINUTES` 仍可一口价覆盖两档（排查时用）。
+ */
+const MAIL_DIGEST_INTERVAL_MINUTES_DAY = 4 * 60;
+const MAIL_DIGEST_INTERVAL_MINUTES_EVENING = 3 * 60;
+/** 进入夜间档的整点（上海时间） */
+const MAIL_DIGEST_EVENING_START_HOUR = 18;
+
+function shanghaiHour(now: Date = new Date()): number {
+  const raw = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai",
+    hour: "2-digit",
+    hour12: false,
+  }).format(now);
+  const h = Number(raw);
+  return Number.isFinite(h) ? h % 24 : 0;
+}
+
+export function resolveMailDigestIntervalMinutes(now: Date = new Date()): number {
+  const override = Number(process.env.GROWTH_MAIL_DIGEST_INTERVAL_MINUTES);
+  if (Number.isFinite(override) && override > 0) return Math.max(15, override);
+  return shanghaiHour(now) >= MAIL_DIGEST_EVENING_START_HOUR
+    ? MAIL_DIGEST_INTERVAL_MINUTES_EVENING
+    : MAIL_DIGEST_INTERVAL_MINUTES_DAY;
+}
 const MAIL_ATTACHMENT_SPLIT_THRESHOLD_BYTES = 8 * 1024 * 1024;
 const MAIL_ATTACHMENT_CHUNK_LIMIT_BYTES = 8 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
@@ -228,16 +257,17 @@ export async function notifyGrowthCollectionUpdate(params: {
   const digestState = await readTrendMailDigestState();
   const lastSentAtMs = digestState.lastSentAt ? new Date(digestState.lastSentAt).getTime() : 0;
   const nowIso = nowShanghaiIso();
-  const withinWindow = lastSentAtMs && Date.now() - lastSentAtMs < MAIL_DIGEST_INTERVAL_MS;
+  const intervalMinutes = resolveMailDigestIntervalMinutes();
+  const withinWindow = lastSentAtMs && Date.now() - lastSentAtMs < intervalMinutes * 60 * 1000;
 
   console.info(
-    `[growth.mail] evaluate platform=${params.platform} recipient=${recipient} lastSentAt=${digestState.lastSentAt || "-"} intervalMinutes=${MAIL_DIGEST_INTERVAL_MINUTES}`,
+    `[growth.mail] evaluate platform=${params.platform} recipient=${recipient} lastSentAt=${digestState.lastSentAt || "-"} intervalMinutes=${intervalMinutes}`,
   );
 
   if (withinWindow) {
-    console.info("[growth.mail] digest skipped within hourly window");
+    console.info(`[growth.mail] digest skipped within ${intervalMinutes}min window`);
     await updateTrendMailDigestState({
-      lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
+      lastWindowMinutes: intervalMinutes,
       pendingAttachmentBytes: 0,
       pendingCreatedAt: undefined,
       pendingSubjectBase: undefined,
@@ -259,7 +289,7 @@ export async function notifyGrowthCollectionUpdate(params: {
 
   const subjectBase = `Creator Growth Camp 数据汇总 - ${nowShanghaiIso().slice(0, 16).replace("T", " ")}`;
   const textBase =
-    `[Growth Trend Scheduler ${MAIL_DIGEST_INTERVAL_MINUTES}分钟汇总]\n` +
+    `[Growth Trend Scheduler ${intervalMinutes}分钟汇总]\n` +
     `最新触发平台：${params.platform}\n` +
     `最新抓取时间：${params.collectedAt}\n` +
     `Pipeline rawFetched=${params.collection.stats?.rawFetchedCount ?? "-"} afterDedup=${params.collection.stats?.afterDedupCount ?? params.itemCount} afterWindowFilter=${params.collection.stats?.afterWindowFilterCount ?? "-"} mergedAdded=${params.addedCount}\n` +
@@ -276,7 +306,7 @@ export async function notifyGrowthCollectionUpdate(params: {
     `清单：${exported.manifestPath}\n` +
     `说明：邮件仅附带本次触发平台的增量导出，不再附带全平台全量导出。`;
   const htmlBase =
-    `<p><strong>汇总窗口：</strong>${MAIL_DIGEST_INTERVAL_MINUTES} 分钟</p>` +
+    `<p><strong>汇总窗口：</strong>${intervalMinutes} 分钟</p>` +
     `<p><strong>最新触发平台：</strong>${params.platform}</p>` +
     `<p><strong>抓取时间：</strong>${params.collectedAt}</p>` +
     `<p><strong>Pipeline：</strong>rawFetched=${params.collection.stats?.rawFetchedCount ?? "-"} · afterDedup=${params.collection.stats?.afterDedupCount ?? params.itemCount} · afterWindowFilter=${params.collection.stats?.afterWindowFilterCount ?? "-"} · mergedAdded=${params.addedCount}</p>` +
@@ -324,7 +354,7 @@ export async function notifyGrowthCollectionUpdate(params: {
   await updateTrendMailDigestState({
     lastSentAt: nowIso,
     lastManifestPath: exported.manifestPath,
-    lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
+    lastWindowMinutes: intervalMinutes,
     pendingAttachmentBytes: 0,
     pendingCreatedAt: undefined,
     pendingSubjectBase: undefined,
