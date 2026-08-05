@@ -5880,6 +5880,9 @@ export default function PlatformPage() {
 
   const mapCustomNoteError = (error: unknown): string => {
     const message = String((error as { message?: string })?.message || "");
+    if (message.includes("文档较长") || message.includes("提练超时")) {
+      return message.includes("超时") ? message : "文档较长，提练超时，请稍后重试";
+    }
     if (message.includes("算力紧张")) {
       return message;
     }
@@ -5891,7 +5894,7 @@ export default function PlatformPage() {
       message.includes("模型返回格式异常") ||
       message.includes("模型服务暂时异常")
     ) {
-      return "算力紧张，请稍后再试";
+      return "算力紧张或请求超时，请稍后重试";
     }
     return message || "生成失败，请稍后重试";
   };
@@ -11420,8 +11423,10 @@ export default function PlatformPage() {
                               })),
                             );
                             setCustomNoteDistillPhase("distilling");
-                            setCustomNoteUploadStatus("上传成功，正在读文/读图并提练写入文本框…");
-                            toast.message("正在提练，完成后会写入上方文本框…");
+                            setCustomNoteUploadStatus(
+                              "上传成功，正在读文/读图并提练写入文本框（长文档会自动分段，可能需数分钟）…",
+                            );
+                            toast.message("正在提练（长文档较久），完成后会写入上方文本框…");
                             const prepared = await prepareKnowledgeCardCopyMutation.mutateAsync({
                               sourceText: customNoteText.trim() || undefined,
                               files: allPending,
@@ -11445,7 +11450,13 @@ export default function PlatformPage() {
                             toast.success(okMsg);
                           } catch (err) {
                             setCustomNoteDistillPhase("idle");
-                            const failMsg = String((err as { message?: string })?.message || "读取/提练失败");
+                            const rawFail = String((err as { message?: string })?.message || "读取/提练失败");
+                            const failMsg = sanitizePlatformUserMessage(
+                              mapCustomNoteError(err),
+                              /超时|较长/.test(rawFail)
+                                ? "文档较长，提练超时，请稍后重试"
+                                : "算力紧张或请求超时，请稍后重试",
+                            );
                             setCustomNoteUploadStatus(`上传或提练失败：${failMsg}`);
                             toast.error(failMsg);
                           } finally {
