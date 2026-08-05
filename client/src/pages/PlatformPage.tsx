@@ -5940,33 +5940,35 @@ export default function PlatformPage() {
         setCustomNoteImages([]);
         setCustomNoteImageUpper(null);
         setCustomNoteImageLower(null);
-        setCustomNoteDistillPhase("distilling");
         const pendingFiles = customNotePendingFilesRef.current.slice();
-        const prepared = await prepareKnowledgeCardCopyMutation.mutateAsync({
-          sourceText: trimmed,
-          files: pendingFiles.length ? pendingFiles : undefined,
-          forceDistill: pendingFiles.length > 0 || trimmed.length > 3200,
-          distillModel: customNoteDistillModel,
-        });
-        const distilled = String(prepared.distilledMarkdown || "").trim();
-        if (!distilled) throw new Error("提练结果为空，请调整文案后重试");
-        setCustomNoteText(distilled);
-        customNotePendingFilesRef.current = [];
-        setCustomNotePendingMeta([]);
-        setCustomNoteUploadStatus(null);
-        setCustomNoteDistillPhase("ready");
-        // 让文本框先渲染提练稿
-        await new Promise<void>((r) => requestAnimationFrame(() => r()));
+        let distilled = trimmed;
+        // 上传路径已提练进文本框时，生成只出图；仅当仍有待处理文件或无文案时再提练
+        if (pendingFiles.length > 0 || !distilled) {
+          setCustomNoteDistillPhase("distilling");
+          const prepared = await prepareKnowledgeCardCopyMutation.mutateAsync({
+            sourceText: trimmed || undefined,
+            files: pendingFiles.length ? pendingFiles : undefined,
+            forceDistill: true,
+            distillModel: customNoteDistillModel,
+          });
+          distilled = String(prepared.distilledMarkdown || "").trim();
+          if (!distilled) throw new Error("提练结果为空，请调整文案后重试");
+          setCustomNoteText(distilled);
+          customNotePendingFilesRef.current = [];
+          setCustomNotePendingMeta([]);
+          setCustomNoteUploadStatus(null);
+          setCustomNoteDistillPhase("ready");
+          await new Promise<void>((r) => requestAnimationFrame(() => r()));
+        }
         const plan = planKnowledgeCardPages(distilled, customNoteDistillModel);
         const pages = plan.pages.length ? plan.pages : [distilled];
         const total = pages.length;
         const q = knowledgeCardImageQuality(total);
         const qLabel = q === "high" ? "4K" : "2K";
         const credits = plan.credits || knowledgeCardCreditsForPages(total, customNoteDistillModel);
-        // 提练后先问用户是否继续出图（避免长书直接烧满页积分）
         setCustomNoteBusy(false);
         const continueGen = window.confirm(
-          `提练完成，约 ${total} 页图文笔记（出图 ${qLabel}，约 ${credits} 积分）。\n\n是否继续出图？\n选「取消」将保留上方提练稿，不出图。`,
+          `约 ${total} 页图文笔记（出图 ${qLabel}，约 ${credits} 积分）。\n\n是否继续出图？\n选「取消」将保留上方提练稿，不出图。`,
         );
         if (!continueGen) {
           toast.success(`已保留提练稿（约 ${total} 页），未出图`);
@@ -11398,40 +11400,53 @@ export default function PlatformPage() {
                                 fileName: file.name,
                               });
                             }
-                            customNotePendingFilesRef.current = [
-                              ...customNotePendingFilesRef.current,
-                              ...encoded,
-                            ];
-                            const docs = encoded.filter((f) => !String(f.mimeType).startsWith("image/") && !/\.(png|jpe?g|webp)$/i.test(f.fileName || ""));
-                            const imgEncoded = encoded.filter((f) => !docs.includes(f));
-                            setCustomNotePendingMeta((prev) => [
-                              ...prev,
-                              ...docs.map((f) => ({ fileName: f.fileName || "文档", kind: "doc" as const })),
-                              ...imgEncoded.map((f) => ({ fileName: f.fileName || "图片", kind: "image" as const })),
-                            ]);
-                            // 一气呵成：上传只暂存，不把 OCR/抽文生文本灌进框；生成时再一次性读文/读图+提练
-                            let probeChars = 0;
-                            if (docs.length) {
-                              const res = await extractPlatformDocumentTextMutation.mutateAsync({ files: docs });
-                              probeChars = String(res.text || "").trim().length;
+                            // 生成按钮依赖文本框非空：上传后立刻 OCR+提练写入文本框，否则无法点生成
+                            const allPending = [...customNotePendingFilesRef.current, ...encoded];
+                            customNotePendingFilesRef.current = allPending;
+                            const docs = allPending.filter(
+                              (f) =>
+                                !String(f.mimeType).startsWith("image/") &&
+                                !/\.(png|jpe?g|webp)$/i.test(f.fileName || ""),
+                            );
+                            const imgEncoded = allPending.filter((f) => !docs.includes(f));
+                            setCustomNotePendingMeta(
+                              allPending.map((f) => ({
+                                fileName: f.fileName || (String(f.mimeType).startsWith("image/") ? "图片" : "文档"),
+                                kind:
+                                  String(f.mimeType).startsWith("image/") ||
+                                  /\.(png|jpe?g|webp)$/i.test(f.fileName || "")
+                                    ? ("image" as const)
+                                    : ("doc" as const),
+                              })),
+                            );
+                            setCustomNoteDistillPhase("distilling");
+                            setCustomNoteUploadStatus("上传成功，正在读文/读图并提练写入文本框…");
+                            toast.message("正在提练，完成后会写入上方文本框…");
+                            const prepared = await prepareKnowledgeCardCopyMutation.mutateAsync({
+                              sourceText: customNoteText.trim() || undefined,
+                              files: allPending,
+                              forceDistill: true,
+                              distillModel: customNoteDistillModel,
+                            });
+                            const distilled = String(prepared.distilledMarkdown || "").trim();
+                            if (!distilled) {
+                              throw new Error("提练结果为空，请换文件或改用可选中文字的 PDF / 关键页图片");
                             }
-                            const imgN = imgEncoded.length;
-                            if (docs.length && probeChars < 40 && imgN === 0) {
-                              const failMsg = "上传成功但未探测到可用文字（扫描版 PDF 请换可选中文字的版本，或上传关键页图片）";
-                              setCustomNoteUploadStatus(failMsg);
-                              toast.error(failMsg);
-                            } else {
-                              const okMsg =
-                                `上传成功：已暂存 ${encoded.length} 个文件` +
-                                (docs.length ? ` · 文档约 ${probeChars} 字` : "") +
-                                (imgN > 0 ? ` · ${imgN} 张图` : "") +
-                                " · 点生成时一次性读文/读图并提练";
-                              setCustomNoteUploadStatus(okMsg);
-                              toast.success(okMsg);
-                            }
+                            setCustomNoteText(distilled);
+                            customNotePendingFilesRef.current = [];
+                            setCustomNotePendingMeta([]);
+                            setCustomNoteDistillPhase("ready");
+                            const plan = planKnowledgeCardPages(distilled, customNoteDistillModel);
+                            const pages = Math.max(1, plan.pageCount || 1);
+                            const credits =
+                              plan.credits || knowledgeCardCreditsForPages(pages, customNoteDistillModel);
+                            const okMsg = `提练完成：已写入文本框 · 约 ${pages} 页 · 约 ${credits} 积分（可点生成出图）`;
+                            setCustomNoteUploadStatus(okMsg);
+                            toast.success(okMsg);
                           } catch (err) {
-                            const failMsg = String((err as { message?: string })?.message || "读取文件失败");
-                            setCustomNoteUploadStatus(`上传失败：${failMsg}`);
+                            setCustomNoteDistillPhase("idle");
+                            const failMsg = String((err as { message?: string })?.message || "读取/提练失败");
+                            setCustomNoteUploadStatus(`上传或提练失败：${failMsg}`);
                             toast.error(failMsg);
                           } finally {
                             setCustomNoteUploadBusy(false);
@@ -11441,7 +11456,7 @@ export default function PlatformPage() {
                     />
                   </label>
                   <span className="text-[11px] text-[#c9c0e6]/45">
-                    选择文件后只暂存；点生成时一次性读文/读图 OCR + 提练（不先灌生文本）
+                    上传后自动读文/读图提练并写入上方文本框；确认后点生成出图
                   </span>
                   {customNoteUploadStatus ? (
                     <span className={`w-full text-[11px] leading-5 ${customNoteUploadStatus.startsWith("上传失败") || customNoteUploadStatus.includes("未探测") || customNoteUploadStatus.includes("未抽出") ? "text-rose-300/90" : "text-emerald-300/85"}`}>
@@ -11504,7 +11519,12 @@ export default function PlatformPage() {
                 <button
                   type="button"
                   onClick={() => void handleGenerateCustomNote()}
-                  disabled={customNoteBusy || !customNoteText.trim()}
+                  disabled={
+                    customNoteBusy ||
+                    customNoteUploadBusy ||
+                    customNoteDistillPhase === "distilling" ||
+                    !customNoteText.trim()
+                  }
                   className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(255,79,184,0.22)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50 ${
                     customNoteKind === "optimize_custom_copy"
                       ? "border border-[#fbbf24]/30 bg-[linear-gradient(135deg,#fbbf24,#f97316)]"
@@ -11513,12 +11533,12 @@ export default function PlatformPage() {
                       : "border border-[#49e6ff]/30 bg-[linear-gradient(135deg,#49e6ff,#6a5cff)]"
                   }`}
                 >
-                  {customNoteBusy ? (
-                    <><Loader2 className="h-4 w-4 animate-spin" />{customNoteKind === "optimize_custom_copy" ? "优化中…" : "生成中…"}</>
+                  {customNoteBusy || customNoteUploadBusy || customNoteDistillPhase === "distilling" ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" />{customNoteKind === "optimize_custom_copy" ? "优化中…" : customNoteDistillPhase === "distilling" || customNoteUploadBusy ? "提练中…" : "生成中…"}</>
                   ) : customNoteKind === "optimize_custom_copy" ? (
                     <><Sparkles className="h-4 w-4" />深度优化文案（{customOptimizeCopyCost} 积分）</>
                   ) : customNoteKind === "single_page_knowledge_card" ? (
-                    <><Sparkles className="h-4 w-4" />生成图文笔记（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · {knowledgeCardImageQuality(Math.max(1, customNoteKnowledgePlan.pageCount || 1)) === "high" ? "4K" : "2K"} · {customNoteKnowledgeCredits || 25} 积分）</>
+                    <><Sparkles className="h-4 w-4" />生成图文笔记（约 {Math.max(1, customNoteKnowledgePlan.pageCount || 1)} 页 · {knowledgeCardImageQuality(Math.max(1, customNoteKnowledgePlan.pageCount || 1)) === "high" ? "4K" : "2K"} · {customNoteKnowledgeCredits || 30} 积分）</>
                   ) : (
                     <><Film className="h-4 w-4" />生成编导分镜图</>
                   )}
