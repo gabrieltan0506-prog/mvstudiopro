@@ -15,10 +15,11 @@ export const KNOWLEDGE_CARD_TARGET_MAX_PAGES = 8;
  * 每页合理字数上限（超出则增页；页数不封顶）。
  *
  * 用户 2026-08-05 给了两张验收样张（16:9 横版，一页承载 4–6 个模块 + 表格 + 指标条），
- * 实测每页约 1000–1200 字。旧值 850 是按「一页一节」的疏朗竖版设的，
+ * 实测每页约 1000–1200 字，取其上界：9.5 万字的书（成稿约 6800 字）因此落在 6 页，
+ * 仍在 4K 门槛（`KNOWLEDGE_CARD_4K_MAX_PAGES`）内。旧值 850 是按「一页一节」的疏朗竖版设的，
  * 在横版下每页只填约 220 字，白白多出好几倍页数。
  */
-export const KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE = 1100;
+export const KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE = 1200;
 /** 一页横版卡片最多承载几个 `##` 小节（对齐样张密度） */
 export const KNOWLEDGE_CARD_MAX_SECTIONS_PER_PAGE = 6;
 /** 低于此字数不强行拆成 4 页 */
