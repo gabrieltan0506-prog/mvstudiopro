@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>技术与实测 · MV Studio Pro</title>
+<meta name="description" content="AI 视频与图文创作的一手实测数据：模型真实单价、内容生产成本拆解、供应商链路排查。数字来自真实调用账单，不是官网标价。">
+
+<link rel="canonical" href="https://www.mvstudiopro.com/blog/">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MV Studio Pro">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:url" content="https://www.mvstudiopro.com/blog/">
+<meta property="og:title" content="技术与实测 · MV Studio Pro">
+<meta property="og:description" content="AI 视频与图文创作的一手实测数据：模型真实单价、内容生产成本拆解、供应商链路排查。数字来自真实调用账单，不是官网标价。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="技术与实测 · MV Studio Pro">
+<meta name="twitter:description" content="AI 视频与图文创作的一手实测数据：模型真实单价、内容生产成本拆解、供应商链路排查。数字来自真实调用账单，不是官网标价。">
+<link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0f1115; color: #e6e6ea;
+    font: 16px/1.85 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 22px 96px; }
+  nav.top { font-size: 13px; color: #8b8b96; margin-bottom: 32px; }
+  nav.top a { color: #7fd1ff; text-decoration: none; }
+  nav.top a:hover { text-decoration: underline; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 12px; letter-spacing: -.01em; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-top: 8px; border-top: 1px solid #23262e; }
+  h3 { font-size: 17px; margin: 28px 0 10px; }
+  .meta { font-size: 13px; color: #8b8b96; margin-bottom: 36px; }
+  p { margin: 0 0 18px; }
+  ul, ol { margin: 0 0 18px; padding-left: 24px; }
+  li { margin: 6px 0; }
+  strong { color: #fff; }
+  a { color: #7fd1ff; }
+  blockquote {
+    margin: 0 0 22px; padding: 12px 18px; border-left: 3px solid #7fd1ff;
+    background: #161922; color: #b9b9c4; font-size: 15px;
+  }
+  blockquote p { margin: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 14.5px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid #23262e; text-align: left; }
+  th { color: #fff; background: #161922; font-weight: 600; }
+  code {
+    background: #1b1f28; padding: 2px 6px; border-radius: 4px;
+    font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  pre {
+    background: #161922; padding: 16px 18px; border-radius: 8px; overflow-x: auto;
+    margin: 0 0 22px; border: 1px solid #23262e;
+  }
+  pre code { background: none; padding: 0; }
+  hr { border: 0; border-top: 1px solid #23262e; margin: 40px 0; }
+  em { color: #a9a9b6; }
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid #23262e;
+           font-size: 13px; color: #8b8b96; }
+  footer a { margin-right: 16px; }
+  .cards { display: grid; gap: 14px; margin: 28px 0 0; }
+  .card { display: block; padding: 18px 20px; background: #161922; border: 1px solid #23262e;
+          border-radius: 10px; text-decoration: none; color: inherit; }
+  .card:hover { border-color: #7fd1ff55; background: #1a1e28; }
+  .card h2 { margin: 0 0 8px; font-size: 18px; border: 0; padding: 0; color: #fff; }
+  .card p { margin: 0; font-size: 14px; color: #a9a9b6; }
+  .card .meta { margin: 10px 0 0; font-size: 12px; }
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Blog",
+  "name": "MV Studio Pro 技术与实测",
+  "url": "https://www.mvstudiopro.com/blog/",
+  "inLanguage": "zh-CN",
+  "blogPost": [
+    {
+      "@type": "BlogPosting",
+      "headline": "AI 视频生成实测：四个模型的真实单价，以及标价为什么会骗你",
+      "description": "实测 Seedance 2.0、MiniMax H3、HappyHorse 1.1 的真实单价——账单里读出来的数字，和官网标的「起价」差 67%。附可复用的按像素外推方法与两个不写在文档里的坑。",
+      "datePublished": "2026-08-05",
+      "url": "https://www.mvstudiopro.com/blog/ai-video-model-real-pricing"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "一万字文档做成图文卡，先提炼和不提炼差多少钱",
+      "description": "同一份一万字材料，直接出图是 9 页 264 积分的 2K，先提炼是 4 页 120 积分的 4K。附完整分页计费规则、三档模型的提炼输出实测，以及「省不回本就别劝用户花钱」的判定。",
+      "datePublished": "2026-08-05",
+      "url": "https://www.mvstudiopro.com/blog/document-to-knowledge-cards-cost"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "AI 漫剧一集的真实成本拆解，以及为什么按「集」定价会亏",
+      "description": "一集四到六段、每段独立计费，实测成本 9 到 13 美元。拆解静帧与成片各占多少、失败重试怎么算钱，以及服务端为什么根本认不出「这是同一集的第三段」。",
+      "datePublished": "2026-08-05",
+      "url": "https://www.mvstudiopro.com/blog/manhua-episode-real-cost"
+    },
+    {
+      "@type": "BlogPosting",
+      "headline": "OpenRouter 把我们的 OpenAI 系全封了，排查与止血的完整过程",
+      "description": "同一把 key，Kimi 和 Qwen 正常，所有 OpenAI 模型一律 403 TOS，连强制走 Azure 也拒。记录如何在两小时内定位出这是账号级封禁而非配置问题，以及一个把余额不足误报成「内容审核」的坑。",
+      "datePublished": "2026-08-05",
+      "url": "https://www.mvstudiopro.com/blog/openrouter-openai-403-diagnosis"
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+<nav class="top"><a href="/">首页</a> › 文章</nav>
+<h1>技术与实测</h1>
+<p class="meta">AI 视频与图文创作的一手数据。所有数字来自真实调用后的账单，不是官网标价。</p>
+<div class="cards">
+  <a class="card" href="/blog/ai-video-model-real-pricing">
+    <h2>AI 视频生成实测：四个模型的真实单价，以及标价为什么会骗你</h2>
+    <p>实测 Seedance 2.0、MiniMax H3、HappyHorse 1.1 的真实单价——账单里读出来的数字，和官网标的「起价」差 67%。附可复用的按像素外推方法与两个不写在文档里的坑。</p>
+    <p class="meta">2026-08-05 · 约 6 分钟</p>
+  </a>
+  <a class="card" href="/blog/document-to-knowledge-cards-cost">
+    <h2>一万字文档做成图文卡，先提炼和不提炼差多少钱</h2>
+    <p>同一份一万字材料，直接出图是 9 页 264 积分的 2K，先提炼是 4 页 120 积分的 4K。附完整分页计费规则、三档模型的提炼输出实测，以及「省不回本就别劝用户花钱」的判定。</p>
+    <p class="meta">2026-08-05 · 约 5 分钟</p>
+  </a>
+  <a class="card" href="/blog/manhua-episode-real-cost">
+    <h2>AI 漫剧一集的真实成本拆解，以及为什么按「集」定价会亏</h2>
+    <p>一集四到六段、每段独立计费，实测成本 9 到 13 美元。拆解静帧与成片各占多少、失败重试怎么算钱，以及服务端为什么根本认不出「这是同一集的第三段」。</p>
+    <p class="meta">2026-08-05 · 约 6 分钟</p>
+  </a>
+  <a class="card" href="/blog/openrouter-openai-403-diagnosis">
+    <h2>OpenRouter 把我们的 OpenAI 系全封了，排查与止血的完整过程</h2>
+    <p>同一把 key，Kimi 和 Qwen 正常，所有 OpenAI 模型一律 403 TOS，连强制走 Azure 也拒。记录如何在两小时内定位出这是账号级封禁而非配置问题，以及一个把余额不足误报成「内容审核」的坑。</p>
+    <p class="meta">2026-08-05 · 约 9 分钟</p>
+  </a>
+</div>
+<footer>
+  <a href="/">MV Studio Pro 首页</a>
+  <a href="/blog/">全部文章</a>
+  <a href="/pricing">定价</a>
+</footer>
+</div>
+</body>
+</html>

@@ -13,13 +13,195 @@
     <link rel="manifest" href="/manifest.json" />
     <link rel="icon" type="image/svg+xml" href="/pwa-icon.svg" />
     <link rel="apple-touch-icon" sizes="192x192" href="/pwa-icon-192.png" />
-    <title>MV Studio Pro - 战略情报库与智能体服务平台</title>
-    <meta name="description" content="MV Studio Pro 是专业的AI视频创作平台，提供MV智能分析、虚拟偶像生成、歌词分镜脚本、视觉特效引擎等一站式MV制作工具，助力创作者高效产出爆款音乐视频。" />
-    <meta name="keywords" content="MV制作,AI视频,虚拟偶像,分镜脚本,视觉特效,MV分析,音乐视频,AI创作,MV Studio Pro,视频生成平台" />
+
+    <title>MV Studio Pro · 文档变图文知识卡、选题变整集漫剧的 AI 创作平台</title>
+    <meta name="description" content="上传一份长文档，自动提炼成多页横版图文知识卡；给一个选题，产出六维全案与分镜脚本；从静帧到成片做完整集漫剧。面向中文创作者的一站式 AI 内容生产平台，按产出计费、失败退回。" />
+    <meta name="keywords" content="图文知识卡,文档转图文笔记,AI漫剧,分镜脚本,小红书图文,短视频选题,AI成片,创作者工具,MV Studio Pro" />
+    <link rel="canonical" href="https://www.mvstudiopro.com/" />
+
+    <!-- 社交分享卡片 -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="MV Studio Pro" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:url" content="https://www.mvstudiopro.com/" />
+    <meta property="og:title" content="MV Studio Pro · 文档变图文知识卡、选题变整集漫剧" />
+    <meta property="og:description" content="九万字的书落成五到七页可发布的横版知识卡；一个选题产出全案与分镜；静帧到成片做完整集漫剧。按产出计费，失败退回。" />
+    <meta property="og:image" content="https://www.mvstudiopro.com/pwa-icon-512.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="MV Studio Pro · 文档变图文知识卡、选题变整集漫剧" />
+    <meta name="twitter:description" content="面向中文创作者的一站式 AI 内容生产平台：图文知识卡、六维全案、分镜脚本、整集漫剧成片。" />
+    <meta name="twitter:image" content="https://www.mvstudiopro.com/pwa-icon-512.png" />
+
+    <!--
+      结构化数据。
+      AI 搜索与传统搜索都优先引用有 JSON-LD 标注的内容——它不用从正文里猜产品是什么、
+      多少钱、能干什么。本站是 SPA，正文靠 JS 渲染，不执行 JS 的爬虫只能看到这里，
+      所以这几段必须自洽完整。
+    -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://www.mvstudiopro.com/#organization",
+          "name": "MV Studio Pro",
+          "url": "https://www.mvstudiopro.com/",
+          "logo": "https://www.mvstudiopro.com/pwa-icon-512.png",
+          "description": "面向中文短视频与图文创作者的一站式 AI 内容生产平台。"
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://www.mvstudiopro.com/#website",
+          "url": "https://www.mvstudiopro.com/",
+          "name": "MV Studio Pro",
+          "inLanguage": "zh-CN",
+          "publisher": { "@id": "https://www.mvstudiopro.com/#organization" }
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://www.mvstudiopro.com/#app",
+          "name": "MV Studio Pro",
+          "applicationCategory": "MultimediaApplication",
+          "operatingSystem": "Web",
+          "inLanguage": "zh-CN",
+          "url": "https://www.mvstudiopro.com/",
+          "description": "把一份文档、一个选题或一条参考视频，变成可直接发布的图文知识卡、分镜脚本与成片。交付成品而非单张图。",
+          "featureList": [
+            "图文知识卡片：长文档自动提炼并排版成多页横版信息卡",
+            "漫剧编剧室：剧本到分镜到成片的整集流水线，角色跨集一致",
+            "创作画布：节点式工作流，出图与成片在同一张画布串联",
+            "创作者成长营：对标视频逐帧拆解与战略推演",
+            "趋势看板：抖音、快手、B站、小红书、头条多平台趋势"
+          ],
+          "offers": {
+            "@type": "Offer",
+            "priceCurrency": "CNY",
+            "description": "积分制，按实际产出扣费，失败自动退回。图文卡按页计费，成片按段计费。",
+            "url": "https://www.mvstudiopro.com/pricing"
+          },
+          "publisher": { "@id": "https://www.mvstudiopro.com/#organization" }
+        },
+        {
+          "@type": "FAQPage",
+          "@id": "https://www.mvstudiopro.com/#faq",
+          "mainEntity": [
+            {
+              "@type": "Question",
+              "name": "怎么把一本书或一份长报告变成能发布的图文知识卡？",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "上传 PDF、文档或图片，平台会同时完成 OCR 与内容提炼，再排版成多页 16:9 横版知识卡。提炼分精细、均衡、轻量三档，可按预算自选。九万字的书通常落到五到七页，而不是逐段搬成几十页。长文在出图前会先算清直接出图与先提炼各需要多少页、多少积分，由用户决定走哪条。"
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "AI 做整集漫剧，怎么保证角色跨镜头一致？",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "漫剧编剧室用角色设定图与关键静帧做跨集锚点，成片阶段支持多图参考与首尾帧控制，同一角色在不同镜头间沿用同一套设定。一集由四到六段拼成，约两分钟，单段最长 30 秒。"
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "怎么分析对标账号的爆款视频？",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "创作者成长营对参考视频做逐帧视觉分析，拆出选题结构、节奏与视觉手法，输出可执行的改进清单，而不只是给一段观后感。"
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "怎么收费？",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "积分制，按实际产出扣费，生成失败自动退回积分。图文卡按页收费，单价随提炼档位分三档，第九页起折扣；成片按段收费，画质越高单价越高；出图按张收费，同批第二张起折扣。成片功能需要正式会员。"
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "和通用的 AI 绘图或聊天工具有什么不同？",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "通用工具交付的是一张图或一段对话，需要用户自己拼装成品。这里交付的是可直接发布的成品：多页图文知识卡、六维全案文案、整集漫剧成片。文案、静帧、成片在同一条流水线上串联，不用在多个工具之间搬运素材。"
+              }
+            }
+          ]
+        }
+      ]
+    }
+    </script>
   </head>
 
   <body>
     <div id="root"></div>
+
+    <!--
+      给不执行 JavaScript 的爬虫看的正文。
+      GPTBot、ClaudeBot、PerplexityBot 这类 AI 检索爬虫基本不跑 JS，
+      本站是 SPA，没有这段的话它们抓到的就是一个空 div——等于站点在 AI 搜索里不存在。
+      内容与首页实际主张保持一致，不做关键词堆砌。
+    -->
+    <noscript>
+      <main>
+        <h1>MV Studio Pro · 面向中文创作者的一站式 AI 内容生产平台</h1>
+        <p>
+          把一份文档、一个选题或一条参考视频，变成可直接发布的图文知识卡、分镜脚本与成片。
+          与通用绘图或聊天工具不同，这里交付的是成品，而不是需要自己拼装的素材。
+        </p>
+
+        <h2>三条完整流水线</h2>
+        <ul>
+          <li>
+            <strong>一份长文档</strong>（书稿、行业报告、课件、PDF）：自动完成 OCR 与提炼，
+            排版成多页 16:9 横版图文知识卡，可直接发小红书、公众号、知识社群。
+            九万字的书通常落到五到七页。
+          </li>
+          <li>
+            <strong>一个选题</strong>：平台趋势看板、选题推荐、六维全案文案、动效 PPT。
+          </li>
+          <li>
+            <strong>一条参考视频或一组静帧</strong>：逐帧视觉拆解、分镜脚本、关键静帧、成片，
+            最长可做整集漫剧，一集四到六段、约两分钟。
+          </li>
+        </ul>
+
+        <h2>核心能力</h2>
+        <ul>
+          <li>图文知识卡片：提炼分精细、均衡、轻量三档，按预算自选；出图前先算清成本再决定。</li>
+          <li>漫剧编剧室：剧本到分镜到成片的整集流水线，角色跨集一致，静帧可复用。</li>
+          <li>创作画布：节点式工作流，出图与成片在同一张画布上串联，支持多图参考、运镜与对白控制、局部重拍、画质提升。</li>
+          <li>创作者成长营：对标视频逐帧视觉分析与战略推演，输出可执行清单。</li>
+          <li>趋势看板：抖音、快手、B 站、小红书、头条多平台趋势与样本库。</li>
+        </ul>
+
+        <h2>计费</h2>
+        <p>
+          积分制，按实际产出扣费，生成失败自动退回。图文卡按页计费，成片按段计费，
+          出图按张计费且同批有折扣。详见
+          <a href="https://www.mvstudiopro.com/pricing">定价页</a>。
+        </p>
+
+        <h2>一手实测数据</h2>
+        <p>
+          <a href="https://www.mvstudiopro.com/blog/">技术与实测</a>
+          栏目发布真实调用后从账单读出的数字，而非转述官网标价：AI 视频各模型的实际单价、
+          内容生产成本拆解、供应商链路排查记录。
+        </p>
+
+        <h2>常用页面</h2>
+        <ul>
+          <li><a href="https://www.mvstudiopro.com/">首页</a></li>
+          <li><a href="https://www.mvstudiopro.com/blog/">技术与实测</a></li>
+          <li><a href="https://www.mvstudiopro.com/pricing">定价</a></li>
+          <li><a href="https://www.mvstudiopro.com/showcase">作品展示</a></li>
+          <li><a href="https://www.mvstudiopro.com/creator-growth-camp">创作者成长营</a></li>
+          <li><a href="https://www.mvstudiopro.com/templates">模板库</a></li>
+          <li><a href="https://www.mvstudiopro.com/creative">创作台</a></li>
+        </ul>
+      </main>
+    </noscript>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 

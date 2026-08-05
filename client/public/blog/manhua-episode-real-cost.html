@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 漫剧一集的真实成本拆解，以及为什么按「集」定价会亏 · MV Studio Pro</title>
+<meta name="description" content="一集四到六段、每段独立计费，实测成本 9 到 13 美元。拆解静帧与成片各占多少、失败重试怎么算钱，以及服务端为什么根本认不出「这是同一集的第三段」。">
+<meta name="keywords" content="AI漫剧,漫剧成本,AI短剧,Seedance,视频生成成本,内容成本核算">
+<link rel="canonical" href="https://www.mvstudiopro.com/blog/manhua-episode-real-cost">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MV Studio Pro">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:url" content="https://www.mvstudiopro.com/blog/manhua-episode-real-cost">
+<meta property="og:title" content="AI 漫剧一集的真实成本拆解，以及为什么按「集」定价会亏 · MV Studio Pro">
+<meta property="og:description" content="一集四到六段、每段独立计费，实测成本 9 到 13 美元。拆解静帧与成片各占多少、失败重试怎么算钱，以及服务端为什么根本认不出「这是同一集的第三段」。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AI 漫剧一集的真实成本拆解，以及为什么按「集」定价会亏 · MV Studio Pro">
+<meta name="twitter:description" content="一集四到六段、每段独立计费，实测成本 9 到 13 美元。拆解静帧与成片各占多少、失败重试怎么算钱，以及服务端为什么根本认不出「这是同一集的第三段」。">
+<link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0f1115; color: #e6e6ea;
+    font: 16px/1.85 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 22px 96px; }
+  nav.top { font-size: 13px; color: #8b8b96; margin-bottom: 32px; }
+  nav.top a { color: #7fd1ff; text-decoration: none; }
+  nav.top a:hover { text-decoration: underline; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 12px; letter-spacing: -.01em; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-top: 8px; border-top: 1px solid #23262e; }
+  h3 { font-size: 17px; margin: 28px 0 10px; }
+  .meta { font-size: 13px; color: #8b8b96; margin-bottom: 36px; }
+  p { margin: 0 0 18px; }
+  ul, ol { margin: 0 0 18px; padding-left: 24px; }
+  li { margin: 6px 0; }
+  strong { color: #fff; }
+  a { color: #7fd1ff; }
+  blockquote {
+    margin: 0 0 22px; padding: 12px 18px; border-left: 3px solid #7fd1ff;
+    background: #161922; color: #b9b9c4; font-size: 15px;
+  }
+  blockquote p { margin: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 14.5px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid #23262e; text-align: left; }
+  th { color: #fff; background: #161922; font-weight: 600; }
+  code {
+    background: #1b1f28; padding: 2px 6px; border-radius: 4px;
+    font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  pre {
+    background: #161922; padding: 16px 18px; border-radius: 8px; overflow-x: auto;
+    margin: 0 0 22px; border: 1px solid #23262e;
+  }
+  pre code { background: none; padding: 0; }
+  hr { border: 0; border-top: 1px solid #23262e; margin: 40px 0; }
+  em { color: #a9a9b6; }
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid #23262e;
+           font-size: 13px; color: #8b8b96; }
+  footer a { margin-right: 16px; }
+  .cards { display: grid; gap: 14px; margin: 28px 0 0; }
+  .card { display: block; padding: 18px 20px; background: #161922; border: 1px solid #23262e;
+          border-radius: 10px; text-decoration: none; color: inherit; }
+  .card:hover { border-color: #7fd1ff55; background: #1a1e28; }
+  .card h2 { margin: 0 0 8px; font-size: 18px; border: 0; padding: 0; color: #fff; }
+  .card p { margin: 0; font-size: 14px; color: #a9a9b6; }
+  .card .meta { margin: 10px 0 0; font-size: 12px; }
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Article",
+      "headline": "AI 漫剧一集的真实成本拆解，以及为什么按「集」定价会亏",
+      "description": "一集四到六段、每段独立计费，实测成本 9 到 13 美元。拆解静帧与成片各占多少、失败重试怎么算钱，以及服务端为什么根本认不出「这是同一集的第三段」。",
+      "datePublished": "2026-08-05",
+      "dateModified": "2026-08-05",
+      "inLanguage": "zh-CN",
+      "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": "https://www.mvstudiopro.com/blog/manhua-episode-real-cost"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://www.mvstudiopro.com/pwa-icon-512.png"
+        }
+      },
+      "keywords": "AI漫剧,漫剧成本,AI短剧,Seedance,视频生成成本,内容成本核算"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "首页",
+          "item": "https://www.mvstudiopro.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "文章",
+          "item": "https://www.mvstudiopro.com/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "AI 漫剧一集的真实成本拆解，以及为什么按「集」定价会亏",
+          "item": "https://www.mvstudiopro.com/blog/manhua-episode-real-cost"
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+<nav class="top"><a href="/">首页</a> › <a href="/blog/">文章</a></nav>
+<article>
+<h1>AI 漫剧一集的真实成本拆解，以及为什么按「集」定价会亏</h1>
+<p class="meta">2026-08-05 · 约 6 分钟</p>
+<blockquote>
+<p>2026-08-05。成本数字来自真实调用后的账单，定价规则来自我们线上跑着的代码。</p>
+</blockquote>
+<p>做漫剧功能定价的时候，我先犯了个错：把「一集」当成一个计费单位。</p>
+<p>直觉上这很合理——用户要的就是一集片子，按集报价最好懂。但真接进去才发现，<strong>服务端根本不知道「一集」是什么</strong>。</p>
+<h2>一集是四到六次独立请求</h2>
+<p>漫剧编剧室的流水线是这样跑的：剧本拆成分镜，每个分镜出关键静帧，静帧再逐段转成视频，最后拼接。</p>
+<p>段数由引擎决定：普通档一集切六段，加长档因为单段能到 30 秒，一集四段就够。每段都是一次独立的 HTTP 请求，串行发出去。</p>
+<p>也就是说，用户点一次「生成本集」，服务端收到的是<strong>四到六个互不相关的成片请求</strong>。它们之间没有任何标识说明「我们是一集的」。</p>
+<h2>成本拆解</h2>
+<p>按 Seedance 720p 实测单价 $0.1512/秒算：</p>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>单价</th>
+<th>一集用量</th>
+<th>小计</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>关键静帧</td>
+<td>约 $0.19/张</td>
+<td>4–6 张</td>
+<td>$0.76–1.14</td>
+</tr>
+<tr>
+<td>成片（15 秒/段）</td>
+<td>$2.27/段</td>
+<td>4–6 段</td>
+<td>$9.08–13.62</td>
+</tr>
+<tr>
+<td><strong>合计</strong></td>
+<td></td>
+<td></td>
+<td><strong>约 $9.8–14.8</strong></td>
+</tr>
+</tbody></table>
+<p>如果用加长档（单段 30 秒），四段就是 $9.07 一段成本、一集约 $20——但换来的是两分钟的成片，单位时长成本反而更低。</p>
+<p>换算成人民币，一集成本在 70 到 110 元之间。这个数字对定价的意义是：<strong>一集卖 688 积分（约 447 元）看着贵，毛利率其实是 79%</strong>，跟单段档位持平，没有额外加价。</p>
+<h2>「按集」和「按段」不是定价问题，是技术问题</h2>
+<p>我原本想按集收 688，服务端一算总数扣一次钱。做不到，原因很实在：</p>
+<p><strong>服务端认不出这是哪一集的第几段。</strong> 集号和段号只存在于前端——节点 id 长成 <code>clip-e01-g03</code> 这样，<code>episodeIndex</code> 存在前端的 block 对象里。发给服务端的请求体里只有提示词、参考图、时长、画质这些，没有任何集号。</p>
+<p>唯一残留的线索是提示词里的 <code>【第 3 段·15s】</code>，但这个也靠不住：出线前会被符号规范化处理，<code>【】</code> 会被换成 <code>[]</code>，而且用户可以直接改提示词。靠正则反解一个用户能改的字符串来决定扣多少钱，这是自找麻烦。</p>
+<p>所以最后的做法是：<strong>前端把 <code>episodeIndex</code> 明确透传进请求体</strong>，服务端见到它就按整集折算的段价扣（688 ÷ 4 = 172/段），没有就按自由画布的单段价扣（118）。</p>
+<p>跑多少扣多少，用户中途停下来只付已跑的部分。这比「先收一集的钱再跑」对双方都干净——毕竟一集要跑十几分钟，中途失败或用户改主意都是常态。</p>
+<h2>失败重试要不要重复扣</h2>
+<p>这是接计费时最容易埋雷的地方。</p>
+<p>我们的规则是：<strong>扣在调用前，失败即退回</strong>。所以自动重试的净效果是只扣成功那一次。</p>
+<p>但有个边界情况值得说：出图那条链路走的是异步队列，超时会再入队一次。此时第一个任务可能仍在跑并最终成功——如果两次都扣，用户就为同一张图付了两遍。</p>
+<p>处理办法是重入队那次不带扣费标记。代价是如果第一次最终失败了，第二次就相当于免费。<strong>宁可少收，不能误扣</strong>——多收一次的信任损失，比少收一次的钱贵得多。</p>
+<h2>一个反直觉的发现：高画质档会吃掉毛利</h2>
+<p>Seedance 的计费公式是公开的：</p>
+<pre><code>tokens = 输出视频高 × 宽 × 秒数 × 24 / 1024
+</code></pre>
+<p>也就是成本严格按像素线性涨。720p 到 1080p 是 2.25 倍，到 2K 是 4 倍，到 4K 是 9 倍。</p>
+<p>我实测验证过这个公式：4 秒 480p 扣 $0.269，反推 token 单价约 $7/M，套回 720p 得 $0.1512/秒，与已知账单吻合；再实测 4 秒 1080p，账单 $1.3608，正好 $0.3402/秒，与推算分毫不差。</p>
+<p>这意味着如果你开放高画质档却沿用同一个价，<strong>每开一档就多亏一档</strong>。一段 15 秒 4K 的成本是 $20.41，按 720p 的价卖等于白送二十美元。</p>
+<p>我们的处理是售价同比例抬：720p 118 积分、1080p 268、2K 472、4K 1062。各档毛利率都维持在 79% 左右。4K 那个价看着吓人，但成本摆在那儿——不这么定就是做慈善。</p>
+<h2>给要做同类功能的人</h2>
+<p><strong>一、先搞清楚服务端能看见什么。</strong> 「按集」「按项目」「按工作流」这类打包定价，前提是服务端能识别这个包。识别不了就得从前端透传，而透传的字段用户能伪造——所以只适合往便宜方向用（认出来给折扣），不适合往贵方向用。</p>
+<p><strong>二、扣费点放在调用前，退款路径必须走通。</strong> 而且要确认新加的代码不会把异常吞掉——退款逻辑挂在 catch 上，一旦某个分支 <code>return null</code> 而不是抛错，钱就退不回去了。</p>
+<p><strong>三、错误分类要准。</strong> 我们踩过一个坑：余额耗尽的 429 和上游封禁的 403，因为错误文本里带 <code>violation</code> 一词，被判成了「内容审核拦截」，于是提示用户「请调整文案后再试」。用户改了三遍也没用——真实原因是备用密钥没钱了。报错把人引向错误的方向，比不报错更伤。</p>
+<p><strong>四、长任务要能中途停。</strong> 一集十几分钟，用户看到第二段效果不对就想停。按段扣费天然支持这件事，按集预收就得处理退款。</p>
+<hr>
+<p><em>成本数字来自 2026-08-05 的真实调用。单价随上游调整会变，核算方法可复用。</em></p>
+
+</article>
+<footer>
+  <a href="/">MV Studio Pro 首页</a>
+  <a href="/blog/">全部文章</a>
+  <a href="/pricing">定价</a>
+</footer>
+</div>
+</body>
+</html>
