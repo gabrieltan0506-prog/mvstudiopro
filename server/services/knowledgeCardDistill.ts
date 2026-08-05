@@ -234,7 +234,10 @@ function buildDistillSystem(minSections: number, modelName?: string | null): str
 }
 
 export type KnowledgeCardUploadFile = {
-  fileBase64: string;
+  /** 小文件走请求体；大文件请改用 `gcsUri` 直传 */
+  fileBase64?: string;
+  /** 前端直传 GCS 后的对象地址（`gs://bucket/object`），不受请求体大小限制 */
+  gcsUri?: string;
   mimeType: string;
   fileName?: string;
 };
@@ -244,7 +247,7 @@ function hasDistillGateway(modelName: KnowledgeCardDistillModelId): boolean {
   return Boolean(getOpenRouterApiKey());
 }
 
-function normalizeImageDataUrl(fileBase64: string, mimeType: string): string | null {
+function normalizeImageDataUrl(fileBase64: string | undefined, mimeType: string): string | null {
   const raw = String(fileBase64 || "").trim();
   if (!raw) return null;
   if (raw.startsWith("data:image/")) return raw;
@@ -271,6 +274,22 @@ function isImageFile(mimeType: string, fileName?: string): boolean {
 }
 
 /** 抽文档文本；图片留给视觉 OCR，不在此解码为文字。 */
+/**
+ * 从 GCS 取回直传的文件。
+ *
+ * 大文档必须走这条：base64 塞进请求体最多约 13.5MB 原文件（`fileBase64` 限 18MB），
+ * 再大就传不完——用户 2026-08-06 传 42MB 的 PDF，base64 后 56MB，
+ * 连接在读请求体阶段就被掐断，报错却显示「算力紧张」，误导他换了三个模型。
+ * 直传还有两个附带好处：文件不经过这台 2 核机器，以及 GCS 原生支持断点续传。
+ */
+async function readGcsUploadBuffer(gcsUri: string): Promise<Buffer> {
+  const { signGsUriV4ReadUrl } = await import("./gcs.js");
+  const url = await signGsUriV4ReadUrl(gcsUri, 3600);
+  const res = await fetch(url, { signal: AbortSignal.timeout(180_000) });
+  if (!res.ok) throw new Error(`读取上传文件失败（${res.status}）`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
 export async function extractKnowledgeCardUploads(files: KnowledgeCardUploadFile[]): Promise<{
   documentText: string;
   imageDataUrls: string[];
@@ -282,18 +301,43 @@ export async function extractKnowledgeCardUploads(files: KnowledgeCardUploadFile
 
   for (const file of files) {
     const name = String(file.fileName || "upload");
+    const gcsUri = String(file.gcsUri || "").trim();
+
     if (isImageFile(file.mimeType, file.fileName)) {
-      const url = normalizeImageDataUrl(file.fileBase64, file.mimeType);
+      // 图片走 OCR，需要 data URL；直传的先取回再转
+      let url = normalizeImageDataUrl(file.fileBase64, file.mimeType);
+      if (!url && gcsUri) {
+        try {
+          const buf = await readGcsUploadBuffer(gcsUri);
+          url = `data:${file.mimeType};base64,${buf.toString("base64")}`;
+        } catch (e) {
+          methods.push(`${name}:gcs_read_failed`);
+          console.warn(`[knowledgeCardDistill] 取回图片失败 ${gcsUri}:`, e);
+        }
+      }
       if (url) {
         imageDataUrls.push(url);
         methods.push(`${name}:image_ocr_pending`);
       }
       continue;
     }
-    const buffer = Buffer.from(
-      String(file.fileBase64 || "").replace(/^data:[^;]+;base64,/, ""),
-      "base64",
-    );
+
+    let buffer: Buffer;
+    if (gcsUri) {
+      try {
+        buffer = await readGcsUploadBuffer(gcsUri);
+        methods.push(`${name}:gcs_direct`);
+      } catch (e) {
+        methods.push(`${name}:gcs_read_failed`);
+        console.warn(`[knowledgeCardDistill] 取回文档失败 ${gcsUri}:`, e);
+        continue;
+      }
+    } else {
+      buffer = Buffer.from(
+        String(file.fileBase64 || "").replace(/^data:[^;]+;base64,/, ""),
+        "base64",
+      );
+    }
     if (!buffer.length) {
       methods.push(`${name}:empty`);
       continue;
