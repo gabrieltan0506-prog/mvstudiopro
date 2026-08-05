@@ -241,7 +241,8 @@ export default function CreativePage() {
           fetch(hailuoUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            credentials: "omit",
+            // 服务端已要求登录，必须带登录态，否则 401
+            credentials: "include",
             body: JSON.stringify({
               prompt: motionPrompt,
               imageUrl,

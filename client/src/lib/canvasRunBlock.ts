@@ -616,13 +616,14 @@ async function runHailuo3(
   const hailuoUrl = withLongJobsFlyDirect("/api/jobs?op=hailuo3Video");
   const probeOrigin = flyHealthProbeOriginForUrl(hailuoUrl);
   const imageUrls = (opts?.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
-  const fromPrompt = parseManhuaClipTargetDurationSec(prompt);
-  const duration = clampHailuoOpenRouterDuration(opts?.duration ?? fromPrompt ?? undefined);
+  // 时长由共享层钉死 15s，节拍解析结果只影响提示词展示
+  const duration = clampHailuoOpenRouterDuration();
   const res = await withFlyHealthGate(probeOrigin, () =>
     fetch(hailuoUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "omit",
+      // 服务端已要求登录（H3 一段 2K·15s 是真钱），必须带上登录态
+      credentials: "include",
       body: JSON.stringify({
         prompt: renderManhuaClipPromptForSeedance(prompt),
         imageUrl: imageUrl || imageUrls[0] || undefined,
