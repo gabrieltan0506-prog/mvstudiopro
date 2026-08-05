@@ -6778,6 +6778,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         z.object({
           sourceText: z.string().max(400_000).optional(),
           forceDistill: z.boolean().optional(),
+          /**
+           * 收提练费。只有「纯文本长文 + 用户在弹窗里选了先提练」才带 true：
+           * 那条路提练是**用户为省页费买的服务**（1 万字直接出图 9 页 264 积分且降 2K，
+           * 提练后 4 页 120 积分保住 4K）。上传文档的提练是抽文的必要环节，成本已含页费，不另收。
+           */
+          chargeDistillFee: z.boolean().optional(),
           /** 默认 Evolink gpt-5.6-sol；备用 OR kimi-k3；备选 Evolink qwen3.8-max（旧 terra/OR-qwen 服务端迁） */
           distillModel: z
             .enum(["gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
@@ -6837,6 +6843,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 distillModel: modelName,
                 imageDataUrls: extracted.imageDataUrls,
                 extractionMethods: extracted.methods,
+                chargeDistillFee: input.chargeDistillFee === true,
               },
             },
           });
@@ -6844,6 +6851,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             success: true as const,
             isAsync: true as const,
             progressJobId: jobId,
+            // 后台任务在提练成功后自己扣，这里还没发生
+            distillFeeCharged: 0,
             sourceChars: mergedRaw.length,
             distillModel: modelName,
             estimatedChunks: estimateKnowledgeCardDistillChunks(modelName, mergedRaw.length),
@@ -6863,10 +6872,35 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           distillModel: input.distillModel,
         });
         const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
+
+        // 与后台任务同一口径：只有用户为省页费主动买提练才收，且扣在提练成功之后
+        let distillFeeCharged = 0;
+        const uidForDistillFee = Number(ctx.user?.id);
+        if (
+          input.chargeDistillFee === true &&
+          !prepared.skippedDistill &&
+          Number.isFinite(uidForDistillFee) &&
+          uidForDistillFee > 0
+        ) {
+          const { knowledgeCardDistillFeeForModel } = await import(
+            "../shared/knowledgeCardDistillModels.js"
+          );
+          const { deductCreditsAmount } = await import("./credits.js");
+          const fee = knowledgeCardDistillFeeForModel(prepared.distillModel);
+          const deducted = await deductCreditsAmount(
+            uidForDistillFee,
+            fee,
+            "knowledgeCardDistill",
+            `图文知识卡·提练（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）`,
+          );
+          distillFeeCharged = deducted.cost;
+        }
+
         return {
           success: true as const,
           isAsync: false as const,
           progressJobId: null,
+          distillFeeCharged,
           distilledMarkdown: prepared.distilledMarkdown,
           skippedDistill: prepared.skippedDistill,
           extractionMethods: prepared.extractionMethods,

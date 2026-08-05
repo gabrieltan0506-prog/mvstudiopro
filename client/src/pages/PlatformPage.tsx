@@ -128,13 +128,17 @@ import {
   hasCustomCopyPdfContent,
 } from "@/lib/customCopyPdfExport";
 import {
+  estimateKnowledgeCardDistillTradeoff,
+  KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS,
   knowledgeCardCreditsForPages,
   knowledgeCardImageQuality,
   planKnowledgeCardPages,
 } from "@shared/knowledgeCardPagination";
+import { suggestKnowledgeCardMinSections } from "@shared/knowledgeCardDistillSections";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS,
   KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+  knowledgeCardDistillFeeForModel,
   resolveKnowledgeCardDistillModel,
   type KnowledgeCardDistillModelId,
 } from "@shared/knowledgeCardDistillModels";
@@ -5806,12 +5810,15 @@ export default function PlatformPage() {
     sourceText?: string;
     files?: Array<{ fileBase64: string; mimeType: string; fileName?: string }>;
     onStatus?: (text: string) => void;
+    /** 纯文本长文里用户主动买的提练，服务端据此收提练费 */
+    chargeDistillFee?: boolean;
   }): Promise<string> => {
     const queued = await prepareKnowledgeCardCopyMutation.mutateAsync({
       sourceText: args.sourceText,
       files: args.files?.length ? args.files : undefined,
       forceDistill: true,
       distillModel: customNoteDistillModel,
+      ...(args.chargeDistillFee ? { chargeDistillFee: true } : {}),
     });
 
     if (!queued.isAsync || !queued.progressJobId) {
@@ -5990,6 +5997,48 @@ export default function PlatformPage() {
           setCustomNoteUploadStatus(null);
           setCustomNoteDistillPhase("ready");
           await new Promise<void>((r) => requestAnimationFrame(() => r()));
+        } else if (distilled.length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS) {
+          /**
+           * 纯文本长文：先把「提练 vs 直接出图」的账摆给用户看。
+           * 一万字直接出图要 9 页 264 积分，而且超过 6 页整套降到 2K；
+           * 花提练费换成 4 页 120 积分还能保住 4K。默认劝提练，但省不回本时不打扰。
+           */
+          const tradeoff = estimateKnowledgeCardDistillTradeoff(
+            distilled,
+            customNoteDistillModel,
+            suggestKnowledgeCardMinSections,
+            knowledgeCardDistillFeeForModel(customNoteDistillModel),
+          );
+          if (tradeoff.saved > 0) {
+            setCustomNoteBusy(false);
+            const wantDistill = window.confirm(
+              [
+                `这段文字约 ${distilled.length.toLocaleString()} 字。`,
+                "",
+                `直接出图：约 ${tradeoff.full.pages} 页 · ${tradeoff.full.credits} 积分 · 画质 ${tradeoff.full.is4k ? "4K" : "2K"}`,
+                `先做提练：约 ${tradeoff.distilled.pages} 页 · ${tradeoff.distilled.credits} 积分 + 提练费 ${tradeoff.distilled.distillFee} · 画质 ${tradeoff.distilled.is4k ? "4K" : "2K"}`,
+                "",
+                `提练可省约 ${tradeoff.saved} 积分${tradeoff.distilled.is4k && !tradeoff.full.is4k ? "，画质还更高（超过 6 页会整套降到 2K）" : ""}。`,
+                "",
+                "点「确定」先提练（推荐），点「取消」按原文全量出图。",
+              ].join("\n"),
+            );
+            setCustomNoteBusy(true);
+            if (wantDistill) {
+              setCustomNoteDistillPhase("distilling");
+              const refined = await runKnowledgeCardDistill({
+                sourceText: distilled,
+                onStatus: setCustomNoteUploadStatus,
+                chargeDistillFee: true,
+              });
+              if (!refined) throw new Error("提练结果为空，请调整文案后重试");
+              distilled = refined;
+              setCustomNoteText(refined);
+              setCustomNoteUploadStatus(null);
+              setCustomNoteDistillPhase("ready");
+              await new Promise<void>((r) => requestAnimationFrame(() => r()));
+            }
+          }
         }
         const plan = planKnowledgeCardPages(distilled, customNoteDistillModel);
         const pages = plan.pages.length ? plan.pages : [distilled];
