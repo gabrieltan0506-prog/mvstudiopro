@@ -498,6 +498,16 @@ type SeedanceProductVideoResult = {
   workMode?: XyqSeedance25WorkMode;
 };
 
+/**
+ * 从漫剧 clip 节点 id（`clip-e01-g03`）取段号，随请求体上报便于服务端记账与排错。
+ * 集号本身走 `block.episodeIndex`，不依赖 id 解析。
+ */
+function parseClipIndexFromBlockId(id: string): number | undefined {
+  const m = /-g(\d{1,3})\b/.exec(String(id || ""));
+  const n = m ? Number(m[1]) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 async function runSeedanceProductVideo(
   prompt: string,
   imageUrl: string | undefined,
@@ -518,6 +528,13 @@ async function runSeedanceProductVideo(
     threadId?: string;
     upscaleResolution?: "720p" | "1080p" | "2k" | "4k";
     sourceUrl?: string;
+    /**
+     * 漫剧编剧室的集号／段号。服务端据此走整集折算段价，
+     * 不透传就只能按自由画布单段计价（提示词里的「第 N 段」出线前会被换成
+     * 普通括号，且用户可改，反解不可靠）。
+     */
+    episodeIndex?: number;
+    clipIndex?: number;
   },
 ): Promise<SeedanceProductVideoResult> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
@@ -534,14 +551,15 @@ async function runSeedanceProductVideo(
     version === "2.5"
       ? clampXyqSeedanceDuration(durationRaw)
       : clampSeedanceOpenRouterDuration(durationRaw);
-  // 2.5 须带登录态，服务端校验正式会员
-  const credentials = version === "2.5" ? "include" : "omit";
+  // 服务端要按登录用户扣积分（2.5 还要校验正式会员），三档一律带登录态
   const workMode = parseXyqSeedance25WorkMode(opts?.workMode);
+  const episodeIndex = Number(opts?.episodeIndex);
+  const clipIndex = Number(opts?.clipIndex);
   const res = await withFlyHealthGate(probeOrigin, () =>
     fetch(seedanceUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials,
+      credentials: "include",
       body: JSON.stringify({
         // 换官方符号只在出线这一刻做：上面的时长解析等仍认【第N段·Xs】
         prompt: renderManhuaClipPromptForSeedance(prompt),
@@ -568,6 +586,8 @@ async function runSeedanceProductVideo(
           ? { upscaleResolution: opts.upscaleResolution }
           : {}),
         ...(version === "2.5" && opts?.sourceUrl ? { sourceUrl: opts.sourceUrl } : {}),
+        ...(Number.isFinite(episodeIndex) && episodeIndex > 0 ? { episodeIndex } : {}),
+        ...(Number.isFinite(clipIndex) && clipIndex > 0 ? { clipIndex } : {}),
       }),
     }),
   );
@@ -611,6 +631,9 @@ async function runHailuo3(
   opts?: {
     imageUrls?: string[];
     duration?: number;
+    /** 漫剧集号／段号：服务端据此走整集折算段价 */
+    episodeIndex?: number;
+    clipIndex?: number;
   },
 ): Promise<string> {
   const hailuoUrl = withLongJobsFlyDirect("/api/jobs?op=hailuo3Video");
@@ -633,6 +656,8 @@ async function runHailuo3(
         aspectRatio,
         duration,
         generateAudio: true,
+        ...(Number(opts?.episodeIndex) > 0 ? { episodeIndex: Number(opts?.episodeIndex) } : {}),
+        ...(Number(opts?.clipIndex) > 0 ? { clipIndex: Number(opts?.clipIndex) } : {}),
       }),
     }),
   );
@@ -1215,6 +1240,8 @@ export async function runCanvasBlock(
         url = await runHailuo3(seedancePrompt, seedStill, ar, {
           imageUrls: httpsImages.length ? httpsImages : undefined,
           duration: clipDuration,
+          episodeIndex: block.episodeIndex,
+          clipIndex: parseClipIndexFromBlockId(block.id),
         });
       } else {
         const userRefVideos = (block.seedance25RefVideoUrls || [])
@@ -1293,6 +1320,8 @@ export async function runCanvasBlock(
           sourceUrl: useSeedance25
             ? String(block.seedance25SourceUrl || "").trim() || undefined
             : undefined,
+          episodeIndex: block.episodeIndex,
+          clipIndex: parseClipIndexFromBlockId(block.id),
         });
         url = seedanceOut.videoUrl;
         if (useSeedance25) {
