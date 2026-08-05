@@ -74,6 +74,56 @@ export function knowledgeCardCreditsForPageIndex(
   return discount;
 }
 
+/**
+ * 提练前后的页数与花费对照，供「要不要提练」的弹窗算账。
+ *
+ * 提练后的字数不好直接预测，但页数受目标小节数约束（见 `suggestKnowledgeCardMinSections`），
+ * 按每节约 180 字反推总字数再走同一套分页规则，实测与成稿吻合
+ * （9.5 万字 → 28 节 → 约 5000 字 → 5 页）。
+ */
+export type KnowledgeCardDistillTradeoff = {
+  /** 直接出图：页数、总积分、是否会被降到 2K */
+  full: { pages: number; credits: number; is4k: boolean };
+  /** 提练后出图：同上，另含一次性提练费 */
+  distilled: { pages: number; credits: number; is4k: boolean; distillFee: number };
+  /** 提练能省下的净积分（已扣掉提练费；可能为负，短文就该直接出） */
+  saved: number;
+};
+
+/** 提练稿每个 `##` 小节的估算字数（含标题与要点） */
+const KNOWLEDGE_CARD_CHARS_PER_SECTION_ESTIMATE = 180;
+
+export function estimateKnowledgeCardDistillTradeoff(
+  sourceText: string,
+  distillModel: string | null | undefined,
+  suggestMinSections: (chars: number) => number,
+  distillFee: number,
+): KnowledgeCardDistillTradeoff {
+  const chars = String(sourceText || "").trim().length;
+  const fullPages = planKnowledgeCardPages(sourceText, distillModel).pageCount;
+  const sections = suggestMinSections(chars);
+  const distilledPages = resolveDesiredPageCount(
+    sections * KNOWLEDGE_CARD_CHARS_PER_SECTION_ESTIMATE,
+    sections,
+  );
+  const fullCredits = knowledgeCardCreditsForPages(fullPages, distillModel);
+  const distilledCredits = knowledgeCardCreditsForPages(distilledPages, distillModel);
+  return {
+    full: {
+      pages: fullPages,
+      credits: fullCredits,
+      is4k: knowledgeCardImageQuality(fullPages) === "high",
+    },
+    distilled: {
+      pages: distilledPages,
+      credits: distilledCredits,
+      is4k: knowledgeCardImageQuality(distilledPages) === "high",
+      distillFee,
+    },
+    saved: fullCredits - distilledCredits - distillFee,
+  };
+}
+
 /** 已提练的短贴文可跳过再提练。 */
 export function shouldSkipKnowledgeCardDistill(text: string, hasUploads: boolean): boolean {
   if (hasUploads) return false;

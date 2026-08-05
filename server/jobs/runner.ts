@@ -2090,10 +2090,37 @@ async function processPlatformJob(
       });
       const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 
+      /**
+       * 提练费：只有前端明确带 `chargeDistillFee` 才收，也就是「纯文本长文，
+       * 用户在弹窗里选了先提练」那条路。上传文档的提练是抽文的必要环节，成本已含在页费里，不另收。
+       * 扣在**提练成功之后**：失败连扣都没扣过，不必写退款。
+       */
+      let distillFeeCharged = 0;
+      const uidForDistillFee = Number(jobUserId);
+      if (
+        params.chargeDistillFee === true &&
+        !prepared.skippedDistill &&
+        Number.isFinite(uidForDistillFee) &&
+        uidForDistillFee > 0
+      ) {
+        const { knowledgeCardDistillFeeForModel } = await import(
+          "../../shared/knowledgeCardDistillModels.js"
+        );
+        const fee = knowledgeCardDistillFeeForModel(prepared.distillModel);
+        const deducted = await deductCreditsAmount(
+          uidForDistillFee,
+          fee,
+          "knowledgeCardDistill",
+          `图文知识卡·提练（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）`,
+        );
+        distillFeeCharged = deducted.cost;
+      }
+
       return {
         provider: "evolink",
         output: {
           success: true,
+          distillFeeCharged,
           distilledMarkdown: prepared.distilledMarkdown,
           skippedDistill: prepared.skippedDistill,
           extractionMethods: extractionMethods.length ? extractionMethods : prepared.extractionMethods,

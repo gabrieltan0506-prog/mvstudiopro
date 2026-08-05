@@ -9,6 +9,7 @@
  */
 import { extractFirstChoicePlainText, type MessageContent } from "../_core/llm.js";
 import { shouldSkipKnowledgeCardDistill } from "../../shared/knowledgeCardPagination.js";
+import { suggestKnowledgeCardMinSections } from "../../shared/knowledgeCardDistillSections.js";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_KIMI,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
@@ -187,21 +188,10 @@ const EVOLINK_DIRECT_CHAT_URL = String(
 ).trim();
 
 /**
- * 目标 `##` 小节数（= 知识卡页数）。
- *
- * 用户 2026-08-05 明文口径：提练的意义是**让人快速读懂全书重点**，
- * 不是把十万字逐段搬成几十页（旧式「每 1400 字 1 节」会让 9.5 万字出 68 节，读不完等于没提练）。
- * 改为字数每翻一倍才多约 5 节：1 万字≈10 节 / 3 万字≈19 节 / 9.5 万字≈28 节，上限 36 节。
- *
- * 注意：小节数 ≠ 页数。一页横版卡片可容纳数个小节，见 `planKnowledgeCardPages`。
+ * 目标 `##` 小节数。实现已挪到 shared，前端要用同一份来预估提练后的页数
+ * （「要不要提练」的弹窗靠它算账），两边算法必须一致。
  */
-export function suggestKnowledgeCardMinSections(sourceChars: number): number {
-  const n = Math.max(0, Math.floor(Number(sourceChars) || 0));
-  if (n < 80) return 1;
-  if (n < 480) return 2;
-  if (n <= 3_000) return Math.max(3, Math.ceil(n / 700));
-  return Math.min(36, Math.max(5, Math.round(10 + 5.5 * Math.log2(n / 10_000))));
-}
+export { suggestKnowledgeCardMinSections };
 
 /** 三档默认的节内条数（Qwen 会按 profile 抬高，见 `bulletsPerSection`） */
 const DISTILL_DEFAULT_BULLETS = { min: 5, max: 9 } as const;

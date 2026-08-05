@@ -33,6 +33,26 @@ export const KNOWLEDGE_CARD_PAGE_CREDITS_BY_MODEL = {
   [KNOWLEDGE_CARD_DISTILL_MODEL_SOL]: { full: 30, discount: 24 },
 } as const;
 
+/**
+ * 提练费（一次性，与页费分开收）。
+ *
+ * 只在**纯文本且超过 `KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS`** 时向用户明示并收取：
+ * 这种情形下提练是「花小钱省大钱」——1 万字直接出图要 9 页 264 积分且整套降到 2K，
+ * 提练后落到 4 页 120 积分且保住 4K，付 50 仍净省近百。上传文档的路径不收，
+ * 那里提练是抽文的必要环节、成本已含在页费里。
+ *
+ * 三档价差对齐页费的档位语言（轻量最便宜、精细最贵），与上游成本方向一致。
+ */
+export const KNOWLEDGE_CARD_DISTILL_FEE_BY_MODEL = {
+  [KNOWLEDGE_CARD_DISTILL_MODEL_QWEN]: 30,
+  [KNOWLEDGE_CARD_DISTILL_MODEL_KIMI]: 40,
+  [KNOWLEDGE_CARD_DISTILL_MODEL_SOL]: 50,
+} as const;
+
+export function knowledgeCardDistillFeeForModel(raw?: string | null): number {
+  return KNOWLEDGE_CARD_DISTILL_FEE_BY_MODEL[resolveKnowledgeCardDistillModel(raw)];
+}
+
 export const KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS = [
   {
     id: KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
