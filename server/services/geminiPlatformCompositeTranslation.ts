@@ -398,36 +398,40 @@ export async function extractChineseVisualBrief(rawContext: string, flowLog?: st
 export const SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH = `你是一位顶尖的归纳知识内容、规划整理的知识卡片设计师（Knowledge Card Visual Designer），精通解读 Markdown 文档，擅长把"文档内容"画成知识分解图。请把下方 Markdown 切片做成**一整页连贯的单页图文知识卡片**（务必是"单页连贯"，而非 2×4 八格网格、也不是分镜表）。
 
 【任务目标】
-- 覆盖本页子标题的关键点，措辞通畅易懂；用简体中文解说。
+- 内容详尽充实、覆盖本页每个子标题的全部关键点，措辞通畅易懂；用简体中文解说。
 - 标题：采用书法楷书字体、金橙色字体并以淡蓝紫色描边包裹每个标题字，字体用渐变色，呈现优雅飘逸的美感。
-- 内文：印刷清晰、绝不可模糊；字号足够大，兼顾排版美观与可读性。
+- 内文：印刷清晰、绝不可模糊；字号比小标题小一级但仍足够大，兼顾信息量与可读性。
 
-【版式·疏朗留白（关键）】
-- **降低密度、多留白**：每页 **1 个主标题** + **有限要点**（每个子标题约 3–5 条短句即可），区块间距宽敞，勿堆字、勿贴边。
-- 不要为了塞满画布而扩写；宁可留白也不要挤成墙字。关键数据 / 方法可保留，次要展开可省略。
-- 每个汉字必须笔画清晰、不粘连、不变形；严禁生造字、错字、半个字或火星文。
+【信息密度·版式（关键）】
+- **信息密度优先、宁详勿略**：对标排版成熟、字数密集的高质量图文笔记（密度只能更高、不能更少）。每个子标题展开成 **5–9 条要点**，每条是信息完整的短句（约 12–30 字，含定义 / 数字 / 方法 / 示例）。**不要为了简洁或留白而删减内容。**
+- 一页要**装得下本页全部小节**：顶部全宽标题带 + 下方 **4–6 个模块**，用**分栏**（左右 2–3 栏）承载，每模块一个小标题 + 上述要点。
+- 模块形态按内容选：**编号卡片**（①②③ 或 1–6 圆形徽章）、**小表格**（3–5 列，表头浅色底）、**指标条**（图标 + 阈值数字）、**流程环**、**清单勾选条**。同类模块外形统一。
+- **把版面填满而不挤**：模块间用细留白带和圆角卡分隔即可，不必大片空白；但严禁文字贴边、模块重叠、要点被裁切。若排不下，改用更小的卡片与更紧的行距，而不是省略小节。
+- 关键数据 / 百分比 / 方法步骤 / 示例都要完整渲染出来。
+- 密度上来后仍要**字迹清晰**：字号足够大，每个汉字笔画清晰、不粘连、不变形、不缺笔；严禁生造字、错字、半个字或火星文。装饰花卉/蝴蝶不得压住文字。
 
 【视觉规范】
-- 主体构图：在中央或左上方放置本页核心视觉意象；摄影写实 + 透视学审美 + 艺术手稿素描结合。
-- 四周环绕模块：均匀布局、层递排列本页知识点；模块之间保留呼吸感。
-- 图标：每段内文配立体透视素描图标；色彩鲜明、对比清晰。
-- 连接结构：素描线稿与花卉/蝴蝶等点缀作视觉链接；**不要使用内部边框，立体透视素描边框只出现在最外层**；避免箭头重叠。
+- 主体构图：在左侧或某一栏放置本页核心视觉意象（人物摄影或建筑/器物插画，约占 1/4–1/3 画面）；摄影写实 + 透视学审美 + 艺术手稿素描结合。
+- 其余版面按栏铺排知识模块，阅读动线明确（左→右、上→下）；同栏模块左右对齐、宽度一致。
+- 图标：每个模块小标题旁配立体透视素描图标；色彩鲜明、对比清晰、尺寸统一。
+- 连接结构：素描线稿与花卉/蝴蝶等点缀作视觉链接与留白填充；**卡片可用圆角浅底色块，最外层保留立体透视素描边框**；避免箭头重叠压字。
 
 【内容拆解】
-- 只呈现下方提供的本页切片；排版疏朗、说明清楚、文字印刷正确。
+- 本页切片的每个小节都要成为版面上的一个可读模块，按小节顺序均匀分配；说明详细、文字印刷正确。
+- 每个模块先给**一句大纲式小标题**，再用条列式要点展开，需要举例处直接写出例子。
 - **是否在结尾生成诗词 / 书法点睛，以下方【收尾】指令为准**（默认多数页不写诗词）。
 
 【核心要求】
 - 风格混合：文艺复兴手绘插画（透视学素描）+ 绝美写实摄影立体图标；元素细腻有质感。
-- 构图：清晰有逻辑，引导视线；勿过度居中、勿填满每一个空隙。
+- 构图：清晰有逻辑，引导视线；信息量大但分区整齐，像一张精编的杂志跨页信息图。
 - 颜色：暖色调为主；背景可用爱马仕橙到浅紫渐变或宣纸/绢本底色；图标彩色；注释用橙色书法楷书、浅蓝描边。
 
-【输出格式】连贯疏朗、简体中文印刷清晰 / 高清 / 横向 16:9。`;
+【输出格式】高密度精编信息图、简体中文印刷清晰 / 高清 / 横向 16:9。`;
 
 /**
- * 英文「渲染外壳」：疏朗留白 + 简体中文清晰渲染。
+ * 英文「渲染外壳」：高密度信息板 + 简体中文清晰渲染。
  */
-export const SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN = `TEXT RENDERING (CRITICAL): All on-image text is **Simplified Chinese**. Prefer a **spacious, airy layout** — one main title, limited bullet points, generous whitespace between blocks; do NOT pack the canvas with dense walls of text. Render every Chinese glyph **crisp, print-clear and correctly-formed** — no garbled, duplicated, missing/broken strokes. Readable font size. Wide 16:9 landscape, ultra high-resolution. Do NOT add any English sentences onto the card except tiny optional accent keywords.`;
+export const SINGLE_PAGE_KNOWLEDGE_CARD_TEXT_RENDER_WRAPPER_EN = `TEXT RENDERING (CRITICAL): All on-image text is **Simplified Chinese**. The card must be **content-rich and information-dense** — include detailed bullet points (5–9 per section), key data/percentages, methods and concrete examples for EVERY section; do NOT thin out or omit content for the sake of brevity or whitespace. Layout is a **high-density editorial infographic**: full-width title band on top, then 4–6 content modules arranged in 2–3 columns — numbered cards, compact tables, metric chips with icons, checklists. Fill the canvas with well-organized information rather than large empty areas, but never let text touch edges, overlap, or get clipped. Render every Chinese glyph **crisp, print-clear and correctly-formed** — no garbled, duplicated, missing/broken strokes; legibility outranks decoration, and floral accents must not cover text. Wide 16:9 landscape, ultra high-resolution. Do NOT add any English sentences onto the card except tiny optional accent keywords.`;
 
 /** @deprecated 旧客户端上/下篇；新路径用 notePageIndex 1..12 */
 export type KnowledgeCardNotePart = "upper" | "lower";
@@ -467,7 +471,7 @@ export function buildSinglePageKnowledgeCardImagePrompt(
   const plan = planKnowledgeCardPages(scriptContext);
 
   let source = String(scriptContext || "");
-  let partDirective = `\n【收尾】本页不生成诗词、金句或书法点睛横幅；版面用于疏朗的知识点内容。`;
+  let partDirective = `\n【收尾】本页不生成诗词、金句或书法点睛横幅；版面全部用于知识点模块。`;
 
   const pageIndex = Number(opts.notePageIndex);
   if (Number.isFinite(pageIndex) && pageIndex >= 1 && plan.pages.length > 0) {
@@ -475,10 +479,10 @@ export function buildSinglePageKnowledgeCardImagePrompt(
     const idx = Math.min(plan.pages.length, Math.max(1, Math.floor(pageIndex)));
     source = plan.pages[idx - 1] || source;
     const isLast = idx >= total || idx >= plan.pages.length;
-    partDirective = `\n【分页】本页是该主题图文笔记的第 ${idx}/${total} 页。请在文档大标题末尾追加「（第 ${idx}/${total} 页）」；**只**呈现下方本页切片，做成疏朗、连贯的单页知识卡片（多留白、有限要点；不要画其他页内容）。\n${
+    partDirective = `\n【分页】本页是该主题图文笔记的第 ${idx}/${total} 页。请在文档大标题末尾追加「（第 ${idx}/${total} 页）」；**只**呈现下方本页切片，把切片里的每个小节都做成版面上的一个模块（分栏铺排、信息密度高、不要画其他页内容）。\n${
       isLast
-        ? "【收尾·末页】可选生成 **一句** 短诗词或书法点睛横幅收束全文（不要长诗占版）；也可不写诗词，保持疏朗。"
-        : "【收尾】本页不要生成诗词或书法点睛横幅；底部版面留给知识点与留白。"
+        ? "【收尾·末页】可选生成 **一句** 短诗词或书法点睛横幅收束全文（不要长诗占版）；也可不写诗词。"
+        : "【收尾】本页不要生成诗词或书法点睛横幅；底部版面留给知识点模块。"
     }`;
   } else if (opts.notePart === "upper" || opts.notePart === "lower") {
     // 旧客户端：映射到第 1 / 2 页语义
@@ -487,8 +491,8 @@ export function buildSinglePageKnowledgeCardImagePrompt(
     const label = opts.notePart === "upper" ? "上篇" : "下篇";
     partDirective =
       opts.notePart === "upper"
-        ? `\n【分页·兼容】本页标注「（${label}）」。只呈现下方切片；疏朗留白；不要诗词横幅。`
-        : `\n【分页·兼容】本页标注「（${label}）」。只呈现下方切片；疏朗留白。\n【收尾】可选一句短诗词点睛，勿占满版。`;
+        ? `\n【分页·兼容】本页标注「（${label}）」。只呈现下方切片；分栏铺排、模块整齐；不要诗词横幅。`
+        : `\n【分页·兼容】本页标注「（${label}）」。只呈现下方切片；分栏铺排、模块整齐。\n【收尾】可选一句短诗词点睛，勿占满版。`;
   } else if (plan.pages.length === 1) {
     source = plan.pages[0];
   }

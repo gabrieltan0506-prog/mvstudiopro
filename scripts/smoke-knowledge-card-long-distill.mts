@@ -12,7 +12,9 @@ import { extractDocumentText } from "../server/growth/documentExtract.ts";
 import {
   prepareKnowledgeCardCopy,
   splitSourceTextForDistill,
+  suggestKnowledgeCardMinSections,
 } from "../server/services/knowledgeCardDistill.ts";
+import { planKnowledgeCardPages } from "../shared/knowledgeCardPagination.ts";
 
 const pdfPath =
   process.env.PDF_PATH ||
@@ -50,7 +52,14 @@ async function main() {
   });
   const ms = Date.now() - t0;
   const out = String(prepared.distilledMarkdown || "").trim();
-  const h2 = (out.match(/^## /gm) || []).length;
+  const headings = (out.match(/^##\s+.*$/gm) || []).map((h) => h.replace(/^##\s+/, "").trim());
+  const plan = planKnowledgeCardPages(out, prepared.distillModel);
+
+  const outDir = path.join(process.cwd(), "tmp");
+  fs.mkdirSync(outDir, { recursive: true });
+  const outFile = path.join(outDir, `distill-${model.replace(/[^a-z0-9.]+/gi, "-")}.md`);
+  fs.writeFileSync(outFile, out, "utf8");
+
   console.log(
     JSON.stringify(
       {
@@ -58,9 +67,17 @@ async function main() {
         ms,
         model: prepared.distillModel,
         sourceChars: prepared.sourceChars,
+        targetSections: suggestKnowledgeCardMinSections(prepared.sourceChars),
+        sectionCount: headings.length,
         outChars: out.length,
-        h2Count: h2,
-        preview: out.slice(0, 240).replace(/\n/g, "\\n"),
+        // 这才是用户最终拿到的图文笔记页数
+        pageCount: plan.pageCount,
+        credits: plan.credits,
+        avgCharsPerPage: plan.pageCount
+          ? Math.round(plan.pages.reduce((a, p) => a + p.length, 0) / plan.pageCount)
+          : 0,
+        outFile,
+        outline: headings,
       },
       null,
       2,

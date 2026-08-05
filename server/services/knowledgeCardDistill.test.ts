@@ -47,8 +47,27 @@ describe("suggestKnowledgeCardMinSections", () => {
   it("scales with source length so a book is not crushed to 1 section", () => {
     expect(suggestKnowledgeCardMinSections(100)).toBeLessThanOrEqual(2);
     expect(suggestKnowledgeCardMinSections(3000)).toBeGreaterThanOrEqual(4);
-    expect(suggestKnowledgeCardMinSections(50_000)).toBeGreaterThanOrEqual(20);
-    expect(suggestKnowledgeCardMinSections(120_000)).toBe(80);
+    expect(suggestKnowledgeCardMinSections(50_000)).toBeGreaterThanOrEqual(15);
+  });
+
+  // 用户 2026-08-05：提练是取重点让人快速读懂，不是把 9.5 万字摊成几十页
+  it("stays readable for a long book instead of growing linearly", () => {
+    expect(suggestKnowledgeCardMinSections(10_000)).toBeLessThanOrEqual(12);
+    // 9.5 万字：旧式线性会要 68 节；用户选定约 28 节（并页后约 5 张卡）
+    const book = suggestKnowledgeCardMinSections(95_000);
+    expect(book).toBeGreaterThanOrEqual(24);
+    expect(book).toBeLessThanOrEqual(30);
+    // 字数再翻几倍也只多几节，且封顶 36
+    expect(suggestKnowledgeCardMinSections(300_000)).toBeLessThanOrEqual(36);
+  });
+
+  it("grows monotonically", () => {
+    const lengths = [1_000, 5_000, 20_000, 60_000, 150_000];
+    for (let i = 1; i < lengths.length; i += 1) {
+      expect(suggestKnowledgeCardMinSections(lengths[i]!)).toBeGreaterThanOrEqual(
+        suggestKnowledgeCardMinSections(lengths[i - 1]!),
+      );
+    }
   });
 });
 
