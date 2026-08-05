@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   CANVAS_IMAGE_CREDITS_PER_SHOT,
   CANVAS_VIDEO_CREDITS_CLIP,
+  CANVAS_VIDEO_CREDITS_CLIP_1080P,
+  CANVAS_VIDEO_CREDITS_CLIP_2K,
+  CANVAS_VIDEO_CREDITS_CLIP_4K,
   CANVAS_VIDEO_CREDITS_CLIP_LONG,
   canvasVideoClipCredits,
   describeCanvasVideoClipPrice,
   MANHUA_EPISODE_CREDITS,
   MANHUA_EPISODE_CREDITS_PER_SEGMENT,
+  normalizeCanvasVideoResolution,
 } from "./canvasGenerationPricing";
 
 describe("canvasVideoClipCredits", () => {
@@ -40,6 +44,35 @@ describe("canvasVideoClipCredits", () => {
 
   it("出图单价与创作台生图同档，不能回到 0", () => {
     expect(CANVAS_IMAGE_CREDITS_PER_SHOT).toBe(54);
+  });
+
+  it("画质按像素比加价，各档毛利率一致", () => {
+    expect(canvasVideoClipCredits({ resolution: "720p" })).toBe(CANVAS_VIDEO_CREDITS_CLIP);
+    expect(canvasVideoClipCredits({ resolution: "1080p" })).toBe(CANVAS_VIDEO_CREDITS_CLIP_1080P);
+    expect(canvasVideoClipCredits({ resolution: "2K" })).toBe(CANVAS_VIDEO_CREDITS_CLIP_2K);
+    expect(canvasVideoClipCredits({ resolution: "4K" })).toBe(CANVAS_VIDEO_CREDITS_CLIP_4K);
+    // 成本按像素线性涨（1080p 2.25×、2K 4×、4K 9×），售价须同步，否则高画质档吃掉毛利
+    expect(CANVAS_VIDEO_CREDITS_CLIP_1080P / CANVAS_VIDEO_CREDITS_CLIP).toBeCloseTo(2.25, 1);
+    expect(CANVAS_VIDEO_CREDITS_CLIP_2K / CANVAS_VIDEO_CREDITS_CLIP).toBeCloseTo(4, 1);
+    expect(CANVAS_VIDEO_CREDITS_CLIP_4K / CANVAS_VIDEO_CREDITS_CLIP).toBeCloseTo(9, 1);
+  });
+
+  it("缺省与脏值一律回落 720p，不会白送高画质", () => {
+    expect(normalizeCanvasVideoResolution(undefined)).toBe("720p");
+    expect(normalizeCanvasVideoResolution("8K")).toBe("720p");
+    expect(canvasVideoClipCredits({})).toBe(CANVAS_VIDEO_CREDITS_CLIP);
+    // OpenRouter 的 1K 写法等同 1080p
+    expect(normalizeCanvasVideoResolution("1k")).toBe("1080p");
+    expect(canvasVideoClipCredits({ resolution: "1k" })).toBe(CANVAS_VIDEO_CREDITS_CLIP_1080P);
+  });
+
+  it("加长档与漫剧段价不吃画质参数", () => {
+    expect(canvasVideoClipCredits({ durationSec: 30, resolution: "4K" })).toBe(
+      CANVAS_VIDEO_CREDITS_CLIP_LONG,
+    );
+    expect(canvasVideoClipCredits({ isEpisodeSegment: true, resolution: "4K" })).toBe(
+      MANHUA_EPISODE_CREDITS_PER_SEGMENT,
+    );
   });
 
   it("说明文案带出整集价", () => {

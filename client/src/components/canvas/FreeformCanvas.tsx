@@ -34,6 +34,11 @@ import {
 import {
   CANVAS_IMAGE_BATCH_OPTIONS,
 } from "@/lib/canvasCredits";
+import {
+  CANVAS_VIDEO_RESOLUTIONS,
+  canvasVideoClipCredits,
+  normalizeCanvasVideoResolution,
+} from "@shared/canvasGenerationPricing";
 import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, takeFilesFromInput, uploadCanvasFilesParallel, uploadOneCanvasAsset, CANVAS_UPLOAD_CONCURRENCY } from "@/lib/canvasUpload";
 import { loadCanvasDocumentTexts } from "@/lib/canvasDocumentText";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
@@ -1984,6 +1989,29 @@ export default function FreeformCanvas({
                                   ? "成片·H3：2K 成片，多图参考 + 运镜/动作/对白，固定 15s"
                                   : "成片·快速：多图参考 + 运镜/动作/对白，更快更省"}
                           </div>
+                          {/* 画质只对标准档开放：快速档定位是便宜快，H3 固定 2K，加长固定 720p */}
+                          {block.videoModel === "seedance-2.0" ? (
+                            <label className="flex items-center gap-2 text-[11px] text-white/70">
+                              <span className="shrink-0 text-white/45">画质</span>
+                              <select
+                                value={normalizeCanvasVideoResolution(block.videoResolution)}
+                                onChange={(e) =>
+                                  patchOne(block.id, {
+                                    videoResolution: normalizeCanvasVideoResolution(e.target.value),
+                                  })
+                                }
+                                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
+                              >
+                                {CANVAS_VIDEO_RESOLUTIONS.map((r) => (
+                                  <option key={r} value={r}>
+                                    {r}
+                                    {" · "}
+                                    {canvasVideoClipCredits({ resolution: r })} 积分/段
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          ) : null}
                           <div className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[10px] font-medium tracking-wide text-white/70">
                             {block.aspectRatio || "9:16"}
                             {" · "}

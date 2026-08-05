@@ -1020,6 +1020,8 @@ async function chargeCanvasVideoAndRun<T>(
     label: string;
     /** 探针请求（`probe=1`）：脚本没有 cookie，既不验登录也不扣费 */
     skipCharge?: boolean;
+    /** 输出分辨率：1080p 单价是 720p 的 2.25 倍 */
+    resolution?: string | null;
   },
   work: () => Promise<T>,
 ): Promise<{ ok: true; result: T; credits: number } | { ok: false; status: number; error: string }> {
@@ -1027,12 +1029,25 @@ async function chargeCanvasVideoAndRun<T>(
   const viewer = await resolveJobUser(req);
   if (!viewer) return { ok: false, status: 401, error: "请先登录后再生成成片" };
 
+  /**
+   * 成片一律限正式会员（用户 2026-08-05 明文：不开放给邀请码用户）。
+   * 邀请码兑换的只是积分，plan 仍是 free，有余额也不放行。
+   */
+  const { resolvePaidVideoAccess } = await import("../shared/paidVideoAccess.js");
+  const { getUserPlan } = await import("../server/credits.js");
+  const plan = await getUserPlan(viewer.userId).catch(() => "free");
+  const access = resolvePaidVideoAccess({ plan: String(plan || "free"), role: viewer.role });
+  if (!access.allowed) {
+    return { ok: false, status: 403, error: access.message || "成片功能仅向正式会员开放" };
+  }
+
   const { canvasVideoClipCredits } = await import("../shared/canvasGenerationPricing.js");
   const episodeIndex = Number(opts.episodeIndex);
   const isEpisodeSegment = Number.isFinite(episodeIndex) && episodeIndex > 0;
   const credits = canvasVideoClipCredits({
     durationSec: opts.durationSec ?? undefined,
     isEpisodeSegment,
+    resolution: opts.resolution ?? undefined,
   });
 
   const { deductCreditsAmount, refundCredits } = await import("../server/credits.js");
@@ -3663,7 +3678,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             {
               durationSec,
               episodeIndex: b.episodeIndex,
-              label: `画布成片·${productVersion === "2.0-fast" ? "快速" : "标准"}（${durationSec}s）`,
+              resolution,
+              label: `画布成片·${productVersion === "2.0-fast" ? "快速" : "标准"}·${resolution}（${durationSec}s）`,
               // 探针脚本没有 cookie，收费会把它们全打成 401
               skipCharge: isProbe,
             },

@@ -90,6 +90,10 @@ import {
 } from "@shared/manhuaFactoryTextOptimize";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import {
+  normalizeCanvasVideoResolution,
+  type CanvasVideoResolution,
+} from "@shared/canvasGenerationPricing";
+import {
   formatManhuaCharacterVoiceLockBlock,
   planManhuaVoiceAudioForPrompt,
   type ManhuaCharacterVoiceLock,
@@ -547,6 +551,11 @@ async function runSeedanceProductVideo(
      */
     episodeIndex?: number;
     clipIndex?: number;
+    /**
+     * 输出画质，默认 720p。标准档（2.0）可选到 4K，单价按像素翻倍（见 canvasGenerationPricing）；
+     * 快速档与 2.5 加长仍固定 720p，由服务端 normalize 兜住。
+     */
+    resolution?: CanvasVideoResolution;
   },
 ): Promise<SeedanceProductVideoResult> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
@@ -585,7 +594,7 @@ async function runSeedanceProductVideo(
         audioUrls: audioUrls.length
           ? audioUrls.slice(0, SEEDANCE_REFERENCE_MAX.audio)
           : undefined,
-        resolution: "720p",
+        resolution: normalizeCanvasVideoResolution(opts?.resolution),
         aspectRatio,
         duration,
         // 产品口径：只用引擎自带 Audio on，暂不另开后期配音 API
@@ -1334,6 +1343,7 @@ export async function runCanvasBlock(
             : undefined,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
+          resolution: block.videoResolution,
         });
         url = seedanceOut.videoUrl;
         if (useSeedance25) {
