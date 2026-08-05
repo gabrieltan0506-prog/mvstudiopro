@@ -322,7 +322,9 @@ ${cards}
 
   // ── 同步 sitemap：重写 blog 段，保留其余 ──
   let xml = await fs.readFile(SITEMAP, "utf-8");
-  xml = xml.replace(/\n\s*<!-- blog:start -->[\s\S]*?<!-- blog:end -->/g, "");
+  // 注意匹配整段注释：起始注释后面还跟着「由 … 生成」，写死 `<!-- blog:start -->`
+  // 会一次都匹配不上，于是每跑一次就往 sitemap 里再追加一个 blog 段（已重复四遍）。
+  xml = xml.replace(/\n\s*<!-- blog:start[\s\S]*?<!-- blog:end -->/g, "");
   const entries = [
     `  <url>\n    <loc>${SITE}/blog/</loc>\n    <lastmod>${posts[0].date}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n  </url>`,
     ...posts.map(
