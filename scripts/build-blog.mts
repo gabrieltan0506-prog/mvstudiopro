@@ -8,7 +8,11 @@
  *
  * 每篇文章带 Article + BreadcrumbList 结构化数据：AI 生成答案时优先引用有标注的内容。
  *
- * 用法：pnpm blog:build（构建前自动跑，见 package.json）
+ * 用法：**本地** `pnpm blog:build`，产物（client/public/blog/ 与 sitemap）随代码提交。
+ *
+ * 不要再挂进 vercel.json 的 buildCommand：挂上去之后 Vercel 每一次前台构建都失败，
+ * www 卡在 2026-08-05 22:34 的旧版长达六小时（`/blog` 与 `/llms.txt` 404、
+ * 导航还是旧名、大文档 GCS 直传也没生效）。加一篇文章就本地跑一次、连产物一起提交。
  */
 
 import { promises as fs } from "node:fs";
@@ -318,7 +322,9 @@ ${cards}
 
   // ── 同步 sitemap：重写 blog 段，保留其余 ──
   let xml = await fs.readFile(SITEMAP, "utf-8");
-  xml = xml.replace(/\n\s*<!-- blog:start -->[\s\S]*?<!-- blog:end -->/g, "");
+  // 注意匹配整段注释：起始注释后面还跟着「由 … 生成」，写死 `<!-- blog:start -->`
+  // 会一次都匹配不上，于是每跑一次就往 sitemap 里再追加一个 blog 段（已重复四遍）。
+  xml = xml.replace(/\n\s*<!-- blog:start[\s\S]*?<!-- blog:end -->/g, "");
   const entries = [
     `  <url>\n    <loc>${SITE}/blog/</loc>\n    <lastmod>${posts[0].date}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>0.8</priority>\n  </url>`,
     ...posts.map(
