@@ -6778,8 +6778,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         z.object({
           sourceText: z.string().max(400_000).optional(),
           forceDistill: z.boolean().optional(),
-          /** 试对比：qwen/qwen3.8-max | moonshotai/kimi-k3 */
-          distillModel: z.enum(["qwen/qwen3.8-max", "moonshotai/kimi-k3"]).optional(),
+          /** 默认 Evolink gpt-5.6-sol；备用 OR kimi-k3；备选 Evolink qwen3.8-max（旧 terra/OR-qwen 服务端迁） */
+          distillModel: z
+            .enum(["gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
+            .optional(),
           files: z
             .array(
               z.object({
@@ -6801,7 +6803,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           forceDistill: input.forceDistill,
           distillModel: input.distillModel,
         });
-        const plan = planKnowledgeCardPages(prepared.distilledMarkdown);
+        const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
         return {
           success: true as const,
           distilledMarkdown: prepared.distilledMarkdown,
@@ -6831,9 +6833,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             ]),
             /** 仅 single_page_knowledge_card：旧上/下篇（兼容）。 */
             notePart: z.enum(["upper", "lower"]).optional(),
-            /** 仅 single_page_knowledge_card：页码（优先于 notePart）；第 9 页起八折，页数不封顶。 */
+            /** 仅 single_page_knowledge_card：页码（优先于 notePart）；第 9 页起折扣，页数不封顶。 */
             notePageIndex: z.number().int().min(1).max(80).optional(),
             notePageTotal: z.number().int().min(1).max(80).optional(),
+            /** 仅 single_page_knowledge_card：提练模型（决定页费档位） */
+            distillModel: z
+              .enum(["gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
+              .optional(),
             /** 仅 storyboard_sheet_landscape / xiaohongshu_dual_note：2×4(默认) 或 3×4 十二格（后端分 2 段生成再 sharp 拼成一张长图，降低糊字）。 */
             gridVariant: z.enum(["2x4", "3x4"]).optional(),
             /** 可選：客戶端生成並輪詢 GET /api/jobs/:id，實時顯示 imageGenFlowLog */
@@ -6920,6 +6926,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             : input.kind === "single_page_knowledge_card"
               ? knowledgeCardCreditsForPageIndex(
                   input.notePageIndex ?? (input.notePart === "lower" ? 2 : 1),
+                  input.distillModel,
                 )
               : (is3x4Grid ? CREDIT_COSTS.platformXhsDualNote3x4 : CREDIT_COSTS.platformXhsDualNote);
 

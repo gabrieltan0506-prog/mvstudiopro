@@ -265,8 +265,11 @@ export const CREDIT_COSTS = {
   platformStoryboardSheet: 60,
   /** 图文笔记·小红书 2×4 八格 **72**（`xiaohongshu_dual_note`，非分镜主表） */
   platformXhsDualNote: 72,
-  /** 单页连贯图文知识卡片 **25/页**（前 8 页）；第 9 页起 **20/页**；提练/OCR 含在页费 */
-  platformSinglePageKnowledgeCard: 25,
+  /**
+   * 单页连贯图文知识卡片默认展示价（提练·精细）；
+   * 实际扣费按模型：精细 30/24、均衡 27/22、轻量 24/19（前 8 满价 / 其后折扣）。
+   */
+  platformSinglePageKnowledgeCard: 30,
   /** 自定义文案 · 深度优化（纯 LLM，无出图；GPT-5.5 结构化改写） */
   platformOptimizeCustomCopy: 25,
   /**

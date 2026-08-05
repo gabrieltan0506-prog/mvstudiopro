@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  KNOWLEDGE_CARD_DISTILL_MODEL_KIMI,
+  KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+  KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+} from "./knowledgeCardDistillModels";
+import {
   KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE,
   knowledgeCardCreditsForPageIndex,
   knowledgeCardCreditsForPages,
@@ -14,12 +19,17 @@ function repeatBlock(label: string, chars: number): string {
 }
 
 describe("knowledgeCardCreditsForPages", () => {
-  it("matches pricing table and continues past 12", () => {
-    expect(knowledgeCardCreditsForPages(4)).toBe(100);
-    expect(knowledgeCardCreditsForPages(8)).toBe(200);
-    expect(knowledgeCardCreditsForPages(10)).toBe(240);
-    expect(knowledgeCardCreditsForPages(12)).toBe(280);
-    expect(knowledgeCardCreditsForPages(15)).toBe(280 + 3 * 20);
+  it("defaults to 精细(Sol) 30/24", () => {
+    expect(knowledgeCardCreditsForPages(4)).toBe(120);
+    expect(knowledgeCardCreditsForPages(8)).toBe(240);
+    expect(knowledgeCardCreditsForPages(10)).toBe(240 + 2 * 24);
+    expect(knowledgeCardCreditsForPages(15)).toBe(240 + 7 * 24);
+  });
+
+  it("tiers by distill model", () => {
+    expect(knowledgeCardCreditsForPages(4, KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toBe(96);
+    expect(knowledgeCardCreditsForPages(4, KNOWLEDGE_CARD_DISTILL_MODEL_KIMI)).toBe(108);
+    expect(knowledgeCardCreditsForPages(4, KNOWLEDGE_CARD_DISTILL_MODEL_SOL)).toBe(120);
   });
 
   it("floors invalid", () => {
@@ -29,11 +39,18 @@ describe("knowledgeCardCreditsForPages", () => {
 });
 
 describe("knowledgeCardCreditsForPageIndex", () => {
-  it("full price 1–8, discount from 9 onward", () => {
-    expect(knowledgeCardCreditsForPageIndex(1)).toBe(25);
-    expect(knowledgeCardCreditsForPageIndex(8)).toBe(25);
-    expect(knowledgeCardCreditsForPageIndex(9)).toBe(20);
-    expect(knowledgeCardCreditsForPageIndex(20)).toBe(20);
+  it("full price 1–8, discount from 9 onward (Sol default)", () => {
+    expect(knowledgeCardCreditsForPageIndex(1)).toBe(30);
+    expect(knowledgeCardCreditsForPageIndex(8)).toBe(30);
+    expect(knowledgeCardCreditsForPageIndex(9)).toBe(24);
+    expect(knowledgeCardCreditsForPageIndex(20)).toBe(24);
+  });
+
+  it("uses Qwen/Kimi page rates", () => {
+    expect(knowledgeCardCreditsForPageIndex(1, KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toBe(24);
+    expect(knowledgeCardCreditsForPageIndex(9, KNOWLEDGE_CARD_DISTILL_MODEL_QWEN)).toBe(19);
+    expect(knowledgeCardCreditsForPageIndex(1, KNOWLEDGE_CARD_DISTILL_MODEL_KIMI)).toBe(27);
+    expect(knowledgeCardCreditsForPageIndex(9, KNOWLEDGE_CARD_DISTILL_MODEL_KIMI)).toBe(22);
   });
 });
 
@@ -62,13 +79,14 @@ describe("planKnowledgeCardPages", () => {
       pageCount: 0,
       credits: 0,
       roundText: "",
+      distillModel: KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
     });
   });
 
   it("keeps very short text as 1 page", () => {
     const plan = planKnowledgeCardPages("短文一条要点即可。");
     expect(plan.pageCount).toBe(1);
-    expect(plan.credits).toBe(25);
+    expect(plan.credits).toBe(30);
   });
 
   it("splits mid-length prose into about 4–8 pages", () => {

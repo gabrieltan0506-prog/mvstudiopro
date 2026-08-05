@@ -137,7 +137,8 @@ import {
 } from "@shared/knowledgeCardPagination";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS,
-  KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
+  KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
+  resolveKnowledgeCardDistillModel,
   type KnowledgeCardDistillModelId,
 } from "@shared/knowledgeCardDistillModels";
 import {
@@ -2150,10 +2151,10 @@ export default function PlatformPage() {
   const [customNoteDistillModel, setCustomNoteDistillModel] = useState<KnowledgeCardDistillModelId>(() => {
     try {
       const raw = localStorage.getItem("mvs-knowledge-card-distill-model");
-      const hit = KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.find((o) => o.id === raw);
-      return hit?.id ?? KNOWLEDGE_CARD_DISTILL_MODEL_QWEN;
+      // 旧 terra / OR-qwen slug 由 resolve 迁到 Sol / Evolink Qwen
+      return resolveKnowledgeCardDistillModel(raw);
     } catch {
-      return KNOWLEDGE_CARD_DISTILL_MODEL_QWEN;
+      return KNOWLEDGE_CARD_DISTILL_MODEL_SOL;
     }
   });
   /** 待随「生成」一并提练的上传文件（含图片 OCR）。 */
@@ -5816,10 +5817,12 @@ export default function PlatformPage() {
   const optimizeCustomCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
   const customOptimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy;
   const customNoteKnowledgePlan = useMemo(
-    () => planKnowledgeCardPages(customNoteText),
-    [customNoteText],
+    () => planKnowledgeCardPages(customNoteText, customNoteDistillModel),
+    [customNoteText, customNoteDistillModel],
   );
-  const customNoteKnowledgeCredits = customNoteKnowledgePlan.credits || knowledgeCardCreditsForPages(customNoteKnowledgePlan.pageCount || 0);
+  const customNoteKnowledgeCredits =
+    customNoteKnowledgePlan.credits ||
+    knowledgeCardCreditsForPages(customNoteKnowledgePlan.pageCount || 0, customNoteDistillModel);
 
   /**
    * 生成一張卡片：同步回 imageUrl 直接用；非同步回 progressJobId 則輪詢至終態取圖。
@@ -5851,6 +5854,7 @@ export default function PlatformPage() {
         : notePart
           ? { notePart }
           : {}),
+      ...(kind === "single_page_knowledge_card" ? { distillModel: customNoteDistillModel } : {}),
       imagePromptTranslator: COMPOSITE_SHEET_IMAGE_PROMPT_TRANSLATOR,
       progressJobId,
       enabledSkillIds: Array.from(enabledPlatformSkillIds),
@@ -5951,18 +5955,26 @@ export default function PlatformPage() {
         setCustomNotePendingMeta([]);
         setCustomNoteUploadStatus(null);
         setCustomNoteDistillPhase("ready");
-        // 让文本框先渲染提练稿，再开始烧图
+        // 让文本框先渲染提练稿
         await new Promise<void>((r) => requestAnimationFrame(() => r()));
-        const plan = planKnowledgeCardPages(distilled);
+        const plan = planKnowledgeCardPages(distilled, customNoteDistillModel);
         const pages = plan.pages.length ? plan.pages : [distilled];
         const total = pages.length;
         const q = knowledgeCardImageQuality(total);
         const qLabel = q === "high" ? "4K" : "2K";
-        if (!prepared.skippedDistill) {
-          toast.success(`提练完成 · 约 ${total} 页 · 出图 ${qLabel}，已写入上方文本框`);
-        } else {
-          toast.success(`开始出图 · 约 ${total} 页 · ${qLabel}`);
+        const credits = plan.credits || knowledgeCardCreditsForPages(total, customNoteDistillModel);
+        // 提练后先问用户是否继续出图（避免长书直接烧满页积分）
+        setCustomNoteBusy(false);
+        const continueGen = window.confirm(
+          `提练完成，约 ${total} 页图文笔记（出图 ${qLabel}，约 ${credits} 积分）。\n\n是否继续出图？\n选「取消」将保留上方提练稿，不出图。`,
+        );
+        if (!continueGen) {
+          toast.success(`已保留提练稿（约 ${total} 页），未出图`);
+          setCustomNoteDistillPhase("idle");
+          return;
         }
+        setCustomNoteBusy(true);
+        toast.success(`开始出图 · ${total} 页 · ${qLabel}`);
         const urls: string[] = [];
         for (let i = 0; i < total; i++) {
           setCustomNotePageProgress({ i: i + 1, n: total });
@@ -5976,7 +5988,7 @@ export default function PlatformPage() {
           setCustomNoteImageUpper(urls[0] ?? null);
           setCustomNoteImageLower(urls[1] ?? null);
         }
-        toast.success(`已生成 ${total} 页图文笔记（${qLabel} · 约 ${plan.credits} 积分）`);
+        toast.success(`已生成 ${total} 页图文笔记（${qLabel} · 约 ${credits} 积分）`);
         setCustomNoteDistillPhase("idle");
       } else {
         setCustomNotePartInFlight(null);
@@ -11397,25 +11409,23 @@ export default function PlatformPage() {
                               ...docs.map((f) => ({ fileName: f.fileName || "文档", kind: "doc" as const })),
                               ...imgEncoded.map((f) => ({ fileName: f.fileName || "图片", kind: "image" as const })),
                             ]);
-                            let extractedChars = 0;
+                            // 一气呵成：上传只暂存，不把 OCR/抽文生文本灌进框；生成时再一次性读文/读图+提练
+                            let probeChars = 0;
                             if (docs.length) {
                               const res = await extractPlatformDocumentTextMutation.mutateAsync({ files: docs });
-                              const extracted = String(res.text || "").trim();
-                              extractedChars = extracted.length;
-                              if (extracted) {
-                                setCustomNoteText((prev) => (prev.trim() ? `${prev.trim()}\n\n${extracted}` : extracted));
-                              }
+                              probeChars = String(res.text || "").trim().length;
                             }
                             const imgN = imgEncoded.length;
-                            if (docs.length && extractedChars < 40 && imgN === 0) {
-                              const failMsg = "上传成功但未抽出可用文字（扫描版 PDF 请换可选中文字的版本，或上传关键页图片）";
+                            if (docs.length && probeChars < 40 && imgN === 0) {
+                              const failMsg = "上传成功但未探测到可用文字（扫描版 PDF 请换可选中文字的版本，或上传关键页图片）";
                               setCustomNoteUploadStatus(failMsg);
                               toast.error(failMsg);
                             } else {
                               const okMsg =
-                                `上传成功：${encoded.length} 个文件` +
-                                (docs.length ? ` · 文档已抽出 ${extractedChars} 字写入文本框` : "") +
-                                (imgN > 0 ? ` · ${imgN} 张图片待生成时读图` : "");
+                                `上传成功：已暂存 ${encoded.length} 个文件` +
+                                (docs.length ? ` · 文档约 ${probeChars} 字` : "") +
+                                (imgN > 0 ? ` · ${imgN} 张图` : "") +
+                                " · 点生成时一次性读文/读图并提练";
                               setCustomNoteUploadStatus(okMsg);
                               toast.success(okMsg);
                             }
@@ -11431,10 +11441,10 @@ export default function PlatformPage() {
                     />
                   </label>
                   <span className="text-[11px] text-[#c9c0e6]/45">
-                    选择文件后会暂存，点生成时提练（图片走读图）
+                    选择文件后只暂存；点生成时一次性读文/读图 OCR + 提练（不先灌生文本）
                   </span>
                   {customNoteUploadStatus ? (
-                    <span className={`w-full text-[11px] leading-5 ${customNoteUploadStatus.startsWith("上传失败") || customNoteUploadStatus.includes("未抽出") ? "text-rose-300/90" : "text-emerald-300/85"}`}>
+                    <span className={`w-full text-[11px] leading-5 ${customNoteUploadStatus.startsWith("上传失败") || customNoteUploadStatus.includes("未探测") || customNoteUploadStatus.includes("未抽出") ? "text-rose-300/90" : "text-emerald-300/85"}`}>
                       {customNoteUploadStatus}
                     </span>
                   ) : null}
@@ -11449,7 +11459,7 @@ export default function PlatformPage() {
                     <span className="w-full text-[11px] text-amber-200/85">正在提练，完成后会写入上方文本框再出图…</span>
                   ) : null}
                   {customNoteDistillPhase === "ready" ? (
-                    <span className="w-full text-[11px] text-emerald-300/85">提练稿已写入文本框，正在按页出图…</span>
+                    <span className="w-full text-[11px] text-emerald-300/85">提练稿已写入文本框；确认后将按页出图…</span>
                   ) : null}
                   {canConfigureStage2CopyEngine ? (
                     <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
@@ -11470,7 +11480,7 @@ export default function PlatformPage() {
                       >
                         {KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS.map((o) => (
                           <option key={o.id} value={o.id}>
-                            {o.labelZh}
+                            {o.labelZh} · {o.creditsFull}积分/页
                           </option>
                         ))}
                       </select>
