@@ -191,7 +191,7 @@ const CAROUSEL_CARDS = [
 const WORKFLOW_LINKS: { href: string; label: string }[] = [
   { href: "/platform", label: "平台创作" },
   // 竞品调研内测中：暂不给链接（战略智库 /research?tab=god-view 不受影响，仍在售）
-  { href: "/canvas", label: "一战成片影像创作台" },
+  { href: "/canvas", label: "一战成片" },
 ];
 
 function MergedGodResearchCard({ isMobile }: { isMobile: boolean }) {
