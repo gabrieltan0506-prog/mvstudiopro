@@ -14,7 +14,7 @@ import {
 const nav = [
   ["首页", "Home", "/"],
   ["平台创作", "Platform", "/platform"],
-  ["竞品调研", "Research", "/research"],
+  // 竞品调研内测中：首页导航暂不给链接（标注见 HomeHero 卡片）
   ["Omini，Seedance 2.X画布", "Canvas", "/canvas"],
 ];
 
@@ -472,13 +472,7 @@ export default function HomeNavbar() {
                       >
                         平台创作
                       </a>
-                      <a
-                        href="/research"
-                        style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.82)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
-                        onClick={() => setMenuOpen(false)}
-                      >
-                        竞品调研
-                      </a>
+                      {/* 竞品调研内测中：暂不给链接 */}
                       <a
                         href="/canvas"
                         style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.82)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}

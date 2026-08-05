@@ -2,6 +2,13 @@ import React, { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { ArrowLeft, BookOpen, Crown, Loader2, Radar, Search, Sparkles, Users } from "lucide-react";
 import { ResearchHubEmbedProvider } from "@/lib/researchHubContext";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { hasSupervisorAccess } from "@/lib/supervisorAccess";
+import {
+  canOpenCompetitorResearch,
+  COMPETITOR_RESEARCH_BETA_LABEL_ZH,
+  COMPETITOR_RESEARCH_BETA_NOTE_ZH,
+} from "@/lib/competitorResearchBeta";
 
 const ResearchPage = lazy(() => import("./ResearchPage"));
 const GodViewPage = lazy(() => import("./GodViewPage"));
@@ -35,10 +42,37 @@ function parseTab(search: string): ResearchHubTab {
   return "research";
 }
 
-function TabPanel({ tab }: { tab: ResearchHubTab }) {
+/** 竞品调研内测中的占位页：链接虽已隐藏，直接输 URL 也要挡住 */
+function CompetitorResearchBetaNotice() {
+  return (
+    <div className="mx-auto flex max-w-[560px] flex-col items-center gap-4 px-6 py-24 text-center">
+      <span className="rounded-full bg-amber-400/15 px-3 py-1 text-[11px] font-bold text-amber-300">
+        {COMPETITOR_RESEARCH_BETA_LABEL_ZH}
+      </span>
+      <h2 className="text-xl font-black text-white">竞品调研正在内测</h2>
+      <p className="text-[13px] leading-relaxed text-white/55">{COMPETITOR_RESEARCH_BETA_NOTE_ZH}</p>
+      <div className="mt-2 flex flex-wrap justify-center gap-2">
+        <Link
+          href="/platform"
+          className="rounded-xl bg-[linear-gradient(135deg,#fb923c,#ea580c)] px-4 py-2 text-[13px] font-bold text-white no-underline"
+        >
+          去平台创作
+        </Link>
+        <Link
+          href="/research?tab=god-view"
+          className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-[13px] font-semibold text-white/80 no-underline"
+        >
+          看战略智库
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function TabPanel({ tab, canResearch }: { tab: ResearchHubTab; canResearch: boolean }) {
   switch (tab) {
     case "research":
-      return <ResearchPage />;
+      return canResearch ? <ResearchPage /> : <CompetitorResearchBetaNotice />;
     case "god-view":
       return <GodViewPage />;
     case "competitor-radar":
@@ -48,12 +82,14 @@ function TabPanel({ tab }: { tab: ResearchHubTab }) {
     case "vip-tracker":
       return <VipTrackerPage />;
     default:
-      return <ResearchPage />;
+      return canResearch ? <ResearchPage /> : <CompetitorResearchBetaNotice />;
   }
 }
 
 export default function ResearchHubPage() {
   const [location, setLocation] = useLocation();
+  const { user } = useAuth();
+  const canResearch = canOpenCompetitorResearch(user?.role) || hasSupervisorAccess();
   const [tab, setTabState] = useState<ResearchHubTab>(() =>
     parseTab(typeof window !== "undefined" ? window.location.search : ""),
   );
@@ -85,22 +121,30 @@ export default function ResearchHubPage() {
             <span className="text-sm font-black tracking-tight">竞品调研 Hub</span>
           </div>
           <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-0.5 md:justify-end md:overflow-visible [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {TABS.map(({ id, label, hint, icon: Icon }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setTab(id)}
-                className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-left transition ${
-                  tab === id
-                    ? "bg-[linear-gradient(135deg,#fb923c,#ea580c)] text-white shadow-sm"
-                    : "border border-white/10 bg-black/30 text-white/75 hover:text-white"
-                }`}
-              >
-                <Icon className="h-3.5 w-3.5 shrink-0 opacity-90" />
-                <span className="text-[12px] font-semibold leading-none">{label}</span>
-                <span className="hidden text-[10px] opacity-70 sm:inline">{hint}</span>
-              </button>
-            ))}
+            {TABS.map(({ id, label, hint, icon: Icon }) => {
+              const beta = id === "research" && !canResearch;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setTab(id)}
+                  title={beta ? COMPETITOR_RESEARCH_BETA_NOTE_ZH : undefined}
+                  className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-left transition ${
+                    tab === id
+                      ? "bg-[linear-gradient(135deg,#fb923c,#ea580c)] text-white shadow-sm"
+                      : beta
+                        ? "border border-white/10 bg-black/20 text-white/40"
+                        : "border border-white/10 bg-black/30 text-white/75 hover:text-white"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0 opacity-90" />
+                  <span className="text-[12px] font-semibold leading-none">{label}</span>
+                  <span className="hidden text-[10px] opacity-70 sm:inline">
+                    {beta ? COMPETITOR_RESEARCH_BETA_LABEL_ZH : hint}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -113,7 +157,7 @@ export default function ResearchHubPage() {
         }
       >
         <ResearchHubEmbedProvider>
-          <TabPanel tab={tab} />
+          <TabPanel tab={tab} canResearch={canResearch} />
         </ResearchHubEmbedProvider>
       </Suspense>
     </div>

@@ -1,9 +1,15 @@
 /**
- * 竞品调研双引擎服务
- * Stage 1：**默认 gemini-3-flash-preview** — **Vertex IAM**（与 TestLab `vertexTranslate` 同闸道：`VERTEX_PROJECT_ID` + SA，不用 `GEMINI_API_KEY`）
- * · 可选 **`RESEARCH_STAGE1_MODEL`** 覆盖为其它走 **Generativelanguage** 的模型 id；**`gemma-4-31b-it` 已从竞品调研移除**，若環境變數仍為該值將告警並強制回退為 Flash
- * Stage 2：固定 **`RESEARCH_STAGE2_MODEL`（`gemini-3.1-pro-preview`）** — **Vertex IAM REST**，不经 GEMINI_API_KEY。  
- * · **`gemini-3.1-pro`**（無 `-preview`）永不**走 Generativelanguage Consumer**，於 {@link generate} 末尾顯式拒絕（歷史上亦未使用該路由）。
+ * 竞品调研双段服务。
+ *
+ * 用户 2026-08-05 明文：竞品调研先把模型换掉，Gemini 那套拿掉；入口链接暂时隐藏，
+ * 等 `/canvas` 修好再开放。
+ *
+ * Stage 1 / Stage 2 现在都默认 **GPT-5.6 Sol Ultra**（`gpt-5.6-sol` + Responses `reasoning.mode: "pro"`
+ * 最高 effort，官方失败自动回退 Chat Completions）。
+ *
+ * 旧的 Gemini 路由保留为逃生门：设 `RESEARCH_STAGE1_MODEL=gemini-3-flash-preview`
+ * 或 `RESEARCH_STAGE2_MODEL=gemini-3.1-pro-preview` 即可切回 Vertex。
+ * `gemini-3.1-pro`（無 `-preview`）永不走 Generativelanguage Consumer，於 {@link generate} 末尾顯式拒絕。
  */
 import fs from "fs/promises";
 import path from "path";
@@ -14,21 +20,36 @@ import { describeVertexGemini31ProRouting } from "./vertexGemini31ProGlobal.js";
 const BACKUP_DIR = "/data/growth/research";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Stage 1 模型 ID；默認 `gemini-3-flash-preview`（Vertex）。`gemma-4-31b-it` 已不再支援，見實作內告警與回退。 */
+/**
+ * 竞品调研两段都跑 **GPT-5.6 Sol Ultra**（用户 2026-08-05 明文：把竞品调研模型换掉，Gemini 那套拿掉）。
+ *
+ * 「Ultra」不是独立的上游 model slug —— GPT-5.6 的高档由 Responses API 的
+ * `reasoning.mode: "pro"` + 最高 effort 表达（见 `gpt56ResponsesClient.ts`），
+ * 所以这里是内部路由标识，实际请求打的是 `gpt-5.6-sol` + pro/max 推理。
+ *
+ * @see https://developers.openai.com/api/reference/overview
+ */
+export const RESEARCH_MODEL_SOL_ULTRA = "gpt-5.6-sol-ultra" as const;
+/** 对外可见称呼（用户明文授权写出引擎名） */
+export const RESEARCH_MODEL_SOL_ULTRA_LABEL = "GPT-5.6 Sol Ultra" as const;
+
+/** Stage 1 模型 ID；默認 Sol Ultra。`RESEARCH_STAGE1_MODEL` 仍可覆盖为 Gemini 逃生门。 */
 export function resolveResearchStage1Model(): string {
   const m = String(process.env.RESEARCH_STAGE1_MODEL || "").trim();
-  if (!m) return "gemini-3-flash-preview";
+  if (!m) return RESEARCH_MODEL_SOL_ULTRA;
   if (m === "gemma-4-31b-it") {
     console.warn(
-      "[researchService] RESEARCH_STAGE1_MODEL=gemma-4-31b-it 已废弃；竞品调研 Stage 1 强制使用 gemini-3-flash-preview（Vertex）",
+      "[researchService] RESEARCH_STAGE1_MODEL=gemma-4-31b-it 已废弃；竞品调研 Stage 1 回退 Sol Ultra",
     );
-    return "gemini-3-flash-preview";
+    return RESEARCH_MODEL_SOL_ULTRA;
   }
   return m;
 }
 
-/** Stage 2：Vertex 文本節點使用的官方預覽版模型 ID（與 `api/google.ts` geminiScript、`VERTEX_GEMINI_MODEL` 預設一致）。 */
-const RESEARCH_STAGE2_MODEL = "gemini-3.1-pro-preview" as const;
+/** Stage 2 模型 ID；默認 Sol Ultra，`RESEARCH_STAGE2_MODEL` 可覆盖。 */
+export function resolveResearchStage2Model(): string {
+  return String(process.env.RESEARCH_STAGE2_MODEL || "").trim() || RESEARCH_MODEL_SOL_ULTRA;
+}
 
 /**
  * 调用生成模型（本檔內僅 Stage1/Stage2 調用；**順序依 Stage1 常用路徑排在前面**，與 Stage 編號無必然對應）：
@@ -37,6 +58,31 @@ const RESEARCH_STAGE2_MODEL = "gemini-3.1-pro-preview" as const;
  * - 其余 model id → Generativelanguage（**禁止** `gemini-3.1-pro` / 誤配 preview 走此路；見下方擋牆）
  */
 async function generate(model: string, prompt: string, retries = 2): Promise<string> {
+  if (model === RESEARCH_MODEL_SOL_ULTRA) {
+    const { invokeGpt56ResponsesText } = await import("./gpt56ResponsesClient.js");
+    for (let i = 0; i <= retries; i++) {
+      try {
+        return await invokeGpt56ResponsesText({
+          input: prompt,
+          // Ultra = Sol + Pro 推理最高档
+          reasoningMode: "pro",
+          reasoningEffort: "max",
+          jsonObject: true,
+          timeoutMs: 480_000,
+        });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if ((msg.includes("429") || /rate.?limit/i.test(msg)) && i < retries) {
+          console.log(`[researchService] Sol Ultra 429/限流，${5 * (i + 1)}s 后重试…`);
+          await sleep(5000 * (i + 1));
+          continue;
+        }
+        throw e;
+      }
+    }
+    return "";
+  }
+
   if (model === "gemini-3-flash-preview") {
     const { vertexGemini3FlashGenerateContent } = await import("./vertexGemini3FlashText.js");
     for (let i = 0; i <= retries; i++) {
@@ -59,7 +105,7 @@ async function generate(model: string, prompt: string, retries = 2): Promise<str
     return "";
   }
 
-  if (model === RESEARCH_STAGE2_MODEL) {
+  if (model === "gemini-3.1-pro-preview") {
     const { callGemini3_1_Pro } = await import("./vertexGemini31ProGlobal.js");
     for (let i = 0; i <= retries; i++) {
       try {
@@ -298,13 +344,20 @@ ${platformContext}
     throwResearchWithDebug(pipelineDebug, e instanceof Error ? e.message : String(e));
   }
 
-  // ── Stage 2: Gemini 3.1 Pro Preview（Vertex aiplatform 實際 model id） ────
-  console.log(`[researchService] Stage 2 Gemini 3.1 Pro Preview 启动`);
-  push("stage2_prescription", "start", `Vertex IAM REST · ${describeVertexGemini31ProRouting()}`);
+  // ── Stage 2：默认 Sol Ultra（RESEARCH_STAGE2_MODEL 可覆盖回 Gemini） ────
+  const stage2Model = resolveResearchStage2Model();
+  console.log(`[researchService] Stage 2 启动 · model=${stage2Model}`);
+  push(
+    "stage2_prescription",
+    "start",
+    stage2Model === RESEARCH_MODEL_SOL_ULTRA
+      ? `${RESEARCH_MODEL_SOL_ULTRA_LABEL} · Responses Pro 推理`
+      : `Vertex IAM REST · ${describeVertexGemini31ProRouting()}`,
+  );
   let stage2Raw: string;
   try {
     stage2Raw = await generate(
-    RESEARCH_STAGE2_MODEL,
+    stage2Model,
     `你是集成了哈佛商学院竞争战略与${label}平台算法的顶级IP策略师，同时担任多模态视听导演。
 
 【竞品扫描报告（Stage 1）】

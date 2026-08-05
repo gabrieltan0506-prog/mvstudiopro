@@ -260,20 +260,14 @@ const PLATFORM_COPY_LLM_ENGINE_LS_KEY = "mvstudiopro.platform.copyLlmEngine.v1";
 const PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY = "mvstudiopro.platform.stage2SupervisorCopyEngine.v1";
 type PlatformCopyLlmEngine = "vertex" | "openai";
 
-/** 创作顾问问答模型（所有登录用户可选；Sol/Terra 免费额度与超额单价不同） */
-const PLATFORM_SKILL_QA_MODEL_LS_KEY = "mvstudiopro.platform.skillQaModel.v2";
+/**
+ * 创作顾问问答档位。
+ *
+ * 用户 2026-08-05 明文**去掉深度档**，只留标准档：两档实际推理都是 Kimi K3，
+ * 差异仅在每日免费次数与超额单价，双档只会让用户多做一次无意义的选择。
+ * 服务端仍认 sol 参数（将来要恢复不必改后端），前台不再提供入口。
+ */
 type PlatformSkillQaModelChoice = "gpt-5.6-terra" | "gpt-5.6-sol";
-
-function readPlatformSkillQaModelFromLs(): PlatformSkillQaModelChoice {
-  if (typeof window === "undefined") return "gpt-5.6-terra";
-  try {
-    const raw = window.localStorage.getItem(PLATFORM_SKILL_QA_MODEL_LS_KEY);
-    if (raw === "gpt-5.6-sol" || raw === "sol") return "gpt-5.6-sol";
-  } catch {
-    /* ignore */
-  }
-  return "gpt-5.6-terra";
-}
 
 /** /platform 挂载 Skill：勾选 id 列表（JSON string[]） */
 /** v2：默认只开核心 Skill；旧 v1 全开记忆不再沿用 */
@@ -2018,8 +2012,11 @@ export default function PlatformPage() {
   const canConfigureStage2CopyEngine =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
 
-  /** 创作顾问：所有登录用户可选 Sol / Terra（计费不同） */
-  const canConfigureSkillQaModel = Boolean(isAuthenticated);
+  /**
+   * 图文知识卡提练三档（精细 / 均衡 / 轻量）：用户 2026-08-05 明文开放给所有登录用户自选，
+   * 不再只对 supervisor 可见（页费按档位不同，见 KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS）。
+   */
+  const canChooseKnowledgeCardDistillModel = Boolean(isAuthenticated);
 
   const [platformCopyLlmEngine, setPlatformCopyLlmEngine] = useState<PlatformCopyLlmEngine>(() =>
     readPlatformCopyLlmEngineFromLs(),
@@ -2435,16 +2432,8 @@ export default function PlatformPage() {
   const [skillQaQuestion, setSkillQaQuestion] = useState("");
   const [skillQaAnswer, setSkillQaAnswer] = useState("");
   const [skillQaRemaining, setSkillQaRemaining] = useState<number | null>(null);
-  const [skillQaModel, setSkillQaModel] = useState<PlatformSkillQaModelChoice>(() =>
-    readPlatformSkillQaModelFromLs(),
-  );
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(PLATFORM_SKILL_QA_MODEL_LS_KEY, skillQaModel);
-    } catch {
-      /* ignore */
-    }
-  }, [skillQaModel]);
+  // 只剩标准档：不再有切换入口，也不必读写 localStorage
+  const [skillQaModel] = useState<PlatformSkillQaModelChoice>("gpt-5.6-terra");
   const [skillQaImageOffer, setSkillQaImageOffer] = useState<null | {
     creationRelated: boolean;
     suggestedPrompt: string;
@@ -3607,43 +3596,14 @@ export default function PlatformPage() {
           <div className="min-w-0 flex-1">
             <div className="text-[12px] font-semibold text-white/90">创作顾问问答</div>
             <p className="mt-0.5 text-[10px] leading-snug text-gray-500">
-              可问创作 / Skill / 运营等问题。
-              {skillQaModel === "gpt-5.6-sol" ? (
-                <>
-                  {" "}
-                  Sol 每日免费 {PLATFORM_SKILL_QA_SOL_DAILY_FREE} 次
-                  {skillQaRemaining != null ? ` · 今日剩 ${skillQaRemaining}` : ""}
-                  ，超额 {platformSkillQaPaidCredits("sol")} 积分/次。
-                </>
-              ) : (
-                <>
-                  {" "}
-                  Terra 每日免费 {PLATFORM_SKILL_QA_TERRA_DAILY_FREE} 次
-                  {skillQaRemaining != null ? ` · 今日剩 ${skillQaRemaining}` : ""}
-                  ，超额 {platformSkillQaPaidCredits("terra")} 积分/次。
-                </>
-              )}{" "}
-              生图另计：首张九折 {CREDIT_COSTS.platformSkillQaImageFirst} 点，之后{" "}
+              可问创作 / Skill / 运营等问题。 每日免费 {PLATFORM_SKILL_QA_TERRA_DAILY_FREE} 次
+              {skillQaRemaining != null ? ` · 今日剩 ${skillQaRemaining}` : ""}
+              ，超额 {platformSkillQaPaidCredits("terra")} 积分/次。 生图另计：首张九折{" "}
+              {CREDIT_COSTS.platformSkillQaImageFirst} 点，之后{" "}
               {CREDIT_COSTS.platformTopicFrameGraphic} 点。
             </p>
           </div>
-          {canConfigureSkillQaModel ? (
-            <label className="flex shrink-0 flex-col gap-1 text-[10px] text-[#8cefff]/90">
-              <span className="font-semibold uppercase tracking-[0.12em]">问答模型</span>
-              <select
-                value={skillQaModel}
-                onChange={(e) => {
-                  const next = e.target.value === "gpt-5.6-sol" ? "gpt-5.6-sol" : "gpt-5.6-terra";
-                  setSkillQaModel(next);
-                  setSkillQaRemaining(null);
-                }}
-                className="rounded-md border border-[#49e6ff]/35 bg-black/50 px-2 py-1.5 text-[11px] font-semibold text-white focus:border-[#49e6ff]/60 focus:outline-none"
-              >
-                <option value="gpt-5.6-terra">5.6 Terra · 免{PLATFORM_SKILL_QA_TERRA_DAILY_FREE}次</option>
-                <option value="gpt-5.6-sol">5.6 Sol · 免{PLATFORM_SKILL_QA_SOL_DAILY_FREE}次</option>
-              </select>
-            </label>
-          ) : null}
+          {/* 深度档已下线：只剩一档，不再放选择器（用户 2026-08-05 明文） */}
         </div>
         <textarea
           value={skillQaQuestion}
@@ -11553,9 +11513,9 @@ export default function PlatformPage() {
                   {customNoteDistillPhase === "ready" ? (
                     <span className="w-full text-[11px] text-emerald-300/85">提练稿已写入文本框；确认后将按页出图…</span>
                   ) : null}
-                  {canConfigureStage2CopyEngine ? (
+                  {canChooseKnowledgeCardDistillModel ? (
                     <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
-                      <span className="shrink-0">提练模型</span>
+                      <span className="shrink-0">提练档位</span>
                       <select
                         className="rounded-md border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-semibold text-white focus:border-[#ff4fb8]/50 focus:outline-none"
                         value={customNoteDistillModel}

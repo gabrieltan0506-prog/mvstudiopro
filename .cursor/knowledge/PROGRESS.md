@@ -347,6 +347,18 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 **真 API 探针（FDE PDF 95356 字，四轮）**：`scripts/smoke-knowledge-card-long-distill.mts` 现直接报小节数 / 页数 / 积分 / 大纲。三档均收到目标节数；Kimi 话最多（成稿字数最高 → 页数最多），Qwen 段最小（14 段）。
 
+**Seedance 2.5 定 8/8 上线**：`shared/seedance25Access.ts` 统一闸门（到点自动开放 · 仅 pro/enterprise · supervisor 提前可用），首页复用 `LaunchCountdownBanner` 读秒。
+
+**首页顶级引擎宣传区**（用户明文授权写引擎名，为前台零泄漏规则的显式例外）：`HomeModelShowcase` 五台 —— GPT-5.6 Sol / Kimi K3 / Qwen 3.8 Max / Seedance 2.5 / MiniMax H3，每台配站内功能链接。
+
+**H3 钉死 15 秒**：`HAILUO_OPENROUTER_FIXED_DURATION_SEC=15`，`clampHailuoOpenRouterDuration()` 无视入参恒返回 15（画布导演卡节拍 / jobs 请求体 / 创作台三路一致）；`op=hailuo3Video` 补登录校验（此前未登录也能白跑 2K 成片）。
+
+**竞品调研换 Sol Ultra + 入口内测中**：`researchService` 两段默认 `RESEARCH_MODEL_SOL_ULTRA`（= `gpt-5.6-sol` + Responses `reasoning.mode=pro`/effort max），Gemini 路径留 env 逃生门。入口按用户明文暂隐：Navbar 显示「内测中」不可点、首页导航与轮播撤链接、`/research?tab=research` 对非 supervisor 显示占位（战略智库 / 赛道雷达不受影响）。
+
+**创作顾问只留标准档**：深度档（sol）前台下线，选择器移除；每日免费 15→**5** 次（两档实际都是 Kimi K3，单价偏高）。超额 8 积分/次。
+
+**定价对账（OpenRouter 实价，¥0.65/积分）**：GPT-image-2 $0.1303/张；Seedance 2.0 720p $0.1512/秒、1080p $0.3402/秒；2.0-fast $0.121/秒；H3 2K $0.13/秒。**发现 `/canvas` 出图与成片全程零扣费**（`canvasCredits.ts` 定了 54/张但无调用方，`api/jobs.ts` 无扣费），漫剧一集 4×30s 白烧约 ¥130。用户定档：服务端收口扣费，出图 54/张、成片 fast/标准/H3 各 118、30 秒加长 240、漫剧整集 688。
+
 ---
 
 ## 如何更新本文件

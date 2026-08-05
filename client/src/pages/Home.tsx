@@ -9,6 +9,7 @@ import HomeRedeemCode from "../components/HomeRedeemCode";
 import HomeInviteApply from "../components/HomeInviteApply";
 import SampleReportDownload from "../components/SampleReportDownload";
 import { LaunchCountdownBanner } from "../components/LaunchCountdownBanner";
+import HomeModelShowcase from "../components/HomeModelShowcase";
 
 /**
  * 营销首页（方案 A）：导航 + Hero + V3 动效段 + 定价占位 + 试读 + 我的作品；
@@ -27,6 +28,7 @@ export default function HomePage() {
         <HomeNavbar />
         <LaunchCountdownBanner />
         <HomeHero />
+        <HomeModelShowcase />
         <HomeCursorReveal />
         <HomeScrollVideo />
 
