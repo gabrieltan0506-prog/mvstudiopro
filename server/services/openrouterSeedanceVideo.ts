@@ -61,6 +61,14 @@ function userFacingSeedanceError(raw: string): string {
   if (/content.?policy|safety|违规|审核/i.test(m)) {
     return "内容未通过审核，请调整提示词或参考图后重试";
   }
+  /**
+   * 上游账号的数据政策 / guardrail 把该 provider 全部排除时返回：
+   * `No endpoints available matching your guardrail restrictions and data policy`。
+   * 这跟提示词无关，用户改多少次都没用，也不该看到上游的设置链接。
+   */
+  if (/no endpoints available|guardrail|data policy/i.test(m)) {
+    return "该成片档暂不可用（服务端配额或线路设置未开放），请改用其他成片档或稍后重试";
+  }
   // 去掉供应商 / 路由名
   return m
     .replace(/openrouter/gi, "视频服务")

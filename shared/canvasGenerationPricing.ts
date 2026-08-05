@@ -22,6 +22,17 @@
  * 上游高质竖屏一张约 $0.19 ≈ 21 积分成本，毛利率约 61%。
  */
 export const CANVAS_IMAGE_CREDITS_PER_SHOT = 54;
+/** 同一次批量出图的第 2 张起：九折（54 → 49），与创作顾问生图的首张折扣口径相反但同量级 */
+export const CANVAS_IMAGE_CREDITS_BATCH = 49;
+
+/**
+ * 一张画布出图应扣的积分。批量是前端并发发 N 个 job，
+ * 所以折扣只能靠请求里带的 `batchIndex` 判断，服务端看不到整批。
+ */
+export function canvasImageCredits(batchIndex?: number | null): number {
+  const i = Math.floor(Number(batchIndex) || 0);
+  return i > 0 ? CANVAS_IMAGE_CREDITS_BATCH : CANVAS_IMAGE_CREDITS_PER_SHOT;
+}
 
 /** 单段成片：快速 / 标准 / H3（≤15 秒） */
 export const CANVAS_VIDEO_CREDITS_CLIP = 118;

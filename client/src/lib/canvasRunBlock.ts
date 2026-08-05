@@ -268,6 +268,8 @@ async function runGptImage2(
     userId?: string;
     /** 设定图与静帧分走两把官方密钥 */
     imageLane?: OpenAiImageLane;
+    /** 批量里的第几张（0-based）：第 2 张起走批量价 */
+    batchIndex?: number;
   },
 ): Promise<string> {
   const refImageUrl = String(opts?.refImageUrl || "").trim();
@@ -289,6 +291,9 @@ async function runGptImage2(
         generalImageEdit: referenceImageUrls.length > 0,
         providerOverride: openaiOnly ? "openai" : undefined,
         imageLane: opts?.imageLane,
+        // 画布出图由 worker 扣积分；/creative 与 /platform 走同一队列但已在前端扣，故不带此标记
+        chargeOnServer: true,
+        batchIndex: opts?.batchIndex,
       }),
     });
     const job = await pollJobUntilTerminal(jobId, {
@@ -329,7 +334,10 @@ async function runGptImage2Batch(
   },
   count: number,
 ): Promise<string[]> {
-  const tasks = Array.from({ length: count }, () => runGptImage2(prompt, aspectRatio, opts));
+  // 批次号随请求带上，让服务端把第 2 张起算批量价
+  const tasks = Array.from({ length: count }, (_unused, batchIndex) =>
+    runGptImage2(prompt, aspectRatio, { ...opts, batchIndex }),
+  );
   return Promise.all(tasks);
 }
 

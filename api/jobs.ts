@@ -1018,9 +1018,12 @@ async function chargeCanvasVideoAndRun<T>(
     episodeIndex?: unknown;
     /** 账本描述后缀，便于对账 */
     label: string;
+    /** 探针请求（`probe=1`）：脚本没有 cookie，既不验登录也不扣费 */
+    skipCharge?: boolean;
   },
   work: () => Promise<T>,
 ): Promise<{ ok: true; result: T; credits: number } | { ok: false; status: number; error: string }> {
+  if (opts.skipCharge) return { ok: true, result: await work(), credits: 0 };
   const viewer = await resolveJobUser(req);
   if (!viewer) return { ok: false, status: 401, error: "请先登录后再生成成片" };
 
@@ -3661,6 +3664,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
               durationSec,
               episodeIndex: b.episodeIndex,
               label: `画布成片·${productVersion === "2.0-fast" ? "快速" : "标准"}（${durationSec}s）`,
+              // 探针脚本没有 cookie，收费会把它们全打成 401
+              skipCharge: isProbe,
             },
             () =>
               runOpenRouterSeedanceVideo({

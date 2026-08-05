@@ -869,20 +869,24 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
 
     /**
      * 画布出图收费：此前这条队列**一分钱不收**（`/canvas` 的静帧、封面、设定图都走这里），
-     * 官方 Image-2 一张真金白银。supervisor/admin 由 `deductCreditsAmount` 内部免扣。
+     * 官方 Image-2 一张真金白银。supervisor/admin 由 `deductCreditsAmount` 内部免扣，
      * 失败/空图退回，所以自动重试不会累计扣款。
+     *
+     * 只扣带 `chargeOnServer` 的：这条队列还服务 `/creative` 生图与 `/platform` 单帧生图，
+     * 那两处已在前端 `chargeStep` 扣过，无条件扣会双扣。
      */
     const numericUserId = Number(jobUserId);
     let creditDeducted = 0;
-    if (Number.isFinite(numericUserId) && numericUserId > 0) {
-      const { CANVAS_IMAGE_CREDITS_PER_SHOT } = await import(
-        "../../shared/canvasGenerationPricing.js"
+    if (params.chargeOnServer === true && Number.isFinite(numericUserId) && numericUserId > 0) {
+      const { canvasImageCredits } = await import("../../shared/canvasGenerationPricing.js");
+      const cost = canvasImageCredits(
+        typeof params.batchIndex === "number" ? params.batchIndex : 0,
       );
       const deducted = await deductCreditsAmount(
         numericUserId,
-        CANVAS_IMAGE_CREDITS_PER_SHOT,
+        cost,
         "canvasGptImage2",
-        `画布出图（${CANVAS_IMAGE_CREDITS_PER_SHOT} 积分/张）`,
+        `画布出图（${cost} 积分/张）`,
       );
       creditDeducted = deducted.cost;
     }

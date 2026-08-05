@@ -601,7 +601,8 @@ export default function TestLab() {
           fetchJsonish(seedanceUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            credentials: "omit",
+            // 成片入口已按登录用户扣费，不带 cookie 会 401
+            credentials: "include",
             body: JSON.stringify({
               prompt,
               imageUrl: inputImage,
