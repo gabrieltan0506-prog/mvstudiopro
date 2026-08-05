@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRouter 把我们的 OpenAI 系全封了，排查与止血的完整过程 · MV Studio Pro</title>
+<meta name="description" content="同一把 key，Kimi 和 Qwen 正常，所有 OpenAI 模型一律 403 TOS，连强制走 Azure 也拒。记录如何在两小时内定位出这是账号级封禁而非配置问题，以及一个把余额不足误报成「内容审核」的坑。">
+<meta name="keywords" content="OpenRouter,403 Terms of Service,API 故障排查,LLM 网关,供应商容灾,AI 基础设施">
+<link rel="canonical" href="https://www.mvstudiopro.com/blog/openrouter-openai-403-diagnosis">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MV Studio Pro">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:url" content="https://www.mvstudiopro.com/blog/openrouter-openai-403-diagnosis">
+<meta property="og:title" content="OpenRouter 把我们的 OpenAI 系全封了，排查与止血的完整过程 · MV Studio Pro">
+<meta property="og:description" content="同一把 key，Kimi 和 Qwen 正常，所有 OpenAI 模型一律 403 TOS，连强制走 Azure 也拒。记录如何在两小时内定位出这是账号级封禁而非配置问题，以及一个把余额不足误报成「内容审核」的坑。">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="OpenRouter 把我们的 OpenAI 系全封了，排查与止血的完整过程 · MV Studio Pro">
+<meta name="twitter:description" content="同一把 key，Kimi 和 Qwen 正常，所有 OpenAI 模型一律 403 TOS，连强制走 Azure 也拒。记录如何在两小时内定位出这是账号级封禁而非配置问题，以及一个把余额不足误报成「内容审核」的坑。">
+<link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0f1115; color: #e6e6ea;
+    font: 16px/1.85 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 22px 96px; }
+  nav.top { font-size: 13px; color: #8b8b96; margin-bottom: 32px; }
+  nav.top a { color: #7fd1ff; text-decoration: none; }
+  nav.top a:hover { text-decoration: underline; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 12px; letter-spacing: -.01em; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-top: 8px; border-top: 1px solid #23262e; }
+  h3 { font-size: 17px; margin: 28px 0 10px; }
+  .meta { font-size: 13px; color: #8b8b96; margin-bottom: 36px; }
+  p { margin: 0 0 18px; }
+  ul, ol { margin: 0 0 18px; padding-left: 24px; }
+  li { margin: 6px 0; }
+  strong { color: #fff; }
+  a { color: #7fd1ff; }
+  blockquote {
+    margin: 0 0 22px; padding: 12px 18px; border-left: 3px solid #7fd1ff;
+    background: #161922; color: #b9b9c4; font-size: 15px;
+  }
+  blockquote p { margin: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 14.5px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid #23262e; text-align: left; }
+  th { color: #fff; background: #161922; font-weight: 600; }
+  code {
+    background: #1b1f28; padding: 2px 6px; border-radius: 4px;
+    font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  pre {
+    background: #161922; padding: 16px 18px; border-radius: 8px; overflow-x: auto;
+    margin: 0 0 22px; border: 1px solid #23262e;
+  }
+  pre code { background: none; padding: 0; }
+  hr { border: 0; border-top: 1px solid #23262e; margin: 40px 0; }
+  em { color: #a9a9b6; }
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid #23262e;
+           font-size: 13px; color: #8b8b96; }
+  footer a { margin-right: 16px; }
+  .cards { display: grid; gap: 14px; margin: 28px 0 0; }
+  .card { display: block; padding: 18px 20px; background: #161922; border: 1px solid #23262e;
+          border-radius: 10px; text-decoration: none; color: inherit; }
+  .card:hover { border-color: #7fd1ff55; background: #1a1e28; }
+  .card h2 { margin: 0 0 8px; font-size: 18px; border: 0; padding: 0; color: #fff; }
+  .card p { margin: 0; font-size: 14px; color: #a9a9b6; }
+  .card .meta { margin: 10px 0 0; font-size: 12px; }
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Article",
+      "headline": "OpenRouter 把我们的 OpenAI 系全封了，排查与止血的完整过程",
+      "description": "同一把 key，Kimi 和 Qwen 正常，所有 OpenAI 模型一律 403 TOS，连强制走 Azure 也拒。记录如何在两小时内定位出这是账号级封禁而非配置问题，以及一个把余额不足误报成「内容审核」的坑。",
+      "datePublished": "2026-08-05",
+      "dateModified": "2026-08-05",
+      "inLanguage": "zh-CN",
+      "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": "https://www.mvstudiopro.com/blog/openrouter-openai-403-diagnosis"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://www.mvstudiopro.com/pwa-icon-512.png"
+        }
+      },
+      "keywords": "OpenRouter,403 Terms of Service,API 故障排查,LLM 网关,供应商容灾,AI 基础设施"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "首页",
+          "item": "https://www.mvstudiopro.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "文章",
+          "item": "https://www.mvstudiopro.com/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "OpenRouter 把我们的 OpenAI 系全封了，排查与止血的完整过程",
+          "item": "https://www.mvstudiopro.com/blog/openrouter-openai-403-diagnosis"
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+<nav class="top"><a href="/">首页</a> › <a href="/blog/">文章</a></nav>
+<article>
+<h1>OpenRouter 把我们的 OpenAI 系全封了，排查与止血的完整过程</h1>
+<p class="meta">2026-08-05 · 约 9 分钟</p>
+<blockquote>
+<p>2026-08-05 的真实故障。所有请求与响应都是当天实测记录。</p>
+</blockquote>
+<p>早上用户报了个奇怪的现象：文案功能正常，出图偶尔失败，而失败时的提示是「该选题文案触发了内容审核，请调整文案后再试」。他改了三遍文案，没用。</p>
+<p>最后查出来的根因跟文案一点关系都没有。过程里踩到的每个坑都挺典型，记录下来。</p>
+<h2>第一层：不是内容审核，是两条腿都断了</h2>
+<p>先看服务端日志：</p>
+<pre><code>[GPT-IMAGE-2·OpenAI] 异常 · 钥=OPENAI_IMAGE_API_KEY_ASSET · fetch failed
+[GPT-IMAGE-2·OpenAI] 换钥重试 → OPENAI_IMAGE_API_KEY
+[GPT-IMAGE-2·OpenAI] 异常 · 钥=OPENAI_IMAGE_API_KEY · HTTP 429: You have no credits remaining
+[单帧·OpenRouter] GPT-IMAGE-2 · OpenAI失败后回落
+[GPT-IMAGE-2·OpenRouter] 异常 · HTTP 403: The request is prohibited due to a violation of provider Terms Of Service
+[单帧] OpenAI/OpenRouter GPT-IMAGE-2 均无图 · 本条失败
+</code></pre>
+<p>三件事叠在一起：主钥遇到瞬时网络失败，换到备用钥发现余额耗尽，回落 OpenRouter 吃 403。</p>
+<p><strong>而「内容审核」这个提示是我们自己代码里的 bug。</strong> 判定函数里有这么一条：</p>
+<pre><code class="language-js">m.includes(&quot;violat&quot;)   // 本意是抓 content policy violation
+</code></pre>
+<p>OpenRouter 的 403 原文写的是 <code>prohibited due to a **violat**ion of provider Terms Of Service</code>，正好命中。于是余额耗尽和账号封禁两个基础设施故障，被包装成了「你的文案有问题」。更糟的是它还触发了「命中审核就快速失败」的短路，把剩下那次重试也跳过了。</p>
+<p><strong>报错把用户引向错误的方向，比不报错更伤。</strong> 这是当天最值得记的一条。</p>
+<h2>第二层：403 到底是什么级别的封禁</h2>
+<p>先确认 key 本身有没有问题：</p>
+<pre><code class="language-bash">curl -H &quot;Authorization: Bearer $KEY&quot; https://openrouter.ai/api/v1/key
+# 200，limit 100，剩余 80，非免费层
+</code></pre>
+<p>key 有效、有钱。那就逐个模型试，全都 403，响应完全一致：</p>
+<pre><code class="language-json">{&quot;error&quot;:{&quot;message&quot;:&quot;The request is prohibited due to a violation of provider Terms Of Service.&quot;,
+&quot;code&quot;:403,&quot;metadata&quot;:{&quot;provider_name&quot;:null,
+&quot;previous_errors&quot;:[{&quot;code&quot;:403,&quot;message&quot;:&quot;...&quot;}]}}}
+</code></pre>
+<p>注意 <code>metadata.provider_name</code> 是 <strong>null</strong>。这个细节很关键——说明拒绝发生在 OpenRouter 选定 provider <strong>之前</strong>，不是某一家 provider 返回的响应。</p>
+<p>继续缩小范围：</p>
+<table>
+<thead>
+<tr>
+<th>测试</th>
+<th>结果</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>openai/gpt-5.6-sol</code></td>
+<td>403</td>
+</tr>
+<tr>
+<td><code>openai/gpt-5.6-terra</code></td>
+<td>403</td>
+</tr>
+<tr>
+<td><code>openai/gpt-4o-mini</code>（老模型）</td>
+<td>403</td>
+</tr>
+<tr>
+<td><code>openai/gpt-image-2</code>（images 端点）</td>
+<td>403</td>
+</tr>
+<tr>
+<td>强制 <code>provider: {&quot;only&quot;:[&quot;Azure&quot;]}</code></td>
+<td><strong>仍然 403</strong></td>
+</tr>
+<tr>
+<td><code>moonshotai/kimi-k3</code></td>
+<td>200 正常</td>
+</tr>
+<tr>
+<td><code>qwen/qwen3.8-max</code></td>
+<td>200 正常</td>
+</tr>
+</tbody></table>
+<p>结论很清楚：<strong>整个 OpenAI 系（含 Azure 托管）对这个账号全禁，与模型、与端点、与请求内容无关</strong>——我发的提示词只有 <code>say ok</code> 两个词。</p>
+<p>这不是能靠改代码、换 key、充值解决的问题，只能走人工申诉。</p>
+<h2>第三层：顺带发现视频模型也不能用，但原因不同</h2>
+<p>排查过程中试了下视频模型，全部 404：</p>
+<pre><code class="language-json">{&quot;error&quot;:{&quot;message&quot;:&quot;No endpoints available matching your guardrail restrictions
+and data policy. Configure: https://openrouter.ai/settings/privacy&quot;,&quot;code&quot;:404}}
+</code></pre>
+<p>这条错误信息比上一个友好得多，直接指出了原因和位置。</p>
+<p>去后台一看，账号的 <strong>Allowed Providers 是白名单模式</strong>（Exclusively enable these providers），当时只放了六家：Azure、OpenAI、Alibaba Cloud Intl、Fireworks、Moonshot AI、Amazon Bedrock。</p>
+<p>而这些视频模型各自只有一家 provider：</p>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th>Provider</th>
+<th>在白名单里?</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>minimax/hailuo-3</code></td>
+<td>Minimax</td>
+<td>否 → 404</td>
+</tr>
+<tr>
+<td><code>bytedance/seedance-2.0</code></td>
+<td>Seed</td>
+<td>否 → 404</td>
+</tr>
+<tr>
+<td><code>moonshotai/kimi-k3</code></td>
+<td>六家可选（含 Fireworks）</td>
+<td>是 → 正常</td>
+</tr>
+</tbody></table>
+<p><strong>单一 provider 的模型一旦被白名单排除就彻底不可用；多 provider 的模型能侥幸活下来。</strong> Kimi 能用纯粹因为它有六家可挑。</p>
+<p>试过在请求里加 <code>provider: {&quot;data_collection&quot;:&quot;allow&quot;}</code> 想绕过，无效——账号级 guardrail 是上限，请求参数只能更严不能更宽。把 Minimax 和 Seed 加进白名单后立刻恢复，实测出片正常。</p>
+<h2>止血：三处改动</h2>
+<p><strong>一、把死掉的备胎换成活的。</strong></p>
+<p>出图原来的链路是「OpenAI 官方 → OpenRouter」。OpenRouter 那条已经是 403 死的，等于官方一挂就整条断。我们把 EvoLink 接回中间（这条通道一直都在，只是之前从链里摘掉了），链路变成 <strong>OpenAI 官方 → EvoLink</strong>，OpenRouter 暂时完全摘出。</p>
+<p>顺带发现同规格（high 1024×1536）EvoLink 还比官方便宜约两成：$0.148 对 $0.187。</p>
+<p>摘除做成了环境变量开关，对方解封后设一个变量就恢复，不用改代码。</p>
+<p><strong>二、钥池不再回落到通用钥。</strong></p>
+<p>看一眼 secrets 的摘要就发现问题：</p>
+<pre><code>OPENAI_API_KEY              e11c392e4c0d6c58
+OPENAI_IMAGE_API_KEY        e11c392e4c0d6c58   ← 同一把
+OPENAI_IMAGE_API_KEY_ASSET  677021c46ad6c378   ← 出图专钥
+</code></pre>
+<p>出图钥池的设计是「本道专钥 → 共用钥 → 另一道专钥」，而所谓共用钥就是文本调用在用的那把通用钥，余额早就耗尽了。主钥一抖就必然去撞那个 429，白等一轮还给出误导性错误。混用另有副作用：出图会去烧文本账户的额度。</p>
+<p>改成<strong>配了专钥就只在专钥之间倒</strong>，一把都没配才退回共用钥。</p>
+<p><strong>三、错误分类先排除账号级故障。</strong></p>
+<p>在判内容审核之前先挡掉余额、配额、计费、TOS 封禁、429 这几类。它们都不是用户能通过改文案解决的问题，也不该触发「快速失败」的短路。</p>
+<h2>几条可复用的经验</h2>
+<p><strong>同一把 key，不同库的表现可能不一样。</strong> 排查时我一度以为 key 失效——Python 的 <code>urllib</code> 全部 403，而 <code>curl</code> 是 200。差别只是 User-Agent：Pexels 那类前面挂了 Cloudflare 的服务，会把默认 UA 直接拒掉。发请求记得带 UA，否则会误判成鉴权问题白折腾半天。</p>
+<p><strong><code>provider_name: null</code> 是个强信号。</strong> 网关类服务如果在选定上游前就拒绝，说明是账号级策略而非上游响应，这时候换模型、换参数、重建 key 都没用。</p>
+<p><strong>多 provider 的模型天然更抗风险。</strong> 同样的白名单策略，Kimi 活了、Seedance 和 H3 全死。选型时把「有几家 provider 可挑」当成一个可用性指标。</p>
+<p><strong>备胎要定期验活。</strong> 我们的 OpenRouter 回落腿已经死了不知道多久，没人发现，因为主链一直没挂。直到主链偶发抖动那一次，才暴露出根本没有备胎。<strong>没被触发过的容灾路径等于不存在。</strong></p>
+<hr>
+<p><em>本文所有请求与响应为 2026-08-05 实测记录。申诉尚在进行中，若后续解封会补充结果。</em></p>
+
+</article>
+<footer>
+  <a href="/">MV Studio Pro 首页</a>
+  <a href="/blog/">全部文章</a>
+  <a href="/pricing">定价</a>
+</footer>
+</div>
+</body>
+</html>
