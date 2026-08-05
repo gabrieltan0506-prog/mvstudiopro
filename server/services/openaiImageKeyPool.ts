@@ -39,16 +39,26 @@ const LANE_ENV: Record<OpenAiImageLane, string> = {
 const SHARED_ENV = ["OPENAI_IMAGE_API_KEY", "OPENAI_API_KEY"] as const;
 
 /**
- * 返回按顺序尝试的密钥链：本道专钥 → 共用钥 → 另一道专钥（借用）。
+ * 返回按顺序尝试的密钥链：本道专钥 → 另一道专钥（借用）；一把专钥都没配才退回共用钥。
+ *
+ * **配了专钥就不碰共用钥**：共用钥（`OPENAI_IMAGE_API_KEY` / `OPENAI_API_KEY`）是
+ * GPT-5.6 等文本调用在用的那把通用钥，跟出图是两个账户。2026-08-05 线上实例：
+ * 出图专钥瞬时 `fetch failed`，钥池按旧顺序换到共用钥，而那把余额早已耗尽，
+ * 于是白等一轮 429「no credits remaining」，还把这条错误一路带到用户面前。
+ * 混用还有个副作用——出图会去烧文本账户的额度。
+ *
  * 同一把密钥只出现一次，避免只配了一把时白跑第二遍。
  */
 export function resolveOpenAiImageKeyChain(lane?: OpenAiImageLane | null): OpenAiImageKeySlot[] {
   const active = lane ?? OPENAI_IMAGE_LANE_DEFAULT;
   const other: OpenAiImageLane = active === "asset" ? "keyart" : "asset";
+  const laneSlot = readSlot(LANE_ENV[active]);
+  const otherLaneSlot = readSlot(LANE_ENV[other]);
+  const hasDedicatedKey = Boolean(laneSlot || otherLaneSlot);
   const candidates = [
-    readSlot(LANE_ENV[active]),
-    ...SHARED_ENV.map((name) => readSlot(name)),
-    readSlot(LANE_ENV[other]),
+    laneSlot,
+    otherLaneSlot,
+    ...(hasDedicatedKey ? [] : SHARED_ENV.map((name) => readSlot(name))),
   ];
   const chain: OpenAiImageKeySlot[] = [];
   const seen = new Set<string>();
