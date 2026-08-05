@@ -289,6 +289,25 @@ export async function postEvolinkGptImage2AndUpload(
 export function isEvolinkModerationFailure(message: string | undefined): boolean {
   const m = String(message || "").toLowerCase();
   if (!m) return false;
+  /**
+   * 账号级故障不是内容审核，必须先排除，否则会把「充值」误导成「改文案」。
+   *
+   * 2026-08-05 线上实例：OpenAI 官方钥 429「You have no credits remaining」，
+   * 回落 OpenRouter 又吃 403「prohibited due to a **violat**ion of provider Terms Of Service」——
+   * 后者正好命中下面的 `violat`，于是整条被标成「内容审核拦截」，
+   * 既让用户以为是自己的文案有问题，又触发了「命中审核就快速失败」的短路，跳过剩余重试。
+   */
+  if (
+    m.includes("no credits") ||
+    m.includes("insufficient") ||
+    m.includes("quota") ||
+    m.includes("billing") ||
+    m.includes("terms of service") ||
+    m.includes("rate limit") ||
+    m.includes("429")
+  ) {
+    return false;
+  }
   return (
     m.includes("inappropriate") ||
     m.includes("moderation") ||
