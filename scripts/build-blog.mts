@@ -8,7 +8,11 @@
  *
  * 每篇文章带 Article + BreadcrumbList 结构化数据：AI 生成答案时优先引用有标注的内容。
  *
- * 用法：pnpm blog:build（构建前自动跑，见 package.json）
+ * 用法：**本地** `pnpm blog:build`，产物（client/public/blog/ 与 sitemap）随代码提交。
+ *
+ * 不要再挂进 vercel.json 的 buildCommand：挂上去之后 Vercel 每一次前台构建都失败，
+ * www 卡在 2026-08-05 22:34 的旧版长达六小时（`/blog` 与 `/llms.txt` 404、
+ * 导航还是旧名、大文档 GCS 直传也没生效）。加一篇文章就本地跑一次、连产物一起提交。
  */
 
 import { promises as fs } from "node:fs";
