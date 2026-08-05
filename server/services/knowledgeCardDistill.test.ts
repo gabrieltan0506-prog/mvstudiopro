@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   KNOWLEDGE_CARD_DISTILL_MODEL,
+  estimateKnowledgeCardDistillChunks,
+  knowledgeCardDistillProfile,
   mergeDistilledMarkdownChunks,
+  shouldRunKnowledgeCardDistillAsync,
   splitSourceTextForDistill,
   suggestKnowledgeCardMinSections,
 } from "./knowledgeCardDistill";
@@ -44,8 +47,27 @@ describe("suggestKnowledgeCardMinSections", () => {
   it("scales with source length so a book is not crushed to 1 section", () => {
     expect(suggestKnowledgeCardMinSections(100)).toBeLessThanOrEqual(2);
     expect(suggestKnowledgeCardMinSections(3000)).toBeGreaterThanOrEqual(4);
-    expect(suggestKnowledgeCardMinSections(50_000)).toBeGreaterThanOrEqual(20);
-    expect(suggestKnowledgeCardMinSections(120_000)).toBe(80);
+    expect(suggestKnowledgeCardMinSections(50_000)).toBeGreaterThanOrEqual(15);
+  });
+
+  // 用户 2026-08-05：提练是取重点让人快速读懂，不是把 9.5 万字摊成几十页
+  it("stays readable for a long book instead of growing linearly", () => {
+    expect(suggestKnowledgeCardMinSections(10_000)).toBeLessThanOrEqual(12);
+    // 9.5 万字：旧式线性会要 68 节；用户选定约 28 节（并页后约 5 张卡）
+    const book = suggestKnowledgeCardMinSections(95_000);
+    expect(book).toBeGreaterThanOrEqual(24);
+    expect(book).toBeLessThanOrEqual(30);
+    // 字数再翻几倍也只多几节，且封顶 36
+    expect(suggestKnowledgeCardMinSections(300_000)).toBeLessThanOrEqual(36);
+  });
+
+  it("grows monotonically", () => {
+    const lengths = [1_000, 5_000, 20_000, 60_000, 150_000];
+    for (let i = 1; i < lengths.length; i += 1) {
+      expect(suggestKnowledgeCardMinSections(lengths[i]!)).toBeGreaterThanOrEqual(
+        suggestKnowledgeCardMinSections(lengths[i - 1]!),
+      );
+    }
   });
 });
 
@@ -58,6 +80,47 @@ describe("splitSourceTextForDistill", () => {
     const body = "段落要点。\n\n".repeat(4000);
     const chunks = splitSourceTextForDistill(body, 10_000);
     expect(chunks.length).toBeGreaterThan(1);
+  });
+});
+
+describe("per-model distill profiles", () => {
+  it("gives each model its own chunking + effort tuning", () => {
+    const sol = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_SOL);
+    const kimi = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_KIMI);
+    const qwen = knowledgeCardDistillProfile(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN);
+
+    // Kimi 实测最快 → 段最大、并发最高；Qwen 最慢且压缩过度 → 段最小、最少小节最高
+    expect(kimi.chunkChars).toBeGreaterThan(sol.chunkChars);
+    expect(sol.chunkChars).toBeGreaterThan(qwen.chunkChars);
+    expect(kimi.concurrency).toBeGreaterThanOrEqual(sol.concurrency);
+    expect(qwen.minSectionsPerChunk).toBeGreaterThan(sol.minSectionsPerChunk);
+
+    // 分段抽要点用中档，统稿用各模型顶档（Kimi 无 xhigh，顶档是 max）
+    expect(sol.effortChunk).toBe("medium");
+    expect(sol.effortFinal).toBe("xhigh");
+    expect(qwen.effortChunk).toBe("medium");
+    expect(qwen.effortFinal).toBe("xhigh");
+    expect(kimi.effortFinal).toBe("max");
+
+    for (const p of [sol, kimi, qwen]) {
+      expect(p.chunkRetries).toBeGreaterThanOrEqual(1);
+      expect(p.requestTimeoutMs).toBeGreaterThanOrEqual(60_000);
+    }
+  });
+
+  it("routes only long books to the background job", () => {
+    expect(shouldRunKnowledgeCardDistillAsync(5_000)).toBe(false);
+    expect(shouldRunKnowledgeCardDistillAsync(25_000)).toBe(false);
+    expect(shouldRunKnowledgeCardDistillAsync(95_000)).toBe(true);
+  });
+
+  it("estimates chunk count per model", () => {
+    expect(estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_SOL, 3_000)).toBe(1);
+    const solChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_SOL, 95_000);
+    const kimiChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_KIMI, 95_000);
+    const qwenChunks = estimateKnowledgeCardDistillChunks(KNOWLEDGE_CARD_DISTILL_MODEL_QWEN, 95_000);
+    expect(kimiChunks).toBeLessThan(solChunks);
+    expect(qwenChunks).toBeGreaterThan(solChunks);
   });
 });
 

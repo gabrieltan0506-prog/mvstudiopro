@@ -40,35 +40,119 @@ const DISTILL_MAX_TOKENS = Math.min(
   65_536,
 );
 
-/** 超过此长度则后台分段提练再合并（对用户仍是一次上传→写框） */
-const DISTILL_CHUNK_THRESHOLD = Math.min(
-  Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_CHUNK_THRESHOLD) || 12_000, 6_000),
-  40_000,
-);
-const DISTILL_CHUNK_CHARS = Math.min(
-  Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_CHUNK_CHARS) || 10_000, 4_000),
-  20_000,
-);
-/** 分段并发；单机 Fly 用 2，避免把健康检查拖死 */
-const DISTILL_CHUNK_CONCURRENCY = Math.min(
-  Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_CHUNK_CONCURRENCY) || 2, 1),
-  3,
-);
-
-/** GPT-5.6 Sol（Evolink）：`reasoning_effort` = xhigh */
-const DISTILL_REASONING_EFFORT_GPT = "xhigh" as const;
 /**
- * Kimi K3 官方档位只有 low|high|max（顶层 `reasoning_effort`），无 xhigh。
+ * 三档分别调参（2026-08-05 实测 FDE PDF 前 25k 字 / 3 段）：
+ *
+ * | 档 | 25k×3 段耗时 | 输出 | 结论 |
+ * |---|---|---|---|
+ * | Kimi K3 | 43s | 7443 字 / 39 节 | 最快；段可放大、并发可高 |
+ * | Sol | 194s | 10129 字 / 64 节 | 最详细但慢；分段降中档 |
+ * | Qwen | 287s | 3904 字 / 33 节 | 最慢且压缩过度；段切小、抬最少小节 |
+ *
+ * `effortChunk` 只用于分段抽要点，`effortFinal` 用于短文直出与合并稿统稿。
+ * Kimi 官方档位只有 low|high|max（无 xhigh / medium）；
+ * Qwen 只有 low|medium|xhigh（无 max），且勿与 `thinking_budget` 同传；
+ * Sol 顶档为 xhigh。
+ *
  * @see https://platform.kimi.ai/docs/guide/kimi-k3-quickstart
- */
-const DISTILL_REASONING_EFFORT_KIMI = "high" as const;
-/**
- * Evolink Qwen3.8 Max：档位 low|medium|xhigh（无 max）；顶档 xhigh。
- * 勿与 thinking_budget 同传。
  * @see https://evolink.ai/qwen-3-8-max
  * @see https://docs.qwencloud.com/developer-guides/text-generation/thinking
  */
-const DISTILL_REASONING_EFFORT_QWEN = "xhigh" as const;
+type KnowledgeCardDistillProfile = {
+  /** 源文超过此长度才切段 */
+  chunkThreshold: number;
+  /** 每段字数 */
+  chunkChars: number;
+  /** 同时在跑的段数 */
+  concurrency: number;
+  effortChunk: string;
+  effortFinal: string;
+  /** 单次上游请求墙钟 */
+  requestTimeoutMs: number;
+  /** 单段失败重试次数（退避）；仍失败再对半细切 */
+  chunkRetries: number;
+  /** 每段 `##` 小节数下限；实际值由总目标节数分摊，此项只兜底防某模型压成一节 */
+  minSectionsPerChunk: number;
+  /** 单次统稿的输入字数上限；超出则先按 `##` 分组压一层（0 = 不分组）。统稿本身绝不跳过 */
+  refineMaxChars: number;
+};
+
+function envNum(key: string, fallback: number, min: number, max: number): number {
+  const raw = Number(process.env[key]);
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.min(Math.max(raw, min), max);
+}
+
+function envStr(key: string, fallback: string): string {
+  const raw = String(process.env[key] || "").trim();
+  return raw || fallback;
+}
+
+const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistillProfile> = {
+  // 精细：输出最全但每段慢，段中等 + 分段降中档
+  [KNOWLEDGE_CARD_DISTILL_MODEL_SOL]: {
+    chunkThreshold: envNum("KNOWLEDGE_CARD_DISTILL_SOL_CHUNK_THRESHOLD", 12_000, 6_000, 40_000),
+    chunkChars: envNum("KNOWLEDGE_CARD_DISTILL_SOL_CHUNK_CHARS", 12_000, 4_000, 24_000),
+    concurrency: envNum("KNOWLEDGE_CARD_DISTILL_SOL_CONCURRENCY", 2, 1, 4),
+    effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_SOL_EFFORT_CHUNK", "medium"),
+    effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_SOL_EFFORT_FINAL", "xhigh"),
+    requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_SOL_TIMEOUT_MS", 180_000, 60_000, 480_000),
+    chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_SOL_CHUNK_RETRIES", 2, 0, 4),
+    minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_SOL_MIN_SECTIONS", 3, 2, 24),
+    refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_SOL_REFINE_MAX_CHARS", 24_000, 0, 120_000),
+  },
+  // 均衡：最快，段放大到 18k、并发 3，统稿用 max
+  [KNOWLEDGE_CARD_DISTILL_MODEL_KIMI]: {
+    chunkThreshold: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_CHUNK_THRESHOLD", 20_000, 6_000, 60_000),
+    chunkChars: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_CHUNK_CHARS", 18_000, 4_000, 32_000),
+    concurrency: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_CONCURRENCY", 3, 1, 5),
+    effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_KIMI_EFFORT_CHUNK", "high"),
+    effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_KIMI_EFFORT_FINAL", "max"),
+    requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_TIMEOUT_MS", 180_000, 60_000, 480_000),
+    chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_CHUNK_RETRIES", 2, 0, 4),
+    minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_MIN_SECTIONS", 4, 2, 24),
+    refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_REFINE_MAX_CHARS", 40_000, 0, 120_000),
+  },
+  // 轻量：最慢且压缩过度，段切小到 8k、抬每段节数下限，单次统稿输入压到最小
+  [KNOWLEDGE_CARD_DISTILL_MODEL_QWEN]: {
+    chunkThreshold: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_THRESHOLD", 9_000, 4_000, 40_000),
+    chunkChars: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_CHARS", 8_000, 3_000, 20_000),
+    concurrency: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CONCURRENCY", 2, 1, 4),
+    effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_QWEN_EFFORT_CHUNK", "medium"),
+    effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_QWEN_EFFORT_FINAL", "xhigh"),
+    requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_TIMEOUT_MS", 240_000, 60_000, 480_000),
+    chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_RETRIES", 2, 0, 4),
+    minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_MIN_SECTIONS", 4, 2, 24),
+    refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_REFINE_MAX_CHARS", 14_000, 0, 120_000),
+  },
+};
+
+export function knowledgeCardDistillProfile(
+  modelName: KnowledgeCardDistillModelId,
+): KnowledgeCardDistillProfile {
+  return DISTILL_PROFILES[modelName];
+}
+
+/**
+ * 超过此长度改走后台任务（前端轮询进度）：
+ * 十余段串行要数分钟，压在一个同步 HTTP 里会被网关掐断，且已跑完的段全丢。
+ * 约 3 万字以下仍同步直出（探针：Sol 2.5 万字 3 段约 194s），省去轮询。
+ */
+export function shouldRunKnowledgeCardDistillAsync(textLength: number): boolean {
+  const threshold = envNum("KNOWLEDGE_CARD_DISTILL_ASYNC_THRESHOLD", 30_000, 8_000, 200_000);
+  return Math.max(0, Number(textLength) || 0) > threshold;
+}
+
+/** 预估分段数，供前端提示「约 N 段」。 */
+export function estimateKnowledgeCardDistillChunks(
+  modelName: KnowledgeCardDistillModelId,
+  textLength: number,
+): number {
+  const profile = DISTILL_PROFILES[modelName];
+  const n = Math.max(0, Number(textLength) || 0);
+  if (n <= profile.chunkThreshold) return 1;
+  return Math.max(1, Math.ceil(n / profile.chunkChars));
+}
 
 /** 多模态（含图 OCR）走 api.evolink.ai */
 const EVOLINK_CHAT_URL = String(
@@ -88,26 +172,46 @@ const EVOLINK_DIRECT_CHAT_URL = String(
 ).trim();
 
 /**
- * 按源文字长度建议最少 `##` 小节数，防止整本书被压成 1 页。
- * 约每 1400 字源文 ≥1 节；上限 80。
+ * 目标 `##` 小节数（= 知识卡页数）。
+ *
+ * 用户 2026-08-05 明文口径：提练的意义是**让人快速读懂全书重点**，
+ * 不是把十万字逐段搬成几十页（旧式「每 1400 字 1 节」会让 9.5 万字出 68 节，读不完等于没提练）。
+ * 改为字数每翻一倍才多约 5 节：1 万字≈10 节 / 3 万字≈19 节 / 9.5 万字≈28 节，上限 36 节。
+ *
+ * 注意：小节数 ≠ 页数。一页横版卡片可容纳数个小节，见 `planKnowledgeCardPages`。
  */
 export function suggestKnowledgeCardMinSections(sourceChars: number): number {
   const n = Math.max(0, Math.floor(Number(sourceChars) || 0));
   if (n < 80) return 1;
   if (n < 480) return 2;
-  return Math.min(80, Math.max(4, Math.ceil(n / 1400)));
+  if (n <= 3_000) return Math.max(3, Math.ceil(n / 700));
+  return Math.min(36, Math.max(5, Math.round(10 + 5.5 * Math.log2(n / 10_000))));
 }
 
+/**
+ * 每小节要点条数与举例要求：三档共用。
+ *
+ * 条数沿用 2026-06-27 定下的原始口径（详尽充实、宁详勿略、每子标题 5–9 条、含定义/数字/方法/示例）；
+ * 2026-08-05 曾被改成「有限要点 3–5 条 + 多留白」，与「详尽 + 条列 + 举例」相悖，此处改回。
+ */
+const DISTILL_SECTION_SHAPE = `每个 \`## 小节\` 内：
+   - **5–9 条**要点短句（每条约 12–30 字，信息完整、一条只讲一件事，能独立读懂）
+   - 每条尽量带上**定义 / 数字 / 方法步骤 / 示例**之一，不要写成空泛的概念名词
+   - 该小节涉及方法/流程/判断标准时，**必须**至少一条以「例：」开头的具体例子（引用原文里的真实案例、数字、场景，不许编造）
+   - 要点之间语意连贯，读完这一节就掌握一个完整概念；**不要为了简洁而删减关键信息**`;
+
 function buildDistillSystem(minSections: number): string {
-  return `你是知识卡片内容主编。任务：把用户提供的文稿/幻灯片抽字/图片 OCR 结果，**一次性**提练成可直接做「疏朗图文知识卡片」的简体中文 Markdown（读图 OCR 与提练在同一次完成，不要只吐生文本）。
+  return `你是知识卡片内容主编。任务：把用户提供的文稿/幻灯片抽字/图片 OCR 结果，提练成可直接做「疏朗图文知识卡片」的简体中文 Markdown（读图 OCR 与提练同时完成，不要只吐生文本）。
+
+**目标**：让没读过原文的人在几分钟内读懂这份材料**讲了什么、关键结论是什么、怎么用**。是**精选重点**，不是逐段搬运。
 
 硬性要求：
-1. 只保留可发表的知识点：定义、方法、数据、步骤、对比、结论、章节要点；去掉重复段落、口头禅、聊天寒暄、问答客套、广告水词。
-2. 结构：以 \`# 总标题\` 开头，下文用若干 \`## 小节\`。每个小节 3–8 条要点短句（约 12–36 字），便于一页一节疏朗排版。
-3. **覆盖密度（硬）**：本批素材至少输出 **${minSections}** 个 \`##\` 小节；长书/长文禁止压成两三节总括，也禁止把整本 OCR 原文原样倒进输出。
-4. 页数不人为砍到 12：内容该有多少精华小节就保留多少；禁止注水扩写，也禁止过度摘要。
-5. 禁止输出与素材无关的模板标题；禁止「首先其次综上所述」公文腔。
-6. 只输出 Markdown 正文，不要 JSON、不要前言后记。`;
+1. **抓主干**：优先保留核心论点、关键结论、可操作方法、决定性数据与对比、反直觉洞察。删掉铺垫、重复、寒暄、案例复述、广告水词、与主题无关的枝节。
+2. 结构：以 \`# 总标题\` 开头（总标题要点出全文主旨，不是书名照抄），下文用 \`## 小节\` 承载重点；小节标题本身就是一句有信息量的判断，不用「概述 / 背景介绍」这类空标题。
+3. ${DISTILL_SECTION_SHAPE}
+4. **篇幅**：约 **${minSections}** 个 \`## 小节\`（可上下浮动 2 个）。宁可少而精，**禁止**为凑数把同一论点拆成多节，也禁止把整本压成两三节总括。
+5. **不要**把原文长段落原样倒进输出；**不要**注水扩写；**不要**「首先其次综上所述」公文腔。
+6. 只输出 Markdown 正文，不要 JSON、不要前言后记、不要解释你做了什么。`;
 }
 
 export type KnowledgeCardUploadFile = {
@@ -196,7 +300,7 @@ export async function extractKnowledgeCardUploads(files: KnowledgeCardUploadFile
 }
 
 /** 长书分段提练：按段落边界切开，避免 Evolink/OR 单请求 524。 */
-export function splitSourceTextForDistill(text: string, chunkChars = DISTILL_CHUNK_CHARS): string[] {
+export function splitSourceTextForDistill(text: string, chunkChars = 10_000): string[] {
   const s = String(text || "").trim();
   if (!s) return [];
   if (s.length <= chunkChars) return [s];
@@ -265,8 +369,24 @@ function mapDistillUpstreamError(status: number, body: string): Error {
   return new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
 }
 
-function distillFetchTimeoutMs(): number {
-  return Math.min(Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_TIMEOUT_MS) || 180_000, 60_000), 480_000);
+function distillFetchTimeoutMs(
+  modelName: KnowledgeCardDistillModelId,
+  timeoutOverrideMs?: number,
+): number {
+  const override = Number(process.env.KNOWLEDGE_CARD_DISTILL_TIMEOUT_MS);
+  if (Number.isFinite(override) && override >= 60_000) return Math.min(override, 480_000);
+  if (Number.isFinite(timeoutOverrideMs) && Number(timeoutOverrideMs) > 0) {
+    return Math.min(Number(timeoutOverrideMs), 480_000);
+  }
+  return DISTILL_PROFILES[modelName].requestTimeoutMs;
+}
+
+/**
+ * 统稿比单段慢得多（输入是整本的提练稿、输出还要重排全局），
+ * 探针里 Kimi 用分段档超时会直接 abort，把 32 节的中间稿留给用户。
+ */
+function distillRefineTimeoutMs(modelName: KnowledgeCardDistillModelId): number {
+  return Math.min(480_000, Math.round(DISTILL_PROFILES[modelName].requestTimeoutMs * 1.8));
 }
 
 function mapFetchAbortError(err: unknown): Error {
@@ -282,9 +402,13 @@ function buildDistillUserContent(params: {
   sourceText: string;
   imageDataUrls: string[];
   minSections: number;
+  /** 本次只提练整本中的一段（分段模式） */
+  chunkLabel?: string;
 }): Array<Record<string, unknown>> {
   const textBlock = [
-    `请一次性完成：读文/读图 OCR + 提练。输出疏朗知识卡片 Markdown；至少 ${params.minSections} 个 ## 小节（不要输出未经提练的长原文）：`,
+    params.chunkLabel
+      ? `本次只处理长文档的${params.chunkLabel}。只就本段内容**挑出最值得记住的重点**（约 ${params.minSections} 个 ## 小节），次要枝节可以整段舍弃；不要复述其它章节、不要写「本段/以上」这类过渡语，不要输出未经提练的长原文：`
+      : `请一次性完成：读文/读图 OCR + 提练。输出疏朗知识卡片 Markdown，约 ${params.minSections} 个 ## 小节，取重点、不要输出未经提练的长原文：`,
     params.sourceText.trim() || "（无纯文本，请主要依据附图 OCR 提练）",
     params.imageDataUrls.length
       ? `\n附图 ${params.imageDataUrls.length} 张：请 OCR 提取文字与图表要点，并入精华，去掉重复。`
@@ -306,6 +430,10 @@ async function invokeEvolinkDistill(params: {
   imageDataUrls: string[];
   modelName: typeof KNOWLEDGE_CARD_DISTILL_MODEL_SOL | typeof KNOWLEDGE_CARD_DISTILL_MODEL_QWEN;
   minSections: number;
+  effort: string;
+  chunkLabel?: string;
+  systemOverride?: string;
+  timeoutMs?: number;
 }): Promise<string> {
   const key = getEvolinkApiKey();
   if (!key) throw new Error("提练通道未配置，请稍后重试");
@@ -314,19 +442,19 @@ async function invokeEvolinkDistill(params: {
   const body: Record<string, unknown> = {
     model: params.modelName,
     messages: [
-      { role: "system", content: buildDistillSystem(params.minSections) },
+      { role: "system", content: params.systemOverride || buildDistillSystem(params.minSections) },
       { role: "user", content: userContent },
     ],
     max_tokens: DISTILL_MAX_TOKENS,
   };
   if (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN) {
-    // Evolink Qwen：顶档 xhigh（无 max）；勿与 thinking_budget 同传
+    // Evolink Qwen：档位 low|medium|xhigh（无 max）；勿与 thinking_budget 同传
     body.enable_thinking = true;
-    body.reasoning_effort = DISTILL_REASONING_EFFORT_QWEN;
+    body.reasoning_effort = params.effort;
     body.max_completion_tokens = DISTILL_MAX_TOKENS;
     delete body.max_tokens;
   } else {
-    body.reasoning_effort = DISTILL_REASONING_EFFORT_GPT;
+    body.reasoning_effort = params.effort;
   }
 
   const url = params.imageDataUrls.length > 0 ? EVOLINK_CHAT_URL : EVOLINK_DIRECT_CHAT_URL;
@@ -338,7 +466,7 @@ async function invokeEvolinkDistill(params: {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
       },
-      signal: AbortSignal.timeout(distillFetchTimeoutMs()),
+      signal: AbortSignal.timeout(distillFetchTimeoutMs(params.modelName, params.timeoutMs)),
       body: JSON.stringify(body),
     });
   } catch (err) {
@@ -365,11 +493,15 @@ async function invokeEvolinkDistill(params: {
   return out;
 }
 
-/** OpenRouter Kimi K3：顶层 reasoning_effort=high。 */
+/** OpenRouter Kimi K3：顶层 reasoning_effort（low|high|max）。 */
 async function invokeOpenRouterKimiDistill(params: {
   sourceText: string;
   imageDataUrls: string[];
   minSections: number;
+  effort: string;
+  chunkLabel?: string;
+  systemOverride?: string;
+  timeoutMs?: number;
 }): Promise<string> {
   const key = getOpenRouterApiKey();
   if (!key) throw new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
@@ -384,15 +516,20 @@ async function invokeOpenRouterKimiDistill(params: {
         "Content-Type": "application/json",
         ...getOpenRouterChatHeaders(),
       },
-      signal: AbortSignal.timeout(distillFetchTimeoutMs()),
+      signal: AbortSignal.timeout(
+        distillFetchTimeoutMs(KNOWLEDGE_CARD_DISTILL_MODEL_KIMI, params.timeoutMs),
+      ),
       body: JSON.stringify({
         model: KNOWLEDGE_CARD_DISTILL_MODEL_KIMI,
         messages: [
-          { role: "system", content: buildDistillSystem(params.minSections) },
+          {
+            role: "system",
+            content: params.systemOverride || buildDistillSystem(params.minSections),
+          },
           { role: "user", content: userContent },
         ],
         max_tokens: DISTILL_MAX_TOKENS,
-        reasoning_effort: DISTILL_REASONING_EFFORT_KIMI,
+        reasoning_effort: params.effort,
       }),
     });
   } catch (err) {
@@ -420,6 +557,10 @@ async function invokeDistillLlm(params: {
   imageDataUrls: string[];
   modelName: KnowledgeCardDistillModelId;
   minSections: number;
+  effort: string;
+  chunkLabel?: string;
+  systemOverride?: string;
+  timeoutMs?: number;
 }): Promise<string> {
   if (!hasDistillGateway(params.modelName)) {
     throw new Error("提练通道未配置，请稍后重试");
@@ -433,47 +574,373 @@ async function invokeDistillLlm(params: {
   return invokeEvolinkDistill({ ...params, modelName: KNOWLEDGE_CARD_DISTILL_MODEL_SOL });
 }
 
-/** 短文一次；长文分段并发提练后合并（产品面仍是「上传→自动写框」一次完成）。 */
+/** 提练无法靠重试救回的错（额度/配置/通道），不必再退避。 */
+function isFatalDistillError(message: string): boolean {
+  return /额度不足|通道不可用|未配置|请先输入|未能从文件/.test(message);
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * 单段提练：失败退避重试，仍失败则把该段对半细切分别提再拼。
+ * 用户口径：个别失败的重新提炼，然后合并写框（不接受半途整批废）。
+ */
+async function distillOneChunkWithRetry(params: {
+  chunk: string;
+  imageDataUrls: string[];
+  modelName: KnowledgeCardDistillModelId;
+  minSections: number;
+  chunkLabel: string;
+  retries: number;
+  effort: string;
+}): Promise<string> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= params.retries; attempt++) {
+    try {
+      return await invokeDistillLlm({
+        sourceText: params.chunk,
+        imageDataUrls: params.imageDataUrls,
+        modelName: params.modelName,
+        minSections: params.minSections,
+        effort: params.effort,
+        chunkLabel: params.chunkLabel,
+      });
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (isFatalDistillError(lastError.message)) throw lastError;
+      console.warn(
+        `[knowledgeCardDistill] ${params.chunkLabel} attempt ${attempt + 1}/${params.retries + 1} failed: ${lastError.message.slice(0, 160)}`,
+      );
+      if (attempt < params.retries) await sleep(2_000 * (attempt + 1));
+    }
+  }
+
+  // 退避用尽：对半细切重提，小片更不容易撞上游超时
+  if (params.chunk.length > 3_000) {
+    const halves = splitSourceTextForDistill(params.chunk, Math.ceil(params.chunk.length / 2));
+    if (halves.length > 1) {
+      console.warn(
+        `[knowledgeCardDistill] ${params.chunkLabel} retry exhausted → split into ${halves.length} finer parts`,
+      );
+      const finer: string[] = [];
+      for (let i = 0; i < halves.length; i++) {
+        finer.push(
+          await distillOneChunkWithRetry({
+            chunk: halves[i]!,
+            imageDataUrls: i === 0 ? params.imageDataUrls : [],
+            modelName: params.modelName,
+            minSections: Math.max(2, Math.ceil(params.minSections / halves.length)),
+            chunkLabel: `${params.chunkLabel}-${i + 1}`,
+            retries: 1,
+            effort: params.effort,
+          }),
+        );
+      }
+      return mergeDistilledMarkdownChunks(finer);
+    }
+  }
+
+  throw lastError || new Error(KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE);
+}
+
+type RefineStage = "group" | "final" | "tighten";
+
+function buildRefineSystem(
+  minSections: number,
+  stage: RefineStage,
+  currentSections?: number,
+): string {
+  if (stage === "tighten") {
+    return `你是知识卡片内容主编。下面这份知识卡片 Markdown **小节太多了**${
+      currentSections ? `（当前 ${currentSections} 个 \`##\` 小节）` : ""
+    }，读者会读不完，等于回去读原文。
+
+请重写成 **${minSections} 个 \`## 小节\`**（这是硬指标，最多 ${minSections + 2} 个）。
+
+怎么删：
+1. 把讲同一主题的多个小节**合并成一节**，标题取信息量最大的那句，正文只留最强的要点与例子。
+2. 删掉枝节、重复举例、只在局部成立的细节、可由其它小节推出的内容。
+3. 保住全局主线：\`# 总标题\` 点出主旨，小节按「是什么 → 为什么 → 怎么做 → 边界与例外」之类的自然顺序排列。
+4. ${DISTILL_SECTION_SHAPE}
+5. 只输出 Markdown 正文，不要前言后记、不要解释你删了什么。`;
+  }
+
+  const head =
+    stage === "final"
+      ? `你是知识卡片内容主编。下面这份 Markdown 由同一份长文档**分段提练后机械拼接**而成，段与段之间重复、粒度不齐、缺少全局主线。请把它**精选统稿**成一份连贯的疏朗知识卡片 Markdown。
+
+这一步是**取舍**，不是誊抄：读者要靠这份卡片在几分钟内读懂整份文档讲了什么、关键结论是什么、怎么用。`
+      : `你是知识卡片内容主编。下面这份 Markdown 是一份长文档若干相邻章节的提练稿拼接，小节偏多、粒度不齐、彼此重复。请**合并同类、只留最值得记住的重点**，压缩成更少的小节，供后续统稿使用。`;
+
+  const mainline =
+    stage === "final"
+      ? `1. **先定主线**：判断全文真正的核心论点，用 \`# 总标题\` 点出主旨，再按「是什么 → 为什么 → 怎么做 → 边界与例外」之类的自然顺序重排小节，读下来是一条线，不是小节堆叠。`
+      : `1. **同类合并**：把讲同一件事的小节并成一节（标题取信息量最大的写法），不同主题不要硬凑；本轮不必追求全局主线，但节内必须自洽。`;
+
+  return `${head}
+
+硬性要求：
+${mainline}
+2. **精选到 ${minSections} 个 \`## 小节\`**（硬指标，最多 ${minSections + 2} 个）：合并同义小节，删掉枝节、重复举例、只在原文局部成立的细节。**删内容是本步的职责**，不要为了「不丢东西」而堆节。
+3. ${DISTILL_SECTION_SHAPE}
+4. 小节标题写成有信息量的一句判断，不要「概述 / 其他 / 补充」这类空标题。
+5. 去掉分段痕迹：「本段 / 以上 / 续上」这类过渡语、重复标题、空节。
+6. 只输出 Markdown 正文，不要前言后记、不要解释取舍过程。`;
+}
+
+/** 统稿要求大幅精选，只在「结构崩塌」时才回退输入稿。 */
+function refinedOutputLooksBroken(refined: string, minSections: number): boolean {
+  const body = refined.trim();
+  if (body.length < 400) return true;
+  const sections = (body.match(/^##\s+\S/gm) || []).length;
+  return sections < Math.max(2, Math.floor(minSections / 2));
+}
+
+function countMarkdownSections(md: string): number {
+  return (md.match(/^##\s+\S/gm) || []).length;
+}
+
+/**
+ * 按 `##` 边界把提练稿分成 groupCount 组（组内保持原顺序，长度尽量均匀）。
+ * 用于统稿前的中间归并：一次喂不完就分组各自压缩。
+ */
+function groupMarkdownSections(md: string, groupCount: number): string[] {
+  const lines = md.split(/\r?\n/);
+  const starts: number[] = [];
+  lines.forEach((l, i) => {
+    if (/^##\s+\S/.test(l.trim())) starts.push(i);
+  });
+  if (starts.length < 2 || groupCount < 2) return [md];
+
+  const blocks = starts.map((start, idx) =>
+    lines.slice(start, idx + 1 < starts.length ? starts[idx + 1] : lines.length).join("\n").trim(),
+  );
+  const groups = Math.min(groupCount, blocks.length);
+  const per = Math.ceil(blocks.length / groups);
+  const out: string[] = [];
+  for (let i = 0; i < blocks.length; i += per) {
+    out.push(blocks.slice(i, i + per).join("\n\n").trim());
+  }
+  return out.filter(Boolean);
+}
+
+/** 单次统稿；失败或结构崩塌则原样退回输入，绝不因这一步丢掉已提练内容。 */
+async function refineOnce(params: {
+  body: string;
+  modelName: KnowledgeCardDistillModelId;
+  minSections: number;
+  stage: RefineStage;
+}): Promise<string> {
+  const profile = DISTILL_PROFILES[params.modelName];
+  try {
+    const refined = await invokeDistillLlm({
+      sourceText: params.body,
+      imageDataUrls: [],
+      modelName: params.modelName,
+      minSections: params.minSections,
+      // 只有定全局主线的 final 值得顶档；分组压缩与收紧节数用分段档，否则又撞超时
+      effort: params.stage === "final" ? profile.effortFinal : profile.effortChunk,
+      systemOverride: buildRefineSystem(
+        params.minSections,
+        params.stage,
+        countMarkdownSections(params.body),
+      ),
+      timeoutMs: distillRefineTimeoutMs(params.modelName),
+    });
+    if (refinedOutputLooksBroken(refined, params.minSections)) {
+      console.warn(
+        `[knowledgeCardDistill] refine(${params.stage}) output broken (${params.body.length} → ${refined.length} chars), keep input`,
+      );
+      return params.body;
+    }
+    return refined;
+  } catch (err) {
+    console.warn(
+      `[knowledgeCardDistill] refine(${params.stage}) failed, keep input: ${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`,
+    );
+    return params.body;
+  }
+}
+
+/** 统稿最多归并层数：每层把小节数压掉一半左右，三层足够把上百节收到目标区间。 */
+const DISTILL_REDUCE_MAX_DEPTH = 3;
+/** 统稿后仍超标时最多再压几轮（探针：Kimi 一次统稿只肯降到 41 节） */
+const DISTILL_TIGHTEN_MAX_ROUNDS = 2;
+
+/**
+ * 树形归并统稿（用户 2026-08-05：可以浓缩重排，但不能出 68 页）。
+ *
+ * 旧实现「合并稿超过 refineMaxChars 就跳过统稿」会把拼接稿原样吐给用户
+ * （Qwen 探针：14 段 × 4 节 = 56 节 → 56 页，等于看原书）。
+ * 现在改为：喂不下就按 `##` 分组各自压缩，逐层收敛，最后必定做一次全局统稿。
+ */
+async function refineMergedDistill(params: {
+  merged: string;
+  modelName: KnowledgeCardDistillModelId;
+  minSections: number;
+}): Promise<string> {
+  const profile = DISTILL_PROFILES[params.modelName];
+  let current = params.merged.trim();
+  if (!current) return current;
+
+  /**
+   * 只按**字数**决定要不要先分组压一层：
+   * 节数超标由后面的收紧轮解决，比多烧一整层归并快得多
+   * （探针：Kimi 57 节能一次统稿到 28 节，先分组反而白等两层超时、多花约 10 分钟）。
+   */
+  const fitsOnePass = () =>
+    profile.refineMaxChars <= 0 || current.length <= profile.refineMaxChars;
+
+  for (let depth = 0; depth < DISTILL_REDUCE_MAX_DEPTH && !fitsOnePass(); depth += 1) {
+    const sectionsBefore = countMarkdownSections(current);
+    const byChars =
+      profile.refineMaxChars > 0 ? Math.ceil(current.length / profile.refineMaxChars) : 1;
+    const bySections = Math.ceil(sectionsBefore / (params.minSections * 2));
+    const groups = groupMarkdownSections(current, Math.max(2, byChars, bySections));
+    if (groups.length < 2) break;
+
+    // 每组留出四成冗余，把最终取舍留给最后一次全局统稿
+    const perGroupTarget = Math.max(3, Math.ceil((params.minSections * 1.4) / groups.length));
+    console.info(
+      `[knowledgeCardDistill] reduce depth=${depth} ${countMarkdownSections(current)} sections / ` +
+        `${current.length} chars → ${groups.length} groups × ~${perGroupTarget} sections`,
+    );
+
+    const reduced: string[] = new Array(groups.length);
+    for (let i = 0; i < groups.length; i += profile.concurrency) {
+      const idxs = groups.slice(i, i + profile.concurrency).map((_, j) => i + j);
+      await Promise.all(
+        idxs.map(async (idx) => {
+          reduced[idx] = await refineOnce({
+            body: groups[idx]!,
+            modelName: params.modelName,
+            minSections: perGroupTarget,
+            stage: "group",
+          });
+        }),
+      );
+    }
+    const next = mergeDistilledMarkdownChunks(reduced);
+    const sectionsAfter = countMarkdownSections(next);
+    current = next;
+    // 这一层没把节数压下来（模型不服从或整层降级退回）→ 别再空转烧一层，交给收紧轮
+    if (sectionsAfter > sectionsBefore * 0.9) {
+      console.info(
+        `[knowledgeCardDistill] reduce stalled at ${sectionsAfter} sections (was ${sectionsBefore}), stop reducing`,
+      );
+      break;
+    }
+  }
+
+  let final = await refineOnce({
+    body: current,
+    modelName: params.modelName,
+    minSections: params.minSections,
+    stage: "final",
+  });
+
+  // 有些模型一次统稿只肯降一点（探针：Kimi 36 → 41 节）。超标就再压，压不动即停，不空烧。
+  const hardCap = Math.ceil(params.minSections * 1.35);
+  for (let round = 0; round < DISTILL_TIGHTEN_MAX_ROUNDS; round += 1) {
+    const before = countMarkdownSections(final);
+    if (before <= hardCap) break;
+    console.info(
+      `[knowledgeCardDistill] tighten round ${round + 1}: ${before} sections > cap ${hardCap}`,
+    );
+    const tightened = await refineOnce({
+      body: final,
+      modelName: params.modelName,
+      minSections: params.minSections,
+      stage: "tighten",
+    });
+    if (countMarkdownSections(tightened) >= before) break;
+    final = tightened;
+  }
+
+  console.info(
+    `[knowledgeCardDistill] refined ${params.merged.length} chars / ` +
+      `${countMarkdownSections(params.merged)} sections → ${final.length} chars / ` +
+      `${countMarkdownSections(final)} sections (target ${params.minSections})`,
+  );
+  return final;
+}
+
+export type KnowledgeCardDistillProgress = {
+  doneChunks: number;
+  totalChunks: number;
+  phase: "distilling" | "refining";
+};
+
+/** 短文一次直出（顶档）；长文按模型 profile 分段（中档）→ 合并 → 顶档统稿。 */
 async function invokeDistillLlmPossiblyChunked(params: {
   sourceText: string;
   imageDataUrls: string[];
   modelName: KnowledgeCardDistillModelId;
   minSectionsTotal: number;
+  onProgress?: (p: KnowledgeCardDistillProgress) => void | Promise<void>;
 }): Promise<string> {
+  const profile = DISTILL_PROFILES[params.modelName];
   const text = String(params.sourceText || "").trim();
   const urls = params.imageDataUrls;
-  if (!text || text.length <= DISTILL_CHUNK_THRESHOLD) {
+
+  if (!text || text.length <= profile.chunkThreshold) {
     return invokeDistillLlm({
       sourceText: text,
       imageDataUrls: urls,
       modelName: params.modelName,
       minSections: params.minSectionsTotal,
+      effort: profile.effortFinal,
     });
   }
 
-  const chunks = splitSourceTextForDistill(text, DISTILL_CHUNK_CHARS);
+  const chunks = splitSourceTextForDistill(text, profile.chunkChars);
   console.info(
-    `[knowledgeCardDistill] long doc ${text.length} chars → ${chunks.length} chunks (threshold=${DISTILL_CHUNK_THRESHOLD}, model=${params.modelName})`,
+    `[knowledgeCardDistill] long doc ${text.length} chars → ${chunks.length} chunks ` +
+      `(model=${params.modelName} chunkChars=${profile.chunkChars} concurrency=${profile.concurrency} effort=${profile.effortChunk})`,
   );
 
   const outputs: string[] = new Array(chunks.length);
-  for (let i = 0; i < chunks.length; i += DISTILL_CHUNK_CONCURRENCY) {
-    const batchIdx = chunks.slice(i, i + DISTILL_CHUNK_CONCURRENCY).map((_, j) => i + j);
+  // 分段只是给统稿备料：按总目标节数分摊 + 六成冗余留出取舍空间，
+  // 不再让每段按自身字数各出十来节（拼接稿会膨胀到近百节，统稿反而读不动）。
+  const minSectionsPerChunk = Math.max(
+    profile.minSectionsPerChunk,
+    Math.ceil((params.minSectionsTotal * 1.6) / chunks.length),
+  );
+  let done = 0;
+  await params.onProgress?.({ doneChunks: 0, totalChunks: chunks.length, phase: "distilling" });
+
+  for (let i = 0; i < chunks.length; i += profile.concurrency) {
+    const batchIdx = chunks.slice(i, i + profile.concurrency).map((_, j) => i + j);
     await Promise.all(
       batchIdx.map(async (idx) => {
         const chunk = chunks[idx]!;
-        const minSec = Math.max(2, Math.min(24, suggestKnowledgeCardMinSections(chunk.length)));
-        outputs[idx] = await invokeDistillLlm({
-          sourceText: chunk,
+        outputs[idx] = await distillOneChunkWithRetry({
+          chunk,
           // 附图只挂第一段，避免每段重复烧视觉
           imageDataUrls: idx === 0 ? urls : [],
           modelName: params.modelName,
-          minSections: minSec,
+          minSections: minSectionsPerChunk,
+          chunkLabel: `第 ${idx + 1}/${chunks.length} 段`,
+          retries: profile.chunkRetries,
+          effort: profile.effortChunk,
         });
+        done += 1;
       }),
     );
+    await params.onProgress?.({ doneChunks: done, totalChunks: chunks.length, phase: "distilling" });
   }
-  return mergeDistilledMarkdownChunks(outputs);
+
+  const merged = mergeDistilledMarkdownChunks(outputs);
+  await params.onProgress?.({
+    doneChunks: chunks.length,
+    totalChunks: chunks.length,
+    phase: "refining",
+  });
+  return refineMergedDistill({
+    merged,
+    modelName: params.modelName,
+    minSections: params.minSectionsTotal,
+  });
 }
 
 export type PrepareKnowledgeCardCopyResult = {
@@ -494,6 +961,7 @@ export async function prepareKnowledgeCardCopy(input: {
   files?: KnowledgeCardUploadFile[];
   forceDistill?: boolean;
   distillModel?: string;
+  onProgress?: (p: KnowledgeCardDistillProgress) => void | Promise<void>;
 }): Promise<PrepareKnowledgeCardCopyResult> {
   const modelName = resolveKnowledgeCardDistillModel(input.distillModel);
   const files = Array.isArray(input.files) ? input.files : [];
@@ -542,6 +1010,7 @@ export async function prepareKnowledgeCardCopy(input: {
       imageDataUrls: urls,
       modelName,
       minSectionsTotal,
+      onProgress: input.onProgress,
     });
     if (mergedRaw.length >= 8000 && distilled.length < Math.min(800, mergedRaw.length * 0.02)) {
       throw new Error("提练结果过短，疑似过度压缩，请重试");

@@ -5825,6 +5825,53 @@ export default function PlatformPage() {
     knowledgeCardCreditsForPages(customNoteKnowledgePlan.pageCount || 0, customNoteDistillModel);
 
   /**
+   * 提练：短文同步直出；长书由服务端转后台任务，这里轮询进度直到拿到稿子。
+   * 上传后与「点生成时仍有待处理文件」两条路径共用，避免逻辑分叉。
+   */
+  const runKnowledgeCardDistill = async (args: {
+    sourceText?: string;
+    files?: Array<{ fileBase64: string; mimeType: string; fileName?: string }>;
+    onStatus?: (text: string) => void;
+  }): Promise<string> => {
+    const queued = await prepareKnowledgeCardCopyMutation.mutateAsync({
+      sourceText: args.sourceText,
+      files: args.files?.length ? args.files : undefined,
+      forceDistill: true,
+      distillModel: customNoteDistillModel,
+    });
+
+    if (!queued.isAsync || !queued.progressJobId) {
+      return String(queued.distilledMarkdown || "").trim();
+    }
+
+    const totalHint = Math.max(1, queued.estimatedChunks || 1);
+    args.onStatus?.(`已读出约 ${queued.sourceChars.toLocaleString()} 字，正在分 ${totalHint} 段提练…`);
+    const job = await pollJobUntilTerminal(queued.progressJobId, {
+      intervalMs: 3000,
+      maxWaitMs: 45 * 60_000,
+      adaptiveBackoffAfterAttempts: 40,
+      maxIntervalMs: 8000,
+      onPoll: ({ output }) => {
+        const out = (output || {}) as {
+          distillPhase?: string;
+          distillDoneChunks?: number;
+          distillTotalChunks?: number;
+        };
+        const total = Number(out.distillTotalChunks) || totalHint;
+        const done = Number(out.distillDoneChunks) || 0;
+        args.onStatus?.(
+          out.distillPhase === "refining"
+            ? `已提练 ${total} 段，正在统稿合并…`
+            : `正在分段提练…已完成 ${done}/${total} 段`,
+        );
+      },
+    });
+    if (job.status === "failed") throw new Error(job.error || "提练失败，请稍后重试");
+    const out = (job.output || {}) as { distilledMarkdown?: string };
+    return String(out.distilledMarkdown || "").trim();
+  };
+
+  /**
    * 生成一張卡片：同步回 imageUrl 直接用；非同步回 progressJobId 則輪詢至終態取圖。
    * @param notePart 舊上/下篇兼容；新路径用 notePageIndex。
    */
@@ -5948,13 +5995,11 @@ export default function PlatformPage() {
         // 上传路径已提练进文本框时，生成只出图；仅当仍有待处理文件或无文案时再提练
         if (pendingFiles.length > 0 || !distilled) {
           setCustomNoteDistillPhase("distilling");
-          const prepared = await prepareKnowledgeCardCopyMutation.mutateAsync({
+          distilled = await runKnowledgeCardDistill({
             sourceText: trimmed || undefined,
-            files: pendingFiles.length ? pendingFiles : undefined,
-            forceDistill: true,
-            distillModel: customNoteDistillModel,
+            files: pendingFiles,
+            onStatus: setCustomNoteUploadStatus,
           });
-          distilled = String(prepared.distilledMarkdown || "").trim();
           if (!distilled) throw new Error("提练结果为空，请调整文案后重试");
           setCustomNoteText(distilled);
           customNotePendingFilesRef.current = [];
@@ -11427,13 +11472,11 @@ export default function PlatformPage() {
                               "上传成功，正在读文/读图并提练写入文本框（长文档会自动分段，可能需数分钟）…",
                             );
                             toast.message("正在提练（长文档较久），完成后会写入上方文本框…");
-                            const prepared = await prepareKnowledgeCardCopyMutation.mutateAsync({
+                            const distilled = await runKnowledgeCardDistill({
                               sourceText: customNoteText.trim() || undefined,
                               files: allPending,
-                              forceDistill: true,
-                              distillModel: customNoteDistillModel,
+                              onStatus: setCustomNoteUploadStatus,
                             });
-                            const distilled = String(prepared.distilledMarkdown || "").trim();
                             if (!distilled) {
                               throw new Error("提练结果为空，请换文件或改用可选中文字的 PDF / 关键页图片");
                             }
@@ -11450,6 +11493,9 @@ export default function PlatformPage() {
                             toast.success(okMsg);
                           } catch (err) {
                             setCustomNoteDistillPhase("idle");
+                            // 失败必须清掉待处理文件：否则用户再传一次会把同一本书叠上去（曾出现 9.5 万 → 28 万字）
+                            customNotePendingFilesRef.current = [];
+                            setCustomNotePendingMeta([]);
                             const rawFail = String((err as { message?: string })?.message || "读取/提练失败");
                             const failMsg = sanitizePlatformUserMessage(
                               mapCustomNoteError(err),
@@ -11457,7 +11503,7 @@ export default function PlatformPage() {
                                 ? "文档较长，提练超时，请稍后重试"
                                 : "算力紧张或请求超时，请稍后重试",
                             );
-                            setCustomNoteUploadStatus(`上传或提练失败：${failMsg}`);
+                            setCustomNoteUploadStatus(`上传或提练失败：${failMsg}（请重新上传，勿在失败态叠加）`);
                             toast.error(failMsg);
                           } finally {
                             setCustomNoteUploadBusy(false);

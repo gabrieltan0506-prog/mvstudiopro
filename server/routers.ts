@@ -6794,9 +6794,68 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             .optional(),
         }),
       )
-      .mutation(async ({ input }) => {
-        const { prepareKnowledgeCardCopy } = await import("./services/knowledgeCardDistill.js");
+      .mutation(async ({ input, ctx }) => {
+        const {
+          prepareKnowledgeCardCopy,
+          extractKnowledgeCardUploads,
+          shouldRunKnowledgeCardDistillAsync,
+          estimateKnowledgeCardDistillChunks,
+        } = await import("./services/knowledgeCardDistill.js");
         const { planKnowledgeCardPages } = await import("../shared/knowledgeCardPagination.js");
+        const { resolveKnowledgeCardDistillModel } = await import(
+          "../shared/knowledgeCardDistillModels.js"
+        );
+
+        const files = input.files ?? [];
+        const modelName = resolveKnowledgeCardDistillModel(input.distillModel);
+
+        // 抽文很快（本机 105 页 PDF 约数秒），先做掉：既能判断是否够长要走后台，
+        // 也避免把几 MB 的 PDF base64 塞进 jobs.input。
+        const extracted = files.length
+          ? await extractKnowledgeCardUploads(files)
+          : { documentText: "", imageDataUrls: [] as string[], methods: [] as string[] };
+        const pasted = String(input.sourceText || "").trim();
+        const mergedRaw = files.length
+          ? [extracted.documentText, pasted.length <= 3200 ? pasted : ""].filter(Boolean).join("\n\n").trim() ||
+            extracted.documentText ||
+            pasted
+          : pasted;
+
+        if (shouldRunKnowledgeCardDistillAsync(mergedRaw.length)) {
+          const userId = ctx.user?.id;
+          if (!userId) throw new Error("请先登录后再上传长文档");
+          const jobId = nanoid(16);
+          await createJobRecord({
+            id: jobId,
+            userId: String(userId),
+            type: "platform",
+            provider: "evolink",
+            input: {
+              action: "knowledge_card_distill",
+              params: {
+                sourceText: mergedRaw,
+                distillModel: modelName,
+                imageDataUrls: extracted.imageDataUrls,
+                extractionMethods: extracted.methods,
+              },
+            },
+          });
+          return {
+            success: true as const,
+            isAsync: true as const,
+            progressJobId: jobId,
+            sourceChars: mergedRaw.length,
+            distillModel: modelName,
+            estimatedChunks: estimateKnowledgeCardDistillChunks(modelName, mergedRaw.length),
+            distilledMarkdown: "",
+            skippedDistill: false,
+            extractionMethods: extracted.methods,
+            pageCount: 0,
+            credits: 0,
+            pages: [] as ReturnType<typeof planKnowledgeCardPages>["pages"],
+          };
+        }
+
         const prepared = await prepareKnowledgeCardCopy({
           sourceText: input.sourceText,
           files: input.files,
@@ -6806,11 +6865,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
         return {
           success: true as const,
+          isAsync: false as const,
+          progressJobId: null,
           distilledMarkdown: prepared.distilledMarkdown,
           skippedDistill: prepared.skippedDistill,
           extractionMethods: prepared.extractionMethods,
           sourceChars: prepared.sourceChars,
           distillModel: prepared.distillModel,
+          estimatedChunks: 1,
           pageCount: plan.pageCount,
           credits: plan.credits,
           pages: plan.pages,

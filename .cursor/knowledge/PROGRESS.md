@@ -339,6 +339,14 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 热修分支 `fix/knowledge-card-long-distill-timeout`：>12k 字后台分段提练再合并；纯文本走 `direct.evolink.ai`；524/Abort 文案改为「文档较长，提练超时」；上传 catch 友好映射。
 
+**提练口径改为「精选重点」（用户明文）**：目标不是把 9.5 万字摊成几十页，而是让人几分钟读懂全书。小节数改**次线性**（`suggestKnowledgeCardMinSections`：字数每翻一倍多约 5 节，1 万≈10 / 3 万≈19 / 9.5 万≈28 / 封顶 36），旧式「每 1400 字 1 节」会出 68 节。删掉残留常量 `KNOWLEDGE_CARD_HARD_MAX_PAGES`（12 页硬顶，用户早已取消，无引用）。
+
+**统稿改树形归并 + 收敛门禁**：旧逻辑「合并稿超过 `refineMaxChars` 就跳过统稿」会把拼接稿原样吐给用户（Qwen 探针 56 节→56 页，等于看原书）。现在统稿**绝不跳过**：字数喂不下才先按 `##` 分组压一层，再做一次全局统稿（定主线 + 重排）；统稿后节数仍超 `minSections × 1.35` 则用 `tighten` 轮再压（明确告知当前节数与硬指标），压不动即停不空烧。仅 `final` 用顶档 effort，分组/收紧用分段档（Kimi 顶档 + 长输入必超时）；统稿超时预算 = 分段档 ×1.8。
+
+**每页密度回滚到原始口径**：`SINGLE_PAGE_KNOWLEDGE_CARD_DIRECTIVE_ZH` 的【信息密度】段（2026-06-27 #647 定：详尽充实·宁详勿略·每子标题 **5–9 条**·含定义/数字/方法/示例）曾被 #1074 改成「疏朗留白·降低密度·有限要点 3–5 条」，无用户授权 → 已改回并升级为**高密度信息板**（顶部标题带 + 4–6 模块 / 2–3 栏 / 编号卡·小表格·指标条，对齐用户 2026-08-05 两张验收样张）。同步：`KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE` 850→**1100**、取消「一节一页」（`KNOWLEDGE_CARD_MAX_SECTIONS_PER_PAGE=6`），28 节 → 约 5–7 页而非 28 页。
+
+**真 API 探针（FDE PDF 95356 字，四轮）**：`scripts/smoke-knowledge-card-long-distill.mts` 现直接报小节数 / 页数 / 积分 / 大纲。三档均收到目标节数；Kimi 话最多（成稿字数最高 → 页数最多），Qwen 段最小（14 段）。
+
 ---
 
 ## 如何更新本文件

@@ -105,14 +105,20 @@ describe("planKnowledgeCardPages", () => {
     expect(plan.pages.some((p) => p.includes("小节1"))).toBe(true);
   });
 
-  it("allows more than 12 pages for long distilled content", () => {
+  // 用户 2026-08-05 样张：16:9 横版一页承载 4–6 个模块，别一节一页把 28 节摊成 28 张
+  it("packs several sections onto one landscape page", () => {
     const sections = Array.from(
       { length: 16 },
       (_, i) => `## 章${i + 1}\n\n${repeatBlock(`C${i}`, 200)}`,
     ).join("\n\n");
     const plan = planKnowledgeCardPages(`# 长篇精华\n\n${sections}`);
-    expect(plan.pageCount).toBeGreaterThan(12);
+    expect(plan.pageCount).toBeLessThanOrEqual(6);
+    expect(plan.pageCount).toBeGreaterThanOrEqual(3);
     expect(plan.credits).toBe(knowledgeCardCreditsForPages(plan.pageCount));
+    // 并页不能丢内容
+    for (let i = 1; i <= 16; i += 1) {
+      expect(plan.pages.some((p) => p.includes(`章${i}\n`) || p.includes(`章${i} `))).toBe(true);
+    }
   });
 
   it("splits by char cap without rejecting", () => {

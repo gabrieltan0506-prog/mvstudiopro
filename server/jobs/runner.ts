@@ -949,6 +949,12 @@ function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         // 13 页双段 Sol（含 reasoning 重试）默认 22min，避免墙钟砍半稿
         return 22 * 60_000;
       }
+      if (input.action === "knowledge_card_distill") {
+        const raw = Number(process.env.KNOWLEDGE_CARD_DISTILL_JOB_TIMEOUT_MS);
+        if (Number.isFinite(raw) && raw >= 300_000) return raw;
+        // 整本约 10 万字：十余段 × 中档推理 + 段级重试 + 顶档统稿，默认 40min
+        return 40 * 60_000;
+      }
     } catch {
       /* fall through */
     }
@@ -2011,6 +2017,53 @@ async function processPlatformJob(
           compositeKind,
           imageGenFlowLog: mergedLog,
           bundleCreditsCharged,
+        },
+      };
+    }
+
+    // ── knowledge_card_distill ───────────────────────────────────────────────
+    // 长书提练：整本 10 万字要分十几段跑数分钟，放同步 HTTP 会被网关掐断且拖死健康检查。
+    if (input.action === "knowledge_card_distill") {
+      const { prepareKnowledgeCardCopy } = await import("../services/knowledgeCardDistill.js");
+      const { planKnowledgeCardPages } = await import("../../shared/knowledgeCardPagination.js");
+
+      const sourceText = String(params.sourceText || "");
+      const distillModel = typeof params.distillModel === "string" ? params.distillModel : undefined;
+      const imageDataUrls = Array.isArray(params.imageDataUrls)
+        ? (params.imageDataUrls as unknown[]).filter((u): u is string => typeof u === "string")
+        : [];
+      const extractionMethods = Array.isArray(params.extractionMethods)
+        ? (params.extractionMethods as unknown[]).filter((m): m is string => typeof m === "string")
+        : [];
+
+      const prepared = await prepareKnowledgeCardCopy({
+        sourceText,
+        files: imageDataUrls.map((url) => ({ fileBase64: url, mimeType: "image/jpeg" })),
+        forceDistill: true,
+        distillModel,
+        onProgress: async (p) => {
+          if (!platformJobId) return;
+          await patchJobRunningProgress(platformJobId, {
+            distillPhase: p.phase,
+            distillDoneChunks: p.doneChunks,
+            distillTotalChunks: p.totalChunks,
+          }).catch(() => {});
+        },
+      });
+      const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
+
+      return {
+        provider: "evolink",
+        output: {
+          success: true,
+          distilledMarkdown: prepared.distilledMarkdown,
+          skippedDistill: prepared.skippedDistill,
+          extractionMethods: extractionMethods.length ? extractionMethods : prepared.extractionMethods,
+          sourceChars: prepared.sourceChars,
+          distillModel: prepared.distillModel,
+          pageCount: plan.pageCount,
+          credits: plan.credits,
+          pages: plan.pages,
         },
       };
     }
