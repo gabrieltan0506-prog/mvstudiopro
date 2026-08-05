@@ -14,6 +14,10 @@ import {
   stripKnowledgeCardInternalDirectives,
 } from "./knowledgeCardPagination";
 import { composePlatformImageSkillHints } from "./platformNativeVariants";
+import {
+  formatAssignedCraftTechniqueZh,
+  pickCraftTechniqueProfile,
+} from "./storyboardLightingEmotion";
 
 function repeatBlock(label: string, chars: number): string {
   const unit = `${label}要点说明。`;
@@ -160,6 +164,33 @@ describe("stripKnowledgeCardInternalDirectives", () => {
   it("keeps untouched text as-is", () => {
     const text = "# 正常文档\n\n## 小节\n\n正文内容。";
     expect(stripKnowledgeCardInternalDirectives(text)).toBe(text);
+  });
+
+  // 用户 2026-08-05：第 3 页整页是手法卡被扩写的「连载节奏／镜头语言／对峙处理」，与 FDE 文档无关
+  it("drops craft-card sections even after the model rewrites them into ## headings", () => {
+    const text = [
+      "# FDE：让现场交付转化为企业 AI 价值",
+      "## FDE 核心定义与价值定位",
+      "FDE = 现场交付工程师，连接客户现场与企业产品。",
+      "## 连载节奏——每格留「下一拍」",
+      "稳镜听戏、微推强调决断；对峙用缓慢环绕或固定对切。",
+      "## 落地实践：从 0 到 1 的执行清单",
+      "明确目标、搭建流程、工具赋能。",
+    ].join("\n\n");
+    const out = stripKnowledgeCardInternalDirectives(text);
+    expect(out).toContain("FDE 核心定义与价值定位");
+    expect(out).toContain("落地实践");
+    expect(out).not.toContain("稳镜听戏");
+    expect(out).not.toContain("下一拍");
+  });
+
+  it("drops the graphic craft card in its raw injected form", () => {
+    const profile = pickCraftTechniqueProfile("fde:1");
+    const card = formatAssignedCraftTechniqueZh(profile, { forGraphic: true });
+    const text = `${card}\n\n# 用户文档\n\n## 小节一\n\n正文。`;
+    const out = stripKnowledgeCardInternalDirectives(text);
+    expect(out).toBe("# 用户文档\n\n## 小节一\n\n正文。");
+    expect(out).not.toContain("系统手法卡 id");
   });
 
   it("falls back to the original when stripping would empty it", () => {

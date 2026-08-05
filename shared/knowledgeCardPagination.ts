@@ -212,22 +212,102 @@ const KNOWLEDGE_CARD_INTERNAL_DIRECTIVE_HEADS = [
   "【3×4 跨段视觉真源】",
 ];
 
-/** 剥掉混进知识卡正文的内部出图约束段；剥空则退回原文（宁可脏也不要空页）。 */
+/**
+ * 内部代号：只在平台出图约束里出现，绝不该印给创作者看。
+ * 约束一旦混进提练源文，模型会把它改写成正常的 `## 小节`，
+ * 于是按 `【…】` 块头就抓不到了，还会以正常小节身份散落到任意页
+ * （用户 2026-08-05 报的「第 1 页 + 第 3 页」，而不是连续两页）。
+ */
+const KNOWLEDGE_CARD_INTERNAL_JARGON_STRONG = [
+  "coverHeadline",
+  "platformVariants",
+  "Platform 出图短约束",
+  "A1 过审集",
+  "壳轮换",
+  "视觉气质手法卡",
+  "导演灵感画布",
+  "flat lay 神器墙",
+  "编导分镜·导演板",
+  // 手法卡（storyboardLightingEmotion）字段：用户 2026-08-05 收到的第 3 页整页是它被扩写的产物
+  "系统手法卡 id",
+  "稳镜听戏",
+  "微推强调决断",
+  "缓慢环绕或固定对切",
+  "每格留「下一拍」",
+  "创意母题（改写进用户场景）",
+];
+
+/** 弱信号：单个可能是正常用词，命中两个以上才判定为内部约束节 */
+const KNOWLEDGE_CARD_INTERNAL_JARGON_WEAK = [
+  "封面出图",
+  "高点击短钩",
+  "杀伤词",
+  "选题包",
+  "荧光撞色",
+  "变形花字",
+  "答案剧透",
+  "锁脸",
+  "配色池",
+  "过审",
+  "屏内字",
+  "雪糕公式",
+  "m1密度",
+  "m2密度",
+];
+
+function looksLikeInternalDirectiveBlock(block: string): boolean {
+  const s = block.trim();
+  if (!s) return false;
+  if (KNOWLEDGE_CARD_INTERNAL_DIRECTIVE_HEADS.some((h) => s.startsWith(h))) return true;
+  if (KNOWLEDGE_CARD_INTERNAL_JARGON_STRONG.some((w) => s.includes(w))) return true;
+  const weakHits = KNOWLEDGE_CARD_INTERNAL_JARGON_WEAK.filter((w) => s.includes(w)).length;
+  return weakHits >= 2;
+}
+
+/** 把整段文本按 `##` 小节切开（`##` 之前的部分作为第 0 块）。 */
+function splitIntoMarkdownBlocks(full: string): string[] {
+  const lines = full.split(/\r?\n/);
+  const starts: number[] = [];
+  lines.forEach((l, i) => {
+    if (/^##\s+/.test(l.trim())) starts.push(i);
+  });
+  if (starts.length === 0) return full.split(/\n\s*\n/);
+  const blocks: string[] = [];
+  const head = lines.slice(0, starts[0]).join("\n");
+  if (head.trim()) blocks.push(head);
+  starts.forEach((start, idx) => {
+    const end = idx + 1 < starts.length ? starts[idx + 1] : lines.length;
+    blocks.push(lines.slice(start, end).join("\n"));
+  });
+  return blocks;
+}
+
+/**
+ * 剥掉混进知识卡正文的内部出图约束（`【…】` 注入块，以及被模型改写成 `##` 小节的同类内容）。
+ * 剥空则退回原文——宁可脏也不要出空页。
+ */
 export function stripKnowledgeCardInternalDirectives(text: string): string {
   const full = String(text || "");
   if (!full.trim()) return full;
-  if (!KNOWLEDGE_CARD_INTERNAL_DIRECTIVE_HEADS.some((h) => full.includes(h))) {
-    return full;
+
+  const blocks = splitIntoMarkdownBlocks(full);
+  const kept: string[] = [];
+  let dropped = 0;
+  for (const block of blocks) {
+    if (looksLikeInternalDirectiveBlock(block)) {
+      dropped += 1;
+      continue;
+    }
+    if (block.trim()) kept.push(block.trim());
   }
-  const kept = full
-    .split(/\n\s*\n/)
-    .filter((block) => {
-      const head = block.trimStart();
-      return !KNOWLEDGE_CARD_INTERNAL_DIRECTIVE_HEADS.some((h) => head.startsWith(h));
-    })
-    .join("\n\n")
-    .trim();
-  return kept || full;
+  if (dropped === 0) return full;
+
+  // 首块（`##` 之前的导语）被剥掉时，`# 大标题` 会跟着丢，补回来保住文档标题
+  const h1 = full.split(/\r?\n/).find((l) => /^#\s+/.test(l.trim()))?.trim() ?? "";
+  const body = kept.join("\n\n").trim();
+  if (!body) return full;
+  if (h1 && !body.includes(h1)) return `${h1}\n\n${body}`;
+  return body;
 }
 
 /**
