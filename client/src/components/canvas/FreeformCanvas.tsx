@@ -32,6 +32,10 @@ import {
   SEEDANCE_25_PAID_ONLY_LABEL_ZH,
 } from "@shared/seedance25Access";
 import {
+  canUsePaidVideoByPlan,
+  PAID_VIDEO_MEMBER_ONLY_LABEL_ZH,
+} from "@shared/paidVideoAccess";
+import {
   CANVAS_IMAGE_BATCH_OPTIONS,
 } from "@/lib/canvasCredits";
 import {
@@ -604,6 +608,8 @@ export default function FreeformCanvas({
   const subQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
   const userPlan = (subQuery.data?.plan || "free") as string;
   const canUseSeedance25 = canAccessSeedance25ByPlan(userPlan);
+  /** 成片一律限正式会员（服务端同口径）；订阅信息还没回来时不提前泼冷水 */
+  const canUsePaidVideo = subQuery.isLoading || canUsePaidVideoByPlan(userPlan);
   const videoModelOptions = useMemo(
     () =>
       canUseSeedance25
@@ -2022,9 +2028,10 @@ export default function FreeformCanvas({
                               ? ` · 资产边 ${countManhuaClipAssetEdges(edges, block.id)}`
                               : ""}
                           </div>
-                          {!canUseSeedance25 ? (
+                          {/* 服务端对所有成片档都验会员，前端先说清楚，别让人等到扣费闸门才知道 */}
+                          {!canUsePaidVideo ? (
                             <div className="rounded-lg border border-dashed border-amber-400/30 bg-amber-500/5 px-2 py-1.5 text-[10px] leading-5 text-amber-100/85">
-                              成片·加长仅正式会员；邀请码用户请用成片·快速
+                              {PAID_VIDEO_MEMBER_ONLY_LABEL_ZH}
                             </div>
                           ) : null}
                           {block.videoModel === "seedance-2.5" && canUseSeedance25 ? (
