@@ -32,6 +32,14 @@
       "destination": "https://mvstudiopro.fly.dev/api/:path*"
     },
     {
+      "source": "/blog",
+      "destination": "/blog/index.html"
+    },
+    {
+      "source": "/blog/:slug((?!.*\\.).+)",
+      "destination": "/blog/:slug.html"
+    },
+    {
       "source": "/:path((?!api/|assets/|.*\\..*).*)",
       "destination": "/index.html"
     }

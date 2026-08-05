@@ -268,12 +268,27 @@ async function main(): Promise<void> {
 ${p.html}
 </article>`;
 
-    await fs.writeFile(
-      path.join(OUT, `${p.slug}.html`),
-      layout({ title: `${p.title} · MV Studio Pro`, description: p.description,
-               canonical: url, jsonLd, keywords: p.keywords, body, cover: p.cover }),
-      "utf-8",
-    );
+    const page = layout({
+      title: `${p.title} · MV Studio Pro`,
+      description: p.description,
+      canonical: url,
+      jsonLd,
+      keywords: p.keywords,
+      body,
+      cover: p.cover,
+    });
+    await fs.writeFile(path.join(OUT, `${p.slug}.html`), page, "utf-8");
+    /**
+     * 同一篇再写一份目录索引。
+     *
+     * 对外链接（sitemap / llms.txt / 列表页）用的是不带扩展名的 `/blog/<slug>`，
+     * 而 vercel.json 末尾那条 SPA 兜底重写会把它当前端路由吃掉——上线后点进文章
+     * 拿到的是 378KB 的应用外壳，爬虫更是什么都读不到。除了给 blog 加重写规则，
+     * 这份 `<slug>/index.html` 让静态文件本身就能命中：文件系统在重写之前匹配，
+     * 规则万一失效也不会退回空壳。
+     */
+    await fs.mkdir(path.join(OUT, p.slug), { recursive: true });
+    await fs.writeFile(path.join(OUT, p.slug, "index.html"), page, "utf-8");
   }
 
   // ── 列表页 ──
