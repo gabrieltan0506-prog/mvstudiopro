@@ -16,6 +16,8 @@ const nav = [
   ["平台创作", "Platform", "/platform"],
   // 竞品调研内测中：首页导航暂不给链接（标注见 HomeHero 卡片）
   ["Omini，Seedance 2.X画布", "Canvas", "/canvas"],
+  // 静态站点（scripts/build-blog.mts 产出），不是 SPA 路由，故整页跳转
+  ["技术与实测", "Blog", "/blog/"],
 ];
 
 export default function HomeNavbar() {

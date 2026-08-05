@@ -6,7 +6,7 @@
   "github": {
     "enabled": true
   },
-  "buildCommand": "pnpm exec vite build",
+  "buildCommand": "pnpm exec tsx scripts/build-blog.mts && pnpm exec vite build",
   "outputDirectory": "client/dist",
   "headers": [
     {

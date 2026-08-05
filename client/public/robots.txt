@@ -3,6 +3,7 @@
 
 User-agent: *
 Allow: /
+Allow: /blog/
 Disallow: /admin
 Disallow: /supervisor
 Disallow: /dashboard
