@@ -61,12 +61,17 @@ export function clampSeedanceOpenRouterDuration(raw: unknown): number {
 export function normalizeSeedanceOpenRouterQuality(
   variant: SeedanceOpenRouterVariant,
   raw: unknown,
-): "480p" | "720p" | "1080p" {
+): "480p" | "720p" | "1080p" | "2K" | "4K" {
   const q = String(raw || "720p").trim().toLowerCase();
+  // 快速档定位是「便宜快」，不给高画质选项，免得比标准档还贵
   if (variant === "2.0-fast") {
     return q === "480p" ? "480p" : "720p";
   }
   if (q === "480p" || q === "1080p") return q;
+  // Seedance 按像素计费，2K/4K 单价是 720p 的 4 倍与 9 倍，售价见 canvasGenerationPricing
+  if (q === "1k") return "1080p";
+  if (q === "2k") return "2K";
+  if (q === "4k") return "4K";
   return "720p";
 }
 

@@ -147,6 +147,11 @@ export type CanvasBlock = {
   error?: string;
   /** 编导反推输出档：zh | en | compact */
   videoReverseOutputMode?: "zh" | "en" | "compact";
+  /**
+   * 成片画质，默认 720p；标准档可选到 4K，单价按像素翻倍。
+   * 快速档与成片·加长固定 720p，选了也会被服务端 normalize 回去。
+   */
+  videoResolution?: "720p" | "1080p" | "2K" | "4K";
   /** 连载集号（多集铺板时挂在链上各节点，可序列化） */
   episodeIndex?: number;
   /** 本集标题（坞列表 / story 注释用） */
@@ -402,6 +407,12 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
         : block.videoReverseOutputMode === "zh"
           ? "zh"
           : undefined,
+    videoResolution:
+      block.videoResolution === "1080p" ||
+      block.videoResolution === "2K" ||
+      block.videoResolution === "4K"
+        ? block.videoResolution
+        : undefined,
     episodeIndex:
       typeof block.episodeIndex === "number" && Number.isFinite(block.episodeIndex) && block.episodeIndex >= 1
         ? Math.floor(block.episodeIndex)

@@ -1000,6 +1000,85 @@ async function resolveJobUser(
 }
 
 /**
+ * 画布成片扣费：验登录 → 预检余额 → 扣 → 跑 → 失败退回。
+ *
+ * 此前 `/canvas` 与漫剧编剧室的成片**一分钱不收**（本文件从无扣费、画布前端也没扣），
+ * 一集 4–6 段等于白烧上游账单。这里统一收口在服务端，前端绕不过去。
+ *
+ * - supervisor / admin 免扣（内部验收），与 `server/jobs/runner.ts` 的成长营口径一致。
+ * - 自动重试不会重复扣：失败即退回，只有真正出片的那次留下扣款。
+ * - 探针请求（`probe=1`）由调用方决定是否走这里，默认不扣。
+ */
+async function chargeCanvasVideoAndRun<T>(
+  req: VercelRequest,
+  opts: {
+    /** 成片秒数，决定 15 秒档还是加长档 */
+    durationSec?: number | null;
+    /** 漫剧集号：有值即按整集折算段价 */
+    episodeIndex?: unknown;
+    /** 账本描述后缀，便于对账 */
+    label: string;
+    /** 探针请求（`probe=1`）：脚本没有 cookie，既不验登录也不扣费 */
+    skipCharge?: boolean;
+    /** 输出分辨率：1080p 单价是 720p 的 2.25 倍 */
+    resolution?: string | null;
+  },
+  work: () => Promise<T>,
+): Promise<{ ok: true; result: T; credits: number } | { ok: false; status: number; error: string }> {
+  if (opts.skipCharge) return { ok: true, result: await work(), credits: 0 };
+  const viewer = await resolveJobUser(req);
+  if (!viewer) return { ok: false, status: 401, error: "请先登录后再生成成片" };
+
+  /**
+   * 成片一律限正式会员（用户 2026-08-05 明文：不开放给邀请码用户）。
+   * 邀请码兑换的只是积分，plan 仍是 free，有余额也不放行。
+   */
+  const { resolvePaidVideoAccess } = await import("../shared/paidVideoAccess.js");
+  const { getUserPlan } = await import("../server/credits.js");
+  const plan = await getUserPlan(viewer.userId).catch(() => "free");
+  const access = resolvePaidVideoAccess({ plan: String(plan || "free"), role: viewer.role });
+  if (!access.allowed) {
+    return { ok: false, status: 403, error: access.message || "成片功能仅向正式会员开放" };
+  }
+
+  const { canvasVideoClipCredits } = await import("../shared/canvasGenerationPricing.js");
+  const episodeIndex = Number(opts.episodeIndex);
+  const isEpisodeSegment = Number.isFinite(episodeIndex) && episodeIndex > 0;
+  const credits = canvasVideoClipCredits({
+    durationSec: opts.durationSec ?? undefined,
+    isEpisodeSegment,
+    resolution: opts.resolution ?? undefined,
+  });
+
+  const { deductCreditsAmount, refundCredits } = await import("../server/credits.js");
+  let deducted = 0;
+  try {
+    // admin / supervisor 在 deductCreditsAmount 内部返回 cost=0，故不必在这里另判角色；
+    // 余额不足是 **throw**（不是返回 false），错误原文含英文与余额细节，这里换成对用户的话。
+    const out = await deductCreditsAmount(viewer.userId, credits, "canvasVideoClip", opts.label);
+    deducted = out.cost;
+  } catch {
+    return {
+      ok: false,
+      status: 402,
+      error: `积分不足：本段成片需要 ${credits} 积分，请补充积分后重试`,
+    };
+  }
+  try {
+    return { ok: true, result: await work(), credits: deducted };
+  } catch (err) {
+    if (deducted > 0) {
+      await refundCredits(viewer.userId, deducted, `${opts.label}·生成失败退回`).catch(
+        (refundErr: unknown) => {
+          console.error("[chargeCanvasVideoAndRun] 退款失败", refundErr);
+        },
+      );
+    }
+    throw err;
+  }
+}
+
+/**
  * 成片·加长(2.5)：8 月 8 日 00:00 (UTC+8) 起自动对**正式会员**（pro/enterprise）开放；
  * 邀请码积分用户仍是 free，拿不到。上线前只有 supervisor/admin 可走（内部验收）。
  */
@@ -3429,14 +3508,23 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         const { clampHailuoOpenRouterDuration } = await import("../shared/hailuoOpenRouterModels.js");
         // H3 一律 15 秒：忽略请求体里的时长，避免调用方各传各的导致计费与产出不符
         const duration = clampHailuoOpenRouterDuration();
-        const out = await runOpenRouterHailuoVideo({
-          prompt,
-          imageUrl,
-          imageUrls,
-          aspectRatio,
-          duration,
-          generateAudio,
-        });
+        const charged = await chargeCanvasVideoAndRun(
+          req,
+          { durationSec: duration, episodeIndex: b.episodeIndex, label: "画布成片·H3（2K·15s）" },
+          () =>
+            runOpenRouterHailuoVideo({
+              prompt,
+              imageUrl,
+              imageUrls,
+              aspectRatio,
+              duration,
+              generateAudio,
+            }),
+        );
+        if (!charged.ok) {
+          return res.status(charged.status).json({ ok: false, error: charged.error });
+        }
+        const out = charged.result;
         return res.status(200).json({
           ok: true,
           videoUrl: out.videoUrl,
@@ -3444,6 +3532,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           model: out.model,
           version: out.version,
           resolution: out.resolution,
+          creditsUsed: charged.credits,
         });
       } catch (e: any) {
         return res.status(502).json({ ok: false, error: e?.message || "hailuo3_failed" });
@@ -3513,22 +3602,40 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
               : Math.floor(Number(generateTypeRaw));
           const { parseXyqSeedance25WorkMode } = await import("../shared/xyqSeedancePrompt.js");
           const workMode = parseXyqSeedance25WorkMode(b.workMode || q.workMode || "generate");
-          const out = await runXyqSeedance25Video({
-            prompt,
-            imageUrl,
-            imageUrls,
-            videoUrls,
-            audioUrls,
-            aspectRatio: s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9",
-            duration: Number(b.duration ?? q.duration ?? b.durationSec ?? 15),
-            quality: s(b.resolution || q.resolution || "720p").trim() || "720p",
-            generateType: Number.isFinite(generateType as number) ? (generateType as number) : undefined,
-            workMode,
-            threadId: s(b.threadId || q.threadId || "").trim() || undefined,
-            upscaleResolution: s(b.upscaleResolution || q.upscaleResolution || "").trim() || undefined,
-            upscaleToolVersion: s(b.upscaleToolVersion || q.upscaleToolVersion || "").trim() || undefined,
-            sourceUrl: s(b.sourceUrl || q.sourceUrl || "").trim() || undefined,
-          });
+          const duration25 = Number(b.duration ?? q.duration ?? b.durationSec ?? 15);
+          const charged = await chargeCanvasVideoAndRun(
+            req,
+            {
+              durationSec: duration25,
+              episodeIndex: b.episodeIndex,
+              label: `画布成片·加长（${Number.isFinite(duration25) ? duration25 : 15}s）`,
+            },
+            () =>
+              runXyqSeedance25Video({
+                prompt,
+                imageUrl,
+                imageUrls,
+                videoUrls,
+                audioUrls,
+                aspectRatio: s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9",
+                duration: duration25,
+                quality: s(b.resolution || q.resolution || "720p").trim() || "720p",
+                generateType: Number.isFinite(generateType as number)
+                  ? (generateType as number)
+                  : undefined,
+                workMode,
+                threadId: s(b.threadId || q.threadId || "").trim() || undefined,
+                upscaleResolution:
+                  s(b.upscaleResolution || q.upscaleResolution || "").trim() || undefined,
+                upscaleToolVersion:
+                  s(b.upscaleToolVersion || q.upscaleToolVersion || "").trim() || undefined,
+                sourceUrl: s(b.sourceUrl || q.sourceUrl || "").trim() || undefined,
+              }),
+          );
+          if (!charged.ok) {
+            return res.status(charged.status).json({ ok: false, error: charged.error });
+          }
+          const out = charged.result;
           return res.status(200).json({
             ok: true,
             videoUrl: out.videoUrl,
@@ -3540,6 +3647,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             webThreadLink: out.webThreadLink,
             route: out.route,
             workMode: out.workMode,
+            creditsUsed: charged.credits,
           });
         } catch (e: any) {
           return res.status(502).json({ ok: false, error: e?.message || "seedance25_failed" });
@@ -3568,17 +3676,34 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           const duration = parseSeedanceDurationInput(
             b.duration ?? q.duration ?? b.durationSec ?? 15,
           );
-          const out = await runOpenRouterSeedanceVideo({
-            prompt,
-            imageUrl,
-            imageUrls,
-            audioUrls,
-            quality: resolution,
-            aspectRatio,
-            duration: typeof duration === "number" ? duration : 15,
-            generateAudio,
-            version: productVersion,
-          });
+          const durationSec = typeof duration === "number" ? duration : 15;
+          const charged = await chargeCanvasVideoAndRun(
+            req,
+            {
+              durationSec,
+              episodeIndex: b.episodeIndex,
+              resolution,
+              label: `画布成片·${productVersion === "2.0-fast" ? "快速" : "标准"}·${resolution}（${durationSec}s）`,
+              // 探针脚本没有 cookie，收费会把它们全打成 401
+              skipCharge: isProbe,
+            },
+            () =>
+              runOpenRouterSeedanceVideo({
+                prompt,
+                imageUrl,
+                imageUrls,
+                audioUrls,
+                quality: resolution,
+                aspectRatio,
+                duration: durationSec,
+                generateAudio,
+                version: productVersion,
+              }),
+          );
+          if (!charged.ok) {
+            return res.status(charged.status).json({ ok: false, error: charged.error });
+          }
+          const out = charged.result;
           return res.status(200).json({
             ok: true,
             videoUrl: out.videoUrl,
@@ -3586,6 +3711,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             model: out.model,
             version: out.version,
             resolution,
+            creditsUsed: charged.credits,
           });
         }
 
@@ -3687,22 +3813,40 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             : Math.floor(Number(generateTypeRaw));
         const { parseXyqSeedance25WorkMode } = await import("../shared/xyqSeedancePrompt.js");
         const workMode = parseXyqSeedance25WorkMode(b.workMode || q.workMode || "generate");
-        const out = await runXyqSeedance25Video({
-          prompt,
-          imageUrl,
-          imageUrls,
-          videoUrls,
-          audioUrls,
-          aspectRatio: s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9",
-          duration: Number(b.duration ?? q.duration ?? b.durationSec ?? 15),
-          quality: s(b.resolution || q.resolution || "720p").trim() || "720p",
-          generateType: Number.isFinite(generateType as number) ? (generateType as number) : undefined,
-          workMode,
-          threadId: s(b.threadId || q.threadId || "").trim() || undefined,
-          upscaleResolution: s(b.upscaleResolution || q.upscaleResolution || "").trim() || undefined,
-          upscaleToolVersion: s(b.upscaleToolVersion || q.upscaleToolVersion || "").trim() || undefined,
-          sourceUrl: s(b.sourceUrl || q.sourceUrl || "").trim() || undefined,
-        });
+        const duration25 = Number(b.duration ?? q.duration ?? b.durationSec ?? 15);
+        const charged = await chargeCanvasVideoAndRun(
+          req,
+          {
+            durationSec: duration25,
+            episodeIndex: b.episodeIndex,
+            label: `成片·加长（${Number.isFinite(duration25) ? duration25 : 15}s）`,
+          },
+          () =>
+            runXyqSeedance25Video({
+              prompt,
+              imageUrl,
+              imageUrls,
+              videoUrls,
+              audioUrls,
+              aspectRatio: s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9",
+              duration: duration25,
+              quality: s(b.resolution || q.resolution || "720p").trim() || "720p",
+              generateType: Number.isFinite(generateType as number)
+                ? (generateType as number)
+                : undefined,
+              workMode,
+              threadId: s(b.threadId || q.threadId || "").trim() || undefined,
+              upscaleResolution:
+                s(b.upscaleResolution || q.upscaleResolution || "").trim() || undefined,
+              upscaleToolVersion:
+                s(b.upscaleToolVersion || q.upscaleToolVersion || "").trim() || undefined,
+              sourceUrl: s(b.sourceUrl || q.sourceUrl || "").trim() || undefined,
+            }),
+        );
+        if (!charged.ok) {
+          return res.status(charged.status).json({ ok: false, error: charged.error });
+        }
+        const out = charged.result;
         return res.status(200).json({
           ok: true,
           videoUrl: out.videoUrl,
@@ -3714,6 +3858,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           webThreadLink: out.webThreadLink,
           route: out.route,
           workMode: out.workMode,
+          creditsUsed: charged.credits,
         });
       } catch (e: any) {
         return res.status(502).json({ ok: false, error: e?.message || "seedance25_failed" });

@@ -90,6 +90,10 @@ import {
 } from "@shared/manhuaFactoryTextOptimize";
 import { assertOpenAiImagePromptWithinLimit } from "@shared/manhuaKeyartPromptCompact";
 import {
+  normalizeCanvasVideoResolution,
+  type CanvasVideoResolution,
+} from "@shared/canvasGenerationPricing";
+import {
   formatManhuaCharacterVoiceLockBlock,
   planManhuaVoiceAudioForPrompt,
   type ManhuaCharacterVoiceLock,
@@ -268,6 +272,8 @@ async function runGptImage2(
     userId?: string;
     /** 设定图与静帧分走两把官方密钥 */
     imageLane?: OpenAiImageLane;
+    /** 批量里的第几张（0-based）：第 2 张起走批量价 */
+    batchIndex?: number;
   },
 ): Promise<string> {
   const refImageUrl = String(opts?.refImageUrl || "").trim();
@@ -277,7 +283,7 @@ async function runGptImage2(
   const openaiOnly = Boolean(opts?.openaiOnly);
   const userId = String(opts?.userId || "");
 
-  const attemptOnce = async (): Promise<string> => {
+  const attemptOnce = async (isRetry = false): Promise<string> => {
     const { jobId } = await createJobSameOrigin({
       type: "image",
       userId,
@@ -289,6 +295,13 @@ async function runGptImage2(
         generalImageEdit: referenceImageUrls.length > 0,
         providerOverride: openaiOnly ? "openai" : undefined,
         imageLane: opts?.imageLane,
+        /**
+         * 画布出图由 worker 扣积分；`/creative` 与 `/platform` 走同一队列但已在前端扣，故不带此标记。
+         * 超时重入队的那次也不带：上一个 job 可能仍在跑并最终成功（那次已扣），
+         * 同一张图不能收两次。宁可少收，也不误扣。
+         */
+        chargeOnServer: !isRetry,
+        batchIndex: opts?.batchIndex,
       }),
     });
     const job = await pollJobUntilTerminal(jobId, {
@@ -310,7 +323,7 @@ async function runGptImage2(
     const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
     if (openaiOnly && isOpenAiImageTimeoutError(msg)) {
       console.warn("[canvasRunBlock] 官方 Image-2 超时，仅再入队一次 OpenAI（不回落 OpenRouter）");
-      return await attemptOnce();
+      return await attemptOnce(true);
     }
     throw firstErr;
   }
@@ -329,7 +342,10 @@ async function runGptImage2Batch(
   },
   count: number,
 ): Promise<string[]> {
-  const tasks = Array.from({ length: count }, () => runGptImage2(prompt, aspectRatio, opts));
+  // 批次号随请求带上，让服务端把第 2 张起算批量价
+  const tasks = Array.from({ length: count }, (_unused, batchIndex) =>
+    runGptImage2(prompt, aspectRatio, { ...opts, batchIndex }),
+  );
   return Promise.all(tasks);
 }
 
@@ -498,6 +514,16 @@ type SeedanceProductVideoResult = {
   workMode?: XyqSeedance25WorkMode;
 };
 
+/**
+ * 从漫剧 clip 节点 id（`clip-e01-g03`）取段号，随请求体上报便于服务端记账与排错。
+ * 集号本身走 `block.episodeIndex`，不依赖 id 解析。
+ */
+function parseClipIndexFromBlockId(id: string): number | undefined {
+  const m = /-g(\d{1,3})\b/.exec(String(id || ""));
+  const n = m ? Number(m[1]) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 async function runSeedanceProductVideo(
   prompt: string,
   imageUrl: string | undefined,
@@ -518,6 +544,18 @@ async function runSeedanceProductVideo(
     threadId?: string;
     upscaleResolution?: "720p" | "1080p" | "2k" | "4k";
     sourceUrl?: string;
+    /**
+     * 漫剧编剧室的集号／段号。服务端据此走整集折算段价，
+     * 不透传就只能按自由画布单段计价（提示词里的「第 N 段」出线前会被换成
+     * 普通括号，且用户可改，反解不可靠）。
+     */
+    episodeIndex?: number;
+    clipIndex?: number;
+    /**
+     * 输出画质，默认 720p。标准档（2.0）可选到 4K，单价按像素翻倍（见 canvasGenerationPricing）；
+     * 快速档与 2.5 加长仍固定 720p，由服务端 normalize 兜住。
+     */
+    resolution?: CanvasVideoResolution;
   },
 ): Promise<SeedanceProductVideoResult> {
   // 与 Creative / TestLab 一致：直连 Fly/api 子域，避免 www→Vercel→Fly 反代 ~120s 被 ROUTER_EXTERNAL 腰斩
@@ -534,14 +572,15 @@ async function runSeedanceProductVideo(
     version === "2.5"
       ? clampXyqSeedanceDuration(durationRaw)
       : clampSeedanceOpenRouterDuration(durationRaw);
-  // 2.5 须带登录态，服务端校验正式会员
-  const credentials = version === "2.5" ? "include" : "omit";
+  // 服务端要按登录用户扣积分（2.5 还要校验正式会员），三档一律带登录态
   const workMode = parseXyqSeedance25WorkMode(opts?.workMode);
+  const episodeIndex = Number(opts?.episodeIndex);
+  const clipIndex = Number(opts?.clipIndex);
   const res = await withFlyHealthGate(probeOrigin, () =>
     fetch(seedanceUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials,
+      credentials: "include",
       body: JSON.stringify({
         // 换官方符号只在出线这一刻做：上面的时长解析等仍认【第N段·Xs】
         prompt: renderManhuaClipPromptForSeedance(prompt),
@@ -555,7 +594,7 @@ async function runSeedanceProductVideo(
         audioUrls: audioUrls.length
           ? audioUrls.slice(0, SEEDANCE_REFERENCE_MAX.audio)
           : undefined,
-        resolution: "720p",
+        resolution: normalizeCanvasVideoResolution(opts?.resolution),
         aspectRatio,
         duration,
         // 产品口径：只用引擎自带 Audio on，暂不另开后期配音 API
@@ -568,6 +607,8 @@ async function runSeedanceProductVideo(
           ? { upscaleResolution: opts.upscaleResolution }
           : {}),
         ...(version === "2.5" && opts?.sourceUrl ? { sourceUrl: opts.sourceUrl } : {}),
+        ...(Number.isFinite(episodeIndex) && episodeIndex > 0 ? { episodeIndex } : {}),
+        ...(Number.isFinite(clipIndex) && clipIndex > 0 ? { clipIndex } : {}),
       }),
     }),
   );
@@ -611,6 +652,9 @@ async function runHailuo3(
   opts?: {
     imageUrls?: string[];
     duration?: number;
+    /** 漫剧集号／段号：服务端据此走整集折算段价 */
+    episodeIndex?: number;
+    clipIndex?: number;
   },
 ): Promise<string> {
   const hailuoUrl = withLongJobsFlyDirect("/api/jobs?op=hailuo3Video");
@@ -633,6 +677,8 @@ async function runHailuo3(
         aspectRatio,
         duration,
         generateAudio: true,
+        ...(Number(opts?.episodeIndex) > 0 ? { episodeIndex: Number(opts?.episodeIndex) } : {}),
+        ...(Number(opts?.clipIndex) > 0 ? { clipIndex: Number(opts?.clipIndex) } : {}),
       }),
     }),
   );
@@ -1215,6 +1261,8 @@ export async function runCanvasBlock(
         url = await runHailuo3(seedancePrompt, seedStill, ar, {
           imageUrls: httpsImages.length ? httpsImages : undefined,
           duration: clipDuration,
+          episodeIndex: block.episodeIndex,
+          clipIndex: parseClipIndexFromBlockId(block.id),
         });
       } else {
         const userRefVideos = (block.seedance25RefVideoUrls || [])
@@ -1293,6 +1341,9 @@ export async function runCanvasBlock(
           sourceUrl: useSeedance25
             ? String(block.seedance25SourceUrl || "").trim() || undefined
             : undefined,
+          episodeIndex: block.episodeIndex,
+          clipIndex: parseClipIndexFromBlockId(block.id),
+          resolution: block.videoResolution,
         });
         url = seedanceOut.videoUrl;
         if (useSeedance25) {

@@ -32,8 +32,17 @@ import {
   SEEDANCE_25_PAID_ONLY_LABEL_ZH,
 } from "@shared/seedance25Access";
 import {
+  canUsePaidVideoByPlan,
+  PAID_VIDEO_MEMBER_ONLY_LABEL_ZH,
+} from "@shared/paidVideoAccess";
+import {
   CANVAS_IMAGE_BATCH_OPTIONS,
 } from "@/lib/canvasCredits";
+import {
+  CANVAS_VIDEO_RESOLUTIONS,
+  canvasVideoClipCredits,
+  normalizeCanvasVideoResolution,
+} from "@shared/canvasGenerationPricing";
 import { isCanvasUploadableFile, inferCanvasAssetKindFromFileName, takeFilesFromInput, uploadCanvasFilesParallel, uploadOneCanvasAsset, CANVAS_UPLOAD_CONCURRENCY } from "@/lib/canvasUpload";
 import { loadCanvasDocumentTexts } from "@/lib/canvasDocumentText";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
@@ -599,6 +608,8 @@ export default function FreeformCanvas({
   const subQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
   const userPlan = (subQuery.data?.plan || "free") as string;
   const canUseSeedance25 = canAccessSeedance25ByPlan(userPlan);
+  /** 成片一律限正式会员（服务端同口径）；订阅信息还没回来时不提前泼冷水 */
+  const canUsePaidVideo = subQuery.isLoading || canUsePaidVideoByPlan(userPlan);
   const videoModelOptions = useMemo(
     () =>
       canUseSeedance25
@@ -1984,6 +1995,29 @@ export default function FreeformCanvas({
                                   ? "成片·H3：2K 成片，多图参考 + 运镜/动作/对白，固定 15s"
                                   : "成片·快速：多图参考 + 运镜/动作/对白，更快更省"}
                           </div>
+                          {/* 画质只对标准档开放：快速档定位是便宜快，H3 固定 2K，加长固定 720p */}
+                          {block.videoModel === "seedance-2.0" ? (
+                            <label className="flex items-center gap-2 text-[11px] text-white/70">
+                              <span className="shrink-0 text-white/45">画质</span>
+                              <select
+                                value={normalizeCanvasVideoResolution(block.videoResolution)}
+                                onChange={(e) =>
+                                  patchOne(block.id, {
+                                    videoResolution: normalizeCanvasVideoResolution(e.target.value),
+                                  })
+                                }
+                                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
+                              >
+                                {CANVAS_VIDEO_RESOLUTIONS.map((r) => (
+                                  <option key={r} value={r}>
+                                    {r}
+                                    {" · "}
+                                    {canvasVideoClipCredits({ resolution: r })} 积分/段
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          ) : null}
                           <div className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[10px] font-medium tracking-wide text-white/70">
                             {block.aspectRatio || "9:16"}
                             {" · "}
@@ -1994,9 +2028,10 @@ export default function FreeformCanvas({
                               ? ` · 资产边 ${countManhuaClipAssetEdges(edges, block.id)}`
                               : ""}
                           </div>
-                          {!canUseSeedance25 ? (
+                          {/* 服务端对所有成片档都验会员，前端先说清楚，别让人等到扣费闸门才知道 */}
+                          {!canUsePaidVideo ? (
                             <div className="rounded-lg border border-dashed border-amber-400/30 bg-amber-500/5 px-2 py-1.5 text-[10px] leading-5 text-amber-100/85">
-                              成片·加长仅正式会员；邀请码用户请用成片·快速
+                              {PAID_VIDEO_MEMBER_ONLY_LABEL_ZH}
                             </div>
                           ) : null}
                           {block.videoModel === "seedance-2.5" && canUseSeedance25 ? (

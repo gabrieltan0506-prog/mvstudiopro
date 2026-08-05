@@ -18,6 +18,16 @@ export type CanvasGptImage2JobParams = {
   gcsSubdir?: string;
   /** 设定图 / 静帧分走两把官方密钥 */
   imageLane?: OpenAiImageLane;
+  /**
+   * 由 worker 扣积分（`server/jobs/runner.ts` 的 `canvas_gpt_image2`）。
+   *
+   * 这条队列有三个调用方：`/canvas`、`/creative` 生图、`/platform` 单帧生图。
+   * 后两个已在前端 `chargeStep` 扣过，worker 再扣就是双扣，所以只有画布带这个标记。
+   * 缺省不扣：漏带只会少收钱，不会误扣用户，比反向标记安全。
+   */
+  chargeOnServer?: boolean;
+  /** 批量出图里的第几张（0-based）：第 2 张起走批量价 */
+  batchIndex?: number;
 };
 
 export function buildCanvasGptImage2JobInput(params: {
@@ -30,6 +40,8 @@ export function buildCanvasGptImage2JobInput(params: {
   providerOverride?: CanvasGptImage2ProviderOverride | string;
   gcsSubdir?: string;
   imageLane?: OpenAiImageLane | string;
+  chargeOnServer?: boolean;
+  batchIndex?: number;
 }): {
   action: "canvas_gpt_image2";
   params: CanvasGptImage2JobParams;
@@ -66,6 +78,8 @@ export function buildCanvasGptImage2JobInput(params: {
       ...(generalImageEdit ? { generalImageEdit: true } : {}),
       ...(providerOverride ? { providerOverride } : {}),
       ...(imageLane ? { imageLane } : {}),
+      ...(params.chargeOnServer ? { chargeOnServer: true } : {}),
+      ...(Number(params.batchIndex) > 0 ? { batchIndex: Math.floor(Number(params.batchIndex)) } : {}),
       gcsSubdir: String(params.gcsSubdir || "").trim() || "canvas-gpt-image2",
     },
   };

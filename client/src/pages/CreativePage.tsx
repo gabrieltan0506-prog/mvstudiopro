@@ -20,12 +20,12 @@ import { Sparkles, Image as ImageIcon, Video, LoaderCircle } from "lucide-react"
 import Image2TemplatePicker from "@/components/Image2TemplatePicker";
 import { toast } from "sonner";
 
-/** 创作台「图生视频」定价（与 chargeStep creditsOverride 一致） */
+/**
+ * Veo 仍由前端扣（它不走 `api/jobs` 的成片接口）。
+ * Seedance / H3 的价格已收口到 `shared/canvasGenerationPricing`，由服务端按时长扣，前端不再重复定价。
+ */
 const CREATIVE_VIDEO_CREDITS_VEO_31 = 54;
-const CREATIVE_VIDEO_CREDITS_SEEDANCE_20 = 118;
-/** H3 2K · OpenRouter；暂与标准成片同档积分 */
-const CREATIVE_VIDEO_CREDITS_HAILUO_H3 = 118;
-/** 成片：Veo 8s / 54 cr；Seedance 10s / 118 cr；H3 固定 15s（与 API 参数一致） */
+/** 成片时长：Veo 8s、Seedance 10s、H3 固定 15s（与 API 参数一致） */
 const CREATIVE_VIDEO_DURATION_VEO_SEC = 8;
 const CREATIVE_VIDEO_DURATION_SEEDANCE_SEC = 10;
 const CREATIVE_VIDEO_DURATION_HAILUO_SEC = HAILUO_OPENROUTER_FIXED_DURATION_SEC;
@@ -185,16 +185,21 @@ export default function CreativePage() {
     
     let chargedCost = 0;
     try {
-      const overrideCost =
-        videoModel === "minimax-hailuo-3"
-          ? CREATIVE_VIDEO_CREDITS_HAILUO_H3
-          : videoModel === "seedance-2.0" || videoModel === "seedance-2.0-fast"
-            ? CREATIVE_VIDEO_CREDITS_SEEDANCE_20
-            : CREATIVE_VIDEO_CREDITS_VEO_31;
+      /**
+       * Seedance 与 H3 的扣费已收口到服务端（`api/jobs.ts` 的 `chargeCanvasVideoAndRun`），
+       * 这里再扣一次就是双扣。Veo 走的不是那两个接口，仍由前端扣。
+       */
+      const chargeOnClient = videoModel === "veo-3.1";
+      if (chargeOnClient) {
+        const charge = await chargeStepMutation.mutateAsync({
+          step: "scene_video",
+          quantity: 1,
+          creditsOverride: CREATIVE_VIDEO_CREDITS_VEO_31,
+        });
+        chargedCost = charge.cost;
+      }
 
-      const charge = await chargeStepMutation.mutateAsync({ step: "scene_video", quantity: 1, creditsOverride: overrideCost });
-      chargedCost = charge.cost;
-      
+
       let finalVideoUrl = "";
 
       // 成片提示词原样进引擎（已废除微动三件套减法；仅去导演名）

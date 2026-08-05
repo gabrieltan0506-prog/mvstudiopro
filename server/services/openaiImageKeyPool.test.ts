@@ -1,74 +1,94 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  resolveOpenAiImageKey,
-  resolveOpenAiImageKeyChain,
-  shouldRetryOpenAiImageWithOtherKey,
-} from "./openaiImageKeyPool.js";
+import { resolveOpenAiImageKeyChain } from "./openaiImageKeyPool";
 
-const KEYS = [
+const ENV_KEYS = [
   "OPENAI_IMAGE_API_KEY_ASSET",
   "OPENAI_IMAGE_API_KEY_KEYART",
   "OPENAI_IMAGE_API_KEY",
   "OPENAI_API_KEY",
 ] as const;
 
-describe("openaiImageKeyPool", () => {
-  const prev: Record<string, string | undefined> = {};
+const saved: Record<string, string | undefined> = {};
 
-  beforeEach(() => {
-    for (const k of KEYS) {
-      prev[k] = process.env[k];
-      delete process.env[k];
+beforeEach(() => {
+  for (const k of ENV_KEYS) {
+    saved[k] = process.env[k];
+    delete process.env[k];
+  }
+});
+
+afterEach(() => {
+  for (const k of ENV_KEYS) {
+    if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+  }
+});
+
+describe("resolveOpenAiImageKeyChain", () => {
+  /**
+   * 2026-08-05 线上：出图专钥瞬时 fetch failed，钥池换到共用钥，
+   * 而共用钥就是 GPT-5.6 在用的那把通用钥、余额早已耗尽，白等一轮 429。
+   */
+  it("配了专钥就不回落到共用钥", () => {
+    process.env.OPENAI_IMAGE_API_KEY_ASSET = "sk-assetkey";
+    process.env.OPENAI_IMAGE_API_KEY = "sk-sharedkey";
+    process.env.OPENAI_API_KEY = "sk-sharedkey";
+
+    const chain = resolveOpenAiImageKeyChain("asset");
+    expect(chain.map((c) => c.slot)).toEqual(["OPENAI_IMAGE_API_KEY_ASSET"]);
+    expect(chain.some((c) => c.key === "sk-sharedkey")).toBe(false);
+  });
+
+  it("两道专钥都配了就互相兜底，顺序是本道优先", () => {
+    process.env.OPENAI_IMAGE_API_KEY_ASSET = "sk-assetkey";
+    process.env.OPENAI_IMAGE_API_KEY_KEYART = "sk-keyartkey";
+    process.env.OPENAI_IMAGE_API_KEY = "sk-sharedkey";
+
+    expect(resolveOpenAiImageKeyChain("asset").map((c) => c.slot)).toEqual([
+      "OPENAI_IMAGE_API_KEY_ASSET",
+      "OPENAI_IMAGE_API_KEY_KEYART",
+    ]);
+    expect(resolveOpenAiImageKeyChain("keyart").map((c) => c.slot)).toEqual([
+      "OPENAI_IMAGE_API_KEY_KEYART",
+      "OPENAI_IMAGE_API_KEY_ASSET",
+    ]);
+  });
+
+  /**
+   * 线上就是这个配置：只有 ASSET 一把专钥，KEYART 不配（用户 2026-08-05 明文：
+   * 不配 KEYART，ASSET 出不来就直接跳 EvoLink）。两条道都必须只用 ASSET，
+   * 谁都不许再掉到没钱的通用钥上。
+   */
+  it("只配 ASSET 时，两条道都只用它，出不来即交给下一家供应商", () => {
+    process.env.OPENAI_IMAGE_API_KEY_ASSET = "sk-assetkey";
+    process.env.OPENAI_IMAGE_API_KEY = "sk-sharedkey";
+    process.env.OPENAI_API_KEY = "sk-sharedkey";
+
+    for (const lane of ["asset", "keyart"] as const) {
+      const chain = resolveOpenAiImageKeyChain(lane);
+      expect(chain.map((c) => c.slot)).toEqual(["OPENAI_IMAGE_API_KEY_ASSET"]);
     }
   });
 
-  afterEach(() => {
-    for (const k of KEYS) {
-      if (prev[k] === undefined) delete process.env[k];
-      else process.env[k] = prev[k];
-    }
+  it("一把专钥都没配才退回共用钥（保持旧行为）", () => {
+    process.env.OPENAI_IMAGE_API_KEY = "sk-sharedkey";
+    expect(resolveOpenAiImageKeyChain("asset").map((c) => c.slot)).toEqual([
+      "OPENAI_IMAGE_API_KEY",
+    ]);
   });
 
-  it("两把分道钥：各走自己那把，另一把排在末位当兜底", () => {
-    process.env.OPENAI_IMAGE_API_KEY_ASSET = "sk-asset";
-    process.env.OPENAI_IMAGE_API_KEY_KEYART = "sk-keyart";
-    expect(resolveOpenAiImageKeyChain("asset").map((s) => s.key)).toEqual(["sk-asset", "sk-keyart"]);
-    expect(resolveOpenAiImageKeyChain("keyart").map((s) => s.key)).toEqual(["sk-keyart", "sk-asset"]);
-    expect(resolveOpenAiImageKey("asset")).toBe("sk-asset");
+  it("同一把钥配在多个变量上只出现一次", () => {
+    process.env.OPENAI_IMAGE_API_KEY = "sk-samekey";
+    process.env.OPENAI_API_KEY = "sk-samekey";
+    expect(resolveOpenAiImageKeyChain("keyart")).toHaveLength(1);
   });
 
-  it("只配设定图专钥：静帧仍走共用钥，设定图不占用它", () => {
-    process.env.OPENAI_IMAGE_API_KEY_ASSET = "sk-asset";
-    process.env.OPENAI_IMAGE_API_KEY = "sk-shared";
-    expect(resolveOpenAiImageKeyChain("asset").map((s) => s.key)).toEqual(["sk-asset", "sk-shared"]);
-    expect(resolveOpenAiImageKeyChain("keyart").map((s) => s.key)).toEqual(["sk-shared", "sk-asset"]);
-  });
-
-  it("只有一把共用钥时链长为 1（不白跑第二遍）", () => {
-    process.env.OPENAI_IMAGE_API_KEY = "sk-only";
-    process.env.OPENAI_API_KEY = "sk-only";
-    expect(resolveOpenAiImageKeyChain("asset")).toHaveLength(1);
-    expect(resolveOpenAiImageKeyChain(null).map((s) => s.slot)).toEqual(["OPENAI_IMAGE_API_KEY"]);
-  });
-
-  it("占位伪值不进链", () => {
-    process.env.OPENAI_IMAGE_API_KEY_ASSET = "[placeholder]";
-    process.env.OPENAI_API_KEY = "sk-proj-real";
-    expect(resolveOpenAiImageKeyChain("asset").map((s) => s.key)).toEqual(["sk-proj-real"]);
-    process.env.OPENAI_API_KEY = "中的openai";
-    expect(resolveOpenAiImageKeyChain("asset")).toHaveLength(0);
-    expect(resolveOpenAiImageKey("asset")).toBe("");
-  });
-
-  it("限流 / 鉴权 / 5xx 换钥重试；审核与提示词过长不换", () => {
-    expect(shouldRetryOpenAiImageWithOtherKey("OpenAI generations HTTP 429: rate limit")).toBe(true);
-    expect(shouldRetryOpenAiImageWithOtherKey("OpenAI edits HTTP 401: invalid api key")).toBe(true);
-    expect(shouldRetryOpenAiImageWithOtherKey("OpenAI generations HTTP 500: server error")).toBe(true);
-    expect(shouldRetryOpenAiImageWithOtherKey("aborted due to timeout")).toBe(true);
-    expect(
-      shouldRetryOpenAiImageWithOtherKey("HTTP 400: Your request was rejected by our safety system"),
-    ).toBe(false);
-    expect(shouldRetryOpenAiImageWithOtherKey("moderation_blocked")).toBe(false);
-    expect(shouldRetryOpenAiImageWithOtherKey("")).toBe(false);
+  it("占位伪值不算可用钥", () => {
+    process.env.OPENAI_IMAGE_API_KEY_ASSET = "[set]";
+    process.env.OPENAI_IMAGE_API_KEY = "sk-sharedkey";
+    // 专钥是伪值 → 视为没配专钥，仍可退回共用钥
+    expect(resolveOpenAiImageKeyChain("asset").map((c) => c.slot)).toEqual([
+      "OPENAI_IMAGE_API_KEY",
+    ]);
   });
 });

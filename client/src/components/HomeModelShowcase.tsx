@@ -87,7 +87,8 @@ const ENGINES: EngineEntry[] = [
   },
   {
     name: "MiniMax H3",
-    tagline: "唯一出 2K 的成片档：字牌不糊，画面能放大看",
+    // 「唯一出 2K」已不成立：Seedance 标准档现在可选到 4K，改说它的实际强项
+    tagline: "2K 直出，字牌不糊：屏内文字与品牌牌面最稳的一档",
     uses: [
       {
         href: "/canvas",

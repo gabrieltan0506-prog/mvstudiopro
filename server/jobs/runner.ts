@@ -867,6 +867,30 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     // 设定图 / 静帧分走两把官方密钥（画布出图都从这条长任务走，勿只接同步 op）
     const imageLane = normalizeOpenAiImageLane(params.imageLane) ?? undefined;
 
+    /**
+     * 画布出图收费：此前这条队列**一分钱不收**（`/canvas` 的静帧、封面、设定图都走这里），
+     * 官方 Image-2 一张真金白银。supervisor/admin 由 `deductCreditsAmount` 内部免扣，
+     * 失败/空图退回，所以自动重试不会累计扣款。
+     *
+     * 只扣带 `chargeOnServer` 的：这条队列还服务 `/creative` 生图与 `/platform` 单帧生图，
+     * 那两处已在前端 `chargeStep` 扣过，无条件扣会双扣。
+     */
+    const numericUserId = Number(jobUserId);
+    let creditDeducted = 0;
+    if (params.chargeOnServer === true && Number.isFinite(numericUserId) && numericUserId > 0) {
+      const { canvasImageCredits } = await import("../../shared/canvasGenerationPricing.js");
+      const cost = canvasImageCredits(
+        typeof params.batchIndex === "number" ? params.batchIndex : 0,
+      );
+      const deducted = await deductCreditsAmount(
+        numericUserId,
+        cost,
+        "canvasGptImage2",
+        `画布出图（${cost} 积分/张）`,
+      );
+      creditDeducted = deducted.cost;
+    }
+
     const { generateGptImage2FromRawEnglishPrompt } = await import("../services/proxyImageService.js");
     const captureError: {
       message?: string;
@@ -876,18 +900,32 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
       openaiError?: string;
       openrouterError?: string;
     } = {};
-    const imageUrl = await generateGptImage2FromRawEnglishPrompt({
-      englishPrompt: prompt,
-      aspectRatio,
-      gcsSubdir,
-      referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
-      maskUrl: maskUrl || undefined,
-      generalImageEdit: referenceImageUrls.length > 0 || generalImageEdit,
-      providerOverride,
-      imageLane,
-      captureError,
-    });
+    const refundCanvasImage = async (reason: string) => {
+      if (creditDeducted <= 0) return;
+      const { refundCredits } = await import("../credits");
+      await refundCredits(numericUserId, creditDeducted, reason).catch((e) =>
+        console.error("[Credits] canvas image refund failed:", e),
+      );
+    };
+    let imageUrl: string | null | undefined;
+    try {
+      imageUrl = await generateGptImage2FromRawEnglishPrompt({
+        englishPrompt: prompt,
+        aspectRatio,
+        gcsSubdir,
+        referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
+        maskUrl: maskUrl || undefined,
+        generalImageEdit: referenceImageUrls.length > 0 || generalImageEdit,
+        providerOverride,
+        imageLane,
+        captureError,
+      });
+    } catch (err) {
+      await refundCanvasImage("画布出图·生成失败·退回已扣积分");
+      throw err;
+    }
     if (!imageUrl) {
+      await refundCanvasImage("画布出图·未出图·退回已扣积分");
       throw new Error(captureError.message || "gpt_image2_empty");
     }
     return {

@@ -60,6 +60,14 @@ function userFacingHailuoError(raw: string): string {
   if (/content.?policy|safety|违规|审核/i.test(m)) {
     return "内容未通过审核，请调整提示词或参考图后重试";
   }
+  /**
+   * H3 在上游只有一家 provider，账号的数据政策 / guardrail 一挡就整档不可用，
+   * 返回 `No endpoints available matching your guardrail restrictions and data policy`。
+   * 与提示词无关，也不该把上游的设置链接给用户看。
+   */
+  if (/no endpoints available|guardrail|data policy/i.test(m)) {
+    return "该成片档暂不可用（服务端配额或线路设置未开放），请改用其他成片档或稍后重试";
+  }
   return m
     .replace(/openrouter/gi, "视频服务")
     .replace(/evolink/gi, "视频服务")
