@@ -11,7 +11,9 @@ import {
   knowledgeCardImageQuality,
   planKnowledgeCardPages,
   shouldSkipKnowledgeCardDistill,
+  stripKnowledgeCardInternalDirectives,
 } from "./knowledgeCardPagination";
+import { composePlatformImageSkillHints } from "./platformNativeVariants";
 
 function repeatBlock(label: string, chars: number): string {
   const unit = `${label}要点说明。`;
@@ -126,5 +128,53 @@ describe("planKnowledgeCardPages", () => {
     const plan = planKnowledgeCardPages(`# 超长主题\n\n${body}`);
     expect(plan.pageCount).toBeGreaterThan(12);
     expect(plan.pages.length).toBe(plan.pageCount);
+  });
+
+  // 用户 2026-08-05：第 1 页整页印的是内部出图约束（coverHeadline / A1 壳 / mk3），正文从第 2 页才开始
+  it("never paginates injected image directives as body content", () => {
+    const hints = composePlatformImageSkillHints(null, {
+      sheetKind: "graphic",
+      forceCoverShortCopy: true,
+    });
+    expect(hints).toContain("coverHeadline");
+    const body = `# 前线部署工程师\n\n${Array.from(
+      { length: 8 },
+      (_, i) => `## 要点${i + 1}\n\n${repeatBlock(`P${i}`, 200)}`,
+    ).join("\n\n")}`;
+
+    const clean = planKnowledgeCardPages(body);
+    const polluted = planKnowledgeCardPages(`${hints}\n\n${body}`);
+
+    expect(polluted.pages[0]).toContain("前线部署工程师");
+    for (const page of polluted.pages) {
+      expect(page).not.toContain("coverHeadline");
+      expect(page).not.toContain("A1 壳");
+      expect(page).not.toContain("mk3");
+    }
+    // 约束还会撑出额外页数：用户看到的是 1/7 而不是 1/6
+    expect(polluted.pageCount).toBe(clean.pageCount);
+  });
+});
+
+describe("stripKnowledgeCardInternalDirectives", () => {
+  it("keeps untouched text as-is", () => {
+    const text = "# 正常文档\n\n## 小节\n\n正文内容。";
+    expect(stripKnowledgeCardInternalDirectives(text)).toBe(text);
+  });
+
+  it("falls back to the original when stripping would empty it", () => {
+    const onlyDirectives = "【Platform 出图短约束】\n【封面出图·高点击短钩】略。";
+    expect(stripKnowledgeCardInternalDirectives(onlyDirectives)).toBe(onlyDirectives);
+  });
+
+  it("drops craft cards and fashion guidance blocks", () => {
+    const text = [
+      "【本条图文·视觉气质手法卡】某手法说明。",
+      "【人物造型·国际时尚大片】某造型说明。",
+      "# 用户文档",
+      "正文。",
+    ].join("\n\n");
+    const out = stripKnowledgeCardInternalDirectives(text);
+    expect(out).toBe("# 用户文档\n\n正文。");
   });
 });

@@ -1508,13 +1508,20 @@ export async function generatePlatformCompositeSheetImage(options: {
 
   const formatForDr: "短视频" | "图文" = isXhs ? "图文" : "短视频";
   let scriptContextForPipeline = options.scriptContext;
+  /**
+   * 知识卡的 scriptContext 会被 `planKnowledgeCardPages` 逐页切开当**正文**渲染，
+   * 所以下面这些出图约束一旦注入就会被当内容印上屏（用户 2026-08-05 收到的
+   * 整本书知识卡，第 1 页整页是内部约束清单）。知识卡一律不注入。
+   */
+  const skipContextInjection = isKnowledgeCard;
   // 图文笔记禁止注入拍摄手法（否则会画成「导演手法卡」）；仅短视频分镜需要光影/机位。
-  const stagingBits = isXhs
-    ? []
-    : [
-        String(options.executionDetails || "").trim(),
-        String(options.shootingTechniqueBrief || "").trim(),
-      ].filter(Boolean);
+  const stagingBits =
+    isXhs || skipContextInjection
+      ? []
+      : [
+          String(options.executionDetails || "").trim(),
+          String(options.shootingTechniqueBrief || "").trim(),
+        ].filter(Boolean);
   if (stagingBits.length > 0) {
     scriptContextForPipeline = `${String(scriptContextForPipeline || "").trim()}\n\n【光影与机位约束·拍摄手法】\n${stagingBits.join("\n\n")}`;
     appendImageFlowLog(L, `[2×4·拍摄手法] 已注入 executionDetails/shootingTechniqueBrief（${stagingBits.join(" · ").length} chars）`);
@@ -1522,10 +1529,12 @@ export async function generatePlatformCompositeSheetImage(options: {
     appendImageFlowLog(L, `[2×4·图文] 已跳过 executionDetails/shootingTechniqueBrief（避免手法卡）`);
   }
   // 全案 / 自定义分镜：无论是否有参考人像，均注入国际时尚大片人物造型约束
-  scriptContextForPipeline = appendFashionEditorialCharacterGuidance(scriptContextForPipeline, {
-    maxChars: 14000,
-    lang: "zh",
-  });
+  if (!skipContextInjection) {
+    scriptContextForPipeline = appendFashionEditorialCharacterGuidance(scriptContextForPipeline, {
+      maxChars: 14000,
+      lang: "zh",
+    });
+  }
   const referencePhotoUrl = String(options.referencePhotoUrl || "").trim() || undefined;
   const continuityRefs = (options.continuityReferenceImageUrls || [])
     .map((u) => String(u || "").trim())
@@ -1534,7 +1543,7 @@ export async function generatePlatformCompositeSheetImage(options: {
     .slice(0, 3);
   const hasAnyImageRef = Boolean(referencePhotoUrl) || continuityRefs.length > 0;
   void hasAnyImageRef;
-  if (referencePhotoUrl || continuityRefs.length > 0) {
+  if (!skipContextInjection && (referencePhotoUrl || continuityRefs.length > 0)) {
     scriptContextForPipeline = appendStoryboardProtagonistAnchorToScript(
       scriptContextForPipeline,
       options.coverPersonaContext,

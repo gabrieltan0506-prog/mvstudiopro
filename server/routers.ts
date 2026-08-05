@@ -7022,19 +7022,23 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const progressJobId = progressJobIdRaw.length >= 8 ? progressJobIdRaw : null;
 
         const enrichedCompositeScriptContext = (() => {
+          const raw = String(input.scriptContext || "").trim();
+          /**
+           * 知识卡的 scriptContext 会被 `planKnowledgeCardPages` 逐页切开当**正文**渲染，
+           * 所以注入的出图约束会被当成内容印上屏——用户 2026-08-05 收到的整本书知识卡，
+           * 第 1 页印的是「封面出图短约束 / 壳轮换策略库」这类内部清单（含 coverHeadline、
+           * A1 壳、mk/mk1/mk3 等内部代号），第 2 页起才是他的文档。
+           * 这些约束本来只服务封面与八格出图，对知识卡无意义，故保持纯提练稿。
+           */
+          if (input.kind === "single_page_knowledge_card") return raw;
+
           const sheetKind =
-            input.kind === "xiaohongshu_dual_note" ||
-            input.kind === "single_page_knowledge_card"
-              ? "graphic"
-              : "storyboard";
-          const base = enrichScriptContextWithBianDaoDirectorBoard(
-            String(input.scriptContext || "").trim(),
-            {
-              sheetKind,
-              craftSeed: `${input.sceneId || ""}:${input.title || ""}`,
-              craftSlotLabel: String(input.title || "").slice(0, 40) || undefined,
-            },
-          );
+            input.kind === "xiaohongshu_dual_note" ? "graphic" : "storyboard";
+          const base = enrichScriptContextWithBianDaoDirectorBoard(raw, {
+            sheetKind,
+            craftSeed: `${input.sceneId || ""}:${input.title || ""}`,
+            craftSlotLabel: String(input.title || "").slice(0, 40) || undefined,
+          });
           const hints = composePlatformImageSkillHints(
             Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
             {
