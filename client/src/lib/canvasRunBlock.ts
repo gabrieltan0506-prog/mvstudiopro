@@ -279,7 +279,7 @@ async function runGptImage2(
   const openaiOnly = Boolean(opts?.openaiOnly);
   const userId = String(opts?.userId || "");
 
-  const attemptOnce = async (): Promise<string> => {
+  const attemptOnce = async (isRetry = false): Promise<string> => {
     const { jobId } = await createJobSameOrigin({
       type: "image",
       userId,
@@ -291,8 +291,12 @@ async function runGptImage2(
         generalImageEdit: referenceImageUrls.length > 0,
         providerOverride: openaiOnly ? "openai" : undefined,
         imageLane: opts?.imageLane,
-        // 画布出图由 worker 扣积分；/creative 与 /platform 走同一队列但已在前端扣，故不带此标记
-        chargeOnServer: true,
+        /**
+         * 画布出图由 worker 扣积分；`/creative` 与 `/platform` 走同一队列但已在前端扣，故不带此标记。
+         * 超时重入队的那次也不带：上一个 job 可能仍在跑并最终成功（那次已扣），
+         * 同一张图不能收两次。宁可少收，也不误扣。
+         */
+        chargeOnServer: !isRetry,
         batchIndex: opts?.batchIndex,
       }),
     });
@@ -315,7 +319,7 @@ async function runGptImage2(
     const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
     if (openaiOnly && isOpenAiImageTimeoutError(msg)) {
       console.warn("[canvasRunBlock] 官方 Image-2 超时，仅再入队一次 OpenAI（不回落 OpenRouter）");
-      return await attemptOnce();
+      return await attemptOnce(true);
     }
     throw firstErr;
   }
