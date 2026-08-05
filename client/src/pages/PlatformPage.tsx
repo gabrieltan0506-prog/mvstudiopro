@@ -19,6 +19,7 @@ import { PlatformDraftPresetsBar } from "@/components/platform/PlatformDraftPres
 import { PlatformAdvancedSettingsFold } from "@/components/platform/PlatformAdvancedSettingsFold";
 import { PlatformSkillDrawer } from "@/components/platform/PlatformSkillDrawer";
 import PlatformHtmlPptPanel from "@/components/PlatformHtmlPptPanel";
+import { uploadFileToSignedUrl } from "@/lib/growthCampImagePipeline";
 import PlatformImageGenPanel from "@/components/platform/PlatformImageGenPanel";
 import {
   composeFocusPromptFromPersona,
@@ -1943,6 +1944,72 @@ function PlatformIpDimensionGuide() {
   );
 }
 
+/** 待提练的上传文件：小文件走 base64 内联，大文件走 GCS 直传只带回 gs:// 地址 */
+type KnowledgeCardPendingFile = {
+  fileBase64?: string;
+  gcsUri?: string;
+  mimeType: string;
+  fileName?: string;
+};
+
+/**
+ * 超过这个体积就直传 GCS。
+ *
+ * base64 会把体积撑大约三分之一，请求体上限 18MB 折回原文件约 13.5MB；再大连接会在
+ * 读 body 阶段被掐断，前端只看到含糊的「算力紧张」（用户 2026-08-06 的 42MB PDF）。
+ * 阈值留到 8MB，是让常见的几百 KB 文档继续走内联，少一次签名往返。
+ */
+const KNOWLEDGE_CARD_DIRECT_UPLOAD_MIN_BYTES = 8 * 1024 * 1024;
+
+/**
+ * 大文档直传 GCS：一次 PUT，断了就重签名重传（签名地址 15 分钟过期，重试必须重新取）。
+ *
+ * 单次 PUT 不是分片续传，断线时会从头再传一遍；对几十 MB 的 PDF 够用，
+ * 真正的分片续传要走 GCS resumable session，留到后面再补。
+ */
+async function uploadKnowledgeCardFileToGcs(params: {
+  file: File;
+  mimeType: string;
+  label: string;
+  getSignedUrl: (input: { fileName: string; mimeType: string }) => Promise<{
+    uploadUrl: string;
+    gcsUri?: string;
+    requiredHeaders?: Record<string, string>;
+  }>;
+  onStatus: (text: string) => void;
+}): Promise<string> {
+  const maxAttempts = 3;
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const signed = await params.getSignedUrl({
+        fileName: params.file.name,
+        mimeType: params.mimeType,
+      });
+      if (!signed.gcsUri) {
+        throw new Error("未取得上传地址");
+      }
+      const retryHint = attempt > 1 ? `（第 ${attempt} 次尝试）` : "";
+      await uploadFileToSignedUrl({
+        file: params.file,
+        uploadUrl: signed.uploadUrl,
+        headers: signed.requiredHeaders,
+        onProgress: (percent) => {
+          params.onStatus(`正在上传 ${params.label} ${percent}%${retryHint}`);
+        },
+      });
+      return signed.gcsUri;
+    } catch (err) {
+      lastError = err;
+      if (attempt >= maxAttempts) break;
+      params.onStatus(`${params.label} 上传中断，正在重试（${attempt}/${maxAttempts - 1}）…`);
+      await new Promise((resolve) => setTimeout(resolve, 1200 * attempt));
+    }
+  }
+  const detail = lastError instanceof Error ? lastError.message : String(lastError || "未知错误");
+  throw new Error(`${params.file.name} 上传失败：${detail}`);
+}
+
 /**
  * 上传文件时决定文本框既有文案要不要一并提练。
  *
@@ -2173,7 +2240,7 @@ export default function PlatformPage() {
     }
   });
   /** 待随「生成」一并提练的上传文件（含图片 OCR）。 */
-  const customNotePendingFilesRef = useRef<Array<{ fileBase64: string; mimeType: string; fileName?: string }>>([]);
+  const customNotePendingFilesRef = useRef<KnowledgeCardPendingFile[]>([]);
   /** 上传区可见状态（成功/失败），避免只靠 toast */
   const [customNoteUploadStatus, setCustomNoteUploadStatus] = useState<string | null>(null);
   const [customNotePendingMeta, setCustomNotePendingMeta] = useState<Array<{ fileName: string; kind: "doc" | "image" }>>([]);
@@ -2821,6 +2888,8 @@ export default function PlatformPage() {
   });
   const uploadPlatformSkillMutation = trpc.mvAnalysis.uploadPlatformSkill.useMutation();
   const deletePlatformSkillMutation = trpc.mvAnalysis.deletePlatformSkill.useMutation();
+  /** 大文档直传 GCS 用的签名地址（与素材分析共用同一条通道） */
+  const getUploadUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
 
   useEffect(() => {
     const skills = platformSkillsQuery.data?.skills;
@@ -5808,7 +5877,7 @@ export default function PlatformPage() {
    */
   const runKnowledgeCardDistill = async (args: {
     sourceText?: string;
-    files?: Array<{ fileBase64: string; mimeType: string; fileName?: string }>;
+    files?: KnowledgeCardPendingFile[];
     onStatus?: (text: string) => void;
     /** 纯文本长文里用户主动买的提练，服务端据此收提练费 */
     chargeDistillFee?: boolean;
@@ -11465,8 +11534,27 @@ export default function PlatformPage() {
                         void (async () => {
                           setCustomNoteUploadBusy(true);
                           try {
-                            const encoded: Array<{ fileBase64: string; mimeType: string; fileName?: string }> = [];
+                            const encoded: KnowledgeCardPendingFile[] = [];
                             for (const file of list) {
+                              const mimeType = file.type || "application/octet-stream";
+                              /**
+                               * 超过阈值改走 GCS 直传：base64 会把体积撑大三分之一，
+                               * 请求体上限约 13.5MB 原文件，再大连接会在读 body 阶段被掐断
+                               * （2026-08-06：42MB 的 PDF 传不上去，却报「算力紧张」）。
+                               * 直传还顺带绕开了那台 2 核机器，机器忙也不影响上传。
+                               */
+                              if (file.size > KNOWLEDGE_CARD_DIRECT_UPLOAD_MIN_BYTES) {
+                                const mb = (file.size / 1024 / 1024).toFixed(1);
+                                const gcsUri = await uploadKnowledgeCardFileToGcs({
+                                  file,
+                                  mimeType,
+                                  getSignedUrl: (input) => getUploadUrlMutation.mutateAsync(input),
+                                  onStatus: (text) => setCustomNoteUploadStatus(text),
+                                  label: `${file.name}（${mb}MB）`,
+                                });
+                                encoded.push({ gcsUri, mimeType, fileName: file.name });
+                                continue;
+                              }
                               const buf = await file.arrayBuffer();
                               const bytes = new Uint8Array(buf);
                               let binary = "";
@@ -11476,10 +11564,11 @@ export default function PlatformPage() {
                               }
                               encoded.push({
                                 fileBase64: btoa(binary),
-                                mimeType: file.type || "application/octet-stream",
+                                mimeType,
                                 fileName: file.name,
                               });
                             }
+                            setCustomNoteUploadStatus(null);
                             // 生成按钮依赖文本框非空：上传后立刻 OCR+提练写入文本框，否则无法点生成
                             const allPending = [...customNotePendingFilesRef.current, ...encoded];
                             customNotePendingFilesRef.current = allPending;

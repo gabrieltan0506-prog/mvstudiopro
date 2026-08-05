@@ -6790,11 +6790,22 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             .optional(),
           files: z
             .array(
-              z.object({
-                fileBase64: z.string().min(1).max(18_000_000),
-                mimeType: z.string().min(1).max(120),
-                fileName: z.string().max(240).optional(),
-              }),
+              z
+                .object({
+                  /**
+                   * 小文件可直接塞请求体，但上限约 13.5MB 原文件；
+                   * 再大必须用 `gcsUri` 直传，否则连接会在读请求体阶段被掐断
+                   * （2026-08-06：42MB 的 PDF base64 后 56MB，传不完却报「算力紧张」）。
+                   */
+                  fileBase64: z.string().min(1).max(18_000_000).optional(),
+                  /** 前端直传 GCS 后的对象地址；与 fileBase64 二选一 */
+                  gcsUri: z.string().min(1).max(1024).optional(),
+                  mimeType: z.string().min(1).max(120),
+                  fileName: z.string().max(240).optional(),
+                })
+                .refine((f) => Boolean(f.fileBase64 || f.gcsUri), {
+                  message: "每个文件需要 fileBase64 或 gcsUri 其一",
+                }),
             )
             .max(40)
             .optional(),
