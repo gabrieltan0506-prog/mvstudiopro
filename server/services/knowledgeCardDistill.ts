@@ -40,35 +40,119 @@ const DISTILL_MAX_TOKENS = Math.min(
   65_536,
 );
 
-/** 超过此长度则后台分段提练再合并（对用户仍是一次上传→写框） */
-const DISTILL_CHUNK_THRESHOLD = Math.min(
-  Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_CHUNK_THRESHOLD) || 12_000, 6_000),
-  40_000,
-);
-const DISTILL_CHUNK_CHARS = Math.min(
-  Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_CHUNK_CHARS) || 10_000, 4_000),
-  20_000,
-);
-/** 分段并发；单机 Fly 用 2，避免把健康检查拖死 */
-const DISTILL_CHUNK_CONCURRENCY = Math.min(
-  Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_CHUNK_CONCURRENCY) || 2, 1),
-  3,
-);
-
-/** GPT-5.6 Sol（Evolink）：`reasoning_effort` = xhigh */
-const DISTILL_REASONING_EFFORT_GPT = "xhigh" as const;
 /**
- * Kimi K3 官方档位只有 low|high|max（顶层 `reasoning_effort`），无 xhigh。
+ * 三档分别调参（2026-08-05 实测 FDE PDF 前 25k 字 / 3 段）：
+ *
+ * | 档 | 25k×3 段耗时 | 输出 | 结论 |
+ * |---|---|---|---|
+ * | Kimi K3 | 43s | 7443 字 / 39 节 | 最快；段可放大、并发可高 |
+ * | Sol | 194s | 10129 字 / 64 节 | 最详细但慢；分段降中档 |
+ * | Qwen | 287s | 3904 字 / 33 节 | 最慢且压缩过度；段切小、抬最少小节 |
+ *
+ * `effortChunk` 只用于分段抽要点，`effortFinal` 用于短文直出与合并稿统稿。
+ * Kimi 官方档位只有 low|high|max（无 xhigh / medium）；
+ * Qwen 只有 low|medium|xhigh（无 max），且勿与 `thinking_budget` 同传；
+ * Sol 顶档为 xhigh。
+ *
  * @see https://platform.kimi.ai/docs/guide/kimi-k3-quickstart
- */
-const DISTILL_REASONING_EFFORT_KIMI = "high" as const;
-/**
- * Evolink Qwen3.8 Max：档位 low|medium|xhigh（无 max）；顶档 xhigh。
- * 勿与 thinking_budget 同传。
  * @see https://evolink.ai/qwen-3-8-max
  * @see https://docs.qwencloud.com/developer-guides/text-generation/thinking
  */
-const DISTILL_REASONING_EFFORT_QWEN = "xhigh" as const;
+type KnowledgeCardDistillProfile = {
+  /** 源文超过此长度才切段 */
+  chunkThreshold: number;
+  /** 每段字数 */
+  chunkChars: number;
+  /** 同时在跑的段数 */
+  concurrency: number;
+  effortChunk: string;
+  effortFinal: string;
+  /** 单次上游请求墙钟 */
+  requestTimeoutMs: number;
+  /** 单段失败重试次数（退避）；仍失败再对半细切 */
+  chunkRetries: number;
+  /** 每段最少 `##` 小节下限（压缩过度的模型抬高） */
+  minSectionsPerChunk: number;
+  /** 合并稿超过此长度就跳过顶档统稿（统稿本身会撞超时） */
+  refineMaxChars: number;
+};
+
+function envNum(key: string, fallback: number, min: number, max: number): number {
+  const raw = Number(process.env[key]);
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.min(Math.max(raw, min), max);
+}
+
+function envStr(key: string, fallback: string): string {
+  const raw = String(process.env[key] || "").trim();
+  return raw || fallback;
+}
+
+const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistillProfile> = {
+  // 精细：输出最全但每段慢，段中等 + 分段降中档
+  [KNOWLEDGE_CARD_DISTILL_MODEL_SOL]: {
+    chunkThreshold: envNum("KNOWLEDGE_CARD_DISTILL_SOL_CHUNK_THRESHOLD", 12_000, 6_000, 40_000),
+    chunkChars: envNum("KNOWLEDGE_CARD_DISTILL_SOL_CHUNK_CHARS", 12_000, 4_000, 24_000),
+    concurrency: envNum("KNOWLEDGE_CARD_DISTILL_SOL_CONCURRENCY", 2, 1, 4),
+    effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_SOL_EFFORT_CHUNK", "medium"),
+    effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_SOL_EFFORT_FINAL", "xhigh"),
+    requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_SOL_TIMEOUT_MS", 180_000, 60_000, 480_000),
+    chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_SOL_CHUNK_RETRIES", 2, 0, 4),
+    minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_SOL_MIN_SECTIONS", 4, 2, 24),
+    refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_SOL_REFINE_MAX_CHARS", 24_000, 0, 120_000),
+  },
+  // 均衡：最快，段放大到 18k、并发 3，统稿用 max
+  [KNOWLEDGE_CARD_DISTILL_MODEL_KIMI]: {
+    chunkThreshold: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_CHUNK_THRESHOLD", 20_000, 6_000, 60_000),
+    chunkChars: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_CHUNK_CHARS", 18_000, 4_000, 32_000),
+    concurrency: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_CONCURRENCY", 3, 1, 5),
+    effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_KIMI_EFFORT_CHUNK", "high"),
+    effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_KIMI_EFFORT_FINAL", "max"),
+    requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_TIMEOUT_MS", 180_000, 60_000, 480_000),
+    chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_CHUNK_RETRIES", 2, 0, 4),
+    minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_MIN_SECTIONS", 5, 2, 24),
+    refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_KIMI_REFINE_MAX_CHARS", 40_000, 0, 120_000),
+  },
+  // 轻量：最慢且压缩过度，段切小到 8k、抬最少小节，统稿门槛压低
+  [KNOWLEDGE_CARD_DISTILL_MODEL_QWEN]: {
+    chunkThreshold: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_THRESHOLD", 9_000, 4_000, 40_000),
+    chunkChars: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_CHARS", 8_000, 3_000, 20_000),
+    concurrency: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CONCURRENCY", 2, 1, 4),
+    effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_QWEN_EFFORT_CHUNK", "medium"),
+    effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_QWEN_EFFORT_FINAL", "xhigh"),
+    requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_TIMEOUT_MS", 240_000, 60_000, 480_000),
+    chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_CHUNK_RETRIES", 2, 0, 4),
+    minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_MIN_SECTIONS", 6, 2, 24),
+    refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_QWEN_REFINE_MAX_CHARS", 14_000, 0, 120_000),
+  },
+};
+
+export function knowledgeCardDistillProfile(
+  modelName: KnowledgeCardDistillModelId,
+): KnowledgeCardDistillProfile {
+  return DISTILL_PROFILES[modelName];
+}
+
+/**
+ * 超过此长度改走后台任务（前端轮询进度）：
+ * 十余段串行要数分钟，压在一个同步 HTTP 里会被网关掐断，且已跑完的段全丢。
+ * 约 3 万字以下仍同步直出（探针：Sol 2.5 万字 3 段约 194s），省去轮询。
+ */
+export function shouldRunKnowledgeCardDistillAsync(textLength: number): boolean {
+  const threshold = envNum("KNOWLEDGE_CARD_DISTILL_ASYNC_THRESHOLD", 30_000, 8_000, 200_000);
+  return Math.max(0, Number(textLength) || 0) > threshold;
+}
+
+/** 预估分段数，供前端提示「约 N 段」。 */
+export function estimateKnowledgeCardDistillChunks(
+  modelName: KnowledgeCardDistillModelId,
+  textLength: number,
+): number {
+  const profile = DISTILL_PROFILES[modelName];
+  const n = Math.max(0, Number(textLength) || 0);
+  if (n <= profile.chunkThreshold) return 1;
+  return Math.max(1, Math.ceil(n / profile.chunkChars));
+}
 
 /** 多模态（含图 OCR）走 api.evolink.ai */
 const EVOLINK_CHAT_URL = String(
@@ -196,7 +280,7 @@ export async function extractKnowledgeCardUploads(files: KnowledgeCardUploadFile
 }
 
 /** 长书分段提练：按段落边界切开，避免 Evolink/OR 单请求 524。 */
-export function splitSourceTextForDistill(text: string, chunkChars = DISTILL_CHUNK_CHARS): string[] {
+export function splitSourceTextForDistill(text: string, chunkChars = 10_000): string[] {
   const s = String(text || "").trim();
   if (!s) return [];
   if (s.length <= chunkChars) return [s];
@@ -265,8 +349,10 @@ function mapDistillUpstreamError(status: number, body: string): Error {
   return new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
 }
 
-function distillFetchTimeoutMs(): number {
-  return Math.min(Math.max(Number(process.env.KNOWLEDGE_CARD_DISTILL_TIMEOUT_MS) || 180_000, 60_000), 480_000);
+function distillFetchTimeoutMs(modelName: KnowledgeCardDistillModelId): number {
+  const override = Number(process.env.KNOWLEDGE_CARD_DISTILL_TIMEOUT_MS);
+  if (Number.isFinite(override) && override >= 60_000) return Math.min(override, 480_000);
+  return DISTILL_PROFILES[modelName].requestTimeoutMs;
 }
 
 function mapFetchAbortError(err: unknown): Error {
@@ -282,9 +368,13 @@ function buildDistillUserContent(params: {
   sourceText: string;
   imageDataUrls: string[];
   minSections: number;
+  /** 本次只提练整本中的一段（分段模式） */
+  chunkLabel?: string;
 }): Array<Record<string, unknown>> {
   const textBlock = [
-    `请一次性完成：读文/读图 OCR + 提练。输出疏朗知识卡片 Markdown；至少 ${params.minSections} 个 ## 小节（不要输出未经提练的长原文）：`,
+    params.chunkLabel
+      ? `本次只处理长文档的${params.chunkLabel}，请只就本段内容提练，不要复述其它章节、不要写「本段/以上」这类过渡语。输出疏朗知识卡片 Markdown；至少 ${params.minSections} 个 ## 小节（不要输出未经提练的长原文）：`
+      : `请一次性完成：读文/读图 OCR + 提练。输出疏朗知识卡片 Markdown；至少 ${params.minSections} 个 ## 小节（不要输出未经提练的长原文）：`,
     params.sourceText.trim() || "（无纯文本，请主要依据附图 OCR 提练）",
     params.imageDataUrls.length
       ? `\n附图 ${params.imageDataUrls.length} 张：请 OCR 提取文字与图表要点，并入精华，去掉重复。`
@@ -306,6 +396,9 @@ async function invokeEvolinkDistill(params: {
   imageDataUrls: string[];
   modelName: typeof KNOWLEDGE_CARD_DISTILL_MODEL_SOL | typeof KNOWLEDGE_CARD_DISTILL_MODEL_QWEN;
   minSections: number;
+  effort: string;
+  chunkLabel?: string;
+  systemOverride?: string;
 }): Promise<string> {
   const key = getEvolinkApiKey();
   if (!key) throw new Error("提练通道未配置，请稍后重试");
@@ -314,19 +407,19 @@ async function invokeEvolinkDistill(params: {
   const body: Record<string, unknown> = {
     model: params.modelName,
     messages: [
-      { role: "system", content: buildDistillSystem(params.minSections) },
+      { role: "system", content: params.systemOverride || buildDistillSystem(params.minSections) },
       { role: "user", content: userContent },
     ],
     max_tokens: DISTILL_MAX_TOKENS,
   };
   if (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_QWEN) {
-    // Evolink Qwen：顶档 xhigh（无 max）；勿与 thinking_budget 同传
+    // Evolink Qwen：档位 low|medium|xhigh（无 max）；勿与 thinking_budget 同传
     body.enable_thinking = true;
-    body.reasoning_effort = DISTILL_REASONING_EFFORT_QWEN;
+    body.reasoning_effort = params.effort;
     body.max_completion_tokens = DISTILL_MAX_TOKENS;
     delete body.max_tokens;
   } else {
-    body.reasoning_effort = DISTILL_REASONING_EFFORT_GPT;
+    body.reasoning_effort = params.effort;
   }
 
   const url = params.imageDataUrls.length > 0 ? EVOLINK_CHAT_URL : EVOLINK_DIRECT_CHAT_URL;
@@ -338,7 +431,7 @@ async function invokeEvolinkDistill(params: {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
       },
-      signal: AbortSignal.timeout(distillFetchTimeoutMs()),
+      signal: AbortSignal.timeout(distillFetchTimeoutMs(params.modelName)),
       body: JSON.stringify(body),
     });
   } catch (err) {
@@ -365,11 +458,14 @@ async function invokeEvolinkDistill(params: {
   return out;
 }
 
-/** OpenRouter Kimi K3：顶层 reasoning_effort=high。 */
+/** OpenRouter Kimi K3：顶层 reasoning_effort（low|high|max）。 */
 async function invokeOpenRouterKimiDistill(params: {
   sourceText: string;
   imageDataUrls: string[];
   minSections: number;
+  effort: string;
+  chunkLabel?: string;
+  systemOverride?: string;
 }): Promise<string> {
   const key = getOpenRouterApiKey();
   if (!key) throw new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
@@ -384,15 +480,18 @@ async function invokeOpenRouterKimiDistill(params: {
         "Content-Type": "application/json",
         ...getOpenRouterChatHeaders(),
       },
-      signal: AbortSignal.timeout(distillFetchTimeoutMs()),
+      signal: AbortSignal.timeout(distillFetchTimeoutMs(KNOWLEDGE_CARD_DISTILL_MODEL_KIMI)),
       body: JSON.stringify({
         model: KNOWLEDGE_CARD_DISTILL_MODEL_KIMI,
         messages: [
-          { role: "system", content: buildDistillSystem(params.minSections) },
+          {
+            role: "system",
+            content: params.systemOverride || buildDistillSystem(params.minSections),
+          },
           { role: "user", content: userContent },
         ],
         max_tokens: DISTILL_MAX_TOKENS,
-        reasoning_effort: DISTILL_REASONING_EFFORT_KIMI,
+        reasoning_effort: params.effort,
       }),
     });
   } catch (err) {
@@ -420,6 +519,9 @@ async function invokeDistillLlm(params: {
   imageDataUrls: string[];
   modelName: KnowledgeCardDistillModelId;
   minSections: number;
+  effort: string;
+  chunkLabel?: string;
+  systemOverride?: string;
 }): Promise<string> {
   if (!hasDistillGateway(params.modelName)) {
     throw new Error("提练通道未配置，请稍后重试");
@@ -433,47 +535,204 @@ async function invokeDistillLlm(params: {
   return invokeEvolinkDistill({ ...params, modelName: KNOWLEDGE_CARD_DISTILL_MODEL_SOL });
 }
 
-/** 短文一次；长文分段并发提练后合并（产品面仍是「上传→自动写框」一次完成）。 */
+/** 提练无法靠重试救回的错（额度/配置/通道），不必再退避。 */
+function isFatalDistillError(message: string): boolean {
+  return /额度不足|通道不可用|未配置|请先输入|未能从文件/.test(message);
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * 单段提练：失败退避重试，仍失败则把该段对半细切分别提再拼。
+ * 用户口径：个别失败的重新提炼，然后合并写框（不接受半途整批废）。
+ */
+async function distillOneChunkWithRetry(params: {
+  chunk: string;
+  imageDataUrls: string[];
+  modelName: KnowledgeCardDistillModelId;
+  minSections: number;
+  chunkLabel: string;
+  retries: number;
+  effort: string;
+}): Promise<string> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= params.retries; attempt++) {
+    try {
+      return await invokeDistillLlm({
+        sourceText: params.chunk,
+        imageDataUrls: params.imageDataUrls,
+        modelName: params.modelName,
+        minSections: params.minSections,
+        effort: params.effort,
+        chunkLabel: params.chunkLabel,
+      });
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (isFatalDistillError(lastError.message)) throw lastError;
+      console.warn(
+        `[knowledgeCardDistill] ${params.chunkLabel} attempt ${attempt + 1}/${params.retries + 1} failed: ${lastError.message.slice(0, 160)}`,
+      );
+      if (attempt < params.retries) await sleep(2_000 * (attempt + 1));
+    }
+  }
+
+  // 退避用尽：对半细切重提，小片更不容易撞上游超时
+  if (params.chunk.length > 3_000) {
+    const halves = splitSourceTextForDistill(params.chunk, Math.ceil(params.chunk.length / 2));
+    if (halves.length > 1) {
+      console.warn(
+        `[knowledgeCardDistill] ${params.chunkLabel} retry exhausted → split into ${halves.length} finer parts`,
+      );
+      const finer: string[] = [];
+      for (let i = 0; i < halves.length; i++) {
+        finer.push(
+          await distillOneChunkWithRetry({
+            chunk: halves[i]!,
+            imageDataUrls: i === 0 ? params.imageDataUrls : [],
+            modelName: params.modelName,
+            minSections: Math.max(2, Math.ceil(params.minSections / halves.length)),
+            chunkLabel: `${params.chunkLabel}-${i + 1}`,
+            retries: 1,
+            effort: params.effort,
+          }),
+        );
+      }
+      return mergeDistilledMarkdownChunks(finer);
+    }
+  }
+
+  throw lastError || new Error(KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE);
+}
+
+function buildRefineSystem(minSections: number): string {
+  return `你是知识卡片内容主编。下面这份 Markdown 由同一份长文档**分段提练后机械拼接**而成，请统稿成一份连贯的疏朗知识卡片 Markdown。
+
+硬性要求：
+1. 只做统稿，**不得丢弃知识点**：合并重复小节、统一措辞与粒度、按主题重排顺序。
+2. 结构：\`# 总标题\` 开头，下文若干 \`## 小节\`，每节 3–8 条要点短句（约 12–36 字）。
+3. 保留至少 **${minSections}** 个 \`##\` 小节；禁止压成几节总括。
+4. 去掉分段痕迹：「本段 / 以上 / 续上」这类过渡语、重复标题、空节。
+5. 只输出 Markdown 正文，不要前言后记。`;
+}
+
+/**
+ * 合并稿顶档统稿（用户口径 B+C：分段用中档，合并稿再用顶档润一次）。
+ * 统稿本身也可能超时 → 失败或过长时降级返回原合并稿，绝不因润色丢掉已提练内容。
+ */
+async function refineMergedDistill(params: {
+  merged: string;
+  modelName: KnowledgeCardDistillModelId;
+  minSections: number;
+}): Promise<string> {
+  const profile = DISTILL_PROFILES[params.modelName];
+  const merged = params.merged.trim();
+  if (!merged) return merged;
+  if (profile.refineMaxChars <= 0 || merged.length > profile.refineMaxChars) {
+    console.info(
+      `[knowledgeCardDistill] skip refine (${merged.length} chars > ${profile.refineMaxChars}, model=${params.modelName})`,
+    );
+    return merged;
+  }
+
+  try {
+    const refined = await invokeDistillLlm({
+      sourceText: merged,
+      imageDataUrls: [],
+      modelName: params.modelName,
+      minSections: params.minSections,
+      effort: profile.effortFinal,
+      systemOverride: buildRefineSystem(params.minSections),
+    });
+    // 统稿把内容砍掉一半以上视为跑偏，宁可用合并稿
+    if (refined.length < merged.length * 0.45) {
+      console.warn(
+        `[knowledgeCardDistill] refine shrank ${merged.length} → ${refined.length}, keep merged`,
+      );
+      return merged;
+    }
+    return refined;
+  } catch (err) {
+    console.warn(
+      `[knowledgeCardDistill] refine failed, keep merged: ${(err instanceof Error ? err.message : String(err)).slice(0, 160)}`,
+    );
+    return merged;
+  }
+}
+
+export type KnowledgeCardDistillProgress = {
+  doneChunks: number;
+  totalChunks: number;
+  phase: "distilling" | "refining";
+};
+
+/** 短文一次直出（顶档）；长文按模型 profile 分段（中档）→ 合并 → 顶档统稿。 */
 async function invokeDistillLlmPossiblyChunked(params: {
   sourceText: string;
   imageDataUrls: string[];
   modelName: KnowledgeCardDistillModelId;
   minSectionsTotal: number;
+  onProgress?: (p: KnowledgeCardDistillProgress) => void | Promise<void>;
 }): Promise<string> {
+  const profile = DISTILL_PROFILES[params.modelName];
   const text = String(params.sourceText || "").trim();
   const urls = params.imageDataUrls;
-  if (!text || text.length <= DISTILL_CHUNK_THRESHOLD) {
+
+  if (!text || text.length <= profile.chunkThreshold) {
     return invokeDistillLlm({
       sourceText: text,
       imageDataUrls: urls,
       modelName: params.modelName,
       minSections: params.minSectionsTotal,
+      effort: profile.effortFinal,
     });
   }
 
-  const chunks = splitSourceTextForDistill(text, DISTILL_CHUNK_CHARS);
+  const chunks = splitSourceTextForDistill(text, profile.chunkChars);
   console.info(
-    `[knowledgeCardDistill] long doc ${text.length} chars → ${chunks.length} chunks (threshold=${DISTILL_CHUNK_THRESHOLD}, model=${params.modelName})`,
+    `[knowledgeCardDistill] long doc ${text.length} chars → ${chunks.length} chunks ` +
+      `(model=${params.modelName} chunkChars=${profile.chunkChars} concurrency=${profile.concurrency} effort=${profile.effortChunk})`,
   );
 
   const outputs: string[] = new Array(chunks.length);
-  for (let i = 0; i < chunks.length; i += DISTILL_CHUNK_CONCURRENCY) {
-    const batchIdx = chunks.slice(i, i + DISTILL_CHUNK_CONCURRENCY).map((_, j) => i + j);
+  let done = 0;
+  await params.onProgress?.({ doneChunks: 0, totalChunks: chunks.length, phase: "distilling" });
+
+  for (let i = 0; i < chunks.length; i += profile.concurrency) {
+    const batchIdx = chunks.slice(i, i + profile.concurrency).map((_, j) => i + j);
     await Promise.all(
       batchIdx.map(async (idx) => {
         const chunk = chunks[idx]!;
-        const minSec = Math.max(2, Math.min(24, suggestKnowledgeCardMinSections(chunk.length)));
-        outputs[idx] = await invokeDistillLlm({
-          sourceText: chunk,
+        const minSec = Math.max(
+          profile.minSectionsPerChunk,
+          Math.min(24, suggestKnowledgeCardMinSections(chunk.length)),
+        );
+        outputs[idx] = await distillOneChunkWithRetry({
+          chunk,
           // 附图只挂第一段，避免每段重复烧视觉
           imageDataUrls: idx === 0 ? urls : [],
           modelName: params.modelName,
           minSections: minSec,
+          chunkLabel: `第 ${idx + 1}/${chunks.length} 段`,
+          retries: profile.chunkRetries,
+          effort: profile.effortChunk,
         });
+        done += 1;
       }),
     );
+    await params.onProgress?.({ doneChunks: done, totalChunks: chunks.length, phase: "distilling" });
   }
-  return mergeDistilledMarkdownChunks(outputs);
+
+  const merged = mergeDistilledMarkdownChunks(outputs);
+  await params.onProgress?.({
+    doneChunks: chunks.length,
+    totalChunks: chunks.length,
+    phase: "refining",
+  });
+  return refineMergedDistill({
+    merged,
+    modelName: params.modelName,
+    minSections: params.minSectionsTotal,
+  });
 }
 
 export type PrepareKnowledgeCardCopyResult = {
@@ -494,6 +753,7 @@ export async function prepareKnowledgeCardCopy(input: {
   files?: KnowledgeCardUploadFile[];
   forceDistill?: boolean;
   distillModel?: string;
+  onProgress?: (p: KnowledgeCardDistillProgress) => void | Promise<void>;
 }): Promise<PrepareKnowledgeCardCopyResult> {
   const modelName = resolveKnowledgeCardDistillModel(input.distillModel);
   const files = Array.isArray(input.files) ? input.files : [];
@@ -542,6 +802,7 @@ export async function prepareKnowledgeCardCopy(input: {
       imageDataUrls: urls,
       modelName,
       minSectionsTotal,
+      onProgress: input.onProgress,
     });
     if (mergedRaw.length >= 8000 && distilled.length < Math.min(800, mergedRaw.length * 0.02)) {
       throw new Error("提练结果过短，疑似过度压缩，请重试");
