@@ -298,6 +298,13 @@ export const CREDIT_COSTS = {
   platformTopicShortlistExtra: 2,
   /** 勾选后正式扩写文案 + 图文页结构（最多 6 条） */
   platformTopicExpand: 48,
+  /**
+   * 人物背景智能优化：头 3 次免费、之后每天 1 次免费，超出按档收。
+   * 优秀档 1 积分（成本约 ¥0.065、毛利 90%），卓越档 2 积分（成本约 ¥0.40、毛利 69%）。
+   * 卓越档必须收 2：它输出单价近 3 倍，收 1 会掉到 38% 毛利、破 65% 底线。
+   */
+  platformPersonaPolish: 1,
+  platformPersonaPolishSuperb: 2,
   decisionIntelTopicExecutionCopyRegenerate: 20,
 } as const;
 

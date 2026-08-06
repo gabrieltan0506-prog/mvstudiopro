@@ -28,6 +28,20 @@ import {
 } from "../../shared/platformSkillRouter.js";
 import { listAllPlatformSkillsForUser, composePlatformSkillsPromptBlock } from "./platformSkillsService.js";
 import { PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE } from "../../shared/platformCreatorInsightFraming.js";
+import { platformEngineEffort } from "../../shared/platformEngineTiers.js";
+import {
+  platformTopicGoalLabel,
+  platformTopicGoalPromptLine,
+} from "../../shared/platformPersonaPolish.js";
+
+/**
+ * 初选的推理档。
+ *
+ * 用户 2026-08-06：「选题用 medium 就好，吐出来给用户再用 high 来润色即可，这样快一点也省钱」。
+ * 当前初选跑在卓越档（Kimi K3）上，它的三级是 low|high|max，中档即 high——
+ * 旧代码一直发 max，是这条链最慢也最贵的一环。
+ */
+const SHORTLIST_REASONING_EFFORT = platformEngineEffort("shortlist", "superb");
 
 function extractJsonObject(raw: string): unknown {
   const t = String(raw || "").trim();
@@ -213,6 +227,8 @@ export async function generatePlatformTopicShortlist(params: {
   blueOceanWords?: string[] | null;
   /** 蓝海词分级：一级是大方向，二级是具体切口——标题落点优先用二级词 */
   blueOceanGroups?: Array<{ primary?: string; secondary?: string[] }> | null;
+  /** 这轮想获客/转化/涨粉：决定钩子与结尾动作往哪落（用户 2026-08-06） */
+  topicGoal?: string | null;
 }): Promise<{ topics: PlatformTopicShortlistItem[]; diagnostics: Record<string, unknown> }> {
   const targetCount = clampTopicShortlistCount(params.count ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT);
   const all = await listAllPlatformSkillsForUser(params.userId);
@@ -279,6 +295,7 @@ export async function generatePlatformTopicShortlist(params: {
         .filter((w) => w.length > 0 && w.length <= 24),
     ),
   ).slice(0, 28);
+  const goalPromptLine = platformTopicGoalPromptLine(params.topicGoal);
   const campaignBrief = featuredCampaigns.slice(0, 10).map((c) => ({
     name: c.name,
     category: c.category,
@@ -320,6 +337,7 @@ ${
       }。**至少三分之一**选题要落在这些词覆盖的话题上，命中的在 \`blueOceanHit\` 里写上用到的词（没命中就给空数组）。这些词是用来抢没人写的位置的——不要为了蹭热榜把它们全丢掉，也不要生硬堆词，要把词还原成生活场景再出题。`
     : ""
 }
+${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
 输出：{ "topics": [ ...恰好${targetCount}条，每条含 viralScore / viralReason / commentHeat${
     blueOceanWords.length ? " / blueOceanHit" : ""
   } ] }`;
@@ -335,6 +353,7 @@ ${
     trendHot: trendBriefs,
     ...(blueOceanWords.length ? { blueOceanWords } : {}),
     ...(blueOceanGroups.length ? { blueOceanGroups } : {}),
+    ...(goalPromptLine ? { topicGoal: platformTopicGoalLabel(params.topicGoal) } : {}),
     ...(Number(params.windowDays) > 0
       ? { trendWindowDays: Number(params.windowDays), trendWindowNote: "trendHot 已按该窗口裁过" }
       : {}),
@@ -352,12 +371,13 @@ ${
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-      reasoningEffort: "max",
+      // 用户 2026-08-06：选题用中档就好，快且省；出完再用高档去润色背景
+      reasoningEffort: SHORTLIST_REASONING_EFFORT,
     });
 
   let emptyRetried = false;
   console.info(
-    `[generatePlatformTopicShortlist] 开始 LLM count=${targetCount} reasoning=max model=kimi-k3 trendStatus=${trendStatus} trendPlatforms=${trendBriefs.length}`,
+    `[generatePlatformTopicShortlist] 开始 LLM count=${targetCount} reasoning=${SHORTLIST_REASONING_EFFORT} model=kimi-k3 trendStatus=${trendStatus} trendPlatforms=${trendBriefs.length}`,
   );
   /**
    * 三次机会：空回与上游抖动（空 200 / 心跳残包）都重试。

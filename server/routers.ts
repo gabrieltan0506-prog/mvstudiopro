@@ -5594,6 +5594,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             )
             .max(8)
             .optional(),
+          /** 这轮想获客/转化/涨粉：进 prompt，决定钩子与结尾动作（用户 2026-08-06） */
+          topicGoal: z.enum(["acquire", "convert", "follow"]).optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -5636,6 +5638,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           windowDays: input.windowDays ?? null,
           blueOceanWords: input.blueOceanWords ?? null,
           blueOceanGroups: input.blueOceanGroups ?? null,
+          topicGoal: input.topicGoal ?? null,
         });
         const creditsInfo = await getCredits(userId);
         return {
@@ -5644,6 +5647,127 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           chargedCredits: isAdminUser ? 0 : priced.total,
           pricing: priced,
           totalAvailable: creditsInfo.totalAvailable,
+        };
+      }),
+
+    /**
+     * 人物背景智能优化的额度：按钮上要显示这次免费还是几积分，所以是个只读查询。
+     */
+    platformPersonaPolishQuota: protectedProcedure
+      .input(z.object({ tier: z.enum(["excellent", "superb"]).optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        const userId = ctx.user.id;
+        const { countPlatformPersonaPolishEver, countPlatformPersonaPolishToday } = await import(
+          "./services/platformPersonaPolish.js"
+        );
+        const { resolvePlatformPersonaPolishQuota } = await import(
+          "../shared/platformPersonaPolish.js"
+        );
+        const [usedEver, usedToday] = await Promise.all([
+          countPlatformPersonaPolishEver(userId),
+          countPlatformPersonaPolishToday(userId),
+        ]);
+        return resolvePlatformPersonaPolishQuota({
+          usedEver,
+          usedToday,
+          tier: input?.tier ?? "excellent",
+        });
+      }),
+
+    /**
+     * 人物背景智能优化：改写全文 + 2–3 条待确认问题 + 猜的选题方向 + 一句关怀。
+     *
+     * 头 3 次免费、之后每天 1 次免费；超出按档扣（优秀 1 / 卓越 2）。
+     * 免费那次一律走优秀档——白送的成本压在最便宜的通道上。
+     */
+    polishPlatformPersona: protectedProcedure
+      .input(
+        z.object({
+          persona: z.string().min(1).max(2000),
+          tier: z.enum(["excellent", "superb"]).optional(),
+          currentGoal: z.enum(["acquire", "convert", "follow"]).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const {
+          countPlatformPersonaPolishEver,
+          countPlatformPersonaPolishToday,
+          logPlatformPersonaPolishUse,
+          polishPlatformPersona: runPolish,
+        } = await import("./services/platformPersonaPolish.js");
+        const {
+          PLATFORM_PERSONA_POLISH_MIN_CHARS,
+          platformPersonaPolishRunTier,
+          resolvePlatformPersonaPolishQuota,
+        } = await import("../shared/platformPersonaPolish.js");
+
+        const persona = input.persona.trim();
+        if (persona.length < PLATFORM_PERSONA_POLISH_MIN_CHARS) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `先写一句人话再优化：至少 ${PLATFORM_PERSONA_POLISH_MIN_CHARS} 个字，说清你是谁、做什么赛道。`,
+          });
+        }
+
+        const [usedEver, usedToday] = await Promise.all([
+          countPlatformPersonaPolishEver(userId),
+          countPlatformPersonaPolishToday(userId),
+        ]);
+        const quota = resolvePlatformPersonaPolishQuota({
+          usedEver,
+          usedToday,
+          tier: input.tier ?? "excellent",
+        });
+        const cost = isAdminUser ? 0 : quota.nextCredits;
+        if (cost > 0) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，这次优化需要 ${cost} 点（今天的免费额度已用完；当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+        }
+
+        const runTier = platformPersonaPolishRunTier({
+          isFree: quota.nextFree,
+          requested: input.tier ?? null,
+        });
+        const result = await runPolish({
+          persona,
+          tier: runTier,
+          currentGoal: input.currentGoal ?? null,
+        });
+
+        // 先出稿再扣点：上游失败不该扣钱
+        if (cost > 0) {
+          await deductCreditsAmount(
+            userId,
+            cost,
+            "platformPersonaPolish",
+            `人物背景智能优化（${runTier === "superb" ? "卓越" : "优秀"}）`,
+          );
+        }
+        await logPlatformPersonaPolishUse({
+          userId,
+          tier: runTier,
+          creditsCost: cost,
+          isFreeQuota: quota.nextFree,
+          personaChars: persona.length,
+        });
+
+        const nextQuota = resolvePlatformPersonaPolishQuota({
+          usedEver: usedEver + 1,
+          usedToday: usedToday + 1,
+          tier: input.tier ?? "excellent",
+        });
+        return {
+          ...result,
+          chargedCredits: cost,
+          wasFree: quota.nextFree,
+          quota: nextQuota,
         };
       }),
 
