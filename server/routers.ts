@@ -5571,6 +5571,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           existingTitles: z.array(z.string().max(200)).max(60).optional(),
           /** 生成条数，默认 6，最大 30；第 7 条起另计费 */
           count: z.number().int().min(1).max(30).optional(),
+          /** 页面上选的时间窗口：热门样本按它裁 */
+          windowDays: z.number().int().min(1).max(365).optional(),
+          /** 蓝海词（扁平）：初选优先往这些词上靠 */
+          blueOceanWords: z.array(z.string().min(1).max(24)).max(40).optional(),
+          /** 蓝海词分级：一级大方向 + 二级具体切口 */
+          blueOceanGroups: z
+            .array(
+              z.object({
+                primary: z.string().min(1).max(24),
+                secondary: z.array(z.string().min(1).max(24)).max(8).optional(),
+              }),
+            )
+            .max(12)
+            .optional(),
           stage1Seeds: z
             .array(
               z.object({
@@ -5619,6 +5633,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           existingTitles: input.existingTitles,
           stage1Seeds: input.stage1Seeds,
           count,
+          windowDays: input.windowDays ?? null,
+          blueOceanWords: input.blueOceanWords ?? null,
+          blueOceanGroups: input.blueOceanGroups ?? null,
         });
         const creditsInfo = await getCredits(userId);
         return {
@@ -5686,6 +5703,85 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           ...result,
           chargedCredits: isAdminUser ? 0 : cost,
           totalAvailable: creditsInfo.totalAvailable,
+        };
+      }),
+
+    /**
+     * 初选扩写（异步）：入队后前端轮询，**每条写完就冒一条**。
+     *
+     * 同步版 `expandPlatformTopicPicks` 要等全部跑完才返回——单条 Kimi K3 约 3 分钟，
+     * 七条就是二十多分钟的空转圈（用户 2026-08-06）。扣费仍在此处一次性发生，
+     * 与条数无关，拆条只是为了让结果早点看见。
+     */
+    enqueuePlatformTopicExpand: protectedProcedure
+      .input(
+        z.object({
+          context: z.string().max(8000).optional(),
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          allowBloggerTitle: z.boolean().optional(),
+          picks: z
+            .array(
+              z.object({
+                id: z.string().min(4).max(64),
+                title: z.string().min(4).max(120),
+                hookSketch: z.string().min(4).max(200),
+                conveyGoal: z.string().min(4).max(240),
+                skillsUsed: z.array(z.string().min(1).max(80)).min(1).max(16),
+                primaryLane: z.enum(["fmcg", "forensic", "crossover", "contrast", "virtual", "default"]),
+                formatHint: z.enum(["图文", "短视频"]),
+                dedupeKey: z.string().min(1).max(80),
+                commentHook: z.string().max(8).optional(),
+                linkedCampaigns: z.array(z.string().min(1).max(80)).max(4).optional(),
+              }),
+            )
+            .min(1)
+            .max(PLATFORM_TOPIC_EXPAND_MAX),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const cost = CREDIT_COSTS.platformTopicExpand;
+        // 上次没出稿的条目重跑免费：坑是我们自己的，不该让用户为同一条再付一次
+        const { claimFreeExpandRetry } = await import("./services/platformTopicExpandRetryCredit.js");
+        const freeRetry = await claimFreeExpandRetry({
+          userId,
+          pickIds: input.picks.map((p) => p.id),
+        });
+        const shouldCharge = !isAdminUser && !freeRetry.free;
+        if (shouldCharge) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，初选扩写需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCredits(userId, "platformTopicExpand", `初选扩写 ${input.picks.length} 条正式文案`);
+        }
+        const jobId = nanoid(16);
+        await createJobRecord({
+          id: jobId,
+          userId: String(userId),
+          type: "platform",
+          provider: "openrouter",
+          input: {
+            action: "platform_topic_expand",
+            params: {
+              context: input.context,
+              picks: input.picks,
+              enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : [],
+              allowBloggerTitle: Boolean(input.allowBloggerTitle),
+              chargedCredits: shouldCharge ? cost : 0,
+            },
+          },
+        });
+        return {
+          success: true as const,
+          jobId,
+          totalCount: input.picks.length,
+          chargedCredits: shouldCharge ? cost : 0,
+          freeRetry: freeRetry.free,
         };
       }),
 

@@ -1,7 +1,7 @@
 /** 面向用户文案：过滤模型名、API、fallback 等内部实现细节 */
 
 const INTERNAL_ENGINE_PATTERN =
-  /EVOLINK|OPENAI|VERTEX|GPT|Gemini|gemini|gpt-|Nano Banana|GPT-IMAGE|GPT54|主模型|备用模型|备用路径|主路径|fallback|analyzeGrowthCamp|growth_analyze|Vertex|Evolink|OhMyGPT|套话快照|成长营套话|trendStore|trendstore|爬虫|爬蟲|crawler|GCS|gs:\/\/|growth-camp|Job not found|pollCount|platformAssetLite|deployment to match the model|request id:/i;
+  /EVOLINK|OPENAI|OpenRouter|openrouter|Cloudflare|VERTEX|GPT|Gemini|gemini|gpt-|Nano Banana|GPT-IMAGE|GPT54|主模型|备用模型|备用路径|主路径|fallback|analyzeGrowthCamp|growth_analyze|Vertex|Evolink|OhMyGPT|套话快照|成长营套话|trendStore|trendstore|爬虫|爬蟲|crawler|GCS|gs:\/\/|growth-camp|Job not found|pollCount|platformAssetLite|deployment to match the model|request id:/i;
 
 export function sanitizePlatformUserMessage(raw: string, fallback = "操作暂时不可用，请稍后重试"): string {
   const text = String(raw || "").trim();
@@ -24,6 +24,14 @@ export function sanitizePlatformUserMessage(raw: string, fallback = "操作暂�
     )
   ) {
     return "算力紧张或请求超时，请稍后重试";
+  }
+  // 上游代理掐断：空 body / 非 JSON / HTML 错误页（status 200 也算）——只给业务句
+  if (
+    /returned empty body|returned non-JSON body|returned HTML instead of JSON|unexpected Content-Type|status 200/i.test(
+      text,
+    )
+  ) {
+    return "算力紧张，请稍后重试（已自动重试仍未成功）";
   }
   // 漫剧学节奏：抖音下片登录态（勿把 yt-dlp 英文 stderr 原样上屏）
   if (/Fresh cookies|cookies?.*(needed|required)|ERROR:\s*\[Douyin\]|Command failed:.*yt-dlp/i.test(text)) {

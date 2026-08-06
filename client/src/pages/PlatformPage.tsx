@@ -80,7 +80,7 @@ import { trpc } from "@/lib/trpc";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import { shouldSkipLocalLearnFallback } from "@shared/manhuaLearnYtdlp";
 import type { AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
-import { buildBlueOceanLexicon } from "@shared/blueOceanLexicon";
+import { buildBlueOceanLexicon, type BlueOceanLexicon } from "@shared/blueOceanLexicon";
 import { appendFashionEditorialCharacterGuidance } from "@shared/platformFashionEditorialCharacter";
 import {
   filterGraphicNoteReaderFacingSteps,
@@ -2011,6 +2011,32 @@ async function uploadKnowledgeCardFileToGcs(params: {
 }
 
 /**
+ * 初选要吃的蓝海词入参：一级词定方向、二级词做标题落点。
+ *
+ * 用户 2026-08-06 明文：一级与二级蓝海词都要抓进选题，别只跟着红海热榜写。
+ */
+function buildShortlistBlueOceanInput(lexicon: BlueOceanLexicon): {
+  blueOceanWords?: string[];
+  blueOceanGroups?: Array<{ primary: string; secondary: string[] }>;
+} {
+  const words = lexicon.flat.filter((w) => w.length > 0 && w.length <= 24).slice(0, 40);
+  const groups = lexicon.grouped
+    .map((g) => ({
+      primary: String(g.primary || "").trim().slice(0, 24),
+      secondary: (g.secondary || [])
+        .map((s) => String(s || "").trim().slice(0, 24))
+        .filter(Boolean)
+        .slice(0, 8),
+    }))
+    .filter((g) => g.primary.length > 0)
+    .slice(0, 12);
+  return {
+    ...(words.length ? { blueOceanWords: words } : {}),
+    ...(groups.length ? { blueOceanGroups: groups } : {}),
+  };
+}
+
+/**
  * 上传文件时决定文本框既有文案要不要一并提练。
  *
  * 提练稿会写回文本框，所以下次上传若默认合并，就会把上一次的稿子混进这本新书
@@ -2187,7 +2213,7 @@ export default function PlatformPage() {
     if (platformDashboard && !platformContent) {
       return "战略看板已就绪。若流程中断，可点下方手动「生成专属文案」继续。";
     }
-    return `点击「开始全案分析」：生成 ${PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT}–${PLATFORM_TOPIC_SHORTLIST_MAX} 条选题初选，并并行整理平台优先级与商业化路径；你挑选后再点「就写这条」扩写（不含决策智库）。`;
+    return `点击「生成选题」：一次出 ${PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT}–${PLATFORM_TOPIC_SHORTLIST_MAX} 条选题；挑中哪条再点「就写这条」写文案。`;
   }, [
     isContentLoading,
     contentLoadingText,
@@ -2626,6 +2652,13 @@ export default function PlatformPage() {
   }, [editingShortlistTitle, editingShortlistTopicId]);
   const generateTopicShortlistMutation = trpc.mvAnalysis.generatePlatformTopicShortlist.useMutation();
   const expandTopicPicksMutation = trpc.mvAnalysis.expandPlatformTopicPicks.useMutation();
+  /** 扩写改走后台任务 + 轮询：每条写完就渲染，不再等七条跑完 */
+  const enqueueTopicExpandMutation = trpc.mvAnalysis.enqueuePlatformTopicExpand.useMutation();
+  const [shortlistExpandBusy, setShortlistExpandBusy] = useState(false);
+  const [shortlistExpandProgress, setShortlistExpandProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
   const topicShortlistPrice = platformTopicShortlistTotalCredits({
     count: topicShortlistCount,
     baseCredits: CREDIT_COSTS.platformTopicShortlist,
@@ -3160,7 +3193,7 @@ export default function PlatformPage() {
         toast.error("请先勾选至少一条选题");
         return;
       }
-      if (expandTopicPicksMutation.isPending) return;
+      if (expandTopicPicksMutation.isPending || shortlistExpandBusy) return;
       const cost = CREDIT_COSTS.platformTopicExpand;
       if (
         !supervisorAccess &&
@@ -3169,14 +3202,39 @@ export default function PlatformPage() {
         return;
       }
       setShortlistLastError(null);
-      pushShortlistDebug(`扩写开始：${picks.length} 条 · expandPlatformTopicPicks`);
+      pushShortlistDebug(`扩写开始：${picks.length} 条 · 后台任务逐条回传`);
       picks.forEach((p, i) => pushShortlistDebug(`  ${i + 1}. ${p.title.slice(0, 48)}`));
       const t0 = Date.now();
-      const heartbeat = window.setInterval(() => {
-        pushShortlistDebug(`⏳ 扩写进行中… ${Math.round((Date.now() - t0) / 1000)}s`);
-      }, 15_000);
+      setShortlistExpandBusy(true);
+      setShortlistExpandProgress({ done: 0, total: picks.length });
+      /** 已渲染过的条目，避免每次轮询都整批重写 state */
+      const rendered = new Set<string>();
+      const mergeBlueprints = (rawList: unknown) => {
+        const bps = (Array.isArray(rawList) ? rawList : []).map((raw, i) => {
+          const bp = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+          const sid = String(bp.id || bp.sceneId || bp.shortlistId || `expand-${t0}-${i}`);
+          return { ...bp, id: sid, sceneId: String(bp.sceneId || sid) };
+        });
+        const fresh = bps.filter((b) => !rendered.has(String(b.id)));
+        if (!fresh.length) return 0;
+        for (const b of fresh) rendered.add(String(b.id));
+        setPlatformContent((prev) => {
+          const prevBps = Array.isArray(prev?.contentBlueprints) ? prev!.contentBlueprints : [];
+          const byId = new Map<string, Record<string, unknown>>();
+          for (const row of prevBps as Array<Record<string, unknown>>) {
+            const k = String(row.id || row.sceneId || row.shortlistId || "");
+            if (k) byId.set(k, row);
+          }
+          for (const row of bps) byId.set(String(row.id), row);
+          return {
+            monetizationLanes: Array.isArray(prev?.monetizationLanes) ? prev!.monetizationLanes : [],
+            contentBlueprints: Array.from(byId.values()) as any[],
+          };
+        });
+        return fresh.length;
+      };
       try {
-        const res = await expandTopicPicksMutation.mutateAsync({
+        const { jobId, freeRetry } = await enqueueTopicExpandMutation.mutateAsync({
           context: focusPrompt.trim() || undefined,
           enabledSkillIds: Array.from(enabledPlatformSkillIds),
           allowBloggerTitle,
@@ -3193,39 +3251,69 @@ export default function PlatformPage() {
             linkedCampaigns: p.linkedCampaigns,
           })),
         });
-        // 对齐旧 Stage2 六条文案：写入 platformContent → contentExecutionCards → 执行卡
-        const bps = (Array.isArray(res.contentBlueprints) ? res.contentBlueprints : []).map(
-          (raw, i) => {
-            const bp = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-            const sid = String(bp.id || bp.sceneId || bp.shortlistId || `expand-${Date.now()}-${i}`);
-            return { ...bp, id: sid, sceneId: String(bp.sceneId || sid) };
-          },
+        pushShortlistDebug(
+          `已入队 job=${jobId}，每条写完即刻显示${freeRetry ? " · 上次未出稿，本次重跑不扣点" : ""}`,
         );
-        setPlatformContent((prev) => {
-          const prevBps = Array.isArray(prev?.contentBlueprints) ? prev!.contentBlueprints : [];
-          const byId = new Map<string, Record<string, unknown>>();
-          for (const row of prevBps as Array<Record<string, unknown>>) {
-            const k = String(row.id || row.sceneId || row.shortlistId || "");
-            if (k) byId.set(k, row);
-          }
-          for (const row of bps) {
-            byId.set(String(row.id), row);
-          }
-          return {
-            monetizationLanes: Array.isArray(prev?.monetizationLanes) ? prev!.monetizationLanes : [],
-            contentBlueprints: Array.from(byId.values()) as any[],
-          };
+        if (freeRetry) toast.success("上次没写出来的条目，本次重跑不扣点");
+        const job = await pollJobUntilTerminal(jobId, {
+          intervalMs: 3000,
+          maxWaitMs: 80 * 60_000,
+          adaptiveBackoffAfterAttempts: 60,
+          maxIntervalMs: 6000,
+          onPoll: ({ output }) => {
+            const out = (output || {}) as {
+              contentBlueprints?: unknown;
+              expandDoneCount?: number;
+              expandTotalCount?: number;
+            };
+            const added = mergeBlueprints(out.contentBlueprints);
+            const done = Number(out.expandDoneCount) || 0;
+            const total = Number(out.expandTotalCount) || picks.length;
+            if (done) setShortlistExpandProgress({ done, total });
+            if (added > 0) {
+              // 第一条一到就切到结果区，别让用户对着转圈
+              setCreateStep("result");
+              setHasAnalyzed(true);
+              pushShortlistDebug(
+                `📄 第 ${done || rendered.size}/${total} 条已出 · ${Math.round((Date.now() - t0) / 1000)}s`,
+              );
+              if (rendered.size === added) toast.success("第 1 条文案已出，其余在后台逐条生成");
+            }
+          },
         });
+        if (job.status === "failed") throw new Error(job.error || "扩写失败，请稍后重试");
+        const out = (job.output || {}) as {
+          contentBlueprints?: unknown;
+          chargedCredits?: number;
+          diagnostics?: { failedCount?: number; failedPicks?: Array<{ id?: string; title?: string }> };
+        };
+        mergeBlueprints(out.contentBlueprints);
+        const bps = Array.from(rendered);
+        const failedPicks = Array.isArray(out.diagnostics?.failedPicks)
+          ? out.diagnostics!.failedPicks!
+          : [];
         setCreateStep("result");
         setHasAnalyzed(true);
-        setSelectedShortlistIds([]);
+        // 失败的留在勾选里，用户可以只重跑这几条
+        setSelectedShortlistIds(
+          failedPicks.map((f) => String(f?.id || "")).filter((id) => id && picks.some((p) => p.id === id)),
+        );
+        setShortlistExpandProgress({ done: bps.length, total: picks.length });
+        if (failedPicks.length) {
+          for (const f of failedPicks) {
+            pushShortlistDebug(`⚠️ 未出：${String(f?.title || f?.id || "").slice(0, 40)}`);
+          }
+          toast.error(
+            `${failedPicks.length} 条没写出来（已保留勾选，可单独重跑），其余 ${bps.length} 条已在下方`,
+          );
+        }
         // 快照：visibleExecutionCards effect 会 sync；出图按钮点击前也会再 sync 一次
         pushShortlistDebug(
-          `✅ 扩写完成 ${bps.length} 条 · ${Math.round((Date.now() - t0) / 1000)}s · 扣点 ${res.chargedCredits ?? "—"}`,
+          `✅ 扩写完成 ${bps.length} 条 · ${Math.round((Date.now() - t0) / 1000)}s · 扣点 ${out.chargedCredits ?? "—"}`,
         );
         pushShortlistDebug("同页展示：文案卡上直接接一键套装/仅封面/分镜·图文（不跳内容创作）");
         toast.success(
-          `已扩写 ${bps.length} 条文案${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；本卡可出封面 / 分镜 / 图文`,
+          `已扩写 ${bps.length} 条文案${out.chargedCredits ? `（扣 ${out.chargedCredits} 点）` : ""}；本卡可出封面 / 分镜 / 图文`,
         );
         // 全案入口在「平台趋势」：结果必须同页可见，禁止切 Tab / 滚到内容创作执行区
         window.setTimeout(() => {
@@ -3241,17 +3329,20 @@ export default function PlatformPage() {
           msg.includes("timeout") || msg.includes("504")
             ? "扩写超时，请少选几条或稍后重试"
             : msg.includes("空内容")
-              ? "模型空回，请再试一次"
-              : msg || "扩写失败";
+              ? "算力紧张，请再试一次"
+              : sanitizePlatformUserMessage(msg, "扩写失败，请稍后重试");
         setShortlistLastError(friendly);
-        pushShortlistDebug(`❌ 扩写失败：${friendly}（已等 ${Math.round((Date.now() - t0) / 1000)}s）`);
-        toast.error(friendly);
+        pushShortlistDebug(`❌ 扩写失败：${msg}（已等 ${Math.round((Date.now() - t0) / 1000)}s）`);
+        // 已经冒出来的条目留在页面上，别因为后半段失败把用户已看到的稿子清掉
+        toast.error(rendered.size > 0 ? `${friendly}（已出 ${rendered.size} 条已保留）` : friendly);
       } finally {
-        window.clearInterval(heartbeat);
+        setShortlistExpandBusy(false);
       }
     },
     [
       expandTopicPicksMutation,
+      enqueueTopicExpandMutation,
+      shortlistExpandBusy,
       supervisorAccess,
       pushShortlistDebug,
       focusPrompt,
@@ -3280,7 +3371,7 @@ export default function PlatformPage() {
               ) : null}
             </div>
             <p className="mt-1 text-[13px] leading-snug text-gray-300">
-              全案默认 {PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT} 条（可读 25/30）；先读小红书 trendStore，再参考 B站与抖音。
+              默认 {PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT} 条（可调 25/30）；以小红书为主，参考 B站与抖音的近期热点。
               <strong className="text-white/90">这步只出题</strong>，挑哪条、标题改成什么都由你定，确认后才写文案与封面。
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-gray-300">
@@ -3298,7 +3389,7 @@ export default function PlatformPage() {
                 >
                   {n}
                   {n === PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT
-                    ? "·全案"
+                    ? "·常用"
                     : n > PLATFORM_TOPIC_SHORTLIST_DEFAULT
                       ? "·加量"
                       : "·少出"}
@@ -3404,27 +3495,29 @@ export default function PlatformPage() {
               </button>
               <button
                 type="button"
-                disabled={
-                  selectedShortlistIds.length === 0 || expandTopicPicksMutation.isPending
-                }
+                disabled={selectedShortlistIds.length === 0 || shortlistExpandBusy}
                 onClick={() => {
                   const picks = topicShortlist.filter((t) => selectedShortlistIds.includes(t.id));
                   void expandShortlistPicks(picks);
                 }}
                 className="rounded-lg border border-emerald-400/50 bg-emerald-500/20 px-3 py-1.5 text-[11px] font-bold text-emerald-50 disabled:opacity-40"
               >
-                {expandTopicPicksMutation.isPending
-                  ? "扩写中…"
+                {shortlistExpandBusy
+                  ? shortlistExpandProgress
+                    ? `扩写中 ${shortlistExpandProgress.done}/${shortlistExpandProgress.total}…`
+                    : "扩写中…"
                   : `写选中的 ${selectedShortlistIds.length || ""} 条（${CREDIT_COSTS.platformTopicExpand} 点）`}
               </button>
               <span className="text-[11px] text-gray-500">
                 已勾 {selectedShortlistIds.length}/{PLATFORM_TOPIC_EXPAND_MAX}
               </span>
             </div>
-            {expandTopicPicksMutation.isPending ? (
+            {shortlistExpandBusy ? (
               <div className="mt-2 flex items-center gap-2 text-sm text-emerald-200/90">
                 <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                正在扩写文案（串行，请勿刷新）…
+                {shortlistExpandProgress && shortlistExpandProgress.done > 0
+                  ? `已出 ${shortlistExpandProgress.done}/${shortlistExpandProgress.total} 条，写好的已显示在下方，其余继续生成…`
+                  : `正在写第 1 条（共 ${shortlistExpandProgress?.total ?? selectedShortlistIds.length} 条）；每写好一条就会显示，可以先看不用等全部完成`}
               </div>
             ) : null}
             <div className="mt-2 max-h-[420px] space-y-1.5 overflow-y-auto pr-1">
@@ -3446,7 +3539,7 @@ export default function PlatformPage() {
                       <input
                         type="checkbox"
                         checked={checked}
-                        disabled={expandTopicPicksMutation.isPending}
+                        disabled={shortlistExpandBusy}
                         onChange={() => toggleShortlistSelection(t.id)}
                         className="mt-1 h-3.5 w-3.5 shrink-0 accent-emerald-400"
                         aria-label={`勾选选题：${t.title}`}
@@ -3528,7 +3621,7 @@ export default function PlatformPage() {
                           </button>
                           <button
                             type="button"
-                            disabled={expandTopicPicksMutation.isPending}
+                            disabled={shortlistExpandBusy}
                             onClick={() => void expandShortlistPicks([t])}
                             className="rounded-lg border border-emerald-400/50 bg-emerald-500/20 px-2.5 py-1.5 text-[11px] font-bold text-emerald-50 disabled:opacity-40"
                           >
@@ -3545,7 +3638,7 @@ export default function PlatformPage() {
           </>
         ) : !generateTopicShortlistMutation.isPending ? (
           <p className="mt-3 text-[12px] text-gray-500">
-            点「开始全案分析」或右侧「生成初选」后，约 {PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT}–{PLATFORM_TOPIC_SHORTLIST_MAX}{" "}
+            点「生成选题」或右侧「生成初选」后，约 {PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT}–{PLATFORM_TOPIC_SHORTLIST_MAX}{" "}
             条选题会出现在这里。
           </p>
         ) : null}
@@ -3586,21 +3679,6 @@ export default function PlatformPage() {
           />
         }
       />
-      {freeformOverride ? (
-        <button
-          type="button"
-          className="rounded-lg border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.08)] px-3 py-2 text-[12px] font-semibold text-[#8cefff]"
-          onClick={() => {
-            const composed = composeFocusPromptFromPersona(structuredPersona);
-            setFocusPrompt(composed);
-            setFreeformOverride(false);
-            toast.success("已由结构化字段重新生成完整描述");
-          }}
-        >
-          由结构化内容生成完整描述
-        </button>
-      ) : null}
-
       <div className="rounded-2xl border border-[#10B981]/35 bg-[#10B981]/10 px-4 py-3.5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -3656,7 +3734,7 @@ export default function PlatformPage() {
         <div className="min-w-0 flex-1">
           <div className="mb-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#8cefff]/80">陪衬说明</div>
           <div className="text-[11px] leading-relaxed text-gray-400">
-            不选额外 Skill 时只开核心。提示词要求优先于 Skill。全案请用上方「一键采纳推荐」。
+            不选额外 Skill 时只开核心。提示词要求优先于 Skill。想省事就用上方「一键采纳推荐」。
           </div>
         </div>
       </div>
@@ -3721,7 +3799,7 @@ export default function PlatformPage() {
                   className="rounded-md border border-[#7d73ff]/45 bg-[#7d73ff]/15 px-2.5 py-1 text-[10px] font-bold text-[#c4b5fd]"
                   onClick={() => scrollToPlatformSection("platform-report")}
                 >
-                  去全案分析（推荐）
+                  去生成选题（推荐）
                 </button>
               </div>
             ) : null}
@@ -7375,7 +7453,7 @@ export default function PlatformPage() {
 
   const heroTrustPoints = useMemo(
     () => [
-      { label: "全案交付", value: "平台优先级、切入方向、选题文案与分镜脚本" },
+      { label: "交付内容", value: "选题、文案、封面与分镜脚本" },
       { label: "不含在内", value: "封面图、编导分镜图、MV Studio Pro AI 决策智库报告（均需另购）" },
       { label: "分析方式", value: `${getWindowLabel(selectedWindowDays)} 窗口 + 人物背景与诉求，不做泛建议` },
     ],
@@ -9125,6 +9203,23 @@ export default function PlatformPage() {
     selectedWindowDays,
   ]);
 
+  /**
+   * 需要平台优先级看板的功能（决策智库、热点风向标）按需现拉一次。
+   *
+   * 以前每次出选题都顺手跑一遍，绝大多数用户根本不看，白烧三轮模型；
+   * 现在改成谁要用谁触发（用户 2026-08-06）。
+   */
+  const ensureFullcaseDashboard = useCallback(async (): Promise<boolean> => {
+    if (platformDashboard) return true;
+    if (!focusPrompt.trim()) {
+      toast.error("请先填写人物背景，再使用需要平台看板的功能");
+      return false;
+    }
+    toast.message("正在准备平台优先级看板（约一分钟）…");
+    await runFullcaseDashboardAndMonetization();
+    return true;
+  }, [platformDashboard, focusPrompt, runFullcaseDashboardAndMonetization]);
+
   const handleAnalyze = async () => {
     if (!focusPrompt.trim()) {
       setPersonaFieldErrors({ freeform: "请先填写人物背景" });
@@ -9147,11 +9242,14 @@ export default function PlatformPage() {
     setHasAnalyzed(true);
     setShortlistLastError(null);
     setShortlistDebugLines([]);
-    pushShortlistDebug(`全案确认：请求 ${n} 条选题初选（小红书主 / B站+抖音辅）`);
+    pushShortlistDebug(`确认：请求 ${n} 条选题初选（小红书主 / B站+抖音辅）`);
     pushShortlistDebug(`人设长度 ${focusPrompt.trim().length} 字 · Skill ${enabledPlatformSkillIds.size} 项`);
     scrollToPlatformSection("platform-fullcase-shortlist-results");
-    // 与选题初选并行：补齐平台优先级 + 商业化（不阻断初选）
-    void runFullcaseDashboardAndMonetization();
+    /**
+     * 这里以前会并行跑「快照 → 平台优先级看板 → 商业化路径」三轮模型。
+     * 用户 2026-08-06：那两块面板不收费也不进文案，选题根本不读它们，白烧算力还把页面撑乱——
+     * 已下线，需要看板时另开入口。
+     */
     const t0 = Date.now();
     const heartbeat = window.setInterval(() => {
       const sec = Math.round((Date.now() - t0) / 1000);
@@ -9171,6 +9269,8 @@ export default function PlatformPage() {
         allowBloggerTitle,
         existingTitles,
         count: n,
+        windowDays: selectedWindowDays,
+        ...buildShortlistBlueOceanInput(decisionIntelBlueOceanLexicon),
       });
       const topics = res.topics || [];
       const ms = Date.now() - t0;
@@ -9216,10 +9316,10 @@ export default function PlatformPage() {
         msg.includes("timeout") || msg.includes("504")
           ? "算力紧张或请求超时，请稍后重试选题初选"
           : msg.includes("空内容")
-            ? "模型空回（服务端已自动重试仍失败），请再试一次"
-            : msg || "全案选题初选失败";
+            ? "算力紧张（已自动重试仍未成功），请再试一次"
+            : sanitizePlatformUserMessage(msg, "选题初选失败，请稍后重试");
       setShortlistLastError(friendly);
-      pushShortlistDebug(`❌ ${friendly}（已等 ${Math.round((Date.now() - t0) / 1000)}s）`);
+      pushShortlistDebug(`❌ ${msg}（已等 ${Math.round((Date.now() - t0) / 1000)}s）`);
       toast.error(friendly);
     } finally {
       window.clearInterval(heartbeat);
@@ -9385,8 +9485,11 @@ export default function PlatformPage() {
   const handleQuickHotTopicToExecution = useCallback(
     async (topic: { title?: string; whyHot?: string; howToUse?: string }) => {
       if (!platformDashboard) {
-        toast.error("请先完成快照与战略看板（点「开始全案分析」）");
-        return;
+        const ready = await ensureFullcaseDashboard();
+        if (!ready || !platformDashboard) {
+          toast.message("平台看板准备中，稍等片刻再点这条");
+          return;
+        }
       }
       const title = String(topic.title || "").trim();
       if (title.length < 2) {
@@ -9534,7 +9637,7 @@ export default function PlatformPage() {
       el.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
     }
-    toast.message("请先完成全案分析：填写人物背景并点「开始全案分析」，生成看板与文案后，可在此单独加购决策智库报告。");
+    toast.message("请先填写人物背景并生成一次选题，再在此加购决策智库报告。");
     document.getElementById(PLATFORM_SECTION_TREND_RUN_ID)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
@@ -9554,7 +9657,7 @@ export default function PlatformPage() {
       return;
     }
     // 趋势分析独立于全案：引导到工作台顶部「开始平台趋势分析」，勿误导向「开始全案分析」。
-    toast.message("请先在上方「平台趋势分析报表」选择天数与平台，再点「开始平台趋势分析」（与全案分析分开计费）。");
+    toast.message("请先在上方「平台趋势分析报表」选择天数与平台，再点「开始平台趋势分析」（与选题分开计费）。");
     document.getElementById("platform-custom-workspace-trends")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [snapshot, platformDashboard]);
 
@@ -9732,6 +9835,8 @@ export default function PlatformPage() {
         allowBloggerTitle,
         existingTitles,
         count,
+        windowDays: selectedWindowDays,
+        ...buildShortlistBlueOceanInput(decisionIntelBlueOceanLexicon),
       });
       const topics = res.topics || [];
       setTopicShortlist(topics);
@@ -9773,10 +9878,10 @@ export default function PlatformPage() {
         msg.includes("timeout") || msg.includes("504")
           ? "算力紧张或请求超时，请稍后重试选题初选"
           : msg.includes("空内容")
-            ? "模型空回（服务端已自动重试仍失败），请再试一次"
-            : msg || "初选生成失败";
+            ? "算力紧张（已自动重试仍未成功），请再试一次"
+            : sanitizePlatformUserMessage(msg, "初选生成失败，请稍后重试");
       setShortlistLastError(friendly);
-      pushShortlistDebug(`❌ ${friendly}`);
+      pushShortlistDebug(`❌ ${msg}`);
       toast.error(friendly);
     }
   }, [
@@ -10094,7 +10199,7 @@ export default function PlatformPage() {
       <Dialog open={fullAnalysisConfirmOpen} onOpenChange={setFullAnalysisConfirmOpen}>
         <DialogContent className="max-w-lg border border-[#49e6ff]/25 bg-[#0a0618] text-white sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-white">开始全案分析前确认</DialogTitle>
+            <DialogTitle className="text-white">生成选题前确认</DialogTitle>
             <DialogDescription className="text-[#b7add8]">
               结合人物背景生成{" "}
               {pendingFullAnalysisLabels || PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT}{" "}
@@ -10257,7 +10362,12 @@ export default function PlatformPage() {
             </p>
             <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-[#b8f4ff]/80">
               <span>shortlistPending={String(generateTopicShortlistMutation.isPending)}</span>
-              <span>expandPending={String(expandTopicPicksMutation.isPending)}</span>
+              <span>
+                expandPending={String(shortlistExpandBusy)}
+                {shortlistExpandProgress
+                  ? ` (${shortlistExpandProgress.done}/${shortlistExpandProgress.total})`
+                  : ""}
+              </span>
               <span>勾选={selectedShortlistIds.length}</span>
               <span>条数档={topicShortlistCount}</span>
               <span>已出={topicShortlist.length}</span>
@@ -10266,7 +10376,7 @@ export default function PlatformPage() {
               ) : null}
             </div>
             {shortlistDebugLines.length === 0 ? (
-              <div className="mt-3 text-xs text-white/30">暂无记录；点「开始全案分析」后会写入步骤。</div>
+              <div className="mt-3 text-xs text-white/30">暂无记录；点「生成选题」后会写入步骤。</div>
             ) : (
               <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-white/10 bg-black/30 p-3 font-mono text-[11px] leading-5 text-[#d7d0ef]">
                 {shortlistDebugLines.join("\n")}
@@ -12533,7 +12643,7 @@ export default function PlatformPage() {
 
         {customWorkspaceOperating && platformMode === "create" ? (
           <p className="mb-4 text-center text-xs text-[#c9c0e6]/45">
-            自定义文案/选题/抠像进行中，下方全案分析区已收起；平台趋势报表与视频深度拆解仍可在上方工作台查看。
+            自定义文案/选题/抠像进行中，下方选题区已收起；平台趋势报表与视频深度拆解仍可在上方工作台查看。
           </p>
         ) : null}
         <div
@@ -12773,11 +12883,11 @@ export default function PlatformPage() {
                     ) : (
                       <Sparkles className="h-4 w-4" />
                     )}
-                    开始全案分析
+                    生成选题
                   </button>
                   <span
                     className="inline-flex shrink-0 items-center rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-2 text-xs font-black tabular-nums tracking-tight text-[#fef08a] shadow-[0_0_20px_rgba(251,191,36,0.12)]"
-                    title="全案先出选题初选（默认20条，可读25/30）；小红书主、B站+抖音辅。挑完再扩写。"
+                    title="一次出 20 条选题（可调 25/30）；读小红书为主、B站与抖音为辅的近期热点与蓝海词。挑完再写文案。"
                   >
                     {
                       platformTopicShortlistTotalCredits({
@@ -12845,10 +12955,15 @@ export default function PlatformPage() {
                 <div className="mt-4 space-y-3">
                   {shortlistLastError ? (
                     <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2.5 text-[12px] leading-relaxed text-rose-100">
-                      选题初选失败：{shortlistLastError}
+                      选题初选失败：{sanitizePlatformUserMessage(shortlistLastError, "算力紧张，请稍后重试")}
                       <span className="mt-1 block text-[11px] text-rose-100/70">
-                        可开顶部 Debug 看完整过程；Fly 侧常见原因：trendStore 超时后模型空回。
+                        可以再点一次「生成选题」；本次未出选题不重复计费。
                       </span>
+                      {supervisorAccess ? (
+                        <span className="mt-1 block text-[11px] text-rose-100/50">
+                          内部诊断：{shortlistLastError}
+                        </span>
+                      ) : null}
                     </div>
                   ) : null}
                   {renderTopicShortlistSection("platform-fullcase-shortlist-results", {
@@ -13249,18 +13364,18 @@ export default function PlatformPage() {
             <div
               className="scroll-mt-24 rounded-2xl border-2 border-[#f59e0b]/55 bg-[linear-gradient(135deg,rgba(245,158,11,0.14),rgba(120,50,20,0.12))] px-4 py-4 shadow-[0_0_32px_rgba(245,158,11,0.12)] md:px-5"
               role="region"
-              aria-label="全案分析扣费说明"
+              aria-label="生成选题扣费说明"
             >
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
                 <div className="flex shrink-0 items-center gap-2 text-[#ffedd5]">
                   <CircleDollarSign className="h-6 w-6 shrink-0 text-[#fbbf24]" aria-hidden />
-                  <span className="text-base font-black tracking-tight text-white sm:text-lg">全案分析 · 扣费说明</span>
+                  <span className="text-base font-black tracking-tight text-white sm:text-lg">生成选题 · 扣费说明</span>
                 </div>
                 <div className="min-w-0 flex-1 text-sm leading-7 text-[#ffe4c4]">
-                  「开始全案分析」会基于你的人物背景，先读<strong className="text-white">小红书 trendStore</strong>（B站+抖音辅），生成默认{" "}
-                  <strong className="text-white">{PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT} 条</strong>选题初选（可读 25/30）。
-                  <strong className="text-white">这步只出题</strong>，按选题初选计价扣除积分；你挑选并点「就写这条」后才扩写文案与封面。
-                  <strong className="text-white">不含</strong>决策智库报告（另购）。任务失败或结果不满意，<strong className="text-red-200">积分不予退还</strong>。
+                  「生成选题」会基于你的人物背景，读取近期热点与蓝海词，一次出默认{" "}
+                  <strong className="text-white">{PLATFORM_TOPIC_SHORTLIST_FULLCASE_COUNT} 条</strong>选题（可调 25/30）。
+                  <strong className="text-white">这步只出题</strong>，按条数计价；挑中哪条点「就写这条」才写文案，封面与分镜按条另计。
+                  任务失败或结果不满意，<strong className="text-red-200">积分不予退还</strong>。
                 </div>
               </div>
             </div>
@@ -13340,7 +13455,7 @@ export default function PlatformPage() {
                   <div>
                     <h3 className="text-base font-bold text-white md:text-lg">MV Studio Pro AI 决策智库报告</h3>
                     <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[#b7add8]">
-                      <strong className="text-white">单独加购模块</strong>：需先完成全案分析（填写人物背景并生成看板与文案），再付费解锁本报告。
+                      <strong className="text-white">单独加购模块</strong>：需先填写人物背景并生成一次选题，再付费解锁本报告。
                       报告将把你的背景、平台优先级与选题<strong className="text-white">收敛为一页可视化决策地图</strong>（雷达、执行建议与阅读向排行；均为模型辅助推演，不构成效果承诺）。
                       与全案入队扣点<strong className="text-white">分开计费</strong>：首次体验{" "}
                       <strong className="text-[#fde047]">{CREDIT_COSTS.decisionIntelligenceReportFirst} 积分</strong>，之后每次{" "}
@@ -13359,7 +13474,7 @@ export default function PlatformPage() {
                     </span>
                     {!decisionIntelInputReady ? (
                       <span className="max-w-[14rem] text-[10px] leading-snug text-amber-200/90 md:text-right">
-                        请先填写人物背景并完成「开始全案分析」，生成看板与文案后，可在此单独加购决策智库报告。
+                        请先填写人物背景并生成一次选题，再在此加购决策智库报告。
                       </span>
                     ) : isContentLoading ? (
                       <span className="max-w-[14rem] text-[10px] leading-snug text-[#8cefff]/90 md:text-right">
@@ -13466,7 +13581,7 @@ export default function PlatformPage() {
                       footnote={
                         strategicMapPreviewReport
                           ? "上为匿名化演示样张（英文与品牌区已打码）。加购后将依你的全案背景与看板结果生成清晰专属版并存档。"
-                          : "上为匿名化演示样张（英文与品牌区已打码）。完成全案分析后可单独加购，获取基于你背景与数据的完整报告。"
+                          : "上为匿名化演示样张（英文与品牌区已打码）。生成过选题后可单独加购，获取基于你背景与数据的完整报告。"
                       }
                     />
                     <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-3 md:p-4">
@@ -13483,7 +13598,7 @@ export default function PlatformPage() {
                             </>
                           ) : (
                             <>
-                              请先完成<strong className="text-[#fde047]">全案分析</strong>（填写背景并生成看板与文案）；本报告与全案积分分开计费，价格见上方。
+                              请先填写背景并生成一次选题；本报告与选题积分分开计费，价格见上方。
                             </>
                           )}
                         </p>
@@ -13911,7 +14026,7 @@ export default function PlatformPage() {
                   </div>
                   <div className="space-y-3">
                     <p className="text-[12px] leading-relaxed text-[#c9c0e6]/55">
-                      选题初选请在上方「开始全案分析」按钮下方操作与挑选；此处专做封面 / 编导分镜出图。
+                      选题请在上方「生成选题」按钮下方挑选；此处专做封面与分镜出图。
                     </p>
                     {topicShortlist.length > 0 ? (
                       <a
@@ -15179,8 +15294,8 @@ export default function PlatformPage() {
                   ) : monetizationCards.length === 0 ? (
                     <div className="col-span-2 flex h-32 w-full flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#c9c0e6]">
                       {hasAnalyzed
-                        ? "本轮未写出变现路径（可再点「开始全案分析」重试）"
-                        : "完成全案分析后显示可落地商业化建议"}
+                        ? "本轮未写出变现路径（可重试）"
+                        : "生成平台看板后显示可落地商业化建议"}
                     </div>
                   ) : (
                     monetizationCards.map((item) => (
@@ -15215,7 +15330,7 @@ export default function PlatformPage() {
                     </div>
                   ) : platformDecisionRows.length === 0 ? (
                     <div className="mt-4 flex h-24 items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-sm text-[#c9c0e6]/70">
-                      完成全案分析后显示平台优先级图
+                      生成平台看板后显示平台优先级图
                     </div>
                   ) : (
                     <div className="mt-4 space-y-3">
