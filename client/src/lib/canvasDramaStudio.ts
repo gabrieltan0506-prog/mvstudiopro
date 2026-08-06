@@ -355,8 +355,6 @@ export type SpawnManhuaDramaStudioOpts = {
   craftShotIds?: string[];
   /** 路径运镜配方 id：注入节拍/反推/成片，并写入 clip.pathCameraRecipeId */
   pathCameraRecipeIds?: string[];
-  /** 静帧路径标注 JSON：写入 clip.pathAnnotationJson，I2V 优先 */
-  pathAnnotationJson?: unknown;
   /** 叙事灯光 id：注入节拍 / 反推 / 静帧 */
   narrativeLightingIds?: string[];
   /** 男发预设 id：注入角色圣经 */
@@ -964,7 +962,6 @@ export function spawnManhuaDramaStudio(opts: SpawnManhuaDramaStudioOpts = {}): D
     : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
   clip.aspectRatio = "9:16";
   if (pathCameraRecipeIds[0]) clip.pathCameraRecipeId = pathCameraRecipeIds[0];
-  if (opts.pathAnnotationJson != null) clip.pathAnnotationJson = opts.pathAnnotationJson;
 
   let promoCover: CanvasBlock | null = null;
   const promoLayout = promoCoverIds[0] ? getPromoCoverLayoutById(promoCoverIds[0]) : null;
@@ -1126,7 +1123,6 @@ export function applyFactoryPrefsToBlocks(
   opts: {
     craftShotIds?: string[];
     pathCameraRecipeIds?: string[];
-    pathAnnotationJson?: unknown;
     narrativeLightingIds?: string[];
     maleHairstyleIds?: string[];
     maleMicroExpressionIds?: string[];
@@ -1356,7 +1352,6 @@ export function applyFactoryPrefsToBlocks(
             : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL
         ) as CanvasBlock["videoModel"],
         pathCameraRecipeId: pathRecipeId || undefined,
-        pathAnnotationJson: opts.pathAnnotationJson,
       };
     }
     if (b.id.startsWith("omni_edit-")) {

@@ -221,7 +221,7 @@ function polishTargets(tier: PlatformPersonaPolishTierId): PolishFetchTarget[] {
         headers: getOpenRouterChatHeaders(),
       }
     : null;
-  const ordered = tier === "excellent" ? [evolink, openrouter] : [openrouter, evolink];
+  const ordered = tier === "superb" ? [openrouter, evolink] : [evolink, openrouter];
   return ordered.filter((t): t is PolishFetchTarget => Boolean(t));
 }
 

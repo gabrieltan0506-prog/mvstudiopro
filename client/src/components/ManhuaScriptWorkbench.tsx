@@ -125,9 +125,8 @@ import {
 } from "@shared/manhuaEpisodeSegmentPlan";
 import { applyShotDialoguesFromText } from "@shared/manhuaShotDialoguePersist";
 import { summarizeManhuaVisualBriefForUi } from "@shared/manhuaScriptVisualBrief";
-import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
 import { MANHUA_DRAFT_RETENTION_HINT_ZH } from "@shared/manhuaCloudDraft";
-import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
+import ManhuaPathRecipePicker from "@/components/ManhuaPathRecipePicker";
 import ManhuaPromptAssetChips from "@/components/ManhuaPromptAssetChips";
 import ManhuaPromptMentionEditor from "@/components/ManhuaPromptMentionEditor";
 import { downloadRemoteFile } from "@/lib/downloadRemoteFile";
@@ -197,21 +196,16 @@ type Props = {
   projectBibleSummary?: string;
   /** 编剧表资产真源：系列人物/道具/场景池 + 每集主场景 */
   assetCanon?: ManhuaWriterAssetCanon | null;
-  /** 已选审定节奏模板短标签（大纲页展示） */
-  viralTemplateLabelZh?: string;
   /** Bible 已绑定造型的集号（1-based） */
   bibleBoundEpisodes?: number[];
   /** 蓝/红轨 + 叙事灯光状态行 */
   pathTrackLabelZh?: string;
   narrativeLightingLabelZh?: string;
-  /** 运镜标注（主屏可画蓝/红轨） */
-  pathAnnotation?: ManhuaPathAnnotation | null;
+  /** 运镜配方（路径/动作，预设文本，无手绘） */
   pathRecipeId?: string;
   actionRecipeId?: string;
-  onPathAnnotationChange?: (ann: ManhuaPathAnnotation | null) => void;
   onPathRecipeIdChange?: (id: string) => void;
   onActionRecipeIdChange?: (id: string) => void;
-  translateMotionZh?: (motionZh: string) => Promise<string>;
   /** 合成长片预览（成片坞合成后） */
   finalVideoUrl?: string | null;
   factoryBusy?: boolean;
@@ -455,17 +449,13 @@ export default function ManhuaScriptWorkbench({
   artStyleLabelZh,
   projectBibleSummary,
   assetCanon = null,
-  viralTemplateLabelZh,
   bibleBoundEpisodes = [],
   pathTrackLabelZh,
   narrativeLightingLabelZh,
-  pathAnnotation = null,
   pathRecipeId,
   actionRecipeId,
-  onPathAnnotationChange,
   onPathRecipeIdChange,
   onActionRecipeIdChange,
-  translateMotionZh,
   finalVideoUrl,
   factoryBusy,
   factoryProgress,
@@ -616,8 +606,6 @@ export default function ManhuaScriptWorkbench({
   ]);
   /** 右栏本集画布：阿硕 C2 分镜有静帧时强制常开；其余阶段仍可随成片收合 */
   const [canvasDockOpen, setCanvasDockOpen] = useState(true);
-  /** 运镜静帧画板：有成片后默认收起，避免占中栏 */
-  const [pathBoardOpen, setPathBoardOpen] = useState(true);
   /** 胶片多选：生成所选 */
   const [selectedShotIndexes, setSelectedShotIndexes] = useState<number[]>([]);
   const [activePhaseLocal, setActivePhaseLocal] = useState<WorkflowPhaseId>(() =>
@@ -940,10 +928,6 @@ export default function ManhuaScriptWorkbench({
     }
     setCanvasDockOpen(!playableClipUrl);
   }, [dockCanvas, playableClipUrl, activeShotNo, activePhase, episodeStillCount]);
-
-  useEffect(() => {
-    setPathBoardOpen(!playableClipUrl);
-  }, [playableClipUrl, activeShotNo]);
 
   const openCanvasDock = () => setCanvasDockOpen(true);
   const closeCanvasDock = () => {
@@ -2254,11 +2238,6 @@ export default function ManhuaScriptWorkbench({
               )}
               {projectBibleSummary ? (
                 <p className="mt-2 text-[11px] text-white/40">{projectBibleSummary}</p>
-              ) : null}
-              {viralTemplateLabelZh ? (
-                <p className="mt-2 text-[11px] text-amber-100/70">
-                  节奏模板：{viralTemplateLabelZh}
-                </p>
               ) : null}
               <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-white/40">
                 <span>共 {Math.max(episodeCount, outlineEpisodes.length, 1)} 集</span>
@@ -5091,58 +5070,21 @@ export default function ManhuaScriptWorkbench({
             </div>
           ) : (
             <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
-              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-                <p className="text-[10px] leading-snug text-white/45">
-                  静帧画轨（
-                  <span className="text-sky-200">蓝=镜头</span>
-                  {" · "}
-                  <span className="text-rose-200">红=人物</span>
-                  ）· 有成片后默认收起，不占分镜列表空间
-                </p>
-                {pathBoardOpen ? (
-                  <button
-                    type="button"
-                    onClick={() => setPathBoardOpen(false)}
-                    className="inline-flex items-center gap-1 rounded-md border border-white/12 px-2 py-0.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
-                  >
-                    <X className="h-3 w-3" />
-                    收起画板
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setPathBoardOpen(true)}
-                    className="inline-flex items-center gap-1 rounded-md border border-sky-400/35 bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-50 hover:bg-sky-500/25"
-                  >
-                    <Focus className="h-3 w-3" />
-                    {playableClipUrl ? "打开画板改轨" : "打开画板"}
-                  </button>
-                )}
-              </div>
-              {pathBoardOpen ? (
-                onPathAnnotationChange ? (
-                  <ManhuaPathCameraAnnotatePanel
-                    compact
-                    imageUrl={annotateStillUrl}
-                    value={pathAnnotation}
-                    recipeId={pathRecipeId}
-                    actionRecipeId={actionRecipeId}
-                    disabled={!canRun || factoryBusy}
-                    onChange={onPathAnnotationChange}
-                    onRecipeIdChange={onPathRecipeIdChange}
-                    onActionRecipeIdChange={onActionRecipeIdChange}
-                    translateMotionZh={translateMotionZh}
-                  />
-                ) : (
-                  <p className="rounded-lg border border-white/10 bg-black/30 px-3 py-4 text-[11px] text-white/40">
-                    运镜画板未接线
-                  </p>
-                )
+              <p className="text-[10px] leading-snug text-white/45">
+                预设运镜配方（文字描述，交模型解读；不再靠手绘轨迹）
+              </p>
+              {onPathRecipeIdChange ? (
+                <ManhuaPathRecipePicker
+                  compact
+                  pathRecipeId={pathRecipeId}
+                  actionRecipeId={actionRecipeId}
+                  disabled={!canRun || factoryBusy}
+                  onPathRecipeIdChange={onPathRecipeIdChange}
+                  onActionRecipeIdChange={onActionRecipeIdChange}
+                />
               ) : (
-                <p className="rounded-lg border border-dashed border-white/12 bg-white/[0.02] px-3 py-3 text-[11px] leading-relaxed text-white/40">
-                  {playableClipUrl
-                    ? "本镜已有成片，画板已收起。检查视频请看右栏；若要改运镜轨再点「打开画板改轨」。"
-                    : "画板已收起，点上方打开后在静帧上划线。"}
+                <p className="rounded-lg border border-white/10 bg-black/30 px-3 py-4 text-[11px] text-white/40">
+                  运镜配方未接线
                 </p>
               )}
               {!annotateStillUrl ? (

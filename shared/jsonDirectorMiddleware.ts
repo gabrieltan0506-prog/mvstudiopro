@@ -9,10 +9,6 @@
  */
 
 import {
-  compilePathAnnotationToMotionPrompt,
-  normalizePathAnnotation,
-} from "./manhuaPathCameraAnnotate.js";
-import {
   compilePathCameraRecipeToMotionPrompt,
   getPathCameraRecipeById,
 } from "./manhuaPathCameraRecipeBank.js";
@@ -320,7 +316,9 @@ export type CompileI2VMotionPromptOpts = {
   hasReferenceImage?: boolean;
   /** 路径运镜配方 id：优先编译分阶段时段句 */
   pathCameraRecipeId?: string | null;
-  /** 路径标注 JSON：优先于 recipeId */
+  /**
+   * @deprecated 手动划线标注已废除；字段保留仅为兼容旧草稿反序列化，不再参与编译。
+   */
   pathAnnotationJson?: unknown;
 };
 
@@ -352,17 +350,13 @@ export const MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS = 8000;
 
 /**
  * 图生视频提示词编译（已废除微动三件套减法）。
- * - 有路径配方/标注 → 编译分阶段时段句
+ * - 有路径配方 → 编译分阶段时段句
  * - 其余：去导演名后原样放行（含漫剧导戏单、@角色对白锁）
  */
 export function compileI2VMotionPrompt(
   rawPrompt: string,
   opts?: CompileI2VMotionPromptOpts,
 ): string {
-  if (opts?.pathAnnotationJson != null) {
-    const ann = normalizePathAnnotation(opts.pathAnnotationJson);
-    if (ann) return compilePathAnnotationToMotionPrompt(ann);
-  }
   const recipeId = String(opts?.pathCameraRecipeId || "").trim();
   if (recipeId) {
     const recipe = getPathCameraRecipeById(recipeId);

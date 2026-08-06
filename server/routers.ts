@@ -5813,6 +5813,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         });
 
         // 先出稿再扣点：上游失败不该扣钱
+        // 付费那次 deductCreditsAmount 内部自己会写一行 stripeUsageLogs（action 同名）；
+        // 这里再写一遍就是重复计数，只在免费（cost=0，deductCreditsAmount 不落库）那次补记。
         if (cost > 0) {
           await deductCreditsAmount(
             userId,
@@ -5820,14 +5822,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             "platformPersonaPolish",
             `人物背景智能优化（${runTier === "superb" ? "卓越" : "优秀"}）`,
           );
+        } else {
+          await logPlatformPersonaPolishUse({
+            userId,
+            tier: runTier,
+            creditsCost: cost,
+            isFreeQuota: quota.nextFree,
+            personaChars: persona.length,
+          });
         }
-        await logPlatformPersonaPolishUse({
-          userId,
-          tier: runTier,
-          creditsCost: cost,
-          isFreeQuota: quota.nextFree,
-          personaChars: persona.length,
-        });
 
         const nextQuota = resolvePlatformPersonaPolishQuota({
           usedEver: usedEver + 1,
@@ -8503,9 +8506,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 扣 {@link CREDIT_COSTS.platformOptimizeCustomCopy} 积分/次。
      */
     /**
-     * /canvas 编剧室连载扩写：OpenRouter Kimi K3（reasoning max）。
+     * /canvas 编剧室连载扩写：三档自选（优秀/卓越/顶级），按集数计价。
      * 须先选定成片引擎（2.0 / 2.0-fast / 2.5），按选型铺段数与秒数。
-     * 不扣点（与原 geminiScript 扩写一致）。
+     * 免费额度口径同 `/platform`：头 3 次免费、之后每天 1 次免费；超出按档 × 集数扣点。
      */
     expandManhuaWriterPack: protectedProcedure
       .input(
@@ -8513,7 +8516,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           topic: z.string().max(500).optional(),
           brief: z.string().max(2000).optional(),
           episodeCount: z.number().int().min(2).max(6).optional(),
-          /** 审定节奏模板 id（tpl_*） */
+          /** 引擎档位：优秀/卓越/顶级，仅前台展示档名 */
+          tier: z.enum(["excellent", "superb", "top"]).optional(),
+          /**
+           * @deprecated 节奏模板选择器已下线；字段保留避免旧前端 400，服务端忽略。
+           */
           viralTemplateId: z.string().max(64).optional(),
           /** 单集时长档位：90s 半强度 / 180s 全长（2.5 时由 videoModel 覆盖段表） */
           lengthTierId: z.string().max(32).optional(),
@@ -8532,7 +8539,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           lockedEpisodeBody: z.string().max(6000).optional(),
         }),
       )
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const topic = String(input.topic || "").trim();
         const brief = String(input.brief || "").trim();
         if (!topic && !brief) {
@@ -8550,32 +8559,46 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const { resolveManhuaSeedanceLayoutProfile } = await import(
           "../shared/manhuaSeedanceLayout.js"
         );
-        const { formatManhuaViralTemplateWriterAddonFromCard } = await import(
-          "../shared/manhuaViralTemplateBank.js"
+        const { resolveManhuaWriterExpandQuota } = await import(
+          "../shared/manhuaWriterExpandPricing.js"
         );
-        const { getMergedManhuaViralTemplate } = await import("./services/manhuaViralTemplateStore.js");
-        const { invokeGpt56ResponsesText } = await import("./services/gpt56ResponsesClient.js");
-        const { getOpenRouterKimiK3Model, OPENROUTER_KIMI_K3_REASONING_EFFORT } = await import(
-          "./services/openrouterKimiK3.js"
-        );
+        const {
+          MANHUA_WRITER_EXPAND_ACTION,
+          countManhuaWriterExpandEver,
+          countManhuaWriterExpandToday,
+          logManhuaWriterExpandUse,
+        } = await import("./services/manhuaWriterExpandBilling.js");
+        const { runManhuaWriterExpand } = await import("./services/manhuaWriterExpandRun.js");
+        const { platformEngineTierLabel } = await import("../shared/platformEngineTiers.js");
+
         const layout = resolveManhuaSeedanceLayoutProfile(input.videoModel);
         const episodeCount = clampWriterEpisodeCount(input.episodeCount);
-        let viralTemplateAddon = "";
-        try {
-          const merged = await getMergedManhuaViralTemplate(input.viralTemplateId);
-          viralTemplateAddon = formatManhuaViralTemplateWriterAddonFromCard(
-            merged,
-            input.lengthTierId || layout.lengthTierId,
-          );
-        } catch {
-          viralTemplateAddon = "";
+
+        const [usedEver, usedToday] = await Promise.all([
+          countManhuaWriterExpandEver(userId),
+          countManhuaWriterExpandToday(userId),
+        ]);
+        const quota = resolveManhuaWriterExpandQuota({
+          usedEver,
+          usedToday,
+          tier: input.tier ?? "excellent",
+          episodeCount,
+        });
+        const cost = isAdminUser ? 0 : quota.nextCredits;
+        if (cost > 0) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，这次扩写需要 ${cost} 点（今天的免费额度已用完；当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
         }
+
         const prompt = buildManhuaWriterExpandPrompt({
           topic,
           brief,
           episodeCount,
-          viralTemplateId: input.viralTemplateId,
-          viralTemplateAddon: viralTemplateAddon || undefined,
           lengthTierId: input.lengthTierId || layout.lengthTierId,
           videoModel: layout.videoModel,
           fromEpisode: input.fromEpisode,
@@ -8584,13 +8607,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         });
         let markdown = "";
         try {
-          markdown = await invokeGpt56ResponsesText({
-            input: prompt,
-            modelName: getOpenRouterKimiK3Model(),
-            reasoningMode: "pro",
-            reasoningEffort: OPENROUTER_KIMI_K3_REASONING_EFFORT,
-            store: false,
-            timeoutMs: 300_000,
+          markdown = await runManhuaWriterExpand({
+            prompt,
+            tier: quota.runTier,
+            episodeCount,
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -8605,12 +8625,35 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             message: "扩写结果过短，请再试一次",
           });
         }
+
+        // 先出稿再扣点：上游失败不该扣钱
+        // 付费那次 deductCreditsAmount 内部自己会写一行 stripeUsageLogs（action 同名）；
+        // 这里再写一遍就是重复计数，只在免费（cost=0，deductCreditsAmount 不落库）那次补记。
+        if (cost > 0) {
+          await deductCreditsAmount(
+            userId,
+            cost,
+            MANHUA_WRITER_EXPAND_ACTION,
+            `编剧室连载扩写（${platformEngineTierLabel(quota.runTier)}）· ${episodeCount} 集`,
+          );
+        } else {
+          await logManhuaWriterExpandUse({
+            userId,
+            tier: quota.runTier,
+            episodeCount,
+            creditsCost: cost,
+            isFreeQuota: quota.nextFree,
+          });
+        }
+
         const pack = parseManhuaWriterPack(markdown, episodeCount, { topic });
         return {
           markdown,
           pack,
           ready: writerPackLooksReady(pack),
-          via: "openrouter_kimi_k3" as const,
+          tier: quota.runTier,
+          creditsCost: cost,
+          isFreeQuota: quota.nextFree,
           videoModel: layout.videoModel,
           layout: {
             segmentCount: layout.segmentCount,

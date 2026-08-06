@@ -1092,7 +1092,6 @@ export async function runCanvasBlock(
     const compiledMotion = stripManhuaPromptSlop(
       compileI2VMotionPrompt(withContinuity, {
         pathCameraRecipeId: isClip ? undefined : block.pathCameraRecipeId,
-        pathAnnotationJson: isClip ? undefined : block.pathAnnotationJson,
       }),
     );
     // 光学 mm/快门：仅出片时由运镜句自动转换，不写回节点/前台审阅
