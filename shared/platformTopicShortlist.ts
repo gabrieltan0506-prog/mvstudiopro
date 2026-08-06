@@ -42,6 +42,34 @@ export function clampTopicShortlistCount(raw: unknown): number {
   return Math.max(1, Math.min(PLATFORM_TOPIC_SHORTLIST_MAX, n));
 }
 
+/**
+ * 三档自选时的条数：用户 2026-08-06 定「直出 6 到 8 条」，选项只留这两个。
+ * 挑得快、跑得也快；要更多条仍可走旧的 count 参数，计价公式同一套。
+ */
+export const PLATFORM_TOPIC_SHORTLIST_TIER_COUNTS = [6, 8] as const;
+
+/**
+ * 各档每条选题的积分。
+ *
+ * 卓越档定成 2 积分/条是刻意对齐旧价（基础 12 含 6 条 + 超出 2/条 → 20 条正好 40 积分），
+ * 改版不让老用户觉得涨价；优秀档砍到一半当入门，顶级档 3 倍——它的输出单价确实是卓越档的 1.8 倍。
+ * 三档毛利都在 90% 以上，65% 底线在这里不是约束（账见 canvas persona-polish-unit-economics）。
+ */
+export const PLATFORM_TOPIC_SHORTLIST_CREDITS_PER_TOPIC = {
+  excellent: 1,
+  superb: 2,
+  top: 3,
+} as const;
+
+export function platformTopicShortlistTierCredits(params: {
+  tier: keyof typeof PLATFORM_TOPIC_SHORTLIST_CREDITS_PER_TOPIC;
+  count: number;
+}): { count: number; perTopic: number; total: number } {
+  const count = clampTopicShortlistCount(params.count);
+  const perTopic = PLATFORM_TOPIC_SHORTLIST_CREDITS_PER_TOPIC[params.tier];
+  return { count, perTopic, total: perTopic * count };
+}
+
 /** 基础价含默认 6 条；超出条数 × extraPerTopic */
 export function platformTopicShortlistTotalCredits(params: {
   count: number;

@@ -14,20 +14,23 @@ type Props = {
   id?: string;
 };
 
-const FIELDS: Array<{
-  key: keyof PlatformStructuredPersona;
-  label: string;
-  placeholder: string;
-}> = [
-  { key: "identity", label: "身份", placeholder: "如：医学背景创作者 / 品牌主理人" },
-  { key: "domain", label: "领域", placeholder: "如：慢病科普、高客单资料包" },
-  { key: "audience", label: "受众", placeholder: "如：25–45 岁关注养生的职场人" },
-  { key: "businessGoal", label: "商业目标", placeholder: "如：虚拟资料店稳定转化" },
+/**
+ * 一个输入框搞定人物背景。
+ *
+ * 原先拆成身份/领域/受众/商业目标四个输入框 + 一个完整描述，五个框摆在一起，
+ * 用户反而不知道从哪下手（用户 2026-08-06：不要这么多栏位，保留一个即可）。
+ * 现在只留一个框，四件要写的事降级成可点的引导标签——点一下就把小标题插进去。
+ */
+const HINTS: Array<{ key: keyof PlatformStructuredPersona; label: string; example: string }> = [
+  { key: "identity", label: "身份", example: "医学背景创作者" },
+  { key: "domain", label: "赛道", example: "慢病科普" },
+  { key: "audience", label: "受众", example: "25–45 岁关注养生的职场人" },
+  { key: "businessGoal", label: "商业目标", example: "虚拟资料店稳定转化" },
 ];
 
+const EXAMPLE_TEXT = HINTS.map((h) => `${h.label}：${h.example}`).join("；");
+
 export function PlatformStructuredPersonaForm({
-  value,
-  onChange,
   freeform,
   onFreeformChange,
   voiceSlot,
@@ -36,6 +39,20 @@ export function PlatformStructuredPersonaForm({
   errors,
   id = "platform-persona-focus",
 }: Props) {
+  const insertHint = (label: string) => {
+    const current = freeform.trimEnd();
+    if (current.includes(`${label}：`)) return;
+    const next = current ? `${current}${current.endsWith("；") ? "" : "；"}${label}：` : `${label}：`;
+    onFreeformChange(next);
+    const el = document.getElementById(`${id}-textarea`) as HTMLTextAreaElement | null;
+    if (el) {
+      el.focus();
+      window.requestAnimationFrame(() => {
+        el.selectionStart = el.selectionEnd = el.value.length;
+      });
+    }
+  };
+
   return (
     <div
       id={id}
@@ -45,9 +62,6 @@ export function PlatformStructuredPersonaForm({
         <div className="flex items-center gap-2 text-base font-bold text-white md:text-lg">
           <Target className="h-5 w-5 shrink-0 text-[#49e6ff]" aria-hidden />
           人物背景
-          <span className="rounded border border-[#ff4fb8]/35 bg-[rgba(255,79,184,0.1)] px-1.5 py-0.5 text-[11px] font-medium text-[#ff9fe0]">
-            内容创作
-          </span>
         </div>
         {onIpGeneFill ? (
           <button
@@ -64,46 +78,56 @@ export function PlatformStructuredPersonaForm({
         ) : null}
       </div>
       <p className="mt-1.5 text-[12px] leading-snug text-[#c9c0e6]/60">
-        结构化填写后自动汇总到下方完整描述；趋势分析与选题初选共用此背景。
+        一段话写清你是谁、做什么赛道、写给谁看、想赚什么钱。趋势分析与选题共用这段背景。
       </p>
 
-      <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
-        {FIELDS.map((field) => {
-          const err = errors?.[field.key];
-          return (
-            <label key={field.key} className="block">
-              <span className="mb-1 block text-[11px] font-semibold text-[#c9c0e6]/70">{field.label}</span>
-              <input
-                value={value[field.key]}
-                onChange={(e) => onChange({ ...value, [field.key]: e.target.value })}
-                placeholder={field.placeholder}
-                className={`w-full rounded-xl border bg-[#0c061e] px-3 py-2.5 text-[13px] text-white outline-none transition focus:border-[#49e6ff]/45 ${
-                  err ? "border-amber-400/50" : "border-white/12"
-                }`}
-              />
-              {err ? <span className="mt-1 block text-[11px] text-amber-200/90">{err}</span> : null}
-            </label>
-          );
-        })}
-      </div>
-
       <div className="relative mt-3">
-        <label className="mb-1 block text-[11px] font-semibold text-[#c9c0e6]/70">完整描述（可语音）</label>
         <textarea
+          id={`${id}-textarea`}
           value={freeform}
           onChange={(e) => onFreeformChange(e.target.value)}
-          placeholder="也可直接写完整背景；结构化字段会尽量同步。"
-          rows={3}
-          className={`min-h-[96px] w-full rounded-xl border bg-[#0c061e] px-3.5 py-3 pr-12 text-[14px] leading-relaxed text-white outline-none transition focus:border-[#49e6ff]/45 ${
+          placeholder={EXAMPLE_TEXT}
+          rows={4}
+          className={`min-h-[120px] w-full rounded-xl border bg-[#0c061e] px-3.5 py-3 pr-12 text-[14px] leading-relaxed text-white outline-none transition placeholder:text-[#6f6791] focus:border-[#49e6ff]/45 ${
             errors?.freeform ? "border-amber-400/50" : "border-white/12"
           }`}
         />
-        {voiceSlot ? <div className="absolute right-2 top-8">{voiceSlot}</div> : null}
+        {voiceSlot ? <div className="absolute right-2 top-2">{voiceSlot}</div> : null}
       </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <span className="text-[11px] text-[#c9c0e6]/45">点一下补进去：</span>
+        {HINTS.map((h) => {
+          const filled = freeform.includes(`${h.label}：`);
+          return (
+            <button
+              key={h.key}
+              type="button"
+              onClick={() => insertHint(h.label)}
+              title={`例：${h.example}`}
+              className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                filled
+                  ? "border-[#49e6ff]/40 bg-[rgba(73,230,255,0.12)] text-[#8cefff]"
+                  : "border-white/12 text-[#c9c0e6]/70 hover:border-[#49e6ff]/35 hover:text-white"
+              }`}
+            >
+              {h.label}
+            </button>
+          );
+        })}
+        {!freeform.trim() ? (
+          <button
+            type="button"
+            onClick={() => onFreeformChange(EXAMPLE_TEXT)}
+            className="rounded-full border border-[#fbbf24]/35 bg-[rgba(251,191,36,0.08)] px-2.5 py-1 text-[11px] font-medium text-[#fde68a] transition hover:brightness-110"
+          >
+            填个示例看看
+          </button>
+        ) : null}
+      </div>
+
       {errors?.freeform ? (
         <p className="mt-1.5 text-[12px] text-amber-200/90">{errors.freeform}</p>
-      ) : !freeform.trim() ? (
-        <p className="mt-1.5 text-[12px] text-[#c9c0e6]/45">填写身份与目标后即可生成选题；空背景会禁用主按钮。</p>
       ) : null}
     </div>
   );

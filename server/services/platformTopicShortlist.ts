@@ -2,7 +2,7 @@
  * 选题初选（20）与勾选扩写（5–6）LLM 服务。
  */
 import { nanoid } from "nanoid";
-import { extractFirstChoicePlainText, invokeLLM } from "../_core/llm.js";
+import { extractFirstChoicePlainText, invokeLLM, isTransientLlmError } from "../_core/llm.js";
 import { getPlatformStage2OpenAiModel } from "../config/platformSwitches.js";
 import { TRPCError } from "@trpc/server";
 import {
@@ -28,6 +28,20 @@ import {
 } from "../../shared/platformSkillRouter.js";
 import { listAllPlatformSkillsForUser, composePlatformSkillsPromptBlock } from "./platformSkillsService.js";
 import { PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE } from "../../shared/platformCreatorInsightFraming.js";
+import { platformEngineEffort } from "../../shared/platformEngineTiers.js";
+import {
+  platformTopicGoalLabel,
+  platformTopicGoalPromptLine,
+} from "../../shared/platformPersonaPolish.js";
+
+/**
+ * 初选的推理档。
+ *
+ * 用户 2026-08-06：「选题用 medium 就好，吐出来给用户再用 high 来润色即可，这样快一点也省钱」。
+ * 当前初选跑在卓越档（Kimi K3）上，它的三级是 low|high|max，中档即 high——
+ * 旧代码一直发 max，是这条链最慢也最贵的一环。
+ */
+const SHORTLIST_REASONING_EFFORT = platformEngineEffort("shortlist", "superb");
 
 function extractJsonObject(raw: string): unknown {
   const t = String(raw || "").trim();
@@ -59,10 +73,33 @@ type ShortlistTrendBrief = {
 };
 
 /**
+ * 按用户选的时间窗口裁热门样本。
+ *
+ * 没有 publishedAt 的一律保留（平台改个时间格式就清空整池太脆）；裁完剩太少
+ * （不足三成且不足 20 条）就退回不裁——宁可题贴得旧一点，也别让初选完全没有热点支撑。
+ */
+function filterTrendRowsToWindow(
+  rows: Array<Record<string, unknown>>,
+  windowDays?: number | null,
+): Array<Record<string, unknown>> {
+  const days = Number(windowDays);
+  if (!Number.isFinite(days) || days <= 0 || !rows.length) return rows;
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const kept = rows.filter((r) => {
+    const raw = r.publishedAt ?? r.createdAt ?? r.collectedAt;
+    const at = raw ? new Date(String(raw)).getTime() : Number.NaN;
+    if (!Number.isFinite(at)) return true;
+    return at >= cutoff;
+  });
+  if (kept.length >= 20 || kept.length >= Math.ceil(rows.length * 0.3)) return kept;
+  return rows;
+}
+
+/**
  * 初选前先查本机热门样本：小红书主、B站+抖音辅。
  * 只读 volume 本地文件，**不打冷仓**；读失败返回空数组继续出题。
  */
-async function readShortlistTrendBriefs(): Promise<{
+async function readShortlistTrendBriefs(windowDays?: number | null): Promise<{
   briefs: ShortlistTrendBrief[];
   status: "ok" | "timeout" | "error" | "empty";
 }> {
@@ -73,19 +110,46 @@ async function readShortlistTrendBriefs(): Promise<{
   ];
   try {
     const { readLocalTrendCollectionsForPlatforms } = await import("../growth/trendStore.js");
-    const collections = await Promise.race([
-      readLocalTrendCollectionsForPlatforms(platforms.map((p) => p.platform)),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), SHORTLIST_TREND_READ_TIMEOUT_MS)),
-    ]);
-    if (!collections) {
-      console.warn("[generatePlatformTopicShortlist] 本机趋势读取超时，本次不带热门样本");
-      return { briefs: [], status: "timeout" };
-    }
+    /**
+     * 逐平台读、各自计时：库里有哪个就用哪个（用户 2026-08-06）。
+     * 旧写法是三平台一起 race 一个 5 秒闸门，小红书慢一点就把 B站 / 抖音的现成数据一起丢掉，
+     * 结果整批题都没有热点支撑。
+     */
+    const perPlatform = await Promise.all(
+      platforms.map(async ({ platform }) => {
+        try {
+          const got = await Promise.race([
+            readLocalTrendCollectionsForPlatforms([platform]),
+            new Promise<null>((resolve) =>
+              setTimeout(() => resolve(null), SHORTLIST_TREND_READ_TIMEOUT_MS),
+            ),
+          ]);
+          if (!got) {
+            console.warn(`[generatePlatformTopicShortlist] ${platform} 趋势读取超时，跳过该平台`);
+            return [platform, undefined] as const;
+          }
+          return [platform, got[platform]] as const;
+        } catch (e) {
+          console.warn(
+            `[generatePlatformTopicShortlist] ${platform} 趋势读取失败: ${
+              e instanceof Error ? e.message.slice(0, 120) : e
+            }`,
+          );
+          return [platform, undefined] as const;
+        }
+      }),
+    );
+    const collections = Object.fromEntries(perPlatform) as Record<
+      string,
+      { items?: unknown } | undefined
+    >;
+    const timedOutAll = perPlatform.every(([, c]) => !c);
     const briefs: ShortlistTrendBrief[] = [];
     for (const { platform, role, titleCap } of platforms) {
       const items = collections[platform]?.items;
       if (!Array.isArray(items) || !items.length) continue;
-      const rows = items as Array<Record<string, unknown>>;
+      const rows = filterTrendRowsToWindow(items as Array<Record<string, unknown>>, windowDays);
+      if (!rows.length) continue;
       const ranked = [...rows].sort(
         (a, b) => Number(b.hotValue || b.likes || 0) - Number(a.hotValue || a.likes || 0),
       );
@@ -121,7 +185,8 @@ async function readShortlistTrendBriefs(): Promise<{
         });
       if (hotTitles.length) briefs.push({ platform, role, hotTitles, hotTags, commentHotTitles });
     }
-    return { briefs, status: briefs.length ? "ok" : "empty" };
+    if (briefs.length) return { briefs, status: "ok" };
+    return { briefs, status: timedOutAll ? "timeout" : "empty" };
   } catch (err) {
     console.warn(
       `[generatePlatformTopicShortlist] 本机趋势读取失败: ${err instanceof Error ? err.message : String(err)}`.slice(
@@ -156,6 +221,14 @@ export async function generatePlatformTopicShortlist(params: {
   stage1Seeds?: Array<{ title?: string; hook?: string }>;
   /** 生成条数，默认 6，最大见 PLATFORM_TOPIC_SHORTLIST_MAX */
   count?: number | null;
+  /** 用户在页面上选的时间窗口：热门样本按它裁，出题才贴当下（用户 2026-08-06） */
+  windowDays?: number | null;
+  /** 蓝海词（扁平）：初选优先往这些词上靠，别只跟着红海热榜写 */
+  blueOceanWords?: string[] | null;
+  /** 蓝海词分级：一级是大方向，二级是具体切口——标题落点优先用二级词 */
+  blueOceanGroups?: Array<{ primary?: string; secondary?: string[] }> | null;
+  /** 这轮想获客/转化/涨粉：决定钩子与结尾动作往哪落（用户 2026-08-06） */
+  topicGoal?: string | null;
 }): Promise<{ topics: PlatformTopicShortlistItem[]; diagnostics: Record<string, unknown> }> {
   const targetCount = clampTopicShortlistCount(params.count ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT);
   const all = await listAllPlatformSkillsForUser(params.userId);
@@ -196,7 +269,33 @@ export async function generatePlatformTopicShortlist(params: {
     platform: "xiaohongshu",
     featuredOnly: true,
   });
-  const { briefs: trendBriefs, status: trendStatus } = await readShortlistTrendBriefs();
+  const { briefs: trendBriefs, status: trendStatus } = await readShortlistTrendBriefs(
+    params.windowDays,
+  );
+  const blueOceanGroups = (params.blueOceanGroups || [])
+    .map((g) => ({
+      primary: String(g?.primary || "").trim(),
+      secondary: Array.from(
+        new Set(
+          (Array.isArray(g?.secondary) ? g!.secondary! : [])
+            .map((s) => String(s || "").trim())
+            .filter((s) => s.length > 0 && s.length <= 24),
+        ),
+      ).slice(0, 8),
+    }))
+    .filter((g) => g.primary.length > 0)
+    .slice(0, 12);
+  const blueOceanWords = Array.from(
+    new Set(
+      [
+        ...(params.blueOceanWords || []),
+        ...blueOceanGroups.flatMap((g) => [g.primary, ...g.secondary]),
+      ]
+        .map((w) => String(w || "").trim())
+        .filter((w) => w.length > 0 && w.length <= 24),
+    ),
+  ).slice(0, 28);
+  const goalPromptLine = platformTopicGoalPromptLine(params.topicGoal);
   const campaignBrief = featuredCampaigns.slice(0, 10).map((c) => ({
     name: c.name,
     category: c.category,
@@ -229,7 +328,19 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
    高分特征：能站队但不撕裂、有争议但安全；有具体问题可回答；能让人晒自己的经历/家里/同款；求链接求教程求配方；有明确可对号入座的身份（久坐党/带娃的/租房的）。
    低分特征：只能「学到了」然后划走的科普；说完就没下文的结论帖；没有让人接话的口子。
    \`commentHeat\` 与 \`viralScore\` **要分开判断**——有的题很容易转发但没人留言，有的题不见得爆但评论区会炸；两个分数不必一致。
-输出：{ "topics": [ ...恰好${targetCount}条，每条含 viralScore / viralReason / commentHeat ] }`;
+${
+  blueOceanWords.length
+    ? `16. **蓝海词优先（硬）**：user JSON 的 \`blueOceanWords\` 是本人设算出来的低竞争高潜力词${
+        blueOceanGroups.length
+          ? `；\`blueOceanGroups\` 给了分级——\`primary\` 是一级大方向，\`secondary\` 是二级具体切口。**标题落点优先用二级词**，一级词只用来定方向，别把一级大词直接当标题写`
+          : ""
+      }。**至少三分之一**选题要落在这些词覆盖的话题上，命中的在 \`blueOceanHit\` 里写上用到的词（没命中就给空数组）。这些词是用来抢没人写的位置的——不要为了蹭热榜把它们全丢掉，也不要生硬堆词，要把词还原成生活场景再出题。`
+    : ""
+}
+${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
+输出：{ "topics": [ ...恰好${targetCount}条，每条含 viralScore / viralReason / commentHeat${
+    blueOceanWords.length ? " / blueOceanHit" : ""
+  } ] }`;
 
   const user = JSON.stringify({
     personaContext: String(params.context || "").slice(0, 6000),
@@ -240,6 +351,12 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
     skillsBrief: skillsBlock.slice(0, 8000),
     officialCampaigns: campaignBrief,
     trendHot: trendBriefs,
+    ...(blueOceanWords.length ? { blueOceanWords } : {}),
+    ...(blueOceanGroups.length ? { blueOceanGroups } : {}),
+    ...(goalPromptLine ? { topicGoal: platformTopicGoalLabel(params.topicGoal) } : {}),
+    ...(Number(params.windowDays) > 0
+      ? { trendWindowDays: Number(params.windowDays), trendWindowNote: "trendHot 已按该窗口裁过" }
+      : {}),
   });
 
   const maxTokens = Math.min(24000, 12000 + Math.max(0, targetCount - 12) * 600);
@@ -254,21 +371,41 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-      reasoningEffort: "max",
+      // 用户 2026-08-06：选题用中档就好，快且省；出完再用高档去润色背景
+      reasoningEffort: SHORTLIST_REASONING_EFFORT,
     });
 
   let emptyRetried = false;
   console.info(
-    `[generatePlatformTopicShortlist] 开始 LLM count=${targetCount} reasoning=max model=kimi-k3 trendStatus=${trendStatus} trendPlatforms=${trendBriefs.length}`,
+    `[generatePlatformTopicShortlist] 开始 LLM count=${targetCount} reasoning=${SHORTLIST_REASONING_EFFORT} model=kimi-k3 trendStatus=${trendStatus} trendPlatforms=${trendBriefs.length}`,
   );
-  let res = await invokeShortlist();
-  let llmText = extractFirstChoicePlainText(res).trim();
-  if (!llmText) {
-    emptyRetried = true;
-    console.warn("[generatePlatformTopicShortlist] 首次空回（max），再以 max 重试一次");
-    res = await invokeShortlist();
-    llmText = extractFirstChoicePlainText(res).trim();
+  /**
+   * 三次机会：空回与上游抖动（空 200 / 心跳残包）都重试。
+   * 2026-08-06 实测 OpenRouter 以 200 返回空 body，旧代码直接抛死，用户面上是「初选失败」。
+   */
+  let res: Awaited<ReturnType<typeof invokeShortlist>> | null = null;
+  let llmText = "";
+  let lastErr: unknown = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      res = await invokeShortlist();
+      llmText = extractFirstChoicePlainText(res).trim();
+      if (llmText) break;
+      emptyRetried = true;
+      console.warn(`[generatePlatformTopicShortlist] 空回（max）第 ${attempt} 次`);
+    } catch (e) {
+      lastErr = e;
+      if (!isTransientLlmError(e) || attempt === 3) throw e;
+      emptyRetried = true;
+      console.warn(
+        `[generatePlatformTopicShortlist] 上游抖动重试 ${attempt}/3 · ${
+          e instanceof Error ? e.message.slice(0, 160) : e
+        }`,
+      );
+      await new Promise((r) => setTimeout(r, attempt * 4000));
+    }
   }
+  if (!llmText && lastErr) throw lastErr;
   if (!llmText) {
     console.error(
       "[generatePlatformTopicShortlist] 两次空回 · finish_reason=",
@@ -387,6 +524,8 @@ ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
       lanes: topics.map((t) => t.primaryLane),
       trendStatus,
       trendPlatforms: trendBriefs.map((b) => `${b.platform}:${b.hotTitles.length}`),
+      trendWindowDays: Number(params.windowDays) > 0 ? Number(params.windowDays) : null,
+      blueOceanWordCount: blueOceanWords.length,
       reasoningUsed: "medium",
       emptyRetried,
       viralScores: topics.map((t) => t.viralScore ?? null),
@@ -401,6 +540,18 @@ export async function expandPlatformTopicPicks(params: {
   picks: PlatformTopicShortlistItem[];
   enabledSkillIds?: string[] | null;
   allowBloggerTitle?: boolean;
+  /**
+   * 每条写完立刻回调（后台任务据此写进度，前端一条一条冒出来）。
+   *
+   * 七条串行 × 单条约 3 分钟 = 二十多分钟；等全部跑完才给结果的话，用户前二十分钟
+   * 面对的是一个不动的转圈（用户 2026-08-06：这样的体验开发者自己都不爽）。
+   */
+  onItem?: (item: {
+    blueprint: Record<string, unknown>;
+    index: number;
+    total: number;
+    elapsedMs: number;
+  }) => Promise<void> | void;
 }): Promise<{
   contentBlueprints: Array<Record<string, unknown>>;
   diagnostics: Record<string, unknown>;
@@ -421,6 +572,9 @@ export async function expandPlatformTopicPicks(params: {
 
   // 串行扩写：并行 + reasoning high 会把 Fly 单机堵死（health 红 + empty content）
   const results: Array<Record<string, unknown>> = [];
+  /** 逐条失败清单：整批不再一起完蛋，失败的交给前端提示可重跑 */
+  const failed: Array<{ id: string; title: string; reason: string }> = [];
+  const startedAt = Date.now();
   for (let i = 0; i < uniquePicks.length; i++) {
     const pick = uniquePicks[i]!;
     const skillsPrompt = await resolvePoolAndPrompt({
@@ -479,12 +633,44 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     console.info(
       `[expandPlatformTopicPicks] ${i + 1}/${uniquePicks.length} title=${pick.title.slice(0, 40)} reasoning=medium`,
     );
-    let res = await invokeExpand();
-    let llmText = extractFirstChoicePlainText(res).trim();
-    if (!llmText) {
-      console.warn(`[expandPlatformTopicPicks] 空回 medium，再以 medium 重试 · ${i + 1}/${uniquePicks.length}`);
-      res = await invokeExpand();
-      llmText = extractFirstChoicePlainText(res).trim();
+    /**
+     * 上游抖动（空 200 / 心跳残包）不该毁掉这一条，更不该毁掉整批：
+     * 2026-08-06 实测 OpenRouter 空体 200 让七条扩写全灭。这里最多试三次。
+     */
+    let llmText = "";
+    let lastErr: unknown = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await invokeExpand();
+        llmText = extractFirstChoicePlainText(res).trim();
+        if (llmText) break;
+        console.warn(
+          `[expandPlatformTopicPicks] 空回 medium（第 ${attempt} 次）· ${i + 1}/${uniquePicks.length}`,
+        );
+      } catch (e) {
+        lastErr = e;
+        if (!isTransientLlmError(e) || attempt === 3) break;
+        console.warn(
+          `[expandPlatformTopicPicks] 上游抖动重试 ${attempt}/3 · ${i + 1}/${uniquePicks.length} · ${
+            e instanceof Error ? e.message.slice(0, 160) : e
+          }`,
+        );
+        await new Promise((r) => setTimeout(r, attempt * 4000));
+      }
+    }
+    if (!llmText && lastErr) {
+      // 这一条放弃，继续跑后面的；失败清单随 diagnostics 回给前端
+      console.warn(
+        `[expandPlatformTopicPicks] 放弃本条 · ${pick.title.slice(0, 40)} · ${
+          lastErr instanceof Error ? lastErr.message.slice(0, 200) : lastErr
+        }`,
+      );
+      failed.push({
+        id: pick.id,
+        title: pick.title,
+        reason: lastErr instanceof Error ? lastErr.message.slice(0, 200) : String(lastErr),
+      });
+      continue;
     }
 
     const parsed = extractJsonObject(llmText) as Record<string, unknown> | null;
@@ -573,6 +759,25 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     }
 
     results.push(bp);
+    if (params.onItem) {
+      try {
+        await params.onItem({
+          blueprint: bp,
+          index: i + 1,
+          total: uniquePicks.length,
+          elapsedMs: Date.now() - startedAt,
+        });
+      } catch (e) {
+        // 写进度失败不该毁掉已经跑出来的文案
+        console.warn("[expandPlatformTopicPicks] onItem 失败（忽略）:", e);
+      }
+    }
+  }
+
+  if (!results.length && failed.length) {
+    throw new Error(
+      `扩写失败（${failed.length} 条全部未出）：${failed[0]?.reason || "上游算力紧张"}`,
+    );
   }
 
   return {
@@ -581,6 +786,8 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
       expanded: results.length,
       lanes: uniquePicks.map((p) => p.primaryLane),
       authorityPatched: results.filter((r) => r.authorityCitePatched).length,
+      failedCount: failed.length,
+      failedPicks: failed,
     },
   };
 }

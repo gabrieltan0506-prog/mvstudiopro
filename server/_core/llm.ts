@@ -160,6 +160,105 @@ export type InvokeResult = {
   };
 };
 
+/** 上游抖动（空体 / 心跳残包 / 代理噪声）：调用方据此重试，不要当成内容错误 */
+export type TransientLlmError = Error & { transient?: true; providerLabel?: string };
+
+export function isTransientLlmError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  if ((err as TransientLlmError).transient === true) return true;
+  const msg = String((err as Error).message || "");
+  return (
+    /returned empty body/i.test(msg) ||
+    /returned non-JSON body/i.test(msg) ||
+    /returned HTML instead of JSON/i.test(msg)
+  );
+}
+
+function makeTransientLlmError(message: string, label: string): TransientLlmError {
+  const err = new Error(message) as TransientLlmError;
+  err.transient = true;
+  err.providerLabel = label;
+  return err;
+}
+
+/**
+ * 解析 chat/completions 响应体。
+ *
+ * OpenRouter 在长耗时的非流式请求上会先吐 SSE 心跳注释行（`: OPENROUTER PROCESSING`），
+ * 偶发还会以 200 返回**完全空的 body**（代理侧掐断）。这两种都被旧代码当成
+ * 「non-JSON body」直接抛死，2026-08-06 实测把七条扩写整批打挂。现在：
+ * 心跳/SSE 残包尽量还原成正常结果，真的空体则标 transient 交给调用方重试。
+ */
+export function parseChatCompletionBody(
+  rawText: string,
+  label: string,
+  status: number,
+): InvokeResult {
+  const text = String(rawText || "").trim();
+  if (!text) {
+    throw makeTransientLlmError(
+      `${label} returned empty body (status ${status}) — 上游连接被掐断，可重试`,
+      label,
+    );
+  }
+  try {
+    return JSON.parse(text) as InvokeResult;
+  } catch {
+    /* 往下走 SSE / 心跳解析 */
+  }
+
+  // SSE：丢掉注释心跳行（以 `:` 开头）与 [DONE]，收集 data: 载荷
+  const payloads: Record<string, unknown>[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith(":")) continue;
+    const body = t.startsWith("data:") ? t.slice(5).trim() : t;
+    if (!body || body === "[DONE]") continue;
+    try {
+      const obj = JSON.parse(body) as Record<string, unknown>;
+      if (obj && typeof obj === "object") payloads.push(obj);
+    } catch {
+      /* 半截 chunk，跳过 */
+    }
+  }
+
+  // 非流式结果被心跳行包着：直接用带 message 的那一包
+  const whole = payloads.find((p) => {
+    const choices = (p as { choices?: unknown }).choices;
+    return Array.isArray(choices) && choices.some((c) => (c as { message?: unknown })?.message);
+  });
+  if (whole) return whole as unknown as InvokeResult;
+
+  // 流式增量：拼回一个非流式形状
+  if (payloads.length) {
+    let content = "";
+    let finish: string | null = null;
+    for (const p of payloads) {
+      const choice = (p as { choices?: Array<Record<string, unknown>> }).choices?.[0];
+      const delta = choice?.delta as { content?: unknown } | undefined;
+      if (typeof delta?.content === "string") content += delta.content;
+      const fr = choice?.finish_reason;
+      if (typeof fr === "string" && fr) finish = fr;
+    }
+    if (content.trim()) {
+      const last = payloads[payloads.length - 1] as Record<string, unknown>;
+      return {
+        id: String(last.id || ""),
+        created: Number(last.created || Math.floor(Date.now() / 1000)),
+        model: String(last.model || ""),
+        choices: [
+          { index: 0, message: { role: "assistant", content }, finish_reason: finish },
+        ],
+      } as InvokeResult;
+    }
+  }
+
+  throw makeTransientLlmError(
+    `${label} returned non-JSON body (status ${status}): ${text.slice(0, 400)}`,
+    label,
+  );
+}
+
 export type JsonSchema = {
   name: string;
   schema: Record<string, unknown>;
@@ -1289,11 +1388,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     }
 
     const rawText = await response.text();
-    try {
-      return JSON.parse(rawText) as InvokeResult;
-    } catch {
-      throw new Error(`${label} returned non-JSON body (status ${response.status}): ${rawText.slice(0, 400)}`);
-    }
+    return parseChatCompletionBody(rawText, label, response.status);
   };
 
   const isOhMyGptEndpoint = isOhMyGptChatEndpoint(String(target.apiUrl || ""));

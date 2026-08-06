@@ -5571,6 +5571,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           existingTitles: z.array(z.string().max(200)).max(60).optional(),
           /** 生成条数，默认 6，最大 30；第 7 条起另计费 */
           count: z.number().int().min(1).max(30).optional(),
+          /** 页面上选的时间窗口：热门样本按它裁 */
+          windowDays: z.number().int().min(1).max(365).optional(),
+          /** 蓝海词（扁平）：初选优先往这些词上靠 */
+          blueOceanWords: z.array(z.string().min(1).max(24)).max(40).optional(),
+          /** 蓝海词分级：一级大方向 + 二级具体切口 */
+          blueOceanGroups: z
+            .array(
+              z.object({
+                primary: z.string().min(1).max(24),
+                secondary: z.array(z.string().min(1).max(24)).max(8).optional(),
+              }),
+            )
+            .max(12)
+            .optional(),
           stage1Seeds: z
             .array(
               z.object({
@@ -5580,6 +5594,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             )
             .max(8)
             .optional(),
+          /** 这轮想获客/转化/涨粉：进 prompt，决定钩子与结尾动作（用户 2026-08-06） */
+          topicGoal: z.enum(["acquire", "convert", "follow"]).optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -5619,6 +5635,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           existingTitles: input.existingTitles,
           stage1Seeds: input.stage1Seeds,
           count,
+          windowDays: input.windowDays ?? null,
+          blueOceanWords: input.blueOceanWords ?? null,
+          blueOceanGroups: input.blueOceanGroups ?? null,
+          topicGoal: input.topicGoal ?? null,
         });
         const creditsInfo = await getCredits(userId);
         return {
@@ -5627,6 +5647,127 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           chargedCredits: isAdminUser ? 0 : priced.total,
           pricing: priced,
           totalAvailable: creditsInfo.totalAvailable,
+        };
+      }),
+
+    /**
+     * 人物背景智能优化的额度：按钮上要显示这次免费还是几积分，所以是个只读查询。
+     */
+    platformPersonaPolishQuota: protectedProcedure
+      .input(z.object({ tier: z.enum(["excellent", "superb"]).optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        const userId = ctx.user.id;
+        const { countPlatformPersonaPolishEver, countPlatformPersonaPolishToday } = await import(
+          "./services/platformPersonaPolish.js"
+        );
+        const { resolvePlatformPersonaPolishQuota } = await import(
+          "../shared/platformPersonaPolish.js"
+        );
+        const [usedEver, usedToday] = await Promise.all([
+          countPlatformPersonaPolishEver(userId),
+          countPlatformPersonaPolishToday(userId),
+        ]);
+        return resolvePlatformPersonaPolishQuota({
+          usedEver,
+          usedToday,
+          tier: input?.tier ?? "excellent",
+        });
+      }),
+
+    /**
+     * 人物背景智能优化：改写全文 + 2–3 条待确认问题 + 猜的选题方向 + 一句关怀。
+     *
+     * 头 3 次免费、之后每天 1 次免费；超出按档扣（优秀 1 / 卓越 2）。
+     * 免费那次一律走优秀档——白送的成本压在最便宜的通道上。
+     */
+    polishPlatformPersona: protectedProcedure
+      .input(
+        z.object({
+          persona: z.string().min(1).max(2000),
+          tier: z.enum(["excellent", "superb"]).optional(),
+          currentGoal: z.enum(["acquire", "convert", "follow"]).optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const {
+          countPlatformPersonaPolishEver,
+          countPlatformPersonaPolishToday,
+          logPlatformPersonaPolishUse,
+          polishPlatformPersona: runPolish,
+        } = await import("./services/platformPersonaPolish.js");
+        const {
+          PLATFORM_PERSONA_POLISH_MIN_CHARS,
+          platformPersonaPolishRunTier,
+          resolvePlatformPersonaPolishQuota,
+        } = await import("../shared/platformPersonaPolish.js");
+
+        const persona = input.persona.trim();
+        if (persona.length < PLATFORM_PERSONA_POLISH_MIN_CHARS) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `先写一句人话再优化：至少 ${PLATFORM_PERSONA_POLISH_MIN_CHARS} 个字，说清你是谁、做什么赛道。`,
+          });
+        }
+
+        const [usedEver, usedToday] = await Promise.all([
+          countPlatformPersonaPolishEver(userId),
+          countPlatformPersonaPolishToday(userId),
+        ]);
+        const quota = resolvePlatformPersonaPolishQuota({
+          usedEver,
+          usedToday,
+          tier: input.tier ?? "excellent",
+        });
+        const cost = isAdminUser ? 0 : quota.nextCredits;
+        if (cost > 0) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，这次优化需要 ${cost} 点（今天的免费额度已用完；当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+        }
+
+        const runTier = platformPersonaPolishRunTier({
+          isFree: quota.nextFree,
+          requested: input.tier ?? null,
+        });
+        const result = await runPolish({
+          persona,
+          tier: runTier,
+          currentGoal: input.currentGoal ?? null,
+        });
+
+        // 先出稿再扣点：上游失败不该扣钱
+        if (cost > 0) {
+          await deductCreditsAmount(
+            userId,
+            cost,
+            "platformPersonaPolish",
+            `人物背景智能优化（${runTier === "superb" ? "卓越" : "优秀"}）`,
+          );
+        }
+        await logPlatformPersonaPolishUse({
+          userId,
+          tier: runTier,
+          creditsCost: cost,
+          isFreeQuota: quota.nextFree,
+          personaChars: persona.length,
+        });
+
+        const nextQuota = resolvePlatformPersonaPolishQuota({
+          usedEver: usedEver + 1,
+          usedToday: usedToday + 1,
+          tier: input.tier ?? "excellent",
+        });
+        return {
+          ...result,
+          chargedCredits: cost,
+          wasFree: quota.nextFree,
+          quota: nextQuota,
         };
       }),
 
@@ -5686,6 +5827,85 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           ...result,
           chargedCredits: isAdminUser ? 0 : cost,
           totalAvailable: creditsInfo.totalAvailable,
+        };
+      }),
+
+    /**
+     * 初选扩写（异步）：入队后前端轮询，**每条写完就冒一条**。
+     *
+     * 同步版 `expandPlatformTopicPicks` 要等全部跑完才返回——单条 Kimi K3 约 3 分钟，
+     * 七条就是二十多分钟的空转圈（用户 2026-08-06）。扣费仍在此处一次性发生，
+     * 与条数无关，拆条只是为了让结果早点看见。
+     */
+    enqueuePlatformTopicExpand: protectedProcedure
+      .input(
+        z.object({
+          context: z.string().max(8000).optional(),
+          enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
+          allowBloggerTitle: z.boolean().optional(),
+          picks: z
+            .array(
+              z.object({
+                id: z.string().min(4).max(64),
+                title: z.string().min(4).max(120),
+                hookSketch: z.string().min(4).max(200),
+                conveyGoal: z.string().min(4).max(240),
+                skillsUsed: z.array(z.string().min(1).max(80)).min(1).max(16),
+                primaryLane: z.enum(["fmcg", "forensic", "crossover", "contrast", "virtual", "default"]),
+                formatHint: z.enum(["图文", "短视频"]),
+                dedupeKey: z.string().min(1).max(80),
+                commentHook: z.string().max(8).optional(),
+                linkedCampaigns: z.array(z.string().min(1).max(80)).max(4).optional(),
+              }),
+            )
+            .min(1)
+            .max(PLATFORM_TOPIC_EXPAND_MAX),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+        const cost = CREDIT_COSTS.platformTopicExpand;
+        // 上次没出稿的条目重跑免费：坑是我们自己的，不该让用户为同一条再付一次
+        const { claimFreeExpandRetry } = await import("./services/platformTopicExpandRetryCredit.js");
+        const freeRetry = await claimFreeExpandRetry({
+          userId,
+          pickIds: input.picks.map((p) => p.id),
+        });
+        const shouldCharge = !isAdminUser && !freeRetry.free;
+        if (shouldCharge) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，初选扩写需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCredits(userId, "platformTopicExpand", `初选扩写 ${input.picks.length} 条正式文案`);
+        }
+        const jobId = nanoid(16);
+        await createJobRecord({
+          id: jobId,
+          userId: String(userId),
+          type: "platform",
+          provider: "openrouter",
+          input: {
+            action: "platform_topic_expand",
+            params: {
+              context: input.context,
+              picks: input.picks,
+              enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : [],
+              allowBloggerTitle: Boolean(input.allowBloggerTitle),
+              chargedCredits: shouldCharge ? cost : 0,
+            },
+          },
+        });
+        return {
+          success: true as const,
+          jobId,
+          totalCount: input.picks.length,
+          chargedCredits: shouldCharge ? cost : 0,
+          freeRetry: freeRetry.free,
         };
       }),
 

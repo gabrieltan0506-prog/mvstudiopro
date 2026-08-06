@@ -993,6 +993,15 @@ function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         // 整本约 10 万字：十余段 × 中档推理 + 段级重试 + 顶档统稿，默认 40min
         return 40 * 60_000;
       }
+      if (input.action === "platform_topic_expand") {
+        const raw = Number(process.env.PLATFORM_TOPIC_EXPAND_JOB_TIMEOUT_MS);
+        if (Number.isFinite(raw) && raw >= 300_000) return raw;
+        // 串行单条实测约 3–4 分钟（Kimi K3 medium），按条数给墙钟，封顶 75min
+        const count = Array.isArray((input.params as Record<string, unknown>)?.picks)
+          ? ((input.params as Record<string, unknown>).picks as unknown[]).length
+          : 7;
+        return Math.min(75, Math.max(15, count * 6)) * 60_000;
+      }
     } catch {
       /* fall through */
     }
@@ -1287,6 +1296,53 @@ async function processPlatformJob(
           platformContent: contentResult,
           completedAt: new Date().toISOString(),
           engines: { stage1: "vertex/gemini-3.1-pro-preview", stage2: "vertex/gemini-3.1-pro-preview", snapshotDepth: "full" },
+        },
+      };
+    }
+
+    /**
+     * ── platform_topic_expand（初选扩写 · 一条一条冒出来）────────────────────
+     *
+     * 单条约 3 分钟（Kimi K3 带推理），七条串行就是二十多分钟。以前放在同步
+     * mutation 里，用户要等最后一条跑完才看到第一条；现在每条写完立刻 patch 进
+     * job.output，前端轮询到就渲染一张卡。扣费仍在入队时一次性发生，不按条计。
+     */
+    if (input.action === "platform_topic_expand") {
+      const { expandPlatformTopicPicks } = await import("../services/platformTopicShortlist.js");
+      const picks = Array.isArray(params.picks)
+        ? (params.picks as Parameters<typeof expandPlatformTopicPicks>[0]["picks"])
+        : [];
+      const streamed: Array<Record<string, unknown>> = [];
+      const result = await expandPlatformTopicPicks({
+        userId: jobUserId ?? 0,
+        context: typeof params.context === "string" ? params.context : undefined,
+        picks,
+        enabledSkillIds: Array.isArray(params.enabledSkillIds)
+          ? (params.enabledSkillIds as unknown[]).filter((s): s is string => typeof s === "string")
+          : null,
+        allowBloggerTitle: params.allowBloggerTitle === true,
+        onItem: platformJobId
+          ? async ({ blueprint, index, total, elapsedMs }) => {
+              streamed.push(blueprint);
+              await patchJobRunningProgress(platformJobId, {
+                contentBlueprints: [...streamed],
+                expandDoneCount: index,
+                expandTotalCount: total,
+                expandElapsedMs: elapsedMs,
+              });
+            }
+          : undefined,
+      });
+      return {
+        provider: "openrouter",
+        output: {
+          success: true,
+          contentBlueprints: result.contentBlueprints,
+          expandDoneCount: result.contentBlueprints.length,
+          expandTotalCount: picks.length,
+          diagnostics: result.diagnostics,
+          chargedCredits: Number(params.chargedCredits || 0),
+          completedAt: new Date().toISOString(),
         },
       };
     }
