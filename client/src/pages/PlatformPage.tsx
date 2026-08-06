@@ -14,6 +14,11 @@ import { PlatformTrendWorkbench } from "@/components/platform/PlatformTrendWorkb
 import { PlatformTrendReportRail } from "@/components/platform/PlatformTrendReportRail";
 import { PlatformToolsWorkbench } from "@/components/platform/PlatformToolsWorkbench";
 import { PlatformStructuredPersonaForm } from "@/components/platform/PlatformStructuredPersonaForm";
+import { PlatformPersonaPolishPanel } from "@/components/platform/PlatformPersonaPolishPanel";
+import {
+  assessPlatformPersonaSpecificity,
+  type PlatformTopicGoalId,
+} from "@shared/platformPersonaPolish";
 import { PlatformOutputTypePicker } from "@/components/platform/PlatformOutputTypePicker";
 import { PlatformDraftPresetsBar } from "@/components/platform/PlatformDraftPresetsBar";
 import { PlatformAdvancedSettingsFold } from "@/components/platform/PlatformAdvancedSettingsFold";
@@ -2304,6 +2309,8 @@ export default function PlatformPage() {
   );
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [createStep, setCreateStep] = useState<PlatformCreateStepId>("persona");
+  /** 这轮想获客/转化/涨粉：独立参数进选题提示词，不是装饰标签（用户 2026-08-06） */
+  const [topicGoal, setTopicGoal] = useState<PlatformTopicGoalId | null>(null);
   const [structuredPersona, setStructuredPersona] = useState<PlatformStructuredPersona>({
     ...EMPTY_STRUCTURED_PERSONA,
   });
@@ -2651,6 +2658,11 @@ export default function PlatformPage() {
     setEditingShortlistTitle("");
   }, [editingShortlistTitle, editingShortlistTopicId]);
   const generateTopicShortlistMutation = trpc.mvAnalysis.generatePlatformTopicShortlist.useMutation();
+  /** 智能优化的免费额度：决定含糊背景是硬拦还是软提示 */
+  const { data: personaPolishQuota } = trpc.mvAnalysis.platformPersonaPolishQuota.useQuery(undefined, {
+    retry: false,
+    staleTime: 60_000,
+  });
   const expandTopicPicksMutation = trpc.mvAnalysis.expandPlatformTopicPicks.useMutation();
   /** 扩写改走后台任务 + 轮询：每条写完就渲染，不再等七条跑完 */
   const enqueueTopicExpandMutation = trpc.mvAnalysis.enqueuePlatformTopicExpand.useMutation();
@@ -3627,6 +3639,17 @@ export default function PlatformPage() {
             size={26}
           />
         }
+      />
+      <PlatformPersonaPolishPanel
+        id="platform-persona-polish"
+        value={focusPrompt}
+        onApply={(next) => {
+          setFocusPrompt(next);
+          setFreeformOverride(true);
+          setPersonaFieldErrors({});
+        }}
+        goal={topicGoal}
+        onGoalChange={setTopicGoal}
       />
       <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.03)] px-4 py-3.5 md:px-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -9212,6 +9235,7 @@ export default function PlatformPage() {
         existingTitles,
         count: n,
         windowDays: selectedWindowDays,
+        ...(topicGoal ? { topicGoal } : {}),
         ...buildShortlistBlueOceanInput(decisionIntelBlueOceanLexicon),
       });
       const topics = res.topics || [];
@@ -9761,6 +9785,21 @@ export default function PlatformPage() {
       trackPlatformFunnel("cta_disabled", { reason: "empty_persona" });
       return;
     }
+    // 太笼统就先拦下来：出来的选题必然泛，等于白烧一轮的钱。
+    // 但只在他还有免费优化额度时硬拦——额度用完还拦等于收保护费。
+    const specificity = assessPlatformPersonaSpecificity(focusPrompt);
+    if (!specificity.ok) {
+      const canPolishFree = personaPolishQuota?.nextFree !== false;
+      if (canPolishFree) {
+        setPersonaFieldErrors({ freeform: specificity.reason });
+        setCreateStep("persona");
+        scrollToPlatformSection("platform-persona-polish");
+        toast.error(`${specificity.reason}点「帮我理一理」，这次免费。`);
+        trackPlatformFunnel("cta_disabled", { reason: "vague_persona" });
+        return;
+      }
+      toast.warning(specificity.reason);
+    }
     const count = clampTopicShortlistCount(topicShortlistCount);
     setShortlistLastError(null);
     pushShortlistDebug(`面板初选：请求 ${count} 条`);
@@ -9778,6 +9817,7 @@ export default function PlatformPage() {
         existingTitles,
         count,
         windowDays: selectedWindowDays,
+        ...(topicGoal ? { topicGoal } : {}),
         ...buildShortlistBlueOceanInput(decisionIntelBlueOceanLexicon),
       });
       const topics = res.topics || [];
@@ -9828,6 +9868,8 @@ export default function PlatformPage() {
     }
   }, [
     focusPrompt,
+    topicGoal,
+    personaPolishQuota,
     topicShortlistCount,
     platformContent,
     topicShortlist,
