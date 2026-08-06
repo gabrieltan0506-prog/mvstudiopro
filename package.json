@@ -10,6 +10,7 @@
     "dev": "NODE_ENV=development tsx watch server/_core/index.ts",
     "build": "tsc",
     "blog:build": "tsx scripts/build-blog.mts",
+    "blog:ping": "tsx scripts/blog-indexnow-ping.mts",
     "start": "NODE_ENV=production node dist/server/_core/index.js",
     "check": "tsc --noEmit",
     "verify:lockfile": "pnpm install --frozen-lockfile",
