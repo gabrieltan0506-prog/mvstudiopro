@@ -8664,6 +8664,38 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         };
       }),
 
+    /**
+     * 道具拼板切图：12 件道具挤在 1-2 张拼板图上没法被段级 wardrobePropZh 单件锁定。
+     * sharp 纯数学裁切（零出图成本）+ 一次视觉读格内小标题（按 SHA256 存 GCS 缓存，
+     * 同一张拼板永不重复读）+ 单件图各自落 GCS，返回可直接写进道具栏的 name/note/url。
+     */
+    splitManhuaPropSheet: protectedProcedure
+      .input(
+        z.object({
+          sheetUrl: z.string().url(),
+          cols: z.number().int().min(1).max(8).default(4),
+          rows: z.number().int().min(1).max(8).default(2),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const { splitManhuaPropSheetFromUrl } = await import(
+          "./services/manhuaPropSheetSplit.js"
+        );
+        try {
+          return await splitManhuaPropSheetFromUrl({
+            sheetUrl: input.sheetUrl,
+            cols: input.cols,
+            rows: input.rows,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "SERVICE_UNAVAILABLE",
+            message: `道具拼板切图暂时不可用：${msg.slice(0, 200)}`,
+          });
+        }
+      }),
+
     optimizeCustomCopy: protectedProcedure
       .input(
         z.object({

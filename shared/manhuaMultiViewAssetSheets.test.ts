@@ -165,6 +165,39 @@ describe("manhuaMultiViewAssetSheets", () => {
     );
     expect(props.map((p) => p.nameZh)).toContain("双鱼玉佩");
   });
+
+  it("returns [] instead of the series' first few props when the character name matches nothing (no fake association)", () => {
+    const allProps = [
+      { id: "wa_prop_jade", role: "prop" as const, nameZh: "残玉", lookZh: "半块古玉", promptZh: "x" },
+      {
+        id: "wa_prop_awl",
+        role: "prop" as const,
+        nameZh: "修复锥与修复笔",
+        lookZh: "锥与笔",
+        promptZh: "x",
+      },
+      { id: "wa_prop_armor", role: "prop" as const, nameZh: "良甲甲片", lookZh: "黑甲片", promptZh: "x" },
+    ];
+    const props = pickPropsForCharacterSheet(
+      { nameZh: "灶头兵", lookZh: "粗布短打，腰系麻绳" },
+      allProps,
+    );
+    expect(props).toEqual([]);
+  });
+
+  it("caps matched props at limit even when more than limit props match", () => {
+    const props = pickPropsForCharacterSheet(
+      { nameZh: "沈策", lookZh: "身上挂着双鱼玉佩、残玉、良甲甲片、劣甲甲片，样样不离身" },
+      [
+        { id: "wa_prop_a", role: "prop" as const, nameZh: "双鱼玉佩", lookZh: "x", promptZh: "x" },
+        { id: "wa_prop_b", role: "prop" as const, nameZh: "残玉", lookZh: "x", promptZh: "x" },
+        { id: "wa_prop_c", role: "prop" as const, nameZh: "良甲甲片", lookZh: "x", promptZh: "x" },
+        { id: "wa_prop_d", role: "prop" as const, nameZh: "劣甲甲片", lookZh: "x", promptZh: "x" },
+      ],
+      2,
+    );
+    expect(props).toHaveLength(2);
+  });
 });
 
 describe("按剧本硬锁性别（修「全身是女·脸特写是男」）", () => {

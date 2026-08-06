@@ -111,6 +111,8 @@ export function buildManhuaAssetLockRegistry(opts?: {
   assetCanon?: ManhuaWriterAssetCanon | null;
   /** wa_char_* → 定妆卡 HTTPS */
   characterSheetUrlById?: Record<string, string> | null;
+  /** wa_prop_* → 该道具的单件图 HTTPS（拼板切图产出）；有则优先于定妆卡整图 */
+  propImageUrlById?: Record<string, string> | null;
   /** 人物造型套（服装子类） */
   characterLookSets?: ManhuaCharacterLookSet[] | null;
 }): ManhuaAssetLockRegistry {
@@ -238,6 +240,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
     assetCanon: opts?.assetCanon,
     characterTagById: draftCharTagById,
     sheetUrlByCharacterId: opts?.characterSheetUrlById,
+    propImageUrlById: opts?.propImageUrlById,
   });
   /**
    * 已有真图的道具不再补特写格草稿。
@@ -300,6 +303,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
     assetCanon: opts?.assetCanon,
     characterTagById: finalCharTagById,
     sheetUrlByCharacterId: opts?.characterSheetUrlById,
+    propImageUrlById: opts?.propImageUrlById,
   }).map((sp) => {
     const propSlot = byRole.prop.find((s) => s.id === sp.propId);
     return propSlot ? { ...sp, propTag: propSlot.tag } : sp;
@@ -1324,6 +1328,8 @@ export function assignManhuaCanvasAssetAtTags<
     registry?: ManhuaAssetLockRegistry | null;
     assetCanon?: ManhuaWriterAssetCanon | null;
     characterSheetUrlById?: Record<string, string> | null;
+    /** wa_prop_* → 单件图 HTTPS；仅在需要自建 registry（无 registry 传入）时用得上 */
+    propImageUrlById?: Record<string, string> | null;
   },
 ): T[] {
   const reg = opts?.registry || null;
@@ -1395,6 +1401,7 @@ export function assignManhuaCanvasAssetAtTags<
     const built = buildManhuaAssetLockRegistry({
       assetCanon: opts.assetCanon,
       characterSheetUrlById: opts.characterSheetUrlById,
+      propImageUrlById: opts.propImageUrlById,
     });
     sheetSlots = built.sheetPropSlots;
   }

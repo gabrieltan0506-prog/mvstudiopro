@@ -6,6 +6,7 @@ import {
   applyTopicToFactoryStory,
   collectManhuaCharacterSheetUrlById,
   collectManhuaCustomRefsFromCanvasAssetBlocks,
+  collectManhuaPropImageUrlById,
   countManhuaClipAssetEdges,
   ensureManhuaFragmentClips,
   expandManhuaShotKeyartsAfterReverse,
@@ -1750,5 +1751,62 @@ describe("锁脸选图：优先脸特写，没有就用全身（画布全身也�
       canon,
     );
     expect(map.wa_char_b).toBe("https://x/hanbo-body.png");
+  });
+});
+
+describe("collectManhuaPropImageUrlById：从「我的道具」按名字匹配回 wa_prop_*", () => {
+  const canon = {
+    characters: [],
+    props: [
+      { id: "wa_prop_jade", role: "prop", nameZh: "残玉", lookZh: "半块古玉", promptZh: "x" },
+      { id: "wa_prop_awl", role: "prop", nameZh: "修复锥与修复笔", lookZh: "x", promptZh: "x" },
+    ],
+    locations: [],
+    episodeMainSceneId: {},
+  } as unknown as Parameters<typeof collectManhuaPropImageUrlById>[1];
+
+  it("labelZh 带备注括号（拼板拆分导入的样子）也能匹配上", () => {
+    const map = collectManhuaPropImageUrlById(
+      [
+        {
+          id: "cust_1",
+          url: "https://cdn.example/jade.png",
+          role: "prop",
+          labelZh: '残玉（仅存"弃城"二字）',
+        },
+      ],
+      canon,
+    );
+    expect(map.wa_prop_jade).toBe("https://cdn.example/jade.png");
+  });
+
+  it("labelZh 精确等于道具名（无备注）也能匹配", () => {
+    const map = collectManhuaPropImageUrlById(
+      [{ id: "cust_2", url: "https://cdn.example/awl.png", role: "prop", labelZh: "修复锥与修复笔" }],
+      canon,
+    );
+    expect(map.wa_prop_awl).toBe("https://cdn.example/awl.png");
+  });
+
+  it("非 prop 分栏或名字对不上的条目不进 map", () => {
+    const map = collectManhuaPropImageUrlById(
+      [
+        { id: "cust_3", url: "https://cdn.example/wrong-role.png", role: "character", labelZh: "残玉" },
+        { id: "cust_4", url: "https://cdn.example/no-match.png", role: "prop", labelZh: "不存在的道具" },
+      ],
+      canon,
+    );
+    expect(map).toEqual({});
+  });
+
+  it("没有 customAssetRefs 或没有 props 时返回空对象，不抛错", () => {
+    expect(collectManhuaPropImageUrlById([], canon)).toEqual({});
+    expect(collectManhuaPropImageUrlById(undefined, canon)).toEqual({});
+    expect(
+      collectManhuaPropImageUrlById(
+        [{ id: "cust_5", url: "https://cdn.example/x.png", role: "prop", labelZh: "残玉" }],
+        { ...canon, props: [] } as unknown as Parameters<typeof collectManhuaPropImageUrlById>[1],
+      ),
+    ).toEqual({});
   });
 });

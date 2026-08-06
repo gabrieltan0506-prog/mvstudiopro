@@ -10,7 +10,7 @@ type ServiceAccountCredentials = {
 const DEFAULT_GCS_BUCKET = "mv-studio-pro-vertex-video-temp";
 const GCS_VIDEO_OBJECT_PREFIX = "growth-camp/videos";
 
-function getGcsBucketName() {
+export function getGcsBucketName() {
   return String(
     process.env.GCS_BUCKET_NAME
       || process.env.GROWTH_CAMP_GCS_BUCKET

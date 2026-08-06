@@ -48,6 +48,7 @@ import {
   resolveEpisodeMainScene,
   type ManhuaWriterAssetCanon,
 } from "@shared/manhuaWriterAssetCanon";
+import { normalizeForManhuaNameMatch } from "@shared/manhuaScriptTextNormalize";
 import {
   extractManhuaSegmentDialogueQuotes,
   inferManhuaCastZhFromDialogue,
@@ -1640,6 +1641,8 @@ export function ensureManhuaFragmentClips(
   opts?: {
     assetCanon?: ManhuaWriterAssetCanon | null;
     characterSheetUrlById?: Record<string, string> | null;
+    /** wa_prop_* → 单件图 HTTPS；有则 @道具N 子槽优先绑这张，不再绑整张定妆卡 */
+    propImageUrlById?: Record<string, string> | null;
     registry?: ManhuaAssetLockRegistry | null;
     /** 我的角色/场景垫图职责 → 成片路径不再灌长职责墙 */
     customRefs?: ManhuaCustomAssetRef[] | null;
@@ -1733,6 +1736,7 @@ export function ensureManhuaFragmentClips(
     buildManhuaAssetLockRegistry({
       assetCanon: opts?.assetCanon,
       characterSheetUrlById: opts?.characterSheetUrlById,
+      propImageUrlById: opts?.propImageUrlById,
       customRefs: mergedCustomRefs,
       characterLookSets: opts?.characterLookSets,
       characterIds: (opts?.assetCanon?.characters || []).map((c) => c.id),
@@ -2313,6 +2317,39 @@ export function collectManhuaCharacterSheetUrlById(
   return map;
 }
 
+/** 「残玉（半块古玉）」→「残玉」：拼板导入时把 note 拼进了 labelZh，比对前先剥掉 */
+function stripManhuaCustomAssetRefNoteSuffix(labelZh: string): string {
+  return String(labelZh || "").replace(/（[^（）]*）\s*$/, "").trim();
+}
+
+/**
+ * 把「我的道具」自定义参考（customAssetRefs，role=prop）按名字匹配回
+ * assetCanon.props 的 wa_prop_* id，供 @道具N 子槽 path 优先绑定单件图。
+ * 名字比对走 normalizeForManhuaNameMatch（PR① 归一化，繁简/全半角空格一致）。
+ */
+export function collectManhuaPropImageUrlById(
+  customAssetRefs: ManhuaCustomAssetRef[] | null | undefined,
+  assetCanon?: ManhuaWriterAssetCanon | null,
+): Record<string, string> {
+  const props = assetCanon?.props || [];
+  if (!props.length || !customAssetRefs?.length) return {};
+  const normalizedNameToPropId = new Map<string, string>();
+  for (const p of props) {
+    const key = normalizeForManhuaNameMatch(p.nameZh);
+    if (key && !normalizedNameToPropId.has(key)) normalizedNameToPropId.set(key, p.id);
+  }
+  const map: Record<string, string> = {};
+  for (const ref of customAssetRefs) {
+    if (ref.role !== "prop") continue;
+    const url = String(ref.url || "").trim();
+    if (!/^https:\/\//i.test(url)) continue;
+    const key = normalizeForManhuaNameMatch(stripManhuaCustomAssetRefNoteSuffix(ref.labelZh || ""));
+    const propId = key ? normalizedNameToPropId.get(key) : undefined;
+    if (propId && !map[propId]) map[propId] = url;
+  }
+  return map;
+}
+
 /**
  * 画布上已出图的定妆/场景/道具 → 合成 customRefs（审阅成片时补进 Image 对照，不依赖会话是否已 sync）。
  */
@@ -2372,6 +2409,8 @@ export function layoutManhuaEpisodeReadableChain(
     stackPerCol?: number;
     assetCanon?: ManhuaWriterAssetCanon | null;
     characterSheetUrlById?: Record<string, string> | null;
+    /** wa_prop_* → 单件图 HTTPS；有则 @道具N 子槽优先绑这张，不再绑整张定妆卡 */
+    propImageUrlById?: Record<string, string> | null;
     registry?: ManhuaAssetLockRegistry | null;
     /** 透传给 ensure 路径；layout 本身不消费 */
     customRefs?: ManhuaCustomAssetRef[] | null;
@@ -2501,6 +2540,7 @@ export function layoutManhuaEpisodeReadableChain(
     registry: opts?.registry,
     assetCanon: opts?.assetCanon,
     characterSheetUrlById: sheetUrls,
+    propImageUrlById: opts?.propImageUrlById,
   });
 }
 
