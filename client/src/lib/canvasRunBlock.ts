@@ -52,10 +52,7 @@ import {
   xyqWorkModeNeedsVideo,
   type XyqSeedance25WorkMode,
 } from "@shared/xyqSeedancePrompt";
-import {
-  canAccessSeedance25ByPlan,
-  SEEDANCE_25_PAID_ONLY_LABEL_ZH,
-} from "@shared/seedance25Access";
+import { resolveSeedance25Access } from "@shared/seedance25Access";
 import {
   clampHailuoOpenRouterDuration,
   HAILUO_REFERENCE_MAX,
@@ -173,6 +170,8 @@ export type CanvasRunDeps = {
   ) => ManhuaEpisodeSegmentPromptRow[];
   /** Stripe plan（free/pro/enterprise）；成片·加长正式会员门禁 */
   userPlan?: string | null;
+  /** 账号角色（supervisor/admin 上线前也可用加长档，与服务端 resolveSeedance25Access 同口径） */
+  userRole?: string | null;
 };
 
 function dataUrlToJpegFile(dataUrl: string, name: string): File | null {
@@ -1104,8 +1103,13 @@ export async function runCanvasBlock(
     const videoModel = block.videoModel || "seedance-2.0-fast";
     const useHailuoH3 = isCanvasHailuoH3VideoModel(videoModel);
     const useSeedance25 = videoModel === "seedance-2.5";
-    if (useSeedance25 && !canAccessSeedance25ByPlan(deps.userPlan)) {
-      throw new Error(SEEDANCE_25_PAID_ONLY_LABEL_ZH);
+    if (useSeedance25) {
+      // 与服务端 assertSeedance25PaidAccess 同一套判定（到点 + 会员 + 内部角色），
+      // 不只判 plan——否则未到点的 supervisor/free 组合会被前端自己拦掉。
+      const access = resolveSeedance25Access({ plan: deps.userPlan, role: deps.userRole });
+      if (!access.allowed) {
+        throw new Error(access.message || "成片·加长暂不可用");
+      }
     }
     console.info(
       `[canvasRunBlock] video · id=${block.id} · videoModel=${videoModel} · stills=${[stillRef, ...fusionStillUrls].filter(Boolean).length} · continuity=${Boolean(continuityVideoUrl)} · directorPass=${isManhuaSeedanceDirectorPrompt(motionPrompt)} · promptChars=${motionPrompt.length}`,

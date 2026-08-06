@@ -367,6 +367,10 @@ export default function OmniCanvas() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const canShowCanvasDebug =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+  /** 成片·加长门禁：与服务端 resolveSeedance25Access 同口径，工厂批量段成片也要吃到 plan+role */
+  const subscriptionQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
+  const userPlan = (subscriptionQuery.data?.plan || "free") as string;
+  const userRole = user?.role ?? null;
   const [debugMode, setDebugMode] = useState(false);
   const [debugLog, setDebugLog] = useState<ManhuaFactoryDebugEntry[]>([]);
   const stageStartedAtRef = useRef<number | null>(null);
@@ -2010,6 +2014,8 @@ export default function OmniCanvas() {
   const runDeps = useMemo<CanvasRunDeps>(
     () => ({
       userId: user?.id ? String(user.id) : "",
+      userPlan,
+      userRole,
       characterVoiceLocks,
       audioReferenceLock,
       manhuaAssetPathById: manhuaAssetMaps.pathById,
@@ -2103,6 +2109,8 @@ export default function OmniCanvas() {
       debugMode,
       pushDebug,
       user?.id,
+      userPlan,
+      userRole,
       characterVoiceLocks,
       audioReferenceLock,
       manhuaAssetMaps,

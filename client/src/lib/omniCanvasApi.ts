@@ -226,13 +226,3 @@ export async function uploadFileToSignedUrl(params: {
     xhr.send(params.file);
   });
 }
-
-/** Seedance 2.5 · 预留（后续同页接入，接口签名先占位） */
-export async function runSeedance25Video(_body: {
-  prompt: string;
-  imageUrl: string;
-  aspectRatio?: string;
-  durationSeconds?: number;
-}): Promise<string> {
-  throw new Error("Seedance 2.5 即将在本页接入，当前为预留位");
-}
