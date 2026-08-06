@@ -66,15 +66,20 @@ describe("manhuaViralTemplateBank", () => {
     expect(listApprovedManhuaViralTemplates().some((t) => t.id === card!.id)).toBe(false);
   });
 
-  it("injects viral template into expand prompt", () => {
+  it("formatManhuaViralTemplateWriterAddon still compiles a card standalone (bank kept, no longer auto-injected)", () => {
+    const addon = formatManhuaViralTemplateWriterAddon("tpl_border_farm_revenge", null, "short");
+    expect(addon).toMatch(/【节奏模板·骨架建议】/);
+    expect(addon).toMatch(/密度建议/);
+    expect(addon).toMatch(/边塞/);
+  });
+
+  it("buildManhuaWriterExpandPrompt no longer injects viral template (selector UI removed)", () => {
     const prompt = buildManhuaWriterExpandPrompt({
       topic: "边关开荒翻盘连载",
       brief: "女主被发配",
       episodeCount: 3,
       viralTemplateId: "tpl_border_farm_revenge",
     });
-    expect(prompt).toMatch(/【节奏模板·骨架建议】/);
-    expect(prompt).toMatch(/密度建议/);
-    expect(prompt).toMatch(/边塞/);
+    expect(prompt).not.toMatch(/【节奏模板·骨架建议】/);
   });
 });

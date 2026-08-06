@@ -190,10 +190,7 @@ import {
   saveManhuaShotContinuityPrefs,
   type ManhuaShotContinuityPrefs,
 } from "@shared/manhuaShotContinuity";
-import {
-  MANHUA_ASSEMBLE_MUSIC_DURATION_SEC,
-  summarizeManhuaPathTrackStatus,
-} from "@shared/manhuaFinalAssemble";
+import { MANHUA_ASSEMBLE_MUSIC_DURATION_SEC } from "@shared/manhuaFinalAssemble";
 import { buildManhuaAssembleJobInput } from "@shared/manhuaAssembleJobInput";
 import ManhuaCharacterGallery from "@/components/ManhuaCharacterGallery";
 import ManhuaGuidedPathRail from "@/components/ManhuaGuidedPathRail";
@@ -210,7 +207,10 @@ import {
   recommendCraftShotFromTopic,
   type CraftShotCategory,
 } from "@shared/craftShotBank";
-import { recommendPathCameraFromTopic } from "@shared/manhuaPathCameraRecipeBank";
+import {
+  getPathCameraRecipeById,
+  recommendPathCameraFromTopic,
+} from "@shared/manhuaPathCameraRecipeBank";
 import {
   getNarrativeLightingById,
   listNarrativeLighting,
@@ -226,7 +226,10 @@ import {
   recommendMaleMicroExpressionFromTopic,
 } from "@shared/manhuaMaleMicroExpressionBank";
 import { listPromoCoverLayouts } from "@shared/manhuaPromoCoverLayouts";
-import { recommendActionCameraFromTopic } from "@shared/manhuaActionCameraRecipeBank";
+import {
+  getActionCameraRecipeById,
+  recommendActionCameraFromTopic,
+} from "@shared/manhuaActionCameraRecipeBank";
 import {
   MANHUA_CINE_VOCAB_BANK,
   MANHUA_CINE_VOCAB_LOCALE_LABEL_ZH,
@@ -250,8 +253,7 @@ import {
   type ManhuaRetakeVariable,
 } from "@shared/manhuaDirectingWorkflow";
 import { listWardrobePropContinuity } from "@shared/manhuaWardrobePropContinuity";
-import type { ManhuaPathAnnotation } from "@shared/manhuaPathCameraAnnotate";
-import ManhuaPathCameraAnnotatePanel from "@/components/ManhuaPathCameraAnnotatePanel";
+import ManhuaPathRecipePicker from "@/components/ManhuaPathRecipePicker";
 import ManhuaFactoryDebugPanel, {
   type ManhuaFactoryDebugEntry,
   type ManhuaFactoryDebugLevel,
@@ -282,18 +284,10 @@ import {
   resolveSeedance25Access,
   SEEDANCE_25_PAID_ONLY_LABEL_ZH,
 } from "@shared/seedance25Access";
-import {
-  getManhuaViralTemplate,
-  listApprovedManhuaViralTemplatesGrouped,
-  type ManhuaViralTemplateCard,
-  type ManhuaViralTemplateLane,
-} from "@shared/manhuaViralTemplateBank";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
-import {
-  MANHUA_SCREENWRITER_KIMI_MODEL,
-  MANHUA_SCREENWRITER_TRANSLATE_BRIEF,
-} from "@shared/manhuaScreenwriterTranslate";
+import { PLATFORM_ENGINE_TIERS, type PlatformEngineTierId } from "@shared/platformEngineTiers";
+import { MANHUA_WRITER_EXPAND_CREDITS_PER_EPISODE } from "@shared/manhuaWriterExpandPricing";
 import { trpc } from "@/lib/trpc";
 import { Clapperboard, FileUp, LayoutTemplate, Loader2, Play, Sparkles, Square, X } from "lucide-react";
 import { toast } from "sonner";
@@ -386,6 +380,10 @@ export default function OmniCanvas() {
   const writerLayoutChoices = MANHUA_SEEDANCE_LAYOUT_CHOICES.filter(
     (c) => c.videoModel !== "seedance-2.5" || canUseSeedance25,
   );
+  /** toast/title 用：动态拼引擎档名，新增档位自动带上，不用再手改文案 */
+  const writerLayoutChoiceLabelsZh = writerLayoutChoices
+    .map((c) => c.labelZh.replace("成片·", ""))
+    .join(" / ");
   const [debugMode, setDebugMode] = useState(false);
   const [debugLog, setDebugLog] = useState<ManhuaFactoryDebugEntry[]>([]);
   const stageStartedAtRef = useRef<number | null>(null);
@@ -547,9 +545,6 @@ export default function OmniCanvas() {
   const [craftShotManual, setCraftShotManual] = useState(false);
   const [factoryPathRecipeId, setFactoryPathRecipeId] = useState("");
   const [pathRecipeManual, setPathRecipeManual] = useState(false);
-  const [factoryPathAnnotation, setFactoryPathAnnotation] = useState<ManhuaPathAnnotation | null>(
-    null,
-  );
   const [factoryNarrativeLightingId, setFactoryNarrativeLightingId] = useState("");
   const [narrativeLightingManual, setNarrativeLightingManual] = useState(false);
   const [factoryMaleHairstyleId, setFactoryMaleHairstyleId] = useState("");
@@ -596,6 +591,8 @@ export default function OmniCanvas() {
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(() =>
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
   );
+  /** 扩写引擎档位：优秀/卓越/顶级，默认优秀；前台只显示档名，不出现模型名 */
+  const [writerExpandTier, setWriterExpandTier] = useState<PlatformEngineTierId>("excellent");
   /** 单集时长档位：段长恒定 15s，切档只改一集几段（2.5 时由成片引擎覆盖） */
   const [writerLengthTierId, setWriterLengthTierId] = useState<ManhuaEpisodeLengthTierId>(
     MANHUA_EPISODE_LENGTH_TIER_DEFAULT,
@@ -1623,8 +1620,6 @@ export default function OmniCanvas() {
 
   const debugInjectSummary = useMemo(() => {
     if (!debugMode) return "";
-    const pathAnchors = factoryPathAnnotation?.anchors?.length || 0;
-    const pathStrokes = factoryPathAnnotation?.strokes?.length || 0;
     const lines = [
       `topic: ${factoryTopic.trim() || "—"}`,
       `focusEpisode: ${writerFocusEpisode}`,
@@ -1640,7 +1635,6 @@ export default function OmniCanvas() {
       `craft: ${selectedCraftShotIds.join(",") || "—"}`,
       `pathRecipe: ${selectedPathRecipeIds.join(",") || "—"}`,
       `actionRecipe: ${selectedActionRecipeIds.join(",") || "—"}`,
-      `pathAnnotate: anchors=${pathAnchors} strokes=${pathStrokes}`,
       `lighting: ${selectedNarrativeLightingIds.join(",") || "—"}`,
       `maleHair/micro: ${selectedMaleHairstyleIds.join(",") || "—"} / ${selectedMaleMicroIds.join(",") || "—"}`,
       `cineVocab: ${selectedCineVocabIds.join(",") || "—"}`,
@@ -1668,7 +1662,6 @@ export default function OmniCanvas() {
     selectedCraftShotIds,
     selectedPathRecipeIds,
     selectedActionRecipeIds,
-    factoryPathAnnotation,
     selectedNarrativeLightingIds,
     selectedMaleHairstyleIds,
     selectedMaleMicroIds,
@@ -1695,7 +1688,6 @@ export default function OmniCanvas() {
       setBlocks((prev) => {
         const next = applyFactoryPrefsToBlocks(prev, {
           craftShotIds: selectedCraftShotIds,          pathCameraRecipeIds: selectedPathRecipeIds,
-          pathAnnotationJson: factoryPathAnnotation,
           narrativeLightingIds: selectedNarrativeLightingIds,
           maleHairstyleIds: selectedMaleHairstyleIds,
           maleMicroExpressionIds: selectedMaleMicroIds,
@@ -1722,7 +1714,6 @@ export default function OmniCanvas() {
             p.prompt !== b.prompt ||
             p.videoReverseOutputMode !== b.videoReverseOutputMode ||
             p.pathCameraRecipeId !== b.pathCameraRecipeId ||
-            p.pathAnnotationJson !== b.pathAnnotationJson ||
             p.refImageUrl !== b.refImageUrl ||
             p.imageMode !== b.imageMode
           );
@@ -1736,7 +1727,6 @@ export default function OmniCanvas() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅跟工厂选择器
   }, [
     factoryCraftShotId,    factoryPathRecipeId,
-    factoryPathAnnotation,
     factoryNarrativeLightingId,
     factoryMaleHairstyleId,
     factoryMaleMicroId,
@@ -1863,10 +1853,14 @@ export default function OmniCanvas() {
   const expandWriterMutation = trpc.mvAnalysis.expandManhuaWriterPack.useMutation();
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
 
-  const pathTrackStatus = useMemo(
-    () => summarizeManhuaPathTrackStatus(factoryPathAnnotation),
-    [factoryPathAnnotation],
-  );
+  const pathTrackLabelZh = useMemo(() => {
+    const path = getPathCameraRecipeById(selectedPathRecipeIds[0]);
+    const action = getActionCameraRecipeById(selectedActionRecipeIds[0]);
+    const picks = [path ? `路径·${path.nameZh}` : "", action ? `动作·${action.nameZh}` : ""].filter(
+      Boolean,
+    );
+    return picks.length ? picks.join(" + ") : "未选运镜配方 · 按剧本时间轴推进";
+  }, [selectedPathRecipeIds, selectedActionRecipeIds]);
   const narrativeLightingLabelZh = useMemo(() => {
     const e = getNarrativeLightingById(factoryNarrativeLightingId);
     return e ? `${e.nameZh}（${e.stageZh}）` : "";
@@ -2151,21 +2145,6 @@ export default function OmniCanvas() {
     ],
   );
 
-  /** Terra：中文运镜说明润色（编剧大师人设） */
-  const translateMotionZh = useCallback(
-    async (englishMotion: string) => {
-      const src = String(englishMotion || "").trim();
-      if (!src) return "";
-      const md = await runDeps.optimizeCopy({
-        sourceText: src,
-        optimizationBrief: MANHUA_SCREENWRITER_TRANSLATE_BRIEF,
-        modelName: MANHUA_SCREENWRITER_KIMI_MODEL,
-      });
-      return String(md || "").trim();
-    },
-    [runDeps],
-  );
-
   const handleBlocksChange = useCallback(
     (next: CanvasBlock[] | ((prev: CanvasBlock[]) => CanvasBlock[])) => {
       setBlocks((cur) => {
@@ -2398,7 +2377,6 @@ export default function OmniCanvas() {
           castBundle.identityLockZh,
         artStyleId: factoryArtStyleId,        craftShotIds: selectedCraftShotIds,
         pathCameraRecipeIds: selectedPathRecipeIds,
-        pathAnnotationJson: factoryPathAnnotation,
         narrativeLightingIds: selectedNarrativeLightingIds,
         maleHairstyleIds: selectedMaleHairstyleIds,
         maleMicroExpressionIds: selectedMaleMicroIds,
@@ -2472,7 +2450,6 @@ export default function OmniCanvas() {
       resolveHardCastForSpawn,
       selectedCharacterIds,      selectedCraftShotIds,
       selectedPathRecipeIds,
-      factoryPathAnnotation,
       selectedNarrativeLightingIds,
       selectedMaleHairstyleIds,
       selectedMaleMicroIds,
@@ -2502,7 +2479,7 @@ export default function OmniCanvas() {
       return;
     }
     if (!hasManhuaSeedanceLayoutChoice(writerVideoModel)) {
-      toast.error("请先选择成片引擎（快速 / 标准 / 加长）");
+      toast.error(`请先选择成片引擎（${writerLayoutChoiceLabelsZh}）`);
       return;
     }
     /** 立刻收窄为成片三选一，避免 async/state 下空串回流导致 tsc 失败 */
@@ -2575,7 +2552,7 @@ export default function OmniCanvas() {
           topic,
           brief: mergedBrief || undefined,
           episodeCount: count,
-          viralTemplateId: viralTemplateId || undefined,
+          tier: writerExpandTier,
           lengthTierId: writerLengthTierId,
           videoModel: selectedVideoModel,
           fromEpisode: writerFromEpisode || undefined,
@@ -2703,14 +2680,15 @@ export default function OmniCanvas() {
         res.layout?.labelZh && res.layout?.segmentCount
           ? `（${res.layout.labelZh} · ${res.layout.segmentCount}×${res.layout.durationSecPerSegment}s）`
           : "";
+      const costHint = res.isFreeQuota ? "本次免费" : `本次扣 ${res.creditsCost} 积分`;
       toast.success(
         cleaned.removedCount > 0 || cleaned.archivedCount > 0
           ? `已扩写 ${pack.episodes.length} 集${layoutHint}：新剧本已覆盖旧稿；旧工厂链已清${
               cleaned.archivedCount > 0
                 ? `，${cleaned.archivedCount} 个已出图/已出片节点转为存档保留（不进新剧本垫图）`
                 : ""
-            }`
-          : `已扩写 ${pack.episodes.length} 集${layoutHint}：新剧本已覆盖本机与云端旧稿`,
+            } · ${costHint}`
+          : `已扩写 ${pack.episodes.length} 集${layoutHint}：新剧本已覆盖本机与云端旧稿 · ${costHint}`,
       );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "扩写失败";
@@ -2734,6 +2712,7 @@ export default function OmniCanvas() {
     writerFromEpisode,
     writerFromSegment,
     viralTemplateId,
+    writerExpandTier,
     customAssetRefs,
     selectedCharacterIds,
     factorySceneId,
@@ -2754,22 +2733,6 @@ export default function OmniCanvas() {
     artStyleManual,
     syncCloudDraftPayload,
   ]);
-
-  const viralTemplatesRemoteQuery = trpc.manhuaViralTemplate.listApproved.useQuery(undefined, {
-    staleTime: 60_000,
-    retry: 1,
-  });
-  const viralTemplateGrouped = useMemo(() => {
-    const remote = viralTemplatesRemoteQuery.data?.groups;
-    if (remote && remote.length > 0) {
-      return remote as Array<{ laneZh: ManhuaViralTemplateLane; items: ManhuaViralTemplateCard[] }>;
-    }
-    return listApprovedManhuaViralTemplatesGrouped();
-  }, [viralTemplatesRemoteQuery.data]);
-  const selectedViralTemplate = useMemo(() => {
-    const extras = viralTemplateGrouped.flatMap((g) => g.items);
-    return getManhuaViralTemplate(viralTemplateId, extras);
-  }, [viralTemplateId, viralTemplateGrouped]);
 
   const importWriterRoomFromText = useCallback(
     async (raw: string) => {
@@ -3022,7 +2985,7 @@ export default function OmniCanvas() {
       return;
     }
     if (!hasManhuaSeedanceLayoutChoice(writerVideoModel)) {
-      toast.error("请先选择成片引擎（快速 / 标准 / 加长）");
+      toast.error(`请先选择成片引擎（${writerLayoutChoiceLabelsZh}）`);
       return;
     }
     const densityGate = evaluateWriterPackAssetAndDensity({
@@ -3038,7 +3001,7 @@ export default function OmniCanvas() {
     });
     if (!densityGate.ok) {
       setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
-      toast.error("剧本未过三分钟密度/资产表门禁", {
+      toast.error("剧本未过密度/资产表门禁", {
         description: densityGate.errors.slice(0, 4).join("；"),
       });
       pushDebug("confirmWriterToDirector", {
@@ -3111,7 +3074,6 @@ export default function OmniCanvas() {
       identityLockZh: identityFromCanon || hardCast.identityLockZh,
       artStyleId: factoryArtStyleId,      craftShotIds: selectedCraftShotIds,
       pathCameraRecipeIds: selectedPathRecipeIds,
-      pathAnnotationJson: factoryPathAnnotation,
       narrativeLightingIds: selectedNarrativeLightingIds,
       maleHairstyleIds: selectedMaleHairstyleIds,
       maleMicroExpressionIds: selectedMaleMicroIds,
@@ -3208,7 +3170,6 @@ export default function OmniCanvas() {
     wardrobeManual,
     selectedCraftShotIds,
     selectedPathRecipeIds,
-    factoryPathAnnotation,
     selectedNarrativeLightingIds,
     selectedMaleHairstyleIds,
     selectedMaleMicroIds,
@@ -3233,7 +3194,7 @@ export default function OmniCanvas() {
       return;
     }
     if (!hasManhuaSeedanceLayoutChoice(writerVideoModel)) {
-      toast.error("请先选择成片引擎（快速 / 标准 / 加长）");
+      toast.error(`请先选择成片引擎（${writerLayoutChoiceLabelsZh}）`);
       return;
     }
     const selectedVideoModel: ManhuaSeedanceLayoutVideoModel = writerVideoModel;
@@ -3250,7 +3211,7 @@ export default function OmniCanvas() {
     });
     if (!densityGate.ok) {
       setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
-      toast.error("剧本未过三分钟密度/资产表门禁", {
+      toast.error("剧本未过密度/资产表门禁", {
         description: densityGate.errors.slice(0, 4).join("；"),
       });
       return;
@@ -3333,7 +3294,6 @@ export default function OmniCanvas() {
       identityLockZh: identityFromCanon || hardCast.identityLockZh,
       artStyleId: factoryArtStyleId,      craftShotIds: selectedCraftShotIds,
       pathCameraRecipeIds: selectedPathRecipeIds,
-      pathAnnotationJson: factoryPathAnnotation,
       narrativeLightingIds: selectedNarrativeLightingIds,
       maleHairstyleIds: selectedMaleHairstyleIds,
       maleMicroExpressionIds: selectedMaleMicroIds,
@@ -3392,7 +3352,6 @@ export default function OmniCanvas() {
     wardrobeManual,
     writerFocusEpisode,    selectedCraftShotIds,
     selectedPathRecipeIds,
-    factoryPathAnnotation,
     selectedNarrativeLightingIds,
     selectedMaleHairstyleIds,
     selectedMaleMicroIds,
@@ -4773,7 +4732,6 @@ export default function OmniCanvas() {
           }
           workingBlocks = applyFactoryPrefsToBlocks(workingBlocks, {
             craftShotIds: selectedCraftShotIds,            pathCameraRecipeIds: selectedPathRecipeIds,
-            pathAnnotationJson: factoryPathAnnotation,
             narrativeLightingIds: selectedNarrativeLightingIds,
             maleHairstyleIds: selectedMaleHairstyleIds,
             maleMicroExpressionIds: selectedMaleMicroIds,
@@ -5172,7 +5130,6 @@ export default function OmniCanvas() {
       factoryGenreId,
       factoryIdentityLockZh,
       factoryReverseMode,
-      factoryPathAnnotation,
       customAssetRefs,
       recommendedScene?.id,
       castBundle.identityLockZh,
@@ -5670,18 +5627,11 @@ export default function OmniCanvas() {
                   artStyleLabelZh={getManhuaArtStylePreset(factoryArtStyleId).labelZh}
                   projectBibleSummary={summarizeManhuaProjectBible(projectBible)}
                   assetCanon={projectBible?.assetCanon}
-                  viralTemplateLabelZh={
-                    selectedViralTemplate
-                      ? `${selectedViralTemplate.nameZh}（${selectedViralTemplate.laneZh}）`
-                      : undefined
-                  }
                   bibleBoundEpisodes={projectBible?.cast.boundEpisodeIndexes}
-                  pathTrackLabelZh={pathTrackStatus.labelZh}
+                  pathTrackLabelZh={pathTrackLabelZh}
                   narrativeLightingLabelZh={narrativeLightingLabelZh}
-                  pathAnnotation={factoryPathAnnotation}
                   pathRecipeId={factoryPathRecipeId}
                   actionRecipeId={factoryActionRecipeId}
-                  onPathAnnotationChange={setFactoryPathAnnotation}
                   onPathRecipeIdChange={(id) => {
                     setPathRecipeManual(true);
                     setFactoryPathRecipeId(id);
@@ -5690,7 +5640,6 @@ export default function OmniCanvas() {
                     setActionRecipeManual(true);
                     setFactoryActionRecipeId(id);
                   }}
-                  translateMotionZh={translateMotionZh}
                   finalVideoUrl={finalAssembleVideoUrl}
                   factoryBusy={factoryBusy || assembleBusy}
                   factoryProgress={
@@ -5961,7 +5910,6 @@ export default function OmniCanvas() {
                     setBlocks((prev) => {
                       const next = applyFactoryPrefsToBlocks(prev, {
                         craftShotIds: selectedCraftShotIds,                        pathCameraRecipeIds: selectedPathRecipeIds,
-                        pathAnnotationJson: factoryPathAnnotation,
                         narrativeLightingIds: selectedNarrativeLightingIds,
                         maleHairstyleIds: selectedMaleHairstyleIds,
                         maleMicroExpressionIds: selectedMaleMicroIds,
@@ -6531,53 +6479,6 @@ export default function OmniCanvas() {
                 placeholder={"例：\n主角隐忍多年后归来\n对手是旧日盟友\n每集结尾必须留下未揭的局"}
                 className="mt-1 w-full resize-y rounded-xl border border-white/15 bg-black/50 px-3.5 py-2.5 text-sm leading-6 text-white placeholder:text-white/30 outline-none focus:border-emerald-400/55 disabled:opacity-50"
               />
-              <div className="mt-3" data-manhua-viral-template>
-                <label className="block text-[11px] text-white/45">节奏模板（可选）</label>
-                <p className="mt-0.5 text-[10px] leading-4 text-white/35">
-                  审定骨架：前 3 秒钩子 + 约 75–90 秒节拍格；只借结构，不写外部剧名。不选则按题材自由扩写。
-                </p>
-                <div className="mt-2 space-y-2">
-                  {viralTemplateGrouped.map((group) => (
-                    <div key={group.laneZh}>
-                      <div className="mb-1 text-[10px] font-semibold text-white/40">
-                        {group.laneZh}
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {group.items.map((tpl) => {
-                          const on = viralTemplateId === tpl.id;
-                          return (
-                            <button
-                              key={tpl.id}
-                              type="button"
-                              disabled={writerBusy || factoryBusy}
-                              title={tpl.summaryZh}
-                              onClick={() => {
-                                setViralTemplateId((prev) => (prev === tpl.id ? "" : tpl.id));
-                                setWriterConfirmed(false);
-                              }}
-                              className={`rounded-lg border px-2.5 py-1.5 text-left text-[11px] disabled:opacity-50 ${
-                                on
-                                  ? "border-amber-300/45 bg-amber-500/20 text-amber-50"
-                                  : "border-white/12 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]"
-                              }`}
-                            >
-                              <div className="font-semibold">{tpl.nameZh}</div>
-                              <div className="mt-0.5 max-w-[11rem] truncate text-[9px] text-white/40">
-                                {tpl.hook3sZh}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {selectedViralTemplate ? (
-                  <p className="mt-1.5 text-[10px] text-amber-100/70">
-                    已选「{selectedViralTemplate.nameZh}」· 扩写时注入节拍与密度建议
-                  </p>
-                ) : null}
-              </div>
               <div className="mt-3 flex flex-wrap items-end gap-2.5">
                 <div>
                   <label className="block text-[11px] text-white/45">集数</label>
@@ -6662,6 +6563,33 @@ export default function OmniCanvas() {
                   </div>
                 </div>
                 <div className="flex flex-col gap-1">
+                  <div className="flex flex-wrap gap-1">
+                    {PLATFORM_ENGINE_TIERS.map((t) => {
+                      const on = writerExpandTier === t.id;
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          disabled={writerBusy || factoryBusy}
+                          title={t.blurb}
+                          onClick={() => setWriterExpandTier(t.id)}
+                          className={`rounded-md border px-2 py-1 text-[10px] font-semibold disabled:opacity-50 ${
+                            on
+                              ? "border-cyan-300/45 bg-cyan-500/20 text-cyan-50"
+                              : "border-white/12 bg-white/[0.03] text-white/60 hover:bg-white/[0.06]"
+                          }`}
+                        >
+                          {t.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] leading-snug text-white/40">
+                    本次扣{" "}
+                    {MANHUA_WRITER_EXPAND_CREDITS_PER_EPISODE[writerExpandTier] *
+                      clampWriterEpisodeCount(writerEpisodeCount)}{" "}
+                    积分（若在免费额度内则本次免费）
+                  </p>
                   <button
                     type="button"
                     disabled={
@@ -7301,14 +7229,11 @@ export default function OmniCanvas() {
                   </select>
                 </div>
 
-                <ManhuaPathCameraAnnotatePanel
-                  imageUrl={keyArtPreviewUrl || undefined}
-                  value={factoryPathAnnotation}
-                  recipeId={factoryPathRecipeId}
+                <ManhuaPathRecipePicker
+                  pathRecipeId={factoryPathRecipeId}
                   actionRecipeId={factoryActionRecipeId}
                   disabled={factoryBusy || !(directorUnlocked || writerConfirmed)}
-                  onChange={setFactoryPathAnnotation}
-                  onRecipeIdChange={(id) => {
+                  onPathRecipeIdChange={(id) => {
                     setPathRecipeManual(true);
                     setFactoryPathRecipeId(id);
                   }}
@@ -7316,7 +7241,6 @@ export default function OmniCanvas() {
                     setActionRecipeManual(true);
                     setFactoryActionRecipeId(id);
                   }}
-                  translateMotionZh={translateMotionZh}
                 />
                 <p className="text-[10px] text-white/35">
                   {!pathRecipeManual || !actionRecipeManual
@@ -7568,7 +7492,6 @@ export default function OmniCanvas() {
                       identityLockZh: factoryIdentityLockZh || castBundle.identityLockZh,
                       artStyleId: factoryArtStyleId,                      craftShotIds: selectedCraftShotIds,
                       pathCameraRecipeIds: selectedPathRecipeIds,
-                      pathAnnotationJson: factoryPathAnnotation,
                       narrativeLightingIds: selectedNarrativeLightingIds,
                       maleHairstyleIds: selectedMaleHairstyleIds,
                       maleMicroExpressionIds: selectedMaleMicroIds,

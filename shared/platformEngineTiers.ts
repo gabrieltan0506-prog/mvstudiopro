@@ -79,6 +79,11 @@ export const PLATFORM_ENGINE_TIER_EFFORT = {
   shortlist: { excellent: "medium", superb: "high", top: "medium" },
   /** 人物背景润色：用力档。Qwen 的顶档是 xhigh，Kimi 是 high。 */
   polish: { excellent: "xhigh", superb: "high", top: "high" },
+  /**
+   * 编剧室连载扩写：长文写作，比选题吃力，但不到润色那么用力。
+   * 优秀档 Qwen 的三级是 low|medium|xhigh，没有 high，所以维持 medium。
+   */
+  expand: { excellent: "medium", superb: "high", top: "high" },
 } as const;
 
 export type PlatformEngineStep = keyof typeof PLATFORM_ENGINE_TIER_EFFORT;

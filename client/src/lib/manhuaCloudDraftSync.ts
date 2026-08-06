@@ -306,7 +306,7 @@ export function cloudDraftBlocksToCanvas(blocks: ManhuaCloudDraftPayload["canvas
       imageMode: raw.imageMode === "edit" ? "edit" : "generate",
       aspectRatio: raw.aspectRatio === "16:9" ? "16:9" : "9:16",
       pathCameraRecipeId: raw.pathCameraRecipeId,
-      pathAnnotationJson: raw.pathAnnotationJson,
+      // 手动划线标注已废除，历史草稿字段读取处兼容忽略，不再还原进画布节点。
       textModel: "kimi-k3",
       imageModel: "gpt-image-2",
       // 云草稿 schema 不落 videoModel：成片一律 Seedance Fast（不再恢复 Omni）

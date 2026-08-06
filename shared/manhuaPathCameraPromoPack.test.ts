@@ -1,13 +1,4 @@
 import { describe, expect, it } from "vitest";
-import {
-  annotationFromRecipeId,
-  compilePathAnnotationToMotionPrompt,
-  downsampleStrokeToAnchors,
-  mergeTrackAnchors,
-  normalizePathAnnotation,
-  upsertStroke,
-  PATH_ANNOTATE_ANCHOR_MIN,
-} from "./manhuaPathCameraAnnotate";
 import { recommendActionCameraFromTopic } from "./manhuaActionCameraRecipeBank";
 import {
   buildPathCameraInjectBlock,
@@ -52,7 +43,7 @@ describe("manhua path camera + P3 banks", () => {
   it("path recipe bank has 8 recipes with phases", () => {
     expect(MANHUA_PATH_CAMERA_RECIPE_BANK.length).toBe(8);
     for (const r of MANHUA_PATH_CAMERA_RECIPE_BANK) {
-      expect(r.phases.length).toBeGreaterThanOrEqual(PATH_ANNOTATE_ANCHOR_MIN);
+      expect(r.phases.length).toBeGreaterThanOrEqual(3);
       expect(r.phases.length).toBeLessThanOrEqual(8);
     }
   });
@@ -72,32 +63,12 @@ describe("manhua path camera + P3 banks", () => {
     expect(motion).toMatch(/每镜一个主运镜/);
   });
 
-  it("annotation JSON compiles and feeds I2V priority", () => {
-    const ann = annotationFromRecipeId("path_05_action_burst")!;
-    const motion = compilePathAnnotationToMotionPrompt(ann);
-    expect(motion).toMatch(/动作|交锋|对峙|爆发|【路径】/);
-    const viaI2V = compileI2VMotionPrompt("ignore long cyberpunk masterpiece 8k", {
-      hasReferenceImage: true,
-      pathAnnotationJson: ann,
-    });
-    expect(viaI2V).toBe(motion);
+  it("compiles recipe via compileI2VMotionPrompt (pathCameraRecipeId only, no annotation)", () => {
     const viaRecipe = compileI2VMotionPrompt("ignore", {
       hasReferenceImage: true,
       pathCameraRecipeId: "path_03_evidence_push",
     });
     expect(viaRecipe).toMatch(/证据|揭穿|反应|【路径】/);
-  });
-
-  it("rejects annotation with too few anchors", () => {
-    expect(
-      normalizePathAnnotation({
-        version: 1,
-        anchors: [
-          { x: 0.5, y: 0.8, focusZh: "a" },
-          { x: 0.5, y: 0.5, focusZh: "b" },
-        ],
-      }),
-    ).toBeNull();
   });
 
   it("recommends path from topic", () => {
@@ -172,138 +143,16 @@ describe("fusion + action dual-track + MIT vocab/wardrobe", () => {
     expect(block).not.toMatch(/CanvasPro|阿硕|李一帆|Seedance-2\.0|DirectorSKILL/i);
   });
 
-  it("downsamples stroke and keeps dense stroke for display", () => {
-    const stroke = Array.from({ length: 40 }, (_, i) => ({
-      x: 0.1 + i * 0.02,
-      y: 0.8 - i * 0.015,
-    }));
-    const red = downsampleStrokeToAnchors(stroke, "subject", { maxPoints: 4 });
-    expect(red.length).toBeGreaterThanOrEqual(2);
-    expect(red.length).toBeLessThanOrEqual(4);
-    expect(red.every((a) => a.trackRole === "subject")).toBe(true);
-    const blue = downsampleStrokeToAnchors(
-      [
-        { x: 0.2, y: 0.2 },
-        { x: 0.5, y: 0.4 },
-        { x: 0.8, y: 0.3 },
-      ],
-      "camera",
-      { maxPoints: 3 },
-    );
-    const merged = mergeTrackAnchors(red, blue, "camera");
-    expect(merged.some((a) => a.trackRole === "subject")).toBe(true);
-    expect(merged.some((a) => a.trackRole === "camera")).toBe(true);
-    const strokes = upsertStroke(undefined, "subject", stroke);
-    expect(strokes[0]?.points.length).toBeGreaterThan(red.length);
-    const normalized = normalizePathAnnotation({
-      version: 1,
-      anchors: merged,
-      strokes,
-      actionRecipeId: "action_dual_track_oner",
-    });
-    expect(normalized?.strokes?.[0]?.points.length).toBeGreaterThan(4);
-  });
-
-  it("dual-track annotation compiles red/blue roles", () => {
-    const motion = compilePathAnnotationToMotionPrompt({
-      version: 1,
-      actionRecipeId: "action_dual_track_oner",
-      anchors: [
-        {
-          index: 1,
-          x: 0.2,
-          y: 0.8,
-          focusZh: "起势",
-          cameraEn: "slow orbit start",
-          subjectActionEn: "draw blade",
-          durationHintSec: 2,
-          trackRole: "subject",
-        },
-        {
-          index: 2,
-          x: 0.5,
-          y: 0.5,
-          focusZh: "交锋",
-          cameraEn: "bypass subject left",
-          subjectActionEn: "dodge and strike",
-          durationHintSec: 2,
-          trackRole: "subject",
-        },
-        {
-          index: 3,
-          x: 0.3,
-          y: 0.4,
-          focusZh: "绕过",
-          cameraEn: "lateral bypass",
-          subjectActionEn: "hold stance",
-          durationHintSec: 2,
-          trackRole: "camera",
-        },
-        {
-          index: 4,
-          x: 0.7,
-          y: 0.3,
-          focusZh: "落幅",
-          cameraEn: "settle on face",
-          subjectActionEn: "exhale",
-          durationHintSec: 2,
-          trackRole: "camera",
-        },
-      ],
-    });
-    expect(motion).toMatch(/红轨|人物节拍/);
-    expect(motion).toMatch(/蓝轨|镜头节拍/);
-    expect(motion).toMatch(/最终画面不显示|成片不显示轨迹/);
-    const viaI2V = compileI2VMotionPrompt("ignore", {
+  it("compileI2VMotionPrompt ignores pathAnnotationJson and falls through to raw prompt", () => {
+    const withAnnotation = compileI2VMotionPrompt("导戏单正文：秒轴与对白锁", {
       hasReferenceImage: true,
-      pathAnnotationJson: {
-        version: 1,
-        actionRecipeId: "action_dual_track_oner",
-        anchors: [
-          {
-            index: 1,
-            x: 0.2,
-            y: 0.8,
-            focusZh: "a",
-            cameraEn: "push",
-            subjectActionEn: "run",
-            durationHintSec: 2,
-            trackRole: "subject",
-          },
-          {
-            index: 2,
-            x: 0.4,
-            y: 0.6,
-            focusZh: "b",
-            cameraEn: "track",
-            subjectActionEn: "slash",
-            durationHintSec: 2,
-            trackRole: "subject",
-          },
-          {
-            index: 3,
-            x: 0.6,
-            y: 0.4,
-            focusZh: "c",
-            cameraEn: "orbit",
-            subjectActionEn: "hold",
-            durationHintSec: 2,
-            trackRole: "camera",
-          },
-          {
-            index: 4,
-            x: 0.8,
-            y: 0.3,
-            focusZh: "d",
-            cameraEn: "settle",
-            subjectActionEn: "breathe",
-            durationHintSec: 2,
-            trackRole: "camera",
-          },
-        ],
-      },
+      pathAnnotationJson: { version: 1, anchors: [{ x: 0.2, y: 0.8, focusZh: "a" }] },
     });
-    expect(viaI2V).toMatch(/红蓝双轨|人物节拍|红轨/);
+    expect(withAnnotation).toBe("导戏单正文：秒轴与对白锁");
+    const withRecipe = compileI2VMotionPrompt("ignore", {
+      pathCameraRecipeId: "path_05_action_burst",
+    });
+    expect(withRecipe).toMatch(/【路径】|打斗短阶段/);
   });
 
   it("cine vocab and wardrobe have no director names", () => {

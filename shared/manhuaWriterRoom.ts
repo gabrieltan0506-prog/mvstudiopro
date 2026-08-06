@@ -15,7 +15,6 @@ import {
   getManhuaPlotPurposeById,
   getManhuaScenePacingById,
 } from "./manhuaPlotPurposeCameraBank.js";
-import { formatManhuaViralTemplateWriterAddon } from "./manhuaViralTemplateBank.js";
 import { formatCraftShotWriterVocabBlock } from "./craftShotBank.js";
 import {
   formatManhuaEpisodeSegmentPlanBeatsBlock,
@@ -94,9 +93,11 @@ export function buildManhuaWriterExpandPrompt(opts: {
   ancientArchetypeIds?: string[];
   plotPurposeId?: string | null;
   scenePacingId?: string | null;
-  /** 审定节奏模板 id（tpl_*） */
+  /**
+   * @deprecated 节奏模板选择器已下线（套路化剧情反馈差）；字段保留仅为兼容旧调用，不再注入提示词。
+   */
   viralTemplateId?: string | null;
-  /** 若已解析动态库卡片，直接注入（优先于仅 id 查种子库） */
+  /** @deprecated 同上，不再使用。 */
   viralTemplateAddon?: string | null;
   /** 单集时长档位：决定节拍格抽到几拍、密度建议报哪个秒数 */
   lengthTierId?: string | null;
@@ -124,10 +125,6 @@ export function buildManhuaWriterExpandPrompt(opts: {
   const purpose = getManhuaPlotPurposeById(opts.plotPurposeId);
   const pacing = getManhuaScenePacingById(opts.scenePacingId);
   const layout = resolveManhuaSeedanceLayoutProfile(opts.videoModel);
-  const lengthTierForViral = opts.lengthTierId || layout.lengthTierId;
-  const viralAddon =
-    String(opts.viralTemplateAddon || "").trim() ||
-    formatManhuaViralTemplateWriterAddon(opts.viralTemplateId, null, lengthTierForViral);
   /**
    * 局部改写锁稿：保留段已经出过图、出过片，剧情一旦被改写就和画面对不上。
    * 把旧正文原样交回并要求前几段逐字不动，比事后人工核对便宜得多。
@@ -175,9 +172,8 @@ export function buildManhuaWriterExpandPrompt(opts: {
     "6. 道具表可参考下方示范库外观锚点改写，勿照抄剧名；权谋/商战可偏海外可读符号。",
     "7. 若提供古风原型设计板，人物外形与服饰层次须与之对齐。",
     "8. 「系列标题」必须是具体可传播的中文剧名（建议 4–24 字），禁止「未命名」「暂定」「一句话标题」等占位，也禁止只复述题材原文整段。",
-    "9. 若提供节奏模板骨架：每集须大体覆盖节拍格冲突类型与场景池关键词，并对白/换场密度不低于模板建议；禁止照抄模板示例成外部剧名。",
-    `10. 每一集「本集剧情」之后必须输出完整「${planTitle}」（正好 ${segDefault} 段：段01–段${String(segDefault).padStart(2, "0")}），字段见下文模板（含对白+表演）；缺段、缺字段、对白不足 3 句「」、表演过薄视为未完成。人物姓名/场景名必须与人物表·场景表一致，禁止另造皇宫大殿等未立场景。`,
-    "11. 系列级须输出「整体影像风格」与「统一运镜风格」各一段，供后续静帧/成片共用。",
+    `9. 每一集「本集剧情」之后必须输出完整「${planTitle}」（正好 ${segDefault} 段：段01–段${String(segDefault).padStart(2, "0")}），字段见下文模板（含对白+表演）；缺段、缺字段、对白不足 3 句「」、表演过薄视为未完成。人物姓名/场景名必须与人物表·场景表一致，禁止另造皇宫大殿等未立场景。`,
+    "10. 系列级须输出「整体影像风格」与「统一运镜风格」各一段，供后续静帧/成片共用。",
     "",
     formatManhuaScreenplayEnginePromptBlock(),
     "",
@@ -188,7 +184,6 @@ export function buildManhuaWriterExpandPrompt(opts: {
     ancientBlock,
     purpose ? formatPlotPurposeCameraBlock(purpose) : "",
     pacing ? formatScenePacingBlock(pacing) : "",
-    viralAddon,
     // 手法条目库同时供段成片兜底补条：两端取同一套词，成片才不会各说各话
     formatCraftShotWriterVocabBlock(),
     partialBlock,
