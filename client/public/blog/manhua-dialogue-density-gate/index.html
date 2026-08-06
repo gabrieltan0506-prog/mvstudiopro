@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 短剧每集只有两句对白？问题多半不在模型，在剧本的结构与计数 · MV Studio Pro</title>
+<meta name="description" content="一份写满对白的短剧剧本，导入后系统只数出两句。排查下来是三个静默丢句的解析细节，外加一处门槛单位错配。附可复用的分段可拍表结构与自查清单。">
+<meta name="keywords" content="AI短剧,短剧剧本,对白密度,分镜可拍表,Seedance,漫剧工作流,剧本结构化">
+<link rel="canonical" href="https://www.mvstudiopro.com/blog/manhua-dialogue-density-gate">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MV Studio Pro">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:url" content="https://www.mvstudiopro.com/blog/manhua-dialogue-density-gate">
+<meta property="og:title" content="AI 短剧每集只有两句对白？问题多半不在模型，在剧本的结构与计数 · MV Studio Pro">
+<meta property="og:description" content="一份写满对白的短剧剧本，导入后系统只数出两句。排查下来是三个静默丢句的解析细节，外加一处门槛单位错配。附可复用的分段可拍表结构与自查清单。">
+<meta property="og:image" content="https://www.mvstudiopro.com/pwa-icon-512.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AI 短剧每集只有两句对白？问题多半不在模型，在剧本的结构与计数 · MV Studio Pro">
+<meta name="twitter:description" content="一份写满对白的短剧剧本，导入后系统只数出两句。排查下来是三个静默丢句的解析细节，外加一处门槛单位错配。附可复用的分段可拍表结构与自查清单。">
+<meta name="twitter:image" content="https://www.mvstudiopro.com/pwa-icon-512.png">
+<link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0f1115; color: #e6e6ea;
+    font: 16px/1.85 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 22px 96px; }
+  nav.top { font-size: 13px; color: #8b8b96; margin-bottom: 32px; }
+  nav.top a { color: #7fd1ff; text-decoration: none; }
+  nav.top a:hover { text-decoration: underline; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 12px; letter-spacing: -.01em; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-top: 8px; border-top: 1px solid #23262e; }
+  h3 { font-size: 17px; margin: 28px 0 10px; }
+  .meta { font-size: 13px; color: #8b8b96; margin-bottom: 36px; }
+  p { margin: 0 0 18px; }
+  ul, ol { margin: 0 0 18px; padding-left: 24px; }
+  li { margin: 6px 0; }
+  strong { color: #fff; }
+  a { color: #7fd1ff; }
+  blockquote {
+    margin: 0 0 22px; padding: 12px 18px; border-left: 3px solid #7fd1ff;
+    background: #161922; color: #b9b9c4; font-size: 15px;
+  }
+  blockquote p { margin: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 14.5px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid #23262e; text-align: left; }
+  th { color: #fff; background: #161922; font-weight: 600; }
+  code {
+    background: #1b1f28; padding: 2px 6px; border-radius: 4px;
+    font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  pre {
+    background: #161922; padding: 16px 18px; border-radius: 8px; overflow-x: auto;
+    margin: 0 0 22px; border: 1px solid #23262e;
+  }
+  pre code { background: none; padding: 0; }
+  hr { border: 0; border-top: 1px solid #23262e; margin: 40px 0; }
+  em { color: #a9a9b6; }
+
+  /* 图片与视频：不加 max-width 的话，一张成片截图就能把版面撑破 */
+  img, video { max-width: 100%; height: auto; display: block;
+               border-radius: 8px; border: 1px solid #23262e; margin: 0 0 8px; }
+  figure { margin: 24px 0; }
+  figure img, figure video { margin-bottom: 8px; }
+  figcaption { font-size: 13px; color: #8b8b96; text-align: center; }
+  /* B 站 / YouTube 等外链视频：按 16:9 自适应，手机上也不会溢出 */
+  .video-embed { position: relative; padding-bottom: 56.25%; height: 0;
+                 margin: 24px 0; border-radius: 8px; overflow: hidden;
+                 border: 1px solid #23262e; }
+  .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid #23262e;
+           font-size: 13px; color: #8b8b96; }
+  footer a { margin-right: 16px; }
+  .cards { display: grid; gap: 14px; margin: 28px 0 0; }
+  .card { display: block; padding: 18px 20px; background: #161922; border: 1px solid #23262e;
+          border-radius: 10px; text-decoration: none; color: inherit; }
+  .card:hover { border-color: #7fd1ff55; background: #1a1e28; }
+  .card h2 { margin: 0 0 8px; font-size: 18px; border: 0; padding: 0; color: #fff; }
+  .card p { margin: 0; font-size: 14px; color: #a9a9b6; }
+  .card .meta { margin: 10px 0 0; font-size: 12px; }
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Article",
+      "headline": "AI 短剧每集只有两句对白？问题多半不在模型，在剧本的结构与计数",
+      "description": "一份写满对白的短剧剧本，导入后系统只数出两句。排查下来是三个静默丢句的解析细节，外加一处门槛单位错配。附可复用的分段可拍表结构与自查清单。",
+      "datePublished": "2026-08-06",
+      "dateModified": "2026-08-06",
+      "inLanguage": "zh-CN",
+      "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": "https://www.mvstudiopro.com/blog/manhua-dialogue-density-gate"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://www.mvstudiopro.com/pwa-icon-512.png"
+        }
+      },
+      "keywords": "AI短剧,短剧剧本,对白密度,分镜可拍表,Seedance,漫剧工作流,剧本结构化"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "首页",
+          "item": "https://www.mvstudiopro.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "文章",
+          "item": "https://www.mvstudiopro.com/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "AI 短剧每集只有两句对白？问题多半不在模型，在剧本的结构与计数",
+          "item": "https://www.mvstudiopro.com/blog/manhua-dialogue-density-gate"
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+<nav class="top"><a href="/">首页</a> › <a href="/blog/">文章</a></nav>
+<article>
+<h1>AI 短剧每集只有两句对白？问题多半不在模型，在剧本的结构与计数</h1>
+<p class="meta">2026-08-06 · 约 9 分钟</p>
+<blockquote>
+<p>2026-08-06 实录。所有代码位置、报错文本与前后数字都来自当天的真实排查，不是示意。</p>
+</blockquote>
+<p>有个反复出现的现象：剧本明明写得挺满，导进 AI 短剧工具里，系统却说「本集有效对白约 2 句，至少需要 21 句」，直接卡住不让往下走。</p>
+<p>第一反应通常是「门槛定得太苛刻」，或者「模型没读懂我的剧本」。我这两天把这件事从头查了一遍，<strong>两个猜测都不对</strong>。真实原因是四个互相独立的小问题叠在一起，其中三个会<strong>静默丢句</strong>——它们不报错，只是让你的对白在计数环节凭空消失。</p>
+<p>这篇把四个原因拆开写。如果你在做类似的剧本结构化流程，或者只是想知道自己的剧本该怎么写才不被卡，都能直接用。</p>
+<h2>一、最常见的原因：你导入的不是那份带对白的文件</h2>
+<p>先说一个听起来很蠢、但发生率极高的情况。</p>
+<p>我手上这套素材包里有<strong>两份剧本</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行数</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>writer_pack_ep01-06.md</code></td>
+<td>79</td>
+<td>每集四条剧情要点，<strong>零对白</strong>，没有场景表和道具表</td>
+</tr>
+<tr>
+<td><code>writer_pack_ep01-06_seedance25_4x30.md</code></td>
+<td>370</td>
+<td>六集 × 四段，每段九个字段，<strong>带完整对白</strong>，且只有这份带场景表与道具表</td>
+</tr>
+</tbody></table>
+<p>第一份是「大纲包」，第二份才是「可拍包」。它们文件名前缀一样，放在不同目录下，肉眼看上去都是「剧本」。</p>
+<p>导进去的是第一份，系统当然数不出对白——那份文件里本来就没有。</p>
+<p><strong>自查方式</strong>：打开你要导入的文件，搜 <code>对白</code> 两个字。搜不到，或者只在标题里出现，那就是拿错文件了。真正的可拍稿每一段都应该有一行 <code>- 对白：</code>。</p>
+<p>这条听起来不像技术问题，但它是发生率最高的一条，值得先排除。</p>
+<h2>二、说话人后面加了括号批注，那句话就消失了</h2>
+<p>这条最阴险，因为它<strong>只吃掉一部分句子</strong>，让你以为是自己写得不够多。</p>
+<p>短剧对白经常要标语气：</p>
+<pre><code>阿咎（气声）：「爹……？」
+谢明彰（对库吏）：「下一批。」
+库吏：「四十七箱。」
+远处车轴：「……」
+</code></pre>
+<p>这一段有四句台词。但系统只数出两句。</p>
+<p>原因在抓取说话人的正则里。它原本长这样：</p>
+<pre><code>/([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*「([^」]{1,80})」/g
+</code></pre>
+<p>说话人名字的字符类只允许汉字、中点和字母。而 <code>阿咎（气声）：</code> 里，冒号前面那个字符是 <code>）</code>——不在允许范围内，整句匹配失败。</p>
+<p><strong>真正致命的是下一步</strong>。抓完带说话人的句子之后，代码里有这么一行：</p>
+<pre><code>if (out.length) return out.slice(0, 8);
+</code></pre>
+<p>意思是：只要抓到过任何一句带说话人的台词，就立即返回，<strong>后面那段「无说话人时只抽引号句」的兜底逻辑永远不会执行</strong>。</p>
+<p>所以不是「带批注的句子漏了、然后被兜底捡回来」，而是<strong>带批注的句子被丢掉，且没有任何补救</strong>。上面那段四句台词里，两句带批注被丢，只剩两句进了计数，低于门槛，当场卡死。</p>
+<p>修法有两处，缺一不可：</p>
+<ol>
+<li>说话人正则容忍一段可选的括号批注，中英文括号都要认：<pre><code>/([\u4e00-\u9fff·A-Za-z]{2,12})(?:[（(][^）)]{0,16}[）)])?\s*[：:]\s*「([^」]{1,80})」/g
+</code></pre>
+</li>
+<li>去掉提前返回，改成「带说话人的结果」与「兜底结果」合并去重。</li>
+</ol>
+<p>第一处还有个容易做错的细节：<strong>批注不能进说话人的名字</strong>。这个函数的返回值后续要拿去锁定角色形象，如果名字变成「谢无咎（气声）」，跨段就对不上同一个角色了。所以括号那一段要用非捕获组，只做跳过、不进结果。</p>
+<h2>三、写「无」的字段，被当成没填</h2>
+<p>有些字段这一段确实用不上，习惯写个「无」：</p>
+<pre><code>- 服装道具：无
+</code></pre>
+<p>而字段解析里有个长度判断，要求取到的值至少 2 个字符才算有效。「无」只有 1 个字，返回空串，于是这一段被判定为「缺字段」，整段作废。</p>
+<p>阈值降到 1 就行。但要顺带想清楚语义分层：<code>无</code>／<code>暂无</code>／<code>/</code>／<code>—</code> 这类值应该算「字段存在且显式为空」，对非对白字段放行；对白字段不要在这里特殊放行，让它照常走引号句数那道门槛——毕竟一段没有任何台词，本来就该被拦下来。</p>
+<h2>四、门槛本身算错了：单位错配</h2>
+<p>前三条修完，还是卡。因为门槛这一侧也有问题，而且是个典型的单位错配。</p>
+<p>计算对白门槛的函数是这样推段数的：</p>
+<pre><code>const segs = Math.floor(targetSec / 15);       // 用固定 15 秒反推段数
+const gateSegs = Math.round(segs * 5 / 6);     // 留白比例
+minDlg = gateSegs * 3;                          // 每段 3 句
+</code></pre>
+<p>这套逻辑在「每段 15 秒」的年代是对的。但换成 4 段 × 30 秒 = 120 秒的成片结构之后：</p>
+<ul>
+<li>门槛按 <code>120 / 15 = 8</code> 段算，得出 <code>round(8 × 5/6) = 7</code>，再 × 3 句 = <strong>21 句</strong></li>
+<li>而实际结构只有 <strong>4 段</strong>，每段写 4 句是正常密度，全集 16 句</li>
+</ul>
+<p><strong>集级门槛按 15 秒段算，段级可拍表按 30 秒段算，两套单位打架。</strong> 一份结构完全正确的 4×30 剧本，天然到不了 21 句。</p>
+<p>修的时候有个反直觉的地方，写在这里省得别人踩：</p>
+<p><strong>正文字数门槛不能跟着段数一起改。</strong> 120 秒的集比 90 秒的集更长，字数要求只能更高不能更低。如果把「按真实段数算」这个改法同时套到字数上，4 段算出来的字数门槛会比 6 段的短档还松，等于门槛倒挂。</p>
+<p>所以正确做法是两个门槛用不同的基准：</p>
+<ul>
+<li><strong>字数门槛</strong>：继续按「每 15 秒一个内容单元」从总秒数反推，跟时长走</li>
+<li><strong>对白门槛</strong>：用真实段数 × 真实段长对应的句数，跟结构走</li>
+</ul>
+<p>顺带一提，每段句数也不该是固定的 3 句。15 秒段 3 句合理，30 秒段还是 3 句就明显撑不满——这正是很多人抱怨「AI 短剧看着人物在发呆」的来源之一。我们的取法是 15 秒段 3 句、30 秒及以上 4 句。</p>
+<p>四条修完，同一份文件跑出来的结果是每集 22／23／24／21／21／21 句，六集全部放行。<strong>剧本一个字没改。</strong></p>
+<h2>一份能过门禁的分段可拍表长什么样</h2>
+<p>顺便把结构贴出来。每段九个字段，缺一个就该被拦：</p>
+<pre><code class="language-markdown">#### 段01
+- 意图：让观众感到血渗入残玉的异常，与现代秩序被瞬间撕开
+- 对白：修复馆夜班：「别碰那裂缝。」谢无咎：「玉纹在吃血……」远处喊：「阿咎你死了？马都没饮！」谢无咎（气声）：「谁在叫我？」
+- 表演：谢无咎眉心紧锁，指尖沿玉纹一颤；灯灭时瞳孔骤缩，肩膀猛地一沉，像坠进水里。
+- 场景：现代古籍修复馆（夜）
+- 配色风格：冷白日光灯主色，玉面青白一点血锈
+- 角色：谢无咎
+- 服装道具：白大褂；残玉（双扣形，缺三分）；锥子；修复灯
+- 光影运镜：微距固定拍血珠入缝；灯灭过曝切黑，留约三秒死静，再硬切马厩草堆仰角手持坐起。
+- 段内白描：1)血珠入缝特写 2)灯灭死静 3)草堆坐起眩晕跟拍 4)摸玉无缺口拉开见马厩
+</code></pre>
+<p>几个写法上的经验：</p>
+<p><strong>「意图」写观众的感受，不写剧情。</strong> 写「阿咎穿越到了雁门」没用，那是剧情；写「让观众感到血渗入残玉的异常」才是导戏锚点，模型知道该往哪个方向使劲。</p>
+<p><strong>「表演」必须含具体的身体或面部动作。</strong> 「他很生气」拍不出来，「眉心紧锁，指尖沿玉纹一颤」才拍得出来。判定表演是否可拍，我们用的办法是查一张动作词表（眼、眉、指、肩、颤、缩、蹲、攥这一类），配合最短长度。纯抽象的心理描写会被拦下——这道拦截有真实价值，别为了让剧本通过就把它拆掉。</p>
+<p><strong>对白按段分配，不要堆在一起。</strong> 30 秒段写 4 句，节奏大致是每 7 秒一句，中间留表演。全集台词写够了但集中在一两段，其余段落照样是空的。</p>
+<p><strong>表演里避免只写形容词。</strong> 「愤怒地」「悲伤地」这种副词对成片没有任何约束力，模型看到的仍然是一片空白。</p>
+<h2>如果你在做类似的解析流程</h2>
+<p>四条通用的经验：</p>
+<p><strong>一、静默丢弃是最贵的 bug。</strong> 上面三个解析问题都不报错，只是让数据凭空少一点。用户看到的是「门槛太严」，实际是「你的输入被吃掉了」。凡是「过滤」「跳过」「提前返回」的分支，都值得加一条计数或日志，让丢弃这件事可见。</p>
+<p><strong>二、提前返回要特别小心。</strong> <code>if (out.length) return</code> 这一行读起来像个无害的性能优化，实际是把兜底路径整条禁用了。有兜底逻辑的地方，优先合并去重，而不是二选一。</p>
+<p><strong>三、门槛和结构必须共用同一个单位。</strong> 一边按「总秒数 ÷ 固定段长」推，一边按真实段数推，迟早对不上。改的时候要逐个确认每个门槛该跟时长走还是跟结构走——它们的答案可能不一样，像上面字数和对白就是相反的。</p>
+<p><strong>四、改门槛算法时，先把旧阈值写成回归测试。</strong> 我们那个函数的注释里明确写着「180 秒档必须精确落回 280 字 / 30 句」，这是前人踩坑后留下的护栏。改算法很容易在满足新场景的同时把旧场景打破，而这种破坏往往几周后才会被发现。</p>
+<hr>
+<p><em>排查过程与代码位置均为 2026-08-06 当日实录。具体行号会随版本变动，判断方法可复用。</em></p>
+
+</article>
+<footer>
+  <a href="/">MV Studio Pro 首页</a>
+  <a href="/blog/">全部文章</a>
+  <a href="/pricing">定价</a>
+</footer>
+</div>
+</body>
+</html>

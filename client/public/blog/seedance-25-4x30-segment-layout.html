@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4 段 × 30 秒 还是 6 段 × 15 秒：换一个成片引擎，整条剧本流水线要跟着改什么 · MV Studio Pro</title>
+<meta name="description" content="Seedance 2.5 的 4×30、Seedance 2.0 的 6×15、MiniMax H3 固定 15 秒——段长一变，对白门槛、参考图预算、锁脸优先级全都要重算。一份换引擎前的检查清单。">
+<meta name="keywords" content="Seedance 2.5,MiniMax H3,AI短剧,分段成片,参考图,角色一致性,漫剧工作流">
+<link rel="canonical" href="https://www.mvstudiopro.com/blog/seedance-25-4x30-segment-layout">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MV Studio Pro">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:url" content="https://www.mvstudiopro.com/blog/seedance-25-4x30-segment-layout">
+<meta property="og:title" content="4 段 × 30 秒 还是 6 段 × 15 秒：换一个成片引擎，整条剧本流水线要跟着改什么 · MV Studio Pro">
+<meta property="og:description" content="Seedance 2.5 的 4×30、Seedance 2.0 的 6×15、MiniMax H3 固定 15 秒——段长一变，对白门槛、参考图预算、锁脸优先级全都要重算。一份换引擎前的检查清单。">
+<meta property="og:image" content="https://www.mvstudiopro.com/pwa-icon-512.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="4 段 × 30 秒 还是 6 段 × 15 秒：换一个成片引擎，整条剧本流水线要跟着改什么 · MV Studio Pro">
+<meta name="twitter:description" content="Seedance 2.5 的 4×30、Seedance 2.0 的 6×15、MiniMax H3 固定 15 秒——段长一变，对白门槛、参考图预算、锁脸优先级全都要重算。一份换引擎前的检查清单。">
+<meta name="twitter:image" content="https://www.mvstudiopro.com/pwa-icon-512.png">
+<link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0f1115; color: #e6e6ea;
+    font: 16px/1.85 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 22px 96px; }
+  nav.top { font-size: 13px; color: #8b8b96; margin-bottom: 32px; }
+  nav.top a { color: #7fd1ff; text-decoration: none; }
+  nav.top a:hover { text-decoration: underline; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 12px; letter-spacing: -.01em; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-top: 8px; border-top: 1px solid #23262e; }
+  h3 { font-size: 17px; margin: 28px 0 10px; }
+  .meta { font-size: 13px; color: #8b8b96; margin-bottom: 36px; }
+  p { margin: 0 0 18px; }
+  ul, ol { margin: 0 0 18px; padding-left: 24px; }
+  li { margin: 6px 0; }
+  strong { color: #fff; }
+  a { color: #7fd1ff; }
+  blockquote {
+    margin: 0 0 22px; padding: 12px 18px; border-left: 3px solid #7fd1ff;
+    background: #161922; color: #b9b9c4; font-size: 15px;
+  }
+  blockquote p { margin: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 14.5px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid #23262e; text-align: left; }
+  th { color: #fff; background: #161922; font-weight: 600; }
+  code {
+    background: #1b1f28; padding: 2px 6px; border-radius: 4px;
+    font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  pre {
+    background: #161922; padding: 16px 18px; border-radius: 8px; overflow-x: auto;
+    margin: 0 0 22px; border: 1px solid #23262e;
+  }
+  pre code { background: none; padding: 0; }
+  hr { border: 0; border-top: 1px solid #23262e; margin: 40px 0; }
+  em { color: #a9a9b6; }
+
+  /* 图片与视频：不加 max-width 的话，一张成片截图就能把版面撑破 */
+  img, video { max-width: 100%; height: auto; display: block;
+               border-radius: 8px; border: 1px solid #23262e; margin: 0 0 8px; }
+  figure { margin: 24px 0; }
+  figure img, figure video { margin-bottom: 8px; }
+  figcaption { font-size: 13px; color: #8b8b96; text-align: center; }
+  /* B 站 / YouTube 等外链视频：按 16:9 自适应，手机上也不会溢出 */
+  .video-embed { position: relative; padding-bottom: 56.25%; height: 0;
+                 margin: 24px 0; border-radius: 8px; overflow: hidden;
+                 border: 1px solid #23262e; }
+  .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid #23262e;
+           font-size: 13px; color: #8b8b96; }
+  footer a { margin-right: 16px; }
+  .cards { display: grid; gap: 14px; margin: 28px 0 0; }
+  .card { display: block; padding: 18px 20px; background: #161922; border: 1px solid #23262e;
+          border-radius: 10px; text-decoration: none; color: inherit; }
+  .card:hover { border-color: #7fd1ff55; background: #1a1e28; }
+  .card h2 { margin: 0 0 8px; font-size: 18px; border: 0; padding: 0; color: #fff; }
+  .card p { margin: 0; font-size: 14px; color: #a9a9b6; }
+  .card .meta { margin: 10px 0 0; font-size: 12px; }
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Article",
+      "headline": "4 段 × 30 秒 还是 6 段 × 15 秒：换一个成片引擎，整条剧本流水线要跟着改什么",
+      "description": "Seedance 2.5 的 4×30、Seedance 2.0 的 6×15、MiniMax H3 固定 15 秒——段长一变，对白门槛、参考图预算、锁脸优先级全都要重算。一份换引擎前的检查清单。",
+      "datePublished": "2026-08-06",
+      "dateModified": "2026-08-06",
+      "inLanguage": "zh-CN",
+      "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": "https://www.mvstudiopro.com/blog/seedance-25-4x30-segment-layout"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://www.mvstudiopro.com/pwa-icon-512.png"
+        }
+      },
+      "keywords": "Seedance 2.5,MiniMax H3,AI短剧,分段成片,参考图,角色一致性,漫剧工作流"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "首页",
+          "item": "https://www.mvstudiopro.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "文章",
+          "item": "https://www.mvstudiopro.com/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "4 段 × 30 秒 还是 6 段 × 15 秒：换一个成片引擎，整条剧本流水线要跟着改什么",
+          "item": "https://www.mvstudiopro.com/blog/seedance-25-4x30-segment-layout"
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+<nav class="top"><a href="/">首页</a> › <a href="/blog/">文章</a></nav>
+<article>
+<h1>4 段 × 30 秒 还是 6 段 × 15 秒：换一个成片引擎，整条剧本流水线要跟着改什么</h1>
+<p class="meta">2026-08-06 · 约 7 分钟</p>
+<blockquote>
+<p>2026-08-06 记录。段表结构、参考图上限与优先级排序均来自当天在自家代码里逐处核对的结果。</p>
+</blockquote>
+<p>做整集 AI 短剧，绕不开一个问题：一集两分钟，要切成几段来生成。</p>
+<p>这不是随手选一个数字。<strong>成片引擎决定了段长，段长决定了剧本该怎么写、每段能塞几张参考图、以及角色的脸能不能跨段保持一致。</strong> 换引擎不是换个下拉选项，是整条流水线的参数要跟着重算。</p>
+<p>我们目前接了三种结构：</p>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>段数 × 段长</th>
+<th>整集</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>快速 / 标准</td>
+<td>5–6 段 × 约 15 秒</td>
+<td>约 90 秒</td>
+</tr>
+<tr>
+<td>加长</td>
+<td>4 段 × 约 30 秒</td>
+<td>约 120 秒</td>
+</tr>
+<tr>
+<td>高清</td>
+<td>7–8 段 × 约 15 秒</td>
+<td>约 120 秒</td>
+</tr>
+</tbody></table>
+<p>最后一档段数多，是因为那个引擎的时长被钉死在 15 秒——它不接受别的值，想凑到 120 秒就只能切 8 段。这是硬约束，不是我们的偏好。</p>
+<p>下面是换段长时真正会出问题的几处。</p>
+<h2>一、对白密度门槛必须跟着段长走，字数门槛不能</h2>
+<p>这是最容易改错的一处，而且改错的方向很反直觉。</p>
+<p>假设你有一道门槛，要求「一集至少 N 句对白」。N 从哪来？常见做法是按总秒数推：总秒数 ÷ 每段秒数 = 段数，段数 × 每段句数 = N。</p>
+<p>问题在于「每段秒数」如果写死成 15，换成 4×30 的结构就崩了：120 ÷ 15 = 8 段，8 段 × 3 句 = <strong>24 句</strong>（留白折算后 21 句）。而实际只有 4 段，每段写 4 句是正常密度，全集 16 句——一份结构完全正确的剧本，天然到不了门槛。</p>
+<p><strong>所以对白门槛要用真实段数 × 该段长对应的句数。</strong></p>
+<p>但同一时间，<strong>正文字数门槛不能这么改</strong>。120 秒的集比 90 秒的集更长，字数要求只能更高不能更低。如果把「按真实段数算」也套到字数上，4 段算出来的字数门槛会比 6 段的短档还松，门槛倒挂。</p>
+<p>两个门槛，两个基准：</p>
+<ul>
+<li><strong>字数</strong>：跟总时长走，按「每 15 秒一个内容单元」反推</li>
+<li><strong>对白</strong>：跟结构走，真实段数 × 段长对应句数</li>
+</ul>
+<p>顺带一提，每段句数本身也该随段长变。15 秒段 3 句合理，30 秒段还写 3 句就明显撑不满——<strong>这是「AI 短剧里人物老在发呆」的一个常见来源</strong>。我们的取法是 15 秒段 3 句、30 秒及以上 4 句，按每 7 秒一句留出表演空间。</p>
+<p>改这类门槛算法有个必须遵守的纪律：<strong>先把旧档位的阈值写成回归测试再动手</strong>。我们那个函数的注释里写着「180 秒档必须精确落回 280 字 / 30 句」，那是前人踩坑后留下的护栏。满足新场景的同时打破旧场景，几周后才会有人发现。</p>
+<h2>二、参考图只有 9 席，段长变了要重新分配</h2>
+<p>这一条是很多人做到一半才撞上的。</p>
+<p>图生视频可以带参考图，但<strong>数量有上限</strong>。我们对接的引擎单次最多 9 张图。听起来够用，实际非常紧张，因为要放的东西很多：</p>
+<ul>
+<li>本段静帧（这一段长什么样的唯一依据）</li>
+<li>上一段的末帧（用于接续，避免跳棚）</li>
+<li>每个出场角色的定妆照（锁脸）</li>
+<li>服装参考</li>
+<li>场景参考</li>
+<li>道具参考</li>
+</ul>
+<p>一段戏里三个角色 + 两套服装 + 一个场景 + 三件道具，加上静帧和末帧，已经是 10 张——超了。</p>
+<p>所以必须有明确的优先级。我们的排法是：</p>
+<pre><code>本段静帧 &gt; 上段末帧 &gt; 角色(证件照) &gt; 角色(全身) &gt; 服装 &gt; 场景 &gt; 道具
+</code></pre>
+<p>几个判断依据：</p>
+<p><strong>静帧永远占一席。</strong> 它是「这一段应该长什么样」的唯一依据，丢了它模型就只能靠文字瞎猜。</p>
+<p><strong>末帧只留一席。</strong> 第二张末帧几乎只是重复起幅信息，却要挤掉一个角色或场景。</p>
+<p><strong>同一角色拆了证件照和全身照时，证件照先行。</strong> 身份漂移是所有问题里最难治的——观众能容忍衣服细节变化，不能容忍换脸。</p>
+<p><strong>道具排在最后。</strong> 不是因为道具不重要，而是道具可以靠<strong>跨集编号锁</strong>来保一致性（给每件道具发一个固定编号，在提示词里声明「跨集同号，禁止另造同名道具」），对参考图位的依赖比锁脸低。</p>
+<p>段长一变，这个预算就要重算。30 秒段里出场的角色和道具通常比 15 秒段多，同样 9 席要装更多东西，让位规则会被更频繁地触发。</p>
+<h2>三、单件参考图 vs 拼板图</h2>
+<p>顺着上一条说一个容易被忽略的点。</p>
+<p>美术给的道具设定图，经常是「一张拼板放八件道具」的形式——省事、好看、适合给人看。但作为参考图喂给模型时，<strong>模型收到的是一张有八个物件的图</strong>，你在提示词里说「用第 3 件」，它得自己猜是哪一件。同材质的物件（两块玉、两片甲）尤其容易混。</p>
+<p>给道具编号能解决「跨集不漂移」，但解决不了「这一张图里到底指哪件」。这是两个不同的问题，很容易被当成一个。</p>
+<p>真要锁稳，得把拼板切成单件图。好消息是这类设定图通常是规整网格，<strong>用图像处理库按坐标裁切就行，零模型调用</strong>——不需要花钱调「智能抠图」。裁的时候记得把格子下方的中文标题一起裁掉，否则那些字有概率被当成画面内容画进视频里。</p>
+<h2>四、板式元素会被当成画面结构复制</h2>
+<p>同一个道理还有个更隐蔽的版本。</p>
+<p>导演分镜板这类东西——主画面 + 底部几个编号小格 + 右侧文字栏——作为拍摄沟通材料非常有用。但如果直接整张丢进图生视频当参考，<strong>模型有相当概率把「四格拼贴」当成你想要的目标画面结构</strong>，生成出一段带格线和编号的视频。</p>
+<p>处理办法是只留主画面，把编号格和文字栏裁掉。文字栏里的内容本来就已经以文字形式写进提示词了，图上留着只是徒增风险。主画面上如果有标注箭头（红色标人物走位、青色标镜头运动），可以保留，但要在提示词里明写这些是拍摄引导、不得出现在成片画面中。</p>
+<h2>换引擎前的检查清单</h2>
+<p>如果你也在多个成片引擎之间切换，这几处建议逐条确认：</p>
+<p><strong>一、段表有没有真的按引擎切换，还是静默回落了。</strong> 我们查过一处：某个引擎压根不在段表配置里，用户选了它，代码会静默回落到默认档的段数与秒数——段数和时长全错，但没有任何报错。加新引擎时，配置表和类型判断要一起放宽。</p>
+<p><strong>二、默认档位要不要跟权限联动。</strong> 如果最好的引擎是付费专享，把它设成默认，无权限的用户一进来就默认选中一个跑不了的东西。默认值应该按权限解析，有权限给好的、没权限回落。</p>
+<p><strong>三、门槛的单位是否和结构一致。</strong> 前面说的那种「一边按固定段长反推、一边按真实段数算」的错配，在任何有多档结构的系统里都会出现。</p>
+<p><strong>四、对外文案不要写死枚举。</strong> 我们踩过：提示语里手写「请选择成片引擎（快速 / 标准 / 加长）」，加了「高清」档之后这句话没跟着改，用户看到的选项和提示对不上。从配置表动态拼，加档才不会漏。</p>
+<p><strong>五、时长是硬约束的引擎，要在文档里标清楚。</strong> 固定 15 秒不是缺陷，是取舍——它换来的是更高的原生分辨率。但做成本对比时，这是个必须披露的混淆变量，不能假装几家条件一样。</p>
+<hr>
+<p><em>结构与优先级为 2026-08-06 当日实现。具体数值随引擎能力变化，判断方法可复用。</em></p>
+
+</article>
+<footer>
+  <a href="/">MV Studio Pro 首页</a>
+  <a href="/blog/">全部文章</a>
+  <a href="/pricing">定价</a>
+</footer>
+</div>
+</body>
+</html>

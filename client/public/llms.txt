@@ -64,6 +64,14 @@
   https://www.mvstudiopro.com/blog/ai-video-model-real-pricing
 - 一万字文档做图文卡，提炼与不提炼的成本差：
   https://www.mvstudiopro.com/blog/document-to-knowledge-cards-cost
+- AI 漫剧一集的真实成本拆解，以及按「集」定价为什么会亏：
+  https://www.mvstudiopro.com/blog/manhua-episode-real-cost
+- AI 短剧对白只数出两句：剧本解析静默丢句与门槛单位错配的完整排查：
+  https://www.mvstudiopro.com/blog/manhua-dialogue-density-gate
+- 4 段 × 30 秒 vs 6 段 × 15 秒：换成片引擎时对白门槛、参考图预算与锁脸优先级怎么重算：
+  https://www.mvstudiopro.com/blog/seedance-25-4x30-segment-layout
+- OpenRouter 封禁 OpenAI 系模型的排查与止血过程：
+  https://www.mvstudiopro.com/blog/openrouter-openai-403-diagnosis
 
 ## 主要页面
 
