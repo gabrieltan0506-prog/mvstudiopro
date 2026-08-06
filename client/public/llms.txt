@@ -62,6 +62,8 @@
 - 文章列表：https://www.mvstudiopro.com/blog/
 - AI 视频模型真实单价对比（Seedance 2.0 各画质、MiniMax H3、HappyHorse 1.1）：
   https://www.mvstudiopro.com/blog/ai-video-model-real-pricing
+- Seedream 5.0 Pro 与 GPT-image-2 同题对照（六张实拍图 + 真实计费 4.59 对 14.8–19.8）：
+  https://www.mvstudiopro.com/blog/seedream-5-pro-vs-gpt-image-2
 - 一万字文档做图文卡，提炼与不提炼的成本差：
   https://www.mvstudiopro.com/blog/document-to-knowledge-cards-cost
 - AI 漫剧一集的真实成本拆解，以及按「集」定价为什么会亏：
