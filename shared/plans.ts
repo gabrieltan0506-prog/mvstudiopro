@@ -624,10 +624,14 @@ export function imageUpscaleCreditRangeHint(
   return { min: Math.min(...bases) * mult, max: Math.max(...bases) * mult };
 }
 
-/** 试用包标价与到账积分（积分数由内部规则从标价推导，前台不展示单价换算） */
-export const TRIAL_PACK_199_PRICE_CNY = 19.9 as const;
-const TRIAL_PACK_199_CREDITS_DIVISOR = 0.6 as const;
-export const TRIAL_PACK_199_CREDITS = Math.floor(TRIAL_PACK_199_PRICE_CNY / TRIAL_PACK_199_CREDITS_DIVISOR);
+/**
+ * 体验包标价与到账积分（前台不展示单价换算）。
+ *
+ * 常量名里的 199 是最早 ¥19.9 那版留下的，改名会牵动数据库里
+ * `trial199_*` 的 packageType 与历史订单，所以名字保留、值跟着现价走。
+ */
+export const TRIAL_PACK_199_PRICE_CNY = 39 as const;
+export const TRIAL_PACK_199_CREDITS = 60 as const;
 
 /** 静态收款「¥19.9 试用包」每人最多可购买次数（含待审核订单占用名额） */
 export const TRIAL_PACK_199_MAX_PURCHASES_PER_USER = 2 as const;
@@ -652,36 +656,22 @@ export const CREDIT_PACKS = {
     credits: TRIAL_PACK_199_CREDITS,
     price: TRIAL_PACK_199_PRICE_CNY,
     label: `${TRIAL_PACK_199_CREDITS} Credits Trial`,
-    labelCn: "¥19.9 试用包",
-    discount: `${TRIAL_PACK_199_CREDITS} Credits · 每人限 ${TRIAL_PACK_199_MAX_PURCHASES_PER_USER} 次`,
-  },
-  small: {
-    credits: 50,
-    price: 35,
-    label: "50 Credits",
-    labelCn: "50 Credits 入门包",
-    discount: "",
+    labelCn: "体验包",
+    discount: `约可完成 1 次完整分析 · 每人限 ${TRIAL_PACK_199_MAX_PURCHASES_PER_USER} 次`,
   },
   medium: {
-    credits: 100,
-    price: 68,
-    label: "100 Credits",
-    labelCn: "100 Credits 高端包",
-    discount: "省 2.9%",
+    credits: 350,
+    price: 219,
+    label: "350 Credits",
+    labelCn: "进阶包",
+    discount: "约可完成 7 次分析 · 省 4%",
   },
   large: {
-    credits: 250,
-    price: 168,
-    label: "250 Credits",
-    labelCn: "250 Credits 超值包",
-    discount: "省 4%",
-  },
-  mega: {
-    credits: 500,
-    price: 328,
-    label: "500 Credits",
-    labelCn: "500 Credits 专业包",
-    discount: "省 6.3%",
+    credits: 690,
+    price: 419,
+    label: "690 Credits",
+    labelCn: "专业包",
+    discount: "约可完成 14 次分析 · 省 7%",
   },
 } as const;
 
@@ -709,18 +699,20 @@ export type ProductPackageDisplayRow = {
   bullets: string[];
 };
 
-const CREDIT_PACK_ORDER = ["trial199", "small", "medium", "large", "mega"] as const;
+const CREDIT_PACK_ORDER = ["trial199", "medium", "large"] as const;
 
 export function getProductPackageDisplayRows(): ProductPackageDisplayRow[] {
   return CREDIT_PACK_ORDER.map((id): ProductPackageDisplayRow => {
     const p = CREDIT_PACKS[id];
-    const price = p.price;
+    const price: number = p.price;
+    const credits: number = p.credits;
+    const discount: string = p.discount;
     return {
       category: "积分加值包",
       name: p.labelCn,
-      credits: p.credits,
-      priceCny: typeof price === "number" ? price : Number(price),
-      summary: p.discount || `${p.credits} Credits`,
+      credits,
+      priceCny: price,
+      summary: discount || `${credits} Credits`,
       bullets: [],
     };
   });

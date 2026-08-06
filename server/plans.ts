@@ -11,6 +11,8 @@
  * - Credits 不足时自动降级到 Forge AI（有水印）
  */
 
+import { TRIAL_PACK_199_MAX_PURCHASES_PER_USER } from "../shared/plans.js";
+
 export type PlanType = "free" | "pro" | "enterprise";
 
 export interface PlanConfig {
@@ -446,41 +448,27 @@ export const SINGLE_PURCHASE = {
  * Credits 加值包
  */
 export const CREDIT_PACKS = {
-  /** ¥39 体验包：60 cr，约可完成 1 次完整分析，每人限 1 次 */
+  /** ¥39 体验包：60 cr，约可完成 1 次完整分析 */
   trial199: {
     credits: 60,
     price: 39,
     label: "60 Credits Trial",
     labelCn: "体验包",
-    discount: "约可完成 1 次完整分析 · 每人限 1 次",
-  },
-  small: {
-    credits: 160,
-    price: 99,
-    label: "160 Credits",
-    labelCn: "基础包",
-    discount: "约可完成 3 次完整分析",
+    discount: `约可完成 1 次完整分析 · 每人限 ${TRIAL_PACK_199_MAX_PURCHASES_PER_USER} 次`,
   },
   medium: {
-    credits: 360,
-    price: 218,
-    label: "360 Credits",
+    credits: 350,
+    price: 219,
+    label: "350 Credits",
     labelCn: "进阶包",
-    discount: "约可完成 7 次分析 · 省 6.8%",
+    discount: "约可完成 7 次分析 · 省 4%",
   },
   large: {
-    credits: 700,
-    price: 418,
-    label: "700 Credits",
+    credits: 690,
+    price: 419,
+    label: "690 Credits",
     labelCn: "专业包",
-    discount: "约可完成 14 次分析 · 省 8.2%",
-  },
-  mega: {
-    credits: 1500,
-    price: 868,
-    label: "1500 Credits",
-    labelCn: "旗舰包",
-    discount: "约可完成 30 次分析 · 省 11%",
+    discount: "约可完成 14 次分析 · 省 7%",
   },
 } as const;
 
