@@ -140,6 +140,12 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 **规则瘦身与七月归档（省每轮固定开销）**：12 个 `alwaysApply` 规则合并成 3 个——`collab-always`（开场必读 / 用户明文优先 / 设计选择题先问 / 冲突裁决）、`ship-always`（本地验证 / Git 与 PR 门禁 / 部署真值）、`product-guardrails-always`（前台零技术泄漏 / UI 分类与悬浮区 / 探针档 / 小云雀积分保护）。321 行 → 111 行，硬约束一条没删，去掉的是四处重复的「用户明文优先」和两处重复的部署门禁。规则每轮都进上下文，这是每次都付的钱。同理把七月记录挪去 `PROGRESS-2026H1-archive.md`，本文件只留 8 月起。
 
+**Seedance 2.5 前后端闸门统一（`feat/canvas-seedance25-gate-fix`）**：`FreeformCanvas.tsx` 此前只判 `canAccessSeedance25ByPlan(userPlan)`，未判到点/角色，导致未到点 pro 能选中「成片·加长」但服务端 403；反过来未到点 supervisor 若 plan=free 会被前端错误藏掉选项（服务端其实放行）。改成四处统一读同一个 `resolveCanvasSeedance25Gate`（新 `client/src/lib/canvasSeedanceGate.ts`，包一层 `shared/seedance25Access.ts` 的 `resolveSeedance25Access`）：能力判定本身、下拉过滤、草稿降档 effect、切换二次拦截。`now` 靠组件内 60s 定时器刷新，不算模块级常量，避免页面挂着跨过 8/8 仍读旧结果；角色靠新接的 `useAuth()`。
+
+- **顺带修的同类漏洞（`client/src/lib/canvasRunBlock.ts` + `OmniCanvas.tsx`）**：漫剧工厂批量段成片路径（`runManhuaDramaFactoryPipeline` → `canvasDramaStudio.ts` → `runCanvasBlock`）此前 `deps.userPlan`/`userRole` 从未被 `OmniCanvas.tsx` 的 `runDeps` 传过，意味着即使编剧室开场选了「加长」引擎，真正跑 clip 时也会被 `canAccessSeedance25ByPlan(undefined)` 恒判 false 挡掉——**任何用户走工厂主线都用不了 2.5**，比 FreeformCanvas 那个「能选但 403」更严重。已补 `userPlan`/`userRole` 透传并把校验点也换成 `resolveSeedance25Access`。
+- P1 顺手清两处死代码：`omniCanvasApi.ts` 的 `runSeedance25Video()`（7 月占位空壳，无调用方，真实路径早已是 `canvasRunBlock.ts` 的 `op=seedance25`）；`canvasCredits.ts` 的 `canvasImageBatchTotalCredits()`/`canvasVisionTotalCredits()`（定价收口前的旧第二套价格，无调用方，真实扣费在 `shared/canvasGenerationPricing.ts` + `server/jobs/runner.ts`），保留 `CANVAS_IMAGE_BATCH_OPTIONS`。
+- 新增 `client/src/lib/canvasSeedanceGate.test.ts` 覆盖四种组合（未到点+pro / 未到点+supervisor / 到点+pro / 到点+free）+ 选项过滤 + 降档函数。
+
 ---
 
 ## 如何更新本文件

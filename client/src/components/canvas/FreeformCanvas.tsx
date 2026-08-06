@@ -19,7 +19,6 @@ import {
   resolveNearestUpstreamImageUrl,
   SPAWN_KIND_OPTIONS,
   TEXT_MODEL_OPTIONS,
-  VIDEO_MODEL_OPTIONS,
   isCanvasSeedance25VideoModel,
   type CanvasBlock,
   type CanvasBlockKind,
@@ -27,10 +26,12 @@ import {
   type CanvasImageBatchCount,
   type CanvasUploadedAsset,
 } from "@/lib/canvasTypes";
+import { SEEDANCE_25_PAID_ONLY_LABEL_ZH } from "@shared/seedance25Access";
 import {
-  canAccessSeedance25ByPlan,
-  SEEDANCE_25_PAID_ONLY_LABEL_ZH,
-} from "@shared/seedance25Access";
+  downgradeUnauthorizedSeedance25Blocks,
+  filterCanvasVideoModelOptions,
+  resolveCanvasSeedance25Gate,
+} from "@/lib/canvasSeedanceGate";
 import {
   canUsePaidVideoByPlan,
   PAID_VIDEO_MEMBER_ONLY_LABEL_ZH,
@@ -38,6 +39,7 @@ import {
 import {
   CANVAS_IMAGE_BATCH_OPTIONS,
 } from "@/lib/canvasCredits";
+import { useAuth } from "@/_core/hooks/useAuth";
 import {
   CANVAS_VIDEO_RESOLUTIONS,
   canvasVideoClipCredits,
@@ -607,37 +609,46 @@ export default function FreeformCanvas({
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const subQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
   const userPlan = (subQuery.data?.plan || "free") as string;
-  const canUseSeedance25 = canAccessSeedance25ByPlan(userPlan);
+  const { user: authUser, loading: authLoading } = useAuth();
+  const userRole = (authUser as { role?: string } | null)?.role ?? null;
+  /**
+   * 与服务端 `assertSeedance25PaidAccess` 同一套 `resolveSeedance25Access`（到点 + 会员 + 内部
+   * 角色一起判），避免前端只判 plan 导致「能选但 403」。`nowMs` 每分钟刷新一次，避免页面挂着
+   * 跨过 8/8 上线时刻却因组件不重渲染而一直读到旧结果（不能算模块级常量或只 mount 时算一次）。
+   */
+  const [seedance25NowMs, setSeedance25NowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setSeedance25NowMs(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  const seedance25Gate = useMemo(
+    () => resolveCanvasSeedance25Gate({ plan: userPlan, role: userRole, now: seedance25NowMs }),
+    [userPlan, userRole, seedance25NowMs],
+  );
+  const canUseSeedance25 = seedance25Gate.allowed;
+  /** plan/role 还没回来时先按无权限渲染，避免虚假放开；两者都到齐后闸门才是最终结果 */
+  const seedance25AccessSettled = !subQuery.isLoading && !authLoading;
   /** 成片一律限正式会员（服务端同口径）；订阅信息还没回来时不提前泼冷水 */
   const canUsePaidVideo = subQuery.isLoading || canUsePaidVideoByPlan(userPlan);
   const videoModelOptions = useMemo(
-    () =>
-      canUseSeedance25
-        ? VIDEO_MODEL_OPTIONS
-        : VIDEO_MODEL_OPTIONS.filter((m) => m.id !== "seedance-2.5"),
+    () => filterCanvasVideoModelOptions(canUseSeedance25),
     [canUseSeedance25],
   );
   const runDepsWithPlan = useMemo(
-    () => ({ ...runDeps, userPlan }),
-    [runDeps, userPlan],
+    () => ({ ...runDeps, userPlan, userRole }),
+    [runDeps, userPlan, userRole],
   );
   const focusMissSinceRef = useRef<number | null>(null);
   const viewScaleRef = useRef(1);
   viewScaleRef.current = viewScale;
 
-  /** 邀请码/免费用户草稿里若残留加长档，降回快速 */
+  /** 无权限（未到点/非会员/邀请码用户）草稿里若残留加长档，降回快速 */
   useEffect(() => {
-    if (canUseSeedance25 || subQuery.isLoading) return;
-    const has25 = blocks.some((b) => isCanvasSeedance25VideoModel(b.videoModel));
-    if (!has25) return;
-    onBlocksChange((prev) =>
-      prev.map((b) =>
-        isCanvasSeedance25VideoModel(b.videoModel)
-          ? { ...b, videoModel: "seedance-2.0-fast" }
-          : b,
-      ),
-    );
-  }, [blocks, canUseSeedance25, onBlocksChange, subQuery.isLoading]);
+    if (!seedance25AccessSettled) return;
+    const next = downgradeUnauthorizedSeedance25Blocks(blocks, canUseSeedance25);
+    if (!next) return;
+    onBlocksChange(next);
+  }, [blocks, canUseSeedance25, onBlocksChange, seedance25AccessSettled]);
 
   const mediaOnly = presentation === "media";
   const spawnOptions = useMemo(() => {
@@ -1972,7 +1983,7 @@ export default function FreeformCanvas({
                               onChange={(e) => {
                                 const next = e.target.value as CanvasBlock["videoModel"];
                                 if (isCanvasSeedance25VideoModel(next) && !canUseSeedance25) {
-                                  toast.error(SEEDANCE_25_PAID_ONLY_LABEL_ZH);
+                                  toast.error(seedance25Gate.message || SEEDANCE_25_PAID_ONLY_LABEL_ZH);
                                   return;
                                 }
                                 patchOne(block.id, { videoModel: next });
