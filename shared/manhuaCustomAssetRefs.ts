@@ -114,6 +114,17 @@ export const MANHUA_CUSTOM_ASSET_ROLE_LABEL_ZH: Record<ManhuaCustomAssetRoleOrUn
   unset: "未勾选",
 };
 
+/**
+ * 已有草稿可能存着老上传未分栏的图（role="unset"）；现在唯一的上传入口
+ * （`uploadCustomAssetFiles`）已强制先选分类，不会再产生新的未归类图。
+ * 打开草稿时数一遍，非零就提一句「请归类或删除」——不静默丢弃用户已上传的资产。
+ */
+export function countManhuaUnclassifiedCustomAssetRefs(
+  refs: Array<Pick<ManhuaCustomAssetRef, "role"> | null | undefined> | null | undefined,
+): number {
+  return (refs || []).filter((r) => r && r.role === "unset").length;
+}
+
 /** 从资产列表编译【参考职责】注入块（无职责则空串） */
 export function formatCustomAssetRefsDutyBlock(
   refs: Array<Pick<ManhuaCustomAssetRef, "refDuty" | "labelZh" | "role"> | null | undefined>,

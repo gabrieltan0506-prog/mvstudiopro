@@ -17,6 +17,7 @@ import {
 import { MANHUA_PROP_SHAPE_LOOKUP_MAX } from "@shared/manhuaPropShapeHint";
 import {
   buildManhuaCustomAssetGenFromLibraryPrompt,
+  countManhuaUnclassifiedCustomAssetRefs,
   defaultManhuaCustomAssetRefDuty,
   makeManhuaCustomAssetId,
   MANHUA_CUSTOM_ASSET_REFS_MAX,
@@ -694,6 +695,21 @@ export default function OmniCanvas() {
     return () => {
       cancelled = true;
     };
+  }, [customAssetRefs]);
+  /**
+   * 上传入口已统一（唯一入口 uploadCustomAssetFiles 强制先选分类），新上传
+   * 不会再产生 role="unset"；但老草稿可能存着历史未归类图，不能静默丢弃——
+   * 打开草稿时提一句，剩下的分类/删除仍走「待归类」栏位里的按钮。
+   */
+  const unclassifiedMigrationToastedRef = useRef(false);
+  useEffect(() => {
+    if (unclassifiedMigrationToastedRef.current) return;
+    const n = countManhuaUnclassifiedCustomAssetRefs(customAssetRefs);
+    if (n <= 0) return;
+    unclassifiedMigrationToastedRef.current = true;
+    toast.message(`有 ${n} 张未归类图，请归类或删除`, {
+      description: "在「我的资产」的「待归类」栏位里点人物/场景/服装/道具归类，或直接删除。",
+    });
   }, [customAssetRefs]);
   const [characterVoiceLocks, setCharacterVoiceLocks] = useState<ManhuaCharacterVoiceLock[]>(() =>
     normalizeManhuaCharacterVoiceLocks(initialWriterSession?.characterVoiceLocks),

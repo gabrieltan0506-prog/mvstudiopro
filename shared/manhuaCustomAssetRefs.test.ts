@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildManhuaCustomAssetGenFromLibraryPrompt,
+  countManhuaUnclassifiedCustomAssetRefs,
   hasCustomCastAndScene,
   inferManhuaCustomAssetRole,
   MANHUA_CUSTOM_ASSET_REFS_MAX,
@@ -197,6 +198,18 @@ describe("manhuaCustomAssetRefs", () => {
     expect(refs.filter((r) => r.role === "prop")).toHaveLength(6);
     // 最后挂上的道具没有被容量截掉
     expect(refs.map((r) => r.url)).toContain("https://cdn.example/prop-5.png");
+  });
+
+  it("counts unclassified refs for the migration prompt（有 N 张未归类图，请归类或删除）", () => {
+    expect(countManhuaUnclassifiedCustomAssetRefs(null)).toBe(0);
+    expect(
+      countManhuaUnclassifiedCustomAssetRefs([
+        { role: "character" },
+        { role: "unset" },
+        { role: "unset" },
+        null,
+      ]),
+    ).toBe(2);
   });
 
   it("第 49 条 normalize 截断，容量恒为 48", () => {

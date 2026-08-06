@@ -8696,6 +8696,67 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
       }),
 
+    /**
+     * 导演分镜板整版（主画面 + 底部编号格 + 右侧文字栏）只用于预览；裁后只剩
+     * 主画面的版本才能送进段成片当垫图。单区域裁一刀，sharp 纯数学裁切（零
+     * 出图成本），返回 gcsUri + 签名 url——草稿里只存前者，后者 7 天后会过期。
+     */
+    cropManhuaDirectorBoardMain: protectedProcedure
+      .input(z.object({ boardUrl: z.string().url() }))
+      .mutation(async ({ input }) => {
+        const { cropManhuaDirectorBoardMainFromUrl } = await import(
+          "./services/manhuaDirectorBoardSplit.js"
+        );
+        try {
+          return await cropManhuaDirectorBoardMainFromUrl({ boardUrl: input.boardUrl });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "SERVICE_UNAVAILABLE",
+            message: `导演板裁切暂时不可用：${msg.slice(0, 200)}`,
+          });
+        }
+      }),
+
+    /**
+     * 导演分镜板提示词：确定性拼装（段级九字段汇总成集级模板），零文本模型调用。
+     * 只拼提示词，不出图——出图入口在前端按「先定妆/服装道具/场景，最后才生成
+     * 导演板」的顺序，走多图参考调用 openaiGptImage2；本接口不碰出图 API。
+     */
+    buildManhuaDirectorBoardPrompt: protectedProcedure
+      .input(
+        z.object({
+          episodeNumber: z.number().int().min(1),
+          episodeTitleZh: z.string().max(200).default(""),
+          segments: z
+            .array(
+              z.object({
+                index: z.number().int().min(1),
+                intentZh: z.string().max(2000).default(""),
+                dialogueZh: z.string().max(4000).default(""),
+                performanceZh: z.string().max(2000).default(""),
+                sceneZh: z.string().max(500).default(""),
+                paletteZh: z.string().max(500).default(""),
+                castZh: z.string().max(500).default(""),
+                wardrobePropZh: z.string().max(1000).default(""),
+                lightingCameraZh: z.string().max(1000).default(""),
+              }),
+            )
+            .min(1)
+            .max(12),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const { buildManhuaDirectorBoardPromptZh } = await import(
+          "../shared/manhuaDirectorBoardPrompt.js"
+        );
+        return buildManhuaDirectorBoardPromptZh({
+          episodeNumber: input.episodeNumber,
+          episodeTitleZh: input.episodeTitleZh,
+          segments: input.segments,
+        });
+      }),
+
     optimizeCustomCopy: protectedProcedure
       .input(
         z.object({

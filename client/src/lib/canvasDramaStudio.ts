@@ -1652,6 +1652,11 @@ export function ensureManhuaFragmentClips(
     characterLookSets?: ManhuaCharacterLookSet[] | null;
     /** 段手选造型 e集:s段 → characterId → lookSetId */
     segmentLookBindings?: Record<string, Record<string, string>> | null;
+    /**
+     * 集级导演分镜板（已裁成仅主画面）的可下载地址；同一集所有段共用同一张。
+     * 出图/裁切在别处完成，这里只接住现成 URL 参与预算与垫图声明。
+     */
+    directorBoardUrlByEpisode?: Record<number, string> | null;
   },
 ): {
   blocks: CanvasBlock[];
@@ -1669,6 +1674,7 @@ export function ensureManhuaFragmentClips(
       ? episodeIndex
       : getBlockEpisodeIndex(blocks.find((b) => b.id.startsWith("reverse-")) || blocks[0]!) ?? 1;
   const sameEpisode = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === ep;
+  const directorBoardUrl = String(opts?.directorBoardUrlByEpisode?.[ep] || "").trim();
   const shots = resolveShotsForEpisodeKeyarts(blocks, ep);
   const segments = groupShotsIntoSegments(
     shots.length
@@ -2013,6 +2019,7 @@ export function ensureManhuaFragmentClips(
         stillUrls: segUrls,
         stillSlotsZh,
         mentionedTags: mentioned,
+        boardUrl: directorBoardUrl || null,
       });
     })();
     /**
@@ -2020,7 +2027,7 @@ export function ensureManhuaFragmentClips(
      * 「@图片N锁定构图」剔掉——它们正是让人误以为"锁上了"的假锁。
      */
     const bindEntriesForOutput = segHasCastNoFaceLock
-      ? (bindPlan?.entries ?? []).filter((e) => e.kind === "asset")
+      ? (bindPlan?.entries ?? []).filter((e) => e.kind === "asset" || e.kind === "board")
       : (bindPlan?.entries ?? []);
     const bindLineZh = segHasCastNoFaceLock
       ? formatManhuaClipSeedanceBindLineFromEntries(bindEntriesForOutput).trim()
@@ -2038,13 +2045,25 @@ export function ensureManhuaFragmentClips(
      * 早先直接写 segUrls.length，出现过「本段静帧3张」但只绑了 1 张的自相矛盾。
      */
     const boundStillCount = bindEntriesForOutput.filter((e) => e.kind === "still").length;
+    /**
+     * 导演板一旦挤进预算（kind==="board"），把 URL + 红青箭头固定引导句压成
+     * 本行的附加短句——只能挂在【垫图】上：这是唯一确认能在 stripper 兜底路径
+     * （manhuaClipPromptSanitize.ts:143，[^\n]* 只吃一行）里存活的白名单块，
+     * 换行或另开新块名都会被整段吃掉或撞上 FORBIDDEN_SECTION_PREFIXES。
+     */
+    const boardBoundUrl = bindEntriesForOutput.find((e) => e.kind === "board")?.url || "";
+    // URL 放在本行最末尾（紧跟其后是块间换行）：stripManhuaAssetUrlsFromPrompt 的
+    // URL 正则遇 \s（含换行）即止，URL 放中间会把后面的中文引导句一并吃掉。
+    const boardAddonZh = boardBoundUrl
+      ? `｜导演板：红箭头=人物/道具动向，青箭头=镜头运镜，青虚线=竖屏安全框，均为拍摄引导，不得出现在成片画面｜${boardBoundUrl}`
+      : "";
     const padLockBlock = !segUrls.length
       ? "【垫图·缺失】禁止出片"
       : segHasCastNoFaceLock
-        ? `【垫图】本段静帧${segUrls.length}张（未锁定定妆前不作出片参考）`
+        ? `【垫图】本段静帧${segUrls.length}张（未锁定定妆前不作出片参考）${boardAddonZh}`
         : boundStillCount >= segUrls.length
-          ? `【垫图】本段静帧${segUrls.length}张（出片顺序：资产定妆/服装→本段静帧→上段末帧，按序绑@图片N）`
-          : `【垫图】本段静帧${segUrls.length}张，其中${boundStillCount}张按序绑@图片N（出片顺序：资产定妆/服装→本段静帧→上段末帧）`;
+          ? `【垫图】本段静帧${segUrls.length}张（出片顺序：资产定妆/服装→本段静帧→上段末帧，按序绑@图片N）${boardAddonZh}`
+          : `【垫图】本段静帧${segUrls.length}张，其中${boundStillCount}张按序绑@图片N（出片顺序：资产定妆/服装→本段静帧→上段末帧）${boardAddonZh}`;
     const segPrompt = stripManhuaAssetUrlsFromPrompt(
       stripManhuaClipForbiddenBoards(
         stripManhuaPromptSlop(

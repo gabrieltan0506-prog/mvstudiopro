@@ -353,6 +353,107 @@ describe("manhuaAssetLockRegistry", () => {
     expect(plan.entries.map((e) => e.imageIndex)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
+  /**
+   * 导演板优先级：本段静帧 > 上段末帧 > @角色(identity) > @角色(look) >
+   * @服装 > @场景 > 【导演板】 > @道具。板是加分项，不是基准项。
+   */
+  describe("director board reference budget", () => {
+    const board = "https://cdn.example/board-main.jpg";
+
+    it("预算充足时导演板进位，且排在 @道具 之前", () => {
+      const plan = planManhuaClipSeedanceImageBind({
+        assetRows: [
+          { tag: "@角色1", id: "c1", labelZh: "沈策", path: "https://cdn.example/c1.jpg" },
+          { tag: "@场景1", id: "s1", labelZh: "雁门关", path: "https://cdn.example/s1.jpg" },
+          { tag: "@道具1", id: "p1", labelZh: "令牌", path: "https://cdn.example/p1.jpg" },
+        ],
+        stillUrls: ["https://cdn.example/still.jpg"],
+        boardUrl: board,
+        maxImages: 9,
+      });
+      const boardIdx = plan.entries.findIndex((e) => e.kind === "board");
+      const propIdx = plan.entries.findIndex((e) => e.kind === "asset" && e.roleTag === "@道具1");
+      expect(boardIdx).toBeGreaterThanOrEqual(0);
+      expect(propIdx).toBeGreaterThanOrEqual(0);
+      expect(boardIdx).toBeLessThan(propIdx);
+      expect(plan.imageUrls).toContain(board);
+      expect(plan.bindLineZh).toContain("本集导演分镜板");
+    });
+
+    it("3 个角色 + 2 件带图道具时，预算紧张则道具让位、导演板进位", () => {
+      const plan = planManhuaClipSeedanceImageBind({
+        assetRows: [
+          { tag: "@角色1", id: "c1", labelZh: "沈策", path: "https://cdn.example/c1.jpg" },
+          { tag: "@角色2", id: "c2", labelZh: "韩廷玉", path: "https://cdn.example/c2.jpg" },
+          { tag: "@角色3", id: "c3", labelZh: "苏文谦", path: "https://cdn.example/c3.jpg" },
+          { tag: "@道具1", id: "p1", labelZh: "令牌", path: "https://cdn.example/p1.jpg" },
+          { tag: "@道具2", id: "p2", labelZh: "短刀", path: "https://cdn.example/p2.jpg" },
+        ],
+        stillUrls: ["https://cdn.example/still.jpg"],
+        boardUrl: board,
+        // 收紧预算：reserveStill=1，assetBudget=4，正好 3 角色 + 导演板占满，两件道具都进不去
+        maxImages: 5,
+      });
+      expect(plan.entries.some((e) => e.kind === "board")).toBe(true);
+      expect(plan.entries.filter((e) => e.kind === "asset" && e.roleTag?.startsWith("@道具"))).toHaveLength(
+        0,
+      );
+      expect(plan.entries.filter((e) => e.kind === "asset" && e.roleTag?.startsWith("@角色"))).toHaveLength(
+        3,
+      );
+    });
+
+    it("预算紧张时导演板让位、@场景 仍在", () => {
+      const plan = planManhuaClipSeedanceImageBind({
+        assetRows: [{ tag: "@场景1", id: "s1", labelZh: "雁门关", path: "https://cdn.example/s1.jpg" }],
+        stillUrls: ["https://cdn.example/still.jpg"],
+        boardUrl: board,
+        // assetBudget = max - takeTail(0) - reserveStill(1) = 1：只够场景，导演板让位
+        maxImages: 2,
+      });
+      expect(plan.entries.some((e) => e.kind === "asset" && e.roleTag === "@场景1")).toBe(true);
+      expect(plan.entries.some((e) => e.kind === "board")).toBe(false);
+    });
+
+    it("连 @场景 都进不去时不放板：板是加分项，不是基准项", () => {
+      const plan = planManhuaClipSeedanceImageBind({
+        assetRows: [{ tag: "@场景1", id: "s1", labelZh: "雁门关", path: "https://cdn.example/s1.jpg" }],
+        stillUrls: ["https://cdn.example/still.jpg"],
+        boardUrl: board,
+        // assetBudget = max - takeTail(0) - reserveStill(1) = 0
+        maxImages: 1,
+      });
+      expect(plan.entries.some((e) => e.kind === "asset" && e.roleTag === "@场景1")).toBe(false);
+      expect(plan.entries.some((e) => e.kind === "board")).toBe(false);
+    });
+
+    it("同一集所有段传同一张导演板 URL 属预期行为，不做跨段去重", () => {
+      const planA = planManhuaClipSeedanceImageBind({
+        assetRows: [],
+        stillUrls: ["https://cdn.example/still-a.jpg"],
+        boardUrl: board,
+        maxImages: 9,
+      });
+      const planB = planManhuaClipSeedanceImageBind({
+        assetRows: [],
+        stillUrls: ["https://cdn.example/still-b.jpg"],
+        boardUrl: board,
+        maxImages: 9,
+      });
+      expect(planA.imageUrls).toContain(board);
+      expect(planB.imageUrls).toContain(board);
+    });
+
+    it("无 boardUrl 时不影响既有行为", () => {
+      const plan = planManhuaClipSeedanceImageBind({
+        assetRows: [{ tag: "@角色1", id: "c1", labelZh: "沈策", path: "https://cdn.example/c1.jpg" }],
+        stillUrls: ["https://cdn.example/still.jpg"],
+        maxImages: 9,
+      });
+      expect(plan.entries.some((e) => e.kind === "board")).toBe(false);
+    });
+  });
+
   it("never soft-locks library order when cast names miss (no 马县丞 fake)", () => {
     const reg = buildManhuaAssetLockRegistry({
       customRefs: [

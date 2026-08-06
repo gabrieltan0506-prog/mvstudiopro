@@ -70,3 +70,37 @@ function clampRatio(v: number): number {
   if (!Number.isFinite(n)) return 0;
   return Math.min(0.9, Math.max(0, n));
 }
+
+/**
+ * 导演分镜板整版结构：中央主画面 + 底部三个编号小分镜 + 右侧深色文字栏。
+ * 送进段成片当垫图的只能是主画面——不裁会让模型把「四格拼贴 + 文字栏」
+ * 当成想要的画面结构，生成出带格线和编号的视频。
+ *
+ * 六张真实导演板（1672×941）实测校准：右侧信息栏起于宽度 78%（78–79% 是纯黑
+ * 分隔槽），底部编号格起于高度 72%。裁到 77.2% / 71.2% 处，人工验图确认干净，
+ * 无右栏文字残留、无底部编号格残留。
+ */
+export const DIRECTOR_BOARD_MAIN_BOX_WIDTH_RATIO = 0.772;
+export const DIRECTOR_BOARD_MAIN_BOX_HEIGHT_RATIO = 0.712;
+
+export type DirectorBoardMainBox = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+/** 导演分镜板整版 → 仅主画面的裁切框（单区域裁一刀，不是网格切多张）。 */
+export function computeDirectorBoardMainBox(
+  imageWidth: number,
+  imageHeight: number,
+): DirectorBoardMainBox {
+  const w = Math.max(1, Math.floor(Number(imageWidth) || 0));
+  const h = Math.max(1, Math.floor(Number(imageHeight) || 0));
+  return {
+    left: 0,
+    top: 0,
+    width: Math.max(1, Math.round(w * DIRECTOR_BOARD_MAIN_BOX_WIDTH_RATIO)),
+    height: Math.max(1, Math.round(h * DIRECTOR_BOARD_MAIN_BOX_HEIGHT_RATIO)),
+  };
+}
