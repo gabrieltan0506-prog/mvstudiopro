@@ -232,6 +232,9 @@ importers:
       nodemailer:
         specifier: ^8.0.1
         version: 8.0.1
+      opencc-js:
+        specifier: ^1.0.5
+        version: 1.0.5
       pdf-node:
         specifier: ^1.5.0
         version: 1.5.0
@@ -362,9 +365,6 @@ importers:
       esbuild:
         specifier: ^0.25.0
         version: 0.25.10
-      opencc-js:
-        specifier: ^1.0.5
-        version: 1.0.5
       postcss:
         specifier: ^8.4.47
         version: 8.5.6

@@ -272,10 +272,16 @@ import {
 } from "@shared/manhuaWriterRoom";
 import {
   hasManhuaSeedanceLayoutChoice,
+  isManhuaSeedanceLayoutVideoModel,
   MANHUA_SEEDANCE_LAYOUT_CHOICES,
+  resolveManhuaFactoryDefaultVideoModel,
   resolveManhuaSeedanceLayoutProfile,
   type ManhuaSeedanceLayoutVideoModel,
 } from "@shared/manhuaSeedanceLayout";
+import {
+  resolveSeedance25Access,
+  SEEDANCE_25_PAID_ONLY_LABEL_ZH,
+} from "@shared/seedance25Access";
 import {
   getManhuaViralTemplate,
   listApprovedManhuaViralTemplatesGrouped,
@@ -371,6 +377,15 @@ export default function OmniCanvas() {
   const subscriptionQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
   const userPlan = (subscriptionQuery.data?.plan || "free") as string;
   const userRole = user?.role ?? null;
+  const seedance25Gate = resolveSeedance25Access({ plan: userPlan, role: userRole });
+  const canUseSeedance25 = seedance25Gate.allowed;
+  const factoryDefaultVideoModel = resolveManhuaFactoryDefaultVideoModel({
+    plan: userPlan,
+    role: userRole,
+  });
+  const writerLayoutChoices = MANHUA_SEEDANCE_LAYOUT_CHOICES.filter(
+    (c) => c.videoModel !== "seedance-2.5" || canUseSeedance25,
+  );
   const [debugMode, setDebugMode] = useState(false);
   const [debugLog, setDebugLog] = useState<ManhuaFactoryDebugEntry[]>([]);
   const stageStartedAtRef = useRef<number | null>(null);
@@ -585,14 +600,26 @@ export default function OmniCanvas() {
   const [writerLengthTierId, setWriterLengthTierId] = useState<ManhuaEpisodeLengthTierId>(
     MANHUA_EPISODE_LENGTH_TIER_DEFAULT,
   );
-  /** 开场必选成片引擎：决定扩写段数与铺板 clip.videoModel；空=未选 */
+  /** 开场成片引擎：决定扩写段数与铺板 clip.videoModel；无会话时按权限预选默认档 */
   const [writerVideoModel, setWriterVideoModel] = useState<ManhuaSeedanceLayoutVideoModel | "">(
     () => {
       const v = String(initialWriterSession?.videoModel || "").trim();
-      if (v === "seedance-2.0-fast" || v === "seedance-2.0" || v === "seedance-2.5") return v;
+      if (isManhuaSeedanceLayoutVideoModel(v)) return v;
       return "";
     },
   );
+
+  // 订阅/角色到位后：无会话选型时预选权限许可的默认档；会话里若是无权限的 2.5 则降级
+  useEffect(() => {
+    if (subscriptionQuery.isLoading) return;
+    setWriterVideoModel((prev) => {
+      if (!prev) return factoryDefaultVideoModel;
+      if (prev === "seedance-2.5" && !canUseSeedance25) {
+        return factoryDefaultVideoModel;
+      }
+      return prev;
+    });
+  }, [subscriptionQuery.isLoading, factoryDefaultVideoModel, canUseSeedance25]);
   const writerLayoutProfile = resolveManhuaSeedanceLayoutProfile(
     writerVideoModel || undefined,
     writerLengthTierId,
@@ -615,6 +642,9 @@ export default function OmniCanvas() {
   const [writerConfirmed, setWriterConfirmed] = useState(
     () => Boolean(initialWriterSession?.writerConfirmed),
   );
+  // 一键清空面板：备份下载默认勾选，避免用户手滑清空却没留备份
+  const [showClearSeriesConfirm, setShowClearSeriesConfirm] = useState(false);
+  const [clearSeriesWithBackup, setClearSeriesWithBackup] = useState(true);
   const [writerFocusEpisode, setWriterFocusEpisode] = useState(() =>
     Math.max(1, Math.floor(Number(initialWriterSession?.focusEpisode) || 1)),
   );
@@ -1279,7 +1309,11 @@ export default function OmniCanvas() {
     {
       const v = String(session.videoModel || "").trim();
       setWriterVideoModel(
-        v === "seedance-2.0-fast" || v === "seedance-2.0" || v === "seedance-2.5" ? v : "",
+        isManhuaSeedanceLayoutVideoModel(v)
+          ? v === "seedance-2.5" && !canUseSeedance25
+            ? factoryDefaultVideoModel
+            : v
+          : factoryDefaultVideoModel,
       );
     }
     if (session.deliveryPackage) {
@@ -2914,6 +2948,74 @@ export default function OmniCanvas() {
     factorySceneId,
   ]);
 
+  /**
+   * 一键清空：跟「导入新剧本」共用同一段清空逻辑，但不依赖导入新文本触发——
+   * 用户单纯想清掉旧设定/残留占位符，不必先粘一份新剧本才能清空。
+   * 备份是否下载交给面板上的勾选框（默认勾选），不再用 window.confirm 两连问。
+   */
+  const clearCurrentSeriesProject = useCallback(async (withBackup: boolean) => {
+    const risk = inspectManhuaSeriesSwitchRisk({ writerPack, blocks, customAssetRefs });
+    if (!risk.needsBackup) {
+      toast.message("当前没有可清空的剧本或已出图资产");
+      setShowClearSeriesConfirm(false);
+      return;
+    }
+    if (withBackup) {
+      try {
+        const r = await downloadManhuaSeriesSwitchBackup({
+          writerPack,
+          topic: factoryTopic.trim() || undefined,
+          previousSeriesTitle: writerPack?.seriesTitle || undefined,
+          blocks,
+          customAssetRefs,
+          characterIds: selectedCharacterIds,
+          artStyleId: factoryArtStyleId,
+          sceneId: factorySceneId || undefined,
+          // 一键清空不是「换新剧」，没有 incoming 剧名要保护，跳过追问先前剧名
+          askPreviousTitle: false,
+        });
+        toast.success(`已备份并清空：${r.filename}`);
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? e.message : "备份失败，已中止清空");
+        return;
+      }
+    }
+    let cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges);
+    const seriesCleared = stripManhuaSeriesAssetsForNewProject(cleaned.blocks, cleaned.edges);
+    cleaned = {
+      ...cleaned,
+      blocks: seriesCleared.blocks,
+      edges: seriesCleared.edges,
+      removedCount: cleaned.removedCount + seriesCleared.removedCount,
+    };
+    if (abortRef.current) abortRef.current.abort();
+    setBlocks(cleaned.blocks);
+    setEdges(cleaned.edges);
+    saveCanvasState(cleaned.blocks, cleaned.edges);
+    setDockSelectedIds(new Set());
+    setWorkflowPhase("outline");
+    setWriterPack(null);
+    setWriterConfirmed(false);
+    setProjectBible(null);
+    setCustomAssetRefs([]);
+    setWriterFocusEpisode(1);
+    setWriterImportDraft("");
+    setWriterConfirmBlockers([]);
+    if (!withBackup) {
+      toast.success("旧专案已清空（未下载备份）");
+    }
+    setShowClearSeriesConfirm(false);
+  }, [
+    writerPack,
+    blocks,
+    edges,
+    customAssetRefs,
+    factoryTopic,
+    selectedCharacterIds,
+    factoryArtStyleId,
+    factorySceneId,
+  ]);
+
   const confirmWriterToDirector = useCallback(() => {
     if (!writerPack || !writerPackLooksReady(writerPack)) {
       toast.error("请先扩写或导入剧本，并检查剧情包是否完整");
@@ -2929,6 +3031,10 @@ export default function OmniCanvas() {
       locationsMd: writerPack.locationsMd,
       episodes: writerPack.episodes,
       targetSec: writerLayoutProfile.targetSec,
+      segmentCount: writerLayoutProfile.segmentCount,
+      durationSecPerSegment: writerLayoutProfile.durationSecPerSegment,
+      segmentMin: writerLayoutProfile.segmentMin,
+      segmentMax: writerLayoutProfile.segmentMax,
     });
     if (!densityGate.ok) {
       setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
@@ -3137,6 +3243,10 @@ export default function OmniCanvas() {
       locationsMd: writerPack.locationsMd,
       episodes: writerPack.episodes,
       targetSec: writerLayoutProfile.targetSec,
+      segmentCount: writerLayoutProfile.segmentCount,
+      durationSecPerSegment: writerLayoutProfile.durationSecPerSegment,
+      segmentMin: writerLayoutProfile.segmentMin,
+      segmentMax: writerLayoutProfile.segmentMax,
     });
     if (!densityGate.ok) {
       setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
@@ -6319,6 +6429,47 @@ export default function OmniCanvas() {
                 >
                   立即下载先前专案备份
                 </button>
+                <button
+                  type="button"
+                  disabled={writerBusy || factoryBusy}
+                  onClick={() => setShowClearSeriesConfirm((v) => !v)}
+                  className="mt-2 ml-1.5 inline-flex items-center rounded-lg border border-white/20 bg-white/[0.06] px-2.5 py-1.5 text-[11px] font-medium text-white/75 hover:bg-white/[0.1] disabled:opacity-50"
+                >
+                  一键清空当前专案
+                </button>
+                {showClearSeriesConfirm ? (
+                  <div className="mt-2 rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2.5">
+                    <p className="text-[10px] leading-relaxed text-red-50/85">
+                      将清空旧人物/场景/道具设定与工厂链，用来消掉残留的旧占位符或换一批全新设定。此操作不可撤销（除非先备份）。
+                    </p>
+                    <label className="mt-2 flex items-center gap-1.5 text-[11px] text-white/75">
+                      <input
+                        type="checkbox"
+                        checked={clearSeriesWithBackup}
+                        onChange={(e) => setClearSeriesWithBackup(e.target.checked)}
+                        className="h-3.5 w-3.5 accent-red-400"
+                      />
+                      清空前先下载备份（默认勾选，建议保留）
+                    </label>
+                    <div className="mt-2 flex gap-1.5">
+                      <button
+                        type="button"
+                        disabled={writerBusy || factoryBusy}
+                        onClick={() => void clearCurrentSeriesProject(clearSeriesWithBackup)}
+                        className="inline-flex items-center rounded-lg border border-red-300/40 bg-red-500/25 px-2.5 py-1.5 text-[11px] font-semibold text-red-50 hover:bg-red-500/35 disabled:opacity-50"
+                      >
+                        确认清空
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowClearSeriesConfirm(false)}
+                        className="inline-flex items-center rounded-lg border border-white/15 px-2.5 py-1.5 text-[11px] text-white/60 hover:bg-white/[0.06]"
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
               <div className="mt-3" data-manhua-seedance-layout>
                 <label className="block text-[11px] text-white/45">成片引擎（必选）</label>
@@ -6326,7 +6477,7 @@ export default function OmniCanvas() {
                   先选再扩写：决定一集几段、每段几秒，并写入后续铺板。
                 </p>
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  {MANHUA_SEEDANCE_LAYOUT_CHOICES.map((c) => {
+                  {writerLayoutChoices.map((c) => {
                     const on = writerVideoModel === c.videoModel;
                     return (
                       <button
@@ -6335,6 +6486,12 @@ export default function OmniCanvas() {
                         disabled={writerBusy || factoryBusy}
                         title={c.layoutHintZh}
                         onClick={() => {
+                          if (c.videoModel === "seedance-2.5" && !canUseSeedance25) {
+                            toast.error(
+                              seedance25Gate.message || SEEDANCE_25_PAID_ONLY_LABEL_ZH,
+                            );
+                            return;
+                          }
                           setWriterVideoModel(c.videoModel);
                           setWriterConfirmed(false);
                         }}

@@ -149,7 +149,14 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     viralTemplateId: String(input.viralTemplateId || "").trim().slice(0, 64),
     videoModel: (() => {
       const v = String(input.videoModel || "").trim();
-      if (v === "seedance-2.0-fast" || v === "seedance-2.0" || v === "seedance-2.5") return v;
+      if (
+        v === "seedance-2.0-fast" ||
+        v === "seedance-2.0" ||
+        v === "seedance-2.5" ||
+        v === "minimax-hailuo-3"
+      ) {
+        return v;
+      }
       return "";
     })(),
     stylePack: parseManhuaStylePack(input.stylePack) || null,

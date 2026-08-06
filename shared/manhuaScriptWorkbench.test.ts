@@ -80,12 +80,14 @@ describe("manhuaScriptWorkbench", () => {
       ),
     );
     // 有分镜表：按每段 3 镜切，不注水到默认 6 段；镜长缺省 5 → 段 15 + 10
+    // 显式传 2.0-fast：默认常量已切到 2.5，这条测的是快速档切段行为
     const segsFast = groupShotsIntoSegments(shots, {
-      videoModel: MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
+      videoModel: "seedance-2.0-fast",
     });
     expect(segsFast.length).toBe(2);
     expect(segsFast[0]?.durationSec).toBe(15);
     expect(segsFast[1]?.durationSec).toBe(10);
+    expect(MANHUA_FACTORY_DEFAULT_VIDEO_MODEL).toBe("seedance-2.5");
     expect(manhuaSegmentDurationSec("seedance-2.0-fast")).toBe(15);
     expect(manhuaSegmentDurationSec("gemini-omni-flash")).toBe(10);
     expect(workbenchShotTotalSec(shots, "seedance-2.0-fast")).toBe(25);

@@ -80,7 +80,7 @@ describe("canvasDramaStudio factory", () => {
     expect(blocks.some((b) => b.id.startsWith("omni_edit-"))).toBe(false);
     expect(blocks[0]!.prompt).toContain("星际车站离别");
     const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
-    expect(clip.videoModel).toBe("seedance-2.0-fast");
+    expect(clip.videoModel).toBe("seedance-2.5");
   });
 
   it("spawns with genre+scene injects scene asset into key art", () => {
@@ -347,7 +347,7 @@ describe("canvasDramaStudio factory", () => {
     );
     expect(clips.length).toBeGreaterThanOrEqual(1);
     expect(clips.every((c) => keyarts.some((k) => k.id === c.parentId))).toBe(true);
-    expect(clips[0]!.videoModel).toBe("seedance-2.0-fast");
+    expect(clips[0]!.videoModel).toBe("seedance-2.5");
     const orderedClip = resolveManhuaFactoryOrderedIds(expanded.blocks, "clip", 1);
     expect(orderedClip.filter((id) => id.startsWith("clip-")).length).toBeGreaterThanOrEqual(1);
     const frag1 = resolveManhuaFragmentRunTargets(expanded.blocks, 1, 1);
