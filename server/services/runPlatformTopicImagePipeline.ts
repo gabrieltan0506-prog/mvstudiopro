@@ -218,7 +218,7 @@ export async function runPlatformTopicImagePipeline(
     let strategistChinesePrompt: string | null = null;
     if (isPlatformCoverAgenticBrainEnabled()) {
       topicImageCondenseLog.push(
-        `${platformFlowLogTimestamp()}  [步骤0·企划大脑] PLATFORM_COVER_AGENTIC_BRAIN 开启 → Vertex 中文企划（失败则降级原链路）`,
+        `${platformFlowLogTimestamp()}  [步骤0·企划大脑] 开启（默认）→ 先出中文视觉企划，失败则降级原链路`,
       );
       try {
         const taskIn = buildCoverTaskInputFromPipeline({

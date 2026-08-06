@@ -70,6 +70,49 @@ export function platformTopicShortlistTierCredits(params: {
   return { count, perTopic, total: perTopic * count };
 }
 
+/**
+ * 免费试跑：让没充值的人先尝到味道，但**只生成看得见的那几条**。
+ *
+ * 用户 2026-08-06 的口径：头 3 次每次给 2 条明文，之后每天 1 次、每次只给 1 条，
+ * 其余位置打码。关键在「不生成」——打码的那些如果照跑，免费池就是纯亏；
+ * 打码位只是告诉用户还有多少条在后面，付费才真去跑。
+ */
+export const PLATFORM_TOPIC_SHORTLIST_FIRST_FREE = 3;
+export const PLATFORM_TOPIC_SHORTLIST_DAILY_FREE = 1;
+export const PLATFORM_TOPIC_SHORTLIST_FIRST_FREE_TOPICS = 2;
+export const PLATFORM_TOPIC_SHORTLIST_DAILY_FREE_TOPICS = 1;
+
+export type PlatformTopicShortlistQuota = {
+  usedEver: number;
+  usedToday: number;
+  /** 这一次能不能免费跑 */
+  nextFree: boolean;
+  /** 头 3 次里还剩几次 */
+  firstFreeLeft: number;
+  /** 免费这次真正生成几条（其余打码不生成） */
+  freeTopics: number;
+};
+
+export function resolvePlatformTopicShortlistQuota(params: {
+  usedEver: number;
+  usedToday: number;
+}): PlatformTopicShortlistQuota {
+  const usedEver = Math.max(0, Math.floor(Number(params.usedEver) || 0));
+  const usedToday = Math.max(0, Math.floor(Number(params.usedToday) || 0));
+  const firstFreeLeft = Math.max(0, PLATFORM_TOPIC_SHORTLIST_FIRST_FREE - usedEver);
+  const inFirstBatch = firstFreeLeft > 0;
+  const nextFree = inFirstBatch || usedToday < PLATFORM_TOPIC_SHORTLIST_DAILY_FREE;
+  return {
+    usedEver,
+    usedToday,
+    nextFree,
+    firstFreeLeft,
+    freeTopics: inFirstBatch
+      ? PLATFORM_TOPIC_SHORTLIST_FIRST_FREE_TOPICS
+      : PLATFORM_TOPIC_SHORTLIST_DAILY_FREE_TOPICS,
+  };
+}
+
 /** 基础价含默认 6 条；超出条数 × extraPerTopic */
 export function platformTopicShortlistTotalCredits(params: {
   count: number;

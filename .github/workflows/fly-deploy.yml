@@ -8,6 +8,16 @@ on:
   # 排队中被取消的 run 重跑不出 job（startup_failure），只能另起一次全新 run。
   # 部署此前只认 push，卡住时除了往 main 推空提交没有别的办法。
   workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: read
+
+# 后端部署与前台看门狗放在**同一个 workflow** 里当两个并行 job。
+#
+# 它们本来是两个 workflow，合一次 main 就冒出两条 run，看着像同一件事跑了两遍；
+# 用户 2026-08-06 因此误取消了 #1096 与 #1098 的 Fly Deploy——取消掉的恰恰是真正
+# 部署后端的那一条。合成一条后一次合并只有一条 run，点进去才分 deploy / frontend。
 jobs:
   deploy:
     name: Deploy app
@@ -109,3 +119,51 @@ jobs:
           else
             echo "Skipping monotonic verification because pre/post status snapshots are incomplete"
           fi
+
+  # 前台发版看门狗（原独立 workflow Frontend Deploy Check，2026-08-06 并进来）。
+  #
+  # 2026-08-05 23:44 一个构建命令写坏，Vercel 此后每一次构建都失败，www 停在旧版本
+  # 整整六小时——期间四张 PR 照常合进 main，Fly Deploy 全绿，没有任何一处报红，
+  # 直到用户发现导航名字没改、/blog 全 404、刚上线的上传改动根本没生效。
+  #
+  # 与 deploy 并行：www 走 Vercel、API 走 Fly，两条通道互不依赖，串起来只会白等。
+  frontend:
+    name: 前台发版检查（www）
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: 等 Vercel production 部署结果
+        id: deploy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          state=""
+          for i in $(seq 1 60); do
+            id=$(gh api "repos/$REPO/deployments?sha=$SHA&environment=Production&per_page=1" --jq '.[0].id // empty')
+            if [ -n "$id" ]; then
+              state=$(gh api "repos/$REPO/deployments/$id/statuses?per_page=1" --jq '.[0].state // empty')
+              echo "[$i] deployment=$id state=${state:-pending}"
+              case "$state" in success|failure|error) break ;; esac
+            else
+              echo "[$i] 等 Vercel 建 deployment…"
+            fi
+            sleep 20
+          done
+          if [ "$state" != "success" ]; then
+            echo "::error::www 前台部署未成功（state=${state:-timeout}）。合进 main 的前台改动不会上线，请查 Vercel 构建日志。"
+            exit 1
+          fi
+
+      - name: 核对正式域名能拿到关键页
+        run: |
+          set -uo pipefail
+          fail=0
+          for u in / /llms.txt /robots.txt /sitemap.xml /blog/; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://www.mvstudiopro.com$u")
+            echo "$u -> $code"
+            [ "$code" = "200" ] || { echo "::error::https://www.mvstudiopro.com$u 返回 $code"; fail=1; }
+          done
+          exit $fail

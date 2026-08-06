@@ -13,6 +13,10 @@ import {
 } from "../../shared/platformFashionEditorialCharacter.js";
 import { STORYBOARD_ON_IMAGE_TEXT_ZH } from "../../shared/storyboardTextClarity.js";
 import {
+  composePlatformCoverShellDirective,
+  pickPlatformCoverShell,
+} from "../../shared/platformCoverShellPicker.js";
+import {
   STORYBOARD_LIGHTING_EMOTION_GUIDANCE_ZH,
   STORYBOARD_PANEL_TABLE_FIELDS_ZH,
 } from "../../shared/storyboardLightingEmotion.js";
@@ -649,6 +653,15 @@ export function buildPlatformTopicCoverDirectChinesePrompt(input: {
     format: input.variant === "graphic" ? "图文" : "短视频",
   });
   const nativeBlock = nativeDirective ? `${nativeDirective}\n\n` : "";
+  /**
+   * 版式在这里就定死一套。
+   *
+   * 以前把 17 种壳 + 7 种手法 + 10 个色一起摆给模型让它挑，出来的封面千篇一律；
+   * 用主句当种子挑，同一条选题重出仍是同一套，不同选题之间才轮换。
+   */
+  const shellDirective = composePlatformCoverShellDirective(
+    pickPlatformCoverShell({ topicHook: hook, salt: input.variant }),
+  );
   const sublineRule = subline
     ? `- 副标固定为「${subline}」（≤18 字、一行），字号明显小于主句、不抢主句；禁止再另造第三条封面文案。`
     : `- 可有一行副标（≤18 字），总共可见文案 **≤2 行**；无副标亦可。`;
@@ -657,10 +670,10 @@ export function buildPlatformTopicCoverDirectChinesePrompt(input: {
 【停滑封面·高点击短钩】
 - 主标题用**简体中文**，**最多 13 字**（含标点；超则精简），大而清晰、印刷级，**必须且只能**呈现「${hook}」；主句气质要对齐反差/反常识/猎奇缺口（数字拧巴、结果颠倒、信息悬念），禁止正确但无聊的论文题；字勿挤成一团抢过人脸。
 ${sublineRule}
-- **提亮杀伤字（A1 配色池轮换）**：主句内仅 **2–6 个关键字**提亮；主字米白/象牙白；强调色从池中**择一**——暖黄块 / 品红侧栏 / 真相深红 / 吸睛绿 / 知识黑金 / 走心红 / 水蜜桃 / 玫瑰金 / 天蓝钴蓝 / 香槟琥珀（按壳气质选，同批勿锁死单色）；**忌**俗艳番茄大红墙、荧光粉绿贴纸堆。
+${shellDirective}
+- **忌**俗艳番茄大红墙、荧光粉绿贴纸堆。
 - **好奇/价值钉**：可用「先做N件事」「又挖到宝了」「刷到就是赚到」等开放环；弱钩（只有禁令无下文）须拧紧。
-- **版式·A1 过审壳**：主信息仍是「${hook}」；可选用侧栏夹字（侧栏字可轻压肩背、勿遮眼口）/ 真相竖排 / 黄底粗标 / 绿杀伤 / 黑金大数字 / 简约情绪条 / 类目大字+弱一档背景小字层 / 粉系双行紧排 / 竖排三段词+底部结果条 / 英文手写压中文错落大字 / 暖色细笔刷箭头+问句钉 / 斜杠夹字+手持实物 / 食物大图+白框手写感叹 / 数字件数好物墙 / 左右大字夹人+箭头注解 / 暖光四字+温柔副句 / 私人笔记刊头；忌塑料说明书墙与 CTA 墙。
-- **排版手法（每张挑 1–2 个，不叠满）**：斜杠夹字 \`\\短句/\`、主句下一行小号英文对照、桃/玫瑰金细笔刷箭头圈注、英文手写体压中文、角落画中画证据（≤1/4 画面）、顶部双层标签条（类目条+结果条）、私人笔记刊头小字（private notes · 年份）。**【禁】**荧光绿荧光笔贴纸、划线否定作业批改感、假杂志品牌刊头、黑金土豪财富墙、医美比例对比线。英文只作装饰不承担信息。
+- **版式禁令**：忌塑料说明书墙与 CTA 墙；**【禁】**荧光绿荧光笔贴纸、划线否定作业批改感、假杂志品牌刊头、黑金土豪财富墙、医美比例对比线。
 - **已剔除·禁止复现**：飞人跳伞类抽象摆拍、立体变形花字墙（字吃画面）、把答案逐条写满的剧透封面、主句字号过小、荧光粉绿撞色侧栏、划线否定作业批改感、黑金土豪财富墙、医美比例/前后对比线。
 - **禁止**百科封面：长段论述、履历堆砌、四条以上卖点清单、多图标+多辅标栏、说明书式信息图。
 - **禁止**默认暗沉、低照度、压抑严肃、葬礼感光影；须**生活化、年轻化、健康化、杂志级高级感**；优先便利店/餐厅/家装/哄娃等烟火气场域。

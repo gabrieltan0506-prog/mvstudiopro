@@ -13,11 +13,32 @@ export function countPlatformCoverHeadlineChars(raw: string): number {
   return Array.from(String(raw || "").trim().replace(/\s+/g, "")).length;
 }
 
-/** 超过 {@link PLATFORM_COVER_HEADLINE_MAX_CHARS} 则截断；生成侧应先改写精简，截断仅兜底。 */
+/** 断句点：在这些符号处收尾，剩下的仍是一句完整的话。 */
+const HEADLINE_BREAKS = new Set(["｜", "|", "，", ",", "。", "、", "；", ";", "：", ":", "！", "!", "？", "?"]);
+
+/**
+ * 超过 {@link PLATFORM_COVER_HEADLINE_MAX_CHARS} 则收短；生成侧应先改写精简，这里只是兜底。
+ *
+ * 旧版直接砍第 14 个字符起，`想吃瘦，别减主食｜先做三件事` 会变成
+ * `…先做三件`——「事」被砍掉，残句原样印在封面上，用户 2026-08-06 反馈
+ * 「连点开的欲望都没有」，这是原因之一。
+ *
+ * 现在优先在分隔符处断句：宁可短几个字，也不印半个词。
+ * 前半段太短（少于 5 字）就说明整句都很长，那时才退回硬砍。
+ */
+const HEADLINE_MIN_KEEP_CHARS = 5;
+
 export function clampPlatformCoverHeadline(raw: string): string {
   const chars = Array.from(String(raw || "").trim().replace(/\s+/g, ""));
   if (chars.length <= PLATFORM_COVER_HEADLINE_MAX_CHARS) return chars.join("");
-  return chars.slice(0, PLATFORM_COVER_HEADLINE_MAX_CHARS).join("");
+  const head = chars.slice(0, PLATFORM_COVER_HEADLINE_MAX_CHARS);
+  for (let i = head.length - 1; i >= HEADLINE_MIN_KEEP_CHARS; i -= 1) {
+    if (HEADLINE_BREAKS.has(head[i])) {
+      // 分隔符本身不留在句尾
+      return head.slice(0, i).join("");
+    }
+  }
+  return head.join("");
 }
 
 /**

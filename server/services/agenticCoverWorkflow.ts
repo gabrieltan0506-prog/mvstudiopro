@@ -2,7 +2,7 @@
  * 選題封面可選「企劃大腦」：**Vertex @google/genai · 預設 global** 輸出**中文**高階生圖企劃（JSON），
  * 再交 {@link runPlatformTopicImagePipeline}：**中文直送** → GPT-IMAGE-2 / Nano Banana。**不取代**長任務 Deep Research Interactions。
  *
- * 環境：`PLATFORM_COVER_AGENTIC_BRAIN=1|true` 啟用。
+ * 環境：預設啟用；`PLATFORM_COVER_AGENTIC_BRAIN=0` 可臨時關掉。
  * `PLATFORM_COVER_STRATEGIST_MODEL`（預設 `gemini-3-flash-preview`）、
  * `PLATFORM_COVER_STRATEGIST_LOCATION`（未設時沿用 {@link resolveVertexFlashTranslationLocation}）。
  */
@@ -126,9 +126,17 @@ export function buildCoverTaskInputFromPipeline(params: {
   };
 }
 
+/**
+ * 默认开启（用户 2026-08-06）。
+ *
+ * 关着的时候封面就是「模板 + 快照原文」直送出图，没有任何视觉企划环节，
+ * 出来的图千篇一律。这一步只多一次便宜的文本调用，且失败会返回 null 自动降级，
+ * 不会把出图卡死，所以默认打开更划算。要临时关掉设 `PLATFORM_COVER_AGENTIC_BRAIN=0`。
+ */
 export function isPlatformCoverAgenticBrainEnabled(): boolean {
   const v = String(process.env.PLATFORM_COVER_AGENTIC_BRAIN || "").trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes";
+  if (v === "0" || v === "false" || v === "no" || v === "off") return false;
+  return true;
 }
 
 /** Vertex Gemini · JSON · 附帶 Google Search（失敗則無工具重試）。 */

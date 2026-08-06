@@ -5596,6 +5596,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             .optional(),
           /** 这轮想获客/转化/涨粉：进 prompt，决定钩子与结尾动作（用户 2026-08-06） */
           topicGoal: z.enum(["acquire", "convert", "follow"]).optional(),
+          /** 免费试跑：只生成前几条，其余在前台打码且**不生成**（用户 2026-08-06） */
+          freeTrial: z.boolean().optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -5603,7 +5605,60 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const { clampTopicShortlistCount, platformTopicShortlistTotalCredits, PLATFORM_TOPIC_SHORTLIST_DEFAULT } =
           await import("../shared/platformTopicShortlist.js");
-        const count = clampTopicShortlistCount(input.count ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT);
+        const requestedCount = clampTopicShortlistCount(input.count ?? PLATFORM_TOPIC_SHORTLIST_DEFAULT);
+
+        // 免费试跑：跑几条就是几条，打码那几条一律不进模型，否则免费池就是纯亏。
+        if (input.freeTrial && !isAdminUser) {
+          const { resolvePlatformTopicShortlistQuota } = await import("../shared/platformTopicShortlist.js");
+          const {
+            countPlatformTopicShortlistFreeEver,
+            countPlatformTopicShortlistFreeToday,
+            logPlatformTopicShortlistFreeUse,
+            generatePlatformTopicShortlist: runShortlist,
+          } = await import("./services/platformTopicShortlist.js");
+          const [usedEver, usedToday] = await Promise.all([
+            countPlatformTopicShortlistFreeEver(userId),
+            countPlatformTopicShortlistFreeToday(userId),
+          ]);
+          const quota = resolvePlatformTopicShortlistQuota({ usedEver, usedToday });
+          if (!quota.nextFree) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: "今天的免费选题已经用过了，明天再来一次，或直接解锁完整一批。",
+            });
+          }
+          const freeCount = Math.min(quota.freeTopics, requestedCount);
+          const freeResult = await runShortlist({
+            userId,
+            context: input.context,
+            enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : null,
+            allowBloggerTitle: Boolean(input.allowBloggerTitle),
+            existingTitles: input.existingTitles,
+            stage1Seeds: input.stage1Seeds,
+            count: freeCount,
+            windowDays: input.windowDays ?? null,
+            blueOceanWords: input.blueOceanWords ?? null,
+            blueOceanGroups: input.blueOceanGroups ?? null,
+            topicGoal: input.topicGoal ?? null,
+          });
+          const maskedCount = Math.max(0, requestedCount - (freeResult.topics?.length || 0));
+          await logPlatformTopicShortlistFreeUse({
+            userId,
+            topics: freeResult.topics?.length || 0,
+            masked: maskedCount,
+          });
+          const freeCredits = await getCredits(userId);
+          return {
+            ...freeResult,
+            count: freeResult.topics?.length || 0,
+            chargedCredits: 0,
+            freeTrial: true as const,
+            maskedCount,
+            totalAvailable: freeCredits.totalAvailable,
+          };
+        }
+
+        const count = requestedCount;
         const priced = platformTopicShortlistTotalCredits({
           count,
           baseCredits: CREDIT_COSTS.platformTopicShortlist,
@@ -5646,9 +5701,25 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           count,
           chargedCredits: isAdminUser ? 0 : priced.total,
           pricing: priced,
+          freeTrial: false as const,
+          maskedCount: 0,
           totalAvailable: creditsInfo.totalAvailable,
         };
       }),
+
+    /** 免费试跑还剩几次、这次给几条：按钮文案与打码位数量都读它。 */
+    platformTopicShortlistQuota: protectedProcedure.query(async ({ ctx }) => {
+      const userId = ctx.user.id;
+      const { countPlatformTopicShortlistFreeEver, countPlatformTopicShortlistFreeToday } = await import(
+        "./services/platformTopicShortlist.js"
+      );
+      const { resolvePlatformTopicShortlistQuota } = await import("../shared/platformTopicShortlist.js");
+      const [usedEver, usedToday] = await Promise.all([
+        countPlatformTopicShortlistFreeEver(userId),
+        countPlatformTopicShortlistFreeToday(userId),
+      ]);
+      return resolvePlatformTopicShortlistQuota({ usedEver, usedToday });
+    }),
 
     /**
      * 人物背景智能优化的额度：按钮上要显示这次免费还是几积分，所以是个只读查询。

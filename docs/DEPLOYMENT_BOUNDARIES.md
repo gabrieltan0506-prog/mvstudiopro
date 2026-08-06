@@ -19,7 +19,7 @@
 - **不要把 Vercel Preview 當 CI 門禁**；驗證正式域名以 production 為準。
 - **可忽略的只有 Preview 紅燈**。**production failure = 前台整個停更**，此後合併的前端改動一件都不會上線，必須當場修。
  - 2026-08-05 23:44 一行 `buildCommand` 寫壞，production 連續失敗六小時無人發現：期間 #1088–#1091 照常合併、Fly Deploy 全綠，用戶自己撞見 `/blog` 404、導航沒改、剛上線的上傳改動沒生效才暴露。
- - 現有 `Frontend Deploy Check`（`.github/workflows/frontend-deploy-check.yml`）在 push `main` 後等 Vercel production 結果並核對正式域名關鍵頁；**它報紅就是前台沒上線**，不得當成雜訊跳過。
+ - `Fly Deploy`（`.github/workflows/fly-deploy.yml`）裡的 **`前台发版检查（www）`** job 在 push `main` 後等 Vercel production 結果並核對正式域名關鍵頁；**它報紅就是前台沒上線**，不得當成雜訊跳過。（原本是獨立的 `Frontend Deploy Check` workflow，一次合併冒兩條 run 容易誤取消掉真正部署後端的那條，2026-08-06 併入同一 workflow 當第二個 job。）
 
 ## 3. Git / PR（與本倉庫 `.cursor/rules` 對齊）
 
