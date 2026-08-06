@@ -69,6 +69,30 @@ describe("manhuaSheetPropSubTags", () => {
     expect(fan?.path).toMatch(/^logical:\/\//);
   });
 
+  it("prefers the prop's own single-image URL over the whole charsheet URL when available", () => {
+    const slots = buildManhuaSheetPropSubSlots({
+      assetCanon: canon,
+      characterTagById: { wa_char_hero: "@角色1" },
+      sheetUrlByCharacterId: { wa_char_hero: "https://cdn.example/hero-sheet.jpg" },
+      propImageUrlById: { wa_prop_jade: "https://cdn.example/prop-single/jade.png" },
+    });
+    const jade = slots.find((s) => s.propId === "wa_prop_jade");
+    expect(jade?.path).toBe("https://cdn.example/prop-single/jade.png");
+  });
+
+  it("falls back to charsheet URL, then logical:// when no single-image URL is given", () => {
+    const slots = buildManhuaSheetPropSubSlots({
+      assetCanon: canon,
+      characterTagById: { wa_char_hero: "@角色1", wa_char_heroine: "@角色2" },
+      sheetUrlByCharacterId: { wa_char_hero: "https://cdn.example/hero-sheet.jpg" },
+      propImageUrlById: { wa_prop_other: "https://cdn.example/prop-single/other.png" },
+    });
+    const jade = slots.find((s) => s.propId === "wa_prop_jade");
+    expect(jade?.path).toBe("https://cdn.example/hero-sheet.jpg");
+    const fan = slots.find((s) => s.propId === "wa_prop_fan");
+    expect(fan?.path).toMatch(/^logical:\/\//);
+  });
+
   it("keeps same propId on same @道具N across characters (cross-episode lock)", () => {
     const a = buildManhuaSheetPropSubSlots({ assetCanon: canon });
     const b = buildManhuaSheetPropSubSlots({ assetCanon: canon });

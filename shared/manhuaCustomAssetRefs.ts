@@ -72,6 +72,12 @@ export type ManhuaCustomAssetRef = {
   /** 视频生成时的参考职责 */
   refDuty?: ManhuaCustomAssetRefDuty | null;
   /**
+   * gs:// 对象地址（有则说明 url 是签名读链接，会过期）。
+   * 长期引用的资产（如道具拼板切图）必须存这个，取用前用它现签新 url，
+   * 不能只存签名 url——过期后没有 gcsUri 就再也签不出新链接了。
+   */
+  gcsUri?: string;
+  /**
    * 四视角拼板切开后的四格地址（仅跨集场景有）。
    * url 存主视角当默认，段内按机位改挑其中一格——同一地点四个机位，
    * 俯拍段喂平视图等于让引擎自己想象地面动线。
@@ -316,6 +322,7 @@ export function normalizeManhuaCustomAssetRefs(
       // 未标注时按分栏自动填；手选过的原样保留
       refDuty: parsedDuty || defaultManhuaCustomAssetRefDuty(role),
       tileUrls: parseSceneTileUrls((o as { tileUrls?: unknown }).tileUrls),
+      gcsUri: /^gs:\/\//i.test(String(o.gcsUri || "")) ? String(o.gcsUri).trim() : undefined,
     });
     if (out.length >= max) break;
   }

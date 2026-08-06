@@ -207,7 +207,12 @@ export function extractWardrobePaletteTokensZh(lookZh: string, limit = 5): strin
   return out;
 }
 
-/** 与角色相关的道具：名称/备注/功能命中角色名，否则取系列前若干件 */
+/**
+ * 与角色相关的道具：名称/备注/功能命中角色名才收；不命中就是空——
+ * 不拿系列前几件瞎凑。凑出来的道具会被 `stampManhuaSheetPropSubTagsOnPrompt`
+ * 写进定妆卡 prompt 变成模型眼里的「事实」，宁可这张卡没有道具特写，
+ * 也不能把不相关的道具锁给不相关的角色。
+ */
 export function pickPropsForCharacterSheet(
   character: Pick<ManhuaWriterAssetAnchor, "nameZh" | "aliasZh" | "lookZh" | "noteZh">,
   props: ManhuaWriterAssetAnchor[] | null | undefined,
@@ -225,8 +230,7 @@ export function pickPropsForCharacterSheet(
     // 外形句里已写到的物件名
     return Boolean(p.nameZh && look.includes(p.nameZh));
   });
-  const picked = (related.length ? related : list).slice(0, limit);
-  return picked;
+  return related.slice(0, limit);
 }
 
 /** A1：同一场景四视角，单张 2×2（整图 9:16） */

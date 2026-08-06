@@ -261,6 +261,11 @@ type Props = {
     files: FileList | File[],
     role?: ManhuaCustomAssetRole,
   ) => void | Promise<void>;
+  /**
+   * 道具拼板拆分导入：一张拼板图（多件道具挤一张）→ 服务端切成单件图，
+   * 各自进「我的道具」。仅在道具分栏出现「拼板拆分」按钮时用。
+   */
+  onImportPropSheetFile?: (file: File) => void | Promise<void>;
   onCustomAssetRoleChange?: (id: string, role: ManhuaCustomAssetRef["role"]) => void;
   onCustomAssetDutyChange?: (id: string, duty: ManhuaCustomAssetRefDuty | null) => void;
   onRemoveCustomAsset?: (id: string) => void;
@@ -486,6 +491,7 @@ export default function ManhuaScriptWorkbench({
   onExtractCharacterVoice,
   onRemoveCharacterVoice,
   onUploadCustomAssets,
+  onImportPropSheetFile,
   onCustomAssetRoleChange,
   onCustomAssetDutyChange,
   onRemoveCustomAsset,
@@ -3386,6 +3392,24 @@ export default function ManhuaScriptWorkbench({
                               onChange={(e) => {
                                 const files = e.target.files;
                                 if (files?.length) void onUploadCustomAssets(files, sec.role);
+                                e.target.value = "";
+                              }}
+                            />
+                          </label>
+                        ) : null}
+                        {sec.role === "prop" && onImportPropSheetFile ? (
+                          <label
+                            className={`inline-flex cursor-pointer items-center rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold ${sec.btnCls}`}
+                            title="一张图里挤了多件道具？上传整张拼板，自动切成单件图分别进本栏"
+                          >
+                            拼板拆分
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) void onImportPropSheetFile(file);
                                 e.target.value = "";
                               }}
                             />

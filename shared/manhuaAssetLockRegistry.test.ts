@@ -142,6 +142,49 @@ describe("manhuaAssetLockRegistry", () => {
     expect(subs[0]?.propTag).toMatch(/^@道具\d+$/);
   });
 
+  it("propImageUrlById 优先于整张定妆卡：@道具N 子槽 path 是切好的单件图", () => {
+    const canon: ManhuaWriterAssetCanon = {
+      characters: [
+        {
+          id: "wa_char_hero",
+          role: "character",
+          nameZh: "沈少主",
+          lookZh: "腰佩玉佩",
+          promptZh: "沈少主",
+        },
+      ],
+      props: [
+        {
+          id: "wa_prop_jade",
+          role: "prop",
+          nameZh: "玉佩",
+          lookZh: "白玉",
+          noteZh: "沈少主",
+          promptZh: "玉佩",
+        },
+      ],
+      locations: [],
+      episodeMainSceneId: {},
+    };
+    // 这是 PR③「让 @道具N 真正锁得住」的关键：不传 propImageUrlById 时子槽
+    // path 只能是整张定妆卡（模型得靠文字猜哪个格子），传了才是切好的单件图。
+    const reg = buildManhuaAssetLockRegistry({
+      customRefs: [
+        {
+          id: "wa_char_hero",
+          url: "https://cdn.example/hero.jpg",
+          role: "character",
+          source: "generated",
+          labelZh: "沈少主",
+        },
+      ],
+      assetCanon: canon,
+      characterSheetUrlById: { wa_char_hero: "https://cdn.example/hero-sheet.jpg" },
+      propImageUrlById: { wa_prop_jade: "https://cdn.example/prop-single/jade.png" },
+    });
+    expect(reg.sheetPropSlots[0]?.path).toBe("https://cdn.example/prop-single/jade.png");
+  });
+
   it("prompt bind table has id only (no URL); path resolves offline for @角色=@Image", () => {
     const reg = buildManhuaAssetLockRegistry({
       customRefs: [

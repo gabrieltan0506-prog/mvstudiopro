@@ -45,6 +45,13 @@ export function buildManhuaSheetPropSubSlots(opts: {
   sheetUrlByCharacterId?: Record<string, string> | null;
   /** 每角色最多特写道具数 */
   perCharacterLimit?: number;
+  /**
+   * wa_prop_* → 该道具的单件图 HTTPS（拼板切图产出）。
+   * 有单件图时优先用它当 path，而不是整张定妆卡——那张图里一堆物件，
+   * 模型只能靠文字猜哪个是 @道具N，道具越多越同材质猜错概率越高。
+   * 缺省时退回旧逻辑（定妆卡 URL，或 logical:// 占位）。
+   */
+  propImageUrlById?: Record<string, string> | null;
 }): ManhuaSheetPropSubSlot[] {
   const canon = opts.assetCanon;
   if (!canon?.characters?.length || !canon.props?.length) return [];
@@ -52,6 +59,7 @@ export function buildManhuaSheetPropSubSlots(opts: {
   const perChar = Math.max(1, Math.min(6, Math.floor(opts.perCharacterLimit ?? 3)));
   const tagById = opts.characterTagById || {};
   const urlById = opts.sheetUrlByCharacterId || {};
+  const propUrlById = opts.propImageUrlById || {};
 
   // 先按角色表序定 @角色（无外来 tag 时）
   const charOrder = canon.characters.map((c, i) => ({
@@ -71,13 +79,14 @@ export function buildManhuaSheetPropSubSlots(opts: {
     const parentTag = String(tagById[ch.id] || ch.fallbackTag).trim();
     const props = pickPropsForCharacterSheet(ch, canon.props, perChar);
     props.forEach((p, idx) => {
-      const url = String(urlById[ch.id] || "").trim();
+      const propImageUrl = String(propUrlById[p.id] || "").trim();
+      const sheetUrl = String(urlById[ch.id] || "").trim();
       pairs.push({
         character: ch,
         parentCharacterTag: parentTag,
         prop: p,
         localIndex: idx + 1,
-        path: url || manhuaSheetPropLogicalPath(ch.id, p.id),
+        path: propImageUrl || sheetUrl || manhuaSheetPropLogicalPath(ch.id, p.id),
       });
     });
   }

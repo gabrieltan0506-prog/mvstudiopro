@@ -302,8 +302,11 @@ describe("manhuaAssetImageGate", () => {
     expect(face?.prompt).toContain("必须与参考图是同一个人");
     expect(face?.prompt).toContain("禁止重新设计脸");
     expect(look?.prompt).toContain("全身入画");
-    // 道具信息改由文本交代，不再另开细节特写格
-    expect(look?.prompt).toContain("双鱼玉佩");
+    // 假关联修复：沈策外形句里没提「双鱼玉佩」，不该被塞进他的定妆卡
+    // （系列里只有这一件道具，不代表它就是这个角色的——宁可这张卡没道具，也不能瞎凑）
+    // 将来如果沈策确实该带双鱼玉佩，正确做法是把道具写进他的外形句
+    // （或建独立的角色-道具映射），不是把这条断言改回 toContain。
+    expect(look?.prompt).not.toContain("双鱼玉佩");
     expect(crowd?.layout).toBe("single");
     expect(crowd?.prompt).not.toContain("三视图");
     expect(granary?.layout).toBe("grid2x2");

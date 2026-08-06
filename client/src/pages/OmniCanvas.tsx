@@ -71,6 +71,7 @@ import {
   type ManhuaAssetStashRole,
 } from "@shared/manhuaAssetStash";
 import { uploadCanvasFilesParallel } from "@/lib/canvasUpload";
+import { resolveOmniMaterialUrl } from "@/lib/omniCanvasApi";
 import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   MANHUA_FACTORY_STAGE_ORDER,
@@ -87,6 +88,7 @@ import {
   ensureManhuaFragmentClips,
   layoutManhuaEpisodeReadableChain,
   collectManhuaCharacterSheetUrlById,
+  collectManhuaPropImageUrlById,
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
   countExpectedManhuaKeyartShots,
   resolveManhuaClipRelatedAssetNodeIds,
@@ -654,6 +656,45 @@ export default function OmniCanvas() {
   const [customAssetRefs, setCustomAssetRefs] = useState<ManhuaCustomAssetRef[]>(() =>
     normalizeManhuaCustomAssetRefs(initialWriterSession?.customAssetRefs),
   );
+  /**
+   * 长期资产的签名 url 会过期（如道具拼板切图，7 天）。有 gcsUri 的条目，
+   * 每次这份草稿加载/变动时现签一次刷新 url——不在这里刷，等到真正点「生成」
+   * 时才发现 403 就晚了。按 gcsUri 去重，避免刚刷完又把自己刷一遍死循环。
+   */
+  const resignedPropGcsUriRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const stale = customAssetRefs.filter(
+      (r) => r.gcsUri && !resignedPropGcsUriRef.current.has(r.gcsUri),
+    );
+    if (!stale.length) return;
+    let cancelled = false;
+    void (async () => {
+      const resolved = await Promise.all(
+        stale.map(async (r) => {
+          try {
+            const url = await resolveOmniMaterialUrl(r.gcsUri!);
+            return { id: r.id, gcsUri: r.gcsUri!, url };
+          } catch {
+            return null;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const byId = new Map<string, string>();
+      for (const r of resolved) {
+        if (!r) continue;
+        resignedPropGcsUriRef.current.add(r.gcsUri);
+        byId.set(r.id, r.url);
+      }
+      if (!byId.size) return;
+      setCustomAssetRefs((prev) =>
+        prev.map((r) => (byId.has(r.id) ? { ...r, url: byId.get(r.id)! } : r)),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [customAssetRefs]);
   const [characterVoiceLocks, setCharacterVoiceLocks] = useState<ManhuaCharacterVoiceLock[]>(() =>
     normalizeManhuaCharacterVoiceLocks(initialWriterSession?.characterVoiceLocks),
   );
@@ -1852,6 +1893,7 @@ export default function OmniCanvas() {
   const canvasTerraVideoReverseMutation = trpc.mvAnalysis.canvasTerraVideoReverse.useMutation();
   const expandWriterMutation = trpc.mvAnalysis.expandManhuaWriterPack.useMutation();
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
+  const splitPropSheetMutation = trpc.mvAnalysis.splitManhuaPropSheet.useMutation();
 
   const pathTrackLabelZh = useMemo(() => {
     const path = getPathCameraRecipeById(selectedPathRecipeIds[0]);
@@ -1987,6 +2029,7 @@ export default function OmniCanvas() {
         blocks,
         projectBible?.assetCanon,
       ),
+      propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
     });
     return {
       registry: reg,
@@ -2408,6 +2451,7 @@ export default function OmniCanvas() {
             spawned.blocks,
             projectBible?.assetCanon,
           ),
+          propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
         }),
       };
       if (spawned.genreInferred && spawned.resolvedGenreId && !factoryGenreId) {
@@ -3428,6 +3472,52 @@ export default function OmniCanvas() {
       }
     },
     [getSignedUrlMutation],
+  );
+
+  /**
+   * 道具拼板拆分导入：一张图里挤了 N 件道具，切成单件图分别进「我的道具」，
+   * 而不是整张拼板当一件参考图喂给融图模型（模型只能靠文字猜哪个是哪个）。
+   */
+  const importPropSheetFile = useCallback(
+    async (file: File) => {
+      if (!/^image\//i.test(file.type)) {
+        toast.message("请选择图片文件");
+        return;
+      }
+      try {
+        const { assets, failed } = await uploadCanvasFilesParallel({
+          files: [file],
+          getSignedUploadUrl: (input) => getSignedUrlMutation.mutateAsync(input),
+        });
+        const sheetUrl = assets.find((a) => a.kind === "image" && /^https:\/\//i.test(a.url))?.url;
+        if (!sheetUrl) {
+          toast.error("拼板上传失败", { description: failed[0]?.error || "请重试" });
+          return;
+        }
+        const res = await splitPropSheetMutation.mutateAsync({ sheetUrl });
+        const added: ManhuaCustomAssetRef[] = res.items.map((item) => ({
+          id: makeManhuaCustomAssetId(),
+          url: item.url,
+          // 长期资产存 gcsUri：item.url 是 7 天签名链接，过期后单靠它再也签不出新链接；
+          // 有 gcsUri 才能在任意时刻现签（见下方 resign effect）。
+          gcsUri: item.gcsUri,
+          role: "prop" as const,
+          labelZh: (item.note ? `${item.name}（${item.note}）` : item.name).slice(0, 40),
+          source: "upload" as const,
+        }));
+        setCustomAssetRefs((prev) => normalizeManhuaCustomAssetRefs([...prev, ...added]));
+        toast.message(`已拆出 ${added.length} 件道具单件图`, {
+          description: res.titlesFromCache
+            ? "标题读取自缓存，未重复调用识图。已归入「我的道具」，可改名。"
+            : "已归入「我的道具」，可改名；读不出标题的按编号占位。",
+        });
+      } catch (e: unknown) {
+        toast.error("拼板拆分失败", {
+          description: e instanceof Error ? e.message : "请稍后重试",
+        });
+      }
+    },
+    [getSignedUrlMutation, splitPropSheetMutation],
   );
 
   const setCustomAssetRole = useCallback(
@@ -4530,6 +4620,7 @@ export default function OmniCanvas() {
               working,
               projectBible?.assetCanon,
             ),
+            propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
           },
         );
         setBlocks(working);
@@ -5292,6 +5383,7 @@ export default function OmniCanvas() {
       return layoutManhuaEpisodeReadableChain(prev, writerFocusEpisode, {
         assetCanon: projectBible?.assetCanon,
         characterSheetUrlById: sheetUrls,
+        propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
         customRefs: customAssetRefs,
       });
     });
@@ -5775,6 +5867,7 @@ export default function OmniCanvas() {
                     );
                   }}
                   onUploadCustomAssets={uploadCustomAssetFiles}
+                  onImportPropSheetFile={importPropSheetFile}
                   onCustomAssetRoleChange={setCustomAssetRole}
                   onCustomAssetDutyChange={setCustomAssetDuty}
                   onSegmentIntentChange={handleSegmentIntentChange}
@@ -5990,6 +6083,10 @@ export default function OmniCanvas() {
                       const layoutOpts = {
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
+                        propImageUrlById: collectManhuaPropImageUrlById(
+                          customAssetRefs,
+                          projectBible?.assetCanon,
+                        ),
                         customRefs: customAssetRefs,
                         segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
                         characterLookSets,
@@ -6030,6 +6127,10 @@ export default function OmniCanvas() {
                       const layoutOpts = {
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
+                        propImageUrlById: collectManhuaPropImageUrlById(
+                          customAssetRefs,
+                          projectBible?.assetCanon,
+                        ),
                         customRefs: customAssetRefs,
                         segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
                         characterLookSets,
@@ -6103,6 +6204,10 @@ export default function OmniCanvas() {
                       const layoutOpts = {
                         assetCanon: projectBible?.assetCanon,
                         characterSheetUrlById: sheetUrls,
+                        propImageUrlById: collectManhuaPropImageUrlById(
+                          customAssetRefs,
+                          projectBible?.assetCanon,
+                        ),
                         customRefs: customAssetRefs,
                         segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
                         characterLookSets,
