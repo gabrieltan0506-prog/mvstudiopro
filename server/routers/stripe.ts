@@ -189,7 +189,7 @@ export const stripeRouter = router({
   createCreditPackCheckout: protectedProcedure
     .input(
       z.object({
-        packId: z.enum(["small", "medium", "large"]),
+        packId: z.enum(["trial199", "medium", "large"]),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -234,7 +234,11 @@ export const stripeRouter = router({
         }
       }
 
-      const priceId = input.packId === "small" ? PRICE_IDS.credit_pack_small : PRICE_IDS.credit_pack_large;
+      const priceId = {
+        trial199: PRICE_IDS.credit_pack_small,
+        medium: PRICE_IDS.credit_pack_medium,
+        large: PRICE_IDS.credit_pack_large,
+      }[input.packId];
       if (!priceId) {
         throw new Error(`Credit pack price ID 未配置: ${input.packId}`);
       }
