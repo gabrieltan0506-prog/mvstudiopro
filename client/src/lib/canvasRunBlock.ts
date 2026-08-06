@@ -162,6 +162,8 @@ export type CanvasRunDeps = {
     string,
     Partial<Record<ManhuaSceneTileSlot, string>>
   > | null;
+  /** 集号 → 集级导演分镜板（已裁成仅主画面）可下载地址；同一集所有段共用同一张 */
+  manhuaDirectorBoardUrlByEpisode?: Record<number, string> | null;
   /**
    * @deprecated 声线不再硬门禁；保留字段以免旧调用方类型炸。
    */
@@ -1171,7 +1173,14 @@ export async function runCanvasBlock(
       const absStills = stillPool
         .map((u) => absolutizeManhuaAssetUrl(u) || u)
         .filter((u) => /^https?:\/\//i.test(u) || u.startsWith("data:image/"));
-      // 成片硬绑：末帧 → 资产定妆 → 本段静帧（URL 只进 API imageUrls）
+      // clip-eNN-... → 集号；没有导演板表或解不出集号时 boardUrl 就是空串，不影响既有行为
+      const clipEpisodeMatch = /^[a-z_]+-e(\d{2})-/i.exec(block.id);
+      const clipEpisodeNo = clipEpisodeMatch ? Number.parseInt(clipEpisodeMatch[1]!, 10) : null;
+      const boardUrl =
+        isClip && clipEpisodeNo
+          ? String(deps.manhuaDirectorBoardUrlByEpisode?.[clipEpisodeNo] || "").trim()
+          : "";
+      // 成片硬绑：末帧 → 资产定妆 → 本段静帧 → 导演板（URL 只进 API imageUrls）
       const bindPlan = isClip
         ? planManhuaClipSeedanceImageBind({
             assetRows: assetRows.filter((r) => /^https?:\/\//i.test(r.path)),
@@ -1179,6 +1188,7 @@ export async function runCanvasBlock(
             tailUrls: tailFrames,
             mentionedTags,
             maxImages: useHailuoH3 ? HAILUO_REFERENCE_MAX.image : SEEDANCE_REFERENCE_MAX.image,
+            boardUrl: boardUrl || null,
           })
         : null;
       const rawPool = bindPlan?.imageUrls?.length

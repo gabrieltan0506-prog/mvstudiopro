@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { computePropSheetGridBoxes } from "./manhuaPropSheetGrid.js";
+import {
+  computeDirectorBoardMainBox,
+  computePropSheetGridBoxes,
+} from "./manhuaPropSheetGrid.js";
 
 describe("computePropSheetGridBoxes", () => {
   it("returns 8 boxes in left-to-right, top-to-bottom order for a 4x2 grid", () => {
@@ -114,5 +117,34 @@ describe("computePropSheetGridBoxes", () => {
     expect(boxes).toHaveLength(1);
     expect(boxes[0]!.height).toBeGreaterThanOrEqual(1);
     expect(boxes[0]!.width).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("computeDirectorBoardMainBox", () => {
+  it("crops the real board size (1672x941) down to 1291x670", () => {
+    const box = computeDirectorBoardMainBox(1672, 941);
+    expect(box).toEqual({ left: 0, top: 0, width: 1291, height: 670 });
+  });
+
+  it("scales proportionally for other sizes at the same source aspect ratio", () => {
+    // 3344×1882 = 2× 原图；比例应与 1291×670 保持一致
+    const box = computeDirectorBoardMainBox(3344, 1882);
+    expect(box.left).toBe(0);
+    expect(box.top).toBe(0);
+    expect(box.width).toBe(Math.round(3344 * 0.772));
+    expect(box.height).toBe(Math.round(1882 * 0.712));
+    expect(box.width / box.height).toBeCloseTo(1291 / 670, 1);
+  });
+
+  it("applies the fixed crop ratios regardless of source aspect ratio", () => {
+    const box = computeDirectorBoardMainBox(2000, 1000);
+    expect(box.width).toBe(Math.round(2000 * 0.772));
+    expect(box.height).toBe(Math.round(1000 * 0.712));
+  });
+
+  it("clamps degenerate inputs instead of throwing", () => {
+    const box = computeDirectorBoardMainBox(0, 0);
+    expect(box.width).toBeGreaterThanOrEqual(1);
+    expect(box.height).toBeGreaterThanOrEqual(1);
   });
 });

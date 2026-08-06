@@ -427,7 +427,7 @@ export type ManhuaAssetImageBindRow = {
 
 export type ManhuaClipSeedanceImageBindEntry = {
   imageIndex: number;
-  kind: "tail" | "asset" | "still";
+  kind: "tail" | "asset" | "still" | "board";
   url: string;
   roleTag?: string;
   assetId?: string;
@@ -436,6 +436,9 @@ export type ManhuaClipSeedanceImageBindEntry = {
   /** 静帧专用：这张分镜管的秒段，如 "0–5s" */
   slotZh?: string | null;
 };
+
+/** 导演板在资产优先级链里的合成 tag：不是真的 @资产，只借用同一条排序队列占位 */
+const DIRECTOR_BOARD_ROW_TAG = "【导演板】";
 
 export type ManhuaClipSeedanceImageBindPlan = {
   imageUrls: string[];
@@ -1095,6 +1098,13 @@ export function planManhuaClipSeedanceImageBind(input: {
   tailUrls?: string[];
   mentionedTags?: string[] | null;
   maxImages?: number;
+  /**
+   * 集级导演分镜板（已裁成仅主画面）的可下载地址。同一集所有段传同一张——
+   * 这是预期行为，不去重。优先级：本段静帧 > 上段末帧 > @角色(identity) >
+   * @角色(look) > @服装 > @场景 > 【导演板】 > @道具。若预算紧到连 @场景
+   * 都进不去，导演板也不放：它是加分项，不是基准项。
+   */
+  boardUrl?: string | null;
 }): ManhuaClipSeedanceImageBindPlan {
   const max = Math.max(
     1,
@@ -1116,12 +1126,24 @@ export function planManhuaClipSeedanceImageBind(input: {
     if (tag.startsWith("@角色")) return 0;
     if (tag.startsWith("@服装")) return 1;
     if (tag.startsWith("@场景")) return 2;
-    return 3;
+    if (tag === DIRECTOR_BOARD_ROW_TAG) return 3;
+    return 4;
   };
   // 同一角色拆了大头照与全身照时，大头照先行：ID 漂移最难治，锁脸最吃紧
   const dutyOrder = (duty: ManhuaAssetImageBindRow["duty"]) =>
     duty === "identity" ? 0 : duty === "look" ? 1 : 0;
-  const sortedAssets = [...input.assetRows].sort((a, b) => {
+  const boardUrl = String(input.boardUrl || "").trim();
+  const boardRow: ManhuaAssetImageBindRow | null = isBindableAssetPath(boardUrl)
+    ? {
+        tag: DIRECTOR_BOARD_ROW_TAG,
+        id: "director-board",
+        labelZh: "导演分镜板",
+        path: boardUrl,
+        duty: null,
+      }
+    : null;
+  const rowsForSort = boardRow ? [...input.assetRows, boardRow] : input.assetRows;
+  const sortedAssets = [...rowsForSort].sort((a, b) => {
     const am = mentioned.has(a.tag) ? 0 : 1;
     const bm = mentioned.has(b.tag) ? 0 : 1;
     if (am !== bm) return am - bm;
@@ -1145,14 +1167,18 @@ export function planManhuaClipSeedanceImageBind(input: {
   let assetsTaken = 0;
   for (const row of sortedAssets) {
     if (assetsTaken >= assetBudget) break;
-    push({
-      kind: "asset",
-      url: row.path,
-      roleTag: row.tag,
-      assetId: row.id,
-      labelZh: row.labelZh,
-      duty: row.duty ?? null,
-    });
+    if (row.tag === DIRECTOR_BOARD_ROW_TAG) {
+      push({ kind: "board", url: row.path, labelZh: row.labelZh });
+    } else {
+      push({
+        kind: "asset",
+        url: row.path,
+        roleTag: row.tag,
+        assetId: row.id,
+        labelZh: row.labelZh,
+        duty: row.duty ?? null,
+      });
+    }
     assetsTaken += 1;
   }
   /**
@@ -1215,6 +1241,7 @@ export function formatManhuaClipSeedanceBindLineFromEntries(
   const bits = entries.map((e, i) => {
     const img = `@图片${e.imageIndex || i + 1}`;
     if (e.kind === "tail") return `${img}承接上段起幅`;
+    if (e.kind === "board") return `${img}为本集导演分镜板（构图/运镜/动作路径引导，不锁脸不锁服）`;
     if (e.kind === "asset") {
       const idBit = withId && e.assetId ? ` id=${e.assetId}` : "";
       // 官方主体绑定式：主体名直接贴图号，不走「@角色N=」中转

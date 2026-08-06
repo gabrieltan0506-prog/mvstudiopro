@@ -545,6 +545,49 @@ describe("canvasDramaStudio factory", () => {
     expect(filterManhuaFactoryTargetIds(ordered, frag.targetBlockIds)).toEqual([frag.clipId]);
   });
 
+  it("ensureManhuaFragmentClips 接入集级导演板：@图片N 硬绑与红/青箭头引导句都在，最终提示词不留原始 URL", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id
+        ? {
+            ...b,
+            status: "done" as const,
+            outputText:
+              "1. 刀客推门进客栈\n2. 油灯下对峙\n3. 拔刀交锋\n4. 雨夜收刀\n5. 撑伞离去留钩子",
+          }
+        : b.id.startsWith("keyart-")
+          ? { ...b, status: "done" as const, outputUrl: "https://example.com/k1.jpg" }
+          : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+    const withKeyarts = expanded.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        : b,
+    );
+    const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1, {
+      directorBoardUrlByEpisode: { 1: "https://cdn.example/ep01-board-main.png" },
+    });
+    const segClips = ensured.blocks.filter(
+      (b) => b.id.startsWith("clip-") && (/-g\d{2,}/i.test(b.id) || /-s\d{2,}/.test(b.id)),
+    );
+    expect(segClips.length).toBeGreaterThan(0);
+    for (const clip of segClips) {
+      const p = clip.prompt || "";
+      expect(p).toContain("【垫图】");
+      expect(p).toContain("导演板");
+      expect(p).toContain("红箭头");
+      expect(p).toContain("青箭头");
+      expect(p).toContain("不得出现在成片画面");
+      // 最终成片提示词禁止残留原始网址（下游统一走 @图片N + editFusionUrls 传图）
+      expect(p).not.toMatch(/https?:\/\//);
+    }
+  });
+
   it("ensureManhuaFragmentClips 拆假锁：有人出场但对照为空 → 不写 @图片N 锁定构图假硬绑", () => {
     const { blocks, edges } = spawnManhuaDramaStudio({
       topic: "江湖刀客雨夜客栈",

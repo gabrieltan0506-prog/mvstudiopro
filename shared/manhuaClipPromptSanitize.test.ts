@@ -134,6 +134,29 @@ describe("manhuaClipPromptSanitize", () => {
     expect(stripManhuaStaleAssetBindForModel(clean)).toBe(clean);
   });
 
+  it("导演板信息压在【垫图】单行内，肥稿走兜底路径时 URL 与箭头声明仍在", () => {
+    // 老草稿含「节拍防火墙」等关键词会触发 LEGACY_FAT_RE，走 :143 附近的兜底路径——
+    // 该路径用 /【垫图[^\n]*/ 只吃一行，导演板信息必须压成单行才能存活。
+    const fat = [
+      "有参考图时写完整视频导戏单（一轮约 15 秒）",
+      "【节拍防火墙】",
+      "当前只拍第 1 段",
+      "【第1段·15s】雁门关城墙",
+      "0–15s：@角色1，翻墙，说「进」。近景。",
+      "【垫图】本段静帧3张（出片顺序：资产定妆/服装→本段静帧→上段末帧，按序绑@图片N）｜导演板：红箭头=人物/道具动向，青箭头=镜头运镜，青虚线=竖屏安全框，均为拍摄引导，不得出现在成片画面｜https://cdn.example/board-main.png",
+      "【连续】接上段末帧。",
+    ].join("\n");
+    const out = stripManhuaClipForbiddenBoards(fat);
+    expect(out).toContain("【垫图】");
+    expect(out).toContain("https://cdn.example/board-main.png");
+    expect(out).toContain("不得出现在成片画面");
+    expect(out).toContain("红箭头");
+    expect(out).toContain("青箭头");
+    // 后续块不受影响
+    expect(out).toContain("【连续】");
+    expect(out).not.toMatch(/节拍防火墙/);
+  });
+
   it("剪辑手法块不该糊在审阅面上", () => {
     // 这一层是出片那一刻现拼的：人在审阅栏要读的是谁在做什么，不是怎么剪
     const raw = [

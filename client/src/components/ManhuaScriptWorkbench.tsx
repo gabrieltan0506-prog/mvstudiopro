@@ -2324,7 +2324,7 @@ export default function ManhuaScriptWorkbench({
                 <p className="mt-1 text-[11px] leading-5 text-white/45">
                   {assetCanon?.characters.length
                     ? "以剧本人物表与系列场景池为准；点右上「生成全部」或底栏同名按钮出定妆与场景空镜。"
-                    : "人物、场景、服装道具分栏上传或生成；未归类不进融图。"}
+                    : "人物、场景、服装、道具分栏上传或生成，上传时先选分类，不设未归类池。"}
                   {customSummaryZh ? ` 已归类：${customSummaryZh}` : ""}
                 </p>
               </div>
@@ -3546,9 +3546,12 @@ export default function ManhuaScriptWorkbench({
                   data-manhua-custom-refs-role="unset"
                   className="rounded-xl border border-white/15 bg-white/[0.03] p-3"
                 >
-                  <div className="text-[11px] font-semibold text-white/70">待归类</div>
+                  <div className="text-[11px] font-semibold text-white/70">
+                    待归类（老草稿迁移）
+                  </div>
                   <p className="mt-0.5 text-[10px] text-white/40">
-                    旧上传未分栏的图；请点人物 / 场景 / 服装道具归入对应栏，未归类不进融图。
+                    上传入口已统一为先选分类，这里只是老草稿留下的未归类图；
+                    请点人物 / 场景 / 服装 / 道具归入对应栏，或直接删除——未归类不进融图。
                   </p>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2 md:grid-cols-3">
                     {customAssetRefs
