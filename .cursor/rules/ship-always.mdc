@@ -1,0 +1,32 @@
+# 验证 · Git · 部署（硬）
+
+合并自旧的 `local-verify-before-push` / `git-pr-workflow` / `deployment-boundaries` 三条。**用户本轮明文可覆盖**（见 `collab-always` 第二节），覆盖时要点明依据。
+
+## 一、本地验证门禁
+
+在 **`git push` 功能分支**、**`gh pr create`**、或回报「改好了 / Deploy 该绿」之前，必须先在本机跑通：
+
+1. **`pnpm check`**（`tsc --noEmit`）——与 Fly 构建同门槛。只跑过某个 vitest 就宣称可合是违规。
+2. **相关 vitest**：改到的模块对应 `*.test.ts`；触及共享工厂或画布布局时补跑 `canvasDramaStudio` 与 `manhuaSeedanceLayout`。
+
+回报里要写清**跑了哪些命令、通过还是失败**。没跑就不许说「可合」。Deploy 因 `tsc` 变红视为本门禁失守，热修分支同样先 `pnpm check` 再推。
+
+**例外**：纯文档 / rules / `PROGRESS` 且不含 TS 改动，可跳 vitest；用户明文说「先推别测」可跳，并在回复点明。
+
+## 二、Git 与 PR
+
+- 写完一小段就在**功能分支** commit 并 `git push`（远端备份），**不要**每推一次就开 PR。
+- 攒到**一整块模块**告一段落再 `gh pr create` 对准 `main`。非紧急**不直推 `main`**；用户明文要求紧急热修才可以，并说明原因。
+- **开 PR 前先查有没有自己开的未合并 PR**：上一张还 OPEN → 禁止开新的，只能继续往已有功能分支 push（叠进同一张）。
+- **节流**：两次 `gh pr create` 间隔 **≥15 分钟**（墙上时钟）；**同一自然日 ≤20 次**。到点不是鼓励开空 PR，模块优先。
+- **串行门禁**：上一张 **MERGED** 才可开下一张；且上一张在 `main` 的 **Fly Deploy 必须 success** 才适合合下一张（`cancelled` / `failure` / `in_progress` 都不算，刚 MERGED 十几秒就合下一刀会把上一刀 Deploy 顶掉）。
+- **禁止默认代合（硬）**：默认不许 `gh pr merge`。开完 PR 只报告链接与 CI / Deploy 状态，**等用户当轮明文**说「合 / 帮我合上 / 你来合 #NNN」才执行。用户说「停 / 别合 / 我自己合」立即停。
+- PR 描述用简短完整句：改了什么、为什么，必要时附 issue 或 run 链接。
+
+## 三、部署真值
+
+- **API 走 Fly**（`main` → Actions `Fly Deploy`）；**www 前台走 Vercel Git 自动部署**。用户要「线上生效」→ 必须**远端有对应提交**，只在本地 checkout/reset 不算完成；`git push` 失败要立刻回报错误与已做尝试，不许假装完成。
+- **合并 ≠ 部署成功**：`MERGED` 不够，要查对应 Actions 是否 success。红或 cancelled 视同未完成，等下一次含该提交的 Deploy 绿，或自己修热修分支再推（合并仍需用户明文）。
+- **前台是另一条通道（2026-08-05 事故教训）**：只看 Fly 绿不够。曾因 `vercel.json` 的 `buildCommand` 挂了博客生成，导致 www 停更六小时而全程无一处报红。现有 `frontend-deploy-check` workflow 看门，但涉及 `vercel.json`、构建脚本、静态产物时仍要单独确认正式域名可访问。
+- PR 上的旧 Vercel 红灯不作为 merge 门禁；正式域名以 production 为准。
+- 指令含 **push / PR / 合并** 时，少做一步即未完成。不要用空泛的「边界」「安全」回避已声明的交付。
