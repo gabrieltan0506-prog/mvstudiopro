@@ -3,6 +3,7 @@ import { PLATFORM_ENGINE_TIER_EFFORT, platformEngineEffort } from "./platformEng
 import {
   PLATFORM_TOPIC_SHORTLIST_TIER_COUNTS,
   platformTopicShortlistTierCredits,
+  resolvePlatformTopicShortlistQuota,
 } from "./platformTopicShortlist.js";
 
 describe("platformTopicShortlistTierCredits", () => {
@@ -21,6 +22,31 @@ describe("platformTopicShortlistTierCredits", () => {
 
   it("只给 6 / 8 两个选项", () => {
     expect([...PLATFORM_TOPIC_SHORTLIST_TIER_COUNTS]).toEqual([6, 8]);
+  });
+});
+
+describe("resolvePlatformTopicShortlistQuota", () => {
+  it("头 3 次每次给 2 条", () => {
+    const q = resolvePlatformTopicShortlistQuota({ usedEver: 0, usedToday: 0 });
+    expect(q.nextFree).toBe(true);
+    expect(q.freeTopics).toBe(2);
+    expect(q.firstFreeLeft).toBe(3);
+    expect(resolvePlatformTopicShortlistQuota({ usedEver: 2, usedToday: 2 }).freeTopics).toBe(2);
+  });
+
+  it("头 3 次用完之后每天只剩 1 次、且只给 1 条", () => {
+    const q = resolvePlatformTopicShortlistQuota({ usedEver: 3, usedToday: 0 });
+    expect(q.nextFree).toBe(true);
+    expect(q.freeTopics).toBe(1);
+    expect(q.firstFreeLeft).toBe(0);
+  });
+
+  it("当天那次用掉就不再免费", () => {
+    expect(resolvePlatformTopicShortlistQuota({ usedEver: 5, usedToday: 1 }).nextFree).toBe(false);
+  });
+
+  it("头 3 次期间不受当天次数限制（同一天连用 3 次仍免费）", () => {
+    expect(resolvePlatformTopicShortlistQuota({ usedEver: 1, usedToday: 1 }).nextFree).toBe(true);
   });
 });
 

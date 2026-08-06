@@ -43,6 +43,76 @@ import {
  */
 const SHORTLIST_REASONING_EFFORT = platformEngineEffort("shortlist", "superb");
 
+/**
+ * 免费试跑的用量键。
+ *
+ * 单独记一条日志而不是查扣费记录：免费那次扣 0 积分，`deductCreditsAmount`
+ * 在 0 的时候直接返回、什么都不写，光靠扣费流水数不出「头 3 次 + 每天 1 次」。
+ */
+export const PLATFORM_TOPIC_SHORTLIST_FREE_ACTION = "platformTopicShortlistFree";
+
+function startOfTodayLocal(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+export async function countPlatformTopicShortlistFreeEver(userId: number): Promise<number> {
+  const { getDb } = await import("../db.js");
+  const { stripeUsageLogs } = await import("../../drizzle/schema.js");
+  const { and, count, eq } = await import("drizzle-orm");
+  const db = await getDb();
+  if (!db) return 0;
+  const [row] = await db
+    .select({ c: count() })
+    .from(stripeUsageLogs)
+    .where(
+      and(
+        eq(stripeUsageLogs.userId, userId),
+        eq(stripeUsageLogs.action, PLATFORM_TOPIC_SHORTLIST_FREE_ACTION),
+      ),
+    );
+  return Number(row?.c || 0);
+}
+
+export async function countPlatformTopicShortlistFreeToday(userId: number): Promise<number> {
+  const { getDb } = await import("../db.js");
+  const { stripeUsageLogs } = await import("../../drizzle/schema.js");
+  const { and, count, eq, gte } = await import("drizzle-orm");
+  const db = await getDb();
+  if (!db) return 0;
+  const [row] = await db
+    .select({ c: count() })
+    .from(stripeUsageLogs)
+    .where(
+      and(
+        eq(stripeUsageLogs.userId, userId),
+        eq(stripeUsageLogs.action, PLATFORM_TOPIC_SHORTLIST_FREE_ACTION),
+        gte(stripeUsageLogs.createdAt, startOfTodayLocal()),
+      ),
+    );
+  return Number(row?.c || 0);
+}
+
+export async function logPlatformTopicShortlistFreeUse(params: {
+  userId: number;
+  topics: number;
+  masked: number;
+}): Promise<void> {
+  const { getDb } = await import("../db.js");
+  const { stripeUsageLogs } = await import("../../drizzle/schema.js");
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(stripeUsageLogs).values({
+    userId: params.userId,
+    action: PLATFORM_TOPIC_SHORTLIST_FREE_ACTION,
+    creditsCost: 0,
+    isFreeQuota: 1,
+    description: `选题免费试跑 ${params.topics} 条（另有 ${params.masked} 条未生成待解锁）`,
+    balanceAfter: null,
+  });
+}
+
 function extractJsonObject(raw: string): unknown {
   const t = String(raw || "").trim();
   if (!t) return null;

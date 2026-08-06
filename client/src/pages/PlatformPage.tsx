@@ -2658,6 +2658,11 @@ export default function PlatformPage() {
     setEditingShortlistTitle("");
   }, [editingShortlistTitle, editingShortlistTopicId]);
   const generateTopicShortlistMutation = trpc.mvAnalysis.generatePlatformTopicShortlist.useMutation();
+  /** 免费试跑还剩几次；打码位数量也读它 */
+  const { data: shortlistFreeQuota, refetch: refetchShortlistQuota } =
+    trpc.mvAnalysis.platformTopicShortlistQuota.useQuery(undefined, { retry: false, staleTime: 60_000 });
+  /** 免费试跑后还有多少条没生成（付费才跑） */
+  const [shortlistMaskedCount, setShortlistMaskedCount] = useState(0);
   /** 智能优化的免费额度：决定含糊背景是硬拦还是软提示 */
   const { data: personaPolishQuota } = trpc.mvAnalysis.platformPersonaPolishQuota.useQuery(undefined, {
     retry: false,
@@ -3409,16 +3414,29 @@ export default function PlatformPage() {
             </div>
           </div>
           {showGenerateButton ? (
-            <button
-              type="button"
-              disabled={!isAuthenticated || generateTopicShortlistMutation.isPending}
-              onClick={() => void runCreateTopicShortlist()}
-              className="shrink-0 rounded-xl border border-[#49e6ff]/50 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-5 py-3 text-[14px] font-bold text-white shadow-[0_10px_32px_rgba(73,230,255,0.18)] transition hover:brightness-110 disabled:opacity-50"
-            >
-              {generateTopicShortlistMutation.isPending
-                ? "生成中…"
-                : `生成 ${topicShortlistCount} 条选题（${topicShortlistPrice.total} 点）`}
-            </button>
+            <div className="flex shrink-0 flex-col items-stretch gap-1.5">
+              <button
+                type="button"
+                disabled={!isAuthenticated || generateTopicShortlistMutation.isPending}
+                onClick={() => void runCreateTopicShortlist()}
+                className="rounded-xl border border-[#49e6ff]/50 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-5 py-3 text-[14px] font-bold text-white shadow-[0_10px_32px_rgba(73,230,255,0.18)] transition hover:brightness-110 disabled:opacity-50"
+              >
+                {generateTopicShortlistMutation.isPending
+                  ? "生成中…"
+                  : `生成 ${topicShortlistCount} 条选题（${topicShortlistPrice.total} 点）`}
+              </button>
+              {shortlistFreeQuota?.nextFree ? (
+                <button
+                  type="button"
+                  disabled={!isAuthenticated || generateTopicShortlistMutation.isPending}
+                  onClick={() => void runCreateTopicShortlist({ freeTrial: true })}
+                  className="rounded-xl border border-emerald-400/45 bg-emerald-500/12 px-5 py-2 text-[12px] font-semibold text-emerald-100 transition hover:brightness-110 disabled:opacity-50"
+                >
+                  先免费试跑 {shortlistFreeQuota.freeTopics} 条
+                  {shortlistFreeQuota.firstFreeLeft > 0 ? `（还剩 ${shortlistFreeQuota.firstFreeLeft} 次）` : "（今日）"}
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </div>
         {generateTopicShortlistMutation.isPending ? (
@@ -3596,7 +3614,36 @@ export default function PlatformPage() {
                 </div>
               );
               })}
+              {shortlistMaskedCount > 0
+                ? Array.from({ length: Math.min(shortlistMaskedCount, 8) }).map((_, i) => (
+                    <div
+                      key={`${domId}-masked-${i}`}
+                      className="relative overflow-hidden rounded-md border border-white/10 bg-black/30 px-2.5 py-2"
+                      aria-hidden
+                    >
+                      <div className="select-none blur-[5px]">
+                        <div className="h-3 w-3/5 rounded bg-white/25" />
+                        <div className="mt-1.5 h-2.5 w-4/5 rounded bg-white/12" />
+                      </div>
+                    </div>
+                  ))
+                : null}
             </div>
+            {shortlistMaskedCount > 0 ? (
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#fbbf24]/30 bg-[rgba(251,191,36,0.07)] px-3 py-2.5">
+                <p className="min-w-0 flex-1 text-[12px] leading-snug text-[#fde68a]">
+                  还有 {shortlistMaskedCount} 条没生成。免费这次只跑看得见的几条，解锁后按你选的条数重新出一整批。
+                </p>
+                <button
+                  type="button"
+                  disabled={generateTopicShortlistMutation.isPending}
+                  onClick={() => void runCreateTopicShortlist()}
+                  className="shrink-0 rounded-lg border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.14)] px-3 py-1.5 text-[11px] font-bold text-[#fde68a] transition hover:brightness-110 disabled:opacity-50"
+                >
+                  解锁 {topicShortlistCount} 条（{topicShortlistPrice.total} 点）
+                </button>
+              </div>
+            ) : null}
           </>
         ) : !generateTopicShortlistMutation.isPending ? (
           <p className="mt-3 text-[12px] text-gray-500">
@@ -9776,7 +9823,8 @@ export default function PlatformPage() {
         ? toolsPrimaryCta
         : createPrimaryCta;
 
-  const runCreateTopicShortlist = useCallback(async () => {
+  const runCreateTopicShortlist = useCallback(async (opts?: { freeTrial?: boolean }) => {
+    const freeTrial = Boolean(opts?.freeTrial);
     if (!focusPrompt.trim()) {
       setPersonaFieldErrors({ freeform: "请先填写人物背景" });
       setCreateStep("persona");
@@ -9817,11 +9865,14 @@ export default function PlatformPage() {
         existingTitles,
         count,
         windowDays: selectedWindowDays,
+        ...(freeTrial ? { freeTrial: true } : {}),
         ...(topicGoal ? { topicGoal } : {}),
         ...buildShortlistBlueOceanInput(decisionIntelBlueOceanLexicon),
       });
       const topics = res.topics || [];
       setTopicShortlist(topics);
+      setShortlistMaskedCount(Number(res.maskedCount) || 0);
+      if (freeTrial) void refetchShortlistQuota();
       setSelectedShortlistIds([]);
       setCreateStep("result");
       scrollToPlatformSection("platform-topic-shortlist");
@@ -9852,7 +9903,9 @@ export default function PlatformPage() {
       }
       pushShortlistDebug(`✅ 面板已展示 ${topics.length} 条`);
       toast.success(
-        `已生成 ${topics.length} 条初选${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；挑完再点「就写这条」。`,
+        freeTrial
+          ? `免费试跑出了 ${topics.length} 条；还有 ${Number(res.maskedCount) || 0} 条要解锁才会生成。`
+          : `已生成 ${topics.length} 条初选${res.chargedCredits ? `（扣 ${res.chargedCredits} 点）` : ""}；挑完再点「就写这条」。`,
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -9870,6 +9923,7 @@ export default function PlatformPage() {
     focusPrompt,
     topicGoal,
     personaPolishQuota,
+    refetchShortlistQuota,
     topicShortlistCount,
     platformContent,
     topicShortlist,
