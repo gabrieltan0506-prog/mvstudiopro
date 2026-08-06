@@ -27,10 +27,25 @@ import {
   formatManhuaScreenplayEnginePromptBlock,
 } from "./manhuaStoryDistill.js";
 import { resolveManhuaSeedanceLayoutProfile } from "./manhuaSeedanceLayout.js";
+import { normalizeManhuaImportText } from "./manhuaScriptTextNormalize.js";
 
 export const MANHUA_WRITER_EPISODE_MIN = 2;
 export const MANHUA_WRITER_EPISODE_MAX = 6;
 export const MANHUA_WRITER_EPISODE_DEFAULT = 3;
+
+/**
+ * 人物/道具/场景表标题别名：平台扩写只吐「人物表/道具表/场景表」，但外部剧本
+ * （编剧手写、其他工具产出）常用「人物卡」「道具·服装」这类近义写法。标题对
+ * 不上时整表解析成空数组，人物/道具/场景三条硬拦会全部误报。
+ */
+const WRITER_CHARACTERS_HEADING_RE = "人物表|人物卡|角色表|角色卡";
+const WRITER_PROPS_HEADING_RE = "道具表|道具卡|道具[·・]服装|服化道";
+const WRITER_LOCATIONS_HEADING_RE = "场景表|场景卡|场景设定";
+
+function extractWriterTableSection(md: string, headingAliasRe: string): string {
+  const re = new RegExp(`##\\s*(?:${headingAliasRe})\\n+([\\s\\S]*?)(?=\\n##\\s|$)`);
+  return md.match(re)?.[1]?.trim() || "";
+}
 
 export type ManhuaWriterEpisode = {
   index: number;
@@ -87,7 +102,8 @@ export function buildManhuaWriterExpandPrompt(opts: {
   lengthTierId?: string | null;
   /**
    * 开场选定的成片引擎：决定可拍表段数与单段秒数。
-   * `seedance-2.0` / `seedance-2.0-fast` → 5–6×15s；`seedance-2.5` → 4×30s。
+   * `seedance-2.0` / `seedance-2.0-fast` → 5–6×15s；`seedance-2.5` → 4×30s；
+   * 成片·高清 → 7–8×15s。
    */
   videoModel?: string | null;
   /** 局部改写：只重写第 N 集起，之前的集不许动 */
@@ -143,7 +159,11 @@ export function buildManhuaWriterExpandPrompt(opts: {
   const segDur = layout.durationSecPerSegment;
   const targetSec = layout.targetSec;
   const planTitle =
-    layout.videoModel === "seedance-2.5" ? "四段可拍表" : "五至六段可拍表";
+    layout.segmentCount <= 4
+      ? "四段可拍表"
+      : layout.segmentCount <= 6
+        ? "五至六段可拍表"
+        : "七至八段可拍表";
   return [
     "你是竖屏漫剧连载编剧。根据用户题材与补充条件，扩写成可拍的连载剧情包。",
     "硬规则：",
@@ -255,17 +275,15 @@ export function parseManhuaWriterPack(
 ): ManhuaWriterPack {
   const md = String(raw || "").trim();
   const n = clampWriterEpisodeCount(episodeCount);
-  const parsedTitle = extractMarkdownSectionLine(md, "系列标题");
+  const parsedTitle = stripSeriesTitleTrailingNoise(extractMarkdownSectionLine(md, "系列标题"));
   const topicFallback = deriveSeriesTitleFromTopic(opts?.topic || "");
   const seriesTitle = !isPlaceholderSeriesTitle(parsedTitle)
     ? parsedTitle.slice(0, 48)
     : topicFallback || "未命名系列";
   const logline = extractMarkdownSectionLine(md, "一句话系列梗概").slice(0, 80);
-  const charactersMd =
-    md.match(/##\s*人物表\n+([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() || "";
-  const propsMd = md.match(/##\s*道具表\n+([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() || "";
-  const locationsMd =
-    md.match(/##\s*场景表\n+([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() || "";
+  const charactersMd = extractWriterTableSection(md, WRITER_CHARACTERS_HEADING_RE);
+  const propsMd = extractWriterTableSection(md, WRITER_PROPS_HEADING_RE);
+  const locationsMd = extractWriterTableSection(md, WRITER_LOCATIONS_HEADING_RE);
 
   const episodes: ManhuaWriterEpisode[] = [];
   for (let i = 1; i <= n; i++) {
@@ -418,12 +436,32 @@ function ensureEpisodeHooks(pack: ManhuaWriterPack): ManhuaWriterPack {
   };
 }
 
+/**
+ * 剥书名号残片与尾部版本/集数噪声词：粘贴进来的标题常常整行抄自别处
+ * 文档（如「雁门照山河》六十一集优化版分集大纲」），书名号只剩半个，
+ * 后面又挂着「N集」「优化版」「分集大纲」「短剧版」这类后缀说明词，
+ * 不剥的话这些噪声会被当成正式剧名一起存下来。
+ * 反复剥尾部，因为这几类后缀常常连着写，一次 replace 剥不干净。
+ */
+function stripSeriesTitleTrailingNoise(raw: string): string {
+  let t = String(raw || "").replace(/[《》]/g, "").trim();
+  let prev = "";
+  while (t !== prev) {
+    prev = t;
+    t = t
+      .replace(/[一二三四五六七八九十百千0-9]{1,4}集$/, "")
+      .replace(/(优化版|分集大纲|短剧版|精编版|完整版|导演剪辑版|加长版)$/, "")
+      .trim();
+  }
+  return t;
+}
+
 function extractFreeformSeriesTitle(md: string, topic?: string): string {
   const fromHeading =
     md.match(/^#\s+([^\n#]+)/m)?.[1] ||
     md.match(/^(?:剧名|系列标题|片名)\s*[:：]\s*([^\n]+)/m)?.[1] ||
     "";
-  const cleaned = cleanWriterTitleLine(fromHeading);
+  const cleaned = stripSeriesTitleTrailingNoise(cleanWriterTitleLine(fromHeading));
   if (!isPlaceholderSeriesTitle(cleaned)) return cleaned.slice(0, 48);
   const topicFallback = deriveSeriesTitleFromTopic(topic || "");
   if (topicFallback) return topicFallback;
@@ -489,10 +527,12 @@ export function importManhuaWriterPackFromText(
   raw: string,
   opts?: { topic?: string; episodeCount?: number },
 ): ManhuaWriterImportResult {
-  const text = String(raw || "")
-    .replace(/^\uFEFF/, "")
-    .replace(/\r\n/g, "\n")
-    .trim();
+  const text = normalizeManhuaImportText(
+    String(raw || "")
+      .replace(/^\uFEFF/, "")
+      .replace(/\r\n/g, "\n")
+      .trim(),
+  ).trim();
   if (text.length < 80) {
     return { ok: false, error: "文本太短，请粘贴完整分集剧本（至少两集，建议含「第1集」「第2集」）" };
   }
@@ -564,11 +604,9 @@ export function importManhuaWriterPackFromText(
     cleanWriterTitleLine(
       text.match(/(?:^|\n)(?:梗概|一句话|logline)\s*[:：]\s*([^\n]+)/i)?.[1] || "",
     ).slice(0, 80) || "";
-  const charactersMd =
-    text.match(/##\s*人物表\n+([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() || "";
-  const propsMd = text.match(/##\s*道具表\n+([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() || "";
-  const locationsMd =
-    text.match(/##\s*场景表\n+([\s\S]*?)(?=\n##\s|$)/)?.[1]?.trim() || "";
+  const charactersMd = extractWriterTableSection(text, WRITER_CHARACTERS_HEADING_RE);
+  const propsMd = extractWriterTableSection(text, WRITER_PROPS_HEADING_RE);
+  const locationsMd = extractWriterTableSection(text, WRITER_LOCATIONS_HEADING_RE);
 
   const pack = ensureEpisodeHooks({
     seriesTitle,

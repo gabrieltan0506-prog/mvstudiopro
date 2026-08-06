@@ -82,6 +82,11 @@ export function manhuaEpisodeSegmentsForTier(id: string | null | undefined): num
 const MIN_BODY_CHARS_PER_SEGMENT = 28;
 const MIN_LOCATION_HITS = 2;
 
+/** 单段对白句数门槛按段长走：15s 段 3 句，≥30s 段 4 句（段更长必须多几句才撑得满） */
+function minDialogueQuotesPerSegment(durationSecPerSegment: number): number {
+  return durationSecPerSegment >= 30 ? 4 : MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES;
+}
+
 /**
  * 按目标秒数推密度门槛。
  *
@@ -92,8 +97,19 @@ const MIN_LOCATION_HITS = 2;
  * 这样 180s 仍精确落回旧阈值 280 字 / 30 句，90s 则落到 5 段 × 3 句 = 15 句。
  *
  * 门禁与节拍模板共用本函数：模板若自报一套更松的建议，编剧照着写就必然卡门禁。
+ *
+ * `layout` 只影响对白句数门槛（minDlg），正文字数门槛（minBody）不跟着走：
+ * Seedance 2.5 是 4 段×30s＝120 秒，比 2.0-fast 的 90 秒更长，字数要求只能更高
+ * 不能更低，所以 minBody 仍按「每 15 秒一个内容单元」的旧口径从 targetSec 反推，
+ * 不能借用 2.5 的真实段数（4 段）去算，否则字数门槛反而比短档还松。
+ * minDlg 则必须用真实段数与真实段长：2.5 每段实际 30 秒、写 4 句就是正常密度，
+ * 如果仍按「总秒数 / 15」倒推出 8 个虚拟段再乘 3 句，门槛会变成 21 句，
+ * 比真实能撑的台词量高出近一倍，逼编剧写注定拍不出来的对白。
  */
-export function manhuaEpisodeDensityFloors(targetSec: number): {
+export function manhuaEpisodeDensityFloors(
+  targetSec: number,
+  layout?: { segmentCount?: number; durationSecPerSegment?: number } | null,
+): {
   segments: number;
   minBody: number;
   minDlg: number;
@@ -101,10 +117,19 @@ export function manhuaEpisodeDensityFloors(targetSec: number): {
 } {
   const segs = Math.max(1, Math.floor(targetSec / MANHUA_EPISODE_SEGMENT_DURATION_SEC));
   const gateSegs = Math.max(1, Math.round((segs * 5) / 6));
+
+  const realSegCount = Math.max(1, Math.floor(layout?.segmentCount ?? segs));
+  const durationPerSeg = Math.max(
+    1,
+    Math.floor(layout?.durationSecPerSegment ?? MANHUA_EPISODE_SEGMENT_DURATION_SEC),
+  );
+  const gateSegsForDlg = Math.max(1, Math.round((realSegCount * 5) / 6));
+  const dlgPerSeg = minDialogueQuotesPerSegment(durationPerSeg);
+
   return {
     segments: segs,
     minBody: gateSegs * MIN_BODY_CHARS_PER_SEGMENT,
-    minDlg: gateSegs * MANHUA_EPISODE_SEGMENT_MIN_DIALOGUE_QUOTES,
+    minDlg: gateSegsForDlg * dlgPerSeg,
     minLoc: gateSegs >= 5 ? MIN_LOCATION_HITS : 1,
   };
 }
@@ -143,7 +168,7 @@ const FILLER_DIALOGUE_RE =
 // 可拍表演线索：表情 / 面部 / 肢体动作 / 情绪起伏。词表宁宽勿窄——
 // 真实表演几乎必含身体或面部动作词；只写「很生气」这类纯抽象仍会被 length + 词表拦下。
 const PERFORMANCE_CUE_RE =
-  /表情|眼|眉|嘴|唇|齿|咬|牙|泪|哽|颤|抖|震|笑|怒|慌|沉|惊|僵|滞|顿|绷|松|垂|扬|皱|瞪|盯|避|躲|迟疑|停顿|呼吸|气口|握|攥|拳|指|掌|手|腕|臂|肩|背|胸|膝|腿|脚|步|身|头|面|脸|推|拉|退|逼近|侧|抬|低|转|跪|扑|甩|扶|挡|护|拦|按|抓|伸|俯|仰|靠|撞|踢|踩|跃|挥|拨|顶|肢体|情绪/;
+  /表情|眼|瞳|眉|嘴|唇|齿|咬|牙|泪|哽|颤|抖|震|笑|怒|慌|沉|惊|僵|滞|顿|绷|松|垂|扬|皱|瞪|盯|避|躲|迟疑|停顿|呼吸|气口|握|攥|拳|指|掌|手|腕|臂|肩|背|胸|膝|腿|脚|步|身|头|面|脸|推|拉|退|逼近|侧|抬|低|转|跪|扑|甩|扶|挡|护|拦|按|抓|伸|俯|仰|靠|撞|踢|踩|跃|挥|拨|顶|肢体|情绪|摸|抠|掐|捏|扣|绞|拧|扭|屈|蜷|缩|蹲|跨|翻|栽|坠|瘫|踉|蹒|怔|愣|愕|瞥|眨|闭|睁|抿|噎|咽|喉|颈|腰|肘|喘|叹|屏|哼|嗤|瑟|停|发飘|滚动/;
 
 const FIELD_KEYS: Array<{
   key: keyof Omit<ManhuaEpisodeSegmentBeat, "index">;
@@ -173,7 +198,9 @@ function pickField(block: string, aliases: string[]): string {
       "i",
     );
     const m = block.match(re)?.[1];
-    if (m && normalizeFieldLine(m).length >= 2) return normalizeFieldLine(m).slice(0, 400);
+    // 阈值放到 ≥1：编剧明确写「无」（此段确无该字段）也算已填，不算漏填。
+    // 对白字段不走这里（见 dialogueZh 分支），密度仍由引号句数门禁把关，不受影响。
+    if (m && normalizeFieldLine(m).length >= 1) return normalizeFieldLine(m).slice(0, 400);
   }
   return "";
 }
@@ -248,28 +275,44 @@ export function extractManhuaSegmentDialogueQuotes(dialogueZh: string): string[]
     seen.add(s);
     out.push(s);
   };
-  // 优先：姓名：「台词」 / 姓名:「台词」（Array.from 兼容 Fly tsc 旧 target）
+  // 已经识别出说话人的引号原文，避免被下面的「无说话人回落」再当匿名句重复计入
+  const consumedQuotes = new Set<string>();
+  /**
+   * 优先：姓名：「台词」/ 姓名（批注）：「台词」（批注如「气声」「自语」「低」不进名字，
+   * 否则锁脸会锁错）。Array.from 兼容 Fly tsc 旧 target。
+   */
   const withSpeaker = Array.from(
-    t.matchAll(/([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*「([^」]{1,80})」/g),
+    t.matchAll(
+      /([\u4e00-\u9fff·A-Za-z]{2,12})(?:[（(][^）)]{0,16}[）)])?\s*[：:]\s*「([^」]{1,80})」/g,
+    ),
   );
   for (const m of withSpeaker) {
     const name = String(m[1] || "").trim();
     const quote = String(m[2] || "").trim();
-    if (name && quote) push(`${name}：「${quote}」`);
+    if (name && quote) {
+      push(`${name}：「${quote}」`);
+      consumedQuotes.add(quote);
+    }
   }
   const withSpeakerCurly = Array.from(
     t.matchAll(
-      /([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*[\u201c“]([^\u201d”]{1,80})[\u201d”]/g,
+      /([\u4e00-\u9fff·A-Za-z]{2,12})(?:[（(][^）)]{0,16}[）)])?\s*[：:]\s*[\u201c“]([^\u201d”]{1,80})[\u201d”]/g,
     ),
   );
   for (const m of withSpeakerCurly) {
     const name = String(m[1] || "").trim();
     const quote = String(m[2] || "").trim();
-    if (name && quote) push(`${name}：「${quote}」`);
+    if (name && quote) {
+      push(`${name}：「${quote}」`);
+      consumedQuotes.add(quote);
+    }
   }
-  if (out.length) return out.slice(0, 8);
 
-  // 回落：无说话人时只抽引号句
+  /**
+   * 回落：无法识别说话人的引号句仍要计入，不能因为本段已经抓到几句带说话人的
+   * 台词就整段跳过——之前在这里 `if (out.length) return` 提前返回，会把带批注
+   * 说话人的句子静默丢掉且不进回落，两三句台词就这样在门禁里凭空消失。
+   */
   const cn = t.match(/「([^」]{1,80})」/g) || [];
   const curly = t.match(/[\u201c“]([^\u201d”]{1,80})[\u201d”]/g) || [];
   const en = t.match(/"([^"]{1,80})"/g) || [];
@@ -277,7 +320,7 @@ export function extractManhuaSegmentDialogueQuotes(dialogueZh: string): string[]
     const inner = String(raw || "")
       .replace(/^[「『"“\u201c]|[」』"”\u201d]$/g, "")
       .trim();
-    if (inner.length < 1) continue;
+    if (inner.length < 1 || consumedQuotes.has(inner)) continue;
     push(inner);
   }
   return out.slice(0, 8);
@@ -289,7 +332,7 @@ export function extractManhuaDialogueSpeakerName(
 ): string {
   const t = String(dialogueZh || "").trim();
   const m =
-    t.match(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[：:]\s*[「『"“]/) ||
+    t.match(/^([\u4e00-\u9fff·A-Za-z]{2,12})(?:[（(][^）)]{0,16}[）)])?\s*[：:]\s*[「『"“]/) ||
     t.match(/^([\u4e00-\u9fff·A-Za-z]{2,12})\s*[「『"“]/);
   return String(m?.[1] || "").trim();
 }

@@ -12,6 +12,7 @@ import {
   manhuaEpisodeDensityFloors,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
 } from "./manhuaEpisodeSegmentPlan.js";
+import { normalizeForManhuaNameMatch } from "./manhuaScriptTextNormalize.js";
 
 export type ManhuaWriterAssetRole = "character" | "prop" | "scene";
 
@@ -236,8 +237,12 @@ export type ManhuaCanonWriterDrift = {
   onlyInBible: string[];
 };
 
+/**
+ * 归一化后再比：已锁定的旧 bible 角色名可能来自归一化上线前的导入/手填，
+ * 跟新剧本的名字繁简或空白不一致时，不归一化会被误判成「换角漂移」。
+ */
 function normName(s: string): string {
-  return String(s || "").replace(/\s+/g, "").toLowerCase();
+  return normalizeForManhuaNameMatch(String(s || "")).replace(/\s+/g, "").toLowerCase();
 }
 
 function looseNameHit(name: string, pool: string[]): boolean {
@@ -373,9 +378,18 @@ export function evaluateWriterEpisodeDensity(input: {
   locationsMd?: string | null;
   /** 目标秒数；默认按成片实际长度 90s。门槛随之按段数推算 */
   targetSec?: number;
+  /**
+   * 真实成片布局（如 Seedance 2.5 = 4 段×30s）：只影响对白句数门槛，
+   * 不传时按「总秒数 / 15」倒推段数，与旧行为一致。
+   */
+  segmentCount?: number;
+  durationSecPerSegment?: number;
 }): WriterDensityGateResult {
   const target = input.targetSec ?? MANHUA_EPISODE_SEGMENT_TARGET_SEC;
-  const { minBody, minDlg, minLoc } = manhuaEpisodeDensityFloors(target);
+  const { minBody, minDlg, minLoc } = manhuaEpisodeDensityFloors(target, {
+    segmentCount: input.segmentCount,
+    durationSecPerSegment: input.durationSecPerSegment,
+  });
   const canon = buildManhuaWriterAssetCanon({
     locationsMd: input.locationsMd,
     episodes: input.episodes,
@@ -437,9 +451,21 @@ export function evaluateWriterPackAssetAndDensity(input: {
   locationsMd?: string | null;
   episodes: Array<{ index: number; body?: string; endHook?: string }>;
   targetSec?: number;
+  /** 真实成片布局（如 Seedance 2.5 = 4 段×30s），透传给对白密度门槛 */
+  segmentCount?: number;
+  durationSecPerSegment?: number;
+  /** 可拍表段数门禁；不传则回落 4–6（2.0 预算期） */
+  segmentMin?: number;
+  segmentMax?: number;
 }): WriterDensityGateResult & { canon: ManhuaWriterAssetCanon } {
   const canon = buildManhuaWriterAssetCanon(input);
-  const density = evaluateWriterEpisodeDensity(input);
+  const density = evaluateWriterEpisodeDensity({
+    episodes: input.episodes,
+    locationsMd: input.locationsMd,
+    targetSec: input.targetSec,
+    segmentCount: input.segmentCount,
+    durationSecPerSegment: input.durationSecPerSegment,
+  });
   const errors = [...density.errors];
   if (canon.characters.length < 2) {
     errors.push("人物表至少需要 2 名可锁定角色（含外形句）");
@@ -450,15 +476,23 @@ export function evaluateWriterPackAssetAndDensity(input: {
   if (canon.props.length < 1) {
     errors.push("道具表至少需要 1 件关键道具");
   }
-  // 预算期：额外要求 5–6 段可拍表（对白+表演/场景配色/角色/服化道/光影运镜），禁灌水。
+  // 预算期：额外要求可拍表（对白+表演/场景配色/角色/服化道/光影运镜），禁灌水。
   // 这道闸此前挂在 >=150 上，若只把 targetSec 改成 90 会被整个关掉，故改挂最短成片秒数。
+  // 段数上下限跟成片引擎走：2.0→5–6、2.5→4、高清→7–8。
   if ((input.targetSec ?? MANHUA_EPISODE_SEGMENT_TARGET_SEC) >= MANHUA_EPISODE_SEGMENT_TARGET_MIN_SEC) {
+    const segMin = Math.max(
+      1,
+      Math.floor(input.segmentMin ?? MANHUA_EPISODE_SEGMENT_COUNT_MIN),
+    );
+    const segMax = Math.max(
+      segMin,
+      Math.floor(input.segmentMax ?? MANHUA_EPISODE_SEGMENT_COUNT_MAX),
+    );
     for (const ep of input.episodes || []) {
       const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(String(ep.body || ""));
-      // 4 段（Seedance 2.5 · 30s）与 5–6 段（2.0 · 15s）均可过关
       const q = evaluateManhuaEpisodeSegmentPlanQuality(plan, {
-        min: MANHUA_EPISODE_SEGMENT_COUNT_MIN,
-        max: MANHUA_EPISODE_SEGMENT_COUNT_MAX,
+        min: segMin,
+        max: segMax,
       });
       if (!q.ok) {
         errors.push(

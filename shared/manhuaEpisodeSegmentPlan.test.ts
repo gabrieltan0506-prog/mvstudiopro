@@ -3,7 +3,10 @@ import {
   buildManhuaEpisodeSegmentPlanFixtureMarkdown,
   deriveManhuaSegmentIntentFallbackZh,
   evaluateManhuaEpisodeSegmentPlanQuality,
+  extractManhuaDialogueSpeakerName,
+  extractManhuaSegmentDialogueQuotes,
   formatManhuaEpisodeSegmentPlanPromptBlock,
+  manhuaEpisodeDensityFloors,
   parseManhuaEpisodeSegmentPlanFromMarkdown,
   inferManhuaCastZhFromDialogue,
   upsertManhuaSegmentCastInMarkdown,
@@ -282,5 +285,195 @@ describe("manhuaEpisodeSegmentPlan", () => {
     const next = upsertManhuaSegmentCastInMarkdown(md, 1, "苏文谦、苏照雪");
     const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(next);
     expect(plan.segments.find((s) => s.index === 1)?.castZh).toContain("苏文谦");
+  });
+
+  it("带括号批注的说话人不再被静默丢句，且批注不进名字", () => {
+    const dialogue =
+      "阿咎（气声）：「爹……？」谢明彰（对库吏）：「下一批。」库吏：「四十七箱。」";
+    const quotes = extractManhuaSegmentDialogueQuotes(dialogue);
+    expect(quotes).toHaveLength(3);
+    expect(quotes[0]).toBe("阿咎：「爹……？」");
+    expect(quotes[1]).toBe("谢明彰：「下一批。」");
+    expect(extractManhuaDialogueSpeakerName(quotes[0]!)).toBe("阿咎");
+    expect(extractManhuaDialogueSpeakerName("谢明彰（对库吏）：「下一批。」")).toBe("谢明彰");
+  });
+
+  it("无说话人的引号句仍与带说话人的句子合并计入，不再互相顶替", () => {
+    const dialogue = "苏文谦：「你取账。」「先活过今夜。」";
+    const quotes = extractManhuaSegmentDialogueQuotes(dialogue);
+    expect(quotes).toHaveLength(2);
+    expect(quotes).toContain("苏文谦：「你取账。」");
+    expect(quotes).toContain("先活过今夜。");
+  });
+
+  it("manhuaEpisodeDensityFloors：Seedance 2.5（targetSec=120、4段×30s）minDlg=12，不再按15s单位倒推成21", () => {
+    const floors = manhuaEpisodeDensityFloors(120, {
+      segmentCount: 4,
+      durationSecPerSegment: 30,
+    });
+    expect(floors.minDlg).toBe(12);
+  });
+
+  it("manhuaEpisodeDensityFloors：2.0-fast（90秒、6×15）minDlg 仍为 15", () => {
+    const floors = manhuaEpisodeDensityFloors(90, {
+      segmentCount: 6,
+      durationSecPerSegment: 15,
+    });
+    expect(floors.minDlg).toBe(15);
+    // 无 layout 时按 targetSec/15 倒推，口径一致
+    expect(manhuaEpisodeDensityFloors(90).minDlg).toBe(15);
+  });
+
+  it("manhuaEpisodeDensityFloors：180秒长档（12×15）minDlg 精确 30、minBody 精确 280", () => {
+    const withLayout = manhuaEpisodeDensityFloors(180, {
+      segmentCount: 12,
+      durationSecPerSegment: 15,
+    });
+    expect(withLayout.minDlg).toBe(30);
+    expect(withLayout.minBody).toBe(280);
+    // 无 layout 时仍精确落回旧阈值（源码注释硬要求）
+    const legacy = manhuaEpisodeDensityFloors(180);
+    expect(legacy.minDlg).toBe(30);
+    expect(legacy.minBody).toBe(280);
+  });
+
+  it("PERFORMANCE_CUE_RE 含用户确认完整清单后半段（睁抿噎咽喉颈腰肘喘叹屏哼嗤瑟停）", () => {
+    // 词表未 export：用真实门禁路径验后半段单字是否命中（每个字单独造一句过 length）
+    const words = ["睁", "抿", "噎", "咽", "喉", "颈", "腰", "肘", "喘", "叹", "屏", "哼", "嗤", "瑟", "停"];
+    for (const w of words) {
+      const md = [
+        "#### 段01",
+        "- 意图：让观众揪心，信任压过生死",
+        "- 对白：",
+        "  - 沈沧澜：「你取账，我断绳。」",
+        "  - 陆清和：「说好一起走。」",
+        "  - 沈沧澜：「先活过今夜。」",
+        `- 表演：他先${w}住片刻再继续动作，神情可拍。`,
+        "- 场景：断月桥",
+        "- 配色风格：墨蓝雨夜",
+        "- 角色：沈沧澜、陆清和",
+        "- 服装道具：玄黑劲装",
+        "- 光影运镜：低机位贴身推进",
+      ].join("\n");
+      const q = evaluateManhuaEpisodeSegmentPlanQuality(
+        parseManhuaEpisodeSegmentPlanFromMarkdown(md),
+      );
+      expect(q.issues.some((s) => s.includes("表演过薄")), `词「${w}」应命中词表`).toBe(false);
+    }
+  });
+
+  it("表演词表扩充：摸/怔/喘等常见动作词不再被误判过薄，纯抽象心理描写仍被拦下", () => {
+    const seg = (n: number, d1: string, d2: string, d3: string, perf: string, scene: string) =>
+      [
+        `#### 段${String(n).padStart(2, "0")}`,
+        "- 意图：让观众揪心，信任压过生死",
+        "- 对白：",
+        `  - 沈沧澜：「${d1}」`,
+        `  - 陆清和：「${d2}」`,
+        `  - 沈沧澜：「${d3}」`,
+        `- 表演：${perf}`,
+        `- 场景：${scene}`,
+        "- 配色风格：墨蓝雨夜",
+        "- 角色：沈沧澜、陆清和",
+        "- 服装道具：玄黑劲装、长剑",
+        "- 光影运镜：低机位贴身推进",
+      ].join("\n");
+    const md = [
+      seg(
+        1,
+        "你取账，我断绳，别回头。",
+        "说好一起走，不是各自送死。",
+        "先活过今夜。",
+        "他先摸自己粗布短褐发愣，随后喉头一哽，怔在原地。",
+        "断月桥",
+      ),
+      seg(
+        2,
+        "玉扣为何能合上？",
+        "我娘临终说这是救命债。",
+        "同一件东西，两家两种谎。",
+        "她伸手拨开发丝，指尖微颤，喘息渐急。",
+        "断月桥",
+      ),
+      seg(
+        3,
+        "他们认得你的剑路。",
+        "先躲开这波弩箭。",
+        "账册不能落他们手里。",
+        "他攥紧拳头又松开，肩线绷紧，眼神一瞥便闭上双眼。",
+        "苍云客栈",
+      ),
+      seg(
+        4,
+        "后墙窄门只能过两人。",
+        "你先走，我断后。",
+        "别回头找我。",
+        "她屏息片刻，蹲下身，抠着地上的裂缝，滚动的泪珠砸落。",
+        "苍云客栈",
+      ),
+      seg(
+        5,
+        "从这步起我们是叛徒。",
+        "名字是仇家给的。",
+        "选择才是自己的。",
+        "他踉跄后退一步，扶住墙，喉咽间发出一声闷哼。",
+        "苍云客栈",
+      ),
+    ].join("\n\n");
+    const q = evaluateManhuaEpisodeSegmentPlanQuality(
+      parseManhuaEpisodeSegmentPlanFromMarkdown(md),
+    );
+    expect(q.ok).toBe(true);
+    expect(q.readyCount).toBe(5);
+
+    // 用真实剧本文件校验时额外发现的缺口：环境/机械动作句夹一处纯视觉细节
+    // （瞳孔反光），原词表只有「眼」没有「瞳」，会被误判过薄
+    const pupilReflect = seg(
+      1,
+      "你取账，我断绳，别回头。",
+      "说好一起走，不是各自送死。",
+      "先活过今夜。",
+      "库门无声开；箱队月光下排开；第一辆车启动时阿咎瞳孔反光。",
+      "断月桥",
+    );
+    const qPupil = evaluateManhuaEpisodeSegmentPlanQuality(
+      parseManhuaEpisodeSegmentPlanFromMarkdown(pupilReflect),
+    );
+    expect(qPupil.issues.some((s) => s.includes("表演过薄"))).toBe(false);
+
+    const abstractOnly = seg(
+      1,
+      "你取账，我断绳，别回头。",
+      "说好一起走，不是各自送死。",
+      "先活过今夜。",
+      "他内心非常纠结和迷茫。",
+      "断月桥",
+    );
+    const qAbstract = evaluateManhuaEpisodeSegmentPlanQuality(
+      parseManhuaEpisodeSegmentPlanFromMarkdown(abstractOnly),
+    );
+    expect(qAbstract.ok).toBe(false);
+    expect(qAbstract.issues.some((s) => s.includes("表演过薄"))).toBe(true);
+  });
+
+  it("字段显式写「无」不再被误判缺字段（非对白字段）", () => {
+    const md = [
+      "#### 段01",
+      "- 意图：让观众揪心，信任压过生死",
+      "- 对白：",
+      "  - 沈沧澜：「你取账，我断绳。」",
+      "  - 陆清和：「说好一起走。」",
+      "  - 沈沧澜：「先活过今夜。」",
+      "- 表演：沈沧澜呼吸短促、齿关紧咬，伸手护住她。",
+      "- 场景：断月桥",
+      "- 配色风格：墨蓝雨夜",
+      "- 角色：沈沧澜、陆清和",
+      "- 服装道具：无",
+      "- 光影运镜：低机位贴身推进",
+    ].join("\n");
+    const plan = parseManhuaEpisodeSegmentPlanFromMarkdown(md);
+    expect(plan.segments[0]?.wardrobePropZh).toBe("无");
+    const q = evaluateManhuaEpisodeSegmentPlanQuality(plan);
+    expect(q.issues.some((s) => s.includes("缺字段"))).toBe(false);
   });
 });

@@ -42,6 +42,7 @@ import {
   HAILUO_OPENROUTER_DURATION,
   isCanvasHailuoH3VideoModel,
 } from "./hailuoOpenRouterModels.js";
+import { resolveManhuaSeedanceLayoutProfile } from "./manhuaSeedanceLayout.js";
 
 export { isManhuaClipPromptLegacyFat, stripManhuaClipForbiddenBoards };
 
@@ -114,30 +115,28 @@ export const MANHUA_KEYARTS_PER_SEGMENT_MIN = 3;
 export const MANHUA_SHOT_KEYART_MAX =
   MANHUA_SEGMENT_DEFAULT * MANHUA_KEYARTS_PER_SEGMENT_MAX;
 
-/** 工厂默认成片模型（产品默认；探针仍可另用 Mini） */
-export const MANHUA_FACTORY_DEFAULT_VIDEO_MODEL = "seedance-2.0-fast" as const;
+/**
+ * 工厂默认成片模型（产品首选：Seedance 2.5 · 4×30）。
+ * 实际给用户预选时请走 resolveManhuaFactoryDefaultVideoModel({ plan, role })，
+ * 无 2.5 权限会回落 2.0-fast，避免默认出一个跑不了的引擎。
+ */
+export const MANHUA_FACTORY_DEFAULT_VIDEO_MODEL = "seedance-2.5" as const;
 
 export function isManhuaSeedance25VideoModel(videoModel?: string | null): boolean {
   return String(videoModel || "").trim() === "seedance-2.5";
 }
 
-/** 按成片模型取段数上下限与默认 */
+/** 按成片模型取段数上下限与默认（与漫剧段表 profile 对齐，含 2.5 / 高清） */
 export function manhuaSegmentCountBounds(videoModel?: string | null): {
   min: number;
   max: number;
   default: number;
 } {
-  if (isManhuaSeedance25VideoModel(videoModel)) {
-    return {
-      min: MANHUA_SEEDANCE_25_SEGMENT_COUNT,
-      max: MANHUA_SEEDANCE_25_SEGMENT_COUNT,
-      default: MANHUA_SEEDANCE_25_SEGMENT_COUNT,
-    };
-  }
+  const layout = resolveManhuaSeedanceLayoutProfile(videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL);
   return {
-    min: MANHUA_SEGMENT_MIN,
-    max: MANHUA_SEGMENT_MAX,
-    default: MANHUA_SEGMENT_DEFAULT,
+    min: layout.segmentMin,
+    max: layout.segmentMax,
+    default: layout.segmentCount,
   };
 }
 

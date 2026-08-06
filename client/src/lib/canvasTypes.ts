@@ -279,8 +279,8 @@ export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }>
   { id: "minimax-hailuo-3", label: "成片·H3（2K）" },
 ];
 
-/** 工厂主成片默认；与 shared MANHUA_FACTORY_DEFAULT_VIDEO_MODEL 对齐 */
-export const DEFAULT_CANVAS_VIDEO_MODEL: CanvasVideoModel = "seedance-2.0-fast";
+/** 工厂主成片默认；与 shared MANHUA_FACTORY_DEFAULT_VIDEO_MODEL 对齐（权限闸门另见 resolveManhuaFactoryDefaultVideoModel） */
+export const DEFAULT_CANVAS_VIDEO_MODEL: CanvasVideoModel = "seedance-2.5";
 
 /** 自由画布「添加节点」：不露出 text/copy_organize（工厂内部仍用 text 跑剧本） */
 export const SPAWN_KIND_OPTIONS: Array<{ kind: CanvasBlockKind; label: string; hint: string }> = [

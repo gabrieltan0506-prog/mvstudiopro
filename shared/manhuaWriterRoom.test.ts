@@ -59,10 +59,12 @@ describe("manhuaWriterRoom", () => {
   });
 
   it("builds expand prompt with episode count and no leak phrases", () => {
+    // 显式 2.0-fast：默认档已切到 2.5，这条测的是快速档扩写模板文案
     const p = buildManhuaWriterExpandPrompt({
       topic: "女主权谋情感连载",
       brief: "每集结尾留钩子",
       episodeCount: 3,
+      videoModel: "seedance-2.0-fast",
     });
     expect(p).toContain("正好输出 3 集");
     expect(p).toContain("片尾钩子");
@@ -75,6 +77,16 @@ describe("manhuaWriterRoom", () => {
     expect(p).toMatch(/权谋|商战|甜宠|古风/);
     expect(p).not.toMatch(/GPT-Image|OpenAI|EvoLink|藏海传/i);
     expect(p).not.toMatch(/严格按 10 秒/);
+  });
+
+  it("默认无 videoModel 时按 2.5 段表写四段可拍表", () => {
+    const p = buildManhuaWriterExpandPrompt({
+      topic: "权谋",
+      brief: "",
+      episodeCount: 3,
+    });
+    expect(p).toContain("四段可拍表");
+    expect(p).toMatch(/30 秒/);
   });
 
   it("parses pack and factory context", () => {
