@@ -1,7 +1,7 @@
 ---
 title: 那张躺在桌面上的旧照片，终于重新笑了起来
 description: 从手机翻拍、自动识边裁切、修复上色，到2K与4K高清放大，再用两种视频模型让照片里的人重新动起来。这是MV Studio Pro首页照片工具真正跑通的一次完整记录。
-date: 2026-08-07
+date: 2026-08-08
 keywords: 老照片修复,老照片上色,照片高清放大,2K放大,4K放大,照片动起来,AI照片修复,MiniMax H3,HappyHorse
 cover: /blog-assets/old-photo-home-update-h3-poster.jpg
 ---
