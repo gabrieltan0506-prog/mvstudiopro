@@ -108,7 +108,10 @@ import { enrichScriptContextWithBianDaoDirectorBoard } from "../shared/bianDaoSt
 import { ensureMinGraphicNoteBlueprints } from "../shared/ensureMinGraphicNoteBlueprints.js";
 import { PLATFORM_TOPIC_EXPAND_MAX, normalizeCommentHooksList } from "../shared/platformTopicShortlist.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
-import { runVertexUpscaleImage } from "./services/vertexImage";
+import {
+  isGeminiApiImageUpscaleConfigured,
+  runGeminiApiImageUpscale,
+} from "./services/geminiApiImageUpscale.js";
 import {
   appendRuntimeMetric,
   getRuntimeMetricTail,
@@ -154,11 +157,16 @@ import {
   PLATFORM_MATTING_BATCH_COUNTS,
   type ImageUpscaleBaseCreditKey,
 } from "../shared/plans";
+import {
+  HOME_OLD_PHOTO_RESTORE_CREDITS,
+  buildOldPhotoRestorePrompt,
+} from "../shared/homePhotoTools.js";
 import { knowledgeCardCreditsForPageIndex } from "../shared/knowledgeCardPagination";
 import { extractDocumentText } from "./growth/documentExtract";
 import { generateVideo, isVeoAvailable } from "./veo";
 import { isGeminiAudioAvailable, analyzeAudioWithGemini } from "./gemini-audio";
 import { executeProviderFallback } from "./services/provider-manager";
+import { autoCropOldPhoto } from "./services/oldPhotoAutoCrop.js";
 import { createGcsSignedUploadUrl, uploadBufferToGcs, resolvePdfExportBucketName } from "./services/gcs";
 import { fetchPdfBufferFromWorker, getPdfWorkerFetchTimeoutMs } from "./services/pdfWorkerClient";
 import { buildStage1StrategicHandoffForStage2 } from "./services/stage1StrategicHandoff.js";
@@ -2797,13 +2805,45 @@ async function generateKlingBeijingVideo(params: {
 }
 
 
-function resolveImageUrlForVertexFetch(imageUrl: string): string {
+function resolveImageUrlForServerFetch(imageUrl: string): string {
   const u = String(imageUrl || "").trim();
   if (!u) return u;
-  if (u.startsWith("data:") || u.startsWith("http://") || u.startsWith("https://")) return u;
+  if (u.startsWith("http://") || u.startsWith("https://")) return u;
   const base = String(process.env.OAUTH_SERVER_URL || process.env.PUBLIC_APP_URL || "").replace(/\/$/, "");
   if (u.startsWith("/") && base) return `${base}${u}`;
   return u;
+}
+
+/**
+ * 首页图片作品不能只保存 1～7 天签名 URL；若结果来自私有 GCS，复制到站内公开存储。
+ * 没有公开存储驱动时保留原 URL，避免把几十 MB data URL 写进数据库。
+ */
+async function persistHomePhotoSignedImage(sourceUrl: string, keyPrefix: string): Promise<string> {
+  const url = String(sourceUrl || "").trim();
+  if (!url || !/[?&]X-Goog-(?:Signature|Algorithm)=/i.test(url)) return url;
+  try {
+    const response = await fetch(url, {
+      redirect: "follow",
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!response.ok) throw new Error(`download HTTP ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length || buffer.length > 64 * 1024 * 1024) {
+      throw new Error(`invalid image bytes=${buffer.length}`);
+    }
+    const rawType = String(response.headers.get("content-type") || "image/png").split(";")[0]!.trim();
+    const contentType = rawType.startsWith("image/") ? rawType : "image/png";
+    const extension = contentType.includes("jpeg") ? "jpg" : contentType.includes("webp") ? "webp" : "png";
+    const stored = await storagePut(
+      `home-photo/${keyPrefix}-${Date.now()}-${randomUUID().slice(0, 8)}.${extension}`,
+      buffer,
+      contentType,
+    );
+    return /^https?:\/\//i.test(stored.url) ? stored.url : url;
+  } catch (error) {
+    console.error("[persistHomePhotoSignedImage] failed", error);
+    return url;
+  }
 }
 
 export const appRouter = router({
@@ -11713,13 +11753,134 @@ ${input.lyrics || "（纯音乐，无歌词）"}
     }),
   }),
 
-  /** Vertex Imagen 图片高清放大（积分 = 原图单价 × 3 或 ×5） */
+  /** 首页照片工具：老照片自动识边裁切后修复上色；失败退回已扣积分。 */
+  homePhotoTools: router({
+    restoreOldPhoto: protectedProcedure
+      .input(
+        z.object({
+          imageUrl: z.string().url(),
+          aspect: z.enum(["square", "portrait", "landscape"]).default("square"),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        let creditsCharged = 0;
+        try {
+          const charged = await deductCreditsAmount(
+            ctx.user.id,
+            HOME_OLD_PHOTO_RESTORE_CREDITS,
+            "homeOldPhotoRestore",
+            "首页照片工具·老照片修复上色",
+          );
+          creditsCharged = charged.cost;
+        } catch {
+          return {
+            success: false as const,
+            error: `积分不足：老照片修复上色需要 ${HOME_OLD_PHOTO_RESTORE_CREDITS} 积分`,
+          };
+        }
+
+        try {
+          const { isOpenAiGptImage2Configured, postOpenAiGptImage2AndUpload } =
+            await import("./services/openaiGptImage2.js");
+          if (!isOpenAiGptImage2Configured()) {
+            throw new Error("图片修复服务暂不可用，请稍后重试");
+          }
+
+          const cropResult = await autoCropOldPhoto(input.imageUrl, input.aspect);
+          const effectiveAspect = cropResult.aspect;
+          const size =
+            effectiveAspect === "portrait"
+              ? "1024x1536"
+              : effectiveAspect === "landscape"
+                ? "1536x1024"
+                : "1024x1024";
+          const captureError: { message?: string } = {};
+          let imageUrl = await postOpenAiGptImage2AndUpload(
+            buildOldPhotoRestorePrompt(),
+            "home-photo-restored",
+            {
+              imageUrls: [cropResult.imageUrl],
+              size,
+              quality: "high",
+              lane: "keyart",
+              captureError,
+            },
+          );
+          if (!imageUrl) throw new Error(captureError.message || "图片修复未返回有效结果");
+          imageUrl = await persistHomePhotoSignedImage(imageUrl, "restored");
+
+          try {
+            const plan = await getUserPlan(ctx.user.id);
+            await recordCreation({
+              userId: ctx.user.id,
+              type: "photo_restore_image",
+              title: "老照片修复上色",
+              outputUrl: imageUrl,
+              thumbnailUrl: imageUrl,
+              quality: "高清修复",
+              creditsUsed: creditsCharged,
+              plan,
+              metadata: {
+                sourceImageUrl: input.imageUrl,
+                restoreInputImageUrl: cropResult.imageUrl,
+                aspect: effectiveAspect,
+                autoCropApplied: cropResult.applied,
+                autoCropConfidence: cropResult.confidence,
+                autoCropBox: cropResult.box,
+                autoCropFallbackReason: cropResult.fallbackReason,
+                tool: "home_old_photo_restore",
+              },
+            });
+          } catch (recordError) {
+            console.error("[homePhotoTools.restoreOldPhoto] recordCreation failed", recordError);
+          }
+
+          return {
+            success: true as const,
+            imageUrl,
+            creditsUsed: creditsCharged,
+            aspect: effectiveAspect,
+            autoCropApplied: cropResult.applied,
+          };
+        } catch (error) {
+          let refundFailed = false;
+          if (creditsCharged > 0) {
+            await refundCredits(
+              ctx.user.id,
+              creditsCharged,
+              "老照片修复上色·失败·退回已扣积分",
+            ).catch((refundError) => {
+              refundFailed = true;
+              console.error("[homePhotoTools.restoreOldPhoto] refund failed", refundError);
+            });
+          }
+          console.error("[homePhotoTools.restoreOldPhoto] failed", error);
+          return {
+            success: false as const,
+            error: refundFailed
+              ? "老照片修复失败；积分退款处理异常，请联系客服核对"
+              : creditsCharged > 0
+                ? "老照片修复失败，积分已自动退回"
+                : "老照片修复失败，请稍后重试",
+          };
+        }
+      }),
+  }),
+
+  /** Gemini API 高清放大：2× 请求 2K，4× 请求 4K；首页固定 15/35 积分。 */
   vertexImage: router({
     upscale: protectedProcedure
       .input(
         z.object({
-          imageUrl: z.string().min(1),
+          imageUrl: z
+            .string()
+            .min(1)
+            .refine((value) => /^https?:\/\//i.test(value) || value.startsWith("/"), {
+              message: "invalid_image_url",
+            }),
           upscaleFactor: z.enum(["x2", "x4"]),
+          qualityWarningAccepted: z.boolean().optional(),
+          sourceBlurScore: z.number().finite().min(0).max(1_000_000).optional(),
           baseCreditKey: z.string().refine(
             (v): v is ImageUpscaleBaseCreditKey =>
               (IMAGE_UPSCALE_BASE_CREDIT_KEYS as readonly string[]).includes(v),
@@ -11728,98 +11889,96 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         }),
       )
       .mutation(async ({ ctx, input }) => {
-        const isAdminUser = ctx.user.role === "admin";
         const creditsNeeded = imageUpscaleTotalCredits(
           input.baseCreditKey as ImageUpscaleBaseCreditKey,
           input.upscaleFactor,
         );
-
-        if (!isAdminUser) {
-          try {
-            await deductCreditsAmount(
-              ctx.user.id,
-              creditsNeeded,
-              "imageUpscale",
-              `图片高清放大 ${input.upscaleFactor}（基准 ${input.baseCreditKey}）`,
-            );
-          } catch (e: any) {
-            return { success: false as const, error: e?.message || "Credits 不足，请充值后再试" };
-          }
+        if (!isGeminiApiImageUpscaleConfigured()) {
+          return { success: false as const, error: "高清放大服务暂不可用，请稍后重试" };
         }
 
-        // 优先在 Fly 直接走 GCS 长任务（2x/4x 同一路径，300s 与 GCS 轮询一致）；无凭据时对**对外公開** `/api/google` 做 HTTP 回退（與本站同域，如已把正式域名指到 Fly 則為 `https://mvstudiopro.com`）
-        const hasVertexCreds = Boolean(String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim());
-        const publicAppBase = String(
-          process.env.PUBLIC_APP_URL ||
-            process.env.OAUTH_SERVER_URL ||
-            process.env.FRONTEND_URL ||
-            process.env.VERCEL_APP_URL ||
-            "https://mvstudiopro.com",
-        ).replace(/\/$/, "");
-        const safeToken = String(process.env.VERCEL_ACCESS_TOKEN || process.env.VERCEL_TOKEN || "").trim();
+        let creditsCharged = 0;
 
-        let imageUrl = "";
-        let upscaleOk = false;
-
-        if (hasVertexCreds) {
-          try {
-            const result = await runVertexUpscaleImage({
-              imageUrl: input.imageUrl,
-              upscaleFactor: input.upscaleFactor,
-              prompt: "",
-              outputMimeType: "image/png",
-            });
-            imageUrl = String(result?.imageUrl || (Array.isArray(result?.imageUrls) ? result.imageUrls[0] : "") || "").trim();
-            upscaleOk = result.ok && !!imageUrl;
-            if (!upscaleOk) {
-              console.error(`[vertexImage.upscale] ${input.upscaleFactor} (direct) failed:`, result?.error);
-            }
-          } catch (e: any) {
-            console.error("[vertexImage.upscale] direct GCS path failed:", e?.message);
-          }
-        } else {
-          try {
-            const res = await fetch(`${publicAppBase}/api/google?op=upscaleImage`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                ...(safeToken ? { Authorization: `Bearer ${safeToken}` } : {}),
-              },
-              body: JSON.stringify({
-                imageUrl: input.imageUrl,
-                upscaleFactor: input.upscaleFactor,
-                prompt: "",
-                outputMimeType: "image/png",
-              }),
-              signal: AbortSignal.timeout(300_000),
-            });
-            const json: any = await res.json().catch(() => ({}));
-            imageUrl = String(json?.imageUrl || (Array.isArray(json?.imageUrls) ? json.imageUrls[0] : "") || "").trim();
-            upscaleOk = res.ok && !!imageUrl;
-            if (!upscaleOk) {
-              const vertexErr = String(json?.error || json?.raw?.error?.message || "").slice(0, 300);
-              console.error(`[vertexImage.upscale] ${input.upscaleFactor} (public /api/google fallback) failed (HTTP ${res.status}): ${vertexErr}`);
-            }
-          } catch (e: any) {
-            console.error("[vertexImage.upscale] public /api/google fallback failed:", e?.message);
-          }
+        try {
+          const charged = await deductCreditsAmount(
+            ctx.user.id,
+            creditsNeeded,
+            "imageUpscale",
+            `图片高清放大 ${input.upscaleFactor}（基准 ${input.baseCreditKey}）${
+              input.qualityWarningAccepted ? "；已确认原图模糊风险提示" : ""
+            }`,
+          );
+          creditsCharged = charged.cost;
+        } catch {
+          return {
+            success: false as const,
+            error: `积分不足：本次高清放大需要 ${creditsNeeded} 积分`,
+          };
         }
 
-        if (!upscaleOk || !imageUrl) {
-          if (!isAdminUser) {
+        const result = await runGeminiApiImageUpscale({
+          imageUrl: resolveImageUrlForServerFetch(input.imageUrl),
+          upscaleFactor: input.upscaleFactor,
+        });
+        let imageUrl = String(result.imageUrl || "").trim();
+        if (!result.ok || !imageUrl) {
+          let refundFailed = false;
+          if (creditsCharged > 0) {
             try {
-              await refundCredits(ctx.user.id, creditsNeeded, "图片放大·失败·退回已扣积分");
+              await refundCredits(ctx.user.id, creditsCharged, "图片放大·失败·退回已扣积分");
             } catch (refErr) {
+              refundFailed = true;
               console.error("[vertexImage.upscale] restore credits failed", refErr);
             }
           }
-          return { success: false as const, error: "放大失败，请稍后重试（已退回积分）" };
+          console.error("[vertexImage.upscale] Gemini API failed", result.error);
+          return {
+            success: false as const,
+            error: refundFailed
+              ? "放大失败；积分退款处理异常，请联系客服核对"
+              : creditsCharged > 0
+                ? "放大失败，积分已自动退回"
+                : "放大失败，请稍后重试",
+          };
+        }
+
+        if (input.baseCreditKey === "homePhotoUpscaleBase") {
+          imageUrl = await persistHomePhotoSignedImage(
+            imageUrl,
+            input.upscaleFactor === "x4" ? "upscale-4x" : "upscale-2x",
+          );
+          try {
+            const plan = await getUserPlan(ctx.user.id);
+            await recordCreation({
+              userId: ctx.user.id,
+              type: "photo_upscale_image",
+              title: `照片高清放大 ${input.upscaleFactor === "x4" ? "4×" : "2×"}`,
+              outputUrl: imageUrl,
+              thumbnailUrl: imageUrl,
+              quality: input.upscaleFactor === "x4" ? "4×" : "2×",
+              creditsUsed: creditsCharged,
+              plan,
+              metadata: {
+                sourceImageUrl: input.imageUrl,
+                upscaleFactor: input.upscaleFactor,
+                inputWidth: result.inputWidth,
+                inputHeight: result.inputHeight,
+                outputWidth: result.outputWidth,
+                outputHeight: result.outputHeight,
+                qualityWarningAccepted: input.qualityWarningAccepted === true,
+                sourceBlurScore: input.sourceBlurScore,
+                tool: "home_photo_upscale",
+              },
+            });
+          } catch (recordError) {
+            console.error("[vertexImage.upscale] home creation record failed", recordError);
+          }
         }
 
         return {
           success: true as const,
           imageUrl,
-          creditsUsed: isAdminUser ? 0 : creditsNeeded,
+          creditsUsed: creditsCharged,
           upscaleFactor: input.upscaleFactor,
         };
       }),

@@ -8,10 +8,10 @@
  *
  * 上游实价参考（OpenRouter，$1≈¥7.2，1 积分≈¥0.65）：
  * - `bytedance/seedance-2.0` 720p $0.1512/秒 → 15 秒约 25 积分成本
- * - `bytedance/seedance-2.0-fast` 720p $0.121/秒 → 15 秒约 13 积分成本
+ * - `bytedance/seedance-2.0-fast` 720p $0.121/秒 → 15 秒约 20 积分成本
  * - `minimax/hailuo-3` 2K $0.13/秒 → 15 秒约 22 积分成本
- * - 2.5 走小云雀，按 2.0 单价估 30 秒约 50 积分成本
- * 即最薄的一档（2.5 加长按段 172 对 50 成本）毛利率仍约 71%，高于视频类 55% 的地板。
+ * - 2.5 已切 EvoLink 五模式；当前未取得可核对的上游实扣，不能拿旧小云雀价格冒充成本
+ * 2.5 继续沿用既有零售价，但在取得 EvoLink 真实账单前，不对该档毛利率下结论。
  *
  * @see https://openrouter.ai/bytedance/seedance-2.0
  * @see https://openrouter.ai/minimax/hailuo-3

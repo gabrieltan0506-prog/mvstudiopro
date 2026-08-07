@@ -11,70 +11,10 @@ import {
   SEEDANCE_REFERENCE_MAX,
   type SeedanceOpenRouterVariant,
 } from "../../shared/seedanceOpenRouterModels.js";
-import { buildOpenRouterAuthHeaders, getOpenRouterApiKey } from "./openrouterGptImage2.js";
-import { mirrorSeedanceMp4ToGcsSignedUrl } from "./seedanceVideo.js";
-
-const OPENROUTER_BASE = String(process.env.OPENROUTER_API_BASE || "https://openrouter.ai/api/v1").replace(
-  /\/$/,
-  "",
-);
-
-const POLL_INTERVAL_MS = Math.min(
-  Math.max(Number(process.env.OPENROUTER_SEEDANCE_POLL_INTERVAL_MS) || 5_000, 3_000),
-  30_000,
-);
-const MAX_POLL_MS = Math.min(
-  Math.max(Number(process.env.OPENROUTER_SEEDANCE_POLL_TIMEOUT_MS) || 900_000, 120_000),
-  1_200_000,
-);
+import { isOpenRouterVideoConfigured, runOpenRouterVideoJob } from "./openrouterVideoCore.js";
 
 export function isOpenRouterSeedanceConfigured(): boolean {
-  return Boolean(getOpenRouterApiKey());
-}
-
-type OpenRouterVideoJob = {
-  id?: string;
-  polling_url?: string;
-  status?: string;
-  unsigned_urls?: string[];
-  error?: string | { message?: string };
-  message?: string;
-};
-
-function jobErrorMessage(job: OpenRouterVideoJob): string {
-  if (typeof job.error === "string" && job.error.trim()) return job.error.trim();
-  if (job.error && typeof job.error === "object" && job.error.message) {
-    return String(job.error.message).trim();
-  }
-  return String(job.message || "").trim();
-}
-
-function userFacingSeedanceError(raw: string): string {
-  const m = String(raw || "").trim();
-  if (!m) return "视频生成失败，请稍后重试";
-  if (/api.?key|unauthorized|401|403|鉴权|invalid.*key/i.test(m)) {
-    return "视频服务暂不可用，请稍后重试";
-  }
-  if (/timeout|超时|ETIMEDOUT/i.test(m)) {
-    return "视频生成超时，请稍后重试";
-  }
-  if (/content.?policy|safety|违规|审核/i.test(m)) {
-    return "内容未通过审核，请调整提示词或参考图后重试";
-  }
-  /**
-   * 上游账号的数据政策 / guardrail 把该 provider 全部排除时返回：
-   * `No endpoints available matching your guardrail restrictions and data policy`。
-   * 这跟提示词无关，用户改多少次都没用，也不该看到上游的设置链接。
-   */
-  if (/no endpoints available|guardrail|data policy/i.test(m)) {
-    return "该成片档暂不可用（服务端配额或线路设置未开放），请改用其他成片档或稍后重试";
-  }
-  // 去掉供应商 / 路由名
-  return m
-    .replace(/openrouter/gi, "视频服务")
-    .replace(/evolink/gi, "视频服务")
-    .replace(/bytedance\/seedance[^\s,]*/gi, "成片引擎")
-    .slice(0, 280);
+  return isOpenRouterVideoConfigured();
 }
 
 export function buildOpenRouterSeedanceSubmitBody(input: {
@@ -150,43 +90,6 @@ export function buildOpenRouterSeedanceSubmitBody(input: {
   return body;
 }
 
-async function pollOpenRouterVideoJob(
-  pollingUrl: string,
-  apiKey: string,
-): Promise<string> {
-  const started = Date.now();
-  const headers = buildOpenRouterAuthHeaders(apiKey);
-  // GET 轮询不需要 Content-Type
-  const getHeaders: Record<string, string> = {
-    Authorization: headers.Authorization!,
-    "HTTP-Referer": headers["HTTP-Referer"] || "",
-    "X-Title": headers["X-Title"] || "",
-  };
-
-  while (Date.now() - started < MAX_POLL_MS) {
-    const r = await fetch(pollingUrl, {
-      method: "GET",
-      headers: getHeaders,
-      signal: AbortSignal.timeout(60_000),
-    });
-    const json = (await r.json().catch(() => ({}))) as OpenRouterVideoJob;
-    if (!r.ok) {
-      throw new Error(userFacingSeedanceError(jobErrorMessage(json) || `查询失败 (${r.status})`));
-    }
-    const status = String(json.status || "").toLowerCase();
-    if (status === "completed") {
-      const url = (json.unsigned_urls || []).find((u) => typeof u === "string" && u.trim());
-      if (!url) throw new Error("视频生成完成但未返回下载地址");
-      return url.trim();
-    }
-    if (status === "failed" || status === "cancelled" || status === "expired") {
-      throw new Error(userFacingSeedanceError(jobErrorMessage(json) || "视频生成失败"));
-    }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-  }
-  throw new Error(`视频生成超时（${Math.round(MAX_POLL_MS / 60_000)} 分钟）`);
-}
-
 export type OpenRouterSeedanceRunInput = {
   prompt: string;
   imageUrl?: string;
@@ -211,11 +114,6 @@ export async function runOpenRouterSeedanceVideo(input: OpenRouterSeedanceRunInp
       ? "2.0-fast"
       : "2.0";
 
-  const apiKey = getOpenRouterApiKey();
-  if (!apiKey) {
-    throw new Error("视频服务暂不可用，请稍后重试");
-  }
-
   const prompt = String(input.prompt || "").trim();
   if (!prompt) throw new Error("请填写视频提示词");
 
@@ -230,38 +128,6 @@ export async function runOpenRouterSeedanceVideo(input: OpenRouterSeedanceRunInp
     quality: input.quality,
     generateAudio: input.generateAudio,
   });
-  const model = String(body.model);
-
-  const createRes = await fetch(`${OPENROUTER_BASE}/videos`, {
-    method: "POST",
-    headers: buildOpenRouterAuthHeaders(apiKey),
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  });
-  const createJson = (await createRes.json().catch(() => ({}))) as OpenRouterVideoJob;
-  if (!createRes.ok) {
-    throw new Error(
-      userFacingSeedanceError(
-        jobErrorMessage(createJson) || `创建任务失败 (${createRes.status})`,
-      ),
-    );
-  }
-
-  const pollingUrl = String(createJson.polling_url || "").trim();
-  const jobId = String(createJson.id || "").trim();
-  if (!pollingUrl && !jobId) {
-    throw new Error("视频服务未返回任务信息");
-  }
-  const pollUrl = pollingUrl || `${OPENROUTER_BASE}/videos/${encodeURIComponent(jobId)}`;
-
-  const immediate =
-    String(createJson.status || "").toLowerCase() === "completed"
-      ? (createJson.unsigned_urls || []).find((u) => typeof u === "string" && u.trim())
-      : undefined;
-  const sourceUrl = immediate
-    ? immediate.trim()
-    : await pollOpenRouterVideoJob(pollUrl, apiKey);
-
-  const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(sourceUrl);
-  return { videoUrl, model, provider: "openrouter", version: variant };
+  const result = await runOpenRouterVideoJob(body);
+  return { videoUrl: result.videoUrl, model: result.model, provider: "openrouter", version: variant };
 }

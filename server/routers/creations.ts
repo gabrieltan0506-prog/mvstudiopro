@@ -203,6 +203,8 @@ async function db() {
 const creationTypeSchema = z.enum([
   "idol_image", "idol_3d", "music", "video", "storyboard",
   "kling_video", "kling_lipsync", "kling_motion", "kling_image",
+  /** 首页照片工具：高清放大、老照片修复、照片人物动起来。 */
+  "photo_upscale_image", "photo_restore_image", "photo_animation_video",
   // PR-3 新增：企业专属智能体（AaaS）每次推演调用记一条
   // 让客户在「我的作品」页能回溯历史 agent session
   "enterprise_agent_session",

@@ -13,6 +13,7 @@ import {
 
 const nav = [
   ["首页", "Home", "/"],
+  ["照片工具", "Photo", "/#photo-tools"],
   ["平台创作", "Platform", "/platform"],
   // 竞品调研内测中：首页导航暂不给链接（标注见 HomeHero 卡片）
   // 原为「Omini，Seedance 2.X画布」：Omni 拼错，且导航挂模型版本号会随版本过期，

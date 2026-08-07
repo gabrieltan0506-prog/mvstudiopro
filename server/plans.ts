@@ -11,7 +11,14 @@
  * - Credits 不足时自动降级到 Forge AI（有水印）
  */
 
-import { TRIAL_PACK_199_MAX_PURCHASES_PER_USER } from "../shared/plans.js";
+import {
+  TRIAL_PACK_199_MAX_PURCHASES_PER_USER,
+  imageUpscaleTotalCredits,
+} from "../shared/plans.js";
+import {
+  HOME_OLD_PHOTO_RESTORE_CREDITS,
+  homePhotoAnimateCredits,
+} from "../shared/homePhotoTools.js";
 
 export type PlanType = "free" | "pro" | "enterprise";
 
@@ -228,6 +235,10 @@ export const CREDIT_COSTS = {
 
   // ─── 高级功能（Credits 设高，限制使用）────────
   videoGeneration: 50,        // 每次视频生成消耗 50 credits（高门槛）
+  /** 首页照片工具：放大内部基准；实际固定价为 2×15 / 4×35，见 shared/plans。 */
+  homePhotoUpscaleBase: 5,
+  /** 首页照片工具：老照片修复并自然上色。 */
+  homeOldPhotoRestore: HOME_OLD_PHOTO_RESTORE_CREDITS,
   idol3D: 30,                 // 每次偶像转 3D 消耗 30 credits（高门槛）
 
   // ─── Suno 音乐生成 ────────────────────
@@ -399,6 +410,15 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "大师级视频基地", subFeature: "自动配乐（Suno V5.5 + Gemini Prompt）", credits: CREDIT_COSTS.workflowMusic },
   { product: "大师级视频基地", subFeature: "最终合成", credits: CREDIT_COSTS.workflowFinalRender },
   // ─── 基础与创作工具 ───────────────────────────────────────
+  { product: "首页照片工具", subFeature: "高清放大 2×", credits: imageUpscaleTotalCredits("homePhotoUpscaleBase", "x2"), note: "失败退款" },
+  { product: "首页照片工具", subFeature: "高清放大 4×", credits: imageUpscaleTotalCredits("homePhotoUpscaleBase", "x4"), note: "失败退款" },
+  { product: "首页照片工具", subFeature: "老照片修复上色", credits: CREDIT_COSTS.homeOldPhotoRestore, note: "失败退款" },
+  { product: "首页照片工具", subFeature: "照片人物动起来 720p · 5 秒", credits: homePhotoAnimateCredits(5, "720p"), note: "正式会员；失败退款" },
+  { product: "首页照片工具", subFeature: "照片人物动起来 720p · 10 秒", credits: homePhotoAnimateCredits(10, "720p"), note: "正式会员；失败退款" },
+  { product: "首页照片工具", subFeature: "照片人物动起来 720p · 15 秒", credits: homePhotoAnimateCredits(15, "720p"), note: "正式会员；失败退款" },
+  { product: "首页照片工具", subFeature: "照片人物动起来 1080p · 5 秒", credits: homePhotoAnimateCredits(5, "1080p"), note: "720p 同秒档加 20%；失败退款" },
+  { product: "首页照片工具", subFeature: "照片人物动起来 1080p · 10 秒", credits: homePhotoAnimateCredits(10, "1080p"), note: "720p 同秒档加 20%；失败退款" },
+  { product: "首页照片工具", subFeature: "照片人物动起来 1080p · 15 秒", credits: homePhotoAnimateCredits(15, "1080p"), note: "720p 同秒档加 20%；失败退款" },
   { product: "分镜图（工作流）", subFeature: "标准 2K", credits: CREDIT_COSTS.nbpImage2K },
   { product: "分镜图（工作流）", subFeature: "高清 4K", credits: CREDIT_COSTS.nbpImage4K },
   // ─── 3D ─────────────────────────────────────────────────

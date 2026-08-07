@@ -1,6 +1,19 @@
-import { buildGrowthCampVideoObjectName, signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
+import {
+  buildGrowthCampVideoObjectName,
+  signGsUriV4ReadUrl,
+  uploadBufferToGcs,
+} from "./gcs.js";
 
 export type SeedanceDurationInput = number | "auto";
+
+export type SeedanceMirrorOptions = {
+  requestHeaders?: Record<string, string>;
+  /** 首页作品需要跨越 GCS V4 最长 7 天签名期，必须另存站内长期对象存储。 */
+  durableStorage?: {
+    keyPrefix: string;
+    required?: boolean;
+  };
+};
 
 /** 臨時 CDN URL → 本機拉取 → 永續桶 + V4 簽名，避免前端/過期鏈路抓不下來。 */
 function isAlreadyGcsSignedReadUrl(u: string): boolean {
@@ -9,24 +22,37 @@ function isAlreadyGcsSignedReadUrl(u: string): boolean {
   return s.includes("x-goog-signature") || s.includes("x-goog-algorithm");
 }
 
-export async function mirrorSeedanceMp4ToGcsSignedUrl(sourceVideoUrl: string): Promise<string> {
+export async function mirrorSeedanceMp4ToGcsSignedUrl(
+  sourceVideoUrl: string,
+  options?: SeedanceMirrorOptions
+): Promise<string> {
   const u = String(sourceVideoUrl || "").trim();
   if (!u) throw new Error("seedance_mirror_empty_url");
   if (isAlreadyGcsSignedReadUrl(u)) return u;
 
   const downloadTimeoutMs = Math.min(
     600_000,
-    Math.max(60_000, Number(process.env.SEEDANCE_MP4_DOWNLOAD_TIMEOUT_MS) || 300_000),
+    Math.max(
+      60_000,
+      Number(process.env.SEEDANCE_MP4_DOWNLOAD_TIMEOUT_MS) || 300_000
+    )
   );
+  const durableKey = options?.durableStorage
+    ? `${String(options.durableStorage.keyPrefix || "video").replace(/\/+$/, "")}-${Date.now()}.mp4`
+    : "";
 
   let lastStatus = 0;
+  let durableStorageError = "";
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) {
-      await new Promise((r) => setTimeout(r, 2500));
+      await new Promise(r => setTimeout(r, 2500));
     }
     const r = await fetch(u, {
       redirect: "follow",
-      headers: { "User-Agent": "mvstudiopro/1.0 (+seedance-gcs-mirror)" },
+      headers: {
+        "User-Agent": "mvstudiopro/1.0 (+seedance-gcs-mirror)",
+        ...(options?.requestHeaders || {}),
+      },
       signal: AbortSignal.timeout(downloadTimeoutMs),
     });
     lastStatus = r.status;
@@ -35,14 +61,43 @@ export async function mirrorSeedanceMp4ToGcsSignedUrl(sourceVideoUrl: string): P
     const buf = Buffer.from(await r.arrayBuffer());
     if (!buf.length) continue;
 
-    const rawCt = (r.headers.get("content-type") || "video/mp4").split(";")[0].trim();
+    const rawCt = (r.headers.get("content-type") || "video/mp4")
+      .split(";")[0]
+      .trim();
     const contentType = rawCt.startsWith("video/") ? rawCt : "video/mp4";
-    const objectName = buildGrowthCampVideoObjectName(`seedance-i2v-${Date.now()}.mp4`);
-    const { gcsUri } = await uploadBufferToGcs({ objectName, buffer: buf, contentType });
+    if (durableKey) {
+      try {
+        const { storagePut } = await import("../storage.js");
+        const stored = await storagePut(durableKey, buf, contentType);
+        if (!/^https?:\/\//i.test(stored.url)) {
+          throw new Error("durable storage did not return an HTTP URL");
+        }
+        return stored.url;
+      } catch (error) {
+        durableStorageError =
+          error instanceof Error ? error.message : "durable storage failed";
+        console.error("[videoMirror] durable storage failed", error);
+        if (options?.durableStorage?.required) continue;
+      }
+    }
+    const objectName = buildGrowthCampVideoObjectName(
+      `seedance-i2v-${Date.now()}.mp4`
+    );
+    const { gcsUri } = await uploadBufferToGcs({
+      objectName,
+      buffer: buf,
+      contentType,
+    });
     return signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
   }
 
-  throw new Error(`seedance_gcs_mirror_fetch_failed lastHttp=${lastStatus} url=${u.slice(0, 160)}`);
+  if (durableStorageError && options?.durableStorage?.required) {
+    throw new Error(`video_durable_storage_failed: ${durableStorageError}`);
+  }
+
+  throw new Error(
+    `seedance_gcs_mirror_fetch_failed lastHttp=${lastStatus} url=${u.slice(0, 160)}`
+  );
 }
 
 /**
@@ -58,6 +113,6 @@ export async function runSeedanceImageToVideo(_input: {
   endImageUrl?: string;
 }): Promise<{ videoUrl: string; seed: number }> {
   throw new Error(
-    "请配置 OPENROUTER_API_KEY 并调用 runOpenRouterSeedanceVideo（成片·标准/快速）",
+    "请配置 OPENROUTER_API_KEY 并调用 runOpenRouterSeedanceVideo（成片·标准/快速）"
   );
 }

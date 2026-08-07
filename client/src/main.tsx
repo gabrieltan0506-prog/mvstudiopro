@@ -98,6 +98,9 @@ const TRPC_LONG_HTTP_LINK_PATHS = new Set([
   "mvAnalysis.chatPlatformProAgent",
   "mvAnalysis.confirmPlatformSkillQaImage",
   "mvAnalysis.getVideoUploadSignedUrl",
+  /** 图片编辑 / 专用超分均可能运行数分钟，必须绕过 Vercel 同步请求时限。 */
+  "homePhotoTools.restoreOldPhoto",
+  "vertexImage.upscale",
   "usage.checkFeatureAccess",
   "ambient.dashboardLive",
   "ambient.dashboardNews",

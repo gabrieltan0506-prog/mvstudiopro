@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import { Clapperboard, FileText, Image as ImageIcon, LayoutTemplate, Video } from "lucide-react";
 import type { ManhuaClipQualityReport } from "@shared/manhuaClipQuality";
+import { normalizeSeedance25EvolinkMode } from "@shared/seedanceEvolinkModels";
 
 export type CanvasBlockKind = "text" | "image" | "video" | "copy_organize" | "video_reverse";
 
@@ -48,7 +49,7 @@ export type CanvasVideoModel =
   | "gemini-omni-flash"
   | "seedance-2.0"
   | "seedance-2.0-fast"
-  /** Seedance 2.5 · 小云雀 A3（约 4–30s；Fly secrets） */
+  /** Seedance 2.5 · EvoLink 官方五模式（约 4–30s） */
   | "seedance-2.5"
   /** MiniMax H3 · OpenRouter minimax/hailuo-3（2K） */
   | "minimax-hailuo-3";
@@ -69,8 +70,16 @@ export type CanvasUploadedAsset = {
   mimeType?: string;
 };
 
-/** 成片·加长工作模式（与官方 CLI 路由对齐，非空壳） */
+/**
+ * Seedance 2.5 官方五模式。末尾六项只为读取历史 XYQ 草稿保留，
+ * 新界面不会再写入；运行时由共享转换器折到 EvoLink 五模式。
+ */
 export type CanvasSeedance25WorkMode =
+  | "text_to_video"
+  | "image_to_video"
+  | "reference_to_video"
+  | "video_edit"
+  | "video_extend"
   | "generate"
   | "extend"
   | "reshoot"
@@ -149,7 +158,7 @@ export type CanvasBlock = {
   videoReverseOutputMode?: "zh" | "en" | "compact";
   /**
    * 成片画质，默认 720p；标准档可选到 4K，单价按像素翻倍。
-   * 快速档与成片·加长固定 720p，选了也会被服务端 normalize 回去。
+   * 快速档与 Seedance 2.5 固定 720p，选了也会被服务端 normalize 回去。
    */
   videoResolution?: "720p" | "1080p" | "2K" | "4K";
   /** 连载集号（多集铺板时挂在链上各节点，可序列化） */
@@ -160,22 +169,22 @@ export type CanvasBlock = {
   pathCameraRecipeId?: string;
   /** 静帧路径标注 JSON（视频节点 I2V 优先于配方） */
   pathAnnotationJson?: unknown;
-  /** 成片·加长：秒级时间戳分镜（多行 `0-5 | 画面`） */
+  /** Seedance 2.5：秒级时间戳分镜（多行 `0-5 | 画面`） */
   seedance25TimestampStoryboard?: string;
-  /** 成片·加长：勾选的参考视频 URL（≤3） */
+  /** Seedance 2.5：勾选的参考视频 URL（EvoLink ≤10） */
   seedance25RefVideoUrls?: string[];
-  /** 成片·加长：勾选的参考音频 URL（≤3） */
+  /** Seedance 2.5：勾选的参考音频 URL（EvoLink ≤10） */
   seedance25RefAudioUrls?: string[];
-  /** 成片·加长：新生成 / 延长 / 局部重拍 */
+  /** Seedance 2.5 官方五模式；兼容历史 XYQ 草稿值 */
   seedance25WorkMode?: CanvasSeedance25WorkMode;
   /** 局部重拍起止秒 */
   seedance25ReshootFromSec?: number;
   seedance25ReshootToSec?: number;
-  /** 成片·加长：显式首尾帧模式（generate_type=1；取参考图首张+末张） */
+  /** 历史 XYQ 草稿：显式首尾帧模式（新界面不再写入） */
   seedance25FirstLastFrame?: boolean;
-  /** 成片·加长：上一轮会话 thread（局部重拍可续聊） */
+  /** 历史 XYQ 草稿：上一轮会话 thread（只读兼容） */
   seedance25ThreadId?: string;
-  /** 成片·加长：创作历史链接（失败时先查此链，勿重复提交） */
+  /** 历史 XYQ 草稿：创作历史链接（只读兼容） */
   seedance25WebThreadLink?: string;
   /** 提升清晰度输出档：720p / 1080p / 2k / 4k */
   seedance25UpscaleResolution?: "720p" | "1080p" | "2k" | "4k";
@@ -271,11 +280,11 @@ export const IMAGE_MODEL_OPTIONS: Array<{ id: CanvasImageModel; label: string }>
   { id: "gpt-image-2", label: "官方出图" },
 ];
 
-/** 产品成片：快速 / 标准 / 加长(2.5) / H3（2K）；不再暴露改写引擎 */
+/** 产品成片：快速 / 标准 / Seedance 2.5 / H3（2K） */
 export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }> = [
   { id: "seedance-2.0-fast", label: "成片·快速（默认）" },
   { id: "seedance-2.0", label: "成片·标准" },
-  { id: "seedance-2.5", label: "成片·加长" },
+  { id: "seedance-2.5", label: "Seedance 2.5 · 五模式" },
   { id: "minimax-hailuo-3", label: "成片·H3（2K）" },
 ];
 
@@ -318,6 +327,8 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
     width: CANVAS_BLOCK_DEFAULT_WIDTH,
     height: CANVAS_BLOCK_DEFAULT_HEIGHT,
     imageBatchCount: 1,
+    // 漫剧工厂是主入口：默认综合多张角色/场景静帧；纯文生可在节点内显式切换。
+    seedance25WorkMode: kind === "video" ? "reference_to_video" : undefined,
     uploadedAssets: [],
     outputUrls: [],
     status: "idle",
@@ -342,7 +353,7 @@ export function normalizeCanvasVideoModel(raw: unknown): CanvasVideoModel {
   return DEFAULT_CANVAS_VIDEO_MODEL;
 }
 
-/** 画布可选成片档位（快速 / 标准 / 加长 / H3） */
+/** 画布可选成片档位（快速 / 标准 / Seedance 2.5 / H3） */
 export function isCanvasProductVideoModel(
   videoModel: string | null | undefined,
 ): videoModel is Exclude<CanvasVideoModel, "gemini-omni-flash"> {
@@ -376,6 +387,27 @@ export function migrateFactoryClipVideoModel(block: CanvasBlock): CanvasBlock {
 export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
   const videoModel = normalizeCanvasVideoModel(block.videoModel);
   const withVideo = migrateFactoryClipVideoModel({ ...block, videoModel });
+  const uploaded = block.uploadedAssets ?? [];
+  const seedance25WorkMode =
+    withVideo.videoModel === "seedance-2.5" && withVideo.kind === "video"
+      ? normalizeSeedance25EvolinkMode(block.seedance25WorkMode, {
+          imageUrls: [
+            block.refImageUrl,
+            ...(block.editFusionUrls || []),
+            ...uploaded
+              .filter((asset) => asset.kind === "image" || /\.(png|jpe?g|webp)(\?|$)/i.test(asset.url))
+              .map((asset) => asset.url),
+          ].filter(Boolean) as string[],
+          videoUrls: [
+            ...(block.seedance25RefVideoUrls || []),
+            block.refVideoUrl,
+            /\.(mp4|mov|webm|m4v)(\?|$)/i.test(block.outputUrl || "")
+              ? block.outputUrl
+              : undefined,
+          ].filter(Boolean) as string[],
+          audioUrls: block.seedance25RefAudioUrls || [],
+        })
+      : block.seedance25WorkMode;
 
   return {
     ...withVideo,
@@ -383,6 +415,7 @@ export function normalizeCanvasBlock(block: CanvasBlock): CanvasBlock {
     imageModel: normalizeCanvasImageModel(block.imageModel),
     videoModel: withVideo.videoModel,
     imageMode: block.imageMode === "edit" ? "edit" : "generate",
+    seedance25WorkMode,
     width: block.width ?? CANVAS_BLOCK_DEFAULT_WIDTH,
     height: block.height ?? CANVAS_BLOCK_DEFAULT_HEIGHT,
     imageBatchCount: block.imageBatchCount ?? 1,

@@ -27,6 +27,7 @@ import {
   type CanvasUploadedAsset,
 } from "@/lib/canvasTypes";
 import { SEEDANCE_25_PAID_ONLY_LABEL_ZH } from "@shared/seedance25Access";
+import { normalizeSeedance25EvolinkMode } from "@shared/seedanceEvolinkModels";
 import {
   downgradeUnauthorizedSeedance25Blocks,
   filterCanvasVideoModelOptions,
@@ -2001,12 +2002,12 @@ export default function FreeformCanvas({
                             {block.videoModel === "seedance-2.0"
                               ? "成片·标准：多图参考 + 运镜/动作/对白，约 4–15s"
                               : block.videoModel === "seedance-2.5"
-                                ? "成片·加长：正式会员，约 4–30s（邀请码用户请用快速）"
+                                ? "Seedance 2.5：官方五模式，约 4–30s；正式会员可用"
                                 : block.videoModel === "minimax-hailuo-3"
                                   ? "成片·H3：2K 成片，多图参考 + 运镜/动作/对白，固定 15s"
                                   : "成片·快速：多图参考 + 运镜/动作/对白，更快更省"}
                           </div>
-                          {/* 画质只对标准档开放：快速档定位是便宜快，H3 固定 2K，加长固定 720p */}
+                          {/* 画质只对标准档开放：快速档定位是便宜快，H3 固定 2K，2.5 固定 720p */}
                           {block.videoModel === "seedance-2.0" ? (
                             <label className="flex items-center gap-2 text-[11px] text-white/70">
                               <span className="shrink-0 text-white/45">画质</span>
@@ -2050,139 +2051,42 @@ export default function FreeformCanvas({
                               <label className="flex items-center gap-2 text-[11px] text-white/70">
                                 <span className="shrink-0 text-white/45">工作模式</span>
                                 <select
-                                  value={block.seedance25WorkMode || "generate"}
+                                  value={normalizeSeedance25EvolinkMode(block.seedance25WorkMode)}
                                   onChange={(e) =>
                                     patchOne(block.id, {
-                                      seedance25WorkMode: e.target.value as
-                                        | "generate"
-                                        | "extend"
-                                        | "reshoot"
-                                        | "remix"
-                                        | "upscale"
-                                        | "erase_subtitle",
+                                      seedance25WorkMode: e.target
+                                        .value as CanvasBlock["seedance25WorkMode"],
                                     })
                                   }
                                   className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
                                 >
-                                  <option value="generate">新生成</option>
-                                  <option value="extend">延长（需参考视频）</option>
-                                  <option value="reshoot">局部重拍（需参考视频）</option>
-                                  <option value="remix">视频复刻（需参考视频）</option>
-                                  <option value="upscale">提升清晰度（需参考视频）</option>
-                                  <option value="erase_subtitle">擦除字幕（需参考视频）</option>
+                                  <option value="text_to_video">文生视频</option>
+                                  <option value="image_to_video">图生视频（1–2 张）</option>
+                                  <option value="reference_to_video">多模态参考生成</option>
+                                  <option value="video_edit">视频编辑</option>
+                                  <option value="video_extend">视频延长</option>
                                 </select>
                               </label>
-                              {(block.seedance25WorkMode || "generate") === "generate" ? (
-                                <label className="flex items-center gap-2 text-[11px] text-white/70">
-                                  <input
-                                    type="checkbox"
-                                    checked={Boolean(block.seedance25FirstLastFrame)}
-                                    onChange={(e) =>
-                                      patchOne(block.id, {
-                                        seedance25FirstLastFrame: e.target.checked,
-                                      })
-                                    }
-                                    className="rounded border-white/30"
-                                  />
-                                  <span>首尾帧模式（参考图首张=起幅，末张=落幅）</span>
-                                </label>
-                              ) : null}
-                              {block.seedance25WorkMode === "extend" && (
-                                <div className="text-[10px] leading-5 text-white/45">
-                                  延长：上传/勾选参考成片后续写（单次约 4–30 秒）。请先出片或下方勾选参考视频；勿因超时重复点生成。
-                                </div>
-                              )}
-                              {block.seedance25WorkMode === "reshoot" && (
-                                <div className="text-[10px] leading-5 text-white/45">
-                                  局部重拍：按参考成片做会话编辑（指定秒段）。请先出片或下方勾选参考视频；勿因超时重复点生成。
-                                </div>
-                              )}
-                              {block.seedance25WorkMode === "remix" && (
-                                <div className="space-y-1">
-                                  <div className="text-[10px] leading-5 text-white/45">
-                                    视频复刻：勾选参考视频，或粘贴成片链接；可在提示词写改写要求。勿因超时重复点生成。
-                                  </div>
-                                  <input
-                                    type="url"
-                                    value={block.seedance25SourceUrl || ""}
-                                    onChange={(e) =>
-                                      patchOne(block.id, { seedance25SourceUrl: e.target.value })
-                                    }
-                                    placeholder="可选：粘贴参考成片链接（https://…）"
-                                    className="w-full rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-[11px] text-white placeholder:text-white/30"
-                                  />
-                                </div>
-                              )}
-                              {block.seedance25WorkMode === "upscale" && (
-                                <div className="space-y-1">
-                                  <div className="text-[10px] leading-5 text-white/45">
-                                    提升清晰度：对参考成片做画质增强（非重生成剧情）。
-                                  </div>
-                                  <label className="flex items-center gap-2 text-[11px] text-white/70">
-                                    <span className="text-white/45">输出清晰度</span>
-                                    <select
-                                      value={block.seedance25UpscaleResolution || "1080p"}
-                                      onChange={(e) =>
-                                        patchOne(block.id, {
-                                          seedance25UpscaleResolution: e.target.value as
-                                            | "720p"
-                                            | "1080p"
-                                            | "2k"
-                                            | "4k",
-                                        })
-                                      }
-                                      className="rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
-                                    >
-                                      <option value="720p">720p</option>
-                                      <option value="1080p">1080p</option>
-                                      <option value="2k">2K</option>
-                                      <option value="4k">4K</option>
-                                    </select>
-                                  </label>
-                                </div>
-                              )}
-                              {block.seedance25WorkMode === "erase_subtitle" && (
-                                <div className="text-[10px] leading-5 text-white/45">
-                                  擦除字幕：去掉参考成片上的硬字幕烧录。勿因超时重复点生成。
-                                </div>
-                              )}
-                              {block.seedance25WorkMode === "reshoot" ? (
-                                <div className="flex items-center gap-2 text-[11px] text-white/70">
-                                  <span className="text-white/45">重拍秒段</span>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    max={29}
-                                    value={block.seedance25ReshootFromSec ?? 0}
-                                    onChange={(e) =>
-                                      patchOne(block.id, {
-                                        seedance25ReshootFromSec: Math.max(
-                                          0,
-                                          Math.floor(Number(e.target.value) || 0),
-                                        ),
-                                      })
-                                    }
-                                    className="w-14 rounded border border-white/10 bg-black/40 px-1 py-0.5 text-[11px] text-white"
-                                  />
-                                  <span>–</span>
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    max={30}
-                                    value={block.seedance25ReshootToSec ?? 3}
-                                    onChange={(e) =>
-                                      patchOne(block.id, {
-                                        seedance25ReshootToSec: Math.max(
-                                          1,
-                                          Math.floor(Number(e.target.value) || 3),
-                                        ),
-                                      })
-                                    }
-                                    className="w-14 rounded border border-white/10 bg-black/40 px-1 py-0.5 text-[11px] text-white"
-                                  />
-                                  <span className="text-white/40">秒</span>
-                                </div>
-                              ) : null}
+                              <div className="text-[10px] leading-5 text-white/45">
+                                {(() => {
+                                  const mode = normalizeSeedance25EvolinkMode(
+                                    block.seedance25WorkMode,
+                                  );
+                                  if (mode === "text_to_video") {
+                                    return "只使用提示词生成视频，不发送画布上的参考素材。";
+                                  }
+                                  if (mode === "image_to_video") {
+                                    return "使用画布链路中的前 1–2 张图片生成视频，可表达首帧与尾帧。";
+                                  }
+                                  if (mode === "reference_to_video") {
+                                    return "综合图片、视频与音频参考生成；适合漫剧角色、场景和声线锁定。";
+                                  }
+                                  if (mode === "video_edit") {
+                                    return "按提示词编辑参考视频；必须先出片或上传并勾选至少一条视频。";
+                                  }
+                                  return "接着参考视频向后续写 4–30 秒；必须先出片或上传并勾选视频。";
+                                })()}
+                              </div>
                               <div>
                                 <div className="mb-1 text-[10px] text-white/45">
                                   秒级分镜（可选，一行一段：0-5 | 画面）
@@ -2226,12 +2130,12 @@ export default function FreeformCanvas({
                                 return (
                                   <div className="space-y-1.5">
                                     <div className="text-[10px] text-white/45">
-                                      参考视频（最多 3）· 先上传 MP4 再勾选
-                                      {block.outputUrl ? " · 已有成片也可直接延长/重拍" : ""}
+                                      参考视频（最多 10）· 先上传 MP4 再勾选
+                                      {block.outputUrl ? " · 已有成片也可直接编辑/延长" : ""}
                                     </div>
                                     {vids.length ? (
                                       <div className="flex flex-wrap gap-1.5">
-                                        {vids.slice(0, 8).map((a) => {
+                                        {vids.slice(0, 10).map((a) => {
                                           const on = selectedV.has(a.url);
                                           return (
                                             <button
@@ -2242,7 +2146,7 @@ export default function FreeformCanvas({
                                                 toggle(
                                                   selectedV,
                                                   a.url,
-                                                  3,
+                                                  10,
                                                   "seedance25RefVideoUrls",
                                                 )
                                               }
@@ -2263,11 +2167,11 @@ export default function FreeformCanvas({
                                       </div>
                                     )}
                                     <div className="text-[10px] text-white/45">
-                                      参考音频（最多 3）· 上传 MP3/WAV 后勾选
+                                      参考音频（最多 10）· 上传 MP3/WAV 后勾选
                                     </div>
                                     {auds.length ? (
                                       <div className="flex flex-wrap gap-1.5">
-                                        {auds.slice(0, 8).map((a) => {
+                                        {auds.slice(0, 10).map((a) => {
                                           const on = selectedA.has(a.url);
                                           return (
                                             <button
@@ -2278,7 +2182,7 @@ export default function FreeformCanvas({
                                                 toggle(
                                                   selectedA,
                                                   a.url,
-                                                  3,
+                                                  10,
                                                   "seedance25RefAudioUrls",
                                                 )
                                               }
@@ -2308,13 +2212,13 @@ export default function FreeformCanvas({
                                     type="button"
                                     onClick={() =>
                                       patchOne(block.id, {
-                                        seedance25WorkMode: "extend",
+                                        seedance25WorkMode: "video_extend",
                                         seedance25RefVideoUrls: Array.from(
                                           new Set([
                                             ...(block.seedance25RefVideoUrls || []),
                                             block.outputUrl!,
                                           ]),
-                                        ).slice(0, 3),
+                                        ).slice(0, 10),
                                       })
                                     }
                                     className="w-full rounded-lg border border-white/15 bg-white/[0.04] px-2 py-1.5 text-[11px] text-white/80 hover:bg-white/[0.08]"

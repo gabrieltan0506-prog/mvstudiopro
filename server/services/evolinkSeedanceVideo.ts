@@ -101,6 +101,78 @@ export type EvolinkSeedanceRunInput = {
   version?: SeedanceEvolinkVersion;
 };
 
+export function buildEvolinkSeedanceRequest(input: EvolinkSeedanceRunInput): {
+  body: Record<string, unknown>;
+  model: string;
+  mode: SeedanceEvolinkMode;
+  version: SeedanceEvolinkVersion;
+  duration: number;
+} {
+  const version: SeedanceEvolinkVersion = parseSeedanceVersion(input.version);
+  const prompt = String(input.prompt || "").trim();
+  if (!prompt) throw new Error(`Seedance ${version} 需要提示词`);
+
+  const imageUrls = [
+    ...((input.imageUrls || []).map(u => String(u || "").trim()).filter(Boolean)),
+    ...(String(input.imageUrl || "").trim() ? [String(input.imageUrl).trim()] : []),
+  ];
+  const uniqueImages = Array.from(new Set(imageUrls));
+  const videoUrls = Array.from(
+    new Set((input.videoUrls || []).map(u => String(u || "").trim()).filter(Boolean)),
+  );
+  const audioUrls = Array.from(
+    new Set((input.audioUrls || []).map(u => String(u || "").trim()).filter(Boolean)),
+  );
+  const mode = input.mode || inferSeedanceMode({ imageUrls: uniqueImages, videoUrls, audioUrls });
+  const model = resolveSeedanceModelId(version, mode);
+  const duration =
+    mode === "video_edit"
+      ? -1
+      : version === "2.5" && Number(input.duration) === -1
+        ? -1
+        : clampSeedanceDuration(version, input.duration);
+  const aspectRatio =
+    mode === "image_to_video" || mode === "video_edit" || mode === "video_extend"
+      ? "adaptive"
+      : String(input.aspectRatio || "adaptive").trim() || "adaptive";
+  const body: Record<string, unknown> = {
+    model,
+    prompt,
+    duration,
+    aspect_ratio: aspectRatio,
+    generate_audio: input.generateAudio !== false,
+    content_filter: input.contentFilter !== false,
+    quality: normalizeSeedanceQuality(version, input.quality),
+    output_format: "mp4",
+  };
+
+  if (version === "2.5" && mode === "text_to_video" && input.webSearch === true) {
+    body.model_params = { web_search: true };
+  }
+
+  if (mode === "image_to_video") {
+    if (uniqueImages.length < 1) throw new Error(`${version} 图生视频需要 1–2 张图片`);
+    body.image_urls = uniqueImages.slice(0, 2);
+  } else if (mode === "reference_to_video") {
+    if (uniqueImages.length + videoUrls.length + audioUrls.length < 1) {
+      throw new Error(`${version} 多模态参考需要至少 1 个图片、视频或音频素材`);
+    }
+    if (uniqueImages.length) body.image_urls = uniqueImages.slice(0, version === "2.5" ? 30 : 9);
+    if (videoUrls.length) body.video_urls = videoUrls.slice(0, version === "2.5" ? 10 : 3);
+    if (audioUrls.length) body.audio_urls = audioUrls.slice(0, version === "2.5" ? 10 : 3);
+  } else if (mode === "video_edit" || mode === "video_extend") {
+    if (version !== "2.5") throw new Error("视频编辑与视频延长仅支持 Seedance 2.5");
+    if (!videoUrls.length) {
+      throw new Error(mode === "video_edit" ? "视频编辑需要至少 1 条原视频" : "视频延长需要至少 1 条原视频");
+    }
+    body.video_urls = videoUrls.slice(0, 10);
+    if (uniqueImages.length) body.image_urls = uniqueImages.slice(0, 30);
+    if (audioUrls.length) body.audio_urls = audioUrls.slice(0, 10);
+  }
+
+  return { body, model, mode, version, duration };
+}
+
 /**
  * EvoLink Seedance · 文生 / 图生 / 参考生视频（2.0 默认开放；2.5 受闸门控制）
  */
@@ -115,61 +187,9 @@ export async function runEvolinkSeedanceVideo(
   const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
   if (!apiKey) throw new Error(`EVOLINK_API_KEY 未配置，无法使用 Seedance ${version}`);
 
-  const prompt = String(input.prompt || "").trim();
-  if (!prompt) throw new Error(`Seedance ${version} 需要提示词`);
-
-  const imageUrls = [
-    ...((input.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean)),
-    ...(String(input.imageUrl || "").trim() ? [String(input.imageUrl).trim()] : []),
-  ];
-  const uniqueImages = Array.from(new Set(imageUrls));
-  const videoUrls = Array.from(
-    new Set((input.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean)),
-  );
-  const audioUrls = Array.from(
-    new Set((input.audioUrls || []).map((u) => String(u || "").trim()).filter(Boolean)),
-  );
-
-  const mode =
-    input.mode ||
-    inferSeedanceMode({ imageUrls: uniqueImages, videoUrls, audioUrls });
-  const model = resolveSeedanceModelId(version, mode);
-  const duration = clampSeedanceDuration(version, input.duration);
-  const aspectRatio = String(input.aspectRatio || "16:9").trim() || "16:9";
+  const built = buildEvolinkSeedanceRequest(input);
+  const { body, model, mode } = built;
   const label = `Seedance ${version}`;
-
-  const body: Record<string, unknown> = {
-    model,
-    prompt,
-    duration,
-    aspect_ratio: aspectRatio,
-    generate_audio: input.generateAudio !== false,
-    content_filter: input.contentFilter !== false,
-    quality: normalizeSeedanceQuality(version, input.quality),
-  };
-
-  if (version === "2.5" && input.webSearch === true) {
-    body.model_params = { web_search: true };
-  }
-
-  if (mode === "image_to_video") {
-    if (uniqueImages.length < 1) throw new Error(`${label} 图生视频需要至少 1 张参考图`);
-    body.image_urls = uniqueImages.slice(0, 1);
-  } else if (mode === "reference_to_video") {
-    if (uniqueImages.length + videoUrls.length + audioUrls.length < 1) {
-      throw new Error(`${label} 参考生视频需要至少 1 个 image/video/audio 参考`);
-    }
-    if (uniqueImages.length) {
-      body.image_urls = uniqueImages.slice(0, version === "2.5" ? 30 : 9);
-    }
-    if (videoUrls.length) {
-      body.video_urls = videoUrls.slice(0, version === "2.5" ? 10 : 3);
-    }
-    if (audioUrls.length) {
-      body.audio_urls = audioUrls.slice(0, version === "2.5" ? 10 : 3);
-    }
-  }
-  // text_to_video：不附媒体
 
   const createRes = await fetch(`${EVOLINK_BASE}/v1/videos/generations`, {
     method: "POST",

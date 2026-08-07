@@ -4,7 +4,7 @@
  * 文档：
  * - 2.0：text / image / reference → video（时长 4–15s）
  * - 2.0 Mini：廉价草稿档（480p/720p，约半价）；探针默认走此档
- * - 2.5：同上三模式（时长 4–30s）；官方标注尚未上线，产品默认不开放
+ * - 2.5：文生、图生、多模态参考、视频编辑、视频延长（时长 4–30s）
  *
  * @see https://docs.evolink.ai/cn/api-manual/video-series/seedance2.0/
  * @see https://evolink.ai/seedance-2-0-mini
@@ -34,10 +34,48 @@ export const SEEDANCE_25_MODELS = {
   textToVideo: "seedance-2.5-text-to-video",
   imageToVideo: "seedance-2.5-image-to-video",
   referenceToVideo: "seedance-2.5-reference-to-video",
+  videoEdit: "seedance-2.5-video-edit",
+  videoExtend: "seedance-2.5-video-extend",
 } as const;
 
 export type SeedanceEvolinkVersion = "2.0" | "2.0-mini" | "2.5";
-export type SeedanceEvolinkMode = "text_to_video" | "image_to_video" | "reference_to_video";
+export type SeedanceEvolinkMode =
+  | "text_to_video"
+  | "image_to_video"
+  | "reference_to_video"
+  | "video_edit"
+  | "video_extend";
+
+export const SEEDANCE_25_EVOLINK_MODES: readonly SeedanceEvolinkMode[] = [
+  "text_to_video",
+  "image_to_video",
+  "reference_to_video",
+  "video_edit",
+  "video_extend",
+] as const;
+
+export function isSeedance25EvolinkMode(raw: unknown): raw is SeedanceEvolinkMode {
+  return (SEEDANCE_25_EVOLINK_MODES as readonly unknown[]).includes(raw);
+}
+
+/** 兼容旧画布草稿：旧“延长/局部重拍/复刻”分别折到新版延长/编辑。 */
+export function normalizeSeedance25EvolinkMode(
+  raw: unknown,
+  media: { imageUrls?: string[]; videoUrls?: string[]; audioUrls?: string[] } = {},
+): SeedanceEvolinkMode {
+  const value = String(raw || "").trim().toLowerCase();
+  if (isSeedance25EvolinkMode(value)) return value;
+  if (value === "extend") return "video_extend";
+  if (
+    value === "reshoot" ||
+    value === "remix" ||
+    value === "upscale" ||
+    value === "erase_subtitle"
+  ) {
+    return "video_edit";
+  }
+  return inferSeedanceMode(media);
+}
 
 /** 产品默认时长：对齐「约 15 秒」漫剧/短镜口径；仍受各版 API 上下限约束 */
 export const SEEDANCE_PRODUCT_DEFAULT_DURATION_SEC = 15;
@@ -74,6 +112,14 @@ export function resolveSeedanceModelId(
       : version === "2.0-mini"
         ? SEEDANCE_20_MINI_MODELS
         : SEEDANCE_20_MODELS;
+  if (mode === "video_edit") {
+    if (version !== "2.5") throw new Error("视频编辑仅支持 Seedance 2.5");
+    return SEEDANCE_25_MODELS.videoEdit;
+  }
+  if (mode === "video_extend") {
+    if (version !== "2.5") throw new Error("视频延长仅支持 Seedance 2.5");
+    return SEEDANCE_25_MODELS.videoExtend;
+  }
   if (mode === "image_to_video") return table.imageToVideo;
   if (mode === "reference_to_video") return table.referenceToVideo;
   return table.textToVideo;

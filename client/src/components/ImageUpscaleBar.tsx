@@ -6,6 +6,10 @@ import {
   type ImageUpscaleBaseCreditKey,
 } from "@shared/plans";
 import { Loader2 } from "lucide-react";
+import {
+  buildUpscaleConfirmation,
+  detectImageBlurRisk,
+} from "@/lib/imageBlurDetection";
 
 type UpscaleFactor = "x2" | "x4";
 
@@ -66,17 +70,31 @@ export function ImageUpscaleBar({
   const btnBase =
     "inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/90 transition hover:bg-white/10 disabled:opacity-45";
 
-  function handleClick(factor: UpscaleFactor) {
-    if (activeFactor) return;
-    const label = FACTOR_LABEL[factor];
-    const cost = factor === "x2" ? cost2 : cost4;
-    const confirmed = window.confirm(
-      `放大（${label}）后将直接替换原图，无法还原。\n请先右键保存原图，再继续。\n约消耗 ${cost} 积分。\n\n确定放大吗？`,
-    );
-    if (!confirmed) return;
+  async function handleClick(factor: UpscaleFactor) {
+    if (activeFactorRef.current) return;
     activeFactorRef.current = factor;
     setActiveFactor(factor);
-    mut.mutate({ imageUrl: url, upscaleFactor: factor, baseCreditKey });
+    const label = FACTOR_LABEL[factor];
+    const cost = factor === "x2" ? cost2 : cost4;
+    const assessment = await detectImageBlurRisk(url);
+    const confirmed = window.confirm(buildUpscaleConfirmation({
+      factorLabel: label,
+      credits: cost,
+      assessment,
+      replacesOriginal: true,
+    }));
+    if (!confirmed) {
+      setActiveFactor(null);
+      activeFactorRef.current = null;
+      return;
+    }
+    mut.mutate({
+      imageUrl: url,
+      upscaleFactor: factor,
+      baseCreditKey,
+      qualityWarningAccepted: assessment.isLikelyBlurry,
+      sourceBlurScore: assessment.score,
+    });
   }
 
   return (
@@ -96,7 +114,7 @@ export function ImageUpscaleBar({
         type="button"
         className={btnBase}
         disabled={!!activeFactor}
-        onClick={() => handleClick("x2")}
+        onClick={() => void handleClick("x2")}
       >
         {activeFactor === "x2" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
         2×
@@ -105,7 +123,7 @@ export function ImageUpscaleBar({
         type="button"
         className={btnBase}
         disabled={!!activeFactor}
-        onClick={() => handleClick("x4")}
+        onClick={() => void handleClick("x4")}
       >
         {activeFactor === "x4" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
         4×

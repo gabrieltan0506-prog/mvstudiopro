@@ -71,12 +71,12 @@ const ENGINES: EngineEntry[] = [
   {
     name: "Seedance 2.5",
     tagline: "单段最长 30 秒，一集四段，成片直接加长",
-    badge: `${SEEDANCE_25_LAUNCH_DATE_LABEL_ZH}上线`,
+    badge: `${SEEDANCE_25_LAUNCH_DATE_LABEL_ZH}正式上线`,
     uses: [
       {
         href: "/canvas",
-        label: "成片·加长",
-        desc: "新生成／延长／局部重拍／复刻／画质提升／擦字幕 六种模式",
+        label: "五种创作模式",
+        desc: "文生视频／图生视频／多模态参考／视频编辑／视频延长 五种模式",
       },
       {
         href: "/canvas",
@@ -137,7 +137,7 @@ export default function HomeModelShowcase() {
                       : "bg-amber-400/15 text-amber-300"
                   }`}
                 >
-                  {launched ? "已上线" : engine.badge}
+                  {launched ? "正式上线" : engine.badge}
                 </span>
               ) : null}
             </div>
