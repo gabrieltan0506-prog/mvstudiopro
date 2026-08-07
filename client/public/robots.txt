@@ -60,4 +60,8 @@ Allow: /
 User-agent: cohere-ai
 Allow: /
 
+# 机器可读站点说明（供 AI 检索优先阅读）
+# https://www.mvstudiopro.com/llms.txt
+# https://www.mvstudiopro.com/llms-full.txt
+
 Sitemap: https://www.mvstudiopro.com/sitemap.xml
