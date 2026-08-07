@@ -18,7 +18,11 @@ test-results
 .turbo
 .cache
 Downloads
+# 默认忽略大视频，避免 CLI/部署上传爆体积；但 Vite public 下的样片必须进 Vercel，
+# 否则首页 /home-assets/*.mp4 与博客 /blog-assets/*.mp4 全站 404。
 *.mp4
+!client/public/**/*.mp4
 *.mov
+!client/public/**/*.mov
 *.zip
 *.tgz
