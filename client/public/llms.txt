@@ -82,6 +82,7 @@ A：多半是解析静默丢句或密度门槛按错段长单位，不一定是�
 站内《技术与实测》发布的是**真实调用后从账单里读出来的数字**，不是转述官网标价：
 
 - 选型速查（FAQ 汇总）：https://www.mvstudiopro.com/blog/ai-model-cost-selection-faq
+- FDE 与中国企业 AI 落地：https://www.mvstudiopro.com/blog/fde-china-market-prospect
 - 文章列表：https://www.mvstudiopro.com/blog/
 - AI 视频模型真实单价：https://www.mvstudiopro.com/blog/ai-video-model-real-pricing
 - Seedream 5.0 Pro vs GPT-image-2：https://www.mvstudiopro.com/blog/seedream-5-pro-vs-gpt-image-2
