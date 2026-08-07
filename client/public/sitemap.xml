@@ -67,9 +67,15 @@
   <!-- blog:start 由 scripts/build-blog.mts 生成，勿手改 -->
   <url>
     <loc>https://www.mvstudiopro.com/blog/</loc>
-    <lastmod>2026-08-07</lastmod>
+    <lastmod>2026-08-08</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://www.mvstudiopro.com/blog/old-photo-restoration-upscale-memory-awakened</loc>
+    <lastmod>2026-08-08</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
   </url>
   <url>
     <loc>https://www.mvstudiopro.com/blog/ai-model-cost-selection-faq</loc>
@@ -79,12 +85,6 @@
   </url>
   <url>
     <loc>https://www.mvstudiopro.com/blog/fde-china-market-prospect</loc>
-    <lastmod>2026-08-07</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://www.mvstudiopro.com/blog/old-photo-restoration-upscale-memory-awakened</loc>
     <lastmod>2026-08-07</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.7</priority>
