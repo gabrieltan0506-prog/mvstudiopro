@@ -86,24 +86,43 @@ export function LaunchCountdownBanner() {
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
-          <figure className="overflow-hidden rounded-2xl border border-white/12 bg-black/35 shadow-[0_24px_80px_rgba(0,0,0,0.4)]">
-            <video
-              controls
-              autoPlay
-              muted
-              loop
-              playsInline
-              preload="metadata"
-              poster="/home-assets/seedance25-kpop-dance-poster.jpg"
-              className="aspect-video w-full bg-black object-cover"
-            >
-              <source src="/home-assets/seedance25-kpop-dance.mp4" type="video/mp4" />
-            </video>
-            <figcaption className="flex items-center justify-between gap-3 px-4 py-3 text-xs text-white/55">
-              <span>Seedance 2.5 · K-pop dance 示例</span>
-              <span>1920×1080 · 声画同步</span>
-            </figcaption>
-          </figure>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <figure className="overflow-hidden rounded-2xl border border-white/12 bg-black/35 shadow-[0_24px_80px_rgba(0,0,0,0.4)]">
+              <video
+                controls
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                poster="/home-assets/seedance25-kpop-dance-poster.jpg"
+                className="aspect-video w-full bg-black object-cover"
+              >
+                <source src="/home-assets/seedance25-kpop-dance.mp4" type="video/mp4" />
+              </video>
+              <figcaption className="flex items-center justify-between gap-3 px-4 py-3 text-xs text-white/55">
+                <span>Seedance 2.5 · K-pop dance</span>
+                <span>1920×1080</span>
+              </figcaption>
+            </figure>
+            <figure className="overflow-hidden rounded-2xl border border-white/12 bg-black/35 shadow-[0_24px_80px_rgba(0,0,0,0.4)]">
+              <video
+                controls
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                poster="/home-assets/seedance25-racemow-poster.jpg"
+                className="aspect-video w-full bg-black object-cover"
+              >
+                <source src="/home-assets/seedance25-racemow.mp4" type="video/mp4" />
+              </video>
+              <figcaption className="flex items-center justify-between gap-3 px-4 py-3 text-xs text-white/55">
+                <span>Seedance 2.5 · Racemow</span>
+                <span>1920×1080</span>
+              </figcaption>
+            </figure>
+          </div>
         </div>
       </section>
     );
