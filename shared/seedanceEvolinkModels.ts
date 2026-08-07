@@ -51,7 +51,8 @@ export const SEEDANCE_20_MINI_DURATION = { min: 4, max: 15, default: SEEDANCE_PR
 export const SEEDANCE_25_DURATION = { min: 4, max: 30, default: SEEDANCE_PRODUCT_DEFAULT_DURATION_SEC } as const;
 
 /**
- * 到 2026-08-08 00:00 (UTC+8) 自动放开（用户 2026-08-05 明文：对外宣称 8 月 8 日上线、到点自动可用）。
+ * 到 `SEEDANCE_25_LAUNCH_AT_ISO` 自动放开（用户 2026-08-05 明文：对外宣称上线日、到点自动可用）。
+ * 日期真源只有 `shared/seedance25Access.ts` 一处，此处不复写，避免改期后注释腐烂。
  * 上线前内部联调设环境变量 SEEDANCE_25_ENABLED=1（仅服务端）。
  *
  * 写成函数而非常量：Fly 是长驻进程，常量会在启动时求值，跨过上线时刻也不会翻转。

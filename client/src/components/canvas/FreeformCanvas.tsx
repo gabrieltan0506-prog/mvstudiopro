@@ -614,7 +614,7 @@ export default function FreeformCanvas({
   /**
    * 与服务端 `assertSeedance25PaidAccess` 同一套 `resolveSeedance25Access`（到点 + 会员 + 内部
    * 角色一起判），避免前端只判 plan 导致「能选但 403」。`nowMs` 每分钟刷新一次，避免页面挂着
-   * 跨过 8/8 上线时刻却因组件不重渲染而一直读到旧结果（不能算模块级常量或只 mount 时算一次）。
+   * 跨过上线时刻却因组件不重渲染而一直读到旧结果（不能算模块级常量或只 mount 时算一次）。
    */
   const [seedance25NowMs, setSeedance25NowMs] = useState(() => Date.now());
   useEffect(() => {
