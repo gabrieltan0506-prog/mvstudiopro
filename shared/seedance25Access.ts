@@ -4,28 +4,28 @@
  * 用户 2026-08-05 明文口径：
  * - 对外宣称上线日，首页读秒倒计时；到点**自动**对用户开放，不必再发版。
  * - 上线后**仅正式付费会员**（Stripe plan pro/enterprise）可用；邀请码只加积分不改 plan → 仍为 free，不可用。
- * - 上线前只有 supervisor / admin 能走（小云雀通道仅对 supervisor 显示，用于内部验收）。
+ * - 上线前只有 supervisor / admin 能走内部验收通道。
  *
  * 闸门是**纯时间判断**，不看上游通不通：到点就放行，直接打 EvoLink。所以上游未开放时
  * 必须靠推迟本文件的上线时刻来挡，否则会员到点选「成片·加长」会撞上游原始报错，
  * 而那句友好的「尚未开放」只在闸门关着时才抛，反被绕过。
- * 2026-08-07 用户明文：EvoLink 侧 Seedance 2.5 仍未开放，上线时刻由 8/8 推到 8/9。
+ * 2026-08-07 用户确认 EvoLink 五条模型路由已开放，要求立即正式上线。
  */
 
-/** 上线时刻：2026-08-09 00:00 (UTC+8) */
-export const SEEDANCE_25_LAUNCH_AT_ISO = "2026-08-09T00:00:00+08:00";
+/** 正式上线时刻：2026-08-07 00:00 (UTC+8) */
+export const SEEDANCE_25_LAUNCH_AT_ISO = "2026-08-07T00:00:00+08:00";
 export const SEEDANCE_25_LAUNCH_AT_MS = Date.parse(SEEDANCE_25_LAUNCH_AT_ISO);
 
 /** 对外文案（用户明文授权可写引擎名与日期）。日期一律引用下面两个 label，勿再硬写。 */
-export const SEEDANCE_25_LAUNCH_DATE_LABEL_ZH = "8 月 9 日";
-export const SEEDANCE_25_LAUNCH_DATE_LABEL_EN = "August 9";
+export const SEEDANCE_25_LAUNCH_DATE_LABEL_ZH = "8 月 7 日";
+export const SEEDANCE_25_LAUNCH_DATE_LABEL_EN = "August 7";
 export const SEEDANCE_25_COUNTDOWN_TITLE_ZH = "Seedance 2.5 上线倒计时";
 export const SEEDANCE_25_COUNTDOWN_SUBTITLE_ZH = `成片·加长 · 单段最长 30 秒 · ${SEEDANCE_25_LAUNCH_DATE_LABEL_ZH}开放，正式会员可用`;
-export const SEEDANCE_25_LAUNCHED_LABEL_ZH = "Seedance 2.5 已上线 · 成片·加长现已开放";
+export const SEEDANCE_25_LAUNCHED_LABEL_ZH = "Seedance 2.5 正式上线 · 五种成片模式现已开放";
 
 export const SEEDANCE_25_PAID_ONLY_LABEL_ZH =
-  "成片·加长仅正式会员可用；邀请码用户请使用成片·快速";
-export const SEEDANCE_25_BEFORE_LAUNCH_LABEL_ZH = `成片·加长将于 ${SEEDANCE_25_LAUNCH_DATE_LABEL_ZH}开放，敬请期待；在此之前请使用成片·快速`;
+  "Seedance 2.5 仅正式会员可用；邀请码用户请使用成片·快速";
+export const SEEDANCE_25_BEFORE_LAUNCH_LABEL_ZH = `Seedance 2.5 将于 ${SEEDANCE_25_LAUNCH_DATE_LABEL_ZH}开放，敬请期待；在此之前请使用成片·快速`;
 
 /** 是否已到上线时刻 */
 export function isSeedance25Launched(now?: Date | number): boolean {

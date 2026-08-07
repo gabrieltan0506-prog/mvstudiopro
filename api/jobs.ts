@@ -1022,6 +1022,8 @@ async function chargeCanvasVideoAndRun<T>(
     skipCharge?: boolean;
     /** 输出分辨率：1080p 单价是 720p 的 2.25 倍 */
     resolution?: string | null;
+    /** 首页照片人物动起来按秒计费；缺省保持原画布分档计费。 */
+    pricingMode?: "canvas" | "homePhotoAnimate";
   },
   work: () => Promise<T>,
 ): Promise<{ ok: true; result: T; credits: number } | { ok: false; status: number; error: string }> {
@@ -1041,21 +1043,41 @@ async function chargeCanvasVideoAndRun<T>(
     return { ok: false, status: 403, error: access.message || "成片功能仅向正式会员开放" };
   }
 
-  const { canvasVideoClipCredits } = await import("../shared/canvasGenerationPricing.js");
   const episodeIndex = Number(opts.episodeIndex);
   const isEpisodeSegment = Number.isFinite(episodeIndex) && episodeIndex > 0;
-  const credits = canvasVideoClipCredits({
-    durationSec: opts.durationSec ?? undefined,
-    isEpisodeSegment,
-    resolution: opts.resolution ?? undefined,
-  });
+  let credits: number;
+  if (opts.pricingMode === "homePhotoAnimate") {
+    const {
+      HOME_PHOTO_ANIMATE_DEFAULT_RESOLUTION,
+      homePhotoAnimateCredits,
+      isHomePhotoAnimateDuration,
+      isHomePhotoAnimateResolution,
+    } = await import(
+      "../shared/homePhotoTools.js"
+    );
+    if (!isHomePhotoAnimateDuration(opts.durationSec)) {
+      return { ok: false, status: 400, error: "照片动起来只支持 5、10 或 15 秒" };
+    }
+    const resolution = isHomePhotoAnimateResolution(opts.resolution)
+      ? opts.resolution
+      : HOME_PHOTO_ANIMATE_DEFAULT_RESOLUTION;
+    credits = homePhotoAnimateCredits(opts.durationSec, resolution);
+  } else {
+    const { canvasVideoClipCredits } = await import("../shared/canvasGenerationPricing.js");
+    credits = canvasVideoClipCredits({
+      durationSec: opts.durationSec ?? undefined,
+      isEpisodeSegment,
+      resolution: opts.resolution ?? undefined,
+    });
+  }
 
   const { deductCreditsAmount, refundCredits } = await import("../server/credits.js");
   let deducted = 0;
   try {
     // admin / supervisor 在 deductCreditsAmount 内部返回 cost=0，故不必在这里另判角色；
     // 余额不足是 **throw**（不是返回 false），错误原文含英文与余额细节，这里换成对用户的话。
-    const out = await deductCreditsAmount(viewer.userId, credits, "canvasVideoClip", opts.label);
+    const action = opts.pricingMode === "homePhotoAnimate" ? "homePhotoAnimate" : "canvasVideoClip";
+    const out = await deductCreditsAmount(viewer.userId, credits, action, opts.label);
     deducted = out.cost;
   } catch {
     return {
@@ -1067,21 +1089,29 @@ async function chargeCanvasVideoAndRun<T>(
   try {
     return { ok: true, result: await work(), credits: deducted };
   } catch (err) {
+    let refundFailed = false;
     if (deducted > 0) {
       await refundCredits(viewer.userId, deducted, `${opts.label}·生成失败退回`).catch(
         (refundErr: unknown) => {
+          refundFailed = true;
           console.error("[chargeCanvasVideoAndRun] 退款失败", refundErr);
         },
       );
+    }
+    if (opts.pricingMode === "homePhotoAnimate") {
+      if (refundFailed) {
+        throw new Error("照片动画生成失败；积分退款处理异常，请联系客服核对");
+      }
+      if (deducted > 0) {
+        throw new Error("照片动画生成失败，积分已自动退回");
+      }
+      throw new Error("照片动画生成失败，请稍后重试");
     }
     throw err;
   }
 }
 
-/**
- * 成片·加长(2.5)：8 月 8 日 00:00 (UTC+8) 起自动对**正式会员**（pro/enterprise）开放；
- * 邀请码积分用户仍是 free，拿不到。上线前只有 supervisor/admin 可走（内部验收）。
- */
+/** Seedance 2.5：正式上线后仍只向正式会员（pro/enterprise）开放。 */
 async function assertSeedance25PaidAccess(
   req: VercelRequest,
 ): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
@@ -1111,6 +1141,126 @@ async function assertSeedance25PaidAccess(
       return { ok: false, status: 401, error: "请先登录后再使用成片·加长" };
     }
     throw e;
+  }
+}
+
+/**
+ * Seedance 2.5 五模式共用主链：契约预检 → 服务配置 → 服务端计费 → EvoLink → 失败退款。
+ * 两个历史 API 入口都必须调用这里，避免 `/canvas` 与兼容入口再次分叉。
+ */
+async function runSeedance25EvolinkJob(
+  req: VercelRequest,
+  body: any,
+  query: any,
+  labelPrefix: string,
+): Promise<
+  | { ok: false; status: number; error: string; paidOnly?: boolean }
+  | {
+      ok: true;
+      out: Awaited<ReturnType<typeof import("../server/services/evolinkSeedanceVideo.js")["runEvolinkSeedanceVideo"]>>;
+      credits: number;
+      resolution: "480p" | "720p" | "1080p";
+      duration: number;
+    }
+> {
+  const access = await assertSeedance25PaidAccess(req);
+  if (!access.ok) return { ...access, paidOnly: true };
+
+  const prompt =
+    s(body.prompt || query.prompt || "").trim() ||
+    "Cinematic motion shot with stable camera and rich detail.";
+  const imageUrl = s(body.imageUrl || query.imageUrl || "").trim() || undefined;
+  const imageUrls = Array.isArray(body.imageUrls)
+    ? body.imageUrls.map((url: unknown) => s(url).trim()).filter(Boolean)
+    : [];
+  const videoUrls = Array.isArray(body.videoUrls)
+    ? body.videoUrls.map((url: unknown) => s(url).trim()).filter(Boolean)
+    : [];
+  const audioUrls = Array.isArray(body.audioUrls)
+    ? body.audioUrls.map((url: unknown) => s(url).trim()).filter(Boolean)
+    : [];
+  const {
+    clampSeedanceDuration,
+    normalizeSeedance25EvolinkMode,
+    normalizeSeedanceQuality,
+  } = await import("../shared/seedanceEvolinkModels.js");
+  const mode = normalizeSeedance25EvolinkMode(body.workMode || query.workMode, {
+    imageUrls: [...(imageUrl ? [imageUrl] : []), ...imageUrls],
+    videoUrls,
+    audioUrls,
+  });
+  const duration = clampSeedanceDuration(
+    "2.5",
+    body.duration ?? query.duration ?? body.durationSec ?? 15,
+  );
+  const providerDuration = mode === "video_edit" ? -1 : duration;
+  const resolution = normalizeSeedanceQuality(
+    "2.5",
+    body.resolution || query.resolution || "720p",
+  );
+  const aspectRatio = s(body.aspectRatio || query.aspectRatio || "16:9").trim() || "16:9";
+  const generateAudio = !(
+    String(body.generateAudio ?? query.generateAudio ?? "1").trim() === "0" ||
+    body.generateAudio === false
+  );
+  const {
+    buildEvolinkSeedanceRequest,
+    isEvolinkSeedanceConfigured,
+    runEvolinkSeedanceVideo,
+  } = await import("../server/services/evolinkSeedanceVideo.js");
+  if (!isEvolinkSeedanceConfigured()) {
+    return { ok: false, status: 503, error: "视频服务暂不可用，请稍后重试" };
+  }
+
+  const runInput = {
+    prompt,
+    imageUrl,
+    imageUrls,
+    videoUrls,
+    audioUrls,
+    quality: resolution,
+    aspectRatio,
+    duration: providerDuration,
+    generateAudio,
+    contentFilter: true,
+    mode,
+    version: "2.5" as const,
+  };
+  try {
+    // 扣费前先跑纯函数契约验证，缺素材不应经历“先扣再退”。
+    buildEvolinkSeedanceRequest(runInput);
+  } catch (error: any) {
+    return { ok: false, status: 400, error: error?.message || "Seedance 2.5 请求参数无效" };
+  }
+
+  const modeLabel = {
+    text_to_video: "文生视频",
+    image_to_video: "图生视频",
+    reference_to_video: "多模态参考生成",
+    video_edit: "视频编辑",
+    video_extend: "视频延长",
+  }[mode];
+  try {
+    const charged = await chargeCanvasVideoAndRun(
+      req,
+      {
+        // 视频编辑按用户选择的产品时长计价；上游协议自身固定传 -1。
+        durationSec: duration,
+        episodeIndex: body.episodeIndex,
+        label: `${labelPrefix}·${modeLabel}（${duration}s）`,
+      },
+      () => runEvolinkSeedanceVideo(runInput),
+    );
+    if (!charged.ok) return charged;
+    return {
+      ok: true,
+      out: charged.result,
+      credits: charged.credits,
+      resolution,
+      duration,
+    };
+  } catch (error: any) {
+    return { ok: false, status: 502, error: error?.message || "seedance25_failed" };
   }
 }
 
@@ -3539,6 +3689,108 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       }
     }
 
+    if (op === "homePhotoAnimate") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const imageUrl = s(b.imageUrl || "").trim();
+      if (!imageUrl) {
+        return res.status(400).json({ ok: false, error: "请先上传一张照片" });
+      }
+      const duration = Number(b.duration ?? b.durationSec);
+      const {
+        HOME_PHOTO_ANIMATE_DEFAULT_RESOLUTION,
+        isHomePhotoAnimateDuration,
+        isHomePhotoAnimateResolution,
+      } = await import("../shared/homePhotoTools.js");
+      if (!isHomePhotoAnimateDuration(duration)) {
+        return res.status(400).json({ ok: false, error: "照片动起来只支持 5、10 或 15 秒" });
+      }
+      const resolutionRaw = s(b.resolution || HOME_PHOTO_ANIMATE_DEFAULT_RESOLUTION).trim();
+      if (!isHomePhotoAnimateResolution(resolutionRaw)) {
+        return res.status(400).json({ ok: false, error: "照片动起来只支持 720p 或 1080p" });
+      }
+      const resolution = resolutionRaw;
+      const prompt =
+        s(b.prompt || "").trim().slice(0, 500) ||
+        "让照片中的人物做自然、克制的微动作，保持身份、脸部特征、服装、背景与原始构图稳定；动作连贯，镜头稳定，不新增人物或物件。";
+      const aspectRatio = s(b.aspectRatio || "16:9").trim() || "16:9";
+
+      try {
+        const { isOpenRouterHappyHorseConfigured, runOpenRouterHappyHorseVideo } = await import(
+          "../server/services/openrouterHappyHorseVideo.js"
+        );
+        if (!isOpenRouterHappyHorseConfigured()) {
+          return res.status(503).json({ ok: false, error: "视频服务暂不可用，请稍后重试" });
+        }
+        const charged = await chargeCanvasVideoAndRun(
+          req,
+          {
+            durationSec: duration,
+            resolution,
+            pricingMode: "homePhotoAnimate",
+            label: `首页照片人物动起来（${resolution} · ${duration}s）`,
+          },
+          () =>
+            runOpenRouterHappyHorseVideo({
+              prompt,
+              imageUrl,
+              resolution,
+              aspectRatio,
+              duration,
+            }),
+        );
+        if (!charged.ok) {
+          return res.status(charged.status).json({ ok: false, error: charged.error });
+        }
+        const out = charged.result;
+
+        try {
+          const [{ recordCreation }, { getUserPlan }] = await Promise.all([
+            import("../server/routers/creations.js"),
+            import("../server/credits.js"),
+          ]);
+          const viewer = await resolveJobUser(req);
+          if (viewer) {
+            const plan = await getUserPlan(viewer.userId);
+            await recordCreation({
+              userId: viewer.userId,
+              type: "photo_animation_video",
+              title: `照片人物动起来 · ${resolution} · ${duration} 秒`,
+              outputUrl: out.videoUrl,
+              thumbnailUrl: imageUrl,
+              quality: resolution,
+              creditsUsed: charged.credits,
+              plan,
+              metadata: {
+                sourceImageUrl: imageUrl,
+                prompt,
+                duration,
+                resolution,
+                model: out.model,
+                tool: "home_photo_animate",
+              },
+            });
+          }
+        } catch (recordError) {
+          console.error("[homePhotoAnimate] recordCreation failed", recordError);
+        }
+
+        return res.status(200).json({
+          ok: true,
+          videoUrl: out.videoUrl,
+          duration,
+          resolution,
+          creditsUsed: charged.credits,
+        });
+      } catch (error: any) {
+        return res.status(502).json({
+          ok: false,
+          error: error?.message || "照片动起来失败，请稍后重试",
+        });
+      }
+    }
+
     if (op === "seedanceI2V") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -3571,87 +3823,28 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (productVersion === "2.0-mini" && !isProbe) {
         productVersion = "2.0-fast";
       }
-      /** A3：2.5 → 小云雀；须正式会员；Fly secrets 未开仍 Coming soon */
+      /** Seedance 2.5 正式版：五种 EvoLink 路由，共用计费与退款主链。 */
       if (productVersion === "2.5") {
-        const { SEEDANCE_25_COMING_SOON_LABEL_ZH } = await import("../shared/seedanceOpenRouterModels.js");
-        const access = await assertSeedance25PaidAccess(req);
-        if (!access.ok) {
-          return res.status(access.status).json({
+        const result = await runSeedance25EvolinkJob(req, b, q, "画布 Seedance 2.5");
+        if (!result.ok) {
+          return res.status(result.status).json({
             ok: false,
-            error: access.error,
+            error: result.error,
             version: "2.5",
-            paidOnly: true,
+            ...(result.paidOnly ? { paidOnly: true } : {}),
           });
         }
-        try {
-          const { isXyqSeedance25Ready, runXyqSeedance25Video } = await import(
-            "../server/services/xyqSeedanceVideo.js"
-          );
-          if (!isXyqSeedance25Ready()) {
-            return res.status(503).json({
-              ok: false,
-              error: SEEDANCE_25_COMING_SOON_LABEL_ZH,
-              comingSoon: true,
-              version: "2.5",
-            });
-          }
-          const generateTypeRaw = b.generateType ?? q.generateType;
-          const generateType =
-            generateTypeRaw === undefined || generateTypeRaw === null || generateTypeRaw === ""
-              ? undefined
-              : Math.floor(Number(generateTypeRaw));
-          const { parseXyqSeedance25WorkMode } = await import("../shared/xyqSeedancePrompt.js");
-          const workMode = parseXyqSeedance25WorkMode(b.workMode || q.workMode || "generate");
-          const duration25 = Number(b.duration ?? q.duration ?? b.durationSec ?? 15);
-          const charged = await chargeCanvasVideoAndRun(
-            req,
-            {
-              durationSec: duration25,
-              episodeIndex: b.episodeIndex,
-              label: `画布成片·加长（${Number.isFinite(duration25) ? duration25 : 15}s）`,
-            },
-            () =>
-              runXyqSeedance25Video({
-                prompt,
-                imageUrl,
-                imageUrls,
-                videoUrls,
-                audioUrls,
-                aspectRatio: s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9",
-                duration: duration25,
-                quality: s(b.resolution || q.resolution || "720p").trim() || "720p",
-                generateType: Number.isFinite(generateType as number)
-                  ? (generateType as number)
-                  : undefined,
-                workMode,
-                threadId: s(b.threadId || q.threadId || "").trim() || undefined,
-                upscaleResolution:
-                  s(b.upscaleResolution || q.upscaleResolution || "").trim() || undefined,
-                upscaleToolVersion:
-                  s(b.upscaleToolVersion || q.upscaleToolVersion || "").trim() || undefined,
-                sourceUrl: s(b.sourceUrl || q.sourceUrl || "").trim() || undefined,
-              }),
-          );
-          if (!charged.ok) {
-            return res.status(charged.status).json({ ok: false, error: charged.error });
-          }
-          const out = charged.result;
-          return res.status(200).json({
-            ok: true,
-            videoUrl: out.videoUrl,
-            provider: out.provider,
-            model: out.model,
-            version: out.version,
-            threadId: out.threadId,
-            runId: out.runId,
-            webThreadLink: out.webThreadLink,
-            route: out.route,
-            workMode: out.workMode,
-            creditsUsed: charged.credits,
-          });
-        } catch (e: any) {
-          return res.status(502).json({ ok: false, error: e?.message || "seedance25_failed" });
-        }
+        return res.status(200).json({
+          ok: true,
+          videoUrl: result.out.videoUrl,
+          provider: result.out.provider,
+          model: result.out.model,
+          version: result.out.version,
+          workMode: result.out.mode,
+          resolution: result.resolution,
+          duration: result.duration,
+          creditsUsed: result.credits,
+        });
       }
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9";
       const generateAudio = !(
@@ -3765,104 +3958,31 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       }
     }
 
-    /**
-     * Seedance 2.5 · A3：Fly secrets + 小云雀；须正式会员（邀请码用户不可用）。
-     */
+    /** Seedance 2.5 兼容入口；与 `/canvas` 共用同一条 EvoLink 五模式主链。 */
     if (op === "seedance25") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
-      const { SEEDANCE_25_COMING_SOON_LABEL_ZH } = await import("../shared/seedanceOpenRouterModels.js");
-      const access = await assertSeedance25PaidAccess(req);
-      if (!access.ok) {
-        return res.status(access.status).json({
+      const result = await runSeedance25EvolinkJob(req, b, q, "Seedance 2.5");
+      if (!result.ok) {
+        return res.status(result.status).json({
           ok: false,
-          error: access.error,
+          error: result.error,
           version: "2.5",
-          paidOnly: true,
+          ...(result.paidOnly ? { paidOnly: true } : {}),
         });
       }
-      const prompt =
-        s(b.prompt || q.prompt || "").trim() || "Cinematic motion shot with stable camera and rich detail.";
-      const imageUrl = s(b.imageUrl || q.imageUrl || "").trim() || undefined;
-      const imageUrls = Array.isArray(b.imageUrls)
-        ? b.imageUrls.map((u: unknown) => s(u)).filter(Boolean)
-        : undefined;
-      const videoUrls = Array.isArray(b.videoUrls)
-        ? b.videoUrls.map((u: unknown) => s(u)).filter(Boolean)
-        : undefined;
-      const audioUrls = Array.isArray(b.audioUrls)
-        ? b.audioUrls.map((u: unknown) => s(u)).filter(Boolean)
-        : undefined;
-      try {
-        const { isXyqSeedance25Ready, runXyqSeedance25Video } = await import(
-          "../server/services/xyqSeedanceVideo.js"
-        );
-        if (!isXyqSeedance25Ready()) {
-          return res.status(503).json({
-            ok: false,
-            error: SEEDANCE_25_COMING_SOON_LABEL_ZH,
-            comingSoon: true,
-            version: "2.5",
-          });
-        }
-        const generateTypeRaw = b.generateType ?? q.generateType;
-        const generateType =
-          generateTypeRaw === undefined || generateTypeRaw === null || generateTypeRaw === ""
-            ? undefined
-            : Math.floor(Number(generateTypeRaw));
-        const { parseXyqSeedance25WorkMode } = await import("../shared/xyqSeedancePrompt.js");
-        const workMode = parseXyqSeedance25WorkMode(b.workMode || q.workMode || "generate");
-        const duration25 = Number(b.duration ?? q.duration ?? b.durationSec ?? 15);
-        const charged = await chargeCanvasVideoAndRun(
-          req,
-          {
-            durationSec: duration25,
-            episodeIndex: b.episodeIndex,
-            label: `成片·加长（${Number.isFinite(duration25) ? duration25 : 15}s）`,
-          },
-          () =>
-            runXyqSeedance25Video({
-              prompt,
-              imageUrl,
-              imageUrls,
-              videoUrls,
-              audioUrls,
-              aspectRatio: s(b.aspectRatio || q.aspectRatio || "16:9").trim() || "16:9",
-              duration: duration25,
-              quality: s(b.resolution || q.resolution || "720p").trim() || "720p",
-              generateType: Number.isFinite(generateType as number)
-                ? (generateType as number)
-                : undefined,
-              workMode,
-              threadId: s(b.threadId || q.threadId || "").trim() || undefined,
-              upscaleResolution:
-                s(b.upscaleResolution || q.upscaleResolution || "").trim() || undefined,
-              upscaleToolVersion:
-                s(b.upscaleToolVersion || q.upscaleToolVersion || "").trim() || undefined,
-              sourceUrl: s(b.sourceUrl || q.sourceUrl || "").trim() || undefined,
-            }),
-        );
-        if (!charged.ok) {
-          return res.status(charged.status).json({ ok: false, error: charged.error });
-        }
-        const out = charged.result;
-        return res.status(200).json({
-          ok: true,
-          videoUrl: out.videoUrl,
-          provider: out.provider,
-          model: out.model,
-          version: out.version,
-          threadId: out.threadId,
-          runId: out.runId,
-          webThreadLink: out.webThreadLink,
-          route: out.route,
-          workMode: out.workMode,
-          creditsUsed: charged.credits,
-        });
-      } catch (e: any) {
-        return res.status(502).json({ ok: false, error: e?.message || "seedance25_failed" });
-      }
+      return res.status(200).json({
+        ok: true,
+        videoUrl: result.out.videoUrl,
+        provider: result.out.provider,
+        model: result.out.model,
+        version: result.out.version,
+        workMode: result.out.mode,
+        resolution: result.resolution,
+        duration: result.duration,
+        creditsUsed: result.credits,
+      });
     }
 
     if (op === "klingCreate") {

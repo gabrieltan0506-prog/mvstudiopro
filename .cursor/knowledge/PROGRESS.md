@@ -146,6 +146,17 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 - P1 顺手清两处死代码：`omniCanvasApi.ts` 的 `runSeedance25Video()`（7 月占位空壳，无调用方，真实路径早已是 `canvasRunBlock.ts` 的 `op=seedance25`）；`canvasCredits.ts` 的 `canvasImageBatchTotalCredits()`/`canvasVisionTotalCredits()`（定价收口前的旧第二套价格，无调用方，真实扣费在 `shared/canvasGenerationPricing.ts` + `server/jobs/runner.ts`），保留 `CANVAS_IMAGE_BATCH_OPTIONS`。
 - 新增 `client/src/lib/canvasSeedanceGate.test.ts` 覆盖四种组合（未到点+pro / 未到点+supervisor / 到点+pro / 到点+free）+ 选项过滤 + 降档函数。
 
+## 2026-08-07
+
+**首页照片工具（分支 `feat/home-photo-tools`）**：确认 `/platform` 只有生成结果后的 `ImageUpscaleBar`，没有独立上传入口；首页新增同组入口：Gemini API 高清放大 2×15 / 4×35、GPT Image 2 老照片修复上色 10、HappyHorse 1.1 照片人物动画。动画 720p 默认档 5/10/15 秒为 40/79/118；1080p 在对应秒档加 20%，向上取整为 48/95/142。广告标题按用户口径改为「让回忆重新穿越，也重新有生命」。上传复用 GCS 签名直传；服务端真实扣费、失败按实扣额退款，结果写作品记录并在首页 / 我的作品展示；图片长任务走 Fly tRPC。
+
+- 动画固定接 OpenRouter `alibaba/happyhorse-1.1`、仅正式会员；服务端重新校验时长、清晰度和计价。118 是照片工具独立价格源，不再跟画布价格联动。OpenRouter 实时目录成本：720p $0.0988/秒、1080p $0.1278/秒。
+- 高清放大已按用户指定切到 `GEMINI_API_KEY`：2× 请求 `gemini-3.1-flash-image` + 2K，4× 请求 `gemini-3-pro-image` + 4K；首页和 `/platform` 四处 `ImageUpscaleBar` 共用同一 tRPC 生产者，旧 Vertex Imagen 放大不再进入这两类入口。明显模糊图只弹知情提示，不阻断付费；确认标记进入服务端并写扣费描述，首页作品元数据同时记录模糊分数。
+- 纸质老照片补齐输入侧自动识边裁切：视觉识别边界 → Sharp 真裁切 → GCS；置信不足或异常时无感回退原图，不要求用户手动操作。修复/放大结果会自动成为动画下一步素材。
+- **真实外部调用已跑**：同一张修复图经 Fly 生产密钥调用，2K 返回 2528×1696（约 19.6 秒），4K 返回 5056×3392（约 40.1 秒）；成品在 `~/Downloads/2026Aug07/老照片-Gemini-{2K,4K}高清放大.png`。此前 GPT Image 2 修复上色与 HappyHorse 720p/5 秒也已各真实跑通并下载成品。
+- Seedance 2.5 按 EvoLink 官方五条模型路由接入：文生视频、图生视频、多模态参考、视频编辑、视频延长。主入口仍是漫剧工厂与 `/canvas`；旧草稿模式会在读取时归一化到五模式，两个历史 jobs 入口共用同一条服务端校验、计费、失败退款和 GCS 镜像主链。首页加入用户提供的 1920×1080 K-pop 声画同步示例；下方模型卡已移除“8 月 9 日上线”和旧六模式文案，改为“正式上线 / 五种创作模式”。用户另给的 30 秒竞速片因带水印明确不采用，等待重新导出的无水印版本。五种付费生产调用尚未逐一实跑，EvoLink 真实成本与毛利率未验，详见 `~/Downloads/2026Aug07/standby0808.md`。
+- 验证：完整 Vitest 为 **236 files / 1518 tests 通过，2 files / 4 tests跳过**；`pnpm check`、`pnpm exec vite build`、博客构建、`git diff --check` 均通过；本地浏览器复核首页桌面/390px 移动端无横向溢出、示例视频可播，文章 7 张图片和 2 条视频均可加载。`/canvas` 未登录态只验证到既有正式会员门禁，未伪造用户身份；代码尚未部署，未从正式页面实扣积分验证退款/作品账本，因此整项仍是“已实现并部分实跑”，不能标记为生产验收完成。
+
 ---
 
 ## 如何更新本文件

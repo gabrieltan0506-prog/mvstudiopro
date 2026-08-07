@@ -3,13 +3,14 @@ import {
   clampSeedanceDuration,
   inferSeedanceMode,
   isSeedance25PubliclyEnabled,
+  normalizeSeedance25EvolinkMode,
   resolveSeedanceModelId,
 } from "../../shared/seedanceEvolinkModels";
 import { SEEDANCE_25_LAUNCH_AT_MS } from "../../shared/seedance25Access";
 import { isSeedance25Enabled } from "./evolinkSeedanceVideo";
 
 describe("seedance evolink models", () => {
-  it("resolves 2.0 / 2.0-mini / 2.5 three modes", () => {
+  it("resolves 2.0 three modes and Seedance 2.5 five modes", () => {
     expect(resolveSeedanceModelId("2.0", "text_to_video")).toBe("seedance-2.0-text-to-video");
     expect(resolveSeedanceModelId("2.0", "image_to_video")).toBe("seedance-2.0-image-to-video");
     expect(resolveSeedanceModelId("2.0", "reference_to_video")).toBe("seedance-2.0-reference-to-video");
@@ -21,6 +22,8 @@ describe("seedance evolink models", () => {
     expect(resolveSeedanceModelId("2.5", "text_to_video")).toBe("seedance-2.5-text-to-video");
     expect(resolveSeedanceModelId("2.5", "image_to_video")).toBe("seedance-2.5-image-to-video");
     expect(resolveSeedanceModelId("2.5", "reference_to_video")).toBe("seedance-2.5-reference-to-video");
+    expect(resolveSeedanceModelId("2.5", "video_edit")).toBe("seedance-2.5-video-edit");
+    expect(resolveSeedanceModelId("2.5", "video_extend")).toBe("seedance-2.5-video-extend");
   });
 
   it("clamps duration per version (2.0 default 15; mini default 5)", () => {
@@ -37,6 +40,18 @@ describe("seedance evolink models", () => {
     expect(inferSeedanceMode({ imageUrls: ["https://a"] })).toBe("image_to_video");
     expect(inferSeedanceMode({ imageUrls: ["https://a", "https://b"] })).toBe("reference_to_video");
     expect(inferSeedanceMode({ videoUrls: ["https://v"] })).toBe("reference_to_video");
+  });
+
+  it("normalizes five direct modes and legacy canvas aliases", () => {
+    expect(normalizeSeedance25EvolinkMode("text_to_video")).toBe("text_to_video");
+    expect(normalizeSeedance25EvolinkMode("video_edit")).toBe("video_edit");
+    expect(normalizeSeedance25EvolinkMode("extend")).toBe("video_extend");
+    expect(normalizeSeedance25EvolinkMode("reshoot")).toBe("video_edit");
+    expect(normalizeSeedance25EvolinkMode("upscale")).toBe("video_edit");
+    expect(normalizeSeedance25EvolinkMode("erase_subtitle")).toBe("video_edit");
+    expect(normalizeSeedance25EvolinkMode("generate", { imageUrls: ["https://a"] })).toBe(
+      "image_to_video",
+    );
   });
 
   // 用户 2026-08-05 明文：对外宣称上线日，到点自动开放（日期真源见 shared/seedance25Access.ts）

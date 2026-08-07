@@ -44,14 +44,12 @@ import {
   clampSeedanceOpenRouterDuration,
   SEEDANCE_REFERENCE_MAX,
 } from "@shared/seedanceOpenRouterModels";
-import { clampXyqSeedanceDuration, XYQ_REFERENCE_MAX } from "@shared/xyqSeedanceModels";
 import {
-  composeXyqSeedance25Prompt,
-  parseXyqSeedance25WorkMode,
-  xyqRemixHasSource,
-  xyqWorkModeNeedsVideo,
-  type XyqSeedance25WorkMode,
-} from "@shared/xyqSeedancePrompt";
+  clampSeedanceDuration,
+  isSeedance25EvolinkMode,
+  normalizeSeedance25EvolinkMode,
+  type SeedanceEvolinkMode,
+} from "@shared/seedanceEvolinkModels";
 import { resolveSeedance25Access } from "@shared/seedance25Access";
 import {
   clampHailuoOpenRouterDuration,
@@ -509,10 +507,7 @@ async function runVideoReversePrompt(
 
 type SeedanceProductVideoResult = {
   videoUrl: string;
-  threadId?: string;
-  webThreadLink?: string;
-  route?: "video_part" | "nest";
-  workMode?: XyqSeedance25WorkMode;
+  workMode?: SeedanceEvolinkMode;
 };
 
 /**
@@ -537,14 +532,8 @@ async function runSeedanceProductVideo(
     version?: "2.0" | "2.0-fast" | "2.5";
     /** 段目标秒数；缺省从 prompt「目标时长」解析 */
     duration?: number;
-    /** 2.5 首尾帧：1 */
-    generateType?: number;
-    /** 2.5 工作模式 → 服务端真路由 */
-    workMode?: XyqSeedance25WorkMode;
-    /** nest 续聊 */
-    threadId?: string;
-    upscaleResolution?: "720p" | "1080p" | "2k" | "4k";
-    sourceUrl?: string;
+    /** 2.5 官方五模式 → 服务端 EvoLink 真路由 */
+    workMode?: SeedanceEvolinkMode;
     /**
      * 漫剧编剧室的集号／段号。服务端据此走整集折算段价，
      * 不透传就只能按自由画布单段计价（提示词里的「第 N 段」出线前会被换成
@@ -571,10 +560,13 @@ async function runSeedanceProductVideo(
   const durationRaw = opts?.duration ?? fromPrompt ?? undefined;
   const duration =
     version === "2.5"
-      ? clampXyqSeedanceDuration(durationRaw)
+      ? clampSeedanceDuration("2.5", durationRaw)
       : clampSeedanceOpenRouterDuration(durationRaw);
   // 服务端要按登录用户扣积分（2.5 还要校验正式会员），三档一律带登录态
-  const workMode = parseXyqSeedance25WorkMode(opts?.workMode);
+  const workMode =
+    version === "2.5"
+      ? normalizeSeedance25EvolinkMode(opts?.workMode, { imageUrls, videoUrls, audioUrls })
+      : undefined;
   const episodeIndex = Number(opts?.episodeIndex);
   const clipIndex = Number(opts?.clipIndex);
   const res = await withFlyHealthGate(probeOrigin, () =>
@@ -601,13 +593,7 @@ async function runSeedanceProductVideo(
         // 产品口径：只用引擎自带 Audio on，暂不另开后期配音 API
         generateAudio: true,
         version,
-        ...(typeof opts?.generateType === "number" ? { generateType: opts.generateType } : {}),
         ...(version === "2.5" ? { workMode } : {}),
-        ...(version === "2.5" && opts?.threadId ? { threadId: opts.threadId } : {}),
-        ...(version === "2.5" && opts?.upscaleResolution
-          ? { upscaleResolution: opts.upscaleResolution }
-          : {}),
-        ...(version === "2.5" && opts?.sourceUrl ? { sourceUrl: opts.sourceUrl } : {}),
         ...(Number.isFinite(episodeIndex) && episodeIndex > 0 ? { episodeIndex } : {}),
         ...(Number.isFinite(clipIndex) && clipIndex > 0 ? { clipIndex } : {}),
       }),
@@ -619,10 +605,7 @@ async function runSeedanceProductVideo(
     error?: string;
     message?: string;
     ok?: boolean;
-    threadId?: string;
-    webThreadLink?: string;
-    route?: "video_part" | "nest";
-    workMode?: XyqSeedance25WorkMode;
+    workMode?: SeedanceEvolinkMode;
   } = {};
   try {
     json = JSON.parse(text) as typeof json;
@@ -638,10 +621,7 @@ async function runSeedanceProductVideo(
   }
   return {
     videoUrl: String(json.videoUrl),
-    threadId: json.threadId ? String(json.threadId) : undefined,
-    webThreadLink: json.webThreadLink ? String(json.webThreadLink) : undefined,
-    route: json.route === "nest" || json.route === "video_part" ? json.route : undefined,
-    workMode: json.workMode ? parseXyqSeedance25WorkMode(json.workMode) : undefined,
+    workMode: isSeedance25EvolinkMode(json.workMode) ? json.workMode : undefined,
   };
 }
 
@@ -1284,62 +1264,81 @@ export async function runCanvasBlock(
         const userRefAudios = (block.seedance25RefAudioUrls || [])
           .map((u) => String(u || "").trim())
           .filter((u) => /^https?:\/\//i.test(u));
-        const workMode = parseXyqSeedance25WorkMode(block.seedance25WorkMode);
-        const mergedVideoUrls = Array.from(
+        const candidateVideoUrls = Array.from(
           new Set([
             ...userRefVideos,
             ...(continuityVideoUrl ? [continuityVideoUrl] : []),
-            ...(workMode !== "generate" && block.outputUrl && looksLikeVideo(block.outputUrl)
+            ...(useSeedance25 && block.outputUrl && looksLikeVideo(block.outputUrl)
               ? [block.outputUrl]
               : []),
-            ...(workMode !== "generate" && block.refVideoUrl && looksLikeVideo(block.refVideoUrl)
+            ...(useSeedance25 && block.refVideoUrl && looksLikeVideo(block.refVideoUrl)
               ? [block.refVideoUrl]
               : []),
           ]),
-        ).slice(0, useSeedance25 ? XYQ_REFERENCE_MAX.video : SEEDANCE_REFERENCE_MAX.video);
-        const mergedAudioUrls = Array.from(
-          new Set([...userRefAudios, ...seedanceAudioUrls]),
-        ).slice(0, useSeedance25 ? XYQ_REFERENCE_MAX.audio : SEEDANCE_REFERENCE_MAX.audio);
-        const durationFor25 = clampXyqSeedanceDuration(clipDuration);
-        let finalPrompt = seedancePrompt;
-        if (useSeedance25) {
-          const sourceUrl = String(block.seedance25SourceUrl || "").trim();
-          if (workMode === "remix") {
-            if (!xyqRemixHasSource({ videoUrls: mergedVideoUrls, sourceUrl })) {
-              throw new Error("视频复刻需要参考视频或可访问的成片链接");
-            }
-          } else if (xyqWorkModeNeedsVideo(workMode) && !mergedVideoUrls.length) {
-            throw new Error("该模式需要参考视频：请先出片或上传/勾选参考视频");
-          }
-          finalPrompt = composeXyqSeedance25Prompt({
-            basePrompt: seedancePrompt,
-            workMode,
-            timestampStoryboard: block.seedance25TimestampStoryboard,
-            durationSec: durationFor25,
-            reshootFromSec: block.seedance25ReshootFromSec,
-            reshootToSec: block.seedance25ReshootToSec,
-            sourceUrl,
-          });
-        }
+        );
+        const candidateAudioUrls = Array.from(new Set([...userRefAudios, ...seedanceAudioUrls]));
+        const workMode = useSeedance25
+          ? normalizeSeedance25EvolinkMode(block.seedance25WorkMode, {
+              imageUrls: httpsImages,
+              videoUrls: candidateVideoUrls,
+              audioUrls: candidateAudioUrls,
+            })
+          : undefined;
+        const storyboard = String(block.seedance25TimestampStoryboard || "").trim();
+        const promptWithStoryboard = storyboard
+          ? `${seedancePrompt}\n\n【秒级分镜】\n${storyboard}`
+          : seedancePrompt;
+        let finalPrompt = promptWithStoryboard;
         let outImages = httpsImages;
-        let generateType: number | undefined;
-        // 首尾帧仅「新生成」；延长/重拍走参考视频，禁止误套 generate_type=1
-        if (
-          useSeedance25 &&
-          workMode === "generate" &&
-          block.seedance25FirstLastFrame
-        ) {
-          if (httpsImages.length < 2) {
-            throw new Error("首尾帧模式需要至少两张参考图（首张=起幅，末张=落幅）");
+        let outVideos = candidateVideoUrls;
+        let outAudios = candidateAudioUrls;
+        if (useSeedance25) {
+          if (workMode === "text_to_video") {
+            outImages = [];
+            outVideos = [];
+            outAudios = [];
+          } else if (workMode === "image_to_video") {
+            if (!outImages.length) {
+              throw new Error("图生视频需要至少一张参考图");
+            }
+            outImages = outImages.slice(0, 2);
+            outVideos = [];
+            outAudios = [];
+          } else if (workMode === "reference_to_video") {
+            if (!outImages.length && !outVideos.length && !outAudios.length) {
+              throw new Error("多模态参考需要至少一张图片、一条视频或一条音频");
+            }
+            outImages = outImages.slice(0, 30);
+            outVideos = outVideos.slice(0, 10);
+            outAudios = outAudios.slice(0, 10);
+          } else {
+            if (!outVideos.length) {
+              throw new Error(
+                workMode === "video_edit"
+                  ? "视频编辑需要参考视频：请先出片或上传并勾选视频"
+                  : "视频延长需要参考视频：请先出片或上传并勾选视频",
+              );
+            }
+            outImages = outImages.slice(0, 30);
+            outVideos = outVideos.slice(0, 10);
+            outAudios = outAudios.slice(0, 10);
+            finalPrompt =
+              workMode === "video_edit"
+                ? `编辑 @video1：${promptWithStoryboard}`
+                : `向后延长 @video1：${promptWithStoryboard}`;
           }
-          // 显式两图：首 + 末；中间参考去掉，避免服务端误判
-          outImages = [httpsImages[0]!, httpsImages[httpsImages.length - 1]!];
-          generateType = 1;
+        } else {
+          outVideos = outVideos.slice(0, SEEDANCE_REFERENCE_MAX.video);
+          outAudios = outAudios.slice(0, SEEDANCE_REFERENCE_MAX.audio);
         }
-        const seedanceOut = await runSeedanceProductVideo(finalPrompt, seedStill, ar, {
+        const seedanceOut = await runSeedanceProductVideo(
+          finalPrompt,
+          useSeedance25 && workMode === "text_to_video" ? undefined : seedStill,
+          ar,
+          {
           imageUrls: outImages.length ? outImages : undefined,
-          videoUrls: mergedVideoUrls.length ? mergedVideoUrls : undefined,
-          audioUrls: mergedAudioUrls.length ? mergedAudioUrls : undefined,
+          videoUrls: outVideos.length ? outVideos : undefined,
+          audioUrls: outAudios.length ? outAudios : undefined,
           version:
             videoModel === "seedance-2.5"
               ? "2.5"
@@ -1347,26 +1346,17 @@ export async function runCanvasBlock(
                 ? "2.0-fast"
                 : "2.0",
           duration: clipDuration,
-          generateType,
           workMode: useSeedance25 ? workMode : undefined,
-          threadId: useSeedance25 ? block.seedance25ThreadId : undefined,
-          upscaleResolution: useSeedance25 ? block.seedance25UpscaleResolution : undefined,
-          sourceUrl: useSeedance25
-            ? String(block.seedance25SourceUrl || "").trim() || undefined
-            : undefined,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
-          resolution: block.videoResolution,
-        });
+            resolution: block.videoResolution,
+          },
+        );
         url = seedanceOut.videoUrl;
         if (useSeedance25) {
           console.info(
-            `[canvasRunBlock] seedance25 · route=${seedanceOut.route || "?"} · workMode=${
-              seedanceOut.workMode || workMode
-            } · thread=${seedanceOut.threadId || "-"}`,
+            `[canvasRunBlock] seedance25 · provider=evolink · workMode=${seedanceOut.workMode || workMode}`,
           );
-          seedance25ThreadId = seedanceOut.threadId;
-          seedance25WebThreadLink = seedanceOut.webThreadLink;
         }
       }
     } else {

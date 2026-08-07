@@ -11,6 +11,8 @@
  * - Credits 不足时自动降级到 Forge AI（有水印）
  */
 
+import { HOME_OLD_PHOTO_RESTORE_CREDITS } from "./homePhotoTools";
+
 export type PlanType = "free" | "pro" | "enterprise";
 
 export interface PlanConfig {
@@ -233,6 +235,10 @@ export const CREDIT_COSTS = {
   videoGenerationFast1080: 25,
   videoGenerationStd720: 30,
   videoGenerationStd1080: 50,
+  /** 首页照片工具：高清放大专用内部基准；真实售价由 UPSCALE_COST_OVERRIDES 固定为 15/35。 */
+  homePhotoUpscaleBase: 5,
+  /** 首页照片工具：老照片修复并自然上色。 */
+  homeOldPhotoRestore: HOME_OLD_PHOTO_RESTORE_CREDITS,
 
   // ─── Suno 音乐生成 ────────────────────
   sunoMusicV4: 12,
@@ -577,7 +583,7 @@ export function platformCompositeBulkFourSlotCredits(slotIndex: number): number 
   );
 }
 
-/** 允许作为「原图生成单价」基准的 CREDIT_COSTS 键（用于 Imagen 高清放大计费） */
+/** 允许作为「原图生成单价」基准的 CREDIT_COSTS 键（用于高清放大计费） */
 export const IMAGE_UPSCALE_BASE_CREDIT_KEYS = [
   "nbpImage2K",
   "nbpImage4K",
@@ -590,6 +596,7 @@ export const IMAGE_UPSCALE_BASE_CREDIT_KEYS = [
   "klingImageV2_1K",
   "klingImageV2_2K",
   "platformRefImage",
+  "homePhotoUpscaleBase",
 ] as const;
 
 export type ImageUpscaleBaseCreditKey = (typeof IMAGE_UPSCALE_BASE_CREDIT_KEYS)[number];
@@ -602,6 +609,7 @@ export const UPSCALE_COST_OVERRIDES: Partial<
   Record<ImageUpscaleBaseCreditKey, Record<keyof typeof IMAGE_UPSCALE_FACTOR_CREDIT_MULTIPLIERS, number>>
 > = {
   platformRefImage: { x2: 108, x4: 144 },
+  homePhotoUpscaleBase: { x2: 15, x4: 35 },
 };
 
 export function imageUpscaleTotalCredits(

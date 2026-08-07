@@ -59,7 +59,7 @@ export const MANHUA_SEEDANCE_LAYOUT_CHOICES: readonly ManhuaSeedanceLayoutProfil
   },
   {
     videoModel: "seedance-2.5",
-    labelZh: "成片·加长",
+    labelZh: "Seedance 2.5 · 五模式",
     layoutHintZh: "4 段 × 约 30 秒（约 120 秒/集）",
     segmentCount: 4,
     segmentMin: 4,

@@ -6,6 +6,7 @@ import {
   collectVisionImages,
   DEFAULT_CANVAS_TEXT_MODEL,
   defaultCanvasBlock,
+  normalizeCanvasBlock,
   resolveBlockHandoffText,
   resolveNearestUpstreamImageUrl,
   SPAWN_KIND_OPTIONS,
@@ -22,6 +23,24 @@ describe("canvas spawn + defaults", () => {
     expect(defaultCanvasBlock("copy_organize", 0, 0).kind).toBe("copy_organize");
     expect(DEFAULT_CANVAS_TEXT_MODEL).toBe("kimi-k3");
     expect(defaultCanvasBlock("text", 0, 0).textModel).toBe("kimi-k3");
+  });
+
+  it("defaults Seedance 2.5 video blocks to multimodal reference mode", () => {
+    expect(defaultCanvasBlock("video", 0, 0).seedance25WorkMode).toBe(
+      "reference_to_video",
+    );
+  });
+
+  it("migrates legacy Seedance 2.5 draft modes to the official five-mode contract", () => {
+    const legacy = defaultCanvasBlock("video", 0, 0);
+    legacy.seedance25WorkMode = "extend";
+    legacy.seedance25RefVideoUrls = ["https://example.com/source.mp4"];
+    expect(normalizeCanvasBlock(legacy).seedance25WorkMode).toBe("video_extend");
+
+    legacy.seedance25WorkMode = "generate";
+    legacy.seedance25RefVideoUrls = [];
+    legacy.refImageUrl = "https://example.com/keyart.jpg";
+    expect(normalizeCanvasBlock(legacy).seedance25WorkMode).toBe("image_to_video");
   });
 });
 
