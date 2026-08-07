@@ -20,65 +20,86 @@
 <meta name="twitter:image" content="https://www.mvstudiopro.com/blog-assets/fde-overview.jpg">
 <link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
 <style>
-  :root { color-scheme: light dark; }
+  :root {
+    color-scheme: dark;
+    --bg0: #141a22;
+    --bg1: #1a2430;
+    --surface: #1e2834;
+    --surface-2: #243041;
+    --line: #2c3848;
+    --text: #e8edf2;
+    --muted: #93a0b0;
+    --soft: #b7c2cf;
+    --accent: #6ec8ff;
+    --accent-soft: rgba(110, 200, 255, 0.14);
+  }
   * { box-sizing: border-box; }
   body {
-    margin: 0; background: #0f1115; color: #e6e6ea;
+    margin: 0; color: var(--text);
     font: 16px/1.85 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background-color: var(--bg0);
+    background-image:
+      radial-gradient(1200px 520px at 12% -8%, rgba(78, 140, 180, 0.22), transparent 60%),
+      radial-gradient(900px 480px at 92% 8%, rgba(56, 110, 150, 0.16), transparent 55%),
+      linear-gradient(180deg, var(--bg1) 0%, var(--bg0) 42%, #121820 100%);
+    background-attachment: fixed;
+    min-height: 100vh;
   }
   .wrap { max-width: 760px; margin: 0 auto; padding: 40px 22px 96px; }
-  nav.top { font-size: 13px; color: #8b8b96; margin-bottom: 32px; }
-  nav.top a { color: #7fd1ff; text-decoration: none; }
+  nav.top { font-size: 13px; color: var(--muted); margin-bottom: 32px; }
+  nav.top a { color: var(--accent); text-decoration: none; }
   nav.top a:hover { text-decoration: underline; }
-  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 12px; letter-spacing: -.01em; }
-  h2 { font-size: 21px; margin: 44px 0 14px; padding-top: 8px; border-top: 1px solid #23262e; }
-  h3 { font-size: 17px; margin: 28px 0 10px; }
-  .meta { font-size: 13px; color: #8b8b96; margin-bottom: 36px; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 12px; letter-spacing: -.01em; color: #f4f7fa; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-top: 8px; border-top: 1px solid var(--line); color: #f1f5f8; }
+  h3 { font-size: 17px; margin: 28px 0 10px; color: #edf2f6; }
+  .meta { font-size: 13px; color: var(--muted); margin-bottom: 36px; }
   p { margin: 0 0 18px; }
   ul, ol { margin: 0 0 18px; padding-left: 24px; }
   li { margin: 6px 0; }
   strong { color: #fff; }
-  a { color: #7fd1ff; }
+  a { color: var(--accent); }
   blockquote {
-    margin: 0 0 22px; padding: 12px 18px; border-left: 3px solid #7fd1ff;
-    background: #161922; color: #b9b9c4; font-size: 15px;
+    margin: 0 0 22px; padding: 12px 18px; border-left: 3px solid var(--accent);
+    background: var(--accent-soft); color: var(--soft); font-size: 15px;
+    border-radius: 0 8px 8px 0;
   }
   blockquote p { margin: 0; }
   table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 14.5px; }
-  th, td { padding: 9px 12px; border-bottom: 1px solid #23262e; text-align: left; }
-  th { color: #fff; background: #161922; font-weight: 600; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; }
+  th { color: #fff; background: var(--surface); font-weight: 600; }
   code {
-    background: #1b1f28; padding: 2px 6px; border-radius: 4px;
+    background: var(--surface-2); padding: 2px 6px; border-radius: 4px;
     font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   pre {
-    background: #161922; padding: 16px 18px; border-radius: 8px; overflow-x: auto;
-    margin: 0 0 22px; border: 1px solid #23262e;
+    background: var(--surface); padding: 16px 18px; border-radius: 8px; overflow-x: auto;
+    margin: 0 0 22px; border: 1px solid var(--line);
   }
   pre code { background: none; padding: 0; }
-  hr { border: 0; border-top: 1px solid #23262e; margin: 40px 0; }
-  em { color: #a9a9b6; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+  em { color: var(--soft); }
 
   /* 图片与视频：不加 max-width 的话，一张成片截图就能把版面撑破 */
   img, video { max-width: 100%; height: auto; display: block;
-               border-radius: 8px; border: 1px solid #23262e; margin: 0 0 8px; }
+               border-radius: 8px; border: 1px solid var(--line); margin: 0 0 8px; }
   figure { margin: 24px 0; }
   figure img, figure video { margin-bottom: 8px; }
-  figcaption { font-size: 13px; color: #8b8b96; text-align: center; }
+  figcaption { font-size: 13px; color: var(--muted); text-align: center; }
   /* B 站 / YouTube 等外链视频：按 16:9 自适应，手机上也不会溢出 */
   .video-embed { position: relative; padding-bottom: 56.25%; height: 0;
                  margin: 24px 0; border-radius: 8px; overflow: hidden;
-                 border: 1px solid #23262e; }
+                 border: 1px solid var(--line); }
   .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid #23262e;
-           font-size: 13px; color: #8b8b96; }
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--line);
+           font-size: 13px; color: var(--muted); }
   footer a { margin-right: 16px; }
   .cards { display: grid; gap: 14px; margin: 28px 0 0; }
-  .card { display: block; padding: 18px 20px; background: #161922; border: 1px solid #23262e;
+  .card { display: block; padding: 18px 20px; background: var(--surface);
+          border: 1px solid var(--line);
           border-radius: 10px; text-decoration: none; color: inherit; }
-  .card:hover { border-color: #7fd1ff55; background: #1a1e28; }
+  .card:hover { border-color: rgba(110, 200, 255, 0.45); background: var(--surface-2); }
   .card h2 { margin: 0 0 8px; font-size: 18px; border: 0; padding: 0; color: #fff; }
-  .card p { margin: 0; font-size: 14px; color: #a9a9b6; }
+  .card p { margin: 0; font-size: 14px; color: var(--soft); }
   .card .meta { margin: 10px 0 0; font-size: 12px; }
 </style>
 <script type="application/ld+json">
