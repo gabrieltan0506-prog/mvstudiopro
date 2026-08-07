@@ -39,8 +39,8 @@ describe("seedance evolink models", () => {
     expect(inferSeedanceMode({ videoUrls: ["https://v"] })).toBe("reference_to_video");
   });
 
-  // 用户 2026-08-05 明文：对外 8 月 8 日上线，到点自动开放
-  it("opens Seedance 2.5 automatically at the 8/8 launch moment", () => {
+  // 用户 2026-08-05 明文：对外宣称上线日，到点自动开放（日期真源见 shared/seedance25Access.ts）
+  it("opens Seedance 2.5 automatically at the configured launch moment", () => {
     expect(isSeedance25PubliclyEnabled(SEEDANCE_25_LAUNCH_AT_MS - 60_000)).toBe(false);
     expect(isSeedance25PubliclyEnabled(SEEDANCE_25_LAUNCH_AT_MS)).toBe(true);
   });
