@@ -44,6 +44,20 @@ describe("buildOpenRouterHappyHorseSubmitBody", () => {
     expect(body.aspect_ratio).toBe("16:9");
   });
 
+  it("画布路径先钳到 ≤15 再提交：30s → 15s", async () => {
+    const { clampHappyHorseCanvasDuration } = await import(
+      "../../shared/happyHorseOpenRouterModels.js"
+    );
+    const duration = clampHappyHorseCanvasDuration(30);
+    expect(duration).toBe(15);
+    const body = buildOpenRouterHappyHorseSubmitBody({
+      prompt: "画布成片",
+      imageUrl: "https://storage.googleapis.com/example/still.jpg",
+      duration,
+    });
+    expect(body.duration).toBe(15);
+  });
+
   it("拒绝未开放的时长和清晰度", () => {
     expect(() =>
       buildOpenRouterHappyHorseSubmitBody({

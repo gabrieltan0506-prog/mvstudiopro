@@ -153,7 +153,8 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
         v === "seedance-2.0-fast" ||
         v === "seedance-2.0" ||
         v === "seedance-2.5" ||
-        v === "minimax-hailuo-3"
+        v === "minimax-hailuo-3" ||
+        v === "happyhorse-1.1"
       ) {
         return v;
       }

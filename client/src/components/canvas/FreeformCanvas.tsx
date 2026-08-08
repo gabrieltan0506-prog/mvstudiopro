@@ -2047,7 +2047,8 @@ export default function FreeformCanvas({
                               value={
                                 block.videoModel === "seedance-2.0" ||
                                 block.videoModel === "seedance-2.5" ||
-                                block.videoModel === "minimax-hailuo-3"
+                                block.videoModel === "minimax-hailuo-3" ||
+                                block.videoModel === "happyhorse-1.1"
                                   ? block.videoModel
                                   : "seedance-2.0-fast"
                               }
@@ -2070,12 +2071,14 @@ export default function FreeformCanvas({
                           </label>
                           <div className="text-[10px] leading-5 text-white/50">
                             {block.videoModel === "seedance-2.0"
-                              ? "成片·标准：多图参考 + 运镜/动作/对白，约 4–15s"
+                              ? "Seedance 2.0：多图参考 + 运镜/动作/对白，最长约 15s"
                               : block.videoModel === "seedance-2.5"
-                                ? "Seedance 2.5：官方五模式，约 4–30s；正式会员可用"
+                                ? "Seedance 2.5：官方五模式，最长约 30s；正式会员可用"
                                 : block.videoModel === "minimax-hailuo-3"
-                                  ? "成片·H3：2K 成片，多图参考 + 运镜/动作/对白，固定 15s"
-                                  : "成片·快速：多图参考 + 运镜/动作/对白，更快更省"}
+                                  ? "Minimax H3：2K 成片，多图参考，固定 15s"
+                                  : block.videoModel === "happyhorse-1.1"
+                                    ? "Happy Horse 1.1：首帧图生，最长 15s"
+                                    : "Seedance 2.0 fast：多图参考 + 运镜/动作/对白，更快更省，最长约 15s"}
                           </div>
                           {/* 画质只对标准档开放：快速档定位是便宜快，H3 固定 2K，2.5 固定 720p */}
                           {block.videoModel === "seedance-2.0" ? (

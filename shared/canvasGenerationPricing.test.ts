@@ -17,6 +17,10 @@ describe("canvasVideoClipCredits", () => {
   it("15 秒及以内按单段价", () => {
     expect(canvasVideoClipCredits({ durationSec: 5 })).toBe(CANVAS_VIDEO_CREDITS_CLIP);
     expect(canvasVideoClipCredits({ durationSec: 15 })).toBe(CANVAS_VIDEO_CREDITS_CLIP);
+    // Happy Horse 画布成片与 2.0/H3 同档 720p 零售（≤15s → 118）
+    expect(canvasVideoClipCredits({ durationSec: 15, resolution: "720p" })).toBe(
+      CANVAS_VIDEO_CREDITS_CLIP,
+    );
   });
 
   it("超过 15 秒按加长档", () => {

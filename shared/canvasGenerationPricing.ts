@@ -3,18 +3,20 @@
  *
  * 背景：`/canvas` 的出图与成片此前**一分钱不收**——`api/jobs.ts` 没有任何扣费，
  * 画布前端也没扣，所以漫剧编剧室跑一集（4–6 段）等于白烧上游账单。
- * 用户 2026-08-05 定价：出图 54/张；成片单段 118（快速 / 标准 / H3），30 秒加长 240，
+ * 用户 2026-08-05 定价：出图 54/张；成片单段 118（2.0 / Fast / H3 / Happy Horse），30 秒加长 240，
  * 漫剧整集 688 → 按段折成 172（688 ÷ 4 段），跑多少扣多少、失败不扣。
  *
  * 上游实价参考（OpenRouter，$1≈¥7.2，1 积分≈¥0.65）：
  * - `bytedance/seedance-2.0` 720p $0.1512/秒 → 15 秒约 25 积分成本
  * - `bytedance/seedance-2.0-fast` 720p $0.121/秒 → 15 秒约 20 积分成本
  * - `minimax/hailuo-3` 2K $0.13/秒 → 15 秒约 22 积分成本
+ * - `alibaba/happyhorse-1.1` 画布成片按同档 720p 零售 118（与首页照片动画独立计价）
  * - 2.5 已切 EvoLink 五模式；当前未取得可核对的上游实扣，不能拿旧小云雀价格冒充成本
  * 2.5 继续沿用既有零售价，但在取得 EvoLink 真实账单前，不对该档毛利率下结论。
  *
  * @see https://openrouter.ai/bytedance/seedance-2.0
  * @see https://openrouter.ai/minimax/hailuo-3
+ * @see https://openrouter.ai/alibaba/happyhorse-1.1
  */
 
 /**
@@ -34,7 +36,7 @@ export function canvasImageCredits(batchIndex?: number | null): number {
   return i > 0 ? CANVAS_IMAGE_CREDITS_BATCH : CANVAS_IMAGE_CREDITS_PER_SHOT;
 }
 
-/** 单段成片：快速 / 标准 / H3（≤15 秒，720p） */
+/** 单段成片：2.0 / Fast / H3 / Happy Horse（≤15 秒，720p 基准） */
 export const CANVAS_VIDEO_CREDITS_CLIP = 118;
 /** 单段成片：加长档（>15 秒，2.5 最长 30 秒） */
 export const CANVAS_VIDEO_CREDITS_CLIP_LONG = 240;

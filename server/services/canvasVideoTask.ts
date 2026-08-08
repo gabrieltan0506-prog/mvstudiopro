@@ -1,5 +1,5 @@
 /**
- * 画布成片异步任务（Seedance OpenRouter / Hailuo / Seedance 2.5 EvoLink）。
+ * 画布成片异步任务（Seedance OpenRouter / Hailuo / Happy Horse / Seedance 2.5 EvoLink）。
  *
  * 原先 seedanceI2V / hailuo3Video 单条 HTTP 同步等上游数分钟，部署 SIGINT 会掐断。
  * 现：扣费 → 提交上游 → 立刻返回 taskId → worker/status 短轮询 → 镜像可读 URL。
@@ -18,6 +18,7 @@ import {
 } from "./paidJobLedger.js";
 import { buildOpenRouterSeedanceSubmitBody } from "./openrouterSeedanceVideo.js";
 import { buildOpenRouterHailuoSubmitBody } from "./openrouterHailuoVideo.js";
+import { buildOpenRouterHappyHorseSubmitBody } from "./openrouterHappyHorseVideo.js";
 import { getOpenRouterApiKey } from "./openrouterGptImage2.js";
 import {
   mirrorOpenRouterVideoSourceUrl,
@@ -43,6 +44,7 @@ const PRIMARY_DIR =
 export type CanvasVideoEngine =
   | "seedance-openrouter"
   | "hailuo-openrouter"
+  | "happyhorse-openrouter"
   | "seedance25-evolink";
 
 export type CanvasVideoTaskStatus =
@@ -260,6 +262,35 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     return;
   }
 
+  if (task.engine === "happyhorse-openrouter") {
+    const imageUrl = String(task.imageUrl || task.imageUrls?.[0] || "").trim();
+    if (!imageUrl) throw new Error("Happy Horse 成片需要至少一张首帧参考图");
+    const body = buildOpenRouterHappyHorseSubmitBody({
+      prompt: task.prompt,
+      imageUrl,
+      aspectRatio: task.aspectRatio,
+      duration: task.duration,
+      resolution: task.resolution || "720p",
+    });
+    const submitted = await submitOpenRouterVideoJob(body);
+    task.openRouterJobId = submitted.openRouterJobId;
+    task.pollingUrl = submitted.pollingUrl;
+    task.model = submitted.model;
+    task.provider = "openrouter";
+    task.status = "running";
+    task.startedAt = task.startedAt || new Date().toISOString();
+    await writeTask(task);
+    if (submitted.immediateSourceUrl) {
+      const videoUrl = await mirrorOpenRouterVideoSourceUrl(
+        submitted.immediateSourceUrl,
+        submitted.apiKey,
+        { keyPrefix: "canvas-video/happyhorse", required: true },
+      );
+      await succeedTask(task, videoUrl, submitted.model, "openrouter");
+    }
+    return;
+  }
+
   // seedance25-evolink
   const runInput: EvolinkSeedanceRunInput = {
     prompt: task.prompt,
@@ -375,7 +406,9 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
       const keyPrefix =
         current.engine === "hailuo-openrouter"
           ? "canvas-video/hailuo"
-          : "canvas-video/seedance";
+          : current.engine === "happyhorse-openrouter"
+            ? "canvas-video/happyhorse"
+            : "canvas-video/seedance";
       const videoUrl = await mirrorOpenRouterVideoSourceUrl(
         snap.sourceUrl,
         apiKey,

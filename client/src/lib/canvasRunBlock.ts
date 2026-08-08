@@ -56,6 +56,13 @@ import {
   HAILUO_REFERENCE_MAX,
   isCanvasHailuoH3VideoModel,
 } from "@shared/hailuoOpenRouterModels";
+import {
+  clampHappyHorseCanvasDuration,
+  HAPPYHORSE_REFERENCE_MAX,
+  isCanvasHappyHorseVideoModel,
+  normalizeHappyHorseCanvasResolution,
+} from "@shared/happyHorseOpenRouterModels";
+import { clampManhuaClipDurationSecForVideoModel } from "@shared/manhuaSeedanceLayout";
 import { stripManhuaPromptSlop } from "@shared/manhuaDirectingWorkflow";
 import { formatManhuaEditCraftDirectives } from "@shared/manhuaEditCraftDirectives";
 import { appendManhuaClipEngineOptics } from "@shared/manhuaCineOpticsBank";
@@ -752,6 +759,67 @@ async function runHailuo3(
   throw new Error(json.error || json.message || "成片生成失败");
 }
 
+/** Happy Horse 1.1 · OpenRouter（首帧图生；时长 5/10/15，最长 15s） */
+async function runHappyHorse(
+  prompt: string,
+  imageUrl: string,
+  aspectRatio: "9:16" | "16:9",
+  opts?: {
+    duration?: number;
+    resolution?: string;
+    episodeIndex?: number;
+    clipIndex?: number;
+  },
+): Promise<string> {
+  const hhUrl = withLongJobsFlyDirect("/api/jobs?op=happyHorseVideo");
+  const probeOrigin = flyHealthProbeOriginForUrl(hhUrl);
+  const duration = clampHappyHorseCanvasDuration(opts?.duration);
+  const resolution = normalizeHappyHorseCanvasResolution(opts?.resolution);
+  const res = await withFlyHealthGate(probeOrigin, () =>
+    fetch(hhUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({
+        prompt: renderManhuaClipPromptForSeedance(prompt),
+        imageUrl,
+        aspectRatio,
+        duration,
+        resolution,
+        ...(Number(opts?.episodeIndex) > 0 ? { episodeIndex: Number(opts?.episodeIndex) } : {}),
+        ...(Number(opts?.clipIndex) > 0 ? { clipIndex: Number(opts?.clipIndex) } : {}),
+      }),
+    }),
+  );
+  const text = await res.text();
+  let json: {
+    videoUrl?: string;
+    error?: string;
+    message?: string;
+    ok?: boolean;
+    async?: boolean;
+    taskId?: string;
+  } = {};
+  try {
+    json = JSON.parse(text) as typeof json;
+  } catch {
+    throw new Error(
+      /An error o|ROUTER_EXTERNAL/i.test(text)
+        ? "成片网关超时，请稍后重试（已尽量直连长任务 API）"
+        : `成片生成失败：${text.slice(0, 160)}`,
+    );
+  }
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error || json.message || "成片生成失败");
+  }
+  if (json.videoUrl) return String(json.videoUrl);
+  if (json.taskId) {
+    const polled = await pollCanvasVideoTask(json.taskId);
+    return polled.videoUrl;
+  }
+  throw new Error(json.error || json.message || "成片生成失败");
+}
+
 export const OMNI_CLIP_DURATION_SECONDS = 10;
 
 /** 成片跟静帧：正向约束，不堆「禁止真人」以免上游拒答 */
@@ -1155,6 +1223,7 @@ export async function runCanvasBlock(
       : compiledMotion;
     const videoModel = block.videoModel || "seedance-2.0-fast";
     const useHailuoH3 = isCanvasHailuoH3VideoModel(videoModel);
+    const useHappyHorse = isCanvasHappyHorseVideoModel(videoModel);
     const useSeedance25 = videoModel === "seedance-2.5";
     if (useSeedance25) {
       // 与服务端 assertSeedance25PaidAccess 同一套判定（到点 + 会员 + 内部角色），
@@ -1174,7 +1243,8 @@ export async function runCanvasBlock(
       videoModel === "seedance-2.0" ||
       videoModel === "seedance-2.0-fast" ||
       useSeedance25 ||
-      useHailuoH3
+      useHailuoH3 ||
+      useHappyHorse
     ) {
       // ~15s 一镜：下一段起幅必须吃上一段末 3–5s 帧，再叠本段静帧（配额≤6）
       const stillPool: string[] = [];
@@ -1239,14 +1309,22 @@ export async function runCanvasBlock(
             stillUrls: absStills,
             tailUrls: tailFrames,
             mentionedTags,
-            maxImages: useHailuoH3 ? HAILUO_REFERENCE_MAX.image : SEEDANCE_REFERENCE_MAX.image,
+            maxImages: useHappyHorse
+              ? HAPPYHORSE_REFERENCE_MAX.image
+              : useHailuoH3
+                ? HAILUO_REFERENCE_MAX.image
+                : SEEDANCE_REFERENCE_MAX.image,
             boardUrl: boardUrl || null,
           })
         : null;
       const rawPool = bindPlan?.imageUrls?.length
         ? bindPlan.imageUrls
         : [...tailFrames, ...absStills];
-      const maxRefImages = useHailuoH3 ? HAILUO_REFERENCE_MAX.image : SEEDANCE_REFERENCE_MAX.image;
+      const maxRefImages = useHappyHorse
+        ? HAPPYHORSE_REFERENCE_MAX.image
+        : useHailuoH3
+          ? HAILUO_REFERENCE_MAX.image
+          : SEEDANCE_REFERENCE_MAX.image;
       const httpsImages = await toHttpsImageUrls(
         deps,
         rawPool.slice(0, maxRefImages),
@@ -1317,11 +1395,23 @@ export async function runCanvasBlock(
       console.info(
         `[canvasRunBlock] clip image-bind · assets=${assetRows.length} · kept=${keptEntries.length} · urls=${httpsImages.length} · bind=${String(imageBind).slice(0, 180)}`,
       );
-      const clipDuration =
+      const clipDurationRaw =
         parseManhuaClipTargetDurationSec(motionPrompt) ??
         parseManhuaClipTargetDurationSec(block.prompt) ??
         undefined;
-      if (useHailuoH3) {
+      const clipDuration = clampManhuaClipDurationSecForVideoModel(videoModel, clipDurationRaw);
+      if (useHappyHorse) {
+        const firstFrame = String(seedStill || "").trim();
+        if (!/^https?:\/\//i.test(firstFrame)) {
+          throw new Error("Happy Horse 成片需要至少一张首帧参考图（请先出静帧或上传参考）");
+        }
+        url = await runHappyHorse(seedancePrompt, firstFrame, ar, {
+          duration: clipDuration,
+          resolution: block.videoResolution,
+          episodeIndex: block.episodeIndex,
+          clipIndex: parseClipIndexFromBlockId(block.id),
+        });
+      } else if (useHailuoH3) {
         // H3：OpenRouter 仅图参考（首帧 + input_references）；不传 Seedance 专属音/视频参考
         url = await runHailuo3(seedancePrompt, seedStill, ar, {
           imageUrls: httpsImages.length ? httpsImages : undefined,
