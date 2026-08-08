@@ -196,7 +196,12 @@ export default function HomePhotoTools() {
       refresh();
       toast.success(`${label}完成，已自动作为下一步素材`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "高清放大失败");
+      const message = error instanceof Error ? error.message : "高清放大失败";
+      if (/abort|Failed to fetch|NetworkError|load failed|connection closed/i.test(message)) {
+        toast.error("连接中断（服务可能正在更新）。若已扣积分将自动退回，请稍后重试");
+      } else {
+        toast.error(message);
+      }
     } finally {
       setUpscaleBusy(null);
       endOperation("upscale");
@@ -273,33 +278,89 @@ export default function HomePhotoTools() {
                   ? "16:9"
                   : "1:1",
           }),
-        })
+        }),
       );
       const raw = await response.text();
-      let result: {
+      let created: {
         ok?: boolean;
+        async?: boolean;
+        taskId?: string;
+        status?: string;
         videoUrl?: string;
         creditsUsed?: number;
         resolution?: HomePhotoAnimateResolution;
         error?: string;
       } = {};
       try {
-        result = JSON.parse(raw) as typeof result;
+        created = JSON.parse(raw) as typeof created;
       } catch {
         throw new Error(`照片动画生成失败：${raw.slice(0, 120)}`);
       }
-      if (!response.ok || !result.ok || !result.videoUrl) {
-        throw new Error(result.error || "照片动画生成失败");
+      if (!response.ok || !created.ok) {
+        throw new Error(created.error || "照片动画生成失败");
       }
+
+      let videoUrl = String(created.videoUrl || "").trim();
+      let creditsUsed = Number(created.creditsUsed || credits);
+      let resultResolution = created.resolution || resolution;
+
+      // 异步任务：短轮询状态，避免单条长连接被部署掐断后整单作废
+      if (!videoUrl && created.taskId) {
+        const statusEndpoint = withLongJobsFlyDirect(
+          `/api/jobs?op=homePhotoAnimateStatus&taskId=${encodeURIComponent(created.taskId)}`,
+        );
+        const deadline = Date.now() + 20 * 60_000;
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 5_000));
+          const statusRes = await fetch(statusEndpoint, {
+            method: "GET",
+            credentials: "include",
+            cache: "no-store",
+          });
+          const statusRaw = await statusRes.text();
+          let statusJson: {
+            ok?: boolean;
+            status?: string;
+            videoUrl?: string;
+            creditsUsed?: number;
+            resolution?: HomePhotoAnimateResolution;
+            error?: string;
+          } = {};
+          try {
+            statusJson = JSON.parse(statusRaw) as typeof statusJson;
+          } catch {
+            continue;
+          }
+          if (!statusRes.ok || !statusJson.ok) {
+            throw new Error(statusJson.error || "照片动画进度查询失败");
+          }
+          if (statusJson.status === "succeeded" && statusJson.videoUrl) {
+            videoUrl = String(statusJson.videoUrl).trim();
+            creditsUsed = Number(statusJson.creditsUsed || creditsUsed);
+            resultResolution = statusJson.resolution || resultResolution;
+            break;
+          }
+          if (statusJson.status === "failed") {
+            throw new Error(statusJson.error || "照片动画生成失败，积分已自动退回");
+          }
+        }
+      }
+
+      if (!videoUrl) {
+        throw new Error("照片动画仍在生成中，请稍后在「我的作品」查看，或稍后再试");
+      }
+
       setVideoResult({
-        url: result.videoUrl,
-        label: `照片人物动画 ${result.resolution || resolution} · ${duration} 秒`,
-        credits: Number(result.creditsUsed || 0),
+        url: videoUrl,
+        label: `照片人物动画 ${resultResolution} · ${duration} 秒`,
+        credits: creditsUsed,
       });
       refresh();
       toast.success("照片人物动画生成完成");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "照片动画生成失败");
+      const message =
+        error instanceof Error ? error.message : "照片动画生成失败";
+      toast.error(message || "照片动画生成失败");
     } finally {
       setAnimateBusy(false);
       endOperation("animate");

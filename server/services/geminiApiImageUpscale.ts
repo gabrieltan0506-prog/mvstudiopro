@@ -29,6 +29,7 @@ type SupportedAspectRatio =
 
 export type GeminiApiUpscaleSpec = {
   factor: GeminiApiUpscaleFactor;
+  /** Nano Banana 2（2×）/ Nano Banana Pro（4×）对应 Gemini API 模型 ID */
   model: "gemini-3.1-flash-image" | "gemini-3-pro-image";
   imageSize: GeminiApiImageSize;
   prompt: string;
@@ -64,6 +65,11 @@ export function isGeminiApiImageUpscaleConfigured(): boolean {
   return Boolean(String(process.env.GEMINI_API_KEY || "").trim());
 }
 
+/**
+ * 2× → Nano Banana 2（gemini-3.1-flash-image / 2K）
+ * 4× → Nano Banana Pro（gemini-3-pro-image / 4K）
+ * 走 Gemini API Key，不走 Vertex Imagen。
+ */
 export function resolveGeminiApiUpscaleSpec(
   factor: GeminiApiUpscaleFactor,
 ): GeminiApiUpscaleSpec {
@@ -73,7 +79,7 @@ export function resolveGeminiApiUpscaleSpec(
       model: "gemini-3-pro-image",
       imageSize: "4K",
       prompt:
-        "对输入图片进行忠实的 4K 高清增强。严格保留原始构图、人物身份、五官、表情、姿势、文字、物体、色彩、光线和纹理；不得添加、删除、移动、重绘或重新构图任何内容。仅修复压缩噪点、轻微模糊和锯齿，恢复可信的细节与清晰边缘。输出一张与原图内容一致的商业级高清图片，不要输出说明文字。",
+        "Upscale this image to 4K resolution (4x). Preserve all original textures, lighting, and fine details. Enhance sharpness and output a commercial-grade image. Do not change identity, composition, text, or add/remove objects. Output the image only.",
     };
   }
 
@@ -82,7 +88,7 @@ export function resolveGeminiApiUpscaleSpec(
     model: "gemini-3.1-flash-image",
     imageSize: "2K",
     prompt:
-      "对输入图片进行忠实的 2K 高清增强。严格保留原始构图、人物身份、五官、表情、姿势、文字、物体、色彩、光线和纹理；不得添加、删除、移动、重绘或重新构图任何内容。仅降低噪点、轻微模糊和锯齿，提升整体清晰度与边缘质量。输出一张与原图内容一致的高清图片，不要输出说明文字。",
+      "Upscale this image to 2K resolution (2x). Enhance overall clarity and denoise while preserving the original visual style. Do not change identity, composition, text, or add/remove objects. Output the image only.",
   };
 }
 
@@ -98,6 +104,7 @@ export function nearestGeminiImageAspectRatio(
   ).label;
 }
 
+/** imageConfig 强制 2K/4K；本地 demo 脚本常漏此项，线上必须保留。 */
 export function buildGeminiApiUpscaleConfig(
   spec: GeminiApiUpscaleSpec,
   aspectRatio: SupportedAspectRatio,
@@ -169,11 +176,16 @@ export async function runGeminiApiImageUpscale(input: {
     const spec = resolveGeminiApiUpscaleSpec(input.upscaleFactor);
     const aspectRatio = nearestGeminiImageAspectRatio(inputWidth, inputHeight);
     const mimeType = normalizeMimeType(sourceMetadata.format || source.mimeType);
+    console.info(
+      `[geminiApi.upscale] start factor=${spec.factor} model=${spec.model} target=${spec.imageSize} aspect=${aspectRatio} input=${inputWidth}x${inputHeight}`,
+    );
+
+    // Gemini API Key（GoogleGenAI），与探针/用户脚本同一主链；非 Vertex Imagen。
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model: spec.model,
       contents: [
-        { text: spec.prompt },
+        spec.prompt,
         {
           inlineData: {
             data: normalized.toString("base64"),
@@ -203,6 +215,10 @@ export async function runGeminiApiImageUpscale(input: {
     );
     if (!String(persistedUrl || "").trim()) throw new Error("empty_persisted_url");
 
+    console.info(
+      `[geminiApi.upscale] ok factor=${spec.factor} model=${spec.model} output=${outputWidth}x${outputHeight}`,
+    );
+
     return {
       ok: true,
       imageUrl: persistedUrl,
@@ -212,9 +228,11 @@ export async function runGeminiApiImageUpscale(input: {
       outputHeight,
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : "gemini_upscale_failed";
+    console.error(`[geminiApi.upscale] failed`, message);
     return {
       ok: false,
-      error: error instanceof Error ? error.message : "gemini_upscale_failed",
+      error: message,
     };
   }
 }

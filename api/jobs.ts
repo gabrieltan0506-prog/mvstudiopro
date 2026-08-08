@@ -3717,76 +3717,133 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const aspectRatio = s(b.aspectRatio || "16:9").trim() || "16:9";
 
       try {
-        const { isOpenRouterHappyHorseConfigured, runOpenRouterHappyHorseVideo } = await import(
+        const { isOpenRouterHappyHorseConfigured } = await import(
           "../server/services/openrouterHappyHorseVideo.js"
         );
         if (!isOpenRouterHappyHorseConfigured()) {
           return res.status(503).json({ ok: false, error: "视频服务暂不可用，请稍后重试" });
         }
-        const charged = await chargeCanvasVideoAndRun(
-          req,
-          {
-            durationSec: duration,
-            resolution,
-            pricingMode: "homePhotoAnimate",
-            label: `首页照片人物动起来（${resolution} · ${duration}s）`,
-          },
-          () =>
-            runOpenRouterHappyHorseVideo({
-              prompt,
-              imageUrl,
-              resolution,
-              aspectRatio,
-              duration,
-            }),
-        );
-        if (!charged.ok) {
-          return res.status(charged.status).json({ ok: false, error: charged.error });
-        }
-        const out = charged.result;
 
+        const viewer = await resolveJobUser(req);
+        if (!viewer) {
+          return res.status(401).json({ ok: false, error: "请先登录后再生成成片" });
+        }
+        const { resolvePaidVideoAccess } = await import("../shared/paidVideoAccess.js");
+        const { deductCreditsAmount, getUserPlan, refundCredits } = await import(
+          "../server/credits.js"
+        );
+        const { homePhotoAnimateCredits } = await import("../shared/homePhotoTools.js");
+        const plan = await getUserPlan(viewer.userId).catch(() => "free");
+        const access = resolvePaidVideoAccess({
+          plan: String(plan || "free"),
+          role: viewer.role,
+        });
+        if (!access.allowed) {
+          return res
+            .status(403)
+            .json({ ok: false, error: access.message || "成片功能仅向正式会员开放" });
+        }
+
+        const creditsNeeded = homePhotoAnimateCredits(duration, resolution);
+        let creditsCharged = 0;
         try {
-          const [{ recordCreation }, { getUserPlan }] = await Promise.all([
-            import("../server/routers/creations.js"),
-            import("../server/credits.js"),
-          ]);
-          const viewer = await resolveJobUser(req);
-          if (viewer) {
-            const plan = await getUserPlan(viewer.userId);
-            await recordCreation({
-              userId: viewer.userId,
-              type: "photo_animation_video",
-              title: `照片人物动起来 · ${resolution} · ${duration} 秒`,
-              outputUrl: out.videoUrl,
-              thumbnailUrl: imageUrl,
-              quality: resolution,
-              creditsUsed: charged.credits,
-              plan,
-              metadata: {
-                sourceImageUrl: imageUrl,
-                prompt,
-                duration,
-                resolution,
-                model: out.model,
-                tool: "home_photo_animate",
-              },
+          const out = await deductCreditsAmount(
+            viewer.userId,
+            creditsNeeded,
+            "homePhotoAnimate",
+            `首页照片人物动起来（${resolution} · ${duration}s）`,
+          );
+          creditsCharged = out.cost;
+        } catch {
+          return res.status(402).json({
+            ok: false,
+            error: `积分不足：本次照片动画需要 ${creditsNeeded} 积分，请补充积分后重试`,
+          });
+        }
+
+        // 异步：扣费后立刻落盘并提交上游，返回 taskId；客户端短轮询，部署不会掐掉整段等待。
+        try {
+          const { createHomePhotoAnimateTask } = await import(
+            "../server/services/homePhotoAnimateTask.js"
+          );
+          const task = await createHomePhotoAnimateTask({
+            userId: viewer.userId,
+            creditsCharged,
+            imageUrl,
+            prompt,
+            duration,
+            resolution,
+            aspectRatio,
+          });
+          console.info(
+            `[homePhotoAnimate] accepted taskId=${task.taskId} duration=${duration}s resolution=${resolution} credits=${creditsCharged}`,
+          );
+          return res.status(200).json({
+            ok: true,
+            async: true,
+            taskId: task.taskId,
+            status: task.status,
+            duration,
+            resolution,
+            creditsUsed: creditsCharged,
+            videoUrl: task.videoUrl || undefined,
+          });
+        } catch (error: any) {
+          if (creditsCharged > 0) {
+            await refundCredits(
+              viewer.userId,
+              creditsCharged,
+              "首页照片人物动起来·创建失败退回",
+            ).catch((refundErr) => {
+              console.error("[homePhotoAnimate] refund failed", refundErr);
             });
           }
-        } catch (recordError) {
-          console.error("[homePhotoAnimate] recordCreation failed", recordError);
+          throw error;
         }
+      } catch (error: any) {
+        const message = String(error?.message || "照片动起来失败，请稍后重试");
+        console.error("[homePhotoAnimate] failed", message);
+        return res.status(502).json({
+          ok: false,
+          error: message,
+        });
+      }
+    }
 
+    if (op === "homePhotoAnimateStatus") {
+      if (req.method !== "GET" && req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const taskId = s(b.taskId || q.taskId || "").trim();
+      if (!taskId) {
+        return res.status(400).json({ ok: false, error: "缺少任务编号" });
+      }
+      const viewer = await resolveJobUser(req);
+      if (!viewer) {
+        return res.status(401).json({ ok: false, error: "请先登录后再查询进度" });
+      }
+      try {
+        const { getHomePhotoAnimateTask } = await import(
+          "../server/services/homePhotoAnimateTask.js"
+        );
+        const task = await getHomePhotoAnimateTask(taskId, viewer.userId);
+        if (!task) {
+          return res.status(404).json({ ok: false, error: "任务不存在或无权查看" });
+        }
         return res.status(200).json({
           ok: true,
-          videoUrl: out.videoUrl,
-          duration,
-          resolution,
-          creditsUsed: charged.credits,
+          taskId: task.taskId,
+          status: task.status,
+          videoUrl: task.videoUrl || undefined,
+          error: task.error || undefined,
+          duration: task.duration,
+          resolution: task.resolution,
+          creditsUsed: task.creditsCharged,
         });
       } catch (error: any) {
         return res.status(502).json({
           ok: false,
-          error: error?.message || "照片动起来失败，请稍后重试",
+          error: error?.message || "查询照片动画进度失败",
         });
       }
     }

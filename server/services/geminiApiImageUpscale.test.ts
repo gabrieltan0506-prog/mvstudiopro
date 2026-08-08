@@ -8,11 +8,11 @@ import {
 } from "./geminiApiImageUpscale";
 
 describe("Gemini API 高清放大模型映射", () => {
-  it("2× 固定走 Flash 图片模型并请求 2K", () => {
+  it("2× 固定走 Nano Banana 2（Flash 图片）并请求 2K", () => {
     const spec = resolveGeminiApiUpscaleSpec("x2");
     expect(spec.model).toBe("gemini-3.1-flash-image");
     expect(spec.imageSize).toBe("2K");
-    expect(spec.prompt).toContain("不得添加、删除、移动、重绘或重新构图");
+    expect(spec.prompt).toContain("Upscale this image to 2K resolution (2x)");
     expect(buildGeminiApiUpscaleConfig(spec, "3:2")).toEqual({
       httpOptions: { timeout: 120_000 },
       responseModalities: ["IMAGE"],
@@ -20,10 +20,11 @@ describe("Gemini API 高清放大模型映射", () => {
     });
   });
 
-  it("4× 固定走 Pro 图片模型并请求 4K", () => {
+  it("4× 固定走 Nano Banana Pro 并请求 4K", () => {
     const spec = resolveGeminiApiUpscaleSpec("x4");
     expect(spec.model).toBe("gemini-3-pro-image");
     expect(spec.imageSize).toBe("4K");
+    expect(spec.prompt).toContain("Upscale this image to 4K resolution (4x)");
     const config = buildGeminiApiUpscaleConfig(spec, "16:9");
     expect(config.imageConfig.imageSize).toBe("4K");
     expect(config.httpOptions.timeout).toBe(180_000);
