@@ -2815,8 +2815,9 @@ function resolveImageUrlForServerFetch(imageUrl: string): string {
 }
 
 /**
- * 首页图片作品不能只保存 1～7 天签名 URL；若结果来自私有 GCS，复制到站内公开存储。
- * 没有公开存储驱动时保留原 URL，避免把几十 MB data URL 写进数据库。
+ * 首页图片作品不能只保存短时签名 URL；若结果来自私有 GCS 签名链，复制到平台可读存储（Fly 公网或 GCS V4 签名）。
+ * 禁止再用 storagePut 写私有桶未签名直链——浏览器打开会 AccessDenied（home-photo/restored-*）。
+ * 平台存储不可用时保留原签名 URL，避免把几十 MB data URL 写进数据库。
  */
 async function persistHomePhotoSignedImage(sourceUrl: string, keyPrefix: string): Promise<string> {
   const url = String(sourceUrl || "").trim();
@@ -2831,15 +2832,18 @@ async function persistHomePhotoSignedImage(sourceUrl: string, keyPrefix: string)
     if (!buffer.length || buffer.length > 64 * 1024 * 1024) {
       throw new Error(`invalid image bytes=${buffer.length}`);
     }
-    const rawType = String(response.headers.get("content-type") || "image/png").split(";")[0]!.trim();
-    const contentType = rawType.startsWith("image/") ? rawType : "image/png";
-    const extension = contentType.includes("jpeg") ? "jpg" : contentType.includes("webp") ? "webp" : "png";
-    const stored = await storagePut(
-      `home-photo/${keyPrefix}-${Date.now()}-${randomUUID().slice(0, 8)}.${extension}`,
-      buffer,
-      contentType,
-    );
-    return /^https?:\/\//i.test(stored.url) ? stored.url : url;
+    const safePrefix = String(keyPrefix || "result").replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 48) || "result";
+    const { uploadBufferToPlatformStorage } = await import("./services/evolinkGptImage2.js");
+    const persisted = await uploadBufferToPlatformStorage(buffer, `home_photo_${safePrefix}`);
+    const out = String(persisted || "").trim();
+    // 防御：绝不能把私有桶未签名 home-photo/* 直链写回作品库
+    if (
+      !out ||
+      (/\/home-photo\//i.test(out) && !/[?&]X-Goog-(?:Signature|Algorithm)=/i.test(out))
+    ) {
+      return url;
+    }
+    return /^https?:\/\//i.test(out) ? out : url;
   } catch (error) {
     console.error("[persistHomePhotoSignedImage] failed", error);
     return url;
