@@ -574,7 +574,7 @@ export function formatManhuaEpisodeSegmentPlanPromptBlock(
   const minSec = minSegs * durationSec;
   const maxSec = maxSegs * durationSec;
   return [
-    isSeedance25 ? `### 四段可拍表（成片·加长）` : `### 五至六段可拍表`,
+    isSeedance25 ? `### 四段可拍表（Seedance 2.5）` : `### 五至六段可拍表`,
     `（硬性：至少 ${minSegs} 段、至多 ${maxSegs} 段；推荐 ${n} 段；每段约 ${durationSec} 秒；整集约 ${minSec}–${maxSec} 秒。预算期勿写满十多段；禁止寒暄灌水、禁止段间复制粘贴。）`,
     `每一段必须用下列字段（缺一不可）：`,
     `- 意图：一句「观众应感到什么」（单一戏剧意图）；机位/光/表演只服务这一句。`,

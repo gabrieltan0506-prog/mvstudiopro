@@ -1,7 +1,7 @@
 /**
- * 小云雀（XYQ）Seedance 2.5 · 内部联调（A3）。
- * 密钥只放 Fly secrets：`XYQ_ACCESS_KEY` + `SEEDANCE_25_ENABLED=1`（不要写本机 .env）。
- * 对齐 CLI：generate-video → submit_run + get_thread 轮询 → 镜像 GCS
+ * 小云雀（XYQ）Seedance 2.5 · 已下线。
+ * 产品成片 2.5 只走 BytePlus 主路径 + EvoLink fallback；本模块保留仅为历史测试/草稿兼容，入口恒拒绝。
+ * 对齐 CLI：generate-video → submit_run + get_thread 轮询 → 镜像 GCS（不再用于生产）
  */
 
 import {
@@ -51,12 +51,12 @@ export function getXyqAccessKey(): string {
 }
 
 export function isXyqSeedanceConfigured(): boolean {
-  return Boolean(getXyqAccessKey());
+  return false;
 }
 
-/** A3：产品闸门未开时，仅内部 env 可走小云雀 2.5 */
+/** 小云雀成片通道已下线，恒为 false */
 export function isXyqSeedance25Ready(): boolean {
-  return isSeedance25Enabled() && isXyqSeedanceConfigured();
+  return false;
 }
 
 type XyqEnvelope<T> = {
@@ -555,131 +555,8 @@ async function submitAndPollXyq(input: {
 }
 
 export async function runXyqSeedance25Video(input: XyqSeedanceRunInput): Promise<XyqSeedanceRunResult> {
-  if (!isSeedance25Enabled()) {
-    throw new Error("Seedance 2.5 即将登陆 MV Studio Pro");
-  }
-  const accessKey = getXyqAccessKey();
-  if (!accessKey) {
-    throw new Error("未配置 XYQ_ACCESS_KEY，无法联调 Seedance 2.5");
-  }
-
-  const workMode = parseXyqSeedance25WorkMode(input.workMode);
-  const prompt = String(input.prompt || "").trim();
-  if (!xyqWorkModeIsMiniTool(workMode) && !prompt) {
-    throw new Error("请填写视频提示词");
-  }
-
-  const imageUrls = Array.from(
-    new Set([
-      ...(input.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean),
-      ...(String(input.imageUrl || "").trim() ? [String(input.imageUrl).trim()] : []),
-    ]),
-  ).slice(0, XYQ_REFERENCE_MAX.image);
-  const videoUrls = Array.from(
-    new Set((input.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean)),
-  ).slice(0, XYQ_REFERENCE_MAX.video);
-  const rawAudioUrls = Array.from(
-    new Set((input.audioUrls || []).map((u) => String(u || "").trim()).filter(Boolean)),
-  ).slice(0, XYQ_REFERENCE_MAX.audio);
-  const rejectedAudio = rawAudioUrls.filter((u) => !isXyqAllowedAudioUrl(u));
-  if (rejectedAudio.length) {
-    throw new Error("参考音频仅支持 mp3 / wav（与官方上传白名单一致）");
-  }
-  const audioUrls = rawAudioUrls;
-
-  const sourceUrl = String(input.sourceUrl || "").trim();
-  if (workMode === "remix") {
-    if (!xyqRemixHasSource({ videoUrls, sourceUrl })) {
-      throw new Error("视频复刻需要参考视频或可访问的成片链接");
-    }
-  } else if (xyqWorkModeNeedsVideo(workMode) && !videoUrls.length) {
-    const needLabel: Record<string, string> = {
-      extend: "延长",
-      reshoot: "局部重拍",
-      upscale: "提升清晰度",
-      erase_subtitle: "擦除字幕",
-    };
-    throw new Error(
-      `${needLabel[workMode] || "该模式"}需要参考视频：请先出片或上传参考视频`,
-    );
-  }
-
-  const imageAssetIds: string[] = [];
-  // mini tool 只需单视频，跳过多余图/音上传省积分与时间
-  if (!xyqWorkModeIsMiniTool(workMode)) {
-    for (const u of imageUrls) {
-      imageAssetIds.push(await uploadUrlToXyqAsset(u, accessKey, "image"));
-    }
-  }
-  const videoAssetIds: string[] = [];
-  for (const u of videoUrls.slice(0, xyqWorkModeIsMiniTool(workMode) ? 1 : XYQ_REFERENCE_MAX.video)) {
-    videoAssetIds.push(await uploadUrlToXyqAsset(u, accessKey, "video"));
-  }
-  const audioAssetIds: string[] = [];
-  if (!xyqWorkModeIsMiniTool(workMode)) {
-    for (const u of audioUrls) {
-      audioAssetIds.push(await uploadUrlToXyqAsset(u, accessKey, "audio"));
-    }
-  }
-
-  // —— 超分 / 擦字幕：官方 mini_tool_param ——
-  if (workMode === "upscale") {
-    const body = buildXyqSuperResolutionBody({
-      videoAssetId: videoAssetIds[0]!,
-      outputResolution: input.upscaleResolution || input.quality,
-      toolVersion: input.upscaleToolVersion,
-    });
-    console.info(
-      `[xyqSeedance] route=video_part workMode=upscale out=${normalizeXyqUpscaleResolution(
-        input.upscaleResolution || input.quality,
-      )}`,
-    );
-    return submitAndPollXyq({ body, accessKey, route: "video_part", workMode });
-  }
-  if (workMode === "erase_subtitle") {
-    const body = buildXyqEraseSubtitleBody({ videoAssetId: videoAssetIds[0]! });
-    console.info(`[xyqSeedance] route=video_part workMode=erase_subtitle`);
-    return submitAndPollXyq({ body, accessKey, route: "video_part", workMode });
-  }
-
-  // —— 局部重拍 / 复刻：官方 nest 会话（message + asset_ids；复刻可外链-only）——
-  if (xyqWorkModeIsNest(workMode)) {
-    const assetIds = [...videoAssetIds, ...imageAssetIds, ...audioAssetIds];
-    const body = buildXyqNestEditBody({
-      message: prompt,
-      assetIds,
-      threadId: input.threadId,
-      allowLinkOnly: workMode === "remix",
-    });
-    console.info(
-      `[xyqSeedance] route=nest workMode=${workMode} assets=${assetIds.length} videos=${videoAssetIds.length} linkOnly=${
-        workMode === "remix" && !assetIds.length
-      }`,
-    );
-    return submitAndPollXyq({ body, accessKey, route: "nest", workMode });
-  }
-
-  // —— 生成 / 延长 / 首尾帧：官方 video_part 模型直出 ——
-  const durationSec = clampXyqSeedanceDuration(input.duration);
-  const ratio = normalizeXyqSeedanceRatio(input.aspectRatio);
-  const resolution = normalizeXyqSeedanceResolution(input.quality);
-  const body = buildXyqGenerateVideoBody({
-    prompt,
-    imageAssetIds,
-    videoAssetIds,
-    audioAssetIds,
-    durationSec,
-    ratio,
-    resolution,
-    generateType: workMode === "generate" ? input.generateType : undefined,
-    workMode,
-  });
-  console.info(
-    `[xyqSeedance] route=video_part workMode=${workMode} images=${imageAssetIds.length} videos=${videoAssetIds.length} generate_type=${
-      (body.video_part_tool_param as Record<string, unknown>)?.generate_type ?? "none"
-    }`,
-  );
-  return submitAndPollXyq({ body, accessKey, route: "video_part", workMode });
+  void input;
+  throw new Error("小云雀成片通道已下线，请改用 Seedance 2.5（BytePlus / EvoLink）");
 }
 
 /** 单测导出 */

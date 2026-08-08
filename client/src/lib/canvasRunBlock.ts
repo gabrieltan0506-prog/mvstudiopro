@@ -1230,7 +1230,7 @@ export async function runCanvasBlock(
       // 不只判 plan——否则未到点的 supervisor/free 组合会被前端自己拦掉。
       const access = resolveSeedance25Access({ plan: deps.userPlan, role: deps.userRole });
       if (!access.allowed) {
-        throw new Error(access.message || "成片·加长暂不可用");
+        throw new Error(access.message || "Seedance 2.5 暂不可用");
       }
     }
     console.info(
