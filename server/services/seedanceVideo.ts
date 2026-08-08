@@ -8,7 +8,7 @@ export type SeedanceDurationInput = number | "auto";
 
 export type SeedanceMirrorOptions = {
   requestHeaders?: Record<string, string>;
-  /** 首页作品需要跨越 GCS V4 最长 7 天签名期，必须另存站内长期对象存储。 */
+  /** 首页作品优先落长期存储；若返回私有未签名直链则必须回退 GCS V4 签名。 */
   durableStorage?: {
     keyPrefix: string;
     required?: boolean;
@@ -20,6 +20,41 @@ function isAlreadyGcsSignedReadUrl(u: string): boolean {
   const s = u.toLowerCase();
   if (!s.includes("storage.googleapis.com")) return false;
   return s.includes("x-goog-signature") || s.includes("x-goog-algorithm");
+}
+
+/**
+ * 浏览器能否直接打开该视频 URL。
+ * storagePut 写私有桶时会返回未签名直链 → AccessDenied（与首页照片 restored-* 同类事故）。
+ */
+export function isBrowserReadableVideoUrl(url: string): boolean {
+  const u = String(url || "").trim();
+  if (!/^https?:\/\//i.test(u)) return false;
+  if (/[?&]X-Goog-(?:Signature|Algorithm)=/i.test(u)) return true;
+  if (/[?&]X-Amz-Signature=/i.test(u)) return true;
+  if (/\.public\.blob\.vercel-storage\.com\b/i.test(u)) return true;
+  if (/[?&]op=flyVolumeMedia\b/i.test(u)) return true;
+  if (/\/home-photo\//i.test(u)) return false;
+  if (/^https?:\/\/storage\.googleapis\.com\//i.test(u)) return false;
+  if (/polished-pond-5133/i.test(u)) return false;
+  return true;
+}
+
+async function mirrorToGcsSignedReadUrl(
+  buf: Buffer,
+  contentType: string,
+  keyHint: string,
+): Promise<string> {
+  const safeHint = String(keyHint || "seedance-i2v")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 64);
+  const objectName = buildGrowthCampVideoObjectName(`${safeHint || "seedance-i2v"}.mp4`);
+  const { gcsUri } = await uploadBufferToGcs({
+    objectName,
+    buffer: buf,
+    contentType,
+  });
+  return signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
 }
 
 export async function mirrorSeedanceMp4ToGcsSignedUrl(
@@ -37,9 +72,10 @@ export async function mirrorSeedanceMp4ToGcsSignedUrl(
       Number(process.env.SEEDANCE_MP4_DOWNLOAD_TIMEOUT_MS) || 300_000
     )
   );
-  const durableKey = options?.durableStorage
-    ? `${String(options.durableStorage.keyPrefix || "video").replace(/\/+$/, "")}-${Date.now()}.mp4`
+  const durablePrefix = options?.durableStorage
+    ? String(options.durableStorage.keyPrefix || "video").replace(/\/+$/, "")
     : "";
+  const durableKey = durablePrefix ? `${durablePrefix}-${Date.now()}.mp4` : "";
 
   let lastStatus = 0;
   let durableStorageError = "";
@@ -65,30 +101,45 @@ export async function mirrorSeedanceMp4ToGcsSignedUrl(
       .split(";")[0]
       .trim();
     const contentType = rawCt.startsWith("video/") ? rawCt : "video/mp4";
+
     if (durableKey) {
       try {
         const { storagePut } = await import("../storage.js");
         const stored = await storagePut(durableKey, buf, contentType);
-        if (!/^https?:\/\//i.test(stored.url)) {
-          throw new Error("durable storage did not return an HTTP URL");
+        const durableUrl = String(stored.url || "").trim();
+        if (isBrowserReadableVideoUrl(durableUrl)) {
+          return durableUrl;
         }
-        return stored.url;
+        durableStorageError =
+          "durable storage returned private unsigned URL (browser AccessDenied)";
+        console.warn(
+          "[videoMirror] reject private durable URL, fallback GCS signed",
+          durableUrl.slice(0, 120),
+        );
       } catch (error) {
         durableStorageError =
           error instanceof Error ? error.message : "durable storage failed";
         console.error("[videoMirror] durable storage failed", error);
-        if (options?.durableStorage?.required) continue;
       }
     }
-    const objectName = buildGrowthCampVideoObjectName(
-      `seedance-i2v-${Date.now()}.mp4`
-    );
-    const { gcsUri } = await uploadBufferToGcs({
-      objectName,
-      buffer: buf,
-      contentType,
-    });
-    return signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
+
+    try {
+      return await mirrorToGcsSignedReadUrl(
+        buf,
+        contentType,
+        durablePrefix || "seedance-i2v",
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "gcs_mirror_failed";
+      console.error("[videoMirror] GCS signed mirror failed", msg);
+      if (options?.durableStorage?.required && durableStorageError) {
+        // 继续下一轮拉源；三轮后统一抛 durable / fetch 错误
+        continue;
+      }
+      if (!options?.durableStorage?.required) {
+        throw error instanceof Error ? error : new Error(msg);
+      }
+    }
   }
 
   if (durableStorageError && options?.durableStorage?.required) {
@@ -113,6 +164,6 @@ export async function runSeedanceImageToVideo(_input: {
   endImageUrl?: string;
 }): Promise<{ videoUrl: string; seed: number }> {
   throw new Error(
-    "请配置 OPENROUTER_API_KEY 并调用 runOpenRouterSeedanceVideo（成片·标准/快速）"
+    "请配置 OPENROUTER_API_KEY 并调用 runOpenRouterSeedanceVideo（成片·标准/快速）",
   );
 }

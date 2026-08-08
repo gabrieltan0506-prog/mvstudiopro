@@ -1,0 +1,410 @@
+/**
+ * 首页照片动画：异步任务（落盘 + 短轮询 + 部署后续跑）。
+ *
+ * 根因：原先单条 HTTP 同步等 OpenRouter 数分钟，Fly rolling deploy / SIGINT
+ * 会直接掐断连接，前端「没返回任何讯息」。上游视频其实可能还在生成。
+ *
+ * 现改为：扣费 → 提交上游 → 立即返回 taskId → 后台/状态接口续轮询 → 镜像可读 URL。
+ */
+
+import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import {
+  HOME_PHOTO_ANIMATE_DEFAULT_RESOLUTION,
+  homePhotoAnimateCredits,
+  isHomePhotoAnimateDuration,
+  isHomePhotoAnimateResolution,
+  type HomePhotoAnimateDuration,
+  type HomePhotoAnimateResolution,
+} from "../../shared/homePhotoTools.js";
+import { getUserPlan, refundCredits } from "../credits.js";
+import { recordCreation } from "../routers/creations.js";
+import {
+  heartbeatActiveJob,
+  registerActiveJob,
+  refundCreditsOnFailure,
+  unregisterActiveJob,
+} from "./paidJobLedger.js";
+import {
+  buildOpenRouterHappyHorseSubmitBody,
+  isOpenRouterHappyHorseConfigured,
+  OPENROUTER_HAPPYHORSE_1_1_MODEL,
+} from "./openrouterHappyHorseVideo.js";
+import { getOpenRouterApiKey } from "./openrouterGptImage2.js";
+import {
+  mirrorOpenRouterVideoSourceUrl,
+  OPENROUTER_VIDEO_MAX_POLL_MS,
+  OPENROUTER_VIDEO_POLL_INTERVAL_MS,
+  pollOpenRouterVideoJobOnce,
+  submitOpenRouterVideoJob,
+} from "./openrouterVideoCore.js";
+
+const TASK_TYPE = "homePhotoAnimate" as const;
+const PRIMARY_DIR =
+  process.env.HOME_PHOTO_ANIMATE_TASK_DIR || "/data/growth/home-photo-animate";
+
+export type HomePhotoAnimateTaskStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed";
+
+export type HomePhotoAnimateTaskRecord = {
+  taskId: string;
+  userId: number;
+  status: HomePhotoAnimateTaskStatus;
+  creditsCharged: number;
+  imageUrl: string;
+  prompt: string;
+  duration: HomePhotoAnimateDuration;
+  resolution: HomePhotoAnimateResolution;
+  aspectRatio: string;
+  openRouterJobId?: string;
+  pollingUrl?: string;
+  model?: string;
+  videoUrl?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+};
+
+let resolvedDir: string | null = null;
+const inflight = new Set<string>();
+let workerTimer: NodeJS.Timeout | null = null;
+
+async function getTaskDir(): Promise<string> {
+  if (resolvedDir) return resolvedDir;
+  try {
+    await fs.mkdir(PRIMARY_DIR, { recursive: true });
+    const probe = path.join(PRIMARY_DIR, ".write-probe");
+    await fs.writeFile(probe, String(Date.now()));
+    await fs.unlink(probe).catch(() => {});
+    resolvedDir = PRIMARY_DIR;
+    return resolvedDir;
+  } catch (error) {
+    const fallback = path.join(os.tmpdir(), "mvstudiopro-home-photo-animate");
+    console.warn(
+      `[homePhotoAnimateTask] primary dir unavailable, fallback=${fallback}`,
+      error instanceof Error ? error.message : error,
+    );
+    await fs.mkdir(fallback, { recursive: true });
+    resolvedDir = fallback;
+    return resolvedDir;
+  }
+}
+
+function taskPath(dir: string, taskId: string): string {
+  const safe = String(taskId).replace(/[^a-zA-Z0-9_.-]+/g, "_");
+  return path.join(dir, `${safe}.json`);
+}
+
+async function writeTask(record: HomePhotoAnimateTaskRecord): Promise<void> {
+  const dir = await getTaskDir();
+  const file = taskPath(dir, record.taskId);
+  const tmp = `${file}.tmp.${process.pid}.${Date.now()}`;
+  record.updatedAt = new Date().toISOString();
+  await fs.writeFile(tmp, JSON.stringify(record, null, 2));
+  await fs.rename(tmp, file);
+}
+
+async function readTask(taskId: string): Promise<HomePhotoAnimateTaskRecord | null> {
+  const dir = await getTaskDir();
+  try {
+    const raw = await fs.readFile(taskPath(dir, taskId), "utf8");
+    return JSON.parse(raw) as HomePhotoAnimateTaskRecord;
+  } catch {
+    return null;
+  }
+}
+
+async function listActiveTaskIds(): Promise<string[]> {
+  const dir = await getTaskDir();
+  try {
+    const names = await fs.readdir(dir);
+    const ids: string[] = [];
+    for (const name of names) {
+      if (!name.endsWith(".json")) continue;
+      const taskId = name.slice(0, -".json".length);
+      const task = await readTask(taskId);
+      if (task && (task.status === "queued" || task.status === "running")) {
+        ids.push(taskId);
+      }
+    }
+    return ids;
+  } catch {
+    return [];
+  }
+}
+
+async function failTask(
+  task: HomePhotoAnimateTaskRecord,
+  error: string,
+): Promise<HomePhotoAnimateTaskRecord> {
+  task.status = "failed";
+  task.error = error.slice(0, 280);
+  task.finishedAt = new Date().toISOString();
+  await writeTask(task);
+  await refundCreditsOnFailure(
+    task.taskId,
+    TASK_TYPE,
+    "task_failed",
+    task.error,
+  ).catch(async () => {
+    if (task.creditsCharged > 0) {
+      await refundCredits(
+        task.userId,
+        task.creditsCharged,
+        "照片动画生成失败·退回已扣积分",
+      ).catch(() => {});
+    }
+  });
+  return task;
+}
+
+async function succeedTask(
+  task: HomePhotoAnimateTaskRecord,
+  videoUrl: string,
+  model: string,
+): Promise<HomePhotoAnimateTaskRecord> {
+  task.status = "succeeded";
+  task.videoUrl = videoUrl;
+  task.model = model;
+  task.finishedAt = new Date().toISOString();
+  task.error = undefined;
+  await writeTask(task);
+  await unregisterActiveJob(task.taskId, TASK_TYPE, "settled").catch(() => {});
+
+  try {
+    const plan = await getUserPlan(task.userId);
+    await recordCreation({
+      userId: task.userId,
+      type: "photo_animation_video",
+      title: `照片人物动起来 · ${task.resolution} · ${task.duration} 秒`,
+      outputUrl: videoUrl,
+      thumbnailUrl: task.imageUrl,
+      quality: task.resolution,
+      creditsUsed: task.creditsCharged,
+      plan,
+      metadata: {
+        sourceImageUrl: task.imageUrl,
+        prompt: task.prompt,
+        duration: task.duration,
+        resolution: task.resolution,
+        model,
+        tool: "home_photo_animate",
+        taskId: task.taskId,
+      },
+    });
+  } catch (error) {
+    console.error("[homePhotoAnimateTask] recordCreation failed", error);
+  }
+  return task;
+}
+
+async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord | null> {
+  if (inflight.has(taskId)) {
+    return readTask(taskId);
+  }
+  inflight.add(taskId);
+  try {
+    const task = await readTask(taskId);
+    if (!task) return null;
+    if (task.status === "succeeded" || task.status === "failed") return task;
+
+    const apiKey = getOpenRouterApiKey();
+    if (!apiKey) {
+      return failTask(task, "视频服务暂不可用，请稍后重试");
+    }
+
+    await heartbeatActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+
+    // 尚未提交上游：创建 OpenRouter 任务
+    if (!task.pollingUrl) {
+      try {
+        const body = buildOpenRouterHappyHorseSubmitBody({
+          prompt: task.prompt,
+          imageUrl: task.imageUrl,
+          duration: task.duration,
+          resolution: task.resolution,
+          aspectRatio: task.aspectRatio,
+        });
+        const submitted = await submitOpenRouterVideoJob(body);
+        task.openRouterJobId = submitted.openRouterJobId;
+        task.pollingUrl = submitted.pollingUrl;
+        task.model = submitted.model;
+        task.status = "running";
+        task.startedAt = task.startedAt || new Date().toISOString();
+        await writeTask(task);
+
+        if (submitted.immediateSourceUrl) {
+          const videoUrl = await mirrorOpenRouterVideoSourceUrl(
+            submitted.immediateSourceUrl,
+            submitted.apiKey,
+            { keyPrefix: "home-photo/animation", required: true },
+          );
+          return succeedTask(task, videoUrl, submitted.model);
+        }
+      } catch (error) {
+        return failTask(
+          task,
+          error instanceof Error ? error.message : "照片动画创建失败",
+        );
+      }
+    }
+
+    if (!task.pollingUrl) {
+      return failTask(task, "视频服务未返回任务查询地址");
+    }
+
+    const createdMs = Date.parse(task.createdAt) || Date.now();
+    if (Date.now() - createdMs > OPENROUTER_VIDEO_MAX_POLL_MS) {
+      return failTask(
+        task,
+        `视频生成超时（${Math.round(OPENROUTER_VIDEO_MAX_POLL_MS / 60_000)} 分钟）`,
+      );
+    }
+
+    try {
+      const snap = await pollOpenRouterVideoJobOnce(task.pollingUrl, apiKey);
+      if (snap.state === "running") {
+        task.status = "running";
+        await writeTask(task);
+        return task;
+      }
+      if (snap.state === "failed") {
+        return failTask(task, snap.error);
+      }
+      const videoUrl = await mirrorOpenRouterVideoSourceUrl(snap.sourceUrl, apiKey, {
+        keyPrefix: "home-photo/animation",
+        required: true,
+      });
+      return succeedTask(
+        task,
+        videoUrl,
+        task.model || OPENROUTER_HAPPYHORSE_1_1_MODEL,
+      );
+    } catch (error) {
+      return failTask(
+        task,
+        error instanceof Error ? error.message : "照片动画生成失败",
+      );
+    }
+  } finally {
+    inflight.delete(taskId);
+  }
+}
+
+export async function createHomePhotoAnimateTask(input: {
+  userId: number;
+  creditsCharged: number;
+  imageUrl: string;
+  prompt: string;
+  duration: number;
+  resolution: string;
+  aspectRatio?: string;
+}): Promise<HomePhotoAnimateTaskRecord> {
+  if (!isOpenRouterHappyHorseConfigured()) {
+    throw new Error("视频服务暂不可用，请稍后重试");
+  }
+  if (!isHomePhotoAnimateDuration(input.duration)) {
+    throw new Error("照片动起来只支持 5、10 或 15 秒");
+  }
+  const resolution = isHomePhotoAnimateResolution(input.resolution)
+    ? input.resolution
+    : HOME_PHOTO_ANIMATE_DEFAULT_RESOLUTION;
+  const expected = homePhotoAnimateCredits(input.duration, resolution);
+  if (input.creditsCharged > 0 && input.creditsCharged !== expected) {
+    // 允许 admin 0 扣；非零时必须与服务端计价一致
+    console.warn(
+      `[homePhotoAnimateTask] credits mismatch charged=${input.creditsCharged} expected=${expected}`,
+    );
+  }
+
+  const taskId = `hpa_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+  const now = new Date().toISOString();
+  const task: HomePhotoAnimateTaskRecord = {
+    taskId,
+    userId: input.userId,
+    status: "queued",
+    creditsCharged: Math.max(0, Number(input.creditsCharged) || 0),
+    imageUrl: String(input.imageUrl || "").trim(),
+    prompt:
+      String(input.prompt || "").trim().slice(0, 500) ||
+      "让照片中的人物做自然、克制的微动作，保持身份、脸部特征、服装、背景与原始构图稳定；动作连贯，镜头稳定，不新增人物或物件。",
+    duration: input.duration,
+    resolution,
+    aspectRatio: String(input.aspectRatio || "16:9").trim() || "16:9",
+    createdAt: now,
+    updatedAt: now,
+  };
+  await writeTask(task);
+  await registerActiveJob({
+    jobId: taskId,
+    taskType: TASK_TYPE,
+    userId: input.userId,
+    creditsBilled: task.creditsCharged,
+    action: `首页照片人物动起来（${resolution} · ${input.duration}s）`,
+    externalApiCostHint: "openrouter happyhorse-1.1",
+    metadata: {
+      imageUrl: task.imageUrl.slice(0, 200),
+      duration: task.duration,
+      resolution: task.resolution,
+    },
+  }).catch((error) => {
+    console.warn("[homePhotoAnimateTask] registerActiveJob failed", error);
+  });
+
+  // 立即推进一轮（尽量在本请求内完成上游提交），然后靠 worker/status 续跑
+  void advanceTask(taskId).catch((error) => {
+    console.error("[homePhotoAnimateTask] initial advance failed", error);
+  });
+  ensureHomePhotoAnimateWorker();
+  return (await readTask(taskId)) || task;
+}
+
+export async function getHomePhotoAnimateTask(
+  taskId: string,
+  userId: number,
+): Promise<HomePhotoAnimateTaskRecord | null> {
+  const task = await readTask(String(taskId || "").trim());
+  if (!task || task.userId !== userId) return null;
+  if (task.status === "queued" || task.status === "running") {
+    return (await advanceTask(task.taskId)) || task;
+  }
+  return task;
+}
+
+export function ensureHomePhotoAnimateWorker(): void {
+  if (workerTimer) return;
+  workerTimer = setInterval(() => {
+    void (async () => {
+      const ids = await listActiveTaskIds();
+      for (const id of ids) {
+        await advanceTask(id).catch((error) => {
+          console.warn("[homePhotoAnimateTask] worker tick failed", id, error);
+        });
+      }
+    })();
+  }, Math.max(3_000, OPENROUTER_VIDEO_POLL_INTERVAL_MS));
+  // 不阻止进程退出
+  workerTimer.unref?.();
+}
+
+export async function resumeHomePhotoAnimateTasksOnStartup(): Promise<void> {
+  ensureHomePhotoAnimateWorker();
+  const ids = await listActiveTaskIds();
+  if (!ids.length) {
+    console.log("[homePhotoAnimateTask] startup: no active tasks");
+    return;
+  }
+  console.log(`[homePhotoAnimateTask] startup: resume ${ids.length} task(s)`);
+  for (const id of ids) {
+    await advanceTask(id).catch((error) => {
+      console.warn("[homePhotoAnimateTask] startup resume failed", id, error);
+    });
+  }
+}

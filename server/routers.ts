@@ -11878,7 +11878,10 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }),
   }),
 
-  /** Gemini API 高清放大：2× 请求 2K，4× 请求 4K；首页固定 15/35 积分。 */
+  /**
+   * 高清放大（路由名历史遗留为 vertexImage，实现已是 Gemini API / Nano Banana）。
+   * 2× → gemini-3.1-flash-image · 2K；4× → gemini-3-pro-image · 4K。
+   */
   vertexImage: router({
     upscale: protectedProcedure
       .input(
@@ -11939,10 +11942,10 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               await refundCredits(ctx.user.id, creditsCharged, "图片放大·失败·退回已扣积分");
             } catch (refErr) {
               refundFailed = true;
-              console.error("[vertexImage.upscale] restore credits failed", refErr);
+              console.error("[geminiApi.upscale] restore credits failed", refErr);
             }
           }
-          console.error("[vertexImage.upscale] Gemini API failed", result.error);
+          console.error("[geminiApi.upscale] failed", result.error);
           return {
             success: false as const,
             error: refundFailed
@@ -11984,7 +11987,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               },
             });
           } catch (recordError) {
-            console.error("[vertexImage.upscale] home creation record failed", recordError);
+            console.error("[geminiApi.upscale] home creation record failed", recordError);
           }
         }
 
