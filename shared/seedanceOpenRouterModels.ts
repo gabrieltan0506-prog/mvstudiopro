@@ -26,7 +26,11 @@ export const SEEDANCE_REFERENCE_MAX = { image: 9, video: 3, audio: 3 } as const;
 export const SEEDANCE_25_COMING_SOON_LABEL_EN = "Seedance 2.5 Coming soon on MV Studio Pro";
 export const SEEDANCE_25_COMING_SOON_LABEL_ZH = "Seedance 2.5 即将登陆 MV Studio Pro";
 
-/** 产品可选：标准 / 快速。`2.0-mini` 仅内部探针解析用，不对产品暴露。 */
+/**
+ * 产品可选：草稿（mini）/ 标准 / 快速 / 2.5。
+ * mini 自 2026-08-09 起是正式草稿档（39 积分/段），不再只给探针用；
+ * 它没有 OpenRouter 型号，只能走 EvoLink，见 `api/jobs.ts` 的 mini 分支。
+ */
 export type SeedanceProductVersion = "2.0" | "2.0-fast" | "2.0-mini" | "2.5";
 
 export function isOpenRouterSeedanceVersion(
@@ -38,7 +42,6 @@ export function isOpenRouterSeedanceVersion(
 export function parseSeedanceProductVersion(raw: unknown): SeedanceProductVersion {
   const v = String(raw || "2.0").trim().toLowerCase();
   if (v === "2.0-fast" || v === "fast" || v === "2.0fast") return "2.0-fast";
-  // 保留解析以便探针传 version=2.0-mini；产品请求会在 jobs 层改走 fast
   if (v === "2.0-mini" || v === "mini" || v === "2.0mini") return "2.0-mini";
   if (v === "2.5" || v === "25") return "2.5";
   return "2.0";

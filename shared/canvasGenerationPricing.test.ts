@@ -6,10 +6,16 @@ import {
   CANVAS_VIDEO_CREDITS_CLIP_2K,
   CANVAS_VIDEO_CREDITS_CLIP_4K,
   CANVAS_VIDEO_CREDITS_CLIP_LONG,
+  CANVAS_VIDEO_CREDITS_CLIP_MINI,
   canvasVideoClipCredits,
   describeCanvasVideoClipPrice,
+  isMiniPricedVideoModel,
   MANHUA_EPISODE_CREDITS,
+  MANHUA_EPISODE_CREDITS_MINI,
   MANHUA_EPISODE_CREDITS_PER_SEGMENT,
+  MANHUA_EPISODE_CREDITS_PER_SEGMENT_MINI,
+  MANHUA_EPISODE_SEGMENTS_FOR_PRICING_MINI,
+  manhuaEpisodeTotalCredits,
   normalizeCanvasVideoResolution,
 } from "./canvasGenerationPricing";
 
@@ -82,5 +88,88 @@ describe("canvasVideoClipCredits", () => {
   it("说明文案带出整集价", () => {
     expect(describeCanvasVideoClipPrice({ isEpisodeSegment: true })).toContain("整集");
     expect(describeCanvasVideoClipPrice({ durationSec: 15 })).toBe("118 积分/段");
+  });
+});
+
+describe("Seedance 2.0 Mini 草稿档（用户 2026-08-09 拍板）", () => {
+  it("mini 一个价：不吃画质加价表也不吃加长档", () => {
+    expect(canvasVideoClipCredits({ videoModel: "seedance-2.0-mini" })).toBe(
+      CANVAS_VIDEO_CREDITS_CLIP_MINI,
+    );
+    expect(
+      canvasVideoClipCredits({ videoModel: "seedance-2.0-mini", resolution: "4K" }),
+    ).toBe(CANVAS_VIDEO_CREDITS_CLIP_MINI);
+    // mini 上游最长 15 秒，就算前端传了 30 也不该跳到 240 的加长档
+    expect(
+      canvasVideoClipCredits({ videoModel: "seedance-2.0-mini", durationSec: 30 }),
+    ).toBe(CANVAS_VIDEO_CREDITS_CLIP_MINI);
+  });
+
+  it("mini 整集草稿包：6 段 × 28 = 168，且远低于正片档", () => {
+    expect(
+      canvasVideoClipCredits({ videoModel: "seedance-2.0-mini", isEpisodeSegment: true }),
+    ).toBe(MANHUA_EPISODE_CREDITS_PER_SEGMENT_MINI);
+    expect(
+      MANHUA_EPISODE_CREDITS_PER_SEGMENT_MINI * MANHUA_EPISODE_SEGMENTS_FOR_PRICING_MINI,
+    ).toBe(MANHUA_EPISODE_CREDITS_MINI);
+    expect(MANHUA_EPISODE_CREDITS_MINI).toBeLessThan(MANHUA_EPISODE_CREDITS);
+    expect(CANVAS_VIDEO_CREDITS_CLIP_MINI).toBeLessThan(CANVAS_VIDEO_CREDITS_CLIP);
+  });
+
+  it("认得 jobs / 画布两侧的 mini 别名，其余引擎不受影响", () => {
+    for (const alias of ["seedance-2.0-mini", "2.0-mini", "mini", "2.0mini", "MINI"]) {
+      expect(isMiniPricedVideoModel(alias)).toBe(true);
+    }
+    for (const other of ["seedance-2.0", "seedance-2.0-fast", "seedance-2.5", "minimax-hailuo-3", "", null]) {
+      expect(isMiniPricedVideoModel(other)).toBe(false);
+    }
+    // 不传 videoModel 时必须保持旧口径，避免存量请求被误当 mini 少收
+    expect(canvasVideoClipCredits({ durationSec: 15 })).toBe(CANVAS_VIDEO_CREDITS_CLIP);
+    expect(canvasVideoClipCredits({ isEpisodeSegment: true })).toBe(
+      MANHUA_EPISODE_CREDITS_PER_SEGMENT,
+    );
+  });
+});
+
+describe("manhuaEpisodeTotalCredits", () => {
+  /**
+   * 实收是「段价 × 段数」，所以整集总额随引擎段数变。
+   * 这条锁的就是别再把 688 当成所有引擎的整集价印给用户。
+   */
+  it("按引擎真实段数算整集价，不再一律印 688", () => {
+    expect(manhuaEpisodeTotalCredits({ videoModel: "seedance-2.5", segmentCount: 4 })).toBe(
+      MANHUA_EPISODE_CREDITS,
+    );
+    expect(manhuaEpisodeTotalCredits({ videoModel: "seedance-2.0-fast", segmentCount: 6 })).toBe(
+      MANHUA_EPISODE_CREDITS_PER_SEGMENT * 6,
+    );
+    expect(manhuaEpisodeTotalCredits({ videoModel: "minimax-hailuo-3", segmentCount: 8 })).toBe(
+      MANHUA_EPISODE_CREDITS_PER_SEGMENT * 8,
+    );
+    expect(manhuaEpisodeTotalCredits({ videoModel: "seedance-2.0-mini", segmentCount: 6 })).toBe(
+      MANHUA_EPISODE_CREDITS_MINI,
+    );
+  });
+
+  it("段数缺省/脏值回落到该档的定价段数", () => {
+    expect(manhuaEpisodeTotalCredits({})).toBe(MANHUA_EPISODE_CREDITS);
+    expect(manhuaEpisodeTotalCredits({ segmentCount: 0 })).toBe(MANHUA_EPISODE_CREDITS);
+    expect(manhuaEpisodeTotalCredits({ segmentCount: Number.NaN })).toBe(MANHUA_EPISODE_CREDITS);
+    expect(manhuaEpisodeTotalCredits({ videoModel: "seedance-2.0-mini" })).toBe(
+      MANHUA_EPISODE_CREDITS_MINI,
+    );
+  });
+
+  it("说明文案跟着段数走", () => {
+    expect(
+      describeCanvasVideoClipPrice({ isEpisodeSegment: true, episodeSegmentCount: 6 }),
+    ).toBe(`${MANHUA_EPISODE_CREDITS_PER_SEGMENT} 积分/段（整集 ${MANHUA_EPISODE_CREDITS_PER_SEGMENT * 6}）`);
+    expect(
+      describeCanvasVideoClipPrice({
+        isEpisodeSegment: true,
+        videoModel: "seedance-2.0-mini",
+        episodeSegmentCount: MANHUA_EPISODE_SEGMENTS_FOR_PRICING_MINI,
+      }),
+    ).toBe(`${MANHUA_EPISODE_CREDITS_PER_SEGMENT_MINI} 积分/段（整集 ${MANHUA_EPISODE_CREDITS_MINI}）`);
   });
 });

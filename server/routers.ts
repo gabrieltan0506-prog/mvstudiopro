@@ -8573,13 +8573,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           viralTemplateId: z.string().max(64).optional(),
           /** 单集时长档位：90s 半强度 / 180s 全长（2.5 时由 videoModel 覆盖段表） */
           lengthTierId: z.string().max(32).optional(),
-          /** 开场成片引擎：2.0 / 2.0-fast / 2.5 / H3 / Happy Horse 1.1 */
+          /** 开场成片引擎：2.0-mini（草稿档）/ 2.0 / 2.0-fast / 2.5 / H3。Happy Horse 1.1 不进漫剧 */
           videoModel: z.enum([
+            "seedance-2.0-mini",
             "seedance-2.0-fast",
             "seedance-2.0",
             "seedance-2.5",
             "minimax-hailuo-3",
-            "happyhorse-1.1",
           ]),
           /** 局部改写起点：只重写第 N 集起（0/空 = 全部重写） */
           fromEpisode: z.number().int().min(0).max(12).optional(),

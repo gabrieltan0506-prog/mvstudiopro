@@ -31,6 +31,7 @@ import {
   type ManhuaDeliveryPackage,
 } from "./manhuaDeliveryPackage.js";
 import type { ManhuaCineVocabLocale } from "./manhuaCineVocabBank.js";
+import { migrateRetiredManhuaLayoutVideoModel } from "./manhuaSeedanceLayout.js";
 import {
   normalizeManhuaCharacterLookSets,
   normalizeManhuaSegmentLookBindings,
@@ -68,8 +69,9 @@ export type ManhuaWriterSession = {
   /** 审定节奏模板 id（tpl_*）；扩写注入用 */
   viralTemplateId: string;
   /**
-   * 开场选定的成片引擎（2.0 / 2.0-fast / 2.5 / H3 / Happy Horse 1.1）。
+   * 开场选定的成片引擎（2.0-mini / 2.0 / 2.0-fast / 2.5 / H3）。
    * 空字符串 = 尚未选择，扩写前必须选定。
+   * Happy Horse 1.1 已移出漫剧，旧会话由 `migrateRetiredManhuaLayoutVideoModel` 迁到 2.0-fast。
    */
   videoModel: string;
   /** 产品化风格包（资产阶段） */
@@ -147,19 +149,9 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     audioReferenceLock: normalizeManhuaAudioReferenceLock(input.audioReferenceLock),
     shareAssetToLibrary: Boolean(input.shareAssetToLibrary),
     viralTemplateId: String(input.viralTemplateId || "").trim().slice(0, 64),
-    videoModel: (() => {
-      const v = String(input.videoModel || "").trim();
-      if (
-        v === "seedance-2.0-fast" ||
-        v === "seedance-2.0" ||
-        v === "seedance-2.5" ||
-        v === "minimax-hailuo-3" ||
-        v === "happyhorse-1.1"
-      ) {
-        return v;
-      }
-      return "";
-    })(),
+    // 已移出漫剧的 happyhorse-1.1 旧会话迁到等价档 2.0-fast（同 6×15s 段表、同段价），
+    // 不让它落到画布默认的 2.5——那会悄悄改段表、改权限门。其余未知值回到「未选引擎」。
+    videoModel: migrateRetiredManhuaLayoutVideoModel(input.videoModel),
     stylePack: parseManhuaStylePack(input.stylePack) || null,
     deliveryPackage: input.deliveryPackage
       ? normalizeManhuaDeliveryPackage(input.deliveryPackage, {
