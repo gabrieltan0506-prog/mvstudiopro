@@ -82,6 +82,9 @@
   /* 图片与视频：不加 max-width 的话，一张成片截图就能把版面撑破 */
   img, video { max-width: 100%; height: auto; display: block;
                border-radius: 8px; border: 1px solid var(--line); margin: 0 0 8px; }
+  /* 自有样片：尽量藏下载按钮（非 DRM，只挡控件一键另存） */
+  video::-webkit-media-controls-download-button { display: none !important; }
+  video::-internal-media-controls-download-button { display: none !important; }
   figure { margin: 24px 0; }
   figure img, figure video { margin-bottom: 8px; }
   figcaption { font-size: 13px; color: var(--muted); text-align: center; }
@@ -230,7 +233,7 @@
 </ul>
 <p>另外，每个模型只跑了一次。视频生成有随机性，下面写的是“这一次出了什么”，不是实验室意义上的稳定胜率。</p>
 <h2>Seedance 2.5：最会卡点，但中途真的换了片场</h2>
-<video controls preload="metadata" poster="/blog-assets/manhua-video-model-review/06-frame-25-pour-layers.jpg">
+<video controls preload="metadata" poster="/blog-assets/manhua-video-model-review/06-frame-25-pour-layers.jpg" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false">
   <source src="/blog-assets/manhua-video-model-review/01-seedance-25-tea-r2v-11s.mp4" type="video/mp4">
 </video><p>
   <img src="/blog-assets/manhua-video-model-review/05-frame-25-open-apple.jpg" alt="Seedance 2.5 开场在果园摘苹果" width="32%">
@@ -248,7 +251,7 @@
 <li><strong>不太适合：</strong> 低成本海量试错，或对空间连续性要求极高的长镜头。</li>
 </ul>
 <h2>Seedance 2.0 mini：不是最好，但便宜到足以改变工作流</h2>
-<video controls preload="metadata" poster="/blog-assets/manhua-video-model-review/09-frame-mini-pour-layers.jpg">
+<video controls preload="metadata" poster="/blog-assets/manhua-video-model-review/09-frame-mini-pour-layers.jpg" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false">
   <source src="/blog-assets/manhua-video-model-review/02-seedance-20-mini-tea-r2v-11s.mp4" type="video/mp4">
 </video><p>
   <img src="/blog-assets/manhua-video-model-review/08-frame-mini-open-apple.jpg" alt="Seedance 2.0 mini 在果园摘苹果" width="32%">
@@ -266,7 +269,7 @@
 <li><strong>不太适合：</strong> 手部大特写、复杂液体交互，以及不准备再精修的最终英雄镜头。</li>
 </ul>
 <h2>Seedance 2.0：慢是真的，三秒也没有白送</h2>
-<video controls preload="metadata" poster="/blog-assets/manhua-video-model-review/12-frame-20-pour-layers.jpg">
+<video controls preload="metadata" poster="/blog-assets/manhua-video-model-review/12-frame-20-pour-layers.jpg" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false">
   <source src="/blog-assets/manhua-video-model-review/03-seedance-20-tea-r2v-14s.mp4" type="video/mp4">
 </video><p>
   <img src="/blog-assets/manhua-video-model-review/11-frame-20-open-apple.jpg" alt="Seedance 2.0 开场摘苹果" width="32%">
@@ -284,7 +287,7 @@
 <li><strong>不太适合：</strong> 追求极速交付的批量任务，或只需要一个五秒情绪镜头的场景。</li>
 </ul>
 <h2>MiniMax H3：这次不是拍空镜，它真演了一场戏</h2>
-<video controls preload="metadata" poster="/blog-assets/manhua-video-model-review/15-h3-mecha-descent.jpg">
+<video controls preload="metadata" poster="/blog-assets/manhua-video-model-review/15-h3-mecha-descent.jpg" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false">
   <source src="/blog-assets/manhua-video-model-review/04-minimax-h3-mecha-r2v-15s.mp4" type="video/mp4">
 </video><p>
   <img src="/blog-assets/manhua-video-model-review/14-h3-reference-first-frame.jpg" alt="MiniMax H3 使用的女战士首帧参考图" width="32%">
@@ -354,5 +357,19 @@
   <a href="/pricing">定价</a>
 </footer>
 </div>
+<script>
+/* 博客样片均为站内自生成：挡右键菜单与拖拽另存；无法阻止抓包，只提高随手拿走成本 */
+(function () {
+  function isOwnedMedia(t) {
+    return t && (t.tagName === "VIDEO" || t.tagName === "IMG" || (t.closest && (t.closest("video") || t.closest("figure"))));
+  }
+  document.addEventListener("contextmenu", function (e) {
+    if (isOwnedMedia(e.target)) e.preventDefault();
+  }, true);
+  document.addEventListener("dragstart", function (e) {
+    if (isOwnedMedia(e.target)) e.preventDefault();
+  }, true);
+})();
+</script>
 </body>
 </html>
