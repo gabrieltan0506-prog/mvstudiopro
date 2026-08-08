@@ -210,11 +210,11 @@ ${opts.body}
 }
 
 /**
- * 给正文里的自有 <video> 打上 nodownload 等属性。
- * Markdown 作者不必每篇手写；编译期统一注入。
+ * 给正文里的自有 <video>/<img> 打上防另存属性。
+ * Markdown 作者不必每篇手写；编译期对全部文章统一注入。
  */
 function hardenOwnedMediaHtml(html: string): string {
-  return html.replace(/<video\b([^>]*)>/gi, (_m, attrs: string) => {
+  const withVideo = html.replace(/<video\b([^>]*)>/gi, (_m, attrs: string) => {
     let a = String(attrs || "");
     if (!/\bcontrolslist\b/i.test(a)) {
       a += ` controlsList="nodownload noplaybackrate"`;
@@ -227,6 +227,12 @@ function hardenOwnedMediaHtml(html: string): string {
     if (!/\boncontextmenu\b/i.test(a)) a += ` oncontextmenu="return false"`;
     if (!/\bdraggable\b/i.test(a)) a += ` draggable="false"`;
     return `<video${a}>`;
+  });
+  return withVideo.replace(/<img\b([^>]*)>/gi, (_m, attrs: string) => {
+    let a = String(attrs || "");
+    if (!/\boncontextmenu\b/i.test(a)) a += ` oncontextmenu="return false"`;
+    if (!/\bdraggable\b/i.test(a)) a += ` draggable="false"`;
+    return `<img${a}>`;
   });
 }
 
