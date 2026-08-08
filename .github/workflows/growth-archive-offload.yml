@@ -1,10 +1,16 @@
 name: Growth Archive Offload
 
+# 冷备旁路：卸 Fly archive 分片到同一 Release。与 growth-backup.yml 同写 growth-cold-store-latest；
+# 改频率必须两条一起改（#994 只改冷备留下本文件每小时，用户仍看到约每小时上传）。
 on:
   schedule:
-    # 每 3 小时（UTC，:15），与冷备 0 */3 错开，避免同时打 Fly SSH。
+    # 每 3 小时（UTC :15）。必须与 growth-backup 的 0 */3 同频，仅错开一刻钟。
     - cron: "15 */3 * * *"
   workflow_dispatch:
+
+concurrency:
+  group: growth-cold-store-fly
+  cancel-in-progress: false
 
 jobs:
   offload:

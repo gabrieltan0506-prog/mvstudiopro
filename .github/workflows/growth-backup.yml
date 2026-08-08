@@ -1,15 +1,16 @@
 name: Growth Backup
 
+# 冷备入口之一。与 growth-archive-offload.yml 都会写 growth-cold-store-latest；
+# 改频率必须两条一起改，只改本文件会再次出现「约每小时传一次」的观感（事故 #994）。
 on:
   schedule:
-    # 每 3 小时（UTC）。备份要在 Fly 上 tar+gzip 整个 growth 卷再拉到 Actions/Release，
-    # 原先每小时／每 2 小时都会持续占磁盘 I/O 与额度；growth 本身按 15 分钟档采集，
-    # 冷备丢 3 小时窗口仍可接受。
+    # 每 3 小时（UTC :00）。必须与 growth-archive-offload 的 15 */3 同频。
     - cron: "0 */3 * * *"
   workflow_dispatch:
 
 concurrency:
-  group: growth-backup
+  # 与 archive-offload 共用：避免同时 SSH Fly / 抢删 archive 分片。
+  group: growth-cold-store-fly
   cancel-in-progress: false
 
 jobs:
