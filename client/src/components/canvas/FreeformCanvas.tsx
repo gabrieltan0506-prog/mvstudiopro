@@ -165,6 +165,20 @@ type FreeformCanvasProps = {
     thumbUrlByAssetId?: Record<string, string>;
     onRequestGenerateAsset?: (candidate: ManhuaMentionCandidate) => void;
   };
+  /**
+   * 漫剧节点重跑前重编译提示词（设定图/静帧/成片）。
+   * 返回 patch 则写入节点后再跑；返回 null 则沿用旧 prompt（自由画布非漫剧节点）。
+   */
+  compileManhuaRerun?: (block: CanvasBlock) => Promise<{
+    prompt: string;
+    outputUrl?: undefined;
+    outputUrls?: string[];
+    status?: "idle";
+    error?: undefined;
+    changed?: boolean;
+    beforePrompt?: string;
+    afterPrompt?: string;
+  } | null>;
 };
 
 type SpawnMenuState = { anchorBlockId: string; x: number; y: number } | null;
@@ -581,6 +595,7 @@ export default function FreeformCanvas({
   /** 嵌入工作台右栏时占满容器，禁止外层再套一层 overflow 双滚动 */
   fillContainer = false,
   manhuaMention,
+  compileManhuaRerun,
 }: FreeformCanvasProps) {
   void _onReplaceCharacterVoiceAudio;
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -1025,17 +1040,60 @@ export default function FreeformCanvas({
         onBlocksChange(safeBlocks);
         onEdgesChange(safeEdges);
       }
+      // 漫剧节点重跑：按当前字段/资产重编译 prompt，旧产物进暂存（禁止复用旧稿）
+      let workingBlock = block;
+      if (compileManhuaRerun) {
+        const mustRecompile =
+          /^(charsheet|sceneplate|propsheet|propplate|clip)-/i.test(block.id);
+        try {
+          const compiled = await compileManhuaRerun(block);
+          if (mustRecompile && !compiled?.prompt?.trim()) {
+            toast.error("重跑前重编译失败：无法按当前字段生成新提示词", {
+              description: "请先确认编剧表/可拍表已齐，或改走工作台「重出」。未扣费。",
+            });
+            return;
+          }
+          if (compiled?.prompt?.trim()) {
+            const patch = {
+              prompt: compiled.prompt,
+              outputUrl: compiled.outputUrl,
+              outputUrls: compiled.outputUrls ?? block.outputUrls,
+              status: compiled.status ?? block.status,
+              error: compiled.error,
+            };
+            workingBlock = { ...block, ...patch };
+            onBlocksChange((prev) => patchBlock(prev, blockId, patch));
+            if (compiled.changed) {
+              const beforeHead = String(compiled.beforePrompt || "").trim().slice(0, 80);
+              const afterHead = String(compiled.afterPrompt || compiled.prompt || "")
+                .trim()
+                .slice(0, 80);
+              toast.message("已按当前字段重编译提示词", {
+                description:
+                  beforeHead && afterHead && beforeHead !== afterHead
+                    ? `前：${beforeHead}… → 后：${afterHead}…`
+                    : "旧成图已暂存，可在节点历史输出里回看",
+              });
+            }
+          }
+        } catch (compileErr: unknown) {
+          const msg = compileErr instanceof Error ? compileErr.message : "重编译失败";
+          toast.error(`重跑前重编译失败：${msg}`);
+          return;
+        }
+      }
       const visionImages = collectVisionImages(blockId, safeBlocks, safeEdges);
       const nearestRef =
-        block.kind === "image" || block.kind === "video"
-          ? block.refImageUrl || resolveNearestUpstreamImageUrl(blockId, safeBlocks, safeEdges)
-          : block.refImageUrl;
+        workingBlock.kind === "image" || workingBlock.kind === "video"
+          ? workingBlock.refImageUrl ||
+            resolveNearestUpstreamImageUrl(blockId, safeBlocks, safeEdges)
+          : workingBlock.refImageUrl;
       let runBlockPayload =
-        nearestRef && nearestRef !== block.refImageUrl
-          ? { ...block, refImageUrl: nearestRef }
-          : block;
+        nearestRef && nearestRef !== workingBlock.refImageUrl
+          ? { ...workingBlock, refImageUrl: nearestRef }
+          : workingBlock;
       // 手点 clip：上一段成片（全集连续编号 g07←g06）供末帧/视频参考
-      if (block.id.startsWith("clip-") && !runBlockPayload.refVideoUrl) {
+      if (workingBlock.id.startsWith("clip-") && !runBlockPayload.refVideoUrl) {
         const ep = getBlockEpisodeIndex(runBlockPayload) ?? 1;
         const seg = resolveClipSegmentIndex(runBlockPayload.id, runBlockPayload.prompt);
         const prevClipUrl = resolvePreviousSegmentClipUrl(safeBlocks, ep, seg);
@@ -1059,16 +1117,20 @@ export default function FreeformCanvas({
       patchOne(blockId, { status: "running", error: undefined });
       try {
         const docTexts =
-          block.kind === "text" || block.kind === "copy_organize"
+          workingBlock.kind === "text" || workingBlock.kind === "copy_organize"
             ? await loadCanvasDocumentTexts(collectDocumentAssets(blockId, safeBlocks, safeEdges))
             : [];
         const texts = [...collectUpstreamTexts(blockId, safeBlocks, safeEdges), ...docTexts];
         const out = await runCanvasBlock(runDepsWithPlan, runBlockPayload, { visionImages, texts });
+        const stashUrls = Array.isArray(workingBlock.outputUrls) ? workingBlock.outputUrls : [];
         patchOne(blockId, {
           status: "done",
           outputText: out.outputText,
           outputUrl: out.outputUrl,
-          outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : block.outputUrls),
+          outputUrls: out.outputUrls ??
+            (out.outputUrl
+              ? Array.from(new Set([out.outputUrl, ...stashUrls])).slice(0, 8)
+              : stashUrls),
           ...(out.seedance25ThreadId ? { seedance25ThreadId: out.seedance25ThreadId } : {}),
           ...(out.seedance25WebThreadLink
             ? { seedance25WebThreadLink: out.seedance25WebThreadLink }
@@ -1081,7 +1143,15 @@ export default function FreeformCanvas({
         toast.error(msg);
       }
     },
-    [blocks, edges, onBlocksChange, onEdgesChange, patchOne, runDepsWithPlan],
+    [
+      blocks,
+      edges,
+      onBlocksChange,
+      onEdgesChange,
+      patchOne,
+      runDepsWithPlan,
+      compileManhuaRerun,
+    ],
   );
 
   const uploadFilesForBlock = useCallback(

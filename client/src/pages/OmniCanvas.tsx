@@ -14,6 +14,20 @@ import {
   planManhuaAssetImageSpawns,
   seedIdFromManhuaSheetBlockId,
 } from "@shared/manhuaAssetImageGate";
+import {
+  applyManhuaRerunCompilePatch,
+  compileManhuaAssetSheetPromptForRerun,
+  isManhuaAssetSheetBlockId,
+  isManhuaClipBlockId,
+  shouldRecompileManhuaBlockOnRerun,
+} from "@shared/manhuaCanvasRerunCompile";
+import {
+  directorBoardHttpsByEpisode,
+  loadManhuaDirectorBoardMainByEpisode,
+  normalizeDirectorBoardMainByEpisode,
+  saveManhuaDirectorBoardMainByEpisode,
+  type ManhuaDirectorBoardMainByEpisode,
+} from "@/lib/manhuaDirectorBoardStore";
 import { MANHUA_PROP_SHAPE_LOOKUP_MAX } from "@shared/manhuaPropShapeHint";
 import {
   buildManhuaCustomAssetGenFromLibraryPrompt,
@@ -470,6 +484,15 @@ export default function OmniCanvas() {
   });
   /** 确认编剧后的专案 Bible（系列级真相；≠ 工厂节点 bible-*） */
   const [projectBible, setProjectBible] = useState<ManhuaProjectBible | null>(() => bootBible);
+  /** 集号 → 导演板裁后主画面（长期 gcsUri + 现签 url） */
+  const [directorBoardMainByEpisode, setDirectorBoardMainByEpisode] =
+    useState<ManhuaDirectorBoardMainByEpisode>(loadManhuaDirectorBoardMainByEpisode);
+  const resignedBoardGcsUriRef = useRef<Set<string>>(new Set());
+  /** 出片/ensure 用的 HTTPS map（由 gcsUri 现签或缓存 url） */
+  const directorBoardUrlByEpisode = useMemo(
+    () => directorBoardHttpsByEpisode(directorBoardMainByEpisode),
+    [directorBoardMainByEpisode],
+  );
   const [factoryTopic, setFactoryTopic] = useState(
     () => initialWriterSession?.topic || initialFactoryPrefs.topic || "",
   );
@@ -696,6 +719,41 @@ export default function OmniCanvas() {
       cancelled = true;
     };
   }, [customAssetRefs]);
+  /** 导演板签名 url 过期：有 gcsUri 则现签刷新 */
+  useEffect(() => {
+    const stale = Object.entries(directorBoardMainByEpisode).filter(
+      ([, e]) => e?.gcsUri && !resignedBoardGcsUriRef.current.has(e.gcsUri),
+    );
+    if (!stale.length) return;
+    let cancelled = false;
+    void (async () => {
+      const resolved: Array<{ ep: number; gcsUri: string; url: string }> = [];
+      for (const [k, e] of stale) {
+        const ep = Number(k);
+        const gcsUri = String(e?.gcsUri || "").trim();
+        if (!Number.isFinite(ep) || !gcsUri) continue;
+        try {
+          const url = await resolveOmniMaterialUrl(gcsUri);
+          resolved.push({ ep, gcsUri, url });
+        } catch {
+          /* 保持旧 url，下次再试 */
+        }
+      }
+      if (cancelled || !resolved.length) return;
+      setDirectorBoardMainByEpisode((prev) => {
+        const next = { ...prev };
+        for (const r of resolved) {
+          resignedBoardGcsUriRef.current.add(r.gcsUri);
+          next[r.ep] = { gcsUri: r.gcsUri, url: r.url };
+        }
+        saveManhuaDirectorBoardMainByEpisode(next);
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [directorBoardMainByEpisode]);
   /**
    * 上传入口已统一（唯一入口 uploadCustomAssetFiles 强制先选分类），新上传
    * 不会再产生 role="unset"；但老草稿可能存着历史未归类图，不能静默丢弃——
@@ -1392,6 +1450,11 @@ export default function OmniCanvas() {
     if (Array.isArray(prefs.customAssetRefs)) {
       setCustomAssetRefs(normalizeManhuaCustomAssetRefs(prefs.customAssetRefs));
     }
+    if (prefs.directorBoardMainByEpisode) {
+      setDirectorBoardMainByEpisode(
+        normalizeDirectorBoardMainByEpisode(prefs.directorBoardMainByEpisode),
+      );
+    }
     if (typeof prefs.femaleId === "string") setFactoryFemaleId(prefs.femaleId);
     if (typeof prefs.maleId === "string") setFactoryMaleId(prefs.maleId);
     if (typeof prefs.artStyleId === "string") {
@@ -1494,6 +1557,7 @@ export default function OmniCanvas() {
       artStyleManual,
       customAssetRefs,
       shareAssetToLibrary,
+      directorBoardMainByEpisode,
     };
     const writerSession = {
       topic: factoryTopic,
@@ -1559,6 +1623,7 @@ export default function OmniCanvas() {
     characterVoiceLocks,
     audioReferenceLock,
     shareAssetToLibrary,
+    directorBoardMainByEpisode,
     viralTemplateId,
     writerVideoModel,
     deliveryPackage,
@@ -1910,6 +1975,10 @@ export default function OmniCanvas() {
   const expandWriterMutation = trpc.mvAnalysis.expandManhuaWriterPack.useMutation();
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const splitPropSheetMutation = trpc.mvAnalysis.splitManhuaPropSheet.useMutation();
+  const cropDirectorBoardMutation = trpc.mvAnalysis.cropManhuaDirectorBoardMain.useMutation();
+  const buildDirectorBoardPromptMutation =
+    trpc.mvAnalysis.buildManhuaDirectorBoardPrompt.useMutation();
+  const [assetZipBusy, setAssetZipBusy] = useState(false);
 
   const pathTrackLabelZh = useMemo(() => {
     const path = getPathCameraRecipeById(selectedPathRecipeIds[0]);
@@ -2107,6 +2176,7 @@ export default function OmniCanvas() {
       audioReferenceLock,
       manhuaAssetPathById: manhuaAssetMaps.pathById,
       manhuaAssetTileUrlsById: manhuaAssetMaps.tileUrlsById,
+      manhuaDirectorBoardUrlByEpisode: directorBoardUrlByEpisode,
       getManhuaEpisodeSegmentPromptsForVoiceGate: (episodeIndex) =>
         collectManhuaEpisodeSegmentPromptsForVoiceGate(blocksRef.current, episodeIndex),
       optimizeCopy: async ({ sourceText, optimizationBrief, modelName }) => {
@@ -2201,6 +2271,232 @@ export default function OmniCanvas() {
       characterVoiceLocks,
       audioReferenceLock,
       manhuaAssetMaps,
+      directorBoardUrlByEpisode,
+    ],
+  );
+
+  const setDirectorBoardMainForEpisode = useCallback(
+    (episodeIndex: number, entry: { gcsUri: string; url?: string } | null) => {
+      const ep = Math.max(1, Math.floor(episodeIndex) || 1);
+      setDirectorBoardMainByEpisode((prev) => {
+        const next = { ...prev };
+        if (!entry || (!entry.gcsUri && !entry.url)) delete next[ep];
+        else {
+          next[ep] = {
+            gcsUri: String(entry.gcsUri || "").trim(),
+            ...(entry.url ? { url: String(entry.url).trim() } : {}),
+          };
+          if (next[ep]!.gcsUri) resignedBoardGcsUriRef.current.delete(next[ep]!.gcsUri);
+        }
+        saveManhuaDirectorBoardMainByEpisode(next);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const ingestDirectorBoardFile = useCallback(
+    async (episodeIndex: number, file: File) => {
+      const ep = Math.max(1, Math.floor(episodeIndex) || 1);
+      const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
+      const asset = await uploadOneCanvasAsset({
+        file,
+        index: Date.now() % 1000,
+        getSignedUploadUrl: (input) => getSignedUrlMutation.mutateAsync(input),
+      });
+      const boardUrl = String(asset.url || "").trim();
+      if (!/^https?:\/\//i.test(boardUrl)) throw new Error("导演板上传失败");
+      const cropped = await cropDirectorBoardMutation.mutateAsync({ boardUrl });
+      const mainUrl = String(cropped?.url || "").trim();
+      const gcsUri = String(cropped?.gcsUri || "").trim();
+      if (!/^https?:\/\//i.test(mainUrl)) throw new Error("导演板裁切未返回主画面地址");
+      if (!/^gs:\/\//i.test(gcsUri)) throw new Error("导演板裁切未返回长期存储地址");
+      setDirectorBoardMainForEpisode(ep, { gcsUri, url: mainUrl });
+      toast.success(`第${ep}集导演板已裁切并接入成片垫图`);
+      return mainUrl;
+    },
+    [cropDirectorBoardMutation, getSignedUrlMutation, setDirectorBoardMainForEpisode],
+  );
+
+  /** 方案 B：拼导演板出图提示词并复制，用户自行出图后再「上传导演板」裁切入库 */
+  const copyDirectorBoardPrompt = useCallback(async () => {
+    const ep = writerFocusEpisode;
+    const epMeta = writerPack?.episodes.find((e) => e.index === ep);
+    const epBody = epMeta?.body || "";
+    const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
+    if (!segmentPlan.segments.length) {
+      toast.error("本集可拍表为空，无法拼导演板提示词");
+      return;
+    }
+    const res = await buildDirectorBoardPromptMutation.mutateAsync({
+      episodeNumber: ep,
+      episodeTitleZh: String(epMeta?.title || "").trim(),
+      segments: segmentPlan.segments.map((s) => ({
+        index: s.index,
+        intentZh: s.intentZh,
+        dialogueZh: s.dialogueZh,
+        performanceZh: s.performanceZh,
+        sceneZh: s.sceneZh,
+        paletteZh: s.paletteZh,
+        castZh: s.castZh,
+        wardrobePropZh: s.wardrobePropZh,
+        lightingCameraZh: s.lightingCameraZh,
+      })),
+    });
+    const textPrompt = String(res?.promptZh || "").trim();
+    if (!textPrompt) throw new Error("导演板提示词为空");
+    await navigator.clipboard.writeText(textPrompt);
+    toast.success("已复制导演板提示词", {
+      description: "请先出齐定妆/场景/道具，再出导演板整版图，最后点「上传导演板」裁切接入。",
+    });
+  }, [writerFocusEpisode, writerPack, buildDirectorBoardPromptMutation]);
+
+  const importAssetZipFile = useCallback(
+    async (file: File) => {
+      setAssetZipBusy(true);
+      try {
+        const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
+        const { importManhuaAssetZipFile } = await import("@/lib/manhuaAssetZipImport");
+        const result = await importManhuaAssetZipFile({
+          file,
+          getSignedUploadUrl: (input) => getSignedUrlMutation.mutateAsync(input),
+          uploadOne: async (f, index) => {
+            const asset = await uploadOneCanvasAsset({
+              file: f,
+              index,
+              getSignedUploadUrl: (input) => getSignedUrlMutation.mutateAsync(input),
+            });
+            return { url: asset.url, gcsUri: asset.gcsUri };
+          },
+        });
+        if (result.addedRefs.length) {
+          setCustomAssetRefs((prev) =>
+            normalizeManhuaCustomAssetRefs([...prev, ...result.addedRefs]),
+          );
+        }
+        for (const board of result.directorBoards) {
+          try {
+            const cropped = await cropDirectorBoardMutation.mutateAsync({
+              boardUrl: board.boardUrl,
+            });
+            const mainUrl = String(cropped?.url || "").trim();
+            const gcsUri = String(cropped?.gcsUri || "").trim();
+            if (/^https?:\/\//i.test(mainUrl) && /^gs:\/\//i.test(gcsUri)) {
+              setDirectorBoardMainForEpisode(board.episodeIndex, { gcsUri, url: mainUrl });
+            }
+          } catch (e) {
+            console.warn("[zip] director board crop failed", e);
+          }
+        }
+        toast.success("资产包已导入", {
+          description: `参考图 ${result.addedRefs.length} 张 · 导演板 ${result.directorBoards.length} 集 · 跳过 ${result.skippedCount} · 去重 ${result.droppedDupes}`,
+        });
+      } finally {
+        setAssetZipBusy(false);
+      }
+    },
+    [cropDirectorBoardMutation, getSignedUrlMutation, setDirectorBoardMainForEpisode],
+  );
+
+  /**
+   * 画布节点重跑：设定图走编剧表重编译；成片走 ensureManhuaFragmentClips 重铺 prompt。
+   * 旧产物进 outputUrls 暂存，避免「按钮转了但吃旧稿」。
+   */
+  const compileManhuaRerun = useCallback(
+    async (block: CanvasBlock) => {
+      if (!shouldRecompileManhuaBlockOnRerun(block.id)) return null;
+      const ep = getBlockEpisodeIndex(block) ?? writerFocusEpisode;
+      if (isManhuaAssetSheetBlockId(block.id)) {
+        const compiled = compileManhuaAssetSheetPromptForRerun(block, {
+          assetCanon: projectBible?.assetCanon,
+          episodeIndex: ep,
+          topic: factoryTopic,
+          artStyleId: projectBible?.cast?.artStyleId || factoryArtStyleId,
+          customRefs: customAssetRefs,
+          characterIds: projectBible?.cast?.characterIds,
+          ancientArchetypeIds: projectBible?.cast?.ancientArchetypeIds,
+          sceneId: factorySceneId || projectBible?.cast?.sceneId,
+          assetBlocks: blocks
+            .filter(
+              (b) =>
+                b.id.startsWith("charsheet-") ||
+                b.id.startsWith("sceneplate-") ||
+                b.id.startsWith("propsheet-") ||
+                b.id.startsWith("propplate-"),
+            )
+            .map((b) => ({
+              id: b.id,
+              outputUrl: b.outputUrl,
+              outputUrls: b.outputUrls,
+            })),
+        });
+        if (!compiled) {
+          throw new Error("无法按当前编剧表重编译本设定图，请走工作台「重出」");
+        }
+        return {
+          ...applyManhuaRerunCompilePatch(compiled),
+          changed: compiled.changed,
+          beforePrompt: compiled.beforePrompt,
+          afterPrompt: compiled.afterPrompt,
+        };
+      }
+      if (isManhuaClipBlockId(block.id)) {
+        const sheetUrls = collectManhuaCharacterSheetUrlById(blocks, projectBible?.assetCanon);
+        const epBody =
+          writerPack?.episodes.find((e) => e.index === ep)?.body || "";
+        const segmentPlan = parseManhuaEpisodeSegmentPlanFromMarkdown(epBody);
+        const ensured = ensureManhuaFragmentClips(blocks, edges, ep, {
+          assetCanon: projectBible?.assetCanon,
+          characterSheetUrlById: sheetUrls,
+          propImageUrlById: collectManhuaPropImageUrlById(
+            customAssetRefs,
+            projectBible?.assetCanon,
+          ),
+          customRefs: customAssetRefs,
+          segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
+          characterLookSets,
+          segmentLookBindings,
+          directorBoardUrlByEpisode,
+        });
+        const fresh = ensured.blocks.find((b) => b.id === block.id);
+        if (!fresh?.prompt?.trim()) {
+          throw new Error("无法重算本段成片提示词，请先「审阅成片提示词」铺段");
+        }
+        const beforePrompt = String(block.prompt || "");
+        const afterPrompt = fresh.prompt.trim();
+        const compiled = {
+          prompt: afterPrompt,
+          beforePrompt,
+          afterPrompt,
+          stashOutputUrls: Array.from(
+            new Set(
+              [block.outputUrl, ...(block.outputUrls || [])].filter(Boolean) as string[],
+            ),
+          ).slice(0, 8),
+          changed: beforePrompt.trim() !== afterPrompt,
+        };
+        return {
+          ...applyManhuaRerunCompilePatch(compiled),
+          changed: compiled.changed,
+          beforePrompt,
+          afterPrompt,
+        };
+      }
+      return null;
+    },
+    [
+      blocks,
+      edges,
+      writerFocusEpisode,
+      projectBible,
+      factoryTopic,
+      factoryArtStyleId,
+      factorySceneId,
+      customAssetRefs,
+      writerPack,
+      characterLookSets,
+      segmentLookBindings,
+      directorBoardUrlByEpisode,
     ],
   );
 
@@ -2588,6 +2884,8 @@ export default function OmniCanvas() {
     setDirectorUnlocked(false);
     setProjectBible(null);
     setCustomAssetRefs([]);
+    setDirectorBoardMainByEpisode({});
+    saveManhuaDirectorBoardMainByEpisode({});
     setWriterConfirmBlockers([]);
     setViralTemplateId("");
     const t0 = Date.now();
@@ -2709,6 +3007,7 @@ export default function OmniCanvas() {
         artStyleManual,
         customAssetRefs: [] as ManhuaCustomAssetRef[],
         shareAssetToLibrary,
+        directorBoardMainByEpisode: {} as ManhuaDirectorBoardMainByEpisode,
       };
       persistManhuaDraftLocally({
         writerSession,
@@ -2875,6 +3174,8 @@ export default function OmniCanvas() {
       setWriterConfirmed(false);
       setProjectBible(null);
       setCustomAssetRefs([]);
+      setDirectorBoardMainByEpisode({});
+      saveManhuaDirectorBoardMainByEpisode({});
       setWriterFocusEpisode(1);
       setWriterEpisodeCount(res.pack.episodeCount);
       setWriterImportDraft(text);
@@ -3021,6 +3322,8 @@ export default function OmniCanvas() {
     setWriterConfirmed(false);
     setProjectBible(null);
     setCustomAssetRefs([]);
+    setDirectorBoardMainByEpisode({});
+    saveManhuaDirectorBoardMainByEpisode({});
     setWriterFocusEpisode(1);
     setWriterImportDraft("");
     setWriterConfirmBlockers([]);
@@ -4066,7 +4369,7 @@ export default function OmniCanvas() {
       onlyAnchorIds?: string[];
       /**
        * 「重出本类 N 张」：这些 anchor 即使已有成品图，也按**新编译的提示词**重出。
-       * 画布上点节点重跑只会复用旧 prompt，改不掉老毛病（如道具烧字）。
+       * 工作台「重出本类」走本路径重编译；画布节点重跑已接 compileManhuaRerun。
        * 与增量同性质：不清别的资产、不跳阶段。
        */
       regenerateAnchorIds?: string[];
@@ -5977,6 +6280,7 @@ export default function OmniCanvas() {
                         characterVoiceLocks={characterVoiceLocks}
                         onReplaceCharacterVoiceAudio={handleReplaceCharacterVoiceAudio}
                         manhuaMention={manhuaCanvasMention}
+                        compileManhuaRerun={compileManhuaRerun}
                       />
                     </div>
                   }
@@ -6086,6 +6390,25 @@ export default function OmniCanvas() {
                       fragmentShotIndex: shotIndex,
                     });
                   }}
+                  directorBoardMainUrl={
+                    directorBoardMainByEpisode[writerFocusEpisode]?.url ||
+                    directorBoardUrlByEpisode[writerFocusEpisode] ||
+                    null
+                  }
+                  directorBoardBusy={
+                    cropDirectorBoardMutation.isPending || assetZipBusy
+                  }
+                  onIngestDirectorBoardFile={async (file) => {
+                    await ingestDirectorBoardFile(writerFocusEpisode, file);
+                  }}
+                  onClearDirectorBoard={() =>
+                    setDirectorBoardMainForEpisode(writerFocusEpisode, null)
+                  }
+                  onCopyDirectorBoardPrompt={() => copyDirectorBoardPrompt()}
+                  onImportAssetZipFile={async (file) => {
+                    await importAssetZipFile(file);
+                  }}
+                  assetZipBusy={assetZipBusy}
                   onEnsureSegmentClips={() => {
                     setBlocks((prev) => {
                       const sheetUrls = collectManhuaCharacterSheetUrlById(
@@ -6107,6 +6430,7 @@ export default function OmniCanvas() {
                         segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
                         characterLookSets,
                         segmentLookBindings,
+                        directorBoardUrlByEpisode,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -6151,6 +6475,7 @@ export default function OmniCanvas() {
                         segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
                         characterLookSets,
                         segmentLookBindings,
+                        directorBoardUrlByEpisode,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -6228,6 +6553,7 @@ export default function OmniCanvas() {
                         segmentPlan: segmentPlan.segments.length ? segmentPlan : null,
                         characterLookSets,
                         segmentLookBindings,
+                        directorBoardUrlByEpisode,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -7098,6 +7424,7 @@ export default function OmniCanvas() {
                         characterVoiceLocks={characterVoiceLocks}
                         onReplaceCharacterVoiceAudio={handleReplaceCharacterVoiceAudio}
                         manhuaMention={manhuaCanvasMention}
+                        compileManhuaRerun={compileManhuaRerun}
                       />
                     </div>
                   </div>
@@ -7811,6 +8138,7 @@ export default function OmniCanvas() {
             characterVoiceLocks={characterVoiceLocks}
             onReplaceCharacterVoiceAudio={handleReplaceCharacterVoiceAudio}
             manhuaMention={manhuaCanvasMention}
+            compileManhuaRerun={compileManhuaRerun}
           />
           </div>
           ) : null}

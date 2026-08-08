@@ -296,7 +296,7 @@ type Props = {
   onFillPendingSheets?: (anchorIds: string[]) => void | Promise<void>;
   /**
    * 重出这一批**已有图**的资产（按新编译提示词重来）；「重出本类 N 张」按钮用。
-   * 画布上点节点重跑只会复用旧 prompt，改不掉老毛病（如道具烧字）。
+   * 画布节点重跑已接 compileManhuaRerun；工作台批量入口仍保留。
    */
   onRegenerateSheets?: (opts: {
     anchorIds: string[];
@@ -353,6 +353,19 @@ type Props = {
   onLayoutReadableChain?: () => void;
   /** 确保本集段成片节点已铺好（审阅提示词前） */
   onEnsureSegmentClips?: () => void;
+  /**
+   * 集级导演分镜板（阿硕对照）：上传整版 → 裁主画面 → 写入成片垫图。
+   * 只接现成图，本入口不出图。
+   */
+  directorBoardMainUrl?: string | null;
+  onIngestDirectorBoardFile?: (file: File) => void | Promise<void>;
+  onClearDirectorBoard?: () => void;
+  directorBoardBusy?: boolean;
+  /** 复制导演板出图提示词（用户自行出图后再上传裁切） */
+  onCopyDirectorBoardPrompt?: () => void | Promise<void>;
+  /** 导入资产 ZIP（含 director_boards/） */
+  onImportAssetZipFile?: (file: File) => void | Promise<void>;
+  assetZipBusy?: boolean;
   /**
    * 审阅成片提示词主路径：铺段节点 + 竖排后，聚焦并高亮目标段节点到视口中央。
    * 有此回调时优先走它，避免「先 focus 再 layout」滚到空白区。
@@ -524,6 +537,13 @@ export default function ManhuaScriptWorkbench({
   onGenerateAllEpisodeKeyarts,
   onLayoutReadableChain,
   onEnsureSegmentClips,
+  directorBoardMainUrl = null,
+  onIngestDirectorBoardFile,
+  onClearDirectorBoard,
+  directorBoardBusy = false,
+  onCopyDirectorBoardPrompt,
+  onImportAssetZipFile,
+  assetZipBusy = false,
   onReviewClipPromptsOnCanvas,
   onUpdateClipPrompt,
   onResumeFromFailure,
@@ -1874,6 +1894,90 @@ export default function ManhuaScriptWorkbench({
               >
                 审阅成片提示词
               </button>
+              {onIngestDirectorBoardFile ? (
+                <label
+                  className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[10px] font-semibold ${
+                    directorBoardMainUrl
+                      ? "border-emerald-300/40 bg-emerald-500/15 text-emerald-50"
+                      : "border-amber-300/35 bg-amber-500/10 text-amber-50/90"
+                  } ${factoryBusy || directorBoardBusy ? "pointer-events-none opacity-45" : ""}`}
+                  title="上传本集导演分镜板整版图；裁出主画面后接入成片垫图（不裁则模型易学四格拼贴）"
+                >
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="hidden"
+                    disabled={Boolean(factoryBusy || directorBoardBusy)}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) return;
+                      void Promise.resolve(onIngestDirectorBoardFile(file)).catch(
+                        (err: unknown) => {
+                          toast.error(err instanceof Error ? err.message : "导演板接入失败");
+                        },
+                      );
+                    }}
+                  />
+                  {directorBoardBusy
+                    ? "导演板裁切中…"
+                    : directorBoardMainUrl
+                      ? "导演板已接入"
+                      : "上传导演板"}
+                </label>
+              ) : null}
+              {onCopyDirectorBoardPrompt ? (
+                <button
+                  type="button"
+                  disabled={Boolean(factoryBusy || directorBoardBusy)}
+                  onClick={() => {
+                    void Promise.resolve(onCopyDirectorBoardPrompt()).catch((err: unknown) => {
+                      toast.error(err instanceof Error ? err.message : "复制提示词失败");
+                    });
+                  }}
+                  className="rounded-lg border border-white/15 bg-white/[0.04] px-2 py-1.5 text-[10px] text-white/70 hover:bg-white/[0.08] disabled:opacity-45"
+                  title="按本集可拍表拼导演板出图提示词并复制；先出齐定妆/场景/道具，再出整版图，最后上传裁切"
+                >
+                  复制导演板提示词
+                </button>
+              ) : null}
+              {onImportAssetZipFile ? (
+                <label
+                  className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/70 hover:bg-white/[0.08] ${
+                    factoryBusy || assetZipBusy || directorBoardBusy
+                      ? "pointer-events-none opacity-45"
+                      : ""
+                  }`}
+                  title="导入资产 ZIP：characters/scenes/props/costumes/director_boards"
+                >
+                  <input
+                    type="file"
+                    accept=".zip,application/zip"
+                    className="hidden"
+                    disabled={Boolean(factoryBusy || assetZipBusy || directorBoardBusy)}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) return;
+                      void Promise.resolve(onImportAssetZipFile(file)).catch((err: unknown) => {
+                        toast.error(err instanceof Error ? err.message : "ZIP 导入失败");
+                      });
+                    }}
+                  />
+                  {assetZipBusy ? "资产包导入中…" : "导入资产 ZIP"}
+                </label>
+              ) : null}
+              {directorBoardMainUrl && onClearDirectorBoard ? (
+                <button
+                  type="button"
+                  disabled={Boolean(factoryBusy || directorBoardBusy)}
+                  onClick={() => onClearDirectorBoard()}
+                  className="rounded-lg border border-white/15 bg-white/[0.04] px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.08]"
+                  title="清除本集导演板垫图绑定（不删已上传文件）"
+                >
+                  清除导演板
+                </button>
+              ) : null}
               <button
                 type="button"
                 data-manhua-action="generate-fragment"
