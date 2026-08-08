@@ -2,10 +2,10 @@ name: Growth Backup
 
 on:
   schedule:
-    # 每 2 小时。备份要在 Fly 机器上 tar+gzip 整个 growth 卷再拉走，
-    # 每小时跑一次是持续占着磁盘 I/O 与 Actions 额度，而 growth 数据本身按 15 分钟档采集，
-    # 丢 2 小时窗口不会让冷备失去意义。
-    - cron: "0 */2 * * *"
+    # 每 3 小时（UTC）。备份要在 Fly 上 tar+gzip 整个 growth 卷再拉到 Actions/Release，
+    # 原先每小时／每 2 小时都会持续占磁盘 I/O 与额度；growth 本身按 15 分钟档采集，
+    # 冷备丢 3 小时窗口仍可接受。
+    - cron: "0 */3 * * *"
   workflow_dispatch:
 
 concurrency:
