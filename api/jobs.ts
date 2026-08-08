@@ -1135,7 +1135,7 @@ async function assertSeedance25PaidAccess(
     const user = await sdk.authenticateRequest(req as any, { silentMissing: true });
     const userId = Number((user as any)?.id);
     if (!Number.isFinite(userId) || userId <= 0) {
-      return { ok: false, status: 401, error: "请先登录后再使用成片·加长" };
+      return { ok: false, status: 401, error: "请先登录后再使用 Seedance 2.5" };
     }
     const role = String((user as any)?.role || "");
     const { getUserPlan } = await import("../server/credits.js");
@@ -1145,14 +1145,14 @@ async function assertSeedance25PaidAccess(
       return {
         ok: false,
         status: access.reason === "before_launch" ? 503 : 403,
-        error: access.message || "成片·加长暂不可用",
+        error: access.message || "Seedance 2.5 暂不可用",
       };
     }
     return { ok: true };
   } catch (e: any) {
     const msg = String(e?.message || e || "");
     if (/Invalid session|Forbidden|Unauthorized|未登录|登录/i.test(msg)) {
-      return { ok: false, status: 401, error: "请先登录后再使用成片·加长" };
+      return { ok: false, status: 401, error: "请先登录后再使用 Seedance 2.5" };
     }
     throw e;
   }
@@ -1179,6 +1179,7 @@ async function runSeedance25EvolinkJob(
       duration: number;
       workMode: string;
       videoUrl?: string;
+      provider?: string;
     }
 > {
   const access = await assertSeedance25PaidAccess(req);
