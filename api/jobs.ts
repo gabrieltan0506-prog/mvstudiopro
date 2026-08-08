@@ -3848,6 +3848,143 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       }
     }
 
+    if (op === "homePhotoUpscale") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const imageUrl = s(b.imageUrl || "").trim();
+      if (!imageUrl) {
+        return res.status(400).json({ ok: false, error: "请先上传一张照片" });
+      }
+      const upscaleFactorRaw = s(b.upscaleFactor || "").trim();
+      if (upscaleFactorRaw !== "x2" && upscaleFactorRaw !== "x4") {
+        return res.status(400).json({ ok: false, error: "仅支持 2× 或 4× 高清放大" });
+      }
+      const upscaleFactor = upscaleFactorRaw as "x2" | "x4";
+      const qualityWarningAccepted = b.qualityWarningAccepted === true;
+      const sourceBlurScore =
+        typeof b.sourceBlurScore === "number" && Number.isFinite(b.sourceBlurScore)
+          ? Number(b.sourceBlurScore)
+          : undefined;
+
+      try {
+        const { isGeminiApiImageUpscaleConfigured } = await import(
+          "../server/services/geminiApiImageUpscale.js"
+        );
+        if (!isGeminiApiImageUpscaleConfigured()) {
+          return res.status(503).json({ ok: false, error: "高清放大服务暂不可用，请稍后重试" });
+        }
+
+        const viewer = await resolveJobUser(req);
+        if (!viewer) {
+          return res.status(401).json({ ok: false, error: "请先登录后再高清放大" });
+        }
+        const { deductCreditsAmount, refundCredits } = await import("../server/credits.js");
+        const { imageUpscaleTotalCredits } = await import("../shared/plans.js");
+        const creditsNeeded = imageUpscaleTotalCredits("homePhotoUpscaleBase", upscaleFactor);
+
+        let creditsCharged = 0;
+        try {
+          const out = await deductCreditsAmount(
+            viewer.userId,
+            creditsNeeded,
+            "imageUpscale",
+            `首页照片高清放大 ${upscaleFactor}${
+              qualityWarningAccepted ? "；已确认原图模糊风险提示" : ""
+            }`,
+          );
+          creditsCharged = out.cost;
+        } catch {
+          return res.status(402).json({
+            ok: false,
+            error: `积分不足：本次高清放大需要 ${creditsNeeded} 积分，请补充积分后重试`,
+          });
+        }
+
+        try {
+          const { createHomePhotoUpscaleTask } = await import(
+            "../server/services/homePhotoUpscaleTask.js"
+          );
+          const task = await createHomePhotoUpscaleTask({
+            userId: viewer.userId,
+            creditsCharged,
+            imageUrl,
+            upscaleFactor,
+            qualityWarningAccepted,
+            sourceBlurScore,
+          });
+          console.info(
+            `[homePhotoUpscale] accepted taskId=${task.taskId} factor=${upscaleFactor} credits=${creditsCharged}`,
+          );
+          return res.status(200).json({
+            ok: true,
+            async: true,
+            taskId: task.taskId,
+            status: task.status,
+            upscaleFactor,
+            creditsUsed: creditsCharged,
+            imageUrl: task.resultImageUrl || undefined,
+          });
+        } catch (error: any) {
+          if (creditsCharged > 0) {
+            await refundCredits(
+              viewer.userId,
+              creditsCharged,
+              "首页照片高清放大·创建失败退回",
+            ).catch((refundErr) => {
+              console.error("[homePhotoUpscale] refund failed", refundErr);
+            });
+          }
+          throw error;
+        }
+      } catch (error: any) {
+        const message = String(error?.message || "高清放大失败，请稍后重试");
+        console.error("[homePhotoUpscale] failed", message);
+        return res.status(502).json({ ok: false, error: message });
+      }
+    }
+
+    if (op === "homePhotoUpscaleStatus") {
+      if (req.method !== "GET" && req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const taskId = s(b.taskId || q.taskId || "").trim();
+      if (!taskId) {
+        return res.status(400).json({ ok: false, error: "缺少任务编号" });
+      }
+      const viewer = await resolveJobUser(req);
+      if (!viewer) {
+        return res.status(401).json({ ok: false, error: "请先登录后再查询进度" });
+      }
+      try {
+        const { getHomePhotoUpscaleTask } = await import(
+          "../server/services/homePhotoUpscaleTask.js"
+        );
+        const task = await getHomePhotoUpscaleTask(taskId, viewer.userId);
+        if (!task) {
+          return res.status(404).json({ ok: false, error: "任务不存在或无权查看" });
+        }
+        return res.status(200).json({
+          ok: true,
+          taskId: task.taskId,
+          status: task.status,
+          imageUrl: task.resultImageUrl || undefined,
+          error: task.error || undefined,
+          upscaleFactor: task.upscaleFactor,
+          creditsUsed: task.creditsCharged,
+          inputWidth: task.inputWidth,
+          inputHeight: task.inputHeight,
+          outputWidth: task.outputWidth,
+          outputHeight: task.outputHeight,
+        });
+      } catch (error: any) {
+        return res.status(502).json({
+          ok: false,
+          error: error?.message || "查询高清放大进度失败",
+        });
+      }
+    }
+
     if (op === "seedanceI2V") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
