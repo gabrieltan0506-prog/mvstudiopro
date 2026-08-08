@@ -160,6 +160,7 @@ import {
 import {
   HOME_OLD_PHOTO_RESTORE_CREDITS,
   buildOldPhotoRestorePrompt,
+  isHomePhotoResultBrowserReadable,
 } from "../shared/homePhotoTools.js";
 import { knowledgeCardCreditsForPageIndex } from "../shared/knowledgeCardPagination";
 import { extractDocumentText } from "./growth/documentExtract";
@@ -2815,12 +2816,15 @@ function resolveImageUrlForServerFetch(imageUrl: string): string {
 }
 
 /**
- * 首页图片作品不能只保存 1～7 天签名 URL；若结果来自私有 GCS，复制到站内公开存储。
- * 没有公开存储驱动时保留原 URL，避免把几十 MB data URL 写进数据库。
+ * 首页图片作品：若结果是 GCS 短时签名链，复制到平台可读存储（Fly 公网或 GCS V4 签名）。
+ * 禁止再用 storagePut 写私有桶未签名直链——浏览器打开会 AccessDenied（home-photo/restored-*）。
+ * 平台存储不可用时保留原可读 URL；最终调用方须用 isHomePhotoResultBrowserReadable 验收。
  */
 async function persistHomePhotoSignedImage(sourceUrl: string, keyPrefix: string): Promise<string> {
   const url = String(sourceUrl || "").trim();
-  if (!url || !/[?&]X-Goog-(?:Signature|Algorithm)=/i.test(url)) return url;
+  if (!url) return url;
+  // 已是 Fly / Blob 等浏览器可读链：无需再拷；未签名私有链也不能靠 HTTP 拉取，直接交上层失败退款。
+  if (!/[?&]X-Goog-(?:Signature|Algorithm)=/i.test(url)) return url;
   try {
     const response = await fetch(url, {
       redirect: "follow",
@@ -2831,19 +2835,24 @@ async function persistHomePhotoSignedImage(sourceUrl: string, keyPrefix: string)
     if (!buffer.length || buffer.length > 64 * 1024 * 1024) {
       throw new Error(`invalid image bytes=${buffer.length}`);
     }
-    const rawType = String(response.headers.get("content-type") || "image/png").split(";")[0]!.trim();
-    const contentType = rawType.startsWith("image/") ? rawType : "image/png";
-    const extension = contentType.includes("jpeg") ? "jpg" : contentType.includes("webp") ? "webp" : "png";
-    const stored = await storagePut(
-      `home-photo/${keyPrefix}-${Date.now()}-${randomUUID().slice(0, 8)}.${extension}`,
-      buffer,
-      contentType,
-    );
-    return /^https?:\/\//i.test(stored.url) ? stored.url : url;
+    const safePrefix = String(keyPrefix || "result").replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 48) || "result";
+    const { uploadBufferToPlatformStorage } = await import("./services/evolinkGptImage2.js");
+    const persisted = await uploadBufferToPlatformStorage(buffer, `home_photo_${safePrefix}`);
+    const out = String(persisted || "").trim();
+    if (isHomePhotoResultBrowserReadable(out)) return out;
+    return isHomePhotoResultBrowserReadable(url) ? url : out;
   } catch (error) {
     console.error("[persistHomePhotoSignedImage] failed", error);
     return url;
   }
+}
+
+function assertHomePhotoResultBrowserReadable(imageUrl: string): string {
+  const url = String(imageUrl || "").trim();
+  if (!isHomePhotoResultBrowserReadable(url)) {
+    throw new Error("home_photo_result_url_not_browser_readable");
+  }
+  return url;
 }
 
 export const appRouter = router({
@@ -11807,7 +11816,9 @@ ${input.lyrics || "（纯音乐，无歌词）"}
             },
           );
           if (!imageUrl) throw new Error(captureError.message || "图片修复未返回有效结果");
-          imageUrl = await persistHomePhotoSignedImage(imageUrl, "restored");
+          imageUrl = assertHomePhotoResultBrowserReadable(
+            await persistHomePhotoSignedImage(imageUrl, "restored"),
+          );
 
           try {
             const plan = await getUserPlan(ctx.user.id);
@@ -11943,9 +11954,11 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         }
 
         if (input.baseCreditKey === "homePhotoUpscaleBase") {
-          imageUrl = await persistHomePhotoSignedImage(
-            imageUrl,
-            input.upscaleFactor === "x4" ? "upscale-4x" : "upscale-2x",
+          imageUrl = assertHomePhotoResultBrowserReadable(
+            await persistHomePhotoSignedImage(
+              imageUrl,
+              input.upscaleFactor === "x4" ? "upscale-4x" : "upscale-2x",
+            ),
           );
           try {
             const plan = await getUserPlan(ctx.user.id);

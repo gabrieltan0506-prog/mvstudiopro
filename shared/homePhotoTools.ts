@@ -1,6 +1,24 @@
 /** 首页照片工具：老照片修复并自然上色。 */
 export const HOME_OLD_PHOTO_RESTORE_CREDITS = 10;
 
+/**
+ * 首页照片结果是否可被浏览器直接打开。
+ * 拒绝私有桶未签名直链（典型：`home-photo/restored-*` → GCS AccessDenied）。
+ */
+export function isHomePhotoResultBrowserReadable(url: string): boolean {
+  const u = String(url || "").trim();
+  if (!/^https?:\/\//i.test(u)) return false;
+  if (/[?&]X-Goog-(?:Signature|Algorithm)=/i.test(u)) return true;
+  if (/[?&]X-Amz-Signature=/i.test(u)) return true;
+  if (/[?&]op=flyVolumeMedia\b/i.test(u)) return true;
+  if (/\.public\.blob\.vercel-storage\.com\b/i.test(u)) return true;
+  // 已知坏链：私有桶 home-photo/* 未签名
+  if (/\/home-photo\//i.test(u)) return false;
+  if (/^https?:\/\/storage\.googleapis\.com\//i.test(u)) return false;
+  if (/polished-pond-5133/i.test(u)) return false;
+  return true;
+}
+
 /** 首页照片动画的独立 15 秒基准价；不得跟随画布成片价格静默变动。 */
 export const HOME_PHOTO_ANIMATE_15S_CREDITS = 118;
 
