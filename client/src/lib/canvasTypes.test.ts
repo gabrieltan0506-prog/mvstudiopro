@@ -6,6 +6,7 @@ import {
   collectVisionImages,
   DEFAULT_CANVAS_TEXT_MODEL,
   defaultCanvasBlock,
+  isCanvasProductVideoModel,
   normalizeCanvasBlock,
   normalizeCanvasVideoModel,
   resolveBlockHandoffText,
@@ -27,8 +28,9 @@ describe("canvas spawn + defaults", () => {
     expect(defaultCanvasBlock("text", 0, 0).textModel).toBe("kimi-k3");
   });
 
-  it("exposes five product video engines with formal labels", () => {
+  it("exposes the product video engines with formal labels", () => {
     expect(VIDEO_MODEL_OPTIONS.map((m) => m.id)).toEqual([
+      "seedance-2.0-mini",
       "seedance-2.0",
       "seedance-2.0-fast",
       "seedance-2.5",
@@ -36,6 +38,7 @@ describe("canvas spawn + defaults", () => {
       "happyhorse-1.1",
     ]);
     expect(VIDEO_MODEL_OPTIONS.map((m) => m.label)).toEqual([
+      "Seedance 2.0 mini（草稿档）",
       "Seedance 2.0",
       "Seedance 2.0 fast",
       "Seedance 2.5",
@@ -44,6 +47,50 @@ describe("canvas spawn + defaults", () => {
     ]);
     expect(normalizeCanvasVideoModel("alibaba/happyhorse-1.1")).toBe("happyhorse-1.1");
     expect(normalizeCanvasVideoModel("happy-horse")).toBe("happyhorse-1.1");
+  });
+
+  /** Mini 是画布可选正式档（漫剧开场也有），别名要认全，否则旧草稿会被顶回默认 2.5 */
+  it("normalizes Seedance 2.0 mini aliases and treats it as a product engine", () => {
+    for (const alias of ["seedance-2.0-mini", "2.0-mini", "mini"]) {
+      expect(normalizeCanvasVideoModel(alias)).toBe("seedance-2.0-mini");
+    }
+    expect(isCanvasProductVideoModel("seedance-2.0-mini")).toBe(true);
+  });
+
+  /**
+   * HH 已被移出漫剧但仍保留在自由画布：迁移只能作用于漫剧段节点
+   * （clip- / omni_edit- 前缀），不能顺手把自由画布的 HH 节点也换掉。
+   */
+  it("migrates Happy Horse off manhua clip nodes but keeps it on free-canvas nodes", () => {
+    const clip = normalizeCanvasBlock({
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "clip-e01-s01",
+      videoModel: "happyhorse-1.1",
+    });
+    expect(clip.videoModel).toBe("seedance-2.0-fast");
+
+    const omniEdit = normalizeCanvasBlock({
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "omni_edit-e01-s01",
+      videoModel: "happyhorse-1.1",
+    });
+    expect(omniEdit.videoModel).toBe("seedance-2.0-fast");
+
+    const freeCanvas = normalizeCanvasBlock({
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "video-1700000000000-abcde",
+      videoModel: "happyhorse-1.1",
+    });
+    expect(freeCanvas.videoModel).toBe("happyhorse-1.1");
+  });
+
+  it("keeps mini on manhua clip nodes（别被 migrate 顶回默认档）", () => {
+    const clip = normalizeCanvasBlock({
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "clip-e01-s01",
+      videoModel: "seedance-2.0-mini",
+    });
+    expect(clip.videoModel).toBe("seedance-2.0-mini");
   });
 
   it("defaults Seedance 2.5 video blocks to multimodal reference mode", () => {

@@ -10,6 +10,7 @@
  * - `bytedance/seedance-2.0` 720p $0.1512/秒 → 15 秒约 25 积分成本
  * - `bytedance/seedance-2.0-fast` 720p $0.121/秒 → 15 秒约 20 积分成本
  * - `minimax/hailuo-3` 2K $0.13/秒 → 15 秒约 22 积分成本
+ * - `seedance-2.0-mini` 15 秒约 5（限时）～13（常规）积分成本 → 草稿档零售 39
  * - `alibaba/happyhorse-1.1` 画布成片按同档 720p 零售 118（与首页照片动画独立计价）
  * - 2.5 已切 EvoLink 五模式；当前未取得可核对的上游实扣，不能拿旧小云雀价格冒充成本
  * 2.5 继续沿用既有零售价，但在取得 EvoLink 真实账单前，不对该档毛利率下结论。
@@ -72,12 +73,45 @@ export function normalizeCanvasVideoResolution(raw: unknown): CanvasVideoResolut
   if (r === "4k") return "4K";
   return CANVAS_VIDEO_RESOLUTION_DEFAULT;
 }
-/** 漫剧整集价与折算段价：一集按 4 段计 */
+/**
+ * 漫剧整集价与折算段价：688 是**按 2.5 的 4 段**定的，折成 172/段。
+ *
+ * 注意实收口径：服务端对任何引擎的整集段都按 172/段收，所以整集实收
+ * 随引擎段数变——2.5（4 段）688、2.0/fast（6 段）1032、H3（8 段）1376。
+ * 因此不能把 688 当成所有引擎的整集价对外写死，须用
+ * `manhuaEpisodeTotalCredits(videoModel, segmentCount)` 现算。
+ */
 export const MANHUA_EPISODE_CREDITS = 688;
 export const MANHUA_EPISODE_SEGMENTS_FOR_PRICING = 4;
 export const MANHUA_EPISODE_CREDITS_PER_SEGMENT = Math.round(
   MANHUA_EPISODE_CREDITS / MANHUA_EPISODE_SEGMENTS_FOR_PRICING,
 );
+
+/**
+ * Seedance 2.0 Mini 草稿档（用户 2026-08-09 拍板）。
+ *
+ * Mini 只有 480p/720p、最长 15 秒，所以不吃画质加价表也不吃加长档——
+ * 一个价 39，比 fast 的 118 低三分之二，定位是「试提示词 / 铺草稿」，
+ * 不跟正片档抢单。整集草稿包沿用 688 的打包折扣率（688 ÷ 4×240 ≈ 71.7%）：
+ * 6 段 × 39 = 234 → 168，折合 28/段。
+ */
+export const CANVAS_VIDEO_CREDITS_CLIP_MINI = 39;
+export const MANHUA_EPISODE_CREDITS_MINI = 168;
+export const MANHUA_EPISODE_SEGMENTS_FOR_PRICING_MINI = 6;
+export const MANHUA_EPISODE_CREDITS_PER_SEGMENT_MINI = Math.round(
+  MANHUA_EPISODE_CREDITS_MINI / MANHUA_EPISODE_SEGMENTS_FOR_PRICING_MINI,
+);
+
+/** 计价用的 Mini 判定：容忍画布/jobs 两侧的历史别名 */
+export function isMiniPricedVideoModel(videoModel?: string | null): boolean {
+  const key = String(videoModel || "").trim().toLowerCase();
+  return (
+    key === "seedance-2.0-mini" ||
+    key === "2.0-mini" ||
+    key === "mini" ||
+    key === "2.0mini"
+  );
+}
 
 /** 超过这个秒数算加长档 */
 export const CANVAS_VIDEO_LONG_CLIP_THRESHOLD_SEC = 15;
@@ -93,6 +127,12 @@ export type CanvasVideoPricingInput = {
   isEpisodeSegment?: boolean;
   /** 输出分辨率；1080p 成本是 720p 的 2.25 倍，售价同步抬 */
   resolution?: string | null;
+  /**
+   * 成片引擎。只有 Mini 草稿档需要区分——它单独一个价，
+   * 不吃画质加价表也不吃加长档。其余引擎（2.0 / fast / 2.5 / H3 / Happy Horse）
+   * 沿用按时长与画质分档的旧口径，传不传都一样。
+   */
+  videoModel?: string | null;
 };
 
 /** 高于 720p 的画质加价表 */
@@ -106,11 +146,20 @@ const CANVAS_VIDEO_CREDITS_BY_RESOLUTION: Record<CanvasVideoResolution, number> 
 /**
  * 一次成片请求应扣的积分。
  *
- * 漫剧分段走整集折算价（172），比单段 118 贵是因为一集普遍是 30 秒档；
- * 自由画布单段按时长分档，15 秒内再按画质分四价。
+ * 漫剧分段走整集折算价（172）；自由画布单段按时长分档，15 秒内再按画质分四价。
  * 加长档（>15 秒）只有 2.5 一条路，固定 720p，不吃画质参数。
+ *
+ * 已知口径问题（待用户拍板，本轮不动实收）：172 是按 2.5 的 30 秒段折的，
+ * 但对 6 段/8 段的 15 秒引擎也照收 172，比自由画布同规格单段（118）还贵，
+ * 等于走整集流水线反而更亏。要么按引擎分段价，要么把整集总额封在 688。
  */
 export function canvasVideoClipCredits(input: CanvasVideoPricingInput): number {
+  // Mini 一个价：上游只有 480p/720p 且最长 15 秒，没有可分的画质档与加长档
+  if (isMiniPricedVideoModel(input.videoModel)) {
+    return input.isEpisodeSegment
+      ? MANHUA_EPISODE_CREDITS_PER_SEGMENT_MINI
+      : CANVAS_VIDEO_CREDITS_CLIP_MINI;
+  }
   if (input.isEpisodeSegment) return MANHUA_EPISODE_CREDITS_PER_SEGMENT;
   const sec = Number(input.durationSec);
   if (Number.isFinite(sec) && sec > CANVAS_VIDEO_LONG_CLIP_THRESHOLD_SEC) {
@@ -119,9 +168,42 @@ export function canvasVideoClipCredits(input: CanvasVideoPricingInput): number {
   return CANVAS_VIDEO_CREDITS_BY_RESOLUTION[normalizeCanvasVideoResolution(input.resolution)];
 }
 
+/**
+ * 一集实收合计 = 段价 × 该引擎实际段数。
+ *
+ * 不能直接印 `MANHUA_EPISODE_CREDITS`：688 只在 4 段（2.5）时成立，
+ * 6 段引擎实收 1032、8 段实收 1376。段数由调用方从漫剧段表传进来，
+ * 这里不 import `manhuaSeedanceLayout` 以免把段表耦合进计价底层模块。
+ */
+export function manhuaEpisodeTotalCredits(input: {
+  videoModel?: string | null;
+  /** 该集实际段数；缺省按 688 的 4 段口径 */
+  segmentCount?: number | null;
+}): number {
+  const perSegment = canvasVideoClipCredits({
+    isEpisodeSegment: true,
+    videoModel: input.videoModel,
+  });
+  const raw = Math.floor(Number(input.segmentCount));
+  const segments = Number.isFinite(raw) && raw > 0
+    ? raw
+    : isMiniPricedVideoModel(input.videoModel)
+      ? MANHUA_EPISODE_SEGMENTS_FOR_PRICING_MINI
+      : MANHUA_EPISODE_SEGMENTS_FOR_PRICING;
+  return perSegment * segments;
+}
+
 /** 对外可读的计费说明（可放 toast / 节点角标） */
-export function describeCanvasVideoClipPrice(input: CanvasVideoPricingInput): string {
+export function describeCanvasVideoClipPrice(
+  input: CanvasVideoPricingInput & { episodeSegmentCount?: number | null },
+): string {
   const credits = canvasVideoClipCredits(input);
-  if (input.isEpisodeSegment) return `${credits} 积分/段（整集 ${MANHUA_EPISODE_CREDITS}）`;
+  if (input.isEpisodeSegment) {
+    const episodeTotal = manhuaEpisodeTotalCredits({
+      videoModel: input.videoModel,
+      segmentCount: input.episodeSegmentCount,
+    });
+    return `${credits} 积分/段（整集 ${episodeTotal}）`;
+  }
   return `${credits} 积分/段`;
 }

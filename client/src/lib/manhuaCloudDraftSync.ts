@@ -20,6 +20,7 @@ import {
 } from "@shared/manhuaWriterSession";
 import {
   normalizeCanvasBlock,
+  normalizeCanvasVideoModel,
   type CanvasBlock,
   type CanvasBlockKind,
   type CanvasEdge,
@@ -283,7 +284,22 @@ export function persistManhuaDraftLocally(input: {
   };
 }
 
-export function cloudDraftBlocksToCanvas(blocks: ManhuaCloudDraftPayload["canvas"]["blocks"]): CanvasBlock[] {
+/**
+ * 云草稿 → 画布节点。
+ *
+ * 云端 block schema 不落 `videoModel`，所以成片引擎必须由**会话**带进来
+ * （`writerSession.videoModel`），否则一律硬编码成 fast：2.5 会话恢复后段长从
+ * 30s 掉回 15s，mini 会话恢复后界面印 28 积分/段、实扣却按 fast 的 172，
+ * 两边都是恢复即变价变结构。传不进来时才退回 fast。
+ */
+export function cloudDraftBlocksToCanvas(
+  blocks: ManhuaCloudDraftPayload["canvas"]["blocks"],
+  opts?: { videoModel?: string | null },
+): CanvasBlock[] {
+  const sessionVideoModel = String(opts?.videoModel || "").trim();
+  const restoredVideoModel: CanvasBlock["videoModel"] = sessionVideoModel
+    ? normalizeCanvasVideoModel(sessionVideoModel)
+    : "seedance-2.0-fast";
   return blocks.map((raw) => {
     const kind = (KIND_OK.has(raw.kind as CanvasBlockKind) ? raw.kind : "text") as CanvasBlockKind;
     const base = {
@@ -309,8 +325,7 @@ export function cloudDraftBlocksToCanvas(blocks: ManhuaCloudDraftPayload["canvas
       // 手动划线标注已废除，历史草稿字段读取处兼容忽略，不再还原进画布节点。
       textModel: "kimi-k3",
       imageModel: "gpt-image-2",
-      // 云草稿 schema 不落 videoModel：成片一律 Seedance Fast（不再恢复 Omni）
-      videoModel: "seedance-2.0-fast",
+      videoModel: restoredVideoModel,
       imageBatchCount: 1,
       uploadedAssets: [],
     } as CanvasBlock;
@@ -476,7 +491,9 @@ export function chooseManhuaDraftHydrate(input: {
 export function repairLocalFromCloudDraft(draft: ManhuaCloudDraftPayload): ManhuaLocalPersistResult {
   return persistManhuaDraftLocally({
     writerSession: draft.writerSession,
-    blocks: cloudDraftBlocksToCanvas(draft.canvas.blocks),
+    blocks: cloudDraftBlocksToCanvas(draft.canvas.blocks, {
+      videoModel: draft.writerSession?.videoModel,
+    }),
     edges: draft.canvas.edges,
     factoryPrefs: draft.factoryPrefs,
     clientUpdatedAt: draft.clientUpdatedAt,

@@ -47,6 +47,8 @@ export function normalizeCanvasImageModel(raw: unknown): CanvasImageModel {
 }
 export type CanvasVideoModel =
   | "gemini-omni-flash"
+  /** Seedance 2.0 Mini · EvoLink 草稿档（≤15s，480p/720p，39 积分/段） */
+  | "seedance-2.0-mini"
   | "seedance-2.0"
   | "seedance-2.0-fast"
   /** Seedance 2.5 · EvoLink 官方五模式（约 4–30s） */
@@ -282,8 +284,9 @@ export const IMAGE_MODEL_OPTIONS: Array<{ id: CanvasImageModel; label: string }>
   { id: "gpt-image-2", label: "官方出图" },
 ];
 
-/** 产品成片五引擎：正式产品名（与 manhuaSeedanceLayout 开场选型一致） */
+/** 产品成片引擎：正式产品名（漫剧开场选型另见 manhuaSeedanceLayout，Happy Horse 只在自由画布） */
 export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }> = [
+  { id: "seedance-2.0-mini", label: "Seedance 2.0 mini（草稿档）" },
   { id: "seedance-2.0", label: "Seedance 2.0" },
   { id: "seedance-2.0-fast", label: "Seedance 2.0 fast" },
   { id: "seedance-2.5", label: "Seedance 2.5" },
@@ -340,6 +343,9 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
 
 export function normalizeCanvasVideoModel(raw: unknown): CanvasVideoModel {
   const key = String(raw || "").trim();
+  if (key === "seedance-2.0-mini" || key === "2.0-mini" || key === "mini") {
+    return "seedance-2.0-mini";
+  }
   if (key === "seedance-2.0-fast") return "seedance-2.0-fast";
   if (key === "seedance-2.0") return "seedance-2.0";
   if (key === "seedance-2.5" || key === "2.5") return "seedance-2.5";
@@ -364,11 +370,12 @@ export function normalizeCanvasVideoModel(raw: unknown): CanvasVideoModel {
   return DEFAULT_CANVAS_VIDEO_MODEL;
 }
 
-/** 画布可选成片档位（五引擎） */
+/** 画布可选成片档位 */
 export function isCanvasProductVideoModel(
   videoModel: string | null | undefined,
 ): videoModel is Exclude<CanvasVideoModel, "gemini-omni-flash"> {
   return (
+    videoModel === "seedance-2.0-mini" ||
     videoModel === "seedance-2.0" ||
     videoModel === "seedance-2.0-fast" ||
     videoModel === "seedance-2.5" ||
@@ -383,12 +390,26 @@ export function isCanvasSeedance25VideoModel(
   return String(videoModel || "").trim() === "seedance-2.5";
 }
 
+/** 漫剧段成片节点（区别于自由画布的 video 节点） */
+function isManhuaClipBlockId(id: string | null | undefined): boolean {
+  const key = String(id || "");
+  return key.startsWith("clip-") || key.startsWith("omni_edit-");
+}
+
 /**
  * 视频节点：非产品成片档位一律迁到默认 Fast（含旧 omni_edit-*）。
+ *
+ * 另外把漫剧段节点上的 Happy Horse 迁到等价档 2.0-fast（同 15 秒段、同段价）——
+ * 用户拍板 HH 不做整集流水线引擎，光改会话白名单不够，存量 `clip-*` 节点
+ * 还会照着自己的 videoModel 跑 HH。**自由画布的 video 节点不动**，HH 仍保留在那边。
  */
 export function migrateFactoryClipVideoModel(block: CanvasBlock): CanvasBlock {
-  if (block.kind !== "video" && !String(block.id || "").startsWith("clip-") && !String(block.id || "").startsWith("omni_edit-")) {
+  const isClip = isManhuaClipBlockId(block.id);
+  if (block.kind !== "video" && !isClip) {
     return block;
+  }
+  if (isClip && block.videoModel === "happyhorse-1.1") {
+    return { ...block, videoModel: "seedance-2.0-fast" };
   }
   if (isCanvasProductVideoModel(block.videoModel)) {
     return block;

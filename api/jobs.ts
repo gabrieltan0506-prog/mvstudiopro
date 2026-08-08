@@ -1020,6 +1020,11 @@ type CanvasVideoChargeOpts = {
   skipCharge?: boolean;
   /** 输出分辨率：1080p 单价是 720p 的 2.25 倍 */
   resolution?: string | null;
+  /**
+   * 成片引擎。只有 Mini 草稿档要靠它分流到单独一个价（39 / 整集段 28）；
+   * 其余引擎不传也不影响，仍按时长与画质分档。
+   */
+  videoModel?: string | null;
   /** 首页照片人物动起来按秒计费；缺省保持原画布分档计费。 */
   pricingMode?: "canvas" | "homePhotoAnimate";
 };
@@ -1074,6 +1079,7 @@ async function chargeCanvasVideoCredits(
       durationSec: opts.durationSec ?? undefined,
       isEpisodeSegment,
       resolution: opts.resolution ?? undefined,
+      videoModel: opts.videoModel ?? undefined,
     });
   }
 
@@ -4188,11 +4194,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       );
       const isProbe =
         b.probe === true || String(b.probe ?? q.probe ?? "").trim() === "1";
-      let productVersion = parseSeedanceProductVersion(b.version || q.version || "2.0");
-      // 产品侧已移除 Mini：非探针请求把 mini 改走快速档
-      if (productVersion === "2.0-mini" && !isProbe) {
-        productVersion = "2.0-fast";
-      }
+      const productVersion = parseSeedanceProductVersion(b.version || q.version || "2.0");
       /** Seedance 2.5 正式版：五种 EvoLink 路由，共用计费与异步任务主链。 */
       if (productVersion === "2.5") {
         const result = await runSeedance25EvolinkJob(req, b, q, "画布 Seedance 2.5");
@@ -4321,21 +4323,26 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           }
         }
 
-        // 仅探针 Mini / 未映射版本走 EvoLink
+        /**
+         * Mini 草稿档（用户 2026-08-09 拍板产品化）。上游只有 EvoLink 有 mini 型号，
+         * BytePlus ModelArk 无对应模型，所以这条没有回落路径：失败即失败退费。
+         * 2.5 在本函数开头已被 runSeedance25EvolinkJob 接走，走不到这里。
+         */
         const seedanceVersion = parseSeedanceVersion(productVersion);
-        if (seedanceVersion !== "2.0-mini" && seedanceVersion !== "2.5") {
+        if (seedanceVersion !== "2.0-mini") {
           return res.status(400).json({
             ok: false,
-            error: "请使用成片·标准或成片·快速",
+            error: "请使用成片·草稿、成片·标准或成片·快速",
           });
         }
         const resolution = normalizeSeedanceQuality(
           seedanceVersion,
-          b.resolution || q.resolution || (seedanceVersion === "2.0-mini" ? "480p" : "720p"),
+          b.resolution || q.resolution || (isProbe ? "480p" : "720p"),
         );
-        const duration = parseSeedanceDurationInput(
-          b.duration ?? q.duration ?? b.durationSec ?? (seedanceVersion === "2.0-mini" ? 5 : 15),
+        const rawDuration = parseSeedanceDurationInput(
+          b.duration ?? q.duration ?? b.durationSec ?? (isProbe ? 5 : 15),
         );
+        const durationSec = typeof rawDuration === "number" ? rawDuration : isProbe ? 5 : 15;
         const { isEvolinkSeedanceConfigured, runEvolinkSeedanceVideo } = await import(
           "../server/services/evolinkSeedanceVideo.js"
         );
@@ -4345,27 +4352,80 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             error: "视频服务暂不可用，请稍后重试",
           });
         }
-        const out = await runEvolinkSeedanceVideo({
-          prompt,
-          imageUrl,
-          imageUrls,
-          videoUrls,
-          audioUrls,
-          quality: resolution,
-          aspectRatio,
-          duration: typeof duration === "number" ? duration : seedanceVersion === "2.0-mini" ? 5 : 15,
-          generateAudio,
-          version: seedanceVersion,
-        });
-        return res.status(200).json({
-          ok: true,
-          videoUrl: out.videoUrl,
-          provider: out.provider,
-          model: out.model,
-          mode: out.mode,
-          version: out.version,
+        const label = `画布成片·草稿·${resolution}（${durationSec}s）`;
+        // 探针仍走同步，方便脚本一次拿结果；正式用户走异步 task，避免 HTTP 超时
+        if (isProbe) {
+          const out = await runEvolinkSeedanceVideo({
+            prompt,
+            imageUrl,
+            imageUrls,
+            videoUrls,
+            audioUrls,
+            quality: resolution,
+            aspectRatio,
+            duration: durationSec,
+            generateAudio,
+            version: seedanceVersion,
+          });
+          return res.status(200).json({
+            ok: true,
+            videoUrl: out.videoUrl,
+            provider: out.provider,
+            model: out.model,
+            mode: out.mode,
+            version: out.version,
+            resolution,
+          });
+        }
+        const chargedMini = await chargeCanvasVideoCredits(req, {
+          durationSec,
+          episodeIndex: b.episodeIndex,
           resolution,
+          videoModel: "seedance-2.0-mini",
+          label,
         });
+        if (!chargedMini.ok) {
+          return res.status(chargedMini.status).json({ ok: false, error: chargedMini.error });
+        }
+        try {
+          const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
+          const task = await createCanvasVideoTask({
+            userId: chargedMini.userId,
+            creditsCharged: chargedMini.credits,
+            engine: "seedance-mini-evolink",
+            label,
+            prompt,
+            imageUrl,
+            imageUrls,
+            videoUrls,
+            audioUrls,
+            aspectRatio,
+            duration: durationSec,
+            resolution,
+            generateAudio,
+            seedanceVersion: "2.0-mini",
+          });
+          return res.status(200).json({
+            ok: true,
+            async: true,
+            taskId: task.taskId,
+            status: task.status,
+            videoUrl: task.videoUrl || undefined,
+            version: "2.0-mini",
+            resolution,
+            creditsUsed: chargedMini.credits,
+          });
+        } catch (error: any) {
+          if (chargedMini.credits > 0) {
+            const { refundCredits } = await import("../server/credits.js");
+            await refundCredits(
+              chargedMini.userId,
+              chargedMini.credits,
+              `${label}·创建失败退回`,
+            ).catch(() => {});
+          }
+          throw error;
+        }
       } catch (e: any) {
         return res.status(502).json({ ok: false, error: e?.message || "seedance_failed" });
       }

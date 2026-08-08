@@ -82,6 +82,38 @@ describe("manhuaCloudDraftSync dual-path", () => {
     expect(serializeCloudDraftForUpload(payload)).toContain("mv-manhua-cloud-draft-v1");
   });
 
+  /**
+   * 云端 block schema 不落 videoModel。恢复时若不把会话引擎带进节点，
+   * mini 会话会按 fast 跑（界面印 28 积分/段、实扣 172），2.5 会话段长从 30s 掉回 15s。
+   */
+  it("restores clip engine from the writer session, not a hardcoded fast", () => {
+    const clipBlock = {
+      id: "clip-e01-s01",
+      kind: "video" as const,
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 360,
+      prompt: "成片",
+    };
+    const restoreWith = (videoModel?: string) =>
+      cloudDraftBlocksToCanvas(
+        buildManhuaCloudDraftPayload({
+          clientUpdatedAt: "2026-08-09T00:00:00.000Z",
+          writerSession: { topic: "t", videoModel },
+          blocks: [clipBlock],
+          edges: [],
+        }).canvas.blocks,
+        { videoModel },
+      );
+
+    expect(restoreWith("seedance-2.0-mini")[0]?.videoModel).toBe("seedance-2.0-mini");
+    expect(restoreWith("seedance-2.5")[0]?.videoModel).toBe("seedance-2.5");
+    expect(restoreWith("minimax-hailuo-3")[0]?.videoModel).toBe("minimax-hailuo-3");
+    // 会话没选引擎时才退回 fast
+    expect(restoreWith(undefined)[0]?.videoModel).toBe("seedance-2.0-fast");
+  });
+
   it("slims local canvas by dropping video outputs", () => {
     const slim = slimBlocksForLocalPersist([
       {

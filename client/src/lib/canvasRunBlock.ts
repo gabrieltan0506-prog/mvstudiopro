@@ -582,7 +582,7 @@ async function runSeedanceProductVideo(
     videoUrls?: string[];
     /** 角色声线参考 mp3/wav（最多 3） */
     audioUrls?: string[];
-    version?: "2.0" | "2.0-fast" | "2.5";
+    version?: "2.0-mini" | "2.0" | "2.0-fast" | "2.5";
     /** 段目标秒数；缺省从 prompt「目标时长」解析 */
     duration?: number;
     /** 2.5 官方五模式 → 服务端 EvoLink 真路由 */
@@ -608,9 +608,16 @@ async function runSeedanceProductVideo(
   const videoUrls = (opts?.videoUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const audioUrls = (opts?.audioUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const version =
-    opts?.version === "2.5" ? "2.5" : opts?.version === "2.0-fast" ? "2.0-fast" : "2.0";
+    opts?.version === "2.5"
+      ? "2.5"
+      : opts?.version === "2.0-fast"
+        ? "2.0-fast"
+        : opts?.version === "2.0-mini"
+          ? "2.0-mini"
+          : "2.0";
   const fromPrompt = parseManhuaClipTargetDurationSec(prompt);
   const durationRaw = opts?.duration ?? fromPrompt ?? undefined;
+  // Mini 与 2.0 同为 4–15s 上限，复用 OpenRouter 档的钳制；2.5 才到 30s
   const duration =
     version === "2.5"
       ? clampSeedanceDuration("2.5", durationRaw)
@@ -1240,6 +1247,7 @@ export async function runCanvasBlock(
     let seedance25ThreadId: string | undefined;
     let seedance25WebThreadLink: string | undefined;
     if (
+      videoModel === "seedance-2.0-mini" ||
       videoModel === "seedance-2.0" ||
       videoModel === "seedance-2.0-fast" ||
       useSeedance25 ||
@@ -1506,7 +1514,9 @@ export async function runCanvasBlock(
               ? "2.5"
               : videoModel === "seedance-2.0-fast"
                 ? "2.0-fast"
-                : "2.0",
+                : videoModel === "seedance-2.0-mini"
+                  ? "2.0-mini"
+                  : "2.0",
           duration: clipDuration,
           workMode: useSeedance25 ? workMode : undefined,
           episodeIndex: block.episodeIndex,

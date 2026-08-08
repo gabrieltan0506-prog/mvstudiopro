@@ -157,6 +157,34 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 - Seedance 2.5 按 EvoLink 官方五条模型路由接入：文生视频、图生视频、多模态参考、视频编辑、视频延长。主入口仍是漫剧工厂与 `/canvas`；旧草稿模式会在读取时归一化到五模式，两个历史 jobs 入口共用同一条服务端校验、计费、失败退款和 GCS 镜像主链。首页加入用户提供的 1920×1080 K-pop 声画同步示例；下方模型卡已移除“8 月 9 日上线”和旧六模式文案，改为“正式上线 / 五种创作模式”。用户另给的 30 秒竞速片因带水印明确不采用，等待重新导出的无水印版本。五种付费生产调用尚未逐一实跑，EvoLink 真实成本与毛利率未验，详见 `~/Downloads/2026Aug07/standby0808.md`。
 - 验证：完整 Vitest 为 **236 files / 1518 tests 通过，2 files / 4 tests跳过**；`pnpm check`、`pnpm exec vite build`、博客构建、`git diff --check` 均通过；本地浏览器复核首页桌面/390px 移动端无横向溢出、示例视频可播，文章 7 张图片和 2 条视频均可加载。`/canvas` 未登录态只验证到既有正式会员门禁，未伪造用户身份；代码尚未部署，未从正式页面实扣积分验证退款/作品账本，因此整项仍是“已实现并部分实跑”，不能标记为生产验收完成。
 
+## 2026-08-08
+
+**五引擎 + BytePlus 2.5 主路径（#1124）**：漫剧开场选型五引擎；Seedance 2.5 生产主路径改 **BytePlus → EvoLink fallback**（`byteplusSeedanceVideo` / `canvasVideoTask` / `runSeedance25EvolinkJob`）。代码进 `main`，**首次 Fly Deploy 因 `api/jobs.ts` TS2353 失败**（成功返回含 `provider`，类型未声明）——run `31266490265`。
+
+**博客《漫剧视频模型实测》上架（#1125）**：`/blog/manhua-video-model-review`。对外口径：价格带 + 积分明码、模型名不混卖、成片默认无水印；**不写** BytePlus 上游实扣美元。www OK；Fly 再挂同 tsc——run `31270314622`。
+
+**热修（#1127）**：`jobs.ts` 成功返回补 `provider?: string`；小云雀成片入口恒拒（`xyqSeedanceVideo.ts` 的 `isXyqSeedanceConfigured`/`isXyqSeedance25Ready` 恒 false）；对外文案「成片·加长」→「Seedance 2.5」。**Fly Deploy success**。#1126 关闭并入本刀。
+
+**探针（直连上游，不扣产品积分）**：茶饮 R2V 三条全 BytePlus——2.5 / 2.0 mini / 2.0；H3 机甲 15s 2K 首帧走 OpenRouter `minimax/hailuo-3`。成片在 `~/Downloads/2026Aug08/`（含 `openrouter-h3-mecha-20260809-005302/`）与 `~/Downloads/byteplus-*`。鉴权下载须 Fly secrets，勿本机 export KEY。
+
+## 2026-08-09
+
+**博客防另存（#1128 / #1129）**：`scripts/build-blog.mts` `hardenOwnedMediaHtml()` + 页脚脚本——video `nodownload`、img/video 禁右键与拖拽（非 DRM，防不住抓包）。agent **未经用户明文**即 merge（违规），且本应打成一张 PR。两条 Fly Deploy 现均 success（用户后来重新部署）；`main` HEAD `1a79d85f`，Fly 映像 `sha-7b0bf1dd`。
+
+**Downloads 8/1–8/8 全量复筛（94 个 md / 31 个 mp4）**：修正旧交接三处误记——2.5 的 `video-edit`/`video-extend` **已接线**（缺的是付费实跑）；导演板 / 重跑重编译 / ZIP 导入 **已随 #1123 合入 main**，`canvas-ashuo-review-handoff.md` 的「仍断」判断已过时；`fix/growth-mail-digest-interval` 早已随 #1086 合并。
+
+**用户拍板（2026-08-09 凌晨）**：① Happy Horse 1.1 **移出**漫剧开场（回到 8/6 口径；720p $0.1647/秒比 Seedance 标准还贵 9%），H3 保留；② `seedance-2.0-mini` 产品化，单段 **39 积分**、漫剧整集草稿包 **168 积分**（6×39 套用与 688 相同的 71.7% 打包折扣，折合 28/段）；③ 线上验收用 supervisor 账号走**漫剧生成**真跑一段 2.5 验 `provider=byteplus`，不接受纯文本提示词打的探针；④ 整集价显示改成**按引擎段数现算**（只改显示，不动实收）；⑤ demo 的验收顺序是**先验上游链路**——资产包导入 → 导演版生成 → 关键帧排布 → 画布 @ 锁图/声/视频参考，视频生成放最后。
+
+**Mini 产品化 + Happy Horse 出漫剧（施工中，未合并）**：分支 `feat/manhua-engine-mini-pricing`。
+- 段表：`manhuaSeedanceLayout.ts` 加 mini（6×15s／约 90s，钉死段表），删 Happy Horse；`manhuaWriterSession.ts` / `server/routers.ts` 白名单同步。旧 HH 会话的 `videoModel` 归零回「未选引擎」，**不让它滑到 2.5**（否则悄悄换成 4×30 段表 + 172/段 + 2.5 权限门）。
+- 计价：`canvasGenerationPricing.ts` 加 `isMiniPricedVideoModel` / mini 常量，mini 不吃画质加价表也不吃加长档；`chargeCanvasVideoCredits` 新增 `videoModel` 透传。
+- 链路：解掉 `api/jobs.ts` 里「非探针 mini → fast」的 remap；mini 走 **异步 task**（新引擎 `seedance-mini-evolink`，与 2.5 共用 EvoLink submit/poll），探针仍同步。mini 无 BytePlus 型号，**没有回落路径**，失败即退费。
+- 显示：新增 `manhuaEpisodeTotalCredits()`，漫剧引擎选型卡直接印该引擎真实段价与整集价（此前 `describeCanvasVideoClipPrice` 是死代码，界面根本没显示整集价）；整集价跟随「单集时长」档的真实段数，长档 12 段不会再印成 6 段。
+- 子代理三轮复审共揪出 4 处并已修：① 会话把未知引擎归零成 `""` 会被 OmniCanvas 的 effect 填成 factoryDefault(2.5)，改为共享迁移器 `migrateRetiredManhuaLayoutVideoModel()`（HH → 2.0-fast 等价档），会话层 / useState 初值 / 云草稿恢复三处同源；② 选型卡整集价漏算时长档段数；③ **既有 bug**：`cloudDraftBlocksToCanvas` 把成片节点硬编码 `seedance-2.0-fast`（云端 block schema 不落 videoModel）——2.5 会话恢复后段长从 30s 掉回 15s，mini 会话会界面印 28、实扣 172，改为由 `writerSession.videoModel` 带入；④ `migrateFactoryClipVideoModel` 对 `clip-` / `omni_edit-` 段节点上的 HH 迁到 2.0-fast，自由画布 video 节点保留 HH。第三轮复审 no bugs。
+- 本地验证：`pnpm check` 通过；`pnpm vitest run` 1559 passed，唯 2 个既有并发超时 flake（`server/phase28`、`server/showcase`）——已在 stash 到干净 `origin/main` 上复跑，同样这 2 个文件失败，与本刀无关；单独跑这两个文件在带改动的树上全绿。
+
+**遗留待拍板（本轮未动实收）**：`MANHUA_EPISODE_CREDITS_PER_SEGMENT`=172 是按 2.5 的 30 秒段折的（688÷4），但对 6 段/8 段的 **15 秒**引擎也照收 172——比自由画布同规格单段 118 还贵，等于走整集流水线反而更亏。要么按引擎分段价，要么把整集总额封在 688。
+
 ---
 
 ## 如何更新本文件

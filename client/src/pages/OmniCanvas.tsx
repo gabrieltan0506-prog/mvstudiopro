@@ -291,8 +291,8 @@ import {
 } from "@shared/manhuaWriterRoom";
 import {
   hasManhuaSeedanceLayoutChoice,
-  isManhuaSeedanceLayoutVideoModel,
   MANHUA_SEEDANCE_LAYOUT_CHOICES,
+  migrateRetiredManhuaLayoutVideoModel,
   manhuaSeedanceLayoutPinsSegmentTable,
   resolveManhuaFactoryDefaultVideoModel,
   resolveManhuaSeedanceLayoutProfile,
@@ -306,6 +306,10 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
 import { PLATFORM_ENGINE_TIERS, type PlatformEngineTierId } from "@shared/platformEngineTiers";
 import { MANHUA_WRITER_EXPAND_CREDITS_PER_EPISODE } from "@shared/manhuaWriterExpandPricing";
+import {
+  canvasVideoClipCredits,
+  manhuaEpisodeTotalCredits,
+} from "@shared/canvasGenerationPricing";
 import { trpc } from "@/lib/trpc";
 import { Clapperboard, FileUp, LayoutTemplate, Loader2, Play, Sparkles, Square, X } from "lucide-react";
 import { toast } from "sonner";
@@ -626,11 +630,8 @@ export default function OmniCanvas() {
   );
   /** 开场成片引擎：决定扩写段数与铺板 clip.videoModel；无会话时按权限预选默认档 */
   const [writerVideoModel, setWriterVideoModel] = useState<ManhuaSeedanceLayoutVideoModel | "">(
-    () => {
-      const v = String(initialWriterSession?.videoModel || "").trim();
-      if (isManhuaSeedanceLayoutVideoModel(v)) return v;
-      return "";
-    },
+    // 已下线引擎（Happy Horse）迁到等价档，不认得的留空等用户选
+    () => migrateRetiredManhuaLayoutVideoModel(initialWriterSession?.videoModel),
   );
 
   // 订阅/角色到位后：无会话选型时预选权限许可的默认档；会话里若是无权限的 2.5 则降级
@@ -1378,7 +1379,10 @@ export default function OmniCanvas() {
     if (healed.healed) {
       toast.warning("检测到剧本已换角，旧角色设定图不再沿用；请重新「确认并进入资产设定」按现稿重建角色");
     }
-    const nextBlocks = cloudDraftBlocksToCanvas(draft.canvas.blocks);
+    // 引擎从会话带进节点：云端 block 不落 videoModel，不传就一律退成 fast（改价改段长）
+    const nextBlocks = cloudDraftBlocksToCanvas(draft.canvas.blocks, {
+      videoModel: migrateRetiredManhuaLayoutVideoModel(session.videoModel),
+    });
     const nextEdges = draft.canvas.edges as CanvasEdge[];
     setBlocks(nextBlocks);
     setEdges(nextEdges);
@@ -1420,9 +1424,10 @@ export default function OmniCanvas() {
     setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
     setViralTemplateId(String(session.viralTemplateId || "").trim());
     {
-      const v = String(session.videoModel || "").trim();
+      // 已下线引擎先迁到等价档（Happy Horse → 2.0-fast），别让它经由「不认得」滑到 2.5
+      const v = migrateRetiredManhuaLayoutVideoModel(session.videoModel);
       setWriterVideoModel(
-        isManhuaSeedanceLayoutVideoModel(v)
+        v
           ? v === "seedance-2.5" && !canUseSeedance25
             ? factoryDefaultVideoModel
             : v
@@ -1518,7 +1523,11 @@ export default function OmniCanvas() {
       // 本机读失败键再尽力写一次
       persistManhuaDraftLocally({
         writerSession: choice.draft.writerSession,
-        blocks: cloudDraftBlocksToCanvas(choice.draft.canvas.blocks),
+        blocks: cloudDraftBlocksToCanvas(choice.draft.canvas.blocks, {
+          videoModel: migrateRetiredManhuaLayoutVideoModel(
+            choice.draft.writerSession?.videoModel,
+          ),
+        }),
         edges: choice.draft.canvas.edges as CanvasEdge[],
         factoryPrefs: choice.draft.factoryPrefs,
         clientUpdatedAt: choice.draft.clientUpdatedAt,
@@ -6875,6 +6884,14 @@ export default function OmniCanvas() {
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {writerLayoutChoices.map((c) => {
                     const on = writerVideoModel === c.videoModel;
+                    /**
+                     * 整集价必须跟着「单集时长」档走：2.0 / 2.0-fast 选长档是 12 段，
+                     * 拿 choices 里的默认 6 段算会把 2064 印成 1032。钉死段表的档不受影响。
+                     */
+                    const cardSegmentCount = resolveManhuaSeedanceLayoutProfile(
+                      c.videoModel,
+                      writerLengthTierId,
+                    ).segmentCount;
                     return (
                       <button
                         key={c.videoModel}
@@ -6900,6 +6917,17 @@ export default function OmniCanvas() {
                         <div className="font-semibold">{c.labelZh}</div>
                         <div className="mt-0.5 max-w-[14rem] text-[9px] leading-snug text-white/40">
                           {c.layoutHintZh}
+                        </div>
+                        <div className="mt-0.5 text-[9px] leading-snug text-amber-200/60">
+                          {canvasVideoClipCredits({
+                            isEpisodeSegment: true,
+                            videoModel: c.videoModel,
+                          })}{" "}
+                          积分/段 · 整集约{" "}
+                          {manhuaEpisodeTotalCredits({
+                            videoModel: c.videoModel,
+                            segmentCount: cardSegmentCount,
+                          })}
                         </div>
                       </button>
                     );

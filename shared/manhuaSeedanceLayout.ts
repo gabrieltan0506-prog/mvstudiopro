@@ -1,25 +1,29 @@
 /**
  * 漫剧编剧室开场：先选成片引擎，再按选型铺段数 / 单段秒数。
- * - Seedance 2.0 / 2.0 Fast / Happy Horse 1.1：5–6 段 × 约 15s（默认 6）
+ * - Seedance 2.0 Mini：6 段 × 约 15s（草稿档，钉死段表；39 积分/段、整集 168）
+ * - Seedance 2.0 / 2.0 Fast：5–6 段 × 约 15s（默认 6）
  * - Seedance 2.5：4 段 × 约 30s
  * - Minimax H3：7–8 段 × 约 15s（默认 8 · 约 120 秒/集）
+ *
+ * Happy Horse 1.1 **不进漫剧段表**（用户 2026-08-06 拍板，2026-08-09 复核维持）：
+ * 720p 实测 $0.1647/秒，比 Seedance 标准还贵 9%、比 H3 贵 27% 且分辨率更低。
+ * 它仍保留在自由画布单节点与首页照片动画，只是不做整集流水线引擎。
  *
  * 文件名仍叫 seedance，语义已是「漫剧段表」——本 PR 不重命名以免牵动 import。
  */
 
 import { CANVAS_VIDEO_MODEL_HAILUO_H3 } from "./hailuoOpenRouterModels.js";
-import { CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1 } from "./happyHorseOpenRouterModels.js";
 import {
   resolveSeedance25Access,
   type Seedance25AccessInput,
 } from "./seedance25Access.js";
 
 export type ManhuaSeedanceLayoutVideoModel =
+  | "seedance-2.0-mini"
   | "seedance-2.0-fast"
   | "seedance-2.0"
   | "seedance-2.5"
-  | typeof CANVAS_VIDEO_MODEL_HAILUO_H3
-  | typeof CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1;
+  | typeof CANVAS_VIDEO_MODEL_HAILUO_H3;
 
 export type ManhuaSeedanceLayoutProfile = {
   videoModel: ManhuaSeedanceLayoutVideoModel;
@@ -37,6 +41,17 @@ export type ManhuaSeedanceLayoutProfile = {
 };
 
 export const MANHUA_SEEDANCE_LAYOUT_CHOICES: readonly ManhuaSeedanceLayoutProfile[] = [
+  {
+    videoModel: "seedance-2.0-mini",
+    labelZh: "Seedance 2.0 mini（草稿档）",
+    layoutHintZh: "6 段 × 约 15 秒（约 90 秒/集 · 便宜试稿）",
+    segmentCount: 6,
+    segmentMin: 6,
+    segmentMax: 6,
+    durationSecPerSegment: 15,
+    targetSec: 90,
+    lengthTierId: "short",
+  },
   {
     videoModel: "seedance-2.0",
     labelZh: "Seedance 2.0",
@@ -81,17 +96,6 @@ export const MANHUA_SEEDANCE_LAYOUT_CHOICES: readonly ManhuaSeedanceLayoutProfil
     targetSec: 120,
     lengthTierId: "short",
   },
-  {
-    videoModel: CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1,
-    labelZh: "Happy Horse 1.1",
-    layoutHintZh: "5–6 段 × 约 15 秒（默认 6 段 · 约 90 秒/集）",
-    segmentCount: 6,
-    segmentMin: 5,
-    segmentMax: 6,
-    durationSecPerSegment: 15,
-    targetSec: 90,
-    lengthTierId: "short",
-  },
 ] as const;
 
 /** 产品首选默认档（有 2.5 权限时）——显式取 2.5，不靠数组下标 */
@@ -102,16 +106,44 @@ export const MANHUA_SEEDANCE_LAYOUT_PREFERRED_DEFAULT: ManhuaSeedanceLayoutProfi
 export const MANHUA_SEEDANCE_LAYOUT_FALLBACK_DEFAULT: ManhuaSeedanceLayoutProfile =
   MANHUA_SEEDANCE_LAYOUT_CHOICES.find((c) => c.videoModel === "seedance-2.0-fast")!;
 
+/**
+ * 已下线引擎 → 等价迁移目标。
+ *
+ * Happy Horse 1.1 的旧漫剧段表就是 6 段 × 15 秒 / 90 秒，与 2.0-fast 完全一致，
+ * 所以迁到 2.0-fast 是等价换名：段表、段价（172/段）、单段零售（118）都不变。
+ * **不能让它落到 2.5**——那会把段表改成 4×30、还要过 2.5 权限门，等于悄悄改价改结构。
+ */
+const RETIRED_MANHUA_LAYOUT_VIDEO_MODELS: Readonly<
+  Record<string, ManhuaSeedanceLayoutVideoModel>
+> = {
+  "happyhorse-1.1": "seedance-2.0-fast",
+  happyhorse: "seedance-2.0-fast",
+  "happy-horse": "seedance-2.0-fast",
+  "alibaba/happyhorse-1.1": "seedance-2.0-fast",
+};
+
+/**
+ * 存量会话的引擎归一：认得的照原样返回，已下线的迁到等价档，其余返回 ""（=未选）。
+ * 会话层与画布恢复路径必须都走这里，否则两边对同一份草稿会得出不同引擎。
+ */
+export function migrateRetiredManhuaLayoutVideoModel(
+  raw?: string | null,
+): ManhuaSeedanceLayoutVideoModel | "" {
+  const k = String(raw || "").trim();
+  if (isManhuaSeedanceLayoutVideoModel(k)) return k;
+  return RETIRED_MANHUA_LAYOUT_VIDEO_MODELS[k.toLowerCase()] || "";
+}
+
 export function isManhuaSeedanceLayoutVideoModel(
   raw?: string | null,
 ): raw is ManhuaSeedanceLayoutVideoModel {
   const k = String(raw || "").trim();
   return (
+    k === "seedance-2.0-mini" ||
     k === "seedance-2.0-fast" ||
     k === "seedance-2.0" ||
     k === "seedance-2.5" ||
-    k === CANVAS_VIDEO_MODEL_HAILUO_H3 ||
-    k === CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1
+    k === CANVAS_VIDEO_MODEL_HAILUO_H3
   );
 }
 
@@ -135,7 +167,7 @@ export function resolveManhuaSeedanceLayoutProfile(
   const base =
     MANHUA_SEEDANCE_LAYOUT_CHOICES.find((c) => c.videoModel === key) ||
     MANHUA_SEEDANCE_LAYOUT_PREFERRED_DEFAULT;
-  // 2.5 / H3 / Happy Horse 固定段表，不受旧「单集时长」长档影响
+  // Mini / 2.5 / H3 固定段表，不受旧「单集时长」长档影响
   if (manhuaSeedanceLayoutPinsSegmentTable(base.videoModel)) {
     return base;
   }
@@ -182,15 +214,18 @@ export function clampManhuaClipDurationSecForVideoModel(
 
 /**
  * 是否钉死段表（不受旧「单集时长」长/短档影响）。
- * 仅 Seedance 2.0 / 2.0-fast 仍吃 lengthTier；2.5 / H3 / Happy Horse 固定。
+ * 仅 Seedance 2.0 / 2.0-fast 仍吃 lengthTier；Mini / 2.5 / H3 固定。
+ *
+ * Mini 必须钉死：整集草稿包 168 是按 6 段 × 28 算的，
+ * 放开到 long 档（12 段）会让「整集 168」这句话变成假话。
  */
 export function manhuaSeedanceLayoutPinsSegmentTable(
   videoModel?: string | null,
 ): boolean {
   const key = String(videoModel || "").trim();
   return (
+    key === "seedance-2.0-mini" ||
     key === "seedance-2.5" ||
-    key === CANVAS_VIDEO_MODEL_HAILUO_H3 ||
-    key === CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1
+    key === CANVAS_VIDEO_MODEL_HAILUO_H3
   );
 }

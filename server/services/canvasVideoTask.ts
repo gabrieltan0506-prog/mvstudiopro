@@ -55,7 +55,9 @@ export type CanvasVideoEngine =
   | "hailuo-openrouter"
   | "happyhorse-openrouter"
   | "seedance25-byteplus"
-  | "seedance25-evolink";
+  | "seedance25-evolink"
+  /** Seedance 2.0 Mini 草稿档：EvoLink 单路径（OpenRouter 没有 mini） */
+  | "seedance-mini-evolink";
 
 export type CanvasVideoTaskStatus =
   | "queued"
@@ -79,8 +81,8 @@ export type CanvasVideoTaskRecord = {
   duration: number;
   resolution?: string;
   generateAudio: boolean;
-  /** OpenRouter Seedance 2.0 / 2.0-fast */
-  seedanceVersion?: "2.0" | "2.0-fast";
+  /** OpenRouter Seedance 2.0 / 2.0-fast；EvoLink Mini 记 2.0-mini */
+  seedanceVersion?: "2.0" | "2.0-fast" | "2.0-mini";
   /** Seedance 2.5 工作模式 */
   workMode?: SeedanceEvolinkMode;
   openRouterJobId?: string;
@@ -178,7 +180,13 @@ function maxPollMs(engine: CanvasVideoEngine): number {
   if (engine === "seedance25-evolink" || engine === "seedance25-byteplus") {
     return Math.max(EVOLINK_SEEDANCE_MAX_POLL_MS, BYTEPLUS_SEEDANCE_MAX_POLL_MS);
   }
+  if (engine === "seedance-mini-evolink") return EVOLINK_SEEDANCE_MAX_POLL_MS;
   return OPENROUTER_VIDEO_MAX_POLL_MS;
+}
+
+/** 走 EvoLink 任务号轮询的引擎（2.5 与 Mini 共用同一套 submit/poll） */
+function usesEvolinkTaskId(engine: CanvasVideoEngine): boolean {
+  return engine === "seedance25-evolink" || engine === "seedance-mini-evolink";
 }
 
 function seedance25RunInput(task: CanvasVideoTaskRecord): EvolinkSeedanceRunInput {
@@ -204,6 +212,36 @@ async function submitSeedance25Evolink(task: CanvasVideoTaskRecord): Promise<voi
   task.evolinkTaskId = submitted.evolinkTaskId;
   task.model = submitted.model;
   task.workMode = submitted.mode;
+  task.provider = "evolink";
+  task.status = "running";
+  task.startedAt = task.startedAt || new Date().toISOString();
+  await writeTask(task);
+  if (submitted.immediateSourceUrl) {
+    const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(submitted.immediateSourceUrl);
+    await succeedTask(task, videoUrl, submitted.model, "evolink");
+  }
+}
+
+/**
+ * Mini 草稿档提交。与 2.5 共用 EvoLink 提交/轮询，差别只在 version 与不做 BytePlus 主路径
+ * ——BytePlus ModelArk 没有 mini 型号，回落无处可落，失败就按失败退费。
+ */
+async function submitSeedanceMiniEvolink(task: CanvasVideoTaskRecord): Promise<void> {
+  const submitted = await submitEvolinkSeedanceVideo({
+    prompt: task.prompt,
+    imageUrl: task.imageUrl,
+    imageUrls: task.imageUrls,
+    videoUrls: task.videoUrls,
+    audioUrls: task.audioUrls,
+    quality: task.resolution,
+    aspectRatio: task.aspectRatio,
+    duration: task.duration,
+    generateAudio: task.generateAudio,
+    contentFilter: true,
+    version: "2.0-mini",
+  });
+  task.evolinkTaskId = submitted.evolinkTaskId;
+  task.model = submitted.model;
   task.provider = "evolink";
   task.status = "running";
   task.startedAt = task.startedAt || new Date().toISOString();
@@ -392,6 +430,11 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     return;
   }
 
+  if (task.engine === "seedance-mini-evolink") {
+    await submitSeedanceMiniEvolink(task);
+    return;
+  }
+
   // seedance25-evolink
   await submitSeedance25Evolink(task);
 }
@@ -414,12 +457,11 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
       );
     }
 
-    const needsSubmit =
-      task.engine === "seedance25-evolink"
-        ? !task.evolinkTaskId
-        : task.engine === "seedance25-byteplus"
-          ? !task.byteplusTaskId
-          : !task.pollingUrl;
+    const needsSubmit = usesEvolinkTaskId(task.engine)
+      ? !task.evolinkTaskId
+      : task.engine === "seedance25-byteplus"
+        ? !task.byteplusTaskId
+        : !task.pollingUrl;
 
     if (needsSubmit) {
       try {
@@ -489,13 +531,14 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         );
       }
 
-      if (current.engine === "seedance25-evolink") {
+      if (usesEvolinkTaskId(current.engine)) {
+        const isMini = current.engine === "seedance-mini-evolink";
         if (!current.evolinkTaskId) {
           return failTask(current, "视频服务未返回任务编号");
         }
         const snap = await pollEvolinkVideoTaskOnce(
           current.evolinkTaskId,
-          `Seedance ${current.seedanceVersion || "2.5"}`,
+          `Seedance ${current.seedanceVersion || (isMini ? "2.0-mini" : "2.5")}`,
         );
         if (snap.state === "running") {
           current.status = "running";
@@ -507,7 +550,7 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         return succeedTask(
           current,
           videoUrl,
-          current.model || "seedance-2.5",
+          current.model || (isMini ? "seedance-2.0-mini" : "seedance-2.5"),
           "evolink",
         );
       }
@@ -568,7 +611,7 @@ export async function createCanvasVideoTask(input: {
   duration: number;
   resolution?: string;
   generateAudio?: boolean;
-  seedanceVersion?: "2.0" | "2.0-fast";
+  seedanceVersion?: "2.0" | "2.0-fast" | "2.0-mini";
   workMode?: SeedanceEvolinkMode;
 }): Promise<CanvasVideoTaskRecord> {
   const prompt = String(input.prompt || "").trim();
