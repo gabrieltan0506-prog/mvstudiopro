@@ -111,7 +111,8 @@ export function buildGeminiApiUpscaleConfig(
 ) {
   return {
     httpOptions: {
-      timeout: spec.imageSize === "4K" ? 180_000 : 120_000,
+      // 异步任务后台跑：2K 给 5 分钟、4K 给 8 分钟；同步 HTTP 路径不应再卡满等待。
+      timeout: spec.imageSize === "4K" ? 480_000 : 300_000,
     },
     responseModalities: ["IMAGE"] as string[],
     imageConfig: {

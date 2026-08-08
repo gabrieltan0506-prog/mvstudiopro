@@ -14,6 +14,23 @@ import {
   normalizeManhuaMixNameKey,
   shouldMarkDouyinMixAsDrama,
 } from "../../shared/manhuaDramaClassify";
+import {
+  assertCollectorNotAborted,
+  getCollectorAbortSignal,
+  mergeAbortSignals,
+} from "./collectorAbort.js";
+
+const nativeFetch = globalThis.fetch.bind(globalThis);
+
+/** 模块内阴影全局 fetch：超时 abort 后立刻停掉后续 HTTP，不再空跑占满机器。 */
+function fetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  assertCollectorNotAborted();
+  const signal = mergeAbortSignals(init?.signal, getCollectorAbortSignal());
+  return nativeFetch(input, signal ? { ...init, signal } : init);
+}
 
 export type TrendSource = "live" | "seed";
 
@@ -1070,7 +1087,25 @@ async function runBatches<T>(tasks: Array<() => Promise<T>>, concurrency: number
 }
 
 function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  const signal = getCollectorAbortSignal();
+  if (!signal) {
+    return new Promise<void>((resolve) => setTimeout(resolve, ms));
+  }
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error("growth_collector_aborted"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error("growth_collector_aborted"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 async function collectDouyinCreatorCenterItems(cookies: string[], _keywords: string[]) {
@@ -3775,7 +3810,11 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
   });
 }
 
-export async function collectPlatformTrends(platform: GrowthPlatform): Promise<PlatformTrendCollection> {
+export async function collectPlatformTrends(
+  platform: GrowthPlatform,
+  _options?: { signal?: AbortSignal },
+): Promise<PlatformTrendCollection> {
+  assertCollectorNotAborted();
   switch (platform) {
     case "bilibili":
       return collectBilibili();
@@ -3809,11 +3848,16 @@ export async function collectPlatformTrends(platform: GrowthPlatform): Promise<P
   }
 }
 
-export async function collectTrendPlatforms(platforms: GrowthPlatform[]) {
+export async function collectTrendPlatforms(
+  platforms: GrowthPlatform[],
+  options?: { signal?: AbortSignal },
+) {
   const normalized = Array.from(
     new Set(platforms.filter((platform): platform is GrowthPlatform => growthPlatformValues.includes(platform))),
   );
-  const results = await Promise.allSettled(normalized.map((platform) => collectPlatformTrends(platform)));
+  const results = await Promise.allSettled(
+    normalized.map((platform) => collectPlatformTrends(platform, options)),
+  );
   const collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>> = {};
   const errors: Partial<Record<GrowthPlatform, string>> = {};
 

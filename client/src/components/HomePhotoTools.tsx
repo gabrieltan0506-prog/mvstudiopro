@@ -87,7 +87,6 @@ export default function HomePhotoTools() {
     useState<ActiveOperation | null>(null);
 
   const getSignedUrl = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
-  const upscaleMutation = trpc.vertexImage.upscale.useMutation();
   const restoreMutation = trpc.homePhotoTools.restoreOldPhoto.useMutation();
 
   useEffect(() => {
@@ -175,23 +174,100 @@ export default function HomePhotoTools() {
         assessment,
       }));
       if (!confirmed) return;
-      const result = await upscaleMutation.mutateAsync({
-        imageUrl: sourceUrl,
-        upscaleFactor: factor,
-        baseCreditKey: "homePhotoUpscaleBase",
-        qualityWarningAccepted: assessment.isLikelyBlurry,
-        sourceBlurScore: assessment.score,
-      });
-      if (!result.success || !result.imageUrl)
-        throw new Error(result.error || "高清放大失败");
+
+      // 异步：立刻拿 taskId，后台跑 Gemini；短轮询，避免同步长连接被 120s/部署掐断
+      const endpoint = withLongJobsFlyDirect("/api/jobs?op=homePhotoUpscale");
+      const probeOrigin = flyHealthProbeOriginForUrl(endpoint);
+      const response = await withFlyHealthGate(probeOrigin, () =>
+        fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            imageUrl: sourceUrl,
+            upscaleFactor: factor,
+            qualityWarningAccepted: assessment.isLikelyBlurry,
+            sourceBlurScore: assessment.score,
+          }),
+        }),
+      );
+      const raw = await response.text();
+      let created: {
+        ok?: boolean;
+        async?: boolean;
+        taskId?: string;
+        status?: string;
+        imageUrl?: string;
+        creditsUsed?: number;
+        error?: string;
+      } = {};
+      try {
+        created = JSON.parse(raw) as typeof created;
+      } catch {
+        throw new Error(`高清放大失败：${raw.slice(0, 120)}`);
+      }
+      if (!response.ok || !created.ok) {
+        throw new Error(created.error || "高清放大失败");
+      }
+
+      let imageUrl = String(created.imageUrl || "").trim();
+      let creditsUsed = Number(created.creditsUsed || credits);
+
+      if (!imageUrl && created.taskId) {
+        const statusEndpoint = withLongJobsFlyDirect(
+          `/api/jobs?op=homePhotoUpscaleStatus&taskId=${encodeURIComponent(created.taskId)}`,
+        );
+        const deadline = Date.now() + 15 * 60_000;
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 5_000));
+          const statusRes = await fetch(statusEndpoint, {
+            method: "GET",
+            credentials: "include",
+            cache: "no-store",
+          });
+          const statusRaw = await statusRes.text();
+          let statusJson: {
+            ok?: boolean;
+            status?: string;
+            imageUrl?: string;
+            creditsUsed?: number;
+            error?: string;
+          } = {};
+          try {
+            statusJson = JSON.parse(statusRaw) as typeof statusJson;
+          } catch {
+            continue;
+          }
+          if (!statusRes.ok || !statusJson.ok) {
+            throw new Error(statusJson.error || "高清放大进度查询失败");
+          }
+          if (statusJson.status === "succeeded" && statusJson.imageUrl) {
+            imageUrl = String(statusJson.imageUrl).trim();
+            creditsUsed = Number(statusJson.creditsUsed || creditsUsed);
+            break;
+          }
+          if (statusJson.status === "failed") {
+            throw new Error(
+              statusJson.error || "高清放大失败，积分已自动退回",
+            );
+          }
+        }
+      }
+
+      if (!imageUrl) {
+        throw new Error(
+          "高清放大仍在处理中，请稍后在「我的作品」查看，或稍后再试",
+        );
+      }
+
       const label = `高清放大 ${factor === "x2" ? "2×" : "4×"}`;
       setUpscaleResult({
-        url: result.imageUrl,
+        url: imageUrl,
         label,
-        credits: result.creditsUsed,
+        credits: creditsUsed,
       });
-      setSourceUrl(result.imageUrl);
-      setPreviewUrl(result.imageUrl);
+      setSourceUrl(imageUrl);
+      setPreviewUrl(imageUrl);
       setSourceName(`${label}结果（当前素材）`);
       refresh();
       toast.success(`${label}完成，已自动作为下一步素材`);

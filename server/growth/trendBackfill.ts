@@ -3,6 +3,7 @@ import { collectTrendPlatforms } from "./trendCollector";
 import { mergeTrendCollectionsWithOptions, readGrowthDebugSummary, readTrendRuntimeMeta, reconcileTrendHistoryState, updateTrendBackfillProgress } from "./trendStore";
 import { notifyGrowthCollectionUpdate } from "./trendMailDigest";
 import { nowShanghaiIso } from "./time";
+import { withAbortableTimeout } from "./collectorAbort.js";
 
 type BackfillKind = "live" | "history";
 
@@ -134,20 +135,6 @@ function isStorageFullError(error: unknown) {
   return /\bENOSPC\b|no space left on device/i.test(message);
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 function canRunBackfillNow(kind: BackfillKind) {
   if (isBackfillWindow()) return true;
   if (!BACKFILL_FAST_START_ENABLED) return false;
@@ -215,8 +202,8 @@ async function runBackfillPlatformTasks(
 
   const tasks = pending.map((platform) => async () => {
     try {
-      const collected = await withTimeout(
-        collectTrendPlatforms([platform]),
+      const collected = await withAbortableTimeout(
+        (signal) => collectTrendPlatforms([platform], { signal }),
         BACKFILL_PLATFORM_TIMEOUT_MS,
         `[${label}] ${platform}`,
       );

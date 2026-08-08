@@ -14,7 +14,7 @@ describe("Gemini API 高清放大模型映射", () => {
     expect(spec.imageSize).toBe("2K");
     expect(spec.prompt).toContain("Upscale this image to 2K resolution (2x)");
     expect(buildGeminiApiUpscaleConfig(spec, "3:2")).toEqual({
-      httpOptions: { timeout: 120_000 },
+      httpOptions: { timeout: 300_000 },
       responseModalities: ["IMAGE"],
       imageConfig: { imageSize: "2K", aspectRatio: "3:2" },
     });
@@ -27,7 +27,7 @@ describe("Gemini API 高清放大模型映射", () => {
     expect(spec.prompt).toContain("Upscale this image to 4K resolution (4x)");
     const config = buildGeminiApiUpscaleConfig(spec, "16:9");
     expect(config.imageConfig.imageSize).toBe("4K");
-    expect(config.httpOptions.timeout).toBe(180_000);
+    expect(config.httpOptions.timeout).toBe(480_000);
   });
 
   it("按原图宽高选择最接近的受支持比例", () => {

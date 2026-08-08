@@ -501,6 +501,16 @@ async function startServer() {
         console.warn("[homePhotoAnimateTask] resume failed:", e),
       );
     }).catch(() => {});
+    import("../services/homePhotoUpscaleTask").then(({ resumeHomePhotoUpscaleTasksOnStartup }) => {
+      resumeHomePhotoUpscaleTasksOnStartup().catch((e) =>
+        console.warn("[homePhotoUpscaleTask] resume failed:", e),
+      );
+    }).catch(() => {});
+    import("../services/canvasVideoTask").then(({ resumeCanvasVideoTasksOnStartup }) => {
+      resumeCanvasVideoTasksOnStartup().catch((e) =>
+        console.warn("[canvasVideoTask] resume failed:", e),
+      );
+    }).catch(() => {});
     // ── 付费任务持久账本：启动时清扫死任务（进程崩溃 / 部署中断 → 自动幂等退积分） ──
     //   策略：默认 staleMs = 5 分钟（heartbeat 超过 5 分钟没刷的判定为僵尸任务）。
     //   对 holdPausedAt 的任务（计划审核停留中）只在超过 30 天硬上限时才退。

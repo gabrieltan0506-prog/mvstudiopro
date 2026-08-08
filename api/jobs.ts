@@ -1009,25 +1009,33 @@ async function resolveJobUser(
  * - 自动重试不会重复扣：失败即退回，只有真正出片的那次留下扣款。
  * - 探针请求（`probe=1`）由调用方决定是否走这里，默认不扣。
  */
-async function chargeCanvasVideoAndRun<T>(
+type CanvasVideoChargeOpts = {
+  /** 成片秒数，决定 15 秒档还是加长档 */
+  durationSec?: number | null;
+  /** 漫剧集号：有值即按整集折算段价 */
+  episodeIndex?: unknown;
+  /** 账本描述后缀，便于对账 */
+  label: string;
+  /** 探针请求（`probe=1`）：脚本没有 cookie，既不验登录也不扣费 */
+  skipCharge?: boolean;
+  /** 输出分辨率：1080p 单价是 720p 的 2.25 倍 */
+  resolution?: string | null;
+  /** 首页照片人物动起来按秒计费；缺省保持原画布分档计费。 */
+  pricingMode?: "canvas" | "homePhotoAnimate";
+};
+
+/** 只扣费、立刻返回；异步成片用。失败路径由 canvasVideoTask 退款。 */
+async function chargeCanvasVideoCredits(
   req: VercelRequest,
-  opts: {
-    /** 成片秒数，决定 15 秒档还是加长档 */
-    durationSec?: number | null;
-    /** 漫剧集号：有值即按整集折算段价 */
-    episodeIndex?: unknown;
-    /** 账本描述后缀，便于对账 */
-    label: string;
-    /** 探针请求（`probe=1`）：脚本没有 cookie，既不验登录也不扣费 */
-    skipCharge?: boolean;
-    /** 输出分辨率：1080p 单价是 720p 的 2.25 倍 */
-    resolution?: string | null;
-    /** 首页照片人物动起来按秒计费；缺省保持原画布分档计费。 */
-    pricingMode?: "canvas" | "homePhotoAnimate";
-  },
-  work: () => Promise<T>,
-): Promise<{ ok: true; result: T; credits: number } | { ok: false; status: number; error: string }> {
-  if (opts.skipCharge) return { ok: true, result: await work(), credits: 0 };
+  opts: CanvasVideoChargeOpts,
+): Promise<
+  | { ok: true; credits: number; userId: number }
+  | { ok: false; status: number; error: string }
+> {
+  if (opts.skipCharge) {
+    const viewer = await resolveJobUser(req);
+    return { ok: true, credits: 0, userId: viewer?.userId ?? 0 };
+  }
   const viewer = await resolveJobUser(req);
   if (!viewer) return { ok: false, status: 401, error: "请先登录后再生成成片" };
 
@@ -1052,9 +1060,7 @@ async function chargeCanvasVideoAndRun<T>(
       homePhotoAnimateCredits,
       isHomePhotoAnimateDuration,
       isHomePhotoAnimateResolution,
-    } = await import(
-      "../shared/homePhotoTools.js"
-    );
+    } = await import("../shared/homePhotoTools.js");
     if (!isHomePhotoAnimateDuration(opts.durationSec)) {
       return { ok: false, status: 400, error: "照片动起来只支持 5、10 或 15 秒" };
     }
@@ -1071,14 +1077,11 @@ async function chargeCanvasVideoAndRun<T>(
     });
   }
 
-  const { deductCreditsAmount, refundCredits } = await import("../server/credits.js");
-  let deducted = 0;
+  const { deductCreditsAmount } = await import("../server/credits.js");
   try {
-    // admin / supervisor 在 deductCreditsAmount 内部返回 cost=0，故不必在这里另判角色；
-    // 余额不足是 **throw**（不是返回 false），错误原文含英文与余额细节，这里换成对用户的话。
     const action = opts.pricingMode === "homePhotoAnimate" ? "homePhotoAnimate" : "canvasVideoClip";
     const out = await deductCreditsAmount(viewer.userId, credits, action, opts.label);
-    deducted = out.cost;
+    return { ok: true, credits: out.cost, userId: viewer.userId };
   } catch {
     return {
       ok: false,
@@ -1086,12 +1089,23 @@ async function chargeCanvasVideoAndRun<T>(
       error: `积分不足：本段成片需要 ${credits} 积分，请补充积分后重试`,
     };
   }
+}
+
+async function chargeCanvasVideoAndRun<T>(
+  req: VercelRequest,
+  opts: CanvasVideoChargeOpts,
+  work: () => Promise<T>,
+): Promise<{ ok: true; result: T; credits: number } | { ok: false; status: number; error: string }> {
+  if (opts.skipCharge) return { ok: true, result: await work(), credits: 0 };
+  const charged = await chargeCanvasVideoCredits(req, opts);
+  if (!charged.ok) return charged;
+  const { refundCredits } = await import("../server/credits.js");
   try {
-    return { ok: true, result: await work(), credits: deducted };
+    return { ok: true, result: await work(), credits: charged.credits };
   } catch (err) {
     let refundFailed = false;
-    if (deducted > 0) {
-      await refundCredits(viewer.userId, deducted, `${opts.label}·生成失败退回`).catch(
+    if (charged.credits > 0) {
+      await refundCredits(charged.userId, charged.credits, `${opts.label}·生成失败退回`).catch(
         (refundErr: unknown) => {
           refundFailed = true;
           console.error("[chargeCanvasVideoAndRun] 退款失败", refundErr);
@@ -1102,7 +1116,7 @@ async function chargeCanvasVideoAndRun<T>(
       if (refundFailed) {
         throw new Error("照片动画生成失败；积分退款处理异常，请联系客服核对");
       }
-      if (deducted > 0) {
+      if (charged.credits > 0) {
         throw new Error("照片动画生成失败，积分已自动退回");
       }
       throw new Error("照片动画生成失败，请稍后重试");
@@ -1145,7 +1159,7 @@ async function assertSeedance25PaidAccess(
 }
 
 /**
- * Seedance 2.5 五模式共用主链：契约预检 → 服务配置 → 服务端计费 → EvoLink → 失败退款。
+ * Seedance 2.5 五模式共用主链：契约预检 → 服务配置 → 服务端计费 → 异步落盘任务。
  * 两个历史 API 入口都必须调用这里，避免 `/canvas` 与兼容入口再次分叉。
  */
 async function runSeedance25EvolinkJob(
@@ -1157,10 +1171,14 @@ async function runSeedance25EvolinkJob(
   | { ok: false; status: number; error: string; paidOnly?: boolean }
   | {
       ok: true;
-      out: Awaited<ReturnType<typeof import("../server/services/evolinkSeedanceVideo.js")["runEvolinkSeedanceVideo"]>>;
+      async: true;
+      taskId: string;
+      status: string;
       credits: number;
       resolution: "480p" | "720p" | "1080p";
       duration: number;
+      workMode: string;
+      videoUrl?: string;
     }
 > {
   const access = await assertSeedance25PaidAccess(req);
@@ -1206,7 +1224,6 @@ async function runSeedance25EvolinkJob(
   const {
     buildEvolinkSeedanceRequest,
     isEvolinkSeedanceConfigured,
-    runEvolinkSeedanceVideo,
   } = await import("../server/services/evolinkSeedanceVideo.js");
   if (!isEvolinkSeedanceConfigured()) {
     return { ok: false, status: 503, error: "视频服务暂不可用，请稍后重试" };
@@ -1240,25 +1257,51 @@ async function runSeedance25EvolinkJob(
     video_edit: "视频编辑",
     video_extend: "视频延长",
   }[mode];
+  const label = `${labelPrefix}·${modeLabel}（${duration}s）`;
   try {
-    const charged = await chargeCanvasVideoAndRun(
-      req,
-      {
-        // 视频编辑按用户选择的产品时长计价；上游协议自身固定传 -1。
-        durationSec: duration,
-        episodeIndex: body.episodeIndex,
-        label: `${labelPrefix}·${modeLabel}（${duration}s）`,
-      },
-      () => runEvolinkSeedanceVideo(runInput),
-    );
+    const charged = await chargeCanvasVideoCredits(req, {
+      durationSec: duration,
+      episodeIndex: body.episodeIndex,
+      label,
+    });
     if (!charged.ok) return charged;
-    return {
-      ok: true,
-      out: charged.result,
-      credits: charged.credits,
-      resolution,
-      duration,
-    };
+
+    const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
+    try {
+      const task = await createCanvasVideoTask({
+        userId: charged.userId,
+        creditsCharged: charged.credits,
+        engine: "seedance25-evolink",
+        label,
+        prompt,
+        imageUrl,
+        imageUrls,
+        videoUrls,
+        audioUrls,
+        aspectRatio,
+        duration: providerDuration,
+        resolution,
+        generateAudio,
+        workMode: mode,
+      });
+      return {
+        ok: true,
+        async: true,
+        taskId: task.taskId,
+        status: task.status,
+        credits: charged.credits,
+        resolution,
+        duration,
+        workMode: mode,
+        videoUrl: task.videoUrl,
+      };
+    } catch (error: any) {
+      if (charged.credits > 0) {
+        const { refundCredits } = await import("../server/credits.js");
+        await refundCredits(charged.userId, charged.credits, `${label}·创建失败退回`).catch(() => {});
+      }
+      throw error;
+    }
   } catch (error: any) {
     return { ok: false, status: 502, error: error?.message || "seedance25_failed" };
   }
@@ -3646,7 +3689,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         String(b.generateAudio ?? q.generateAudio ?? "1").trim() === "0" || b.generateAudio === false
       );
       try {
-        const { isOpenRouterHailuoConfigured, runOpenRouterHailuoVideo } = await import(
+        const { isOpenRouterHailuoConfigured } = await import(
           "../server/services/openrouterHailuoVideo.js"
         );
         if (!isOpenRouterHailuoConfigured()) {
@@ -3655,35 +3698,55 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             error: "视频服务暂不可用，请稍后重试",
           });
         }
-        const { clampHailuoOpenRouterDuration } = await import("../shared/hailuoOpenRouterModels.js");
+        const { clampHailuoOpenRouterDuration, HAILUO_OPENROUTER_RESOLUTION } = await import(
+          "../shared/hailuoOpenRouterModels.js"
+        );
         // H3 一律 15 秒：忽略请求体里的时长，避免调用方各传各的导致计费与产出不符
         const duration = clampHailuoOpenRouterDuration();
-        const charged = await chargeCanvasVideoAndRun(
-          req,
-          { durationSec: duration, episodeIndex: b.episodeIndex, label: "画布成片·H3（2K·15s）" },
-          () =>
-            runOpenRouterHailuoVideo({
-              prompt,
-              imageUrl,
-              imageUrls,
-              aspectRatio,
-              duration,
-              generateAudio,
-            }),
-        );
+        const label = "画布成片·H3（2K·15s）";
+        const charged = await chargeCanvasVideoCredits(req, {
+          durationSec: duration,
+          episodeIndex: b.episodeIndex,
+          label,
+        });
         if (!charged.ok) {
           return res.status(charged.status).json({ ok: false, error: charged.error });
         }
-        const out = charged.result;
-        return res.status(200).json({
-          ok: true,
-          videoUrl: out.videoUrl,
-          provider: out.provider,
-          model: out.model,
-          version: out.version,
-          resolution: out.resolution,
-          creditsUsed: charged.credits,
-        });
+        try {
+          const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
+          const task = await createCanvasVideoTask({
+            userId: charged.userId,
+            creditsCharged: charged.credits,
+            engine: "hailuo-openrouter",
+            label,
+            prompt,
+            imageUrl,
+            imageUrls,
+            aspectRatio,
+            duration,
+            resolution: HAILUO_OPENROUTER_RESOLUTION,
+            generateAudio,
+          });
+          return res.status(200).json({
+            ok: true,
+            async: true,
+            taskId: task.taskId,
+            status: task.status,
+            videoUrl: task.videoUrl || undefined,
+            provider: "openrouter",
+            version: "hailuo-3",
+            resolution: HAILUO_OPENROUTER_RESOLUTION,
+            creditsUsed: charged.credits,
+          });
+        } catch (error: any) {
+          if (charged.credits > 0) {
+            const { refundCredits } = await import("../server/credits.js");
+            await refundCredits(charged.userId, charged.credits, `${label}·创建失败退回`).catch(
+              () => {},
+            );
+          }
+          throw error;
+        }
       } catch (e: any) {
         return res.status(502).json({ ok: false, error: e?.message || "hailuo3_failed" });
       }
@@ -3848,6 +3911,143 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       }
     }
 
+    if (op === "homePhotoUpscale") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const imageUrl = s(b.imageUrl || "").trim();
+      if (!imageUrl) {
+        return res.status(400).json({ ok: false, error: "请先上传一张照片" });
+      }
+      const upscaleFactorRaw = s(b.upscaleFactor || "").trim();
+      if (upscaleFactorRaw !== "x2" && upscaleFactorRaw !== "x4") {
+        return res.status(400).json({ ok: false, error: "仅支持 2× 或 4× 高清放大" });
+      }
+      const upscaleFactor = upscaleFactorRaw as "x2" | "x4";
+      const qualityWarningAccepted = b.qualityWarningAccepted === true;
+      const sourceBlurScore =
+        typeof b.sourceBlurScore === "number" && Number.isFinite(b.sourceBlurScore)
+          ? Number(b.sourceBlurScore)
+          : undefined;
+
+      try {
+        const { isGeminiApiImageUpscaleConfigured } = await import(
+          "../server/services/geminiApiImageUpscale.js"
+        );
+        if (!isGeminiApiImageUpscaleConfigured()) {
+          return res.status(503).json({ ok: false, error: "高清放大服务暂不可用，请稍后重试" });
+        }
+
+        const viewer = await resolveJobUser(req);
+        if (!viewer) {
+          return res.status(401).json({ ok: false, error: "请先登录后再高清放大" });
+        }
+        const { deductCreditsAmount, refundCredits } = await import("../server/credits.js");
+        const { imageUpscaleTotalCredits } = await import("../shared/plans.js");
+        const creditsNeeded = imageUpscaleTotalCredits("homePhotoUpscaleBase", upscaleFactor);
+
+        let creditsCharged = 0;
+        try {
+          const out = await deductCreditsAmount(
+            viewer.userId,
+            creditsNeeded,
+            "imageUpscale",
+            `首页照片高清放大 ${upscaleFactor}${
+              qualityWarningAccepted ? "；已确认原图模糊风险提示" : ""
+            }`,
+          );
+          creditsCharged = out.cost;
+        } catch {
+          return res.status(402).json({
+            ok: false,
+            error: `积分不足：本次高清放大需要 ${creditsNeeded} 积分，请补充积分后重试`,
+          });
+        }
+
+        try {
+          const { createHomePhotoUpscaleTask } = await import(
+            "../server/services/homePhotoUpscaleTask.js"
+          );
+          const task = await createHomePhotoUpscaleTask({
+            userId: viewer.userId,
+            creditsCharged,
+            imageUrl,
+            upscaleFactor,
+            qualityWarningAccepted,
+            sourceBlurScore,
+          });
+          console.info(
+            `[homePhotoUpscale] accepted taskId=${task.taskId} factor=${upscaleFactor} credits=${creditsCharged}`,
+          );
+          return res.status(200).json({
+            ok: true,
+            async: true,
+            taskId: task.taskId,
+            status: task.status,
+            upscaleFactor,
+            creditsUsed: creditsCharged,
+            imageUrl: task.resultImageUrl || undefined,
+          });
+        } catch (error: any) {
+          if (creditsCharged > 0) {
+            await refundCredits(
+              viewer.userId,
+              creditsCharged,
+              "首页照片高清放大·创建失败退回",
+            ).catch((refundErr) => {
+              console.error("[homePhotoUpscale] refund failed", refundErr);
+            });
+          }
+          throw error;
+        }
+      } catch (error: any) {
+        const message = String(error?.message || "高清放大失败，请稍后重试");
+        console.error("[homePhotoUpscale] failed", message);
+        return res.status(502).json({ ok: false, error: message });
+      }
+    }
+
+    if (op === "homePhotoUpscaleStatus") {
+      if (req.method !== "GET" && req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const taskId = s(b.taskId || q.taskId || "").trim();
+      if (!taskId) {
+        return res.status(400).json({ ok: false, error: "缺少任务编号" });
+      }
+      const viewer = await resolveJobUser(req);
+      if (!viewer) {
+        return res.status(401).json({ ok: false, error: "请先登录后再查询进度" });
+      }
+      try {
+        const { getHomePhotoUpscaleTask } = await import(
+          "../server/services/homePhotoUpscaleTask.js"
+        );
+        const task = await getHomePhotoUpscaleTask(taskId, viewer.userId);
+        if (!task) {
+          return res.status(404).json({ ok: false, error: "任务不存在或无权查看" });
+        }
+        return res.status(200).json({
+          ok: true,
+          taskId: task.taskId,
+          status: task.status,
+          imageUrl: task.resultImageUrl || undefined,
+          error: task.error || undefined,
+          upscaleFactor: task.upscaleFactor,
+          creditsUsed: task.creditsCharged,
+          inputWidth: task.inputWidth,
+          inputHeight: task.inputHeight,
+          outputWidth: task.outputWidth,
+          outputHeight: task.outputHeight,
+        });
+      } catch (error: any) {
+        return res.status(502).json({
+          ok: false,
+          error: error?.message || "查询高清放大进度失败",
+        });
+      }
+    }
+
     if (op === "seedanceI2V") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -3880,7 +4080,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (productVersion === "2.0-mini" && !isProbe) {
         productVersion = "2.0-fast";
       }
-      /** Seedance 2.5 正式版：五种 EvoLink 路由，共用计费与退款主链。 */
+      /** Seedance 2.5 正式版：五种 EvoLink 路由，共用计费与异步任务主链。 */
       if (productVersion === "2.5") {
         const result = await runSeedance25EvolinkJob(req, b, q, "画布 Seedance 2.5");
         if (!result.ok) {
@@ -3893,11 +4093,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         }
         return res.status(200).json({
           ok: true,
-          videoUrl: result.out.videoUrl,
-          provider: result.out.provider,
-          model: result.out.model,
-          version: result.out.version,
-          workMode: result.out.mode,
+          async: true,
+          taskId: result.taskId,
+          status: result.status,
+          videoUrl: result.videoUrl || undefined,
+          version: "2.5",
+          workMode: result.workMode,
           resolution: result.resolution,
           duration: result.duration,
           creditsUsed: result.credits,
@@ -3927,42 +4128,84 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             b.duration ?? q.duration ?? b.durationSec ?? 15,
           );
           const durationSec = typeof duration === "number" ? duration : 15;
-          const charged = await chargeCanvasVideoAndRun(
-            req,
-            {
-              durationSec,
-              episodeIndex: b.episodeIndex,
+          const label = `画布成片·${productVersion === "2.0-fast" ? "快速" : "标准"}·${resolution}（${durationSec}s）`;
+          // 探针仍走同步，方便脚本一次拿结果；正式用户走异步 task
+          if (isProbe) {
+            const charged = await chargeCanvasVideoAndRun(
+              req,
+              { durationSec, episodeIndex: b.episodeIndex, resolution, label, skipCharge: true },
+              () =>
+                runOpenRouterSeedanceVideo({
+                  prompt,
+                  imageUrl,
+                  imageUrls,
+                  audioUrls,
+                  quality: resolution,
+                  aspectRatio,
+                  duration: durationSec,
+                  generateAudio,
+                  version: productVersion,
+                }),
+            );
+            if (!charged.ok) {
+              return res.status(charged.status).json({ ok: false, error: charged.error });
+            }
+            const out = charged.result;
+            return res.status(200).json({
+              ok: true,
+              videoUrl: out.videoUrl,
+              provider: out.provider,
+              model: out.model,
+              version: out.version,
               resolution,
-              label: `画布成片·${productVersion === "2.0-fast" ? "快速" : "标准"}·${resolution}（${durationSec}s）`,
-              // 探针脚本没有 cookie，收费会把它们全打成 401
-              skipCharge: isProbe,
-            },
-            () =>
-              runOpenRouterSeedanceVideo({
-                prompt,
-                imageUrl,
-                imageUrls,
-                audioUrls,
-                quality: resolution,
-                aspectRatio,
-                duration: durationSec,
-                generateAudio,
-                version: productVersion,
-              }),
-          );
+              creditsUsed: charged.credits,
+            });
+          }
+          const charged = await chargeCanvasVideoCredits(req, {
+            durationSec,
+            episodeIndex: b.episodeIndex,
+            resolution,
+            label,
+          });
           if (!charged.ok) {
             return res.status(charged.status).json({ ok: false, error: charged.error });
           }
-          const out = charged.result;
-          return res.status(200).json({
-            ok: true,
-            videoUrl: out.videoUrl,
-            provider: out.provider,
-            model: out.model,
-            version: out.version,
-            resolution,
-            creditsUsed: charged.credits,
-          });
+          try {
+            const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
+            const task = await createCanvasVideoTask({
+              userId: charged.userId,
+              creditsCharged: charged.credits,
+              engine: "seedance-openrouter",
+              label,
+              prompt,
+              imageUrl,
+              imageUrls,
+              audioUrls,
+              aspectRatio,
+              duration: durationSec,
+              resolution,
+              generateAudio,
+              seedanceVersion: productVersion === "2.0-fast" ? "2.0-fast" : "2.0",
+            });
+            return res.status(200).json({
+              ok: true,
+              async: true,
+              taskId: task.taskId,
+              status: task.status,
+              videoUrl: task.videoUrl || undefined,
+              version: productVersion,
+              resolution,
+              creditsUsed: charged.credits,
+            });
+          } catch (error: any) {
+            if (charged.credits > 0) {
+              const { refundCredits } = await import("../server/credits.js");
+              await refundCredits(charged.userId, charged.credits, `${label}·创建失败退回`).catch(
+                () => {},
+              );
+            }
+            throw error;
+          }
         }
 
         // 仅探针 Mini / 未映射版本走 EvoLink
@@ -4031,15 +4274,56 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       }
       return res.status(200).json({
         ok: true,
-        videoUrl: result.out.videoUrl,
-        provider: result.out.provider,
-        model: result.out.model,
-        version: result.out.version,
-        workMode: result.out.mode,
+        async: true,
+        taskId: result.taskId,
+        status: result.status,
+        videoUrl: result.videoUrl || undefined,
+        version: "2.5",
+        workMode: result.workMode,
         resolution: result.resolution,
         duration: result.duration,
         creditsUsed: result.credits,
       });
+    }
+
+    if (op === "canvasVideoStatus") {
+      if (req.method !== "GET" && req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const taskId = s(b.taskId || q.taskId || "").trim();
+      if (!taskId) {
+        return res.status(400).json({ ok: false, error: "缺少任务编号" });
+      }
+      const viewer = await resolveJobUser(req);
+      if (!viewer) {
+        return res.status(401).json({ ok: false, error: "请先登录后再查询进度" });
+      }
+      try {
+        const { getCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
+        const task = await getCanvasVideoTask(taskId, viewer.userId);
+        if (!task) {
+          return res.status(404).json({ ok: false, error: "任务不存在或无权查看" });
+        }
+        return res.status(200).json({
+          ok: true,
+          taskId: task.taskId,
+          status: task.status,
+          videoUrl: task.videoUrl || undefined,
+          error: task.error || undefined,
+          engine: task.engine,
+          provider: task.provider,
+          model: task.model,
+          workMode: task.workMode,
+          resolution: task.resolution,
+          duration: task.duration,
+          creditsUsed: task.creditsCharged,
+        });
+      } catch (error: any) {
+        return res.status(502).json({
+          ok: false,
+          error: error?.message || "查询成片进度失败",
+        });
+      }
     }
 
     if (op === "klingCreate") {
