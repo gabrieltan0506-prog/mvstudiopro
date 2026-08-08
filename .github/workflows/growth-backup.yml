@@ -4,7 +4,7 @@ name: Growth Backup
 # 改频率必须两条一起改，只改本文件会再次出现「约每小时传一次」的观感（事故 #994）。
 on:
   schedule:
-    # 每 3 小时（UTC :00）。必须与 growth-archive-offload 的 15 */3 同频。
+    # 每 3 小时（UTC :00）。必须与 growth-archive-offload 的 30 */3 同频，错开 30 分钟。
     - cron: "0 */3 * * *"
   workflow_dispatch:
 
