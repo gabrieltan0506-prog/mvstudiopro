@@ -121,6 +121,9 @@ const CSS = `
   /* 图片与视频：不加 max-width 的话，一张成片截图就能把版面撑破 */
   img, video { max-width: 100%; height: auto; display: block;
                border-radius: 8px; border: 1px solid var(--line); margin: 0 0 8px; }
+  /* 自有样片：尽量藏下载按钮（非 DRM，只挡控件一键另存） */
+  video::-webkit-media-controls-download-button { display: none !important; }
+  video::-internal-media-controls-download-button { display: none !important; }
   figure { margin: 24px 0; }
   figure img, figure video { margin-bottom: 8px; }
   figcaption { font-size: 13px; color: var(--muted); text-align: center; }
@@ -187,9 +190,44 @@ ${opts.body}
   <a href="/pricing">定价</a>
 </footer>
 </div>
+<script>
+/* 博客样片均为站内自生成：挡右键菜单与拖拽另存；无法阻止抓包，只提高随手拿走成本 */
+(function () {
+  function isOwnedMedia(t) {
+    return t && (t.tagName === "VIDEO" || t.tagName === "IMG" || (t.closest && (t.closest("video") || t.closest("figure"))));
+  }
+  document.addEventListener("contextmenu", function (e) {
+    if (isOwnedMedia(e.target)) e.preventDefault();
+  }, true);
+  document.addEventListener("dragstart", function (e) {
+    if (isOwnedMedia(e.target)) e.preventDefault();
+  }, true);
+})();
+</script>
 </body>
 </html>
 `;
+}
+
+/**
+ * 给正文里的自有 <video> 打上 nodownload 等属性。
+ * Markdown 作者不必每篇手写；编译期统一注入。
+ */
+function hardenOwnedMediaHtml(html: string): string {
+  return html.replace(/<video\b([^>]*)>/gi, (_m, attrs: string) => {
+    let a = String(attrs || "");
+    if (!/\bcontrolslist\b/i.test(a)) {
+      a += ` controlsList="nodownload noplaybackrate"`;
+    } else if (!/nodownload/i.test(a)) {
+      a = a.replace(/\bcontrolslist\s*=\s*(["'])(.*?)\1/i, (_mm: string, q: string, v: string) => {
+        return `controlsList=${q}${v} nodownload${q}`;
+      });
+    }
+    if (!/\bdisablepictureinpicture\b/i.test(a)) a += ` disablePictureInPicture`;
+    if (!/\boncontextmenu\b/i.test(a)) a += ` oncontextmenu="return false"`;
+    if (!/\bdraggable\b/i.test(a)) a += ` draggable="false"`;
+    return `<video${a}>`;
+  });
 }
 
 async function main(): Promise<void> {
@@ -221,7 +259,9 @@ async function main(): Promise<void> {
         .find((l) => l.trim() && !/^[#>|\-*]/.test(l.trim()))
         ?.slice(0, 150) ||
       "";
-    const html = await marked.parse(body.replace(/^#\s+.+$/m, "").trimStart());
+    const html = hardenOwnedMediaHtml(
+      await marked.parse(body.replace(/^#\s+.+$/m, "").trimStart()),
+    );
     // 中文按字数估阅读时长，每分钟约 400 字
     const plain = body.replace(/[#>*`|\-]/g, "");
     // 分享卡片图取正文第一张图。默认那个 PWA 图标做封面很难看，
