@@ -175,7 +175,7 @@
 <p>我们一开始只想把首页的“老照片修复”入口补回来。真正动手以后才发现，要让普通人愿意用，它不能只会接收一张已经裁好、摆正、清晰的数字照片。多数人的回忆，本来就躺在相册里、抽屉里，甚至像这一张一样，躺在桌面上。</p>
 <figure>
   <a href="/#photo-tools" aria-label="前往MV Studio Pro首页照片工具">
-    <img src="/blog-assets/old-photo-home-update-homepage-tools.jpg" alt="MV Studio Pro首页照片工具，包含老照片修复上色、2倍与4倍高清放大和照片人物动画" loading="eager" decoding="async">
+    <img src="/blog-assets/old-photo-home-update-homepage-tools.jpg" alt="MV Studio Pro首页照片工具，包含老照片修复上色、2倍与4倍高清放大和照片人物动画" loading="eager" decoding="async" oncontextmenu="return false" draggable="false">
   </a>
   <figcaption>今天上线的首页照片工具：上传一次，修复、放大和人物动画可以接着做。点击截图即可前往。</figcaption>
 </figure><p>想直接试，不必读完全文：</p>
@@ -185,38 +185,38 @@
 <li><a href="/#photo-tools-animate">让照片人物动起来：可写动作提示词，按时长和清晰度计费</a></li>
 </ul>
 <figure>
-  <img src="/blog-assets/old-photo-home-update-original.jpg" alt="手机拍摄的纸质旧照片原图，周围仍有桌面、床单、白边和反光" loading="lazy" decoding="async">
+  <img src="/blog-assets/old-photo-home-update-original.jpg" alt="手机拍摄的纸质旧照片原图，周围仍有桌面、床单、白边和反光" loading="lazy" decoding="async" oncontextmenu="return false" draggable="false">
   <figcaption>最初上传的原图：1024×1820。真正的照片只占画面中间一部分。</figcaption>
 </figure><h2>第一步，不是上色，而是先把相纸从桌面上“拿起来”</h2>
 <p>让用户自己拖四个裁切点，当然最省开发时间。但这等于把我们的麻烦推给用户：老人不会裁，手机上不好裁，裁歪一点还得重来。</p>
 <p>所以新链路先做边界识别。幕后使用视觉模型只回答一件事：纸质照片的有效影像从哪里开始、到哪里结束。它不看人物是谁，也不负责重绘，只返回一组归一化坐标和置信度。服务端再按真实像素裁掉桌面、床单、白边、手指和阴影；真正的修复上色随后才交给 GPT Image 2。</p>
 <p>这一步还加了一道很朴素的保险：置信度不足时不乱裁，直接回到原图继续处理。自动化的意义是少给用户添麻烦，不是自信满满地切掉半张脸。</p>
 <figure>
-  <img src="/blog-assets/old-photo-home-update-ai-crop.jpg" alt="从手机翻拍画面中裁出的纸质旧照片有效影像区域" loading="lazy" decoding="async">
+  <img src="/blog-assets/old-photo-home-update-ai-crop.jpg" alt="从手机翻拍画面中裁出的纸质旧照片有效影像区域" loading="lazy" decoding="async" oncontextmenu="return false" draggable="false">
   <figcaption>为了展示边界目标而单独裁出的有效影像；生产链由视觉模型返回坐标，再执行像素裁切。</figcaption>
 </figure><p>上传也没有改成看似方便、实际笨重的浏览器 Base64。图片仍然从浏览器直传 GCS，业务请求只携带 GCS 地址；服务端需要调用模型时再读取图片。到了4K，一张图就是8MB左右，这个区别会直接决定请求是顺畅，还是在网关里堵成一团。</p>
 <h2>第一次上色，我们没有收货</h2>
 <p>第一版修复其实不算失败。划痕淡了，人物清楚了，肤色也回来了。但整张图仍像罩着一层旧相册的黄雾：颜色太客气，白边也还在。它像一张被认真保存的档案，却不像一段刚刚发生过的生活。</p>
 <figure>
-  <img src="/blog-assets/old-photo-home-update-first-color.jpg" alt="第一次老照片修复上色结果，颜色较淡并保留相纸边缘" loading="lazy" decoding="async">
+  <img src="/blog-assets/old-photo-home-update-first-color.jpg" alt="第一次老照片修复上色结果，颜色较淡并保留相纸边缘" loading="lazy" decoding="async" oncontextmenu="return false" draggable="false">
   <figcaption>第一次上色：修复有效，但颜色偏淡，离“重新活起来”还有一点距离。</figcaption>
 </figure><p>于是提示词重新收紧：人物身份、脸型、五官、年龄、表情、姿势和服装轮廓都不能动；允许恢复的，是皮肤、毛衣、书架、皮包和室内光线原本可能拥有的颜色。我们要的是鲜活，不是艳丽；是现代照片的通透感，不是把旧照片变成影楼样片。</p>
 <p>第二次出来时，粉色毛衣、米黄色童装、木柜和书脊终于各自有了温度。更重要的是，画面里的人仍然能被认出来。</p>
 <figure>
-  <img src="/blog-assets/old-photo-home-update-vivid.jpg" alt="颜色更鲜活自然的老照片修复上色结果" loading="lazy" decoding="async">
+  <img src="/blog-assets/old-photo-home-update-vivid.jpg" alt="颜色更鲜活自然的老照片修复上色结果" loading="lazy" decoding="async" oncontextmenu="return false" draggable="false">
   <figcaption>重新调整修复指令后的版本：1536×1024，颜色更明亮，但没有故意做成高饱和滤镜。</figcaption>
 </figure><h2>2K很快，4K也真的不是把数字写大</h2>
 <p>修复完成后，这张图会自动成为下一步素材，不用下载、重新上传、再找一遍文件。首页的2倍和4倍放大，也不再共用同一个模型然后换一行文案。</p>
 <p>2倍走速度更快的 <code>gemini-3.1-flash-image</code>。这次实跑约19.6秒，输出 <strong>2528×1696</strong>。发丝、衣料和书架边缘更干净，适合手机保存、社交平台分享和普通尺寸冲印。</p>
 <figure>
   <a href="/blog-assets/old-photo-home-update-2k.jpg" target="_blank" rel="noreferrer">
-    <img src="/blog-assets/old-photo-home-update-2k.jpg" alt="老照片经过2倍高清放大后的2K结果" loading="lazy" decoding="async">
+    <img src="/blog-assets/old-photo-home-update-2k.jpg" alt="老照片经过2倍高清放大后的2K结果" loading="lazy" decoding="async" oncontextmenu="return false" draggable="false">
   </a>
   <figcaption>2×高清放大：2528×1696，约19.6秒完成。点击可查看大图。</figcaption>
 </figure><p>4倍则换成面向4K输出的 <code>gemini-3-pro-image</code>。这次实跑约40.1秒，输出 <strong>5056×3392</strong>。它没有把2K文件机械拉伸一遍，而是重新检查细节，同时被要求锁住构图、人物身份、表情、色彩和光线，不许借“增强”之名偷偷换脸。模型名留在幕后，用户在页面上只需要选择2×或4×。</p>
 <figure>
   <a href="/blog-assets/old-photo-home-update-4k.jpg" target="_blank" rel="noreferrer">
-    <img src="/blog-assets/old-photo-home-update-4k.jpg" alt="老照片经过4倍高清放大后的4K结果" loading="lazy" decoding="async">
+    <img src="/blog-assets/old-photo-home-update-4k.jpg" alt="老照片经过4倍高清放大后的4K结果" loading="lazy" decoding="async" oncontextmenu="return false" draggable="false">
   </a>
   <figcaption>4×高清放大：5056×3392，约40.1秒完成。页面使用高质量压缩，像素尺寸保持不变。</figcaption>
 </figure><p>两档模型不同，但对外仍是一件简单的事：2×扣15积分，4×扣35积分。系统会先检查原图清晰度；如果源图已经糊到没有真实细节，会明确提醒放大可能产生推测纹理。用户仍然可以继续，只是这笔选择要在生成前说清楚。</p>
