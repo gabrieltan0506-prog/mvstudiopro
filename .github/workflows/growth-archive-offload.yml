@@ -2,7 +2,8 @@ name: Growth Archive Offload
 
 on:
   schedule:
-    - cron: "15 * * * *"
+    # 每 3 小时（UTC，:15），与冷备 0 */3 错开，避免同时打 Fly SSH。
+    - cron: "15 */3 * * *"
   workflow_dispatch:
 
 jobs:
