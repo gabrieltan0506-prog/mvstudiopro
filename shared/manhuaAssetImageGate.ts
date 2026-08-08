@@ -320,7 +320,8 @@ export function seedIdFromManhuaSheetBlockId(blockId: string): string {
     .replace(/^charsheet-face-/, "")
     .replace(/^charsheet-/, "")
     .replace(/^sceneplate-/, "")
-    .replace(/^propsheet-/, "");
+    .replace(/^propsheet-/, "")
+    .replace(/^propplate-/, "");
 }
 
 /**
@@ -356,8 +357,8 @@ export function planManhuaAssetImageSpawns(
     forceEpisodeSheets?: boolean;
     /**
      * 指定这些 anchor **即使已有成品图也重新编译提示词并重出**（「重出本类 N 张」用）。
-     * 场景：提示词修好了（如道具禁烧字），旧图得按新 prompt 重出；画布上点节点重跑只会
-     * 复用旧 prompt，改不掉老毛病。
+     * 场景：提示词修好了（如道具禁烧字），旧图得按新 prompt 重出。
+     * 画布节点重跑另走 `compileManhuaRerun`（同套重编译契约）。
      */
     regenerateAnchorIds?: string[];
     /**

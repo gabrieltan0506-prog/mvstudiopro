@@ -2731,6 +2731,10 @@ export function expandManhuaShotKeyartsAfterReverse(
   blocks: CanvasBlock[],
   edges: CanvasEdge[],
   reverseId: string,
+  opts?: {
+    /** 与 ensure 同契约：工厂/反推旁路不得丢导演板垫图 */
+    directorBoardUrlByEpisode?: Record<number, string> | null;
+  },
 ): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
   const reverse = blocks.find((b) => b.id === reverseId);
   if (!reverse) return { blocks, edges };
@@ -2742,7 +2746,9 @@ export function expandManhuaShotKeyartsAfterReverse(
   };
   const shots = resolveShotsForEpisodeKeyarts(blocks, ep);
   if (shots.length < 2) {
-    return ensureManhuaFragmentClips(blocks, edges, ep ?? 1);
+    return ensureManhuaFragmentClips(blocks, edges, ep ?? 1, {
+      directorBoardUrlByEpisode: opts?.directorBoardUrlByEpisode,
+    });
   }
 
   const existingKeyarts = blocks.filter((b) => b.id.startsWith("keyart-") && !b.archivedFromPreviousScript && sameEpisode(b)).sort(sortKeyartBlocks);
@@ -2832,7 +2838,9 @@ export function expandManhuaShotKeyartsAfterReverse(
     ...keyartIds.map((id) => ({ fromId: reverse.id, toId: id })),
   ];
 
-  return ensureManhuaFragmentClips(nextBlocks, nextEdges, ep ?? 1);
+  return ensureManhuaFragmentClips(nextBlocks, nextEdges, ep ?? 1, {
+    directorBoardUrlByEpisode: opts?.directorBoardUrlByEpisode,
+  });
 }
 
 export function stageKeyFromBlockId(blockId: string): ManhuaFactoryStageKey | null {
@@ -3153,6 +3161,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   const stopOnError = opts.stopOnError === true;
   const skipDone = opts.skipDone !== false;
   const defaultMaxRetries = Math.max(0, Math.min(4, opts.maxRetries ?? 2));
+  /** 工厂内 ensure/反推展开必须吃同一张导演板表，禁止只靠工作台审阅路径传参 */
+  const directorBoardUrlByEpisode = opts.deps.manhuaDirectorBoardUrlByEpisode ?? null;
   const hadPoisonedRecapLink = opts.blocks.some(
     (b) => b.id.startsWith("story-") && Boolean(b.parentId?.startsWith("recap_card-")),
   );
@@ -3176,7 +3186,9 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       Boolean(b.outputText?.trim()),
   );
   if (reverseReady) {
-    const expanded = expandManhuaShotKeyartsAfterReverse(working, edges, reverseReady.id);
+    const expanded = expandManhuaShotKeyartsAfterReverse(working, edges, reverseReady.id, {
+      directorBoardUrlByEpisode,
+    });
     working = expanded.blocks;
     edges = expanded.edges;
     opts.onBlocksChange?.(working);
@@ -3185,7 +3197,9 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     opts.episodeIndex >= 1 &&
     (opts.fragmentShotIndex != null || (opts.untilStage ?? "clip") === "clip")
   ) {
-    const ensured = ensureManhuaFragmentClips(working, edges, opts.episodeIndex);
+    const ensured = ensureManhuaFragmentClips(working, edges, opts.episodeIndex, {
+      directorBoardUrlByEpisode,
+    });
     working = ensured.blocks;
     edges = ensured.edges;
     opts.onBlocksChange?.(working);
@@ -3612,7 +3626,9 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         );
         next = enrichDownstreamPrompts(next, blockId);
         if (stage === "reverse") {
-          const expanded = expandManhuaShotKeyartsAfterReverse(next, edges, blockId);
+          const expanded = expandManhuaShotKeyartsAfterReverse(next, edges, blockId, {
+            directorBoardUrlByEpisode,
+          });
           next = expanded.blocks;
           edges = expanded.edges;
           // 反推后新铺的按镜静帧与片段成片需并入后续执行队列
