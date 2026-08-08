@@ -510,6 +510,52 @@ type SeedanceProductVideoResult = {
   workMode?: SeedanceEvolinkMode;
 };
 
+/** 画布成片异步任务：短轮询 status，避免单条 HTTP 长等被部署掐断。 */
+async function pollCanvasVideoTask(
+  taskId: string,
+): Promise<{ videoUrl: string; workMode?: SeedanceEvolinkMode }> {
+  const statusEndpoint = withLongJobsFlyDirect(
+    `/api/jobs?op=canvasVideoStatus&taskId=${encodeURIComponent(taskId)}`,
+  );
+  const deadline = Date.now() + 20 * 60_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 5_000));
+    const statusRes = await fetch(statusEndpoint, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+    });
+    const statusRaw = await statusRes.text();
+    let statusJson: {
+      ok?: boolean;
+      status?: string;
+      videoUrl?: string;
+      workMode?: SeedanceEvolinkMode;
+      error?: string;
+    } = {};
+    try {
+      statusJson = JSON.parse(statusRaw) as typeof statusJson;
+    } catch {
+      continue;
+    }
+    if (!statusRes.ok || !statusJson.ok) {
+      throw new Error(statusJson.error || "成片进度查询失败");
+    }
+    if (statusJson.status === "succeeded" && statusJson.videoUrl) {
+      return {
+        videoUrl: String(statusJson.videoUrl).trim(),
+        workMode: isSeedance25EvolinkMode(statusJson.workMode)
+          ? statusJson.workMode
+          : undefined,
+      };
+    }
+    if (statusJson.status === "failed") {
+      throw new Error(statusJson.error || "成片生成失败，积分已自动退回");
+    }
+  }
+  throw new Error("成片仍在生成中，请稍后在作品页查看，或稍后再试");
+}
+
 /**
  * 从漫剧 clip 节点 id（`clip-e01-g03`）取段号，随请求体上报便于服务端记账与排错。
  * 集号本身走 `block.episodeIndex`，不依赖 id 解析。
@@ -605,6 +651,8 @@ async function runSeedanceProductVideo(
     error?: string;
     message?: string;
     ok?: boolean;
+    async?: boolean;
+    taskId?: string;
     workMode?: SeedanceEvolinkMode;
   } = {};
   try {
@@ -616,13 +664,25 @@ async function runSeedanceProductVideo(
         : `成片生成失败：${text.slice(0, 160)}`,
     );
   }
-  if (!res.ok || !json.videoUrl) {
+  if (!res.ok || !json.ok) {
     throw new Error(json.error || json.message || "成片生成失败");
   }
-  return {
-    videoUrl: String(json.videoUrl),
-    workMode: isSeedance25EvolinkMode(json.workMode) ? json.workMode : undefined,
-  };
+  if (json.videoUrl) {
+    return {
+      videoUrl: String(json.videoUrl),
+      workMode: isSeedance25EvolinkMode(json.workMode) ? json.workMode : undefined,
+    };
+  }
+  if (json.taskId) {
+    const polled = await pollCanvasVideoTask(json.taskId);
+    return {
+      videoUrl: polled.videoUrl,
+      workMode:
+        polled.workMode ||
+        (isSeedance25EvolinkMode(json.workMode) ? json.workMode : undefined),
+    };
+  }
+  throw new Error(json.error || json.message || "成片生成失败");
 }
 
 /** MiniMax H3 · OpenRouter（2K；时长 5–15s） */
@@ -664,7 +724,14 @@ async function runHailuo3(
     }),
   );
   const text = await res.text();
-  let json: { videoUrl?: string; error?: string; message?: string; ok?: boolean } = {};
+  let json: {
+    videoUrl?: string;
+    error?: string;
+    message?: string;
+    ok?: boolean;
+    async?: boolean;
+    taskId?: string;
+  } = {};
   try {
     json = JSON.parse(text) as typeof json;
   } catch {
@@ -674,10 +741,15 @@ async function runHailuo3(
         : `成片生成失败：${text.slice(0, 160)}`,
     );
   }
-  if (!res.ok || !json.videoUrl) {
+  if (!res.ok || !json.ok) {
     throw new Error(json.error || json.message || "成片生成失败");
   }
-  return String(json.videoUrl);
+  if (json.videoUrl) return String(json.videoUrl);
+  if (json.taskId) {
+    const polled = await pollCanvasVideoTask(json.taskId);
+    return polled.videoUrl;
+  }
+  throw new Error(json.error || json.message || "成片生成失败");
 }
 
 export const OMNI_CLIP_DURATION_SECONDS = 10;

@@ -36,6 +36,10 @@ export type TrendSchedulerState = {
   burstLowYieldRuns?: number;
   lastFrequencyLabel?: string;
   lastError?: string;
+  /** 连续超时/中止次数；成功采集后清零。用于超时冷却退出，避免掐断后立刻再抓。 */
+  timeoutStreak?: number;
+  /** 超时冷却截止（ISO）；未到期前调度不得强制重跑。 */
+  timeoutCooldownUntil?: string;
 };
 
 export type TrendArchiveEntry = {

@@ -20,6 +20,12 @@ import {
 } from "./trendStore";
 import { notifyGrowthCollectionUpdate } from "./trendMailDigest";
 import { nowShanghaiIso } from "./time";
+import {
+  buildTimeoutCooldownMs,
+  formatTimeoutCooldownLabel,
+  isSchedulerTimeoutOrAbortError,
+  withAbortableTimeout,
+} from "./collectorAbort.js";
 
 const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", "xiaohongshu", "toutiao"];
 const RETRY_BASE_MS = 5 * 60 * 1000;
@@ -120,20 +126,6 @@ function nextRunIso(baseMs: number) {
 
 function nextBootRunIso(order: number) {
   return nowShanghaiIso(Date.now() + SCHEDULER_BOOT_GRACE_MS + (order * INITIAL_PLATFORM_SPACING_MS));
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
 
 function readPlatformMinutesEnv(platform: GrowthPlatform, suffix: string, fallbackMinutes: number) {
@@ -383,6 +375,28 @@ function buildRetryDelayMs(failureCount: number) {
   return Math.min(RETRY_MAX_MS, RETRY_BASE_MS * Math.max(1, 2 ** Math.max(0, failureCount - 1)));
 }
 
+function isInTimeoutCooldown(state?: {
+  timeoutCooldownUntil?: string;
+  nextRunAt?: string;
+  lastError?: string;
+}): boolean {
+  if (!state) return false;
+  const cooldownUntilMs = state.timeoutCooldownUntil
+    ? new Date(state.timeoutCooldownUntil).getTime()
+    : 0;
+  if (cooldownUntilMs > Date.now()) return true;
+  // 兼容旧状态：只有 lastError 是超时、且 nextRunAt 仍在未来
+  if (
+    state.lastError &&
+    isSchedulerTimeoutOrAbortError(state.lastError) &&
+    state.nextRunAt &&
+    new Date(state.nextRunAt).getTime() > Date.now()
+  ) {
+    return true;
+  }
+  return false;
+}
+
 async function runPlatform(platform: GrowthPlatform) {
   const startedAt = nowShanghaiIso();
   const startedAtMs = Date.now();
@@ -400,8 +414,8 @@ async function runPlatform(platform: GrowthPlatform) {
   });
 
   try {
-    const collection = await withTimeout(
-      collectPlatformTrends(platform),
+    const collection = await withAbortableTimeout(
+      (signal) => collectPlatformTrends(platform, { signal }),
       getPlatformRunTimeoutMs(platform),
       `[growth.scheduler] ${platform}`,
     );
@@ -421,6 +435,8 @@ async function runPlatform(platform: GrowthPlatform) {
       lastSuccessAt: collection.collectedAt,
       nextRunAt: plan.nextRunAt,
       failureCount: 0,
+      timeoutStreak: 0,
+      timeoutCooldownUntil: undefined,
       totalRuns: (currentState?.totalRuns || 0) + 1,
       successCount: (currentState?.successCount || 0) + 1,
       lastDurationMs: Date.now() - startedAtMs,
@@ -462,10 +478,23 @@ async function runPlatform(platform: GrowthPlatform) {
     const message = error instanceof Error ? error.message : String(error);
     const current = (await readTrendSchedulerState())[platform];
     const failureCount = (current?.failureCount || 0) + 1;
-    const forcedBurst = isForceBurstActive(platform);
+    const timedOut = isSchedulerTimeoutOrAbortError(error);
+    const timeoutStreak = timedOut ? (current?.timeoutStreak || 0) + 1 : 0;
+    const forcedBurst = isForceBurstActive(platform) && !timedOut;
     const storageFull = isStorageFullError(error);
+    // 超时/中止：退出 burst，进入冷却，本轮不再立刻重抓
+    const cooldownMs = timedOut
+      ? buildTimeoutCooldownMs(timeoutStreak)
+      : forcedBurst
+        ? getPlatformBurstIntervalMs(platform)
+        : buildRetryDelayMs(failureCount);
+    const cooldownUntil = timedOut
+      ? nowShanghaiIso(Date.now() + cooldownMs)
+      : undefined;
     await updateTrendSchedulerState(platform, {
       failureCount,
+      timeoutStreak,
+      timeoutCooldownUntil: cooldownUntil,
       totalRuns: (current?.totalRuns || 0) + 1,
       totalFailures: (current?.totalFailures || 0) + 1,
       lastDurationMs: Date.now() - startedAtMs,
@@ -474,14 +503,25 @@ async function runPlatform(platform: GrowthPlatform) {
       burstStableRuns: forcedBurst ? (current?.burstStableRuns || 0) : 0,
       burstLowYieldRuns: forcedBurst ? (current?.burstLowYieldRuns || 0) : 0,
       burstTriggeredAt: forcedBurst ? (current?.burstTriggeredAt || startedAt) : undefined,
-      nextRunAt: forcedBurst
-        ? nextRunIso(getPlatformBurstIntervalMs(platform))
-        : nextRunIso(buildRetryDelayMs(failureCount)),
-      lastFrequencyLabel: forcedBurst
-        ? getForceBurstLabel(platform)
-        : current?.lastFrequencyLabel,
+      burstExitCount:
+        (current?.burstExitCount || 0) +
+        (current?.burstMode && !forcedBurst ? 1 : 0),
+      nextRunAt: nextRunIso(cooldownMs),
+      lastFrequencyLabel: timedOut
+        ? formatTimeoutCooldownLabel(cooldownMs)
+        : forcedBurst
+          ? getForceBurstLabel(platform)
+          : current?.lastFrequencyLabel,
     });
-    console.warn(`[growth.scheduler] ${platform} failed:`, message);
+    if (timedOut) {
+      console.warn(
+        `[growth.scheduler] ${platform} aborted/timeout → exit burst, cooldown ${Math.round(cooldownMs / 60_000)}min (streak=${timeoutStreak})` +
+          (storageFull ? " [storage_full]" : ""),
+        message,
+      );
+    } else {
+      console.warn(`[growth.scheduler] ${platform} failed:`, message);
+    }
   }
 }
 
@@ -495,12 +535,16 @@ async function runDuePlatforms() {
       let touched = false;
       for (const platform of PRIORITY_PLATFORMS) {
         const state = scheduler[platform];
+        // 超时冷却期内禁止 live 模式清零强制重跑
+        if (isInTimeoutCooldown(state)) continue;
         const nextRunAtMs = state?.nextRunAt ? new Date(state.nextRunAt).getTime() : 0;
         const overdueMs = nextRunAtMs > 0 ? Date.now() - nextRunAtMs : 0;
         if (overdueMs < 5 * 60 * 1000) continue;
         await updateTrendSchedulerState(platform, {
           nextRunAt: nowShanghaiIso(),
           failureCount: 0,
+          timeoutStreak: 0,
+          timeoutCooldownUntil: undefined,
           lastError: undefined,
           burstMode: false,
           burstTriggeredAt: undefined,
@@ -514,12 +558,17 @@ async function runDuePlatforms() {
     }
     const queue = PRIORITY_PLATFORMS.filter((platform) => {
       const state = scheduler[platform];
+      // 冷却中：硬退出，本轮不进队列
+      if (isInTimeoutCooldown(state)) return false;
       const nextRunAt = state?.nextRunAt;
       const lastRunAt = state?.lastRunAt;
       const staleSinceLastRun = lastRunAt
         ? Date.now() - new Date(lastRunAt).getTime() >= STALE_SCHEDULER_FORCE_RUN_MS
         : false;
-      if (isForceBurstActive(platform) && staleSinceLastRun) return true;
+      // 超时冷却优先于 force-burst 强制重跑
+      if (isForceBurstActive(platform) && staleSinceLastRun && !isInTimeoutCooldown(state)) {
+        return true;
+      }
       if (!nextRunAt) return true;
       return new Date(nextRunAt).getTime() <= Date.now();
     });

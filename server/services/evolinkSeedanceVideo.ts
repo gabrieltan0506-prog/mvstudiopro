@@ -50,37 +50,120 @@ function extractEvolinkVideoUrl(task: EvolinkVideoTask): string {
   return nested.trim();
 }
 
-async function pollEvolinkVideoTask(taskId: string, label: string): Promise<string> {
-  const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
-  if (!apiKey) throw new Error("EVOLINK_API_KEY 未配置");
+export type EvolinkVideoPollSnapshot =
+  | { state: "completed"; sourceUrl: string }
+  | { state: "failed"; error: string }
+  | { state: "running"; status: string };
 
+/** 单次查询 EvoLink 任务；供画布异步成片在部署后续跑。 */
+export async function pollEvolinkVideoTaskOnce(
+  taskId: string,
+  label: string,
+): Promise<EvolinkVideoPollSnapshot> {
+  const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
+  if (!apiKey) return { state: "failed", error: "EVOLINK_API_KEY 未配置" };
+
+  const r = await fetch(`${EVOLINK_BASE}/v1/tasks/${encodeURIComponent(taskId)}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(60_000),
+  });
+  const json = (await r.json().catch(() => ({}))) as EvolinkVideoTask;
+  if (!r.ok) {
+    return {
+      state: "failed",
+      error: json.error?.message || `EvoLink 任务查询失败 (${r.status})`,
+    };
+  }
+
+  const status = String(json.status || "").toLowerCase();
+  if (status === "completed" || status === "succeeded" || status === "success") {
+    const url = extractEvolinkVideoUrl(json);
+    if (!url) {
+      return { state: "failed", error: `${label} 任务完成但未返回视频 URL` };
+    }
+    return { state: "completed", sourceUrl: url };
+  }
+  if (status === "failed" || status === "cancelled") {
+    return {
+      state: "failed",
+      error: json.error?.message || `${label} 视频生成失败`,
+    };
+  }
+  return { state: "running", status: status || "processing" };
+}
+
+async function pollEvolinkVideoTask(taskId: string, label: string): Promise<string> {
   const started = Date.now();
   while (Date.now() - started < MAX_POLL_MS) {
-    const r = await fetch(`${EVOLINK_BASE}/v1/tasks/${encodeURIComponent(taskId)}`, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(60_000),
-    });
-    const json = (await r.json().catch(() => ({}))) as EvolinkVideoTask;
-    if (!r.ok) {
-      throw new Error(json.error?.message || `EvoLink 任务查询失败 (${r.status})`);
-    }
-
-    const status = String(json.status || "").toLowerCase();
-    if (status === "completed" || status === "succeeded" || status === "success") {
-      const url = extractEvolinkVideoUrl(json);
-      if (!url) throw new Error(`${label} 任务完成但未返回视频 URL`);
-      return url;
-    }
-    if (status === "failed" || status === "cancelled") {
-      throw new Error(json.error?.message || `${label} 视频生成失败`);
-    }
-
+    const snap = await pollEvolinkVideoTaskOnce(taskId, label);
+    if (snap.state === "completed") return snap.sourceUrl;
+    if (snap.state === "failed") throw new Error(snap.error);
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
 
   throw new Error(`${label} 任务超时（${Math.round(MAX_POLL_MS / 60_000)} 分钟）`);
 }
+
+export async function submitEvolinkSeedanceVideo(
+  input: EvolinkSeedanceRunInput,
+): Promise<{
+  model: string;
+  mode: SeedanceEvolinkMode;
+  version: SeedanceEvolinkVersion;
+  evolinkTaskId: string;
+  immediateSourceUrl?: string;
+}> {
+  const version: SeedanceEvolinkVersion = parseSeedanceVersion(input.version);
+  if (version === "2.5" && !isSeedance25Enabled()) {
+    throw new Error(
+      `${SEEDANCE_25_COMING_SOON_LABEL_EN}（EvoLink 尚未开放，请先用 Seedance 2.0 / Mini）`,
+    );
+  }
+
+  const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
+  if (!apiKey) throw new Error(`EVOLINK_API_KEY 未配置，无法使用 Seedance ${version}`);
+
+  const built = buildEvolinkSeedanceRequest(input);
+  const { body, model, mode } = built;
+
+  const createRes = await fetch(`${EVOLINK_BASE}/v1/videos/generations`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(60_000),
+  });
+
+  const createJson = (await createRes.json().catch(() => ({}))) as EvolinkVideoTask;
+  if (!createRes.ok) {
+    throw new Error(
+      createJson.error?.message || createJson.message || `EvoLink 创建任务失败 (${createRes.status})`,
+    );
+  }
+
+  const immediateUrl = extractEvolinkVideoUrl(createJson);
+  if (immediateUrl && String(createJson.status || "").toLowerCase() === "completed") {
+    return {
+      model,
+      mode,
+      version,
+      evolinkTaskId: String(createJson.id || "").trim() || `immediate-${Date.now()}`,
+      immediateSourceUrl: immediateUrl,
+    };
+  }
+
+  const taskId = String(createJson.id || "").trim();
+  if (!taskId) throw new Error("EvoLink 未返回任务 ID");
+  return { model, mode, version, evolinkTaskId: taskId };
+}
+
+export {
+  POLL_INTERVAL_MS as EVOLINK_SEEDANCE_POLL_INTERVAL_MS,
+  MAX_POLL_MS as EVOLINK_SEEDANCE_MAX_POLL_MS,
+};
 
 export type EvolinkSeedanceRunInput = {
   prompt: string;
@@ -179,46 +262,19 @@ export function buildEvolinkSeedanceRequest(input: EvolinkSeedanceRunInput): {
 export async function runEvolinkSeedanceVideo(
   input: EvolinkSeedanceRunInput,
 ): Promise<{ videoUrl: string; model: string; provider: "evolink"; version: SeedanceEvolinkVersion; mode: SeedanceEvolinkMode }> {
-  const version: SeedanceEvolinkVersion = parseSeedanceVersion(input.version);
-  if (version === "2.5" && !isSeedance25Enabled()) {
-    throw new Error(`${SEEDANCE_25_COMING_SOON_LABEL_EN}（EvoLink 尚未开放，请先用 Seedance 2.0 / Mini）`);
-  }
-
-  const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
-  if (!apiKey) throw new Error(`EVOLINK_API_KEY 未配置，无法使用 Seedance ${version}`);
-
-  const built = buildEvolinkSeedanceRequest(input);
-  const { body, model, mode } = built;
-  const label = `Seedance ${version}`;
-
-  const createRes = await fetch(`${EVOLINK_BASE}/v1/videos/generations`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  });
-
-  const createJson = (await createRes.json().catch(() => ({}))) as EvolinkVideoTask;
-
-  if (!createRes.ok) {
-    throw new Error(createJson.error?.message || createJson.message || `EvoLink 创建任务失败 (${createRes.status})`);
-  }
-
-  const immediateUrl = extractEvolinkVideoUrl(createJson);
-  if (immediateUrl && String(createJson.status || "").toLowerCase() === "completed") {
-    const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(immediateUrl);
-    return { videoUrl, model, provider: "evolink", version, mode };
-  }
-
-  const taskId = String(createJson.id || "").trim();
-  if (!taskId) throw new Error("EvoLink 未返回任务 ID");
-
-  const sourceUrl = await pollEvolinkVideoTask(taskId, label);
+  const submitted = await submitEvolinkSeedanceVideo(input);
+  const label = `Seedance ${submitted.version}`;
+  const sourceUrl =
+    submitted.immediateSourceUrl ||
+    (await pollEvolinkVideoTask(submitted.evolinkTaskId, label));
   const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(sourceUrl);
-  return { videoUrl, model, provider: "evolink", version, mode };
+  return {
+    videoUrl,
+    model: submitted.model,
+    provider: "evolink",
+    version: submitted.version,
+    mode: submitted.mode,
+  };
 }
 
 /** @deprecated 兼容旧名；等同 runEvolinkSeedanceVideo（2.0） */
