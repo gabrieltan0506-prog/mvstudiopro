@@ -9,6 +9,7 @@ import {
   homePhotoAnimateCredits,
   isHomePhotoAnimateDuration,
   isHomePhotoAnimateResolution,
+  isHomePhotoResultBrowserReadable,
 } from "./homePhotoTools";
 import { imageUpscaleTotalCredits } from "./plans";
 
@@ -63,5 +64,38 @@ describe("老照片修复提示词", () => {
     expect(prompt).toContain("禁止美颜换脸");
     expect(prompt).toContain("禁止");
     expect(prompt).toContain("水印");
+  });
+});
+
+describe("首页照片结果 URL 可读性", () => {
+  it("拒绝私有桶未签名 home-photo 直链", () => {
+    expect(
+      isHomePhotoResultBrowserReadable(
+        "https://storage.googleapis.com/polished-pond-5133/home-photo/restored-1.png",
+      ),
+    ).toBe(false);
+    expect(
+      isHomePhotoResultBrowserReadable(
+        "https://storage.googleapis.com/polished-pond-5133/generated/x.png",
+      ),
+    ).toBe(false);
+  });
+
+  it("接受 GCS V4 签名、Fly 卷代理与 Blob 公链", () => {
+    expect(
+      isHomePhotoResultBrowserReadable(
+        "https://storage.googleapis.com/bucket/generated/x.png?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Signature=abc",
+      ),
+    ).toBe(true);
+    expect(
+      isHomePhotoResultBrowserReadable(
+        "https://mvstudiopro.com/api/jobs?op=flyVolumeMedia&relPath=home_photo_restored%2Fa.png",
+      ),
+    ).toBe(true);
+    expect(
+      isHomePhotoResultBrowserReadable(
+        "https://abc123.public.blob.vercel-storage.com/home-photo/restored.png",
+      ),
+    ).toBe(true);
   });
 });
