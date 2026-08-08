@@ -103,8 +103,8 @@ export function buildManhuaWriterExpandPrompt(opts: {
   lengthTierId?: string | null;
   /**
    * 开场选定的成片引擎：决定可拍表段数与单段秒数。
-   * `seedance-2.0` / `seedance-2.0-fast` → 5–6×15s；`seedance-2.5` → 4×30s；
-   * 成片·高清 → 7–8×15s。
+   * `seedance-2.0` / `seedance-2.0-fast` / Happy Horse → 5–6×15s；`seedance-2.5` → 4×30s；
+   * Minimax H3 → 7–8×15s。
    */
   videoModel?: string | null;
   /** 局部改写：只重写第 N 集起，之前的集不许动 */

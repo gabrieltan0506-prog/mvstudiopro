@@ -52,7 +52,9 @@ export type CanvasVideoModel =
   /** Seedance 2.5 · EvoLink 官方五模式（约 4–30s） */
   | "seedance-2.5"
   /** MiniMax H3 · OpenRouter minimax/hailuo-3（2K） */
-  | "minimax-hailuo-3";
+  | "minimax-hailuo-3"
+  /** Happy Horse 1.1 · OpenRouter alibaba/happyhorse-1.1（≤15s） */
+  | "happyhorse-1.1";
 /** 文生图 vs 改图（EvoLink image_urls edit） */
 export type CanvasImageMode = "generate" | "edit";
 
@@ -280,12 +282,13 @@ export const IMAGE_MODEL_OPTIONS: Array<{ id: CanvasImageModel; label: string }>
   { id: "gpt-image-2", label: "官方出图" },
 ];
 
-/** 产品成片：快速 / 标准 / Seedance 2.5 / H3（2K） */
+/** 产品成片五引擎：正式产品名（与 manhuaSeedanceLayout 开场选型一致） */
 export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }> = [
-  { id: "seedance-2.0-fast", label: "成片·快速（默认）" },
-  { id: "seedance-2.0", label: "成片·标准" },
-  { id: "seedance-2.5", label: "Seedance 2.5 · 五模式" },
-  { id: "minimax-hailuo-3", label: "成片·H3（2K）" },
+  { id: "seedance-2.0", label: "Seedance 2.0" },
+  { id: "seedance-2.0-fast", label: "Seedance 2.0 fast" },
+  { id: "seedance-2.5", label: "Seedance 2.5" },
+  { id: "minimax-hailuo-3", label: "Minimax H3" },
+  { id: "happyhorse-1.1", label: "Happy Horse 1.1" },
 ];
 
 /** 工厂主成片默认；与 shared MANHUA_FACTORY_DEFAULT_VIDEO_MODEL 对齐（权限闸门另见 resolveManhuaFactoryDefaultVideoModel） */
@@ -348,12 +351,20 @@ export function normalizeCanvasVideoModel(raw: unknown): CanvasVideoModel {
   ) {
     return "minimax-hailuo-3";
   }
-  // 旧 Omni / Veo 会话一律迁到成片·快速（产品不再提供改写引擎）
+  if (
+    key === "happyhorse-1.1" ||
+    key === "happyhorse" ||
+    key === "happy-horse" ||
+    key === "alibaba/happyhorse-1.1"
+  ) {
+    return "happyhorse-1.1";
+  }
+  // 旧 Omni / Veo 会话一律迁到默认成片引擎（产品不再提供改写引擎）
   if (key === "gemini-omni-flash" || key === "veo-3.1") return DEFAULT_CANVAS_VIDEO_MODEL;
   return DEFAULT_CANVAS_VIDEO_MODEL;
 }
 
-/** 画布可选成片档位（快速 / 标准 / Seedance 2.5 / H3） */
+/** 画布可选成片档位（五引擎） */
 export function isCanvasProductVideoModel(
   videoModel: string | null | undefined,
 ): videoModel is Exclude<CanvasVideoModel, "gemini-omni-flash"> {
@@ -361,7 +372,8 @@ export function isCanvasProductVideoModel(
     videoModel === "seedance-2.0" ||
     videoModel === "seedance-2.0-fast" ||
     videoModel === "seedance-2.5" ||
-    videoModel === "minimax-hailuo-3"
+    videoModel === "minimax-hailuo-3" ||
+    videoModel === "happyhorse-1.1"
   );
 }
 

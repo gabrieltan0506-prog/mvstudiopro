@@ -114,6 +114,9 @@ describe("manhuaScriptWorkbench", () => {
     expect(resolveSegmentClipDurationSec([{ durationSec: 99 }], "seedance-2.0-fast")).toBe(15);
     expect(resolveSegmentClipDurationSec([{ durationSec: 30 }], "seedance-2.5")).toBe(30);
     expect(resolveSegmentClipDurationSec([{ durationSec: 99 }], "seedance-2.5")).toBe(30);
+    expect(resolveSegmentClipDurationSec([{ durationSec: 99 }], "happyhorse-1.1")).toBe(15);
+    expect(resolveSegmentClipDurationSec([{ durationSec: 7 }], "happyhorse-1.1")).toBe(10);
+    expect(manhuaSegmentDurationSec("happyhorse-1.1")).toBe(15);
   });
 
   it("formats shot inject with cast lock and resolves keyart shot index", () => {

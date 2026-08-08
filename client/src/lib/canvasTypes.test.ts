@@ -7,9 +7,11 @@ import {
   DEFAULT_CANVAS_TEXT_MODEL,
   defaultCanvasBlock,
   normalizeCanvasBlock,
+  normalizeCanvasVideoModel,
   resolveBlockHandoffText,
   resolveNearestUpstreamImageUrl,
   SPAWN_KIND_OPTIONS,
+  VIDEO_MODEL_OPTIONS,
 } from "./canvasTypes";
 
 describe("canvas spawn + defaults", () => {
@@ -23,6 +25,25 @@ describe("canvas spawn + defaults", () => {
     expect(defaultCanvasBlock("copy_organize", 0, 0).kind).toBe("copy_organize");
     expect(DEFAULT_CANVAS_TEXT_MODEL).toBe("kimi-k3");
     expect(defaultCanvasBlock("text", 0, 0).textModel).toBe("kimi-k3");
+  });
+
+  it("exposes five product video engines with formal labels", () => {
+    expect(VIDEO_MODEL_OPTIONS.map((m) => m.id)).toEqual([
+      "seedance-2.0",
+      "seedance-2.0-fast",
+      "seedance-2.5",
+      "minimax-hailuo-3",
+      "happyhorse-1.1",
+    ]);
+    expect(VIDEO_MODEL_OPTIONS.map((m) => m.label)).toEqual([
+      "Seedance 2.0",
+      "Seedance 2.0 fast",
+      "Seedance 2.5",
+      "Minimax H3",
+      "Happy Horse 1.1",
+    ]);
+    expect(normalizeCanvasVideoModel("alibaba/happyhorse-1.1")).toBe("happyhorse-1.1");
+    expect(normalizeCanvasVideoModel("happy-horse")).toBe("happyhorse-1.1");
   });
 
   it("defaults Seedance 2.5 video blocks to multimodal reference mode", () => {

@@ -1225,7 +1225,15 @@ async function runSeedance25EvolinkJob(
     buildEvolinkSeedanceRequest,
     isEvolinkSeedanceConfigured,
   } = await import("../server/services/evolinkSeedanceVideo.js");
-  if (!isEvolinkSeedanceConfigured()) {
+  const {
+    buildByteplusSeedance25SubmitBody,
+    isByteplusSeedanceConfigured,
+  } = await import("../server/services/byteplusSeedanceVideo.js");
+  const { resolveSeedance25CanvasEngine } = await import(
+    "../server/services/canvasVideoTask.js"
+  );
+  const preferByteplus = isByteplusSeedanceConfigured();
+  if (!preferByteplus && !isEvolinkSeedanceConfigured()) {
     return { ok: false, status: 503, error: "视频服务暂不可用，请稍后重试" };
   }
 
@@ -1245,7 +1253,27 @@ async function runSeedance25EvolinkJob(
   };
   try {
     // 扣费前先跑纯函数契约验证，缺素材不应经历“先扣再退”。
-    buildEvolinkSeedanceRequest(runInput);
+    if (preferByteplus) {
+      buildByteplusSeedance25SubmitBody({
+        prompt,
+        imageUrl,
+        imageUrls,
+        videoUrls,
+        audioUrls,
+        aspectRatio,
+        duration: providerDuration === -1 ? 15 : providerDuration,
+        resolution,
+        generateAudio,
+        watermark: false,
+        mode,
+      });
+      // 预校验 EvoLink 契约，保证 BytePlus 失败时可无感回落
+      if (isEvolinkSeedanceConfigured()) {
+        buildEvolinkSeedanceRequest(runInput);
+      }
+    } else {
+      buildEvolinkSeedanceRequest(runInput);
+    }
   } catch (error: any) {
     return { ok: false, status: 400, error: error?.message || "Seedance 2.5 请求参数无效" };
   }
@@ -1271,7 +1299,7 @@ async function runSeedance25EvolinkJob(
       const task = await createCanvasVideoTask({
         userId: charged.userId,
         creditsCharged: charged.credits,
-        engine: "seedance25-evolink",
+        engine: resolveSeedance25CanvasEngine(),
         label,
         prompt,
         imageUrl,
@@ -1294,6 +1322,7 @@ async function runSeedance25EvolinkJob(
         duration,
         workMode: mode,
         videoUrl: task.videoUrl,
+        provider: task.provider || (preferByteplus ? "byteplus" : "evolink"),
       };
     } catch (error: any) {
       if (charged.credits > 0) {
@@ -3749,6 +3778,89 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         }
       } catch (e: any) {
         return res.status(502).json({ ok: false, error: e?.message || "hailuo3_failed" });
+      }
+    }
+
+    /**
+     * Happy Horse 1.1 · OpenRouter。
+     * 画布 videoModel=happyhorse-1.1；首帧图生；时长钳制 5/10/15（最长 15s）。
+     */
+    if (op === "happyHorseVideo") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      if (!(await resolveJobUser(req))) {
+        return res.status(401).json({ ok: false, error: "请先登录后再生成成片" });
+      }
+      const prompt =
+        s(b.prompt || q.prompt || "").trim() || "Cinematic motion shot with stable camera and rich detail.";
+      const imageUrl = s(b.imageUrl || q.imageUrl || "").trim();
+      if (!imageUrl) {
+        return res.status(400).json({ ok: false, error: "Happy Horse 成片需要至少一张首帧参考图" });
+      }
+      const aspectRatio = s(b.aspectRatio || q.aspectRatio || "9:16").trim() || "9:16";
+      try {
+        const { isOpenRouterHappyHorseConfigured } = await import(
+          "../server/services/openrouterHappyHorseVideo.js"
+        );
+        if (!isOpenRouterHappyHorseConfigured()) {
+          return res.status(503).json({
+            ok: false,
+            error: "视频服务暂不可用，请稍后重试",
+          });
+        }
+        const {
+          clampHappyHorseCanvasDuration,
+          normalizeHappyHorseCanvasResolution,
+        } = await import("../shared/happyHorseOpenRouterModels.js");
+        const duration = clampHappyHorseCanvasDuration(b.duration ?? b.durationSec ?? q.duration);
+        const resolution = normalizeHappyHorseCanvasResolution(b.resolution || q.resolution);
+        const label = `画布成片·Happy Horse 1.1（${resolution}·${duration}s）`;
+        const charged = await chargeCanvasVideoCredits(req, {
+          durationSec: duration,
+          episodeIndex: b.episodeIndex,
+          label,
+          resolution,
+        });
+        if (!charged.ok) {
+          return res.status(charged.status).json({ ok: false, error: charged.error });
+        }
+        try {
+          const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
+          const task = await createCanvasVideoTask({
+            userId: charged.userId,
+            creditsCharged: charged.credits,
+            engine: "happyhorse-openrouter",
+            label,
+            prompt,
+            imageUrl,
+            aspectRatio,
+            duration,
+            resolution,
+            generateAudio: true,
+          });
+          return res.status(200).json({
+            ok: true,
+            async: true,
+            taskId: task.taskId,
+            status: task.status,
+            videoUrl: task.videoUrl || undefined,
+            provider: "openrouter",
+            version: "happyhorse-1.1",
+            resolution,
+            creditsUsed: charged.credits,
+          });
+        } catch (error: any) {
+          if (charged.credits > 0) {
+            const { refundCredits } = await import("../server/credits.js");
+            await refundCredits(charged.userId, charged.credits, `${label}·创建失败退回`).catch(
+              () => {},
+            );
+          }
+          throw error;
+        }
+      } catch (e: any) {
+        return res.status(502).json({ ok: false, error: e?.message || "happyhorse_failed" });
       }
     }
 

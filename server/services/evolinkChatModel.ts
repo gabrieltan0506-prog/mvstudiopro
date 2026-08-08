@@ -1,6 +1,7 @@
 /** EvoLink 文本模型 ID（https://docs.evolink.ai/en/api-manual/language-series/） */
 export const EVOLINK_CHAT_MODEL_GPT56_SOL = "gpt-5.6-sol" as const;
 export const EVOLINK_CHAT_MODEL_GPT56_TERRA = "gpt-5.6-terra" as const;
+export const EVOLINK_CHAT_MODEL_GPT56_LUNA = "gpt-5.6-luna" as const;
 export const EVOLINK_CHAT_MODEL_GPT55 = "gpt-5.5" as const;
 export const EVOLINK_CHAT_MODEL_GPT54 = "gpt-5.4" as const;
 
@@ -10,6 +11,8 @@ const EVOLINK_CHAT_MODEL_ALIASES: Record<string, string> = {
   gpt56sol: EVOLINK_CHAT_MODEL_GPT56_SOL,
   "gpt-5.6-terra": EVOLINK_CHAT_MODEL_GPT56_TERRA,
   gpt56terra: EVOLINK_CHAT_MODEL_GPT56_TERRA,
+  "gpt-5.6-luna": EVOLINK_CHAT_MODEL_GPT56_LUNA,
+  gpt56luna: EVOLINK_CHAT_MODEL_GPT56_LUNA,
   "gpt-5.5": EVOLINK_CHAT_MODEL_GPT55,
   gpt55: EVOLINK_CHAT_MODEL_GPT55,
   "gpt-5-5": EVOLINK_CHAT_MODEL_GPT55,
@@ -21,11 +24,12 @@ const EVOLINK_CHAT_MODEL_ALIASES: Record<string, string> = {
 export type EvolinkChatModelId =
   | typeof EVOLINK_CHAT_MODEL_GPT56_SOL
   | typeof EVOLINK_CHAT_MODEL_GPT56_TERRA
+  | typeof EVOLINK_CHAT_MODEL_GPT56_LUNA
   | typeof EVOLINK_CHAT_MODEL_GPT55
   | typeof EVOLINK_CHAT_MODEL_GPT54;
 
 /**
- * 将 env / 调用方传入的模型名规范为 EvoLink 支持的 chat model。
+ * 将 env / 调用方传入的模型名规范为 EvoLink / OpenAI 支持的 chat model。
  * 未知值回退 `gpt-5.6-sol`（平台文案主路径）。
  * Docs: https://docs.evolink.ai/en/api-manual/language-series/gpt-5.6/gpt-5.6-reference
  */
@@ -41,6 +45,7 @@ export function normalizeEvolinkChatModel(
   if (
     key === EVOLINK_CHAT_MODEL_GPT56_SOL ||
     key === EVOLINK_CHAT_MODEL_GPT56_TERRA ||
+    key === EVOLINK_CHAT_MODEL_GPT56_LUNA ||
     key === EVOLINK_CHAT_MODEL_GPT55 ||
     key === EVOLINK_CHAT_MODEL_GPT54
   ) {
@@ -57,11 +62,12 @@ export function isEvolinkGpt56FamilyModel(raw?: string): boolean {
   if (!key) return false;
   // 仅 5.6 家族；勿把 gpt-5.5 / 5.4 别名误判进此分支（否则会错走网关）
   if (/^gpt-5\.6(-sol|-terra|-luna)?$/i.test(key)) return true;
-  if (key === "gpt56sol" || key === "gpt56terra") return true;
+  if (key === "gpt56sol" || key === "gpt56terra" || key === "gpt56luna") return true;
   const mapped = EVOLINK_CHAT_MODEL_ALIASES[key];
   return (
     mapped === EVOLINK_CHAT_MODEL_GPT56_SOL ||
     mapped === EVOLINK_CHAT_MODEL_GPT56_TERRA ||
+    mapped === EVOLINK_CHAT_MODEL_GPT56_LUNA ||
     mapped === "gpt-5.6"
   );
 }

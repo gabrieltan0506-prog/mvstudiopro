@@ -68,7 +68,7 @@ export type ManhuaWriterSession = {
   /** 审定节奏模板 id（tpl_*）；扩写注入用 */
   viralTemplateId: string;
   /**
-   * 开场选定的成片引擎（seedance-2.0-fast / seedance-2.0 / seedance-2.5）。
+   * 开场选定的成片引擎（2.0 / 2.0-fast / 2.5 / H3 / Happy Horse 1.1）。
    * 空字符串 = 尚未选择，扩写前必须选定。
    */
   videoModel: string;
@@ -153,7 +153,8 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
         v === "seedance-2.0-fast" ||
         v === "seedance-2.0" ||
         v === "seedance-2.5" ||
-        v === "minimax-hailuo-3"
+        v === "minimax-hailuo-3" ||
+        v === "happyhorse-1.1"
       ) {
         return v;
       }

@@ -42,6 +42,11 @@ import {
   HAILUO_OPENROUTER_DURATION,
   isCanvasHailuoH3VideoModel,
 } from "./hailuoOpenRouterModels.js";
+import {
+  CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1,
+  clampHappyHorseCanvasDuration,
+  isCanvasHappyHorseVideoModel,
+} from "./happyHorseOpenRouterModels.js";
 import { resolveManhuaSeedanceLayoutProfile } from "./manhuaSeedanceLayout.js";
 
 export { isManhuaClipPromptLegacyFat, stripManhuaClipForbiddenBoards };
@@ -160,7 +165,7 @@ export function resolveShotDurationSecForSegment(shot: {
 }
 
 /**
- * 一段成片目标秒数：段内镜长之和，再按模型钳制（2.0 4–15；2.5 加长 4–30；H3 5–15；Omni ≤10）。
+ * 一段成片目标秒数：段内镜长之和，再按模型钳制（2.0 4–15；2.5 加长 4–30；H3 5–15；Happy Horse 5/10/15；Omni ≤10）。
  * 不强制写死 15——短段可短于上限。
  */
 export function resolveSegmentClipDurationSec(
@@ -179,6 +184,9 @@ export function resolveSegmentClipDurationSec(
     return clampHailuoOpenRouterDuration(
       sum > 0 ? sum : HAILUO_OPENROUTER_DURATION.default,
     );
+  }
+  if (isCanvasHappyHorseVideoModel(m) || m === CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1) {
+    return clampHappyHorseCanvasDuration(sum > 0 ? sum : 15);
   }
   if (isManhuaSeedance25VideoModel(m)) {
     // 2.5 产品档：一集 4×30s；3×5s 骨架合计≤15 时抬到 30，不误用 XYQ 默认 15

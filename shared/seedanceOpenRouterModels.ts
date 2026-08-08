@@ -1,6 +1,6 @@
 /**
  * OpenRouter Seedance 2.0 / 2.0-fast 模型与参数钳制。
- * 前台文案见 canvasTypes（成片·标准 / 成片·快速）；此处仅内部 slug。
+ * 前台文案见 canvasTypes / manhuaSeedanceLayout（正式产品名）；此处仅内部 slug。
  *
  * @see https://openrouter.ai/bytedance/seedance-2.0
  * @see https://openrouter.ai/bytedance/seedance-2.0-fast

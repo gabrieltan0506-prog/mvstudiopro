@@ -1,6 +1,7 @@
 /**
  * 官方 OpenAI GPT Image 2（images/generations + images/edits 共用同一 snapshot）
- * 供 canvasGptImage2 / 平台单帧像素链（不再走 EvoLink）。
+ * 供 canvasGptImage2 / 平台单帧像素链。
+ * 画布主链由 proxyImageService 按牌价序调度（当前 EvoLink 更便宜优先，OpenAI 备胎）。
  *
  * 环境变量：
  * - OPENAI_IMAGE_API_KEY 或 OPENAI_API_KEY（分道专钥见 openaiImageKeyPool）

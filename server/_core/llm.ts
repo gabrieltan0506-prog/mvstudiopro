@@ -31,11 +31,14 @@ import {
   OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL,
   OPENROUTER_CHAT_COMPLETIONS_URL,
   resolveGpt56CopywritingTarget,
+  resolveGpt56EvolinkFallbackTarget,
   resolveGpt56OfficialOnlyTarget,
   resolveOpenRouterChatTarget,
-  toOpenRouterGpt56Model,
 } from "../services/gpt56CopywritingGateway";
-import { getOpenRouterApiKey } from "../services/openrouterGptImage2";
+import {
+  getGpt56PrimaryTimeoutMs,
+  racePrimaryTimeout,
+} from "../../shared/providerPrimaryTimeout";
 import {
   isOpenRouterKimiK3Model,
   OPENROUTER_KIMI_K3_REASONING_EFFORT,
@@ -678,11 +681,11 @@ const resolveTarget = (
     }
 
     /**
-     * 平台全案 / Stage2 文案：**OpenAI 官方 GPT-5.6 Sol（主）→ OpenRouter（fallback）**。
-     * `official_only`：仅 api.openai.com（画布 Terra 多模态等）。
+     * 平台全案 / Stage2 文案：**OpenAI 官方 GPT-5.6 Sol/Terra/Luna（主）→ EvoLink（fallback）**。
+     * `official_only`：解析仍优先 api.openai.com；失败/超时仍回落 EvoLink。
      * Refs:
      *   https://developers.openai.com/api/docs/models/gpt-5.6-sol
-     *   https://openrouter.ai/openai/gpt-5.6-sol
+     *   https://docs.evolink.ai/en/api-manual/language-series/gpt-5.6/gpt-5.6-reference
      */
     if (
       isEvolinkGpt56FamilyModel(candidate) ||
@@ -1406,32 +1409,29 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     isEvolinkGpt56FamilyModel(String(target.modelName || "")) ||
     isOhMyGptGpt56FamilyModel(String(target.modelName || ""));
 
-  const officialOnly = params.openAiGateway === "official_only";
   try {
-    return await postChatCompletions(
+    const primary = postChatCompletions(
       String(target.apiUrl),
       String(target.apiKey),
       payload,
       label,
     );
+    // GPT-5.6 官方主路径：短超时，卡住就切 EvoLink（体验优先）
+    if (isOfficialEndpoint && isGpt56Family) {
+      return await racePrimaryTimeout(primary, getGpt56PrimaryTimeoutMs(), "OpenAI GPT-5.6");
+    }
+    return await primary;
   } catch (primaryErr) {
-    // GPT-5.6 文案：官方 OpenAI 失败 → OpenRouter fallback（official_only 禁止）
-    if (isOfficialEndpoint && isGpt56Family && !officialOnly) {
-      const openrouterKey = getOpenRouterApiKey();
-      if (openrouterKey) {
-        const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
-        console.warn(`[OpenAI→OpenRouter] GPT-5.6 copywriting fallback after official OpenAI failure: ${msg.slice(0, 240)}`);
-        const orPayload = {
-          ...payload,
-          model: toOpenRouterGpt56Model(String(payload.model || target.modelName || "gpt-5.6-sol")),
-        };
-        return await postChatCompletions(
-          OPENROUTER_CHAT_COMPLETIONS_URL,
-          openrouterKey,
-          orPayload,
-          "OpenRouter",
-        );
-      }
+    // GPT-5.6：官方失败/超时 → EvoLink（含原 official_only）
+    if (isOfficialEndpoint && isGpt56Family && getEvolinkApiKey()) {
+      const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+      console.warn(
+        `[OpenAI→EvoLink] GPT-5.6 fallback after official OpenAI failure/timeout: ${msg.slice(0, 240)}`,
+      );
+      const fb = resolveGpt56EvolinkFallbackTarget(
+        String(payload.model || target.modelName || "gpt-5.6-sol"),
+      );
+      return await postChatCompletions(fb.apiUrl, fb.apiKey, { ...payload, model: fb.modelName }, "Evolink");
     }
     throw primaryErr;
   }
