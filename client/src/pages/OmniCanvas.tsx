@@ -293,6 +293,7 @@ import {
   hasManhuaSeedanceLayoutChoice,
   isManhuaSeedanceLayoutVideoModel,
   MANHUA_SEEDANCE_LAYOUT_CHOICES,
+  manhuaSeedanceLayoutPinsSegmentTable,
   resolveManhuaFactoryDefaultVideoModel,
   resolveManhuaSeedanceLayoutProfile,
   type ManhuaSeedanceLayoutVideoModel,
@@ -6945,7 +6946,14 @@ export default function OmniCanvas() {
                     ))}
                   </select>
                 </div>
-                {writerVideoModel !== "seedance-2.5" ? (
+                {manhuaSeedanceLayoutPinsSegmentTable(writerVideoModel) ? (
+                  <div>
+                    <label className="block text-[11px] text-white/45">段落布局</label>
+                    <div className="mt-1 rounded-lg border border-cyan-300/25 bg-cyan-500/10 px-2.5 py-2 text-xs text-cyan-50/90">
+                      {writerLayoutProfile.layoutHintZh}
+                    </div>
+                  </div>
+                ) : (
                   <div>
                     <label className="block text-[11px] text-white/45">单集时长</label>
                     <select
@@ -6962,13 +6970,6 @@ export default function OmniCanvas() {
                         </option>
                       ))}
                     </select>
-                  </div>
-                ) : (
-                  <div>
-                    <label className="block text-[11px] text-white/45">段落布局</label>
-                    <div className="mt-1 rounded-lg border border-cyan-300/25 bg-cyan-500/10 px-2.5 py-2 text-xs text-cyan-50/90">
-                      4 段 × 约 30 秒
-                    </div>
                   </div>
                 )}
                 <div>

@@ -1,5 +1,6 @@
 /**
- * 画布成片异步任务（Seedance OpenRouter / Hailuo / Happy Horse / Seedance 2.5 EvoLink）。
+ * 画布成片异步任务（Seedance OpenRouter / Hailuo / Happy Horse /
+ * Seedance 2.5 BytePlus 主路径 + EvoLink fallback）。
  *
  * 原先 seedanceI2V / hailuo3Video 单条 HTTP 同步等上游数分钟，部署 SIGINT 会掐断。
  * 现：扣费 → 提交上游 → 立刻返回 taskId → worker/status 短轮询 → 镜像可读 URL。
@@ -28,8 +29,16 @@ import {
   submitOpenRouterVideoJob,
 } from "./openrouterVideoCore.js";
 import {
+  BYTEPLUS_SEEDANCE_MAX_POLL_MS,
+  isByteplusFallbackableError,
+  isByteplusSeedanceConfigured,
+  pollByteplusVideoTaskOnce,
+  submitByteplusSeedance25Video,
+} from "./byteplusSeedanceVideo.js";
+import {
   EVOLINK_SEEDANCE_MAX_POLL_MS,
   EVOLINK_SEEDANCE_POLL_INTERVAL_MS,
+  isEvolinkSeedanceConfigured,
   pollEvolinkVideoTaskOnce,
   submitEvolinkSeedanceVideo,
   type EvolinkSeedanceRunInput,
@@ -45,6 +54,7 @@ export type CanvasVideoEngine =
   | "seedance-openrouter"
   | "hailuo-openrouter"
   | "happyhorse-openrouter"
+  | "seedance25-byteplus"
   | "seedance25-evolink";
 
 export type CanvasVideoTaskStatus =
@@ -71,11 +81,15 @@ export type CanvasVideoTaskRecord = {
   generateAudio: boolean;
   /** OpenRouter Seedance 2.0 / 2.0-fast */
   seedanceVersion?: "2.0" | "2.0-fast";
-  /** EvoLink 2.5 */
+  /** Seedance 2.5 工作模式 */
   workMode?: SeedanceEvolinkMode;
   openRouterJobId?: string;
   pollingUrl?: string;
   evolinkTaskId?: string;
+  /** BytePlus ModelArk contents/generations task id */
+  byteplusTaskId?: string;
+  /** 若从 BytePlus 回落到 EvoLink，记下原因摘要 */
+  fallbackReason?: string;
   model?: string;
   provider?: string;
   videoUrl?: string;
@@ -85,6 +99,12 @@ export type CanvasVideoTaskRecord = {
   startedAt?: string;
   finishedAt?: string;
 };
+
+/** 画布 Seedance 2.5：有 BytePlus Key 则主路径；否则 EvoLink。 */
+export function resolveSeedance25CanvasEngine(): CanvasVideoEngine {
+  if (isByteplusSeedanceConfigured()) return "seedance25-byteplus";
+  return "seedance25-evolink";
+}
 
 let resolvedDir: string | null = null;
 const inflight = new Set<string>();
@@ -155,9 +175,85 @@ async function listActiveTaskIds(): Promise<string[]> {
 }
 
 function maxPollMs(engine: CanvasVideoEngine): number {
-  return engine === "seedance25-evolink"
-    ? EVOLINK_SEEDANCE_MAX_POLL_MS
-    : OPENROUTER_VIDEO_MAX_POLL_MS;
+  if (engine === "seedance25-evolink" || engine === "seedance25-byteplus") {
+    return Math.max(EVOLINK_SEEDANCE_MAX_POLL_MS, BYTEPLUS_SEEDANCE_MAX_POLL_MS);
+  }
+  return OPENROUTER_VIDEO_MAX_POLL_MS;
+}
+
+function seedance25RunInput(task: CanvasVideoTaskRecord): EvolinkSeedanceRunInput {
+  return {
+    prompt: task.prompt,
+    imageUrl: task.imageUrl,
+    imageUrls: task.imageUrls,
+    videoUrls: task.videoUrls,
+    audioUrls: task.audioUrls,
+    quality: task.resolution,
+    aspectRatio: task.aspectRatio,
+    duration: task.duration,
+    generateAudio: task.generateAudio,
+    contentFilter: true,
+    mode: task.workMode,
+    version: "2.5",
+  };
+}
+
+async function submitSeedance25Evolink(task: CanvasVideoTaskRecord): Promise<void> {
+  const submitted = await submitEvolinkSeedanceVideo(seedance25RunInput(task));
+  task.engine = "seedance25-evolink";
+  task.evolinkTaskId = submitted.evolinkTaskId;
+  task.model = submitted.model;
+  task.workMode = submitted.mode;
+  task.provider = "evolink";
+  task.status = "running";
+  task.startedAt = task.startedAt || new Date().toISOString();
+  await writeTask(task);
+  if (submitted.immediateSourceUrl) {
+    const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(submitted.immediateSourceUrl);
+    await succeedTask(task, videoUrl, submitted.model, "evolink");
+  }
+}
+
+async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<void> {
+  try {
+    const submitted = await submitByteplusSeedance25Video({
+      prompt: task.prompt,
+      imageUrl: task.imageUrl,
+      imageUrls: task.imageUrls,
+      videoUrls: task.videoUrls,
+      audioUrls: task.audioUrls,
+      aspectRatio: task.aspectRatio,
+      duration: task.duration,
+      resolution: task.resolution,
+      generateAudio: task.generateAudio,
+      watermark: false,
+      mode: task.workMode,
+    });
+    task.engine = "seedance25-byteplus";
+    task.byteplusTaskId = submitted.byteplusTaskId;
+    task.model = submitted.model;
+    task.workMode = submitted.mode;
+    task.provider = "byteplus";
+    task.status = "running";
+    task.startedAt = task.startedAt || new Date().toISOString();
+    await writeTask(task);
+    if (submitted.immediateSourceUrl) {
+      const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(submitted.immediateSourceUrl);
+      await succeedTask(task, videoUrl, submitted.model, "byteplus");
+    }
+  } catch (error) {
+    if (!isByteplusFallbackableError(error) || !isEvolinkSeedanceConfigured()) {
+      throw error;
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[canvasVideoTask] BytePlus Seedance 2.5 提交失败，回落 EvoLink · task=${task.taskId} · ${reason}`,
+    );
+    task.fallbackReason = reason.slice(0, 200);
+    task.byteplusTaskId = undefined;
+    await writeTask(task);
+    await submitSeedance25Evolink(task);
+  }
 }
 
 async function failTask(
@@ -291,35 +387,13 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     return;
   }
 
-  // seedance25-evolink
-  const runInput: EvolinkSeedanceRunInput = {
-    prompt: task.prompt,
-    imageUrl: task.imageUrl,
-    imageUrls: task.imageUrls,
-    videoUrls: task.videoUrls,
-    audioUrls: task.audioUrls,
-    quality: task.resolution,
-    aspectRatio: task.aspectRatio,
-    duration: task.duration,
-    generateAudio: task.generateAudio,
-    contentFilter: true,
-    mode: task.workMode,
-    version: "2.5",
-  };
-  const submitted = await submitEvolinkSeedanceVideo(runInput);
-  task.evolinkTaskId = submitted.evolinkTaskId;
-  task.model = submitted.model;
-  task.workMode = submitted.mode;
-  task.provider = "evolink";
-  task.status = "running";
-  task.startedAt = task.startedAt || new Date().toISOString();
-  await writeTask(task);
-  if (submitted.immediateSourceUrl) {
-    const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(
-      submitted.immediateSourceUrl,
-    );
-    await succeedTask(task, videoUrl, submitted.model, "evolink");
+  if (task.engine === "seedance25-byteplus") {
+    await submitSeedance25Byteplus(task);
+    return;
   }
+
+  // seedance25-evolink
+  await submitSeedance25Evolink(task);
 }
 
 async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null> {
@@ -343,7 +417,9 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
     const needsSubmit =
       task.engine === "seedance25-evolink"
         ? !task.evolinkTaskId
-        : !task.pollingUrl;
+        : task.engine === "seedance25-byteplus"
+          ? !task.byteplusTaskId
+          : !task.pollingUrl;
 
     if (needsSubmit) {
       try {
@@ -366,6 +442,53 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
     }
 
     try {
+      if (current.engine === "seedance25-byteplus") {
+        if (!current.byteplusTaskId) {
+          return failTask(current, "视频服务未返回任务编号");
+        }
+        const snap = await pollByteplusVideoTaskOnce(
+          current.byteplusTaskId,
+          `Seedance ${current.seedanceVersion || "2.5"}`,
+        );
+        if (snap.state === "running") {
+          current.status = "running";
+          await writeTask(current);
+          return current;
+        }
+        if (snap.state === "failed") {
+          // 上游跑挂：若还可回落且尚未提交过 EvoLink，切引擎重提（不重复扣费）
+          if (isEvolinkSeedanceConfigured() && !current.evolinkTaskId) {
+            const reason = snap.error;
+            console.warn(
+              `[canvasVideoTask] BytePlus 任务失败，回落 EvoLink · task=${current.taskId} · ${reason}`,
+            );
+            current.fallbackReason = reason.slice(0, 200);
+            current.byteplusTaskId = undefined;
+            current.engine = "seedance25-evolink";
+            current.status = "queued";
+            await writeTask(current);
+            try {
+              await submitSeedance25Evolink(current);
+              const after = await readTask(taskId);
+              return after || current;
+            } catch (error) {
+              return failTask(
+                current,
+                error instanceof Error ? error.message : reason,
+              );
+            }
+          }
+          return failTask(current, snap.error);
+        }
+        const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl);
+        return succeedTask(
+          current,
+          videoUrl,
+          current.model || "dreamina-seedance-2-5",
+          "byteplus",
+        );
+      }
+
       if (current.engine === "seedance25-evolink") {
         if (!current.evolinkTaskId) {
           return failTask(current, "视频服务未返回任务编号");

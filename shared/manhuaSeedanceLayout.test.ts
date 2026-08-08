@@ -6,6 +6,7 @@ import {
   hasManhuaSeedanceLayoutChoice,
   MANHUA_SEEDANCE_LAYOUT_CHOICES,
   manhuaClipMaxDurationSecForVideoModel,
+  manhuaSeedanceLayoutPinsSegmentTable,
   resolveManhuaFactoryDefaultVideoModel,
   resolveManhuaSeedanceLayoutProfile,
 } from "./manhuaSeedanceLayout.js";
@@ -73,6 +74,10 @@ describe("manhuaSeedanceLayout", () => {
     );
     expect(resolveManhuaSeedanceLayoutProfile("seedance-2.5", "long").segmentCount).toBe(4);
     expect(resolveManhuaSeedanceLayoutProfile("seedance-2.0", "long").segmentCount).toBe(12);
+    expect(manhuaSeedanceLayoutPinsSegmentTable(CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1)).toBe(true);
+    expect(manhuaSeedanceLayoutPinsSegmentTable(CANVAS_VIDEO_MODEL_HAILUO_H3)).toBe(true);
+    expect(manhuaSeedanceLayoutPinsSegmentTable("seedance-2.5")).toBe(true);
+    expect(manhuaSeedanceLayoutPinsSegmentTable("seedance-2.0")).toBe(false);
   });
 
   it("empty / unknown model falls back to explicit 2.5 profile（不靠数组[0]）", () => {

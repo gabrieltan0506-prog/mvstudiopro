@@ -136,11 +136,7 @@ export function resolveManhuaSeedanceLayoutProfile(
     MANHUA_SEEDANCE_LAYOUT_CHOICES.find((c) => c.videoModel === key) ||
     MANHUA_SEEDANCE_LAYOUT_PREFERRED_DEFAULT;
   // 2.5 / H3 / Happy Horse 固定段表，不受旧「单集时长」长档影响
-  if (
-    base.videoModel === "seedance-2.5" ||
-    base.videoModel === CANVAS_VIDEO_MODEL_HAILUO_H3 ||
-    base.videoModel === CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1
-  ) {
+  if (manhuaSeedanceLayoutPinsSegmentTable(base.videoModel)) {
     return base;
   }
   const tier = String(lengthTierId || "").trim().toLowerCase();
@@ -182,4 +178,19 @@ export function clampManhuaClipDurationSecForVideoModel(
   const n = Number(rawDurationSec);
   if (!Number.isFinite(n) || n <= 0) return Math.min(15, max);
   return Math.max(1, Math.min(max, Math.round(n)));
+}
+
+/**
+ * 是否钉死段表（不受旧「单集时长」长/短档影响）。
+ * 仅 Seedance 2.0 / 2.0-fast 仍吃 lengthTier；2.5 / H3 / Happy Horse 固定。
+ */
+export function manhuaSeedanceLayoutPinsSegmentTable(
+  videoModel?: string | null,
+): boolean {
+  const key = String(videoModel || "").trim();
+  return (
+    key === "seedance-2.5" ||
+    key === CANVAS_VIDEO_MODEL_HAILUO_H3 ||
+    key === CANVAS_VIDEO_MODEL_HAPPYHORSE_1_1
+  );
 }

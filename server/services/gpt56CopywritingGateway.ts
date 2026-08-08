@@ -1,5 +1,6 @@
 /**
- * GPT-5.6 平台文案网关：OpenAI 官方优先，OpenRouter fallback。
+ * GPT-5.6（sol / terra / luna）平台文案网关：
+ * OpenAI 官方优先 → EvoLink fallback（含主路径超时切备胎）。
  */
 
 import {
@@ -10,11 +11,10 @@ import {
 import { getOpenRouterApiKey } from "./openrouterGptImage2.js";
 
 export const OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions";
-/** @deprecated 文案主路径已改 OpenRouter；保留常量供旧测/非 5.6 路径引用 */
 export const EVOLINK_CHAT_COMPLETIONS_URL = "https://direct.evolink.ai/v1/chat/completions";
 export const OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-export type Gpt56CopywritingGateway = "openai_official" | "openrouter";
+export type Gpt56CopywritingGateway = "openai_official" | "evolink" | "openrouter";
 
 export type Gpt56CopywritingTarget = {
   gateway: Gpt56CopywritingGateway;
@@ -29,7 +29,6 @@ export function getOfficialOpenAiApiKey(): string {
   return raw;
 }
 
-/** @deprecated 文案 fallback 已改 OpenRouter；非 5.6 路径仍可能读 EVOLINK */
 export function getEvolinkApiKey(): string {
   return String(process.env.EVOLINK_API_KEY || "").trim();
 }
@@ -46,7 +45,7 @@ export function isOpenRouterChatEndpoint(apiUrl?: string): boolean {
   return String(apiUrl || "").toLowerCase().includes("openrouter.ai");
 }
 
-/** OpenRouter 侧模型 slug：`gpt-5.6-sol` → `openai/gpt-5.6-sol` */
+/** OpenRouter 侧模型 slug：`gpt-5.6-sol` → `openai/gpt-5.6-sol`（非 5.6 主链；保留兼容） */
 export function toOpenRouterGpt56Model(modelName: string): string {
   const raw = String(modelName || "").trim();
   if (!raw) return "openai/gpt-5.6-sol";
@@ -57,7 +56,6 @@ export function toOpenRouterGpt56Model(modelName: string): string {
 /**
  * 非 OpenAI GPT-5.6 的 OpenRouter `vendor/model` slug（如 `moonshotai/kimi-k3`）应直连 OpenRouter，
  * 勿再走官方 OpenAI / Evolink 归一。
- * `openai/gpt-5.6-*` 仍走「官方优先 → OpenRouter fallback」。
  */
 export function isDirectOpenRouterModelSlug(raw?: string): boolean {
   const s = String(raw || "").trim();
@@ -97,7 +95,28 @@ export function getOpenRouterChatHeaders(): Record<string, string> {
   };
 }
 
-/** 解析 GPT-5.6 文案应打的网关（不发请求）：官方 OpenAI → OpenRouter。 */
+/** EvoLink GPT-5.6 fallback 目标（与主路径同 model id：sol/terra/luna）。 */
+export function resolveGpt56EvolinkFallbackTarget(modelNameHint?: string): Gpt56CopywritingTarget {
+  const modelName = normalizeEvolinkChatModel(
+    modelNameHint || getEvolinkGpt56SolModel(),
+    EVOLINK_CHAT_MODEL_GPT56_SOL,
+  );
+  const evolinkKey = getEvolinkApiKey();
+  if (!evolinkKey) {
+    throw new Error("EVOLINK_API_KEY 未配置：无法回落 EvoLink GPT-5.6");
+  }
+  return {
+    gateway: "evolink",
+    apiUrl: EVOLINK_CHAT_COMPLETIONS_URL,
+    apiKey: evolinkKey,
+    modelName,
+  };
+}
+
+/**
+ * 解析 GPT-5.6 文案应打的网关（不发请求）：
+ * OpenAI 官方 →（无官方钥则）EvoLink。
+ */
 export function resolveGpt56CopywritingTarget(modelNameHint?: string): Gpt56CopywritingTarget {
   const modelName = normalizeEvolinkChatModel(
     modelNameHint || getEvolinkGpt56SolModel(),
@@ -112,23 +131,23 @@ export function resolveGpt56CopywritingTarget(modelNameHint?: string): Gpt56Copy
       modelName,
     };
   }
-  const openrouterKey = getOpenRouterApiKey();
-  if (openrouterKey) {
+  const evolinkKey = getEvolinkApiKey();
+  if (evolinkKey) {
     return {
-      gateway: "openrouter",
-      apiUrl: OPENROUTER_CHAT_COMPLETIONS_URL,
-      apiKey: openrouterKey,
-      modelName: toOpenRouterGpt56Model(modelName),
+      gateway: "evolink",
+      apiUrl: EVOLINK_CHAT_COMPLETIONS_URL,
+      apiKey: evolinkKey,
+      modelName,
     };
   }
   throw new Error(
-    "OPENAI_API_KEY（或 OPENAI_CHAT_API_KEY）与 OPENROUTER_API_KEY 均未配置（GPT-5.6 文案：官方 OpenAI 优先，OpenRouter fallback）",
+    "OPENAI_API_KEY（或 OPENAI_CHAT_API_KEY）与 EVOLINK_API_KEY 均未配置（GPT-5.6：官方 OpenAI 优先，EvoLink fallback）",
   );
 }
 
 /**
- * 强制仅 OpenAI 官方（`api.openai.com`）：用于 gpt-5.6-terra / 趋势报表等。
- * **禁止** Evolink / OpenRouter。
+ * 主解析仍钉官方 OpenAI（画布 Terra 等）。
+ * 运行时失败/超时仍由 invokeLLM 回落 EvoLink（体验优先）。
  */
 export function resolveGpt56OfficialOnlyTarget(modelNameHint?: string): Gpt56CopywritingTarget {
   const modelName = normalizeEvolinkChatModel(
@@ -137,9 +156,8 @@ export function resolveGpt56OfficialOnlyTarget(modelNameHint?: string): Gpt56Cop
   );
   const officialKey = getOfficialOpenAiApiKey();
   if (!officialKey) {
-    throw new Error(
-      "OPENAI_API_KEY（或 OPENAI_CHAT_API_KEY）未配置：gpt-5.6-terra / 官方专线须走 api.openai.com，不走 Evolink/OpenRouter",
-    );
+    // 无官方钥时直接给 EvoLink，避免整条链路硬死
+    return resolveGpt56EvolinkFallbackTarget(modelName);
   }
   return {
     gateway: "openai_official",

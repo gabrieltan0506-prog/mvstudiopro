@@ -1225,7 +1225,15 @@ async function runSeedance25EvolinkJob(
     buildEvolinkSeedanceRequest,
     isEvolinkSeedanceConfigured,
   } = await import("../server/services/evolinkSeedanceVideo.js");
-  if (!isEvolinkSeedanceConfigured()) {
+  const {
+    buildByteplusSeedance25SubmitBody,
+    isByteplusSeedanceConfigured,
+  } = await import("../server/services/byteplusSeedanceVideo.js");
+  const { resolveSeedance25CanvasEngine } = await import(
+    "../server/services/canvasVideoTask.js"
+  );
+  const preferByteplus = isByteplusSeedanceConfigured();
+  if (!preferByteplus && !isEvolinkSeedanceConfigured()) {
     return { ok: false, status: 503, error: "视频服务暂不可用，请稍后重试" };
   }
 
@@ -1245,7 +1253,27 @@ async function runSeedance25EvolinkJob(
   };
   try {
     // 扣费前先跑纯函数契约验证，缺素材不应经历“先扣再退”。
-    buildEvolinkSeedanceRequest(runInput);
+    if (preferByteplus) {
+      buildByteplusSeedance25SubmitBody({
+        prompt,
+        imageUrl,
+        imageUrls,
+        videoUrls,
+        audioUrls,
+        aspectRatio,
+        duration: providerDuration === -1 ? 15 : providerDuration,
+        resolution,
+        generateAudio,
+        watermark: false,
+        mode,
+      });
+      // 预校验 EvoLink 契约，保证 BytePlus 失败时可无感回落
+      if (isEvolinkSeedanceConfigured()) {
+        buildEvolinkSeedanceRequest(runInput);
+      }
+    } else {
+      buildEvolinkSeedanceRequest(runInput);
+    }
   } catch (error: any) {
     return { ok: false, status: 400, error: error?.message || "Seedance 2.5 请求参数无效" };
   }
@@ -1271,7 +1299,7 @@ async function runSeedance25EvolinkJob(
       const task = await createCanvasVideoTask({
         userId: charged.userId,
         creditsCharged: charged.credits,
-        engine: "seedance25-evolink",
+        engine: resolveSeedance25CanvasEngine(),
         label,
         prompt,
         imageUrl,
@@ -1294,6 +1322,7 @@ async function runSeedance25EvolinkJob(
         duration,
         workMode: mode,
         videoUrl: task.videoUrl,
+        provider: task.provider || (preferByteplus ? "byteplus" : "evolink"),
       };
     } catch (error: any) {
       if (charged.credits > 0) {
