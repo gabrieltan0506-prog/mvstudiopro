@@ -791,14 +791,16 @@ export async function createCanvasVideoTask(input: {
     const dir = await getTaskDir();
     const mapFile = idemMapPath(dir, input.userId, idemKey);
     await fs.mkdir(path.dirname(mapFile), { recursive: true });
+    // 原子排他 = 先写 tmp 再 link：link 是排他且原子的（EEXIST 即输家），
+    // 且输家读到的映射文件一定是完整内容——直接 wx 写入时并发读会读到半截 JSON，
+    // 半截被 catch 当「映射损坏」走新任务 = 同键出两个任务
+    const tmpMap = `${mapFile}.tmp.${process.pid}.${taskId}`;
+    await fs.writeFile(tmpMap, JSON.stringify({ taskId, userId: input.userId, createdAt: now }));
     try {
-      // wx = 原子排他创建，文件系统层的唯一约束：并发同键只有一个赢家
-      await fs.writeFile(
-        mapFile,
-        JSON.stringify({ taskId, userId: input.userId, createdAt: now }),
-        { flag: "wx" },
-      );
+      await fs.link(tmpMap, mapFile);
+      await fs.unlink(tmpMap).catch(() => {});
     } catch (e) {
+      await fs.unlink(tmpMap).catch(() => {});
       if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") throw e;
       try {
         const raw = JSON.parse(await fs.readFile(mapFile, "utf8")) as { taskId?: string };
@@ -807,10 +809,13 @@ export async function createCanvasVideoTask(input: {
           const existing = await readTask(mappedId);
           if (existing && existing.status === "failed") {
             // 既有任务已终态失败（已退分）：这是一次全新的付费重试，换新 taskId 重开
+            // tmp+rename 原子替换，并发读不到半截内容
+            const reopenTmp = `${mapFile}.tmp.${process.pid}.${taskId}`;
             await fs.writeFile(
-              mapFile,
+              reopenTmp,
               JSON.stringify({ taskId, userId: input.userId, createdAt: now }),
             );
+            await fs.rename(reopenTmp, mapFile);
           } else if (existing) {
             // 同键重复请求：直接还既有任务，不重复扣费、不重复提交上游
             return existing;

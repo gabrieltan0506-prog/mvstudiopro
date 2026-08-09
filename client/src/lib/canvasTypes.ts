@@ -165,6 +165,22 @@ export type CanvasBlock = {
    * 快速档与 Seedance 2.5 固定 720p，选了也会被服务端 normalize 回去。
    */
   videoResolution?: "720p" | "1080p" | "2K" | "4K";
+  /**
+   * 高清放大（WaveSpeed 2K/4K）。结果写 `upscaledVideoUrl` 独立存放，
+   * **绝不覆盖** `outputUrl` 原片；任务字段随画布持久化，刷新后可恢复轮询。
+   */
+  upscaleTaskId?: string;
+  upscaleStatus?:
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "timed_out_pending_reconcile"
+    | "reconcile_manual";
+  upscaleTarget?: "2k" | "4k";
+  upscaledVideoUrl?: string;
+  upscaleError?: string;
+  upscaleCreditsUsed?: number;
   /** 连载集号（多集铺板时挂在链上各节点，可序列化） */
   episodeIndex?: number;
   /** 本集标题（坞列表 / story 注释用） */
