@@ -63,10 +63,10 @@ vi.mock("./seedanceVideo.js", () => ({
   mirrorSeedanceMp4ToGcsSignedUrl: vi.fn(async (u: string) => `mirrored:${u}`),
 }));
 
-const registerActiveJob = vi.fn(async () => {});
-const refundCreditsOnFailure = vi.fn(async () => ({ refunded: true, creditsRefunded: 388, status: "refunded" }));
-const pauseActiveJob = vi.fn(async () => {});
-const unregisterActiveJob = vi.fn(async () => ({ ok: true }));
+const registerActiveJob = vi.fn(async (..._args: unknown[]) => {});
+const refundCreditsOnFailure = vi.fn(async (..._args: unknown[]) => ({ refunded: true, creditsRefunded: 388, status: "refunded" }));
+const pauseActiveJob = vi.fn(async (..._args: unknown[]) => {});
+const unregisterActiveJob = vi.fn(async (..._args: unknown[]) => ({ ok: true }));
 vi.mock("./paidJobLedger.js", () => ({
   heartbeatActiveJob: vi.fn(async () => {}),
   pauseActiveJob: (...args: unknown[]) => pauseActiveJob(...args),
@@ -125,34 +125,45 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
     return JSON.parse(raw) as Record<string, unknown>;
   }
 
-  async function patchTaskFile(taskId: string, patch: Record<string, unknown>) {
-    const task = await readTaskFile(taskId);
-    Object.assign(task, patch);
-    await fs.writeFile(path.join(tempDir, `${taskId}.json`), JSON.stringify(task));
-  }
-
   function agoIso(ms: number): string {
     return new Date(Date.now() - ms).toISOString();
   }
 
-  async function createRunningTask(m: Awaited<ReturnType<typeof mod>>) {
-    const task = await m.createCanvasVideoTask({
-      userId: 7,
-      creditsCharged: 388,
-      engine: "seedance25-evolink",
-      label: "测试成片",
-      prompt: "一条测试视频",
-      duration: 5,
-    });
-    await until(async () => (await readTaskFile(task.taskId)).status === "running");
-    return task.taskId;
+  /**
+   * 直接落一份 running 任务文件当种子。不经 createCanvasVideoTask——它的
+   * void advanceTask 后台链会用内存旧对象 writeTask 覆盖测试刚改的时间字段（竞态）。
+   * 超时判定只读文件字段与 Date.now() 的差，种子文件即完整现场。
+   */
+  async function seedRunningTask(patch: Record<string, unknown> = {}): Promise<string> {
+    const taskId = `cv_test_${Math.random().toString(36).slice(2, 10)}`;
+    const now = new Date().toISOString();
+    await fs.writeFile(
+      path.join(tempDir, `${taskId}.json`),
+      JSON.stringify({
+        taskId,
+        userId: 7,
+        status: "running",
+        creditsCharged: 388,
+        engine: "seedance25-evolink",
+        label: "测试成片",
+        prompt: "一条测试视频",
+        aspectRatio: "16:9",
+        duration: 5,
+        generateAudio: true,
+        evolinkTaskId: "ev-1",
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+        ...patch,
+      }),
+    );
+    return taskId;
   }
 
   it("968s 后成功：新默认线内不误杀，正常入账", async () => {
     const m = await mod();
-    const taskId = await createRunningTask(m);
-    // 把创建时间回拨 968s（< 1500s 上限）——4K 实测耗时，旧默认 900s 会在这里误杀
-    await patchTaskFile(taskId, { createdAt: agoIso(968_000) });
+    // 创建时间回拨 968s（< 1500s 上限）——4K 实测耗时，旧默认 900s 会在这里误杀
+    const taskId = await seedRunningTask({ createdAt: agoIso(968_000) });
     evolinkPoll.mockResolvedValue({ state: "completed", sourceUrl: "https://cdn/x.mp4" });
     const task = await m.getCanvasVideoTask(taskId, 7);
     expect(task?.status).toBe("succeeded");
@@ -163,8 +174,7 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
 
   it("越线且上游已受理 → 对账态不退分；晚到的成功照常入账", async () => {
     const m = await mod();
-    const taskId = await createRunningTask(m);
-    await patchTaskFile(taskId, { createdAt: agoIso(EVOLINK_MAX + 1_000) });
+    const taskId = await seedRunningTask({ createdAt: agoIso(EVOLINK_MAX + 1_000) });
     let task = await m.getCanvasVideoTask(taskId, 7);
     expect(task?.status).toBe("timed_out_pending_reconcile");
     expect(refundCreditsOnFailure).toHaveBeenCalledTimes(0);
@@ -179,8 +189,7 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
 
   it("对账窗口内上游明确失败 → 恰好一次退分", async () => {
     const m = await mod();
-    const taskId = await createRunningTask(m);
-    await patchTaskFile(taskId, { createdAt: agoIso(EVOLINK_MAX + 1_000) });
+    const taskId = await seedRunningTask({ createdAt: agoIso(EVOLINK_MAX + 1_000) });
     let task = await m.getCanvasVideoTask(taskId, 7);
     expect(task?.status).toBe("timed_out_pending_reconcile");
 
@@ -192,8 +201,7 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
 
   it("对账窗口也尽了 → reconcile_manual 停轮询等人工，不自动退分", async () => {
     const m = await mod();
-    const taskId = await createRunningTask(m);
-    await patchTaskFile(taskId, {
+    const taskId = await seedRunningTask({
       createdAt: agoIso(EVOLINK_MAX + RECONCILE_MIN + 10_000),
       status: "timed_out_pending_reconcile",
       timedOutAt: agoIso(RECONCILE_MIN + 1_000),
@@ -229,7 +237,7 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
 
   it("轮询抛错是瞬态：不退分、记录 lastTransientError、状态保持活跃", async () => {
     const m = await mod();
-    const taskId = await createRunningTask(m);
+    const taskId = await seedRunningTask();
     evolinkPoll.mockRejectedValue(new Error("ECONNRESET"));
     const task = await m.getCanvasVideoTask(taskId, 7);
     expect(task?.status).toBe("running");
@@ -298,7 +306,9 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
       idempotencyKey: "client-key-2",
     });
     await until(async () => (await readTaskFile(first.taskId)).status === "running");
-    await patchTaskFile(first.taskId, { status: "failed", error: "上游失败" });
+    // 经轮询推进到 failed（手改文件会被后台 advance 的内存旧值覆盖，竞态）
+    evolinkPoll.mockResolvedValue({ state: "failed", error: "上游失败" });
+    await until(async () => (await m.getCanvasVideoTask(first.taskId, 7))?.status === "failed");
     const second = await m.createCanvasVideoTask({
       userId: 7,
       creditsCharged: 388,
