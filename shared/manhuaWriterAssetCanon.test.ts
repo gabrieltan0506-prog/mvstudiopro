@@ -6,6 +6,7 @@ import {
   detectManhuaCanonWriterDrift,
   evaluateWriterPackAssetAndDensity,
   formatWriterAssetCanonIdentityLock,
+  isMarkdownTableSeparatorLine,
   parseWriterTableLine,
   pickEpisodeMainSceneId,
   resolveEpisodeMainScene,
@@ -60,6 +61,79 @@ describe("manhuaWriterAssetCanon", () => {
     expect(row?.nameZh).toBe("沈砚舟");
     expect(row?.aliasZh).toBe("沈少主");
     expect(row?.fields).toHaveLength(4);
+  });
+
+  /**
+   * 外部剧本包爱用 Markdown 表格写人物卡。表头与分隔线若当成资产，
+   * 会造出名叫「角色」「---」的假角色，并一路写进脸锁提示词去污染出图。
+   */
+  it("drops Markdown table header and separator rows", () => {
+    expect(parseWriterTableLine("|---|---|")).toBeNull();
+    expect(parseWriterTableLine("| :--- | ---: |")).toBeNull();
+
+    const tableMd = `| 角色 | 说明 |
+|---|---|
+| 谢无咎 | 现代24岁古籍修复师 |
+| 谢明彰 | 雁门守将，谢无咎之父 |`;
+    const canon = buildManhuaWriterAssetCanon({
+      charactersMd: tableMd,
+      episodes: [{ index: 1, body: "谢无咎在灯下修书。" }],
+    });
+    expect(canon.characters.map((c) => c.nameZh)).toEqual(["谢无咎", "谢明彰"]);
+    expect(collectWriterCharacterNames(tableMd)).toEqual(["谢无咎", "谢明彰"]);
+    expect(formatWriterAssetCanonIdentityLock(canon)).not.toContain("---");
+  });
+
+  it("keeps a bullet list intact when there is no separator row", () => {
+    expect(collectWriterCharacterNames(CHARACTERS_MD)).toContain("沈砚舟");
+  });
+
+  /** 孤立的 `---` 是分割横线，不能把它上面那名角色当表头吞掉 */
+  it("treats a bare --- as a rule, not a table separator", () => {
+    expect(isMarkdownTableSeparatorLine("---")).toBe(false);
+    expect(isMarkdownTableSeparatorLine("|---|---|")).toBe(true);
+    expect(parseWriterTableLine("---")).toBeNull();
+
+    const ruledMd = `- 沈砚舟｜玄色鹤氅｜寻鹤归宗
+---
+- 云疏冷｜青衫执剑｜守山神旧约`;
+    expect(collectWriterCharacterNames(ruledMd)).toEqual(["沈砚舟", "云疏冷"]);
+  });
+
+  /** 表头判定收紧后，这些边角都不该丢角色 */
+  it("only strips a real table header, never a data row", () => {
+    // 列表行用半角竖线分隔字段，后面紧跟一条分隔行
+    expect(
+      collectWriterCharacterNames(`- 沈砚舟|玄色鹤氅|寻鹤归宗
+|---|---|`),
+    ).toEqual(["沈砚舟"]);
+
+    // 表格末行之后多出一条分隔行
+    expect(
+      collectWriterCharacterNames(`| 角色 | 说明 |
+|---|---|
+| 沈砚舟 | 玄色鹤氅 |
+| 云疏冷 | 青衫执剑 |
+|---|---|`),
+    ).toEqual(["沈砚舟", "云疏冷"]);
+
+    // 表格前有普通说明句
+    expect(
+      collectWriterCharacterNames(`本系列人物如下：
+| 角色 | 说明 |
+|---|---|
+| 沈砚舟 | 玄色鹤氅 |`),
+    ).toEqual(["本系列人物如下：", "沈砚舟"]);
+
+    // 无表头表格：首行就是数据行，紧挨分隔行也不能删
+    expect(
+      collectWriterCharacterNames(`| 沈砚舟 | 玄色鹤氅 |
+|---|---|
+| 云疏冷 | 青衫执剑 |`),
+    ).toEqual(["沈砚舟", "云疏冷"]);
+
+    // 名字自带破折号不能被当成横线行
+    expect(parseWriterTableLine("- 路人-甲｜灰袍｜看热闹")?.nameZh).toBe("路人-甲");
   });
 
   it("builds series pool + picks episode main scene by body hits", () => {

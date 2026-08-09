@@ -61,6 +61,58 @@ function makeAnchorId(role: ManhuaWriterAssetRole, nameZh: string): string {
   return `${prefix}${slugToken(nameZh)}`;
 }
 
+/** 只有横线/冒号/竖线的行：分割横线或表格分隔行，都不是资产 */
+function isRulerOnlyLine(rawLine: string): boolean {
+  const line = String(rawLine || "").trim();
+  if (!line.includes("-")) return false;
+  return /^[\s:|-]+$/.test(line);
+}
+
+/**
+ * Markdown 表格的分隔行：`|---|---|`、`| :--- | ---: |`。
+ * 正版剧本包常用表格写人物卡，这行若当成资产会造出名叫「---」的假角色。
+ *
+ * 必须带竖线：孤立一行 `---` 只是普通分割横线，认成分隔行会把它上面
+ * 那名角色当表头删掉。
+ */
+export function isMarkdownTableSeparatorLine(rawLine: string): boolean {
+  const line = String(rawLine || "").trim();
+  if (!line.includes("|")) return false;
+  return isRulerOnlyLine(line);
+}
+
+/** 表格列名词。真实角色/道具/场景不会叫这些名字 */
+const TABLE_COLUMN_LABEL_RE =
+  /^(序号|编号|角色|人物|姓名|名字|名称|别名|称呼|说明|描述|简介|备注|设定|身份|外形|形象|造型|特征|动机|欲望|目标|关系|底线|禁忌|道具|物件|作用|功能|场景|地点|氛围|元素)$/;
+
+/**
+ * 是否为 Markdown 表格的表头行：整行单元格全是列名词。
+ *
+ * 按内容判定而不按所在位置判定——位置判定（上一行/下一行长什么样）在
+ * 无表头表格、表格中段多一条分隔行等写法下会误删真实数据行，
+ * 而误删一行等于脸锁静默漏一个角色。认不准就留着，最多多一个候选。
+ */
+function isMarkdownTableHeaderLine(rawLine: string): boolean {
+  const line = String(rawLine || "").trim();
+  if (!line.includes("|")) return false;
+  if (/^[-*•]\s/.test(line)) return false;
+  const cells = line
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((s) => s.trim().replace(/\*\*/g, ""))
+    .filter(Boolean);
+  if (cells.length < 2) return false;
+  return cells.every((c) => TABLE_COLUMN_LABEL_RE.test(c));
+}
+
+/** 去掉 Markdown 表格的表头行与分隔行，保留数据行 */
+export function stripMarkdownTableHeaderLines(lines: string[]): string[] {
+  return lines.filter(
+    (line) => !isMarkdownTableSeparatorLine(line) && !isMarkdownTableHeaderLine(line),
+  );
+}
+
 /** 拆一行「- 名/别名｜字段｜字段」 */
 export function parseWriterTableLine(rawLine: string): {
   nameZh: string;
@@ -69,6 +121,7 @@ export function parseWriterTableLine(rawLine: string): {
 } | null {
   let line = String(rawLine || "").trim();
   if (!line) return null;
+  if (isRulerOnlyLine(line)) return null;
   line = line.replace(/^[-*•]\s*/, "").replace(/^\d+[\.\)、]\s*/, "");
   if (!line || /^（|^无|^见原文/.test(line)) return null;
   const parts = line.split(/[｜|]/).map((s) => s.trim()).filter(Boolean);
@@ -85,10 +138,12 @@ function parseTableMd(
   md: string,
   role: ManhuaWriterAssetRole,
 ): ManhuaWriterAssetAnchor[] {
-  const lines = String(md || "")
-    .split(/\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const lines = stripMarkdownTableHeaderLines(
+    String(md || "")
+      .split(/\n/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
   const out: ManhuaWriterAssetAnchor[] = [];
   const seen = new Set<string>();
   for (const line of lines) {
@@ -215,7 +270,12 @@ export function collectWriterCharacterNames(
   charactersMd: string | null | undefined,
 ): string[] {
   const names = new Set<string>();
-  for (const line of String(charactersMd || "").split(/\n/)) {
+  const lines = stripMarkdownTableHeaderLines(
+    String(charactersMd || "")
+      .split(/\n/)
+      .map((s) => s.trim()),
+  );
+  for (const line of lines) {
     const parsed = parseWriterTableLine(line);
     if (!parsed) continue;
     if (parsed.nameZh) names.add(parsed.nameZh);
