@@ -13,15 +13,34 @@ export const HAILUO_OPENROUTER_MODEL_ID = "minimax/hailuo-3" as const;
 export const CANVAS_VIDEO_MODEL_HAILUO_H3 = "minimax-hailuo-3" as const;
 
 /**
- * 时长固定 15 秒（用户 2026-08-05 明文：H3 钉死 15s，不再随导演卡节拍浮动）。
- * OpenRouter 上游可接受 5–15s，这里只用上限；分辨率仅 2K。
+ * 时长三档 5 / 10 / 15 秒（用户 2026-08-09 拍板，取代 2026-08-05 的「钉死 15s」）。
+ *
+ * 上游 H3 接受 4–15 秒整数（不收小数、字符串、`auto`、`-1`），默认 4；
+ * 这里只开三个整档，避免导演卡节拍算出 7.3 秒这种上游不认的值。
+ * 认不出的入参一律回落 15（既有调用点大多不传，保持原行为）。
  */
+export const HAILUO_OPENROUTER_DURATION_CHOICES = [5, 10, 15] as const;
+export type HailuoOpenRouterDurationSec = (typeof HAILUO_OPENROUTER_DURATION_CHOICES)[number];
 export const HAILUO_OPENROUTER_FIXED_DURATION_SEC = 15 as const;
 export const HAILUO_OPENROUTER_DURATION = {
-  min: HAILUO_OPENROUTER_FIXED_DURATION_SEC,
-  max: HAILUO_OPENROUTER_FIXED_DURATION_SEC,
+  min: 5,
+  max: 15,
   default: HAILUO_OPENROUTER_FIXED_DURATION_SEC,
 } as const;
+
+/**
+ * 画质两档：草稿 768p / 高清 2K（上游 `quality` 只认这两个值）。
+ *
+ * 产品默认取 **2K**（用户 2026-08-09 拍板）。理由是实测账单反过来了：
+ * H3 的 2K 上游 **$0.13/秒**，比 Seedance 2.0 的 720p（BytePlus $0.159/秒、
+ * EvoLink $0.1986/秒）**还便宜**，更是 Seedance 4K（$1.0126/秒）的 1/7.8。
+ * 而 Seedance 全系根本没有 2K 档，H3 是站内唯一能出 2K 的引擎——
+ * 把它默认压到 768p，等于把最便宜的高画质藏起来。
+ */
+export const HAILUO_OPENROUTER_RESOLUTION_CHOICES = ["768p", "2K"] as const;
+export type HailuoOpenRouterResolution = (typeof HAILUO_OPENROUTER_RESOLUTION_CHOICES)[number];
+export const HAILUO_OPENROUTER_RESOLUTION_DEFAULT = "2K" as const;
+/** @deprecated 旧的「恒 2K」常量，仅供尚未接上选档的调用点过渡 */
 export const HAILUO_OPENROUTER_RESOLUTION = "2K" as const;
 
 export const HAILUO_OPENROUTER_ASPECT_RATIOS = [
@@ -48,11 +67,26 @@ export function isCanvasHailuoH3VideoModel(videoModel: string | null | undefined
 }
 
 /**
- * H3 一律 15 秒：入参保留是为了兼容既有调用点（画布导演卡节拍、api/jobs 请求体），
- * 但无论传什么都返回固定值，避免某条路径漏改就退回 10s。
+ * 归一到 5 / 10 / 15 三档。
+ *
+ * 不传、传不出数、或传了上游不认的值（小数、7、`auto`）→ 回落 15，
+ * 与既有「恒 15」的调用点行为一致；传了就近取档，不四舍五入到中间值。
  */
-export function clampHailuoOpenRouterDuration(_raw?: unknown): number {
-  return HAILUO_OPENROUTER_FIXED_DURATION_SEC;
+export function clampHailuoOpenRouterDuration(raw?: unknown): HailuoOpenRouterDurationSec {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return HAILUO_OPENROUTER_DURATION.default;
+  let picked: HailuoOpenRouterDurationSec = HAILUO_OPENROUTER_DURATION_CHOICES[0];
+  for (const choice of HAILUO_OPENROUTER_DURATION_CHOICES) {
+    if (Math.abs(choice - n) < Math.abs(picked - n)) picked = choice;
+  }
+  return picked;
+}
+
+/** 只有显式要草稿档才给 768p；其余（含认不出的值）一律 2K —— 2K 才是 H3 的默认档 */
+export function normalizeHailuoOpenRouterResolution(raw?: unknown): HailuoOpenRouterResolution {
+  const q = String(raw || "").trim().toLowerCase();
+  if (q === "768p") return "768p";
+  return HAILUO_OPENROUTER_RESOLUTION_DEFAULT;
 }
 
 export function normalizeHailuoOpenRouterAspectRatio(raw: unknown): string {

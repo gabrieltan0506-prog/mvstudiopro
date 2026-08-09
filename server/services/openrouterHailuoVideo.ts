@@ -6,9 +6,10 @@
 import {
   clampHailuoOpenRouterDuration,
   HAILUO_OPENROUTER_MODEL_ID,
-  HAILUO_OPENROUTER_RESOLUTION,
   HAILUO_REFERENCE_MAX,
+  type HailuoOpenRouterResolution,
   normalizeHailuoOpenRouterAspectRatio,
+  normalizeHailuoOpenRouterResolution,
 } from "../../shared/hailuoOpenRouterModels.js";
 import { buildOpenRouterAuthHeaders, getOpenRouterApiKey } from "./openrouterGptImage2.js";
 import { mirrorSeedanceMp4ToGcsSignedUrl } from "./seedanceVideo.js";
@@ -82,9 +83,12 @@ export function buildOpenRouterHailuoSubmitBody(input: {
   imageUrls?: string[];
   aspectRatio?: string;
   duration?: number;
+  /** 768p 草稿 / 2K 高清；缺省或认不出一律 768p */
+  resolution?: string;
   generateAudio?: boolean;
 }): Record<string, unknown> {
   const duration = clampHailuoOpenRouterDuration(input.duration);
+  const resolution = normalizeHailuoOpenRouterResolution(input.resolution);
   const aspect_ratio = normalizeHailuoOpenRouterAspectRatio(input.aspectRatio);
   const images = [
     ...(input.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean),
@@ -96,7 +100,7 @@ export function buildOpenRouterHailuoSubmitBody(input: {
     model: HAILUO_OPENROUTER_MODEL_ID,
     prompt: String(input.prompt || "").trim(),
     duration,
-    resolution: HAILUO_OPENROUTER_RESOLUTION,
+    resolution,
     aspect_ratio,
     generate_audio: input.generateAudio !== false,
   };
@@ -166,6 +170,8 @@ export type OpenRouterHailuoRunInput = {
   imageUrls?: string[];
   aspectRatio?: string;
   duration?: number;
+  /** 768p 草稿 / 2K 高清；缺省或认不出一律 768p */
+  resolution?: string;
   generateAudio?: boolean;
 };
 
@@ -174,7 +180,7 @@ export async function runOpenRouterHailuoVideo(input: OpenRouterHailuoRunInput):
   model: string;
   provider: "openrouter";
   version: "hailuo-3";
-  resolution: typeof HAILUO_OPENROUTER_RESOLUTION;
+  resolution: HailuoOpenRouterResolution;
 }> {
   const apiKey = getOpenRouterApiKey();
   if (!apiKey) {
@@ -186,6 +192,7 @@ export async function runOpenRouterHailuoVideo(input: OpenRouterHailuoRunInput):
 
   const body = buildOpenRouterHailuoSubmitBody(input);
   const model = String(body.model);
+  const resolution = body.resolution as HailuoOpenRouterResolution;
 
   const createRes = await fetch(`${OPENROUTER_BASE}/videos`, {
     method: "POST",
@@ -221,6 +228,6 @@ export async function runOpenRouterHailuoVideo(input: OpenRouterHailuoRunInput):
     model,
     provider: "openrouter",
     version: "hailuo-3",
-    resolution: HAILUO_OPENROUTER_RESOLUTION,
+    resolution,
   };
 }

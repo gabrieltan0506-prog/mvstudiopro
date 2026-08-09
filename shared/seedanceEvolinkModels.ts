@@ -38,6 +38,21 @@ export const SEEDANCE_25_MODELS = {
   videoExtend: "seedance-2.5-video-extend",
 } as const;
 
+/**
+ * EvoLink `content_filter`（用户 2026-08-09 拍板改为 false）。
+ *
+ * - `true`：标准内容安全检查（上游默认）
+ * - `false`：**放宽内容限制，上游加收 10%**；文档同时注明「违法违禁内容无论如何都拦」，
+ *   所以放宽不等于没有底线。
+ *
+ * 改动理由：漫剧每一段都拿角色定妆图当首帧，标准档会把人物图判成真人素材拦下来
+ * （2026-08-09 实测到 `InputImageSensitiveContentDetected.PrivacyInformation`）。
+ *
+ * ⚠️ 只对 EvoLink 路径生效。BytePlus ModelArk 的请求体没有这个参数，
+ * 主路径（2.5）的人脸拦截**不会**因为这里改成 false 而解除。
+ */
+export const SEEDANCE_EVOLINK_CONTENT_FILTER = false as const;
+
 export type SeedanceEvolinkVersion = "2.0" | "2.0-mini" | "2.5";
 export type SeedanceEvolinkMode =
   | "text_to_video"

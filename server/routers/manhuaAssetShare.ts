@@ -104,6 +104,8 @@ export const manhuaAssetShareRouter = router({
           gcsSubdir: "manhua-asset-still",
           referenceImageUrls: refs,
           generalImageEdit: Boolean(refs?.length),
+          // 漫剧资产图（人物/场景/道具）画内禁字；与画布出图同一口径
+          onImageText: "forbid",
           imageLane: "asset",
         });
         if (!imageUrl) {

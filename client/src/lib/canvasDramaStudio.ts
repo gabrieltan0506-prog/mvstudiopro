@@ -2542,11 +2542,22 @@ export function collectManhuaPropImageUrlById(
     const key = normalizeForManhuaNameMatch(p.nameZh);
     if (key && !normalizedNameToPropId.has(key)) normalizedNameToPropId.set(key, p.id);
   }
+  const propIdSet = new Set(props.map((p) => p.id));
   const map: Record<string, string> = {};
   for (const ref of customAssetRefs) {
     if (ref.role !== "prop") continue;
     const url = String(ref.url || "").trim();
     if (!/^https:\/\//i.test(url)) continue;
+    /**
+     * 先认稳定 id：`seedLibraryId` 是生成时写死的库资产 id，改标签、加「新道具·」前缀
+     * 都不会动它。只按 labelZh 归一化匹配的话，名称一漂移就整条命不中，
+     * map 为空 → 道具子槽回退成角色整图甚至 `logical://` 占位。
+     */
+    const seedId = String(ref.seedLibraryId || "").trim();
+    if (seedId && propIdSet.has(seedId)) {
+      if (!map[seedId]) map[seedId] = url;
+      continue;
+    }
     const key = normalizeForManhuaNameMatch(stripManhuaCustomAssetRefNoteSuffix(ref.labelZh || ""));
     const propId = key ? normalizedNameToPropId.get(key) : undefined;
     if (propId && !map[propId]) map[propId] = url;
