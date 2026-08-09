@@ -10977,7 +10977,9 @@ export default function PlatformPage() {
                               onClick={() =>
                                 void runManhuaTemplateLearnCloud(
                                   {
-                                    mixName: manhuaPasteTitle.trim() || "贴链接学习",
+                                    // 剧名留空让服务端从抖音详情/合集接口回填真剧名，
+                                    // 不再传「贴链接学习」占位（会压住回填且写脏进度）
+                                    mixName: manhuaPasteTitle.trim(),
                                     url: manhuaPasteUrl.trim(),
                                     platform: "douyin",
                                   },
@@ -10986,8 +10988,7 @@ export default function PlatformPage() {
                               }
                               className="shrink-0 rounded-lg border border-[#8cefff]/35 bg-[rgba(140,239,255,0.12)] px-3 py-1.5 text-[11px] font-semibold text-[#8cefff] disabled:opacity-45"
                             >
-                              {manhuaLearnBusyKey ===
-                              String(manhuaPasteUrl.trim() || "贴链接学习")
+                              {manhuaLearnBusyKey === manhuaPasteUrl.trim()
                                 ? "学习中…"
                                 : "开始学习"}
                             </button>

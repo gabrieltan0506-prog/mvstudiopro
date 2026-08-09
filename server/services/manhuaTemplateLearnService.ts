@@ -185,6 +185,22 @@ function gcsBucketHint(): string {
   ).trim();
 }
 
+/**
+ * 前端占位词不算剧名：旧版贴链接路径把「贴链接学习」当 title 传上来，
+ * 会把详情接口回填的真剧名压住，且已写进存量 progress——这里统一洗掉。
+ */
+const MANHUA_LEARN_TITLE_PLACEHOLDERS = new Set(["未命名合集", "贴链接学习"]);
+
+function cleanManhuaLearnTitle(raw?: string | null): string {
+  const t = String(raw || "").trim();
+  return MANHUA_LEARN_TITLE_PLACEHOLDERS.has(t) ? "" : t;
+}
+
+/** 剧名两侧多余书名号剥掉（mix_name 常自带《》，进度行再包一层会变《《》》） */
+function stripBookTitleMarks(raw?: string | null): string {
+  return String(raw || "").trim().replace(/^[《\s]+/, "").replace(/[》\s]+$/, "");
+}
+
 function seriesKeyFrom(input: { url: string; mixId?: string; title?: string }): string {
   const mix = String(input.mixId || "").trim();
   if (mix) return createHash("sha1").update(`mix:${mix}`).digest("hex").slice(0, 12);
@@ -828,7 +844,7 @@ async function learnOneEpisode(input: {
 export async function runManhuaTemplateLearn(
   input: ManhuaTemplateLearnInput,
 ): Promise<ManhuaTemplateLearnResult> {
-  const title = String(input.title || "").trim();
+  const title = cleanManhuaLearnTitle(input.title);
   const url = String(input.url || "").trim();
   if (!url) {
     throw new Error("缺少合集或成片链接（榜单一点或粘贴链接）");
@@ -856,7 +872,7 @@ export async function runManhuaTemplateLearn(
         if (!/^\d{6,}$/.test(mixId) && detail.mixId && /^\d{6,}$/.test(detail.mixId)) {
           mixId = detail.mixId;
         }
-        dramaNameZh = detail.mixNameZh || "";
+        dramaNameZh = stripBookTitleMarks(detail.mixNameZh);
       }
     }
   }
@@ -889,7 +905,9 @@ export async function runManhuaTemplateLearn(
     if (!listed.length) {
       throw new Error("无法解析任何可学剧集，请换合集页或成片链接重试");
     }
-    if (!dramaNameZh && listedRes.mixNameZh) dramaNameZh = listedRes.mixNameZh;
+    if (!dramaNameZh && listedRes.mixNameZh) {
+      dramaNameZh = stripBookTitleMarks(listedRes.mixNameZh);
+    }
     // 剧名口径：用户手填 > 详情/合集接口回填的剧名（后者是单集路径「剧名恒空」的修复）
     const titleHint = title || dramaNameZh;
     await progress(
@@ -921,11 +939,8 @@ export async function runManhuaTemplateLearn(
     prog = {
       ...prog,
       sourceUrl: url,
-      // 旧进度若还挂着「未命名合集」占位，回填到手的真剧名
-      titleHint:
-        titleHint
-        || (prog.titleHint && prog.titleHint !== "未命名合集" ? prog.titleHint : "")
-        || "未命名合集",
+      // 旧进度若还挂着占位（未命名合集/贴链接学习），回填到手的真剧名
+      titleHint: titleHint || cleanManhuaLearnTitle(prog.titleHint) || "未命名合集",
       listedEpisodeCount: listed.length,
       mixId: mixId || prog.mixId || undefined,
       dramaKind: seriesClassify.dramaKind,
