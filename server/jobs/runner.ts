@@ -75,7 +75,7 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
   pdf_export: 55 * 60_000,
 };
 
-import { reapStaleJobsOnce } from "./staleJobsReaper";
+
 
 const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 const POLL_INTERVAL_MS = 2_000;
@@ -2255,8 +2255,13 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
   }
 }
 
+/**
+ * 僵尸行清理只归 startStaleJobsReaper（20 分钟一次）。原先每个 tick 都先跑一遍
+ * reapStaleJobsOnce（三个 interval 合计每秒 2-3 次 × 双 DELETE），5 个月在 Neon
+ * 上打出 2800 万次 DELETE——是账单里 compute 的最大单项，而清理门槛本来就是
+ * 20 分钟量级，每秒清一次毫无意义。
+ */
 async function processOneJob() {
-  await reapStaleJobsOnce();
   const job = await claimNextQueuedJob();
   if (!job) return false;
 
@@ -2266,7 +2271,6 @@ async function processOneJob() {
 
 async function processOneGrowthAnalyzeJob(): Promise<boolean> {
   if (growthAnalyzeJobsActive >= GROWTH_CAMP_JOB_WORKER_CONCURRENCY) return false;
-  await reapStaleJobsOnce();
   const job = await claimNextGrowthCampAnalyzeJob();
   if (!job) return false;
 
@@ -2284,7 +2288,6 @@ export async function processGrowthAnalyzeJobsOnce() {
 }
 
 async function processOnePdfExportJob(): Promise<boolean> {
-  await reapStaleJobsOnce();
   const job = await claimNextPdfExportJob();
   if (!job) return false;
 

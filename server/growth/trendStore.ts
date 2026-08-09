@@ -1,9 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { gunzipSync, gzipSync } from "node:zlib";
+import { gunzip as gunzipCb, gzip as gzipCb } from "node:zlib";
+import { promisify } from "node:util";
+
+// gzipSync/gunzipSync 会把整段压缩 CPU 扣在事件循环上——growth 落盘/读档撞上
+// 生产请求时，health check 30-40s 无响应就是这么来的。异步版走 zlib 线程池。
+const gunzipAsync = promisify(gunzipCb);
+const gzipAsync = promisify(gzipCb);
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { growthPlatformValues, growthPlatformsForStatsAggregationList, isGrowthPlatformInStatsAggregate, type GrowthPlatform } from "@shared/growth";
 import type { PlatformTrendCollection, TrendItem } from "./trendCollector";
 import { nowShanghaiIso, toShanghaiIso } from "./time";
@@ -346,7 +351,7 @@ async function readLocalJsonOrGzip<T>(plainPath: string): Promise<T | null> {
   const gzPath = `${plainPath}.gz`;
   try {
     const raw = await fs.readFile(gzPath);
-    return JSON.parse(gunzipSync(raw).toString("utf8")) as T;
+    return JSON.parse((await gunzipAsync(raw)).toString("utf8")) as T;
   } catch {}
   try {
     return JSON.parse(await fs.readFile(plainPath, "utf8")) as T;
@@ -1521,7 +1526,7 @@ async function writeJsonGzipAtomic(plainPath: string, value: unknown) {
   const tempPath = `${gzPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.next`;
   let payload: Buffer;
   try {
-    payload = gzipSync(Buffer.from(JSON.stringify(value), "utf8"), { level: 6 });
+    payload = await gzipAsync(Buffer.from(JSON.stringify(value), "utf8"), { level: 6 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (error instanceof RangeError || /Invalid string length/i.test(message)) {
