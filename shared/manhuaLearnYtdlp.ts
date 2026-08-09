@@ -87,16 +87,20 @@ function readEnv(env?: EnvMap): EnvMap {
 }
 
 export function pickDouyinCookieHeaderFromEnv(env?: EnvMap): string {
+  return listDouyinCookieCandidatesFromEnv(env)[0] || "";
+}
+
+/** 全部候选凭证（主 → 备 → 池，去重）；web API 拉合集时逐个试到有响应为止 */
+export function listDouyinCookieCandidatesFromEnv(env?: EnvMap): string[] {
   const e = readEnv(env);
-  const primary = String(e.DOUYIN_COOKIE || "").trim();
-  if (primary) return primary;
-  const backup = String(e.DOUYIN_COOKIE_BACKUP || "").trim();
-  if (backup) return backup;
-  const pool = String(e.DOUYIN_COOKIE_POOL || "")
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return pool[0] || "";
+  const raw = [
+    String(e.DOUYIN_COOKIE || "").trim(),
+    String(e.DOUYIN_COOKIE_BACKUP || "").trim(),
+    ...String(e.DOUYIN_COOKIE_POOL || "")
+      .split("\n")
+      .map((s) => s.trim()),
+  ].filter(Boolean);
+  return Array.from(new Set(raw));
 }
 
 export function manhuaLearnYtdlpCookiesFileFromEnv(env?: EnvMap): string {
@@ -211,12 +215,17 @@ export function shouldSkipLocalLearnFallback(errorZh: string): boolean {
 export function listedSingleEpisodeFromUrl(
   sourceUrl: string,
   titleHint?: string,
+  /** 已知真实集号时传入（如 web API 详情的 current_episode），避免同剧多条单集链接都占第 1 集互相覆盖 */
+  episodeIndex?: number,
 ): Array<{ index: number; url: string; title: string }> {
+  const idx = Number.isFinite(Number(episodeIndex)) && Number(episodeIndex) > 0
+    ? Math.floor(Number(episodeIndex))
+    : 1;
   return [
     {
-      index: 1,
+      index: idx,
       url: sourceUrl,
-      title: String(titleHint || "第1集").trim() || "第1集",
+      title: String(titleHint || `第${idx}集`).trim() || `第${idx}集`,
     },
   ];
 }
