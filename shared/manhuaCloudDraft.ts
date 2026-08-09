@@ -43,6 +43,11 @@ export type ManhuaCloudDraftCanvasBlock = {
   editFusionUrls?: string[];
   imageMode?: string;
   aspectRatio?: string;
+  /**
+   * 成片引擎。不落这一项就只能在恢复时靠会话猜，猜错就是段表、时长和每段扣费一起变；
+   * 视频产物不云存，但节点盖的档必须原样带回来。
+   */
+  videoModel?: string;
   pathCameraRecipeId?: string;
   pathAnnotationJson?: unknown;
 };
@@ -122,6 +127,7 @@ export function sanitizeManhuaCloudDraftBlock(raw: unknown): ManhuaCloudDraftCan
     status: b.status != null ? String(b.status).slice(0, 24) : undefined,
     imageMode: b.imageMode != null ? String(b.imageMode).slice(0, 24) : undefined,
     aspectRatio: b.aspectRatio === "16:9" || b.aspectRatio === "9:16" ? b.aspectRatio : undefined,
+    videoModel: b.videoModel != null ? String(b.videoModel).slice(0, 48) : undefined,
     pathCameraRecipeId:
       b.pathCameraRecipeId != null ? String(b.pathCameraRecipeId).slice(0, 80) : undefined,
     pathAnnotationJson: b.pathAnnotationJson,

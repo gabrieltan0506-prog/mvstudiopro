@@ -8,6 +8,7 @@ import {
   collectManhuaCustomRefsFromCanvasAssetBlocks,
   collectManhuaPropImageUrlById,
   countManhuaClipAssetEdges,
+  countExpectedManhuaKeyartShots,
   ensureManhuaFragmentClips,
   expandManhuaShotKeyartsAfterReverse,
   expectedMinManhuaClipAssetEdges,
@@ -23,6 +24,8 @@ import {
   stripManhuaFactoryCanvasArtifacts,
   resolveFactoryResumeStage,
   resolveManhuaEpisodeSpawnContinuity,
+  queuedManhuaKeyartBlocks,
+  resolveManhuaCanvasClipVideoModel,
   resolveManhuaFactoryOrderedIds,
   resolveManhuaFragmentRunTargets,
   runManhuaDramaFactoryPipeline,
@@ -37,10 +40,13 @@ import {
   collectVisionImages,
   defaultCanvasBlock,
   resolveNearestUpstreamImageUrl,
+  type CanvasBlock,
 } from "./canvasTypes";
 import * as canvasRunBlock from "./canvasRunBlock";
 import type { CanvasRunDeps } from "./canvasRunBlock";
 import {
+  MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
+  MANHUA_KEYARTS_PER_SEGMENT_MIN,
   resolveClipSegmentIndex,
   resolveKeyartShotIndex,
 } from "@shared/manhuaScriptWorkbench";
@@ -81,7 +87,7 @@ describe("canvasDramaStudio factory", () => {
     expect(blocks.some((b) => b.id.startsWith("omni_edit-"))).toBe(false);
     expect(blocks[0]!.prompt).toContain("星际车站离别");
     const clip = blocks.find((b) => b.id.startsWith("clip-"))!;
-    expect(clip.videoModel).toBe("seedance-2.5");
+    expect(clip.videoModel).toBe("seedance-2.0-mini");
   });
 
   it("spawns with genre+scene injects scene asset into key art", () => {
@@ -348,7 +354,7 @@ describe("canvasDramaStudio factory", () => {
     );
     expect(clips.length).toBeGreaterThanOrEqual(1);
     expect(clips.every((c) => keyarts.some((k) => k.id === c.parentId))).toBe(true);
-    expect(clips[0]!.videoModel).toBe("seedance-2.5");
+    expect(clips[0]!.videoModel).toBe("seedance-2.0-mini");
     const orderedClip = resolveManhuaFactoryOrderedIds(expanded.blocks, "clip", 1);
     expect(orderedClip.filter((id) => id.startsWith("clip-")).length).toBeGreaterThanOrEqual(1);
     const frag1 = resolveManhuaFragmentRunTargets(expanded.blocks, 1, 1);
@@ -543,6 +549,270 @@ describe("canvasDramaStudio factory", () => {
     expect(frag.targetBlockIds).toEqual([frag.clipId]);
     const ordered = resolveManhuaFactoryOrderedIds(ensured.blocks, "clip", 1);
     expect(filterManhuaFactoryTargetIds(ordered, frag.targetBlockIds)).toEqual([frag.clipId]);
+  });
+
+  /**
+   * 铺几条 clip 就是实收几段积分。旧行为固定按 3 镜切段，18 镜切 6 段，
+   * 2.5（段表 4 段 × 30s）会多收两段、总长也从 120s 变 180s。
+   */
+  it("ensureManhuaFragmentClips pins clip count to the engine segment table", () => {
+    const buildEpisode = (videoModel: string) => {
+      const { blocks, edges } = spawnManhuaDramaStudio({
+        topic: "江湖刀客雨夜客栈",
+        episodeIndex: 1,
+        videoModel: videoModel as never,
+      });
+      const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+      const outputText = Array.from(
+        { length: 18 },
+        (_, i) => `${i + 1}. 第 ${i + 1} 镜：刀客在客栈内推进动作`,
+      ).join("\n");
+      const withReverse = blocks.map((b) =>
+        b.id === reverse.id ? { ...b, status: "done" as const, outputText } : b,
+      );
+      const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+      const withKeyarts = expanded.blocks.map((b) =>
+        b.id.startsWith("keyart-")
+          ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+          : b,
+      );
+      const ensured = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1, {});
+      return ensured.blocks.filter(
+        (b) => b.id.startsWith("clip-") && /-g\d{2,}/i.test(b.id),
+      );
+    };
+
+    const clips25 = buildEpisode("seedance-2.5");
+    expect(clips25.length).toBe(4);
+    expect(clips25.every((c) => /【第\d+段·30(\.0)?s】/.test(c.prompt || ""))).toBe(true);
+
+    const clipsMini = buildEpisode("seedance-2.0-mini");
+    expect(clipsMini.length).toBe(6);
+    expect(clipsMini.every((c) => /【第\d+段·15(\.0)?s】/.test(c.prompt || ""))).toBe(true);
+
+    // 2.0-fast 段数随长档从 6 变 12，不能一刀钉成短档段数；这里仍由镜数决定
+    const clipsFast = buildEpisode("seedance-2.0-fast");
+    expect(clipsFast.length).toBe(18 / MANHUA_KEYARTS_PER_SEGMENT_MIN);
+  });
+
+  it("ensureManhuaFragmentClips 本集没有 clip 时用编剧室引擎，不掉回兜底默认档", () => {
+    // 不显式选引擎：spawn / 展开静帧都落兜底 mini，铺满 6×3 张静帧
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const outputText = Array.from(
+      { length: 18 },
+      (_, i) => `${i + 1}. 第 ${i + 1} 镜：刀客在客栈内推进动作`,
+    ).join("\n");
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id ? { ...b, status: "done" as const, outputText } : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+    const withKeyarts = expanded.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        : b,
+    );
+    // 模拟局部改写清空本集成片：一条未归档 clip 都不剩，只能靠 opts.videoModel 认引擎
+    const noClips = withKeyarts.filter((b) => !b.id.startsWith("clip-"));
+
+    const fellBack = ensureManhuaFragmentClips(noClips, expanded.edges, 1, {});
+    expect(
+      fellBack.blocks.filter((b) => b.id.startsWith("clip-") && /-g\d{2,}/i.test(b.id)).length,
+    ).toBe(6);
+
+    const kept = ensureManhuaFragmentClips(noClips, expanded.edges, 1, {
+      videoModel: "seedance-2.5",
+    });
+    const keptClips = kept.blocks.filter(
+      (b) => b.id.startsWith("clip-") && /-g\d{2,}/i.test(b.id),
+    );
+    expect(keptClips.length).toBe(4);
+    expect(keptClips.every((c) => c.videoModel === "seedance-2.5")).toBe(true);
+  });
+
+  it("钉段引擎不铺超出段表的静帧（多铺一张就白烧 54 积分）", () => {
+    const buildKeyarts = (videoModel: string) => {
+      const { blocks, edges } = spawnManhuaDramaStudio({
+        topic: "江湖刀客雨夜客栈",
+        episodeIndex: 1,
+        videoModel: videoModel as never,
+      });
+      const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+      const outputText = Array.from(
+        { length: 18 },
+        (_, i) => `${i + 1}. 第 ${i + 1} 镜：刀客在客栈内推进动作`,
+      ).join("\n");
+      const withReverse = blocks.map((b) =>
+        b.id === reverse.id ? { ...b, status: "done" as const, outputText } : b,
+      );
+      const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id, {
+        videoModel,
+      });
+      return expanded.blocks.filter(
+        (b) => b.id.startsWith("keyart-") && !b.archivedFromPreviousScript,
+      );
+    };
+
+    // 2.5 只有 4 段 → 12 张；反推吐的 18 镜里多出的 6 张没有任何成片会消费
+    expect(buildKeyarts("seedance-2.5").length).toBe(4 * MANHUA_KEYARTS_PER_SEGMENT_MIN);
+    expect(buildKeyarts("seedance-2.0-mini").length).toBe(6 * MANHUA_KEYARTS_PER_SEGMENT_MIN);
+    // 2.0-fast 不钉段（长档可到 12 段），镜数说了算
+    expect(buildKeyarts("seedance-2.0-fast").length).toBe(18);
+  });
+
+  it("本集还没铺段时跟同项目其它集的引擎，不掉回兜底默认", () => {
+    const ep1Clip: CanvasBlock = {
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "clip-e01-g01-a",
+      episodeIndex: 1,
+      videoModel: "seedance-2.5",
+    };
+    // 第 2 集一条 clip 都没有：若按兜底默认会静默变 mini，段表 4→6、扣费口径全变
+    expect(resolveManhuaCanvasClipVideoModel([ep1Clip])).toBe("seedance-2.5");
+    // 显式选型仍然优先
+    expect(resolveManhuaCanvasClipVideoModel([ep1Clip], "seedance-2.0-mini")).toBe(
+      "seedance-2.0-mini",
+    );
+    // 画布上一条 clip 都没有才用兜底
+    expect(resolveManhuaCanvasClipVideoModel([])).toBe(MANHUA_FACTORY_DEFAULT_VIDEO_MODEL);
+  });
+
+  it("改档变窄只停放超额静帧，不删掉已出图（一张 54 积分）", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+      videoModel: "seedance-2.0-mini" as never,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const outputText = Array.from(
+      { length: 18 },
+      (_, i) => `${i + 1}. 第 ${i + 1} 镜：刀客在客栈内推进动作`,
+    ).join("\n");
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id ? { ...b, status: "done" as const, outputText } : b,
+    );
+    const mini = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id, {
+      videoModel: "seedance-2.0-mini",
+    });
+    // mini 的 18 张都已出图，此时改选 2.5（一集 4 段 → 只用 12 张）
+    const printed = mini.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? { ...b, status: "done" as const, outputUrl: `https://cdn.example/${b.id}.png` }
+        : b,
+    );
+    const switched = expandManhuaShotKeyartsAfterReverse(printed, mini.edges, reverse.id, {
+      videoModel: "seedance-2.5",
+    });
+    const kept = switched.blocks.filter(
+      (b) => b.id.startsWith("keyart-") && !b.archivedFromPreviousScript,
+    );
+    // 节点全留着（改回 mini 还要用），只是超出 12 张的不再排队
+    expect(kept).toHaveLength(18);
+    expect(kept.every((b) => Boolean(b.outputUrl))).toBe(true);
+    expect(queuedManhuaKeyartBlocks(switched.blocks, 1, "seedance-2.5")).toHaveLength(12);
+  });
+
+  it("静帧进度分母与钉段截断同口径，不会卡在 12/18", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const outputText = Array.from(
+      { length: 18 },
+      (_, i) => `${i + 1}. 第 ${i + 1} 镜：刀客在客栈内推进动作`,
+    ).join("\n");
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id ? { ...b, status: "done" as const, outputText } : b,
+    );
+    void edges;
+    expect(countExpectedManhuaKeyartShots(withReverse, 1, "seedance-2.5")).toBe(
+      4 * MANHUA_KEYARTS_PER_SEGMENT_MIN,
+    );
+    expect(countExpectedManhuaKeyartShots(withReverse, 1, "seedance-2.0-mini")).toBe(
+      6 * MANHUA_KEYARTS_PER_SEGMENT_MIN,
+    );
+    expect(countExpectedManhuaKeyartShots(withReverse, 1, "seedance-2.0-fast")).toBe(18);
+  });
+
+  it("改选引擎后存量段节点跟着换档，不留 prompt 按新表、节点按旧档", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const outputText = Array.from(
+      { length: 18 },
+      (_, i) => `${i + 1}. 第 ${i + 1} 镜：刀客在客栈内推进动作`,
+    ).join("\n");
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id ? { ...b, status: "done" as const, outputText } : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+    const withKeyarts = expanded.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        : b,
+    );
+    // 先按默认 mini 铺一轮，再改选 2.5 重铺
+    const asMini = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1, {});
+    const miniClips = asMini.blocks.filter(
+      (b) => b.id.startsWith("clip-") && /-g\d{2,}/i.test(b.id),
+    );
+    expect(miniClips.length).toBe(6);
+    expect(miniClips.every((c) => c.videoModel === "seedance-2.0-mini")).toBe(true);
+
+    const as25 = ensureManhuaFragmentClips(asMini.blocks, asMini.edges, 1, {
+      videoModel: "seedance-2.5",
+    });
+    const clips25 = as25.blocks.filter(
+      (b) => b.id.startsWith("clip-") && /-g\d{2,}/i.test(b.id) && !b.archivedFromPreviousScript,
+    );
+    expect(clips25.some((c) => c.videoModel === "seedance-2.0-mini")).toBe(false);
+    expect(
+      clips25
+        .filter((c) => /【第\d+段·30(\.0)?s】/.test(c.prompt || ""))
+        .every((c) => c.videoModel === "seedance-2.5"),
+    ).toBe(true);
+  });
+
+  it("ensureManhuaFragmentClips 不读改写归档的旧成片引擎", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const outputText = Array.from(
+      { length: 18 },
+      (_, i) => `${i + 1}. 第 ${i + 1} 镜：刀客在客栈内推进动作`,
+    ).join("\n");
+    const withReverse = blocks.map((b) =>
+      b.id === reverse.id ? { ...b, status: "done" as const, outputText } : b,
+    );
+    const expanded = expandManhuaShotKeyartsAfterReverse(withReverse, edges, reverse.id);
+    const staged = expanded.blocks.map((b) => {
+      if (b.id.startsWith("keyart-")) {
+        return { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` };
+      }
+      // 归档的旧成片挂 2.5（4 段）；兜底默认档是 mini（6 段），读错就会铺成 4 段
+      if (b.id.startsWith("clip-")) {
+        return {
+          ...b,
+          archivedFromPreviousScript: true,
+          videoModel: "seedance-2.5" as const,
+        };
+      }
+      return b;
+    });
+    const ensured = ensureManhuaFragmentClips(staged, expanded.edges, 1, {});
+    const clips = ensured.blocks.filter(
+      (b) => b.id.startsWith("clip-") && /-g\d{2,}/i.test(b.id),
+    );
+    // 读到归档的 2.5 会铺成 4 段；跳过它、落兜底 mini 才是 6 段
+    expect(clips.length).toBe(6);
   });
 
   it("ensureManhuaFragmentClips 接入集级导演板：@图片N 硬绑与红/青箭头引导句都在，最终提示词不留原始 URL", () => {
@@ -1185,6 +1455,24 @@ slow push, crystal glow
     expect(resolveManhuaFactoryOrderedIds(blocks, "reverse")).toHaveLength(4);
     expect(resolveManhuaFactoryOrderedIds(blocks, "keyart")).toHaveLength(5);
     expect(resolveManhuaFactoryOrderedIds(blocks, "clip")).toHaveLength(6);
+  });
+
+  it("改选钉段引擎后，超出段表的残留静帧不进队列（跑一张白烧 54 积分）", () => {
+    const keyarts: CanvasBlock[] = Array.from({ length: 18 }, (_, i) => ({
+      ...defaultCanvasBlock("image", 0, 0),
+      id: `keyart-e01-s${String(i + 1).padStart(2, "0")}-a`,
+      episodeIndex: 1,
+    }));
+    const clip: CanvasBlock = {
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "clip-e01-g01-a",
+      episodeIndex: 1,
+      videoModel: "seedance-2.5",
+    };
+    const queued = resolveManhuaFactoryOrderedIds([...keyarts, clip], "keyart", 1);
+    // 2.5 一集钉 4 段 × 3 张 = 12 张，s13–s18 留在画布但不排队
+    expect(queued.filter((id) => id.startsWith("keyart-"))).toHaveLength(12);
+    expect(queued).not.toContain("keyart-e01-s13-a");
   });
 
   it("limits a manual rerun to the selected shot keyart", () => {

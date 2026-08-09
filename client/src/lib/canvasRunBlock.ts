@@ -170,6 +170,12 @@ export type CanvasRunDeps = {
   /** 集号 → 集级导演分镜板（已裁成仅主画面）可下载地址；同一集所有段共用同一张 */
   manhuaDirectorBoardUrlByEpisode?: Record<number, string> | null;
   /**
+   * 编剧室已选成片引擎。段数、段时长与新建 clip 盖的引擎都跟它走。
+   * 本集还没有未归档 clip 节点时（局部改写清空、只扩写没 spawn），
+   * 没有它就会掉到兜底默认档，把用户选的 2.5 / H3 悄悄换成草稿档。
+   */
+  manhuaWriterVideoModel?: string | null;
+  /**
    * @deprecated 声线不再硬门禁；保留字段以免旧调用方类型炸。
    */
   getManhuaEpisodeSegmentPromptsForVoiceGate?: (

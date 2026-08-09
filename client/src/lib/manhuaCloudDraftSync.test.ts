@@ -9,6 +9,7 @@ import {
 } from "./manhuaCloudDraftSync";
 import { buildManhuaCloudDraftPayload } from "@shared/manhuaCloudDraft";
 import { buildManhuaWriterSession } from "@shared/manhuaWriterSession";
+import { MANHUA_FACTORY_DEFAULT_VIDEO_MODEL } from "@shared/manhuaScriptWorkbench";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 
 describe("manhuaCloudDraftSync dual-path", () => {
@@ -83,8 +84,8 @@ describe("manhuaCloudDraftSync dual-path", () => {
   });
 
   /**
-   * 云端 block schema 不落 videoModel。恢复时若不把会话引擎带进节点，
-   * mini 会话会按 fast 跑（界面印 28 积分/段、实扣 172），2.5 会话段长从 30s 掉回 15s。
+   * 恢复时若不把节点/会话的引擎带回来，mini 会按 fast 跑（界面印 28 积分/段、实扣 172），
+   * 2.5 的段长会从 30s 掉回 15s——两边都是恢复即变价变结构。
    */
   it("restores clip engine from the writer session, not a hardcoded fast", () => {
     const clipBlock = {
@@ -110,8 +111,30 @@ describe("manhuaCloudDraftSync dual-path", () => {
     expect(restoreWith("seedance-2.0-mini")[0]?.videoModel).toBe("seedance-2.0-mini");
     expect(restoreWith("seedance-2.5")[0]?.videoModel).toBe("seedance-2.5");
     expect(restoreWith("minimax-hailuo-3")[0]?.videoModel).toBe("minimax-hailuo-3");
-    // 会话没选引擎时才退回 fast
-    expect(restoreWith(undefined)[0]?.videoModel).toBe("seedance-2.0-fast");
+    // 节点和会话都没有引擎（旧草稿）才走兜底默认档
+    expect(restoreWith(undefined)[0]?.videoModel).toBe(MANHUA_FACTORY_DEFAULT_VIDEO_MODEL);
+  });
+
+  it("节点自带的引擎优先于会话，旧草稿才靠会话猜", () => {
+    const clipBlock = {
+      id: "clip-e01-s01",
+      kind: "video" as const,
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 360,
+      prompt: "成片",
+      videoModel: "seedance-2.5",
+    };
+    const payload = buildManhuaCloudDraftPayload({
+      clientUpdatedAt: "2026-08-09T00:00:00.000Z",
+      writerSession: { topic: "t" },
+      blocks: [clipBlock],
+      edges: [],
+    });
+    // 会话没选引擎（自动预选不落盘）也不该把 2.5 节点拽成兜底档
+    expect(payload.canvas.blocks[0]?.videoModel).toBe("seedance-2.5");
+    expect(cloudDraftBlocksToCanvas(payload.canvas.blocks)[0]?.videoModel).toBe("seedance-2.5");
   });
 
   it("slims local canvas by dropping video outputs", () => {

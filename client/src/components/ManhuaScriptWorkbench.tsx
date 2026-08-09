@@ -95,6 +95,7 @@ import {
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
   manhuaSegmentCountBounds,
+  pinnedManhuaSegmentCount,
   parseWorkbenchShotsFromText,
   resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
@@ -722,11 +723,13 @@ export default function ManhuaScriptWorkbench({
   const segments = useMemo(
     () =>
       groupShotsIntoSegments(shots, {
+        // 只有段表固定的引擎才钉段；2.0 / 2.0-fast 的段数随长档变，钉死会把 12 段压回 6 段，
+        // 而工厂那边对它们不钉段，界面段数与实收段数会再次脱节
         videoModel: episodeVideoModel,
-        segmentCount: episodeSegmentBounds.default,
+        segmentCount: pinnedManhuaSegmentCount(episodeVideoModel),
         padToDefaultEpisode: true,
       }),
-    [shots, episodeVideoModel, episodeSegmentBounds.default],
+    [shots, episodeVideoModel],
   );
   const shootablePlan = useMemo(
     () =>

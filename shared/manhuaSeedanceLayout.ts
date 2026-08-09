@@ -1,5 +1,5 @@
 /**
- * 漫剧编剧室开场：先选成片引擎，再按选型铺段数 / 单段秒数。
+ * 漫剧编剧室开场：先选成片引擎，再按选型铺段数 / 单段秒数。默认预选 Mini。
  * - Seedance 2.0 Mini：6 段 × 约 15s（草稿档，钉死段表；39 积分/段、整集 168）
  * - Seedance 2.0 / 2.0 Fast：5–6 段 × 约 15s（默认 6）
  * - Seedance 2.5：4 段 × 约 30s
@@ -13,10 +13,7 @@
  */
 
 import { CANVAS_VIDEO_MODEL_HAILUO_H3 } from "./hailuoOpenRouterModels.js";
-import {
-  resolveSeedance25Access,
-  type Seedance25AccessInput,
-} from "./seedance25Access.js";
+import { type Seedance25AccessInput } from "./seedance25Access.js";
 
 export type ManhuaSeedanceLayoutVideoModel =
   | "seedance-2.0-mini"
@@ -98,13 +95,15 @@ export const MANHUA_SEEDANCE_LAYOUT_CHOICES: readonly ManhuaSeedanceLayoutProfil
   },
 ] as const;
 
-/** 产品首选默认档（有 2.5 权限时）——显式取 2.5，不靠数组下标 */
-export const MANHUA_SEEDANCE_LAYOUT_PREFERRED_DEFAULT: ManhuaSeedanceLayoutProfile =
-  MANHUA_SEEDANCE_LAYOUT_CHOICES.find((c) => c.videoModel === "seedance-2.5")!;
-
-/** 无 2.5 权限时的回落档 */
-export const MANHUA_SEEDANCE_LAYOUT_FALLBACK_DEFAULT: ManhuaSeedanceLayoutProfile =
-  MANHUA_SEEDANCE_LAYOUT_CHOICES.find((c) => c.videoModel === "seedance-2.0-fast")!;
+/**
+ * 产品默认档（用户 2026-08-09 拍板）：草稿档 mini，6 段 × 15 秒 / 90 秒。
+ *
+ * 从 2.5 换到 mini 的理由：mini 没有权限闸门、人人可用，而 2.5 是正式会员专属，
+ * 拿它当默认会让无权限用户的预选值根本不在自己的下拉里，只能靠降级逻辑兜。
+ * 显式按 videoModel 取，不靠数组下标。
+ */
+export const MANHUA_SEEDANCE_LAYOUT_DEFAULT: ManhuaSeedanceLayoutProfile =
+  MANHUA_SEEDANCE_LAYOUT_CHOICES.find((c) => c.videoModel === "seedance-2.0-mini")!;
 
 /**
  * 已下线引擎 → 等价迁移目标。
@@ -148,15 +147,17 @@ export function isManhuaSeedanceLayoutVideoModel(
 }
 
 /**
- * 工厂默认成片引擎：有 Seedance 2.5 权限 → 2.5；否则 → 2.0-fast。
- * 复用 PR #1098 的 resolveSeedance25Access，不另写判定。
+ * 工厂默认成片引擎：一律草稿档 mini。
+ *
+ * 以前按 2.5 权限分流（有权限给 2.5、否则给 2.0-fast），现在 mini 不设闸门、人人可选，
+ * 分流就没有意义了。2.5 的权限校验没有取消，只是移回它该在的地方——
+ * 选项过滤（`writerLayoutChoices`）和服务端扣费闸门；用户想用 2.5 必须自己点。
+ * 保留 access 形参是为了不动调用点签名。
  */
 export function resolveManhuaFactoryDefaultVideoModel(
-  access: Seedance25AccessInput = {},
+  _access: Seedance25AccessInput = {},
 ): ManhuaSeedanceLayoutVideoModel {
-  return resolveSeedance25Access(access).allowed
-    ? MANHUA_SEEDANCE_LAYOUT_PREFERRED_DEFAULT.videoModel
-    : MANHUA_SEEDANCE_LAYOUT_FALLBACK_DEFAULT.videoModel;
+  return MANHUA_SEEDANCE_LAYOUT_DEFAULT.videoModel;
 }
 
 export function resolveManhuaSeedanceLayoutProfile(
@@ -166,7 +167,7 @@ export function resolveManhuaSeedanceLayoutProfile(
   const key = String(videoModel || "").trim();
   const base =
     MANHUA_SEEDANCE_LAYOUT_CHOICES.find((c) => c.videoModel === key) ||
-    MANHUA_SEEDANCE_LAYOUT_PREFERRED_DEFAULT;
+    MANHUA_SEEDANCE_LAYOUT_DEFAULT;
   // Mini / 2.5 / H3 固定段表，不受旧「单集时长」长档影响
   if (manhuaSeedanceLayoutPinsSegmentTable(base.videoModel)) {
     return base;

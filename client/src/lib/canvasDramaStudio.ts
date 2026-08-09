@@ -141,6 +141,7 @@ import {
   scrubManhuaWorkbenchShotSlop,
   inferWorkbenchShotCastCount,
   manhuaGlobalSegmentIndex,
+  pinnedManhuaSegmentCount,
   manhuaSegmentDurationSec,
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
   MANHUA_KEYART_NO_TEXT_LOCK,
@@ -1409,21 +1410,29 @@ export function resolveManhuaFactoryOrderedIds(
   blocks: CanvasBlock[],
   untilStage: ManhuaFactoryStageKey = "clip",
   episodeIndex?: number | null,
+  /** 编剧室当前选型；改选引擎后段节点还没刷新时，只有它能反映真实段表 */
+  videoModel?: string | null,
 ): string[] {
   const storyNodes = blocks.filter((b) => b.id.startsWith("story-"));
   let scoped = blocks;
+  let scopedEp = 1;
   if (typeof episodeIndex === "number" && episodeIndex >= 1) {
     scoped = filterBlocksByEpisode(blocks, episodeIndex);
+    scopedEp = episodeIndex;
   } else if (storyNodes.length > 1) {
     const firstEp = getBlockEpisodeIndex(storyNodes[0]!) ?? 1;
     scoped = filterBlocksByEpisode(blocks, firstEp);
+    scopedEp = firstEp;
   }
+  const queuedKeyartIds = new Set(
+    queuedManhuaKeyartBlocks(scoped, scopedEp, videoModel).map((b) => b.id),
+  );
   const untilIdx = MANHUA_FACTORY_STAGE_ORDER.indexOf(untilStage);
   const ids: string[] = [];
   for (const stage of MANHUA_FACTORY_STAGE_ORDER) {
     if (MANHUA_FACTORY_STAGE_ORDER.indexOf(stage) > untilIdx) break;
     if (stage === "keyart") {
-      const keyarts = scoped.filter((b) => b.id.startsWith("keyart-") && !b.archivedFromPreviousScript).sort(sortKeyartBlocks);
+      const keyarts = scoped.filter((b) => queuedKeyartIds.has(b.id)).sort(sortKeyartBlocks);
       for (const k of keyarts) {
         if (!ids.includes(k.id)) ids.push(k.id);
       }
@@ -1528,12 +1537,45 @@ function stripShotInjectSection(prompt: string): string {
   return stripMarkedSection(String(prompt || ""), "【分镜");
 }
 
-/** 本集分镜表预期静帧张数（反推/节拍解析；用于进度分母，避免未展开时显示 1/1） */
+/**
+ * 本集分镜表预期静帧张数（反推/节拍解析；用于进度分母，避免未展开时显示 1/1）。
+ *
+ * 必须与 expandManhuaShotKeyartsAfterReverse 用同一套截断口径：那边 2.5 只铺 12 张，
+ * 这里若还按反推全文的 18 镜算分母，进度会永远停在 12/18、静帧阶段绿不了。
+ */
+/**
+ * 该集**这一轮真正会被跑到**的静帧节点：钉段引擎按 `段数 × 3` 截断。
+ *
+ * 从 mini 改选 2.5 后，画布上会留着 mini 时代的 18 张静帧，但只铺 4 条成片。
+ * 多出的 6 张没有任何成片会消费，跑一张白烧 54 积分。节点不删（用户改回 mini
+ * 还要用），但排队与进度分母都只认截断后的这批，否则推进条会永远停在 12/18。
+ */
+export function queuedManhuaKeyartBlocks(
+  blocks: CanvasBlock[],
+  episodeIndex: number | null | undefined,
+  videoModel?: string | null,
+): CanvasBlock[] {
+  const pinned = pinnedManhuaSegmentCount(
+    resolveEpisodeClipVideoModel(blocks, episodeIndex ?? 1, videoModel),
+  );
+  const max = pinned ? pinned * MANHUA_KEYARTS_PER_SEGMENT_MIN : Number.POSITIVE_INFINITY;
+  return blocks.filter(
+    (b) =>
+      b.id.startsWith("keyart-") &&
+      !b.archivedFromPreviousScript &&
+      resolveKeyartShotIndex(b.id, b.prompt) <= max,
+  );
+}
+
 export function countExpectedManhuaKeyartShots(
   blocks: CanvasBlock[],
   episodeIndex: number | null | undefined,
+  videoModel?: string | null,
 ): number {
-  return resolveShotsForEpisodeKeyarts(blocks, episodeIndex).length;
+  return capShotsToPinnedSegments(
+    resolveShotsForEpisodeKeyarts(blocks, episodeIndex),
+    resolveEpisodeClipVideoModel(blocks, episodeIndex ?? 1, videoModel),
+  ).length;
 }
 
 function resolveShotsForEpisodeKeyarts(
@@ -1631,6 +1673,61 @@ function resolveSegmentPlanForEpisodeClips(
 }
 
 /**
+ * 本集成片引擎：显式入参 > 本集未归档 clip 上盖的引擎 > 兜底默认。
+ *
+ * 铺段（ensureManhuaFragmentClips）与铺静帧（expandManhuaShotKeyartsAfterReverse）
+ * 必须认同一个引擎，否则静帧按 A 引擎的镜数铺、成片按 B 引擎的段数收，
+ * 多出来的静帧一张 54 积分照烧却没有任何一条成片会用它。
+ * 归档节点一律跳过：改写留下的旧成片可能挂着已退役的引擎。
+ */
+function resolveEpisodeClipVideoModel(
+  blocks: CanvasBlock[],
+  /** null = 不限集，扫全画布 */
+  episodeIndex: number | null,
+  explicit?: string | null,
+): string {
+  const stampedIn = (ep: number | null) =>
+    blocks.find(
+      (b) =>
+        b.kind === "video" &&
+        b.id.startsWith("clip-") &&
+        !b.archivedFromPreviousScript &&
+        (ep == null || (getBlockEpisodeIndex(b) ?? 1) === ep) &&
+        isCanvasProductVideoModel(b.videoModel),
+    )?.videoModel;
+  // 本集还没铺段时按同项目其它集的档走：一部剧只该有一个引擎，
+  // 掉回兜底默认会让第 2 集起悄悄从 2.5 变 mini，段表与扣费全跟着变
+  const stamped = stampedIn(episodeIndex) ?? stampedIn(null);
+  return String(explicit || stamped || "").trim() || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+}
+
+/**
+ * 画布当前实际在用的成片引擎：显式选型 > 画布上未归档段节点盖的档 > 兜底默认。
+ * 新开一集时用它，避免自动预选的默认档把已经在跑 2.5 的项目拽回 mini。
+ */
+export function resolveManhuaCanvasClipVideoModel(
+  blocks: CanvasBlock[],
+  explicit?: string | null,
+): string {
+  return resolveEpisodeClipVideoModel(blocks, null, explicit);
+}
+
+/**
+ * 该集最多铺几张关键静帧：钉段引擎按 `段数 × 3` 截断，不钉段的由镜数决定。
+ * 与 groupShotsIntoSegments 的截断口径同源。
+ */
+function capShotsToPinnedSegments<T>(shots: T[], videoModel: string): T[] {
+  const max = pinnedKeyartShotMax(videoModel);
+  return Number.isFinite(max) ? shots.slice(0, max) : shots;
+}
+
+/** 钉段引擎的静帧镜号上限（`段数 × 3`）；不钉段的引擎无上限。 */
+function pinnedKeyartShotMax(videoModel: string): number {
+  const pinned = pinnedManhuaSegmentCount(videoModel);
+  return pinned ? pinned * MANHUA_KEYARTS_PER_SEGMENT_MIN : Number.POSITIVE_INFINITY;
+}
+
+/**
  * 按「段」铺/对齐成片节点（clip-eXX-gSS）：每段一条成片，parent 绑段内首张静帧。
  * 兼容旧 clip-eXX-sNN（视为段号）。
  */
@@ -1657,6 +1754,11 @@ export function ensureManhuaFragmentClips(
      * 出图/裁切在别处完成，这里只接住现成 URL 参与预算与垫图声明。
      */
     directorBoardUrlByEpisode?: Record<number, string> | null;
+    /**
+     * 用户选定的成片引擎。段数与段时长必须跟它的段表走——铺几条 clip 就是实收
+     * 几段积分，不能由反推这次吐了几镜来定。缺省只在旧调用兜底。
+     */
+    videoModel?: string | null;
   },
 ): {
   blocks: CanvasBlock[];
@@ -1676,11 +1778,19 @@ export function ensureManhuaFragmentClips(
   const sameEpisode = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === ep;
   const directorBoardUrl = String(opts?.directorBoardUrlByEpisode?.[ep] || "").trim();
   const shots = resolveShotsForEpisodeKeyarts(blocks, ep);
+  /**
+   * 引擎优先级：显式入参 > 本集已有 clip 节点上盖的引擎（spawn 时按用户选择写入）
+   * > 兜底默认。段数与段时长都跟它走，不能由反推这次吐了几镜来定。
+   */
+  const clipVideoModel = resolveEpisodeClipVideoModel(blocks, ep, opts?.videoModel);
   const segments = groupShotsIntoSegments(
     shots.length
       ? shots
       : [{ index: 1, durationSec: 0, cameraZh: "", actionZh: "" } as ManhuaWorkbenchShot],
-    { videoModel: MANHUA_FACTORY_DEFAULT_VIDEO_MODEL },
+    {
+      videoModel: clipVideoModel,
+      segmentCount: pinnedManhuaSegmentCount(clipVideoModel),
+    },
   );
 
   /** 可拍表点了名、资产库却一个都对不上的段：喂错脸会白烧钱，交给门禁拦 */
@@ -1728,8 +1838,22 @@ export function ensureManhuaFragmentClips(
     keyarts[0]!;
   const nextExtras: CanvasBlock[] = [];
   const keepSegClipIds = new Set<string>();
-  const defaultModel =
-    (template.kind === "video" && template.videoModel) || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+  /**
+   * 与分段用的引擎同源，避免段数按 A 引擎切、段节点却盖 B 引擎。
+   * 不能优先读 template：模板可能是确认导演前铺的占位 clip 或旧脚本残留，
+   * 用户改选引擎后新铺的段会继续盖旧档，段数按新表、扣费与出片按旧表。
+   * clipVideoModel 本身已是「显式入参 > 未归档 clip 上盖的引擎 > 兜底默认」。
+   */
+  const defaultModel = clipVideoModel;
+  /**
+   * 编剧室显式选的引擎必须盖过存量段节点上的旧档。
+   * 段 prompt 这一轮就按新段表重写了（比如从 15 秒改成 30 秒），节点若还标着 mini，
+   * 出片会按 mini 扣费、走 mini 上游、还被 15 秒上限截断，和用户看到的段表对不上。
+   * 没有显式选型时不动存量节点：那时候它自己就是最可信的引擎来源。
+   */
+  const explicitVideoModel = isCanvasProductVideoModel(opts?.videoModel)
+    ? opts.videoModel
+    : null;
 
   const canvasRefs = collectManhuaCustomRefsFromCanvasAssetBlocks(blocks, opts?.assetCanon);
   const mergedCustomRefs = normalizeManhuaCustomAssetRefs([
@@ -2090,11 +2214,13 @@ export function ensureManhuaFragmentClips(
         parentId: primary.id,
         refImageUrl: segUrls[0] || mediaUrlOf(primary) || existing.refImageUrl,
         editFusionUrls: segUrls.slice(1).slice(0, 15),
-        videoModel: isCanvasProductVideoModel(existing.videoModel)
-          ? existing.videoModel
-          : isCanvasProductVideoModel(defaultModel)
-            ? defaultModel
-            : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
+        videoModel:
+          explicitVideoModel ||
+          (isCanvasProductVideoModel(existing.videoModel)
+            ? existing.videoModel
+            : isCanvasProductVideoModel(defaultModel)
+              ? defaultModel
+              : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL),
       });
       continue;
     }
@@ -2734,6 +2860,8 @@ export function expandManhuaShotKeyartsAfterReverse(
   opts?: {
     /** 与 ensure 同契约：工厂/反推旁路不得丢导演板垫图 */
     directorBoardUrlByEpisode?: Record<number, string> | null;
+    /** 同上：本集还没有 clip 节点时，没有它会掉到兜底默认档而不是用户选的引擎 */
+    videoModel?: string | null;
   },
 ): { blocks: CanvasBlock[]; edges: CanvasEdge[] } {
   const reverse = blocks.find((b) => b.id === reverseId);
@@ -2744,10 +2872,17 @@ export function expandManhuaShotKeyartsAfterReverse(
     const be = getBlockEpisodeIndex(b);
     return be == null ? ep === 1 : be === ep;
   };
-  const shots = resolveShotsForEpisodeKeyarts(blocks, ep);
+  /**
+   * 钉段引擎（mini / 2.5 / H3）按段表截镜：2.5 只铺 4 段，反推吐 18 镜就有 6 张静帧
+   * 没有任何成片会用，一张 54 积分白烧。截断口径与 groupShotsIntoSegments 同源。
+   */
+  const episodeClipModel = resolveEpisodeClipVideoModel(blocks, ep ?? 1, opts?.videoModel);
+  const shots = capShotsToPinnedSegments(resolveShotsForEpisodeKeyarts(blocks, ep), episodeClipModel);
+  const keyartShotMax = pinnedKeyartShotMax(episodeClipModel);
   if (shots.length < 2) {
     return ensureManhuaFragmentClips(blocks, edges, ep ?? 1, {
       directorBoardUrlByEpisode: opts?.directorBoardUrlByEpisode,
+      videoModel: opts?.videoModel,
     });
   }
 
@@ -2802,8 +2937,16 @@ export function expandManhuaShotKeyartsAfterReverse(
     });
   }
 
+  // 超出当前段表的静帧只是「本档用不到」，不是脚本改写留下的废节点：
+  // 从 mini 改选 2.5 会让 s13–s18 落在镜表外，删掉等于把已出图（54 积分/张）扔了，
+  // 改回 mini 还得重烧一遍。它们已被排队与进度口径跳过，这里只做停放。
   const removedIds = new Set(
-    existingKeyarts.filter((b) => !keepIds.has(b.id)).map((b) => b.id),
+    existingKeyarts
+      .filter(
+        (b) =>
+          !keepIds.has(b.id) && resolveKeyartShotIndex(b.id, b.prompt) <= keyartShotMax,
+      )
+      .map((b) => b.id),
   );
 
   let nextBlocks = blocks
@@ -2840,6 +2983,7 @@ export function expandManhuaShotKeyartsAfterReverse(
 
   return ensureManhuaFragmentClips(nextBlocks, nextEdges, ep ?? 1, {
     directorBoardUrlByEpisode: opts?.directorBoardUrlByEpisode,
+    videoModel: opts?.videoModel,
   });
 }
 
@@ -3163,6 +3307,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   const defaultMaxRetries = Math.max(0, Math.min(4, opts.maxRetries ?? 2));
   /** 工厂内 ensure/反推展开必须吃同一张导演板表，禁止只靠工作台审阅路径传参 */
   const directorBoardUrlByEpisode = opts.deps.manhuaDirectorBoardUrlByEpisode ?? null;
+  /** 同理：编剧室选的引擎要一路带到 ensure，否则本集没 clip 时会掉回兜底默认档 */
+  const writerVideoModel = opts.deps.manhuaWriterVideoModel ?? null;
   const hadPoisonedRecapLink = opts.blocks.some(
     (b) => b.id.startsWith("story-") && Boolean(b.parentId?.startsWith("recap_card-")),
   );
@@ -3188,6 +3334,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   if (reverseReady) {
     const expanded = expandManhuaShotKeyartsAfterReverse(working, edges, reverseReady.id, {
       directorBoardUrlByEpisode,
+      videoModel: writerVideoModel,
     });
     working = expanded.blocks;
     edges = expanded.edges;
@@ -3199,6 +3346,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
   ) {
     const ensured = ensureManhuaFragmentClips(working, edges, opts.episodeIndex, {
       directorBoardUrlByEpisode,
+      videoModel: writerVideoModel,
     });
     working = ensured.blocks;
     edges = ensured.edges;
@@ -3242,6 +3390,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
     working,
     opts.untilStage ?? "clip",
     opts.episodeIndex,
+    writerVideoModel,
   );
   orderedIds = filterManhuaFactoryTargetIds(orderedIds, resolvedTargetIds);
   const forceIdx = resolvedForceFromStage
@@ -3628,6 +3777,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
         if (stage === "reverse") {
           const expanded = expandManhuaShotKeyartsAfterReverse(next, edges, blockId, {
             directorBoardUrlByEpisode,
+            videoModel: writerVideoModel,
           });
           next = expanded.blocks;
           edges = expanded.edges;
@@ -3636,6 +3786,7 @@ export async function runManhuaDramaFactoryPipeline(opts: {
             next,
             opts.untilStage ?? "clip",
             opts.episodeIndex,
+            writerVideoModel,
           ).filter(
             (id) =>
               (id.startsWith("keyart-") || id.startsWith("clip-")) && !orderedIds.includes(id),
@@ -3725,8 +3876,11 @@ export async function runManhuaDramaFactoryPipeline(opts: {
       if (firstUrl && refUrl) {
         try {
           const shots = resolveShotsForEpisodeKeyarts(working, ep);
+          const qcVideoModel = first.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+          // 与 ensureManhuaFragmentClips 同口径：不钉段的话 2.5 会按 6 段 90 秒去质检实际 4 段 120 秒的成片
           const segs = groupShotsIntoSegments(shots, {
-            videoModel: first.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
+            videoModel: qcVideoModel,
+            segmentCount: pinnedManhuaSegmentCount(qcVideoModel),
           });
           const expectedDurationSec = segs.reduce((s, x) => s + x.durationSec, 0);
           const report = await reviewManhuaClipQuality({

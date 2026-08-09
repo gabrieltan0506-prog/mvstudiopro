@@ -72,6 +72,27 @@ describe("resolvePreviousSegmentClipUrl", () => {
     expect(url).toBe("https://cdn.example/g01.mp4");
   });
 
+  it("2.5 一集四段时，第 2 集首段回退到第 1 集实际末段（g05/g06 是空的）", () => {
+    const url = resolvePreviousSegmentClipUrl(
+      [
+        {
+          id: "clip-e01-g04-aaa",
+          episodeIndex: 1,
+          status: "done",
+          outputUrl: "https://cdn.example/ep1-g04.mp4",
+        },
+        {
+          id: "clip-e02-g07-bbb",
+          episodeIndex: 2,
+          status: "idle",
+        },
+      ],
+      2,
+      7,
+    );
+    expect(url).toBe("https://cdn.example/ep1-g04.mp4");
+  });
+
   it("legacy ep2-g01 still resolves prev as ep1 last segment", () => {
     const url = resolvePreviousSegmentClipUrl(
       [

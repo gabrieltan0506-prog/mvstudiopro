@@ -12,12 +12,15 @@ import {
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
   MANHUA_SEGMENT_DEFAULT,
+  manhuaSegmentCountBounds,
   manhuaSegmentDurationSec,
+  shotIndexesForSegment,
   parseManhuaClipTargetDurationSec,
   parseWorkbenchShotsFromText,
   resolveClipSegmentIndex,
   resolveKeyartShotIndex,
   resolveSegmentClipDurationSec,
+  resolveSegmentIndexFromShotIndex,
   resolveWorkbenchShotAssetMount,
   workbenchShotTotalSec,
 } from "./manhuaScriptWorkbench";
@@ -80,14 +83,14 @@ describe("manhuaScriptWorkbench", () => {
       ),
     );
     // 有分镜表：按每段 3 镜切，不注水到默认 6 段；镜长缺省 5 → 段 15 + 10
-    // 显式传 2.0-fast：默认常量已切到 2.5，这条测的是快速档切段行为
+    // 显式传 2.0-fast：这条测的是快速档切段行为，不受默认常量影响
     const segsFast = groupShotsIntoSegments(shots, {
       videoModel: "seedance-2.0-fast",
     });
     expect(segsFast.length).toBe(2);
     expect(segsFast[0]?.durationSec).toBe(15);
     expect(segsFast[1]?.durationSec).toBe(10);
-    expect(MANHUA_FACTORY_DEFAULT_VIDEO_MODEL).toBe("seedance-2.5");
+    expect(MANHUA_FACTORY_DEFAULT_VIDEO_MODEL).toBe("seedance-2.0-mini");
     expect(manhuaSegmentDurationSec("seedance-2.0-fast")).toBe(15);
     expect(manhuaSegmentDurationSec("gemini-omni-flash")).toBe(10);
     expect(workbenchShotTotalSec(shots, "seedance-2.0-fast")).toBe(25);
@@ -97,6 +100,78 @@ describe("manhuaScriptWorkbench", () => {
     expect(
       groupShotsIntoSegments([], { videoModel: "seedance-2.0-fast" }).length,
     ).toBe(MANHUA_SEGMENT_DEFAULT);
+  });
+
+  /**
+   * 段数决定实际铺几条成片、也决定实收几段积分，不能由反推这次吐了几镜来定。
+   * 旧行为固定按 3 镜切段，18 镜就切 6 段，2.5（段表 4 段）会多收两段。
+   */
+  it("pins segment count and duration to the engine table, not the shot count", () => {
+    const shots = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        index: i + 1,
+        durationSec: 0,
+        cameraZh: "中景",
+        actionZh: `动作 ${i + 1}`,
+      }));
+
+    for (const n of [12, 13, 16, 18, 24]) {
+      const s25 = groupShotsIntoSegments(shots(n), {
+        videoModel: "seedance-2.5",
+        segmentCount: manhuaSegmentCountBounds("seedance-2.5").default,
+      });
+      expect(s25.length).toBe(4);
+      expect(s25.every((x) => x.durationSec === 30)).toBe(true);
+      // 每段恰好 3 镜：全仓的镜↔段映射都按这个不变量算，超出的镜截掉而不是塞进段内
+      expect(s25.every((x) => x.shots.length === MANHUA_KEYARTS_PER_SEGMENT_MIN)).toBe(true);
+      expect(s25.reduce((sum, x) => sum + x.shots.length, 0)).toBe(12);
+
+      const sMini = groupShotsIntoSegments(shots(n), {
+        videoModel: "seedance-2.0-mini",
+        segmentCount: manhuaSegmentCountBounds("seedance-2.0-mini").default,
+      });
+      expect(sMini.length).toBe(6);
+      expect(sMini.every((x) => x.durationSec === 15)).toBe(true);
+      expect(sMini.every((x) => x.shots.length === MANHUA_KEYARTS_PER_SEGMENT_MIN)).toBe(true);
+    }
+  });
+
+  it("钉段后镜→段映射与 groupShotsIntoSegments 一致", () => {
+    // 段内多塞一张镜就会让这两边各算各的，镜绑到错误的段成片上
+    const shots = Array.from({ length: 18 }, (_, i) => ({
+      index: i + 1,
+      durationSec: 0,
+      cameraZh: "中景",
+      actionZh: `动作 ${i + 1}`,
+    }));
+    for (const videoModel of ["seedance-2.5", "seedance-2.0-mini", "seedance-2.0-fast"]) {
+      const segs = groupShotsIntoSegments(shots, {
+        videoModel,
+        segmentCount: manhuaSegmentCountBounds(videoModel).default,
+      });
+      for (const seg of segs) {
+        for (const shot of seg.shots) {
+          expect(resolveSegmentIndexFromShotIndex(shot.index)).toBe(seg.index);
+        }
+        expect(shotIndexesForSegment(seg.index)).toEqual(seg.shots.map((s) => s.index));
+      }
+    }
+  });
+
+  it("still respects real shot durations when the script marks them", () => {
+    const marked = [
+      { index: 1, durationSec: 12, cameraZh: "中景", actionZh: "a" },
+      { index: 2, durationSec: 12, cameraZh: "中景", actionZh: "b" },
+      { index: 3, durationSec: 12, cameraZh: "中景", actionZh: "c" },
+      { index: 4, durationSec: 12, cameraZh: "中景", actionZh: "d" },
+    ];
+    const segs = groupShotsIntoSegments(marked, {
+      videoModel: "seedance-2.5",
+      segmentCount: 4,
+    });
+    expect(segs.length).toBe(4);
+    // 每段 3 镜 ×12s = 36 → 钳到 2.5 上限 30，而不是回落到标称值
+    expect(segs[0]?.durationSec).toBe(30);
   });
 
   it("parses clip target duration from inject prompt", () => {

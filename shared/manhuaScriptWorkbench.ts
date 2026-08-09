@@ -47,7 +47,10 @@ import {
   clampHappyHorseCanvasDuration,
   isCanvasHappyHorseVideoModel,
 } from "./happyHorseOpenRouterModels.js";
-import { resolveManhuaSeedanceLayoutProfile } from "./manhuaSeedanceLayout.js";
+import {
+  manhuaSeedanceLayoutPinsSegmentTable,
+  resolveManhuaSeedanceLayoutProfile,
+} from "./manhuaSeedanceLayout.js";
 
 export { isManhuaClipPromptLegacyFat, stripManhuaClipForbiddenBoards };
 
@@ -121,11 +124,13 @@ export const MANHUA_SHOT_KEYART_MAX =
   MANHUA_SEGMENT_DEFAULT * MANHUA_KEYARTS_PER_SEGMENT_MAX;
 
 /**
- * 工厂默认成片模型（产品首选：Seedance 2.5 · 4×30）。
- * 实际给用户预选时请走 resolveManhuaFactoryDefaultVideoModel({ plan, role })，
- * 无 2.5 权限会回落 2.0-fast，避免默认出一个跑不了的引擎。
+ * 工厂默认成片模型（用户 2026-08-09 拍板改为草稿档 Mini · 6×15）。
+ *
+ * 这是**兜底常量**：旧节点缺 videoModel、旧调用没传时才用它。拿 Mini 兜底比拿 2.5 安全——
+ * Mini 人人可用且最便宜，兜错了顶多出一段草稿；兜到 2.5 则可能撞权限门或按 172/段扣费。
+ * 给用户预选走 resolveManhuaFactoryDefaultVideoModel，与本常量同档。
  */
-export const MANHUA_FACTORY_DEFAULT_VIDEO_MODEL = "seedance-2.5" as const;
+export const MANHUA_FACTORY_DEFAULT_VIDEO_MODEL = "seedance-2.0-mini" as const;
 
 export function isManhuaSeedance25VideoModel(videoModel?: string | null): boolean {
   return String(videoModel || "").trim() === "seedance-2.5";
@@ -143,6 +148,19 @@ export function manhuaSegmentCountBounds(videoModel?: string | null): {
     max: layout.segmentMax,
     default: layout.segmentCount,
   };
+}
+
+/**
+ * 该引擎是否钉死段数；钉死则返回段数，否则返回 undefined（由镜数决定，保留长档能力）。
+ *
+ * Mini / 2.5 / H3 的段表是固定的、不吃「单集时长」长档，所以必须钉——不钉的话
+ * 反推吐多少镜就铺多少条成片，界面按段表印价、实收却按 clip 条数扣。
+ * 2.0 / 2.0-fast 的段数会随长档从 6 变 12，这里不能一刀钉成短档的 6。
+ */
+export function pinnedManhuaSegmentCount(videoModel?: string | null): number | undefined {
+  return manhuaSeedanceLayoutPinsSegmentTable(videoModel)
+    ? manhuaSegmentCountBounds(videoModel).default
+    : undefined;
 }
 
 export function manhuaSegmentDurationSec(videoModel?: string | null): number {
@@ -222,7 +240,18 @@ export type ManhuaWorkbenchSegment = {
   shots: ManhuaWorkbenchShot[];
 };
 
-/** 将分镜列表收成段：无分镜时默认 6 段 × 3 静帧；有分镜表则按每段下限切，不强行注水 */
+/**
+ * 将分镜列表收成段：无分镜时默认 6 段 × 3 静帧；有分镜表则按每段下限切，不强行注水。
+ *
+ * 传了 `segmentCount` 就**钉死**成那么多段：段数决定实际铺几条成片、也决定实收
+ * 多少积分，不能由反推这次吐了几镜来定。
+ *
+ * 钉段时把镜列表**补齐并截到恰好 `段数 × 3` 镜**，而不是把多出来的镜均摊进各段。
+ * 「每段恰好 3 镜」是全仓共用的不变量：`resolveSegmentIndexFromShotIndex`（镜→段）、
+ * `manhuaSegmentShotIndexes`（段→镜）、画布铺 keyart 的起始镜号都按它算。一旦某段
+ * 装了 4 镜，这些映射会各算各的，镜就绑到错误的段成片与可拍表上。超出的镜宁可截掉，
+ * 也不能让映射对不上——真要留住它们，得让上游按引擎段数生成 3N 张静帧。
+ */
 export function groupShotsIntoSegments(
   shots: ManhuaWorkbenchShot[],
   opts?: { videoModel?: string | null; segmentCount?: number; padToDefaultEpisode?: boolean },
@@ -235,14 +264,15 @@ export function groupShotsIntoSegments(
     ...s,
     index: i + 1,
   }));
+  let pinnedSegs = 0;
   if (padToDefault || opts?.segmentCount != null) {
     const bounds = manhuaSegmentCountBounds(opts?.videoModel);
     const targetSegs = Math.max(
       1,
       Math.min(16, Math.floor(opts?.segmentCount ?? bounds.default)),
     );
-    const minTotal = targetSegs * per;
-    while (list.length < minTotal) {
+    const total = targetSegs * per;
+    while (list.length < total) {
       const i = list.length;
       list.push({
         index: i + 1,
@@ -251,7 +281,8 @@ export function groupShotsIntoSegments(
         actionZh: `段内补镜：承接上镜情绪与空间，推进可读动作 ${i + 1}`,
       });
     }
-    list = list.slice(0, targetSegs * MANHUA_KEYARTS_PER_SEGMENT_MAX);
+    list = list.slice(0, total);
+    pinnedSegs = targetSegs;
   } else {
     list = list.slice(0, MANHUA_SHOT_KEYART_MAX);
   }
@@ -261,9 +292,21 @@ export function groupShotsIntoSegments(
   for (let i = 0; i < list.length; i += per) {
     const chunk = list.slice(i, i + per);
     if (!chunk.length) break;
+    /**
+     * 钉段且剧本没标镜长时，段时长取引擎段表标称值，别拿「镜数 × 5 秒兜底」去推——
+     * 那样 2.5 的段会算成 3×5=15 秒而不是段表的 30 秒，一集凑不满目标秒数。
+     * 剧本标了真实镜长则照旧按和取，短段仍可短于上限。
+     */
+    const hasRealDuration = chunk.some((s) => {
+      const d = Number(s.durationSec);
+      return Number.isFinite(d) && d > 0;
+    });
     segs.push({
       index: segs.length + 1,
-      durationSec: resolveSegmentClipDurationSec(chunk, opts?.videoModel),
+      durationSec:
+        pinnedSegs > 0 && !hasRealDuration
+          ? manhuaSegmentDurationSec(opts?.videoModel)
+          : resolveSegmentClipDurationSec(chunk, opts?.videoModel),
       shots: chunk,
     });
   }
