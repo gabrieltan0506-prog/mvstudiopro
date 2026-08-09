@@ -1,13 +1,12 @@
 /**
  * 漫剧节奏模板动态库（GCS）。
- * proposals/ = 待审；approved/ = 人审通过。产品列表 = 种子库 ∪ approved（同 id 以 GCS 为准）。
+ * proposals/ = 待审；approved/ = 人审通过。产品列表 = GCS approved
+ * （出厂种子 2026-08-10 已清空，shared 库只剩合并逻辑，见 manhuaViralTemplateBank.ts 文件头）。
  */
 import {
-  MANHUA_VIRAL_TEMPLATE_BANK,
   getManhuaViralTemplate,
   listApprovedManhuaViralTemplates,
   listApprovedManhuaViralTemplatesGrouped,
-  mergeManhuaViralTemplateBanks,
   parseManhuaViralTemplateCard,
   type ManhuaViralTemplateCard,
 } from "../../shared/manhuaViralTemplateBank.js";
@@ -122,10 +121,6 @@ export async function approveManhuaViralTemplate(input: {
   if (!card && id) {
     card = await getGcsManhuaViralProposal(id);
   }
-  if (!card && id) {
-    // 允许批准种子库已有条目（重写 approvedAt）或仅 id 来自 job 输出里的完整 proposal 字段
-    card = getManhuaViralTemplate(id);
-  }
   if (!card) throw new Error("找不到可批准的提案（请提供 id 或完整卡片）");
 
   const approved: ManhuaViralTemplateCard = {
@@ -158,13 +153,4 @@ export async function approveManhuaViralTemplate(input: {
     );
   }
   return validated;
-}
-
-/** 供单测：纯合并语义（不碰 GCS） */
-export function mergeSeedWithApprovedExtrasForTest(
-  extras: ManhuaViralTemplateCard[],
-): ManhuaViralTemplateCard[] {
-  return mergeManhuaViralTemplateBanks(MANHUA_VIRAL_TEMPLATE_BANK, extras).filter(
-    (t) => t.status === "approved",
-  );
 }

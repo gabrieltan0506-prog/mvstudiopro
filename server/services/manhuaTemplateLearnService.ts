@@ -60,11 +60,21 @@ import {
 } from "./gcs.js";
 import {
   buildDouyinMixCandidateUrls,
+  isDouyinHostUrl,
   isDouyinSingleVideoUrl,
+  normalizeDouyinVideoUrl,
   listedSingleEpisodeFromUrl,
   mapManhuaLearnFetchError,
   MANHUA_LEARN_FETCH_ERR,
 } from "../../shared/manhuaLearnYtdlp.js";
+import {
+  extractDouyinMixIdFromUrl,
+  extractDouyinVideoIdFromUrl,
+} from "../../shared/manhuaLearnDouyinWebApi.js";
+import {
+  fetchDouyinAwemeDetailViaWebApi,
+  listDouyinMixEpisodesViaWebApi,
+} from "./manhuaLearnDouyinWebApi.js";
 import {
   assertYtdlpCookieReadyForUrl,
   execYtdlpJson,
@@ -391,15 +401,38 @@ async function listPlaylistViaYtdlp(
   }
 }
 
+type ListedEpisodesResult = { listed: ListedEpisode[]; mixNameZh?: string };
+
 /**
- * B：有数字 mixId 时优先展开合集多集；失败再回退成片/单集 URL。
+ * 有数字 mixId 时优先展开合集多集；失败再回退成片/单集 URL。
+ * 展开首选趋势采集器同款抖音 web API——collection/mix 页改版后
+ * yt-dlp flat-playlist 解析已死（生产日志实锤），老路只留作兜底。
  */
 async function listOrderedEpisodes(
   sourceUrl: string,
   titleHint?: string,
   mixId?: string,
-): Promise<ListedEpisode[]> {
-  const mixCandidates = buildDouyinMixCandidateUrls(String(mixId || ""));
+  single?: { titleZh?: string; episodeIndex?: number },
+): Promise<ListedEpisodesResult> {
+  const id = String(mixId || "").trim();
+  if (/^\d{6,}$/.test(id)) {
+    try {
+      const viaApi = await listDouyinMixEpisodesViaWebApi(id);
+      if (viaApi && viaApi.episodes.length > 0) {
+        console.info(
+          `[manhuaTemplateLearn] mix expand via web api: entries=${viaApi.episodes.length} mixId=${id}`,
+        );
+        return { listed: viaApi.episodes, mixNameZh: viaApi.mixNameZh };
+      }
+    } catch (e) {
+      console.warn(
+        "[manhuaTemplateLearn] mix web api expand failed:",
+        id,
+        e instanceof Error ? e.message : e,
+      );
+    }
+  }
+  const mixCandidates = buildDouyinMixCandidateUrls(id);
   for (const mixUrl of mixCandidates) {
     try {
       const listed = await listPlaylistViaYtdlp(mixUrl, titleHint);
@@ -407,7 +440,7 @@ async function listOrderedEpisodes(
         console.info(
           `[manhuaTemplateLearn] mix expand ok: mixId entries=${listed.length} via ${mixUrl.slice(0, 60)}`,
         );
-        return listed;
+        return { listed };
       }
     } catch (e) {
       console.warn(
@@ -418,13 +451,21 @@ async function listOrderedEpisodes(
     }
   }
 
-  // 单集成片页：不必 --flat-playlist（抖音常因此先撞登录态）
+  // 单集成片页：不必 --flat-playlist（抖音常因此先撞登录态）。
+  // modal_id 弹层链接归一化成 /video/ 标准形态——yt-dlp 只稳定认后者。
+  // 详情接口给过真实集号/标题时带上，避免同剧多条单集链接都占第 1 集互相覆盖
   if (isDouyinSingleVideoUrl(sourceUrl)) {
-    return listedSingleEpisodeFromUrl(sourceUrl, titleHint);
+    return {
+      listed: listedSingleEpisodeFromUrl(
+        normalizeDouyinVideoUrl(sourceUrl),
+        single?.titleZh || titleHint,
+        single?.episodeIndex,
+      ),
+    };
   }
 
   try {
-    return await listPlaylistViaYtdlp(sourceUrl, titleHint);
+    return { listed: await listPlaylistViaYtdlp(sourceUrl, titleHint) };
   } catch (e) {
     throw new Error(mapManhuaLearnFetchError(e));
   }
@@ -796,8 +837,38 @@ export async function runManhuaTemplateLearn(
     throw new Error("当前是搜索页链接，请改用合集/成片页地址");
   }
 
+  // —— 抖音上下文解析：合集页 URL 直接提 mixId（榜单行有时只给链接不带 mixId）；
+  //    单集（含 modal_id 弹层）查详情回填剧名；发现所属合集则升级为合集学习
+  //    （榜单单集链接一次学一批的入口）——
+  let mixId = String(input.mixId || "").trim();
+  let dramaNameZh = "";
+  let single: { titleZh?: string; episodeIndex?: number } | undefined;
+  if (isDouyinHostUrl(url)) {
+    if (!/^\d{6,}$/.test(mixId)) {
+      const fromUrl = extractDouyinMixIdFromUrl(url);
+      if (fromUrl) mixId = fromUrl;
+    }
+    const videoId = extractDouyinVideoIdFromUrl(url);
+    if (videoId) {
+      const detail = await fetchDouyinAwemeDetailViaWebApi(videoId).catch(() => null);
+      if (detail) {
+        single = { titleZh: detail.titleZh, episodeIndex: detail.episodeIndex };
+        if (!/^\d{6,}$/.test(mixId) && detail.mixId && /^\d{6,}$/.test(detail.mixId)) {
+          mixId = detail.mixId;
+        }
+        dramaNameZh = detail.mixNameZh || "";
+      }
+    }
+  }
+  if (mixId && !String(input.mixId || "").trim()) {
+    // 单集/裸链接升级为合集学习：留双 key 日志，排查「旧进度去哪了」用
+    console.info(
+      `[manhuaTemplateLearn] series upgraded to mix: mixKey=${seriesKeyFrom({ url, mixId, title })} urlKey=${seriesKeyFrom({ url, title })}`,
+    );
+  }
+
   const batchSize = clampManhuaLearnBatchSize(input.batchSize ?? MANHUA_LEARN_BATCH_DEFAULT);
-  const seriesKey = seriesKeyFrom({ url, mixId: input.mixId, title });
+  const seriesKey = seriesKeyFrom({ url, mixId, title });
   const workId = `tpl_series_${seriesKey}`;
   const rootTmp = await fs.mkdtemp(path.join(os.tmpdir(), `manhua-learn-${seriesKey}-`));
   const progress = async (phase: string, detailZh: string) => {
@@ -813,23 +884,27 @@ export async function runManhuaTemplateLearn(
       MANHUA_LEARN_STAGE.list,
       manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.list),
     );
-    const listed = await listOrderedEpisodes(url, title, input.mixId);
+    const listedRes = await listOrderedEpisodes(url, title || dramaNameZh, mixId, single);
+    const listed = listedRes.listed;
     if (!listed.length) {
       throw new Error("无法解析任何可学剧集，请换合集页或成片链接重试");
     }
+    if (!dramaNameZh && listedRes.mixNameZh) dramaNameZh = listedRes.mixNameZh;
+    // 剧名口径：用户手填 > 详情/合集接口回填的剧名（后者是单集路径「剧名恒空」的修复）
+    const titleHint = title || dramaNameZh;
     await progress(
       MANHUA_LEARN_STAGE.list,
-      `已解析 ${listed.length} 集${input.mixId && listed.length > 1 ? "（合集展开）" : ""}`,
+      `已解析 ${listed.length} 集${mixId && listed.length > 1 ? "（合集展开）" : ""}${dramaNameZh ? ` · 《${dramaNameZh}》` : ""}`,
     );
 
-    const seriesClassify = classifyManhuaLearnTitle(title || "未命名合集");
+    const seriesClassify = classifyManhuaLearnTitle(titleHint || "未命名合集");
     let prog =
       (await loadSeriesProgress(seriesKey)) ||
       ({
         seriesKey,
         sourceUrl: url,
-        titleHint: title || "未命名合集",
-        mixId: String(input.mixId || "").trim() || undefined,
+        titleHint: titleHint || "未命名合集",
+        mixId: mixId || undefined,
         listedEpisodeCount: listed.length,
         learnedEpisodeIndexes: [],
         updatedAt: new Date().toISOString(),
@@ -846,9 +921,13 @@ export async function runManhuaTemplateLearn(
     prog = {
       ...prog,
       sourceUrl: url,
-      titleHint: title || prog.titleHint,
+      // 旧进度若还挂着「未命名合集」占位，回填到手的真剧名
+      titleHint:
+        titleHint
+        || (prog.titleHint && prog.titleHint !== "未命名合集" ? prog.titleHint : "")
+        || "未命名合集",
       listedEpisodeCount: listed.length,
-      mixId: String(input.mixId || prog.mixId || "").trim() || undefined,
+      mixId: mixId || prog.mixId || undefined,
       dramaKind: seriesClassify.dramaKind,
       categoryLabelZh: seriesClassify.categoryLabelZh,
       tagLabelsZh: seriesClassify.tagLabelsZh,

@@ -9,8 +9,35 @@ import {
   fitManhuaViralBeatGridToSegments,
   fitManhuaViralDensityHintsToSegments,
   formatManhuaViralTemplateWriterAddon,
-  getManhuaViralTemplate,
+  type ManhuaViralTemplateBeat,
+  type ManhuaViralTemplateCard,
 } from "./manhuaViralTemplateBank";
+
+/** 长档 12 拍骨架 fixture（种子库已清空，卡片按学成模板口径手造） */
+const grid: ManhuaViralTemplateBeat[] = Array.from({ length: 12 }, (_, i) => ({
+  atSec: i * 15,
+  conflictZh: i === 0 ? "开场定调" : i === 11 ? "片尾钩子" : `冲突${i + 1}`,
+  visualZh: `可拍动作${i + 1}`,
+}));
+
+const hints = { minBodyChars: 280, minDialogueLines: 8, minLocationHits: 2 };
+
+const fixtureCard: ManhuaViralTemplateCard = {
+  id: "tpl_series_tierfixture",
+  nameZh: "档位折算样例",
+  laneZh: "古言种田",
+  summaryZh: "绝境开局→可见升级→片尾钩子。",
+  hook3sZh: "开场即绝境，先落一个可见动作。",
+  beatGrid: grid,
+  scenePoolHints: ["边塞", "关隘"],
+  castShape: { leadDesireZh: "活下去并翻盘", pressureZh: "环境压迫" },
+  densityHints: { ...hints },
+  sourceRefs: [{ url: "https://example.com/learned", fetchedAt: "2026-08-10" }],
+  status: "approved",
+  approvedAt: "2026-08-10T00:00:00.000Z",
+};
+
+const extras = [fixtureCard];
 
 describe("单集时长档位", () => {
   it("两档：短档 90s/6 段，长档 180s/12 段", () => {
@@ -26,8 +53,6 @@ describe("单集时长档位", () => {
 });
 
 describe("节拍格按档位缩放", () => {
-  const grid = getManhuaViralTemplate("tpl_border_farm_revenge")!.beatGrid;
-
   it("长档原样保留 12 拍，时间戳仍是每 15s 一个", () => {
     const beats = fitManhuaViralBeatGridToSegments(grid, 12);
     expect(beats).toHaveLength(12);
@@ -53,8 +78,8 @@ describe("节拍格按档位缩放", () => {
   });
 
   it("注入块的密度建议跟着档位改口，不再写死 180 秒", () => {
-    const short = formatManhuaViralTemplateWriterAddon("tpl_border_farm_revenge", null, "short");
-    const long = formatManhuaViralTemplateWriterAddon("tpl_border_farm_revenge", null, "long");
+    const short = formatManhuaViralTemplateWriterAddon("tpl_series_tierfixture", extras, "short");
+    const long = formatManhuaViralTemplateWriterAddon("tpl_series_tierfixture", extras, "long");
     expect(short).toContain("约90秒/集·6段");
     expect(long).toContain("约180秒/集·12段");
     expect(short).not.toContain("165s");
@@ -62,8 +87,6 @@ describe("节拍格按档位缩放", () => {
 });
 
 describe("密度建议不得低于门禁", () => {
-  const hints = getManhuaViralTemplate("tpl_border_farm_revenge")!.densityHints;
-
   /**
    * 卡片手写的 8 句是长档估值，门禁按每段 3 句算要 30 句。
    * 照卡片写完必然被退回，编剧永远摸不到门禁线。
@@ -84,7 +107,7 @@ describe("密度建议不得低于门禁", () => {
   });
 
   it("注入块印的就是门禁那组数，两边不会各说各话", () => {
-    const short = formatManhuaViralTemplateWriterAddon("tpl_border_farm_revenge", null, "short");
+    const short = formatManhuaViralTemplateWriterAddon("tpl_series_tierfixture", extras, "short");
     const floors = manhuaEpisodeDensityFloors(90);
     expect(short).toContain(`正文≥${floors.minBody}字`);
     expect(short).toContain(`对白≥${floors.minDlg}句`);

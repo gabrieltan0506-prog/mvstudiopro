@@ -19,7 +19,7 @@ function assertSupervisorOps(
 }
 
 export const manhuaViralTemplateRouter = router({
-  /** 编剧室 / 已登录：合并后的 approved 列表（失败时服务端仍尽量返回种子库） */
+  /** 编剧室 / 已登录：GCS approved 列表（出厂种子已清空；GCS 失败时返回空组，前端有空态） */
   listApproved: protectedProcedure.query(async () => {
     try {
       const { listMergedApprovedManhuaViralTemplatesGrouped } = await import(
@@ -27,14 +27,11 @@ export const manhuaViralTemplateRouter = router({
       );
       return { groups: await listMergedApprovedManhuaViralTemplatesGrouped() };
     } catch (e) {
-      const { listApprovedManhuaViralTemplatesGrouped } = await import(
-        "../../shared/manhuaViralTemplateBank.js"
-      );
       console.warn(
-        "[manhuaViralTemplate.listApproved] fallback seed:",
+        "[manhuaViralTemplate.listApproved] gcs failed, return empty:",
         e instanceof Error ? e.message : e,
       );
-      return { groups: listApprovedManhuaViralTemplatesGrouped() };
+      return { groups: [] };
     }
   }),
 

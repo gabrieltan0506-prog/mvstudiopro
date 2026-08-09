@@ -2327,6 +2327,10 @@ export default function FreeformCanvas({
                                   <div className="space-y-1.5">
                                     <div className="text-[10px] text-white/45">
                                       参考视频（最多 10）· 先上传 MP4 再勾选
+                                      {block.seedance25WorkMode === "video_edit" ||
+                                      block.seedance25WorkMode === "video_extend"
+                                        ? "——勾选的第 1 条是被编辑/延长的主片，其余作参考"
+                                        : ""}
                                       {block.outputUrl ? " · 已有成片也可直接编辑/延长" : ""}
                                     </div>
                                     {vids.length ? (

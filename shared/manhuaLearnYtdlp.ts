@@ -4,10 +4,38 @@
  * 云端凭证与趋势采集同源：DOUYIN_COOKIE / DOUYIN_COOKIE_BACKUP / DOUYIN_COOKIE_POOL。
  */
 
-/** 抖音单集成片页（非合集列表） */
+/**
+ * 抖音 modal_id 弹层链接里的视频 id。
+ * 用户从榜单/搜索页复制到的常是 `douyin.com/…?modal_id=7XXX` 形态——它就是单集视频，
+ * 但路径不含 /video/，旧判定认不出 → 掉进合集解析（已被抖音改版打死）→ 学节奏必空。
+ */
+export function extractDouyinModalVideoId(url: string): string | null {
+  const u = String(url || "").trim();
+  if (!u) return null;
+  try {
+    const parsed = new URL(u);
+    if (!/(^|\.)douyin\.com$/i.test(parsed.hostname) && !/(^|\.)iesdouyin\.com$/i.test(parsed.hostname)) {
+      return null;
+    }
+    const id = String(parsed.searchParams.get("modal_id") || "").trim();
+    return /^\d{5,}$/.test(id) ? id : null;
+  } catch {
+    const m = /[?&]modal_id=(\d{5,})/.exec(u);
+    return m ? m[1] : null;
+  }
+}
+
+/** modal_id 弹层链接 → 标准单集页（yt-dlp 只稳定认 /video/ 形态）；其余原样返回 */
+export function normalizeDouyinVideoUrl(url: string): string {
+  const modalId = extractDouyinModalVideoId(url);
+  return modalId ? `https://www.douyin.com/video/${modalId}` : String(url || "").trim();
+}
+
+/** 抖音单集成片页（非合集列表）；含 modal_id 弹层形态 */
 export function isDouyinSingleVideoUrl(url: string): boolean {
   const u = String(url || "").trim();
   if (!u) return false;
+  if (extractDouyinModalVideoId(u)) return true;
   try {
     const parsed = new URL(u);
     if (!/(^|\.)douyin\.com$/i.test(parsed.hostname) && !/(^|\.)iesdouyin\.com$/i.test(parsed.hostname)) {
@@ -59,16 +87,20 @@ function readEnv(env?: EnvMap): EnvMap {
 }
 
 export function pickDouyinCookieHeaderFromEnv(env?: EnvMap): string {
+  return listDouyinCookieCandidatesFromEnv(env)[0] || "";
+}
+
+/** 全部候选凭证（主 → 备 → 池，去重）；web API 拉合集时逐个试到有响应为止 */
+export function listDouyinCookieCandidatesFromEnv(env?: EnvMap): string[] {
   const e = readEnv(env);
-  const primary = String(e.DOUYIN_COOKIE || "").trim();
-  if (primary) return primary;
-  const backup = String(e.DOUYIN_COOKIE_BACKUP || "").trim();
-  if (backup) return backup;
-  const pool = String(e.DOUYIN_COOKIE_POOL || "")
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return pool[0] || "";
+  const raw = [
+    String(e.DOUYIN_COOKIE || "").trim(),
+    String(e.DOUYIN_COOKIE_BACKUP || "").trim(),
+    ...String(e.DOUYIN_COOKIE_POOL || "")
+      .split("\n")
+      .map((s) => s.trim()),
+  ].filter(Boolean);
+  return Array.from(new Set(raw));
 }
 
 export function manhuaLearnYtdlpCookiesFileFromEnv(env?: EnvMap): string {
@@ -183,12 +215,17 @@ export function shouldSkipLocalLearnFallback(errorZh: string): boolean {
 export function listedSingleEpisodeFromUrl(
   sourceUrl: string,
   titleHint?: string,
+  /** 已知真实集号时传入（如 web API 详情的 current_episode），避免同剧多条单集链接都占第 1 集互相覆盖 */
+  episodeIndex?: number,
 ): Array<{ index: number; url: string; title: string }> {
+  const idx = Number.isFinite(Number(episodeIndex)) && Number(episodeIndex) > 0
+    ? Math.floor(Number(episodeIndex))
+    : 1;
   return [
     {
-      index: 1,
+      index: idx,
       url: sourceUrl,
-      title: String(titleHint || "第1集").trim() || "第1集",
+      title: String(titleHint || `第${idx}集`).trim() || `第${idx}集`,
     },
   ];
 }

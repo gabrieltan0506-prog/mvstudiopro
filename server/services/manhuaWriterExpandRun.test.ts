@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// 用例体内 await import 重模块，全量并发下 transform 成本计入 5s 默认预算（负载抽签）
+vi.setConfig({ testTimeout: 60_000 });
+
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
 

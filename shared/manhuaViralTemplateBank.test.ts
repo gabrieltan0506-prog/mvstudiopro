@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  MANHUA_VIRAL_TEMPLATE_BANK,
   formatManhuaViralTemplateWriterAddon,
   getManhuaViralTemplate,
   listApprovedManhuaViralTemplates,
@@ -12,31 +13,64 @@ import {
 } from "./manhuaViralTemplateBank";
 import { buildManhuaWriterExpandPrompt } from "./manhuaWriterRoom";
 
+/** 学成模板 fixture（种子已下架，动态库条目全走 extras 注入） */
+function learnedCard(overrides?: Partial<ManhuaViralTemplateCard>): ManhuaViralTemplateCard {
+  return {
+    id: "tpl_series_fixture01",
+    nameZh: "学成模板样例",
+    laneZh: "古言种田",
+    summaryZh: "绝境开局→可见升级→片尾钩子。",
+    hook3sZh: "开场即绝境，主角先落一个不服输的可见动作。",
+    beatGrid: Array.from({ length: 12 }, (_, i) => ({
+      atSec: i * 15,
+      conflictZh: `冲突${i + 1}`,
+      visualZh: `可拍动作${i + 1}`,
+    })),
+    scenePoolHints: ["边塞", "关隘", "军营"],
+    castShape: { leadDesireZh: "活下去并翻盘", pressureZh: "环境压迫+小人盯梢" },
+    densityHints: { minBodyChars: 280, minDialogueLines: 8, minLocationHits: 2 },
+    sourceRefs: [{ url: "https://example.com/learned", fetchedAt: "2026-08-10" }],
+    status: "approved",
+    approvedAt: "2026-08-10T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 describe("manhuaViralTemplateBank", () => {
-  it("merges extras over seed by id", () => {
-    const seed = listApprovedManhuaViralTemplates();
-    const override: ManhuaViralTemplateCard = {
-      ...seed[0]!,
-      nameZh: "动态覆盖名",
-      status: "approved",
-    };
-    const merged = mergeManhuaViralTemplateBanks(seed, [override]);
-    expect(merged.find((t) => t.id === override.id)?.nameZh).toBe("动态覆盖名");
-    expect(listApprovedManhuaViralTemplates([override]).some((t) => t.nameZh === "动态覆盖名")).toBe(
-      true,
-    );
+  it("出厂种子已清空：不带 extras 时产品列表为空", () => {
+    expect(MANHUA_VIRAL_TEMPLATE_BANK).toHaveLength(0);
+    expect(listApprovedManhuaViralTemplates()).toHaveLength(0);
+    expect(listApprovedManhuaViralTemplatesGrouped()).toHaveLength(0);
+    expect(getManhuaViralTemplate("tpl_border_farm_revenge")).toBeNull();
+  });
+
+  it("merges extras over prior entries by id", () => {
+    const base = learnedCard();
+    const override = learnedCard({ nameZh: "动态覆盖名" });
+    const merged = mergeManhuaViralTemplateBanks([base], [override]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]!.nameZh).toBe("动态覆盖名");
+    expect(
+      listApprovedManhuaViralTemplates([override]).some((t) => t.nameZh === "动态覆盖名"),
+    ).toBe(true);
   });
 
   it("lists only approved cards in product API", () => {
-    const approved = listApprovedManhuaViralTemplates();
-    expect(approved.length).toBeGreaterThanOrEqual(3);
+    const approved = listApprovedManhuaViralTemplates([
+      learnedCard(),
+      learnedCard({ id: "tpl_series_fixture02", status: "proposed" }),
+      learnedCard({ id: "tpl_series_fixture03", status: "rejected" }),
+    ]);
+    expect(approved.map((t) => t.id)).toEqual(["tpl_series_fixture01"]);
     expect(approved.every((t) => t.status === "approved")).toBe(true);
-    expect(approved.some((t) => t.id === "tpl_proposal_example_stub")).toBe(false);
   });
 
   it("groups by lane order without empty lanes", () => {
-    const groups = listApprovedManhuaViralTemplatesGrouped();
-    expect(groups.length).toBeGreaterThan(0);
+    const groups = listApprovedManhuaViralTemplatesGrouped([
+      learnedCard(),
+      learnedCard({ id: "tpl_series_fixture04", laneZh: "系统觉醒" }),
+    ]);
+    expect(groups.map((g) => g.laneZh)).toEqual(["古言种田", "系统觉醒"]);
     for (const g of groups) {
       expect(g.items.length).toBeGreaterThan(0);
       expect(g.items.every((t) => t.laneZh === g.laneZh)).toBe(true);
@@ -44,12 +78,13 @@ describe("manhuaViralTemplateBank", () => {
   });
 
   it("formats writer addon for approved id only", () => {
-    const addon = formatManhuaViralTemplateWriterAddon("tpl_border_farm_revenge");
+    const extras = [learnedCard(), learnedCard({ id: "tpl_series_fixture05", status: "proposed" })];
+    const addon = formatManhuaViralTemplateWriterAddon("tpl_series_fixture01", extras);
     expect(addon).toMatch(/节奏模板/);
-    expect(addon).toMatch(/边关开荒翻盘/);
+    expect(addon).toMatch(/学成模板样例/);
     expect(addon).toMatch(/节拍格/);
-    expect(addon).not.toMatch(/发配边关/);
-    expect(formatManhuaViralTemplateWriterAddon("tpl_does_not_exist")).toBe("");
+    expect(formatManhuaViralTemplateWriterAddon("tpl_series_fixture05", extras)).toBe("");
+    expect(formatManhuaViralTemplateWriterAddon("tpl_does_not_exist", extras)).toBe("");
   });
 
   it("proposal stub json is parseable but not listed as approved", () => {
@@ -66,8 +101,8 @@ describe("manhuaViralTemplateBank", () => {
     expect(listApprovedManhuaViralTemplates().some((t) => t.id === card!.id)).toBe(false);
   });
 
-  it("formatManhuaViralTemplateWriterAddon still compiles a card standalone (bank kept, no longer auto-injected)", () => {
-    const addon = formatManhuaViralTemplateWriterAddon("tpl_border_farm_revenge", null, "short");
+  it("formatManhuaViralTemplateWriterAddon still compiles a card standalone", () => {
+    const addon = formatManhuaViralTemplateWriterAddon("tpl_series_fixture01", [learnedCard()], "short");
     expect(addon).toMatch(/【节奏模板·骨架建议】/);
     expect(addon).toMatch(/密度建议/);
     expect(addon).toMatch(/边塞/);
@@ -78,7 +113,7 @@ describe("manhuaViralTemplateBank", () => {
       topic: "边关开荒翻盘连载",
       brief: "女主被发配",
       episodeCount: 3,
-      viralTemplateId: "tpl_border_farm_revenge",
+      viralTemplateId: "tpl_series_fixture01",
     });
     expect(prompt).not.toMatch(/【节奏模板·骨架建议】/);
   });

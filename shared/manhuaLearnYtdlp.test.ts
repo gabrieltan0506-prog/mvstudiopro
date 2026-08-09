@@ -4,6 +4,7 @@ import {
   buildNetscapeCookiesFromHeader,
   hasManhuaLearnYtdlpCookieSource,
   isDouyinSingleVideoUrl,
+  normalizeDouyinVideoUrl,
   isManhuaLearnPermissionDeniedHint,
   listedSingleEpisodeFromUrl,
   mapManhuaLearnFetchError,
@@ -18,6 +19,23 @@ describe("manhuaLearnYtdlp", () => {
     ).toBe(true);
     expect(isDouyinSingleVideoUrl("https://www.douyin.com/search/foo")).toBe(false);
     expect(isDouyinSingleVideoUrl("https://www.kuaishou.com/short-video/x")).toBe(false);
+  });
+
+  it("modal_id 弹层链接按单集识别并归一化成 /video/ 标准形态", () => {
+    const modal = "https://www.douyin.com/discover?modal_id=7658227988223380788";
+    expect(isDouyinSingleVideoUrl(modal)).toBe(true);
+    expect(normalizeDouyinVideoUrl(modal)).toBe(
+      "https://www.douyin.com/video/7658227988223380788",
+    );
+    // 搜索页带 modal_id 同样是单集
+    expect(
+      isDouyinSingleVideoUrl("https://www.douyin.com/root/search/古装?modal_id=7649000000000000001"),
+    ).toBe(true);
+    // 非抖音域名不认；已是 /video/ 形态原样返回
+    expect(isDouyinSingleVideoUrl("https://example.com/x?modal_id=123456789")).toBe(false);
+    expect(normalizeDouyinVideoUrl("https://www.douyin.com/video/111222333")).toBe(
+      "https://www.douyin.com/video/111222333",
+    );
   });
 
   it("builds netscape cookies from header", () => {

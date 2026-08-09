@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 
+// 用例体内 await import 重模块，全量并发下 transform 成本计入 5s 默认预算（负载抽签）
+vi.setConfig({ testTimeout: 60_000 });
+
 // Test the veo module's helper functions and structure
 describe("Veo Video Generation", () => {
   it("isVeoAvailable returns true when GEMINI_API_KEY is set", async () => {
