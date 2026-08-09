@@ -91,13 +91,19 @@ export function collectManhuaClipDockItems(
     const pendingStory = stage === "story" && includePendingStory && !hasText;
     if (!hasMedia && !hasText && !pendingStory) continue;
     const episodeIndex = getBlockEpisodeIndex(b) ?? 1;
+    // 段号取自 id（clip-e01-g03 → 3）：同集 4 段在坞里不能都叫「微动成片」，
+    // 否则用户分不清缺的是第几段、重拍点错段
+    const segMatch = /-g(\d{1,3})\b/.exec(b.id);
+    const segIndex = segMatch ? Number(segMatch[1]) : undefined;
     const baseLabel = STAGE_LABEL_DOCK[stage] || stage;
+    const labelWithSeg =
+      stage === "clip" && segIndex ? `第 ${segIndex} 段·${baseLabel}` : baseLabel;
     items.push({
       blockId: b.id,
       stage,
       episodeIndex,
       episodeTitle: b.episodeTitle,
-      label: pendingStory ? "故事链（待跑·可勾选运行）" : baseLabel,
+      label: pendingStory ? "故事链（待跑·可勾选运行）" : labelWithSeg,
       outputUrl: b.outputUrl || b.outputUrls?.[0],
       outputText: b.outputText,
       kind: b.kind,

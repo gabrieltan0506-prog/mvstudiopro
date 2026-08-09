@@ -4000,12 +4000,16 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                 /* ignore */
               }
             }
+            // 失败也给全集段盖报告（与 passed 分支对称）：每段都有「仍采用」解锁入口。
+            // 只盖第 1 段的旧行为会让第 2 段起 clipQuality 恒 undefined →
+            // manhuaClipQualityAllowsAssemble 的 !q 分支判永不可合成，整集卡死无解。
             working = working.map((b) =>
-              b.id === first.id
+              b.id.startsWith("clip-") && (getBlockEpisodeIndex(b) ?? 1) === ep
                 ? {
                     ...b,
                     manhuaClipQuality: { ...report, userAcceptedDespiteQc: false },
-                    error: tip,
+                    // 错误横幅只挂抽查的第 1 段，避免全集刷同一条提示
+                    ...(b.id === first.id ? { error: tip } : {}),
                   }
                 : b,
             );

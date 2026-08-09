@@ -14,8 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // 用例体内 await import 大模块，导入成本计入用例预算，全量并发下 5s 默认线会被踩爆
 vi.setConfig({ testTimeout: 60_000 });
 
-const refundCredits = vi.fn(async () => {});
-const refundCreditsForDeductAmount = vi.fn(async () => {});
+const refundCredits = vi.fn(async (..._args: unknown[]) => {});
+const refundCreditsForDeductAmount = vi.fn(async (..._args: unknown[]) => {});
 vi.mock("../credits", () => ({
   refundCredits: (...args: unknown[]) => refundCredits(...args),
   refundCreditsForDeductAmount: (...args: unknown[]) => refundCreditsForDeductAmount(...args),

@@ -43,7 +43,11 @@ export function manhuaClipQualityAllowsAssemble(opts: {
 }): boolean {
   if (!String(opts.outputUrl || "").trim()) return false;
   const q = opts.quality;
-  if (!q) return false;
+  // 未质检 ≠ 不合格。软拦只拦「明确 failed 且用户未仍采用」的段；
+  // 旧的 !q → false 会让所有没盖到报告的段（历史上质检失败只给第 1 段盖报告、
+  // 手点重跑不补质检）永远不可合成——整集卡死且 UI 无解。
+  // 空壳风险由上面的 outputUrl 判定兜底（只认真实出片，垫图不进来）。
+  if (!q) return true;
   if (q.status === "passed") return true;
   if (q.status === "failed" && q.userAcceptedDespiteQc) return true;
   return false;
