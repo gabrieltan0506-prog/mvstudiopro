@@ -35,7 +35,42 @@ type Post = {
   readMinutes: number;
   /** 分享卡片图：取正文第一张图，没有就退回站点图标 */
   cover: string;
+  /** 「## 常见问题」段里的 Q&A，编译成 FAQPage 结构化数据（AI 引擎最爱直接引用的格式） */
+  faq: Array<{ q: string; a: string }>;
 };
+
+/**
+ * 从 markdown 正文提取「## 常见问题」段的 Q&A。
+ *
+ * 识别规则：`## 常见问题`（或含 FAQ 字样的二级标题）之后、下一个二级标题之前，
+ * 每个 `### 问题` 为一问，其后的段落为答。答案剥掉 markdown 语法只留纯文本——
+ * FAQPage 的 acceptedAnswer 用纯文本最稳，富文本反而容易被判格式错误。
+ */
+function extractFaq(body: string): Array<{ q: string; a: string }> {
+  // 不用带 $ 的 lookahead：/m 模式下 $ 匹配每一行行尾，段落会被截成空串
+  const head = body.match(/^##\s*(?:常见问题|FAQ|常見問題)[^\n]*\n/m);
+  if (!head || head.index === undefined) return [];
+  const start = head.index + head[0].length;
+  const next = body.slice(start).search(/\n##\s/);
+  const section = next >= 0 ? body.slice(start, start + next) : body.slice(start);
+  const out: Array<{ q: string; a: string }> = [];
+  const parts = section.split(/^###\s+/m).slice(1);
+  for (const part of parts) {
+    const nl = part.indexOf("\n");
+    if (nl < 0) continue;
+    const q = part.slice(0, nl).trim();
+    const a = part
+      .slice(nl + 1)
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/<[^>]+>/g, "")
+      .replace(/[#>*`|]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (q && a) out.push({ q, a: a.slice(0, 800) });
+  }
+  return out;
+}
 
 /** 解析 front matter：只认 `key: value`，够用且不引入 yaml 依赖 */
 function parseFrontMatter(raw: string): { meta: Record<string, string>; body: string } {
@@ -176,6 +211,7 @@ ${opts.keywords ? `<meta name="keywords" content="${escapeHtml(opts.keywords)}">
 <meta name="twitter:description" content="${escapeHtml(opts.description)}">
 <meta name="twitter:image" content="${cover}">
 <link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
+<link rel="alternate" type="application/rss+xml" title="MV Studio Pro 博客" href="${SITE}/blog/rss.xml">
 <style>${CSS}</style>
 <script type="application/ld+json">
 ${JSON.stringify(opts.jsonLd, null, 2)}
@@ -288,6 +324,7 @@ async function main(): Promise<void> {
       html,
       readMinutes: Math.max(1, Math.round(plain.length / 400)),
       cover,
+      faq: extractFaq(body),
     });
   }
 
@@ -325,6 +362,19 @@ async function main(): Promise<void> {
             { "@type": "ListItem", position: 3, name: p.title, item: url },
           ],
         },
+        // FAQPage：AI 引擎（以及 Google 富摘要）优先引用带结构化标注的 Q&A
+        ...(p.faq.length
+          ? [
+              {
+                "@type": "FAQPage",
+                mainEntity: p.faq.map((f) => ({
+                  "@type": "Question",
+                  name: f.q,
+                  acceptedAnswer: { "@type": "Answer", text: f.a },
+                })),
+              },
+            ]
+          : []),
       ],
     };
 
@@ -420,7 +470,41 @@ ${cards}
   );
   await fs.writeFile(SITEMAP, xml, "utf-8");
 
-  console.log(`[blog] 生成 ${posts.length} 篇 + 列表页，已同步 sitemap`);
+  /**
+   * ── RSS：/blog/rss.xml ──
+   * Perplexity 等 AI 引擎与聚合器靠 feed 发现新文，比等爬虫巡回快得多。
+   * pubDate 统一按上海时间早上 8 点，避免 date-only 被解析成 UTC 零点跨天。
+   */
+  const rssItems = posts
+    .slice(0, 30)
+    .map((p) => {
+      const link = `${SITE}/blog/${p.slug}`;
+      const pub = new Date(`${p.date}T08:00:00+08:00`).toUTCString();
+      return `    <item>
+      <title>${escapeHtml(p.title)}</title>
+      <link>${link}</link>
+      <guid isPermaLink="true">${link}</guid>
+      <pubDate>${pub}</pubDate>
+      <description>${escapeHtml(p.description)}</description>
+    </item>`;
+    })
+    .join("\n");
+  const rss = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>MV Studio Pro 博客</title>
+    <link>${SITE}/blog/</link>
+    <atom:link href="${SITE}/blog/rss.xml" rel="self" type="application/rss+xml"/>
+    <description>AI 漫剧与视频生成实测：模型对比、真实价格、工作流拆解</description>
+    <language>zh-CN</language>
+    <lastBuildDate>${new Date(`${posts[0].date}T08:00:00+08:00`).toUTCString()}</lastBuildDate>
+${rssItems}
+  </channel>
+</rss>
+`;
+  await fs.writeFile(path.join(OUT, "rss.xml"), rss, "utf-8");
+
+  console.log(`[blog] 生成 ${posts.length} 篇 + 列表页 + rss.xml，已同步 sitemap`);
   for (const p of posts) console.log(`        /blog/${p.slug}  ${p.title}`);
 }
 

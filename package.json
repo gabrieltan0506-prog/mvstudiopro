@@ -50,7 +50,8 @@
     "ambient:fetch-images": "node scripts/fetch-ambient-images.mjs",
     "ambient:fetch-images:refresh": "node scripts/fetch-ambient-images.mjs --refresh",
     "ambient:fetch-images:daily": "node scripts/fetch-ambient-images.mjs --max-age-hours=24",
-    "push:github": "bash scripts/gh-git-push.sh"
+    "push:github": "bash scripts/gh-git-push.sh",
+    "blog:publish": "tsx scripts/blog-publish.mts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",
