@@ -52,7 +52,10 @@ import {
   WAVESPEED_UPSCALE_MAX_POLL_MS,
 } from "./wavespeedVideoUpscale.js";
 import type { WavespeedUpscaleTarget } from "../../shared/wavespeedVideoUpscaleModels.js";
-import type { SeedanceEvolinkMode } from "../../shared/seedanceEvolinkModels.js";
+import {
+  SEEDANCE_EVOLINK_CONTENT_FILTER,
+  type SeedanceEvolinkMode,
+} from "../../shared/seedanceEvolinkModels.js";
 
 const TASK_TYPE = "canvasVideo" as const;
 const PRIMARY_DIR =
@@ -135,8 +138,26 @@ export type CanvasVideoTaskRecord = {
   wavespeedPredictionId?: string;
 };
 
-/** 画布 Seedance 2.5：有 BytePlus Key 则主路径；否则 EvoLink。 */
-export function resolveSeedance25CanvasEngine(): CanvasVideoEngine {
+/**
+ * 画布 Seedance 2.5：有 BytePlus Key 则主路径；否则 EvoLink。
+ * video_edit / video_extend 例外：强制 EvoLink——BytePlus 通道对 edit 发固定 15s
+ * （官方契约只收 -1 等长）、adaptive 画幅被反转成 16:9，且该通道这两个模式从未实测；
+ * EvoLink 是官方文档口径的实测通路。
+ */
+export function resolveSeedance25CanvasEngine(
+  mode?: SeedanceEvolinkMode,
+  opts?: {
+    /**
+     * 仿真人信号（用户 2026-08-10 明文）：写实人脸走 BytePlus 会被
+     * InputImageSensitiveContentDetected 拦住任务失败，只能走 EvoLink；CG 漫画风无碍。
+     * 信号来源是参考图 URL 的 photoreal 资产路径；用户自传真人照片识别不到，
+     * 由 BytePlus 失败回落 EvoLink 兜底（isByteplusFallbackableError 默认放行）。
+     */
+    photoreal?: boolean;
+  },
+): CanvasVideoEngine {
+  if (mode === "video_edit" || mode === "video_extend") return "seedance25-evolink";
+  if (opts?.photoreal) return "seedance25-evolink";
   if (isByteplusSeedanceConfigured()) return "seedance25-byteplus";
   return "seedance25-evolink";
 }
@@ -251,7 +272,8 @@ function seedance25RunInput(task: CanvasVideoTaskRecord): EvolinkSeedanceRunInpu
     aspectRatio: task.aspectRatio,
     duration: task.duration,
     generateAudio: task.generateAudio,
-    contentFilter: true,
+    // 8-09 拍板值（放宽送审，EvoLink 不挡人脸是仿真人档的前提）；原先是三处硬编码 true 的死常量
+    contentFilter: SEEDANCE_EVOLINK_CONTENT_FILTER,
     mode: task.workMode,
     version: "2.5",
   };
@@ -288,7 +310,8 @@ async function submitSeedanceMiniEvolink(task: CanvasVideoTaskRecord): Promise<v
     aspectRatio: task.aspectRatio,
     duration: task.duration,
     generateAudio: task.generateAudio,
-    contentFilter: true,
+    // 8-09 拍板值（放宽送审，EvoLink 不挡人脸是仿真人档的前提）；原先是三处硬编码 true 的死常量
+    contentFilter: SEEDANCE_EVOLINK_CONTENT_FILTER,
     version: "2.0-mini",
   });
   task.evolinkTaskId = submitted.evolinkTaskId;

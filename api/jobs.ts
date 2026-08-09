@@ -1299,17 +1299,32 @@ async function runSeedance25EvolinkJob(
     clampSeedanceDuration,
     normalizeSeedance25EvolinkMode,
     normalizeSeedanceQuality,
+    SEEDANCE_EVOLINK_CONTENT_FILTER,
   } = await import("../shared/seedanceEvolinkModels.js");
   const mode = normalizeSeedance25EvolinkMode(body.workMode || query.workMode, {
     imageUrls: [...(imageUrl ? [imageUrl] : []), ...imageUrls],
     videoUrls,
     audioUrls,
   });
+  const rawDuration = body.duration ?? query.duration ?? body.durationSec ?? 15;
+  // extend 官方支持 -1 自动（跟内容走）；显式时长 4–30s。原实现把 -1 clamp 成 4，自动档不可达
+  const wantsAutoDuration =
+    Number(rawDuration) === -1 || String(rawDuration).trim().toLowerCase() === "auto";
+  // edit 产出与主片等长：计费按前端探测的主片时长（editSourceDurationSec），
+  // 不再按写死的 15s 扣——那会让扣费额与产出长度完全脱钩
+  const editSourceSec = Math.round(Number(body.editSourceDurationSec) || 0);
   const duration = clampSeedanceDuration(
     "2.5",
-    body.duration ?? query.duration ?? body.durationSec ?? 15,
+    mode === "video_edit" && editSourceSec > 0
+      ? editSourceSec
+      : wantsAutoDuration
+        ? mode === "video_extend"
+          ? 5 // 官方 extend 自动档默认产出 5s，计费按 5 不多收
+          : 15
+        : rawDuration,
   );
-  const providerDuration = mode === "video_edit" ? -1 : duration;
+  const providerDuration =
+    mode === "video_edit" ? -1 : mode === "video_extend" && wantsAutoDuration ? -1 : duration;
   const resolution = normalizeSeedanceQuality(
     "2.5",
     body.resolution || query.resolution || "720p",
@@ -1345,7 +1360,7 @@ async function runSeedance25EvolinkJob(
     aspectRatio,
     duration: providerDuration,
     generateAudio,
-    contentFilter: true,
+    contentFilter: SEEDANCE_EVOLINK_CONTENT_FILTER,
     mode,
     version: "2.5" as const,
   };
@@ -1397,7 +1412,11 @@ async function runSeedance25EvolinkJob(
       const task = await createCanvasVideoTask({
         userId: charged.userId,
         creditsCharged: charged.credits,
-        engine: resolveSeedance25CanvasEngine(),
+        engine: resolveSeedance25CanvasEngine(mode, {
+          photoreal: [imageUrl, ...imageUrls, ...videoUrls].some((u) =>
+            /\/photoreal\//i.test(String(u || "")),
+          ),
+        }),
         label,
         prompt,
         imageUrl,
