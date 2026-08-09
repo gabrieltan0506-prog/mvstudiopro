@@ -2326,7 +2326,12 @@ export function ensureManhuaFragmentClips(
     ...blocks.filter((b) => !staleClipIds.has(b.id)),
     ...nextExtras,
   ].map((b) => {
-    if (!b.id.startsWith("clip-") || !sameEpisode(b) || !keepSegClipIds.has(b.id)) return b;
+    if (!b.id.startsWith("clip-") || !sameEpisode(b)) return b;
+    if (!keepSegClipIds.has(b.id)) {
+      // 改档后掉出新段表的已出片段（走到这没进 stale = 有产出）：停放 = 不删、
+      // 也**不再被消费**——打归档标记，成片坞/长片合成据此排除（审阅必须修#3）
+      return b.archivedFromPreviousScript ? b : { ...b, archivedFromPreviousScript: true };
+    }
     const refreshed = refreshedById.get(b.id);
     if (refreshed) return refreshed;
     const localSeg = resolveClipLocalSegmentIndex(b.id, b.prompt, ep);
@@ -3850,7 +3855,8 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                 outputText: out.outputText,
                 outputUrl: out.outputUrl,
                 outputUrls: out.outputUrls ?? (out.outputUrl ? [out.outputUrl] : b.outputUrls),
-                lastFrameUrl: out.lastFrameUrl || b.lastFrameUrl,
+                // 无条件写入：本次没抽到尾帧就清旧值，绝不让上一版尾帧顶给下一段当起幅
+                lastFrameUrl: out.lastFrameUrl,
                 ...(out.seedance25ThreadId
                   ? { seedance25ThreadId: out.seedance25ThreadId }
                   : {}),
@@ -4000,16 +4006,15 @@ export async function runManhuaDramaFactoryPipeline(opts: {
                 /* ignore */
               }
             }
-            // 失败也给全集段盖报告（与 passed 分支对称）：每段都有「仍采用」解锁入口。
-            // 只盖第 1 段的旧行为会让第 2 段起 clipQuality 恒 undefined →
-            // manhuaClipQualityAllowsAssemble 的 !q 分支判永不可合成，整集卡死无解。
+            // 这次质检实际只上传了第 1 段的素材（抽查），失败报告只能盖第 1 段——
+            // 把抽查结果连坐全集会给从未被检查的段错标 failed（审阅结论必须修#2）。
+            // 其余段无报告：manhuaClipQualityAllowsAssemble 按「未质检不拦」放行（软拦语义）。
             working = working.map((b) =>
-              b.id.startsWith("clip-") && (getBlockEpisodeIndex(b) ?? 1) === ep
+              b.id === first.id
                 ? {
                     ...b,
                     manhuaClipQuality: { ...report, userAcceptedDespiteQc: false },
-                    // 错误横幅只挂抽查的第 1 段，避免全集刷同一条提示
-                    ...(b.id === first.id ? { error: tip } : {}),
+                    error: tip,
                   }
                 : b,
             );

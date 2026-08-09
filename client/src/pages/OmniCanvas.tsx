@@ -3440,14 +3440,15 @@ export default function OmniCanvas() {
     factorySceneId,
   ]);
 
-  const confirmWriterToDirector = useCallback(() => {
+  // 返回是否确认成功：调用方据此决定是否切视图（失败时 extras 已被切开展示门禁红字，勿再关）
+  const confirmWriterToDirector = useCallback((): boolean => {
     if (!writerPack || !writerPackLooksReady(writerPack)) {
       toast.error("请先扩写或导入剧本，并检查剧情包是否完整");
-      return;
+      return false;
     }
     if (!hasManhuaSeedanceLayoutChoice(writerVideoModel)) {
       toast.error(`请先选择成片引擎（${writerLayoutChoiceLabelsZh}）`);
-      return;
+      return false;
     }
     const densityGate = evaluateWriterPackAssetAndDensity({
       charactersMd: writerPack.charactersMd,
@@ -3477,7 +3478,7 @@ export default function OmniCanvas() {
         level: "warn",
         detail: densityGate.errors.join(" | ").slice(0, 500),
       });
-      return;
+      return false;
     }
     setWriterConfirmBlockers([]);
     const canon = densityGate.canon;
@@ -3625,6 +3626,7 @@ export default function OmniCanvas() {
         forceRegenerate: true,
       });
     }, 80);
+    return true;
   }, [
     writerPack,
     factoryTopic,
@@ -6028,10 +6030,9 @@ export default function OmniCanvas() {
                 onNextActionClick={(stepId) => {
                   // 剧情包已出未确认：下一步直接确认并滚到工作台（少一次找按钮）
                   if (stepId === "writer" && writerPack && !writerConfirmed) {
-                    confirmWriterToDirector();
-                    setManhuaUiMode("workbench");
-                    setImmersiveExtrasOpen(false);
-                    // confirmWriterToDirector 已切到资产设定；勿再强制进分镜
+                    // 失败时函数已切开 extras 展示门禁红字——这里绝不能再关（会盖回 display:none）
+                    if (!confirmWriterToDirector()) return;
+                    // 成功路径函数内部已切 workbench + 关 extras；这里只负责滚动
                     window.setTimeout(() => {
                       document.querySelector("#manhua-workbench-shell")?.scrollIntoView({
                         behavior: "smooth",
@@ -7203,10 +7204,9 @@ export default function OmniCanvas() {
                   type="button"
                   disabled={writerBusy || factoryBusy || !writerPack}
                   onClick={() => {
-                    confirmWriterToDirector();
-                    setManhuaUiMode("workbench");
-                    setImmersiveExtrasOpen(false);
-                    // 先进资产设定改人物/场景/道具，再进分镜
+                    // 失败时函数已切开 extras 展示门禁红字——这里绝不能再关
+                    if (!confirmWriterToDirector()) return;
+                    // 成功路径函数内部已切 workbench + 关 extras；这里只负责滚动
                     window.setTimeout(() => {
                       document.querySelector("#manhua-workbench-zone")?.scrollIntoView({
                         behavior: "smooth",

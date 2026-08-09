@@ -1245,9 +1245,10 @@ export default function FreeformCanvas({
             (out.outputUrl
               ? Array.from(new Set([out.outputUrl, ...stashUrls])).slice(0, 8)
               : stashUrls),
-          // 与流水线版（canvasDramaStudio 铺链）对齐：手点重跑也要写回尾帧锚点，
-          // 否则下一段续拍拿不到起幅，镜间接力从这一段断掉
-          ...(out.lastFrameUrl ? { lastFrameUrl: out.lastFrameUrl } : {}),
+          // 手点重跑也要写回尾帧锚点（否则下一段续拍拿不到起幅）。
+          // 无条件写入：本次没抽到尾帧时必须清掉旧值——残留 v1 的尾帧会让
+          // 下一段拿旧片画面当起幅（审阅结论必须修#5）
+          lastFrameUrl: out.lastFrameUrl,
           // 重跑出了新片：旧质检报告（连同旧的「仍采用」授权）作废，按未质检状态重新走
           ...(blockId.startsWith("clip-") ? { manhuaClipQuality: undefined } : {}),
           ...(out.seedance25ThreadId ? { seedance25ThreadId: out.seedance25ThreadId } : {}),
