@@ -61,6 +61,7 @@ import {
 import {
   buildDouyinMixCandidateUrls,
   isDouyinSingleVideoUrl,
+  normalizeDouyinVideoUrl,
   listedSingleEpisodeFromUrl,
   mapManhuaLearnFetchError,
   MANHUA_LEARN_FETCH_ERR,
@@ -418,9 +419,10 @@ async function listOrderedEpisodes(
     }
   }
 
-  // 单集成片页：不必 --flat-playlist（抖音常因此先撞登录态）
+  // 单集成片页：不必 --flat-playlist（抖音常因此先撞登录态）。
+  // modal_id 弹层链接归一化成 /video/ 标准形态——yt-dlp 只稳定认后者
   if (isDouyinSingleVideoUrl(sourceUrl)) {
-    return listedSingleEpisodeFromUrl(sourceUrl, titleHint);
+    return listedSingleEpisodeFromUrl(normalizeDouyinVideoUrl(sourceUrl), titleHint);
   }
 
   try {

@@ -4,10 +4,38 @@
  * 云端凭证与趋势采集同源：DOUYIN_COOKIE / DOUYIN_COOKIE_BACKUP / DOUYIN_COOKIE_POOL。
  */
 
-/** 抖音单集成片页（非合集列表） */
+/**
+ * 抖音 modal_id 弹层链接里的视频 id。
+ * 用户从榜单/搜索页复制到的常是 `douyin.com/…?modal_id=7XXX` 形态——它就是单集视频，
+ * 但路径不含 /video/，旧判定认不出 → 掉进合集解析（已被抖音改版打死）→ 学节奏必空。
+ */
+export function extractDouyinModalVideoId(url: string): string | null {
+  const u = String(url || "").trim();
+  if (!u) return null;
+  try {
+    const parsed = new URL(u);
+    if (!/(^|\.)douyin\.com$/i.test(parsed.hostname) && !/(^|\.)iesdouyin\.com$/i.test(parsed.hostname)) {
+      return null;
+    }
+    const id = String(parsed.searchParams.get("modal_id") || "").trim();
+    return /^\d{5,}$/.test(id) ? id : null;
+  } catch {
+    const m = /[?&]modal_id=(\d{5,})/.exec(u);
+    return m ? m[1] : null;
+  }
+}
+
+/** modal_id 弹层链接 → 标准单集页（yt-dlp 只稳定认 /video/ 形态）；其余原样返回 */
+export function normalizeDouyinVideoUrl(url: string): string {
+  const modalId = extractDouyinModalVideoId(url);
+  return modalId ? `https://www.douyin.com/video/${modalId}` : String(url || "").trim();
+}
+
+/** 抖音单集成片页（非合集列表）；含 modal_id 弹层形态 */
 export function isDouyinSingleVideoUrl(url: string): boolean {
   const u = String(url || "").trim();
   if (!u) return false;
+  if (extractDouyinModalVideoId(u)) return true;
   try {
     const parsed = new URL(u);
     if (!/(^|\.)douyin\.com$/i.test(parsed.hostname) && !/(^|\.)iesdouyin\.com$/i.test(parsed.hostname)) {
