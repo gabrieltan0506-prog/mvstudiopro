@@ -285,21 +285,31 @@ export function persistManhuaDraftLocally(input: {
   };
 }
 
+/** 默认档改 mini 之前的旧云草稿兜底档 */
+const LEGACY_CLOUD_DRAFT_VIDEO_MODEL = "seedance-2.0-fast";
+
 /**
  * 云草稿 → 画布节点。
  *
  * 成片引擎按「节点自带 > 会话选型 > 兜底默认」取。节点自带是 2026-08-09 之后才落的，
  * 旧草稿没有；那时只能靠会话，会话也空就走兜底。取错的代价是恢复即变价变结构：
  * 2.5 掉成 fast 段长从 30s 变 15s，mini 掉成 fast 界面印 28 积分/段、实扣 172。
+ *
+ * 兜底分新旧稿：默认档 2026-08-09 从 fast 改成 mini，若让没有任何盖章的旧稿也走新默认，
+ * 一次恢复就把用户原本的 fast 静默迁成 mini（段表与单段价都变）。所以整批都没盖章 =
+ * 旧格式，继续回退 fast 保持原语义；只要有一个节点盖过章就是新格式，缺章的走新默认。
  */
 export function cloudDraftBlocksToCanvas(
   blocks: ManhuaCloudDraftPayload["canvas"]["blocks"],
   opts?: { videoModel?: string | null },
 ): CanvasBlock[] {
   const sessionVideoModel = String(opts?.videoModel || "").trim();
+  const anyBlockStamped = blocks.some((b) => String(b.videoModel || "").trim());
   const fallbackVideoModel: CanvasBlock["videoModel"] = sessionVideoModel
     ? normalizeCanvasVideoModel(sessionVideoModel)
-    : MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+    : anyBlockStamped
+      ? MANHUA_FACTORY_DEFAULT_VIDEO_MODEL
+      : normalizeCanvasVideoModel(LEGACY_CLOUD_DRAFT_VIDEO_MODEL);
   return blocks.map((raw) => {
     const kind = (KIND_OK.has(raw.kind as CanvasBlockKind) ? raw.kind : "text") as CanvasBlockKind;
     const base = {

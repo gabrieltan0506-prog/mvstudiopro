@@ -232,6 +232,28 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 连带影响已逐一追平：`normalizeCanvasVideoModel` 未知值落 mini（比落 2.5 便宜且无权限门）；`normalizeCanvasBlock` 的 2.5 五模式迁移只对 `videoModel === "seedance-2.5"` 生效，测试改为显式挂 2.5 才测得到真实历史路径；扩写提示词段数口径随默认档从「四段可拍表 / 30 秒」变「五至六段可拍表 / 15 秒」，另补一条显式传 2.5 仍出四段的用例。
 
+#1132 外部审查回修（同一 PR 追加）——这批全是「段数/引擎口径」在各处没对齐的漏网点：
+
+- **成片入口会被停放节点锁死**（最要命，直接挡出片）。`ManhuaScriptWorkbench` 的静帧分母取的是画布上全部 keyart 节点数：mini 铺 18 张、出了 12 张后改选 2.5，队列只跑 12 张，门禁却仍要 18/18，`stillsReadyEnough` 永远 false。改为 `episodeKeyarts` 一律走 `queuedManhuaKeyartBlocks()`，分母/已完成数/pixel-lock 三处一次统一。
+- **旧整集成片有产出也被删**。`staleClipIds` 对段级 clip 加了 `hasRenderedOutput` 保护，却漏了没有 `-g/-s` 段号的 legacy clip，铺出段级链就无条件删——那是一整集的成片。改为同样只删空壳。连带在 `queuedManhuaClipBlocks` 挡掉「同集已有段级 clip 时的 legacy clip」：它的段号会回落成第 1 段，不挡就会混进队列与分母，重烧一次整集。
+- **垫图被当成已出静帧**。`missingKeyarts` 用 `mediaUrlOf()`，而它把 `refImageUrl` 也算进去，只有参考图、还没生成的静帧会被判成不缺，段直接从 clip 阶段起跑。改用 `hasRenderedOutput()`。
+- **非钉段长档只能出 8 段**。2.0 / 2.0-fast 长档一集 12 段要 36 镜，却被固定的 `MANHUA_SHOT_KEYART_MAX=24` 截到 8 段；镜数不是 3 的倍数时尾段也不补齐，`resolveSegmentIndexFromShotIndex`（按 3 镜/段）随之错位。新增 `maxManhuaShotsForVideoModel()` 按该引擎长档段数取上限，并补齐到 3 的倍数。副作用是尾段从 2 镜注水到 3 镜、段时长对齐段表——这反而贴近实收，那条尾段本就按整段跑、按整段收 172 积分。
+- **自由画布的 mini 默认没接通全**。下拉回显白名单漏了 mini（选了显示成 fast），`canvasRunBlock` 缺 `videoModel` 时的运行兜底还硬编码 fast，与 `DEFAULT_CANVAS_VIDEO_MODEL=mini` 打架。两处都改为引用常量。
+- **旧云草稿不再被静默迁档**。默认档从 fast 改 mini 后，节点和会话都没盖章的旧稿一恢复就会从 fast 变 mini（段表与单段价都变）。改为按格式判定：整批都没盖章 = 旧稿，继续回退 fast；有任一节点盖过章才是新格式，缺章的走新默认。
+- `resolveEpisodeClipVideoModel` 的跨集回退原本取全画布第一条 clip，改成取集号最近的一条。`CanvasBlock` 上没有 series/project 字段，真要两部剧共存也无从区分；实际不会共存（系列铺板整体替换 blocks、确认导演前会 strip），这里只是让残留节点不至于跨得太远。
+
+审查另外指出「保留已出片」那条测试是虚的——只验了 `queuedManhuaClipBlocks` 的排队口径，没调 `ensureManhuaFragmentClips`，抓不到真实删除。已改成走真实铺链路径，并反向验证过：把 legacy 保护撤掉该用例会失败。
+
+画布版式（用户 2026-08-09 拍板）：新增 `client/src/lib/manhuaCanvasLayout.ts` 统一排版。最左一竖条按资产类型上下堆三块——人物、服装道具组（服装并入道具）、场景，块内同类直排；往右依次是「静帧+导演版」「成片提示词」「出片」。多集可折叠，折叠的集只占一个节点高度。
+
+之前画布乱是因为**三套排位互相覆盖**：铺板时一集排成一行（`canvasDramaStudio.ts:837` 起，多集往下叠行）、`packAssetSheetPositions` 把角色和场景各挤成一行、`layoutManhuaEpisodeReadableChain` 再按集重排一遍。而且前者只认角色和场景，**道具压根没进排位函数**，留在生成时的原始坐标上。现在 `packAssetSheetPositions` 已删，readableChain 因为还兼着盖 @资产 标签所以留着照跑，但坐标一律以 `layoutManhuaCanvasBlocks` 这最后一道为准。
+
+拼接不需要新开发：`shared/manhuaFinalAssemble.ts:108-112` 检测到多段就按集号、再按段号排序接起来，四段拼成 120 秒，首段带静帧封面；传 `episodeIndexes` 可只拼指定集。
+
+顺带修两条测试假绿/假红：`trendStore.splitGzip` 的 `rm` 与被测代码迟到的异步写撞车抛 `ENOTEMPTY`（加重试）；`canvasDramaStudio` 的静帧渐进 publish 顺序断言要求「第一个完成的必须是 s02」，但画布里还有不带段号的初始静帧节点，机器一忙 `setTimeout` 失准它就会插到最前（改为只比段级静帧的相对先后）。
+
+未纳入本 PR（既有缺陷，非本次引入）：mini/2.5 异步任务缺跨请求跨实例幂等（POST 重试会重复扣费，`inflight` 只是进程内 Set）；`paidJobLedger` 退款先写 refunded 再调 `refundCredits`，两步之间崩溃会永久漏退。两条都要动计费，单独开刀。
+
 **下一步（验链路② 起）**：② 平台「扩写」真跑 → 过确认编剧门禁 → 导演版；③ 关键帧排布；④ 画布 @ 锁定图/声/视频参考；⑤ 视频生成真跑验 provider。②–⑤ 都需登录态。
 
 ---

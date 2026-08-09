@@ -1,4 +1,4 @@
-import type { CanvasBlock } from "./canvasTypes";
+import { DEFAULT_CANVAS_VIDEO_MODEL, type CanvasBlock } from "./canvasTypes";
 import { withFlyHealthGate } from "./flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "./longJobsFlyOrigin";
 import { createJobSameOrigin, pollJobUntilTerminal } from "./jobs";
@@ -1234,7 +1234,7 @@ export async function runCanvasBlock(
     const motionPrompt = isClip
       ? stripManhuaAssetUrlsFromPrompt(appendManhuaClipEngineOptics(compiledMotion))
       : compiledMotion;
-    const videoModel = block.videoModel || "seedance-2.0-fast";
+    const videoModel = block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL;
     const useHailuoH3 = isCanvasHailuoH3VideoModel(videoModel);
     const useHappyHorse = isCanvasHappyHorseVideoModel(videoModel);
     const useSeedance25 = videoModel === "seedance-2.5";

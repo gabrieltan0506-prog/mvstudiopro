@@ -120,6 +120,7 @@ import {
   syncManhuaClipAssetEdges,
   type ManhuaFactoryStageKey,
 } from "@/lib/canvasDramaStudio";
+import { layoutManhuaCanvasBlocks, MANHUA_CANVAS_LAYOUT } from "@/lib/manhuaCanvasLayout";
 import {
   collectManhuaClipDockItems,
   episodeIndexesFromDockSelection,
@@ -688,6 +689,10 @@ export default function OmniCanvas() {
   const [clearSeriesWithBackup, setClearSeriesWithBackup] = useState(true);
   const [writerFocusEpisode, setWriterFocusEpisode] = useState(() =>
     Math.max(1, Math.floor(Number(initialWriterSession?.focusEpisode) || 1)),
+  );
+  /** 折叠起来的集：多集铺开后画布会很长，折叠让它只占一行高度 */
+  const [collapsedManhuaEpisodes, setCollapsedManhuaEpisodes] = useState<Set<number>>(
+    () => new Set(),
   );
   const [directorUnlocked, setDirectorUnlocked] = useState(
     () => Boolean(initialWriterSession?.directorUnlocked),
@@ -4748,41 +4753,14 @@ export default function OmniCanvas() {
       const regenFailedIds = new Set<string>();
       try {
         let working = [...canvasBlocks];
-        /** 资产图固定左上：角色一行、场景一行；禁止再贴到画布最右 */
-        const ASSET_ORIGIN_X = 60;
-        const CHAR_SHEET_Y = 80;
-        const SCENE_SHEET_Y = 520;
-        const sheetColGap = 380;
-        const packAssetSheetPositions = (list: typeof working) => {
-          let c = 0;
-          let s = 0;
-          return list.map((b) => {
-            if (b.id.startsWith("charsheet-")) {
-              const next = {
-                ...b,
-                x: ASSET_ORIGIN_X + c * sheetColGap,
-                y: CHAR_SHEET_Y,
-                width: b.width || 360,
-                height: b.height || 400,
-              };
-              c += 1;
-              return next;
-            }
-            if (b.id.startsWith("sceneplate-")) {
-              const next = {
-                ...b,
-                x: ASSET_ORIGIN_X + s * sheetColGap,
-                y: SCENE_SHEET_Y,
-                width: b.width || 360,
-                height: b.height || 400,
-              };
-              s += 1;
-              return next;
-            }
-            return b;
-          });
-        };
-        working = packAssetSheetPositions(working);
+        /**
+         * 全画布统一排版：人物 / 道具 / 场景上下堆在最左，往右依次是
+         * 静帧+导演版、成片提示词、出片。旧版只认角色和场景、各挤成一行，
+         * 道具没人排，留在生成时的原始坐标上，画面就是一团乱。
+         */
+        working = layoutManhuaCanvasBlocks(working, {
+          collapsedEpisodes: collapsedManhuaEpisodes,
+        });
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
         // 视口滚到左上资产带并高亮，别让人去右边找
@@ -4820,15 +4798,8 @@ export default function OmniCanvas() {
           }
           let block = working.find((b) => b.id === plan.id);
           if (!block) {
-            const isChar = plan.kind === "charsheet";
-            const col = working.filter((b) =>
-              b.id.startsWith(isChar ? "charsheet-" : "sceneplate-"),
-            ).length;
-            block = defaultCanvasBlock(
-              "image",
-              ASSET_ORIGIN_X + col * sheetColGap,
-              isChar ? CHAR_SHEET_Y : SCENE_SHEET_Y,
-            );
+            // 落点交给统一排版算，这里给个占位坐标即可
+            block = defaultCanvasBlock("image", MANHUA_CANVAS_LAYOUT.originX, MANHUA_CANVAS_LAYOUT.originY);
             block.id = plan.id;
             block.prompt = plan.prompt;
             block.aspectRatio = "9:16";
@@ -4837,7 +4808,9 @@ export default function OmniCanvas() {
             block.refImageUrl = deriveRefUrl || undefined;
             block.width = 360;
             block.height = 400;
-            working = packAssetSheetPositions([...working, block]);
+            working = layoutManhuaCanvasBlocks([...working, block], {
+              collapsedEpisodes: collapsedManhuaEpisodes,
+            });
             block = working.find((b) => b.id === plan.id)!;
           } else if (!(block.outputUrl || block.outputUrls?.[0]) || isRegenPlan(plan.id)) {
             // 已有图 + 指定重出 → 按新编译的提示词重跑（清掉旧产物，别让 UI 显示成已完成）
@@ -4985,17 +4958,21 @@ export default function OmniCanvas() {
             }
           }
         }
-        working = layoutManhuaEpisodeReadableChain(
-          packAssetSheetPositions(working),
-          writerFocusEpisode,
-          {
+        /**
+         * readableChain 除了排版还负责给节点盖 @资产 标签，所以留着照跑；
+         * 但坐标以统一排版为准——三套排位互相覆盖正是画布乱的根源，
+         * 让 layoutManhuaCanvasBlocks 做最后一道，谁也别再改坐标。
+         */
+        working = layoutManhuaCanvasBlocks(
+          layoutManhuaEpisodeReadableChain(working, writerFocusEpisode, {
             assetCanon: projectBible?.assetCanon,
             characterSheetUrlById: collectManhuaCharacterSheetUrlById(
               working,
               projectBible?.assetCanon,
             ),
             propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
-          },
+          }),
+          { collapsedEpisodes: collapsedManhuaEpisodes },
         );
         setBlocks(working);
         saveCanvasState(working, canvasEdges);

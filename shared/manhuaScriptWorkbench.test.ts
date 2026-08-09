@@ -17,6 +17,7 @@ import {
   shotIndexesForSegment,
   parseManhuaClipTargetDurationSec,
   parseWorkbenchShotsFromText,
+  pinnedManhuaSegmentCount,
   resolveClipSegmentIndex,
   resolveKeyartShotIndex,
   resolveSegmentClipDurationSec,
@@ -82,18 +83,20 @@ describe("manhuaScriptWorkbench", () => {
         "\n",
       ),
     );
-    // 有分镜表：按每段 3 镜切，不注水到默认 6 段；镜长缺省 5 → 段 15 + 10
-    // 显式传 2.0-fast：这条测的是快速档切段行为，不受默认常量影响
+    // 有分镜表：按每段 3 镜切，不注水到默认 6 段；显式传 2.0-fast 不受默认常量影响。
+    // 5 镜补齐到 6 镜两段满编：尾段留 2 镜会让镜号→段号映射（按 3 镜/段）错位，
+    // 而且那条尾段成片本来就按整段跑、按整段收 172 积分，标 10s 是假的。
     const segsFast = groupShotsIntoSegments(shots, {
       videoModel: "seedance-2.0-fast",
     });
     expect(segsFast.length).toBe(2);
     expect(segsFast[0]?.durationSec).toBe(15);
-    expect(segsFast[1]?.durationSec).toBe(10);
+    expect(segsFast[1]?.durationSec).toBe(15);
     expect(MANHUA_FACTORY_DEFAULT_VIDEO_MODEL).toBe("seedance-2.0-mini");
     expect(manhuaSegmentDurationSec("seedance-2.0-fast")).toBe(15);
     expect(manhuaSegmentDurationSec("gemini-omni-flash")).toBe(10);
-    expect(workbenchShotTotalSec(shots, "seedance-2.0-fast")).toBe(25);
+    // 尾段补满后一集就是 2 段 ×15s；这也是实际会烧出来的秒数
+    expect(workbenchShotTotalSec(shots, "seedance-2.0-fast")).toBe(30);
     expect(workbenchShotTotalSec(shots, "gemini-omni-flash")).toBe(20);
     // 默认骨架：6 段 ×（3 镜×5s 钳 15）= 90s
     expect(workbenchShotTotalSec([], "seedance-2.0-fast")).toBe(90);
@@ -134,6 +137,44 @@ describe("manhuaScriptWorkbench", () => {
       expect(sMini.every((x) => x.durationSec === 15)).toBe(true);
       expect(sMini.every((x) => x.shots.length === MANHUA_KEYARTS_PER_SEGMENT_MIN)).toBe(true);
     }
+  });
+
+  /**
+   * 非钉段（2.0 / 2.0-fast）不该被 24 镜的固定上限卡住：长档一集 12 段要 36 镜，
+   * 卡在 24 镜只能出 8 段。镜数不是 3 的倍数时也要补齐，否则尾段不足 3 镜，
+   * 镜号→段号映射（按 3 镜/段）会把镜绑到隔壁段。
+   */
+  it("非钉段按长档上限收镜，并补齐到 3 的倍数", () => {
+    const shots = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        index: i + 1,
+        durationSec: 0,
+        cameraZh: "中景",
+        actionZh: `动作 ${i + 1}`,
+      }));
+    const group = (n: number) =>
+      groupShotsIntoSegments(shots(n), {
+        videoModel: "seedance-2.0-fast",
+        segmentCount: pinnedManhuaSegmentCount("seedance-2.0-fast"),
+      });
+
+    // 13 镜 → 补到 15 镜 5 段，尾段不再是孤零零 1 镜
+    const s13 = group(13);
+    expect(s13.length).toBe(5);
+    expect(s13.every((x) => x.shots.length === MANHUA_KEYARTS_PER_SEGMENT_MIN)).toBe(true);
+
+    // 24 镜 → 8 段，正好整除不补不截
+    const s24 = group(24);
+    expect(s24.length).toBe(8);
+    expect(s24.reduce((sum, x) => sum + x.shots.length, 0)).toBe(24);
+
+    // 36 镜 → 长档满编 12 段，不再被 24 镜上限截成 8 段
+    const s36 = group(36);
+    expect(s36.length).toBe(12);
+    expect(s36.every((x) => x.shots.length === MANHUA_KEYARTS_PER_SEGMENT_MIN)).toBe(true);
+
+    // 超过长档上限才截：40 镜仍是 12 段
+    expect(group(40).length).toBe(12);
   });
 
   it("钉段后镜→段映射与 groupShotsIntoSegments 一致", () => {

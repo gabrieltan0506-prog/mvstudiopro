@@ -111,8 +111,35 @@ describe("manhuaCloudDraftSync dual-path", () => {
     expect(restoreWith("seedance-2.0-mini")[0]?.videoModel).toBe("seedance-2.0-mini");
     expect(restoreWith("seedance-2.5")[0]?.videoModel).toBe("seedance-2.5");
     expect(restoreWith("minimax-hailuo-3")[0]?.videoModel).toBe("minimax-hailuo-3");
-    // 节点和会话都没有引擎（旧草稿）才走兜底默认档
-    expect(restoreWith(undefined)[0]?.videoModel).toBe(MANHUA_FACTORY_DEFAULT_VIDEO_MODEL);
+    // 节点和会话都没有引擎 = 默认档改 mini 之前存的旧稿，继续回退 fast 保持原语义，
+    // 否则一次恢复就把用户原本的 fast 静默迁成 mini（段表与单段价都会变）
+    expect(restoreWith(undefined)[0]?.videoModel).toBe("seedance-2.0-fast");
+  });
+
+  it("有任一节点盖过引擎 = 新格式草稿，缺章节点走新默认 mini 而非旧稿 fast", () => {
+    const mk = (id: string, videoModel?: string) => ({
+      id,
+      kind: "video" as const,
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 360,
+      prompt: "成片",
+      ...(videoModel ? { videoModel } : {}),
+    });
+    const restored = cloudDraftBlocksToCanvas(
+      buildManhuaCloudDraftPayload({
+        clientUpdatedAt: "2026-08-09T00:00:00.000Z",
+        writerSession: { topic: "t" },
+        blocks: [mk("clip-e01-s01", "seedance-2.5"), mk("clip-e01-s02")],
+        edges: [],
+      }).canvas.blocks,
+      {},
+    );
+    expect(restored.find((b) => b.id === "clip-e01-s01")?.videoModel).toBe("seedance-2.5");
+    expect(restored.find((b) => b.id === "clip-e01-s02")?.videoModel).toBe(
+      MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
+    );
   });
 
   it("节点自带的引擎优先于会话，旧草稿才靠会话猜", () => {

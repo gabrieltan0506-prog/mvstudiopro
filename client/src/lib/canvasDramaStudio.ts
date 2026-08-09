@@ -1508,7 +1508,9 @@ export function resolveManhuaFragmentRunTargets(
   if (!keyarts.length) {
     return { targetBlockIds: [], forceFromStage: "keyart" };
   }
-  const missingKeyarts = keyarts.filter((k) => !mediaUrlOf(k));
+  // 只有垫图（refImageUrl）不算已出静帧：mediaUrlOf 把垫图也算进去，
+  // 会让「有参考图但还没生成」的静帧被判成不缺，段直接从 clip 阶段起跑，成片没有静帧可用。
+  const missingKeyarts = keyarts.filter((k) => !hasRenderedOutput(k));
   const primary = keyarts[0]!;
   if (!clip) {
     return {
@@ -1582,10 +1584,19 @@ export function queuedManhuaClipBlocks(
   const pinned = pinnedManhuaSegmentCount(
     resolveEpisodeClipVideoModel(blocks, episodeIndex ?? 1, videoModel),
   );
+  const isSegmented = (b: CanvasBlock) =>
+    /-g\d{2,}(?:-|$)/i.test(b.id) || /-s\d{2,}(?:-|$)/.test(b.id);
+  // 已出片的旧整集 clip 不再删（见 staleClipIds），但段级链一旦铺出来它就没人消费了。
+  // 段号解析会把它回落成第 1 段，不挡掉的话它会混进队列与分母，重烧一次整集。
+  const segmentedEpisodes = new Set(
+    blocks
+      .filter((b) => b.id.startsWith("clip-") && !b.archivedFromPreviousScript && isSegmented(b))
+      .map((b) => getBlockEpisodeIndex(b) ?? 1),
+  );
   return blocks.filter((b) => {
     if (!b.id.startsWith("clip-") || b.archivedFromPreviousScript) return false;
+    if (!isSegmented(b) && segmentedEpisodes.has(getBlockEpisodeIndex(b) ?? 1)) return false;
     if (!pinned) return true;
-    // 旧整集 clip 没有 -g/-s 段号，解析回落到 1，不会被这里误挡
     return resolveClipLocalSegmentIndex(b.id, b.prompt, ep) <= pinned;
   });
 }
@@ -1709,18 +1720,32 @@ function resolveEpisodeClipVideoModel(
   episodeIndex: number | null,
   explicit?: string | null,
 ): string {
-  const stampedIn = (ep: number | null) =>
-    blocks.find(
-      (b) =>
-        b.kind === "video" &&
-        b.id.startsWith("clip-") &&
-        !b.archivedFromPreviousScript &&
-        (ep == null || (getBlockEpisodeIndex(b) ?? 1) === ep) &&
-        isCanvasProductVideoModel(b.videoModel),
-    )?.videoModel;
-  // 本集还没铺段时按同项目其它集的档走：一部剧只该有一个引擎，
-  // 掉回兜底默认会让第 2 集起悄悄从 2.5 变 mini，段表与扣费全跟着变
-  const stamped = stampedIn(episodeIndex) ?? stampedIn(null);
+  const stampedClips = blocks.filter(
+    (b) =>
+      b.kind === "video" &&
+      b.id.startsWith("clip-") &&
+      !b.archivedFromPreviousScript &&
+      isCanvasProductVideoModel(b.videoModel),
+  );
+  const stampedIn = (ep: number) =>
+    stampedClips.find((b) => (getBlockEpisodeIndex(b) ?? 1) === ep)?.videoModel;
+  /**
+   * 本集还没铺段时按画布上其它集的档走：一部剧只该有一个引擎，
+   * 掉回兜底默认会让第 2 集起悄悄从 2.5 变 mini，段表与扣费全跟着变。
+   *
+   * 前提是一个画布只承载一部剧——系列铺板整体替换 blocks，确认导演前也会 strip 旧产物，
+   * 所以不存在两部剧共存。CanvasBlock 上没有 series/project 字段，真要共存也无从区分；
+   * 这里取集号最近的一条而非任意第一条，至少让残留节点不会跨得太远。
+   */
+  const nearestStamped = episodeIndex == null
+    ? stampedClips[0]?.videoModel
+    : [...stampedClips]
+        .sort(
+          (a, b) =>
+            Math.abs((getBlockEpisodeIndex(a) ?? 1) - episodeIndex) -
+            Math.abs((getBlockEpisodeIndex(b) ?? 1) - episodeIndex),
+        )[0]?.videoModel;
+  const stamped = (episodeIndex == null ? undefined : stampedIn(episodeIndex)) ?? nearestStamped;
   return String(explicit || stamped || "").trim() || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
 }
 
@@ -2286,8 +2311,10 @@ export function ensureManhuaFragmentClips(
     ...existingSegClips
       .filter((c) => !keepSegClipIds.has(c.id) && !hasRenderedOutput(c))
       .map((c) => c.id),
-    // 已铺段级成片后，丢掉无 -g/-s 的旧整集 clip
-    ...(legacyClip && keepSegClipIds.size ? [legacyClip.id] : []),
+    // 已铺段级成片后，丢掉无 -g/-s 的旧整集 clip；但它若已出过整集成片，同样只停放不删
+    ...(legacyClip && keepSegClipIds.size && !hasRenderedOutput(legacyClip)
+      ? [legacyClip.id]
+      : []),
   ]);
 
   const refreshedById = new Map(

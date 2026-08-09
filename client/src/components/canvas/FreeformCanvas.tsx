@@ -13,6 +13,7 @@ import {
   collectUpstreamTexts,
   collectVisionImages,
   defaultCanvasBlock,
+  DEFAULT_CANVAS_VIDEO_MODEL,
   IMAGE_MODEL_OPTIONS,
   makeCanvasBlockId,
   resolveBlockHandoffText,
@@ -2046,11 +2047,12 @@ export default function FreeformCanvas({
                             <select
                               value={
                                 block.videoModel === "seedance-2.0" ||
+                                block.videoModel === "seedance-2.0-mini" ||
                                 block.videoModel === "seedance-2.5" ||
                                 block.videoModel === "minimax-hailuo-3" ||
                                 block.videoModel === "happyhorse-1.1"
                                   ? block.videoModel
-                                  : "seedance-2.0-fast"
+                                  : DEFAULT_CANVAS_VIDEO_MODEL
                               }
                               onChange={(e) => {
                                 const next = e.target.value as CanvasBlock["videoModel"];
@@ -2070,7 +2072,7 @@ export default function FreeformCanvas({
                             </select>
                           </label>
                           <div className="text-[10px] leading-5 text-white/50">
-                            {block.videoModel === "seedance-2.0-mini"
+                            {(block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL) === "seedance-2.0-mini"
                               ? "Seedance 2.0 mini（草稿档）：最省，多图参考，最长约 15s；不支持 1080p"
                               : block.videoModel === "seedance-2.0"
                                 ? "Seedance 2.0：多图参考 + 运镜/动作/对白，最长约 15s"

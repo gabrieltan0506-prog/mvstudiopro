@@ -681,6 +681,76 @@ describe("canvasDramaStudio factory", () => {
     expect(queued).toEqual(["clip-e01-g01-a", "clip-e01-g04-a"]);
   });
 
+  /**
+   * 上一条只验了排队口径，抓不到真实删除——铺链函数才是动手删节点的地方。
+   * 这里走 ensureManhuaFragmentClips 真实路径：mini 六段改选 2.5 后，
+   * 掉出新段表的 g05 已出片（172 积分）、旧整集成片也已出片，两者都只能停放；
+   * 只有没产出的 g06 空壳该清掉。
+   */
+  it("ensureManhuaFragmentClips 变窄改档不删已出片的段与旧整集成片", () => {
+    const { blocks, edges } = spawnManhuaDramaStudio({
+      topic: "江湖刀客雨夜客栈",
+      episodeIndex: 1,
+      videoModel: "seedance-2.0-mini" as never,
+    });
+    const reverse = blocks.find((b) => b.id.startsWith("reverse-"))!;
+    const outputText = Array.from(
+      { length: 18 },
+      (_, i) => `${i + 1}. 第 ${i + 1} 镜：刀客在客栈内推进动作`,
+    ).join("\n");
+    const expanded = expandManhuaShotKeyartsAfterReverse(
+      blocks.map((b) => (b.id === reverse.id ? { ...b, status: "done" as const, outputText } : b)),
+      edges,
+      reverse.id,
+    );
+    const withKeyarts = expanded.blocks.map((b) =>
+      b.id.startsWith("keyart-")
+        ? { ...b, status: "done" as const, outputUrl: `https://example.com/${b.id}.jpg` }
+        : b,
+    );
+    // 先按 mini 铺满六段
+    const mini = ensureManhuaFragmentClips(withKeyarts, expanded.edges, 1, {
+      videoModel: "seedance-2.0-mini",
+    });
+    const segIds = mini.blocks
+      .filter((b) => b.id.startsWith("clip-") && /-g\d{2,}/i.test(b.id))
+      .map((b) => b.id);
+    expect(segIds.length).toBe(6);
+
+    const renderedSeg5 = segIds[4]!;
+    const emptySeg6 = segIds[5]!;
+    const legacyClipId = "clip-e01-legacy";
+    const staged = [
+      ...mini.blocks.map((b) =>
+        b.id === renderedSeg5
+          ? { ...b, status: "done" as const, outputUrl: "https://cdn.example/g05.mp4" }
+          : b,
+      ),
+      {
+        ...defaultCanvasBlock("video", 0, 0),
+        id: legacyClipId,
+        episodeIndex: 1,
+        videoModel: "seedance-2.0-mini" as const,
+        status: "done" as const,
+        outputUrl: "https://cdn.example/whole-episode.mp4",
+      },
+    ];
+
+    const narrowed = ensureManhuaFragmentClips(staged, mini.edges, 1, {
+      videoModel: "seedance-2.5",
+    });
+    const keptIds = new Set(narrowed.blocks.map((b) => b.id));
+    expect(keptIds.has(renderedSeg5)).toBe(true);
+    expect(keptIds.has(legacyClipId)).toBe(true);
+    expect(keptIds.has(emptySeg6)).toBe(false);
+
+    // 停放的两条都不能再排队，否则重跑按 2.5 白烧
+    const queuedIds = queuedManhuaClipBlocks(narrowed.blocks, 1, "seedance-2.5").map((b) => b.id);
+    expect(queuedIds).not.toContain(renderedSeg5);
+    expect(queuedIds).not.toContain(legacyClipId);
+    expect(queuedIds.length).toBe(4);
+  });
+
   it("本集还没铺段时跟同项目其它集的引擎，不掉回兜底默认", () => {
     const ep1Clip: CanvasBlock = {
       ...defaultCanvasBlock("video", 0, 0),
@@ -1843,9 +1913,12 @@ slow dolly in, soft rain, trembling hand
         },
       });
 
-      // s02 更快：应先于 s01 出现在渐进 publish 里（若严格串行则必为 s01→s02→s03）
+      // s02 更快：应先于其它段出现在渐进 publish 里（若严格串行则必为 s01→s02→s03）。
+      // 只看带段号的静帧：画布里还有不带段号的初始静帧节点，机器一忙 setTimeout 失准，
+      // 它会插到 doneOrder 最前面，让「第一个完成的必须是 s02」按挂钟顺序随机翻车。
       expect(doneOrder.length).toBeGreaterThanOrEqual(3);
-      expect(doneOrder[0]).toMatch(/-s02/);
+      const segmentedDoneOrder = doneOrder.filter((id) => /-s\d{2}/.test(id));
+      expect(segmentedDoneOrder[0]).toMatch(/-s02/);
       expect(Math.max(...inFlightPeaks)).toBeGreaterThanOrEqual(2);
       // 批量并行：可加软一致提示；若节点已有垫图/融图，不得改成 generate 并清空 refs
       const keyartCalls = spy.mock.calls.filter(([_, b]) => b.id.startsWith("keyart-"));

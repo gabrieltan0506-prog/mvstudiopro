@@ -240,6 +240,39 @@ export type ManhuaWorkbenchSegment = {
   shots: ManhuaWorkbenchShot[];
 };
 
+/** 补足占位镜到 total 张（起幅/戏核/落幅骨架之外的段内补镜） */
+function padWorkbenchShotsTo(
+  shots: ManhuaWorkbenchShot[],
+  total: number,
+): ManhuaWorkbenchShot[] {
+  const list = [...shots];
+  while (list.length < total) {
+    const i = list.length;
+    list.push({
+      index: i + 1,
+      durationSec: 0,
+      cameraZh: DEFAULT_CAMERAS[i % DEFAULT_CAMERAS.length]!,
+      actionZh: `段内补镜：承接上镜情绪与空间，推进可读动作 ${i + 1}`,
+    });
+  }
+  return list;
+}
+
+/**
+ * 该引擎在所有长档下最多需要多少张按镜静帧。
+ *
+ * 2.0 / 2.0-fast 长档是 12 段，钉段引擎按各自段表；一律 ×3 镜/段。
+ */
+export function maxManhuaShotsForVideoModel(videoModel?: string | null): number {
+  const maxSegs = Math.max(
+    resolveManhuaSeedanceLayoutProfile(videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL, "short")
+      .segmentMax,
+    resolveManhuaSeedanceLayoutProfile(videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL, "long")
+      .segmentMax,
+  );
+  return Math.max(1, maxSegs) * MANHUA_KEYARTS_PER_SEGMENT_MIN;
+}
+
 /**
  * 将分镜列表收成段：无分镜时默认 6 段 × 3 静帧；有分镜表则按每段下限切，不强行注水。
  *
@@ -251,6 +284,9 @@ export type ManhuaWorkbenchSegment = {
  * `manhuaSegmentShotIndexes`（段→镜）、画布铺 keyart 的起始镜号都按它算。一旦某段
  * 装了 4 镜，这些映射会各算各的，镜就绑到错误的段成片与可拍表上。超出的镜宁可截掉，
  * 也不能让映射对不上——真要留住它们，得让上游按引擎段数生成 3N 张静帧。
+ *
+ * 不钉段（2.0 / 2.0-fast 吃长档）时同样要守住 3 镜/段：按该引擎长档段数取镜数上限，
+ * 尾段不足 3 镜就补齐。
  */
 export function groupShotsIntoSegments(
   shots: ManhuaWorkbenchShot[],
@@ -272,19 +308,21 @@ export function groupShotsIntoSegments(
       Math.min(16, Math.floor(opts?.segmentCount ?? bounds.default)),
     );
     const total = targetSegs * per;
-    while (list.length < total) {
-      const i = list.length;
-      list.push({
-        index: i + 1,
-        durationSec: 0,
-        cameraZh: DEFAULT_CAMERAS[i % DEFAULT_CAMERAS.length]!,
-        actionZh: `段内补镜：承接上镜情绪与空间，推进可读动作 ${i + 1}`,
-      });
-    }
-    list = list.slice(0, total);
+    list = padWorkbenchShotsTo(list, total).slice(0, total);
     pinnedSegs = targetSegs;
   } else {
-    list = list.slice(0, MANHUA_SHOT_KEYART_MAX);
+    /**
+     * 非钉段（2.0 / 2.0-fast）的镜数上限得按该引擎**长档**的段数算。
+     * 用固定的 MANHUA_SHOT_KEYART_MAX=24 会把长档 12 段（需 36 镜）截到 8 段，
+     * 用户选了长档却只拿到三分之二集。
+     */
+    list = list.slice(0, maxManhuaShotsForVideoModel(opts?.videoModel));
+    /**
+     * 再补齐到 3 的倍数：镜号→段号映射（resolveSegmentIndexFromShotIndex）按每段 3 镜算，
+     * 尾段只有 1、2 镜时映射就会错位，镜绑到隔壁段的成片上。
+     */
+    const remainder = list.length % per;
+    if (remainder) list = padWorkbenchShotsTo(list, list.length + (per - remainder));
   }
   list = list.map((s, i) => ({ ...s, index: i + 1 }));
 
