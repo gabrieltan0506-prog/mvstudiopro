@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { growthPlatformValues, type GrowthPlatform } from "@shared/growth";
 import type { PlatformTrendCollection } from "./trendCollector";
 
+// 用例体内 await import("./trendStore") 大模块，导入成本计入用例预算，全量并发下 5s 默认线会被踩爆（2026-08-10 实爆过）
+vi.setConfig({ testTimeout: 60_000 });
+
 const ORIGINAL_STORE_DIR = process.env.GROWTH_STORE_DIR;
 const TEST_PLATFORMS = ["douyin", "xiaohongshu", "kuaishou", "bilibili", "toutiao", "weixin_channels"] as const;
 

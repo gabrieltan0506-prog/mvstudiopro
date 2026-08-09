@@ -3,6 +3,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+// 用例体内 await import("./trendCollector")（3000+ 行），导入成本计入用例预算，全量并发下 5s 默认线会被踩爆
+vi.setConfig({ testTimeout: 60_000 });
+
 vi.mock("./trendAdaptiveConfig", () => ({
   getAdaptiveRouteDecision: vi.fn(async (_platform, routeKey, defaults = {}) => ({
     enabled: true,
