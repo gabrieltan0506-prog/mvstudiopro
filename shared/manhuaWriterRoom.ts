@@ -7,7 +7,10 @@ import {
   composeManhuaPropDemoPromptBlock,
   recommendManhuaContentLanesFromTopic,
 } from "./manhuaScenePropDemoCatalog.js";
-import { parseWriterTableLine } from "./manhuaWriterAssetCanon.js";
+import {
+  parseWriterTableLine,
+  stripMarkdownTableHeaderLines,
+} from "./manhuaWriterAssetCanon.js";
 import { buildAncientArchetypePromptBlock } from "./manhuaAncientArchetypeLibrary.js";
 import {
   formatPlotPurposeCameraBlock,
@@ -37,6 +40,15 @@ export const MANHUA_WRITER_EPISODE_DEFAULT = 3;
  * （编剧手写、其他工具产出）常用「人物卡」「道具·服装」这类近义写法。标题对
  * 不上时整表解析成空数组，人物/道具/场景三条硬拦会全部误报。
  */
+/**
+ * 标题类小节别名：平台自己扩写只会吐第一个写法，别名是给外部正版剧本包用的。
+ * 认不出不会报错，只会静默丢字段（剧名/梗概为空、集标题退化成「第N集」），
+ * 所以宁可多认几种常见写法。
+ */
+const WRITER_SERIES_TITLE_HEADING_RE = "系列标题|剧名|作品名";
+const WRITER_LOGLINE_HEADING_RE = "一句话系列梗概|一句话梗概|系列梗概|一句话简介|梗概";
+const WRITER_EPISODE_TITLE_HEADING_RE = "集标题|本集标题|标题";
+
 const WRITER_CHARACTERS_HEADING_RE = "人物表|人物卡|角色表|角色卡";
 const WRITER_PROPS_HEADING_RE = "道具表|道具卡|道具[·・]服装|服化道";
 const WRITER_LOCATIONS_HEADING_RE = "场景表|场景卡|场景设定";
@@ -254,11 +266,11 @@ export function deriveSeriesTitleFromTopic(topic: string): string {
   return candidate.slice(0, 36);
 }
 
-function extractMarkdownSectionLine(md: string, heading: string): string {
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const sameLine = md.match(new RegExp(`##\\s*${escaped}\\s*[:：]\\s*([^\\n#]+)`, "i"))?.[1];
+function extractMarkdownSectionLine(md: string, headingAliasRe: string): string {
+  const alias = `(?:${headingAliasRe})`;
+  const sameLine = md.match(new RegExp(`##\\s*${alias}\\s*[:：]\\s*([^\\n#]+)`, "i"))?.[1];
   if (sameLine) return cleanWriterTitleLine(sameLine);
-  const nextLine = md.match(new RegExp(`##\\s*${escaped}\\n+([^\\n#]+)`, "i"))?.[1];
+  const nextLine = md.match(new RegExp(`##\\s*${alias}\\n+([^\\n#]+)`, "i"))?.[1];
   return cleanWriterTitleLine(nextLine || "");
 }
 
@@ -270,12 +282,14 @@ export function parseManhuaWriterPack(
 ): ManhuaWriterPack {
   const md = String(raw || "").trim();
   const n = clampWriterEpisodeCount(episodeCount);
-  const parsedTitle = stripSeriesTitleTrailingNoise(extractMarkdownSectionLine(md, "系列标题"));
+  const parsedTitle = stripSeriesTitleTrailingNoise(
+    extractMarkdownSectionLine(md, WRITER_SERIES_TITLE_HEADING_RE),
+  );
   const topicFallback = deriveSeriesTitleFromTopic(opts?.topic || "");
   const seriesTitle = !isPlaceholderSeriesTitle(parsedTitle)
     ? parsedTitle.slice(0, 48)
     : topicFallback || "未命名系列";
-  const logline = extractMarkdownSectionLine(md, "一句话系列梗概").slice(0, 80);
+  const logline = extractMarkdownSectionLine(md, WRITER_LOGLINE_HEADING_RE).slice(0, 80);
   const charactersMd = extractWriterTableSection(md, WRITER_CHARACTERS_HEADING_RE);
   const propsMd = extractWriterTableSection(md, WRITER_PROPS_HEADING_RE);
   const locationsMd = extractWriterTableSection(md, WRITER_LOCATIONS_HEADING_RE);
@@ -285,9 +299,10 @@ export function parseManhuaWriterPack(
     const block =
       md.match(new RegExp(`##\\s*第${i}集\\n+([\\s\\S]*?)(?=\\n##\\s*第\\d+集|\\n##\\s[^第]|$)`))?.[1] ||
       "";
+    const epTitleAlias = `(?:${WRITER_EPISODE_TITLE_HEADING_RE})`;
     const titleRaw =
-      block.match(/###\s*集标题\s*[:：]\s*([^\n#]+)/)?.[1] ||
-      block.match(/###\s*集标题\n+([^\n#]+)/)?.[1] ||
+      block.match(new RegExp(`###\\s*${epTitleAlias}\\s*[:：]\\s*([^\\n#]+)`))?.[1] ||
+      block.match(new RegExp(`###\\s*${epTitleAlias}\\n+([^\\n#]+)`))?.[1] ||
       "";
     const title = cleanWriterTitleLine(titleRaw) || `第${i}集`;
     const body =
@@ -312,8 +327,8 @@ export function parseManhuaWriterPack(
 
 /** 按人物/场景名取并集：旧稿在前保设定不变，新稿里没见过的名字追加在后 */
 function mergeWriterTableMd(prevMd: string, nextMd: string): string {
-  const prevLines = String(prevMd || "").split("\n");
-  const nextLines = String(nextMd || "").split("\n");
+  const prevLines = stripMarkdownTableHeaderLines(String(prevMd || "").split("\n"));
+  const nextLines = stripMarkdownTableHeaderLines(String(nextMd || "").split("\n"));
   if (!prevLines.some((l) => l.trim())) return nextMd;
   const seen = new Set(
     prevLines

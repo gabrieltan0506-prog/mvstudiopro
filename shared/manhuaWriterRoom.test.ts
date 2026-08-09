@@ -162,6 +162,54 @@ describe("manhuaWriterRoom", () => {
     if (res.ok) return;
     expect(res.error).toMatch(/分集|第1集/);
   });
+
+  /**
+   * 外部正版剧本包的真实写法：繁体正文、`## 一句话梗概`、`### 标题`、
+   * 表格式人物卡。平台自己扩写不会这么写，认不出来是静默丢字段。
+   */
+  it("imports an external pack using heading aliases and traditional Chinese", () => {
+    const raw = `## 系列标题
+雁门照山河
+
+## 一句话梗概
+古籍修復師謝無咎因殘玉兩度穿越，親歷雁門換甲案。
+
+## 人物卡
+| 角色 | 说明 |
+|---|---|
+| 谢无咎 | 现代24岁古籍修复师 |
+| 谢明彰 | 雁门守将，谢无咎之父 |
+
+## 第1集
+### 标题
+第01集　血落殘玉
+
+### 本集剧情
+- 冷開場：現代修復燈下，謝無咎的血滲入殘玉。
+- 尾鉤：一輛載著四十七箱「良甲」的車，悄悄駛出軍營。
+
+## 第2集
+### 标题
+第02集　認錯人不要緊
+
+### 本集剧情
+- 冷開場：謝無咎脫口喊「爹」，立刻被軍士按進泥裡。
+- 尾鉤：軍庫封條無損，庫內良甲卻已全被換空。
+`;
+    const res = importManhuaWriterPackFromText(raw, { episodeCount: 2 });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.pack.seriesTitle).toBe("雁门照山河");
+    // `## 一句话梗概` 也要认，否则 logline 静默为空
+    expect(res.pack.logline).toContain("古籍修复师谢无咎");
+    // `### 标题` 也要认，否则退化成「第1集」，正片名丢失
+    expect(res.pack.episodes.map((e) => e.title)).toEqual([
+      "第01集 血落残玉",
+      "第02集 认错人不要紧",
+    ]);
+    // 表格人物卡整段保留，供下游资产表解析
+    expect(res.pack.charactersMd).toContain("谢无咎");
+  });
 });
 
 describe("局部改写", () => {
