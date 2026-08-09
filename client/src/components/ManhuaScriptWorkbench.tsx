@@ -1405,8 +1405,9 @@ export default function ManhuaScriptWorkbench({
       segmentPlanReady,
       keyartsReady,
       cueSheetReady,
+      // 完成度判定只认真实产出：mediaUrl 会回退垫图，旧草稿/失败重跑会被当成「已有成片」
       hasClip: episodeClips.some(
-        (b) => b.status === "done" && Boolean(mediaUrl(b)),
+        (b) => b.status === "done" && Boolean(clipOutputUrl(b)),
       ),
     };
   }, [
@@ -1550,8 +1551,9 @@ export default function ManhuaScriptWorkbench({
         };
       }
       if (stage === "clip") {
+        // 阶段状态同理：垫图不算出片
         const has = episodeClips.some(
-          (b) => b.status === "done" && b.manhuaClipQuality?.status === "passed" && mediaUrl(b),
+          (b) => b.status === "done" && b.manhuaClipQuality?.status === "passed" && clipOutputUrl(b),
         );
         return {
           stage,
@@ -5694,7 +5696,8 @@ export default function ManhuaScriptWorkbench({
         </div>
         <div className="flex gap-2 overflow-x-auto pb-0.5">
           {filmstripSegments.map((seg) => {
-            const clipUrl = mediaUrl(seg.clip);
+            // 质检通过 / 仍采用 都是「已出片」判定，只能认真实产出，不能吃垫图
+            const clipUrl = clipOutputUrl(seg.clip);
             const qc = seg.clip?.manhuaClipQuality;
             const clipPassed = seg.clip?.status === "done" && qc?.status === "passed" && Boolean(clipUrl);
             const clipAccepted =
@@ -5860,16 +5863,19 @@ export default function ManhuaScriptWorkbench({
             const epClips = blocks.filter(
               (b) => b.id.startsWith("clip-") && (getBlockEpisodeIndex(b) ?? 1) === ep,
             );
+            // 集级 ready 只认真实产出
             const epClipReady = epClips.find(
               (b) =>
                 b.status === "done" &&
                 b.manhuaClipQuality?.status === "passed" &&
-                Boolean(mediaUrl(b)),
+                Boolean(clipOutputUrl(b)),
             );
             const clipReady = Boolean(epClipReady);
             const clipFailed = epClips.some((b) => b.manhuaClipQuality?.status === "failed");
+            // 缩略图可以退静帧，但退的是静帧本身，不让垫图反过来参与上面的完成判定
             const thumb =
-              (epClipReady ? mediaUrl(epClipReady) : undefined) || epKeys.map(mediaUrl).find(Boolean);
+              (epClipReady ? clipOutputUrl(epClipReady) : undefined) ||
+              epKeys.map(mediaUrl).find(Boolean);
             const stillReady = epKeys.some((b) => Boolean(mediaUrl(b)));
             const bound = bibleBoundEpisodes.includes(ep);
             const on = ep === focusEpisode;

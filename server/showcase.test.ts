@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// 用例体内 await import 大模块（drizzle/schema、routers），导入成本计入用例预算，5s 默认线全量跑时会被踩爆
+vi.setConfig({ testTimeout: 60_000 });
+
 // Mock getDb
 const mockDb = {
   select: vi.fn().mockReturnThis(),

@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 
+// 用例体内 await import 大模块，transform/实例化成本计入用例预算，全量跑时 5s 默认线会被踩爆
+vi.setConfig({ testTimeout: 60_000 });
+
 describe("Phase 28: Watermark + Kling + Suno fixes", () => {
 
   // ─── 1. Image watermark utility ────────────────────────

@@ -58,15 +58,66 @@ export const CANVAS_VIDEO_CREDITS_CLIP_LONG = 240;
  * @see https://openrouter.ai/bytedance/seedance-2.0
  */
 export const CANVAS_VIDEO_CREDITS_CLIP_1080P = 268;
-export const CANVAS_VIDEO_CREDITS_CLIP_2K = 472;
+/** 2K 限时特价 **388**（原 472，用户 2026-08-09 拍板）。2K 只能靠超分交付，见下方 4K 注释 */
+export const CANVAS_VIDEO_CREDITS_CLIP_2K = 388;
 /**
- * 4K 零售 **900**（用户 2026-08-09 拍板，原 1062）。
+ * 4K 限时特价 **688**（用户 2026-08-09 拍板；原 1062 → 900 → 688）。
  *
- * 1062 是按「像素比外推」算出的成本 $20.41 定的；实测 EvoLink 4K 只要 $1.0126/秒，
- * 15 秒 $15.19 ≈ 168 积分成本，外推值高估了 26%，导致 4K 被定得过贵。
- * 900 对应毛利约 81%，与其余档位大致齐平。
+ * 1062 是按「像素比外推」的成本 $20.41 定的；实测 EvoLink 原生 4K 只要 $1.0126/秒，
+ * 15 秒 $15.19 ≈ 168 积分，外推值高估 26%。
+ *
+ * 而走超分之后成本还要再掉一个数量级：720p 生成 $2.98 + 超分到 4K $0.43 = 15 秒
+ * 约 **38 积分**，688 对应约 **18 倍**；2K 同理，成本约 35 积分，388 对应约 **11 倍**。
+ * 相比之下原生 4K 生成成本 168 积分，同卖 688 只有 **4.1 倍** —— 所以 2K/4K 应优先走
+ * 超分链路（且超分模型是字节自研、专门对 Seedance 调过，时序稳定不闪不糊）。
  */
-export const CANVAS_VIDEO_CREDITS_CLIP_4K = 900;
+export const CANVAS_VIDEO_CREDITS_CLIP_4K = 688;
+
+/**
+ * 视频超分（WaveSpeed · ByteDance Video Upscaler）零售：**按秒**，不按条。
+ *
+ * 为什么不能按条：真实用法是**整集合成后跑一次**（2.5 一集 4×30 ≈ 120 秒），
+ * 没人愿意每 30 秒一条分别提交。上游本身也是纯按秒收，不分条：
+ * 2K $0.0144/秒、4K $0.0288/秒，最低按 5 秒计、单任务最多计 600 秒。
+ *
+ * 上游成本折积分（$1≈¥7.2，1 积分≈¥0.65）：2K 约 0.16 积分/秒、4K 约 0.32 积分/秒。
+ * 下面两个费率按约 12.6 倍定，一集 120 秒因此是 2K 240 / 4K 480 积分。
+ * **改这两个常量即可调价**，无需动逻辑。
+ */
+export const CANVAS_VIDEO_UPSCALE_CREDITS_PER_SEC_2K = 2;
+export const CANVAS_VIDEO_UPSCALE_CREDITS_PER_SEC_4K = 4;
+/** 与上游一致：不足 5 秒按 5 秒计，超过 600 秒按 600 秒封顶 */
+export const CANVAS_VIDEO_UPSCALE_MIN_BILLED_SEC = 5;
+export const CANVAS_VIDEO_UPSCALE_MAX_BILLED_SEC = 600;
+
+/**
+ * 自由画布加价系数 **1.1**（用户 2026-08-09 拍板）。
+ *
+ * 自由画布是散客单条，漫剧是一次好几集的批量——批发价与零售价不该同价。
+ * 只作用于自由画布单条，漫剧整集链路按原价。
+ */
+export const CANVAS_FREEFORM_RETAIL_MULTIPLIER = 1.1;
+
+export function canvasVideoUpscaleCredits(
+  target: "2k" | "4k",
+  durationSec: number,
+  opts?: { freeform?: boolean },
+): number {
+  const raw = Number(durationSec);
+  const sec = Math.min(
+    CANVAS_VIDEO_UPSCALE_MAX_BILLED_SEC,
+    Math.max(
+      CANVAS_VIDEO_UPSCALE_MIN_BILLED_SEC,
+      Number.isFinite(raw) && raw > 0 ? Math.ceil(raw) : 0,
+    ),
+  );
+  const rate =
+    target === "4k"
+      ? CANVAS_VIDEO_UPSCALE_CREDITS_PER_SEC_4K
+      : CANVAS_VIDEO_UPSCALE_CREDITS_PER_SEC_2K;
+  const base = sec * rate;
+  return opts?.freeform ? Math.ceil(base * CANVAS_FREEFORM_RETAIL_MULTIPLIER) : base;
+}
 
 /** 画布成片可选画质：默认 720p */
 export const CANVAS_VIDEO_RESOLUTIONS = ["720p", "1080p", "2K", "4K"] as const;
@@ -246,14 +297,26 @@ export function canvasVideoClipCredits(input: CanvasVideoPricingInput): number {
       : CANVAS_VIDEO_CREDITS_CLIP_MINI;
   }
   if (input.isEpisodeSegment) return MANHUA_EPISODE_CREDITS_PER_SEGMENT;
+  // 按引擎钳制后再取价：上游出不来的档不能收钱
+  const base =
+    CANVAS_VIDEO_CREDITS_BY_RESOLUTION[
+      resolveCanvasVideoResolution(input.videoModel, input.resolution)
+    ];
   const sec = Number(input.durationSec);
   if (Number.isFinite(sec) && sec > CANVAS_VIDEO_LONG_CLIP_THRESHOLD_SEC) {
-    return CANVAS_VIDEO_CREDITS_CLIP_LONG;
+    /**
+     * 加长档也要吃画质。
+     *
+     * 原来这里直接 `return CANVAS_VIDEO_CREDITS_CLIP_LONG`，长片判断压在画质查表**之前**，
+     * 于是画质参数被整条吞掉：一条 30 秒 4K 只收 240，而 15 秒 4K 收 688 —— **越长越便宜**，
+     * 用户只要把时长拉过 15 秒就能拿高画质当白菜价。
+     *
+     * 改成按同一倍率抬：`长档 = 该画质基础价 × (240 / 118)`。720p 长档仍是 240 不变，
+     * 不动既有实收；其余画质按各自基础价等比例上去。
+     */
+    return Math.round((base * CANVAS_VIDEO_CREDITS_CLIP_LONG) / CANVAS_VIDEO_CREDITS_CLIP);
   }
-  // 按引擎钳制后再取价：上游出不来的档不能收钱
-  return CANVAS_VIDEO_CREDITS_BY_RESOLUTION[
-    resolveCanvasVideoResolution(input.videoModel, input.resolution)
-  ];
+  return base;
 }
 
 /**

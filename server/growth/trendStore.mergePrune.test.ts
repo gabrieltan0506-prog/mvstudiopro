@@ -4,6 +4,9 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlatformTrendCollection } from "./trendCollector";
 
+// 用例体内 await import("./trendStore") 大模块，导入成本计入用例预算（实测安静机器已 4.8s），全量跑时 5s 默认线会被踩爆
+vi.setConfig({ testTimeout: 60_000 });
+
 /**
  * 回归：热窗裁剪（#995）曾被 writeStore 的「防缩保护」整体换回旧档——
  * merged 池因 prune 变小（< existing），allowLowerTotals 默认 false 就把

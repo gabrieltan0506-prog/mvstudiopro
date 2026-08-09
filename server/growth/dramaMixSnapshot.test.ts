@@ -3,6 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// 用例体内 await import 大模块，导入成本计入用例预算（安静机器已 3.0s），全量并发下 5s 默认线会被踩爆
+vi.setConfig({ testTimeout: 60_000 });
+
 describe("loadDramaMixSnapshotBaseline", () => {
   const envBackup = { ...process.env };
   let tempRoot = "";

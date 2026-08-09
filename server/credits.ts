@@ -72,7 +72,9 @@ async function getTeamMembership(userId: number) {
   return membership.length > 0 ? membership[0] : null;
 }
 
-type DbHandle = NonNullable<Awaited<ReturnType<typeof getDb>>>;
+type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
+/** 只依赖查询方法的结构类型：裸连接与事务句柄（db.transaction 回调的 tx）都能传 */
+type DbHandle = Pick<Db, "update" | "insert" | "select" | "delete">;
 
 /**
  * 个人余额原子扣减：够不够由 SQL 的 WHERE 判，不在 JS 里比大小。
@@ -254,27 +256,32 @@ export async function deductCreditsAmount(
 
   // 先确保余额行存在，否则条件 UPDATE 会扑空
   const balance = await getOrCreateBalance(userId);
-  const newBalance = await tryDeductPersonalCredits(db, userId, cost);
-  if (newBalance !== null) {
-    await db.insert(creditTransactions).values({
+  // 扣减与日志行同事务：拆开写时中间崩溃会「余额已扣、无日志行」，
+  // 幂等重试按 description 里的 chargeKey 查不到账就会再扣一次
+  const newBalance = await db.transaction(async (tx) => {
+    const nb = await tryDeductPersonalCredits(tx, userId, cost);
+    if (nb === null) return null;
+    await tx.insert(creditTransactions).values({
       userId,
       amount: -cost,
       type: "debit",
       source: "usage",
       action: action.slice(0, 50),
       description: description ?? `${action} (${cost} cr)`,
-      balanceAfter: newBalance,
+      balanceAfter: nb,
     });
 
-    await db.insert(stripeUsageLogs).values({
+    await tx.insert(stripeUsageLogs).values({
       userId,
       action: action.slice(0, 50),
       creditsCost: cost,
       isFreeQuota: 0,
       description: description ?? `${action} (${cost} cr, 个人帐户)`,
-      balanceAfter: newBalance,
+      balanceAfter: nb,
     });
-
+    return nb;
+  });
+  if (newBalance !== null) {
     return {
       success: true,
       cost,
@@ -285,11 +292,12 @@ export async function deductCreditsAmount(
 
   const membership = await getTeamMembership(userId);
   if (membership) {
-    const team = await tryDeductTeamCredits(db, membership.id, cost);
-    if (team) {
-      const remainingAllocation = team.allocated - team.used;
+    const team = await db.transaction(async (tx) => {
+      const t = await tryDeductTeamCredits(tx, membership.id, cost);
+      if (!t) return null;
+      const remainingAllocation = t.allocated - t.used;
 
-      await db.insert(stripeUsageLogs).values({
+      await tx.insert(stripeUsageLogs).values({
         userId,
         action: action.slice(0, 50),
         creditsCost: cost,
@@ -303,18 +311,20 @@ export async function deductCreditsAmount(
         }),
       });
 
-      await db.insert(teamActivityLogs).values({
+      await tx.insert(teamActivityLogs).values({
         teamId: membership.teamId,
         userId,
         action: "credits_used",
         description: `使用 ${cost} Credits 进行 ${action}`,
         metadata: JSON.stringify({ action, cost, remainingAllocation }),
       });
-
+      return t;
+    });
+    if (team) {
       return {
         success: true,
         cost,
-        remainingBalance: remainingAllocation,
+        remainingBalance: team.allocated - team.used,
         source: "team" as const,
         teamId: membership.teamId,
         teamMemberId: membership.id,
@@ -634,18 +644,22 @@ export async function refundCredits(
   const newBalance = balance.balance + amount;
   const newLifetimeEarned = balance.lifetimeEarned + amount;
 
-  await db
-    .update(creditBalances)
-    .set({ balance: newBalance, lifetimeEarned: newLifetimeEarned })
-    .where(eq(creditBalances.userId, userId));
+  // 余额与交易行必须同生共死：拆开写时中间崩溃会出现「余额已加、无交易行」，
+  // 退分对账（按 description 里的 refundKey 查交易行）就会误判未退而再打一次
+  await db.transaction(async (tx) => {
+    await tx
+      .update(creditBalances)
+      .set({ balance: newBalance, lifetimeEarned: newLifetimeEarned })
+      .where(eq(creditBalances.userId, userId));
 
-  await db.insert(creditTransactions).values({
-    userId,
-    amount,
-    type: "credit",
-    source: "credit_restore",
-    description: reason,
-    balanceAfter: newBalance,
+    await tx.insert(creditTransactions).values({
+      userId,
+      amount,
+      type: "credit",
+      source: "credit_restore",
+      description: reason,
+      balanceAfter: newBalance,
+    });
   });
 
   console.log(`[Credits] restoreCredits: userId=${userId}, amount=+${amount}, reason=${reason}`);
@@ -699,32 +713,36 @@ export async function refundCreditsForDeductAmount(
     }
 
     const nextUsed = Math.max(0, row.usedCredits - cost);
-    await db
-      .update(teamMembers)
-      .set({ usedCredits: nextUsed })
-      .where(eq(teamMembers.id, teamMemberId));
+    // 额度回冲与两条日志同事务：拆开写时中间崩溃会让退分对账（查 stripeUsageLogs
+    // 里的 refundKey）与实际额度状态对不上，误判后重复回冲
+    await db.transaction(async (tx) => {
+      await tx
+        .update(teamMembers)
+        .set({ usedCredits: nextUsed })
+        .where(eq(teamMembers.id, teamMemberId));
 
-    await db.insert(stripeUsageLogs).values({
-      userId,
-      action: act,
-      creditsCost: 0,
-      isFreeQuota: 0,
-      description: `${reason}（${cost} cr · 团队额度退回 · used ${row.usedCredits}→${nextUsed}）`,
-      balanceAfter: row.allocatedCredits - nextUsed,
-      metadata: JSON.stringify({
-        source: "team_refund",
+      await tx.insert(stripeUsageLogs).values({
+        userId,
+        action: act,
+        creditsCost: 0,
+        isFreeQuota: 0,
+        description: `${reason}（${cost} cr · 团队额度退回 · used ${row.usedCredits}→${nextUsed}）`,
+        balanceAfter: row.allocatedCredits - nextUsed,
+        metadata: JSON.stringify({
+          source: "team_refund",
+          teamId,
+          teamMemberId,
+          restoredCredits: cost,
+        }),
+      });
+
+      await tx.insert(teamActivityLogs).values({
         teamId,
-        teamMemberId,
-        restoredCredits: cost,
-      }),
-    });
-
-    await db.insert(teamActivityLogs).values({
-      teamId,
-      userId,
-      action: "credits_refund",
-      description: `退回 ${cost} Credits（团队分配额度）：${reason}`,
-      metadata: JSON.stringify({ action: act, cost, teamMemberId }),
+        userId,
+        action: "credits_refund",
+        description: `退回 ${cost} Credits（团队分配额度）：${reason}`,
+        metadata: JSON.stringify({ action: act, cost, teamMemberId }),
+      });
     });
   }
 }

@@ -23,9 +23,10 @@ const POLL_INTERVAL_MS = Math.min(
   Math.max(Number(process.env.OPENROUTER_HAILUO_POLL_INTERVAL_MS) || 5_000, 3_000),
   30_000,
 );
+// 与 Seedance 同口径（实测 4K 要 968s，900s 会误杀）：默认 1500s、帽 3600s
 const MAX_POLL_MS = Math.min(
-  Math.max(Number(process.env.OPENROUTER_HAILUO_POLL_TIMEOUT_MS) || 900_000, 120_000),
-  1_200_000,
+  Math.max(Number(process.env.OPENROUTER_HAILUO_POLL_TIMEOUT_MS) || 1_500_000, 120_000),
+  3_600_000,
 );
 
 export function isOpenRouterHailuoConfigured(): boolean {

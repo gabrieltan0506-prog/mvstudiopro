@@ -24,15 +24,16 @@ const POLL_INTERVAL_MS = Math.min(
   ),
   30_000
 );
+// 实测 4K 要 968s（2026-08-09），900s 默认线会误杀已扣费的正常任务；默认 1500s、帽 3600s
 const MAX_POLL_MS = Math.min(
   Math.max(
     Number(
       process.env.OPENROUTER_VIDEO_POLL_TIMEOUT_MS ||
         process.env.OPENROUTER_SEEDANCE_POLL_TIMEOUT_MS
-    ) || 900_000,
+    ) || 1_500_000,
     120_000
   ),
-  1_200_000
+  3_600_000
 );
 
 type OpenRouterVideoJob = {
@@ -118,19 +119,24 @@ export async function pollOpenRouterVideoJobOnce(
     "HTTP-Referer": headers["HTTP-Referer"] || "",
     "X-Title": headers["X-Title"] || "",
   };
-  const response = await fetch(safePollingUrl, {
-    method: "GET",
-    headers: getHeaders,
-    signal: AbortSignal.timeout(60_000),
-  });
+  // 查询接口自身故障（网络 / 限流 / 5xx）≠ 任务失败：当终态会「假失败真退分」。
+  // 视作仍在跑，等下一轮；终态只认 2xx 响应体里的 failed/cancelled/expired。
+  let response: Response;
+  try {
+    response = await fetch(safePollingUrl, {
+      method: "GET",
+      headers: getHeaders,
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (e) {
+    return {
+      state: "running",
+      status: `transient_fetch_error:${e instanceof Error ? e.name : "unknown"}`,
+    };
+  }
   const json = (await response.json().catch(() => ({}))) as OpenRouterVideoJob;
   if (!response.ok) {
-    return {
-      state: "failed",
-      error: userFacingOpenRouterVideoError(
-        jobErrorMessage(json) || `查询失败 (${response.status})`,
-      ),
-    };
+    return { state: "running", status: `transient_http_${response.status}` };
   }
   const status = String(json.status || "").toLowerCase();
   if (status === "completed") {

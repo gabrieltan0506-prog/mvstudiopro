@@ -82,10 +82,17 @@ export function clampHailuoOpenRouterDuration(raw?: unknown): HailuoOpenRouterDu
   return picked;
 }
 
-/** 只有显式要草稿档才给 768p；其余（含认不出的值）一律 2K —— 2K 才是 H3 的默认档 */
+/**
+ * 只有显式要草稿档才给 768p；其余（含认不出的值）一律 2K —— 2K 才是 H3 的默认档。
+ *
+ * **必须同时认 `720p`**：产品层（画布画质选项、计价表 CANVAS_VIDEO_RESOLUTIONS）
+ * 没有 768p 这一档，H3 的草稿档一律用 720p 表示，CanvasBlock 上存的也是 720p。
+ * 只认字面量 "768p" 的话，用户选了草稿档、服务端却落到默认的 2K —— 按 2K 建任务、
+ * 按 2K 收钱，而用户以为自己选的是便宜档。
+ */
 export function normalizeHailuoOpenRouterResolution(raw?: unknown): HailuoOpenRouterResolution {
   const q = String(raw || "").trim().toLowerCase();
-  if (q === "768p") return "768p";
+  if (q === "768p" || q === "720p" || q === "480p") return "768p";
   return HAILUO_OPENROUTER_RESOLUTION_DEFAULT;
 }
 

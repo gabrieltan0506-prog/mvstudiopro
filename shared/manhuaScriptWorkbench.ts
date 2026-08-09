@@ -241,6 +241,135 @@ export type ManhuaWorkbenchSegment = {
 };
 
 /** 补足占位镜到 total 张（起幅/戏核/落幅骨架之外的段内补镜） */
+/** 重切后哪些镜是接缝：合并处与拆分处，供「智能改写衔接」只润这几处而不是整集重写 */
+export type ManhuaShotRecutResult = {
+  shots: ManhuaWorkbenchShot[];
+  /** exact=正好对上；merged=内容多、已合并；split=内容够、已拆分；thin=内容不足，需扩写 */
+  mode: "exact" | "merged" | "split" | "thin";
+  /** 1-based 镜号：这些位置的前后文是重切造出来的，衔接可能不顺 */
+  seamShotIndexes: number[];
+};
+
+/**
+ * 换引擎时按**内容**重切镜列表，而不是补空镜或截尾。
+ *
+ * 换引擎会改段数（2.5 四段、2.0/mini 六段、H3 八段），而「每段恰好 3 镜」是全仓不变量，
+ * 所以目标镜数跟着变。过去的做法两头都在毁内容：
+ *   - 镜多了 `.slice(0, total)` 直接截掉尾巴 —— 2.0 换 2.5 会静默丢两段剧情；
+ *   - 镜少了补一堆「段内补镜：承接上镜情绪…」的空壳 —— 观众看到的是白填的段。
+ *
+ * 现在：多了就合并相邻镜（动作描述串起来，内容全留），少了就拆分内容最厚的镜。
+ * 合并/拆分的位置记进 `seamShotIndexes`，前端据此提示「这几处衔接可能不顺」并给
+ * 「智能改写衔接」的付费入口——只润接缝，不整集重写。
+ *
+ * 内容实在太薄（拆无可拆）时返回 `thin`，由调用方引导走付费扩写，而不是硬塞空镜。
+ */
+export function recutWorkbenchShotsTo(
+  shots: ManhuaWorkbenchShot[],
+  total: number,
+): ManhuaShotRecutResult {
+  const list = shots.map((s) => ({ ...s }));
+  if (total <= 0 || !list.length) return { shots: list, mode: "exact", seamShotIndexes: [] };
+  if (list.length === total) return { shots: list, mode: "exact", seamShotIndexes: [] };
+
+  const textOf = (s: ManhuaWorkbenchShot) => String(s.actionZh || "").trim();
+
+  if (list.length > total) {
+    /**
+     * 内容多：按比例分桶合并，**恰好**得到 total 个镜，一句都不丢。
+     * 不能用 `Math.ceil(len/total)` 定长切块——40 镜切到 36 时块长会算成 2，
+     * 直接并成 20 镜，段数当场对不上。
+     */
+    const buckets: ManhuaWorkbenchShot[][] = Array.from({ length: total }, () => []);
+    list.forEach((s, i) => {
+      buckets[Math.min(total - 1, Math.floor((i * total) / list.length))]!.push(s);
+    });
+    const seams: number[] = [];
+    const joinField = (chunk: ManhuaWorkbenchShot[], key: "dialogueZh" | "actionZh") =>
+      chunk
+        .map((s) => String(s[key] || "").trim())
+        .filter(Boolean)
+        .join(key === "dialogueZh" ? " " : "；") || undefined;
+    const firstOf = (chunk: ManhuaWorkbenchShot[], key: keyof ManhuaWorkbenchShot) =>
+      chunk.map((s) => s[key]).find((v) => v !== undefined && v !== "");
+    const out = buckets.map((chunk, bi) => {
+      const head = chunk[0]!;
+      if (chunk.length > 1) seams.push(bi + 1);
+      /**
+       * 只继承 head 会把被合并镜的**台词**和表演字段整条吞掉——「一句不丢」就只对
+       * actionZh 成立，dialogueZh 静默消失。台词必须拼起来；情绪/语气/微表情这些
+       * 单值字段取第一个非空（同段内本来就该一致）。
+       */
+      return {
+        ...head,
+        index: bi + 1,
+        durationSec: chunk.reduce((n, s) => n + (Number(s.durationSec) || 0), 0),
+        actionZh: joinField(chunk, "actionZh") || "",
+        dialogueZh: joinField(chunk, "dialogueZh"),
+        intentZh: firstOf(chunk, "intentZh") as string | undefined,
+        emotionZh: firstOf(chunk, "emotionZh") as string | undefined,
+        voiceToneZh: firstOf(chunk, "voiceToneZh") as string | undefined,
+        microExpressionZh: firstOf(chunk, "microExpressionZh") as string | undefined,
+      };
+    });
+    return { shots: out, mode: "merged", seamShotIndexes: seams };
+  }
+
+  // 内容少：拆分描述最厚的镜，把剧情摊到目标段数上；拆不动就报 thin，交给付费扩写
+  const out = list.map((s) => ({ ...s }));
+  const seams: number[] = [];
+  let guard = 0;
+  while (out.length < total && guard++ < 64) {
+    let pick = -1;
+    let best = 0;
+    for (let i = 0; i < out.length; i++) {
+      const len = textOf(out[i]!).length;
+      if (len > best) {
+        best = len;
+        pick = i;
+      }
+    }
+    // 太短就切不出两个能读的半句，硬拆只会造出两个空壳
+    if (pick < 0 || best < 16) break;
+    const src = out[pick]!;
+    const text = textOf(src);
+    /** 按中文标点找语义边界，别拦腰切在词中间；找不到才退回中点 */
+    const mid = Math.ceil(text.length / 2);
+    let at = -1;
+    for (let k = 0; k < text.length; k++) {
+      if (!/[。；;！？!?，,]/.test(text[k]!)) continue;
+      if (at < 0 || Math.abs(k + 1 - mid) < Math.abs(at - mid)) at = k + 1;
+    }
+    const cutAt = at > 0 && at < text.length ? at : mid;
+    const cut = text.slice(0, cutAt).trim();
+    const rest = text.slice(cutAt).trim();
+    const half = (Number(src.durationSec) || 0) / 2;
+    /**
+     * 台词只能给其中一镜：两半都 `{...src}` 会把 dialogueZh 复制两份，
+     * 同一句台词播两次。给前半（起幅先说），后半清空。
+     */
+    out.splice(
+      pick,
+      1,
+      { ...src, actionZh: cut, durationSec: half },
+      { ...src, actionZh: rest, durationSec: half, dialogueZh: undefined },
+    );
+    seams.push(pick + 1);
+  }
+  if (out.length < total) {
+    return {
+      shots: out.map((s, i) => ({ ...s, index: i + 1 })),
+      mode: "thin",
+      seamShotIndexes: seams,
+    };
+  }
+  return {
+    shots: out.map((s, i) => ({ ...s, index: i + 1 })),
+    mode: "split",
+    seamShotIndexes: seams,
+  };
+}
+
 function padWorkbenchShotsTo(
   shots: ManhuaWorkbenchShot[],
   total: number,
@@ -290,7 +419,26 @@ export function maxManhuaShotsForVideoModel(videoModel?: string | null): number 
  */
 export function groupShotsIntoSegments(
   shots: ManhuaWorkbenchShot[],
-  opts?: { videoModel?: string | null; segmentCount?: number; padToDefaultEpisode?: boolean },
+  opts?: {
+    videoModel?: string | null;
+    segmentCount?: number;
+    padToDefaultEpisode?: boolean;
+    /**
+     * 出参：把重切结果回填给调用方（沿用本仓 `captureError` 的出参惯例，
+     * 不破坏既有调用签名）。
+     *
+     * - `mode: "thin"` 表示剧情撑不满目标段数，已用补镜凑数 —— 前端**必须**据此
+     *   提示并引导付费扩写，而不是让用户拿一集空壳去出片；
+     * - `seamShotIndexes` 是重切造出来的接缝，供「智能改写衔接」只润这几处。
+     *
+     * 不回填的话这两个信号会被整条吞掉，等于白算——那正是本仓反复出现的空壳模式。
+     */
+    captureRecut?: {
+      mode?: ManhuaShotRecutResult["mode"];
+      seamShotIndexes?: number[];
+      paddedCount?: number;
+    };
+  },
 ): ManhuaWorkbenchSegment[] {
   const per = MANHUA_KEYARTS_PER_SEGMENT_MIN;
   const explicit = shots.length >= 2;
@@ -308,7 +456,25 @@ export function groupShotsIntoSegments(
       Math.min(16, Math.floor(opts?.segmentCount ?? bounds.default)),
     );
     const total = targetSegs * per;
-    list = padWorkbenchShotsTo(list, total).slice(0, total);
+    /**
+     * 换引擎按内容重切：镜多合并、镜少拆分，不再 `pad + slice` 一头补空一头截尾。
+     * 只有原本就没镜（走 defaultWorkbenchShots 兜底）才仍用补齐——那时没有内容可切。
+     */
+    if (explicit) {
+      const recut = recutWorkbenchShotsTo(list, total);
+      // 拆不动（内容太薄）时仍要凑够钉死的段数，否则段数与实收积分对不上；
+      // 但必须把 thin 回填出去，让前端引导付费扩写，而不是让用户拿一集空壳
+      const padded = Math.max(0, total - recut.shots.length);
+      list = padded > 0 ? padWorkbenchShotsTo(recut.shots, total) : recut.shots;
+      list = list.slice(0, total);
+      if (opts?.captureRecut) {
+        opts.captureRecut.mode = recut.mode;
+        opts.captureRecut.seamShotIndexes = recut.seamShotIndexes;
+        opts.captureRecut.paddedCount = padded;
+      }
+    } else {
+      list = padWorkbenchShotsTo(list, total).slice(0, total);
+    }
     pinnedSegs = targetSegs;
   } else {
     /**
@@ -316,13 +482,34 @@ export function groupShotsIntoSegments(
      * 用固定的 MANHUA_SHOT_KEYART_MAX=24 会把长档 12 段（需 36 镜）截到 8 段，
      * 用户选了长档却只拿到三分之二集。
      */
-    list = list.slice(0, maxManhuaShotsForVideoModel(opts?.videoModel));
+    const cap = maxManhuaShotsForVideoModel(opts?.videoModel);
+    /**
+     * 超上限时按内容合并，不再 `.slice()` 截尾——截尾会把后面几段剧情静默丢掉。
+     * 上限本身按引擎长档段数算（固定 24 会把 12 段长档截成 8 段）。
+     */
+    if (list.length > cap) {
+      const capped = recutWorkbenchShotsTo(list, cap);
+      list = capped.shots;
+      if (opts?.captureRecut) {
+        opts.captureRecut.mode = capped.mode;
+        opts.captureRecut.seamShotIndexes = capped.seamShotIndexes;
+      }
+    }
     /**
      * 再补齐到 3 的倍数：镜号→段号映射（resolveSegmentIndexFromShotIndex）按每段 3 镜算，
      * 尾段只有 1、2 镜时映射就会错位，镜绑到隔壁段的成片上。
      */
     const remainder = list.length % per;
-    if (remainder) list = padWorkbenchShotsTo(list, list.length + (per - remainder));
+    if (remainder) {
+      const target = list.length + (per - remainder);
+      const recut = recutWorkbenchShotsTo(list, target);
+      const short = recut.shots.length !== target;
+      list = short ? padWorkbenchShotsTo(list, target) : recut.shots;
+      if (opts?.captureRecut && short) {
+        opts.captureRecut.mode = "thin";
+        opts.captureRecut.paddedCount = target - recut.shots.length;
+      }
+    }
   }
   list = list.map((s, i) => ({ ...s, index: i + 1 }));
 
