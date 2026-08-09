@@ -1,6 +1,7 @@
 import { DEFAULT_CANVAS_VIDEO_MODEL, type CanvasBlock } from "./canvasTypes";
 import { withFlyHealthGate } from "./flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "./longJobsFlyOrigin";
+import { probeVideoDurationSec } from "./videoUpscaleApi";
 import { createJobSameOrigin, pollJobUntilTerminal } from "./jobs";
 import {
   createOmniInteraction,
@@ -600,6 +601,8 @@ async function runSeedanceProductVideo(
      */
     episodeIndex?: number;
     clipIndex?: number;
+    /** video_edit 专用：主片（videoUrls[0]）探测时长——edit 产出与主片等长，服务端按它计费 */
+    editSourceDurationSec?: number;
     /**
      * 输出画质，默认 720p。标准档（2.0）可选到 4K，单价按像素翻倍（见 canvasGenerationPricing）；
      * 快速档与 2.5 加长仍固定 720p，由服务端 normalize 兜住。
@@ -644,18 +647,22 @@ async function runSeedanceProductVideo(
         // 换官方符号只在出线这一刻做：上面的时长解析等仍认【第N段·Xs】
         prompt: renderManhuaClipPromptForSeedance(prompt),
         imageUrl: imageUrl || imageUrls[0] || undefined,
+        // 配额按版本分流：2.5 官方收图 30/视频 10/音频 10，2.0 系 9/3/3。
+        // 原先无版本区分统一按 9/3/3 切，2.5 的高配额在出线口被砍——
+        // 参考图是人物锁定的命根，30 席给锁脸+服装+场景+道具才够摆
         imageUrls: imageUrls.length
-          ? imageUrls.slice(0, SEEDANCE_REFERENCE_MAX.image)
+          ? imageUrls.slice(0, version === "2.5" ? 30 : SEEDANCE_REFERENCE_MAX.image)
           : undefined,
         videoUrls: videoUrls.length
-          ? videoUrls.slice(0, SEEDANCE_REFERENCE_MAX.video)
+          ? videoUrls.slice(0, version === "2.5" ? 10 : SEEDANCE_REFERENCE_MAX.video)
           : undefined,
         audioUrls: audioUrls.length
-          ? audioUrls.slice(0, SEEDANCE_REFERENCE_MAX.audio)
+          ? audioUrls.slice(0, version === "2.5" ? 10 : SEEDANCE_REFERENCE_MAX.audio)
           : undefined,
         resolution: normalizeCanvasVideoResolution(opts?.resolution),
         aspectRatio,
         duration,
+        editSourceDurationSec: opts?.editSourceDurationSec || undefined,
         // 产品口径：只用引擎自带 Audio on，暂不另开后期配音 API
         generateAudio: true,
         version,
@@ -1464,6 +1471,7 @@ export async function runCanvasBlock(
         const promptWithStoryboard = storyboard
           ? `${seedancePrompt}\n\n【秒级分镜】\n${storyboard}`
           : seedancePrompt;
+        let editSourceDurationSec: number | undefined;
         let finalPrompt = promptWithStoryboard;
         let outImages = httpsImages;
         let outVideos = candidateVideoUrls;
@@ -1502,6 +1510,12 @@ export async function runCanvasBlock(
               workMode === "video_edit"
                 ? `编辑 @video1：${promptWithStoryboard}`
                 : `向后延长 @video1：${promptWithStoryboard}`;
+            if (workMode === "video_edit" && outVideos[0]) {
+              // edit 产出与主片等长：探测主片真实时长交服务端按秒计费，
+              // 不探测就会按写死的 15s 扣（与产出长度脱钩）；探测失败服务端走保守值
+              editSourceDurationSec =
+                (await probeVideoDurationSec(outVideos[0])) || undefined;
+            }
           }
         } else {
           outVideos = outVideos.slice(0, SEEDANCE_REFERENCE_MAX.video);
@@ -1525,6 +1539,7 @@ export async function runCanvasBlock(
                   : "2.0",
           duration: clipDuration,
           workMode: useSeedance25 ? workMode : undefined,
+          editSourceDurationSec,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
             resolution: block.videoResolution,
