@@ -308,12 +308,12 @@ export default function ManhuaClipDock({
                 <span className="text-cyan-100/70">
                   {" "}
                   本次将拼第{" "}
-                  {assembleClips
-                    .map((c) => c.episodeIndex)
-                    .filter((n) => n >= 1)
+                  {Array.from(
+                    new Set(assembleClips.map((c) => c.episodeIndex).filter((n) => n >= 1)),
+                  )
                     .sort((a, b) => a - b)
                     .join("、")}{" "}
-                  集。
+                  集（共 {assembleClips.length} 段）。
                 </span>
               ) : null}
             </p>
@@ -362,7 +362,7 @@ export default function ManhuaClipDock({
               className="inline-flex min-w-[9.5rem] items-center justify-center gap-2 rounded-xl border border-cyan-300/45 bg-gradient-to-b from-cyan-400/30 to-cyan-600/25 px-4 py-2.5 text-[12px] font-semibold text-cyan-50 shadow-[0_0_24px_rgba(34,211,238,0.12)] hover:from-cyan-400/40 hover:to-cyan-600/35 disabled:opacity-40"
               title={
                 canAssemble
-                  ? `将用 ${assembleClips.length} 集成片合成长片并自动配乐`
+                  ? `将用 ${assembleClips.length} 段成片合成长片并自动配乐`
                   : "需至少一集有微动成片"
               }
             >
@@ -370,7 +370,7 @@ export default function ManhuaClipDock({
               {assembleBusy
                 ? "合成中…"
                 : canAssemble
-                  ? `合成长片（${assembleClips.length} 集·含配乐）`
+                  ? `合成长片（${assembleClips.length} 段·含配乐）`
                   : "合成长片（含配乐）"}
             </button>
             {!canAssemble && !assembleBusy && onGoWorkbench ? (
