@@ -24,6 +24,7 @@ import {
   stripManhuaFactoryCanvasArtifacts,
   resolveFactoryResumeStage,
   resolveManhuaEpisodeSpawnContinuity,
+  queuedManhuaClipBlocks,
   queuedManhuaKeyartBlocks,
   resolveManhuaCanvasClipVideoModel,
   resolveManhuaFactoryOrderedIds,
@@ -661,6 +662,23 @@ describe("canvasDramaStudio factory", () => {
     expect(buildKeyarts("seedance-2.0-mini").length).toBe(6 * MANHUA_KEYARTS_PER_SEGMENT_MIN);
     // 2.0-fast 不钉段（长档可到 12 段），镜数说了算
     expect(buildKeyarts("seedance-2.0-fast").length).toBe(18);
+  });
+
+  it("变窄改档保留已出片的段，只清空壳（一段 172 积分）", () => {
+    const seg = (n: number, rendered: boolean): CanvasBlock => ({
+      ...defaultCanvasBlock("video", 0, 0),
+      id: `clip-e01-g0${n}-a`,
+      episodeIndex: 1,
+      videoModel: "seedance-2.5",
+      // 垫图不是产出：绑了静帧的空壳不能因此被当成品留下
+      refImageUrl: "https://cdn.example/keyart.png",
+      outputUrl: rendered ? `https://cdn.example/g0${n}.mp4` : undefined,
+    });
+    // mini 6 段改选 2.5 后只剩 4 段：g05 已出片、g06 是空壳
+    const blocks = [seg(1, true), seg(4, true), seg(5, true), seg(6, false)];
+    const queued = queuedManhuaClipBlocks(blocks, 1, "seedance-2.5").map((b) => b.id);
+    // 停放的段不排队，否则强制重跑会按新引擎白烧
+    expect(queued).toEqual(["clip-e01-g01-a", "clip-e01-g04-a"]);
   });
 
   it("本集还没铺段时跟同项目其它集的引擎，不掉回兜底默认", () => {

@@ -1439,7 +1439,7 @@ export function resolveManhuaFactoryOrderedIds(
       continue;
     }
     if (stage === "clip") {
-      const clips = scoped.filter((b) => b.id.startsWith("clip-") && !b.archivedFromPreviousScript).sort(sortKeyartBlocks);
+      const clips = queuedManhuaClipBlocks(scoped, scopedEp, videoModel).sort(sortKeyartBlocks);
       for (const c of clips) {
         if (!ids.includes(c.id)) ids.push(c.id);
       }
@@ -1565,6 +1565,29 @@ export function queuedManhuaKeyartBlocks(
       !b.archivedFromPreviousScript &&
       resolveKeyartShotIndex(b.id, b.prompt) <= max,
   );
+}
+
+/**
+ * 该集**这一轮真正会被跑到**的段成片节点：钉段引擎按段表截断。
+ *
+ * 与静帧同理——从 mini 改选 2.5 后，第 5、6 段的成片节点会被停放（已出片的不删），
+ * 但它们的段号已在新段表之外，没有任何东西会消费。强制重跑一段白烧 172 积分。
+ */
+export function queuedManhuaClipBlocks(
+  blocks: CanvasBlock[],
+  episodeIndex: number | null | undefined,
+  videoModel?: string | null,
+): CanvasBlock[] {
+  const ep = Math.max(1, Math.floor(episodeIndex ?? 1) || 1);
+  const pinned = pinnedManhuaSegmentCount(
+    resolveEpisodeClipVideoModel(blocks, episodeIndex ?? 1, videoModel),
+  );
+  return blocks.filter((b) => {
+    if (!b.id.startsWith("clip-") || b.archivedFromPreviousScript) return false;
+    if (!pinned) return true;
+    // 旧整集 clip 没有 -g/-s 段号，解析回落到 1，不会被这里误挡
+    return resolveClipLocalSegmentIndex(b.id, b.prompt, ep) <= pinned;
+  });
 }
 
 export function countExpectedManhuaKeyartShots(
@@ -2252,8 +2275,17 @@ export function ensureManhuaFragmentClips(
     clipBySeg.set(globalSeg, clone);
   }
 
+  /**
+   * 变窄改档不能连已出片的段一起删。
+   *
+   * mini / 2.0-fast 是一集 6 段，2.5 是 4 段；从前者改到后者，第 5、6 段就掉出新段表。
+   * 那两段若已经出片，一段 172 积分，删掉等于凭空蒸发 344 积分，改回原档还得重烧。
+   * 所以只清没产出的空壳；有产出的一律停放（它们也不会再排进队列）。
+   */
   const staleClipIds = new Set([
-    ...existingSegClips.filter((c) => !keepSegClipIds.has(c.id)).map((c) => c.id),
+    ...existingSegClips
+      .filter((c) => !keepSegClipIds.has(c.id) && !hasRenderedOutput(c))
+      .map((c) => c.id),
     // 已铺段级成片后，丢掉无 -g/-s 的旧整集 clip
     ...(legacyClip && keepSegClipIds.size ? [legacyClip.id] : []),
   ]);
@@ -2694,6 +2726,17 @@ function mediaUrlOf(
 ): string | undefined {
   if (!b) return undefined;
   return b.outputUrl || b.outputUrls?.[0] || b.refImageUrl || undefined;
+}
+
+/**
+ * 这个节点真出过东西吗。
+ *
+ * 不能用 `mediaUrlOf`：它把 `refImageUrl`（垫图）也算进来，拿它判断会把每个绑了
+ * 静帧的空壳都当成品，画布会堆一堆没产出的节点。
+ */
+function hasRenderedOutput(b?: Partial<Pick<CanvasBlock, "outputUrl" | "outputUrls">> | null): boolean {
+  if (!b) return false;
+  return Boolean(b.outputUrl || b.outputUrls?.[0]);
 }
 
 /**

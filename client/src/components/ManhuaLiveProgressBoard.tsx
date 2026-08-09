@@ -6,6 +6,7 @@ import { Loader2, Square } from "lucide-react";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
   countExpectedManhuaKeyartShots,
+  queuedManhuaClipBlocks,
   queuedManhuaKeyartBlocks,
   getBlockEpisodeIndex,
   MANHUA_FACTORY_STAGE_LABEL_ZH,
@@ -81,12 +82,16 @@ export default function ManhuaLiveProgressBoard({
       const queuedKeyartIds = new Set(
         queuedManhuaKeyartBlocks(blocks, ep, videoModel).map((x) => x.id),
       );
+      const queuedClipIds = new Set(
+        queuedManhuaClipBlocks(blocks, ep, videoModel).map((x) => x.id),
+      );
       for (const stage of TRACK_STAGES) {
-        const stageBlocks = list.filter(
-          (x) =>
-            stageKeyFromBlockId(x.id) === stage &&
-            (stage !== "keyart" || queuedKeyartIds.has(x.id)),
-        );
+        const stageBlocks = list.filter((x) => {
+          if (stageKeyFromBlockId(x.id) !== stage) return false;
+          if (stage === "keyart") return queuedKeyartIds.has(x.id);
+          if (stage === "clip") return queuedClipIds.has(x.id);
+          return true;
+        });
         const b = stageBlocks[0];
         const baseLabel = MANHUA_FACTORY_STAGE_LABEL_ZH[stage] || stage;
         if (!stageBlocks.length) {
