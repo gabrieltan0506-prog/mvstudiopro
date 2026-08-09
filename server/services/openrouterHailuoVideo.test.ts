@@ -10,20 +10,20 @@ describe("buildOpenRouterHailuoSubmitBody", () => {
     });
     expect(body.model).toBe("minimax/hailuo-3");
     expect(body.prompt).toBe("A quiet alley at dusk");
-    // H3 时长固定 15 秒（用户 2026-08-05 明文），传进来的时长一律忽略
-    expect(body.duration).toBe(15);
+    // H3 时长 5/10/15 三档（用户 2026-08-09 拍板，推翻 08-05 的钉死 15s），落到最近档
+    expect(body.duration).toBe(10);
     expect(body.resolution).toBe("2K");
     expect(body.aspect_ratio).toBe("9:16");
     expect(body.generate_audio).toBe(true);
     expect(body.frame_images).toBeUndefined();
   });
 
-  it("短时长同样被拉到固定的 15 秒", () => {
+  it("档外时长落到最近档：3 秒 → 5 秒", () => {
     const body = buildOpenRouterHailuoSubmitBody({
       prompt: "short",
       duration: 3,
     });
-    expect(body.duration).toBe(15);
+    expect(body.duration).toBe(5);
   });
 
   it("uses first_frame for single image", () => {

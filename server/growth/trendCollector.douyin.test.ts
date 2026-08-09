@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// vi.resetModules 后用例体内 await import("./trendCollector")（3000+ 行），导入成本计入用例预算，实测安静机器即 5.2s，5s 默认线稳定踩爆
+vi.setConfig({ testTimeout: 60_000 });
+
 describe("collectPlatformTrends douyin", () => {
   const envBackup = { ...process.env };
 
