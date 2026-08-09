@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import fs from "node:fs/promises";
 import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
+import type { PaidJobDeductSnapshot } from "../server/services/paidJobLedger.js";
 import sharp from "sharp";
 import { get, put } from "@vercel/blob";
 import { env, getEnvStatus } from "../server/vercel-api-core/env.js";
@@ -1018,6 +1019,11 @@ type CanvasVideoChargeOpts = {
   label: string;
   /** 探针请求（`probe=1`）：脚本没有 cookie，既不验登录也不扣费 */
   skipCharge?: boolean;
+  /**
+   * 客户端幂等键：会以 [chargeKey:…] 埋进扣费描述。重试请求先按标记查账，
+   * 查到（上一次扣完费在建任务前崩了）就直接复用那笔扣费，不再扣第二次。
+   */
+  idempotencyKey?: string;
   /** 输出分辨率：1080p 单价是 720p 的 2.25 倍 */
   resolution?: string | null;
   /**
@@ -1030,11 +1036,67 @@ type CanvasVideoChargeOpts = {
 };
 
 /** 只扣费、立刻返回；异步成片用。失败路径由 canvasVideoTask 退款。 */
+/** 幂等键 → 扣费标记：进扣费描述（creditTransactions / stripeUsageLogs 均可查） */
+function chargeMarkerFor(userId: number, idempotencyKey: string): string {
+  const hash = crypto
+    .createHash("sha256")
+    .update(`${userId}:${idempotencyKey}`)
+    .digest("hex")
+    .slice(0, 24);
+  return `[chargeKey:${hash}]`;
+}
+
+/** 查这笔幂等扣费是否已入账（上一次「扣费成功→建任务前」崩溃的补救线） */
+async function findPriorChargeByMarker(
+  userId: number,
+  marker: string,
+): Promise<{ credits: number; deduct: PaidJobDeductSnapshot } | null> {
+  try {
+    const { getDb } = await import("../server/db.js");
+    const db = await getDb();
+    if (!db) return null;
+    const { stripeUsageLogs } = await import("../drizzle/schema.js");
+    const { and, eq, like } = await import("drizzle-orm");
+    const [row] = await db
+      .select({
+        creditsCost: stripeUsageLogs.creditsCost,
+        metadata: stripeUsageLogs.metadata,
+      })
+      .from(stripeUsageLogs)
+      .where(and(eq(stripeUsageLogs.userId, userId), like(stripeUsageLogs.description, `%${marker}%`)))
+      .limit(1);
+    if (!row) return null;
+    let deduct: PaidJobDeductSnapshot = { source: "personal" };
+    try {
+      const meta = JSON.parse(String(row.metadata || "{}")) as {
+        source?: string;
+        teamId?: number;
+        memberId?: number;
+      };
+      if (meta.source === "team" && meta.teamId != null && meta.memberId != null) {
+        deduct = { source: "team", teamId: meta.teamId, teamMemberId: meta.memberId };
+      }
+    } catch {
+      // metadata 缺失/损坏按个人来源处理
+    }
+    return { credits: Math.max(0, Number(row.creditsCost) || 0), deduct };
+  } catch (e: any) {
+    console.warn(`[chargeCanvasVideoCredits] findPriorChargeByMarker 查询失败：${e?.message}`);
+    return null;
+  }
+}
+
 async function chargeCanvasVideoCredits(
   req: VercelRequest,
   opts: CanvasVideoChargeOpts,
 ): Promise<
-  | { ok: true; credits: number; userId: number }
+  | {
+      ok: true;
+      credits: number;
+      userId: number;
+      deduct?: PaidJobDeductSnapshot;
+      alreadyCharged?: boolean;
+    }
   | { ok: false; status: number; error: string }
 > {
   if (opts.skipCharge) {
@@ -1083,11 +1145,40 @@ async function chargeCanvasVideoCredits(
     });
   }
 
+  const idemKey = String(opts.idempotencyKey || "").trim();
+  const marker = idemKey ? chargeMarkerFor(viewer.userId, idemKey) : "";
+  if (marker) {
+    const prior = await findPriorChargeByMarker(viewer.userId, marker);
+    if (prior) {
+      return {
+        ok: true,
+        credits: prior.credits,
+        userId: viewer.userId,
+        deduct: prior.deduct,
+        alreadyCharged: true,
+      };
+    }
+  }
+
   const { deductCreditsAmount } = await import("../server/credits.js");
   try {
     const action = opts.pricingMode === "homePhotoAnimate" ? "homePhotoAnimate" : "canvasVideoClip";
-    const out = await deductCreditsAmount(viewer.userId, credits, action, opts.label);
-    return { ok: true, credits: out.cost, userId: viewer.userId };
+    const out = await deductCreditsAmount(
+      viewer.userId,
+      credits,
+      action,
+      marker ? `${opts.label} ${marker}` : opts.label,
+    );
+    return {
+      ok: true,
+      credits: out.cost,
+      userId: viewer.userId,
+      deduct: {
+        source: out.source,
+        teamId: "teamId" in out ? out.teamId : undefined,
+        teamMemberId: "teamMemberId" in out ? out.teamMemberId : undefined,
+      },
+    };
   } catch {
     return {
       ok: false,
@@ -3723,7 +3814,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         normalizeWavespeedUpscaleTarget,
       } = await import("../shared/wavespeedVideoUpscaleModels.js");
       const { canvasVideoUpscaleCredits } = await import("../shared/canvasGenerationPricing.js");
-      const { isWavespeedUpscaleConfigured, runWavespeedVideoUpscale } = await import(
+      const { isWavespeedUpscaleConfigured } = await import(
         "../server/services/wavespeedVideoUpscale.js"
       );
       if (!isWavespeedUpscaleConfigured()) {
@@ -3759,31 +3850,75 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const label = `高清放大·${target.toUpperCase()}（${durationSec}s）`;
       const viewer = await resolveJobUser(req);
       if (!viewer) return res.status(401).json({ ok: false, error: "请先登录后再使用高清放大" });
+
+      /**
+       * 异步任务化（原先同步等上游 3–10+ 分钟，部署重启会「钱扣了、退款逻辑随进程
+       * 一起死」）。幂等键缺省用「用户+源视频+档位」这个天然业务键：同一条片升同一档，
+       * POST 重试/断线重发都只有一笔扣费一个任务。既有任务 failed（已退分）时放行重开。
+       */
+      const idemKey =
+        s(b.idempotencyKey || "").trim() || `upscale:${videoUrl}:${target}`;
+      const marker = chargeMarkerFor(viewer.userId, idemKey);
       const { deductCreditsAmount, refundCredits } = await import("../server/credits.js");
       let charged = 0;
-      try {
-        const out = await deductCreditsAmount(viewer.userId, credits, "canvasVideoClip", label);
-        charged = out.cost;
-      } catch {
-        return res.status(402).json({
-          ok: false,
-          error: `积分不足：本次高清放大需要 ${credits} 积分`,
-        });
+      let reusedPriorCharge = false;
+      let deduct: PaidJobDeductSnapshot | undefined;
+      const prior = await findPriorChargeByMarker(viewer.userId, marker);
+      if (prior) {
+        charged = prior.credits;
+        deduct = prior.deduct;
+        reusedPriorCharge = true;
+      } else {
+        try {
+          const out = await deductCreditsAmount(
+            viewer.userId,
+            credits,
+            "canvasVideoClip",
+            `${label} ${marker}`,
+          );
+          charged = out.cost;
+          deduct = {
+            source: out.source,
+            teamId: "teamId" in out ? out.teamId : undefined,
+            teamMemberId: "teamMemberId" in out ? out.teamMemberId : undefined,
+          };
+        } catch {
+          return res.status(402).json({
+            ok: false,
+            error: `积分不足：本次高清放大需要 ${credits} 积分`,
+          });
+        }
       }
       try {
-        const result = await runWavespeedVideoUpscale({ videoUrl, target });
+        const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
+        const task = await createCanvasVideoTask({
+          userId: viewer.userId,
+          creditsCharged: charged,
+          engine: "wavespeed-upscale",
+          label,
+          prompt: "",
+          duration: durationSec,
+          resolution: target,
+          idempotencyKey: idemKey,
+          deduct,
+          upscaleSourceUrl: videoUrl,
+          upscaleTarget: target,
+        });
         return res.status(200).json({
           ok: true,
-          videoUrl: result.videoUrl,
+          async: true,
+          taskId: task.taskId,
+          status: task.status,
           target,
           durationSec,
-          creditsUsed: charged,
-          provider: result.provider,
-          predictionId: result.predictionId,
+          creditsUsed: task.creditsCharged || charged,
+          provider: "wavespeed",
+          videoUrl: task.videoUrl || undefined,
         });
       } catch (error: unknown) {
-        if (charged > 0) {
-          await refundCredits(viewer.userId, charged, `${label}·失败退回`).catch(() => {});
+        // 只退本请求周期新扣的那笔；复用的旧扣费属于上一次周期，乱退会与其任务对不上账
+        if (charged > 0 && !reusedPriorCharge) {
+          await refundCredits(viewer.userId, charged, `${label}·创建失败退回`).catch(() => {});
         }
         return res.status(502).json({
           ok: false,
@@ -4613,6 +4748,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           resolution: task.resolution,
           duration: task.duration,
           creditsUsed: task.creditsCharged,
+          // 超分任务：原片地址与目标档（结果在 videoUrl，原片不被覆盖）
+          upscaleSourceUrl: task.upscaleSourceUrl || undefined,
+          upscaleTarget: task.upscaleTarget || undefined,
+          // 超时对账诊断：UI 把 timed_out_pending_reconcile 显示为「超时对账中，不会白扣」
+          timedOutAt: task.timedOutAt || undefined,
+          lastTransientError: task.lastTransientError || undefined,
         });
       } catch (error: any) {
         return res.status(502).json({

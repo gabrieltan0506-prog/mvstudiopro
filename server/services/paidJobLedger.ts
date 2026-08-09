@@ -20,9 +20,13 @@
  *      统一的幂等退积分入口。**仅写 creditBalances + creditTransactions 表**
  *      （server/credits.ts 的 refundCredits），**绝不调用 Stripe SDK**。
  *
- *  幂等保证：每条 hold 文件用三态机（active → settled / refunded），refund 路径
- *  会先 readHold → 仅在 status="active" 时才调 refundCredits，写入
- *  refundedAt + refundReason 后将 status 切到 "refunded"。重复调用直接 no-op。
+ *  幂等保证：每条 hold 文件用状态机 active → refund_pending → refunded（或
+ *  active → settled）。refund 路径先把 status 切到 "refund_pending" 落盘（并发
+ *  双退在这里被挡住），再调 refundCredits（reason 里埋 [refundKey:…] 业务键），
+ *  成功后切 "refunded"。若在两步之间崩溃，reaper 的对账分支用 refundKey 去
+ *  creditTransactions / stripeUsageLogs 查真账：查到 → 只补状态；查不到 → 补执行
+ *  退分。这样退分对崩溃是「至多一次 + 可对账补偿」，不存在旧实现「先标 refunded
+ *  再打款，中间崩了永久漏退」的窗口。
  */
 
 import fs from "fs/promises";
@@ -77,7 +81,14 @@ export type PaidTaskType =
   | "vipMonthly"
   | string;
 
-export type PaidJobStatus = "active" | "settled" | "refunded";
+export type PaidJobStatus = "active" | "refund_pending" | "settled" | "refunded";
+
+/** 扣分来源快照（deductCreditsAmount 的返回摘要）。退分按同源退回，避免「团队扣款、个人收退」。 */
+export interface PaidJobDeductSnapshot {
+  source: "personal" | "team" | "admin" | "none";
+  teamId?: number;
+  teamMemberId?: number;
+}
 
 export type PaidJobRefundReason =
   | "task_failed"
@@ -111,6 +122,15 @@ export interface PaidJobHold {
   externalApiCostHint?: string;
   /** taskType 特有元数据，比如 dbRecordId / topic / interactionId */
   metadata?: Record<string, unknown>;
+  /** 扣分来源快照；存在时退分走同源（团队额度退回团队） */
+  deduct?: PaidJobDeductSnapshot;
+  /**
+   * 任务记录持久化在卷上、进程重启后会被 resume*OnStartup 恢复继续跑的任务
+   * （canvasVideo 等）标 true：SIGTERM forceAll 与 5 分钟心跳 reaper 都不碰它，
+   * 否则「部署时退分 + 重启后任务照常跑完」= 用户白拿产物。此类任务的失败退分
+   * 由任务自身状态机负责，账本只兜 RESUMABLE_HARD_CAP_MS 的最终底。
+   */
+  resumable?: boolean;
   // ── 取消信号（跨进程） ─────────────────────────────────────────────────
   cancelRequestedAt?: string;
   cancelRequestedBy?: "user" | "admin" | "deploy" | "reaper";
@@ -164,6 +184,8 @@ export interface RegisterInput {
   action: string;
   externalApiCostHint?: string;
   metadata?: Record<string, unknown>;
+  deduct?: PaidJobDeductSnapshot;
+  resumable?: boolean;
 }
 
 /**
@@ -183,12 +205,14 @@ export async function registerActiveJob(input: RegisterInput): Promise<void> {
     userId: input.userId,
     creditsBilled: input.creditsBilled,
     action: input.action,
-    status: existing?.status === "settled" || existing?.status === "refunded"
+    status: existing?.status === "settled" || existing?.status === "refunded" || existing?.status === "refund_pending"
       ? existing.status
       : "active",
     chargedAt: existing?.chargedAt ?? now,
     lastHeartbeatAt: now,
     pid: process.pid,
+    ...(input.deduct ? { deduct: input.deduct } : existing?.deduct ? { deduct: existing.deduct } : {}),
+    ...(input.resumable ?? existing?.resumable ? { resumable: true } : {}),
     ...(input.externalApiCostHint
       ? { externalApiCostHint: input.externalApiCostHint }
       : existing?.externalApiCostHint
@@ -285,7 +309,7 @@ export async function readActiveJob(
   return readHoldFile(holdFilePath(dir, taskType, jobId));
 }
 
-export async function listAllActiveJobs(): Promise<PaidJobHold[]> {
+async function listHoldsByStatus(statuses: readonly PaidJobStatus[]): Promise<PaidJobHold[]> {
   const dir = await getLedgerDir();
   const out: PaidJobHold[] = [];
   let typeDirs: string[] = [];
@@ -313,10 +337,14 @@ export async function listAllActiveJobs(): Promise<PaidJobHold[]> {
     for (const f of files) {
       if (!f.endsWith(".json")) continue;
       const hold = await readHoldFile(path.join(full, f));
-      if (hold && hold.status === "active") out.push(hold);
+      if (hold && statuses.includes(hold.status)) out.push(hold);
     }
   }
   return out;
+}
+
+export async function listAllActiveJobs(): Promise<PaidJobHold[]> {
+  return listHoldsByStatus(["active"]);
 }
 
 /** healthcheck 端点用：只返计数 + 最早开始时间，不带敏感字段 */
@@ -369,6 +397,125 @@ export async function isCancelRequested(jobId: string, taskType: PaidTaskType): 
 
 // ── 退积分（幂等）────────────────────────────────────────────────────────────
 
+/** 退分唯一业务键。埋进退分 reason 文本 → 落到 creditTransactions / stripeUsageLogs 的 description，可反查。 */
+export function refundMarkerFor(taskType: PaidTaskType, jobId: string): string {
+  return `[refundKey:${String(taskType)}/${String(jobId)}]`;
+}
+
+/**
+ * 查真账：这笔退分是否已经写进 DB。个人退分落 creditTransactions.description，
+ * 团队退分落 stripeUsageLogs.description，两处都查。
+ * 返回 null 表示 DB 不可用（判断不了，调用方应保持 refund_pending 下轮再试）。
+ */
+async function hasRefundMarker(userId: number, marker: string): Promise<boolean | null> {
+  try {
+    const { getDb } = await import("../db");
+    const db = await getDb();
+    if (!db) return null;
+    const { creditTransactions, stripeUsageLogs } = await import("../../drizzle/schema");
+    const { and, eq, like } = await import("drizzle-orm");
+    const [personal] = await db
+      .select({ id: creditTransactions.id })
+      .from(creditTransactions)
+      .where(and(eq(creditTransactions.userId, userId), like(creditTransactions.description, `%${marker}%`)))
+      .limit(1);
+    if (personal) return true;
+    const [team] = await db
+      .select({ id: stripeUsageLogs.id })
+      .from(stripeUsageLogs)
+      .where(and(eq(stripeUsageLogs.userId, userId), like(stripeUsageLogs.description, `%${marker}%`)))
+      .limit(1);
+    return Boolean(team);
+  } catch (e: any) {
+    console.warn(`[paidJobLedger] hasRefundMarker 查询失败：${e?.message}`);
+    return null;
+  }
+}
+
+/** 按扣分来源同源退回（团队额度退团队、个人余额退个人）。reason 必须已含 refundMarker。 */
+async function executeLedgerRefund(hold: PaidJobHold, reasonText: string): Promise<void> {
+  const userIdNum = Number(hold.userId);
+  if (!Number.isFinite(userIdNum)) {
+    throw new Error(`invalid userId in hold: ${String(hold.userId)}`);
+  }
+  const d = hold.deduct;
+  if (d?.source === "team" && d.teamId != null && d.teamMemberId != null) {
+    const { refundCreditsForDeductAmount } = await import("../credits");
+    await refundCreditsForDeductAmount(
+      userIdNum,
+      reasonText,
+      {
+        success: true,
+        cost: hold.creditsBilled,
+        remainingBalance: -1,
+        source: "team",
+        teamId: d.teamId,
+        teamMemberId: d.teamMemberId,
+      } as Awaited<ReturnType<typeof import("../credits")["deductCreditsAmount"]>>,
+      hold.action,
+    );
+    return;
+  }
+  const { refundCredits } = await import("../credits");
+  await refundCredits(userIdNum, hold.creditsBilled, reasonText);
+}
+
+async function finalizeRefundedHold(
+  file: string,
+  hold: PaidJobHold,
+  note?: string,
+): Promise<void> {
+  hold.status = "refunded";
+  hold.refundedAt = new Date().toISOString();
+  hold.creditsRefunded = hold.creditsBilled;
+  if (note) hold.refundDetail = `${hold.refundDetail ? `${hold.refundDetail} · ` : ""}${note}`;
+  await writeHoldFile(file, hold);
+}
+
+/**
+ * refund_pending 的对账补偿：上一次退分在「标 pending → 打款 → 标 refunded」
+ * 中间崩过。查真账决定补哪半边——查到已打款只补状态；没打款补执行打款。
+ */
+async function reconcileRefundPendingHold(
+  hold: PaidJobHold,
+  file: string,
+): Promise<{ refunded: boolean; creditsRefunded: number; status: PaidJobStatus | "missing" }> {
+  if (hold.creditsBilled <= 0) {
+    await finalizeRefundedHold(file, hold, "reconcile: zero-credit");
+    return { refunded: true, creditsRefunded: 0, status: "refunded" };
+  }
+  const marker = refundMarkerFor(hold.taskType, hold.jobId);
+  const seen = await hasRefundMarker(Number(hold.userId), marker);
+  if (seen === null) {
+    // DB 不可用：保持 refund_pending，等下一轮 reaper 再对
+    return { refunded: false, creditsRefunded: 0, status: "refund_pending" };
+  }
+  if (seen) {
+    await finalizeRefundedHold(file, hold, "reconcile: marker already in ledger");
+    console.log(
+      `[paidJobLedger] ↺ reconcile：退分已在账（${marker}），只补 hold 状态 jobId=${hold.jobId}`,
+    );
+    return { refunded: true, creditsRefunded: hold.creditsBilled, status: "refunded" };
+  }
+  const reasonText = `${hold.action} · ${hold.refundReason || "task_failed"} · 积分已退还至您的账户 ${marker}`;
+  await executeLedgerRefund(hold, reasonText);
+  await finalizeRefundedHold(file, hold, "reconcile: executed refund");
+  await appendAuditEntry({
+    ts: new Date().toISOString(),
+    action: "refundReconciled",
+    jobId: hold.jobId,
+    taskType: String(hold.taskType),
+    userId: hold.userId,
+    creditsRefunded: hold.creditsBilled,
+    reason: String(hold.refundReason || "task_failed"),
+    detail: hold.refundDetail,
+  }).catch(() => {});
+  console.log(
+    `[paidJobLedger] ↺ reconcile：补执行退分 ${hold.creditsBilled} jobId=${hold.jobId} userId=${hold.userId}`,
+  );
+  return { refunded: true, creditsRefunded: hold.creditsBilled, status: "refunded" };
+}
+
 /**
  * 任务失败 / 取消 / 超时 / 崩溃统一退积分入口。**严格幂等**：
  *   - 读 hold 文件
@@ -393,6 +540,10 @@ export async function refundCreditsOnFailure(
       `[paidJobLedger] refundCreditsOnFailure: hold missing taskType=${taskType} jobId=${jobId} reason=${reason}`,
     );
     return { refunded: false, creditsRefunded: 0, status: "missing" };
+  }
+  if (hold.status === "refund_pending") {
+    // 上一次退分中途崩过：查真账补偿，不重复打款
+    return reconcileRefundPendingHold(hold, file);
   }
   if (hold.status !== "active") {
     // 已经 settled / refunded：幂等 no-op
@@ -430,34 +581,29 @@ export async function refundCreditsOnFailure(
     return { refunded: false, creditsRefunded: 0, status: "settled" };
   }
 
-  // ── 标记 refunded 在前，避免并发场景双退 ────────────────────────────────
-  hold.status = "refunded";
-  hold.refundedAt = new Date().toISOString();
+  // ── 两阶段：先标 refund_pending 落盘（挡并发双退），打款成功再标 refunded ──
+  //    两步之间崩溃 → hold 停在 refund_pending，reaper/下次调用走对账补偿。
+  hold.status = "refund_pending";
+  hold.refundedAt = undefined;
   hold.refundReason = reason;
   hold.refundDetail = detail;
-  hold.creditsRefunded = hold.creditsBilled;
+  hold.creditsRefunded = undefined;
   await writeHoldFile(file, hold);
 
   // 没扣过分（管理员 / source="admin"）就不需要还分
   if (hold.creditsBilled <= 0) {
+    await finalizeRefundedHold(file, hold);
     console.log(
       `[paidJobLedger] ↺ refund (admin/zero) taskType=${taskType} jobId=${jobId} reason=${reason}`,
     );
     return { refunded: true, creditsRefunded: 0, status: "refunded" };
   }
 
-  // 调用积分账本（仅写 creditBalances / creditTransactions，绝不碰支付网关）
+  // 调用积分账本（仅写 creditBalances / creditTransactions / 团队额度，绝不碰支付网关）
   try {
-    const userIdNum = Number(hold.userId);
-    if (!Number.isFinite(userIdNum)) {
-      throw new Error(`invalid userId in hold: ${String(hold.userId)}`);
-    }
-    const { refundCredits } = await import("../credits");
-    await refundCredits(
-      userIdNum,
-      hold.creditsBilled,
-      `${hold.action} · ${reason} · 积分已退还至您的账户`,
-    );
+    const marker = refundMarkerFor(taskType, jobId);
+    await executeLedgerRefund(hold, `${hold.action} · ${reason} · 积分已退还至您的账户 ${marker}`);
+    await finalizeRefundedHold(file, hold);
     console.log(
       `[paidJobLedger] ↺ refunded ${hold.creditsBilled} credits taskType=${taskType} jobId=${jobId} userId=${hold.userId} reason=${reason}`,
     );
@@ -575,7 +721,7 @@ export async function reapStuckPaidJobs(opts?: {
 }): Promise<ReapResult> {
   const staleMs = opts?.staleMs ?? 5 * 60 * 1000;
   const reasonForStale: PaidJobRefundReason = opts?.reason ?? "process_crashed";
-  const all = await listAllActiveJobs();
+  const all = await listHoldsByStatus(["active", "refund_pending"]);
   const now = Date.now();
   let refunded = 0;
   let errors = 0;
@@ -583,11 +729,41 @@ export async function reapStuckPaidJobs(opts?: {
 
   // 30 天硬上限：即便 holdPausedAt 一直挂着也不能无限压住，超期就强行退积分
   const PAUSE_HARD_CAP_MS = 30 * 24 * 60 * 60 * 1000;
+  // 可恢复任务（resumable）不吃 5 分钟心跳线，只兜 24 小时硬底：
+  // 任务级状态机（超时对账等）先负责；24 小时还没结清就当彻底死亡退分
+  const RESUMABLE_HARD_CAP_MS = 24 * 60 * 60 * 1000;
   for (const hold of all) {
     try {
       const lastBeat = new Date(hold.lastHeartbeatAt).getTime();
       const lag = now - lastBeat;
       const force = opts?.forceAll === true;
+
+      // 上一次退分中途崩过的：每轮 reaper 都对账补偿（与心跳/force 无关）
+      if (hold.status === "refund_pending") {
+        const dir = await getLedgerDir();
+        const result = await reconcileRefundPendingHold(
+          hold,
+          holdFilePath(dir, hold.taskType, hold.jobId),
+        );
+        if (result.refunded) refunded += 1;
+        continue;
+      }
+
+      // 可恢复任务：SIGTERM forceAll 与心跳僵尸判定都不适用（进程重启后任务会被
+      // resume 继续跑，此时退分 = 用户既拿退分又拿成片）。只有超过 24h 硬底才退。
+      if (hold.resumable) {
+        const chargedAtMs = new Date(hold.chargedAt).getTime();
+        if (Number.isFinite(chargedAtMs) && now - chargedAtMs > RESUMABLE_HARD_CAP_MS) {
+          await refundCreditsOnFailure(
+            hold.jobId,
+            hold.taskType,
+            "task_timeout",
+            `resumable hold over 24h hard cap · charged=${hold.chargedAt}`,
+          );
+          refunded += 1;
+        }
+        continue;
+      }
 
       // 暂停状态的 hold 默认跳过（用户在审核 plan 等场景），除非超 30 天硬上限或 forceAll
       if (hold.holdPausedAt && !force) {

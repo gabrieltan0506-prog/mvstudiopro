@@ -13,9 +13,12 @@ import { mirrorSeedanceMp4ToGcsSignedUrl } from "./seedanceVideo.js";
 
 const EVOLINK_BASE = String(process.env.EVOLINK_API_BASE || "https://api.evolink.ai").replace(/\/$/, "");
 const POLL_INTERVAL_MS = 4000;
+// 实测 4K 对白 5s 片要 968s（2026-08-09），900s 默认线会误杀已扣费的正常任务；
+// 默认 1500s，帽 3600s 留给 env 上调空间。超线不等于失败——canvasVideoTask 会
+// 转入 timed_out_pending_reconcile 继续对账，不立即退分。
 const MAX_POLL_MS = Math.min(
-  Math.max(Number(process.env.EVOLINK_SEEDANCE_POLL_TIMEOUT_MS) || 900_000, 120_000),
-  1_200_000,
+  Math.max(Number(process.env.EVOLINK_SEEDANCE_POLL_TIMEOUT_MS) || 1_500_000, 120_000),
+  3_600_000,
 );
 
 export function isEvolinkSeedanceConfigured(): boolean {
@@ -63,17 +66,25 @@ export async function pollEvolinkVideoTaskOnce(
   const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
   if (!apiKey) return { state: "failed", error: "EVOLINK_API_KEY 未配置" };
 
-  const r = await fetch(`${EVOLINK_BASE}/v1/tasks/${encodeURIComponent(taskId)}`, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${apiKey}` },
-    signal: AbortSignal.timeout(60_000),
-  });
+  // 查询接口自身的故障（网络抖动 / 限流 / 网关 5xx）说明不了任务死活——上游任务
+  // 不可取消、积分已扣，把这类错误当终态失败会触发「假失败真退分，上游照跑照收钱」。
+  // 一律视作仍在跑，交给下一轮轮询；真正的失败只认 2xx 响应体里的 failed/cancelled。
+  let r: Response;
+  try {
+    r = await fetch(`${EVOLINK_BASE}/v1/tasks/${encodeURIComponent(taskId)}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (e) {
+    return {
+      state: "running",
+      status: `transient_fetch_error:${e instanceof Error ? e.name : "unknown"}`,
+    };
+  }
   const json = (await r.json().catch(() => ({}))) as EvolinkVideoTask;
   if (!r.ok) {
-    return {
-      state: "failed",
-      error: json.error?.message || `EvoLink 任务查询失败 (${r.status})`,
-    };
+    return { state: "running", status: `transient_http_${r.status}` };
   }
 
   const status = String(json.status || "").toLowerCase();

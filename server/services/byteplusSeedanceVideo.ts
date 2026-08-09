@@ -18,9 +18,10 @@ import {
 import { mirrorSeedanceMp4ToGcsSignedUrl } from "./seedanceVideo.js";
 
 const POLL_INTERVAL_MS = 4000;
+// 与 EvoLink 同口径：实测 4K 要 968s，900s 默认线会误杀；默认 1500s、帽 3600s
 const MAX_POLL_MS = Math.min(
-  Math.max(Number(process.env.BYTEPLUS_SEEDANCE_POLL_TIMEOUT_MS) || 900_000, 120_000),
-  1_200_000,
+  Math.max(Number(process.env.BYTEPLUS_SEEDANCE_POLL_TIMEOUT_MS) || 1_500_000, 120_000),
+  3_600_000,
 );
 
 export function getByteplusArkApiKey(): string {
@@ -206,20 +207,27 @@ export async function pollByteplusVideoTaskOnce(
   const apiKey = getByteplusArkApiKey();
   if (!apiKey) return { state: "failed", error: "BYTEPLUS_ARK_API_KEY 未配置" };
 
-  const r = await fetch(
-    `${getByteplusArkApiBase()}/contents/generations/tasks/${encodeURIComponent(taskId)}`,
-    {
-      method: "GET",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(60_000),
-    },
-  );
+  // 查询接口自身故障（网络 / 限流 / 5xx）≠ 任务失败：当终态会「假失败真退分」。
+  // 视作仍在跑，等下一轮；终态只认 2xx 响应体里的 failed/cancelled。
+  let r: Response;
+  try {
+    r = await fetch(
+      `${getByteplusArkApiBase()}/contents/generations/tasks/${encodeURIComponent(taskId)}`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(60_000),
+      },
+    );
+  } catch (e) {
+    return {
+      state: "running",
+      status: `transient_fetch_error:${e instanceof Error ? e.name : "unknown"}`,
+    };
+  }
   const json = (await r.json().catch(() => ({}))) as ByteplusTaskJson;
   if (!r.ok) {
-    return {
-      state: "failed",
-      error: json.error?.message || json.message || `BytePlus 任务查询失败 (${r.status})`,
-    };
+    return { state: "running", status: `transient_http_${r.status}` };
   }
 
   const status = String(json.status || "").toLowerCase();

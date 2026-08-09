@@ -12,9 +12,11 @@ import {
 } from "../../shared/wavespeedVideoUpscaleModels.js";
 
 const POLL_INTERVAL_MS = 2000;
+// 实测 5s 片超分要 163–187s（约 35 倍片长）；漫剧整集（120s 档）按同比例约 70 分钟。
+// 默认 3600s、帽 7200s；超线由 canvasVideoTask 转 timed_out_pending_reconcile，不误杀。
 const MAX_POLL_MS = Math.min(
-  Math.max(Number(process.env.WAVESPEED_UPSCALE_POLL_TIMEOUT_MS) || 900_000, 120_000),
-  1_800_000,
+  Math.max(Number(process.env.WAVESPEED_UPSCALE_POLL_TIMEOUT_MS) || 3_600_000, 120_000),
+  7_200_000,
 );
 
 export function getWavespeedApiKey(): string {
@@ -52,31 +54,32 @@ function pickPrediction(json: WavespeedPrediction) {
   };
 }
 
+export type WavespeedUpscalePollSnapshot =
+  | { state: "completed"; sourceUrl: string }
+  | { state: "failed"; error: string }
+  | { state: "running"; status: string };
+
 /**
- * 超分一条视频。`videoUrl` 必须是上游能直接抓取的公网地址。
- *
- * 只做「跑完拿结果」，不管计费与档位合法性——那两件在扣费前由
- * `canWavespeedUpscale` / `wavespeedUpscaleUsdCost` 决定，别在这里二次判断，
- * 免得两处口径漂移（画布 2K 那次就是判定分散在两层才出的事）。
+ * 提交超分任务，拿 predictionId 就返回（不等完成）。`videoUrl` 必须是上游能
+ * 直接抓取的公网地址。计费与档位合法性在扣费前由 `canWavespeedUpscale` /
+ * `wavespeedUpscaleUsdCost` 决定，别在这里二次判断，免得两处口径漂移。
  */
-export async function runWavespeedVideoUpscale(input: {
+export async function submitWavespeedVideoUpscale(input: {
   videoUrl: string;
   target: WavespeedUpscaleTarget;
-}): Promise<{ videoUrl: string; predictionId: string; provider: "wavespeed" }> {
+}): Promise<{ predictionId: string }> {
   const apiKey = getWavespeedApiKey();
   if (!apiKey) throw new Error("视频高清放大暂不可用，请稍后重试");
 
   const source = String(input.videoUrl || "").trim();
   if (!/^https?:\/\//i.test(source)) throw new Error("需要一条可公开访问的视频地址");
 
-  const headers = {
-    Authorization: `Bearer ${apiKey}`,
-    "Content-Type": "application/json",
-  };
-
   const createRes = await fetch(`${apiBase()}${WAVESPEED_VIDEO_UPSCALE_PATH}`, {
     method: "POST",
-    headers,
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({ video: source, target_resolution: input.target }),
     signal: AbortSignal.timeout(60_000),
   });
@@ -85,26 +88,72 @@ export async function runWavespeedVideoUpscale(input: {
   if (!createRes.ok || !created.id) {
     throw new Error(created.error || `超分任务创建失败 (${createRes.status})`);
   }
+  return { predictionId: created.id };
+}
+
+/**
+ * 轮询一次。查询接口自身故障（网络 / 限流 / 5xx）≠ 任务失败：当终态会
+ * 「假失败真退分」，一律视作仍在跑；终态只认 2xx 响应体里的 failed/cancelled/timeout。
+ * completed 时返回上游短期直链，镜像交给调用方。
+ */
+export async function pollWavespeedUpscaleOnce(
+  predictionId: string,
+): Promise<WavespeedUpscalePollSnapshot> {
+  const apiKey = getWavespeedApiKey();
+  if (!apiKey) return { state: "failed", error: "WAVESPEED_API_KEY 未配置" };
+
+  let res: Response;
+  try {
+    res = await fetch(`${apiBase()}/predictions/${encodeURIComponent(predictionId)}/result`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (e) {
+    return {
+      state: "running",
+      status: `transient_fetch_error:${e instanceof Error ? e.name : "unknown"}`,
+    };
+  }
+  const json = (await res.json().catch(() => ({}))) as WavespeedPrediction;
+  if (!res.ok) {
+    return { state: "running", status: `transient_http_${res.status}` };
+  }
+  const snap = pickPrediction(json);
+  if (snap.status === "completed") {
+    const out = snap.outputs.find((u) => u.trim());
+    if (!out) return { state: "failed", error: "超分完成但未返回下载地址" };
+    return { state: "completed", sourceUrl: out.trim() };
+  }
+  if (snap.status === "failed" || snap.status === "cancelled" || snap.status === "timeout") {
+    return {
+      state: "failed",
+      error: snap.error || `超分${snap.status === "timeout" ? "超时" : "失败"}`,
+    };
+  }
+  return { state: "running", status: snap.status || "processing" };
+}
+
+/** 同步跑完拿结果（提交 + 轮询 + 镜像）。异步任务框架请分别用 submit / pollOnce。 */
+export async function runWavespeedVideoUpscale(input: {
+  videoUrl: string;
+  target: WavespeedUpscaleTarget;
+}): Promise<{ videoUrl: string; predictionId: string; provider: "wavespeed" }> {
+  const { predictionId } = await submitWavespeedVideoUpscale(input);
 
   const started = Date.now();
   while (Date.now() - started < MAX_POLL_MS) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-    const res = await fetch(`${apiBase()}/predictions/${encodeURIComponent(created.id)}/result`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(60_000),
-    });
-    const json = (await res.json().catch(() => ({}))) as WavespeedPrediction;
-    const snap = pickPrediction(json);
-    if (snap.status === "completed") {
-      const out = snap.outputs.find((u) => u.trim());
-      if (!out) throw new Error("超分完成但未返回下载地址");
+    const snap = await pollWavespeedUpscaleOnce(predictionId);
+    if (snap.state === "completed") {
       // 上游直链是短期的，镜像到 GCS 再交给前端，与成片同一口径
-      const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(out.trim());
-      return { videoUrl, predictionId: created.id, provider: "wavespeed" };
+      const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl);
+      return { videoUrl, predictionId, provider: "wavespeed" };
     }
-    if (snap.status === "failed" || snap.status === "cancelled" || snap.status === "timeout") {
-      throw new Error(snap.error || `超分${snap.status === "timeout" ? "超时" : "失败"}`);
+    if (snap.state === "failed") {
+      throw new Error(snap.error);
     }
   }
   throw new Error("超分超时，请稍后重试");
 }
+
+export const WAVESPEED_UPSCALE_MAX_POLL_MS = MAX_POLL_MS;
