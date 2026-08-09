@@ -11351,8 +11351,12 @@ export default function PlatformPage() {
                                 ) : null}
                               </div>
                             );
+                            // 与 runManhuaTemplateLearnCloud 的 busyKey 同口径（那边 trim 过）
                             const busyKey = String(
-                              row.mixId || row.url || row.mixName || idx + 1,
+                              String(row.mixId || "").trim()
+                                || String(row.url || "").trim()
+                                || String(row.mixName || "").trim()
+                                || idx + 1,
                             );
                             const busy = manhuaLearnBusyKey === busyKey;
                             return (

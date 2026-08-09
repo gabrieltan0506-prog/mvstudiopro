@@ -152,6 +152,10 @@ export async function getManhuaSeriesLearnSnapshot(seriesKey: string): Promise<{
     return { progress: null, digestsPreview: [], analysisReady: false, proposal: null };
   }
   const progress = await loadSeriesProgress(key);
+  if (progress) {
+    // 存量被占位词写脏的 titleHint，读路径也洗（不等下次学习才修复面板显示）
+    progress.titleHint = cleanManhuaLearnTitle(progress.titleHint) || "未命名合集";
+  }
   const digestsAll = await loadAllDigests(key);
   const digests = digestsAll.filter(isManhuaLearnEpisodeComplete);
   const digestsPreview = digestsAll.map(toDigestPreview);
@@ -196,9 +200,15 @@ function cleanManhuaLearnTitle(raw?: string | null): string {
   return MANHUA_LEARN_TITLE_PLACEHOLDERS.has(t) ? "" : t;
 }
 
-/** 剧名两侧多余书名号剥掉（mix_name 常自带《》，进度行再包一层会变《《》》） */
+/**
+ * 剥外层书名号（mix_name 常自带《》，进度行再包一层会变《《》》）。
+ * 只在整体被一对《》包裹且内部不再含书名号时才剥——单侧剥会把
+ * 「XXX《动态漫画》」「《XX》第二季」这类高频命名剥坏并写脏进度。
+ */
 function stripBookTitleMarks(raw?: string | null): string {
-  return String(raw || "").trim().replace(/^[《\s]+/, "").replace(/[》\s]+$/, "");
+  const t = String(raw || "").trim();
+  const m = /^《(.*)》$/.exec(t);
+  return m && !m[1].includes("《") && !m[1].includes("》") ? m[1].trim() : t;
 }
 
 function seriesKeyFrom(input: { url: string; mixId?: string; title?: string }): string {
@@ -844,7 +854,7 @@ async function learnOneEpisode(input: {
 export async function runManhuaTemplateLearn(
   input: ManhuaTemplateLearnInput,
 ): Promise<ManhuaTemplateLearnResult> {
-  const title = cleanManhuaLearnTitle(input.title);
+  const title = stripBookTitleMarks(cleanManhuaLearnTitle(input.title));
   const url = String(input.url || "").trim();
   if (!url) {
     throw new Error("缺少合集或成片链接（榜单一点或粘贴链接）");
