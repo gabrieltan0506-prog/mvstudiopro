@@ -285,14 +285,31 @@ export function recutWorkbenchShotsTo(
       buckets[Math.min(total - 1, Math.floor((i * total) / list.length))]!.push(s);
     });
     const seams: number[] = [];
+    const joinField = (chunk: ManhuaWorkbenchShot[], key: "dialogueZh" | "actionZh") =>
+      chunk
+        .map((s) => String(s[key] || "").trim())
+        .filter(Boolean)
+        .join(key === "dialogueZh" ? " " : "；") || undefined;
+    const firstOf = (chunk: ManhuaWorkbenchShot[], key: keyof ManhuaWorkbenchShot) =>
+      chunk.map((s) => s[key]).find((v) => v !== undefined && v !== "");
     const out = buckets.map((chunk, bi) => {
       const head = chunk[0]!;
       if (chunk.length > 1) seams.push(bi + 1);
+      /**
+       * 只继承 head 会把被合并镜的**台词**和表演字段整条吞掉——「一句不丢」就只对
+       * actionZh 成立，dialogueZh 静默消失。台词必须拼起来；情绪/语气/微表情这些
+       * 单值字段取第一个非空（同段内本来就该一致）。
+       */
       return {
         ...head,
         index: bi + 1,
         durationSec: chunk.reduce((n, s) => n + (Number(s.durationSec) || 0), 0),
-        actionZh: chunk.map(textOf).filter(Boolean).join("；"),
+        actionZh: joinField(chunk, "actionZh") || "",
+        dialogueZh: joinField(chunk, "dialogueZh"),
+        intentZh: firstOf(chunk, "intentZh") as string | undefined,
+        emotionZh: firstOf(chunk, "emotionZh") as string | undefined,
+        voiceToneZh: firstOf(chunk, "voiceToneZh") as string | undefined,
+        microExpressionZh: firstOf(chunk, "microExpressionZh") as string | undefined,
       };
     });
     return { shots: out, mode: "merged", seamShotIndexes: seams };
@@ -316,14 +333,26 @@ export function recutWorkbenchShotsTo(
     if (pick < 0 || best < 16) break;
     const src = out[pick]!;
     const text = textOf(src);
-    const cut = text.slice(0, Math.ceil(text.length / 2));
-    const rest = text.slice(cut.length);
+    /** 按中文标点找语义边界，别拦腰切在词中间；找不到才退回中点 */
+    const mid = Math.ceil(text.length / 2);
+    let at = -1;
+    for (let k = 0; k < text.length; k++) {
+      if (!/[。；;！？!?，,]/.test(text[k]!)) continue;
+      if (at < 0 || Math.abs(k + 1 - mid) < Math.abs(at - mid)) at = k + 1;
+    }
+    const cutAt = at > 0 && at < text.length ? at : mid;
+    const cut = text.slice(0, cutAt).trim();
+    const rest = text.slice(cutAt).trim();
     const half = (Number(src.durationSec) || 0) / 2;
+    /**
+     * 台词只能给其中一镜：两半都 `{...src}` 会把 dialogueZh 复制两份，
+     * 同一句台词播两次。给前半（起幅先说），后半清空。
+     */
     out.splice(
       pick,
       1,
       { ...src, actionZh: cut, durationSec: half },
-      { ...src, actionZh: rest, durationSec: half },
+      { ...src, actionZh: rest, durationSec: half, dialogueZh: undefined },
     );
     seams.push(pick + 1);
   }
@@ -390,7 +419,26 @@ export function maxManhuaShotsForVideoModel(videoModel?: string | null): number 
  */
 export function groupShotsIntoSegments(
   shots: ManhuaWorkbenchShot[],
-  opts?: { videoModel?: string | null; segmentCount?: number; padToDefaultEpisode?: boolean },
+  opts?: {
+    videoModel?: string | null;
+    segmentCount?: number;
+    padToDefaultEpisode?: boolean;
+    /**
+     * 出参：把重切结果回填给调用方（沿用本仓 `captureError` 的出参惯例，
+     * 不破坏既有调用签名）。
+     *
+     * - `mode: "thin"` 表示剧情撑不满目标段数，已用补镜凑数 —— 前端**必须**据此
+     *   提示并引导付费扩写，而不是让用户拿一集空壳去出片；
+     * - `seamShotIndexes` 是重切造出来的接缝，供「智能改写衔接」只润这几处。
+     *
+     * 不回填的话这两个信号会被整条吞掉，等于白算——那正是本仓反复出现的空壳模式。
+     */
+    captureRecut?: {
+      mode?: ManhuaShotRecutResult["mode"];
+      seamShotIndexes?: number[];
+      paddedCount?: number;
+    };
+  },
 ): ManhuaWorkbenchSegment[] {
   const per = MANHUA_KEYARTS_PER_SEGMENT_MIN;
   const explicit = shots.length >= 2;
@@ -415,9 +463,15 @@ export function groupShotsIntoSegments(
     if (explicit) {
       const recut = recutWorkbenchShotsTo(list, total);
       // 拆不动（内容太薄）时仍要凑够钉死的段数，否则段数与实收积分对不上；
-      // 这种情况前端应引导付费扩写，而不是让用户拿一集空壳
-      list = recut.shots.length === total ? recut.shots : padWorkbenchShotsTo(recut.shots, total);
+      // 但必须把 thin 回填出去，让前端引导付费扩写，而不是让用户拿一集空壳
+      const padded = Math.max(0, total - recut.shots.length);
+      list = padded > 0 ? padWorkbenchShotsTo(recut.shots, total) : recut.shots;
       list = list.slice(0, total);
+      if (opts?.captureRecut) {
+        opts.captureRecut.mode = recut.mode;
+        opts.captureRecut.seamShotIndexes = recut.seamShotIndexes;
+        opts.captureRecut.paddedCount = padded;
+      }
     } else {
       list = padWorkbenchShotsTo(list, total).slice(0, total);
     }
@@ -433,7 +487,14 @@ export function groupShotsIntoSegments(
      * 超上限时按内容合并，不再 `.slice()` 截尾——截尾会把后面几段剧情静默丢掉。
      * 上限本身按引擎长档段数算（固定 24 会把 12 段长档截成 8 段）。
      */
-    if (list.length > cap) list = recutWorkbenchShotsTo(list, cap).shots;
+    if (list.length > cap) {
+      const capped = recutWorkbenchShotsTo(list, cap);
+      list = capped.shots;
+      if (opts?.captureRecut) {
+        opts.captureRecut.mode = capped.mode;
+        opts.captureRecut.seamShotIndexes = capped.seamShotIndexes;
+      }
+    }
     /**
      * 再补齐到 3 的倍数：镜号→段号映射（resolveSegmentIndexFromShotIndex）按每段 3 镜算，
      * 尾段只有 1、2 镜时映射就会错位，镜绑到隔壁段的成片上。
@@ -442,7 +503,12 @@ export function groupShotsIntoSegments(
     if (remainder) {
       const target = list.length + (per - remainder);
       const recut = recutWorkbenchShotsTo(list, target);
-      list = recut.shots.length === target ? recut.shots : padWorkbenchShotsTo(list, target);
+      const short = recut.shots.length !== target;
+      list = short ? padWorkbenchShotsTo(list, target) : recut.shots;
+      if (opts?.captureRecut && short) {
+        opts.captureRecut.mode = "thin";
+        opts.captureRecut.paddedCount = target - recut.shots.length;
+      }
     }
   }
   list = list.map((s, i) => ({ ...s, index: i + 1 }));

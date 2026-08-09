@@ -117,6 +117,7 @@ import {
 import {
   formatCustomAssetRefsDutyBlock,
   normalizeManhuaCustomAssetRefs,
+  stripManhuaCustomAssetLabelPrefix,
   upsertGeneratedManhuaCustomAssetRef,
   type ManhuaCustomAssetRef,
   type ManhuaCustomAssetRole,
@@ -2558,7 +2559,13 @@ export function collectManhuaPropImageUrlById(
       if (!map[seedId]) map[seedId] = url;
       continue;
     }
-    const key = normalizeForManhuaNameMatch(stripManhuaCustomAssetRefNoteSuffix(ref.labelZh || ""));
+    /**
+     * 名称兜底要先剥「新道具·」这类前缀再剥括号备注，两步都做才对得上 canon 的 nameZh。
+     * 只剥括号的话，用户改过标签或走「新道具」入口的资产一律匹配不上。
+     */
+    const key = normalizeForManhuaNameMatch(
+      stripManhuaCustomAssetRefNoteSuffix(stripManhuaCustomAssetLabelPrefix(ref.labelZh || "")),
+    );
     const propId = key ? normalizedNameToPropId.get(key) : undefined;
     if (propId && !map[propId]) map[propId] = url;
   }

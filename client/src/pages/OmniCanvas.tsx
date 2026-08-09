@@ -2388,6 +2388,9 @@ export default function OmniCanvas() {
     });
   }, [writerFocusEpisode, writerPack, buildDirectorBoardPromptMutation]);
 
+  /** 见下方赋值处：ZIP 导入要先写剧本，但剧本导入函数定义在后面，用 ref 转一手 */
+  const importWriterFromTextRef = useRef<((raw: string) => Promise<void>) | null>(null);
+
   const importAssetZipFile = useCallback(
     async (file: File) => {
       setAssetZipBusy(true);
@@ -2406,6 +2409,28 @@ export default function OmniCanvas() {
             return { url: asset.url, gcsUri: asset.gcsUri };
           },
         });
+        /**
+         * 剧本必须**先于**资产写入。
+         *
+         * `importWriterRoomFromText` 里 `setCustomAssetRefs([])` /
+         * `setDirectorBoardMainByEpisode({})` 是无条件执行的（换剧要清旧资产），
+         * 所以「先挂资产再导剧本」会把刚导进来的资产整批清掉——2026-08-09 用户实际踩到，
+         * 被迫把 50MB 的包重传一次。顺序在这里锁死，用户就不必知道有这个坑。
+         */
+        let scriptImported = 0;
+        const bestScript = result.scripts[0];
+        if (bestScript) {
+          const ok =
+            !writerPack ||
+            window.confirm(
+              `资产包里带着剧本（${bestScript.path.split("/").pop()}，正文约 ${bestScript.charCount} 字、对白 ${bestScript.dialogueCount} 句）。\n\n` +
+                "导入它会替换当前剧本。取消则只挂资产、不动剧本。是否导入？",
+            );
+          if (ok) {
+            await importWriterFromTextRef.current?.(bestScript.text);
+            scriptImported = 1;
+          }
+        }
         if (result.addedRefs.length) {
           setCustomAssetRefs((prev) =>
             normalizeManhuaCustomAssetRefs([...prev, ...result.addedRefs]),
@@ -2435,8 +2460,13 @@ export default function OmniCanvas() {
         const boardDescZh = result.directorBoards.length
           ? `导演板 ${boardsIngested}/${result.directorBoards.length} 集`
           : "导演板 0 集";
+        const scriptDescZh = result.scripts.length
+          ? scriptImported
+            ? ` · 剧本已导入（${result.scripts.length} 份中取对白最全的一份）`
+            : ` · 识别到 ${result.scripts.length} 份剧本（未导入）`
+          : "";
         toast.success("资产包已导入", {
-          description: `参考图 ${result.addedRefs.length} 张 · ${boardDescZh} · 跳过 ${result.skippedCount} · 去重 ${result.droppedDupes}`,
+          description: `参考图 ${result.addedRefs.length} 张 · ${boardDescZh} · 跳过 ${result.skippedCount} · 去重 ${result.droppedDupes}${scriptDescZh}`,
         });
         if (failedBoardEpisodes.length) {
           toast.error("部分导演板未接入", {
@@ -2447,7 +2477,8 @@ export default function OmniCanvas() {
         setAssetZipBusy(false);
       }
     },
-    [cropDirectorBoardMutation, getSignedUrlMutation, setDirectorBoardMainForEpisode],
+    // writerPack 只用来判断「要不要问用户确认替换」；剧本导入函数走 ref，不进依赖
+    [cropDirectorBoardMutation, getSignedUrlMutation, setDirectorBoardMainForEpisode, writerPack],
   );
 
   /**
@@ -3265,6 +3296,14 @@ export default function OmniCanvas() {
       pushDebug,
     ],
   );
+
+  /**
+   * 供 ZIP 导入回调调用。
+   *
+   * ZIP 导入（importAssetZipFile）定义在本函数之前，不能把它写进依赖数组——
+   * 依赖数组在渲染时立即求值，那时这个 const 还在 TDZ 里会直接抛错。用 ref 转一手。
+   */
+  importWriterFromTextRef.current = importWriterRoomFromText;
 
   const onWriterImportFile = useCallback(
     async (file: File | null) => {

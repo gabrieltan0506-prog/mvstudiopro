@@ -84,10 +84,25 @@ describe("canvasVideoClipCredits", () => {
     expect(canvasVideoClipCredits({ resolution: "1k" })).toBe(CANVAS_VIDEO_CREDITS_CLIP_1080P);
   });
 
-  it("加长档与漫剧段价不吃画质参数", () => {
-    expect(canvasVideoClipCredits({ durationSec: 30, resolution: "4K" })).toBe(
+  /**
+   * 原来这条断言「加长档不吃画质参数」——那正是个收费漏洞：长片判断压在画质查表之前，
+   * 一条 30 秒 4K 只收 240，而 15 秒 4K 收 688，**越长越便宜**，
+   * 用户把时长拉过 15 秒就能拿高画质当白菜价。现在长档按同一倍率抬。
+   */
+  it("加长档按画质等比例抬价，720p 长档维持原值", () => {
+    expect(canvasVideoClipCredits({ durationSec: 30, resolution: "720p" })).toBe(
       CANVAS_VIDEO_CREDITS_CLIP_LONG,
     );
+    const long4K = canvasVideoClipCredits({ durationSec: 30, resolution: "4K" });
+    expect(long4K).toBeGreaterThan(CANVAS_VIDEO_CREDITS_CLIP_LONG);
+    // 与短档同一比例：4K 长档 / 4K 短档 === 720p 长档 / 720p 短档
+    expect(long4K / CANVAS_VIDEO_CREDITS_CLIP_4K).toBeCloseTo(
+      CANVAS_VIDEO_CREDITS_CLIP_LONG / CANVAS_VIDEO_CREDITS_CLIP,
+      2,
+    );
+  });
+
+  it("漫剧段价仍是整集折算价，不吃画质参数", () => {
     expect(canvasVideoClipCredits({ isEpisodeSegment: true, resolution: "4K" })).toBe(
       MANHUA_EPISODE_CREDITS_PER_SEGMENT,
     );

@@ -14,6 +14,8 @@ import {
   MANHUA_SEGMENT_DEFAULT,
   manhuaSegmentCountBounds,
   manhuaSegmentDurationSec,
+  recutWorkbenchShotsTo,
+  type ManhuaWorkbenchShot,
   shotIndexesForSegment,
   parseManhuaClipTargetDurationSec,
   parseWorkbenchShotsFromText,
@@ -351,5 +353,72 @@ describe("manhuaScriptWorkbench", () => {
     const shots = defaultWorkbenchShots();
     expect(shots.some((s) => s.dialogueZh)).toBe(false);
     expect(shots.some((s) => /写清空间纵深|别逼我/.test(s.actionZh))).toBe(false);
+  });
+});
+
+describe("recutWorkbenchShotsTo：换引擎重切", () => {
+  const shot = (i: number, action: string, dialogue?: string): ManhuaWorkbenchShot => ({
+    index: i,
+    durationSec: 5,
+    cameraZh: "平视",
+    actionZh: action,
+    dialogueZh: dialogue,
+  });
+
+  it("镜多时合并，台词一句都不丢", () => {
+    const src = [
+      shot(1, "甲推门", "「谁在外面」"),
+      shot(2, "乙抬头", "「是我」"),
+      shot(3, "刀出鞘", "「别动」"),
+      shot(4, "雨落下"),
+    ];
+    const r = recutWorkbenchShotsTo(src, 2);
+    expect(r.shots.length).toBe(2);
+    expect(r.mode).toBe("merged");
+    const allDialogue = r.shots.map((s) => s.dialogueZh || "").join(" ");
+    for (const line of ["「谁在外面」", "「是我」", "「别动」"]) {
+      expect(allDialogue).toContain(line);
+    }
+    // 动作也全在
+    const allAction = r.shots.map((s) => s.actionZh).join("；");
+    for (const a of ["甲推门", "乙抬头", "刀出鞘", "雨落下"]) {
+      expect(allAction).toContain(a);
+    }
+  });
+
+  it("镜少时拆分，台词只归其中一镜不重复", () => {
+    const src = [shot(1, "他缓缓抬起头，目光越过人群，落在门口那道影子上。", "「你终于来了」")];
+    const r = recutWorkbenchShotsTo(src, 2);
+    expect(r.shots.length).toBe(2);
+    expect(r.mode).toBe("split");
+    const withDialogue = r.shots.filter((s) => (s.dialogueZh || "").trim());
+    expect(withDialogue.length).toBe(1);
+  });
+
+  it("内容太薄拆不动时报 thin，不假装拆成功", () => {
+    const r = recutWorkbenchShotsTo([shot(1, "开门")], 4);
+    expect(r.mode).toBe("thin");
+    expect(r.shots.length).toBeLessThan(4);
+  });
+
+  it("合并按比例分桶，恰好得到目标镜数", () => {
+    const src = Array.from({ length: 40 }, (_, i) => shot(i + 1, `动作${i + 1}`));
+    expect(recutWorkbenchShotsTo(src, 36).shots.length).toBe(36);
+    expect(recutWorkbenchShotsTo(src, 12).shots.length).toBe(12);
+  });
+
+  it("thin 会通过 captureRecut 传出去，前端才能引导付费扩写", () => {
+    const capture: Parameters<typeof groupShotsIntoSegments>[1] extends
+      | { captureRecut?: infer C }
+      | undefined
+      ? NonNullable<C>
+      : never = {};
+    groupShotsIntoSegments([shot(1, "开门"), shot(2, "关门")], {
+      videoModel: "seedance-2.5",
+      segmentCount: 4,
+      captureRecut: capture,
+    });
+    expect(capture.mode).toBe("thin");
+    expect(capture.paddedCount).toBeGreaterThan(0);
   });
 });

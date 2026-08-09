@@ -164,9 +164,16 @@ export async function importManhuaAssetZipFile(opts: {
     directorBoards,
     skippedCount: plan.skipped.length,
     droppedDupes: deduped.dropped.length,
-    // 对白多的排前面：一个包里常同时有梗概版与带对白版，梗概版会被密度门禁拦下
+    /**
+     * 先按「有没有对白」分两档，再按正文长度排。
+     *
+     * 不能单按 dialogueCount 排：一份极短但含一句「」的文件会压过完整剧本。
+     * 密度门禁两条都要过（正文 ≥196 字/集、对白 ≥12 句/集），所以先筛出带对白的，
+     * 再在其中取最长的那份——梗概版通常既短又几乎没有「」，自然排到后面。
+     */
     scripts: scripts.sort(
-      (a, b) => b.dialogueCount - a.dialogueCount || b.charCount - a.charCount,
+      (a, b) =>
+        Number(b.dialogueCount > 0) - Number(a.dialogueCount > 0) || b.charCount - a.charCount,
     ),
   };
 }

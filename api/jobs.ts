@@ -3705,6 +3705,94 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
     }
 
     /**
+     * 视频高清放大（WaveSpeed · ByteDance Video Upscaler）。
+     *
+     * **不绑漫剧**：自由画布的单条成片、合成后的整集、用户自己上传的视频都能走这条，
+     * 单独按秒计费。有人就是拿 2.5 出单条视频、根本不做漫剧，这条也得赚得到。
+     *
+     * 为什么必须有：**2K 在 Seedance 全系不存在**（上游枚举只有 480p/720p/1080p/4K），
+     * 2.5 更是只到 720p —— 用最贵的模型反而卡在最低画质。超分把 720p 补到 2K/4K，
+     * 成本只占总花费的 12.7%（4K 超分 $0.0288/秒 vs 原生 4K 生成 $1.0126/秒）。
+     */
+    if (op === "videoUpscale") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const {
+        canWavespeedUpscale,
+        normalizeWavespeedUpscaleTarget,
+      } = await import("../shared/wavespeedVideoUpscaleModels.js");
+      const { canvasVideoUpscaleCredits } = await import("../shared/canvasGenerationPricing.js");
+      const { isWavespeedUpscaleConfigured, runWavespeedVideoUpscale } = await import(
+        "../server/services/wavespeedVideoUpscale.js"
+      );
+      if (!isWavespeedUpscaleConfigured()) {
+        return res.status(503).json({ ok: false, error: "高清放大暂不可用，请稍后重试" });
+      }
+
+      const videoUrl = s(b.videoUrl || b.url || q.videoUrl || "").trim();
+      if (!/^https?:\/\//i.test(videoUrl)) {
+        return res.status(400).json({ ok: false, error: "请提供一条可访问的视频地址" });
+      }
+      const target = normalizeWavespeedUpscaleTarget(b.target ?? b.resolution ?? q.target);
+      if (!target || target === "1080p") {
+        return res.status(400).json({ ok: false, error: "高清放大目标只支持 2K 或 4K" });
+      }
+      const sourceResolution = s(b.sourceResolution || q.sourceResolution || "720p").trim();
+      if (!canWavespeedUpscale(sourceResolution, target)) {
+        return res.status(400).json({
+          ok: false,
+          error: `${sourceResolution} 无法放大到 ${target.toUpperCase()}；已是该档或更高时无需放大`,
+        });
+      }
+      const durationSec = Math.max(1, Math.round(Number(b.durationSec ?? q.durationSec) || 0));
+      if (!durationSec) {
+        return res.status(400).json({ ok: false, error: "请提供视频时长（秒）" });
+      }
+
+      /**
+       * 按秒计费：整集合成后跑一次是主流用法，不能按条收。
+       * 无 episodeIndex 即视作自由画布散客，按 1.1 倍零售价——批发价与零售价不同价。
+       */
+      const isFreeform = !(Number(b.episodeIndex) > 0);
+      const credits = canvasVideoUpscaleCredits(target, durationSec, { freeform: isFreeform });
+      const label = `高清放大·${target.toUpperCase()}（${durationSec}s）`;
+      const viewer = await resolveJobUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "请先登录后再使用高清放大" });
+      const { deductCreditsAmount, refundCredits } = await import("../server/credits.js");
+      let charged = 0;
+      try {
+        const out = await deductCreditsAmount(viewer.userId, credits, "canvasVideoClip", label);
+        charged = out.cost;
+      } catch {
+        return res.status(402).json({
+          ok: false,
+          error: `积分不足：本次高清放大需要 ${credits} 积分`,
+        });
+      }
+      try {
+        const result = await runWavespeedVideoUpscale({ videoUrl, target });
+        return res.status(200).json({
+          ok: true,
+          videoUrl: result.videoUrl,
+          target,
+          durationSec,
+          creditsUsed: charged,
+          provider: result.provider,
+          predictionId: result.predictionId,
+        });
+      } catch (error: unknown) {
+        if (charged > 0) {
+          await refundCredits(viewer.userId, charged, `${label}·失败退回`).catch(() => {});
+        }
+        return res.status(502).json({
+          ok: false,
+          error: error instanceof Error ? error.message : "高清放大失败，请稍后重试",
+        });
+      }
+    }
+
+    /**
      * MiniMax H3（Hailuo 3）· OpenRouter POST /api/v1/videos。
      * 画布 videoModel=minimax-hailuo-3；不走 EvoLink。
      */
@@ -3749,13 +3837,17 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         const resolution = normalizeHailuoOpenRouterResolution(
           b.videoResolution ?? b.resolution ?? q.resolution,
         );
+        /**
+         * 只算一次，label / 扣费 / 任务参数 / 响应全用它，避免四处各归一化一遍再漂移。
+         * 计价表没有 768p 档，H3 草稿档折到 720p 价；2K 才按 2K 收。
+         */
+        const billedResolution = resolution === "2K" ? "2K" : "720p";
         const label = `画布成片·H3（${resolution}·${duration}s）`;
         const charged = await chargeCanvasVideoCredits(req, {
           durationSec: duration,
           episodeIndex: b.episodeIndex,
           label,
-          // 计费必须读实际下发的画质，否则 2K 会按 720p 档收，等于我们贴钱出高清
-          resolution: resolution === "2K" ? "2K" : "720p",
+          resolution: billedResolution,
           videoModel: CANVAS_VIDEO_MODEL_HAILUO_H3,
         });
         if (!charged.ok) {
@@ -4248,9 +4340,25 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
               error: "视频服务暂不可用，请稍后重试",
             });
           }
+          /**
+           * 只算一次，label / 扣费 / 上游参数 / 响应全用同一个值。
+           *
+           * 之前 `normalizeSeedanceOpenRouterQuality` 对标准 2.0 会放行 "2K"/"4K"，
+           * 而扣费那边又没传 videoModel，`resolveCanvasVideoResolution` 拿不到引擎就放行全档
+           * —— 2K 照 388 收、照发上游，然后被 BytePlus 拒（实测：Supported values 里没有 2K）。
+           * 先按引擎钳一次，再喂给 provider 的归一化，两层同源。
+           */
+          const { resolveCanvasVideoResolution } = await import(
+            "../shared/canvasGenerationPricing.js"
+          );
+          const requestedResolution = b.resolution || q.resolution || "720p";
+          const effectiveResolution = resolveCanvasVideoResolution(
+            productVersion === "2.0-fast" ? "seedance-2.0-fast" : "seedance-2.0",
+            requestedResolution,
+          );
           const resolution = normalizeSeedanceOpenRouterQuality(
             productVersion,
-            b.resolution || q.resolution || "720p",
+            effectiveResolution,
           );
           const duration = parseSeedanceDurationInput(
             b.duration ?? q.duration ?? b.durationSec ?? 15,
@@ -4294,6 +4402,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             episodeIndex: b.episodeIndex,
             resolution,
             label,
+            // 不传 videoModel 的话按引擎钳制拿不到引擎，等于没钳
+            videoModel: productVersion === "2.0-fast" ? "seedance-2.0-fast" : "seedance-2.0",
           });
           if (!charged.ok) {
             return res.status(charged.status).json({ ok: false, error: charged.error });
