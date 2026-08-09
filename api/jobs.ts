@@ -3393,6 +3393,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           maskUrl: maskUrl || undefined,
           // Canvas：有参考图即按通用改图，勿注入平台封面换脸指令
           generalImageEdit: referenceImageUrls.length > 0 || generalImageEdit,
+          // 画布画面一律禁字；与 server/jobs/runner.ts 的画布出图保持同一口径
+          onImageText: "forbid",
           providerOverride,
           imageLane,
           captureError,
@@ -3734,16 +3736,27 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             error: "视频服务暂不可用，请稍后重试",
           });
         }
-        const { clampHailuoOpenRouterDuration, HAILUO_OPENROUTER_RESOLUTION } = await import(
-          "../shared/hailuoOpenRouterModels.js"
+        const {
+          CANVAS_VIDEO_MODEL_HAILUO_H3,
+          clampHailuoOpenRouterDuration,
+          normalizeHailuoOpenRouterResolution,
+        } = await import("../shared/hailuoOpenRouterModels.js");
+        /**
+         * 时长三档 5/10/15，画质两档 768p/2K（用户 2026-08-09 拍板）。
+         * 认不出一律回落 15s / 768p——宁可便宜出片，不要按高清收钱却拿不到高清。
+         */
+        const duration = clampHailuoOpenRouterDuration(b.duration ?? q.duration);
+        const resolution = normalizeHailuoOpenRouterResolution(
+          b.videoResolution ?? b.resolution ?? q.resolution,
         );
-        // H3 一律 15 秒：忽略请求体里的时长，避免调用方各传各的导致计费与产出不符
-        const duration = clampHailuoOpenRouterDuration();
-        const label = "画布成片·H3（2K·15s）";
+        const label = `画布成片·H3（${resolution}·${duration}s）`;
         const charged = await chargeCanvasVideoCredits(req, {
           durationSec: duration,
           episodeIndex: b.episodeIndex,
           label,
+          // 计费必须读实际下发的画质，否则 2K 会按 720p 档收，等于我们贴钱出高清
+          resolution: resolution === "2K" ? "2K" : "720p",
+          videoModel: CANVAS_VIDEO_MODEL_HAILUO_H3,
         });
         if (!charged.ok) {
           return res.status(charged.status).json({ ok: false, error: charged.error });
@@ -3760,7 +3773,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             imageUrls,
             aspectRatio,
             duration,
-            resolution: HAILUO_OPENROUTER_RESOLUTION,
+            resolution,
             generateAudio,
           });
           return res.status(200).json({
@@ -3771,7 +3784,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             videoUrl: task.videoUrl || undefined,
             provider: "openrouter",
             version: "hailuo-3",
-            resolution: HAILUO_OPENROUTER_RESOLUTION,
+            resolution,
             creditsUsed: charged.credits,
           });
         } catch (error: any) {

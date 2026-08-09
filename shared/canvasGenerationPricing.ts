@@ -59,7 +59,14 @@ export const CANVAS_VIDEO_CREDITS_CLIP_LONG = 240;
  */
 export const CANVAS_VIDEO_CREDITS_CLIP_1080P = 268;
 export const CANVAS_VIDEO_CREDITS_CLIP_2K = 472;
-export const CANVAS_VIDEO_CREDITS_CLIP_4K = 1062;
+/**
+ * 4K 零售 **900**（用户 2026-08-09 拍板，原 1062）。
+ *
+ * 1062 是按「像素比外推」算出的成本 $20.41 定的；实测 EvoLink 4K 只要 $1.0126/秒，
+ * 15 秒 $15.19 ≈ 168 积分成本，外推值高估了 26%，导致 4K 被定得过贵。
+ * 900 对应毛利约 81%，与其余档位大致齐平。
+ */
+export const CANVAS_VIDEO_CREDITS_CLIP_4K = 900;
 
 /** 画布成片可选画质：默认 720p */
 export const CANVAS_VIDEO_RESOLUTIONS = ["720p", "1080p", "2K", "4K"] as const;
@@ -72,6 +79,84 @@ export function normalizeCanvasVideoResolution(raw: unknown): CanvasVideoResolut
   if (r === "2k") return "2K";
   if (r === "4k") return "4K";
   return CANVAS_VIDEO_RESOLUTION_DEFAULT;
+}
+
+/**
+ * 每个引擎**实际出得来**的画质档。
+ *
+ * 2026-08-09 实测（两条路径都打过，OpenRouter 的报错写明 "for BytePlus Seedance"，
+ * 说明它只是转发到同一个上游，不是独立供应商）：
+ *
+ * - 直连 BytePlus Ark：2.0 与 2.5，i2v 与 t2v 四种组合发 `resolution=2k`，全部 400。
+ * - 经 OpenRouter：上游把枚举吐了出来——
+ *   `Unsupported resolution '2K' for BytePlus Seedance. Supported values: 480p, 720p, 1080p, 4K`
+ *
+ * 所以 **2K 在 Seedance 全系根本不存在**（要 2K 只能出 4K 再压，或出 1080p 再超分）；
+ * 4K 则是真档位——同一发请求过了分辨率校验，倒在下一关的内容审核上。
+ *
+ * 4K 只登记给 2.0 标准档，已实测出片（EvoLink，5 秒 $5.063 / $1.0126 每秒）。
+ *
+ * 2.5 **最高只到 720p**，连 1080p 都没有——EvoLink 上游原话：
+ *   `invalid quality: 4k (model seedance-2.5-image-to-video only supports quality=[480p 720p])`
+ * fast / mini 同样只到 720p。所以画质上限最高的是 2.0，不是 2.5。
+ *
+ * 实测单价（EvoLink · 2.0 · 5 秒 · i2v，音频开关不影响价格）：
+ *   720p $0.993 ｜ 1080p $2.482 ｜ 4K $5.063
+ * 折成每秒 $0.1986 / $0.4964 / $1.0126 —— 对 720p 的倍数是 1 / 2.50 / 5.10，
+ * 而像素倍数是 1 / 2.25 / 9.00：**高档有明显折扣，计费不随像素线性增长**。
+ * 上面那张按像素比外推的表因此低档高估、高档低估，勿再拿它当成本依据。
+ *
+ * H3 上游是 `768p | 2k`，这里把 768p 归到 720p 价档（`720p` 即 H3 的草稿档）。
+ *
+ * 未登记的引擎保持全量可选，避免新接引擎被这张表悄悄砍掉能力。
+ */
+const CANVAS_VIDEO_RESOLUTIONS_BY_MODEL: Readonly<
+  Record<string, readonly CanvasVideoResolution[]>
+> = {
+  "seedance-2.0": ["720p", "1080p", "4K"],
+  "seedance-2.0-fast": ["720p"],
+  "seedance-2.0-mini": ["720p"],
+  "seedance-2.5": ["720p"],
+  "minimax-hailuo-3": ["720p", "2K"],
+};
+
+/** 引擎别名 → 上表的键；与 canvasTypes / manhuaSeedanceLayout 的写法对齐 */
+function canvasVideoModelPricingKey(videoModel?: string | null): string {
+  const k = String(videoModel || "").trim().toLowerCase();
+  if (!k) return "";
+  if (isMiniPricedVideoModel(k)) return "seedance-2.0-mini";
+  if (k === "hailuo-3" || k === "minimax/hailuo-3" || k === "minimax-h3" || k === "h3") {
+    return "minimax-hailuo-3";
+  }
+  if (k === "2.0-fast" || k === "fast") return "seedance-2.0-fast";
+  if (k === "2.5" || k === "25") return "seedance-2.5";
+  if (k === "2.0") return "seedance-2.0";
+  return k;
+}
+
+export function canvasVideoResolutionsForModel(
+  videoModel?: string | null,
+): readonly CanvasVideoResolution[] {
+  return (
+    CANVAS_VIDEO_RESOLUTIONS_BY_MODEL[canvasVideoModelPricingKey(videoModel)] ??
+    CANVAS_VIDEO_RESOLUTIONS
+  );
+}
+
+/**
+ * 按引擎钳制画质。**必须在计费之前调用**。
+ *
+ * 之前的顺序是「按用户选的档收钱 → 到 provider 层才发现不支持 → 悄悄降级或被上游拒」，
+ * 于是 2K 收 472 积分、实际拿到上游默认档。钳制提到计费前，收的就是出得来的那一档。
+ */
+export function resolveCanvasVideoResolution(
+  videoModel: string | null | undefined,
+  raw: unknown,
+): CanvasVideoResolution {
+  const allowed = canvasVideoResolutionsForModel(videoModel);
+  const wanted = normalizeCanvasVideoResolution(raw);
+  if (allowed.includes(wanted)) return wanted;
+  return allowed[0] ?? CANVAS_VIDEO_RESOLUTION_DEFAULT;
 }
 /**
  * 漫剧整集价与折算段价：688 是**按 2.5 的 4 段**定的，折成 172/段。
@@ -165,7 +250,10 @@ export function canvasVideoClipCredits(input: CanvasVideoPricingInput): number {
   if (Number.isFinite(sec) && sec > CANVAS_VIDEO_LONG_CLIP_THRESHOLD_SEC) {
     return CANVAS_VIDEO_CREDITS_CLIP_LONG;
   }
-  return CANVAS_VIDEO_CREDITS_BY_RESOLUTION[normalizeCanvasVideoResolution(input.resolution)];
+  // 按引擎钳制后再取价：上游出不来的档不能收钱
+  return CANVAS_VIDEO_CREDITS_BY_RESOLUTION[
+    resolveCanvasVideoResolution(input.videoModel, input.resolution)
+  ];
 }
 
 /**

@@ -1153,6 +1153,21 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
    */
   generalImageEdit?: boolean;
   /**
+   * 画内文字策略。
+   *
+   * `forbid`：改用 {@link NO_TEXT_ON_IMAGE_BLOCK}，并且**不追加**
+   * `appendVertexProPhotographyPromptModifiers` 的版式修饰——16:9 那档修饰里带着
+   * `multi-panel graphic layout, high legibility`，那是**要求模型出可读文字**，
+   * 会把干净画面变成带标题的海报。
+   *
+   * 背景（2026-08-09）：画布出图只在有垫图时才走 `generalImageEdit`，所以首次生成的
+   * 定妆卡 / 场景图 / 道具图全都落在带版式修饰那条路上被烧字。此前只能在各个
+   * 提示词构造器里一个个补「禁字」，源头没堵；这个开关就是把它堵在源头。
+   *
+   * 缺省 `auto` 保持既有行为，避免动到平台图文 sheet 那些**本来就要出字**的路径。
+   */
+  onImageText?: "auto" | "forbid";
+  /**
    * 单次请求覆盖供应商：`openai` | `openrouter` | `auto`。
    * 不设则读 env `GPT_IMAGE2_PROVIDER`（默认 auto）。
    */
@@ -1189,15 +1204,22 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
   const hasRef = refImageUrls.length > 0;
   const generalEdit = Boolean(options.generalImageEdit);
   const suffix = String(options.trialWatermarkPromptSuffix || "").trim();
-  const base =
-    options.aspectRatio === "9:16" && !generalEdit
+  /**
+   * 禁字档：版式修饰（16:9 那档带 `multi-panel graphic layout, high legibility`）
+   * 与封面版式 prompt 都是**要求出字**的，必须整段绕开，只留画面本身 + 禁字指令。
+   */
+  const forbidOnImageText = options.onImageText === "forbid";
+  const base = forbidOnImageText
+    ? [raw, suffix, NO_TEXT_ON_IMAGE_BLOCK].filter(Boolean).join("\n\n")
+    : options.aspectRatio === "9:16" && !generalEdit
       ? buildGptImage2AlignedPlatformTopicCoverPrompt(raw, suffix)
       : [raw, suffix].filter(Boolean).join("\n\n");
   const photoIntent =
     options.aspectRatio === "9:16" ? "platform_vertical_cover_after_gpt2_aspect_lock" : "platform_landscape_sheet";
-  const withProVisual = generalEdit
-    ? base
-    : appendVertexProPhotographyPromptModifiers(base, photoIntent);
+  const withProVisual =
+    generalEdit || forbidOnImageText
+      ? base
+      : appendVertexProPhotographyPromptModifiers(base, photoIntent);
   const prompt =
     hasRef && !generalEdit ? `${withProVisual}\n${COVER_REFERENCE_PERSON_EDIT_DIRECTIVE_EN}` : withProVisual;
 

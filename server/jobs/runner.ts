@@ -928,6 +928,12 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
         referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
         maskUrl: maskUrl || undefined,
         generalImageEdit: referenceImageUrls.length > 0 || generalImageEdit,
+        /**
+         * 画布画面一律禁字。此前只有「有垫图」才绕开版式修饰，于是首次生成的
+         * 定妆卡 / 场景图 / 道具图落在 16:9 的 `multi-panel graphic layout,
+         * high legibility` 上被烧上海报标题，再传给图生视频就整段字都在动。
+         */
+        onImageText: "forbid",
         providerOverride,
         imageLane,
         captureError,

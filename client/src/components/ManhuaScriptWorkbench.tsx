@@ -20,7 +20,9 @@ import {
 } from "lucide-react";
 import { VIDEO_MODEL_OPTIONS, type CanvasBlock } from "@/lib/canvasTypes";
 import {
+  collectManhuaCharacterSheetUrlById,
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
+  collectManhuaPropImageUrlById,
   getBlockEpisodeIndex,
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   queuedManhuaKeyartBlocks,
@@ -72,6 +74,7 @@ import type { ManhuaRetakeVariable } from "@shared/manhuaDirectingWorkflow";
 import { MANHUA_REF_DUTIES } from "@shared/manhuaDirectingWorkflow";
 import {
   areManhuaKeyartsPixelLocked,
+  isBindableAssetPath,
   isManhuaKeyartPixelLocked,
   buildManhuaAssetLockRegistry,
 } from "@shared/manhuaAssetLockRegistry";
@@ -444,6 +447,20 @@ function mediaUrl(b?: CanvasBlock): string | undefined {
   );
 }
 
+/**
+ * 真实产出地址——**只认 outputUrl / outputUrls**，绝不回退垫图。
+ *
+ * 铺段时每个 clip 都会写 `refImageUrl` 当首帧垫图，所以 `mediaUrl()` 对一个还没出片的
+ * 空壳段也返回非空。凡是拿它判「已出片 / 可播放 / 缺段 / 粗剪输入」的地方，都会把
+ * 空壳段算成已完成：底栏显示段已齐、预览把静帧当视频播、粗剪把垫图送进自动切点。
+ *
+ * `mediaUrl()` 只保留给缩略图兜底（没出片时显示垫图是对的）。
+ */
+function clipOutputUrl(b?: CanvasBlock): string | undefined {
+  if (!b) return undefined;
+  return b.outputUrl || b.outputUrls?.[0] || undefined;
+}
+
 const CLIP_QUALITY_ROWS = [
   ["CHARACTER_MATCH", "角色"],
   ["SCENE_MATCH", "场景"],
@@ -798,10 +815,11 @@ export default function ManhuaScriptWorkbench({
 
   const clipIndexSet = useMemo(() => {
     const s = new Set<number>();
+    // 粗剪只能吃真出片的段；垫图进来会被自动切点当成画面
     for (const b of episodeClips) {
-      if (mediaUrl(b)) s.add(resolveKeyartShotIndex(b.id, b.prompt));
+      if (clipOutputUrl(b)) s.add(resolveKeyartShotIndex(b.id, b.prompt));
     }
-    if (legacyClip && mediaUrl(legacyClip)) s.add(1);
+    if (legacyClip && clipOutputUrl(legacyClip)) s.add(1);
     return s;
   }, [episodeClips, legacyClip]);
 
@@ -830,7 +848,7 @@ export default function ManhuaScriptWorkbench({
         shotIndex: c.shotIndex,
         clipBlockId: shotClip?.id,
         keyartBlockId: shotKeyart?.id,
-        outputUrl: mediaUrl(shotClip),
+        outputUrl: clipOutputUrl(shotClip),
         quality: shotClip?.manhuaClipQuality ?? null,
       };
     });
@@ -943,7 +961,7 @@ export default function ManhuaScriptWorkbench({
     ) || (activeSegNo === 1 ? legacyClip : undefined);
   const clip = activeClip || legacyClip;
   const clipQuality = clip?.manhuaClipQuality;
-  const clipVideoUrl = mediaUrl(clip);
+  const clipVideoUrl = clipOutputUrl(clip);
   const approvedClipUrl =
     clipQuality?.status === "passed" && clipVideoUrl ? clipVideoUrl : undefined;
   // 有成片就播：质检未过/服务暂不可用时仍可看，避免「生成成功却像失败」
@@ -1057,7 +1075,8 @@ export default function ManhuaScriptWorkbench({
           episodeClips.find(
             (b) => resolveClipLocalSegmentIndex(b.id, b.prompt, focusEpisode) === seg.index,
           ) || (seg.index === 1 ? legacyClip : undefined);
-        const playable = Boolean(mediaUrl(segClip));
+        // 只认真实产出：垫图不算出片，否则铺完段就显示「段已齐」
+        const playable = Boolean(clipOutputUrl(segClip));
         const failed = segClip?.manhuaClipQuality?.status === "failed";
         return !playable || failed;
       })
@@ -1290,21 +1309,23 @@ export default function ManhuaScriptWorkbench({
     if (episodeMainScene?.nameZh) return "";
     return sceneId;
   }, [customAssetRefs, episodeMainScene?.nameZh, sceneId]);
-  const characterSheetUrlById = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const b of blocks) {
-      if (!b.id.startsWith("charsheet-")) continue;
-      const url = mediaUrl(b);
-      if (!url) continue;
-      const seed = b.id.replace(/^charsheet-/, "");
-      map[seed] = url;
-      const canonHit = assetCanon?.characters.find(
-        (c) => c.id === seed || b.id.includes(c.id),
-      );
-      if (canonHit) map[canonHit.id] = url;
-    }
-    return map;
-  }, [blocks, assetCanon]);
+  /**
+   * 必须与成片链路同源：左栏「本集出场对照」和成片门禁读同一份 registry，
+   * 口径分叉会造成「左栏显示已挂图、出片被门禁拦下」的假信号。
+   *
+   * 原实现有两处分叉：用 mediaUrl() 会把只有垫图（refImageUrl / editFusionUrls）
+   * 的定妆卡算成已出图；且没有「脸特写优先、无脸退全身」的定序，同角色两张图时
+   * 全凭块顺序后者覆盖前者。
+   */
+  const characterSheetUrlById = useMemo(
+    () => collectManhuaCharacterSheetUrlById(blocks, assetCanon),
+    [blocks, assetCanon],
+  );
+  /** 漏传时 buildManhuaSheetPropSubSlots 会退回拿整张角色定妆卡当道具 path，甚至 logical:// 占位 */
+  const propImageUrlById = useMemo(
+    () => collectManhuaPropImageUrlById(customAssetRefs, assetCanon),
+    [customAssetRefs, assetCanon],
+  );
   const resolvedLookSets = useMemo(
     () =>
       ensureDefaultLookSetsForCharacters(
@@ -1329,6 +1350,7 @@ export default function ManhuaScriptWorkbench({
         customRefs: customAssetRefs,
         assetCanon,
         characterSheetUrlById,
+        propImageUrlById,
         characterLookSets: resolvedLookSets,
       }),
     [
@@ -1339,6 +1361,7 @@ export default function ManhuaScriptWorkbench({
       customAssetRefs,
       assetCanon,
       characterSheetUrlById,
+      propImageUrlById,
       resolvedLookSets,
     ],
   );
@@ -3170,7 +3193,13 @@ export default function ManhuaScriptWorkbench({
                   </p>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {assetLockRegistry.slots.map((s) => {
-                      const hasPad = Boolean(String(s.path || "").trim());
+                      /**
+                       * 必须与成片侧同一判定。`buildManhuaSheetPropSubSlots` 在既无道具单件图
+                       * 也无角色定妆输出时仍会兜底成 `logical://` 占位，path 永远非空，
+                       * 于是 `Boolean(s.path)` 让「已挂图」恒亮——而出片链路用
+                       * `isBindableAssetPath` 把这类地址全过滤掉，判成缺口拦下出片。
+                       */
+                      const hasPad = isBindableAssetPath(String(s.path || ""));
                       const kindZh =
                         s.role === "character"
                           ? "人物"

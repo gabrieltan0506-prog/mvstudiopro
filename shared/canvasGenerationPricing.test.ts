@@ -61,10 +61,18 @@ describe("canvasVideoClipCredits", () => {
     expect(canvasVideoClipCredits({ resolution: "1080p" })).toBe(CANVAS_VIDEO_CREDITS_CLIP_1080P);
     expect(canvasVideoClipCredits({ resolution: "2K" })).toBe(CANVAS_VIDEO_CREDITS_CLIP_2K);
     expect(canvasVideoClipCredits({ resolution: "4K" })).toBe(CANVAS_VIDEO_CREDITS_CLIP_4K);
-    // 成本按像素线性涨（1080p 2.25×、2K 4×、4K 9×），售价须同步，否则高画质档吃掉毛利
-    expect(CANVAS_VIDEO_CREDITS_CLIP_1080P / CANVAS_VIDEO_CREDITS_CLIP).toBeCloseTo(2.25, 1);
-    expect(CANVAS_VIDEO_CREDITS_CLIP_2K / CANVAS_VIDEO_CREDITS_CLIP).toBeCloseTo(4, 1);
-    expect(CANVAS_VIDEO_CREDITS_CLIP_4K / CANVAS_VIDEO_CREDITS_CLIP).toBeCloseTo(9, 1);
+    /**
+     * 原来这里断言「售价按像素比 2.25× / 4× / 9× 同步」。
+     * 2026-08-09 实测把这个前提推翻了——EvoLink 同一条 5 秒片，
+     * 720p $0.993、1080p $2.482、4K $5.063，折成每秒是 1.00 / 2.50 / 5.10 倍，
+     * 而像素倍数是 1 / 2.25 / 9：**高档有明显折扣，成本不随像素线性增长**。
+     * 4K 按 9 倍定价（1062）因此高估成本 26%，已按实测下调到 900。
+     *
+     * 所以这里只保留「档位越高越贵」这个不变量，不再假装存在某个像素公式。
+     */
+    expect(CANVAS_VIDEO_CREDITS_CLIP_1080P).toBeGreaterThan(CANVAS_VIDEO_CREDITS_CLIP);
+    expect(CANVAS_VIDEO_CREDITS_CLIP_2K).toBeGreaterThan(CANVAS_VIDEO_CREDITS_CLIP_1080P);
+    expect(CANVAS_VIDEO_CREDITS_CLIP_4K).toBeGreaterThan(CANVAS_VIDEO_CREDITS_CLIP_2K);
   });
 
   it("缺省与脏值一律回落 720p，不会白送高画质", () => {
