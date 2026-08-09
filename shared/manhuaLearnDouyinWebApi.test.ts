@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildDouyinAwemeDetailApiUrl,
   buildDouyinMixAwemeApiUrl,
+  extractDouyinMixIdFromUrl,
   extractDouyinVideoIdFromUrl,
+  isDouyinWebApiStatusOk,
   mergeDouyinMixEpisodePages,
   parseDouyinAwemeDetailResponse,
   parseDouyinMixAwemeResponse,
@@ -44,9 +46,34 @@ describe("extractDouyinVideoIdFromUrl", () => {
     ).toBe("7400000000000000003");
   });
 
+  it("iesdouyin 分享形态 /share/video/ 也认（isDouyinSingleVideoUrl 同口径）", () => {
+    expect(
+      extractDouyinVideoIdFromUrl("https://www.iesdouyin.com/share/video/7400000000000000004/?x=1"),
+    ).toBe("7400000000000000004");
+  });
+
   it("非视频链接返回 null", () => {
     expect(extractDouyinVideoIdFromUrl("https://www.douyin.com/collection/74123456789")).toBeNull();
     expect(extractDouyinVideoIdFromUrl("")).toBeNull();
+  });
+});
+
+describe("extractDouyinMixIdFromUrl", () => {
+  it("collection 与 mix 页（含 /share/ 前缀）都提得出 mixId", () => {
+    expect(extractDouyinMixIdFromUrl("https://www.douyin.com/collection/7412345678901234567")).toBe(
+      "7412345678901234567",
+    );
+    expect(extractDouyinMixIdFromUrl("https://www.douyin.com/mix/7412345678901234567?p=1")).toBe(
+      "7412345678901234567",
+    );
+    expect(
+      extractDouyinMixIdFromUrl("https://www.iesdouyin.com/share/mix/7412345678901234567"),
+    ).toBe("7412345678901234567");
+  });
+
+  it("单集/其它链接返回 null", () => {
+    expect(extractDouyinMixIdFromUrl("https://www.douyin.com/video/7400000000000000001")).toBeNull();
+    expect(extractDouyinMixIdFromUrl("")).toBeNull();
   });
 });
 
@@ -94,10 +121,18 @@ describe("parseDouyinMixAwemeResponse", () => {
     expect(parsed.episodes.map((e) => e.index)).toEqual([3, 4]);
   });
 
-  it("status_code 非 0 视为失败页，不产出分集", () => {
-    const parsed = parseDouyinMixAwemeResponse({ status_code: 8, aweme_list: [mixItem("74000", 1)] });
-    expect(parsed.statusCode).toBe(8);
-    expect(parsed.episodes).toHaveLength(0);
+  it("status_code 0/200 都算成功（趋势采集器生产口径），其余失败", () => {
+    expect(isDouyinWebApiStatusOk(0)).toBe(true);
+    expect(isDouyinWebApiStatusOk(200)).toBe(true);
+    expect(isDouyinWebApiStatusOk(8)).toBe(false);
+    const ok200 = parseDouyinMixAwemeResponse({
+      status_code: 200,
+      aweme_list: [mixItem("7400000000000000009", 9)],
+    });
+    expect(ok200.episodes.map((e) => e.index)).toEqual([9]);
+    const bad = parseDouyinMixAwemeResponse({ status_code: 8, aweme_list: [mixItem("74000", 1)] });
+    expect(bad.statusCode).toBe(8);
+    expect(bad.episodes).toHaveLength(0);
   });
 
   it("aweme_id 不合法的条目丢弃；空 payload 不炸", () => {

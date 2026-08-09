@@ -7,6 +7,7 @@
 import {
   buildDouyinAwemeDetailApiUrl,
   buildDouyinMixAwemeApiUrl,
+  isDouyinWebApiStatusOk,
   mergeDouyinMixEpisodePages,
   parseDouyinAwemeDetailResponse,
   parseDouyinMixAwemeResponse,
@@ -59,11 +60,15 @@ export async function listDouyinMixEpisodesViaWebApi(
   if (!cookies.length) return null;
   const referer = `https://www.douyin.com/collection/${id}`;
 
+  // 某候选中途被风控只拉到前几页时，留作备胎继续试下一份凭证补全；
+  // 全部候选都残缺则返回最全的那份（残缺也比全无强，listedEpisodeCount 会随之波动）
+  let best: { episodes: DouyinListedEpisode[]; mixNameZh?: string } | null = null;
   for (const cookie of cookies) {
     const pages: DouyinListedEpisode[][] = [];
     let mixNameZh: string | undefined;
     let cursor = 0;
     let gathered = 0;
+    let truncated = false;
     for (let page = 0; page < MIX_MAX_PAGES; page++) {
       const url = buildDouyinMixAwemeApiUrl(id, cursor, MIX_PAGE_COUNT);
       let payload: unknown | null = null;
@@ -77,18 +82,26 @@ export async function listDouyinMixEpisodesViaWebApi(
           e instanceof Error ? e.message : e,
         );
       }
-      if (payload == null) break;
+      if (payload == null) {
+        truncated = pages.length > 0;
+        break;
+      }
       const parsed = parseDouyinMixAwemeResponse(payload, gathered);
-      if (parsed.statusCode !== 0) {
+      if (!isDouyinWebApiStatusOk(parsed.statusCode)) {
         console.warn(
           "[manhuaLearnDouyinWebApi] mix page status_code:",
           id,
           `page=${page}`,
           parsed.statusCode,
         );
+        truncated = pages.length > 0;
         break;
       }
-      if (!parsed.episodes.length) break;
+      if (!parsed.episodes.length) {
+        // 服务端还说 hasMore 却回空页 → 视为残缺
+        truncated = pages.length > 0;
+        break;
+      }
       pages.push(parsed.episodes);
       gathered += parsed.episodes.length;
       if (!mixNameZh && parsed.mixNameZh) mixNameZh = parsed.mixNameZh;
@@ -97,12 +110,20 @@ export async function listDouyinMixEpisodesViaWebApi(
       cursor = parsed.nextCursor > cursor ? parsed.nextCursor : gathered;
     }
     const episodes = mergeDouyinMixEpisodePages(pages);
-    if (episodes.length > 0) {
+    if (episodes.length > 0 && !truncated) {
       return { episodes, mixNameZh };
     }
-    // 本候选一无所获 → 换下一份凭证再试
+    if (episodes.length > (best?.episodes.length || 0)) {
+      best = { episodes, mixNameZh };
+    }
+    // 一无所获或残缺 → 换下一份凭证再试
   }
-  return null;
+  if (best) {
+    console.warn(
+      `[manhuaLearnDouyinWebApi] mix expand truncated: mixId=${id} entries=${best.episodes.length}（全部凭证候选均未拉全，先用最全一份）`,
+    );
+  }
+  return best;
 }
 
 /** 单条视频详情（剧名回填 / 识别所属合集）；拉不到返回 null，不阻断学习 */

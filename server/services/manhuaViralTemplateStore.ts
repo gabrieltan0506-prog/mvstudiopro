@@ -4,11 +4,9 @@
  * （出厂种子 2026-08-10 已清空，shared 库只剩合并逻辑，见 manhuaViralTemplateBank.ts 文件头）。
  */
 import {
-  MANHUA_VIRAL_TEMPLATE_BANK,
   getManhuaViralTemplate,
   listApprovedManhuaViralTemplates,
   listApprovedManhuaViralTemplatesGrouped,
-  mergeManhuaViralTemplateBanks,
   parseManhuaViralTemplateCard,
   type ManhuaViralTemplateCard,
 } from "../../shared/manhuaViralTemplateBank.js";
@@ -155,13 +153,4 @@ export async function approveManhuaViralTemplate(input: {
     );
   }
   return validated;
-}
-
-/** 供单测：纯合并语义（不碰 GCS） */
-export function mergeSeedWithApprovedExtrasForTest(
-  extras: ManhuaViralTemplateCard[],
-): ManhuaViralTemplateCard[] {
-  return mergeManhuaViralTemplateBanks(MANHUA_VIRAL_TEMPLATE_BANK, extras).filter(
-    (t) => t.status === "approved",
-  );
 }

@@ -16,9 +16,14 @@ export type DouyinMixAwemePageParse = {
   mixNameZh?: string;
   hasMore: boolean;
   nextCursor: number;
-  /** 抖音业务码；非 0 视为本页失败 */
+  /** 抖音业务码；0/200 都算成功（同 trendCollector 生产口径），其余视为本页失败 */
   statusCode: number;
 };
+
+/** 抖音 web API 业务码成功判定（趋势采集器生产口径：0 或 200） */
+export function isDouyinWebApiStatusOk(statusCode: number): boolean {
+  return statusCode === 0 || statusCode === 200;
+}
 
 export type DouyinAwemeDetailParse = {
   /** 视频标题（desc） */
@@ -63,13 +68,21 @@ export function buildDouyinAwemeDetailApiUrl(awemeId: string): string {
   return withCommonParams(url).toString();
 }
 
-/** /video/、/note/ 或 modal_id 弹层形态里的视频 id */
+/** /video/、/note/（含 iesdouyin /share/ 前缀）或 modal_id 弹层形态里的视频 id */
 export function extractDouyinVideoIdFromUrl(url: string): string | null {
   const u = String(url || "").trim();
   if (!u) return null;
   const modalId = extractDouyinModalVideoId(u);
   if (modalId) return modalId;
-  const m = /(?:^|douyin\.com)\/(?:video|note)\/(\d{5,})/i.exec(u);
+  const m = /(?:^|douyin\.com)\/(?:share\/)?(?:video|note)\/(\d{5,})/i.exec(u);
+  return m ? m[1] : null;
+}
+
+/** collection/mix 合集页 URL 里的 mixId（榜单行有时只给合集链接不带 mixId） */
+export function extractDouyinMixIdFromUrl(url: string): string | null {
+  const u = String(url || "").trim();
+  if (!u) return null;
+  const m = /(?:^|douyin\.com)\/(?:share\/)?(?:collection|mix)\/(\d{6,})/i.exec(u);
   return m ? m[1] : null;
 }
 
@@ -123,7 +136,7 @@ export function parseDouyinMixAwemeResponse(
     nextCursor: 0,
     statusCode,
   };
-  if (!root || statusCode !== 0) return empty;
+  if (!root || !isDouyinWebApiStatusOk(statusCode)) return empty;
 
   const list = Array.isArray(root.aweme_list) ? root.aweme_list : [];
   const episodes: DouyinListedEpisode[] = [];
@@ -156,7 +169,7 @@ export function parseDouyinMixAwemeResponse(
 /** 解析 aweme/detail；解析不出核心字段返回 null */
 export function parseDouyinAwemeDetailResponse(payload: unknown): DouyinAwemeDetailParse | null {
   const root = asRecord(payload);
-  if (!root || (Number(root.status_code ?? 0) || 0) !== 0) return null;
+  if (!root || !isDouyinWebApiStatusOk(Number(root.status_code ?? 0) || 0)) return null;
   const detail = asRecord(root.aweme_detail);
   if (!detail) return null;
   const mix = readMixInfo(detail);

@@ -67,7 +67,10 @@ import {
   mapManhuaLearnFetchError,
   MANHUA_LEARN_FETCH_ERR,
 } from "../../shared/manhuaLearnYtdlp.js";
-import { extractDouyinVideoIdFromUrl } from "../../shared/manhuaLearnDouyinWebApi.js";
+import {
+  extractDouyinMixIdFromUrl,
+  extractDouyinVideoIdFromUrl,
+} from "../../shared/manhuaLearnDouyinWebApi.js";
 import {
   fetchDouyinAwemeDetailViaWebApi,
   listDouyinMixEpisodesViaWebApi,
@@ -834,12 +837,17 @@ export async function runManhuaTemplateLearn(
     throw new Error("当前是搜索页链接，请改用合集/成片页地址");
   }
 
-  // —— 抖音上下文解析：单集（含 modal_id 弹层）查详情回填剧名；
-  //    发现所属合集则升级为合集学习（榜单单集链接一次学一批的入口）——
+  // —— 抖音上下文解析：合集页 URL 直接提 mixId（榜单行有时只给链接不带 mixId）；
+  //    单集（含 modal_id 弹层）查详情回填剧名；发现所属合集则升级为合集学习
+  //    （榜单单集链接一次学一批的入口）——
   let mixId = String(input.mixId || "").trim();
   let dramaNameZh = "";
   let single: { titleZh?: string; episodeIndex?: number } | undefined;
   if (isDouyinHostUrl(url)) {
+    if (!/^\d{6,}$/.test(mixId)) {
+      const fromUrl = extractDouyinMixIdFromUrl(url);
+      if (fromUrl) mixId = fromUrl;
+    }
     const videoId = extractDouyinVideoIdFromUrl(url);
     if (videoId) {
       const detail = await fetchDouyinAwemeDetailViaWebApi(videoId).catch(() => null);
@@ -851,6 +859,12 @@ export async function runManhuaTemplateLearn(
         dramaNameZh = detail.mixNameZh || "";
       }
     }
+  }
+  if (mixId && !String(input.mixId || "").trim()) {
+    // 单集/裸链接升级为合集学习：留双 key 日志，排查「旧进度去哪了」用
+    console.info(
+      `[manhuaTemplateLearn] series upgraded to mix: mixKey=${seriesKeyFrom({ url, mixId, title })} urlKey=${seriesKeyFrom({ url, title })}`,
+    );
   }
 
   const batchSize = clampManhuaLearnBatchSize(input.batchSize ?? MANHUA_LEARN_BATCH_DEFAULT);
