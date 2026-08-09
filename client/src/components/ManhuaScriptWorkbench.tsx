@@ -230,6 +230,11 @@ type Props = {
   onWorkflowPhaseChange?: (phase: WorkflowPhaseId) => void;
   onOpenCharacterCard?: () => void;
   onOpenAssetWall?: () => void;
+  /**
+   * 打开成片坞。坞渲染在 extras 视图（沉浸工作台下是 display:none），
+   * 组件内部直接 scrollIntoView 对隐藏元素无效——必须由父级先切开视图再滚动。
+   */
+  onOpenClipDock?: () => void;
   /** 确认资产：先按序出角色图→场景图，再进分镜 */
   onConfirmAssetsAndPrepareImages?: () => void | Promise<void>;
   /** 清掉与现稿不符的旧设定图，并按剧本强制重出 */
@@ -506,6 +511,7 @@ export default function ManhuaScriptWorkbench({
   onWorkflowPhaseChange,
   onOpenCharacterCard,
   onOpenAssetWall,
+  onOpenClipDock,
   onConfirmAssetsAndPrepareImages,
   onRegenerateAssetsFromScript,
   assetScriptStaleHintZh = null,
@@ -4250,6 +4256,10 @@ export default function ManhuaScriptWorkbench({
               }
             }}
             onOpenClipDock={() => {
+              if (onOpenClipDock) {
+                onOpenClipDock();
+                return;
+              }
               document.querySelector("#manhua-clip-dock-zone")?.scrollIntoView({
                 behavior: "smooth",
                 block: "start",
@@ -5574,12 +5584,16 @@ export default function ManhuaScriptWorkbench({
               <button
                 type="button"
                 className="text-[10px] text-cyan-100/75 underline underline-offset-2 hover:text-cyan-50"
-                onClick={() =>
+                onClick={() => {
+                  if (onOpenClipDock) {
+                    onOpenClipDock();
+                    return;
+                  }
                   document.querySelector("#manhua-clip-dock-zone")?.scrollIntoView({
                     behavior: "smooth",
                     block: "start",
-                  })
-                }
+                  });
+                }}
               >
                 打开成片坞
               </button>

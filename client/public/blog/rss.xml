@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>MV Studio Pro 博客</title>
+    <link>https://www.mvstudiopro.com/blog/</link>
+    <atom:link href="https://www.mvstudiopro.com/blog/rss.xml" rel="self" type="application/rss+xml"/>
+    <description>AI 漫剧与视频生成实测：模型对比、真实价格、工作流拆解</description>
+    <language>zh-CN</language>
+    <lastBuildDate>Mon, 10 Aug 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>Seedance 2.5 只有 720P？实测升到 4K，泪痕和睫毛都回来了</title>
+      <link>https://www.mvstudiopro.com/blog/video-4k-upscale</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/video-4k-upscale</guid>
+      <pubDate>Mon, 10 Aug 2026 00:00:00 GMT</pubDate>
+      <description>Seedance 2.5 的官方接口目前只提供 480p 和 720p。我们不信邪，实测了哭戏、写实对白和 K-pop 舞蹈，再把成片超分到 4K。这里有原片、同帧对比、实际分辨率、音轨检查和公开价格区间。</description>
+    </item>
+    <item>
+      <title>Seedance 2.5、2.0 Mini、MiniMax H3 实测：做漫剧谁更能打？</title>
+      <link>https://www.mvstudiopro.com/blog/manhua-video-model-review</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/manhua-video-model-review</guid>
+      <pubDate>Sun, 09 Aug 2026 00:00:00 GMT</pubDate>
+      <description>同一套苹果茶素材实测 Seedance 2.5、2.0 mini 与 2.0，再用 15 秒 2K 机甲片观察 MiniMax H3。对比画面、速度、价格带、优缺点与适用场景，给 AI 漫剧和短剧创作者一份选型答案。</description>
+    </item>
+    <item>
+      <title>那张躺在桌面上的旧照片，终于重新笑了起来</title>
+      <link>https://www.mvstudiopro.com/blog/old-photo-restoration-upscale-memory-awakened</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/old-photo-restoration-upscale-memory-awakened</guid>
+      <pubDate>Sat, 08 Aug 2026 00:00:00 GMT</pubDate>
+      <description>从手机翻拍、自动识边裁切、修复上色，到2K与4K高清放大，再用两种视频模型让照片里的人重新动起来。这是MV Studio Pro首页照片工具真正跑通的一次完整记录。</description>
+    </item>
+    <item>
+      <title>做内容生产怎么选 AI 模型：六条用账单回答的问题</title>
+      <link>https://www.mvstudiopro.com/blog/ai-model-cost-selection-faq</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/ai-model-cost-selection-faq</guid>
+      <pubDate>Fri, 07 Aug 2026 00:00:00 GMT</pubDate>
+      <description>不背官网起价。用站内实测账单回答：视频模型真实单价、HappyHorse 为什么比标价贵、图文卡要不要先提炼、Seedream 5 和 GPT-image-2 差几倍、漫剧为什么不能按集一口价。每条答案可核对原文。</description>
+    </item>
+    <item>
+      <title>AI项目死在上线前，FDE却火了：这个岗位在中国会不会沦为“高级驻场”？</title>
+      <link>https://www.mvstudiopro.com/blog/fde-china-market-prospect</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/fde-china-market-prospect</guid>
+      <pubDate>Fri, 07 Aug 2026 00:00:00 GMT</pubDate>
+      <description>一边是约95%的企业级生成式AI试点难见损益回报，一边是海外FDE相关职位一年增至约8倍。拆清FDE与驻场外包的差别，并谈它在中国的机会与坑。</description>
+    </item>
+    <item>
+      <title>Seedream 5.0 Pro 对上 GPT-image-2：同一句提示词跑六张，价差三到四倍，贵的那个赢在哪</title>
+      <link>https://www.mvstudiopro.com/blog/seedream-5-pro-vs-gpt-image-2</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/seedream-5-pro-vs-gpt-image-2</guid>
+      <pubDate>Fri, 07 Aug 2026 00:00:00 GMT</pubDate>
+      <description>字节最新的 Seedream 5.0 Pro 刚上线，OpenRouter 还没接。我用同一个网关、同一把 key、同一句提示词跑了三组对照：中文排版、人物质感、复杂版面各一题。真实计费、实际耗时，以及一处必须先说清楚的参数陷阱，全都摊开聊。</description>
+    </item>
+    <item>
+      <title>AI 短剧每集只有两句对白？问题多半不在模型，在剧本的结构与计数</title>
+      <link>https://www.mvstudiopro.com/blog/manhua-dialogue-density-gate</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/manhua-dialogue-density-gate</guid>
+      <pubDate>Thu, 06 Aug 2026 00:00:00 GMT</pubDate>
+      <description>一份写满对白的短剧剧本，导入后系统只数出两句。排查下来是三个静默丢句的解析细节，外加一处门槛单位错配。附可复用的分段可拍表结构与自查清单。</description>
+    </item>
+    <item>
+      <title>4 段 × 30 秒 还是 6 段 × 15 秒：换一个成片引擎，整条剧本流水线要跟着改什么</title>
+      <link>https://www.mvstudiopro.com/blog/seedance-25-4x30-segment-layout</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/seedance-25-4x30-segment-layout</guid>
+      <pubDate>Thu, 06 Aug 2026 00:00:00 GMT</pubDate>
+      <description>Seedance 2.5 的 4×30、Seedance 2.0 的 6×15、MiniMax H3 固定 15 秒——段长一变，对白门槛、参考图预算、锁脸优先级全都要重算。一份换引擎前的检查清单。</description>
+    </item>
+    <item>
+      <title>AI 视频生成实测：四个模型的真实单价，以及标价为什么会骗你</title>
+      <link>https://www.mvstudiopro.com/blog/ai-video-model-real-pricing</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/ai-video-model-real-pricing</guid>
+      <pubDate>Wed, 05 Aug 2026 00:00:00 GMT</pubDate>
+      <description>实测 Seedance 2.0、MiniMax H3、HappyHorse 1.1 的真实单价——账单里读出来的数字，和官网标的「起价」差 67%。附可复用的按像素外推方法与两个不写在文档里的坑。</description>
+    </item>
+    <item>
+      <title>一万字文档做成图文卡，先提炼和不提炼差多少钱</title>
+      <link>https://www.mvstudiopro.com/blog/document-to-knowledge-cards-cost</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/document-to-knowledge-cards-cost</guid>
+      <pubDate>Wed, 05 Aug 2026 00:00:00 GMT</pubDate>
+      <description>同一份一万字材料，直接出图是 9 页 264 积分的 2K，先提炼是 4 页 120 积分的 4K。附完整分页计费规则、三档模型的提炼输出实测，以及「省不回本就别劝用户花钱」的判定。</description>
+    </item>
+    <item>
+      <title>AI 漫剧一集的真实成本拆解，以及为什么按「集」定价会亏</title>
+      <link>https://www.mvstudiopro.com/blog/manhua-episode-real-cost</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/manhua-episode-real-cost</guid>
+      <pubDate>Wed, 05 Aug 2026 00:00:00 GMT</pubDate>
+      <description>一集四到六段、每段独立计费，实测成本 9 到 13 美元。拆解静帧与成片各占多少、失败重试怎么算钱，以及服务端为什么根本认不出「这是同一集的第三段」。</description>
+    </item>
+    <item>
+      <title>OpenRouter 把我们的 OpenAI 系全封了，排查与止血的完整过程</title>
+      <link>https://www.mvstudiopro.com/blog/openrouter-openai-403-diagnosis</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/openrouter-openai-403-diagnosis</guid>
+      <pubDate>Wed, 05 Aug 2026 00:00:00 GMT</pubDate>
+      <description>同一把 key，Kimi 和 Qwen 正常，所有 OpenAI 模型一律 403 TOS，连强制走 Azure 也拒。记录如何在两小时内定位出这是账号级封禁而非配置问题，以及一个把余额不足误报成「内容审核」的坑。</description>
+    </item>
+  </channel>
+</rss>

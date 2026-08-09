@@ -9,6 +9,7 @@ import {
 } from "@shared/manhuaScenePropDemoCatalog";
 import { getManhuaCharacterPreviewUrl } from "@shared/manhuaCharacterAssetLibrary";
 import { manhuaClipQualityAllowsAssemble } from "@shared/manhuaClipQuality";
+import { resolveClipLocalSegmentIndex } from "@shared/manhuaScriptWorkbench";
 import type { CanvasBlock } from "./canvasTypes";
 import { getBlockEpisodeIndex, stageKeyFromBlockId, type ManhuaFactoryStageKey } from "./canvasDramaStudio";
 
@@ -34,6 +35,8 @@ export type ManhuaClipDockItem = {
   outputText?: string;
   kind: CanvasBlock["kind"];
   clipQuality?: CanvasBlock["manhuaClipQuality"];
+  /** 集内段号（clip 段有值）：zip 路径与坞内显示都用它区分同集多段 */
+  segIndex?: number;
 };
 
 /** 成片是否可进坞勾选 / 长片合成（passed 或用户仍采用） */
@@ -83,22 +86,38 @@ export function collectManhuaClipDockItems(
   const includePendingStory = opts?.includePendingStory !== false;
   const items: ManhuaClipDockItem[] = [];
   for (const b of blocks) {
+    // 旧剧本归档片 / 改档停放片：付费产物保留在画布可回看，但绝不进坞、不进合成、
+    // 不进 zip——「真实视频 URL」不等于「当前剧本当前段表的有效视频」（审阅必须修#3）
+    if (b.archivedFromPreviousScript) continue;
     const stage = stageKeyFromBlockId(b.id);
     if (!stage || !MANHUA_CLIP_DOCK_STAGES.includes(stage as ManhuaClipDockStage)) continue;
-    const hasMedia = Boolean(b.outputUrl || (b.outputUrls && b.outputUrls[0]));
+    // clip 段只认「本次运行成功的活动 outputUrl」：重跑编译会把旧片挪进 outputUrls
+    // 历史，若新任务失败（status=error）绝不能回退旧片顶上（审阅必须修#4）
+    const hasMedia =
+      stage === "clip"
+        ? Boolean(b.outputUrl) && b.status !== "error"
+        : Boolean(b.outputUrl || (b.outputUrls && b.outputUrls[0]));
     const isTextStage = TEXT_EXPORT_STAGES.has(stage);
     const hasText = Boolean(b.outputText?.trim()) && isTextStage;
     const pendingStory = stage === "story" && includePendingStory && !hasText;
     if (!hasMedia && !hasText && !pendingStory) continue;
     const episodeIndex = getBlockEpisodeIndex(b) ?? 1;
+    // 集内段号：-gNN 是全集连续编号，必须经 resolveClipLocalSegmentIndex 折算
+    // （clip-e02-g07 是第 2 集第 1 段，不是第 7 段）；它同时兼容旧 -sNN 与 prompt 标段
+    const segIndex =
+      stage === "clip" ? resolveClipLocalSegmentIndex(b.id, b.prompt, episodeIndex) : 0;
     const baseLabel = STAGE_LABEL_DOCK[stage] || stage;
+    const labelWithSeg =
+      stage === "clip" && segIndex > 0 ? `第 ${segIndex} 段·${baseLabel}` : baseLabel;
     items.push({
       blockId: b.id,
       stage,
       episodeIndex,
       episodeTitle: b.episodeTitle,
-      label: pendingStory ? "故事链（待跑·可勾选运行）" : baseLabel,
-      outputUrl: b.outputUrl || b.outputUrls?.[0],
+      label: pendingStory ? "故事链（待跑·可勾选运行）" : labelWithSeg,
+      segIndex: segIndex > 0 ? segIndex : undefined,
+      // clip 只认活动 outputUrl；outputUrls 是历史暂存（重跑旧片），仅供回看不供合成
+      outputUrl: stage === "clip" ? b.outputUrl : b.outputUrl || b.outputUrls?.[0],
       outputText: b.outputText,
       kind: b.kind,
       clipQuality: b.manhuaClipQuality,
@@ -427,6 +446,20 @@ export async function exportManhuaProjectZip(
   const failed: ManhuaProjectExportManifest["failed"] = [];
   const selectedMeta: ManhuaProjectExportManifest["selected"] = [];
   let okCount = 0;
+  // 同集同 stage 多个产物（一集 4 段 clip、多张 keyart）不得共用一个路径——
+  // JSZip 后写覆盖前写，zip 里只剩最后一个而 manifest 谎报全成功（审阅必须修#7）
+  const usedPaths = new Set<string>();
+  const uniqueZipPath = (folder: string, base: string, seg: number | undefined, ext: string): string => {
+    const segSuffix = seg && seg > 0 ? `-s${String(seg).padStart(2, "0")}` : "";
+    let path = `${folder}/${base}${segSuffix}.${ext}`;
+    let n = 2;
+    while (usedPaths.has(path)) {
+      path = `${folder}/${base}${segSuffix}-${n}.${ext}`;
+      n += 1;
+    }
+    usedPaths.add(path);
+    return path;
+  };
 
   for (const it of selected) {
     const epFolder = `ep${String(it.episodeIndex).padStart(2, "0")}`;
@@ -434,7 +467,7 @@ export async function exportManhuaProjectZip(
     if (!fileMeta) continue;
 
     if (TEXT_EXPORT_STAGES.has(it.stage) && it.outputText?.trim()) {
-      const path = `${epFolder}/${fileMeta.base}.md`;
+      const path = uniqueZipPath(epFolder, fileMeta.base, it.segIndex, "md");
       zip.file(path, it.outputText.trim());
       selectedMeta.push({
         blockId: it.blockId,
@@ -462,7 +495,7 @@ export async function exportManhuaProjectZip(
     try {
       const buf = await fetchAsArrayBuffer(url);
       const ext = guessExt(url, fileMeta.extHint);
-      const path = `${epFolder}/${fileMeta.base}.${ext}`;
+      const path = uniqueZipPath(epFolder, fileMeta.base, it.segIndex, ext);
       zip.file(path, buf);
       selectedMeta.push({
         blockId: it.blockId,
@@ -516,7 +549,7 @@ export async function exportManhuaProjectZip(
     exportedAt: new Date().toISOString(),
     note: finalVideoUrl
       ? "本包含分集素材；长片合成链接见 README「合成长片」。library/ 为站点复用资产（人物设定卡/场景道具示范）。"
-      : "本包为素材工程包。有成片后可在成片坞一键合成长片（含配乐）；亦可本地按 epXX/clip.* 拼接。library/ 为站点复用资产。",
+      : "本包为素材工程包。有成片后可在成片坞一键合成长片（含配乐）；亦可本地按 epXX/clip-s*.mp4 顺序拼接。library/ 为站点复用资产。",
     characters: opts.characterIds,
     artStyleId: opts.artStyleId,
     sceneId: opts.sceneId,
@@ -574,8 +607,8 @@ export async function exportManhuaProjectZip(
     "",
     "## 合成长片",
     finalVideoUrl
-      ? [`- 长片（含配乐）：\`${finalVideoUrl}\``, "- 亦可按 epXX/clip.* 顺序本地再拼接。"].join("\n")
-      : "> 尚未合成长片时，可在成片坞点「合成长片（含配乐）」；或按 epXX/clip.* 本地拼接。",
+      ? [`- 长片（含配乐）：\`${finalVideoUrl}\``, "- 亦可按 epXX/clip-s*.mp4 顺序本地再拼接。"].join("\n")
+      : "> 尚未合成长片时，可在成片坞点「合成长片（含配乐）」；或按 epXX/clip-s*.mp4 顺序本地拼接。",
   ];
   zip.file("README.md", playlistLines.join("\n"));
   zip.file(

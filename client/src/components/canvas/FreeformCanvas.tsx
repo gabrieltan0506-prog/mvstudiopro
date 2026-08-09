@@ -85,6 +85,14 @@ import {
 } from "@shared/manhuaClipDirectorCard";
 import { CanvasImageEditMaskPainter } from "@/components/canvas/CanvasImageEditMaskPainter";
 import { eraseAiCornerMark } from "@/lib/eraseAiCornerMarkApi";
+import {
+  fetchVideoUpscaleStatus,
+  isVideoUpscaleTerminal,
+  probeVideoDurationSec,
+  startVideoUpscale,
+  videoUpscaleStatusLabel,
+} from "@/lib/videoUpscaleApi";
+import { canvasVideoUpscaleCredits } from "@shared/canvasGenerationPricing";
 import { trpc } from "@/lib/trpc";
 import {
   Clapperboard,
@@ -613,6 +621,10 @@ export default function FreeformCanvas({
   const [resizeState, setResizeState] = useState<ResizeState>(null);
   const [uploadBusyId, setUploadBusyId] = useState<string | null>(null);
   const [eraseCornerBusyId, setEraseCornerBusyId] = useState<string | null>(null);
+  // 高清放大：报价面板展开的 block、探测到的真实时长（计费按秒，展示与提交同源）、提交中锁
+  const [upscalePanelBlockId, setUpscalePanelBlockId] = useState<string | null>(null);
+  const [upscaleProbedSec, setUpscaleProbedSec] = useState<Record<string, number>>({});
+  const [upscaleBusyId, setUpscaleBusyId] = useState<string | null>(null);
   const [maskBusyId, setMaskBusyId] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ blockId: string; done: number; total: number } | null>(null);
   /** 左栏：画布节点列表 / 资产设定卡（对照参考图 IA，不抄皮肤） */
@@ -1028,6 +1040,107 @@ export default function FreeformCanvas({
     [blocks, eraseCornerBusyId, patchOne],
   );
 
+  const openUpscalePanel = useCallback(
+    async (blockId: string) => {
+      const block = blocks.find((b) => b.id === blockId);
+      // 只认真实成片 outputUrl；refImageUrl 垫图不进这个操作区（外层渲染条件已挡）
+      const src = String(block?.outputUrl || "").trim();
+      if (!block || !/^https:\/\//i.test(src)) {
+        toast.error("请先生成成片再做高清放大");
+        return;
+      }
+      setUpscalePanelBlockId(blockId);
+      if (!upscaleProbedSec[blockId]) {
+        const sec = await probeVideoDurationSec(src);
+        if (sec) {
+          setUpscaleProbedSec((prev) => ({ ...prev, [blockId]: sec }));
+        } else {
+          toast.error("读取视频时长失败，请稍后重试");
+          setUpscalePanelBlockId((cur) => (cur === blockId ? null : cur));
+        }
+      }
+    },
+    [blocks, upscaleProbedSec],
+  );
+
+  const startUpscaleForBlock = useCallback(
+    async (blockId: string, target: "2k" | "4k") => {
+      const block = blocks.find((b) => b.id === blockId);
+      const src = String(block?.outputUrl || "").trim();
+      const sec = upscaleProbedSec[blockId];
+      if (!block || !/^https:\/\//i.test(src) || !sec) return;
+      if (upscaleBusyId) return;
+      setUpscaleBusyId(blockId);
+      try {
+        const started = await startVideoUpscale({
+          videoUrl: src,
+          target,
+          durationSec: sec,
+          episodeIndex: Number(block.episodeIndex) > 0 ? Number(block.episodeIndex) : undefined,
+          sourceResolution: block.videoResolution || "720p",
+        });
+        // 任务字段随画布持久化 → 刷新后由下面的轮询 effect 自动恢复
+        patchOne(blockId, {
+          upscaleTaskId: started.taskId,
+          upscaleStatus: started.status,
+          upscaleTarget: target,
+          upscaleError: undefined,
+          upscaleCreditsUsed: started.creditsUsed,
+        });
+        setUpscalePanelBlockId(null);
+        toast.success(`高清放大已提交（${target.toUpperCase()} · ${started.creditsUsed} 积分）`);
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? e.message : "高清放大提交失败");
+      } finally {
+        setUpscaleBusyId(null);
+      }
+    },
+    [blocks, patchOne, upscaleBusyId, upscaleProbedSec],
+  );
+
+  // 活跃超分任务统一轮询（含刷新恢复：字段随画布持久化，挂载即接管）。
+  // deps 用任务键串而不是 blocks 引用，避免每次画布重渲都重建 interval。
+  const activeUpscaleKey = blocks
+    .filter((b) => b.upscaleTaskId && b.upscaleStatus && !isVideoUpscaleTerminal(b.upscaleStatus))
+    .map((b) => `${b.id}:${b.upscaleTaskId}:${b.upscaleStatus}`)
+    .join(",");
+  useEffect(() => {
+    if (!activeUpscaleKey) return;
+    const entries = activeUpscaleKey.split(",").map((item) => {
+      const [blockId, taskId] = item.split(":");
+      return { blockId, taskId };
+    });
+    let cancelled = false;
+    const tick = () => {
+      for (const { blockId, taskId } of entries) {
+        void (async () => {
+          try {
+            const snap = await fetchVideoUpscaleStatus(taskId);
+            if (cancelled) return;
+            patchOne(blockId, {
+              upscaleStatus: snap.status,
+              // 结果只写独立字段，原片 outputUrl 一个字节都不动
+              ...(snap.videoUrl ? { upscaledVideoUrl: snap.videoUrl } : {}),
+              upscaleError: snap.status === "failed" ? snap.error : undefined,
+              ...(snap.creditsUsed ? { upscaleCreditsUsed: snap.creditsUsed } : {}),
+            });
+            if (snap.status === "succeeded" && snap.videoUrl) {
+              toast.success("高清放大完成，原片已保留");
+            }
+          } catch {
+            // 查询失败视为瞬态，下一轮再试；终态判定只信服务端
+          }
+        })();
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeUpscaleKey, patchOne]);
+
   const runBlock = useCallback(
     async (blockId: string) => {
       const block = blocks.find((b) => b.id === blockId);
@@ -1132,6 +1245,12 @@ export default function FreeformCanvas({
             (out.outputUrl
               ? Array.from(new Set([out.outputUrl, ...stashUrls])).slice(0, 8)
               : stashUrls),
+          // 手点重跑也要写回尾帧锚点（否则下一段续拍拿不到起幅）。
+          // 无条件写入：本次没抽到尾帧时必须清掉旧值——残留 v1 的尾帧会让
+          // 下一段拿旧片画面当起幅（审阅结论必须修#5）
+          lastFrameUrl: out.lastFrameUrl,
+          // 重跑出了新片：旧质检报告（连同旧的「仍采用」授权）作废，按未质检状态重新走
+          ...(blockId.startsWith("clip-") ? { manhuaClipQuality: undefined } : {}),
           ...(out.seedance25ThreadId ? { seedance25ThreadId: out.seedance25ThreadId } : {}),
           ...(out.seedance25WebThreadLink
             ? { seedance25WebThreadLink: out.seedance25WebThreadLink }
@@ -2313,6 +2432,83 @@ export default function FreeformCanvas({
                                       ? "正在清除角标…"
                                       : "清除左上角标（后期修补）"}
                                   </button>
+                                  {/* 高清放大：结果写独立字段，原片保留；任务随画布持久化可刷新恢复 */}
+                                  {block.upscaleTaskId &&
+                                  block.upscaleStatus &&
+                                  !isVideoUpscaleTerminal(block.upscaleStatus) ? (
+                                    <div className="rounded-lg border border-sky-300/30 bg-sky-500/10 px-2 py-1.5 text-[10px] leading-4 text-sky-100/90">
+                                      高清放大（{(block.upscaleTarget || "").toUpperCase()}）·
+                                      {videoUpscaleStatusLabel(block.upscaleStatus)}
+                                    </div>
+                                  ) : null}
+                                  {block.upscaleStatus === "failed" ? (
+                                    <div className="rounded-lg border border-rose-300/30 bg-rose-500/10 px-2 py-1.5 text-[10px] leading-4 text-rose-100/90">
+                                      放大失败：{block.upscaleError || "请重试"}（积分已退回）
+                                    </div>
+                                  ) : null}
+                                  {block.upscaleStatus === "reconcile_manual" ? (
+                                    <div className="rounded-lg border border-orange-300/30 bg-orange-500/10 px-2 py-1.5 text-[10px] leading-4 text-orange-100/90">
+                                      放大超时且暂无法确认结果，已转人工核对——不会白扣积分
+                                    </div>
+                                  ) : null}
+                                  {block.upscaledVideoUrl ? (
+                                    <a
+                                      href={block.upscaledVideoUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="block w-full rounded-lg border border-emerald-300/35 bg-emerald-500/10 px-2 py-1.5 text-center text-[11px] text-emerald-50/90 hover:bg-emerald-500/15"
+                                      title="高清版单独存放，原片未被覆盖"
+                                    >
+                                      打开高清版（{(block.upscaleTarget || "").toUpperCase()}）
+                                    </a>
+                                  ) : null}
+                                  {upscalePanelBlockId === block.id ? (
+                                    (() => {
+                                      const sec = upscaleProbedSec[block.id];
+                                      const freeform = !(Number(block.episodeIndex) > 0);
+                                      return (
+                                        <div className="space-y-1 rounded-lg border border-white/15 bg-white/[0.04] p-2">
+                                          <div className="text-[10px] text-white/60">
+                                            {sec
+                                              ? `视频约 ${sec} 秒 · 按秒计费${freeform ? "" : "（整集批发价）"}`
+                                              : "读取视频时长中…"}
+                                          </div>
+                                          {sec ? (
+                                            <div className="grid grid-cols-2 gap-1">
+                                              {(["2k", "4k"] as const).map((t) => (
+                                                <button
+                                                  key={t}
+                                                  type="button"
+                                                  disabled={upscaleBusyId === block.id}
+                                                  onClick={() =>
+                                                    void startUpscaleForBlock(block.id, t)
+                                                  }
+                                                  className="rounded-lg border border-sky-300/35 bg-sky-500/10 px-2 py-1.5 text-[11px] text-sky-50/90 hover:bg-sky-500/15 disabled:opacity-50"
+                                                >
+                                                  {t.toUpperCase()} ·{" "}
+                                                  {canvasVideoUpscaleCredits(t, sec, { freeform })}{" "}
+                                                  积分
+                                                </button>
+                                              ))}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      );
+                                    })()
+                                  ) : !block.upscaleTaskId ||
+                                    (block.upscaleStatus &&
+                                      isVideoUpscaleTerminal(block.upscaleStatus)) ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => void openUpscalePanel(block.id)}
+                                      className="w-full rounded-lg border border-sky-300/35 bg-sky-500/10 px-2 py-1.5 text-[11px] text-sky-50/90 hover:bg-sky-500/15"
+                                      title="WaveSpeed 高清放大，按秒计费；结果单独存放不覆盖原片"
+                                    >
+                                      {block.upscaledVideoUrl
+                                        ? "重新高清放大（2K / 4K）"
+                                        : "高清放大（2K / 4K）"}
+                                    </button>
+                                  ) : null}
                                 </div>
                               ) : null}
                               {block.seedance25WebThreadLink ? (

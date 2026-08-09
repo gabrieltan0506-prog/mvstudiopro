@@ -2101,6 +2101,8 @@ export default function OmniCanvas() {
           response: finalVideoUrl.slice(0, 180),
         });
         toast.success(`长片已合成（${out.sceneCount || ready.length} 集 + 配乐）`);
+        // 沉浸态下坞是 display:none，先切开 extras 再滚
+        setImmersiveExtrasOpen(true);
         window.setTimeout(() => {
           document.querySelector("#manhua-clip-dock-zone")?.scrollIntoView({
             behavior: "smooth",
@@ -3438,14 +3440,15 @@ export default function OmniCanvas() {
     factorySceneId,
   ]);
 
-  const confirmWriterToDirector = useCallback(() => {
+  // 返回是否确认成功：调用方据此决定是否切视图（失败时 extras 已被切开展示门禁红字，勿再关）
+  const confirmWriterToDirector = useCallback((): boolean => {
     if (!writerPack || !writerPackLooksReady(writerPack)) {
       toast.error("请先扩写或导入剧本，并检查剧情包是否完整");
-      return;
+      return false;
     }
     if (!hasManhuaSeedanceLayoutChoice(writerVideoModel)) {
       toast.error(`请先选择成片引擎（${writerLayoutChoiceLabelsZh}）`);
-      return;
+      return false;
     }
     const densityGate = evaluateWriterPackAssetAndDensity({
       charactersMd: writerPack.charactersMd,
@@ -3460,6 +3463,14 @@ export default function OmniCanvas() {
     });
     if (!densityGate.ok) {
       setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
+      // 红字横幅渲染在 extras 视图里；沉浸工作台下若不切开，用户只能看到截断的
+      // toast，门禁就成了「看不见原因的死路」。切开并滚到横幅。
+      setImmersiveExtrasOpen(true);
+      window.setTimeout(() => {
+        document
+          .querySelector("[data-manhua-writer-confirm-blockers]")
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 60);
       toast.error("剧本未过密度/资产表门禁", {
         description: densityGate.errors.slice(0, 4).join("；"),
       });
@@ -3467,7 +3478,7 @@ export default function OmniCanvas() {
         level: "warn",
         detail: densityGate.errors.join(" | ").slice(0, 500),
       });
-      return;
+      return false;
     }
     setWriterConfirmBlockers([]);
     const canon = densityGate.canon;
@@ -3615,6 +3626,7 @@ export default function OmniCanvas() {
         forceRegenerate: true,
       });
     }, 80);
+    return true;
   }, [
     writerPack,
     factoryTopic,
@@ -3672,6 +3684,13 @@ export default function OmniCanvas() {
     });
     if (!densityGate.ok) {
       setWriterConfirmBlockers(densityGate.errors.slice(0, 6));
+      // 同 confirmWriterToDirector：沉浸态下切开 extras，让门禁原因可见
+      setImmersiveExtrasOpen(true);
+      window.setTimeout(() => {
+        document
+          .querySelector("[data-manhua-writer-confirm-blockers]")
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 60);
       toast.error("剧本未过密度/资产表门禁", {
         description: densityGate.errors.slice(0, 4).join("；"),
       });
@@ -6011,10 +6030,9 @@ export default function OmniCanvas() {
                 onNextActionClick={(stepId) => {
                   // 剧情包已出未确认：下一步直接确认并滚到工作台（少一次找按钮）
                   if (stepId === "writer" && writerPack && !writerConfirmed) {
-                    confirmWriterToDirector();
-                    setManhuaUiMode("workbench");
-                    setImmersiveExtrasOpen(false);
-                    // confirmWriterToDirector 已切到资产设定；勿再强制进分镜
+                    // 失败时函数已切开 extras 展示门禁红字——这里绝不能再关（会盖回 display:none）
+                    if (!confirmWriterToDirector()) return;
+                    // 成功路径函数内部已切 workbench + 关 extras；这里只负责滚动
                     window.setTimeout(() => {
                       document.querySelector("#manhua-workbench-shell")?.scrollIntoView({
                         behavior: "smooth",
@@ -6289,6 +6307,15 @@ export default function OmniCanvas() {
                   onWorkflowPhaseChange={setWorkflowPhase}
                   onOpenCharacterCard={() => setManhuaAssetDrawer("characters")}
                   onOpenAssetWall={() => setManhuaAssetDrawer("assets")}
+                  onOpenClipDock={() => {
+                    // 坞在 extras 视图里；沉浸态必须先切开再滚，对 display:none 滚动无效
+                    setImmersiveExtrasOpen(true);
+                    window.setTimeout(() => {
+                      document
+                        .getElementById("manhua-clip-dock-zone")
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }, 60);
+                  }}
                   onUpsertShotAngles={(angles) => {
                     const ep = writerFocusEpisode;
                     handleBlocksChange((prev) =>
@@ -7177,10 +7204,9 @@ export default function OmniCanvas() {
                   type="button"
                   disabled={writerBusy || factoryBusy || !writerPack}
                   onClick={() => {
-                    confirmWriterToDirector();
-                    setManhuaUiMode("workbench");
-                    setImmersiveExtrasOpen(false);
-                    // 先进资产设定改人物/场景/道具，再进分镜
+                    // 失败时函数已切开 extras 展示门禁红字——这里绝不能再关
+                    if (!confirmWriterToDirector()) return;
+                    // 成功路径函数内部已切 workbench + 关 extras；这里只负责滚动
                     window.setTimeout(() => {
                       document.querySelector("#manhua-workbench-zone")?.scrollIntoView({
                         behavior: "smooth",
@@ -7540,120 +7566,6 @@ export default function OmniCanvas() {
               ) : null}
             </div>
 
-            {/* 角色库 / 资产墙：抽屉，不长期占主流程 */}
-            {manhuaAssetDrawer ? (
-              <div className="fixed inset-0 z-[80] flex justify-end bg-black/55 backdrop-blur-[2px]">
-                <button
-                  type="button"
-                  className="absolute inset-0 cursor-default"
-                  aria-label="关闭资产抽屉"
-                  onClick={() => setManhuaAssetDrawer(null)}
-                />
-                <aside className="relative z-[81] flex h-full w-full max-w-3xl flex-col border-l border-cyan-400/20 bg-gradient-to-b from-[#0c1520] to-[#0a0e18] shadow-2xl">
-                  <div className="flex items-center justify-between border-b border-cyan-400/15 px-4 py-3">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-white/90">
-                        {manhuaAssetDrawer === "characters" ? "角色库 · 画风" : "资产墙 · 场景道具"}
-                        <span className="rounded-full border border-cyan-400/30 bg-cyan-500/12 px-1.5 py-0.5 text-[9px] font-medium text-cyan-100/85">
-                          步骤 3–4
-                        </span>
-                      </div>
-                      <p className="mt-0.5 text-[10px] text-white/40">
-                        手选始终覆盖自动推荐；确认编剧后写入专案设定并绑定各集
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setManhuaAssetDrawer(null)}
-                      className="rounded-lg border border-white/15 p-1.5 text-white/70 hover:bg-white/10"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                    {manhuaAssetDrawer === "characters" ? (
-                      <ManhuaCharacterGallery
-                        femaleId={factoryFemaleId}
-                        maleId={factoryMaleId}
-                        femaleAutoApplied={femaleAutoApplied}
-                        maleAutoApplied={maleAutoApplied}
-                        artStyleId={factoryArtStyleId}
-                        artStyleAutoApplied={artStyleAutoApplied}
-                        disabled={factoryBusy}
-                        topicHint={[factoryGenreLabel, factoryTopic].filter(Boolean).join(" ")}
-                        ancientArchetypeIds={factoryAncientArchetypeIds}
-                        castLane={castBundle.lane}
-                        reasonZh={`${castBundle.reasonZh}；画风可自选仿真人或 CG（题材仅软推荐）${
-                          castHardApplyReady
-                            ? selectedCharacterIds.length || factoryAncientArchetypeIds.length
-                              ? "；角色/场景/道具已按剧本预填，点选可改。"
-                              : "；已确认编剧，可改角色与画风后再进分镜。"
-                            : "；先扩写并确认剧本后，会预填造型（当前为软预览）。"
-                        }`}
-                        onSelectFemale={(id) => {
-                          setFemaleLeadManual(true);
-                          setFactoryFemaleId(id);
-                        }}
-                        onSelectMale={(id) => {
-                          setMaleLeadManual(true);
-                          setFactoryMaleId(id);
-                        }}
-                        onSelectArtStyle={(id) => {
-                          setArtStyleManual(true);
-                          setFactoryArtStyleId(id);
-                        }}
-                        onGenerateSameLayout={spawnSameLayoutSheet}
-                        onToggleAncientArchetype={(id) => {
-                          setAncientManual(true);
-                          setFactoryAncientArchetypeIds((prev) => {
-                            if (prev.includes(id)) return prev.filter((x) => x !== id);
-                            return [...prev, id].slice(-2);
-                          });
-                        }}
-                        onClearManual={() => {
-                          setFemaleLeadManual(false);
-                          setMaleLeadManual(false);
-                          setArtStyleManual(false);
-                          setAncientManual(false);
-                          setWardrobeManual(false);
-                          setPropManual(false);
-                        }}
-                      />
-                    ) : (
-                      <ManhuaAssetWall
-                        femaleId={factoryFemaleId}
-                        maleId={factoryMaleId}
-                        sceneId={factorySceneId || recommendedScene?.id}
-                        propIds={factoryPropIds}
-                        topic={factoryTopic}
-                        genreId={factoryGenreId}
-                        artStyleId={factoryArtStyleId}
-                        disabled={factoryBusy}
-                        onSelectFemale={(id) => {
-                          setFemaleLeadManual(true);
-                          setFactoryFemaleId(id);
-                        }}
-                        onSelectMale={(id) => {
-                          setMaleLeadManual(true);
-                          setFactoryMaleId(id);
-                        }}
-                        onSelectScene={(id) => {
-                          setSceneManual(true);
-                          setFactorySceneId(id);
-                        }}
-                        onToggleProp={(id) => {
-                          setPropManual(true);
-                          setFactoryPropIds((prev) => {
-                            if (prev.includes(id)) return prev.filter((x) => x !== id);
-                            return [...prev, id].slice(-4);
-                          });
-                        }}
-                      />
-                    )}
-                  </div>
-                </aside>
-              </div>
-            ) : null}
 
             {/* ③ 编导工厂：经典表单（工作台模式下收起，专家控件仍可切回） */}
             {manhuaUiMode === "form" ? (
@@ -8249,6 +8161,121 @@ export default function OmniCanvas() {
             compileManhuaRerun={compileManhuaRerun}
           />
           </div>
+          ) : null}
+
+          {/* 角色库 / 资产墙：抽屉，不长期占主流程 */}
+          {manhuaAssetDrawer ? (
+            <div className="fixed inset-0 z-[80] flex justify-end bg-black/55 backdrop-blur-[2px]">
+              <button
+                type="button"
+                className="absolute inset-0 cursor-default"
+                aria-label="关闭资产抽屉"
+                onClick={() => setManhuaAssetDrawer(null)}
+              />
+              <aside className="relative z-[81] flex h-full w-full max-w-3xl flex-col border-l border-cyan-400/20 bg-gradient-to-b from-[#0c1520] to-[#0a0e18] shadow-2xl">
+                <div className="flex items-center justify-between border-b border-cyan-400/15 px-4 py-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-white/90">
+                      {manhuaAssetDrawer === "characters" ? "角色库 · 画风" : "资产墙 · 场景道具"}
+                      <span className="rounded-full border border-cyan-400/30 bg-cyan-500/12 px-1.5 py-0.5 text-[9px] font-medium text-cyan-100/85">
+                        步骤 3–4
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[10px] text-white/40">
+                      手选始终覆盖自动推荐；确认编剧后写入专案设定并绑定各集
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setManhuaAssetDrawer(null)}
+                    className="rounded-lg border border-white/15 p-1.5 text-white/70 hover:bg-white/10"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                  {manhuaAssetDrawer === "characters" ? (
+                    <ManhuaCharacterGallery
+                      femaleId={factoryFemaleId}
+                      maleId={factoryMaleId}
+                      femaleAutoApplied={femaleAutoApplied}
+                      maleAutoApplied={maleAutoApplied}
+                      artStyleId={factoryArtStyleId}
+                      artStyleAutoApplied={artStyleAutoApplied}
+                      disabled={factoryBusy}
+                      topicHint={[factoryGenreLabel, factoryTopic].filter(Boolean).join(" ")}
+                      ancientArchetypeIds={factoryAncientArchetypeIds}
+                      castLane={castBundle.lane}
+                      reasonZh={`${castBundle.reasonZh}；画风可自选仿真人或 CG（题材仅软推荐）${
+                        castHardApplyReady
+                          ? selectedCharacterIds.length || factoryAncientArchetypeIds.length
+                            ? "；角色/场景/道具已按剧本预填，点选可改。"
+                            : "；已确认编剧，可改角色与画风后再进分镜。"
+                          : "；先扩写并确认剧本后，会预填造型（当前为软预览）。"
+                      }`}
+                      onSelectFemale={(id) => {
+                        setFemaleLeadManual(true);
+                        setFactoryFemaleId(id);
+                      }}
+                      onSelectMale={(id) => {
+                        setMaleLeadManual(true);
+                        setFactoryMaleId(id);
+                      }}
+                      onSelectArtStyle={(id) => {
+                        setArtStyleManual(true);
+                        setFactoryArtStyleId(id);
+                      }}
+                      onGenerateSameLayout={spawnSameLayoutSheet}
+                      onToggleAncientArchetype={(id) => {
+                        setAncientManual(true);
+                        setFactoryAncientArchetypeIds((prev) => {
+                          if (prev.includes(id)) return prev.filter((x) => x !== id);
+                          return [...prev, id].slice(-2);
+                        });
+                      }}
+                      onClearManual={() => {
+                        setFemaleLeadManual(false);
+                        setMaleLeadManual(false);
+                        setArtStyleManual(false);
+                        setAncientManual(false);
+                        setWardrobeManual(false);
+                        setPropManual(false);
+                      }}
+                    />
+                  ) : (
+                    <ManhuaAssetWall
+                      femaleId={factoryFemaleId}
+                      maleId={factoryMaleId}
+                      sceneId={factorySceneId || recommendedScene?.id}
+                      propIds={factoryPropIds}
+                      topic={factoryTopic}
+                      genreId={factoryGenreId}
+                      artStyleId={factoryArtStyleId}
+                      disabled={factoryBusy}
+                      onSelectFemale={(id) => {
+                        setFemaleLeadManual(true);
+                        setFactoryFemaleId(id);
+                      }}
+                      onSelectMale={(id) => {
+                        setMaleLeadManual(true);
+                        setFactoryMaleId(id);
+                      }}
+                      onSelectScene={(id) => {
+                        setSceneManual(true);
+                        setFactorySceneId(id);
+                      }}
+                      onToggleProp={(id) => {
+                        setPropManual(true);
+                        setFactoryPropIds((prev) => {
+                          if (prev.includes(id)) return prev.filter((x) => x !== id);
+                          return [...prev, id].slice(-4);
+                        });
+                      }}
+                    />
+                  )}
+                </div>
+              </aside>
+            </div>
           ) : null}
         </div>
       </main>

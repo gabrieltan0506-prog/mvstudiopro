@@ -19,6 +19,7 @@
 <meta name="twitter:description" content="Seedance 2.5 的官方接口目前只提供 480p 和 720p。我们不信邪，实测了哭戏、写实对白和 K-pop 舞蹈，再把成片超分到 4K。这里有原片、同帧对比、实际分辨率、音轨检查和公开价格区间。">
 <meta name="twitter:image" content="https://www.mvstudiopro.com/blog-assets/video-4k-upscale/compare-25-720p-vs-4k.jpg">
 <link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
+<link rel="alternate" type="application/rss+xml" title="MV Studio Pro 博客" href="https://www.mvstudiopro.com/blog/rss.xml">
 <style>
   :root {
     color-scheme: dark;
@@ -157,6 +158,51 @@
           "position": 3,
           "name": "Seedance 2.5 只有 720P？实测升到 4K，泪痕和睫毛都回来了",
           "item": "https://www.mvstudiopro.com/blog/video-4k-upscale"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Seedance 2.5 支持 1080P、2K 或 4K 吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "截至 2026 年 8 月 10 日，不支持。我们实测时，官方接口给出的画质参数只有 480p 和 720p。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "720P 超分到 4K，等于原生 4K 吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不等于。超分模型会根据前后帧重建边缘和纹理，让画面更适合大屏播放和后期裁切，但它无法还原源文件里从未记录的真实细节。本文同时放出原片和输出片，建议直接播放对比。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "为什么有些 4K 输出不是 3840×2160？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "因为视频会保留原始画幅。16:9 素材可以输出 3840×2160；其他比例会以 2160 像素高度为目标，宽度按比例计算，例如本文的 3234×2160 和 2880×2160。它们属于 4K 超分档输出，但不是标准 16:9 UHD 尺寸。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "视频超分会保留声音吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "本文三组 MP4 实测都保留了 AAC 双声道音轨。正式交付前仍建议检查片长、声画同步和音量，不要只看任务状态显示成功。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "应该先剪辑，还是先超分？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "先剪辑。等画面、字幕、配音和音乐全部定稿后，再对最终视频做一次超分，可以避免为会被删掉的镜头付费。"
+          }
         }
       ]
     }
