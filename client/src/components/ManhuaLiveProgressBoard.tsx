@@ -6,6 +6,8 @@ import { Loader2, Square } from "lucide-react";
 import type { CanvasBlock } from "@/lib/canvasTypes";
 import {
   countExpectedManhuaKeyartShots,
+  queuedManhuaClipBlocks,
+  queuedManhuaKeyartBlocks,
   getBlockEpisodeIndex,
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   MANHUA_FACTORY_STAGE_ORDER,
@@ -45,6 +47,8 @@ type Props = {
   onStopFactory?: () => void;
   onFocusEpisode: (ep: number) => void;
   onFocusBlock?: (blockId: string) => void;
+  /** 编剧室已选引擎：静帧分母要按它的段表截断，否则 2.5 会卡在 12/18 */
+  videoModel?: string | null;
 };
 
 export default function ManhuaLiveProgressBoard({
@@ -55,6 +59,7 @@ export default function ManhuaLiveProgressBoard({
   onStopFactory,
   onFocusEpisode,
   onFocusBlock,
+  videoModel,
 }: Props) {
   const rows = useMemo(() => {
     const byEp = new Map<number, CanvasBlock[]>();
@@ -72,8 +77,21 @@ export default function ManhuaLiveProgressBoard({
       const list = byEp.get(ep) || [];
       const title = list.find((b) => b.episodeTitle)?.episodeTitle;
       const stages: EpRow["stages"] = {};
+      // 改选钉段引擎后画布上会留着上一档多出来的静帧节点，工厂队列已按段表截断不跑它们；
+      // 这里若仍按节点数算分母，推进条会永远停在 12/18、静帧阶段绿不了
+      const queuedKeyartIds = new Set(
+        queuedManhuaKeyartBlocks(blocks, ep, videoModel).map((x) => x.id),
+      );
+      const queuedClipIds = new Set(
+        queuedManhuaClipBlocks(blocks, ep, videoModel).map((x) => x.id),
+      );
       for (const stage of TRACK_STAGES) {
-        const stageBlocks = list.filter((x) => stageKeyFromBlockId(x.id) === stage);
+        const stageBlocks = list.filter((x) => {
+          if (stageKeyFromBlockId(x.id) !== stage) return false;
+          if (stage === "keyart") return queuedKeyartIds.has(x.id);
+          if (stage === "clip") return queuedClipIds.has(x.id);
+          return true;
+        });
         const b = stageBlocks[0];
         const baseLabel = MANHUA_FACTORY_STAGE_LABEL_ZH[stage] || stage;
         if (!stageBlocks.length) {
@@ -84,7 +102,7 @@ export default function ManhuaLiveProgressBoard({
         if (stage === "keyart" || stage === "clip") {
           const expect =
             stage === "keyart"
-              ? Math.max(stageBlocks.length, countExpectedManhuaKeyartShots(blocks, ep))
+              ? Math.max(stageBlocks.length, countExpectedManhuaKeyartShots(blocks, ep, videoModel))
               : stageBlocks.length;
           const total = Math.max(stageBlocks.length, expect);
           const done = stageBlocks.filter((x) => Boolean(mediaOf(x))).length;
@@ -132,7 +150,7 @@ export default function ManhuaLiveProgressBoard({
       }
       return { ep, title, stages };
     });
-  }, [blocks, focusEpisode, factoryBusy]);
+  }, [blocks, focusEpisode, factoryBusy, videoModel]);
 
   const hasChain = rows.some((r) =>
     TRACK_STAGES.some((s) => r.stages[s]?.status !== "idle"),

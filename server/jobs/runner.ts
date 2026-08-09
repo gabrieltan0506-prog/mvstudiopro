@@ -557,9 +557,17 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     }
   }
 
-  ensureKlingInitialized();
-
+  /*
+   * 这里原本无条件调 ensureKlingInitialized()，缺密钥直接抛错。
+   *
+   * 但它下面只有 omni_* / motion_control / lip_sync / kling_image 这几个可灵分支真需要
+   * 初始化，而 nano_image、virtual_idol、canvas_gpt_image2 也排在后面——画布关键静帧走
+   * 的正是 canvas_gpt_image2，等于漫剧出静帧要先过一道可灵密钥门。可灵已下线、密钥已过期，
+   * 一删 secrets 静帧就会全挂。改成由真正用到可灵的分支各自初始化（kling_image 已自带一次，
+   * 其余分支无前端生产者、不可达）。
+   */
   if (input.action === "omni_t2v") {
+    ensureKlingInitialized();
     const request = buildT2VRequest({
       prompt: String(params.prompt ?? ""),
       negativePrompt: typeof params.negativePrompt === "string" ? params.negativePrompt : undefined,
@@ -583,6 +591,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
   }
 
   if (input.action === "omni_i2v") {
+    ensureKlingInitialized();
     const request = buildI2VRequest({
       prompt: String(params.prompt ?? ""),
       imageUrl: String(params.imageUrl ?? ""),
@@ -608,6 +617,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
   }
 
   if (input.action === "omni_storyboard") {
+    ensureKlingInitialized();
     const shotsInput = Array.isArray(params.shots) ? params.shots : [];
     const shots = shotsInput
       .map((shot) => (isRecord(shot) ? shot : null))
@@ -637,6 +647,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
   }
 
   if (input.action === "motion_control") {
+    ensureKlingInitialized();
     const request = buildMotionControlRequest({
       imageUrl: String(params.imageUrl ?? ""),
       videoUrl: String(params.videoUrl ?? ""),
@@ -674,6 +685,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
   }
 
   if (input.action === "lip_sync") {
+    ensureKlingInitialized();
     const request = buildLipSyncWithAudio({
       sessionId: String(params.sessionId ?? ""),
       faceId: String(params.faceId ?? ""),

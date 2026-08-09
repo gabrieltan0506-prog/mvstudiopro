@@ -40,6 +40,23 @@ function createCollection(platform: GrowthPlatform, suffix: string): PlatformTre
   };
 }
 
+/**
+ * 被测代码的写盘不全是 await 到底的，rm 与迟到的写会撞车，
+ * 目录刚清空又冒出新文件，rmdir 就抛 ENOTEMPTY。重试几次再放弃。
+ */
+async function removeTempDirWithRetry(dir: string, attempts = 5): Promise<void> {
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      await fs.rm(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code !== "ENOTEMPTY" || i === attempts - 1) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 20 * (i + 1)));
+    }
+  }
+}
+
 describe("growth store split + gzip layout", () => {
   let tempRoot = "";
 
@@ -57,7 +74,7 @@ describe("growth store split + gzip layout", () => {
     if (ORIGINAL_STORE_DIR) process.env.GROWTH_STORE_DIR = ORIGINAL_STORE_DIR;
     else delete process.env.GROWTH_STORE_DIR;
     delete process.env.GROWTH_DISABLE_STORE_LAYOUT_MIGRATE;
-    if (tempRoot) await fs.rm(tempRoot, { recursive: true, force: true });
+    if (tempRoot) await removeTempDirWithRetry(tempRoot);
   });
 
   it("migrates every growth platform into platform-current gzip", async () => {

@@ -294,8 +294,13 @@ export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }>
   { id: "happyhorse-1.1", label: "Happy Horse 1.1" },
 ];
 
-/** 工厂主成片默认；与 shared MANHUA_FACTORY_DEFAULT_VIDEO_MODEL 对齐（权限闸门另见 resolveManhuaFactoryDefaultVideoModel） */
-export const DEFAULT_CANVAS_VIDEO_MODEL: CanvasVideoModel = "seedance-2.5";
+/**
+ * 自由画布新建视频节点的默认引擎；与 shared MANHUA_FACTORY_DEFAULT_VIDEO_MODEL 同档。
+ *
+ * 之前默认 2.5，但 2.5 是正式会员专属，无权限用户拿到的默认值根本不在自己的下拉里，
+ * 只能靠 downgradeUnauthorizedSeedance25Blocks 事后降级。Mini 无闸门，默认即可用。
+ */
+export const DEFAULT_CANVAS_VIDEO_MODEL: CanvasVideoModel = "seedance-2.0-mini";
 
 /** 自由画布「添加节点」：不露出 text/copy_organize（工厂内部仍用 text 跑剧本） */
 export const SPAWN_KIND_OPTIONS: Array<{ kind: CanvasBlockKind; label: string; hint: string }> = [

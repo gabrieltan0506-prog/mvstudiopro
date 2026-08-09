@@ -18,6 +18,7 @@ import {
   type ManhuaWriterSession,
   type ManhuaWriterSessionPartial,
 } from "@shared/manhuaWriterSession";
+import { MANHUA_FACTORY_DEFAULT_VIDEO_MODEL } from "@shared/manhuaScriptWorkbench";
 import {
   normalizeCanvasBlock,
   normalizeCanvasVideoModel,
@@ -284,22 +285,31 @@ export function persistManhuaDraftLocally(input: {
   };
 }
 
+/** 默认档改 mini 之前的旧云草稿兜底档 */
+const LEGACY_CLOUD_DRAFT_VIDEO_MODEL = "seedance-2.0-fast";
+
 /**
  * 云草稿 → 画布节点。
  *
- * 云端 block schema 不落 `videoModel`，所以成片引擎必须由**会话**带进来
- * （`writerSession.videoModel`），否则一律硬编码成 fast：2.5 会话恢复后段长从
- * 30s 掉回 15s，mini 会话恢复后界面印 28 积分/段、实扣却按 fast 的 172，
- * 两边都是恢复即变价变结构。传不进来时才退回 fast。
+ * 成片引擎按「节点自带 > 会话选型 > 兜底默认」取。节点自带是 2026-08-09 之后才落的，
+ * 旧草稿没有；那时只能靠会话，会话也空就走兜底。取错的代价是恢复即变价变结构：
+ * 2.5 掉成 fast 段长从 30s 变 15s，mini 掉成 fast 界面印 28 积分/段、实扣 172。
+ *
+ * 兜底分新旧稿：默认档 2026-08-09 从 fast 改成 mini，若让没有任何盖章的旧稿也走新默认，
+ * 一次恢复就把用户原本的 fast 静默迁成 mini（段表与单段价都变）。所以整批都没盖章 =
+ * 旧格式，继续回退 fast 保持原语义；只要有一个节点盖过章就是新格式，缺章的走新默认。
  */
 export function cloudDraftBlocksToCanvas(
   blocks: ManhuaCloudDraftPayload["canvas"]["blocks"],
   opts?: { videoModel?: string | null },
 ): CanvasBlock[] {
   const sessionVideoModel = String(opts?.videoModel || "").trim();
-  const restoredVideoModel: CanvasBlock["videoModel"] = sessionVideoModel
+  const anyBlockStamped = blocks.some((b) => String(b.videoModel || "").trim());
+  const fallbackVideoModel: CanvasBlock["videoModel"] = sessionVideoModel
     ? normalizeCanvasVideoModel(sessionVideoModel)
-    : "seedance-2.0-fast";
+    : anyBlockStamped
+      ? MANHUA_FACTORY_DEFAULT_VIDEO_MODEL
+      : normalizeCanvasVideoModel(LEGACY_CLOUD_DRAFT_VIDEO_MODEL);
   return blocks.map((raw) => {
     const kind = (KIND_OK.has(raw.kind as CanvasBlockKind) ? raw.kind : "text") as CanvasBlockKind;
     const base = {
@@ -325,7 +335,9 @@ export function cloudDraftBlocksToCanvas(
       // 手动划线标注已废除，历史草稿字段读取处兼容忽略，不再还原进画布节点。
       textModel: "kimi-k3",
       imageModel: "gpt-image-2",
-      videoModel: restoredVideoModel,
+      videoModel: raw.videoModel
+        ? normalizeCanvasVideoModel(raw.videoModel)
+        : fallbackVideoModel,
       imageBatchCount: 1,
       uploadedAssets: [],
     } as CanvasBlock;

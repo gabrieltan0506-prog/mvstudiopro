@@ -26,10 +26,12 @@ describe("seedance evolink models", () => {
     expect(resolveSeedanceModelId("2.5", "video_extend")).toBe("seedance-2.5-video-extend");
   });
 
-  it("clamps duration per version (2.0 default 15; mini default 5)", () => {
+  it("clamps duration per version (mini 已产品化，默认跟 2.0 一样 15 秒)", () => {
     expect(clampSeedanceDuration("2.0", undefined)).toBe(15);
     expect(clampSeedanceDuration("2.0", 99)).toBe(15);
-    expect(clampSeedanceDuration("2.0-mini", undefined)).toBe(5);
+    // mini 是 39 积分/段的售卖档，漏传时长时不能只出 5 秒探针片
+    expect(clampSeedanceDuration("2.0-mini", undefined)).toBe(15);
+    expect(clampSeedanceDuration("2.0-mini", 5)).toBe(5);
     expect(clampSeedanceDuration("2.0-mini", 99)).toBe(15);
     expect(clampSeedanceDuration("2.5", 99)).toBe(30);
     expect(clampSeedanceDuration("2.5", 8)).toBe(8);

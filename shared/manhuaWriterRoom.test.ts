@@ -79,11 +79,23 @@ describe("manhuaWriterRoom", () => {
     expect(p).not.toMatch(/严格按 10 秒/);
   });
 
-  it("默认无 videoModel 时按 2.5 段表写四段可拍表", () => {
+  it("默认无 videoModel 时按 mini 段表写五至六段可拍表", () => {
+    // 默认档已从 2.5 换到 mini（6×15），扩写段数口径跟着走
     const p = buildManhuaWriterExpandPrompt({
       topic: "权谋",
       brief: "",
       episodeCount: 3,
+    });
+    expect(p).toContain("五至六段可拍表");
+    expect(p).toMatch(/15 秒/);
+  });
+
+  it("显式传 2.5 时仍按 2.5 段表写四段可拍表", () => {
+    const p = buildManhuaWriterExpandPrompt({
+      topic: "权谋",
+      brief: "",
+      episodeCount: 3,
+      videoModel: "seedance-2.5",
     });
     expect(p).toContain("四段可拍表");
     expect(p).toMatch(/30 秒/);

@@ -63,6 +63,10 @@ function httpsDoneUrl(block: ContinuityClipLike): string | undefined {
 /**
  * 取「全局段号 − 1」的已完成成片 URL（同集上一段，或跨集时上一集末段）。
  * 例：生成 g07（第 2 集第 1 段）→ 参考 g06。
+ *
+ * 全局段号的步长固定是每集 6，但引擎段表不一定是 6：Seedance 2.5 一集只有 4 段，
+ * 第 1 集占 g01–g04、第 2 集从 g07 起，中间 g05/g06 是空的。所以每集**首段**不能
+ * 死盯 global−1，要直接回退到上一集实际的末段，否则跨集接力在 2.5 / H3 上静默失效。
  */
 export function resolvePreviousSegmentClipUrl(
   blocks: ContinuityClipLike[],
@@ -73,6 +77,7 @@ export function resolvePreviousSegmentClipUrl(
   const local = manhuaLocalSegmentIndex(segmentIndex, ep);
   const global = manhuaGlobalSegmentIndex(ep, local);
   if (global <= 1) return undefined;
+  if (local <= 1) return resolvePreviousEpisodeClipUrl(blocks, ep);
   const prevGlobal = global - 1;
   let best: { url: string; ep: number } | undefined;
   for (const b of blocks) {

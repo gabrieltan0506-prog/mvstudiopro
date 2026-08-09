@@ -99,8 +99,17 @@ describe("canvas spawn + defaults", () => {
     );
   });
 
+  it("defaults new video blocks to the mini draft tier", () => {
+    // 默认档从 2.5 换成 mini：2.5 是正式会员专属，当默认会给无权限用户一个跑不了的值
+    expect(defaultCanvasBlock("video", 0, 0).videoModel).toBe("seedance-2.0-mini");
+    expect(normalizeCanvasVideoModel("")).toBe("seedance-2.0-mini");
+    expect(normalizeCanvasVideoModel("gemini-omni-flash")).toBe("seedance-2.0-mini");
+  });
+
   it("migrates legacy Seedance 2.5 draft modes to the official five-mode contract", () => {
     const legacy = defaultCanvasBlock("video", 0, 0);
+    // 五模式只对 2.5 有意义，默认档已不是 2.5，所以这里必须显式挂 2.5
+    legacy.videoModel = "seedance-2.5";
     legacy.seedance25WorkMode = "extend";
     legacy.seedance25RefVideoUrls = ["https://example.com/source.mp4"];
     expect(normalizeCanvasBlock(legacy).seedance25WorkMode).toBe("video_extend");

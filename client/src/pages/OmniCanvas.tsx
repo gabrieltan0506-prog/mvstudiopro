@@ -106,6 +106,8 @@ import {
   collectManhuaPropImageUrlById,
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
   countExpectedManhuaKeyartShots,
+  queuedManhuaKeyartBlocks,
+  resolveManhuaCanvasClipVideoModel,
   resolveManhuaClipRelatedAssetNodeIds,
   runManhuaDramaFactoryPipeline,
   sanitizeManhuaClipBlocksPrompts,
@@ -118,6 +120,7 @@ import {
   syncManhuaClipAssetEdges,
   type ManhuaFactoryStageKey,
 } from "@/lib/canvasDramaStudio";
+import { layoutManhuaCanvasBlocks, MANHUA_CANVAS_LAYOUT } from "@/lib/manhuaCanvasLayout";
 import {
   collectManhuaClipDockItems,
   episodeIndexesFromDockSelection,
@@ -633,6 +636,19 @@ export default function OmniCanvas() {
     // 已下线引擎（Happy Horse）迁到等价档，不认得的留空等用户选
     () => migrateRetiredManhuaLayoutVideoModel(initialWriterSession?.videoModel),
   );
+  /**
+   * 这个选型是「用户/会话真选的」还是「界面自动预选的默认档」。
+   *
+   * 下游 `ensureManhuaFragmentClips` 把显式选型当成「盖过存量段节点」的授权，
+   * 而无会话选型时界面会自动预选 mini——若把自动值也当显式，打开一张历史 2.5 画布
+   * 就会被静默改档：段表 4→6、上游换成 mini、扣费口径跟着变。自动预选不算数，
+   * 那时让存量节点上盖着的引擎说话。
+   */
+  const [writerVideoModelPicked, setWriterVideoModelPicked] = useState(() =>
+    Boolean(migrateRetiredManhuaLayoutVideoModel(initialWriterSession?.videoModel)),
+  );
+  /** 只有真选过才向下游透传；否则交给存量节点的既有引擎 */
+  const explicitWriterVideoModel = writerVideoModelPicked ? writerVideoModel : "";
 
   // 订阅/角色到位后：无会话选型时预选权限许可的默认档；会话里若是无权限的 2.5 则降级
   useEffect(() => {
@@ -646,6 +662,7 @@ export default function OmniCanvas() {
     });
   }, [subscriptionQuery.isLoading, factoryDefaultVideoModel, canUseSeedance25]);
   const writerLayoutProfile = resolveManhuaSeedanceLayoutProfile(
+    // 界面口径跟着界面上高亮的那一档走，与「是否算显式选型」无关
     writerVideoModel || undefined,
     writerLengthTierId,
   );
@@ -672,6 +689,10 @@ export default function OmniCanvas() {
   const [clearSeriesWithBackup, setClearSeriesWithBackup] = useState(true);
   const [writerFocusEpisode, setWriterFocusEpisode] = useState(() =>
     Math.max(1, Math.floor(Number(initialWriterSession?.focusEpisode) || 1)),
+  );
+  /** 折叠起来的集：多集铺开后画布会很长，折叠让它只占一行高度 */
+  const [collapsedManhuaEpisodes, setCollapsedManhuaEpisodes] = useState<Set<number>>(
+    () => new Set(),
   );
   const [directorUnlocked, setDirectorUnlocked] = useState(
     () => Boolean(initialWriterSession?.directorUnlocked),
@@ -1433,6 +1454,8 @@ export default function OmniCanvas() {
             : v
           : factoryDefaultVideoModel,
       );
+      // 会话里存过选型才算数；没有就是界面自动预选，不能拿去盖存量段节点
+      setWriterVideoModelPicked(Boolean(v));
     }
     if (session.deliveryPackage) {
       setDeliveryPackage(
@@ -1588,7 +1611,9 @@ export default function OmniCanvas() {
       segmentLookBindings,
       shareAssetToLibrary,
       viralTemplateId,
-      videoModel: writerVideoModel,
+      // 只存真选过的档。存自动预选值会让下次打开时把它当显式选型，
+      // 一张历史 2.5 画布重开两次就被静默改成 mini
+      videoModel: explicitWriterVideoModel,
       deliveryPackage,
       cineVocabLocale: factoryCineVocabLocale,
       chainIgnoreByScene,
@@ -1635,7 +1660,7 @@ export default function OmniCanvas() {
     shareAssetToLibrary,
     directorBoardMainByEpisode,
     viralTemplateId,
-    writerVideoModel,
+    explicitWriterVideoModel,
     deliveryPackage,
     factoryCineVocabLocale,
     chainIgnoreByScene,
@@ -2187,6 +2212,7 @@ export default function OmniCanvas() {
       manhuaAssetPathById: manhuaAssetMaps.pathById,
       manhuaAssetTileUrlsById: manhuaAssetMaps.tileUrlsById,
       manhuaDirectorBoardUrlByEpisode: directorBoardUrlByEpisode,
+      manhuaWriterVideoModel: explicitWriterVideoModel || undefined,
       getManhuaEpisodeSegmentPromptsForVoiceGate: (episodeIndex) =>
         collectManhuaEpisodeSegmentPromptsForVoiceGate(blocksRef.current, episodeIndex),
       optimizeCopy: async ({ sourceText, optimizationBrief, modelName }) => {
@@ -2282,6 +2308,7 @@ export default function OmniCanvas() {
       audioReferenceLock,
       manhuaAssetMaps,
       directorBoardUrlByEpisode,
+      explicitWriterVideoModel,
     ],
   );
 
@@ -2384,6 +2411,9 @@ export default function OmniCanvas() {
             normalizeManhuaCustomAssetRefs([...prev, ...result.addedRefs]),
           );
         }
+        // 报成功入库数，不报尝试数：裁切失败还说「导演板 6 集」等于骗自己
+        const failedBoardEpisodes: number[] = [];
+        let boardsIngested = 0;
         for (const board of result.directorBoards) {
           try {
             const cropped = await cropDirectorBoardMutation.mutateAsync({
@@ -2393,14 +2423,26 @@ export default function OmniCanvas() {
             const gcsUri = String(cropped?.gcsUri || "").trim();
             if (/^https?:\/\//i.test(mainUrl) && /^gs:\/\//i.test(gcsUri)) {
               setDirectorBoardMainForEpisode(board.episodeIndex, { gcsUri, url: mainUrl });
+              boardsIngested += 1;
+            } else {
+              failedBoardEpisodes.push(board.episodeIndex);
             }
           } catch (e) {
             console.warn("[zip] director board crop failed", e);
+            failedBoardEpisodes.push(board.episodeIndex);
           }
         }
+        const boardDescZh = result.directorBoards.length
+          ? `导演板 ${boardsIngested}/${result.directorBoards.length} 集`
+          : "导演板 0 集";
         toast.success("资产包已导入", {
-          description: `参考图 ${result.addedRefs.length} 张 · 导演板 ${result.directorBoards.length} 集 · 跳过 ${result.skippedCount} · 去重 ${result.droppedDupes}`,
+          description: `参考图 ${result.addedRefs.length} 张 · ${boardDescZh} · 跳过 ${result.skippedCount} · 去重 ${result.droppedDupes}`,
         });
+        if (failedBoardEpisodes.length) {
+          toast.error("部分导演板未接入", {
+            description: `第 ${failedBoardEpisodes.sort((a, b) => a - b).join("、")} 集裁切失败，这些集成片将缺导演板垫图；可在工作台单独上传。`,
+          });
+        }
       } finally {
         setAssetZipBusy(false);
       }
@@ -2467,6 +2509,7 @@ export default function OmniCanvas() {
           characterLookSets,
           segmentLookBindings,
           directorBoardUrlByEpisode,
+          videoModel: explicitWriterVideoModel || undefined,
         });
         const fresh = ensured.blocks.find((b) => b.id === block.id);
         if (!fresh?.prompt?.trim()) {
@@ -2507,6 +2550,7 @@ export default function OmniCanvas() {
       characterLookSets,
       segmentLookBindings,
       directorBoardUrlByEpisode,
+      explicitWriterVideoModel,
     ],
   );
 
@@ -2761,9 +2805,12 @@ export default function OmniCanvas() {
         endingHook: continuity.endingHook,
         previousEndingHook: continuity.previousEndingHook,
         previouslyOnRecap: continuity.previouslyOnRecap,
-        videoModel: hasManhuaSeedanceLayoutChoice(writerVideoModel)
-          ? (writerVideoModel as CanvasBlock["videoModel"])
-          : undefined,
+        // 补铺新一集时不能用自动预选值：第 1 集已在跑 2.5 的项目会被拽回 mini，
+        // 段表 4→6、扣费口径跟着变。用户没真选过就跟画布上已有的档走。
+        videoModel: resolveManhuaCanvasClipVideoModel(
+          blocks,
+          explicitWriterVideoModel || undefined,
+        ) as CanvasBlock["videoModel"],
       });
       spawned = {
         ...spawned,
@@ -2831,7 +2878,7 @@ export default function OmniCanvas() {
       writerConfirmed,
       writerPack,
       writerFocusEpisode,
-      writerVideoModel,
+      explicitWriterVideoModel,
       projectBible?.assetCanon,
       remapDockSelectionAfterSpawn,
     ],
@@ -3457,7 +3504,9 @@ export default function OmniCanvas() {
       wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
       videoReverseOutputMode: factoryReverseMode,
       customRefs: customAssetRefs,
-      assetCanon: projectBible?.assetCanon,
+      // 用刚算出的 canon，不能读 projectBible——上一行的 setState 本轮还没生效，
+      // 首次确认编剧时它还是 null，等于 assetCanon 传了 undefined
+      assetCanon: canon,
       writerContext: composeWriterPackFactoryContext(writerPack, continuity.episodeIndex, {
         assetCanonAddonZh: formatWriterAssetCanonFactoryAddon(canon, continuity.episodeIndex),
       }),
@@ -3677,7 +3726,8 @@ export default function OmniCanvas() {
       wardrobePropContinuityIds: hardCast.wardrobePropContinuityIds,
       videoReverseOutputMode: factoryReverseMode,
       customRefs: customAssetRefs,
-      assetCanon: projectBible?.assetCanon,
+      // 同 confirmWriterToDirector：读 state 会拿到本轮还没更新的旧值
+      assetCanon: canon,
       episodes: episodes.map((ep) => ({
         index: ep.index,
         title: ep.title,
@@ -4703,41 +4753,14 @@ export default function OmniCanvas() {
       const regenFailedIds = new Set<string>();
       try {
         let working = [...canvasBlocks];
-        /** 资产图固定左上：角色一行、场景一行；禁止再贴到画布最右 */
-        const ASSET_ORIGIN_X = 60;
-        const CHAR_SHEET_Y = 80;
-        const SCENE_SHEET_Y = 520;
-        const sheetColGap = 380;
-        const packAssetSheetPositions = (list: typeof working) => {
-          let c = 0;
-          let s = 0;
-          return list.map((b) => {
-            if (b.id.startsWith("charsheet-")) {
-              const next = {
-                ...b,
-                x: ASSET_ORIGIN_X + c * sheetColGap,
-                y: CHAR_SHEET_Y,
-                width: b.width || 360,
-                height: b.height || 400,
-              };
-              c += 1;
-              return next;
-            }
-            if (b.id.startsWith("sceneplate-")) {
-              const next = {
-                ...b,
-                x: ASSET_ORIGIN_X + s * sheetColGap,
-                y: SCENE_SHEET_Y,
-                width: b.width || 360,
-                height: b.height || 400,
-              };
-              s += 1;
-              return next;
-            }
-            return b;
-          });
-        };
-        working = packAssetSheetPositions(working);
+        /**
+         * 全画布统一排版：人物 / 道具 / 场景上下堆在最左，往右依次是
+         * 静帧+导演版、成片提示词、出片。旧版只认角色和场景、各挤成一行，
+         * 道具没人排，留在生成时的原始坐标上，画面就是一团乱。
+         */
+        working = layoutManhuaCanvasBlocks(working, {
+          collapsedEpisodes: collapsedManhuaEpisodes,
+        });
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
         // 视口滚到左上资产带并高亮，别让人去右边找
@@ -4775,15 +4798,8 @@ export default function OmniCanvas() {
           }
           let block = working.find((b) => b.id === plan.id);
           if (!block) {
-            const isChar = plan.kind === "charsheet";
-            const col = working.filter((b) =>
-              b.id.startsWith(isChar ? "charsheet-" : "sceneplate-"),
-            ).length;
-            block = defaultCanvasBlock(
-              "image",
-              ASSET_ORIGIN_X + col * sheetColGap,
-              isChar ? CHAR_SHEET_Y : SCENE_SHEET_Y,
-            );
+            // 落点交给统一排版算，这里给个占位坐标即可
+            block = defaultCanvasBlock("image", MANHUA_CANVAS_LAYOUT.originX, MANHUA_CANVAS_LAYOUT.originY);
             block.id = plan.id;
             block.prompt = plan.prompt;
             block.aspectRatio = "9:16";
@@ -4792,7 +4808,9 @@ export default function OmniCanvas() {
             block.refImageUrl = deriveRefUrl || undefined;
             block.width = 360;
             block.height = 400;
-            working = packAssetSheetPositions([...working, block]);
+            working = layoutManhuaCanvasBlocks([...working, block], {
+              collapsedEpisodes: collapsedManhuaEpisodes,
+            });
             block = working.find((b) => b.id === plan.id)!;
           } else if (!(block.outputUrl || block.outputUrls?.[0]) || isRegenPlan(plan.id)) {
             // 已有图 + 指定重出 → 按新编译的提示词重跑（清掉旧产物，别让 UI 显示成已完成）
@@ -4940,17 +4958,21 @@ export default function OmniCanvas() {
             }
           }
         }
-        working = layoutManhuaEpisodeReadableChain(
-          packAssetSheetPositions(working),
-          writerFocusEpisode,
-          {
+        /**
+         * readableChain 除了排版还负责给节点盖 @资产 标签，所以留着照跑；
+         * 但坐标以统一排版为准——三套排位互相覆盖正是画布乱的根源，
+         * 让 layoutManhuaCanvasBlocks 做最后一道，谁也别再改坐标。
+         */
+        working = layoutManhuaCanvasBlocks(
+          layoutManhuaEpisodeReadableChain(working, writerFocusEpisode, {
             assetCanon: projectBible?.assetCanon,
             characterSheetUrlById: collectManhuaCharacterSheetUrlById(
               working,
               projectBible?.assetCanon,
             ),
             propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
-          },
+          }),
+          { collapsedEpisodes: collapsedManhuaEpisodes },
         );
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
@@ -5300,10 +5322,17 @@ export default function OmniCanvas() {
             const keyartExpectedTotal = countExpectedManhuaKeyartShots(
               workingBlocks,
               episodeIndex,
+              explicitWriterVideoModel || undefined,
             );
             const keyartProgressZh = () => {
               const counts = countManhuaKeyartProgress(
-                workingBlocks,
+                // 只数这一轮真会跑的静帧：改选引擎后残留的旧节点若也计入，
+                // 分母会被顶回 18、永远显示 12/18，与推进板和队列各说各话
+                queuedManhuaKeyartBlocks(
+                  workingBlocks,
+                  episodeIndex,
+                  explicitWriterVideoModel || undefined,
+                ),
                 episodeIndex,
                 getBlockEpisodeIndex,
                 keyartExpectedTotal,
@@ -6356,18 +6385,23 @@ export default function OmniCanvas() {
                         saveCanvasState(next, eds);
                         return eds;
                       });
-                      // 用刷新后的 next 计数，避免闭包旧 blocks 导致「跳过张数」不准
-                      const epKeys = next.filter(
-                        (b) =>
-                          b.id.startsWith("keyart-") &&
-                          (getBlockEpisodeIndex(b) ?? 1) === writerFocusEpisode,
-                      );
+                      // 用刷新后的 next 计数，避免闭包旧 blocks 导致「跳过张数」不准；
+                      // 只认这一轮会跑的静帧，否则改选引擎后残留的旧节点会让 toast 谎报还差几张
+                      const epKeys = queuedManhuaKeyartBlocks(
+                        next,
+                        writerFocusEpisode,
+                        explicitWriterVideoModel || undefined,
+                      ).filter((b) => (getBlockEpisodeIndex(b) ?? 1) === writerFocusEpisode);
                       const already = epKeys.filter((b) =>
                         Boolean(b.outputUrl || b.outputUrls?.[0]),
                       ).length;
                       const expected = Math.max(
                         epKeys.length,
-                        countExpectedManhuaKeyartShots(next, writerFocusEpisode),
+                        countExpectedManhuaKeyartShots(
+                          next,
+                          writerFocusEpisode,
+                          explicitWriterVideoModel || undefined,
+                        ),
                       );
                       if (already > 0) {
                         const need = Math.max(0, expected - already);
@@ -6441,6 +6475,7 @@ export default function OmniCanvas() {
                         characterLookSets,
                         segmentLookBindings,
                         directorBoardUrlByEpisode,
+                        videoModel: explicitWriterVideoModel || undefined,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -6486,6 +6521,7 @@ export default function OmniCanvas() {
                         characterLookSets,
                         segmentLookBindings,
                         directorBoardUrlByEpisode,
+                        videoModel: explicitWriterVideoModel || undefined,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -6564,6 +6600,7 @@ export default function OmniCanvas() {
                         characterLookSets,
                         segmentLookBindings,
                         directorBoardUrlByEpisode,
+                        videoModel: explicitWriterVideoModel || undefined,
                       };
                       const ensured = ensureManhuaFragmentClips(
                         prev,
@@ -6906,6 +6943,7 @@ export default function OmniCanvas() {
                             return;
                           }
                           setWriterVideoModel(c.videoModel);
+                          setWriterVideoModelPicked(true);
                           setWriterConfirmed(false);
                         }}
                         className={`rounded-lg border px-2.5 py-1.5 text-left text-[11px] disabled:opacity-50 ${
@@ -7387,6 +7425,8 @@ export default function OmniCanvas() {
               <ManhuaLiveProgressBoard
                 blocks={blocks}
                 focusEpisode={writerFocusEpisode}
+                // 分母口径必须与工厂队列一致：自动预选不算数，否则历史 2.5 画布会按 mini 算张数
+                videoModel={explicitWriterVideoModel || undefined}
                 factoryBusy={factoryBusy || assembleBusy}
                 factoryProgress={
                   assembleBusy ? "正在合成长片与配乐…" : factoryProgress || undefined

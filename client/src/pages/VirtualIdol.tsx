@@ -47,10 +47,6 @@ function virtualIdolUpscaleBaseKey(engine: EngineOption): ImageUpscaleBaseCredit
       return "nbpImage4K";
     case "nbp_2k":
       return "nbpImage2K";
-    case "kling_2k":
-      return "klingImageO1_2K";
-    case "kling_1k":
-      return "klingImageO1_1K";
     case "forge":
       return "forgeImage";
     default:

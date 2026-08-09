@@ -80,12 +80,16 @@ export function normalizeSeedance25EvolinkMode(
 /** 产品默认时长：对齐「约 15 秒」漫剧/短镜口径；仍受各版 API 上下限约束 */
 export const SEEDANCE_PRODUCT_DEFAULT_DURATION_SEC = 15;
 
-/** 探针 / 草稿默认：Mini 5s·480p，约半价于标准 2.0 */
+/** 探针专用：5s·480p，约半价于标准 2.0。探针路径显式传这两个值，不靠模型默认 */
 export const SEEDANCE_PROBE_DEFAULT_DURATION_SEC = 5;
 export const SEEDANCE_PROBE_DEFAULT_QUALITY = "480p" as const;
 
 export const SEEDANCE_20_DURATION = { min: 4, max: 15, default: SEEDANCE_PRODUCT_DEFAULT_DURATION_SEC } as const;
-export const SEEDANCE_20_MINI_DURATION = { min: 4, max: 15, default: SEEDANCE_PROBE_DEFAULT_DURATION_SEC } as const;
+/**
+ * Mini 已是正式售卖档（39 积分/段），默认必须跟产品口径走 15s。
+ * 以前它挂在探针的 5s 上：任何漏传时长的调用都会按 39 积分只出 5 秒片。
+ */
+export const SEEDANCE_20_MINI_DURATION = { min: 4, max: 15, default: SEEDANCE_PRODUCT_DEFAULT_DURATION_SEC } as const;
 export const SEEDANCE_25_DURATION = { min: 4, max: 30, default: SEEDANCE_PRODUCT_DEFAULT_DURATION_SEC } as const;
 
 /**

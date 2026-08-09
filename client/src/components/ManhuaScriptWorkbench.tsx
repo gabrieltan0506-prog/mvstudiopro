@@ -23,6 +23,7 @@ import {
   collectManhuaEpisodeSegmentPromptsForVoiceGate,
   getBlockEpisodeIndex,
   MANHUA_FACTORY_STAGE_LABEL_ZH,
+  queuedManhuaKeyartBlocks,
   stageKeyFromBlockId,
 } from "@/lib/canvasDramaStudio";
 import { tryLocalMediaDisplayForBlock } from "@/lib/manhuaLocalMediaStore";
@@ -95,6 +96,7 @@ import {
   MANHUA_FACTORY_DEFAULT_VIDEO_MODEL,
   MANHUA_KEYARTS_PER_SEGMENT_MIN,
   manhuaSegmentCountBounds,
+  pinnedManhuaSegmentCount,
   parseWorkbenchShotsFromText,
   resolveClipLocalSegmentIndex,
   resolveClipSegmentIndex,
@@ -655,10 +657,6 @@ export default function ManhuaScriptWorkbench({
 
   const beats = blockByStage(blocks, focusEpisode, "beats");
   const reverse = blockByStage(blocks, focusEpisode, "reverse");
-  const episodeKeyarts = useMemo(
-    () => keyartsForEpisode(blocks, focusEpisode),
-    [blocks, focusEpisode],
-  );
   const episodeClips = useMemo(
     () =>
       blocks
@@ -671,7 +669,6 @@ export default function ManhuaScriptWorkbench({
         ),
     [blocks, focusEpisode],
   );
-  const keyart = episodeKeyarts[0];
   const legacyClip = blockByStage(blocks, focusEpisode, "clip");
   const story = blockByStage(blocks, focusEpisode, "story");
 
@@ -716,17 +713,28 @@ export default function ManhuaScriptWorkbench({
 
   const episodeVideoModel =
     episodeClips[0]?.videoModel || legacyClip?.videoModel || MANHUA_FACTORY_DEFAULT_VIDEO_MODEL;
+  // 静帧一律取「这一轮真正会被跑到」的节点：从 mini（18 张）改选 2.5（12 张）后，
+  // 超出新段表的静帧只是停放，队列不会跑它们。分母若仍按画布节点数算，成片门禁会卡死在 12/18。
+  const episodeKeyarts = useMemo(() => {
+    const queued = new Set(
+      queuedManhuaKeyartBlocks(blocks, focusEpisode, episodeVideoModel).map((b) => b.id),
+    );
+    return keyartsForEpisode(blocks, focusEpisode).filter((b) => queued.has(b.id));
+  }, [blocks, focusEpisode, episodeVideoModel]);
+  const keyart = episodeKeyarts[0];
   const episodeSegmentBounds = manhuaSegmentCountBounds(episodeVideoModel);
   const episodeVideoLabelZh =
     VIDEO_MODEL_OPTIONS.find((m) => m.id === episodeVideoModel)?.label || "成片";
   const segments = useMemo(
     () =>
       groupShotsIntoSegments(shots, {
+        // 只有段表固定的引擎才钉段；2.0 / 2.0-fast 的段数随长档变，钉死会把 12 段压回 6 段，
+        // 而工厂那边对它们不钉段，界面段数与实收段数会再次脱节
         videoModel: episodeVideoModel,
-        segmentCount: episodeSegmentBounds.default,
+        segmentCount: pinnedManhuaSegmentCount(episodeVideoModel),
         padToDefaultEpisode: true,
       }),
-    [shots, episodeVideoModel, episodeSegmentBounds.default],
+    [shots, episodeVideoModel],
   );
   const shootablePlan = useMemo(
     () =>

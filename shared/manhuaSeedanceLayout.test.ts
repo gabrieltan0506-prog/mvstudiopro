@@ -125,15 +125,15 @@ describe("manhuaSeedanceLayout", () => {
     expect(manhuaSeedanceLayoutPinsSegmentTable("seedance-2.0")).toBe(false);
   });
 
-  it("empty / unknown model falls back to explicit 2.5 profile（不靠数组[0]）", () => {
+  it("empty / unknown model falls back to explicit mini profile（不靠数组[0]）", () => {
     expect(resolveManhuaSeedanceLayoutProfile("")).toMatchObject({
-      videoModel: "seedance-2.5",
-      segmentCount: 4,
-      durationSecPerSegment: 30,
-      targetSec: 120,
+      videoModel: "seedance-2.0-mini",
+      segmentCount: 6,
+      durationSecPerSegment: 15,
+      targetSec: 90,
     });
     expect(resolveManhuaSeedanceLayoutProfile("not-a-model")).toMatchObject({
-      videoModel: "seedance-2.5",
+      videoModel: "seedance-2.0-mini",
     });
   });
 
@@ -153,23 +153,18 @@ describe("manhuaSeedanceLayout", () => {
     expect(clampManhuaClipDurationSecForVideoModel(CANVAS_VIDEO_MODEL_HAILUO_H3, 20)).toBe(15);
   });
 
-  it("有 2.5 权限时默认 2.5；无权限默认回落 2.0-fast", () => {
-    expect(resolveManhuaFactoryDefaultVideoModel({ plan: "pro", now: AFTER })).toBe("seedance-2.5");
-    expect(resolveManhuaFactoryDefaultVideoModel({ plan: "enterprise", now: AFTER })).toBe(
-      "seedance-2.5",
-    );
-    expect(resolveManhuaFactoryDefaultVideoModel({ plan: "free", now: AFTER })).toBe(
-      "seedance-2.0-fast",
-    );
-    expect(resolveManhuaFactoryDefaultVideoModel({ plan: "pro", now: BEFORE })).toBe(
-      "seedance-2.0-fast",
-    );
-    expect(
-      resolveManhuaFactoryDefaultVideoModel({
-        plan: "free",
-        role: "supervisor",
-        now: BEFORE,
-      }),
-    ).toBe("seedance-2.5");
+  it("默认一律 mini：不再按 2.5 权限分流", () => {
+    // mini 无闸门、人人可用，所以 plan / role / 时点都不影响默认档；
+    // 2.5 的权限校验移回选项过滤与服务端扣费闸门，用户必须自己点才用得上。
+    for (const access of [
+      { plan: "pro", now: AFTER },
+      { plan: "enterprise", now: AFTER },
+      { plan: "free", now: AFTER },
+      { plan: "pro", now: BEFORE },
+      { plan: "free", role: "supervisor", now: BEFORE },
+    ] as const) {
+      expect(resolveManhuaFactoryDefaultVideoModel(access)).toBe("seedance-2.0-mini");
+    }
+    expect(resolveManhuaFactoryDefaultVideoModel()).toBe("seedance-2.0-mini");
   });
 });
