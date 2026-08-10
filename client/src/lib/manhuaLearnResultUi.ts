@@ -18,6 +18,29 @@ import {
 } from "@shared/manhuaTemplateLearnPipeline";
 
 export const LS_MANHUA_LEARN_SERIES_KEY = "mv-manhua-learn-focus-series-v1";
+export const LS_MANHUA_LEARN_ACTIVE_JOB = "mvs-manhua-learn-active-job-v1";
+export const LS_MANHUA_LEARN_RESULT = "mvs-manhua-learn-result-v1";
+
+export type ManhuaLearnActiveJobRecord = {
+  jobId: string;
+  busyKey: string;
+  continuation: {
+    row: {
+      url?: string | null;
+      gcsUri?: string | null;
+      fileName?: string | null;
+      localFileName?: string | null;
+      learnLlm?: "claude" | "gpt";
+      mixName?: string | null;
+      mixId?: string | null;
+      platform?: string | null;
+    };
+    rank: number;
+    seriesKey?: string;
+    savedAt: number;
+  };
+  savedAt: number;
+};
 
 export type ManhuaLearnResultUi = {
   seriesKey: string;
@@ -174,6 +197,7 @@ export function mergeManhuaLearnLiveProgress(
   );
   return {
     ...base,
+    seriesKey: String(out.seriesKey || base.seriesKey).trim() || base.seriesKey,
     channel: "cloud",
     liveStatus,
     livePhase: String(out.analysisStage || base.livePhase || "").replace(/^manhua_learn_/, ""),
@@ -284,6 +308,100 @@ export function writeManhuaLearnFocusSeriesKey(seriesKey: string): void {
     else localStorage.removeItem(LS_MANHUA_LEARN_SERIES_KEY);
   } catch {
     /* ignore */
+  }
+}
+
+/**
+ * 后台学习任务接力记录。刷新只接管同一个 job，绝不重新入队；
+ * 同时兼容链接学习与素材分析上传的 gs:// 输入。
+ */
+export function readManhuaLearnActiveJob(): ManhuaLearnActiveJobRecord | null {
+  try {
+    const raw = localStorage.getItem(LS_MANHUA_LEARN_ACTIVE_JOB);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ManhuaLearnActiveJobRecord>;
+    const continuation = parsed.continuation;
+    const row = continuation?.row;
+    const url = String(row?.url || "").trim();
+    const gcsUri = String(row?.gcsUri || "").trim();
+    const jobId = String(parsed.jobId || "").trim();
+    const savedAt = Number(parsed.savedAt);
+    const validSource = /^https?:\/\//i.test(url) || /^gs:\/\//i.test(gcsUri);
+    if (!jobId || !validSource || !Number.isFinite(savedAt)) {
+      localStorage.removeItem(LS_MANHUA_LEARN_ACTIVE_JOB);
+      return null;
+    }
+    const learnLlm = row?.learnLlm === "claude" || row?.learnLlm === "gpt"
+      ? row.learnLlm
+      : undefined;
+    return {
+      jobId,
+      busyKey: String(parsed.busyKey || jobId).trim() || jobId,
+      continuation: {
+        row: {
+          url: url || undefined,
+          gcsUri: gcsUri || undefined,
+          fileName: String(row?.fileName || "").trim() || undefined,
+          localFileName: String(row?.localFileName || "").trim() || undefined,
+          learnLlm,
+          mixName: String(row?.mixName || "").trim() || null,
+          mixId: String(row?.mixId || "").trim() || null,
+          platform: String(row?.platform || "").trim() || null,
+        },
+        rank: Math.max(0, Math.floor(Number(continuation?.rank) || 0)),
+        seriesKey: String(continuation?.seriesKey || "").trim() || undefined,
+        savedAt: Number(continuation?.savedAt) || savedAt,
+      },
+      savedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function writeManhuaLearnActiveJob(value: ManhuaLearnActiveJobRecord | null): void {
+  try {
+    if (value) localStorage.setItem(LS_MANHUA_LEARN_ACTIVE_JOB, JSON.stringify(value));
+    else localStorage.removeItem(LS_MANHUA_LEARN_ACTIVE_JOB);
+  } catch {
+    // localStorage 禁用时仍保留当前会话状态；不阻断服务端任务。
+  }
+}
+
+/** 页面刷新后保留已解析总数、累计已学与待学习数；用户明确清空时才删除。 */
+export function readManhuaLearnResult(): ManhuaLearnResultUi | null {
+  try {
+    const raw = localStorage.getItem(LS_MANHUA_LEARN_RESULT);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ManhuaLearnResultUi>;
+    if (!String(parsed.seriesKey || "").trim()) {
+      localStorage.removeItem(LS_MANHUA_LEARN_RESULT);
+      return null;
+    }
+    return {
+      ...(parsed as ManhuaLearnResultUi),
+      seriesKey: String(parsed.seriesKey).trim(),
+      learnedCount: Math.max(0, Math.floor(Number(parsed.learnedCount) || 0)),
+      batchLearned: Math.max(0, Math.floor(Number(parsed.batchLearned) || 0)),
+      analysisMin: Math.max(1, Math.floor(Number(parsed.analysisMin) || MANHUA_LEARN_ANALYSIS_MIN)),
+      analysisTarget: Math.max(
+        1,
+        Math.floor(Number(parsed.analysisTarget) || MANHUA_LEARN_ANALYSIS_TARGET),
+      ),
+      digestsPreview: Array.isArray(parsed.digestsPreview) ? parsed.digestsPreview : [],
+      proposal: parsed.proposal && typeof parsed.proposal === "object" ? parsed.proposal : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function writeManhuaLearnResult(value: ManhuaLearnResultUi | null): void {
+  try {
+    if (value) localStorage.setItem(LS_MANHUA_LEARN_RESULT, JSON.stringify(value));
+    else localStorage.removeItem(LS_MANHUA_LEARN_RESULT);
+  } catch {
+    // 存储空间不足时不影响当前学习任务与 GCS 检查点。
   }
 }
 

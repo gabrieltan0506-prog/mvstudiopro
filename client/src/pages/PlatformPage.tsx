@@ -102,8 +102,13 @@ import {
   manhuaLearnResultFromSnapshot,
   manhuaLearnResultFromStart,
   mergeManhuaLearnLiveProgress,
+  readManhuaLearnActiveJob,
   readManhuaLearnFocusSeriesKey,
+  readManhuaLearnResult,
+  writeManhuaLearnActiveJob,
   writeManhuaLearnFocusSeriesKey,
+  writeManhuaLearnResult,
+  type ManhuaLearnActiveJobRecord,
   type ManhuaLearnResultUi,
 } from "@/lib/manhuaLearnResultUi";
 import { getManhuaLearnPipelineMeta } from "@shared/manhuaTemplateLearnPipeline";
@@ -1976,6 +1981,10 @@ type ManhuaLearnContinuation = {
   savedAt: number;
 };
 
+type ManhuaLearnActiveJob = ManhuaLearnActiveJobRecord & {
+  continuation: ManhuaLearnContinuation;
+};
+
 const MANHUA_LEARN_CONTINUATION_LS_KEY = "mvs-manhua-learn-continuation-v1";
 
 function readManhuaLearnContinuation(): ManhuaLearnContinuation | null {
@@ -2222,7 +2231,11 @@ export default function PlatformPage() {
   }, []);
 
   /** 平台趋势区子 Tab：指定平台分析 / AI 漫剧专区 */
-  const [trendInsightTab, setTrendInsightTab] = useState<"overview" | "ai_manhua">("overview");
+  const [trendInsightTab, setTrendInsightTab] = useState<"overview" | "ai_manhua">(() =>
+    readManhuaLearnFocusSeriesKey() || readManhuaLearnActiveJob() || readManhuaLearnResult()
+      ? "ai_manhua"
+      : "overview",
+  );
   /** AI 漫剧专区内：抖音 / 快手子榜（随上方趋势平台筛选自动切换） */
   const [aiManhuaPlatformTab, setAiManhuaPlatformTab] = useState<"douyin" | "kuaishou">("douyin");
   useEffect(() => {
@@ -2244,11 +2257,21 @@ export default function PlatformPage() {
     readManhuaLearnFocusSeriesKey(),
   );
   const [manhuaLearnPanelCollapsed, setManhuaLearnPanelCollapsed] = useState(false);
-  const [manhuaLearnResult, setManhuaLearnResult] = useState<ManhuaLearnResultUi | null>(null);
+  const [manhuaLearnResult, setManhuaLearnResult] = useState<ManhuaLearnResultUi | null>(() =>
+    readManhuaLearnResult(),
+  );
+  useEffect(() => {
+    writeManhuaLearnResult(manhuaLearnResult);
+  }, [manhuaLearnResult]);
   /** 单批完成后由用户决定是否续学；同一 row/rank 复用，服务端按 GCS 检查点跳过已学集。 */
   const manhuaLearnContinueRef = useRef<ManhuaLearnContinuation | null>(
     readManhuaLearnContinuation(),
   );
+  const [manhuaLearnActiveJob, setManhuaLearnActiveJob] = useState<ManhuaLearnActiveJob | null>(
+    readManhuaLearnActiveJob(),
+  );
+  /** 同一页面只允许一个轮询 owner；刷新后新页面从 active job 接手。 */
+  const manhuaLearnPollingJobIdRef = useRef<string | null>(null);
   const [manhuaLearnContinueDismissedKey, setManhuaLearnContinueDismissedKey] = useState("");
   const visualReportRef = useRef<HTMLDivElement>(null);
   // Call 3 state — content blueprints and monetization
@@ -2650,9 +2673,9 @@ export default function PlatformPage() {
       enabled:
         trendInsightTab === "ai_manhua" &&
         manhuaLearnFocusSeriesKey.length >= 4 &&
-        Boolean(supervisorAccess || user?.role === "admin" || user?.role === "supervisor") &&
-        !manhuaLearnBusyKey,
+        Boolean(supervisorAccess || user?.role === "admin" || user?.role === "supervisor"),
       staleTime: 15_000,
+      refetchInterval: manhuaLearnActiveJob ? 15_000 : false,
       retry: false,
     },
   );
@@ -4475,6 +4498,7 @@ export default function PlatformPage() {
     async (
       row: ManhuaLearnSourceRow,
       rank: number,
+      resumeSeriesKey?: string,
     ) => {
       const canOps =
         supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
@@ -4516,13 +4540,19 @@ export default function PlatformPage() {
       const continuation: ManhuaLearnContinuation = {
         row: { ...row },
         rank,
+        seriesKey: String(resumeSeriesKey || "").trim() || undefined,
         savedAt: Date.now(),
       };
       manhuaLearnContinueRef.current = continuation;
       writeManhuaLearnContinuation(continuation);
       setManhuaLearnContinueDismissedKey("");
       setManhuaLearnBusyKey(busyKey);
-      const startUi = manhuaLearnResultFromStart({ channel: "cloud", url: source, title });
+      const startUi = manhuaLearnResultFromStart({
+        channel: "cloud",
+        url: source,
+        title,
+        seriesKey: continuation.seriesKey,
+      });
       setManhuaLearnResult(startUi);
       setManhuaLearnPanelCollapsed(false);
       setManhuaLearnFocusSeriesKey(startUi.seriesKey);
@@ -4534,6 +4564,8 @@ export default function PlatformPage() {
         pollCount: 0,
         currentStep: "准备入队",
       });
+      let queuedJobId: string | null = null;
+      let terminalReached = false;
       try {
         const { jobId } = await createJob({
           type: "video",
@@ -4553,6 +4585,16 @@ export default function PlatformPage() {
             },
           },
         });
+        queuedJobId = jobId;
+        const activeJob: ManhuaLearnActiveJob = {
+          jobId,
+          busyKey,
+          continuation,
+          savedAt: Date.now(),
+        };
+        manhuaLearnPollingJobIdRef.current = jobId;
+        setManhuaLearnActiveJob(activeJob);
+        writeManhuaLearnActiveJob(activeJob);
         setManhuaLearnJobPollTrace((prev) => ({
           jobId,
           label: prev?.label || `学节奏 · ${title.slice(0, 24) || "未命名"}`,
@@ -4599,6 +4641,7 @@ export default function PlatformPage() {
             );
           },
         });
+        terminalReached = true;
         if (job.status !== "succeeded") {
           const errZh = sanitizePlatformUserMessage(job.error || "云端学习失败");
           setManhuaLearnJobPollTrace((prev) =>
@@ -4687,39 +4730,51 @@ export default function PlatformPage() {
         }
       } catch (e) {
         const msg = sanitizePlatformUserMessage(e instanceof Error ? e.message : String(e));
+        const pollInterrupted = Boolean(queuedJobId) && !terminalReached;
+        const visibleMsg = pollInterrupted
+          ? `${msg || "页面暂时无法读取后台进度"}（后台任务记录已保留，刷新页面会继续接管）`
+          : msg || "云端入队失败";
         setManhuaLearnJobPollTrace((prev) =>
           prev
             ? {
                 ...prev,
-                terminalStatus: "client_error",
-                currentStep: msg || "云端入队失败",
+                terminalStatus: pollInterrupted ? undefined : "client_error",
+                currentStep: visibleMsg,
                 lines: appendPollDebugLine(
                   prev.lines,
-                  `${new Date().toISOString()} ✗ 客户端异常: ${msg}`,
+                  `${new Date().toISOString()} ✗ ${pollInterrupted ? "轮询中断" : "客户端异常"}: ${visibleMsg}`,
                 ),
               }
             : {
                 jobId: "client_error",
                 label: `学节奏 · ${title.slice(0, 24) || "未命名"}`,
-                lines: [`${new Date().toISOString()} ✗ ${msg}`],
+                lines: [`${new Date().toISOString()} ✗ ${visibleMsg}`],
                 pollCount: 0,
-                terminalStatus: "client_error",
-                currentStep: msg,
+                terminalStatus: pollInterrupted ? undefined : "client_error",
+                currentStep: visibleMsg,
               },
         );
         setManhuaLearnResult((prev) =>
           manhuaLearnResultFromFailure({
-            errorZh: msg || "云端入队失败",
+            errorZh: visibleMsg,
             url,
             title,
             prev,
           }),
         );
-        toast.error("学习未完成", { description: `${msg || "云端入队失败"}（进度见下方面板 / Debug）` });
-        if (!shouldSkipLocalLearnFallback(msg || "")) {
-          await copyManhuaLocalLearnFallback(row, msg || "云端入队失败");
+        toast.error(pollInterrupted ? "进度连接已中断" : "学习未完成", {
+          description: `${visibleMsg}（进度见下方面板 / Debug）`,
+        });
+        // 已经入队后绝不再启动本机副本；否则网络抖动会让同一视频云端/本机重复学习。
+        if (!pollInterrupted && !shouldSkipLocalLearnFallback(msg || "")) {
+          await copyManhuaLocalLearnFallback(row, visibleMsg);
         }
       } finally {
+        if (!queuedJobId || terminalReached) {
+          setManhuaLearnActiveJob(null);
+          writeManhuaLearnActiveJob(null);
+        }
+        manhuaLearnPollingJobIdRef.current = null;
         setManhuaLearnBusyKey(null);
       }
     },
@@ -4728,10 +4783,158 @@ export default function PlatformPage() {
       user?.id,
       user?.role,
       copyManhuaLocalLearnFallback,
-      manhuaViralProposalsQuery,
+      manhuaViralProposalsQuery.refetch,
       applyManhuaLearnJobOutput,
     ],
   );
+
+  /**
+   * 刷新/断线恢复：接管同一个后台 job，而不是重新入队。
+   * job 终态后才清 active marker；轮询网络失败则保留，下一次刷新仍可继续接管。
+   */
+  useEffect(() => {
+    const active = manhuaLearnActiveJob;
+    if (!active || !user?.id) return;
+    if (!(supervisorAccess || user.role === "admin" || user.role === "supervisor")) return;
+    if (manhuaLearnPollingJobIdRef.current === active.jobId) return;
+
+    let cancelled = false;
+    let terminalReached = false;
+    const { continuation, jobId, busyKey } = active;
+    const row = continuation.row;
+    const url = String(row.url || "").trim();
+    const title = String(row.mixName || "").trim();
+    manhuaLearnPollingJobIdRef.current = jobId;
+    manhuaLearnContinueRef.current = continuation;
+    writeManhuaLearnContinuation(continuation);
+    setTrendInsightTab("ai_manhua");
+    setManhuaLearnBusyKey(busyKey);
+    if (continuation.seriesKey) {
+      setManhuaLearnFocusSeriesKey(continuation.seriesKey);
+      writeManhuaLearnFocusSeriesKey(continuation.seriesKey);
+    }
+    setManhuaLearnResult((prev) =>
+      prev ||
+      manhuaLearnResultFromStart({
+        channel: "cloud",
+        url,
+        title,
+        seriesKey: continuation.seriesKey,
+      }),
+    );
+    setManhuaLearnJobPollTrace({
+      jobId,
+      label: `恢复学习 · ${title.slice(0, 24) || "未命名"}`,
+      lines: [`${new Date().toISOString()} 刷新后重新接管后台任务…`],
+      pollCount: 0,
+      currentStep: "正在恢复后台进度…",
+    });
+
+    void (async () => {
+      let pollAttempt = 0;
+      try {
+        const job = await pollJobUntilTerminal(jobId, {
+          maxWaitMs: 95 * 60_000,
+          onPoll: (tick) => {
+            if (cancelled) return;
+            pollAttempt += 1;
+            const out = (tick.output || {}) as Record<string, unknown>;
+            const log = Array.isArray(out.learnProgressLog)
+              ? (out.learnProgressLog as Array<{ detailZh?: string }>)
+              : [];
+            const currentStep = String(
+              log[log.length - 1]?.detailZh || out.analysisStageLabel || tick.status,
+            ).slice(0, 200);
+            setManhuaLearnJobPollTrace((prev) => ({
+              jobId,
+              label: prev?.label || `恢复学习 · ${title.slice(0, 24) || "未命名"}`,
+              lines: appendPollDebugLine(
+                prev?.lines || [],
+                `${new Date().toISOString()} #${pollAttempt} ${tick.status} · ${currentStep}`,
+              ),
+              pollCount: pollAttempt,
+              currentStep,
+              terminalStatus: undefined,
+            }));
+            setManhuaLearnResult((prev) =>
+              mergeManhuaLearnLiveProgress(prev, {
+                status: tick.status,
+                output: tick.output,
+              }),
+            );
+          },
+        });
+        if (cancelled) return;
+        terminalReached = true;
+        if (job.status !== "succeeded") {
+          const errZh = sanitizePlatformUserMessage(job.error || "云端学习失败");
+          setManhuaLearnResult((prev) =>
+            manhuaLearnResultFromFailure({ errorZh: errZh, url, title, prev }),
+          );
+          setManhuaLearnJobPollTrace((prev) =>
+            prev
+              ? { ...prev, terminalStatus: job.status, currentStep: errZh }
+              : prev,
+          );
+          return;
+        }
+        const out = (job.output || {}) as Record<string, unknown>;
+        if (isManhuaLearnEmptyBatchFailure(out)) {
+          const errZh = sanitizePlatformUserMessage(
+            String(out.messageZh || "本轮未能成功采下新集"),
+          );
+          setManhuaLearnResult((prev) =>
+            manhuaLearnResultFromFailure({ errorZh: errZh, url, title, prev }),
+          );
+          return;
+        }
+        applyManhuaLearnJobOutput(out);
+        void manhuaViralProposalsQuery.refetch();
+        setManhuaLearnJobPollTrace((prev) =>
+          prev
+            ? {
+                ...prev,
+                terminalStatus: "succeeded",
+                currentStep: String(out.messageZh || "本轮学习结束").slice(0, 160),
+              }
+            : prev,
+        );
+      } catch (e) {
+        if (cancelled) return;
+        const msg = sanitizePlatformUserMessage(e instanceof Error ? e.message : String(e));
+        setManhuaLearnResult((prev) =>
+          manhuaLearnResultFromFailure({
+            errorZh: `${msg}（后台任务记录已保留，刷新可继续恢复）`,
+            url,
+            title,
+            prev,
+          }),
+        );
+      } finally {
+        if (cancelled) return;
+        manhuaLearnPollingJobIdRef.current = null;
+        setManhuaLearnBusyKey(null);
+        if (terminalReached) {
+          setManhuaLearnActiveJob(null);
+          writeManhuaLearnActiveJob(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (manhuaLearnPollingJobIdRef.current === jobId) {
+        manhuaLearnPollingJobIdRef.current = null;
+      }
+    };
+  }, [
+    applyManhuaLearnJobOutput,
+    manhuaLearnActiveJob,
+    manhuaViralProposalsQuery.refetch,
+    supervisorAccess,
+    user?.id,
+    user?.role,
+  ]);
 
   const approveManhuaLearnProposal = useCallback(
     async (id: string, nameZh?: string) => {
@@ -11094,7 +11297,11 @@ export default function PlatformPage() {
                             />
                             <button
                               type="button"
-                              disabled={Boolean(manhuaLearnBusyKey) || !manhuaPasteUrl.trim()}
+                              disabled={
+                                Boolean(manhuaLearnBusyKey)
+                                || Boolean(manhuaLearnActiveJob)
+                                || !manhuaPasteUrl.trim()
+                              }
                               onClick={() =>
                                 void runManhuaTemplateLearnCloud(
                                   {
@@ -11193,7 +11400,10 @@ export default function PlatformPage() {
                                 if (!window.confirm("清空当前剧集学习入口与页面记录？已落盘的学习检查点不会删除。")) return;
                                 manhuaLearnContinueRef.current = null;
                                 writeManhuaLearnContinuation(null);
+                                setManhuaLearnActiveJob(null);
+                                writeManhuaLearnActiveJob(null);
                                 setManhuaLearnResult(null);
+                                writeManhuaLearnResult(null);
                                 setManhuaLearnFocusSeriesKey("");
                                 writeManhuaLearnFocusSeriesKey("");
                                 setManhuaLearnContinueDismissedKey("");
@@ -11246,7 +11456,10 @@ export default function PlatformPage() {
                                 if (!window.confirm("清空当前剧集学习入口与页面记录？已落盘的学习检查点不会删除。")) return;
                                 manhuaLearnContinueRef.current = null;
                                 writeManhuaLearnContinuation(null);
+                                setManhuaLearnActiveJob(null);
+                                writeManhuaLearnActiveJob(null);
                                 setManhuaLearnResult(null);
+                                writeManhuaLearnResult(null);
                                 setManhuaLearnFocusSeriesKey("");
                                 writeManhuaLearnFocusSeriesKey("");
                                 setManhuaLearnContinueDismissedKey("");
@@ -11294,11 +11507,12 @@ export default function PlatformPage() {
                                 || manhuaLearnResult.pendingCount <= 0
                                 || !manhuaLearnContinueRef.current
                                 || Boolean(manhuaLearnBusyKey)
+                                || Boolean(manhuaLearnActiveJob)
                               }
                               onClick={() => {
                                 const next = manhuaLearnContinueRef.current;
                                 if (!next || (manhuaLearnResult.pendingCount || 0) <= 0) return;
-                                void runManhuaTemplateLearnCloud(next.row, next.rank);
+                                void runManhuaTemplateLearnCloud(next.row, next.rank, next.seriesKey);
                               }}
                               title={
                                 (manhuaLearnResult.pendingCount || 0) > 0
@@ -11356,11 +11570,13 @@ export default function PlatformPage() {
                               <div className="mt-2 flex flex-wrap gap-2">
                                 <button
                                   type="button"
-                                  disabled={Boolean(manhuaLearnBusyKey)}
+                                  disabled={
+                                    Boolean(manhuaLearnBusyKey) || Boolean(manhuaLearnActiveJob)
+                                  }
                                   onClick={() => {
                                     const next = manhuaLearnContinueRef.current;
                                     if (!next) return;
-                                    void runManhuaTemplateLearnCloud(next.row, next.rank);
+                                    void runManhuaTemplateLearnCloud(next.row, next.rank, next.seriesKey);
                                   }}
                                   className="rounded-md border border-sky-200/40 bg-sky-400/20 px-2.5 py-1 font-semibold text-sky-50 hover:bg-sky-400/30 disabled:opacity-45"
                                 >
@@ -11599,7 +11815,11 @@ export default function PlatformPage() {
                                 </span>
                                 <button
                                   type="button"
-                                  disabled={Boolean(manhuaLearnBusyKey) || !learnable}
+                                  disabled={
+                                    Boolean(manhuaLearnBusyKey)
+                                    || Boolean(manhuaLearnActiveJob)
+                                    || !learnable
+                                  }
                                   title={
                                     learnable
                                       ? "云端学节奏；失败回退本机命令"
