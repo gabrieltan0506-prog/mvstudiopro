@@ -616,6 +616,16 @@ export default function ManhuaScriptWorkbench({
     artStyleId === "photoreal" ? "photoreal" : "cg_drama";
   const [shotIndex, setShotIndex] = useState(0);
   const [clipPromptReviewOpen, setClipPromptReviewOpen] = useState(false);
+  /** 参考图批量勾选：图角勾选 → 底部一键删除；删除后自动清勾 */
+  const [selectedAssetIds, setSelectedAssetIds] = useState<ReadonlySet<string>>(new Set());
+  const toggleAssetSelected = (id: string) => {
+    setSelectedAssetIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
   const [downloadBusy, setDownloadBusy] = useState(false);
   /** 默认药丸视图；按段记「谁被切到了原文编辑」 */
   const [rawPromptSegments, setRawPromptSegments] = useState<Set<number>>(
@@ -3636,8 +3646,35 @@ export default function ManhuaScriptWorkbench({
                             data-manhua-asset-lock-tag={lockTag || ""}
                             className="relative overflow-hidden rounded-lg border border-white/12 bg-black/35"
                           >
+                            {onRemoveCustomAsset ? (
+                              <>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedAssetIds.has(ref.id)}
+                                  onChange={() => toggleAssetSelected(ref.id)}
+                                  title="勾选后底部可一键批量删除"
+                                  className="absolute left-1.5 top-1.5 z-[2] h-4 w-4 cursor-pointer accent-rose-400"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onRemoveCustomAsset(ref.id);
+                                    setSelectedAssetIds((prev) => {
+                                      if (!prev.has(ref.id)) return prev;
+                                      const next = new Set(prev);
+                                      next.delete(ref.id);
+                                      return next;
+                                    });
+                                  }}
+                                  title="删除这张参考图"
+                                  className="absolute right-1.5 top-1.5 z-[2] flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-[13px] leading-none text-rose-200 hover:bg-rose-500/70 hover:text-white"
+                                >
+                                  ×
+                                </button>
+                              </>
+                            ) : null}
                             {lockTag ? (
-                              <span className="absolute left-1.5 top-1.5 z-[1] rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100">
+                              <span className="absolute left-7 top-1.5 z-[1] rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100">
                                 {lockTag}
                               </span>
                             ) : null}
@@ -3780,13 +3817,6 @@ export default function ManhuaScriptWorkbench({
                                     </button>
                                   );
                                 })}
-                                <button
-                                  type="button"
-                                  onClick={() => onRemoveCustomAsset?.(ref.id)}
-                                  className="ml-auto rounded px-1.5 py-0.5 text-[9px] text-rose-200/70 hover:bg-rose-500/20"
-                                >
-                                  删除
-                                </button>
                               </div>
                               {onCustomAssetDutyChange ? (
                                 <label
@@ -3832,6 +3862,32 @@ export default function ManhuaScriptWorkbench({
                   </div>
                 );
               })}
+              {selectedAssetIds.size > 0 && onRemoveCustomAsset ? (
+                <div className="sticky bottom-2 z-[5] flex items-center gap-2 rounded-xl border border-rose-300/40 bg-[#150d13]/95 px-3 py-2 backdrop-blur">
+                  <span className="text-[11px] font-semibold text-rose-100">
+                    已选 {selectedAssetIds.size} 张
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ids = Array.from(selectedAssetIds);
+                      if (!window.confirm(`删除所选 ${ids.length} 张参考图？只删参考记录，可重新上传。`)) return;
+                      ids.forEach((id) => onRemoveCustomAsset(id));
+                      setSelectedAssetIds(new Set());
+                    }}
+                    className="rounded-lg border border-rose-300/50 bg-rose-500/20 px-3 py-1 text-[11px] font-semibold text-rose-100 hover:bg-rose-500/35"
+                  >
+                    删除所选
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAssetIds(new Set())}
+                    className="rounded-lg border border-white/15 px-3 py-1 text-[11px] text-white/60 hover:bg-white/[0.06]"
+                  >
+                    取消勾选
+                  </button>
+                </div>
+              ) : null}
               {customAssetRefs.some((r) => r.role === "unset") ? (
                 <div
                   data-manhua-custom-refs-role="unset"
