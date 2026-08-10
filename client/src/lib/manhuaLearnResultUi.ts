@@ -18,6 +18,37 @@ import {
 } from "@shared/manhuaTemplateLearnPipeline";
 
 export const LS_MANHUA_LEARN_SERIES_KEY = "mv-manhua-learn-focus-series-v1";
+export const LS_MANHUA_LEARN_ACTIVE_JOB = "mvs-manhua-learn-active-job-v1";
+export const LS_MANHUA_LEARN_RESULT = "mvs-manhua-learn-result-v1";
+const LS_MANHUA_LEARN_BASKET_PREFIX = "mvs-manhua-learn-basket-v1";
+
+export type ManhuaLearnActiveJobRecord = {
+  jobId: string;
+  busyKey: string;
+  continuation: {
+    row: {
+      url?: string | null;
+      gcsUri?: string | null;
+      fileName?: string | null;
+      localFileName?: string | null;
+      learnLlm?: "claude" | "gpt";
+      mixName?: string | null;
+      mixId?: string | null;
+      platform?: string | null;
+    };
+    rank: number;
+    seriesKey?: string;
+    savedAt: number;
+  };
+  savedAt: number;
+};
+
+export type ManhuaLearnBasketItem = {
+  seriesKey: string;
+  continuation: ManhuaLearnActiveJobRecord["continuation"];
+  result: ManhuaLearnResultUi;
+  updatedAt: number;
+};
 
 export type ManhuaLearnResultUi = {
   seriesKey: string;
@@ -174,6 +205,7 @@ export function mergeManhuaLearnLiveProgress(
   );
   return {
     ...base,
+    seriesKey: String(out.seriesKey || base.seriesKey).trim() || base.seriesKey,
     channel: "cloud",
     liveStatus,
     livePhase: String(out.analysisStage || base.livePhase || "").replace(/^manhua_learn_/, ""),
@@ -285,6 +317,178 @@ export function writeManhuaLearnFocusSeriesKey(seriesKey: string): void {
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * 后台学习任务接力记录。刷新只接管同一个 job，绝不重新入队；
+ * 同时兼容链接学习与素材分析上传的 gs:// 输入。
+ */
+export function readManhuaLearnActiveJob(): ManhuaLearnActiveJobRecord | null {
+  try {
+    const raw = localStorage.getItem(LS_MANHUA_LEARN_ACTIVE_JOB);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ManhuaLearnActiveJobRecord>;
+    const continuation = parsed.continuation;
+    const row = continuation?.row;
+    const url = String(row?.url || "").trim();
+    const gcsUri = String(row?.gcsUri || "").trim();
+    const jobId = String(parsed.jobId || "").trim();
+    const savedAt = Number(parsed.savedAt);
+    const validSource = /^https?:\/\//i.test(url) || /^gs:\/\//i.test(gcsUri);
+    if (!jobId || !validSource || !Number.isFinite(savedAt)) {
+      localStorage.removeItem(LS_MANHUA_LEARN_ACTIVE_JOB);
+      return null;
+    }
+    const learnLlm = row?.learnLlm === "claude" || row?.learnLlm === "gpt"
+      ? row.learnLlm
+      : undefined;
+    return {
+      jobId,
+      busyKey: String(parsed.busyKey || jobId).trim() || jobId,
+      continuation: {
+        row: {
+          url: url || undefined,
+          gcsUri: gcsUri || undefined,
+          fileName: String(row?.fileName || "").trim() || undefined,
+          localFileName: String(row?.localFileName || "").trim() || undefined,
+          learnLlm,
+          mixName: String(row?.mixName || "").trim() || null,
+          mixId: String(row?.mixId || "").trim() || null,
+          platform: String(row?.platform || "").trim() || null,
+        },
+        rank: Math.max(0, Math.floor(Number(continuation?.rank) || 0)),
+        seriesKey: String(continuation?.seriesKey || "").trim() || undefined,
+        savedAt: Number(continuation?.savedAt) || savedAt,
+      },
+      savedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function writeManhuaLearnActiveJob(value: ManhuaLearnActiveJobRecord | null): void {
+  try {
+    if (value) localStorage.setItem(LS_MANHUA_LEARN_ACTIVE_JOB, JSON.stringify(value));
+    else localStorage.removeItem(LS_MANHUA_LEARN_ACTIVE_JOB);
+  } catch {
+    // localStorage 禁用时仍保留当前会话状态；不阻断服务端任务。
+  }
+}
+
+/** 页面刷新后保留已解析总数、累计已学与待学习数；用户明确清空时才删除。 */
+export function readManhuaLearnResult(): ManhuaLearnResultUi | null {
+  try {
+    const raw = localStorage.getItem(LS_MANHUA_LEARN_RESULT);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ManhuaLearnResultUi>;
+    if (!String(parsed.seriesKey || "").trim()) {
+      localStorage.removeItem(LS_MANHUA_LEARN_RESULT);
+      return null;
+    }
+    return {
+      ...(parsed as ManhuaLearnResultUi),
+      seriesKey: String(parsed.seriesKey).trim(),
+      learnedCount: Math.max(0, Math.floor(Number(parsed.learnedCount) || 0)),
+      batchLearned: Math.max(0, Math.floor(Number(parsed.batchLearned) || 0)),
+      analysisMin: Math.max(1, Math.floor(Number(parsed.analysisMin) || MANHUA_LEARN_ANALYSIS_MIN)),
+      analysisTarget: Math.max(
+        1,
+        Math.floor(Number(parsed.analysisTarget) || MANHUA_LEARN_ANALYSIS_TARGET),
+      ),
+      digestsPreview: Array.isArray(parsed.digestsPreview) ? parsed.digestsPreview : [],
+      proposal: parsed.proposal && typeof parsed.proposal === "object" ? parsed.proposal : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function writeManhuaLearnResult(value: ManhuaLearnResultUi | null): void {
+  try {
+    if (value) localStorage.setItem(LS_MANHUA_LEARN_RESULT, JSON.stringify(value));
+    else localStorage.removeItem(LS_MANHUA_LEARN_RESULT);
+  } catch {
+    // 存储空间不足时不影响当前学习任务与 GCS 检查点。
+  }
+}
+
+function manhuaLearnBasketStorageKey(userKey: string): string {
+  const safe = String(userKey || "").trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+  return `${LS_MANHUA_LEARN_BASKET_PREFIX}:${safe || "anonymous"}`;
+}
+
+/** 当前登录用户自己的剧集篮子；只保存待学习项，完成后自动消失。 */
+export function readManhuaLearnBasket(userKey: string): ManhuaLearnBasketItem[] {
+  try {
+    const raw = localStorage.getItem(manhuaLearnBasketStorageKey(userKey));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((value) => value as Partial<ManhuaLearnBasketItem>)
+      .filter((item) => {
+        const sourceUrl = String(item.continuation?.row?.url || "").trim();
+        return Boolean(
+          String(item.seriesKey || "").trim()
+          && /^https?:\/\//i.test(sourceUrl)
+          && item.result
+          && (typeof item.result.pendingCount !== "number" || item.result.pendingCount > 0),
+        );
+      })
+      .map((item) => item as ManhuaLearnBasketItem)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, 30);
+  } catch {
+    return [];
+  }
+}
+
+export function writeManhuaLearnBasket(userKey: string, items: ManhuaLearnBasketItem[]): void {
+  try {
+    const pending = (items || [])
+      .filter(
+        (item) => /^https?:\/\//i.test(String(item.continuation.row.url || "").trim())
+          && (typeof item.result.pendingCount !== "number" || item.result.pendingCount > 0),
+      )
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, 30);
+    if (pending.length) {
+      localStorage.setItem(manhuaLearnBasketStorageKey(userKey), JSON.stringify(pending));
+    } else {
+      localStorage.removeItem(manhuaLearnBasketStorageKey(userKey));
+    }
+  } catch {
+    // 篮子写入失败不阻断真实后台任务与 GCS 检查点。
+  }
+}
+
+/** 同一来源从临时 learn_* key 升级到真实 seriesKey 时原位替换，不生成重复剧卡。 */
+export function upsertManhuaLearnBasketItem(
+  items: ManhuaLearnBasketItem[],
+  item: ManhuaLearnBasketItem,
+): ManhuaLearnBasketItem[] {
+  const source = String(
+    item.continuation.row.gcsUri || item.continuation.row.url || "",
+  ).trim();
+  const kept = (items || []).filter((current) => {
+    const currentSource = String(
+      current.continuation.row.gcsUri || current.continuation.row.url || "",
+    ).trim();
+    return current.seriesKey !== item.seriesKey && (!source || currentSource !== source);
+  });
+  if (typeof item.result.pendingCount === "number" && item.result.pendingCount <= 0) {
+    return kept;
+  }
+  return [item, ...kept].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 30);
+}
+
+export function removeManhuaLearnBasketItem(
+  items: ManhuaLearnBasketItem[],
+  seriesKey: string,
+): ManhuaLearnBasketItem[] {
+  const key = String(seriesKey || "").trim();
+  return (items || []).filter((item) => item.seriesKey !== key);
 }
 
 /** Job 虽 succeeded 但本轮 0 集：视为失败展示（兼容旧服务端软成功） */

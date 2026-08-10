@@ -1,9 +1,34 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   isManhuaLearnEmptyBatchFailure,
   manhuaLearnResultFromJobOutput,
+  manhuaLearnResultFromStart,
   mergeManhuaLearnLiveProgress,
+  readManhuaLearnActiveJob,
+  readManhuaLearnBasket,
+  readManhuaLearnResult,
+  removeManhuaLearnBasketItem,
+  upsertManhuaLearnBasketItem,
+  writeManhuaLearnActiveJob,
+  writeManhuaLearnBasket,
+  writeManhuaLearnResult,
 } from "./manhuaLearnResultUi";
+
+function installMemoryLocalStorage() {
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    },
+  });
+}
+
+afterEach(() => {
+  Reflect.deleteProperty(globalThis, "localStorage");
+});
 
 describe("manhuaLearnResultUi soft-fail", () => {
   it("detects empty-batch failure message", () => {
@@ -50,5 +75,153 @@ describe("manhuaLearnResultUi soft-fail", () => {
     expect(ui.learnedCount).toBe(7);
     expect(ui.listedEpisodeCount).toBe(90);
     expect(ui.pendingCount).toBe(83);
+  });
+
+  it("preserves the real series key when continuing a learned series", () => {
+    const ui = manhuaLearnResultFromStart({
+      channel: "cloud",
+      url: "https://www.douyin.com/video/123",
+      seriesKey: "douyin_kimi_abc123",
+    });
+    const live = mergeManhuaLearnLiveProgress(ui, {
+      status: "running",
+      output: {
+        seriesKey: "douyin_kimi_abc123",
+        learnedCount: 9,
+        listedEpisodeCount: 99,
+      },
+    });
+    expect(live.seriesKey).toBe("douyin_kimi_abc123");
+    expect(live.learnedCount).toBe(9);
+    expect(live.pendingCount).toBe(90);
+  });
+
+  it("persists a cloud job so refresh can reattach without re-enqueueing", () => {
+    installMemoryLocalStorage();
+    writeManhuaLearnActiveJob({
+      jobId: "job_episode_10",
+      busyKey: "mix_90",
+      continuation: {
+        row: {
+          url: "https://www.douyin.com/video/7658227988223380788",
+          mixId: "mix_90",
+          mixName: "聚宝仙盆之杂灵根才是真BOSS",
+          platform: "douyin",
+        },
+        rank: 1,
+        seriesKey: "douyin_kimi_abc123",
+        savedAt: 123,
+      },
+      savedAt: 456,
+    });
+    expect(readManhuaLearnActiveJob()).toMatchObject({
+      jobId: "job_episode_10",
+      continuation: {
+        seriesKey: "douyin_kimi_abc123",
+        row: { mixId: "mix_90" },
+      },
+    });
+  });
+
+  it("also restores an uploaded GCS learning job", () => {
+    installMemoryLocalStorage();
+    writeManhuaLearnActiveJob({
+      jobId: "job_upload",
+      busyKey: "gs://bucket/uploads/u7/long.mp4",
+      continuation: {
+        row: {
+          gcsUri: "gs://bucket/uploads/u7/long.mp4",
+          fileName: "long.mp4",
+          platform: "upload",
+          learnLlm: "claude",
+        },
+        rank: 0,
+        savedAt: 100,
+      },
+      savedAt: 101,
+    });
+    expect(readManhuaLearnActiveJob()).toMatchObject({
+      jobId: "job_upload",
+      continuation: {
+        row: {
+          gcsUri: "gs://bucket/uploads/u7/long.mp4",
+          learnLlm: "claude",
+        },
+      },
+    });
+  });
+
+  it("keeps parsed, learned and pending counts across refresh", () => {
+    installMemoryLocalStorage();
+    const result = manhuaLearnResultFromJobOutput({
+      seriesKey: "douyin_kimi_abc123",
+      batchLearned: 9,
+      learnedCount: 9,
+      listedEpisodeCount: 99,
+      messageZh: "累计 9 集",
+      digestsPreview: [],
+      learnChannel: "cloud",
+    });
+    writeManhuaLearnResult(result);
+    expect(readManhuaLearnResult()).toMatchObject({
+      seriesKey: "douyin_kimi_abc123",
+      learnedCount: 9,
+      listedEpisodeCount: 99,
+      pendingCount: 90,
+    });
+  });
+
+  it("keeps multiple dramas separate and removes a completed drama", () => {
+    installMemoryLocalStorage();
+    const makeItem = (seriesKey: string, title: string, learned: number, pending: number) => ({
+      seriesKey,
+      continuation: {
+        row: { url: `https://www.douyin.com/collection/${seriesKey}`, mixName: title },
+        rank: 0,
+        seriesKey,
+        savedAt: 100,
+      },
+      result: {
+        ...manhuaLearnResultFromStart({ channel: "cloud", seriesKey }),
+        learnedCount: learned,
+        pendingCount: pending,
+      },
+      updatedAt: learned,
+    });
+    let basket = upsertManhuaLearnBasketItem([], makeItem("series_a", "A剧", 9, 90));
+    basket = upsertManhuaLearnBasketItem(basket, makeItem("series_b", "B剧", 2, 28));
+    expect(basket.map((item) => item.seriesKey).sort()).toEqual(["series_a", "series_b"]);
+
+    basket = upsertManhuaLearnBasketItem(basket, makeItem("series_a", "A剧", 99, 0));
+    expect(basket.map((item) => item.seriesKey)).toEqual(["series_b"]);
+    expect(removeManhuaLearnBasketItem(basket, "series_b")).toEqual([]);
+  });
+
+  it("migrates a temporary key to the real series key and persists per user", () => {
+    installMemoryLocalStorage();
+    const source = "https://www.douyin.com/collection/abc";
+    const base = manhuaLearnResultFromStart({ channel: "cloud", seriesKey: "learn_tmp" });
+    let basket = upsertManhuaLearnBasketItem([], {
+      seriesKey: "learn_tmp",
+      continuation: { row: { url: source, mixName: "测试剧" }, rank: 0, savedAt: 1 },
+      result: { ...base, pendingCount: 90 },
+      updatedAt: 1,
+    });
+    basket = upsertManhuaLearnBasketItem(basket, {
+      seriesKey: "series_real",
+      continuation: {
+        row: { url: source, mixName: "测试剧" },
+        rank: 0,
+        seriesKey: "series_real",
+        savedAt: 2,
+      },
+      result: { ...base, seriesKey: "series_real", learnedCount: 8, pendingCount: 82 },
+      updatedAt: 2,
+    });
+    expect(basket).toHaveLength(1);
+    expect(basket[0]?.seriesKey).toBe("series_real");
+    writeManhuaLearnBasket("user_7", basket);
+    expect(readManhuaLearnBasket("user_7")).toHaveLength(1);
+    expect(readManhuaLearnBasket("user_8")).toEqual([]);
   });
 });

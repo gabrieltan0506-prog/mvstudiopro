@@ -102,8 +102,18 @@ import {
   manhuaLearnResultFromSnapshot,
   manhuaLearnResultFromStart,
   mergeManhuaLearnLiveProgress,
+  readManhuaLearnActiveJob,
+  readManhuaLearnBasket,
   readManhuaLearnFocusSeriesKey,
+  readManhuaLearnResult,
+  removeManhuaLearnBasketItem,
+  upsertManhuaLearnBasketItem,
+  writeManhuaLearnActiveJob,
+  writeManhuaLearnBasket,
   writeManhuaLearnFocusSeriesKey,
+  writeManhuaLearnResult,
+  type ManhuaLearnActiveJobRecord,
+  type ManhuaLearnBasketItem,
   type ManhuaLearnResultUi,
 } from "@/lib/manhuaLearnResultUi";
 import { getManhuaLearnPipelineMeta } from "@shared/manhuaTemplateLearnPipeline";
@@ -1976,6 +1986,10 @@ type ManhuaLearnContinuation = {
   savedAt: number;
 };
 
+type ManhuaLearnActiveJob = ManhuaLearnActiveJobRecord & {
+  continuation: ManhuaLearnContinuation;
+};
+
 const MANHUA_LEARN_CONTINUATION_LS_KEY = "mvs-manhua-learn-continuation-v1";
 
 function readManhuaLearnContinuation(): ManhuaLearnContinuation | null {
@@ -2222,7 +2236,11 @@ export default function PlatformPage() {
   }, []);
 
   /** 平台趋势区子 Tab：指定平台分析 / AI 漫剧专区 */
-  const [trendInsightTab, setTrendInsightTab] = useState<"overview" | "ai_manhua">("overview");
+  const [trendInsightTab, setTrendInsightTab] = useState<"overview" | "ai_manhua">(() =>
+    readManhuaLearnFocusSeriesKey() || readManhuaLearnActiveJob() || readManhuaLearnResult()
+      ? "ai_manhua"
+      : "overview",
+  );
   /** AI 漫剧专区内：抖音 / 快手子榜（随上方趋势平台筛选自动切换） */
   const [aiManhuaPlatformTab, setAiManhuaPlatformTab] = useState<"douyin" | "kuaishou">("douyin");
   useEffect(() => {
@@ -2244,12 +2262,67 @@ export default function PlatformPage() {
     readManhuaLearnFocusSeriesKey(),
   );
   const [manhuaLearnPanelCollapsed, setManhuaLearnPanelCollapsed] = useState(false);
-  const [manhuaLearnResult, setManhuaLearnResult] = useState<ManhuaLearnResultUi | null>(null);
+  const [manhuaLearnResult, setManhuaLearnResult] = useState<ManhuaLearnResultUi | null>(() =>
+    readManhuaLearnResult(),
+  );
   /** 单批完成后由用户决定是否续学；同一 row/rank 复用，服务端按 GCS 检查点跳过已学集。 */
   const manhuaLearnContinueRef = useRef<ManhuaLearnContinuation | null>(
     readManhuaLearnContinuation(),
   );
+  const [manhuaLearnBasket, setManhuaLearnBasket] = useState<ManhuaLearnBasketItem[]>([]);
+  const manhuaLearnBasketHydratedUserRef = useRef("");
+  const [manhuaLearnActiveJob, setManhuaLearnActiveJob] = useState<ManhuaLearnActiveJob | null>(
+    readManhuaLearnActiveJob(),
+  );
+  /** 同一页面只允许一个轮询 owner；刷新后新页面从 active job 接手。 */
+  const manhuaLearnPollingJobIdRef = useRef<string | null>(null);
   const [manhuaLearnContinueDismissedKey, setManhuaLearnContinueDismissedKey] = useState("");
+
+  useEffect(() => {
+    const userKey = String(user?.id || "").trim();
+    if (!userKey || manhuaLearnBasketHydratedUserRef.current === userKey) return;
+    manhuaLearnBasketHydratedUserRef.current = userKey;
+    let next = readManhuaLearnBasket(userKey);
+    const legacyResult = readManhuaLearnResult();
+    const legacyContinuation = readManhuaLearnContinuation();
+    if (legacyResult && legacyContinuation) {
+      next = upsertManhuaLearnBasketItem(next, {
+        seriesKey: legacyResult.seriesKey,
+        continuation: legacyContinuation,
+        result: legacyResult,
+        updatedAt: Date.now(),
+      });
+      writeManhuaLearnBasket(userKey, next);
+    }
+    setManhuaLearnBasket(next);
+  }, [user?.id]);
+
+  useEffect(() => {
+    writeManhuaLearnResult(manhuaLearnResult);
+    const userKey = String(user?.id || "").trim();
+    const continuation = manhuaLearnContinueRef.current;
+    if (
+      !userKey
+      || manhuaLearnBasketHydratedUserRef.current !== userKey
+      || !manhuaLearnResult
+      || !continuation
+    ) {
+      return;
+    }
+    setManhuaLearnBasket((prev) => {
+      const next = upsertManhuaLearnBasketItem(prev, {
+        seriesKey: manhuaLearnResult.seriesKey,
+        continuation: {
+          ...continuation,
+          seriesKey: manhuaLearnResult.seriesKey,
+        },
+        result: manhuaLearnResult,
+        updatedAt: Date.now(),
+      });
+      writeManhuaLearnBasket(userKey, next);
+      return next;
+    });
+  }, [manhuaLearnResult, user?.id]);
   const visualReportRef = useRef<HTMLDivElement>(null);
   // Call 3 state — content blueprints and monetization
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
@@ -2636,6 +2709,26 @@ export default function PlatformPage() {
       retry: false,
     },
   );
+  const pendingManhuaViralProposals = useMemo(
+    () => (manhuaViralProposalsQuery.data?.items || []).filter((item) => item.status !== "approved"),
+    [manhuaViralProposalsQuery.data?.items],
+  );
+  const [selectedManhuaProposalId, setSelectedManhuaProposalId] = useState("");
+  const selectedManhuaProposal = useMemo(
+    () => pendingManhuaViralProposals.find((item) => item.id === selectedManhuaProposalId)
+      || pendingManhuaViralProposals[0]
+      || null,
+    [pendingManhuaViralProposals, selectedManhuaProposalId],
+  );
+  useEffect(() => {
+    if (!pendingManhuaViralProposals.length) {
+      setSelectedManhuaProposalId("");
+      return;
+    }
+    if (!pendingManhuaViralProposals.some((item) => item.id === selectedManhuaProposalId)) {
+      setSelectedManhuaProposalId(pendingManhuaViralProposals[0].id);
+    }
+  }, [pendingManhuaViralProposals, selectedManhuaProposalId]);
   const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApproved.useQuery(undefined, {
     enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
     staleTime: 60_000,
@@ -2650,9 +2743,9 @@ export default function PlatformPage() {
       enabled:
         trendInsightTab === "ai_manhua" &&
         manhuaLearnFocusSeriesKey.length >= 4 &&
-        Boolean(supervisorAccess || user?.role === "admin" || user?.role === "supervisor") &&
-        !manhuaLearnBusyKey,
+        Boolean(supervisorAccess || user?.role === "admin" || user?.role === "supervisor"),
       staleTime: 15_000,
+      refetchInterval: manhuaLearnActiveJob ? 15_000 : false,
       retry: false,
     },
   );
@@ -2711,6 +2804,37 @@ export default function PlatformPage() {
     });
     setManhuaLearnPanelCollapsed(false);
   }, [manhuaLearnSnapshotQuery.data, manhuaLearnFocusSeriesKey]);
+
+  const selectManhuaLearnBasketItem = useCallback(
+    (seriesKey: string) => {
+      const item = manhuaLearnBasket.find((candidate) => candidate.seriesKey === seriesKey);
+      if (!item) return;
+      const continuation: ManhuaLearnContinuation = {
+        ...item.continuation,
+        seriesKey: item.seriesKey,
+        savedAt: Date.now(),
+      };
+      manhuaLearnContinueRef.current = continuation;
+      writeManhuaLearnContinuation(continuation);
+      setManhuaLearnResult(item.result);
+      setManhuaLearnFocusSeriesKey(item.seriesKey);
+      writeManhuaLearnFocusSeriesKey(item.seriesKey);
+      setManhuaLearnContinueDismissedKey("");
+      setManhuaLearnPanelCollapsed(false);
+    },
+    [manhuaLearnBasket],
+  );
+
+  const removeCurrentManhuaLearnBasketItem = useCallback(() => {
+    const seriesKey = String(manhuaLearnResult?.seriesKey || manhuaLearnFocusSeriesKey).trim();
+    const userKey = String(user?.id || "").trim();
+    if (!seriesKey || !userKey) return;
+    setManhuaLearnBasket((prev) => {
+      const next = removeManhuaLearnBasketItem(prev, seriesKey);
+      writeManhuaLearnBasket(userKey, next);
+      return next;
+    });
+  }, [manhuaLearnFocusSeriesKey, manhuaLearnResult?.seriesKey, user?.id]);
   const [allowBloggerTitle, setAllowBloggerTitle] = useState(() => readAllowBloggerTitleFromLs());
   /** 全案分析确认前：Skill/提示词优先级对话气泡 */
   const [fullAnalysisConfirmOpen, setFullAnalysisConfirmOpen] = useState(false);
@@ -4475,6 +4599,7 @@ export default function PlatformPage() {
     async (
       row: ManhuaLearnSourceRow,
       rank: number,
+      resumeSeriesKey?: string,
     ) => {
       const canOps =
         supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
@@ -4516,13 +4641,19 @@ export default function PlatformPage() {
       const continuation: ManhuaLearnContinuation = {
         row: { ...row },
         rank,
+        seriesKey: String(resumeSeriesKey || "").trim() || undefined,
         savedAt: Date.now(),
       };
       manhuaLearnContinueRef.current = continuation;
       writeManhuaLearnContinuation(continuation);
       setManhuaLearnContinueDismissedKey("");
       setManhuaLearnBusyKey(busyKey);
-      const startUi = manhuaLearnResultFromStart({ channel: "cloud", url: source, title });
+      const startUi = manhuaLearnResultFromStart({
+        channel: "cloud",
+        url: source,
+        title,
+        seriesKey: continuation.seriesKey,
+      });
       setManhuaLearnResult(startUi);
       setManhuaLearnPanelCollapsed(false);
       setManhuaLearnFocusSeriesKey(startUi.seriesKey);
@@ -4534,6 +4665,8 @@ export default function PlatformPage() {
         pollCount: 0,
         currentStep: "准备入队",
       });
+      let queuedJobId: string | null = null;
+      let terminalReached = false;
       try {
         const { jobId } = await createJob({
           type: "video",
@@ -4553,6 +4686,16 @@ export default function PlatformPage() {
             },
           },
         });
+        queuedJobId = jobId;
+        const activeJob: ManhuaLearnActiveJob = {
+          jobId,
+          busyKey,
+          continuation,
+          savedAt: Date.now(),
+        };
+        manhuaLearnPollingJobIdRef.current = jobId;
+        setManhuaLearnActiveJob(activeJob);
+        writeManhuaLearnActiveJob(activeJob);
         setManhuaLearnJobPollTrace((prev) => ({
           jobId,
           label: prev?.label || `学节奏 · ${title.slice(0, 24) || "未命名"}`,
@@ -4599,6 +4742,7 @@ export default function PlatformPage() {
             );
           },
         });
+        terminalReached = true;
         if (job.status !== "succeeded") {
           const errZh = sanitizePlatformUserMessage(job.error || "云端学习失败");
           setManhuaLearnJobPollTrace((prev) =>
@@ -4687,39 +4831,51 @@ export default function PlatformPage() {
         }
       } catch (e) {
         const msg = sanitizePlatformUserMessage(e instanceof Error ? e.message : String(e));
+        const pollInterrupted = Boolean(queuedJobId) && !terminalReached;
+        const visibleMsg = pollInterrupted
+          ? `${msg || "页面暂时无法读取后台进度"}（后台任务记录已保留，刷新页面会继续接管）`
+          : msg || "云端入队失败";
         setManhuaLearnJobPollTrace((prev) =>
           prev
             ? {
                 ...prev,
-                terminalStatus: "client_error",
-                currentStep: msg || "云端入队失败",
+                terminalStatus: pollInterrupted ? undefined : "client_error",
+                currentStep: visibleMsg,
                 lines: appendPollDebugLine(
                   prev.lines,
-                  `${new Date().toISOString()} ✗ 客户端异常: ${msg}`,
+                  `${new Date().toISOString()} ✗ ${pollInterrupted ? "轮询中断" : "客户端异常"}: ${visibleMsg}`,
                 ),
               }
             : {
                 jobId: "client_error",
                 label: `学节奏 · ${title.slice(0, 24) || "未命名"}`,
-                lines: [`${new Date().toISOString()} ✗ ${msg}`],
+                lines: [`${new Date().toISOString()} ✗ ${visibleMsg}`],
                 pollCount: 0,
-                terminalStatus: "client_error",
-                currentStep: msg,
+                terminalStatus: pollInterrupted ? undefined : "client_error",
+                currentStep: visibleMsg,
               },
         );
         setManhuaLearnResult((prev) =>
           manhuaLearnResultFromFailure({
-            errorZh: msg || "云端入队失败",
+            errorZh: visibleMsg,
             url,
             title,
             prev,
           }),
         );
-        toast.error("学习未完成", { description: `${msg || "云端入队失败"}（进度见下方面板 / Debug）` });
-        if (!shouldSkipLocalLearnFallback(msg || "")) {
-          await copyManhuaLocalLearnFallback(row, msg || "云端入队失败");
+        toast.error(pollInterrupted ? "进度连接已中断" : "学习未完成", {
+          description: `${visibleMsg}（进度见下方面板 / Debug）`,
+        });
+        // 已经入队后绝不再启动本机副本；否则网络抖动会让同一视频云端/本机重复学习。
+        if (!pollInterrupted && !shouldSkipLocalLearnFallback(msg || "")) {
+          await copyManhuaLocalLearnFallback(row, visibleMsg);
         }
       } finally {
+        if (!queuedJobId || terminalReached) {
+          setManhuaLearnActiveJob(null);
+          writeManhuaLearnActiveJob(null);
+        }
+        manhuaLearnPollingJobIdRef.current = null;
         setManhuaLearnBusyKey(null);
       }
     },
@@ -4728,10 +4884,158 @@ export default function PlatformPage() {
       user?.id,
       user?.role,
       copyManhuaLocalLearnFallback,
-      manhuaViralProposalsQuery,
+      manhuaViralProposalsQuery.refetch,
       applyManhuaLearnJobOutput,
     ],
   );
+
+  /**
+   * 刷新/断线恢复：接管同一个后台 job，而不是重新入队。
+   * job 终态后才清 active marker；轮询网络失败则保留，下一次刷新仍可继续接管。
+   */
+  useEffect(() => {
+    const active = manhuaLearnActiveJob;
+    if (!active || !user?.id) return;
+    if (!(supervisorAccess || user.role === "admin" || user.role === "supervisor")) return;
+    if (manhuaLearnPollingJobIdRef.current === active.jobId) return;
+
+    let cancelled = false;
+    let terminalReached = false;
+    const { continuation, jobId, busyKey } = active;
+    const row = continuation.row;
+    const url = String(row.url || "").trim();
+    const title = String(row.mixName || "").trim();
+    manhuaLearnPollingJobIdRef.current = jobId;
+    manhuaLearnContinueRef.current = continuation;
+    writeManhuaLearnContinuation(continuation);
+    setTrendInsightTab("ai_manhua");
+    setManhuaLearnBusyKey(busyKey);
+    if (continuation.seriesKey) {
+      setManhuaLearnFocusSeriesKey(continuation.seriesKey);
+      writeManhuaLearnFocusSeriesKey(continuation.seriesKey);
+    }
+    setManhuaLearnResult((prev) =>
+      prev ||
+      manhuaLearnResultFromStart({
+        channel: "cloud",
+        url,
+        title,
+        seriesKey: continuation.seriesKey,
+      }),
+    );
+    setManhuaLearnJobPollTrace({
+      jobId,
+      label: `恢复学习 · ${title.slice(0, 24) || "未命名"}`,
+      lines: [`${new Date().toISOString()} 刷新后重新接管后台任务…`],
+      pollCount: 0,
+      currentStep: "正在恢复后台进度…",
+    });
+
+    void (async () => {
+      let pollAttempt = 0;
+      try {
+        const job = await pollJobUntilTerminal(jobId, {
+          maxWaitMs: 95 * 60_000,
+          onPoll: (tick) => {
+            if (cancelled) return;
+            pollAttempt += 1;
+            const out = (tick.output || {}) as Record<string, unknown>;
+            const log = Array.isArray(out.learnProgressLog)
+              ? (out.learnProgressLog as Array<{ detailZh?: string }>)
+              : [];
+            const currentStep = String(
+              log[log.length - 1]?.detailZh || out.analysisStageLabel || tick.status,
+            ).slice(0, 200);
+            setManhuaLearnJobPollTrace((prev) => ({
+              jobId,
+              label: prev?.label || `恢复学习 · ${title.slice(0, 24) || "未命名"}`,
+              lines: appendPollDebugLine(
+                prev?.lines || [],
+                `${new Date().toISOString()} #${pollAttempt} ${tick.status} · ${currentStep}`,
+              ),
+              pollCount: pollAttempt,
+              currentStep,
+              terminalStatus: undefined,
+            }));
+            setManhuaLearnResult((prev) =>
+              mergeManhuaLearnLiveProgress(prev, {
+                status: tick.status,
+                output: tick.output,
+              }),
+            );
+          },
+        });
+        if (cancelled) return;
+        terminalReached = true;
+        if (job.status !== "succeeded") {
+          const errZh = sanitizePlatformUserMessage(job.error || "云端学习失败");
+          setManhuaLearnResult((prev) =>
+            manhuaLearnResultFromFailure({ errorZh: errZh, url, title, prev }),
+          );
+          setManhuaLearnJobPollTrace((prev) =>
+            prev
+              ? { ...prev, terminalStatus: job.status, currentStep: errZh }
+              : prev,
+          );
+          return;
+        }
+        const out = (job.output || {}) as Record<string, unknown>;
+        if (isManhuaLearnEmptyBatchFailure(out)) {
+          const errZh = sanitizePlatformUserMessage(
+            String(out.messageZh || "本轮未能成功采下新集"),
+          );
+          setManhuaLearnResult((prev) =>
+            manhuaLearnResultFromFailure({ errorZh: errZh, url, title, prev }),
+          );
+          return;
+        }
+        applyManhuaLearnJobOutput(out);
+        void manhuaViralProposalsQuery.refetch();
+        setManhuaLearnJobPollTrace((prev) =>
+          prev
+            ? {
+                ...prev,
+                terminalStatus: "succeeded",
+                currentStep: String(out.messageZh || "本轮学习结束").slice(0, 160),
+              }
+            : prev,
+        );
+      } catch (e) {
+        if (cancelled) return;
+        const msg = sanitizePlatformUserMessage(e instanceof Error ? e.message : String(e));
+        setManhuaLearnResult((prev) =>
+          manhuaLearnResultFromFailure({
+            errorZh: `${msg}（后台任务记录已保留，刷新可继续恢复）`,
+            url,
+            title,
+            prev,
+          }),
+        );
+      } finally {
+        if (cancelled) return;
+        manhuaLearnPollingJobIdRef.current = null;
+        setManhuaLearnBusyKey(null);
+        if (terminalReached) {
+          setManhuaLearnActiveJob(null);
+          writeManhuaLearnActiveJob(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (manhuaLearnPollingJobIdRef.current === jobId) {
+        manhuaLearnPollingJobIdRef.current = null;
+      }
+    };
+  }, [
+    applyManhuaLearnJobOutput,
+    manhuaLearnActiveJob,
+    manhuaViralProposalsQuery.refetch,
+    supervisorAccess,
+    user?.id,
+    user?.role,
+  ]);
 
   const approveManhuaLearnProposal = useCallback(
     async (id: string, nameZh?: string) => {
@@ -4756,7 +5060,8 @@ export default function PlatformPage() {
               }
             : prev,
         );
-        void manhuaViralProposalsQuery.refetch();
+        await manhuaViralProposalsQuery.refetch();
+        setSelectedManhuaProposalId("");
         void manhuaViralApprovedQuery.refetch();
       } catch (e) {
         toast.error(sanitizePlatformUserMessage(e instanceof Error ? e.message : String(e)));
@@ -11094,7 +11399,11 @@ export default function PlatformPage() {
                             />
                             <button
                               type="button"
-                              disabled={Boolean(manhuaLearnBusyKey) || !manhuaPasteUrl.trim()}
+                              disabled={
+                                Boolean(manhuaLearnBusyKey)
+                                || Boolean(manhuaLearnActiveJob)
+                                || !manhuaPasteUrl.trim()
+                              }
                               onClick={() =>
                                 void runManhuaTemplateLearnCloud(
                                   {
@@ -11120,6 +11429,52 @@ export default function PlatformPage() {
                           快手榜：有样本链可点开或学节奏；无链时展示剧名、类别与标签，可复制剧名自行查找。
                         </p>
                       )}
+
+                      {manhuaLearnBasket.length > 0 ? (
+                        <div className="mt-3 rounded-xl border border-amber-300/20 bg-amber-500/10 px-3 py-2.5">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <label
+                              htmlFor="manhua-learn-series-select"
+                              className="shrink-0 text-[11px] font-semibold text-amber-50/90"
+                            >
+                              剧集学习（{manhuaLearnBasket.length}）
+                            </label>
+                            <select
+                              id="manhua-learn-series-select"
+                              value={
+                                manhuaLearnBasket.some(
+                                  (item) => item.seriesKey === manhuaLearnFocusSeriesKey,
+                                )
+                                  ? manhuaLearnFocusSeriesKey
+                                  : ""
+                              }
+                              disabled={Boolean(manhuaLearnBusyKey) || Boolean(manhuaLearnActiveJob)}
+                              onChange={(event) => selectManhuaLearnBasketItem(event.target.value)}
+                              className="min-w-0 flex-1 rounded-lg border border-amber-200/20 bg-black/45 px-2.5 py-1.5 text-[11px] text-amber-50 disabled:opacity-50"
+                            >
+                              <option value="">选择一部待学习剧</option>
+                              {manhuaLearnBasket.map((item) => {
+                                const title = String(
+                                  item.continuation.row.mixName
+                                    || item.result.proposal?.nameZh
+                                    || "未命名剧集",
+                                ).trim();
+                                const pending = typeof item.result.pendingCount === "number"
+                                  ? item.result.pendingCount
+                                  : "待确认";
+                                return (
+                                  <option key={item.seriesKey} value={item.seriesKey}>
+                                    {title} · 已学 {item.result.learnedCount} · 待学 {pending}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+                          <p className="mt-1.5 text-[10px] text-amber-100/50">
+                            每部剧独立续学；刷新后仍保留。学完后会自动从此列表消失。
+                          </p>
+                        </div>
+                      ) : null}
 
                       {Object.keys(kindCounts).length > 0 ? (
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -11191,9 +11546,13 @@ export default function PlatformPage() {
                               disabled={Boolean(manhuaLearnBusyKey)}
                               onClick={() => {
                                 if (!window.confirm("清空当前剧集学习入口与页面记录？已落盘的学习检查点不会删除。")) return;
+                                removeCurrentManhuaLearnBasketItem();
                                 manhuaLearnContinueRef.current = null;
                                 writeManhuaLearnContinuation(null);
+                                setManhuaLearnActiveJob(null);
+                                writeManhuaLearnActiveJob(null);
                                 setManhuaLearnResult(null);
+                                writeManhuaLearnResult(null);
                                 setManhuaLearnFocusSeriesKey("");
                                 writeManhuaLearnFocusSeriesKey("");
                                 setManhuaLearnContinueDismissedKey("");
@@ -11244,9 +11603,13 @@ export default function PlatformPage() {
                               disabled={Boolean(manhuaLearnBusyKey)}
                               onClick={() => {
                                 if (!window.confirm("清空当前剧集学习入口与页面记录？已落盘的学习检查点不会删除。")) return;
+                                removeCurrentManhuaLearnBasketItem();
                                 manhuaLearnContinueRef.current = null;
                                 writeManhuaLearnContinuation(null);
+                                setManhuaLearnActiveJob(null);
+                                writeManhuaLearnActiveJob(null);
                                 setManhuaLearnResult(null);
+                                writeManhuaLearnResult(null);
                                 setManhuaLearnFocusSeriesKey("");
                                 writeManhuaLearnFocusSeriesKey("");
                                 setManhuaLearnContinueDismissedKey("");
@@ -11294,11 +11657,12 @@ export default function PlatformPage() {
                                 || manhuaLearnResult.pendingCount <= 0
                                 || !manhuaLearnContinueRef.current
                                 || Boolean(manhuaLearnBusyKey)
+                                || Boolean(manhuaLearnActiveJob)
                               }
                               onClick={() => {
                                 const next = manhuaLearnContinueRef.current;
                                 if (!next || (manhuaLearnResult.pendingCount || 0) <= 0) return;
-                                void runManhuaTemplateLearnCloud(next.row, next.rank);
+                                void runManhuaTemplateLearnCloud(next.row, next.rank, next.seriesKey);
                               }}
                               title={
                                 (manhuaLearnResult.pendingCount || 0) > 0
@@ -11356,11 +11720,13 @@ export default function PlatformPage() {
                               <div className="mt-2 flex flex-wrap gap-2">
                                 <button
                                   type="button"
-                                  disabled={Boolean(manhuaLearnBusyKey)}
+                                  disabled={
+                                    Boolean(manhuaLearnBusyKey) || Boolean(manhuaLearnActiveJob)
+                                  }
                                   onClick={() => {
                                     const next = manhuaLearnContinueRef.current;
                                     if (!next) return;
-                                    void runManhuaTemplateLearnCloud(next.row, next.rank);
+                                    void runManhuaTemplateLearnCloud(next.row, next.rank, next.seriesKey);
                                   }}
                                   className="rounded-md border border-sky-200/40 bg-sky-400/20 px-2.5 py-1 font-semibold text-sky-50 hover:bg-sky-400/30 disabled:opacity-45"
                                 >
@@ -11430,22 +11796,9 @@ export default function PlatformPage() {
                                 </p>
                               ) : null}
                               <p className="mt-1 text-[10px] text-amber-100/50">
-                                请先阅读上方结果，确认后再批准进库；未批准不会进入编剧室可选库。
+                                这份提案已进入下方「待批准入库」下拉；未批准不会进入编剧室可选库。
                               </p>
                               <div className="mt-2 flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  disabled={approveManhuaViralTemplateMutation.isPending}
-                                  onClick={() =>
-                                    void approveManhuaLearnProposal(
-                                      manhuaLearnResult.proposal!.id,
-                                      manhuaLearnResult.proposal!.nameZh,
-                                    )
-                                  }
-                                  className="rounded-md border border-amber-300/40 bg-amber-500/20 px-2.5 py-1 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/30 disabled:opacity-50"
-                                >
-                                  批准进库
-                                </button>
                                 <button
                                   type="button"
                                   onClick={() => setManhuaLearnPanelCollapsed(true)}
@@ -11500,34 +11853,51 @@ export default function PlatformPage() {
                         </div>
                       ) : null}
 
-                      {manhuaViralProposalsQuery.data?.items?.length ? (
-                        <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[10px] text-[#c9c0e6]/70">
-                          <div className="mb-1 font-semibold text-[#c9c0e6]/90">云端提案（近批）</div>
-                          <div className="space-y-1">
-                            {manhuaViralProposalsQuery.data.items.slice(0, 6).map((p) => (
-                              <div
-                                key={p.id}
-                                className="flex flex-wrap items-center justify-between gap-2 border-t border-white/5 py-1"
-                              >
-                                <span className="min-w-0 truncate">
-                                  {p.nameZh}
-                                  <span className="ml-1 text-[#c9c0e6]/40">
-                                    {p.status === "approved" ? "已批准" : "待审"}
-                                  </span>
-                                </span>
-                                {p.status !== "approved" ? (
-                                  <button
-                                    type="button"
-                                    disabled={approveManhuaViralTemplateMutation.isPending}
-                                    onClick={() => void approveManhuaLearnProposal(p.id)}
-                                    className="shrink-0 rounded border border-[#8cefff]/25 px-1.5 py-0.5 text-[10px] text-[#8cefff]"
-                                  >
-                                    批准
-                                  </button>
-                                ) : null}
-                              </div>
-                            ))}
+                      {pendingManhuaViralProposals.length > 0 && selectedManhuaProposal ? (
+                        <div className="mt-3 rounded-xl border border-[#8cefff]/20 bg-[rgba(140,239,255,0.07)] px-3 py-2.5 text-[10px] text-[#c9c0e6]/70">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <label
+                              htmlFor="manhua-proposal-select"
+                              className="shrink-0 font-semibold text-[#c9c0e6]/90"
+                            >
+                              待批准入库（{pendingManhuaViralProposals.length}）
+                            </label>
+                            <select
+                              id="manhua-proposal-select"
+                              value={selectedManhuaProposal.id}
+                              onChange={(event) => setSelectedManhuaProposalId(event.target.value)}
+                              className="min-w-0 flex-1 rounded-lg border border-white/15 bg-black/45 px-2.5 py-1.5 text-[11px] text-white"
+                            >
+                              {pendingManhuaViralProposals.map((proposal) => (
+                                <option key={proposal.id} value={proposal.id}>
+                                  {proposal.nameZh} · {proposal.laneZh}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              disabled={approveManhuaViralTemplateMutation.isPending}
+                              onClick={() =>
+                                void approveManhuaLearnProposal(
+                                  selectedManhuaProposal.id,
+                                  selectedManhuaProposal.nameZh,
+                                )
+                              }
+                              className="shrink-0 rounded-lg border border-[#8cefff]/30 bg-[rgba(140,239,255,0.1)] px-2.5 py-1.5 font-semibold text-[#8cefff] disabled:opacity-50"
+                            >
+                              {approveManhuaViralTemplateMutation.isPending ? "入库中…" : "批准入库"}
+                            </button>
                           </div>
+                          {selectedManhuaProposal.hook3sZh ? (
+                            <p className="mt-2 text-[#c9c0e6]/65">
+                              钩子：{selectedManhuaProposal.hook3sZh}
+                            </p>
+                          ) : null}
+                          {selectedManhuaProposal.summaryZh ? (
+                            <p className="mt-1 line-clamp-2 text-[#c9c0e6]/45">
+                              {selectedManhuaProposal.summaryZh}
+                            </p>
+                          ) : null}
                         </div>
                       ) : null}
 
@@ -11599,7 +11969,11 @@ export default function PlatformPage() {
                                 </span>
                                 <button
                                   type="button"
-                                  disabled={Boolean(manhuaLearnBusyKey) || !learnable}
+                                  disabled={
+                                    Boolean(manhuaLearnBusyKey)
+                                    || Boolean(manhuaLearnActiveJob)
+                                    || !learnable
+                                  }
                                   title={
                                     learnable
                                       ? "云端学节奏；失败回退本机命令"
