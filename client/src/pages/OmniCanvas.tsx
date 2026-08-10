@@ -45,6 +45,7 @@ import {
 import {
   collectStaleAssetSheetBlockIds,
   evaluateManhuaAssetScriptAlignment,
+  fingerprintManhuaWriterAssetCanon,
   planManhuaSheetAdoptions,
   purgeStaleCustomAssetRefsForCanon,
 } from "@shared/manhuaAssetScriptSync";
@@ -156,6 +157,7 @@ import {
   type ManhuaCharacterGender,
 } from "@shared/manhuaCharacterAssetLibrary";
 import { recommendManhuaCastBundle } from "@shared/manhuaCastBundle";
+import { getManhuaDemoAsset } from "@shared/manhuaScenePropDemoCatalog";
 import {
   buildManhuaProjectBible,
   summarizeManhuaProjectBible,
@@ -221,6 +223,11 @@ import ManhuaScriptWorkbench from "@/components/ManhuaScriptWorkbench";
 import ManhuaAssetWall from "@/components/ManhuaAssetWall";
 import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import { createJobSameOrigin, pollJobUntilTerminal } from "@/lib/jobs";
+import { buildCanvasGptImage2JobInput } from "@shared/canvasGptImage2JobInput";
+import {
+  manhuaAssetStandardizeCredits,
+  type ManhuaAssetStandardizeQuality,
+} from "@shared/manhuaAssetStandardize";
 import {
   CRAFT_SHOT_BANK,
   CRAFT_SHOT_CATEGORY_LABEL_ZH,
@@ -389,6 +396,30 @@ function saveFactoryCharacterPrefs(prefs: FactoryCharacterPrefs) {
 /** 本机编剧会话（剧情包 / 确认态 / Bible）；硬刷新恢复，避免线上重扩 */
 function bootWriterSession() {
   return loadManhuaWriterSessionFromStorage();
+}
+
+
+/** 已确认会跨专案复活的三件都市演示道具；未知 id 视为用户自有资产，不误删。 */
+const LEGACY_GHOST_DEMO_PROP_IDS = new Set([
+  "demo_prop_romance_ring_box",
+  "demo_prop_romance_lipstick",
+  "demo_prop_romance_handkerchief",
+]);
+
+/**
+ * 古风专案里过滤掉「现代演示道具」残留（丝绒戒指盒 romance/同款口红 romance/
+ * 绣帕信物 intrigue——用户点名的幽灵三件套均在此列）。
+ * 只过滤已确认的演示 id；查不到目录的 id（用户自有资产）一律保留，不误伤。
+ */
+function stripUrbanDemoPropIds(ids: string[]): string[] {
+  return (ids || []).filter((id) => !LEGACY_GHOST_DEMO_PROP_IDS.has(id));
+}
+
+function manhuaAssetSelectionScopeKey(
+  topic: string,
+  canon: Parameters<typeof fingerprintManhuaWriterAssetCanon>[0],
+): string {
+  return `${String(topic || "").trim().slice(0, 80)}::${fingerprintManhuaWriterAssetCanon(canon)}`;
 }
 
 export default function OmniCanvas() {
@@ -1099,12 +1130,18 @@ export default function OmniCanvas() {
   useEffect(() => {
     setFactoryIdentityLockZh(castBundle.identityLockZh);
 
-    // 古风题材：确认前也清掉残留都市角色卡（防 localStorage/prefs 污染）
+    // 古风题材：确认前也清掉残留都市角色卡（防 localStorage/prefs 污染）。
+    // 道具同理——propManual 豁免只该保护「本专案手选」，不该保护跨专案的
+    // 都市演示道具残留（幽灵三件套），按 demo 目录 lane 精准过滤、不误伤自有资产
     if (castBundle.lane === "ancient") {
       setFactoryFemaleId("");
       setFactoryMaleId("");
       setFemaleLeadManual(false);
       setMaleLeadManual(false);
+      setFactoryPropIds((prev) => {
+        const kept = stripUrbanDemoPropIds(prev);
+        return kept.length === prev.length ? prev : kept;
+      });
     }
 
     if (!castHardApplyReady) {
@@ -1163,7 +1200,8 @@ export default function OmniCanvas() {
         const ancientIds = ancientManual
           ? factoryAncientArchetypeIds
           : bundle.ancientArchetypeIds;
-        const propIds = propManual ? factoryPropIds : bundle.propIds;
+        // manual 豁免不保护跨专案都市演示道具残留（幽灵三件套）
+        const propIds = propManual ? stripUrbanDemoPropIds(factoryPropIds) : bundle.propIds;
         const wardrobeId = wardrobeManual
           ? factoryWardrobeId
           : bundle.wardrobePropContinuityIds[0] || "";
@@ -1482,6 +1520,12 @@ export default function OmniCanvas() {
           : "outline",
     );
     const prefs = draft.factoryPrefs || {};
+    const restoredScope = String(prefs.assetSelectionScopeKey || "").trim();
+    const sessionScope = manhuaAssetSelectionScopeKey(
+      session.topic || "",
+      session.projectBible?.assetCanon,
+    );
+    const sameAssetSelectionScope = Boolean(restoredScope && restoredScope === sessionScope);
     if (Array.isArray(prefs.customAssetRefs)) {
       setCustomAssetRefs(normalizeManhuaCustomAssetRefs(prefs.customAssetRefs));
     }
@@ -1490,18 +1534,43 @@ export default function OmniCanvas() {
         normalizeDirectorBoardMainByEpisode(prefs.directorBoardMainByEpisode),
       );
     }
-    if (typeof prefs.femaleId === "string") setFactoryFemaleId(prefs.femaleId);
-    if (typeof prefs.maleId === "string") setFactoryMaleId(prefs.maleId);
+    // 跨专案幽灵防线（用户实测「清都清不掉」的根）：恢复数据里旧都市专案的
+    // 库选角/道具/manual 标志，会在每次登录云同步时无条件写回，把种子库 CP
+    //（沈清辞/傅临渊）与都市演示道具复活到古风专案。守卫口径：会话 cast 已是
+    // ancient 时，都市选角与其 manual 豁免一律不恢复；道具按 demo 目录 lane 过滤。
+    const restoredCastLane = session.projectBible?.cast?.lane;
+    const restoreUrbanLeads = restoredCastLane !== "ancient";
+    if (restoreUrbanLeads) {
+      if (typeof prefs.femaleId === "string") setFactoryFemaleId(prefs.femaleId);
+      if (typeof prefs.maleId === "string") setFactoryMaleId(prefs.maleId);
+    } else {
+      // 不能只“跳过恢复”：当前 React state 可能仍是启动时从旧 LS 读出的都市种子。
+      setFactoryFemaleId("");
+      setFactoryMaleId("");
+      setFemaleLeadManual(false);
+      setMaleLeadManual(false);
+    }
     if (typeof prefs.artStyleId === "string") {
       setFactoryArtStyleId(prefs.artStyleId as ManhuaArtStyleId);
     }
-    if (prefs.femaleLeadManual != null) setFemaleLeadManual(Boolean(prefs.femaleLeadManual));
-    if (prefs.maleLeadManual != null) setMaleLeadManual(Boolean(prefs.maleLeadManual));
+    if (restoreUrbanLeads && prefs.femaleLeadManual != null) {
+      setFemaleLeadManual(Boolean(prefs.femaleLeadManual));
+    }
+    if (restoreUrbanLeads && prefs.maleLeadManual != null) {
+      setMaleLeadManual(Boolean(prefs.maleLeadManual));
+    }
     if (prefs.artStyleManual != null) setArtStyleManual(Boolean(prefs.artStyleManual));
     const cast = session.projectBible?.cast;
+    const restoredPropIds = cast?.propIds?.length
+      ? cast.lane === "ancient" && !sameAssetSelectionScope
+        ? cast.propIds.filter((id) => !getManhuaDemoAsset(id))
+        : cast.lane === "ancient"
+          ? stripUrbanDemoPropIds(cast.propIds)
+          : cast.propIds
+      : [];
     if (cast) {
       if (cast.sceneId) setFactorySceneId(cast.sceneId);
-      if (cast.propIds?.length) setFactoryPropIds(cast.propIds);
+      setFactoryPropIds(restoredPropIds);
       if (cast.ancientArchetypeIds?.length) setFactoryAncientArchetypeIds(cast.ancientArchetypeIds);
       if (cast.identityLockZh) setFactoryIdentityLockZh(cast.identityLockZh);
       if (cast.wardrobePropContinuityIds?.[0]) {
@@ -1513,9 +1582,82 @@ export default function OmniCanvas() {
       }
       if (cast.artStyleId) setFactoryArtStyleId(cast.artStyleId as ManhuaArtStyleId);
     }
-    // 胜出草稿尽量补写本机（失败忽略）
-    repairLocalFromCloudDraft(draft);
-  }, []);
+    // 胜出草稿补写本机时也必须用同一份清洗结果；写回原始 draft 会在下一次
+    // 刷新时把刚从 UI 清掉的都市选角/manual/道具再次复活。
+    const repairedWriterSession =
+      cast && session.projectBible
+        ? {
+            ...session,
+            projectBible: {
+              ...session.projectBible,
+              cast: { ...cast, propIds: restoredPropIds },
+            },
+          }
+        : session;
+    const repairedFactoryPrefs = restoreUrbanLeads
+      ? prefs
+      : {
+          ...prefs,
+          femaleId: "",
+          maleId: "",
+          femaleLeadManual: false,
+          maleLeadManual: false,
+        };
+    repairLocalFromCloudDraft({
+      ...draft,
+      writerSession: repairedWriterSession,
+      factoryPrefs: repairedFactoryPrefs,
+    });
+  }, [canUseSeedance25, factoryDefaultVideoModel]);
+
+
+  /** 手动备份（用户拍板：只有用户点上传才存云） */
+  const latestDraftSnapshotRef = useRef<Parameters<typeof buildLocalCloudDraftSnapshot>[0] | null>(null);
+  const [cloudBackupBusy, setCloudBackupBusy] = useState<null | "upload" | "restore">(null);
+  const uploadCloudBackupNow = useCallback(async () => {
+    if (cloudBackupBusy) return;
+    const snap = latestDraftSnapshotRef.current;
+    if (!snap) {
+      toast.error("当前没有可备份的工作区内容");
+      return;
+    }
+    setCloudBackupBusy("upload");
+    try {
+      await syncCloudDraftPayload(buildLocalCloudDraftSnapshot(snap));
+      toast.success("已上传备份到云端");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "备份上传失败，请稍后重试");
+    } finally {
+      setCloudBackupBusy(null);
+    }
+  }, [cloudBackupBusy, syncCloudDraftPayload]);
+  const restoreCloudBackupNow = useCallback(async () => {
+    if (cloudBackupBusy) return;
+    setCloudBackupBusy("restore");
+    try {
+      // 回填前强制取最新云备份，别用登录时的旧缓存
+      const fresh = await cloudDraftQuery.refetch();
+      const draft = fresh.data?.draft;
+      if (!draft) {
+        toast.error("云端没有备份可回填");
+        return;
+      }
+      const at = String(draft.clientUpdatedAt || "").slice(0, 16) || "未知时间";
+      if (
+        !window.confirm(
+          `将用云端备份（${at}）覆盖当前工作区，本机未上传的改动会丢失。确定回填？`,
+        )
+      ) {
+        return;
+      }
+      applyCloudDraftToUi(draft);
+      toast.success("已从云端备份回填");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "回填失败，请稍后重试");
+    } finally {
+      setCloudBackupBusy(null);
+    }
+  }, [cloudBackupBusy, cloudDraftQuery, applyCloudDraftToUi]);
 
   /** 登录后：云端与本机比新，胜出方驱动 UI，并补写较弱一侧 */
   useEffect(() => {
@@ -1538,17 +1680,18 @@ export default function OmniCanvas() {
     });
 
     if (choice.source === "cloud") {
-      applyCloudDraftToUi(choice.draft);
-      toast.message("已从云端恢复草稿（约 30 天暂存；请记得导出备份）");
-      pushDebug("cloudDraft:hydrate-cloud", {
+      // 备份手动化（用户 2026-08-10 拍板）：云端较新也**绝不自动覆盖本机**——
+      // 用户正在生图/出片/精修时被静默回填，一切成果变泡影（实际发生过）。
+      // 只提示有备份可回填，恢复动作交给顶栏「回填备份」按钮（带确认）。
+      toast.message(
+        `云端有较新备份（${String(choice.draft.clientUpdatedAt).slice(0, 16)}）。如需恢复请点顶栏「回填备份」；当前工作区不受影响。`,
+      );
+      pushDebug("cloudDraft:hydrate-skip-auto", {
         level: "ok",
-        detail: `blocks=${choice.draft.canvas.blocks.length} · at=${choice.draft.clientUpdatedAt}`,
+        detail: `cloud newer · blocks=${choice.draft.canvas.blocks.length} · at=${choice.draft.clientUpdatedAt}`,
       });
     } else if (choice.source === "local") {
-      // 本机较新：补写云端（不打断当前 UI；优先 GCS 直传）
-      void syncCloudDraftPayload(choice.draft).then(() => {
-        pushDebug("cloudDraft:repair-cloud-from-local", { level: "ok" });
-      });
+      // 备份手动化：本机较新也不再自动上传——上传只走「上传备份」按钮
       // 本机读失败键再尽力写一次
       persistManhuaDraftLocally({
         writerSession: choice.draft.writerSession,
@@ -1597,6 +1740,7 @@ export default function OmniCanvas() {
       customAssetRefs,
       shareAssetToLibrary,
       directorBoardMainByEpisode,
+      assetSelectionScopeKey: manhuaAssetSelectionScopeKey(factoryTopic, projectBible?.assetCanon),
     };
     const writerSession = {
       topic: factoryTopic,
@@ -1615,6 +1759,7 @@ export default function OmniCanvas() {
       audioReferenceLock,
       characterLookSets,
       segmentLookBindings,
+      stylePack,
       shareAssetToLibrary,
       viralTemplateId,
       // 只存真选过的档。存自动预选值会让下次打开时把它当显式选型，
@@ -1632,18 +1777,12 @@ export default function OmniCanvas() {
       factoryPrefs,
       clientUpdatedAt,
     });
+    // 手动上传按钮从这个 ref 取当前工作区快照
+    latestDraftSnapshotRef.current = { writerSession, blocks, edges, factoryPrefs, clientUpdatedAt };
 
-    const timer = window.setTimeout(() => {
-      const payload = buildLocalCloudDraftSnapshot({
-        writerSession,
-        blocks,
-        edges,
-        factoryPrefs,
-        clientUpdatedAt,
-      });
-      void syncCloudDraftPayload(payload);
-    }, MANHUA_CLOUD_DRAFT_SYNC_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
+    // 备份手动化（用户 2026-08-10 拍板）：防抖自动上传拆除——云备份只在用户
+    // 点「上传备份」时发生。本机 persistManhuaDraftLocally 双写保留（防刷新丢失，
+    // 那是本地工作区不是云备份）。
   }, [
     user?.id,
     cloudSyncReady,
@@ -1663,6 +1802,9 @@ export default function OmniCanvas() {
     customAssetRefs,
     characterVoiceLocks,
     audioReferenceLock,
+    characterLookSets,
+    segmentLookBindings,
+    stylePack,
     shareAssetToLibrary,
     directorBoardMainByEpisode,
     viralTemplateId,
@@ -2046,6 +2188,7 @@ export default function OmniCanvas() {
   const buildDirectorBoardPromptMutation =
     trpc.mvAnalysis.buildManhuaDirectorBoardPrompt.useMutation();
   const [assetZipBusy, setAssetZipBusy] = useState(false);
+  const [assetStandardizeBusyId, setAssetStandardizeBusyId] = useState<string | null>(null);
 
   const pathTrackLabelZh = useMemo(() => {
     const path = getPathCameraRecipeById(selectedPathRecipeIds[0]);
@@ -2500,7 +2643,7 @@ export default function OmniCanvas() {
             : ` · 识别到 ${result.scripts.length} 份剧本（未导入）`
           : "";
         toast.success("资产包已导入", {
-          description: `参考图 ${result.addedRefs.length} 张 · ${boardDescZh} · 跳过 ${result.skippedCount} · 去重 ${result.droppedDupes}${scriptDescZh}`,
+          description: `参考图 ${result.addedRefs.length} 张（待确认 ${result.quarantinedCount}） · ${boardDescZh} · 跳过 ${result.skippedCount} · 去重 ${result.droppedDupes}${scriptDescZh}`,
         });
         if (failedBoardEpisodes.length) {
           toast.error("部分导演板未接入", {
@@ -3156,15 +3299,7 @@ export default function OmniCanvas() {
         factoryPrefs,
         clientUpdatedAt,
       });
-      void syncCloudDraftPayload(
-        buildLocalCloudDraftSnapshot({
-          writerSession,
-          blocks: nextBlocks,
-          edges: nextEdges,
-          factoryPrefs,
-          clientUpdatedAt,
-        }),
-      );
+      // 备份手动化：扩写完成也不自动上云——用户点「上传备份」才存
       const epDigest = pack.episodes
         .map((ep) => `第${ep.index}集·${ep.title || ""}：${String(ep.endHook || "").slice(0, 80)}`)
         .join("\n");
@@ -4037,6 +4172,122 @@ export default function OmniCanvas() {
       ),
     );
   }, []);
+
+  /**
+   * 手动改名：自动识别只求 95%，剩下认错/认不出的（阿咎_半身、s05_xx 前缀）
+   * 由用户改成与剧本表一致的名字，labelMatchesName 即命中，门禁与认领同步解锁。
+   */
+  const setCustomAssetLabel = useCallback((id: string, labelZh: string) => {
+    const label = String(labelZh || "").trim().slice(0, 40);
+    setCustomAssetRefs((prev) =>
+      normalizeManhuaCustomAssetRefs(
+        prev.map((r) => {
+          if (r.id !== id) return r;
+          // 「清除明确认领」会把 claimSource 留在 manual（挡住名字匹配）；
+          // 之后用户改名是更新的认领意图，必须让名字匹配重新生效，
+          // 否则改名入口和清除入口互相打架，改什么都认不上。
+          const unblockNameClaim =
+            r.claimSource === "manual" && !(r.claimedAnchorIds || []).length;
+          return {
+            ...r,
+            labelZh: label || undefined,
+            ...(unblockNameClaim ? { claimSource: "name" as const } : {}),
+          };
+        }),
+      ),
+    );
+  }, []);
+
+  const setCustomAssetClaims = useCallback((id: string, anchorIds: string[]) => {
+    const claimedAnchorIds = Array.from(
+      new Set(anchorIds.map((v) => String(v || "").trim()).filter(Boolean)),
+    ).slice(0, 24);
+    setCustomAssetRefs((prev) =>
+      normalizeManhuaCustomAssetRefs(
+        prev.map((r) =>
+          r.id === id ? { ...r, claimedAnchorIds, claimSource: "manual" as const } : r,
+        ),
+      ),
+    );
+  }, []);
+
+  const acceptCustomAssetReview = useCallback((id: string) => {
+    setCustomAssetRefs((prev) =>
+      normalizeManhuaCustomAssetRefs(
+        prev.map((r) =>
+          r.id === id ? { ...r, reviewStatus: "accepted" as const, qualityIssues: [] } : r,
+        ),
+      ),
+    );
+  }, []);
+
+  const standardizeCustomAsset = useCallback(
+    async (id: string, quality: ManhuaAssetStandardizeQuality) => {
+      if (assetStandardizeBusyId) return;
+      const ref = customAssetRefs.find((item) => item.id === id);
+      if (!ref) return;
+      const cost = manhuaAssetStandardizeCredits(quality);
+      if (!window.confirm(`将调用 AI 图片编辑，把这张图标准化为工作流可用资产。\n\n${quality === "high" ? "高质" : "标准"}：${cost} 积分/张；失败自动退回。原图会保留。\n处理约需 1–2 分钟，期间请不要关闭页面，否则新图无法进入资产库。继续？`)) return;
+      setAssetStandardizeBusyId(id);
+      try {
+        const claimedNames = (ref.claimedAnchorNamesZh || []).filter(Boolean).slice(0, 8);
+        const multiPropSheet = ref.role === "prop" && claimedNames.length > 1;
+        const rolePrompt =
+          ref.role === "character"
+            ? "保留同一人物的脸、年龄、发型、服装与身份特征，补全为单人竖版 2:3 资产照；头顶到胸口或全身完整可见，背景干净，不新增人物，不改变身份。"
+            : ref.role === "scene"
+              ? "保留同一地点的建筑、陈设、光线与时代信息，整理为干净的横版 3:2 场景空镜；画面无人脸特写，不改变地点。"
+              : multiPropSheet
+                ? `保留同一批道具（${claimedNames.join("、")}）的材质、颜色、形制与磨损，整理为横版等分资产拼板；每格只放一件道具，不新增品类。`
+                : "保留同一件物品的材质、颜色、形制与磨损，整理为单件居中的竖版 2:3 道具设定图；不新增其他物品。";
+        const aspectRatio = ref.role === "scene" || multiPropSheet ? "16:9" : "9:16";
+        const { jobId } = await createJobSameOrigin({
+          type: "image",
+          userId: String(user?.id || ""),
+          input: buildCanvasGptImage2JobInput({
+            prompt: `${rolePrompt}\n禁止文字、标签、边框、水印、拼图和多宫格。`,
+            aspectRatio,
+            referenceImageUrls: [ref.url],
+            generalImageEdit: true,
+            providerOverride: "openai",
+            imageLane: "asset",
+            gcsSubdir: "manhua-asset-standardized",
+            assetStandardizeQuality: quality,
+            assetRefId: ref.id,
+          }),
+        });
+        const job = await pollJobUntilTerminal(jobId, { maxWaitMs: 12 * 60_000, intervalMs: 2500 });
+        if (job.status !== "succeeded") throw new Error(job.error || "资产标准化失败");
+        const out = (job.output || {}) as { imageUrl?: string; imageUrls?: string[] };
+        const imageUrl = String(out.imageUrl || out.imageUrls?.[0] || "").trim();
+        if (!/^https:\/\//i.test(imageUrl)) throw new Error("资产标准化未返回有效图片");
+        setCustomAssetRefs((prev) =>
+          normalizeManhuaCustomAssetRefs([
+            ...prev,
+            {
+              ...ref,
+              id: makeManhuaCustomAssetId(),
+              url: imageUrl,
+              gcsUri: undefined,
+              labelZh: `${ref.labelZh || "资产"}·标准化`,
+              reviewStatus: "converted",
+              qualityIssues: [],
+              claimSource: "converted",
+              source: "generated",
+            },
+          ]),
+        );
+        toast.success(`标准化完成 · 已扣 ${cost} 积分`, { description: "原图仍保留，新图已进入资产库。" });
+      } catch (error) {
+        toast.error("资产标准化失败", {
+          description: error instanceof Error ? error.message : "已进入失败退分流程",
+        });
+      } finally {
+        setAssetStandardizeBusyId(null);
+      }
+    },
+    [assetStandardizeBusyId, customAssetRefs, user?.id],
+  );
 
   const handleSegmentIntentChange = useCallback(
     (segmentIndex: number, intentZh: string) => {
@@ -5958,6 +6209,28 @@ export default function OmniCanvas() {
                 </div>
               )}
               <div className="flex flex-wrap items-center gap-2">
+                {canvasMode === "manhua" ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={cloudBackupBusy != null || !cloudSyncReady || factoryBusy || writerBusy}
+                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] text-white/70 hover:bg-white/10 disabled:opacity-40"
+                      title="把当前工作区手动存到云端；系统不再自动备份"
+                      onClick={() => void uploadCloudBackupNow()}
+                    >
+                      {cloudBackupBusy === "upload" ? "备份中…" : "上传备份"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={cloudBackupBusy != null || !cloudSyncReady || factoryBusy || writerBusy}
+                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] text-white/70 hover:bg-white/10 disabled:opacity-40"
+                      title="用云端备份覆盖当前工作区（会先确认）"
+                      onClick={() => void restoreCloudBackupNow()}
+                    >
+                      {cloudBackupBusy === "restore" ? "回填中…" : "回填备份"}
+                    </button>
+                  </>
+                ) : null}
                 {canShowCanvasDebug ? (
                   <button
                     type="button"
@@ -6352,6 +6625,11 @@ export default function OmniCanvas() {
                   onImportPropSheetFile={importPropSheetFile}
                   onCustomAssetRoleChange={setCustomAssetRole}
                   onCustomAssetDutyChange={setCustomAssetDuty}
+                  onCustomAssetLabelChange={setCustomAssetLabel}
+                  onCustomAssetClaimsChange={setCustomAssetClaims}
+                  onCustomAssetReviewAccept={acceptCustomAssetReview}
+                  onStandardizeCustomAsset={standardizeCustomAsset}
+                  assetStandardizeBusyId={assetStandardizeBusyId}
                   onSegmentIntentChange={handleSegmentIntentChange}
                   onSegmentCastChange={handleSegmentCastChange}
                   deliveryPackage={deliveryPackage}

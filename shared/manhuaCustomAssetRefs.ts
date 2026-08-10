@@ -23,6 +23,10 @@ export type ManhuaCustomAssetRoleOrUnset = ManhuaCustomAssetRole | "unset";
 
 export type ManhuaCustomAssetSource = "upload" | "generated";
 
+/** 导入图的认领与质量状态。needs_review 不得参与锁脸/锁场或门禁放行。 */
+export type ManhuaCustomAssetReviewStatus = "accepted" | "needs_review" | "converted";
+export type ManhuaCustomAssetClaimSource = "manifest" | "name" | "manual" | "converted";
+
 /**
  * 成片垫图职责（与人物/场景/道具分栏正交）。
  *
@@ -69,6 +73,16 @@ export type ManhuaCustomAssetRef = {
   source?: ManhuaCustomAssetSource;
   /** 生成时参考的库资产 id（可选） */
   seedLibraryId?: string;
+  /** 一张复合场景图可明确覆盖多个剧本锚点；显示名不再承担主键职责。 */
+  claimedAnchorIds?: string[];
+  /** manifest 没有稳定 id 时用原始中文名兜底（如一张道具拼板对应多件道具）。 */
+  claimedAnchorNamesZh?: string[];
+  claimSource?: ManhuaCustomAssetClaimSource;
+  /** 结构/语义不确定的图先隔离，用户确认或 AI 标准化后再消费。 */
+  reviewStatus?: ManhuaCustomAssetReviewStatus;
+  qualityIssues?: string[];
+  sourceWidth?: number;
+  sourceHeight?: number;
   /** 视频生成时的参考职责 */
   refDuty?: ManhuaCustomAssetRefDuty | null;
   /**
@@ -304,6 +318,41 @@ export function normalizeManhuaCustomAssetRefs(
     });
     const source =
       o.source === "generated" || o.source === "upload" ? o.source : undefined;
+    const claimedAnchorIds = Array.from(
+      new Set(
+        (Array.isArray(o.claimedAnchorIds) ? o.claimedAnchorIds : [])
+          .map((v) => String(v || "").trim())
+          .filter(Boolean),
+      ),
+    ).slice(0, 24);
+    const claimedAnchorNamesZh = Array.from(
+      new Set(
+        (Array.isArray(o.claimedAnchorNamesZh) ? o.claimedAnchorNamesZh : [])
+          .map((v) => String(v || "").trim().slice(0, 60))
+          .filter(Boolean),
+      ),
+    ).slice(0, 24);
+    const claimSourceRaw = String(o.claimSource || "").trim();
+    const claimSource = (
+      ["manifest", "name", "manual", "converted"] as const
+    ).includes(claimSourceRaw as ManhuaCustomAssetClaimSource)
+      ? (claimSourceRaw as ManhuaCustomAssetClaimSource)
+      : undefined;
+    const reviewRaw = String(o.reviewStatus || "").trim();
+    const reviewStatus = (
+      ["accepted", "needs_review", "converted"] as const
+    ).includes(reviewRaw as ManhuaCustomAssetReviewStatus)
+      ? (reviewRaw as ManhuaCustomAssetReviewStatus)
+      : "accepted";
+    const qualityIssues = Array.from(
+      new Set(
+        (Array.isArray(o.qualityIssues) ? o.qualityIssues : [])
+          .map((v) => String(v || "").trim().slice(0, 80))
+          .filter(Boolean),
+      ),
+    ).slice(0, 8);
+    const sourceWidth = Math.max(0, Math.floor(Number(o.sourceWidth) || 0)) || undefined;
+    const sourceHeight = Math.max(0, Math.floor(Number(o.sourceHeight) || 0)) || undefined;
     const refDutyRaw = String(o.refDuty || "").trim();
     const role = inferManhuaCustomAssetRole({
       role: o.role,
@@ -330,6 +379,13 @@ export function normalizeManhuaCustomAssetRefs(
       labelZh,
       source,
       seedLibraryId,
+      claimedAnchorIds,
+      claimedAnchorNamesZh,
+      claimSource,
+      reviewStatus,
+      qualityIssues,
+      sourceWidth,
+      sourceHeight,
       // 未标注时按分栏自动填；手选过的原样保留
       refDuty: parsedDuty || defaultManhuaCustomAssetRefDuty(role),
       tileUrls: parseSceneTileUrls((o as { tileUrls?: unknown }).tileUrls),

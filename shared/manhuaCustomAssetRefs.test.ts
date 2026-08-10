@@ -11,6 +11,32 @@ import {
 } from "./manhuaCustomAssetRefs";
 
 describe("manhuaCustomAssetRefs", () => {
+  it("保留稳定认领与隔离状态，清洗重复锚点", () => {
+    const refs = normalizeManhuaCustomAssetRefs([
+      {
+        id: "q1",
+        url: "https://cdn.example.com/q1.png",
+        role: "scene",
+        claimedAnchorIds: ["wa_scene_a", "wa_scene_a", ""],
+        claimedAnchorNamesZh: ["灶前", "灶前", ""],
+        claimSource: "manual",
+        reviewStatus: "needs_review",
+        qualityIssues: ["人物图为横向切片", "人物图为横向切片"],
+        sourceWidth: 652,
+        sourceHeight: 244,
+      },
+    ]);
+    expect(refs[0]).toMatchObject({
+      claimedAnchorIds: ["wa_scene_a"],
+      claimedAnchorNamesZh: ["灶前"],
+      claimSource: "manual",
+      reviewStatus: "needs_review",
+      qualityIssues: ["人物图为横向切片"],
+      sourceWidth: 652,
+      sourceHeight: 244,
+    });
+  });
+
   it("keeps https only and drops unset from tagged", () => {
     const refs = normalizeManhuaCustomAssetRefs([
       { id: "1", url: "https://cdn.example/a.jpg", role: "character" },

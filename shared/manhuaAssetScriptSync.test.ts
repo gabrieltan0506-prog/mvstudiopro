@@ -3,6 +3,7 @@ import {
   collectStaleAssetSheetBlockIds,
   evaluateManhuaAssetScriptAlignment,
   findManhuaAssetCoverageGaps,
+  customAssetRefClaimsAnchor,
   fingerprintManhuaWriterAssetCanon,
   planManhuaSheetAdoptions,
   purgeStaleCustomAssetRefsForCanon,
@@ -33,6 +34,34 @@ const canon: ManhuaWriterAssetCanon = {
 };
 
 describe("manhuaAssetScriptSync", () => {
+  it("显式多认领优先，隔离图不参与门禁", () => {
+    const scene = canon.locations[0]!;
+    expect(
+      customAssetRefClaimsAnchor(
+        {
+          id: "r1",
+          role: "scene",
+          url: "https://cdn.example.com/scene.png",
+          claimedAnchorIds: [scene.id],
+          reviewStatus: "accepted",
+        },
+        scene,
+      ),
+    ).toBe(true);
+    expect(
+      customAssetRefClaimsAnchor(
+        {
+          id: "r2",
+          role: "scene",
+          url: "https://cdn.example.com/bad.png",
+          claimedAnchorIds: [scene.id],
+          reviewStatus: "needs_review",
+        },
+        scene,
+      ),
+    ).toBe(false);
+  });
+
   it("fingerprints cast+locations", () => {
     const a = fingerprintManhuaWriterAssetCanon(canon);
     const b = fingerprintManhuaWriterAssetCanon({
@@ -185,6 +214,39 @@ describe("manhuaAssetScriptSync", () => {
       assetBlocks: [],
     });
     expect(gaps.map((g) => g.nameZh)).toEqual(["裴砚舟"]);
+  });
+
+  it("manifest 中文名可让一张拼板认领多个锚点；手动清除后不再回退猜名", () => {
+    const expanded: ManhuaWriterAssetCanon = {
+      ...canon,
+      characters: [
+        canon.characters[0]!,
+        { id: "wa_c_pei", role: "character", nameZh: "裴砚舟", lookZh: "玄甲", promptZh: "裴砚舟" },
+      ],
+    };
+    const base = {
+      id: "sheet",
+      role: "character" as const,
+      source: "upload" as const,
+      labelZh: "人物设定拼板",
+      url: "https://cdn.example/sheet.jpg",
+      claimedAnchorNamesZh: ["沈照野", "裴砚舟"],
+      claimSource: "manifest" as const,
+    };
+    expect(
+      findManhuaAssetCoverageGaps({
+        assetCanon: expanded,
+        customRefs: [base],
+        assetBlocks: [{ id: "sceneplate-wa_l_bridge", hasMedia: true }],
+      }),
+    ).toEqual([]);
+    expect(
+      findManhuaAssetCoverageGaps({
+        assetCanon: expanded,
+        customRefs: [{ ...base, claimSource: "manual", claimedAnchorIds: [] }],
+        assetBlocks: [{ id: "sceneplate-wa_l_bridge", hasMedia: true }],
+      }).map((gap) => gap.nameZh),
+    ).toEqual(["沈照野", "裴砚舟"]);
   });
 
   it("图齐时无缺口", () => {

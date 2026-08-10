@@ -827,7 +827,7 @@ async function resolveUserForJob(userId: string): Promise<User> {
   return rows[0];
 }
 
-async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId: string): Promise<{ output: unknown; provider?: string }> {
+async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId: string, jobId?: string): Promise<{ output: unknown; provider?: string }> {
   const params = input.params ?? {};
 
   if (input.action === "kling_image") {
@@ -943,10 +943,18 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     const providerRaw = String(params.providerOverride || "")
       .trim()
       .toLowerCase();
-    const providerOverride =
+    let providerOverride =
       providerRaw === "openai" || providerRaw === "openrouter" || providerRaw === "auto"
         ? (providerRaw as "openai" | "openrouter" | "auto")
         : undefined;
+    const assetStandardizeQuality =
+      params.assetStandardizeQuality === "high" || params.assetStandardizeQuality === "medium"
+        ? params.assetStandardizeQuality
+        : null;
+    if (assetStandardizeQuality) {
+      if (referenceImageUrls.length !== 1) throw new Error("资产标准化必须且只能提交一张原图");
+      providerOverride = "openai";
+    }
     const generalImageEdit =
       Boolean(params.generalImageEdit) || referenceImageUrls.length > 0;
     const gcsSubdir =
@@ -965,19 +973,52 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
      * 那两处已在前端 `chargeStep` 扣过，无条件扣会双扣。
      */
     const numericUserId = Number(jobUserId);
+    if (assetStandardizeQuality && (!Number.isFinite(numericUserId) || numericUserId <= 0)) {
+      throw new Error("资产标准化缺少有效登录用户，已拒绝调用上游");
+    }
     let creditDeducted = 0;
-    if (params.chargeOnServer === true && Number.isFinite(numericUserId) && numericUserId > 0) {
+    let deductReceipt: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
+    const shouldCharge = params.chargeOnServer === true || Boolean(assetStandardizeQuality);
+    if (shouldCharge && Number.isFinite(numericUserId) && numericUserId > 0) {
       const { canvasImageCredits } = await import("../../shared/canvasGenerationPricing.js");
-      const cost = canvasImageCredits(
-        typeof params.batchIndex === "number" ? params.batchIndex : 0,
-      );
+      const { manhuaAssetStandardizeCredits } = await import("../../shared/manhuaAssetStandardize.js");
+      const cost = assetStandardizeQuality
+        ? manhuaAssetStandardizeCredits(assetStandardizeQuality)
+        : canvasImageCredits(typeof params.batchIndex === "number" ? params.batchIndex : 0);
+      const chargeKey = assetStandardizeQuality && jobId ? `manhuaAssetStandardize/${jobId}` : undefined;
       const deducted = await deductCreditsAmount(
         numericUserId,
         cost,
-        "canvasGptImage2",
-        `画布出图（${cost} 积分/张）`,
+        assetStandardizeQuality ? "manhuaAssetStandardize" : "canvasGptImage2",
+        assetStandardizeQuality ? `导入资产 AI 标准化（${cost} 积分/张）` : `画布出图（${cost} 积分/张）`,
+        chargeKey ? { chargeKey } : undefined,
       );
       creditDeducted = deducted.cost;
+      deductReceipt = deducted;
+      if (assetStandardizeQuality && jobId) {
+        const { registerActiveJob } = await import("../services/paidJobLedger.js");
+        try {
+          await registerActiveJob({
+            jobId,
+            taskType: "manhuaAssetStandardize",
+            userId: numericUserId,
+            creditsBilled: deducted.cost,
+            action: `导入资产 AI 标准化 · ${assetStandardizeQuality}`,
+            deduct: deducted,
+            metadata: { assetRefId: String(params.assetRefId || "").slice(0, 100) },
+          });
+        } catch (error) {
+          const { refundCreditsForDeductAmount } = await import("../credits.js");
+          await refundCreditsForDeductAmount(
+            numericUserId,
+            "资产标准化登记失败·退回积分",
+            deducted,
+            "manhuaAssetStandardizeRefund",
+            { refundKey: `refund:manhuaAssetStandardize/register/${jobId}`.slice(0, 120) },
+          );
+          throw error;
+        }
+      }
     }
 
     const { generateGptImage2FromRawEnglishPrompt } = await import("../services/proxyImageService.js");
@@ -991,6 +1032,21 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     } = {};
     const refundCanvasImage = async (reason: string) => {
       if (creditDeducted <= 0) return;
+      if (assetStandardizeQuality && jobId) {
+        const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
+        await refundCreditsOnFailure(jobId, "manhuaAssetStandardize", "external_api_error", reason);
+        return;
+      }
+      if (deductReceipt) {
+        const { refundCreditsForDeductAmount } = await import("../credits.js");
+        await refundCreditsForDeductAmount(
+          numericUserId,
+          reason,
+          deductReceipt,
+          "canvasGptImage2Refund",
+        );
+        return;
+      }
       const { refundCredits } = await import("../credits");
       await refundCredits(numericUserId, creditDeducted, reason).catch((e) =>
         console.error("[Credits] canvas image refund failed:", e),
@@ -1013,6 +1069,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
         onImageText: "forbid",
         providerOverride,
         imageLane,
+        qualityOverride: assetStandardizeQuality || undefined,
         captureError,
       });
     } catch (err) {
@@ -2351,7 +2408,7 @@ async function executeJob(
 ): Promise<{ output: unknown; provider?: string }> {
   const input = asEnvelope(inputRaw);
   if (type === "video") return processVideoJob(input, timeoutMs, userId, jobId);
-  if (type === "image") return processImageJob(input, timeoutMs, userId);
+  if (type === "image") return processImageJob(input, timeoutMs, userId, jobId);
   if (type === "platform") return processPlatformJob(input, jobId, userId);
   if (type === "pdf_export") return processPdfExportJob(inputRaw, userId, jobId);
   return processAudioJob(input, timeoutMs, userId);
@@ -2367,13 +2424,56 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
       timeoutMs,
       `${job.type} job timed out after ${timeoutMs}ms`,
     );
-    await markJobSucceeded(job.id, output, provider);
+    const succeededPersisted = await markJobSucceeded(job.id, output, provider);
+    const paidAssetStandardize =
+      jobType === "image" &&
+      isRecord(job.input) &&
+      isRecord(job.input.params) &&
+      (job.input.params.assetStandardizeQuality === "medium" || job.input.params.assetStandardizeQuality === "high");
+    if (paidAssetStandardize) {
+      if (!succeededPersisted) {
+        // 上游有图但 job.output 没落库，用户拿不到产物；不能先结算后留下永久扣费。
+        const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
+        await refundCreditsOnFailure(
+          job.id,
+          "manhuaAssetStandardize",
+          "task_failed",
+          "资产标准化结果保存失败·退回积分",
+        );
+        await markJobFailed(job.id, "资产标准化结果保存失败，已进入退分流程");
+        return;
+      }
+      const { markSettlementPending, unregisterActiveJob } = await import("../services/paidJobLedger.js");
+      try {
+        await unregisterActiveJob(job.id, "manhuaAssetStandardize", "settled");
+      } catch {
+        // job.output 已经持久化，不能退款；reaper 只补结算，不会把成功单退掉。
+        await markSettlementPending(job.id, "manhuaAssetStandardize");
+      }
+    }
   } catch (error) {
     const message =
       job.type === "platform" && error instanceof Error
         ? error.message
         : getJobFailureMessage(job.type as JobType, error);
-    if ((job.attempts ?? 0) < 2) {
+    const noRetryPaidAssetEdit =
+      job.type === "image" &&
+      isRecord(job.input) &&
+      isRecord(job.input.params) &&
+      (job.input.params.assetStandardizeQuality === "medium" || job.input.params.assetStandardizeQuality === "high");
+    if (noRetryPaidAssetEdit) {
+      // 包含 worker 外层墙钟超时：上游 Promise 可能仍在跑，先把用户账幂等退掉，且不重试双烧。
+      const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
+      await refundCreditsOnFailure(
+        job.id,
+        "manhuaAssetStandardize",
+        "external_api_error",
+        "资产标准化失败或超时·退回积分",
+      ).catch((refundError) =>
+        console.error("[Jobs] manhua asset standardize refund failed:", refundError),
+      );
+      await markJobFailed(job.id, message);
+    } else if ((job.attempts ?? 0) < 2) {
       await requeueJob(job.id, message);
     } else {
       await markJobFailed(job.id, message);
