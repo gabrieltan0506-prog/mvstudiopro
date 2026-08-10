@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  getManhuaLearnContinueControl,
   isManhuaLearnEmptyBatchFailure,
   manhuaLearnResultFromJobOutput,
   manhuaLearnResultFromStart,
@@ -223,5 +224,48 @@ describe("manhuaLearnResultUi soft-fail", () => {
     writeManhuaLearnBasket("user_7", basket);
     expect(readManhuaLearnBasket("user_7")).toHaveLength(1);
     expect(readManhuaLearnBasket("user_8")).toEqual([]);
+  });
+
+  it("allows an unknown pending count to resume from a saved continuation", () => {
+    expect(
+      getManhuaLearnContinueControl({
+        pendingCount: undefined,
+        hasContinuation: true,
+        busy: false,
+        active: false,
+      }),
+    ).toMatchObject({
+      disabled: false,
+      labelZh: "继续学习 · 检查剩余集数",
+    });
+  });
+
+  it("explains an active batch instead of presenting a dead pending button", () => {
+    expect(
+      getManhuaLearnContinueControl({
+        pendingCount: 6,
+        hasContinuation: true,
+        busy: false,
+        active: true,
+      }),
+    ).toEqual({
+      disabled: true,
+      labelZh: "当前批次学习中",
+      titleZh: "当前任务结束后可继续下一批",
+    });
+  });
+
+  it("keeps a known positive pending count clickable when idle", () => {
+    expect(
+      getManhuaLearnContinueControl({
+        pendingCount: 82,
+        hasContinuation: true,
+        busy: false,
+        active: false,
+      }),
+    ).toMatchObject({
+      disabled: false,
+      labelZh: "待学习 82 · 继续",
+    });
   });
 });

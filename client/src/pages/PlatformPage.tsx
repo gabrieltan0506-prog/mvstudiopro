@@ -95,6 +95,7 @@ import {
 import { captureSupervisorTokenFromUrl, getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
 import {
+  getManhuaLearnContinueControl,
   isManhuaLearnEmptyBatchFailure,
   manhuaLearnResultFromFailure,
   manhuaLearnResultFromJobOutput,
@@ -2277,6 +2278,12 @@ export default function PlatformPage() {
   /** 同一页面只允许一个轮询 owner；刷新后新页面从 active job 接手。 */
   const manhuaLearnPollingJobIdRef = useRef<string | null>(null);
   const [manhuaLearnContinueDismissedKey, setManhuaLearnContinueDismissedKey] = useState("");
+  const manhuaLearnContinueControl = getManhuaLearnContinueControl({
+    pendingCount: manhuaLearnResult?.pendingCount,
+    hasContinuation: Boolean(manhuaLearnContinueRef.current),
+    busy: Boolean(manhuaLearnBusyKey),
+    active: Boolean(manhuaLearnActiveJob),
+  });
 
   useEffect(() => {
     const userKey = String(user?.id || "").trim();
@@ -11652,29 +11659,22 @@ export default function PlatformPage() {
                           <div className="flex flex-wrap gap-2 text-[10px]">
                             <button
                               type="button"
-                              disabled={
-                                typeof manhuaLearnResult.pendingCount !== "number"
-                                || manhuaLearnResult.pendingCount <= 0
-                                || !manhuaLearnContinueRef.current
-                                || Boolean(manhuaLearnBusyKey)
-                                || Boolean(manhuaLearnActiveJob)
-                              }
+                              disabled={manhuaLearnContinueControl.disabled}
                               onClick={() => {
                                 const next = manhuaLearnContinueRef.current;
-                                if (!next || (manhuaLearnResult.pendingCount || 0) <= 0) return;
+                                if (
+                                  !next
+                                  || (
+                                    typeof manhuaLearnResult.pendingCount === "number"
+                                    && manhuaLearnResult.pendingCount <= 0
+                                  )
+                                ) return;
                                 void runManhuaTemplateLearnCloud(next.row, next.rank, next.seriesKey);
                               }}
-                              title={
-                                (manhuaLearnResult.pendingCount || 0) > 0
-                                  ? "继续学习下一批"
-                                  : "当前没有待学习剧集"
-                              }
+                              title={manhuaLearnContinueControl.titleZh}
                               className="rounded-full border border-white/15 bg-black/25 px-2 py-0.5 transition enabled:cursor-pointer enabled:hover:border-sky-200/50 enabled:hover:bg-sky-400/15 enabled:hover:text-sky-50 disabled:cursor-default"
                             >
-                              待学习{" "}
-                              {typeof manhuaLearnResult.pendingCount === "number"
-                                ? manhuaLearnResult.pendingCount
-                                : "—"}
+                              {manhuaLearnContinueControl.labelZh}
                             </button>
                             <span className="rounded-full border border-emerald-300/30 bg-black/25 px-2 py-0.5 text-emerald-100/85">
                               已学完 {manhuaLearnResult.learnedCount}

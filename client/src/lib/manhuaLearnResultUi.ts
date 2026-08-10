@@ -491,6 +491,57 @@ export function removeManhuaLearnBasketItem(
   return (items || []).filter((item) => item.seriesKey !== key);
 }
 
+export type ManhuaLearnContinueControl = {
+  disabled: boolean;
+  labelZh: string;
+  titleZh: string;
+};
+
+/**
+ * 「待学习」按钮状态：未知总集数不等于没有待学内容。
+ * 有续学来源且当前无任务时，必须允许用户重新探测并从云端检查点继续。
+ */
+export function getManhuaLearnContinueControl(input: {
+  pendingCount?: number;
+  hasContinuation: boolean;
+  busy: boolean;
+  active: boolean;
+}): ManhuaLearnContinueControl {
+  if (input.busy || input.active) {
+    return {
+      disabled: true,
+      labelZh: "当前批次学习中",
+      titleZh: "当前任务结束后可继续下一批",
+    };
+  }
+  if (!input.hasContinuation) {
+    return {
+      disabled: true,
+      labelZh: "暂无续学来源",
+      titleZh: "请重新贴入该剧链接后继续",
+    };
+  }
+  if (typeof input.pendingCount === "number" && input.pendingCount <= 0) {
+    return {
+      disabled: true,
+      labelZh: "已学完",
+      titleZh: "当前没有待学习剧集",
+    };
+  }
+  if (typeof input.pendingCount === "number") {
+    return {
+      disabled: false,
+      labelZh: `待学习 ${input.pendingCount} · 继续`,
+      titleZh: "继续学习下一批",
+    };
+  }
+  return {
+    disabled: false,
+    labelZh: "继续学习 · 检查剩余集数",
+    titleZh: "重新读取合集并从已落盘检查点继续，不会重学已完成分集",
+  };
+}
+
 /** Job 虽 succeeded 但本轮 0 集：视为失败展示（兼容旧服务端软成功） */
 export function isManhuaLearnEmptyBatchFailure(out: {
   batchLearned?: unknown;
