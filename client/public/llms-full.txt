@@ -11,7 +11,6 @@
 - 类型：中文创作者 AI 内容生产平台（图文知识卡 / 漫剧编剧室 / 创作画布 / 成长营）
 - 官网：https://www.mvstudiopro.com
 - 实测专栏：https://www.mvstudiopro.com/blog/
-- 定价：https://www.mvstudiopro.com/pricing
 
 ## 视频模型账单单价（2026-08-05 实测）
 

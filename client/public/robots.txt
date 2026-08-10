@@ -4,6 +4,15 @@
 User-agent: *
 Allow: /
 Allow: /blog/
+# 2026-08-10 拍板：收录白名单 = 首页 + /blog/*。
+# 下列废弃/应用路由对未登录访客是空壳页，GSC 全躺「未收录」，不再让它抓
+Disallow: /creative
+Disallow: /create
+Disallow: /pricing
+Disallow: /showcase
+Disallow: /storyboard
+Disallow: /templates
+Disallow: /vfx
 Disallow: /admin
 Disallow: /supervisor
 Disallow: /dashboard
