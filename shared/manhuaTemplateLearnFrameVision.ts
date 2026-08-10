@@ -18,6 +18,22 @@ export const MANHUA_TEMPLATE_FRAME_VISION_REASONING = "high" as const;
 /** 单次读帧上限（控制请求体与上下文） */
 export const MANHUA_TEMPLATE_FRAME_VISION_MAX_FRAMES = 24;
 
+/**
+ * 学习链 LLM 供应商 A/B 开关（2026-08-10 拍板）：
+ * env `MANHUA_TEMPLATE_LEARN_LLM_PROVIDER=claude` 切 Claude（帧视觉+模板润色同切），
+ * 缺省走 GPT。产出两版模板各生成剧本，用户亲选哪版有拍的欲望＝唯一验收标准。
+ */
+export type ManhuaTemplateLearnLlmProvider = "gpt" | "claude";
+/** Claude 档：claude-opus-5（带高分辨率 vision；模型口径取自 claude-api skill 2026-08） */
+export const MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL = "claude-opus-5" as const;
+
+export function resolveManhuaTemplateLearnLlmProvider(
+  raw?: string | null,
+): ManhuaTemplateLearnLlmProvider {
+  const t = String(raw || "").trim().toLowerCase();
+  return t === "claude" || t === "anthropic" ? "claude" : "gpt";
+}
+
 export type ManhuaTemplateFrameVisionInputFrame = {
   atSec: number;
   /** data URL；服务端也可先下成 base64 */

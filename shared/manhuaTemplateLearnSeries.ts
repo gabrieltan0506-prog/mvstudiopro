@@ -216,8 +216,22 @@ export function pickNextEpisodeIndexes(input: {
   return pending.slice(0, batch);
 }
 
-export function canEmitManhuaLearnAnalysis(learnedCount: number): boolean {
-  return learnedCount >= MANHUA_LEARN_ANALYSIS_MIN;
+/**
+ * 草版门槛（2026-08-10 用户实测反馈落地）：老口径 16 集才出总分析+入库入口，
+ * 单集/短合集永远看不到模板产出。改为：学满 4 集，或该合集可学集数已全部学完
+ * （2 集的合集学完 2 集就出），即先出草版；≥16 集仍是完整版口径。
+ */
+export const MANHUA_LEARN_ANALYSIS_DRAFT_MIN = 4;
+
+export function canEmitManhuaLearnAnalysis(
+  learnedCount: number,
+  listedEpisodeCount?: number,
+): boolean {
+  if (learnedCount >= MANHUA_LEARN_ANALYSIS_MIN) return true;
+  if (learnedCount < 1) return false;
+  if (learnedCount >= MANHUA_LEARN_ANALYSIS_DRAFT_MIN) return true;
+  const listed = Math.floor(Number(listedEpisodeCount) || 0);
+  return listed > 0 && learnedCount >= listed;
 }
 
 function guessLane(text: string): ManhuaViralTemplateLane {
@@ -242,7 +256,8 @@ export function mergeEpisodeDigestsIntoProposal(input: {
     .filter((d) => d && d.episodeIndex >= 1)
     .sort((a, b) => a.episodeIndex - b.episodeIndex)
     .slice(0, MANHUA_LEARN_ANALYSIS_TARGET);
-  if (digests.length < MANHUA_LEARN_ANALYSIS_MIN) return null;
+  // 草版口径：有多少集合成多少集；是否达到出分析门槛由 canEmitManhuaLearnAnalysis 把关
+  if (!digests.length) return null;
 
   const blob = digests
     .map((d) => [d.title, d.transcriptPreview, d.hookNoteZh, ...d.sceneHints].join(" "))

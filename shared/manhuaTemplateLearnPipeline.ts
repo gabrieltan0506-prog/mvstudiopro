@@ -68,7 +68,7 @@ export function getManhuaLearnPipelineMeta(): ManhuaLearnPipelineMeta {
     analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
     analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
     summaryZh:
-      `有合集 id 时优先展开多集；成片最长约 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟。整集按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟打点写入 JSON（中断可续，已学不重下）。下片失败跳下一集，连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次才停本轮。凑满约 16 集后再出总分析。`,
+      `有合集 id 时优先展开多集；成片最长约 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟。整集按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟打点写入 JSON（中断可续，已学不重下）。下片失败跳下一集，连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次才停本轮。学满 4 集或合集学完即出草版总分析（约 16 集更准）。`,
     stepsZh: [
       "解析可学剧集列表（有合集 id 优先展开多集）",
       `按序采本轮剧集（短链有几集采几集；长合集约 ${MANHUA_LEARN_BATCH_MIN}–${MANHUA_LEARN_BATCH_MAX} 集）；已学完的集跳过`,

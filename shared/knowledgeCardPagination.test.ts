@@ -72,7 +72,7 @@ describe("knowledgeCardImageQuality", () => {
 
 describe("shouldSkipKnowledgeCardDistill", () => {
   it("skips short paste without uploads", () => {
-    expect(shouldSkipKnowledgeCardDistill("已经提练过的短文案".repeat(10), false)).toBe(true);
+    expect(shouldSkipKnowledgeCardDistill("已经提炼过的短文案".repeat(10), false)).toBe(true);
   });
   it("never skips when uploads present", () => {
     expect(shouldSkipKnowledgeCardDistill("短", true)).toBe(false);

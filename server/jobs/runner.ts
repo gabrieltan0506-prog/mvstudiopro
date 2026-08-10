@@ -2134,7 +2134,7 @@ async function processPlatformJob(
     }
 
     // ── knowledge_card_distill ───────────────────────────────────────────────
-    // 长书提练：整本 10 万字要分十几段跑数分钟，放同步 HTTP 会被网关掐断且拖死健康检查。
+    // 长书提炼：整本 10 万字要分十几段跑数分钟，放同步 HTTP 会被网关掐断且拖死健康检查。
     if (input.action === "knowledge_card_distill") {
       const { prepareKnowledgeCardCopy } = await import("../services/knowledgeCardDistill.js");
       const { planKnowledgeCardPages } = await import("../../shared/knowledgeCardPagination.js");
@@ -2165,9 +2165,9 @@ async function processPlatformJob(
       const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 
       /**
-       * 提练费：只有前端明确带 `chargeDistillFee` 才收，也就是「纯文本长文，
-       * 用户在弹窗里选了先提练」那条路。上传文档的提练是抽文的必要环节，成本已含在页费里，不另收。
-       * 扣在**提练成功之后**：失败连扣都没扣过，不必写退款。
+       * 提炼费：只有前端明确带 `chargeDistillFee` 才收，也就是「纯文本长文，
+       * 用户在弹窗里选了先提炼」那条路。上传文档的提炼是抽文的必要环节，成本已含在页费里，不另收。
+       * 扣在**提炼成功之后**：失败连扣都没扣过，不必写退款。
        */
       let distillFeeCharged = 0;
       const uidForDistillFee = Number(jobUserId);
@@ -2185,7 +2185,7 @@ async function processPlatformJob(
           uidForDistillFee,
           fee,
           "knowledgeCardDistill",
-          `图文知识卡·提练（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）`,
+          `图文知识卡·提炼（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）`,
         );
         distillFeeCharged = deducted.cost;
       }

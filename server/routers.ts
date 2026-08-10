@@ -7088,7 +7088,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 单条散买：分镜 {@link CREDIT_COSTS.platformStoryboardSheet} cr、小红书八格 {@link CREDIT_COSTS.platformXhsDualNote} cr。
      * 一键套装：传 `bulkCompositePack` 时按 54×选题数 整数分拆扣费。
      */
-    /** 平台图文卡：多文件抽文（docx/pdf/pptx）+ 图片交 OCR 提练；不扣积分（含在页费）。 */
+    /** 平台图文卡：多文件抽文（docx/pdf/pptx）+ 图片交 OCR 提炼；不扣积分（含在页费）。 */
     extractPlatformDocumentText: protectedProcedure
       .input(
         z.object({
@@ -7115,21 +7115,21 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         };
       }),
 
-    /** 平台图文卡：OCR + Qwen3.8 Max 提练精华（费用含在后续页费；本接口不扣积分）。 */
+    /** 平台图文卡：OCR + Qwen3.8 Max 提炼精华（费用含在后续页费；本接口不扣积分）。 */
     prepareKnowledgeCardCopy: protectedProcedure
       .input(
         z.object({
           sourceText: z.string().max(400_000).optional(),
           forceDistill: z.boolean().optional(),
           /**
-           * 收提练费。只有「纯文本长文 + 用户在弹窗里选了先提练」才带 true：
-           * 那条路提练是**用户为省页费买的服务**（1 万字直接出图 9 页 264 积分且降 2K，
-           * 提练后 4 页 120 积分保住 4K）。上传文档的提练是抽文的必要环节，成本已含页费，不另收。
+           * 收提炼费。只有「纯文本长文 + 用户在弹窗里选了先提炼」才带 true：
+           * 那条路提炼是**用户为省页费买的服务**（1 万字直接出图 9 页 264 积分且降 2K，
+           * 提炼后 4 页 120 积分保住 4K）。上传文档的提炼是抽文的必要环节，成本已含页费，不另收。
            */
           chargeDistillFee: z.boolean().optional(),
           /** 默认 Evolink gpt-5.6-sol；备用 OR kimi-k3；备选 Evolink qwen3.8-max（旧 terra/OR-qwen 服务端迁） */
           distillModel: z
-            .enum(["gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
+            .enum(["claude-opus-5", "gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
             .optional(),
           files: z
             .array(
@@ -7205,7 +7205,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             success: true as const,
             isAsync: true as const,
             progressJobId: jobId,
-            // 后台任务在提练成功后自己扣，这里还没发生
+            // 后台任务在提炼成功后自己扣，这里还没发生
             distillFeeCharged: 0,
             sourceChars: mergedRaw.length,
             distillModel: modelName,
@@ -7227,7 +7227,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         });
         const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 
-        // 与后台任务同一口径：只有用户为省页费主动买提练才收，且扣在提练成功之后
+        // 与后台任务同一口径：只有用户为省页费主动买提炼才收，且扣在提炼成功之后
         let distillFeeCharged = 0;
         const uidForDistillFee = Number(ctx.user?.id);
         if (
@@ -7245,7 +7245,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             uidForDistillFee,
             fee,
             "knowledgeCardDistill",
-            `图文知识卡·提练（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）`,
+            `图文知识卡·提炼（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）`,
           );
           distillFeeCharged = deducted.cost;
         }
@@ -7286,9 +7286,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             /** 仅 single_page_knowledge_card：页码（优先于 notePart）；第 9 页起折扣，页数不封顶。 */
             notePageIndex: z.number().int().min(1).max(80).optional(),
             notePageTotal: z.number().int().min(1).max(80).optional(),
-            /** 仅 single_page_knowledge_card：提练模型（决定页费档位） */
+            /** 仅 single_page_knowledge_card：提炼模型（决定页费档位） */
             distillModel: z
-              .enum(["gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
+              .enum(["claude-opus-5", "gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
               .optional(),
             /**
              * 仅 single_page_knowledge_card：图文可视化版式 id（`shared/infographicNoteTemplates`）。
@@ -7424,7 +7424,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
            * 所以注入的出图约束会被当成内容印上屏——用户 2026-08-05 收到的整本书知识卡，
            * 第 1 页印的是「封面出图短约束 / 壳轮换策略库」这类内部清单（含 coverHeadline、
            * A1 壳、mk/mk1/mk3 等内部代号），第 2 页起才是他的文档。
-           * 这些约束本来只服务封面与八格出图，对知识卡无意义，故保持纯提练稿。
+           * 这些约束本来只服务封面与八格出图，对知识卡无意义，故保持纯提炼稿。
            */
           if (input.kind === "single_page_knowledge_card") return raw;
 

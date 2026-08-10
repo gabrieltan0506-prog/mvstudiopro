@@ -18,6 +18,7 @@ import {
   selectFramesForVisionAnalysis,
 } from "../../shared/manhuaTemplateLearnFrameVision.js";
 import {
+  MANHUA_LEARN_ANALYSIS_DRAFT_MIN,
   MANHUA_LEARN_ANALYSIS_MIN,
   MANHUA_LEARN_ANALYSIS_TARGET,
   MANHUA_LEARN_BATCH_DEFAULT,
@@ -133,7 +134,7 @@ function toDigestPreview(d: ManhuaLearnEpisodeDigest): ManhuaLearnDigestPreview 
     episodeIndex: d.episodeIndex,
     title: d.title,
     hookNoteZh: d.hookNoteZh,
-    transcriptPreview: d.transcriptPreview.slice(0, 160),
+    transcriptPreview: d.transcriptPreview.slice(0, 800),
     durationSec: d.durationSec,
     categoryLabelZh: d.categoryLabelZh,
     tagLabelsZh: d.tagLabelsZh,
@@ -159,7 +160,7 @@ export async function getManhuaSeriesLearnSnapshot(seriesKey: string): Promise<{
   const digestsAll = await loadAllDigests(key);
   const digests = digestsAll.filter(isManhuaLearnEpisodeComplete);
   const digestsPreview = digestsAll.map(toDigestPreview);
-  const analysisReady = canEmitManhuaLearnAnalysis(digests.length);
+  const analysisReady = canEmitManhuaLearnAnalysis(digests.length, progress?.listedEpisodeCount);
   let proposal: ManhuaViralTemplateCard | null = null;
   if (analysisReady && progress) {
     proposal = mergeEpisodeDigestsIntoProposal({
@@ -975,7 +976,7 @@ export async function runManhuaTemplateLearn(
     if (!batchIndexes.length) {
       const digestsAll = await loadAllDigests(seriesKey);
       const digests = digestsAll.filter(isManhuaLearnEpisodeComplete);
-      if (canEmitManhuaLearnAnalysis(digests.length)) {
+      if (canEmitManhuaLearnAnalysis(digests.length, listed.length)) {
         const proposal = mergeEpisodeDigestsIntoProposal({
           seriesKey,
           titleHint: prog.titleHint,
@@ -1031,7 +1032,7 @@ export async function runManhuaTemplateLearn(
         visionFilled: false,
         messageZh:
           digests.length > 0
-            ? `该链接可学剧集已学完（累计 ${digests.length} 集，列表共 ${listed.length} 集）。分集结果见下方；总分析需约 ${MANHUA_LEARN_ANALYSIS_MIN} 集，可换更长合集继续学。`
+            ? `该链接可学剧集已学完（累计 ${digests.length} 集，列表共 ${listed.length} 集）。分集结果见下方。`
             : `该链接暂无可再学剧集（列表 ${listed.length} 集）。请换合集/成片链接重试。`,
         workId,
       };
@@ -1134,7 +1135,7 @@ export async function runManhuaTemplateLearn(
     const digestsAll = await loadAllDigests(seriesKey);
     const digests = digestsAll.filter(isManhuaLearnEpisodeComplete);
     const learnedCount = digests.length;
-    const ready = canEmitManhuaLearnAnalysis(learnedCount);
+    const ready = canEmitManhuaLearnAnalysis(learnedCount, listed.length);
 
     if (!ready) {
       const singleOrShort =
@@ -1161,7 +1162,7 @@ export async function runManhuaTemplateLearn(
         proposalGcsUri: null,
         visionFilled: false,
         messageZh:
-          `本轮学了 ${batchLearnedIndexes.length} 集（视频已删），累计 ${learnedCount}/${MANHUA_LEARN_ANALYSIS_MIN}（目标 ${MANHUA_LEARN_ANALYSIS_TARGET}）。${singleOrShort}${failHint}分集结果见下方；凑满后再出总分析，是否进库由你决定。`,
+          `本轮学了 ${batchLearnedIndexes.length} 集（视频已删），累计 ${learnedCount} 集。${singleOrShort}${failHint}分集结果见下方；学满 ${MANHUA_LEARN_ANALYSIS_DRAFT_MIN} 集或该合集学完即出草版总分析（约 ${MANHUA_LEARN_ANALYSIS_MIN} 集更准），是否进库由你决定。`,
         workId,
       };
     }
@@ -1178,19 +1179,27 @@ export async function runManhuaTemplateLearn(
     });
     if (!proposal) throw new Error("合成提案失败");
 
-    // 可选：Terra 文本润色 hook（失败则用启发式）
+    // 可选：文本润色 hook（默认 Terra；env 切 Claude 做 A/B，失败则用启发式）
     try {
       const { invokeLLM, extractJsonString } = await import("../_core/llm.js");
-      const { MANHUA_TEMPLATE_FRAME_VISION_MODEL, MANHUA_TEMPLATE_FRAME_VISION_REASONING } =
-        await import("../../shared/manhuaTemplateLearnFrameVision.js");
+      const {
+        MANHUA_TEMPLATE_FRAME_VISION_MODEL,
+        MANHUA_TEMPLATE_FRAME_VISION_REASONING,
+        MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL,
+        resolveManhuaTemplateLearnLlmProvider,
+      } = await import("../../shared/manhuaTemplateLearnFrameVision.js");
+      const learnLlm = resolveManhuaTemplateLearnLlmProvider(
+        process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER,
+      );
+      const isClaude = learnLlm === "claude";
       const resp = await invokeLLM({
         model: "pro",
-        provider: "openai",
-        modelName: MANHUA_TEMPLATE_FRAME_VISION_MODEL,
+        provider: isClaude ? "anthropic" : "openai",
+        modelName: isClaude ? MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL : MANHUA_TEMPLATE_FRAME_VISION_MODEL,
         reasoningEffort: MANHUA_TEMPLATE_FRAME_VISION_REASONING,
         max_tokens: 4096,
-        temperature: 0.3,
-        response_format: { type: "json_object" },
+        // claude-opus-5 不收采样控件与 response_format，仅 GPT 路径带
+        ...(isClaude ? {} : { temperature: 0.3, response_format: { type: "json_object" as const } }),
         messages: [
           {
             role: "system",
@@ -1204,7 +1213,7 @@ export async function runManhuaTemplateLearn(
               digests: digests.slice(0, MANHUA_LEARN_ANALYSIS_TARGET).map((d) => ({
                 episodeIndex: d.episodeIndex,
                 hookNoteZh: d.hookNoteZh,
-                transcriptPreview: d.transcriptPreview.slice(0, 160),
+                transcriptPreview: d.transcriptPreview.slice(0, 800),
                 climaxNotes: d.climaxNotes,
                 sceneHints: d.sceneHints,
                 beatHints: d.beatHints.slice(0, 6),
@@ -1228,6 +1237,10 @@ export async function runManhuaTemplateLearn(
         sourceRefs: proposal.sourceRefs,
       });
       if (polished) proposal = polished;
+      if (isClaude) {
+        // A/B 拍板：Claude 版提案另存 id 后缀，避免覆盖 GPT 版；两版各生成剧本，用户亲选
+        proposal = { ...proposal, id: `${proposal.id}_claude`.slice(0, 64) };
+      }
     } catch (e) {
       console.warn(
         "[manhuaTemplateLearn] polish failed, keep heuristic:",

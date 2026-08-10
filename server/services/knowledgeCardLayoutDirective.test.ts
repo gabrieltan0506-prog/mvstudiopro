@@ -6,7 +6,7 @@ import { buildSinglePageKnowledgeCardImagePrompt } from "./geminiPlatformComposi
  *
  * 用户 2026-08-05 随机选「左右对半对比」跑轻量档，第 1 页整页印成模板说明书：
  * 当时前端把版式块拼在 `scriptContext` 前面，而 `scriptContext` 会被
- * `planKnowledgeCardPages` 逐页切开当正文，提练稿越短版式块占比越大。
+ * `planKnowledgeCardPages` 逐页切开当正文，提炼稿越短版式块占比越大。
  */
 describe("buildSinglePageKnowledgeCardImagePrompt · 版式指令", () => {
   const markdown = [

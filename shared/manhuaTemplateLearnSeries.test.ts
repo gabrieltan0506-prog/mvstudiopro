@@ -67,21 +67,39 @@ describe("manhuaTemplateLearnSeries", () => {
     ).toEqual([2, 3]);
   });
 
-  it("requires min episodes before analysis", () => {
-    expect(canEmitManhuaLearnAnalysis(15)).toBe(false);
+  it("门槛：≥16 完整版；4 集或合集学完出草版；0 集与 3/长合集不出", () => {
     expect(canEmitManhuaLearnAnalysis(MANHUA_LEARN_ANALYSIS_MIN)).toBe(true);
+    // 草版：学满 4 集即出
+    expect(canEmitManhuaLearnAnalysis(4)).toBe(true);
+    expect(canEmitManhuaLearnAnalysis(15)).toBe(true);
+    // 草版：短合集全学完（2 集合集学完 2 集）
+    expect(canEmitManhuaLearnAnalysis(2, 2)).toBe(true);
+    expect(canEmitManhuaLearnAnalysis(1, 1)).toBe(true);
+    // 不出：一集没学 / 长合集只学了 3 集
+    expect(canEmitManhuaLearnAnalysis(0, 2)).toBe(false);
+    expect(canEmitManhuaLearnAnalysis(3, 20)).toBe(false);
+    expect(canEmitManhuaLearnAnalysis(3)).toBe(false);
   });
 
-  it("merges digests into one proposal only when enough episodes", () => {
-    const few = Array.from({ length: 10 }, (_, i) => digest(i + 1));
+  it("merges digests into one proposal（草版口径：有几集合成几集，空集合返 null）", () => {
+    expect(
+      mergeEpisodeDigestsIntoProposal({
+        seriesKey: "abc",
+        titleHint: "边关开荒",
+        sourceUrl: "https://example.com/mix",
+        digests: [],
+      }),
+    ).toBeNull();
+
+    const few = Array.from({ length: 2 }, (_, i) => digest(i + 1));
     expect(
       mergeEpisodeDigestsIntoProposal({
         seriesKey: "abc",
         titleHint: "边关开荒",
         sourceUrl: "https://example.com/mix",
         digests: few,
-      }),
-    ).toBeNull();
+      })?.status,
+    ).toBe("proposed");
 
     const enough = Array.from({ length: 16 }, (_, i) => digest(i + 1));
     const card = mergeEpisodeDigestsIntoProposal({

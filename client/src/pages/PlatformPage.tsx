@@ -1949,7 +1949,7 @@ function PlatformIpDimensionGuide() {
   );
 }
 
-/** 待提练的上传文件：小文件走 base64 内联，大文件走 GCS 直传只带回 gs:// 地址 */
+/** 待提炼的上传文件：小文件走 base64 内联，大文件走 GCS 直传只带回 gs:// 地址 */
 type KnowledgeCardPendingFile = {
   fileBase64?: string;
   gcsUri?: string;
@@ -2042,9 +2042,9 @@ function buildShortlistBlueOceanInput(lexicon: BlueOceanLexicon): {
 }
 
 /**
- * 上传文件时决定文本框既有文案要不要一并提练。
+ * 上传文件时决定文本框既有文案要不要一并提炼。
  *
- * 提练稿会写回文本框，所以下次上传若默认合并，就会把上一次的稿子混进这本新书
+ * 提炼稿会写回文本框，所以下次上传若默认合并，就会把上一次的稿子混进这本新书
  * （用户 2026-08-05：整本书的知识卡第 1 页出的是上一次残留的内容）。
  */
 function resolveKnowledgeCardSourceText(existing: string, fileCount: number): string | undefined {
@@ -2052,8 +2052,8 @@ function resolveKnowledgeCardSourceText(existing: string, fileCount: number): st
   if (!text || fileCount <= 0) return text || undefined;
   const merge = window.confirm(
     `上方文本框已有约 ${text.length} 字文案。\n\n` +
-      `「确定」＝ 连同这段文案一起提练\n` +
-      `「取消」＝ 只提练新上传的 ${fileCount} 个文件（上方文案会被新的提练稿替换）`,
+      `「确定」＝ 连同这段文案一起提炼\n` +
+      `「取消」＝ 只提炼新上传的 ${fileCount} 个文件（上方文案会被新的提炼稿替换）`,
   );
   return merge ? text : undefined;
 }
@@ -2112,7 +2112,7 @@ export default function PlatformPage() {
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
 
   /**
-   * 图文知识卡提练三档（精细 / 均衡 / 轻量）：用户 2026-08-05 明文开放给所有登录用户自选，
+   * 图文知识卡提炼三档（精细 / 均衡 / 轻量）：用户 2026-08-05 明文开放给所有登录用户自选，
    * 不再只对 supervisor 可见（页费按档位不同，见 KNOWLEDGE_CARD_DISTILL_MODEL_OPTIONS）。
    */
   const canChooseKnowledgeCardDistillModel = Boolean(isAuthenticated);
@@ -2270,12 +2270,12 @@ export default function PlatformPage() {
       return KNOWLEDGE_CARD_DISTILL_MODEL_SOL;
     }
   });
-  /** 待随「生成」一并提练的上传文件（含图片 OCR）。 */
+  /** 待随「生成」一并提炼的上传文件（含图片 OCR）。 */
   const customNotePendingFilesRef = useRef<KnowledgeCardPendingFile[]>([]);
   /** 上传区可见状态（成功/失败），避免只靠 toast */
   const [customNoteUploadStatus, setCustomNoteUploadStatus] = useState<string | null>(null);
   const [customNotePendingMeta, setCustomNotePendingMeta] = useState<Array<{ fileName: string; kind: "doc" | "image" }>>([]);
-  /** 提练完成后先展示再出图 */
+  /** 提炼完成后先展示再出图 */
   const [customNoteDistillPhase, setCustomNoteDistillPhase] = useState<"idle" | "distilling" | "ready">("idle");
   /** 用戶自選生成類型：單頁連貫圖文知識卡片 or 2×4 分鏡圖 or 深度优化文案（自定義文案專用） */
   const [customNoteKind, setCustomNoteKind] = useState<
@@ -5962,14 +5962,14 @@ export default function PlatformPage() {
     knowledgeCardCreditsForPages(customNoteKnowledgePlan.pageCount || 0, customNoteDistillModel);
 
   /**
-   * 提练：短文同步直出；长书由服务端转后台任务，这里轮询进度直到拿到稿子。
+   * 提炼：短文同步直出；长书由服务端转后台任务，这里轮询进度直到拿到稿子。
    * 上传后与「点生成时仍有待处理文件」两条路径共用，避免逻辑分叉。
    */
   const runKnowledgeCardDistill = async (args: {
     sourceText?: string;
     files?: KnowledgeCardPendingFile[];
     onStatus?: (text: string) => void;
-    /** 纯文本长文里用户主动买的提练，服务端据此收提练费 */
+    /** 纯文本长文里用户主动买的提炼，服务端据此收提炼费 */
     chargeDistillFee?: boolean;
   }): Promise<string> => {
     const queued = await prepareKnowledgeCardCopyMutation.mutateAsync({
@@ -5985,7 +5985,7 @@ export default function PlatformPage() {
     }
 
     const totalHint = Math.max(1, queued.estimatedChunks || 1);
-    args.onStatus?.(`已读出约 ${queued.sourceChars.toLocaleString()} 字，正在分 ${totalHint} 段提练…`);
+    args.onStatus?.(`已读出约 ${queued.sourceChars.toLocaleString()} 字，正在分 ${totalHint} 段提炼…`);
     const job = await pollJobUntilTerminal(queued.progressJobId, {
       intervalMs: 3000,
       maxWaitMs: 45 * 60_000,
@@ -6001,12 +6001,12 @@ export default function PlatformPage() {
         const done = Number(out.distillDoneChunks) || 0;
         args.onStatus?.(
           out.distillPhase === "refining"
-            ? `已提练 ${total} 段，正在统稿合并…`
-            : `正在分段提练…已完成 ${done}/${total} 段`,
+            ? `已提炼 ${total} 段，正在统稿合并…`
+            : `正在分段提炼…已完成 ${done}/${total} 段`,
         );
       },
     });
-    if (job.status === "failed") throw new Error(job.error || "提练失败，请稍后重试");
+    if (job.status === "failed") throw new Error(job.error || "提炼失败，请稍后重试");
     const out = (job.output || {}) as { distilledMarkdown?: string };
     return String(out.distilledMarkdown || "").trim();
   };
@@ -6076,8 +6076,8 @@ export default function PlatformPage() {
 
   const mapCustomNoteError = (error: unknown): string => {
     const message = String((error as { message?: string })?.message || "");
-    if (message.includes("文档较长") || message.includes("提练超时")) {
-      return message.includes("超时") ? message : "文档较长，提练超时，请稍后重试";
+    if (message.includes("文档较长") || message.includes("提炼超时")) {
+      return message.includes("超时") ? message : "文档较长，提炼超时，请稍后重试";
     }
     if (message.includes("算力紧张")) {
       return message;
@@ -6141,7 +6141,7 @@ export default function PlatformPage() {
         setCustomNoteImageLower(null);
         const pendingFiles = customNotePendingFilesRef.current.slice();
         let distilled = trimmed;
-        // 上传路径已提练进文本框时，生成只出图；仅当仍有待处理文件或无文案时再提练
+        // 上传路径已提炼进文本框时，生成只出图；仅当仍有待处理文件或无文案时再提炼
         if (pendingFiles.length > 0 || !distilled) {
           setCustomNoteDistillPhase("distilling");
           distilled = await runKnowledgeCardDistill({
@@ -6149,7 +6149,7 @@ export default function PlatformPage() {
             files: pendingFiles,
             onStatus: setCustomNoteUploadStatus,
           });
-          if (!distilled) throw new Error("提练结果为空，请调整文案后重试");
+          if (!distilled) throw new Error("提炼结果为空，请调整文案后重试");
           setCustomNoteText(distilled);
           customNotePendingFilesRef.current = [];
           setCustomNotePendingMeta([]);
@@ -6158,9 +6158,9 @@ export default function PlatformPage() {
           await new Promise<void>((r) => requestAnimationFrame(() => r()));
         } else if (distilled.length > KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS) {
           /**
-           * 纯文本长文：先把「提练 vs 直接出图」的账摆给用户看。
+           * 纯文本长文：先把「提炼 vs 直接出图」的账摆给用户看。
            * 一万字直接出图要 9 页 264 积分，而且超过 6 页整套降到 2K；
-           * 花提练费换成 4 页 120 积分还能保住 4K。默认劝提练，但省不回本时不打扰。
+           * 花提炼费换成 4 页 120 积分还能保住 4K。默认劝提炼，但省不回本时不打扰。
            */
           const tradeoff = estimateKnowledgeCardDistillTradeoff(
             distilled,
@@ -6175,11 +6175,11 @@ export default function PlatformPage() {
                 `这段文字约 ${distilled.length.toLocaleString()} 字。`,
                 "",
                 `直接出图：约 ${tradeoff.full.pages} 页 · ${tradeoff.full.credits} 积分 · 画质 ${tradeoff.full.is4k ? "4K" : "2K"}`,
-                `先做提练：约 ${tradeoff.distilled.pages} 页 · ${tradeoff.distilled.credits} 积分 + 提练费 ${tradeoff.distilled.distillFee} · 画质 ${tradeoff.distilled.is4k ? "4K" : "2K"}`,
+                `先做提炼：约 ${tradeoff.distilled.pages} 页 · ${tradeoff.distilled.credits} 积分 + 提炼费 ${tradeoff.distilled.distillFee} · 画质 ${tradeoff.distilled.is4k ? "4K" : "2K"}`,
                 "",
-                `提练可省约 ${tradeoff.saved} 积分${tradeoff.distilled.is4k && !tradeoff.full.is4k ? "，画质还更高（超过 6 页会整套降到 2K）" : ""}。`,
+                `提炼可省约 ${tradeoff.saved} 积分${tradeoff.distilled.is4k && !tradeoff.full.is4k ? "，画质还更高（超过 6 页会整套降到 2K）" : ""}。`,
                 "",
-                "点「确定」先提练（推荐），点「取消」按原文全量出图。",
+                "点「确定」先提炼（推荐），点「取消」按原文全量出图。",
               ].join("\n"),
             );
             setCustomNoteBusy(true);
@@ -6190,7 +6190,7 @@ export default function PlatformPage() {
                 onStatus: setCustomNoteUploadStatus,
                 chargeDistillFee: true,
               });
-              if (!refined) throw new Error("提练结果为空，请调整文案后重试");
+              if (!refined) throw new Error("提炼结果为空，请调整文案后重试");
               distilled = refined;
               setCustomNoteText(refined);
               setCustomNoteUploadStatus(null);
@@ -6207,10 +6207,10 @@ export default function PlatformPage() {
         const credits = plan.credits || knowledgeCardCreditsForPages(total, customNoteDistillModel);
         setCustomNoteBusy(false);
         const continueGen = window.confirm(
-          `约 ${total} 页图文笔记（出图 ${qLabel}，约 ${credits} 积分）。\n\n是否继续出图？\n选「取消」将保留上方提练稿，不出图。`,
+          `约 ${total} 页图文笔记（出图 ${qLabel}，约 ${credits} 积分）。\n\n是否继续出图？\n选「取消」将保留上方提炼稿，不出图。`,
         );
         if (!continueGen) {
-          toast.success(`已保留提练稿（约 ${total} 页），未出图`);
+          toast.success(`已保留提炼稿（约 ${total} 页），未出图`);
           setCustomNoteDistillPhase("idle");
           return;
         }
@@ -10870,8 +10870,8 @@ export default function PlatformPage() {
                             {rising?.note
                               || "与总览报表数据同源：抖音/快手采集中的合集与漫剧样本单独聚合。其它种草、口播样本仍在「总览」里。"}
                             {" "}
-                            学节奏：有成片/合集链时可一点学习；无链仅展示剧名与归类。按集顺序每轮采 8–10 集（学完即删视频），累计满约 16–20
-                            集出总分析；结果立刻在本页展示，你看完再决定是否「批准进库」。
+                            学节奏：有成片/合集链时可一点学习；无链仅展示剧名与归类。按集顺序每轮采 8–10 集（学完即删视频）。学满
+                            4 集或合集全部学完即出草版总分析（约 16 集更准）；结果立刻在本页展示，你看完再决定是否「批准进库」。
                           </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
@@ -11158,15 +11158,14 @@ export default function PlatformPage() {
                             </div>
                           ) : null}
                           <p className="text-amber-100/70">
-                            进度 {manhuaLearnResult.learnedCount}/
-                            {manhuaLearnResult.analysisMin} 集（目标约{" "}
-                            {manhuaLearnResult.analysisTarget}）
+                            进度 {manhuaLearnResult.learnedCount} 集（草版满 4
+                            集或合集学完即出 · 完整版约 {manhuaLearnResult.analysisMin}）
                             {manhuaLearnResult.batchLearned > 0
                               ? ` · 本轮新增 ${manhuaLearnResult.batchLearned}`
                               : " · 云端进度"}
                             {manhuaLearnResult.analysisReady
-                              ? " · 已达分析门槛"
-                              : " · 未满门槛可继续学"}
+                              ? " · 已出分析，可批准进库"
+                              : " · 未满草版门槛可继续学"}
                           </p>
                           {manhuaLearnResult.messageZh ? (
                             <p className="text-amber-100/60">{manhuaLearnResult.messageZh}</p>
@@ -11662,7 +11661,7 @@ export default function PlatformPage() {
                   customNoteKind === "optimize_custom_copy"
                     ? "粘贴待优化的封面文案、分镜描述或完整 Markdown…（建议 100–3000 字）"
                     : customNoteKind === "single_page_knowledge_card"
-                      ? "粘贴中文正文 / Markdown，或上传文档/图片后自动提练…约 4–8 页图文笔记（页数随内容，第 9 页起八折）"
+                      ? "粘贴中文正文 / Markdown，或上传文档/图片后自动提炼…约 4–8 页图文笔记（页数随内容，第 9 页起八折）"
                       : "输入中文文案或分镜脚本，系统自动翻译并生成 2×4 编导分镜图…（建议 100–800 字）"
                 }
                 value={customNoteText}
@@ -11722,7 +11721,7 @@ export default function PlatformPage() {
                               });
                             }
                             setCustomNoteUploadStatus(null);
-                            // 生成按钮依赖文本框非空：上传后立刻 OCR+提练写入文本框，否则无法点生成
+                            // 生成按钮依赖文本框非空：上传后立刻 OCR+提炼写入文本框，否则无法点生成
                             const allPending = [...customNotePendingFilesRef.current, ...encoded];
                             customNotePendingFilesRef.current = allPending;
                             const docs = allPending.filter(
@@ -11743,9 +11742,9 @@ export default function PlatformPage() {
                             );
                             setCustomNoteDistillPhase("distilling");
                             setCustomNoteUploadStatus(
-                              "上传成功，正在读文/读图并提练写入文本框（长文档会自动分段，可能需数分钟）…",
+                              "上传成功，正在读文/读图并提炼写入文本框（长文档会自动分段，可能需数分钟）…",
                             );
-                            toast.message("正在提练（长文档较久），完成后会写入上方文本框…");
+                            toast.message("正在提炼（长文档较久），完成后会写入上方文本框…");
                             const distilled = await runKnowledgeCardDistill({
                               sourceText: resolveKnowledgeCardSourceText(
                                 customNoteText,
@@ -11755,7 +11754,7 @@ export default function PlatformPage() {
                               onStatus: setCustomNoteUploadStatus,
                             });
                             if (!distilled) {
-                              throw new Error("提练结果为空，请换文件或改用可选中文字的 PDF / 关键页图片");
+                              throw new Error("提炼结果为空，请换文件或改用可选中文字的 PDF / 关键页图片");
                             }
                             setCustomNoteText(distilled);
                             customNotePendingFilesRef.current = [];
@@ -11765,7 +11764,7 @@ export default function PlatformPage() {
                             const pages = Math.max(1, plan.pageCount || 1);
                             const credits =
                               plan.credits || knowledgeCardCreditsForPages(pages, customNoteDistillModel);
-                            const okMsg = `提练完成：已写入文本框 · 约 ${pages} 页 · 约 ${credits} 积分（可点生成出图）`;
+                            const okMsg = `提炼完成：已写入文本框 · 约 ${pages} 页 · 约 ${credits} 积分（可点生成出图）`;
                             setCustomNoteUploadStatus(okMsg);
                             toast.success(okMsg);
                           } catch (err) {
@@ -11773,14 +11772,14 @@ export default function PlatformPage() {
                             // 失败必须清掉待处理文件：否则用户再传一次会把同一本书叠上去（曾出现 9.5 万 → 28 万字）
                             customNotePendingFilesRef.current = [];
                             setCustomNotePendingMeta([]);
-                            const rawFail = String((err as { message?: string })?.message || "读取/提练失败");
+                            const rawFail = String((err as { message?: string })?.message || "读取/提炼失败");
                             const failMsg = sanitizePlatformUserMessage(
                               mapCustomNoteError(err),
                               /超时|较长/.test(rawFail)
-                                ? "文档较长，提练超时，请稍后重试"
+                                ? "文档较长，提炼超时，请稍后重试"
                                 : "算力紧张或请求超时，请稍后重试",
                             );
-                            setCustomNoteUploadStatus(`上传或提练失败：${failMsg}（请重新上传，勿在失败态叠加）`);
+                            setCustomNoteUploadStatus(`上传或提炼失败：${failMsg}（请重新上传，勿在失败态叠加）`);
                             toast.error(failMsg);
                           } finally {
                             setCustomNoteUploadBusy(false);
@@ -11790,7 +11789,7 @@ export default function PlatformPage() {
                     />
                   </label>
                   <span className="text-[11px] text-[#c9c0e6]/45">
-                    上传后自动读文/读图提练并写入上方文本框；确认后点生成出图
+                    上传后自动读文/读图提炼并写入上方文本框；确认后点生成出图
                   </span>
                   {customNoteUploadStatus ? (
                     <span className={`w-full text-[11px] leading-5 ${customNoteUploadStatus.startsWith("上传失败") || customNoteUploadStatus.includes("未探测") || customNoteUploadStatus.includes("未抽出") ? "text-rose-300/90" : "text-emerald-300/85"}`}>
@@ -11805,14 +11804,14 @@ export default function PlatformPage() {
                     </span>
                   ) : null}
                   {customNoteDistillPhase === "distilling" ? (
-                    <span className="w-full text-[11px] text-amber-200/85">正在提练，完成后会写入上方文本框再出图…</span>
+                    <span className="w-full text-[11px] text-amber-200/85">正在提炼，完成后会写入上方文本框再出图…</span>
                   ) : null}
                   {customNoteDistillPhase === "ready" ? (
-                    <span className="w-full text-[11px] text-emerald-300/85">提练稿已写入文本框；确认后将按页出图…</span>
+                    <span className="w-full text-[11px] text-emerald-300/85">提炼稿已写入文本框；确认后将按页出图…</span>
                   ) : null}
                   {canChooseKnowledgeCardDistillModel ? (
                     <label className="inline-flex items-center gap-1.5 text-[11px] text-[#c9c0e6]/70">
-                      <span className="shrink-0">提练档位</span>
+                      <span className="shrink-0">提炼档位</span>
                       <select
                         className="rounded-md border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-semibold text-white focus:border-[#ff4fb8]/50 focus:outline-none"
                         value={customNoteDistillModel}
@@ -11836,7 +11835,7 @@ export default function PlatformPage() {
                     </label>
                   ) : null}
                   <span className="text-[11px] text-[#c9c0e6]/45">
-                    支持 pptx / docx / pdf / png / jpg；提练费用含在页费中
+                    支持 pptx / docx / pdf / png / jpg；提炼费用含在页费中
                   </span>
                 </div>
               ) : null}
@@ -11868,7 +11867,7 @@ export default function PlatformPage() {
                   }`}
                 >
                   {customNoteBusy || customNoteUploadBusy || customNoteDistillPhase === "distilling" ? (
-                    <><Loader2 className="h-4 w-4 animate-spin" />{customNoteKind === "optimize_custom_copy" ? "优化中…" : customNoteDistillPhase === "distilling" || customNoteUploadBusy ? "提练中…" : "生成中…"}</>
+                    <><Loader2 className="h-4 w-4 animate-spin" />{customNoteKind === "optimize_custom_copy" ? "优化中…" : customNoteDistillPhase === "distilling" || customNoteUploadBusy ? "提炼中…" : "生成中…"}</>
                   ) : customNoteKind === "optimize_custom_copy" ? (
                     <><Sparkles className="h-4 w-4" />深度优化文案（{customOptimizeCopyCost} 积分）</>
                   ) : customNoteKind === "single_page_knowledge_card" ? (
@@ -11933,7 +11932,7 @@ export default function PlatformPage() {
                     : customNotePageProgress
                       ? `正在生成第 ${customNotePageProgress.i}/${customNotePageProgress.n} 页，请勿关闭页面…`
                       : prepareKnowledgeCardCopyMutation.isPending
-                        ? "正在提练文案与读图要点…"
+                        ? "正在提炼文案与读图要点…"
                         : "正在生成图片，约需数分钟，请勿关闭页面…"}
                 </div>
               )}
