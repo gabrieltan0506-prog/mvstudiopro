@@ -415,6 +415,18 @@ function stripUrbanDemoPropIds(ids: string[]): string[] {
   return (ids || []).filter((id) => !LEGACY_GHOST_DEMO_PROP_IDS.has(id));
 }
 
+/**
+ * 同一批幽灵的出演位版本：沈清辞/傅临渊两个都市种子会借「恢复/推荐」写回
+ * 女主/男主位。穿越剧（如雁门：现代修复馆开场）会被赛道检测判成 urban，
+ * 挂 lane 的守卫全体失效——所以这两个 id 在任何自动路径一律清空，
+ * 只允许用户在角色库里显式点选。
+ */
+const LEGACY_GHOST_URBAN_LEAD_IDS = new Set(["char_f_01", "char_m_02"]);
+function stripGhostUrbanLeadId(id: string | undefined | null): string {
+  const v = String(id || "").trim();
+  return LEGACY_GHOST_URBAN_LEAD_IDS.has(v) ? "" : v;
+}
+
 function manhuaAssetSelectionScopeKey(
   topic: string,
   canon: Parameters<typeof fingerprintManhuaWriterAssetCanon>[0],
@@ -560,11 +572,11 @@ export default function OmniCanvas() {
     Boolean(bootManual?.scene || (bootCast?.sceneId && initialWriterSession?.writerConfirmed)),
   );
   const bootUrbanIds = bootCast?.lane === "urban" ? bootCast.characterIds : [];
-  const [factoryFemaleId, setFactoryFemaleId] = useState(
-    () => bootUrbanIds[0] || initialFactoryPrefs.femaleId || "",
+  const [factoryFemaleId, setFactoryFemaleId] = useState(() =>
+    stripGhostUrbanLeadId(bootUrbanIds[0] || initialFactoryPrefs.femaleId),
   );
-  const [factoryMaleId, setFactoryMaleId] = useState(
-    () => bootUrbanIds[1] || initialFactoryPrefs.maleId || "",
+  const [factoryMaleId, setFactoryMaleId] = useState(() =>
+    stripGhostUrbanLeadId(bootUrbanIds[1] || initialFactoryPrefs.maleId),
   );
   /** 用户手选后不再被题材自动覆盖（4.B） */
   const [femaleLeadManual, setFemaleLeadManual] = useState(() =>
@@ -1166,8 +1178,10 @@ export default function OmniCanvas() {
     if (castBundle.lane === "ancient") {
       if (!ancientManual) setFactoryAncientArchetypeIds(castBundle.ancientArchetypeIds);
     } else {
-      if (!femaleLeadManual && castBundle.femaleId) setFactoryFemaleId(castBundle.femaleId);
-      if (!maleLeadManual && castBundle.maleId) setFactoryMaleId(castBundle.maleId);
+      const recFemale = stripGhostUrbanLeadId(castBundle.femaleId);
+      const recMale = stripGhostUrbanLeadId(castBundle.maleId);
+      if (!femaleLeadManual && recFemale) setFactoryFemaleId(recFemale);
+      if (!maleLeadManual && recMale) setFactoryMaleId(recMale);
       if (!ancientManual) setFactoryAncientArchetypeIds([]);
     }
     if (!wardrobeManual) {
@@ -1227,14 +1241,14 @@ export default function OmniCanvas() {
           lane: "ancient" as const,
         };
       }
-      const femaleId = femaleLeadManual ? factoryFemaleId : bundle.femaleId;
-      const maleId = maleLeadManual ? factoryMaleId : bundle.maleId;
+      const femaleId = stripGhostUrbanLeadId(femaleLeadManual ? factoryFemaleId : bundle.femaleId);
+      const maleId = stripGhostUrbanLeadId(maleLeadManual ? factoryMaleId : bundle.maleId);
       const propIds = stripUrbanDemoPropIds(propManual ? factoryPropIds : bundle.propIds);
       const wardrobeId = wardrobeManual
         ? factoryWardrobeId
         : bundle.wardrobePropContinuityIds[0] || "";
-      if (!femaleLeadManual && bundle.femaleId) setFactoryFemaleId(bundle.femaleId);
-      if (!maleLeadManual && bundle.maleId) setFactoryMaleId(bundle.maleId);
+      if (!femaleLeadManual && femaleId) setFactoryFemaleId(femaleId);
+      if (!maleLeadManual && maleId) setFactoryMaleId(maleId);
       if (!ancientManual) setFactoryAncientArchetypeIds([]);
       if (!propManual) setFactoryPropIds(propIds);
       if (!wardrobeManual) setFactoryWardrobeId(wardrobeId);
@@ -1547,8 +1561,8 @@ export default function OmniCanvas() {
     const restoredCastLane = session.projectBible?.cast?.lane;
     const restoreUrbanLeads = restoredCastLane !== "ancient";
     if (restoreUrbanLeads) {
-      if (typeof prefs.femaleId === "string") setFactoryFemaleId(prefs.femaleId);
-      if (typeof prefs.maleId === "string") setFactoryMaleId(prefs.maleId);
+      if (typeof prefs.femaleId === "string") setFactoryFemaleId(stripGhostUrbanLeadId(prefs.femaleId));
+      if (typeof prefs.maleId === "string") setFactoryMaleId(stripGhostUrbanLeadId(prefs.maleId));
     } else {
       // 不能只“跳过恢复”：当前 React state 可能仍是启动时从旧 LS 读出的都市种子。
       setFactoryFemaleId("");
@@ -1582,8 +1596,10 @@ export default function OmniCanvas() {
         setFactoryWardrobeId(cast.wardrobePropContinuityIds[0]);
       }
       if (cast.lane === "urban" && cast.characterIds?.length) {
-        if (cast.characterIds[0]) setFactoryFemaleId(cast.characterIds[0]);
-        if (cast.characterIds[1]) setFactoryMaleId(cast.characterIds[1]);
+        const restoredFemale = stripGhostUrbanLeadId(cast.characterIds[0]);
+        const restoredMale = stripGhostUrbanLeadId(cast.characterIds[1]);
+        if (restoredFemale) setFactoryFemaleId(restoredFemale);
+        if (restoredMale) setFactoryMaleId(restoredMale);
       }
       if (cast.artStyleId) setFactoryArtStyleId(cast.artStyleId as ManhuaArtStyleId);
     }
