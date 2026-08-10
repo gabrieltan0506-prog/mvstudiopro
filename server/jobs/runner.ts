@@ -404,11 +404,13 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     if (typeof params.fileUrl === "string" && params.fileUrl.trim()) {
       let allowed = false;
       try {
+        const { getGcsBucketName } = await import("../services/gcs.js");
         const u = new URL(String(params.fileUrl));
+        // 前缀校验（第七轮 P1·3）：includes 会放过「任意外部桶但路径里带 /uploads/u<id>/」
         allowed =
           u.protocol === "https:" &&
           u.hostname === "storage.googleapis.com" &&
-          u.pathname.includes(`/uploads/u${numericUserId}/`);
+          u.pathname.startsWith(`/${getGcsBucketName()}/uploads/u${numericUserId}/`);
       } catch {
         allowed = false;
       }

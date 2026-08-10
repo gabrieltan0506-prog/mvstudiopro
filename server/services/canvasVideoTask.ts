@@ -461,7 +461,14 @@ async function succeedTask(
   task.finishedAt = new Date().toISOString();
   task.error = undefined;
   await writeTask(task);
-  await unregisterActiveJob(task.taskId, TASK_TYPE, "settled").catch(() => {});
+  try {
+    await unregisterActiveJob(task.taskId, TASK_TYPE, "settled");
+  } catch (e) {
+    // 结算失败不许静默吞：转 settlement_pending 持久态，reaper 只补结算不退款
+    console.warn("[canvasVideoTask] settle 失败，转 settlement_pending", task.taskId, e);
+    const { markSettlementPending } = await import("./paidJobLedger.js");
+    await markSettlementPending(task.taskId, TASK_TYPE);
+  }
   return task;
 }
 

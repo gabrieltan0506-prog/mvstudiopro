@@ -81,7 +81,13 @@ export type PaidTaskType =
   | "vipMonthly"
   | string;
 
-export type PaidJobStatus = "active" | "refund_pending" | "settled" | "refunded";
+export type PaidJobStatus =
+  | "active"
+  | "refund_pending"
+  /** 业务已成功但 settle 写盘失败：只能继续结算，绝不退款（第七轮 P0·5） */
+  | "settlement_pending"
+  | "settled"
+  | "refunded";
 
 /** 扣分来源快照（deductCreditsAmount 的返回摘要）。退分按同源退回，避免「团队扣款、个人收退」。 */
 export interface PaidJobDeductSnapshot {
@@ -286,8 +292,8 @@ export async function unregisterActiveJob(
   const file = holdFilePath(dir, taskType, jobId);
   const hold = await readHoldFile(file);
   if (!hold) return { ok: false };
-  if (hold.status !== "active") {
-    // 已经 settled / refunded 就是 no-op
+  // settlement_pending = 业务已成功只欠结算，允许补 settle；其余非 active 状态 no-op
+  if (hold.status !== "active" && hold.status !== "settlement_pending") {
     return { ok: true };
   }
   hold.status = mode;
@@ -297,6 +303,35 @@ export async function unregisterActiveJob(
     `[paidJobLedger] ✓ settled taskType=${taskType} jobId=${jobId} userId=${hold.userId} credits=${hold.creditsBilled}`,
   );
   return { ok: true };
+}
+
+/**
+ * 业务已成功但 unregisterActiveJob（settle）失败时调用：把 hold 落成
+ * settlement_pending——reaper 只会继续结算它，绝不退款（防成功单被误退）。
+ */
+export async function markSettlementPending(
+  jobId: string,
+  taskType: PaidTaskType,
+): Promise<boolean> {
+  try {
+    const dir = await getLedgerDir();
+    const file = holdFilePath(dir, taskType, jobId);
+    const hold = await readHoldFile(file);
+    if (!hold) return false;
+    if (hold.status === "settled" || hold.status === "refunded") return true;
+    hold.status = "settlement_pending";
+    await writeHoldFile(file, hold);
+    console.warn(
+      `[paidJobLedger] ⏳ settlement_pending taskType=${taskType} jobId=${jobId}（业务已成功，等补结算）`,
+    );
+    return true;
+  } catch (e) {
+    console.error(
+      `[CRITICAL][paidJobLedger] settlement_pending 也写不进：成功单可能被误退，需人工处理 ${taskType}/${jobId}`,
+      e,
+    );
+    return false;
+  }
 }
 
 // ── 查询 / 列表 ──────────────────────────────────────────────────────────────
@@ -403,6 +438,14 @@ export function refundMarkerFor(taskType: PaidTaskType, jobId: string): string {
 }
 
 /**
+ * 退款 DB 认领键唯一入口（第七轮 P0·1）：账本退款与业务侧兜底直退必须用同一把键，
+ * 否则「账本已打款、hold 写盘失败、外层再直退」会因键不同名而双退。
+ */
+export function canonicalRefundKey(taskType: PaidTaskType, jobId: string): string {
+  return `refund:${refundMarkerFor(taskType, jobId)}`.slice(0, 120);
+}
+
+/**
  * 查真账：这笔退分是否已经写进 DB。个人退分落 creditTransactions.description，
  * 团队退分落 stripeUsageLogs.description，两处都查。
  * 返回 null 表示 DB 不可用（判断不了，调用方应保持 refund_pending 下轮再试）。
@@ -440,7 +483,7 @@ async function executeLedgerRefund(hold: PaidJobHold, reasonText: string): Promi
   if (!Number.isFinite(userIdNum)) {
     throw new Error(`invalid userId in hold: ${String(hold.userId)}`);
   }
-  const refundKey = `refund:${refundMarkerFor(hold.taskType, hold.jobId)}`.slice(0, 120);
+  const refundKey = canonicalRefundKey(hold.taskType, hold.jobId);
   const d = hold.deduct;
   if (d?.source === "team" && d.teamId != null && d.teamMemberId != null) {
     const { refundCreditsForDeductAmount } = await import("../credits");
@@ -739,7 +782,7 @@ export async function reapStuckPaidJobs(opts?: {
 }): Promise<ReapResult> {
   const staleMs = opts?.staleMs ?? 5 * 60 * 1000;
   const reasonForStale: PaidJobRefundReason = opts?.reason ?? "process_crashed";
-  const all = await listHoldsByStatus(["active", "refund_pending"]);
+  const all = await listHoldsByStatus(["active", "refund_pending", "settlement_pending"]);
   const now = Date.now();
   let refunded = 0;
   let errors = 0;
@@ -755,6 +798,14 @@ export async function reapStuckPaidJobs(opts?: {
       const lastBeat = new Date(hold.lastHeartbeatAt).getTime();
       const lag = now - lastBeat;
       const force = opts?.forceAll === true;
+
+      // 业务已成功、只欠结算的：补 settle，绝不退款（第七轮 P0·5）
+      if (hold.status === "settlement_pending") {
+        await unregisterActiveJob(hold.jobId, hold.taskType, "settled").catch((e) =>
+          console.warn(`[paidJobLedger] settlement_pending 补结算失败，下轮再试 ${hold.jobId}`, e),
+        );
+        continue;
+      }
 
       // 上一次退分中途崩过的：每轮 reaper 都对账补偿（与心跳/force 无关）
       if (hold.status === "refund_pending") {

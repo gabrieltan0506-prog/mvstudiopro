@@ -1205,10 +1205,12 @@ async function chargeCanvasVideoCredits(
 }
 
 /**
- * 成片任务「已扣费、创建失败」的统一退款：注册一条 hold 再走账本退分，
- * 从而免费获得两阶段退分（refund_pending 对账、refundKey 真账查重、
- * 团队扣款按 deduct 同源退回）。直接调 refundCredits 的老写法会把团队扣款
- * 退进个人余额，且失败即静默丢单。
+ * 成片任务「已扣费、创建失败」的统一退款（第七轮 P0·1 重写）。
+ * 两段独立处理，禁止一个大 catch：
+ *   1) 注册 hold 失败（hold 明确不存在）→ 允许按 deduct 同源直退，
+ *      退款认领键 = canonicalRefundKey（与账本同一把）——即使注册"写成功但返回异常"，
+ *      之后 reaper 对同一 hold 退款也因同键 DB 唯一认领只会到账一次；
+ *   2) hold 已注册、账本退款失败 → 绝不直退，保持 active/refund_pending 交给 reaper 对账。
  * chargeKey 存在时 jobId 稳定：重试复用旧扣费又失败，不会重复退。
  */
 async function refundCanvasChargeOnCreateFail(
@@ -1219,14 +1221,42 @@ async function refundCanvasChargeOnCreateFail(
   if (!(charged.credits > 0)) return "skipped";
   const d = charged.deduct;
   if (d?.source === "admin" || d?.source === "none") return "skipped";
+
+  const { registerActiveJob, refundCreditsOnFailure, refundMarkerFor, canonicalRefundKey } =
+    await import("../server/services/paidJobLedger.js");
+  const { createHash } = await import("node:crypto");
+  const jobId = charged.chargeKey
+    ? `cf_${createHash("sha256").update(charged.chargeKey).digest("hex").slice(0, 24)}`
+    : `cf_${Date.now().toString(36)}_${createHash("sha256").update(`${label}:${Math.random()}`).digest("hex").slice(0, 12)}`;
+  const marker = refundMarkerFor("canvasVideoCreateFail", jobId);
+  const refundKey = canonicalRefundKey("canvasVideoCreateFail", jobId);
+  const reason = `${label}·${reasonSuffix} ${marker}`;
+
+  // 同源直退（个人/团队都走同一把 canonical 认领键）
+  const refundDirectSameSource = async (): Promise<void> => {
+    const { refundCredits, refundCreditsForDeductAmount } = await import("../server/credits.js");
+    if (d?.source === "team" && d.teamId != null && d.teamMemberId != null) {
+      await refundCreditsForDeductAmount(
+        charged.userId,
+        reason,
+        {
+          success: true,
+          cost: charged.credits,
+          remainingBalance: -1,
+          source: "team",
+          teamId: d.teamId,
+          teamMemberId: d.teamMemberId,
+        } as Awaited<ReturnType<typeof import("../server/credits.js")["deductCreditsAmount"]>>,
+        label,
+        { refundKey },
+      );
+      return;
+    }
+    await refundCredits(charged.userId, charged.credits, reason, { refundKey });
+  };
+
+  // 第一段：只管注册 hold
   try {
-    const { registerActiveJob, refundCreditsOnFailure } = await import(
-      "../server/services/paidJobLedger.js"
-    );
-    const { createHash } = await import("node:crypto");
-    const jobId = charged.chargeKey
-      ? `cf_${createHash("sha256").update(charged.chargeKey).digest("hex").slice(0, 24)}`
-      : `cf_${Date.now().toString(36)}_${createHash("sha256").update(`${label}:${Math.random()}`).digest("hex").slice(0, 12)}`;
     await registerActiveJob({
       jobId,
       taskType: "canvasVideoCreateFail",
@@ -1235,53 +1265,33 @@ async function refundCanvasChargeOnCreateFail(
       action: `${label}·${reasonSuffix}`.slice(0, 80),
       deduct: d,
     });
+  } catch (registerError) {
+    console.error(`[canvasVideo] create-fail hold 注册失败，转同源直退 label=${label}`, registerError);
+    try {
+      await refundDirectSameSource();
+      return "refunded";
+    } catch (directError) {
+      console.error(`[canvasVideo] create-fail 直退也失败（需人工对账）label=${label}`, directError);
+      return "failed";
+    }
+  }
+
+  // 第二段：账本两阶段退款；失败绝不直退（hold 已在，reaper 会对账补偿）
+  try {
     const out = await refundCreditsOnFailure(
       jobId,
       "canvasVideoCreateFail",
       "task_failed",
       `${label}·${reasonSuffix}`,
     );
-    if (!out.refunded && out.status !== "refunded" && out.status !== "settled") {
-      console.error(
-        `[canvasVideo] create-fail 退分未完成（status=${out.status}，等 reaper 对账）jobId=${jobId}`,
-      );
-      return "pending";
-    }
-    return "refunded";
-  } catch (error) {
-    // 账本自身故障（hold 卷写不进等）不能造成永久漏退：
-    // 直接按 deduct 同源退，refundKey 在 DB 层做唯一认领，重复调用不双退
-    console.error(`[canvasVideo] create-fail 账本退款异常，转直退 label=${label}`, error);
-    try {
-      const { refundCredits, refundCreditsForDeductAmount } = await import("../server/credits.js");
-      const { createHash } = await import("node:crypto");
-      const directKey = charged.chargeKey
-        ? `cfd_${createHash("sha256").update(charged.chargeKey).digest("hex").slice(0, 24)}`
-        : undefined;
-      const reason = `${label}·${reasonSuffix}（账本不可用直退）`;
-      if (d?.source === "team" && d.teamId != null && d.teamMemberId != null) {
-        await refundCreditsForDeductAmount(
-          charged.userId,
-          reason,
-          {
-            success: true,
-            cost: charged.credits,
-            remainingBalance: -1,
-            source: "team",
-            teamId: d.teamId,
-            teamMemberId: d.teamMemberId,
-          } as Awaited<ReturnType<typeof import("../server/credits.js")["deductCreditsAmount"]>>,
-          label,
-          { refundKey: directKey },
-        );
-      } else {
-        await refundCredits(charged.userId, charged.credits, reason, { refundKey: directKey });
-      }
-      return "refunded";
-    } catch (directError) {
-      console.error(`[canvasVideo] create-fail 直退也失败（需人工对账）label=${label}`, directError);
-      return "failed";
-    }
+    if (out.refunded || out.status === "refunded" || out.status === "settled") return "refunded";
+    return "pending";
+  } catch (ledgerError) {
+    console.error(
+      `[canvasVideo] create-fail 账本退款未完成（hold 已注册，等 reaper 对账）jobId=${jobId}`,
+      ledgerError,
+    );
+    return "pending";
   }
 }
 
@@ -1300,14 +1310,19 @@ async function chargeCanvasVideoAndRun<T>(
     if (charged.credits > 0) {
       const refundOutcome = await refundCanvasChargeOnCreateFail(charged, opts.label, "生成失败退回");
       refundFailed = refundOutcome === "failed";
+      if (opts.pricingMode === "homePhotoAnimate") {
+        if (refundFailed) {
+          throw new Error("照片动画生成失败；积分退款处理异常，请联系客服核对");
+        }
+        if (refundOutcome === "pending") {
+          throw new Error("照片动画生成失败，退款处理中，将自动补退");
+        }
+        if (charged.credits > 0) {
+          throw new Error("照片动画生成失败，积分已自动退回");
+        }
+      }
     }
     if (opts.pricingMode === "homePhotoAnimate") {
-      if (refundFailed) {
-        throw new Error("照片动画生成失败；积分退款处理异常，请联系客服核对");
-      }
-      if (charged.credits > 0) {
-        throw new Error("照片动画生成失败，积分已自动退回");
-      }
       throw new Error("照片动画生成失败，请稍后重试");
     }
     throw err;
@@ -1551,7 +1566,12 @@ async function runSeedance25EvolinkJob(
     } catch (error: any) {
       const refundOutcome = await refundCanvasChargeOnCreateFail(charged, label);
       if (error instanceof Error && refundOutcome !== "skipped") {
-        error.message += refundOutcome === "failed" ? "（退款受阻已记录，将自动补退）" : "（费用已退回）";
+        error.message +=
+              refundOutcome === "refunded"
+                ? "（费用已退回）"
+                : refundOutcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
       }
       throw error;
     }
@@ -4057,7 +4077,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             { userId: viewer.userId, credits: charged, deduct, chargeKey: marker },
             label,
           );
-          refundNote = outcome === "failed" ? "（退款受阻已记录，将自动补退）" : "（费用已退回）";
+          refundNote =
+            outcome === "refunded"
+              ? "（费用已退回）"
+              : outcome === "pending"
+                ? "（退款处理中，将自动补退）"
+                : "（退款受阻已记录，需人工对账）";
         }
         return res.status(502).json({
           ok: false,
@@ -4162,7 +4187,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         } catch (error: any) {
           const refundOutcome = await refundCanvasChargeOnCreateFail(charged, label);
           if (error instanceof Error && refundOutcome !== "skipped") {
-            error.message += refundOutcome === "failed" ? "（退款受阻已记录，将自动补退）" : "（费用已退回）";
+            error.message +=
+              refundOutcome === "refunded"
+                ? "（费用已退回）"
+                : refundOutcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
           }
           throw error;
         }
@@ -4249,7 +4279,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         } catch (error: any) {
           const refundOutcome = await refundCanvasChargeOnCreateFail(charged, label);
           if (error instanceof Error && refundOutcome !== "skipped") {
-            error.message += refundOutcome === "failed" ? "（退款受阻已记录，将自动补退）" : "（费用已退回）";
+            error.message +=
+              refundOutcome === "refunded"
+                ? "（费用已退回）"
+                : refundOutcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
           }
           throw error;
         }
@@ -4349,6 +4384,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             "../server/services/homePhotoAnimateTask.js"
           );
           const task = await createHomePhotoAnimateTask({
+            deduct: hpaDeduct,
             userId: viewer.userId,
             creditsCharged,
             imageUrl,
@@ -4376,7 +4412,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             "首页照片人物动起来",
           );
           if (error instanceof Error && outcome !== "skipped") {
-            error.message += outcome === "failed" ? "（退款受阻已记录，将自动补退）" : "（费用已退回）";
+            error.message +=
+              outcome === "refunded"
+                ? "（费用已退回）"
+                : outcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
           }
           throw error;
         }
@@ -4499,6 +4540,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             "../server/services/homePhotoUpscaleTask.js"
           );
           const task = await createHomePhotoUpscaleTask({
+            deduct: hpuDeduct,
             userId: viewer.userId,
             creditsCharged,
             imageUrl,
@@ -4524,7 +4566,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             "首页照片高清放大",
           );
           if (error instanceof Error && outcome !== "skipped") {
-            error.message += outcome === "failed" ? "（退款受阻已记录，将自动补退）" : "（费用已退回）";
+            error.message +=
+              outcome === "refunded"
+                ? "（费用已退回）"
+                : outcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
           }
           throw error;
         }
@@ -4827,7 +4874,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           } catch (error: any) {
             const refundOutcome = await refundCanvasChargeOnCreateFail(charged, label);
             if (error instanceof Error && refundOutcome !== "skipped") {
-              error.message += refundOutcome === "failed" ? "（退款受阻已记录，将自动补退）" : "（费用已退回）";
+              error.message +=
+              refundOutcome === "refunded"
+                ? "（费用已退回）"
+                : refundOutcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
             }
             throw error;
           }
@@ -4934,7 +4986,12 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         } catch (error: any) {
           const refundOutcome = await refundCanvasChargeOnCreateFail(chargedMini, label);
           if (error instanceof Error && refundOutcome !== "skipped") {
-            error.message += refundOutcome === "failed" ? "（退款受阻已记录，将自动补退）" : "（费用已退回）";
+            error.message +=
+              refundOutcome === "refunded"
+                ? "（费用已退回）"
+                : refundOutcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
           }
           throw error;
         }

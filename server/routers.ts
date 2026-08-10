@@ -3323,11 +3323,13 @@ export const appRouter = router({
         if (input.fileUrl) {
           let allowed = false;
           try {
+            const { getGcsBucketName } = await import("./services/gcs.js");
             const u = new URL(String(input.fileUrl));
+            // 前缀校验：桶名+本人目录整段匹配，includes 会放过任意外部桶
             allowed =
               u.protocol === "https:" &&
               u.hostname === "storage.googleapis.com" &&
-              u.pathname.includes(`/uploads/u${ctx.user.id}/`);
+              u.pathname.startsWith(`/${getGcsBucketName()}/uploads/u${ctx.user.id}/`);
           } catch {
             allowed = false;
           }
@@ -7497,6 +7499,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 )
               : (is3x4Grid ? CREDIT_COSTS.platformXhsDualNote3x4 : CREDIT_COSTS.platformXhsDualNote);
 
+        // 服务端操作号（第七轮 P0·5）：扣费 chargeKey 与 hold 编号共用，
+        // 扣费-账本-退款三者绑死；DB 唯一键防并发重复扣
+        const compositeOpId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
         // 审查必须修：留扣款来源快照——退款按同源退回（团队不退个人、admin 零扣不退）
         let compositeChargeReceipt: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
         if (!isAdminUser) {
@@ -7521,6 +7526,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             cost,
             "platformCompositeSheet",
             compositeDeductionNote + bulkTag,
+            { chargeKey: `platformCompositeSheet/${userId}/${compositeOpId}` },
           );
         }
 
@@ -7543,9 +7549,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         // 第五轮复审 P0·3：hold 编号必须服务端生成并绑定用户——客户端可控的
         // progressJobId 若复用旧终态（settled/refunded）编号，注册会保留终态，
         // 本次新扣款的退款/结算全部空转（漏退/错账）。
-        const compositeHoldJobId = `cs_u${userId}_${Date.now().toString(36)}_${Math.random()
-          .toString(36)
-          .slice(2, 10)}`;
+        const compositeHoldJobId = `cs_u${userId}_${compositeOpId}`;
         let compositeHoldRegistered = false;
         if (compositeChargeReceipt && compositeChargeReceipt.cost > 0) {
           try {
@@ -7627,8 +7631,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
             }
           }
+          // 三连败：落 settlement_pending 持久态——reaper 扫到只补结算不退款；
+          // 连这个态都写不进才是真危险（函数内部已打 CRITICAL）
+          const { markSettlementPending } = await import("./services/paidJobLedger.js");
+          await markSettlementPending(compositeHoldJobId, "platformCompositeSheet");
           console.error(
-            `[CRITICAL][compositeSheet] hold 结算失败三次，成功单可能被 reaper 误退，需人工处理 hold=${compositeHoldJobId}`,
+            `[compositeSheet] hold 结算三次失败，已转 settlement_pending 等 reaper 补结算 hold=${compositeHoldJobId}`,
             lastErr,
           );
         };
@@ -7816,11 +7824,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           `[2×4 接口] generatePlatformCompositeSheet 开始 (同步执行) · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)} · 本笔 ${cost} 点`,
         );
         // --- 同步執行部分 (繼續) ---
-        const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
-        appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
+        // 第七轮 P0·5：resolveWatermark 等一并纳入 try——try 外抛错会漏退款漏清心跳
         let imageUrl: string | null = null;
         const stopSyncHeartbeat = startCompositeHeartbeat();
         try {
+          const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
+          appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
           imageUrl = await generateSheet({
             kind: input.kind,
             title: input.title,

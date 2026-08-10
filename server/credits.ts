@@ -1,5 +1,5 @@
 import { eq, and, sql } from "drizzle-orm";
-import { getDb, isBillingChargeKeyIndexReady } from "./db";
+import { getDb, isBillingChargeKeyIndexReady, reverifyBillingChargeKeyIndex } from "./db";
 import {
   creditBalances,
   creditTransactions,
@@ -185,7 +185,7 @@ export async function deductCredits(
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  if (!isBillingChargeKeyIndexReady()) {
+  if (!isBillingChargeKeyIndexReady() && !(await reverifyBillingChargeKeyIndex())) {
     // 幂等索引缺失时扣费必须 fail-closed：宁可停账，不可失去并发防双扣防线
     throw new Error("计费幂等索引未就绪，扣费暂停，请稍后重试");
   }
@@ -310,7 +310,7 @@ export async function deductCreditsAmount(
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  if (!isBillingChargeKeyIndexReady()) {
+  if (!isBillingChargeKeyIndexReady() && !(await reverifyBillingChargeKeyIndex())) {
     // 同 deductCredits：索引缺失 fail-closed
     throw new Error("计费幂等索引未就绪，扣费暂停，请稍后重试");
   }
@@ -747,6 +747,10 @@ export async function refundCredits(
   if (!db) throw new Error("Database not available (refund not executed)");
 
   const refundKey = String(opts?.refundKey || "").trim().slice(0, 120) || null;
+  if (refundKey && !isBillingChargeKeyIndexReady() && !(await reverifyBillingChargeKeyIndex())) {
+    // 没有唯一索引时并发认领会全部成功——带键退款必须停，hold 保持待退等恢复
+    throw new Error("计费幂等索引未就绪，退款暂缓（hold 保持待退，恢复后自动补退）");
+  }
   await getOrCreateBalance(userId);
   // 相对更新 + 单条 SQL：绝对 SET 会覆盖并发账变（读 100 → 并发扣到 70 → SET 120 抹掉扣款）；
   // 余额、交易行、退款认领行同一条语句——认领撞唯一约束则整条回滚，一分不多退
@@ -807,6 +811,9 @@ export async function refundCreditsForDeductAmount(
 
   const act = actionForLog.slice(0, 50);
   const refundKey = String(opts?.refundKey || "").trim().slice(0, 120) || null;
+  if (refundKey && !isBillingChargeKeyIndexReady() && !(await reverifyBillingChargeKeyIndex())) {
+    throw new Error("计费幂等索引未就绪，退款暂缓（hold 保持待退，恢复后自动补退）");
+  }
 
   if (deduct.source === "personal") {
     await refundCredits(userId, cost, reason, { refundKey: refundKey || undefined });
