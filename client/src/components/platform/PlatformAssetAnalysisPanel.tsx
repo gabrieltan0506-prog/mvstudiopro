@@ -12,6 +12,7 @@ import {
   normalizeGrowthCampImageMime,
   readFileAsDataUrl,
   runGrowthCampAssetAnalysis,
+  uploadFileToSignedUrl,
   type GrowthCampAnalysisProgressUpdate,
   type GrowthCampPartialAnalysis,
   type ImagePipelineDebugState,
@@ -32,6 +33,7 @@ import type { GrowthAnalysisScores } from "@shared/growth";
 import { mergeGrowthAnalysesDeterministic } from "@shared/growth";
 import { CREDIT_COSTS, platformAssetAnalysisTotalCredits } from "@shared/plans";
 import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
+import { MANHUA_LEARN_SEGMENT_MAX_BYTES } from "@shared/manhuaLearnVideoSegments";
 import { formatAssetAnalysisForOptimize, formatShootingTechniqueBrief, type AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
 import { PlatformWorkspaceStepHint } from "@/components/platform/PlatformWorkspaceStepHint";
 import { FileText, Film, FileUp, Image as ImageIcon, Loader2, Sparkles, Trash2, X } from "lucide-react";
@@ -53,6 +55,12 @@ type PlatformAssetAnalysisPanelProps = {
     text: string,
     kind: "storyboard_sheet_landscape" | "single_page_knowledge_card",
   ) => Promise<void>;
+  /** 监管入口：复用素材分析直传，把当前视频交给 Claude 分段学习。 */
+  onLearnVideoRhythm?: (input: {
+    gcsUri: string;
+    fileName: string;
+    title: string;
+  }) => Promise<void>;
   optimizeCopyCost?: number;
   storyboardCost?: number;
   cardCost?: number;
@@ -69,6 +77,7 @@ export default function PlatformAssetAnalysisPanel({
   onDeepOptimize,
   onShootingTechniqueReady,
   onGenerateFromText,
+  onLearnVideoRhythm,
   optimizeCopyCost = CREDIT_COSTS.platformOptimizeCustomCopy,
   storyboardCost = 60,
   cardCost = 50,
@@ -98,13 +107,15 @@ export default function PlatformAssetAnalysisPanel({
   const [imagePipelineDebug, setImagePipelineDebug] = useState<ImagePipelineDebugState>({});
   const [optimizeBusy, setOptimizeBusy] = useState(false);
   const [generateBusy, setGenerateBusy] = useState(false);
+  const [learnBusy, setLearnBusy] = useState(false);
+  const [learnStatus, setLearnStatus] = useState("");
   const [partialFailure, setPartialFailure] = useState<string | null>(null);
   const [optimizedMarkdown, setOptimizedMarkdown] = useState<string | null>(null);
   const [optimizeSummary, setOptimizeSummary] = useState<string | null>(null);
 
   useEffect(() => {
-    onBusyChange?.(busy || optimizeBusy || generateBusy);
-  }, [busy, optimizeBusy, generateBusy, onBusyChange]);
+    onBusyChange?.(busy || optimizeBusy || generateBusy || learnBusy);
+  }, [busy, optimizeBusy, generateBusy, learnBusy, onBusyChange]);
 
   const getVideoUploadSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
@@ -173,6 +184,51 @@ export default function PlatformAssetAnalysisPanel({
     setImagePipelineDebug({});
   }, []);
 
+  const handleLearnVideoRhythm = useCallback(async () => {
+    const file = videoAsset?.file;
+    if (!file || !videoAsset.ready || !onLearnVideoRhythm || learnBusy) return;
+    if (file.size > MANHUA_LEARN_SEGMENT_MAX_BYTES) {
+      toast.error("手动导入单文件暂限 800MB；链接学习仍按 10 分钟分段，不受整片估算限制");
+      return;
+    }
+    setLearnBusy(true);
+    setLearnStatus("正在准备安全上传…");
+    try {
+      const signed = await getVideoUploadSignedUrlMutation.mutateAsync({
+        fileName: file.name,
+        mimeType: file.type || "application/octet-stream",
+      });
+      if (!signed.gcsUri) throw new Error("未取得视频上传地址");
+      await uploadFileToSignedUrl({
+        file,
+        uploadUrl: signed.uploadUrl,
+        headers: signed.requiredHeaders,
+        onProgress: (percent) => setLearnStatus(`正在上传学习视频 ${percent}%`),
+      });
+      setLearnStatus("上传完成，正在启动 Claude 分段学习…");
+      await onLearnVideoRhythm({
+        gcsUri: signed.gcsUri,
+        fileName: file.name,
+        title: file.name.replace(/\.[^.]+$/, "") || "手动导入视频",
+      });
+      setLearnStatus("已提交学习；进度见学节奏面板");
+    } catch (e) {
+      const msg = sanitizePlatformUserMessage(
+        e instanceof Error ? e.message : String(e),
+        "手动导入学习失败，请稍后重试",
+      );
+      setLearnStatus(msg);
+      throw e;
+    } finally {
+      setLearnBusy(false);
+    }
+  }, [
+    getVideoUploadSignedUrlMutation,
+    learnBusy,
+    onLearnVideoRhythm,
+    videoAsset,
+  ]);
+
   const ingestImages = useCallback((files: File[]) => {
     const valid = files.filter((f) => isGrowthCampImageFile(f));
     if (!valid.length) {
@@ -233,7 +289,7 @@ export default function PlatformAssetAnalysisPanel({
   }, []);
 
   const handleAnalyze = useCallback(async () => {
-    if (!allAssetsReady || busy) return;
+    if (!allAssetsReady || busy || learnBusy) return;
 
     if (!supervisorAccess) {
       try {
@@ -467,6 +523,7 @@ export default function PlatformAssetAnalysisPanel({
     context,
     getVideoUploadSignedUrlMutation,
     ipProfile,
+    learnBusy,
     personaSummary,
     supervisorAccess,
     trendPlatforms,
@@ -584,7 +641,7 @@ export default function PlatformAssetAnalysisPanel({
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={busy || disabled}
+            disabled={busy || learnBusy || disabled}
             className="inline-flex items-center gap-2 rounded-full border border-[#6ee7b7]/30 bg-[rgba(52,211,153,0.1)] px-4 py-2 text-sm font-semibold text-[#6ee7b7] transition hover:bg-[rgba(52,211,153,0.18)] disabled:opacity-50"
           >
             <FileUp className="h-4 w-4" />
@@ -593,7 +650,7 @@ export default function PlatformAssetAnalysisPanel({
           <button
             type="button"
             onClick={() => videoFileInputRef.current?.click()}
-            disabled={busy || disabled}
+            disabled={busy || learnBusy || disabled}
             className="inline-flex items-center gap-2 rounded-full border border-[#8cefff]/30 bg-[rgba(140,239,255,0.08)] px-4 py-2 text-sm font-semibold text-[#8cefff] transition hover:bg-[rgba(140,239,255,0.15)] disabled:opacity-50"
           >
             <Film className="h-4 w-4" />
@@ -656,7 +713,7 @@ export default function PlatformAssetAnalysisPanel({
                   <div className="text-[10px] text-[#8cefff]/70">{videoAsset.durationSeconds}s</div>
                 ) : null}
               </div>
-              {!busy && !disabled ? (
+              {!busy && !learnBusy && !disabled ? (
                 <button
                   type="button"
                   onClick={removeVideo}
@@ -695,7 +752,7 @@ export default function PlatformAssetAnalysisPanel({
                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-2 py-2">
                   <div className="truncate text-[10px] text-white/80">{asset.fileName}</div>
                 </div>
-                {!busy && !disabled ? (
+                {!busy && !learnBusy && !disabled ? (
                   <button
                     type="button"
                     onClick={() => removeAsset(asset.id)}
@@ -727,7 +784,7 @@ export default function PlatformAssetAnalysisPanel({
         <button
           type="button"
           onClick={() => void handleAnalyze()}
-          disabled={busy || disabled || !allAssetsReady}
+          disabled={busy || learnBusy || disabled || !allAssetsReady}
           className="inline-flex items-center gap-2 rounded-full border border-[#6ee7b7]/30 bg-[linear-gradient(135deg,#34d399,#059669)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(52,211,153,0.22)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? (
@@ -744,7 +801,22 @@ export default function PlatformAssetAnalysisPanel({
             </>
           )}
         </button>
-        {(analysis || error || assets.length > 0 || videoAsset) && !busy ? (
+        {supervisorAccess && onLearnVideoRhythm && videoAsset?.ready ? (
+          <button
+            type="button"
+            onClick={() => {
+              void handleLearnVideoRhythm().catch((e) => {
+                toast.error(e instanceof Error ? e.message : "手动导入学习失败");
+              });
+            }}
+            disabled={busy || learnBusy || disabled}
+            className="inline-flex items-center gap-2 rounded-full border border-[#8cefff]/30 bg-[linear-gradient(135deg,#0891b2,#4f46e5)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(8,145,178,0.2)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {learnBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Film className="h-4 w-4" />}
+            {learnBusy ? "Claude 学习中…" : "用 Claude 学节奏"}
+          </button>
+        ) : null}
+        {(analysis || error || assets.length > 0 || videoAsset) && !busy && !learnBusy ? (
           <button
             type="button"
             onClick={() => {
@@ -768,6 +840,10 @@ export default function PlatformAssetAnalysisPanel({
           </button>
         ) : null}
       </div>
+
+      {learnStatus ? (
+        <p className="mt-2 text-[11px] text-[#8cefff]/75">{learnStatus}</p>
+      ) : null}
 
       {showWaitPanel ? (
         <div ref={partialLiveRef}>

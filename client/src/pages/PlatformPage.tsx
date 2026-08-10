@@ -1957,6 +1957,81 @@ type KnowledgeCardPendingFile = {
   fileName?: string;
 };
 
+type ManhuaLearnSourceRow = {
+  url?: string | null;
+  gcsUri?: string | null;
+  fileName?: string | null;
+  localFileName?: string | null;
+  learnLlm?: "claude" | "gpt";
+  mixName?: string | null;
+  mixId?: string | null;
+  platform?: "douyin" | "kuaishou" | "upload" | string | null;
+};
+
+type ManhuaLearnContinuation = {
+  row: ManhuaLearnSourceRow;
+  rank: number;
+  /** 服务端真实系列 key；首次入队前可能为空，终态回写后用于防止串剧续跑。 */
+  seriesKey?: string;
+  savedAt: number;
+};
+
+const MANHUA_LEARN_CONTINUATION_LS_KEY = "mvs-manhua-learn-continuation-v1";
+
+function readManhuaLearnContinuation(): ManhuaLearnContinuation | null {
+  try {
+    const raw = window.localStorage.getItem(MANHUA_LEARN_CONTINUATION_LS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ManhuaLearnContinuation>;
+    const url = String(parsed.row?.url || "").trim();
+    const savedAt = Number(parsed.savedAt);
+    if (!/^https?:\/\//i.test(url) || !Number.isFinite(savedAt)) {
+      window.localStorage.removeItem(MANHUA_LEARN_CONTINUATION_LS_KEY);
+      return null;
+    }
+    return {
+      row: {
+        url,
+        mixName: String(parsed.row?.mixName || "").trim() || null,
+        mixId: String(parsed.row?.mixId || "").trim() || null,
+        platform: String(parsed.row?.platform || "").trim() || null,
+      },
+      rank: Math.max(0, Math.floor(Number(parsed.rank) || 0)),
+      seriesKey: String(parsed.seriesKey || "").trim() || undefined,
+      savedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeManhuaLearnContinuation(value: ManhuaLearnContinuation | null): void {
+  try {
+    const url = String(value?.row.url || "").trim();
+    // 手动上传的 gs:// 路径不持久化；刷新后需重新选择素材，避免长期留下用户素材路径。
+    if (!value || !/^https?:\/\//i.test(url)) {
+      window.localStorage.removeItem(MANHUA_LEARN_CONTINUATION_LS_KEY);
+      return;
+    }
+    window.localStorage.setItem(
+      MANHUA_LEARN_CONTINUATION_LS_KEY,
+      JSON.stringify({
+        row: {
+          url,
+          mixName: value.row.mixName || null,
+          mixId: value.row.mixId || null,
+          platform: value.row.platform || null,
+        },
+        rank: value.rank,
+        seriesKey: value.seriesKey || undefined,
+        savedAt: value.savedAt,
+      }),
+    );
+  } catch {
+    // localStorage 禁用时仍保留当前会话内的 ref，不阻断学习主链。
+  }
+}
+
 /**
  * 超过这个体积就直传 GCS。
  *
@@ -2170,6 +2245,11 @@ export default function PlatformPage() {
   );
   const [manhuaLearnPanelCollapsed, setManhuaLearnPanelCollapsed] = useState(false);
   const [manhuaLearnResult, setManhuaLearnResult] = useState<ManhuaLearnResultUi | null>(null);
+  /** 单批完成后由用户决定是否续学；同一 row/rank 复用，服务端按 GCS 检查点跳过已学集。 */
+  const manhuaLearnContinueRef = useRef<ManhuaLearnContinuation | null>(
+    readManhuaLearnContinuation(),
+  );
+  const [manhuaLearnContinueDismissedKey, setManhuaLearnContinueDismissedKey] = useState("");
   const visualReportRef = useRef<HTMLDivElement>(null);
   // Call 3 state — content blueprints and monetization
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
@@ -2580,6 +2660,22 @@ export default function PlatformPage() {
   useEffect(() => {
     const snap = manhuaLearnSnapshotQuery.data;
     if (!snap || !manhuaLearnFocusSeriesKey) return;
+    const persistedSourceUrl = String(snap.progress?.sourceUrl || "").trim();
+    if (/^https?:\/\//i.test(persistedSourceUrl)) {
+      const continuation: ManhuaLearnContinuation = {
+        row: {
+          url: persistedSourceUrl,
+          mixName: String(snap.progress?.titleHint || "").trim() || null,
+          mixId: String(snap.progress?.mixId || "").trim() || null,
+          platform: /kuaishou\.com/i.test(persistedSourceUrl) ? "kuaishou" : "douyin",
+        },
+        rank: 0,
+        seriesKey: manhuaLearnFocusSeriesKey,
+        savedAt: Date.now(),
+      };
+      manhuaLearnContinueRef.current = continuation;
+      writeManhuaLearnContinuation(continuation);
+    }
     setManhuaLearnResult((prev) => {
       // 本轮 Job / 失败态优先：勿被空 GCS 快照盖成「尚无已学分集」
       if (prev && prev.seriesKey === manhuaLearnFocusSeriesKey) {
@@ -4289,9 +4385,16 @@ export default function PlatformPage() {
     await startStage2ContentGeneration();
   }, [startStage2ContentGeneration]);
 
-  const buildManhuaLocalLearnCmd = useCallback((row: { url?: string | null; mixName?: string | null }) => {
+  const buildManhuaLocalLearnCmd = useCallback((row: ManhuaLearnSourceRow) => {
     const title = String(row.mixName || "").trim();
     const url = String(row.url || "").trim();
+    const localFileName = String(row.localFileName || "").trim();
+    if (localFileName) {
+      const command = `pnpm run manhua:template-learn -- --video ${JSON.stringify(`/完整路径/${localFileName}`)} --title ${JSON.stringify(title)}`;
+      return row.learnLlm === "claude"
+        ? `MANHUA_TEMPLATE_LEARN_LLM_PROVIDER=claude ${command}`
+        : command;
+    }
     if (url) {
       return `pnpm run manhua:template-learn -- --url ${JSON.stringify(url)} --title ${JSON.stringify(title)}`;
     }
@@ -4299,7 +4402,7 @@ export default function PlatformPage() {
   }, []);
 
   const copyManhuaLocalLearnFallback = useCallback(
-    async (row: { url?: string | null; mixName?: string | null }, reasonZh: string) => {
+    async (row: ManhuaLearnSourceRow, reasonZh: string) => {
       const learnCmd = buildManhuaLocalLearnCmd(row);
       const title = String(row.mixName || "").trim();
       const url = String(row.url || "").trim();
@@ -4333,6 +4436,15 @@ export default function PlatformPage() {
 
   const applyManhuaLearnJobOutput = useCallback((out: Record<string, unknown>) => {
     const next = manhuaLearnResultFromJobOutput(out);
+    if (manhuaLearnContinueRef.current && next.seriesKey) {
+      const continuation = {
+        ...manhuaLearnContinueRef.current,
+        seriesKey: next.seriesKey,
+        savedAt: Date.now(),
+      };
+      manhuaLearnContinueRef.current = continuation;
+      writeManhuaLearnContinuation(continuation);
+    }
     setManhuaLearnResult((prev) => {
       const mergedLines = [
         ...(prev?.progressLines || []),
@@ -4361,12 +4473,7 @@ export default function PlatformPage() {
 
   const runManhuaTemplateLearnCloud = useCallback(
     async (
-      row: {
-        url?: string | null;
-        mixName?: string | null;
-        mixId?: string | null;
-        platform?: "douyin" | "kuaishou" | string | null;
-      },
+      row: ManhuaLearnSourceRow,
       rank: number,
     ) => {
       const canOps =
@@ -4380,10 +4487,12 @@ export default function PlatformPage() {
         return;
       }
       const url = String(row.url || "").trim();
+      const gcsUri = String(row.gcsUri || "").trim();
       const title = String(row.mixName || "").trim();
-      const busyKey = String(row.mixId || url || title || rank);
+      const source = gcsUri || url;
+      const busyKey = String(row.mixId || source || title || rank);
       const isKuaishou = row.platform === "kuaishou";
-      if (!url) {
+      if (!source) {
         if (isKuaishou && title) {
           try {
             await navigator.clipboard.writeText(title);
@@ -4400,12 +4509,20 @@ export default function PlatformPage() {
         await copyManhuaLocalLearnFallback(row, "无成片链接，无法云端下片");
         return;
       }
-      if (/douyin\.com\/search\//i.test(url) || /kuaishou\.com\/search\//i.test(url)) {
+      if (url && (/douyin\.com\/search\//i.test(url) || /kuaishou\.com\/search\//i.test(url))) {
         await copyManhuaLocalLearnFallback(row, "当前是搜索页链接");
         return;
       }
+      const continuation: ManhuaLearnContinuation = {
+        row: { ...row },
+        rank,
+        savedAt: Date.now(),
+      };
+      manhuaLearnContinueRef.current = continuation;
+      writeManhuaLearnContinuation(continuation);
+      setManhuaLearnContinueDismissedKey("");
       setManhuaLearnBusyKey(busyKey);
-      const startUi = manhuaLearnResultFromStart({ channel: "cloud", url, title });
+      const startUi = manhuaLearnResultFromStart({ channel: "cloud", url: source, title });
       setManhuaLearnResult(startUi);
       setManhuaLearnPanelCollapsed(false);
       setManhuaLearnFocusSeriesKey(startUi.seriesKey);
@@ -4425,10 +4542,13 @@ export default function PlatformPage() {
             action: "manhua_template_learn",
             params: {
               url,
+              gcsUri: gcsUri || undefined,
+              fileName: String(row.fileName || "").trim() || undefined,
               title,
               mixId: String(row.mixId || "").trim() || undefined,
               rank,
               batchSize: 8,
+              learnLlm: row.learnLlm,
               supervisorToken: getSupervisorTrpcToken(),
             },
           },
@@ -11058,13 +11178,32 @@ export default function PlatformPage() {
                               ? ` · 已学完 ${manhuaLearnResult.learnedCount} 集`
                               : ""}
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => setManhuaLearnPanelCollapsed(false)}
-                            className="rounded-md border border-amber-300/35 px-2.5 py-1 text-[10px] text-amber-50 hover:bg-amber-500/20"
-                          >
-                            展开学习结果
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setManhuaLearnPanelCollapsed(false)}
+                              className="rounded-md border border-amber-300/35 px-2.5 py-1 text-[10px] text-amber-50 hover:bg-amber-500/20"
+                            >
+                              展开学习结果
+                            </button>
+                            <button
+                              type="button"
+                              disabled={Boolean(manhuaLearnBusyKey)}
+                              onClick={() => {
+                                if (!window.confirm("清空当前剧集学习入口与页面记录？已落盘的学习检查点不会删除。")) return;
+                                manhuaLearnContinueRef.current = null;
+                                writeManhuaLearnContinuation(null);
+                                setManhuaLearnResult(null);
+                                setManhuaLearnFocusSeriesKey("");
+                                writeManhuaLearnFocusSeriesKey("");
+                                setManhuaLearnContinueDismissedKey("");
+                                setManhuaLearnPanelCollapsed(false);
+                              }}
+                              className="rounded-md border border-rose-300/30 px-2.5 py-1 text-[10px] text-rose-100 hover:bg-rose-500/15 disabled:opacity-45"
+                            >
+                              清空剧集学习
+                            </button>
+                          </div>
                         </div>
                       ) : null}
 
@@ -11081,23 +11220,41 @@ export default function PlatformPage() {
                                   : "border-amber-300/25 bg-amber-500/10 text-amber-50/90"
                           }`}
                         >
-                          <div className="font-semibold">
-                            {manhuaLearnResult.liveStatus === "running" ||
-                            manhuaLearnResult.liveStatus === "queued"
-                              ? "学习进行中"
-                              : manhuaLearnResult.liveStatus === "local"
-                                ? "本机学习"
-                                : manhuaLearnResult.errorZh || manhuaLearnResult.liveStatus === "failed"
-                                  ? "学习未完成"
-                                  : "学习结果"}
-                            {manhuaLearnResult.channel === "cloud"
-                              ? " · 云端"
-                              : manhuaLearnResult.channel === "local"
-                                ? " · 本机"
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="font-semibold">
+                              {manhuaLearnResult.liveStatus === "running" ||
+                              manhuaLearnResult.liveStatus === "queued"
+                                ? "学习进行中"
+                                : manhuaLearnResult.liveStatus === "local"
+                                  ? "本机学习"
+                                  : manhuaLearnResult.errorZh || manhuaLearnResult.liveStatus === "failed"
+                                    ? "学习未完成"
+                                    : "学习结果"}
+                              {manhuaLearnResult.channel === "cloud"
+                                ? " · 云端"
+                                : manhuaLearnResult.channel === "local"
+                                  ? " · 本机"
+                                  : ""}
+                              {!manhuaLearnResult.errorZh && manhuaLearnResult.proposal?.nameZh
+                                ? ` · ${manhuaLearnResult.proposal.nameZh}`
                                 : ""}
-                            {!manhuaLearnResult.errorZh && manhuaLearnResult.proposal?.nameZh
-                              ? ` · ${manhuaLearnResult.proposal.nameZh}`
-                              : ""}
+                            </div>
+                            <button
+                              type="button"
+                              disabled={Boolean(manhuaLearnBusyKey)}
+                              onClick={() => {
+                                if (!window.confirm("清空当前剧集学习入口与页面记录？已落盘的学习检查点不会删除。")) return;
+                                manhuaLearnContinueRef.current = null;
+                                writeManhuaLearnContinuation(null);
+                                setManhuaLearnResult(null);
+                                setManhuaLearnFocusSeriesKey("");
+                                writeManhuaLearnFocusSeriesKey("");
+                                setManhuaLearnContinueDismissedKey("");
+                              }}
+                              className="shrink-0 rounded-md border border-rose-300/30 px-2 py-0.5 text-[10px] font-normal text-rose-100 hover:bg-rose-500/15 disabled:opacity-45"
+                            >
+                              清空剧集学习
+                            </button>
                           </div>
                           {manhuaLearnResult.liveLabelZh ? (
                             <p className="text-[10px] opacity-90">
@@ -11130,12 +11287,31 @@ export default function PlatformPage() {
                             <p className="text-rose-100/80">{manhuaLearnResult.errorZh}</p>
                           ) : null}
                           <div className="flex flex-wrap gap-2 text-[10px]">
-                            <span className="rounded-full border border-white/15 bg-black/25 px-2 py-0.5">
+                            <button
+                              type="button"
+                              disabled={
+                                typeof manhuaLearnResult.pendingCount !== "number"
+                                || manhuaLearnResult.pendingCount <= 0
+                                || !manhuaLearnContinueRef.current
+                                || Boolean(manhuaLearnBusyKey)
+                              }
+                              onClick={() => {
+                                const next = manhuaLearnContinueRef.current;
+                                if (!next || (manhuaLearnResult.pendingCount || 0) <= 0) return;
+                                void runManhuaTemplateLearnCloud(next.row, next.rank);
+                              }}
+                              title={
+                                (manhuaLearnResult.pendingCount || 0) > 0
+                                  ? "继续学习下一批"
+                                  : "当前没有待学习剧集"
+                              }
+                              className="rounded-full border border-white/15 bg-black/25 px-2 py-0.5 transition enabled:cursor-pointer enabled:hover:border-sky-200/50 enabled:hover:bg-sky-400/15 enabled:hover:text-sky-50 disabled:cursor-default"
+                            >
                               待学习{" "}
                               {typeof manhuaLearnResult.pendingCount === "number"
                                 ? manhuaLearnResult.pendingCount
                                 : "—"}
-                            </span>
+                            </button>
                             <span className="rounded-full border border-emerald-300/30 bg-black/25 px-2 py-0.5 text-emerald-100/85">
                               已学完 {manhuaLearnResult.learnedCount}
                             </span>
@@ -11168,6 +11344,38 @@ export default function PlatformPage() {
                               ? " · 已出分析，可批准进库"
                               : " · 未满草版门槛可继续学"}
                           </p>
+                          {manhuaLearnResult.liveStatus === "succeeded"
+                            && (manhuaLearnResult.pendingCount || 0) > 0
+                            && manhuaLearnContinueRef.current
+                            && manhuaLearnContinueDismissedKey !== manhuaLearnResult.seriesKey ? (
+                            <div className="rounded-lg border border-sky-300/25 bg-sky-500/10 px-2.5 py-2 text-sky-50/90">
+                              <p>
+                                本轮 {manhuaLearnResult.batchLearned || "已选"} 集已全部落盘，合集仍有{" "}
+                                {manhuaLearnResult.pendingCount} 集。是否继续学习下一批？
+                              </p>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  disabled={Boolean(manhuaLearnBusyKey)}
+                                  onClick={() => {
+                                    const next = manhuaLearnContinueRef.current;
+                                    if (!next) return;
+                                    void runManhuaTemplateLearnCloud(next.row, next.rank);
+                                  }}
+                                  className="rounded-md border border-sky-200/40 bg-sky-400/20 px-2.5 py-1 font-semibold text-sky-50 hover:bg-sky-400/30 disabled:opacity-45"
+                                >
+                                  继续下一批
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setManhuaLearnContinueDismissedKey(manhuaLearnResult.seriesKey)}
+                                  className="rounded-md border border-white/15 bg-black/20 px-2.5 py-1 text-white/70 hover:text-white"
+                                >
+                                  本轮先到这里
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
                           {manhuaLearnResult.messageZh ? (
                             <p className="text-amber-100/60">{manhuaLearnResult.messageZh}</p>
                           ) : null}
@@ -12445,6 +12653,19 @@ export default function PlatformPage() {
                 onDeepOptimize={handleAssetDeepOptimize}
                 onShootingTechniqueReady={(brief) => {
                   lastShootingTechniqueBriefRef.current = brief;
+                }}
+                onLearnVideoRhythm={async ({ gcsUri, fileName, title }) => {
+                  await runManhuaTemplateLearnCloud(
+                    {
+                      gcsUri,
+                      fileName,
+                      localFileName: fileName,
+                      mixName: title,
+                      platform: "upload",
+                      learnLlm: "claude",
+                    },
+                    0,
+                  );
                 }}
                 onGenerateFromText={handleAssetGenerateFromText}
                 optimizeCopyCost={customOptimizeCopyCost}

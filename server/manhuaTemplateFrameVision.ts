@@ -18,6 +18,7 @@ import {
   selectFramesForVisionAnalysis,
   type ManhuaTemplateFrameVisionInputFrame,
   type ManhuaTemplateFrameVisionResult,
+  type ManhuaTemplateLearnLlmProvider,
 } from "../shared/manhuaTemplateLearnFrameVision.js";
 import type { ManhuaViralTemplateLane } from "../shared/manhuaViralTemplateBank.js";
 
@@ -28,6 +29,8 @@ export type AnalyzeManhuaTemplateFramesInput = {
   transcriptPreview?: string;
   climaxNotes?: string[];
   fallbackLane?: ManhuaViralTemplateLane | string;
+  /** 手动导入等受控入口可显式选实验组；未传时仍读部署 env。 */
+  learnProvider?: ManhuaTemplateLearnLlmProvider;
 };
 
 async function resolveFrameDataUrl(frame: ManhuaTemplateFrameVisionInputFrame): Promise<{
@@ -123,7 +126,7 @@ export async function analyzeManhuaTemplateFramesWithTerra(
   );
   if (!selected.length) throw new Error("missing_frames");
 
-  const learnProvider = resolveManhuaTemplateLearnLlmProvider(
+  const learnProvider = input.learnProvider || resolveManhuaTemplateLearnLlmProvider(
     process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER,
   );
   const isClaude = learnProvider === "claude";

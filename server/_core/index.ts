@@ -283,6 +283,20 @@ async function startServer() {
         if (!resolvePlatformSupervisorOpsAllowed(ctx.user, supervisorToken)) {
           return res.status(403).json({ error: "学节奏为监管专用（下片+语音+读帧成本较高）" });
         }
+        const importedGcsUri = String((input as any)?.params?.gcsUri || "").trim();
+        if (importedGcsUri) {
+          const [{ getGcsBucketName }, { isOwnedManhuaLearnImportGcsUri }] = await Promise.all([
+            import("../services/gcs"),
+            import("../../shared/manhuaLearnVideoSegments.js"),
+          ]);
+          if (!isOwnedManhuaLearnImportGcsUri({
+            gcsUri: importedGcsUri,
+            bucket: getGcsBucketName(),
+            userId: ctx.user.id,
+          })) {
+            return res.status(403).json({ error: "手动导入视频不属于当前用户" });
+          }
+        }
       }
       if (action === "growth_analyze_video" || action === "growth_analyze_images") {
         // 审查必须修（P0·租户边界）：公共 job 主链曾允许匿名 "public" 入队 +

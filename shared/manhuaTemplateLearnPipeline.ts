@@ -3,7 +3,7 @@
  * 云端 Job / 本机 CLI / Platform 面板共用同一阶段表与文案，避免只挂 skill 文件。
  *
  * 流程：
- * 入口(榜单/贴链) → 解析列表 → 按集：下片→语音→抽帧→读帧→删视频
+ * 入口(榜单/贴链) → 解析列表 → 按集：探测时长→分段下片→语音→抽帧→读帧→删片段
  * → 累计摘要 →（满 4 集或合集学完出草版；约 16 集更准）总分析提案 → 人审批准进库
  */
 
@@ -68,11 +68,11 @@ export function getManhuaLearnPipelineMeta(): ManhuaLearnPipelineMeta {
     analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
     analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
     summaryZh:
-      `有合集 id 时优先展开多集；成片最长约 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟。整集按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟打点写入 JSON（中断可续，已学不重下）。下片失败跳下一集，连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次才停本轮。学满 4 集或合集学完即出草版总分析（约 16 集更准）。`,
+      `有合集 id 时优先展开多集；成片最长约 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟。长片不先落整片，按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟分段下载、分析并写入 JSON（中断可续，已学片段不重下）。下片失败跳下一集，连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次才停本轮。学满 4 集或合集学完即出草版总分析（约 16 集更准）。`,
     stepsZh: [
       "解析可学剧集列表（有合集 id 优先展开多集）",
       `按序采本轮剧集（短链有几集采几集；长合集约 ${MANHUA_LEARN_BATCH_MIN}–${MANHUA_LEARN_BATCH_MAX} 集）；已学完的集跳过`,
-      `逐集：下片 → 按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟分片学习并合并 JSON → 整集完成后再删视频`,
+      `逐集：读取时长 → 按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟裁切下载 → 分片学习并合并 JSON → 每段完成立即删除`,
       `下片/学习失败则跳下一集（权限不足会标注）；连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次停止本轮`,
       "累计分集摘要（本页即时可见）",
       `同一系列学满 4 集或合集全学完即出草版总分析（约 ${MANHUA_LEARN_ANALYSIS_MIN} 集更准，目标约 ${MANHUA_LEARN_ANALYSIS_TARGET}）`,
@@ -195,7 +195,7 @@ export function buildManhuaLocalLearnPanelSteps(input: {
       atIso: now(),
       stage: MANHUA_LEARN_STAGE.local_run,
       detailZh: cmd
-        ? `请在本机终端粘贴执行（需已装下片与剪辑工具）：${cmd.slice(0, 180)}${cmd.length > 180 ? "…" : ""}`
+        ? `请在本机终端粘贴执行；本机也会按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟下载、分析并落盘，重跑会跳过已完成段（需已装下片与剪辑工具）：${cmd.slice(0, 180)}${cmd.length > 180 ? "…" : ""}`
         : "请在本机终端执行学节奏命令",
     },
   ];

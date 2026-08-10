@@ -30,7 +30,8 @@ import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "
 import { normalizeOpenAiImageLane } from "../../shared/openaiImageLane.js";
 import { appRouter, buildPlatformContent, slimBuildPlatformContentDiagnosticsForJob } from "../routers";
 import { invokeLLM, extractJsonString, type FileContent } from "../_core/llm";
-import { deleteGcsObject } from "../services/gcs";
+import { deleteGcsObject, getGcsBucketName } from "../services/gcs";
+import { isOwnedManhuaLearnImportGcsUri } from "../../shared/manhuaLearnVideoSegments.js";
 import { resolveWatermark } from "../services/tier-provider-routing.js";
 import { buildStage1StrategicHandoffForStage2 } from "../services/stage1StrategicHandoff.js";
 import { getDb } from "../db";
@@ -299,6 +300,9 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     } = await import("../../shared/manhuaTemplateLearnPipeline.js");
     const reportLearnProgress = async (phase: string, detailZh: string) => {
       const label = manhuaLearnStageLabelZh(phase, detailZh);
+      const parsedBatch = Number(/本轮新增\s*(\d+)/.exec(label)?.[1] || 0);
+      const parsedLearned = Number(/累计\s*(\d+)\s*集/.exec(label)?.[1] || 0);
+      const parsedListed = Number(/已解析\s*(\d+)\s*集/.exec(label)?.[1] || 0);
       let learnProgressLog = appendManhuaLearnProgressLine(undefined, phase, label);
       if (jobId) {
         try {
@@ -316,6 +320,15 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
             analysisStageLabel: label,
             learnChannel: "cloud",
             learnProgressLog,
+            ...(parsedBatch > 0
+              ? { batchLearned: Math.max(Number(prevOut.batchLearned) || 0, parsedBatch) }
+              : {}),
+            ...(parsedLearned > 0
+              ? { learnedCount: Math.max(Number(prevOut.learnedCount) || 0, parsedLearned) }
+              : {}),
+            ...(parsedListed > 0
+              ? { listedEpisodeCount: Math.max(Number(prevOut.listedEpisodeCount) || 0, parsedListed) }
+              : {}),
           });
           return;
         } catch {
@@ -327,15 +340,29 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         analysisStageLabel: label,
         learnChannel: "cloud",
         learnProgressLog,
+        ...(parsedBatch > 0 ? { batchLearned: parsedBatch } : {}),
+        ...(parsedLearned > 0 ? { learnedCount: parsedLearned } : {}),
+        ...(parsedListed > 0 ? { listedEpisodeCount: parsedListed } : {}),
       } as any);
     };
     await reportLearnProgress(MANHUA_LEARN_STAGE.queued, "云端学节奏已入队，正在启动…");
+    const importedGcsUri = typeof params.gcsUri === "string" ? params.gcsUri.trim() : "";
+    if (importedGcsUri && !isOwnedManhuaLearnImportGcsUri({
+      gcsUri: importedGcsUri,
+      bucket: getGcsBucketName(),
+      userId: userId || "",
+    })) {
+      throw new Error("手动导入视频不属于当前用户或配置存储桶");
+    }
     const result = await runManhuaTemplateLearn({
       url: typeof params.url === "string" ? params.url : undefined,
+      gcsUri: importedGcsUri || undefined,
+      fileName: typeof params.fileName === "string" ? params.fileName : undefined,
       title: typeof params.title === "string" ? params.title : undefined,
       mixId: typeof params.mixId === "string" ? params.mixId : undefined,
       rank: typeof params.rank === "number" ? params.rank : undefined,
       batchSize: typeof params.batchSize === "number" ? params.batchSize : undefined,
+      learnLlm: params.learnLlm === "claude" ? "claude" : undefined,
       onProgress: reportLearnProgress,
     });
     let learnProgressLog: ReturnType<typeof appendManhuaLearnProgressLine> | undefined;

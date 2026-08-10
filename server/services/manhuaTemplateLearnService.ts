@@ -17,6 +17,7 @@ import {
   applyFrameVisionToProposal,
   resolveManhuaTemplateLearnLlmProvider,
   selectFramesForVisionAnalysis,
+  type ManhuaTemplateLearnLlmProvider,
 } from "../../shared/manhuaTemplateLearnFrameVision.js";
 import {
   MANHUA_LEARN_ANALYSIS_DRAFT_MIN,
@@ -44,6 +45,13 @@ import {
   formatManhuaLearnEpisodeDetail,
   manhuaLearnStageLabelZh,
 } from "../../shared/manhuaTemplateLearnPipeline.js";
+import {
+  MANHUA_LEARN_SEGMENT_MAX_BYTES,
+  buildManhuaLearnYtdlpMetadataArgs,
+  buildManhuaLearnYtdlpSegmentArgs,
+  nextManhuaLearnVideoSegment,
+  parseManhuaLearnRemoteDurationSec,
+} from "../../shared/manhuaLearnVideoSegments.js";
 import {
   parseManhuaViralTemplateCard,
   type ManhuaViralTemplateCard,
@@ -90,11 +98,15 @@ const execFileAsync = promisify(execFile);
 
 export type ManhuaTemplateLearnInput = {
   url?: string;
+  /** Platform 素材分析手动导入的本人 GCS 对象；入口和 worker 均校验归属。 */
+  gcsUri?: string;
+  fileName?: string;
   title?: string;
   mixId?: string;
   rank?: number;
   /** 本轮采几集：8–10 */
   batchSize?: number;
+  learnLlm?: ManhuaTemplateLearnLlmProvider;
   onProgress?: (phase: string, detailZh: string) => void | Promise<void>;
 };
 
@@ -350,37 +362,63 @@ async function extractFrames(
   return paths;
 }
 
-async function downloadVideo(url: string, workDir: string): Promise<string> {
-  await fs.mkdir(workDir, { recursive: true });
+async function probeRemoteVideoDuration(url: string): Promise<number> {
   if (/douyin\.com\/search\//i.test(url)) {
     throw new Error("当前是搜索页链接，请改用成片/合集页地址后再学节奏");
   }
   assertYtdlpCookieReadyForUrl(url);
   const cookies = await openYtdlpCookieSession();
   try {
-    const outTpl = path.join(workDir, "source.%(ext)s");
-    const { code, stderr } = await runYtdlp([
-      ...cookies.args,
-      "-f",
-      "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best",
-      "--merge-output-format",
-      "mp4",
-      "-o",
-      outTpl,
-      "--no-playlist",
-      "--max-filesize",
-      "180M",
-      "--no-warnings",
-      url,
-    ]);
-    if (code !== 0) throwMappedYtdlpFailure(stderr);
+    const payload = await execYtdlpJson(
+      buildManhuaLearnYtdlpMetadataArgs({ url, cookieArgs: cookies.args }),
+    );
+    const durationSec = parseManhuaLearnRemoteDurationSec(payload);
+    if (durationSec <= 0) throw new Error("无法读取成片时长，不能安全分段下载");
+    return durationSec;
   } finally {
     await cookies.cleanup();
   }
-  const files = await fs.readdir(workDir);
+}
+
+async function downloadVideoSegment(input: {
+  url: string;
+  workDir: string;
+  startSec: number;
+  endSec: number;
+}): Promise<string> {
+  await fs.mkdir(input.workDir, { recursive: true });
+  assertYtdlpCookieReadyForUrl(input.url);
+  const cookies = await openYtdlpCookieSession();
+  let stderr = "";
+  try {
+    const outTpl = path.join(input.workDir, "source.%(ext)s");
+    const result = await runYtdlp(
+      buildManhuaLearnYtdlpSegmentArgs({
+        url: input.url,
+        outputTemplate: outTpl,
+        startSec: input.startSec,
+        endSec: input.endSec,
+        cookieArgs: cookies.args,
+      }),
+    );
+    stderr = result.stderr;
+    if (result.code !== 0) throwMappedYtdlpFailure(result.stderr);
+  } finally {
+    await cookies.cleanup();
+  }
+  const files = await fs.readdir(input.workDir);
   const vid = files.find((f) => /\.(mp4|webm|mkv)$/i.test(f));
-  if (!vid) throw new Error("下载完成但未找到视频文件");
-  return path.join(workDir, vid);
+  if (!vid) {
+    const mapped = stderr.trim() ? mapManhuaLearnFetchError(stderr) : "";
+    throw new Error(mapped || "分段下载未生成视频文件，请确认链接可访问或稍后重试");
+  }
+  const videoPath = path.join(input.workDir, vid);
+  const stat = await fs.stat(videoPath);
+  if (stat.size > MANHUA_LEARN_SEGMENT_MAX_BYTES) {
+    throw new Error("当前 10 分钟片段超过 800MB，已停止处理以保护服务容量");
+  }
+  await ffprobeDuration(videoPath);
+  return videoPath;
 }
 
 type ListedEpisode = { index: number; url: string; title: string };
@@ -629,7 +667,10 @@ async function rmrf(dir: string) {
 async function learnOneEpisodeChunk(input: {
   ep: ListedEpisode;
   titleHint: string;
+  learnLlm: ManhuaTemplateLearnLlmProvider;
   videoPath: string;
+  /** 当前本地媒体对应原片的起点；整片为 0，分段文件为该段 startSec。 */
+  mediaStartSec?: number;
   startSec: number;
   endSec: number;
   chunkDir: string;
@@ -647,8 +688,10 @@ async function learnOneEpisodeChunk(input: {
     ),
   );
   const audioPath = path.join(input.chunkDir, "audio.mp3");
+  const mediaStartSec = Math.max(0, Number(input.mediaStartSec) || 0);
+  const localStartSec = Math.max(0, input.startSec - mediaStartSec);
   await extractAudioMp3(input.videoPath, audioPath, {
-    startSec: input.startSec,
+    startSec: localStartSec,
     durationSec: chunkLen,
   });
 
@@ -680,10 +723,11 @@ async function learnOneEpisodeChunk(input: {
     speechRegions,
   });
   // 分片内相对时间 → 成片绝对时间
-  const timestamps = plan.timestamps
+  const relativeTimestamps = plan.timestamps
     .filter((t) => t >= 0 && t <= chunkLen)
-    .slice(0, 12)
-    .map((t) => t + input.startSec);
+    .slice(0, 12);
+  const timestamps = relativeTimestamps.map((t) => t + input.startSec);
+  const mediaTimestamps = relativeTimestamps.map((t) => t + localStartSec);
 
   await input.onProgress?.(
     MANHUA_LEARN_STAGE.frames,
@@ -694,7 +738,7 @@ async function learnOneEpisodeChunk(input: {
     ),
   );
   const framesDir = path.join(input.chunkDir, "frames");
-  const framePaths = await extractFrames(input.videoPath, timestamps, framesDir);
+  const framePaths = await extractFrames(input.videoPath, mediaTimestamps, framesDir);
 
   const transcriptPreview = String(geminiScan?.transcriptSummary || "")
     .replace(/\s+/g, " ")
@@ -720,10 +764,7 @@ async function learnOneEpisodeChunk(input: {
   const { MANHUA_TEMPLATE_FRAME_VISION_MODEL, MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL } = await import(
     "../../shared/manhuaTemplateLearnFrameVision.js"
   );
-  const visionProvider =
-    resolveManhuaTemplateLearnLlmProvider(process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER) === "claude"
-      ? "anthropic"
-      : "openai";
+  const visionProvider = input.learnLlm === "claude" ? "anthropic" : "openai";
   const visionProvenance: NonNullable<ManhuaLearnEpisodeChunk["vision"]> = {
     provider: visionProvider,
     model:
@@ -774,6 +815,7 @@ async function learnOneEpisodeChunk(input: {
         transcriptPreview,
         climaxNotes: plan.climaxWindows.map((w) => w.reasonZh),
         fallbackLane: draft.laneZh,
+        learnProvider: input.learnLlm,
       });
       visionProvenance.success = true;
       visionProvenance.model = String(vision.model || visionProvenance.model);
@@ -815,12 +857,13 @@ async function learnOneEpisodeChunk(input: {
 }
 
 /**
- * 整集分段学：每满约 10 分钟合并写入分集 JSON（可续学）。
- * 视频保留到整集完成后再删。
+ * 整集分段学：先探测总时长，再按约 10 分钟裁切下载；每段完成即删并写入
+ * 分集 JSON（可续学）。长片不再先落完整原视频。
  */
 async function learnOneEpisode(input: {
   ep: ListedEpisode;
   titleHint: string;
+  learnLlm: ManhuaTemplateLearnLlmProvider;
   rootTmp: string;
   existing?: ManhuaLearnEpisodeDigest | null;
   onProgress?: ManhuaTemplateLearnInput["onProgress"];
@@ -833,12 +876,8 @@ async function learnOneEpisode(input: {
       return input.existing;
     }
 
-    await input.onProgress?.(
-      MANHUA_LEARN_STAGE.download,
-      formatManhuaLearnEpisodeDetail(MANHUA_LEARN_STAGE.download, input.ep.index),
-    );
-    const videoPath = await downloadVideo(input.ep.url, epDir);
-    const durationSec = await ffprobeDuration(videoPath);
+    await input.onProgress?.(MANHUA_LEARN_STAGE.download, `正在读取第 ${input.ep.index} 集时长…`);
+    const durationSec = await probeRemoteVideoDuration(input.ep.url);
     if (durationSec > MANHUA_LEARN_MAX_DURATION_SEC) {
       throw new Error(
         `第 ${input.ep.index} 集超过 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，已跳过策略外片`,
@@ -867,8 +906,13 @@ async function learnOneEpisode(input: {
     const checkpoint = Math.max(60, MANHUA_LEARN_CHECKPOINT_SEC);
     const retryMax = Math.max(1, MANHUA_LEARN_EPISODE_RETRY_MAX);
     while (cursor < durationSec - 0.5) {
-      const startSec = cursor;
-      const endSec = Math.min(durationSec, startSec + checkpoint);
+      const segment = nextManhuaLearnVideoSegment({
+        cursorSec: cursor,
+        durationSec,
+        segmentSec: checkpoint,
+      });
+      if (!segment) break;
+      const { startSec, endSec } = segment;
       const chunkDir = path.join(
         epDir,
         `chunk_${String(Math.floor(startSec)).padStart(5, "0")}`,
@@ -879,16 +923,22 @@ async function learnOneEpisode(input: {
         await rmrf(chunkDir);
         await fs.mkdir(chunkDir, { recursive: true });
         try {
-          if (attempt > 1) {
-            await input.onProgress?.(
-              MANHUA_LEARN_STAGE.download,
-              `第 ${input.ep.index} 集 ${Math.floor(startSec / 60)}–${Math.ceil(endSec / 60)} 分重试 ${attempt}/${retryMax}…`,
-            );
-          }
+          await input.onProgress?.(
+            MANHUA_LEARN_STAGE.download,
+            `正在下载第 ${input.ep.index} 集 ${Math.floor(startSec / 60)}–${Math.ceil(endSec / 60)} 分片段${attempt > 1 ? `（重试 ${attempt}/${retryMax}）` : ""}…`,
+          );
+          const videoPath = await downloadVideoSegment({
+            url: input.ep.url,
+            workDir: chunkDir,
+            startSec,
+            endSec,
+          });
           chunk = await learnOneEpisodeChunk({
             ep: input.ep,
             titleHint: input.titleHint,
+            learnLlm: input.learnLlm,
             videoPath,
+            mediaStartSec: startSec,
             startSec,
             endSec,
             chunkDir,
@@ -944,10 +994,9 @@ async function learnOneEpisode(input: {
     };
     await input.onCheckpoint?.(digest);
 
-    await fs.unlink(videoPath).catch(() => undefined);
     await input.onProgress?.(
       MANHUA_LEARN_STAGE.cleanup,
-      formatManhuaLearnEpisodeDetail(MANHUA_LEARN_STAGE.cleanup, input.ep.index),
+      `第 ${input.ep.index} 集全部片段已学完，本地片段均已删除`,
     );
     return digest;
   } finally {
@@ -959,13 +1008,22 @@ export async function runManhuaTemplateLearn(
   input: ManhuaTemplateLearnInput,
 ): Promise<ManhuaTemplateLearnResult> {
   const title = stripBookTitleMarks(cleanManhuaLearnTitle(input.title));
-  const url = String(input.url || "").trim();
-  if (!url) {
-    throw new Error("缺少合集或成片链接（榜单一点或粘贴链接）");
+  const sourceGcsUri = String(input.gcsUri || "").trim();
+  const sourceUrl = String(input.url || "").trim();
+  if (!sourceUrl && !sourceGcsUri) {
+    throw new Error("缺少合集、成片链接或手动导入视频");
   }
-  if (/douyin\.com\/search\//i.test(url)) {
+  if (sourceGcsUri && !sourceGcsUri.startsWith("gs://")) {
+    throw new Error("手动导入视频地址无效");
+  }
+  if (/douyin\.com\/search\//i.test(sourceUrl)) {
     throw new Error("当前是搜索页链接，请改用合集/成片页地址");
   }
+  // yt-dlp/ffmpeg 只消费短时效 HTTPS；seriesKey 与 GCS 进度始终绑定稳定 gs://。
+  const url = sourceGcsUri
+    ? signGsUriV4ReadUrl(sourceGcsUri, 7 * 24 * 3600)
+    : sourceUrl;
+  const sourceIdentity = sourceGcsUri || sourceUrl;
 
   // —— 抖音上下文解析：合集页 URL 直接提 mixId（榜单行有时只给链接不带 mixId）；
   //    单集（含 modal_id 弹层）查详情回填剧名；发现所属合集则升级为合集学习
@@ -973,7 +1031,7 @@ export async function runManhuaTemplateLearn(
   let mixId = String(input.mixId || "").trim();
   let dramaNameZh = "";
   let single: { titleZh?: string; episodeIndex?: number } | undefined;
-  if (isDouyinHostUrl(url)) {
+  if (!sourceGcsUri && isDouyinHostUrl(url)) {
     if (!/^\d{6,}$/.test(mixId)) {
       const fromUrl = extractDouyinMixIdFromUrl(url);
       if (fromUrl) mixId = fromUrl;
@@ -993,15 +1051,15 @@ export async function runManhuaTemplateLearn(
   if (mixId && !String(input.mixId || "").trim()) {
     // 单集/裸链接升级为合集学习：留双 key 日志，排查「旧进度去哪了」用
     console.info(
-      `[manhuaTemplateLearn] series upgraded to mix: mixKey=${seriesKeyFrom({ url, mixId, title, learnLlm: resolveManhuaTemplateLearnLlmProvider(process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER) })} urlKey=${seriesKeyFrom({ url, title })}`,
+      `[manhuaTemplateLearn] series upgraded to mix: mixKey=${seriesKeyFrom({ url: sourceIdentity, mixId, title, learnLlm: resolveManhuaTemplateLearnLlmProvider(process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER) })} urlKey=${seriesKeyFrom({ url: sourceIdentity, title })}`,
     );
   }
 
   const batchSize = clampManhuaLearnBatchSize(input.batchSize ?? MANHUA_LEARN_BATCH_DEFAULT);
-  const learnLlm = resolveManhuaTemplateLearnLlmProvider(
+  const learnLlm = input.learnLlm || resolveManhuaTemplateLearnLlmProvider(
     process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER,
   );
-  const seriesKey = seriesKeyFrom({ url, mixId, title, learnLlm });
+  const seriesKey = seriesKeyFrom({ url: sourceIdentity, mixId, title, learnLlm });
   const workId = `tpl_series_${seriesKey}`;
   const rootTmp = await fs.mkdtemp(path.join(os.tmpdir(), `manhua-learn-${seriesKey}-`));
   const progress = async (phase: string, detailZh: string) => {
@@ -1017,7 +1075,16 @@ export async function runManhuaTemplateLearn(
       MANHUA_LEARN_STAGE.list,
       manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.list),
     );
-    const listedRes = await listOrderedEpisodes(url, title || dramaNameZh, mixId, single);
+    const listedRes = sourceGcsUri
+      ? {
+          listed: listedSingleEpisodeFromUrl(
+            url,
+            title || String(input.fileName || "").replace(/\.[^.]+$/, "") || "手动导入视频",
+            1,
+          ),
+          reliable: true,
+        }
+      : await listOrderedEpisodes(url, title || dramaNameZh, mixId, single);
     const listed = listedRes.listed;
     if (!listed.length) {
       throw new Error("无法解析任何可学剧集，请换合集页或成片链接重试");
@@ -1037,7 +1104,7 @@ export async function runManhuaTemplateLearn(
       (await loadSeriesProgress(seriesKey)) ||
       ({
         seriesKey,
-        sourceUrl: url,
+        sourceUrl: sourceIdentity,
         titleHint: titleHint || "未命名合集",
         learnLlm,
         mixId: mixId || undefined,
@@ -1059,7 +1126,7 @@ export async function runManhuaTemplateLearn(
       .map((d) => d.episodeIndex);
     prog = {
       ...prog,
-      sourceUrl: url,
+      sourceUrl: sourceIdentity,
       // 旧进度若还挂着占位（未命名合集/贴链接学习），回填到手的真剧名
       titleHint: titleHint || cleanManhuaLearnTitle(prog.titleHint) || "未命名合集",
       // 只有可靠列表才并进可靠集合；降级列表不缩写也不污染历史
@@ -1259,6 +1326,7 @@ export async function runManhuaTemplateLearn(
         const digest = await learnOneEpisode({
           ep,
           titleHint: prog.titleHint,
+          learnLlm,
           rootTmp,
           existing,
           onProgress: input.onProgress,
@@ -1282,7 +1350,7 @@ export async function runManhuaTemplateLearn(
         );
         await progress(
           MANHUA_LEARN_STAGE.persist,
-          `第 ${idx} 集整集学完（约 ${Math.round((digest.durationSec || 0) / 60)} 分钟 · 本轮新增 ${batchLearnedIndexes.length}）`,
+          `第 ${idx} 集整集学完（约 ${Math.round((digest.durationSec || 0) / 60)} 分钟 · 本轮新增 ${batchLearnedIndexes.length} · 累计 ${prog.learnedEpisodeIndexes.length} 集）`,
         );
       } catch (e) {
         const errZh = mapManhuaLearnFetchError(e);

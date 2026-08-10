@@ -140,6 +140,38 @@ export function mergeManhuaLearnLiveProgress(
           : tick.status === "succeeded"
             ? "succeeded"
             : base.liveStatus || "running";
+  const logCounts = fromJob.reduce(
+    (acc, line) => {
+      const detail = line.detailZh;
+      const batch = Number(/本轮新增\s*(\d+)/.exec(detail)?.[1] || 0);
+      const learned = Number(/累计\s*(\d+)\s*集/.exec(detail)?.[1] || 0);
+      const listed = Number(/已解析\s*(\d+)\s*集/.exec(detail)?.[1] || 0);
+      return {
+        batch: Math.max(acc.batch, batch),
+        learned: Math.max(acc.learned, learned),
+        listed: Math.max(acc.listed, listed),
+      };
+    },
+    { batch: 0, learned: 0, listed: 0 },
+  );
+  const batchLearned = Math.max(
+    base.batchLearned,
+    Math.floor(Number(out.batchLearned) || 0),
+    logCounts.batch,
+  );
+  // 兼容正在运行的旧 worker：旧日志只有“本轮新增 N”，至少不能继续显示 0；
+  // 新 worker 同时写“累计 N 集”，恢复/续学时会显示精确累计值。
+  const learnedCount = Math.max(
+    base.learnedCount,
+    Math.floor(Number(out.learnedCount) || 0),
+    logCounts.learned,
+    batchLearned,
+  );
+  const listedEpisodeCount = Math.max(
+    Number(base.listedEpisodeCount) || 0,
+    Math.floor(Number(out.listedEpisodeCount) || 0),
+    logCounts.listed,
+  );
   return {
     ...base,
     channel: "cloud",
@@ -148,6 +180,12 @@ export function mergeManhuaLearnLiveProgress(
     liveLabelZh: label || base.liveLabelZh,
     progressLines,
     messageZh: label || base.messageZh,
+    learnedCount,
+    batchLearned,
+    listedEpisodeCount: listedEpisodeCount || undefined,
+    pendingCount: listedEpisodeCount > 0
+      ? Math.max(0, listedEpisodeCount - learnedCount)
+      : base.pendingCount,
   };
 }
 

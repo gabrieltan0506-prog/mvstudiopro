@@ -1,5 +1,5 @@
 /**
- * 漫剧节奏模板学习（B+2）：剧名/URL/飙升榜条目 → 本机下片 → 语音预扫 → 自适应抽帧 → 提案卡。
+ * 漫剧节奏模板学习（B+2）：剧名/URL/飙升榜条目 → 本机分段下片 → 语音预扫 → 自适应抽帧 → 提案卡。
  *
  * 抽帧：前 5s 钩子帧 + 约每 10s；语音/高潮窗内改为约每 3s。
  * 产物：downloads/manhua-template-learn/（gitignore）+ docs/manhua-template-lab/proposals/
@@ -47,18 +47,32 @@ import {
 } from "../shared/manhuaTemplateLearnFrameVision.js";
 import {
   MANHUA_LEARN_STAGE,
-  formatManhuaLearnEpisodeDetail,
   getManhuaLearnPipelineMeta,
   manhuaLearnStageLabelZh,
 } from "../shared/manhuaTemplateLearnPipeline.js";
+import {
+  MANHUA_LEARN_CHECKPOINT_SEC,
+  MANHUA_LEARN_MAX_DURATION_SEC,
+} from "../shared/manhuaTemplateLearnSeries.js";
+import {
+  MANHUA_LEARN_SEGMENT_MAX_BYTES,
+  buildManhuaLearnYtdlpMetadataArgs,
+  buildManhuaLearnYtdlpSegmentArgs,
+  nextManhuaLearnVideoSegment,
+  parseManhuaLearnRemoteDurationSec,
+} from "../shared/manhuaLearnVideoSegments.js";
 import {
   analyzeManhuaDramaAudioWithGemini,
   isGeminiAudioAvailable,
   type ManhuaDramaAudioScanResult,
 } from "../server/gemini-audio.js";
-import { mapManhuaLearnFetchError } from "../shared/manhuaLearnYtdlp.js";
+import {
+  mapManhuaLearnFetchError,
+  normalizeDouyinVideoUrl,
+} from "../shared/manhuaLearnYtdlp.js";
 import {
   assertYtdlpCookieReadyForUrl,
+  execYtdlpJson,
   openYtdlpCookieSession,
   runYtdlp,
   throwMappedYtdlpFailure,
@@ -152,20 +166,19 @@ async function ffprobeDuration(videoPath: string): Promise<number> {
   return n;
 }
 
-async function extractAudioMp3(videoPath: string, audioPath: string): Promise<void> {
-  await execFileAsync("ffmpeg", [
-    "-y",
-    "-i",
-    videoPath,
-    "-vn",
-    "-ac",
-    "1",
-    "-ar",
-    "16000",
-    "-b:a",
-    "64k",
-    audioPath,
-  ]);
+async function extractAudioMp3(
+  videoPath: string,
+  audioPath: string,
+  opts?: { startSec?: number; durationSec?: number },
+): Promise<void> {
+  const args = ["-y"];
+  const startSec = Math.max(0, Number(opts?.startSec) || 0);
+  const durationSec = Math.max(0, Number(opts?.durationSec) || 0);
+  if (startSec > 0) args.push("-ss", String(startSec));
+  args.push("-i", videoPath, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k");
+  if (durationSec > 0) args.push("-t", String(durationSec));
+  args.push(audioPath);
+  await execFileAsync("ffmpeg", args);
 }
 
 async function silenceDetectLog(audioPath: string): Promise<string> {
@@ -506,40 +519,74 @@ async function extractFrames(
   return paths;
 }
 
-async function downloadVideo(url: string, workDir: string): Promise<string> {
-  await fs.mkdir(workDir, { recursive: true });
+async function probeRemoteVideoDuration(url: string): Promise<number> {
   if (/douyin\.com\/search\//i.test(url)) {
     throw new Error("当前是搜索页链接，请改用成片/合集页地址后再学节奏");
   }
   assertYtdlpCookieReadyForUrl(url);
   const cookies = await openYtdlpCookieSession();
   try {
-    const outTpl = path.join(workDir, "source.%(ext)s");
-    console.log("[learn] 下载成片…", url.slice(0, 120), cookies.hasCookies ? "(已带登录态)" : "");
-    const { code, stderr } = await runYtdlp([
-      ...cookies.args,
-      "-f",
-      "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/best",
-      "--merge-output-format",
-      "mp4",
-      "-o",
-      outTpl,
-      "--no-playlist",
-      "--max-filesize",
-      "180M",
-      "--no-warnings",
-      url,
-    ]);
-    if (code !== 0) throwMappedYtdlpFailure(stderr);
+    const payload = await execYtdlpJson(
+      buildManhuaLearnYtdlpMetadataArgs({ url, cookieArgs: cookies.args }),
+    );
+    const durationSec = parseManhuaLearnRemoteDurationSec(payload);
+    if (durationSec <= 0) throw new Error("无法读取成片时长，不能安全分段下载");
+    return durationSec;
   } catch (e) {
     throw new Error(mapManhuaLearnFetchError(e));
   } finally {
     await cookies.cleanup();
   }
-  const files = await fs.readdir(workDir);
+}
+
+async function downloadVideoSegment(input: {
+  url: string;
+  workDir: string;
+  startSec: number;
+  endSec: number;
+}): Promise<string> {
+  await fs.mkdir(input.workDir, { recursive: true });
+  assertYtdlpCookieReadyForUrl(input.url);
+  const cookies = await openYtdlpCookieSession();
+  let stderr = "";
+  try {
+    const outTpl = path.join(input.workDir, "source.%(ext)s");
+    console.log(
+      `[learn] 分段下载 ${Math.floor(input.startSec / 60)}–${Math.ceil(input.endSec / 60)} 分…`,
+      cookies.hasCookies ? "(已带登录态)" : "",
+    );
+    const result = await runYtdlp(
+      buildManhuaLearnYtdlpSegmentArgs({
+        url: input.url,
+        outputTemplate: outTpl,
+        startSec: input.startSec,
+        endSec: input.endSec,
+        cookieArgs: cookies.args,
+      }),
+    );
+    stderr = result.stderr;
+    if (result.code !== 0) throwMappedYtdlpFailure(result.stderr);
+  } catch (e) {
+    throw new Error(mapManhuaLearnFetchError(e));
+  } finally {
+    await cookies.cleanup();
+  }
+  const files = await fs.readdir(input.workDir);
   const vid = files.find((f) => /\.(mp4|webm|mkv)$/i.test(f));
-  if (!vid) throw new Error("下载完成但未找到视频文件");
-  return path.join(workDir, vid);
+  if (!vid) {
+    throw new Error(
+      stderr.trim()
+        ? mapManhuaLearnFetchError(stderr)
+        : "分段下载未生成视频文件，请确认链接可访问或稍后重试",
+    );
+  }
+  const videoPath = path.join(input.workDir, vid);
+  const stat = await fs.stat(videoPath);
+  if (stat.size > MANHUA_LEARN_SEGMENT_MAX_BYTES) {
+    throw new Error("当前 10 分钟片段超过 800MB，已停止处理以保护本机容量");
+  }
+  await ffprobeDuration(videoPath);
+  return videoPath;
 }
 
 function titleToSearchUrl(title: string): string {
@@ -615,6 +662,220 @@ async function appendChangelog(id: string, note: string) {
   await fs.appendFile(CHANGELOG, line, "utf8").catch(() => undefined);
 }
 
+type LocalSegmentAnalysis = {
+  startSec: number;
+  endSec: number;
+  transcriptPreview: string;
+  timestamps: number[];
+  climaxNotes: string[];
+  framePaths: string[];
+  planPath: string;
+  visionCard: ManhuaViralTemplateCard | null;
+  visionModel: string | null;
+};
+
+function sampleEvenly<T>(items: readonly T[], max: number): T[] {
+  const src = items.slice();
+  const count = Math.max(1, Math.floor(max));
+  if (src.length <= count) return src;
+  return Array.from({ length: count }, (_, i) =>
+    src[Math.round((i * (src.length - 1)) / Math.max(1, count - 1))]!,
+  );
+}
+
+function combineTranscriptPreviews(parts: readonly string[], maxChars = 400): string {
+  const clean = parts.map((s) => String(s || "").replace(/\s+/g, " ").trim()).filter(Boolean);
+  if (!clean.length) return "";
+  const perPart = Math.max(24, Math.floor((maxChars - clean.length * 3) / clean.length));
+  return clean.map((s) => s.slice(0, perPart)).join(" … ").slice(0, maxChars);
+}
+
+async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
+  const tmp = `${filePath}.tmp`;
+  await fs.writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await fs.rename(tmp, filePath);
+}
+
+async function readLocalSegmentCheckpoint(
+  filePath: string,
+  expected: { startSec: number; endSec: number },
+): Promise<LocalSegmentAnalysis | null> {
+  try {
+    const value = JSON.parse(await fs.readFile(filePath, "utf8")) as LocalSegmentAnalysis;
+    if (
+      Number(value.startSec) !== expected.startSec
+      || Number(value.endSec) !== expected.endSec
+      || !Array.isArray(value.timestamps)
+      || !Array.isArray(value.framePaths)
+    ) {
+      return null;
+    }
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+async function analyzeLocalSegment(input: {
+  workId: string;
+  title: string;
+  url?: string;
+  videoPath: string;
+  mediaStartSec: number;
+  startSec: number;
+  endSec: number;
+  segmentDir: string;
+  dry: boolean;
+}): Promise<LocalSegmentAnalysis> {
+  const segmentLen = Math.max(1, input.endSec - input.startSec);
+  const localStartSec = Math.max(0, input.startSec - input.mediaStartSec);
+  await fs.mkdir(input.segmentDir, { recursive: true });
+
+  logLearnStage(
+    MANHUA_LEARN_STAGE.audio,
+    `正在分析 ${Math.floor(input.startSec / 60)}–${Math.ceil(input.endSec / 60)} 分语音与节奏…`,
+  );
+  const audioPath = path.join(input.segmentDir, "audio.mp3");
+  await extractAudioMp3(input.videoPath, audioPath, {
+    startSec: localStartSec,
+    durationSec: segmentLen,
+  });
+  const geminiScan = await geminiAudioScan(audioPath);
+  const silenceLog = await silenceDetectLog(audioPath);
+  const speechRegions = speechRegionsFromSilenceDetectLog(silenceLog, segmentLen);
+  const plan = buildAdaptiveFramePlan({
+    durationSec: segmentLen,
+    geminiSections: geminiScan?.sections,
+    speechRegions,
+  });
+  const relativeTimestamps = plan.timestamps.filter((t) => t >= 0 && t <= segmentLen);
+  const timestamps = relativeTimestamps.map((t) => t + input.startSec);
+  const mediaTimestamps = relativeTimestamps.map((t) => t + localStartSec);
+  const planPath = path.join(input.segmentDir, "frame-plan.json");
+  await writeJsonAtomic(planPath, {
+    title: input.title,
+    url: input.url,
+    sourceRangeSec: [input.startSec, input.endSec],
+    ...plan,
+    timestamps,
+    geminiModel: geminiScan?.model || null,
+    geminiSectionCount: geminiScan?.sections.length || 0,
+    transcriptSummary: geminiScan?.transcriptSummary || "",
+    redLineZh: "帧与转写仅内部研究；成稿禁止外部剧名/抄台词画面",
+  });
+
+  const transcriptPreview = String(geminiScan?.transcriptSummary || "")
+    .replace(/\s+/g, " ")
+    .slice(0, 400);
+  const empty: LocalSegmentAnalysis = {
+    startSec: input.startSec,
+    endSec: input.endSec,
+    transcriptPreview,
+    timestamps,
+    climaxNotes: plan.climaxWindows.map((w) => w.reasonZh),
+    framePaths: [],
+    planPath,
+    visionCard: null,
+    visionModel: null,
+  };
+  if (input.dry) {
+    await fs.unlink(audioPath).catch(() => undefined);
+    return empty;
+  }
+
+  logLearnStage(
+    MANHUA_LEARN_STAGE.frames,
+    `正在抽取 ${Math.floor(input.startSec / 60)}–${Math.ceil(input.endSec / 60)} 分关键帧（${timestamps.length} 张）…`,
+  );
+  const framesDir = path.join(input.segmentDir, "frames");
+  const framePaths = await extractFrames(input.videoPath, mediaTimestamps, framesDir);
+  let card = draftCard({
+    id: `${input.workId}_${Math.floor(input.startSec)}`,
+    titleHint: input.title || "未命名学习片",
+    url: input.url,
+    durationSec: segmentLen,
+    timestamps,
+    climaxNotes: plan.climaxWindows.map((w) => w.reasonZh),
+    transcriptPreview,
+  });
+  logLearnStage(
+    MANHUA_LEARN_STAGE.vision,
+    `正在读帧 ${Math.floor(input.startSec / 60)}–${Math.ceil(input.endSec / 60)} 分…`,
+  );
+  const vision = await terraFrameScan({
+    framePaths,
+    timestamps,
+    titleHint: `${input.title || "未命名学习片"} · ${Math.floor(input.startSec / 60)}–${Math.ceil(input.endSec / 60)} 分`,
+    durationSec: segmentLen,
+    transcriptPreview,
+    climaxNotes: plan.climaxWindows.map((w) => w.reasonZh),
+    fallbackLane: card.laneZh,
+  });
+  if (vision) {
+    const filled = applyFrameVisionToProposal(card, vision);
+    if (filled) {
+      card = {
+        ...filled,
+        beatGrid: filled.beatGrid.map((beat) => ({
+          ...beat,
+          atSec:
+            Number(beat.atSec) <= segmentLen + 1
+              ? Math.round(Number(beat.atSec) + input.startSec)
+              : Math.round(Number(beat.atSec) || 0),
+        })),
+      };
+    }
+  }
+  await fs.unlink(audioPath).catch(() => undefined);
+  return {
+    ...empty,
+    framePaths,
+    visionCard: vision ? card : null,
+    visionModel: vision?.model || null,
+  };
+}
+
+function mergeLocalSegmentCards(input: {
+  workId: string;
+  title: string;
+  url?: string;
+  durationSec: number;
+  segments: LocalSegmentAnalysis[];
+}): ManhuaViralTemplateCard {
+  const timestamps = input.segments.flatMap((s) => s.timestamps).sort((a, b) => a - b);
+  const transcriptPreview = combineTranscriptPreviews(
+    input.segments.map((s) => s.transcriptPreview),
+  );
+  const climaxNotes = input.segments.flatMap((s) => s.climaxNotes);
+  let card = draftCard({
+    id: input.workId,
+    titleHint: input.title || "未命名学习片",
+    url: input.url,
+    durationSec: input.durationSec,
+    timestamps: sampleEvenly(timestamps, 16),
+    climaxNotes,
+    transcriptPreview,
+  });
+  const filled = input.segments.map((s) => s.visionCard).filter(Boolean) as ManhuaViralTemplateCard[];
+  if (!filled.length) return card;
+  const first = filled[0]!;
+  card = {
+    ...card,
+    nameZh: first.nameZh,
+    laneZh: first.laneZh,
+    summaryZh: "长片按时间分段学习后合成的节奏草案；只借结构与节拍，须人审后入库。",
+    hook3sZh: first.hook3sZh,
+    beatGrid: sampleEvenly(
+      filled.flatMap((item) => item.beatGrid).sort((a, b) => a.atSec - b.atSec),
+      24,
+    ),
+    scenePoolHints: Array.from(new Set(filled.flatMap((item) => item.scenePoolHints))).slice(0, 16),
+    castShape: first.castShape,
+    densityHints: first.densityHints,
+  };
+  return card;
+}
+
 async function main() {
   const risingJson = argValue("--rising-json");
   const rank = Number(argValue("--rank") || "1");
@@ -648,120 +909,95 @@ async function main() {
   const workId = slugId(url || title || videoPath || "clip");
   const workDir = path.join(OUT_ROOT, workId);
   await fs.mkdir(workDir, { recursive: true });
+  const remoteUrl = videoPath ? "" : normalizeDouyinVideoUrl(url);
+  if (remoteUrl && /douyin\.com\/search\//i.test(remoteUrl)) {
+    throw new Error("当前是抖音搜索页链接，请改用成片/合集页地址后再学节奏");
+  }
+  if (videoPath) videoPath = path.resolve(videoPath);
+  const durationSec = videoPath
+    ? await ffprobeDuration(videoPath)
+    : await probeRemoteVideoDuration(remoteUrl);
+  if (durationSec > MANHUA_LEARN_MAX_DURATION_SEC) {
+    throw new Error(`成片超过 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，已停止处理`);
+  }
+  console.log(`[learn] duration=${durationSec.toFixed(1)}s · 分段=${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)}分钟`);
 
-  if (!videoPath) {
-    // 搜索页不能直接下片：若是 search URL，提示用户改成成片页；仍尝试 yt-dlp
-    if (/douyin\.com\/search\//i.test(url)) {
-      console.warn(
-        "[learn] 当前是抖音搜索页链接。若下载失败，请打开搜索结果里的成片/合集页，改用 --url 成片地址。",
-      );
-    }
-    logLearnStage(
-      MANHUA_LEARN_STAGE.download,
-      formatManhuaLearnEpisodeDetail(MANHUA_LEARN_STAGE.download, 1),
+  const segmentsDir = path.join(workDir, "segments");
+  await fs.mkdir(segmentsDir, { recursive: true });
+  const analyses: LocalSegmentAnalysis[] = [];
+  let cursor = 0;
+  while (cursor < durationSec - 0.5) {
+    const segment = nextManhuaLearnVideoSegment({
+      cursorSec: cursor,
+      durationSec,
+      segmentSec: MANHUA_LEARN_CHECKPOINT_SEC,
+    });
+    if (!segment) break;
+    const segmentDir = path.join(
+      segmentsDir,
+      `segment_${String(Math.floor(segment.startSec)).padStart(5, "0")}`,
     );
-    videoPath = await downloadVideo(url, workDir);
-  } else {
-    videoPath = path.resolve(videoPath);
+    const checkpointPath = path.join(segmentDir, "analysis.json");
+    const checkpoint = await readLocalSegmentCheckpoint(checkpointPath, segment);
+    if (checkpoint) {
+      console.log(
+        `[learn] 已有检查点，跳过 ${Math.floor(segment.startSec / 60)}–${Math.ceil(segment.endSec / 60)} 分`,
+      );
+      analyses.push(checkpoint);
+      cursor = segment.endSec;
+      continue;
+    }
+    await fs.rm(segmentDir, { recursive: true, force: true });
+    await fs.mkdir(segmentDir, { recursive: true });
+    let currentVideoPath = videoPath;
+    let mediaStartSec = 0;
+    if (!currentVideoPath) {
+      logLearnStage(
+        MANHUA_LEARN_STAGE.download,
+        `正在下载 ${Math.floor(segment.startSec / 60)}–${Math.ceil(segment.endSec / 60)} 分片段…`,
+      );
+      currentVideoPath = await downloadVideoSegment({
+        url: remoteUrl,
+        workDir: segmentDir,
+        startSec: segment.startSec,
+        endSec: segment.endSec,
+      });
+      mediaStartSec = segment.startSec;
+    }
+    const analysis = await analyzeLocalSegment({
+      workId,
+      title,
+      url: remoteUrl || undefined,
+      videoPath: currentVideoPath,
+      mediaStartSec,
+      startSec: segment.startSec,
+      endSec: segment.endSec,
+      segmentDir,
+      dry,
+    });
+    await writeJsonAtomic(checkpointPath, analysis);
+    if (!videoPath) await fs.unlink(currentVideoPath).catch(() => undefined);
+    analyses.push(analysis);
+    console.log(
+      `[learn] 检查点已落盘 ${Math.round(segment.endSec / 60)}/${Math.round(durationSec / 60)} 分`,
+    );
+    cursor = segment.endSec;
   }
 
-  const durationSec = await ffprobeDuration(videoPath);
-  console.log(`[learn] duration=${durationSec.toFixed(1)}s`);
-
-  logLearnStage(
-    MANHUA_LEARN_STAGE.audio,
-    formatManhuaLearnEpisodeDetail(MANHUA_LEARN_STAGE.audio, 1),
-  );
-  const audioPath = path.join(workDir, "audio.mp3");
-  await extractAudioMp3(videoPath, audioPath);
-  const geminiScan = await geminiAudioScan(audioPath);
-  const silenceLog = await silenceDetectLog(audioPath);
-  const speechRegions = speechRegionsFromSilenceDetectLog(silenceLog, durationSec);
-
-  const plan = buildAdaptiveFramePlan({
-    durationSec,
-    geminiSections: geminiScan?.sections,
-    speechRegions,
-  });
-
-  const planPath = path.join(workDir, "frame-plan.json");
-  await fs.writeFile(
-    planPath,
-    JSON.stringify(
-      {
-        title,
-        url,
-        videoPath,
-        ...plan,
-        geminiModel: geminiScan?.model || null,
-        geminiSectionCount: geminiScan?.sections.length || 0,
-        transcriptSummary: geminiScan?.transcriptSummary || "",
-        redLineZh: "帧与转写仅内部研究；成稿禁止外部剧名/抄台词画面",
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
-  console.log(
-    `[learn] 抽帧计划 base=${plan.baseTimestamps.length} → final=${plan.timestamps.length} (+${plan.densifiedCount} 高潮加密) windows=${plan.climaxWindows.length}`,
-  );
-
   if (dry) {
-    console.log("[learn] --dry-plan 仅写 frame-plan.json，跳过抽帧与提案");
-    console.log(planPath);
+    console.log(`[learn] --dry-plan 已写 ${analyses.length} 个分段计划，跳过提案`);
     return;
   }
 
-  logLearnStage(
-    MANHUA_LEARN_STAGE.frames,
-    formatManhuaLearnEpisodeDetail(
-      MANHUA_LEARN_STAGE.frames,
-      1,
-      `${plan.timestamps.length} 张`,
-    ),
-  );
-  const framesDir = path.join(workDir, "frames");
-  const framePaths = await extractFrames(videoPath, plan.timestamps, framesDir);
-  console.log(`[learn] 已抽 ${framePaths.length} 帧 → ${framesDir}`);
-  logLearnStage(
-    MANHUA_LEARN_STAGE.vision,
-    formatManhuaLearnEpisodeDetail(MANHUA_LEARN_STAGE.vision, 1),
-  );
-
-  const transcriptPreview = String(geminiScan?.transcriptSummary || "")
-    .replace(/\s+/g, " ")
-    .slice(0, 400);
-
-  let card = draftCard({
-    id: workId,
-    titleHint: title || "未命名学习片",
-    url: url || undefined,
+  let card = mergeLocalSegmentCards({
+    workId,
+    title,
+    url: remoteUrl || undefined,
     durationSec,
-    timestamps: plan.timestamps,
-    climaxNotes: plan.climaxWindows.map((w) => w.reasonZh),
-    transcriptPreview,
+    segments: analyses,
   });
-
-  const vision = await terraFrameScan({
-    framePaths,
-    timestamps: plan.timestamps,
-    titleHint: title || "未命名学习片",
-    durationSec,
-    transcriptPreview,
-    climaxNotes: plan.climaxWindows.map((w) => w.reasonZh),
-    fallbackLane: card.laneZh,
-  });
-  let visionFilled = false;
-  if (vision) {
-    const filled = applyFrameVisionToProposal(card, vision);
-    if (filled) {
-      card = filled;
-      visionFilled = true;
-    } else {
-      console.warn("[learn] 读帧结果校验失败，保留草案字段");
-    }
-  }
+  const visionFilled = analyses.some((item) => Boolean(item.visionCard));
+  const framePaths = analyses.flatMap((item) => item.framePaths);
 
   const validated = parseManhuaViralTemplateCard(card);
   if (!validated) throw new Error("提案卡校验失败");
@@ -771,7 +1007,7 @@ async function main() {
   await fs.writeFile(proposalPath, `${JSON.stringify(validated, null, 2)}\n`, "utf8");
   await appendChangelog(
     validated.id,
-    `frames=${framePaths.length} climax=${plan.climaxWindows.length} vision=${visionFilled ? "terra" : "skip"}`,
+    `segments=${analyses.length} frames=${framePaths.length} vision=${visionFilled ? "terra" : "skip"}`,
   );
 
   const manifestPath = path.join(workDir, "manifest.json");
@@ -780,11 +1016,13 @@ async function main() {
     JSON.stringify(
       {
         proposalPath,
-        framesDir,
         framePaths,
-        planPath,
+        segmentCheckpoints: analyses.map((item) => ({
+          rangeSec: [item.startSec, item.endSec],
+          planPath: item.planPath,
+        })),
         visionFilled,
-        visionModel: vision?.model || null,
+        visionModels: Array.from(new Set(analyses.map((item) => item.visionModel).filter(Boolean))),
         nextStepZh: visionFilled
           ? "读帧已自动填提案（status=proposed）；人审「批准进库」后才进产品库。"
           : "读帧未完成：可重跑学习或人工改 proposals JSON；产品只吃 approved。",
