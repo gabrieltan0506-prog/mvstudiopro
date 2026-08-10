@@ -239,6 +239,8 @@ type Props = {
   onConfirmAssetsAndPrepareImages?: () => void | Promise<void>;
   /** 清掉与现稿不符的旧设定图，并按剧本强制重出 */
   onRegenerateAssetsFromScript?: () => void | Promise<void>;
+  /** 只清掉旧生成图、不触发重出（不扣费）；用户有现成资产时用这个 */
+  onPurgeStaleAssets?: () => void;
   /** 剧本人物/场景与当前设定图不对齐时的提示 */
   assetScriptStaleHintZh?: string | null;
   /** 已锁 canon 与现剧本人物表换角漂移（重出会出旧角色）时的强警示 */
@@ -514,6 +516,7 @@ export default function ManhuaScriptWorkbench({
   onOpenClipDock,
   onConfirmAssetsAndPrepareImages,
   onRegenerateAssetsFromScript,
+  onPurgeStaleAssets,
   assetScriptStaleHintZh = null,
   canonWriterDriftHintZh = null,
   stylePack = null,
@@ -1729,18 +1732,20 @@ export default function ManhuaScriptWorkbench({
       setActivePhase("outline");
       return;
     }
-    if (assetScriptStaleHintZh && onRegenerateAssetsFromScript) {
+    // 2026-08-10 用户明令：进分镜不得自动触发清图/出图（皆为扣费动作）。
+    // 只提示缺什么，由用户在资产设定页显式选择「导 ZIP / 只清旧图 / 付费重出」。
+    if (assetScriptStaleHintZh) {
       toast.message("设定图与剧本不符", {
-        description: assetScriptStaleHintZh,
+        description: `${assetScriptStaleHintZh}（请先在资产设定处理：导入资产 ZIP、只清旧图，或付费重出）`,
       });
-      void onRegenerateAssetsFromScript();
+      setActivePhase("assets");
       return;
     }
-    if (!assetsComplete && onConfirmAssetsAndPrepareImages) {
-      if (keyartGateHint) {
-        toast.message("正在准备资产", { description: keyartGateHint });
-      }
-      void onConfirmAssetsAndPrepareImages();
+    if (!assetsComplete) {
+      toast.message("资产尚未齐备", {
+        description: keyartGateHint || "请先在资产设定导入 ZIP 或手动生成设定图（生成将扣费）",
+      });
+      setActivePhase("assets");
       return;
     }
     if (refuseIfBlocked(keyartGateHint)) return;
@@ -2596,16 +2601,28 @@ export default function ManhuaScriptWorkbench({
                 <p className="mt-1 text-[10px] leading-4 text-amber-50/70">
                   重写剧本后旧人物图不会自动继续用。点右上「按剧本重出设定图」清掉旧生成图并按现稿重出；你手动上传的参考会保留。
                 </p>
-                {onRegenerateAssetsFromScript ? (
-                  <button
-                    type="button"
-                    disabled={factoryBusy}
-                    onClick={() => void onRegenerateAssetsFromScript()}
-                    className="mt-2 rounded-lg border border-amber-200/50 bg-amber-400/25 px-3 py-1.5 text-[11px] font-bold text-amber-50 disabled:opacity-45"
-                  >
-                    立刻清掉旧图并重出
-                  </button>
-                ) : null}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {onPurgeStaleAssets ? (
+                    <button
+                      type="button"
+                      disabled={factoryBusy}
+                      onClick={() => onPurgeStaleAssets()}
+                      className="rounded-lg border border-white/25 bg-white/[0.08] px-3 py-1.5 text-[11px] font-bold text-white/85 disabled:opacity-45"
+                    >
+                      只清掉旧图（不出图 · 不扣费）
+                    </button>
+                  ) : null}
+                  {onRegenerateAssetsFromScript ? (
+                    <button
+                      type="button"
+                      disabled={factoryBusy}
+                      onClick={() => void onRegenerateAssetsFromScript()}
+                      className="rounded-lg border border-amber-200/50 bg-amber-400/25 px-3 py-1.5 text-[11px] font-bold text-amber-50 disabled:opacity-45"
+                    >
+                      清掉并按剧本重出（将扣费）
+                    </button>
+                  ) : null}
+                </div>
               </div>
             ) : null}
 

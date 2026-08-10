@@ -2008,6 +2008,24 @@ export default function OmniCanvas() {
   const canvasTerraVisionMutation = trpc.mvAnalysis.canvasTerraVisionMarkdown.useMutation();
   const canvasTerraVideoReverseMutation = trpc.mvAnalysis.canvasTerraVideoReverse.useMutation();
   const expandWriterMutation = trpc.mvAnalysis.expandManhuaWriterPack.useMutation();
+  const manhuaViralTemplatesQuery = trpc.manhuaViralTemplate.listApproved.useQuery(undefined, {
+    staleTime: 60_000,
+    retry: 1,
+  });
+  const approvedViralTemplateCards = useMemo(
+    () => (manhuaViralTemplatesQuery.data?.groups || []).flatMap((group) => group.items),
+    [manhuaViralTemplatesQuery.data?.groups],
+  );
+  const selectedViralTemplate = useMemo(
+    () => approvedViralTemplateCards.find((card) => card.id === viralTemplateId) || null,
+    [approvedViralTemplateCards, viralTemplateId],
+  );
+  useEffect(() => {
+    if (!manhuaViralTemplatesQuery.isSuccess || !viralTemplateId) return;
+    if (!approvedViralTemplateCards.some((card) => card.id === viralTemplateId)) {
+      setViralTemplateId("");
+    }
+  }, [approvedViralTemplateCards, manhuaViralTemplatesQuery.isSuccess, viralTemplateId]);
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const splitPropSheetMutation = trpc.mvAnalysis.splitManhuaPropSheet.useMutation();
   const cropDirectorBoardMutation = trpc.mvAnalysis.cropManhuaDirectorBoardMain.useMutation();
@@ -2977,7 +2995,6 @@ export default function OmniCanvas() {
     setDirectorBoardMainByEpisode({});
     saveManhuaDirectorBoardMainByEpisode({});
     setWriterConfirmBlockers([]);
-    setViralTemplateId("");
     const t0 = Date.now();
     const count = clampWriterEpisodeCount(writerEpisodeCount);
     const designInject = [
@@ -3001,6 +3018,7 @@ export default function OmniCanvas() {
           brief: mergedBrief || undefined,
           episodeCount: count,
           tier: writerExpandTier,
+          viralTemplateId: viralTemplateId || undefined,
           lengthTierId: writerLengthTierId,
           videoModel: selectedVideoModel,
           fromEpisode: writerFromEpisode || undefined,
@@ -3264,6 +3282,12 @@ export default function OmniCanvas() {
       setWriterConfirmed(false);
       setProjectBible(null);
       setCustomAssetRefs([]);
+      // 导入新剧本：清掉库选角残留——「当前出演人物」以剧本人物表为准，
+      // 旧系列/默认原型不得继续占位（2026-08-10 用户点名 bug）
+      setFactoryFemaleId("");
+      setFactoryMaleId("");
+      setFemaleLeadManual(false);
+      setMaleLeadManual(false);
       setDirectorBoardMainByEpisode({});
       saveManhuaDirectorBoardMainByEpisode({});
       setWriterFocusEpisode(1);
@@ -6206,6 +6230,20 @@ export default function OmniCanvas() {
                   onRegenerateAssetsFromScript={() =>
                     void confirmAssetsAndPrepareImages({ forceRegenerate: true })
                   }
+                  onPurgeStaleAssets={() => {
+                    const canon = projectBible?.assetCanon;
+                    if (!canon) {
+                      toast.error("请先确认剧本，再清理旧图");
+                      return;
+                    }
+                    const purged = purgeStaleCustomAssetRefsForCanon(customAssetRefs, canon, {
+                      forceAllGenerated: true,
+                    });
+                    setCustomAssetRefs(purged.refs);
+                    toast.success(
+                      `已清掉 ${purged.removedCount} 张旧生成图（未生成新图、不扣费）；手动上传的参考已保留`,
+                    );
+                  }}
                   assetScriptStaleHintZh={assetScriptAlign.hintZh}
                   canonWriterDriftHintZh={canonWriterDriftHintZh}
                   stylePack={stylePack}
@@ -7053,6 +7091,50 @@ export default function OmniCanvas() {
                 placeholder={"例：\n主角隐忍多年后归来\n对手是旧日盟友\n每集结尾必须留下未揭的局"}
                 className="mt-1 w-full resize-y rounded-xl border border-white/15 bg-black/50 px-3.5 py-2.5 text-sm leading-6 text-white placeholder:text-white/30 outline-none focus:border-emerald-400/55 disabled:opacity-50"
               />
+              <div className="mt-3 rounded-xl border border-cyan-300/15 bg-cyan-500/[0.05] p-3">
+                <label className="block text-[11px] font-semibold text-cyan-50/80">
+                  节奏模板（可选）
+                </label>
+                <select
+                  value={viralTemplateId}
+                  onChange={(e) => {
+                    setViralTemplateId(e.target.value);
+                    setWriterConfirmed(false);
+                  }}
+                  disabled={writerBusy || factoryBusy || manhuaViralTemplatesQuery.isLoading}
+                  className="mt-1.5 w-full rounded-lg border border-white/12 bg-black/50 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
+                >
+                  <option value="">不使用模板（默认）</option>
+                  {(manhuaViralTemplatesQuery.data?.groups || []).map((group) => (
+                    <optgroup key={group.laneZh} label={group.laneZh}>
+                      {group.items.map((tpl) => (
+                        <option key={tpl.id} value={tpl.id}>
+                          {tpl.nameZh}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                {selectedViralTemplate ? (
+                  <div className="mt-2 rounded-lg border border-cyan-200/15 bg-black/25 px-2.5 py-2 text-[10px] leading-4 text-white/60">
+                    <div className="font-semibold text-cyan-50/85">
+                      {selectedViralTemplate.nameZh} · {selectedViralTemplate.laneZh}
+                    </div>
+                    <div>{selectedViralTemplate.summaryZh}</div>
+                    <div className="mt-1 text-amber-100/70">
+                      前 3 秒：{selectedViralTemplate.hook3sZh}
+                    </div>
+                  </div>
+                ) : manhuaViralTemplatesQuery.isSuccess && approvedViralTemplateCards.length === 0 ? (
+                  <p className="mt-1.5 text-[10px] text-white/35">
+                    暂无通过人工验收的模板；垃圾、待审和已拒绝模板不会显示。
+                  </p>
+                ) : (
+                  <p className="mt-1.5 text-[10px] text-white/35">
+                    默认不套模板；只有人工批准的模板才可选，题材和已锁剧情始终优先。
+                  </p>
+                )}
+              </div>
               <div className="mt-3 flex flex-wrap items-end gap-2.5">
                 <div>
                   <label className="block text-[11px] text-white/45">集数</label>
