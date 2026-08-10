@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isManhuaLearnListComplete,
   MANHUA_LEARN_ANALYSIS_MIN,
   MANHUA_LEARN_BATCH_DEFAULT,
   canEmitManhuaLearnAnalysis,
@@ -72,13 +73,18 @@ describe("manhuaTemplateLearnSeries", () => {
     // 草版：学满 4 集即出
     expect(canEmitManhuaLearnAnalysis(4)).toBe(true);
     expect(canEmitManhuaLearnAnalysis(15)).toBe(true);
-    // 草版：短合集全学完（2 集合集学完 2 集）
-    expect(canEmitManhuaLearnAnalysis(2, 2)).toBe(true);
-    expect(canEmitManhuaLearnAnalysis(1, 1)).toBe(true);
-    // 不出：一集没学 / 长合集只学了 3 集
-    expect(canEmitManhuaLearnAnalysis(0, 2)).toBe(false);
-    expect(canEmitManhuaLearnAnalysis(3, 20)).toBe(false);
+    // 草版：合集全学完（集合包含由调用方判定后传入）
+    expect(canEmitManhuaLearnAnalysis(2, { allListedComplete: true })).toBe(true);
+    expect(canEmitManhuaLearnAnalysis(1, { allListedComplete: true })).toBe(true);
+    // 不出：一集没学 / 长合集未学完 / 数量比较不再是依据
+    expect(canEmitManhuaLearnAnalysis(0, { allListedComplete: true })).toBe(false);
+    expect(canEmitManhuaLearnAnalysis(3, { allListedComplete: false })).toBe(false);
     expect(canEmitManhuaLearnAnalysis(3)).toBe(false);
+    // 集合判定辅助：列表降级缩水不会误判
+    expect(isManhuaLearnListComplete([1, 2], [1, 2, 3])).toBe(true);
+    expect(isManhuaLearnListComplete([1, 2, 3], [1, 2])).toBe(false);
+    expect(isManhuaLearnListComplete([], [1])).toBe(false);
+    expect(isManhuaLearnListComplete(undefined, [1])).toBe(false);
   });
 
   it("merges digests into one proposal（草版口径：有几集合成几集，空集合返 null）", () => {

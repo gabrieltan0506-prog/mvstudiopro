@@ -160,8 +160,12 @@ export type ManhuaLearnSeriesProgress = {
   seriesKey: string;
   sourceUrl: string;
   titleHint: string;
+  /** provenance：本系列由哪条学习链产出（A/B 隔离；seriesKey 已按此分命名空间） */
+  learnLlm?: "gpt" | "claude";
   mixId?: string;
   listedEpisodeCount: number;
+  /** 列表里出现过的全部集号（判「合集全学完」用集合包含，不用数量比较） */
+  listedEpisodeIndexes?: number[];
   learnedEpisodeIndexes: number[];
   updatedAt: string;
   dramaKind?: ManhuaDramaKind;
@@ -225,13 +229,25 @@ export const MANHUA_LEARN_ANALYSIS_DRAFT_MIN = 4;
 
 export function canEmitManhuaLearnAnalysis(
   learnedCount: number,
-  listedEpisodeCount?: number,
+  opts?: { allListedComplete?: boolean },
 ): boolean {
   if (learnedCount >= MANHUA_LEARN_ANALYSIS_MIN) return true;
   if (learnedCount < 1) return false;
   if (learnedCount >= MANHUA_LEARN_ANALYSIS_DRAFT_MIN) return true;
-  const listed = Math.floor(Number(listedEpisodeCount) || 0);
-  return listed > 0 && learnedCount >= listed;
+  // 「合集全学完」必须由调用方按集合包含（listedIndexes ⊆ completeIndexes）判定，
+  // 不许拿数量比较凑数——列表接口抖动降级成 1 集时数量比较会误判提前出草版
+  return opts?.allListedComplete === true;
+}
+
+/** 集合判定辅助：可靠列表非空且每一集都已完整学完 */
+export function isManhuaLearnListComplete(
+  listedIndexes: readonly number[] | undefined,
+  completeIndexes: readonly number[],
+): boolean {
+  const listed = (listedIndexes || []).filter((n) => Number.isFinite(n) && n >= 1);
+  if (!listed.length) return false;
+  const done = new Set(completeIndexes);
+  return listed.every((n) => done.has(n));
 }
 
 function guessLane(text: string): ManhuaViralTemplateLane {

@@ -31,7 +31,12 @@ export function resolveManhuaTemplateLearnLlmProvider(
   raw?: string | null,
 ): ManhuaTemplateLearnLlmProvider {
   const t = String(raw || "").trim().toLowerCase();
-  return t === "claude" || t === "anthropic" ? "claude" : "gpt";
+  if (t === "claude" || t === "anthropic") return "claude";
+  if (t && t !== "gpt" && t !== "openai" && t !== "terra") {
+    // A/B 部署变量拼错会静默产出错误实验组——留告警别静默
+    console.warn(`[manhuaTemplateLearn] 未知的 LLM provider 环境值「${t}」，按 gpt 处理`);
+  }
+  return "gpt";
 }
 
 export type ManhuaTemplateFrameVisionInputFrame = {

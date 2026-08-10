@@ -352,10 +352,14 @@ export function manhuaLearnResultFromSnapshot(input: {
     tagLabelsZh?: string[] | null;
   } | null;
   digestsPreview: ManhuaLearnResultUi["digestsPreview"];
+  /** 服务端已整集学完数；preview 含未学完检查点，不能拿长度冒充完成数 */
+  completedCount?: number;
   analysisReady: boolean;
   proposal: Record<string, unknown> | null;
 }): ManhuaLearnResultUi {
-  const learnedCount = input.digestsPreview.length;
+  const learnedCount = Number.isFinite(Number(input.completedCount))
+    ? Math.max(0, Math.floor(Number(input.completedCount)))
+    : input.digestsPreview.length;
   const listed = Math.max(0, Math.floor(Number(input.progress?.listedEpisodeCount) || 0));
   const tags = Array.isArray(input.progress?.tagLabelsZh)
     ? input.progress!.tagLabelsZh!.map((t) => String(t || "").trim()).filter(Boolean)

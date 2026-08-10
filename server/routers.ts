@@ -3257,13 +3257,24 @@ export const appRouter = router({
       .input(z.object({
         fileName: z.string().min(1),
         mimeType: z.string().min(1),
+        /** @deprecated 审查收紧（2026-08-10）：对象名一律服务端生成，客户端传入被忽略 */
         objectName: z.string().min(1).optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        // 审查必须修：匿名可反复索取 PUT 签名 + 自带 objectName 覆盖已知路径。
+        // 收紧为：须登录；对象名 = 用户前缀 + 随机 UUID（读取侧按前缀校验归属）。
+        if (!ctx.user?.id) {
+          throw new Error("请先登录后再上传文件");
+        }
+        const { randomUUID } = await import("node:crypto");
+        const safeName = String(input.fileName || "file.bin")
+          .replace(/[^a-z0-9._-]/gi, "-")
+          .replace(/-{2,}/g, "-")
+          .slice(-80);
         return createGcsSignedUploadUrl({
           fileName: input.fileName,
           contentType: input.mimeType,
-          objectName: input.objectName,
+          objectName: `uploads/u${ctx.user.id}/${randomUUID()}-${safeName}`,
         });
       }),
 
@@ -7167,6 +7178,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         );
 
         const files = input.files ?? [];
+        // 审查必须修：gcsUri 只认本人上传前缀，堵「提交任意 gs:// 让服务账号代读」的跨租户洞
+        if (files.some((f) => f.gcsUri)) {
+          const uidForGcs = ctx.user?.id;
+          if (!uidForGcs) throw new Error("请先登录后再使用直传文件");
+          const { getGcsBucketName } = await import("./services/gcs.js");
+          const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${uidForGcs}/`;
+          for (const f of files) {
+            if (f.gcsUri && !String(f.gcsUri).startsWith(allowedPrefix)) {
+              throw new Error("直传文件校验失败，请重新上传后再试");
+            }
+          }
+        }
         const modelName = resolveKnowledgeCardDistillModel(input.distillModel);
 
         // 抽文很快（本机 105 页 PDF 约数秒），先做掉：既能判断是否够长要走后台，
@@ -7189,7 +7212,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             id: jobId,
             userId: String(userId),
             type: "platform",
-            provider: "evolink",
+            provider: modelName === "claude-opus-5" ? "anthropic" : "evolink",
             input: {
               action: "knowledge_card_distill",
               params: {
@@ -7465,9 +7488,26 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             });
           } catch (pe) {
             console.warn("[mvAnalysis.generatePlatformCompositeSheet] progress job insert failed:", pe);
+            // 审查必须修：页费已扣、任务没建成 → 可靠退款（带稳定 key，重复退防护走描述对账）
+            try {
+              if (cost > 0) {
+                const { refundCredits } = await import("./credits.js");
+                await refundCredits(
+                  userId,
+                  cost,
+                  `platformCompositeSheet 建任务失败退回 [refundKey:compositeSheet/${progressJobId}]`,
+                );
+              }
+            } catch (re) {
+              console.error(
+                "[mvAnalysis.generatePlatformCompositeSheet] refund after insert failure ALSO failed:",
+                `userId=${userId} cost=${cost} jobId=${progressJobId}`,
+                re,
+              );
+            }
             throw new TRPCError({
               code: "INTERNAL_SERVER_ERROR",
-              message: "無法建立實時進度任務，請稍後再試",
+              message: "無法建立實時進度任務，費用已退回，請稍後再試",
             });
           }
           

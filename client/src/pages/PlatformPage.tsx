@@ -2608,6 +2608,7 @@ export default function PlatformPage() {
           categoryLabelZh: d.categoryLabelZh,
           tagLabelsZh: d.tagLabelsZh,
         })),
+        completedCount: (snap as { completedCount?: number }).completedCount,
         analysisReady: snap.analysisReady,
         proposal: snap.proposal as Record<string, unknown> | null,
       });
@@ -4613,14 +4614,14 @@ export default function PlatformPage() {
   );
 
   const approveManhuaLearnProposal = useCallback(
-    async (id: string, card?: Record<string, unknown>) => {
-      if (!window.confirm(`确认批准「${id}」进节奏模板库？批准后编剧室可选，无需改代码发版。`)) {
+    async (id: string, nameZh?: string) => {
+      if (!window.confirm(`确认批准「${nameZh || "该节奏模板"}」进节奏模板库？批准后编剧室可选，无需改代码发版。`)) {
         return;
       }
       try {
+        // 审查收紧：只传 id，服务端按落盘提案批准，不信任客户端卡片
         const res = await approveManhuaViralTemplateMutation.mutateAsync({
           id,
-          card,
           confirmApprove: true,
           supervisorToken: getSupervisorTrpcToken(),
         });
@@ -11207,8 +11208,7 @@ export default function PlatformPage() {
                               <div className="font-semibold">
                                 总分析提案 · {manhuaLearnResult.proposal.nameZh}
                                 <span className="ml-2 font-normal text-amber-100/55">
-                                  {manhuaLearnResult.proposal.laneZh} ·{" "}
-                                  {manhuaLearnResult.proposal.id}
+                                  {manhuaLearnResult.proposal.laneZh}
                                 </span>
                               </div>
                               {manhuaLearnResult.proposal.hook3sZh ? (
@@ -11231,7 +11231,7 @@ export default function PlatformPage() {
                                   onClick={() =>
                                     void approveManhuaLearnProposal(
                                       manhuaLearnResult.proposal!.id,
-                                      manhuaLearnResult.proposal!.card,
+                                      manhuaLearnResult.proposal!.nameZh,
                                     )
                                   }
                                   className="rounded-md border border-amber-300/40 bg-amber-500/20 px-2.5 py-1 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/30 disabled:opacity-50"
@@ -11815,7 +11815,16 @@ export default function PlatformPage() {
                       <select
                         className="rounded-md border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-semibold text-white focus:border-[#ff4fb8]/50 focus:outline-none"
                         value={customNoteDistillModel}
-                        disabled={customNoteBusy || customNoteUploadBusy}
+                        disabled={
+                          customNoteBusy
+                          || customNoteUploadBusy
+                          || customNoteDistillPhase !== "idle"
+                        }
+                        title={
+                          customNoteDistillPhase !== "idle"
+                            ? "本次提炼按当前档位计费，出图完成后才能换档"
+                            : undefined
+                        }
                         onChange={(e) => {
                           const next = e.target.value as KnowledgeCardDistillModelId;
                           setCustomNoteDistillModel(next);
@@ -11835,7 +11844,7 @@ export default function PlatformPage() {
                     </label>
                   ) : null}
                   <span className="text-[11px] text-[#c9c0e6]/45">
-                    支持 pptx / docx / pdf / png / jpg；提炼费用含在页费中
+                    支持 pptx / docx / pdf / png / jpg；上传文档的提炼含在页费中，超长纯文本主动提炼另收一次性提炼费
                   </span>
                 </div>
               ) : null}

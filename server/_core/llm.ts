@@ -680,7 +680,9 @@ const resolveTarget = (
   if (preferredProvider === "anthropic") {
     const anthropicKey = String(process.env.ANTHROPIC_API_KEY || "").trim();
     if (!anthropicKey) {
-      throw new Error("ANTHROPIC_API_KEY is not configured");
+      // 前台零泄漏：环境名只进服务端日志
+      console.warn("[llm] anthropic provider requested but ANTHROPIC_API_KEY is missing");
+      throw new Error("模型通道未配置，请稍后重试");
     }
     return {
       provider: "anthropic",
@@ -1494,17 +1496,21 @@ function toAnthropicContentBlock(part: MessageContent): AnthropicContentBlock {
     const url = String(part.image_url?.url || "").trim();
     const parsed = parseDataUrl(url);
     if (parsed) {
+      // 上游只收四种图片格式；其余（如 svg/bmp）提前报错，别把 400 留给上游猜
+      if (!/^image\/(jpeg|png|gif|webp)$/i.test(parsed.mimeType)) {
+        throw new Error("图片格式仅支持 JPEG/PNG/GIF/WebP");
+      }
       return {
         type: "image",
-        source: { type: "base64", media_type: parsed.mimeType, data: parsed.data },
+        source: { type: "base64", media_type: parsed.mimeType.toLowerCase(), data: parsed.data },
       };
     }
-    if (!/^https?:\/\//i.test(url)) {
+    if (!/^https:\/\//i.test(url)) {
       throw new Error("图片仅支持 https 或 data URL");
     }
     return { type: "image", source: { type: "url", url } };
   }
-  throw new Error(`anthropic 分支暂不支持 ${part.type} 内容（当前接入链路用不到）`);
+  throw new Error(`该模型通道暂不支持 ${part.type} 内容`);
 }
 
 /** 纯函数：OpenAI 形消息 → Anthropic /v1/messages 请求体（可单测） */
@@ -1525,13 +1531,13 @@ export function buildAnthropicRequestBody(
       continue;
     }
     if (msg.role !== "user" && msg.role !== "assistant") {
-      throw new Error(`anthropic 分支暂不支持 role=${msg.role} 消息（当前接入链路用不到）`);
+      throw new Error(`该模型通道暂不支持 role=${msg.role} 消息`);
     }
     messages.push({ role: msg.role, content: parts.map(toAnthropicContentBlock) });
   }
   if (!messages.length || messages[0]!.role !== "user") {
     // Anthropic 要求首条为 user；system-only 调用补一个占位不合理，直接报错让调用方修
-    throw new Error("anthropic 分支要求首条非 system 消息为 user");
+    throw new Error("该模型通道要求首条非 system 消息为 user");
   }
 
   const requested =
@@ -1563,6 +1569,11 @@ async function invokeAnthropic(
   params: InvokeParams & { model?: ModelTier },
   target: LlmTarget,
 ): Promise<InvokeResult> {
+  // invokeLLM 公开的 tools/toolChoice 契约本通道尚未实现转换——宁可 fail-fast，
+  // 不许静默发出无工具请求（上游 tool_use 返回也无法回传 tool_result）
+  if (params.tools?.length || params.toolChoice || params.tool_choice) {
+    throw new Error("该模型通道暂不支持工具调用（tools/toolChoice）");
+  }
   const body = buildAnthropicRequestBody(params, target.modelName);
   const response = await fetch(String(target.apiUrl || ANTHROPIC_MESSAGES_URL), {
     method: "POST",

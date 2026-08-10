@@ -168,6 +168,9 @@ export async function analyzeManhuaTemplateFramesWithTerra(
     ],
   });
 
+  if (String(response.choices?.[0]?.finish_reason || "") === "max_tokens") {
+    throw new Error("frame_vision_truncated");
+  }
   const content = String(response.choices?.[0]?.message?.content || "").trim();
   const jsonText = extractJsonString(content);
   let parsedJson: unknown = jsonText;

@@ -652,14 +652,15 @@ async function invokeClaudeDistill(params: {
 }): Promise<string> {
   const imageUrls: string[] = [];
   if (params.imageDataUrls.length) {
-    if (params.imageDataUrls.length > 30) {
+    if (params.imageDataUrls.length > 40) {
       console.warn(
-        `[knowledgeCardDistill] claude 档图片超上限，截取前 30/${params.imageDataUrls.length} 张`,
+        `[knowledgeCardDistill] claude 档图片超上限，截取前 40/${params.imageDataUrls.length} 张`,
       );
     }
     const { createHash } = await import("node:crypto");
     const { uploadBufferToGcs, signGsUriV4ReadUrl } = await import("./gcs.js");
-    for (const dataUrl of params.imageDataUrls.slice(0, 30)) {
+    // 与路由/GPT 路径同一上限（40），不再私砍到 30
+    for (const dataUrl of params.imageDataUrls.slice(0, 40)) {
       const match = /^data:([^;,]+);base64,([\s\S]+)$/.exec(String(dataUrl || ""));
       if (!match) {
         console.warn("[knowledgeCardDistill] claude 档跳过非 data: 形态图片条目");
@@ -711,6 +712,10 @@ async function invokeClaudeDistill(params: {
       },
     ],
   });
+  // 截断不当成功：max_tokens 截断的半截稿会顺利通过下游长度检查并照常收费
+  if (String(response.choices?.[0]?.finish_reason || "") === "max_tokens") {
+    throw new Error(KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE);
+  }
   const out = extractFirstChoicePlainText(response).trim();
   if (!out || out.length < 20) throw new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
   return out;
@@ -743,7 +748,8 @@ async function invokeDistillLlm(params: {
 
 /** 提炼无法靠重试救回的错（额度/配置/通道），不必再退避。 */
 function isFatalDistillError(message: string): boolean {
-  return /额度不足|通道不可用|未配置|请先输入|未能从文件/.test(message);
+  // 401/403/安全拒答/未配置是确定性失败：重试+递归细切只会放大请求量
+  return /额度不足|通道不可用|未配置|请先输入|未能从文件|HTTP 40[13]|安全分类器拒答/.test(message);
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

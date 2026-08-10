@@ -111,17 +111,19 @@ export async function getGcsManhuaViralProposal(
  */
 export async function approveManhuaViralTemplate(input: {
   id?: string;
+  /** @deprecated 审查收紧（2026-08-10）：客户端完整卡不再被信任，只按 id 读落盘提案 */
   card?: unknown;
 }): Promise<ManhuaViralTemplateCard> {
-  let card: ManhuaViralTemplateCard | null = null;
-  if (input.card) {
-    card = parseManhuaViralTemplateCard(input.card);
+  const id = String(
+    input.id || (parseManhuaViralTemplateCard(input.card)?.id ?? "") || "",
+  ).trim();
+  if (!id) throw new Error("找不到可批准的提案（请提供提案 id）");
+  // 只信落盘：防止凭内存/客户端构造一份从未真实学成的卡片直接入库
+  const card = await getGcsManhuaViralProposal(id);
+  if (!card) throw new Error("提案文件不存在或已失效，请重新学习后再批准");
+  if (card.status !== "proposed") {
+    throw new Error("该提案不是待审状态（可能已批准入库），无需重复批准");
   }
-  const id = String(input.id || card?.id || "").trim();
-  if (!card && id) {
-    card = await getGcsManhuaViralProposal(id);
-  }
-  if (!card) throw new Error("找不到可批准的提案（请提供 id 或完整卡片）");
 
   const approved: ManhuaViralTemplateCard = {
     ...card,

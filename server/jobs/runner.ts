@@ -2181,17 +2181,49 @@ async function processPlatformJob(
           "../../shared/knowledgeCardDistillModels.js"
         );
         const fee = knowledgeCardDistillFeeForModel(prepared.distillModel);
-        const deducted = await deductCreditsAmount(
-          uidForDistillFee,
-          fee,
-          "knowledgeCardDistill",
-          `图文知识卡·提炼（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）`,
-        );
-        distillFeeCharged = deducted.cost;
+        /**
+         * 幂等（审查必须修）：withTimeout 只是 Promise.race，超时后原执行仍在跑，
+         * job 重排后新旧两次执行都会走到这里——按 jobId 查账，已扣过就不再扣第二次。
+         */
+        const chargeMarker = `[chargeKey:kcdistill/${String(platformJobId || "nojob")}]`;
+        const { getDb } = await import("../db.js");
+        let alreadyCharged = false;
+        try {
+          const db = await getDb();
+          if (db) {
+            const { stripeUsageLogs } = await import("../../drizzle/schema.js");
+            const { and, eq, like } = await import("drizzle-orm");
+            const [row] = await db
+              .select({ creditsCost: stripeUsageLogs.creditsCost })
+              .from(stripeUsageLogs)
+              .where(
+                and(
+                  eq(stripeUsageLogs.userId, uidForDistillFee),
+                  like(stripeUsageLogs.description, `%${chargeMarker}%`),
+                ),
+              )
+              .limit(1);
+            if (row) {
+              alreadyCharged = true;
+              distillFeeCharged = Math.max(0, Number(row.creditsCost) || 0);
+            }
+          }
+        } catch (e) {
+          console.warn("[knowledgeCardDistill] 幂等查账失败，按未扣处理：", e);
+        }
+        if (!alreadyCharged) {
+          const deducted = await deductCreditsAmount(
+            uidForDistillFee,
+            fee,
+            "knowledgeCardDistill",
+            `图文知识卡·提炼（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）${chargeMarker}`,
+          );
+          distillFeeCharged = deducted.cost;
+        }
       }
 
       return {
-        provider: "evolink",
+        provider: prepared.distillModel === "claude-opus-5" ? "anthropic" : "evolink",
         output: {
           success: true,
           distillFeeCharged,

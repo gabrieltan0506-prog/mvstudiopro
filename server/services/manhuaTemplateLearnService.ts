@@ -29,6 +29,7 @@ import {
   MANHUA_LEARN_MAX_DURATION_SEC,
   canEmitManhuaLearnAnalysis,
   clampManhuaLearnBatchSize,
+  isManhuaLearnListComplete,
   classifyManhuaLearnTitle,
   isManhuaLearnEpisodeComplete,
   mergeEpisodeDigestsIntoProposal,
@@ -146,12 +147,14 @@ function toDigestPreview(d: ManhuaLearnEpisodeDigest): ManhuaLearnDigestPreview 
 export async function getManhuaSeriesLearnSnapshot(seriesKey: string): Promise<{
   progress: ManhuaLearnSeriesProgress | null;
   digestsPreview: ManhuaLearnDigestPreview[];
+  /** 已整集学完的数量（digestsPreview 含未学完的检查点，勿拿其长度当完成数） */
+  completedCount: number;
   analysisReady: boolean;
   proposal: ManhuaViralTemplateCard | null;
 }> {
   const key = String(seriesKey || "").trim();
   if (!key) {
-    return { progress: null, digestsPreview: [], analysisReady: false, proposal: null };
+    return { progress: null, digestsPreview: [], completedCount: 0, analysisReady: false, proposal: null };
   }
   const progress = await loadSeriesProgress(key);
   if (progress) {
@@ -161,33 +164,27 @@ export async function getManhuaSeriesLearnSnapshot(seriesKey: string): Promise<{
   const digestsAll = await loadAllDigests(key);
   const digests = digestsAll.filter(isManhuaLearnEpisodeComplete);
   const digestsPreview = digestsAll.map(toDigestPreview);
-  const analysisReady = canEmitManhuaLearnAnalysis(digests.length, progress?.listedEpisodeCount);
+  const completeIndexes = digests.map((d) => d.episodeIndex);
+  // 集合包含判定；存量 progress 无 listedEpisodeIndexes 时退化为可靠总数比较
+  const allListedComplete = progress
+    ? progress.listedEpisodeIndexes?.length
+      ? isManhuaLearnListComplete(progress.listedEpisodeIndexes, completeIndexes)
+      : progress.listedEpisodeCount > 0 && digests.length >= progress.listedEpisodeCount
+    : false;
+  const analysisReady = canEmitManhuaLearnAnalysis(digests.length, { allListedComplete });
   let proposal: ManhuaViralTemplateCard | null = null;
   if (analysisReady && progress) {
-    // A/B 口径与学习主路径一致：claude 档下重建/读取都带 _claude 后缀，
-    // 防止从快照点「批准进库」时以无后缀 id 覆盖 GPT 版
-    const learnLlm = resolveManhuaTemplateLearnLlmProvider(
-      process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER,
-    );
-    proposal = mergeEpisodeDigestsIntoProposal({
-      seriesKey: key,
-      titleHint: progress.titleHint,
-      sourceUrl: progress.sourceUrl,
-      digests: digests.slice(0, MANHUA_LEARN_ANALYSIS_TARGET),
-    });
-    if (proposal && learnLlm === "claude") {
-      proposal = { ...proposal, id: `${proposal.id}_claude`.slice(0, 64) };
-    }
-    // 若已有 GCS 提案文件则优先读（按当前档位取对应版本）
-    const proposalId = learnLlm === "claude" ? `tpl_series_${key}_claude` : `tpl_series_${key}`;
+    // 审查收紧：快照只回真实落盘的 proposed 提案（seriesKey 已带 provider 命名空间）。
+    // 不再返回内存重建的启发式卡——批准端也只认落盘，杜绝「凭 env 伪造版本」整条链。
     const fromGcs = await readJsonGcs<ManhuaViralTemplateCard>(
-      `manhua-template-learn/proposals/${proposalId}.json`,
+      `manhua-template-learn/proposals/tpl_series_${key}.json`,
     );
     if (fromGcs && fromGcs.status === "proposed") {
-      proposal = parseManhuaViralTemplateCard(fromGcs) || proposal;
+      proposal = parseManhuaViralTemplateCard(fromGcs);
     }
+    // status=approved：已入库，不再给可批准的提案（防重复批准循环）
   }
-  return { progress, digestsPreview, analysisReady, proposal };
+  return { progress, digestsPreview, completedCount: digests.length, analysisReady, proposal };
 }
 
 function gcsBucketHint(): string {
@@ -222,11 +219,23 @@ function stripBookTitleMarks(raw?: string | null): string {
   return m && !m[1].includes("《") && !m[1].includes("》") ? m[1].trim() : t;
 }
 
-function seriesKeyFrom(input: { url: string; mixId?: string; title?: string }): string {
+/**
+ * A/B 隔离（审查必须修）：provider 进 seriesKey 命名空间。
+ * GPT 档 key 与存量完全兼容；Claude 档独立 key = 独立 digest/progress/提案存储，
+ * 两档互不复用互不覆盖（Claude 轮从头下片读帧，实验组干净），
+ * 也不再需要 _claude 后缀 hack（快照/批准按 key 天然取对版本）。
+ */
+function seriesKeyFrom(input: {
+  url: string;
+  mixId?: string;
+  title?: string;
+  learnLlm?: "gpt" | "claude";
+}): string {
+  const ns = input.learnLlm === "claude" ? ":claude" : "";
   const mix = String(input.mixId || "").trim();
-  if (mix) return createHash("sha1").update(`mix:${mix}`).digest("hex").slice(0, 12);
+  if (mix) return createHash("sha1").update(`mix:${mix}${ns}`).digest("hex").slice(0, 12);
   return createHash("sha1")
-    .update(String(input.url || input.title || "series"))
+    .update(`${String(input.url || input.title || "series")}${ns}`)
     .digest("hex")
     .slice(0, 12);
 }
@@ -900,12 +909,15 @@ export async function runManhuaTemplateLearn(
   if (mixId && !String(input.mixId || "").trim()) {
     // 单集/裸链接升级为合集学习：留双 key 日志，排查「旧进度去哪了」用
     console.info(
-      `[manhuaTemplateLearn] series upgraded to mix: mixKey=${seriesKeyFrom({ url, mixId, title })} urlKey=${seriesKeyFrom({ url, title })}`,
+      `[manhuaTemplateLearn] series upgraded to mix: mixKey=${seriesKeyFrom({ url, mixId, title, learnLlm: resolveManhuaTemplateLearnLlmProvider(process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER) })} urlKey=${seriesKeyFrom({ url, title })}`,
     );
   }
 
   const batchSize = clampManhuaLearnBatchSize(input.batchSize ?? MANHUA_LEARN_BATCH_DEFAULT);
-  const seriesKey = seriesKeyFrom({ url, mixId, title });
+  const learnLlm = resolveManhuaTemplateLearnLlmProvider(
+    process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER,
+  );
+  const seriesKey = seriesKeyFrom({ url, mixId, title, learnLlm });
   const workId = `tpl_series_${seriesKey}`;
   const rootTmp = await fs.mkdtemp(path.join(os.tmpdir(), `manhua-learn-${seriesKey}-`));
   const progress = async (phase: string, detailZh: string) => {
@@ -943,8 +955,10 @@ export async function runManhuaTemplateLearn(
         seriesKey,
         sourceUrl: url,
         titleHint: titleHint || "未命名合集",
+        learnLlm,
         mixId: mixId || undefined,
         listedEpisodeCount: listed.length,
+        listedEpisodeIndexes: listed.map((e) => e.index).sort((a, b) => a - b),
         learnedEpisodeIndexes: [],
         updatedAt: new Date().toISOString(),
         dramaKind: seriesClassify.dramaKind,
@@ -962,7 +976,14 @@ export async function runManhuaTemplateLearn(
       sourceUrl: url,
       // 旧进度若还挂着占位（未命名合集/贴链接学习），回填到手的真剧名
       titleHint: titleHint || cleanManhuaLearnTitle(prog.titleHint) || "未命名合集",
-      listedEpisodeCount: listed.length,
+      // 列表接口抖动降级不许缩写历史可靠总数：索引取并集、数量取并集大小
+      listedEpisodeIndexes: Array.from(
+        new Set([...(prog.listedEpisodeIndexes || []), ...listed.map((e) => e.index)]),
+      ).sort((a, b) => a - b),
+      listedEpisodeCount: Math.max(
+        prog.listedEpisodeCount || 0,
+        new Set([...(prog.listedEpisodeIndexes || []), ...listed.map((e) => e.index)]).size,
+      ),
       mixId: mixId || prog.mixId || undefined,
       dramaKind: seriesClassify.dramaKind,
       categoryLabelZh: seriesClassify.categoryLabelZh,
@@ -986,7 +1007,16 @@ export async function runManhuaTemplateLearn(
     if (!batchIndexes.length) {
       const digestsAll = await loadAllDigests(seriesKey);
       const digests = digestsAll.filter(isManhuaLearnEpisodeComplete);
-      if (canEmitManhuaLearnAnalysis(digests.length, listed.length)) {
+      if (
+        canEmitManhuaLearnAnalysis(digests.length, {
+          allListedComplete: isManhuaLearnListComplete(
+            prog.listedEpisodeIndexes?.length
+              ? prog.listedEpisodeIndexes
+              : listed.map((e) => e.index),
+            digests.map((d) => d.episodeIndex),
+          ),
+        })
+      ) {
         const proposal = mergeEpisodeDigestsIntoProposal({
           seriesKey,
           titleHint: prog.titleHint,
@@ -1145,7 +1175,14 @@ export async function runManhuaTemplateLearn(
     const digestsAll = await loadAllDigests(seriesKey);
     const digests = digestsAll.filter(isManhuaLearnEpisodeComplete);
     const learnedCount = digests.length;
-    const ready = canEmitManhuaLearnAnalysis(learnedCount, listed.length);
+    const ready = canEmitManhuaLearnAnalysis(learnedCount, {
+      allListedComplete: isManhuaLearnListComplete(
+        prog.listedEpisodeIndexes?.length
+          ? prog.listedEpisodeIndexes
+          : listed.map((e) => e.index),
+        digests.map((d) => d.episodeIndex),
+      ),
+    });
 
     if (!ready) {
       const singleOrShort =
@@ -1198,9 +1235,6 @@ export async function runManhuaTemplateLearn(
         MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL,
         resolveManhuaTemplateLearnLlmProvider,
       } = await import("../../shared/manhuaTemplateLearnFrameVision.js");
-      const learnLlm = resolveManhuaTemplateLearnLlmProvider(
-        process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER,
-      );
       const isClaude = learnLlm === "claude";
       const resp = await invokeLLM({
         model: "pro",
@@ -1237,6 +1271,9 @@ export async function runManhuaTemplateLearn(
           },
         ],
       });
+      if (String(resp.choices?.[0]?.finish_reason || "") === "max_tokens") {
+        throw new Error("polish_truncated");
+      }
       const raw = String(resp.choices?.[0]?.message?.content || "");
       const parsed = JSON.parse(extractJsonString(raw)) as Record<string, unknown>;
       const polished = parseManhuaViralTemplateCard({
@@ -1247,10 +1284,6 @@ export async function runManhuaTemplateLearn(
         sourceRefs: proposal.sourceRefs,
       });
       if (polished) proposal = polished;
-      if (isClaude) {
-        // A/B 拍板：Claude 版提案另存 id 后缀，避免覆盖 GPT 版；两版各生成剧本，用户亲选
-        proposal = { ...proposal, id: `${proposal.id}_claude`.slice(0, 64) };
-      }
     } catch (e) {
       console.warn(
         "[manhuaTemplateLearn] polish failed, keep heuristic:",
