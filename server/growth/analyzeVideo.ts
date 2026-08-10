@@ -2214,7 +2214,8 @@ export async function analyzeVideo(params: {
       if (storedBuffer?.length) {
         buffer = storedBuffer;
       } else if (typeof params.fileUrl === "string" && params.fileUrl.trim()) {
-        const response = await fetch(params.fileUrl);
+        // redirect:error——入口只放行 GCS 签名直链，重定向跳内网属于攻击面
+        const response = await fetch(params.fileUrl, { redirect: "error" });
         if (!response.ok) {
           throw new VideoAnalysisFailure("decode", `下载上传视频失败: ${response.status}`);
         }
@@ -2223,7 +2224,7 @@ export async function analyzeVideo(params: {
         throw new VideoAnalysisFailure("decode", "无法读取上传视频");
       }
     } else if (typeof params.fileUrl === "string" && params.fileUrl.trim()) {
-      const response = await fetch(params.fileUrl);
+      const response = await fetch(params.fileUrl, { redirect: "error" });
       if (!response.ok) {
         throw new VideoAnalysisFailure("decode", `下载上传视频失败: ${response.status}`);
       }

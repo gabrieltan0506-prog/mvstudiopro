@@ -432,12 +432,15 @@ export async function hasRefundMarker(userId: number, marker: string): Promise<b
   }
 }
 
-/** 按扣分来源同源退回（团队额度退团队、个人余额退个人）。reason 必须已含 refundMarker。 */
+/** 按扣分来源同源退回（团队额度退团队、个人余额退个人）。reason 必须已含 refundMarker。
+ * 退款以 refundKey 在 DB 层做原子认领（第五轮复审 P0·4）：并发双调用后到者整条回滚，
+ * 文件级 TOCTOU 不再能双退。 */
 async function executeLedgerRefund(hold: PaidJobHold, reasonText: string): Promise<void> {
   const userIdNum = Number(hold.userId);
   if (!Number.isFinite(userIdNum)) {
     throw new Error(`invalid userId in hold: ${String(hold.userId)}`);
   }
+  const refundKey = `refund:${refundMarkerFor(hold.taskType, hold.jobId)}`.slice(0, 120);
   const d = hold.deduct;
   if (d?.source === "team" && d.teamId != null && d.teamMemberId != null) {
     const { refundCreditsForDeductAmount } = await import("../credits");
@@ -453,11 +456,12 @@ async function executeLedgerRefund(hold: PaidJobHold, reasonText: string): Promi
         teamMemberId: d.teamMemberId,
       } as Awaited<ReturnType<typeof import("../credits")["deductCreditsAmount"]>>,
       hold.action,
+      { refundKey },
     );
     return;
   }
   const { refundCredits } = await import("../credits");
-  await refundCredits(userIdNum, hold.creditsBilled, reasonText);
+  await refundCredits(userIdNum, hold.creditsBilled, reasonText, { refundKey });
 }
 
 async function finalizeRefundedHold(
@@ -611,6 +615,10 @@ export async function refundCreditsOnFailure(
         `[paidJobLedger] ↺ 退分已在账（${marker}），只补 hold 状态 jobId=${jobId}`,
       );
       return { refunded: true, creditsRefunded: hold.creditsBilled, status: "refunded" };
+    }
+    if (seen === null) {
+      // 查账失败必须保守：判断不了是否退过就不许打款，保持 active 等下轮再对
+      throw new Error("refund_marker_check_unavailable (kept active, will retry)");
     }
     await executeLedgerRefund(hold, `${hold.action} · ${reason} · 积分已退还至您的账户 ${marker}`);
     await finalizeRefundedHold(file, hold);

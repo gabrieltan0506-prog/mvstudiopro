@@ -27,6 +27,12 @@ async function ensureUsersEnterpriseTrialPaidColumn(db: NonNullable<Awaited<Retu
  * 扣费 CTE 单语句里同时写 usage 日志，撞唯一约束时整条语句（含余额 UPDATE）回滚。
  * 部分索引：仅幂等扣费带 key，普通日志行不受影响。幂等。
  */
+let _billingChargeKeyIndexReady = false;
+/** 计费幂等索引是否已验证存在（第五轮复审 P0·8）：没有它扣费必须 fail-closed */
+export function isBillingChargeKeyIndexReady(): boolean {
+  return _billingChargeKeyIndexReady;
+}
+
 async function ensureStripeUsageLogsChargeKey(db: NonNullable<Awaited<ReturnType<typeof drizzle>>>) {
   try {
     await db.execute(sql`
@@ -38,9 +44,20 @@ async function ensureStripeUsageLogsChargeKey(db: NonNullable<Awaited<ReturnType
         ON "stripe_usage_logs" ("chargeKey")
         WHERE "chargeKey" IS NOT NULL
     `);
+    // 建完必须查证：索引真实存在才放行扣费——只 warn 继续会失去并发防双扣的最后防线
+    const check = await db.execute(
+      sql`SELECT 1 FROM pg_indexes WHERE indexname = 'stripe_usage_logs_charge_key_uniq'`,
+    );
+    _billingChargeKeyIndexReady =
+      Array.isArray((check as { rows?: unknown[] })?.rows) &&
+      ((check as { rows: unknown[] }).rows.length > 0);
+    if (!_billingChargeKeyIndexReady) {
+      console.error("[Database] ❌ 计费幂等索引校验失败：扣费将 fail-closed 直到索引就绪");
+    }
   } catch (e) {
-    console.warn(
-      "[Database] ensure stripe_usage_logs.chargeKey (non-fatal):",
+    _billingChargeKeyIndexReady = false;
+    console.error(
+      "[Database] ❌ ensure stripe_usage_logs.chargeKey 失败（扣费将 fail-closed）:",
       e instanceof Error ? e.message.slice(0, 200) : e,
     );
   }

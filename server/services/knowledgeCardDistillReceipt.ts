@@ -20,7 +20,13 @@ import {
 } from "../../shared/knowledgeCardDistillModels";
 
 function hashDistilledText(text: string): string {
-  return createHash("sha256").update(String(text || "").trim()).digest("hex").slice(0, 64);
+  // 归一化（第五轮复审 P1·10）：去掉全部空白再哈希——改一个空格/换行就 hash miss
+  // 回退客户端档位的绕过路径关掉。真实内容编辑仍可绕，根治需前端携带 receipt id
+  //（提炼响应可返回 id，出图请求带回），列后续批次。
+  return createHash("sha256")
+    .update(String(text || "").replace(/\s+/g, ""))
+    .digest("hex")
+    .slice(0, 64);
 }
 
 /** 提炼成功后调用（真实跑了 LLM 才记；skippedDistill 不记） */

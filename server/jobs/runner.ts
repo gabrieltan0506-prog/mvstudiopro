@@ -393,6 +393,29 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         throw new Error("只能分析本人上传的文件");
       }
     }
+    // 第五轮复审 P0·5：fileKey/fileUrl 是 gcsUri 的旁路——
+    // fileKey 可读任意已知对象键、fileUrl 可让服务器去拉内网/元数据地址（SSRF）。
+    // fileKey 只认本人上传前缀；fileUrl 只认 GCS 签名直链且路径归属本人。
+    if (typeof params.fileKey === "string" && params.fileKey.trim()) {
+      if (!String(params.fileKey).startsWith(`uploads/u${numericUserId}/`)) {
+        throw new Error("只能分析本人上传的文件");
+      }
+    }
+    if (typeof params.fileUrl === "string" && params.fileUrl.trim()) {
+      let allowed = false;
+      try {
+        const u = new URL(String(params.fileUrl));
+        allowed =
+          u.protocol === "https:" &&
+          u.hostname === "storage.googleapis.com" &&
+          u.pathname.includes(`/uploads/u${numericUserId}/`);
+      } catch {
+        allowed = false;
+      }
+      if (!allowed) {
+        throw new Error("只能分析本人上传的文件");
+      }
+    }
     const growthMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
     const creditAction = growthMode === "REMIX" ? "growthCampRemix" : "growthCampGrowth";
 

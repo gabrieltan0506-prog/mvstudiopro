@@ -1,5 +1,5 @@
 import { eq, and, sql } from "drizzle-orm";
-import { getDb } from "./db";
+import { getDb, isBillingChargeKeyIndexReady } from "./db";
 import {
   creditBalances,
   creditTransactions,
@@ -185,6 +185,10 @@ export async function deductCredits(
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  if (!isBillingChargeKeyIndexReady()) {
+    // 幂等索引缺失时扣费必须 fail-closed：宁可停账，不可失去并发防双扣防线
+    throw new Error("计费幂等索引未就绪，扣费暂停，请稍后重试");
+  }
 
   // ─── 管理员免扣费 ─────────────────────────────────
   if (await isAdmin(userId)) {
@@ -306,6 +310,10 @@ export async function deductCreditsAmount(
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  if (!isBillingChargeKeyIndexReady()) {
+    // 同 deductCredits：索引缺失 fail-closed
+    throw new Error("计费幂等索引未就绪，扣费暂停，请稍后重试");
+  }
 
   const cost = Math.max(0, Math.floor(Number(amount) || 0));
   if (cost <= 0) {
@@ -722,31 +730,57 @@ export async function estimateRemainingGiftedCredits(
 export async function refundCredits(
   userId: number,
   amount: number,
-  reason: string
+  reason: string,
+  opts?: {
+    /**
+     * 退款幂等键（第五轮复审 P0·4）：写进 stripe_usage_logs 唯一索引列，与余额
+     * 回加同一条 SQL——两个失败处理器并发退同一笔时，后到者整条语句回滚，
+     * 文件级 TOCTOU（读 active→各写 pending→各退一次）由 DB 层兜死。
+     * 撞唯一约束时本函数当「已退过」静默成功。
+     */
+    refundKey?: string;
+  },
 ): Promise<void> {
   const db = await getDb();
   // DB 不可用必须抛错：静默 return 会让调用方把「没退成」谎报成「已退回」，
   // 该进持久化 refund_pending 的走不进去
   if (!db) throw new Error("Database not available (refund not executed)");
 
+  const refundKey = String(opts?.refundKey || "").trim().slice(0, 120) || null;
   await getOrCreateBalance(userId);
   // 相对更新 + 单条 SQL：绝对 SET 会覆盖并发账变（读 100 → 并发扣到 70 → SET 120 抹掉扣款）；
-  // 余额与交易行同一条语句，不存在「余额已加、无交易行」，退分对账（按 refundKey 查交易行）口径可靠
-  const res = await db.execute(sql`
-    WITH upd AS (
-      UPDATE credit_balances
-      SET "balance" = "balance" + ${amount},
-          "lifetimeEarned" = "lifetimeEarned" + ${amount},
-          "updatedAt" = NOW()
-      WHERE "userId" = ${userId}
-      RETURNING "balance"
-    )
-    INSERT INTO credit_transactions
-      ("userId", "amount", "type", "source", "description", "balanceAfter")
-    SELECT ${userId}, ${amount}, 'credit', 'credit_restore', ${reason}, upd."balance"
-    FROM upd
-    RETURNING "balanceAfter"
-  `);
+  // 余额、交易行、退款认领行同一条语句——认领撞唯一约束则整条回滚，一分不多退
+  let res: unknown;
+  try {
+    res = await db.execute(sql`
+      WITH upd AS (
+        UPDATE credit_balances
+        SET "balance" = "balance" + ${amount},
+            "lifetimeEarned" = "lifetimeEarned" + ${amount},
+            "updatedAt" = NOW()
+        WHERE "userId" = ${userId}
+        RETURNING "balance"
+      ),
+      claim AS (
+        INSERT INTO stripe_usage_logs
+          ("userId", "action", "creditsCost", "isFreeQuota", "description", "balanceAfter", "chargeKey")
+        SELECT ${userId}, 'refund_claim', 0, 0, ${reason}, upd."balance", ${refundKey}
+        FROM upd
+        WHERE ${refundKey}::text IS NOT NULL
+      )
+      INSERT INTO credit_transactions
+        ("userId", "amount", "type", "source", "description", "balanceAfter")
+      SELECT ${userId}, ${amount}, 'credit', 'credit_restore', ${reason}, upd."balance"
+      FROM upd
+      RETURNING "balanceAfter"
+    `);
+  } catch (e) {
+    if (refundKey && isChargeKeyUniqueViolation(e)) {
+      console.log(`[Credits] refund already claimed (${refundKey}), skip: userId=${userId}`);
+      return;
+    }
+    throw e;
+  }
   if (!executeRows(res).length) {
     throw new Error(`refundCredits: balance row missing userId=${userId} (refund not executed)`);
   }
@@ -762,6 +796,7 @@ export async function refundCreditsForDeductAmount(
   reason: string,
   deduct: Awaited<ReturnType<typeof deductCreditsAmount>>,
   actionForLog: string,
+  opts?: { refundKey?: string },
 ): Promise<void> {
   const cost = deduct.cost;
   if (!deduct.success || cost <= 0) return;
@@ -771,9 +806,10 @@ export async function refundCreditsForDeductAmount(
   if (!db) throw new Error("Database not available");
 
   const act = actionForLog.slice(0, 50);
+  const refundKey = String(opts?.refundKey || "").trim().slice(0, 120) || null;
 
   if (deduct.source === "personal") {
-    await refundCredits(userId, cost, reason);
+    await refundCredits(userId, cost, reason, { refundKey: refundKey || undefined });
     return;
   }
 
@@ -795,8 +831,10 @@ export async function refundCreditsForDeductAmount(
     });
     const activityMetadata = JSON.stringify({ action: act, cost, teamMemberId });
     // 相对回冲 + 单条 SQL：绝对 SET 会覆盖并发扣款/并发退款；
-    // 额度回冲与两条日志同一条语句，退分对账（查 stripeUsageLogs 里的 refundKey）口径可靠
-    const res = await db.execute(sql`
+    // 额度回冲与两条日志同一条语句；退款幂等键撞唯一约束则整条回滚（并发双退兜死）
+    let res: unknown;
+    try {
+      res = await db.execute(sql`
       WITH upd AS (
         UPDATE team_members
         SET "usedCredits" = GREATEST(0, "usedCredits" - ${cost}),
@@ -806,10 +844,10 @@ export async function refundCreditsForDeductAmount(
       ),
       usage_log AS (
         INSERT INTO stripe_usage_logs
-          ("userId", "action", "creditsCost", "isFreeQuota", "description", "balanceAfter", "metadata")
+          ("userId", "action", "creditsCost", "isFreeQuota", "description", "balanceAfter", "metadata", "chargeKey")
         SELECT ${userId}, ${act}, 0, 0,
                ${reason} || '（' || ${cost}::text || ' cr · 团队额度退回 · used→' || upd."usedCredits"::text || '）',
-               upd."allocatedCredits" - upd."usedCredits", ${usageMetadata}
+               upd."allocatedCredits" - upd."usedCredits", ${usageMetadata}, ${refundKey}
         FROM upd
       ),
       activity_log AS (
@@ -820,6 +858,13 @@ export async function refundCreditsForDeductAmount(
       )
       SELECT "usedCredits" FROM upd
     `);
+    } catch (e) {
+      if (refundKey && isChargeKeyUniqueViolation(e)) {
+        console.log(`[Credits] team refund already claimed (${refundKey}), skip: userId=${userId}`);
+        return;
+      }
+      throw e;
+    }
     if (!executeRows(res).length) {
       console.error(`[Credits] refundCreditsForDeductAmount: teamMembers.id=${teamMemberId} not found`);
       throw new Error("team_member_not_found_for_refund");

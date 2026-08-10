@@ -3316,6 +3316,23 @@ export const appRouter = router({
             throw new Error("直传文件校验失败，请重新上传后再试");
           }
         }
+        // 第五轮复审 P0·5：fileKey/fileUrl 旁路同口径封（worker 层为终闸，这里提前拦）
+        if (input.fileKey && !String(input.fileKey).startsWith(`uploads/u${ctx.user.id}/`)) {
+          throw new Error("直传文件校验失败，请重新上传后再试");
+        }
+        if (input.fileUrl) {
+          let allowed = false;
+          try {
+            const u = new URL(String(input.fileUrl));
+            allowed =
+              u.protocol === "https:" &&
+              u.hostname === "storage.googleapis.com" &&
+              u.pathname.includes(`/uploads/u${ctx.user.id}/`);
+          } catch {
+            allowed = false;
+          }
+          if (!allowed) throw new Error("直传文件校验失败，请重新上传后再试");
+        }
         const result = await analyzeVideo(input);
         return {
           success: true,
@@ -7301,13 +7318,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           );
           const { deductCreditsAmount } = await import("./credits.js");
           const fee = knowledgeCardDistillFeeForModel(prepared.distillModel);
-          // 幂等（审查必须修）：同步路径丢响应/重复 POST 不得再扣——
-          // 天然业务键 = 用户+档位+提炼稿哈希，DB 唯一索引兜底
+          // 幂等（第五轮复审 P1·9）：键必须绑「请求输入」而不是模型输出——
+          // 输出哈希在重试时会因 LLM 输出微差变成新键再扣一次；
+          // 输入键 = 用户+档位+原始文本与文件内容哈希，调 LLM 前即可确定
           const { createHash } = await import("node:crypto");
-          const chargeKey = `kcdistill-sync/${uidForDistillFee}/${prepared.distillModel}/${createHash(
-            "sha256",
-          )
-            .update(prepared.distilledMarkdown)
+          const inputDigest = createHash("sha256");
+          inputDigest.update(String(input.sourceText || ""));
+          for (const f of input.files || []) {
+            inputDigest.update(" ");
+            inputDigest.update(String((f as { fileBase64?: string }).fileBase64 || ""));
+            inputDigest.update(String((f as { gcsUri?: string }).gcsUri || ""));
+          }
+          const chargeKey = `kcdistill-sync/${uidForDistillFee}/${prepared.distillModel}/${inputDigest
             .digest("hex")
             .slice(0, 32)}`;
           const deducted = await deductCreditsAmount(
@@ -7518,9 +7540,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
          * 所有失败分支统一走账本两阶段退分（refund_pending 对账 + refundKey 查重
          * + 团队同源退回）；崩溃/部署中断由 SIGTERM forceAll 与 startup reap 兜底。
          */
-        const compositeHoldJobId =
-          progressJobId ||
-          `cs_sync_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+        // 第五轮复审 P0·3：hold 编号必须服务端生成并绑定用户——客户端可控的
+        // progressJobId 若复用旧终态（settled/refunded）编号，注册会保留终态，
+        // 本次新扣款的退款/结算全部空转（漏退/错账）。
+        const compositeHoldJobId = `cs_u${userId}_${Date.now().toString(36)}_${Math.random()
+          .toString(36)
+          .slice(2, 10)}`;
         let compositeHoldRegistered = false;
         if (compositeChargeReceipt && compositeChargeReceipt.cost > 0) {
           try {
@@ -7590,8 +7615,21 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const settleCompositeHold = async (): Promise<void> => {
           if (!compositeHoldRegistered) return;
           const { unregisterActiveJob } = await import("./services/paidJobLedger.js");
-          await unregisterActiveJob(compositeHoldJobId, "platformCompositeSheet", "settled").catch(
-            () => {},
+          // 结算失败不许静默吞：hold 留在 active 会被 reaper 当僵尸退分（成功单被误退）。
+          // 重试三次，仍失败打 CRITICAL 日志人工对账
+          let lastErr: unknown;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              await unregisterActiveJob(compositeHoldJobId, "platformCompositeSheet", "settled");
+              return;
+            } catch (e) {
+              lastErr = e;
+              await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+            }
+          }
+          console.error(
+            `[CRITICAL][compositeSheet] hold 结算失败三次，成功单可能被 reaper 误退，需人工处理 hold=${compositeHoldJobId}`,
+            lastErr,
           );
         };
         /** 长生成（3×4 多张）会超过账本 5 分钟心跳线：生成期间刷心跳防误退 */
@@ -7608,7 +7646,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           return () => clearInterval(timer);
         };
 
-        const enrichedCompositeScriptContext = (() => {
+        /** 扣费后初始化统一保护（第五轮复审 P0·2）：这里抛错=已扣费但任务没起步，必须退 */
+        const guardChargedInit = async <T>(step: string, fn: () => T | Promise<T>): Promise<T> => {
+          try {
+            return await fn();
+          } catch (e) {
+            const refunded = await refundCompositeCharge(`platformCompositeSheet ${step}失败退回`);
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: `生成初始化失败（${refunded ? "费用已退回" : "退款受阻已记录，账本会自动补退"}），请稍后重试`,
+            });
+          }
+        };
+
+        const enrichedCompositeScriptContext = await guardChargedInit("脚本上下文拼装", () => (() => {
           const raw = String(input.scriptContext || "").trim();
           /**
            * 知识卡的 scriptContext 会被 `planKnowledgeCardPages` 逐页切开当**正文**渲染，
@@ -7636,11 +7687,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           );
           if (!hints.trim()) return base;
           return `${hints}\n\n${base}`.slice(0, 12000);
-        })();
+        })());
 
         let detachLiveProgress: (() => void) | undefined;
 
-        const { generatePlatformCompositeSheetImage, generatePlatformGridStitchedSheetImage, appendImageFlowLog } = await import("./services/proxyImageService.js");
+        const { generatePlatformCompositeSheetImage, generatePlatformGridStitchedSheetImage, appendImageFlowLog } =
+          await guardChargedInit("生成服务加载", () => import("./services/proxyImageService.js"));
         // 3×4 → 走「分段生成 + sharp 直向拼接」总控；否则走单张合成
         const generateSheet = is3x4Grid ? generatePlatformGridStitchedSheetImage : generatePlatformCompositeSheetImage;
         const imageGenFlowLog: string[] = [];
@@ -7672,16 +7724,16 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           // 🚀 核心修復：如果前端傳了 progressJobId（非同步輪詢模式），
           // 則在背景啟動耗時的生成任務，並立即回傳 HTTP 200 給前端，避免 Vercel 60s Timeout。
           const runBackgroundComposite = async () => {
-            const { attachCompositeSheetFlowLogLiveSync } = await import("./jobs/compositeSheetLiveProgress.js");
-            detachLiveProgress = attachCompositeSheetFlowLogLiveSync(imageGenFlowLog, progressJobId);
             const stopHeartbeat = startCompositeHeartbeat();
-
-            appendImageFlowLog(
-              imageGenFlowLog,
-              `[2×4 接口] generatePlatformCompositeSheet 开始 (异步背景执行) · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)} · 本笔 ${cost} 点`,
-            );
             let imageUrl: string | null = null;
             try {
+              // 动态加载与进度挂接也在 try 内：任何一步抛错都走统一退款+终态
+              const { attachCompositeSheetFlowLogLiveSync } = await import("./jobs/compositeSheetLiveProgress.js");
+              detachLiveProgress = attachCompositeSheetFlowLogLiveSync(imageGenFlowLog, progressJobId);
+              appendImageFlowLog(
+                imageGenFlowLog,
+                `[2×4 接口] generatePlatformCompositeSheet 开始 (异步背景执行) · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)} · 本笔 ${cost} 点`,
+              );
               // resolveWatermark 必须在 try 内：try 外抛错会绕过 finally，
               // 心跳 interval 泄漏并持续给 hold 续命，reaper 永不退分
               const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
@@ -7706,7 +7758,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 infographicTemplateId: input.infographicTemplateId,
               });
 
-              appendImageFlowLog(imageGenFlowLog, imageUrl ? "✓ generatePlatformCompositeSheet 完成" : "✗ 无 imageUrl（应已在上方抛错）");
+              // 第五轮复审 P0·1：空产物不许标成功——扣了费没有图，必须走统一失败退款
+              if (!imageUrl) {
+                throw new Error("生成服务未返回图片（imageUrl 为空）");
+              }
+              appendImageFlowLog(imageGenFlowLog, "✓ generatePlatformCompositeSheet 完成");
               await markJobSucceeded(progressJobId, {
                 imageGenFlowLog,
                 compositeSheetProgress: true,
