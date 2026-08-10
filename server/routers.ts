@@ -8846,7 +8846,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           episodeCount: z.number().int().min(2).max(6).optional(),
           /** 引擎档位：优秀/卓越/顶级，仅前台展示档名 */
           tier: z.enum(["excellent", "superb", "top"]).optional(),
-          /** 可选节奏模板；服务端只接受 GCS approved 真卡片。 */
+          /**
+           * @deprecated 节奏模板选择器已下线；字段保留避免旧前端 400，服务端忽略。
+           */
           viralTemplateId: z.string().max(64).optional(),
           /** 单集时长档位：90s 半强度 / 180s 全长（2.5 时由 videoModel 覆盖段表） */
           lengthTierId: z.string().max(32).optional(),
@@ -8897,34 +8899,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         } = await import("./services/manhuaWriterExpandBilling.js");
         const { runManhuaWriterExpand } = await import("./services/manhuaWriterExpandRun.js");
         const { platformEngineTierLabel } = await import("../shared/platformEngineTiers.js");
-        const requestedTemplateId = String(input.viralTemplateId || "").trim();
-        let appliedTemplate: { id: string; nameZh: string } | null = null;
-        let viralTemplateAddon = "";
-        if (requestedTemplateId) {
-          const [{ getMergedManhuaViralTemplate }, { formatManhuaViralTemplateWriterAddonFromCard }] =
-            await Promise.all([
-              import("./services/manhuaViralTemplateStore.js"),
-              import("../shared/manhuaViralTemplateBank.js"),
-            ]);
-          const card = await getMergedManhuaViralTemplate(requestedTemplateId);
-          if (!card || card.status !== "approved") {
-            throw new TRPCError({
-              code: "BAD_REQUEST",
-              message: "所选节奏模板未批准、已下架或不存在，请刷新模板列表后重试",
-            });
-          }
-          viralTemplateAddon = formatManhuaViralTemplateWriterAddonFromCard(
-            card,
-            input.lengthTierId || undefined,
-          );
-          if (!viralTemplateAddon) {
-            throw new TRPCError({
-              code: "BAD_REQUEST",
-              message: "所选节奏模板内容不完整，未调用扩写模型",
-            });
-          }
-          appliedTemplate = { id: card.id, nameZh: card.nameZh };
-        }
 
         const layout = resolveManhuaSeedanceLayoutProfile(input.videoModel);
         const episodeCount = clampWriterEpisodeCount(input.episodeCount);
@@ -8959,8 +8933,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           fromEpisode: input.fromEpisode,
           fromSegment: input.fromSegment,
           lockedEpisodeBody: input.lockedEpisodeBody,
-          viralTemplateId: appliedTemplate?.id,
-          viralTemplateAddon,
         });
         let markdown = "";
         try {
@@ -9018,7 +8990,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             targetSec: layout.targetSec,
             labelZh: layout.labelZh,
           },
-          appliedTemplate,
         };
       }),
 

@@ -3148,14 +3148,17 @@ export default function OmniCanvas() {
           ? `（${res.layout.labelZh} · ${res.layout.segmentCount}×${res.layout.durationSecPerSegment}s）`
           : "";
       const costHint = res.isFreeQuota ? "本次免费" : `本次扣 ${res.creditsCost} 积分`;
+      const templateHint = res.appliedTemplate?.nameZh
+        ? ` · 已应用节奏模板「${res.appliedTemplate.nameZh}」`
+        : "";
       toast.success(
         cleaned.removedCount > 0 || cleaned.archivedCount > 0
           ? `已扩写 ${pack.episodes.length} 集${layoutHint}：新剧本已覆盖旧稿；旧工厂链已清${
               cleaned.archivedCount > 0
                 ? `，${cleaned.archivedCount} 个已出图/已出片节点转为存档保留（不进新剧本垫图）`
                 : ""
-            } · ${costHint}`
-          : `已扩写 ${pack.episodes.length} 集${layoutHint}：新剧本已覆盖本机与云端旧稿 · ${costHint}`,
+            } · ${costHint}${templateHint}`
+          : `已扩写 ${pack.episodes.length} 集${layoutHint}：新剧本已覆盖本机与云端旧稿 · ${costHint}${templateHint}`,
       );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "扩写失败";

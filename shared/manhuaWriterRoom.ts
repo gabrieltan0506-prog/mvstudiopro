@@ -105,9 +105,11 @@ export function buildManhuaWriterExpandPrompt(opts: {
   ancientArchetypeIds?: string[];
   plotPurposeId?: string | null;
   scenePacingId?: string | null;
-  /** 服务端已校验为 approved 的模板 id，仅用于审计与回显。 */
+  /**
+   * @deprecated 节奏模板选择器已下线（套路化剧情反馈差）；字段保留仅为兼容旧调用，不再注入提示词。
+   */
   viralTemplateId?: string | null;
-  /** 服务端由 approved 卡片编译出的节奏骨架；客户端不得直接提供。 */
+  /** @deprecated 同上，不再使用。 */
   viralTemplateAddon?: string | null;
   /** 单集时长档位：决定节拍格抽到几拍、密度建议报哪个秒数 */
   lengthTierId?: string | null;
@@ -135,14 +137,6 @@ export function buildManhuaWriterExpandPrompt(opts: {
   const purpose = getManhuaPlotPurposeById(opts.plotPurposeId);
   const pacing = getManhuaScenePacingById(opts.scenePacingId);
   const layout = resolveManhuaSeedanceLayoutProfile(opts.videoModel);
-  const viralTemplateAddon = String(opts.viralTemplateAddon || "").trim().slice(0, 8_000);
-  const viralTemplateBlock = viralTemplateAddon
-    ? [
-        "【已人工批准的节奏模板】",
-        viralTemplateAddon,
-        "【模板质量边界】模板只提供节奏骨架；用户题材、人物动机与已锁剧情优先。若某一拍与本剧冲突，必须舍弃该拍，不得机械套词、复制外部剧名/台词，亦不得每集重复同一种反转。",
-      ].join("\n")
-    : "";
   /**
    * 局部改写锁稿：保留段已经出过图、出过片，剧情一旦被改写就和画面对不上。
    * 把旧正文原样交回并要求前几段逐字不动，比事后人工核对便宜得多。
@@ -198,7 +192,6 @@ export function buildManhuaWriterExpandPrompt(opts: {
     `【成片铺排】${layout.labelZh}｜${layout.layoutHintZh}`,
     `【用户题材】${topic || "（未填，请基于补充条件合理拟定）"}`,
     brief ? `【补充条件】\n${brief}` : "【补充条件】（无，请在合理范围内自行补全并保持克制）",
-    viralTemplateBlock,
     propDemo,
     ancientBlock,
     purpose ? formatPlotPurposeCameraBlock(purpose) : "",

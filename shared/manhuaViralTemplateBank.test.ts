@@ -108,21 +108,13 @@ describe("manhuaViralTemplateBank", () => {
     expect(addon).toMatch(/边塞/);
   });
 
-  it("buildManhuaWriterExpandPrompt injects only the server-compiled approved addon", () => {
-    const addon = formatManhuaViralTemplateWriterAddon(
-      "tpl_series_fixture01",
-      [learnedCard()],
-      "short",
-    );
+  it("buildManhuaWriterExpandPrompt no longer injects viral template (selector UI removed)", () => {
     const prompt = buildManhuaWriterExpandPrompt({
       topic: "边关开荒翻盘连载",
       brief: "女主被发配",
       episodeCount: 3,
       viralTemplateId: "tpl_series_fixture01",
-      viralTemplateAddon: addon,
     });
-    expect(prompt).toMatch(/【节奏模板·骨架建议】/);
-    expect(prompt).toMatch(/模板质量边界/);
-    expect(prompt).toMatch(/用户题材、人物动机与已锁剧情优先/);
+    expect(prompt).not.toMatch(/【节奏模板·骨架建议】/);
   });
 });
