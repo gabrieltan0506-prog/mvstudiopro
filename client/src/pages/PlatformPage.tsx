@@ -5213,6 +5213,25 @@ export default function PlatformPage() {
             prev,
           }),
         );
+        // 后台 job 可能在旧版本部署时已被清理。不能继续把本地 active marker
+        // 当作“运行中”，否则“继续学习”永久 disabled；保留剧集与已落盘检查点，
+        // 让用户一键重新入队并从未学集继续。
+        setManhuaLearnActiveJob(null);
+        writeManhuaLearnActiveJob(null);
+        setManhuaLearnBasket((prev) => {
+          const next = prev.map((item) =>
+            item.jobId === jobId
+              ? {
+                  ...item,
+                  jobStatus: "failed" as const,
+                  jobErrorZh: msg,
+                  updatedAt: Date.now(),
+                }
+              : item,
+          );
+          writeManhuaLearnBasket(String(user.id || "").trim(), next);
+          return next;
+        });
       } finally {
         if (cancelled) return;
         manhuaLearnPollingJobIdRef.current = null;
