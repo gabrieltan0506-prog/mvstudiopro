@@ -20,6 +20,7 @@ import {
 export const LS_MANHUA_LEARN_SERIES_KEY = "mv-manhua-learn-focus-series-v1";
 export const LS_MANHUA_LEARN_ACTIVE_JOB = "mvs-manhua-learn-active-job-v1";
 export const LS_MANHUA_LEARN_RESULT = "mvs-manhua-learn-result-v1";
+const LS_MANHUA_LEARN_BASKET_PREFIX = "mvs-manhua-learn-basket-v1";
 
 export type ManhuaLearnActiveJobRecord = {
   jobId: string;
@@ -40,6 +41,13 @@ export type ManhuaLearnActiveJobRecord = {
     savedAt: number;
   };
   savedAt: number;
+};
+
+export type ManhuaLearnBasketItem = {
+  seriesKey: string;
+  continuation: ManhuaLearnActiveJobRecord["continuation"];
+  result: ManhuaLearnResultUi;
+  updatedAt: number;
 };
 
 export type ManhuaLearnResultUi = {
@@ -403,6 +411,84 @@ export function writeManhuaLearnResult(value: ManhuaLearnResultUi | null): void 
   } catch {
     // 存储空间不足时不影响当前学习任务与 GCS 检查点。
   }
+}
+
+function manhuaLearnBasketStorageKey(userKey: string): string {
+  const safe = String(userKey || "").trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+  return `${LS_MANHUA_LEARN_BASKET_PREFIX}:${safe || "anonymous"}`;
+}
+
+/** 当前登录用户自己的剧集篮子；只保存待学习项，完成后自动消失。 */
+export function readManhuaLearnBasket(userKey: string): ManhuaLearnBasketItem[] {
+  try {
+    const raw = localStorage.getItem(manhuaLearnBasketStorageKey(userKey));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((value) => value as Partial<ManhuaLearnBasketItem>)
+      .filter((item) => {
+        const sourceUrl = String(item.continuation?.row?.url || "").trim();
+        return Boolean(
+          String(item.seriesKey || "").trim()
+          && /^https?:\/\//i.test(sourceUrl)
+          && item.result
+          && (typeof item.result.pendingCount !== "number" || item.result.pendingCount > 0),
+        );
+      })
+      .map((item) => item as ManhuaLearnBasketItem)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, 30);
+  } catch {
+    return [];
+  }
+}
+
+export function writeManhuaLearnBasket(userKey: string, items: ManhuaLearnBasketItem[]): void {
+  try {
+    const pending = (items || [])
+      .filter(
+        (item) => /^https?:\/\//i.test(String(item.continuation.row.url || "").trim())
+          && (typeof item.result.pendingCount !== "number" || item.result.pendingCount > 0),
+      )
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, 30);
+    if (pending.length) {
+      localStorage.setItem(manhuaLearnBasketStorageKey(userKey), JSON.stringify(pending));
+    } else {
+      localStorage.removeItem(manhuaLearnBasketStorageKey(userKey));
+    }
+  } catch {
+    // 篮子写入失败不阻断真实后台任务与 GCS 检查点。
+  }
+}
+
+/** 同一来源从临时 learn_* key 升级到真实 seriesKey 时原位替换，不生成重复剧卡。 */
+export function upsertManhuaLearnBasketItem(
+  items: ManhuaLearnBasketItem[],
+  item: ManhuaLearnBasketItem,
+): ManhuaLearnBasketItem[] {
+  const source = String(
+    item.continuation.row.gcsUri || item.continuation.row.url || "",
+  ).trim();
+  const kept = (items || []).filter((current) => {
+    const currentSource = String(
+      current.continuation.row.gcsUri || current.continuation.row.url || "",
+    ).trim();
+    return current.seriesKey !== item.seriesKey && (!source || currentSource !== source);
+  });
+  if (typeof item.result.pendingCount === "number" && item.result.pendingCount <= 0) {
+    return kept;
+  }
+  return [item, ...kept].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 30);
+}
+
+export function removeManhuaLearnBasketItem(
+  items: ManhuaLearnBasketItem[],
+  seriesKey: string,
+): ManhuaLearnBasketItem[] {
+  const key = String(seriesKey || "").trim();
+  return (items || []).filter((item) => item.seriesKey !== key);
 }
 
 /** Job 虽 succeeded 但本轮 0 集：视为失败展示（兼容旧服务端软成功） */

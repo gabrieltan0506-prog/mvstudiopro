@@ -5,8 +5,12 @@ import {
   manhuaLearnResultFromStart,
   mergeManhuaLearnLiveProgress,
   readManhuaLearnActiveJob,
+  readManhuaLearnBasket,
   readManhuaLearnResult,
+  removeManhuaLearnBasketItem,
+  upsertManhuaLearnBasketItem,
   writeManhuaLearnActiveJob,
+  writeManhuaLearnBasket,
   writeManhuaLearnResult,
 } from "./manhuaLearnResultUi";
 
@@ -165,5 +169,59 @@ describe("manhuaLearnResultUi soft-fail", () => {
       listedEpisodeCount: 99,
       pendingCount: 90,
     });
+  });
+
+  it("keeps multiple dramas separate and removes a completed drama", () => {
+    installMemoryLocalStorage();
+    const makeItem = (seriesKey: string, title: string, learned: number, pending: number) => ({
+      seriesKey,
+      continuation: {
+        row: { url: `https://www.douyin.com/collection/${seriesKey}`, mixName: title },
+        rank: 0,
+        seriesKey,
+        savedAt: 100,
+      },
+      result: {
+        ...manhuaLearnResultFromStart({ channel: "cloud", seriesKey }),
+        learnedCount: learned,
+        pendingCount: pending,
+      },
+      updatedAt: learned,
+    });
+    let basket = upsertManhuaLearnBasketItem([], makeItem("series_a", "A剧", 9, 90));
+    basket = upsertManhuaLearnBasketItem(basket, makeItem("series_b", "B剧", 2, 28));
+    expect(basket.map((item) => item.seriesKey).sort()).toEqual(["series_a", "series_b"]);
+
+    basket = upsertManhuaLearnBasketItem(basket, makeItem("series_a", "A剧", 99, 0));
+    expect(basket.map((item) => item.seriesKey)).toEqual(["series_b"]);
+    expect(removeManhuaLearnBasketItem(basket, "series_b")).toEqual([]);
+  });
+
+  it("migrates a temporary key to the real series key and persists per user", () => {
+    installMemoryLocalStorage();
+    const source = "https://www.douyin.com/collection/abc";
+    const base = manhuaLearnResultFromStart({ channel: "cloud", seriesKey: "learn_tmp" });
+    let basket = upsertManhuaLearnBasketItem([], {
+      seriesKey: "learn_tmp",
+      continuation: { row: { url: source, mixName: "测试剧" }, rank: 0, savedAt: 1 },
+      result: { ...base, pendingCount: 90 },
+      updatedAt: 1,
+    });
+    basket = upsertManhuaLearnBasketItem(basket, {
+      seriesKey: "series_real",
+      continuation: {
+        row: { url: source, mixName: "测试剧" },
+        rank: 0,
+        seriesKey: "series_real",
+        savedAt: 2,
+      },
+      result: { ...base, seriesKey: "series_real", learnedCount: 8, pendingCount: 82 },
+      updatedAt: 2,
+    });
+    expect(basket).toHaveLength(1);
+    expect(basket[0]?.seriesKey).toBe("series_real");
+    writeManhuaLearnBasket("user_7", basket);
+    expect(readManhuaLearnBasket("user_7")).toHaveLength(1);
+    expect(readManhuaLearnBasket("user_8")).toEqual([]);
   });
 });
