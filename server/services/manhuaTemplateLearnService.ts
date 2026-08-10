@@ -63,6 +63,7 @@ import {
   type ManhuaDramaAudioScanResult,
 } from "../gemini-audio.js";
 import { analyzeManhuaTemplateFramesWithTerra } from "../manhuaTemplateFrameVision.js";
+import { assertManhuaPreviewFramesHaveMotion } from "./manhuaFramePreviewGuard.js";
 import {
   downloadGcsObject,
   listGcsObjectNamesByPrefix,
@@ -106,6 +107,8 @@ export type ManhuaTemplateLearnInput = {
   rank?: number;
   /** 本轮采几集：8–10 */
   batchSize?: number;
+  /** 只重新下载并保存代表静帧；不重跑语音、视觉模型或系列分析。 */
+  refreshPreviewFrames?: boolean;
   learnLlm?: ManhuaTemplateLearnLlmProvider;
   onProgress?: (phase: string, detailZh: string) => void | Promise<void>;
   /** 每个分片落盘后把该集摘要同步进 Job output，供网页即时甄别。 */
@@ -804,6 +807,10 @@ async function learnOneEpisodeChunk(input: {
   const framesDir = path.join(input.chunkDir, "frames");
   const framePaths = await extractFrames(input.videoPath, mediaTimestamps, framesDir);
   await assertManhuaLearnControl(input);
+  // 先验帧，再上传：抖音限制页也能被 ffmpeg 成功抽成 jpg，不能因此误报「已抽帧」。
+  if (isDouyinHostUrl(input.ep.url)) {
+    await assertManhuaPreviewFramesHaveMotion(framePaths);
+  }
   const previewFrameGcsUris = input.capturePreviewFrames
     ? await persistEpisodePreviewFrames({
         seriesKey: input.seriesKey,
@@ -932,6 +939,52 @@ async function learnOneEpisodeChunk(input: {
     previewFrameGcsUris: previewFrameGcsUris.length ? previewFrameGcsUris : undefined,
     vision: visionProvenance,
   };
+}
+
+/** 已学分集的补救：只重下首分钟并重抽三张代表帧，绝不重复烧语音/视觉模型成本。 */
+async function refreshEpisodePreviewFrames(input: {
+  seriesKey: string;
+  ep: ListedEpisode;
+  digest: ManhuaLearnEpisodeDigest;
+  rootTmp: string;
+  onProgress?: ManhuaTemplateLearnInput["onProgress"];
+  checkControl?: ManhuaTemplateLearnInput["checkControl"];
+  abortSignal?: AbortSignal;
+}): Promise<ManhuaLearnEpisodeDigest> {
+  const workDir = path.join(input.rootTmp, `repair-preview-${input.ep.index}`);
+  const durationSec = Math.max(1, Number(input.digest.durationSec) || 60);
+  const endSec = Math.min(durationSec, 60);
+  try {
+    await assertManhuaLearnControl(input);
+    await input.onProgress?.(
+      MANHUA_LEARN_STAGE.download,
+      `正在补抽第 ${input.ep.index} 集静帧 0–${Math.ceil(endSec / 60)} 分（不重跑模型）…`,
+    );
+    const videoPath = await downloadVideoSegment({
+      url: input.ep.url,
+      workDir,
+      startSec: 0,
+      endSec,
+    });
+    const framePaths = await extractFrames(
+      videoPath,
+      [Math.min(3, endSec / 2), endSec / 2, Math.max(0, endSec - 3)],
+      path.join(workDir, "frames"),
+    );
+    if (isDouyinHostUrl(input.ep.url)) {
+      await assertManhuaPreviewFramesHaveMotion(framePaths);
+    }
+    const previewFrameGcsUris = await persistEpisodePreviewFrames({
+      seriesKey: input.seriesKey,
+      episodeIndex: input.ep.index,
+      framePaths,
+    });
+    if (!previewFrameGcsUris.length) throw new Error("静帧补抽未生成可展示图片");
+    await input.onProgress?.(MANHUA_LEARN_STAGE.persist, `第 ${input.ep.index} 集静帧已补齐（未重跑模型）`);
+    return { ...input.digest, previewFrameGcsUris };
+  } finally {
+    await rmrf(workDir);
+  }
 }
 
 /**
@@ -1245,11 +1298,18 @@ export async function runManhuaTemplateLearn(
     );
 
     const listedIndexes = listed.map((e) => e.index);
-    const batchIndexes = pickNextEpisodeIndexes({
-      listedIndexes,
-      learnedIndexes: prog.learnedEpisodeIndexes,
-      batchSize,
-    });
+    const existingDigests = await loadAllDigests(seriesKey);
+    const batchIndexes = input.refreshPreviewFrames
+      ? existingDigests
+          .filter(isManhuaLearnEpisodeComplete)
+          .map((digest) => digest.episodeIndex)
+          .sort((a, b) => a - b)
+          .slice(0, batchSize)
+      : pickNextEpisodeIndexes({
+          listedIndexes,
+          learnedIndexes: prog.learnedEpisodeIndexes,
+          batchSize,
+        });
     if (!batchIndexes.length) {
       const digestsAll = await loadAllDigests(seriesKey);
       const digests = digestsAll.filter(isManhuaLearnEpisodeComplete);
@@ -1391,6 +1451,33 @@ export async function runManhuaTemplateLearn(
         episodeObjectName(seriesKey, idx),
       );
 
+      // 补帧是独立低成本路径：已学完成也要按用户请求补展示图；正常学习仍跳过。
+      if (input.refreshPreviewFrames && existing && isManhuaLearnEpisodeComplete(existing)) {
+        try {
+          const repaired = await refreshEpisodePreviewFrames({
+            seriesKey,
+            ep,
+            digest: existing,
+            rootTmp,
+            onProgress: input.onProgress,
+            checkControl: input.checkControl,
+            abortSignal: input.abortSignal,
+          });
+          await writeJsonGcs(episodeObjectName(seriesKey, idx), repaired);
+          await input.onEpisodeCheckpoint?.(toDigestPreview(repaired));
+          batchLearnedIndexes.push(idx);
+          consecutiveFails = 0;
+          continue;
+        } catch (e) {
+          if (e instanceof Error && /ManhuaLearn(Cancelled|SkipEpisode)Error/.test(e.name)) throw e;
+          const errZh = mapManhuaLearnFetchError(e);
+          episodeFailNotes.push(`第 ${idx} 集静帧补抽失败：${errZh}`);
+          consecutiveFails += 1;
+          await progress(MANHUA_LEARN_STAGE.failed, `第 ${idx} 集静帧补抽失败：${errZh}`);
+          if (consecutiveFails >= consecutiveStop) throw new Error(`连续 ${consecutiveStop} 集静帧补抽失败，已停止本轮。最近：${errZh}`);
+          continue;
+        }
+      }
       // 已学完：跳过，不重下（防容量/限流）
       if (existing && isManhuaLearnEpisodeComplete(existing)) {
         consecutiveFails = 0;

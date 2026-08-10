@@ -4722,6 +4722,7 @@ export default function PlatformPage() {
       row: ManhuaLearnSourceRow,
       rank: number,
       resumeSeriesKey?: string,
+      options?: { refreshPreviewFrames?: boolean },
     ) => {
       const canOps =
         supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
@@ -4819,6 +4820,7 @@ export default function PlatformPage() {
               seriesKey: startUi.seriesKey,
               dedupeKey: source,
               batchSize: 8,
+              refreshPreviewFrames: options?.refreshPreviewFrames === true,
               learnLlm: row.learnLlm,
             },
           },
@@ -11903,6 +11905,26 @@ export default function PlatformPage() {
                             >
                               {manhuaLearnContinueControl.labelZh}
                             </button>
+                            {manhuaLearnResult.learnedCount > 0 ? (
+                              <button
+                                type="button"
+                                disabled={Boolean(manhuaLearnBusyKey) || focusedManhuaLearnJobActive}
+                                onClick={() => {
+                                  const next = manhuaLearnContinueRef.current;
+                                  if (!next) return;
+                                  if (!window.confirm("补抽当前剧此前已学分集的静帧？不会重跑语音、读帧或总分析；本次最多补 8 集。")) return;
+                                  void runManhuaTemplateLearnCloud(
+                                    next.row,
+                                    next.rank,
+                                    next.seriesKey,
+                                    { refreshPreviewFrames: true },
+                                  );
+                                }}
+                                className="rounded-full border border-amber-300/30 bg-amber-400/10 px-2 py-0.5 transition enabled:cursor-pointer enabled:hover:bg-amber-400/20 disabled:opacity-45"
+                              >
+                                补抽前 8 集静帧
+                              </button>
+                            ) : null}
                             <span className="rounded-full border border-emerald-300/30 bg-black/25 px-2 py-0.5 text-emerald-100/85">
                               已学完 {manhuaLearnResult.learnedCount}
                             </span>
