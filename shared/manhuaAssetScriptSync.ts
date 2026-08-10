@@ -22,11 +22,27 @@ export function fingerprintManhuaWriterAssetCanon(
   return `${chars}::${locs}`;
 }
 
+/**
+ * 资产包命名习惯归一：去掉「s01_02_」类场景序号前缀与「_半身/_全身」类
+ * 视角后缀，让「阿咎_半身」「s01_02_雁门军营马厩」能对上剧本表的
+ * 「阿咎」「雁门军营马厩」。只求自动认领到大头（约 95%），
+ * 剩下认不出的由用户在卡片上手动改名认领，不赌全自动。
+ */
+function normalizeAssetClaimLabel(label: string): string {
+  return label
+    .replace(/^s\d{1,3}(?:[_-]\d{1,3})?[_-]/i, "")
+    .replace(/[_\-–—·\s]*(?:半身|全身|大头|头像|特写|正面|侧面|背面|立绘|设定图?)$/, "")
+    .trim();
+}
+
 function labelMatchesName(labelZh: string | undefined, nameZh: string): boolean {
   const label = stripManhuaCustomAssetLabelPrefix(labelZh);
   const name = String(nameZh || "").trim();
   if (!label || !name) return false;
-  return label.includes(name) || name.includes(label);
+  if (label.includes(name) || name.includes(label)) return true;
+  const bare = normalizeAssetClaimLabel(label);
+  if (!bare || bare === label) return false;
+  return bare.includes(name) || name.includes(bare);
 }
 
 function refMatchesCanonCharacter(

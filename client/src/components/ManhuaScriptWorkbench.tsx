@@ -280,6 +280,8 @@ type Props = {
   onImportPropSheetFile?: (file: File) => void | Promise<void>;
   onCustomAssetRoleChange?: (id: string, role: ManhuaCustomAssetRef["role"]) => void;
   onCustomAssetDutyChange?: (id: string, duty: ManhuaCustomAssetRefDuty | null) => void;
+  /** 手动改名：改成与剧本表一致的名字即被认领（自动识别不追求 100%） */
+  onCustomAssetLabelChange?: (id: string, labelZh: string) => void;
   onRemoveCustomAsset?: (id: string) => void;
   /** 段意图写回可拍表（工作台编辑） */
   onSegmentIntentChange?: (segmentIndex: number, intentZh: string) => void;
@@ -535,6 +537,7 @@ export default function ManhuaScriptWorkbench({
   onImportPropSheetFile,
   onCustomAssetRoleChange,
   onCustomAssetDutyChange,
+  onCustomAssetLabelChange,
   onRemoveCustomAsset,
   onSegmentIntentChange,
   onSegmentCastChange,
@@ -3631,11 +3634,40 @@ export default function ManhuaScriptWorkbench({
                               loading="lazy"
                             />
                             <div className="space-y-1.5 p-2">
-                              <div className="truncate text-[10px] text-white/55">
-                                {lockTag ? `${lockTag} · ` : ""}
-                                {ref.labelZh || "参考图"}
-                                {ref.source === "generated" ? " · 新生成" : " · 上传"}
-                              </div>
+                              {onCustomAssetLabelChange ? (
+                                <div
+                                  className="flex items-center gap-1"
+                                  title="识别错了就改名：改成与剧本表一致的人物/场景名，这张图立即被认领"
+                                >
+                                  {lockTag ? (
+                                    <span className="shrink-0 text-[10px] text-white/55">{lockTag} ·</span>
+                                  ) : null}
+                                  <input
+                                    key={`${ref.id}:${ref.labelZh || ""}`}
+                                    type="text"
+                                    defaultValue={ref.labelZh || ""}
+                                    placeholder="改名认领：填剧本表里的名字"
+                                    maxLength={40}
+                                    onBlur={(e) => {
+                                      const v = e.target.value.trim();
+                                      if (v !== (ref.labelZh || "")) onCustomAssetLabelChange(ref.id, v);
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                    }}
+                                    className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-[10px] text-white/70 hover:border-white/15 focus:border-white/30 focus:bg-black/40 focus:outline-none"
+                                  />
+                                  <span className="shrink-0 text-[9px] text-white/35">
+                                    {ref.source === "generated" ? "新生成" : "上传"}
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="truncate text-[10px] text-white/55">
+                                  {lockTag ? `${lockTag} · ` : ""}
+                                  {ref.labelZh || "参考图"}
+                                  {ref.source === "generated" ? " · 新生成" : " · 上传"}
+                                </div>
+                              )}
                               <div className="flex flex-wrap gap-1">
                                 {MANHUA_CUSTOM_ASSET_ROLES.map((role) => {
                                   const on = ref.role === role;

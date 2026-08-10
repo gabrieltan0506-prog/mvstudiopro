@@ -4112,6 +4112,19 @@ export default function OmniCanvas() {
     );
   }, []);
 
+  /**
+   * 手动改名：自动识别只求 95%，剩下认错/认不出的（阿咎_半身、s05_xx 前缀）
+   * 由用户改成与剧本表一致的名字，labelMatchesName 即命中，门禁与认领同步解锁。
+   */
+  const setCustomAssetLabel = useCallback((id: string, labelZh: string) => {
+    const label = String(labelZh || "").trim().slice(0, 40);
+    setCustomAssetRefs((prev) =>
+      normalizeManhuaCustomAssetRefs(
+        prev.map((r) => (r.id === id ? { ...r, labelZh: label || undefined } : r)),
+      ),
+    );
+  }, []);
+
   const handleSegmentIntentChange = useCallback(
     (segmentIndex: number, intentZh: string) => {
       const intent = String(intentZh || "").trim().slice(0, 80);
@@ -6444,6 +6457,7 @@ export default function OmniCanvas() {
                   onImportPropSheetFile={importPropSheetFile}
                   onCustomAssetRoleChange={setCustomAssetRole}
                   onCustomAssetDutyChange={setCustomAssetDuty}
+                  onCustomAssetLabelChange={setCustomAssetLabel}
                   onSegmentIntentChange={handleSegmentIntentChange}
                   onSegmentCastChange={handleSegmentCastChange}
                   deliveryPackage={deliveryPackage}
