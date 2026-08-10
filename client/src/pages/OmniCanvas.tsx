@@ -2630,9 +2630,24 @@ export default function OmniCanvas() {
           }
         }
         if (result.addedRefs.length) {
-          setCustomAssetRefs((prev) =>
-            normalizeManhuaCustomAssetRefs([...prev, ...result.addedRefs]),
-          );
+          setCustomAssetRefs((prev) => {
+            /**
+             * 重复导入按「分栏+文件名」替换旧记录，不追加：每次导入图片会
+             * 重新上传拿到新 URL，按 URL 去重永远失灵——用户实测导一次翻一倍，
+             * 而且资产表上限 48 张，翻两次开始静默丢图。替换还让旧图借新记录
+             * 获得质量体检/manifest 认领字段。用户改过名的旧图（labelZh 已变）
+             * 不会被替换，保留其手动认领。
+             */
+            const incomingKeys = new Set(
+              result.addedRefs.map((r) => `${r.role}::${String(r.labelZh || "").trim()}`),
+            );
+            const kept = prev.filter(
+              (r) =>
+                r.source !== "upload" ||
+                !incomingKeys.has(`${r.role}::${String(r.labelZh || "").trim()}`),
+            );
+            return normalizeManhuaCustomAssetRefs([...kept, ...result.addedRefs]);
+          });
         }
         // 报成功入库数，不报尝试数：裁切失败还说「导演板 6 集」等于骗自己
         const failedBoardEpisodes: number[] = [];
