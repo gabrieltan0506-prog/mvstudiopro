@@ -1298,7 +1298,6 @@ export async function runManhuaTemplateLearn(
     );
 
     const listedIndexes = listed.map((e) => e.index);
-    const existingDigests = await loadAllDigests(seriesKey);
     const batchIndexes = input.refreshPreviewFrames
       ? existingDigests
           .filter(isManhuaLearnEpisodeComplete)
