@@ -31,6 +31,7 @@ export type AnalyzeManhuaTemplateFramesInput = {
   fallbackLane?: ManhuaViralTemplateLane | string;
   /** 手动导入等受控入口可显式选实验组；未传时仍读部署 env。 */
   learnProvider?: ManhuaTemplateLearnLlmProvider;
+  abortSignal?: AbortSignal;
 };
 
 async function resolveFrameDataUrl(frame: ManhuaTemplateFrameVisionInputFrame): Promise<{
@@ -162,6 +163,7 @@ export async function analyzeManhuaTemplateFramesWithTerra(
     modelName,
     reasoningEffort: MANHUA_TEMPLATE_FRAME_VISION_REASONING,
     max_tokens: 16_384,
+    abortSignal: input.abortSignal,
     // claude-opus-5 不收采样控件与 response_format，仅 GPT 路径带
     ...(isClaude ? {} : { temperature: 0.3, response_format: { type: "json_object" as const } }),
     messages: [

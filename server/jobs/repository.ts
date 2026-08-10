@@ -1,4 +1,4 @@
-import { and, asc, eq, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { jobs, type Job, type InsertJob } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { omitChineseStagingFromJobOutput } from "../services/platformImageChineseStaging.js";
@@ -41,6 +41,15 @@ function isGrowthCampAnalyzeJob(job: Job): boolean {
   const action = getVideoJobAction(job.input);
   if (action !== "growth_analyze_video" && action !== "growth_analyze_images") return false;
   return job.type === "video" || job.type === "image";
+}
+
+function isManhuaTemplateLearnJob(job: Pick<Job, "type" | "input">): boolean {
+  return job.type === "video" && getVideoJobAction(job.input) === "manhua_template_learn";
+}
+
+/** 供 API 轮询唤醒漫剧学习专用 worker。 */
+export function isManhuaTemplateLearnJobRecord(job: Pick<Job, "type" | "input">): boolean {
+  return isManhuaTemplateLearnJob(job);
 }
 
 /** 供 API 轮询唤醒 growth 专用 worker */
@@ -107,6 +116,181 @@ export async function claimNextGrowthCampAnalyzeJob(): Promise<NormalizedJob | n
   if (!next || !isGrowthCampAnalyzeJob(next)) return null;
 
   return claimQueuedJobById(db, next, "claimNextGrowthCampAnalyzeJob");
+}
+
+/** 漫剧学习专用持久队列；由独立双并发 worker 领取，关页后仍继续。 */
+export async function claimNextManhuaTemplateLearnJob(): Promise<NormalizedJob | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  let rows: Job[] = [];
+  try {
+    rows = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.status, "queued"),
+          eq(jobs.type, "video"),
+          sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
+        ),
+      )
+      .orderBy(asc(jobs.createdAt))
+      .limit(1);
+  } catch (error) {
+    console.error("[JobsRepo] claimNextManhuaTemplateLearnJob select failed:", error);
+    return null;
+  }
+
+  const next = rows[0];
+  if (!next || !isManhuaTemplateLearnJob(next)) return null;
+  return claimQueuedJobById(db, next, "claimNextManhuaTemplateLearnJob");
+}
+
+/** 当前用户最近的学习任务：页面刷新/关闭后可从服务端恢复全部运行、排队及刚结束任务。 */
+export async function listManhuaTemplateLearnJobsForUser(
+  userId: string,
+  limit = 30,
+): Promise<NormalizedJob[]> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    const rows = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.userId, String(userId)),
+          eq(jobs.type, "video"),
+          sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
+        ),
+      )
+      .orderBy(desc(jobs.createdAt))
+      .limit(Math.max(1, Math.min(50, Math.floor(limit) || 30)));
+    return rows.map(normalizeJob);
+  } catch (error) {
+    console.error("[JobsRepo] listManhuaTemplateLearnJobsForUser failed:", error);
+    return [];
+  }
+}
+
+/** 同一用户同一来源只允许存在一条 queued/running 学习任务，防双击/多标签页重复烧模型。 */
+export async function findActiveManhuaTemplateLearnJobForSource(
+  userId: string,
+  sourceKey: string,
+): Promise<NormalizedJob | null> {
+  const db = await getDb();
+  const key = String(sourceKey || "").trim();
+  if (!db || !key) return null;
+  try {
+    const rows = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.userId, String(userId)),
+          eq(jobs.type, "video"),
+          inArray(jobs.status, ["queued", "running"]),
+          sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
+          sql`coalesce(
+            nullif(${jobs.input}::jsonb->'params'->>'dedupeKey', ''),
+            nullif(${jobs.input}::jsonb->'params'->>'gcsUri', ''),
+            nullif(${jobs.input}::jsonb->'params'->>'url', '')
+          ) = ${key}`,
+        ),
+      )
+      .orderBy(desc(jobs.createdAt))
+      .limit(1);
+    return rows[0] ? normalizeJob(rows[0]) : null;
+  } catch (error) {
+    console.error("[JobsRepo] findActiveManhuaTemplateLearnJobForSource failed:", error);
+    throw error;
+  }
+}
+
+/** 持久化取消请求；queued 直接终止，running 由 worker 在下一检查点停止。 */
+export async function requestManhuaTemplateLearnJobCancel(input: {
+  jobId: string;
+  userId: string;
+}): Promise<NormalizedJob | null> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot cancel job");
+  const current = await getJobById(input.jobId);
+  if (!current || !isManhuaTemplateLearnJob(current)) return null;
+  if (String(current.userId) !== String(input.userId)) return null;
+  if (current.status === "succeeded" || current.status === "failed") return current;
+
+  const rawInput = parseMaybeJson(current.input);
+  const requestedAt = new Date().toISOString();
+  const nextInput = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
+    ? { ...(rawInput as Record<string, unknown>), cancelRequestedAt: requestedAt }
+    : { action: "manhua_template_learn", cancelRequestedAt: requestedAt };
+  const nextStatus = current.status === "queued" ? "failed" : "running";
+  await db
+    .update(jobs)
+    .set({
+      input: nextInput as InsertJob["input"],
+      status: nextStatus,
+      error: current.status === "queued" ? "用户已停止学习（未开始执行）" : current.error,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(jobs.id, input.jobId),
+        eq(jobs.userId, String(input.userId)),
+        inArray(jobs.status, ["queued", "running"]),
+      ),
+    );
+  return getJobById(input.jobId);
+}
+
+export async function isManhuaTemplateLearnJobCancelRequested(jobId: string): Promise<boolean> {
+  const job = await getJobById(jobId);
+  if (!job) return true;
+  const raw = parseMaybeJson(job.input);
+  return Boolean(
+    job.status === "failed"
+    || (raw && typeof raw === "object" && !Array.isArray(raw)
+      && (raw as Record<string, unknown>).cancelRequestedAt),
+  );
+}
+
+/** 请求跳过当前集；只允许 running，worker 消费一次后写 skipConsumedAt。 */
+export async function requestManhuaTemplateLearnEpisodeSkip(input: {
+  jobId: string;
+  userId: string;
+}): Promise<NormalizedJob | null> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot skip episode");
+  const current = await getJobById(input.jobId);
+  if (!current || !isManhuaTemplateLearnJob(current)) return null;
+  if (String(current.userId) !== String(input.userId) || current.status !== "running") return null;
+  const raw = parseMaybeJson(current.input);
+  const nextInput = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? { ...(raw as Record<string, unknown>), skipEpisodeRequestedAt: new Date().toISOString() }
+    : { action: "manhua_template_learn", skipEpisodeRequestedAt: new Date().toISOString() };
+  await db.update(jobs).set({ input: nextInput as InsertJob["input"], updatedAt: new Date() })
+    .where(and(eq(jobs.id, input.jobId), eq(jobs.userId, String(input.userId)), eq(jobs.status, "running")));
+  return getJobById(input.jobId);
+}
+
+/** 单 worker 消费跳集请求；时间戳相等表示已消费。 */
+export async function consumeManhuaTemplateLearnEpisodeSkip(jobId: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const current = await getJobById(jobId);
+  if (!current || current.status !== "running") return false;
+  const raw = parseMaybeJson(current.input);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const base = raw as Record<string, unknown>;
+  const requestedAt = String(base.skipEpisodeRequestedAt || "").trim();
+  const consumedAt = String(base.skipEpisodeConsumedAt || "").trim();
+  if (!requestedAt || requestedAt === consumedAt) return false;
+  await db.update(jobs).set({
+    input: { ...base, skipEpisodeConsumedAt: requestedAt } as InsertJob["input"],
+    updatedAt: new Date(),
+  }).where(and(eq(jobs.id, jobId), eq(jobs.status, "running")));
+  return true;
 }
 
 /** 每次拾取時掃描前方若干個 queued，避免 Stage2 文案永遠卡在長時間 platform_topic_image 之後 */
@@ -196,10 +380,13 @@ export async function claimNextQueuedJobExcluding(excludeTypes: string[]): Promi
 
   let rows: Job[] = [];
   try {
+    const actionCondition = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
+      'growth_analyze_video', 'growth_analyze_images', 'manhua_template_learn'
+    )`;
     const condition =
       excludeTypes.length > 0
-        ? and(eq(jobs.status, "queued"), notInArray(jobs.type, excludeTypes))
-        : eq(jobs.status, "queued");
+        ? and(eq(jobs.status, "queued"), notInArray(jobs.type, excludeTypes), actionCondition)
+        : and(eq(jobs.status, "queued"), actionCondition);
     rows = await db.select().from(jobs).where(condition).orderBy(asc(jobs.createdAt)).limit(1);
   } catch (error) {
     console.error("[JobsRepo] claimNextQueuedJobExcluding select failed:", error);
@@ -243,10 +430,13 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
   const excludeTypes = ["pdf_export"];
   let rows: Job[] = [];
   try {
+    const actionCondition = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
+      'growth_analyze_video', 'growth_analyze_images', 'manhua_template_learn'
+    )`;
     const condition =
       excludeTypes.length > 0
-        ? and(eq(jobs.status, "queued"), notInArray(jobs.type, excludeTypes))
-        : eq(jobs.status, "queued");
+        ? and(eq(jobs.status, "queued"), notInArray(jobs.type, excludeTypes), actionCondition)
+        : and(eq(jobs.status, "queued"), actionCondition);
     rows = await db
       .select()
       .from(jobs)
@@ -260,7 +450,9 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
 
   if (rows.length === 0) return null;
 
-  const nonGrowthRows = rows.filter((j) => !isGrowthCampAnalyzeJob(j));
+  const nonGrowthRows = rows.filter(
+    (j) => !isGrowthCampAnalyzeJob(j) && !isManhuaTemplateLearnJob(j),
+  );
   const preferred =
     nonGrowthRows.find(
       (j) => j.type === "platform" && getPlatformJobAction(j.input) === "platform_build_content",

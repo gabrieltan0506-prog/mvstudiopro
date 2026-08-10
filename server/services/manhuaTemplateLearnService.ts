@@ -108,6 +108,11 @@ export type ManhuaTemplateLearnInput = {
   batchSize?: number;
   learnLlm?: ManhuaTemplateLearnLlmProvider;
   onProgress?: (phase: string, detailZh: string) => void | Promise<void>;
+  /** 每个分片落盘后把该集摘要同步进 Job output，供网页即时甄别。 */
+  onEpisodeCheckpoint?: (preview: ManhuaLearnDigestPreview) => void | Promise<void>;
+  /** 服务端持久控制：停止整部剧或跳过当前集。 */
+  checkControl?: () => Promise<"continue" | "cancel" | "skip">;
+  abortSignal?: AbortSignal;
 };
 
 export type ManhuaLearnDigestPreview = {
@@ -116,6 +121,9 @@ export type ManhuaLearnDigestPreview = {
   hookNoteZh: string;
   transcriptPreview: string;
   durationSec: number;
+  learnedThroughSec?: number;
+  complete?: boolean;
+  previewFrameUrls?: string[];
   categoryLabelZh?: string;
   tagLabelsZh?: string[];
 };
@@ -161,12 +169,22 @@ function aggregateDigestFrameVision(
 }
 
 function toDigestPreview(d: ManhuaLearnEpisodeDigest): ManhuaLearnDigestPreview {
+  const previewFrameUrls = (d.previewFrameGcsUris || []).flatMap((uri) => {
+    try {
+      return [signGsUriV4ReadUrl(uri, 7 * 24 * 3600)];
+    } catch {
+      return [];
+    }
+  }).slice(0, 3);
   return {
     episodeIndex: d.episodeIndex,
     title: d.title,
     hookNoteZh: d.hookNoteZh,
     transcriptPreview: d.transcriptPreview.slice(0, 800),
     durationSec: d.durationSec,
+    learnedThroughSec: d.learnedThroughSec,
+    complete: isManhuaLearnEpisodeComplete(d),
+    previewFrameUrls: previewFrameUrls.length ? previewFrameUrls : undefined,
     categoryLabelZh: d.categoryLabelZh,
     tagLabelsZh: d.tagLabelsZh,
   };
@@ -664,7 +682,46 @@ async function rmrf(dir: string) {
   await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
 }
 
+function manhuaLearnControlError(kind: "cancel" | "skip"): Error {
+  const error = new Error(kind === "cancel" ? "用户已停止学习" : "用户已跳过当前集");
+  error.name = kind === "cancel" ? "ManhuaLearnCancelledError" : "ManhuaLearnSkipEpisodeError";
+  return error;
+}
+
+async function assertManhuaLearnControl(
+  input: Pick<ManhuaTemplateLearnInput, "checkControl" | "abortSignal">,
+): Promise<void> {
+  if (input.abortSignal?.aborted) throw manhuaLearnControlError("cancel");
+  const state = await input.checkControl?.();
+  if (state === "cancel" || state === "skip") throw manhuaLearnControlError(state);
+}
+
+async function persistEpisodePreviewFrames(input: {
+  seriesKey: string;
+  episodeIndex: number;
+  framePaths: string[];
+}): Promise<string[]> {
+  if (!input.seriesKey || !input.framePaths.length) return [];
+  const indexes = Array.from(new Set([
+    0,
+    Math.floor((input.framePaths.length - 1) / 2),
+    input.framePaths.length - 1,
+  ])).filter((i) => i >= 0 && i < input.framePaths.length).slice(0, 3);
+  const uris: string[] = [];
+  for (let slot = 0; slot < indexes.length; slot++) {
+    const framePath = input.framePaths[indexes[slot]!]!;
+    const uploaded = await uploadBufferToGcs({
+      objectName: `manhua-template-learn/series/${input.seriesKey}/episodes/${input.episodeIndex}/preview-${slot + 1}.jpg`,
+      buffer: await fs.readFile(framePath),
+      contentType: "image/jpeg",
+    });
+    uris.push(uploaded.gcsUri);
+  }
+  return uris;
+}
+
 async function learnOneEpisodeChunk(input: {
+  seriesKey: string;
   ep: ListedEpisode;
   titleHint: string;
   learnLlm: ManhuaTemplateLearnLlmProvider;
@@ -675,10 +732,14 @@ async function learnOneEpisodeChunk(input: {
   endSec: number;
   chunkDir: string;
   onProgress?: ManhuaTemplateLearnInput["onProgress"];
+  checkControl?: ManhuaTemplateLearnInput["checkControl"];
+  abortSignal?: AbortSignal;
+  capturePreviewFrames?: boolean;
 }): Promise<ManhuaLearnEpisodeChunk> {
   const chunkLen = Math.max(1, input.endSec - input.startSec);
   const rangeZh = `${Math.floor(input.startSec / 60)}–${Math.ceil(input.endSec / 60)} 分`;
 
+  await assertManhuaLearnControl(input);
   await input.onProgress?.(
     MANHUA_LEARN_STAGE.audio,
     formatManhuaLearnEpisodeDetail(
@@ -700,12 +761,14 @@ async function learnOneEpisodeChunk(input: {
     try {
       const buf = await fs.readFile(audioPath);
       if (buf.length <= 18 * 1024 * 1024) {
+        await assertManhuaLearnControl(input);
         geminiScan = await analyzeManhuaDramaAudioWithGemini({
           audioBase64: buf.toString("base64"),
           mimeType: "audio/mpeg",
         });
       }
     } catch (e) {
+      await assertManhuaLearnControl(input);
       console.warn(
         "[manhuaTemplateLearn] chunk audio failed:",
         input.ep.index,
@@ -729,6 +792,7 @@ async function learnOneEpisodeChunk(input: {
   const timestamps = relativeTimestamps.map((t) => t + input.startSec);
   const mediaTimestamps = relativeTimestamps.map((t) => t + localStartSec);
 
+  await assertManhuaLearnControl(input);
   await input.onProgress?.(
     MANHUA_LEARN_STAGE.frames,
     formatManhuaLearnEpisodeDetail(
@@ -739,6 +803,14 @@ async function learnOneEpisodeChunk(input: {
   );
   const framesDir = path.join(input.chunkDir, "frames");
   const framePaths = await extractFrames(input.videoPath, mediaTimestamps, framesDir);
+  await assertManhuaLearnControl(input);
+  const previewFrameGcsUris = input.capturePreviewFrames
+    ? await persistEpisodePreviewFrames({
+        seriesKey: input.seriesKey,
+        episodeIndex: input.ep.index,
+        framePaths,
+      })
+    : [];
 
   const transcriptPreview = String(geminiScan?.transcriptSummary || "")
     .replace(/\s+/g, " ")
@@ -808,6 +880,7 @@ async function learnOneEpisodeChunk(input: {
         status: "proposed" as const,
       };
       visionProvenance.attempted = true;
+      await assertManhuaLearnControl(input);
       const vision = await analyzeManhuaTemplateFramesWithTerra({
         frames,
         titleHint: `${input.titleHint} · ${input.ep.title} · ${rangeZh}`,
@@ -816,7 +889,9 @@ async function learnOneEpisodeChunk(input: {
         climaxNotes: plan.climaxWindows.map((w) => w.reasonZh),
         fallbackLane: draft.laneZh,
         learnProvider: input.learnLlm,
+        abortSignal: input.abortSignal,
       });
+      await assertManhuaLearnControl(input);
       visionProvenance.success = true;
       visionProvenance.model = String(vision.model || visionProvenance.model);
       const filled = applyFrameVisionToProposal(draft, vision);
@@ -834,6 +909,8 @@ async function learnOneEpisodeChunk(input: {
       }
     }
   } catch (e) {
+    await assertManhuaLearnControl(input);
+    if (e instanceof Error && /ManhuaLearn(Cancelled|SkipEpisode)Error/.test(e.name)) throw e;
     visionProvenance.errorNote = (e instanceof Error ? e.message : String(e)).slice(0, 160);
     console.warn(
       "[manhuaTemplateLearn] chunk vision failed:",
@@ -852,6 +929,7 @@ async function learnOneEpisodeChunk(input: {
     climaxNotes: plan.climaxWindows.map((w) => w.reasonZh).slice(0, 6),
     sceneHints: sceneHints.slice(0, 8),
     learnedAt: new Date().toISOString(),
+    previewFrameGcsUris: previewFrameGcsUris.length ? previewFrameGcsUris : undefined,
     vision: visionProvenance,
   };
 }
@@ -861,6 +939,7 @@ async function learnOneEpisodeChunk(input: {
  * 分集 JSON（可续学）。长片不再先落完整原视频。
  */
 async function learnOneEpisode(input: {
+  seriesKey: string;
   ep: ListedEpisode;
   titleHint: string;
   learnLlm: ManhuaTemplateLearnLlmProvider;
@@ -868,6 +947,8 @@ async function learnOneEpisode(input: {
   existing?: ManhuaLearnEpisodeDigest | null;
   onProgress?: ManhuaTemplateLearnInput["onProgress"];
   onCheckpoint?: (digest: ManhuaLearnEpisodeDigest) => void | Promise<void>;
+  checkControl?: ManhuaTemplateLearnInput["checkControl"];
+  abortSignal?: AbortSignal;
 }): Promise<ManhuaLearnEpisodeDigest> {
   const epDir = path.join(input.rootTmp, `ep_${input.ep.index}`);
   await fs.mkdir(epDir, { recursive: true });
@@ -876,6 +957,7 @@ async function learnOneEpisode(input: {
       return input.existing;
     }
 
+    await assertManhuaLearnControl(input);
     await input.onProgress?.(MANHUA_LEARN_STAGE.download, `正在读取第 ${input.ep.index} 集时长…`);
     const durationSec = await probeRemoteVideoDuration(input.ep.url);
     if (durationSec > MANHUA_LEARN_MAX_DURATION_SEC) {
@@ -906,6 +988,7 @@ async function learnOneEpisode(input: {
     const checkpoint = Math.max(60, MANHUA_LEARN_CHECKPOINT_SEC);
     const retryMax = Math.max(1, MANHUA_LEARN_EPISODE_RETRY_MAX);
     while (cursor < durationSec - 0.5) {
+      await assertManhuaLearnControl(input);
       const segment = nextManhuaLearnVideoSegment({
         cursorSec: cursor,
         durationSec,
@@ -923,6 +1006,7 @@ async function learnOneEpisode(input: {
         await rmrf(chunkDir);
         await fs.mkdir(chunkDir, { recursive: true });
         try {
+          await assertManhuaLearnControl(input);
           await input.onProgress?.(
             MANHUA_LEARN_STAGE.download,
             `正在下载第 ${input.ep.index} 集 ${Math.floor(startSec / 60)}–${Math.ceil(endSec / 60)} 分片段${attempt > 1 ? `（重试 ${attempt}/${retryMax}）` : ""}…`,
@@ -934,6 +1018,7 @@ async function learnOneEpisode(input: {
             endSec,
           });
           chunk = await learnOneEpisodeChunk({
+            seriesKey: input.seriesKey,
             ep: input.ep,
             titleHint: input.titleHint,
             learnLlm: input.learnLlm,
@@ -943,9 +1028,13 @@ async function learnOneEpisode(input: {
             endSec,
             chunkDir,
             onProgress: input.onProgress,
+            checkControl: input.checkControl,
+            abortSignal: input.abortSignal,
+            capturePreviewFrames: !(digest?.previewFrameGcsUris?.length),
           });
           break;
         } catch (e) {
+          if (e instanceof Error && /ManhuaLearn(Cancelled|SkipEpisode)Error/.test(e.name)) throw e;
           lastErrZh = mapManhuaLearnFetchError(e);
           await input.onProgress?.(
             MANHUA_LEARN_STAGE.failed,
@@ -1323,15 +1412,20 @@ export async function runManhuaTemplateLearn(
       }
 
       try {
+        await assertManhuaLearnControl(input);
         const digest = await learnOneEpisode({
+          seriesKey,
           ep,
           titleHint: prog.titleHint,
           learnLlm,
           rootTmp,
           existing,
           onProgress: input.onProgress,
+          checkControl: input.checkControl,
+          abortSignal: input.abortSignal,
           onCheckpoint: async (partial) => {
             await writeJsonGcs(episodeObjectName(seriesKey, idx), partial);
+            await input.onEpisodeCheckpoint?.(toDigestPreview(partial));
           },
         });
         await writeJsonGcs(episodeObjectName(seriesKey, idx), digest);
@@ -1353,6 +1447,12 @@ export async function runManhuaTemplateLearn(
           `第 ${idx} 集整集学完（约 ${Math.round((digest.durationSec || 0) / 60)} 分钟 · 本轮新增 ${batchLearnedIndexes.length} · 累计 ${prog.learnedEpisodeIndexes.length} 集）`,
         );
       } catch (e) {
+        if (e instanceof Error && e.name === "ManhuaLearnCancelledError") throw e;
+        if (e instanceof Error && e.name === "ManhuaLearnSkipEpisodeError") {
+          consecutiveFails = 0;
+          await progress(MANHUA_LEARN_STAGE.persist, `第 ${idx} 集已按要求跳过，继续下一集`);
+          continue;
+        }
         const errZh = mapManhuaLearnFetchError(e);
         const isPerm = errZh === MANHUA_LEARN_FETCH_ERR.permissionDenied
           || /权限不足/.test(errZh);
@@ -1424,6 +1524,7 @@ export async function runManhuaTemplateLearn(
       };
     }
 
+    await assertManhuaLearnControl(input);
     await progress(
       MANHUA_LEARN_STAGE.analysis,
       manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.analysis),
@@ -1456,6 +1557,7 @@ export async function runManhuaTemplateLearn(
         modelName: isClaude ? MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL : MANHUA_TEMPLATE_FRAME_VISION_MODEL,
         reasoningEffort: MANHUA_TEMPLATE_FRAME_VISION_REASONING,
         max_tokens: 4096,
+        abortSignal: input.abortSignal,
         // claude-opus-5 不收采样控件与 response_format，仅 GPT 路径带
         ...(isClaude ? {} : { temperature: 0.3, response_format: { type: "json_object" as const } }),
         messages: [
@@ -1502,6 +1604,7 @@ export async function runManhuaTemplateLearn(
         polishOk = true;
       }
     } catch (e) {
+      await assertManhuaLearnControl(input);
       console.warn(
         "[manhuaTemplateLearn] polish failed, keep heuristic:",
         e instanceof Error ? e.message : e,

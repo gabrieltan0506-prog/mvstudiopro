@@ -48,6 +48,10 @@ export type ManhuaLearnBasketItem = {
   continuation: ManhuaLearnActiveJobRecord["continuation"];
   result: ManhuaLearnResultUi;
   updatedAt: number;
+  /** 服务端持久任务状态；刷新后由 /api/jobs/manhua-learn 回填。 */
+  jobId?: string;
+  jobStatus?: "queued" | "running" | "succeeded" | "failed";
+  jobErrorZh?: string;
 };
 
 export type ManhuaLearnResultUi = {
@@ -78,6 +82,9 @@ export type ManhuaLearnResultUi = {
     hookNoteZh: string;
     transcriptPreview: string;
     durationSec: number;
+    learnedThroughSec?: number;
+    complete?: boolean;
+    previewFrameUrls?: string[];
     categoryLabelZh?: string;
     tagLabelsZh?: string[];
   }>;
@@ -203,6 +210,27 @@ export function mergeManhuaLearnLiveProgress(
     Math.floor(Number(out.listedEpisodeCount) || 0),
     logCounts.listed,
   );
+  const liveDigests = Array.isArray(out.digestsPreview)
+    ? out.digestsPreview.map((raw) => {
+        const row = raw as Record<string, unknown>;
+        return {
+          episodeIndex: Math.max(0, Math.floor(Number(row.episodeIndex) || 0)),
+          title: String(row.title || "").trim(),
+          hookNoteZh: String(row.hookNoteZh || "").trim(),
+          transcriptPreview: String(row.transcriptPreview || "").trim(),
+          durationSec: Math.max(0, Number(row.durationSec) || 0),
+          learnedThroughSec: Math.max(0, Number(row.learnedThroughSec) || 0) || undefined,
+          complete: row.complete === true,
+          previewFrameUrls: Array.isArray(row.previewFrameUrls)
+            ? row.previewFrameUrls.map((url) => String(url || "").trim()).filter(Boolean).slice(0, 3)
+            : undefined,
+          categoryLabelZh: String(row.categoryLabelZh || "").trim() || undefined,
+          tagLabelsZh: Array.isArray(row.tagLabelsZh)
+            ? row.tagLabelsZh.map((tag) => String(tag || "").trim()).filter(Boolean)
+            : undefined,
+        };
+      }).filter((row) => row.episodeIndex > 0)
+    : [];
   return {
     ...base,
     seriesKey: String(out.seriesKey || base.seriesKey).trim() || base.seriesKey,
@@ -218,6 +246,7 @@ export function mergeManhuaLearnLiveProgress(
     pendingCount: listedEpisodeCount > 0
       ? Math.max(0, listedEpisodeCount - learnedCount)
       : base.pendingCount,
+    digestsPreview: liveDigests.length ? liveDigests : base.digestsPreview,
   };
 }
 
@@ -491,6 +520,97 @@ export function removeManhuaLearnBasketItem(
   return (items || []).filter((item) => item.seriesKey !== key);
 }
 
+export type ManhuaLearnServerJobSnapshot = {
+  jobId: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  input?: { params?: Record<string, unknown> };
+  output?: Record<string, unknown>;
+  error?: string;
+  updatedAt?: string;
+};
+
+/** 服务端 jobs 是并发/关页恢复真源；按来源把各 Job 合并回对应剧集，而不是覆盖当前选中剧。 */
+export function mergeManhuaLearnServerJobsIntoBasket(
+  items: ManhuaLearnBasketItem[],
+  jobs: ManhuaLearnServerJobSnapshot[],
+  now = Date.now(),
+): ManhuaLearnBasketItem[] {
+  let next = [...(items || [])];
+  const ordered = [...(jobs || [])].reverse();
+  for (const job of ordered) {
+    const params = job.input?.params || {};
+    const url = String(params.url || "").trim();
+    const gcsUri = String(params.gcsUri || "").trim();
+    const source = gcsUri || url;
+    if (!source) continue;
+    const title = String(params.title || "").trim();
+    const requestedSeriesKey = String(params.seriesKey || "").trim();
+    const existing = next.find((item) => {
+      const itemSource = String(
+        item.continuation.row.gcsUri || item.continuation.row.url || "",
+      ).trim();
+      return itemSource === source || (requestedSeriesKey && item.seriesKey === requestedSeriesKey);
+    });
+    const base = existing?.result || manhuaLearnResultFromStart({
+      channel: "cloud",
+      url: source,
+      title,
+      seriesKey: requestedSeriesKey || undefined,
+    });
+    let result: ManhuaLearnResultUi;
+    if (job.status === "succeeded") {
+      const out = job.output || {};
+      result = isManhuaLearnEmptyBatchFailure(out)
+        ? manhuaLearnResultFromFailure({
+            errorZh: String(out.messageZh || "本轮未能成功采下新集"),
+            url,
+            title,
+            prev: base,
+          })
+        : manhuaLearnResultFromJobOutput(out);
+    } else if (job.status === "failed") {
+      result = manhuaLearnResultFromFailure({
+        errorZh: String(job.error || "云端学习失败"),
+        url,
+        title,
+        prev: base,
+      });
+    } else {
+      result = mergeManhuaLearnLiveProgress(base, {
+        status: job.status,
+        output: job.output,
+      });
+    }
+    const seriesKey = String(result.seriesKey || requestedSeriesKey || base.seriesKey).trim();
+    const continuation: ManhuaLearnActiveJobRecord["continuation"] = {
+      row: {
+        url: url || null,
+        gcsUri: gcsUri || null,
+        fileName: String(params.fileName || "").trim() || null,
+        mixName: title || null,
+        mixId: String(params.mixId || "").trim() || null,
+        platform: String(params.platform || (/kuaishou\.com/i.test(url) ? "kuaishou" : "douyin")),
+        learnLlm: params.learnLlm === "claude" ? "claude" : "gpt",
+      },
+      rank: Math.max(0, Math.floor(Number(params.rank) || 0)),
+      seriesKey,
+      savedAt: now,
+    };
+    next = upsertManhuaLearnBasketItem(next, {
+      seriesKey,
+      continuation,
+      result,
+      updatedAt: Number.isFinite(Date.parse(String(job.updatedAt || "")))
+        ? Date.parse(String(job.updatedAt))
+        : now,
+      jobId: job.jobId,
+      jobStatus: job.status,
+      jobErrorZh: job.status === "failed" ? String(job.error || "云端学习失败") : undefined,
+    });
+  }
+  return next;
+}
+
 export type ManhuaLearnContinueControl = {
   disabled: boolean;
   labelZh: string;
@@ -570,6 +690,11 @@ export function manhuaLearnResultFromJobOutput(
         hookNoteZh: String(row.hookNoteZh || "").trim(),
         transcriptPreview: String(row.transcriptPreview || "").trim(),
         durationSec: Math.max(0, Number(row.durationSec) || 0),
+        learnedThroughSec: Math.max(0, Number(row.learnedThroughSec) || 0) || undefined,
+        complete: row.complete === true,
+        previewFrameUrls: Array.isArray(row.previewFrameUrls)
+          ? row.previewFrameUrls.map((url) => String(url || "").trim()).filter(Boolean).slice(0, 3)
+          : undefined,
         categoryLabelZh: String(row.categoryLabelZh || "").trim() || undefined,
         tagLabelsZh: tags.length ? tags : undefined,
       };
