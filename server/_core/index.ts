@@ -16,6 +16,7 @@ import {
   getJobById,
   isGrowthCampAnalyzeJobRecord,
   isManhuaTemplateLearnJobRecord,
+  recoverInterruptedManhuaTemplateLearnJobsOnStartup,
   listManhuaTemplateLearnJobsForUser,
   requestManhuaTemplateLearnEpisodeSkip,
   requestManhuaTemplateLearnJobCancel,
@@ -639,8 +640,20 @@ async function startServer() {
 
   server.listen(port, host, () => {
     console.log(`Server listening on http://${host}:${port}/ (NODE_ENV=${process.env.NODE_ENV || "undefined"})`);
-    // Defer background worker startup until the HTTP listener is ready.
-    startJobWorker();
+    // 漫剧学习逐集落盘；部署/崩溃会留下 running 行。先恢复为 queued 再启动 worker，
+    // 让任务跳过已完成集并继续总分析，避免页面永久卡在“正在合成”。
+    void recoverInterruptedManhuaTemplateLearnJobsOnStartup()
+      .then(({ requeued, cancelled }) => {
+        if (requeued > 0 || cancelled > 0) {
+          console.warn(`[manhua-learn] startup recovery: requeued=${requeued} cancelled=${cancelled}`);
+        }
+      })
+      .catch((error) => {
+        console.error("[manhua-learn] startup recovery failed:", error);
+      })
+      .finally(() => {
+        startJobWorker();
+      });
     startStaleJobsReaper();
     // 启动时扫描并恢复孤儿 deepResearch 任务（机器重启/部署可能中断异步任务）
     import("../services/deepResearchService").then(({ recoverOrphanedJobs }) => {

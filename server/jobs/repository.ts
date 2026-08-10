@@ -147,6 +147,55 @@ export async function claimNextManhuaTemplateLearnJob(): Promise<NormalizedJob |
   return claimQueuedJobById(db, next, "claimNextManhuaTemplateLearnJob");
 }
 
+/**
+ * 服务启动时恢复被部署/崩溃打断的漫剧学习任务。
+ *
+ * 分集检查点已逐集落到 GCS，重新排队后会跳过已完成集并继续总分析；
+ * 带取消标记的任务保持终止语义，不能因重启又开始烧模型。
+ */
+export async function recoverInterruptedManhuaTemplateLearnJobsOnStartup(): Promise<{
+  requeued: number;
+  cancelled: number;
+}> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot recover manhua learn jobs");
+
+  const recovered = await db
+    .update(jobs)
+    .set({
+      status: sql<JobStatus>`case
+        when coalesce(${jobs.input}::jsonb->>'cancelRequestedAt', '') <> '' then 'failed'
+        else 'queued'
+      end`,
+      error: sql<string>`case
+        when coalesce(${jobs.input}::jsonb->>'cancelRequestedAt', '') <> ''
+          then '用户已停止学习；已落盘内容保留'
+        else '服务重启，已自动恢复排队'
+      end`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(jobs.status, "running"),
+        eq(jobs.type, "video"),
+        sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
+      ),
+    )
+    .returning({
+      id: jobs.id,
+      status: jobs.status,
+    });
+
+  return recovered.reduce(
+    (acc, row) => {
+      if (row.status === "queued") acc.requeued += 1;
+      if (row.status === "failed") acc.cancelled += 1;
+      return acc;
+    },
+    { requeued: 0, cancelled: 0 },
+  );
+}
+
 /** 当前用户最近的学习任务：页面刷新/关闭后可从服务端恢复全部运行、排队及刚结束任务。 */
 export async function listManhuaTemplateLearnJobsForUser(
   userId: string,
