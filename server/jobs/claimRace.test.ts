@@ -9,7 +9,10 @@ vi.mock("../services/drProSecondaryStaging.js", () => ({
   deleteDrProSecondaryStagingByJobId: async () => {},
 }));
 
-import { claimNextQueuedJobExcluding } from "./repository";
+import {
+  claimNextQueuedJobExcluding,
+  recoverInterruptedManhuaTemplateLearnJobsOnStartup,
+} from "./repository";
 
 const QUEUED_ROW = {
   id: "job-1",
@@ -68,5 +71,33 @@ describe("queued 任务抢占", () => {
     const db = fakeDb([0]);
     getDb.mockResolvedValue(db);
     expect(await claimNextQueuedJobExcluding([])).toBeNull();
+  });
+});
+
+describe("漫剧学习启动恢复", () => {
+  beforeEach(() => getDb.mockReset());
+
+  it("把重启前的运行任务重新排队，并保留已取消任务的终止状态", async () => {
+    const returning = vi.fn().mockResolvedValue([
+      { id: "learn-running", status: "queued" },
+      { id: "learn-cancelled", status: "failed" },
+    ]);
+    const where = vi.fn(() => ({ returning }));
+    const set = vi.fn(() => ({ where }));
+    getDb.mockResolvedValue({ update: vi.fn(() => ({ set })) });
+
+    await expect(recoverInterruptedManhuaTemplateLearnJobsOnStartup()).resolves.toEqual({
+      requeued: 1,
+      cancelled: 1,
+    });
+    expect(set).toHaveBeenCalledOnce();
+    expect(where).toHaveBeenCalledOnce();
+  });
+
+  it("数据库不可用时明确失败，不伪装成已恢复", async () => {
+    getDb.mockResolvedValue(null);
+    await expect(recoverInterruptedManhuaTemplateLearnJobsOnStartup()).rejects.toThrow(
+      "cannot recover manhua learn jobs",
+    );
   });
 });
