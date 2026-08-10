@@ -4181,7 +4181,19 @@ export default function OmniCanvas() {
     const label = String(labelZh || "").trim().slice(0, 40);
     setCustomAssetRefs((prev) =>
       normalizeManhuaCustomAssetRefs(
-        prev.map((r) => (r.id === id ? { ...r, labelZh: label || undefined } : r)),
+        prev.map((r) => {
+          if (r.id !== id) return r;
+          // 「清除明确认领」会把 claimSource 留在 manual（挡住名字匹配）；
+          // 之后用户改名是更新的认领意图，必须让名字匹配重新生效，
+          // 否则改名入口和清除入口互相打架，改什么都认不上。
+          const unblockNameClaim =
+            r.claimSource === "manual" && !(r.claimedAnchorIds || []).length;
+          return {
+            ...r,
+            labelZh: label || undefined,
+            ...(unblockNameClaim ? { claimSource: "name" as const } : {}),
+          };
+        }),
       ),
     );
   }, []);
@@ -4215,7 +4227,7 @@ export default function OmniCanvas() {
       const ref = customAssetRefs.find((item) => item.id === id);
       if (!ref) return;
       const cost = manhuaAssetStandardizeCredits(quality);
-      if (!window.confirm(`将调用 GPT-image-2 图片编辑，把这张图标准化为工作流可用资产。\n\n${quality}：${cost} 积分/张；失败自动退回。原图会保留。继续？`)) return;
+      if (!window.confirm(`将调用 AI 图片编辑，把这张图标准化为工作流可用资产。\n\n${quality === "high" ? "高质" : "标准"}：${cost} 积分/张；失败自动退回。原图会保留。\n处理约需 1–2 分钟，期间请不要关闭页面，否则新图无法进入资产库。继续？`)) return;
       setAssetStandardizeBusyId(id);
       try {
         const claimedNames = (ref.claimedAnchorNamesZh || []).filter(Boolean).slice(0, 8);

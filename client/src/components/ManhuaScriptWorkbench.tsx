@@ -3753,6 +3753,7 @@ export default function ManhuaScriptWorkbench({
                                     <button
                                       type="button"
                                       onClick={() => onCustomAssetClaimsChange(ref.id, [])}
+                                      title="清除后这张图不再自动挂任何剧本资产；要重新认领请在上方点选，或直接改名"
                                       className="text-[9px] text-white/40 hover:text-white/65"
                                     >
                                       清除明确认领
