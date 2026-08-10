@@ -2209,7 +2209,9 @@ async function processPlatformJob(
             }
           }
         } catch (e) {
-          console.warn("[knowledgeCardDistill] 幂等查账失败，按未扣处理：", e);
+          // 审查修正：查账失败时不许盲扣（可能已扣过）——报错让 job 稍后重试
+          console.warn("[knowledgeCardDistill] 幂等查账失败，停账重试：", e);
+          throw new Error("计费对账暂不可用，请稍后重试");
         }
         if (!alreadyCharged) {
           const deducted = await deductCreditsAmount(

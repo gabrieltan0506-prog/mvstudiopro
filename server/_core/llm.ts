@@ -1612,7 +1612,11 @@ async function invokeAnthropic(
     usage?: { input_tokens?: number; output_tokens?: number };
   } | null;
   if (!json || !Array.isArray(json.content)) {
-    throw new Error("Anthropic 返回体不是预期 JSON（content 缺失）");
+    // 代理 200+HTML/空体按传输抖动处理：中性文案 + transient（调用方可重试）
+    const err = new Error("上游模型返回异常，请稍后重试") as TransientLlmError;
+    err.transient = true;
+    err.providerLabel = "Anthropic";
+    throw err;
   }
   // 先查 refusal 再读正文（Opus 5 分类器拒答返回 200 + stop_reason=refusal）
   if (json.stop_reason === "refusal") {

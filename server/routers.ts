@@ -3184,6 +3184,11 @@ export const appRouter = router({
         };
       }),
 
+
+    /**
+     * 审查必须修（P0·跨租户）：所有接收外部 gcsUri 的入口都要校验归属——
+     * 只认本人上传前缀，否则服务账号会替调用者代读任意对象。
+     */
     analyzeGrowthCampImages: publicProcedure
       .input(
         z.object({
@@ -3210,6 +3215,15 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         if (!ctx.user?.id) {
           throw new Error("請先登入，才能使用分析功能");
+        }
+        {
+          const { getGcsBucketName } = await import("./services/gcs.js");
+          const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${ctx.user.id}/`;
+          for (const img of input.images) {
+            if (img.gcsUri && !String(img.gcsUri).startsWith(allowedPrefix)) {
+              throw new Error("直传文件校验失败，请重新上传后再试");
+            }
+          }
         }
         // 积分在 growth_analyze_images Job 内扣除；此 mutation 仅供兼容/调试，勿在前端主路径调用
         const result = await analyzeGrowthCampImages(input);
@@ -3290,7 +3304,18 @@ export const appRouter = router({
         modelName: growthCampModelSchema.optional(),
         forceRefresh: z.boolean().optional().default(false),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        // 审查必须修：曾是匿名入口 + 任意 gs:// 代读
+        if (!ctx.user?.id) {
+          throw new Error("請先登入，才能使用分析功能");
+        }
+        if (input.gcsUri) {
+          const { getGcsBucketName } = await import("./services/gcs.js");
+          const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${ctx.user.id}/`;
+          if (!String(input.gcsUri).startsWith(allowedPrefix)) {
+            throw new Error("直传文件校验失败，请重新上传后再试");
+          }
+        }
         const result = await analyzeVideo(input);
         return {
           success: true,
@@ -7411,6 +7436,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 )
               : (is3x4Grid ? CREDIT_COSTS.platformXhsDualNote3x4 : CREDIT_COSTS.platformXhsDualNote);
 
+        // 审查必须修：留扣款来源快照——退款按同源退回（团队不退个人、admin 零扣不退）
+        let compositeChargeReceipt: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < cost) {
@@ -7428,7 +7455,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const bulkTag = compositePack
             ? ` · 编导分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
             : "";
-          await deductCreditsAmount(userId, cost, "platformCompositeSheet", compositeDeductionNote + bulkTag);
+          compositeChargeReceipt = await deductCreditsAmount(
+            userId,
+            cost,
+            "platformCompositeSheet",
+            compositeDeductionNote + bulkTag,
+          );
         }
 
         if (input.jobId) {
@@ -7488,26 +7520,34 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             });
           } catch (pe) {
             console.warn("[mvAnalysis.generatePlatformCompositeSheet] progress job insert failed:", pe);
-            // 审查必须修：页费已扣、任务没建成 → 可靠退款（带稳定 key，重复退防护走描述对账）
+            // 审查必须修：只退实扣（admin/未扣不退）、按扣款来源退（团队额度不错退个人）、
+            // 退款失败不许谎报「已退回」
+            let refunded = false;
             try {
-              if (cost > 0) {
-                const { refundCredits } = await import("./credits.js");
-                await refundCredits(
+              if (compositeChargeReceipt && compositeChargeReceipt.cost > 0) {
+                const { refundCreditsForDeductAmount } = await import("./credits.js");
+                await refundCreditsForDeductAmount(
                   userId,
-                  cost,
                   `platformCompositeSheet 建任务失败退回 [refundKey:compositeSheet/${progressJobId}]`,
+                  compositeChargeReceipt,
+                  "platformCompositeSheet",
                 );
+                refunded = true;
+              } else {
+                refunded = true; // 本来就没扣（admin/免费路径），无账可退
               }
             } catch (re) {
               console.error(
                 "[mvAnalysis.generatePlatformCompositeSheet] refund after insert failure ALSO failed:",
-                `userId=${userId} cost=${cost} jobId=${progressJobId}`,
+                `userId=${userId} cost=${compositeChargeReceipt?.cost ?? 0} jobId=${progressJobId}`,
                 re,
               );
             }
             throw new TRPCError({
               code: "INTERNAL_SERVER_ERROR",
-              message: "無法建立實時進度任務，費用已退回，請稍後再試",
+              message: refunded
+                ? "無法建立實時進度任務，費用已退回，請稍後再試"
+                : "無法建立實時進度任務；退款受阻已记录，客服会跟进，請勿重複重試",
             });
           }
           

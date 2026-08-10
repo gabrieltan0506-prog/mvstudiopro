@@ -1413,6 +1413,7 @@ async function runSeedance25EvolinkJob(
       const task = await createCanvasVideoTask({
         userId: charged.userId,
         creditsCharged: charged.credits,
+        deduct: charged.deduct,
         engine: resolveSeedance25CanvasEngine(mode, {
           // 共享信号（覆盖 photoreal-age/、photoreal-gen/ 等派生路径），与 2.0 路由同口径
           photoreal: hasPhotorealReferenceUrl([imageUrl, ...imageUrls, ...videoUrls]),
@@ -4012,6 +4013,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           const task = await createCanvasVideoTask({
             userId: charged.userId,
             creditsCharged: charged.credits,
+            deduct: charged.deduct,
             engine: "hailuo-openrouter",
             label,
             prompt,
@@ -4096,6 +4098,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           const task = await createCanvasVideoTask({
             userId: charged.userId,
             creditsCharged: charged.credits,
+            deduct: charged.deduct,
             engine: "happyhorse-openrouter",
             label,
             prompt,
@@ -4451,8 +4454,17 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const { parseSeedanceVersion, normalizeSeedanceQuality } = await import(
         "../shared/seedanceEvolinkModels.js"
       );
-      const isProbe =
+      let isProbe =
         b.probe === true || String(b.probe ?? q.probe ?? "").trim() === "1";
+      if (isProbe) {
+        // 审查必须修（P0）：probe=1 曾是公网免登录免扣费的真实上游开关。
+        // 收紧为须匹配服务端密钥；未配置密钥则一律拒绝探针。
+        const probeSecret = String(b.probeSecret ?? q.probeSecret ?? "").trim();
+        const expected = String(process.env.CANVAS_PROBE_SECRET || "").trim();
+        if (!expected || probeSecret !== expected) {
+          return res.status(403).json({ ok: false, error: "探针未授权" });
+        }
+      }
       const productVersion = parseSeedanceProductVersion(b.version || q.version || "2.0");
       /** Seedance 2.5 正式版：五种 EvoLink 路由，共用计费与异步任务主链。 */
       if (productVersion === "2.5") {
@@ -4590,11 +4602,14 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             const task = await createCanvasVideoTask({
               userId: charged.userId,
               creditsCharged: charged.credits,
+              deduct: charged.deduct,
               engine: photorealToEvolink ? "seedance20-evolink" : "seedance-openrouter",
               label,
               prompt,
               imageUrl,
               imageUrls,
+              // 连续性素材：EvoLink reference-to-video 收 0–3 条视频；OpenRouter 路径不消费无副作用
+              videoUrls,
               audioUrls,
               aspectRatio,
               duration: durationSec,
@@ -4692,6 +4707,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           const task = await createCanvasVideoTask({
             userId: chargedMini.userId,
             creditsCharged: chargedMini.credits,
+            deduct: chargedMini.deduct,
             engine: "seedance-mini-evolink",
             label,
             prompt,

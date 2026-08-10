@@ -77,6 +77,25 @@ type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
 type DbHandle = Pick<Db, "update" | "insert" | "select" | "delete">;
 
 /**
+ * 驱动兼容层（2026-08-10 线上事故热修）：生产用 drizzle-orm/neon-http，
+ * `db.transaction()` 一调用就抛「No transactions support in neon-http driver」——
+ * #1134 给扣费/退款包的事务在真实用户请求里必炸（admin 免扣费路径测不出来）。
+ * 这里检测到该驱动限制时回退为顺序执行（恢复事务化之前跑了数月的行为，
+ * 单条余额 UPDATE 本身仍是条件原子的；跨语句原子化待 CTE 重写跟进）。
+ */
+async function runAtomically<T>(db: Db, fn: (tx: DbHandle) => Promise<T>): Promise<T> {
+  try {
+    return await db.transaction(async (tx) => fn(tx as unknown as DbHandle));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/No transactions support/i.test(msg)) {
+      return fn(db as unknown as DbHandle);
+    }
+    throw e;
+  }
+}
+
+/**
  * 个人余额原子扣减：够不够由 SQL 的 WHERE 判，不在 JS 里比大小。
  *
  * 原写法是「读余额 → JS 比大小 → 写回一个算好的数」。两个请求同时进来都读到 100，
@@ -258,7 +277,7 @@ export async function deductCreditsAmount(
   const balance = await getOrCreateBalance(userId);
   // 扣减与日志行同事务：拆开写时中间崩溃会「余额已扣、无日志行」，
   // 幂等重试按 description 里的 chargeKey 查不到账就会再扣一次
-  const newBalance = await db.transaction(async (tx) => {
+  const newBalance = await runAtomically(db, async (tx) => {
     const nb = await tryDeductPersonalCredits(tx, userId, cost);
     if (nb === null) return null;
     await tx.insert(creditTransactions).values({
@@ -292,7 +311,7 @@ export async function deductCreditsAmount(
 
   const membership = await getTeamMembership(userId);
   if (membership) {
-    const team = await db.transaction(async (tx) => {
+    const team = await runAtomically(db, async (tx) => {
       const t = await tryDeductTeamCredits(tx, membership.id, cost);
       if (!t) return null;
       const remainingAllocation = t.allocated - t.used;
@@ -646,7 +665,7 @@ export async function refundCredits(
 
   // 余额与交易行必须同生共死：拆开写时中间崩溃会出现「余额已加、无交易行」，
   // 退分对账（按 description 里的 refundKey 查交易行）就会误判未退而再打一次
-  await db.transaction(async (tx) => {
+  await runAtomically(db, async (tx) => {
     await tx
       .update(creditBalances)
       .set({ balance: newBalance, lifetimeEarned: newLifetimeEarned })
@@ -715,7 +734,7 @@ export async function refundCreditsForDeductAmount(
     const nextUsed = Math.max(0, row.usedCredits - cost);
     // 额度回冲与两条日志同事务：拆开写时中间崩溃会让退分对账（查 stripeUsageLogs
     // 里的 refundKey）与实际额度状态对不上，误判后重复回冲
-    await db.transaction(async (tx) => {
+    await runAtomically(db, async (tx) => {
       await tx
         .update(teamMembers)
         .set({ usedCredits: nextUsed })
