@@ -45,7 +45,7 @@ export type ReapStaleJobsOnceOptions = {
 };
 
 /**
- * 單次掃描：**刪除**過舊的 `running` / `queued` 行（釋放 DB；輪詢端會 404）。
+ * 單次掃描：**刪除**過舊的非漫劇學習 `running` / `queued` 行（釋放 DB；輪詢端會 404）。
  *
  * - **running**：僅當 **`updatedAt` 早於門檻** 時刪（依「最後活動」判殭屍）。長任務可跑超過門檻，
  *   只要 worker 仍透過 `patchJobRunningProgress` / `recordPdfExportStep` 等刷新 `updatedAt` 即不會被清掉。
@@ -67,14 +67,17 @@ export async function reapStaleJobsOnce(
   const qCutoff = wallCutoffSql(qMin);
 
   try {
+    // 漫剧学习有逐集 GCS 检查点与启动恢复机制。不能在部署后的恢复 SQL 前把
+    // running 行删除，否则页面只剩“操作不可用”而无法续跑。
+    const nonManhuaLearn = sql`coalesce(${jobs.input}::jsonb->>'action', '') <> 'manhua_template_learn'`;
     const runningRows = await db
       .delete(jobs)
-      .where(and(eq(jobs.status, "running"), lt(jobs.updatedAt, runCutoff)))
+      .where(and(eq(jobs.status, "running"), nonManhuaLearn, lt(jobs.updatedAt, runCutoff)))
       .returning({ id: jobs.id });
 
     const queuedRows = await db
       .delete(jobs)
-      .where(and(eq(jobs.status, "queued"), lt(jobs.createdAt, qCutoff)))
+      .where(and(eq(jobs.status, "queued"), nonManhuaLearn, lt(jobs.createdAt, qCutoff)))
       .returning({ id: jobs.id });
 
     return { runningCleared: runningRows.length, queuedCleared: queuedRows.length };
