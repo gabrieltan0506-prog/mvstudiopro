@@ -13,6 +13,11 @@ import {
   type ManhuaCustomAssetRef,
   type ManhuaCustomAssetRole,
 } from "@shared/manhuaCustomAssetRefs";
+import { evaluateManhuaAssetImportQuality } from "@shared/manhuaAssetImportQuality";
+import {
+  buildManhuaAssetManifestClaims,
+  resolveManhuaAssetManifestClaim,
+} from "@shared/manhuaAssetManifestClaims";
 
 async function sha256Hex(buf: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", buf);
@@ -41,6 +46,7 @@ export type ManhuaAssetZipImportResult = {
   directorBoards: Array<{ episodeIndex: number; boardUrl: string; gcsUri?: string }>;
   skippedCount: number;
   droppedDupes: number;
+  quarantinedCount: number;
   /**
    * `script/` 目录里的剧本文本，按「能不能撑满一集」从优到劣排好序。
    *
@@ -51,6 +57,30 @@ export type ManhuaAssetZipImportResult = {
    */
   scripts: Array<{ path: string; text: string; charCount: number; dialogueCount: number }>;
 };
+
+async function readImageDimensions(blob: Blob): Promise<{ width: number; height: number }> {
+  if (typeof createImageBitmap === "function") {
+    const bitmap = await createImageBitmap(blob);
+    try {
+      return { width: bitmap.width, height: bitmap.height };
+    } finally {
+      bitmap.close();
+    }
+  }
+  return await new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("图片无法解码"));
+    };
+    img.src = url;
+  });
+}
 
 /**
  * 剧本稿的「够不够拍」评分：正文字数 + 「」对白句数。
@@ -78,12 +108,24 @@ export async function importManhuaAssetZipFile(opts: {
   const zip = await JSZip.loadAsync(await opts.file.arrayBuffer());
   const paths = Object.keys(zip.files).filter((p) => !zip.files[p]?.dir);
   const plan = planManhuaAssetZipImport(paths);
+  const assetCanonPath = paths.find((path) => /(^|\/)asset_canon\.json$/i.test(path));
+  let manifestClaims = buildManhuaAssetManifestClaims(null);
+  if (assetCanonPath) {
+    try {
+      const raw = await zip.file(assetCanonPath)?.async("string");
+      manifestClaims = buildManhuaAssetManifestClaims(raw ? JSON.parse(raw) : null);
+    } catch {
+      // 坏 manifest 不得拖垮整包；后续仍可走文件名自动匹配 + 手动认领。
+    }
+  }
 
   const withHash: Array<{
     path: string;
     category: ManhuaZipEntryCategory;
     sha256: string;
     blob: Blob;
+    width: number;
+    height: number;
   }> = [];
 
   const scripts: ManhuaAssetZipImportResult["scripts"] = [];
@@ -111,12 +153,22 @@ export async function importManhuaAssetZipFile(opts: {
       ? "image/png"
       : lower.endsWith(".webp")
         ? "image/webp"
-        : "image/jpeg";
+        : lower.endsWith(".gif")
+          ? "image/gif"
+          : "image/jpeg";
+    const blob = new Blob([buf], { type: mime });
+    let dimensions = { width: 0, height: 0 };
+    try {
+      dimensions = await readImageDimensions(blob);
+    } catch {
+      // 无法解码的文件保留为隔离记录，绝不参与锁定。
+    }
     withHash.push({
       path: entry.path,
       category: entry.category,
       sha256,
-      blob: new Blob([buf], { type: mime }),
+      blob,
+      ...dimensions,
     });
   }
 
@@ -149,6 +201,12 @@ export async function importManhuaAssetZipFile(opts: {
 
     const role = categoryToRole(item.category);
     if (!role) continue;
+    const quality = evaluateManhuaAssetImportQuality({
+      role,
+      width: item.width,
+      height: item.height,
+    });
+    const manifestClaim = resolveManhuaAssetManifestClaim(manifestClaims, item.path);
     addedRefs.push({
       id: makeManhuaCustomAssetId(),
       url,
@@ -156,6 +214,13 @@ export async function importManhuaAssetZipFile(opts: {
       role,
       labelZh: base.replace(/\.[^.]+$/, "").slice(0, 40) || "导入资产",
       source: "upload",
+      claimedAnchorIds: manifestClaim?.anchorIds,
+      claimedAnchorNamesZh: manifestClaim?.anchorNamesZh,
+      claimSource: manifestClaim ? "manifest" : "name",
+      reviewStatus: quality.reviewStatus,
+      qualityIssues: quality.issues,
+      sourceWidth: item.width || undefined,
+      sourceHeight: item.height || undefined,
     });
   }
 
@@ -164,6 +229,7 @@ export async function importManhuaAssetZipFile(opts: {
     directorBoards,
     skippedCount: plan.skipped.length,
     droppedDupes: deduped.dropped.length,
+    quarantinedCount: addedRefs.filter((r) => r.reviewStatus === "needs_review").length,
     /**
      * 先按「有没有对白」分两档，再按正文长度排。
      *

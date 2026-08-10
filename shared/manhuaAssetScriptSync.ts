@@ -7,7 +7,7 @@ import {
   stripManhuaCustomAssetLabelPrefix,
   type ManhuaCustomAssetRef,
 } from "./manhuaCustomAssetRefs.js";
-import type { ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon.js";
+import type { ManhuaWriterAssetAnchor, ManhuaWriterAssetCanon } from "./manhuaWriterAssetCanon.js";
 
 export function fingerprintManhuaWriterAssetCanon(
   canon: ManhuaWriterAssetCanon | null | undefined,
@@ -22,11 +22,49 @@ export function fingerprintManhuaWriterAssetCanon(
   return `${chars}::${locs}`;
 }
 
-function labelMatchesName(labelZh: string | undefined, nameZh: string): boolean {
+/**
+ * 资产包命名习惯归一：去掉「s01_02_」类场景序号前缀与「_半身/_全身」类
+ * 视角后缀，让「阿咎_半身」「s01_02_雁门军营马厩」能对上剧本表的
+ * 「阿咎」「雁门军营马厩」。只求自动认领到大头（约 95%），
+ * 剩下认不出的由用户在卡片上手动改名认领，不赌全自动。
+ */
+export function normalizeAssetClaimLabel(label: string): string {
+  return label
+    .replace(/^s\d{1,3}(?:[_-]\d{1,3})?[_-]/i, "")
+    .replace(/[_\-–—·\s]*(?:半身|全身|大头|头像|特写|正面|侧面|背面|立绘|设定图?)$/, "")
+    .replace(/[\s·•_\-—–（）()《》「」『』]/g, "")
+    .trim();
+}
+
+export function labelMatchesManhuaAnchor(
+  labelZh: string | undefined,
+  anchor: Pick<ManhuaWriterAssetAnchor, "nameZh" | "aliasZh">,
+): boolean {
   const label = stripManhuaCustomAssetLabelPrefix(labelZh);
-  const name = String(nameZh || "").trim();
-  if (!label || !name) return false;
-  return label.includes(name) || name.includes(label);
+  const bare = normalizeAssetClaimLabel(label);
+  if (!bare) return false;
+  const names = [anchor.nameZh, anchor.aliasZh]
+    .flatMap((v) => String(v || "").split(/[\/／、,，]/))
+    .map(normalizeAssetClaimLabel)
+    .filter((v) => v.length >= 2);
+  return names.some((name) => bare === name || (Math.min(bare.length, name.length) >= 3 && (bare.includes(name) || name.includes(bare))));
+}
+
+/** 单一认领真源：显式 anchor id > seed id > 名称/别名；隔离图永不命中。 */
+export function customAssetRefClaimsAnchor(
+  ref: ManhuaCustomAssetRef,
+  anchor: ManhuaWriterAssetAnchor,
+): boolean {
+  if (ref.reviewStatus === "needs_review") return false;
+  if ((ref.claimedAnchorIds || []).includes(anchor.id)) return true;
+  // 用户手动认领（含“清除认领”）必须覆盖 manifest/文件名猜测。
+  if (ref.claimSource === "manual") return false;
+  if ((ref.claimedAnchorNamesZh || []).some((name) => labelMatchesManhuaAnchor(name, anchor))) {
+    return true;
+  }
+  const seed = String(ref.seedLibraryId || "").trim();
+  if (seed === anchor.id) return true;
+  return labelMatchesManhuaAnchor(ref.labelZh, anchor);
 }
 
 function refMatchesCanonCharacter(
@@ -35,7 +73,7 @@ function refMatchesCanonCharacter(
 ): boolean {
   const seed = String(ref.seedLibraryId || "").trim();
   if (seed && canon.characters.some((c) => c.id === seed)) return true;
-  return canon.characters.some((c) => labelMatchesName(ref.labelZh, c.nameZh));
+  return canon.characters.some((c) => customAssetRefClaimsAnchor(ref, c));
 }
 
 function refMatchesCanonLocation(
@@ -44,7 +82,7 @@ function refMatchesCanonLocation(
 ): boolean {
   const seed = String(ref.seedLibraryId || "").trim();
   if (seed && canon.locations.some((l) => l.id === seed)) return true;
-  return canon.locations.some((l) => labelMatchesName(ref.labelZh, l.nameZh));
+  return canon.locations.some((l) => customAssetRefClaimsAnchor(ref, l));
 }
 
 function refMatchesCanonProp(
@@ -53,7 +91,7 @@ function refMatchesCanonProp(
 ): boolean {
   const seed = String(ref.seedLibraryId || "").trim();
   if (seed && canon.props.some((p) => p.id === seed)) return true;
-  return canon.props.some((p) => labelMatchesName(ref.labelZh, p.nameZh));
+  return canon.props.some((p) => customAssetRefClaimsAnchor(ref, p));
 }
 
 /** 生成垫图是否仍对应当前剧本表（上传手改图默认保留） */
@@ -134,23 +172,19 @@ export function findManhuaAssetCoverageGaps(input: {
         anchorId.includes(parsed.seedId)
       );
     });
-  const refHit = (role: "character" | "scene", anchorId: string, nameZh: string): boolean =>
+  const refHit = (role: "character" | "scene", anchor: ManhuaWriterAssetAnchor): boolean =>
     refs.some((r) => {
       if (r.role !== role) return false;
-      const seed = String(r.seedLibraryId || "").trim();
-      if (seed && (seed === anchorId || seed.includes(anchorId) || anchorId.includes(seed))) {
-        return true;
-      }
-      return labelMatchesName(r.labelZh, nameZh);
+      return customAssetRefClaimsAnchor(r, anchor);
     });
 
   const gaps: ManhuaAssetCoverageGap[] = [];
   for (const c of canon.characters || []) {
-    if (seedIdHit("charsheet", c.id) || refHit("character", c.id, c.nameZh)) continue;
+    if (seedIdHit("charsheet", c.id) || refHit("character", c)) continue;
     gaps.push({ role: "character", id: c.id, nameZh: c.nameZh });
   }
   for (const l of canon.locations || []) {
-    if (seedIdHit("sceneplate", l.id) || refHit("scene", l.id, l.nameZh)) continue;
+    if (seedIdHit("sceneplate", l.id) || refHit("scene", l)) continue;
     gaps.push({ role: "scene", id: l.id, nameZh: l.nameZh });
   }
   return gaps;

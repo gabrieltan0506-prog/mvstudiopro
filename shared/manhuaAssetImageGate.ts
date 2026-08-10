@@ -142,7 +142,8 @@ export function evaluateManhuaAssetImageGate(
 ): ManhuaAssetImageGateResult {
   const canonForGate = input.assetCanon;
   const hasCanon = Boolean(canonForGate?.characters?.length);
-  const customReady = hasCustomCastAndScene(input.customRefs);
+  const consumableRefs = (input.customRefs || []).filter((r) => r.reviewStatus !== "needs_review");
+  const customReady = hasCustomCastAndScene(consumableRefs);
   /**
    * 有剧本表时不能因为「上传过人物+场景」就直接放行：扩写和导入外部剧本都会
    * 加人加景，得按名字逐个点名，否则新角色一路裸奔到成片才发现没锁脸。
@@ -174,10 +175,18 @@ export function evaluateManhuaAssetImageGate(
     .filter(Boolean);
   const sceneId = writerSceneId || String(input.sceneId || "").trim();
   const blocks = input.assetBlocks || [];
-  const customChars = customRefsByRole(input.customRefs, "character");
-  const customScenes = customRefsByRole(input.customRefs, "scene");
+  const customChars = customRefsByRole(consumableRefs, "character");
+  const customScenes = customRefsByRole(consumableRefs, "scene");
 
-  const writerCastIds = (canon?.characters || []).map((c) => c.id);
+  const episodeBody = String(
+    (input.episodes || []).find((item) => Number(item.index) === ep)?.body || "",
+  );
+  const activeWriterCharacters = episodeBody
+    ? (canon?.characters || []).filter((c) =>
+        [c.nameZh, c.aliasZh].filter(Boolean).some((name) => episodeBody.includes(String(name))),
+      )
+    : (canon?.characters || []);
+  const writerCastIds = activeWriterCharacters.map((c) => c.id);
   const castIdsForGate = writerCastIds.length
     ? writerCastIds
     : [...characterIds, ...ancientIds];
@@ -206,12 +215,18 @@ export function evaluateManhuaAssetImageGate(
   const coverageGaps = hasCanon && !legacySheetNaming
     ? findManhuaAssetCoverageGaps({
         assetCanon: canonForGate,
-        customRefs: input.customRefs,
+        customRefs: consumableRefs,
         assetBlocks: blocks.map((blk) => ({ id: blk.id, hasMedia: blockHasMedia(blk) })),
       })
     : [];
-  const castGaps = coverageGaps.filter((g) => g.role === "character");
-  const sceneGaps = coverageGaps.filter((g) => g.role === "scene");
+  const activeCastIdSet = new Set(writerCastIds);
+  const castGaps = coverageGaps.filter(
+    (g) => g.role === "character" && (!activeCastIdSet.size || activeCastIdSet.has(g.id)),
+  );
+  /** 边角场景无参考时继续用文字提示；只硬挡当前集主场景，禁止一个土路卡死全集。 */
+  const sceneGaps = coverageGaps.filter(
+    (g) => g.role === "scene" && (!mainScene || g.id === mainScene.id),
+  );
 
   const missingCastIds: string[] = [];
   if (hasCanon && !legacySheetNaming) {

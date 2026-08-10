@@ -472,9 +472,9 @@ async function maybeDeleteDrProSecondaryStagingForTerminalPlatformJob(jobId: str
   await deleteDrProSecondaryStagingByJobId(jobId);
 }
 
-export async function markJobSucceeded(id: string, output: unknown, provider?: string): Promise<void> {
+export async function markJobSucceeded(id: string, output: unknown, provider?: string): Promise<boolean> {
   const db = await getDb();
-  if (!db) return;
+  if (!db) return false;
 
   const cleaned =
     output != null && typeof output === "object" && !Array.isArray(output)
@@ -493,8 +493,10 @@ export async function markJobSucceeded(id: string, output: unknown, provider?: s
     await db.update(jobs).set(setValues as any).where(eq(jobs.id, id));
   } catch (error) {
     console.error("[JobsRepo] markJobSucceeded failed:", error);
+    return false;
   }
   await maybeDeleteDrProSecondaryStagingForTerminalPlatformJob(id);
+  return true;
 }
 
 export async function markJobFailed(id: string, error: string): Promise<void> {

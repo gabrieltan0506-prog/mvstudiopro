@@ -284,6 +284,18 @@ async function startServer() {
       }
 
       const action = typeof (input as any).action === "string" ? String((input as any).action) : "";
+      const isManhuaAssetStandardize =
+        action === "canvas_gpt_image2" &&
+        ((input as any)?.params?.assetStandardizeQuality === "medium" ||
+          (input as any)?.params?.assetStandardizeQuality === "high");
+      if (isManhuaAssetStandardize) {
+        // 这是服务端扣费入口；若允许省略 userId 落成 public，worker 会拿不到付款人，
+        // 不能把“无法扣费”降级成免费调用上游。
+        if (!ctx.user || !Number.isFinite(Number(ctx.user.id)) || Number(ctx.user.id) <= 0) {
+          return res.status(401).json({ error: "请先登录后再标准化资产" });
+        }
+        resolvedUserId = String(ctx.user.id);
+      }
       if (action === "manhua_template_learn") {
         if (!ctx.user) {
           return res.status(401).json({ error: "请先登录后再学节奏" });
