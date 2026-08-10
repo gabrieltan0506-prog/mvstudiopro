@@ -518,6 +518,7 @@ type AiManhuaRisingEntryView = {
   status: string;
   author?: string;
   sampleTitle?: string;
+  gcsUri?: string;
   url?: string;
 };
 
@@ -2780,7 +2781,7 @@ export default function PlatformPage() {
     setManhuaLearnServerJobsHydrated(true);
     setManhuaLearnBasket((prev) => {
       const merged = mergeManhuaLearnServerJobsIntoBasket(prev, listed.items);
-      writeManhuaLearnBasket(merged);
+      writeManhuaLearnBasket(String(user?.id || "").trim(), merged);
       const focused = merged.find((item) => item.seriesKey === manhuaLearnFocusSeriesKey);
       if (focused) setManhuaLearnResult(focused.result);
       return merged;
@@ -4797,7 +4798,7 @@ export default function PlatformPage() {
       };
       setManhuaLearnBasket((prev) => {
         const next = upsertManhuaLearnBasketItem(prev, optimisticItem);
-        writeManhuaLearnBasket(next);
+        writeManhuaLearnBasket(String(user?.id || "").trim(), next);
         return next;
       });
       try {
@@ -4829,7 +4830,7 @@ export default function PlatformPage() {
             jobStatus: "queued",
             updatedAt: Date.now(),
           });
-          writeManhuaLearnBasket(next);
+          writeManhuaLearnBasket(String(user?.id || "").trim(), next);
           return next;
         });
         setManhuaLearnJobPollTrace((prev) => ({
@@ -4855,7 +4856,7 @@ export default function PlatformPage() {
             jobErrorZh: msg,
             updatedAt: Date.now(),
           });
-          writeManhuaLearnBasket(next);
+          writeManhuaLearnBasket(String(user?.id || "").trim(), next);
           return next;
         });
         toast.error("学习入队失败", { description: msg });
@@ -5028,7 +5029,8 @@ export default function PlatformPage() {
           });
         }
       } catch (e) {
-        const msg = sanitizePlatformUserMessage(e instanceof Error ? e.message : String(e));
+        const errorMessage = (e as { message?: unknown } | null)?.message;
+        const msg = sanitizePlatformUserMessage(String(errorMessage || e));
         const pollInterrupted = Boolean(queuedJobId) && !terminalReached;
         const visibleMsg = pollInterrupted
           ? `${msg || "页面暂时无法读取后台进度"}（后台任务记录已保留，刷新页面会继续接管）`
