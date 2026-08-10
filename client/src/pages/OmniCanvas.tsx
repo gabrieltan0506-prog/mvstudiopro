@@ -4398,6 +4398,19 @@ export default function OmniCanvas() {
     setCustomAssetRefs((prev) => prev.filter((r) => r.id !== id));
   }, []);
 
+  /** 删除本集设定图画廊里的一张（画布块 + 连线一起清；可随时重出，不扣费） */
+  const removeEpisodeSheetBlock = useCallback(
+    (blockId: string) => {
+      const nextBlocks = blocks.filter((b) => b.id !== blockId);
+      if (nextBlocks.length === blocks.length) return;
+      const nextEdges = edges.filter((e) => e.fromId !== blockId && e.toId !== blockId);
+      setBlocks(nextBlocks);
+      setEdges(nextEdges);
+      saveCanvasState(nextBlocks, nextEdges);
+    },
+    [blocks, edges],
+  );
+
   /** 基于库参考生成新人物/场景/服装道具（扣费；授权进库半价） */
   const generateCustomAssetFromLibrary = useCallback(
     async (opts: { role: ManhuaCustomAssetRole; seedLibraryId: string }) => {
@@ -6665,6 +6678,8 @@ export default function OmniCanvas() {
                   onCineVocabLocaleChange={setFactoryCineVocabLocale}
                   onRetakeClip={handleRetakeClip}
                   onRemoveCustomAsset={removeCustomAssetRef}
+                  onClearAllCustomAssets={() => setCustomAssetRefs([])}
+                  onRemoveEpisodeSheet={removeEpisodeSheetBlock}
                   onGenerateCustomAssetFromLibrary={generateCustomAssetFromLibrary}
                   shareAssetToLibrary={shareAssetToLibrary}
                   onShareAssetToLibraryChange={setShareAssetToLibrary}

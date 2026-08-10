@@ -291,6 +291,10 @@ type Props = {
   onStandardizeCustomAsset?: (id: string, quality: ManhuaAssetStandardizeQuality) => void | Promise<void>;
   assetStandardizeBusyId?: string | null;
   onRemoveCustomAsset?: (id: string) => void;
+  /** 一键清空全部参考图（清了重导资产包用）；带确认 */
+  onClearAllCustomAssets?: () => void;
+  /** 删除本集设定图画廊里的一张（画布块）；可随时重出，不扣费 */
+  onRemoveEpisodeSheet?: (blockId: string) => void;
   /** 段意图写回可拍表（工作台编辑） */
   onSegmentIntentChange?: (segmentIndex: number, intentZh: string) => void;
   /** 段出场角色写回可拍表（工作台编辑） */
@@ -551,6 +555,8 @@ export default function ManhuaScriptWorkbench({
   onStandardizeCustomAsset,
   assetStandardizeBusyId = null,
   onRemoveCustomAsset,
+  onClearAllCustomAssets,
+  onRemoveEpisodeSheet,
   onSegmentIntentChange,
   onSegmentCastChange,
   deliveryPackage = null,
@@ -3012,6 +3018,16 @@ export default function ManhuaScriptWorkbench({
                                   key={item.id}
                                   className="group relative w-[88px] overflow-hidden rounded-lg border border-emerald-300/35 bg-black/40 hover:border-emerald-200/60"
                                 >
+                                  {onRemoveEpisodeSheet ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => onRemoveEpisodeSheet(item.id)}
+                                      title={`删除「${item.labelZh}」这张设定图（可随时重出，不扣费）`}
+                                      className="absolute right-1 top-1 z-[2] flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-[13px] leading-none text-rose-200 hover:bg-rose-500/70 hover:text-white"
+                                    >
+                                      ×
+                                    </button>
+                                  ) : null}
                                   <button
                                     type="button"
                                     data-manhua-sheet-id={item.id}
@@ -3862,6 +3878,27 @@ export default function ManhuaScriptWorkbench({
                   </div>
                 );
               })}
+              {onClearAllCustomAssets && customAssetRefs.length > 0 ? (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          `一键清空全部 ${customAssetRefs.length} 张参考图？清完可重新导入资产包，一次导干净。`,
+                        )
+                      )
+                        return;
+                      onClearAllCustomAssets();
+                      setSelectedAssetIds(new Set());
+                    }}
+                    className="rounded-lg border border-rose-300/40 bg-rose-500/10 px-3 py-1.5 text-[11px] font-semibold text-rose-100 hover:bg-rose-500/25"
+                    title="清空我的角色/场景/服装/道具全部参考图；本机草稿会同步保存"
+                  >
+                    一键清空参考图（{customAssetRefs.length}）
+                  </button>
+                </div>
+              ) : null}
               {selectedAssetIds.size > 0 && onRemoveCustomAsset ? (
                 <div className="sticky bottom-2 z-[5] flex items-center gap-2 rounded-xl border border-rose-300/40 bg-[#150d13]/95 px-3 py-2 backdrop-blur">
                   <span className="text-[11px] font-semibold text-rose-100">
