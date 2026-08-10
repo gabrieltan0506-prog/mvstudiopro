@@ -284,6 +284,15 @@ async function startServer() {
           return res.status(403).json({ error: "学节奏为监管专用（下片+语音+读帧成本较高）" });
         }
       }
+      if (action === "growth_analyze_video" || action === "growth_analyze_images") {
+        // 审查必须修（P0·租户边界）：公共 job 主链曾允许匿名 "public" 入队 +
+        // 任意 gs:// 让服务账号代读 + NaN userId 免扣费。收紧为须真实登录数字 id；
+        // gcsUri 归属在 worker 层按本人前缀二次校验（入队校验可被绕，worker 是终闸）。
+        if (!ctx.user || !Number.isFinite(Number(ctx.user.id)) || Number(ctx.user.id) <= 0) {
+          return res.status(401).json({ error: "请先登录后再提交分析" });
+        }
+        resolvedUserId = String(ctx.user.id);
+      }
       const provider =
         type === "audio"
           ? "suno"

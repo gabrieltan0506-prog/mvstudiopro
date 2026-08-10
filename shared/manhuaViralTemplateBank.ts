@@ -79,6 +79,26 @@ export type ManhuaViralTemplateCard = {
   status: ManhuaViralTemplateStatus;
   approvedAt?: string;
   updatedAt?: string;
+  /** 学习链 provenance（审查必须修13）：证明读帧/润色各自真实跑过哪个模型，A/B 结果可解释 */
+  provenance?: ManhuaViralTemplateProvenance;
+};
+
+/** 读帧与润色分开记：visionFilled 不再把「文本润色成功」冒充「模型读过帧」 */
+export type ManhuaViralTemplateProvenance = {
+  frameVision?: {
+    provider: string;
+    model: string;
+    attemptedChunks: number;
+    successChunks: number;
+  };
+  proposalPolish?: {
+    provider: string;
+    model: string;
+    attempted: boolean;
+    success: boolean;
+    /** true = 润色失败、卡面是启发式草稿 */
+    degraded?: boolean;
+  };
 };
 
 const DEFAULT_DENSITY: ManhuaViralTemplateDensityHints = {
@@ -152,7 +172,34 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
     status,
     approvedAt: o.approvedAt ? String(o.approvedAt) : undefined,
     updatedAt: o.updatedAt ? String(o.updatedAt) : undefined,
+    provenance: parseManhuaViralTemplateProvenance(o.provenance),
   };
+}
+
+function parseManhuaViralTemplateProvenance(
+  raw: unknown,
+): ManhuaViralTemplateProvenance | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as ManhuaViralTemplateProvenance;
+  const out: ManhuaViralTemplateProvenance = {};
+  if (o.frameVision && typeof o.frameVision === "object") {
+    out.frameVision = {
+      provider: String(o.frameVision.provider || "").slice(0, 20),
+      model: String(o.frameVision.model || "").slice(0, 60),
+      attemptedChunks: Math.max(0, Math.floor(Number(o.frameVision.attemptedChunks) || 0)),
+      successChunks: Math.max(0, Math.floor(Number(o.frameVision.successChunks) || 0)),
+    };
+  }
+  if (o.proposalPolish && typeof o.proposalPolish === "object") {
+    out.proposalPolish = {
+      provider: String(o.proposalPolish.provider || "").slice(0, 20),
+      model: String(o.proposalPolish.model || "").slice(0, 60),
+      attempted: o.proposalPolish.attempted === true,
+      success: o.proposalPolish.success === true,
+      degraded: o.proposalPolish.degraded === true || undefined,
+    };
+  }
+  return out.frameVision || out.proposalPolish ? out : undefined;
 }
 
 /**

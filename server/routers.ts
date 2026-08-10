@@ -3184,6 +3184,11 @@ export const appRouter = router({
         };
       }),
 
+
+    /**
+     * 审查必须修（P0·跨租户）：所有接收外部 gcsUri 的入口都要校验归属——
+     * 只认本人上传前缀，否则服务账号会替调用者代读任意对象。
+     */
     analyzeGrowthCampImages: publicProcedure
       .input(
         z.object({
@@ -3210,6 +3215,15 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         if (!ctx.user?.id) {
           throw new Error("請先登入，才能使用分析功能");
+        }
+        {
+          const { getGcsBucketName } = await import("./services/gcs.js");
+          const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${ctx.user.id}/`;
+          for (const img of input.images) {
+            if (img.gcsUri && !String(img.gcsUri).startsWith(allowedPrefix)) {
+              throw new Error("直传文件校验失败，请重新上传后再试");
+            }
+          }
         }
         // 积分在 growth_analyze_images Job 内扣除；此 mutation 仅供兼容/调试，勿在前端主路径调用
         const result = await analyzeGrowthCampImages(input);
@@ -3257,13 +3271,24 @@ export const appRouter = router({
       .input(z.object({
         fileName: z.string().min(1),
         mimeType: z.string().min(1),
+        /** @deprecated 审查收紧（2026-08-10）：对象名一律服务端生成，客户端传入被忽略 */
         objectName: z.string().min(1).optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        // 审查必须修：匿名可反复索取 PUT 签名 + 自带 objectName 覆盖已知路径。
+        // 收紧为：须登录；对象名 = 用户前缀 + 随机 UUID（读取侧按前缀校验归属）。
+        if (!ctx.user?.id) {
+          throw new Error("请先登录后再上传文件");
+        }
+        const { randomUUID } = await import("node:crypto");
+        const safeName = String(input.fileName || "file.bin")
+          .replace(/[^a-z0-9._-]/gi, "-")
+          .replace(/-{2,}/g, "-")
+          .slice(-80);
         return createGcsSignedUploadUrl({
           fileName: input.fileName,
           contentType: input.mimeType,
-          objectName: input.objectName,
+          objectName: `uploads/u${ctx.user.id}/${randomUUID()}-${safeName}`,
         });
       }),
 
@@ -3279,7 +3304,37 @@ export const appRouter = router({
         modelName: growthCampModelSchema.optional(),
         forceRefresh: z.boolean().optional().default(false),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        // 审查必须修：曾是匿名入口 + 任意 gs:// 代读
+        if (!ctx.user?.id) {
+          throw new Error("請先登入，才能使用分析功能");
+        }
+        if (input.gcsUri) {
+          const { getGcsBucketName } = await import("./services/gcs.js");
+          const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${ctx.user.id}/`;
+          if (!String(input.gcsUri).startsWith(allowedPrefix)) {
+            throw new Error("直传文件校验失败，请重新上传后再试");
+          }
+        }
+        // 第五轮复审 P0·5：fileKey/fileUrl 旁路同口径封（worker 层为终闸，这里提前拦）
+        if (input.fileKey && !String(input.fileKey).startsWith(`uploads/u${ctx.user.id}/`)) {
+          throw new Error("直传文件校验失败，请重新上传后再试");
+        }
+        if (input.fileUrl) {
+          let allowed = false;
+          try {
+            const { getGcsBucketName } = await import("./services/gcs.js");
+            const u = new URL(String(input.fileUrl));
+            // 前缀校验：桶名+本人目录整段匹配，includes 会放过任意外部桶
+            allowed =
+              u.protocol === "https:" &&
+              u.hostname === "storage.googleapis.com" &&
+              u.pathname.startsWith(`/${getGcsBucketName()}/uploads/u${ctx.user.id}/`);
+          } catch {
+            allowed = false;
+          }
+          if (!allowed) throw new Error("直传文件校验失败，请重新上传后再试");
+        }
         const result = await analyzeVideo(input);
         return {
           success: true,
@@ -7088,7 +7143,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 单条散买：分镜 {@link CREDIT_COSTS.platformStoryboardSheet} cr、小红书八格 {@link CREDIT_COSTS.platformXhsDualNote} cr。
      * 一键套装：传 `bulkCompositePack` 时按 54×选题数 整数分拆扣费。
      */
-    /** 平台图文卡：多文件抽文（docx/pdf/pptx）+ 图片交 OCR 提练；不扣积分（含在页费）。 */
+    /** 平台图文卡：多文件抽文（docx/pdf/pptx）+ 图片交 OCR 提炼；不扣积分（含在页费）。 */
     extractPlatformDocumentText: protectedProcedure
       .input(
         z.object({
@@ -7115,21 +7170,21 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         };
       }),
 
-    /** 平台图文卡：OCR + Qwen3.8 Max 提练精华（费用含在后续页费；本接口不扣积分）。 */
+    /** 平台图文卡：OCR + Qwen3.8 Max 提炼精华（费用含在后续页费；本接口不扣积分）。 */
     prepareKnowledgeCardCopy: protectedProcedure
       .input(
         z.object({
           sourceText: z.string().max(400_000).optional(),
           forceDistill: z.boolean().optional(),
           /**
-           * 收提练费。只有「纯文本长文 + 用户在弹窗里选了先提练」才带 true：
-           * 那条路提练是**用户为省页费买的服务**（1 万字直接出图 9 页 264 积分且降 2K，
-           * 提练后 4 页 120 积分保住 4K）。上传文档的提练是抽文的必要环节，成本已含页费，不另收。
+           * 收提炼费。只有「纯文本长文 + 用户在弹窗里选了先提炼」才带 true：
+           * 那条路提炼是**用户为省页费买的服务**（1 万字直接出图 9 页 264 积分且降 2K，
+           * 提炼后 4 页 120 积分保住 4K）。上传文档的提炼是抽文的必要环节，成本已含页费，不另收。
            */
           chargeDistillFee: z.boolean().optional(),
           /** 默认 Evolink gpt-5.6-sol；备用 OR kimi-k3；备选 Evolink qwen3.8-max（旧 terra/OR-qwen 服务端迁） */
           distillModel: z
-            .enum(["gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
+            .enum(["claude-opus-5", "gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
             .optional(),
           files: z
             .array(
@@ -7167,6 +7222,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         );
 
         const files = input.files ?? [];
+        // 审查必须修：gcsUri 只认本人上传前缀，堵「提交任意 gs:// 让服务账号代读」的跨租户洞
+        if (files.some((f) => f.gcsUri)) {
+          const uidForGcs = ctx.user?.id;
+          if (!uidForGcs) throw new Error("请先登录后再使用直传文件");
+          const { getGcsBucketName } = await import("./services/gcs.js");
+          const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${uidForGcs}/`;
+          for (const f of files) {
+            if (f.gcsUri && !String(f.gcsUri).startsWith(allowedPrefix)) {
+              throw new Error("直传文件校验失败，请重新上传后再试");
+            }
+          }
+        }
         const modelName = resolveKnowledgeCardDistillModel(input.distillModel);
 
         // 抽文很快（本机 105 页 PDF 约数秒），先做掉：既能判断是否够长要走后台，
@@ -7189,7 +7256,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             id: jobId,
             userId: String(userId),
             type: "platform",
-            provider: "evolink",
+            provider: modelName === "claude-opus-5" ? "anthropic" : "evolink",
             input: {
               action: "knowledge_card_distill",
               params: {
@@ -7205,7 +7272,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             success: true as const,
             isAsync: true as const,
             progressJobId: jobId,
-            // 后台任务在提练成功后自己扣，这里还没发生
+            // 后台任务在提炼成功后自己扣，这里还没发生
             distillFeeCharged: 0,
             sourceChars: mergedRaw.length,
             distillModel: modelName,
@@ -7227,7 +7294,19 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         });
         const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 
-        // 与后台任务同一口径：只有用户为省页费主动买提练才收，且扣在提练成功之后
+        // 服务端账本（审查必须修 P0·6）：真实提炼产出的稿子绑档位，出图页费按此结算
+        if (!prepared.skippedDistill && prepared.distillModel) {
+          const { recordKnowledgeCardDistillReceipt } = await import(
+            "./services/knowledgeCardDistillReceipt.js"
+          );
+          await recordKnowledgeCardDistillReceipt(
+            Number(ctx.user?.id),
+            prepared.distillModel,
+            prepared.distilledMarkdown,
+          );
+        }
+
+        // 与后台任务同一口径：只有用户为省页费主动买提炼才收，且扣在提炼成功之后
         let distillFeeCharged = 0;
         const uidForDistillFee = Number(ctx.user?.id);
         if (
@@ -7241,11 +7320,26 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           );
           const { deductCreditsAmount } = await import("./credits.js");
           const fee = knowledgeCardDistillFeeForModel(prepared.distillModel);
+          // 幂等（第五轮复审 P1·9）：键必须绑「请求输入」而不是模型输出——
+          // 输出哈希在重试时会因 LLM 输出微差变成新键再扣一次；
+          // 输入键 = 用户+档位+原始文本与文件内容哈希，调 LLM 前即可确定
+          const { createHash } = await import("node:crypto");
+          const inputDigest = createHash("sha256");
+          inputDigest.update(String(input.sourceText || ""));
+          for (const f of input.files || []) {
+            inputDigest.update(" ");
+            inputDigest.update(String((f as { fileBase64?: string }).fileBase64 || ""));
+            inputDigest.update(String((f as { gcsUri?: string }).gcsUri || ""));
+          }
+          const chargeKey = `kcdistill-sync/${uidForDistillFee}/${prepared.distillModel}/${inputDigest
+            .digest("hex")
+            .slice(0, 32)}`;
           const deducted = await deductCreditsAmount(
             uidForDistillFee,
             fee,
             "knowledgeCardDistill",
-            `图文知识卡·提练（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）`,
+            `图文知识卡·提炼（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）[chargeKey:${chargeKey}]`,
+            { chargeKey },
           );
           distillFeeCharged = deducted.cost;
         }
@@ -7286,9 +7380,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             /** 仅 single_page_knowledge_card：页码（优先于 notePart）；第 9 页起折扣，页数不封顶。 */
             notePageIndex: z.number().int().min(1).max(80).optional(),
             notePageTotal: z.number().int().min(1).max(80).optional(),
-            /** 仅 single_page_knowledge_card：提练模型（决定页费档位） */
+            /** 仅 single_page_knowledge_card：提炼模型（决定页费档位） */
             distillModel: z
-              .enum(["gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
+              .enum(["claude-opus-5", "gpt-5.6-sol", "moonshotai/kimi-k3", "qwen3.8-max", "gpt-5.6-terra", "qwen/qwen3.8-max"])
               .optional(),
             /**
              * 仅 single_page_knowledge_card：图文可视化版式 id（`shared/infographicNoteTemplates`）。
@@ -7373,6 +7467,23 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const is3x4Grid =
           input.gridVariant === "3x4" &&
           (input.kind === "storyboard_sheet_landscape" || input.kind === "xiaohongshu_dual_note");
+        // 审查必须修（P0·6）：知识卡页费档位以服务端提炼 receipt 为准——
+        // 客户端在提炼后换低档（取消出图→切轻量）不再改变计费；查无 receipt
+        // （手写文本/未走提炼）才按客户端声明档
+        let effectiveDistillModel = input.distillModel;
+        if (input.kind === "single_page_knowledge_card") {
+          const { lookupKnowledgeCardDistillReceiptModel } = await import(
+            "./services/knowledgeCardDistillReceipt.js"
+          );
+          // fail-closed：查不了账本就报错重试，回退客户端声明会重开「超凡稿按轻量档」的洞
+          const receiptModel = await lookupKnowledgeCardDistillReceiptModel(
+            userId,
+            String(input.scriptContext || ""),
+          );
+          if (receiptModel) {
+            effectiveDistillModel = receiptModel as typeof input.distillModel;
+          }
+        }
         const cost = compositePack
           ? platformBundleCreditsForSlot(
               platformCompositeBundleTotalCreditsForGrid(compositePack.packSceneIds.length, is3x4Grid),
@@ -7384,10 +7495,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             : input.kind === "single_page_knowledge_card"
               ? knowledgeCardCreditsForPageIndex(
                   input.notePageIndex ?? (input.notePart === "lower" ? 2 : 1),
-                  input.distillModel,
+                  effectiveDistillModel,
                 )
               : (is3x4Grid ? CREDIT_COSTS.platformXhsDualNote3x4 : CREDIT_COSTS.platformXhsDualNote);
 
+        // 服务端操作号（第七轮 P0·5）：扣费 chargeKey 与 hold 编号共用，
+        // 扣费-账本-退款三者绑死；DB 唯一键防并发重复扣
+        const compositeOpId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+        // 审查必须修：留扣款来源快照——退款按同源退回（团队不退个人、admin 零扣不退）
+        let compositeChargeReceipt: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < cost) {
@@ -7405,7 +7521,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const bulkTag = compositePack
             ? ` · 编导分镜套装（九折）第${compositePack.sequentialSlot + 1}/${compositePack.packSceneIds.length}笔`
             : "";
-          await deductCreditsAmount(userId, cost, "platformCompositeSheet", compositeDeductionNote + bulkTag);
+          compositeChargeReceipt = await deductCreditsAmount(
+            userId,
+            cost,
+            "platformCompositeSheet",
+            compositeDeductionNote + bulkTag,
+            { chargeKey: `platformCompositeSheet/${userId}/${compositeOpId}` },
+          );
         }
 
         if (input.jobId) {
@@ -7417,14 +7539,142 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const progressJobIdRaw = String(input.progressJobId ?? "").trim();
         const progressJobId = progressJobIdRaw.length >= 8 ? progressJobIdRaw : null;
 
-        const enrichedCompositeScriptContext = (() => {
+        /**
+         * 审查必须修（P0·8/9）：扣费 receipt 只活在请求闭包里——进程在
+         * fire-and-forget 启动前退出，receipt 随闭包消失，费用永久扣住。
+         * 收口：扣费成功即注册 paidJobLedger hold（含 deduct 来源快照），
+         * 所有失败分支统一走账本两阶段退分（refund_pending 对账 + refundKey 查重
+         * + 团队同源退回）；崩溃/部署中断由 SIGTERM forceAll 与 startup reap 兜底。
+         */
+        // 第五轮复审 P0·3：hold 编号必须服务端生成并绑定用户——客户端可控的
+        // progressJobId 若复用旧终态（settled/refunded）编号，注册会保留终态，
+        // 本次新扣款的退款/结算全部空转（漏退/错账）。
+        const compositeHoldJobId = `cs_u${userId}_${compositeOpId}`;
+        let compositeHoldRegistered = false;
+        if (compositeChargeReceipt && compositeChargeReceipt.cost > 0) {
+          try {
+            const { registerActiveJob } = await import("./services/paidJobLedger.js");
+            await registerActiveJob({
+              jobId: compositeHoldJobId,
+              taskType: "platformCompositeSheet",
+              userId,
+              creditsBilled: compositeChargeReceipt.cost,
+              action: "platformCompositeSheet",
+              deduct: {
+                source: compositeChargeReceipt.source as "personal" | "team",
+                teamId:
+                  "teamId" in compositeChargeReceipt ? compositeChargeReceipt.teamId : undefined,
+                teamMemberId:
+                  "teamMemberId" in compositeChargeReceipt
+                    ? compositeChargeReceipt.teamMemberId
+                    : undefined,
+              },
+            });
+            compositeHoldRegistered = true;
+          } catch (e) {
+            // hold 没写成不能带着「无账可对」的扣费继续跑：立刻按 receipt 同源退款并终止
+            const { refundCreditsForDeductAmount } = await import("./credits.js");
+            await refundCreditsForDeductAmount(
+              userId,
+              `platformCompositeSheet 账本登记失败退回 [refundKey:platformCompositeSheet/${compositeHoldJobId}]`,
+              compositeChargeReceipt,
+              "platformCompositeSheet",
+            );
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "任务账本暂不可用，费用已退回，请稍后重试",
+            });
+          }
+        }
+        /** 失败分支统一退款入口；返回是否确认退回（不许谎报「已退回」） */
+        const refundCompositeCharge = async (why: string): Promise<boolean> => {
+          if (!compositeChargeReceipt || compositeChargeReceipt.cost <= 0) return true;
+          try {
+            if (compositeHoldRegistered) {
+              const { refundCreditsOnFailure } = await import("./services/paidJobLedger.js");
+              const out = await refundCreditsOnFailure(
+                compositeHoldJobId,
+                "platformCompositeSheet",
+                "task_failed",
+                why,
+              );
+              return out.refunded || out.status === "refunded" || out.status === "settled";
+            }
+            const { refundCreditsForDeductAmount } = await import("./credits.js");
+            await refundCreditsForDeductAmount(
+              userId,
+              `${why} [refundKey:platformCompositeSheet/${compositeHoldJobId}]`,
+              compositeChargeReceipt,
+              "platformCompositeSheet",
+            );
+            return true;
+          } catch (re) {
+            console.error(
+              `[mvAnalysis.generatePlatformCompositeSheet] refund failed userId=${userId} hold=${compositeHoldJobId}:`,
+              re,
+            );
+            return false;
+          }
+        };
+        const settleCompositeHold = async (): Promise<void> => {
+          if (!compositeHoldRegistered) return;
+          const { unregisterActiveJob } = await import("./services/paidJobLedger.js");
+          // 结算失败不许静默吞：hold 留在 active 会被 reaper 当僵尸退分（成功单被误退）。
+          // 重试三次，仍失败打 CRITICAL 日志人工对账
+          let lastErr: unknown;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              await unregisterActiveJob(compositeHoldJobId, "platformCompositeSheet", "settled");
+              return;
+            } catch (e) {
+              lastErr = e;
+              await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+            }
+          }
+          // 三连败：落 settlement_pending 持久态——reaper 扫到只补结算不退款；
+          // 连这个态都写不进才是真危险（函数内部已打 CRITICAL）
+          const { markSettlementPending } = await import("./services/paidJobLedger.js");
+          await markSettlementPending(compositeHoldJobId, "platformCompositeSheet");
+          console.error(
+            `[compositeSheet] hold 结算三次失败，已转 settlement_pending 等 reaper 补结算 hold=${compositeHoldJobId}`,
+            lastErr,
+          );
+        };
+        /** 长生成（3×4 多张）会超过账本 5 分钟心跳线：生成期间刷心跳防误退 */
+        const startCompositeHeartbeat = (): (() => void) => {
+          if (!compositeHoldRegistered) return () => {};
+          const timer = setInterval(() => {
+            import("./services/paidJobLedger.js")
+              .then(({ heartbeatActiveJob }) =>
+                heartbeatActiveJob(compositeHoldJobId, "platformCompositeSheet").catch(() => {}),
+              )
+              .catch(() => {});
+          }, 60_000);
+          timer.unref?.();
+          return () => clearInterval(timer);
+        };
+
+        /** 扣费后初始化统一保护（第五轮复审 P0·2）：这里抛错=已扣费但任务没起步，必须退 */
+        const guardChargedInit = async <T>(step: string, fn: () => T | Promise<T>): Promise<T> => {
+          try {
+            return await fn();
+          } catch (e) {
+            const refunded = await refundCompositeCharge(`platformCompositeSheet ${step}失败退回`);
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: `生成初始化失败（${refunded ? "费用已退回" : "退款受阻已记录，账本会自动补退"}），请稍后重试`,
+            });
+          }
+        };
+
+        const enrichedCompositeScriptContext = await guardChargedInit("脚本上下文拼装", () => (() => {
           const raw = String(input.scriptContext || "").trim();
           /**
            * 知识卡的 scriptContext 会被 `planKnowledgeCardPages` 逐页切开当**正文**渲染，
            * 所以注入的出图约束会被当成内容印上屏——用户 2026-08-05 收到的整本书知识卡，
            * 第 1 页印的是「封面出图短约束 / 壳轮换策略库」这类内部清单（含 coverHeadline、
            * A1 壳、mk/mk1/mk3 等内部代号），第 2 页起才是他的文档。
-           * 这些约束本来只服务封面与八格出图，对知识卡无意义，故保持纯提练稿。
+           * 这些约束本来只服务封面与八格出图，对知识卡无意义，故保持纯提炼稿。
            */
           if (input.kind === "single_page_knowledge_card") return raw;
 
@@ -7445,11 +7695,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           );
           if (!hints.trim()) return base;
           return `${hints}\n\n${base}`.slice(0, 12000);
-        })();
+        })());
 
         let detachLiveProgress: (() => void) | undefined;
 
-        const { generatePlatformCompositeSheetImage, generatePlatformGridStitchedSheetImage, appendImageFlowLog } = await import("./services/proxyImageService.js");
+        const { generatePlatformCompositeSheetImage, generatePlatformGridStitchedSheetImage, appendImageFlowLog } =
+          await guardChargedInit("生成服务加载", () => import("./services/proxyImageService.js"));
         // 3×4 → 走「分段生成 + sharp 直向拼接」总控；否则走单张合成
         const generateSheet = is3x4Grid ? generatePlatformGridStitchedSheetImage : generatePlatformCompositeSheetImage;
         const imageGenFlowLog: string[] = [];
@@ -7465,26 +7716,36 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             });
           } catch (pe) {
             console.warn("[mvAnalysis.generatePlatformCompositeSheet] progress job insert failed:", pe);
+            // 审查必须修：只退实扣（admin/未扣不退）、按扣款来源退（团队额度不错退个人）、
+            // 退款失败不许谎报「已退回」；走账本两阶段，失败停在 refund_pending 由 reaper 补
+            const refunded = await refundCompositeCharge(
+              "platformCompositeSheet 建任务失败退回",
+            );
             throw new TRPCError({
               code: "INTERNAL_SERVER_ERROR",
-              message: "無法建立實時進度任務，請稍後再試",
+              message: refunded
+                ? "無法建立實時進度任務，費用已退回，請稍後再試"
+                : "無法建立實時進度任務；退款受阻已记录，客服会跟进，請勿重複重試",
             });
           }
           
           // 🚀 核心修復：如果前端傳了 progressJobId（非同步輪詢模式），
           // 則在背景啟動耗時的生成任務，並立即回傳 HTTP 200 給前端，避免 Vercel 60s Timeout。
           const runBackgroundComposite = async () => {
-            const { attachCompositeSheetFlowLogLiveSync } = await import("./jobs/compositeSheetLiveProgress.js");
-            detachLiveProgress = attachCompositeSheetFlowLogLiveSync(imageGenFlowLog, progressJobId);
-            
-            appendImageFlowLog(
-              imageGenFlowLog,
-              `[2×4 接口] generatePlatformCompositeSheet 开始 (异步背景执行) · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)} · 本笔 ${cost} 点`,
-            );
-            const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
-            appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
+            const stopHeartbeat = startCompositeHeartbeat();
             let imageUrl: string | null = null;
             try {
+              // 动态加载与进度挂接也在 try 内：任何一步抛错都走统一退款+终态
+              const { attachCompositeSheetFlowLogLiveSync } = await import("./jobs/compositeSheetLiveProgress.js");
+              detachLiveProgress = attachCompositeSheetFlowLogLiveSync(imageGenFlowLog, progressJobId);
+              appendImageFlowLog(
+                imageGenFlowLog,
+                `[2×4 接口] generatePlatformCompositeSheet 开始 (异步背景执行) · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)} · 本笔 ${cost} 点`,
+              );
+              // resolveWatermark 必须在 try 内：try 外抛错会绕过 finally，
+              // 心跳 interval 泄漏并持续给 hold 续命，reaper 永不退分
+              const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
+              appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
               imageUrl = await generateSheet({
                 kind: input.kind,
                 title: input.title,
@@ -7505,27 +7766,39 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 infographicTemplateId: input.infographicTemplateId,
               });
 
-              appendImageFlowLog(imageGenFlowLog, imageUrl ? "✓ generatePlatformCompositeSheet 完成" : "✗ 无 imageUrl（应已在上方抛错）");
+              // 第五轮复审 P0·1：空产物不许标成功——扣了费没有图，必须走统一失败退款
+              if (!imageUrl) {
+                throw new Error("生成服务未返回图片（imageUrl 为空）");
+              }
+              appendImageFlowLog(imageGenFlowLog, "✓ generatePlatformCompositeSheet 完成");
               await markJobSucceeded(progressJobId, {
                 imageGenFlowLog,
                 compositeSheetProgress: true,
                 compositeImageUrl: imageUrl,
                 done: true,
               });
+              await settleCompositeHold();
             } catch (error: any) {
               const rawMessage = error instanceof Error ? error.message : String(error);
               console.error("\n[生图致命错误 (Async Background)]:", rawMessage);
-              
+
+              // 先退款再落 job 终态文案：不许把「没退成」写成「已退回」
+              const refunded = await refundCompositeCharge(
+                "platformCompositeSheet 生图致命错误退还",
+              );
+              const refundNote =
+                !compositeChargeReceipt || compositeChargeReceipt.cost <= 0
+                  ? ""
+                  : refunded
+                    ? "\n（积分已退回）"
+                    : "\n（退款受阻已记录，账本会自动补退，请勿重复重试）";
               const tail = imageGenFlowLog.filter((s) => String(s).trim()).slice(-24).join("\n").slice(0, 1200);
               await markJobFailed(
                 progressJobId,
-                tail ? `${rawMessage}\n── log ──\n${tail}` : rawMessage,
+                (tail ? `${rawMessage}\n── log ──\n${tail}` : rawMessage) + refundNote,
               );
-              
-              if (!isAdminUser) {
-                await refundCredits(userId, cost, "platformCompositeSheet 生图致命错误退还");
-              }
             } finally {
+              stopHeartbeat();
               detachLiveProgress?.();
             }
           };
@@ -7551,10 +7824,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           `[2×4 接口] generatePlatformCompositeSheet 开始 (同步执行) · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)} · 本笔 ${cost} 点`,
         );
         // --- 同步執行部分 (繼續) ---
-        const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
-        appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
+        // 第七轮 P0·5：resolveWatermark 等一并纳入 try——try 外抛错会漏退款漏清心跳
         let imageUrl: string | null = null;
+        const stopSyncHeartbeat = startCompositeHeartbeat();
         try {
+          const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
+          appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
           imageUrl = await generateSheet({
             kind: input.kind,
             title: input.title,
@@ -7575,6 +7850,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             infographicTemplateId: input.infographicTemplateId,
           });
         } catch (error: any) {
+          stopSyncHeartbeat();
           detachLiveProgress?.();
           detachLiveProgress = undefined;
           if (progressJobId) {
@@ -7588,9 +7864,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
           console.error("\n[生图致命错误 (Global Node)]:", rawMessage);
 
-          if (!isAdminUser) {
-            await refundCredits(ctx.user.id, cost, "platformCompositeSheet Global Node 生图致命错误退还");
-          }
+          const refunded = await refundCompositeCharge(
+            "platformCompositeSheet Global Node 生图致命错误退还",
+          );
+          const refundLabel = refunded ? "积分已退回" : "退款受阻已记录，账本会自动补退";
 
           const hasFullLogInMessage =
             rawMessage.includes("执行日志:") || rawMessage.includes("—— imageGenFlowLog ——");
@@ -7598,8 +7875,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             rawMessage.trim() === PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE ||
             rawMessage.includes(PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE);
           let clientMessage = isCompositeCapacity
-            ? `${PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}（积分已退回）`
-            : `引擎错误 (积分已退回): \n${rawMessage}`;
+            ? `${PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}（${refundLabel}）`
+            : `引擎错误 (${refundLabel}): \n${rawMessage}`;
           if (!isCompositeCapacity && !hasFullLogInMessage && imageGenFlowLog.length > 0) {
             const logTail = imageGenFlowLog
               .filter((s) => String(s).trim())
@@ -7621,13 +7898,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         if (!imageUrl) {
+          stopSyncHeartbeat();
           detachLiveProgress?.();
           if (progressJobId) {
             await markJobFailed(progressJobId, "imageUrl 为空");
           }
-          if (!isAdminUser) {
-            await refundCredits(userId, cost, "platformCompositeSheet 生图失败退还");
-          }
+          const refunded = await refundCompositeCharge("platformCompositeSheet 生图失败退还");
+          const refundLabel = refunded ? "积分已退回" : "退款受阻已记录，账本会自动补退";
           const logTail = imageGenFlowLog
             .filter((s) => String(s).trim())
             .slice(-72)
@@ -7642,7 +7919,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           console.error("\n[生图致命错误 (Global Node)]:", rawMessage);
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
-            message: `引擎错误 (积分已退回): \n${rawMessage}`,
+            message: `引擎错误 (${refundLabel}): \n${rawMessage}`,
           });
         }
 
@@ -7670,6 +7947,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         appendImageFlowLog(imageGenFlowLog, imageUrl ? "✓ generatePlatformCompositeSheet 完成" : "✗ 无 imageUrl（应已在上方抛错）");
+        stopSyncHeartbeat();
         detachLiveProgress?.();
         if (progressJobId) {
           await markJobSucceeded(progressJobId, {
@@ -7678,6 +7956,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             done: true,
           });
         }
+        await settleCompositeHold();
         return {
           success: true as const,
           imageUrl,

@@ -1096,6 +1096,8 @@ async function chargeCanvasVideoCredits(
       userId: number;
       deduct?: PaidJobDeductSnapshot;
       alreadyCharged?: boolean;
+      /** 幂等扣费 marker（有 idempotencyKey 时）；创建失败退款用它做稳定 refund jobId */
+      chargeKey?: string;
     }
   | { ok: false; status: number; error: string }
 > {
@@ -1156,11 +1158,12 @@ async function chargeCanvasVideoCredits(
         userId: viewer.userId,
         deduct: prior.deduct,
         alreadyCharged: true,
+        chargeKey: marker,
       };
     }
   }
 
-  const { deductCreditsAmount } = await import("../server/credits.js");
+  const { deductCreditsAmount, InsufficientCreditsError } = await import("../server/credits.js");
   try {
     const action = opts.pricingMode === "homePhotoAnimate" ? "homePhotoAnimate" : "canvasVideoClip";
     const out = await deductCreditsAmount(
@@ -1168,6 +1171,8 @@ async function chargeCanvasVideoCredits(
       credits,
       action,
       marker ? `${opts.label} ${marker}` : opts.label,
+      // DB 唯一索引兜底：SELECT-再-扣 的 TOCTOU（旧执行超时未取消 vs 重排执行并跑）
+      marker ? { chargeKey: marker } : undefined,
     );
     return {
       ok: true,
@@ -1178,13 +1183,115 @@ async function chargeCanvasVideoCredits(
         teamId: "teamId" in out ? out.teamId : undefined,
         teamMemberId: "teamMemberId" in out ? out.teamMemberId : undefined,
       },
+      chargeKey: marker || undefined,
     };
-  } catch {
+  } catch (error) {
+    // 只有真·余额不足才回 402；其余异常（DB 抖动等）是「扣费未执行」，
+    // 伪装成 402 会误导用户充值，且重试语义完全不同
+    if (error instanceof InsufficientCreditsError) {
+      return {
+        ok: false,
+        status: 402,
+        error: `积分不足：本段成片需要 ${credits} 积分，请补充积分后重试`,
+      };
+    }
+    console.error("[chargeCanvasVideoCredits] deduct failed (not charged):", error);
     return {
       ok: false,
-      status: 402,
-      error: `积分不足：本段成片需要 ${credits} 积分，请补充积分后重试`,
+      status: 503,
+      error: "扣费服务暂不可用，本次未扣费，请稍后重试",
     };
+  }
+}
+
+/**
+ * 成片任务「已扣费、创建失败」的统一退款（第七轮 P0·1 重写）。
+ * 两段独立处理，禁止一个大 catch：
+ *   1) 注册 hold 失败（hold 明确不存在）→ 允许按 deduct 同源直退，
+ *      退款认领键 = canonicalRefundKey（与账本同一把）——即使注册"写成功但返回异常"，
+ *      之后 reaper 对同一 hold 退款也因同键 DB 唯一认领只会到账一次；
+ *   2) hold 已注册、账本退款失败 → 绝不直退，保持 active/refund_pending 交给 reaper 对账。
+ * chargeKey 存在时 jobId 稳定：重试复用旧扣费又失败，不会重复退。
+ */
+async function refundCanvasChargeOnCreateFail(
+  charged: { userId: number; credits: number; deduct?: PaidJobDeductSnapshot; chargeKey?: string },
+  label: string,
+  reasonSuffix = "创建失败退回",
+): Promise<"refunded" | "pending" | "failed" | "skipped"> {
+  if (!(charged.credits > 0)) return "skipped";
+  const d = charged.deduct;
+  if (d?.source === "admin" || d?.source === "none") return "skipped";
+
+  const { registerActiveJob, refundCreditsOnFailure, refundMarkerFor, canonicalRefundKey } =
+    await import("../server/services/paidJobLedger.js");
+  const { createHash } = await import("node:crypto");
+  const jobId = charged.chargeKey
+    ? `cf_${createHash("sha256").update(charged.chargeKey).digest("hex").slice(0, 24)}`
+    : `cf_${Date.now().toString(36)}_${createHash("sha256").update(`${label}:${Math.random()}`).digest("hex").slice(0, 12)}`;
+  const marker = refundMarkerFor("canvasVideoCreateFail", jobId);
+  const refundKey = canonicalRefundKey("canvasVideoCreateFail", jobId);
+  const reason = `${label}·${reasonSuffix} ${marker}`;
+
+  // 同源直退（个人/团队都走同一把 canonical 认领键）
+  const refundDirectSameSource = async (): Promise<void> => {
+    const { refundCredits, refundCreditsForDeductAmount } = await import("../server/credits.js");
+    if (d?.source === "team" && d.teamId != null && d.teamMemberId != null) {
+      await refundCreditsForDeductAmount(
+        charged.userId,
+        reason,
+        {
+          success: true,
+          cost: charged.credits,
+          remainingBalance: -1,
+          source: "team",
+          teamId: d.teamId,
+          teamMemberId: d.teamMemberId,
+        } as Awaited<ReturnType<typeof import("../server/credits.js")["deductCreditsAmount"]>>,
+        label,
+        { refundKey },
+      );
+      return;
+    }
+    await refundCredits(charged.userId, charged.credits, reason, { refundKey });
+  };
+
+  // 第一段：只管注册 hold
+  try {
+    await registerActiveJob({
+      jobId,
+      taskType: "canvasVideoCreateFail",
+      userId: charged.userId,
+      creditsBilled: charged.credits,
+      action: `${label}·${reasonSuffix}`.slice(0, 80),
+      deduct: d,
+    });
+  } catch (registerError) {
+    console.error(`[canvasVideo] create-fail hold 注册失败，转同源直退 label=${label}`, registerError);
+    try {
+      await refundDirectSameSource();
+      return "refunded";
+    } catch (directError) {
+      console.error(`[canvasVideo] create-fail 直退也失败（需人工对账）label=${label}`, directError);
+      return "failed";
+    }
+  }
+
+  // 第二段：账本两阶段退款；失败绝不直退（hold 已在，reaper 会对账补偿）
+  try {
+    const out = await refundCreditsOnFailure(
+      jobId,
+      "canvasVideoCreateFail",
+      "task_failed",
+      `${label}·${reasonSuffix}`,
+    );
+    if (out.refunded || out.status === "refunded" || out.status === "settled") return "refunded";
+    return "pending";
+  } catch (ledgerError) {
+    console.error(
+      `[canvasVideo] create-fail 账本退款未完成（hold 已注册，等 reaper 对账）jobId=${jobId}`,
+      ledgerError,
+    );
+    return "pending";
   }
 }
 
@@ -1196,26 +1303,26 @@ async function chargeCanvasVideoAndRun<T>(
   if (opts.skipCharge) return { ok: true, result: await work(), credits: 0 };
   const charged = await chargeCanvasVideoCredits(req, opts);
   if (!charged.ok) return charged;
-  const { refundCredits } = await import("../server/credits.js");
   try {
     return { ok: true, result: await work(), credits: charged.credits };
   } catch (err) {
     let refundFailed = false;
     if (charged.credits > 0) {
-      await refundCredits(charged.userId, charged.credits, `${opts.label}·生成失败退回`).catch(
-        (refundErr: unknown) => {
-          refundFailed = true;
-          console.error("[chargeCanvasVideoAndRun] 退款失败", refundErr);
-        },
-      );
+      const refundOutcome = await refundCanvasChargeOnCreateFail(charged, opts.label, "生成失败退回");
+      refundFailed = refundOutcome === "failed";
+      if (opts.pricingMode === "homePhotoAnimate") {
+        if (refundFailed) {
+          throw new Error("照片动画生成失败；积分退款处理异常，请联系客服核对");
+        }
+        if (refundOutcome === "pending") {
+          throw new Error("照片动画生成失败，退款处理中，将自动补退");
+        }
+        if (charged.credits > 0) {
+          throw new Error("照片动画生成失败，积分已自动退回");
+        }
+      }
     }
     if (opts.pricingMode === "homePhotoAnimate") {
-      if (refundFailed) {
-        throw new Error("照片动画生成失败；积分退款处理异常，请联系客服核对");
-      }
-      if (charged.credits > 0) {
-        throw new Error("照片动画生成失败，积分已自动退回");
-      }
       throw new Error("照片动画生成失败，请稍后重试");
     }
     throw err;
@@ -1345,7 +1452,14 @@ async function runSeedance25EvolinkJob(
   const { resolveSeedance25CanvasEngine } = await import(
     "../server/services/canvasVideoTask.js"
   );
+  const { hasPhotorealReferenceUrl } = await import("../shared/photorealMediaSignal.js");
   const preferByteplus = isByteplusSeedanceConfigured();
+  // 仿真人（photoreal 素材信号）只能走 EvoLink：BytePlus 拦真人照参考。
+  // 有 BytePlus 没 EvoLink 时不能扣费后必败，扣费前 503。
+  const isPhotorealRequest = hasPhotorealReferenceUrl([imageUrl, ...imageUrls, ...videoUrls]);
+  if (isPhotorealRequest && !isEvolinkSeedanceConfigured()) {
+    return { ok: false, status: 503, error: "仿真人通道暂不可用，请稍后重试" };
+  }
   if (!preferByteplus && !isEvolinkSeedanceConfigured()) {
     return { ok: false, status: 503, error: "视频服务暂不可用，请稍后重试" };
   }
@@ -1400,10 +1514,16 @@ async function runSeedance25EvolinkJob(
   }[mode];
   const label = `${labelPrefix}·${modeLabel}（${duration}s）`;
   try {
+    // 第五轮复审 P0·6：稳定请求键——客户端带则用客户端的（跨重试稳定），
+    // 缺省服务端生成（至少保证本次扣费与其退款/任务稳定关联）
+    const requestKey =
+      String((body as Record<string, unknown>).idempotencyKey || "").trim() ||
+      `srv25_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
     const charged = await chargeCanvasVideoCredits(req, {
       durationSec: duration,
       episodeIndex: body.episodeIndex,
       label,
+      idempotencyKey: requestKey,
     });
     if (!charged.ok) return charged;
 
@@ -1412,10 +1532,12 @@ async function runSeedance25EvolinkJob(
       const task = await createCanvasVideoTask({
         userId: charged.userId,
         creditsCharged: charged.credits,
+        deduct: charged.deduct,
+        idempotencyKey: requestKey,
         engine: resolveSeedance25CanvasEngine(mode, {
-          photoreal: [imageUrl, ...imageUrls, ...videoUrls].some((u) =>
-            /\/photoreal\//i.test(String(u || "")),
-          ),
+          // 共享信号（覆盖 photoreal-age/、photoreal-gen/ 等派生路径），与 2.0 路由同口径；
+          // EvoLink 缺配置的 photoreal 已在扣费前 503，这里选中 EvoLink 引擎必有配置
+          photoreal: isPhotorealRequest,
         }),
         label,
         prompt,
@@ -1442,9 +1564,14 @@ async function runSeedance25EvolinkJob(
         provider: task.provider || (preferByteplus ? "byteplus" : "evolink"),
       };
     } catch (error: any) {
-      if (charged.credits > 0) {
-        const { refundCredits } = await import("../server/credits.js");
-        await refundCredits(charged.userId, charged.credits, `${label}·创建失败退回`).catch(() => {});
+      const refundOutcome = await refundCanvasChargeOnCreateFail(charged, label);
+      if (error instanceof Error && refundOutcome !== "skipped") {
+        error.message +=
+              refundOutcome === "refunded"
+                ? "（费用已退回）"
+                : refundOutcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
       }
       throw error;
     }
@@ -3894,6 +4021,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             credits,
             "canvasVideoClip",
             `${label} ${marker}`,
+            // DB 唯一键：并发重试双扣的最后防线（第五轮复审 P0·7）
+            { chargeKey: marker },
           );
           charged = out.cost;
           deduct = {
@@ -3901,11 +4030,16 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             teamId: "teamId" in out ? out.teamId : undefined,
             teamMemberId: "teamMemberId" in out ? out.teamMemberId : undefined,
           };
-        } catch {
-          return res.status(402).json({
-            ok: false,
-            error: `积分不足：本次高清放大需要 ${credits} 积分`,
-          });
+        } catch (deductError) {
+          const { InsufficientCreditsError } = await import("../server/credits.js");
+          if (deductError instanceof InsufficientCreditsError) {
+            return res.status(402).json({
+              ok: false,
+              error: `积分不足：本次高清放大需要 ${credits} 积分`,
+            });
+          }
+          console.error("[videoUpscale] 扣费失败（未扣费）:", deductError);
+          return res.status(503).json({ ok: false, error: "扣费服务暂不可用，本次未扣费，请稍后重试" });
         }
       }
       try {
@@ -3935,13 +4069,24 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           videoUrl: task.videoUrl || undefined,
         });
       } catch (error: unknown) {
-        // 只退本请求周期新扣的那笔；复用的旧扣费属于上一次周期，乱退会与其任务对不上账
+        // 只退本请求周期新扣的那笔；复用的旧扣费属于上一次周期，乱退会与其任务对不上账。
+        // 统一走账本两阶段退款：按 deduct 同源退（团队不退个人）、失败有 durable 兜底
+        let refundNote = "";
         if (charged > 0 && !reusedPriorCharge) {
-          await refundCredits(viewer.userId, charged, `${label}·创建失败退回`).catch(() => {});
+          const outcome = await refundCanvasChargeOnCreateFail(
+            { userId: viewer.userId, credits: charged, deduct, chargeKey: marker },
+            label,
+          );
+          refundNote =
+            outcome === "refunded"
+              ? "（费用已退回）"
+              : outcome === "pending"
+                ? "（退款处理中，将自动补退）"
+                : "（退款受阻已记录，需人工对账）";
         }
         return res.status(502).json({
           ok: false,
-          error: error instanceof Error ? error.message : "高清放大失败，请稍后重试",
+          error: (error instanceof Error ? error.message : "高清放大失败，请稍后重试") + refundNote,
         });
       }
     }
@@ -3997,7 +4142,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
          */
         const billedResolution = resolution === "2K" ? "2K" : "720p";
         const label = `画布成片·H3（${resolution}·${duration}s）`;
+        const requestKey =
+          s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
+          `srvh3_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
         const charged = await chargeCanvasVideoCredits(req, {
+          idempotencyKey: requestKey,
           durationSec: duration,
           episodeIndex: b.episodeIndex,
           label,
@@ -4012,6 +4161,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           const task = await createCanvasVideoTask({
             userId: charged.userId,
             creditsCharged: charged.credits,
+            deduct: charged.deduct,
+            idempotencyKey: requestKey,
             engine: "hailuo-openrouter",
             label,
             prompt,
@@ -4034,11 +4185,14 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             creditsUsed: charged.credits,
           });
         } catch (error: any) {
-          if (charged.credits > 0) {
-            const { refundCredits } = await import("../server/credits.js");
-            await refundCredits(charged.userId, charged.credits, `${label}·创建失败退回`).catch(
-              () => {},
-            );
+          const refundOutcome = await refundCanvasChargeOnCreateFail(charged, label);
+          if (error instanceof Error && refundOutcome !== "skipped") {
+            error.message +=
+              refundOutcome === "refunded"
+                ? "（费用已退回）"
+                : refundOutcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
           }
           throw error;
         }
@@ -4082,7 +4236,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         const duration = clampHappyHorseCanvasDuration(b.duration ?? b.durationSec ?? q.duration);
         const resolution = normalizeHappyHorseCanvasResolution(b.resolution || q.resolution);
         const label = `画布成片·Happy Horse 1.1（${resolution}·${duration}s）`;
+        const requestKey =
+          s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
+          `srvhh_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
         const charged = await chargeCanvasVideoCredits(req, {
+          idempotencyKey: requestKey,
           durationSec: duration,
           episodeIndex: b.episodeIndex,
           label,
@@ -4096,6 +4254,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           const task = await createCanvasVideoTask({
             userId: charged.userId,
             creditsCharged: charged.credits,
+            deduct: charged.deduct,
+            idempotencyKey: requestKey,
             engine: "happyhorse-openrouter",
             label,
             prompt,
@@ -4117,11 +4277,14 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             creditsUsed: charged.credits,
           });
         } catch (error: any) {
-          if (charged.credits > 0) {
-            const { refundCredits } = await import("../server/credits.js");
-            await refundCredits(charged.userId, charged.credits, `${label}·创建失败退回`).catch(
-              () => {},
-            );
+          const refundOutcome = await refundCanvasChargeOnCreateFail(charged, label);
+          if (error instanceof Error && refundOutcome !== "skipped") {
+            error.message +=
+              refundOutcome === "refunded"
+                ? "（费用已退回）"
+                : refundOutcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
           }
           throw error;
         }
@@ -4186,20 +4349,33 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         }
 
         const creditsNeeded = homePhotoAnimateCredits(duration, resolution);
+        const hpaChargeKey = `hpanim:${viewer.userId}:${Date.now().toString(36)}:${randomUUID().slice(0, 8)}`;
         let creditsCharged = 0;
+        let hpaDeduct: PaidJobDeductSnapshot | undefined;
         try {
           const out = await deductCreditsAmount(
             viewer.userId,
             creditsNeeded,
             "homePhotoAnimate",
-            `首页照片人物动起来（${resolution} · ${duration}s）`,
+            `首页照片人物动起来（${resolution} · ${duration}s）[chargeKey:${hpaChargeKey}]`,
+            { chargeKey: hpaChargeKey },
           );
           creditsCharged = out.cost;
-        } catch {
-          return res.status(402).json({
-            ok: false,
-            error: `积分不足：本次照片动画需要 ${creditsNeeded} 积分，请补充积分后重试`,
-          });
+          hpaDeduct = {
+            source: out.source,
+            teamId: "teamId" in out ? out.teamId : undefined,
+            teamMemberId: "teamMemberId" in out ? out.teamMemberId : undefined,
+          };
+        } catch (deductError) {
+          const { InsufficientCreditsError } = await import("../server/credits.js");
+          if (deductError instanceof InsufficientCreditsError) {
+            return res.status(402).json({
+              ok: false,
+              error: `积分不足：本次照片动画需要 ${creditsNeeded} 积分，请补充积分后重试`,
+            });
+          }
+          console.error("[homePhotoAnimate] 扣费失败（未扣费）:", deductError);
+          return res.status(503).json({ ok: false, error: "扣费服务暂不可用，本次未扣费，请稍后重试" });
         }
 
         // 异步：扣费后立刻落盘并提交上游，返回 taskId；客户端短轮询，部署不会掐掉整段等待。
@@ -4208,6 +4384,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             "../server/services/homePhotoAnimateTask.js"
           );
           const task = await createHomePhotoAnimateTask({
+            deduct: hpaDeduct,
             userId: viewer.userId,
             creditsCharged,
             imageUrl,
@@ -4230,14 +4407,17 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             videoUrl: task.videoUrl || undefined,
           });
         } catch (error: any) {
-          if (creditsCharged > 0) {
-            await refundCredits(
-              viewer.userId,
-              creditsCharged,
-              "首页照片人物动起来·创建失败退回",
-            ).catch((refundErr) => {
-              console.error("[homePhotoAnimate] refund failed", refundErr);
-            });
+          const outcome = await refundCanvasChargeOnCreateFail(
+            { userId: viewer.userId, credits: creditsCharged, deduct: hpaDeduct, chargeKey: hpaChargeKey },
+            "首页照片人物动起来",
+          );
+          if (error instanceof Error && outcome !== "skipped") {
+            error.message +=
+              outcome === "refunded"
+                ? "（费用已退回）"
+                : outcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
           }
           throw error;
         }
@@ -4324,7 +4504,9 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         const { imageUpscaleTotalCredits } = await import("../shared/plans.js");
         const creditsNeeded = imageUpscaleTotalCredits("homePhotoUpscaleBase", upscaleFactor);
 
+        const hpuChargeKey = `hpupscale:${viewer.userId}:${Date.now().toString(36)}:${randomUUID().slice(0, 8)}`;
         let creditsCharged = 0;
+        let hpuDeduct: PaidJobDeductSnapshot | undefined;
         try {
           const out = await deductCreditsAmount(
             viewer.userId,
@@ -4332,14 +4514,25 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             "imageUpscale",
             `首页照片高清放大 ${upscaleFactor}${
               qualityWarningAccepted ? "；已确认原图模糊风险提示" : ""
-            }`,
+            }[chargeKey:${hpuChargeKey}]`,
+            { chargeKey: hpuChargeKey },
           );
           creditsCharged = out.cost;
-        } catch {
-          return res.status(402).json({
-            ok: false,
-            error: `积分不足：本次高清放大需要 ${creditsNeeded} 积分，请补充积分后重试`,
-          });
+          hpuDeduct = {
+            source: out.source,
+            teamId: "teamId" in out ? out.teamId : undefined,
+            teamMemberId: "teamMemberId" in out ? out.teamMemberId : undefined,
+          };
+        } catch (deductError) {
+          const { InsufficientCreditsError } = await import("../server/credits.js");
+          if (deductError instanceof InsufficientCreditsError) {
+            return res.status(402).json({
+              ok: false,
+              error: `积分不足：本次高清放大需要 ${creditsNeeded} 积分，请补充积分后重试`,
+            });
+          }
+          console.error("[homePhotoUpscale] 扣费失败（未扣费）:", deductError);
+          return res.status(503).json({ ok: false, error: "扣费服务暂不可用，本次未扣费，请稍后重试" });
         }
 
         try {
@@ -4347,6 +4540,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             "../server/services/homePhotoUpscaleTask.js"
           );
           const task = await createHomePhotoUpscaleTask({
+            deduct: hpuDeduct,
             userId: viewer.userId,
             creditsCharged,
             imageUrl,
@@ -4367,14 +4561,17 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             imageUrl: task.resultImageUrl || undefined,
           });
         } catch (error: any) {
-          if (creditsCharged > 0) {
-            await refundCredits(
-              viewer.userId,
-              creditsCharged,
-              "首页照片高清放大·创建失败退回",
-            ).catch((refundErr) => {
-              console.error("[homePhotoUpscale] refund failed", refundErr);
-            });
+          const outcome = await refundCanvasChargeOnCreateFail(
+            { userId: viewer.userId, credits: creditsCharged, deduct: hpuDeduct, chargeKey: hpuChargeKey },
+            "首页照片高清放大",
+          );
+          if (error instanceof Error && outcome !== "skipped") {
+            error.message +=
+              outcome === "refunded"
+                ? "（费用已退回）"
+                : outcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
           }
           throw error;
         }
@@ -4451,8 +4648,26 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       const { parseSeedanceVersion, normalizeSeedanceQuality } = await import(
         "../shared/seedanceEvolinkModels.js"
       );
-      const isProbe =
+      let isProbe =
         b.probe === true || String(b.probe ?? q.probe ?? "").trim() === "1";
+      if (isProbe) {
+        // 审查必须修（P0）：probe=1 曾是公网免登录免扣费的真实上游开关。
+        // 收紧为须匹配服务端密钥；未配置密钥则一律拒绝探针。
+        // 只收专用 header（query/body 会进网关日志与浏览器历史）；恒时比较防时序侧信道。
+        const headerSecret = String(req.headers["x-canvas-probe-secret"] ?? "").trim();
+        const expected = String(process.env.CANVAS_PROBE_SECRET || "").trim();
+        const { timingSafeEqual, createHash: sha } = await import("node:crypto");
+        const ok =
+          Boolean(expected) &&
+          Boolean(headerSecret) &&
+          timingSafeEqual(
+            sha("sha256").update(headerSecret).digest(),
+            sha("sha256").update(expected).digest(),
+          );
+        if (!ok) {
+          return res.status(403).json({ ok: false, error: "探针未授权" });
+        }
+      }
       const productVersion = parseSeedanceProductVersion(b.version || q.version || "2.0");
       /** Seedance 2.5 正式版：五种 EvoLink 路由，共用计费与异步任务主链。 */
       if (productVersion === "2.5") {
@@ -4488,7 +4703,30 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           const { isOpenRouterSeedanceConfigured, runOpenRouterSeedanceVideo } = await import(
             "../server/services/openrouterSeedanceVideo.js"
           );
-          if (!isOpenRouterSeedanceConfigured()) {
+          /**
+           * 闸门顺序（审查必须修）：先识别 photoreal 信号定通道，再只校验被选中的通道。
+           * 老写法先要求 OpenRouter 配置——EvoLink 可用时仿真人请求被误 503；
+           * 反过来 EvoLink 缺配置时 photoreal 静默降级 OpenRouter，扣费后必撞人脸拦截。
+           * 信号覆盖全部参考素材（含 videoUrls，2.0 r2v 也吃参考视频）。
+           */
+          const { hasPhotorealReferenceUrl: hasPhotorealSignal } = await import(
+            "../shared/photorealMediaSignal.js"
+          );
+          const { isEvolinkSeedanceConfigured: evolinkConfigured } = await import(
+            "../server/services/evolinkSeedanceVideo.js"
+          );
+          const isPhotorealRequest = hasPhotorealSignal([
+            imageUrl,
+            ...(imageUrls || []),
+            ...(videoUrls || []),
+          ]);
+          if (isPhotorealRequest && !evolinkConfigured()) {
+            return res.status(503).json({
+              ok: false,
+              error: "仿真人通道暂不可用，请稍后重试",
+            });
+          }
+          if (!isPhotorealRequest && !isOpenRouterSeedanceConfigured()) {
             return res.status(503).json({
               ok: false,
               error: "视频服务暂不可用，请稍后重试",
@@ -4502,30 +4740,65 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
            * —— 2K 照 388 收、照发上游，然后被 BytePlus 拒（实测：Supported values 里没有 2K）。
            * 先按引擎钳一次，再喂给 provider 的归一化，两层同源。
            */
+          /**
+           * 仿真人正向路由（2026-08-10）：真人照参考（photoreal 素材路径）在
+           * BytePlus/OpenRouter 必被拦，老路是撞一次失败再退费。现在扣费前就按
+           * 信号切 EvoLink（不拦真人脸；官方 2.0 九模型 standard/fast/mini 齐全）。
+           * 标准/快速各按原档交付计费，不换档不换价。
+           */
+          const photorealToEvolink = isPhotorealRequest;
+
           const { resolveCanvasVideoResolution } = await import(
             "../shared/canvasGenerationPricing.js"
           );
+          const billingVideoModel =
+            productVersion === "2.0-fast"
+              ? ("seedance-2.0-fast" as const)
+              : ("seedance-2.0" as const);
           const requestedResolution = b.resolution || q.resolution || "720p";
           const effectiveResolution = resolveCanvasVideoResolution(
-            productVersion === "2.0-fast" ? "seedance-2.0-fast" : "seedance-2.0",
+            billingVideoModel,
             requestedResolution,
           );
-          const resolution = normalizeSeedanceOpenRouterQuality(
-            productVersion,
-            effectiveResolution,
-          );
+          // EvoLink 2.0 标准最高 1080p（fast 720p）：photoreal 下 4K 请求按最近档 1080p 交付并计费
+          const resolution = photorealToEvolink
+            ? normalizeSeedanceQuality(
+                productVersion === "2.0-fast" ? "2.0-fast" : "2.0",
+                /^4k$/i.test(String(effectiveResolution)) ? "1080p" : effectiveResolution,
+              )
+            : normalizeSeedanceOpenRouterQuality(productVersion, effectiveResolution);
           const duration = parseSeedanceDurationInput(
             b.duration ?? q.duration ?? b.durationSec ?? 15,
           );
           const durationSec = typeof duration === "number" ? duration : 15;
-          const label = `画布成片·${productVersion === "2.0-fast" ? "快速" : "标准"}·${resolution}（${durationSec}s）`;
+          const label = `画布成片·${productVersion === "2.0-fast" ? "快速" : "标准"}${
+            photorealToEvolink ? "·仿真人" : ""
+          }·${resolution}（${durationSec}s）`;
           // 探针仍走同步，方便脚本一次拿结果；正式用户走异步 task
           if (isProbe) {
             const charged = await chargeCanvasVideoAndRun(
               req,
               { durationSec, episodeIndex: b.episodeIndex, resolution, label, skipCharge: true },
-              () =>
-                runOpenRouterSeedanceVideo({
+              async () => {
+                // 探针复用正式 provider 选择：photoreal 走 EvoLink，与真实用户同路
+                if (photorealToEvolink) {
+                  const { runEvolinkSeedanceVideo } = await import(
+                    "../server/services/evolinkSeedanceVideo.js"
+                  );
+                  return runEvolinkSeedanceVideo({
+                    prompt,
+                    imageUrl,
+                    imageUrls,
+                    videoUrls,
+                    audioUrls,
+                    quality: resolution,
+                    aspectRatio,
+                    duration: durationSec,
+                    generateAudio,
+                    version: productVersion === "2.0-fast" ? "2.0-fast" : "2.0",
+                  });
+                }
+                return runOpenRouterSeedanceVideo({
                   prompt,
                   imageUrl,
                   imageUrls,
@@ -4535,7 +4808,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
                   duration: durationSec,
                   generateAudio,
                   version: productVersion,
-                }),
+                });
+              },
             );
             if (!charged.ok) {
               return res.status(charged.status).json({ ok: false, error: charged.error });
@@ -4551,13 +4825,17 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
               creditsUsed: charged.credits,
             });
           }
+          const requestKey =
+            s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
+            `srv20_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
           const charged = await chargeCanvasVideoCredits(req, {
+            idempotencyKey: requestKey,
             durationSec,
             episodeIndex: b.episodeIndex,
             resolution,
             label,
-            // 不传 videoModel 的话按引擎钳制拿不到引擎，等于没钳
-            videoModel: productVersion === "2.0-fast" ? "seedance-2.0-fast" : "seedance-2.0",
+            // 不传 videoModel 的话按引擎钳制拿不到引擎，等于没钳；仿真人按标准 2.0 口径
+            videoModel: billingVideoModel,
           });
           if (!charged.ok) {
             return res.status(charged.status).json({ ok: false, error: charged.error });
@@ -4567,11 +4845,15 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             const task = await createCanvasVideoTask({
               userId: charged.userId,
               creditsCharged: charged.credits,
-              engine: "seedance-openrouter",
+              deduct: charged.deduct,
+              idempotencyKey: requestKey,
+              engine: photorealToEvolink ? "seedance20-evolink" : "seedance-openrouter",
               label,
               prompt,
               imageUrl,
               imageUrls,
+              // 连续性素材：EvoLink reference-to-video 收 0–3 条视频；OpenRouter 路径不消费无副作用
+              videoUrls,
               audioUrls,
               aspectRatio,
               duration: durationSec,
@@ -4590,11 +4872,14 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
               creditsUsed: charged.credits,
             });
           } catch (error: any) {
-            if (charged.credits > 0) {
-              const { refundCredits } = await import("../server/credits.js");
-              await refundCredits(charged.userId, charged.credits, `${label}·创建失败退回`).catch(
-                () => {},
-              );
+            const refundOutcome = await refundCanvasChargeOnCreateFail(charged, label);
+            if (error instanceof Error && refundOutcome !== "skipped") {
+              error.message +=
+              refundOutcome === "refunded"
+                ? "（费用已退回）"
+                : refundOutcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
             }
             throw error;
           }
@@ -4654,7 +4939,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             resolution,
           });
         }
+        const requestKey =
+          s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
+          `srvmini_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
         const chargedMini = await chargeCanvasVideoCredits(req, {
+          idempotencyKey: requestKey,
           durationSec,
           episodeIndex: b.episodeIndex,
           resolution,
@@ -4669,6 +4958,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           const task = await createCanvasVideoTask({
             userId: chargedMini.userId,
             creditsCharged: chargedMini.credits,
+            deduct: chargedMini.deduct,
+            idempotencyKey: requestKey,
             engine: "seedance-mini-evolink",
             label,
             prompt,
@@ -4693,13 +4984,14 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             creditsUsed: chargedMini.credits,
           });
         } catch (error: any) {
-          if (chargedMini.credits > 0) {
-            const { refundCredits } = await import("../server/credits.js");
-            await refundCredits(
-              chargedMini.userId,
-              chargedMini.credits,
-              `${label}·创建失败退回`,
-            ).catch(() => {});
+          const refundOutcome = await refundCanvasChargeOnCreateFail(chargedMini, label);
+          if (error instanceof Error && refundOutcome !== "skipped") {
+            error.message +=
+              refundOutcome === "refunded"
+                ? "（费用已退回）"
+                : refundOutcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
           }
           throw error;
         }

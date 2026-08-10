@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 
+// 全量并发下 sharp 等重模块加载计入用例预算，5s 默认线负载抽签超时
+//（机制同 56daf878 / 0e08ec7f，断言零改动）
+vi.setConfig({ testTimeout: 60_000 });
+
 const gcsStore = new Map<string, Buffer>();
 const downloadGcsObject = vi.fn(async (params: { gcsUri: string }) => {
   const buf = gcsStore.get(params.gcsUri);

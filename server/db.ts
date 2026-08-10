@@ -22,6 +22,131 @@ async function ensureUsersEnterpriseTrialPaidColumn(db: NonNullable<Awaited<Retu
   }
 }
 
+/**
+ * 幂等扣费键（2026-08-10 审查必须修）：chargeKey 唯一索引是并发双扣的最后防线——
+ * 扣费 CTE 单语句里同时写 usage 日志，撞唯一约束时整条语句（含余额 UPDATE）回滚。
+ * 部分索引：仅幂等扣费带 key，普通日志行不受影响。幂等。
+ */
+let _billingChargeKeyIndexReady = false;
+let _lastIndexRecheckAt = 0;
+const INDEX_RECHECK_BACKOFF_MS = 30_000;
+
+/** 计费幂等索引是否已验证存在：没有它扣费与带键退款必须 fail-closed */
+export function isBillingChargeKeyIndexReady(): boolean {
+  return _billingChargeKeyIndexReady;
+}
+
+/**
+ * 严格校验（第七轮 P0·4）：限当前 schema + 目标表，且唯一、有效、列为 chargeKey。
+ * 只看 indexname 会被别库/别表同名索引骗过。
+ */
+async function verifyBillingChargeKeyIndex(
+  db: NonNullable<Awaited<ReturnType<typeof drizzle>>>,
+): Promise<boolean> {
+  const check = await db.execute(sql`
+    SELECT 1
+    FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indexrelid
+    JOIN pg_class t ON t.oid = i.indrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (i.indkey)
+    WHERE c.relname = 'stripe_usage_logs_charge_key_uniq'
+      AND t.relname = 'stripe_usage_logs'
+      AND n.nspname = current_schema()
+      AND i.indisunique = true
+      AND i.indisvalid = true
+      AND a.attname = 'chargeKey'
+    LIMIT 1
+  `);
+  const rows = (check as { rows?: unknown[] })?.rows;
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+/**
+ * 首次校验失败后的带退避重验（第七轮 P0·4）：_db 已缓存时 ensure 不会再跑，
+ * 不能只在首次 getDb 检查一次。扣费/退款路径在未就绪时调用本函数争取恢复。
+ */
+export async function reverifyBillingChargeKeyIndex(): Promise<boolean> {
+  if (_billingChargeKeyIndexReady) return true;
+  const now = Date.now();
+  if (now - _lastIndexRecheckAt < INDEX_RECHECK_BACKOFF_MS) return false;
+  _lastIndexRecheckAt = now;
+  try {
+    const db = await getDb();
+    if (!db) return false;
+    await db.execute(sql`
+      ALTER TABLE "stripe_usage_logs"
+      ADD COLUMN IF NOT EXISTS "chargeKey" varchar(120)
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "stripe_usage_logs_charge_key_uniq"
+        ON "stripe_usage_logs" ("chargeKey")
+        WHERE "chargeKey" IS NOT NULL
+    `);
+    _billingChargeKeyIndexReady = await verifyBillingChargeKeyIndex(db);
+    if (_billingChargeKeyIndexReady) {
+      console.log("[Database] ✓ 计费幂等索引重验通过，扣费/退款恢复");
+    }
+    return _billingChargeKeyIndexReady;
+  } catch (e) {
+    console.error(
+      "[Database] 计费幂等索引重验失败：",
+      e instanceof Error ? e.message.slice(0, 200) : e,
+    );
+    return false;
+  }
+}
+
+async function ensureStripeUsageLogsChargeKey(db: NonNullable<Awaited<ReturnType<typeof drizzle>>>) {
+  try {
+    await db.execute(sql`
+      ALTER TABLE "stripe_usage_logs"
+      ADD COLUMN IF NOT EXISTS "chargeKey" varchar(120)
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "stripe_usage_logs_charge_key_uniq"
+        ON "stripe_usage_logs" ("chargeKey")
+        WHERE "chargeKey" IS NOT NULL
+    `);
+    // 建完必须严格查证（schema/表/唯一/有效/列名）：索引真实可用才放行扣费与带键退款
+    _billingChargeKeyIndexReady = await verifyBillingChargeKeyIndex(db);
+    if (!_billingChargeKeyIndexReady) {
+      console.error("[Database] ❌ 计费幂等索引校验失败：扣费与带键退款将 fail-closed 直到索引就绪");
+    }
+  } catch (e) {
+    _billingChargeKeyIndexReady = false;
+    console.error(
+      "[Database] ❌ ensure stripe_usage_logs.chargeKey 失败（扣费将 fail-closed）:",
+      e instanceof Error ? e.message.slice(0, 200) : e,
+    );
+  }
+}
+
+/** 图文卡提炼 receipt（审查必须修 P0·6）：出图页费按提炼档位真源结算。幂等。 */
+async function ensureKnowledgeCardDistillReceiptsTable(db: NonNullable<Awaited<ReturnType<typeof drizzle>>>) {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "knowledge_card_distill_receipts" (
+        "id"        serial PRIMARY KEY,
+        "userId"    integer NOT NULL,
+        "textHash"  varchar(64) NOT NULL,
+        "model"     varchar(40) NOT NULL,
+        "createdAt" timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await db.execute(sql`DROP INDEX IF EXISTS "kc_distill_receipts_user_hash_uniq"`);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "kc_distill_receipts_user_hash_model_uniq"
+        ON "knowledge_card_distill_receipts" ("userId", "textHash", "model")
+    `);
+  } catch (e) {
+    console.warn(
+      "[Database] ensure knowledge_card_distill_receipts (non-fatal):",
+      e instanceof Error ? e.message.slice(0, 200) : e,
+    );
+  }
+}
+
 /** Stage2 選題快照表：缺失時自動建表（與 drizzle/postgres/0004 對齊）。 */
 async function ensurePlatformStrategicBlueprintSnapshotsTable(db: NonNullable<Awaited<ReturnType<typeof drizzle>>>) {
   try {
@@ -197,6 +322,8 @@ export async function getDb() {
       const sql_conn = neon(process.env.DATABASE_URL);
       _db = drizzle(sql_conn);
       await ensureUsersEnterpriseTrialPaidColumn(_db);
+      await ensureStripeUsageLogsChargeKey(_db);
+      await ensureKnowledgeCardDistillReceiptsTable(_db);
       await ensurePlatformStrategicBlueprintSnapshotsTable(_db);
       await ensurePlatformDrSecondaryStagingTable(_db);
       await ensurePaidTrafficReviewsTable(_db);

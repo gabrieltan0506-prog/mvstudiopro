@@ -78,6 +78,8 @@ export type CanvasVideoEngine =
   | "seedance25-evolink"
   /** Seedance 2.0 Mini 草稿档：EvoLink 单路径（OpenRouter 没有 mini） */
   | "seedance-mini-evolink"
+  /** Seedance 2.0 标准档·仿真人正向路由：真人照参考被 BytePlus/OpenRouter 拦，扣费前直切 EvoLink */
+  | "seedance20-evolink"
   /** WaveSpeed 字节视频超分（2K/4K）：复用同一套异步任务框架，入参走 upscale* 字段 */
   | "wavespeed-upscale";
 
@@ -132,6 +134,8 @@ export type CanvasVideoTaskRecord = {
   lastTransientError?: string;
   /** 客户端幂等键；同键重复创建返回同一任务（见 createCanvasVideoTask） */
   idempotencyKey?: string;
+  /** 扣费来源快照：hold 丢失时按此同源退回（团队扣款不得退进个人） */
+  deduct?: PaidJobDeductSnapshot;
   /** wavespeed-upscale 专用：要放大的源视频（必须是真实成片 URL）与目标档 */
   upscaleSourceUrl?: string;
   upscaleTarget?: WavespeedUpscaleTarget;
@@ -239,7 +243,9 @@ function maxPollMs(engine: CanvasVideoEngine): number {
   if (engine === "seedance25-evolink" || engine === "seedance25-byteplus") {
     return Math.max(EVOLINK_SEEDANCE_MAX_POLL_MS, BYTEPLUS_SEEDANCE_MAX_POLL_MS);
   }
-  if (engine === "seedance-mini-evolink") return EVOLINK_SEEDANCE_MAX_POLL_MS;
+  if (engine === "seedance-mini-evolink" || engine === "seedance20-evolink") {
+    return EVOLINK_SEEDANCE_MAX_POLL_MS;
+  }
   if (engine === "wavespeed-upscale") return WAVESPEED_UPSCALE_MAX_POLL_MS;
   return OPENROUTER_VIDEO_MAX_POLL_MS;
 }
@@ -256,9 +262,13 @@ function hasProviderTask(task: CanvasVideoTaskRecord): boolean {
   );
 }
 
-/** 走 EvoLink 任务号轮询的引擎（2.5 与 Mini 共用同一套 submit/poll） */
+/** 走 EvoLink 任务号轮询的引擎（2.5 / Mini / 2.0 仿真人共用同一套 submit/poll） */
 function usesEvolinkTaskId(engine: CanvasVideoEngine): boolean {
-  return engine === "seedance25-evolink" || engine === "seedance-mini-evolink";
+  return (
+    engine === "seedance25-evolink"
+    || engine === "seedance-mini-evolink"
+    || engine === "seedance20-evolink"
+  );
 }
 
 function seedance25RunInput(task: CanvasVideoTaskRecord): EvolinkSeedanceRunInput {
@@ -300,6 +310,21 @@ async function submitSeedance25Evolink(task: CanvasVideoTaskRecord): Promise<voi
  * ——BytePlus ModelArk 没有 mini 型号，回落无处可落，失败就按失败退费。
  */
 async function submitSeedanceMiniEvolink(task: CanvasVideoTaskRecord): Promise<void> {
+  return submitSeedanceEvolinkVersioned(task, "2.0-mini");
+}
+
+/** 2.0 仿真人：标准/快速各按原档走 EvoLink 九模型（fast 有对应型号，不降不换档） */
+async function submitSeedance20Evolink(task: CanvasVideoTaskRecord): Promise<void> {
+  return submitSeedanceEvolinkVersioned(
+    task,
+    task.seedanceVersion === "2.0-fast" ? "2.0-fast" : "2.0",
+  );
+}
+
+async function submitSeedanceEvolinkVersioned(
+  task: CanvasVideoTaskRecord,
+  version: "2.0" | "2.0-fast" | "2.0-mini",
+): Promise<void> {
   const submitted = await submitEvolinkSeedanceVideo({
     prompt: task.prompt,
     imageUrl: task.imageUrl,
@@ -312,7 +337,7 @@ async function submitSeedanceMiniEvolink(task: CanvasVideoTaskRecord): Promise<v
     generateAudio: task.generateAudio,
     // 8-09 拍板值（放宽送审，EvoLink 不挡人脸是仿真人档的前提）；原先是三处硬编码 true 的死常量
     contentFilter: SEEDANCE_EVOLINK_CONTENT_FILTER,
-    version: "2.0-mini",
+    version,
   });
   task.evolinkTaskId = submitted.evolinkTaskId;
   task.model = submitted.model;
@@ -368,6 +393,36 @@ async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<vo
   }
 }
 
+/** hold 缺失/账本异常时的兜底直退：按任务里持久化的 deduct 同源退回。
+ * 退前查真账 refundKey，重复调用不双退（与 paidJobLedger 对账同一套 marker）。 */
+async function refundTaskDirect(task: CanvasVideoTaskRecord, reason: string): Promise<void> {
+  if (task.creditsCharged <= 0) return;
+  const d = task.deduct;
+  if (d?.source === "admin" || d?.source === "none") return;
+  const { hasRefundMarker, refundMarkerFor } = await import("./paidJobLedger.js");
+  const seen = await hasRefundMarker(task.userId, refundMarkerFor(TASK_TYPE, task.taskId));
+  if (seen === true) return; // 已在账，勿重复
+  if (seen === null) throw new Error("db_unavailable_refund_deferred");
+  if (d?.source === "team" && d.teamId != null && d.teamMemberId != null) {
+    const { refundCreditsForDeductAmount } = await import("../credits.js");
+    await refundCreditsForDeductAmount(
+      task.userId,
+      reason,
+      {
+        success: true,
+        cost: task.creditsCharged,
+        remainingBalance: -1,
+        source: "team",
+        teamId: d.teamId,
+        teamMemberId: d.teamMemberId,
+      } as Awaited<ReturnType<typeof import("../credits.js")["deductCreditsAmount"]>>,
+      task.label,
+    );
+    return;
+  }
+  await refundCredits(task.userId, task.creditsCharged, reason);
+}
+
 async function failTask(
   task: CanvasVideoTaskRecord,
   error: string,
@@ -376,20 +431,20 @@ async function failTask(
   task.error = error.slice(0, 280);
   task.finishedAt = new Date().toISOString();
   await writeTask(task);
-  await refundCreditsOnFailure(
-    task.taskId,
-    TASK_TYPE,
-    "task_failed",
-    task.error,
-  ).catch(async () => {
-    if (task.creditsCharged > 0) {
-      await refundCredits(
-        task.userId,
-        task.creditsCharged,
-        `${task.label}·生成失败退回`,
-      ).catch(() => {});
+  const refundReason = `${task.label}·生成失败退回 [refundKey:${TASK_TYPE}/${task.taskId}]`;
+  try {
+    const out = await refundCreditsOnFailure(task.taskId, TASK_TYPE, "task_failed", task.error);
+    // hold 缺失时账本正常 resolve {status:"missing"} 而非 reject——不兜底就一分不退
+    if (out.status === "missing" && !out.refunded) {
+      await refundTaskDirect(task, refundReason).catch((e) => {
+        console.error("[canvasVideoTask] direct refund after missing hold failed", task.taskId, e);
+      });
     }
-  });
+  } catch {
+    await refundTaskDirect(task, refundReason).catch((e) => {
+      console.error("[canvasVideoTask] direct refund after ledger error failed", task.taskId, e);
+    });
+  }
   return task;
 }
 
@@ -406,7 +461,14 @@ async function succeedTask(
   task.finishedAt = new Date().toISOString();
   task.error = undefined;
   await writeTask(task);
-  await unregisterActiveJob(task.taskId, TASK_TYPE, "settled").catch(() => {});
+  try {
+    await unregisterActiveJob(task.taskId, TASK_TYPE, "settled");
+  } catch (e) {
+    // 结算失败不许静默吞：转 settlement_pending 持久态，reaper 只补结算不退款
+    console.warn("[canvasVideoTask] settle 失败，转 settlement_pending", task.taskId, e);
+    const { markSettlementPending } = await import("./paidJobLedger.js");
+    await markSettlementPending(task.taskId, TASK_TYPE);
+  }
   return task;
 }
 
@@ -506,6 +568,11 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
 
   if (task.engine === "seedance-mini-evolink") {
     await submitSeedanceMiniEvolink(task);
+    return;
+  }
+
+  if (task.engine === "seedance20-evolink") {
+    await submitSeedance20Evolink(task);
     return;
   }
 
@@ -871,30 +938,41 @@ export async function createCanvasVideoTask(input: {
     seedanceVersion: input.seedanceVersion,
     workMode: input.workMode,
     idempotencyKey: idemKey || undefined,
+    deduct: input.deduct,
     upscaleSourceUrl: input.upscaleSourceUrl,
     upscaleTarget: input.upscaleTarget,
     createdAt: now,
     updatedAt: now,
   };
   await writeTask(task);
-  await registerActiveJob({
-    jobId: taskId,
-    taskType: TASK_TYPE,
-    userId: input.userId,
-    creditsBilled: task.creditsCharged,
-    action: task.label,
-    externalApiCostHint: task.engine,
-    metadata: {
-      engine: task.engine,
-      duration: task.duration,
-      resolution: task.resolution,
-    },
-    deduct: input.deduct,
-    // 任务记录已持久化、启动会 resume：SIGTERM/心跳 reaper 不得退分（见 paidJobLedger）
-    resumable: true,
-  }).catch((error) => {
-    console.warn("[canvasVideoTask] registerActiveJob failed", error);
-  });
+  try {
+    await registerActiveJob({
+      jobId: taskId,
+      taskType: TASK_TYPE,
+      userId: input.userId,
+      creditsBilled: task.creditsCharged,
+      action: task.label,
+      externalApiCostHint: task.engine,
+      metadata: {
+        engine: task.engine,
+        duration: task.duration,
+        resolution: task.resolution,
+      },
+      deduct: input.deduct,
+      // 任务记录已持久化、启动会 resume：SIGTERM/心跳 reaper 不得退分（见 paidJobLedger）
+      resumable: true,
+    });
+  } catch (error) {
+    // hold 没登记成就提交上游 = 任务失败时账本查无此单、一分不退（永久漏退窗）。
+    // fail-fast：任务落终态失败、不碰上游，抛给调用方按 deduct 同源退款；
+    // 幂等映射里的 failed 任务会在付费重试时换新 taskId 重开，不挡重试。
+    console.error("[canvasVideoTask] registerActiveJob failed, abort before upstream", error);
+    task.status = "failed";
+    task.error = "任务账本登记失败，未提交生成，费用已退回";
+    task.finishedAt = new Date().toISOString();
+    await writeTask(task).catch(() => {});
+    throw new Error("paid_job_ledger_register_failed");
+  }
 
   void advanceTask(taskId).catch((error) => {
     console.error("[canvasVideoTask] initial advance failed", error);
@@ -947,6 +1025,24 @@ export async function resumeCanvasVideoTasksOnStartup(): Promise<void> {
   }
   console.log(`[canvasVideoTask] startup: resume ${ids.length} task(s)`);
   for (const id of ids) {
+    // 恢复前补登记 hold：跨部署丢账本卷/上次 register 失败的任务，失败时才有账可退。
+    // registerActiveJob 幂等且保留终态，不会把 refunded/settled 冲回 active。
+    const task = await readTask(id);
+    if (task) {
+      await registerActiveJob({
+        jobId: id,
+        taskType: TASK_TYPE,
+        userId: task.userId,
+        creditsBilled: task.creditsCharged,
+        action: task.label,
+        externalApiCostHint: task.engine,
+        metadata: { engine: task.engine, duration: task.duration, resolution: task.resolution },
+        deduct: task.deduct,
+        resumable: true,
+      }).catch((error) => {
+        console.warn("[canvasVideoTask] startup re-register hold failed", id, error);
+      });
+    }
     await advanceTask(id).catch((error) => {
       console.warn("[canvasVideoTask] startup resume failed", id, error);
     });

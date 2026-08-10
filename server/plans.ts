@@ -282,7 +282,7 @@ export const CREDIT_COSTS = {
   platformStoryboardSheet: 60,
   /** 图文笔记·小红书 2×4 八格（`xiaohongshu_dual_note`）·**72** — 非分镜主表 */
   platformXhsDualNote: 72,
-  /** 图文知识卡片默认展示价（提练·精细 30）；实际按 distillModel：精细30/24、均衡27/22、轻量24/19 */
+  /** 图文知识卡片默认展示价（提炼·精细 30）；实际按 distillModel：超凡36/29、精细30/24、均衡27/22、轻量24/19 */
   platformSinglePageKnowledgeCard: 30,
   /** 自定义文案 · 深度优化（纯 LLM · 无出图） */
   platformOptimizeCustomCopy: 25,

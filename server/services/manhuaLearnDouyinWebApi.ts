@@ -53,7 +53,7 @@ async function fetchDouyinJsonWithCookie(
  */
 export async function listDouyinMixEpisodesViaWebApi(
   mixId: string,
-): Promise<{ episodes: DouyinListedEpisode[]; mixNameZh?: string } | null> {
+): Promise<{ episodes: DouyinListedEpisode[]; mixNameZh?: string; complete: boolean } | null> {
   const id = String(mixId || "").trim();
   if (!/^\d{6,}$/.test(id)) return null;
   const cookies = listDouyinCookieCandidatesFromEnv();
@@ -62,13 +62,15 @@ export async function listDouyinMixEpisodesViaWebApi(
 
   // 某候选中途被风控只拉到前几页时，留作备胎继续试下一份凭证补全；
   // 全部候选都残缺则返回最全的那份（残缺也比全无强，listedEpisodeCount 会随之波动）
-  let best: { episodes: DouyinListedEpisode[]; mixNameZh?: string } | null = null;
+  let best: { episodes: DouyinListedEpisode[]; mixNameZh?: string; complete: boolean } | null =
+    null;
   for (const cookie of cookies) {
     const pages: DouyinListedEpisode[][] = [];
     let mixNameZh: string | undefined;
     let cursor = 0;
     let gathered = 0;
     let truncated = false;
+    let lastHasMore = false;
     for (let page = 0; page < MIX_MAX_PAGES; page++) {
       const url = buildDouyinMixAwemeApiUrl(id, cursor, MIX_PAGE_COUNT);
       let payload: unknown | null = null;
@@ -105,16 +107,19 @@ export async function listDouyinMixEpisodesViaWebApi(
       pages.push(parsed.episodes);
       gathered += parsed.episodes.length;
       if (!mixNameZh && parsed.mixNameZh) mixNameZh = parsed.mixNameZh;
+      lastHasMore = parsed.hasMore;
       if (!parsed.hasMore) break;
       // cursor 语义：抖音返回下一页起点；个别版本不回 cursor 时按已收条数续
       cursor = parsed.nextCursor > cursor ? parsed.nextCursor : gathered;
     }
+    // 第五轮复审 P1·11：页数打满仍 hasMore = 列表没拉完，同样算残缺
+    if (lastHasMore) truncated = true;
     const episodes = mergeDouyinMixEpisodePages(pages);
     if (episodes.length > 0 && !truncated) {
-      return { episodes, mixNameZh };
+      return { episodes, mixNameZh, complete: true };
     }
     if (episodes.length > (best?.episodes.length || 0)) {
-      best = { episodes, mixNameZh };
+      best = { episodes, mixNameZh, complete: false };
     }
     // 一无所获或残缺 → 换下一份凭证再试
   }

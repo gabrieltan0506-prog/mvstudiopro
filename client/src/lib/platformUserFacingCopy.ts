@@ -1,7 +1,7 @@
 /** 面向用户文案：过滤模型名、API、fallback 等内部实现细节 */
 
 const INTERNAL_ENGINE_PATTERN =
-  /EVOLINK|OPENAI|OpenRouter|openrouter|Cloudflare|VERTEX|GPT|Gemini|gemini|gpt-|Nano Banana|GPT-IMAGE|GPT54|主模型|备用模型|备用路径|主路径|fallback|analyzeGrowthCamp|growth_analyze|Vertex|Evolink|OhMyGPT|套话快照|成长营套话|trendStore|trendstore|爬虫|爬蟲|crawler|GCS|gs:\/\/|growth-camp|Job not found|pollCount|platformAssetLite|deployment to match the model|request id:/i;
+  /EVOLINK|OPENAI|OpenRouter|openrouter|Cloudflare|VERTEX|GPT|Gemini|gemini|gpt-|Anthropic|ANTHROPIC|Claude|claude-|Nano Banana|GPT-IMAGE|GPT54|主模型|备用模型|备用路径|主路径|fallback|analyzeGrowthCamp|growth_analyze|Vertex|Evolink|OhMyGPT|套话快照|成长营套话|trendStore|trendstore|爬虫|爬蟲|crawler|GCS|gs:\/\/|growth-camp|Job not found|pollCount|platformAssetLite|deployment to match the model|request id:/i;
 
 export function sanitizePlatformUserMessage(raw: string, fallback = "操作暂时不可用，请稍后重试"): string {
   const text = String(raw || "").trim();

@@ -50,7 +50,7 @@ describe("suggestKnowledgeCardMinSections", () => {
     expect(suggestKnowledgeCardMinSections(50_000)).toBeGreaterThanOrEqual(15);
   });
 
-  // 用户 2026-08-05：提练是取重点让人快速读懂，不是把 9.5 万字摊成几十页
+  // 用户 2026-08-05：提炼是取重点让人快速读懂，不是把 9.5 万字摊成几十页
   it("stays readable for a long book instead of growing linearly", () => {
     expect(suggestKnowledgeCardMinSections(10_000)).toBeLessThanOrEqual(12);
     // 9.5 万字：旧式线性会要 68 节；用户选定约 28 节（并页后约 5 张卡）

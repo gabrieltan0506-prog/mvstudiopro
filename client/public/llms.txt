@@ -96,11 +96,6 @@ A：多半是解析静默丢句或密度门槛按错段长单位，不一定是�
 
 - 首页：https://www.mvstudiopro.com/
 - 技术与实测：https://www.mvstudiopro.com/blog/
-- 定价：https://www.mvstudiopro.com/pricing
-- 作品展示：https://www.mvstudiopro.com/showcase
-- 创作者成长营：https://www.mvstudiopro.com/creator-growth-camp
-- 模板库：https://www.mvstudiopro.com/templates
-- 创作台：https://www.mvstudiopro.com/creative
 - 机器可读说明：https://www.mvstudiopro.com/llms.txt
 - 可引用事实全文：https://www.mvstudiopro.com/llms-full.txt
 

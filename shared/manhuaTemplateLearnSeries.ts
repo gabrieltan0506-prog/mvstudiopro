@@ -51,6 +51,14 @@ export type ManhuaLearnEpisodeChunk = {
   climaxNotes: string[];
   sceneHints: string[];
   learnedAt: string;
+  /** 读帧 provenance（审查必须修13）：本块视觉读帧是否真实跑过、用了哪个模型 */
+  vision?: {
+    provider: string;
+    model: string;
+    attempted: boolean;
+    success: boolean;
+    errorNote?: string;
+  };
 };
 
 export type ManhuaLearnEpisodeDigest = {
@@ -75,6 +83,13 @@ export type ManhuaLearnEpisodeDigest = {
   dramaKind?: ManhuaDramaKind;
   categoryLabelZh?: string;
   tagLabelsZh?: string[];
+  /** 读帧 provenance 聚合（审查必须修13）：attempted/success 按块计数 */
+  frameVision?: {
+    provider: string;
+    model: string;
+    attemptedChunks: number;
+    successChunks: number;
+  };
 };
 
 /** 旧 digest 无检查点字段视为已完成；新 digest 以 complete / learnedThroughSec 为准 */
@@ -136,6 +151,18 @@ export function mergeManhuaLearnChunkIntoDigest(input: {
     || prev?.hookNoteZh
     || "待补钩子";
 
+  // 读帧 provenance 按块聚合；model/provider 取最近一次真实尝试的记录
+  const visionChunks = chunks.filter((c) => c.vision?.attempted);
+  const lastVision = visionChunks.length ? visionChunks[visionChunks.length - 1].vision : undefined;
+  const frameVision = lastVision
+    ? {
+        provider: lastVision.provider,
+        model: lastVision.model,
+        attemptedChunks: visionChunks.length,
+        successChunks: visionChunks.filter((c) => c.vision?.success).length,
+      }
+    : prev?.frameVision;
+
   return {
     episodeIndex: input.episodeIndex,
     url: input.url,
@@ -153,6 +180,7 @@ export function mergeManhuaLearnChunkIntoDigest(input: {
     dramaKind: input.dramaKind || prev?.dramaKind,
     categoryLabelZh: input.categoryLabelZh || prev?.categoryLabelZh,
     tagLabelsZh: input.tagLabelsZh || prev?.tagLabelsZh,
+    frameVision,
   };
 }
 
@@ -160,8 +188,12 @@ export type ManhuaLearnSeriesProgress = {
   seriesKey: string;
   sourceUrl: string;
   titleHint: string;
+  /** provenance：本系列由哪条学习链产出（A/B 隔离；seriesKey 已按此分命名空间） */
+  learnLlm?: "gpt" | "claude";
   mixId?: string;
   listedEpisodeCount: number;
+  /** 列表里出现过的全部集号（判「合集全学完」用集合包含，不用数量比较） */
+  listedEpisodeIndexes?: number[];
   learnedEpisodeIndexes: number[];
   updatedAt: string;
   dramaKind?: ManhuaDramaKind;
@@ -216,8 +248,34 @@ export function pickNextEpisodeIndexes(input: {
   return pending.slice(0, batch);
 }
 
-export function canEmitManhuaLearnAnalysis(learnedCount: number): boolean {
-  return learnedCount >= MANHUA_LEARN_ANALYSIS_MIN;
+/**
+ * 草版门槛（2026-08-10 用户实测反馈落地）：老口径 16 集才出总分析+入库入口，
+ * 单集/短合集永远看不到模板产出。改为：学满 4 集，或该合集可学集数已全部学完
+ * （2 集的合集学完 2 集就出），即先出草版；≥16 集仍是完整版口径。
+ */
+export const MANHUA_LEARN_ANALYSIS_DRAFT_MIN = 4;
+
+export function canEmitManhuaLearnAnalysis(
+  learnedCount: number,
+  opts?: { allListedComplete?: boolean },
+): boolean {
+  if (learnedCount >= MANHUA_LEARN_ANALYSIS_MIN) return true;
+  if (learnedCount < 1) return false;
+  if (learnedCount >= MANHUA_LEARN_ANALYSIS_DRAFT_MIN) return true;
+  // 「合集全学完」必须由调用方按集合包含（listedIndexes ⊆ completeIndexes）判定，
+  // 不许拿数量比较凑数——列表接口抖动降级成 1 集时数量比较会误判提前出草版
+  return opts?.allListedComplete === true;
+}
+
+/** 集合判定辅助：可靠列表非空且每一集都已完整学完 */
+export function isManhuaLearnListComplete(
+  listedIndexes: readonly number[] | undefined,
+  completeIndexes: readonly number[],
+): boolean {
+  const listed = (listedIndexes || []).filter((n) => Number.isFinite(n) && n >= 1);
+  if (!listed.length) return false;
+  const done = new Set(completeIndexes);
+  return listed.every((n) => done.has(n));
 }
 
 function guessLane(text: string): ManhuaViralTemplateLane {
@@ -242,7 +300,8 @@ export function mergeEpisodeDigestsIntoProposal(input: {
     .filter((d) => d && d.episodeIndex >= 1)
     .sort((a, b) => a.episodeIndex - b.episodeIndex)
     .slice(0, MANHUA_LEARN_ANALYSIS_TARGET);
-  if (digests.length < MANHUA_LEARN_ANALYSIS_MIN) return null;
+  // 草版口径：有多少集合成多少集；是否达到出分析门槛由 canEmitManhuaLearnAnalysis 把关
+  if (!digests.length) return null;
 
   const blob = digests
     .map((d) => [d.title, d.transcriptPreview, d.hookNoteZh, ...d.sceneHints].join(" "))

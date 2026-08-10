@@ -381,6 +381,43 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
 
   if (input.action === "growth_analyze_video") {
     const numericUserId = userId ? Number(userId) : NaN;
+    // 审查必须修（P0·租户边界）：worker 是终闸——历史队列/旁路入队的 job 也在这里拦。
+    // 匿名 "public"/非数字 userId 不跑（NaN 还会免扣费）；gcsUri 只认本人上传前缀。
+    if (!Number.isFinite(numericUserId) || numericUserId <= 0) {
+      throw new Error("请先登录后再提交分析");
+    }
+    if (typeof params.gcsUri === "string" && params.gcsUri.trim()) {
+      const { getGcsBucketName } = await import("../services/gcs.js");
+      const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${numericUserId}/`;
+      if (!String(params.gcsUri).startsWith(allowedPrefix)) {
+        throw new Error("只能分析本人上传的文件");
+      }
+    }
+    // 第五轮复审 P0·5：fileKey/fileUrl 是 gcsUri 的旁路——
+    // fileKey 可读任意已知对象键、fileUrl 可让服务器去拉内网/元数据地址（SSRF）。
+    // fileKey 只认本人上传前缀；fileUrl 只认 GCS 签名直链且路径归属本人。
+    if (typeof params.fileKey === "string" && params.fileKey.trim()) {
+      if (!String(params.fileKey).startsWith(`uploads/u${numericUserId}/`)) {
+        throw new Error("只能分析本人上传的文件");
+      }
+    }
+    if (typeof params.fileUrl === "string" && params.fileUrl.trim()) {
+      let allowed = false;
+      try {
+        const { getGcsBucketName } = await import("../services/gcs.js");
+        const u = new URL(String(params.fileUrl));
+        // 前缀校验（第七轮 P1·3）：includes 会放过「任意外部桶但路径里带 /uploads/u<id>/」
+        allowed =
+          u.protocol === "https:" &&
+          u.hostname === "storage.googleapis.com" &&
+          u.pathname.startsWith(`/${getGcsBucketName()}/uploads/u${numericUserId}/`);
+      } catch {
+        allowed = false;
+      }
+      if (!allowed) {
+        throw new Error("只能分析本人上传的文件");
+      }
+    }
     const growthMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
     const creditAction = growthMode === "REMIX" ? "growthCampRemix" : "growthCampGrowth";
 
@@ -475,6 +512,10 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
 
   if (input.action === "growth_analyze_images") {
     const numericUserId = userId ? Number(userId) : NaN;
+    // 同 growth_analyze_video：worker 终闸，拒匿名/非数字 userId，gcsUri 只认本人前缀
+    if (!Number.isFinite(numericUserId) || numericUserId <= 0) {
+      throw new Error("请先登录后再提交分析");
+    }
     const growthMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
     const creditAction = growthMode === "REMIX" ? "growthCampRemix" : "growthCampGrowth";
 
@@ -493,6 +534,15 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
 
     if (!images.length) {
       throw new Error("请至少上传一张 PNG 或 JPG 图片");
+    }
+    if (images.some((img) => img.gcsUri)) {
+      const { getGcsBucketName } = await import("../services/gcs.js");
+      const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${numericUserId}/`;
+      for (const img of images) {
+        if (img.gcsUri && !String(img.gcsUri).startsWith(allowedPrefix)) {
+          throw new Error("只能分析本人上传的文件");
+        }
+      }
     }
 
     const unitCost = flatAnalysisCost(growthMode);
@@ -2134,7 +2184,7 @@ async function processPlatformJob(
     }
 
     // ── knowledge_card_distill ───────────────────────────────────────────────
-    // 长书提练：整本 10 万字要分十几段跑数分钟，放同步 HTTP 会被网关掐断且拖死健康检查。
+    // 长书提炼：整本 10 万字要分十几段跑数分钟，放同步 HTTP 会被网关掐断且拖死健康检查。
     if (input.action === "knowledge_card_distill") {
       const { prepareKnowledgeCardCopy } = await import("../services/knowledgeCardDistill.js");
       const { planKnowledgeCardPages } = await import("../../shared/knowledgeCardPagination.js");
@@ -2164,10 +2214,23 @@ async function processPlatformJob(
       });
       const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 
+      // 服务端账本（审查必须修 P0·6）：真实提炼产出的稿子绑档位，出图页费按此结算
+      if (!prepared.skippedDistill && prepared.distillModel) {
+        const { recordKnowledgeCardDistillReceipt } = await import(
+          "../services/knowledgeCardDistillReceipt.js"
+        );
+        // fail-closed：receipt 落不了盘就让 job 报错重试——吞错会让后续出图按客户端声明档计费
+        await recordKnowledgeCardDistillReceipt(
+          Number(jobUserId),
+          prepared.distillModel,
+          prepared.distilledMarkdown,
+        );
+      }
+
       /**
-       * 提练费：只有前端明确带 `chargeDistillFee` 才收，也就是「纯文本长文，
-       * 用户在弹窗里选了先提练」那条路。上传文档的提练是抽文的必要环节，成本已含在页费里，不另收。
-       * 扣在**提练成功之后**：失败连扣都没扣过，不必写退款。
+       * 提炼费：只有前端明确带 `chargeDistillFee` 才收，也就是「纯文本长文，
+       * 用户在弹窗里选了先提炼」那条路。上传文档的提炼是抽文的必要环节，成本已含在页费里，不另收。
+       * 扣在**提炼成功之后**：失败连扣都没扣过，不必写退款。
        */
       let distillFeeCharged = 0;
       const uidForDistillFee = Number(jobUserId);
@@ -2181,17 +2244,53 @@ async function processPlatformJob(
           "../../shared/knowledgeCardDistillModels.js"
         );
         const fee = knowledgeCardDistillFeeForModel(prepared.distillModel);
-        const deducted = await deductCreditsAmount(
-          uidForDistillFee,
-          fee,
-          "knowledgeCardDistill",
-          `图文知识卡·提练（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）`,
-        );
-        distillFeeCharged = deducted.cost;
+        /**
+         * 幂等（审查必须修）：withTimeout 只是 Promise.race，超时后原执行仍在跑，
+         * job 重排后新旧两次执行都会走到这里——按 jobId 查账，已扣过就不再扣第二次。
+         */
+        const chargeMarker = `[chargeKey:kcdistill/${String(platformJobId || "nojob")}]`;
+        const { getDb } = await import("../db.js");
+        let alreadyCharged = false;
+        try {
+          const db = await getDb();
+          if (db) {
+            const { stripeUsageLogs } = await import("../../drizzle/schema.js");
+            const { and, eq, like } = await import("drizzle-orm");
+            const [row] = await db
+              .select({ creditsCost: stripeUsageLogs.creditsCost })
+              .from(stripeUsageLogs)
+              .where(
+                and(
+                  eq(stripeUsageLogs.userId, uidForDistillFee),
+                  like(stripeUsageLogs.description, `%${chargeMarker}%`),
+                ),
+              )
+              .limit(1);
+            if (row) {
+              alreadyCharged = true;
+              distillFeeCharged = Math.max(0, Number(row.creditsCost) || 0);
+            }
+          }
+        } catch (e) {
+          // 审查修正：查账失败时不许盲扣（可能已扣过）——报错让 job 稍后重试
+          console.warn("[knowledgeCardDistill] 幂等查账失败，停账重试：", e);
+          throw new Error("计费对账暂不可用，请稍后重试");
+        }
+        if (!alreadyCharged) {
+          const deducted = await deductCreditsAmount(
+            uidForDistillFee,
+            fee,
+            "knowledgeCardDistill",
+            `图文知识卡·提炼（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）${chargeMarker}`,
+            // DB 唯一索引兜底并发双扣（超时旧执行 vs 重排新执行都过了上面的 SELECT 查账）
+            { chargeKey: chargeMarker },
+          );
+          distillFeeCharged = deducted.cost;
+        }
       }
 
       return {
-        provider: "evolink",
+        provider: prepared.distillModel === "claude-opus-5" ? "anthropic" : "evolink",
         output: {
           success: true,
           distillFeeCharged,

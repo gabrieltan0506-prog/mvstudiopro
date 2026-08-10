@@ -387,7 +387,7 @@ function applyMemorySafeDiagnostics(
 }
 
 type ModelTier = "flash" | "pro" | "gpt5" | "gpt54";
-type Provider = "vertex" | "gemini" | "cometapi" | "openai";
+type Provider = "vertex" | "gemini" | "cometapi" | "openai" | "anthropic";
 
 type LlmTarget = {
   provider: Provider;
@@ -659,12 +659,39 @@ async function getVertexAccessToken() {
   return String(json.access_token);
 }
 
+/** Anthropic Messages API（官方直连）。模型默认 claude-opus-5（2026-08 当前 Opus，带 vision）。 */
+const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_DEFAULT_MODEL = "claude-opus-5";
+
+function getAnthropicModelName(explicit?: string): string {
+  return (
+    String(explicit || "").trim()
+    || String(process.env.ANTHROPIC_MODEL || "").trim()
+    || ANTHROPIC_DEFAULT_MODEL
+  );
+}
+
 const resolveTarget = (
   modelTier: ModelTier | undefined,
   preferredProvider?: Provider,
   explicitModelName?: string,
   openAiGateway: "auto" | "official_only" = "auto",
 ): LlmTarget => {
+  if (preferredProvider === "anthropic") {
+    const anthropicKey = String(process.env.ANTHROPIC_API_KEY || "").trim();
+    if (!anthropicKey) {
+      // 前台零泄漏：环境名只进服务端日志
+      console.warn("[llm] anthropic provider requested but ANTHROPIC_API_KEY is missing");
+      throw new Error("模型通道未配置，请稍后重试");
+    }
+    return {
+      provider: "anthropic",
+      apiUrl: ANTHROPIC_MESSAGES_URL,
+      apiKey: anthropicKey,
+      modelName: getAnthropicModelName(explicitModelName),
+    };
+  }
+
   if (preferredProvider === "openai" || modelTier === "gpt5" || modelTier === "gpt54") {
     const candidate = String(explicitModelName || getOpenAiModelName(modelTier)).trim();
     const officialOnly = openAiGateway === "official_only";
@@ -1437,6 +1464,191 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
   }
 }
 
+// ============ Anthropic（Claude）分支 ============
+// 形态：POST /v1/messages。与 chat-completions 的关键差异：
+// - system 是顶层字段（不进 messages）；响应正文在 content[] 的 text block
+// - claude-opus-5 家族不收 temperature/top_p/top_k（发了 400），一律不带采样控件
+// - thinking 默认开启且计入 max_tokens 预算 → max_tokens 宁大勿掐（下限可 env 调）
+// - 图片走 {type:"image", source:{type:"url"}}；data: 形态兜底转 base64 source
+//   （学习链拍板走「帧上 GCS → 签名 https URL」，见 manhuaTemplateFrameVision.ts）
+
+/** thinking 计入预算：低于此值的 max_tokens 抬到下限，防推理中途截断（拍板：宁大勿掐） */
+const ANTHROPIC_MIN_MAX_TOKENS = 16_000;
+/** 非流式安全帽：11 分钟墙钟超时内可完成的输出规模 */
+const ANTHROPIC_MAX_MAX_TOKENS = 64_000;
+
+function anthropicEffortFrom(raw?: InvokeParams["reasoningEffort"]): string | undefined {
+  const t = String(raw || "").trim().toLowerCase();
+  if (!t) return undefined;
+  if (t === "none" || t === "minimal") return "low";
+  if (t === "low" || t === "medium" || t === "high" || t === "xhigh" || t === "max") return t;
+  return undefined;
+}
+
+type AnthropicContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; source: { type: "url"; url: string } | { type: "base64"; media_type: string; data: string } };
+
+function toAnthropicContentBlock(part: MessageContent): AnthropicContentBlock {
+  if (typeof part === "string") return { type: "text", text: part };
+  if (part.type === "text") return { type: "text", text: part.text };
+  if (part.type === "image_url") {
+    const url = String(part.image_url?.url || "").trim();
+    const parsed = parseDataUrl(url);
+    if (parsed) {
+      // 上游只收四种图片格式；其余（如 svg/bmp）提前报错，别把 400 留给上游猜
+      if (!/^image\/(jpeg|png|gif|webp)$/i.test(parsed.mimeType)) {
+        throw new Error("图片格式仅支持 JPEG/PNG/GIF/WebP");
+      }
+      return {
+        type: "image",
+        source: { type: "base64", media_type: parsed.mimeType.toLowerCase(), data: parsed.data },
+      };
+    }
+    if (!/^https:\/\//i.test(url)) {
+      throw new Error("图片仅支持 https 或 data URL");
+    }
+    return { type: "image", source: { type: "url", url } };
+  }
+  throw new Error(`该模型通道暂不支持 ${part.type} 内容`);
+}
+
+/** 纯函数：OpenAI 形消息 → Anthropic /v1/messages 请求体（可单测） */
+export function buildAnthropicRequestBody(
+  params: Pick<InvokeParams, "messages" | "maxTokens" | "max_tokens" | "reasoningEffort">,
+  modelName: string,
+): Record<string, unknown> {
+  const systemParts: string[] = [];
+  const messages: Array<{ role: "user" | "assistant"; content: AnthropicContentBlock[] }> = [];
+  for (const msg of params.messages) {
+    const parts = Array.isArray(msg.content) ? msg.content : [msg.content];
+    if (msg.role === "system" || msg.role === "developer") {
+      const text = parts
+        .map((p) => (typeof p === "string" ? p : p.type === "text" ? p.text : ""))
+        .filter(Boolean)
+        .join("\n");
+      if (text.trim()) systemParts.push(text);
+      continue;
+    }
+    if (msg.role !== "user" && msg.role !== "assistant") {
+      throw new Error(`该模型通道暂不支持 role=${msg.role} 消息`);
+    }
+    messages.push({ role: msg.role, content: parts.map(toAnthropicContentBlock) });
+  }
+  if (!messages.length || messages[0]!.role !== "user") {
+    // Anthropic 要求首条为 user；system-only 调用补一个占位不合理，直接报错让调用方修
+    throw new Error("该模型通道要求首条非 system 消息为 user");
+  }
+
+  const requested =
+    typeof params.maxTokens === "number" && Number.isFinite(params.maxTokens)
+      ? params.maxTokens
+      : typeof params.max_tokens === "number" && Number.isFinite(params.max_tokens)
+        ? params.max_tokens
+        : ANTHROPIC_MIN_MAX_TOKENS;
+  const floor = Math.max(
+    1024,
+    Number(process.env.ANTHROPIC_MIN_MAX_TOKENS || "") || ANTHROPIC_MIN_MAX_TOKENS,
+  );
+  const maxTokens = Math.min(ANTHROPIC_MAX_MAX_TOKENS, Math.max(floor, Math.floor(requested)));
+
+  const body: Record<string, unknown> = {
+    model: modelName,
+    max_tokens: maxTokens,
+    messages,
+    // 安全分类器拒答时服务端自动换推荐模型重跑（claude-api skill 建议默认开启）
+    fallbacks: "default",
+  };
+  if (systemParts.length) body.system = systemParts.join("\n\n");
+  const effort = anthropicEffortFrom(params.reasoningEffort);
+  if (effort) body.output_config = { effort };
+  return body;
+}
+
+async function invokeAnthropic(
+  params: InvokeParams & { model?: ModelTier },
+  target: LlmTarget,
+): Promise<InvokeResult> {
+  // invokeLLM 公开的 tools/toolChoice 契约本通道尚未实现转换——宁可 fail-fast，
+  // 不许静默发出无工具请求（上游 tool_use 返回也无法回传 tool_result）
+  if (params.tools?.length || params.toolChoice || params.tool_choice) {
+    throw new Error("该模型通道暂不支持工具调用（tools/toolChoice）");
+  }
+  const body = buildAnthropicRequestBody(params, target.modelName);
+  const response = await fetch(String(target.apiUrl || ANTHROPIC_MESSAGES_URL), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": target.apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-beta": "server-side-fallback-2026-07-01",
+    },
+    signal: mergeWithLlmTimeout(params.abortSignal),
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    console.warn(`[Anthropic] HTTP ${response.status}: ${errorText.slice(0, 400)}`);
+    // 前台零技术泄漏：抛给调用方的串不带供应商名（供应商细节只进服务端日志）
+    const err = new Error(`上游模型请求失败（HTTP ${response.status}）`) as TransientLlmError & {
+      status?: number;
+      rawErrorText?: string;
+    };
+    err.status = response.status;
+    err.rawErrorText = errorText.slice(0, 800);
+    if (response.status === 429 || response.status >= 500) {
+      err.transient = true;
+      err.providerLabel = "Anthropic";
+    }
+    throw err;
+  }
+
+  const json = (await response.json().catch(() => null)) as {
+    id?: string;
+    model?: string;
+    stop_reason?: string | null;
+    content?: Array<{ type?: string; text?: string }>;
+    usage?: { input_tokens?: number; output_tokens?: number };
+  } | null;
+  if (!json || !Array.isArray(json.content)) {
+    // 代理 200+HTML/空体按传输抖动处理：中性文案 + transient（调用方可重试）
+    const err = new Error("上游模型返回异常，请稍后重试") as TransientLlmError;
+    err.transient = true;
+    err.providerLabel = "Anthropic";
+    throw err;
+  }
+  // 先查 refusal 再读正文（Opus 5 分类器拒答返回 200 + stop_reason=refusal）
+  if (json.stop_reason === "refusal") {
+    throw new Error("上游安全分类器拒答，请调整内容后重试");
+  }
+  const text = json.content
+    .filter((b) => b && b.type === "text" && typeof b.text === "string")
+    .map((b) => b.text as string)
+    .join("");
+
+  const promptTokens = Number(json.usage?.input_tokens || 0) || 0;
+  const completionTokens = Number(json.usage?.output_tokens || 0) || 0;
+  return {
+    id: String(json.id || `anthropic_${Date.now()}`),
+    created: Math.floor(Date.now() / 1000),
+    model: String(json.model || target.modelName),
+    provider: "anthropic",
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: text },
+        finish_reason: String(json.stop_reason || "stop"),
+      },
+    ],
+    usage: {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+    },
+  };
+}
+
 export async function invokeLLM(params: InvokeParams & { model?: ModelTier }): Promise<InvokeResult> {
   const target = resolveTarget(params.model, params.provider, params.modelName, params.openAiGateway);
 
@@ -1447,6 +1659,8 @@ export async function invokeLLM(params: InvokeParams & { model?: ModelTier }): P
     raw = await invokeGemini(params, target);
   } else if (target.provider === "openai") {
     raw = await invokeOpenAI(params, target);
+  } else if (target.provider === "anthropic") {
+    raw = await invokeAnthropic(params, target);
   } else {
     raw = await invokeCometApi(params, target);
   }

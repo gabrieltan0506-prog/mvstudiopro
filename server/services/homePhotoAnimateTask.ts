@@ -26,6 +26,11 @@ import {
   registerActiveJob,
   refundCreditsOnFailure,
   unregisterActiveJob,
+  hasRefundMarker,
+  refundMarkerFor,
+  canonicalRefundKey,
+  markSettlementPending,
+  type PaidJobDeductSnapshot,
 } from "./paidJobLedger.js";
 import {
   buildOpenRouterHappyHorseSubmitBody,
@@ -54,6 +59,8 @@ export type HomePhotoAnimateTaskStatus =
 export type HomePhotoAnimateTaskRecord = {
   taskId: string;
   userId: number;
+  /** 扣款来源快照：退款按同源退回（团队不退个人）；hold 丢失时兜底直退用 */
+  deduct?: PaidJobDeductSnapshot;
   status: HomePhotoAnimateTaskStatus;
   creditsCharged: number;
   imageUrl: string;
@@ -148,20 +155,41 @@ async function failTask(
   task.error = error.slice(0, 280);
   task.finishedAt = new Date().toISOString();
   await writeTask(task);
-  await refundCreditsOnFailure(
-    task.taskId,
-    TASK_TYPE,
-    "task_failed",
-    task.error,
-  ).catch(async () => {
-    if (task.creditsCharged > 0) {
-      await refundCredits(
-        task.userId,
-        task.creditsCharged,
-        "照片动画生成失败·退回已扣积分",
-      ).catch(() => {});
+  // 第七轮 P0·3：必须消费返回值——hold 缺失（missing）时按 canonical 键同源直退，
+  // 查真账防双退；账本抛错则保持待退等 reaper，不裸退不吞错
+  try {
+    const out = await refundCreditsOnFailure(task.taskId, TASK_TYPE, "task_failed", task.error);
+    if (out.status === "missing" && !out.refunded && task.creditsCharged > 0) {
+      const marker = refundMarkerFor(TASK_TYPE, task.taskId);
+      const refundKey = canonicalRefundKey(TASK_TYPE, task.taskId);
+      const seen = await hasRefundMarker(task.userId, marker);
+      if (seen === false) {
+        const d = task.deduct;
+        const reason = `照片动画生成失败·退回已扣积分 ${marker}`;
+        if (d?.source === "team" && d.teamId != null && d.teamMemberId != null) {
+          const { refundCreditsForDeductAmount } = await import("../credits.js");
+          await refundCreditsForDeductAmount(
+            task.userId,
+            reason,
+            {
+              success: true,
+              cost: task.creditsCharged,
+              remainingBalance: -1,
+              source: "team",
+              teamId: d.teamId,
+              teamMemberId: d.teamMemberId,
+            } as Awaited<ReturnType<typeof import("../credits.js")["deductCreditsAmount"]>>,
+            "首页照片人物动起来",
+            { refundKey },
+          );
+        } else if (d?.source !== "admin" && d?.source !== "none") {
+          await refundCredits(task.userId, task.creditsCharged, reason, { refundKey });
+        }
+      }
     }
-  });
+  } catch (e) {
+    console.error("[homePhotoAnimateTask] 退款未完成（等 reaper 对账）", task.taskId, e);
+  }
   return task;
 }
 
@@ -176,7 +204,13 @@ async function succeedTask(
   task.finishedAt = new Date().toISOString();
   task.error = undefined;
   await writeTask(task);
-  await unregisterActiveJob(task.taskId, TASK_TYPE, "settled").catch(() => {});
+  try {
+    await unregisterActiveJob(task.taskId, TASK_TYPE, "settled");
+  } catch (e) {
+    // 结算失败不许吞：转 settlement_pending，reaper 只补结算不退款（防成功单被误退）
+    console.warn("[homePhotoAnimateTask] settle 失败，转 settlement_pending", task.taskId, e);
+    await markSettlementPending(task.taskId, TASK_TYPE);
+  }
 
   try {
     const plan = await getUserPlan(task.userId);
@@ -301,6 +335,8 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
 export async function createHomePhotoAnimateTask(input: {
   userId: number;
   creditsCharged: number;
+  /** 扣款来源快照（API 扣费时生成），必须透传进任务与账本 */
+  deduct?: PaidJobDeductSnapshot;
   imageUrl: string;
   prompt: string;
   duration: number;
@@ -331,6 +367,7 @@ export async function createHomePhotoAnimateTask(input: {
     userId: input.userId,
     status: "queued",
     creditsCharged: Math.max(0, Number(input.creditsCharged) || 0),
+    deduct: input.deduct,
     imageUrl: String(input.imageUrl || "").trim(),
     prompt:
       String(input.prompt || "").trim().slice(0, 500) ||
@@ -342,21 +379,30 @@ export async function createHomePhotoAnimateTask(input: {
     updatedAt: now,
   };
   await writeTask(task);
+  try {
   await registerActiveJob({
     jobId: taskId,
-    taskType: TASK_TYPE,
-    userId: input.userId,
-    creditsBilled: task.creditsCharged,
-    action: `首页照片人物动起来（${resolution} · ${input.duration}s）`,
-    externalApiCostHint: "openrouter happyhorse-1.1",
-    metadata: {
-      imageUrl: task.imageUrl.slice(0, 200),
-      duration: task.duration,
-      resolution: task.resolution,
-    },
-  }).catch((error) => {
-    console.warn("[homePhotoAnimateTask] registerActiveJob failed", error);
-  });
+      taskType: TASK_TYPE,
+      userId: input.userId,
+      creditsBilled: task.creditsCharged,
+      action: `首页照片人物动起来（${resolution} · ${input.duration}s）`,
+      externalApiCostHint: "openrouter happyhorse-1.1",
+      metadata: {
+        imageUrl: task.imageUrl.slice(0, 200),
+        duration: task.duration,
+        resolution: task.resolution,
+      },
+      deduct: input.deduct,
+    });
+  } catch (error) {
+    // 账本没登记成不许跑上游：失败时查无此单会一分不退（第七轮 P0·3）
+    console.error("[homePhotoAnimateTask] registerActiveJob failed, abort before upstream", error);
+    task.status = "failed";
+    task.error = "任务账本登记失败，未提交生成，费用已退回";
+    task.finishedAt = new Date().toISOString();
+    await writeTask(task).catch(() => {});
+    throw new Error("paid_job_ledger_register_failed");
+  }
 
   // 立即推进一轮（尽量在本请求内完成上游提交），然后靠 worker/status 续跑
   void advanceTask(taskId).catch((error) => {

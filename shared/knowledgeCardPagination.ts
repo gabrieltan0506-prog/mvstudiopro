@@ -1,6 +1,6 @@
 /**
  * 单页图文知识卡片：本地分页（无 LLM）+ 积分（前 8 页满价，第 9 页起折扣，不封顶）。
- * 页费按提练模型分档（见 knowledgeCardDistillModels）；本模块负责切页与计价。
+ * 页费按提炼模型分档（见 knowledgeCardDistillModels）；本模块负责切页与计价。
  */
 
 import {
@@ -24,7 +24,7 @@ export const KNOWLEDGE_CARD_MAX_CHARS_PER_PAGE = 1200;
 export const KNOWLEDGE_CARD_MAX_SECTIONS_PER_PAGE = 6;
 /** 低于此字数不强行拆成 4 页 */
 export const KNOWLEDGE_CARD_MIN_CHARS_FOR_TARGET_MIN = 480;
-/** 短贴文可跳过提练的字数上限（前端/路由启发式） */
+/** 短贴文可跳过提炼的字数上限（前端/路由启发式） */
 export const KNOWLEDGE_CARD_SKIP_DISTILL_MAX_CHARS = 3200;
 
 /** @deprecated 默认精细档满价；请用 knowledgeCardPageCreditsForModel */
@@ -49,7 +49,7 @@ export type KnowledgeCardPagePlan = {
   distillModel: KnowledgeCardDistillModelId;
 };
 
-/** 整套 N 页合计积分（不封顶；前 8 满价，其后折扣；按提练模型分档）。 */
+/** 整套 N 页合计积分（不封顶；前 8 满价，其后折扣；按提炼模型分档）。 */
 export function knowledgeCardCreditsForPages(
   n: number,
   distillModel?: string | null,
@@ -75,22 +75,22 @@ export function knowledgeCardCreditsForPageIndex(
 }
 
 /**
- * 提练前后的页数与花费对照，供「要不要提练」的弹窗算账。
+ * 提炼前后的页数与花费对照，供「要不要提炼」的弹窗算账。
  *
- * 提练后的字数不好直接预测，但页数受目标小节数约束（见 `suggestKnowledgeCardMinSections`），
+ * 提炼后的字数不好直接预测，但页数受目标小节数约束（见 `suggestKnowledgeCardMinSections`），
  * 按每节约 180 字反推总字数再走同一套分页规则，实测与成稿吻合
  * （9.5 万字 → 28 节 → 约 5000 字 → 5 页）。
  */
 export type KnowledgeCardDistillTradeoff = {
   /** 直接出图：页数、总积分、是否会被降到 2K */
   full: { pages: number; credits: number; is4k: boolean };
-  /** 提练后出图：同上，另含一次性提练费 */
+  /** 提炼后出图：同上，另含一次性提炼费 */
   distilled: { pages: number; credits: number; is4k: boolean; distillFee: number };
-  /** 提练能省下的净积分（已扣掉提练费；可能为负，短文就该直接出） */
+  /** 提炼能省下的净积分（已扣掉提炼费；可能为负，短文就该直接出） */
   saved: number;
 };
 
-/** 提练稿每个 `##` 小节的估算字数（含标题与要点） */
+/** 提炼稿每个 `##` 小节的估算字数（含标题与要点） */
 const KNOWLEDGE_CARD_CHARS_PER_SECTION_ESTIMATE = 180;
 
 export function estimateKnowledgeCardDistillTradeoff(
@@ -124,7 +124,7 @@ export function estimateKnowledgeCardDistillTradeoff(
   };
 }
 
-/** 已提练的短贴文可跳过再提练。 */
+/** 已提炼的短贴文可跳过再提炼。 */
 export function shouldSkipKnowledgeCardDistill(text: string, hasUploads: boolean): boolean {
   if (hasUploads) return false;
   const t = String(text || "").trim();
@@ -272,7 +272,7 @@ const KNOWLEDGE_CARD_INTERNAL_DIRECTIVE_HEADS = [
 
 /**
  * 内部代号：只在平台出图约束里出现，绝不该印给创作者看。
- * 约束一旦混进提练源文，模型会把它改写成正常的 `## 小节`，
+ * 约束一旦混进提炼源文，模型会把它改写成正常的 `## 小节`，
  * 于是按 `【…】` 块头就抓不到了，还会以正常小节身份散落到任意页
  * （用户 2026-08-05 报的「第 1 页 + 第 3 页」，而不是连续两页）。
  */

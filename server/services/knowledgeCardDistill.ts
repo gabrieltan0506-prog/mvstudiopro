@@ -1,16 +1,17 @@
 /**
- * 图文知识卡片：上传/长文 → 读文/读图 OCR + 提练 → Markdown。
- * 三档并列：Evolink GPT-5.6 Sol / OpenRouter Kimi K3 / Evolink Qwen3.8 Max。
- * 长书超过阈值时后台分段提练再合并（避免上游 524）；产品面仍是一次上传写框。
- * 提练/OCR 成本含在页费中，本模块不单独扣积分。
+ * 图文知识卡片：上传/长文 → 读文/读图 OCR + 提炼 → Markdown。
+ * 四档并列：Claude Opus 5（超凡）/ Evolink GPT-5.6 Sol / OpenRouter Kimi K3 / Evolink Qwen3.8 Max。
+ * 长书超过阈值时后台分段提炼再合并（避免上游 524）；产品面仍是一次上传写框。
+ * 提炼/OCR 成本含在页费中，本模块不单独扣积分。
  *
  * @see https://evolink.ai/gpt-5-6
  * @see https://evolink.ai/docs/cn/api-manual/language-series/qwen3.8-max/qwen3.8-max-chat
  */
-import { extractFirstChoicePlainText, type MessageContent } from "../_core/llm.js";
+import { extractFirstChoicePlainText, invokeLLM, type MessageContent } from "../_core/llm.js";
 import { shouldSkipKnowledgeCardDistill } from "../../shared/knowledgeCardPagination.js";
 import { suggestKnowledgeCardMinSections } from "../../shared/knowledgeCardDistillSections.js";
 import {
+  KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE,
   KNOWLEDGE_CARD_DISTILL_MODEL_KIMI,
   KNOWLEDGE_CARD_DISTILL_MODEL_QWEN,
   KNOWLEDGE_CARD_DISTILL_MODEL_SOL,
@@ -29,7 +30,7 @@ import { extractDocumentText } from "../growth/documentExtract.js";
 export const KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE = "算力紧张，请稍后再试";
 /** Evolink/OR 网关 524 或本端 Abort：长书一气呵成常见 */
 export const KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE =
-  "文档较长，提练超时，请稍后重试；超长书会自动分段提练后再合并";
+  "文档较长，提炼超时，请稍后重试；超长书会自动分段提炼后再合并";
 
 /** @deprecated 用 resolveKnowledgeCardDistillModel */
 export const KNOWLEDGE_CARD_DISTILL_MODEL = resolveKnowledgeCardDistillModel(
@@ -99,6 +100,19 @@ function envStr(key: string, fallback: string): string {
 }
 
 const DISTILL_PROFILES: Record<KnowledgeCardDistillModelId, KnowledgeCardDistillProfile> = {
+  // 超凡（Claude Opus 5）：质量顶档；分段架构保留（8/5 拍板：长书必须分段，单段内 max_tokens 开足）
+  [KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE]: {
+    chunkThreshold: envNum("KNOWLEDGE_CARD_DISTILL_CLAUDE_CHUNK_THRESHOLD", 12_000, 6_000, 40_000),
+    chunkChars: envNum("KNOWLEDGE_CARD_DISTILL_CLAUDE_CHUNK_CHARS", 12_000, 4_000, 24_000),
+    concurrency: envNum("KNOWLEDGE_CARD_DISTILL_CLAUDE_CONCURRENCY", 2, 1, 4),
+    effortChunk: envStr("KNOWLEDGE_CARD_DISTILL_CLAUDE_EFFORT_CHUNK", "medium"),
+    effortFinal: envStr("KNOWLEDGE_CARD_DISTILL_CLAUDE_EFFORT_FINAL", "high"),
+    requestTimeoutMs: envNum("KNOWLEDGE_CARD_DISTILL_CLAUDE_TIMEOUT_MS", 300_000, 60_000, 480_000),
+    chunkRetries: envNum("KNOWLEDGE_CARD_DISTILL_CLAUDE_CHUNK_RETRIES", 2, 0, 4),
+    minSectionsPerChunk: envNum("KNOWLEDGE_CARD_DISTILL_CLAUDE_MIN_SECTIONS", 3, 2, 24),
+    refineMaxChars: envNum("KNOWLEDGE_CARD_DISTILL_CLAUDE_REFINE_MAX_CHARS", 24_000, 0, 120_000),
+    bulletsPerSection: { min: 5, max: 9 },
+  },
   // 精细：输出最全但每段慢，段中等 + 分段降中档
   [KNOWLEDGE_CARD_DISTILL_MODEL_SOL]: {
     chunkThreshold: envNum("KNOWLEDGE_CARD_DISTILL_SOL_CHUNK_THRESHOLD", 12_000, 6_000, 40_000),
@@ -188,8 +202,8 @@ const EVOLINK_DIRECT_CHAT_URL = String(
 ).trim();
 
 /**
- * 目标 `##` 小节数。实现已挪到 shared，前端要用同一份来预估提练后的页数
- * （「要不要提练」的弹窗靠它算账），两边算法必须一致。
+ * 目标 `##` 小节数。实现已挪到 shared，前端要用同一份来预估提炼后的页数
+ * （「要不要提炼」的弹窗靠它算账），两边算法必须一致。
  */
 export { suggestKnowledgeCardMinSections };
 
@@ -201,7 +215,7 @@ const DISTILL_DEFAULT_BULLETS = { min: 5, max: 9 } as const;
  *
  * 条数沿用 2026-06-27 定下的原始口径（详尽充实、宁详勿略、含定义/数字/方法/示例）；
  * 2026-08-05 曾被改成「有限要点 3–5 条 + 多留白」，与「详尽 + 条列 + 举例」相悖，已改回。
- * 区间按提练档位取（轻量档抬高，避免它把每节压成三条干标题）。
+ * 区间按提炼档位取（轻量档抬高，避免它把每节压成三条干标题）。
  */
 function distillSectionShape(bullets: { min: number; max: number }): string {
   return `每个 \`## 小节\` 内：
@@ -220,7 +234,7 @@ function resolveDistillBullets(modelName?: string | null): { min: number; max: n
 
 function buildDistillSystem(minSections: number, modelName?: string | null): string {
   const bullets = resolveDistillBullets(modelName);
-  return `你是知识卡片内容主编。任务：把用户提供的文稿/幻灯片抽字/图片 OCR 结果，提练成可直接做「疏朗图文知识卡片」的简体中文 Markdown（读图 OCR 与提练同时完成，不要只吐生文本）。
+  return `你是知识卡片内容主编。任务：把用户提供的文稿/幻灯片抽字/图片 OCR 结果，提炼成可直接做「疏朗图文知识卡片」的简体中文 Markdown（读图 OCR 与提炼同时完成，不要只吐生文本）。
 
 **目标**：让没读过原文的人在几分钟内读懂这份材料**讲了什么、关键结论是什么、怎么用**。是**精选重点**，不是逐段搬运。
 
@@ -243,6 +257,9 @@ export type KnowledgeCardUploadFile = {
 };
 
 function hasDistillGateway(modelName: KnowledgeCardDistillModelId): boolean {
+  if (modelName === KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE) {
+    return Boolean(String(process.env.ANTHROPIC_API_KEY || "").trim());
+  }
   if (isKnowledgeCardDistillEvolinkModel(modelName)) return Boolean(getEvolinkApiKey());
   return Boolean(getOpenRouterApiKey());
 }
@@ -362,7 +379,7 @@ export async function extractKnowledgeCardUploads(files: KnowledgeCardUploadFile
   };
 }
 
-/** 长书分段提练：按段落边界切开，避免 Evolink/OR 单请求 524。 */
+/** 长书分段提炼：按段落边界切开，避免 Evolink/OR 单请求 524。 */
 export function splitSourceTextForDistill(text: string, chunkChars = 10_000): string[] {
   const s = String(text || "").trim();
   if (!s) return [];
@@ -383,7 +400,7 @@ export function splitSourceTextForDistill(text: string, chunkChars = 10_000): st
   return parts;
 }
 
-/** 合并多段提练 Markdown：保留首个 # 标题，后续只拼 ## 小节。 */
+/** 合并多段提炼 Markdown：保留首个 # 标题，后续只拼 ## 小节。 */
 export function mergeDistilledMarkdownChunks(parts: string[]): string {
   const cleaned = parts.map((p) => String(p || "").trim()).filter(Boolean);
   if (!cleaned.length) return "";
@@ -415,10 +432,10 @@ function isTimeoutUpstream(status: number, body: string): boolean {
 function mapDistillUpstreamError(status: number, body: string): Error {
   const t = String(body || "");
   if (status === 402 || /insufficient|credit|余额|积分不足|quota/i.test(t)) {
-    return new Error("提练账户额度不足，请稍后重试或联系管理员");
+    return new Error("提炼账户额度不足，请稍后重试或联系管理员");
   }
   if (status === 404 && /guardrail|privacy|data policy|No endpoints/i.test(t)) {
-    return new Error("当前提练通道不可用，请改用其他提练档位后重试");
+    return new Error("当前提炼通道不可用，请改用其他提炼档位后重试");
   }
   if (isTimeoutUpstream(status, t)) {
     return new Error(KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE);
@@ -445,7 +462,7 @@ function distillFetchTimeoutMs(
 }
 
 /**
- * 统稿比单段慢得多（输入是整本的提练稿、输出还要重排全局），
+ * 统稿比单段慢得多（输入是整本的提炼稿、输出还要重排全局），
  * 探针里 Kimi 用分段档超时会直接 abort，把 32 节的中间稿留给用户。
  */
 function distillRefineTimeoutMs(modelName: KnowledgeCardDistillModelId): number {
@@ -465,14 +482,14 @@ function buildDistillUserContent(params: {
   sourceText: string;
   imageDataUrls: string[];
   minSections: number;
-  /** 本次只提练整本中的一段（分段模式） */
+  /** 本次只提炼整本中的一段（分段模式） */
   chunkLabel?: string;
 }): Array<Record<string, unknown>> {
   const textBlock = [
     params.chunkLabel
-      ? `本次只处理长文档的${params.chunkLabel}。只就本段内容**挑出最值得记住的重点**（约 ${params.minSections} 个 ## 小节），次要枝节可以整段舍弃；不要复述其它章节、不要写「本段/以上」这类过渡语，不要输出未经提练的长原文：`
-      : `请一次性完成：读文/读图 OCR + 提练。输出疏朗知识卡片 Markdown，约 ${params.minSections} 个 ## 小节，取重点、不要输出未经提练的长原文：`,
-    params.sourceText.trim() || "（无纯文本，请主要依据附图 OCR 提练）",
+      ? `本次只处理长文档的${params.chunkLabel}。只就本段内容**挑出最值得记住的重点**（约 ${params.minSections} 个 ## 小节），次要枝节可以整段舍弃；不要复述其它章节、不要写「本段/以上」这类过渡语，不要输出未经提炼的长原文：`
+      : `请一次性完成：读文/读图 OCR + 提炼。输出疏朗知识卡片 Markdown，约 ${params.minSections} 个 ## 小节，取重点、不要输出未经提炼的长原文：`,
+    params.sourceText.trim() || "（无纯文本，请主要依据附图 OCR 提炼）",
     params.imageDataUrls.length
       ? `\n附图 ${params.imageDataUrls.length} 张：请 OCR 提取文字与图表要点，并入精华，去掉重复。`
       : "",
@@ -499,7 +516,7 @@ async function invokeEvolinkDistill(params: {
   timeoutMs?: number;
 }): Promise<string> {
   const key = getEvolinkApiKey();
-  if (!key) throw new Error("提练通道未配置，请稍后重试");
+  if (!key) throw new Error("提炼通道未配置，请稍后重试");
 
   const userContent = buildDistillUserContent(params);
   const body: Record<string, unknown> = {
@@ -620,6 +637,90 @@ async function invokeOpenRouterKimiDistill(params: {
   return out;
 }
 
+/**
+ * 超凡档（Claude Opus 5）：走 invokeLLM 的 anthropic 分支。
+ * 图片拍板走 URL 不走 base64：dataUrl 先上 GCS（按内容哈希去重）再签名 https。
+ */
+async function invokeClaudeDistill(params: {
+  sourceText: string;
+  imageDataUrls: string[];
+  minSections: number;
+  effort: string;
+  chunkLabel?: string;
+  systemOverride?: string;
+  timeoutMs?: number;
+}): Promise<string> {
+  const imageUrls: string[] = [];
+  if (params.imageDataUrls.length) {
+    if (params.imageDataUrls.length > 40) {
+      console.warn(
+        `[knowledgeCardDistill] claude 档图片超上限，截取前 40/${params.imageDataUrls.length} 张`,
+      );
+    }
+    const { createHash } = await import("node:crypto");
+    const { uploadBufferToGcs, signGsUriV4ReadUrl } = await import("./gcs.js");
+    // 与路由/GPT 路径同一上限（40），不再私砍到 30
+    for (const dataUrl of params.imageDataUrls.slice(0, 40)) {
+      const match = /^data:([^;,]+);base64,([\s\S]+)$/.exec(String(dataUrl || ""));
+      if (!match) {
+        console.warn("[knowledgeCardDistill] claude 档跳过非 data: 形态图片条目");
+        continue;
+      }
+      const mime = match[1] || "image/jpeg";
+      const buffer = Buffer.from(match[2]!, "base64");
+      const ext = /png/i.test(mime) ? "png" : /webp/i.test(mime) ? "webp" : "jpg";
+      const hash = createHash("sha1").update(buffer).digest("hex").slice(0, 20);
+      const uploaded = await uploadBufferToGcs({
+        objectName: `knowledge-card-distill/images-tmp/${hash}.${ext}`,
+        buffer,
+        contentType: mime,
+      });
+      imageUrls.push(signGsUriV4ReadUrl(uploaded.gcsUri, 2 * 3600));
+    }
+  }
+
+  const textBlock = buildDistillUserContent({ ...params, imageDataUrls: [] })
+    .filter((p) => p.type === "text")
+    .map((p) => String((p as { text?: string }).text || ""))
+    .join("\n");
+  const response = await invokeLLM({
+    model: "pro",
+    provider: "anthropic",
+    modelName: KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE,
+    reasoningEffort: params.effort as "low" | "medium" | "high" | "xhigh" | "max",
+    max_tokens: DISTILL_MAX_TOKENS,
+    // 档位超时旋钮接活（否则 KNOWLEDGE_CARD_DISTILL_CLAUDE_TIMEOUT_MS 是死配置）
+    abortSignal: AbortSignal.timeout(
+      distillFetchTimeoutMs(KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE, params.timeoutMs),
+    ),
+    messages: [
+      {
+        role: "system",
+        content:
+          params.systemOverride
+          || buildDistillSystem(params.minSections, KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE),
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: textBlock },
+          ...imageUrls.map((url) => ({
+            type: "image_url" as const,
+            image_url: { url, detail: "high" as const },
+          })),
+        ],
+      },
+    ],
+  });
+  // 截断不当成功：max_tokens 截断的半截稿会顺利通过下游长度检查并照常收费
+  if (String(response.choices?.[0]?.finish_reason || "") === "max_tokens") {
+    throw new Error(KNOWLEDGE_CARD_DISTILL_TIMEOUT_MESSAGE);
+  }
+  const out = extractFirstChoicePlainText(response).trim();
+  if (!out || out.length < 20) throw new Error(KNOWLEDGE_CARD_DISTILL_CAPACITY_MESSAGE);
+  return out;
+}
+
 async function invokeDistillLlm(params: {
   sourceText: string;
   imageDataUrls: string[];
@@ -631,7 +732,10 @@ async function invokeDistillLlm(params: {
   timeoutMs?: number;
 }): Promise<string> {
   if (!hasDistillGateway(params.modelName)) {
-    throw new Error("提练通道未配置，请稍后重试");
+    throw new Error("提炼通道未配置，请稍后重试");
+  }
+  if (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE) {
+    return invokeClaudeDistill(params);
   }
   if (params.modelName === KNOWLEDGE_CARD_DISTILL_MODEL_KIMI) {
     return invokeOpenRouterKimiDistill(params);
@@ -642,15 +746,16 @@ async function invokeDistillLlm(params: {
   return invokeEvolinkDistill({ ...params, modelName: KNOWLEDGE_CARD_DISTILL_MODEL_SOL });
 }
 
-/** 提练无法靠重试救回的错（额度/配置/通道），不必再退避。 */
+/** 提炼无法靠重试救回的错（额度/配置/通道），不必再退避。 */
 function isFatalDistillError(message: string): boolean {
-  return /额度不足|通道不可用|未配置|请先输入|未能从文件/.test(message);
+  // 401/403/安全拒答/未配置是确定性失败：重试+递归细切只会放大请求量
+  return /额度不足|通道不可用|未配置|请先输入|未能从文件|HTTP 40[13]|安全分类器拒答/.test(message);
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * 单段提练：失败退避重试，仍失败则把该段对半细切分别提再拼。
+ * 单段提炼：失败退避重试，仍失败则把该段对半细切分别提再拼。
  * 用户口径：个别失败的重新提炼，然后合并写框（不接受半途整批废）。
  */
 async function distillOneChunkWithRetry(params: {
@@ -737,10 +842,10 @@ function buildRefineSystem(
 
   const head =
     stage === "final"
-      ? `你是知识卡片内容主编。下面这份 Markdown 由同一份长文档**分段提练后机械拼接**而成，段与段之间重复、粒度不齐、缺少全局主线。请把它**精选统稿**成一份连贯的疏朗知识卡片 Markdown。
+      ? `你是知识卡片内容主编。下面这份 Markdown 由同一份长文档**分段提炼后机械拼接**而成，段与段之间重复、粒度不齐、缺少全局主线。请把它**精选统稿**成一份连贯的疏朗知识卡片 Markdown。
 
 这一步是**取舍**，不是誊抄：读者要靠这份卡片在几分钟内读懂整份文档讲了什么、关键结论是什么、怎么用。`
-      : `你是知识卡片内容主编。下面这份 Markdown 是一份长文档若干相邻章节的提练稿拼接，小节偏多、粒度不齐、彼此重复。请**合并同类、只留最值得记住的重点**，压缩成更少的小节，供后续统稿使用。`;
+      : `你是知识卡片内容主编。下面这份 Markdown 是一份长文档若干相邻章节的提炼稿拼接，小节偏多、粒度不齐、彼此重复。请**合并同类、只留最值得记住的重点**，压缩成更少的小节，供后续统稿使用。`;
 
   const mainline =
     stage === "final"
@@ -771,7 +876,7 @@ function countMarkdownSections(md: string): number {
 }
 
 /**
- * 按 `##` 边界把提练稿分成 groupCount 组（组内保持原顺序，长度尽量均匀）。
+ * 按 `##` 边界把提炼稿分成 groupCount 组（组内保持原顺序，长度尽量均匀）。
  * 用于统稿前的中间归并：一次喂不完就分组各自压缩。
  */
 function groupMarkdownSections(md: string, groupCount: number): string[] {
@@ -794,7 +899,7 @@ function groupMarkdownSections(md: string, groupCount: number): string[] {
   return out.filter(Boolean);
 }
 
-/** 单次统稿；失败或结构崩塌则原样退回输入，绝不因这一步丢掉已提练内容。 */
+/** 单次统稿；失败或结构崩塌则原样退回输入，绝不因这一步丢掉已提炼内容。 */
 async function refineOnce(params: {
   body: string;
   modelName: KnowledgeCardDistillModelId;
@@ -1023,9 +1128,9 @@ export type PrepareKnowledgeCardCopyResult = {
 };
 
 /**
- * 合并文本框 + 上传 → OCR/提练 → 可分页 Markdown。
- * 短贴文且无上传：跳过提练。
- * 长书（>~12k 字）后台分段提练再合并；产品面仍是一次上传自动写框。
+ * 合并文本框 + 上传 → OCR/提炼 → 可分页 Markdown。
+ * 短贴文且无上传：跳过提炼。
+ * 长书（>~12k 字）后台分段提炼再合并；产品面仍是一次上传自动写框。
  */
 export async function prepareKnowledgeCardCopy(input: {
   sourceText?: string;
@@ -1084,7 +1189,7 @@ export async function prepareKnowledgeCardCopy(input: {
       onProgress: input.onProgress,
     });
     if (mergedRaw.length >= 8000 && distilled.length < Math.min(800, mergedRaw.length * 0.02)) {
-      throw new Error("提练结果过短，疑似过度压缩，请重试");
+      throw new Error("提炼结果过短，疑似过度压缩，请重试");
     }
     return {
       distilledMarkdown: distilled,
