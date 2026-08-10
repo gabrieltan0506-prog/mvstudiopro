@@ -291,6 +291,10 @@ type Props = {
   onStandardizeCustomAsset?: (id: string, quality: ManhuaAssetStandardizeQuality) => void | Promise<void>;
   assetStandardizeBusyId?: string | null;
   onRemoveCustomAsset?: (id: string) => void;
+  /** 一键清空全部参考图（清了重导资产包用）；带确认 */
+  onClearAllCustomAssets?: () => void;
+  /** 删除本集设定图画廊里的一张（画布块）；可随时重出，不扣费 */
+  onRemoveEpisodeSheet?: (blockId: string) => void;
   /** 段意图写回可拍表（工作台编辑） */
   onSegmentIntentChange?: (segmentIndex: number, intentZh: string) => void;
   /** 段出场角色写回可拍表（工作台编辑） */
@@ -551,6 +555,8 @@ export default function ManhuaScriptWorkbench({
   onStandardizeCustomAsset,
   assetStandardizeBusyId = null,
   onRemoveCustomAsset,
+  onClearAllCustomAssets,
+  onRemoveEpisodeSheet,
   onSegmentIntentChange,
   onSegmentCastChange,
   deliveryPackage = null,
@@ -623,6 +629,35 @@ export default function ManhuaScriptWorkbench({
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      return next;
+    });
+  };
+  /** 待生成虚线卡折条：默认收起（26 张铺满一屏太吵），点「展开补图」再出卡 */
+  const [pendingOpenKinds, setPendingOpenKinds] = useState<ReadonlySet<string>>(new Set());
+  const togglePendingOpen = (kind: string) => {
+    setPendingOpenKinds((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  };
+  /** 简洁模式（默认开）：说明性灰色小字与低频控件收起；「显示说明」随时展开 */
+  const [compactUi, setCompactUi] = useState(() => {
+    try {
+      return window.localStorage.getItem("manhua_compact_ui") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleCompactUi = () => {
+    setCompactUi((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem("manhua_compact_ui", next ? "1" : "0");
+      } catch {
+        /* 无痕模式没 localStorage 也不影响本次会话 */
+      }
       return next;
     });
   };
@@ -1854,11 +1889,11 @@ export default function ManhuaScriptWorkbench({
     <div
       id="manhua-workbench-shell"
       data-manhua-layout={immersive ? "immersive-3col" : "card-3col"}
-      className={
+      className={`${compactUi ? "mh-compact " : ""}${
         immersive
           ? "flex h-full min-h-0 w-full flex-col overflow-hidden bg-[#0a0d14]"
           : "mt-1 flex h-[calc(100dvh-5.75rem)] min-h-[620px] w-full min-w-[1180px] flex-col overflow-hidden rounded-xl border border-white/12 bg-[#0a0d14] shadow-[0_12px_48px_rgba(0,0,0,0.45)]"
-      }
+      }`}
     >
       {/* 顶栏 */}
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-1.5 md:px-4">
@@ -2049,6 +2084,14 @@ export default function ManhuaScriptWorkbench({
                   清除导演板
                 </button>
               ) : null}
+              <button
+                type="button"
+                onClick={toggleCompactUi}
+                title={compactUi ? "展开全部说明小字与低频控件" : "收起说明小字，界面更清爽"}
+                className="rounded-lg border border-white/15 bg-white/[0.04] px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.08]"
+              >
+                {compactUi ? "显示说明" : "简洁模式"}
+              </button>
               <button
                 type="button"
                 data-manhua-action="generate-fragment"
@@ -2724,7 +2767,7 @@ export default function ManhuaScriptWorkbench({
                     </span>
                   ) : null}
                 </div>
-                <p className="mt-0.5 text-[10px] leading-4 text-white/45">
+                <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/45">
                   角色定妆、场景空镜、关键道具分栏；点缩略图定位画布，点虚线卡补这一张。生成后同步进下方「我的角色
                   / 我的场景 / 我的道具」。
                 </p>
@@ -2866,7 +2909,7 @@ export default function ManhuaScriptWorkbench({
                             ))}
                         </div>
                       ) : (
-                        <p className="text-[10px] text-white/40">
+                        <p className="mh-hint text-[10px] text-white/40">
                           库里还没有同类可用的匿名资产，先用「按描述重画」。
                         </p>
                       )}
@@ -3012,6 +3055,16 @@ export default function ManhuaScriptWorkbench({
                                   key={item.id}
                                   className="group relative w-[88px] overflow-hidden rounded-lg border border-emerald-300/35 bg-black/40 hover:border-emerald-200/60"
                                 >
+                                  {onRemoveEpisodeSheet ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => onRemoveEpisodeSheet(item.id)}
+                                      title={`删除「${item.labelZh}」这张设定图（可随时重出，不扣费）`}
+                                      className="absolute right-1 top-1 z-[2] flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-[13px] leading-none text-rose-200 hover:bg-rose-500/70 hover:text-white"
+                                    >
+                                      ×
+                                    </button>
+                                  ) : null}
                                   <button
                                     type="button"
                                     data-manhua-sheet-id={item.id}
@@ -3066,7 +3119,25 @@ export default function ManhuaScriptWorkbench({
                                 </div>
                               );
                             })}
-                            {pending.map((p) => (
+                            {pending.length ? (
+                              <div className="flex w-full flex-wrap items-center gap-2 rounded-lg border border-dashed border-amber-300/45 bg-amber-500/[0.07] px-2.5 py-1.5">
+                                <span className="text-[10px] font-semibold text-amber-100/90">
+                                  待生成 {pending.length}
+                                </span>
+                                <span className="min-w-0 flex-1 truncate text-[9px] text-amber-100/55">
+                                  {pending.slice(0, 8).map((p) => p.nameZh).join("、")}
+                                  {pending.length > 8 ? "…" : ""}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => togglePendingOpen(sec.kind)}
+                                  className="rounded border border-amber-300/50 px-2 py-0.5 text-[10px] font-semibold text-amber-100 hover:bg-amber-500/25"
+                                >
+                                  {pendingOpenKinds.has(sec.kind) ? "收起" : "展开补图"}
+                                </button>
+                              </div>
+                            ) : null}
+                            {(pendingOpenKinds.has(sec.kind) ? pending : []).map((p) => (
                               <button
                                 key={p.anchorId}
                                 type="button"
@@ -3097,7 +3168,7 @@ export default function ManhuaScriptWorkbench({
                             ))}
                           </div>
                         ) : (
-                          <p className="mt-1 text-[10px] text-white/35">{sec.emptyZh}</p>
+                          <p className="mh-hint mt-1 text-[10px] text-white/35">{sec.emptyZh}</p>
                         )}
                       </div>
                     );
@@ -3132,7 +3203,7 @@ export default function ManhuaScriptWorkbench({
                 </>
               ) : (
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                  <p className="text-[10px] text-white/40">
+                  <p className="mh-hint text-[10px] text-white/40">
                     尚未出设定图。点「生成全部」（或底栏同名按钮）；也可到下方分区上传参考。
                   </p>
                   <button
@@ -3164,7 +3235,7 @@ export default function ManhuaScriptWorkbench({
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <div className="text-[11px] font-semibold text-violet-50/95">当前出演人物</div>
-                  <p className="mt-0.5 text-[10px] leading-4 text-white/45">
+                  <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/45">
                     默认以剧本人物表为准自动出设定图；库内点选仅为可选参考。古装线显示造型原型。
                   </p>
                 </div>
@@ -3240,7 +3311,7 @@ export default function ManhuaScriptWorkbench({
                   <div className="text-[11px] font-semibold text-cyan-50/90">
                     本集出场对照
                   </div>
-                  <p className="mt-0.5 text-[10px] leading-4 text-white/45">
+                  <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/45">
                     人名与场景会跟垫图一一对应。关键静帧请先挂上参考图，再出成片。
                   </p>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -3284,7 +3355,7 @@ export default function ManhuaScriptWorkbench({
                       <div className="text-[10px] font-semibold text-amber-50/90">
                         定妆特写·随身道具
                       </div>
-                      <p className="mt-0.5 text-[10px] leading-4 text-white/40">
+                      <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/40">
                         特写道具会挂到对应人物定妆上，换集时请保持同一套。
                       </p>
                       <div className="mt-1 flex flex-wrap gap-1">
@@ -3305,7 +3376,7 @@ export default function ManhuaScriptWorkbench({
                     <div className="text-[10px] font-semibold text-emerald-50/90">
                       角色声线参考（可选）
                     </div>
-                    <p className="mt-0.5 text-[10px] leading-4 text-white/40">
+                    <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/40">
                       有参考音更稳，没有也能先出片。语音与配乐之后还能改；同框最多 3 人带声。
                     </p>
                     {characterVoiceLocks.length ? (
@@ -3331,7 +3402,7 @@ export default function ManhuaScriptWorkbench({
                         ))}
                       </div>
                     ) : (
-                      <p className="mt-1 text-[10px] text-white/35">尚未挂声线</p>
+                      <p className="mh-hint mt-1 text-[10px] text-white/35">尚未挂声线</p>
                     )}
                     {onExtractCharacterVoice ? (
                       <div className="mt-1.5 flex flex-wrap gap-1">
@@ -3388,7 +3459,7 @@ export default function ManhuaScriptWorkbench({
                       <div className="text-[10px] font-semibold text-sky-50/90">
                         参考音频（BGM / 对白口音）· 可选
                       </div>
-                      <p className="mt-0.5 text-[10px] leading-4 text-white/40">
+                      <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/40">
                         软参考，不硬锁、不挡出片：填背景音乐与对白口音基准，成片配乐/口音尽量对齐；后期还能改。角色专属音色仍用上方「角色声线参考」。
                       </p>
                       <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -3494,7 +3565,7 @@ export default function ManhuaScriptWorkbench({
                             : ""}
                         </span>
                       </label>
-                      <p className="mt-1 text-[10px] leading-4 text-white/40">
+                      <p className="mh-hint mt-1 text-[10px] leading-4 text-white/40">
                         {assetShareBilling?.noticeZh ||
                           "勾选后本单半价并匿名进参考库；兑换码赠送积分不享半价，生成后仍无条件进库。成片与分镜静帧不享受半价。"}
                       </p>
@@ -3569,7 +3640,7 @@ export default function ManhuaScriptWorkbench({
                           {sec.titleZh}
                           <span className="ml-1 font-normal text-white/40">· {refs.length}</span>
                         </div>
-                        <p className="mt-0.5 text-[10px] leading-4 text-white/45">{sec.hintZh}</p>
+                        <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/45">{sec.hintZh}</p>
                       </div>
                       <div className="flex flex-wrap gap-1.5">
                         {onUploadCustomAssets ? (
@@ -3818,7 +3889,7 @@ export default function ManhuaScriptWorkbench({
                                   );
                                 })}
                               </div>
-                              {onCustomAssetDutyChange ? (
+                              {onCustomAssetDutyChange && !compactUi ? (
                                 <label
                                   className="flex flex-col gap-0.5 text-[9px] text-white/40"
                                   title="成片时这张垫图锁什么：人物默认锁脸、场景默认锁场；可手改"
@@ -3857,11 +3928,32 @@ export default function ManhuaScriptWorkbench({
                         })}
                       </div>
                     ) : (
-                      <p className="mt-2 text-[10px] text-white/35">本栏尚无参考图。</p>
+                      <p className="mh-hint mt-2 text-[10px] text-white/35">本栏尚无参考图。</p>
                     )}
                   </div>
                 );
               })}
+              {onClearAllCustomAssets && customAssetRefs.length > 0 ? (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          `一键清空全部 ${customAssetRefs.length} 张参考图？清完可重新导入资产包，一次导干净。`,
+                        )
+                      )
+                        return;
+                      onClearAllCustomAssets();
+                      setSelectedAssetIds(new Set());
+                    }}
+                    className="rounded-lg border border-rose-300/40 bg-rose-500/10 px-3 py-1.5 text-[11px] font-semibold text-rose-100 hover:bg-rose-500/25"
+                    title="清空我的角色/场景/服装/道具全部参考图；本机草稿会同步保存"
+                  >
+                    一键清空参考图（{customAssetRefs.length}）
+                  </button>
+                </div>
+              ) : null}
               {selectedAssetIds.size > 0 && onRemoveCustomAsset ? (
                 <div className="sticky bottom-2 z-[5] flex items-center gap-2 rounded-xl border border-rose-300/40 bg-[#150d13]/95 px-3 py-2 backdrop-blur">
                   <span className="text-[11px] font-semibold text-rose-100">
@@ -3896,7 +3988,7 @@ export default function ManhuaScriptWorkbench({
                   <div className="text-[11px] font-semibold text-white/70">
                     待归类（老草稿迁移）
                   </div>
-                  <p className="mt-0.5 text-[10px] text-white/40">
+                  <p className="mh-hint mt-0.5 text-[10px] text-white/40">
                     上传入口已统一为先选分类，这里只是老草稿留下的未归类图；
                     请点人物 / 场景 / 服装 / 道具归入对应栏，或直接删除——未归类不进融图。
                   </p>
@@ -3962,7 +4054,7 @@ export default function ManhuaScriptWorkbench({
                 <div className="text-[11px] font-semibold text-rose-50/90">
                   造型套（每人最多 {MANHUA_LOOK_SETS_PER_CHARACTER_MAX} 套）
                 </div>
-                <p className="mt-0.5 text-[10px] leading-4 text-white/45">
+                <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/45">
                   妆造/服装挂进套后，分镜里按段手选启用；换装改套，不改 @角色 脸号。网址不展示。
                 </p>
                 <div className="mt-2 space-y-2">
@@ -4054,7 +4146,7 @@ export default function ManhuaScriptWorkbench({
                 className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3"
               >
                 <div className="text-[11px] font-semibold text-white/75">成片画风（自选，不硬套）</div>
-                <p className="mt-0.5 text-[10px] text-white/40">
+                <p className="mh-hint mt-0.5 text-[10px] text-white/40">
                   仿真人 / CG 漫剧均可；影响静帧与成片，与角色库底栏同步。
                 </p>
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -4090,7 +4182,7 @@ export default function ManhuaScriptWorkbench({
                 className="mt-3 rounded-xl border border-amber-400/25 bg-amber-500/[0.07] p-3"
               >
                 <div className="text-[11px] font-semibold text-amber-50/95">剧本表 · 系列资产</div>
-                <p className="mt-0.5 text-[10px] leading-4 text-white/45">
+                <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/45">
                   人物 {assetCanon?.characters.length || 0} · 道具 {assetCanon?.props.length || 0} ·
                   场景池 {assetCanon?.locations.length || 0}
                   {episodeMainScene
@@ -5209,7 +5301,7 @@ export default function ManhuaScriptWorkbench({
                   );
                 })}
               </div>
-              <p className="mt-2 text-[10px] leading-snug text-white/35">
+              <p className="mh-hint mt-2 text-[10px] leading-snug text-white/35">
                 确认简报 → 静帧锁脸服场 → 审阅段成片提示词 → 本段一轮成片吃多镜表演；改台词只重出本段，勿整集重烧。
               </p>
               {clipPromptReviewOpen ? (
@@ -5442,13 +5534,13 @@ export default function ManhuaScriptWorkbench({
                 }}
                 onReorder={setRoughShotOrder}
               />
-              <p className="mt-2 text-[10px] leading-snug text-white/35">
+              <p className="mh-hint mt-2 text-[10px] leading-snug text-white/35">
                 粗剪排序；剪辑阶段可细剪、字幕、质检返工，并勾选进成片坞。
               </p>
             </div>
           ) : (
             <div className="mt-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-0.5">
-              <p className="text-[10px] leading-snug text-white/45">
+              <p className="mh-hint text-[10px] leading-snug text-white/45">
                 预设运镜配方（文字描述，交模型解读；不再靠手绘轨迹）
               </p>
               {onPathRecipeIdChange ? (
@@ -5761,7 +5853,7 @@ export default function ManhuaScriptWorkbench({
             (clipQuality?.status === "failed" &&
               /文字|设定卡|姓名条|字幕|重出静帧/.test(clipQuality.summary || ""))) &&
           onRerunKeyartsFromReverse ? (
-            <p className="mt-1.5 shrink-0 text-[10px] leading-snug text-white/40">
+            <p className="mh-hint mt-1.5 shrink-0 text-[10px] leading-snug text-white/40">
               静帧不对（穿错时代/没进场景/带字）→ 顶栏点
               <button
                 type="button"
