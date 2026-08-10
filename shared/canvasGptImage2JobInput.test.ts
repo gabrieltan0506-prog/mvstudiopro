@@ -18,9 +18,15 @@ describe("buildCanvasGptImage2JobInput", () => {
   });
 
   it("带上生图分道（设定图走另一把密钥）", () => {
-    const asset = buildCanvasGptImage2JobInput({ prompt: "角色定妆", imageLane: "asset" });
+    const asset = buildCanvasGptImage2JobInput({
+      prompt: "角色定妆",
+      imageLane: "asset",
+    });
     expect(asset.params.imageLane).toBe("asset");
-    const bad = buildCanvasGptImage2JobInput({ prompt: "静帧", imageLane: "video" });
+    const bad = buildCanvasGptImage2JobInput({
+      prompt: "静帧",
+      imageLane: "video",
+    });
     expect(bad.params.imageLane).toBeUndefined();
   });
 
@@ -28,7 +34,10 @@ describe("buildCanvasGptImage2JobInput", () => {
     const input = buildCanvasGptImage2JobInput({
       prompt: "edit",
       referenceImageUrl: "https://a.example/x.png",
-      referenceImageUrls: ["https://a.example/x.png", "https://b.example/y.png"],
+      referenceImageUrls: [
+        "https://a.example/x.png",
+        "https://b.example/y.png",
+      ],
       maskUrl: "https://a.example/mask.png",
     });
     expect(input.params.referenceImageUrls).toEqual([
@@ -37,5 +46,17 @@ describe("buildCanvasGptImage2JobInput", () => {
     ]);
     expect(input.params.generalImageEdit).toBe(true);
     expect(input.params.maskUrl).toBe("https://a.example/mask.png");
+  });
+
+  it("资产标准化只携带有效档位与追账 ref id", () => {
+    const input = buildCanvasGptImage2JobInput({
+      prompt: "整理为人物资产照",
+      referenceImageUrls: ["https://a.example/person.png"],
+      assetStandardizeQuality: "high",
+      assetRefId: " imported-character-1 ",
+    });
+    expect(input.params.assetStandardizeQuality).toBe("high");
+    expect(input.params.assetRefId).toBe("imported-character-1");
+    expect(input.params.generalImageEdit).toBe(true);
   });
 });

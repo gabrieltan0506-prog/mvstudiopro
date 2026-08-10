@@ -5,6 +5,7 @@
  */
 
 import { normalizeOpenAiImageLane, type OpenAiImageLane } from "./openaiImageLane.js";
+import type { ManhuaAssetStandardizeQuality } from "./manhuaAssetStandardize.js";
 
 export type CanvasGptImage2ProviderOverride = "openai" | "openrouter" | "auto";
 
@@ -28,6 +29,9 @@ export type CanvasGptImage2JobParams = {
   chargeOnServer?: boolean;
   /** 批量出图里的第几张（0-based）：第 2 张起走批量价 */
   batchIndex?: number;
+  /** 用户明确点选的漫剧导入资产标准化；服务端固定 GPT-image-2 edit 并按 3/5 积分结算。 */
+  assetStandardizeQuality?: ManhuaAssetStandardizeQuality;
+  assetRefId?: string;
 };
 
 export function buildCanvasGptImage2JobInput(params: {
@@ -42,6 +46,8 @@ export function buildCanvasGptImage2JobInput(params: {
   imageLane?: OpenAiImageLane | string;
   chargeOnServer?: boolean;
   batchIndex?: number;
+  assetStandardizeQuality?: ManhuaAssetStandardizeQuality;
+  assetRefId?: string;
 }): {
   action: "canvas_gpt_image2";
   params: CanvasGptImage2JobParams;
@@ -67,6 +73,10 @@ export function buildCanvasGptImage2JobInput(params: {
   const generalImageEdit =
     Boolean(params.generalImageEdit) || referenceImageUrls.length > 0;
   const imageLane = normalizeOpenAiImageLane(params.imageLane);
+  const assetStandardizeQuality =
+    params.assetStandardizeQuality === "high" || params.assetStandardizeQuality === "medium"
+      ? params.assetStandardizeQuality
+      : undefined;
 
   return {
     action: "canvas_gpt_image2",
@@ -80,6 +90,10 @@ export function buildCanvasGptImage2JobInput(params: {
       ...(imageLane ? { imageLane } : {}),
       ...(params.chargeOnServer ? { chargeOnServer: true } : {}),
       ...(Number(params.batchIndex) > 0 ? { batchIndex: Math.floor(Number(params.batchIndex)) } : {}),
+      ...(assetStandardizeQuality ? { assetStandardizeQuality } : {}),
+      ...(assetStandardizeQuality && String(params.assetRefId || "").trim()
+        ? { assetRefId: String(params.assetRefId).trim().slice(0, 100) }
+        : {}),
       gcsSubdir: String(params.gcsSubdir || "").trim() || "canvas-gpt-image2",
     },
   };

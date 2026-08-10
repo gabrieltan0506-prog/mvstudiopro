@@ -117,6 +117,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
   characterLookSets?: ManhuaCharacterLookSet[] | null;
 }): ManhuaAssetLockRegistry {
   const draft: ManhuaAssetLockSlot[] = [];
+  const consumableRefs = (opts?.customRefs || []).filter((r) => r.reviewStatus !== "needs_review");
 
   const pushRole = (
     role: ManhuaCustomAssetRole,
@@ -150,7 +151,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
   };
 
   // 上传与本集生成的人物垫图都进锁（生成图也是可用 HTTPS）
-  const customChars = customRefsByRole(opts?.customRefs, "character");
+  const customChars = customRefsByRole(consumableRefs, "character");
   for (const c of customChars) {
     pushRole(
       "character",
@@ -175,7 +176,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
   }
 
   // 上传 + 本集生成的场景图都进锁；有自有图时不再塞库内皇宫大殿示范
-  const customScenes = customRefsByRole(opts?.customRefs, "scene");
+  const customScenes = customRefsByRole(consumableRefs, "scene");
   for (const c of customScenes) {
     pushRole(
       "scene",
@@ -195,7 +196,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
     }
   }
 
-  const customProps = customRefsByRole(opts?.customRefs, "prop");
+  const customProps = customRefsByRole(consumableRefs, "prop");
   for (const c of customProps) {
     pushRole(
       "prop",
@@ -215,7 +216,7 @@ export function buildManhuaAssetLockRegistry(opts?: {
     }
   }
 
-  const customWardrobes = customRefsByRole(opts?.customRefs, "wardrobe");
+  const customWardrobes = customRefsByRole(consumableRefs, "wardrobe");
   for (const c of customWardrobes) {
     pushRole(
       "wardrobe",

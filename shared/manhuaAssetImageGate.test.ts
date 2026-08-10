@@ -464,6 +464,52 @@ describe("manhuaAssetImageGate", () => {
     expect(shen).toHaveLength(1);
     expect(shen[0]?.layout).toBe("heroLook");
   });
+
+  it("只硬挡本集出场人物与主场景；边角场景和隔离图不冒充可用资产", () => {
+    const assetCanon = {
+      characters: [
+        { id: "char_a", role: "character" as const, nameZh: "阿咎", lookZh: "灰衣少年", promptZh: "阿咎" },
+        { id: "char_b", role: "character" as const, nameZh: "韩镜", lookZh: "黑甲将军", promptZh: "韩镜" },
+      ],
+      props: [],
+      locations: [
+        { id: "scene_main", role: "scene" as const, nameZh: "火头军灶房", lookZh: "灶火", promptZh: "灶房" },
+        { id: "scene_edge", role: "scene" as const, nameZh: "营外土路", lookZh: "泥路", promptZh: "土路" },
+      ],
+      episodeMainSceneId: { 1: "scene_main" },
+    };
+    const refs = [
+      {
+        id: "cust_a",
+        role: "character" as const,
+        url: "https://cdn.example/a.jpg",
+        claimedAnchorIds: ["char_a"],
+      },
+      {
+        id: "cust_main",
+        role: "scene" as const,
+        url: "https://cdn.example/main.jpg",
+        claimedAnchorIds: ["scene_main"],
+      },
+    ];
+    const ready = evaluateManhuaAssetImageGate({
+      assetCanon,
+      episodeIndex: 1,
+      episodes: [{ index: 1, body: "阿咎在火头军灶房生火。" }],
+      customRefs: refs,
+    });
+    expect(ready.ready).toBe(true);
+
+    const quarantined = evaluateManhuaAssetImageGate({
+      assetCanon,
+      episodeIndex: 1,
+      episodes: [{ index: 1, body: "阿咎在火头军灶房生火。" }],
+      customRefs: refs.map((ref) =>
+        ref.id === "cust_main" ? { ...ref, reviewStatus: "needs_review" as const } : ref,
+      ),
+    });
+    expect(quarantined.ready).toBe(false);
+  });
 });
 
 /**

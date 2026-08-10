@@ -50,6 +50,7 @@ import {
 } from "@shared/manhuaAssetImageGate";
 import {
   resolveEpisodeMainScene,
+  type ManhuaWriterAssetAnchor,
   type ManhuaWriterAssetCanon,
 } from "@shared/manhuaWriterAssetCanon";
 import {
@@ -61,6 +62,7 @@ import {
   type ManhuaCustomAssetRefDuty,
   type ManhuaCustomAssetRole,
 } from "@shared/manhuaCustomAssetRefs";
+import { customAssetRefClaimsAnchor } from "@shared/manhuaAssetScriptSync";
 import {
   MANHUA_ASSET_REGEN_NOTE_MAX,
   manhuaAssetRegenPriceLabelZh,
@@ -71,6 +73,7 @@ import type { ManhuaDeliveryPackage } from "@shared/manhuaDeliveryPackage";
 import { syncDeliveryPackageSubtitleEnabled } from "@shared/manhuaDeliveryPackage";
 import type { ManhuaCineVocabLocale } from "@shared/manhuaCineVocabBank";
 import type { ManhuaRetakeVariable } from "@shared/manhuaDirectingWorkflow";
+import type { ManhuaAssetStandardizeQuality } from "@shared/manhuaAssetStandardize";
 import { MANHUA_REF_DUTIES } from "@shared/manhuaDirectingWorkflow";
 import {
   areManhuaKeyartsPixelLocked,
@@ -282,6 +285,11 @@ type Props = {
   onCustomAssetDutyChange?: (id: string, duty: ManhuaCustomAssetRefDuty | null) => void;
   /** 手动改名：改成与剧本表一致的名字即被认领（自动识别不追求 100%） */
   onCustomAssetLabelChange?: (id: string, labelZh: string) => void;
+  /** 明确认领稳定锚点；场景允许一图多选，替代用显示名猜主键。 */
+  onCustomAssetClaimsChange?: (id: string, anchorIds: string[]) => void;
+  onCustomAssetReviewAccept?: (id: string) => void;
+  onStandardizeCustomAsset?: (id: string, quality: ManhuaAssetStandardizeQuality) => void | Promise<void>;
+  assetStandardizeBusyId?: string | null;
   onRemoveCustomAsset?: (id: string) => void;
   /** 段意图写回可拍表（工作台编辑） */
   onSegmentIntentChange?: (segmentIndex: number, intentZh: string) => void;
@@ -538,6 +546,10 @@ export default function ManhuaScriptWorkbench({
   onCustomAssetRoleChange,
   onCustomAssetDutyChange,
   onCustomAssetLabelChange,
+  onCustomAssetClaimsChange,
+  onCustomAssetReviewAccept,
+  onStandardizeCustomAsset,
+  assetStandardizeBusyId = null,
   onRemoveCustomAsset,
   onSegmentIntentChange,
   onSegmentCastChange,
@@ -1264,16 +1276,18 @@ export default function ManhuaScriptWorkbench({
    */
   const pendingSheetAnchors = useMemo(() => {
     if (!assetCanon) return [] as ManhuaPendingSheetAnchor[];
-    const hasImage = (anchorId: string, kind: ManhuaCanonSheetKind) =>
-      episodeSheetGallery.some((g) => g.kind === kind && g.id.includes(anchorId)) ||
-      customAssetRefs.some(
-        (r) =>
-          String(r.seedLibraryId || "") === anchorId &&
-          /^https:\/\//i.test(String(r.url || "")),
-      );
+    const hasImage = (
+      anchor: ManhuaWriterAssetCanon["characters"][number],
+      kind: ManhuaCanonSheetKind,
+    ) =>
+      episodeSheetGallery.some((g) => g.kind === kind && g.id.includes(anchor.id)) ||
+      customAssetRefs.some((r) => {
+        const role = kind === "charsheet" ? "character" : kind === "sceneplate" ? "scene" : "prop";
+        return r.role === role && /^https:\/\//i.test(String(r.url || "")) && customAssetRefClaimsAnchor(r, anchor);
+      });
     const out: ManhuaPendingSheetAnchor[] = [];
     for (const c of assetCanon.characters) {
-      if (hasImage(c.id, "charsheet")) continue;
+      if (hasImage(c, "charsheet")) continue;
       out.push({
         anchorId: c.id,
         kind: "charsheet",
@@ -1282,7 +1296,7 @@ export default function ManhuaScriptWorkbench({
       });
     }
     for (const l of assetCanon.locations) {
-      if (hasImage(l.id, "sceneplate")) continue;
+      if (hasImage(l, "sceneplate")) continue;
       out.push({
         anchorId: l.id,
         kind: "sceneplate",
@@ -1294,7 +1308,7 @@ export default function ManhuaScriptWorkbench({
     for (const p of (assetCanon.props || [])
       .filter(shouldSpawnManhuaPropPlate)
       .slice(0, MANHUA_PROP_SHEET_MAX)) {
-      if (hasImage(p.id, "propsheet")) continue;
+      if (hasImage(p, "propsheet")) continue;
       if (
         customAssetRefs.some(
           (r) =>
@@ -3607,6 +3621,14 @@ export default function ManhuaScriptWorkbench({
                           const lockTag =
                             assetLockRegistry.slots.find((s) => s.path === ref.url)?.tag ||
                             assetLockRegistry.byRole[sec.role].find((s) => s.id === ref.id)?.tag;
+                          const claimOptions: ManhuaWriterAssetAnchor[] =
+                            ref.role === "character"
+                              ? assetCanon?.characters || []
+                              : ref.role === "scene"
+                                ? assetCanon?.locations || []
+                                : ref.role === "prop"
+                                  ? assetCanon?.props || []
+                                  : [];
                           return (
                           <div
                             key={ref.id}
@@ -3634,6 +3656,40 @@ export default function ManhuaScriptWorkbench({
                               loading="lazy"
                             />
                             <div className="space-y-1.5 p-2">
+                              {ref.reviewStatus === "needs_review" ? (
+                                <div className="rounded border border-amber-400/35 bg-amber-500/10 p-1.5 text-[9px] text-amber-100">
+                                  <div>{(ref.qualityIssues || []).join("；") || "图片需人工确认"}</div>
+                                  {onCustomAssetReviewAccept ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => onCustomAssetReviewAccept(ref.id)}
+                                      className="mt-1 rounded bg-amber-300/20 px-1.5 py-0.5 font-medium hover:bg-amber-300/30"
+                                    >
+                                      确认原图可用
+                                    </button>
+                                  ) : null}
+                                  {onStandardizeCustomAsset ? (
+                                    <div className="mt-1 flex gap-1">
+                                      <button
+                                        type="button"
+                                        disabled={assetStandardizeBusyId != null}
+                                        onClick={() => void onStandardizeCustomAsset(ref.id, "medium")}
+                                        className="rounded bg-cyan-300/15 px-1.5 py-0.5 font-medium text-cyan-100 disabled:opacity-40"
+                                      >
+                                        {assetStandardizeBusyId === ref.id ? "处理中…" : "AI 标准化·3分"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={assetStandardizeBusyId != null}
+                                        onClick={() => void onStandardizeCustomAsset(ref.id, "high")}
+                                        className="rounded bg-violet-300/15 px-1.5 py-0.5 font-medium text-violet-100 disabled:opacity-40"
+                                      >
+                                        高质·5分
+                                      </button>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
                               {onCustomAssetLabelChange ? (
                                 <div
                                   className="flex items-center gap-1"
@@ -3668,6 +3724,42 @@ export default function ManhuaScriptWorkbench({
                                   {ref.source === "generated" ? " · 新生成" : " · 上传"}
                                 </div>
                               )}
+                              {onCustomAssetClaimsChange && claimOptions.length ? (
+                                <div className="space-y-1">
+                                  <select
+                                    value=""
+                                    onChange={(e) => {
+                                      const picked = e.target.value;
+                                      if (!picked) return;
+                                      const current = ref.claimedAnchorIds || [];
+                                      const next =
+                                        ref.role === "scene" || ref.role === "prop"
+                                          ? current.includes(picked)
+                                            ? current.filter((id) => id !== picked)
+                                            : [...current, picked]
+                                          : [picked];
+                                      onCustomAssetClaimsChange(ref.id, next);
+                                    }}
+                                    className="w-full rounded border border-white/10 bg-black/45 px-1 py-0.5 text-[9px] text-white/65"
+                                  >
+                                    <option value="">认领剧本资产…</option>
+                                    {claimOptions.map((anchor) => (
+                                      <option key={anchor.id} value={anchor.id}>
+                                        {(ref.claimedAnchorIds || []).includes(anchor.id) ? "✓ " : ""}{anchor.nameZh}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {(ref.claimedAnchorIds || []).length ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => onCustomAssetClaimsChange(ref.id, [])}
+                                      className="text-[9px] text-white/40 hover:text-white/65"
+                                    >
+                                      清除明确认领
+                                    </button>
+                                  ) : null}
+                                </div>
+                              ) : null}
                               <div className="flex flex-wrap gap-1">
                                 {MANHUA_CUSTOM_ASSET_ROLES.map((role) => {
                                   const on = ref.role === role;
