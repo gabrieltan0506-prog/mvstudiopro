@@ -78,6 +78,8 @@ export type CanvasVideoEngine =
   | "seedance25-evolink"
   /** Seedance 2.0 Mini 草稿档：EvoLink 单路径（OpenRouter 没有 mini） */
   | "seedance-mini-evolink"
+  /** Seedance 2.0 标准档·仿真人正向路由：真人照参考被 BytePlus/OpenRouter 拦，扣费前直切 EvoLink */
+  | "seedance20-evolink"
   /** WaveSpeed 字节视频超分（2K/4K）：复用同一套异步任务框架，入参走 upscale* 字段 */
   | "wavespeed-upscale";
 
@@ -239,7 +241,9 @@ function maxPollMs(engine: CanvasVideoEngine): number {
   if (engine === "seedance25-evolink" || engine === "seedance25-byteplus") {
     return Math.max(EVOLINK_SEEDANCE_MAX_POLL_MS, BYTEPLUS_SEEDANCE_MAX_POLL_MS);
   }
-  if (engine === "seedance-mini-evolink") return EVOLINK_SEEDANCE_MAX_POLL_MS;
+  if (engine === "seedance-mini-evolink" || engine === "seedance20-evolink") {
+    return EVOLINK_SEEDANCE_MAX_POLL_MS;
+  }
   if (engine === "wavespeed-upscale") return WAVESPEED_UPSCALE_MAX_POLL_MS;
   return OPENROUTER_VIDEO_MAX_POLL_MS;
 }
@@ -256,9 +260,13 @@ function hasProviderTask(task: CanvasVideoTaskRecord): boolean {
   );
 }
 
-/** 走 EvoLink 任务号轮询的引擎（2.5 与 Mini 共用同一套 submit/poll） */
+/** 走 EvoLink 任务号轮询的引擎（2.5 / Mini / 2.0 仿真人共用同一套 submit/poll） */
 function usesEvolinkTaskId(engine: CanvasVideoEngine): boolean {
-  return engine === "seedance25-evolink" || engine === "seedance-mini-evolink";
+  return (
+    engine === "seedance25-evolink"
+    || engine === "seedance-mini-evolink"
+    || engine === "seedance20-evolink"
+  );
 }
 
 function seedance25RunInput(task: CanvasVideoTaskRecord): EvolinkSeedanceRunInput {
@@ -300,6 +308,21 @@ async function submitSeedance25Evolink(task: CanvasVideoTaskRecord): Promise<voi
  * ——BytePlus ModelArk 没有 mini 型号，回落无处可落，失败就按失败退费。
  */
 async function submitSeedanceMiniEvolink(task: CanvasVideoTaskRecord): Promise<void> {
+  return submitSeedanceEvolinkVersioned(task, "2.0-mini");
+}
+
+/** 2.0 仿真人：标准/快速各按原档走 EvoLink 九模型（fast 有对应型号，不降不换档） */
+async function submitSeedance20Evolink(task: CanvasVideoTaskRecord): Promise<void> {
+  return submitSeedanceEvolinkVersioned(
+    task,
+    task.seedanceVersion === "2.0-fast" ? "2.0-fast" : "2.0",
+  );
+}
+
+async function submitSeedanceEvolinkVersioned(
+  task: CanvasVideoTaskRecord,
+  version: "2.0" | "2.0-fast" | "2.0-mini",
+): Promise<void> {
   const submitted = await submitEvolinkSeedanceVideo({
     prompt: task.prompt,
     imageUrl: task.imageUrl,
@@ -312,7 +335,7 @@ async function submitSeedanceMiniEvolink(task: CanvasVideoTaskRecord): Promise<v
     generateAudio: task.generateAudio,
     // 8-09 拍板值（放宽送审，EvoLink 不挡人脸是仿真人档的前提）；原先是三处硬编码 true 的死常量
     contentFilter: SEEDANCE_EVOLINK_CONTENT_FILTER,
-    version: "2.0-mini",
+    version,
   });
   task.evolinkTaskId = submitted.evolinkTaskId;
   task.model = submitted.model;
@@ -506,6 +529,11 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
 
   if (task.engine === "seedance-mini-evolink") {
     await submitSeedanceMiniEvolink(task);
+    return;
+  }
+
+  if (task.engine === "seedance20-evolink") {
+    await submitSeedance20Evolink(task);
     return;
   }
 

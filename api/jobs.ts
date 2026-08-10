@@ -1345,6 +1345,7 @@ async function runSeedance25EvolinkJob(
   const { resolveSeedance25CanvasEngine } = await import(
     "../server/services/canvasVideoTask.js"
   );
+  const { hasPhotorealReferenceUrl } = await import("../shared/photorealMediaSignal.js");
   const preferByteplus = isByteplusSeedanceConfigured();
   if (!preferByteplus && !isEvolinkSeedanceConfigured()) {
     return { ok: false, status: 503, error: "视频服务暂不可用，请稍后重试" };
@@ -1413,9 +1414,8 @@ async function runSeedance25EvolinkJob(
         userId: charged.userId,
         creditsCharged: charged.credits,
         engine: resolveSeedance25CanvasEngine(mode, {
-          photoreal: [imageUrl, ...imageUrls, ...videoUrls].some((u) =>
-            /\/photoreal\//i.test(String(u || "")),
-          ),
+          // 共享信号（覆盖 photoreal-age/、photoreal-gen/ 等派生路径），与 2.0 路由同口径
+          photoreal: hasPhotorealReferenceUrl([imageUrl, ...imageUrls, ...videoUrls]),
         }),
         label,
         prompt,
@@ -4502,23 +4502,46 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
            * —— 2K 照 388 收、照发上游，然后被 BytePlus 拒（实测：Supported values 里没有 2K）。
            * 先按引擎钳一次，再喂给 provider 的归一化，两层同源。
            */
+          /**
+           * 仿真人正向路由（2026-08-10）：真人照参考（photoreal 素材路径）在
+           * BytePlus/OpenRouter 必被拦，老路是撞一次失败再退费。现在扣费前就按
+           * 信号切 EvoLink（不拦真人脸；官方 2.0 九模型 standard/fast/mini 齐全）。
+           * 标准/快速各按原档交付计费，不换档不换价。
+           */
+          const { hasPhotorealReferenceUrl } = await import("../shared/photorealMediaSignal.js");
+          const { isEvolinkSeedanceConfigured } = await import(
+            "../server/services/evolinkSeedanceVideo.js"
+          );
+          const photorealToEvolink =
+            hasPhotorealReferenceUrl([imageUrl, ...(imageUrls || [])])
+            && isEvolinkSeedanceConfigured();
+
           const { resolveCanvasVideoResolution } = await import(
             "../shared/canvasGenerationPricing.js"
           );
+          const billingVideoModel =
+            productVersion === "2.0-fast"
+              ? ("seedance-2.0-fast" as const)
+              : ("seedance-2.0" as const);
           const requestedResolution = b.resolution || q.resolution || "720p";
           const effectiveResolution = resolveCanvasVideoResolution(
-            productVersion === "2.0-fast" ? "seedance-2.0-fast" : "seedance-2.0",
+            billingVideoModel,
             requestedResolution,
           );
-          const resolution = normalizeSeedanceOpenRouterQuality(
-            productVersion,
-            effectiveResolution,
-          );
+          // EvoLink 2.0 标准最高 1080p（fast 720p）：photoreal 下 4K 请求按最近档 1080p 交付并计费
+          const resolution = photorealToEvolink
+            ? normalizeSeedanceQuality(
+                productVersion === "2.0-fast" ? "2.0-fast" : "2.0",
+                /^4k$/i.test(String(effectiveResolution)) ? "1080p" : effectiveResolution,
+              )
+            : normalizeSeedanceOpenRouterQuality(productVersion, effectiveResolution);
           const duration = parseSeedanceDurationInput(
             b.duration ?? q.duration ?? b.durationSec ?? 15,
           );
           const durationSec = typeof duration === "number" ? duration : 15;
-          const label = `画布成片·${productVersion === "2.0-fast" ? "快速" : "标准"}·${resolution}（${durationSec}s）`;
+          const label = `画布成片·${productVersion === "2.0-fast" ? "快速" : "标准"}${
+            photorealToEvolink ? "·仿真人" : ""
+          }·${resolution}（${durationSec}s）`;
           // 探针仍走同步，方便脚本一次拿结果；正式用户走异步 task
           if (isProbe) {
             const charged = await chargeCanvasVideoAndRun(
@@ -4556,8 +4579,8 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             episodeIndex: b.episodeIndex,
             resolution,
             label,
-            // 不传 videoModel 的话按引擎钳制拿不到引擎，等于没钳
-            videoModel: productVersion === "2.0-fast" ? "seedance-2.0-fast" : "seedance-2.0",
+            // 不传 videoModel 的话按引擎钳制拿不到引擎，等于没钳；仿真人按标准 2.0 口径
+            videoModel: billingVideoModel,
           });
           if (!charged.ok) {
             return res.status(charged.status).json({ ok: false, error: charged.error });
@@ -4567,7 +4590,7 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             const task = await createCanvasVideoTask({
               userId: charged.userId,
               creditsCharged: charged.credits,
-              engine: "seedance-openrouter",
+              engine: photorealToEvolink ? "seedance20-evolink" : "seedance-openrouter",
               label,
               prompt,
               imageUrl,

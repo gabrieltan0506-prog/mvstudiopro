@@ -23,6 +23,13 @@ export const SEEDANCE_20_MODELS = {
   referenceToVideo: "seedance-2.0-reference-to-video",
 } as const;
 
+/** 快速档：EvoLink 官方 2.0 九模型之一（standard/fast/mini × t2v/i2v/r2v），此前一直没接 */
+export const SEEDANCE_20_FAST_MODELS = {
+  textToVideo: "seedance-2.0-fast-text-to-video",
+  imageToVideo: "seedance-2.0-fast-image-to-video",
+  referenceToVideo: "seedance-2.0-fast-reference-to-video",
+} as const;
+
 /** 廉价迭代档：草稿 / 探针优先；Mini 不支持 1080p */
 export const SEEDANCE_20_MINI_MODELS = {
   textToVideo: "seedance-2.0-mini-text-to-video",
@@ -53,7 +60,7 @@ export const SEEDANCE_25_MODELS = {
  */
 export const SEEDANCE_EVOLINK_CONTENT_FILTER = false as const;
 
-export type SeedanceEvolinkVersion = "2.0" | "2.0-mini" | "2.5";
+export type SeedanceEvolinkVersion = "2.0" | "2.0-fast" | "2.0-mini" | "2.5";
 export type SeedanceEvolinkMode =
   | "text_to_video"
   | "image_to_video"
@@ -130,7 +137,9 @@ export function resolveSeedanceModelId(
       ? SEEDANCE_25_MODELS
       : version === "2.0-mini"
         ? SEEDANCE_20_MINI_MODELS
-        : SEEDANCE_20_MODELS;
+        : version === "2.0-fast"
+          ? SEEDANCE_20_FAST_MODELS
+          : SEEDANCE_20_MODELS;
   if (mode === "video_edit") {
     if (version !== "2.5") throw new Error("视频编辑仅支持 Seedance 2.5");
     return SEEDANCE_25_MODELS.videoEdit;
@@ -153,13 +162,18 @@ export function clampSeedanceDuration(
       ? SEEDANCE_25_DURATION
       : version === "2.0-mini"
         ? SEEDANCE_20_MINI_DURATION
-        : SEEDANCE_20_DURATION;
+        : SEEDANCE_20_DURATION; // fast 档时长限制与标准 2.0 同表
   const n = Math.floor(Number(raw));
   if (!Number.isFinite(n)) return lim.default;
   return Math.min(lim.max, Math.max(lim.min, n));
 }
 
-/** Mini 仅 480p/720p；标准 2.0 可到 1080p */
+/**
+ * 上游档位忠实归一（官方 seedance-2.0-overview 完整参数表）：
+ * 标准与 Fast 都支持 480p/720p/1080p；Mini 仅 480p/720p；2.5 仅 480p/720p。
+ * 产品层卖不卖某档（如画布 fast 只卖 720p）由 canvasGenerationPricing 的价表钳制管，
+ * 这里不越权替产品砍档。
+ */
 export function normalizeSeedanceQuality(
   version: SeedanceEvolinkVersion,
   raw: unknown,
@@ -176,6 +190,7 @@ export function parseSeedanceVersion(raw: unknown): SeedanceEvolinkVersion {
   const v = String(raw || "2.0").trim().toLowerCase();
   if (v === "2.5" || v === "25") return "2.5";
   if (v === "2.0-mini" || v === "mini" || v === "2.0mini") return "2.0-mini";
+  if (v === "2.0-fast" || v === "fast" || v === "2.0fast") return "2.0-fast";
   return "2.0";
 }
 
