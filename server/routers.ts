@@ -8834,9 +8834,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 扣 {@link CREDIT_COSTS.platformOptimizeCustomCopy} 积分/次。
      */
     /**
-     * /canvas 编剧室连载扩写：三档自选（优秀/卓越/顶级），按集数计价。
+     * /canvas 编剧室连载扩写：四档自选，所有调用按集数计价。
      * 须先选定成片引擎（2.0 / 2.0-fast / 2.5），按选型铺段数与秒数。
-     * 免费额度口径同 `/platform`：头 3 次免费、之后每天 1 次免费；超出按档 × 集数扣点。
      */
     expandManhuaWriterPack: protectedProcedure
       .input(
@@ -8844,11 +8843,11 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           topic: z.string().max(500).optional(),
           brief: z.string().max(2000).optional(),
           episodeCount: z.number().int().min(2).max(6).optional(),
-          /** 引擎档位：优秀/卓越/顶级，仅前台展示档名 */
-          tier: z.enum(["excellent", "superb", "top"]).optional(),
-          /**
-           * @deprecated 节奏模板选择器已下线；字段保留避免旧前端 400，服务端忽略。
-           */
+          /** 引擎档位：前台只展示中文档名，不显示供应商或模型名。 */
+          tier: z.enum(["excellent", "superb", "top", "transcendent"]).optional(),
+          /** 一次用户动作一个 UUID；网络重试复用，用于原子幂等扣费。 */
+          requestId: z.string().uuid(),
+          /** 可选创作 Skill；服务端只接受 GCS approved 真卡片。 */
           viralTemplateId: z.string().max(64).optional(),
           /** 单集时长档位：90s 半强度 / 180s 全长（2.5 时由 videoModel 覆盖段表） */
           lengthTierId: z.string().max(32).optional(),
@@ -8870,7 +8869,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       )
       .mutation(async ({ ctx, input }) => {
         const userId = ctx.user.id;
-        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
         const topic = String(input.topic || "").trim();
         const brief = String(input.brief || "").trim();
         if (!topic && !brief) {
@@ -8888,38 +8886,55 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const { resolveManhuaSeedanceLayoutProfile } = await import(
           "../shared/manhuaSeedanceLayout.js"
         );
-        const { resolveManhuaWriterExpandQuota } = await import(
+        const { manhuaWriterExpandTierLabel, resolveManhuaWriterExpandQuota } = await import(
           "../shared/manhuaWriterExpandPricing.js"
         );
-        const {
-          MANHUA_WRITER_EXPAND_ACTION,
-          countManhuaWriterExpandEver,
-          countManhuaWriterExpandToday,
-          logManhuaWriterExpandUse,
-        } = await import("./services/manhuaWriterExpandBilling.js");
+        const { MANHUA_WRITER_EXPAND_ACTION } = await import(
+          "./services/manhuaWriterExpandBilling.js"
+        );
         const { runManhuaWriterExpand } = await import("./services/manhuaWriterExpandRun.js");
-        const { platformEngineTierLabel } = await import("../shared/platformEngineTiers.js");
 
         const layout = resolveManhuaSeedanceLayoutProfile(input.videoModel);
+        const requestedTemplateId = String(input.viralTemplateId || "").trim();
+        let appliedTemplate: { id: string; nameZh: string } | null = null;
+        let viralTemplateAddon = "";
+        if (requestedTemplateId) {
+          const [{ getMergedManhuaViralTemplate }, { formatManhuaViralTemplateWriterSkillFromCard }] =
+            await Promise.all([
+              import("./services/manhuaViralTemplateStore.js"),
+              import("../shared/manhuaViralTemplateBank.js"),
+            ]);
+          const card = await getMergedManhuaViralTemplate(requestedTemplateId);
+          if (!card || card.status !== "approved") {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "所选剧情增强方案已下架或不存在，请刷新后重试",
+            });
+          }
+          viralTemplateAddon = formatManhuaViralTemplateWriterSkillFromCard(card);
+          if (!viralTemplateAddon) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "所选剧情增强方案内容不完整，未调用扩写模型",
+            });
+          }
+          appliedTemplate = { id: card.id, nameZh: card.nameZh };
+        }
         const episodeCount = clampWriterEpisodeCount(input.episodeCount);
 
-        const [usedEver, usedToday] = await Promise.all([
-          countManhuaWriterExpandEver(userId),
-          countManhuaWriterExpandToday(userId),
-        ]);
         const quota = resolveManhuaWriterExpandQuota({
-          usedEver,
-          usedToday,
+          usedEver: 0,
+          usedToday: 0,
           tier: input.tier ?? "excellent",
           episodeCount,
         });
-        const cost = isAdminUser ? 0 : quota.nextCredits;
+        const cost = quota.nextCredits;
         if (cost > 0) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < cost) {
             throw new TRPCError({
               code: "PAYMENT_REQUIRED",
-              message: `Credits 不足，这次扩写需要 ${cost} 点（今天的免费额度已用完；当前可用：${creditsInfo.totalAvailable}）`,
+              message: `Credits 不足，这次扩写需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
             });
           }
         }
@@ -8933,7 +8948,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           fromEpisode: input.fromEpisode,
           fromSegment: input.fromSegment,
           lockedEpisodeBody: input.lockedEpisodeBody,
+          viralTemplateId: appliedTemplate?.id,
+          viralTemplateAddon,
         });
+        const { createHash } = await import("node:crypto");
+        const chargeKey = `mwe_${createHash("sha256")
+          .update(`${userId}:${input.requestId}:${quota.runTier}:${prompt}`)
+          .digest("hex")}`;
         let markdown = "";
         try {
           markdown = await runManhuaWriterExpand({
@@ -8955,25 +8976,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           });
         }
 
-        // 先出稿再扣点：上游失败不该扣钱
-        // 付费那次 deductCreditsAmount 内部自己会写一行 stripeUsageLogs（action 同名）；
-        // 这里再写一遍就是重复计数，只在免费（cost=0，deductCreditsAmount 不落库）那次补记。
-        if (cost > 0) {
-          await deductCreditsAmount(
-            userId,
-            cost,
-            MANHUA_WRITER_EXPAND_ACTION,
-            `编剧室连载扩写（${platformEngineTierLabel(quota.runTier)}）· ${episodeCount} 集`,
-          );
-        } else {
-          await logManhuaWriterExpandUse({
-            userId,
-            tier: quota.runTier,
-            episodeCount,
-            creditsCost: cost,
-            isFreeQuota: quota.nextFree,
-          });
-        }
+        // 先出稿再原子扣点：上游失败不扣；相同 requestId + 相同请求的网络重试不双扣。
+        await deductCreditsAmount(
+          userId,
+          cost,
+          MANHUA_WRITER_EXPAND_ACTION,
+          `编剧室连载扩写（${manhuaWriterExpandTierLabel(quota.runTier)}）· ${episodeCount} 集`,
+          { chargeKey },
+        );
 
         const pack = parseManhuaWriterPack(markdown, episodeCount, { topic });
         return {
@@ -8990,6 +9000,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             targetSec: layout.targetSec,
             labelZh: layout.labelZh,
           },
+          appliedTemplate,
         };
       }),
 

@@ -1,9 +1,9 @@
 /**
- * /canvas 编剧室连载扩写：三档模型调用（优秀=qwen3.8-max、卓越=kimi-k3、顶级=gpt-5.6-sol）。
+ * /canvas 编剧室连载扩写：四档模型调用（超凡=Anthropic Claude Opus 5）。
  * 通道与推理档写法对齐 `platformPersonaPolish.ts` 的双通道润色器，只是这里输出是长篇 Markdown 正文，
  * 不走 JSON response_format，且输出上限按集数放大。
  */
-import { extractFirstChoicePlainText, type InvokeResult } from "../_core/llm.js";
+import { extractFirstChoicePlainText, invokeLLM, type InvokeResult } from "../_core/llm.js";
 import {
   getEvolinkApiKey,
   getOpenRouterChatHeaders,
@@ -11,7 +11,10 @@ import {
 } from "./gpt56CopywritingGateway.js";
 import { getOpenRouterApiKey } from "./openrouterGptImage2.js";
 import { PLATFORM_ENGINE_TIER_MODELS, platformEngineEffort } from "../../shared/platformEngineTiers.js";
-import type { PlatformEngineTierId } from "../../shared/manhuaWriterExpandPricing.js";
+import type {
+  ManhuaWriterExpandTierId,
+  PlatformEngineTierId,
+} from "../../shared/manhuaWriterExpandPricing.js";
 
 export const MANHUA_WRITER_EXPAND_CAPACITY_MESSAGE = "算力紧张，请稍后再试";
 
@@ -129,15 +132,46 @@ async function callExpandOnce(params: {
   return text;
 }
 
+async function callClaudeExpandOnce(params: {
+  prompt: string;
+  maxTokens: number;
+}): Promise<string> {
+  const result = await invokeLLM({
+    provider: "anthropic",
+    modelName: "claude-opus-5",
+    messages: [{ role: "user", content: params.prompt }],
+    maxTokens: params.maxTokens,
+    reasoningEffort: "high",
+  });
+  const text = extractFirstChoicePlainText(result).trim();
+  if (!text || result.choices?.[0]?.finish_reason === "length") {
+    throw new Error(MANHUA_WRITER_EXPAND_CAPACITY_MESSAGE);
+  }
+  console.info(
+    `[manhuaWriterExpand] claude-opus-5 completion_tokens=${result.usage?.completion_tokens ?? "?"}`,
+  );
+  return text;
+}
+
 /** 跑一次扩写。主通道失败换备道，两条都失败才抛业务话术。 */
 export async function runManhuaWriterExpand(params: {
   prompt: string;
-  tier: PlatformEngineTierId;
+  tier: ManhuaWriterExpandTierId;
   episodeCount: number;
 }): Promise<string> {
+  const maxTokens = expandMaxTokens(params.episodeCount);
+  if (params.tier === "transcendent") {
+    try {
+      return await callClaudeExpandOnce({ prompt: params.prompt, maxTokens });
+    } catch (err) {
+      console.warn(
+        `[manhuaWriterExpand] Claude 通道失败：${err instanceof Error ? err.message : String(err)}`,
+      );
+      throw new Error(MANHUA_WRITER_EXPAND_CAPACITY_MESSAGE);
+    }
+  }
   const targets = expandTargets(params.tier);
   if (targets.length === 0) throw new Error(MANHUA_WRITER_EXPAND_CAPACITY_MESSAGE);
-  const maxTokens = expandMaxTokens(params.episodeCount);
   let lastErr: unknown = null;
   for (const target of targets) {
     try {

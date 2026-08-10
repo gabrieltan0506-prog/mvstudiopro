@@ -29,6 +29,7 @@ import {
   type ManhuaDirectorBoardMainByEpisode,
 } from "@/lib/manhuaDirectorBoardStore";
 import { MANHUA_PROP_SHAPE_LOOKUP_MAX } from "@shared/manhuaPropShapeHint";
+import { recommendApprovedManhuaViralTemplate } from "@shared/manhuaViralTemplateBank";
 import {
   buildManhuaCustomAssetGenFromLibraryPrompt,
   countManhuaUnclassifiedCustomAssetRefs,
@@ -307,8 +308,11 @@ import {
 } from "@shared/seedance25Access";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
-import { PLATFORM_ENGINE_TIERS, type PlatformEngineTierId } from "@shared/platformEngineTiers";
-import { MANHUA_WRITER_EXPAND_CREDITS_PER_EPISODE } from "@shared/manhuaWriterExpandPricing";
+import {
+  MANHUA_WRITER_EXPAND_CREDITS_PER_EPISODE,
+  MANHUA_WRITER_EXPAND_TIERS,
+  type ManhuaWriterExpandTierId,
+} from "@shared/manhuaWriterExpandPricing";
 import {
   canvasVideoClipCredits,
   manhuaEpisodeTotalCredits,
@@ -625,8 +629,10 @@ export default function OmniCanvas() {
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(() =>
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
   );
-  /** 扩写引擎档位：优秀/卓越/顶级，默认优秀；前台只显示档名，不出现模型名 */
-  const [writerExpandTier, setWriterExpandTier] = useState<PlatformEngineTierId>("excellent");
+  /** 扩写引擎档位：四档，默认优秀；前台只显示档名，不出现模型名 */
+  const [writerExpandTier, setWriterExpandTier] = useState<ManhuaWriterExpandTierId>("excellent");
+  /** 失败/丢响应后同参数重试复用请求键；成功后清空，下一次主动扩写重新计费。 */
+  const writerExpandRetryRef = useRef<{ signature: string; requestId: string } | null>(null);
   /** 单集时长档位：段长恒定 15s，切档只改一集几段（2.5 时由成片引擎覆盖） */
   const [writerLengthTierId, setWriterLengthTierId] = useState<ManhuaEpisodeLengthTierId>(
     MANHUA_EPISODE_LENGTH_TIER_DEFAULT,
@@ -2020,6 +2026,14 @@ export default function OmniCanvas() {
     () => approvedViralTemplateCards.find((card) => card.id === viralTemplateId) || null,
     [approvedViralTemplateCards, viralTemplateId],
   );
+  const recommendedViralTemplate = useMemo(
+    () =>
+      recommendApprovedManhuaViralTemplate(
+        approvedViralTemplateCards,
+        `${factoryTopic}\n${writerBrief}`,
+      ),
+    [approvedViralTemplateCards, factoryTopic, writerBrief],
+  );
   useEffect(() => {
     if (!manhuaViralTemplatesQuery.isSuccess || !viralTemplateId) return;
     if (!approvedViralTemplateCards.some((card) => card.id === viralTemplateId)) {
@@ -3011,6 +3025,22 @@ export default function OmniCanvas() {
     });
     /** 服务端 300s；客户端略宽一点，超时必须解锁，避免旧稿挂着却一直「正在扩写」 */
     const EXPAND_CLIENT_TIMEOUT_MS = 320_000;
+    const expandSignature = JSON.stringify({
+      topic,
+      mergedBrief,
+      count,
+      writerExpandTier,
+      viralTemplateId,
+      writerLengthTierId,
+      selectedVideoModel,
+      writerFromEpisode,
+      writerFromSegment,
+    });
+    const expandRequestId =
+      writerExpandRetryRef.current?.signature === expandSignature
+        ? writerExpandRetryRef.current.requestId
+        : crypto.randomUUID();
+    writerExpandRetryRef.current = { signature: expandSignature, requestId: expandRequestId };
     try {
       const res = await Promise.race([
         expandWriterMutation.mutateAsync({
@@ -3018,6 +3048,7 @@ export default function OmniCanvas() {
           brief: mergedBrief || undefined,
           episodeCount: count,
           tier: writerExpandTier,
+          requestId: expandRequestId,
           viralTemplateId: viralTemplateId || undefined,
           lengthTierId: writerLengthTierId,
           videoModel: selectedVideoModel,
@@ -3035,6 +3066,7 @@ export default function OmniCanvas() {
           }, EXPAND_CLIENT_TIMEOUT_MS);
         }),
       ]);
+      writerExpandRetryRef.current = null;
       // 局部改写：保留集沿用旧正文，资产表按名取并集，新角色照样进表
       const pack = spliceManhuaWriterPackFromEpisode(
         writerPack,
@@ -3147,9 +3179,9 @@ export default function OmniCanvas() {
         res.layout?.labelZh && res.layout?.segmentCount
           ? `（${res.layout.labelZh} · ${res.layout.segmentCount}×${res.layout.durationSecPerSegment}s）`
           : "";
-      const costHint = res.isFreeQuota ? "本次免费" : `本次扣 ${res.creditsCost} 积分`;
+      const costHint = `本次扣 ${res.creditsCost} 积分`;
       const templateHint = res.appliedTemplate?.nameZh
-        ? ` · 已应用节奏模板「${res.appliedTemplate.nameZh}」`
+        ? ` · 已应用剧情增强「${res.appliedTemplate.nameZh}」`
         : "";
       toast.success(
         cleaned.removedCount > 0 || cleaned.archivedCount > 0
@@ -7096,8 +7128,21 @@ export default function OmniCanvas() {
               />
               <div className="mt-3 rounded-xl border border-cyan-300/15 bg-cyan-500/[0.05] p-3">
                 <label className="block text-[11px] font-semibold text-cyan-50/80">
-                  节奏模板（可选）
+                  剧情增强（可选）
                 </label>
+                {recommendedViralTemplate && recommendedViralTemplate.id !== viralTemplateId ? (
+                  <button
+                    type="button"
+                    disabled={writerBusy || factoryBusy}
+                    onClick={() => {
+                      setViralTemplateId(recommendedViralTemplate.id);
+                      setWriterConfirmed(false);
+                    }}
+                    className="mt-1.5 rounded-lg border border-amber-300/25 bg-amber-400/10 px-2.5 py-1.5 text-[10px] font-semibold text-amber-100 hover:bg-amber-400/15 disabled:opacity-50"
+                  >
+                    推荐：{recommendedViralTemplate.nameZh}
+                  </button>
+                ) : null}
                 <select
                   value={viralTemplateId}
                   onChange={(e) => {
@@ -7107,7 +7152,7 @@ export default function OmniCanvas() {
                   disabled={writerBusy || factoryBusy || manhuaViralTemplatesQuery.isLoading}
                   className="mt-1.5 w-full rounded-lg border border-white/12 bg-black/50 px-2.5 py-2 text-xs text-white/90 outline-none disabled:opacity-50"
                 >
-                  <option value="">不使用模板（默认）</option>
+                  <option value="">不使用剧情增强</option>
                   {(manhuaViralTemplatesQuery.data?.groups || []).map((group) => (
                     <optgroup key={group.laneZh} label={group.laneZh}>
                       {group.items.map((tpl) => (
@@ -7124,17 +7169,15 @@ export default function OmniCanvas() {
                       {selectedViralTemplate.nameZh} · {selectedViralTemplate.laneZh}
                     </div>
                     <div>{selectedViralTemplate.summaryZh}</div>
-                    <div className="mt-1 text-amber-100/70">
-                      前 3 秒：{selectedViralTemplate.hook3sZh}
-                    </div>
+                    <div className="mt-1 text-amber-100/70">具体剧情由当前大模型自由发挥。</div>
                   </div>
                 ) : manhuaViralTemplatesQuery.isSuccess && approvedViralTemplateCards.length === 0 ? (
                   <p className="mt-1.5 text-[10px] text-white/35">
-                    暂无通过人工验收的模板；垃圾、待审和已拒绝模板不会显示。
+                    暂无可用的剧情增强方案；垃圾、待审和已拒绝内容不会显示。
                   </p>
                 ) : (
                   <p className="mt-1.5 text-[10px] text-white/35">
-                    默认不套模板；只有人工批准的模板才可选，题材和已锁剧情始终优先。
+                    只增强开场、冲突和追更钩子；题材、人物和已锁剧情始终优先。
                   </p>
                 )}
               </div>
@@ -7223,7 +7266,7 @@ export default function OmniCanvas() {
                 </div>
                 <div className="flex flex-col gap-1">
                   <div className="flex flex-wrap gap-1">
-                    {PLATFORM_ENGINE_TIERS.map((t) => {
+                    {MANHUA_WRITER_EXPAND_TIERS.map((t) => {
                       const on = writerExpandTier === t.id;
                       return (
                         <button
@@ -7247,7 +7290,7 @@ export default function OmniCanvas() {
                     本次扣{" "}
                     {MANHUA_WRITER_EXPAND_CREDITS_PER_EPISODE[writerExpandTier] *
                       clampWriterEpisodeCount(writerEpisodeCount)}{" "}
-                    积分（若在免费额度内则本次免费）
+                    积分
                   </p>
                   <button
                     type="button"

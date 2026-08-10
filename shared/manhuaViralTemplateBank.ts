@@ -252,6 +252,32 @@ export function listApprovedManhuaViralTemplatesGrouped(
   })).filter((g) => g.items.length > 0);
 }
 
+const MANHUA_VIRAL_TEMPLATE_LANE_TOPIC_RE: Record<ManhuaViralTemplateLane, RegExp> = {
+  爽文逆袭: /逆袭|复仇|重生|打脸|赘婿|归来|翻盘|爽文/,
+  古言种田: /古言|古代|种田|农家|宅斗|边关|王妃|侯府|将军/,
+  系统觉醒: /系统|觉醒|异能|金手指|穿越|修仙|玄幻/,
+  甜宠: /甜宠|恋爱|爱情|总裁|先婚|闪婚|夫人|追妻/,
+  悬疑权谋: /悬疑|权谋|宫斗|探案|谜案|朝堂|阴谋|推理/,
+  搞笑沙雕: /搞笑|沙雕|喜剧|无厘头|轻松|欢乐/,
+  游戏竞技: /游戏|电竞|竞技|玩家|副本|战队|赛事/,
+};
+
+/** 编剧室“推荐 Skill”：只在题材明确命中时推荐，不为凑数强塞模板。 */
+export function recommendApprovedManhuaViralTemplate(
+  cards: readonly ManhuaViralTemplateCard[],
+  topic: string | null | undefined,
+): ManhuaViralTemplateCard | null {
+  const text = String(topic || "").trim();
+  if (!text) return null;
+  const approved = cards.filter((card) => card.status === "approved");
+  for (const lane of MANHUA_VIRAL_TEMPLATE_LANE_ORDER) {
+    if (!MANHUA_VIRAL_TEMPLATE_LANE_TOPIC_RE[lane].test(text)) continue;
+    const hit = approved.find((card) => card.laneZh === lane);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 /** 卡片里的骨架与密度都按长档 12 段填写，折算短档时以它为分母 */
 const LONG_TIER_SEGMENTS = manhuaEpisodeSegmentsForTier("long");
 
@@ -332,6 +358,18 @@ export function formatManhuaViralTemplateWriterAddonFromCard(
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/** 编剧室消费版 Skill：只给分类与能力简介，把具体情节和节拍留给当前大模型发挥。 */
+export function formatManhuaViralTemplateWriterSkillFromCard(
+  tpl: ManhuaViralTemplateCard | null | undefined,
+): string {
+  if (!tpl || tpl.status !== "approved") return "";
+  return [
+    `分类：${tpl.laneZh}`,
+    `能力简介：${tpl.summaryZh}`,
+    "请结合当前题材自由发挥，不照搬来源剧情，不强制复刻固定节拍。",
+  ].join("\n");
 }
 
 /** 注入编剧扩写：节拍格 + 密度 + 场景池关键词（不泄漏出处剧名） */

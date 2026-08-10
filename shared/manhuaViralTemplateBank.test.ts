@@ -4,11 +4,13 @@ import { describe, expect, it } from "vitest";
 import {
   MANHUA_VIRAL_TEMPLATE_BANK,
   formatManhuaViralTemplateWriterAddon,
+  formatManhuaViralTemplateWriterSkillFromCard,
   getManhuaViralTemplate,
   listApprovedManhuaViralTemplates,
   listApprovedManhuaViralTemplatesGrouped,
   mergeManhuaViralTemplateBanks,
   parseManhuaViralTemplateCard,
+  recommendApprovedManhuaViralTemplate,
   type ManhuaViralTemplateCard,
 } from "./manhuaViralTemplateBank";
 import { buildManhuaWriterExpandPrompt } from "./manhuaWriterRoom";
@@ -108,13 +110,36 @@ describe("manhuaViralTemplateBank", () => {
     expect(addon).toMatch(/边塞/);
   });
 
-  it("buildManhuaWriterExpandPrompt no longer injects viral template (selector UI removed)", () => {
+  it("recommends an approved Skill only when the topic lane clearly matches", () => {
+    const cards = [learnedCard(), learnedCard({ id: "tpl_series_fixture06", laneZh: "甜宠" })];
+    expect(recommendApprovedManhuaViralTemplate(cards, "边关古言种田翻盘")).toMatchObject({
+      id: "tpl_series_fixture01",
+    });
+    expect(recommendApprovedManhuaViralTemplate(cards, "先婚后爱甜宠短剧")).toMatchObject({
+      id: "tpl_series_fixture06",
+    });
+    expect(recommendApprovedManhuaViralTemplate(cards, "没有明确类型的故事")).toBeNull();
+  });
+
+  it("writer Skill exposes only category and intro, not rigid beat/density details", () => {
+    const skill = formatManhuaViralTemplateWriterSkillFromCard(learnedCard());
+    expect(skill).toMatch(/分类：古言种田/);
+    expect(skill).toMatch(/能力简介：绝境开局/);
+    expect(skill).not.toMatch(/节拍格|密度建议|正文≥|人设槽|场景池/);
+  });
+
+  it("buildManhuaWriterExpandPrompt injects the server-compiled Skill as a soft strategy", () => {
+    const addon = formatManhuaViralTemplateWriterSkillFromCard(learnedCard());
     const prompt = buildManhuaWriterExpandPrompt({
       topic: "边关开荒翻盘连载",
       brief: "女主被发配",
       episodeCount: 3,
       viralTemplateId: "tpl_series_fixture01",
+      viralTemplateAddon: addon,
     });
-    expect(prompt).not.toMatch(/【节奏模板·骨架建议】/);
+    expect(prompt).toMatch(/【可调用的创作 Skill】/);
+    expect(prompt).toMatch(/增强策略，不是固定公式/);
+    expect(prompt).toMatch(/与本剧冲突的节拍直接舍弃/);
+    expect(prompt).not.toMatch(/节拍格|密度建议|正文≥|人设槽|场景池/);
   });
 });
