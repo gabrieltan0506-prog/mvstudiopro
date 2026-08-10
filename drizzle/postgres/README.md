@@ -16,6 +16,7 @@
 | `0002_enterprise_agent_kb_full_text.sql` | enterprise_agent_kb 加 `extractedTextFull` 列 | PR-3（已合并） |
 | `0003_users_enterprise_trial_paid.sql` | `users` 表加 `enterpriseTrialPaid`（与 `drizzle/schema.ts` 一致） | 未执行会导致查询 users 失败、易被重定向登录 |
 | `0004_platform_strategic_blueprint_snapshots.sql` | Stage2 四條選題 JSON 快照，供封面生圖按 `sceneId` 讀回 | 與 `drizzle/schema-platform-strategic-blueprints.ts` 同步 |
+| `0008_billing_idempotency_and_distill_receipts.sql` | 付费任务 `chargeKey` 唯一索引 + 图文卡提炼档位凭证 | 第三轮账务复审收口；部署前须先执行 |
 
 ## 应用流程（生产 Neon）
 

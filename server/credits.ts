@@ -6,7 +6,6 @@ import {
   stripeUsageLogs,
   stripeCustomers,
   teamMembers,
-  teamActivityLogs,
   users,
 } from "../drizzle/schema";
 import { CREDIT_COSTS, PLANS, type PlanType } from "./plans";
@@ -73,72 +72,106 @@ async function getTeamMembership(userId: number) {
 }
 
 type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
-/** 只依赖查询方法的结构类型：裸连接与事务句柄（db.transaction 回调的 tx）都能传 */
-type DbHandle = Pick<Db, "update" | "insert" | "select" | "delete">;
 
-/**
- * 驱动兼容层（2026-08-10 线上事故热修）：生产用 drizzle-orm/neon-http，
- * `db.transaction()` 一调用就抛「No transactions support in neon-http driver」——
- * #1134 给扣费/退款包的事务在真实用户请求里必炸（admin 免扣费路径测不出来）。
- * 这里检测到该驱动限制时回退为顺序执行（恢复事务化之前跑了数月的行为，
- * 单条余额 UPDATE 本身仍是条件原子的；跨语句原子化待 CTE 重写跟进）。
- */
-async function runAtomically<T>(db: Db, fn: (tx: DbHandle) => Promise<T>): Promise<T> {
-  try {
-    return await db.transaction(async (tx) => fn(tx as unknown as DbHandle));
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (/No transactions support/i.test(msg)) {
-      return fn(db as unknown as DbHandle);
-    }
-    throw e;
-  }
+/** 余额不足（个人+团队都扣不动）。调用方据此回 402，别的异常一律不是 402。 */
+export class InsufficientCreditsError extends Error {
+  readonly code = "INSUFFICIENT_CREDITS";
+}
+
+function executeRows(res: unknown): Record<string, unknown>[] {
+  const rows = (res as { rows?: unknown })?.rows;
+  return Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [];
 }
 
 /**
- * 个人余额原子扣减：够不够由 SQL 的 WHERE 判，不在 JS 里比大小。
- *
- * 原写法是「读余额 → JS 比大小 → 写回一个算好的数」。两个请求同时进来都读到 100，
- * 都算出 100-40=60 写回，扣了两次却只少 40——白送一次。neon-http 驱动没有跨语句事务，
- * 所以必须收敛成单条带条件的 UPDATE。
+ * 个人扣费 = 单条 SQL（neon-http 没有跨语句事务，只有单语句是原子的）：
+ * 余额条件 UPDATE、交易行、使用日志三件事全在一条数据修改 CTE 里，
+ * 要么全落库要么全不落——不存在「余额已扣、日志没写」的中间态。
+ * 够不够由 WHERE 判，不在 JS 里比大小（并发双扣的老病根）。
  *
  * @returns 扣减后的余额；余额不足或被并发抢先时返回 null（此时一分未扣）
  */
-async function tryDeductPersonalCredits(
-  db: DbHandle,
+async function deductPersonalAtomic(
+  db: Db,
   userId: number,
   cost: number,
+  action: string,
+  txDescription: string,
+  usageDescription: string,
+  chargeKey?: string,
 ): Promise<number | null> {
-  const rows = await db
-    .update(creditBalances)
-    .set({
-      balance: sql`${creditBalances.balance} - ${cost}`,
-      lifetimeSpent: sql`${creditBalances.lifetimeSpent} + ${cost}`,
-    })
-    .where(and(eq(creditBalances.userId, userId), sql`${creditBalances.balance} >= ${cost}`))
-    .returning({ balance: creditBalances.balance });
+  const res = await db.execute(sql`
+    WITH upd AS (
+      UPDATE credit_balances
+      SET "balance" = "balance" - ${cost},
+          "lifetimeSpent" = "lifetimeSpent" + ${cost},
+          "updatedAt" = NOW()
+      WHERE "userId" = ${userId} AND "balance" >= ${cost}
+      RETURNING "balance"
+    ),
+    tx_log AS (
+      INSERT INTO credit_transactions
+        ("userId", "amount", "type", "source", "action", "description", "balanceAfter")
+      SELECT ${userId}, ${-cost}, 'debit', 'usage', ${action}, ${txDescription}, upd."balance"
+      FROM upd
+    ),
+    usage_log AS (
+      INSERT INTO stripe_usage_logs
+        ("userId", "action", "creditsCost", "isFreeQuota", "description", "balanceAfter", "chargeKey")
+      SELECT ${userId}, ${action}, ${cost}, 0, ${usageDescription}, upd."balance", ${chargeKey ?? null}
+      FROM upd
+    )
+    SELECT "balance" FROM upd
+  `);
+  const rows = executeRows(res);
   return rows.length ? Number(rows[0].balance) : null;
 }
 
-/** 团队额度原子扣减；余额不足或被并发抢先时返回 null（同 {@link tryDeductPersonalCredits}） */
-async function tryDeductTeamCredits(
-  db: DbHandle,
-  memberId: number,
+/** 团队额度扣费；同 {@link deductPersonalAtomic}，额度 UPDATE 与两条日志同一条 SQL */
+async function deductTeamAtomic(
+  db: Db,
+  membership: { id: number; teamId: number },
+  userId: number,
   cost: number,
+  action: string,
+  usageDescription: string,
+  activityDescription: string,
+  chargeKey?: string,
 ): Promise<{ allocated: number; used: number } | null> {
-  const rows = await db
-    .update(teamMembers)
-    .set({ usedCredits: sql`${teamMembers.usedCredits} + ${cost}` })
-    .where(
-      and(
-        eq(teamMembers.id, memberId),
-        sql`${teamMembers.allocatedCredits} - ${teamMembers.usedCredits} >= ${cost}`,
-      ),
+  const usageMetadata = JSON.stringify({
+    source: "team",
+    teamId: membership.teamId,
+    memberId: membership.id,
+  });
+  const res = await db.execute(sql`
+    WITH upd AS (
+      UPDATE team_members
+      SET "usedCredits" = "usedCredits" + ${cost},
+          "updatedAt" = NOW()
+      WHERE "id" = ${membership.id}
+        AND "allocatedCredits" - "usedCredits" >= ${cost}
+      RETURNING "allocatedCredits", "usedCredits"
+    ),
+    usage_log AS (
+      INSERT INTO stripe_usage_logs
+        ("userId", "action", "creditsCost", "isFreeQuota", "description", "balanceAfter", "metadata", "chargeKey")
+      SELECT ${userId}, ${action}, ${cost}, 0, ${usageDescription},
+             upd."allocatedCredits" - upd."usedCredits", ${usageMetadata}, ${chargeKey ?? null}
+      FROM upd
+    ),
+    activity_log AS (
+      INSERT INTO team_activity_logs ("teamId", "userId", "action", "description", "metadata")
+      SELECT ${membership.teamId}, ${userId}, 'credits_used', ${activityDescription},
+             jsonb_build_object(
+               'action', ${action}::text,
+               'cost', ${cost}::int,
+               'remainingAllocation', upd."allocatedCredits" - upd."usedCredits"
+             )::text
+      FROM upd
     )
-    .returning({
-      allocated: teamMembers.allocatedCredits,
-      used: teamMembers.usedCredits,
-    });
+    SELECT "allocatedCredits" AS allocated, "usedCredits" AS used FROM upd
+  `);
+  const rows = executeRows(res);
   return rows.length
     ? { allocated: Number(rows[0].allocated), used: Number(rows[0].used) }
     : null;
@@ -167,27 +200,15 @@ export async function deductCredits(
 
   // 1. 先尝试从个人帐户扣费（先确保余额行存在，否则条件 UPDATE 会扑空）
   const balance = await getOrCreateBalance(userId);
-  const newBalance = await tryDeductPersonalCredits(db, userId, cost);
+  const newBalance = await deductPersonalAtomic(
+    db,
+    userId,
+    cost,
+    action,
+    description ?? `${action} generation`,
+    description ?? `${action} generation (个人帐户)`,
+  );
   if (newBalance !== null) {
-    await db.insert(creditTransactions).values({
-      userId,
-      amount: -cost,
-      type: "debit",
-      source: "usage",
-      action,
-      description: description ?? `${action} generation`,
-      balanceAfter: newBalance,
-    });
-
-    await db.insert(stripeUsageLogs).values({
-      userId,
-      action,
-      creditsCost: cost,
-      isFreeQuota: 0,
-      description: description ?? `${action} generation (个人帐户)`,
-      balanceAfter: newBalance,
-    });
-
     return {
       success: true,
       cost,
@@ -199,38 +220,20 @@ export async function deductCredits(
   // 2. 个人帐户不足，尝试从团队分配额度扣费
   const membership = await getTeamMembership(userId);
   if (membership) {
-    const team = await tryDeductTeamCredits(db, membership.id, cost);
+    const team = await deductTeamAtomic(
+      db,
+      membership,
+      userId,
+      cost,
+      action,
+      description ?? `${action} generation (团队额度)`,
+      `使用 ${cost} Credits 进行 ${action}`,
+    );
     if (team) {
-      const remainingAllocation = team.allocated - team.used;
-
-      // 记录使用日志
-      await db.insert(stripeUsageLogs).values({
-        userId,
-        action,
-        creditsCost: cost,
-        isFreeQuota: 0,
-        description: description ?? `${action} generation (团队额度)`,
-        balanceAfter: remainingAllocation,
-        metadata: JSON.stringify({
-          source: "team",
-          teamId: membership.teamId,
-          memberId: membership.id,
-        }),
-      });
-
-      // 记录团队活动日志
-      await db.insert(teamActivityLogs).values({
-        teamId: membership.teamId,
-        userId,
-        action: "credits_used",
-        description: `使用 ${cost} Credits 进行 ${action}`,
-        metadata: JSON.stringify({ action, cost, remainingAllocation }),
-      });
-
       return {
         success: true,
         cost,
-        remainingBalance: remainingAllocation,
+        remainingBalance: team.allocated - team.used,
         source: "team" as const,
         teamId: membership.teamId,
         teamMemberId: membership.id,
@@ -242,19 +245,64 @@ export async function deductCredits(
   const teamInfo = membership
     ? `（团队额度剩余: ${membership.allocatedCredits - membership.usedCredits}）`
     : "";
-  throw new Error(
+  throw new InsufficientCreditsError(
     `Credits 不足。需要: ${cost}, 个人帐户可用: ${balance.balance}${teamInfo}`
   );
 }
 
+/** 唯一约束撞击 = 同 chargeKey 已扣过（并发/重试的另一腿先落库） */
+function isChargeKeyUniqueViolation(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /stripe_usage_logs_charge_key_uniq|duplicate key value/i.test(msg);
+}
+
+/** 按 chargeKey 读已落库的那笔扣费（含来源快照），供撞唯一约束后复原返回值 */
+async function findChargeByKey(
+  db: Db,
+  userId: number,
+  chargeKey: string,
+): Promise<
+  | { cost: number; source: "personal" | "team"; teamId?: number; teamMemberId?: number }
+  | null
+> {
+  const [row] = await db
+    .select({
+      creditsCost: stripeUsageLogs.creditsCost,
+      metadata: stripeUsageLogs.metadata,
+    })
+    .from(stripeUsageLogs)
+    .where(and(eq(stripeUsageLogs.userId, userId), eq(stripeUsageLogs.chargeKey, chargeKey)))
+    .limit(1);
+  if (!row) return null;
+  let meta: { source?: string; teamId?: number; memberId?: number } = {};
+  try {
+    meta = row.metadata ? JSON.parse(row.metadata) : {};
+  } catch {
+    meta = {};
+  }
+  if (meta.source === "team") {
+    return {
+      cost: Math.max(0, Number(row.creditsCost) || 0),
+      source: "team",
+      teamId: Number(meta.teamId) || undefined,
+      teamMemberId: Number(meta.memberId) || undefined,
+    };
+  }
+  return { cost: Math.max(0, Number(row.creditsCost) || 0), source: "personal" };
+}
+
 /**
- * 按固定数额扣费（用于放大等 = 基准单价 × 倍率的场景）
+ * 按固定数额扣费（用于放大等 = 基准单价 × 倍率的场景）。
+ * opts.chargeKey：幂等扣费键——写进 stripe_usage_logs 唯一索引列，与余额 UPDATE
+ * 同一条 SQL；并发/重试双扣时后到者整条语句回滚，本函数捕获后按已落库那笔复原返回
+ * （alreadyCharged=true），DB 层兜死 SELECT-再-扣 的 TOCTOU。
  */
 export async function deductCreditsAmount(
   userId: number,
   amount: number,
   action: string,
-  description?: string
+  description?: string,
+  opts?: { chargeKey?: string },
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -273,33 +321,47 @@ export async function deductCreditsAmount(
     };
   }
 
+  const chargeKey = String(opts?.chargeKey || "").trim().slice(0, 120) || undefined;
+
   // 先确保余额行存在，否则条件 UPDATE 会扑空
   const balance = await getOrCreateBalance(userId);
-  // 扣减与日志行同事务：拆开写时中间崩溃会「余额已扣、无日志行」，
-  // 幂等重试按 description 里的 chargeKey 查不到账就会再扣一次
-  const newBalance = await runAtomically(db, async (tx) => {
-    const nb = await tryDeductPersonalCredits(tx, userId, cost);
-    if (nb === null) return null;
-    await tx.insert(creditTransactions).values({
+  // 扣减与日志行同一条 SQL：中间态不存在，幂等重试按 chargeKey 查账口径可靠
+  let newBalance: number | null = null;
+  try {
+    newBalance = await deductPersonalAtomic(
+      db,
       userId,
-      amount: -cost,
-      type: "debit",
-      source: "usage",
-      action: action.slice(0, 50),
-      description: description ?? `${action} (${cost} cr)`,
-      balanceAfter: nb,
-    });
-
-    await tx.insert(stripeUsageLogs).values({
-      userId,
-      action: action.slice(0, 50),
-      creditsCost: cost,
-      isFreeQuota: 0,
-      description: description ?? `${action} (${cost} cr, 个人帐户)`,
-      balanceAfter: nb,
-    });
-    return nb;
-  });
+      cost,
+      action.slice(0, 50),
+      description ?? `${action} (${cost} cr)`,
+      description ?? `${action} (${cost} cr, 个人帐户)`,
+      chargeKey,
+    );
+  } catch (e) {
+    if (chargeKey && isChargeKeyUniqueViolation(e)) {
+      const prior = await findChargeByKey(db, userId, chargeKey);
+      if (prior) {
+        return prior.source === "team"
+          ? {
+              success: true,
+              cost: prior.cost,
+              remainingBalance: -1,
+              source: "team" as const,
+              teamId: prior.teamId,
+              teamMemberId: prior.teamMemberId,
+              alreadyCharged: true,
+            }
+          : {
+              success: true,
+              cost: prior.cost,
+              remainingBalance: -1,
+              source: "personal" as const,
+              alreadyCharged: true,
+            };
+      }
+    }
+    throw e;
+  }
   if (newBalance !== null) {
     return {
       success: true,
@@ -311,34 +373,44 @@ export async function deductCreditsAmount(
 
   const membership = await getTeamMembership(userId);
   if (membership) {
-    const team = await runAtomically(db, async (tx) => {
-      const t = await tryDeductTeamCredits(tx, membership.id, cost);
-      if (!t) return null;
-      const remainingAllocation = t.allocated - t.used;
-
-      await tx.insert(stripeUsageLogs).values({
+    let team: { allocated: number; used: number } | null = null;
+    try {
+      team = await deductTeamAtomic(
+        db,
+        membership,
         userId,
-        action: action.slice(0, 50),
-        creditsCost: cost,
-        isFreeQuota: 0,
-        description: description ?? `${action} (${cost} cr, 团队额度)`,
-        balanceAfter: remainingAllocation,
-        metadata: JSON.stringify({
-          source: "team",
-          teamId: membership.teamId,
-          memberId: membership.id,
-        }),
-      });
-
-      await tx.insert(teamActivityLogs).values({
-        teamId: membership.teamId,
-        userId,
-        action: "credits_used",
-        description: `使用 ${cost} Credits 进行 ${action}`,
-        metadata: JSON.stringify({ action, cost, remainingAllocation }),
-      });
-      return t;
-    });
+        cost,
+        action.slice(0, 50),
+        description ?? `${action} (${cost} cr, 团队额度)`,
+        `使用 ${cost} Credits 进行 ${action}`,
+        chargeKey,
+      );
+    } catch (e) {
+      if (chargeKey && isChargeKeyUniqueViolation(e)) {
+        const prior = await findChargeByKey(db, userId, chargeKey);
+        if (prior?.source === "team") {
+          return {
+            success: true,
+            cost: prior.cost,
+            remainingBalance: -1,
+            source: "team" as const,
+            teamId: prior.teamId,
+            teamMemberId: prior.teamMemberId,
+            alreadyCharged: true,
+          };
+        }
+        if (prior) {
+          return {
+            success: true,
+            cost: prior.cost,
+            remainingBalance: -1,
+            source: "personal" as const,
+            alreadyCharged: true,
+          };
+        }
+      }
+      throw e;
+    }
     if (team) {
       return {
         success: true,
@@ -354,7 +426,7 @@ export async function deductCreditsAmount(
   const teamInfo = membership
     ? `（团队额度剩余: ${membership.allocatedCredits - membership.usedCredits}）`
     : "";
-  throw new Error(
+  throw new InsufficientCreditsError(
     `Credits 不足。需要: ${cost}, 个人帐户可用: ${balance.balance}${teamInfo}`
   );
 }
@@ -377,37 +449,33 @@ export async function addCredits(
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const balance = await getOrCreateBalance(userId);
-  const newBalance = balance.balance + amount;
-  const newLifetimeEarned = balance.lifetimeEarned + amount;
-
-  // 更新 creditBalances 余额
-  await db
-    .update(creditBalances)
-    .set({
-      balance: newBalance,
-      lifetimeEarned: newLifetimeEarned,
-    })
-    .where(eq(creditBalances.userId, userId));
-
-  // 同步更新 users.credits，保持首页积分显示一致
-  await db
-    .update(users)
-    .set({ credits: sql`COALESCE(${users.credits}, 0) + ${amount}` })
-    .where(eq(users.id, userId));
-
-  // 记录交易
-  await db.insert(creditTransactions).values({
-    userId,
-    amount,
-    type: "credit",
-    source,
-    description: `${source}: +${amount} credits`,
-    balanceAfter: newBalance,
-    stripePaymentIntentId: stripePaymentIntentId ?? null,
-  });
-
-  return { balance: newBalance };
+  await getOrCreateBalance(userId);
+  // 相对更新 + 单条 SQL：绝对 SET 会把并发扣费覆盖掉（读到旧值再写回）
+  const res = await db.execute(sql`
+    WITH upd AS (
+      UPDATE credit_balances
+      SET "balance" = "balance" + ${amount},
+          "lifetimeEarned" = "lifetimeEarned" + ${amount},
+          "updatedAt" = NOW()
+      WHERE "userId" = ${userId}
+      RETURNING "balance"
+    ),
+    mirror AS (
+      -- 同步 users.credits，保持首页积分显示一致
+      UPDATE users
+      SET "credits" = COALESCE("credits", 0) + ${amount}
+      WHERE "id" = ${userId}
+    )
+    INSERT INTO credit_transactions
+      ("userId", "amount", "type", "source", "description", "balanceAfter", "stripePaymentIntentId")
+    SELECT ${userId}, ${amount}, 'credit', ${source}, ${`${source}: +${amount} credits`},
+           upd."balance", ${stripePaymentIntentId ?? null}
+    FROM upd
+    RETURNING "balanceAfter"
+  `);
+  const rows = executeRows(res);
+  if (!rows.length) throw new Error(`addCredits: balance row missing userId=${userId}`);
+  return { balance: Number(rows[0].balanceAfter) };
 }
 
 // ─── 查找余额（含团队额度） ─────────────────────────
@@ -657,29 +725,31 @@ export async function refundCredits(
   reason: string
 ): Promise<void> {
   const db = await getDb();
-  if (!db) return;
+  // DB 不可用必须抛错：静默 return 会让调用方把「没退成」谎报成「已退回」，
+  // 该进持久化 refund_pending 的走不进去
+  if (!db) throw new Error("Database not available (refund not executed)");
 
-  const balance = await getOrCreateBalance(userId);
-  const newBalance = balance.balance + amount;
-  const newLifetimeEarned = balance.lifetimeEarned + amount;
-
-  // 余额与交易行必须同生共死：拆开写时中间崩溃会出现「余额已加、无交易行」，
-  // 退分对账（按 description 里的 refundKey 查交易行）就会误判未退而再打一次
-  await runAtomically(db, async (tx) => {
-    await tx
-      .update(creditBalances)
-      .set({ balance: newBalance, lifetimeEarned: newLifetimeEarned })
-      .where(eq(creditBalances.userId, userId));
-
-    await tx.insert(creditTransactions).values({
-      userId,
-      amount,
-      type: "credit",
-      source: "credit_restore",
-      description: reason,
-      balanceAfter: newBalance,
-    });
-  });
+  await getOrCreateBalance(userId);
+  // 相对更新 + 单条 SQL：绝对 SET 会覆盖并发账变（读 100 → 并发扣到 70 → SET 120 抹掉扣款）；
+  // 余额与交易行同一条语句，不存在「余额已加、无交易行」，退分对账（按 refundKey 查交易行）口径可靠
+  const res = await db.execute(sql`
+    WITH upd AS (
+      UPDATE credit_balances
+      SET "balance" = "balance" + ${amount},
+          "lifetimeEarned" = "lifetimeEarned" + ${amount},
+          "updatedAt" = NOW()
+      WHERE "userId" = ${userId}
+      RETURNING "balance"
+    )
+    INSERT INTO credit_transactions
+      ("userId", "amount", "type", "source", "description", "balanceAfter")
+    SELECT ${userId}, ${amount}, 'credit', 'credit_restore', ${reason}, upd."balance"
+    FROM upd
+    RETURNING "balanceAfter"
+  `);
+  if (!executeRows(res).length) {
+    throw new Error(`refundCredits: balance row missing userId=${userId} (refund not executed)`);
+  }
 
   console.log(`[Credits] restoreCredits: userId=${userId}, amount=+${amount}, reason=${reason}`);
 }
@@ -717,52 +787,43 @@ export async function refundCreditsForDeductAmount(
       throw new Error("team_refund_metadata_missing");
     }
 
-    const [row] = await db
-      .select({
-        usedCredits: teamMembers.usedCredits,
-        allocatedCredits: teamMembers.allocatedCredits,
-      })
-      .from(teamMembers)
-      .where(eq(teamMembers.id, teamMemberId))
-      .limit(1);
-
-    if (!row) {
+    const usageMetadata = JSON.stringify({
+      source: "team_refund",
+      teamId,
+      teamMemberId,
+      restoredCredits: cost,
+    });
+    const activityMetadata = JSON.stringify({ action: act, cost, teamMemberId });
+    // 相对回冲 + 单条 SQL：绝对 SET 会覆盖并发扣款/并发退款；
+    // 额度回冲与两条日志同一条语句，退分对账（查 stripeUsageLogs 里的 refundKey）口径可靠
+    const res = await db.execute(sql`
+      WITH upd AS (
+        UPDATE team_members
+        SET "usedCredits" = GREATEST(0, "usedCredits" - ${cost}),
+            "updatedAt" = NOW()
+        WHERE "id" = ${teamMemberId}
+        RETURNING "allocatedCredits", "usedCredits"
+      ),
+      usage_log AS (
+        INSERT INTO stripe_usage_logs
+          ("userId", "action", "creditsCost", "isFreeQuota", "description", "balanceAfter", "metadata")
+        SELECT ${userId}, ${act}, 0, 0,
+               ${reason} || '（' || ${cost}::text || ' cr · 团队额度退回 · used→' || upd."usedCredits"::text || '）',
+               upd."allocatedCredits" - upd."usedCredits", ${usageMetadata}
+        FROM upd
+      ),
+      activity_log AS (
+        INSERT INTO team_activity_logs ("teamId", "userId", "action", "description", "metadata")
+        SELECT ${teamId}, ${userId}, 'credits_refund',
+               ${`退回 ${cost} Credits（团队分配额度）：${reason}`}, ${activityMetadata}
+        FROM upd
+      )
+      SELECT "usedCredits" FROM upd
+    `);
+    if (!executeRows(res).length) {
       console.error(`[Credits] refundCreditsForDeductAmount: teamMembers.id=${teamMemberId} not found`);
       throw new Error("team_member_not_found_for_refund");
     }
-
-    const nextUsed = Math.max(0, row.usedCredits - cost);
-    // 额度回冲与两条日志同事务：拆开写时中间崩溃会让退分对账（查 stripeUsageLogs
-    // 里的 refundKey）与实际额度状态对不上，误判后重复回冲
-    await runAtomically(db, async (tx) => {
-      await tx
-        .update(teamMembers)
-        .set({ usedCredits: nextUsed })
-        .where(eq(teamMembers.id, teamMemberId));
-
-      await tx.insert(stripeUsageLogs).values({
-        userId,
-        action: act,
-        creditsCost: 0,
-        isFreeQuota: 0,
-        description: `${reason}（${cost} cr · 团队额度退回 · used ${row.usedCredits}→${nextUsed}）`,
-        balanceAfter: row.allocatedCredits - nextUsed,
-        metadata: JSON.stringify({
-          source: "team_refund",
-          teamId,
-          teamMemberId,
-          restoredCredits: cost,
-        }),
-      });
-
-      await tx.insert(teamActivityLogs).values({
-        teamId,
-        userId,
-        action: "credits_refund",
-        description: `退回 ${cost} Credits（团队分配额度）：${reason}`,
-        metadata: JSON.stringify({ action: act, cost, teamMemberId }),
-      });
-    });
   }
 }
 

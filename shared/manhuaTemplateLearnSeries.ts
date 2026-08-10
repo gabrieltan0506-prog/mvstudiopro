@@ -51,6 +51,14 @@ export type ManhuaLearnEpisodeChunk = {
   climaxNotes: string[];
   sceneHints: string[];
   learnedAt: string;
+  /** 读帧 provenance（审查必须修13）：本块视觉读帧是否真实跑过、用了哪个模型 */
+  vision?: {
+    provider: string;
+    model: string;
+    attempted: boolean;
+    success: boolean;
+    errorNote?: string;
+  };
 };
 
 export type ManhuaLearnEpisodeDigest = {
@@ -75,6 +83,13 @@ export type ManhuaLearnEpisodeDigest = {
   dramaKind?: ManhuaDramaKind;
   categoryLabelZh?: string;
   tagLabelsZh?: string[];
+  /** 读帧 provenance 聚合（审查必须修13）：attempted/success 按块计数 */
+  frameVision?: {
+    provider: string;
+    model: string;
+    attemptedChunks: number;
+    successChunks: number;
+  };
 };
 
 /** 旧 digest 无检查点字段视为已完成；新 digest 以 complete / learnedThroughSec 为准 */
@@ -136,6 +151,18 @@ export function mergeManhuaLearnChunkIntoDigest(input: {
     || prev?.hookNoteZh
     || "待补钩子";
 
+  // 读帧 provenance 按块聚合；model/provider 取最近一次真实尝试的记录
+  const visionChunks = chunks.filter((c) => c.vision?.attempted);
+  const lastVision = visionChunks.length ? visionChunks[visionChunks.length - 1].vision : undefined;
+  const frameVision = lastVision
+    ? {
+        provider: lastVision.provider,
+        model: lastVision.model,
+        attemptedChunks: visionChunks.length,
+        successChunks: visionChunks.filter((c) => c.vision?.success).length,
+      }
+    : prev?.frameVision;
+
   return {
     episodeIndex: input.episodeIndex,
     url: input.url,
@@ -153,6 +180,7 @@ export function mergeManhuaLearnChunkIntoDigest(input: {
     dramaKind: input.dramaKind || prev?.dramaKind,
     categoryLabelZh: input.categoryLabelZh || prev?.categoryLabelZh,
     tagLabelsZh: input.tagLabelsZh || prev?.tagLabelsZh,
+    frameVision,
   };
 }
 

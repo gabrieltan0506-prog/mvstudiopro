@@ -407,7 +407,7 @@ export function refundMarkerFor(taskType: PaidTaskType, jobId: string): string {
  * 团队退分落 stripeUsageLogs.description，两处都查。
  * 返回 null 表示 DB 不可用（判断不了，调用方应保持 refund_pending 下轮再试）。
  */
-async function hasRefundMarker(userId: number, marker: string): Promise<boolean | null> {
+export async function hasRefundMarker(userId: number, marker: string): Promise<boolean | null> {
   try {
     const { getDb } = await import("../db");
     const db = await getDb();
@@ -602,6 +602,16 @@ export async function refundCreditsOnFailure(
   // 调用积分账本（仅写 creditBalances / creditTransactions / 团队额度，绝不碰支付网关）
   try {
     const marker = refundMarkerFor(taskType, jobId);
+    // active 分支打款前也查真账：hold 卷异常时业务侧可能已按同一 refundKey 直退过
+    //（canvasVideoTask.refundTaskDirect 兜底路径），24h 硬底再走到这里不许双退
+    const seen = await hasRefundMarker(Number(hold.userId), marker);
+    if (seen === true) {
+      await finalizeRefundedHold(file, hold, "active: marker already in ledger");
+      console.log(
+        `[paidJobLedger] ↺ 退分已在账（${marker}），只补 hold 状态 jobId=${jobId}`,
+      );
+      return { refunded: true, creditsRefunded: hold.creditsBilled, status: "refunded" };
+    }
     await executeLedgerRefund(hold, `${hold.action} · ${reason} · 积分已退还至您的账户 ${marker}`);
     await finalizeRefundedHold(file, hold);
     console.log(

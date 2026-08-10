@@ -381,6 +381,18 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
 
   if (input.action === "growth_analyze_video") {
     const numericUserId = userId ? Number(userId) : NaN;
+    // 审查必须修（P0·租户边界）：worker 是终闸——历史队列/旁路入队的 job 也在这里拦。
+    // 匿名 "public"/非数字 userId 不跑（NaN 还会免扣费）；gcsUri 只认本人上传前缀。
+    if (!Number.isFinite(numericUserId) || numericUserId <= 0) {
+      throw new Error("请先登录后再提交分析");
+    }
+    if (typeof params.gcsUri === "string" && params.gcsUri.trim()) {
+      const { getGcsBucketName } = await import("../services/gcs.js");
+      const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${numericUserId}/`;
+      if (!String(params.gcsUri).startsWith(allowedPrefix)) {
+        throw new Error("只能分析本人上传的文件");
+      }
+    }
     const growthMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
     const creditAction = growthMode === "REMIX" ? "growthCampRemix" : "growthCampGrowth";
 
@@ -475,6 +487,10 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
 
   if (input.action === "growth_analyze_images") {
     const numericUserId = userId ? Number(userId) : NaN;
+    // 同 growth_analyze_video：worker 终闸，拒匿名/非数字 userId，gcsUri 只认本人前缀
+    if (!Number.isFinite(numericUserId) || numericUserId <= 0) {
+      throw new Error("请先登录后再提交分析");
+    }
     const growthMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
     const creditAction = growthMode === "REMIX" ? "growthCampRemix" : "growthCampGrowth";
 
@@ -493,6 +509,15 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
 
     if (!images.length) {
       throw new Error("请至少上传一张 PNG 或 JPG 图片");
+    }
+    if (images.some((img) => img.gcsUri)) {
+      const { getGcsBucketName } = await import("../services/gcs.js");
+      const allowedPrefix = `gs://${getGcsBucketName()}/uploads/u${numericUserId}/`;
+      for (const img of images) {
+        if (img.gcsUri && !String(img.gcsUri).startsWith(allowedPrefix)) {
+          throw new Error("只能分析本人上传的文件");
+        }
+      }
     }
 
     const unitCost = flatAnalysisCost(growthMode);
@@ -2164,6 +2189,19 @@ async function processPlatformJob(
       });
       const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 
+      // 服务端账本（审查必须修 P0·6）：真实提炼产出的稿子绑档位，出图页费按此结算
+      if (!prepared.skippedDistill && prepared.distillModel) {
+        const { recordKnowledgeCardDistillReceipt } = await import(
+          "../services/knowledgeCardDistillReceipt.js"
+        );
+        // fail-closed：receipt 落不了盘就让 job 报错重试——吞错会让后续出图按客户端声明档计费
+        await recordKnowledgeCardDistillReceipt(
+          Number(jobUserId),
+          prepared.distillModel,
+          prepared.distilledMarkdown,
+        );
+      }
+
       /**
        * 提炼费：只有前端明确带 `chargeDistillFee` 才收，也就是「纯文本长文，
        * 用户在弹窗里选了先提炼」那条路。上传文档的提炼是抽文的必要环节，成本已含在页费里，不另收。
@@ -2219,6 +2257,8 @@ async function processPlatformJob(
             fee,
             "knowledgeCardDistill",
             `图文知识卡·提炼（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）${chargeMarker}`,
+            // DB 唯一索引兜底并发双扣（超时旧执行 vs 重排新执行都过了上面的 SELECT 查账）
+            { chargeKey: chargeMarker },
           );
           distillFeeCharged = deducted.cost;
         }

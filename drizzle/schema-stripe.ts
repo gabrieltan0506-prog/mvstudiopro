@@ -1,4 +1,13 @@
-import { decimal, integer, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
+import {
+  decimal,
+  integer,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+  uniqueIndex,
+  varchar,
+} from "drizzle-orm/pg-core";
 
 /**
  * Stripe + Credits 付費系統 Schema
@@ -77,11 +86,39 @@ export const stripeUsageLogs = pgTable("stripe_usage_logs", {
   description: text("description"),
   balanceAfter: integer("balanceAfter"),
   metadata: text("metadata"), // JSON string
+  /** 幂等扣费键（部分唯一索引，见 server/db.ts ensureStripeUsageLogsChargeKey）：并发/重试双扣的 DB 级防线 */
+  chargeKey: varchar("chargeKey", { length: 120 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
 export type StripeUsageLog = typeof stripeUsageLogs.$inferSelect;
 export type InsertStripeUsageLog = typeof stripeUsageLogs.$inferInsert;
+
+// ═══════════════════════════════════════════
+// 圖文卡提煉 receipt（2026-08-10 审查必须修 P0·6）
+// 服务端账本绑定 {userId, textHash, model}：出图页费按提炼时的真实档位结算，
+// 客户端换档（取消出图后切轻量档）不再能把超凡提炼稿按轻量页费出图。
+// ═══════════════════════════════════════════
+export const knowledgeCardDistillReceipts = pgTable(
+  "knowledge_card_distill_receipts",
+  {
+    id: serial().primaryKey(),
+    userId: integer("userId").notNull(),
+    /** sha256(trim(提炼稿)) 前 64 位十六进制 */
+    textHash: varchar("textHash", { length: 64 }).notNull(),
+    model: varchar("model", { length: 40 }).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (table) => ({
+    userHashModelUnique: uniqueIndex("kc_distill_receipts_user_hash_model_uniq").on(
+      table.userId,
+      table.textHash,
+      table.model,
+    ),
+  }),
+);
+
+export type KnowledgeCardDistillReceipt = typeof knowledgeCardDistillReceipts.$inferSelect;
 
 // ═══════════════════════════════════════════
 // 優惠碼

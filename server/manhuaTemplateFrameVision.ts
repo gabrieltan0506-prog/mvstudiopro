@@ -76,6 +76,8 @@ const FRAME_SIGNED_URL_TTL_SEC = 2 * 3600;
 async function resolveFrameHttpsUrl(frame: ManhuaTemplateFrameVisionInputFrame): Promise<{
   atSec: number;
   url: string;
+  /** 本次为发请求临时上传的 frames-tmp 对象（用后清理）；直连已有 URL/gcsUri 时为空 */
+  tmpObjectName?: string;
 }> {
   const atSec = Math.max(0, Number(frame.atSec) || 0);
   const direct = String(frame.url || "").trim();
@@ -95,12 +97,17 @@ async function resolveFrameHttpsUrl(frame: ManhuaTemplateFrameVisionInputFrame):
   const ext = /png/i.test(mime) ? "png" : /webp/i.test(mime) ? "webp" : "jpg";
   const hash = createHash("sha1").update(buffer).digest("hex").slice(0, 20);
   const { uploadBufferToGcs, signGsUriV4ReadUrl } = await import("./services/gcs.js");
+  const objectName = `manhua-template-learn/frames-tmp/${hash}.${ext}`;
   const uploaded = await uploadBufferToGcs({
-    objectName: `manhua-template-learn/frames-tmp/${hash}.${ext}`,
+    objectName,
     buffer,
     contentType: mime,
   });
-  return { atSec, url: signGsUriV4ReadUrl(uploaded.gcsUri, FRAME_SIGNED_URL_TTL_SEC) };
+  return {
+    atSec,
+    url: signGsUriV4ReadUrl(uploaded.gcsUri, FRAME_SIGNED_URL_TTL_SEC),
+    tmpObjectName: objectName,
+  };
 }
 
 export async function analyzeManhuaTemplateFramesWithTerra(
@@ -119,17 +126,28 @@ export async function analyzeManhuaTemplateFramesWithTerra(
 
   // GPT 路径帧转 dataUrl 内联；Claude 路径帧一律转 https URL（GCS 签名），绝不 base64
   const resolved: Array<{ atSec: number; imageUrl: string }> = [];
+  const tmpFrameObjects: string[] = [];
   for (const frame of selected) {
     if (isClaude) {
-      const { atSec, url } = await resolveFrameHttpsUrl(frame);
+      const { atSec, url, tmpObjectName } = await resolveFrameHttpsUrl(frame);
       resolved.push({ atSec, imageUrl: url });
+      if (tmpObjectName) tmpFrameObjects.push(tmpObjectName);
     } else {
       const { atSec, dataUrl } = await resolveFrameDataUrl(frame);
       resolved.push({ atSec, imageUrl: dataUrl });
     }
   }
+  // frames-tmp 请求后 best-effort 清理（审查建议5）：签名 URL 只在本次请求内有用
+  const cleanupTmpFrames = async () => {
+    if (!tmpFrameObjects.length) return;
+    const { deleteGcsObject } = await import("./services/gcs.js");
+    await Promise.all(
+      tmpFrameObjects.map((objectName) => deleteGcsObject({ objectName }).catch(() => {})),
+    );
+  };
 
   const modelName = isClaude ? MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL : MANHUA_TEMPLATE_FRAME_VISION_MODEL;
+  try {
   const response = await invokeLLM({
     model: "pro",
     provider: isClaude ? "anthropic" : "openai",
@@ -189,4 +207,7 @@ export async function analyzeManhuaTemplateFramesWithTerra(
     model: modelName,
     reasoningEffort: MANHUA_TEMPLATE_FRAME_VISION_REASONING,
   };
+  } finally {
+    await cleanupTmpFrames();
+  }
 }

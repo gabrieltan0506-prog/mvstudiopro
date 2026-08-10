@@ -134,6 +134,8 @@ export type CanvasVideoTaskRecord = {
   lastTransientError?: string;
   /** 客户端幂等键；同键重复创建返回同一任务（见 createCanvasVideoTask） */
   idempotencyKey?: string;
+  /** 扣费来源快照：hold 丢失时按此同源退回（团队扣款不得退进个人） */
+  deduct?: PaidJobDeductSnapshot;
   /** wavespeed-upscale 专用：要放大的源视频（必须是真实成片 URL）与目标档 */
   upscaleSourceUrl?: string;
   upscaleTarget?: WavespeedUpscaleTarget;
@@ -391,6 +393,36 @@ async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<vo
   }
 }
 
+/** hold 缺失/账本异常时的兜底直退：按任务里持久化的 deduct 同源退回。
+ * 退前查真账 refundKey，重复调用不双退（与 paidJobLedger 对账同一套 marker）。 */
+async function refundTaskDirect(task: CanvasVideoTaskRecord, reason: string): Promise<void> {
+  if (task.creditsCharged <= 0) return;
+  const d = task.deduct;
+  if (d?.source === "admin" || d?.source === "none") return;
+  const { hasRefundMarker, refundMarkerFor } = await import("./paidJobLedger.js");
+  const seen = await hasRefundMarker(task.userId, refundMarkerFor(TASK_TYPE, task.taskId));
+  if (seen === true) return; // 已在账，勿重复
+  if (seen === null) throw new Error("db_unavailable_refund_deferred");
+  if (d?.source === "team" && d.teamId != null && d.teamMemberId != null) {
+    const { refundCreditsForDeductAmount } = await import("../credits.js");
+    await refundCreditsForDeductAmount(
+      task.userId,
+      reason,
+      {
+        success: true,
+        cost: task.creditsCharged,
+        remainingBalance: -1,
+        source: "team",
+        teamId: d.teamId,
+        teamMemberId: d.teamMemberId,
+      } as Awaited<ReturnType<typeof import("../credits.js")["deductCreditsAmount"]>>,
+      task.label,
+    );
+    return;
+  }
+  await refundCredits(task.userId, task.creditsCharged, reason);
+}
+
 async function failTask(
   task: CanvasVideoTaskRecord,
   error: string,
@@ -399,20 +431,20 @@ async function failTask(
   task.error = error.slice(0, 280);
   task.finishedAt = new Date().toISOString();
   await writeTask(task);
-  await refundCreditsOnFailure(
-    task.taskId,
-    TASK_TYPE,
-    "task_failed",
-    task.error,
-  ).catch(async () => {
-    if (task.creditsCharged > 0) {
-      await refundCredits(
-        task.userId,
-        task.creditsCharged,
-        `${task.label}·生成失败退回`,
-      ).catch(() => {});
+  const refundReason = `${task.label}·生成失败退回 [refundKey:${TASK_TYPE}/${task.taskId}]`;
+  try {
+    const out = await refundCreditsOnFailure(task.taskId, TASK_TYPE, "task_failed", task.error);
+    // hold 缺失时账本正常 resolve {status:"missing"} 而非 reject——不兜底就一分不退
+    if (out.status === "missing" && !out.refunded) {
+      await refundTaskDirect(task, refundReason).catch((e) => {
+        console.error("[canvasVideoTask] direct refund after missing hold failed", task.taskId, e);
+      });
     }
-  });
+  } catch {
+    await refundTaskDirect(task, refundReason).catch((e) => {
+      console.error("[canvasVideoTask] direct refund after ledger error failed", task.taskId, e);
+    });
+  }
   return task;
 }
 
@@ -899,30 +931,41 @@ export async function createCanvasVideoTask(input: {
     seedanceVersion: input.seedanceVersion,
     workMode: input.workMode,
     idempotencyKey: idemKey || undefined,
+    deduct: input.deduct,
     upscaleSourceUrl: input.upscaleSourceUrl,
     upscaleTarget: input.upscaleTarget,
     createdAt: now,
     updatedAt: now,
   };
   await writeTask(task);
-  await registerActiveJob({
-    jobId: taskId,
-    taskType: TASK_TYPE,
-    userId: input.userId,
-    creditsBilled: task.creditsCharged,
-    action: task.label,
-    externalApiCostHint: task.engine,
-    metadata: {
-      engine: task.engine,
-      duration: task.duration,
-      resolution: task.resolution,
-    },
-    deduct: input.deduct,
-    // 任务记录已持久化、启动会 resume：SIGTERM/心跳 reaper 不得退分（见 paidJobLedger）
-    resumable: true,
-  }).catch((error) => {
-    console.warn("[canvasVideoTask] registerActiveJob failed", error);
-  });
+  try {
+    await registerActiveJob({
+      jobId: taskId,
+      taskType: TASK_TYPE,
+      userId: input.userId,
+      creditsBilled: task.creditsCharged,
+      action: task.label,
+      externalApiCostHint: task.engine,
+      metadata: {
+        engine: task.engine,
+        duration: task.duration,
+        resolution: task.resolution,
+      },
+      deduct: input.deduct,
+      // 任务记录已持久化、启动会 resume：SIGTERM/心跳 reaper 不得退分（见 paidJobLedger）
+      resumable: true,
+    });
+  } catch (error) {
+    // hold 没登记成就提交上游 = 任务失败时账本查无此单、一分不退（永久漏退窗）。
+    // fail-fast：任务落终态失败、不碰上游，抛给调用方按 deduct 同源退款；
+    // 幂等映射里的 failed 任务会在付费重试时换新 taskId 重开，不挡重试。
+    console.error("[canvasVideoTask] registerActiveJob failed, abort before upstream", error);
+    task.status = "failed";
+    task.error = "任务账本登记失败，未提交生成，费用已退回";
+    task.finishedAt = new Date().toISOString();
+    await writeTask(task).catch(() => {});
+    throw new Error("paid_job_ledger_register_failed");
+  }
 
   void advanceTask(taskId).catch((error) => {
     console.error("[canvasVideoTask] initial advance failed", error);
@@ -975,6 +1018,24 @@ export async function resumeCanvasVideoTasksOnStartup(): Promise<void> {
   }
   console.log(`[canvasVideoTask] startup: resume ${ids.length} task(s)`);
   for (const id of ids) {
+    // 恢复前补登记 hold：跨部署丢账本卷/上次 register 失败的任务，失败时才有账可退。
+    // registerActiveJob 幂等且保留终态，不会把 refunded/settled 冲回 active。
+    const task = await readTask(id);
+    if (task) {
+      await registerActiveJob({
+        jobId: id,
+        taskType: TASK_TYPE,
+        userId: task.userId,
+        creditsBilled: task.creditsCharged,
+        action: task.label,
+        externalApiCostHint: task.engine,
+        metadata: { engine: task.engine, duration: task.duration, resolution: task.resolution },
+        deduct: task.deduct,
+        resumable: true,
+      }).catch((error) => {
+        console.warn("[canvasVideoTask] startup re-register hold failed", id, error);
+      });
+    }
     await advanceTask(id).catch((error) => {
       console.warn("[canvasVideoTask] startup resume failed", id, error);
     });

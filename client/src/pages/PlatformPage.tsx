@@ -11283,7 +11283,6 @@ export default function PlatformPage() {
                                       className="rounded-lg border border-emerald-300/25 bg-black/25 px-2 py-1 text-[10px] text-emerald-50/80"
                                     >
                                       <span className="font-semibold">{tpl.nameZh}</span>
-                                      <span className="ml-1 text-emerald-50/40">{tpl.id}</span>
                                     </span>
                                   ))}
                                 </div>
@@ -11305,7 +11304,7 @@ export default function PlatformPage() {
                                 <span className="min-w-0 truncate">
                                   {p.nameZh}
                                   <span className="ml-1 text-[#c9c0e6]/40">
-                                    {p.status === "approved" ? "已批准" : "待审"} · {p.id}
+                                    {p.status === "approved" ? "已批准" : "待审"}
                                   </span>
                                 </span>
                                 {p.status !== "approved" ? (

@@ -7275,6 +7275,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         });
         const plan = planKnowledgeCardPages(prepared.distilledMarkdown, prepared.distillModel);
 
+        // 服务端账本（审查必须修 P0·6）：真实提炼产出的稿子绑档位，出图页费按此结算
+        if (!prepared.skippedDistill && prepared.distillModel) {
+          const { recordKnowledgeCardDistillReceipt } = await import(
+            "./services/knowledgeCardDistillReceipt.js"
+          );
+          await recordKnowledgeCardDistillReceipt(
+            Number(ctx.user?.id),
+            prepared.distillModel,
+            prepared.distilledMarkdown,
+          );
+        }
+
         // 与后台任务同一口径：只有用户为省页费主动买提炼才收，且扣在提炼成功之后
         let distillFeeCharged = 0;
         const uidForDistillFee = Number(ctx.user?.id);
@@ -7289,11 +7301,21 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           );
           const { deductCreditsAmount } = await import("./credits.js");
           const fee = knowledgeCardDistillFeeForModel(prepared.distillModel);
+          // 幂等（审查必须修）：同步路径丢响应/重复 POST 不得再扣——
+          // 天然业务键 = 用户+档位+提炼稿哈希，DB 唯一索引兜底
+          const { createHash } = await import("node:crypto");
+          const chargeKey = `kcdistill-sync/${uidForDistillFee}/${prepared.distillModel}/${createHash(
+            "sha256",
+          )
+            .update(prepared.distilledMarkdown)
+            .digest("hex")
+            .slice(0, 32)}`;
           const deducted = await deductCreditsAmount(
             uidForDistillFee,
             fee,
             "knowledgeCardDistill",
-            `图文知识卡·提炼（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）`,
+            `图文知识卡·提炼（${prepared.sourceChars.toLocaleString()} 字 → ${plan.pageCount} 页）[chargeKey:${chargeKey}]`,
+            { chargeKey },
           );
           distillFeeCharged = deducted.cost;
         }
@@ -7421,6 +7443,23 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const is3x4Grid =
           input.gridVariant === "3x4" &&
           (input.kind === "storyboard_sheet_landscape" || input.kind === "xiaohongshu_dual_note");
+        // 审查必须修（P0·6）：知识卡页费档位以服务端提炼 receipt 为准——
+        // 客户端在提炼后换低档（取消出图→切轻量）不再改变计费；查无 receipt
+        // （手写文本/未走提炼）才按客户端声明档
+        let effectiveDistillModel = input.distillModel;
+        if (input.kind === "single_page_knowledge_card") {
+          const { lookupKnowledgeCardDistillReceiptModel } = await import(
+            "./services/knowledgeCardDistillReceipt.js"
+          );
+          // fail-closed：查不了账本就报错重试，回退客户端声明会重开「超凡稿按轻量档」的洞
+          const receiptModel = await lookupKnowledgeCardDistillReceiptModel(
+            userId,
+            String(input.scriptContext || ""),
+          );
+          if (receiptModel) {
+            effectiveDistillModel = receiptModel as typeof input.distillModel;
+          }
+        }
         const cost = compositePack
           ? platformBundleCreditsForSlot(
               platformCompositeBundleTotalCreditsForGrid(compositePack.packSceneIds.length, is3x4Grid),
@@ -7432,7 +7471,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             : input.kind === "single_page_knowledge_card"
               ? knowledgeCardCreditsForPageIndex(
                   input.notePageIndex ?? (input.notePart === "lower" ? 2 : 1),
-                  input.distillModel,
+                  effectiveDistillModel,
                 )
               : (is3x4Grid ? CREDIT_COSTS.platformXhsDualNote3x4 : CREDIT_COSTS.platformXhsDualNote);
 
@@ -7471,6 +7510,103 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         const progressJobIdRaw = String(input.progressJobId ?? "").trim();
         const progressJobId = progressJobIdRaw.length >= 8 ? progressJobIdRaw : null;
+
+        /**
+         * 审查必须修（P0·8/9）：扣费 receipt 只活在请求闭包里——进程在
+         * fire-and-forget 启动前退出，receipt 随闭包消失，费用永久扣住。
+         * 收口：扣费成功即注册 paidJobLedger hold（含 deduct 来源快照），
+         * 所有失败分支统一走账本两阶段退分（refund_pending 对账 + refundKey 查重
+         * + 团队同源退回）；崩溃/部署中断由 SIGTERM forceAll 与 startup reap 兜底。
+         */
+        const compositeHoldJobId =
+          progressJobId ||
+          `cs_sync_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+        let compositeHoldRegistered = false;
+        if (compositeChargeReceipt && compositeChargeReceipt.cost > 0) {
+          try {
+            const { registerActiveJob } = await import("./services/paidJobLedger.js");
+            await registerActiveJob({
+              jobId: compositeHoldJobId,
+              taskType: "platformCompositeSheet",
+              userId,
+              creditsBilled: compositeChargeReceipt.cost,
+              action: "platformCompositeSheet",
+              deduct: {
+                source: compositeChargeReceipt.source as "personal" | "team",
+                teamId:
+                  "teamId" in compositeChargeReceipt ? compositeChargeReceipt.teamId : undefined,
+                teamMemberId:
+                  "teamMemberId" in compositeChargeReceipt
+                    ? compositeChargeReceipt.teamMemberId
+                    : undefined,
+              },
+            });
+            compositeHoldRegistered = true;
+          } catch (e) {
+            // hold 没写成不能带着「无账可对」的扣费继续跑：立刻按 receipt 同源退款并终止
+            const { refundCreditsForDeductAmount } = await import("./credits.js");
+            await refundCreditsForDeductAmount(
+              userId,
+              `platformCompositeSheet 账本登记失败退回 [refundKey:platformCompositeSheet/${compositeHoldJobId}]`,
+              compositeChargeReceipt,
+              "platformCompositeSheet",
+            );
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "任务账本暂不可用，费用已退回，请稍后重试",
+            });
+          }
+        }
+        /** 失败分支统一退款入口；返回是否确认退回（不许谎报「已退回」） */
+        const refundCompositeCharge = async (why: string): Promise<boolean> => {
+          if (!compositeChargeReceipt || compositeChargeReceipt.cost <= 0) return true;
+          try {
+            if (compositeHoldRegistered) {
+              const { refundCreditsOnFailure } = await import("./services/paidJobLedger.js");
+              const out = await refundCreditsOnFailure(
+                compositeHoldJobId,
+                "platformCompositeSheet",
+                "task_failed",
+                why,
+              );
+              return out.refunded || out.status === "refunded" || out.status === "settled";
+            }
+            const { refundCreditsForDeductAmount } = await import("./credits.js");
+            await refundCreditsForDeductAmount(
+              userId,
+              `${why} [refundKey:platformCompositeSheet/${compositeHoldJobId}]`,
+              compositeChargeReceipt,
+              "platformCompositeSheet",
+            );
+            return true;
+          } catch (re) {
+            console.error(
+              `[mvAnalysis.generatePlatformCompositeSheet] refund failed userId=${userId} hold=${compositeHoldJobId}:`,
+              re,
+            );
+            return false;
+          }
+        };
+        const settleCompositeHold = async (): Promise<void> => {
+          if (!compositeHoldRegistered) return;
+          const { unregisterActiveJob } = await import("./services/paidJobLedger.js");
+          await unregisterActiveJob(compositeHoldJobId, "platformCompositeSheet", "settled").catch(
+            () => {},
+          );
+        };
+        /** 长生成（3×4 多张）会超过账本 5 分钟心跳线：生成期间刷心跳防误退 */
+        const startCompositeHeartbeat = (): (() => void) => {
+          if (!compositeHoldRegistered) return () => {};
+          const timer = setInterval(() => {
+            import("./services/paidJobLedger.js")
+              .then(({ heartbeatActiveJob }) =>
+                heartbeatActiveJob(compositeHoldJobId, "platformCompositeSheet").catch(() => {}),
+              )
+              .catch(() => {});
+          }, 60_000);
+          timer.unref?.();
+          return () => clearInterval(timer);
+        };
 
         const enrichedCompositeScriptContext = (() => {
           const raw = String(input.scriptContext || "").trim();
@@ -7521,28 +7657,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           } catch (pe) {
             console.warn("[mvAnalysis.generatePlatformCompositeSheet] progress job insert failed:", pe);
             // 审查必须修：只退实扣（admin/未扣不退）、按扣款来源退（团队额度不错退个人）、
-            // 退款失败不许谎报「已退回」
-            let refunded = false;
-            try {
-              if (compositeChargeReceipt && compositeChargeReceipt.cost > 0) {
-                const { refundCreditsForDeductAmount } = await import("./credits.js");
-                await refundCreditsForDeductAmount(
-                  userId,
-                  `platformCompositeSheet 建任务失败退回 [refundKey:compositeSheet/${progressJobId}]`,
-                  compositeChargeReceipt,
-                  "platformCompositeSheet",
-                );
-                refunded = true;
-              } else {
-                refunded = true; // 本来就没扣（admin/免费路径），无账可退
-              }
-            } catch (re) {
-              console.error(
-                "[mvAnalysis.generatePlatformCompositeSheet] refund after insert failure ALSO failed:",
-                `userId=${userId} cost=${compositeChargeReceipt?.cost ?? 0} jobId=${progressJobId}`,
-                re,
-              );
-            }
+            // 退款失败不许谎报「已退回」；走账本两阶段，失败停在 refund_pending 由 reaper 补
+            const refunded = await refundCompositeCharge(
+              "platformCompositeSheet 建任务失败退回",
+            );
             throw new TRPCError({
               code: "INTERNAL_SERVER_ERROR",
               message: refunded
@@ -7556,15 +7674,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const runBackgroundComposite = async () => {
             const { attachCompositeSheetFlowLogLiveSync } = await import("./jobs/compositeSheetLiveProgress.js");
             detachLiveProgress = attachCompositeSheetFlowLogLiveSync(imageGenFlowLog, progressJobId);
-            
+            const stopHeartbeat = startCompositeHeartbeat();
+
             appendImageFlowLog(
               imageGenFlowLog,
               `[2×4 接口] generatePlatformCompositeSheet 开始 (异步背景执行) · sceneId=${input.sceneId} · kind=${input.kind} · title=${input.title.slice(0, 60)} · 本笔 ${cost} 点`,
             );
-            const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
-            appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
             let imageUrl: string | null = null;
             try {
+              // resolveWatermark 必须在 try 内：try 外抛错会绕过 finally，
+              // 心跳 interval 泄漏并持续给 hold 续命，reaper 永不退分
+              const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
+              appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
               imageUrl = await generateSheet({
                 kind: input.kind,
                 title: input.title,
@@ -7592,20 +7713,28 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 compositeImageUrl: imageUrl,
                 done: true,
               });
+              await settleCompositeHold();
             } catch (error: any) {
               const rawMessage = error instanceof Error ? error.message : String(error);
               console.error("\n[生图致命错误 (Async Background)]:", rawMessage);
-              
+
+              // 先退款再落 job 终态文案：不许把「没退成」写成「已退回」
+              const refunded = await refundCompositeCharge(
+                "platformCompositeSheet 生图致命错误退还",
+              );
+              const refundNote =
+                !compositeChargeReceipt || compositeChargeReceipt.cost <= 0
+                  ? ""
+                  : refunded
+                    ? "\n（积分已退回）"
+                    : "\n（退款受阻已记录，账本会自动补退，请勿重复重试）";
               const tail = imageGenFlowLog.filter((s) => String(s).trim()).slice(-24).join("\n").slice(0, 1200);
               await markJobFailed(
                 progressJobId,
-                tail ? `${rawMessage}\n── log ──\n${tail}` : rawMessage,
+                (tail ? `${rawMessage}\n── log ──\n${tail}` : rawMessage) + refundNote,
               );
-              
-              if (!isAdminUser) {
-                await refundCredits(userId, cost, "platformCompositeSheet 生图致命错误退还");
-              }
             } finally {
+              stopHeartbeat();
               detachLiveProgress?.();
             }
           };
@@ -7634,6 +7763,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const isTrial = !isAdminUser && (await resolveWatermark(userId, isAdminUser));
         appendImageFlowLog(imageGenFlowLog, `[2×4 接口] 试用水印 isTrial=${isTrial}`);
         let imageUrl: string | null = null;
+        const stopSyncHeartbeat = startCompositeHeartbeat();
         try {
           imageUrl = await generateSheet({
             kind: input.kind,
@@ -7655,6 +7785,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             infographicTemplateId: input.infographicTemplateId,
           });
         } catch (error: any) {
+          stopSyncHeartbeat();
           detachLiveProgress?.();
           detachLiveProgress = undefined;
           if (progressJobId) {
@@ -7668,9 +7799,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
           console.error("\n[生图致命错误 (Global Node)]:", rawMessage);
 
-          if (!isAdminUser) {
-            await refundCredits(ctx.user.id, cost, "platformCompositeSheet Global Node 生图致命错误退还");
-          }
+          const refunded = await refundCompositeCharge(
+            "platformCompositeSheet Global Node 生图致命错误退还",
+          );
+          const refundLabel = refunded ? "积分已退回" : "退款受阻已记录，账本会自动补退";
 
           const hasFullLogInMessage =
             rawMessage.includes("执行日志:") || rawMessage.includes("—— imageGenFlowLog ——");
@@ -7678,8 +7810,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             rawMessage.trim() === PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE ||
             rawMessage.includes(PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE);
           let clientMessage = isCompositeCapacity
-            ? `${PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}（积分已退回）`
-            : `引擎错误 (积分已退回): \n${rawMessage}`;
+            ? `${PLATFORM_COMPOSITE_TRANSLATION_CAPACITY_MESSAGE}（${refundLabel}）`
+            : `引擎错误 (${refundLabel}): \n${rawMessage}`;
           if (!isCompositeCapacity && !hasFullLogInMessage && imageGenFlowLog.length > 0) {
             const logTail = imageGenFlowLog
               .filter((s) => String(s).trim())
@@ -7701,13 +7833,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         if (!imageUrl) {
+          stopSyncHeartbeat();
           detachLiveProgress?.();
           if (progressJobId) {
             await markJobFailed(progressJobId, "imageUrl 为空");
           }
-          if (!isAdminUser) {
-            await refundCredits(userId, cost, "platformCompositeSheet 生图失败退还");
-          }
+          const refunded = await refundCompositeCharge("platformCompositeSheet 生图失败退还");
+          const refundLabel = refunded ? "积分已退回" : "退款受阻已记录，账本会自动补退";
           const logTail = imageGenFlowLog
             .filter((s) => String(s).trim())
             .slice(-72)
@@ -7722,7 +7854,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           console.error("\n[生图致命错误 (Global Node)]:", rawMessage);
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
-            message: `引擎错误 (积分已退回): \n${rawMessage}`,
+            message: `引擎错误 (${refundLabel}): \n${rawMessage}`,
           });
         }
 
@@ -7750,6 +7882,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
 
         appendImageFlowLog(imageGenFlowLog, imageUrl ? "✓ generatePlatformCompositeSheet 完成" : "✗ 无 imageUrl（应已在上方抛错）");
+        stopSyncHeartbeat();
         detachLiveProgress?.();
         if (progressJobId) {
           await markJobSucceeded(progressJobId, {
@@ -7758,6 +7891,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             done: true,
           });
         }
+        await settleCompositeHold();
         return {
           success: true as const,
           imageUrl,
