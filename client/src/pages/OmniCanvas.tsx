@@ -156,6 +156,7 @@ import {
   type ManhuaCharacterGender,
 } from "@shared/manhuaCharacterAssetLibrary";
 import { recommendManhuaCastBundle } from "@shared/manhuaCastBundle";
+import { getManhuaDemoAsset } from "@shared/manhuaScenePropDemoCatalog";
 import {
   buildManhuaProjectBible,
   summarizeManhuaProjectBible,
@@ -389,6 +390,22 @@ function saveFactoryCharacterPrefs(prefs: FactoryCharacterPrefs) {
 /** 本机编剧会话（剧情包 / 确认态 / Bible）；硬刷新恢复，避免线上重扩 */
 function bootWriterSession() {
   return loadManhuaWriterSessionFromStorage();
+}
+
+
+/** 古风会话可保留的 demo 赛道；其余赛道（romance/intrigue/business…）的演示道具视为现代残留 */
+const ANCIENT_FRIENDLY_DEMO_LANES = new Set<string>(["ancient", "xianxia", "xuanhuan"]);
+
+/**
+ * 古风专案里过滤掉「现代演示道具」残留（丝绒戒指盒 romance/同款口红 romance/
+ * 绣帕信物 intrigue——用户点名的幽灵三件套均在此列）。
+ * 只过滤 demo 目录能查到且赛道非古风族的 id；查不到目录的 id（用户自有资产）一律保留，不误伤。
+ */
+function stripUrbanDemoPropIds(ids: string[]): string[] {
+  return (ids || []).filter((id) => {
+    const demo = getManhuaDemoAsset(id);
+    return !demo || ANCIENT_FRIENDLY_DEMO_LANES.has(demo.lane);
+  });
 }
 
 export default function OmniCanvas() {
@@ -1099,12 +1116,18 @@ export default function OmniCanvas() {
   useEffect(() => {
     setFactoryIdentityLockZh(castBundle.identityLockZh);
 
-    // 古风题材：确认前也清掉残留都市角色卡（防 localStorage/prefs 污染）
+    // 古风题材：确认前也清掉残留都市角色卡（防 localStorage/prefs 污染）。
+    // 道具同理——propManual 豁免只该保护「本专案手选」，不该保护跨专案的
+    // 都市演示道具残留（幽灵三件套），按 demo 目录 lane 精准过滤、不误伤自有资产
     if (castBundle.lane === "ancient") {
       setFactoryFemaleId("");
       setFactoryMaleId("");
       setFemaleLeadManual(false);
       setMaleLeadManual(false);
+      setFactoryPropIds((prev) => {
+        const kept = stripUrbanDemoPropIds(prev);
+        return kept.length === prev.length ? prev : kept;
+      });
     }
 
     if (!castHardApplyReady) {
@@ -1163,7 +1186,8 @@ export default function OmniCanvas() {
         const ancientIds = ancientManual
           ? factoryAncientArchetypeIds
           : bundle.ancientArchetypeIds;
-        const propIds = propManual ? factoryPropIds : bundle.propIds;
+        // manual 豁免不保护跨专案都市演示道具残留（幽灵三件套）
+        const propIds = propManual ? stripUrbanDemoPropIds(factoryPropIds) : bundle.propIds;
         const wardrobeId = wardrobeManual
           ? factoryWardrobeId
           : bundle.wardrobePropContinuityIds[0] || "";
@@ -1490,18 +1514,32 @@ export default function OmniCanvas() {
         normalizeDirectorBoardMainByEpisode(prefs.directorBoardMainByEpisode),
       );
     }
-    if (typeof prefs.femaleId === "string") setFactoryFemaleId(prefs.femaleId);
-    if (typeof prefs.maleId === "string") setFactoryMaleId(prefs.maleId);
+    // 跨专案幽灵防线（用户实测「清都清不掉」的根）：恢复数据里旧都市专案的
+    // 库选角/道具/manual 标志，会在每次登录云同步时无条件写回，把种子库 CP
+    //（沈清辞/傅临渊）与都市演示道具复活到古风专案。守卫口径：会话 cast 已是
+    // ancient 时，都市选角与其 manual 豁免一律不恢复；道具按 demo 目录 lane 过滤。
+    const restoredCastLane = session.projectBible?.cast?.lane;
+    const restoreUrbanLeads = restoredCastLane !== "ancient";
+    if (restoreUrbanLeads && typeof prefs.femaleId === "string") setFactoryFemaleId(prefs.femaleId);
+    if (restoreUrbanLeads && typeof prefs.maleId === "string") setFactoryMaleId(prefs.maleId);
     if (typeof prefs.artStyleId === "string") {
       setFactoryArtStyleId(prefs.artStyleId as ManhuaArtStyleId);
     }
-    if (prefs.femaleLeadManual != null) setFemaleLeadManual(Boolean(prefs.femaleLeadManual));
-    if (prefs.maleLeadManual != null) setMaleLeadManual(Boolean(prefs.maleLeadManual));
+    if (restoreUrbanLeads && prefs.femaleLeadManual != null) {
+      setFemaleLeadManual(Boolean(prefs.femaleLeadManual));
+    }
+    if (restoreUrbanLeads && prefs.maleLeadManual != null) {
+      setMaleLeadManual(Boolean(prefs.maleLeadManual));
+    }
     if (prefs.artStyleManual != null) setArtStyleManual(Boolean(prefs.artStyleManual));
     const cast = session.projectBible?.cast;
     if (cast) {
       if (cast.sceneId) setFactorySceneId(cast.sceneId);
-      if (cast.propIds?.length) setFactoryPropIds(cast.propIds);
+      if (cast.propIds?.length) {
+        setFactoryPropIds(
+          cast.lane === "ancient" ? stripUrbanDemoPropIds(cast.propIds) : cast.propIds,
+        );
+      }
       if (cast.ancientArchetypeIds?.length) setFactoryAncientArchetypeIds(cast.ancientArchetypeIds);
       if (cast.identityLockZh) setFactoryIdentityLockZh(cast.identityLockZh);
       if (cast.wardrobePropContinuityIds?.[0]) {
@@ -1516,6 +1554,55 @@ export default function OmniCanvas() {
     // 胜出草稿尽量补写本机（失败忽略）
     repairLocalFromCloudDraft(draft);
   }, []);
+
+
+  /** 手动备份（用户拍板：只有用户点上传才存云） */
+  const latestDraftSnapshotRef = useRef<Parameters<typeof buildLocalCloudDraftSnapshot>[0] | null>(null);
+  const [cloudBackupBusy, setCloudBackupBusy] = useState<null | "upload" | "restore">(null);
+  const uploadCloudBackupNow = useCallback(async () => {
+    if (cloudBackupBusy) return;
+    const snap = latestDraftSnapshotRef.current;
+    if (!snap) {
+      toast.error("当前没有可备份的工作区内容");
+      return;
+    }
+    setCloudBackupBusy("upload");
+    try {
+      await syncCloudDraftPayload(buildLocalCloudDraftSnapshot(snap));
+      toast.success("已上传备份到云端");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "备份上传失败，请稍后重试");
+    } finally {
+      setCloudBackupBusy(null);
+    }
+  }, [cloudBackupBusy, syncCloudDraftPayload]);
+  const restoreCloudBackupNow = useCallback(async () => {
+    if (cloudBackupBusy) return;
+    setCloudBackupBusy("restore");
+    try {
+      // 回填前强制取最新云备份，别用登录时的旧缓存
+      const fresh = await cloudDraftQuery.refetch();
+      const draft = fresh.data?.draft;
+      if (!draft) {
+        toast.error("云端没有备份可回填");
+        return;
+      }
+      const at = String(draft.clientUpdatedAt || "").slice(0, 16) || "未知时间";
+      if (
+        !window.confirm(
+          `将用云端备份（${at}）覆盖当前工作区，本机未上传的改动会丢失。确定回填？`,
+        )
+      ) {
+        return;
+      }
+      applyCloudDraftToUi(draft);
+      toast.success("已从云端备份回填");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "回填失败，请稍后重试");
+    } finally {
+      setCloudBackupBusy(null);
+    }
+  }, [cloudBackupBusy, cloudDraftQuery, applyCloudDraftToUi]);
 
   /** 登录后：云端与本机比新，胜出方驱动 UI，并补写较弱一侧 */
   useEffect(() => {
@@ -1538,17 +1625,18 @@ export default function OmniCanvas() {
     });
 
     if (choice.source === "cloud") {
-      applyCloudDraftToUi(choice.draft);
-      toast.message("已从云端恢复草稿（约 30 天暂存；请记得导出备份）");
-      pushDebug("cloudDraft:hydrate-cloud", {
+      // 备份手动化（用户 2026-08-10 拍板）：云端较新也**绝不自动覆盖本机**——
+      // 用户正在生图/出片/精修时被静默回填，一切成果变泡影（实际发生过）。
+      // 只提示有备份可回填，恢复动作交给顶栏「回填备份」按钮（带确认）。
+      toast.message(
+        `云端有较新备份（${String(choice.draft.clientUpdatedAt).slice(0, 16)}）。如需恢复请点顶栏「回填备份」；当前工作区不受影响。`,
+      );
+      pushDebug("cloudDraft:hydrate-skip-auto", {
         level: "ok",
-        detail: `blocks=${choice.draft.canvas.blocks.length} · at=${choice.draft.clientUpdatedAt}`,
+        detail: `cloud newer · blocks=${choice.draft.canvas.blocks.length} · at=${choice.draft.clientUpdatedAt}`,
       });
     } else if (choice.source === "local") {
-      // 本机较新：补写云端（不打断当前 UI；优先 GCS 直传）
-      void syncCloudDraftPayload(choice.draft).then(() => {
-        pushDebug("cloudDraft:repair-cloud-from-local", { level: "ok" });
-      });
+      // 备份手动化：本机较新也不再自动上传——上传只走「上传备份」按钮
       // 本机读失败键再尽力写一次
       persistManhuaDraftLocally({
         writerSession: choice.draft.writerSession,
@@ -1632,18 +1720,12 @@ export default function OmniCanvas() {
       factoryPrefs,
       clientUpdatedAt,
     });
+    // 手动上传按钮从这个 ref 取当前工作区快照
+    latestDraftSnapshotRef.current = { writerSession, blocks, edges, factoryPrefs, clientUpdatedAt };
 
-    const timer = window.setTimeout(() => {
-      const payload = buildLocalCloudDraftSnapshot({
-        writerSession,
-        blocks,
-        edges,
-        factoryPrefs,
-        clientUpdatedAt,
-      });
-      void syncCloudDraftPayload(payload);
-    }, MANHUA_CLOUD_DRAFT_SYNC_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
+    // 备份手动化（用户 2026-08-10 拍板）：防抖自动上传拆除——云备份只在用户
+    // 点「上传备份」时发生。本机 persistManhuaDraftLocally 双写保留（防刷新丢失，
+    // 那是本地工作区不是云备份）。
   }, [
     user?.id,
     cloudSyncReady,
@@ -3156,15 +3238,7 @@ export default function OmniCanvas() {
         factoryPrefs,
         clientUpdatedAt,
       });
-      void syncCloudDraftPayload(
-        buildLocalCloudDraftSnapshot({
-          writerSession,
-          blocks: nextBlocks,
-          edges: nextEdges,
-          factoryPrefs,
-          clientUpdatedAt,
-        }),
-      );
+      // 备份手动化：扩写完成也不自动上云——用户点「上传备份」才存
       const epDigest = pack.episodes
         .map((ep) => `第${ep.index}集·${ep.title || ""}：${String(ep.endHook || "").slice(0, 80)}`)
         .join("\n");
@@ -5925,6 +5999,24 @@ export default function OmniCanvas() {
                     }}
                   >
                     成片坞
+                  </button>
+                  <button
+                    type="button"
+                    disabled={cloudBackupBusy != null}
+                    className="underline underline-offset-2 hover:text-white/75 disabled:opacity-50"
+                    title="把当前工作区手动存到云端（约 30 天）；系统不再自动备份"
+                    onClick={() => void uploadCloudBackupNow()}
+                  >
+                    {cloudBackupBusy === "upload" ? "备份中…" : "上传备份"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={cloudBackupBusy != null}
+                    className="underline underline-offset-2 hover:text-white/75 disabled:opacity-50"
+                    title="用云端备份覆盖当前工作区（会先确认）；系统不再自动回填"
+                    onClick={() => void restoreCloudBackupNow()}
+                  >
+                    {cloudBackupBusy === "restore" ? "回填中…" : "回填备份"}
                   </button>
                   <button
                     type="button"
