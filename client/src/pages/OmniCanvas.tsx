@@ -542,7 +542,11 @@ export default function OmniCanvas() {
   const [factoryGenreId, setFactoryGenreId] = useState("");
   const [factorySceneId, setFactorySceneId] = useState(() => bootCast?.sceneId || "");
   /** 资产墙点选的道具示范（最多 4） */
-  const [factoryPropIds, setFactoryPropIds] = useState<string[]>(() => bootCast?.propIds || []);
+  const [factoryPropIds, setFactoryPropIds] = useState<string[]>(() =>
+    // 本机会话启动是幽灵三件套的最后一条活路：被污染的 LS 直接进 state，
+    // 且实测古风专案 cast.lane 可能错存 urban，挂 lane 的守卫全被绕过——无条件清
+    stripUrbanDemoPropIds(bootCast?.propIds || []),
+  );
   /** 古风原型 arch_*（最多 2） */
   const [factoryAncientArchetypeIds, setFactoryAncientArchetypeIds] = useState<string[]>(
     () => bootCast?.ancientArchetypeIds || [],
@@ -1133,15 +1137,17 @@ export default function OmniCanvas() {
     // 古风题材：确认前也清掉残留都市角色卡（防 localStorage/prefs 污染）。
     // 道具同理——propManual 豁免只该保护「本专案手选」，不该保护跨专案的
     // 都市演示道具残留（幽灵三件套），按 demo 目录 lane 精准过滤、不误伤自有资产
+    // 幽灵三件套无条件清：实测（2026-08-11 线上）古风专案 cast.lane 可能
+    // 错存 urban，挂在 lane 上的守卫会被整体绕过——不再信 lane
+    setFactoryPropIds((prev) => {
+      const kept = stripUrbanDemoPropIds(prev);
+      return kept.length === prev.length ? prev : kept;
+    });
     if (castBundle.lane === "ancient") {
       setFactoryFemaleId("");
       setFactoryMaleId("");
       setFemaleLeadManual(false);
       setMaleLeadManual(false);
-      setFactoryPropIds((prev) => {
-        const kept = stripUrbanDemoPropIds(prev);
-        return kept.length === prev.length ? prev : kept;
-      });
     }
 
     if (!castHardApplyReady) {
@@ -1168,7 +1174,7 @@ export default function OmniCanvas() {
       setFactoryWardrobeId(castBundle.wardrobePropContinuityIds[0] || "");
     }
     if (!propManual) {
-      setFactoryPropIds(castBundle.propIds);
+      setFactoryPropIds(stripUrbanDemoPropIds(castBundle.propIds));
     }
   }, [
     castBundle,
@@ -1200,8 +1206,8 @@ export default function OmniCanvas() {
         const ancientIds = ancientManual
           ? factoryAncientArchetypeIds
           : bundle.ancientArchetypeIds;
-        // manual 豁免不保护跨专案都市演示道具残留（幽灵三件套）
-        const propIds = propManual ? stripUrbanDemoPropIds(factoryPropIds) : bundle.propIds;
+        // manual 豁免不保护跨专案都市演示道具残留（幽灵三件套）；推荐值同样过
+        const propIds = stripUrbanDemoPropIds(propManual ? factoryPropIds : bundle.propIds);
         const wardrobeId = wardrobeManual
           ? factoryWardrobeId
           : bundle.wardrobePropContinuityIds[0] || "";
@@ -1223,7 +1229,7 @@ export default function OmniCanvas() {
       }
       const femaleId = femaleLeadManual ? factoryFemaleId : bundle.femaleId;
       const maleId = maleLeadManual ? factoryMaleId : bundle.maleId;
-      const propIds = propManual ? factoryPropIds : bundle.propIds;
+      const propIds = stripUrbanDemoPropIds(propManual ? factoryPropIds : bundle.propIds);
       const wardrobeId = wardrobeManual
         ? factoryWardrobeId
         : bundle.wardrobePropContinuityIds[0] || "";
@@ -1564,9 +1570,8 @@ export default function OmniCanvas() {
     const restoredPropIds = cast?.propIds?.length
       ? cast.lane === "ancient" && !sameAssetSelectionScope
         ? cast.propIds.filter((id) => !getManhuaDemoAsset(id))
-        : cast.lane === "ancient"
-          ? stripUrbanDemoPropIds(cast.propIds)
-          : cast.propIds
+        : // 幽灵三件套无条件清：lane 可能错存 urban（2026-08-11 线上实测），不再信 lane
+          stripUrbanDemoPropIds(cast.propIds)
       : [];
     if (cast) {
       if (cast.sceneId) setFactorySceneId(cast.sceneId);
