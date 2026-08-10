@@ -592,3 +592,8 @@
   background: rgba(16, 185, 129, 0.35);
   border-radius: 999px;
 }
+
+/* 漫剧工厂简洁模式：说明性小字收起，「显示说明」开关随时展开 */
+.mh-compact .mh-hint {
+  display: none !important;
+}
