@@ -4,7 +4,7 @@
  *
  * 流程：
  * 入口(榜单/贴链) → 解析列表 → 按集：下片→语音→抽帧→读帧→删视频
- * → 累计摘要 →（≥16 集）总分析提案 → 人审批准进库
+ * → 累计摘要 →（满 4 集或合集学完出草版；约 16 集更准）总分析提案 → 人审批准进库
  */
 
 import {
@@ -75,7 +75,7 @@ export function getManhuaLearnPipelineMeta(): ManhuaLearnPipelineMeta {
       `逐集：下片 → 按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟分片学习并合并 JSON → 整集完成后再删视频`,
       `下片/学习失败则跳下一集（权限不足会标注）；连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次停止本轮`,
       "累计分集摘要（本页即时可见）",
-      `同一系列累计 ≥${MANHUA_LEARN_ANALYSIS_MIN} 集（目标约 ${MANHUA_LEARN_ANALYSIS_TARGET}）才出总分析提案`,
+      `同一系列学满 4 集或合集全学完即出草版总分析（约 ${MANHUA_LEARN_ANALYSIS_MIN} 集更准，目标约 ${MANHUA_LEARN_ANALYSIS_TARGET}）`,
       "你确认后再批准进库；未批准不会进编剧室可选库",
     ],
   };

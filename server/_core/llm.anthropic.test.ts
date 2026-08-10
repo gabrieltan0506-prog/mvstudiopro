@@ -55,7 +55,7 @@ describe("buildAnthropicRequestBody", () => {
         },
         "claude-opus-5",
       ),
-    ).toThrow(/https URL/);
+    ).toThrow(/https 或 data URL/);
   });
 
   it("max_tokens 宁大勿掐：低于下限抬到 16000，超帽压回 64000", () => {

@@ -1500,7 +1500,7 @@ function toAnthropicContentBlock(part: MessageContent): AnthropicContentBlock {
       };
     }
     if (!/^https?:\/\//i.test(url)) {
-      throw new Error("anthropic 分支图片只收 https URL 或 data URL");
+      throw new Error("图片仅支持 https 或 data URL");
     }
     return { type: "image", source: { type: "url", url } };
   }
@@ -1579,7 +1579,8 @@ async function invokeAnthropic(
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
     console.warn(`[Anthropic] HTTP ${response.status}: ${errorText.slice(0, 400)}`);
-    const err = new Error(`Anthropic 请求失败（HTTP ${response.status}）`) as TransientLlmError & {
+    // 前台零技术泄漏：抛给调用方的串不带供应商名（供应商细节只进服务端日志）
+    const err = new Error(`上游模型请求失败（HTTP ${response.status}）`) as TransientLlmError & {
       status?: number;
       rawErrorText?: string;
     };
@@ -1604,7 +1605,7 @@ async function invokeAnthropic(
   }
   // 先查 refusal 再读正文（Opus 5 分类器拒答返回 200 + stop_reason=refusal）
   if (json.stop_reason === "refusal") {
-    throw new Error("Anthropic 安全分类器拒答（含 fallback 链全拒），调用方可走启发式兜底");
+    throw new Error("上游安全分类器拒答，请调整内容后重试");
   }
   const text = json.content
     .filter((b) => b && b.type === "text" && typeof b.text === "string")

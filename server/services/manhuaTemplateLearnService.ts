@@ -1,7 +1,7 @@
 /**
  * 漫剧节奏模板 · 单集或合集学习。
  * 每轮按剧集顺序采（短合集有几集采几集；长合集约 8–10）→ 语音+抽帧+读帧 → 立刻删本地视频；
- * 同一系列累计 ≥16 集（目标约 20）才合成一张提案；不足也可先看分集学习结果。
+ * 学满 4 集或合集学完即出草版提案（约 16 集更准）；不足也可先看分集学习结果。
  */
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
@@ -15,6 +15,7 @@ import {
 } from "../../shared/manhuaTemplateLearnFramePlan.js";
 import {
   applyFrameVisionToProposal,
+  resolveManhuaTemplateLearnLlmProvider,
   selectFramesForVisionAnalysis,
 } from "../../shared/manhuaTemplateLearnFrameVision.js";
 import {
@@ -163,15 +164,24 @@ export async function getManhuaSeriesLearnSnapshot(seriesKey: string): Promise<{
   const analysisReady = canEmitManhuaLearnAnalysis(digests.length, progress?.listedEpisodeCount);
   let proposal: ManhuaViralTemplateCard | null = null;
   if (analysisReady && progress) {
+    // A/B 口径与学习主路径一致：claude 档下重建/读取都带 _claude 后缀，
+    // 防止从快照点「批准进库」时以无后缀 id 覆盖 GPT 版
+    const learnLlm = resolveManhuaTemplateLearnLlmProvider(
+      process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER,
+    );
     proposal = mergeEpisodeDigestsIntoProposal({
       seriesKey: key,
       titleHint: progress.titleHint,
       sourceUrl: progress.sourceUrl,
       digests: digests.slice(0, MANHUA_LEARN_ANALYSIS_TARGET),
     });
-    // 若已有 GCS 提案文件则优先读
+    if (proposal && learnLlm === "claude") {
+      proposal = { ...proposal, id: `${proposal.id}_claude`.slice(0, 64) };
+    }
+    // 若已有 GCS 提案文件则优先读（按当前档位取对应版本）
+    const proposalId = learnLlm === "claude" ? `tpl_series_${key}_claude` : `tpl_series_${key}`;
     const fromGcs = await readJsonGcs<ManhuaViralTemplateCard>(
-      `manhua-template-learn/proposals/tpl_series_${key}.json`,
+      `manhua-template-learn/proposals/${proposalId}.json`,
     );
     if (fromGcs && fromGcs.status === "proposed") {
       proposal = parseManhuaViralTemplateCard(fromGcs) || proposal;

@@ -652,11 +652,19 @@ async function invokeClaudeDistill(params: {
 }): Promise<string> {
   const imageUrls: string[] = [];
   if (params.imageDataUrls.length) {
+    if (params.imageDataUrls.length > 30) {
+      console.warn(
+        `[knowledgeCardDistill] claude 档图片超上限，截取前 30/${params.imageDataUrls.length} 张`,
+      );
+    }
     const { createHash } = await import("node:crypto");
     const { uploadBufferToGcs, signGsUriV4ReadUrl } = await import("./gcs.js");
     for (const dataUrl of params.imageDataUrls.slice(0, 30)) {
       const match = /^data:([^;,]+);base64,([\s\S]+)$/.exec(String(dataUrl || ""));
-      if (!match) continue;
+      if (!match) {
+        console.warn("[knowledgeCardDistill] claude 档跳过非 data: 形态图片条目");
+        continue;
+      }
       const mime = match[1] || "image/jpeg";
       const buffer = Buffer.from(match[2]!, "base64");
       const ext = /png/i.test(mime) ? "png" : /webp/i.test(mime) ? "webp" : "jpg";
@@ -680,6 +688,10 @@ async function invokeClaudeDistill(params: {
     modelName: KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE,
     reasoningEffort: params.effort as "low" | "medium" | "high" | "xhigh" | "max",
     max_tokens: DISTILL_MAX_TOKENS,
+    // 档位超时旋钮接活（否则 KNOWLEDGE_CARD_DISTILL_CLAUDE_TIMEOUT_MS 是死配置）
+    abortSignal: AbortSignal.timeout(
+      distillFetchTimeoutMs(KNOWLEDGE_CARD_DISTILL_MODEL_CLAUDE, params.timeoutMs),
+    ),
     messages: [
       {
         role: "system",
