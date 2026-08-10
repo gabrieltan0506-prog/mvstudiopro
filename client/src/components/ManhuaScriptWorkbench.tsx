@@ -632,6 +632,16 @@ export default function ManhuaScriptWorkbench({
       return next;
     });
   };
+  /** 待生成虚线卡折条：默认收起（26 张铺满一屏太吵），点「展开补图」再出卡 */
+  const [pendingOpenKinds, setPendingOpenKinds] = useState<ReadonlySet<string>>(new Set());
+  const togglePendingOpen = (kind: string) => {
+    setPendingOpenKinds((prev) => {
+      const next = new Set(prev);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  };
   /** 简洁模式（默认开）：说明性灰色小字与低频控件收起；「显示说明」随时展开 */
   const [compactUi, setCompactUi] = useState(() => {
     try {
@@ -3109,7 +3119,25 @@ export default function ManhuaScriptWorkbench({
                                 </div>
                               );
                             })}
-                            {pending.map((p) => (
+                            {pending.length ? (
+                              <div className="flex w-full flex-wrap items-center gap-2 rounded-lg border border-dashed border-amber-300/45 bg-amber-500/[0.07] px-2.5 py-1.5">
+                                <span className="text-[10px] font-semibold text-amber-100/90">
+                                  待生成 {pending.length}
+                                </span>
+                                <span className="min-w-0 flex-1 truncate text-[9px] text-amber-100/55">
+                                  {pending.slice(0, 8).map((p) => p.nameZh).join("、")}
+                                  {pending.length > 8 ? "…" : ""}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => togglePendingOpen(sec.kind)}
+                                  className="rounded border border-amber-300/50 px-2 py-0.5 text-[10px] font-semibold text-amber-100 hover:bg-amber-500/25"
+                                >
+                                  {pendingOpenKinds.has(sec.kind) ? "收起" : "展开补图"}
+                                </button>
+                              </div>
+                            ) : null}
+                            {(pendingOpenKinds.has(sec.kind) ? pending : []).map((p) => (
                               <button
                                 key={p.anchorId}
                                 type="button"
