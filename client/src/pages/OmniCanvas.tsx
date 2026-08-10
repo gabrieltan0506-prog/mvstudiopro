@@ -3611,21 +3611,15 @@ export default function OmniCanvas() {
     });
     setManhuaUiMode("workbench");
     setImmersiveExtrasOpen(false);
-    // 确认剧本后先进资产设定：从剧本表自动出缺的角色/场景设定图，再进分镜
+    // 确认剧本只进资产设定阶段，不再自动出图（2026-08-10 用户明令拿掉：
+    // 出图是付费动作，且用户常有现成资产 ZIP 可导入——自动触发等于未经同意扣费/烧上游。
+    // 生成设定图一律由用户在资产设定页显式点击触发）
     setWorkflowPhase("assets");
     toast.success(
       `已确认剧情并锁定编剧表（${tips.join("·")}${
         purgedRefs.removedCount > 0 ? `·已清旧设定图${purgedRefs.removedCount}` : ""
-      }）。正在从剧本出角色/场景设定图…`,
+      }）。可导入现成资产 ZIP，或手动点击生成设定图（生成将扣费）。`,
     );
-    window.setTimeout(() => {
-      void confirmAssetsAutoRef.current({
-        assetCanonOverride: canon,
-        episodeIndexOverride: continuity.episodeIndex,
-        topicOverride: topicForSpawn,
-        forceRegenerate: true,
-      });
-    }, 80);
     return true;
   }, [
     writerPack,
