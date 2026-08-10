@@ -2709,47 +2709,57 @@ export function layoutManhuaEpisodeReadableChain(
   if (!textCols.length && !keyarts.length && !hasAssets) return blocks;
 
   const pos = new Map<string, { x: number; y: number }>();
+  /**
+   * 四柱布局（2026-08-11 用户拍板）：横向＝工序，纵向＝段落。
+   * ① 资产柱：角色 → 服装道具 → 场景，单列纵排，全集共用、宽度恒定
+   * ② 静帧·导演镜柱：按段分组纵排，段间留缝
+   * ③ 成片柱：每段成片卡与该段静帧组顶对齐
+   * 段数多只往下长、画布宽度恒定；整集在成片坞收口（最右）。
+   */
+  const assetRowH = Math.round(gapY * 0.85);
   const placeWall = (list: CanvasBlock[], startY: number) => {
     list.forEach((b, i) => {
-      const col = i % assetsPerRow;
-      const row = Math.floor(i / assetsPerRow);
-      pos.set(b.id, {
-        x: originX + gapX * col,
-        y: startY + row * Math.round(gapY * 0.85),
-      });
+      pos.set(b.id, { x: originX, y: startY + i * assetRowH });
     });
-    const rows = list.length ? Math.ceil(list.length / assetsPerRow) : 0;
-    return startY + (rows ? rows * Math.round(gapY * 0.85) + Math.round(assetRowGap * 0.35) : 0);
+    return (
+      startY + (list.length ? list.length * assetRowH + Math.round(assetRowGap * 0.35) : 0)
+    );
   };
 
   const textY = originY;
   textCols.forEach((b, i) => {
     pos.set(b.id, { x: originX + gapX * i, y: textY });
   });
-  let cursorY = originY + (textCols.length ? Math.round(gapY * 0.55) : 0);
-  cursorY = placeWall(charWall, cursorY);
-  cursorY = placeWall(sceneWall, cursorY);
-  cursorY = placeWall(propWall, cursorY);
-  const keyartY = cursorY;
+  const lanesTop = originY + (textCols.length ? Math.round(gapY * 0.55) : 0);
+  placeWall(sceneWall, placeWall(propWall, placeWall(charWall, lanesTop)));
 
-  const keyStack = placeManhuaStackColumns(
-    keyarts,
-    originX,
-    keyartY,
-    gapX,
-    gapY,
-    stackPer,
-    pos,
+  const keyartLaneX = originX + gapX;
+  const clipLaneX = originX + gapX * 2;
+  const segGap = Math.round(gapY * 0.35);
+  // 段边界：ensure 已把每段 clip.parentId 指到本段首镜，按它在镜序里的位置切组；
+  // 老画布没 parentId 就退化成一条不分组的静帧柱，仍是四柱几何
+  const keyartOrder = new Map<string, number>();
+  keyarts.forEach((k, i) => keyartOrder.set(k.id, i));
+  const segFirstIdx = new Set(
+    clips
+      .map((c) => (c.parentId ? keyartOrder.get(c.parentId) : undefined))
+      .filter((v): v is number => typeof v === "number"),
   );
-  /**
-   * 成片另起一条横带：以前跟静帧同分列、只隔 0.25 行距，看起来像同一列往下连。
-   * 现在拉开带距，再按段号 1→N 单列竖排——视频生成文本框自成一块，不贴静帧。
-   */
-  const clipBandGap = Math.round(gapY * 0.9);
-  const clipY =
-    keyartY + (keyStack.rows ? keyStack.rows * gapY + clipBandGap : clipBandGap);
-  const clipStackPer = Math.max(clips.length, 1);
-  placeManhuaStackColumns(clips, originX, clipY, gapX, gapY, clipStackPer, pos);
+  let keyartCursorY = lanesTop;
+  const keyartYById = new Map<string, number>();
+  keyarts.forEach((k, i) => {
+    if (i > 0 && segFirstIdx.has(i)) keyartCursorY += segGap;
+    pos.set(k.id, { x: keyartLaneX, y: keyartCursorY });
+    keyartYById.set(k.id, keyartCursorY);
+    keyartCursorY += gapY;
+  });
+  let clipCursorY = lanesTop;
+  clips.forEach((c) => {
+    const alignY = c.parentId ? keyartYById.get(c.parentId) : undefined;
+    const y = typeof alignY === "number" ? Math.max(alignY, clipCursorY) : clipCursorY;
+    pos.set(c.id, { x: clipLaneX, y });
+    clipCursorY = y + gapY;
+  });
 
   const positioned = blocks.map((b) => {
     const p = pos.get(b.id);
