@@ -10,6 +10,27 @@ import App from "./App";
 import { getLoginUrl } from "./const";
 import "./index.css";
 
+// ─── 部署换版兜底 ─────────────────────────────────────────────────────────────
+// 按需 chunk（导入资产包等）在部署后会换文件名；开着旧页面的用户一点就
+// "Failed to fetch dynamically imported module"。Vite 会派发 vite:preloadError，
+// 这里清掉 SW/HTTP 缓存后自动整页刷新一次换新版（本机草稿有 LS 双写，不丢工作区）。
+window.addEventListener("vite:preloadError", (event) => {
+  event.preventDefault();
+  const KEY = "mv-chunk-reload-at";
+  const last = Number(window.sessionStorage.getItem(KEY) || 0);
+  if (Date.now() - last < 60_000) return; // 一分钟内只自动刷一次，防刷新循环
+  window.sessionStorage.setItem(KEY, String(Date.now()));
+  const reload = () => window.location.reload();
+  if ("caches" in window) {
+    window.caches
+      .keys()
+      .then((keys) => Promise.all(keys.map((k) => window.caches.delete(k))))
+      .then(reload, reload);
+  } else {
+    reload();
+  }
+});
+
 // ─── PWA Service Worker Registration ──────────────────────────────────────────
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
