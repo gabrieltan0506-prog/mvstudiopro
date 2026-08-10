@@ -10,9 +10,24 @@ import uploadRouter from "../upload";
 import { registerStripeWebhook } from "../stripe-webhook";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { createJob, getJobById, type JobType } from "../jobs/repository";
-import { processGrowthAnalyzeJobsOnce, processJobsOnce, startJobWorker } from "../jobs/runner";
-import { isGrowthCampAnalyzeJobRecord } from "../jobs/repository";
+import {
+  createJob,
+  findActiveManhuaTemplateLearnJobForSource,
+  getJobById,
+  isGrowthCampAnalyzeJobRecord,
+  isManhuaTemplateLearnJobRecord,
+  listManhuaTemplateLearnJobsForUser,
+  requestManhuaTemplateLearnEpisodeSkip,
+  requestManhuaTemplateLearnJobCancel,
+  type JobType,
+} from "../jobs/repository";
+import {
+  processGrowthAnalyzeJobsOnce,
+  processJobsOnce,
+  processManhuaLearnJobsOnce,
+  abortRunningManhuaLearnJob,
+  startJobWorker,
+} from "../jobs/runner";
 import { startStaleJobsReaper } from "../jobs/staleJobsReaper";
 import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
 import { getTierProviderChain, resolveUserTier } from "../services/tier-provider-routing";
@@ -295,6 +310,7 @@ async function startServer() {
         if (!resolvePlatformSupervisorOpsAllowed(ctx.user, supervisorToken)) {
           return res.status(403).json({ error: "学节奏为监管专用（下片+语音+读帧成本较高）" });
         }
+        resolvedUserId = String(ctx.user.id);
         const importedGcsUri = String((input as any)?.params?.gcsUri || "").trim();
         if (importedGcsUri) {
           const [{ getGcsBucketName }, { isOwnedManhuaLearnImportGcsUri }] = await Promise.all([
@@ -334,6 +350,18 @@ async function startServer() {
           ? "openai-gpt-image-2"
           : "kling-cn";
 
+      if (action === "manhua_template_learn") {
+        const params = (input as any)?.params || {};
+        const sourceKey = String(params.dedupeKey || params.gcsUri || params.url || "").trim();
+        if (sourceKey) {
+          const active = await findActiveManhuaTemplateLearnJobForSource(resolvedUserId, sourceKey);
+          if (active) {
+            void processManhuaLearnJobsOnce().catch(() => {});
+            return res.status(200).json({ jobId: active.id, status: active.status, reused: true });
+          }
+        }
+      }
+
       const jobId = nanoid(16);
       await createJob({
         id: jobId,
@@ -347,6 +375,9 @@ async function startServer() {
       if (action === "growth_analyze_video" || action === "growth_analyze_images") {
         void processGrowthAnalyzeJobsOnce().catch(() => {});
       }
+      if (action === "manhua_template_learn") {
+        void processManhuaLearnJobsOnce().catch(() => {});
+      }
 
       return res.status(200).json({ jobId, status: "queued" });
     } catch (error) {
@@ -355,6 +386,87 @@ async function startServer() {
         error: "Failed to create job",
         detail: error instanceof Error ? error.message : String(error),
       });
+    }
+  });
+
+  app.get("/api/jobs/manhua-learn", async (req, res) => {
+    try {
+      res.setHeader("Cache-Control", "private, no-store, max-age=0");
+      const ctx = await createContext({ req: req as any, res: res as any } as any);
+      if (!ctx.user) return res.status(401).json({ error: "请先登录" });
+      const { resolvePlatformSupervisorOpsAllowed } = await import("../services/access-policy");
+      const supervisorToken = String(req.headers["x-supervisor-token"] || "").trim();
+      if (!resolvePlatformSupervisorOpsAllowed(ctx.user, supervisorToken)) {
+        return res.status(403).json({ error: "学节奏为监管专用" });
+      }
+      const rows = await listManhuaTemplateLearnJobsForUser(String(ctx.user.id), 30);
+      return res.status(200).json({
+        maxConcurrent: 2,
+        items: rows.map((job) => {
+          const rawInput = job.input && typeof job.input === "object" && !Array.isArray(job.input)
+            ? job.input as Record<string, unknown>
+            : {};
+          const rawParams = rawInput.params && typeof rawInput.params === "object" && !Array.isArray(rawInput.params)
+            ? rawInput.params as Record<string, unknown>
+            : {};
+          const { supervisorToken: _secret, ...safeParams } = rawParams;
+          return {
+          jobId: job.id,
+          status: job.status,
+          input: { action: "manhua_template_learn", params: safeParams },
+          output: job.output,
+          error: job.error ?? undefined,
+          createdAt: job.createdAt,
+          updatedAt: job.updatedAt,
+          };
+        }),
+      });
+    } catch (error) {
+      console.error("[Jobs] GET /api/jobs/manhua-learn failed:", error);
+      return res.status(500).json({ error: "Failed to list manhua learn jobs" });
+    }
+  });
+
+  app.post("/api/jobs/manhua-learn/:id/cancel", async (req, res) => {
+    try {
+      const ctx = await createContext({ req: req as any, res: res as any } as any);
+      if (!ctx.user) return res.status(401).json({ error: "请先登录" });
+      const { resolvePlatformSupervisorOpsAllowed } = await import("../services/access-policy");
+      const supervisorToken = String(req.headers["x-supervisor-token"] || "").trim();
+      if (!resolvePlatformSupervisorOpsAllowed(ctx.user, supervisorToken)) {
+        return res.status(403).json({ error: "学节奏为监管专用" });
+      }
+      const job = await requestManhuaTemplateLearnJobCancel({
+        jobId: String(req.params.id || ""),
+        userId: String(ctx.user.id),
+      });
+      if (!job) return res.status(404).json({ error: "学习任务不存在或不属于当前用户" });
+      abortRunningManhuaLearnJob(job.id);
+      return res.status(200).json({ jobId: job.id, status: job.status, messageZh: "已请求停止学习" });
+    } catch (error) {
+      console.error("[Jobs] cancel manhua learn failed:", error);
+      return res.status(500).json({ error: "停止学习失败，请稍后重试" });
+    }
+  });
+
+  app.post("/api/jobs/manhua-learn/:id/skip", async (req, res) => {
+    try {
+      const ctx = await createContext({ req: req as any, res: res as any } as any);
+      if (!ctx.user) return res.status(401).json({ error: "请先登录" });
+      const { resolvePlatformSupervisorOpsAllowed } = await import("../services/access-policy");
+      const supervisorToken = String(req.headers["x-supervisor-token"] || "").trim();
+      if (!resolvePlatformSupervisorOpsAllowed(ctx.user, supervisorToken)) {
+        return res.status(403).json({ error: "学节奏为监管专用" });
+      }
+      const job = await requestManhuaTemplateLearnEpisodeSkip({
+        jobId: String(req.params.id || ""),
+        userId: String(ctx.user.id),
+      });
+      if (!job) return res.status(409).json({ error: "当前任务尚未运行或已经结束，无法跳过本集" });
+      return res.status(200).json({ jobId: job.id, status: job.status, messageZh: "已请求跳过当前集" });
+    } catch (error) {
+      console.error("[Jobs] skip manhua episode failed:", error);
+      return res.status(500).json({ error: "跳过本集失败，请稍后重试" });
     }
   });
 
@@ -394,6 +506,9 @@ async function startServer() {
         void processJobsOnce().catch(() => {});
         if (isGrowthCampAnalyzeJobRecord(job)) {
           void processGrowthAnalyzeJobsOnce().catch(() => {});
+        }
+        if (isManhuaTemplateLearnJobRecord(job)) {
+          void processManhuaLearnJobsOnce().catch(() => {});
         }
       }
 

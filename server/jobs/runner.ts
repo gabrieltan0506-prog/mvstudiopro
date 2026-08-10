@@ -54,9 +54,12 @@ import { normalizePlatforms } from "../growth/growthSchema";
 import { readTrendStore, readTrendStoreForPlatforms } from "../growth/trendStore";
 import {
   claimNextGrowthCampAnalyzeJob,
+  claimNextManhuaTemplateLearnJob,
   claimNextQueuedJob,
   claimNextPdfExportJob,
+  consumeManhuaTemplateLearnEpisodeSkip,
   getJobById,
+  isManhuaTemplateLearnJobCancelRequested,
   markJobFailed,
   markJobSucceeded,
   patchJobRunningProgress,
@@ -94,6 +97,22 @@ const GROWTH_CAMP_JOB_WORKER_CONCURRENCY = Math.max(
 );
 let growthAnalyzeJobsActive = 0;
 let growthAnalyzeTimer: NodeJS.Timeout | null = null;
+/** 漫剧学习独立双并发池；任务本身已在 Neon jobs 持久化，关页/刷新不影响。 */
+const MANHUA_LEARN_JOB_WORKER_CONCURRENCY = Math.max(
+  1,
+  Math.min(2, Number(process.env.MANHUA_LEARN_JOB_WORKER_CONCURRENCY || 2) || 2),
+);
+let manhuaLearnJobsActive = 0;
+let manhuaLearnTimer: NodeJS.Timeout | null = null;
+const manhuaLearnAbortControllers = new Map<string, AbortController>();
+
+/** HTTP 停止按钮先中止本进程里的模型请求；DB 标记负责跨进程/重启兜底。 */
+export function abortRunningManhuaLearnJob(jobId: string): boolean {
+  const controller = manhuaLearnAbortControllers.get(jobId);
+  if (!controller) return false;
+  controller.abort();
+  return true;
+}
 
 type JobEnvelope = {
   action: string;
@@ -303,6 +322,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       const parsedBatch = Number(/本轮新增\s*(\d+)/.exec(label)?.[1] || 0);
       const parsedLearned = Number(/累计\s*(\d+)\s*集/.exec(label)?.[1] || 0);
       const parsedListed = Number(/已解析\s*(\d+)\s*集/.exec(label)?.[1] || 0);
+      const parsedEpisode = Number(/第\s*(\d+)\s*集/.exec(label)?.[1] || 0);
       let learnProgressLog = appendManhuaLearnProgressLine(undefined, phase, label);
       if (jobId) {
         try {
@@ -329,6 +349,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
             ...(parsedListed > 0
               ? { listedEpisodeCount: Math.max(Number(prevOut.listedEpisodeCount) || 0, parsedListed) }
               : {}),
+            ...(parsedEpisode > 0 ? { currentEpisodeIndex: parsedEpisode } : {}),
           });
           return;
         } catch {
@@ -354,7 +375,11 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     })) {
       throw new Error("手动导入视频不属于当前用户或配置存储桶");
     }
-    const result = await runManhuaTemplateLearn({
+    const abortController = new AbortController();
+    if (jobId) manhuaLearnAbortControllers.set(jobId, abortController);
+    let result: Awaited<ReturnType<typeof runManhuaTemplateLearn>>;
+    try {
+      result = await runManhuaTemplateLearn({
       url: typeof params.url === "string" ? params.url : undefined,
       gcsUri: importedGcsUri || undefined,
       fileName: typeof params.fileName === "string" ? params.fileName : undefined,
@@ -364,7 +389,36 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       batchSize: typeof params.batchSize === "number" ? params.batchSize : undefined,
       learnLlm: params.learnLlm === "claude" ? "claude" : undefined,
       onProgress: reportLearnProgress,
-    });
+      abortSignal: abortController.signal,
+      checkControl: async () => {
+        if (abortController.signal.aborted) return "cancel";
+        if (jobId && await isManhuaTemplateLearnJobCancelRequested(jobId)) return "cancel";
+        if (jobId && await consumeManhuaTemplateLearnEpisodeSkip(jobId)) return "skip";
+        return "continue";
+      },
+      onEpisodeCheckpoint: async (preview) => {
+        if (!jobId) return;
+        const current = await getJobById(jobId);
+        const prevOut = current?.output && typeof current.output === "object" && !Array.isArray(current.output)
+          ? current.output as Record<string, unknown>
+          : {};
+        const previews = Array.isArray(prevOut.digestsPreview)
+          ? [...prevOut.digestsPreview as Array<Record<string, unknown>>]
+          : [];
+        const withoutCurrent = previews.filter((row) => Number(row.episodeIndex) !== preview.episodeIndex);
+        const nextPreviews = [...withoutCurrent, preview].sort(
+          (a, b) => Number(a.episodeIndex) - Number(b.episodeIndex),
+        );
+        await patchJobRunningProgress(jobId, {
+          digestsPreview: nextPreviews,
+          currentEpisodeIndex: preview.episodeIndex,
+          learnedCount: nextPreviews.filter((row) => row.complete === true).length,
+        });
+      },
+      });
+    } finally {
+      if (jobId) manhuaLearnAbortControllers.delete(jobId);
+    }
     let learnProgressLog: ReturnType<typeof appendManhuaLearnProgressLine> | undefined;
     if (jobId) {
       try {
@@ -2452,16 +2506,20 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
       }
     }
   } catch (error) {
+    const userCancelled = error instanceof Error
+      && (error.name === "ManhuaLearnCancelledError" || /用户已停止学习/.test(error.message));
     const message =
       job.type === "platform" && error instanceof Error
         ? error.message
         : getJobFailureMessage(job.type as JobType, error);
-    const noRetryPaidAssetEdit =
+    if (userCancelled) {
+      await markJobFailed(job.id, "用户已停止学习；已落盘内容保留");
+    } else if (
       job.type === "image" &&
       isRecord(job.input) &&
       isRecord(job.input.params) &&
-      (job.input.params.assetStandardizeQuality === "medium" || job.input.params.assetStandardizeQuality === "high");
-    if (noRetryPaidAssetEdit) {
+      (job.input.params.assetStandardizeQuality === "medium" || job.input.params.assetStandardizeQuality === "high")
+    ) {
       // 包含 worker 外层墙钟超时：上游 Promise 可能仍在跑，先把用户账幂等退掉，且不重试双烧。
       const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
       await refundCreditsOnFailure(
@@ -2510,6 +2568,25 @@ async function processOneGrowthAnalyzeJob(): Promise<boolean> {
 export async function processGrowthAnalyzeJobsOnce() {
   while (await processOneGrowthAnalyzeJob()) {
     // 直到队列空或达到 GROWTH_CAMP_JOB_WORKER_CONCURRENCY
+  }
+}
+
+async function processOneManhuaLearnJob(): Promise<boolean> {
+  if (manhuaLearnJobsActive >= MANHUA_LEARN_JOB_WORKER_CONCURRENCY) return false;
+  const job = await claimNextManhuaTemplateLearnJob();
+  if (!job) return false;
+
+  manhuaLearnJobsActive += 1;
+  void runClaimedJob(job).finally(() => {
+    manhuaLearnJobsActive = Math.max(0, manhuaLearnJobsActive - 1);
+    void processManhuaLearnJobsOnce();
+  });
+  return true;
+}
+
+export async function processManhuaLearnJobsOnce() {
+  while (await processOneManhuaLearnJob()) {
+    // 直到持久队列为空或达到双并发上限；任务结束会立即唤醒下一条。
   }
 }
 
@@ -2571,11 +2648,15 @@ export function startJobWorker() {
   void processJobsOnce();
   void processPdfJobsOnce();
   void processGrowthAnalyzeJobsOnce();
+  void processManhuaLearnJobsOnce();
   timer = setInterval(() => {
     void processJobsOnce();
   }, 1_000);
   growthAnalyzeTimer = setInterval(() => {
     void processGrowthAnalyzeJobsOnce();
+  }, 1_000);
+  manhuaLearnTimer = setInterval(() => {
+    void processManhuaLearnJobsOnce();
   }, 1_000);
   pdfTimer = setInterval(() => {
     void processPdfJobsOnce();
@@ -2587,6 +2668,9 @@ export function startJobWorker() {
   if (growthAnalyzeTimer && typeof growthAnalyzeTimer.unref === "function") {
     growthAnalyzeTimer.unref();
   }
+  if (manhuaLearnTimer && typeof manhuaLearnTimer.unref === "function") {
+    manhuaLearnTimer.unref();
+  }
   if (pdfTimer && typeof pdfTimer.unref === "function") {
     pdfTimer.unref();
   }
@@ -2597,6 +2681,8 @@ export function stopJobWorker() {
   timer = null;
   if (growthAnalyzeTimer) clearInterval(growthAnalyzeTimer);
   growthAnalyzeTimer = null;
+  if (manhuaLearnTimer) clearInterval(manhuaLearnTimer);
+  manhuaLearnTimer = null;
   if (pdfTimer) clearInterval(pdfTimer);
   pdfTimer = null;
   workerStarted = false;

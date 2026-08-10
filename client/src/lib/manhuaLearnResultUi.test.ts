@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  getManhuaLearnContinueControl,
   isManhuaLearnEmptyBatchFailure,
   manhuaLearnResultFromJobOutput,
   manhuaLearnResultFromStart,
   mergeManhuaLearnLiveProgress,
+  mergeManhuaLearnServerJobsIntoBasket,
   readManhuaLearnActiveJob,
   readManhuaLearnBasket,
   readManhuaLearnResult,
@@ -223,5 +225,84 @@ describe("manhuaLearnResultUi soft-fail", () => {
     writeManhuaLearnBasket("user_7", basket);
     expect(readManhuaLearnBasket("user_7")).toHaveLength(1);
     expect(readManhuaLearnBasket("user_8")).toEqual([]);
+  });
+
+  it("allows an unknown pending count to resume from a saved continuation", () => {
+    expect(
+      getManhuaLearnContinueControl({
+        pendingCount: undefined,
+        hasContinuation: true,
+        busy: false,
+        active: false,
+      }),
+    ).toMatchObject({
+      disabled: false,
+      labelZh: "继续学习 · 检查剩余集数",
+    });
+  });
+
+  it("explains an active batch instead of presenting a dead pending button", () => {
+    expect(
+      getManhuaLearnContinueControl({
+        pendingCount: 6,
+        hasContinuation: true,
+        busy: false,
+        active: true,
+      }),
+    ).toEqual({
+      disabled: true,
+      labelZh: "当前批次学习中",
+      titleZh: "当前任务结束后可继续下一批",
+    });
+  });
+
+  it("keeps a known positive pending count clickable when idle", () => {
+    expect(
+      getManhuaLearnContinueControl({
+        pendingCount: 82,
+        hasContinuation: true,
+        busy: false,
+        active: false,
+      }),
+    ).toMatchObject({
+      disabled: false,
+      labelZh: "待学习 82 · 继续",
+    });
+  });
+
+  it("restores two running dramas and one queued drama without overwriting each other", () => {
+    const jobs = [
+      { jobId: "a", status: "running" as const, input: { params: { url: "https://douyin.com/video/a", title: "A剧", seriesKey: "series_a" } }, output: { learnedCount: 1, listedEpisodeCount: 20 } },
+      { jobId: "b", status: "running" as const, input: { params: { url: "https://douyin.com/video/b", title: "B剧", seriesKey: "series_b" } }, output: { learnedCount: 2, listedEpisodeCount: 30 } },
+      { jobId: "c", status: "queued" as const, input: { params: { url: "https://douyin.com/video/c", title: "C剧", seriesKey: "series_c" } } },
+    ];
+    const basket = mergeManhuaLearnServerJobsIntoBasket([], jobs, 100);
+    expect(basket).toHaveLength(3);
+    expect(basket.map((item) => item.jobStatus).sort()).toEqual(["queued", "running", "running"]);
+    expect(basket.find((item) => item.seriesKey === "series_b")?.result.learnedCount).toBe(2);
+  });
+
+  it("shows persisted episode frames while a job is still running", () => {
+    const ui = mergeManhuaLearnLiveProgress(null, {
+      status: "running",
+      output: {
+        learnedCount: 1,
+        digestsPreview: [{
+          episodeIndex: 1,
+          title: "第一集",
+          complete: true,
+          learnedThroughSec: 180,
+          durationSec: 180,
+          hookNoteZh: "开场冲突",
+          transcriptPreview: "家庭聚餐",
+          previewFrameUrls: ["https://storage.googleapis.com/a.jpg", "https://storage.googleapis.com/b.jpg"],
+        }],
+      },
+    });
+    expect(ui.digestsPreview[0]).toMatchObject({
+      episodeIndex: 1,
+      complete: true,
+      previewFrameUrls: ["https://storage.googleapis.com/a.jpg", "https://storage.googleapis.com/b.jpg"],
+    });
   });
 });

@@ -51,6 +51,8 @@ export type ManhuaLearnEpisodeChunk = {
   climaxNotes: string[];
   sceneHints: string[];
   learnedAt: string;
+  /** 供人工甄别题材的代表帧；稳定 GCS 对象，不随临时目录删除。 */
+  previewFrameGcsUris?: string[];
   /** 读帧 provenance（审查必须修13）：本块视觉读帧是否真实跑过、用了哪个模型 */
   vision?: {
     provider: string;
@@ -79,6 +81,8 @@ export type ManhuaLearnEpisodeDigest = {
   climaxNotes: string[];
   sceneHints: string[];
   learnedAt: string;
+  /** 每集最多 3 张代表帧，刷新后仍可查看。 */
+  previewFrameGcsUris?: string[];
   /** 与飙升榜同源归类（前台展示中文类别/标签） */
   dramaKind?: ManhuaDramaKind;
   categoryLabelZh?: string;
@@ -162,6 +166,10 @@ export function mergeManhuaLearnChunkIntoDigest(input: {
         successChunks: visionChunks.filter((c) => c.vision?.success).length,
       }
     : prev?.frameVision;
+  const previewFrameGcsUris = Array.from(new Set([
+    ...(prev?.previewFrameGcsUris || []),
+    ...(input.chunk.previewFrameGcsUris || []),
+  ])).slice(0, 3);
 
   return {
     episodeIndex: input.episodeIndex,
@@ -177,6 +185,7 @@ export function mergeManhuaLearnChunkIntoDigest(input: {
     climaxNotes: climaxNotes.length ? climaxNotes : prev?.climaxNotes || [],
     sceneHints: sceneHints.length ? sceneHints : prev?.sceneHints || [],
     learnedAt: input.chunk.learnedAt,
+    previewFrameGcsUris: previewFrameGcsUris.length ? previewFrameGcsUris : undefined,
     dramaKind: input.dramaKind || prev?.dramaKind,
     categoryLabelZh: input.categoryLabelZh || prev?.categoryLabelZh,
     tagLabelsZh: input.tagLabelsZh || prev?.tagLabelsZh,
