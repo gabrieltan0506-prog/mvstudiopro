@@ -18,6 +18,9 @@ import {
 } from "./manhuaViralTemplateBank.js";
 
 /** 每轮最少采几集 */
+/** 连续下片失败多少次停本轮（#1162 误删导出，热修补回：pipeline 引用 3 处） */
+export const MANHUA_LEARN_CONSECUTIVE_FAIL_STOP = 3;
+
 export const MANHUA_LEARN_BATCH_MIN = 8;
 /** 每轮最多采几集 */
 export const MANHUA_LEARN_BATCH_MAX = 10;
