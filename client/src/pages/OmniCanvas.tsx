@@ -34,6 +34,7 @@ import {
   type ManhuaDirectorBoardMainByEpisode,
 } from "@/lib/manhuaDirectorBoardStore";
 import { MANHUA_PROP_SHAPE_LOOKUP_MAX } from "@shared/manhuaPropShapeHint";
+import { MANHUA_VIRAL_TEMPLATE_COPY } from "@shared/manhuaViralTemplateCopy";
 import { recommendApprovedManhuaViralTemplate } from "@shared/manhuaViralTemplateBank";
 import {
   buildManhuaCustomAssetGenFromLibraryPrompt,
@@ -2281,6 +2282,49 @@ export default function OmniCanvas() {
       ),
     [approvedViralTemplateCards, factoryTopic, writerBrief],
   );
+  /** 选中模板的「特色/简介」：由节拍数据现场合成（赛道/拍数/冲突链），零具名零源剧信息 */
+  const composeViralTemplateIntroZh = useCallback(
+    (tpl: {
+      laneZh?: string;
+      beatGrid?: Array<{ conflictZh?: string }>;
+    }): { featureZh: string; introZh: string } => {
+      const beats = Array.isArray(tpl.beatGrid) ? tpl.beatGrid : [];
+      const conflicts = Array.from(
+        new Set(beats.map((b) => String(b?.conflictZh || "").trim()).filter(Boolean)),
+      ).slice(0, 3);
+      const lane = String(tpl.laneZh || "").trim();
+      const featureZh = [
+        beats.length ? `${beats.length} 拍连载骨架` : "连载节奏骨架",
+        conflicts.length ? `冲突链：${conflicts.join(" → ")}` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      const introZh = `${lane}赛道验证过的开场与追更节奏：开场 3 秒钩人、拍拍有追更点。只借节奏骨架，不动你的题材、人物与已锁剧情。`;
+      return { featureZh, introZh };
+    },
+    [],
+  );
+  /** 定稿文案优先（用户润色过关表），新模板无定稿时回落现场合成 */
+  const resolveViralTemplateCopy = useCallback(
+    (tpl: {
+      id: string;
+      laneZh?: string;
+      beatGrid?: Array<{ conflictZh?: string }>;
+    }): { featureZh: string; introZh: string } =>
+      MANHUA_VIRAL_TEMPLATE_COPY[tpl.id] || composeViralTemplateIntroZh(tpl),
+    [composeViralTemplateIntroZh],
+  );
+  /** 前台不露模板具名（学习源剧名不外泄，用户 2026-08-12 拍板）：只以「赛道·模板序号」示人 */
+  const viralTemplateAnonLabelById = useMemo(() => {
+    const zh = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
+    const out = new Map<string, string>();
+    for (const group of manhuaViralTemplatesQuery.data?.groups || []) {
+      (group.items || []).forEach((tpl, i) => {
+        out.set(tpl.id, `${group.laneZh}·模板${zh[i] || String(i + 1)}`);
+      });
+    }
+    return out;
+  }, [manhuaViralTemplatesQuery.data?.groups]);
   useEffect(() => {
     if (!manhuaViralTemplatesQuery.isSuccess || !viralTemplateId) return;
     if (!approvedViralTemplateCards.some((card) => card.id === viralTemplateId)) {
@@ -3508,8 +3552,8 @@ export default function OmniCanvas() {
           ? `（${res.layout.labelZh} · ${res.layout.segmentCount}×${res.layout.durationSecPerSegment}s）`
           : "";
       const costHint = `本次扣 ${res.creditsCost} 积分`;
-      const templateHint = res.appliedTemplate?.nameZh
-        ? ` · 已应用剧情增强「${res.appliedTemplate.nameZh}」`
+      const templateHint = res.appliedTemplate?.id
+        ? ` · 已应用剧情增强「${viralTemplateAnonLabelById.get(res.appliedTemplate.id) || "剧情增强方案"}」`
         : "";
       toast.success(
         cleaned.removedCount > 0 || cleaned.archivedCount > 0
@@ -7912,7 +7956,7 @@ export default function OmniCanvas() {
                     }}
                     className="mt-1.5 rounded-lg border border-amber-300/25 bg-amber-400/10 px-2.5 py-1.5 text-[10px] font-semibold text-amber-100 hover:bg-amber-400/15 disabled:opacity-50"
                   >
-                    推荐：{recommendedViralTemplate.nameZh}
+                    推荐：{viralTemplateAnonLabelById.get(recommendedViralTemplate.id) || "剧情增强方案"}
                   </button>
                 ) : null}
                 <select
@@ -7927,9 +7971,14 @@ export default function OmniCanvas() {
                   <option value="">不使用剧情增强</option>
                   {(manhuaViralTemplatesQuery.data?.groups || []).map((group) => (
                     <optgroup key={group.laneZh} label={group.laneZh}>
-                      {group.items.map((tpl) => (
+                      {group.items.map((tpl, i) => (
                         <option key={tpl.id} value={tpl.id}>
-                          {tpl.nameZh}
+                          {/* 不露具名：只报序号与节拍规模 */}
+                          {`模板${["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"][i] || String(i + 1)}${
+                            Array.isArray(tpl.beatGrid) && tpl.beatGrid.length
+                              ? ` · ${tpl.beatGrid.length} 拍`
+                              : ""
+                          }`}
                         </option>
                       ))}
                     </optgroup>
@@ -7938,9 +7987,24 @@ export default function OmniCanvas() {
                 {selectedViralTemplate ? (
                   <div className="mt-2 rounded-lg border border-cyan-200/15 bg-black/25 px-2.5 py-2 text-[10px] leading-4 text-white/60">
                     <div className="font-semibold text-cyan-50/85">
-                      {selectedViralTemplate.nameZh} · {selectedViralTemplate.laneZh}
+                      {viralTemplateAnonLabelById.get(selectedViralTemplate.id) ||
+                        selectedViralTemplate.laneZh}
                     </div>
-                    <div>{selectedViralTemplate.summaryZh}</div>
+                    {(() => {
+                      const copy = resolveViralTemplateCopy(selectedViralTemplate);
+                      return (
+                        <>
+                          <div>
+                            <span className="text-cyan-100/75">特色：</span>
+                            {copy.featureZh}
+                          </div>
+                          <div className="mt-0.5">
+                            <span className="text-cyan-100/75">简介：</span>
+                            {copy.introZh}
+                          </div>
+                        </>
+                      );
+                    })()}
                     <div className="mt-1 text-amber-100/70">具体剧情由当前大模型自由发挥。</div>
                   </div>
                 ) : manhuaViralTemplatesQuery.isSuccess && approvedViralTemplateCards.length === 0 ? (
