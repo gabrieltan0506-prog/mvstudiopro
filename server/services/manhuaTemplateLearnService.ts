@@ -477,24 +477,31 @@ const DOUYIN_PLAYBACK_REFERER = "https://www.douyin.com/";
 
 /** 官方播放地址直连探测时长（ffprobe 支持 https 输入）；失败由调用方回退页面探测 */
 async function ffprobeRemoteDuration(url: string): Promise<number> {
-  const { stdout } = await execFileAsync(
-    "ffprobe",
-    [
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync(
+      "ffprobe",
+      [
       "-v",
       "error",
       "-user_agent",
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       "-headers",
       `Referer: ${DOUYIN_PLAYBACK_REFERER}\r\n`,
-      "-show_entries",
-      "format=duration",
-      "-of",
-      "default=noprint_wrappers=1:nokey=1",
-      url,
-    ],
-    // 挂死一个坏 CDN 节点不能拖死整集：20s 拿不到就回退页面探测
-    { timeout: 20_000 },
-  );
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        url,
+      ],
+      // 挂死一个坏 CDN 节点不能拖死整集：20s 拿不到就回退页面探测
+      { timeout: 20_000 },
+    ));
+  } catch {
+    // 审查必须修：execFile 失败的 Error.message 含完整命令行（即含签名播放地址），
+    // 原样抛出会被上层 warn 打进 Fly 持久日志——收敛成固定文案，地址只留内存
+    throw new Error("播放地址探测失败（超时或节点拒绝）");
+  }
   const n = Number(String(stdout).trim());
   if (!Number.isFinite(n) || n <= 0) throw new Error("播放地址无法读取时长");
   return n;
@@ -1028,7 +1035,9 @@ async function refreshEpisodePreviewFrames(input: {
       });
     } catch (e) {
       if (!input.ep.playbackUrl) throw e;
-      // 播放地址失效 → 页面老路兜底
+      // 播放地址失效 → 清残片后走页面老路兜底
+      await rmrf(workDir);
+      await fs.mkdir(workDir, { recursive: true });
       videoPath = await downloadVideoSegment({
         url: input.ep.url,
         workDir,
@@ -1170,6 +1179,9 @@ async function learnOneEpisode(input: {
                 input.ep.index,
                 e instanceof Error ? e.message : e,
               );
+              // 清掉直连留下的半截文件，防止页面回退把残片认成成品
+              await rmrf(chunkDir);
+              await fs.mkdir(chunkDir, { recursive: true });
               videoPath = await downloadVideoSegment({
                 url: input.ep.url,
                 workDir: chunkDir,
@@ -1415,6 +1427,8 @@ export async function runManhuaTemplateLearn(
     );
 
     const listedIndexes = listed.map((e) => e.index);
+    // 旗标优先级（固化语义）：refreshPreviewFrames > retrySkippedEpisodes > 常规续学；
+    // 前端不会同传，两 true 时按补帧处理
     const batchIndexes = input.refreshPreviewFrames
       ? existingDigests
           .filter(isManhuaLearnEpisodeComplete)
@@ -1434,6 +1448,32 @@ export async function runManhuaTemplateLearn(
             skippedIndexes: prog.skippedEpisodeIndexes,
             batchSize,
           });
+    if (input.retrySkippedEpisodes && !batchIndexes.length) {
+      // 重试暂跳专属空批次：不落通用「已学完」文案（用户刚点了重试，得说清为什么没跑）
+      return {
+        seriesKey,
+        analysisReady: false,
+        learnedCount: prog.learnedEpisodeIndexes.length,
+        analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
+        analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
+        batchLearned: 0,
+        batchIndexes: [],
+        listedEpisodeCount: prog.listedEpisodeCount || listed.length,
+        skippedEpisodeIndexes: prog.skippedEpisodeIndexes?.length
+          ? prog.skippedEpisodeIndexes
+          : undefined,
+        digestsPreview: existingDigests.map(toDigestPreview),
+        categoryLabelZh: prog.categoryLabelZh,
+        tagLabelsZh: prog.tagLabelsZh,
+        proposal: null,
+        proposalGcsUri: null,
+        visionFilled: false,
+        messageZh: prog.skippedEpisodeIndexes?.length
+          ? "暂跳集这次没有出现在合集列表里（或已学成），本轮未消耗任何模型成本；稍后再点「重试暂跳集」。"
+          : "当前没有暂跳集需要重试。",
+        workId,
+      };
+    }
     if (!batchIndexes.length) {
       const digestsAll = await loadAllDigests(seriesKey);
       const digests = digestsAll.filter(isManhuaLearnEpisodeComplete);
