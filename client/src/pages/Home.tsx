@@ -10,6 +10,7 @@ import HomeInviteApply from "../components/HomeInviteApply";
 import SampleReportDownload from "../components/SampleReportDownload";
 import { LaunchCountdownBanner } from "../components/LaunchCountdownBanner";
 import HomeModelShowcase from "../components/HomeModelShowcase";
+import HomeUpdateTicker from "../components/HomeUpdateTicker";
 import HomePlatformHighlights from "../components/HomePlatformHighlights";
 import HomePhotoTools from "../components/HomePhotoTools";
 
@@ -30,6 +31,7 @@ export default function HomePage() {
         <HomeNavbar />
         <LaunchCountdownBanner />
         <HomeHero />
+        <HomeUpdateTicker />
         <HomeModelShowcase />
         <HomePlatformHighlights />
         <HomePhotoTools />

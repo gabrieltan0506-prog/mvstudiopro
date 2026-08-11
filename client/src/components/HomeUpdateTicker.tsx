@@ -98,6 +98,9 @@ export default function HomeUpdateTicker() {
           animation: mvsp-home-ticker 40s linear infinite;
         }
         .mvsp-home-ticker-track:hover { animation-play-state: paused; }
+        @media (prefers-reduced-motion: reduce) {
+          .mvsp-home-ticker-track { animation: none; }
+        }
       `}</style>
     </div>
   );
