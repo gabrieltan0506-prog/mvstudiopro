@@ -24,6 +24,7 @@ import { buildOpenRouterHailuoSubmitBody } from "./openrouterHailuoVideo.js";
 import { buildOpenRouterHappyHorseSubmitBody } from "./openrouterHappyHorseVideo.js";
 import { getOpenRouterApiKey } from "./openrouterGptImage2.js";
 import {
+  isOpenRouterVideoConfigured,
   mirrorOpenRouterVideoSourceUrl,
   OPENROUTER_VIDEO_MAX_POLL_MS,
   OPENROUTER_VIDEO_POLL_INTERVAL_MS,
@@ -109,8 +110,8 @@ export type CanvasVideoTaskRecord = {
   duration: number;
   resolution?: string;
   generateAudio: boolean;
-  /** OpenRouter Seedance 2.0 / 2.0-fast；EvoLink Mini 记 2.0-mini */
-  seedanceVersion?: "2.0" | "2.0-fast" | "2.0-mini";
+  /** OpenRouter Seedance 2.0 / 2.0-fast；EvoLink Mini 记 2.0-mini；2.5 仅 BytePlus 回落 OpenRouter 时写入 */
+  seedanceVersion?: "2.0" | "2.0-fast" | "2.0-mini" | "2.5";
   /** Seedance 2.5 工作模式 */
   workMode?: SeedanceEvolinkMode;
   openRouterJobId?: string;
@@ -379,10 +380,31 @@ async function submitSeedance25Byteplus(task: CanvasVideoTaskRecord): Promise<vo
       await succeedTask(task, videoUrl, submitted.model, "byteplus");
     }
   } catch (error) {
-    if (!isByteplusFallbackableError(error) || !isEvolinkSeedanceConfigured()) {
+    if (!isByteplusFallbackableError(error)) {
       throw error;
     }
     const reason = error instanceof Error ? error.message : String(error);
+    /**
+     * CG 漫剧回落顺序（用户 2026-08-12 拍板）：BytePlus 挂了先去 OpenRouter（比 EvoLink 省 25%）。
+     * 例外仍去 EvoLink：①真人脸敏感错（OpenRouter 同为 BytePlus 转发方，一样拦脸）
+     * ②带参考视频的任务（OpenRouter 通道未接 video_urls，硬切会静默丢运镜参考）。
+     */
+    const faceBlocked = /InputImageSensitiveContentDetected|sensitive/i.test(reason);
+    if (!faceBlocked && !task.videoUrls?.length && isOpenRouterVideoConfigured()) {
+      console.warn(
+        `[canvasVideoTask] BytePlus Seedance 2.5 提交失败，回落 OpenRouter · task=${task.taskId} · ${reason}`,
+      );
+      task.fallbackReason = reason.slice(0, 200);
+      task.byteplusTaskId = undefined;
+      task.engine = "seedance-openrouter";
+      task.seedanceVersion = "2.5";
+      await writeTask(task);
+      await submitUpstream(task);
+      return;
+    }
+    if (!isEvolinkSeedanceConfigured()) {
+      throw error;
+    }
     console.warn(
       `[canvasVideoTask] BytePlus Seedance 2.5 提交失败，回落 EvoLink · task=${task.taskId} · ${reason}`,
     );
@@ -475,7 +497,12 @@ async function succeedTask(
 async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
   if (task.engine === "seedance-openrouter") {
     const body = buildOpenRouterSeedanceSubmitBody({
-      variant: task.seedanceVersion === "2.0-fast" ? "2.0-fast" : "2.0",
+      variant:
+        task.seedanceVersion === "2.0-fast"
+          ? "2.0-fast"
+          : task.seedanceVersion === "2.5"
+            ? "2.5"
+            : "2.0",
       prompt: task.prompt,
       imageUrl: task.imageUrl,
       imageUrls: task.imageUrls,
@@ -688,9 +715,36 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           return current;
         }
         if (snap.state === "failed") {
-          // 上游跑挂：若还可回落且尚未提交过 EvoLink，切引擎重提（不重复扣费）
+          // 上游跑挂：CG 无参考视频先回落 OpenRouter（拍板口径），脸敏感/带参考视频回落 EvoLink；均不重复扣费
+          const reason = snap.error;
+          const faceBlocked = /InputImageSensitiveContentDetected|sensitive/i.test(reason);
+          if (
+            !faceBlocked &&
+            !current.videoUrls?.length &&
+            isOpenRouterVideoConfigured() &&
+            !current.openRouterJobId
+          ) {
+            console.warn(
+              `[canvasVideoTask] BytePlus 任务失败，回落 OpenRouter · task=${current.taskId} · ${reason}`,
+            );
+            current.fallbackReason = reason.slice(0, 200);
+            current.byteplusTaskId = undefined;
+            current.engine = "seedance-openrouter";
+            current.seedanceVersion = "2.5";
+            current.status = "queued";
+            await writeTask(current);
+            try {
+              await submitUpstream(current);
+              const after = await readTask(taskId);
+              return after || current;
+            } catch (error) {
+              return failTask(
+                current,
+                error instanceof Error ? error.message : reason,
+              );
+            }
+          }
           if (isEvolinkSeedanceConfigured() && !current.evolinkTaskId) {
-            const reason = snap.error;
             console.warn(
               `[canvasVideoTask] BytePlus 任务失败，回落 EvoLink · task=${current.taskId} · ${reason}`,
             );

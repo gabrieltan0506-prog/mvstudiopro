@@ -8,7 +8,7 @@ import {
   normalizeSeedanceOpenRouterAspectRatio,
   normalizeSeedanceOpenRouterQuality,
   resolveSeedanceOpenRouterModelId,
-  SEEDANCE_REFERENCE_MAX,
+  seedanceOpenRouterReferenceMax,
   type SeedanceOpenRouterVariant,
 } from "../../shared/seedanceOpenRouterModels.js";
 import { isOpenRouterVideoConfigured, runOpenRouterVideoJob } from "./openrouterVideoCore.js";
@@ -30,9 +30,11 @@ export function buildOpenRouterSeedanceSubmitBody(input: {
   generateAudio?: boolean;
 }): Record<string, unknown> {
   const model = resolveSeedanceOpenRouterModelId(input.variant);
-  const duration = clampSeedanceOpenRouterDuration(input.duration);
+  const duration = clampSeedanceOpenRouterDuration(input.duration, input.variant);
   const resolution = normalizeSeedanceOpenRouterQuality(input.variant, input.quality);
   const aspect_ratio = normalizeSeedanceOpenRouterAspectRatio(input.aspectRatio);
+  // 参考名额按档取（2.5 图 30/音 10；2.0 图 9/音 3），回落通道不砍图丢锁
+  const refMax = seedanceOpenRouterReferenceMax(input.variant);
   const images = [
     ...(input.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean),
     ...(String(input.imageUrl || "").trim() ? [String(input.imageUrl).trim()] : []),
@@ -40,7 +42,7 @@ export function buildOpenRouterSeedanceSubmitBody(input: {
   const uniqueImages = Array.from(new Set(images));
   const audioUrls = Array.from(
     new Set((input.audioUrls || []).map((u) => String(u || "").trim()).filter(Boolean)),
-  ).slice(0, SEEDANCE_REFERENCE_MAX.audio);
+  ).slice(0, refMax.audio);
 
   const body: Record<string, unknown> = {
     model,
@@ -70,7 +72,7 @@ export function buildOpenRouterSeedanceSubmitBody(input: {
   } else if (uniqueImages.length > 1) {
     // 官方多模态参考上限 9 张；早先写死 4 会把本段静帧和场景/道具静默丢掉，
     // 提示词里的 @ImageN 却照旧指向没发出去的图，导致脸/服/场锁不住。
-    for (const url of uniqueImages.slice(0, SEEDANCE_REFERENCE_MAX.image)) {
+    for (const url of uniqueImages.slice(0, refMax.image)) {
       inputReferences.push({
         type: "image_url",
         image_url: { url },
@@ -108,11 +110,9 @@ export async function runOpenRouterSeedanceVideo(input: OpenRouterSeedanceRunInp
   provider: "openrouter";
   version: SeedanceOpenRouterVariant;
 }> {
+  const raw = String(input.version || "2.0").trim().toLowerCase();
   const variant: SeedanceOpenRouterVariant =
-    String(input.version || "2.0").trim().toLowerCase() === "2.0-fast" ||
-    String(input.version || "").trim().toLowerCase() === "fast"
-      ? "2.0-fast"
-      : "2.0";
+    raw === "2.0-fast" || raw === "fast" ? "2.0-fast" : raw === "2.5" ? "2.5" : "2.0";
 
   const prompt = String(input.prompt || "").trim();
   if (!prompt) throw new Error("请填写视频提示词");
