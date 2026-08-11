@@ -739,6 +739,19 @@ export default function OmniCanvas() {
   const [writerBusy, setWriterBusy] = useState(false);
   /** 确认编剧失败时的门禁原因（页面常驻，不只 toast） */
   const [writerConfirmBlockers, setWriterConfirmBlockers] = useState<string[]>([]);
+  /** 门禁一键补密度：扩写成功落盘后自动重跑一次「编剧确认」（A2 闭环） */
+  const gateRecheckPendingRef = useRef(false);
+  /** 门禁红字里点到名的集号（付费扩写起点与报价按它算） */
+  const writerGateFailEpisodes = useMemo(() => {
+    const found = new Set<number>();
+    for (const err of writerConfirmBlockers) {
+      for (const m of Array.from(String(err).matchAll(/第(\d+)集/g))) {
+        const n = Number(m[1]);
+        if (Number.isFinite(n) && n >= 1) found.add(n);
+      }
+    }
+    return Array.from(found).sort((a, b) => a - b);
+  }, [writerConfirmBlockers]);
   /** 次要入口：粘贴 / 上传已有剧本 */
   const [writerImportDraft, setWriterImportDraft] = useState("");
   const writerImportFileRef = useRef<HTMLInputElement | null>(null);
@@ -3128,7 +3141,7 @@ export default function OmniCanvas() {
     ],
   );
 
-  const expandWriterRoom = useCallback(async () => {
+  const expandWriterRoom = useCallback(async (opts?: { fromEpisodeOverride?: number }) => {
     const topic = factoryTopic.trim();
     const brief = writerBrief.trim();
     if (!topic && !brief) {
@@ -3141,8 +3154,11 @@ export default function OmniCanvas() {
     }
     /** 立刻收窄为成片三选一，避免 async/state 下空串回流导致 tsc 失败 */
     const selectedVideoModel: ManhuaSeedanceLayoutVideoModel = writerVideoModel;
+    /** 门禁「补密度」带 override：从首个不足集起局部改写，整集重写（段起点=1） */
+    const fromEpisode = Math.max(0, Math.floor(opts?.fromEpisodeOverride ?? writerFromEpisode));
+    const fromSegment = opts?.fromEpisodeOverride != null ? 1 : writerFromSegment;
     /** 全量换剧：先备份旧专案（剧本+付费设定图），再清空，避免新旧串味 */
-    const fullSeriesSwitch = !(writerFromEpisode > 0);
+    const fullSeriesSwitch = !(fromEpisode > 0);
     let clearSeriesAssetsAfterBackup = false;
     if (fullSeriesSwitch) {
       const risk = inspectManhuaSeriesSwitchRisk({
@@ -3212,8 +3228,8 @@ export default function OmniCanvas() {
       viralTemplateId,
       writerLengthTierId,
       selectedVideoModel,
-      writerFromEpisode,
-      writerFromSegment,
+      fromEpisode,
+      fromSegment,
     });
     const expandRequestId =
       writerExpandRetryRef.current?.signature === expandSignature
@@ -3231,11 +3247,11 @@ export default function OmniCanvas() {
           viralTemplateId: viralTemplateId || undefined,
           lengthTierId: writerLengthTierId,
           videoModel: selectedVideoModel,
-          fromEpisode: writerFromEpisode || undefined,
-          fromSegment: writerFromEpisode > 0 ? writerFromSegment : undefined,
+          fromEpisode: fromEpisode || undefined,
+          fromSegment: fromEpisode > 0 ? fromSegment : undefined,
           lockedEpisodeBody:
-            writerFromEpisode > 0 && writerFromSegment > 1
-              ? writerPack?.episodes.find((e) => e.index === writerFromEpisode)?.body ||
+            fromEpisode > 0 && fromSegment > 1
+              ? writerPack?.episodes.find((e) => e.index === fromEpisode)?.body ||
                 undefined
               : undefined,
         }),
@@ -3250,7 +3266,7 @@ export default function OmniCanvas() {
       const pack = spliceManhuaWriterPackFromEpisode(
         writerPack,
         res.pack,
-        writerFromEpisode,
+        fromEpisode,
       );
       if (isPlaceholderSeriesTitle(pack.seriesTitle)) {
         const fallback = deriveSeriesTitleFromTopic(topic);
@@ -3261,8 +3277,8 @@ export default function OmniCanvas() {
       }
       // 新剧情包不应继续展示旧静帧/成片/多集坞（云草稿残留）
       let cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges, {
-        fromEpisode: writerFromEpisode || undefined,
-        fromSegment: writerFromEpisode > 0 ? writerFromSegment : undefined,
+        fromEpisode: fromEpisode || undefined,
+        fromSegment: fromEpisode > 0 ? fromSegment : undefined,
       });
       if (clearSeriesAssetsAfterBackup) {
         const seriesCleared = stripManhuaSeriesAssetsForNewProject(
@@ -3291,7 +3307,7 @@ export default function OmniCanvas() {
         setWorkflowPhase("outline");
       }
       setWriterPack(pack);
-      setWriterFocusEpisode(writerFromEpisode || 1);
+      setWriterFocusEpisode(fromEpisode || 1);
       setWriterConfirmBlockers([]);
       // 新剧本立刻落盘并覆盖本机+云端旧稿，避免刷新后又被旧云草稿盖回
       const clientUpdatedAt = new Date().toISOString();
@@ -3373,6 +3389,7 @@ export default function OmniCanvas() {
         response: msg,
       });
       toast.error(msg);
+      gateRecheckPendingRef.current = false;
     } finally {
       setWriterBusy(false);
     }
@@ -3884,6 +3901,19 @@ export default function OmniCanvas() {
     remapDockSelectionAfterSpawn,
     pushDebug,
   ]);
+
+  // A2 闭环收尾：门禁「补密度」扩写成功、新稿落盘后自动重跑一次编剧确认；
+  // 过了直接放行进导演，没过红字刷新为最新缺口（失败路径在 expandWriterRoom catch 里撤标）
+  useEffect(() => {
+    if (!gateRecheckPendingRef.current || writerBusy || !writerPack) return;
+    gateRecheckPendingRef.current = false;
+    const timer = window.setTimeout(() => {
+      const ok = confirmWriterToDirector();
+      if (ok) toast.success("扩写后密度门禁已通过，可进入资产设定");
+    }, 120);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [writerPack, writerBusy]);
 
   const confirmWriterSeriesSpawn = useCallback(() => {
     if (!writerPack || !writerPackLooksReady(writerPack)) {
@@ -7851,6 +7881,40 @@ export default function OmniCanvas() {
                     <p className="mt-1.5 text-[10px] text-amber-100/55">
                       常见原因：对白未用直角引号「」或可拍表缺「对白」行。可点「重新扩写」后再确认。
                     </p>
+                    {writerGateFailEpisodes.length > 0 && writerPack ? (() => {
+                      const minFailing = writerGateFailEpisodes[0];
+                      const rewriteCount = Math.max(
+                        1,
+                        writerPack.episodes.length - minFailing + 1,
+                      );
+                      const perEpisode =
+                        MANHUA_WRITER_EXPAND_CREDITS_PER_EPISODE[writerExpandTier];
+                      const tierLabel =
+                        MANHUA_WRITER_EXPAND_TIERS.find((t) => t.id === writerExpandTier)
+                          ?.label || writerExpandTier;
+                      return (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-amber-400/20 pt-2">
+                          <span className="text-[10px] text-amber-50/85">
+                            不足的集（第 {writerGateFailEpisodes.join("、")} 集）可一键付费扩写补密度：
+                            从第 {minFailing} 集起局部改写 {rewriteCount} 集 ·{" "}
+                            {tierLabel}档 {perEpisode} 分/集 · 预计 {perEpisode * rewriteCount} 积分。
+                            之前的集与已出片资产保留；扩写失败不动原稿，成功后自动重检门禁。
+                          </span>
+                          <button
+                            type="button"
+                            data-manhua-action="expand-fix-density"
+                            disabled={writerBusy || factoryBusy}
+                            onClick={() => {
+                              gateRecheckPendingRef.current = true;
+                              void expandWriterRoom({ fromEpisodeOverride: minFailing });
+                            }}
+                            className="rounded-lg border border-amber-300/45 bg-amber-400/15 px-2.5 py-1 text-[11px] font-semibold text-amber-50 hover:bg-amber-400/25 disabled:opacity-45"
+                          >
+                            {writerBusy ? "正在扩写…" : "一键扩写补密度"}
+                          </button>
+                        </div>
+                      );
+                    })() : null}
                   </div>
                 ) : null}
                 <button
