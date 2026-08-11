@@ -29,9 +29,23 @@ const registry = {
 };
 
 describe("manhuaAtReference", () => {
-  it("用户示例原句：图片与音轨 token 全部扫出", () => {
+  it("用户示例原句（英文形态兼容）：图片与音轨 token 全部扫出", () => {
     const text = "4-7秒 阿咎@image01 颤抖的说：这不是我干的，你们抓错人了@x3.mp3";
     expect(parseManhuaAtReferenceTokens(text)).toEqual(["image01", "x3.mp3"]);
+  });
+
+  it("中文正式形态：@图03/@音3/@板1 全部扫出", () => {
+    const text = "开场@图03，配乐@音3，轨迹见@板1";
+    expect(parseManhuaAtReferenceTokens(text)).toEqual(["图03", "音3", "板1"]);
+  });
+
+  it("中英同指一物：@image01 与 @图01 解析到同一 URL", () => {
+    const index = buildManhuaAtReferenceIndex({ registry });
+    const en = resolveManhuaAtReferences({ text: "看@image01", index, registry });
+    const zh = resolveManhuaAtReferences({ text: "看@图01", index, registry });
+    expect(en.resolved[0]!.url).toBe("https://x/ajiu.png");
+    expect(zh.resolved[0]!.url).toBe("https://x/ajiu.png");
+    expect(en.resolved[0]!.token).toBe("图01");
   });
 
   it("不吃邮箱与普通 @ 字符", () => {
@@ -44,7 +58,7 @@ describe("manhuaAtReference", () => {
       boardUrlByEpisode: { 1: "https://x/board1.png" },
     });
     const r = resolveManhuaAtReferences({
-      text: "开场@image02，阿咎@image01，轨迹见@d1.png，配@x9.mp3",
+      text: "开场@图02，阿咎@image01，轨迹见@d1.png，配@x9.mp3",
       index,
       registry,
     });
@@ -76,7 +90,8 @@ describe("manhuaAtReference", () => {
       registry,
       bindings: { image07: { tag: "@角色9" } },
     });
-    expect(r.missing).toEqual(["image07"]);
+    // 断链上报也用中文正式形态
+    expect(r.missing).toEqual(["图07"]);
   });
 
   it("注入块含对照与导演板约束句", () => {
@@ -84,7 +99,7 @@ describe("manhuaAtReference", () => {
       registry,
       boardUrlByEpisode: { 1: "https://x/board1.png" },
     });
-    const r = resolveManhuaAtReferences({ text: "@image01 @d1.png", index, registry });
+    const r = resolveManhuaAtReferences({ text: "@图01 @板1", index, registry });
     const block = formatManhuaAtReferencePromptBlock(r);
     expect(block).toContain("【@引用对照】");
     expect(block).toContain("阿咎");
