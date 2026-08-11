@@ -6228,7 +6228,7 @@ export default function OmniCanvas() {
           id: existing?.id || makeManhuaCharacterVoiceLockId(),
           characterTag,
           characterId: existing?.characterId,
-          labelZh: String(input.labelZh || existing?.labelZh || characterTag).trim().slice(0, 40),
+          labelZh: String(input.labelZh || existing?.labelZh || "").trim().slice(0, 40),
           audioUrl,
           sourceVideoUrl: existing?.sourceVideoUrl,
           sourceClipId: existing?.sourceClipId,
@@ -6790,7 +6790,7 @@ export default function OmniCanvas() {
                       const lock: ManhuaCharacterVoiceLock = {
                         id: makeManhuaCharacterVoiceLockId(),
                         characterTag,
-                        labelZh: labelZh || characterTag,
+                        labelZh: labelZh || "",
                         audioUrl: out.audioUrl,
                         sourceVideoUrl: videoUrl,
                         sourceClipId: clipId,
