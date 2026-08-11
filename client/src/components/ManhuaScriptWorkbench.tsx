@@ -392,7 +392,10 @@ type Props = {
    * 只接现成图，本入口不出图。
    */
   directorBoardMainUrl?: string | null;
-  onIngestDirectorBoardFile?: (file: File) => void | Promise<void>;
+  /** 本集段号(1 起) → 段级导演板 URL（段级为主、集级兜底；用于段选择接入状态） */
+  directorBoardSegUrls?: Record<number, string> | null;
+  /** segIndex 为空/0 = 本集共用；>0 = 只作用该段 */
+  onIngestDirectorBoardFile?: (file: File, segIndex?: number | null) => void | Promise<void>;
   onClearDirectorBoard?: () => void;
   directorBoardBusy?: boolean;
   /** 复制导演板出图提示词（用户自行出图后再上传裁切） */
@@ -597,6 +600,7 @@ export default function ManhuaScriptWorkbench({
   onLayoutReadableChain,
   onEnsureSegmentClips,
   directorBoardMainUrl = null,
+  directorBoardSegUrls = null,
   onIngestDirectorBoardFile,
   onClearDirectorBoard,
   directorBoardBusy = false,
@@ -836,6 +840,8 @@ export default function ManhuaScriptWorkbench({
       }),
     [shots, episodeVideoModel],
   );
+  /** 导演板上传作用范围：0=本集共用；>0=只作用该段（段级为主、集级兜底） */
+  const [boardSegChoice, setBoardSegChoice] = useState(0);
   const shootablePlan = useMemo(
     () =>
       parseManhuaEpisodeSegmentPlanFromMarkdown(
@@ -2014,38 +2020,72 @@ export default function ManhuaScriptWorkbench({
               >
                 审阅成片提示词
               </button>
-              {!compactUi && onIngestDirectorBoardFile ? (
-                <label
-                  className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[10px] font-semibold ${
-                    directorBoardMainUrl
-                      ? "border-emerald-300/40 bg-emerald-500/15 text-emerald-50"
-                      : "border-amber-300/35 bg-amber-500/10 text-amber-50/90"
-                  } ${factoryBusy || directorBoardBusy ? "pointer-events-none opacity-45" : ""}`}
-                  title="上传本集导演分镜板整版图；裁出主画面后接入成片垫图（不裁则模型易学四格拼贴）"
-                >
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    className="hidden"
-                    disabled={Boolean(factoryBusy || directorBoardBusy)}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      e.target.value = "";
-                      if (!file) return;
-                      void Promise.resolve(onIngestDirectorBoardFile(file)).catch(
-                        (err: unknown) => {
-                          toast.error(err instanceof Error ? err.message : "导演板接入失败");
-                        },
-                      );
-                    }}
-                  />
-                  {directorBoardBusy
-                    ? "导演板裁切中…"
-                    : directorBoardMainUrl
-                      ? "导演板已接入"
-                      : "上传导演板"}
-                </label>
-              ) : null}
+              {!compactUi && onIngestDirectorBoardFile
+                ? (() => {
+                    // 切集后旧段号可能越界 → 自动回落「本集共用」
+                    const segChoice =
+                      boardSegChoice > 0 && boardSegChoice <= segments.length
+                        ? boardSegChoice
+                        : 0;
+                    const chosenUrl =
+                      segChoice > 0
+                        ? directorBoardSegUrls?.[segChoice] || null
+                        : directorBoardMainUrl;
+                    return (
+                      <span className="inline-flex items-center gap-1">
+                        <select
+                          value={segChoice}
+                          disabled={Boolean(factoryBusy || directorBoardBusy)}
+                          onChange={(e) => setBoardSegChoice(Number(e.target.value) || 0)}
+                          className="rounded-lg border border-white/15 bg-white/[0.04] px-1.5 py-1.5 text-[10px] text-white/70 focus:outline-none disabled:opacity-45"
+                          title="这张导演板作用范围：本集共用，或只作用某一段（段级优先、集级兜底）"
+                        >
+                          <option value={0}>本集共用</option>
+                          {segments.map((s) => (
+                            <option key={s.index} value={s.index}>
+                              段{String(s.index).padStart(2, "0")}
+                              {directorBoardSegUrls?.[s.index] ? " ✓" : ""}
+                            </option>
+                          ))}
+                        </select>
+                        <label
+                          className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[10px] font-semibold ${
+                            chosenUrl
+                              ? "border-emerald-300/40 bg-emerald-500/15 text-emerald-50"
+                              : "border-amber-300/35 bg-amber-500/10 text-amber-50/90"
+                          } ${factoryBusy || directorBoardBusy ? "pointer-events-none opacity-45" : ""}`}
+                          title="上传导演分镜板整版图；裁出主画面后接入成片垫图（不裁则模型易学四格拼贴）。选了段就只作用该段，未传段级板的段用本集共用板兜底"
+                        >
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp"
+                            className="hidden"
+                            disabled={Boolean(factoryBusy || directorBoardBusy)}
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              e.target.value = "";
+                              if (!file) return;
+                              void Promise.resolve(
+                                onIngestDirectorBoardFile(file, segChoice > 0 ? segChoice : null),
+                              ).catch((err: unknown) => {
+                                toast.error(err instanceof Error ? err.message : "导演板接入失败");
+                              });
+                            }}
+                          />
+                          {directorBoardBusy
+                            ? "导演板裁切中…"
+                            : segChoice > 0
+                              ? chosenUrl
+                                ? `段${String(segChoice).padStart(2, "0")}已接入·可覆盖`
+                                : `上传段${String(segChoice).padStart(2, "0")}导演板`
+                              : chosenUrl
+                                ? "导演板已接入"
+                                : "上传导演板"}
+                        </label>
+                      </span>
+                    );
+                  })()
+                : null}
               {!compactUi && onCopyDirectorBoardPrompt ? (
                 <button
                   type="button"

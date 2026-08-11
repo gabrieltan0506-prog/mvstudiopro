@@ -1803,6 +1803,8 @@ export function ensureManhuaFragmentClips(
      * 出图/裁切在别处完成，这里只接住现成 URL 参与预算与垫图声明。
      */
     directorBoardUrlByEpisode?: Record<number, string> | null;
+    /** 段级导演板（段级为主、集级兜底，2026-08-11 拍板）：集号→本集段号→HTTPS */
+    directorBoardUrlByEpisodeSegment?: Record<number, Record<number, string>> | null;
     /**
      * 用户选定的成片引擎。段数与段时长必须跟它的段表走——铺几条 clip 就是实收
      * 几段积分，不能由反推这次吐了几镜来定。缺省只在旧调用兜底。
@@ -2192,7 +2194,11 @@ export function ensureManhuaFragmentClips(
         stillUrls: segUrls,
         stillSlotsZh,
         mentionedTags: mentioned,
-        boardUrl: directorBoardUrl || null,
+        // 段级板优先、集级兜底（红青线解读句 boardAddonZh 随之指向本段的板）
+        boardUrl:
+          String(opts?.directorBoardUrlByEpisodeSegment?.[ep]?.[seg.index] || "").trim() ||
+          directorBoardUrl ||
+          null,
       });
     })();
     /**
