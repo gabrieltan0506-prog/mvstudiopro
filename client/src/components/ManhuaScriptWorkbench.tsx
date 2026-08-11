@@ -5500,9 +5500,18 @@ export default function ManhuaScriptWorkbench({
                                   });
                                   void onConfirmAssetsAndPrepareImages?.();
                                 }}
+                                boardCandidate={
+                                  directorBoardMainUrl
+                                    ? {
+                                        tag: `@板${focusEpisode}`,
+                                        labelZh: `第${String(focusEpisode).padStart(2, "0")}集导演板（轨迹参考）`,
+                                        thumbUrl: directorBoardMainUrl,
+                                      }
+                                    : null
+                                }
                                 placeholder={
                                   row.clip?.id
-                                    ? "段成片提示词（输入 @ 挑本集人物/场景/道具）"
+                                    ? "段成片提示词（输入 @ 挑本集人物/场景/道具/导演板）"
                                     : "点「审阅」时会先铺段节点；若仍空请对齐画布竖排"
                                 }
                               />
