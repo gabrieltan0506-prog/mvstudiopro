@@ -4257,6 +4257,104 @@ export default function OmniCanvas() {
     );
   }, []);
 
+  /** AI 去字（3 分）：物理擦除画面文字，其余像素保真——同标准化计费链 */
+  const detextCustomAsset = useCallback(
+    async (id: string) => {
+      if (assetStandardizeBusyId) return;
+      const ref = customAssetRefs.find((item) => item.id === id);
+      if (!ref) return;
+      const cost = manhuaAssetStandardizeCredits("medium");
+      if (
+        !window.confirm(
+          `将调用 AI 图片编辑，精确擦除这张图画面上的所有文字/水印/标牌字样，其余画面保持原样。\n\n${cost} 积分/张；失败自动退回。原图会保留。\n处理约需 1–2 分钟，期间请不要关闭页面。继续？`,
+        )
+      )
+        return;
+      setAssetStandardizeBusyId(id);
+      try {
+        const { jobId } = await createJobSameOrigin({
+          type: "image",
+          userId: String(user?.id || ""),
+          input: buildCanvasGptImage2JobInput({
+            prompt:
+              "精确擦除画面中出现的所有文字、字样、水印、标牌与印章文字，用周围的材质、光影自然补全被擦除区域；构图、人物、陈设、色调与其余像素保持原样。禁止新增任何元素。",
+            aspectRatio: (ref.sourceWidth || 0) >= (ref.sourceHeight || 1) ? "16:9" : "9:16",
+            referenceImageUrls: [ref.url],
+            generalImageEdit: true,
+            providerOverride: "openai",
+            imageLane: "asset",
+            gcsSubdir: "manhua-asset-detext",
+            assetStandardizeQuality: "medium",
+            assetRefId: ref.id,
+          }),
+        });
+        const job = await pollJobUntilTerminal(jobId, { maxWaitMs: 12 * 60_000, intervalMs: 2500 });
+        if (job.status !== "succeeded") throw new Error(job.error || "去字失败");
+        const out = (job.output || {}) as { imageUrl?: string; imageUrls?: string[] };
+        const imageUrl = String(out.imageUrl || out.imageUrls?.[0] || "").trim();
+        if (!/^https:\/\//i.test(imageUrl)) throw new Error("去字未返回有效图片");
+        setCustomAssetRefs((prev) =>
+          normalizeManhuaCustomAssetRefs([
+            ...prev,
+            {
+              ...ref,
+              id: makeManhuaCustomAssetId(),
+              url: imageUrl,
+              gcsUri: undefined,
+              labelZh: `${ref.labelZh || "资产"}·去字`,
+              reviewStatus: "converted",
+              qualityIssues: [],
+              claimSource: "converted",
+              source: "generated",
+            },
+          ]),
+        );
+        toast.success(`去字完成 · 已扣 ${cost} 积分`, { description: "原图仍保留，可对比后删除旧图。" });
+      } catch (error) {
+        toast.error("去字失败", {
+          description: error instanceof Error ? error.message : "已进入失败退分流程",
+        });
+      } finally {
+        setAssetStandardizeBusyId(null);
+      }
+    },
+    [assetStandardizeBusyId, customAssetRefs, user?.id],
+  );
+
+  /** 免费裁字：客户端裁剪后作为新参考图入库（零调用零扣费），旧图保留待删 */
+  const cropCustomAssetToFile = useCallback(
+    async (id: string, crop: { x: number; y: number; w: number; h: number }) => {
+      const ref = customAssetRefs.find((item) => item.id === id);
+      if (!ref) return;
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error("图片加载失败"));
+        img.src = ref.url;
+      });
+      const sx = Math.round(img.naturalWidth * crop.x);
+      const sy = Math.round(img.naturalHeight * crop.y);
+      const sw = Math.max(16, Math.round(img.naturalWidth * crop.w));
+      const sh = Math.max(16, Math.round(img.naturalHeight * crop.h));
+      const canvas = document.createElement("canvas");
+      canvas.width = sw;
+      canvas.height = sh;
+      canvas.getContext("2d")!.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, "image/png"),
+      );
+      if (!blob) throw new Error("裁剪导出失败");
+      const file = new File([blob], `${(ref.labelZh || "资产").slice(0, 20)}_去字.png`, {
+        type: "image/png",
+      });
+      const role = ref.role === "unset" ? "scene" : ref.role;
+      await uploadCustomAssetFiles([file], role);
+      toast.success("已裁好并入库", { description: "新图进了同分栏；确认没问题后把旧图 ✕ 掉。" });
+    },
+    [customAssetRefs],
+  );
+
   const standardizeCustomAsset = useCallback(
     async (id: string, quality: ManhuaAssetStandardizeQuality) => {
       if (assetStandardizeBusyId) return;
@@ -6725,6 +6823,8 @@ export default function OmniCanvas() {
                   onCustomAssetRoleChange={setCustomAssetRole}
                   onCustomAssetDutyChange={setCustomAssetDuty}
                   onCustomAssetLabelChange={setCustomAssetLabel}
+                  onDetextCustomAsset={detextCustomAsset}
+                  onCropCustomAsset={cropCustomAssetToFile}
                   onCustomAssetClaimsChange={setCustomAssetClaims}
                   onCustomAssetReviewAccept={acceptCustomAssetReview}
                   onStandardizeCustomAsset={standardizeCustomAsset}

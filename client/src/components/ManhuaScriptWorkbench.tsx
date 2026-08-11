@@ -289,6 +289,10 @@ type Props = {
   onCustomAssetDutyChange?: (id: string, duty: ManhuaCustomAssetRefDuty | null) => void;
   /** 手动改名：改成与剧本表一致的名字即被认领（自动识别不追求 100%） */
   onCustomAssetLabelChange?: (id: string, labelZh: string) => void;
+  /** AI 去字（3 分）：物理擦除画面文字 */
+  onDetextCustomAsset?: (id: string) => void | Promise<void>;
+  /** 免费裁字：按保留区比例裁剪后入库为新参考图 */
+  onCropCustomAsset?: (id: string, crop: { x: number; y: number; w: number; h: number }) => void | Promise<void>;
   /** 明确认领稳定锚点；场景允许一图多选，替代用显示名猜主键。 */
   onCustomAssetClaimsChange?: (id: string, anchorIds: string[]) => void;
   onCustomAssetReviewAccept?: (id: string) => void;
@@ -554,6 +558,8 @@ export default function ManhuaScriptWorkbench({
   onCustomAssetRoleChange,
   onCustomAssetDutyChange,
   onCustomAssetLabelChange,
+  onDetextCustomAsset,
+  onCropCustomAsset,
   onCustomAssetClaimsChange,
   onCustomAssetReviewAccept,
   onStandardizeCustomAsset,
@@ -626,6 +632,10 @@ export default function ManhuaScriptWorkbench({
     artStyleId === "photoreal" ? "photoreal" : "cg_drama";
   const [shotIndex, setShotIndex] = useState(0);
   const [clipPromptReviewOpen, setClipPromptReviewOpen] = useState(false);
+  /** 免费裁字弹层：拖框选保留区，框外（含烧字边缘）裁掉 */
+  const [cropTarget, setCropTarget] = useState<{ id: string; url: string; labelZh: string } | null>(null);
+  const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const cropDragRef = useRef<{ startX: number; startY: number } | null>(null);
   /** 参考图批量勾选：图角勾选 → 底部一键删除；删除后自动清勾 */
   const [selectedAssetIds, setSelectedAssetIds] = useState<ReadonlySet<string>>(new Set());
   const toggleAssetSelected = (id: string) => {
@@ -2782,6 +2792,92 @@ export default function ManhuaScriptWorkbench({
                   / 我的场景 / 我的道具」。
                 </p>
               </div>
+              {cropTarget ? (
+                <div
+                  className="fixed inset-0 z-[80] flex flex-col items-center justify-center gap-2 bg-black/85 px-4 py-6"
+                  onClick={() => setCropTarget(null)}
+                >
+                  <p className="text-[12px] font-semibold text-white/90">
+                    裁字：在图上拖一个框，框内保留、框外裁掉（烧字通常在边缘）
+                  </p>
+                  <div
+                    className="relative max-h-[70vh] max-w-full cursor-crosshair select-none"
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => {
+                      const box = e.currentTarget.getBoundingClientRect();
+                      const x = (e.clientX - box.left) / box.width;
+                      const y = (e.clientY - box.top) / box.height;
+                      cropDragRef.current = { startX: x, startY: y };
+                      setCropRect({ x, y, w: 0, h: 0 });
+                    }}
+                    onMouseMove={(e) => {
+                      if (!cropDragRef.current) return;
+                      const box = e.currentTarget.getBoundingClientRect();
+                      const cx = Math.min(1, Math.max(0, (e.clientX - box.left) / box.width));
+                      const cy = Math.min(1, Math.max(0, (e.clientY - box.top) / box.height));
+                      const { startX, startY } = cropDragRef.current;
+                      setCropRect({
+                        x: Math.min(startX, cx),
+                        y: Math.min(startY, cy),
+                        w: Math.abs(cx - startX),
+                        h: Math.abs(cy - startY),
+                      });
+                    }}
+                    onMouseUp={() => {
+                      cropDragRef.current = null;
+                    }}
+                    onMouseLeave={() => {
+                      cropDragRef.current = null;
+                    }}
+                  >
+                    <img
+                      src={cropTarget.url}
+                      alt={cropTarget.labelZh}
+                      draggable={false}
+                      className="max-h-[70vh] max-w-full rounded-lg border border-white/15 object-contain"
+                    />
+                    {cropRect && cropRect.w > 0.01 && cropRect.h > 0.01 ? (
+                      <div
+                        className="pointer-events-none absolute border-2 border-emerald-300 bg-emerald-400/10"
+                        style={{
+                          left: `${cropRect.x * 100}%`,
+                          top: `${cropRect.y * 100}%`,
+                          width: `${cropRect.w * 100}%`,
+                          height: `${cropRect.h * 100}%`,
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      disabled={!cropRect || cropRect.w < 0.05 || cropRect.h < 0.05}
+                      onClick={() => {
+                        if (!cropRect || !onCropCustomAsset) return;
+                        void onCropCustomAsset(cropTarget.id, cropRect);
+                        setCropTarget(null);
+                      }}
+                      className="rounded-lg border border-emerald-300/50 bg-emerald-500/25 px-3 py-1.5 text-[12px] font-semibold text-emerald-50 hover:bg-emerald-500/40 disabled:opacity-40"
+                    >
+                      保留框内 · 裁掉框外（免费）
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCropRect(null)}
+                      className="rounded-lg border border-white/15 px-3 py-1.5 text-[12px] text-white/70 hover:bg-white/[0.06]"
+                    >
+                      重画框
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCropTarget(null)}
+                      className="rounded-lg border border-white/15 px-3 py-1.5 text-[12px] text-white/60 hover:bg-white/[0.06]"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               {sheetPreview ? (
                 <div
                   className="fixed inset-0 z-[75] flex flex-col items-center justify-center gap-3 bg-black/85 px-4 py-6"
@@ -3895,6 +3991,34 @@ export default function ManhuaScriptWorkbench({
                                       className="text-[9px] text-white/40 hover:text-white/65"
                                     >
                                       清除明确认领
+                                    </button>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                              {onCropCustomAsset || onDetextCustomAsset ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {onCropCustomAsset ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setCropTarget({ id: ref.id, url: ref.url, labelZh: ref.labelZh || "参考图" });
+                                        setCropRect(null);
+                                      }}
+                                      title="画面边缘有烧字？拖框选要保留的部分，框外裁掉——免费"
+                                      className="rounded border border-emerald-300/40 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-medium text-emerald-100 hover:bg-emerald-500/25"
+                                    >
+                                      裁字·免费
+                                    </button>
+                                  ) : null}
+                                  {onDetextCustomAsset ? (
+                                    <button
+                                      type="button"
+                                      disabled={assetStandardizeBusyId != null}
+                                      onClick={() => void onDetextCustomAsset(ref.id)}
+                                      title="文字在画面中间裁不掉？AI 精确擦除文字，其余像素保持原样"
+                                      className="rounded border border-cyan-300/40 bg-cyan-500/10 px-1.5 py-0.5 text-[9px] font-medium text-cyan-100 hover:bg-cyan-500/25 disabled:opacity-40"
+                                    >
+                                      {assetStandardizeBusyId === ref.id ? "去字中…" : "AI 去字·3分"}
                                     </button>
                                   ) : null}
                                 </div>
