@@ -31,19 +31,33 @@ export type ManhuaAtReferenceEntry = {
 /** 随稿持久化的插入期绑定：token → 锁表 tag（图片类才需要） */
 export type ManhuaAtReferenceBindings = Record<string, { tag: string }>;
 
-const IMAGE_TOKEN_RE = /^image(\d{1,3})$/i;
-const AUDIO_TOKEN_RE = /^[\w-]{1,40}\.(?:mp3|wav|m4a)$/i;
-const BOARD_TOKEN_RE = /^d(\d{1,3})\.png$/i;
+/**
+ * 正式形态中文（用户拍板：显示中文不显示英文）：@图03 / @音3 / @板1。
+ * 英文形态兼容不废（@image03 / @x3.mp3 / @d1.png），解析时归一到中文。
+ */
+const IMAGE_TOKEN_RE = /^(?:image|图)(\d{1,3})$/i;
+const AUDIO_FILE_TOKEN_RE = /^[\w-]{1,40}\.(?:mp3|wav|m4a)$/i;
+const AUDIO_NO_TOKEN_RE = /^音(\d{1,3})$/;
+const BOARD_TOKEN_RE = /^(?:d(\d{1,3})\.png|板(\d{1,3}))$/i;
 
 /** 提示词中可出现的 @token（不吃邮箱：@ 前必须是行首/空白/中文/标点） */
 const TOKEN_SCAN_RE =
-  /(^|[\s，。：；、！？“”()（）一-鿿])@(image\d{1,3}|[\w-]{1,40}\.(?:mp3|wav|m4a)|d\d{1,3}\.png)/gi;
+  /(^|[\s，。：；、！？“”()（）一-鿿])@((?:image|图)\d{1,3}|音\d{1,3}|板\d{1,3}|[\w-]{1,40}\.(?:mp3|wav|m4a)|d\d{1,3}\.png)/gi;
 
 export function classifyManhuaAtToken(token: string): ManhuaAtReferenceKind | null {
   if (IMAGE_TOKEN_RE.test(token)) return "image";
   if (BOARD_TOKEN_RE.test(token)) return "board";
-  if (AUDIO_TOKEN_RE.test(token)) return "audio";
+  if (AUDIO_FILE_TOKEN_RE.test(token) || AUDIO_NO_TOKEN_RE.test(token)) return "audio";
   return null;
+}
+
+/** 英文形态归一到中文正式形态：image03→图03、d1.png→板1；音频文件名保持原样 */
+export function canonicalizeManhuaAtToken(token: string): string {
+  const img = token.match(IMAGE_TOKEN_RE);
+  if (img) return `图${img[1]!.padStart(2, "0")}`;
+  const board = token.match(BOARD_TOKEN_RE);
+  if (board) return `板${board[1] || board[2]}`;
+  return token;
 }
 
 /** 扫出文本里全部 @token（去重保序） */
@@ -78,23 +92,32 @@ export function buildManhuaAtReferenceIndex(input: {
   slots.forEach((slot, i) => {
     if (!slot?.path) return;
     out.push({
-      token: `image${String(i + 1).padStart(2, "0")}`,
+      token: `图${String(i + 1).padStart(2, "0")}`,
       kind: "image",
       tag: slot.tag,
       labelZh: slot.labelZh || slot.tag,
       url: slot.path,
     });
   });
-  for (const a of input.audioAssets || []) {
+  (input.audioAssets || []).forEach((a, i) => {
     const name = String(a?.name || "").trim();
-    if (!name || !AUDIO_TOKEN_RE.test(name) || !a.url) continue;
-    out.push({ token: name, kind: "audio", labelZh: a.labelZh || name, url: a.url });
-  }
+    if (!a?.url) return;
+    // 正式 token 用中文序号；真实文件名（x3.mp3）作兼容别名由 resolver 归一
+    out.push({
+      token: `音${i + 1}`,
+      kind: "audio",
+      labelZh: a.labelZh || name || `音${i + 1}`,
+      url: a.url,
+    });
+    if (name && AUDIO_FILE_TOKEN_RE.test(name)) {
+      out.push({ token: name, kind: "audio", labelZh: a.labelZh || name, url: a.url });
+    }
+  });
   for (const [ep, url] of Object.entries(input.boardUrlByEpisode || {})) {
     const n = Number(ep);
     if (!Number.isFinite(n) || n < 1 || !url) continue;
     out.push({
-      token: `d${n}.png`,
+      token: `板${n}`,
       kind: "board",
       labelZh: `第${String(n).padStart(2, "0")}集导演板`,
       url: String(url),
@@ -124,14 +147,16 @@ export function resolveManhuaAtReferences(input: {
   bindings?: ManhuaAtReferenceBindings | null;
 }): ManhuaAtReferenceResolution {
   const tokens = parseManhuaAtReferenceTokens(input.text);
-  const byToken = new Map(input.index.map((e) => [e.token.toLowerCase(), e]));
+  const byToken = new Map(
+    input.index.map((e) => [canonicalizeManhuaAtToken(e.token).toLowerCase(), e]),
+  );
   const slots = input.registry?.slots || [];
   const resolved: ManhuaAtReferenceEntry[] = [];
   const missing: string[] = [];
-  for (const token of tokens) {
-    const bound = input.bindings?.[token]?.tag
-      ? slotByTag(slots, input.bindings[token]!.tag)
-      : undefined;
+  for (const rawToken of tokens) {
+    const token = canonicalizeManhuaAtToken(rawToken);
+    const binding = input.bindings?.[rawToken] || input.bindings?.[token];
+    const bound = binding?.tag ? slotByTag(slots, binding.tag) : undefined;
     if (bound) {
       resolved.push({
         token,
