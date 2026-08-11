@@ -1232,10 +1232,12 @@ export async function runCanvasBlock(
       !isClip && continuityVideoUrl
         ? `${seedanceDirectorSource}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}`
         : seedanceDirectorSource;
-    // 导戏单原样进 Seedance（已废除微动三件套）；clip 不用路径配方覆盖正文
+    // 导戏单原样进 Seedance（已废除微动三件套）；clip 的路径配方以
+    // 附加约束合成——不覆盖含秒轴/对白锁的正文（审计 P1 闭环）
     const compiledMotion = stripManhuaPromptSlop(
       compileI2VMotionPrompt(withContinuity, {
-        pathCameraRecipeId: isClip ? undefined : block.pathCameraRecipeId,
+        pathCameraRecipeId: block.pathCameraRecipeId,
+        appendRecipeAsConstraint: isClip,
       }),
     );
     // 光学 mm/快门：仅出片时由运镜句自动转换，不写回节点/前台审阅

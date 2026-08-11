@@ -317,6 +317,12 @@ export type CompileI2VMotionPromptOpts = {
   /** 路径运镜配方 id：优先编译分阶段时段句 */
   pathCameraRecipeId?: string | null;
   /**
+   * 附加约束模式（段成片专用）：配方不覆盖导戏单正文，而是追加
+   * 【运镜配方】块。正文含秒轴/对白锁，整段替换等于毁片——
+   * 这正是 clip 历史上被迫传 undefined 的原因（2026-08-11 审计闭环）。
+   */
+  appendRecipeAsConstraint?: boolean;
+  /**
    * @deprecated 手动划线标注已废除；字段保留仅为兼容旧草稿反序列化，不再参与编译。
    */
   pathAnnotationJson?: unknown;
@@ -360,7 +366,17 @@ export function compileI2VMotionPrompt(
   const recipeId = String(opts?.pathCameraRecipeId || "").trim();
   if (recipeId) {
     const recipe = getPathCameraRecipeById(recipeId);
-    if (recipe) return compilePathCameraRecipeToMotionPrompt(recipe);
+    if (recipe && !opts?.appendRecipeAsConstraint) {
+      return compilePathCameraRecipeToMotionPrompt(recipe);
+    }
+    if (recipe && opts?.appendRecipeAsConstraint) {
+      const body = stripDirectorNamesForDelivery(String(rawPrompt || "").trim());
+      const addon = `【运镜配方·附加约束】${compilePathCameraRecipeToMotionPrompt(recipe)}`;
+      return `${body ? `${body}\n\n` : ""}${addon}`.slice(
+        0,
+        MANHUA_SEEDANCE_DIRECTOR_PROMPT_MAX_CHARS,
+      );
+    }
   }
 
   const raw = stripDirectorNamesForDelivery(String(rawPrompt || "").trim());
