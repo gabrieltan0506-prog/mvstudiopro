@@ -28,6 +28,7 @@ import {
   processManhuaLearnJobsOnce,
   abortRunningManhuaLearnJob,
   startJobWorker,
+  MANHUA_LEARN_JOB_WORKER_CONCURRENCY,
 } from "../jobs/runner";
 import { startStaleJobsReaper } from "../jobs/staleJobsReaper";
 import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
@@ -402,7 +403,8 @@ async function startServer() {
       }
       const rows = await listManhuaTemplateLearnJobsForUser(String(ctx.user.id), 30);
       return res.status(200).json({
-        maxConcurrent: 2,
+        // 与 worker 闸门同一真源（默认 1 串行；单机双核，双开会打满 CPU）
+        maxConcurrent: MANHUA_LEARN_JOB_WORKER_CONCURRENCY,
         items: rows.map((job) => {
           const rawInput = job.input && typeof job.input === "object" && !Array.isArray(job.input)
             ? job.input as Record<string, unknown>
