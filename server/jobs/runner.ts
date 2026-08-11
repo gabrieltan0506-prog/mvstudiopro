@@ -1534,6 +1534,7 @@ async function processPlatformJob(
           ? (params.enabledSkillIds as unknown[]).filter((s): s is string => typeof s === "string")
           : null,
         allowBloggerTitle: params.allowBloggerTitle === true,
+        engine: params.expandEngine === "qwen3.8-max" ? "qwen3.8-max" : "kimi-k3",
         onItem: platformJobId
           ? async ({ blueprint, index, total, elapsedMs }) => {
               streamed.push(blueprint);
@@ -1546,6 +1547,28 @@ async function processPlatformJob(
             }
           : undefined,
       });
+      // 按条计费后的对账：失败条自动退款（16 点/条 × 失败数），别让用户为空稿买单
+      const failedPicks = Array.isArray(
+        (result.diagnostics as Record<string, unknown> | undefined)?.failedPicks,
+      )
+        ? ((result.diagnostics as Record<string, unknown>).failedPicks as unknown[])
+        : [];
+      const perItemCredits = Math.max(0, Math.floor(Number(params.perItemCredits || 0)));
+      let refundedCredits = 0;
+      if (failedPicks.length > 0 && perItemCredits > 0 && jobUserId != null) {
+        try {
+          const { addCredits } = await import("../credits.js");
+          refundedCredits = perItemCredits * failedPicks.length;
+          await addCredits(Number(jobUserId), refundedCredits, "refund");
+          console.info(
+            `[platform_topic_expand] 失败 ${failedPicks.length} 条已退款 ${refundedCredits} 点 · user=${jobUserId}`,
+          );
+        } catch (e) {
+          // 退款失败只记日志，不影响已产出的文案；失败清单仍在 diagnostics 供免费重跑认领
+          console.error("[platform_topic_expand] 失败条退款异常:", e);
+          refundedCredits = 0;
+        }
+      }
       return {
         provider: "openrouter",
         output: {
@@ -1555,6 +1578,7 @@ async function processPlatformJob(
           expandTotalCount: picks.length,
           diagnostics: result.diagnostics,
           chargedCredits: Number(params.chargedCredits || 0),
+          refundedCredits,
           completedAt: new Date().toISOString(),
         },
       };

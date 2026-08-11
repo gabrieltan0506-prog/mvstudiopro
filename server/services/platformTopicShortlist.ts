@@ -608,12 +608,69 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
   };
 }
 
+/** 扩写可选引擎：kimi-k3 主走 OpenRouter（Evolink 兜底）；qwen3.8-max 直走 Evolink */
+export type PlatformTopicExpandEngine = "kimi-k3" | "qwen3.8-max";
+
+const EXPAND_EVOLINK_DIRECT_CHAT_URL = String(
+  process.env.EVOLINK_DIRECT_CHAT_COMPLETIONS_URL || "https://direct.evolink.ai/v1/chat/completions",
+).trim();
+
+/**
+ * 输出封顶：Evolink 的 K3 reasoning_effort 只有 max（强制深思考），
+ * 思考 token 全按输出计费，不封顶单条成本能翻倍、击穿按条毛利。
+ */
+const EXPAND_MAX_COMPLETION_TOKENS = 12_000;
+
+async function invokeExpandViaEvolink(params: {
+  model: PlatformTopicExpandEngine;
+  system: string;
+  user: string;
+}): Promise<string> {
+  const { getEvolinkApiKey } = await import("./gpt56CopywritingGateway.js");
+  const key = getEvolinkApiKey();
+  if (!key) throw new Error("扩写备用通道未配置");
+  const body: Record<string, unknown> = {
+    model: params.model,
+    messages: [
+      { role: "system", content: params.system },
+      { role: "user", content: params.user },
+    ],
+    max_completion_tokens: EXPAND_MAX_COMPLETION_TOKENS,
+  };
+  if (params.model === "qwen3.8-max") {
+    // Evolink Qwen：档位 low|medium|xhigh；勿与 thinking_budget 同传（同知识卡提炼口径）
+    body.enable_thinking = true;
+    body.reasoning_effort = "medium";
+  } else {
+    body.reasoning_effort = "max";
+  }
+  const res = await fetch(EXPAND_EVOLINK_DIRECT_CHAT_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(240_000),
+    body: JSON.stringify(body),
+  });
+  const raw = await res.text();
+  if (!res.ok) {
+    throw new Error(`Evolink ${params.model} HTTP ${res.status}: ${raw.slice(0, 160)}`);
+  }
+  try {
+    const json = JSON.parse(raw) as { choices?: Array<{ message?: { content?: unknown } }> };
+    const content = json.choices?.[0]?.message?.content;
+    return typeof content === "string" ? content.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
 export async function expandPlatformTopicPicks(params: {
   userId: number | string;
   context?: string;
   picks: PlatformTopicShortlistItem[];
   enabledSkillIds?: string[] | null;
   allowBloggerTitle?: boolean;
+  /** 缺省 kimi-k3（OpenRouter 主、Evolink 兜底）；qwen3.8-max 直走 Evolink */
+  engine?: PlatformTopicExpandEngine | null;
   /**
    * 每条写完立刻回调（后台任务据此写进度，前端一条一条冒出来）。
    *
@@ -690,10 +747,10 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
       outputFormat: "json",
     });
 
-    const invokeExpand = () =>
-      invokeLLM({
+    const invokeExpandOpenRouter = (openRouterModel: string) => async () => {
+      const res = await invokeLLM({
         provider: "openai",
-        modelName: getPlatformStage2OpenAiModel(),
+        modelName: openRouterModel,
         max_tokens: 16000,
         temperature: 0.55,
         response_format: { type: "json_object" },
@@ -704,29 +761,67 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
         // 产品口径：固定 medium，不用 minimal
         reasoningEffort: "medium",
       });
+      return extractFirstChoicePlainText(res).trim();
+    };
+    const invokeExpandEvolink = (model: PlatformTopicExpandEngine) => () =>
+      invokeExpandViaEvolink({ model, system, user });
+
+    // 双通道编排（2026-08-12 用户拍板：哪家便宜哪家先，另一家兜底）——
+    // Kimi K3 两家同价（$3/$15），主走 OpenRouter、两次抖动后切 Evolink 保稳；
+    // Qwen 3.8 Max Evolink（$1.765/$5.295）比 OpenRouter（$2/$6）便宜 ~12%，
+    // 主走 Evolink、兜底 OpenRouter（qwen/qwen3.8-max）。
+    const engine: PlatformTopicExpandEngine =
+      params.engine === "qwen3.8-max" ? "qwen3.8-max" : "kimi-k3";
+    const attempts =
+      engine === "qwen3.8-max"
+        ? [
+            invokeExpandEvolink("qwen3.8-max"),
+            invokeExpandEvolink("qwen3.8-max"),
+            invokeExpandOpenRouter("qwen/qwen3.8-max"),
+          ]
+        : [
+            invokeExpandOpenRouter(getPlatformStage2OpenAiModel()),
+            invokeExpandOpenRouter(getPlatformStage2OpenAiModel()),
+            invokeExpandEvolink("kimi-k3"),
+          ];
 
     console.info(
-      `[expandPlatformTopicPicks] ${i + 1}/${uniquePicks.length} title=${pick.title.slice(0, 40)} reasoning=medium`,
+      `[expandPlatformTopicPicks] ${i + 1}/${uniquePicks.length} engine=${engine} title=${pick.title.slice(0, 40)}`,
     );
     /**
      * 上游抖动（空 200 / 心跳残包）不该毁掉这一条，更不该毁掉整批：
-     * 2026-08-06 实测 OpenRouter 空体 200 让七条扩写全灭。这里最多试三次。
+     * 2026-08-06 实测 OpenRouter 空体 200 让七条扩写全灭。最多三次，
+     * Kimi 第三次自动换 Evolink 通道（2026-08-12 凌晨 OpenRouter Kimi 连挂两单）。
      */
     let llmText = "";
     let lastErr: unknown = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= attempts.length; attempt++) {
       try {
-        const res = await invokeExpand();
-        llmText = extractFirstChoicePlainText(res).trim();
+        llmText = await attempts[attempt - 1]!();
         if (llmText) break;
         console.warn(
-          `[expandPlatformTopicPicks] 空回 medium（第 ${attempt} 次）· ${i + 1}/${uniquePicks.length}`,
+          `[expandPlatformTopicPicks] 空回（第 ${attempt} 次）· ${i + 1}/${uniquePicks.length}`,
         );
       } catch (e) {
         lastErr = e;
-        if (!isTransientLlmError(e) || attempt === 3) break;
+        // 换通道前不因「非瞬时错」提前放弃：Evolink 兜底是最后一搏
+        if (attempt === attempts.length) break;
+        if (!isTransientLlmError(e) && attempt < attempts.length - 1) {
+          // 非瞬时错直接跳到最后的兜底通道
+          console.warn(
+            `[expandPlatformTopicPicks] 非瞬时错，直切兜底通道 · ${i + 1}/${uniquePicks.length} · ${
+              e instanceof Error ? e.message.slice(0, 160) : e
+            }`,
+          );
+          try {
+            llmText = await attempts[attempts.length - 1]!();
+          } catch (e2) {
+            lastErr = e2;
+          }
+          break;
+        }
         console.warn(
-          `[expandPlatformTopicPicks] 上游抖动重试 ${attempt}/3 · ${i + 1}/${uniquePicks.length} · ${
+          `[expandPlatformTopicPicks] 上游抖动重试 ${attempt}/${attempts.length} · ${i + 1}/${uniquePicks.length} · ${
             e instanceof Error ? e.message.slice(0, 160) : e
           }`,
         );
