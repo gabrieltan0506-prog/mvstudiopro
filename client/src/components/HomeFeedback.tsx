@@ -20,15 +20,22 @@ export default function HomeFeedback() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.subject.trim() || !form.message.trim()) {
-      toast.error("请填写标题和反馈内容");
+    // 与后端 zod 对齐（subject 2-120 / message 10-4000），短输入拦在前端出中文提示
+    const subject = form.subject.trim();
+    const message = form.message.trim();
+    if (subject.length < 2) {
+      toast.error("标题至少 2 个字");
       return;
     }
-    submitMutation.mutate(form);
+    if (message.length < 10) {
+      toast.error("反馈内容至少 10 个字，说得具体我们才好改");
+      return;
+    }
+    submitMutation.mutate({ subject, message });
   };
 
   return (
-    <section style={{ maxWidth: 1240, margin: "64px auto 0", padding: "0 20px" }}>
+    <section style={{ maxWidth: 1240, margin: "48px auto 0", padding: "0 20px" }}>
       <div
         style={{
           borderRadius: 28,
@@ -65,7 +72,7 @@ export default function HomeFeedback() {
           <h2 style={{ fontSize: 30, fontWeight: 900, color: "#fff", lineHeight: 1.25, margin: "0 0 16px" }}>
             说说你的想法，
             <br />
-            <span style={{ color: "#49e6ff" }}>送你 100 积分</span>
+            <span style={{ color: "#49e6ff" }}>被采纳送 100 积分</span>
           </h2>
 
           <p style={{ fontSize: 15, color: "rgba(200,191,231,0.85)", lineHeight: 1.8, margin: 0 }}>
@@ -118,10 +125,10 @@ export default function HomeFeedback() {
             >
               <MessageSquare size={40} style={{ color: "#8cefff", margin: "0 auto 16px" }} />
               <p style={{ fontSize: 15, color: "rgba(200,191,231,0.8)", margin: "0 0 20px" }}>
-                登录后即可提交回馈并获得积分奖励
+                登录后即可提交回馈，被采纳可得积分奖励
               </p>
               <a
-                href="/auth"
+                href="/login"
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -213,7 +220,7 @@ export default function HomeFeedback() {
                 {submitMutation.isPending ? (
                   <><Loader2 size={16} className="animate-spin" /> 提交中…</>
                 ) : (
-                  <>提交回馈 · 获取 100 积分 <Gift size={16} /></>
+                  <>提交回馈 <Gift size={16} /></>
                 )}
               </button>
 
