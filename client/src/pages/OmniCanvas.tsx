@@ -741,7 +741,10 @@ export default function OmniCanvas() {
   const [writerConfirmBlockers, setWriterConfirmBlockers] = useState<string[]>([]);
   /** 门禁一键补密度：扩写成功落盘后自动重跑一次「编剧确认」（A2 闭环） */
   const gateRecheckPendingRef = useRef(false);
-  /** 门禁红字里点到名的集号（付费扩写起点与报价按它算） */
+  /**
+   * 门禁红字里点到名的集号。注意红字有 slice(0,6) 截断：列举可能不全，
+   * 但扩写从最小集号重写到末集，报价与修复范围只依赖最小集号，不受截断影响。
+   */
   const writerGateFailEpisodes = useMemo(() => {
     const found = new Set<number>();
     for (const err of writerConfirmBlockers) {
@@ -3191,12 +3194,22 @@ export default function OmniCanvas() {
       if (!allowed) return;
       clearSeriesAssetsAfterBackup = risk.needsBackup;
     } else if (writerPack) {
+      const gateRepair = opts?.fromEpisodeOverride != null;
+      const rewriteCount = Math.max(
+        1,
+        (writerPack.episodes.length || fromEpisode) - fromEpisode + 1,
+      );
+      const perEp = MANHUA_WRITER_EXPAND_CREDITS_PER_EPISODE[writerExpandTier];
       const ok = window.confirm(
-        "局部改写将覆盖起点之后的剧情；起点之前的剧本与已出片资产会保留。是否继续？",
+        gateRepair
+          ? `补密度：从第 ${fromEpisode} 集起重写 ${rewriteCount} 集，预计 ${perEp * rewriteCount} 积分。之前的集与已出片资产保留；失败不动原稿，成功后自动重检门禁。是否继续？`
+          : "局部改写将覆盖起点之后的剧情；起点之前的剧本与已出片资产会保留。是否继续？",
       );
       if (!ok) return;
     }
     setWriterBusy(true);
+    // 补密度路径：过了 confirm 等全部早退才挂自动重检标，防悬挂被无关剧本变更误触发
+    if (opts?.fromEpisodeOverride != null) gateRecheckPendingRef.current = true;
     setWriterConfirmed(false);
     setDirectorUnlocked(false);
     setProjectBible(null);
@@ -3908,8 +3921,8 @@ export default function OmniCanvas() {
     if (!gateRecheckPendingRef.current || writerBusy || !writerPack) return;
     gateRecheckPendingRef.current = false;
     const timer = window.setTimeout(() => {
-      const ok = confirmWriterToDirector();
-      if (ok) toast.success("扩写后密度门禁已通过，可进入资产设定");
+      // 通过与否 confirmWriterToDirector 自己会 toast/滚红字，这里不再叠加
+      confirmWriterToDirector();
     }, 120);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7904,10 +7917,9 @@ export default function OmniCanvas() {
                             type="button"
                             data-manhua-action="expand-fix-density"
                             disabled={writerBusy || factoryBusy}
-                            onClick={() => {
-                              gateRecheckPendingRef.current = true;
-                              void expandWriterRoom({ fromEpisodeOverride: minFailing });
-                            }}
+                            onClick={() =>
+                              void expandWriterRoom({ fromEpisodeOverride: minFailing })
+                            }
                             className="rounded-lg border border-amber-300/45 bg-amber-400/15 px-2.5 py-1 text-[11px] font-semibold text-amber-50 hover:bg-amber-400/25 disabled:opacity-45"
                           >
                             {writerBusy ? "正在扩写…" : "一键扩写补密度"}
