@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>同一道爆款题实测：千问 3.8 Max 用 144 秒交卷，Kimi K3 花了 292 秒 · MV Studio Pro</title>
+<meta name="description" content="同一账号、同一条 87 分选题、同一套内容 Skill，只更换扩写引擎。千问 3.8 Max 用时 144 秒，Kimi K3 用时 292 秒；本文对比速度、成本估算、文风、逐镜拆片表和真实生产风险。">
+<meta name="keywords" content="Kimi K3,千问3.8 Max,Qwen3.8 Max,AI写作模型对比,爆款文章扩写,短视频脚本,逐镜拆片表,AI内容生产成本">
+<link rel="canonical" href="https://www.mvstudiopro.com/blog/kimi-k3-vs-qwen-38-max-real-test">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MV Studio Pro">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:url" content="https://www.mvstudiopro.com/blog/kimi-k3-vs-qwen-38-max-real-test">
+<meta property="og:title" content="同一道爆款题实测：千问 3.8 Max 用 144 秒交卷，Kimi K3 花了 292 秒 · MV Studio Pro">
+<meta property="og:description" content="同一账号、同一条 87 分选题、同一套内容 Skill，只更换扩写引擎。千问 3.8 Max 用时 144 秒，Kimi K3 用时 292 秒；本文对比速度、成本估算、文风、逐镜拆片表和真实生产风险。">
+<meta property="og:image" content="https://www.mvstudiopro.com/blog-assets/pk-kimi-vs-qwen/pk-05-同题对比总览.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="同一道爆款题实测：千问 3.8 Max 用 144 秒交卷，Kimi K3 花了 292 秒 · MV Studio Pro">
+<meta name="twitter:description" content="同一账号、同一条 87 分选题、同一套内容 Skill，只更换扩写引擎。千问 3.8 Max 用时 144 秒，Kimi K3 用时 292 秒；本文对比速度、成本估算、文风、逐镜拆片表和真实生产风险。">
+<meta name="twitter:image" content="https://www.mvstudiopro.com/blog-assets/pk-kimi-vs-qwen/pk-05-同题对比总览.jpg">
+<link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
+<link rel="alternate" type="application/rss+xml" title="MV Studio Pro 博客" href="https://www.mvstudiopro.com/blog/rss.xml">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg0: #141a22;
+    --bg1: #1a2430;
+    --surface: #1e2834;
+    --surface-2: #243041;
+    --line: #2c3848;
+    --text: #e8edf2;
+    --muted: #93a0b0;
+    --soft: #b7c2cf;
+    --accent: #6ec8ff;
+    --accent-soft: rgba(110, 200, 255, 0.14);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--text);
+    font: 16px/1.85 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background-color: var(--bg0);
+    background-image:
+      radial-gradient(1200px 520px at 12% -8%, rgba(78, 140, 180, 0.22), transparent 60%),
+      radial-gradient(900px 480px at 92% 8%, rgba(56, 110, 150, 0.16), transparent 55%),
+      linear-gradient(180deg, var(--bg1) 0%, var(--bg0) 42%, #121820 100%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 22px 96px; }
+  nav.top { font-size: 13px; color: var(--muted); margin-bottom: 32px; }
+  nav.top a { color: var(--accent); text-decoration: none; }
+  nav.top a:hover { text-decoration: underline; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 12px; letter-spacing: -.01em; color: #f4f7fa; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-top: 8px; border-top: 1px solid var(--line); color: #f1f5f8; }
+  h3 { font-size: 17px; margin: 28px 0 10px; color: #edf2f6; }
+  .meta { font-size: 13px; color: var(--muted); margin-bottom: 36px; }
+  p { margin: 0 0 18px; }
+  ul, ol { margin: 0 0 18px; padding-left: 24px; }
+  li { margin: 6px 0; }
+  strong { color: #fff; }
+  a { color: var(--accent); }
+  blockquote {
+    margin: 0 0 22px; padding: 12px 18px; border-left: 3px solid var(--accent);
+    background: var(--accent-soft); color: var(--soft); font-size: 15px;
+    border-radius: 0 8px 8px 0;
+  }
+  blockquote p { margin: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 14.5px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; }
+  th { color: #fff; background: var(--surface); font-weight: 600; }
+  code {
+    background: var(--surface-2); padding: 2px 6px; border-radius: 4px;
+    font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  pre {
+    background: var(--surface); padding: 16px 18px; border-radius: 8px; overflow-x: auto;
+    margin: 0 0 22px; border: 1px solid var(--line);
+  }
+  pre code { background: none; padding: 0; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+  em { color: var(--soft); }
+
+  /* 图片与视频：不加 max-width 的话，一张成片截图就能把版面撑破 */
+  img, video { max-width: 100%; height: auto; display: block;
+               border-radius: 8px; border: 1px solid var(--line); margin: 0 0 8px; }
+  /* 自有样片：尽量藏下载按钮（非 DRM，只挡控件一键另存） */
+  video::-webkit-media-controls-download-button { display: none !important; }
+  video::-internal-media-controls-download-button { display: none !important; }
+  figure { margin: 24px 0; }
+  figure img, figure video { margin-bottom: 8px; }
+  figcaption { font-size: 13px; color: var(--muted); text-align: center; }
+  /* B 站 / YouTube 等外链视频：按 16:9 自适应，手机上也不会溢出 */
+  .video-embed { position: relative; padding-bottom: 56.25%; height: 0;
+                 margin: 24px 0; border-radius: 8px; overflow: hidden;
+                 border: 1px solid var(--line); }
+  .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--line);
+           font-size: 13px; color: var(--muted); }
+  footer a { margin-right: 16px; }
+  .cards { display: grid; gap: 14px; margin: 28px 0 0; }
+  .card { display: block; padding: 18px 20px; background: var(--surface);
+          border: 1px solid var(--line);
+          border-radius: 10px; text-decoration: none; color: inherit; }
+  .card:hover { border-color: rgba(110, 200, 255, 0.45); background: var(--surface-2); }
+  .card h2 { margin: 0 0 8px; font-size: 18px; border: 0; padding: 0; color: #fff; }
+  .card p { margin: 0; font-size: 14px; color: var(--soft); }
+  .card .meta { margin: 10px 0 0; font-size: 12px; }
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Article",
+      "headline": "同一道爆款题实测：千问 3.8 Max 用 144 秒交卷，Kimi K3 花了 292 秒",
+      "description": "同一账号、同一条 87 分选题、同一套内容 Skill，只更换扩写引擎。千问 3.8 Max 用时 144 秒，Kimi K3 用时 292 秒；本文对比速度、成本估算、文风、逐镜拆片表和真实生产风险。",
+      "datePublished": "2026-08-12",
+      "dateModified": "2026-08-12",
+      "inLanguage": "zh-CN",
+      "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": "https://www.mvstudiopro.com/blog/kimi-k3-vs-qwen-38-max-real-test"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://www.mvstudiopro.com/pwa-icon-512.png"
+        }
+      },
+      "keywords": "Kimi K3,千问3.8 Max,Qwen3.8 Max,AI写作模型对比,爆款文章扩写,短视频脚本,逐镜拆片表,AI内容生产成本",
+      "image": "https://www.mvstudiopro.com/blog-assets/pk-kimi-vs-qwen/pk-05-同题对比总览.jpg"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "首页",
+          "item": "https://www.mvstudiopro.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "文章",
+          "item": "https://www.mvstudiopro.com/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "同一道爆款题实测：千问 3.8 Max 用 144 秒交卷，Kimi K3 花了 292 秒",
+          "item": "https://www.mvstudiopro.com/blog/kimi-k3-vs-qwen-38-max-real-test"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Kimi K3 和千问 3.8 Max，哪个生成文章更快？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "在 2026-08-12 这次同题实测中，千问 3.8 Max 用时 144 秒，Kimi K3 用时 292 秒，千问少用约 148 秒。不过 Kimi 使用 high 推理，千问使用 medium，而且两者通道不同；这个结果代表本次生产任务，不等于长期平均速度。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Kimi K3 和千问 3.8 Max，哪个成本更低？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "按本次 token 用量和当日渠道单价估算，千问约三五毛，Kimi 约大几毛到一块出头，千问接近 Kimi 的一半。这个数字是估算，不是最终账单实扣；两者面向用户目前均为 20 积分一条。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "做短视频脚本应该选 Kimi K3 还是千问 3.8 Max？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "赶热点、日更或批量生产时，可以优先试千问；它本轮更快，拆片结构也更细。专家账号、品牌内容或对人设真实性要求高的内容，无论选哪一个，都应由真人复核亲历叙事、数字和专业建议，而不是直接发布模型原稿。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "为什么同一个模型有时很快，有时提示算力紧张？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "模型速度不只由模型本身决定，也受到供应商排队、时段流量、推理档位和备用通道状态影响。生产系统应设置明确超时、有限重试、失败退款和备用供应商，不能让用户靠反复点击碰运气。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "逐镜拆片表是额外收费的吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不是。本产品当前按扩写任务收取 20 积分/条，逐镜拆片表与正文、时间轴脚本、图文结构、平台标题和封面描述在同一次扩写中生成，不单独收费。实际价格以后续站内页面为准。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "两个模型的正文和拆片表可以混用吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "可以。产物采用结构化字段，可以选择一个版本的正文和另一个版本的镜头设计。但混用后仍要检查台词与镜头是否一一对应，避免出现正文已经改了、拆片表还保留旧台词的情况。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "模型生成的健康与营养内容可以直接发布吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "不建议。模型可能生成听起来合理但缺少依据的具体数字、因果关系或统一时间规则。发布前应核对权威来源，删除虚构经历，并根据账号定位增加必要免责声明。本文比较的是内容生产能力，不提供个人饮食或医疗建议。 --- 本轮测试使用选题 ID 9jB3lROllD。原始记录包括 Kimi K3 与千问 3.8 Max 的 JSON 产物、真实页面截图和同题对比总览。模型能力、渠道价格与供应商状态会变化，本文保留的是测试方法和当时结果。"
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+<nav class="top"><a href="/">首页</a> › <a href="/blog/">文章</a></nav>
+<article>
+<h1>同一道爆款题实测：千问 3.8 Max 用 144 秒交卷，Kimi K3 花了 292 秒</h1>
+<p class="meta">2026-08-12 · 约 12 分钟</p>
+<blockquote>
+<p>2026-08-12 凌晨生产实测。使用同一账号、同一条选题和同一套内容 Skill，只更换扩写引擎。耗时来自浏览器端点击到产物落库的计时；成本是按本次 token 用量与当日渠道价格估算，不是上游账单实扣。</p>
+</blockquote>
+<p>凌晨两点，我盯着第二个「算力紧张」报错，已经没心情讨论哪家模型更聪明了。</p>
+<p>用户点一次扩写，要的不是模型参数，也不是排行榜名次。他只想知道两件事：多久能拿到稿子，以及失败以后积分会不会回来。</p>
+<p>于是我们先把按条退款和备用通道补上。凌晨四点，新版本上线。我从选题池里抓出同一条 87 分选题，分别交给 Kimi K3 和千问 3.8 Max。题目是：</p>
+<blockquote>
+<p>晚上不吃饭减肥，反而胖了十斤。</p>
+</blockquote>
+<p>这不是一场实验室跑分。它就是一次真实的生产任务：正文、时间轴口播稿、图文结构、平台标题、封面描述和逐镜拆片表，都得一起交出来。</p>
+<h2>先给答案</h2>
+<p>在这一次同题测试里，<strong>千问 3.8 Max 用了 144 秒，Kimi K3 用了 292 秒</strong>。千问快了约 148 秒，耗时接近 Kimi 的一半；按当日渠道价格和本次 token 用量估算，千问的上游成本也更低。</p>
+<p>但我不会因此写「千问全面碾压 Kimi」。原因很简单：这只是一个题、各跑一次，而且两边推理档位不同。真正有用的结论是：</p>
+<ul>
+<li>赶热点、做日更、需要快速拿到可拍结构，千问这轮更合适。</li>
+<li>更在意语气克制和标题控制时，Kimi 的原始 JSON 更稳一些，但不能把产品里的「稳定档」名称当成稳定性证明。</li>
+<li>两边都会为了抓人而虚构「我」或「我闺蜜」的亲历故事，也都会生成需要查证的营养说法，不能原样发布。</li>
+</ul>
+<figure>
+  <img src="/blog-assets/pk-kimi-vs-qwen/pk-05-同题对比总览.jpg" alt="Kimi K3 与千问 3.8 Max 同题扩写的耗时、标题、钩子和逐镜拆片表对比" oncontextmenu="return false" draggable="false">
+  <figcaption>同一条 87 分选题的两份原始交卷。本文的镜数与标题比较以同轮导出的 JSON 和这张总览为准。</figcaption>
+</figure><h2>测试条件先摊开</h2>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>Kimi K3</th>
+<th>千问 3.8 Max</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>产品档位名</td>
+<td>稳定档</td>
+<td>轻快档</td>
+</tr>
+<tr>
+<td>推理设置</td>
+<td>high</td>
+<td>enable_thinking + medium</td>
+</tr>
+<tr>
+<td>主通道</td>
+<td>OpenRouter</td>
+<td>EvoLink</td>
+</tr>
+<tr>
+<td>本轮耗时</td>
+<td>292 秒</td>
+<td>144 秒</td>
+</tr>
+<tr>
+<td>本轮原始 JSON 拆片表</td>
+<td>7 镜</td>
+<td>8 镜</td>
+</tr>
+<tr>
+<td>正文视角</td>
+<td>第三人称「我闺蜜」</td>
+<td>第一人称「我」</td>
+</tr>
+<tr>
+<td>用户价格</td>
+<td>20 积分/条</td>
+<td>20 积分/条</td>
+</tr>
+<tr>
+<td>上游成本口径</td>
+<td>按 token 与当日单价估算</td>
+<td>按 token 与当日单价估算</td>
+</tr>
+</tbody></table>
+<p>这里有三个限制必须提前说清。</p>
+<p>第一，两边不是同一个供应商通道；第二，两边推理档位不同；第三，每个模型只跑了一次。因此，144 秒和 292 秒是这一次任务的真实结果，不是长期平均速度。</p>
+<p>文章可以有立场，数据不能装作比自己更大。</p>
+<h2>第一回合：144 秒对 292 秒，速度差能不能感知</h2>
+<p>能，而且非常明显。</p>
+<p>千问 144 秒交卷时，我还能把注意力留在这个选题上。Kimi 到 292 秒才回来，已经足够让人切去处理别的工作，再回来重新找上下文。</p>
+<p>如果只是偶尔扩写一条，这两分多钟不算灾难；如果一天要处理几十条，差距会被放大。20 条任务按本轮结果粗算，串行等待时间会相差将近 50 分钟。</p>
+<p>不过别忘了背景：Kimi 这轮开的是 high 推理，千问是 medium。更慢不一定代表底层模型天生慢，也可能是我们主动让它想得更久。下一轮若要得出更硬的速度结论，应当统一推理强度，并在同一时段至少各跑 10 次，记录中位数和失败率。</p>
+<h2>第二回合：便宜一半，还是一句容易误导人的标题</h2>
+<p>原稿里有一句「所有数字来自真实账单」，我把它删了。</p>
+<p>耗时确实是真实计时，但这篇文章里的成本不是从最终账单字段直接读取，而是用本次 token 用量乘以 2026-08-12 的渠道单价估算。按这个口径，Kimi 大约是大几毛到一块出头，千问约三五毛，后者接近前者的一半。</p>
+<p>这个差距对内部毛利有意义，对用户当次选择却没有价格差：两个档位现在都是 20 积分一条。用户真正买的是等待时间、文风和一次成功率，不是我们后台的 token 单价。</p>
+<p>所以更准确的说法不是「千问一定便宜一半」，而是：<strong>本轮估算中，千问的上游成本约为 Kimi 的一半；价格会随 token 用量和渠道单价变化。</strong></p>
+<h2>第三回合：两个模型，写出了两种“人设”</h2>
+<p>千问的开场很猛：</p>
+<blockquote>
+<p>我一口晚饭没吃，坚持了整整三个月，上秤一看——胖了十斤。</p>
+</blockquote>
+<p>它把原题改成了第一人称亲历，还把「晚上不吃饭」拧成「一口晚饭没吃」。传播上更狠，画面也立刻出来了。</p>
+<p>问题也在这里：如果作者本人没经历过，这不是“更有网感”，而是凭空替作者捏了一段人生。短视频里最容易被忽略的失真，往往就藏在这种看起来特别顺口的第一句里。</p>
+<p>Kimi 的开场是：</p>
+<blockquote>
+<p>晚上不吃饭减肥？我闺蜜三个月，反而胖了十斤。</p>
+</blockquote>
+<p>它没有把故事压到作者本人身上，但「我闺蜜」同样可能是虚构。两种写法都很像内容平台上的真人表达，也都必须由真人负责：有真实经历就保留，没有就改成「我见过一个很典型的情况」或直接讲机制。</p>
+<p>这轮最值得记住的，不是哪家更会装人，而是：<strong>模型越会写“活人感”，越要防它顺手编造活人经历。</strong></p>
+<h2>第四回合：拆片表有没有到“照着就能拍”</h2>
+<p>这一项两边都比正文更让我满意。</p>
+<p>千问在第二镜写了「代谢切成省电模式」，同时给出一个很具体的画面：半透明电池图标从满格掉到一格。Kimi 对应的处理是让人物躺在床上摸肚子，把咕叫声放大，再给「身体在报警」加红色描边。</p>
+<p>前者是视觉比喻，后者是生活声音。都不是高深创意，但导演拿到以后不用再问「这一句到底拍什么」。这就是结构化拆片表的价值：它不只是把文案切成八段，而是把台词、场景、景别、动作、运镜和剪辑备注绑在一起。</p>
+<p>千问本轮 JSON 给了 8 镜，Kimi 本轮 JSON 给了 7 镜。镜数多不自动等于质量高，但对短视频初稿来说，多一镜通常意味着节奏更细、后期更容易取舍。</p>
+<h2>真正让我踩刹车的，是那些“听起来很对”的句子</h2>
+<p>两份稿子都引用了《中国居民膳食指南（2022）》，也都写了「代谢省电」「晚餐占全天热量三成」「七点前吃完」一类判断。</p>
+<p>这些句子很适合传播，因为短、狠、好懂。也正因为如此，发布前更需要查证。比如「消耗热量砍了将近一半」是很具体的量化结论，原始产物没有给出对应依据；「七点前吃完」也不能脱离作息、总摄入和个体情况写成普遍规则。</p>
+<p>这轮测试比的是内容生产能力，不是营养学正确率。若把成品直接发出去，模型写得越流畅，错误越容易被当成常识。</p>
+<p>所以我们现在把最终流程拆成两层：模型负责生成结构和表达，人负责核对经历、数字、医学与营养建议。<strong>可拍不等于可发。</strong></p>
+<h2>如果今天就要选，我会怎么用</h2>
+<p>日更、追热点、批量做选题，我会先用千问。它这轮速度快，成本估算低，拆片更细，而且第一版已经有明显的镜头意识。</p>
+<p>品牌账号、专家账号或对口吻敏感的内容，我不会直接把任务全扔给某一个模型。我会让模型先交结构，再由作者把虚构经历、夸张数字和不属于自己的人设拿掉。Kimi 可以做一个更克制的备选，但这轮之前它刚出现过两次上游「算力紧张」，不能只因为产品档位叫“稳定档”就宣布它更稳定。</p>
+<p>如果预算允许，同一条重点选题跑两个版本也有价值：用千问的镜头结构，吸收 Kimi 的表达，再由真人写最后一遍。不是把两份答案机械拼起来，而是让它们互相暴露盲点。</p>
+<h2>这次故障留下的产品结论</h2>
+<p>凌晨的两次失败，最后比模型 PK 本身更有价值。</p>
+<p>上游模型会排队、会限流、会临时不可用，这些都不是用户能控制的。产品能控制的是：失败是否按条退款、错误有没有说人话、主通道连续失败后能不能切到备用通道，以及单机双核会不会因为自作聪明地提高并发而把整台机器拖死。</p>
+<p>我们最后保留串行执行。慢一点可以解释，任务互相抢资源、一起挂掉就解释不通了。</p>
+<p>所以这篇实测最后真正想回答的，不是「Kimi 和千问谁赢」，而是：当模型进入真实生产，<strong>速度、成本、内容诚实度和失败恢复，缺一个都不算交付。</strong></p>
+<h2>这轮测试的局限</h2>
+<ul>
+<li>只有一个健康类选题，每个模型各成功运行一次，不能代表全部题材。</li>
+<li>推理档位不同：Kimi 为 high，千问为 medium，不能把全部耗时差归因于模型本身。</li>
+<li>通道不同：Kimi 走 OpenRouter，千问走 EvoLink，上游排队也会影响结果。</li>
+<li>成本为 token 用量乘以当日渠道单价的估算值，不是最终账单字段。</li>
+<li>原始 JSON 与后补的 Kimi 页面截图时间不同；后补截图显示了另一版 8 镜页面状态，因此本文的同轮镜数比较只采用原始 JSON 与对比总览，不混用后续页面状态。</li>
+<li>营养内容没有在本次测试中做专业事实核查，引用仅用于展示模型产物，不构成饮食建议。</li>
+</ul>
+<h2>常见问题</h2>
+<h3>Kimi K3 和千问 3.8 Max，哪个生成文章更快？</h3>
+<p>在 2026-08-12 这次同题实测中，千问 3.8 Max 用时 144 秒，Kimi K3 用时 292 秒，千问少用约 148 秒。不过 Kimi 使用 high 推理，千问使用 medium，而且两者通道不同；这个结果代表本次生产任务，不等于长期平均速度。</p>
+<h3>Kimi K3 和千问 3.8 Max，哪个成本更低？</h3>
+<p>按本次 token 用量和当日渠道单价估算，千问约三五毛，Kimi 约大几毛到一块出头，千问接近 Kimi 的一半。这个数字是估算，不是最终账单实扣；两者面向用户目前均为 20 积分一条。</p>
+<h3>做短视频脚本应该选 Kimi K3 还是千问 3.8 Max？</h3>
+<p>赶热点、日更或批量生产时，可以优先试千问；它本轮更快，拆片结构也更细。专家账号、品牌内容或对人设真实性要求高的内容，无论选哪一个，都应由真人复核亲历叙事、数字和专业建议，而不是直接发布模型原稿。</p>
+<h3>为什么同一个模型有时很快，有时提示算力紧张？</h3>
+<p>模型速度不只由模型本身决定，也受到供应商排队、时段流量、推理档位和备用通道状态影响。生产系统应设置明确超时、有限重试、失败退款和备用供应商，不能让用户靠反复点击碰运气。</p>
+<h3>逐镜拆片表是额外收费的吗？</h3>
+<p>不是。本产品当前按扩写任务收取 20 积分/条，逐镜拆片表与正文、时间轴脚本、图文结构、平台标题和封面描述在同一次扩写中生成，不单独收费。实际价格以后续站内页面为准。</p>
+<h3>两个模型的正文和拆片表可以混用吗？</h3>
+<p>可以。产物采用结构化字段，可以选择一个版本的正文和另一个版本的镜头设计。但混用后仍要检查台词与镜头是否一一对应，避免出现正文已经改了、拆片表还保留旧台词的情况。</p>
+<h3>模型生成的健康与营养内容可以直接发布吗？</h3>
+<p>不建议。模型可能生成听起来合理但缺少依据的具体数字、因果关系或统一时间规则。发布前应核对权威来源，删除虚构经历，并根据账号定位增加必要免责声明。本文比较的是内容生产能力，不提供个人饮食或医疗建议。</p>
+<hr>
+<p><em>本轮测试使用选题 ID <code>9jB3lROllD</code>。原始记录包括 Kimi K3 与千问 3.8 Max 的 JSON 产物、真实页面截图和同题对比总览。模型能力、渠道价格与供应商状态会变化，本文保留的是测试方法和当时结果。</em></p>
+
+</article>
+<footer>
+  <a href="/">MV Studio Pro 首页</a>
+  <a href="/blog/">全部文章</a>
+  <a href="/pricing">定价</a>
+</footer>
+</div>
+<script>
+/* 博客样片均为站内自生成：挡右键菜单与拖拽另存；无法阻止抓包，只提高随手拿走成本 */
+(function () {
+  function isOwnedMedia(t) {
+    return t && (t.tagName === "VIDEO" || t.tagName === "IMG" || (t.closest && (t.closest("video") || t.closest("figure"))));
+  }
+  document.addEventListener("contextmenu", function (e) {
+    if (isOwnedMedia(e.target)) e.preventDefault();
+  }, true);
+  document.addEventListener("dragstart", function (e) {
+    if (isOwnedMedia(e.target)) e.preventDefault();
+  }, true);
+})();
+</script>
+</body>
+</html>
