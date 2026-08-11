@@ -73,9 +73,12 @@ export function buildManhuaLearnYtdlpSection(startSec: number, endSec: number): 
 export function buildManhuaLearnYtdlpMetadataArgs(input: {
   url: string;
   cookieArgs?: string[];
+  /** 直连官方 CDN 播放地址时带站内 Referer（部分节点校验来源） */
+  referer?: string;
 }): string[] {
   return [
     ...(input.cookieArgs || []),
+    ...(input.referer ? ["--referer", input.referer] : []),
     "--dump-single-json",
     "--skip-download",
     "--no-playlist",
@@ -95,9 +98,12 @@ export function buildManhuaLearnYtdlpSegmentArgs(input: {
   startSec: number;
   endSec: number;
   cookieArgs?: string[];
+  /** 直连官方 CDN 播放地址时带站内 Referer（部分节点校验来源） */
+  referer?: string;
 }): string[] {
   return [
     ...(input.cookieArgs || []),
+    ...(input.referer ? ["--referer", input.referer] : []),
     "-f",
     `bv*[height<=${MANHUA_LEARN_SEGMENT_MAX_HEIGHT}][ext=mp4]+ba[ext=m4a]/b[height<=${MANHUA_LEARN_SEGMENT_MAX_HEIGHT}][ext=mp4]/best[height<=${MANHUA_LEARN_SEGMENT_MAX_HEIGHT}]/best`,
     "--download-sections",

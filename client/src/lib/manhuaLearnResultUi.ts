@@ -68,6 +68,8 @@ export type ManhuaLearnResultUi = {
   tagLabelsZh?: string[];
   listedEpisodeCount?: number;
   pendingCount?: number;
+  /** 因来源受限暂跳的集号；不计入已学，可在来源恢复后重试 */
+  skippedEpisodeIndexes?: number[];
   /** cloud | local */
   channel?: ManhuaLearnChannel;
   /** queued | running | succeeded | failed | local */
@@ -611,6 +613,41 @@ export function mergeManhuaLearnServerJobsIntoBasket(
   return next;
 }
 
+/**
+ * 僵尸「学习进行中」降级：basket 项还挂着 running/queued，但服务端任务列表里
+ * 已经找不到这个 jobId（进程重启丢任务/被回收）→ 面板必须掉到「已暂停·可继续」，
+ * 不许显示进行中却没有任何 worker 在跑（2026-08-11 用户实测反馈）。
+ */
+export function demoteStaleRunningManhuaLearnItems(
+  items: ManhuaLearnBasketItem[],
+  jobs: ManhuaLearnServerJobSnapshot[],
+): ManhuaLearnBasketItem[] {
+  const knownJobIds = new Set((jobs || []).map((job) => job.jobId));
+  return (items || []).map((item) => {
+    const looksRunning =
+      item.jobStatus === "queued"
+      || item.jobStatus === "running"
+      || item.result.liveStatus === "queued"
+      || item.result.liveStatus === "running";
+    if (!looksRunning) return item;
+    if (item.jobId && knownJobIds.has(item.jobId)) return item;
+    // 没有 jobId 的乐观占位（刚点开始、入队请求未返回）不动，避免误杀启动瞬间
+    if (!item.jobId) return item;
+    return {
+      ...item,
+      jobStatus: undefined,
+      result: {
+        ...item.result,
+        liveStatus: undefined,
+        livePhase: undefined,
+        liveLabelZh: undefined,
+        // 旧 messageZh 描述的是「已开始/进行中」的过去时，保留会误导——降级必写中断说明
+        messageZh: "云端任务已中断（已落盘分集与静帧保留）；点「继续」从检查点续学。",
+      },
+    };
+  });
+}
+
 export type ManhuaLearnContinueControl = {
   disabled: boolean;
   labelZh: string;
@@ -707,6 +744,12 @@ export function manhuaLearnResultFromJobOutput(
     : [];
   const learnedCount = Math.max(0, Math.floor(Number(out.learnedCount) || 0));
   const listed = Math.max(0, Math.floor(Number(out.listedEpisodeCount) || 0));
+  const skippedEpisodeIndexes = Array.isArray(out.skippedEpisodeIndexes)
+    ? out.skippedEpisodeIndexes
+        .map((n) => Math.floor(Number(n) || 0))
+        .filter((n) => n >= 1)
+        .sort((a, b) => a - b)
+    : [];
   const progressLines = parseProgressLines(out.learnProgressLog);
   const messageZh = String(out.messageZh || "").trim();
   const emptyFail = isManhuaLearnEmptyBatchFailure({
@@ -737,7 +780,10 @@ export function manhuaLearnResultFromJobOutput(
     categoryLabelZh: String(out.categoryLabelZh || "").trim() || undefined,
     tagLabelsZh: seriesTags.length ? seriesTags : undefined,
     listedEpisodeCount: listed || undefined,
-    pendingCount: listed > 0 ? Math.max(0, listed - learnedCount) : undefined,
+    // 待学 = 列表 − 已学 − 暂跳：暂跳集要走「重试暂跳集」，不算普通待学
+    pendingCount:
+      listed > 0 ? Math.max(0, listed - learnedCount - skippedEpisodeIndexes.length) : undefined,
+    skippedEpisodeIndexes: skippedEpisodeIndexes.length ? skippedEpisodeIndexes : undefined,
     channel: out.learnChannel === "local" ? "local" : "cloud",
     liveStatus: emptyFail ? "failed" : "succeeded",
     livePhase: emptyFail ? MANHUA_LEARN_STAGE.failed : MANHUA_LEARN_STAGE.done,
@@ -768,6 +814,7 @@ export function manhuaLearnResultFromSnapshot(input: {
     titleHint?: string;
     categoryLabelZh?: string;
     tagLabelsZh?: string[] | null;
+    skippedEpisodeIndexes?: number[] | null;
   } | null;
   digestsPreview: ManhuaLearnResultUi["digestsPreview"];
   /** 服务端已整集学完数；preview 含未学完检查点，不能拿长度冒充完成数 */
@@ -779,6 +826,12 @@ export function manhuaLearnResultFromSnapshot(input: {
     ? Math.max(0, Math.floor(Number(input.completedCount)))
     : input.digestsPreview.length;
   const listed = Math.max(0, Math.floor(Number(input.progress?.listedEpisodeCount) || 0));
+  const skippedEpisodeIndexes = Array.isArray(input.progress?.skippedEpisodeIndexes)
+    ? input.progress!.skippedEpisodeIndexes!
+        .map((n) => Math.floor(Number(n) || 0))
+        .filter((n) => n >= 1)
+        .sort((a, b) => a - b)
+    : [];
   const tags = Array.isArray(input.progress?.tagLabelsZh)
     ? input.progress!.tagLabelsZh!.map((t) => String(t || "").trim()).filter(Boolean)
     : [];
@@ -800,7 +853,9 @@ export function manhuaLearnResultFromSnapshot(input: {
       String(input.progress?.categoryLabelZh || "").trim() || undefined,
     tagLabelsZh: tags.length ? tags : undefined,
     listedEpisodeCount: listed || undefined,
-    pendingCount: listed > 0 ? Math.max(0, listed - learnedCount) : undefined,
+    pendingCount:
+      listed > 0 ? Math.max(0, listed - learnedCount - skippedEpisodeIndexes.length) : undefined,
+    skippedEpisodeIndexes: skippedEpisodeIndexes.length ? skippedEpisodeIndexes : undefined,
     digestsPreview: input.digestsPreview,
     proposal:
       analysisReady && proposalRaw

@@ -7,7 +7,17 @@
 
 import { extractDouyinModalVideoId } from "./manhuaLearnYtdlp.js";
 
-export type DouyinListedEpisode = { index: number; url: string; title: string };
+export type DouyinListedEpisode = {
+  index: number;
+  url: string;
+  title: string;
+  /**
+   * 官方接口随分集返回的播放地址（video.play_addr.url_list 里首个可信 HTTPS 条目）。
+   * 短时效签名 URL：只在本轮学习内存中使用，不落任何进度 JSON；
+   * 下载失败或过期一律回退 url（/video/ 页面）走 yt-dlp 老路。
+   */
+  playbackUrl?: string;
+};
 
 export type DouyinMixAwemePageParse = {
   /** 本页解析出的分集（index 优先取 mix_info.statis.current_episode） */
@@ -34,6 +44,8 @@ export type DouyinAwemeDetailParse = {
   mixNameZh?: string;
   /** 本条是第几集（current_episode） */
   episodeIndex?: number;
+  /** 官方播放地址（同 DouyinListedEpisode.playbackUrl 口径，短时效不持久化） */
+  playbackUrl?: string;
 };
 
 const DOUYIN_WEB_API_COMMON_PARAMS: ReadonlyArray<[string, string]> = [
@@ -111,6 +123,52 @@ function readMixId(mix: AnyRecord | null): string {
   return String(mix.mix_id ?? mix.mixId ?? mix.mix_id_str ?? "").trim();
 }
 
+/**
+ * 播放地址可信域白名单（后缀匹配）：抖音站内与其官方视频 CDN。
+ * 只接受 HTTPS；白名单外域名一律丢弃——播放地址会直接交给下载器，
+ * 不能让接口响应里的任意字符串变成我们的出网目标（SSRF/投毒面）。
+ */
+const DOUYIN_PLAYBACK_HOST_SUFFIXES: readonly string[] = [
+  "douyin.com",
+  "iesdouyin.com",
+  "douyinvod.com",
+  "douyinstatic.com",
+  "amemv.com",
+  "snssdk.com",
+  "zjcdn.com",
+];
+
+function isTrustedDouyinPlaybackUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "https:") return false;
+    const host = u.hostname.toLowerCase();
+    return DOUYIN_PLAYBACK_HOST_SUFFIXES.some(
+      (suffix) => host === suffix || host.endsWith(`.${suffix}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** item.video.play_addr.url_list（含驼峰变体）里首个可信 HTTPS 地址；无则 undefined */
+export function readDouyinPlaybackUrl(item: unknown): string | undefined {
+  const root = asRecord(item);
+  if (!root) return undefined;
+  const video = asRecord(root.video) ?? asRecord(asRecord(root.aweme_info)?.video);
+  if (!video) return undefined;
+  const playAddr = asRecord(video.play_addr) ?? asRecord(video.playAddr);
+  if (!playAddr) return undefined;
+  const list = playAddr.url_list ?? playAddr.urlList;
+  if (!Array.isArray(list)) return undefined;
+  for (const candidate of list) {
+    if (typeof candidate !== "string") continue;
+    const url = candidate.trim();
+    if (url && isTrustedDouyinPlaybackUrl(url)) return url;
+  }
+  return undefined;
+}
+
 function readCurrentEpisode(mix: AnyRecord | null): number {
   if (!mix) return 0;
   const statis = asRecord(mix.statis) ?? asRecord(mix.stats) ?? asRecord(mix.statistics);
@@ -155,6 +213,7 @@ export function parseDouyinMixAwemeResponse(
       index,
       url: `https://www.douyin.com/video/${awemeId}`,
       title,
+      playbackUrl: readDouyinPlaybackUrl(item),
     });
   }
   return {
@@ -178,7 +237,7 @@ export function parseDouyinAwemeDetailResponse(payload: unknown): DouyinAwemeDet
   const mixNameZh = readMixName(mix) || undefined;
   const episodeIndex = readCurrentEpisode(mix) || undefined;
   if (!titleZh && !mixId && !mixNameZh) return null;
-  return { titleZh, mixId, mixNameZh, episodeIndex };
+  return { titleZh, mixId, mixNameZh, episodeIndex, playbackUrl: readDouyinPlaybackUrl(detail) };
 }
 
 /**

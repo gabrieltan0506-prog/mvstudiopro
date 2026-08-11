@@ -9,6 +9,8 @@ import {
   mergeEpisodeDigestsIntoProposal,
   pickNextEpisodeIndexes,
   type ManhuaLearnEpisodeDigest,
+  pickManhuaLearnEpisodeGapMs,
+  pickRetrySkippedEpisodeIndexes,
 } from "./manhuaTemplateLearnSeries";
 
 function digest(i: number): ManhuaLearnEpisodeDigest {
@@ -79,18 +81,15 @@ describe("manhuaTemplateLearnSeries", () => {
     ).toEqual([2, 3]);
   });
 
-  it("门槛：≥16 完整版；4 集或合集学完出草版；0 集与 3/长合集不出", () => {
+  it("门槛（2026-08-11 拍板）：学 1 集即可出草版入库；只有 0 集不出", () => {
     expect(canEmitManhuaLearnAnalysis(MANHUA_LEARN_ANALYSIS_MIN)).toBe(true);
-    // 草版：学满 4 集即出
     expect(canEmitManhuaLearnAnalysis(4)).toBe(true);
-    expect(canEmitManhuaLearnAnalysis(15)).toBe(true);
-    // 草版：合集全学完（集合包含由调用方判定后传入）
-    expect(canEmitManhuaLearnAnalysis(2, { allListedComplete: true })).toBe(true);
-    expect(canEmitManhuaLearnAnalysis(1, { allListedComplete: true })).toBe(true);
-    // 不出：一集没学 / 长合集未学完 / 数量比较不再是依据
+    expect(canEmitManhuaLearnAnalysis(3)).toBe(true);
+    expect(canEmitManhuaLearnAnalysis(1)).toBe(true);
+    expect(canEmitManhuaLearnAnalysis(1, { allListedComplete: false })).toBe(true);
+    // 不出：一集没学
+    expect(canEmitManhuaLearnAnalysis(0)).toBe(false);
     expect(canEmitManhuaLearnAnalysis(0, { allListedComplete: true })).toBe(false);
-    expect(canEmitManhuaLearnAnalysis(3, { allListedComplete: false })).toBe(false);
-    expect(canEmitManhuaLearnAnalysis(3)).toBe(false);
     // 集合判定辅助：列表降级缩水不会误判
     expect(isManhuaLearnListComplete([1, 2], [1, 2, 3])).toBe(true);
     expect(isManhuaLearnListComplete([1, 2, 3], [1, 2])).toBe(false);
@@ -129,5 +128,52 @@ describe("manhuaTemplateLearnSeries", () => {
     expect(card?.id).toMatch(/^tpl_series_/);
     expect(card?.hook3sZh).toMatch(/贬令|开场/);
     expect(card?.beatGrid.length).toBeGreaterThan(0);
+  });
+});
+
+describe("pickRetrySkippedEpisodeIndexes（重试暂跳集批次）", () => {
+  it("只取仍在列表里的暂跳集，升序，尊重批次上限", () => {
+    expect(
+      pickRetrySkippedEpisodeIndexes({
+        listedIndexes: [1, 2, 3, 4, 5, 6],
+        skippedIndexes: [4, 3, 99],
+        learnedIndexes: [1, 2],
+        batchSize: 8,
+      }),
+    ).toEqual([3, 4]);
+  });
+
+  it("已学成的集不再重试；空暂跳返回空组", () => {
+    expect(
+      pickRetrySkippedEpisodeIndexes({
+        listedIndexes: [1, 2, 3],
+        skippedIndexes: [2],
+        learnedIndexes: [2],
+      }),
+    ).toEqual([]);
+    expect(
+      pickRetrySkippedEpisodeIndexes({ listedIndexes: [1, 2, 3], skippedIndexes: [] }),
+    ).toEqual([]);
+  });
+
+  it("批次裁剪：暂跳 5 集 batchSize=2 只取前 2", () => {
+    expect(
+      pickRetrySkippedEpisodeIndexes({
+        listedIndexes: [1, 2, 3, 4, 5],
+        skippedIndexes: [5, 1, 3, 2, 4],
+        batchSize: 2,
+      }),
+    ).toEqual([1, 2]);
+  });
+});
+
+describe("pickManhuaLearnEpisodeGapMs（集间礼貌间隔）", () => {
+  it("在 10–15 秒区间内取值，seed 越界收敛", () => {
+    expect(pickManhuaLearnEpisodeGapMs(0)).toBe(10_000);
+    expect(pickManhuaLearnEpisodeGapMs(1)).toBe(15_000);
+    expect(pickManhuaLearnEpisodeGapMs(0.5)).toBe(12_500);
+    expect(pickManhuaLearnEpisodeGapMs(-1)).toBe(10_000);
+    expect(pickManhuaLearnEpisodeGapMs(2)).toBe(15_000);
+    expect(pickManhuaLearnEpisodeGapMs(Number.NaN)).toBe(10_000);
   });
 });

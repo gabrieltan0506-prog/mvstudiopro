@@ -42,6 +42,22 @@ export const MANHUA_LEARN_ANALYZE_WINDOW_SEC = MANHUA_LEARN_CHECKPOINT_SEC;
 /** 单集内分片失败最多重试次数（含首次） */
 export const MANHUA_LEARN_EPISODE_RETRY_MAX = 3;
 
+/**
+ * 集间礼貌间隔（2026-08-11 用户拍板）：真实下载相邻两集之间随机停 N 秒，
+ * 纯为减轻来源压力、降低被限流概率——不伪装真人、不绕过任何风控。
+ * 单核串行本就慢，此间隔对总时长影响可忽略。
+ */
+export const MANHUA_LEARN_EPISODE_GAP_MIN_MS = 10_000;
+export const MANHUA_LEARN_EPISODE_GAP_MAX_MS = 15_000;
+
+/** [min,max] 内取一个礼貌间隔毫秒数（seed 传 0–1 随机源，便于测试确定化） */
+export function pickManhuaLearnEpisodeGapMs(seed: number): number {
+  const lo = MANHUA_LEARN_EPISODE_GAP_MIN_MS;
+  const hi = MANHUA_LEARN_EPISODE_GAP_MAX_MS;
+  const r = Number.isFinite(seed) ? Math.min(1, Math.max(0, seed)) : 0;
+  return Math.round(lo + (hi - lo) * r);
+}
+
 /** 一集内的 10 分钟（或末段不足）学习块 */
 export type ManhuaLearnEpisodeChunk = {
   startSec: number;
@@ -262,22 +278,38 @@ export function pickNextEpisodeIndexes(input: {
 }
 
 /**
- * 草版门槛（2026-08-10 用户实测反馈落地）：老口径 16 集才出总分析+入库入口，
- * 单集/短合集永远看不到模板产出。改为：学满 4 集，或该合集可学集数已全部学完
- * （2 集的合集学完 2 集就出），即先出草版；≥16 集仍是完整版口径。
+ * 「重试暂跳集」批次：只取此前因来源受限暂跳、且仍在本次列表里的集
+ * （列表每轮重新拉取，官方播放地址随之刷新）；已学成的不再重试。
  */
-export const MANHUA_LEARN_ANALYSIS_DRAFT_MIN = 4;
+export function pickRetrySkippedEpisodeIndexes(input: {
+  listedIndexes: number[];
+  skippedIndexes?: number[];
+  learnedIndexes?: number[];
+  batchSize?: number;
+}): number[] {
+  const listed = new Set(input.listedIndexes.filter((i) => Number.isFinite(i) && i >= 1));
+  const learned = new Set(input.learnedIndexes || []);
+  const pending = Array.from(new Set(input.skippedIndexes || []))
+    .filter((i) => Number.isFinite(i) && i >= 1 && listed.has(i) && !learned.has(i))
+    .sort((a, b) => a - b);
+  if (!pending.length) return [];
+  const raw = Math.floor(Number(input.batchSize));
+  const preferred = Number.isFinite(raw) && raw > 0 ? raw : clampManhuaLearnBatchSize(undefined);
+  return pending.slice(0, Math.max(1, Math.min(preferred, pending.length, MANHUA_LEARN_BATCH_MAX)));
+}
+
+/**
+ * 草版门槛演进：16 集（老口径）→ 4 集/合集学完（2026-08-10）→
+ * **学满 1 集即可出草版并入库（2026-08-11 用户拍板：不管学了多少集，都直接可落盘入库）**。
+ * ≥16 集仍是「更准」的完整版口径，只影响文案不再挡门。
+ */
+export const MANHUA_LEARN_ANALYSIS_DRAFT_MIN = 1;
 
 export function canEmitManhuaLearnAnalysis(
   learnedCount: number,
-  opts?: { allListedComplete?: boolean },
+  _opts?: { allListedComplete?: boolean },
 ): boolean {
-  if (learnedCount >= MANHUA_LEARN_ANALYSIS_MIN) return true;
-  if (learnedCount < 1) return false;
-  if (learnedCount >= MANHUA_LEARN_ANALYSIS_DRAFT_MIN) return true;
-  // 「合集全学完」必须由调用方按集合包含（listedIndexes ⊆ completeIndexes）判定，
-  // 不许拿数量比较凑数——列表接口抖动降级成 1 集时数量比较会误判提前出草版
-  return opts?.allListedComplete === true;
+  return learnedCount >= 1;
 }
 
 /** 集合判定辅助：可靠列表非空且每一集都已完整学完 */
