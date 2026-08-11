@@ -620,6 +620,8 @@ const EXPAND_EVOLINK_DIRECT_CHAT_URL = String(
  * 思考 token 全按输出计费，不封顶单条成本能翻倍、击穿按条毛利。
  */
 const EXPAND_MAX_COMPLETION_TOKENS = 12_000;
+/** Qwen 3.8 Max 输出上限（2026-08-12 用户拍板 65k）：单价低（$5.295/M），给足思考与长稿余量 */
+const EXPAND_QWEN_MAX_COMPLETION_TOKENS = 65_536;
 
 async function invokeExpandViaEvolink(params: {
   model: PlatformTopicExpandEngine;
@@ -641,6 +643,7 @@ async function invokeExpandViaEvolink(params: {
     // Evolink Qwen：档位 low|medium|xhigh；勿与 thinking_budget 同传（同知识卡提炼口径，max_completion_tokens）
     body.enable_thinking = true;
     body.reasoning_effort = "medium";
+    body.max_completion_tokens = EXPAND_QWEN_MAX_COMPLETION_TOKENS;
   } else {
     // 非 Qwen 走 max_tokens（对齐 knowledgeCardDistill 先例，防封顶字段不被识别而静默失效）
     body.reasoning_effort = "max";
