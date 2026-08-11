@@ -11569,8 +11569,8 @@ export default function PlatformPage() {
                             {rising?.note
                               || "与总览报表数据同源：抖音/快手采集中的合集与漫剧样本单独聚合。其它种草、口播样本仍在「总览」里。"}
                             {" "}
-                            学节奏：有成片/合集链时可一点学习；无链仅展示剧名与归类。按集顺序每轮采 8–10 集（学完即删视频）。学满
-                            4 集或合集全部学完即出草版总分析（约 16 集更准）；结果立刻在本页展示，你看完再决定是否「批准进库」。
+                            学节奏：有成片/合集链时可一点学习；无链仅展示剧名与归类。按集顺序每轮采 8–10 集（学完即删视频）。学
+                            1 集即可出草版总分析并入库（约 16 集更准）；结果立刻在本页展示，你看完再决定是否「批准进库」。
                           </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
@@ -12049,8 +12049,8 @@ export default function PlatformPage() {
                             </div>
                           ) : null}
                           <p className="text-amber-100/70">
-                            进度 {manhuaLearnResult.learnedCount} 集（草版满 4
-                            集或合集学完即出 · 完整版约 {manhuaLearnResult.analysisMin}）
+                            进度 {manhuaLearnResult.learnedCount} 集（学 1 集即可出草版入库
+                            · 完整版约 {manhuaLearnResult.analysisMin}）
                             {manhuaLearnResult.batchLearned > 0
                               ? ` · 本轮新增 ${manhuaLearnResult.batchLearned}`
                               : " · 云端进度"}

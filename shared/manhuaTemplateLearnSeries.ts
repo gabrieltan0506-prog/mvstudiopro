@@ -283,22 +283,17 @@ export function pickRetrySkippedEpisodeIndexes(input: {
 }
 
 /**
- * 草版门槛（2026-08-10 用户实测反馈落地）：老口径 16 集才出总分析+入库入口，
- * 单集/短合集永远看不到模板产出。改为：学满 4 集，或该合集可学集数已全部学完
- * （2 集的合集学完 2 集就出），即先出草版；≥16 集仍是完整版口径。
+ * 草版门槛演进：16 集（老口径）→ 4 集/合集学完（2026-08-10）→
+ * **学满 1 集即可出草版并入库（2026-08-11 用户拍板：不管学了多少集，都直接可落盘入库）**。
+ * ≥16 集仍是「更准」的完整版口径，只影响文案不再挡门。
  */
-export const MANHUA_LEARN_ANALYSIS_DRAFT_MIN = 4;
+export const MANHUA_LEARN_ANALYSIS_DRAFT_MIN = 1;
 
 export function canEmitManhuaLearnAnalysis(
   learnedCount: number,
-  opts?: { allListedComplete?: boolean },
+  _opts?: { allListedComplete?: boolean },
 ): boolean {
-  if (learnedCount >= MANHUA_LEARN_ANALYSIS_MIN) return true;
-  if (learnedCount < 1) return false;
-  if (learnedCount >= MANHUA_LEARN_ANALYSIS_DRAFT_MIN) return true;
-  // 「合集全学完」必须由调用方按集合包含（listedIndexes ⊆ completeIndexes）判定，
-  // 不许拿数量比较凑数——列表接口抖动降级成 1 集时数量比较会误判提前出草版
-  return opts?.allListedComplete === true;
+  return learnedCount >= 1;
 }
 
 /** 集合判定辅助：可靠列表非空且每一集都已完整学完 */

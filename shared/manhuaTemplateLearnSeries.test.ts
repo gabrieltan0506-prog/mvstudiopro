@@ -80,18 +80,15 @@ describe("manhuaTemplateLearnSeries", () => {
     ).toEqual([2, 3]);
   });
 
-  it("门槛：≥16 完整版；4 集或合集学完出草版；0 集与 3/长合集不出", () => {
+  it("门槛（2026-08-11 拍板）：学 1 集即可出草版入库；只有 0 集不出", () => {
     expect(canEmitManhuaLearnAnalysis(MANHUA_LEARN_ANALYSIS_MIN)).toBe(true);
-    // 草版：学满 4 集即出
     expect(canEmitManhuaLearnAnalysis(4)).toBe(true);
-    expect(canEmitManhuaLearnAnalysis(15)).toBe(true);
-    // 草版：合集全学完（集合包含由调用方判定后传入）
-    expect(canEmitManhuaLearnAnalysis(2, { allListedComplete: true })).toBe(true);
-    expect(canEmitManhuaLearnAnalysis(1, { allListedComplete: true })).toBe(true);
-    // 不出：一集没学 / 长合集未学完 / 数量比较不再是依据
+    expect(canEmitManhuaLearnAnalysis(3)).toBe(true);
+    expect(canEmitManhuaLearnAnalysis(1)).toBe(true);
+    expect(canEmitManhuaLearnAnalysis(1, { allListedComplete: false })).toBe(true);
+    // 不出：一集没学
+    expect(canEmitManhuaLearnAnalysis(0)).toBe(false);
     expect(canEmitManhuaLearnAnalysis(0, { allListedComplete: true })).toBe(false);
-    expect(canEmitManhuaLearnAnalysis(3, { allListedComplete: false })).toBe(false);
-    expect(canEmitManhuaLearnAnalysis(3)).toBe(false);
     // 集合判定辅助：列表降级缩水不会误判
     expect(isManhuaLearnListComplete([1, 2], [1, 2, 3])).toBe(true);
     expect(isManhuaLearnListComplete([1, 2, 3], [1, 2])).toBe(false);
