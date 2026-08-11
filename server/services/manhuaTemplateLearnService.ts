@@ -35,6 +35,7 @@ import {
   mergeEpisodeDigestsIntoProposal,
   mergeManhuaLearnChunkIntoDigest,
   pickNextEpisodeIndexes,
+  pickManhuaLearnEpisodeGapMs,
   pickRetrySkippedEpisodeIndexes,
   type ManhuaLearnEpisodeChunk,
   type ManhuaLearnEpisodeDigest,
@@ -1721,6 +1722,8 @@ export async function runManhuaTemplateLearn(
     const episodeFailNotes: string[] = [];
     // 手动叫停/abort：跳出学习循环但仍走收尾润色（停止时润色拍板）
     let cancelledMidRun = false;
+    // 本轮真实开下的集数（用于集间礼貌间隔：第一集不等，跳过/已学过不计）
+    let downloadedThisRun = 0;
     for (const idx of batchIndexes) {
       const ep = byIndex.get(idx);
       if (!ep) continue;
@@ -1777,6 +1780,21 @@ export async function runManhuaTemplateLearn(
 
       try {
         await assertManhuaLearnControl(input);
+        // 集间礼貌间隔：只隔真实下载的相邻两集（跳过/已学过的不算）；
+        // 期间每秒响应停止/跳过指令，不做任何伪装
+        if (downloadedThisRun > 0) {
+          const gapMs = pickManhuaLearnEpisodeGapMs(Math.random());
+          await progress(
+            MANHUA_LEARN_STAGE.download,
+            `第 ${idx} 集将在 ${Math.round(gapMs / 1000)} 秒后开始（减轻来源压力）…`,
+          );
+          const gapEndAt = Date.now() + gapMs;
+          while (Date.now() < gapEndAt) {
+            await assertManhuaLearnControl(input);
+            await new Promise((resolve) => setTimeout(resolve, Math.min(1000, gapEndAt - Date.now())));
+          }
+        }
+        downloadedThisRun += 1;
         const digest = await learnOneEpisode({
           seriesKey,
           ep,

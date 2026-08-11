@@ -9,6 +9,7 @@ import {
   mergeEpisodeDigestsIntoProposal,
   pickNextEpisodeIndexes,
   type ManhuaLearnEpisodeDigest,
+  pickManhuaLearnEpisodeGapMs,
   pickRetrySkippedEpisodeIndexes,
 } from "./manhuaTemplateLearnSeries";
 
@@ -163,5 +164,16 @@ describe("pickRetrySkippedEpisodeIndexes（重试暂跳集批次）", () => {
         batchSize: 2,
       }),
     ).toEqual([1, 2]);
+  });
+});
+
+describe("pickManhuaLearnEpisodeGapMs（集间礼貌间隔）", () => {
+  it("在 10–15 秒区间内取值，seed 越界收敛", () => {
+    expect(pickManhuaLearnEpisodeGapMs(0)).toBe(10_000);
+    expect(pickManhuaLearnEpisodeGapMs(1)).toBe(15_000);
+    expect(pickManhuaLearnEpisodeGapMs(0.5)).toBe(12_500);
+    expect(pickManhuaLearnEpisodeGapMs(-1)).toBe(10_000);
+    expect(pickManhuaLearnEpisodeGapMs(2)).toBe(15_000);
+    expect(pickManhuaLearnEpisodeGapMs(Number.NaN)).toBe(10_000);
   });
 });

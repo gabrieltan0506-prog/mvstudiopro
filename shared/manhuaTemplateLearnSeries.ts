@@ -42,6 +42,22 @@ export const MANHUA_LEARN_ANALYZE_WINDOW_SEC = MANHUA_LEARN_CHECKPOINT_SEC;
 /** 单集内分片失败最多重试次数（含首次） */
 export const MANHUA_LEARN_EPISODE_RETRY_MAX = 3;
 
+/**
+ * 集间礼貌间隔（2026-08-11 用户拍板）：真实下载相邻两集之间随机停 N 秒，
+ * 纯为减轻来源压力、降低被限流概率——不伪装真人、不绕过任何风控。
+ * 单核串行本就慢，此间隔对总时长影响可忽略。
+ */
+export const MANHUA_LEARN_EPISODE_GAP_MIN_MS = 10_000;
+export const MANHUA_LEARN_EPISODE_GAP_MAX_MS = 15_000;
+
+/** [min,max] 内取一个礼貌间隔毫秒数（seed 传 0–1 随机源，便于测试确定化） */
+export function pickManhuaLearnEpisodeGapMs(seed: number): number {
+  const lo = MANHUA_LEARN_EPISODE_GAP_MIN_MS;
+  const hi = MANHUA_LEARN_EPISODE_GAP_MAX_MS;
+  const r = Number.isFinite(seed) ? Math.min(1, Math.max(0, seed)) : 0;
+  return Math.round(lo + (hi - lo) * r);
+}
+
 /** 一集内的 10 分钟（或末段不足）学习块 */
 export type ManhuaLearnEpisodeChunk = {
   startSec: number;
