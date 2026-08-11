@@ -5,6 +5,7 @@ import {
   formatManhuaAtReferencePromptBlock,
   parseManhuaAtReferenceTokens,
   resolveManhuaAtReferences,
+  applyManhuaAtReferencesToClip,
 } from "./manhuaAtReference";
 
 const registry = {
@@ -104,5 +105,30 @@ describe("manhuaAtReference", () => {
     expect(block).toContain("【@引用对照】");
     expect(block).toContain("阿咎");
     expect(block).toContain("红线＝角色/道具动线");
+  });
+
+  it("出片闭环：@图 落 imageUrls + 注入块 + bindings；断链必报", () => {
+    const index = buildManhuaAtReferenceIndex({ registry });
+    const r = applyManhuaAtReferencesToClip({
+      promptText: "阿咎@图01 出场，背景@图02，坏的@图09",
+      index,
+      registry,
+    });
+    expect(r.imageUrls).toEqual(["https://x/ajiu.png", "https://x/majiu.png"]);
+    expect(r.promptAddonZh).toContain("【@引用对照】");
+    expect(r.missing).toEqual(["图09"]);
+    expect(r.bindings["图01"]).toEqual({ tag: "@角色1" });
+  });
+
+  it("出片闭环：重排后 bindings 仍指原槽位", () => {
+    const index = buildManhuaAtReferenceIndex({ registry });
+    const r = applyManhuaAtReferencesToClip({
+      promptText: "看@图02",
+      index,
+      registry,
+      bindings: { 图02: { tag: "@角色1" } },
+    });
+    expect(r.imageUrls).toEqual(["https://x/ajiu.png"]);
+    expect(r.missing).toEqual([]);
   });
 });

@@ -158,6 +158,7 @@ import {
 } from "@shared/manhuaCharacterAssetLibrary";
 import { recommendManhuaCastBundle } from "@shared/manhuaCastBundle";
 import { getManhuaDemoAsset } from "@shared/manhuaScenePropDemoCatalog";
+import { buildManhuaAtReferenceIndex } from "@shared/manhuaAtReference";
 import {
   buildManhuaProjectBible,
   summarizeManhuaProjectBible,
@@ -2420,6 +2421,10 @@ export default function OmniCanvas() {
       manhuaAssetPathById: manhuaAssetMaps.pathById,
       manhuaAssetTileUrlsById: manhuaAssetMaps.tileUrlsById,
       manhuaDirectorBoardUrlByEpisode: directorBoardUrlByEpisode,
+      manhuaAtReferenceEntries: buildManhuaAtReferenceIndex({
+        registry: manhuaAssetMaps.registry,
+        boardUrlByEpisode: directorBoardUrlByEpisode,
+      }),
       manhuaWriterVideoModel: explicitWriterVideoModel || undefined,
       getManhuaEpisodeSegmentPromptsForVoiceGate: (episodeIndex) =>
         collectManhuaEpisodeSegmentPromptsForVoiceGate(blocksRef.current, episodeIndex),
