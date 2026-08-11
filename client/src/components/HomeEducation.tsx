@@ -29,9 +29,8 @@ export default function HomeEducation() {
   return (
     <section style={{ maxWidth: 1240, margin: "48px auto 0", padding: "0 20px" }}>
       <div
+        className="grid grid-cols-1 md:grid-cols-2"
         style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
           gap: 0,
           borderRadius: 24,
           overflow: "hidden",
@@ -155,14 +154,14 @@ export default function HomeEducation() {
             <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <h3 style={{ fontSize: 20, fontWeight: 800, color: "#f7f4ef", margin: 0 }}>留下联系方式</h3>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <Field label="姓名 *" value={form.name} onChange={set("name")} placeholder="您的姓名" />
-                <Field label="邮箱 *" type="email" value={form.email} onChange={set("email")} placeholder="email@example.com" />
+              <div className="grid grid-cols-1 sm:grid-cols-2" style={{ gap: 12 }}>
+                <Field label="姓名 *" value={form.name} onChange={set("name")} placeholder="您的姓名" maxLength={60} />
+                <Field label="邮箱 *" type="email" value={form.email} onChange={set("email")} placeholder="email@example.com" maxLength={200} />
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <Field label="联系电话" value={form.phone} onChange={set("phone")} placeholder="手机 / 微信号" />
-                <Field label="所在机构 / 院校" value={form.organization} onChange={set("organization")} placeholder="学校或机构名称" />
+              <div className="grid grid-cols-1 sm:grid-cols-2" style={{ gap: 12 }}>
+                <Field label="联系电话" value={form.phone} onChange={set("phone")} placeholder="手机 / 微信号" maxLength={30} />
+                <Field label="所在机构 / 院校" value={form.organization} onChange={set("organization")} placeholder="学校或机构名称" maxLength={100} />
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -171,6 +170,7 @@ export default function HomeEducation() {
                   rows={3}
                   value={form.message}
                   onChange={set("message")}
+                  maxLength={500}
                   placeholder="简述合作场景、学员规模或其他需求..."
                   style={{
                     background: "rgba(255,255,255,0.06)",
@@ -220,11 +220,11 @@ export default function HomeEducation() {
 }
 
 function Field({
-  label, value, onChange, placeholder, type = "text",
+  label, value, onChange, placeholder, type = "text", maxLength,
 }: {
   label: string; value: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  placeholder?: string; type?: string;
+  placeholder?: string; type?: string; maxLength?: number;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -233,6 +233,7 @@ function Field({
         type={type}
         value={value}
         onChange={onChange}
+        maxLength={maxLength}
         placeholder={placeholder}
         style={{
           background: "rgba(255,255,255,0.06)",
