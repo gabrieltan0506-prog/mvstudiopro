@@ -95,6 +95,13 @@ import { sanitizePlatformUserMessage } from "@/lib/platformUserFacingCopy";
 import { shouldSkipLocalLearnFallback } from "@shared/manhuaLearnYtdlp";
 import type { AssetAnalysisHandoffPayload } from "@/lib/platformAssetAnalysisHandoff";
 import { buildBlueOceanLexicon, type BlueOceanLexicon } from "@shared/blueOceanLexicon";
+import {
+  buildStoryboardCellsFromStepScript,
+  formatPlatformStoryboardCellsSixColumnText,
+  normalizePlatformStoryboardCells,
+  type PlatformStoryboardCell,
+} from "@shared/platformStoryboardCells";
+import PlatformStoryboardCellsTable from "@/components/platform/PlatformStoryboardCellsTable";
 import { appendFashionEditorialCharacterGuidance } from "@shared/platformFashionEditorialCharacter";
 import {
   filterGraphicNoteReaderFacingSteps,
@@ -1162,6 +1169,7 @@ function buildPlatformSheetScriptContext(
       lightingAndCamera?: string;
       stepByStepScript?: string[];
     };
+    storyboardCells?: PlatformStoryboardCell[];
   },
   opts?: {
     shootingTechniqueBrief?: string;
@@ -1261,7 +1269,13 @@ function buildPlatformSheetScriptContext(
       "【版式·3×4 十二格编导分镜】须按 3 行 × 4 列 = 12 格展开镜头节拍；现代主人公跨格同脸（锁参考人像），衣着可随场景微调。",
     );
   }
-  if (Array.isArray(ex?.stepByStepScript) && ex.stepByStepScript.length) {
+  // 有结构化逐镜拆片表时优先喂表：不让出图模型自己拆镜，画格更稳
+  const cellsBlock = formatPlatformStoryboardCellsSixColumnText(
+    normalizePlatformStoryboardCells(item.storyboardCells),
+  );
+  if (cellsBlock) {
+    parts.push(cellsBlock);
+  } else if (Array.isArray(ex?.stepByStepScript) && ex.stepByStepScript.length) {
     parts.push(`【编导分镜步骤】\n${ex.stepByStepScript.map((s, i) => `${i + 1}. ${s}`).join("\n")}`);
   }
   if (item.actionableSteps?.length) {
@@ -1369,6 +1383,8 @@ type PlatformContentExecutionCard = {
     stepByStepScript: string[];
   };
   titleVariants: PlatformTitleVariant[];
+  /** 逐镜拆片表（台词/场景/景别/动作/运镜/剪辑），服务端保底产出 */
+  storyboardCells: PlatformStoryboardCell[];
   /** 蓝海词 / 高亮搜索词（推演文案） */
   highlightKeywords?: string[];
   /** 战略地图当次赠送选题（刷新后不再展示） */
@@ -1474,6 +1490,13 @@ function mapContentBlueprintToExecutionCard(
       stepByStepScript: scriptSteps,
     },
     titleVariants,
+    storyboardCells: (() => {
+      const normalized = normalizePlatformStoryboardCells(item.storyboardCells);
+      if (normalized.length) return normalized;
+      // 图文笔记无镜头概念，不从大纲硬造垃圾表
+      if (/图文|小红书/.test(String(format || ""))) return [];
+      return buildStoryboardCellsFromStepScript(scriptSteps);
+    })(),
     highlightKeywords,
     isDecisionIntelBonus: opts?.isDecisionIntelBonus,
     isDecisionIntelPicked: opts?.isDecisionIntelPicked,
@@ -7773,6 +7796,8 @@ export default function PlatformPage() {
     }
   }, [canExportCustomCopyPdf, customCopyPdfPayload, downloadCustomCopyPdfMutation]);
 
+  // 拆片表导出走「复制表格」（Markdown）；PDF 链路依赖 GCS pdf-worker，按用户口径不动
+
   /** /platform 不再展示或写入企业 IP 基因；保留空壳仅兼容既有函数签名 */
   const ipProfile: IpProfile = {
     industry: "",
@@ -9513,6 +9538,15 @@ export default function PlatformPage() {
                       {item.detailedScript}
                     </div>
                   </details>
+                ) : null}
+                {Array.isArray((item as any).storyboardCells) &&
+                (item as any).storyboardCells.length > 0 &&
+                !/图文|小红书/.test(String(item.format || "")) ? (
+                  <div className="mt-3 rounded-lg bg-black/30 p-3 text-xs text-gray-400">
+                    <PlatformStoryboardCellsTable
+                      cells={(item as any).storyboardCells as PlatformStoryboardCell[]}
+                    />
+                  </div>
                 ) : null}
 
                 {(coverUrl || sheetUrl) && (
@@ -15712,6 +15746,13 @@ export default function PlatformPage() {
                                 <strong className="text-[#9ddcff]">导演灵感 · 灯光 &amp; 运镜：</strong>
                                 {(item as any).executionDetails.lightingAndCamera}
                               </p>
+                            ) : null}
+                            {Array.isArray((item as any).storyboardCells) &&
+                            (item as any).storyboardCells.length > 0 &&
+                            !/图文|小红书/.test(String((item as any).format || "")) ? (
+                              <PlatformStoryboardCellsTable
+                                cells={(item as any).storyboardCells as PlatformStoryboardCell[]}
+                              />
                             ) : null}
                             {Array.isArray((item as any).executionDetails?.stepByStepScript) &&
                             (item as any).executionDetails.stepByStepScript.length > 0 ? (
