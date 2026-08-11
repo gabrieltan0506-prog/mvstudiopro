@@ -1557,6 +1557,10 @@ export async function runManhuaTemplateLearn(
       }
     }
 
+    const skippedCount = prog.skippedEpisodeIndexes?.length || 0;
+    const skippedHint = skippedCount > 0
+      ? ` 当前有 ${skippedCount} 集因来源受限暂跳，不计入已学；续学将从后续集继续。`
+      : "";
     const digestsAll = await loadAllDigests(seriesKey);
     const digests = digestsAll.filter(isManhuaLearnEpisodeComplete);
     const learnedCount = digests.length;
@@ -1592,7 +1596,7 @@ export async function runManhuaTemplateLearn(
         proposalGcsUri: null,
         visionFilled: false,
         messageZh:
-          `本轮学了 ${batchLearnedIndexes.length} 集（视频已删），累计 ${learnedCount} 集。${singleOrShort}${failHint}分集结果见下方；学满 ${MANHUA_LEARN_ANALYSIS_DRAFT_MIN} 集或该合集学完即出草版总分析（约 ${MANHUA_LEARN_ANALYSIS_MIN} 集更准），是否进库由你决定。`,
+          `本轮学了 ${batchLearnedIndexes.length} 集（视频已删），累计 ${learnedCount} 集。${singleOrShort}${failHint}${skippedHint}分集结果见下方；学满 ${MANHUA_LEARN_ANALYSIS_DRAFT_MIN} 集或该合集学完即出草版总分析（约 ${MANHUA_LEARN_ANALYSIS_MIN} 集更准），是否进库由你决定。`,
         workId,
       };
     }
@@ -1732,7 +1736,7 @@ export async function runManhuaTemplateLearn(
       visionFilled: polishOk && (frameVisionAgg?.successChunks ?? 0) > 0,
       messageZh: `本轮 +${batchLearnedIndexes.length} 集（视频已删），累计 ${learnedCount} 集，系列分析已可在网页预览${
         polishOk ? "" : "（本轮为启发式草稿，模型润色未成功）"
-      }${(frameVisionAgg?.successChunks ?? 0) > 0 ? "" : "（视觉读帧未成功，节奏点为启发式）"}，是否进库由你决定。`,
+      }${(frameVisionAgg?.successChunks ?? 0) > 0 ? "" : "（视觉读帧未成功，节奏点为启发式）"}${skippedHint}，是否进库由你决定。`,
       workId,
     };
   } finally {
