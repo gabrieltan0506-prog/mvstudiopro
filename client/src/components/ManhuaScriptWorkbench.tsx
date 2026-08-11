@@ -2000,7 +2000,7 @@ export default function ManhuaScriptWorkbench({
               >
                 审阅成片提示词
               </button>
-              {onIngestDirectorBoardFile ? (
+              {!compactUi && onIngestDirectorBoardFile ? (
                 <label
                   className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[10px] font-semibold ${
                     directorBoardMainUrl
@@ -2032,7 +2032,7 @@ export default function ManhuaScriptWorkbench({
                       : "上传导演板"}
                 </label>
               ) : null}
-              {onCopyDirectorBoardPrompt ? (
+              {!compactUi && onCopyDirectorBoardPrompt ? (
                 <button
                   type="button"
                   disabled={Boolean(factoryBusy || directorBoardBusy)}
@@ -2073,7 +2073,7 @@ export default function ManhuaScriptWorkbench({
                   {assetZipBusy ? "资产包导入中…" : "导入资产 ZIP"}
                 </label>
               ) : null}
-              {directorBoardMainUrl && onClearDirectorBoard ? (
+              {!compactUi && directorBoardMainUrl && onClearDirectorBoard ? (
                 <button
                   type="button"
                   disabled={Boolean(factoryBusy || directorBoardBusy)}
@@ -2107,7 +2107,7 @@ export default function ManhuaScriptWorkbench({
               </button>
             </>
           )}
-          {onLayoutReadableChain ? (
+          {!compactUi && onLayoutReadableChain ? (
             <button
               type="button"
               data-manhua-action="layout-readable-chain"
@@ -2187,6 +2187,7 @@ export default function ManhuaScriptWorkbench({
           {onRerunKeyartsFromReverse ? (
             <button
               type="button"
+              hidden={compactUi}
               data-manhua-action="rerun-keyarts"
               disabled={Boolean(factoryBusy)}
               onClick={() => {
@@ -2200,7 +2201,7 @@ export default function ManhuaScriptWorkbench({
               重出全部分镜
             </button>
           ) : null}
-          {onShotContinuityChange ? (
+          {!compactUi && onShotContinuityChange ? (
             <div
               data-manhua-shot-continuity
               className="flex flex-wrap items-center gap-1 rounded-lg border border-white/10 bg-white/[0.03] px-1.5 py-1"
@@ -2261,20 +2262,24 @@ export default function ManhuaScriptWorkbench({
               续跑
             </button>
           ) : null}
-          <button
-            type="button"
-            onClick={() => onOpenCharacterCard?.()}
-            className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
-          >
-            角色库
-          </button>
-          <button
-            type="button"
-            onClick={() => onOpenAssetWall?.()}
-            className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
-          >
-            资产墙
-          </button>
+          {!compactUi ? (
+            <>
+              <button
+                type="button"
+                onClick={() => onOpenCharacterCard?.()}
+                className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
+              >
+                角色库
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenAssetWall?.()}
+                className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06]"
+              >
+                资产墙
+              </button>
+            </>
+          ) : null}
         </div>
       </div>
 
@@ -2402,7 +2407,7 @@ export default function ManhuaScriptWorkbench({
           >
             {nextCta.stepTitleZh}
           </div>
-          <p className="mt-0.5 text-[11px] leading-snug text-white/50">{nextCta.hintZh}</p>
+          <p className="mh-hint mt-0.5 text-[11px] leading-snug text-white/50">{nextCta.hintZh}</p>
         </div>
         <button
           type="button"
@@ -2448,7 +2453,7 @@ export default function ManhuaScriptWorkbench({
         >
           <div className="mx-auto max-w-3xl">
             <div className="text-[13px] font-semibold text-white/90">剧本大纲</div>
-            <p className="mt-1 text-[11px] leading-5 text-white/45">
+            <p className="mh-hint mt-1 text-[11px] leading-5 text-white/45">
               确认系列与分集大纲后，再进入资产设定与分镜视频。
             </p>
             <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-4">
@@ -2461,7 +2466,7 @@ export default function ManhuaScriptWorkbench({
                 </p>
               )}
               {projectBibleSummary ? (
-                <p className="mt-2 text-[11px] text-white/40">{projectBibleSummary}</p>
+                <p className="mh-hint mt-2 text-[11px] text-white/40">{projectBibleSummary}</p>
               ) : null}
               <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-white/40">
                 <span>共 {Math.max(episodeCount, outlineEpisodes.length, 1)} 集</span>
@@ -2536,10 +2541,10 @@ export default function ManhuaScriptWorkbench({
           <div className="mx-auto max-w-4xl">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <div className="text-[15px] font-bold tracking-wide text-white/95">
+                <div className={`text-[15px] font-bold tracking-wide text-white/95 ${compactUi ? "hidden" : ""}`}>
                   生成本集角色设定卡
                 </div>
-                <p className="mt-1 text-[11px] leading-5 text-white/45">
+                <p className="mh-hint mt-1 text-[11px] leading-5 text-white/45">
                   {assetCanon?.characters.length
                     ? "以剧本人物表与系列场景池为准；点右上「生成全部」或底栏同名按钮出定妆与场景空镜。"
                     : "人物、场景、服装、道具分栏上传或生成，上传时先选分类，不设未归类池。"}
@@ -2668,7 +2673,7 @@ export default function ManhuaScriptWorkbench({
                 className="mt-3 rounded-xl border border-amber-300/40 bg-amber-500/15 px-3 py-2.5"
               >
                 <p className="text-[12px] font-semibold text-amber-50">{assetScriptStaleHintZh}</p>
-                <p className="mt-1 text-[10px] leading-4 text-amber-50/70">
+                <p className="mh-hint mt-1 text-[10px] leading-4 text-amber-50/70">
                   重写剧本后旧人物图不会自动继续用。点右上「按剧本重出设定图」清掉旧生成图并按现稿重出；你手动上传的参考会保留。
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -3286,7 +3291,7 @@ export default function ManhuaScriptWorkbench({
                   ))}
                 </div>
               ) : (
-                <p className="mt-2 rounded-lg border border-dashed border-white/15 px-3 py-4 text-center text-[11px] text-white/45">
+                <p className="mh-hint mt-2 rounded-lg border border-dashed border-white/15 px-3 py-4 text-center text-[11px] text-white/45">
                   尚未点选人物 · 请点「去选人物」打开角色库
                 </p>
               )}
@@ -5013,7 +5018,7 @@ export default function ManhuaScriptWorkbench({
                 </div>
               ) : (
                 <>
-                  <p className="mt-2 max-h-14 shrink-0 overflow-y-auto rounded-lg border border-white/8 bg-black/30 px-2.5 py-2 text-[11px] leading-relaxed text-white/55">
+                  <p className="mh-hint mt-2 max-h-14 shrink-0 overflow-y-auto rounded-lg border border-white/8 bg-black/30 px-2.5 py-2 text-[11px] leading-relaxed text-white/55">
                     {(
                       story?.outputText ||
                       story?.prompt ||
@@ -5553,7 +5558,7 @@ export default function ManhuaScriptWorkbench({
                   onActionRecipeIdChange={onActionRecipeIdChange}
                 />
               ) : (
-                <p className="rounded-lg border border-white/10 bg-black/30 px-3 py-4 text-[11px] text-white/40">
+                <p className="mh-hint rounded-lg border border-white/10 bg-black/30 px-3 py-4 text-[11px] text-white/40">
                   运镜配方未接线
                 </p>
               )}
