@@ -6,7 +6,14 @@
     <atom:link href="https://www.mvstudiopro.com/blog/rss.xml" rel="self" type="application/rss+xml"/>
     <description>AI 漫剧与视频生成实测：模型对比、真实价格、工作流拆解</description>
     <language>zh-CN</language>
-    <lastBuildDate>Mon, 10 Aug 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Wed, 12 Aug 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>同一道爆款题实测：千问 3.8 Max 用 144 秒交卷，Kimi K3 花了 292 秒</title>
+      <link>https://www.mvstudiopro.com/blog/kimi-k3-vs-qwen-38-max-real-test</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/kimi-k3-vs-qwen-38-max-real-test</guid>
+      <pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate>
+      <description>同一账号、同一条 87 分选题、同一套内容 Skill，只更换扩写引擎。千问 3.8 Max 用时 144 秒，Kimi K3 用时 292 秒；本文对比速度、成本估算、文风、逐镜拆片表和真实生产风险。</description>
+    </item>
     <item>
       <title>Seedance 2.5 只有 720P？实测升到 4K，泪痕和睫毛都回来了</title>
       <link>https://www.mvstudiopro.com/blog/video-4k-upscale</link>
