@@ -1492,9 +1492,10 @@ function mapContentBlueprintToExecutionCard(
     titleVariants,
     storyboardCells: (() => {
       const normalized = normalizePlatformStoryboardCells(item.storyboardCells);
-      return normalized.length
-        ? normalized
-        : buildStoryboardCellsFromStepScript(scriptSteps);
+      if (normalized.length) return normalized;
+      // 图文笔记无镜头概念，不从大纲硬造垃圾表
+      if (/图文|小红书/.test(String(format || ""))) return [];
+      return buildStoryboardCellsFromStepScript(scriptSteps);
     })(),
     highlightKeywords,
     isDecisionIntelBonus: opts?.isDecisionIntelBonus,
@@ -9538,6 +9539,15 @@ export default function PlatformPage() {
                     </div>
                   </details>
                 ) : null}
+                {Array.isArray((item as any).storyboardCells) &&
+                (item as any).storyboardCells.length > 0 &&
+                !/图文|小红书/.test(String(item.format || "")) ? (
+                  <div className="mt-3 rounded-lg bg-black/30 p-3 text-xs text-gray-400">
+                    <PlatformStoryboardCellsTable
+                      cells={(item as any).storyboardCells as PlatformStoryboardCell[]}
+                    />
+                  </div>
+                ) : null}
 
                 {(coverUrl || sheetUrl) && (
                   <div className="mt-3 flex flex-wrap gap-2">
@@ -15738,7 +15748,8 @@ export default function PlatformPage() {
                               </p>
                             ) : null}
                             {Array.isArray((item as any).storyboardCells) &&
-                            (item as any).storyboardCells.length > 0 ? (
+                            (item as any).storyboardCells.length > 0 &&
+                            !/图文|小红书/.test(String((item as any).format || "")) ? (
                               <PlatformStoryboardCellsTable
                                 cells={(item as any).storyboardCells as PlatformStoryboardCell[]}
                               />

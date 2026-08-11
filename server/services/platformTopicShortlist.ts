@@ -664,7 +664,7 @@ export async function expandPlatformTopicPicks(params: {
 ${PLATFORM_HIGH_CTR_TITLE_COVER_GUIDANCE}
 硬约束：
 - title/hook/copywriting/detailedScript/format/suitablePlatforms/actionableSteps/publishingAdvice/highlightKeywords/commentHooks/graphicNotePages/platformVariants/storyboardCells
-- storyboardCells：逐镜拆片表，6–8 镜数组，每镜 { cellIndex, dialogueZh(这一镜台词，一字不差，无则空串), sceneZh(场景，如"浴室镜前"), shotSize(景别，全景/远景/中景/近景/特写/大特写 六选一), actionZh(画面里谁在做什么，一句说清), cameraMoveZh(运镜：推/拉/摇/移/跟/固定), editNoteZh(转场/特效/BGM/字幕节点) }；台词合计须与 detailedScript 口径一致，不得另编
+- storyboardCells：逐镜拆片表（短视频必给；图文笔记可省略），6–8 镜数组，每镜 { cellIndex, dialogueZh(这一镜台词，一字不差，无则空串), sceneZh(场景，如"浴室镜前"), shotSize(景别，全景/远景/中景/近景/特写/大特写 六选一), actionZh(画面里谁在做什么，一句说清), cameraMoveZh(运镜：推/拉/摇/移/跟/固定), editNoteZh(转场/特效/BGM/字幕节点) }；台词合计须与 detailedScript 口径一致，不得另编
 - platformVariants 必须覆盖 xiaohongshu/bilibili/weixin_channels，各含最多 13 字 coverHeadline（高点击短钩，超则精简，互不雷同）
 - 保留初选 title 的反差杀伤力，可微调拧得更紧；禁止改回正确无聊题
 - format 优先用「${pick.formatHint}」
@@ -823,12 +823,12 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     bp.copywriting = med.copywriting;
     if (med.patched) bp.authorityCitePatched = true;
 
-    // 逐镜拆片表：LLM 输出优先，坏行归一丢弃；整表缺失时从口播时间轴降级拆装，
-    // 保证结果卡表格、PDF、出图 scriptContext 三处消费者永远有内容
+    // 逐镜拆片表：LLM 输出优先，坏行归一丢弃；短视频缺表时从口播时间轴降级拆装，
+    // 保证结果卡表格与出图 scriptContext 两处消费者有内容。图文笔记无镜头概念，不硬造。
     const normalizedCells = normalizePlatformStoryboardCells(bp.storyboardCells);
     if (normalizedCells.length) {
       bp.storyboardCells = normalizedCells;
-    } else {
+    } else if (isVideo) {
       const exec =
         bp.executionDetails && typeof bp.executionDetails === "object"
           ? (bp.executionDetails as Record<string, unknown>)
@@ -842,6 +842,8 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
               .filter(Boolean)
           : [];
       bp.storyboardCells = buildStoryboardCellsFromStepScript(steps);
+    } else {
+      bp.storyboardCells = [];
     }
 
     const hooks = bp.commentHooks as string[];

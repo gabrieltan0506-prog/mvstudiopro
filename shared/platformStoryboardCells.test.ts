@@ -43,6 +43,33 @@ describe("platformStoryboardCells", () => {
     expect(cells[1]!.shotSize).toBe("中景");
   });
 
+  it("时间轴前缀不切成垃圾表：00:00-00:08 进剪辑备注，台词完整", () => {
+    const cells = buildStoryboardCellsFromStepScript([
+      "00:00-00:08 开场杀伤句：你梳头掉的不是头发",
+      "0-3秒，钩子｜特写：是胶原蛋白",
+    ]);
+    expect(cells[0]).toMatchObject({
+      dialogueZh: "你梳头掉的不是头发",
+      editNoteZh: "00:00-00:08",
+    });
+    expect(cells[0]!.actionZh).toBe("开场杀伤句");
+    expect(cells[1]).toMatchObject({
+      dialogueZh: "是胶原蛋白",
+      shotSize: "特写",
+      editNoteZh: "0-3秒",
+    });
+  });
+
+  it("head 全被景别/运镜吃掉时，台词不在动作栏重复", () => {
+    const cells = buildStoryboardCellsFromStepScript(["特写｜缓推：这句只能出现一次"]);
+    expect(cells[0]).toMatchObject({
+      shotSize: "特写",
+      cameraMoveZh: "缓推",
+      dialogueZh: "这句只能出现一次",
+      actionZh: "",
+    });
+  });
+
   it("Markdown 与六栏文本：空表出空串，竖线转义", () => {
     expect(formatPlatformStoryboardCellsMarkdown([])).toBe("");
     expect(formatPlatformStoryboardCellsSixColumnText([])).toBe("");

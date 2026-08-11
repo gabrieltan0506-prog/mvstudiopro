@@ -1,7 +1,7 @@
 /**
  * 逐镜拆片表：执行卡里的结构化分镜表格。
  * 数据由扩写服务保底产出（LLM 字段优先，口播时间轴降级拆装），
- * 这里只管展示 + 复制 Markdown；导出 PDF 走 customCopyPdfExport 的表格 section。
+ * 这里只管展示 + 复制 Markdown（PDF 链路依赖 GCS pdf-worker，按用户口径不接）。
  */
 
 import { useState } from "react";

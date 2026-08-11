@@ -49,7 +49,8 @@ export function normalizePlatformStoryboardCells(
     if (!item || typeof item !== "object") continue;
     const o = item as Record<string, unknown>;
     const parsed = platformStoryboardCellSchema.safeParse({
-      cellIndex: Number(o.cellIndex) || out.length + 1,
+      // 镜号越界不整行误杀：先 clamp，最后统一重排
+      cellIndex: Math.min(12, Math.max(1, Number(o.cellIndex) || out.length + 1)),
       dialogueZh: String(o.dialogueZh ?? o.dialogue ?? "").trim().slice(0, 200),
       sceneZh: String(o.sceneZh ?? o.scene ?? "").trim().slice(0, 60),
       shotSize: String(o.shotSize ?? o.framing ?? "").trim().slice(0, 12),
@@ -87,8 +88,18 @@ export function buildStoryboardCellsFromStepScript(
   const list = (steps || []).map((s) => String(s || "").trim()).filter(Boolean);
   const cells: PlatformStoryboardCell[] = [];
   for (const line of list) {
-    const bare = line.replace(/^【[^】]*】\s*/, "");
-    const [head, ...tailParts] = bare.split(/[：:]/);
+    const bracketNote = line.match(/^【([^】]*)】/)?.[1] || "";
+    const noBracket = line.replace(/^【[^】]*】\s*/, "");
+    // 时间轴前缀（00:00-00:08 / 0-3秒）先剥进剪辑备注，
+    // 否则 ASCII 冒号会被当台词分隔符切出垃圾表（审查实测复现）
+    // 裸数字区间必须带「秒/s」后缀才算时间戳，防误吃「1-2个月见效」这类正文
+    const tsMatch = noBracket.match(
+      /^\s*([0-9]{1,2}[:：][0-9]{2}\s*[-–~—]\s*[0-9]{1,2}[:：][0-9]{2}|[0-9]+\s*[-–~—]\s*[0-9]+\s*[秒s])\s*[，,、]?\s*/,
+    );
+    const timeNote = tsMatch?.[1]?.trim() || "";
+    const bare = tsMatch ? noBracket.slice(tsMatch[0].length) : noBracket;
+    // 台词分隔只认中文冒号（残余 ASCII 冒号多半仍是时间戳）
+    const [head, ...tailParts] = bare.split("：");
     const dialogue = tailParts.join("：").trim().slice(0, 200);
     const segs = String(head || "")
       .split(/[｜|]/)
@@ -99,14 +110,16 @@ export function buildStoryboardCellsFromStepScript(
     const cameraMove =
       segs.find((s) => /^(缓)?(推|拉|摇|移|跟|固定|环绕)/.test(s)) || "";
     const rest = segs.filter((s) => s !== shotSize && s !== cameraMove);
+    // rest 空且已有台词时不回填整行，避免台词在动作栏重复一遍
+    const action = rest.join("｜") || (dialogue ? "" : bare);
     cells.push({
       cellIndex: cells.length + 1,
       dialogueZh: dialogue,
       sceneZh: "",
       shotSize,
-      actionZh: (rest.join("｜") || bare).slice(0, 160),
+      actionZh: action.slice(0, 160),
       cameraMoveZh: cameraMove,
-      editNoteZh: (line.match(/^【([^】]*)】/)?.[1] || "").slice(0, 80),
+      editNoteZh: (bracketNote || timeNote).slice(0, 80),
     });
     if (cells.length >= 12) break;
   }
