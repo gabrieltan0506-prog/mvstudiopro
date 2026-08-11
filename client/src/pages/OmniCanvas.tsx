@@ -4398,6 +4398,56 @@ export default function OmniCanvas() {
     setCustomAssetRefs((prev) => prev.filter((r) => r.id !== id));
   }, []);
 
+  /**
+   * 四柱布局一次性迁移：布局只在点「对齐画布竖排」时执行，老存档的旧坐标
+   * 会一直躺着——用户升级后看画布「根本没变」（2026-08-11 实反馈）。
+   * 进入漫剧画布且有漫剧节点时自动重排一次，打标记不再打扰手动摆放；
+   * 「对齐画布竖排」按钮随时可再排。
+   */
+  const fourLaneMigratedRef = useRef(false);
+  useEffect(() => {
+    if (fourLaneMigratedRef.current || canvasMode !== "manhua") return;
+    try {
+      if (window.localStorage.getItem("mv_manhua_layout_4lane_v1") === "1") {
+        fourLaneMigratedRef.current = true;
+        return;
+      }
+    } catch {
+      /* 无痕模式：本次会话内仍只迁移一次 */
+    }
+    const hasManhuaNodes = blocks.some(
+      (b) =>
+        b.id.startsWith("charsheet-") ||
+        b.id.startsWith("keyart-") ||
+        b.id.startsWith("clip-"),
+    );
+    if (!hasManhuaNodes) return;
+    fourLaneMigratedRef.current = true;
+    try {
+      window.localStorage.setItem("mv_manhua_layout_4lane_v1", "1");
+    } catch {
+      /* 忽略 */
+    }
+    setBlocks((prev) => {
+      const next = layoutManhuaEpisodeReadableChain(prev, writerFocusEpisode, {
+        assetCanon: projectBible?.assetCanon,
+        characterSheetUrlById: collectManhuaCharacterSheetUrlById(
+          prev,
+          projectBible?.assetCanon,
+        ),
+        customRefs: customAssetRefs,
+      });
+      setEdges((eds) => {
+        saveCanvasState(next, eds);
+        return eds;
+      });
+      return next;
+    });
+    toast.message("画布已切换为四柱排布", {
+      description: "资产柱｜静帧柱｜成片柱，段落从上往下；点「对齐画布竖排」可随时重排",
+    });
+  }, [blocks, canvasMode, writerFocusEpisode, projectBible?.assetCanon, customAssetRefs]);
+
   /** 删除本集设定图画廊里的一张（画布块 + 连线一起清；可随时重出，不扣费） */
   const removeEpisodeSheetBlock = useCallback(
     (blockId: string) => {
