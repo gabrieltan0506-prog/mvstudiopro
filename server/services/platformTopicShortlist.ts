@@ -641,9 +641,10 @@ async function invokeExpandViaEvolink(params: {
     max_completion_tokens: EXPAND_MAX_COMPLETION_TOKENS,
   };
   if (params.model === "qwen3.8-max") {
-    // Evolink Qwen：档位 low|medium|xhigh；勿与 thinking_budget 同传（同知识卡提炼口径，max_completion_tokens）
+    // Evolink Qwen：档位 low|medium|xhigh（无 max）；2026-08-12 用户拍板开到顶档，
+    // 与 Kimi high 对等公平；勿与 thinking_budget 同传（同知识卡提炼口径）
     body.enable_thinking = true;
-    body.reasoning_effort = "medium";
+    body.reasoning_effort = "xhigh";
     body.max_completion_tokens = EXPAND_QWEN_MAX_COMPLETION_TOKENS;
   } else {
     // 非 Qwen 走 max_tokens（对齐 knowledgeCardDistill 先例，防封顶字段不被识别而静默失效）
