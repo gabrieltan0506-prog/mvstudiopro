@@ -2701,7 +2701,8 @@ export function layoutManhuaEpisodeReadableChain(
   }
 
   const laneX = (i: number) => originX + gapX * (1 + i);
-  const epOf = (b: CanvasBlock) => getBlockEpisodeIndex(b) ?? focusEp;
+  // 无集号老节点按全仓惯例归第 1 集，不吸进当前焦点带（审查建议修1）
+  const epOf = (b: CanvasBlock) => getBlockEpisodeIndex(b) ?? 1;
   const episodes = Array.from(new Set(chainNodes.map(epOf))).sort((a, b) => a - b);
   const segOfBoard = (id: string): number | null => {
     const m = /-s(\d{2,})$/i.exec(id);
