@@ -8,6 +8,7 @@ import {
   mergeDouyinMixEpisodePages,
   parseDouyinAwemeDetailResponse,
   parseDouyinMixAwemeResponse,
+  readDouyinPlaybackUrl,
 } from "./manhuaLearnDouyinWebApi";
 
 describe("抖音 web API URL 构造", () => {
@@ -197,5 +198,86 @@ describe("mergeDouyinMixEpisodePages", () => {
     ]);
     expect(merged.map((e) => e.index)).toEqual([1, 2, 3]);
     expect(merged[1]!.url).toBe("u2");
+  });
+});
+
+describe("readDouyinPlaybackUrl（官方播放地址提取）", () => {
+  it("play_addr.url_list 里首个可信 HTTPS 地址被采纳", () => {
+    expect(
+      readDouyinPlaybackUrl({
+        video: {
+          play_addr: {
+            url_list: [
+              "http://v3-web.douyinvod.com/insecure.mp4",
+              "https://v3-web.douyinvod.com/ok.mp4?sig=1",
+            ],
+          },
+        },
+      }),
+    ).toBe("https://v3-web.douyinvod.com/ok.mp4?sig=1");
+  });
+
+  it("白名单外域名与非 HTTPS 一律丢弃", () => {
+    expect(
+      readDouyinPlaybackUrl({
+        video: { play_addr: { url_list: ["https://evil.com/x.mp4", "http://www.douyin.com/a"] } },
+      }),
+    ).toBeUndefined();
+    // 子串伪装域（evildouyinvod.com 不是 *.douyinvod.com）
+    expect(
+      readDouyinPlaybackUrl({
+        video: { play_addr: { url_list: ["https://evildouyinvod.com/x.mp4"] } },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("兼容 playAddr.urlList 驼峰变体与 aweme_info 包壳", () => {
+    expect(
+      readDouyinPlaybackUrl({
+        aweme_info: { video: { playAddr: { urlList: ["https://www.douyin.com/aweme/v1/play/x"] } } },
+      }),
+    ).toBe("https://www.douyin.com/aweme/v1/play/x");
+  });
+
+  it("缺 video/play_addr/url_list 时返回 undefined 不抛错", () => {
+    expect(readDouyinPlaybackUrl(null)).toBeUndefined();
+    expect(readDouyinPlaybackUrl({})).toBeUndefined();
+    expect(readDouyinPlaybackUrl({ video: {} })).toBeUndefined();
+    expect(readDouyinPlaybackUrl({ video: { play_addr: { url_list: "not-array" } } })).toBeUndefined();
+  });
+
+  it("mix 分页解析把 playbackUrl 带进分集", () => {
+    const parsed = parseDouyinMixAwemeResponse({
+      status_code: 0,
+      has_more: 0,
+      aweme_list: [
+        {
+          aweme_id: "7400000000000000001",
+          desc: "第1集",
+          mix_info: { mix_name: "测试剧", statis: { current_episode: 1 } },
+          video: { play_addr: { url_list: ["https://v5.douyinvod.com/e1.mp4?sig=a"] } },
+        },
+        {
+          aweme_id: "7400000000000000002",
+          desc: "第2集",
+          mix_info: { statis: { current_episode: 2 } },
+        },
+      ],
+    });
+    expect(parsed.episodes[0]?.playbackUrl).toBe("https://v5.douyinvod.com/e1.mp4?sig=a");
+    expect(parsed.episodes[1]?.playbackUrl).toBeUndefined();
+  });
+
+  it("aweme/detail 解析带 playbackUrl", () => {
+    const parsed = parseDouyinAwemeDetailResponse({
+      status_code: 0,
+      aweme_detail: {
+        desc: "第3集",
+        mix_info: { mix_id: "7412345678901234567", mix_name: "测试剧", statis: { current_episode: 3 } },
+        video: { play_addr: { url_list: ["https://v9.zjcdn.com/e3.mp4?sig=c"] } },
+      },
+    });
+    expect(parsed?.playbackUrl).toBe("https://v9.zjcdn.com/e3.mp4?sig=c");
+    expect(parsed?.episodeIndex).toBe(3);
   });
 });

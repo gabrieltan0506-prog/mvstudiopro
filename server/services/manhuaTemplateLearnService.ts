@@ -35,6 +35,7 @@ import {
   mergeEpisodeDigestsIntoProposal,
   mergeManhuaLearnChunkIntoDigest,
   pickNextEpisodeIndexes,
+  pickRetrySkippedEpisodeIndexes,
   type ManhuaLearnEpisodeChunk,
   type ManhuaLearnEpisodeDigest,
   type ManhuaLearnSeriesProgress,
@@ -108,6 +109,8 @@ export type ManhuaTemplateLearnInput = {
   batchSize?: number;
   /** 只重新下载并保存代表静帧；不重跑语音、视觉模型或系列分析。 */
   refreshPreviewFrames?: boolean;
+  /** 只重试此前因来源受限暂跳的集（列表已重新拉取，播放地址随之刷新）。 */
+  retrySkippedEpisodes?: boolean;
   learnLlm?: ManhuaTemplateLearnLlmProvider;
   onProgress?: (phase: string, detailZh: string) => void | Promise<void>;
   /** 每个分片落盘后把该集摘要同步进 Job output，供网页即时甄别。 */
@@ -139,6 +142,8 @@ export type ManhuaTemplateLearnResult = {
   batchLearned: number;
   batchIndexes: number[];
   listedEpisodeCount: number;
+  /** 因来源受限暂跳的集号（不计入已学；可用「重试暂跳集」在地址刷新后重试） */
+  skippedEpisodeIndexes?: number[];
   /** 网页即时展示：已学分集摘要（视频已删，只留结构化结果） */
   digestsPreview: ManhuaLearnDigestPreview[];
   /** 与飙升榜同源：类别 / 题材标签（前台中文） */
@@ -405,6 +410,7 @@ async function downloadVideoSegment(input: {
   workDir: string;
   startSec: number;
   endSec: number;
+  referer?: string;
 }): Promise<string> {
   await fs.mkdir(input.workDir, { recursive: true });
   assertYtdlpCookieReadyForUrl(input.url);
@@ -419,6 +425,7 @@ async function downloadVideoSegment(input: {
         startSec: input.startSec,
         endSec: input.endSec,
         cookieArgs: cookies.args,
+        referer: input.referer,
       }),
     );
     stderr = result.stderr;
@@ -441,7 +448,57 @@ async function downloadVideoSegment(input: {
   return videoPath;
 }
 
-type ListedEpisode = { index: number; url: string; title: string };
+type ListedEpisode = {
+  index: number;
+  url: string;
+  title: string;
+  /** 官方接口给的短时效播放地址；只在本轮内存使用，永不写进度/摘要 JSON */
+  playbackUrl?: string;
+};
+
+/**
+ * 分集下载源状态：优先官方播放地址（/video/ 页面被抖音 App 限制页顶掉时，
+ * 目录接口返回的签名 CDN 地址往往仍可用）；一旦失败立刻回退页面 URL 且
+ * 本集内不再尝试播放地址（签名过期不会自愈，重试只是白烧时间）。
+ */
+type EpisodeSourceState = { playbackDead?: boolean };
+
+function episodeDownloadSource(
+  ep: ListedEpisode,
+  state: EpisodeSourceState,
+): { url: string; viaPlayback: boolean } {
+  if (!state.playbackDead && ep.playbackUrl) {
+    return { url: ep.playbackUrl, viaPlayback: true };
+  }
+  return { url: ep.url, viaPlayback: false };
+}
+
+const DOUYIN_PLAYBACK_REFERER = "https://www.douyin.com/";
+
+/** 官方播放地址直连探测时长（ffprobe 支持 https 输入）；失败由调用方回退页面探测 */
+async function ffprobeRemoteDuration(url: string): Promise<number> {
+  const { stdout } = await execFileAsync(
+    "ffprobe",
+    [
+      "-v",
+      "error",
+      "-user_agent",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "-headers",
+      `Referer: ${DOUYIN_PLAYBACK_REFERER}\r\n`,
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      url,
+    ],
+    // 挂死一个坏 CDN 节点不能拖死整集：20s 拿不到就回退页面探测
+    { timeout: 20_000 },
+  );
+  const n = Number(String(stdout).trim());
+  if (!Number.isFinite(n) || n <= 0) throw new Error("播放地址无法读取时长");
+  return n;
+}
 
 function parseFlatPlaylistEntries(
   data: {
@@ -542,7 +599,7 @@ async function listOrderedEpisodes(
   sourceUrl: string,
   titleHint?: string,
   mixId?: string,
-  single?: { titleZh?: string; episodeIndex?: number },
+  single?: { titleZh?: string; episodeIndex?: number; playbackUrl?: string },
 ): Promise<ListedEpisodesResult> {
   const id = String(mixId || "").trim();
   if (/^\d{6,}$/.test(id)) {
@@ -592,7 +649,7 @@ async function listOrderedEpisodes(
         normalizeDouyinVideoUrl(sourceUrl),
         single?.titleZh || titleHint,
         single?.episodeIndex,
-      ),
+      ).map((e) => ({ ...e, playbackUrl: single?.playbackUrl })),
       // 有 mixId 却走到单集回退 = 合集展开失败的降级列表，不可靠
       reliable: !/^\d{6,}$/.test(id),
     };
@@ -959,12 +1016,26 @@ async function refreshEpisodePreviewFrames(input: {
       MANHUA_LEARN_STAGE.download,
       `正在补抽第 ${input.ep.index} 集静帧 0–${Math.ceil(endSec / 60)} 分（不重跑模型）…`,
     );
-    const videoPath = await downloadVideoSegment({
-      url: input.ep.url,
-      workDir,
-      startSec: 0,
-      endSec,
-    });
+    let videoPath: string;
+    try {
+      const src = episodeDownloadSource(input.ep, {});
+      videoPath = await downloadVideoSegment({
+        url: src.url,
+        workDir,
+        startSec: 0,
+        endSec,
+        referer: src.viaPlayback ? DOUYIN_PLAYBACK_REFERER : undefined,
+      });
+    } catch (e) {
+      if (!input.ep.playbackUrl) throw e;
+      // 播放地址失效 → 页面老路兜底
+      videoPath = await downloadVideoSegment({
+        url: input.ep.url,
+        workDir,
+        startSec: 0,
+        endSec,
+      });
+    }
     const framePaths = await extractFrames(
       videoPath,
       [Math.min(3, endSec / 2), endSec / 2, Math.max(0, endSec - 3)],
@@ -1011,7 +1082,24 @@ async function learnOneEpisode(input: {
 
     await assertManhuaLearnControl(input);
     await input.onProgress?.(MANHUA_LEARN_STAGE.download, `正在读取第 ${input.ep.index} 集时长…`);
-    const durationSec = await probeRemoteVideoDuration(input.ep.url);
+    const srcState: EpisodeSourceState = {};
+    let durationSec: number;
+    if (input.ep.playbackUrl) {
+      try {
+        durationSec = await ffprobeRemoteDuration(input.ep.playbackUrl);
+      } catch (e) {
+        // 播放地址探测失败（过期/节点拒绝）→ 本集放弃直连，回老路读页面
+        srcState.playbackDead = true;
+        console.warn(
+          "[manhuaTemplateLearn] playback probe fallback to page url:",
+          input.ep.index,
+          e instanceof Error ? e.message : e,
+        );
+        durationSec = await probeRemoteVideoDuration(input.ep.url);
+      }
+    } else {
+      durationSec = await probeRemoteVideoDuration(input.ep.url);
+    }
     if (durationSec > MANHUA_LEARN_MAX_DURATION_SEC) {
       throw new Error(
         `第 ${input.ep.index} 集超过 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，已跳过策略外片`,
@@ -1063,12 +1151,35 @@ async function learnOneEpisode(input: {
             MANHUA_LEARN_STAGE.download,
             `正在下载第 ${input.ep.index} 集 ${Math.floor(startSec / 60)}–${Math.ceil(endSec / 60)} 分片段${attempt > 1 ? `（重试 ${attempt}/${retryMax}）` : ""}…`,
           );
-          const videoPath = await downloadVideoSegment({
-            url: input.ep.url,
-            workDir: chunkDir,
-            startSec,
-            endSec,
-          });
+          const src = episodeDownloadSource(input.ep, srcState);
+          let videoPath: string;
+          try {
+            videoPath = await downloadVideoSegment({
+              url: src.url,
+              workDir: chunkDir,
+              startSec,
+              endSec,
+              referer: src.viaPlayback ? DOUYIN_PLAYBACK_REFERER : undefined,
+            });
+          } catch (e) {
+            if (src.viaPlayback) {
+              // 直连失败只烧了一次 HTTP，不吃重试预算：标记失效立即换页面老路
+              srcState.playbackDead = true;
+              console.warn(
+                "[manhuaTemplateLearn] playback download fallback to page url:",
+                input.ep.index,
+                e instanceof Error ? e.message : e,
+              );
+              videoPath = await downloadVideoSegment({
+                url: input.ep.url,
+                workDir: chunkDir,
+                startSec,
+                endSec,
+              });
+            } else {
+              throw e;
+            }
+          }
           chunk = await learnOneEpisodeChunk({
             seriesKey: input.seriesKey,
             ep: input.ep,
@@ -1171,7 +1282,7 @@ export async function runManhuaTemplateLearn(
   //    （榜单单集链接一次学一批的入口）——
   let mixId = String(input.mixId || "").trim();
   let dramaNameZh = "";
-  let single: { titleZh?: string; episodeIndex?: number } | undefined;
+  let single: { titleZh?: string; episodeIndex?: number; playbackUrl?: string } | undefined;
   if (!sourceGcsUri && isDouyinHostUrl(url)) {
     if (!/^\d{6,}$/.test(mixId)) {
       const fromUrl = extractDouyinMixIdFromUrl(url);
@@ -1181,7 +1292,11 @@ export async function runManhuaTemplateLearn(
     if (videoId) {
       const detail = await fetchDouyinAwemeDetailViaWebApi(videoId).catch(() => null);
       if (detail) {
-        single = { titleZh: detail.titleZh, episodeIndex: detail.episodeIndex };
+        single = {
+          titleZh: detail.titleZh,
+          episodeIndex: detail.episodeIndex,
+          playbackUrl: detail.playbackUrl,
+        };
         if (!/^\d{6,}$/.test(mixId) && detail.mixId && /^\d{6,}$/.test(detail.mixId)) {
           mixId = detail.mixId;
         }
@@ -1216,7 +1331,7 @@ export async function runManhuaTemplateLearn(
       MANHUA_LEARN_STAGE.list,
       manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.list),
     );
-    const listedRes = sourceGcsUri
+    const listedRes: ListedEpisodesResult = sourceGcsUri
       ? {
           listed: listedSingleEpisodeFromUrl(
             url,
@@ -1306,12 +1421,19 @@ export async function runManhuaTemplateLearn(
           .map((digest) => digest.episodeIndex)
           .sort((a, b) => a - b)
           .slice(0, batchSize)
-      : pickNextEpisodeIndexes({
-          listedIndexes,
-          learnedIndexes: prog.learnedEpisodeIndexes,
-          skippedIndexes: prog.skippedEpisodeIndexes,
-          batchSize,
-        });
+      : input.retrySkippedEpisodes
+        ? pickRetrySkippedEpisodeIndexes({
+            listedIndexes,
+            skippedIndexes: prog.skippedEpisodeIndexes,
+            learnedIndexes: prog.learnedEpisodeIndexes,
+            batchSize,
+          })
+        : pickNextEpisodeIndexes({
+            listedIndexes,
+            learnedIndexes: prog.learnedEpisodeIndexes,
+            skippedIndexes: prog.skippedEpisodeIndexes,
+            batchSize,
+          });
     if (!batchIndexes.length) {
       const digestsAll = await loadAllDigests(seriesKey);
       const digests = digestsAll.filter(isManhuaLearnEpisodeComplete);
@@ -1405,6 +1527,7 @@ export async function runManhuaTemplateLearn(
           batchLearned: 0,
           batchIndexes: [],
           listedEpisodeCount: listedRes.reliable ? Math.max(prog.listedEpisodeCount || 0, listed.length) : (prog.listedEpisodeCount || 0),
+          skippedEpisodeIndexes: prog.skippedEpisodeIndexes?.length ? prog.skippedEpisodeIndexes : undefined,
           digestsPreview: digestsAll.map(toDigestPreview),
           categoryLabelZh: prog.categoryLabelZh,
           tagLabelsZh: prog.tagLabelsZh,
@@ -1426,6 +1549,7 @@ export async function runManhuaTemplateLearn(
         batchLearned: 0,
         batchIndexes: [],
         listedEpisodeCount: listedRes.reliable ? Math.max(prog.listedEpisodeCount || 0, listed.length) : (prog.listedEpisodeCount || 0),
+        skippedEpisodeIndexes: prog.skippedEpisodeIndexes?.length ? prog.skippedEpisodeIndexes : undefined,
         digestsPreview: digestsAll.map(toDigestPreview),
         categoryLabelZh: prog.categoryLabelZh,
         tagLabelsZh: prog.tagLabelsZh,
@@ -1518,6 +1642,10 @@ export async function runManhuaTemplateLearn(
         prog.learnedEpisodeIndexes = Array.from(
           new Set([...prog.learnedEpisodeIndexes, idx]),
         ).sort((a, b) => a - b);
+        // 暂跳集重试成功 → 摘掉暂跳标记，别让它挂着「受限」误导续学口径
+        prog.skippedEpisodeIndexes = (prog.skippedEpisodeIndexes || []).filter(
+          (skipped) => skipped !== idx,
+        );
         prog.updatedAt = new Date().toISOString();
         await writeJsonGcs(
           `manhua-template-learn/series/${seriesKey}/progress.json`,
@@ -1589,6 +1717,7 @@ export async function runManhuaTemplateLearn(
         batchLearned: batchLearnedIndexes.length,
         batchIndexes: batchLearnedIndexes,
         listedEpisodeCount: listedRes.reliable ? Math.max(prog.listedEpisodeCount || 0, listed.length) : (prog.listedEpisodeCount || 0),
+        skippedEpisodeIndexes: prog.skippedEpisodeIndexes?.length ? prog.skippedEpisodeIndexes : undefined,
         digestsPreview: digestsAll.map(toDigestPreview),
         categoryLabelZh: prog.categoryLabelZh,
         tagLabelsZh: prog.tagLabelsZh,
@@ -1725,6 +1854,7 @@ export async function runManhuaTemplateLearn(
       batchLearned: batchLearnedIndexes.length,
       batchIndexes: batchLearnedIndexes,
       listedEpisodeCount: listedRes.reliable ? Math.max(prog.listedEpisodeCount || 0, listed.length) : (prog.listedEpisodeCount || 0),
+      skippedEpisodeIndexes: prog.skippedEpisodeIndexes?.length ? prog.skippedEpisodeIndexes : undefined,
       digestsPreview: digestsAll.map(toDigestPreview),
       categoryLabelZh: prog.categoryLabelZh,
       tagLabelsZh: prog.tagLabelsZh,

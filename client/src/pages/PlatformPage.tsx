@@ -112,6 +112,7 @@ import {
   manhuaLearnResultFromSnapshot,
   manhuaLearnResultFromStart,
   mergeManhuaLearnLiveProgress,
+  demoteStaleRunningManhuaLearnItems,
   mergeManhuaLearnServerJobsIntoBasket,
   readManhuaLearnActiveJob,
   readManhuaLearnBasket,
@@ -2295,12 +2296,53 @@ export default function PlatformPage() {
   const focusedManhuaLearnBasketItem = manhuaLearnBasket.find(
     (item) => item.seriesKey === manhuaLearnFocusSeriesKey,
   );
+  /**
+   * 控制按钮（停止/跳过）真源：服务端任务列表，而不是 basket 焦点项。
+   * 单集升级为合集学习时服务端会换 seriesKey，焦点 key 匹配不上 basket 项，
+   * 旧判定会让「学习进行中」却永远看不到停止/跳过按钮（2026-08-11 用户实测）。
+   * 兜底顺序：jobId 精确匹配 → seriesKey/来源 URL 匹配 → 全局唯一活跃任务。
+   */
+  const focusedManhuaLearnServerJob = useMemo(() => {
+    const running = manhuaLearnServerJobs.filter(
+      (job) => job.status === "queued" || job.status === "running",
+    );
+    const byJobId =
+      manhuaLearnServerJobs.find((job) => job.jobId === focusedManhuaLearnBasketItem?.jobId)
+      || null;
+    if (byJobId && (byJobId.status === "queued" || byJobId.status === "running")) return byJobId;
+    const focusKey = String(manhuaLearnFocusSeriesKey || "").trim();
+    const focusSource = String(
+      focusedManhuaLearnBasketItem?.continuation.row.gcsUri
+        || focusedManhuaLearnBasketItem?.continuation.row.url
+        || "",
+    ).trim();
+    const byKeyOrSource = running.find((job) => {
+      const params = job.input?.params || {};
+      const source = String(params.dedupeKey || params.gcsUri || params.url || "").trim();
+      return (
+        (focusKey && String(params.seriesKey || "").trim() === focusKey)
+        || (focusKey && String(job.output?.seriesKey || "").trim() === focusKey)
+        || (focusSource && source === focusSource)
+      );
+    });
+    if (byKeyOrSource) return byKeyOrSource;
+    // 全局唯一活跃任务兜底：只在焦点面板「自认为在跑」却匹配不上时启用——
+    // 否则会把停止/跳过误挂到用户正看着的另一部空闲剧上
+    const focusClaimsRunning =
+      focusedManhuaLearnBasketItem?.jobStatus === "queued"
+      || focusedManhuaLearnBasketItem?.jobStatus === "running"
+      || focusedManhuaLearnBasketItem?.result.liveStatus === "queued"
+      || focusedManhuaLearnBasketItem?.result.liveStatus === "running";
+    if (running.length === 1 && (focusClaimsRunning || !focusedManhuaLearnBasketItem)) {
+      return running[0];
+    }
+    return byJobId;
+  }, [manhuaLearnServerJobs, focusedManhuaLearnBasketItem, manhuaLearnFocusSeriesKey]);
   const focusedManhuaLearnJobActive =
     focusedManhuaLearnBasketItem?.jobStatus === "queued"
-    || focusedManhuaLearnBasketItem?.jobStatus === "running";
-  const focusedManhuaLearnServerJob = manhuaLearnServerJobs.find(
-    (job) => job.jobId === focusedManhuaLearnBasketItem?.jobId,
-  );
+    || focusedManhuaLearnBasketItem?.jobStatus === "running"
+    || focusedManhuaLearnServerJob?.status === "queued"
+    || focusedManhuaLearnServerJob?.status === "running";
   const focusedManhuaLearnEpisodeIndex = Math.max(
     0,
     Math.floor(Number(focusedManhuaLearnServerJob?.output?.currentEpisodeIndex) || 0),
@@ -2780,7 +2822,10 @@ export default function PlatformPage() {
     setManhuaLearnServerJobs(listed.items);
     setManhuaLearnServerJobsHydrated(true);
     setManhuaLearnBasket((prev) => {
-      const merged = mergeManhuaLearnServerJobsIntoBasket(prev, listed.items);
+      const merged = demoteStaleRunningManhuaLearnItems(
+        mergeManhuaLearnServerJobsIntoBasket(prev, listed.items),
+        listed.items,
+      );
       writeManhuaLearnBasket(String(user?.id || "").trim(), merged);
       const focused = merged.find((item) => item.seriesKey === manhuaLearnFocusSeriesKey);
       if (focused) setManhuaLearnResult(focused.result);
@@ -2795,7 +2840,7 @@ export default function PlatformPage() {
   }, [manhuaLearnActiveJob, manhuaLearnFocusSeriesKey]);
 
   const stopFocusedManhuaLearnJob = useCallback(async () => {
-    const jobId = focusedManhuaLearnBasketItem?.jobId;
+    const jobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
     if (!jobId || manhuaLearnControlBusy) return;
     if (!window.confirm("停止这部剧的学习？已落盘分集和静帧会保留，后续下载与模型调用将停止。")) return;
     setManhuaLearnControlBusy("cancel");
@@ -2808,11 +2853,14 @@ export default function PlatformPage() {
     } finally {
       setManhuaLearnControlBusy(null);
     }
-  }, [focusedManhuaLearnBasketItem?.jobId, manhuaLearnControlBusy, refreshManhuaLearnServerJobs]);
+  }, [focusedManhuaLearnServerJob?.jobId, focusedManhuaLearnBasketItem?.jobId, manhuaLearnControlBusy, refreshManhuaLearnServerJobs]);
 
   const skipFocusedManhuaLearnEpisode = useCallback(async () => {
-    const jobId = focusedManhuaLearnBasketItem?.jobId;
-    if (!jobId || focusedManhuaLearnBasketItem?.jobStatus !== "running" || focusedManhuaLearnEpisodeIndex <= 0 || manhuaLearnControlBusy) return;
+    const jobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
+    const jobRunning =
+      focusedManhuaLearnServerJob?.status === "running"
+      || focusedManhuaLearnBasketItem?.jobStatus === "running";
+    if (!jobId || !jobRunning || focusedManhuaLearnEpisodeIndex <= 0 || manhuaLearnControlBusy) return;
     setManhuaLearnControlBusy("skip");
     try {
       await skipManhuaLearnServerEpisode(jobId, getSupervisorTrpcToken());
@@ -2822,7 +2870,7 @@ export default function PlatformPage() {
     } finally {
       setManhuaLearnControlBusy(null);
     }
-  }, [focusedManhuaLearnBasketItem?.jobId, focusedManhuaLearnBasketItem?.jobStatus, focusedManhuaLearnEpisodeIndex, manhuaLearnControlBusy]);
+  }, [focusedManhuaLearnServerJob?.jobId, focusedManhuaLearnServerJob?.status, focusedManhuaLearnBasketItem?.jobId, focusedManhuaLearnBasketItem?.jobStatus, focusedManhuaLearnEpisodeIndex, manhuaLearnControlBusy]);
 
   useEffect(() => {
     const allowed = Boolean(
@@ -4722,7 +4770,7 @@ export default function PlatformPage() {
       row: ManhuaLearnSourceRow,
       rank: number,
       resumeSeriesKey?: string,
-      options?: { refreshPreviewFrames?: boolean },
+      options?: { refreshPreviewFrames?: boolean; retrySkippedEpisodes?: boolean },
     ) => {
       const canOps =
         supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
@@ -4821,6 +4869,7 @@ export default function PlatformPage() {
               dedupeKey: source,
               batchSize: 8,
               refreshPreviewFrames: options?.refreshPreviewFrames === true,
+              retrySkippedEpisodes: options?.retrySkippedEpisodes === true,
               learnLlm: row.learnLlm,
             },
           },
@@ -11858,7 +11907,12 @@ export default function PlatformPage() {
                             <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
-                                disabled={focusedManhuaLearnBasketItem?.jobStatus !== "running" || focusedManhuaLearnEpisodeIndex <= 0 || Boolean(manhuaLearnControlBusy)}
+                                disabled={
+                                  (focusedManhuaLearnServerJob?.status !== "running"
+                                    && focusedManhuaLearnBasketItem?.jobStatus !== "running")
+                                  || focusedManhuaLearnEpisodeIndex <= 0
+                                  || Boolean(manhuaLearnControlBusy)
+                                }
                                 onClick={() => void skipFocusedManhuaLearnEpisode()}
                                 className="rounded-md border border-amber-200/35 bg-amber-400/10 px-2.5 py-1 text-[10px] font-semibold text-amber-50 hover:bg-amber-400/20 disabled:opacity-40"
                               >
@@ -11947,6 +12001,34 @@ export default function PlatformPage() {
                             <span className="rounded-full border border-emerald-300/30 bg-black/25 px-2 py-0.5 text-emerald-100/85">
                               已学完 {manhuaLearnResult.learnedCount}
                             </span>
+                            {(manhuaLearnResult.skippedEpisodeIndexes?.length || 0) > 0 ? (
+                              <>
+                                <span
+                                  className="rounded-full border border-orange-300/35 bg-orange-500/10 px-2 py-0.5 text-orange-100/90"
+                                  title={`因来源受限暂跳：第 ${(manhuaLearnResult.skippedEpisodeIndexes || []).join("、")} 集；不计入已学`}
+                                >
+                                  暂跳 {manhuaLearnResult.skippedEpisodeIndexes?.length} 集（来源受限）
+                                </span>
+                                <button
+                                  type="button"
+                                  disabled={Boolean(manhuaLearnBusyKey) || focusedManhuaLearnJobActive}
+                                  onClick={() => {
+                                    const next = manhuaLearnContinueRef.current;
+                                    if (!next) return;
+                                    void runManhuaTemplateLearnCloud(
+                                      next.row,
+                                      next.rank,
+                                      next.seriesKey,
+                                      { retrySkippedEpisodes: true },
+                                    );
+                                  }}
+                                  title="重新读取合集获取新的播放地址后，只重试这些暂跳集；不重学已完成分集"
+                                  className="rounded-full border border-orange-300/35 bg-orange-400/10 px-2 py-0.5 transition enabled:cursor-pointer enabled:hover:bg-orange-400/20 disabled:opacity-45"
+                                >
+                                  重试暂跳集
+                                </button>
+                              </>
+                            ) : null}
                           </div>
                           {(manhuaLearnResult.categoryLabelZh
                             || (manhuaLearnResult.tagLabelsZh?.length || 0) > 0) ? (

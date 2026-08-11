@@ -9,6 +9,7 @@ import {
   mergeEpisodeDigestsIntoProposal,
   pickNextEpisodeIndexes,
   type ManhuaLearnEpisodeDigest,
+  pickRetrySkippedEpisodeIndexes,
 } from "./manhuaTemplateLearnSeries";
 
 function digest(i: number): ManhuaLearnEpisodeDigest {
@@ -129,5 +130,41 @@ describe("manhuaTemplateLearnSeries", () => {
     expect(card?.id).toMatch(/^tpl_series_/);
     expect(card?.hook3sZh).toMatch(/贬令|开场/);
     expect(card?.beatGrid.length).toBeGreaterThan(0);
+  });
+});
+
+describe("pickRetrySkippedEpisodeIndexes（重试暂跳集批次）", () => {
+  it("只取仍在列表里的暂跳集，升序，尊重批次上限", () => {
+    expect(
+      pickRetrySkippedEpisodeIndexes({
+        listedIndexes: [1, 2, 3, 4, 5, 6],
+        skippedIndexes: [4, 3, 99],
+        learnedIndexes: [1, 2],
+        batchSize: 8,
+      }),
+    ).toEqual([3, 4]);
+  });
+
+  it("已学成的集不再重试；空暂跳返回空组", () => {
+    expect(
+      pickRetrySkippedEpisodeIndexes({
+        listedIndexes: [1, 2, 3],
+        skippedIndexes: [2],
+        learnedIndexes: [2],
+      }),
+    ).toEqual([]);
+    expect(
+      pickRetrySkippedEpisodeIndexes({ listedIndexes: [1, 2, 3], skippedIndexes: [] }),
+    ).toEqual([]);
+  });
+
+  it("批次裁剪：暂跳 5 集 batchSize=2 只取前 2", () => {
+    expect(
+      pickRetrySkippedEpisodeIndexes({
+        listedIndexes: [1, 2, 3, 4, 5],
+        skippedIndexes: [5, 1, 3, 2, 4],
+        batchSize: 2,
+      }),
+    ).toEqual([1, 2]);
   });
 });

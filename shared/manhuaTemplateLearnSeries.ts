@@ -262,6 +262,27 @@ export function pickNextEpisodeIndexes(input: {
 }
 
 /**
+ * 「重试暂跳集」批次：只取此前因来源受限暂跳、且仍在本次列表里的集
+ * （列表每轮重新拉取，官方播放地址随之刷新）；已学成的不再重试。
+ */
+export function pickRetrySkippedEpisodeIndexes(input: {
+  listedIndexes: number[];
+  skippedIndexes?: number[];
+  learnedIndexes?: number[];
+  batchSize?: number;
+}): number[] {
+  const listed = new Set(input.listedIndexes.filter((i) => Number.isFinite(i) && i >= 1));
+  const learned = new Set(input.learnedIndexes || []);
+  const pending = Array.from(new Set(input.skippedIndexes || []))
+    .filter((i) => Number.isFinite(i) && i >= 1 && listed.has(i) && !learned.has(i))
+    .sort((a, b) => a - b);
+  if (!pending.length) return [];
+  const raw = Math.floor(Number(input.batchSize));
+  const preferred = Number.isFinite(raw) && raw > 0 ? raw : clampManhuaLearnBatchSize(undefined);
+  return pending.slice(0, Math.max(1, Math.min(preferred, pending.length, MANHUA_LEARN_BATCH_MAX)));
+}
+
+/**
  * 草版门槛（2026-08-10 用户实测反馈落地）：老口径 16 集才出总分析+入库入口，
  * 单集/短合集永远看不到模板产出。改为：学满 4 集，或该合集可学集数已全部学完
  * （2 集的合集学完 2 集就出），即先出草版；≥16 集仍是完整版口径。

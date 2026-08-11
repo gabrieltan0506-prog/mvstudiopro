@@ -388,6 +388,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       rank: typeof params.rank === "number" ? params.rank : undefined,
       batchSize: typeof params.batchSize === "number" ? params.batchSize : undefined,
       refreshPreviewFrames: params.refreshPreviewFrames === true,
+      retrySkippedEpisodes: params.retrySkippedEpisodes === true,
       learnLlm: params.learnLlm === "claude" ? "claude" : undefined,
       onProgress: reportLearnProgress,
       abortSignal: abortController.signal,

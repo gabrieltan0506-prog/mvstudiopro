@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  demoteStaleRunningManhuaLearnItems,
   getManhuaLearnContinueControl,
   isManhuaLearnEmptyBatchFailure,
   manhuaLearnResultFromJobOutput,
@@ -304,5 +305,46 @@ describe("manhuaLearnResultUi soft-fail", () => {
       complete: true,
       previewFrameUrls: ["https://storage.googleapis.com/a.jpg", "https://storage.googleapis.com/b.jpg"],
     });
+  });
+});
+
+describe("demoteStaleRunningManhuaLearnItems（僵尸进行中降级）", () => {
+  const runningItem = {
+    seriesKey: "k1",
+    continuation: {
+      row: { url: "https://www.douyin.com/collection/1", mixName: "剧A", mixId: "1", platform: "douyin" },
+      rank: 0,
+      seriesKey: "k1",
+      savedAt: 0,
+    },
+    result: {
+      ...manhuaLearnResultFromStart({ channel: "cloud", url: "https://www.douyin.com/collection/1", title: "剧A", seriesKey: "k1" }),
+      liveStatus: "running" as const,
+    },
+    updatedAt: 0,
+    jobId: "job-gone",
+    jobStatus: "running" as const,
+  };
+
+  it("jobId 不在服务端列表 → 掉到可继续态，不再显示进行中", () => {
+    const [out] = demoteStaleRunningManhuaLearnItems([runningItem], []);
+    expect(out.jobStatus).toBeUndefined();
+    expect(out.result.liveStatus).toBeUndefined();
+    expect(out.result.messageZh).toContain("继续");
+  });
+
+  it("jobId 仍在列表 → 原样保留", () => {
+    const [out] = demoteStaleRunningManhuaLearnItems(
+      [runningItem],
+      [{ jobId: "job-gone", status: "running" }],
+    );
+    expect(out.jobStatus).toBe("running");
+    expect(out.result.liveStatus).toBe("running");
+  });
+
+  it("无 jobId 的乐观占位（入队请求未返回）不动", () => {
+    const optimistic = { ...runningItem, jobId: undefined };
+    const [out] = demoteStaleRunningManhuaLearnItems([optimistic], []);
+    expect(out.result.liveStatus).toBe("running");
   });
 });
