@@ -25,7 +25,6 @@ import {
   MANHUA_LEARN_ANALYSIS_TARGET,
   MANHUA_LEARN_BATCH_DEFAULT,
   MANHUA_LEARN_CHECKPOINT_SEC,
-  MANHUA_LEARN_CONSECUTIVE_FAIL_STOP,
   MANHUA_LEARN_EPISODE_RETRY_MAX,
   MANHUA_LEARN_MAX_DURATION_SEC,
   canEmitManhuaLearnAnalysis,
@@ -1255,6 +1254,7 @@ export async function runManhuaTemplateLearn(
           ? listed.map((e) => e.index).sort((a, b) => a - b)
           : undefined,
         learnedEpisodeIndexes: [],
+        skippedEpisodeIndexes: [],
         updatedAt: new Date().toISOString(),
         dramaKind: seriesClassify.dramaKind,
         categoryLabelZh: seriesClassify.categoryLabelZh,
@@ -1290,6 +1290,8 @@ export async function runManhuaTemplateLearn(
       learnedEpisodeIndexes: Array.from(
         new Set([...prog.learnedEpisodeIndexes, ...completeIndexes]),
       ).sort((a, b) => a - b),
+      skippedEpisodeIndexes: (prog.skippedEpisodeIndexes || [])
+        .filter((index) => !completeIndexes.includes(index)),
       updatedAt: new Date().toISOString(),
     };
     await writeJsonGcs(
@@ -1307,6 +1309,7 @@ export async function runManhuaTemplateLearn(
       : pickNextEpisodeIndexes({
           listedIndexes,
           learnedIndexes: prog.learnedEpisodeIndexes,
+          skippedIndexes: prog.skippedEpisodeIndexes,
           batchSize,
         });
     if (!batchIndexes.length) {
@@ -1440,9 +1443,6 @@ export async function runManhuaTemplateLearn(
     const byIndex = new Map(listed.map((e) => [e.index, e]));
     const batchLearnedIndexes: number[] = [];
     const episodeFailNotes: string[] = [];
-    const consecutiveStop = Math.max(1, MANHUA_LEARN_CONSECUTIVE_FAIL_STOP);
-    let consecutiveFails = 0;
-
     for (const idx of batchIndexes) {
       const ep = byIndex.get(idx);
       if (!ep) continue;
@@ -1465,21 +1465,17 @@ export async function runManhuaTemplateLearn(
           await writeJsonGcs(episodeObjectName(seriesKey, idx), repaired);
           await input.onEpisodeCheckpoint?.(toDigestPreview(repaired));
           batchLearnedIndexes.push(idx);
-          consecutiveFails = 0;
           continue;
         } catch (e) {
           if (e instanceof Error && /ManhuaLearn(Cancelled|SkipEpisode)Error/.test(e.name)) throw e;
           const errZh = mapManhuaLearnFetchError(e);
           episodeFailNotes.push(`第 ${idx} 集静帧补抽失败：${errZh}`);
-          consecutiveFails += 1;
           await progress(MANHUA_LEARN_STAGE.failed, `第 ${idx} 集静帧补抽失败：${errZh}`);
-          if (consecutiveFails >= consecutiveStop) throw new Error(`连续 ${consecutiveStop} 集静帧补抽失败，已停止本轮。最近：${errZh}`);
           continue;
         }
       }
       // 已学完：跳过，不重下（防容量/限流）
       if (existing && isManhuaLearnEpisodeComplete(existing)) {
-        consecutiveFails = 0;
         if (!prog.learnedEpisodeIndexes.includes(idx)) {
           prog.learnedEpisodeIndexes = Array.from(
             new Set([...prog.learnedEpisodeIndexes, idx]),
@@ -1518,7 +1514,6 @@ export async function runManhuaTemplateLearn(
         if (!isManhuaLearnEpisodeComplete(digest)) {
           throw new Error(`第 ${idx} 集未学完（检查点已保留，可续学）`);
         }
-        consecutiveFails = 0;
         batchLearnedIndexes.push(idx);
         prog.learnedEpisodeIndexes = Array.from(
           new Set([...prog.learnedEpisodeIndexes, idx]),
@@ -1535,7 +1530,6 @@ export async function runManhuaTemplateLearn(
       } catch (e) {
         if (e instanceof Error && e.name === "ManhuaLearnCancelledError") throw e;
         if (e instanceof Error && e.name === "ManhuaLearnSkipEpisodeError") {
-          consecutiveFails = 0;
           await progress(MANHUA_LEARN_STAGE.persist, `第 ${idx} 集已按要求跳过，继续下一集`);
           continue;
         }
@@ -1546,28 +1540,21 @@ export async function runManhuaTemplateLearn(
           ? `第 ${idx} 集权限不足，已跳过`
           : `第 ${idx} 集失败已跳过：${errZh}`;
         episodeFailNotes.push(note);
-        consecutiveFails += 1;
+        prog.skippedEpisodeIndexes = Array.from(
+          new Set([...(prog.skippedEpisodeIndexes || []), idx]),
+        ).sort((a, b) => a - b);
+        prog.updatedAt = new Date().toISOString();
+        await writeJsonGcs(
+          `manhua-template-learn/series/${seriesKey}/progress.json`,
+          prog,
+        );
         console.warn(
-          "[manhuaTemplateLearn] skip ep → next:",
+          "[manhuaTemplateLearn] source unavailable → persist skip and continue:",
           idx,
-          `consecutiveFails=${consecutiveFails}/${consecutiveStop}`,
           errZh,
         );
         await progress(MANHUA_LEARN_STAGE.failed, note);
-        if (consecutiveFails >= consecutiveStop) {
-          throw new Error(
-            `连续 ${consecutiveStop} 集学习失败，已停止本轮（列表共 ${listed.length} 集，本轮新增 ${batchLearnedIndexes.length} 集）。最近：${note}。检查点已保留，可稍后续学。`,
-          );
-        }
       }
-    }
-
-    if (batchLearnedIndexes.length === 0 && batchIndexes.length > 0) {
-      const last = episodeFailNotes[episodeFailNotes.length - 1] || "本轮未能成功采下新集";
-      // 全部跳过但未达连续停机阈值（例如只试了 1–2 集）→ 仍给失败终态，避免伪装成功
-      throw new Error(
-        `${last}（本轮尝试 ${batchIndexes.length} 集均未新增完整学习）。请换合集/成片或稍后重试。`,
-      );
     }
 
     const digestsAll = await loadAllDigests(seriesKey);

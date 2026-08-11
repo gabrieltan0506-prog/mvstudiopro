@@ -38,8 +38,6 @@ export const MANHUA_LEARN_CHECKPOINT_SEC = 10 * 60;
 export const MANHUA_LEARN_ANALYZE_WINDOW_SEC = MANHUA_LEARN_CHECKPOINT_SEC;
 /** 单集内分片失败最多重试次数（含首次） */
 export const MANHUA_LEARN_EPISODE_RETRY_MAX = 3;
-/** 连续多集下片/学习失败达到此次数则停止本轮（中间跳过，不立刻整轮报错） */
-export const MANHUA_LEARN_CONSECUTIVE_FAIL_STOP = 3;
 
 /** 一集内的 10 分钟（或末段不足）学习块 */
 export type ManhuaLearnEpisodeChunk = {
@@ -204,6 +202,8 @@ export type ManhuaLearnSeriesProgress = {
   /** 列表里出现过的全部集号（判「合集全学完」用集合包含，不用数量比较） */
   listedEpisodeIndexes?: number[];
   learnedEpisodeIndexes: number[];
+  /** 当前来源不可用而暂跳的集号；用于下轮从后续集继续，不计入已学。 */
+  skippedEpisodeIndexes?: number[];
   updatedAt: string;
   dramaKind?: ManhuaDramaKind;
   categoryLabelZh?: string;
@@ -241,11 +241,12 @@ export function clampManhuaLearnBatchSize(raw?: number): number {
 export function pickNextEpisodeIndexes(input: {
   listedIndexes: number[];
   learnedIndexes: number[];
+  skippedIndexes?: number[];
   batchSize?: number;
 }): number[] {
-  const learned = new Set(input.learnedIndexes);
+  const unavailable = new Set([...input.learnedIndexes, ...(input.skippedIndexes || [])]);
   const pending = input.listedIndexes
-    .filter((i) => Number.isFinite(i) && i >= 1 && !learned.has(i))
+    .filter((i) => Number.isFinite(i) && i >= 1 && !unavailable.has(i))
     .sort((a, b) => a - b);
   if (!pending.length) return [];
   const raw = Math.floor(Number(input.batchSize));

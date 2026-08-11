@@ -51,6 +51,17 @@ describe("manhuaTemplateLearnSeries", () => {
     expect(picked).toEqual([4, 5, 6, 7, 8, 9, 10, 11]);
   });
 
+  it("skips temporarily unavailable episodes and continues from later episodes", () => {
+    expect(
+      pickNextEpisodeIndexes({
+        listedIndexes: [1, 2, 3, 4, 5, 6],
+        learnedIndexes: [1, 2],
+        skippedIndexes: [3, 4],
+        batchSize: 8,
+      }),
+    ).toEqual([5, 6]);
+  });
+
   it("picks single remaining episode without forcing batch of 8", () => {
     expect(
       pickNextEpisodeIndexes({
