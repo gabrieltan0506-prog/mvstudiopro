@@ -340,6 +340,16 @@ function loadCanvasWorkspaceMode(): CanvasWorkspaceMode {
   try {
     const raw = localStorage.getItem(LS_CANVAS_MODE_KEY);
     if (raw === "manhua" || raw === "freeform" || raw === "pick") return raw;
+    /**
+     * 模式标记缺失（换浏览器/清缓存/无痕）时不再一律落双入口选择页：
+     * 本机已有漫剧剧集的老用户直达漫剧工厂——用户实反馈「一开始都
+     * 不会进入到这页面」（2026-08-11）。真新用户（无任何漫剧存档）
+     * 仍看选择页。
+     */
+    const session = localStorage.getItem("mv-manhua-writer-session-v1");
+    if (session && session.length > 200 && /"topic"\s*:\s*"[^"]/.test(session)) {
+      return "manhua";
+    }
   } catch {
     /* ignore */
   }

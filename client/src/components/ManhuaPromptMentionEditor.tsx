@@ -18,6 +18,7 @@ const KIND_TONE: Record<string, string> = {
   服装: "text-fuchsia-200",
   场景: "text-sky-200",
   道具: "text-emerald-200",
+  板: "text-orange-200",
 };
 
 const PICKER_W = 288;
@@ -58,6 +59,7 @@ export default function ManhuaPromptMentionEditor({
   registry,
   assetCanon,
   onRequestGenerateAsset,
+  boardCandidate = null,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -72,16 +74,31 @@ export default function ManhuaPromptMentionEditor({
   assetCanon?: ManhuaWriterAssetCanon | null;
   /** 点了还没出图的候选：跳去生成那一张 */
   onRequestGenerateAsset?: (candidate: ManhuaMentionCandidate) => void;
+  /** 本集导演板（有则出现 @板N 候选：红线=角色动线、青线=镜头轨迹，只进提示词层） */
+  boardCandidate?: { tag: string; labelZh: string; thumbUrl?: string } | null;
 }) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const [mention, setMention] = useState<{ at: number; query: string } | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
 
-  const candidates = useMemo(
-    () => buildManhuaMentionCandidates({ registry, prompt: value, assetCanon }),
-    [registry, value, assetCanon],
-  );
+  const candidates = useMemo(() => {
+    const base = buildManhuaMentionCandidates({ registry, prompt: value, assetCanon });
+    if (!boardCandidate?.tag) return base;
+    // 导演板：插 tag 不落对照表（出片链按段自动带板；红青线只进提示词层）
+    return [
+      ...base,
+      {
+        tag: boardCandidate.tag,
+        assetId: `board:${boardCandidate.tag}`,
+        labelZh: boardCandidate.labelZh,
+        kind: "板",
+        duty: null,
+        ready: true,
+        bound: false,
+      } as unknown as ManhuaMentionCandidate,
+    ];
+  }, [registry, value, assetCanon, boardCandidate]);
 
   const matches = useMemo(() => {
     if (!mention) return [];
@@ -136,6 +153,16 @@ export default function ManhuaPromptMentionEditor({
     }
     const caret = el.selectionStart ?? 0;
     const withTag = `${value.slice(0, mention.at)}${c.tag}${value.slice(caret)}`;
+    if (c.kind === "板") {
+      onChange(withTag);
+      setMention(null);
+      const posB = mention.at + c.tag.length;
+      window.requestAnimationFrame(() => {
+        el.focus();
+        el.setSelectionRange(posB, posB);
+      });
+      return;
+    }
     const meta: ManhuaPromptAssetMeta = {
       tag: c.tag,
       assetId: c.assetId,
