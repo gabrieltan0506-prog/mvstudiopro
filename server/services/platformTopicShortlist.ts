@@ -617,9 +617,10 @@ const EXPAND_EVOLINK_DIRECT_CHAT_URL = String(
 
 /**
  * 输出封顶：Evolink 的 K3 reasoning_effort 只有 max（强制深思考），
- * 思考 token 全按输出计费，不封顶单条成本能翻倍、击穿按条毛利。
+ * 思考 token 全按输出计费。2026-08-12 用户拍板质量优先，上限提到 32k
+ *（worst case 单条 ~$0.48，接受偶发毛利下探换文案质量）。
  */
-const EXPAND_MAX_COMPLETION_TOKENS = 12_000;
+const EXPAND_MAX_COMPLETION_TOKENS = 32_000;
 /** Qwen 3.8 Max 输出上限（2026-08-12 用户拍板 65k）：单价低（$5.295/M），给足思考与长稿余量 */
 const EXPAND_QWEN_MAX_COMPLETION_TOKENS = 65_536;
 
@@ -763,15 +764,15 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
       const res = await invokeLLM({
         provider: "openai",
         modelName: openRouterModel,
-        max_tokens: 16000,
+        // 2026-08-12 用户拍板：medium 写得不够好 → high + 32k 上限（质量优先，接受毛利下探）
+        max_tokens: 32_000,
         temperature: 0.55,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
         ],
-        // 产品口径：固定 medium，不用 minimal
-        reasoningEffort: "medium",
+        reasoningEffort: "high",
       });
       return extractFirstChoicePlainText(res).trim();
     };
