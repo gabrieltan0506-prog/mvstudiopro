@@ -1417,9 +1417,43 @@ async function runSeedance25EvolinkJob(
   // extend 官方支持 -1 自动（跟内容走）；显式时长 4–30s。原实现把 -1 clamp 成 4，自动档不可达
   const wantsAutoDuration =
     Number(rawDuration) === -1 || String(rawDuration).trim().toLowerCase() === "auto";
-  // edit 产出与主片等长：计费按前端探测的主片时长（editSourceDurationSec），
-  // 不再按写死的 15s 扣——那会让扣费额与产出长度完全脱钩
-  const editSourceSec = Math.round(Number(body.editSourceDurationSec) || 0);
+  /**
+   * edit 产出与主片等长：时长由服务端 ffprobe 亲测远程主片，
+   * 客户端传值（editSourceDurationSec）一律不信——可被改成 1s 把
+   * 30s 编辑压成最低价（2026-08-11 审计 P0 高风险）。
+   * 探测失败按 clamp 上限 30s 报价：fail-closed，宁多勿漏；
+   * 多收的部分产出短于报价时走既有对账退款路径。
+   */
+  let editSourceSec = 0;
+  if (mode === "video_edit") {
+    const mainVideoUrl = String(videoUrls?.[0] || "").trim();
+    if (/^https:\/\//i.test(mainVideoUrl)) {
+      try {
+        const { execFile } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const probe = await promisify(execFile)(
+          "ffprobe",
+          [
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            mainVideoUrl,
+          ],
+          { timeout: 15_000 },
+        );
+        const parsed = Number(String(probe.stdout || "").trim());
+        if (Number.isFinite(parsed) && parsed > 0) {
+          editSourceSec = Math.max(1, Math.round(parsed));
+        }
+      } catch {
+        // 探测不到就走上限，不回落到客户端值
+      }
+    }
+    if (!editSourceSec) editSourceSec = 30;
+  }
   const duration = clampSeedanceDuration(
     "2.5",
     mode === "video_edit" && editSourceSec > 0
