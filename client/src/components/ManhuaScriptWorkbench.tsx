@@ -64,6 +64,10 @@ import {
 } from "@shared/manhuaCustomAssetRefs";
 import { customAssetRefClaimsAnchor } from "@shared/manhuaAssetScriptSync";
 import {
+  buildManhuaAtReferenceIndex,
+  resolveManhuaAtReferences,
+} from "@shared/manhuaAtReference";
+import {
   MANHUA_ASSET_REGEN_NOTE_MAX,
   manhuaAssetRegenPriceLabelZh,
   normalizeManhuaAssetRegenNoteZh,
@@ -5378,6 +5382,18 @@ export default function ManhuaScriptWorkbench({
                         const hasAssetLock = /【资产·Image对照】|【资产】|【资产锁/.test(p);
                         const hasDuty = /【参考职责】/.test(p);
                         const tags = p.match(/@(?:角色|场景|道具)\d+/g) || [];
+                        // @引用断链检查：@图NN/@音N/@板N 指到不存在的实体就标红，
+                        // 出片前一眼可见，绝不静默跳过（shared 解析器同源）
+                        const atRefMissing = resolveManhuaAtReferences({
+                          text: p,
+                          index: buildManhuaAtReferenceIndex({
+                            registry: assetLockRegistry,
+                            boardUrlByEpisode: directorBoardMainUrl
+                              ? { [focusEpisode]: directorBoardMainUrl }
+                              : null,
+                          }),
+                          registry: assetLockRegistry,
+                        }).missing;
                         const voiceGate = evaluateManhuaCrossSegmentVoiceGate({
                           localSegmentIndex: row.segmentIndex,
                           currentPrompt: p,
@@ -5411,6 +5427,15 @@ export default function ManhuaScriptWorkbench({
                             >
                               {hasAssetLock ? "Image对照✓" : "Image对照缺失"}
                             </span>
+                            {atRefMissing.map((t) => (
+                              <span
+                                key={`at-missing-${t}`}
+                                title={`@${t} 指到的资产不存在（可能已删除或敲错）；出片前请修正或删掉这个引用`}
+                                className="rounded bg-red-500/30 px-1 py-px text-[8px] font-semibold text-red-50"
+                              >
+                                @{t} 断链
+                              </span>
+                            ))}
                             <span
                               className={`rounded px-1 py-px text-[8px] font-semibold ${
                                 voiceGate.requiredTags.length === 0
