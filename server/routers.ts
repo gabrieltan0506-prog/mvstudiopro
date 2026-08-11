@@ -6061,6 +6061,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           pickIds: input.picks.map((p) => p.id),
         });
         const shouldCharge = !isAdminUser && !freeRetry.free;
+        const jobId = nanoid(16);
         if (shouldCharge) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < cost) {
@@ -6074,9 +6075,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             cost,
             "platformTopicExpand",
             `初选扩写 ${input.picks.length} 条正式文案（${perItemCost} 点/条）`,
+            { chargeKey: `platformTopicExpand/${userId}/${jobId}` },
           );
         }
-        const jobId = nanoid(16);
         await createJobRecord({
           id: jobId,
           userId: String(userId),

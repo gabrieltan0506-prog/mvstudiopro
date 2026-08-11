@@ -638,11 +638,14 @@ async function invokeExpandViaEvolink(params: {
     max_completion_tokens: EXPAND_MAX_COMPLETION_TOKENS,
   };
   if (params.model === "qwen3.8-max") {
-    // Evolink Qwen：档位 low|medium|xhigh；勿与 thinking_budget 同传（同知识卡提炼口径）
+    // Evolink Qwen：档位 low|medium|xhigh；勿与 thinking_budget 同传（同知识卡提炼口径，max_completion_tokens）
     body.enable_thinking = true;
     body.reasoning_effort = "medium";
   } else {
+    // 非 Qwen 走 max_tokens（对齐 knowledgeCardDistill 先例，防封顶字段不被识别而静默失效）
     body.reasoning_effort = "max";
+    body.max_tokens = EXPAND_MAX_COMPLETION_TOKENS;
+    delete body.max_completion_tokens;
   }
   const res = await fetch(EXPAND_EVOLINK_DIRECT_CHAT_URL, {
     method: "POST",
@@ -654,13 +657,19 @@ async function invokeExpandViaEvolink(params: {
   if (!res.ok) {
     throw new Error(`Evolink ${params.model} HTTP ${res.status}: ${raw.slice(0, 160)}`);
   }
+  // 反空壳：Cloudflare 假 200 / HTML 页 / 空 content 一律抛错换通道，不许静默返回空串
+  let json: { choices?: Array<{ message?: { content?: unknown } }> };
   try {
-    const json = JSON.parse(raw) as { choices?: Array<{ message?: { content?: unknown } }> };
-    const content = json.choices?.[0]?.message?.content;
-    return typeof content === "string" ? content.trim() : "";
+    json = JSON.parse(raw) as typeof json;
   } catch {
-    return "";
+    throw new Error(`Evolink ${params.model} 非 JSON 响应：${raw.slice(0, 120)}`);
   }
+  const content = json.choices?.[0]?.message?.content;
+  const text = typeof content === "string" ? content.trim() : "";
+  if (text.length < 20) {
+    throw new Error(`Evolink ${params.model} 内容过短（${text.length} 字符）`);
+  }
+  return text;
 }
 
 export async function expandPlatformTopicPicks(params: {
@@ -827,6 +836,15 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
         );
         await new Promise((r) => setTimeout(r, attempt * 4000));
       }
+    }
+    if (!llmText && !lastErr) {
+      // 三通道全空回但没抛错：也算失败进清单（可退款/免重跑），不许落骨架空壳照收费
+      failed.push({
+        id: pick.id,
+        title: pick.title,
+        reason: "上游多次空回（未抛错）",
+      });
+      continue;
     }
     if (!llmText && lastErr) {
       // 这一条放弃，继续跑后面的；失败清单随 diagnostics 回给前端
