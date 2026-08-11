@@ -3319,7 +3319,26 @@ export default function ManhuaScriptWorkbench({
                   <p className="mh-hint mt-0.5 text-[10px] leading-4 text-white/45">
                     人名与场景会跟垫图一一对应。关键静帧请先挂上参考图，再出成片。
                   </p>
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {compactUi
+                    ? (() => {
+                        const missing = assetLockRegistry.slots.filter(
+                          (s) => !isBindableAssetPath(String(s.path || "")),
+                        );
+                        return (
+                          <p className="mt-1 text-[10px] text-cyan-50/80">
+                            已挂图 {assetLockRegistry.slots.length - missing.length}
+                            {missing.length
+                              ? ` · 缺图 ${missing.length}：${missing
+                                  .slice(0, 4)
+                                  .map((s) => s.labelZh || s.tag)
+                                  .join("、")}${missing.length > 4 ? "…" : ""}`
+                              : " · 全部就位"}
+                            （点顶栏「显示说明」看全表）
+                          </p>
+                        );
+                      })()
+                    : null}
+                  <div className={`mt-1.5 flex flex-wrap gap-1.5 ${compactUi ? "hidden" : ""}`}>
                     {assetLockRegistry.slots.map((s) => {
                       /**
                        * 必须与成片侧同一判定。`buildManhuaSheetPropSubSlots` 在既无道具单件图
@@ -3377,7 +3396,7 @@ export default function ManhuaScriptWorkbench({
                       </div>
                     </div>
                   ) : null}
-                  <div className="mt-2 border-t border-cyan-400/20 pt-1.5">
+                  <div className={`mt-2 border-t border-cyan-400/20 pt-1.5 ${compactUi ? "hidden" : ""}`}>
                     <div className="text-[10px] font-semibold text-emerald-50/90">
                       角色声线参考（可选）
                     </div>
@@ -3459,7 +3478,7 @@ export default function ManhuaScriptWorkbench({
                       </div>
                     ) : null}
                   </div>
-                  {onAudioReferenceLockChange ? (
+                  {!compactUi && onAudioReferenceLockChange ? (
                     <div className="mt-2 border-t border-cyan-400/20 pt-1.5">
                       <div className="text-[10px] font-semibold text-sky-50/90">
                         参考音频（BGM / 对白口音）· 可选
