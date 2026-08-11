@@ -437,10 +437,13 @@ describe("canvasDramaStudio factory", () => {
     const inn = laid.find((b) => b.id === "sceneplate-inn")!;
     expect(inn.y).toBeGreaterThan(hero.y);
     expect(keyarts.length).toBeGreaterThanOrEqual(6);
-    // 四柱：静帧一根柱（同 x、y 递增），柱在资产柱右侧
+    // 段列（2026-08-11 手绘拍板）：每段一竖列——同段 3 镜同 x 纵排，跨段换列
     expect(keyarts[1]!.y).toBeGreaterThan(keyarts[0]!.y);
     expect(keyarts[1]!.x).toBe(keyarts[0]!.x);
-    expect(keyarts[5]!.x).toBe(keyarts[0]!.x);
+    expect(keyarts[2]!.x).toBe(keyarts[0]!.x);
+    // 第 4 镜属第 2 段：另起一列（x 右移），y 从列顶重开
+    expect(keyarts[3]!.x).toBeGreaterThan(keyarts[0]!.x);
+    expect(keyarts[3]!.y).toBeLessThanOrEqual(keyarts[2]!.y);
     expect(keyarts[0]!.x).toBeGreaterThan(assets[0]!.x);
     // 缩略尺寸：右栏一眼看全，不再用默认 420×360
     expect(keyarts[0]!.width).toBeLessThanOrEqual(180);
@@ -449,7 +452,7 @@ describe("canvasDramaStudio factory", () => {
     // 资产柱单列纵排：角色/场景同 x，场景在角色下方
     expect(inn.x).toBe(hero.x);
 
-    // 成片柱在静帧柱右侧：各段同 x、y 随段号递增
+    // 成片柱在全部段列右侧：单 x、y 随段号递增
     const clips = laid
       .filter((b) => b.id.startsWith("clip-") && (/-g\d{2,}/i.test(b.id) || /-s\d{2,}/.test(b.id)))
       .sort(
@@ -457,7 +460,8 @@ describe("canvasDramaStudio factory", () => {
           resolveClipSegmentIndex(a.id, a.prompt) - resolveClipSegmentIndex(b.id, b.prompt),
       );
     expect(clips.length).toBeGreaterThanOrEqual(2);
-    expect(clips[0]!.x).toBeGreaterThan(keyarts[0]!.x);
+    const maxKeyartX = Math.max(...keyarts.map((k) => k.x));
+    expect(clips[0]!.x).toBeGreaterThan(maxKeyartX);
     for (let i = 1; i < clips.length; i++) {
       expect(clips[i]!.x).toBe(clips[0]!.x);
       expect(clips[i]!.y).toBeGreaterThan(clips[i - 1]!.y);

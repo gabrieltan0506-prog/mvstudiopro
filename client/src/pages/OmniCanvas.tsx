@@ -122,7 +122,7 @@ import {
   syncManhuaClipAssetEdges,
   type ManhuaFactoryStageKey,
 } from "@/lib/canvasDramaStudio";
-import { layoutManhuaCanvasBlocks, MANHUA_CANVAS_LAYOUT } from "@/lib/manhuaCanvasLayout";
+import { MANHUA_CANVAS_LAYOUT } from "@/lib/manhuaCanvasLayout";
 import {
   collectManhuaClipDockItems,
   episodeIndexesFromDockSelection,
@@ -769,10 +769,6 @@ export default function OmniCanvas() {
   const [clearSeriesWithBackup, setClearSeriesWithBackup] = useState(true);
   const [writerFocusEpisode, setWriterFocusEpisode] = useState(() =>
     Math.max(1, Math.floor(Number(initialWriterSession?.focusEpisode) || 1)),
-  );
-  /** 折叠起来的集：多集铺开后画布会很长，折叠让它只占一行高度 */
-  const [collapsedManhuaEpisodes, setCollapsedManhuaEpisodes] = useState<Set<number>>(
-    () => new Set(),
   );
   const [directorUnlocked, setDirectorUnlocked] = useState(
     () => Boolean(initialWriterSession?.directorUnlocked),
@@ -2318,6 +2314,32 @@ export default function OmniCanvas() {
         const finalVideoUrl = String(out.finalVideoUrl || out.videoUrl || "").trim();
         if (!finalVideoUrl) throw new Error("合成完成但未返回成片地址");
         setFinalAssembleVideoUrl(finalVideoUrl);
+        // 整集节点落画布（段列制最右收口）：成片不再只活在坞面板的 state 里
+        setBlocks((prev) => {
+          const finalId = `final-e${String(writerFocusEpisode).padStart(2, "0")}`;
+          const existing = prev.find((b) => b.id === finalId);
+          const nextBlock = {
+            ...(existing ?? {
+              ...defaultCanvasBlock("video", 0, 0),
+              id: finalId,
+              episodeIndex: writerFocusEpisode,
+            }),
+            prompt: existing?.prompt || `第${writerFocusEpisode}集 · 整集成片`,
+            status: "done" as const,
+            outputUrl: finalVideoUrl,
+          };
+          const next = existing
+            ? prev.map((b) => (b.id === finalId ? nextBlock : b))
+            : [...prev, nextBlock];
+          const laid = layoutManhuaEpisodeReadableChain(next, writerFocusEpisode, {
+            assetCanon: projectBible?.assetCanon,
+          });
+          setEdges((eds) => {
+            saveCanvasState(laid, eds);
+            return eds;
+          });
+          return laid;
+        });
         pushDebug("assemble:done", {
           level: "ok",
           detail: `scenes=${out.sceneCount || ready.length} · final ok`,
@@ -2355,6 +2377,8 @@ export default function OmniCanvas() {
       writerPack?.logline,
       projectBible?.seriesTitle,
       projectBible?.logline,
+      projectBible?.assetCanon,
+      writerFocusEpisode,
       pushDebug,
       user?.id,
     ],
@@ -4564,7 +4588,7 @@ export default function OmniCanvas() {
   useEffect(() => {
     if (fourLaneMigratedRef.current || canvasMode !== "manhua") return;
     try {
-      if (window.localStorage.getItem("mv_manhua_layout_4lane_v1") === "1") {
+      if (window.localStorage.getItem("mv_manhua_layout_seglane_v1") === "1") {
         fourLaneMigratedRef.current = true;
         return;
       }
@@ -4580,7 +4604,7 @@ export default function OmniCanvas() {
     if (!hasManhuaNodes) return;
     fourLaneMigratedRef.current = true;
     try {
-      window.localStorage.setItem("mv_manhua_layout_4lane_v1", "1");
+      window.localStorage.setItem("mv_manhua_layout_seglane_v1", "1");
     } catch {
       /* 忽略 */
     }
@@ -4599,8 +4623,8 @@ export default function OmniCanvas() {
       });
       return next;
     });
-    toast.message("画布已切换为四柱排布", {
-      description: "资产柱｜静帧柱｜成片柱，段落从上往下；点「对齐画布竖排」可随时重排",
+    toast.message("画布已切换为段列排布", {
+      description: "资产柱｜每段一列（导演板+静帧）｜成片柱｜整集；点「对齐画布竖排」可随时重排",
     });
   }, [blocks, canvasMode, writerFocusEpisode, projectBible?.assetCanon, customAssetRefs]);
 
@@ -5360,8 +5384,13 @@ export default function OmniCanvas() {
          * 静帧+导演版、成片提示词、出片。旧版只认角色和场景、各挤成一行，
          * 道具没人排，留在生成时的原始坐标上，画面就是一团乱。
          */
-        working = layoutManhuaCanvasBlocks(working, {
-          collapsedEpisodes: collapsedManhuaEpisodes,
+        working = layoutManhuaEpisodeReadableChain(working, writerFocusEpisode, {
+          assetCanon: projectBible?.assetCanon,
+          characterSheetUrlById: collectManhuaCharacterSheetUrlById(
+            working,
+            projectBible?.assetCanon,
+          ),
+          propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
         });
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
@@ -5410,8 +5439,8 @@ export default function OmniCanvas() {
             block.refImageUrl = deriveRefUrl || undefined;
             block.width = 360;
             block.height = 400;
-            working = layoutManhuaCanvasBlocks([...working, block], {
-              collapsedEpisodes: collapsedManhuaEpisodes,
+            working = layoutManhuaEpisodeReadableChain([...working, block], writerFocusEpisode, {
+              assetCanon: projectBible?.assetCanon,
             });
             block = working.find((b) => b.id === plan.id)!;
           } else if (!(block.outputUrl || block.outputUrls?.[0]) || isRegenPlan(plan.id)) {
@@ -5561,21 +5590,18 @@ export default function OmniCanvas() {
           }
         }
         /**
-         * readableChain 除了排版还负责给节点盖 @资产 标签，所以留着照跑；
-         * 但坐标以统一排版为准——三套排位互相覆盖正是画布乱的根源，
-         * 让 layoutManhuaCanvasBlocks 做最后一道，谁也别再改坐标。
+         * 段列制后 readableChain 是唯一版式出口（排版+@资产标签一体）；
+         * 旧三柱大卡 layoutManhuaCanvasBlocks 退役——双版式互相覆盖正是
+         * 「画布根本没变/一团乱」的根源（2026-08-11 段列化收敛）。
          */
-        working = layoutManhuaCanvasBlocks(
-          layoutManhuaEpisodeReadableChain(working, writerFocusEpisode, {
-            assetCanon: projectBible?.assetCanon,
-            characterSheetUrlById: collectManhuaCharacterSheetUrlById(
-              working,
-              projectBible?.assetCanon,
-            ),
-            propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
-          }),
-          { collapsedEpisodes: collapsedManhuaEpisodes },
-        );
+        working = layoutManhuaEpisodeReadableChain(working, writerFocusEpisode, {
+          assetCanon: projectBible?.assetCanon,
+          characterSheetUrlById: collectManhuaCharacterSheetUrlById(
+            working,
+            projectBible?.assetCanon,
+          ),
+          propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
+        });
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
         {

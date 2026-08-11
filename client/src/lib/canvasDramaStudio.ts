@@ -2464,7 +2464,12 @@ function manhuaLayoutCompactSizeFor(b: CanvasBlock): { width: number; height: nu
   ) {
     return { width: MANHUA_LAYOUT_ASSET_W, height: MANHUA_LAYOUT_ASSET_H };
   }
-  if (id.startsWith("keyart-") || id.startsWith("clip-")) {
+  if (
+    id.startsWith("keyart-") ||
+    id.startsWith("clip-") ||
+    id.startsWith("board-") ||
+    id.startsWith("final-")
+  ) {
     return { width: MANHUA_LAYOUT_MEDIA_W, height: MANHUA_LAYOUT_MEDIA_H };
   }
   if (
@@ -2643,7 +2648,7 @@ export function layoutManhuaEpisodeReadableChain(
     customRefs?: ManhuaCustomAssetRef[] | null;
   },
 ): CanvasBlock[] {
-  const ep =
+  const focusEp =
     typeof episodeIndex === "number" && episodeIndex >= 1
       ? Math.floor(episodeIndex)
       : getBlockEpisodeIndex(blocks.find((b) => b.id.startsWith("reverse-") || b.id.startsWith("story-")) || blocks[0]!) ??
@@ -2652,114 +2657,154 @@ export function layoutManhuaEpisodeReadableChain(
   const originY = opts?.originY ?? 40;
   const gapX = opts?.colGap ?? MANHUA_LAYOUT_COMPACT_COL_GAP;
   const gapY = opts?.rowGap ?? MANHUA_LAYOUT_COMPACT_ROW_GAP;
-  const stackPer = opts?.stackPerCol ?? MANHUA_LAYOUT_STACK_PER_COL;
-  const assetsPerRow = 4;
-  const assetRowGap = Math.round(gapY * 0.72);
-  const sameEpisode = (b: CanvasBlock) => (getBlockEpisodeIndex(b) ?? 1) === ep;
 
-  const pick = (prefix: string) =>
-    blocks.filter((b) => b.id.startsWith(`${prefix}-`) && sameEpisode(b));
-
-  const textCols = [
-    pick("story")[0],
-    pick("bible")[0],
-    pick("beats")[0],
-    pick("reverse")[0],
-  ].filter(Boolean) as CanvasBlock[];
-
+  /**
+   * 段列布局（2026-08-11 用户手绘拍板）：
+   *   资产柱（全集共用）| 段01列 段02列 …（导演板头卡+3 镜静帧纵排）| 成片柱 | 整集
+   * 多集纵向分带：焦点集展开为段列几何，其余集折叠为一行（切集即展开）。
+   * 段边界优先认 clip.parentId→段首镜；无信息按「每段恰 3 镜」全仓不变量切组。
+   */
+  const isPropLike = (id: string) =>
+    id.startsWith("propplate-") ||
+    id.startsWith("propsheet-") ||
+    id.startsWith("prop-") ||
+    id.startsWith("wardrobeplate-") ||
+    id.startsWith("wardrobe-");
   const charWall = blocks
-    .filter((b) => b.id.startsWith("charsheet-") && sameEpisode(b))
-    .sort((a, b) => a.id.localeCompare(b.id));
-  const sceneWall = blocks
-    .filter((b) => b.id.startsWith("sceneplate-") && sameEpisode(b))
+    .filter((b) => b.id.startsWith("charsheet-"))
     .sort((a, b) => a.id.localeCompare(b.id));
   const propWall = blocks
-    .filter(
-      (b) =>
-        sameEpisode(b) &&
-        (b.id.startsWith("propplate-") ||
-          b.id.startsWith("propsheet-") ||
-          b.id.startsWith("prop-")),
-    )
+    .filter((b) => isPropLike(b.id))
     .sort((a, b) => a.id.localeCompare(b.id));
-  // 无集号孤儿：挂到对应墙末尾，仍分行
-  for (const b of blocks) {
-    if (getBlockEpisodeIndex(b) != null) continue;
-    if (b.id.startsWith("charsheet-") && !charWall.some((x) => x.id === b.id)) {
-      charWall.push(b);
-    } else if (b.id.startsWith("sceneplate-") && !sceneWall.some((x) => x.id === b.id)) {
-      sceneWall.push(b);
-    } else if (
-      (b.id.startsWith("propplate-") ||
-        b.id.startsWith("propsheet-") ||
-        b.id.startsWith("prop-")) &&
-      !propWall.some((x) => x.id === b.id)
-    ) {
-      propWall.push(b);
-    }
-  }
+  const sceneWall = blocks
+    .filter((b) => b.id.startsWith("sceneplate-"))
+    .sort((a, b) => a.id.localeCompare(b.id));
 
-  const keyarts = pick("keyart").sort(sortKeyartBlocks);
-  const clips = pick("clip").sort(
-    (a, b) =>
-      resolveClipSegmentIndex(a.id, a.prompt) - resolveClipSegmentIndex(b.id, b.prompt),
-  );
-
+  const CHAIN_PREFIXES = ["story-", "bible-", "beats-", "reverse-", "board-", "keyart-", "clip-", "final-"];
+  const isChainNode = (id: string) => CHAIN_PREFIXES.some((p) => id.startsWith(p));
+  const chainNodes = blocks.filter((b) => isChainNode(b.id));
   const hasAssets = charWall.length + sceneWall.length + propWall.length > 0;
-  if (!textCols.length && !keyarts.length && !hasAssets) return blocks;
+  if (!chainNodes.length && !hasAssets) return blocks;
 
   const pos = new Map<string, { x: number; y: number }>();
-  /**
-   * 四柱布局（2026-08-11 用户拍板）：横向＝工序，纵向＝段落。
-   * ① 资产柱：角色 → 服装道具 → 场景，单列纵排，全集共用、宽度恒定
-   * ② 静帧·导演镜柱：按段分组纵排，段间留缝
-   * ③ 成片柱：每段成片卡与该段静帧组顶对齐
-   * 段数多只往下长、画布宽度恒定；整集在成片坞收口（最右）。
-   */
+
+  // —— 资产柱：全集共用（跨集身份锁本就是同一批人/景/物），角色→服装道具→场景 ——
   const assetRowH = Math.round(gapY * 0.85);
-  const placeWall = (list: CanvasBlock[], startY: number) => {
-    list.forEach((b, i) => {
-      pos.set(b.id, { x: originX, y: startY + i * assetRowH });
-    });
-    return (
-      startY + (list.length ? list.length * assetRowH + Math.round(assetRowGap * 0.35) : 0)
-    );
+  const assetGroupGap = Math.round(gapY * 0.25);
+  let assetCursorY = originY;
+  for (const wall of [charWall, propWall, sceneWall]) {
+    for (const b of wall) {
+      pos.set(b.id, { x: originX, y: assetCursorY });
+      assetCursorY += assetRowH;
+    }
+    if (wall.length) assetCursorY += assetGroupGap;
+  }
+
+  const laneX = (i: number) => originX + gapX * (1 + i);
+  // 无集号老节点按全仓惯例归第 1 集，不吸进当前焦点带（审查建议修1）
+  const epOf = (b: CanvasBlock) => getBlockEpisodeIndex(b) ?? 1;
+  const episodes = Array.from(new Set(chainNodes.map(epOf))).sort((a, b) => a - b);
+  const segOfBoard = (id: string): number | null => {
+    const m = /-s(\d{2,})$/i.exec(id);
+    return m ? Math.max(1, Number(m[1])) : null;
   };
 
-  const textY = originY;
-  textCols.forEach((b, i) => {
-    pos.set(b.id, { x: originX + gapX * i, y: textY });
-  });
-  const lanesTop = originY + (textCols.length ? Math.round(gapY * 0.55) : 0);
-  placeWall(sceneWall, placeWall(propWall, placeWall(charWall, lanesTop)));
+  let bandTop = originY;
+  for (const ep of episodes.length ? episodes : [focusEp]) {
+    const inEp = (b: CanvasBlock) => epOf(b) === ep;
+    const textCols = ["story", "bible", "beats", "reverse"]
+      .map((p) => chainNodes.find((b) => b.id.startsWith(`${p}-`) && inEp(b)))
+      .filter(Boolean) as CanvasBlock[];
+    const keyarts = chainNodes
+      .filter((b) => b.id.startsWith("keyart-") && inEp(b))
+      .sort(sortKeyartBlocks);
+    const clips = chainNodes
+      .filter((b) => b.id.startsWith("clip-") && inEp(b))
+      .sort(
+        (a, b) =>
+          resolveClipSegmentIndex(a.id, a.prompt) - resolveClipSegmentIndex(b.id, b.prompt),
+      );
+    const boards = chainNodes
+      .filter((b) => b.id.startsWith("board-") && inEp(b))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    const finals = chainNodes.filter((b) => b.id.startsWith("final-") && inEp(b));
 
-  const keyartLaneX = originX + gapX;
-  const clipLaneX = originX + gapX * 2;
-  const segGap = Math.round(gapY * 0.35);
-  // 段边界：ensure 已把每段 clip.parentId 指到本段首镜，按它在镜序里的位置切组；
-  // 老画布没 parentId 就退化成一条不分组的静帧柱，仍是四柱几何
-  const keyartOrder = new Map<string, number>();
-  keyarts.forEach((k, i) => keyartOrder.set(k.id, i));
-  const segFirstIdx = new Set(
-    clips
-      .map((c) => (c.parentId ? keyartOrder.get(c.parentId) : undefined))
-      .filter((v): v is number => typeof v === "number"),
-  );
-  let keyartCursorY = lanesTop;
-  const keyartYById = new Map<string, number>();
-  keyarts.forEach((k, i) => {
-    if (i > 0 && segFirstIdx.has(i)) keyartCursorY += segGap;
-    pos.set(k.id, { x: keyartLaneX, y: keyartCursorY });
-    keyartYById.set(k.id, keyartCursorY);
-    keyartCursorY += gapY;
-  });
-  let clipCursorY = lanesTop;
-  clips.forEach((c) => {
-    const alignY = c.parentId ? keyartYById.get(c.parentId) : undefined;
-    const y = typeof alignY === "number" ? Math.max(alignY, clipCursorY) : clipCursorY;
-    pos.set(c.id, { x: clipLaneX, y });
-    clipCursorY = y + gapY;
-  });
+    if (ep !== focusEp) {
+      // 折叠带：整集压成一行（只占一个节点高度），切到该集即自动展开
+      const strip = [...textCols, ...boards, ...keyarts, ...clips, ...finals];
+      strip.forEach((b, i) => {
+        pos.set(b.id, { x: laneX(0) + i * Math.round(gapX * 0.25), y: bandTop });
+      });
+      if (strip.length) bandTop += gapY + Math.round(gapY * 0.3);
+      continue;
+    }
+
+    // 文本链：带顶一横行（y 与段列分离，不再与柱互压）
+    textCols.forEach((b, i) => {
+      pos.set(b.id, { x: laneX(i), y: bandTop });
+    });
+    const lanesTop = bandTop + (textCols.length ? Math.round(gapY * 0.75) : 0);
+
+    // 段分组：parentId→段首镜为主；无多段信息按每段恰 3 镜切组
+    const keyartOrder = new Map<string, number>();
+    keyarts.forEach((k, i) => keyartOrder.set(k.id, i));
+    const segFirstIdx = new Set(
+      clips
+        .map((c) => (c.parentId ? keyartOrder.get(c.parentId) : undefined))
+        .filter((v): v is number => typeof v === "number"),
+    );
+    const groups: CanvasBlock[][] = [];
+    if (keyarts.length) {
+      if (segFirstIdx.size > 1) {
+        let cur: CanvasBlock[] = [];
+        keyarts.forEach((k, i) => {
+          if (i > 0 && segFirstIdx.has(i)) {
+            groups.push(cur);
+            cur = [];
+          }
+          cur.push(k);
+        });
+        if (cur.length) groups.push(cur);
+      } else {
+        for (let i = 0; i < keyarts.length; i += 3) groups.push(keyarts.slice(i, i + 3));
+      }
+    }
+
+    // 段列：头卡=该段导演板（board-eXX-sNN 段级；board-eXX 集级只兜首列），镜纵排其下
+    const episodeBoard = boards.find((b) => segOfBoard(b.id) == null) || null;
+    let bandBottom = lanesTop;
+    groups.forEach((grp, g) => {
+      let y = lanesTop;
+      const head =
+        boards.find((b) => segOfBoard(b.id) === g + 1) || (g === 0 ? episodeBoard : null);
+      if (head) {
+        pos.set(head.id, { x: laneX(g), y });
+        y += gapY;
+      }
+      for (const k of grp) {
+        pos.set(k.id, { x: laneX(g), y });
+        y += gapY;
+      }
+      bandBottom = Math.max(bandBottom, y);
+    });
+    if (!groups.length && episodeBoard) {
+      pos.set(episodeBoard.id, { x: laneX(0), y: lanesTop });
+      bandBottom = Math.max(bandBottom, lanesTop + gapY);
+    }
+
+    // 成片柱：所有段列右侧纵排；整集节点在成片柱右侧收口（最右）
+    const clipLaneX = laneX(Math.max(1, groups.length));
+    clips.forEach((c, i) => {
+      pos.set(c.id, { x: clipLaneX, y: lanesTop + i * gapY });
+    });
+    bandBottom = Math.max(bandBottom, lanesTop + clips.length * gapY);
+    const finalX = clipLaneX + gapX;
+    finals.forEach((f, i) => {
+      pos.set(f.id, { x: finalX, y: lanesTop + i * gapY });
+    });
+    bandBottom = Math.max(bandBottom, lanesTop + (finals.length ? gapY : 0));
+    bandTop = bandBottom + Math.round(gapY * 0.5);
+  }
 
   const positioned = blocks.map((b) => {
     const p = pos.get(b.id);

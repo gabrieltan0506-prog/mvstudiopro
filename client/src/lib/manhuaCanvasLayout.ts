@@ -133,6 +133,11 @@ export type ManhuaCanvasLayoutOptions = {
  * 纯函数：只改 x/y/width/height，不增删节点、不动 prompt 与产出。
  * 不归任何分区的节点（用户自己拖进来的自由节点等）原样返回。
  */
+/**
+ * @deprecated 2026-08-11 段列化后已退役：生产线唯一版式出口是
+ * canvasDramaStudio.layoutManhuaEpisodeReadableChain（段列制）。
+ * 本文件仅 MANHUA_CANVAS_LAYOUT 常量仍被消费；函数与测试待下批删除。
+ */
 export function layoutManhuaCanvasBlocks(
   blocks: CanvasBlock[],
   opts?: ManhuaCanvasLayoutOptions,
