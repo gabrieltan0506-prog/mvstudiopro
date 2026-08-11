@@ -86,8 +86,11 @@ function readEnv(env?: EnvMap): EnvMap {
   return env || (typeof process !== "undefined" ? (process.env as EnvMap) : {});
 }
 
-export function pickDouyinCookieHeaderFromEnv(env?: EnvMap): string {
-  return listDouyinCookieCandidatesFromEnv(env)[0] || "";
+export function pickDouyinCookieHeaderFromEnv(env?: EnvMap, candidateIndex = 0): string {
+  const candidates = listDouyinCookieCandidatesFromEnv(env);
+  if (!candidates.length) return "";
+  const index = Math.max(0, Math.floor(Number(candidateIndex) || 0)) % candidates.length;
+  return candidates[index] || "";
 }
 
 /** 全部候选凭证（主 → 备 → 池，去重）；web API 拉合集时逐个试到有响应为止 */
@@ -101,6 +104,14 @@ export function listDouyinCookieCandidatesFromEnv(env?: EnvMap): string[] {
       .map((s) => s.trim()),
   ].filter(Boolean);
   return Array.from(new Set(raw));
+}
+
+/** 从指定候选开始轮转；仅改变尝试顺序，不复制或暴露凭证内容。 */
+export function rotateDouyinCookieCandidates(candidates: string[], startIndex = 0): string[] {
+  const deduped = Array.from(new Set(candidates.map((item) => String(item || "").trim()).filter(Boolean)));
+  if (deduped.length <= 1) return deduped;
+  const offset = Math.max(0, Math.floor(Number(startIndex) || 0)) % deduped.length;
+  return [...deduped.slice(offset), ...deduped.slice(0, offset)];
 }
 
 export function manhuaLearnYtdlpCookiesFileFromEnv(env?: EnvMap): string {

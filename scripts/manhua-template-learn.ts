@@ -67,6 +67,7 @@ import {
   type ManhuaDramaAudioScanResult,
 } from "../server/gemini-audio.js";
 import {
+  isDouyinHostUrl,
   mapManhuaLearnFetchError,
   normalizeDouyinVideoUrl,
 } from "../shared/manhuaLearnYtdlp.js";
@@ -76,6 +77,7 @@ import {
   openYtdlpCookieSession,
   runYtdlp,
   throwMappedYtdlpFailure,
+  ytdlpCookieCandidateCount,
 } from "../server/services/manhuaLearnYtdlpRuntime.js";
 
 function logLearnStage(stage: string, detailZh?: string) {
@@ -519,23 +521,46 @@ async function extractFrames(
   return paths;
 }
 
+async function withYtdlpCookieCandidates<T>(
+  url: string,
+  run: (cookieArgs: string[], candidateIndex: number) => Promise<T>,
+): Promise<T> {
+  const attemptCount = isDouyinHostUrl(url) ? ytdlpCookieCandidateCount() : 1;
+  let lastError: unknown = new Error("成片下载失败");
+  for (let candidateIndex = 0; candidateIndex < attemptCount; candidateIndex++) {
+    const cookies = await openYtdlpCookieSession(candidateIndex);
+    try {
+      return await run(cookies.args, candidateIndex);
+    } catch (error) {
+      lastError = error;
+      if (candidateIndex + 1 < attemptCount) {
+        console.warn(
+          `[learn] Cookie 候选 ${candidateIndex + 1}/${attemptCount} 失败，改试下一账号：${mapManhuaLearnFetchError(error)}`,
+        );
+      }
+    } finally {
+      await cookies.cleanup();
+    }
+  }
+  throw lastError;
+}
+
 async function probeRemoteVideoDuration(url: string): Promise<number> {
   if (/douyin\.com\/search\//i.test(url)) {
     throw new Error("当前是搜索页链接，请改用成片/合集页地址后再学节奏");
   }
   assertYtdlpCookieReadyForUrl(url);
-  const cookies = await openYtdlpCookieSession();
   try {
-    const payload = await execYtdlpJson(
-      buildManhuaLearnYtdlpMetadataArgs({ url, cookieArgs: cookies.args }),
-    );
-    const durationSec = parseManhuaLearnRemoteDurationSec(payload);
-    if (durationSec <= 0) throw new Error("无法读取成片时长，不能安全分段下载");
-    return durationSec;
+    return await withYtdlpCookieCandidates(url, async (cookieArgs) => {
+      const payload = await execYtdlpJson(
+        buildManhuaLearnYtdlpMetadataArgs({ url, cookieArgs }),
+      );
+      const durationSec = parseManhuaLearnRemoteDurationSec(payload);
+      if (durationSec <= 0) throw new Error("无法读取成片时长，不能安全分段下载");
+      return durationSec;
+    });
   } catch (e) {
     throw new Error(mapManhuaLearnFetchError(e));
-  } finally {
-    await cookies.cleanup();
   }
 }
 
@@ -547,46 +572,46 @@ async function downloadVideoSegment(input: {
 }): Promise<string> {
   await fs.mkdir(input.workDir, { recursive: true });
   assertYtdlpCookieReadyForUrl(input.url);
-  const cookies = await openYtdlpCookieSession();
-  let stderr = "";
   try {
-    const outTpl = path.join(input.workDir, "source.%(ext)s");
-    console.log(
-      `[learn] 分段下载 ${Math.floor(input.startSec / 60)}–${Math.ceil(input.endSec / 60)} 分…`,
-      cookies.hasCookies ? "(已带登录态)" : "",
-    );
-    const result = await runYtdlp(
-      buildManhuaLearnYtdlpSegmentArgs({
-        url: input.url,
-        outputTemplate: outTpl,
-        startSec: input.startSec,
-        endSec: input.endSec,
-        cookieArgs: cookies.args,
-      }),
-    );
-    stderr = result.stderr;
-    if (result.code !== 0) throwMappedYtdlpFailure(result.stderr);
+    return await withYtdlpCookieCandidates(input.url, async (cookieArgs, candidateIndex) => {
+      const prefix = `source-c${candidateIndex + 1}`;
+      const outTpl = path.join(input.workDir, `${prefix}.%(ext)s`);
+      console.log(
+        `[learn] 分段下载 ${Math.floor(input.startSec / 60)}–${Math.ceil(input.endSec / 60)} 分…`,
+        cookieArgs.length ? `(登录态候选 ${candidateIndex + 1})` : "",
+      );
+      const result = await runYtdlp(
+        buildManhuaLearnYtdlpSegmentArgs({
+          url: input.url,
+          outputTemplate: outTpl,
+          startSec: input.startSec,
+          endSec: input.endSec,
+          cookieArgs,
+        }),
+      );
+      if (result.code !== 0) throwMappedYtdlpFailure(result.stderr);
+      const files = await fs.readdir(input.workDir);
+      const vid = files.find(
+        (file) => file.startsWith(`${prefix}.`) && /\.(mp4|webm|mkv)$/i.test(file),
+      );
+      if (!vid) {
+        throw new Error(
+          result.stderr.trim()
+            ? mapManhuaLearnFetchError(result.stderr)
+            : "分段下载未生成视频文件，请确认链接可访问或稍后重试",
+        );
+      }
+      const videoPath = path.join(input.workDir, vid);
+      const stat = await fs.stat(videoPath);
+      if (stat.size > MANHUA_LEARN_SEGMENT_MAX_BYTES) {
+        throw new Error("当前 10 分钟片段超过 800MB，已停止处理以保护本机容量");
+      }
+      await ffprobeDuration(videoPath);
+      return videoPath;
+    });
   } catch (e) {
     throw new Error(mapManhuaLearnFetchError(e));
-  } finally {
-    await cookies.cleanup();
   }
-  const files = await fs.readdir(input.workDir);
-  const vid = files.find((f) => /\.(mp4|webm|mkv)$/i.test(f));
-  if (!vid) {
-    throw new Error(
-      stderr.trim()
-        ? mapManhuaLearnFetchError(stderr)
-        : "分段下载未生成视频文件，请确认链接可访问或稍后重试",
-    );
-  }
-  const videoPath = path.join(input.workDir, vid);
-  const stat = await fs.stat(videoPath);
-  if (stat.size > MANHUA_LEARN_SEGMENT_MAX_BYTES) {
-    throw new Error("当前 10 分钟片段超过 800MB，已停止处理以保护本机容量");
-  }
-  await ffprobeDuration(videoPath);
-  return videoPath;
 }
 
 function titleToSearchUrl(title: string): string {

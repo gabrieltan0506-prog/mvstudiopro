@@ -236,8 +236,9 @@ export function parseDouyinAwemeDetailResponse(payload: unknown): DouyinAwemeDet
   const mixId = readMixId(mix) || undefined;
   const mixNameZh = readMixName(mix) || undefined;
   const episodeIndex = readCurrentEpisode(mix) || undefined;
-  if (!titleZh && !mixId && !mixNameZh) return null;
-  return { titleZh, mixId, mixNameZh, episodeIndex, playbackUrl: readDouyinPlaybackUrl(detail) };
+  const playbackUrl = readDouyinPlaybackUrl(detail);
+  if (!titleZh && !mixId && !mixNameZh && !playbackUrl) return null;
+  return { titleZh, mixId, mixNameZh, episodeIndex, playbackUrl };
 }
 
 /**

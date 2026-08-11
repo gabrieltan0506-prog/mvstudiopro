@@ -177,6 +177,16 @@ describe("parseDouyinAwemeDetailResponse", () => {
     expect(parsed?.mixId).toBeUndefined();
   });
 
+  it("标题与合集字段暂缺时仍保留可信播放地址", () => {
+    const parsed = parseDouyinAwemeDetailResponse({
+      status_code: 0,
+      aweme_detail: {
+        video: { play_addr: { url_list: ["https://v9.zjcdn.com/only-playback.mp4"] } },
+      },
+    });
+    expect(parsed?.playbackUrl).toBe("https://v9.zjcdn.com/only-playback.mp4");
+  });
+
   it("status_code 非 0 或空 detail 返回 null", () => {
     expect(parseDouyinAwemeDetailResponse({ status_code: 2, aweme_detail: { desc: "x" } })).toBeNull();
     expect(parseDouyinAwemeDetailResponse({ status_code: 0 })).toBeNull();

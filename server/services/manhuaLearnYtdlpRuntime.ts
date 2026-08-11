@@ -11,6 +11,7 @@ import {
   hasManhuaLearnYtdlpCookieSource,
   isDouyinHostUrl,
   MANHUA_LEARN_FETCH_ERR,
+  listDouyinCookieCandidatesFromEnv,
   manhuaLearnYtdlpCookiesFileFromEnv,
   manhuaLearnYtdlpCookiesFromBrowserFromEnv,
   mapManhuaLearnFetchError,
@@ -30,7 +31,12 @@ export type YtdlpCookieSession = {
 };
 
 /** 解析 --cookies / --cookies-from-browser；Header Cookie 写临时 Netscape 文件 */
-export async function openYtdlpCookieSession(): Promise<YtdlpCookieSession> {
+export function ytdlpCookieCandidateCount(): number {
+  if (manhuaLearnYtdlpCookiesFileFromEnv() || manhuaLearnYtdlpCookiesFromBrowserFromEnv()) return 1;
+  return Math.max(1, listDouyinCookieCandidatesFromEnv().length);
+}
+
+export async function openYtdlpCookieSession(candidateIndex = 0): Promise<YtdlpCookieSession> {
   const file = manhuaLearnYtdlpCookiesFileFromEnv();
   if (file) {
     try {
@@ -54,7 +60,7 @@ export async function openYtdlpCookieSession(): Promise<YtdlpCookieSession> {
     };
   }
 
-  const header = pickDouyinCookieHeaderFromEnv();
+  const header = pickDouyinCookieHeaderFromEnv(undefined, candidateIndex);
   if (header) {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "manhua-learn-cookies-"));
     const cookiesPath = path.join(tmp, "douyin.cookies.txt");
