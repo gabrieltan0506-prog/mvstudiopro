@@ -311,8 +311,8 @@ export const CREDIT_COSTS = {
   platformTopicShortlist: 12,
   /** 选题初选超出默认 6 条后，每多 1 条 */
   platformTopicShortlistExtra: 2,
-  /** 勾选后正式扩写文案 + 图文页结构（最多 6 条） */
-  platformTopicExpand: 48,
+  /** 勾选后正式扩写文案 + 图文页结构：按条计费（2026-08-12 用户拍板 20 点/条；旧整批一价 48 勾满 20 条净亏） */
+  platformTopicExpand: 20,
   /**
    * 人物背景智能优化：头 3 次免费、之后每天 1 次免费，超出按档收。
    * 优秀档 1 积分（成本约 ¥0.065、毛利 90%），卓越档 2 积分（成本约 ¥0.40、毛利 69%）。

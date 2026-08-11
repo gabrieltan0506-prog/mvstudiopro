@@ -3083,6 +3083,22 @@ export default function PlatformPage() {
     staleTime: 60_000,
   });
   const expandTopicPicksMutation = trpc.mvAnalysis.expandPlatformTopicPicks.useMutation();
+  /** 扩写引擎（用户可选，2026-08-12）：稳定档主走 OpenRouter 抖动自动换备用通道；轻快档直走备用通道 */
+  const [platformExpandEngine, setPlatformExpandEngine] = useState<"kimi-k3" | "qwen3.8-max">(() => {
+    try {
+      const raw = window.localStorage.getItem("mvstudiopro.platform.expandEngine.v1");
+      return raw === "qwen3.8-max" ? "qwen3.8-max" : "kimi-k3";
+    } catch {
+      return "kimi-k3";
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("mvstudiopro.platform.expandEngine.v1", platformExpandEngine);
+    } catch {
+      /* 忽略隐私模式写失败 */
+    }
+  }, [platformExpandEngine]);
   /** 扩写改走后台任务 + 轮询：每条写完就渲染，不再等七条跑完 */
   const enqueueTopicExpandMutation = trpc.mvAnalysis.enqueuePlatformTopicExpand.useMutation();
   const [shortlistExpandBusy, setShortlistExpandBusy] = useState(false);
@@ -3625,10 +3641,13 @@ export default function PlatformPage() {
         return;
       }
       if (expandTopicPicksMutation.isPending || shortlistExpandBusy) return;
-      const cost = CREDIT_COSTS.platformTopicExpand;
+      // 按条计费（2026-08-12 拍板，单价见 CREDIT_COSTS）
+      const cost = CREDIT_COSTS.platformTopicExpand * picks.length;
       if (
         !supervisorAccess &&
-        !window.confirm(`将为选中的 ${picks.length} 条选题扩写正式文案（${cost} 点）。是否继续？`)
+        !window.confirm(
+          `将为选中的 ${picks.length} 条选题扩写正式文案（${CREDIT_COSTS.platformTopicExpand} 点/条 × ${picks.length} = ${cost} 点；失败条自动退款）。是否继续？`,
+        )
       ) {
         return;
       }
@@ -3669,6 +3688,7 @@ export default function PlatformPage() {
           context: focusPrompt.trim() || undefined,
           enabledSkillIds: Array.from(enabledPlatformSkillIds),
           allowBloggerTitle,
+          expandEngine: platformExpandEngine,
           picks: picks.map((p) => ({
             id: p.id,
             title: p.title,
@@ -3900,8 +3920,21 @@ export default function PlatformPage() {
                   ? shortlistExpandProgress
                     ? `扩写中 ${shortlistExpandProgress.done}/${shortlistExpandProgress.total}…`
                     : "扩写中…"
-                  : `写选中的 ${selectedShortlistIds.length || ""} 条（${CREDIT_COSTS.platformTopicExpand} 点）`}
+                  : `写选中的 ${selectedShortlistIds.length || ""} 条（${
+                      CREDIT_COSTS.platformTopicExpand * Math.max(1, selectedShortlistIds.length)
+                    } 点 · ${CREDIT_COSTS.platformTopicExpand}/条）`}
               </button>
+              <select
+                value={platformExpandEngine}
+                onChange={(e) =>
+                  setPlatformExpandEngine(e.target.value === "qwen3.8-max" ? "qwen3.8-max" : "kimi-k3")
+                }
+                title="扩写引擎：稳定档遇高峰自动切备用通道；轻快档速度更快、文风更简"
+                className="rounded-lg border border-white/15 bg-black/45 px-2 py-1.5 text-[11px] text-gray-300"
+              >
+                <option value="kimi-k3">扩写·稳定档</option>
+                <option value="qwen3.8-max">扩写·轻快档</option>
+              </select>
               <span className="text-[11px] text-gray-500">
                 已勾 {selectedShortlistIds.length}/{PLATFORM_TOPIC_EXPAND_MAX}
               </span>

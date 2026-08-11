@@ -1526,7 +1526,11 @@ async function processPlatformJob(
         ? (params.picks as Parameters<typeof expandPlatformTopicPicks>[0]["picks"])
         : [];
       const streamed: Array<Record<string, unknown>> = [];
-      const result = await expandPlatformTopicPicks({
+      const expandChargedCredits = Math.max(0, Math.floor(Number(params.chargedCredits || 0)));
+      const expandPerItemCredits = Math.max(0, Math.floor(Number(params.perItemCredits || 0)));
+      let result: Awaited<ReturnType<typeof expandPlatformTopicPicks>>;
+      try {
+        result = await expandPlatformTopicPicks({
         userId: jobUserId ?? 0,
         context: typeof params.context === "string" ? params.context : undefined,
         picks,
@@ -1534,6 +1538,7 @@ async function processPlatformJob(
           ? (params.enabledSkillIds as unknown[]).filter((s): s is string => typeof s === "string")
           : null,
         allowBloggerTitle: params.allowBloggerTitle === true,
+        engine: params.expandEngine === "qwen3.8-max" ? "qwen3.8-max" : "kimi-k3",
         onItem: platformJobId
           ? async ({ blueprint, index, total, elapsedMs }) => {
               streamed.push(blueprint);
@@ -1545,7 +1550,61 @@ async function processPlatformJob(
               });
             }
           : undefined,
-      });
+        });
+      } catch (err) {
+        // 全灭/超时终态：整单退款（照 platform_html_ppt_outline 先例，attempts>=2 才退，防首轮 requeue 误退）
+        if (expandChargedCredits > 0 && jobUserId != null && platformJobId) {
+          const { getJobById } = await import("./repository.js");
+          const jobRow = await getJobById(platformJobId);
+          if ((jobRow?.attempts ?? 0) >= 2) {
+            const { refundCredits } = await import("../credits.js");
+            await refundCredits(
+              Number(jobUserId),
+              expandChargedCredits,
+              "platform_topic_expand 整单失败退还",
+            ).catch((e) => console.error("[platform_topic_expand] 整单退款失败:", e));
+          }
+        }
+        throw err;
+      }
+      // 按条计费后的对账：失败条按单价自动退款，别让用户为空稿买单
+      const failedPicks = Array.isArray(
+        (result.diagnostics as Record<string, unknown> | undefined)?.failedPicks,
+      )
+        ? ((result.diagnostics as Record<string, unknown>).failedPicks as unknown[])
+        : [];
+      const failedIds = failedPicks
+        .map((row) =>
+          String((row && typeof row === "object" ? (row as Record<string, unknown>).id : "") || "").trim(),
+        )
+        .filter(Boolean);
+      let refundedCredits = 0;
+      if (failedPicks.length > 0 && expandPerItemCredits > 0 && jobUserId != null) {
+        try {
+          // 幂等防重：僵尸 run / requeue 重入前先读库，已退过就不再退
+          const { getJobById } = await import("./repository.js");
+          const jobRow = platformJobId ? await getJobById(platformJobId) : null;
+          const prevOutput =
+            jobRow && jobRow.output && typeof jobRow.output === "object"
+              ? (jobRow.output as Record<string, unknown>)
+              : null;
+          const alreadyRefunded = Math.max(0, Math.floor(Number(prevOutput?.refundedCredits || 0)));
+          if (alreadyRefunded > 0) {
+            refundedCredits = alreadyRefunded;
+          } else {
+            const { addCredits } = await import("../credits.js");
+            refundedCredits = expandPerItemCredits * failedPicks.length;
+            await addCredits(Number(jobUserId), refundedCredits, "refund");
+            console.info(
+              `[platform_topic_expand] 失败 ${failedPicks.length} 条已退款 ${refundedCredits} 点 · user=${jobUserId}`,
+            );
+          }
+        } catch (e) {
+          // 退款失败只记日志，不影响已产出的文案；失败清单仍在 diagnostics 供免费重跑认领
+          console.error("[platform_topic_expand] 失败条退款异常:", e);
+          refundedCredits = 0;
+        }
+      }
       return {
         provider: "openrouter",
         output: {
@@ -1554,7 +1613,10 @@ async function processPlatformJob(
           expandDoneCount: result.contentBlueprints.length,
           expandTotalCount: picks.length,
           diagnostics: result.diagnostics,
-          chargedCredits: Number(params.chargedCredits || 0),
+          chargedCredits: expandChargedCredits,
+          refundedCredits,
+          // 已退款的失败条同时标记为「免费重跑已认领」：退款与免单二选一，不双重补偿
+          freeRetryClaimedIds: refundedCredits > 0 ? failedIds : [],
           completedAt: new Date().toISOString(),
         },
       };

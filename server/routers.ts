@@ -5981,7 +5981,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       .mutation(async ({ ctx, input }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const cost = CREDIT_COSTS.platformTopicExpand;
+        // 按条计费（2026-08-12 用户拍板，单价见 CREDIT_COSTS），与 enqueue 版同口径
+        const cost = CREDIT_COSTS.platformTopicExpand * input.picks.length;
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < cost) {
@@ -5990,7 +5991,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               message: `Credits 不足，初选扩写需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
             });
           }
-          await deductCredits(userId, "platformTopicExpand", `初选扩写 ${input.picks.length} 条正式文案`);
+          await deductCreditsAmount(
+            userId,
+            cost,
+            "platformTopicExpand",
+            `初选扩写 ${input.picks.length} 条正式文案（按条计费）`,
+          );
         }
         const { expandPlatformTopicPicks } = await import("./services/platformTopicShortlist.js");
         const result = await expandPlatformTopicPicks({
@@ -6012,8 +6018,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
      * 初选扩写（异步）：入队后前端轮询，**每条写完就冒一条**。
      *
      * 同步版 `expandPlatformTopicPicks` 要等全部跑完才返回——单条 Kimi K3 约 3 分钟，
-     * 七条就是二十多分钟的空转圈（用户 2026-08-06）。扣费仍在此处一次性发生，
-     * 与条数无关，拆条只是为了让结果早点看见。
+     * 七条就是二十多分钟的空转圈（用户 2026-08-06）。扣费在此处按条一次性发生
+     *（单价 × 条数，2026-08-12 拍板）；失败条由 runner 自动退款。
      */
     enqueuePlatformTopicExpand: protectedProcedure
       .input(
@@ -6038,12 +6044,16 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             )
             .min(1)
             .max(PLATFORM_TOPIC_EXPAND_MAX),
+          /** 扩写引擎（用户可选）：缺省 kimi-k3（OpenRouter 主/Evolink 兜底）；qwen3.8-max（Evolink 主/OpenRouter 兜底） */
+          expandEngine: z.enum(["kimi-k3", "qwen3.8-max"]).optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const cost = CREDIT_COSTS.platformTopicExpand;
+        // 按条计费（2026-08-12 用户拍板，单价见 CREDIT_COSTS.platformTopicExpand）：旧整批一价勾满 20 条必亏
+        const perItemCost = CREDIT_COSTS.platformTopicExpand;
+        const cost = perItemCost * input.picks.length;
         // 上次没出稿的条目重跑免费：坑是我们自己的，不该让用户为同一条再付一次
         const { claimFreeExpandRetry } = await import("./services/platformTopicExpandRetryCredit.js");
         const freeRetry = await claimFreeExpandRetry({
@@ -6051,17 +6061,23 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           pickIds: input.picks.map((p) => p.id),
         });
         const shouldCharge = !isAdminUser && !freeRetry.free;
+        const jobId = nanoid(16);
         if (shouldCharge) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < cost) {
             throw new TRPCError({
               code: "PAYMENT_REQUIRED",
-              message: `Credits 不足，初选扩写需要 ${cost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+              message: `Credits 不足，初选扩写需要 ${cost} 点（${perItemCost} 点/条 × ${input.picks.length} 条，当前可用：${creditsInfo.totalAvailable}）`,
             });
           }
-          await deductCredits(userId, "platformTopicExpand", `初选扩写 ${input.picks.length} 条正式文案`);
+          await deductCreditsAmount(
+            userId,
+            cost,
+            "platformTopicExpand",
+            `初选扩写 ${input.picks.length} 条正式文案（${perItemCost} 点/条）`,
+            { chargeKey: `platformTopicExpand/${userId}/${jobId}` },
+          );
         }
-        const jobId = nanoid(16);
         await createJobRecord({
           id: jobId,
           userId: String(userId),
@@ -6074,7 +6090,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               picks: input.picks,
               enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : [],
               allowBloggerTitle: Boolean(input.allowBloggerTitle),
+              expandEngine: input.expandEngine === "qwen3.8-max" ? "qwen3.8-max" : "kimi-k3",
               chargedCredits: shouldCharge ? cost : 0,
+              perItemCredits: shouldCharge ? perItemCost : 0,
             },
           },
         });

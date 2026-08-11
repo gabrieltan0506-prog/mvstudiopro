@@ -608,12 +608,82 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
   };
 }
 
+/** 扩写可选引擎：kimi-k3 主走 OpenRouter（Evolink 兜底）；qwen3.8-max 直走 Evolink */
+export type PlatformTopicExpandEngine = "kimi-k3" | "qwen3.8-max";
+
+const EXPAND_EVOLINK_DIRECT_CHAT_URL = String(
+  process.env.EVOLINK_DIRECT_CHAT_COMPLETIONS_URL || "https://direct.evolink.ai/v1/chat/completions",
+).trim();
+
+/**
+ * 输出封顶：Evolink 的 K3 reasoning_effort 只有 max（强制深思考），
+ * 思考 token 全按输出计费。2026-08-12 用户拍板质量优先，上限提到 32k
+ *（worst case 单条 ~$0.48，接受偶发毛利下探换文案质量）。
+ */
+const EXPAND_MAX_COMPLETION_TOKENS = 32_000;
+/** Qwen 3.8 Max 输出上限（2026-08-12 用户拍板 65k）：单价低（$5.295/M），给足思考与长稿余量 */
+const EXPAND_QWEN_MAX_COMPLETION_TOKENS = 65_536;
+
+async function invokeExpandViaEvolink(params: {
+  model: PlatformTopicExpandEngine;
+  system: string;
+  user: string;
+}): Promise<string> {
+  const { getEvolinkApiKey } = await import("./gpt56CopywritingGateway.js");
+  const key = getEvolinkApiKey();
+  if (!key) throw new Error("扩写备用通道未配置");
+  const body: Record<string, unknown> = {
+    model: params.model,
+    messages: [
+      { role: "system", content: params.system },
+      { role: "user", content: params.user },
+    ],
+    max_completion_tokens: EXPAND_MAX_COMPLETION_TOKENS,
+  };
+  if (params.model === "qwen3.8-max") {
+    // Evolink Qwen：档位 low|medium|xhigh；勿与 thinking_budget 同传（同知识卡提炼口径，max_completion_tokens）
+    body.enable_thinking = true;
+    body.reasoning_effort = "medium";
+    body.max_completion_tokens = EXPAND_QWEN_MAX_COMPLETION_TOKENS;
+  } else {
+    // 非 Qwen 走 max_tokens（对齐 knowledgeCardDistill 先例，防封顶字段不被识别而静默失效）
+    body.reasoning_effort = "max";
+    body.max_tokens = EXPAND_MAX_COMPLETION_TOKENS;
+    delete body.max_completion_tokens;
+  }
+  const res = await fetch(EXPAND_EVOLINK_DIRECT_CHAT_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(240_000),
+    body: JSON.stringify(body),
+  });
+  const raw = await res.text();
+  if (!res.ok) {
+    throw new Error(`Evolink ${params.model} HTTP ${res.status}: ${raw.slice(0, 160)}`);
+  }
+  // 反空壳：Cloudflare 假 200 / HTML 页 / 空 content 一律抛错换通道，不许静默返回空串
+  let json: { choices?: Array<{ message?: { content?: unknown } }> };
+  try {
+    json = JSON.parse(raw) as typeof json;
+  } catch {
+    throw new Error(`Evolink ${params.model} 非 JSON 响应：${raw.slice(0, 120)}`);
+  }
+  const content = json.choices?.[0]?.message?.content;
+  const text = typeof content === "string" ? content.trim() : "";
+  if (text.length < 20) {
+    throw new Error(`Evolink ${params.model} 内容过短（${text.length} 字符）`);
+  }
+  return text;
+}
+
 export async function expandPlatformTopicPicks(params: {
   userId: number | string;
   context?: string;
   picks: PlatformTopicShortlistItem[];
   enabledSkillIds?: string[] | null;
   allowBloggerTitle?: boolean;
+  /** 缺省 kimi-k3（OpenRouter 主、Evolink 兜底）；qwen3.8-max 直走 Evolink */
+  engine?: PlatformTopicExpandEngine | null;
   /**
    * 每条写完立刻回调（后台任务据此写进度，前端一条一条冒出来）。
    *
@@ -690,48 +760,95 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
       outputFormat: "json",
     });
 
-    const invokeExpand = () =>
-      invokeLLM({
+    const invokeExpandOpenRouter = (openRouterModel: string) => async () => {
+      const res = await invokeLLM({
         provider: "openai",
-        modelName: getPlatformStage2OpenAiModel(),
-        max_tokens: 16000,
+        modelName: openRouterModel,
+        // 2026-08-12 用户拍板：medium 写得不够好 → high + 32k 上限（质量优先，接受毛利下探）
+        max_tokens: 32_000,
         temperature: 0.55,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
         ],
-        // 产品口径：固定 medium，不用 minimal
-        reasoningEffort: "medium",
+        reasoningEffort: "high",
       });
+      return extractFirstChoicePlainText(res).trim();
+    };
+    const invokeExpandEvolink = (model: PlatformTopicExpandEngine) => () =>
+      invokeExpandViaEvolink({ model, system, user });
+
+    // 双通道编排（2026-08-12 用户拍板：哪家便宜哪家先，另一家兜底）——
+    // Kimi K3 两家同价（$3/$15），主走 OpenRouter、两次抖动后切 Evolink 保稳；
+    // Qwen 3.8 Max Evolink（$1.765/$5.295）比 OpenRouter（$2/$6）便宜 ~12%，
+    // 主走 Evolink、兜底 OpenRouter（qwen/qwen3.8-max）。
+    const engine: PlatformTopicExpandEngine =
+      params.engine === "qwen3.8-max" ? "qwen3.8-max" : "kimi-k3";
+    const attempts =
+      engine === "qwen3.8-max"
+        ? [
+            invokeExpandEvolink("qwen3.8-max"),
+            invokeExpandEvolink("qwen3.8-max"),
+            invokeExpandOpenRouter("qwen/qwen3.8-max"),
+          ]
+        : [
+            invokeExpandOpenRouter(getPlatformStage2OpenAiModel()),
+            invokeExpandOpenRouter(getPlatformStage2OpenAiModel()),
+            invokeExpandEvolink("kimi-k3"),
+          ];
 
     console.info(
-      `[expandPlatformTopicPicks] ${i + 1}/${uniquePicks.length} title=${pick.title.slice(0, 40)} reasoning=medium`,
+      `[expandPlatformTopicPicks] ${i + 1}/${uniquePicks.length} engine=${engine} title=${pick.title.slice(0, 40)}`,
     );
     /**
      * 上游抖动（空 200 / 心跳残包）不该毁掉这一条，更不该毁掉整批：
-     * 2026-08-06 实测 OpenRouter 空体 200 让七条扩写全灭。这里最多试三次。
+     * 2026-08-06 实测 OpenRouter 空体 200 让七条扩写全灭。最多三次，
+     * Kimi 第三次自动换 Evolink 通道（2026-08-12 凌晨 OpenRouter Kimi 连挂两单）。
      */
     let llmText = "";
     let lastErr: unknown = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= attempts.length; attempt++) {
       try {
-        const res = await invokeExpand();
-        llmText = extractFirstChoicePlainText(res).trim();
+        llmText = await attempts[attempt - 1]!();
         if (llmText) break;
         console.warn(
-          `[expandPlatformTopicPicks] 空回 medium（第 ${attempt} 次）· ${i + 1}/${uniquePicks.length}`,
+          `[expandPlatformTopicPicks] 空回（第 ${attempt} 次）· ${i + 1}/${uniquePicks.length}`,
         );
       } catch (e) {
         lastErr = e;
-        if (!isTransientLlmError(e) || attempt === 3) break;
+        // 换通道前不因「非瞬时错」提前放弃：Evolink 兜底是最后一搏
+        if (attempt === attempts.length) break;
+        if (!isTransientLlmError(e) && attempt < attempts.length - 1) {
+          // 非瞬时错直接跳到最后的兜底通道
+          console.warn(
+            `[expandPlatformTopicPicks] 非瞬时错，直切兜底通道 · ${i + 1}/${uniquePicks.length} · ${
+              e instanceof Error ? e.message.slice(0, 160) : e
+            }`,
+          );
+          try {
+            llmText = await attempts[attempts.length - 1]!();
+          } catch (e2) {
+            lastErr = e2;
+          }
+          break;
+        }
         console.warn(
-          `[expandPlatformTopicPicks] 上游抖动重试 ${attempt}/3 · ${i + 1}/${uniquePicks.length} · ${
+          `[expandPlatformTopicPicks] 上游抖动重试 ${attempt}/${attempts.length} · ${i + 1}/${uniquePicks.length} · ${
             e instanceof Error ? e.message.slice(0, 160) : e
           }`,
         );
         await new Promise((r) => setTimeout(r, attempt * 4000));
       }
+    }
+    if (!llmText && !lastErr) {
+      // 三通道全空回但没抛错：也算失败进清单（可退款/免重跑），不许落骨架空壳照收费
+      failed.push({
+        id: pick.id,
+        title: pick.title,
+        reason: "上游多次空回（未抛错）",
+      });
+      continue;
     }
     if (!llmText && lastErr) {
       // 这一条放弃，继续跑后面的；失败清单随 diagnostics 回给前端
