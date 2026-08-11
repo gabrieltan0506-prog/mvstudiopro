@@ -264,6 +264,11 @@ export function resolveManhuaCustomAssetDisplayLabelZh(opts: {
   const bare = stripManhuaCustomAssetLabelPrefix(label);
   const looksLikeId = (s: string) =>
     /^(arch_|char_|scene_|wa_|demo_)/i.test(s) || /^[a-z][a-z0-9_]{6,}$/i.test(s);
+  // 锁位 tag（@角色1）与生成兜底串（角色定妆）都不是人名：能回查就让位，查不到当空
+  const looksLikeLockTag = (s: string) =>
+    /^@(角色|场景|道具|服装|图|音|板)\d+$/.test(s);
+  const looksLikeGenericFallback = (s: string) =>
+    s === "角色定妆" || s === "场景参考" || s === "道具参考" || s === "参考图" || s === "上传参考";
 
   const fromSeed = (id: string): string | undefined => {
     const arch = getAncientArchetypeById(id);
@@ -277,12 +282,22 @@ export function resolveManhuaCustomAssetDisplayLabelZh(opts: {
 
   if (seed) {
     const named = fromSeed(seed);
-    if (named && (!label || looksLikeId(bare) || bare === seed)) return named;
+    if (
+      named &&
+      (!label ||
+        looksLikeId(bare) ||
+        bare === seed ||
+        looksLikeLockTag(bare) ||
+        looksLikeGenericFallback(bare))
+    ) {
+      return named;
+    }
   }
   if (bare && looksLikeId(bare)) {
     const named = fromSeed(bare);
     if (named) return named;
   }
+  if (bare && looksLikeLockTag(bare)) return undefined;
   return label ? label.slice(0, 40) : undefined;
 }
 

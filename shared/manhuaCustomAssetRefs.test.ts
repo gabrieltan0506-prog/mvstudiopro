@@ -251,4 +251,31 @@ describe("manhuaCustomAssetRefs", () => {
     expect(refs[0]!.url).toBe("https://cdn.example/r-0.jpg");
     expect(refs.map((r) => r.url)).not.toContain("https://cdn.example/r-59.jpg");
   });
+
+  it("labelZh 防脏：@tag 形态不落名位；兜底串让位 seed 人名", () => {
+    const refs = normalizeManhuaCustomAssetRefs([
+      {
+        id: "t1",
+        url: "https://cdn.example/t1.jpg",
+        role: "character",
+        labelZh: "@角色1",
+      },
+      {
+        id: "t2",
+        url: "https://cdn.example/t2.jpg",
+        role: "character",
+        labelZh: "角色定妆",
+        seedLibraryId: "char_f_01",
+      },
+      {
+        id: "t3",
+        url: "https://cdn.example/t3.jpg",
+        role: "character",
+        labelZh: "傅临渊",
+      },
+    ]);
+    expect(refs.find((r) => r.id === "t1")?.labelZh).toBeUndefined();
+    expect(refs.find((r) => r.id === "t2")?.labelZh).toBe("沈清辞");
+    expect(refs.find((r) => r.id === "t3")?.labelZh).toBe("傅临渊");
+  });
 });

@@ -158,4 +158,25 @@ describe("manhuaCharacterVoiceLock", () => {
     expect(gate.ok).toBe(true);
     expect(gate.requiredTags).toEqual([]);
   });
+
+  it("labelZh 被写成 @角色N 形态时读取自愈清空（存量脏数据）", () => {
+    const locks = normalizeManhuaCharacterVoiceLocks([
+      {
+        id: "d",
+        characterTag: "@角色3",
+        labelZh: "@角色3",
+        audioUrl: "https://cdn.example/d.mp3",
+        createdAt: 1,
+      },
+      {
+        id: "e",
+        characterTag: "@角色4",
+        labelZh: "沈清辞",
+        audioUrl: "https://cdn.example/e.mp3",
+        createdAt: 2,
+      },
+    ]);
+    expect(locks.find((l) => l.characterTag === "@角色3")?.labelZh).toBe("");
+    expect(locks.find((l) => l.characterTag === "@角色4")?.labelZh).toBe("沈清辞");
+  });
 });
