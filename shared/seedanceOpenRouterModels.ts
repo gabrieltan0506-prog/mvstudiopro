@@ -6,15 +6,18 @@
  * @see https://openrouter.ai/bytedance/seedance-2.0-fast
  */
 
-export type SeedanceOpenRouterVariant = "2.0" | "2.0-fast";
+export type SeedanceOpenRouterVariant = "2.0" | "2.0-fast" | "2.5";
 
 export const SEEDANCE_OPENROUTER_MODELS = {
   "2.0": "bytedance/seedance-2.0",
   "2.0-fast": "bytedance/seedance-2.0-fast",
+  /** 2.5 只作 BytePlus 的 CG fallback（用户 2026-08-12 拍板）；仿真人仍只走 EvoLink */
+  "2.5": "bytedance/seedance-2.5",
 } as const;
 
-/** 与 EvoLink 2.0 时长口径对齐：4–15s，产品默认 15 */
+/** 与 EvoLink 2.0 时长口径对齐：4–15s，产品默认 15；2.5 官方 4–30s，段默认 30 */
 export const SEEDANCE_OPENROUTER_DURATION = { min: 4, max: 15, default: 15 } as const;
+export const SEEDANCE_OPENROUTER_25_DURATION = { min: 4, max: 30, default: 30 } as const;
 
 /**
  * Seedance 2.0 多模态参考的官方上限：图 9 / 视频 3 / 音频 3。
@@ -22,6 +25,14 @@ export const SEEDANCE_OPENROUTER_DURATION = { min: 4, max: 15, default: 15 } as 
  * 别再各处拍脑袋写 4 或 6——喂图不计费（计费只看输出分辨率×时长），砍名额纯亏一致性。
  */
 export const SEEDANCE_REFERENCE_MAX = { image: 9, video: 3, audio: 3 } as const;
+/** 2.5 官方上限：图 30 / 视频 10 / 音频 10——回落通道不得沿用 2.0 的 9 砍图丢锁 */
+export const SEEDANCE_25_REFERENCE_MAX = { image: 30, video: 10, audio: 10 } as const;
+
+export function seedanceOpenRouterReferenceMax(
+  variant: SeedanceOpenRouterVariant,
+): { image: number; video: number; audio: number } {
+  return variant === "2.5" ? SEEDANCE_25_REFERENCE_MAX : SEEDANCE_REFERENCE_MAX;
+}
 
 export const SEEDANCE_25_COMING_SOON_LABEL_EN = "Seedance 2.5 Coming soon on MV Studio Pro";
 export const SEEDANCE_25_COMING_SOON_LABEL_ZH = "Seedance 2.5 即将登陆 MV Studio Pro";
@@ -51,13 +62,15 @@ export function resolveSeedanceOpenRouterModelId(variant: SeedanceOpenRouterVari
   return SEEDANCE_OPENROUTER_MODELS[variant];
 }
 
-export function clampSeedanceOpenRouterDuration(raw: unknown): number {
+export function clampSeedanceOpenRouterDuration(
+  raw: unknown,
+  variant: SeedanceOpenRouterVariant = "2.0",
+): number {
+  const bounds =
+    variant === "2.5" ? SEEDANCE_OPENROUTER_25_DURATION : SEEDANCE_OPENROUTER_DURATION;
   const n = Math.floor(Number(raw));
-  if (!Number.isFinite(n)) return SEEDANCE_OPENROUTER_DURATION.default;
-  return Math.min(
-    SEEDANCE_OPENROUTER_DURATION.max,
-    Math.max(SEEDANCE_OPENROUTER_DURATION.min, n),
-  );
+  if (!Number.isFinite(n)) return bounds.default;
+  return Math.min(bounds.max, Math.max(bounds.min, n));
 }
 
 /** OpenRouter Seedance：480p / 720p / 1080p（fast 侧常见 480/720） */
@@ -68,6 +81,10 @@ export function normalizeSeedanceOpenRouterQuality(
   const q = String(raw || "720p").trim().toLowerCase();
   // 快速档定位是「便宜快」，不给高画质选项，免得比标准档还贵
   if (variant === "2.0-fast") {
+    return q === "480p" ? "480p" : "720p";
+  }
+  // 2.5 原生上限 720p（2K 全系不存在，1080p 也没有）
+  if (variant === "2.5") {
     return q === "480p" ? "480p" : "720p";
   }
   if (q === "480p" || q === "1080p") return q;
