@@ -3299,7 +3299,8 @@ export default function ManhuaScriptWorkbench({
             </div>
 
             {onStylePackChange ? (
-              <div className="mt-3">
+              // 风格包已填才常显；空包属可选进阶功能，简洁模式收进「显示说明」
+              <div className={`mt-3 ${compactUi && !stylePack ? "hidden" : ""}`}>
                 <ManhuaStylePackPanel
                   value={stylePack}
                   onChange={onStylePackChange}
