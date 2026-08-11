@@ -195,3 +195,45 @@ export function formatManhuaAtReferencePromptBlock(
       : []),
   ].join("\n");
 }
+
+/**
+ * 出片闭环：把段提示词里的 @引用落成引擎可用产物。
+ * - imageUrls：图片类引用的真 URL（进 API imageUrls，顺序在静帧之前）
+ * - promptAddonZh：@引用对照块（导演板约束句含在内）
+ * - missing：断链 token（调用方必须硬拦出片，不得静默）
+ * - bindings：本次按序号解析成功的图片引用 → 槽位 tag，调用方落回块字段
+ *   持久化；下次解析 bindings 优先，资产重排不断链
+ */
+export function applyManhuaAtReferencesToClip(input: {
+  promptText: string;
+  index: ManhuaAtReferenceEntry[];
+  registry?: Pick<ManhuaAssetLockRegistry, "slots"> | null;
+  bindings?: ManhuaAtReferenceBindings | null;
+}): {
+  imageUrls: string[];
+  promptAddonZh: string;
+  missing: string[];
+  bindings: ManhuaAtReferenceBindings;
+} {
+  const res = resolveManhuaAtReferences({
+    text: input.promptText,
+    index: input.index,
+    registry: input.registry,
+    bindings: input.bindings,
+  });
+  const nextBindings: ManhuaAtReferenceBindings = { ...(input.bindings || {}) };
+  for (const e of res.resolved) {
+    if (e.kind === "image" && e.tag && !nextBindings[e.token]) {
+      nextBindings[e.token] = { tag: e.tag };
+    }
+  }
+  return {
+    imageUrls: res.resolved
+      .filter((e) => e.kind === "image")
+      .map((e) => e.url)
+      .filter((u) => /^https?:\/\//i.test(u)),
+    promptAddonZh: formatManhuaAtReferencePromptBlock(res),
+    missing: res.missing,
+    bindings: nextBindings,
+  };
+}

@@ -187,6 +187,8 @@ export type CanvasBlock = {
   episodeTitle?: string;
   /** 路径运镜配方 id（视频节点 I2V 优先） */
   pathCameraRecipeId?: string;
+  /** @引用绑定：@图NN → 锁表 tag；首跑解析成功即落，重排不断链 */
+  atRefBindings?: Record<string, { tag: string }>;
   /** 静帧路径标注 JSON（视频节点 I2V 优先于配方） */
   pathAnnotationJson?: unknown;
   /** Seedance 2.5：秒级时间戳分镜（多行 `0-5 | 画面`） */

@@ -170,6 +170,8 @@ export type CanvasRunDeps = {
   > | null;
   /** 集号 → 集级导演分镜板（已裁成仅主画面）可下载地址；同一集所有段共用同一张 */
   manhuaDirectorBoardUrlByEpisode?: Record<number, string> | null;
+  /** @引用索引（@图NN 平铺→锁表槽位）；由画布层按当前 registry 预构建 */
+  manhuaAtReferenceEntries?: import("@shared/manhuaAtReference").ManhuaAtReferenceEntry[] | null;
   /**
    * 编剧室已选成片引擎。段数、段时长与新建 clip 盖的引擎都跟它走。
    * 本集还没有未归档 clip 节点时（局部改写清空、只扩写没 spawn），
@@ -1230,10 +1232,12 @@ export async function runCanvasBlock(
       !isClip && continuityVideoUrl
         ? `${seedanceDirectorSource}\n\n${MANHUA_CLIP_CONTINUITY_HINT_ZH}`
         : seedanceDirectorSource;
-    // 导戏单原样进 Seedance（已废除微动三件套）；clip 不用路径配方覆盖正文
+    // 导戏单原样进 Seedance（已废除微动三件套）；clip 的路径配方以
+    // 附加约束合成——不覆盖含秒轴/对白锁的正文（审计 P1 闭环）
     const compiledMotion = stripManhuaPromptSlop(
       compileI2VMotionPrompt(withContinuity, {
-        pathCameraRecipeId: isClip ? undefined : block.pathCameraRecipeId,
+        pathCameraRecipeId: block.pathCameraRecipeId,
+        appendRecipeAsConstraint: isClip,
       }),
     );
     // 光学 mm/快门：仅出片时由运镜句自动转换，不写回节点/前台审阅
@@ -1313,9 +1317,31 @@ export async function runCanvasBlock(
       const mentionedTags = isClip
         ? extractManhuaMentionedAssetTags(motionPrompt)
         : [];
-      const absStills = stillPool
-        .map((u) => absolutizeManhuaAssetUrl(u) || u)
-        .filter((u) => /^https?:\/\//i.test(u) || u.startsWith("data:image/"));
+      /**
+       * @引用闭环（@图NN）：解析成真 URL 进 imageUrls；断链硬拦——
+       * 红 chip 只是提示，跑到这一步还断就必须炸，绝不静默出错脸。
+       */
+      const { applyManhuaAtReferencesToClip } = await import("@shared/manhuaAtReference");
+      const atRefApplied =
+        isClip && deps.manhuaAtReferenceEntries?.length
+          ? applyManhuaAtReferencesToClip({
+              promptText: String(block.prompt || motionPrompt || ""),
+              index: deps.manhuaAtReferenceEntries,
+              bindings: block.atRefBindings || null,
+            })
+          : null;
+      if (atRefApplied?.missing.length) {
+        throw new Error(
+          `@引用断链：@${atRefApplied.missing.join("、@")} 指到的资产不存在，请在审阅框修正或删除该引用后再出片`,
+        );
+      }
+      const absStills = [
+        ...(atRefApplied?.imageUrls || []),
+        ...stillPool.map((u) => absolutizeManhuaAssetUrl(u) || u),
+      ].filter(
+        (u, i, arr) =>
+          (/^https?:\/\//i.test(u) || u.startsWith("data:image/")) && arr.indexOf(u) === i,
+      );
       // clip-eNN-... → 集号；没有导演板表或解不出集号时 boardUrl 就是空串，不影响既有行为
       const clipEpisodeMatch = /^[a-z_]+-e(\d{2})-/i.exec(block.id);
       const clipEpisodeNo = clipEpisodeMatch ? Number.parseInt(clipEpisodeMatch[1]!, 10) : null;
