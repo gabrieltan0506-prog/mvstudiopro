@@ -1966,7 +1966,7 @@ export default function ManhuaScriptWorkbench({
             </button>
           ) : (
             <>
-              {onGenerateAllEpisodeKeyarts ? (
+              {onGenerateAllEpisodeKeyarts && !(compactUi && activePhase === "storyboard") ? (
                 <button
                   type="button"
                   data-manhua-action="generate-all-keyarts"
@@ -2094,6 +2094,7 @@ export default function ManhuaScriptWorkbench({
               </button>
               <button
                 type="button"
+                hidden={compactUi && activePhase !== "storyboard"}
                 data-manhua-action="generate-fragment"
                 disabled={Boolean(factoryBusy)}
                 onClick={runGenerateFragment}
@@ -2122,7 +2123,7 @@ export default function ManhuaScriptWorkbench({
               对齐画布竖排
             </button>
           ) : null}
-          {onGenerateMissingFragments && selectedSorted.length > 0 ? (
+          {onGenerateMissingFragments && selectedSorted.length > 0 && !(compactUi && activePhase !== "storyboard") ? (
             <button
               type="button"
               data-manhua-action="generate-selected-fragments"
@@ -2288,8 +2289,8 @@ export default function ManhuaScriptWorkbench({
         className={
           // 沉浸分镜把高度留给三栏画布；提示缩成单行
           immersive
-            ? "shrink-0 truncate border-b border-white/8 bg-white/[0.03] px-3 py-0.5 text-[9px] text-white/35"
-            : "shrink-0 border-b border-white/8 bg-white/[0.03] px-3 py-1.5 text-[10px] leading-relaxed text-white/45"
+            ? "mh-hint shrink-0 truncate border-b border-white/8 bg-white/[0.03] px-3 py-0.5 text-[9px] text-white/35"
+            : "mh-hint shrink-0 border-b border-white/8 bg-white/[0.03] px-3 py-1.5 text-[10px] leading-relaxed text-white/45"
         }
         title={MANHUA_DRAFT_RETENTION_HINT_ZH}
       >
