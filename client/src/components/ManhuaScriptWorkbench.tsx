@@ -3513,7 +3513,9 @@ export default function ManhuaScriptWorkbench({
                             className="inline-flex items-center gap-1 rounded border border-emerald-300/35 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[9px] text-emerald-50/95"
                           >
                             {v.characterTag}
-                            <span className="font-sans text-white/50">{v.labelZh}</span>
+                            {v.labelZh && v.labelZh !== v.characterTag ? (
+                              <span className="font-sans text-white/50">{v.labelZh}</span>
+                            ) : null}
                             {onRemoveCharacterVoice ? (
                               <button
                                 type="button"
@@ -3551,7 +3553,7 @@ export default function ManhuaScriptWorkbench({
                             return charTags.map((tag) => {
                               const label =
                                 assetLockRegistry.byRole.character.find((s) => s.tag === tag)
-                                  ?.labelZh || tag;
+                                  ?.labelZh || "";
                               const win = resolveManhuaVoiceExtractWindow(clip.prompt, tag);
                               return (
                                 <button
@@ -3828,6 +3830,9 @@ export default function ManhuaScriptWorkbench({
                           const lockTag =
                             assetLockRegistry.slots.find((s) => s.path === ref.url)?.tag ||
                             assetLockRegistry.byRole[sec.role].find((s) => s.id === ref.id)?.tag;
+                          // 卡片名永远优先真人名：labelZh 空时回查认领锚点名，别让 @角色N 独占卡面
+                          const displayNameZh =
+                            ref.labelZh || (ref.claimedAnchorNamesZh || [])[0] || "";
                           const claimOptions: ManhuaWriterAssetAnchor[] =
                             ref.role === "character"
                               ? assetCanon?.characters || []
@@ -3933,14 +3938,15 @@ export default function ManhuaScriptWorkbench({
                                     <span className="shrink-0 text-[10px] text-white/55">{lockTag} ·</span>
                                   ) : null}
                                   <input
-                                    key={`${ref.id}:${ref.labelZh || ""}`}
+                                    key={`${ref.id}:${displayNameZh}`}
                                     type="text"
-                                    defaultValue={ref.labelZh || ""}
+                                    defaultValue={displayNameZh}
                                     placeholder="改名认领：填剧本表里的名字"
                                     maxLength={40}
                                     onBlur={(e) => {
+                                      // 与预填名（含认领回查名）相同就不写：零编辑失焦不落库
                                       const v = e.target.value.trim();
-                                      if (v !== (ref.labelZh || "")) onCustomAssetLabelChange(ref.id, v);
+                                      if (v !== displayNameZh) onCustomAssetLabelChange(ref.id, v);
                                     }}
                                     onKeyDown={(e) => {
                                       if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -3954,7 +3960,7 @@ export default function ManhuaScriptWorkbench({
                               ) : (
                                 <div className="truncate text-[10px] text-white/55">
                                   {lockTag ? `${lockTag} · ` : ""}
-                                  {ref.labelZh || "参考图"}
+                                  {displayNameZh || "参考图"}
                                   {ref.source === "generated" ? " · 新生成" : " · 上传"}
                                 </div>
                               )}

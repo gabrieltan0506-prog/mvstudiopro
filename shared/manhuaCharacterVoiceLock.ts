@@ -70,7 +70,9 @@ export function normalizeManhuaCharacterVoiceLock(
   if (!TAG_RE.test(characterTag)) return null;
   if (!/^https:\/\//i.test(audioUrl)) return null;
   const id = String(o.id || "").trim() || makeManhuaCharacterVoiceLockId();
-  const labelZh = String(o.labelZh || characterTag).trim().slice(0, 40) || characterTag;
+  // @角色N 是锁位号不是人名：存量脏 labelZh 读时自愈清空，显示层按 tag 回查人名
+  const labelZhRaw = String(o.labelZh || "").trim().slice(0, 40);
+  const labelZh = /^@(角色|场景|道具|服装)\d+$/.test(labelZhRaw) ? "" : labelZhRaw;
   const characterId = String(o.characterId || "").trim().slice(0, 80) || undefined;
   const sourceVideoUrl = String(o.sourceVideoUrl || "").trim();
   const sourceClipId = String(o.sourceClipId || "").trim().slice(0, 120) || undefined;
@@ -311,9 +313,9 @@ export function formatManhuaCharacterVoiceLockBlock(
     "多人同框：只挂本段有对白的角色，按时长优先，最多 3 路；未挂角色禁止串用别人声线。",
     ...attached.map(
       (l) =>
-        `${l.characterTag}=${l.labelZh}${
-          l.weightSec > 0 ? `（对白约${l.weightSec}s）` : ""
-        }（参考音已挂）`,
+        `${l.characterTag}${
+          l.labelZh && l.labelZh !== l.characterTag ? `=${l.labelZh}` : ""
+        }${l.weightSec > 0 ? `（对白约${l.weightSec}s）` : ""}（参考音已挂）`,
     ),
   ];
   if (plan?.deferredTags?.length) {
