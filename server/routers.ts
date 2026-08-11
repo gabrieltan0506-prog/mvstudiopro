@@ -9067,6 +9067,37 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       }),
 
     /**
+     * 对白配音试听（管理员限定）。计费未拍板前不对用户开放，防免费成本洞；
+     * 情绪/音效靠 input 内联标签，字段纪律见 qwenDialogueTts.ts 顶注。
+     */
+    manhuaDialogueTtsPreview: adminProcedure
+      .input(
+        z.object({
+          input: z.string().min(1).max(4000),
+          voice: z.string().min(1).max(80).optional(),
+          seed: z.number().int().optional(),
+        }),
+      )
+      .mutation(async ({ input }) => {
+        const { synthesizeQwenDialogue, QWEN_TTS_SYSTEM_VOICES } = await import(
+          "./services/qwenDialogueTts.js"
+        );
+        try {
+          return await synthesizeQwenDialogue({
+            input: input.input,
+            voice: input.voice || QWEN_TTS_SYSTEM_VOICES[0].id,
+            seed: input.seed,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "SERVICE_UNAVAILABLE",
+            message: `对白配音暂时不可用：${msg.slice(0, 200)}`,
+          });
+        }
+      }),
+
+    /**
      * 导演分镜板提示词：确定性拼装（段级九字段汇总成集级模板），零文本模型调用。
      * 只拼提示词，不出图——出图入口在前端按「先定妆/服装道具/场景，最后才生成
      * 导演板」的顺序，走多图参考调用 openaiGptImage2；本接口不碰出图 API。
