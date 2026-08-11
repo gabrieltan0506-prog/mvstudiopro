@@ -40,6 +40,7 @@ import {
   MANHUA_ASSET_SHEET_SOFT_NO_TEXT_EN,
   MANHUA_KEYART_NO_TEXT_EN,
   parseManhuaClipTargetDurationSec,
+  resolveClipLocalSegmentIndex,
 } from "@shared/manhuaScriptWorkbench";
 import {
   clampSeedanceOpenRouterDuration,
@@ -170,6 +171,8 @@ export type CanvasRunDeps = {
   > | null;
   /** 集号 → 集级导演分镜板（已裁成仅主画面）可下载地址；同一集所有段共用同一张 */
   manhuaDirectorBoardUrlByEpisode?: Record<number, string> | null;
+  /** 段级导演板（段级为主、集级兜底）：集号 → 本集段号(1 起) → HTTPS */
+  manhuaDirectorBoardUrlByEpisodeSegment?: Record<number, Record<number, string>> | null;
   /** @引用索引（@图NN 平铺→锁表槽位）；由画布层按当前 registry 预构建 */
   manhuaAtReferenceEntries?: import("@shared/manhuaAtReference").ManhuaAtReferenceEntry[] | null;
   /**
@@ -1345,9 +1348,18 @@ export async function runCanvasBlock(
       // clip-eNN-... → 集号；没有导演板表或解不出集号时 boardUrl 就是空串，不影响既有行为
       const clipEpisodeMatch = /^[a-z_]+-e(\d{2})-/i.exec(block.id);
       const clipEpisodeNo = clipEpisodeMatch ? Number.parseInt(clipEpisodeMatch[1]!, 10) : null;
+      // 段级板优先、集级兜底（与 ensureManhuaFragmentClips 同口径）；g 号可能是全集连续，折回本集段号
+      const clipLocalSegNo = clipEpisodeNo
+        ? resolveClipLocalSegmentIndex(block.id, block.prompt, clipEpisodeNo)
+        : null;
       const boardUrl =
         isClip && clipEpisodeNo
-          ? String(deps.manhuaDirectorBoardUrlByEpisode?.[clipEpisodeNo] || "").trim()
+          ? String(
+              (clipLocalSegNo != null
+                ? deps.manhuaDirectorBoardUrlByEpisodeSegment?.[clipEpisodeNo]?.[clipLocalSegNo]
+                : "") || "",
+            ).trim() ||
+            String(deps.manhuaDirectorBoardUrlByEpisode?.[clipEpisodeNo] || "").trim()
           : "";
       // 成片硬绑：末帧 → 资产定妆 → 本段静帧 → 导演板（URL 只进 API imageUrls）
       const bindPlan = isClip

@@ -8921,12 +8921,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           appliedTemplate = { id: card.id, nameZh: card.nameZh };
         }
         const episodeCount = clampWriterEpisodeCount(input.episodeCount);
+        // 局部改写按实际重写集数计费（按集计价的拍板语义）：fromEpisode 起重写到末集。
+        // 此前不看 fromEpisode 全量收费，门禁「补密度」入口的前端报价会与实扣不符。
+        const fromEpisodeReq = Math.min(
+          episodeCount,
+          Math.max(0, Math.floor(Number(input.fromEpisode) || 0)),
+        );
+        const billableEpisodes =
+          fromEpisodeReq > 0 ? Math.max(1, episodeCount - fromEpisodeReq + 1) : episodeCount;
 
         const quota = resolveManhuaWriterExpandQuota({
           usedEver: 0,
           usedToday: 0,
           tier: input.tier ?? "excellent",
-          episodeCount,
+          episodeCount: billableEpisodes,
         });
         const cost = quota.nextCredits;
         if (cost > 0) {
@@ -8981,7 +8989,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           userId,
           cost,
           MANHUA_WRITER_EXPAND_ACTION,
-          `编剧室连载扩写（${manhuaWriterExpandTierLabel(quota.runTier)}）· ${episodeCount} 集`,
+          `编剧室连载扩写（${manhuaWriterExpandTierLabel(quota.runTier)}）· ${billableEpisodes} 集${fromEpisodeReq > 0 ? `（第 ${fromEpisodeReq} 集起局部改写）` : ""}`,
           { chargeKey },
         );
 

@@ -23,9 +23,14 @@ import {
 } from "@shared/manhuaCanvasRerunCompile";
 import {
   directorBoardHttpsByEpisode,
+  directorBoardHttpsByEpisodeSegment,
+  loadManhuaDirectorBoardBySegment,
   loadManhuaDirectorBoardMainByEpisode,
+  normalizeDirectorBoardBySegment,
   normalizeDirectorBoardMainByEpisode,
+  saveManhuaDirectorBoardBySegment,
   saveManhuaDirectorBoardMainByEpisode,
+  type ManhuaDirectorBoardBySegment,
   type ManhuaDirectorBoardMainByEpisode,
 } from "@/lib/manhuaDirectorBoardStore";
 import { MANHUA_PROP_SHAPE_LOOKUP_MAX } from "@shared/manhuaPropShapeHint";
@@ -122,7 +127,7 @@ import {
   syncManhuaClipAssetEdges,
   type ManhuaFactoryStageKey,
 } from "@/lib/canvasDramaStudio";
-import { layoutManhuaCanvasBlocks, MANHUA_CANVAS_LAYOUT } from "@/lib/manhuaCanvasLayout";
+import { MANHUA_CANVAS_LAYOUT } from "@/lib/manhuaCanvasLayout";
 import {
   collectManhuaClipDockItems,
   episodeIndexesFromDockSelection,
@@ -554,10 +559,19 @@ export default function OmniCanvas() {
   const [directorBoardMainByEpisode, setDirectorBoardMainByEpisode] =
     useState<ManhuaDirectorBoardMainByEpisode>(loadManhuaDirectorBoardMainByEpisode);
   const resignedBoardGcsUriRef = useRef<Set<string>>(new Set());
+  /** 段列头卡已落块过的 id；云恢复/换剧必须 clear，否则误判「用户删卡」清真源 */
+  const materializedBoardIdsRef = useRef<Set<string>>(new Set());
   /** 出片/ensure 用的 HTTPS map（由 gcsUri 现签或缓存 url） */
   const directorBoardUrlByEpisode = useMemo(
     () => directorBoardHttpsByEpisode(directorBoardMainByEpisode),
     [directorBoardMainByEpisode],
+  );
+  /** 段级导演板（段级为主、集级兜底）：集号 → 本集段号 → 裁后主画面 */
+  const [directorBoardBySegment, setDirectorBoardBySegment] =
+    useState<ManhuaDirectorBoardBySegment>(loadManhuaDirectorBoardBySegment);
+  const directorBoardUrlByEpisodeSegment = useMemo(
+    () => directorBoardHttpsByEpisodeSegment(directorBoardBySegment),
+    [directorBoardBySegment],
   );
   const [factoryTopic, setFactoryTopic] = useState(
     () => initialWriterSession?.topic || initialFactoryPrefs.topic || "",
@@ -739,6 +753,22 @@ export default function OmniCanvas() {
   const [writerBusy, setWriterBusy] = useState(false);
   /** 确认编剧失败时的门禁原因（页面常驻，不只 toast） */
   const [writerConfirmBlockers, setWriterConfirmBlockers] = useState<string[]>([]);
+  /** 门禁一键补密度：扩写成功落盘后自动重跑一次「编剧确认」（A2 闭环） */
+  const gateRecheckPendingRef = useRef(false);
+  /**
+   * 门禁红字里点到名的集号。注意红字有 slice(0,6) 截断：列举可能不全，
+   * 但扩写从最小集号重写到末集，报价与修复范围只依赖最小集号，不受截断影响。
+   */
+  const writerGateFailEpisodes = useMemo(() => {
+    const found = new Set<number>();
+    for (const err of writerConfirmBlockers) {
+      for (const m of Array.from(String(err).matchAll(/第(\d+)集/g))) {
+        const n = Number(m[1]);
+        if (Number.isFinite(n) && n >= 1) found.add(n);
+      }
+    }
+    return Array.from(found).sort((a, b) => a - b);
+  }, [writerConfirmBlockers]);
   /** 次要入口：粘贴 / 上传已有剧本 */
   const [writerImportDraft, setWriterImportDraft] = useState("");
   const writerImportFileRef = useRef<HTMLInputElement | null>(null);
@@ -753,10 +783,6 @@ export default function OmniCanvas() {
   const [clearSeriesWithBackup, setClearSeriesWithBackup] = useState(true);
   const [writerFocusEpisode, setWriterFocusEpisode] = useState(() =>
     Math.max(1, Math.floor(Number(initialWriterSession?.focusEpisode) || 1)),
-  );
-  /** 折叠起来的集：多集铺开后画布会很长，折叠让它只占一行高度 */
-  const [collapsedManhuaEpisodes, setCollapsedManhuaEpisodes] = useState<Set<number>>(
-    () => new Set(),
   );
   const [directorUnlocked, setDirectorUnlocked] = useState(
     () => Boolean(initialWriterSession?.directorUnlocked),
@@ -841,6 +867,46 @@ export default function OmniCanvas() {
       cancelled = true;
     };
   }, [directorBoardMainByEpisode]);
+  /** 段级导演板签名 url 过期：有 gcsUri 则现签刷新（与集级同口径，共用已签集合） */
+  useEffect(() => {
+    const stale: Array<{ ep: number; seg: number; gcsUri: string }> = [];
+    for (const [epKey, segMap] of Object.entries(directorBoardBySegment)) {
+      const ep = Number(epKey);
+      if (!Number.isFinite(ep)) continue;
+      for (const [segKey, e] of Object.entries(segMap || {})) {
+        const seg = Number(segKey);
+        const gcsUri = String(e?.gcsUri || "").trim();
+        if (!Number.isFinite(seg) || !gcsUri) continue;
+        if (resignedBoardGcsUriRef.current.has(gcsUri)) continue;
+        stale.push({ ep, seg, gcsUri });
+      }
+    }
+    if (!stale.length) return;
+    let cancelled = false;
+    void (async () => {
+      const resolved: Array<{ ep: number; seg: number; gcsUri: string; url: string }> = [];
+      for (const s of stale) {
+        try {
+          resolved.push({ ...s, url: await resolveOmniMaterialUrl(s.gcsUri) });
+        } catch {
+          /* 保持旧 url，下次再试 */
+        }
+      }
+      if (cancelled || !resolved.length) return;
+      setDirectorBoardBySegment((prev) => {
+        const next = { ...prev };
+        for (const r of resolved) {
+          resignedBoardGcsUriRef.current.add(r.gcsUri);
+          next[r.ep] = { ...(next[r.ep] || {}), [r.seg]: { gcsUri: r.gcsUri, url: r.url } };
+        }
+        saveManhuaDirectorBoardBySegment(next);
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [directorBoardBySegment]);
   /**
    * 上传入口已统一（唯一入口 uploadCustomAssetFiles 强制先选分类），新上传
    * 不会再产生 role="unset"；但老草稿可能存着历史未归类图，不能静默丢弃——
@@ -1560,10 +1626,15 @@ export default function OmniCanvas() {
     if (Array.isArray(prefs.customAssetRefs)) {
       setCustomAssetRefs(normalizeManhuaCustomAssetRefs(prefs.customAssetRefs));
     }
+    // 云恢复整体替换画布：清「已落块」记忆，避免旧快照无 board 卡被误判用户删卡而清真源
+    materializedBoardIdsRef.current.clear();
     if (prefs.directorBoardMainByEpisode) {
       setDirectorBoardMainByEpisode(
         normalizeDirectorBoardMainByEpisode(prefs.directorBoardMainByEpisode),
       );
+    }
+    if (prefs.directorBoardBySegment) {
+      setDirectorBoardBySegment(normalizeDirectorBoardBySegment(prefs.directorBoardBySegment));
     }
     // 跨专案幽灵防线（用户实测「清都清不掉」的根）：恢复数据里旧都市专案的
     // 库选角/道具/manual 标志，会在每次登录云同步时无条件写回，把种子库 CP
@@ -1772,6 +1843,7 @@ export default function OmniCanvas() {
       customAssetRefs,
       shareAssetToLibrary,
       directorBoardMainByEpisode,
+      directorBoardBySegment,
       assetSelectionScopeKey: manhuaAssetSelectionScopeKey(factoryTopic, projectBible?.assetCanon),
     };
     const writerSession = {
@@ -1839,6 +1911,7 @@ export default function OmniCanvas() {
     stylePack,
     shareAssetToLibrary,
     directorBoardMainByEpisode,
+    directorBoardBySegment,
     viralTemplateId,
     explicitWriterVideoModel,
     deliveryPackage,
@@ -2302,6 +2375,32 @@ export default function OmniCanvas() {
         const finalVideoUrl = String(out.finalVideoUrl || out.videoUrl || "").trim();
         if (!finalVideoUrl) throw new Error("合成完成但未返回成片地址");
         setFinalAssembleVideoUrl(finalVideoUrl);
+        // 整集节点落画布（段列制最右收口）：成片不再只活在坞面板的 state 里
+        setBlocks((prev) => {
+          const finalId = `final-e${String(writerFocusEpisode).padStart(2, "0")}`;
+          const existing = prev.find((b) => b.id === finalId);
+          const nextBlock = {
+            ...(existing ?? {
+              ...defaultCanvasBlock("video", 0, 0),
+              id: finalId,
+              episodeIndex: writerFocusEpisode,
+            }),
+            prompt: existing?.prompt || `第${writerFocusEpisode}集 · 整集成片`,
+            status: "done" as const,
+            outputUrl: finalVideoUrl,
+          };
+          const next = existing
+            ? prev.map((b) => (b.id === finalId ? nextBlock : b))
+            : [...prev, nextBlock];
+          const laid = layoutManhuaEpisodeReadableChain(next, writerFocusEpisode, {
+            assetCanon: projectBible?.assetCanon,
+          });
+          setEdges((eds) => {
+            saveCanvasState(laid, eds);
+            return eds;
+          });
+          return laid;
+        });
         pushDebug("assemble:done", {
           level: "ok",
           detail: `scenes=${out.sceneCount || ready.length} · final ok`,
@@ -2339,6 +2438,8 @@ export default function OmniCanvas() {
       writerPack?.logline,
       projectBible?.seriesTitle,
       projectBible?.logline,
+      projectBible?.assetCanon,
+      writerFocusEpisode,
       pushDebug,
       user?.id,
     ],
@@ -2421,6 +2522,7 @@ export default function OmniCanvas() {
       manhuaAssetPathById: manhuaAssetMaps.pathById,
       manhuaAssetTileUrlsById: manhuaAssetMaps.tileUrlsById,
       manhuaDirectorBoardUrlByEpisode: directorBoardUrlByEpisode,
+      manhuaDirectorBoardUrlByEpisodeSegment: directorBoardUrlByEpisodeSegment,
       manhuaAtReferenceEntries: buildManhuaAtReferenceIndex({
         registry: manhuaAssetMaps.registry,
         boardUrlByEpisode: directorBoardUrlByEpisode,
@@ -2521,6 +2623,7 @@ export default function OmniCanvas() {
       audioReferenceLock,
       manhuaAssetMaps,
       directorBoardUrlByEpisode,
+      directorBoardUrlByEpisodeSegment,
       explicitWriterVideoModel,
     ],
   );
@@ -2545,8 +2648,33 @@ export default function OmniCanvas() {
     [],
   );
 
+  /** 段级导演板写入/删除（entry=null 删除该段；段图删完自动收掉集条目） */
+  const setDirectorBoardMainForSegment = useCallback(
+    (episodeIndex: number, segIndex: number, entry: { gcsUri: string; url?: string } | null) => {
+      const ep = Math.max(1, Math.floor(episodeIndex) || 1);
+      const seg = Math.max(1, Math.floor(segIndex) || 1);
+      setDirectorBoardBySegment((prev) => {
+        const next = { ...prev };
+        const segMap = { ...(next[ep] || {}) };
+        if (!entry || (!entry.gcsUri && !entry.url)) delete segMap[seg];
+        else {
+          segMap[seg] = {
+            gcsUri: String(entry.gcsUri || "").trim(),
+            ...(entry.url ? { url: String(entry.url).trim() } : {}),
+          };
+          if (segMap[seg]!.gcsUri) resignedBoardGcsUriRef.current.delete(segMap[seg]!.gcsUri);
+        }
+        if (Object.keys(segMap).length) next[ep] = segMap;
+        else delete next[ep];
+        saveManhuaDirectorBoardBySegment(next);
+        return next;
+      });
+    },
+    [],
+  );
+
   const ingestDirectorBoardFile = useCallback(
-    async (episodeIndex: number, file: File) => {
+    async (episodeIndex: number, file: File, segIndex?: number | null) => {
       const ep = Math.max(1, Math.floor(episodeIndex) || 1);
       const { uploadOneCanvasAsset } = await import("@/lib/canvasUpload");
       const asset = await uploadOneCanvasAsset({
@@ -2561,11 +2689,22 @@ export default function OmniCanvas() {
       const gcsUri = String(cropped?.gcsUri || "").trim();
       if (!/^https?:\/\//i.test(mainUrl)) throw new Error("导演板裁切未返回主画面地址");
       if (!/^gs:\/\//i.test(gcsUri)) throw new Error("导演板裁切未返回长期存储地址");
-      setDirectorBoardMainForEpisode(ep, { gcsUri, url: mainUrl });
-      toast.success(`第${ep}集导演板已裁切并接入成片垫图`);
+      const seg = segIndex != null && Number.isFinite(segIndex) ? Math.max(1, Math.floor(segIndex)) : null;
+      if (seg) {
+        setDirectorBoardMainForSegment(ep, seg, { gcsUri, url: mainUrl });
+        toast.success(`第${ep}集·段${String(seg).padStart(2, "0")}导演板已裁切并接入本段垫图`);
+      } else {
+        setDirectorBoardMainForEpisode(ep, { gcsUri, url: mainUrl });
+        toast.success(`第${ep}集导演板已裁切并接入成片垫图`);
+      }
       return mainUrl;
     },
-    [cropDirectorBoardMutation, getSignedUrlMutation, setDirectorBoardMainForEpisode],
+    [
+      cropDirectorBoardMutation,
+      getSignedUrlMutation,
+      setDirectorBoardMainForEpisode,
+      setDirectorBoardMainForSegment,
+    ],
   );
 
   /** 方案 B：拼导演板出图提示词并复制，用户自行出图后再「上传导演板」裁切入库 */
@@ -2753,6 +2892,7 @@ export default function OmniCanvas() {
           characterLookSets,
           segmentLookBindings,
           directorBoardUrlByEpisode,
+          directorBoardUrlByEpisodeSegment,
           videoModel: explicitWriterVideoModel || undefined,
         });
         const fresh = ensured.blocks.find((b) => b.id === block.id);
@@ -2794,6 +2934,7 @@ export default function OmniCanvas() {
       characterLookSets,
       segmentLookBindings,
       directorBoardUrlByEpisode,
+      directorBoardUrlByEpisodeSegment,
       explicitWriterVideoModel,
     ],
   );
@@ -3128,7 +3269,7 @@ export default function OmniCanvas() {
     ],
   );
 
-  const expandWriterRoom = useCallback(async () => {
+  const expandWriterRoom = useCallback(async (opts?: { fromEpisodeOverride?: number }) => {
     const topic = factoryTopic.trim();
     const brief = writerBrief.trim();
     if (!topic && !brief) {
@@ -3141,8 +3282,11 @@ export default function OmniCanvas() {
     }
     /** 立刻收窄为成片三选一，避免 async/state 下空串回流导致 tsc 失败 */
     const selectedVideoModel: ManhuaSeedanceLayoutVideoModel = writerVideoModel;
+    /** 门禁「补密度」带 override：从首个不足集起局部改写，整集重写（段起点=1） */
+    const fromEpisode = Math.max(0, Math.floor(opts?.fromEpisodeOverride ?? writerFromEpisode));
+    const fromSegment = opts?.fromEpisodeOverride != null ? 1 : writerFromSegment;
     /** 全量换剧：先备份旧专案（剧本+付费设定图），再清空，避免新旧串味 */
-    const fullSeriesSwitch = !(writerFromEpisode > 0);
+    const fullSeriesSwitch = !(fromEpisode > 0);
     let clearSeriesAssetsAfterBackup = false;
     if (fullSeriesSwitch) {
       const risk = inspectManhuaSeriesSwitchRisk({
@@ -3175,18 +3319,31 @@ export default function OmniCanvas() {
       if (!allowed) return;
       clearSeriesAssetsAfterBackup = risk.needsBackup;
     } else if (writerPack) {
+      const gateRepair = opts?.fromEpisodeOverride != null;
+      const rewriteCount = Math.max(
+        1,
+        (writerPack.episodes.length || fromEpisode) - fromEpisode + 1,
+      );
+      const perEp = MANHUA_WRITER_EXPAND_CREDITS_PER_EPISODE[writerExpandTier];
       const ok = window.confirm(
-        "局部改写将覆盖起点之后的剧情；起点之前的剧本与已出片资产会保留。是否继续？",
+        gateRepair
+          ? `补密度：从第 ${fromEpisode} 集起重写 ${rewriteCount} 集，预计 ${perEp * rewriteCount} 积分。之前的集与已出片资产保留；失败不动原稿，成功后自动重检门禁。是否继续？`
+          : "局部改写将覆盖起点之后的剧情；起点之前的剧本与已出片资产会保留。是否继续？",
       );
       if (!ok) return;
     }
     setWriterBusy(true);
+    // 补密度路径：过了 confirm 等全部早退才挂自动重检标，防悬挂被无关剧本变更误触发
+    if (opts?.fromEpisodeOverride != null) gateRecheckPendingRef.current = true;
     setWriterConfirmed(false);
     setDirectorUnlocked(false);
     setProjectBible(null);
     setCustomAssetRefs([]);
     setDirectorBoardMainByEpisode({});
     saveManhuaDirectorBoardMainByEpisode({});
+    setDirectorBoardBySegment({});
+    saveManhuaDirectorBoardBySegment({});
+    materializedBoardIdsRef.current.clear();
     setWriterConfirmBlockers([]);
     const t0 = Date.now();
     const count = clampWriterEpisodeCount(writerEpisodeCount);
@@ -3212,8 +3369,8 @@ export default function OmniCanvas() {
       viralTemplateId,
       writerLengthTierId,
       selectedVideoModel,
-      writerFromEpisode,
-      writerFromSegment,
+      fromEpisode,
+      fromSegment,
     });
     const expandRequestId =
       writerExpandRetryRef.current?.signature === expandSignature
@@ -3231,11 +3388,11 @@ export default function OmniCanvas() {
           viralTemplateId: viralTemplateId || undefined,
           lengthTierId: writerLengthTierId,
           videoModel: selectedVideoModel,
-          fromEpisode: writerFromEpisode || undefined,
-          fromSegment: writerFromEpisode > 0 ? writerFromSegment : undefined,
+          fromEpisode: fromEpisode || undefined,
+          fromSegment: fromEpisode > 0 ? fromSegment : undefined,
           lockedEpisodeBody:
-            writerFromEpisode > 0 && writerFromSegment > 1
-              ? writerPack?.episodes.find((e) => e.index === writerFromEpisode)?.body ||
+            fromEpisode > 0 && fromSegment > 1
+              ? writerPack?.episodes.find((e) => e.index === fromEpisode)?.body ||
                 undefined
               : undefined,
         }),
@@ -3250,7 +3407,7 @@ export default function OmniCanvas() {
       const pack = spliceManhuaWriterPackFromEpisode(
         writerPack,
         res.pack,
-        writerFromEpisode,
+        fromEpisode,
       );
       if (isPlaceholderSeriesTitle(pack.seriesTitle)) {
         const fallback = deriveSeriesTitleFromTopic(topic);
@@ -3261,8 +3418,8 @@ export default function OmniCanvas() {
       }
       // 新剧情包不应继续展示旧静帧/成片/多集坞（云草稿残留）
       let cleaned = stripManhuaFactoryCanvasArtifacts(blocks, edges, {
-        fromEpisode: writerFromEpisode || undefined,
-        fromSegment: writerFromEpisode > 0 ? writerFromSegment : undefined,
+        fromEpisode: fromEpisode || undefined,
+        fromSegment: fromEpisode > 0 ? fromSegment : undefined,
       });
       if (clearSeriesAssetsAfterBackup) {
         const seriesCleared = stripManhuaSeriesAssetsForNewProject(
@@ -3291,7 +3448,7 @@ export default function OmniCanvas() {
         setWorkflowPhase("outline");
       }
       setWriterPack(pack);
-      setWriterFocusEpisode(writerFromEpisode || 1);
+      setWriterFocusEpisode(fromEpisode || 1);
       setWriterConfirmBlockers([]);
       // 新剧本立刻落盘并覆盖本机+云端旧稿，避免刷新后又被旧云草稿盖回
       const clientUpdatedAt = new Date().toISOString();
@@ -3373,6 +3530,7 @@ export default function OmniCanvas() {
         response: msg,
       });
       toast.error(msg);
+      gateRecheckPendingRef.current = false;
     } finally {
       setWriterBusy(false);
     }
@@ -3496,6 +3654,9 @@ export default function OmniCanvas() {
       setMaleLeadManual(false);
       setDirectorBoardMainByEpisode({});
       saveManhuaDirectorBoardMainByEpisode({});
+      setDirectorBoardBySegment({});
+      saveManhuaDirectorBoardBySegment({});
+      materializedBoardIdsRef.current.clear();
       setWriterFocusEpisode(1);
       setWriterEpisodeCount(res.pack.episodeCount);
       setWriterImportDraft(text);
@@ -3652,6 +3813,9 @@ export default function OmniCanvas() {
     setCustomAssetRefs([]);
     setDirectorBoardMainByEpisode({});
     saveManhuaDirectorBoardMainByEpisode({});
+    setDirectorBoardBySegment({});
+    saveManhuaDirectorBoardBySegment({});
+    materializedBoardIdsRef.current.clear();
     setWriterFocusEpisode(1);
     setWriterImportDraft("");
     setWriterConfirmBlockers([]);
@@ -3884,6 +4048,19 @@ export default function OmniCanvas() {
     remapDockSelectionAfterSpawn,
     pushDebug,
   ]);
+
+  // A2 闭环收尾：门禁「补密度」扩写成功、新稿落盘后自动重跑一次编剧确认；
+  // 过了直接放行进导演，没过红字刷新为最新缺口（失败路径在 expandWriterRoom catch 里撤标）
+  useEffect(() => {
+    if (!gateRecheckPendingRef.current || writerBusy || !writerPack) return;
+    gateRecheckPendingRef.current = false;
+    const timer = window.setTimeout(() => {
+      // 通过与否 confirmWriterToDirector 自己会 toast/滚红字，这里不再叠加
+      confirmWriterToDirector();
+    }, 120);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [writerPack, writerBusy]);
 
   const confirmWriterSeriesSpawn = useCallback(() => {
     if (!writerPack || !writerPackLooksReady(writerPack)) {
@@ -4521,7 +4698,7 @@ export default function OmniCanvas() {
   useEffect(() => {
     if (fourLaneMigratedRef.current || canvasMode !== "manhua") return;
     try {
-      if (window.localStorage.getItem("mv_manhua_layout_4lane_v1") === "1") {
+      if (window.localStorage.getItem("mv_manhua_layout_seglane_v1") === "1") {
         fourLaneMigratedRef.current = true;
         return;
       }
@@ -4537,7 +4714,7 @@ export default function OmniCanvas() {
     if (!hasManhuaNodes) return;
     fourLaneMigratedRef.current = true;
     try {
-      window.localStorage.setItem("mv_manhua_layout_4lane_v1", "1");
+      window.localStorage.setItem("mv_manhua_layout_seglane_v1", "1");
     } catch {
       /* 忽略 */
     }
@@ -4556,10 +4733,118 @@ export default function OmniCanvas() {
       });
       return next;
     });
-    toast.message("画布已切换为四柱排布", {
-      description: "资产柱｜静帧柱｜成片柱，段落从上往下；点「对齐画布竖排」可随时重排",
+    toast.message("画布已切换为段列排布", {
+      description: "资产柱｜每段一列（导演板+静帧）｜成片柱｜整集；点「对齐画布竖排」可随时重排",
     });
   }, [blocks, canvasMode, writerFocusEpisode, projectBible?.assetCanon, customAssetRefs]);
+
+  /**
+   * 段列头卡生产者：导演板真源（段级 store + 集级兜底）→ 画布 board 节点投影。
+   * id 固定 board-eXX-sNN / board-eXX（版式按此归列；不带随机尾缀，天然幂等）。
+   * 反向：头卡在画布上被删（且画布还有其它漫剧节点=非整体换稿）→ 视为删该板，
+   * 清 store 真源，不复活——删除语义与卡面一致。
+   */
+  useEffect(() => {
+    if (canvasMode !== "manhua") return;
+    const expected = new Map<string, { url: string; ep: number; seg: number | null }>();
+    for (const [epKey, segMap] of Object.entries(directorBoardUrlByEpisodeSegment)) {
+      const ep = Number(epKey);
+      if (!Number.isFinite(ep) || ep < 1) continue;
+      for (const [segKey, url] of Object.entries(segMap || {})) {
+        const seg = Number(segKey);
+        const u = String(url || "").trim();
+        if (!Number.isFinite(seg) || seg < 1 || !u) continue;
+        expected.set(
+          `board-e${String(ep).padStart(2, "0")}-s${String(seg).padStart(2, "0")}`,
+          { url: u, ep, seg },
+        );
+      }
+    }
+    for (const [epKey, url] of Object.entries(directorBoardUrlByEpisode)) {
+      const ep = Number(epKey);
+      const u = String(url || "").trim();
+      if (!Number.isFinite(ep) || ep < 1 || !u) continue;
+      expected.set(`board-e${String(ep).padStart(2, "0")}`, { url: u, ep, seg: null });
+    }
+    // 真源已不含的 id 从「已落块」记忆剔除（换剧/删除后的残留会让下次同 id 上传被秒删）
+    for (const id of Array.from(materializedBoardIdsRef.current)) {
+      if (!expected.has(id)) materializedBoardIdsRef.current.delete(id);
+    }
+    const presentBoards = blocks.filter((b) => b.id.startsWith("board-e"));
+    const presentById = new Map(presentBoards.map((b) => [b.id, b]));
+    const hasOtherManhuaNodes = blocks.some(
+      (b) => b.id.startsWith("keyart-") || b.id.startsWith("clip-") || b.id.startsWith("charsheet-"),
+    );
+    const toAdd: CanvasBlock[] = [];
+    const toRefresh = new Map<string, string>();
+    for (const [id, e] of Array.from(expected.entries())) {
+      const hit = presentById.get(id);
+      if (hit) {
+        materializedBoardIdsRef.current.add(id);
+        if (String(hit.outputUrl || "").trim() !== e.url) toRefresh.set(id, e.url);
+        continue;
+      }
+      if (materializedBoardIdsRef.current.has(id) && hasOtherManhuaNodes) {
+        // 画布上被删过 → 清真源（下轮 expected 不再含它）
+        materializedBoardIdsRef.current.delete(id);
+        if (e.seg != null) setDirectorBoardMainForSegment(e.ep, e.seg, null);
+        else setDirectorBoardMainForEpisode(e.ep, null);
+        continue;
+      }
+      const nb = defaultCanvasBlock("image", 0, 0);
+      toAdd.push({
+        ...nb,
+        id,
+        prompt:
+          e.seg != null
+            ? `第${String(e.ep).padStart(2, "0")}集·段${String(e.seg).padStart(2, "0")} 导演板 · 本段成片垫图`
+            : `第${String(e.ep).padStart(2, "0")}集 导演板 · 全集共用垫图（无段级板时兜底）`,
+        aspectRatio: "16:9",
+        status: "done",
+        outputUrl: e.url,
+        outputUrls: [e.url],
+        episodeIndex: e.ep,
+      });
+      materializedBoardIdsRef.current.add(id);
+    }
+    // 真源已删/换剧 → 收掉画布残卡
+    const toDrop = presentBoards.filter((b) => !expected.has(b.id)).map((b) => b.id);
+    for (const id of toDrop) materializedBoardIdsRef.current.delete(id);
+    if (!toAdd.length && !toRefresh.size && !toDrop.length) return;
+    setBlocks((prev) => {
+      let next = prev;
+      if (toDrop.length) next = next.filter((b) => !toDrop.includes(b.id));
+      if (toRefresh.size) {
+        next = next.map((b) => {
+          const u = toRefresh.get(b.id);
+          return u ? { ...b, outputUrl: u, outputUrls: [u] } : b;
+        });
+      }
+      if (toAdd.length) {
+        // 新头卡按段列归位（只在真的新增时排；URL 刷新/删除不动用户摆位）
+        next = layoutManhuaEpisodeReadableChain([...next, ...toAdd], writerFocusEpisode, {
+          assetCanon: projectBible?.assetCanon,
+          characterSheetUrlById: collectManhuaCharacterSheetUrlById(next, projectBible?.assetCanon),
+          customRefs: customAssetRefs,
+        });
+      }
+      setEdges((eds) => {
+        saveCanvasState(next, eds);
+        return eds;
+      });
+      return next;
+    });
+  }, [
+    blocks,
+    canvasMode,
+    directorBoardUrlByEpisodeSegment,
+    directorBoardUrlByEpisode,
+    writerFocusEpisode,
+    projectBible?.assetCanon,
+    customAssetRefs,
+    setDirectorBoardMainForSegment,
+    setDirectorBoardMainForEpisode,
+  ]);
 
   /** 删除本集设定图画廊里的一张（画布块 + 连线一起清；可随时重出，不扣费） */
   const removeEpisodeSheetBlock = useCallback(
@@ -5317,8 +5602,13 @@ export default function OmniCanvas() {
          * 静帧+导演版、成片提示词、出片。旧版只认角色和场景、各挤成一行，
          * 道具没人排，留在生成时的原始坐标上，画面就是一团乱。
          */
-        working = layoutManhuaCanvasBlocks(working, {
-          collapsedEpisodes: collapsedManhuaEpisodes,
+        working = layoutManhuaEpisodeReadableChain(working, writerFocusEpisode, {
+          assetCanon: projectBible?.assetCanon,
+          characterSheetUrlById: collectManhuaCharacterSheetUrlById(
+            working,
+            projectBible?.assetCanon,
+          ),
+          propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
         });
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
@@ -5367,8 +5657,8 @@ export default function OmniCanvas() {
             block.refImageUrl = deriveRefUrl || undefined;
             block.width = 360;
             block.height = 400;
-            working = layoutManhuaCanvasBlocks([...working, block], {
-              collapsedEpisodes: collapsedManhuaEpisodes,
+            working = layoutManhuaEpisodeReadableChain([...working, block], writerFocusEpisode, {
+              assetCanon: projectBible?.assetCanon,
             });
             block = working.find((b) => b.id === plan.id)!;
           } else if (!(block.outputUrl || block.outputUrls?.[0]) || isRegenPlan(plan.id)) {
@@ -5518,21 +5808,18 @@ export default function OmniCanvas() {
           }
         }
         /**
-         * readableChain 除了排版还负责给节点盖 @资产 标签，所以留着照跑；
-         * 但坐标以统一排版为准——三套排位互相覆盖正是画布乱的根源，
-         * 让 layoutManhuaCanvasBlocks 做最后一道，谁也别再改坐标。
+         * 段列制后 readableChain 是唯一版式出口（排版+@资产标签一体）；
+         * 旧三柱大卡 layoutManhuaCanvasBlocks 退役——双版式互相覆盖正是
+         * 「画布根本没变/一团乱」的根源（2026-08-11 段列化收敛）。
          */
-        working = layoutManhuaCanvasBlocks(
-          layoutManhuaEpisodeReadableChain(working, writerFocusEpisode, {
-            assetCanon: projectBible?.assetCanon,
-            characterSheetUrlById: collectManhuaCharacterSheetUrlById(
-              working,
-              projectBible?.assetCanon,
-            ),
-            propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
-          }),
-          { collapsedEpisodes: collapsedManhuaEpisodes },
-        );
+        working = layoutManhuaEpisodeReadableChain(working, writerFocusEpisode, {
+          assetCanon: projectBible?.assetCanon,
+          characterSheetUrlById: collectManhuaCharacterSheetUrlById(
+            working,
+            projectBible?.assetCanon,
+          ),
+          propImageUrlById: collectManhuaPropImageUrlById(customAssetRefs, projectBible?.assetCanon),
+        });
         setBlocks(working);
         saveCanvasState(working, canvasEdges);
         {
@@ -6228,7 +6515,7 @@ export default function OmniCanvas() {
           id: existing?.id || makeManhuaCharacterVoiceLockId(),
           characterTag,
           characterId: existing?.characterId,
-          labelZh: String(input.labelZh || existing?.labelZh || characterTag).trim().slice(0, 40),
+          labelZh: String(input.labelZh || existing?.labelZh || "").trim().slice(0, 40),
           audioUrl,
           sourceVideoUrl: existing?.sourceVideoUrl,
           sourceClipId: existing?.sourceClipId,
@@ -6790,7 +7077,7 @@ export default function OmniCanvas() {
                       const lock: ManhuaCharacterVoiceLock = {
                         id: makeManhuaCharacterVoiceLockId(),
                         characterTag,
-                        labelZh: labelZh || characterTag,
+                        labelZh: labelZh || "",
                         audioUrl: out.audioUrl,
                         sourceVideoUrl: videoUrl,
                         sourceClipId: clipId,
@@ -7054,8 +7341,11 @@ export default function OmniCanvas() {
                   directorBoardBusy={
                     cropDirectorBoardMutation.isPending || assetZipBusy
                   }
-                  onIngestDirectorBoardFile={async (file) => {
-                    await ingestDirectorBoardFile(writerFocusEpisode, file);
+                  directorBoardSegUrls={
+                    directorBoardUrlByEpisodeSegment[writerFocusEpisode] || null
+                  }
+                  onIngestDirectorBoardFile={async (file, segIndex) => {
+                    await ingestDirectorBoardFile(writerFocusEpisode, file, segIndex);
                   }}
                   onClearDirectorBoard={() =>
                     setDirectorBoardMainForEpisode(writerFocusEpisode, null)
@@ -7087,6 +7377,7 @@ export default function OmniCanvas() {
                         characterLookSets,
                         segmentLookBindings,
                         directorBoardUrlByEpisode,
+                        directorBoardUrlByEpisodeSegment,
                         videoModel: explicitWriterVideoModel || undefined,
                       };
                       const ensured = ensureManhuaFragmentClips(
@@ -7133,6 +7424,7 @@ export default function OmniCanvas() {
                         characterLookSets,
                         segmentLookBindings,
                         directorBoardUrlByEpisode,
+                        directorBoardUrlByEpisodeSegment,
                         videoModel: explicitWriterVideoModel || undefined,
                       };
                       const ensured = ensureManhuaFragmentClips(
@@ -7212,6 +7504,7 @@ export default function OmniCanvas() {
                         characterLookSets,
                         segmentLookBindings,
                         directorBoardUrlByEpisode,
+                        directorBoardUrlByEpisodeSegment,
                         videoModel: explicitWriterVideoModel || undefined,
                       };
                       const ensured = ensureManhuaFragmentClips(
@@ -7851,6 +8144,39 @@ export default function OmniCanvas() {
                     <p className="mt-1.5 text-[10px] text-amber-100/55">
                       常见原因：对白未用直角引号「」或可拍表缺「对白」行。可点「重新扩写」后再确认。
                     </p>
+                    {writerGateFailEpisodes.length > 0 && writerPack ? (() => {
+                      const minFailing = writerGateFailEpisodes[0];
+                      const rewriteCount = Math.max(
+                        1,
+                        writerPack.episodes.length - minFailing + 1,
+                      );
+                      const perEpisode =
+                        MANHUA_WRITER_EXPAND_CREDITS_PER_EPISODE[writerExpandTier];
+                      const tierLabel =
+                        MANHUA_WRITER_EXPAND_TIERS.find((t) => t.id === writerExpandTier)
+                          ?.label || writerExpandTier;
+                      return (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-amber-400/20 pt-2">
+                          <span className="text-[10px] text-amber-50/85">
+                            不足的集（第 {writerGateFailEpisodes.join("、")} 集）可一键付费扩写补密度：
+                            从第 {minFailing} 集起局部改写 {rewriteCount} 集 ·{" "}
+                            {tierLabel}档 {perEpisode} 分/集 · 预计 {perEpisode * rewriteCount} 积分。
+                            之前的集与已出片资产保留；扩写失败不动原稿，成功后自动重检门禁。
+                          </span>
+                          <button
+                            type="button"
+                            data-manhua-action="expand-fix-density"
+                            disabled={writerBusy || factoryBusy}
+                            onClick={() =>
+                              void expandWriterRoom({ fromEpisodeOverride: minFailing })
+                            }
+                            className="rounded-lg border border-amber-300/45 bg-amber-400/15 px-2.5 py-1 text-[11px] font-semibold text-amber-50 hover:bg-amber-400/25 disabled:opacity-45"
+                          >
+                            {writerBusy ? "正在扩写…" : "一键扩写补密度"}
+                          </button>
+                        </div>
+                      );
+                    })() : null}
                   </div>
                 ) : null}
                 <button

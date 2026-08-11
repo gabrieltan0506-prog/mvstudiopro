@@ -110,3 +110,59 @@ export function directorBoardHttpsByEpisode(
   }
   return out;
 }
+
+/**
+ * 段级导演板（2026-08-11 拍板：段级为主、集级兜底）。
+ * 结构 Record<集号, Record<段号(本集内 1 起), Entry>>；出片取板顺序 段级→集级。
+ */
+const LS_SEG_KEY = "mv-manhua-director-board-seg-v1";
+
+export type ManhuaDirectorBoardBySegment = Record<
+  number,
+  Record<number, ManhuaDirectorBoardMainEntry>
+>;
+
+export function normalizeDirectorBoardBySegment(raw: unknown): ManhuaDirectorBoardBySegment {
+  if (!raw || typeof raw !== "object") return {};
+  const out: ManhuaDirectorBoardBySegment = {};
+  for (const [epKey, segMapRaw] of Object.entries(raw as Record<string, unknown>)) {
+    const ep = Number(epKey);
+    if (!Number.isFinite(ep) || ep < 1) continue;
+    const segMap = normalizeDirectorBoardMainByEpisode(segMapRaw);
+    if (Object.keys(segMap).length) out[ep] = segMap;
+  }
+  return out;
+}
+
+export function loadManhuaDirectorBoardBySegment(): ManhuaDirectorBoardBySegment {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(LS_SEG_KEY);
+    return raw ? normalizeDirectorBoardBySegment(JSON.parse(raw)) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveManhuaDirectorBoardBySegment(map: ManhuaDirectorBoardBySegment): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LS_SEG_KEY, JSON.stringify(normalizeDirectorBoardBySegment(map)));
+  } catch {
+    /* quota */
+  }
+}
+
+/** 出片用：集号 → 段号 → HTTPS（与集级 directorBoardHttpsByEpisode 同口径） */
+export function directorBoardHttpsByEpisodeSegment(
+  map: ManhuaDirectorBoardBySegment,
+): Record<number, Record<number, string>> {
+  const out: Record<number, Record<number, string>> = {};
+  for (const [epKey, segMap] of Object.entries(map)) {
+    const ep = Number(epKey);
+    if (!Number.isFinite(ep) || ep < 1) continue;
+    const https = directorBoardHttpsByEpisode(segMap);
+    if (Object.keys(https).length) out[ep] = https;
+  }
+  return out;
+}
