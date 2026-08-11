@@ -9,6 +9,9 @@ import {
   listedSingleEpisodeFromUrl,
   mapManhuaLearnFetchError,
   MANHUA_LEARN_FETCH_ERR,
+  listDouyinCookieCandidatesFromEnv,
+  pickDouyinCookieHeaderFromEnv,
+  rotateDouyinCookieCandidates,
   shouldSkipLocalLearnFallback,
 } from "./manhuaLearnYtdlp";
 
@@ -70,6 +73,23 @@ describe("manhuaLearnYtdlp", () => {
     expect(
       hasManhuaLearnYtdlpCookieSource({ MANHUA_LEARN_YTDLP_COOKIES_FILE: "/tmp/c.txt" }),
     ).toBe(true);
+  });
+
+  it("主、备、池凭证去重后可按候选编号轮转", () => {
+    const env = {
+      DOUYIN_COOKIE: "account-a=1",
+      DOUYIN_COOKIE_BACKUP: "account-b=1",
+      DOUYIN_COOKIE_POOL: "account-b=1\naccount-c=1",
+    };
+    const candidates = listDouyinCookieCandidatesFromEnv(env);
+    expect(candidates).toEqual(["account-a=1", "account-b=1", "account-c=1"]);
+    expect(pickDouyinCookieHeaderFromEnv(env, 1)).toBe("account-b=1");
+    expect(pickDouyinCookieHeaderFromEnv(env, 4)).toBe("account-b=1");
+    expect(rotateDouyinCookieCandidates(candidates, 1)).toEqual([
+      "account-b=1",
+      "account-c=1",
+      "account-a=1",
+    ]);
   });
 
   it("builds mix candidate urls only for numeric mixId", () => {

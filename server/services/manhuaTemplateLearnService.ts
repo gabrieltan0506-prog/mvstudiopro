@@ -86,6 +86,7 @@ import {
 } from "../../shared/manhuaLearnDouyinWebApi.js";
 import {
   fetchDouyinAwemeDetailViaWebApi,
+  listDouyinAwemePlaybackUrlsViaWebApi,
   listDouyinMixEpisodesViaWebApi,
 } from "./manhuaLearnDouyinWebApi.js";
 import {
@@ -94,6 +95,7 @@ import {
   openYtdlpCookieSession,
   runYtdlp,
   throwMappedYtdlpFailure,
+  ytdlpCookieCandidateCount,
 } from "./manhuaLearnYtdlpRuntime.js";
 
 const execFileAsync = promisify(execFile);
@@ -388,22 +390,45 @@ async function extractFrames(
   return paths;
 }
 
+async function withYtdlpCookieCandidates<T>(
+  url: string,
+  run: (cookieArgs: string[], candidateIndex: number) => Promise<T>,
+): Promise<T> {
+  const attemptCount = isDouyinHostUrl(url) ? ytdlpCookieCandidateCount() : 1;
+  let lastError: unknown = new Error(MANHUA_LEARN_FETCH_ERR.downloadFailed);
+  for (let candidateIndex = 0; candidateIndex < attemptCount; candidateIndex++) {
+    const cookies = await openYtdlpCookieSession(candidateIndex);
+    try {
+      return await run(cookies.args, candidateIndex);
+    } catch (error) {
+      lastError = error;
+      if (candidateIndex + 1 < attemptCount) {
+        console.warn(
+          "[manhuaTemplateLearn] yt-dlp cookie candidate failed, trying next:",
+          `candidate=${candidateIndex + 1}/${attemptCount}`,
+          mapManhuaLearnFetchError(error),
+        );
+      }
+    } finally {
+      await cookies.cleanup();
+    }
+  }
+  throw lastError;
+}
+
 async function probeRemoteVideoDuration(url: string): Promise<number> {
   if (/douyin\.com\/search\//i.test(url)) {
     throw new Error("当前是搜索页链接，请改用成片/合集页地址后再学节奏");
   }
   assertYtdlpCookieReadyForUrl(url);
-  const cookies = await openYtdlpCookieSession();
-  try {
+  return withYtdlpCookieCandidates(url, async (cookieArgs) => {
     const payload = await execYtdlpJson(
-      buildManhuaLearnYtdlpMetadataArgs({ url, cookieArgs: cookies.args }),
+      buildManhuaLearnYtdlpMetadataArgs({ url, cookieArgs }),
     );
     const durationSec = parseManhuaLearnRemoteDurationSec(payload);
     if (durationSec <= 0) throw new Error("无法读取成片时长，不能安全分段下载");
     return durationSec;
-  } finally {
-    await cookies.cleanup();
-  }
+  });
 }
 
 async function downloadVideoSegment(input: {
@@ -415,38 +440,36 @@ async function downloadVideoSegment(input: {
 }): Promise<string> {
   await fs.mkdir(input.workDir, { recursive: true });
   assertYtdlpCookieReadyForUrl(input.url);
-  const cookies = await openYtdlpCookieSession();
-  let stderr = "";
-  try {
-    const outTpl = path.join(input.workDir, "source.%(ext)s");
+  return withYtdlpCookieCandidates(input.url, async (cookieArgs, candidateIndex) => {
+    const prefix = `source-c${candidateIndex + 1}`;
+    const outTpl = path.join(input.workDir, `${prefix}.%(ext)s`);
     const result = await runYtdlp(
       buildManhuaLearnYtdlpSegmentArgs({
         url: input.url,
         outputTemplate: outTpl,
         startSec: input.startSec,
         endSec: input.endSec,
-        cookieArgs: cookies.args,
+        cookieArgs,
         referer: input.referer,
       }),
     );
-    stderr = result.stderr;
     if (result.code !== 0) throwMappedYtdlpFailure(result.stderr);
-  } finally {
-    await cookies.cleanup();
-  }
-  const files = await fs.readdir(input.workDir);
-  const vid = files.find((f) => /\.(mp4|webm|mkv)$/i.test(f));
-  if (!vid) {
-    const mapped = stderr.trim() ? mapManhuaLearnFetchError(stderr) : "";
-    throw new Error(mapped || "分段下载未生成视频文件，请确认链接可访问或稍后重试");
-  }
-  const videoPath = path.join(input.workDir, vid);
-  const stat = await fs.stat(videoPath);
-  if (stat.size > MANHUA_LEARN_SEGMENT_MAX_BYTES) {
-    throw new Error("当前 10 分钟片段超过 800MB，已停止处理以保护服务容量");
-  }
-  await ffprobeDuration(videoPath);
-  return videoPath;
+    const files = await fs.readdir(input.workDir);
+    const vid = files.find(
+      (file) => file.startsWith(`${prefix}.`) && /\.(mp4|webm|mkv)$/i.test(file),
+    );
+    if (!vid) {
+      const mapped = result.stderr.trim() ? mapManhuaLearnFetchError(result.stderr) : "";
+      throw new Error(mapped || "分段下载未生成视频文件，请确认链接可访问或稍后重试");
+    }
+    const videoPath = path.join(input.workDir, vid);
+    const stat = await fs.stat(videoPath);
+    if (stat.size > MANHUA_LEARN_SEGMENT_MAX_BYTES) {
+      throw new Error("当前 10 分钟片段超过 800MB，已停止处理以保护服务容量");
+    }
+    await ffprobeDuration(videoPath);
+    return videoPath;
+  });
 }
 
 type ListedEpisode = {
@@ -462,14 +485,20 @@ type ListedEpisode = {
  * 目录接口返回的签名 CDN 地址往往仍可用）；一旦失败立刻回退页面 URL 且
  * 本集内不再尝试播放地址（签名过期不会自愈，重试只是白烧时间）。
  */
-type EpisodeSourceState = { playbackDead?: boolean };
+type EpisodeSourceState = {
+  playbackUrl?: string;
+  playbackDead?: boolean;
+  playbackRefreshAttempted?: boolean;
+  playbackRefreshUrls?: string[];
+};
 
 function episodeDownloadSource(
   ep: ListedEpisode,
   state: EpisodeSourceState,
 ): { url: string; viaPlayback: boolean } {
-  if (!state.playbackDead && ep.playbackUrl) {
-    return { url: ep.playbackUrl, viaPlayback: true };
+  const playbackUrl = state.playbackUrl || ep.playbackUrl;
+  if (!state.playbackDead && playbackUrl) {
+    return { url: playbackUrl, viaPlayback: true };
   }
   return { url: ep.url, viaPlayback: false };
 }
@@ -506,6 +535,114 @@ async function ffprobeRemoteDuration(url: string): Promise<number> {
   const n = Number(String(stdout).trim());
   if (!Number.isFinite(n) || n <= 0) throw new Error("播放地址无法读取时长");
   return n;
+}
+
+async function refreshEpisodePlaybackUrls(
+  ep: ListedEpisode,
+  state: EpisodeSourceState,
+): Promise<string[]> {
+  if (state.playbackRefreshAttempted) return state.playbackRefreshUrls || [];
+  state.playbackRefreshAttempted = true;
+  const awemeId = extractDouyinVideoIdFromUrl(ep.url);
+  if (!awemeId) return [];
+  // 合集列表通常从主 Cookie 开始；故障刷新从备用候选开始，再回到主候选。
+  state.playbackRefreshUrls = await listDouyinAwemePlaybackUrlsViaWebApi(awemeId, 1).catch(() => []);
+  return state.playbackRefreshUrls;
+}
+
+async function probeEpisodeDurationWithSourceFailover(
+  ep: ListedEpisode,
+  state: EpisodeSourceState,
+): Promise<number> {
+  const source = episodeDownloadSource(ep, state);
+  if (!source.viaPlayback) return probeRemoteVideoDuration(ep.url);
+  try {
+    return await ffprobeRemoteDuration(source.url);
+  } catch (error) {
+    console.warn(
+      "[manhuaTemplateLearn] playback probe failed, refreshing detail:",
+      ep.index,
+      error instanceof Error ? error.message : error,
+    );
+  }
+  const refreshedUrls = await refreshEpisodePlaybackUrls(ep, state);
+  for (let index = 0; index < refreshedUrls.length; index++) {
+    try {
+      state.playbackUrl = refreshedUrls[index];
+      return await ffprobeRemoteDuration(refreshedUrls[index]!);
+    } catch {
+      console.warn(
+        "[manhuaTemplateLearn] refreshed playback probe failed, trying next:",
+        ep.index,
+        `candidate=${index + 1}/${refreshedUrls.length}`,
+      );
+    }
+  }
+  state.playbackDead = true;
+  return probeRemoteVideoDuration(ep.url);
+}
+
+async function downloadEpisodeSegmentWithSourceFailover(input: {
+  ep: ListedEpisode;
+  state: EpisodeSourceState;
+  workDir: string;
+  startSec: number;
+  endSec: number;
+}): Promise<string> {
+  const source = episodeDownloadSource(input.ep, input.state);
+  if (!source.viaPlayback) {
+    return downloadVideoSegment({
+      url: input.ep.url,
+      workDir: input.workDir,
+      startSec: input.startSec,
+      endSec: input.endSec,
+    });
+  }
+  try {
+    return await downloadVideoSegment({
+      url: source.url,
+      workDir: input.workDir,
+      startSec: input.startSec,
+      endSec: input.endSec,
+      referer: DOUYIN_PLAYBACK_REFERER,
+    });
+  } catch (error) {
+    console.warn(
+      "[manhuaTemplateLearn] playback download failed, refreshing detail:",
+      input.ep.index,
+      error instanceof Error ? error.message : error,
+    );
+  }
+  const refreshedUrls = await refreshEpisodePlaybackUrls(input.ep, input.state);
+  for (let index = 0; index < refreshedUrls.length; index++) {
+    await rmrf(input.workDir);
+    await fs.mkdir(input.workDir, { recursive: true });
+    try {
+      input.state.playbackUrl = refreshedUrls[index];
+      return await downloadVideoSegment({
+        url: refreshedUrls[index]!,
+        workDir: input.workDir,
+        startSec: input.startSec,
+        endSec: input.endSec,
+        referer: DOUYIN_PLAYBACK_REFERER,
+      });
+    } catch {
+      console.warn(
+        "[manhuaTemplateLearn] refreshed playback download failed, trying next:",
+        input.ep.index,
+        `candidate=${index + 1}/${refreshedUrls.length}`,
+      );
+    }
+  }
+  input.state.playbackDead = true;
+  await rmrf(input.workDir);
+  await fs.mkdir(input.workDir, { recursive: true });
+  return downloadVideoSegment({
+    url: input.ep.url,
+    workDir: input.workDir,
+    startSec: input.startSec,
+    endSec: input.endSec,
+  });
 }
 
 function parseFlatPlaylistEntries(
@@ -563,10 +700,9 @@ async function listPlaylistViaYtdlp(
   titleHint?: string,
 ): Promise<{ listed: ListedEpisode[]; fromEntries: boolean }> {
   assertYtdlpCookieReadyForUrl(playlistUrl);
-  const cookies = await openYtdlpCookieSession();
-  try {
+  return withYtdlpCookieCandidates(playlistUrl, async (cookieArgs) => {
     const data = (await execYtdlpJson([
-      ...cookies.args,
+      ...cookieArgs,
       "--flat-playlist",
       "-J",
       "--no-warnings",
@@ -583,9 +719,7 @@ async function listPlaylistViaYtdlp(
     };
     const fromEntries = Array.isArray(data.entries) && data.entries.filter(Boolean).length > 0;
     return { listed: parseFlatPlaylistEntries(data, playlistUrl, titleHint), fromEntries };
-  } finally {
-    await cookies.cleanup();
-  }
+  });
 }
 
 type ListedEpisodesResult = {
@@ -1024,28 +1158,13 @@ async function refreshEpisodePreviewFrames(input: {
       MANHUA_LEARN_STAGE.download,
       `正在补抽第 ${input.ep.index} 集静帧 0–${Math.ceil(endSec / 60)} 分（不重跑模型）…`,
     );
-    let videoPath: string;
-    try {
-      const src = episodeDownloadSource(input.ep, {});
-      videoPath = await downloadVideoSegment({
-        url: src.url,
-        workDir,
-        startSec: 0,
-        endSec,
-        referer: src.viaPlayback ? DOUYIN_PLAYBACK_REFERER : undefined,
-      });
-    } catch (e) {
-      if (!input.ep.playbackUrl) throw e;
-      // 播放地址失效 → 清残片后走页面老路兜底
-      await rmrf(workDir);
-      await fs.mkdir(workDir, { recursive: true });
-      videoPath = await downloadVideoSegment({
-        url: input.ep.url,
-        workDir,
-        startSec: 0,
-        endSec,
-      });
-    }
+    const videoPath = await downloadEpisodeSegmentWithSourceFailover({
+      ep: input.ep,
+      state: { playbackUrl: input.ep.playbackUrl },
+      workDir,
+      startSec: 0,
+      endSec,
+    });
     const framePaths = await extractFrames(
       videoPath,
       [Math.min(3, endSec / 2), endSec / 2, Math.max(0, endSec - 3)],
@@ -1092,24 +1211,8 @@ async function learnOneEpisode(input: {
 
     await assertManhuaLearnControl(input);
     await input.onProgress?.(MANHUA_LEARN_STAGE.download, `正在读取第 ${input.ep.index} 集时长…`);
-    const srcState: EpisodeSourceState = {};
-    let durationSec: number;
-    if (input.ep.playbackUrl) {
-      try {
-        durationSec = await ffprobeRemoteDuration(input.ep.playbackUrl);
-      } catch (e) {
-        // 播放地址探测失败（过期/节点拒绝）→ 本集放弃直连，回老路读页面
-        srcState.playbackDead = true;
-        console.warn(
-          "[manhuaTemplateLearn] playback probe fallback to page url:",
-          input.ep.index,
-          e instanceof Error ? e.message : e,
-        );
-        durationSec = await probeRemoteVideoDuration(input.ep.url);
-      }
-    } else {
-      durationSec = await probeRemoteVideoDuration(input.ep.url);
-    }
+    const srcState: EpisodeSourceState = { playbackUrl: input.ep.playbackUrl };
+    const durationSec = await probeEpisodeDurationWithSourceFailover(input.ep, srcState);
     if (durationSec > MANHUA_LEARN_MAX_DURATION_SEC) {
       throw new Error(
         `第 ${input.ep.index} 集超过 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，已跳过策略外片`,
@@ -1161,38 +1264,13 @@ async function learnOneEpisode(input: {
             MANHUA_LEARN_STAGE.download,
             `正在下载第 ${input.ep.index} 集 ${Math.floor(startSec / 60)}–${Math.ceil(endSec / 60)} 分片段${attempt > 1 ? `（重试 ${attempt}/${retryMax}）` : ""}…`,
           );
-          const src = episodeDownloadSource(input.ep, srcState);
-          let videoPath: string;
-          try {
-            videoPath = await downloadVideoSegment({
-              url: src.url,
-              workDir: chunkDir,
-              startSec,
-              endSec,
-              referer: src.viaPlayback ? DOUYIN_PLAYBACK_REFERER : undefined,
-            });
-          } catch (e) {
-            if (src.viaPlayback) {
-              // 直连失败只烧了一次 HTTP，不吃重试预算：标记失效立即换页面老路
-              srcState.playbackDead = true;
-              console.warn(
-                "[manhuaTemplateLearn] playback download fallback to page url:",
-                input.ep.index,
-                e instanceof Error ? e.message : e,
-              );
-              // 清掉直连留下的半截文件，防止页面回退把残片认成成品
-              await rmrf(chunkDir);
-              await fs.mkdir(chunkDir, { recursive: true });
-              videoPath = await downloadVideoSegment({
-                url: input.ep.url,
-                workDir: chunkDir,
-                startSec,
-                endSec,
-              });
-            } else {
-              throw e;
-            }
-          }
+          const videoPath = await downloadEpisodeSegmentWithSourceFailover({
+            ep: input.ep,
+            state: srcState,
+            workDir: chunkDir,
+            startSec,
+            endSec,
+          });
           chunk = await learnOneEpisodeChunk({
             seriesKey: input.seriesKey,
             ep: input.ep,

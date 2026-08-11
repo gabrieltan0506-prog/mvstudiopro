@@ -14,7 +14,10 @@ import {
   type DouyinAwemeDetailParse,
   type DouyinListedEpisode,
 } from "../../shared/manhuaLearnDouyinWebApi.js";
-import { listDouyinCookieCandidatesFromEnv } from "../../shared/manhuaLearnYtdlp.js";
+import {
+  listDouyinCookieCandidatesFromEnv,
+  rotateDouyinCookieCandidates,
+} from "../../shared/manhuaLearnYtdlp.js";
 
 const DOUYIN_WEB_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
@@ -157,4 +160,40 @@ export async function fetchDouyinAwemeDetailViaWebApi(
     if (parsed) return parsed;
   }
   return null;
+}
+
+/**
+ * 下载失败后的轻量刷新：从备用候选开始逐个取一遍详情，返回去重后的新鲜播放地址。
+ * Cookie、签名地址都只留在本轮内存；调用方只在旧播放地址失败时触发。
+ */
+export async function listDouyinAwemePlaybackUrlsViaWebApi(
+  awemeId: string,
+  startCookieIndex = 1,
+): Promise<string[]> {
+  const id = String(awemeId || "").trim();
+  if (!/^\d{5,}$/.test(id)) return [];
+  const cookies = rotateDouyinCookieCandidates(
+    listDouyinCookieCandidatesFromEnv(),
+    startCookieIndex,
+  );
+  if (!cookies.length) return [];
+  const url = buildDouyinAwemeDetailApiUrl(id);
+  const referer = `https://www.douyin.com/video/${id}`;
+  const playbackUrls: string[] = [];
+  for (const cookie of cookies) {
+    let payload: unknown | null = null;
+    try {
+      payload = await fetchDouyinJsonWithCookie(url, referer, cookie);
+    } catch (e) {
+      console.warn(
+        "[manhuaLearnDouyinWebApi] playback refresh failed:",
+        id,
+        e instanceof Error ? e.message : e,
+      );
+    }
+    if (payload == null) continue;
+    const playbackUrl = parseDouyinAwemeDetailResponse(payload)?.playbackUrl;
+    if (playbackUrl && !playbackUrls.includes(playbackUrl)) playbackUrls.push(playbackUrl);
+  }
+  return playbackUrls;
 }
