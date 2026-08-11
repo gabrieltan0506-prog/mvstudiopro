@@ -8486,6 +8486,7 @@ export default function PlatformPage() {
           stepByStepScript: [],
         },
         titleVariants,
+        storyboardCells: [],
       };
     });
   }, [isContentLoading, isDashboardLoading, platformDashboard, platformContent, recommendedPlatforms, topTopics]);
