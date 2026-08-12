@@ -18,6 +18,14 @@ import {
   filterManhuaFactoryTargetIds,
   isTransientFactoryError,
   layoutManhuaEpisodeReadableChain,
+  MANHUA_LAYOUT_ASSET_H,
+  MANHUA_LAYOUT_ASSET_W,
+  MANHUA_LAYOUT_COMPACT_COL_GAP,
+  MANHUA_LAYOUT_COMPACT_ROW_GAP,
+  MANHUA_LAYOUT_MEDIA_H,
+  MANHUA_LAYOUT_MEDIA_W,
+  MANHUA_LAYOUT_TEXT_H,
+  MANHUA_LAYOUT_TEXT_W,
   manhuaEpisodeHasFactoryChain,
   replaceManhuaEpisodeChain,
   resolveManhuaClipRelatedAssetNodeIds,
@@ -445,10 +453,10 @@ describe("canvasDramaStudio factory", () => {
     expect(keyarts[3]!.x).toBeGreaterThan(keyarts[0]!.x);
     expect(keyarts[3]!.y).toBeLessThanOrEqual(keyarts[2]!.y);
     expect(keyarts[0]!.x).toBeGreaterThan(assets[0]!.x);
-    // 缩略尺寸：右栏一眼看全，不再用默认 420×360
-    expect(keyarts[0]!.width).toBeLessThanOrEqual(180);
-    expect(keyarts[0]!.height).toBeLessThanOrEqual(230);
-    expect(hero.width).toBeLessThanOrEqual(160);
+    // 缩略尺寸：直读布局常量（2026-08-13 放大 1.5×，不再用默认 420×360）
+    expect(keyarts[0]!.width).toBe(MANHUA_LAYOUT_MEDIA_W);
+    expect(keyarts[0]!.height).toBe(MANHUA_LAYOUT_MEDIA_H);
+    expect(hero.width).toBe(MANHUA_LAYOUT_ASSET_W);
     // 资产柱单列纵排：角色/场景同 x，场景在角色下方
     expect(inn.x).toBe(hero.x);
 
@@ -2234,5 +2242,18 @@ describe("collectManhuaPropImageUrlById：从「我的道具」按名字匹配�
         { ...canon, props: [] } as unknown as Parameters<typeof collectManhuaPropImageUrlById>[1],
       ),
     ).toEqual({});
+  });
+});
+
+describe("manhua layout size/gap invariants", () => {
+  it("展开布局间距恒大于对应节点尺寸（防竖排互叠）", () => {
+    const maxW = Math.max(MANHUA_LAYOUT_MEDIA_W, MANHUA_LAYOUT_ASSET_W, MANHUA_LAYOUT_TEXT_W);
+    const maxH = Math.max(MANHUA_LAYOUT_MEDIA_H, MANHUA_LAYOUT_ASSET_H, MANHUA_LAYOUT_TEXT_H);
+    expect(MANHUA_LAYOUT_COMPACT_COL_GAP).toBeGreaterThanOrEqual(maxW + 16);
+    expect(MANHUA_LAYOUT_COMPACT_ROW_GAP).toBeGreaterThanOrEqual(maxH + 16);
+    // 资产组行高派生自 gapY*0.85，也必须容得下资产节点
+    expect(Math.round(MANHUA_LAYOUT_COMPACT_ROW_GAP * 0.85)).toBeGreaterThanOrEqual(
+      MANHUA_LAYOUT_ASSET_H + 16,
+    );
   });
 });

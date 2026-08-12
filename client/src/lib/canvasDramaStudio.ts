@@ -2422,7 +2422,11 @@ export function ensureManhuaFragmentClips(
 /** 静帧/成片竖排模块：每列最多几镜（约 13 镜 → 3 列） */
 export const MANHUA_LAYOUT_STACK_PER_COL = 5;
 
-/** 工作台右栏可读链：缩略竖排默认间距（与下方缩略尺寸联动 ≈1.5×，间距必须始终大于对应尺寸，否则竖排互叠） */
+/**
+ * 工作台右栏可读链：缩略竖排默认间距（与下方缩略尺寸联动 ≈1.5×）。
+ * 展开布局下间距必须大于对应节点尺寸（防竖排互叠，有测试锁）；
+ * 折叠集横条（gapX*0.25 步长）是有意的叠卡展示，不受此约束。
+ */
 export const MANHUA_LAYOUT_COMPACT_COL_GAP = 272;
 export const MANHUA_LAYOUT_COMPACT_ROW_GAP = 356;
 /** 静帧 / 成片缩略尺寸（约 3:4） */
