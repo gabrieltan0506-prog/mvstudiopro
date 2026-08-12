@@ -8,7 +8,7 @@ import HomeRedeemCode from "../components/HomeRedeemCode";
 import HomeInviteApply from "../components/HomeInviteApply";
 import HomeEducation from "../components/HomeEducation";
 import HomeFeedback from "../components/HomeFeedback";
-import SampleReportDownload from "../components/SampleReportDownload";
+import HomeBlogShowcase from "../components/HomeBlogShowcase";
 import { LaunchCountdownBanner } from "../components/LaunchCountdownBanner";
 import HomeModelShowcase from "../components/HomeModelShowcase";
 import HomeUpdateTicker from "../components/HomeUpdateTicker";
@@ -32,15 +32,14 @@ export default function HomePage() {
         <HomeNavbar />
         <LaunchCountdownBanner />
         <HomeHero />
+        {/* 定价置顶（用户 2026-08-12：商业网站先谈钱）；试读样刊区整区下架，换 /blog 实测封面直达生成 */}
+        <HomePricing />
         <HomeUpdateTicker />
         <HomeModelShowcase />
         <HomePlatformHighlights />
-        {/* 销售区上移（用户 2026-08-12：销售要明显）；「页面滚多快」演示段整段下架（无用+9.5MB 视频拖加载） */}
-        <SampleReportDownload />
+        <HomeBlogShowcase />
         <HomePhotoTools />
         <HomeCursorReveal />
-
-        <HomePricing />
 
         <HomeMyWorks />
 
