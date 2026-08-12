@@ -3,7 +3,7 @@ title: 从爆款选题到 4K 成片：选题、文案、视频一条龙，我们
 description: 一条 87 分爆款选题，先让两个 AI 写手同题对决（144 秒 vs 292 秒），再把胜稿一路做成海报、5 秒成片和 4K 超分。选题、文案、拆片、视频一条龙的真实生产实录，含同帧画质对比。
 date: 2026-08-12
 keywords: 爆款选题,AI文案,一条龙内容生产,AI视频生成,4K超分放大,逐镜拆片表,Kimi K3,千问3.8 Max,短视频脚本
-cover: /blog-assets/pk-kimi-vs-qwen/pk-05-同题对比总览.jpg
+cover: /blog-assets/pk-kimi-vs-qwen/pk-05-overview.jpg
 ---
 
 # 从爆款选题到 4K 成片：选题、文案、视频一条龙，我们是怎么跑通的
@@ -31,7 +31,7 @@ cover: /blog-assets/pk-kimi-vs-qwen/pk-05-同题对比总览.jpg
 - 两边都会为了抓人而虚构「我」或「我闺蜜」的亲历故事，也都会生成需要查证的营养说法，不能原样发布。
 
 <figure>
-  <img src="/blog-assets/pk-kimi-vs-qwen/pk-05-同题对比总览.jpg" alt="Kimi K3 与千问 3.8 Max 同题扩写的耗时、标题、钩子和逐镜拆片表对比">
+  <img src="/blog-assets/pk-kimi-vs-qwen/pk-05-overview.jpg" alt="Kimi K3 与千问 3.8 Max 同题扩写的耗时、标题、钩子和逐镜拆片表对比">
   <figcaption>同一条 87 分选题的两份原始交卷。本文的镜数与标题比较以同轮导出的 JSON 和这张总览为准。</figcaption>
 </figure>
 
