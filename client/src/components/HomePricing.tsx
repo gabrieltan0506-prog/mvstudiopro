@@ -17,7 +17,7 @@ const GROUPS: PriceGroup[] = [
     accent: "#8cefff",
     rows: [
       { name: "4K 成片 · 单条", price: "688 积分", note: "限时价" },
-      { name: "2K 成片 · 单条", price: "388 积分" },
+      { name: "2K 成片 · 单条", price: "388 积分", note: "限时价" },
       { name: "漫剧整集（4 段 × 约 30s）", price: "688 积分", note: "172 / 段" },
     ],
   },
@@ -25,8 +25,8 @@ const GROUPS: PriceGroup[] = [
     title: "高清放大（按秒计费）",
     accent: "#c4b5fd",
     rows: [
-      { name: "视频超分 2K", price: "2 积分 / 秒", note: "不足 5 秒按 5 秒" },
-      { name: "视频超分 4K", price: "4 积分 / 秒", note: "单任务最长 600 秒" },
+      { name: "视频超分 2K", price: "2 积分 / 秒", note: "不足 5 秒按 5 秒；自由画布单条 ×1.1" },
+      { name: "视频超分 4K", price: "4 积分 / 秒", note: "单任务最长 600 秒；自由画布单条 ×1.1" },
       { name: "照片放大 2× / 4×", price: "15 / 35 积分" },
     ],
   },
