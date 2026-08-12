@@ -21,7 +21,17 @@ export type ManhuaCameraMoveId =
   | "cam_15_empty"
   | "cam_16_cut_in"
   | "cam_17_slowmo"
-  | "cam_18_push_pull";
+  | "cam_18_push_pull"
+  | "cam_19_lateral_track"
+  | "cam_20_pan_reveal"
+  | "cam_21_rack_focus"
+  | "cam_22_orbit"
+  | "cam_23_peep"
+  | "cam_24_establishing"
+  | "cam_25_reaction"
+  | "cam_26_shot_reverse"
+  | "cam_27_low_rush"
+  | "cam_28_ending_hold";
 
 export type ManhuaCameraMoveEntry = {
   id: ManhuaCameraMoveId;
@@ -61,6 +71,16 @@ export const MANHUA_CAMERA_MOVE_ORDER: readonly ManhuaCameraMoveId[] = [
   "cam_16_cut_in",
   "cam_17_slowmo",
   "cam_18_push_pull",
+  "cam_19_lateral_track",
+  "cam_20_pan_reveal",
+  "cam_21_rack_focus",
+  "cam_22_orbit",
+  "cam_23_peep",
+  "cam_24_establishing",
+  "cam_25_reaction",
+  "cam_26_shot_reverse",
+  "cam_27_low_rush",
+  "cam_28_ending_hold",
 ] as const;
 
 export const MANHUA_CAMERA_MOVE_BANK: readonly ManhuaCameraMoveEntry[] = [
@@ -230,6 +250,99 @@ export const MANHUA_CAMERA_MOVE_BANK: readonly ManhuaCameraMoveEntry[] = [
     promptZh: "镜头先推进再拉远，或先拉远再推进，强化叙事节奏。",
     emotionTags: ["转折", "关系", "节奏"],
     sequenceZh: ["先缓推贴近主体", "再匀速拉远还原"],
+  },
+  {
+    id: "cam_19_lateral_track",
+    no: 19,
+    nameZh: "横移跟走",
+    effectZh: "与人物并行等距横移，画面稳定有陪伴感。",
+    whenToUseZh: "边走边谈、巡场、并行关系铺垫。",
+    promptZh: "镜头与人物平行横向移动，等距跟走，背景匀速掠过。",
+    emotionTags: ["行走", "并行", "巡场", "过渡"],
+  },
+  {
+    id: "cam_20_pan_reveal",
+    no: 20,
+    nameZh: "摇镜引视",
+    effectZh: "机位不动的水平摇转，把视线从环境引到主体。",
+    whenToUseZh: "揭示新人物/新线索、环境切主体。",
+    promptZh: "机位固定，镜头水平缓摇，从环境摇到主体完成视线引导。",
+    emotionTags: ["引导", "揭示", "巡视", "转场"],
+    sequenceZh: ["先停在环境交代空间", "再摇到主体落焦点"],
+  },
+  {
+    id: "cam_21_rack_focus",
+    no: 21,
+    nameZh: "移焦切景",
+    effectZh: "焦点在前景物与人物间转移，一镜完成情绪切换。",
+    whenToUseZh: "道具线索揭示、由物及人的情绪过渡。",
+    promptZh: "焦点从前景物件缓慢移到人物面部，同一镜内完成切换。",
+    emotionTags: ["线索", "道具", "悬念", "转移"],
+  },
+  {
+    id: "cam_22_orbit",
+    no: 22,
+    nameZh: "环绕回旋",
+    effectZh: "绕主体低速环绕，制造心动或包围压迫。",
+    whenToUseZh: "心动瞬间、对峙合围、群像打斗中心。",
+    promptZh: "镜头绕人物低速环绕半圈，背景旋转虚化，主体居中。",
+    emotionTags: ["心动", "压迫", "包围", "对峙"],
+  },
+  {
+    id: "cam_23_peep",
+    no: 23,
+    nameZh: "窥视遮挡",
+    effectZh: "前景遮挡的偷看视角，秘密感与紧张感并生。",
+    whenToUseZh: "偷听密谋、暗中观察、危机逼近。",
+    promptZh: "透过门缝、玻璃或遮挡物拍主体，画面带前景遮挡。",
+    emotionTags: ["偷看", "密谋", "窥探", "紧张"],
+  },
+  {
+    id: "cam_24_establishing",
+    no: 24,
+    nameZh: "建立全景",
+    effectZh: "大全景先交代空间关系，再进入人物层级。",
+    whenToUseZh: "段落开场、换场第一镜。",
+    promptZh: "先用大全景交代场景与空间关系，再切入人物。",
+    emotionTags: ["建场", "开场", "空间", "交代"],
+    sequenceZh: ["先大全景立空间", "再切近景入人物"],
+  },
+  {
+    id: "cam_25_reaction",
+    no: 25,
+    nameZh: "反应特写",
+    effectZh: "台词/动作落点后接对方反应，情绪结果可见。",
+    whenToUseZh: "关键台词后、冲突落点后。",
+    promptZh: "关键动作或台词落点后，切对方面部反应特写，停半拍再推进。",
+    emotionTags: ["反应", "震惊", "回应", "停顿"],
+  },
+  {
+    id: "cam_26_shot_reverse",
+    no: 26,
+    nameZh: "正反打对话",
+    effectZh: "双人对话交替肩背视角，说话归属始终清晰。",
+    whenToUseZh: "谈判、质问、双人对手戏。",
+    promptZh: "双人对话用正反打交替，过肩带画外者，观众始终知道谁在说话。",
+    emotionTags: ["对话", "对峙", "谈判", "质问"],
+  },
+  {
+    id: "cam_27_low_rush",
+    no: 27,
+    nameZh: "低位突进",
+    effectZh: "低角度贴地跟进前冲，速度与力量感拉满。",
+    whenToUseZh: "冲刺、追逐、爆发进攻。",
+    promptZh: "低角度贴地跟进人物前冲，强化速度与力量感。",
+    emotionTags: ["冲刺", "爆发", "追逐", "力量"],
+  },
+  {
+    id: "cam_28_ending_hold",
+    no: 28,
+    nameZh: "收尾定格",
+    effectZh: "段尾拉远或定格，留情绪余韵与下段钩子。",
+    whenToUseZh: "每段最后一镜、悬念收口。",
+    promptZh: "段落收尾镜头缓缓拉远或突然定格，留出情绪余韵。",
+    emotionTags: ["收尾", "余韵", "钩子", "定格"],
+    sequenceZh: ["先让动作收住落定", "再拉远或定格留白"],
   },
 ];
 
