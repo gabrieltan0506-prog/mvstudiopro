@@ -17,6 +17,8 @@ export type DouyinListedEpisode = {
    * 下载失败或过期一律回退 url（/video/ 页面）走 yt-dlp 老路。
    */
   playbackUrl?: string;
+  /** 同一条视频的全部可信候选；播放地址过期、无音轨或 CDN 拒绝时逐个切换。 */
+  playbackUrls?: string[];
 };
 
 export type DouyinMixAwemePageParse = {
@@ -46,6 +48,7 @@ export type DouyinAwemeDetailParse = {
   episodeIndex?: number;
   /** 官方播放地址（同 DouyinListedEpisode.playbackUrl 口径，短时效不持久化） */
   playbackUrl?: string;
+  playbackUrls?: string[];
 };
 
 const DOUYIN_WEB_API_COMMON_PARAMS: ReadonlyArray<[string, string]> = [
@@ -151,22 +154,44 @@ function isTrustedDouyinPlaybackUrl(raw: string): boolean {
   }
 }
 
-/** item.video.play_addr.url_list（含驼峰变体）里首个可信 HTTPS 地址；无则 undefined */
-export function readDouyinPlaybackUrl(item: unknown): string | undefined {
+/** 收齐官方返回的可信媒体候选：主播放、下载地址与各码率播放地址。 */
+export function readDouyinPlaybackUrls(item: unknown): string[] {
   const root = asRecord(item);
-  if (!root) return undefined;
+  if (!root) return [];
   const video = asRecord(root.video) ?? asRecord(asRecord(root.aweme_info)?.video);
-  if (!video) return undefined;
-  const playAddr = asRecord(video.play_addr) ?? asRecord(video.playAddr);
-  if (!playAddr) return undefined;
-  const list = playAddr.url_list ?? playAddr.urlList;
-  if (!Array.isArray(list)) return undefined;
-  for (const candidate of list) {
-    if (typeof candidate !== "string") continue;
-    const url = candidate.trim();
-    if (url && isTrustedDouyinPlaybackUrl(url)) return url;
+  if (!video) return [];
+  const addressGroups: AnyRecord[] = [];
+  const appendAddress = (value: unknown) => {
+    const address = asRecord(value);
+    if (address) addressGroups.push(address);
+  };
+  appendAddress(video.play_addr ?? video.playAddr);
+  appendAddress(video.download_addr ?? video.downloadAddr);
+  const bitRates = Array.isArray(video.bit_rate)
+    ? video.bit_rate
+    : Array.isArray(video.bitRate)
+      ? video.bitRate
+      : [];
+  for (const bitRate of bitRates) {
+    const row = asRecord(bitRate);
+    appendAddress(row?.play_addr ?? row?.playAddr);
   }
-  return undefined;
+  const urls: string[] = [];
+  for (const address of addressGroups) {
+    const list = address.url_list ?? address.urlList;
+    if (!Array.isArray(list)) continue;
+    for (const candidate of list) {
+      if (typeof candidate !== "string") continue;
+      const url = candidate.trim();
+      if (url && isTrustedDouyinPlaybackUrl(url) && !urls.includes(url)) urls.push(url);
+    }
+  }
+  return urls;
+}
+
+/** 兼容旧调用：首选候选仍放在 playbackUrl。 */
+export function readDouyinPlaybackUrl(item: unknown): string | undefined {
+  return readDouyinPlaybackUrls(item)[0];
 }
 
 function readCurrentEpisode(mix: AnyRecord | null): number {
@@ -209,11 +234,13 @@ export function parseDouyinMixAwemeResponse(
     const epNo = readCurrentEpisode(mix);
     const index = epNo > 0 ? epNo : fallbackOrderBase + episodes.length + 1;
     const title = String(item.desc ?? item.caption ?? "").trim().slice(0, 120) || `第${index}集`;
+    const playbackUrls = readDouyinPlaybackUrls(item);
     episodes.push({
       index,
       url: `https://www.douyin.com/video/${awemeId}`,
       title,
-      playbackUrl: readDouyinPlaybackUrl(item),
+      playbackUrl: playbackUrls[0],
+      playbackUrls: playbackUrls.length ? playbackUrls : undefined,
     });
   }
   return {
@@ -236,9 +263,17 @@ export function parseDouyinAwemeDetailResponse(payload: unknown): DouyinAwemeDet
   const mixId = readMixId(mix) || undefined;
   const mixNameZh = readMixName(mix) || undefined;
   const episodeIndex = readCurrentEpisode(mix) || undefined;
-  const playbackUrl = readDouyinPlaybackUrl(detail);
+  const playbackUrls = readDouyinPlaybackUrls(detail);
+  const playbackUrl = playbackUrls[0];
   if (!titleZh && !mixId && !mixNameZh && !playbackUrl) return null;
-  return { titleZh, mixId, mixNameZh, episodeIndex, playbackUrl };
+  return {
+    titleZh,
+    mixId,
+    mixNameZh,
+    episodeIndex,
+    playbackUrl,
+    playbackUrls: playbackUrls.length ? playbackUrls : undefined,
+  };
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   parseDouyinAwemeDetailResponse,
   parseDouyinMixAwemeResponse,
   readDouyinPlaybackUrl,
+  readDouyinPlaybackUrls,
 } from "./manhuaLearnDouyinWebApi";
 
 describe("抖音 web API URL 构造", () => {
@@ -254,6 +255,23 @@ describe("readDouyinPlaybackUrl（官方播放地址提取）", () => {
     expect(readDouyinPlaybackUrl({})).toBeUndefined();
     expect(readDouyinPlaybackUrl({ video: {} })).toBeUndefined();
     expect(readDouyinPlaybackUrl({ video: { play_addr: { url_list: "not-array" } } })).toBeUndefined();
+  });
+
+  it("收齐主播放、下载地址与多码率候选并去重", () => {
+    expect(readDouyinPlaybackUrls({
+      video: {
+        play_addr: { url_list: ["https://v1.douyinvod.com/main.mp4"] },
+        download_addr: { url_list: ["https://v2.douyinvod.com/download.mp4"] },
+        bit_rate: [
+          { play_addr: { url_list: ["https://v3.douyinvod.com/hd.mp4"] } },
+          { play_addr: { url_list: ["https://v1.douyinvod.com/main.mp4"] } },
+        ],
+      },
+    })).toEqual([
+      "https://v1.douyinvod.com/main.mp4",
+      "https://v2.douyinvod.com/download.mp4",
+      "https://v3.douyinvod.com/hd.mp4",
+    ]);
   });
 
   it("mix 分页解析把 playbackUrl 带进分集", () => {

@@ -192,8 +192,10 @@ export async function listDouyinAwemePlaybackUrlsViaWebApi(
       );
     }
     if (payload == null) continue;
-    const playbackUrl = parseDouyinAwemeDetailResponse(payload)?.playbackUrl;
-    if (playbackUrl && !playbackUrls.includes(playbackUrl)) playbackUrls.push(playbackUrl);
+    const parsed = parseDouyinAwemeDetailResponse(payload);
+    for (const playbackUrl of parsed?.playbackUrls || (parsed?.playbackUrl ? [parsed.playbackUrl] : [])) {
+      if (!playbackUrls.includes(playbackUrl)) playbackUrls.push(playbackUrl);
+    }
   }
   return playbackUrls;
 }
