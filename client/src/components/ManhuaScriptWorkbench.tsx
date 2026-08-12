@@ -3182,15 +3182,29 @@ export default function ManhuaScriptWorkbench({
                               重出{sec.titleZh} {doneAnchorIds.length} 张…
                             </button>
                           ) : null}
-                          {/* 清重复：批次被打断重试会同名双开（2026-08-12 双烧实锤），一键只留每名第一张 */}
+                          {/* 清重复：批次被打断重试会同名双开（2026-08-12 双烧实锤），一键只留每名第一张。
+                              v2：同主体不同后缀（阿咎/阿咎_半身/阿咎_全身）也算同组——导入图与重出图
+                              并存的乱局一键收敛；组内优先保「无后缀」那张（剧本认领绑的就是它）。 */}
                           {(() => {
                             if (!onRemoveEpisodeSheet) return null;
-                            const seen = new Set<string>();
-                            const extras: string[] = [];
+                            const baseOf = (s: string) =>
+                              String(s || "").trim().replace(/[_·\s]*(半身|全身|特写|侧身)$/g, "");
+                            const groups = new Map<string, typeof items>();
                             for (const it of items) {
-                              const k = String(it.labelZh || "").trim() || it.id;
-                              if (seen.has(k)) extras.push(it.id);
-                              else seen.add(k);
+                              const k = baseOf(it.labelZh) || it.id;
+                              const arr = groups.get(k) || [];
+                              arr.push(it);
+                              groups.set(k, arr);
+                            }
+                            const extras: string[] = [];
+                            for (const arr of Array.from(groups.values())) {
+                              if (arr.length <= 1) continue;
+                              const keep =
+                                arr.find(
+                                  (x: (typeof items)[number]) =>
+                                    baseOf(x.labelZh) === String(x.labelZh || "").trim(),
+                                ) || arr[0]!;
+                              for (const x of arr) if (x.id !== keep.id) extras.push(x.id);
                             }
                             if (!extras.length) return null;
                             return (
