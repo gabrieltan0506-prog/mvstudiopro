@@ -1325,7 +1325,14 @@ export async function generateGptImage2FromRawEnglishPrompt(options: {
             captureError: err,
           });
     try {
-      const url = isPrimary && !isLast
+      /**
+       * 弃赛=双花（2026-08-12 用户点拨，记 P0）：EvoLink 是提交任务+异步轮询的形态，
+       * 90s race 把已提交的任务半路抛弃，上游照跑照扣钱，我们再去烧备胎=同一张图付两份。
+       * 批量出图 lane（asset/keyart，不吃交互延迟）一律轮询到底，不竞速不弃单；
+       * 交互 lane（封面等）保留原 90s 竞速换体验。
+       */
+      const batchLane = options.imageLane === "asset" || options.imageLane === "keyart";
+      const url = isPrimary && !isLast && !batchLane
         ? await racePrimaryTimeout(run, primaryTimeoutMs, `GPT-image-2·${tag}`)
         : await run;
       if (url) {
