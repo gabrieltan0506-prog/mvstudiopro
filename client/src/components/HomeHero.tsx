@@ -129,7 +129,7 @@ export default function HomeHero() {
               ))}
             </h1>
             <p className="mt-4 max-w-md text-[15px] leading-relaxed text-white/70">
-              平台创作、竞品调研与创作画布同站协作。先看成片气质，再进入你要的工作台。
+              平台创作与创作画布同站协作。先看成片气质，再进入你要的工作台。
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
               <Link

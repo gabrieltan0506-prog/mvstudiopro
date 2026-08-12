@@ -2,7 +2,6 @@ import React from "react";
 import HomeNavbar from "../components/HomeNavbar";
 import HomeHero from "../components/HomeHero";
 import HomeCursorReveal from "../components/HomeCursorReveal";
-import HomeScrollVideo from "../components/HomeScrollVideo";
 import HomePricing from "../components/HomePricing";
 import HomeMyWorks from "../components/HomeMyWorks";
 import HomeRedeemCode from "../components/HomeRedeemCode";

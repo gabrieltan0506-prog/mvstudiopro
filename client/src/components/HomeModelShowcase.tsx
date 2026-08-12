@@ -115,18 +115,24 @@ function FunctionCard({ entry }: { entry: FunctionEntry }) {
       <p className="mt-1.5 text-[12.5px] leading-relaxed text-white/50">{entry.tagline}</p>
 
       <div className="mt-4 flex flex-col gap-2">
-        <select
-          value={sel}
-          onChange={(e) => setSel(Number(e.target.value) || 0)}
-          aria-label={`${entry.title}引擎选择`}
-          className="w-full rounded-xl border border-white/12 bg-black/45 px-3 py-2 text-[13px] text-white/85 outline-none transition-colors hover:border-white/25 focus:border-white/35"
-        >
-          {entry.options.map((o, i) => (
-            <option key={o.label} value={i}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+        {entry.options.length > 1 ? (
+          <select
+            value={sel}
+            onChange={(e) => setSel(Number(e.target.value) || 0)}
+            aria-label={`${entry.title}引擎选择`}
+            className="w-full rounded-xl border border-white/12 bg-black/45 px-3 py-2 text-[13px] text-white/85 outline-none transition-colors hover:border-white/25 focus:border-white/35"
+          >
+            {entry.options.map((o, i) => (
+              <option key={o.label} value={i}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-[13px] text-white/70">
+            {active.label}
+          </div>
+        )}
         <p className="min-h-[2.2em] text-[11.5px] leading-relaxed text-white/45">{active.desc}</p>
       </div>
 
