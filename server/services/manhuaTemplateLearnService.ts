@@ -472,6 +472,44 @@ async function ffprobeRemoteDuration(url: string): Promise<number> {
   return n;
 }
 
+/** 时长可读不代表含音轨；学习前必须同时确认音频与视频流存在。 */
+async function ffprobeRemoteMedia(url: string): Promise<number> {
+  let stdout: string;
+  try {
+    ({ stdout } = await execFileAsync(
+      "ffprobe",
+      [
+        "-v",
+        "error",
+        "-user_agent",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "-headers",
+        `Referer: ${DOUYIN_PLAYBACK_REFERER}\r\n`,
+        "-show_entries",
+        "format=duration:stream=codec_type",
+        "-of",
+        "json",
+        url,
+      ],
+      { timeout: 20_000 },
+    ));
+  } catch {
+    throw new Error("播放地址探测失败（超时或节点拒绝）");
+  }
+  let parsed: { format?: { duration?: string }; streams?: Array<{ codec_type?: string }> };
+  try {
+    parsed = JSON.parse(String(stdout || "{}"));
+  } catch {
+    throw new Error("播放地址返回了无效媒体信息");
+  }
+  const durationSec = Number(parsed.format?.duration);
+  const streamTypes = new Set((parsed.streams || []).map((stream) => stream.codec_type));
+  if (!Number.isFinite(durationSec) || durationSec <= 0) throw new Error("播放地址无法读取时长");
+  if (!streamTypes.has("audio")) throw new Error("播放地址不含音轨");
+  if (!streamTypes.has("video")) throw new Error("播放地址不含画面");
+  return durationSec;
+}
+
 async function refreshEpisodePlaybackUrls(
   ep: ListedEpisode,
   state: EpisodeSourceState,
@@ -481,7 +519,11 @@ async function refreshEpisodePlaybackUrls(
   const awemeId = extractDouyinVideoIdFromUrl(ep.url);
   if (!awemeId) return [];
   // 合集列表通常从主 Cookie 开始；故障刷新从备用候选开始，再回到主候选。
-  state.playbackRefreshUrls = await listDouyinAwemePlaybackUrlsViaWebApi(awemeId, 1).catch(() => []);
+  const fresh = await listDouyinAwemePlaybackUrlsViaWebApi(awemeId, 1).catch(() => []);
+  state.playbackRefreshUrls = Array.from(new Set([
+    ...(ep.playbackUrls || []),
+    ...fresh,
+  ]));
   return state.playbackRefreshUrls;
 }
 
@@ -492,7 +534,7 @@ async function probeEpisodeDurationWithSourceFailover(
   const source = episodeDownloadSource(ep, state);
   if (!source.viaPlayback) {
     if (!isDouyinHostUrl(ep.url)) {
-      const durationSec = await ffprobeRemoteDuration(ep.url);
+      const durationSec = await ffprobeRemoteMedia(ep.url);
       state.resolvedStreamUrl = ep.url;
       state.triedStreamUrls = [ep.url];
       return durationSec;
@@ -500,7 +542,7 @@ async function probeEpisodeDurationWithSourceFailover(
     // Douyin 页面 URL 不是媒体流；不用 ffprobe 白等超时，直接刷新官方播放地址。
   } else {
     try {
-      const durationSec = await ffprobeRemoteDuration(source.url);
+      const durationSec = await ffprobeRemoteMedia(source.url);
       state.resolvedStreamUrl = source.url;
       state.triedStreamUrls = [source.url];
       return durationSec;
@@ -516,7 +558,7 @@ async function probeEpisodeDurationWithSourceFailover(
   for (let index = 0; index < refreshedUrls.length; index++) {
     try {
       state.playbackUrl = refreshedUrls[index];
-      const durationSec = await ffprobeRemoteDuration(refreshedUrls[index]!);
+      const durationSec = await ffprobeRemoteMedia(refreshedUrls[index]!);
       state.resolvedStreamUrl = refreshedUrls[index];
       state.triedStreamUrls = Array.from(new Set([
         ...(state.triedStreamUrls || []),
@@ -661,7 +703,7 @@ async function listOrderedEpisodes(
   sourceUrl: string,
   titleHint?: string,
   mixId?: string,
-  single?: { titleZh?: string; episodeIndex?: number; playbackUrl?: string },
+  single?: { titleZh?: string; episodeIndex?: number; playbackUrl?: string; playbackUrls?: string[] },
 ): Promise<ListedEpisodesResult> {
   const id = String(mixId || "").trim();
   if (/^\d{6,}$/.test(id)) {
@@ -711,7 +753,11 @@ async function listOrderedEpisodes(
         normalizeDouyinVideoUrl(sourceUrl),
         single?.titleZh || titleHint,
         single?.episodeIndex,
-      ).map((e) => ({ ...e, playbackUrl: single?.playbackUrl })),
+      ).map((e) => ({
+        ...e,
+        playbackUrl: single?.playbackUrl,
+        playbackUrls: single?.playbackUrls,
+      })),
       // 有 mixId 却走到单集回退 = 合集展开失败的降级列表，不可靠
       reliable: !/^\d{6,}$/.test(id),
     };
@@ -1436,7 +1482,12 @@ export async function runManhuaTemplateLearn(
   //    （榜单单集链接一次学一批的入口）——
   let mixId = String(input.mixId || "").trim();
   let dramaNameZh = "";
-  let single: { titleZh?: string; episodeIndex?: number; playbackUrl?: string } | undefined;
+  let single: {
+    titleZh?: string;
+    episodeIndex?: number;
+    playbackUrl?: string;
+    playbackUrls?: string[];
+  } | undefined;
   if (!sourceGcsUri && isDouyinHostUrl(url)) {
     if (!/^\d{6,}$/.test(mixId)) {
       const fromUrl = extractDouyinMixIdFromUrl(url);
@@ -1450,6 +1501,7 @@ export async function runManhuaTemplateLearn(
           titleZh: detail.titleZh,
           episodeIndex: detail.episodeIndex,
           playbackUrl: detail.playbackUrl,
+          playbackUrls: detail.playbackUrls,
         };
         if (!/^\d{6,}$/.test(mixId) && detail.mixId && /^\d{6,}$/.test(detail.mixId)) {
           mixId = detail.mixId;

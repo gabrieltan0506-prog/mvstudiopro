@@ -6,6 +6,7 @@ export type ManhuaLearnListedSource = {
   url: string;
   title: string;
   playbackUrl?: string;
+  playbackUrls?: string[];
 };
 
 /** 直接视频达 60 分钟时按大合集源学习。 */
