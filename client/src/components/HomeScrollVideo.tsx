@@ -100,11 +100,11 @@ export default function HomeScrollVideo() {
           <div>
             <div className="text-[11px] font-semibold tracking-[0.16em] text-white/50">成片节奏 · 边滚边看</div>
             <h2 className="mt-2 max-w-xl text-3xl font-black tracking-tight text-white md:text-4xl">
-              你滚多快，片走多快
+              页面滚多快，片走多快
             </h2>
             <p className="mt-3 max-w-md text-sm leading-relaxed text-white/65">
               {reduceMotion
-                ? "已按系统设置改为自动播放，避免滚动同步。"
+                ? "检测到你偏好减少动态，视频已改为自动循环播放。"
                 : "向下滚动，视频进度随页面推进；前景文案正常滚过，背景层更“沉”。"}
             </p>
           </div>

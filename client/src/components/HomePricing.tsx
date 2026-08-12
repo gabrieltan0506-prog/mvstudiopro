@@ -8,9 +8,9 @@ import { Link } from "wouter";
 export default function HomePricing() {
   return (
     <section className="mx-auto max-w-[1240px] px-5 py-6">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-full border border-white/10 bg-white/[0.03] px-5 py-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-3 sm:rounded-full">
         <span className="text-sm font-bold text-white">定价</span>
-        <span className="min-w-0 flex-1 text-[13px] text-white/55">
+        <span className="min-w-[14rem] flex-1 text-[13px] text-white/55">
           积分包与优惠档位按真实消耗重算中，正式价目上线前以站内扣点说明为准
         </span>
         <Link
