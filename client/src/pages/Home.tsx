@@ -36,13 +36,12 @@ export default function HomePage() {
         <HomeUpdateTicker />
         <HomeModelShowcase />
         <HomePlatformHighlights />
+        {/* 销售区上移（用户 2026-08-12：销售要明显）；「页面滚多快」演示段整段下架（无用+9.5MB 视频拖加载） */}
+        <SampleReportDownload />
         <HomePhotoTools />
         <HomeCursorReveal />
-        <HomeScrollVideo />
 
         <HomePricing />
-
-        <SampleReportDownload />
 
         <HomeMyWorks />
 
