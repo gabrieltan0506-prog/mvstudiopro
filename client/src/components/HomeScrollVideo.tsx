@@ -98,9 +98,9 @@ export default function HomeScrollVideo() {
 
         <div className="relative z-10 mx-auto flex h-full max-w-[1240px] flex-col justify-between px-5 py-10 md:py-14">
           <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/50">Scroll · V3</div>
+            <div className="text-[11px] font-semibold tracking-[0.16em] text-white/50">成片节奏 · 边滚边看</div>
             <h2 className="mt-2 max-w-xl text-3xl font-black tracking-tight text-white md:text-4xl">
-              滚动驱动成片
+              你滚多快，片走多快
             </h2>
             <p className="mt-3 max-w-md text-sm leading-relaxed text-white/65">
               {reduceMotion

@@ -73,10 +73,10 @@ export default function HomeCursorReveal() {
     <section className="mx-auto max-w-[1240px] px-5 pt-10">
       <div className="mb-3 flex items-end justify-between gap-3">
         <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/45">Motion · V3</div>
-          <h2 className="mt-1 text-xl font-black tracking-tight text-white md:text-2xl">光标揭层</h2>
+          <div className="text-[11px] font-semibold tracking-[0.16em] text-white/45">成片气质 · 亲手划一下</div>
+          <h2 className="mt-1 text-xl font-black tracking-tight text-white md:text-2xl">同一帧，两种画风</h2>
           <p className="mt-1 max-w-lg text-sm leading-relaxed text-white/55">
-            移动指针查看第二图层气质。桌面端体验最佳；触控设备显示静态对比。
+            移动指针，看同一画面在两种成片气质之间切换。桌面端体验最佳；触屏设备显示静态对比。
           </p>
         </div>
       </div>
