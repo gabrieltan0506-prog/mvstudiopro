@@ -87,7 +87,7 @@ export default function HomeEducation() {
               margin: 0,
             }}
           >
-            为院校 & 培训机构
+            为院校与培训机构
             <br />
             定制 AI 创作课程
           </h2>
