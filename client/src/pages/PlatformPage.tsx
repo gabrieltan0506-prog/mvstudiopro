@@ -3191,7 +3191,8 @@ export default function PlatformPage() {
         toast.info(`找到未完成的出图任务（${pending.titleHead || "上次生成"}），正在续接结果…`);
         void pollJobUntilTerminal(pending.jobId, {
           intervalMs: 2500,
-          maxWaitMs: Math.max(60_000, PLATFORM_POSTER_RESUME_MAX_AGE_MS - age),
+          // 后台墙钟 10 分钟，续航最多再等 12 分钟减去已耗时，别把整区锁半小时
+          maxWaitMs: Math.max(60_000, 12 * 60_000 - age),
           adaptiveBackoffAfterAttempts: 20,
           maxIntervalMs: 6000,
         })
@@ -3202,6 +3203,12 @@ export default function PlatformPage() {
               setCustomNoteError(j.error || "上次的出图任务未成功，请重试（失败会自动退积分）");
               return;
             }
+            if (
+              pending.kind === "storyboard_sheet_landscape" ||
+              pending.kind === "single_page_knowledge_card"
+            ) {
+              setCustomNoteKind(pending.kind);
+            }
             setCustomNoteImages([url]);
             writePosterLastResult([url], pending.kind);
             toast.success("已找回上次未完成的生成结果");
@@ -3210,7 +3217,7 @@ export default function PlatformPage() {
             setCustomNoteError("续接上次出图任务失败，请重新生成");
           })
           .finally(() => {
-            writePosterResumeRecord(null);
+            if (readPosterResumeRecord()?.jobId === pending.jobId) writePosterResumeRecord(null);
             setCustomNoteBusy(false);
           });
       }
@@ -3218,8 +3225,17 @@ export default function PlatformPage() {
     }
     const last = readPosterLastResult();
     if (last && Date.now() - last.at < 24 * 3600_000) {
-      // 只在结果区为空时静默找回，不打扰正在进行的新操作
-      setCustomNoteImages((prev) => (prev.length ? prev : last.urls));
+      // 只在结果区为空时找回，并明示这是历史结果（防把昨天的图当本次发出去）
+      setCustomNoteImages((prev) => {
+        if (prev.length) return prev;
+        const mins = Math.max(1, Math.round((Date.now() - last.at) / 60_000));
+        const ago = mins >= 60 ? `${Math.round(mins / 60)} 小时前` : `${mins} 分钟前`;
+        toast.info(`已恢复上次的生成结果（${ago}），重新生成会覆盖`);
+        if (last.kind === "storyboard_sheet_landscape" || last.kind === "single_page_knowledge_card") {
+          setCustomNoteKind(last.kind);
+        }
+        return last.urls;
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -6957,7 +6973,8 @@ export default function PlatformPage() {
         writePosterLastResult([url], kind);
         return url;
       } finally {
-        writePosterResumeRecord(null);
+        // 只清自己的挂账：无条件清会把并发新任务的记录误删（审查抓的竞态）
+        if (readPosterResumeRecord()?.jobId === pid) writePosterResumeRecord(null);
       }
     }
     throw new Error("生成失敗，請重試");
@@ -6989,6 +7006,11 @@ export default function PlatformPage() {
     kind?: typeof customNoteKind;
     skipClearOptimize?: boolean;
   }) => {
+    // 连点/续航进行中兜底：busy 期间一切入口直接弹提示，不叠任务
+    if (customNoteBusy) {
+      toast.info("上一个生成任务还在进行中，请稍候");
+      return;
+    }
     const kind = overrides?.kind ?? customNoteKind;
     const trimmed = (overrides?.text ?? customNoteText).trim();
     const pendingAhead = customNotePendingFilesRef.current.length;
@@ -7115,6 +7137,8 @@ export default function PlatformPage() {
           });
           urls.push(url);
           setCustomNoteImages([...urls]);
+          // 逐页累积落库：单页内的写入是覆盖式，只存这里的全量才不会「三页只找回最后一页」
+          writePosterLastResult([...urls], "single_page_knowledge_card");
           setCustomNoteImageUpper(urls[0] ?? null);
           setCustomNoteImageLower(urls[1] ?? null);
         }
