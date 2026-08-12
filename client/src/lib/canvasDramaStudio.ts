@@ -2422,18 +2422,18 @@ export function ensureManhuaFragmentClips(
 /** 静帧/成片竖排模块：每列最多几镜（约 13 镜 → 3 列） */
 export const MANHUA_LAYOUT_STACK_PER_COL = 5;
 
-/** 工作台右栏可读链：缩略竖排默认间距（节点可缩，整集须一眼可见） */
-export const MANHUA_LAYOUT_COMPACT_COL_GAP = 176;
-export const MANHUA_LAYOUT_COMPACT_ROW_GAP = 230;
+/** 工作台右栏可读链：缩略竖排默认间距（与下方缩略尺寸联动 ≈1.5×，间距必须始终大于对应尺寸，否则竖排互叠） */
+export const MANHUA_LAYOUT_COMPACT_COL_GAP = 272;
+export const MANHUA_LAYOUT_COMPACT_ROW_GAP = 356;
 /** 静帧 / 成片缩略尺寸（约 3:4） */
-export const MANHUA_LAYOUT_MEDIA_W = 156;
-export const MANHUA_LAYOUT_MEDIA_H = 208;
+export const MANHUA_LAYOUT_MEDIA_W = 240;
+export const MANHUA_LAYOUT_MEDIA_H = 320;
 /** 定妆 / 场景 / 道具墙缩略 */
-export const MANHUA_LAYOUT_ASSET_W = 132;
-export const MANHUA_LAYOUT_ASSET_H = 176;
+export const MANHUA_LAYOUT_ASSET_W = 204;
+export const MANHUA_LAYOUT_ASSET_H = 272;
 /** 顶栏文案链缩略 */
-export const MANHUA_LAYOUT_TEXT_W = 168;
-export const MANHUA_LAYOUT_TEXT_H = 120;
+export const MANHUA_LAYOUT_TEXT_W = 252;
+export const MANHUA_LAYOUT_TEXT_H = 180;
 
 function placeManhuaStackColumns(
   items: CanvasBlock[],

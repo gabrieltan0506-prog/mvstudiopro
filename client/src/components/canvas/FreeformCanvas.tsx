@@ -786,6 +786,39 @@ export default function FreeformCanvas({
     el.scrollTo({ left: 0, top: 0 });
   }, [contentBounds.h, contentBounds.w, visibleBlocks.length]);
 
+  /** 锚定缩放：clamp 后换算滚动位，让 anchor（默认视口中心）下的世界点保持不动 */
+  const applyZoom = useCallback((next: number, anchor?: { clientX: number; clientY: number }) => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const prev = Math.max(0.01, viewScaleRef.current || 1);
+    const clamped = Math.min(2.5, Math.max(0.12, Math.round(next * 1000) / 1000));
+    if (clamped === prev) return;
+    const rect = el.getBoundingClientRect();
+    const offsetX = anchor ? anchor.clientX - rect.left : el.clientWidth / 2;
+    const offsetY = anchor ? anchor.clientY - rect.top : el.clientHeight / 2;
+    const worldX = (el.scrollLeft + offsetX) / prev;
+    const worldY = (el.scrollTop + offsetY) / prev;
+    setViewScale(clamped);
+    requestAnimationFrame(() => {
+      el.scrollLeft = worldX * clamped - offsetX;
+      el.scrollTop = worldY * clamped - offsetY;
+    });
+  }, []);
+
+  /** Ctrl/⌘+滚轮 与触控板双指捏合（浏览器上报为 ctrlKey wheel）缩放；普通滚轮维持平移 */
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const factor = Math.exp(-e.deltaY * 0.0022);
+      applyZoom((viewScaleRef.current || 1) * factor, { clientX: e.clientX, clientY: e.clientY });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [applyZoom]);
+
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
@@ -2735,9 +2768,30 @@ export default function FreeformCanvas({
         >
           看全图
         </button>
-        <div className="rounded-full border border-white/15 bg-black/70 px-3 py-1 text-[11px] font-medium text-white/75 shadow-lg backdrop-blur">
+        <button
+          type="button"
+          aria-label="缩小"
+          onClick={() => applyZoom((viewScaleRef.current || 1) / 1.25)}
+          className="pointer-events-auto rounded-full border border-white/15 bg-black/70 px-3 py-1 text-[13px] font-semibold leading-none text-white/85 shadow-lg backdrop-blur hover:bg-white/15"
+        >
+          −
+        </button>
+        <button
+          type="button"
+          title="点击复位 100%"
+          onClick={() => applyZoom(1)}
+          className="pointer-events-auto rounded-full border border-white/15 bg-black/70 px-3 py-1 text-[11px] font-medium text-white/75 shadow-lg backdrop-blur hover:bg-white/15"
+        >
           视野 {viewportPct}% · {Math.round(viewScale * 100)}%
-        </div>
+        </button>
+        <button
+          type="button"
+          aria-label="放大"
+          onClick={() => applyZoom((viewScaleRef.current || 1) * 1.25)}
+          className="pointer-events-auto rounded-full border border-white/15 bg-black/70 px-3 py-1 text-[13px] font-semibold leading-none text-white/85 shadow-lg backdrop-blur hover:bg-white/15"
+        >
+          +
+        </button>
       </div>
       </div>
 
