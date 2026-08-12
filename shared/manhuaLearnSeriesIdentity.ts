@@ -6,6 +6,7 @@ export type ManhuaLearnListedSource = {
   url: string;
   title: string;
   playbackUrl?: string;
+  playbackUrls?: string[];
 };
 
 /** 直接视频达 60 分钟时按大合集源学习。 */
@@ -50,7 +51,8 @@ export function placeSingleSourceInExistingSeries<T extends ManhuaLearnListedSou
   const only = listed[0]!;
   const same = existingDigests.find((digest) => sameEpisodeSource(digest.url, only.url));
   if (same) return [{ ...only, index: same.episodeIndex }];
-  const occupied = new Set(existingDigests.map((digest) => digest.episodeIndex));
-  if (!occupied.has(only.index) && only.index > Math.max(...Array.from(occupied))) return listed;
-  return [{ ...only, index: Math.max(...Array.from(occupied)) + 1 }];
+  const occupied = existingDigests.map((digest) => digest.episodeIndex);
+  const maxOccupiedIndex = Math.max.apply(null, occupied);
+  if (occupied.indexOf(only.index) === -1 && only.index > maxOccupiedIndex) return listed;
+  return [{ ...only, index: maxOccupiedIndex + 1 }];
 }
