@@ -12,18 +12,18 @@ import {
 } from "./manhuaTemplateLearnFramePlan";
 
 describe("manhuaTemplateLearnFramePlan", () => {
-  it("base plan: intro within 5s + ~10s stride", () => {
+  it("base plan: intro within 5s + ~3s stride", () => {
     const ts = buildBaseFrameTimestamps(180);
-    expect(ts.filter((t) => t <= 5)).toEqual([1, 2.5, 5]);
-    expect(ts).toContain(10);
-    expect(ts).toContain(20);
-    const mid = ts.filter((t) => t >= 10 && t <= 170);
+    expect(ts.filter((t) => t <= 5)).toEqual([1, 2.5, 3, 5]);
+    expect(ts).toContain(9);
+    expect(ts).toContain(21);
+    const mid = ts.filter((t) => t >= 6 && t <= 170);
     for (let i = 1; i < mid.length; i++) {
       expect(mid[i]! - mid[i - 1]!).toBeGreaterThanOrEqual(BASE_STRIDE_SEC - 0.01);
     }
   });
 
-  it("densifies climax windows to ~3s", () => {
+  it("densifies climax windows to ~0.5s", () => {
     const base = buildBaseFrameTimestamps(120);
     const windows = detectClimaxWindowsFromTranscript(
       [{ start: 58, end: 62, text: "这一掌打脸翻盘了" }],

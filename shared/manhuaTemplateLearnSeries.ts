@@ -70,6 +70,21 @@ export type ManhuaLearnEpisodeChunk = {
   learnedAt: string;
   /** 供人工甄别题材的代表帧；稳定 GCS 对象，不随临时目录删除。 */
   previewFrameGcsUris?: string[];
+  /** 严格学习门：语音模型必须真实完成且产出可用结构。 */
+  audioAnalysis?: {
+    model: string;
+    attempted: boolean;
+    success: boolean;
+    errorNote?: string;
+  };
+  /** 严格学习门：高密度抽帧必须达到密度下限，且画面不是限制页/静止页。 */
+  denseFrames?: {
+    requestedCount: number;
+    extractedCount: number;
+    validMotion: boolean;
+    success: boolean;
+    errorNote?: string;
+  };
   /** 读帧 provenance（审查必须修13）：本块视觉读帧是否真实跑过、用了哪个模型 */
   vision?: {
     provider: string;
@@ -79,6 +94,19 @@ export type ManhuaLearnEpisodeChunk = {
     errorNote?: string;
   };
 };
+
+/** 新学习链一块必须语音、高密度画面、视觉理解三路同时成功。 */
+export function isStrictManhuaLearnChunkComplete(chunk: ManhuaLearnEpisodeChunk): boolean {
+  return Boolean(
+    chunk.audioAnalysis?.attempted
+      && chunk.audioAnalysis.success
+      && chunk.denseFrames?.success
+      && chunk.denseFrames.validMotion
+      && chunk.denseFrames.extractedCount > 0
+      && chunk.vision?.attempted
+      && chunk.vision.success,
+  );
+}
 
 export type ManhuaLearnEpisodeDigest = {
   episodeIndex: number;
@@ -111,10 +139,16 @@ export type ManhuaLearnEpisodeDigest = {
     attemptedChunks: number;
     successChunks: number;
   };
+  /** 新链路启用严格双通道完成口径；旧数据不在本次迁移中被静默改写。 */
+  completionPolicy?: "audio_dense_frames_v1";
 };
 
 /** 旧 digest 无检查点字段视为已完成；新 digest 以 complete / learnedThroughSec 为准 */
 export function isManhuaLearnEpisodeComplete(d: ManhuaLearnEpisodeDigest): boolean {
+  if (d.completionPolicy === "audio_dense_frames_v1") {
+    const chunks = Array.isArray(d.chunks) ? d.chunks : [];
+    if (!chunks.length || !chunks.every(isStrictManhuaLearnChunkComplete)) return false;
+  }
   if (d.complete === true) return true;
   if (d.complete === false) return false;
   const through = Number(d.learnedThroughSec);
@@ -139,6 +173,10 @@ export function mergeManhuaLearnChunkIntoDigest(input: {
   tagLabelsZh?: string[];
 }): ManhuaLearnEpisodeDigest {
   const prev = input.prev;
+  const usesStrictPolicy = Boolean(input.chunk.audioAnalysis || input.chunk.denseFrames);
+  if (usesStrictPolicy && !isStrictManhuaLearnChunkComplete(input.chunk)) {
+    throw new Error("语音分析与高密度画面分析未同时通过，拒绝推进学习检查点");
+  }
   const chunks = [...(Array.isArray(prev?.chunks) ? prev!.chunks! : [])];
   const exists = chunks.some(
     (c) =>
@@ -207,6 +245,9 @@ export function mergeManhuaLearnChunkIntoDigest(input: {
     categoryLabelZh: input.categoryLabelZh || prev?.categoryLabelZh,
     tagLabelsZh: input.tagLabelsZh || prev?.tagLabelsZh,
     frameVision,
+    completionPolicy: usesStrictPolicy
+      ? "audio_dense_frames_v1"
+      : prev?.completionPolicy,
   };
 }
 

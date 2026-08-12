@@ -24,7 +24,7 @@ export async function assertManhuaPreviewFramesHaveMotion(framePaths: string[]):
   });
   if (!differs) {
     throw new Error(
-      "下载的视频画面持续不变，疑似抖音 App 限制页；未写入假静帧，请稍后重试或换可下载的成片链接",
+      "媒体流画面持续不变，疑似抖音 App 限制页；未写入假静帧，请稍后重试或换可读取的成片链接",
     );
   }
 }
