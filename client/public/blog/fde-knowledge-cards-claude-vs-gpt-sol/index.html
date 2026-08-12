@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>十万字交给两个顶级 AI：一个浓缩成 4 页，一个写了 7 页——谁更懂「精炼」？ · MV Studio Pro</title>
+<meta name="description" content="同一份十万字 FDE 资料，分别交给 Claude 与 GPT-5.6 Sol，生成两套图文知识卡。一个像作战地图，一个像培训手册。逐页比较之后，我们发现，真正值得讨论的并不是谁赢了，而是什么材料应该交给什么样的精炼方式。">
+<meta name="keywords" content="AI 知识卡片, 知识精炼, Claude, GPT-5.6, FDE, 前线部署工程师, 图文知识卡, 长文档提炼, AI 对比实测, mvstudiopro">
+<link rel="canonical" href="https://www.mvstudiopro.com/blog/fde-knowledge-cards-claude-vs-gpt-sol">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MV Studio Pro">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:url" content="https://www.mvstudiopro.com/blog/fde-knowledge-cards-claude-vs-gpt-sol">
+<meta property="og:title" content="十万字交给两个顶级 AI：一个浓缩成 4 页，一个写了 7 页——谁更懂「精炼」？ · MV Studio Pro">
+<meta property="og:description" content="同一份十万字 FDE 资料，分别交给 Claude 与 GPT-5.6 Sol，生成两套图文知识卡。一个像作战地图，一个像培训手册。逐页比较之后，我们发现，真正值得讨论的并不是谁赢了，而是什么材料应该交给什么样的精炼方式。">
+<meta property="og:image" content="https://www.mvstudiopro.com/blog-assets/fde-cards-pk/claude-p1.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="十万字交给两个顶级 AI：一个浓缩成 4 页，一个写了 7 页——谁更懂「精炼」？ · MV Studio Pro">
+<meta name="twitter:description" content="同一份十万字 FDE 资料，分别交给 Claude 与 GPT-5.6 Sol，生成两套图文知识卡。一个像作战地图，一个像培训手册。逐页比较之后，我们发现，真正值得讨论的并不是谁赢了，而是什么材料应该交给什么样的精炼方式。">
+<meta name="twitter:image" content="https://www.mvstudiopro.com/blog-assets/fde-cards-pk/claude-p1.jpg">
+<link rel="icon" type="image/svg+xml" href="/pwa-icon.svg">
+<link rel="alternate" type="application/rss+xml" title="MV Studio Pro 博客" href="https://www.mvstudiopro.com/blog/rss.xml">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg0: #141a22;
+    --bg1: #1a2430;
+    --surface: #1e2834;
+    --surface-2: #243041;
+    --line: #2c3848;
+    --text: #e8edf2;
+    --muted: #93a0b0;
+    --soft: #b7c2cf;
+    --accent: #6ec8ff;
+    --accent-soft: rgba(110, 200, 255, 0.14);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--text);
+    font: 16px/1.85 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background-color: var(--bg0);
+    background-image:
+      radial-gradient(1200px 520px at 12% -8%, rgba(78, 140, 180, 0.22), transparent 60%),
+      radial-gradient(900px 480px at 92% 8%, rgba(56, 110, 150, 0.16), transparent 55%),
+      linear-gradient(180deg, var(--bg1) 0%, var(--bg0) 42%, #121820 100%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 22px 96px; }
+  nav.top { font-size: 13px; color: var(--muted); margin-bottom: 32px; }
+  nav.top a { color: var(--accent); text-decoration: none; }
+  nav.top a:hover { text-decoration: underline; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 12px; letter-spacing: -.01em; color: #f4f7fa; }
+  h2 { font-size: 21px; margin: 44px 0 14px; padding-top: 8px; border-top: 1px solid var(--line); color: #f1f5f8; }
+  h3 { font-size: 17px; margin: 28px 0 10px; color: #edf2f6; }
+  .meta { font-size: 13px; color: var(--muted); margin-bottom: 36px; }
+  p { margin: 0 0 18px; }
+  ul, ol { margin: 0 0 18px; padding-left: 24px; }
+  li { margin: 6px 0; }
+  strong { color: #fff; }
+  a { color: var(--accent); }
+  blockquote {
+    margin: 0 0 22px; padding: 12px 18px; border-left: 3px solid var(--accent);
+    background: var(--accent-soft); color: var(--soft); font-size: 15px;
+    border-radius: 0 8px 8px 0;
+  }
+  blockquote p { margin: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 14.5px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; }
+  th { color: #fff; background: var(--surface); font-weight: 600; }
+  code {
+    background: var(--surface-2); padding: 2px 6px; border-radius: 4px;
+    font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  pre {
+    background: var(--surface); padding: 16px 18px; border-radius: 8px; overflow-x: auto;
+    margin: 0 0 22px; border: 1px solid var(--line);
+  }
+  pre code { background: none; padding: 0; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 40px 0; }
+  em { color: var(--soft); }
+
+  /* 图片与视频：不加 max-width 的话，一张成片截图就能把版面撑破 */
+  img, video { max-width: 100%; height: auto; display: block;
+               border-radius: 8px; border: 1px solid var(--line); margin: 0 0 8px; }
+  /* 自有样片：尽量藏下载按钮（非 DRM，只挡控件一键另存） */
+  video::-webkit-media-controls-download-button { display: none !important; }
+  video::-internal-media-controls-download-button { display: none !important; }
+  figure { margin: 24px 0; }
+  figure img, figure video { margin-bottom: 8px; }
+  figcaption { font-size: 13px; color: var(--muted); text-align: center; }
+  /* B 站 / YouTube 等外链视频：按 16:9 自适应，手机上也不会溢出 */
+  .video-embed { position: relative; padding-bottom: 56.25%; height: 0;
+                 margin: 24px 0; border-radius: 8px; overflow: hidden;
+                 border: 1px solid var(--line); }
+  .video-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--line);
+           font-size: 13px; color: var(--muted); }
+  footer a { margin-right: 16px; }
+  .cards { display: grid; gap: 14px; margin: 28px 0 0; }
+  .card { display: block; padding: 18px 20px; background: var(--surface);
+          border: 1px solid var(--line);
+          border-radius: 10px; text-decoration: none; color: inherit; }
+  .card:hover { border-color: rgba(110, 200, 255, 0.45); background: var(--surface-2); }
+  .card h2 { margin: 0 0 8px; font-size: 18px; border: 0; padding: 0; color: #fff; }
+  .card p { margin: 0; font-size: 14px; color: var(--soft); }
+  .card .meta { margin: 10px 0 0; font-size: 12px; }
+</style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Article",
+      "headline": "十万字交给两个顶级 AI：一个浓缩成 4 页，一个写了 7 页——谁更懂「精炼」？",
+      "description": "同一份十万字 FDE 资料，分别交给 Claude 与 GPT-5.6 Sol，生成两套图文知识卡。一个像作战地图，一个像培训手册。逐页比较之后，我们发现，真正值得讨论的并不是谁赢了，而是什么材料应该交给什么样的精炼方式。",
+      "datePublished": "2026-08-13",
+      "dateModified": "2026-08-13",
+      "inLanguage": "zh-CN",
+      "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": "https://www.mvstudiopro.com/blog/fde-knowledge-cards-claude-vs-gpt-sol"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "MV Studio Pro",
+        "url": "https://www.mvstudiopro.com",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://www.mvstudiopro.com/pwa-icon-512.png"
+        }
+      },
+      "keywords": "AI 知识卡片, 知识精炼, Claude, GPT-5.6, FDE, 前线部署工程师, 图文知识卡, 长文档提炼, AI 对比实测, mvstudiopro",
+      "image": "https://www.mvstudiopro.com/blog-assets/fde-cards-pk/claude-p1.jpg"
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "首页",
+          "item": "https://www.mvstudiopro.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "文章",
+          "item": "https://www.mvstudiopro.com/blog/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 3,
+          "name": "十万字交给两个顶级 AI：一个浓缩成 4 页，一个写了 7 页——谁更懂「精炼」？",
+          "item": "https://www.mvstudiopro.com/blog/fde-knowledge-cards-claude-vs-gpt-sol"
+        }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "两个版本用的是同一份原始材料吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "是。同一份约十万字的 FDE 资料包，也经过同一条知识卡生成流程，主要变量是精炼引擎。4 页和 7 页的差别，来自它们对信息取舍和组织方式的不同判断。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "4 页版是不是删掉了更多内容？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "删掉的字数确实更多，但主干仍在。三阶段流程、风险清单等内容被压进表格和页脚，省掉的主要是叙事、解释和过渡。它默认读者已经具备一定背景，能够自己补足上下文。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "7 页版会不会太啰嗦？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "实际读下来并不会。多出来的篇幅主要用在阈值、清单和决策工具上，而这些恰恰是团队真正执行时最容易缺失的部分。放在培训场景里，这些内容很难再省。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "哪个版本生成成本更高？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "知识卡按页计费，因此 7 页版的费用自然更高。不过，真正昂贵的往往不是多出的几页，而是材料用错了形式：给管理者一份过长的说明，会消耗决策时间；给新人一份过度压缩的结论，则会增加沟通和培训成本。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "可以换成自己的文档吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "可以。mvstudiopro 的图文知识卡支持上传长文档，再根据用途选择不同的精炼档位。合同、书稿、行业报告和内部资料都可以处理。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "知识卡会泄露文档内容吗？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "生成后的卡片由用户自行管理和使用。本文展示的是我们自己的实验材料，并在公开发布前添加了水印。涉及内部资料时，我们也建议区分对内和对外版本：内部保留原图，对外分享使用带水印版本。"
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "为什么不让两个模型输出相同页数？",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "因为“应该整理成几页”本身就是精炼能力的一部分。如果一开始就锁死页数，就等于替模型做掉了最重要的一次取舍。我们想看的，正是它们面对同一堆材料时，会各自留下什么。 --- 本文卡片素材由 mvstudiopro 图文知识卡流程生成，转载请保留水印与出处。"
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<div class="wrap">
+<nav class="top"><a href="/">首页</a> › <a href="/blog/">文章</a></nav>
+<article>
+<h1>十万字交给两个顶级 AI：一个浓缩成 4 页，一个写了 7 页——谁更懂「精炼」？</h1>
+<p class="meta">2026-08-13 · 约 11 分钟</p>
+<p>我们手上有一份将近十万字的 FDE（前线部署工程师）资料。</p>
+<p>里面既有行业报告，也有从业者访谈、企业案例和薪酬数据。内容很扎实，但也很散。真要从头读完，至少得腾出一个下午；至于读完之后还能记住多少，就很难说了。</p>
+<p>于是我们做了一个很直接的实验：把同一份资料分别交给 Claude 和 GPT-5.6 Sol，请它们整理成图文知识卡。要求只有一个——读者看完卡片，应该能抓住原文真正重要的东西，不必再回头啃那十万字。</p>
+<p>结果出来时，我们先愣了一下。</p>
+<p>Claude 交了 <strong>4 页</strong>，GPT-5.6 Sol 交了 <strong>7 页</strong>。页数差了将近一倍，却很难简单地说谁偷懒、谁啰嗦。认真逐页看完后会发现，它们只是对“精炼”这件事做出了两种完全不同的选择。</p>
+<p>Claude 更像在替一个已经上过战场的人画地图；GPT-5.6 Sol 则像在给一支新团队编教材。</p>
+<h2>先说我们的真实感受</h2>
+<p><strong>Claude 的 4 页版很像一张作战地图。</strong> 每页围绕一个大问题展开，三栏信息几乎没有空隙，页脚还会再压进一条流程。第一眼看上去有些重，需要停下来慢慢消化；但一旦看懂，里面的判断框架可以直接拿去开会和做决策。</p>
+<p><strong>GPT-5.6 Sol 的 7 页版更像一套培训材料。</strong> 它愿意多走几步，从定义、方法讲到验收阈值，再补上清单和决策画布。阅读负担更小，也更方便交给没有背景知识的同事，让大家沿着同一条路径理解和执行。</p>
+<p>所以，这次没有“谁把谁打败”的戏码。相反，同一份资料被整理成了两种性格鲜明的成品，这件事本身比输赢更有意思。</p>
+<p><strong>Claude 4 页版：</strong></p>
+<p><img src="/blog-assets/fde-cards-pk/claude-p1.jpg" alt="Claude 版第 1 页：组织采纳与 80/95/99 规律" oncontextmenu="return false" draggable="false">
+<img src="/blog-assets/fde-cards-pk/claude-p2.jpg" alt="Claude 版第 2 页：双向蒸馏与本体化成本曲线" oncontextmenu="return false" draggable="false">
+<img src="/blog-assets/fde-cards-pk/claude-p3.jpg" alt="Claude 版第 3 页：L0—L4 阶梯与四维矩阵" oncontextmenu="return false" draggable="false">
+<img src="/blog-assets/fde-cards-pk/claude-p4.jpg" alt="Claude 版第 4 页：中国市场、岗位数据与成长路径" oncontextmenu="return false" draggable="false"></p>
+<p><strong>GPT-5.6 Sol 7 页版：</strong></p>
+<p><img src="/blog-assets/fde-cards-pk/sol-p1.jpg" alt="Sol 版第 1 页：FDE 定义与三阶段闭环" oncontextmenu="return false" draggable="false">
+<img src="/blog-assets/fde-cards-pk/sol-p2.jpg" alt="Sol 版第 2 页：企业 AI 价值断层与执行路线图" oncontextmenu="return false" draggable="false">
+<img src="/blog-assets/fde-cards-pk/sol-p3.jpg" alt="Sol 版第 3 页：让系统在真实世界产生结果" oncontextmenu="return false" draggable="false">
+<img src="/blog-assets/fde-cards-pk/sol-p4.jpg" alt="Sol 版第 4 页：连接客户、产品与组织的双循环" oncontextmenu="return false" draggable="false">
+<img src="/blog-assets/fde-cards-pk/sol-p5.jpg" alt="Sol 版第 5 页：项目选择与验收方法" oncontextmenu="return false" draggable="false">
+<img src="/blog-assets/fde-cards-pk/sol-p6.jpg" alt="Sol 版第 6 页：灯塔客户与 MVD 周循环" oncontextmenu="return false" draggable="false">
+<img src="/blog-assets/fde-cards-pk/sol-p7.jpg" alt="Sol 版第 7 页：数据地基与价值闭环" oncontextmenu="return false" draggable="false"></p>
+<h2>第一处差别：怎么判断一个项目做成了</h2>
+<p>FDE 工作最难的地方，往往不是把系统搭起来，而是回答一句看似简单的话：这个项目到底算不算成功？</p>
+<p>Claude 给出的办法很利落，可以概括成“五问”：模型听得懂业务语言吗？数据能用吗？接口接得上吗？一线用户愿意用吗？最终指标真的改善了吗？</p>
+<p>这五个问题后面还跟着几条硬指标，例如触达率提升至少 20%、人效提升至少 15%、异常率不高于 5%。它没有替你把每一张表都填好，而是先帮你建立判断顺序。以后再碰到类似项目，脑子里会自然地先过一遍这五关。</p>
+<p>GPT-5.6 Sol 走的是另一条路。它把验收标准直接整理成了一块可以拿去开会的指标看板：12 个月内 ROI 不低于 3 倍、90 天内采用率达到 70%、留存率不低于 60%、准确率达到 90%、NPS 不低于 40，单个项目还要沉淀出至少 3 个可复用场景。</p>
+<p>它甚至把目标值、时间窗口和计算方法都写好了。团队第二天要开项目复盘会，几乎可以直接把这一页投到屏幕上。</p>
+<p>两种做法的差别很直白：Claude 在训练你的判断力，GPT-5.6 Sol 在替你准备执行工具。哪一个更好，要看团队现在缺的是脑中的尺，还是手上的表。</p>
+<h2>第二处差别：什么项目值得接</h2>
+<p>不是每个客户需求都值得投入重兵。尤其是 FDE 这种深入业务现场的工作，项目选错了，几个月的人力很容易被消耗在无法复制的定制需求里。</p>
+<p>Claude 用一张“四维矩阵”来处理这个问题：问题够不够关键、客户是否集中、领域是否过于碎片化、监管和数据是否形成足够的进入门槛。每个维度都列出了适合做与不适合做的特征。</p>
+<p>其中有一句话很锋利：如果一个项目只能带来 10%—20% 的效率提升，通常不值得重兵投入。</p>
+<p>这张表的好处是简洁，几分钟就能让人抓住取舍逻辑；但最后怎么判断，仍然需要有经验的人拍板。</p>
+<p>GPT-5.6 Sol 则把判断做成了一张“灯塔客户筛选清单”：有没有真正负责结果的业务负责人？能不能拿到真实数据？需求边界清不清楚？场景是否匹配？项目有没有学习价值和行业影响力？客户愿不愿意深度合作？</p>
+<p>七项逐一检查，再把战略价值和学习价值加权计分，达到 70 分才进入排期池。</p>
+<p>如果说 Claude 给的是一把尺，GPT-5.6 Sol 给的就是一台已经调好刻度的秤。前者适合经验丰富的负责人，后者更适合需要统一团队判断标准的组织。</p>
+<h2>第三处差别：交付之后，究竟留下了什么</h2>
+<p>这是整份 FDE 材料里我们最在意的问题。</p>
+<p>FDE 和传统外包的真正区别，不在于项目现场有多忙，而在于项目结束之后，经验有没有回到产品里。做完一个客户，下一个客户还得从头再来，那只是昂贵的人力服务；只有交付成本随着复用不断下降，这项工作才开始变成产品能力。</p>
+<p>Claude 用数字把这件事讲得很有冲击力：第一个客户需要 45 人天，到第 5 个客户降到 3 人天，第 8 个客户只剩 2 人天。配合“项目制”和“本体化”的对照，毛利率可以从 25% 抬升到 55%—70%。</p>
+<p>它没有花很多篇幅讲流程，却让人一眼看到沉淀资产为什么值钱——因为成本曲线真的变了。</p>
+<p>GPT-5.6 Sol 更关心这条曲线是怎么一步步做出来的。它把过程拆成“现场工程—结果验收—产品回流”三个阶段，再加入 MVD（最小可行部署）的每周验证循环，以及一套连接免费验证、采购、法务和安全的“五步毕业机制”。</p>
+<p>Claude 解释了为什么必须沉淀，GPT-5.6 Sol 说明了怎样把沉淀做成日常动作。一个让管理者看懂经济账，一个让团队知道明天该从哪里开始。</p>
+<h2>放在一起看，差别更清楚</h2>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>4 页版（Claude）</th>
+<th>7 页版（GPT-5.6 Sol）</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>整理思路</td>
+<td>先保骨架和判断，尽量压缩</td>
+<td>先保完整和可执行，宁可多讲几步</td>
+</tr>
+<tr>
+<td>单页信息量</td>
+<td>很高，需要停下来读</td>
+<td>适中，阅读节奏更轻松</td>
+</tr>
+<tr>
+<td>阅读门槛</td>
+<td>更适合已有基础的人</td>
+<td>没有背景也能跟上</td>
+</tr>
+<tr>
+<td>最有价值的部分</td>
+<td>决策框架、判断口诀、关键数据</td>
+<td>阈值、清单、画布、执行步骤</td>
+</tr>
+<tr>
+<td>更适合谁</td>
+<td>管理者、资深从业者</td>
+<td>新团队、新人、培训场景</td>
+</tr>
+</tbody></table>
+<h2>选 4 页还是 7 页，先看材料要拿去做什么</h2>
+<p>我们平台里的两种整理方式，分别接近<strong>超凡档</strong>和<strong>精细档</strong>。真正选择时，不必纠结哪个模型名气更大，只要先问自己：这份材料最后会交到谁手里？</p>
+<ul>
+<li><strong>董事会材料、投资备忘录、竞品分析</strong>：更适合 4 页式的高密度表达。读者的时间有限，先给结论和判断框架，比解释所有来龙去脉更重要。</li>
+<li><strong>员工手册、操作规程、培训教材</strong>：更适合 7 页式的完整表达。读者需要照着做，少一步都可能造成理解偏差。</li>
+<li><strong>一本 300 页的书</strong>：两种方式都成立。想快速记住核心思想，可以选前者；想把内容讲给别人听，后者会更稳妥。</li>
+</ul>
+<p>页数从来不是越少越高级，也不是越多越负责。能不能服务最终用途，才是判断精炼质量的标准。</p>
+<h2>这 11 张卡片是怎么做出来的</h2>
+<p>文章里的 11 张知识卡，都由 mvstudiopro 的图文知识卡流程生成。</p>
+<p>我们把长文档放进去，系统先理解内容，再按不同的精炼方式重组信息、安排层级和版面，最后输出可以直接阅读和分享的图文卡片。合同、书稿、行业报告、内部调研，只要原始材料足够扎实，都可以用同样的方式处理。</p>
+<p>对我们来说，这次实验最大的收获不是证明某个模型更强，而是更清楚地看到：所谓精炼，并不是机械地删字。它是在有限的篇幅里决定什么必须留下、什么可以省略，以及读者看完之后究竟要做什么。</p>
+<h2>常见问题</h2>
+<h3>两个版本用的是同一份原始材料吗？</h3>
+<p>是。同一份约十万字的 FDE 资料包，也经过同一条知识卡生成流程，主要变量是精炼引擎。4 页和 7 页的差别，来自它们对信息取舍和组织方式的不同判断。</p>
+<h3>4 页版是不是删掉了更多内容？</h3>
+<p>删掉的字数确实更多，但主干仍在。三阶段流程、风险清单等内容被压进表格和页脚，省掉的主要是叙事、解释和过渡。它默认读者已经具备一定背景，能够自己补足上下文。</p>
+<h3>7 页版会不会太啰嗦？</h3>
+<p>实际读下来并不会。多出来的篇幅主要用在阈值、清单和决策工具上，而这些恰恰是团队真正执行时最容易缺失的部分。放在培训场景里，这些内容很难再省。</p>
+<h3>哪个版本生成成本更高？</h3>
+<p>知识卡按页计费，因此 7 页版的费用自然更高。不过，真正昂贵的往往不是多出的几页，而是材料用错了形式：给管理者一份过长的说明，会消耗决策时间；给新人一份过度压缩的结论，则会增加沟通和培训成本。</p>
+<h3>可以换成自己的文档吗？</h3>
+<p>可以。mvstudiopro 的图文知识卡支持上传长文档，再根据用途选择不同的精炼档位。合同、书稿、行业报告和内部资料都可以处理。</p>
+<h3>知识卡会泄露文档内容吗？</h3>
+<p>生成后的卡片由用户自行管理和使用。本文展示的是我们自己的实验材料，并在公开发布前添加了水印。涉及内部资料时，我们也建议区分对内和对外版本：内部保留原图，对外分享使用带水印版本。</p>
+<h3>为什么不让两个模型输出相同页数？</h3>
+<p>因为“应该整理成几页”本身就是精炼能力的一部分。如果一开始就锁死页数，就等于替模型做掉了最重要的一次取舍。我们想看的，正是它们面对同一堆材料时，会各自留下什么。</p>
+<hr>
+<p><em>本文卡片素材由 mvstudiopro 图文知识卡流程生成，转载请保留水印与出处。</em></p>
+
+</article>
+<footer>
+  <a href="/">MV Studio Pro 首页</a>
+  <a href="/blog/">全部文章</a>
+  <a href="/pricing">定价</a>
+</footer>
+</div>
+<script>
+/* 博客样片均为站内自生成：挡右键菜单与拖拽另存；无法阻止抓包，只提高随手拿走成本 */
+(function () {
+  function isOwnedMedia(t) {
+    return t && (t.tagName === "VIDEO" || t.tagName === "IMG" || (t.closest && (t.closest("video") || t.closest("figure"))));
+  }
+  document.addEventListener("contextmenu", function (e) {
+    if (isOwnedMedia(e.target)) e.preventDefault();
+  }, true);
+  document.addEventListener("dragstart", function (e) {
+    if (isOwnedMedia(e.target)) e.preventDefault();
+  }, true);
+})();
+</script>
+</body>
+</html>

@@ -6,7 +6,14 @@
     <atom:link href="https://www.mvstudiopro.com/blog/rss.xml" rel="self" type="application/rss+xml"/>
     <description>AI 漫剧与视频生成实测：模型对比、真实价格、工作流拆解</description>
     <language>zh-CN</language>
-    <lastBuildDate>Wed, 12 Aug 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Thu, 13 Aug 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>十万字交给两个顶级 AI：一个浓缩成 4 页，一个写了 7 页——谁更懂「精炼」？</title>
+      <link>https://www.mvstudiopro.com/blog/fde-knowledge-cards-claude-vs-gpt-sol</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/fde-knowledge-cards-claude-vs-gpt-sol</guid>
+      <pubDate>Thu, 13 Aug 2026 00:00:00 GMT</pubDate>
+      <description>同一份十万字 FDE 资料，分别交给 Claude 与 GPT-5.6 Sol，生成两套图文知识卡。一个像作战地图，一个像培训手册。逐页比较之后，我们发现，真正值得讨论的并不是谁赢了，而是什么材料应该交给什么样的精炼方式。</description>
+    </item>
     <item>
       <title>从爆款选题到 4K 成片：选题、文案、视频一条龙，我们是怎么跑通的</title>
       <link>https://www.mvstudiopro.com/blog/kimi-k3-vs-qwen-38-max-real-test</link>
