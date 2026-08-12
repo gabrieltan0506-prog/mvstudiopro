@@ -292,6 +292,77 @@ type PlatformComposite2x4ImageEngine = "gpt_image2" | "nano_banana_2";
 
 /** 全用户：Stage 1 战略看板 + Stage 2 专属文案 LLM（localStorage 记忆） */
 const PLATFORM_COPY_LLM_ENGINE_LS_KEY = "mvstudiopro.platform.copyLlmEngine.v1";
+
+/**
+ * 文生图/海报/知识卡任务的断线续航（2026-08-12：一夜连丢三单实证）——
+ * 旧行为：jobId 只活在 React 态，刷新即丢、卡死无超时无恢复，积分照扣图拿不到。
+ * 新行为：入队即落 localStorage，开页发现未完成任务自动续轮询；成品同样落库常驻。
+ */
+const PLATFORM_POSTER_RESUME_LS_KEY = "mvstudiopro.platform.posterResume.v1";
+const PLATFORM_POSTER_LAST_RESULT_LS_KEY = "mvstudiopro.platform.posterLastResult.v1";
+/** 超过这个时长的挂账任务不再续（后台任务墙钟 10 分钟 + 余量） */
+const PLATFORM_POSTER_RESUME_MAX_AGE_MS = 30 * 60_000;
+
+type PlatformPosterResumeRecord = {
+  jobId: string;
+  kind: string;
+  titleHead: string;
+  firedAt: number;
+};
+
+function readPosterResumeRecord(): PlatformPosterResumeRecord | null {
+  try {
+    const raw = window.localStorage.getItem(PLATFORM_POSTER_RESUME_LS_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw) as Partial<PlatformPosterResumeRecord>;
+    if (!o || typeof o.jobId !== "string" || !o.jobId) return null;
+    return {
+      jobId: o.jobId,
+      kind: String(o.kind || ""),
+      titleHead: String(o.titleHead || "").slice(0, 40),
+      firedAt: Number(o.firedAt) || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePosterResumeRecord(rec: PlatformPosterResumeRecord | null): void {
+  try {
+    if (rec) window.localStorage.setItem(PLATFORM_POSTER_RESUME_LS_KEY, JSON.stringify(rec));
+    else window.localStorage.removeItem(PLATFORM_POSTER_RESUME_LS_KEY);
+  } catch {
+    /* 隐私模式忽略 */
+  }
+}
+
+function writePosterLastResult(urls: string[], kind: string): void {
+  try {
+    const clean = urls.filter((u) => /^https:\/\//i.test(String(u || "")));
+    if (!clean.length) return;
+    window.localStorage.setItem(
+      PLATFORM_POSTER_LAST_RESULT_LS_KEY,
+      JSON.stringify({ urls: clean.slice(0, 12), kind, at: Date.now() }),
+    );
+  } catch {
+    /* 忽略 */
+  }
+}
+
+function readPosterLastResult(): { urls: string[]; kind: string; at: number } | null {
+  try {
+    const raw = window.localStorage.getItem(PLATFORM_POSTER_LAST_RESULT_LS_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw) as { urls?: unknown; kind?: unknown; at?: unknown };
+    const urls = Array.isArray(o.urls)
+      ? o.urls.map((u) => String(u || "")).filter((u) => /^https:\/\//i.test(u))
+      : [];
+    if (!urls.length) return null;
+    return { urls, kind: String(o.kind || ""), at: Number(o.at) || 0 };
+  } catch {
+    return null;
+  }
+}
 /** @deprecated 监管旧键；读取时 fallback */
 const PLATFORM_STAGE2_SUPERVISOR_COPY_ENGINE_LS_KEY = "mvstudiopro.platform.stage2SupervisorCopyEngine.v1";
 type PlatformCopyLlmEngine = "vertex" | "openai";
@@ -3099,6 +3170,75 @@ export default function PlatformPage() {
       /* 忽略隐私模式写失败 */
     }
   }, [platformExpandEngine]);
+
+  /**
+   * 文生图断线续航：开页发现有未完成的出图任务就自动续轮询到终态；
+   * 没有挂账任务但有历史成品时，把「最近一次生成结果」找回到结果区。
+   * 治的是 2026-08-12 实证的三连丢：刷新即丢单、卡死无超时、成品拿不回。
+   */
+  const posterResumeRanRef = useRef(false);
+  useEffect(() => {
+    if (posterResumeRanRef.current) return;
+    posterResumeRanRef.current = true;
+    const pending = readPosterResumeRecord();
+    if (pending) {
+      const age = Date.now() - pending.firedAt;
+      if (age > PLATFORM_POSTER_RESUME_MAX_AGE_MS) {
+        writePosterResumeRecord(null);
+        toast.info("上次的出图任务已超时未完成，可重新生成（失败会自动退积分）");
+      } else {
+        setCustomNoteBusy(true);
+        toast.info(`找到未完成的出图任务（${pending.titleHead || "上次生成"}），正在续接结果…`);
+        void pollJobUntilTerminal(pending.jobId, {
+          intervalMs: 2500,
+          // 后台墙钟 10 分钟，续航最多再等 12 分钟减去已耗时，别把整区锁半小时
+          maxWaitMs: Math.max(60_000, 12 * 60_000 - age),
+          adaptiveBackoffAfterAttempts: 20,
+          maxIntervalMs: 6000,
+        })
+          .then((j) => {
+            const out = (j.output || {}) as { compositeImageUrl?: string; imageUrl?: string };
+            const url = out.compositeImageUrl || out.imageUrl || "";
+            if (j.status === "failed" || !url) {
+              setCustomNoteError(j.error || "上次的出图任务未成功，请重试（失败会自动退积分）");
+              return;
+            }
+            if (
+              pending.kind === "storyboard_sheet_landscape" ||
+              pending.kind === "single_page_knowledge_card"
+            ) {
+              setCustomNoteKind(pending.kind);
+            }
+            setCustomNoteImages([url]);
+            writePosterLastResult([url], pending.kind);
+            toast.success("已找回上次未完成的生成结果");
+          })
+          .catch(() => {
+            setCustomNoteError("续接上次出图任务失败，请重新生成");
+          })
+          .finally(() => {
+            if (readPosterResumeRecord()?.jobId === pending.jobId) writePosterResumeRecord(null);
+            setCustomNoteBusy(false);
+          });
+      }
+      return;
+    }
+    const last = readPosterLastResult();
+    if (last && Date.now() - last.at < 24 * 3600_000) {
+      // 只在结果区为空时找回，并明示这是历史结果（防把昨天的图当本次发出去）
+      setCustomNoteImages((prev) => {
+        if (prev.length) return prev;
+        const mins = Math.max(1, Math.round((Date.now() - last.at) / 60_000));
+        const ago = mins >= 60 ? `${Math.round(mins / 60)} 小时前` : `${mins} 分钟前`;
+        toast.info(`已恢复上次的生成结果（${ago}），重新生成会覆盖`);
+        if (last.kind === "storyboard_sheet_landscape" || last.kind === "single_page_knowledge_card") {
+          setCustomNoteKind(last.kind);
+        }
+        return last.urls;
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   /** 扩写改走后台任务 + 轮询：每条写完就渲染，不再等七条跑完 */
   const enqueueTopicExpandMutation = trpc.mvAnalysis.enqueuePlatformTopicExpand.useMutation();
   const [shortlistExpandBusy, setShortlistExpandBusy] = useState(false);
@@ -6811,20 +6951,31 @@ export default function PlatformPage() {
       enabledSkillIds: Array.from(enabledPlatformSkillIds),
       allowBloggerTitle,
     });
-    if (res.imageUrl) return res.imageUrl;
+    if (res.imageUrl) {
+      writePosterLastResult([res.imageUrl], kind);
+      return res.imageUrl;
+    }
     if ((res as { isAsync?: boolean }).isAsync && (res as { progressJobId?: string }).progressJobId) {
       const pid = (res as { progressJobId?: string }).progressJobId!;
-      const j = await pollJobUntilTerminal(pid, {
-        intervalMs: 1500,
-        maxWaitMs: 10 * 60_000,
-        adaptiveBackoffAfterAttempts: 20,
-        maxIntervalMs: 5000,
-      });
-      if (j.status === "failed") throw new Error(j.error || "生成失敗，請重試");
-      const out = j.output as { compositeImageUrl?: string; imageUrl?: string } | null;
-      const url = out?.compositeImageUrl || out?.imageUrl || "";
-      if (!url) throw new Error("未取得圖片 URL，請重試");
-      return url;
+      // 入队即落库：刷新/换页后开页可自动续轮询，不再丢单（2026-08-12 实证三连丢后加）
+      writePosterResumeRecord({ jobId: pid, kind, titleHead: title, firedAt: Date.now() });
+      try {
+        const j = await pollJobUntilTerminal(pid, {
+          intervalMs: 1500,
+          maxWaitMs: 10 * 60_000,
+          adaptiveBackoffAfterAttempts: 20,
+          maxIntervalMs: 5000,
+        });
+        if (j.status === "failed") throw new Error(j.error || "生成失敗，請重試");
+        const out = j.output as { compositeImageUrl?: string; imageUrl?: string } | null;
+        const url = out?.compositeImageUrl || out?.imageUrl || "";
+        if (!url) throw new Error("未取得圖片 URL，請重試");
+        writePosterLastResult([url], kind);
+        return url;
+      } finally {
+        // 只清自己的挂账：无条件清会把并发新任务的记录误删（审查抓的竞态）
+        if (readPosterResumeRecord()?.jobId === pid) writePosterResumeRecord(null);
+      }
     }
     throw new Error("生成失敗，請重試");
   };
@@ -6855,6 +7006,11 @@ export default function PlatformPage() {
     kind?: typeof customNoteKind;
     skipClearOptimize?: boolean;
   }) => {
+    // 连点/续航进行中兜底：busy 期间一切入口直接弹提示，不叠任务
+    if (customNoteBusy) {
+      toast.info("上一个生成任务还在进行中，请稍候");
+      return;
+    }
     const kind = overrides?.kind ?? customNoteKind;
     const trimmed = (overrides?.text ?? customNoteText).trim();
     const pendingAhead = customNotePendingFilesRef.current.length;
@@ -6981,6 +7137,8 @@ export default function PlatformPage() {
           });
           urls.push(url);
           setCustomNoteImages([...urls]);
+          // 逐页累积落库：单页内的写入是覆盖式，只存这里的全量才不会「三页只找回最后一页」
+          writePosterLastResult([...urls], "single_page_knowledge_card");
           setCustomNoteImageUpper(urls[0] ?? null);
           setCustomNoteImageLower(urls[1] ?? null);
         }
@@ -13512,8 +13670,15 @@ export default function PlatformPage() {
                 </div>
               ) : null}
               {customNoteError && customWorkspaceTab === "assets" ? (
-                <div className="mt-5 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
-                  ❌ {customNoteError}
+                <div className="mt-5 flex flex-wrap items-center gap-3 rounded-2xl border border-red-500/25 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
+                  <span className="min-w-0 flex-1">❌ {customNoteError}</span>
+                  <button
+                    type="button"
+                    onClick={() => void handleGenerateCustomNote()}
+                    className="shrink-0 rounded-lg border border-red-300/40 px-3 py-1 text-xs font-semibold text-red-200 transition-colors hover:bg-red-500/20"
+                  >
+                    重试
+                  </button>
                 </div>
               ) : null}
             </>
