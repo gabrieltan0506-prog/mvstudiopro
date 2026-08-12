@@ -3182,6 +3182,30 @@ export default function ManhuaScriptWorkbench({
                               重出{sec.titleZh} {doneAnchorIds.length} 张…
                             </button>
                           ) : null}
+                          {/* 清重复：批次被打断重试会同名双开（2026-08-12 双烧实锤），一键只留每名第一张 */}
+                          {(() => {
+                            if (!onRemoveEpisodeSheet) return null;
+                            const seen = new Set<string>();
+                            const extras: string[] = [];
+                            for (const it of items) {
+                              const k = String(it.labelZh || "").trim() || it.id;
+                              if (seen.has(k)) extras.push(it.id);
+                              else seen.add(k);
+                            }
+                            if (!extras.length) return null;
+                            return (
+                              <button
+                                type="button"
+                                data-manhua-action={`dedupe-${sec.kind}`}
+                                disabled={factoryBusy}
+                                onClick={() => extras.forEach((id) => onRemoveEpisodeSheet(id))}
+                                className="shrink-0 rounded border border-rose-300/40 bg-rose-500/15 px-2 py-0.5 text-[9px] font-semibold text-rose-50 hover:bg-rose-500/30 disabled:opacity-40"
+                                title={`同名多份只保留第一张，删除免费、可随时重出`}
+                              >
+                                清重复 {extras.length} 张
+                              </button>
+                            );
+                          })()}
                         </div>
                         {items.length || pending.length ? (
                           <div className="mt-1.5 flex flex-wrap gap-2">
