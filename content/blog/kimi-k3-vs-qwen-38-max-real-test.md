@@ -1,12 +1,12 @@
 ---
-title: 同一道爆款题实测：千问 3.8 Max 用 144 秒交卷，Kimi K3 花了 292 秒
-description: 同一账号、同一条 87 分选题、同一套内容 Skill，只更换扩写引擎。千问 3.8 Max 用时 144 秒，Kimi K3 用时 292 秒；本文对比速度、成本估算、文风、逐镜拆片表和真实生产风险。
+title: 从爆款选题到 4K 成片：选题、文案、视频一条龙，我们是怎么跑通的
+description: 一条 87 分爆款选题，先让两个 AI 写手同题对决（144 秒 vs 292 秒），再把胜稿一路做成海报、5 秒成片和 4K 超分。选题、文案、拆片、视频一条龙的真实生产实录，含同帧画质对比。
 date: 2026-08-12
-keywords: Kimi K3,千问3.8 Max,Qwen3.8 Max,AI写作模型对比,爆款文章扩写,短视频脚本,逐镜拆片表,AI内容生产成本
+keywords: 爆款选题,AI文案,一条龙内容生产,AI视频生成,4K超分放大,逐镜拆片表,Kimi K3,千问3.8 Max,短视频脚本
 cover: /blog-assets/pk-kimi-vs-qwen/pk-05-同题对比总览.jpg
 ---
 
-# 同一道爆款题实测：千问 3.8 Max 用 144 秒交卷，Kimi K3 花了 292 秒
+# 从爆款选题到 4K 成片：选题、文案、视频一条龙，我们是怎么跑通的
 
 > 2026-08-12 凌晨生产实测。使用同一账号、同一条选题和同一套内容 Skill，只更换扩写引擎。耗时来自浏览器端点击到产物落库的计时；成本是按本次 token 用量与当日渠道价格估算，不是上游账单实扣。
 
@@ -40,8 +40,7 @@ cover: /blog-assets/pk-kimi-vs-qwen/pk-05-同题对比总览.jpg
 | 项目 | Kimi K3 | 千问 3.8 Max |
 |---|---|---|
 | 产品档位名 | 稳定档 | 轻快档 |
-| 推理设置 | high | enable_thinking + medium |
-| 主通道 | OpenRouter | EvoLink |
+| 推理设置 | 高 | 中 |
 | 本轮耗时 | 292 秒 | 144 秒 |
 | 本轮原始 JSON 拆片表 | 7 镜 | 8 镜 |
 | 正文视角 | 第三人称「我闺蜜」 | 第一人称「我」 |
@@ -50,7 +49,7 @@ cover: /blog-assets/pk-kimi-vs-qwen/pk-05-同题对比总览.jpg
 
 这里有三个限制必须提前说清。
 
-第一，两边不是同一个供应商通道；第二，两边推理档位不同；第三，每个模型只跑了一次。因此，144 秒和 292 秒是这一次任务的真实结果，不是长期平均速度。
+第一，两边推理档位不同（Kimi 为高档，千问为中档）；第二，每个模型只跑了一次。因此，144 秒和 292 秒是这一次任务的真实结果，不是长期平均速度。
 
 文章可以有立场，数据不能装作比自己更大。
 
@@ -62,7 +61,7 @@ cover: /blog-assets/pk-kimi-vs-qwen/pk-05-同题对比总览.jpg
 
 如果只是偶尔扩写一条，这两分多钟不算灾难；如果一天要处理几十条，差距会被放大。20 条任务按本轮结果粗算，串行等待时间会相差将近 50 分钟。
 
-不过别忘了背景：Kimi 这轮开的是 high 推理，千问是 medium。更慢不一定代表底层模型天生慢，也可能是我们主动让它想得更久。下一轮若要得出更硬的速度结论，应当统一推理强度，并在同一时段至少各跑 10 次，记录中位数和失败率。
+不过别忘了背景：Kimi 这轮开的是高档推理，千问是中档。更慢不一定代表底层模型天生慢，也可能是我们主动让它想得更久。下一轮若要得出更硬的速度结论，应当统一推理强度，并在同一时段至少各跑 10 次，记录中位数和失败率。
 
 ## 第二回合：便宜一半，还是一句容易误导人的标题
 
@@ -133,17 +132,47 @@ Kimi 的开场是：
 ## 这轮测试的局限
 
 - 只有一个健康类选题，每个模型各成功运行一次，不能代表全部题材。
-- 推理档位不同：Kimi 为 high，千问为 medium，不能把全部耗时差归因于模型本身。
-- 通道不同：Kimi 走 OpenRouter，千问走 EvoLink，上游排队也会影响结果。
+- 推理档位不同：Kimi 为高档，千问为中档，不能把全部耗时差归因于模型本身。
+- 通道不同：两边接的上游供应商通道不同，排队情况也会影响结果。
 - 成本为 token 用量乘以当日渠道单价的估算值，不是最终账单字段。
 - 原始 JSON 与后补的 Kimi 页面截图时间不同；后补截图显示了另一版 8 镜页面状态，因此本文的同轮镜数比较只采用原始 JSON 与对比总览，不混用后续页面状态。
 - 营养内容没有在本次测试中做专业事实核查，引用仅用于展示模型产物，不构成饮食建议。
+
+## 彩蛋：这条选题，我们顺手做成了 4K 成片
+
+光比文案不过瘾。写完这篇的当晚，我们把这条选题直接推完了整条流水线：**文案 → 海报 → 5 秒成片 → 4K 超分**，全程没离开这个网站。
+
+先看两版拆片表各自的第一镜，被画成了什么样：
+
+<div class="demo-media-grid" oncontextmenu="return false">
+  <img src="/blog-assets/pk-kimi-vs-qwen/demo-A-越饿越胖-海报-wm.png" alt="千问版第一镜海报：越饿越胖" draggable="false" loading="lazy" />
+  <img src="/blog-assets/pk-kimi-vs-qwen/demo-B-反而胖了十斤-海报-wm.png" alt="Kimi 版第一镜海报：反而胖了十斤" draggable="false" loading="lazy" />
+</div>
+
+然后让海报动起来（5 秒，一条 720p、一条 480p），再各做一次 4K 超分放大：
+
+<div class="demo-media-grid" oncontextmenu="return false">
+  <video src="/blog-assets/pk-kimi-vs-qwen/demo-A-4K-wm.mp4" controls controlslist="nodownload noremoteplayback" disablepictureinpicture playsinline muted loop preload="metadata"></video>
+  <video src="/blog-assets/pk-kimi-vs-qwen/demo-B-4K-wm.mp4" controls controlslist="nodownload noremoteplayback" disablepictureinpicture playsinline muted loop preload="metadata"></video>
+</div>
+
+超分到底有没有用？同一帧、同一块脸部裁切，放大到同尺寸对比（左边是原片，右边是 4K 超分）：
+
+<div oncontextmenu="return false">
+  <img src="/blog-assets/pk-kimi-vs-qwen/demo-A-同帧对比-720p-vs-4K-wm.png" alt="720p 原片与 4K 超分同帧对比" draggable="false" loading="lazy" />
+  <img src="/blog-assets/pk-kimi-vs-qwen/demo-B-同帧对比-480p-vs-4K-wm.png" alt="480p 原片与 4K 超分同帧对比" draggable="false" loading="lazy" />
+</div>
+
+两个数字：480p 原片 560×752，超分后 2160×2902——像素量放大约 **15 倍**，睫毛、碗沿反光、字幕描边全都回来了。底图生成得够干净，超分才有东西可挖；这两步一个都不能省。
+
+（画面含站名水印；原始素材归本站所有，请勿转用。）
+
 
 ## 常见问题
 
 ### Kimi K3 和千问 3.8 Max，哪个生成文章更快？
 
-在 2026-08-12 这次同题实测中，千问 3.8 Max 用时 144 秒，Kimi K3 用时 292 秒，千问少用约 148 秒。不过 Kimi 使用 high 推理，千问使用 medium，而且两者通道不同；这个结果代表本次生产任务，不等于长期平均速度。
+在 2026-08-12 这次同题实测中，千问 3.8 Max 用时 144 秒，Kimi K3 用时 292 秒，千问少用约 148 秒。不过 Kimi 使用高档推理，千问使用中档，而且两者通道不同；这个结果代表本次生产任务，不等于长期平均速度。
 
 ### Kimi K3 和千问 3.8 Max，哪个成本更低？
 
