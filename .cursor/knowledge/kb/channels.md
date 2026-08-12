@@ -7,7 +7,11 @@
 - EvoLink edits 场景曾连发「Image processing failed」——失败率高就对 edits 回钉官方通道。
 
 ## 视频
-- **真人图生视频只能走 EvoLink**（BytePlus/OpenRouter 挡人脸；EvoLink 贵 25% 但不挡）。
+- **Seedance 2.5 三通道路由拍板（用户 2026-08-13 口径）**：
+  - BytePlus = 官方 API 最便宜，但**挡真人脸**；OpenRouter 同样挡脸——这两家只能出 CG。
+  - **仿真人剧一律 EvoLink**（不挡脸，贵；content_filter 放宽 +10%）。
+  - **CG 内容走便宜通道（BytePlus/OpenRouter），但生成中途因「太像真人」被退回时 → EvoLink 接手**，这是标准 fallback，不算事故。
+  - 唯一例外：积分不够时才允许 BytePlus/OpenRouter 二选一硬扛（放弃 EvoLink 兜底）。
 - Seedance 硬事实：2K 全系不存在；2.5 上限 720p；4K 只有 2.0（EvoLink $1.0126/s）。成本按像素线性（tokens=宽×高×秒×24/1024，$7/M）。
 - **mode 枚举用下划线**（`image_to_video`）——连字符字符串会被 `input.mode || inferSeedanceMode(...)` 静默放行并打断模型解析，产出文生视频冒充图生视频（P0-6 实锤）。
 - H3：默认 2K（$0.13/s，比 Seedance 720p 便宜），时长 5/10/15 档。EvoLink 与 H3 任务均**不可取消**。
