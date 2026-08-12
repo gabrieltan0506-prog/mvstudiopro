@@ -560,7 +560,8 @@ async function advanceEpisodeMediaSource(
   const next = urls.find((url) => !tried.has(url));
   if (!next) return false;
   state.resolvedStreamUrl = next;
-  state.triedStreamUrls = Array.from(new Set([...tried, next]));
+  tried.add(next);
+  state.triedStreamUrls = Array.from(tried);
   return true;
 }
 
