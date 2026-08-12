@@ -8,17 +8,19 @@ import { COMPETITOR_RESEARCH_BETA_LABEL_ZH } from "@/lib/competitorResearchBeta"
 /** Hero 主能力入口（与导航一致） */
 const FLAGSHIP: { href: string; label: string; desc: string; beta?: boolean }[] = [
   { href: "/platform", label: "平台创作", desc: "趋势分析、选题文案与自定义工作台。" },
-  // 竞品调研内测中：首页只展示不给链接（用户 2026-08-05 明文，等 /canvas 修好再开放）
-  { href: "/research", label: "竞品调研", desc: "多平台调研与战略报告。", beta: true },
+  // 竞品调研入口先整体隐藏（用户 2026-08-12：内测卡占位无用，等开放再恢复）
+  // { href: "/research", label: "竞品调研", desc: "多平台调研与战略报告。", beta: true },
   { href: "/canvas", label: "创作画布", desc: "节点式生图、分镜与成片编排。" },
 ];
 
+// 2026-08-12 换新：网球（30MB 旧片）与神庙下架，换成 /blog 实测的 Seedance 2.5/2.0 新片
+// （小体积档，复用博客既有资产，首页不新增大文件）
 const slides = [
   {
-    title: "雷电网球",
-    subtitle: "职业女子网球比赛的关键瞬间",
-    videoUrl: "/migrated/home/video1.mp4",
-    poster: "/migrated/home/poster1.jpg",
+    title: "雁门 · 残玉",
+    subtitle: "古装哭戏，原生对白声画同步",
+    videoUrl: "/blog-assets/video-4k-upscale/01-sd25-yuji-720p.mp4",
+    poster: "/blog-assets/video-4k-upscale/poster-25-720p.jpg",
   },
   {
     title: "海洋女神",
@@ -27,10 +29,10 @@ const slides = [
     poster: "/migrated/home/poster2.jpg",
   },
   {
-    title: "秘境森林",
-    subtitle: "古代森林神庙遗迹",
-    videoUrl: "/migrated/home/video3.mp4",
-    poster: "/migrated/home/poster3.jpg",
+    title: "剑客 · 雨中对峙",
+    subtitle: "雨丝、盔甲与远处灯笼的复杂场面",
+    videoUrl: "/blog-assets/video-4k-upscale/03-sd20-swordsmen-1080p.mp4",
+    poster: "/blog-assets/video-4k-upscale/poster-20-1080p.jpg",
   },
   {
     title: "太空站观景台",
@@ -127,7 +129,7 @@ export default function HomeHero() {
               ))}
             </h1>
             <p className="mt-4 max-w-md text-[15px] leading-relaxed text-white/70">
-              平台创作、竞品调研与创作画布同站协作。先看成片气质，再进入你要的工作台。
+              平台创作与创作画布同站协作。先看成片气质，再进入你要的工作台。
             </p>
             <div className="mt-7 flex flex-wrap gap-3">
               <Link

@@ -2,7 +2,6 @@ import React from "react";
 import HomeNavbar from "../components/HomeNavbar";
 import HomeHero from "../components/HomeHero";
 import HomeCursorReveal from "../components/HomeCursorReveal";
-import HomeScrollVideo from "../components/HomeScrollVideo";
 import HomePricing from "../components/HomePricing";
 import HomeMyWorks from "../components/HomeMyWorks";
 import HomeRedeemCode from "../components/HomeRedeemCode";
@@ -36,13 +35,12 @@ export default function HomePage() {
         <HomeUpdateTicker />
         <HomeModelShowcase />
         <HomePlatformHighlights />
+        {/* 销售区上移（用户 2026-08-12：销售要明显）；「页面滚多快」演示段整段下架（无用+9.5MB 视频拖加载） */}
+        <SampleReportDownload />
         <HomePhotoTools />
         <HomeCursorReveal />
-        <HomeScrollVideo />
 
         <HomePricing />
-
-        <SampleReportDownload />
 
         <HomeMyWorks />
 

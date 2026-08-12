@@ -370,8 +370,10 @@ const QUARTERLY_MARKDOWN = `# 88 岁奶奶熬夜追凡修 · 银发审美的算�
 // 提交进仓库，永远 0 算力消耗。
 // ─────────────────────────────────────────────────────────────────────────────
 
-const BIWEEKLY_COVER_URL = "/sample-covers/biweekly-ai-shortform.png";
-const QUARTERLY_COVER_URL = "/sample-covers/quarterly-silver-bili.png";
+// 2026-08-12 换新：旧样刊封面两张 6.2MB PNG 拖垮加载，换成 /blog 实测文章的
+// 竖版海报素材（带站名水印，压缩后 <200KB）
+const BIWEEKLY_COVER_URL = "/sample-covers/pk-demo-a.jpg";
+const QUARTERLY_COVER_URL = "/sample-covers/pk-demo-b.jpg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 在线阅读 modal：全屏覆盖，渲染 markdown，叠加防截图水印层。
