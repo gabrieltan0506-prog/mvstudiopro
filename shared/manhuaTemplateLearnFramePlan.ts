@@ -1,8 +1,8 @@
 /**
  * 漫剧模板学习 · 自适应抽帧时间轴（纯函数，可单测）。
  *
- * 基线：前 5 秒内抽钩子帧 + 之后约每 10 秒一帧。
- * 语音/高潮窗：命中后该窗内改为约每 3 秒一帧。
+ * 基线：前 5 秒内抽钩子帧 + 之后约每 3 秒一帧。
+ * 语音/高潮窗：命中后该窗内改为约每 0.5 秒一帧。
  * 成稿红线：帧仅内部研究，不进用户可见成稿、不抄台词画面。
  */
 
@@ -28,8 +28,8 @@ export type FramePlanResult = {
 
 /** 前 5 秒钩子采样点 */
 export const INTRO_HOOK_SEC = [1, 2.5, 5] as const;
-export const BASE_STRIDE_SEC = 10;
-export const CLIMAX_STRIDE_SEC = 3;
+export const BASE_STRIDE_SEC = 3;
+export const CLIMAX_STRIDE_SEC = 0.5;
 /** 高潮窗前后各扩这么多秒 */
 export const CLIMAX_PAD_SEC = 4;
 
@@ -44,7 +44,7 @@ function round2(n: number): number {
   return Number(n.toFixed(2));
 }
 
-/** 基线时间戳：前 5s 钩子 + 每 10s */
+/** 基线时间戳：前 5s 钩子 + 每 3s */
 export function buildBaseFrameTimestamps(durationSec: number): number[] {
   const duration = Math.max(0.5, Number(durationSec) || 0);
   const out: number[] = [];
@@ -127,7 +127,7 @@ export function mergeClimaxWindows(windows: ClimaxWindow[]): ClimaxWindow[] {
   return out;
 }
 
-/** 在高潮窗内按 3s 加密 */
+/** 在高潮窗内按 0.5s 加密 */
 export function densifyTimestampsInWindows(
   base: number[],
   windows: ClimaxWindow[],

@@ -3,7 +3,7 @@
  * 云端 Job / 本机 CLI / Platform 面板共用同一阶段表与文案，避免只挂 skill 文件。
  *
  * 流程：
- * 入口(榜单/贴链) → 解析列表 → 按集：探测时长→分段下片→语音→抽帧→读帧→删片段
+ * 入口(榜单/贴链) → 解析列表 → 按集：探测时长→远程语音→高密度抽帧→读帧
  * → 累计摘要 →（满 4 集或合集学完出草版；约 16 集更准）总分析提案 → 人审批准进库
  */
 
@@ -68,12 +68,12 @@ export function getManhuaLearnPipelineMeta(): ManhuaLearnPipelineMeta {
     analysisMin: MANHUA_LEARN_ANALYSIS_MIN,
     analysisTarget: MANHUA_LEARN_ANALYSIS_TARGET,
     summaryZh:
-      `有合集 id 时优先展开多集；成片最长约 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟。长片不先落整片，按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟分段下载、分析并写入 JSON（中断可续，已学片段不重下）。下片失败跳下一集，连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次才停本轮。学 1 集即可出草版总分析并入库（约 16 集更准）。`,
+      `有合集 id 时优先展开多集；单条大合集最长约 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，按同一剧名并入原剧。不落 MP4，每约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟直接从媒体流提取语音与高密度画面并写入 JSON（中断可续）。语音、抽帧密度、有效画面和读帧必须同时通过才计入已学。连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次才停本轮。学 1 集即可出草版总分析并入库（约 16 集更准）。`,
     stepsZh: [
       "解析可学剧集列表（有合集 id 优先展开多集）",
       `按序采本轮剧集（短链有几集采几集；长合集约 ${MANHUA_LEARN_BATCH_MIN}–${MANHUA_LEARN_BATCH_MAX} 集）；已学完的集跳过`,
-      `逐集：读取时长 → 按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟裁切下载 → 分片学习并合并 JSON → 每段完成立即删除`,
-      `下片/学习失败则跳下一集（权限不足会标注）；连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次停止本轮`,
+      `逐集：读取时长 → 按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟流式提取语音 → 每 3 秒抽帧、高能段每 0.5 秒加密 → 读帧 → 双通道成功才合并 JSON`,
+      `媒体流/学习失败则跳下一集（权限不足会标注）；连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次停止本轮`,
       "累计分集摘要（本页即时可见）",
       `同一系列学 1 集即可出草版总分析并入库（约 ${MANHUA_LEARN_ANALYSIS_MIN} 集更准，目标约 ${MANHUA_LEARN_ANALYSIS_TARGET}）`,
       "你确认后再批准进库；未批准不会进编剧室可选库",
@@ -93,7 +93,7 @@ export function manhuaLearnStageLabelZh(
     case MANHUA_LEARN_STAGE.list:
       return "正在解析剧集列表…";
     case MANHUA_LEARN_STAGE.download:
-      return "正在下载成片…";
+      return "正在读取远程媒体流…";
     case MANHUA_LEARN_STAGE.audio:
       return "正在分析语音与节奏…";
     case MANHUA_LEARN_STAGE.frames:
@@ -101,7 +101,7 @@ export function manhuaLearnStageLabelZh(
     case MANHUA_LEARN_STAGE.vision:
       return "正在读帧提炼钩子与节拍…";
     case MANHUA_LEARN_STAGE.cleanup:
-      return "已删本地视频，写入分集摘要…";
+      return "语音与高密度画面已通过，写入分集摘要…";
     case MANHUA_LEARN_STAGE.persist:
       return "正在汇总本轮学习结果…";
     case MANHUA_LEARN_STAGE.analysis:
@@ -133,7 +133,7 @@ export function formatManhuaLearnEpisodeDetail(
   let base: string;
   switch (stage) {
     case MANHUA_LEARN_STAGE.download:
-      base = `正在下载第 ${ep} 集…`;
+      base = `正在读取第 ${ep} 集媒体流…`;
       break;
     case MANHUA_LEARN_STAGE.audio:
       base = `第 ${ep} 集：分析语音与节奏…`;
@@ -145,7 +145,7 @@ export function formatManhuaLearnEpisodeDetail(
       base = `第 ${ep} 集：读帧提炼钩子与节拍…`;
       break;
     case MANHUA_LEARN_STAGE.cleanup:
-      base = `第 ${ep} 集：成片已删除，继续读帧…`;
+      base = `第 ${ep} 集：语音与高密度画面均已通过…`;
       break;
     default:
       base = `第 ${ep} 集：${manhuaLearnStageLabelZh(stage)}`;
@@ -195,7 +195,7 @@ export function buildManhuaLocalLearnPanelSteps(input: {
       atIso: now(),
       stage: MANHUA_LEARN_STAGE.local_run,
       detailZh: cmd
-        ? `请在本机终端粘贴执行；本机也会按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟下载、分析并落盘，重跑会跳过已完成段（需已装下片与剪辑工具）：${cmd.slice(0, 180)}${cmd.length > 180 ? "…" : ""}`
+        ? `请在本机终端粘贴执行；本机只处理你主动导入的视频文件，不再回退下载网页视频。每约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟分析并落盘，重跑会跳过已完成段：${cmd.slice(0, 180)}${cmd.length > 180 ? "…" : ""}`
         : "请在本机终端执行学节奏命令",
     },
   ];

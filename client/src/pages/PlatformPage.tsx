@@ -2936,7 +2936,7 @@ export default function PlatformPage() {
   const stopFocusedManhuaLearnJob = useCallback(async () => {
     const jobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
     if (!jobId || manhuaLearnControlBusy) return;
-    if (!window.confirm("停止这部剧的学习？已落盘分集和静帧会保留，后续下载与模型调用将停止。")) return;
+    if (!window.confirm("停止这部剧的学习？已落盘分集和静帧会保留，后续媒体流读取与模型调用将停止。")) return;
     setManhuaLearnControlBusy("cancel");
     try {
       await cancelManhuaLearnServerJob(jobId, getSupervisorTrpcToken());
@@ -4886,7 +4886,8 @@ export default function PlatformPage() {
         : command;
     }
     if (url) {
-      return `pnpm run manhua:template-learn -- --url ${JSON.stringify(url)} --title ${JSON.stringify(title)}`;
+      // 远程学习不再回退到本机 yt-dlp 下载；只保留用户主动导入本地文件的 CLI。
+      return "";
     }
     return `pnpm run manhua:template-learn -- --title ${JSON.stringify(title)}`;
   }, []);
@@ -4897,6 +4898,12 @@ export default function PlatformPage() {
       const title = String(row.mixName || "").trim();
       const url = String(row.url || "").trim();
       let copied = false;
+      if (!learnCmd) {
+        toast.error("云端媒体流未完成", {
+          description: "已停止「再下载一次」的碰运气回退；请稍后重试，或手动导入本地视频学习。",
+        });
+        return;
+      }
       try {
         await navigator.clipboard.writeText(learnCmd);
         copied = true;
@@ -11795,7 +11802,7 @@ export default function PlatformPage() {
                             {rising?.note
                               || "与总览报表数据同源：抖音/快手采集中的合集与漫剧样本单独聚合。其它种草、口播样本仍在「总览」里。"}
                             {" "}
-                            学节奏：有成片/合集链时可一点学习；无链仅展示剧名与归类。按集顺序每轮采 8–10 集（学完即删视频）。学
+                            学节奏：有成片/合集链时可一点学习；无链仅展示剧名与归类。按集顺序每轮采 8–10 集（不落视频文件）。学
                             1 集即可出草版总分析并入库（约 16 集更准）；结果立刻在本页展示，你看完再决定是否「批准进库」。
                           </p>
                         </div>

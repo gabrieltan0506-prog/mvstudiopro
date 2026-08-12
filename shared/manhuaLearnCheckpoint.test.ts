@@ -71,4 +71,56 @@ describe("manhua learn checkpoint merge", () => {
     };
     expect(isManhuaLearnEpisodeComplete(legacy)).toBe(true);
   });
+
+  it("requires audio, dense valid frames and vision before advancing strict checkpoints", () => {
+    const base = {
+      startSec: 0,
+      endSec: 600,
+      transcriptPreview: "真实语音摘要",
+      hookNoteZh: "画面冲突",
+      beatHints: [],
+      climaxNotes: [],
+      sceneHints: [],
+      learnedAt: "2026-08-12T00:00:00.000Z",
+      audioAnalysis: {
+        model: "audio-model",
+        attempted: true,
+        success: true,
+      },
+      denseFrames: {
+        requestedCount: 200,
+        extractedCount: 180,
+        validMotion: true,
+        success: true,
+      },
+      vision: {
+        provider: "openai",
+        model: "vision-model",
+        attempted: true,
+        success: true,
+      },
+    };
+    const digest = mergeManhuaLearnChunkIntoDigest({
+      prev: null,
+      chunk: base,
+      episodeIndex: 1,
+      url: "https://example.com/compilation",
+      title: "大合集",
+      durationSec: 600,
+    });
+    expect(digest.completionPolicy).toBe("audio_dense_frames_v1");
+    expect(isManhuaLearnEpisodeComplete(digest)).toBe(true);
+
+    expect(() => mergeManhuaLearnChunkIntoDigest({
+      prev: null,
+      chunk: {
+        ...base,
+        denseFrames: { ...base.denseFrames, validMotion: false, success: false },
+      },
+      episodeIndex: 2,
+      url: "https://example.com/blocked",
+      title: "限制页",
+      durationSec: 600,
+    })).toThrow("拒绝推进学习检查点");
+  });
 });
