@@ -1163,8 +1163,12 @@ export async function runCanvasBlock(
     if (isKeyart) {
       assertOpenAiImagePromptWithinLimit(imagePrompt);
     }
-    /** 画布一律钉官方 OpenAI Image-2，失败即停；已移除 Nano Banana 2 */
-    const pinOfficialOpenAi = true;
+    /**
+     * 画布锁 gpt-image-2 型号但不再钉官方单供应商（2026-08-12 解钉）：
+     * 旧钉子是防 Nano Banana 回流；auto 只在 EvoLink/官方两家 gpt-image-2 里按价调度
+     * （EvoLink 便宜 10% 为主路径，官方备胎），NB2 无回流通道。
+     * 曾因此钉全画布出图绕过便宜通道，见 2026-08-12 P0 报告。
+     */
     const gptUserId = String(deps.userId || "");
     // 设定图与静帧分走两把官方密钥（本道打不通由服务端借另一把）
     const imageLane = resolveOpenAiImageLaneForBlockId(block.id);
@@ -1173,13 +1177,11 @@ export async function runCanvasBlock(
           refImageUrl: editRef,
           referenceImageUrls: fusionUrls,
           maskUrl: maskUrl || undefined,
-          openaiOnly: pinOfficialOpenAi,
+          openaiOnly: false,
           userId: gptUserId,
           imageLane,
         }
-      : pinOfficialOpenAi
-        ? { openaiOnly: true as const, userId: gptUserId, imageLane }
-        : { refImageUrl: absRef(refUrl) || refUrl, userId: gptUserId, imageLane };
+      : { openaiOnly: false as const, userId: gptUserId, imageLane };
     let urls: string[] = [];
     try {
       urls = await runGptImage2Batch(imagePrompt, ar, gptImageOpts, count);
