@@ -8,9 +8,9 @@ import {
 } from "./manhuaCameraMoveBank";
 
 describe("manhuaCameraMoveBank", () => {
-  it("has 18 camera moves in fixed order", () => {
-    expect(MANHUA_CAMERA_MOVE_ORDER).toHaveLength(18);
-    expect(MANHUA_CAMERA_MOVE_BANK).toHaveLength(18);
+  it("has 28 camera moves in fixed order", () => {
+    expect(MANHUA_CAMERA_MOVE_ORDER).toHaveLength(28);
+    expect(MANHUA_CAMERA_MOVE_BANK).toHaveLength(28);
     expect(MANHUA_CAMERA_MOVE_BANK.map((e) => e.id)).toEqual([...MANHUA_CAMERA_MOVE_ORDER]);
   });
 
@@ -34,6 +34,9 @@ describe("manhuaCameraMoveBank", () => {
       "cam_16_cut_in",
       "cam_17_slowmo",
       "cam_18_push_pull",
+      "cam_20_pan_reveal",
+      "cam_24_establishing",
+      "cam_28_ending_hold",
     ]);
     for (const e of MANHUA_CAMERA_MOVE_BANK) {
       if (e.sequenceZh) {

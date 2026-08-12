@@ -1,70 +1,36 @@
 import { Link } from "wouter";
 import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import FloatingVideoWatermark from "./FloatingVideoWatermark";
-import { useAuth } from "../_core/hooks/useAuth";
-import { COMPETITOR_RESEARCH_BETA_LABEL_ZH } from "@/lib/competitorResearchBeta";
 
-/** Hero 主能力入口（与导航一致） */
-const FLAGSHIP: { href: string; label: string; desc: string; beta?: boolean }[] = [
+/** Hero 主能力入口（视频下方横排一行；用户 2026-08-12：不许再遮视频） */
+const FLAGSHIP: { href: string; label: string; desc: string }[] = [
   { href: "/platform", label: "平台创作", desc: "趋势分析、选题文案与自定义工作台。" },
-  // 竞品调研入口先整体隐藏（用户 2026-08-12：内测卡占位无用，等开放再恢复）
-  // { href: "/research", label: "竞品调研", desc: "多平台调研与战略报告。", beta: true },
   { href: "/canvas", label: "创作画布", desc: "节点式生图、分镜与成片编排。" },
 ];
 
-// 2026-08-12 换新：网球（30MB 旧片）与神庙下架，换成 /blog 实测的 Seedance 2.5/2.0 新片
-// （小体积档，复用博客既有资产，首页不新增大文件）
+/**
+ * 片单全部来自 /blog 实测新片（用户 2026-08-12：视频只留片名，文字别糊脸；
+ * 「从洞察到成片」的话 /blog 已经讲过，这里不重复）。海洋女神/太空站观景台旧片下架。
+ */
 const slides = [
   {
     title: "雁门 · 残玉",
-    subtitle: "古装哭戏，原生对白声画同步",
     videoUrl: "/blog-assets/video-4k-upscale/01-sd25-yuji-720p.mp4",
     poster: "/blog-assets/video-4k-upscale/poster-25-720p.jpg",
   },
   {
-    title: "海洋女神",
-    subtitle: "史诗奇幻海洋场景",
-    videoUrl: "/migrated/home/video2.mp4",
-    poster: "/migrated/home/poster2.jpg",
-  },
-  {
     title: "剑客 · 雨中对峙",
-    subtitle: "雨丝、盔甲与远处灯笼的复杂场面",
     videoUrl: "/blog-assets/video-4k-upscale/03-sd20-swordsmen-1080p.mp4",
     poster: "/blog-assets/video-4k-upscale/poster-20-1080p.jpg",
   },
   {
-    title: "太空站观景台",
-    subtitle: "未来太空站内部观景大厅",
-    videoUrl: "/migrated/home/video4.mp4",
-    poster: "/migrated/home/poster4.jpg",
+    title: "苹果茶 · 倾倒",
+    videoUrl: "/blog-assets/manhua-video-model-review/01-seedance-25-tea-r2v-11s.mp4",
+    poster: "/blog-assets/manhua-video-model-review/00-cover-seedance-25-pour.jpg",
   },
 ];
 
-const HEADLINE_LINES = ["从洞察到成片", "一个人也能跑通全链路"];
-
-function BlurInWords({ text, delay = 0 }: { text: string; delay?: number }) {
-  const words = text.split(/\s+/);
-  return (
-    <span className="inline-flex flex-wrap gap-x-[0.28em]">
-      {words.map((w, i) => (
-        <motion.span
-          key={`${w}-${i}`}
-          initial={{ opacity: 0, filter: "blur(10px)", y: 8 }}
-          animate={{ opacity: 1, filter: "blur(0px)", y: 0 }}
-          transition={{ duration: 0.55, delay: delay + i * 0.08, ease: [0.22, 1, 0.36, 1] }}
-          className="inline-block"
-        >
-          {w}
-        </motion.span>
-      ))}
-    </span>
-  );
-}
-
 export default function HomeHero() {
-  const { isAuthenticated } = useAuth({ autoFetch: true });
   const [idx, setIdx] = useState(0);
   const [reduceMotion, setReduceMotion] = useState(false);
 
@@ -78,7 +44,7 @@ export default function HomeHero() {
 
   useEffect(() => {
     if (reduceMotion) return;
-    const t = setInterval(() => setIdx((v) => (v + 1) % slides.length), 5500);
+    const t = setInterval(() => setIdx((v) => (v + 1) % slides.length), 8000);
     return () => clearInterval(t);
   }, [reduceMotion]);
 
@@ -86,126 +52,54 @@ export default function HomeHero() {
 
   return (
     <section className="relative mx-auto max-w-[1240px] px-5 pt-7">
-      <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-[#0c0b16]">
-        {/* 全幅视频底（V2 MotionSite 灵感：object-cover + 轻遮罩） */}
-        <div className="absolute inset-0">
-          <AnimatePresence mode="wait">
-            <motion.video
-              key={slide.videoUrl}
-              src={slide.videoUrl}
-              poster={slide.poster}
-              autoPlay
-              muted
-              loop
-              playsInline
-              initial={reduceMotion ? false : { opacity: 0.35, scale: 1.04 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0.2 }}
-              transition={{ duration: 0.7 }}
-              className="h-full w-full object-cover object-right"
-            />
-          </AnimatePresence>
-          <div className="absolute inset-0 bg-black/45" />
-          <div className="absolute inset-0 bg-gradient-to-r from-[#0c0b16]/95 via-[#0c0b16]/55 to-transparent" />
-          <FloatingVideoWatermark enabled text="Powered by mvstudiopro.com" />
-        </div>
-
-        <div className="relative z-10 grid items-stretch gap-6 p-5 md:grid-cols-[1.15fr_0.85fr] md:p-7">
-          <div className="flex min-h-[320px] flex-col justify-end pb-2 md:min-h-[420px]">
-            <motion.div
-              initial={reduceMotion ? false : { opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              className="home-liquid-glass mb-4 w-fit rounded-full px-3 py-1 text-[11px] font-semibold text-white/85"
+      {/* 视频全幅干净展示：画面上只有底部片名切换条，其余文字一概不上脸 */}
+      <div className="relative aspect-[16/9] overflow-hidden rounded-3xl border border-white/10 bg-[#0c0b16] md:aspect-[21/9]">
+        <AnimatePresence mode="wait">
+          <motion.video
+            key={slide.videoUrl}
+            src={slide.videoUrl}
+            poster={slide.poster}
+            autoPlay
+            muted
+            loop
+            playsInline
+            initial={reduceMotion ? false : { opacity: 0.35, scale: 1.02 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0.2 }}
+            transition={{ duration: 0.7 }}
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+        </AnimatePresence>
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/60 to-transparent" />
+        <div className="absolute inset-x-0 bottom-0 flex flex-wrap items-center gap-2 px-5 pb-4">
+          {slides.map((s, i) => (
+            <button
+              key={s.title}
+              type="button"
+              onClick={() => setIdx(i)}
+              className={`home-liquid-glass shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                i === idx ? "text-white ring-1 ring-white/40" : "text-white/60 hover:text-white"
+              }`}
             >
-              New · 成片气质预览
-            </motion.div>
-            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">MV Studio Pro</div>
-            <h1 className="mt-3 max-w-xl text-[1.85rem] font-black leading-[1.05] tracking-tight text-white md:text-[2.45rem]">
-              {HEADLINE_LINES.map((line, i) => (
-                <span key={line} className="block">
-                  {reduceMotion ? line : <BlurInWords text={line} delay={0.12 + i * 0.22} />}
-                </span>
-              ))}
-            </h1>
-            <p className="mt-4 max-w-md text-[15px] leading-relaxed text-white/70">
-              平台创作与创作画布同站协作。先看成片气质，再进入你要的工作台。
-            </p>
-            <div className="mt-7 flex flex-wrap gap-3">
-              <Link
-                href="/platform"
-                className="home-liquid-glass-strong rounded-full px-6 py-2.5 text-sm font-bold text-white no-underline transition hover:scale-[1.03]"
-              >
-                进入平台创作
-              </Link>
-              {!isAuthenticated ? (
-                <Link
-                  href="/login"
-                  className="home-liquid-glass rounded-full px-6 py-2.5 text-sm font-bold text-white no-underline transition hover:scale-[1.03]"
-                >
-                  登录 / 注册
-                </Link>
-              ) : (
-                <Link
-                  href="/canvas"
-                  className="home-liquid-glass rounded-full px-6 py-2.5 text-sm font-bold text-white no-underline transition hover:scale-[1.03]"
-                >
-                  打开创作画布
-                </Link>
-              )}
-            </div>
-            <div className="mt-5 text-xs text-white/55">
-              {slide.subtitle} · <span className="text-white/85">{slide.title}</span>
-            </div>
-          </div>
-
-          <div className="flex flex-col justify-between">
-            <div className="flex flex-wrap gap-2">
-              {slides.map((s, i) => (
-                <button
-                  key={s.title}
-                  type="button"
-                  onClick={() => setIdx(i)}
-                  className={`home-liquid-glass shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                    i === idx ? "text-white ring-1 ring-white/40" : "text-white/60 hover:text-white"
-                  }`}
-                >
-                  {s.title}
-                </button>
-              ))}
-            </div>
-            <div className="mt-5 grid gap-2">
-              {FLAGSHIP.map((item, i) => (
-                <motion.div
-                  key={item.href}
-                  initial={reduceMotion ? false : { opacity: 0, x: 12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.2 + i * 0.08, duration: 0.4 }}
-                >
-                  {item.beta ? (
-                    <div className="home-liquid-glass block cursor-default rounded-2xl px-4 py-3 text-white/70">
-                      <div className="flex items-center gap-2 text-sm font-bold">
-                        {item.label}
-                        <span className="rounded-full bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300/90">
-                          {COMPETITOR_RESEARCH_BETA_LABEL_ZH}
-                        </span>
-                      </div>
-                      <div className="mt-1 text-[12px] leading-relaxed text-white/45">{item.desc}</div>
-                    </div>
-                  ) : (
-                  <Link
-                    href={item.href}
-                    className="home-liquid-glass block rounded-2xl px-4 py-3 text-white no-underline transition hover:bg-white/[0.1]"
-                  >
-                    <div className="text-sm font-bold">{item.label}</div>
-                    <div className="mt-1 text-[12px] leading-relaxed text-white/60">{item.desc}</div>
-                  </Link>
-                  )}
-                </motion.div>
-              ))}
-            </div>
-          </div>
+              {s.title}
+            </button>
+          ))}
         </div>
+      </div>
+
+      {/* 两个工作台入口：视频下方横排一行，不占画面 */}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        {FLAGSHIP.map((item) => (
+          <Link
+            key={item.href}
+            href={item.href}
+            className="home-liquid-glass flex items-baseline justify-between gap-3 rounded-2xl px-5 py-3.5 text-white no-underline transition hover:bg-white/[0.1]"
+          >
+            <span className="text-sm font-bold">{item.label}</span>
+            <span className="min-w-0 flex-1 truncate text-right text-[12px] text-white/55">{item.desc}</span>
+            <span aria-hidden className="text-white/40">→</span>
+          </Link>
+        ))}
       </div>
 
       <style>{`
@@ -215,19 +109,6 @@ export default function HomeHero() {
           backdrop-filter: blur(14px);
           -webkit-backdrop-filter: blur(14px);
           box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
-        }
-        .home-liquid-glass-strong {
-          background: linear-gradient(135deg, rgba(255,255,255,0.22), rgba(255,255,255,0.08));
-          border: 1px solid rgba(255,255,255,0.28);
-          backdrop-filter: blur(16px);
-          -webkit-backdrop-filter: blur(16px);
-          box-shadow: 0 8px 28px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.2);
-        }
-        @media (max-width: 900px) {
-          .home-hero-grid { grid-template-columns: 1fr !important; }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .home-liquid-glass-strong:hover { transform: none; }
         }
       `}</style>
     </section>

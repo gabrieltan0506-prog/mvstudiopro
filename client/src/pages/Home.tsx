@@ -1,7 +1,6 @@
 import React from "react";
 import HomeNavbar from "../components/HomeNavbar";
 import HomeHero from "../components/HomeHero";
-import HomeCursorReveal from "../components/HomeCursorReveal";
 import HomePricing from "../components/HomePricing";
 import HomeMyWorks from "../components/HomeMyWorks";
 import HomeRedeemCode from "../components/HomeRedeemCode";
@@ -39,7 +38,6 @@ export default function HomePage() {
         <HomePlatformHighlights />
         <HomeBlogShowcase />
         <HomePhotoTools />
-        <HomeCursorReveal />
 
         <HomeMyWorks />
 
