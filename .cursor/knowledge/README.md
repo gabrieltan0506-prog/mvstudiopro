@@ -4,6 +4,7 @@
 
 | 文件 | 用途 |
 |---|---|
+| [`kb/INDEX.md`](./kb/INDEX.md) | **主题事实库**（计费/通道/部署验收/博文 GEO/两条产品线动态/P0 案册/环境工具）——按任务挑 1–2 篇读 |
 | [`manhua-factory-brief.md`](./manhua-factory-brief.md) | 漫剧工厂：目标、硬口径、验收、UI、关键代码路径 |
 | [`PROGRESS.md`](./PROGRESS.md) | 滚动进度（按日追加；合并后更新） |
 | [`downloads-jul2026-index.md`](./downloads-jul2026-index.md) | `~/Downloads/2026Jul01–30`（约 104 md / 80 mp4）分类索引 + 周摘要 |

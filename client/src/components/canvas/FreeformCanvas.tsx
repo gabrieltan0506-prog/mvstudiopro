@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   CANVAS_BLOCK_DEFAULT_HEIGHT,
   CANVAS_BLOCK_DEFAULT_WIDTH,
@@ -782,9 +782,58 @@ export default function FreeformCanvas({
     const availW = Math.max(80, el.clientWidth - pad * 2);
     const availH = Math.max(80, el.clientHeight - pad * 2);
     const scale = Math.min(1, availW / contentBounds.w, availH / contentBounds.h);
+    pendingZoomAnchorRef.current = null; // 看全图接管滚动位，丢弃未完成的缩放锚点
     setViewScale(Math.max(0.12, Math.round(scale * 1000) / 1000));
     el.scrollTo({ left: 0, top: 0 });
   }, [contentBounds.h, contentBounds.w, visibleBlocks.length]);
+
+  const pendingZoomAnchorRef = useRef<{
+    worldX: number;
+    worldY: number;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
+
+  /** 锚定缩放：clamp 后换算滚动位，让 anchor（默认视口中心）下的世界点保持不动 */
+  const applyZoom = useCallback((next: number, anchor?: { clientX: number; clientY: number }) => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const prev = Math.max(0.01, viewScaleRef.current || 1);
+    const clamped = Math.min(2.5, Math.max(0.12, Math.round(next * 1000) / 1000));
+    if (clamped === prev) return;
+    const rect = el.getBoundingClientRect();
+    const offsetX = anchor ? anchor.clientX - rect.left : el.clientWidth / 2;
+    const offsetY = anchor ? anchor.clientY - rect.top : el.clientHeight / 2;
+    const worldX = (el.scrollLeft + offsetX) / prev;
+    const worldY = (el.scrollTop + offsetY) / prev;
+    // 连续缩放天然合并：后一次覆盖前一次的待恢复锚点，DOM 撑大后在 layoutEffect 里统一恢复
+    pendingZoomAnchorRef.current = { worldX, worldY, offsetX, offsetY };
+    setViewScale(clamped);
+  }, []);
+
+  /** viewScale 提交、容器已按新尺寸撑大后，同步恢复锚点下的滚动位（避免 rAF 与连续缩放/看全图竞态） */
+  useLayoutEffect(() => {
+    const el = canvasRef.current;
+    const anchor = pendingZoomAnchorRef.current;
+    if (!el || !anchor) return;
+    pendingZoomAnchorRef.current = null;
+    el.scrollLeft = anchor.worldX * viewScale - anchor.offsetX;
+    el.scrollTop = anchor.worldY * viewScale - anchor.offsetY;
+  }, [viewScale]);
+
+  /** Ctrl/⌘+滚轮 与触控板双指捏合（浏览器上报为 ctrlKey wheel）缩放；普通滚轮维持平移 */
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const factor = Math.exp(-e.deltaY * 0.0022);
+      applyZoom((viewScaleRef.current || 1) * factor, { clientX: e.clientX, clientY: e.clientY });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [applyZoom]);
 
   useEffect(() => {
     const el = canvasRef.current;
@@ -885,8 +934,9 @@ export default function FreeformCanvas({
     if (!canvas) {
       return { x: 120 + stagger * 24, y: 120 + stagger * 20 };
     }
-    const x = canvas.scrollLeft + (canvas.clientWidth - width) / 2 + stagger * 22;
-    const y = canvas.scrollTop + (canvas.clientHeight - height) / 2 + stagger * 18;
+    const scale = Math.max(0.01, viewScaleRef.current || 1);
+    const x = (canvas.scrollLeft + canvas.clientWidth / 2) / scale - width / 2 + stagger * 22;
+    const y = (canvas.scrollTop + canvas.clientHeight / 2) / scale - height / 2 + stagger * 18;
     return { x: Math.max(8, x), y: Math.max(8, y) };
   }, []);
 
@@ -899,13 +949,14 @@ export default function FreeformCanvas({
         return { x: 120 + stagger * 24, y: 120 + stagger * 20 };
       }
       const canvasRect = canvas.getBoundingClientRect();
-      const x = canvas.scrollLeft + 24 + stagger * 20;
+      const scale = Math.max(0.01, viewScaleRef.current || 1);
+      const x = (canvas.scrollLeft + 24) / scale + stagger * 20;
       const y =
-        canvas.scrollTop + (anchorCenterY - canvasRect.top) - height / 2 + stagger * 14;
-      const minX = canvas.scrollLeft + 8;
-      const minY = canvas.scrollTop + 8;
-      const maxX = canvas.scrollLeft + canvas.clientWidth - width - 8;
-      const maxY = canvas.scrollTop + canvas.clientHeight - height - 8;
+        (canvas.scrollTop + (anchorCenterY - canvasRect.top)) / scale - height / 2 + stagger * 14;
+      const minX = (canvas.scrollLeft + 8) / scale;
+      const minY = (canvas.scrollTop + 8) / scale;
+      const maxX = (canvas.scrollLeft + canvas.clientWidth - 8) / scale - width;
+      const maxY = (canvas.scrollTop + canvas.clientHeight - 8) / scale - height;
       return {
         x: Math.max(minX, Math.min(x, maxX)),
         y: Math.max(minY, Math.min(y, maxY)),
@@ -2735,9 +2786,30 @@ export default function FreeformCanvas({
         >
           看全图
         </button>
-        <div className="rounded-full border border-white/15 bg-black/70 px-3 py-1 text-[11px] font-medium text-white/75 shadow-lg backdrop-blur">
+        <button
+          type="button"
+          aria-label="缩小"
+          onClick={() => applyZoom((viewScaleRef.current || 1) / 1.25)}
+          className="pointer-events-auto rounded-full border border-white/15 bg-black/70 px-3 py-1 text-[13px] font-semibold leading-none text-white/85 shadow-lg backdrop-blur hover:bg-white/15"
+        >
+          −
+        </button>
+        <button
+          type="button"
+          title="点击复位 100%"
+          onClick={() => applyZoom(1)}
+          className="pointer-events-auto rounded-full border border-white/15 bg-black/70 px-3 py-1 text-[11px] font-medium text-white/75 shadow-lg backdrop-blur hover:bg-white/15"
+        >
           视野 {viewportPct}% · {Math.round(viewScale * 100)}%
-        </div>
+        </button>
+        <button
+          type="button"
+          aria-label="放大"
+          onClick={() => applyZoom((viewScaleRef.current || 1) * 1.25)}
+          className="pointer-events-auto rounded-full border border-white/15 bg-black/70 px-3 py-1 text-[13px] font-semibold leading-none text-white/85 shadow-lg backdrop-blur hover:bg-white/15"
+        >
+          +
+        </button>
       </div>
       </div>
 
