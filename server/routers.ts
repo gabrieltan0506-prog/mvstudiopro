@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT } from "../shared/weixinChannelsRules.js";
 
 import { COOKIE_NAME, TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../shared/const.js";
 import { HTML_PPT_VIZ_KINDS, type HtmlPptVizKind } from "../shared/htmlPptMaker.js";
@@ -3060,6 +3061,8 @@ export const appRouter = router({
         accumulatedQualifiedCount: state.observations.filter((item) => item.runKind !== "probe" && item.qualified && !item.invalid && !item.consumedAt && !item.aggregationJobId).length,
         probeQualifiedCount: state.observations.filter((item) => item.runKind === "probe" && item.qualified && !item.invalid).length,
         totalScanned: state.observations.length,
+        deepseekCompletedBatchCount: state.jobs.filter((item) => item.kind === "formal" && item.stage === "deepseek_batch" && item.status === "completed" && !item.cleanedByJobId).length,
+        terraCleanupBatchTarget: WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
         latestJob: state.jobs[state.jobs.length - 1] || null,
       };
     }),
@@ -3067,7 +3070,8 @@ export const appRouter = router({
     setWeixinChannelsCaptureEnabled: adminProcedure
       .input(z.object({ enabled: z.boolean() }))
       .mutation(async ({ input }) => {
-        const { setWeixinChannelsCaptureEnabled } = await import("./growth/weixinChannelsMinerStore.js");
+        const { refreshWeixinChannelsCandidates, setWeixinChannelsCaptureEnabled } = await import("./growth/weixinChannelsMinerStore.js");
+        if (input.enabled) await refreshWeixinChannelsCandidates();
         const state = await setWeixinChannelsCaptureEnabled(input.enabled);
         return { ok: true as const, capture: state.capture };
       }),

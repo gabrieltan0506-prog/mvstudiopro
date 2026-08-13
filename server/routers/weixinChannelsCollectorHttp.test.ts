@@ -26,4 +26,40 @@ describe("weixinChannelsCollectorHttp", () => {
     expect(weixinChannelsObservationSchema.safeParse({ ...base, captureElapsedMs: 5_999 }).success).toBe(true);
     expect(weixinChannelsObservationSchema.safeParse({ ...base, captureElapsedMs: 6_001 }).success).toBe(false);
   });
+
+  it("广告视频即使评论数达到门槛也不要求打开评论区", () => {
+    const result = weixinChannelsObservationSchema.safeParse({
+      observationId: "advertisement-1",
+      taskId: "task-123",
+      query: "AI视频",
+      resultRank: 1,
+      title: "AI工具推广",
+      observedAt: "2026-08-14T00:00:00.000Z",
+      likes: 8_998,
+      shares: 12_000,
+      comments: 361,
+      ocrTexts: ["本内容包含 广告 推广"],
+      evidence: "capture",
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("非广告视频评论数达到门槛时仍必须提供真实评论", () => {
+    const result = weixinChannelsObservationSchema.safeParse({
+      observationId: "organic-video-1",
+      taskId: "task-123",
+      query: "AI视频",
+      resultRank: 1,
+      title: "AI视频教程",
+      observedAt: "2026-08-14T00:00:00.000Z",
+      likes: 8_998,
+      shares: 12_000,
+      comments: 80,
+      ocrTexts: ["AI视频制作教程"],
+      evidence: "capture",
+    });
+
+    expect(result.success).toBe(false);
+  });
 });

@@ -13,6 +13,8 @@ import {
   getWeixinChannelsMinerState,
   ingestWeixinChannelsObservations,
   processWeixinChannelsAggregationJob,
+  recordWeixinChannelsHeartbeat,
+  refreshWeixinChannelsCandidates,
 } from "./weixinChannelsMinerStore";
 
 let storeFile = "";
@@ -34,11 +36,11 @@ function persisted(index: number, runKind: "formal" | "probe" = "formal") {
   };
 }
 
-async function seed(observations: ReturnType<typeof persisted>[]) {
+async function seed(observations: ReturnType<typeof persisted>[], jobs: unknown[] = []) {
   await fs.writeFile(storeFile, JSON.stringify({
     version: 2, updatedAt: "2026-08-14T00:00:00.000Z",
     capture: { enabled: true, updatedAt: "2026-08-14T00:00:00.000Z" }, aggregationPaused: false,
-    candidates: [candidate()], observations, lunaBatches: [], jobs: [],
+    candidates: [candidate()], observations, lunaBatches: [], jobs,
   }));
 }
 
@@ -53,6 +55,21 @@ afterEach(() => {
 });
 
 describe("weixinChannelsMinerStore", () => {
+  it("同一本机连续心跳续租原任务，不会误占多个七天热词候选", async () => {
+    await seed([]);
+    const first = await recordWeixinChannelsHeartbeat("mac-client-1");
+    const second = await recordWeixinChannelsHeartbeat("mac-client-1");
+    expect(first.nextTask?.taskId).toBe("task-123");
+    expect(second.nextTask?.taskId).toBe("task-123");
+    expect((await getWeixinChannelsMinerState()).candidates.filter((item) => item.status === "claimed")).toHaveLength(1);
+  });
+
+  it("刷新七天候选后丢弃无历史数据的过期待办，避免继续领取旧热词", async () => {
+    await seed([]);
+    await refreshWeixinChannelsCandidates();
+    expect((await getWeixinChannelsMinerState()).candidates).toHaveLength(0);
+  });
+
   it("999 条不建任务，第 1000 条并发 ingest 也只建一个正式任务且单条模型调用为零", async () => {
     await seed(Array.from({ length: 999 }, (_, index) => persisted(index)));
     const final = { ...persisted(999), resultRank: 1_000 };
@@ -65,14 +82,15 @@ describe("weixinChannelsMinerStore", () => {
     const state = await getWeixinChannelsMinerState();
     expect(state.jobs.filter((job) => job.kind === "formal")).toHaveLength(1);
     expect(state.jobs.find((job) => job.kind === "formal")?.analysisObservationIds).toHaveLength(1_000);
+    expect(state.jobs[0]).toMatchObject({ stage: "deepseek_batch", terraModel: "deepseek/deepseek-v4-pro-0813", threshold: 1_000 });
     expect(state.lunaBatches).toHaveLength(0);
   }, 20_000);
 
-  it("5 条 probe 照常持久化，只调用一次 Terra，且不计入正式额度", async () => {
+  it("5 条 probe 照常持久化，只调用一次 DeepSeek，且不计入正式额度", async () => {
     await seed(Array.from({ length: 5 }, (_, index) => persisted(index, "probe")));
     const { job } = await createWeixinChannelsProbeJob();
     const result = Object.fromEntries(["duplicates", "categories", "keywords", "commentTopics", "trends", "blueOceanKeywords", "topicIdeas", "weeklySummary"].map((key) => [key, [key]]));
-    const invoke = vi.fn().mockResolvedValueOnce({ id: "terra", created: 1, model: "gpt-5.6-terra", provider: "evolink", choices: [{ message: { content: JSON.stringify(result) } }] });
+    const invoke = vi.fn().mockResolvedValueOnce({ id: "deepseek", created: 1, model: "deepseek/deepseek-v4-pro-0813", provider: "DeepSeek", choices: [{ message: { content: JSON.stringify(result) } }] });
     const completed = await processWeixinChannelsAggregationJob(job.jobId, { invoke: invoke as never });
     expect(completed.status).toBe("completed");
     expect(invoke).toHaveBeenCalledTimes(1);
@@ -84,4 +102,36 @@ describe("weixinChannelsMinerStore", () => {
     expect(repeated.job.jobId).toBe(job.jobId);
     expect((await getWeixinChannelsMinerState()).jobs.filter((item) => item.kind === "probe")).toHaveLength(1);
   });
+
+  it("累计八个千条 DeepSeek 结果后只创建一个 Terra 清洗任务，且不重新发送原始记录", async () => {
+    const eightFields = Object.fromEntries(["duplicates", "categories", "keywords", "commentTopics", "trends", "blueOceanKeywords", "topicIdeas", "weeklySummary"].map((key) => [key, [key]]));
+    const oldJobs = Array.from({ length: 7 }, (_, index) => ({
+      jobId: `ds-old-${index}`, kind: "formal", stage: "deepseek_batch", threshold: 1_000,
+      rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [], analysisObservationIds: [], lunaBatchIds: [],
+      status: "completed", terraProvider: "openrouter", terraModel: "deepseek/deepseek-v4-pro-0813", reasoningEffort: "high",
+      finalResult: eightFields, createdAt: `2026-08-0${index + 1}T00:00:00.000Z`, updatedAt: `2026-08-0${index + 1}T00:00:00.000Z`, completedAt: `2026-08-0${index + 1}T00:00:00.000Z`,
+    }));
+    const observations = Array.from({ length: 1_000 }, (_, index) => persisted(index));
+    await seed(observations, oldJobs);
+    await ingestWeixinChannelsObservations({ taskId: "task-123", observations: [{ ...persisted(0), resultRank: 1 }] });
+    let state = await getWeixinChannelsMinerState();
+    expect(state.jobs.filter((job) => job.stage === "terra_cleanup")).toHaveLength(0);
+    const eighth = state.jobs.find((job) => job.stage === "deepseek_batch" && job.status === "pending")!;
+    const cleanResult = { ...eightFields, cleaningReport: { removedNoise: ["UI"], downgradedClaims: [], preservedEvidence: ["obs"] } };
+    const invoke = vi.fn()
+      .mockResolvedValueOnce({ id: "ds-8", model: "deepseek/deepseek-v4-pro-0813", provider: "DeepSeek", choices: [{ message: { content: JSON.stringify(eightFields) } }] })
+      .mockResolvedValueOnce({ id: "terra-clean", model: "gpt-5.6-terra", provider: "evolink", choices: [{ message: { content: JSON.stringify(cleanResult) } }] });
+    await processWeixinChannelsAggregationJob(eighth.jobId, { invoke: invoke as never });
+    state = await getWeixinChannelsMinerState();
+    const cleanupJobs = state.jobs.filter((job) => job.stage === "terra_cleanup");
+    expect(cleanupJobs).toHaveLength(1);
+    expect(cleanupJobs[0]).toMatchObject({ threshold: 8_000, rawCount: 8_000, terraModel: "gpt-5.6-terra" });
+    expect(cleanupJobs[0]?.sourceJobIds).toHaveLength(8);
+    expect(cleanupJobs[0]?.observationIds).toHaveLength(0);
+    await processWeixinChannelsAggregationJob(cleanupJobs[0]!.jobId, { invoke: invoke as never });
+    state = await getWeixinChannelsMinerState();
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(state.jobs.filter((job) => job.stage === "terra_cleanup")).toHaveLength(1);
+    expect(state.jobs.filter((job) => job.stage === "deepseek_batch").every((job) => job.cleanedByJobId === cleanupJobs[0]!.jobId)).toBe(true);
+  }, 20_000);
 });

@@ -4,9 +4,12 @@ import {
   buildWeixinChannelsCandidateQueue,
   buildWeixinChannelsSearchQueries,
   cleanWeixinChannelsObservationsLocally,
+  invokeWeixinChannelsDeepSeekBatch,
+  invokeWeixinChannelsTerraCleanup,
   invokeWeixinChannelsTerraDirect,
   persistableWeixinChannelsObservation,
   selectWeixinChannelsTerraInput,
+  WEIXIN_CHANNELS_SEARCH_WINDOW_DAYS,
   WEIXIN_CHANNELS_TERRA_MAX_COMPLETION_TOKENS,
   type FinalAnalysisJob,
   type WeixinChannelsObservation,
@@ -43,6 +46,19 @@ describe("weixinChannelsMiner", () => {
       kuaishou: collection("kuaishou"), toutiao: collection("toutiao"),
     });
     expect(new Set(candidates.map((item) => item.sourcePlatform))).toEqual(new Set(["douyin", "bilibili", "xiaohongshu"]));
+  });
+
+  it("视频号搜索候选严格只使用最近七天热点", () => {
+    const source = collection("douyin");
+    source.items.push({
+      ...source.items[0]!,
+      id: "douyin-old",
+      title: "八天前的旧热词",
+      publishedAt: new Date(Date.now() - 8 * 24 * 60 * 60_000).toISOString(),
+    });
+    const candidates = buildWeixinChannelsCandidateQueue({ douyin: source });
+    expect(WEIXIN_CHANNELS_SEARCH_WINDOW_DAYS).toBe(7);
+    expect(candidates.some((item) => item.sourceItemId === "douyin-old")).toBe(false);
   });
 
   it("从真实热点标题生成垂类与高意图搜索词，不注入无关固定词", () => {
@@ -85,7 +101,7 @@ describe("weixinChannelsMiner", () => {
     expect(item).toMatchObject({ scanned: true, qualified: false, invalid: false, qualificationReason: "内容与当前搜索垂类不相关，仅记录扫描结果" });
   });
 
-  it("先本地精确与近似去重，再为 Terra 选择 1,000–2,000 条安全输入", () => {
+  it("先本地精确与近似去重，再将单个 DeepSeek 批次严格限制为 1,000 条", () => {
     const rows = Array.from({ length: 2_000 }, (_, index) => persistableWeixinChannelsObservation(observation({
       observationId: `o-${index}`,
       title: `视频 ${index}`,
@@ -96,8 +112,35 @@ describe("weixinChannelsMiner", () => {
     })));
     const cleaned = cleanWeixinChannelsObservationsLocally(rows);
     const selected = selectWeixinChannelsTerraInput(cleaned.kept);
-    expect(selected.selected.length).toBeGreaterThanOrEqual(1_000);
-    expect(selected.selected.length).toBeLessThanOrEqual(2_000);
+    expect(selected.selected).toHaveLength(1_000);
+  });
+
+  it("千条批次固定使用 DeepSeek 0813 High、JSON、100K 与价格帽", async () => {
+    const result = Object.fromEntries(["duplicates", "categories", "keywords", "commentTopics", "trends", "blueOceanKeywords", "topicIdeas", "weeklySummary"].map((key) => [key, [key]]));
+    const invoke = vi.fn().mockResolvedValueOnce({ provider: "DeepSeek", usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30, cost: 0.01, completion_tokens_details: { reasoning_tokens: 5 } }, choices: [{ message: { content: JSON.stringify(result) } }] });
+    const persisted = persistableWeixinChannelsObservation(observation({ likes: 3_000, shares: 2_000, comments: 10 }));
+    const job: FinalAnalysisJob = { jobId: "ds-1", kind: "formal", stage: "deepseek_batch", threshold: 1_000, rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [persisted.observationId], analysisObservationIds: [persisted.observationId], lunaBatchIds: [], status: "processing", terraModel: "deepseek/deepseek-v4-pro-0813", reasoningEffort: "high", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };
+    const output = await invokeWeixinChannelsDeepSeekBatch({ job, observations: [persisted], invoke: invoke as never });
+    expect(invoke.mock.calls[0][0]).toMatchObject({
+      modelName: "deepseek/deepseek-v4-pro-0813", reasoningEffort: "high", requestId: "ds-1",
+      max_tokens: WEIXIN_CHANNELS_TERRA_MAX_COMPLETION_TOKENS, temperature: 1,
+      response_format: { type: "json_object" },
+      openRouterProviderPreferences: { require_parameters: true, data_collection: "allow", max_price: { prompt: 0.5, completion: 1 } },
+    });
+    expect(output).toMatchObject({ provider: "openrouter", usage: { reasoningTokens: 5, costUsd: 0.01 } });
+  });
+
+  it("Terra High 只读取八个 DeepSeek 结果并输出清洗报告", async () => {
+    const base = Object.fromEntries(["duplicates", "categories", "keywords", "commentTopics", "trends", "blueOceanKeywords", "topicIdeas", "weeklySummary"].map((key) => [key, [key]]));
+    const result = { ...base, cleaningReport: { removedNoise: ["UI"], downgradedClaims: [], preservedEvidence: ["obs-1"] } };
+    const invoke = vi.fn().mockResolvedValueOnce({ provider: "evolink", choices: [{ message: { content: JSON.stringify(result) } }] });
+    const job: FinalAnalysisJob = { jobId: "clean-1", kind: "formal", stage: "terra_cleanup", threshold: 8_000, rawCount: 8_000, locallyDedupedCount: 7_900, observationIds: [], sourceJobIds: Array.from({ length: 8 }, (_, i) => `ds-${i}`), lunaBatchIds: [], status: "processing", terraModel: "gpt-5.6-terra", reasoningEffort: "high", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };
+    await invokeWeixinChannelsTerraCleanup({ job, batchResults: job.sourceJobIds!.map((jobId) => ({ jobId, rawCount: 1_000, result: base })), invoke: invoke as never });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke.mock.calls[0][0]).toMatchObject({ modelName: "gpt-5.6-terra", reasoningEffort: "high", openAiGateway: "evolink_primary", requestId: "clean-1", max_tokens: WEIXIN_CHANNELS_TERRA_MAX_COMPLETION_TOKENS });
+    const body = JSON.parse(String(invoke.mock.calls[0][0].messages[1].content));
+    expect(body.batchResults).toHaveLength(8);
+    expect(body.observations).toBeUndefined();
   });
 
   it("一次 Terra high 直接产出八项结果，使用同一任务 ID 和 100K 输出上限", async () => {

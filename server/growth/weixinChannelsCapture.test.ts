@@ -15,11 +15,32 @@ import {
   metricsRemainOnSameVideo,
   parseVisibleMetric,
   parseVisibleVideoClockSeconds,
+  shouldSwitchRecommendationToSearch,
   uploadPendingObservation,
+  WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS,
   waitForVisibleVideoLoad,
 } from "../../scripts/weixin-channels-capture.mts";
 
 describe("weixin channels OCR", () => {
+  it("推荐页十分钟内不足五条达标时才切换到搜索", () => {
+    const startedAt = 1_000;
+    expect(shouldSwitchRecommendationToSearch({
+      startedAt,
+      now: startedAt + WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS - 1,
+      qualifiedCount: 0,
+    })).toBe(false);
+    expect(shouldSwitchRecommendationToSearch({
+      startedAt,
+      now: startedAt + WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS,
+      qualifiedCount: 4,
+    })).toBe(true);
+    expect(shouldSwitchRecommendationToSearch({
+      startedAt,
+      now: startedAt + WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS,
+      qualifiedCount: 5,
+    })).toBe(false);
+  });
+
   it("从20%/50%/80%播放时钟推导时长，并将总采集预算限制为视频时长十分之一", () => {
     expect(parseVisibleVideoClockSeconds("当前 0:12")).toBe(12);
     expect(deriveVideoDurationSeconds([

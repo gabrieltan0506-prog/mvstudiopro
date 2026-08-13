@@ -2,6 +2,11 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import {
+  containsWeixinChannelsAdvertisement,
+  WEIXIN_CHANNELS_COMMENT_THRESHOLD,
+  WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
+} from "../../shared/weixinChannelsRules";
+import {
   getWeixinChannelsMinerState,
   ingestWeixinChannelsObservations,
   recordWeixinChannelsHeartbeat,
@@ -60,7 +65,12 @@ export const weixinChannelsObservationSchema = z.object({
   runKind: z.enum(["formal", "probe"]).optional(),
 }).refine((item) => [item.likes, item.comments, item.shares, item.favorites, item.views].filter((value) => value !== undefined).length >= 2, {
   message: "至少需要两个真实互动指标，禁止用估算值补齐",
-}).refine((item) => item.comments === undefined || item.comments < 80 || Boolean(item.commentSamples?.length), {
+}).refine((item) => (
+  containsWeixinChannelsAdvertisement(item.ocrTexts)
+  || item.comments === undefined
+  || item.comments < WEIXIN_CHANNELS_COMMENT_THRESHOLD
+  || Boolean(item.commentSamples?.length)
+), {
   message: "评论数达到 80 时必须采集真实评论样本，不能只记评论数量",
 }).refine((item) => item.captureElapsedMs === undefined || item.captureBudgetMs === undefined || item.captureElapsedMs <= item.captureBudgetMs, {
   message: "单条采集总耗时不得超过视频时长的十分之一",
@@ -97,6 +107,8 @@ export function registerWeixinChannelsCollectorHttpRoutes(app: Express) {
         aggregationPaused: state.aggregationPaused,
         accumulatedQualifiedCount: state.observations.filter((item) => item.runKind !== "probe" && item.qualified && !item.invalid && !item.consumedAt && !item.aggregationJobId).length,
         probeQualifiedCount: state.observations.filter((item) => item.runKind === "probe" && item.qualified && !item.invalid).length,
+        deepseekCompletedBatchCount: state.jobs.filter((item) => item.kind === "formal" && item.stage === "deepseek_batch" && item.status === "completed" && !item.cleanedByJobId).length,
+        terraCleanupBatchTarget: WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
         jobs: state.jobs,
       });
     } catch (error) {

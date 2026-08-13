@@ -136,6 +136,13 @@ export type InvokeParams = {
   openAiGateway?: "auto" | "official_only" | "evolink_primary";
   /** 同一批次在主/备通道与重试间保持不变，用于幂等审计。 */
   requestId?: string;
+  /** 仅直连 OpenRouter 时透传；用于参数能力、价格帽与数据策略约束。 */
+  openRouterProviderPreferences?: {
+    require_parameters?: boolean;
+    data_collection?: "allow" | "deny";
+    allow_fallbacks?: boolean;
+    max_price?: { prompt?: number; completion?: number };
+  };
 };
 
 export type ToolCall = {
@@ -165,6 +172,8 @@ export type InvokeResult = {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    cost?: number;
+    completion_tokens_details?: { reasoning_tokens?: number; [key: string]: unknown };
   };
 };
 
@@ -1317,6 +1326,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
   const normalizedResponseFormat = normalizeResponseFormat(params);
   const modelId = String(target.modelName || "").trim();
   const isKimiK3 = isOpenRouterKimiK3Model(modelId);
+  const isDeepSeekV4Pro0813 = modelId === "deepseek/deepseek-v4-pro-0813";
   /** Kimi K3：官方文档要求勿传 temperature/top_p（固定）；GPT-5 系亦不用采样控件 */
   const supportsSamplingControls =
     !isKimiK3 && !/^gpt-5(?:[.-]|$)/i.test(modelId) && !/^openai\/gpt-5/i.test(modelId);
@@ -1335,6 +1345,9 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     } else {
       reasoningEffort = OPENROUTER_KIMI_K3_REASONING_EFFORT;
     }
+  } else if (isDeepSeekV4Pro0813) {
+    const requested = String(params.reasoningEffort || "high").trim().toLowerCase();
+    reasoningEffort = requested === "low" || requested === "max" ? requested : "high";
   } else if (isGpt5Family) {
     if (params.reasoningEffort) {
       reasoningEffort = params.reasoningEffort;
@@ -1349,7 +1362,9 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     model: target.modelName,
     messages: params.messages.map(normalizeMessage),
   };
-  if (reasoningEffort) {
+  if (isDeepSeekV4Pro0813 && reasoningEffort) {
+    payload.reasoning = { effort: reasoningEffort, exclude: true };
+  } else if (reasoningEffort) {
     payload.reasoning_effort = reasoningEffort;
   }
 
@@ -1361,7 +1376,8 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
         : undefined;
 
   if (typeof maxCompletionTokens === "number" && maxCompletionTokens > 0) {
-    payload.max_completion_tokens = Math.floor(maxCompletionTokens);
+    if (isDeepSeekV4Pro0813) payload.max_tokens = Math.floor(maxCompletionTokens);
+    else payload.max_completion_tokens = Math.floor(maxCompletionTokens);
   }
 
   if (supportsSamplingControls && typeof params.temperature === "number") {
@@ -1383,6 +1399,9 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
 
   if (normalizedResponseFormat) {
     payload.response_format = normalizedResponseFormat;
+  }
+  if (isDeepSeekV4Pro0813 && params.openRouterProviderPreferences) {
+    payload.provider = params.openRouterProviderPreferences;
   }
 
   const postChatCompletions = async (

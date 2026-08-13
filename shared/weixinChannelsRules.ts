@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 
-/** 达到 1,000 条即建立正式整理任务；单次最多交给 Terra 2,000 条。 */
+/** 每累计 1,000 条，由 DeepSeek V4 Pro 0813 做一次八项结构化整理。 */
 export const WEIXIN_CHANNELS_ACCUMULATION_TARGET = 1_000;
-export const WEIXIN_CHANNELS_AGGREGATION_MAX_ITEMS = 2_000;
-/** Terra 1.05M 总上下文中为 100K 输出及协议开销留出空间。 */
-export const WEIXIN_CHANNELS_TERRA_INPUT_TOKEN_BUDGET = 900_000;
+export const WEIXIN_CHANNELS_AGGREGATION_MAX_ITEMS = 1_000;
+/** 8 个千条结果（8,000 条）累计后，Terra High 才做一次最终去噪/UI 清洗。 */
+export const WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT = 8;
+/** 1.05M 上下文为 100K 输出和消息协议留安全余量。 */
+export const WEIXIN_CHANNELS_TERRA_INPUT_TOKEN_BUDGET = 880_000;
 export const WEIXIN_CHANNELS_TERRA_MAX_COMPLETION_TOKENS = 100_000;
 /** 仅用于读取旧版状态，不再创建新的 Luna 批次。 */
 export const WEIXIN_CHANNELS_LUNA_BATCH_SIZE = 100;

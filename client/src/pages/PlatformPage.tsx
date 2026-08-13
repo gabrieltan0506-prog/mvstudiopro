@@ -11608,7 +11608,8 @@ export default function PlatformPage() {
                     {weixinChannelsCollectorStatusQuery.data?.capture.lastHeartbeatAt
                       ? ` · 最近心跳 ${new Date(weixinChannelsCollectorStatusQuery.data.capture.lastHeartbeatAt).toLocaleString()}`
                       : " · 尚无本机心跳"}
-                    {` · 正式累计 ${weixinChannelsCollectorStatusQuery.data?.accumulatedQualifiedCount ?? 0}/1000（单批最多2000）`}
+                    {` · 待整理 ${weixinChannelsCollectorStatusQuery.data?.accumulatedQualifiedCount ?? 0}/1000`}
+                    {` · DeepSeek批次 ${weixinChannelsCollectorStatusQuery.data?.deepseekCompletedBatchCount ?? 0}/${weixinChannelsCollectorStatusQuery.data?.terraCleanupBatchTarget ?? 8} 后 Terra 清洗`}
                   </div>
                 </div>
                 <button

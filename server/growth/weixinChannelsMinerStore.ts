@@ -2,16 +2,22 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { GrowthPlatform } from "@shared/growth";
-import { WEIXIN_CHANNELS_AGGREGATION_MAX_ITEMS, WEIXIN_CHANNELS_PROBE_TARGET } from "@shared/weixinChannelsRules";
+import {
+  WEIXIN_CHANNELS_AGGREGATION_MAX_ITEMS,
+  WEIXIN_CHANNELS_COMMENT_THRESHOLD,
+  WEIXIN_CHANNELS_PROBE_TARGET,
+  WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
+} from "@shared/weixinChannelsRules";
 import { mergeTrendCollections, readTrendStore } from "./trendStore";
 import {
   WEIXIN_CHANNELS_ACCUMULATION_TARGET,
   buildWeixinChannelsCandidateQueue,
   buildWeixinChannelsTrendCollection,
   cleanWeixinChannelsObservationsLocally,
+  invokeWeixinChannelsDeepSeekBatch,
+  invokeWeixinChannelsTerraCleanup,
   invokeWeixinChannelsTerraDirect,
   persistableWeixinChannelsObservation,
-  selectWeixinChannelsTerraInput,
   type FinalAnalysisJob,
   type LunaBatch,
   type PersistedWeixinChannelsObservation,
@@ -83,7 +89,10 @@ function migrateState(parsed: Record<string, unknown>): WeixinChannelsMinerState
     })),
     observations: rawObservations.map((item) => persistableWeixinChannelsObservation(item)),
     lunaBatches: Array.isArray(parsed.lunaBatches) ? parsed.lunaBatches as LunaBatch[] : [],
-    jobs: Array.isArray(parsed.jobs) ? parsed.jobs as FinalAnalysisJob[] : [],
+    jobs: Array.isArray(parsed.jobs) ? (parsed.jobs as FinalAnalysisJob[]).map((job) => ({
+      ...job,
+      stage: job.stage || (job.sourceJobIds?.length ? "terra_cleanup" : "legacy_terra"),
+    })) : [],
   };
 }
 
@@ -124,18 +133,16 @@ function createJob(
   const now = new Date().toISOString();
   const jobId = `wxc_${kind}_${now.replace(/\D/g, "").slice(0, 14)}_${randomUUID().slice(0, 8)}`;
   const cleaned = cleanWeixinChannelsObservationsLocally(source);
-  const selected = kind === "formal"
-    ? selectWeixinChannelsTerraInput(cleaned.kept).selected
-    : cleaned.kept;
-  if (kind === "formal" && selected.length < WEIXIN_CHANNELS_ACCUMULATION_TARGET) {
+  const selected = cleaned.kept.slice(0, kind === "formal" ? WEIXIN_CHANNELS_AGGREGATION_MAX_ITEMS : WEIXIN_CHANNELS_PROBE_TARGET);
+  if (kind === "formal" && source.length < WEIXIN_CHANNELS_ACCUMULATION_TARGET) {
     return state;
   }
-  const selectedIds = new Set(selected.map((item) => item.observationId));
-  const removedIds = new Set(cleaned.removed.map((item) => item.observationId));
-  const claimedSource = source.filter((item) => selectedIds.has(item.observationId) || removedIds.has(item.observationId));
+  if (!selected.length) return state;
+  const claimedSource = source;
   const job: FinalAnalysisJob = {
     jobId,
     kind,
+    stage: "deepseek_batch",
     threshold: kind === "formal" ? WEIXIN_CHANNELS_ACCUMULATION_TARGET : WEIXIN_CHANNELS_PROBE_TARGET,
     rawCount: claimedSource.length,
     locallyDedupedCount: selected.length,
@@ -144,7 +151,7 @@ function createJob(
     // 旧字段保留给已落盘状态迁移；新任务不再创建 Luna 批次。
     lunaBatchIds: [],
     status: "pending",
-    terraModel: "gpt-5.6-terra",
+    terraModel: "deepseek/deepseek-v4-pro-0813",
     reasoningEffort: "high",
     createdAt: now,
     updatedAt: now,
@@ -159,14 +166,46 @@ function createJob(
 }
 
 function maybeCreateFormalJob(state: WeixinChannelsMinerState) {
-  const active = state.jobs.some((job) => job.kind === "formal" && job.status !== "completed");
+  const active = state.jobs.some((job) => job.kind === "formal" && job.stage === "deepseek_batch" && job.status !== "completed");
   if (active) return state;
   const available = formalAvailable(state);
   if (available.length < WEIXIN_CHANNELS_ACCUMULATION_TARGET) return state;
   return createJob(state, "formal", available.slice(0, WEIXIN_CHANNELS_AGGREGATION_MAX_ITEMS));
 }
 
-export async function refreshWeixinChannelsCandidates(options?: { perPlatform?: number; windowDays?: number }) {
+function maybeCreateTerraCleanupJob(state: WeixinChannelsMinerState) {
+  if (state.jobs.some((job) => job.stage === "terra_cleanup" && job.status !== "completed")) return state;
+  const sourceJobs = state.jobs
+    .filter((job) => job.kind === "formal"
+      && job.stage === "deepseek_batch"
+      && job.status === "completed"
+      && Boolean(job.finalResult)
+      && !job.cleanedByJobId)
+    .slice(0, WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT);
+  if (sourceJobs.length < WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT) return state;
+  const now = new Date().toISOString();
+  const jobId = `wxc_terra_cleanup_${now.replace(/\D/g, "").slice(0, 14)}_${randomUUID().slice(0, 8)}`;
+  const cleanup: FinalAnalysisJob = {
+    jobId,
+    kind: "formal",
+    stage: "terra_cleanup",
+    threshold: WEIXIN_CHANNELS_ACCUMULATION_TARGET * WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
+    rawCount: sourceJobs.reduce((sum, job) => sum + job.rawCount, 0),
+    locallyDedupedCount: sourceJobs.reduce((sum, job) => sum + job.locallyDedupedCount, 0),
+    observationIds: [],
+    analysisObservationIds: [],
+    lunaBatchIds: [],
+    sourceJobIds: sourceJobs.map((job) => job.jobId),
+    status: "pending",
+    terraModel: "gpt-5.6-terra",
+    reasoningEffort: "high",
+    createdAt: now,
+    updatedAt: now,
+  };
+  return { ...state, jobs: [...state.jobs, cleanup] };
+}
+
+export async function refreshWeixinChannelsCandidates(options?: { perPlatform?: number }) {
   return serializeMutation(async () => {
     const state = await readState();
     const trends = await readTrendStore({ preferDerivedFiles: true });
@@ -182,8 +221,14 @@ export async function refreshWeixinChannelsCandidates(options?: { perPlatform?: 
       };
     });
     for (const current of state.candidates) {
-      if (!newIds.has(current.taskId) && (current.status !== "pending" || state.observations.some((item) => item.taskId === current.taskId))) {
-        candidates.push(current);
+      if (!newIds.has(current.taskId) && state.observations.some((item) => item.taskId === current.taskId)) {
+        // 超出七天窗口的候选只为历史记录保留关联，强制终态，不能再被本机领取。
+        candidates.push({
+          ...current,
+          status: "scanned",
+          claimedBy: undefined,
+          claimExpiresAt: undefined,
+        });
       }
     }
     return writeState({ ...state, candidates });
@@ -237,7 +282,10 @@ export async function ingestWeixinChannelsObservations(params: {
     const currentById = new Map(state.observations.map((item) => [item.observationId, item]));
     const results = params.observations.map((raw) => {
       const incoming = persistableWeixinChannelsObservation(raw);
-      if (incoming.comments !== undefined && incoming.comments >= 80 && !incoming.invalid && !incoming.commentSamples?.length) {
+      if (incoming.comments !== undefined
+        && incoming.comments >= WEIXIN_CHANNELS_COMMENT_THRESHOLD
+        && !incoming.invalid
+        && !incoming.commentSamples?.length) {
         throw new Error("weixin_channels_comments_required");
       }
       const merged = mergeObservation(currentById.get(raw.observationId), incoming);
@@ -346,7 +394,10 @@ export async function recordWeixinChannelsHeartbeat(clientId: string) {
     const claimExpiry = new Date(now.getTime() + 5 * 60_000).toISOString();
     let nextTask: CandidateState | undefined;
     if (state.capture.enabled) {
+      // 同一台本机的心跳优先续租当前任务，避免每 30 秒误占一个新热词任务。
       nextTask = state.candidates.find((item) =>
+        item.status === "claimed" && item.claimedBy === clientId && Boolean(item.claimExpiresAt && item.claimExpiresAt > nowIso),
+      ) || state.candidates.find((item) =>
         item.status === "pending" || (item.status === "claimed" && (!item.claimExpiresAt || item.claimExpiresAt <= nowIso)),
       );
       if (nextTask) {
@@ -400,7 +451,7 @@ export async function createWeixinChannelsProbeJob() {
 
 export async function processWeixinChannelsAggregationJob(
   jobId?: string,
-  options?: { invoke?: NonNullable<Parameters<typeof invokeWeixinChannelsTerraDirect>[0]["invoke"]>; staleClaimMs?: number },
+  options?: { invoke?: NonNullable<Parameters<typeof invokeWeixinChannelsDeepSeekBatch>[0]["invoke"]>; staleClaimMs?: number },
 ) {
   const claimToken = randomUUID();
   let claimed = await serializeMutation(async () => {
@@ -433,17 +484,30 @@ export async function processWeixinChannelsAggregationJob(
     const beforeFinal = await getWeixinChannelsMinerState();
     const job = beforeFinal.jobs.find((item) => item.jobId === targetJobId)!;
     if (beforeFinal.aggregationPaused) throw new Error("weixin_channels_aggregation_paused");
-    const analysisIds = new Set(job.analysisObservationIds || job.observationIds);
-    const source = beforeFinal.observations.filter((item) => analysisIds.has(item.observationId));
-    const observations = cleanWeixinChannelsObservationsLocally(source).kept;
-    if (!observations.length) throw new Error("weixin_channels_terra_direct_input_empty");
     const final = job.finalResult
-      ? { result: job.finalResult, provider: job.terraProvider || "evolink" as const, usage: job.usage || {} }
-      : await invokeWeixinChannelsTerraDirect({
-          job,
-          observations,
-          invoke: options?.invoke,
-        });
+      ? { result: job.finalResult, provider: job.terraProvider || (job.stage === "deepseek_batch" ? "openrouter" : "evolink") as "openrouter" | "evolink" | "openai", usage: job.usage || {} }
+      : job.stage === "terra_cleanup"
+        ? await invokeWeixinChannelsTerraCleanup({
+            job,
+            batchResults: (job.sourceJobIds || []).map((sourceJobId) => {
+              const sourceJob = beforeFinal.jobs.find((item) => item.jobId === sourceJobId);
+              if (!sourceJob?.finalResult || sourceJob.status !== "completed") {
+                throw new Error(`weixin_channels_cleanup_source_incomplete:${sourceJobId}`);
+              }
+              return { jobId: sourceJob.jobId, rawCount: sourceJob.rawCount, result: sourceJob.finalResult };
+            }),
+            invoke: options?.invoke,
+          })
+        : (() => {
+            const analysisIds = new Set(job.analysisObservationIds || job.observationIds);
+            const source = beforeFinal.observations.filter((item) => analysisIds.has(item.observationId));
+            const observations = cleanWeixinChannelsObservationsLocally(source).kept;
+            if (!observations.length) throw new Error("weixin_channels_model_input_empty");
+            return job.stage === "deepseek_batch"
+              ? invokeWeixinChannelsDeepSeekBatch({ job, observations, invoke: options?.invoke })
+              : invokeWeixinChannelsTerraDirect({ job, observations, invoke: options?.invoke });
+          })();
+    const resolvedFinal = await final;
     claimed = await serializeMutation(async () => {
       const state = await readState();
       const completedAt = new Date().toISOString();
@@ -455,18 +519,26 @@ export async function processWeixinChannelsAggregationJob(
           ...item,
           status: "completed",
           claimToken: undefined,
-          terraProvider: final.provider,
-          finalResult: final.result,
-          usage: final.usage,
+          terraProvider: resolvedFinal.provider,
+          finalResult: resolvedFinal.result,
+          usage: resolvedFinal.usage,
           error: undefined,
           completedAt,
           updatedAt: completedAt,
         } : item),
-        observations: current?.kind === "formal"
+        observations: current?.kind === "formal" && current.stage === "deepseek_batch"
           ? state.observations.map((item) => current.observationIds.includes(item.observationId) ? { ...item, consumedAt: completedAt } : item)
           : state.observations,
       };
+      if (current?.stage === "terra_cleanup") {
+        const sourceIds = new Set(current.sourceJobIds || []);
+        next = {
+          ...next,
+          jobs: next.jobs.map((item) => sourceIds.has(item.jobId) ? { ...item, cleanedByJobId: current.jobId } : item),
+        };
+      }
       next = maybeCreateFormalJob(next);
+      next = maybeCreateTerraCleanupJob(next);
       next = await writeState(next);
       return { state: next, job: next.jobs.find((item) => item.jobId === targetJobId)! };
     });

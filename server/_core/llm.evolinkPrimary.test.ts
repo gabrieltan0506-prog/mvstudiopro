@@ -10,16 +10,47 @@ function completion(model = "gpt-5.6-luna") {
 beforeEach(() => {
   process.env.EVOLINK_API_KEY = "evo-test";
   process.env.OPENAI_API_KEY = "sk-official-test";
+  process.env.OPENROUTER_API_KEY = "sk-or-test";
 });
 
 afterEach(() => {
   global.fetch = originalFetch;
   delete process.env.EVOLINK_API_KEY;
   delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
   vi.restoreAllMocks();
 });
 
 describe("invokeLLM evolink_primary", () => {
+  it("DeepSeek V4 Pro 0813 明确开启 High thinking，并透传JSON、100K与价格帽", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...completion("deepseek/deepseek-v4-pro-0813"),
+      provider: "DeepSeek",
+      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30, cost: 0.01, completion_tokens_details: { reasoning_tokens: 5 } },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    global.fetch = fetchMock as typeof fetch;
+    const result = await invokeLLM({
+      model: "pro", provider: "openai", modelName: "deepseek/deepseek-v4-pro-0813",
+      reasoningEffort: "high", requestId: "ds-stable-id", max_tokens: 100_000, temperature: 1,
+      response_format: { type: "json_object" },
+      openRouterProviderPreferences: { require_parameters: true, data_collection: "allow", max_price: { prompt: 0.5, completion: 1 } },
+      messages: [{ role: "user", content: "test" }],
+    });
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(fetchMock.mock.calls[0][0]).toContain("openrouter.ai");
+    expect(body).toMatchObject({
+      model: "deepseek/deepseek-v4-pro-0813",
+      reasoning: { effort: "high", exclude: true },
+      max_tokens: 100_000,
+      temperature: 1,
+      response_format: { type: "json_object" },
+      provider: { require_parameters: true, data_collection: "allow", max_price: { prompt: 0.5, completion: 1 } },
+    });
+    expect(body.reasoning_effort).toBeUndefined();
+    expect(body.max_completion_tokens).toBeUndefined();
+    expect(result.usage).toMatchObject({ cost: 0.01, completion_tokens_details: { reasoning_tokens: 5 } });
+  });
+
   it("EvoLink 可重试失败时只回落官方一次并复用 requestId", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response("busy", { status: 503, headers: { "content-type": "application/json" } }))
