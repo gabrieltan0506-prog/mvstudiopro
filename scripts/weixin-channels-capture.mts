@@ -15,6 +15,7 @@ import {
   containsWeixinChannelsAdvertisement,
   makeWeixinChannelsObservationId,
   qualifyWeixinChannelsObservationLocally,
+  weixinChannelsCaptureBudgetMs,
   WEIXIN_CHANNELS_COMMENT_THRESHOLD,
   type WeixinChannelsCommentSample,
 } from "../shared/weixinChannelsRules";
@@ -24,14 +25,26 @@ const execFileAsync = promisify(execFile);
 export const WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS = 10 * 60_000;
 export const WEIXIN_CHANNELS_RECOMMENDATION_TARGET = 5;
 export const WEIXIN_CHANNELS_UNQUALIFIED_DWELL_MS = 2_000;
+export const WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS = [0.1, 0.3, 0.5, 0.7, 0.9] as const;
+export const WEIXIN_CHANNELS_PRECISION_SAMPLE_SIZE = 10;
+export const WEIXIN_CHANNELS_MIN_QUALIFIED_RATE = 0.4;
 
 export function shouldSwitchRecommendationToSearch(params: {
   startedAt: number;
   now: number;
   qualifiedCount: number;
+  scannedCount?: number;
 }) {
-  return params.now - params.startedAt >= WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS
+  const lowPrecisionSample = (params.scannedCount || 0) >= WEIXIN_CHANNELS_PRECISION_SAMPLE_SIZE
+    && params.qualifiedCount / (params.scannedCount || 1) < WEIXIN_CHANNELS_MIN_QUALIFIED_RATE;
+  const timedOutWithoutEnoughHits = params.now - params.startedAt >= WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS
     && params.qualifiedCount < WEIXIN_CHANNELS_RECOMMENDATION_TARGET;
+  return lowPrecisionSample || timedOutWithoutEnoughHits;
+}
+
+export function shouldRotateSearchQuery(params: { scannedCount: number; qualifiedCount: number }) {
+  return params.scannedCount >= WEIXIN_CHANNELS_PRECISION_SAMPLE_SIZE
+    && params.qualifiedCount / params.scannedCount < WEIXIN_CHANNELS_MIN_QUALIFIED_RATE;
 }
 
 type OcrLine = { text: string; confidence: number; x: number; y: number; width: number; height: number };
@@ -57,7 +70,7 @@ export function deriveVideoDurationSeconds(samples: Array<{ progress: number; te
 }
 
 export function captureBudgetMsForVideo(videoDurationSec: number) {
-  return Math.max(1_000, Math.round(videoDurationSec * 100));
+  return weixinChannelsCaptureBudgetMs(videoDurationSec);
 }
 
 function remainingBudgetMs(deadlineAt?: number) {
@@ -175,6 +188,8 @@ export function extractCommentSamples(lines: OcrLine[]): WeixinChannelsCommentSa
   for (const line of visible) {
     const text = cleanWeixinChannelsCommentTexts([line.text])[0];
     if (!text || text.length < 4 || /^\d+(\.\d+)?[万萬wW]?$/.test(text) || seen.has(text)) continue;
+    if (/^(赞和收藏|讚和收藏|推薦|推荐|已读|已讀|换电话|換電話|换微信|換微信|发简历|發簡歷|不感兴趣|不感興趣|拒绝|拒絕|同意)$/.test(text)) continue;
+    if (/^\d{1,2}:\d{2}$|^\d{1,2}月\d{1,2}日(?:\s+\d{1,2}:\d{2})?$/.test(text)) continue;
     if (/^都在搜[:：]|^\d+条回复$|^[凸♡赞]\s*\d+$|作者赞过|发表评论[:：]?$|^置顶(?:\s*作者赞过)?$/.test(text)) continue;
     if (/作者.*(?:\d+月\d+日|(?:分钟|小时|天|月|年)前)$/.test(text)) continue;
     if (/(北京|上海|天津|重庆|河北|河南|云南|辽宁|黑龙江|湖南|安徽|山东|新疆|江苏|浙江|江西|湖北|广西|甘肃|山西|内蒙古|陕西|吉林|福建|贵州|广东|青海|西藏|四川|宁夏|海南|台湾|香港|澳门)\s*(?:\d+月\d+日|\d*(?:分钟|小时|天|月|年)前)$/.test(text)) continue;
@@ -272,7 +287,7 @@ async function sampleVideoContentAtProgress(
   const startX = track.startX;
   let previousX = startX;
   await runSwiftControl(["click-relative", startX.toFixed(4), track.y.toFixed(4)]);
-  for (const progress of [0.2, 0.5, 0.8]) {
+  for (const progress of WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS) {
     const targetX = startX + (track.endX - startX) * progress;
     await runSwiftControl(["move-relative", "0.50", track.y.toFixed(4)]);
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -394,6 +409,95 @@ export async function uploadPendingObservation(params: {
   if (payload.persisted !== true) throw new Error("upload_not_persisted");
   await fs.unlink(params.pendingFile);
   return payload;
+}
+
+type PendingObservationEnvelope = {
+  taskId?: string;
+  videoDurationSec?: number;
+  captureElapsedMs?: number;
+  captureBudgetMs?: number;
+};
+
+function exceedsAuthoritativeCaptureBudget(observation: PendingObservationEnvelope) {
+  if (observation.captureElapsedMs === undefined) return false;
+  const budget = observation.videoDurationSec !== undefined
+    ? captureBudgetMsForVideo(observation.videoDurationSec)
+    : observation.captureBudgetMs;
+  return budget !== undefined && observation.captureElapsedMs > budget;
+}
+
+/** 容差口径放宽后，把符合新服务端门禁的旧隔离记录送回待传队列。 */
+export async function restoreEligibleQuarantinedObservations(tempDir = os.tmpdir()) {
+  const quarantineDir = path.join(tempDir, "weixin-channels-quarantine");
+  let names: string[];
+  try {
+    names = (await fs.readdir(quarantineDir))
+      .filter((name) => name.startsWith("weixin-channels-pending-") && name.endsWith(".json"))
+      .sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { found: 0, restored: 0 };
+    throw error;
+  }
+  let restored = 0;
+  for (const name of names) {
+    const quarantinedFile = path.join(quarantineDir, name);
+    const pendingFile = path.join(tempDir, name);
+    const observation = JSON.parse(await fs.readFile(quarantinedFile, "utf8")) as PendingObservationEnvelope;
+    if (exceedsAuthoritativeCaptureBudget(observation)) continue;
+    try {
+      await fs.stat(pendingFile);
+      continue;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    await fs.rename(quarantinedFile, pendingFile);
+    restored += 1;
+    process.stderr.write(`pending_restored:${name}\n`);
+  }
+  return { found: names.length, restored };
+}
+
+export async function retryPendingObservations(params: {
+  server: string;
+  token: string;
+  tempDir?: string;
+  fetchImpl?: typeof fetch;
+}) {
+  const tempDir = params.tempDir || os.tmpdir();
+  const names = (await fs.readdir(tempDir))
+    .filter((name) => name.startsWith("weixin-channels-pending-") && name.endsWith(".json"))
+    .sort();
+  let persisted = 0;
+  let failed = 0;
+  // Fly 单机双核：每个心跳只恢复一个，避免封面上传与正常 ingest 叠加冲垮实例。
+  for (const name of names.slice(0, 1)) {
+    const pendingFile = path.join(tempDir, name);
+    try {
+      const observation = JSON.parse(await fs.readFile(pendingFile, "utf8")) as PendingObservationEnvelope;
+      if (!observation.taskId) throw new Error("pending_observation_task_id_missing");
+      if (exceedsAuthoritativeCaptureBudget(observation)) {
+        const quarantineDir = path.join(tempDir, "weixin-channels-quarantine");
+        await fs.mkdir(quarantineDir, { recursive: true });
+        await fs.rename(pendingFile, path.join(quarantineDir, name));
+        process.stderr.write(`pending_quarantined:${name}:capture_sla_exceeded\n`);
+        continue;
+      }
+      await uploadPendingObservation({
+        server: params.server,
+        token: params.token,
+        taskId: observation.taskId,
+        pendingFile,
+        deadlineAt: Date.now() + 60_000,
+        fetchImpl: params.fetchImpl,
+      });
+      persisted += 1;
+      process.stderr.write(`pending_recovered:${name}\n`);
+    } catch (error) {
+      failed += 1;
+      process.stderr.write(`pending_retry_failed:${name}:${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  }
+  return { found: names.length, persisted, failed };
 }
 
 async function waitForChangedFrame(previous: string, screenshot: string, timeoutMs = 12_000) {
@@ -532,12 +636,33 @@ async function heartbeatCollector(server: string, token: string, clientId: strin
   return JSON.parse(text) as { enabled: boolean; nextTask?: HeartbeatTask };
 }
 
+type CollectorCandidate = HeartbeatTask & {
+  status?: "pending" | "claimed" | "scanned";
+  category?: string;
+  sourceTitle?: string;
+  createdAt?: string;
+};
+
 async function refreshCollectorCandidates(server: string, token: string) {
   const response = await fetch(`${server.replace(/\/$/, "")}/api/internal/weixin-channels/candidates`, {
     headers: { "x-weixin-channels-collector-token": token },
   });
   const text = await response.text();
   if (!response.ok) throw new Error(`candidate_refresh_failed:${response.status}:${text.slice(0, 500)}`);
+  return (JSON.parse(text) as { candidates?: CollectorCandidate[] }).candidates || [];
+}
+
+export function selectReusableCollectorCandidate(candidates: CollectorCandidate[]) {
+  const usable = candidates.filter((item) => item.taskId && item.searchQueries?.length);
+  return usable.sort((left, right) => {
+    const score = (item: CollectorCandidate) => {
+      const text = `${item.category || ""} ${item.sourceTitle || ""} ${item.searchQueries.join(" ")}`;
+      return (/AI|人工智能|漫剧|漫劇/i.test(text) ? 100 : 0)
+        + Math.min(item.searchQueries.length, 10)
+        + (Date.parse(item.createdAt || "") || 0) / 1e15;
+    };
+    return score(right) - score(left);
+  })[0];
 }
 
 async function captureVisibleQualifiedVideo(params: {
@@ -588,6 +713,16 @@ async function captureVisibleQualifiedVideo(params: {
   const coverImageBase64 = !adDetected && finalQualification.qualified
     ? await buildCoverBase64(params.screenshot)
     : undefined;
+  const captureElapsedMs = Date.now() - captureStartedAt;
+  const captureBudgetMs = captureBudgetMsForVideo(videoDurationSec);
+  if (captureElapsedMs > captureBudgetMs) {
+    return {
+      qualified: false as const,
+      inspectedContent: true as const,
+      reason: "weixin_channels_capture_time_budget_exceeded",
+      fingerprint: ocrFingerprint(ocr),
+    };
+  }
   const observation = {
     observationId: makeWeixinChannelsObservationId({ taskId: params.taskId, title, author }),
     taskId: params.taskId,
@@ -604,8 +739,8 @@ async function captureVisibleQualifiedVideo(params: {
     commentSamples,
     ocrTexts,
     videoDurationSec,
-    captureBudgetMs: captureBudgetMsForVideo(videoDurationSec),
-    captureElapsedMs: Date.now() - captureStartedAt,
+    captureBudgetMs,
+    captureElapsedMs,
     evidence: "capture" as const,
     runKind: params.probe ? "probe" as const : "formal" as const,
   };
@@ -619,13 +754,26 @@ async function captureVisibleQualifiedVideo(params: {
       token: params.token,
       taskId: params.taskId,
       pendingFile: output,
-      deadlineAt,
+      // 视频内容采样 SLA 与远端持久化确认分离。若沿用采样截止时间，
+      // 客户端会在 Fly 仍处理中时 abort，随后重传同一大封面请求造成重叠负载。
+      deadlineAt: Date.now() + 60_000,
     });
-    if (Date.now() > deadlineAt) throw new Error("weixin_channels_capture_time_budget_exceeded_after_upload");
+    // 服务端已确认 persisted=true 后，不能再把该条改判成“未达标/跳过”；
+    // 超时属于 SLA 观测，入库事实与本地达标计数必须保持一致。
+    if (Date.now() > deadlineAt) {
+      process.stderr.write(`capture_sla_exceeded_after_persist:${observation.observationId}\n`);
+    }
     process.stderr.write(`uploaded:${JSON.stringify(payload)}\n`);
   }
-  const { coverImageBase64: _coverImageBase64, ...safeObservationLog } = observation;
-  process.stdout.write(`${JSON.stringify(safeObservationLog, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({
+    event: "observation_persisted",
+    observationId: observation.observationId,
+    runKind: observation.runKind,
+    qualified: finalQualification.qualified,
+    commentSampleCount: observation.commentSamples?.length || 0,
+    captureElapsedMs: observation.captureElapsedMs,
+    captureBudgetMs: observation.captureBudgetMs,
+  })}\n`);
   return {
     qualified: finalQualification.qualified,
     inspectedContent: true as const,
@@ -655,12 +803,21 @@ async function runCollectionPool(params: {
   maxScanned?: number;
 }) {
   const clientId = `mac-weixin-${os.hostname()}`.slice(0, 120);
+  await restoreEligibleQuarantinedObservations();
+  const initialRecovery = await retryPendingObservations({ server: params.server, token: params.token });
   let heartbeat = await heartbeatCollector(params.server, params.token, clientId);
   if (!heartbeat.enabled) return { stopped: "capture_disabled", scanned: 0, qualified: 0 };
   if (!heartbeat.nextTask) {
     // 任务只能由 Fly 中抖音/B站/小红书最近七天真实数据生成；本机不维护固定热词。
-    await refreshCollectorCandidates(params.server, params.token);
+    const candidates = await refreshCollectorCandidates(params.server, params.token);
     heartbeat = await heartbeatCollector(params.server, params.token, clientId);
+    if (!heartbeat.nextTask) {
+      const reusable = selectReusableCollectorCandidate(candidates);
+      if (reusable) {
+        heartbeat.nextTask = { taskId: reusable.taskId, searchQueries: reusable.searchQueries };
+        process.stderr.write(`candidate_reused:${reusable.taskId}\n`);
+      }
+    }
   }
   if (!heartbeat.nextTask) return { stopped: "no_candidate_task", scanned: 0, qualified: 0 };
 
@@ -670,8 +827,10 @@ async function runCollectionPool(params: {
   let recommendationQualified = 0;
   let totalScanned = 0;
   let totalQualified = 0;
+  let totalRecovered = initialRecovery.persisted;
   let searchQueryIndex = 0;
   let scansOnCurrentQuery = 0;
+  let qualifiedOnCurrentQuery = 0;
   let lastHeartbeatAt = Date.now();
   await captureWindow(params.screenshot);
   let ocr = await readOcr(params.screenshot);
@@ -679,6 +838,8 @@ async function runCollectionPool(params: {
   while (totalScanned < (params.maxScanned ?? Number.POSITIVE_INFINITY)) {
     if (Date.now() - lastHeartbeatAt >= 30_000) {
       heartbeat = await heartbeatCollector(params.server, params.token, clientId);
+      const recovery = await retryPendingObservations({ server: params.server, token: params.token });
+      totalRecovered += recovery.persisted;
       lastHeartbeatAt = Date.now();
       if (!heartbeat.enabled) return { stopped: "capture_disabled", scanned: totalScanned, qualified: totalQualified };
       if (heartbeat.nextTask) task = heartbeat.nextTask;
@@ -688,35 +849,59 @@ async function runCollectionPool(params: {
       startedAt: recommendationStartedAt,
       now: Date.now(),
       qualifiedCount: recommendationQualified,
+      scannedCount: totalScanned,
     })) {
       mode = "search";
       searchQueryIndex = 0;
       scansOnCurrentQuery = 0;
+      qualifiedOnCurrentQuery = 0;
       const query = task.searchQueries[searchQueryIndex];
       if (!query) throw new Error("weixin_channels_search_queries_empty");
       ocr = await openFirstSearchResult(query, params.screenshot);
     }
 
     // 每条先关闭上一条可能残留的评论面板，并以四项互动指标重新出现作为断言。
-    ocr = await ensureInteractionMetricsVisible(params.screenshot, ocr);
+    // 单条界面异常只跳过当前视频，不能退出整条采集池。
+    try {
+      ocr = await ensureInteractionMetricsVisible(params.screenshot, ocr);
+    } catch (error) {
+      totalScanned += 1;
+      process.stderr.write(`scan_skipped:${error instanceof Error ? error.message : String(error)}\n`);
+      process.stderr.write(`collector_progress:${JSON.stringify({ scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode })}\n`);
+      ocr = await advanceToNextVideo(ocrFingerprint(ocr), params.screenshot);
+      continue;
+    }
     const itemStartedAt = Date.now();
     const query = mode === "recommendation"
       ? "推荐页"
       : task.searchQueries[searchQueryIndex] || task.searchQueries[0] || "网络热点";
-    const result = await captureVisibleQualifiedVideo({
-      ocr,
-      screenshot: params.screenshot,
-      taskId: task.taskId,
-      query,
-      probe: params.probe,
-      server: params.server,
-      token: params.token,
-    });
+    let result: Awaited<ReturnType<typeof captureVisibleQualifiedVideo>>;
+    try {
+      result = await captureVisibleQualifiedVideo({
+        ocr,
+        screenshot: params.screenshot,
+        taskId: task.taskId,
+        query,
+        probe: params.probe,
+        server: params.server,
+        token: params.token,
+      });
+    } catch (error) {
+      // 单条视频超时、评论区识别失败或上传失败不能杀死整晚采集；
+      // 待传文件仍由 captureVisibleQualifiedVideo 保留，随后继续下一条。
+      totalScanned += 1;
+      process.stderr.write(`scan_skipped:${error instanceof Error ? error.message : String(error)}\n`);
+      process.stderr.write(`collector_progress:${JSON.stringify({ scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode })}\n`);
+      ocr = await advanceToNextVideo(ocrFingerprint(ocr), params.screenshot);
+      continue;
+    }
     totalScanned += 1;
     if (result.qualified) {
       totalQualified += 1;
       if (mode === "recommendation") recommendationQualified += 1;
+      else qualifiedOnCurrentQuery += 1;
     }
+    process.stderr.write(`collector_progress:${JSON.stringify({ scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode })}\n`);
 
     if (!result.qualified && !("inspectedContent" in result)) {
       const deadlineAt = itemStartedAt + WEIXIN_CHANNELS_UNQUALIFIED_DWELL_MS;
@@ -732,14 +917,22 @@ async function runCollectionPool(params: {
       }
     } else if (mode === "search") {
       scansOnCurrentQuery += 1;
-      if (scansOnCurrentQuery >= 10 && task.searchQueries.length > 1) {
-        searchQueryIndex = (searchQueryIndex + 1) % task.searchQueries.length;
+      if (scansOnCurrentQuery >= WEIXIN_CHANNELS_PRECISION_SAMPLE_SIZE) {
+        const rotate = shouldRotateSearchQuery({
+          scannedCount: scansOnCurrentQuery,
+          qualifiedCount: qualifiedOnCurrentQuery,
+        }) && task.searchQueries.length > 1;
+        if (rotate) searchQueryIndex = (searchQueryIndex + 1) % task.searchQueries.length;
         scansOnCurrentQuery = 0;
-        ocr = await openFirstSearchResult(task.searchQueries[searchQueryIndex]!, params.screenshot);
+        qualifiedOnCurrentQuery = 0;
+        if (rotate) {
+          process.stderr.write(`search_query_rotated:${task.searchQueries[searchQueryIndex]}:qualified_rate_below_40_percent\n`);
+          ocr = await openFirstSearchResult(task.searchQueries[searchQueryIndex]!, params.screenshot);
+        }
       }
     }
   }
-  return { stopped: "max_scanned_reached", scanned: totalScanned, qualified: totalQualified, mode };
+  return { stopped: "max_scanned_reached", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
 }
 
 async function main() {
