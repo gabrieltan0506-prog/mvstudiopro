@@ -17,6 +17,7 @@ import {
   hasFourVisibleMetrics,
   hasTypedSearchKeyword,
   metricsRemainOnSameVideo,
+  nextCollectorSearchQueryIndex,
   parseVisibleMetric,
   parseVisibleVideoClockSeconds,
   restoreEligibleQuarantinedObservations,
@@ -62,6 +63,9 @@ describe("weixin channels OCR", () => {
     })).toBe(false);
     expect(shouldRotateSearchQuery({ scannedCount: 10, qualifiedCount: 3 })).toBe(true);
     expect(shouldRotateSearchQuery({ scannedCount: 10, qualifiedCount: 4 })).toBe(false);
+    expect(nextCollectorSearchQueryIndex(0, 21)).toBe(1);
+    expect(nextCollectorSearchQueryIndex(20, 21)).toBe(0);
+    expect(nextCollectorSearchQueryIndex(0, 1)).toBe(0);
   });
 
   it("从多点播放时钟推导时长，并将总采集预算限制为视频时长十分之一加两秒", () => {

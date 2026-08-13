@@ -50,6 +50,10 @@ export function shouldRotateSearchQuery(params: { scannedCount: number; qualifie
     && params.qualifiedCount / params.scannedCount < WEIXIN_CHANNELS_MIN_QUALIFIED_RATE;
 }
 
+export function nextCollectorSearchQueryIndex(currentIndex: number, queryCount: number) {
+  return queryCount > 1 ? (currentIndex + 1) % queryCount : currentIndex;
+}
+
 type OcrLine = { text: string; confidence: number; x: number; y: number; width: number; height: number };
 type OcrResult = { width: number; height: number; lines: OcrLine[] };
 
@@ -1170,11 +1174,13 @@ async function runCollectionPool(params: {
         await rememberCollectorQuery(query);
       } catch (error) {
         // 微信可能短暂停在“赞和收藏”等子页。搜索入口失败只重置采样窗，
-        // 不退出常驻进程；下一轮十条仍会再次尝试切换。
+        // 不退出常驻进程；下一轮改试下一个七天新词，禁止反复卡在同一个词。
+        const failedQuery = query;
+        searchQueryIndex = nextCollectorSearchQueryIndex(searchQueryIndex, task.searchQueries.length);
         recommendationStartedAt = Date.now();
         recommendationQualified = 0;
         recommendationScanned = 0;
-        process.stderr.write(`search_mode_deferred:${error instanceof Error ? error.message : String(error)}\n`);
+        process.stderr.write(`search_mode_deferred:${failedQuery}:next=${task.searchQueries[searchQueryIndex] || failedQuery}:${error instanceof Error ? error.message : String(error)}\n`);
         await captureWindow(params.screenshot);
         ocr = await readOcr(params.screenshot);
         continue;
