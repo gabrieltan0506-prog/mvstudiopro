@@ -5,11 +5,13 @@ import { describe, expect, it, vi } from "vitest";
 import {
   extractCommentSamples,
   captureBudgetMsForVideo,
+  buildDiverseCollectorSearchQueries,
   deriveVideoDurationSeconds,
   extractVisibleTitleAndAuthor,
   extractWeixinChannelsMetrics,
   findCommentsClosePoint,
   findCommentsOpenPoint,
+  findFirstSearchVideoPoint,
   findSearchInputPoint,
   hasFourVisibleMetrics,
   metricsRemainOnSameVideo,
@@ -23,6 +25,7 @@ import {
   uploadPendingObservation,
   WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS,
   WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS,
+  WEIXIN_CHANNELS_SEARCH_BUTTON_POINT,
   waitForVisibleVideoLoad,
 } from "../../scripts/weixin-channels-capture.mts";
 
@@ -105,6 +108,26 @@ describe("weixin channels OCR", () => {
     expect(point?.x).toBeCloseTo(0.43);
     expect(point?.y).toBeCloseTo(0.06);
     expect(findSearchInputPoint([])).toBeNull();
+    expect(WEIXIN_CHANNELS_SEARCH_BUTTON_POINT).toEqual({ x: 0.785, y: 0.026 });
+  });
+
+  it("搜索结果优先定位带时长的自然视频卡，避开广告与账号卡", () => {
+    const point = findFirstSearchVideoPoint([
+      { text: "广告", confidence: 0.99, x: 0.54, y: 0.72, width: 0.08, height: 0.03 },
+      { text: "02:28", confidence: 0.99, x: 0.07, y: 0.43, width: 0.08, height: 0.03 },
+      { text: "大麦AI漫剧", confidence: 0.99, x: 0.2, y: 0.08, width: 0.2, height: 0.03 },
+    ]);
+    expect(point).toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
+    expect(point!.x).toBeLessThan(0.5);
+    expect(findFirstSearchVideoPoint([{ text: "广告", confidence: 0.99, x: 0.54, y: 0.72, width: 0.08, height: 0.03 }])).toBeNull();
+    expect(findFirstSearchVideoPoint([
+      { text: "02:28", confidence: 0.99, x: 0.07, y: 0.43, width: 0.08, height: 0.03 },
+      { text: "没怎么，就是想抱抱你 #漫剧 #原创动画 #男频爽文", confidence: 0.99, x: 0.06, y: 0.31, width: 0.4, height: 0.04 },
+    ])).toBeNull();
+    expect(findFirstSearchVideoPoint([
+      { text: "03:18", confidence: 0.99, x: 0.07, y: 0.43, width: 0.08, height: 0.03 },
+      { text: "AI漫剧制作教程：新手工作流拆解", confidence: 0.99, x: 0.06, y: 0.31, width: 0.4, height: 0.04 },
+    ])).not.toBeNull();
   });
 
   it("每次切换至少等待两秒且不超过三秒", async () => {
@@ -191,9 +214,25 @@ describe("weixin channels OCR", () => {
   it("候选任务耗尽时优先复用 AI 或漫剧主题，不返回空壳任务", () => {
     expect(selectReusableCollectorCandidate([
       { taskId: "general", searchQueries: ["家常菜"], category: "生活", createdAt: "2026-08-14T01:00:00Z" },
-      { taskId: "ai", searchQueries: ["AI视频", "漫剧制作"], category: "科技", createdAt: "2026-08-13T01:00:00Z" },
-    ])).toMatchObject({ taskId: "ai", searchQueries: ["AI视频", "漫剧制作"] });
+      { taskId: "drama", searchQueries: ["AI短剧", "漫剧免费看"], category: "娱乐", createdAt: "2026-08-14T02:00:00Z" },
+      { taskId: "ai", searchQueries: ["AI工作流", "AI工具实测"], category: "科技", createdAt: "2026-08-13T01:00:00Z" },
+    ])).toMatchObject({ taskId: "ai", searchQueries: ["AI工作流", "AI工具实测"] });
     expect(selectReusableCollectorCandidate([])).toBeUndefined();
+  });
+
+  it("最近七天热词跨类目轮换，短剧作品词剔除且已用词沉底", () => {
+    const queries = buildDiverseCollectorSearchQueries({
+      candidates: [
+        { taskId: "ai", category: "AI工具", searchQueries: ["AI工作流", "AI工具实测"], sourceTitle: "普通人AI工作流" },
+        { taskId: "career", category: "职场", searchQueries: ["普通人副业方法", "升职方法"], sourceTitle: "职场方法" },
+        { taskId: "drama", category: "娱乐", searchQueries: ["短剧免费看", "男频爽文全集"], sourceTitle: "短剧" },
+      ],
+      seedQueries: ["AI工作流"],
+      recentlyUsed: ["AI工作流"],
+      limit: 10,
+    });
+    expect(queries).toEqual(["普通人副业方法", "AI工具实测", "升职方法", "AI工作流"]);
+    expect(queries.join(" ")).not.toMatch(/短剧|爽文|免费看/);
   });
 
   it("进度抽查时四项指标必须仍属于同一视频", () => {
