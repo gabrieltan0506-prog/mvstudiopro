@@ -1332,6 +1332,24 @@ export default function ManhuaScriptWorkbench({
       return CANON_SHEET_KIND_ORDER.indexOf(a.kind) - CANON_SHEET_KIND_ORDER.indexOf(b.kind);
     });
   }, [blocks, assetCanon, customAssetRefs]);
+
+  /**
+   * 画廊删除分流：用户自传参考图的画廊 id 是 `<kind>-custom-<refId>`，不在画布块里，
+   * 直接喂 onRemoveEpisodeSheet 会静默无效（2026-08-13 用户实锤「X 点了删不掉」）——
+   * custom 条目必须走 onRemoveCustomAsset(refId)，画布块条目才走 onRemoveEpisodeSheet。
+   */
+  const removeEpisodeGalleryItem = useCallback(
+    (galleryId: string) => {
+      const m = /^(?:charsheet|sceneplate|propsheet)-custom-(.+)$/.exec(galleryId);
+      if (m?.[1]) {
+        // custom 条目只认参考图删除；没有该回调也不许 fall through 到块删除装样子
+        onRemoveCustomAsset?.(m[1]);
+        return;
+      }
+      onRemoveEpisodeSheet?.(galleryId);
+    },
+    [onRemoveCustomAsset, onRemoveEpisodeSheet],
+  );
   /**
    * 剧本表里点名、但还没有图的角色/场景/道具。
    *
@@ -3212,7 +3230,7 @@ export default function ManhuaScriptWorkbench({
                                 type="button"
                                 data-manhua-action={`dedupe-${sec.kind}`}
                                 disabled={factoryBusy}
-                                onClick={() => extras.forEach((id) => onRemoveEpisodeSheet(id))}
+                                onClick={() => extras.forEach((id) => removeEpisodeGalleryItem(id))}
                                 className="shrink-0 rounded border border-rose-300/40 bg-rose-500/15 px-2 py-0.5 text-[9px] font-semibold text-rose-50 hover:bg-rose-500/30 disabled:opacity-40"
                                 title={`同名多份只保留第一张，删除免费、可随时重出`}
                               >
@@ -3242,7 +3260,7 @@ export default function ManhuaScriptWorkbench({
                                   {onRemoveEpisodeSheet ? (
                                     <button
                                       type="button"
-                                      onClick={() => onRemoveEpisodeSheet(item.id)}
+                                      onClick={() => removeEpisodeGalleryItem(item.id)}
                                       title={`删除「${item.labelZh}」这张设定图（可随时重出，不扣费）`}
                                       className="absolute right-1 top-1 z-[2] flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-[13px] leading-none text-rose-200 hover:bg-rose-500/70 hover:text-white"
                                     >

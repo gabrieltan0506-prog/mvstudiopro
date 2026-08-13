@@ -1105,17 +1105,18 @@ export default function OmniCanvas() {
   cloudDraftPrepareMutateRef.current = cloudDraftPrepareUpload.mutateAsync;
   cloudDraftCommitMutateRef.current = cloudDraftCommitUpload.mutateAsync;
   cloudDraftUpsertMutateRef.current = cloudDraftUpsert.mutate;
+  /** @returns true=确认已落云（GCS 直传成功）；false=跳过或走 fire-and-forget 兜底，成败未知——调用方别把 false 当已备份 */
   const syncCloudDraftPayload = useCallback(
-    async (payload: ManhuaCloudDraftPayload) => {
-      if (!user?.id) return;
+    async (payload: ManhuaCloudDraftPayload): Promise<boolean> => {
+      if (!user?.id) return false;
       if (cloudDraftSyncInFlightRef.current) {
         pushDebug("cloudDraft:skip-in-flight", { level: "warn", detail: "上一笔云草稿仍在传" });
-        return;
+        return false;
       }
       const payloadJson = serializeCloudDraftForUpload(payload);
       if (!payloadJson) {
         pushDebug("cloudDraft:skip-too-large", { level: "warn" });
-        return;
+        return false;
       }
       cloudDraftSyncInFlightRef.current = true;
       try {
@@ -1128,7 +1129,7 @@ export default function OmniCanvas() {
         if (direct.ok) {
           trySaveLocalClientUpdatedAt(payload.clientUpdatedAt);
           pushDebug("cloudDraft:gcs-direct-ok", { level: "ok" });
-          return;
+          return true;
         }
         pushDebug("cloudDraft:gcs-direct-fail", {
           level: "warn",
@@ -1143,6 +1144,7 @@ export default function OmniCanvas() {
             },
           },
         );
+        return false;
       } finally {
         cloudDraftSyncInFlightRef.current = false;
       }
@@ -1718,6 +1720,9 @@ export default function OmniCanvas() {
   /** 手动备份（用户拍板：只有用户点上传才存云） */
   const latestDraftSnapshotRef = useRef<Parameters<typeof buildLocalCloudDraftSnapshot>[0] | null>(null);
   const [cloudBackupBusy, setCloudBackupBusy] = useState<null | "upload" | "restore">(null);
+  /** 自动备份去重标记：上次自动上云的快照序列化；手动上传后清空，让下个周期重新校准 */
+  const lastAutoBackupSerializedRef = useRef("");
+  const autoBackupInFlightRef = useRef(false);
   const uploadCloudBackupNow = useCallback(async () => {
     if (cloudBackupBusy) return;
     const snap = latestDraftSnapshotRef.current;
@@ -1728,6 +1733,7 @@ export default function OmniCanvas() {
     setCloudBackupBusy("upload");
     try {
       await syncCloudDraftPayload(buildLocalCloudDraftSnapshot(snap));
+      lastAutoBackupSerializedRef.current = "";
       toast.success("已上传备份到云端");
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "备份上传失败，请稍后重试");
@@ -1735,6 +1741,40 @@ export default function OmniCanvas() {
       setCloudBackupBusy(null);
     }
   }, [cloudBackupBusy, syncCloudDraftPayload]);
+  /**
+   * 自动云备份（2026-08-13 用户拍板：半小时自动刷新一次，防当机/断线丢档；
+   * 覆盖旧「只有用户点上传才存云」口径）。内容没变或上一发在途就跳过；
+   * 失败静默，下个周期自然重试——不拿报错打扰创作。
+   */
+  useEffect(() => {
+    const tick = async () => {
+      if (autoBackupInFlightRef.current) return;
+      const snap = latestDraftSnapshotRef.current;
+      if (!snap) return;
+      const payload = buildLocalCloudDraftSnapshot(snap);
+      let serialized = "";
+      try {
+        serialized = JSON.stringify(payload);
+      } catch {
+        serialized = "";
+      }
+      if (serialized && serialized === lastAutoBackupSerializedRef.current) return;
+      autoBackupInFlightRef.current = true;
+      try {
+        const ok = await syncCloudDraftPayload(payload);
+        // 只有确认落云才记「已备份」；跳过/兜底未知一律留给下个周期重试（审查建议 1）
+        if (ok && serialized) lastAutoBackupSerializedRef.current = serialized;
+      } catch {
+        /* 静默：下个周期重试 */
+      } finally {
+        autoBackupInFlightRef.current = false;
+      }
+    };
+    const timer = window.setInterval(() => {
+      void tick();
+    }, 30 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [syncCloudDraftPayload]);
   const restoreCloudBackupNow = useCallback(async () => {
     if (cloudBackupBusy) return;
     setCloudBackupBusy("restore");

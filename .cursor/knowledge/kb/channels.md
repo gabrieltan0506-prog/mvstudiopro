@@ -14,7 +14,12 @@
   - 唯一例外：积分不够时才允许 BytePlus/OpenRouter 二选一硬扛（放弃 EvoLink 兜底）。
 - Seedance 硬事实：2K 全系不存在；2.5 上限 720p；4K 只有 2.0（EvoLink $1.0126/s）。成本按像素线性（tokens=宽×高×秒×24/1024，$7/M）。
 - **mode 枚举用下划线**（`image_to_video`）——连字符字符串会被 `input.mode || inferSeedanceMode(...)` 静默放行并打断模型解析，产出文生视频冒充图生视频（P0-6 实锤）。
-- H3：默认 2K（$0.13/s，比 Seedance 720p 便宜），时长 5/10/15 档。EvoLink 与 H3 任务均**不可取消**。
+- **MiniMax H3（2026-08-13 实测口径更新）**：
+  - **不挡真人脸——用户亲测实锤**（老照片动画线在用；博文 old-photo-restoration 有真账单：仿真人母子照 → 2144×1440、5.17s、$0.65 = $0.13/s 分毫不差）。
+  - 通道三选：**EvoLink（推荐主通道）768p 默认 + 2K 双档**，模型名 `minimax-h3-text/image/reference-to-video`，参考上限图 9/视 3/音 3，**参考音频时长不计费**、参考视频计费；OpenRouter 只剩 2K（768p 已下架）$0.13/s + 参考图第 6 张起 $0.04/张；直连官方（api.minimax.io）768P|2K——**Fly 上没有 MINIMAX_API_KEY**，走 EvoLink/OpenRouter 用现有 key 即可。
+  - 时长 4–15 整数秒（产品成片档固定 15s 出售，探针短测不改商业规则）；「2K」实际输出 2144×1440 非标准分辨率——超分/成片链一直在消化非标尺寸（1176×784、560×752 都过过），**768p 超分无碍**。
+  - **仿真人剧预算档推荐**：H3 走 EvoLink，768p 出草稿、选中的镜头 WaveSpeed 超分 2K（≈$0.09/s），品质镜头原生 2K（$0.13/s）；对比 Seedance 2.0 720p $0.151/s 全面占优，Seedance 2.0 只剩 480p 探针岗。要 edit/extend/多模态花活才上 Seedance 2.5。
+  - EvoLink 768p 单价（44.2 credits/4s）的美元换算**待第一单真实账单校准**。旧口径「EvoLink 与 H3 任务均不可取消」维持。
 - WaveSpeed 超分：`runWavespeedVideoUpscale({videoUrl, target})` 2K $0.0144/s、4K $0.0288/s，音轨保留，结果镜像回 GCS。
 - 视频探针一律 Seedance 2.0-mini 480p（work-rules 7）；HappyHorse 1.1 = 首页照片动画引擎（720p/1080p）。
 
