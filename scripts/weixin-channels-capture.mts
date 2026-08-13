@@ -28,6 +28,8 @@ export const WEIXIN_CHANNELS_UNQUALIFIED_DWELL_MS = 2_000;
 export const WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS = [0.1, 0.3, 0.5, 0.7, 0.9] as const;
 export const WEIXIN_CHANNELS_PRECISION_SAMPLE_SIZE = 10;
 export const WEIXIN_CHANNELS_MIN_QUALIFIED_RATE = 0.4;
+/** 2026-08-14 在动态 483×769 / 966×1538 窗口均实测命中顶栏放大镜。 */
+export const WEIXIN_CHANNELS_SEARCH_BUTTON_POINT = { x: 0.785, y: 0.026 } as const;
 
 export function shouldSwitchRecommendationToSearch(params: {
   startedAt: number;
@@ -103,6 +105,29 @@ export function findSearchInputPoint(lines: OcrLine[]): { x: number; y: number }
   const hit = candidates.sort((left, right) => right.width - left.width)[0];
   if (!hit) return null;
   return { x: hit.x + Math.min(hit.width / 2, 0.08), y: 1 - (hit.y + hit.height / 2) };
+}
+
+/** 搜索结果优先点带时长的自然视频卡，避开右侧“广告”卡和账号卡。 */
+export function findFirstSearchVideoPoint(lines: OcrLine[]): { x: number; y: number } | null {
+  const durations = lines
+    .filter((line) => line.confidence >= 0.35 && /^\d{1,2}:[0-5]\d$/.test(line.text.trim()))
+    .filter((line) => line.x < 0.55 && line.y >= 0.25 && line.y <= 0.75)
+    .sort((left, right) => right.y - left.y || left.x - right.x);
+  for (const duration of durations) {
+    const cardText = lines
+      .filter((line) => line.confidence >= 0.25)
+      .filter((line) => line.x < 0.52 && line.y >= duration.y - 0.22 && line.y <= duration.y + 0.42)
+      .map((line) => line.text.trim())
+      .join(" ");
+    const isShortDramaContent = /(短剧|短劇|剧场|劇場|免费看|免費看|追剧|追劇|看剧|看劇|原创动画|原創動畫|男频|男頻|女频|女頻|第\s*\d+\s*集|全集|完结|完結|爽文|爽剧|爽劇)/i.test(cardText)
+      && !/(教程|教學|工作流|制作|製作|怎么做|怎麼做|如何做|新手|拆解)/i.test(cardText);
+    if (isShortDramaContent || /(^|\s)广告($|\s)|(^|\s)廣告($|\s)/.test(cardText)) continue;
+    return {
+      x: Math.max(0.12, Math.min(0.45, duration.x + 0.18)),
+      y: Math.max(0.18, Math.min(0.72, 1 - (duration.y + duration.height / 2) - 0.16)),
+    };
+  }
+  return null;
 }
 
 export function ocrFingerprint(ocr: OcrResult) {
@@ -530,10 +555,14 @@ async function searchKeyword(keyword: string, screenshot: string) {
   await captureWindow(screenshot);
   let ocr = await readOcr(screenshot);
   let point = findSearchInputPoint(ocr.lines);
-  if (!point) {
-    // 视频号内容页的放大镜位于右上区域；点击后必须 OCR 复核输入框出现。
-    await runSwiftControl(["click-relative", "0.94", "0.09"]);
-    await new Promise((resolve) => setTimeout(resolve, 700));
+  for (let attempt = 0; !point && attempt < 2; attempt += 1) {
+    // 顶栏放大镜使用动态窗口相对坐标；点击后仍必须由 OCR 复核输入框，不能盲输关键词。
+    await runSwiftControl([
+      "click-relative",
+      WEIXIN_CHANNELS_SEARCH_BUTTON_POINT.x.toFixed(5),
+      WEIXIN_CHANNELS_SEARCH_BUTTON_POINT.y.toFixed(5),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 900));
     await captureWindow(screenshot);
     ocr = await readOcr(screenshot);
     point = findSearchInputPoint(ocr.lines);
@@ -643,6 +672,76 @@ type CollectorCandidate = HeartbeatTask & {
   createdAt?: string;
 };
 
+const BLOCKED_DRAMA_QUERY = /(短剧|短劇|剧场|劇場|免费看|免費看|追剧|追劇|看剧|看劇|原创动画|原創動畫|男频|男頻|女频|女頻|爽文|爽剧|爽劇)/i;
+
+export function buildDiverseCollectorSearchQueries(params: {
+  candidates: CollectorCandidate[];
+  seedQueries?: string[];
+  recentlyUsed?: string[];
+  limit?: number;
+}) {
+  const recentlyUsed = new Set((params.recentlyUsed || []).map((item) => item.trim().toLowerCase()));
+  const byCategory = new Map<string, string[]>();
+  const ranked = [...params.candidates].sort((left, right) => {
+    const score = (item: CollectorCandidate) => {
+      const text = `${item.category || ""} ${item.sourceTitle || ""} ${item.searchQueries.join(" ")}`;
+      return (/AI|人工智能/i.test(text) ? 100 : 0)
+        + (/(工作流|工具|实测|實測|拆解|方法|变现|變現)/i.test(text) ? 300 : 0)
+        + (/(教程|教學|新手|怎么|怎麼|如何)/i.test(text) ? 200 : 0)
+        - (BLOCKED_DRAMA_QUERY.test(text) ? 180 : 0);
+    };
+    return score(right) - score(left);
+  });
+  for (const item of ranked) {
+    const category = String(item.category || "其他").trim() || "其他";
+    const bucket = byCategory.get(category) || [];
+    for (const raw of item.searchQueries) {
+      const query = String(raw || "").replace(/^[【\[].*?[】\]]\s*/, "").replace(/\s+/g, " ").trim().slice(0, 80);
+      if (query.length < 2 || BLOCKED_DRAMA_QUERY.test(query) || bucket.includes(query)) continue;
+      bucket.push(query);
+    }
+    if (bucket.length) byCategory.set(category, bucket);
+  }
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  const append = (query: string) => {
+    const key = query.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      ordered.push(query);
+    }
+  };
+  // 跨类目轮询，避免同一候选一次占满词池。
+  for (let round = 0; round < 3; round += 1) {
+    for (const bucket of Array.from(byCategory.values())) {
+      if (bucket[round]) append(bucket[round]!);
+    }
+  }
+  for (const query of params.seedQueries || []) {
+    const normalized = String(query || "").replace(/\s+/g, " ").trim().slice(0, 80);
+    if (normalized.length >= 2 && !BLOCKED_DRAMA_QUERY.test(normalized)) append(normalized);
+  }
+  const fresh = ordered.filter((query) => !recentlyUsed.has(query.toLowerCase()));
+  const used = ordered.filter((query) => recentlyUsed.has(query.toLowerCase()));
+  return [...fresh, ...used].slice(0, params.limit || 24);
+}
+
+async function readRecentCollectorQueries(tempDir = os.tmpdir()) {
+  try {
+    const value = JSON.parse(await fs.readFile(path.join(tempDir, "weixin-channels-recent-queries.json"), "utf8"));
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").slice(-50) : [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+async function rememberCollectorQuery(query: string, tempDir = os.tmpdir()) {
+  const recent = await readRecentCollectorQueries(tempDir);
+  const next = [...recent.filter((item) => item.toLowerCase() !== query.toLowerCase()), query].slice(-50);
+  await fs.writeFile(path.join(tempDir, "weixin-channels-recent-queries.json"), JSON.stringify(next), "utf8");
+}
+
 async function refreshCollectorCandidates(server: string, token: string) {
   const response = await fetch(`${server.replace(/\/$/, "")}/api/internal/weixin-channels/candidates`, {
     headers: { "x-weixin-channels-collector-token": token },
@@ -657,7 +756,10 @@ export function selectReusableCollectorCandidate(candidates: CollectorCandidate[
   return usable.sort((left, right) => {
     const score = (item: CollectorCandidate) => {
       const text = `${item.category || ""} ${item.sourceTitle || ""} ${item.searchQueries.join(" ")}`;
-      return (/AI|人工智能|漫剧|漫劇/i.test(text) ? 100 : 0)
+      return (/AI|人工智能/i.test(text) ? 100 : 0)
+        + (/(工作流|工具|实测|實測|拆解|方法|变现|變現)/i.test(text) ? 300 : 0)
+        + (/(教程|教學|新手|怎么|怎麼|如何)/i.test(text) ? 200 : 0)
+        - (/(短剧|短劇|剧场|劇場|免费看|免費看|追剧|追劇|原创动画|原創動畫|男频|男頻|女频|女頻|爽文)/i.test(text) ? 180 : 0)
         + Math.min(item.searchQueries.length, 10)
         + (Date.parse(item.createdAt || "") || 0) / 1e15;
     };
@@ -784,15 +886,31 @@ async function captureVisibleQualifiedVideo(params: {
 }
 
 async function openFirstSearchResult(keyword: string, screenshot: string) {
-  const results = await searchKeyword(keyword, screenshot);
-  const before = ocrFingerprint(results);
-  await runSwiftControl(["click-relative", "0.55", "0.55"]);
+  let results = await searchKeyword(keyword, screenshot);
+  let point = findFirstSearchVideoPoint(results.lines);
+  for (let page = 0; !point && page < 3; page += 1) {
+    await runSwiftControl(["scroll-relative", "0.75", "0.68", "-6"]);
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    await captureWindow(screenshot);
+    results = await readOcr(screenshot);
+    point = findFirstSearchVideoPoint(results.lines);
+  }
+  if (!point) throw new Error("weixin_channels_organic_search_video_not_found");
+  await runSwiftControl(["click-relative", point.x.toFixed(5), point.y.toFixed(5)]);
   await waitForVisibleVideoLoad();
-  await captureWindow(screenshot);
-  const opened = await readOcr(screenshot);
-  return ocrFingerprint(opened) === before
-    ? waitForChangedFrame(before, screenshot)
-    : opened;
+  const startedAt = Date.now();
+  // 搜索结果页到播放器首次加载实测偶尔超过 8 秒；这是换源导航时间，
+  // 单条内容采集计时从播放器指标可见后才开始，二者不能混为同一个 SLA。
+  while (Date.now() - startedAt < 15_000) {
+    await captureWindow(screenshot);
+    const opened = await readOcr(screenshot);
+    const metrics = extractWeixinChannelsMetrics(opened.lines);
+    if ([metrics.likes, metrics.shares, metrics.favorites, metrics.comments].filter((value) => value !== undefined).length >= 2) {
+      return opened;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error("weixin_channels_search_result_video_not_opened");
 }
 
 async function runCollectionPool(params: {
@@ -805,11 +923,12 @@ async function runCollectionPool(params: {
   const clientId = `mac-weixin-${os.hostname()}`.slice(0, 120);
   await restoreEligibleQuarantinedObservations();
   const initialRecovery = await retryPendingObservations({ server: params.server, token: params.token });
+  let candidates = await refreshCollectorCandidates(params.server, params.token);
   let heartbeat = await heartbeatCollector(params.server, params.token, clientId);
   if (!heartbeat.enabled) return { stopped: "capture_disabled", scanned: 0, qualified: 0 };
   if (!heartbeat.nextTask) {
     // 任务只能由 Fly 中抖音/B站/小红书最近七天真实数据生成；本机不维护固定热词。
-    const candidates = await refreshCollectorCandidates(params.server, params.token);
+    candidates = await refreshCollectorCandidates(params.server, params.token);
     heartbeat = await heartbeatCollector(params.server, params.token, clientId);
     if (!heartbeat.nextTask) {
       const reusable = selectReusableCollectorCandidate(candidates);
@@ -822,9 +941,19 @@ async function runCollectionPool(params: {
   if (!heartbeat.nextTask) return { stopped: "no_candidate_task", scanned: 0, qualified: 0 };
 
   let task = heartbeat.nextTask;
+  task = {
+    ...task,
+    searchQueries: buildDiverseCollectorSearchQueries({
+      candidates,
+      seedQueries: task.searchQueries,
+      recentlyUsed: await readRecentCollectorQueries(),
+    }),
+  };
+  process.stderr.write(`search_query_pool_ready:${task.searchQueries.length}\n`);
   let mode: "recommendation" | "search" = "recommendation";
   let recommendationStartedAt = Date.now();
   let recommendationQualified = 0;
+  let recommendationScanned = 0;
   let totalScanned = 0;
   let totalQualified = 0;
   let totalRecovered = initialRecovery.persisted;
@@ -849,15 +978,29 @@ async function runCollectionPool(params: {
       startedAt: recommendationStartedAt,
       now: Date.now(),
       qualifiedCount: recommendationQualified,
-      scannedCount: totalScanned,
+      scannedCount: recommendationScanned,
     })) {
-      mode = "search";
-      searchQueryIndex = 0;
-      scansOnCurrentQuery = 0;
-      qualifiedOnCurrentQuery = 0;
       const query = task.searchQueries[searchQueryIndex];
       if (!query) throw new Error("weixin_channels_search_queries_empty");
-      ocr = await openFirstSearchResult(query, params.screenshot);
+      try {
+        const searchOcr = await openFirstSearchResult(query, params.screenshot);
+        mode = "search";
+        searchQueryIndex = 0;
+        scansOnCurrentQuery = 0;
+        qualifiedOnCurrentQuery = 0;
+        ocr = searchOcr;
+        await rememberCollectorQuery(query);
+      } catch (error) {
+        // 微信可能短暂停在“赞和收藏”等子页。搜索入口失败只重置采样窗，
+        // 不退出常驻进程；下一轮十条仍会再次尝试切换。
+        recommendationStartedAt = Date.now();
+        recommendationQualified = 0;
+        recommendationScanned = 0;
+        process.stderr.write(`search_mode_deferred:${error instanceof Error ? error.message : String(error)}\n`);
+        await captureWindow(params.screenshot);
+        ocr = await readOcr(params.screenshot);
+        continue;
+      }
     }
 
     // 每条先关闭上一条可能残留的评论面板，并以四项互动指标重新出现作为断言。
@@ -866,6 +1009,8 @@ async function runCollectionPool(params: {
       ocr = await ensureInteractionMetricsVisible(params.screenshot, ocr);
     } catch (error) {
       totalScanned += 1;
+      if (mode === "recommendation") recommendationScanned += 1;
+      else scansOnCurrentQuery += 1;
       process.stderr.write(`scan_skipped:${error instanceof Error ? error.message : String(error)}\n`);
       process.stderr.write(`collector_progress:${JSON.stringify({ scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode })}\n`);
       ocr = await advanceToNextVideo(ocrFingerprint(ocr), params.screenshot);
@@ -890,12 +1035,15 @@ async function runCollectionPool(params: {
       // 单条视频超时、评论区识别失败或上传失败不能杀死整晚采集；
       // 待传文件仍由 captureVisibleQualifiedVideo 保留，随后继续下一条。
       totalScanned += 1;
+      if (mode === "recommendation") recommendationScanned += 1;
+      else scansOnCurrentQuery += 1;
       process.stderr.write(`scan_skipped:${error instanceof Error ? error.message : String(error)}\n`);
       process.stderr.write(`collector_progress:${JSON.stringify({ scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode })}\n`);
       ocr = await advanceToNextVideo(ocrFingerprint(ocr), params.screenshot);
       continue;
     }
     totalScanned += 1;
+    if (mode === "recommendation") recommendationScanned += 1;
     if (result.qualified) {
       totalQualified += 1;
       if (mode === "recommendation") recommendationQualified += 1;
@@ -914,6 +1062,7 @@ async function runCollectionPool(params: {
       if (recommendationQualified >= WEIXIN_CHANNELS_RECOMMENDATION_TARGET) {
         recommendationStartedAt = Date.now();
         recommendationQualified = 0;
+        recommendationScanned = 0;
       }
     } else if (mode === "search") {
       scansOnCurrentQuery += 1;
@@ -922,12 +1071,20 @@ async function runCollectionPool(params: {
           scannedCount: scansOnCurrentQuery,
           qualifiedCount: qualifiedOnCurrentQuery,
         }) && task.searchQueries.length > 1;
-        if (rotate) searchQueryIndex = (searchQueryIndex + 1) % task.searchQueries.length;
         scansOnCurrentQuery = 0;
         qualifiedOnCurrentQuery = 0;
         if (rotate) {
-          process.stderr.write(`search_query_rotated:${task.searchQueries[searchQueryIndex]}:qualified_rate_below_40_percent\n`);
-          ocr = await openFirstSearchResult(task.searchQueries[searchQueryIndex]!, params.screenshot);
+          const nextIndex = (searchQueryIndex + 1) % task.searchQueries.length;
+          const nextQuery = task.searchQueries[nextIndex]!;
+          try {
+            const searchOcr = await openFirstSearchResult(nextQuery, params.screenshot);
+            searchQueryIndex = nextIndex;
+            ocr = searchOcr;
+            await rememberCollectorQuery(nextQuery);
+            process.stderr.write(`search_query_rotated:${nextQuery}:qualified_rate_below_40_percent\n`);
+          } catch (error) {
+            process.stderr.write(`search_query_rotation_deferred:${nextQuery}:${error instanceof Error ? error.message : String(error)}\n`);
+          }
         }
       }
     }
@@ -971,10 +1128,8 @@ async function main() {
   const query = queryArg.slice("--query=".length);
   let ocr: OcrResult;
   if (automate) {
-    ocr = await searchKeyword(query, screenshot);
+    ocr = await openFirstSearchResult(query, screenshot);
     const before = ocrFingerprint(ocr);
-    await runSwiftControl(["click-relative", "0.55", "0.55"]);
-    await waitForVisibleVideoLoad();
     await runSwiftControl(["key", direction]);
     await waitForVisibleVideoLoad();
     ocr = await waitForChangedFrame(before, screenshot);
