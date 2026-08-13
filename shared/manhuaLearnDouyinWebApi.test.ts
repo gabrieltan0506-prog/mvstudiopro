@@ -274,6 +274,40 @@ describe("readDouyinPlaybackUrl（官方播放地址提取）", () => {
     ]);
   });
 
+  it("候选按媒体形态交错，有限重试不会只撞同类镜像", () => {
+    expect(readDouyinPlaybackUrls({
+      video: {
+        play_addr: {
+          url_list: [
+            "https://v1.douyinvod.com/play-a.mp4",
+            "https://v2.douyinvod.com/play-b.mp4",
+          ],
+        },
+        download_addr: {
+          url_list: [
+            "https://v3.douyinvod.com/download-a.mp4",
+            "https://v4.douyinvod.com/download-b.mp4",
+          ],
+        },
+        bit_rate: [{
+          play_addr: {
+            url_list: [
+              "https://v5.douyinvod.com/bitrate-a.mp4",
+              "https://v6.douyinvod.com/bitrate-b.mp4",
+            ],
+          },
+        }],
+      },
+    })).toEqual([
+      "https://v1.douyinvod.com/play-a.mp4",
+      "https://v3.douyinvod.com/download-a.mp4",
+      "https://v5.douyinvod.com/bitrate-a.mp4",
+      "https://v2.douyinvod.com/play-b.mp4",
+      "https://v4.douyinvod.com/download-b.mp4",
+      "https://v6.douyinvod.com/bitrate-b.mp4",
+    ]);
+  });
+
   it("mix 分页解析把 playbackUrl 带进分集", () => {
     const parsed = parseDouyinMixAwemeResponse({
       status_code: 0,

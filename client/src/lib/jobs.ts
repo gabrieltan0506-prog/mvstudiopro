@@ -68,6 +68,19 @@ export function skipManhuaLearnServerEpisode(jobId: string, supervisorToken?: st
   return controlManhuaLearnJob(jobId, "skip", supervisorToken);
 }
 
+export async function hideManhuaLearnServerSeries(jobId: string, supervisorToken?: string) {
+  const response = await fetch(
+    `/api/jobs/manhua-learn/${encodeURIComponent(jobId)}/hide`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: supervisorToken ? { "x-supervisor-token": supervisorToken } : undefined,
+    },
+  );
+  if (!response.ok) throw new Error(await formatCreateJobError(response));
+  return response.json() as Promise<{ hiddenCount: number; hiddenJobIds: string[]; messageZh?: string }>;
+}
+
 export async function createJob(payload: {
   type: JobType;
   userId: string;

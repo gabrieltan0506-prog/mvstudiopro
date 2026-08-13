@@ -141,7 +141,7 @@ const DOUYIN_PLAYBACK_HOST_SUFFIXES: readonly string[] = [
   "zjcdn.com",
 ];
 
-function isTrustedDouyinPlaybackUrl(raw: string): boolean {
+export function isTrustedDouyinPlaybackUrl(raw: string): boolean {
   try {
     const u = new URL(raw);
     if (u.protocol !== "https:") return false;
@@ -176,11 +176,17 @@ export function readDouyinPlaybackUrls(item: unknown): string[] {
     const row = asRecord(bitRate);
     appendAddress(row?.play_addr ?? row?.playAddr);
   }
-  const urls: string[] = [];
-  for (const address of addressGroups) {
+  const candidateGroups = addressGroups.map((address) => {
     const list = address.url_list ?? address.urlList;
-    if (!Array.isArray(list)) continue;
-    for (const candidate of list) {
+    return Array.isArray(list) ? list : [];
+  });
+  const urls: string[] = [];
+  // 同一 address 的 url_list 通常只是同类 CDN 镜像。按镜像序号交错主播放、
+  // 下载地址和各码率，让有限重试优先覆盖不同媒体形态，而不是连续撞三个同类节点。
+  const mirrorCount = Math.max(0, ...candidateGroups.map((list) => list.length));
+  for (let mirrorIndex = 0; mirrorIndex < mirrorCount; mirrorIndex++) {
+    for (const list of candidateGroups) {
+      const candidate = list[mirrorIndex];
       if (typeof candidate !== "string") continue;
       const url = candidate.trim();
       if (url && isTrustedDouyinPlaybackUrl(url) && !urls.includes(url)) urls.push(url);
