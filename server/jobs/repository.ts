@@ -133,6 +133,7 @@ export async function claimNextManhuaTemplateLearnJob(): Promise<NormalizedJob |
           eq(jobs.status, "queued"),
           eq(jobs.type, "video"),
           sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
+          sql`coalesce(${jobs.input}::jsonb->>'hiddenAt', '') = ''`,
         ),
       )
       .orderBy(asc(jobs.createdAt))
@@ -212,6 +213,7 @@ export async function listManhuaTemplateLearnJobsForUser(
           eq(jobs.userId, String(userId)),
           eq(jobs.type, "video"),
           sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
+          sql`coalesce(${jobs.input}::jsonb->>'hiddenAt', '') = ''`,
         ),
       )
       .orderBy(desc(jobs.createdAt))
@@ -241,6 +243,7 @@ export async function findActiveManhuaTemplateLearnJobForSource(
           eq(jobs.type, "video"),
           inArray(jobs.status, ["queued", "running"]),
           sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
+          sql`coalesce(${jobs.input}::jsonb->>'hiddenAt', '') = ''`,
           sql`coalesce(
             nullif(${jobs.input}::jsonb->'params'->>'dedupeKey', ''),
             nullif(${jobs.input}::jsonb->'params'->>'gcsUri', ''),
@@ -255,6 +258,84 @@ export async function findActiveManhuaTemplateLearnJobForSource(
     console.error("[JobsRepo] findActiveManhuaTemplateLearnJobForSource failed:", error);
     throw error;
   }
+}
+
+/**
+ * 从剧集学习列表隐藏同一部剧的全部任务；运行中的任务同时落取消标记。
+ * 只改 jobs 列表源，不删除 GCS 分集检查点、静帧、提案或已批准模板。
+ */
+export async function hideManhuaTemplateLearnSeriesForUser(input: {
+  jobId: string;
+  userId: string;
+}): Promise<{ hiddenJobIds: string[]; runningJobIds: string[] } | null> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable — cannot hide manhua learn series");
+  const current = await getJobById(input.jobId);
+  if (!current || !isManhuaTemplateLearnJob(current)) return null;
+  if (String(current.userId) !== String(input.userId)) return null;
+
+  const readIdentity = (job: Pick<Job, "id" | "input" | "output">) => {
+    const rawInput = parseMaybeJson(job.input);
+    const rawOutput = parseMaybeJson(job.output);
+    const params = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
+      && (rawInput as Record<string, unknown>).params
+      && typeof (rawInput as Record<string, unknown>).params === "object"
+      && !Array.isArray((rawInput as Record<string, unknown>).params)
+      ? (rawInput as Record<string, unknown>).params as Record<string, unknown>
+      : {};
+    const output = rawOutput && typeof rawOutput === "object" && !Array.isArray(rawOutput)
+      ? rawOutput as Record<string, unknown>
+      : {};
+    return {
+      seriesKey: String(output.seriesKey || params.seriesKey || "").trim(),
+      sourceKey: String(params.dedupeKey || params.gcsUri || params.url || "").trim(),
+    };
+  };
+
+  const target = readIdentity(current);
+  const rows = await db
+    .select()
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.userId, String(input.userId)),
+        eq(jobs.type, "video"),
+        sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
+        sql`coalesce(${jobs.input}::jsonb->>'hiddenAt', '') = ''`,
+      ),
+    );
+  const matched = rows.filter((job) => {
+    if (job.id === current.id) return true;
+    const identity = readIdentity(job);
+    return Boolean(
+      (target.seriesKey && identity.seriesKey === target.seriesKey)
+      || (target.sourceKey && identity.sourceKey === target.sourceKey),
+    );
+  });
+  const hiddenJobIds = matched.map((job) => job.id);
+  const runningJobIds = matched.filter((job) => job.status === "running").map((job) => job.id);
+  if (!hiddenJobIds.length) return { hiddenJobIds: [], runningJobIds: [] };
+
+  const hiddenAt = new Date().toISOString();
+  // 每条 input 都需保留原 params；逐行构造后串行写，数量仅限当前用户同剧的历史任务。
+  for (const job of matched) {
+    const raw = parseMaybeJson(job.input);
+    const base = raw && typeof raw === "object" && !Array.isArray(raw)
+      ? raw as Record<string, unknown>
+      : { action: "manhua_template_learn" };
+    const active = job.status === "queued" || job.status === "running";
+    await db.update(jobs).set({
+      input: {
+        ...base,
+        hiddenAt,
+        ...(active ? { cancelRequestedAt: hiddenAt } : {}),
+      } as InsertJob["input"],
+      status: job.status === "queued" ? "failed" : job.status,
+      error: job.status === "queued" ? "用户已从列表删除（未开始执行）" : job.error,
+      updatedAt: new Date(),
+    }).where(and(eq(jobs.id, job.id), eq(jobs.userId, String(input.userId))));
+  }
+  return { hiddenJobIds, runningJobIds };
 }
 
 /** 持久化取消请求；queued 直接终止，running 由 worker 在下一检查点停止。 */

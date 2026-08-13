@@ -85,6 +85,7 @@ import {
   cancelManhuaLearnServerJob,
   createJob,
   getJob,
+  hideManhuaLearnServerSeries,
   listManhuaLearnServerJobs,
   pollJobUntilTerminal,
   skipManhuaLearnServerEpisode,
@@ -2383,7 +2384,7 @@ export default function PlatformPage() {
   );
   const [manhuaLearnServerJobs, setManhuaLearnServerJobs] = useState<ManhuaLearnServerJob[]>([]);
   const [manhuaLearnServerJobsHydrated, setManhuaLearnServerJobsHydrated] = useState(false);
-  const [manhuaLearnControlBusy, setManhuaLearnControlBusy] = useState<"cancel" | "skip" | null>(null);
+  const [manhuaLearnControlBusy, setManhuaLearnControlBusy] = useState<"cancel" | "skip" | "delete" | null>(null);
   /** 同一页面只允许一个轮询 owner；刷新后新页面从 active job 接手。 */
   const manhuaLearnPollingJobIdRef = useRef<string | null>(null);
   const [manhuaLearnContinueDismissedKey, setManhuaLearnContinueDismissedKey] = useState("");
@@ -3089,16 +3090,44 @@ export default function PlatformPage() {
     [manhuaLearnBasket],
   );
 
-  const removeCurrentManhuaLearnBasketItem = useCallback(() => {
+  const deleteFocusedManhuaLearnSeries = useCallback(async () => {
     const seriesKey = String(manhuaLearnResult?.seriesKey || manhuaLearnFocusSeriesKey).trim();
     const userKey = String(user?.id || "").trim();
-    if (!seriesKey || !userKey) return;
-    setManhuaLearnBasket((prev) => {
-      const next = removeManhuaLearnBasketItem(prev, seriesKey);
-      writeManhuaLearnBasket(userKey, next);
-      return next;
-    });
-  }, [manhuaLearnFocusSeriesKey, manhuaLearnResult?.seriesKey, user?.id]);
+    const jobId = focusedManhuaLearnServerJob?.jobId || focusedManhuaLearnBasketItem?.jobId;
+    if (!seriesKey || !userKey || manhuaLearnControlBusy) return;
+    if (!window.confirm("从列表删除这部剧？若正在学习会立即停止；已落盘分集、静帧和已批准模板仍会保留。")) return;
+    setManhuaLearnControlBusy("delete");
+    try {
+      const hidden = jobId
+        ? await hideManhuaLearnServerSeries(jobId, getSupervisorTrpcToken())
+        : null;
+      const nextBasket = removeManhuaLearnBasketItem(manhuaLearnBasket, seriesKey);
+      setManhuaLearnBasket(nextBasket);
+      writeManhuaLearnBasket(userKey, nextBasket);
+      const hiddenIds = new Set(hidden?.hiddenJobIds || (jobId ? [jobId] : []));
+      setManhuaLearnServerJobs((prev) => prev.filter((job) => !hiddenIds.has(job.jobId)));
+      const next = nextBasket[0];
+      if (next) {
+        selectManhuaLearnBasketItem(next.seriesKey);
+      } else {
+        manhuaLearnContinueRef.current = null;
+        writeManhuaLearnContinuation(null);
+        setManhuaLearnActiveJob(null);
+        writeManhuaLearnActiveJob(null);
+        setManhuaLearnResult(null);
+        writeManhuaLearnResult(null);
+        setManhuaLearnFocusSeriesKey("");
+        writeManhuaLearnFocusSeriesKey("");
+        setManhuaLearnContinueDismissedKey("");
+      }
+      setManhuaLearnPanelCollapsed(false);
+      toast.success("已从列表删除", { description: "落盘学习成果和已批准模板没有删除。" });
+    } catch (error) {
+      toast.error("删除失败", { description: sanitizePlatformUserMessage(error instanceof Error ? error.message : String(error)) });
+    } finally {
+      setManhuaLearnControlBusy(null);
+    }
+  }, [focusedManhuaLearnBasketItem?.jobId, focusedManhuaLearnServerJob?.jobId, manhuaLearnBasket, manhuaLearnControlBusy, manhuaLearnFocusSeriesKey, manhuaLearnResult?.seriesKey, selectManhuaLearnBasketItem, user?.id]);
   const [allowBloggerTitle, setAllowBloggerTitle] = useState(() => readAllowBloggerTitleFromLs());
   /** 全案分析确认前：Skill/提示词优先级对话气泡 */
   const [fullAnalysisConfirmOpen, setFullAnalysisConfirmOpen] = useState(false);
@@ -11981,9 +12010,17 @@ export default function PlatformPage() {
                                 );
                               })}
                             </select>
+                            <button
+                              type="button"
+                              disabled={!manhuaLearnFocusSeriesKey || Boolean(manhuaLearnControlBusy)}
+                              onClick={() => void deleteFocusedManhuaLearnSeries()}
+                              className="shrink-0 rounded-lg border border-rose-300/30 bg-rose-500/10 px-2.5 py-1.5 text-[10px] font-semibold text-rose-100 hover:bg-rose-500/20 disabled:opacity-40"
+                            >
+                              {manhuaLearnControlBusy === "delete" ? "正在删除…" : "删除这部剧"}
+                            </button>
                           </div>
                           <p className="mt-1.5 text-[10px] text-amber-100/50">
-                            每部剧独立续学；刷新后仍保留。学完后会自动从此列表消失。
+                            每部剧独立续学；刷新后仍保留。删除会停止该剧，但保留已经落盘的成果。
                           </p>
                         </div>
                       ) : null}
@@ -12056,23 +12093,10 @@ export default function PlatformPage() {
                             <button
                               type="button"
                               disabled={Boolean(manhuaLearnBusyKey)}
-                              onClick={() => {
-                                if (!window.confirm("清空当前剧集学习入口与页面记录？已落盘的学习检查点不会删除。")) return;
-                                removeCurrentManhuaLearnBasketItem();
-                                manhuaLearnContinueRef.current = null;
-                                writeManhuaLearnContinuation(null);
-                                setManhuaLearnActiveJob(null);
-                                writeManhuaLearnActiveJob(null);
-                                setManhuaLearnResult(null);
-                                writeManhuaLearnResult(null);
-                                setManhuaLearnFocusSeriesKey("");
-                                writeManhuaLearnFocusSeriesKey("");
-                                setManhuaLearnContinueDismissedKey("");
-                                setManhuaLearnPanelCollapsed(false);
-                              }}
+                              onClick={() => void deleteFocusedManhuaLearnSeries()}
                               className="rounded-md border border-rose-300/30 px-2.5 py-1 text-[10px] text-rose-100 hover:bg-rose-500/15 disabled:opacity-45"
                             >
-                              清空剧集学习
+                              删除这部剧
                             </button>
                           </div>
                         </div>
@@ -12113,22 +12137,10 @@ export default function PlatformPage() {
                             <button
                               type="button"
                               disabled={Boolean(manhuaLearnBusyKey)}
-                              onClick={() => {
-                                if (!window.confirm("清空当前剧集学习入口与页面记录？已落盘的学习检查点不会删除。")) return;
-                                removeCurrentManhuaLearnBasketItem();
-                                manhuaLearnContinueRef.current = null;
-                                writeManhuaLearnContinuation(null);
-                                setManhuaLearnActiveJob(null);
-                                writeManhuaLearnActiveJob(null);
-                                setManhuaLearnResult(null);
-                                writeManhuaLearnResult(null);
-                                setManhuaLearnFocusSeriesKey("");
-                                writeManhuaLearnFocusSeriesKey("");
-                                setManhuaLearnContinueDismissedKey("");
-                              }}
+                              onClick={() => void deleteFocusedManhuaLearnSeries()}
                               className="shrink-0 rounded-md border border-rose-300/30 px-2 py-0.5 text-[10px] font-normal text-rose-100 hover:bg-rose-500/15 disabled:opacity-45"
                             >
-                              清空剧集学习
+                              删除这部剧
                             </button>
                           </div>
                           {manhuaLearnResult.liveLabelZh ? (

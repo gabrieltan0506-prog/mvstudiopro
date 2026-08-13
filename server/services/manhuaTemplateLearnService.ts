@@ -90,6 +90,7 @@ import {
 import {
   extractDouyinMixIdFromUrl,
   extractDouyinVideoIdFromUrl,
+  isTrustedDouyinPlaybackUrl,
 } from "../../shared/manhuaLearnDouyinWebApi.js";
 import {
   fetchDouyinAwemeDetailViaWebApi,
@@ -423,9 +424,67 @@ type EpisodeSourceState = {
   playbackDead?: boolean;
   playbackRefreshAttempted?: boolean;
   playbackRefreshUrls?: string[];
+  ytdlpRefreshAttempted?: boolean;
+  ytdlpRefreshUrls?: string[];
   resolvedStreamUrl?: string;
   triedStreamUrls?: string[];
 };
+
+function readMuxedPlaybackUrlsFromYtdlpInfo(data: unknown): string[] {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return [];
+  const root = data as Record<string, unknown>;
+  const candidates: string[] = [];
+  const append = (raw: unknown) => {
+    const url = typeof raw === "string" ? raw.trim() : "";
+    if (url && isTrustedDouyinPlaybackUrl(url) && !candidates.includes(url)) candidates.push(url);
+  };
+  append(root.url);
+  const formats = Array.isArray(root.formats) ? root.formats : [];
+  for (const raw of formats) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const format = raw as Record<string, unknown>;
+    const audioCodec = String(format.acodec || "").trim().toLowerCase();
+    const videoCodec = String(format.vcodec || "").trim().toLowerCase();
+    // 当前采样器要求同一地址同时具备语音与画面；分离轨不能冒充成功。
+    if (!audioCodec || !videoCodec || audioCodec === "none" || videoCodec === "none") continue;
+    append(format.url);
+  }
+  return candidates;
+}
+
+async function refreshEpisodePlaybackUrlsViaYtdlp(
+  ep: ListedEpisode,
+  state: EpisodeSourceState,
+): Promise<string[]> {
+  if (state.ytdlpRefreshAttempted) return state.ytdlpRefreshUrls || [];
+  state.ytdlpRefreshAttempted = true;
+  if (!isDouyinHostUrl(ep.url)) return [];
+  try {
+    assertYtdlpCookieReadyForUrl(ep.url);
+    const urls = await withYtdlpCookieCandidates(ep.url, async (cookieArgs) => {
+      const data = await execYtdlpJson([
+        ...cookieArgs,
+        "-J",
+        "--no-playlist",
+        "--no-warnings",
+        ep.url,
+      ]);
+      const parsed = readMuxedPlaybackUrlsFromYtdlpInfo(data);
+      if (!parsed.length) throw new Error("yt-dlp 未解析到同时含语音与画面的媒体流");
+      return parsed;
+    });
+    state.ytdlpRefreshUrls = urls;
+    return urls;
+  } catch (error) {
+    console.warn(
+      "[manhuaTemplateLearn] yt-dlp direct stream fallback failed:",
+      ep.index,
+      mapManhuaLearnFetchError(error),
+    );
+    state.ytdlpRefreshUrls = [];
+    return [];
+  }
+}
 
 function episodeDownloadSource(
   ep: ListedEpisode,
@@ -555,22 +614,47 @@ async function probeEpisodeDurationWithSourceFailover(
     }
   }
   const refreshedUrls = await refreshEpisodePlaybackUrls(ep, state);
-  for (let index = 0; index < refreshedUrls.length; index++) {
+  const fallbackUrls = refreshedUrls.length
+    ? refreshedUrls
+    : await refreshEpisodePlaybackUrlsViaYtdlp(ep, state);
+  for (let index = 0; index < fallbackUrls.length; index++) {
     try {
-      state.playbackUrl = refreshedUrls[index];
-      const durationSec = await ffprobeRemoteMedia(refreshedUrls[index]!);
-      state.resolvedStreamUrl = refreshedUrls[index];
+      state.playbackUrl = fallbackUrls[index];
+      const durationSec = await ffprobeRemoteMedia(fallbackUrls[index]!);
+      state.resolvedStreamUrl = fallbackUrls[index];
       state.triedStreamUrls = Array.from(new Set([
         ...(state.triedStreamUrls || []),
-        refreshedUrls[index]!,
+        fallbackUrls[index]!,
       ]));
       return durationSec;
     } catch {
       console.warn(
         "[manhuaTemplateLearn] refreshed playback probe failed, trying next:",
         ep.index,
-        `candidate=${index + 1}/${refreshedUrls.length}`,
+        `candidate=${index + 1}/${fallbackUrls.length}`,
       );
+    }
+  }
+  if (refreshedUrls.length) {
+    const ytdlpUrls = await refreshEpisodePlaybackUrlsViaYtdlp(ep, state);
+    for (let index = 0; index < ytdlpUrls.length; index++) {
+      if ((state.triedStreamUrls || []).includes(ytdlpUrls[index]!)) continue;
+      try {
+        const durationSec = await ffprobeRemoteMedia(ytdlpUrls[index]!);
+        state.playbackUrl = ytdlpUrls[index];
+        state.resolvedStreamUrl = ytdlpUrls[index];
+        state.triedStreamUrls = Array.from(new Set([
+          ...(state.triedStreamUrls || []),
+          ytdlpUrls[index]!,
+        ]));
+        return durationSec;
+      } catch {
+        console.warn(
+          "[manhuaTemplateLearn] yt-dlp playback probe failed, trying next:",
+          ep.index,
+          `candidate=${index + 1}/${ytdlpUrls.length}`,
+        );
+      }
     }
   }
   state.playbackDead = true;
@@ -594,17 +678,27 @@ async function advanceEpisodeMediaSource(
   state: EpisodeSourceState,
 ): Promise<boolean> {
   if (!isDouyinHostUrl(ep.url)) return false;
-  const urls = await refreshEpisodePlaybackUrls(ep, state);
+  const webApiUrls = await refreshEpisodePlaybackUrls(ep, state);
+  const ytdlpUrls = await refreshEpisodePlaybackUrlsViaYtdlp(ep, state);
+  const urls = Array.from(new Set([...webApiUrls, ...ytdlpUrls]));
   const tried = new Set<string>(
     [...(state.triedStreamUrls || []), state.resolvedStreamUrl]
       .filter((url): url is string => Boolean(url)),
   );
-  const next = urls.find((url) => !tried.has(url));
-  if (!next) return false;
-  state.resolvedStreamUrl = next;
-  tried.add(next);
-  state.triedStreamUrls = Array.from(tried);
-  return true;
+  for (const next of urls) {
+    if (tried.has(next)) continue;
+    tried.add(next);
+    state.triedStreamUrls = Array.from(tried);
+    try {
+      await ffprobeRemoteMedia(next);
+      state.playbackUrl = next;
+      state.resolvedStreamUrl = next;
+      return true;
+    } catch {
+      console.warn("[manhuaTemplateLearn] alternate stream probe failed:", ep.index);
+    }
+  }
+  return false;
 }
 
 function parseFlatPlaylistEntries(
@@ -1273,7 +1367,10 @@ async function learnOneEpisode(input: {
             /媒体流|语音流|抽帧|画面不可解码|节点拒绝/.test(lastErrZh)
             && attempt < retryMax
           ) {
-            await advanceEpisodeMediaSource(input.ep, srcState).catch(() => false);
+            const advanced = await advanceEpisodeMediaSource(input.ep, srcState).catch(() => false);
+            if (!advanced) {
+              lastErrZh = `${lastErrZh}；所有候选媒体流均不可用`;
+            }
           }
           await input.onProgress?.(
             MANHUA_LEARN_STAGE.failed,

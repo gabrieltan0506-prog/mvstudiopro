@@ -14,6 +14,7 @@ import {
   createJob,
   findActiveManhuaTemplateLearnJobForSource,
   getJobById,
+  hideManhuaTemplateLearnSeriesForUser,
   isGrowthCampAnalyzeJobRecord,
   isManhuaTemplateLearnJobRecord,
   recoverInterruptedManhuaTemplateLearnJobsOnStartup,
@@ -470,6 +471,32 @@ async function startServer() {
     } catch (error) {
       console.error("[Jobs] skip manhua episode failed:", error);
       return res.status(500).json({ error: "跳过本集失败，请稍后重试" });
+    }
+  });
+
+  app.post("/api/jobs/manhua-learn/:id/hide", async (req, res) => {
+    try {
+      const ctx = await createContext({ req: req as any, res: res as any } as any);
+      if (!ctx.user) return res.status(401).json({ error: "请先登录" });
+      const { resolvePlatformSupervisorOpsAllowed } = await import("../services/access-policy");
+      const supervisorToken = String(req.headers["x-supervisor-token"] || "").trim();
+      if (!resolvePlatformSupervisorOpsAllowed(ctx.user, supervisorToken)) {
+        return res.status(403).json({ error: "学节奏为监管专用" });
+      }
+      const hidden = await hideManhuaTemplateLearnSeriesForUser({
+        jobId: String(req.params.id || ""),
+        userId: String(ctx.user.id),
+      });
+      if (!hidden) return res.status(404).json({ error: "学习任务不存在或不属于当前用户" });
+      hidden.runningJobIds.forEach((jobId) => abortRunningManhuaLearnJob(jobId));
+      return res.status(200).json({
+        hiddenCount: hidden.hiddenJobIds.length,
+        hiddenJobIds: hidden.hiddenJobIds,
+        messageZh: "已从列表删除；已落盘学习成果保留",
+      });
+    } catch (error) {
+      console.error("[Jobs] hide manhua learn series failed:", error);
+      return res.status(500).json({ error: "从列表删除失败，请稍后重试" });
     }
   });
 
