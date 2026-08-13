@@ -61,6 +61,10 @@ export type WeixinChannelsObservation = {
   title: string;
   author?: string;
   url?: string;
+  /** 本机裁出的低清封面，仅在上传请求内存在，服务端会镜像后剥离。 */
+  coverImageBase64?: string;
+  coverUrl?: string;
+  coverCapturedAt?: string;
   publishedAt?: string;
   observedAt: string;
   likes?: number;
@@ -224,8 +228,9 @@ export function persistableWeixinChannelsObservation(
   item: WeixinChannelsObservation,
 ): PersistedWeixinChannelsObservation {
   const qualification = qualifyWeixinChannelsObservationLocally(item);
+  const { coverImageBase64: _transientCover, ...persisted } = item;
   return {
-    ...item,
+    ...persisted,
     runKind: item.runKind === "probe" ? "probe" : "formal",
     scanned: true,
     qualified: qualification.qualified,
@@ -451,6 +456,8 @@ export function buildWeixinChannelsTrendCollection(params: {
       title: item.title,
       author: item.author,
       url: item.url,
+      coverUrl: item.coverUrl,
+      coverCapturedAt: item.coverCapturedAt,
       publishedAt: item.publishedAt,
       likes: item.likes,
       comments: item.comments,

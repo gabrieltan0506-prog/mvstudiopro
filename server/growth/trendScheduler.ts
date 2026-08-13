@@ -20,6 +20,7 @@ import {
 } from "./trendStore";
 import { notifyGrowthCollectionUpdate } from "./trendMailDigest";
 import { nowShanghaiIso } from "./time";
+import { backfillRecentTrendCoverUrls } from "./trendCoverSelection";
 import {
   buildTimeoutCooldownMs,
   formatTimeoutCooldownLabel,
@@ -420,7 +421,14 @@ async function runPlatform(platform: GrowthPlatform) {
       getPlatformRunTimeoutMs(platform),
       `[growth.scheduler] ${platform}`,
     );
-    const mergedStore = await mergeTrendCollections({ [platform]: collection });
+    let mergedStore = await mergeTrendCollections({ [platform]: collection });
+    const mergedBeforeBackfill = mergedStore.collections[platform];
+    if (mergedBeforeBackfill) {
+      const backfilled = await backfillRecentTrendCoverUrls(platform, mergedBeforeBackfill);
+      if (backfilled.resolved > 0) {
+        mergedStore = await mergeTrendCollections({ [platform]: backfilled.collection });
+      }
+    }
     const mergedCollection = mergedStore.collections[platform];
     const currentCount = collection.stats?.itemCount || collection.items.length;
     const previousCount = currentState?.lastCollectedCount || 0;

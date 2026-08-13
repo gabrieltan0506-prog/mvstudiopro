@@ -60,7 +60,7 @@ import {
 } from "@/lib/platformWorkbenchCta";
 import InfographicTemplatePicker from "@/components/InfographicTemplatePicker";
 import { extractInfographicSubjectFromUserCopy } from "@shared/infographicNoteTemplates";
-import { VisualReportTemplate, type VisualReportData } from "@/components/VisualReportTemplate";
+import { VisualReportCoverPage, VisualReportTemplate, type VisualReportData } from "@/components/VisualReportTemplate";
 import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
 import {
   mapGenerateVisualReportResult,
@@ -158,6 +158,10 @@ import {
   platformCustomMattingTotalCredits,
   platformCustomTopicImageCredits,
 } from "@shared/plans";
+import {
+  getPlatformTrendReportCredits,
+  isPlatformTrendCoverPromo,
+} from "@shared/platformTrendPricing";
 import type { PlatformMattingAspectRatio, PlatformMattingBatchCount } from "@shared/plans";
 import {
   buildCustomCopyPdfHtml,
@@ -2523,6 +2527,7 @@ export default function PlatformPage() {
     });
   }, [manhuaLearnResult, user?.id]);
   const visualReportRef = useRef<HTMLDivElement>(null);
+  const visualReportCoverRef = useRef<HTMLDivElement>(null);
   // Call 3 state — content blueprints and monetization
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
   const [contentDebug, setContentDebug] = useState<Record<string, unknown> | null>(null);
@@ -9933,7 +9938,7 @@ export default function PlatformPage() {
       .filter(Boolean)
       .join("、");
 
-    const cost = CREDIT_COSTS.platformTrend ?? 50;
+    const cost = getPlatformTrendReportCredits(selectedWindowDays);
     const reportWindowDays = toVisualReportWindowDays(selectedWindowDays);
     const windowNote =
       selectedWindowDays === 45
@@ -9941,7 +9946,7 @@ export default function PlatformPage() {
         : "";
     if (
       !window.confirm(
-        `【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天样本，生成四格战略摘要、Stage 1 看板，并同步生成含蓝海词的可下载 PNG 图文报表${windowNote}。\n\n扣除 ${cost} 积分，不含专属文案 / 决策智库全景（需另行加购）。是否开始？`,
+        `【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天样本，生成四格战略摘要、Stage 1 看板、趋势 PNG 与本期优秀封面页${windowNote}。\n\n${isPlatformTrendCoverPromo(selectedWindowDays) ? "限时特价：优秀封面页免费赠送至 9 月 15 日。\n" : ""}扣除 ${cost} 积分，不含专属文案 / 决策智库全景（需另行加购）。是否开始？`,
       )
     ) {
       return;
@@ -9991,6 +9996,7 @@ export default function PlatformPage() {
           windowDays: reportWindowDays,
           theme: visualReportTheme,
           platforms: visualPlatforms,
+          billingRequestId: crypto.randomUUID(),
         }),
       ]);
 
@@ -10082,7 +10088,17 @@ export default function PlatformPage() {
       link.download = `mvstudiopro-trend-report-${reportWindowDays}d-${visualReportTheme}.png`;
       link.href = dataUrl;
       link.click();
-      toast.success("PNG 图文报表已下载");
+      if (visualReportCoverRef.current && (visualReportData.excellentCoverReferences?.length || 0) > 0) {
+        const coverDataUrl = await toPng(visualReportCoverRef.current, {
+          pixelRatio: 2,
+          backgroundColor: visualReportTheme === "dark" ? "#E4B8A8" : "#F3E0D6",
+        });
+        const coverLink = document.createElement("a");
+        coverLink.download = `mvstudiopro-cover-selection-${reportWindowDays}d-${visualReportTheme}.png`;
+        coverLink.href = coverDataUrl;
+        coverLink.click();
+      }
+      toast.success("主周报与本期优秀封面 PNG 已下载");
     } catch {
       toast.error("下载失败，请重试");
     } finally {
@@ -11655,9 +11671,11 @@ export default function PlatformPage() {
                     开始平台趋势分析
                   </button>
                   <span className="rounded-full border border-[#fbbf24]/45 bg-[rgba(251,191,36,0.12)] px-3 py-1.5 text-[11px] font-black tabular-nums text-[#fef08a]">
-                    {(CREDIT_COSTS as any).platformTrend ?? 50} 积分/次
+                    {getPlatformTrendReportCredits(selectedWindowDays)} 积分/次
                   </span>
-                  <span className="text-[11px] text-[#c9c0e6]/50">含 PNG 图文报表 · 不含专属文案</span>
+                  <span className="text-[11px] text-[#c9c0e6]/50">
+                    {isPlatformTrendCoverPromo(selectedWindowDays) ? "限时特价至 9 月 15 日 · 免费含优秀封面页" : "含趋势报告与优秀封面页"}
+                  </span>
                 </div>
               </div>
             ) : null}
@@ -11729,6 +11747,11 @@ export default function PlatformPage() {
                 <div className="mt-3 overflow-x-auto rounded-2xl border border-white/10">
                   <VisualReportTemplate data={visualReportData} ref={visualReportRef} />
                 </div>
+                {(visualReportData.excellentCoverReferences?.length || 0) > 0 ? (
+                  <div className="mt-3 overflow-x-auto rounded-2xl border border-white/10">
+                    <VisualReportCoverPage data={visualReportData} ref={visualReportCoverRef} />
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -13994,7 +14017,7 @@ export default function PlatformPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-base font-bold text-white md:text-lg">平台趋势分析</span>
                         <span className="rounded-full border border-[#fef08a]/40 bg-[rgba(254,240,138,0.15)] px-2.5 py-0.5 text-xs font-semibold text-[#fef08a]">
-                          {CREDIT_COSTS.platformTrend} 积分/次
+                          {getPlatformTrendReportCredits(selectedWindowDays)} 积分/次
                         </span>
                       </div>
                       <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">
@@ -14477,7 +14500,7 @@ export default function PlatformPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-bold text-white">平台趋势分析</span>
                       <span className="rounded-full border border-[#fef08a]/40 bg-[rgba(254,240,138,0.15)] px-2 py-0.5 text-[10px] font-semibold text-[#fef08a]">
-                        {CREDIT_COSTS.platformTrend} 积分/次
+                        {getPlatformTrendReportCredits(selectedWindowDays)} 积分/次
                       </span>
                     </div>
                     <p className="mt-1 text-xs leading-snug text-[#c4b8e8]">

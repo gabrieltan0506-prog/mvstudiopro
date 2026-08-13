@@ -348,6 +348,21 @@ async function persistPendingFile(output: string, observation: unknown) {
   await fs.rename(temp, output);
 }
 
+async function buildCoverBase64(screenshot: string) {
+  const metadata = await sharp(screenshot).metadata();
+  const width = metadata.width || 0;
+  const height = metadata.height || 0;
+  if (width < 100 || height < 100) throw new Error("weixin_channels_cover_screenshot_invalid");
+  const top = Math.round(height * 0.07);
+  const cropHeight = Math.max(80, Math.round(height * 0.76));
+  return sharp(screenshot)
+    .extract({ left: 0, top, width, height: Math.min(cropHeight, height - top) })
+    .resize({ width: 720, withoutEnlargement: true })
+    .jpeg({ quality: 85, mozjpeg: true })
+    .toBuffer()
+    .then((buffer) => buffer.toString("base64"));
+}
+
 export async function uploadPendingObservation(params: {
   server: string;
   token: string;
@@ -570,6 +585,9 @@ async function captureVisibleQualifiedVideo(params: {
     if (!commentSamples.length) throw new Error("weixin_channels_real_comments_not_found");
     ocr = comments.closedOcr;
   }
+  const coverImageBase64 = !adDetected && finalQualification.qualified
+    ? await buildCoverBase64(params.screenshot)
+    : undefined;
   const observation = {
     observationId: makeWeixinChannelsObservationId({ taskId: params.taskId, title, author }),
     taskId: params.taskId,
@@ -577,6 +595,7 @@ async function captureVisibleQualifiedVideo(params: {
     resultRank: 1,
     title,
     author,
+    coverImageBase64,
     observedAt: new Date().toISOString(),
     likes: metrics.likes,
     comments: metrics.comments,
@@ -605,7 +624,8 @@ async function captureVisibleQualifiedVideo(params: {
     if (Date.now() > deadlineAt) throw new Error("weixin_channels_capture_time_budget_exceeded_after_upload");
     process.stderr.write(`uploaded:${JSON.stringify(payload)}\n`);
   }
-  process.stdout.write(`${JSON.stringify(observation, null, 2)}\n`);
+  const { coverImageBase64: _coverImageBase64, ...safeObservationLog } = observation;
+  process.stdout.write(`${JSON.stringify(safeObservationLog, null, 2)}\n`);
   return {
     qualified: finalQualification.qualified,
     inspectedContent: true as const,

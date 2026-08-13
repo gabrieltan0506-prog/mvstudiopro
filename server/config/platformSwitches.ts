@@ -19,6 +19,7 @@ import {
   OPENROUTER_KIMI_K3_MODEL,
   OPENROUTER_KIMI_K3_REASONING_EFFORT,
 } from "../services/openrouterKimiK3.js";
+import { getEvolinkGpt56TerraModel } from "../services/evolinkChatModel.js";
 
 export type PlatformStage2LlmMode = "openai" | "vertex";
 export type PlatformImageStorageDriver = "fly" | "gcs";
@@ -274,11 +275,9 @@ export function getPlatformStage2OpenAiModel(): string {
 /** @deprecated 与 {@link OPENROUTER_KIMI_K3_MODEL} 同值；保留旧导出名 */
 export const VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL = OPENROUTER_KIMI_K3_MODEL;
 
-/**
- * 平台趋势 PNG 报表（generateVisualReport）：OpenRouter Kimi K3。
- */
+/** 平台趋势 PNG 报表：Terra High 同时清洗结构化数据并完成封面选秀。 */
 export function getVisualReportOpenAiModel(): string {
-  return getOpenRouterKimiK3Model();
+  return getEvolinkGpt56TerraModel();
 }
 
 /**

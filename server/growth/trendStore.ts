@@ -532,6 +532,8 @@ function normalizeItem(item: TrendItem): TrendItem {
     bucket: item.bucket ? String(item.bucket).trim() : undefined,
     author: item.author ? String(item.author).trim() : undefined,
     url: item.url ? String(item.url).trim() : undefined,
+    coverUrl: item.coverUrl ? String(item.coverUrl).trim() : undefined,
+    coverCapturedAt: item.coverCapturedAt ? String(item.coverCapturedAt).trim() : undefined,
     tags: normalizeStringList(item.tags),
     commentSamples: Array.isArray(item.commentSamples)
       ? item.commentSamples
@@ -600,6 +602,20 @@ function dedupeTrendItems(existing: TrendItem[] = [], incoming: TrendItem[] = []
       views: Math.max(current.views || 0, item.views || 0) || undefined,
       publishedAt: item.publishedAt || current.publishedAt,
       url: item.url || current.url,
+      coverUrl: (() => {
+        const currentMs = Date.parse(String(current.coverCapturedAt || ""));
+        const incomingMs = Date.parse(String(item.coverCapturedAt || ""));
+        return Number.isFinite(incomingMs) && (!Number.isFinite(currentMs) || incomingMs >= currentMs)
+          ? (item.coverUrl || current.coverUrl)
+          : (current.coverUrl || item.coverUrl);
+      })(),
+      coverCapturedAt: (() => {
+        const currentMs = Date.parse(String(current.coverCapturedAt || ""));
+        const incomingMs = Date.parse(String(item.coverCapturedAt || ""));
+        return Number.isFinite(incomingMs) && (!Number.isFinite(currentMs) || incomingMs >= currentMs)
+          ? item.coverCapturedAt
+          : current.coverCapturedAt;
+      })(),
       author: item.author || current.author,
       isDrama: Boolean(item.isDrama || current.isDrama) || undefined,
       dramaKind: item.dramaKind && item.dramaKind !== "unknown"

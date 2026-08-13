@@ -19,6 +19,7 @@ import {
   getCollectorAbortSignal,
   mergeAbortSignals,
 } from "./collectorAbort.js";
+import { extractPlatformCoverUrl, isTrendCoverCollectionActive } from "./trendCoverSelection";
 
 const nativeFetch = globalThis.fetch.bind(globalThis);
 
@@ -65,6 +66,10 @@ export type TrendItem = {
   /** 账号身份判定依据（debug 用，例如 "verify_type=2" / "name_match:旗舰店"） */
   accountTypeReason?: string;
   url?: string;
+  /** 平台原始封面或已镜像到 GCS/Fly 的封面；禁止用占位图补齐。 */
+  coverUrl?: string;
+  /** 实际取得封面的时间，用于 2026-08-14 新旧数据门禁。 */
+  coverCapturedAt?: string;
   publishedAt?: string;
   likes?: number;
   comments?: number;
@@ -2105,12 +2110,15 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
   const pushBilibiliItem = (item: Record<string, any>, bucket = "bilibili_feed") => {
     const title = String(item.title ?? "").trim();
     if (!title) return;
+    const coverUrl = isTrendCoverCollectionActive() ? extractPlatformCoverUrl("bilibili", item) : undefined;
     items.push({
       id: String(item.aid ?? item.id ?? item.bvid ?? `bili-${items.length}`),
       title,
       bucket,
       author: String(item.owner?.name ?? item.author ?? "").trim() || undefined,
       url: item.bvid ? `https://www.bilibili.com/video/${item.bvid}` : undefined,
+      coverUrl,
+      coverCapturedAt: coverUrl ? nowShanghaiIso() : undefined,
       publishedAt: safeDateFromUnix(Number(item.pubdate)),
       likes: Number(item.stat?.like ?? item.like ?? 0) || undefined,
       comments: Number(item.stat?.reply ?? item.review ?? 0) || undefined,
@@ -2299,12 +2307,15 @@ function mapDouyinAwemeToTrendItem(
       : []),
     ...extraTags.map((tag) => String(tag || "").trim()).filter(Boolean),
   ]));
+  const coverUrl = isTrendCoverCollectionActive() ? extractPlatformCoverUrl("douyin", aweme) : undefined;
   return {
     id: awemeId,
     title,
     bucket,
     author: String(author.nickname ?? author.uid ?? "").trim() || undefined,
     url: `https://www.douyin.com/video/${awemeId}`,
+    coverUrl,
+    coverCapturedAt: coverUrl ? nowShanghaiIso() : undefined,
     publishedAt: safeDateFromUnix(Number(aweme.create_time)),
     likes: Number(stats.digg_count ?? 0) || undefined,
     comments: Number(stats.comment_count ?? 0) || undefined,
@@ -2541,12 +2552,15 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
                 .map((entry) => String(entry?.hashtag_name ?? "").trim())
                 .filter(Boolean)
               : [];
+            const coverUrl = isTrendCoverCollectionActive() ? extractPlatformCoverUrl("douyin", item) : undefined;
             return {
               id: String(item.aweme_id ?? item.group_id ?? ""),
               title,
               bucket: "douyin_feed",
               author: String(author.nickname ?? author.uid ?? "").trim() || undefined,
               url: item.aweme_id ? `https://www.douyin.com/video/${item.aweme_id}` : undefined,
+              coverUrl,
+              coverCapturedAt: coverUrl ? nowShanghaiIso() : undefined,
               publishedAt: safeDateFromUnix(Number(item.create_time)),
               likes: Number(stats.digg_count ?? 0) || undefined,
               comments: Number(stats.comment_count ?? 0) || undefined,
@@ -2752,12 +2766,15 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
           if (!noteCard) return null;
           const title = String(noteCard.displayTitle ?? "").trim();
           if (!title) return null;
+          const coverUrl = isTrendCoverCollectionActive() ? extractPlatformCoverUrl("xiaohongshu", noteCard) : undefined;
           return {
             id: String(feed.id ?? `${pageUrl}-${index}`),
             title,
             bucket: "xiaohongshu_feed",
             author: String(noteCard.user?.nickname ?? noteCard.user?.nickName ?? "").trim() || undefined,
             url: feed.id ? `https://www.xiaohongshu.com/explore/${feed.id}` : undefined,
+            coverUrl,
+            coverCapturedAt: coverUrl ? nowShanghaiIso() : undefined,
             likes: parseChineseCount(noteCard.interactInfo?.likedCount),
             comments: parseChineseCount(noteCard.interactInfo?.commentCount),
             shares: parseChineseCount(noteCard.interactInfo?.shareCount),
@@ -2805,12 +2822,16 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
             .map((note, itemIndex) => {
               const title = String(note.displayTitle ?? note.title ?? "").trim();
               if (!title) return null;
+              const rawNote = note.noteCard ?? note;
+              const coverUrl = isTrendCoverCollectionActive() ? extractPlatformCoverUrl("xiaohongshu", rawNote) : undefined;
               return {
                 id: String(note.id ?? `${keyword}-${sort}-${page}-${itemIndex}`),
                 title,
                 bucket: "xiaohongshu_feed",
                 author: String(note.user?.nickname ?? note.user?.nickName ?? "").trim() || undefined,
                 url: note.id ? `https://www.xiaohongshu.com/explore/${note.id}` : undefined,
+                coverUrl,
+                coverCapturedAt: coverUrl ? nowShanghaiIso() : undefined,
                 likes: parseChineseCount(note.interactInfo?.likedCount ?? note.likedCount),
                 comments: parseChineseCount(note.interactInfo?.commentCount ?? note.commentCount),
                 shares: parseChineseCount(note.interactInfo?.shareCount ?? note.shareCount),

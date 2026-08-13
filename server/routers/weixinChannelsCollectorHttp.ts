@@ -13,6 +13,8 @@ import {
   refreshWeixinChannelsCandidates,
   summarizeCandidateSources,
 } from "../growth/weixinChannelsMinerStore";
+import { qualifyWeixinChannelsObservationLocally } from "../growth/weixinChannelsMiner";
+import { isTrendCoverCollectionActive } from "../growth/trendCoverSelection";
 
 function tokenDigest(value: string) {
   return createHash("sha256").update(value).digest();
@@ -42,6 +44,7 @@ export const weixinChannelsObservationSchema = z.object({
   title: z.string().min(1).max(500),
   author: z.string().max(200).optional(),
   url: z.string().url().max(2_000).optional(),
+  coverImageBase64: z.string().max(700_000).optional(),
   publishedAt: z.string().datetime().optional(),
   observedAt: z.string().datetime(),
   likes: metric,
@@ -141,7 +144,23 @@ export function registerWeixinChannelsCollectorHttpRoutes(app: Express) {
       return;
     }
     try {
-      const result = await ingestWeixinChannelsObservations(parsed.data);
+      const observations = await Promise.all(parsed.data.observations.map(async (observation) => {
+        const qualification = qualifyWeixinChannelsObservationLocally(observation);
+        if (!qualification.qualified || !observation.coverImageBase64 || !isTrendCoverCollectionActive()) {
+          return observation;
+        }
+        const buffer = Buffer.from(observation.coverImageBase64, "base64");
+        if (buffer.length < 64 || buffer.length > 500_000) throw new Error("weixin_channels_cover_invalid");
+        const { uploadBufferToPlatformStorage } = await import("../services/evolinkGptImage2.js");
+        const coverUrl = await uploadBufferToPlatformStorage(buffer, "growth_cover_candidates/weixin_channels");
+        return {
+          ...observation,
+          coverImageBase64: undefined,
+          coverUrl,
+          coverCapturedAt: new Date().toISOString(),
+        };
+      }));
+      const result = await ingestWeixinChannelsObservations({ ...parsed.data, observations });
       res.json({
         ok: true,
         ...result,
