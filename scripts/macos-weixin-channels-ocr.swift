@@ -17,37 +17,42 @@ struct OcrResult: Codable {
     let lines: [OcrLine]
 }
 
-guard CommandLine.arguments.count == 2 else {
-    FileHandle.standardError.write(Data("usage: macos-weixin-channels-ocr.swift <screenshot.png>\n".utf8))
+let cliArgs = Array(CommandLine.arguments.dropFirst())
+let batchMode = cliArgs.first == "--batch"
+let imagePaths = batchMode ? Array(cliArgs.dropFirst()) : cliArgs
+guard !imagePaths.isEmpty, batchMode || imagePaths.count == 1 else {
+    FileHandle.standardError.write(Data("usage: macos-weixin-channels-ocr.swift [--batch] <screenshot.png>...\n".utf8))
     exit(2)
 }
 
-let imageUrl = URL(fileURLWithPath: CommandLine.arguments[1])
-guard let nsImage = NSImage(contentsOf: imageUrl),
-      let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-    FileHandle.standardError.write(Data("cannot_read_image\n".utf8))
-    exit(3)
+func recognize(path: String) throws -> OcrResult {
+    let imageUrl = URL(fileURLWithPath: path)
+    guard let nsImage = NSImage(contentsOf: imageUrl),
+          let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+        throw NSError(domain: "weixin-ocr", code: 3, userInfo: [NSLocalizedDescriptionKey: "cannot_read_image:\(path)"])
+    }
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = batchMode ? .fast : .accurate
+    request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
+    request.usesLanguageCorrection = !batchMode
+    try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+    let observations = (request.results ?? []).compactMap { observation -> OcrLine? in
+        guard let candidate = observation.topCandidates(1).first else { return nil }
+        let box = observation.boundingBox
+        return OcrLine(
+            text: candidate.string,
+            confidence: candidate.confidence,
+            x: box.origin.x,
+            y: box.origin.y,
+            width: box.size.width,
+            height: box.size.height
+        )
+    }
+    return OcrResult(width: cgImage.width, height: cgImage.height, lines: observations)
 }
 
-let request = VNRecognizeTextRequest()
-request.recognitionLevel = .accurate
-request.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
-request.usesLanguageCorrection = true
-try VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
-
-let observations = (request.results ?? []).compactMap { observation -> OcrLine? in
-    guard let candidate = observation.topCandidates(1).first else { return nil }
-    let box = observation.boundingBox
-    return OcrLine(
-        text: candidate.string,
-        confidence: candidate.confidence,
-        x: box.origin.x,
-        y: box.origin.y,
-        width: box.size.width,
-        height: box.size.height
-    )
-}
-
-let result = OcrResult(width: cgImage.width, height: cgImage.height, lines: observations)
-let encoded = try JSONEncoder().encode(result)
+let results = try imagePaths.map(recognize)
+let encoded = batchMode
+    ? try JSONEncoder().encode(results)
+    : try JSONEncoder().encode(results[0])
 FileHandle.standardOutput.write(encoded)
