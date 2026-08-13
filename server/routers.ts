@@ -3051,6 +3051,50 @@ export const appRouter = router({
 
   // Video PK Rating - upload video frame and get AI analysis
   mvAnalysis: router({
+    getWeixinChannelsCollectorStatus: adminProcedure.query(async () => {
+      const { getWeixinChannelsMinerState } = await import("./growth/weixinChannelsMinerStore.js");
+      const state = await getWeixinChannelsMinerState();
+      return {
+        capture: state.capture,
+        aggregationPaused: state.aggregationPaused,
+        accumulatedQualifiedCount: state.observations.filter((item) => item.runKind !== "probe" && item.qualified && !item.invalid && !item.consumedAt && !item.aggregationJobId).length,
+        probeQualifiedCount: state.observations.filter((item) => item.runKind === "probe" && item.qualified && !item.invalid).length,
+        totalScanned: state.observations.length,
+        latestJob: state.jobs[state.jobs.length - 1] || null,
+      };
+    }),
+
+    setWeixinChannelsCaptureEnabled: adminProcedure
+      .input(z.object({ enabled: z.boolean() }))
+      .mutation(async ({ input }) => {
+        const { setWeixinChannelsCaptureEnabled } = await import("./growth/weixinChannelsMinerStore.js");
+        const state = await setWeixinChannelsCaptureEnabled(input.enabled);
+        return { ok: true as const, capture: state.capture };
+      }),
+
+    setWeixinChannelsAggregationPaused: adminProcedure
+      .input(z.object({ paused: z.boolean() }))
+      .mutation(async ({ input }) => {
+        const { setWeixinChannelsAggregationPaused } = await import("./growth/weixinChannelsMinerStore.js");
+        const state = await setWeixinChannelsAggregationPaused(input.paused);
+        return { ok: true as const, aggregationPaused: state.aggregationPaused };
+      }),
+
+    startWeixinChannelsAggregation: adminProcedure
+      .input(z.object({ jobId: z.string().min(6).max(160).optional(), probe: z.boolean().optional() }))
+      .mutation(async ({ input }) => {
+        const store = await import("./growth/weixinChannelsMinerStore.js");
+        await store.setWeixinChannelsAggregationPaused(false);
+        const job = input.probe
+          ? (await store.createWeixinChannelsProbeJob()).job
+          : input.jobId
+            ? (await store.getWeixinChannelsMinerState()).jobs.find((item) => item.jobId === input.jobId)
+            : (await store.getWeixinChannelsMinerState()).jobs.find((item) => item.kind === "formal" && item.status !== "completed");
+        if (!job) throw new Error("当前没有可启动的整理任务");
+        const started = store.startWeixinChannelsAggregationInBackground(job.jobId);
+        return { ok: true as const, started, jobId: job.jobId, kind: job.kind };
+      }),
+
     analyzeFrame: publicProcedure
       .input(z.object({
         imageBase64: z.string().min(1),
@@ -4755,7 +4799,7 @@ export const appRouter = router({
         // Extended to support short-form trend radar: 3d and 7d windows
         windowDays: z.enum(["3", "7", "15", "30"]),
         theme: z.enum(["light", "dark"]),
-        platforms: z.array(z.enum(["douyin", "kuaishou", "xiaohongshu", "bilibili"])),
+        platforms: z.array(z.enum(["douyin", "kuaishou", "xiaohongshu", "bilibili", "weixin_channels"])),
         /** 可選：創作者人設補充（職業、身份、興趣、專長等），用於收窄熱點解讀與選題公式落點 */
         personaContext: z.string().max(4000).optional(),
       }))
@@ -4765,6 +4809,7 @@ export const appRouter = router({
           kuaishou: "快手",
           xiaohongshu: "小红书",
           bilibili: "B站",
+          weixin_channels: "视频号",
           toutiao: "今日头条",
         };
         const platformListStr = input.platforms.map((p) => PLATFORM_NAMES[p] || p).join("、");

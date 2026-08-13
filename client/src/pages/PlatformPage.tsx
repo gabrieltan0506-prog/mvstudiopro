@@ -524,7 +524,7 @@ const TREND_PLATFORM_OPTIONS: { key: TrendPlatformKey; label: string; comingSoon
   { key: "bilibili", label: "B站" },
   { key: "douyin", label: "抖音" },
   { key: "kuaishou", label: "快手" },
-  { key: "weixin_channels", label: "视频号", comingSoon: true },
+  { key: "weixin_channels", label: "视频号" },
 ];
 
 /** Only include platforms that are live (not comingSoon) in the default selection */
@@ -2307,6 +2307,23 @@ export default function PlatformPage() {
   /** 与封面进阶开关一致：supervisor 入口 / admin / supervisor，一般用户不可见 */
   const canConfigureStage2CopyEngine =
     supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+
+  const canManageWeixinChannelsCollector =
+    supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+  const weixinChannelsCollectorStatusQuery = trpc.mvAnalysis.getWeixinChannelsCollectorStatus.useQuery(
+    undefined,
+    {
+      enabled: canManageWeixinChannelsCollector && isAuthenticated,
+      refetchInterval: 15_000,
+      refetchOnWindowFocus: false,
+      retry: false,
+    },
+  );
+  const setWeixinChannelsCaptureEnabledMutation = trpc.mvAnalysis.setWeixinChannelsCaptureEnabled.useMutation({
+    onSuccess: async () => {
+      await weixinChannelsCollectorStatusQuery.refetch();
+    },
+  });
 
   /**
    * 图文知识卡提炼三档（精细 / 均衡 / 轻量）：用户 2026-08-05 明文开放给所有登录用户自选，
@@ -9908,11 +9925,10 @@ export default function PlatformPage() {
     }
     const visualPlatforms = toVisualReportPlatforms(selectedTrendPlatforms);
     if (!visualPlatforms.length) {
-      toast.error("当前所选平台暂不支持图文报表（视频号即将开放）");
+      toast.error("当前所选平台暂不支持图文报表");
       return;
     }
     const selectedPlatformLabels = selectedTrendPlatforms
-      .filter((k) => k !== "weixin_channels")
       .map((key) => TREND_PLATFORM_OPTIONS.find((item) => item.key === key)?.label)
       .filter(Boolean)
       .join("、");
@@ -11582,6 +11598,39 @@ export default function PlatformPage() {
                 );
               })}
             </div>
+
+            {canManageWeixinChannelsCollector ? (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-400/20 bg-emerald-400/[0.06] px-3 py-2.5">
+                <div>
+                  <div className="text-[11px] font-semibold text-emerald-100">视频号本机采集</div>
+                  <div className="mt-0.5 text-[10px] text-emerald-100/55">
+                    {weixinChannelsCollectorStatusQuery.data?.capture.enabled ? "已开启，等待本机心跳领取任务" : "已暂停，不影响其他平台采集"}
+                    {weixinChannelsCollectorStatusQuery.data?.capture.lastHeartbeatAt
+                      ? ` · 最近心跳 ${new Date(weixinChannelsCollectorStatusQuery.data.capture.lastHeartbeatAt).toLocaleString()}`
+                      : " · 尚无本机心跳"}
+                    {` · 正式累计 ${weixinChannelsCollectorStatusQuery.data?.accumulatedQualifiedCount ?? 0}/1000（单批最多2000）`}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={setWeixinChannelsCaptureEnabledMutation.isPending || weixinChannelsCollectorStatusQuery.isLoading}
+                  onClick={() => setWeixinChannelsCaptureEnabledMutation.mutate({
+                    enabled: !Boolean(weixinChannelsCollectorStatusQuery.data?.capture.enabled),
+                  })}
+                  className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
+                    weixinChannelsCollectorStatusQuery.data?.capture.enabled
+                      ? "border-emerald-300/40 bg-emerald-400/15 text-emerald-100"
+                      : "border-white/15 bg-black/25 text-white/65 hover:text-white"
+                  }`}
+                >
+                  {setWeixinChannelsCaptureEnabledMutation.isPending
+                    ? "保存中…"
+                    : weixinChannelsCollectorStatusQuery.data?.capture.enabled
+                      ? "停止采集"
+                      : "开启采集"}
+                </button>
+              </div>
+            ) : null}
 
             {!platformDashboard &&
             !visualReportData &&

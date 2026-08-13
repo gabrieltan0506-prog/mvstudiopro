@@ -113,6 +113,29 @@ export function resolveGpt56EvolinkFallbackTarget(modelNameHint?: string): Gpt56
   };
 }
 
+/** 视频号聚合专线主目标；名称独立，避免误用全站“官方主、EvoLink 备”语义。 */
+export function resolveGpt56EvolinkPrimaryTarget(modelNameHint?: string): Gpt56CopywritingTarget {
+  return resolveGpt56EvolinkFallbackTarget(modelNameHint);
+}
+
+/** 视频号聚合专线的官方备目标；缺少官方 key 时明确失败，不可绕回 EvoLink。 */
+export function resolveGpt56OfficialFallbackTarget(modelNameHint?: string): Gpt56CopywritingTarget {
+  const modelName = normalizeEvolinkChatModel(
+    modelNameHint || getEvolinkGpt56SolModel(),
+    EVOLINK_CHAT_MODEL_GPT56_SOL,
+  );
+  const officialKey = getOfficialOpenAiApiKey();
+  if (!officialKey) {
+    throw new Error("OPENAI_API_KEY（或 OPENAI_CHAT_API_KEY）未配置：无法使用官方备用通道");
+  }
+  return {
+    gateway: "openai_official",
+    apiUrl: OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL,
+    apiKey: officialKey,
+    modelName,
+  };
+}
+
 /**
  * 解析 GPT-5.6 文案应打的网关（不发请求）：
  * OpenAI 官方 →（无官方钥则）EvoLink。

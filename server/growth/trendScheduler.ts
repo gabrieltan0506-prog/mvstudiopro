@@ -27,7 +27,8 @@ import {
   withAbortableTimeout,
 } from "./collectorAbort.js";
 
-const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", "xiaohongshu", "toutiao"];
+/** 仅停止新抓取；快手/头条类型和历史集合仍保留给报表读取。 */
+const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "bilibili", "xiaohongshu"];
 const RETRY_BASE_MS = 5 * 60 * 1000;
 const RETRY_MAX_MS = Math.max(
   5 * 60 * 1000,

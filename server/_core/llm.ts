@@ -31,7 +31,9 @@ import {
   OPENAI_OFFICIAL_CHAT_COMPLETIONS_URL,
   OPENROUTER_CHAT_COMPLETIONS_URL,
   resolveGpt56CopywritingTarget,
+  resolveGpt56EvolinkPrimaryTarget,
   resolveGpt56EvolinkFallbackTarget,
+  resolveGpt56OfficialFallbackTarget,
   resolveGpt56OfficialOnlyTarget,
   resolveOpenRouterChatTarget,
 } from "../services/gpt56CopywritingGateway";
@@ -129,8 +131,11 @@ export type InvokeParams = {
    * OpenAI 兼容网关选择：
    * - `auto`（默认）：GPT-5.6 官方 OpenAI → OpenRouter；非 5.6 仍可能走 Evolink
    * - `official_only`：**仅** `api.openai.com`（禁止 Evolink / OpenRouter）——画布 Terra 多模态等专线
+   * - `evolink_primary`：仅调用方显式启用；EvoLink 主、官方 OpenAI 仅可重试错误备用
    */
-  openAiGateway?: "auto" | "official_only";
+  openAiGateway?: "auto" | "official_only" | "evolink_primary";
+  /** 同一批次在主/备通道与重试间保持不变，用于幂等审计。 */
+  requestId?: string;
 };
 
 export type ToolCall = {
@@ -182,6 +187,18 @@ function makeTransientLlmError(message: string, label: string): TransientLlmErro
   err.transient = true;
   err.providerLabel = label;
   return err;
+}
+
+/** 视频号专线只在网络/超时/限流/5xx 等可重试错误上切官方备用。 */
+export function isRetryableOpenAiGatewayError(error: unknown): boolean {
+  const candidate = error as { status?: unknown; transient?: unknown; name?: unknown; message?: unknown };
+  if (candidate?.transient === true) return true;
+  const status = Number(candidate?.status);
+  if (Number.isFinite(status) && status > 0) {
+    return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+  }
+  const message = String(candidate?.message || "");
+  return candidate?.name === "AbortError" || /timeout|timed out|fetch failed|network|socket|ECONN|ENOTFOUND|EAI_AGAIN|empty body|returned HTML/i.test(message);
 }
 
 /**
@@ -675,7 +692,7 @@ const resolveTarget = (
   modelTier: ModelTier | undefined,
   preferredProvider?: Provider,
   explicitModelName?: string,
-  openAiGateway: "auto" | "official_only" = "auto",
+  openAiGateway: "auto" | "official_only" | "evolink_primary" = "auto",
 ): LlmTarget => {
   if (preferredProvider === "anthropic") {
     const anthropicKey = String(process.env.ANTHROPIC_API_KEY || "").trim();
@@ -695,6 +712,7 @@ const resolveTarget = (
   if (preferredProvider === "openai" || modelTier === "gpt5" || modelTier === "gpt54") {
     const candidate = String(explicitModelName || getOpenAiModelName(modelTier)).trim();
     const officialOnly = openAiGateway === "official_only";
+    const evolinkPrimary = openAiGateway === "evolink_primary";
 
     /** 趋势报表等：`moonshotai/kimi-k3` 一类 slug 直连 OpenRouter，避免被归一成 GPT-5.6 */
     if (isDirectOpenRouterModelSlug(candidate)) {
@@ -719,9 +737,11 @@ const resolveTarget = (
       isOhMyGptGpt56FamilyModel(candidate) ||
       (!explicitModelName && modelTier !== "gpt54" && modelTier !== "gpt5")
     ) {
-      const gw = officialOnly
-        ? resolveGpt56OfficialOnlyTarget(candidate || getEvolinkGpt56SolModel())
-        : resolveGpt56CopywritingTarget(candidate || getEvolinkGpt56SolModel());
+      const gw = evolinkPrimary
+        ? resolveGpt56EvolinkPrimaryTarget(candidate || getEvolinkGpt56SolModel())
+        : officialOnly
+          ? resolveGpt56OfficialOnlyTarget(candidate || getEvolinkGpt56SolModel())
+          : resolveGpt56CopywritingTarget(candidate || getEvolinkGpt56SolModel());
       return {
         provider: "openai",
         apiUrl: gw.apiUrl,
@@ -1375,6 +1395,10 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
       "content-type": "application/json",
       authorization: `Bearer ${apiKey}`,
     };
+    if (params.requestId) {
+      headers["x-request-id"] = params.requestId;
+      headers["idempotency-key"] = params.requestId;
+    }
     if (label === "OpenRouter" || isOpenRouterChatEndpoint(apiUrl)) {
       Object.assign(headers, getOpenRouterChatHeaders());
     }
@@ -1418,7 +1442,11 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     }
 
     const rawText = await response.text();
-    return parseChatCompletionBody(rawText, label, response.status);
+    const parsed = parseChatCompletionBody(rawText, label, response.status);
+    return {
+      ...parsed,
+      provider: label === "Evolink" ? "evolink" : label === "OpenAI" ? "openai" : parsed.provider,
+    };
   };
 
   const isOhMyGptEndpoint = isOhMyGptChatEndpoint(String(target.apiUrl || ""));
@@ -1449,6 +1477,18 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     }
     return await primary;
   } catch (primaryErr) {
+    if (
+      params.openAiGateway === "evolink_primary"
+      && isEvolinkEndpoint
+      && isGpt56Family
+      && isRetryableOpenAiGatewayError(primaryErr)
+      && getOfficialOpenAiApiKey()
+    ) {
+      const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+      console.warn(`[EvoLink→OpenAI] GPT-5.6 retryable fallback: ${msg.slice(0, 240)}`);
+      const fb = resolveGpt56OfficialFallbackTarget(String(payload.model || target.modelName));
+      return postChatCompletions(fb.apiUrl, fb.apiKey, { ...payload, model: fb.modelName }, "OpenAI");
+    }
     // GPT-5.6：官方失败/超时 → EvoLink（含原 official_only）
     if (isOfficialEndpoint && isGpt56Family && getEvolinkApiKey()) {
       const msg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);

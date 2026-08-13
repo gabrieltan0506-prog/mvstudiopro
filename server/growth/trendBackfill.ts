@@ -73,7 +73,8 @@ const LIVE_FINE_PENDING_LIMIT = Math.max(
   2,
   Number(process.env.GROWTH_LIVE_BACKFILL_FINE_PENDING_LIMIT || 4) || 4,
 );
-const PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "kuaishou", "bilibili", "toutiao"];
+/** 回填 worker 同样不再向快手/头条发起新请求；旧数据不删除。 */
+const PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "bilibili"];
 const BACKFILL_EXCLUDE_PLATFORMS = new Set<GrowthPlatform>(
   String(process.env.GROWTH_BACKFILL_EXCLUDE_PLATFORMS || "")
     .split(",")

@@ -173,6 +173,7 @@ jobs:
           fetch_file_from_fly /data/growth/archive-index.json /tmp/growth-backup/store/archive-index.json true
           fetch_file_from_fly /data/growth/history-summary.json /tmp/growth-backup/store/history-summary.json true
           fetch_file_from_fly /data/growth/backups/growth-debug-summary.json /tmp/growth-backup/store/backups/growth-debug-summary.json false
+          fetch_file_from_fly /data/growth/weixin-channels-miner.json /tmp/growth-backup/store/weixin-channels-miner.json false
 
           if [ "${EXTERNALIZE_PLATFORMS:-false}" = "true" ]; then
             capture_from_fly "if [ -d /data/growth/platforms ]; then tar -C /data/growth -czf - platforms 2>/dev/null; fi" /tmp/growth-backup/growth-platforms.tar.gz 720 || true
@@ -256,6 +257,9 @@ jobs:
           (
             cd /tmp/growth-backup/store
             FILES="current.json runtime-meta.json archive-index.json history-summary.json backups"
+            if [ -f weixin-channels-miner.json ]; then
+              FILES="$FILES weixin-channels-miner.json"
+            fi
             if [ -d history-ledger ] && [ "${EXTERNALIZE_HISTORY_LEDGER:-false}" != "true" ]; then
               FILES="$FILES history-ledger"
             fi
@@ -288,6 +292,9 @@ jobs:
           gzip -c /tmp/growth-backup/store/archive-index.json > /tmp/growth-backup/archive-index.json.gz
           gzip -c /tmp/growth-backup/store/history-summary.json > /tmp/growth-backup/history-summary.json.gz
           gzip -c /tmp/growth-backup/store/backups/growth-debug-summary.json > /tmp/growth-backup/growth-debug-summary.json.gz
+          if [ -s /tmp/growth-backup/store/weixin-channels-miner.json ]; then
+            gzip -c /tmp/growth-backup/store/weixin-channels-miner.json > /tmp/growth-backup/weixin-channels-miner.json.gz
+          fi
           gh release upload growth-cold-store-latest \
             /tmp/growth-backup/current.json.gz#current.json.gz \
             /tmp/growth-backup/runtime-meta.json.gz#runtime-meta.json.gz \
@@ -298,13 +305,18 @@ jobs:
             /tmp/growth-backup/cold-restore-manifest.json#cold-restore-manifest.json \
             /tmp/growth-backup/growth-restore-bundle.tar.gz#growth-restore-bundle.tar.gz \
             --clobber
+          if [ -s /tmp/growth-backup/weixin-channels-miner.json.gz ]; then
+            gh release upload growth-cold-store-latest \
+              /tmp/growth-backup/weixin-channels-miner.json.gz#weixin-channels-miner.json.gz \
+              --clobber
+          fi
           for asset in /tmp/growth-backup/growth-platforms.tar.gz /tmp/growth-backup/growth-platform-current.tar.gz /tmp/growth-backup/growth-history-ledger.tar.gz; do
             [ -f "$asset" ] || continue
             gh release upload growth-cold-store-latest "$asset#$(basename "$asset")" --clobber
           done
           for asset in /tmp/growth-backup/*.json.gz; do
             case "$(basename "$asset")" in
-              current.json.gz|runtime-meta.json.gz|archive-index.json.gz|history-summary.json.gz|growth-debug-summary.json.gz) continue ;;
+              current.json.gz|runtime-meta.json.gz|archive-index.json.gz|history-summary.json.gz|growth-debug-summary.json.gz|weixin-channels-miner.json.gz) continue ;;
             esac
             gh release upload growth-cold-store-latest "$asset#$(basename "$asset")" --clobber
           done

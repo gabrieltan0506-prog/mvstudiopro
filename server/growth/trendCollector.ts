@@ -69,6 +69,12 @@ export type TrendItem = {
   likes?: number;
   comments?: number;
   shares?: number;
+  /** 收藏数（视频号等平台可见时写入；禁止估算） */
+  favorites?: number;
+  /** 作者粉丝数（平台公开可见时写入；禁止估算） */
+  followers?: number;
+  /** 当前用户的朋友关注数（视频号公开界面信号） */
+  friendsFollowing?: number;
   views?: number;
   hotValue?: number;
   contentType?: "video" | "note" | "topic";
@@ -89,6 +95,15 @@ export type TrendItem = {
   /** AI 漫剧 / 普通短剧 / 未知（标题+合集名启发式） */
   dramaKind?: DouyinDramaKind;
   dramaInfo?: DouyinDramaInfo;
+  /** 外部/本机采集证据链，确保模型结论可追溯到真实观测。 */
+  sourceEvidence?: {
+    mode: "capture" | "manual";
+    observedAt: string;
+    query: string;
+    resultRank: number;
+    sourcePlatform?: GrowthPlatform;
+    sourceItemId?: string;
+  };
 };
 
 /** 抖音 Web author 常见字段：企业认证、政务媒体、蓝标文案（用于结构化排除商业号） */
