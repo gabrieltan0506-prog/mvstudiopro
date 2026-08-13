@@ -12,8 +12,10 @@ import {
   findCommentsClosePoint,
   findCommentsOpenPoint,
   findFirstSearchVideoPoint,
+  findExactSearchSuggestionPoint,
   findSearchInputPoint,
   hasFourVisibleMetrics,
+  hasTypedSearchKeyword,
   metricsRemainOnSameVideo,
   parseVisibleMetric,
   parseVisibleVideoClockSeconds,
@@ -26,6 +28,7 @@ import {
   WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS,
   WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS,
   WEIXIN_CHANNELS_SEARCH_BUTTON_POINT,
+  WEIXIN_CHANNELS_SEARCH_INPUT_POINT,
   waitForVisibleVideoLoad,
 } from "../../scripts/weixin-channels-capture.mts";
 
@@ -90,6 +93,16 @@ describe("weixin channels OCR", () => {
     expect(metrics).toMatchObject({ likes: 2985, shares: 6234, favorites: 2641, comments: 17 });
   });
 
+  it("横排 OCR 漏掉一项时按真实槽位保留其余指标", () => {
+    const metrics = extractWeixinChannelsMetrics([
+      { text: "2.7万", confidence: 0.99, x: 0.52, y: 0.05, width: 0.05, height: 0.03 },
+      { text: "8315", confidence: 0.99, x: 0.76, y: 0.05, width: 0.05, height: 0.03 },
+      { text: "2319", confidence: 0.99, x: 0.88, y: 0.05, width: 0.05, height: 0.03 },
+    ]);
+    expect(metrics).toMatchObject({ likes: 27_000, favorites: 8_315, comments: 2_319 });
+    expect(metrics.shares).toBeUndefined();
+  });
+
   it("忽略画面中的 F 键和正文数字，只读取底部四项及真实标题作者", () => {
     const lines = [
       { text: "F7", confidence: 0.99, x: 0.75, y: 0.18, width: 0.03, height: 0.02 },
@@ -109,6 +122,27 @@ describe("weixin channels OCR", () => {
     expect(point?.y).toBeCloseTo(0.06);
     expect(findSearchInputPoint([])).toBeNull();
     expect(WEIXIN_CHANNELS_SEARCH_BUTTON_POINT).toEqual({ x: 0.785, y: 0.026 });
+    expect(WEIXIN_CHANNELS_SEARCH_INPUT_POINT).toEqual({ x: 0.58, y: 0.026 });
+  });
+
+  it("回车停在联想下拉框时只点击完全匹配的搜索词", () => {
+    const point = findExactSearchSuggestionPoint([
+      { text: "Al拥抱自由，找准普通人搞钱方向", confidence: 1, x: 0.42, y: 0.965, width: 0.36, height: 0.02 },
+      { text: "AI拥抱自由，找准普通人搞钱方向", confidence: 1, x: 0.42, y: 0.907, width: 0.37, height: 0.02 },
+      { text: "AI多少钱", confidence: 1, x: 0.42, y: 0.78, width: 0.2, height: 0.02 },
+    ], "AI拥抱自由，找准普通人搞钱方向");
+    expect(point?.x).toEqual(expect.any(Number));
+    expect(point?.y).toBeCloseTo(0.083, 2);
+    expect(findExactSearchSuggestionPoint([], "AI拥抱自由")).toBeNull();
+    expect(hasTypedSearchKeyword([
+      { text: "找Al拥抱自由，找准普通人搞钱方向", confidence: 1, x: 0.42, y: 0.965, width: 0.36, height: 0.02 },
+    ], "AI拥抱自由，找准普通人搞钱方向")).toBe(true);
+    expect(hasTypedSearchKeyword([
+      { text: "Q Al漫剧教程", confidence: 0.3, x: 0.4, y: 0.963, width: 0.2, height: 0.02 },
+    ], "AI漫剧教程")).toBe(true);
+    expect(hasTypedSearchKeyword([
+      { text: "• AI漫剧教程", confidence: 0.3, x: 0.4, y: 0.963, width: 0.2, height: 0.02 },
+    ], "AI漫剧教程")).toBe(true);
   });
 
   it("搜索结果优先定位带时长的自然视频卡，避开广告与账号卡", () => {
@@ -182,6 +216,26 @@ describe("weixin channels OCR", () => {
     await expect(fs.stat(pending)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("Fly 响应正文不结束时按总截止时间退出并保留待传文件", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-upload-timeout-"));
+    const pending = path.join(dir, "pending.json");
+    await fs.writeFile(pending, JSON.stringify({ observationId: "obs-timeout" }));
+    const hangingFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => new Promise<string>(() => undefined),
+    });
+    await expect(uploadPendingObservation({
+      server: "https://example.invalid",
+      token: "token",
+      taskId: "task-timeout",
+      pendingFile: pending,
+      deadlineAt: Date.now() + 30,
+      fetchImpl: hangingFetch as unknown as typeof fetch,
+    })).rejects.toThrow("upload_timeout");
+    await expect(fs.stat(pending)).resolves.toBeTruthy();
+  });
+
   it("按新容差救回旧隔离记录，并在单次心跳只补传一条", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-recovery-"));
     const quarantine = path.join(dir, "weixin-channels-quarantine");
@@ -235,9 +289,24 @@ describe("weixin channels OCR", () => {
     expect(queries.join(" ")).not.toMatch(/短剧|爽文|免费看/);
   });
 
+  it("不会只取每个类目前三个热词，后续七天新词也进入轮换", () => {
+    const queries = buildDiverseCollectorSearchQueries({
+      candidates: [{
+        taskId: "ai",
+        category: "AI工具",
+        searchQueries: ["词一", "词二", "词三", "词四", "词五", "词六"],
+      }],
+      recentlyUsed: ["词一", "词二"],
+      limit: 6,
+    });
+    expect(queries).toEqual(["词三", "词四", "词五", "词六", "词一", "词二"]);
+  });
+
   it("进度抽查时四项指标必须仍属于同一视频", () => {
     const base = { likes: 4_855, shares: 1_766, favorites: 1_997, comments: 254, rawText: [] };
     expect(metricsRemainOnSameVideo(base, { likes: 4_856, shares: 1_766, favorites: 1_997, comments: 254, rawText: [] })).toBe(true);
     expect(metricsRemainOnSameVideo(base, { likes: 34_000, shares: 27_000, favorites: 9_726, comments: 2_147, rawText: [] })).toBe(false);
+    expect(metricsRemainOnSameVideo(base, { likes: 4_856, shares: 1_766, favorites: undefined, comments: undefined, rawText: [] })).toBe(true);
+    expect(metricsRemainOnSameVideo(base, { likes: 4_856, shares: undefined, favorites: undefined, comments: undefined, rawText: [] })).toBe(false);
   });
 });
