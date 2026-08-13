@@ -68,6 +68,7 @@ async function main() {
     archiveIndex: await statIfExists(path.join(storeDir, "archive-index.json")),
     historySummary: await statIfExists(path.join(storeDir, "history-summary.json")),
     growthDebugSummary: await statIfExists(path.join(storeDir, "backups", "growth-debug-summary.json")),
+    weixinChannelsMiner: await statIfExists(path.join(storeDir, "weixin-channels-miner.json")),
     platforms: Object.fromEntries(
       await Promise.all(
         PLATFORM_ORDER.map(async (platform) => [

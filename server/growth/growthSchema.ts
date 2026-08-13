@@ -79,7 +79,7 @@ const PLATFORM_BY_LABEL = Object.fromEntries(
 export function normalizePlatforms(input?: string[]): GrowthPlatform[] {
   const mapped = (input || [])
     .map((item) => PLATFORM_ALIASES[String(item || "").trim().toLowerCase()] || PLATFORM_ALIASES[String(item || "").trim()])
-    .filter((item): item is GrowthPlatform => Boolean(item) && item !== "weixin_channels");
+    .filter((item): item is GrowthPlatform => Boolean(item));
   const unique = Array.from(new Set(mapped));
   return unique.length ? unique.slice(0, 4) : ["douyin", "kuaishou", "bilibili", "xiaohongshu"];
 }
@@ -2565,7 +2565,7 @@ export function buildGrowthSnapshotFromCollections(params: {
   windowDaysOverride?: number;
 }): GrowthSnapshot {
   const collectedPlatforms = (Object.entries(params.collections) as Array<[GrowthPlatform, PlatformTrendCollection | undefined]>)
-    .filter(([platform, collection]) => platform !== "weixin_channels" && Boolean(collection?.items?.length))
+    .filter(([, collection]) => Boolean(collection?.items?.length))
     .map(([platform]) => platform);
   const requestedPlatforms = normalizePlatforms(
     params.requestedPlatforms?.length

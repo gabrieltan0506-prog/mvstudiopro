@@ -9,6 +9,23 @@ export type VisualReportData = {
   trackGrowth?: Array<{ name: string; growth: string; isHot?: boolean }>;
   audiencesAndBiz?: Array<{ audience: string; bizDirection: string }>;
   topicExamples?: Array<{ structure: string; concept: string; realCase: string }>;
+  excellentCoverReferences?: Array<{
+    sourceId: string;
+    platform: string;
+    title: string;
+    author?: string;
+    sourceUrl?: string;
+    coverUrl?: string;
+    rank: number;
+    highCtrReason?: string;
+  }>;
+  legacyCoverReferences?: Array<{
+    sourceId: string;
+    platform: string;
+    title: string;
+    author?: string;
+    sourceUrl?: string;
+  }>;
   // New global fields from upgraded prompt
   trafficSupport?: string[];
   hotFestivals?: string[];
@@ -804,4 +821,65 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
       </div>
     );
   }
+);
+
+/** 独立第二张 PNG：不挤占主周报版面，不触发生图调用。 */
+export const VisualReportCoverPage = React.forwardRef<HTMLDivElement, Props>(
+  function VisualReportCoverPage({ data }, ref) {
+    const border = "rgba(140,90,70,0.28)";
+    const bodyTxt = "#3D2A20";
+    return (
+      <div
+        ref={ref}
+        style={{
+          background: data.theme === "dark" ? HERMES_PAGE_BG : "linear-gradient(168deg, #F7F1EA 0%, #F3E0D6 100%)",
+          color: "#2A1810",
+          fontFamily: '"PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif',
+          padding: "32px",
+          minWidth: "900px",
+          maxWidth: "1200px",
+        }}
+      >
+        <div style={{ borderBottom: `1px solid ${border}`, paddingBottom: "14px", marginBottom: "18px" }}>
+          <div style={{ fontSize: "26px", fontWeight: 900 }}>本期优秀封面 · Terra High 选秀</div>
+          <div style={{ marginTop: "5px", fontSize: "12px", color: "#6B4E3D" }}>
+            {data.dateRange} · 从真实平台封面候选中按点击吸引力排序
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "14px" }}>
+          {(data.excellentCoverReferences || []).slice(0, 10).map((cover) => (
+            <div key={cover.sourceId} style={{ display: "grid", gridTemplateColumns: "150px 1fr", gap: "12px", minHeight: "210px", padding: "12px", background: "rgba(255,249,242,0.96)", border: `1px solid ${border}`, borderRadius: "12px" }}>
+              {cover.coverUrl ? (
+                <img src={cover.coverUrl} crossOrigin="anonymous" alt={cover.title} style={{ width: "150px", height: "210px", objectFit: "cover", borderRadius: "9px" }} />
+              ) : <div style={{ width: "150px", height: "210px", borderRadius: "9px", background: "rgba(70,48,36,0.08)" }} />}
+              <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                <div style={{ fontSize: "18px", fontWeight: 900, color: C[(cover.rank - 1) % C.length] }}>#{cover.rank}</div>
+                <div style={{ marginTop: "7px", fontSize: "14px", fontWeight: 800, lineHeight: 1.45 }}>{safeTxt(cover.title)}</div>
+                <div style={{ marginTop: "6px", fontSize: "11px", color: "#6B4E3D" }}>{PLATFORM_ICONS[cover.platform] || "📱"} {safeTxt(cover.author) || "作者未标注"}</div>
+                <div style={{ marginTop: "auto", paddingTop: "10px", borderTop: `1px solid ${border}`, fontSize: "12px", color: bodyTxt, lineHeight: 1.6 }}>
+                  <span style={{ color: C[(cover.rank + 2) % C.length], fontWeight: 900 }}>高 CTR 判断：</span>
+                  {safeTxt(cover.highCtrReason) || "真实互动领先，首屏主体与标题信息易识别"}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        {(data.legacyCoverReferences?.length || 0) > 0 && (
+          <div style={{ marginTop: "18px", padding: "16px 18px", background: "rgba(255,249,242,0.94)", border: `1px solid ${border}`, borderRadius: "12px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 900, color: C[6], marginBottom: "9px" }}>历史参考（旧数据无封面，仅列标题与作者）</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 18px" }}>
+              {(data.legacyCoverReferences || []).slice(0, 20).map((row) => (
+                <div key={row.sourceId} style={{ fontSize: "11px", color: bodyTxt, lineHeight: 1.5 }}>
+                  {PLATFORM_ICONS[row.platform] || "📱"} {safeTxt(row.title)} · {safeTxt(row.author) || "作者未标注"}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <div style={{ marginTop: "20px", paddingTop: "12px", borderTop: `1px solid ${border}`, fontSize: "11px", color: "#6B4E3D", textAlign: "center" }}>
+          由 mvstudiopro Platform Intelligence 生成 · 封面来自真实平台内容，不使用 GPT‑Image‑2 重绘
+        </div>
+      </div>
+    );
+  },
 );

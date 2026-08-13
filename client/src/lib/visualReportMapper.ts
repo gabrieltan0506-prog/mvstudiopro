@@ -5,7 +5,7 @@ import {
 } from "@shared/blueOceanLexicon";
 import type { VisualReportData } from "@/components/VisualReportTemplate";
 
-export type VisualReportPlatformKey = "douyin" | "kuaishou" | "xiaohongshu" | "bilibili";
+export type VisualReportPlatformKey = "douyin" | "kuaishou" | "xiaohongshu" | "bilibili" | "weixin_channels";
 export type VisualReportTheme = "dark" | "light";
 export type VisualReportWindowDays = "3" | "7" | "15" | "30";
 
@@ -14,6 +14,7 @@ const PLATFORM_NAMES: Record<VisualReportPlatformKey, string> = {
   kuaishou: "快手",
   xiaohongshu: "小红书",
   bilibili: "B站",
+  weixin_channels: "视频号",
 };
 
 type BlueOceanWord = { primary: string; secondary: string[] };
@@ -49,7 +50,7 @@ export function toVisualReportWindowDays(days: PlatformWindowDays): VisualReport
 export function toVisualReportPlatforms(
   platforms: readonly string[],
 ): VisualReportPlatformKey[] {
-  const allowed = new Set<VisualReportPlatformKey>(["douyin", "kuaishou", "xiaohongshu", "bilibili"]);
+  const allowed = new Set<VisualReportPlatformKey>(["douyin", "kuaishou", "xiaohongshu", "bilibili", "weixin_channels"]);
   return platforms.filter((p): p is VisualReportPlatformKey => allowed.has(p as VisualReportPlatformKey));
 }
 
@@ -208,6 +209,12 @@ export function mapGenerateVisualReportResult(
       ? (report.audiencesAndBiz as VisualReportData["audiencesAndBiz"])
       : [],
     topicExamples,
+    excellentCoverReferences: Array.isArray(report.excellentCoverReferences)
+      ? (report.excellentCoverReferences as VisualReportData["excellentCoverReferences"])
+      : [],
+    legacyCoverReferences: Array.isArray(report.legacyCoverReferences)
+      ? (report.legacyCoverReferences as VisualReportData["legacyCoverReferences"])
+      : [],
     trafficSupport: Array.isArray(report.trafficSupport) ? (report.trafficSupport as string[]) : [],
     hotFestivals: Array.isArray(report.hotFestivals) ? (report.hotFestivals as string[]) : [],
     globalBlueOceanWords,

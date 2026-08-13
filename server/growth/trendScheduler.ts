@@ -20,6 +20,7 @@ import {
 } from "./trendStore";
 import { notifyGrowthCollectionUpdate } from "./trendMailDigest";
 import { nowShanghaiIso } from "./time";
+import { backfillRecentTrendCoverUrls } from "./trendCoverSelection";
 import {
   buildTimeoutCooldownMs,
   formatTimeoutCooldownLabel,
@@ -27,7 +28,8 @@ import {
   withAbortableTimeout,
 } from "./collectorAbort.js";
 
-const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", "xiaohongshu", "toutiao"];
+/** 仅停止新抓取；快手/头条类型和历史集合仍保留给报表读取。 */
+const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "bilibili", "xiaohongshu"];
 const RETRY_BASE_MS = 5 * 60 * 1000;
 const RETRY_MAX_MS = Math.max(
   5 * 60 * 1000,
@@ -419,7 +421,14 @@ async function runPlatform(platform: GrowthPlatform) {
       getPlatformRunTimeoutMs(platform),
       `[growth.scheduler] ${platform}`,
     );
-    const mergedStore = await mergeTrendCollections({ [platform]: collection });
+    let mergedStore = await mergeTrendCollections({ [platform]: collection });
+    const mergedBeforeBackfill = mergedStore.collections[platform];
+    if (mergedBeforeBackfill) {
+      const backfilled = await backfillRecentTrendCoverUrls(platform, mergedBeforeBackfill);
+      if (backfilled.resolved > 0) {
+        mergedStore = await mergeTrendCollections({ [platform]: backfilled.collection });
+      }
+    }
     const mergedCollection = mergedStore.collections[platform];
     const currentCount = collection.stats?.itemCount || collection.items.length;
     const previousCount = currentState?.lastCollectedCount || 0;

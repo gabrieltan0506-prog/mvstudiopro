@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT } from "../shared/weixinChannelsRules.js";
 
 import { COOKIE_NAME, TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../shared/const.js";
 import { HTML_PPT_VIZ_KINDS, type HtmlPptVizKind } from "../shared/htmlPptMaker.js";
@@ -67,6 +68,11 @@ import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/prem
 import { buildAiManhuaRisingBoard, buildAiManhuaRisingByPlatform } from "./growth/aiManhuaRising";
 import { AI_MANHUA_RISING_BOARD_LIMIT } from "../shared/manhuaDramaClassify";
 import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
+import {
+  mirrorSelectedTrendCovers,
+  selectTrendCoverCandidates,
+  TREND_COVER_DISPLAY_LIMIT,
+} from "./growth/trendCoverSelection";
 import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, loadDouyinDramaBaselineItems, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
 import { summarizeTrendWindowCounts } from "./growth/trendWindow";
@@ -142,7 +148,9 @@ import {
   getCreditTransactions,
   getOrCreateBalance,
   refundCredits,
+  refundCreditsForDeductAmount,
 } from "./credits";
+import { getPlatformTrendReportCredits } from "../shared/platformTrendPricing.js";
 import { CREDIT_COSTS } from "./plans";
 import {
   IMAGE_UPSCALE_BASE_CREDIT_KEYS,
@@ -3051,6 +3059,53 @@ export const appRouter = router({
 
   // Video PK Rating - upload video frame and get AI analysis
   mvAnalysis: router({
+    getWeixinChannelsCollectorStatus: adminProcedure.query(async () => {
+      const { getWeixinChannelsMinerState } = await import("./growth/weixinChannelsMinerStore.js");
+      const state = await getWeixinChannelsMinerState();
+      return {
+        capture: state.capture,
+        aggregationPaused: state.aggregationPaused,
+        accumulatedQualifiedCount: state.observations.filter((item) => item.runKind !== "probe" && item.qualified && !item.invalid && !item.consumedAt && !item.aggregationJobId).length,
+        probeQualifiedCount: state.observations.filter((item) => item.runKind === "probe" && item.qualified && !item.invalid).length,
+        totalScanned: state.observations.length,
+        deepseekCompletedBatchCount: state.jobs.filter((item) => item.kind === "formal" && item.stage === "deepseek_batch" && item.status === "completed" && !item.cleanedByJobId).length,
+        terraCleanupBatchTarget: WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
+        latestJob: state.jobs[state.jobs.length - 1] || null,
+      };
+    }),
+
+    setWeixinChannelsCaptureEnabled: adminProcedure
+      .input(z.object({ enabled: z.boolean() }))
+      .mutation(async ({ input }) => {
+        const { refreshWeixinChannelsCandidates, setWeixinChannelsCaptureEnabled } = await import("./growth/weixinChannelsMinerStore.js");
+        if (input.enabled) await refreshWeixinChannelsCandidates();
+        const state = await setWeixinChannelsCaptureEnabled(input.enabled);
+        return { ok: true as const, capture: state.capture };
+      }),
+
+    setWeixinChannelsAggregationPaused: adminProcedure
+      .input(z.object({ paused: z.boolean() }))
+      .mutation(async ({ input }) => {
+        const { setWeixinChannelsAggregationPaused } = await import("./growth/weixinChannelsMinerStore.js");
+        const state = await setWeixinChannelsAggregationPaused(input.paused);
+        return { ok: true as const, aggregationPaused: state.aggregationPaused };
+      }),
+
+    startWeixinChannelsAggregation: adminProcedure
+      .input(z.object({ jobId: z.string().min(6).max(160).optional(), probe: z.boolean().optional() }))
+      .mutation(async ({ input }) => {
+        const store = await import("./growth/weixinChannelsMinerStore.js");
+        await store.setWeixinChannelsAggregationPaused(false);
+        const job = input.probe
+          ? (await store.createWeixinChannelsProbeJob()).job
+          : input.jobId
+            ? (await store.getWeixinChannelsMinerState()).jobs.find((item) => item.jobId === input.jobId)
+            : (await store.getWeixinChannelsMinerState()).jobs.find((item) => item.kind === "formal" && item.status !== "completed");
+        if (!job) throw new Error("当前没有可启动的整理任务");
+        const started = store.startWeixinChannelsAggregationInBackground(job.jobId);
+        return { ok: true as const, started, jobId: job.jobId, kind: job.kind };
+      }),
+
     analyzeFrame: publicProcedure
       .input(z.object({
         imageBase64: z.string().min(1),
@@ -3936,26 +3991,31 @@ export const appRouter = router({
         const { assertMaintenanceOff } = await import("./services/maintenanceMode");
         await assertMaintenanceOff("平台數據分析");
 
-        // ── 扣費：每次平台數據分析扣 platformTrend（50 cr）─────────────────
+        const jobId = nanoid(16);
+        // ── 扣费真源：9 月 15 日前 50；北京时间 9 月 16 日起 60 ─────────
         let creditsBilled = 0;
         if (ctx.user?.id) {
           const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
           if (!isAdminUser) {
-            const cost = CREDIT_COSTS["platformTrend"];
+            const cost = getPlatformTrendReportCredits(input.windowDays);
             const creditsInfo = await getCredits(ctx.user.id);
             if (creditsInfo.totalAvailable < cost) {
               throw new Error(
                 `Credits 不足，平台數據分析需要 ${cost} Credits（當前餘額：${creditsInfo.totalAvailable}）`
               );
             }
-            await deductCredits(ctx.user.id, "platformTrend", `平台數據分析（${input.windowDays}天窗口）`);
+            await deductCreditsAmount(
+              ctx.user.id,
+              cost,
+              "platformTrend",
+              `平台数据分析（${input.windowDays}天窗口，含优秀封面页）`,
+              { chargeKey: `platform-trend-job:${ctx.user.id}:${jobId}` },
+            );
             creditsBilled = cost;
           }
         } else {
           throw new Error("請先登入，才能使用平台數據分析功能");
         }
-
-        const jobId = nanoid(16);
 
         // ── paidJobLedger：登记 active hold（runner.ts 失败兜底退积分） ────
         if (creditsBilled > 0) {
@@ -4750,21 +4810,24 @@ export const appRouter = router({
         return { ok: true as const, count: input.contentBlueprints.length };
       }),
 
-    generateVisualReport: publicProcedure
+    generateVisualReport: protectedProcedure
       .input(z.object({
         // Extended to support short-form trend radar: 3d and 7d windows
         windowDays: z.enum(["3", "7", "15", "30"]),
         theme: z.enum(["light", "dark"]),
-        platforms: z.array(z.enum(["douyin", "kuaishou", "xiaohongshu", "bilibili"])),
+        platforms: z.array(z.enum(["douyin", "kuaishou", "xiaohongshu", "bilibili", "weixin_channels"])),
         /** 可選：創作者人設補充（職業、身份、興趣、專長等），用於收窄熱點解讀與選題公式落點 */
         personaContext: z.string().max(4000).optional(),
+        /** 同一次用户点击的计费幂等键；重试不得重复扣分。 */
+        billingRequestId: z.string().min(12).max(120),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const PLATFORM_NAMES: Record<string, string> = {
           douyin: "抖音",
           kuaishou: "快手",
           xiaohongshu: "小红书",
           bilibili: "B站",
+          weixin_channels: "视频号",
           toutiao: "今日头条",
         };
         const platformListStr = input.platforms.map((p) => PLATFORM_NAMES[p] || p).join("、");
@@ -4828,11 +4891,11 @@ export const appRouter = router({
           const windowCutoff = shBounds.currentStart;
           const windowItems = items.filter((item: any) => {
             const ts = item?.collectedAt || item?.publishedAt || item?.date || null;
-            if (!ts) return true;
+            if (!ts) return false;
             const ms = new Date(String(ts)).getTime();
             return Number.isFinite(ms) && ms >= windowCutoff && ms < shBounds.currentEndExclusive;
           });
-          const evidenceItems = windowItems.length > 0 ? windowItems : items.slice(0, 30);
+          const evidenceItems = windowItems;
           const hotTitles = evidenceItems.slice(0, 15).map((i: any) => i.title || i.keyword || "").filter(Boolean);
           const playCounts = evidenceItems
             .map((i: any) => Number(i.playCount || i.play_count || i.likes || i.views || 0))
@@ -4885,6 +4948,27 @@ export const appRouter = router({
               : "当前窗口内没有可用的平台样本。请确认采集已更新后再试。",
           });
         }
+
+        const selectedCoverCollections = Object.fromEntries(
+          input.platforms.map((platform) => [platform, (store.collections as any)?.[platform]]),
+        );
+        const coverCandidates = selectTrendCoverCandidates(selectedCoverCollections as any, {
+          contentStartAt: shBounds.currentStart,
+          endExclusive: shBounds.currentEndExclusive,
+        });
+        const legacyCoverReferences = input.platforms.flatMap((platform) => {
+          const items = (((store.collections as any)?.[platform]?.items || []) as TrendItem[]);
+          return items
+            .filter((item) => item.title && item.author && !item.coverUrl)
+            .slice(0, 20)
+            .map((item) => ({
+              sourceId: `${platform}:${item.id}`,
+              platform,
+              title: item.title,
+              author: item.author,
+              sourceUrl: item.url,
+            }));
+        }).slice(0, 20);
 
         const industryGrowthHintMap = buildIndustryGrowthHintMap(store, input.platforms as string[], wd, anchorMs);
         const industryGrowthHintsObj = Object.fromEntries(
@@ -4948,16 +5032,23 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 - trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-4条）。**必须优先采用** user JSON 字段 officialCampaigns.globalTrafficSupport 中的条目（可略压缩说明），格式：["活动名称：详细说明"]
 - hotFestivals：根據今天 ${currentDateStr} 及前后 ${wd} 天范围，指出当下正在爆发或即将到来的节日、节气或社会热点（2-3个）。格式：["节日/热点：简要说明与内容切入角度"]
 - globalBlueOceanWords：**【必须输出 4–6 组，禁止空数组】** 聚合选定平台的高意图搜索词，一/二级分级。格式：[{"primary":"一级词","secondary":["二级词1","二级词2"]}]。须从 platformEvidence.topTitles、dramaMixNames、dramaRising、行业样本 key、各平台 hotTopics 提炼；含抖音漫剧样本时可输出「AI漫剧/重生漫剧」类一级词。无法核实月搜索量时仍须输出，**禁止**「尚未检索到蓝海词」等空话。
+- excellentCoverSelections：只从 user JSON 的 coverCandidates.sourceId 中选择，按预估自然点击吸引力由高到低输出最多 ${TREND_COVER_DISPLAY_LIMIT} 个，格式为 [{"sourceId":"平台:内容ID","highCtrReason":"15–40字，指出主体、文字、反差、情绪或构图为何能提高点击"}]。允许同类目重复；必须结合画面、标题、作者及真实互动指标判断，禁止伪造 ID，禁止空泛写「画面吸引人」。
 
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 
-        /**
-         * 平台趋势分析报表（独立功能）文案 JSON：默认 OpenRouter **moonshotai/kimi-k3**
-         *（见 getVisualReportOpenAiModel / https://openrouter.ai/moonshotai/kimi-k3）。
-         */
+        /** 平台趋势分析 + 封面选秀：统一由 GPT-5.6 Terra High 处理。 */
         const visualReportModel = getVisualReportOpenAiModel();
         const llmStartedAtMs = Date.now();
+        let trendReportDeduct: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
         try {
+          const trendReportCredits = getPlatformTrendReportCredits(Number(input.windowDays));
+          trendReportDeduct = await deductCreditsAmount(
+            ctx.user.id,
+            trendReportCredits,
+            "platformTrend",
+            `平台趋势报告（${input.windowDays}天，含本期优秀封面页）`,
+            { chargeKey: `platform-trend:${ctx.user.id}:${input.billingRequestId}` },
+          );
           const { listOfficialCampaignLinesForReport, ensureOfficialCampaignSeedsLoaded } = await import(
             "./services/platformOfficialCampaigns"
           );
@@ -4981,15 +5072,26 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             platformEvidence: platformEvidenceForLlm,
             industrySampleGrowth: industryGrowthHintsObj,
             officialCampaigns,
+            coverCandidates: coverCandidates.map(({ coverUrl: _coverUrl, ...row }) => row),
             ...(String(input.personaContext || "").trim()
               ? { personaContext: String(input.personaContext).trim().slice(0, 4000) }
               : {}),
           });
 
-          const visualReportMaxTokens = resolveOpenRouterKimiK3MaxCompletionTokens(
-            "VISUAL_REPORT_MAX_COMPLETION_TOKENS",
+          const visualReportMaxTokens = Math.max(
+            8_192,
+            Math.min(65_536, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 32_768),
           );
           const visualReportUser = `${userPayload}\n\n【輸出】僅輸出一個合法 JSON 物件（禁止 markdown围栏與前言後語）；首尾字元為 { 與 }。`;
+          const visualReportUserContent = coverCandidates.length
+            ? [
+                { type: "text" as const, text: visualReportUser },
+                ...coverCandidates.flatMap((candidate, index) => [
+                  { type: "text" as const, text: `封面候选 ${index + 1} · sourceId=${candidate.sourceId} · ${candidate.platform} · ${candidate.title} · 作者=${candidate.author || "未知"}` },
+                  { type: "image_url" as const, image_url: { url: String(candidate.coverUrl), detail: "high" as const } },
+                ]),
+              ]
+            : visualReportUser;
 
           const VISUAL_REPORT_MAX_ATTEMPTS = 3;
           let response: Awaited<ReturnType<typeof invokeLLM>> | null = null;
@@ -5002,13 +5104,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               response = await invokeLLM({
                 provider: "openai",
                 modelName: visualReportModel,
-                /** OpenRouter Kimi K3 · reasoning max · 直连 */
                 response_format: { type: "json_object" },
                 max_tokens: visualReportMaxTokens,
-                reasoningEffort: "max",
+                reasoningEffort: "high",
+                openAiGateway: "evolink_primary",
+                requestId: `visual-report:${input.billingRequestId}`,
                 messages: [
                   { role: "system", content: systemPrompt },
-                  { role: "user", content: visualReportUser },
+                  { role: "user", content: visualReportUserContent },
                 ],
               });
               const choice0 = response.choices?.[0];
@@ -5166,8 +5269,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           };
           appendRuntimeMetric("visual.report", {
             ok: true,
-            engineEnv: "openai_official",
-            provider: `openai_official:${visualReportModel}`,
+            engineEnv: "evolink_primary",
+            provider: `${String(response?.provider || "evolink_primary")}:${visualReportModel}`,
             durationMs: Date.now() - llmStartedAtMs,
             upstreamModel: String(response?.model ?? visualReportModel).trim() || null,
             finishReason: choice0?.finish_reason ?? null,
@@ -5213,6 +5316,21 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 };
               })
             : [];
+          const coverSelections = Array.isArray(parsed.excellentCoverSelections)
+            ? parsed.excellentCoverSelections.map((row: any) => ({
+                sourceId: safeStr(row?.sourceId),
+                highCtrReason: safeStr(row?.highCtrReason).slice(0, 80),
+              })).filter((row: { sourceId: string }) => row.sourceId)
+            : [];
+          const coverReasonById = new Map(coverSelections.map((row: { sourceId: string; highCtrReason: string }) => [row.sourceId, row.highCtrReason]));
+          const requestedCoverIds = coverSelections.map((row: { sourceId: string }) => row.sourceId);
+          const rankedCoverIds = requestedCoverIds.length
+            ? requestedCoverIds
+            : coverCandidates.slice(0, TREND_COVER_DISPLAY_LIMIT).map((row) => row.sourceId);
+          const excellentCoverReferences = (await mirrorSelectedTrendCovers(coverCandidates, rankedCoverIds)).map((row) => ({
+            ...row,
+            highCtrReason: coverReasonById.get(row.sourceId) || "真实互动领先，主体与标题信息在首屏更易识别",
+          }));
           const topicHints = Array.isArray(parsed.topicExamples)
             ? parsed.topicExamples.flatMap((e: any) => [
                 safeStr(e?.structure || e),
@@ -5278,6 +5396,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               })(),
               hotFestivals: Array.isArray(parsed.hotFestivals) ? parsed.hotFestivals.map(safeStr) : [],
               globalBlueOceanWords,
+              excellentCoverReferences,
+              legacyCoverReferences,
               platformDetails,
               officialCampaignTopicExamples: officialCampaigns.topicExamples || [],
               aiManhuaRising: await (async () => {
@@ -5299,10 +5419,21 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          if (trendReportDeduct && !trendReportDeduct.alreadyCharged) {
+            await refundCreditsForDeductAmount(
+              ctx.user.id,
+              `平台趋势报告生成失败退还：${message.slice(0, 120)}`,
+              trendReportDeduct,
+              "platformTrendRefund",
+              { refundKey: `platform-trend-refund:${ctx.user.id}:${input.billingRequestId}` },
+            ).catch((refundError) => {
+              console.error("[generateVisualReport] refund failed", refundError);
+            });
+          }
           appendRuntimeMetric("visual.report", {
             ok: false,
-            engineEnv: "openai_official",
-            provider: `openai_official:${visualReportModel}`,
+            engineEnv: "evolink_primary",
+            provider: `evolink_primary:${visualReportModel}`,
             durationMs: Date.now() - llmStartedAtMs,
             message: message.slice(0, 800),
             windowDays: input.windowDays,
