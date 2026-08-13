@@ -3,6 +3,7 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import {
   containsWeixinChannelsAdvertisement,
+  weixinChannelsCaptureBudgetMs,
   WEIXIN_CHANNELS_COMMENT_THRESHOLD,
   WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
 } from "../../shared/weixinChannelsRules";
@@ -62,8 +63,8 @@ export const weixinChannelsObservationSchema = z.object({
   })).max(20).optional(),
   ocrTexts: z.array(z.string().max(4_000)).max(12).optional(),
   videoDurationSec: z.number().finite().positive().max(86_400).optional(),
-  captureBudgetMs: z.number().int().positive().max(8_640_000).optional(),
-  captureElapsedMs: z.number().int().nonnegative().max(8_640_000).optional(),
+  captureBudgetMs: z.number().int().positive().max(8_642_000).optional(),
+  captureElapsedMs: z.number().int().nonnegative().max(8_642_000).optional(),
   evidence: z.enum(["capture", "manual"]),
   runKind: z.enum(["formal", "probe"]).optional(),
 }).refine((item) => [item.likes, item.comments, item.shares, item.favorites, item.views].filter((value) => value !== undefined).length >= 2, {
@@ -75,8 +76,13 @@ export const weixinChannelsObservationSchema = z.object({
   || Boolean(item.commentSamples?.length)
 ), {
   message: "评论数达到 80 时必须采集真实评论样本，不能只记评论数量",
-}).refine((item) => item.captureElapsedMs === undefined || item.captureBudgetMs === undefined || item.captureElapsedMs <= item.captureBudgetMs, {
-  message: "单条采集总耗时不得超过视频时长的十分之一",
+}).refine((item) => {
+  if (item.captureElapsedMs === undefined || item.videoDurationSec === undefined) return true;
+  const authoritativeBudget = weixinChannelsCaptureBudgetMs(item.videoDurationSec);
+  return item.captureElapsedMs <= authoritativeBudget
+    && (item.captureBudgetMs === undefined || item.captureBudgetMs <= authoritativeBudget);
+}, {
+  message: "单条采集总耗时不得超过视频时长约十分之一加 2 秒容差",
 });
 
 const ingestSchema = z.object({

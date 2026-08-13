@@ -15,8 +15,13 @@ import {
   metricsRemainOnSameVideo,
   parseVisibleMetric,
   parseVisibleVideoClockSeconds,
+  restoreEligibleQuarantinedObservations,
+  retryPendingObservations,
+  selectReusableCollectorCandidate,
   shouldSwitchRecommendationToSearch,
+  shouldRotateSearchQuery,
   uploadPendingObservation,
+  WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS,
   WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS,
   waitForVisibleVideoLoad,
 } from "../../scripts/weixin-channels-capture.mts";
@@ -41,15 +46,30 @@ describe("weixin channels OCR", () => {
     })).toBe(false);
   });
 
-  it("从20%/50%/80%播放时钟推导时长，并将总采集预算限制为视频时长十分之一", () => {
+  it("每十条按四成命中率止损推荐流并轮换七天热词", () => {
+    const startedAt = 1_000;
+    expect(shouldSwitchRecommendationToSearch({
+      startedAt, now: startedAt + 30_000, scannedCount: 10, qualifiedCount: 2,
+    })).toBe(true);
+    expect(shouldSwitchRecommendationToSearch({
+      startedAt, now: startedAt + 30_000, scannedCount: 10, qualifiedCount: 4,
+    })).toBe(false);
+    expect(shouldRotateSearchQuery({ scannedCount: 10, qualifiedCount: 3 })).toBe(true);
+    expect(shouldRotateSearchQuery({ scannedCount: 10, qualifiedCount: 4 })).toBe(false);
+  });
+
+  it("从多点播放时钟推导时长，并将总采集预算限制为视频时长十分之一加两秒", () => {
     expect(parseVisibleVideoClockSeconds("当前 0:12")).toBe(12);
     expect(deriveVideoDurationSeconds([
-      { progress: 0.2, text: "0:12" },
+      { progress: 0.1, text: "0:06" },
+      { progress: 0.3, text: "0:18" },
       { progress: 0.5, text: "0:30" },
-      { progress: 0.8, text: "0:48" },
+      { progress: 0.7, text: "0:42" },
+      { progress: 0.9, text: "0:54" },
     ])).toBe(60);
-    expect(captureBudgetMsForVideo(60)).toBe(6_000);
-    expect(captureBudgetMsForVideo(600)).toBe(60_000);
+    expect(WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS).toEqual([0.1, 0.3, 0.5, 0.7, 0.9]);
+    expect(captureBudgetMsForVideo(60)).toBe(8_000);
+    expect(captureBudgetMsForVideo(600)).toBe(62_000);
   });
 
   it("解析中文万单位且不伪造缺失数据", () => {
@@ -117,6 +137,16 @@ describe("weixin channels OCR", () => {
     expect(samples).toEqual([{ text: "这个方法为什么有效？", likeCount: undefined, signals: ["question"] }]);
   });
 
+  it("过滤评论面板按钮和时间戳，不把 UI 噪音送入分析", () => {
+    const lines = ["赞和收藏", "推荐", "12:35", "8月14日 12:35", "这个方法确实省了很多时间"]
+      .map((text, index) => ({ text, confidence: 0.99, x: 0.1, y: 0.8 - index * 0.08, width: 0.5, height: 0.04 }));
+    expect(extractCommentSamples(lines)).toEqual([{
+      text: "这个方法确实省了很多时间",
+      likeCount: undefined,
+      signals: undefined,
+    }]);
+  });
+
   it("Fly 未确认 persisted=true 时保留待传文件，确认后才删除", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-upload-"));
     const pending = path.join(dir, "pending.json");
@@ -127,6 +157,43 @@ describe("weixin channels OCR", () => {
     const successFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, persisted: true }), { status: 200 }));
     await uploadPendingObservation({ server: "https://example.invalid", token: "token", taskId: "task-123", pendingFile: pending, fetchImpl: successFetch });
     await expect(fs.stat(pending)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("按新容差救回旧隔离记录，并在单次心跳只补传一条", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-recovery-"));
+    const quarantine = path.join(dir, "weixin-channels-quarantine");
+    await fs.mkdir(quarantine);
+    const eligibleName = "weixin-channels-pending-eligible.json";
+    const excessiveName = "weixin-channels-pending-excessive.json";
+    await fs.writeFile(path.join(quarantine, eligibleName), JSON.stringify({
+      taskId: "task-eligible", videoDurationSec: 274, captureBudgetMs: 27_400, captureElapsedMs: 27_442,
+    }));
+    await fs.writeFile(path.join(quarantine, excessiveName), JSON.stringify({
+      taskId: "task-excessive", videoDurationSec: 60, captureBudgetMs: 6_000, captureElapsedMs: 8_001,
+    }));
+    expect(await restoreEligibleQuarantinedObservations(dir)).toEqual({ found: 2, restored: 1 });
+    await expect(fs.stat(path.join(dir, eligibleName))).resolves.toBeTruthy();
+    await expect(fs.stat(path.join(quarantine, excessiveName))).resolves.toBeTruthy();
+
+    await fs.writeFile(path.join(dir, "weixin-channels-pending-second.json"), JSON.stringify({
+      taskId: "task-second", videoDurationSec: 60, captureBudgetMs: 8_000, captureElapsedMs: 7_000,
+    }));
+    const persistedFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ persisted: true }), { status: 200 }));
+    const recovery = await retryPendingObservations({
+      server: "https://example.invalid", token: "token", tempDir: dir, fetchImpl: persistedFetch,
+    });
+    expect(recovery).toEqual({ found: 2, persisted: 1, failed: 0 });
+    expect(persistedFetch).toHaveBeenCalledTimes(1);
+    const remaining = (await fs.readdir(dir)).filter((name) => name.startsWith("weixin-channels-pending-"));
+    expect(remaining).toHaveLength(1);
+  });
+
+  it("候选任务耗尽时优先复用 AI 或漫剧主题，不返回空壳任务", () => {
+    expect(selectReusableCollectorCandidate([
+      { taskId: "general", searchQueries: ["家常菜"], category: "生活", createdAt: "2026-08-14T01:00:00Z" },
+      { taskId: "ai", searchQueries: ["AI视频", "漫剧制作"], category: "科技", createdAt: "2026-08-13T01:00:00Z" },
+    ])).toMatchObject({ taskId: "ai", searchQueries: ["AI视频", "漫剧制作"] });
+    expect(selectReusableCollectorCandidate([])).toBeUndefined();
   });
 
   it("进度抽查时四项指标必须仍属于同一视频", () => {

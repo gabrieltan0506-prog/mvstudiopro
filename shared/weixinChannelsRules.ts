@@ -12,6 +12,12 @@ export const WEIXIN_CHANNELS_TERRA_MAX_COMPLETION_TOKENS = 100_000;
 export const WEIXIN_CHANNELS_LUNA_BATCH_SIZE = 100;
 export const WEIXIN_CHANNELS_PROBE_TARGET = 5;
 export const WEIXIN_CHANNELS_COMMENT_THRESHOLD = 80;
+/** “视频时长约十分之一”允许 2 秒本机 OCR/窗口调度抖动。 */
+export const WEIXIN_CHANNELS_CAPTURE_TOLERANCE_MS = 2_000;
+
+export function weixinChannelsCaptureBudgetMs(videoDurationSec: number) {
+  return Math.max(1_000, Math.round(videoDurationSec * 100) + WEIXIN_CHANNELS_CAPTURE_TOLERANCE_MS);
+}
 
 export type WeixinChannelsCommentSignal =
   | "high_like"
