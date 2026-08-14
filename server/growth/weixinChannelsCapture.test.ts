@@ -1,8 +1,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 import {
+  automaticRecoveryDelayMs,
   extractCommentSamples,
   captureBudgetMsForVideo,
   collectorSeenContains,
@@ -13,6 +15,7 @@ import {
   rememberCollectorSeen,
   buildDiverseCollectorSearchQueries,
   deriveVideoDurationSeconds,
+  detectVisibleProgressTrack,
   extractVisibleTitleAndAuthor,
   extractWeixinChannelsMetrics,
   findCommentsClosePoint,
@@ -36,6 +39,7 @@ import {
   scoreRepresentativeFrameCandidate,
   selectReusableCollectorCandidate,
   shouldReuseExistingSearchTab,
+  shouldLaunchdRestartCollector,
   shouldSwitchRecommendationToSearch,
   shouldRotateSearchQuery,
   syncPersistedCollectorIdentities,
@@ -148,6 +152,17 @@ describe("weixin channels OCR", () => {
     expect(collectorVideoStateAfterCapture({ qualified: false, persisted: false })).toEqual({ state: "terminal_unqualified", stopWithoutAdvance: false });
   });
 
+  it("夜间自动恢复使用有上限的指数退避，不要求人工重启", () => {
+    expect(automaticRecoveryDelayMs(1)).toBe(5_000);
+    expect(automaticRecoveryDelayMs(2)).toBe(10_000);
+    expect(automaticRecoveryDelayMs(7)).toBe(300_000);
+    expect(automaticRecoveryDelayMs(100)).toBe(300_000);
+    expect(shouldLaunchdRestartCollector("player_state_unconfirmed")).toBe(true);
+    expect(shouldLaunchdRestartCollector("capture_disabled")).toBe(false);
+    expect(shouldLaunchdRestartCollector("hourly_target_missed")).toBe(false);
+    expect(shouldLaunchdRestartCollector("max_scanned_reached", 1)).toBe(false);
+  });
+
   it("只有 Fly persistedAt 同步结果会升级为跨重启重复", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-seen-sync-"));
     const registry = await loadCollectorSeenRegistry(dir, Date.parse("2026-08-14T01:00:00.000Z"));
@@ -188,6 +203,22 @@ describe("weixin channels OCR", () => {
     expect(collectorWatchdogDecision(30 * 60_000, 24)).toBe("checkpoint_30");
     expect(collectorWatchdogDecision(60 * 60_000, 49)).toBe("stop");
     expect(collectorWatchdogDecision(60 * 60_000, 50)).toBe("rollover");
+  });
+
+  it("识别视频号半透明蓝灰进度轨道，不把可见轨道误报为缺失", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-track-"));
+    const file = path.join(dir, "blue-gray-track.png");
+    await sharp({ create: { width: 966, height: 1538, channels: 3, background: { r: 0, g: 49, b: 83 } } })
+      .composite([
+        { input: { create: { width: 560, height: 5, channels: 3, background: { r: 94, g: 123, b: 146 } } }, left: 120, top: 1262 },
+        { input: { create: { width: 110, height: 5, channels: 3, background: { r: 255, g: 255, b: 255 } } }, left: 120, top: 1262 },
+      ])
+      .png()
+      .toFile(file);
+    const track = await detectVisibleProgressTrack(file);
+    expect(track.startX).toBeGreaterThanOrEqual(0.08);
+    expect(track.endX).toBeGreaterThan(0.65);
+    expect(track.y).toBeCloseTo(1262 / 1538, 2);
   });
 
   it("解析中文万单位且不伪造缺失数据", () => {

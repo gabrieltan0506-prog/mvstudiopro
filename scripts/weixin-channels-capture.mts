@@ -450,6 +450,14 @@ export function collectorSeenContains(registry: CollectorSeenRegistry, videoIden
   return terminal || Boolean(observationId && registry.observationIds.has(observationId));
 }
 
+export function automaticRecoveryDelayMs(failureCount: number) {
+  return Math.min(5 * 60_000, 5_000 * (2 ** Math.max(0, Math.min(6, failureCount - 1))));
+}
+
+export function shouldLaunchdRestartCollector(stopped: string, maxScanned?: number) {
+  return maxScanned === undefined && !["capture_disabled", "hourly_target_missed"].includes(stopped);
+}
+
 async function persistCollectorSeenRegistry(registry: CollectorSeenRegistry, now: number) {
   const fresh = Array.from(registry.entries.values()).filter((item) => now - Date.parse(item.seenAt) <= WEIXIN_CHANNELS_SEEN_TTL_MS);
   await fs.mkdir(path.dirname(registry.file), { recursive: true });
@@ -691,7 +699,10 @@ export async function detectVisibleProgressTrack(screenshot: string) {
       const red = data[offset]!;
       const green = data[offset + 1]!;
       const blue = data[offset + 2]!;
-      const gray = Math.max(red, green, blue) - Math.min(red, green, blue) <= 45 && red >= 55 && red <= 255;
+      // 微信会把未播放轨道染成半透明蓝灰（实测 RGB 约 94/123/146，色差 52），
+      // 旧的 45 阈值只认中性灰，导致画面明明有轨道却无限重试。背景深蓝 red≈0，
+      // 继续由 red>=55 排除，因此放宽到 65 不会把整片视频背景当进度条。
+      const gray = Math.max(red, green, blue) - Math.min(red, green, blue) <= 65 && red >= 55 && red <= 255;
       if (gray) {
         if (runStart < 0 || (lastGray >= 0 && x - lastGray > Math.round(info.width * 0.025))) runStart = x;
         lastGray = x;
@@ -1931,8 +1942,11 @@ async function runCollectionPool(params: {
       consecutiveDuplicates += 1;
       process.stderr.write(`duplicate_visible_video_skipped:${videoIdentity}:${observationId}\n`);
       if (consecutiveDuplicates >= 3) {
-        process.stderr.write("collector_safety_stopped:duplicate_loop_detected\n");
-        return { stopped: "duplicate_loop_detected", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
+        // 不继续滑同一推荐流，也不退出等人工处理；下一轮改用另一条七天热词。
+        consecutiveDuplicates = 0;
+        forceSearchQueryRotation = true;
+        process.stderr.write("collector_duplicate_loop_rotating_source\n");
+        continue;
       }
       await waitForVisibleVideoLoad();
       ocr = await advanceTracked(videoIdentity);
@@ -1953,33 +1967,114 @@ async function runCollectionPool(params: {
     const query = mode === "recommendation"
       ? "推荐页"
       : task.searchQueries[searchQueryIndex] || task.searchQueries[0] || "网络热点";
-    let result: Awaited<ReturnType<typeof captureVisibleQualifiedVideo>>;
-    try {
-      result = await captureVisibleQualifiedVideo({
-        ocr,
-        screenshot: params.screenshot,
-        taskId: task.taskId,
-        query,
-        videoIdentity,
-        observationId,
-        diagnostics,
-        probe: params.probe,
-        server: params.server,
-        token: params.token,
-        videoDurationHintSec: knownVideoDurationSec,
-      });
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      await rememberCollectorSeen(seenRegistry, {
-        videoIdentity,
-        observationId,
-        seenAt: new Date().toISOString(),
-        state: "retryable_failed",
-        failureReason: reason,
-      });
-      inFlightVideoIdentities.delete(videoIdentity);
-      process.stderr.write(`collector_safety_stopped:qualified_or_unknown_video_capture_failed:${reason}\n`);
-      return { stopped: "video_capture_failed_without_advance", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
+    const pendingOutput = path.join(os.tmpdir(), `weixin-channels-pending-${observationId}.json`);
+    const captureCurrentVideo = (currentOcr: OcrResult) => captureVisibleQualifiedVideo({
+      ocr: currentOcr,
+      screenshot: params.screenshot,
+      taskId: task.taskId,
+      query,
+      videoIdentity,
+      observationId,
+      diagnostics,
+      probe: params.probe,
+      server: params.server,
+      token: params.token,
+      outputOverride: pendingOutput,
+      videoDurationHintSec: knownVideoDurationSec,
+    });
+    let result!: Awaited<ReturnType<typeof captureVisibleQualifiedVideo>>;
+    let captureOcr = ocr;
+    let failureCount = 0;
+    let stableRecoverySnapshots = 0;
+    for (;;) {
+      let pendingExists = false;
+      try {
+        await fs.access(pendingOutput);
+        pendingExists = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      try {
+        if (pendingExists) {
+          // UI 已完整采集，只在后台重传 pending，绝不再次拖动或打开评论区。
+          const observation = JSON.parse(await fs.readFile(pendingOutput, "utf8"));
+          const qualification = qualifyWeixinChannelsObservationLocally(observation);
+          const payload = await uploadPendingObservation({
+            server: params.server,
+            token: params.token,
+            taskId: task.taskId,
+            pendingFile: pendingOutput,
+            deadlineAt: Date.now() + 60_000,
+          });
+          result = {
+            qualified: qualification.qualified,
+            inspectedContent: true as const,
+            reason: qualification.reason,
+            fingerprint: videoIdentity,
+            observation,
+            persisted: payload.persisted === true,
+          };
+          if (payload.newlyQualifiedPersisted === true) diagnostics.persistedUnique += 1;
+          else if (payload.newlyPersisted !== true) diagnostics.duplicatePersistRejected += 1;
+          if (failureCount > 0) process.stderr.write(`collector_safe_retry_succeeded:attempt=${failureCount}\n`);
+          break;
+        } else {
+          result = await captureCurrentVideo(captureOcr);
+          if (failureCount > 0) process.stderr.write(`collector_safe_retry_succeeded:attempt=${failureCount}\n`);
+          break;
+        }
+      } catch (error) {
+        failureCount += 1;
+        stableRecoverySnapshots = 0;
+        const reason = error instanceof Error ? error.message : String(error);
+        await rememberCollectorSeen(seenRegistry, {
+          videoIdentity,
+          observationId,
+          seenAt: new Date().toISOString(),
+          state: "retryable_failed",
+          failureReason: reason,
+        });
+        const delayMs = automaticRecoveryDelayMs(failureCount);
+        process.stderr.write(`collector_automatic_recovery_waiting:attempt=${failureCount}:delayMs=${delayMs}:pending=${pendingExists}:reason=${reason}\n`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        heartbeat = await heartbeatCollector(params.server, params.token, clientId);
+        if (!heartbeat.enabled) {
+          inFlightVideoIdentities.delete(videoIdentity);
+          return { stopped: "capture_disabled_during_recovery", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
+        }
+        if (pendingExists) continue;
+        // 不操作播放器，只被动截图；连续两张互动指标都证明是同一视频后，才允许再次完整采集。
+        while (stableRecoverySnapshots < 2) {
+          await captureWindow(params.screenshot);
+          let passiveOcr = await readOcr(params.screenshot);
+          let sameVideo = false;
+          if (!isWeixinChannelsAuxiliaryPage(passiveOcr.lines)) {
+            try {
+              passiveOcr = await ensureInteractionMetricsVisible(params.screenshot, passiveOcr);
+              sameVideo = metricsRemainOnSameVideo(
+                extractWeixinChannelsMetrics(ocr.lines),
+                extractWeixinChannelsMetrics(passiveOcr.lines),
+              );
+            } catch {
+              sameVideo = false;
+            }
+          }
+          if (sameVideo) {
+            stableRecoverySnapshots += 1;
+            captureOcr = passiveOcr;
+          } else {
+            stableRecoverySnapshots = 0;
+          }
+          if (stableRecoverySnapshots < 2) {
+            await new Promise((resolve) => setTimeout(resolve, Math.min(30_000, delayMs)));
+            heartbeat = await heartbeatCollector(params.server, params.token, clientId);
+            if (!heartbeat.enabled) {
+              inFlightVideoIdentities.delete(videoIdentity);
+              return { stopped: "capture_disabled_during_recovery", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
+            }
+          }
+        }
+      }
     }
     inFlightVideoIdentities.delete(videoIdentity);
     const terminal = collectorVideoStateAfterCapture(result);
@@ -2076,6 +2171,10 @@ async function main() {
       maxScanned,
     });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    // launchd 只重启临时退出；网页关采集、小时目标未达和有界探针都是有意终止。
+    if (shouldLaunchdRestartCollector(String(result.stopped || ""), maxScanned)) {
+      process.exitCode = 75;
+    }
     return;
   }
   if (!taskArg || !queryArg || (!titleArg && !automate && !interact)) {
