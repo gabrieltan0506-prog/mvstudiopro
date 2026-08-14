@@ -15,14 +15,17 @@ import {
   findExactSearchSuggestionPoint,
   findSearchInputPoint,
   hasFourVisibleMetrics,
+  isWeixinChannelsAuxiliaryPage,
   hasTypedSearchKeyword,
   metricsRemainOnSameVideo,
   nextCollectorSearchQueryIndex,
   parseVisibleMetric,
   parseVisibleVideoClockSeconds,
+  pendingObservationHasRequiredComments,
   restoreEligibleQuarantinedObservations,
   retryPendingObservations,
   selectReusableCollectorCandidate,
+  shouldReuseExistingSearchTab,
   shouldSwitchRecommendationToSearch,
   shouldRotateSearchQuery,
   uploadPendingObservation,
@@ -129,6 +132,13 @@ describe("weixin channels OCR", () => {
     expect(WEIXIN_CHANNELS_SEARCH_INPUT_POINT).toEqual({ x: 0.58, y: 0.026 });
   });
 
+  it("视频号搜索标签最多保留三个并复用旧标签", () => {
+    expect(shouldReuseExistingSearchTab(0)).toBe(false);
+    expect(shouldReuseExistingSearchTab(1)).toBe(false);
+    expect(shouldReuseExistingSearchTab(2)).toBe(true);
+    expect(shouldReuseExistingSearchTab(3)).toBe(true);
+  });
+
   it("回车停在联想下拉框时只点击完全匹配的搜索词", () => {
     const point = findExactSearchSuggestionPoint([
       { text: "Al拥抱自由，找准普通人搞钱方向", confidence: 1, x: 0.42, y: 0.965, width: 0.36, height: 0.02 },
@@ -179,14 +189,30 @@ describe("weixin channels OCR", () => {
 
   it("由 OCR 评论标题同行推导关闭点，并在关闭后要求四项指标重新出现", () => {
     const panel = [
-      { text: "评论 361", confidence: 0.99, x: 0.08, y: 0.86, width: 0.18, height: 0.04 },
+      { text: "评论 1.5万", confidence: 0.99, x: 0.08, y: 0.86, width: 0.18, height: 0.04 },
       { text: "×", confidence: 0.99, x: 0.92, y: 0.86, width: 0.03, height: 0.04 },
     ];
     expect(findCommentsClosePoint(panel)).toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
     expect(findCommentsClosePoint([])).toBeNull();
     const metrics = ["2985", "6234", "2641", "80"].map((text, index) => ({ text, confidence: 0.99, x: 0.55 + index * 0.1, y: 0.1, width: 0.04, height: 0.03 }));
     expect(findCommentsOpenPoint(metrics)?.x).toBeGreaterThan(0.8);
+    expect(findCommentsOpenPoint(metrics.slice(0, 3))).toBeNull();
     expect(hasFourVisibleMetrics(metrics)).toBe(true);
+  });
+
+  it("识别赞和收藏及搜索结果辅助页，禁止当成视频扫描", () => {
+    expect(isWeixinChannelsAuxiliaryPage([
+      { text: "赞和收藏", confidence: 0.99, x: 0.07, y: 0.9, width: 0.15, height: 0.04 },
+      { text: "浏览记录", confidence: 0.99, x: 0.07, y: 0.8, width: 0.15, height: 0.04 },
+    ])).toBe(true);
+    expect(isWeixinChannelsAuxiliaryPage([
+      { text: "全部", confidence: 0.99, x: 0.2, y: 0.8, width: 0.1, height: 0.04 },
+      { text: "影片", confidence: 0.99, x: 0.4, y: 0.8, width: 0.1, height: 0.04 },
+      { text: "朋友圈", confidence: 0.99, x: 0.6, y: 0.8, width: 0.1, height: 0.04 },
+    ])).toBe(true);
+    expect(isWeixinChannelsAuxiliaryPage([
+      { text: "客房没有捷径", confidence: 0.99, x: 0.1, y: 0.2, width: 0.3, height: 0.04 },
+    ])).toBe(false);
   });
 
   it("只提取真实评论文本并标记用户问题", () => {
@@ -238,6 +264,26 @@ describe("weixin channels OCR", () => {
       fetchImpl: hangingFetch as unknown as typeof fetch,
     })).rejects.toThrow("upload_timeout");
     await expect(fs.stat(pending)).resolves.toBeTruthy();
+  });
+
+  it("评论达到 80 的旧待传记录缺真实评论时隔离且不再请求 Fly", async () => {
+    expect(pendingObservationHasRequiredComments({ comments: 79 })).toBe(true);
+    expect(pendingObservationHasRequiredComments({ comments: 80, commentSamples: [] })).toBe(false);
+    expect(pendingObservationHasRequiredComments({ comments: 80, commentSamples: [{ text: "真实评论" }] })).toBe(true);
+
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-missing-comments-"));
+    const pending = path.join(dir, "weixin-channels-pending-invalid.json");
+    await fs.writeFile(pending, JSON.stringify({
+      taskId: "task-invalid", comments: 558, commentSamples: [], captureElapsedMs: 1_000, videoDurationSec: 60,
+    }));
+    const fetchImpl = vi.fn();
+    const recovery = await retryPendingObservations({
+      server: "https://example.invalid", token: "token", tempDir: dir, fetchImpl,
+    });
+    expect(recovery).toEqual({ found: 1, persisted: 0, failed: 0 });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    await expect(fs.stat(pending)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(path.join(dir, "weixin-channels-quarantine", path.basename(pending)))).resolves.toBeTruthy();
   });
 
   it("按新容差救回旧隔离记录，并在单次心跳只补传一条", async () => {
