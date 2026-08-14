@@ -107,6 +107,11 @@ describe("weixinChannelsMiner", () => {
       ocrTexts: ["本内容包含 广告 推广"],
     }));
     expect(item).toMatchObject({ scanned: true, qualified: false, invalid: true });
+    const traditional = persistableWeixinChannelsObservation(observation({
+      likes: 99_999, shares: 20_000, favorites: 20_000, comments: 500,
+      ocrTexts: ["本內容包含 廣告 推廣"],
+    }));
+    expect(traditional).toMatchObject({ scanned: true, qualified: false, invalid: true });
   });
 
   it("高互动但与搜索垂类无关时不进入聚合", () => {

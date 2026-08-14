@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   automaticRecoveryDelayMs,
   extractCommentSamples,
+  extractCommentPanelContentLines,
   captureBudgetMsForVideo,
   collectorSeenContains,
   collectorWatchdogDecision,
@@ -25,6 +26,8 @@ import {
   findExactSearchSuggestionPoint,
   findSearchInputPoint,
   hasFourVisibleMetrics,
+  hasConfirmedVideoTransition,
+  interactionMetricsConfirmed,
   isWeixinChannelsAuxiliaryPage,
   isWeixinChannelsMediaViewer,
   hasTypedSearchKeyword,
@@ -36,6 +39,7 @@ import {
   pendingObservationHasRequiredComments,
   restoreEligibleQuarantinedObservations,
   retryPendingObservations,
+  representativeFrameNeedsSingleRetry,
   scoreRepresentativeFrameCandidate,
   selectReusableCollectorCandidate,
   shouldReuseExistingSearchTab,
@@ -159,7 +163,8 @@ describe("weixin channels OCR", () => {
     expect(automaticRecoveryDelayMs(100)).toBe(300_000);
     expect(shouldLaunchdRestartCollector("player_state_unconfirmed")).toBe(true);
     expect(shouldLaunchdRestartCollector("capture_disabled")).toBe(false);
-    expect(shouldLaunchdRestartCollector("hourly_target_missed")).toBe(false);
+    expect(shouldLaunchdRestartCollector("capture_disabled_during_recovery")).toBe(false);
+    expect(shouldLaunchdRestartCollector("hourly_target_missed")).toBe(true);
     expect(shouldLaunchdRestartCollector("max_scanned_reached", 1)).toBe(false);
   });
 
@@ -182,6 +187,8 @@ describe("weixin channels OCR", () => {
     const loading = scoreRepresentativeFrameCandidate({ progress: 0.5, ocrText: "网络加载中", entropy: 1, sharpness: 1, mean: 10 });
     const narrative = scoreRepresentativeFrameCandidate({ progress: 0.5, ocrText: "AI工作流拆解 第三步生成分镜", entropy: 5, sharpness: 8, mean: 120 });
     expect(narrative).toBeGreaterThan(loading);
+    expect(representativeFrameNeedsSingleRetry({ ocrText: "网络加载中", entropy: 1, sharpness: 1, mean: 10 })).toBe(true);
+    expect(representativeFrameNeedsSingleRetry({ ocrText: "AI工作流拆解", entropy: 5, sharpness: 8, mean: 120 })).toBe(false);
   });
 
   it("跨进程只允许一个新增搜索标签，总数最多两个", async () => {
@@ -195,13 +202,13 @@ describe("weixin channels OCR", () => {
     expect(shouldReuseExistingSearchTab(0)).toBe(false);
   });
 
-  it("播放器只接受明确总时长，小时看门狗低于五十会停采", () => {
+  it("播放器只接受明确总时长，小时看门狗低于五十会停止当前窗口并自动换源", () => {
     expect(parseVisibleVideoTotalDurationSeconds("01:12 / 03:40")).toBe(220);
     expect(parseVisibleVideoTotalDurationSeconds("总时长 02:06")).toBe(126);
     expect(parseVisibleVideoTotalDurationSeconds("当前 01:12")).toBeUndefined();
     expect(collectorWatchdogDecision(15 * 60_000, 11)).toBe("checkpoint_15");
     expect(collectorWatchdogDecision(30 * 60_000, 24)).toBe("checkpoint_30");
-    expect(collectorWatchdogDecision(60 * 60_000, 49)).toBe("stop");
+    expect(collectorWatchdogDecision(60 * 60_000, 49)).toBe("remediate");
     expect(collectorWatchdogDecision(60 * 60_000, 50)).toBe("rollover");
   });
 
@@ -234,6 +241,18 @@ describe("weixin channels OCR", () => {
       { text: "17", confidence: 0.99, x: 0.85, y: 0.1, width: 0.04, height: 0.03 },
     ]);
     expect(metrics).toMatchObject({ likes: 2985, shares: 6234, favorites: 2641, comments: 17 });
+  });
+
+  it("四项指标必须由连续两张截图确认，单次 OCR 高值不能触发采集", () => {
+    const makeOcr = (values: string[]) => ({
+      width: 483,
+      height: 769,
+      lines: values.map((text, index) => ({ text, confidence: 0.99, x: 0.52 + index * 0.12, y: 0.08, width: 0.06, height: 0.03 })),
+    });
+    const first = makeOcr(["8998", "12000", "3981", "361"]);
+    expect(interactionMetricsConfirmed(first, makeOcr(["8999", "12000", "3981", "361"]))).toBe(true);
+    expect(interactionMetricsConfirmed(first, makeOcr(["103", "80", "42", "14"]))).toBe(false);
+    expect(interactionMetricsConfirmed(first, makeOcr(["8998", "12000", "3981"]))).toBe(false);
   });
 
   it("横排 OCR 漏掉一项时按真实槽位保留其余指标", () => {
@@ -333,6 +352,7 @@ describe("weixin channels OCR", () => {
     const metrics = ["2985", "6234", "2641", "80"].map((text, index) => ({ text, confidence: 0.99, x: 0.55 + index * 0.1, y: 0.1, width: 0.04, height: 0.03 }));
     expect(findCommentsOpenPoint(metrics)?.x).toBeGreaterThan(0.8);
     expect(findCommentsOpenPoint(metrics.slice(0, 3))).toBeNull();
+    expect(findCommentsOpenPoint([{ text: "评论", confidence: 0.99, x: 0.1, y: 0.6, width: 0.1, height: 0.03 }])).toBeNull();
     expect(hasFourVisibleMetrics(metrics)).toBe(true);
   });
 
@@ -373,6 +393,26 @@ describe("weixin channels OCR", () => {
       { text: "回复", confidence: 0.99, x: 0.1, y: 0.5, width: 0.1, height: 0.03 },
     ]);
     expect(samples).toEqual([{ text: "这个方法为什么有效？", likeCount: undefined, signals: ["question"] }]);
+  });
+
+  it("评论样本只来自右侧评论抽屉，左侧视频字幕不能冒充评论", () => {
+    const lines = [
+      { text: "评论 361", confidence: 0.99, x: 0.34, y: 0.92, width: 0.18, height: 0.04 },
+      { text: "左侧视频字幕不是评论", confidence: 0.99, x: 0.05, y: 0.55, width: 0.22, height: 0.04 },
+      { text: "这个工具怎么安装？", confidence: 0.99, x: 0.43, y: 0.55, width: 0.35, height: 0.04 },
+      { text: "谭博 发表评论：", confidence: 0.99, x: 0.47, y: 0.03, width: 0.3, height: 0.04 },
+    ];
+    const panelLines = extractCommentPanelContentLines(lines);
+    expect(panelLines.map((line) => line.text)).toEqual(["这个工具怎么安装？"]);
+    expect(extractCommentSamples(panelLines)).toEqual([{ text: "这个工具怎么安装？", likeCount: undefined, signals: ["question"] }]);
+  });
+
+  it("评论作者的地区时间不是评论或点赞数", () => {
+    const samples = extractCommentSamples([
+      { text: "Magic 雲南 2天前", confidence: 0.99, x: 0.43, y: 0.61, width: 0.24, height: 0.03 },
+      { text: "这是什么软件？", confidence: 0.99, x: 0.43, y: 0.57, width: 0.2, height: 0.03 },
+    ]);
+    expect(samples).toEqual([{ text: "这是什么软件？", likeCount: undefined, signals: ["question"] }]);
   });
 
   it("过滤评论面板按钮和时间戳，不把 UI 噪音送入分析", () => {
@@ -521,5 +561,20 @@ describe("weixin channels OCR", () => {
     expect(metricsRemainOnSameVideo(base, { likes: 34_000, shares: 27_000, favorites: 9_726, comments: 2_147, rawText: [] })).toBe(false);
     expect(metricsRemainOnSameVideo(base, { likes: 4_856, shares: 1_766, favorites: undefined, comments: undefined, rawText: [] })).toBe(true);
     expect(metricsRemainOnSameVideo(base, { likes: 4_856, shares: undefined, favorites: undefined, comments: undefined, rawText: [] })).toBe(false);
+  });
+
+  it("切换视频需排除同一高热视频互动数的自然小幅增长", () => {
+    const makeOcr = (title: string, likes: string, comments = "254") => ({
+      width: 483,
+      height: 769,
+      lines: [
+        { text: title, confidence: 0.99, x: 0.05, y: 0.12, width: 0.42, height: 0.04 },
+        { text: "工具研究所", confidence: 0.99, x: 0.05, y: 0.07, width: 0.18, height: 0.03 },
+        ...[likes, "1766", "1997", comments].map((text, index) => ({ text, confidence: 0.99, x: 0.52 + index * 0.12, y: 0.08, width: 0.06, height: 0.03 })),
+      ],
+    });
+    const before = makeOcr("AI工作流实测", "4855");
+    expect(hasConfirmedVideoTransition(before, makeOcr("AI工作流实测", "4856"))).toBe(false);
+    expect(hasConfirmedVideoTransition(before, makeOcr("另一条视频", "34000", "2147"))).toBe(true);
   });
 });

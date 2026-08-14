@@ -61,7 +61,7 @@ export type WeixinChannelsQualification = {
 };
 
 export function containsWeixinChannelsAdvertisement(ocrTexts?: readonly string[]) {
-  return (ocrTexts || []).some((text) => String(text || "").replace(/\s+/g, "").includes("广告"));
+  return (ocrTexts || []).some((text) => /广告|廣告/.test(String(text || "").replace(/\s+/g, "")));
 }
 
 /** 单条采集的唯一资格真源：纯本地规则，禁止在这里调用模型。 */
