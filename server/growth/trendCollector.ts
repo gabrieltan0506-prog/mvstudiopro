@@ -70,6 +70,8 @@ export type TrendItem = {
   coverUrl?: string;
   /** 实际取得封面的时间，用于 2026-08-14 新旧数据门禁。 */
   coverCapturedAt?: string;
+  visualAssetKind?: "platform_cover" | "representative_frame";
+  visualFrameProgress?: number;
   publishedAt?: string;
   likes?: number;
   comments?: number;

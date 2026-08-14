@@ -66,8 +66,13 @@ export type WeixinChannelsObservation = {
   url?: string;
   /** 本机裁出的低清封面，仅在上传请求内存在，服务端会镜像后剥离。 */
   coverImageBase64?: string;
+  visualImageBase64?: string;
+  visualUrl?: string;
+  visualCapturedAt?: string;
   coverUrl?: string;
   coverCapturedAt?: string;
+  visualAssetKind?: "platform_cover" | "representative_frame";
+  visualFrameProgress?: number;
   publishedAt?: string;
   observedAt: string;
   /** Fly 首次确认写入持久卷的时间；重复 ingest 不得覆盖。 */
@@ -225,7 +230,7 @@ export function persistableWeixinChannelsObservation(
   item: WeixinChannelsObservation,
 ): PersistedWeixinChannelsObservation {
   const qualification = qualifyWeixinChannelsObservationLocally(item);
-  const { coverImageBase64: _transientCover, ...persisted } = item;
+  const { coverImageBase64: _transientCover, visualImageBase64: _transientVisual, ...persisted } = item;
   return {
     ...persisted,
     runKind: item.runKind === "probe" ? "probe" : "formal",
@@ -453,8 +458,10 @@ export function buildWeixinChannelsTrendCollection(params: {
       title: item.title,
       author: item.author,
       url: item.url,
-      coverUrl: item.coverUrl,
-      coverCapturedAt: item.coverCapturedAt,
+      coverUrl: item.visualUrl || item.coverUrl,
+      coverCapturedAt: item.visualCapturedAt || item.coverCapturedAt,
+      visualAssetKind: item.visualUrl ? "representative_frame" : "platform_cover",
+      visualFrameProgress: item.visualFrameProgress,
       publishedAt: item.publishedAt,
       likes: item.likes,
       comments: item.comments,

@@ -64,4 +64,13 @@ describe("weixinChannelsCollectorHttp", () => {
 
     expect(result.success).toBe(false);
   });
+
+  it("接受有真实语义的代表画面元数据，不再假称视频号原始封面", () => {
+    const result = weixinChannelsObservationSchema.safeParse({
+      observationId: "visual-frame-1", videoIdentity: "a".repeat(64), taskId: "task-123", query: "AI视频", resultRank: 1,
+      title: "AI视频教程", observedAt: "2026-08-14T00:00:00.000Z", likes: 3_000, shares: 2_000, comments: 10,
+      evidence: "capture", visualImageBase64: "a".repeat(100), visualAssetKind: "representative_frame", visualFrameProgress: 0.5,
+    });
+    expect(result.success).toBe(true);
+  });
 });

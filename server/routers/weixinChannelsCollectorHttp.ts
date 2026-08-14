@@ -47,6 +47,9 @@ export const weixinChannelsObservationSchema = z.object({
   author: z.string().max(200).optional(),
   url: z.string().url().max(2_000).optional(),
   coverImageBase64: z.string().max(700_000).optional(),
+  visualImageBase64: z.string().max(700_000).optional(),
+  visualAssetKind: z.enum(["platform_cover", "representative_frame"]).optional(),
+  visualFrameProgress: z.number().finite().min(0).max(1).optional(),
   publishedAt: z.string().datetime().optional(),
   observedAt: z.string().datetime(),
   likes: metric,
@@ -152,6 +155,25 @@ export function registerWeixinChannelsCollectorHttpRoutes(app: Express) {
     }
   });
 
+  app.get("/api/internal/weixin-channels/persisted-identities", async (req, res) => {
+    if (!authorize(req, res)) return;
+    const parsed = z.object({ since: z.string().datetime() }).safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ ok: false, error: "invalid_since" });
+      return;
+    }
+    try {
+      const sinceMs = Date.parse(parsed.data.since);
+      const state = await getWeixinChannelsMinerState();
+      const records = state.observations
+        .filter((item) => Boolean(item.persistedAt) && Date.parse(item.persistedAt!) >= sinceMs)
+        .map((item) => ({ videoIdentity: item.videoIdentity, observationId: item.observationId, persistedAt: item.persistedAt }));
+      res.json({ ok: true, records });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   app.post("/api/internal/weixin-channels/observations", async (req, res) => {
     if (!authorize(req, res)) return;
     const parsed = ingestSchema.safeParse(req.body);
@@ -162,18 +184,25 @@ export function registerWeixinChannelsCollectorHttpRoutes(app: Express) {
     try {
       const observations = await Promise.all(parsed.data.observations.map(async (observation) => {
         const qualification = qualifyWeixinChannelsObservationLocally(observation);
-        if (!qualification.qualified || !observation.coverImageBase64 || !isTrendCoverCollectionActive()) {
+        const isRepresentativeFrame = Boolean(observation.visualImageBase64);
+        const visualImageBase64 = observation.visualImageBase64 || observation.coverImageBase64;
+        if (!qualification.qualified || !visualImageBase64 || (!isRepresentativeFrame && !isTrendCoverCollectionActive())) {
           return observation;
         }
-        const buffer = Buffer.from(observation.coverImageBase64, "base64");
+        const buffer = Buffer.from(visualImageBase64, "base64");
         if (buffer.length < 64 || buffer.length > 500_000) throw new Error("weixin_channels_cover_invalid");
         const { uploadBufferToPlatformStorage } = await import("../services/evolinkGptImage2.js");
-        const coverUrl = await uploadBufferToPlatformStorage(buffer, "growth_cover_candidates/weixin_channels");
+        const assetUrl = await uploadBufferToPlatformStorage(
+          buffer,
+          isRepresentativeFrame ? "growth_visual_frames/weixin_channels" : "growth_cover_candidates/weixin_channels",
+        );
         return {
           ...observation,
           coverImageBase64: undefined,
-          coverUrl,
-          coverCapturedAt: new Date().toISOString(),
+          visualImageBase64: undefined,
+          ...(isRepresentativeFrame
+            ? { visualUrl: assetUrl, visualCapturedAt: new Date().toISOString(), visualAssetKind: "representative_frame" as const }
+            : { coverUrl: assetUrl, coverCapturedAt: new Date().toISOString() }),
         };
       }));
       const result = await ingestWeixinChannelsObservations({ ...parsed.data, observations });
