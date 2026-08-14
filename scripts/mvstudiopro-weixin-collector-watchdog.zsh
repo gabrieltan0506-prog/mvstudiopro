@@ -17,11 +17,59 @@ readonly watchdog_agent_log="${WEIXIN_CHANNELS_WATCHDOG_AGENT_LOG:-/private/tmp/
 readonly watchdog_agent_report="${WEIXIN_CHANNELS_WATCHDOG_AGENT_REPORT:-/private/tmp/mvstudiopro-weixin-collector-agent-last.md}"
 readonly watchdog_codex="/Applications/ChatGPT.app/Contents/Resources/codex"
 readonly watchdog_domain="gui/$(/usr/bin/id -u)"
+readonly watchdog_capture_prefix="${WEIXIN_CHANNELS_CAPTURE_ACTIVITY_PREFIX:-/private/tmp/mvstudiopro-weixin-channels-active-capture}"
+readonly watchdog_capture_timeout_ms=60000
+
+watchdog_capture_timeout_for_file() {
+  local activity_file="$1"
+  local now_ms="$2"
+  /usr/bin/python3 -c '
+import json, os, sys
+path, now_ms, timeout_ms = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+try:
+    with open(path, "r", encoding="utf-8") as handle:
+        item = json.load(handle)
+    started = int(item.get("startedAtMs", 0))
+    owner_pid = int(item.get("ownerPid", 0))
+    if owner_pid <= 0:
+        raise SystemExit(0)
+    if os.environ.get("WEIXIN_CHANNELS_WATCHDOG_SKIP_OWNER_CHECK") != "1":
+        os.kill(owner_pid, 0)
+except Exception:
+    raise SystemExit(0)
+if started > 0 and now_ms - started > timeout_ms:
+    payload = {
+        "event": "collector_single_video_capture_timeout",
+        "file": os.path.basename(path),
+        "observationId": str(item.get("observationId", "")),
+        "videoIdentity": str(item.get("videoIdentity", "")),
+        "windowId": int(item.get("windowId", 0)),
+        "ownerPid": owner_pid,
+        "stage": str(item.get("stage", "unknown")),
+        "startedAtMs": started,
+        "elapsedMs": now_ms - started,
+        "hardTimeoutMs": timeout_ms,
+    }
+    print("collector_single_video_capture_timeout:" + json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+' "${activity_file}" "${now_ms}" "${watchdog_capture_timeout_ms}" 2>/dev/null || true
+}
 
 if [[ "${1:-}" == "--check-source" ]]; then
   [[ -x "${watchdog_codex}" ]] || { print -u2 -- "watchdog_codex_missing"; exit 1; }
   /bin/zsh -f -o NO_BG_NICE -n "$0"
   print -- "weixin_channels_watchdog_source_ok"
+  exit 0
+fi
+
+if [[ "${1:-}" == --check-capture-timeout=* ]]; then
+  watchdog_check_file="${1#--check-capture-timeout=}"
+  watchdog_check_now_ms="${WEIXIN_CHANNELS_WATCHDOG_NOW_MS:-$(( $(/bin/date +%s) * 1000 ))}"
+  watchdog_check_incident="$(watchdog_capture_timeout_for_file "${watchdog_check_file}" "${watchdog_check_now_ms}")"
+  if [[ -n "${watchdog_check_incident}" ]]; then
+    print -- "${watchdog_check_incident}"
+    exit 2
+  fi
+  print -- "watchdog_capture_within_limit"
   exit 0
 fi
 
@@ -71,6 +119,14 @@ elif ! /usr/bin/pgrep -f '[s]cripts/weixin-channels-capture.mts.*--pool' >/dev/n
   watchdog_incident="collector_pool_process_missing"
 fi
 
+if [[ -z "${watchdog_incident}" ]]; then
+  watchdog_now_ms="$(( $(/bin/date +%s) * 1000 ))"
+  for watchdog_activity_file in ${watchdog_capture_prefix}-*.json(N); do
+    watchdog_incident="$(watchdog_capture_timeout_for_file "${watchdog_activity_file}" "${watchdog_now_ms}")"
+    [[ -n "${watchdog_incident}" ]] && break
+  done
+fi
+
 watchdog_log_size=0
 [[ -f "${watchdog_log}" ]] && watchdog_log_size="$(/usr/bin/stat -f %z "${watchdog_log}" 2>/dev/null || print 0)"
 watchdog_previous_size=0
@@ -85,7 +141,7 @@ fi
 if [[ -z "${watchdog_incident}" && "${watchdog_log_size}" -gt "${watchdog_previous_size}" ]]; then
   watchdog_new_log="$(/usr/bin/tail -c "+$((watchdog_previous_size + 1))" "${watchdog_log}" 2>/dev/null || true)"
   watchdog_incident="$(print -r -- "${watchdog_new_log}" | /usr/bin/grep -E \
-    'dual_window_fail_closed|collector_safety_pause_failed|collector_watchdog_60m_remediating|collector_window_recovering:.*attempt=([3-9]|[1-9][0-9]+)|uncaught|unhandled|fatal' \
+    'dual_window_fail_closed|collector_safety_pause_failed|collector_single_video_capture_timeout|collector_watchdog_60m_remediating|collector_window_recovering:.*attempt=([3-9]|[1-9][0-9]+)|uncaught|unhandled|fatal' \
     | /usr/bin/tail -n 1 || true)"
 fi
 
@@ -110,6 +166,12 @@ print -r -- "${watchdog_now}|${watchdog_incident}" > "${watchdog_agent_log}.inci
 if [[ "${WEIXIN_CHANNELS_WATCHDOG_DRY_RUN:-0}" == "1" ]]; then
   print -- "watchdog_agent_dry_run:${watchdog_incident_hash}"
   exit 0
+fi
+
+if [[ "${watchdog_incident}" == collector_single_video_capture_timeout:* ]]; then
+  # 超时轮次可能仍占用键鼠；先终止正式采集 job，launchd 会从干净状态重启。
+  /bin/launchctl kill SIGTERM "${watchdog_domain}/${watchdog_collector_label}" 2>/dev/null || true
+  print -- "watchdog_collector_restarted_for_capture_timeout"
 fi
 
 "${watchdog_codex}" exec \

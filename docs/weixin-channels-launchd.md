@@ -34,7 +34,9 @@
 
 ## 零 token 本地 watchdog
 
-watchdog 每 60 秒只用本地进程、增量日志和 Fly heartbeat 做健康检查；正常状态不调用模型。
+watchdog 每 15 秒检查本地单条采集活动文件，并用 Fly heartbeat 确认网页开关；正常状态不调用模型。
+任一视频从资格采集开始到 Fly 最终确认超过 60 秒，会记录
+`collector_single_video_capture_timeout`、终止卡死的 collector job，并只对该新故障调用一次 Agent。
 只有新的持久故障证据才运行一次临时 Codex 修复任务，同一故障一小时内去重。自动任务先要求
 工作树干净，再创建独立修复分支；验证失败时继续诊断、修改和重跑，直到目标测试、TypeScript、
 构建和静态检查全部通过后才 commit、push 并创建 PR。真实阻塞时不推送；始终禁止自动合并、
