@@ -32,6 +32,24 @@
 ./scripts/install-weixin-channels-launchd.zsh --check
 ```
 
+## 零 token 本地 watchdog
+
+watchdog 每 60 秒只用本地进程、增量日志和 Fly heartbeat 做健康检查；正常状态不调用模型。
+只有新的持久故障证据才运行一次临时 Codex 修复任务，同一故障一小时内去重。自动任务可以诊断、
+修改工作树并跑测试，但明确禁止 commit、push、PR、部署、付费业务模型和真实微信 UI。
+
+```bash
+./scripts/install-weixin-channels-watchdog.zsh --check-source
+./scripts/install-weixin-channels-watchdog.zsh --install
+./scripts/install-weixin-channels-watchdog.zsh --check
+```
+
+本地日志：
+
+- `/private/tmp/mvstudiopro-weixin-collector-watchdog.log`
+- `/private/tmp/mvstudiopro-weixin-collector-agent.log`
+- `/private/tmp/mvstudiopro-weixin-collector-agent-last.md`
+
 重复执行 `--install` 时，如果安装内容未变化且 job 已加载，不重启正在运行的采集器；模板变化时才执行 bootout/bootstrap。
 
 微信或系统重启后 CGWindow ID 变化不需要修改仓库；下一次网页开启采集时会重新按
