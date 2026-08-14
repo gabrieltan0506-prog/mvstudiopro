@@ -5345,7 +5345,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               rank,
             }];
           });
-          const platformOrder = new Map(input.platforms.map((platform, index) => [platform, index]));
+          // 候选通用类型仍包含历史平台（如头条），而报告入口已停用该平台；
+          // 用字符串键承接兼容数据，未知平台稳定排到末尾。
+          const platformOrder = new Map<string, number>(input.platforms.map((platform, index) => [platform, index]));
           const excellentCoverReferences = [...visualCoverReferences, ...metadataCoverReferences]
             .sort((left, right) => (platformOrder.get(left.platform) ?? 999) - (platformOrder.get(right.platform) ?? 999)
               || left.rank - right.rank);
