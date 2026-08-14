@@ -4622,6 +4622,8 @@ async function main() {
       if (calibrateSearchButtons) {
         await calibrateCollectorSearchButtonsForSessions(sessions, {
           formal: true,
+          // 网页每次重新开启都要求左右窗重新定位；即使窗口身份不变，
+          // 用户也可能移动或缩放窗口，不能静默复用上次坐标。
           force: true,
         });
       }

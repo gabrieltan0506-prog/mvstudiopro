@@ -78,6 +78,7 @@ final class CalibrationOverlayWindow: NSWindow {
 final class CalibrationOverlayView: NSView {
     let label: String
     var onPoint: ((CalibrationPoint) -> Void)?
+    private var rejectedClick = false
 
     init(frame: NSRect, label: String) {
         self.label = label
@@ -95,12 +96,14 @@ final class CalibrationOverlayView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.systemGreen.withAlphaComponent(0.85).setStroke()
+        (rejectedClick ? NSColor.systemRed : NSColor.systemGreen)
+            .withAlphaComponent(0.85)
+            .setStroke()
         let border = NSBezierPath(rect: bounds.insetBy(dx: 2, dy: 2))
         border.lineWidth = 3
         border.stroke()
 
-        let message = "点击放大镜"
+        let message = rejectedClick ? "位置不对，请点放大镜" : label
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
             .foregroundColor: NSColor.white,
@@ -110,7 +113,7 @@ final class CalibrationOverlayView: NSView {
             in: NSRect(
                 x: 16,
                 y: bounds.height - 42,
-                width: 160,
+                width: 240,
                 height: 26
             ),
             withAttributes: attributes
@@ -118,24 +121,27 @@ final class CalibrationOverlayView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard let overlayWindow = self.window else { return }
-        let point = overlayWindow.convertPoint(toScreen: event.locationInWindow)
-        let frame = overlayWindow.frame
+        // 直接使用视图本地坐标。旧实现先转屏幕坐标再减 window.frame，
+        // 第二个窗口在 AppKit 重新激活/换焦点时可能得到不一致的坐标空间，
+        // 点击看似落在放大镜上却被范围门静默拒绝。
+        let point = convert(event.locationInWindow, from: nil)
         let relative = CalibrationPoint(
-            x: Double((point.x - frame.minX) / frame.width),
-            y: 1 - Double((point.y - frame.minY) / frame.height)
+            x: Double(point.x / bounds.width),
+            y: 1 - Double(point.y / bounds.height)
         )
         FileHandle.standardError.write(Data(
             "calibration_click:{\"x\":\(relative.x),\"y\":\(relative.y)}\n".utf8
         ))
         // 只接受顶部右侧方框放大镜的大范围。误点中央说明、视频号标签或
         // 标签 X 时保持校准层不动，让用户可以直接重试，不保存错误坐标。
-        guard relative.x >= 0.68,
+        guard relative.x >= 0.55,
               relative.x <= 0.90,
               relative.y >= 0.005,
               relative.y <= 0.075,
               !isDangerousTabCloseRegion(relX: relative.x, relY: relative.y),
               !isDangerousAvatarRegion(relX: relative.x, relY: relative.y) else {
+            rejectedClick = true
+            needsDisplay = true
             return
         }
         onPoint?(relative)
@@ -187,7 +193,7 @@ func captureCalibrationPoint(window: WindowInfo, label: String) throws -> Calibr
     NSApp.activate(ignoringOtherApps: true)
     NSApp.run()
     guard let result,
-          result.x >= 0.68,
+          result.x >= 0.55,
           result.x <= 0.90,
           result.y >= 0.005,
           result.y <= 0.075,
