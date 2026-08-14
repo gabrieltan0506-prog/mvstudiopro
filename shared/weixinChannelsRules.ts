@@ -129,6 +129,7 @@ export function normalizeWeixinChannelsText(value: unknown) {
 }
 
 const WEIXIN_CHANNELS_SEARCH_QUERY_REJECT = /(?:直播(?:录制|錄製|回放)?|vlog|日常记录|日常記錄|生活记录|生活記錄|第\s*\d+\s*集|全集|完结|完結|短剧|短劇|爽文|爽剧|爽劇|sku|型号|型號|旗舰店|旗艦店|购买|購買|下单|下單)/i;
+const WEIXIN_CHANNELS_GENERIC_SEARCH_QUERY = /^(?:(?:内有|內有|附有|附带|附帶|完整|详细|詳細)?(?:教程|教學|教学|新手|小白|方法|技巧))$/i;
 
 /**
  * 视频号搜索只接受短主题词。完整标题、商品型号和日期句子宁可丢弃，
@@ -145,10 +146,17 @@ export function normalizeWeixinChannelsSearchQuery(value: unknown) {
     .replace(/\s+/g, " ")
     .trim();
   if (!normalized || WEIXIN_CHANNELS_SEARCH_QUERY_REJECT.test(normalized)) return undefined;
-  const compact = normalized.replace(/\s+/g, "");
+  let compact = normalized.replace(/\s+/g, "");
+  // 七天标题常把“新手/小白/教程”层层堆在主题后；视频号搜索需要主题词，
+  // 保留具体 AI 垂类并压成“主题+教程”，避免输入整句修饰语。
+  compact = compact.replace(
+    /^(AI(?:视频|影片|工作流|工具|智能体|副业|营销|变现|漫剧))(?:新手|小白)+(?:入门)?(?:教程|教學|教学)?$/i,
+    "$1教程",
+  );
   const length = Array.from(compact).length;
   if (length < 2 || length > 12) return undefined;
   if (!/[\u3400-\u9fffA-Za-z]/.test(compact)) return undefined;
+  if (WEIXIN_CHANNELS_GENERIC_SEARCH_QUERY.test(compact)) return undefined;
   if (/^(?:ai|人工智能)$/i.test(compact)) return undefined;
   if (/^(?:原来|原來|这次|這次|今天|居然|别再|別再|真的|终于|終於|为什么|為什麼|怎么|怎麼)/i.test(compact)) return undefined;
   if (/(?:这样|這樣|而已|罢了|罷了|了|吗|嗎|呢|吧)$/.test(compact)) return undefined;

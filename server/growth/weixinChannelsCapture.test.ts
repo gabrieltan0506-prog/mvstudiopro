@@ -16,11 +16,13 @@ import {
   extractWeixinChannelsMetrics,
   findCommentsClosePoint,
   findCommentsOpenPoint,
+  findMediaViewerClosePoint,
   findFirstSearchVideoPoint,
   findExactSearchSuggestionPoint,
   findSearchInputPoint,
   hasFourVisibleMetrics,
   isWeixinChannelsAuxiliaryPage,
+  isWeixinChannelsMediaViewer,
   hasTypedSearchKeyword,
   metricsRemainOnSameVideo,
   nextCollectorSearchQueryIndex,
@@ -124,14 +126,15 @@ describe("weixin channels OCR", () => {
     expect(collectorSeenContains(expired, "a".repeat(64))).toBe(false);
   });
 
-  it("跨进程标签状态钳制为两个新增标签，总数永远不超过三个", async () => {
+  it("跨进程只允许一个新增搜索标签，总数最多两个", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-tabs-"));
     await fs.writeFile(path.join(dir, "weixin-channels-search-tabs-v1.json"), JSON.stringify({
       windowId: 42, openedTabs: 99, updatedAt: "2026-08-14T00:00:00.000Z",
     }));
     const state = await loadCollectorSearchTabState(42, dir, Date.parse("2026-08-14T01:00:00.000Z"));
-    expect(state.openedTabs).toBe(2);
+    expect(state.openedTabs).toBe(1);
     expect(shouldReuseExistingSearchTab(state.openedTabs)).toBe(true);
+    expect(shouldReuseExistingSearchTab(0)).toBe(false);
   });
 
   it("播放器只接受明确总时长，小时看门狗低于五十会停采", () => {
@@ -191,9 +194,9 @@ describe("weixin channels OCR", () => {
     expect(WEIXIN_CHANNELS_SEARCH_INPUT_POINT).toEqual({ x: 0.58, y: 0.026 });
   });
 
-  it("视频号搜索标签最多保留三个并复用旧标签", () => {
+  it("视频号只保留一个可复用搜索标签", () => {
     expect(shouldReuseExistingSearchTab(0)).toBe(false);
-    expect(shouldReuseExistingSearchTab(1)).toBe(false);
+    expect(shouldReuseExistingSearchTab(1)).toBe(true);
     expect(shouldReuseExistingSearchTab(2)).toBe(true);
     expect(shouldReuseExistingSearchTab(3)).toBe(true);
   });
@@ -272,6 +275,21 @@ describe("weixin channels OCR", () => {
     expect(isWeixinChannelsAuxiliaryPage([
       { text: "客房没有捷径", confidence: 0.99, x: 0.1, y: 0.2, width: 0.3, height: 0.04 },
     ])).toBe(false);
+  });
+
+  it("识别图片查看器并只用同排 OCR 关闭点退出", () => {
+    const viewer = [
+      { text: "用新視窗開啟", confidence: 1, x: 0.69, y: 0.926, width: 0.15, height: 0.018 },
+      { text: "X", confidence: 0.3, x: 0.86, y: 0.924, width: 0.04, height: 0.02 },
+      { text: "45", confidence: 1, x: 0.63, y: 0.019, width: 0.03, height: 0.014 },
+      { text: "90", confidence: 1, x: 0.72, y: 0.019, width: 0.03, height: 0.014 },
+      { text: "35", confidence: 1, x: 0.81, y: 0.019, width: 0.03, height: 0.014 },
+      { text: "15", confidence: 1, x: 0.90, y: 0.019, width: 0.03, height: 0.014 },
+    ];
+    expect(isWeixinChannelsMediaViewer(viewer)).toBe(true);
+    expect(isWeixinChannelsAuxiliaryPage(viewer)).toBe(true);
+    expect(findMediaViewerClosePoint(viewer)?.x).toBeGreaterThan(0.85);
+    expect(findMediaViewerClosePoint(viewer.slice(0, 1))).toBeNull();
   });
 
   it("只提取真实评论文本并标记用户问题", () => {
@@ -396,6 +414,18 @@ describe("weixin channels OCR", () => {
     });
     expect(queries).toEqual(["普通人副业方法", "AI工具实测", "升职方法", "AI工作流"]);
     expect(queries.join(" ")).not.toMatch(/短剧|爽文|免费看/);
+  });
+
+  it("热词剔除空泛教程并把 AI 新手长句压成具体主题", () => {
+    const queries = buildDiverseCollectorSearchQueries({
+      candidates: [{
+        taskId: "ai",
+        category: "AI工具",
+        searchQueries: ["内有教程", "AI漫剧新手小白教程", "AI工作流"],
+      }],
+      limit: 10,
+    });
+    expect(queries).toEqual(["AI漫剧教程", "AI工作流"]);
   });
 
   it("不会只取每个类目前三个热词，后续七天新词也进入轮换", () => {
