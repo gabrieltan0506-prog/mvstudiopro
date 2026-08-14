@@ -2194,6 +2194,9 @@ async function runCollectionPool(params: {
         failureCount += 1;
         stableRecoverySnapshots = 0;
         const reason = error instanceof Error ? error.message : String(error);
+        // 任一失败进入退避前都把鼠标停到独立窗左侧黑边；绝不能悬停在头像区，
+        // Swift 底层同时拒绝头像禁区的 click/drag，形成双重门禁。
+        await runSwiftControl(["move-relative", "0.02", "0.50"]).catch(() => undefined);
         await rememberCollectorSeen(seenRegistry, {
           videoIdentity,
           observationId,

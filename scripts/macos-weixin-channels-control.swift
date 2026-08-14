@@ -6,14 +6,21 @@ enum ControlError: Error, CustomStringConvertible {
     case appNotRunning
     case windowNotFound
     case invalidArguments
+    case dangerousAvatarRegion
 
     var description: String {
         switch self {
         case .appNotRunning: return "weixin_channels_app_not_running"
         case .windowNotFound: return "weixin_channels_window_not_found"
         case .invalidArguments: return "usage: control.swift window|focus|move-window-visible|move-relative <x> <y>|click-relative <x> <y>|drag-relative <fromX> <fromY> <toX> <toY>|scroll-relative <x> <y> <delta>|type <text>|key up|down|pageDown|return|escape|closeTab|selectAll|clear"
+        case .dangerousAvatarRegion: return "weixin_channels_avatar_region_interaction_blocked"
         }
     }
+}
+
+/** 底部左侧头像/作者区是账号安全禁区，任何点击或拖动端点都必须被底层拒绝。 */
+func isDangerousAvatarRegion(relX: Double, relY: Double) -> Bool {
+    return relX <= 0.42 && relY >= 0.86
 }
 
 struct WindowInfo: Codable {
@@ -192,6 +199,7 @@ do {
         let window = try resolveWindow(for: app)
         guard args.count == 3, let relX = Double(args[1]), let relY = Double(args[2]),
               (0...1).contains(relX), (0...1).contains(relY) else { throw ControlError.invalidArguments }
+        guard !isDangerousAvatarRegion(relX: relX, relY: relY) else { throw ControlError.dangerousAvatarRegion }
         postMouseClick(x: window.x + window.width * relX, y: window.y + window.height * relY)
     case "drag-relative":
         let window = try resolveWindow(for: app)
@@ -199,6 +207,8 @@ do {
               let fromX = Double(args[1]), let fromY = Double(args[2]),
               let toX = Double(args[3]), let toY = Double(args[4]),
               [fromX, fromY, toX, toY].allSatisfy({ (0...1).contains($0) }) else { throw ControlError.invalidArguments }
+        guard !isDangerousAvatarRegion(relX: fromX, relY: fromY),
+              !isDangerousAvatarRegion(relX: toX, relY: toY) else { throw ControlError.dangerousAvatarRegion }
         postMouseDrag(
             fromX: window.x + window.width * fromX,
             fromY: window.y + window.height * fromY,
