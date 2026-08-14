@@ -5,11 +5,13 @@
  */
 import { createHash, randomInt } from "node:crypto";
 import { execFile } from "node:child_process";
+import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
+import type { WeixinChannelsObservation } from "../server/growth/weixinChannelsMiner";
 import {
   cleanWeixinChannelsCommentTexts,
   containsWeixinChannelsAdvertisement,
@@ -19,25 +21,47 @@ import {
   qualifyWeixinChannelsObservationLocally,
   weixinChannelsCaptureBudgetMs,
   WEIXIN_CHANNELS_COMMENT_THRESHOLD,
+  WEIXIN_CHANNELS_HIGH_HEAT_BANDS,
   type WeixinChannelsCommentSample,
 } from "../shared/weixinChannelsRules";
+import {
+  buildWindowScopedControlArgs,
+  buildSearchPlaybackRoutes,
+  createAsyncSerialGate,
+  createWeixinChannelsWindowCoordinator,
+  WEIXIN_CHANNELS_MAX_TOTAL_SEARCH_TABS,
+  type WeixinChannelsWindowInfo,
+  type WeixinChannelsWindowSession,
+} from "./weixin-channels-window-session.mts";
 
 const execFileAsync = promisify(execFile);
 
 export const WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS = 10 * 60_000;
 export const WEIXIN_CHANNELS_RECOMMENDATION_TARGET = 5;
 export const WEIXIN_CHANNELS_UNQUALIFIED_DWELL_MS = 2_000;
+/** 评论首屏加两次向下翻页，共读取三屏。 */
+export const WEIXIN_CHANNELS_COMMENT_PANEL_SCREEN_COUNT = 3;
 export const WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS = [0.1, 0.3, 0.5, 0.7, 0.9] as const;
 export const WEIXIN_CHANNELS_PRECISION_SAMPLE_SIZE = 10;
 export const WEIXIN_CHANNELS_MIN_QUALIFIED_RATE = 0.4;
+
+export function shouldUseWeixinChannelsSearchAtHour(hour: number) {
+  return Number.isInteger(hour) && hour >= 0 && hour < 6;
+}
 export const WEIXIN_CHANNELS_SEEN_TTL_MS = 7 * 24 * 60 * 60_000;
+export const WEIXIN_CHANNELS_SEARCH_FRESHNESS_DAYS = 15;
+export const WEIXIN_CHANNELS_SEARCH_HIGH_PLAY_THRESHOLD = 10_000;
 export const WEIXIN_CHANNELS_HOUR_MS = 60 * 60_000;
+export const WEIXIN_CHANNELS_HOURLY_UNIQUE_TARGET = 101;
+export const WEIXIN_CHANNELS_MAX_PASSIVE_RECOVERY_SNAPSHOTS = 4;
 export const WEIXIN_CHANNELS_WATCHDOG_CHECKPOINTS = [
-  { elapsedMs: 15 * 60_000, minimumPersisted: 12 },
-  { elapsedMs: 30 * 60_000, minimumPersisted: 25 },
+  { elapsedMs: 15 * 60_000, minimumPersisted: 25 },
+  { elapsedMs: 30 * 60_000, minimumPersisted: 50 },
 ] as const;
 /** 2026-08-14 在动态 483×769 / 966×1538 窗口均实测命中顶栏放大镜。 */
-export const WEIXIN_CHANNELS_SEARCH_BUTTON_POINT = { x: 0.785, y: 0.026 } as const;
+// 440×769 双窗布局实截图中，顶栏方框搜索按钮中心为 x≈0.765、y≈0.026；
+// x≈0.60 落在“视频号”标签内部，只会切换标签而不会打开搜索。
+export const WEIXIN_CHANNELS_SEARCH_BUTTON_POINT = { x: 0.765, y: 0.026 } as const;
 export const WEIXIN_CHANNELS_SEARCH_INPUT_POINT = { x: 0.58, y: 0.026 } as const;
 
 export function shouldSwitchRecommendationToSearch(params: {
@@ -59,7 +83,9 @@ export function shouldRotateSearchQuery(params: { scannedCount: number; qualifie
 }
 
 export function collectorWatchdogDecision(elapsedMs: number, persistedUnique: number) {
-  if (elapsedMs >= WEIXIN_CHANNELS_HOUR_MS) return persistedUnique < 50 ? "remediate" as const : "rollover" as const;
+  if (elapsedMs >= WEIXIN_CHANNELS_HOUR_MS) {
+    return persistedUnique < WEIXIN_CHANNELS_HOURLY_UNIQUE_TARGET ? "remediate" as const : "rollover" as const;
+  }
   if (elapsedMs >= WEIXIN_CHANNELS_WATCHDOG_CHECKPOINTS[1].elapsedMs
     && persistedUnique < WEIXIN_CHANNELS_WATCHDOG_CHECKPOINTS[1].minimumPersisted) return "checkpoint_30" as const;
   if (elapsedMs >= WEIXIN_CHANNELS_WATCHDOG_CHECKPOINTS[0].elapsedMs
@@ -130,11 +156,25 @@ export function findSearchInputPoint(lines: OcrLine[]): { x: number; y: number }
   const candidates = lines.filter((line) =>
     line.confidence >= 0.35
       && /(搜一搜|搜索|搜尋|输入网址|輸入網址)/i.test(line.text)
-      && line.y >= 0.72,
+      && line.y >= 0.72
+      && line.x < 0.75,
   );
   const hit = candidates.sort((left, right) => right.width - left.width)[0];
-  if (!hit) return null;
-  return { x: hit.x + Math.min(hit.width / 2, 0.08), y: 1 - (hit.y + hit.height / 2) };
+  if (hit) return { x: hit.x + Math.min(hit.width / 2, 0.08), y: 1 - (hit.y + hit.height / 2) };
+  // 已有关键词时输入框不再显示“搜一搜”，只能由同一行右侧搜索按钮反推输入区。
+  const button = lines.find((line) => line.confidence >= 0.35
+    && /^(搜索|搜尋)$/.test(line.text.trim()) && line.x >= 0.75 && line.y >= 0.78);
+  return button
+    ? { x: Math.max(0.18, button.x - 0.42), y: 1 - (button.y + button.height / 2) }
+    : null;
+}
+
+export function findSearchSubmitPoint(lines: OcrLine[]): { x: number; y: number } | null {
+  const hit = lines
+    .filter((line) => line.confidence >= 0.35 && /^(搜索|搜尋)$/.test(line.text.trim()))
+    .filter((line) => line.x >= 0.72 && line.y >= 0.78 && line.y <= 0.94)
+    .sort((left, right) => right.x - left.x)[0];
+  return hit ? clickPoint(hit) : null;
 }
 
 export function findExactSearchSuggestionPoint(lines: OcrLine[], keyword: string): { x: number; y: number } | null {
@@ -169,6 +209,279 @@ export function hasTypedSearchKeyword(lines: OcrLine[], keyword: string) {
   });
 }
 
+export function hasSubmittedSearchKeyword(lines: OcrLine[], keyword: string) {
+  const target = normalizeSearchTopicText(keyword);
+  return lines.some((line) => line.confidence >= 0.25
+    && line.y >= 0.82
+    && line.y <= 0.94
+    && normalizeSearchTopicText(line.text).includes(target));
+}
+
+export function findSearchVideosTabPoint(lines: OcrLine[]): { x: number; y: number } | null {
+  const hit = lines
+    .filter((line) => line.confidence >= 0.35 && /^(影片|视频|視頻)$/.test(line.text.trim()))
+    .filter((line) => line.y >= 0.72 && line.y <= 0.9 && line.x >= 0.3 && line.x <= 0.65)
+    .sort((left, right) => Math.abs(left.x - 0.45) - Math.abs(right.x - 0.45))[0];
+  return hit ? clickPoint(hit) : null;
+}
+
+export function findChannelsTabPoint(lines: OcrLine[]): { x: number; y: number } | null {
+  const hit = lines
+    .filter((line) => line.confidence >= 0.25
+      && /^(?:[xX×✕])?(?:视频号|視頻號|视频|視頻|视|視)(?:[xX×✕])?$/.test(line.text.replace(/\s+/g, "")))
+    .filter((line) => line.y >= 0.90 && line.x >= 0.30 && line.x <= 0.62)
+    .sort((left, right) => left.x - right.x)[0];
+  return hit ? {
+    // Vision 会把“视频号 + X”合并或只识别出“视×”。只点文字左侧，
+    // 并把纵坐标夹在窗口顶栏文字带内，绝不取含 X 整行的中心。
+    x: Math.max(0.30, Math.min(0.49, hit.x + Math.min(0.015, hit.width * 0.2))),
+    y: Math.max(0.02, Math.min(0.05, 1 - (hit.y + hit.height / 2))),
+  } : null;
+}
+
+/**
+ * 顶栏搜索入口不使用窗口绝对坐标。Vision 通常把放大镜识别为 Q/O；识别
+ * 不到时，以同排“视频号”标签关闭符号为锚点，按当前字体高度推导相邻按钮。
+ */
+export function findSearchButtonPoint(lines: OcrLine[]): { x: number; y: number } | null {
+  const glyph = lines
+    .filter((line) => line.confidence >= 0.18 && /^(?:Q|O|0|🔍)$/.test(line.text.trim()))
+    .filter((line) => line.y >= 0.94 && line.x >= 0.62 && line.x <= 0.9)
+    .sort((left, right) => right.x - left.x)[0];
+  if (glyph) return clickPoint(glyph);
+
+  const channels = lines
+    .filter((line) => line.confidence >= 0.3 && /^(?:[xX×✕])?(?:视频号|視頻號)$/.test(line.text.trim()))
+    .filter((line) => line.y >= 0.94 && line.x >= 0.25 && line.x <= 0.65)
+    .sort((left, right) => left.x - right.x)[0];
+  if (!channels) return null;
+  const close = lines
+    .filter((line) => line.confidence >= 0.15 && /^(?:x|X|×|✕)$/.test(line.text.trim()))
+    .filter((line) => Math.abs((line.y + line.height / 2) - (channels.y + channels.height / 2))
+      <= Math.max(0.02, channels.height))
+    .filter((line) => line.x > channels.x + channels.width && line.x <= 0.8)
+    .sort((left, right) => left.x - right.x)[0];
+  if (!close) return null;
+  const fontUnit = Math.max(channels.height, close.height, 0.018);
+  return {
+    x: Math.min(0.92, close.x + close.width / 2 + fontUnit * 3.4),
+    y: 1 - (channels.y + channels.height / 2),
+  };
+}
+
+export function findAnySearchTabPoint(lines: OcrLine[]): { x: number; y: number } | null {
+  const hit = lines
+    .filter((line) => line.confidence >= 0.25 && line.y >= 0.90 && line.x >= 0.54 && line.x <= 0.70)
+    .filter((line) => !/^(视频号|視頻號|[xX×])$/.test(line.text.trim()))
+    .sort((left, right) => left.x - right.x)[0];
+  return hit ? {
+    // Vision 常把“搜索词 + X”合成一行；只点文字左侧，永不取整行中心。
+    x: Math.max(0.54, Math.min(0.64, hit.x + Math.min(0.02, hit.width * 0.2))),
+    y: Math.max(0.02, Math.min(0.05, 1 - (hit.y + hit.height / 2))),
+  } : null;
+}
+
+export function findSearchTabClosePoint(lines: OcrLine[]): { x: number; y: number } | null {
+  const hit = lines
+    .filter((line) => line.confidence >= 0.2 && /^[xX×]$/.test(line.text.trim()))
+    .filter((line) => line.y >= 0.94 && line.x >= 0.55 && line.x <= 0.78)
+    .sort((left, right) => right.x - left.x)[0];
+  return hit ? clickPoint(hit) : null;
+}
+
+/**
+ * 仅识别用户确认的“赞和收藏”个人数据页。一个标题不足以放行关闭动作，
+ * 必须同时出现至少两个侧栏身份项，避免把普通视频字幕或搜索结果误判成异常页。
+ */
+export function isWeixinChannelsPersonalDataPage(lines: OcrLine[]) {
+  const text = lines
+    .filter((line) => line.confidence >= 0.25)
+    .map((line) => line.text.normalize("NFKC").replace(/\s+/g, "").trim());
+  const hasTitle = text.some((value) => /^(赞和收藏|讚和收藏)$/.test(value));
+  const navigationSignals = [
+    /^(浏览记录|瀏覽記錄)$/,
+    /^(关注|關注)$/,
+    /^(我的视频号|我的視頻號)$/,
+    /^(发表视频|發表視頻)$/,
+    /^(发起直播|發起直播)$/,
+  ];
+  const matchedSignals = navigationSignals.filter((pattern) => text.some((value) => pattern.test(value))).length;
+  return hasTitle && matchedSignals >= 2;
+}
+
+/**
+ * 关闭点只能在严格确认个人数据页后产生。优先读取 OCR 的 X；若 Vision 漏读 X，
+ * 则由同排的异常标签文字或“视频号”标签动态推导，不使用屏幕绝对坐标。
+ */
+export function findPersonalDataTabClosePoint(lines: OcrLine[]): { x: number; y: number } | null {
+  if (!isWeixinChannelsPersonalDataPage(lines)) return null;
+  const explicitClose = lines
+    .filter((line) => line.confidence >= 0.18 && /^(?:x|X|×|✕)$/.test(line.text.trim()))
+    .filter((line) => line.y >= 0.935 && line.x >= 0.60 && line.x <= 0.76)
+    .sort((left, right) => right.x - left.x)[0];
+  if (explicitClose) return clickPoint(explicitClose);
+  const auxiliaryTab = lines
+    .filter((line) => line.confidence >= 0.2 && line.y >= 0.94 && line.x >= 0.54 && line.x <= 0.70)
+    .filter((line) => /^(?:赞|讚|赞和收藏|讚和收藏)$/.test(line.text.replace(/[xX×✕\s]/g, "")))
+    .sort((left, right) => right.x - left.x)[0];
+  if (auxiliaryTab) {
+    return {
+      x: Math.max(0.60, Math.min(0.76, auxiliaryTab.x + auxiliaryTab.width + 0.025)),
+      y: 1 - (auxiliaryTab.y + auxiliaryTab.height / 2),
+    };
+  }
+  const channelsTab = findChannelsTabPoint(lines);
+  if (!channelsTab) return null;
+  return { x: Math.max(0.60, Math.min(0.76, channelsTab.x + 0.205)), y: channelsTab.y };
+}
+
+export function findSearchTabActivationPoint(lines: OcrLine[], keyword: string): { x: number; y: number } | null {
+  const normalize = (value: string) => value.normalize("NFKC").replace(/[\s，,。.!！?？]/g, "").toLowerCase();
+  const target = normalize(keyword);
+  const hit = lines
+    .filter((line) => line.confidence >= 0.3 && line.y >= 0.94 && line.x >= 0.54 && line.x <= 0.82)
+    .filter((line) => {
+      const value = normalize(line.text).replace(/[xX×]$/, "");
+      return value.length >= 1 && (target.startsWith(value) || value.startsWith(target.slice(0, Math.min(2, target.length))));
+    })
+    .sort((left, right) => left.x - right.x)[0];
+  return hit ? clickPoint(hit) : null;
+}
+
+export function findSearchSortPoint(lines: OcrLine[], sort: "latest" | "hottest") {
+  const pattern = sort === "latest" ? /^(最新)$/ : /^(最热门|最熱門)$/;
+  const hit = lines
+    .filter((line) => line.confidence >= 0.35 && pattern.test(line.text.trim()))
+    .filter((line) => line.y >= 0.68 && line.y <= 0.86)
+    .sort((left, right) => right.y - left.y)[0];
+  return hit ? clickPoint(hit) : null;
+}
+
+export function parseVisiblePublicationAgeDays(text: string, now = Date.now()): number | undefined {
+  const value = String(text || "").trim();
+  if (/^(刚刚|剛剛|今天|今日|\d+\s*(分钟|分鐘|小时|小時)前)$/.test(value)) return 0;
+  if (/^(昨天|昨日)$/.test(value)) return 1;
+  if (/^前天$/.test(value)) return 2;
+  const relative = value.match(/^(\d+)\s*(天|周|週|个月|個月|月|年)前$/);
+  if (relative) {
+    const amount = Number(relative[1]);
+    const unit = relative[2];
+    return amount * (unit === "天" ? 1 : /周|週/.test(unit!) ? 7 : /月/.test(unit!) ? 30 : 365);
+  }
+  const absolute = value.match(/^(20\d{2})[./年-](\d{1,2})[./月-](\d{1,2})日?$/);
+  if (absolute) {
+    const publishedAt = new Date(Number(absolute[1]), Number(absolute[2]) - 1, Number(absolute[3])).getTime();
+    if (Number.isFinite(publishedAt) && publishedAt <= now) return Math.floor((now - publishedAt) / 86_400_000);
+  }
+  return undefined;
+}
+
+function normalizeSearchTopicText(value: string) {
+  return String(value || "").normalize("NFKC").toLowerCase().replace(/[\s，,。.!！?？:：'“”"·…#@｜|/\\【】\[\]（）()《》]/g, "");
+}
+
+export type WeixinChannelsSearchSortSummary = {
+  matchingCount: number;
+  recentMatchingCount: number;
+  newestMatchingAgeDays: number | undefined;
+  maxVisiblePlayCount: number;
+  recentHighPlayCount: number;
+  firstHighPlayPoint: { x: number; y: number } | undefined;
+  firstMatchingPoint: { x: number; y: number } | undefined;
+};
+
+export function summarizeSearchSort(
+  lines: OcrLine[],
+  keyword: string,
+  now = Date.now(),
+): WeixinChannelsSearchSortSummary {
+  void keyword;
+  const records = lines.flatMap((dateLine) => {
+    const ageDays = parseVisiblePublicationAgeDays(dateLine.text, now);
+    if (ageDays === undefined || dateLine.y < 0.02 || dateLine.y > 0.68) return [];
+    const leftColumn = dateLine.x < 0.5;
+    const cardText = lines
+      .filter((line) => (leftColumn ? line.x < 0.5 : line.x >= 0.48))
+      .filter((line) => line.y >= dateLine.y && line.y <= dateLine.y + 0.42)
+      .map((line) => line.text)
+      .join(" ");
+    const normalizedCard = normalizeSearchTopicText(cardText);
+    const visiblePlayCount = Math.max(0, ...lines
+      .filter((line) => (leftColumn ? line.x < 0.5 : line.x >= 0.48))
+      .filter((line) => line.y >= dateLine.y && line.y <= dateLine.y + 0.2)
+      .map((line) => parseStandaloneMetric(line.text) || 0));
+    return [{
+      ageDays,
+      visiblePlayCount,
+      // 微信已按输入词返回结果；这里不再二次 OCR 匹配标题，只以发布日期
+      // 和广告标记筛选卡片，点入播放器后再读取四项真实指标。
+      matchesTopic: true,
+      advertisement: containsWeixinChannelsAdvertisement([cardText]),
+      point: {
+        x: leftColumn ? Math.max(0.16, dateLine.x + 0.2) : Math.min(0.84, dateLine.x + 0.2),
+        y: Math.max(0.22, Math.min(0.68, 1 - dateLine.y - 0.24)),
+      },
+    }];
+  });
+  const matching = records.filter((record) => record.matchesTopic && !record.advertisement);
+  return {
+    matchingCount: matching.length,
+    recentMatchingCount: matching.filter((record) => record.ageDays <= WEIXIN_CHANNELS_SEARCH_FRESHNESS_DAYS).length,
+    newestMatchingAgeDays: matching.length ? Math.min(...matching.map((record) => record.ageDays)) : undefined,
+    maxVisiblePlayCount: matching.length ? Math.max(...matching.map((record) => record.visiblePlayCount)) : 0,
+    recentHighPlayCount: matching.filter((record) => record.ageDays <= WEIXIN_CHANNELS_SEARCH_FRESHNESS_DAYS
+      && record.visiblePlayCount >= WEIXIN_CHANNELS_SEARCH_HIGH_PLAY_THRESHOLD).length,
+    firstHighPlayPoint: matching
+      // “最新”仍记录十五天新鲜度，但“最热门”的爆款候选不受发布日期限制。
+      // 点入后由播放器四项互动指标执行最终资格判断。
+      .filter((record) => record.visiblePlayCount >= WEIXIN_CHANNELS_SEARCH_HIGH_PLAY_THRESHOLD)
+      .sort((left, right) => right.visiblePlayCount - left.visiblePlayCount)[0]?.point,
+    firstMatchingPoint: matching.sort((left, right) => left.ageDays - right.ageDays)[0]?.point,
+  };
+}
+
+export function mergeSearchSortSummaries(
+  summaries: WeixinChannelsSearchSortSummary[],
+): WeixinChannelsSearchSortSummary {
+  const newestMatchingAgeDays = summaries
+    .map((summary) => summary.newestMatchingAgeDays)
+    .filter((value): value is number => value !== undefined)
+    .sort((left, right) => left - right)[0];
+  return {
+    matchingCount: summaries.reduce((sum, summary) => sum + summary.matchingCount, 0),
+    recentMatchingCount: summaries.reduce((sum, summary) => sum + summary.recentMatchingCount, 0),
+    newestMatchingAgeDays,
+    maxVisiblePlayCount: Math.max(0, ...summaries.map((summary) => summary.maxVisiblePlayCount)),
+    recentHighPlayCount: summaries.reduce((sum, summary) => sum + summary.recentHighPlayCount, 0),
+    firstHighPlayPoint: summaries.find((summary) => summary.firstHighPlayPoint)?.firstHighPlayPoint,
+    firstMatchingPoint: summaries.find((summary) => summary.firstMatchingPoint)?.firstMatchingPoint,
+  };
+}
+
+export function assessSearchTopicHeat(params: {
+  latest: WeixinChannelsSearchSortSummary;
+  hottest: WeixinChannelsSearchSortSummary;
+}) {
+  const outdated = params.hottest.matchingCount > 0 && params.hottest.recentMatchingCount === 0;
+  return {
+    outdated,
+    highHeat: !outdated
+      && params.latest.recentHighPlayCount > 0
+      && params.hottest.recentHighPlayCount > 0,
+  };
+}
+
+export function shouldExpireSearchTopic(params: {
+  latest: WeixinChannelsSearchSortSummary;
+  hottest: WeixinChannelsSearchSortSummary;
+  latestQualified: boolean;
+}) {
+  if (!params.latest.recentMatchingCount) return true;
+  return !params.latestQualified
+    && params.hottest.matchingCount > 0
+    && (params.hottest.newestMatchingAgeDays || 0) > WEIXIN_CHANNELS_SEARCH_FRESHNESS_DAYS;
+}
+
 /** 搜索结果优先点带时长的自然视频卡，避开右侧“广告”卡和账号卡。 */
 export function findFirstSearchVideoPoint(lines: OcrLine[]): { x: number; y: number; videoDurationSec: number } | null {
   const durations = lines
@@ -199,22 +512,32 @@ export function ocrFingerprint(ocr: OcrResult) {
   ).digest("hex");
 }
 
-export function visibleVideoIdentityFingerprint(ocr: OcrResult) {
-  const metrics = extractWeixinChannelsMetrics(ocr.lines);
+function normalizeDedupIdentityText(value: string | undefined) {
+  return String(value || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/(?:展开|展開)$/g, "")
+    .replace(/[\s，,。.!！?？:：'“”"·…⋯#@]+/g, "")
+    .slice(0, 160);
+}
+
+/**
+ * 历史去重身份不能包含会自然增长的互动数字。标题取稳定前缀以容忍“展开”，
+ * 作者单独参与；两者都不可读时 fail-closed，不用指标拼出伪稳定 ID。
+ */
+export function dedupIdentityFingerprint(ocr: OcrResult) {
   const identity = extractVisibleTitleAndAuthor(ocr.lines);
-  const stableMetrics = [
-    ["likes", metrics.likes],
-    ["shares", metrics.shares],
-    ["favorites", metrics.favorites],
-    ["comments", metrics.comments],
-  ].filter((entry): entry is [string, number] => entry[1] !== undefined);
-  if (stableMetrics.length < 2) return undefined;
+  const title = normalizeDedupIdentityText(identity.title);
+  const author = normalizeDedupIdentityText(identity.author);
+  if (!title || !author) return undefined;
   return createHash("sha256").update(JSON.stringify({
-    metrics: stableMetrics,
-    title: identity.title || "",
-    author: identity.author || "",
+    title,
+    author,
   })).digest("hex");
 }
+
+/** 兼容既有调用名；语义已明确为历史去重身份。 */
+export const visibleVideoIdentityFingerprint = dedupIdentityFingerprint;
 
 function clickPoint(line: OcrLine) {
   return { x: line.x + line.width / 2, y: 1 - (line.y + line.height / 2) };
@@ -227,13 +550,23 @@ export function findCommentsOpenPoint(lines: OcrLine[]) {
     .sort((left, right) => left.y - right.y)[0];
   if (label) return clickPoint(label);
   const bottomNumbers = lines
-    .filter((line) => line.confidence >= 0.35 && line.y < 0.25 && line.x > 0.45 && parseVisibleMetric(line.text) !== undefined)
+    .filter((line) => line.confidence >= 0.25 && line.y < 0.25 && line.x > 0.45 && parseVisibleMetric(line.text) !== undefined)
     .sort((left, right) => left.x - right.x);
   if (bottomNumbers.length < 4) return null;
   const rightmost = bottomNumbers[bottomNumbers.length - 1]!;
   // 缺少评论数字时，最右可见数字可能其实是“收藏”。只有落在评论槽位
   // 的数字才允许点击，禁止误入“赞和收藏”页，更不能靠头像或固定坐标猜。
   return rightmost.x >= 0.84 ? clickPoint(rightmost) : null;
+}
+
+export function shouldOpenVisibleComments(lines: OcrLine[]) {
+  if (!hasFourVisibleMetrics(lines)) return false;
+  const metrics = extractWeixinChannelsMetrics(lines);
+  const qualification = qualifyWeixinChannelsObservationLocally({
+    ...metrics,
+    ocrTexts: metrics.rawText,
+  });
+  return qualification.qualified && qualification.requiresComments;
 }
 
 export function isWeixinChannelsAuxiliaryPage(lines: OcrLine[]) {
@@ -312,18 +645,38 @@ async function findCommentsClosePointFromScreenshot(screenshot: string, lines: O
   return { x: best.x / info.width, y: best.y / info.height };
 }
 
+async function closeConfirmedCommentsPanel(screenshot: string, lines: OcrLine[]) {
+  const closePoint = await findCommentsClosePointFromScreenshot(screenshot, lines);
+  if (!closePoint) return false;
+  await runSwiftControl([
+    "click-confirmed-comments-close",
+    closePoint.x.toFixed(5),
+    closePoint.y.toFixed(5),
+  ]);
+  return true;
+}
+
 export function hasFourVisibleMetrics(lines: OcrLine[]) {
   const metrics = extractWeixinChannelsMetrics(lines);
   return [metrics.likes, metrics.shares, metrics.favorites, metrics.comments].every((value) => value !== undefined);
 }
 
+export function hasDefinitiveVisibleUnqualifiedMetrics(lines: OcrLine[]) {
+  const metrics = extractWeixinChannelsMetrics(lines);
+  const knownBelowThreshold = [
+    metrics.likes !== undefined && metrics.likes < WEIXIN_CHANNELS_HIGH_HEAT_BANDS.likes.min,
+    metrics.shares !== undefined && metrics.shares < WEIXIN_CHANNELS_HIGH_HEAT_BANDS.shares.min,
+    metrics.favorites !== undefined && metrics.favorites < WEIXIN_CHANNELS_HIGH_HEAT_BANDS.favorites.min,
+  ].filter(Boolean).length;
+  // 高热门槛要求三项至少两项达标；两项已明确低于门槛时，缺失项无论多高
+  // 都不可能改变结论，因此可安全淘汰，不必为了第四项 OCR 原地死等。
+  return knownBelowThreshold >= 2;
+}
+
 export function interactionMetricsConfirmed(first: OcrResult, second: OcrResult) {
   return hasFourVisibleMetrics(first.lines)
     && hasFourVisibleMetrics(second.lines)
-    && metricsRemainOnSameVideo(
-      extractWeixinChannelsMetrics(first.lines),
-      extractWeixinChannelsMetrics(second.lines),
-    );
+    && sameVideoContinuity(first, second);
 }
 
 export function extractCommentSamples(lines: OcrLine[]): WeixinChannelsCommentSample[] {
@@ -378,35 +731,199 @@ export function extractCommentPanelContentLines(lines: OcrLine[]) {
 
 let controlExecutablePromise: Promise<string> | undefined;
 let ocrExecutablePromise: Promise<string> | undefined;
-type CollectorSearchTabState = { windowId: number; openedTabs: number; updatedAt: string };
-let collectorSearchTabState: CollectorSearchTabState | undefined;
+type CollectorSearchTabState = { windowId: number; openedTabs: number; ownerPid?: number; updatedAt: string };
+const collectorSearchTabStates = new Map<number, CollectorSearchTabState>();
+const collectorWindowContext = new AsyncLocalStorage<WeixinChannelsWindowSession>();
+const collectorUiGate = createAsyncSerialGate();
+let collectorWindowScopeRequired = false;
 
-function collectorSearchTabStateFile(tempDir = os.tmpdir()) {
-  return path.join(tempDir, "weixin-channels-search-tabs-v1.json");
+function requireCollectorWindowSession() {
+  const session = collectorWindowContext.getStore();
+  if (!session) throw new Error("weixin_channels_window_context_required");
+  return session;
+}
+
+async function getCollectorSearchTabState() {
+  const { windowId } = requireCollectorWindowSession();
+  let state = collectorSearchTabStates.get(windowId);
+  if (!state) {
+    state = await loadCollectorSearchTabState(windowId);
+    collectorSearchTabStates.set(windowId, state);
+  }
+  return state;
+}
+
+function totalCollectorSearchTabs() {
+  return Array.from(collectorSearchTabStates.values())
+    .reduce((total, state) => total + state.openedTabs, 0);
+}
+
+function processIsAlive(pid: number | undefined) {
+  if (!pid || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function collectorSearchTabStateFile(windowId: number, tempDir = os.tmpdir()) {
+  return path.join(tempDir, `weixin-channels-search-tabs-v2-${windowId}.json`);
+}
+
+type CollectorSearchCalibration = {
+  windowId: number;
+  pid: number;
+  point: { x: number; y: number };
+  calibratedAt: string;
+};
+
+function collectorSearchCalibrationFile(session: WeixinChannelsWindowSession, tempDir = os.tmpdir()) {
+  return path.join(
+    tempDir,
+    `weixin-channels-search-calibration-v1-${session.pid}-${session.windowId}.json`,
+  );
+}
+
+async function loadCollectorSearchCalibration() {
+  const session = requireCollectorWindowSession();
+  try {
+    const parsed = JSON.parse(
+      await fs.readFile(collectorSearchCalibrationFile(session), "utf8"),
+    ) as CollectorSearchCalibration;
+    if (parsed.windowId !== session.windowId
+      || parsed.pid !== session.pid
+      || parsed.point.x < 0.55
+      || parsed.point.x > 0.9
+      || parsed.point.y < 0.005
+      || parsed.point.y > 0.075) return null;
+    return parsed.point;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function calibrateCollectorSearchButton(session: WeixinChannelsWindowSession, label: string) {
+  return collectorWindowContext.run(session, async () => {
+    const { stdout } = await runSwiftControl(["calibrate-point", label]);
+    const point = JSON.parse(stdout) as { x?: number; y?: number };
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)
+      || point.x! < 0.55 || point.x! > 0.9
+      || point.y! < 0.005 || point.y! > 0.075) {
+      throw new Error("weixin_channels_search_calibration_invalid");
+    }
+    const calibration: CollectorSearchCalibration = {
+      windowId: session.windowId,
+      pid: session.pid,
+      point: { x: point.x!, y: point.y! },
+      calibratedAt: new Date().toISOString(),
+    };
+    const file = collectorSearchCalibrationFile(session);
+    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(temporary, JSON.stringify(calibration, null, 2), "utf8");
+    await fs.rename(temporary, file);
+    process.stderr.write(`search_button_calibrated:${JSON.stringify(calibration)}\n`);
+    return calibration.point;
+  });
+}
+
+async function calibrateCollectorSearchButtonsForSessions(
+  sessions: WeixinChannelsWindowSession[],
+) {
+  collectorWindowScopeRequired = true;
+  const points: Array<{ windowId: number; point: { x: number; y: number } }> = [];
+  for (const session of [...sessions].sort((left, right) => left.bounds.x - right.bounds.x)) {
+    const saved = await collectorWindowContext.run(
+      session,
+      () => loadCollectorSearchCalibration(),
+    );
+    const point = saved || await calibrateCollectorSearchButton(
+      session,
+      `${session.slot === 1 ? "左窗" : "右窗"}：请点击顶部方框放大镜`,
+    );
+    if (saved) {
+      process.stderr.write(`search_button_calibration_reused:${JSON.stringify({
+        windowId: session.windowId,
+        pid: session.pid,
+        point,
+      })}\n`);
+    }
+    points.push({ windowId: session.windowId, point });
+  }
+  return points;
+}
+
+export async function calibrateDualWindowSearchButtons(windowIds: number[]) {
+  await prepareWeixinCollectorExecutables();
+  const sessions = await discoverCollectorWindowSessions(windowIds);
+  if (sessions.length !== 2) throw new Error("weixin_channels_dual_window_probe_requires_two_windows");
+  return calibrateCollectorSearchButtonsForSessions(sessions);
+}
+
+export async function inspectSearchCalibrationOnWindow(params: {
+  windowId: number;
+  keyword: string;
+  screenshot: string;
+}) {
+  await prepareWeixinCollectorExecutables();
+  const sessions = await discoverCollectorWindowSessions([params.windowId]);
+  const session = sessions[0];
+  if (!session) throw new Error("weixin_channels_required_window_not_found");
+  collectorWindowScopeRequired = true;
+  collectorSearchTabStates.set(
+    session.windowId,
+    await loadCollectorSearchTabState(session.windowId),
+  );
+  return collectorWindowContext.run(session, async () => {
+    const result = await searchKeyword(params.keyword, params.screenshot);
+    return {
+      windowId: session.windowId,
+      keyword: params.keyword,
+      latest: result.latest,
+      hottest: result.hottest,
+      heat: assessSearchTopicHeat({ latest: result.latest, hottest: result.hottest }),
+    };
+  });
 }
 
 export async function loadCollectorSearchTabState(windowId: number, tempDir = os.tmpdir(), now = Date.now()) {
   try {
-    const parsed = JSON.parse(await fs.readFile(collectorSearchTabStateFile(tempDir), "utf8")) as CollectorSearchTabState;
+    const parsed = JSON.parse(await fs.readFile(collectorSearchTabStateFile(windowId, tempDir), "utf8")) as CollectorSearchTabState;
     if (parsed.windowId === windowId && now - Date.parse(parsed.updatedAt) <= WEIXIN_CHANNELS_SEEN_TTL_MS) {
       return { ...parsed, openedTabs: Math.max(0, Math.min(1, Math.floor(parsed.openedTabs || 0))) };
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    // 单窗口 v1 只在 windowId 完全一致时迁移，绝不能把左窗标签数套到右窗。
+    try {
+      const legacy = JSON.parse(await fs.readFile(path.join(tempDir, "weixin-channels-search-tabs-v1.json"), "utf8")) as CollectorSearchTabState;
+      if (legacy.windowId === windowId && now - Date.parse(legacy.updatedAt) <= WEIXIN_CHANNELS_SEEN_TTL_MS) {
+        return { ...legacy, openedTabs: Math.max(0, Math.min(1, Math.floor(legacy.openedTabs || 0))) };
+      }
+    } catch (legacyError) {
+      if ((legacyError as NodeJS.ErrnoException).code !== "ENOENT") throw legacyError;
+    }
   }
   // 当前窗口已经由 ensureVideoPlayerVisible 证明是播放器，基线只占推荐页一个标签。
-  return { windowId, openedTabs: 0, updatedAt: new Date(now).toISOString() };
+  return { windowId, openedTabs: 0, ownerPid: undefined, updatedAt: new Date(now).toISOString() };
 }
 
 async function persistCollectorSearchTabState(state: CollectorSearchTabState, tempDir = os.tmpdir()) {
   state.updatedAt = new Date().toISOString();
-  const file = collectorSearchTabStateFile(tempDir);
+  const file = collectorSearchTabStateFile(state.windowId, tempDir);
   const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
   await fs.writeFile(temp, JSON.stringify(state, null, 2), "utf8");
   await fs.rename(temp, file);
 }
 
-export type CollectorVideoState = "persisted" | "terminal_unqualified" | "retryable_failed";
+export type CollectorVideoState =
+  | "in_flight"
+  | "persisted"
+  | "terminal_unqualified"
+  | "retryable_failed"
+  | "unsafe_ui_state";
 
 export function collectorVideoStateAfterCapture(result: { qualified: boolean; persisted?: boolean }) {
   if (result.qualified && result.persisted !== true) {
@@ -416,6 +933,36 @@ export function collectorVideoStateAfterCapture(result: { qualified: boolean; pe
     state: result.persisted === true ? "persisted" as const : "terminal_unqualified" as const,
     stopWithoutAdvance: false,
   };
+}
+
+export type CollectorAdvanceEvidence = {
+  metricsOcrConfirmed: boolean;
+  advertisementRejected?: boolean;
+  terminalDuplicate?: boolean;
+  unqualifiedInFlightDuplicate?: boolean;
+  captureState?: CollectorVideoState;
+};
+
+export function collectorAdvanceAllowed(evidence: CollectorAdvanceEvidence) {
+  if (!evidence.metricsOcrConfirmed) return false;
+  return evidence.advertisementRejected === true
+    || evidence.terminalDuplicate === true
+    || evidence.unqualifiedInFlightDuplicate === true
+    || evidence.captureState === "persisted"
+    || evidence.captureState === "terminal_unqualified";
+}
+
+export function qualifiedCaptureHasAdvanceEvidence(result: {
+  qualified: boolean;
+  persisted?: boolean;
+  observation?: Record<string, unknown>;
+}) {
+  if (!result.qualified) return true;
+  if (result.persisted !== true || !result.observation) return false;
+  const qualification = qualifyWeixinChannelsObservationLocally(result.observation);
+  return !qualification.requiresComments
+    || (Array.isArray(result.observation.commentSamples)
+      && result.observation.commentSamples.length > 0);
 }
 
 type CollectorSeenEntry = {
@@ -483,8 +1030,39 @@ export function automaticRecoveryDelayMs(failureCount: number) {
   return Math.min(5 * 60_000, 5_000 * (2 ** Math.max(0, Math.min(6, failureCount - 1))));
 }
 
-export function shouldLaunchdRestartCollector(stopped: string, maxScanned?: number) {
-  return maxScanned === undefined && !stopped.startsWith("capture_disabled");
+export function shouldLaunchdRestartCollector(stopped: string, maxScanned?: number, maxQualified?: number) {
+  return maxScanned === undefined
+    && maxQualified === undefined
+    && !stopped.startsWith("capture_disabled")
+    && stopped !== "dual_window_fail_closed";
+}
+
+export type CollectorRecoveryState = {
+  consecutiveBlackScreens: number;
+  consecutiveSameContent: number;
+  lastIdentityByWindow: Record<string, string>;
+  lastStopReason?: string;
+  updatedAt: string;
+};
+
+export function nextCollectorRecoveryState(
+  previous: CollectorRecoveryState,
+  evidence: { allBlack: boolean; allSameContent: boolean; identities: Record<string, string>; stopReason: string },
+  now = Date.now(),
+) {
+  const state: CollectorRecoveryState = {
+    consecutiveBlackScreens: evidence.allBlack ? previous.consecutiveBlackScreens + 1 : 0,
+    consecutiveSameContent: evidence.allSameContent ? previous.consecutiveSameContent + 1 : 0,
+    lastIdentityByWindow: evidence.identities,
+    lastStopReason: evidence.stopReason,
+    updatedAt: new Date(now).toISOString(),
+  };
+  const fuseReason = state.consecutiveBlackScreens >= 3
+    ? "persistent_black_screen" as const
+    : state.consecutiveSameContent >= 3
+      ? "persistent_same_content" as const
+      : undefined;
+  return { state, fuseReason };
 }
 
 async function persistCollectorSeenRegistry(registry: CollectorSeenRegistry, now: number) {
@@ -647,7 +1225,32 @@ async function compileSwiftExecutable(scriptName: string, binaryName: string) {
     await fs.access(executable);
   } catch {
     const temporary = `${executable}.${process.pid}.tmp`;
-    await execFileAsync("/usr/bin/swiftc", [script, "-o", temporary], { maxBuffer: 20 * 1024 * 1024 });
+    const moduleCache = path.join(os.tmpdir(), "mvstudiopro-swift-module-cache");
+    await fs.mkdir(moduleCache, { recursive: true });
+    const compilerArgs = [script, "-o", temporary];
+    // 始终使用 xcode-select 当前 Swift 工具链配套 SDK。固定旧 SDK 会在系统
+    // 升级后出现 swiftinterface 版本不匹配，导致 launchd 每轮启动都编译失败。
+    const compilerOptions = {
+      maxBuffer: 20 * 1024 * 1024,
+      env: { ...process.env, CLANG_MODULE_CACHE_PATH: moduleCache },
+    };
+    try {
+      await execFileAsync("/usr/bin/swiftc", compilerArgs, compilerOptions);
+    } catch (primaryError) {
+      // 部分 CommandLineTools 更新会短暂留下“新编译器 + 旧 26 SDK”的不配套组合。
+      // 本控制器只用 macOS 12 已有 API；存在 12.1 SDK 时用明确 target 重试一次。
+      const compatibilitySdk = "/Library/Developer/CommandLineTools/SDKs/MacOSX12.1.sdk";
+      try {
+        await fs.access(compatibilitySdk);
+        await execFileAsync("/usr/bin/swiftc", [
+          "-sdk", compatibilitySdk,
+          "-target", "arm64-apple-macosx12.0",
+          ...compilerArgs,
+        ], compilerOptions);
+      } catch {
+        throw primaryError;
+      }
+    }
     await fs.rename(temporary, executable).catch(async (error) => {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       await fs.unlink(temporary).catch(() => undefined);
@@ -657,8 +1260,34 @@ async function compileSwiftExecutable(scriptName: string, binaryName: string) {
 }
 
 async function runSwiftControl(args: string[]) {
+  const session = collectorWindowContext.getStore();
+  if (collectorWindowScopeRequired && !session) {
+    throw new Error("weixin_channels_unscoped_ui_action_blocked");
+  }
+  const scopedArgs = session ? buildWindowScopedControlArgs(session, args) : args;
+  return collectorUiGate.run(async () => {
+    const executable = await getControlExecutable();
+    return execFileAsync(executable, scopedArgs, { maxBuffer: 10 * 1024 * 1024 });
+  });
+}
+
+async function discoverCollectorWindowSessions(requiredWindowIds: number[] = []) {
   const executable = await getControlExecutable();
-  return execFileAsync(executable, args, { maxBuffer: 10 * 1024 * 1024 });
+  const { stdout } = await collectorUiGate.run(() => execFileAsync(
+    executable,
+    ["windows"],
+    { maxBuffer: 10 * 1024 * 1024 },
+  ));
+  const windows = JSON.parse(stdout) as WeixinChannelsWindowInfo[];
+  const coordinator = createWeixinChannelsWindowCoordinator(windows, requiredWindowIds);
+  if (!coordinator.sessions.length) throw new Error("weixin_channels_window_not_found");
+  return coordinator.sessions;
+}
+
+export function collectorScreenshotForWindow(baseScreenshot: string, windowId: number) {
+  const extension = path.extname(baseScreenshot) || ".png";
+  const stem = baseScreenshot.slice(0, baseScreenshot.length - path.extname(baseScreenshot).length);
+  return `${stem}-window-${windowId}${extension}`;
 }
 
 async function getControlExecutable() {
@@ -696,11 +1325,18 @@ async function readOcrBatch(screenshots: string[]): Promise<OcrResult[]> {
 }
 
 async function captureWindow(output: string) {
-  const { stdout } = await runSwiftControl(["window"]);
-  const window = JSON.parse(stdout) as { x: number; y: number; width: number; height: number };
-  // 微信独立渲染窗口常拒绝 -l windowId 截图；按动态窗口边界截屏更稳定，仍不写死坐标。
-  const region = [window.x, window.y, window.width, window.height].map((value) => Math.round(value)).join(",");
-  await execFileAsync("/usr/sbin/screencapture", ["-x", `-R${region}`, output]);
+  const session = collectorWindowContext.getStore();
+  if (collectorWindowScopeRequired && !session) throw new Error("weixin_channels_unscoped_ui_action_blocked");
+  const args = session ? buildWindowScopedControlArgs(session, ["window"]) : ["window"];
+  // Raise、焦点反查与截屏必须占用同一个全局 UI 临界区；否则另一窗可能在
+  // window 命令返回后、screencapture 前抢走焦点或改变控制条悬停状态。
+  await collectorUiGate.run(async () => {
+    const executable = await getControlExecutable();
+    const { stdout } = await execFileAsync(executable, args, { maxBuffer: 10 * 1024 * 1024 });
+    const window = JSON.parse(stdout) as { x: number; y: number; width: number; height: number };
+    const region = [window.x, window.y, window.width, window.height].map((value) => Math.round(value)).join(",");
+    await execFileAsync("/usr/sbin/screencapture", ["-x", `-R${region}`, output]);
+  });
 }
 
 export function metricsRemainOnSameVideo(
@@ -715,14 +1351,48 @@ export function metricsRemainOnSameVideo(
   return comparable.every((key) => Math.abs(sample[key]! - base[key]!) <= Math.max(5, base[key]! * 0.03));
 }
 
+/** 当前播放器连续性只做短时容错判断，不参与跨重启历史去重。 */
+export function sameVideoContinuity(base: OcrResult, sample: OcrResult) {
+  const baseIdentity = extractVisibleTitleAndAuthor(base.lines);
+  const sampleIdentity = extractVisibleTitleAndAuthor(sample.lines);
+  const compatibleText = (leftValue?: string, rightValue?: string) => {
+    const left = normalizeDedupIdentityText(leftValue);
+    const right = normalizeDedupIdentityText(rightValue);
+    if (!left || !right || left === right || left.includes(right) || right.includes(left)) return true;
+    const rows = Array.from({ length: left.length + 1 }, (_, index) => index);
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+      let diagonal = rows[0]!;
+      rows[0] = rightIndex;
+      for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+        const above = rows[leftIndex]!;
+        rows[leftIndex] = Math.min(
+          rows[leftIndex]! + 1,
+          rows[leftIndex - 1]! + 1,
+          diagonal + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+        );
+        diagonal = above;
+      }
+    }
+    return rows[left.length]! <= Math.max(1, Math.ceil(Math.max(left.length, right.length) * 0.2));
+  };
+  // 标题展开和轻微 OCR 差异可容忍；两边都读到且明确矛盾时必须 fail-closed，
+  // 不能仅因两个低互动视频数字接近就把新视频写进旧 observationId。
+  if (!compatibleText(baseIdentity.title, sampleIdentity.title)
+    || !compatibleText(baseIdentity.author, sampleIdentity.author)) return false;
+  return metricsRemainOnSameVideo(
+    extractWeixinChannelsMetrics(base.lines),
+    extractWeixinChannelsMetrics(sample.lines),
+  );
+}
+
 export async function detectVisibleProgressTrack(screenshot: string) {
   const { data, info } = await sharp(screenshot).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  let best: { start: number; end: number; y: number; length: number } | null = null;
-  const minY = Math.round(info.height * 0.78);
-  const maxY = Math.round(info.height * 0.85);
+  let best: { start: number; end: number; y: number; length: number; score: number } | null = null;
+  // 横视频与竖视频的控制区高度不同；两张真实双窗截图分别位于 73.3% 与 82.2%。
+  const minY = Math.round(info.height * 0.65);
+  const maxY = Math.round(info.height * 0.86);
   for (let y = minY; y <= maxY; y += 1) {
-    let runStart = -1;
-    let lastGray = -1;
+    const grayXs: number[] = [];
     for (let x = Math.round(info.width * 0.09); x < Math.round(info.width * 0.86); x += 1) {
       const offset = (y * info.width + x) * info.channels;
       const red = data[offset]!;
@@ -732,39 +1402,141 @@ export async function detectVisibleProgressTrack(screenshot: string) {
       // 旧的 45 阈值只认中性灰，导致画面明明有轨道却无限重试。背景深蓝 red≈0，
       // 继续由 red>=55 排除，因此放宽到 65 不会把整片视频背景当进度条。
       const gray = Math.max(red, green, blue) - Math.min(red, green, blue) <= 65 && red >= 55 && red <= 255;
-      if (gray) {
-        if (runStart < 0 || (lastGray >= 0 && x - lastGray > Math.round(info.width * 0.025))) runStart = x;
-        lastGray = x;
-        const length = lastGray - runStart;
-        if (length >= info.width * 0.25 && (!best || length > best.length)) best = { start: runStart, end: lastGray, y, length };
+      if (gray) grayXs.push(x);
+    }
+    let runStart = grayXs[0];
+    let lastGray = grayXs[0];
+    const commitRun = () => {
+      if (runStart === undefined || lastGray === undefined) return;
+      const rawStartRatio = runStart / info.width;
+      const endRatio = lastGray / info.width;
+      const playButtonJoined = rawStartRatio >= 0.085 && rawStartRatio < 0.1;
+      const normalizedStart = playButtonJoined ? Math.round(info.width * 0.136) : runStart;
+      const startRatio = normalizedStart / info.width;
+      const length = lastGray - normalizedStart;
+      if (length >= info.width * 0.25 && startRatio >= 0.1 && startRatio <= 0.2
+        // 双窗真实轨道末端稳定在约 69.9%；收紧范围可排除同高度字幕横画。
+        && endRatio >= 0.67 && endRatio <= 0.72) {
+        const score = length
+          - Math.abs(startRatio - 0.136) * info.width
+          - Math.abs(endRatio - 0.699) * info.width;
+        if (!best || score > best.score) best = { start: normalizedStart, end: lastGray, y, length, score };
+      }
+    };
+    for (let index = 1; index <= grayXs.length; index += 1) {
+      const current = grayXs[index];
+      if (current === undefined || lastGray === undefined || current - lastGray > Math.max(4, Math.round(info.width * 0.005))) {
+        commitRun();
+        runStart = current;
+      }
+      lastGray = current;
+    }
+  }
+  {
+    // 浅色路面会让播放按钮、轨道和背景连成一整段。用轨道相对上下
+    // 6px 的亮度突变确认真实横线，再采用已由双窗截图校准的两端。
+    let edgeBest: { y: number; count: number; score: number } | undefined;
+    const start = Math.round(info.width * 0.136);
+    const end = Math.round(info.width * 0.70);
+    const luminance = (x: number, y: number) => {
+      const offset = (y * info.width + x) * info.channels;
+      return (data[offset]! + data[offset + 1]! + data[offset + 2]!) / 3;
+    };
+    for (let y = minY + 6; y <= maxY - 6; y += 1) {
+      let count = 0;
+      let score = 0;
+      for (let x = start; x <= end; x += 1) {
+        const contrast = luminance(x, y) - (luminance(x, y - 6) + luminance(x, y + 6)) / 2;
+        if (contrast > 25) count += 1;
+        score += Math.max(0, contrast);
+      }
+      if (count >= info.width * 0.25 && (!edgeBest || count > edgeBest.count || (count === edgeBest.count && score > edgeBest.score))) {
+        edgeBest = { y, count, score };
       }
     }
+    // 边缘证据比“浅色连续段”更能区分道路/字幕，命中时优先采用。
+    if (edgeBest) best = { start, end, y: edgeBest.y, length: end - start, score: edgeBest.score };
   }
   if (!best) throw new Error("weixin_channels_progress_track_not_found");
   return {
-    // 最长连续段通常从当前播放圆点右缘开始，按图像宽度回补圆点及其左侧短轨道。
-    startX: Math.max(0.08, best.start / info.width - 0.04),
+    startX: best.start / info.width,
     endX: best.end / info.width,
     y: best.y / info.height,
   };
 }
 
 async function detectVisibleProgressTrackReliably(screenshot: string) {
+  try {
+    return await detectVisibleProgressTrack(screenshot);
+  } catch {
+    // 横版素材的控制条约在 73%，竖版约在 82%。旧实现依次经过两个高度
+    // 后只在 82% 截图，导致横版控制条刚出现就又被鼠标移走。现在每个布局
+    // 各截一帧并立即检测，首个命中就停止，最多增加两张被动截图。
+  }
   let lastError: unknown;
-  // 首次截图失败后只允许重拍一次，避免控制条识别反复消耗单条预算。
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (const hoverY of ["0.73", "0.82"] as const) {
+    await runSwiftControl(["move-relative", "0.50", hoverY]);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    await captureWindow(screenshot);
     try {
       return await detectVisibleProgressTrack(screenshot);
     } catch (error) {
       lastError = error;
-      // 微信控制条有淡入动画，首张截图可能只拍到视频帧；保持鼠标位于
-      // 实测进度条高度并重拍，不能因一次瞬态截图等待二十秒或误造时长。
-      await runSwiftControl(["move-relative", "0.50", "0.785"]);
-      await new Promise((resolve) => setTimeout(resolve, 160));
-      await captureWindow(screenshot);
     }
   }
   throw lastError instanceof Error ? lastError : new Error("weixin_channels_progress_track_not_found");
+}
+
+async function detectProgressPlayheadRatio(
+  screenshot: string,
+  track: { startX: number; endX: number; y: number },
+) {
+  const { data, info } = await sharp(screenshot).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const start = Math.round(track.startX * info.width);
+  const end = Math.round(track.endX * info.width);
+  const centerY = Math.round(track.y * info.height);
+  let rightmost = -1;
+  for (let x = start; x <= end; x += 1) {
+    let bright = 0;
+    for (let y = Math.max(0, centerY - 4); y <= Math.min(info.height - 1, centerY + 4); y += 1) {
+      const offset = (y * info.width + x) * info.channels;
+      const red = data[offset]!, green = data[offset + 1]!, blue = data[offset + 2]!;
+      if (red >= 190 && green >= 190 && blue >= 190 && Math.max(red, green, blue) - Math.min(red, green, blue) <= 35) bright += 1;
+    }
+    if (bright >= 2) rightmost = x;
+  }
+  if (rightmost < start) throw new Error("weixin_channels_progress_playhead_not_found");
+  return Math.max(0, Math.min(1, (rightmost - start) / Math.max(1, end - start)));
+}
+
+async function measureVideoDurationFromProgressMotion(params: {
+  screenshot: string;
+  track: { startX: number; endX: number; y: number };
+}) {
+  const measure = async () => {
+    const startedAt = Date.now();
+    const first = await detectProgressPlayheadRatio(params.screenshot, params.track);
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    await captureWindow(params.screenshot);
+    const second = await detectProgressPlayheadRatio(params.screenshot, params.track);
+    const elapsedSec = (Date.now() - startedAt) / 1_000;
+    return { delta: second - first, elapsedSec };
+  };
+  let sample = await measure();
+  if (sample.delta <= 0.002) {
+    // 播放器可能处于暂停态；只切换一次播放状态后重新量测，仍不移动进度。
+    await runSwiftControl(["click-relative", "0.50", "0.50"]);
+    await runSwiftControl(["move-relative", "0.50", params.track.y.toFixed(4)]);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await captureWindow(params.screenshot);
+    sample = await measure();
+  }
+  if (sample.delta <= 0.002) throw new Error("weixin_channels_progress_motion_not_detected");
+  const duration = Math.round(sample.elapsedSec / sample.delta);
+  if (!Number.isFinite(duration) || duration < 3 || duration > 86_400) {
+    throw new Error("weixin_channels_progress_motion_duration_invalid");
+  }
+  return duration;
 }
 
 async function detectVideoDurationBeforeSampling(params: {
@@ -796,9 +1568,9 @@ async function detectVideoDurationBeforeSampling(params: {
       track.endX.toFixed(4),
       track.y.toFixed(4),
     ]);
-    // VPN 下 seek 后可能先出现转圈/黑屏；给播放器一次有界缓冲时间，
-    // 随后只截一张用于 OCR，不连续截图追加载动画。
-    await new Promise((resolve) => setTimeout(resolve, 650));
+    // 末端时长浮层消失很快：先在拖动后 120ms 截取真实总时长，再把
+    // 剩余加载等待留给后续五点采样，不能等 650ms 后才读已经消失的浮层。
+    await new Promise((resolve) => setTimeout(resolve, 120));
     await captureWindow(params.screenshot);
     const atEnd = await readOcr(params.screenshot);
     if (!metricsRemainOnSameVideo(params.baseMetrics, extractWeixinChannelsMetrics(atEnd.lines))) {
@@ -809,6 +1581,7 @@ async function detectVideoDurationBeforeSampling(params: {
       .map((line) => line.text)
       .join(" | ");
     duration = parseVisibleVideoClockSeconds(clockText);
+    if (duration) await new Promise((resolve) => setTimeout(resolve, 530));
   }
   if (!duration) throw new Error("weixin_channels_video_duration_not_detected");
   return duration;
@@ -875,10 +1648,9 @@ export async function sampleVideoContentAtProgress(
   captureStartedAt: number,
   videoDurationHintSec?: number,
 ) {
-  if (!videoDurationHintSec) throw new Error("weixin_channels_video_duration_not_detected");
   const ocrTexts: string[] = [];
   const videoDurationSec = videoDurationHintSec;
-  const deadlineAt = captureStartedAt + captureBudgetMsForVideo(videoDurationSec);
+  const deadlineAt = captureStartedAt + (videoDurationSec ? captureBudgetMsForVideo(videoDurationSec) : 60_000);
   // 点击视频使控制条出现；真实探针确认进度条横跨窗口宽度约 12.5%–91%、纵向约 82.3%。
   await runSwiftControl(["click-relative", "0.50", "0.50"]);
   await runSwiftControl(["move-relative", "0.50", "0.82"]);
@@ -889,6 +1661,7 @@ export async function sampleVideoContentAtProgress(
   let previousX = startX;
   const sampleScreenshots: string[] = [];
   const sampleRecords: Array<{ file: string; progress: number; ocrText: string }> = [];
+  const windowToken = String(collectorWindowContext.getStore()?.windowId || "single");
   await runSwiftControl(["click-relative", startX.toFixed(4), track.y.toFixed(4)]);
   try {
     for (let index = 0; index < WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS.length; index += 1) {
@@ -900,7 +1673,7 @@ export async function sampleVideoContentAtProgress(
       // VPN 下拖动进度后先等画面完成同步，再只截一张内容样本。
       await new Promise((resolve) => setTimeout(resolve, 650));
       await captureWindow(screenshot);
-      const sampleFile = path.join(os.tmpdir(), `weixin-channels-sample-${process.pid}-${index}.png`);
+      const sampleFile = path.join(os.tmpdir(), `weixin-channels-sample-${process.pid}-${windowToken}-${index}.png`);
       await fs.copyFile(screenshot, sampleFile);
       sampleScreenshots.push(sampleFile);
       previousX = targetX;
@@ -938,7 +1711,7 @@ export async function sampleVideoContentAtProgress(
       await runSwiftControl(["drag-relative", previousX.toFixed(4), track.y.toFixed(4), retryX.toFixed(4), track.y.toFixed(4)]);
       await new Promise((resolve) => setTimeout(resolve, 1_500));
       await captureWindow(screenshot);
-      const retryFile = path.join(os.tmpdir(), `weixin-channels-sample-${process.pid}-retry.png`);
+      const retryFile = path.join(os.tmpdir(), `weixin-channels-sample-${process.pid}-${windowToken}-retry.png`);
       await fs.copyFile(screenshot, retryFile);
       sampleScreenshots.push(retryFile);
       const retryOcr = await readOcr(retryFile);
@@ -968,6 +1741,11 @@ export async function sampleVideoContentAtProgress(
 }
 
 async function collectVisibleComments(screenshot: string, baseOcr: OcrResult, deadlineAt: number) {
+  // 即使上层资格分支被未来改动误调用，底层仍以当前播放器四项指标硬挡：
+  // 前置高热不足或评论少于 80 时都绝不触碰评论入口。
+  if (!shouldOpenVisibleComments(baseOcr.lines)) {
+    throw new Error("weixin_channels_comments_qualification_gate_blocked");
+  }
   const openPoint = findCommentsOpenPoint(baseOcr.lines);
   if (!openPoint) throw new Error("weixin_channels_comments_entry_not_found");
   await runSwiftControl(["click-relative", openPoint.x.toFixed(5), openPoint.y.toFixed(5)]);
@@ -976,23 +1754,26 @@ async function collectVisibleComments(screenshot: string, baseOcr: OcrResult, de
   let panel = await readOcr(screenshot);
   if (!await findCommentsClosePointFromScreenshot(screenshot, panel.lines)) throw new Error("weixin_channels_comments_open_not_confirmed");
   const collected: OcrLine[] = [];
-  const pageLimit = remainingBudgetMs(deadlineAt) >= 3_000 ? 2 : 1;
+  if (remainingBudgetMs(deadlineAt) < 4_000) {
+    throw new Error("weixin_channels_comments_two_page_budget_missing");
+  }
+  const pageLimit = WEIXIN_CHANNELS_COMMENT_PANEL_SCREEN_COUNT;
   for (let page = 0; page < pageLimit; page += 1) {
     if (page > 0) {
       await captureWindow(screenshot);
       panel = await readOcr(screenshot);
     }
     collected.push(...extractCommentPanelContentLines(panel.lines));
-    if (page === 0) {
+    if (page < pageLimit - 1) {
       await runSwiftControl(["scroll-relative", "0.75", "0.68", "-6"]);
       await waitWithinCaptureBudget(deadlineAt, 150, 500);
     }
   }
   await captureWindow(screenshot);
   panel = await readOcr(screenshot);
-  const closePoint = await findCommentsClosePointFromScreenshot(screenshot, panel.lines);
-  if (!closePoint) throw new Error("weixin_channels_comments_close_not_found");
-  await runSwiftControl(["click-relative", closePoint.x.toFixed(5), closePoint.y.toFixed(5)]);
+  if (!await closeConfirmedCommentsPanel(screenshot, panel.lines)) {
+    throw new Error("weixin_channels_comments_close_not_found");
+  }
   await waitWithinCaptureBudget(deadlineAt, 100, 350);
   await captureWindow(screenshot);
   const closed = await readOcr(screenshot);
@@ -1003,30 +1784,63 @@ async function collectVisibleComments(screenshot: string, baseOcr: OcrResult, de
 
 async function ensureInteractionMetricsVisible(screenshot: string, ocr: OcrResult) {
   if (hasFourVisibleMetrics(ocr.lines)) return ocr;
-  const closePoint = await findCommentsClosePointFromScreenshot(screenshot, ocr.lines);
-  if (!closePoint) return ocr;
-  await runSwiftControl(["click-relative", closePoint.x.toFixed(5), closePoint.y.toFixed(5)]);
-  await new Promise((resolve) => setTimeout(resolve, 150));
+  // 鼠标停在视频上会显示“倍速播放中”等控制层并遮住前两项数字。
+  // 先移到左侧黑边并被动补拍；这是普通播放器恢复，不点击任何内容。
+  await runSwiftControl(["move-relative", "0.02", "0.50"]);
+  await new Promise((resolve) => setTimeout(resolve, 450));
   await captureWindow(screenshot);
-  const closed = await readOcr(screenshot);
-  if (!hasFourVisibleMetrics(closed.lines)) throw new Error("weixin_channels_previous_comments_close_not_confirmed");
-  return closed;
+  let closed = await readOcr(screenshot);
+  if (hasFourVisibleMetrics(closed.lines)) return closed;
+  if (!await closeConfirmedCommentsPanel(screenshot, closed.lines)) return closed;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 200 + attempt * 150));
+    await captureWindow(screenshot);
+    closed = await readOcr(screenshot);
+    if (hasFourVisibleMetrics(closed.lines)) return closed;
+  }
+  throw new Error("weixin_channels_previous_comments_close_not_confirmed");
 }
 
 async function confirmVisibleInteractionMetrics(screenshot: string, first: OcrResult) {
-  if (!hasFourVisibleMetrics(first.lines)) throw new Error("weixin_channels_four_metrics_not_visible");
-  await new Promise((resolve) => setTimeout(resolve, 160));
-  await captureWindow(screenshot);
-  const second = await readOcr(screenshot);
-  if (!interactionMetricsConfirmed(first, second)) {
-    throw new Error("weixin_channels_four_metrics_not_stable_across_snapshots");
+  let stableFirst = first;
+  for (let attempt = 0;
+    !hasFourVisibleMetrics(stableFirst.lines)
+      && !hasDefinitiveVisibleUnqualifiedMetrics(stableFirst.lines)
+      && attempt < 3;
+    attempt += 1) {
+    // OCR 对底部白色数字偶发漏帧；只被动补拍，不点击、不滑动，也不降低四项门槛。
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    await captureWindow(screenshot);
+    stableFirst = await readOcr(screenshot);
+  }
+  if (!hasFourVisibleMetrics(stableFirst.lines)
+    && !hasDefinitiveVisibleUnqualifiedMetrics(stableFirst.lines)) {
+    throw new Error("weixin_channels_qualification_metrics_not_visible");
+  }
+  let second: OcrResult | undefined;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 160));
+    await captureWindow(screenshot);
+    const candidate = await readOcr(screenshot);
+    if (interactionMetricsConfirmed(stableFirst, candidate)
+      || (hasDefinitiveVisibleUnqualifiedMetrics(stableFirst.lines)
+        && hasDefinitiveVisibleUnqualifiedMetrics(candidate.lines)
+        && sameVideoContinuity(stableFirst, candidate))) {
+      second = candidate;
+      break;
+    }
+  }
+  if (!second) {
+    throw new Error("weixin_channels_qualification_metrics_not_stable_across_snapshots");
   }
   return second;
 }
 
 async function ensureVideoPlayerVisible(screenshot: string, ocr: OcrResult) {
   let current = ocr;
+  let recoveryAttempted = false;
   for (let attempt = 0; attempt < 2 && isWeixinChannelsAuxiliaryPage(current.lines); attempt += 1) {
+    recoveryAttempted = true;
     process.stderr.write("auxiliary_page_closing\n");
     const mediaClosePoint = findMediaViewerClosePoint(current.lines);
     if (isWeixinChannelsMediaViewer(current.lines)) {
@@ -1035,12 +1849,20 @@ async function ensureVideoPlayerVisible(screenshot: string, ocr: OcrResult) {
       } else {
         await runSwiftControl(["key", "escape"]);
       }
+    } else if (isWeixinChannelsPersonalDataPage(current.lines)) {
+      const personalDataClosePoint = findPersonalDataTabClosePoint(current.lines);
+      if (!personalDataClosePoint) throw new Error("weixin_channels_personal_data_close_not_proven");
+      await runSwiftControl([
+        "click-confirmed-personal-data-tab-close",
+        personalDataClosePoint.x.toFixed(5),
+        personalDataClosePoint.y.toFixed(5),
+      ]);
+      process.stderr.write("personal_data_page_close_requested\n");
     } else {
-      await runSwiftControl(["key", "closeTab"]);
-      if (collectorSearchTabState?.openedTabs) {
-        collectorSearchTabState.openedTabs = Math.max(0, collectorSearchTabState.openedTabs - 1);
-        await persistCollectorSearchTabState(collectorSearchTabState);
-      }
+      // 搜索页是每窗保留的唯一搜索标签；只能切回“视频号”，不能关闭标签。
+      const channelsTabPoint = findChannelsTabPoint(current.lines);
+      if (!channelsTabPoint) throw new Error("weixin_channels_auxiliary_page_recovery_not_proven");
+      await runSwiftControl(["click-relative", channelsTabPoint.x.toFixed(5), channelsTabPoint.y.toFixed(5)]);
     }
     await new Promise((resolve) => setTimeout(resolve, 700));
     await captureWindow(screenshot);
@@ -1048,6 +1870,9 @@ async function ensureVideoPlayerVisible(screenshot: string, ocr: OcrResult) {
   }
   if (isWeixinChannelsAuxiliaryPage(current.lines)) {
     throw new Error("weixin_channels_auxiliary_page_not_closed");
+  }
+  if (recoveryAttempted && !dedupIdentityFingerprint(current) && !hasFourVisibleMetrics(current.lines)) {
+    throw new Error("weixin_channels_video_player_not_restored_after_auxiliary_page");
   }
   return current;
 }
@@ -1108,10 +1933,13 @@ export async function uploadPendingObservation(params: {
     const text = timeoutPromise ? await Promise.race([body, timeoutPromise]) : await body;
     if (!response.ok) throw new Error(`upload_failed:${response.status}:${text.slice(0, 500)}`);
     const payload = JSON.parse(text) as {
+      qualified?: boolean;
+      invalid?: boolean;
       persisted?: boolean;
       newlyPersisted?: boolean;
       newlyQualifiedPersisted?: boolean;
       accumulatedQualifiedCount?: number;
+      modelCalls?: number;
     };
     if (payload.persisted !== true) throw new Error("upload_not_persisted");
     await fs.unlink(params.pendingFile);
@@ -1123,16 +1951,24 @@ export async function uploadPendingObservation(params: {
 
 type PendingObservationEnvelope = {
   taskId?: string;
+  query?: string;
+  title?: string;
+  likes?: number;
+  shares?: number;
+  favorites?: number;
   videoDurationSec?: number;
   captureElapsedMs?: number;
   captureBudgetMs?: number;
   comments?: number;
   commentSamples?: unknown[];
+  ocrTexts?: string[];
 };
 
 export function pendingObservationHasRequiredComments(observation: PendingObservationEnvelope) {
-  return (observation.comments || 0) < WEIXIN_CHANNELS_COMMENT_THRESHOLD
-    || (Array.isArray(observation.commentSamples) && observation.commentSamples.length > 0);
+  const qualification = qualifyWeixinChannelsObservationLocally(observation);
+  return qualification.qualified
+    && (!qualification.requiresComments
+      || (Array.isArray(observation.commentSamples) && observation.commentSamples.length > 0));
 }
 
 function exceedsAuthoritativeCaptureBudget(observation: PendingObservationEnvelope) {
@@ -1256,6 +2092,39 @@ export function hasConfirmedVideoTransition(previous: OcrResult, next: OcrResult
   return true;
 }
 
+export function classifyLiveFrameBeforeAdvance(
+  decided: OcrResult,
+  live: OcrResult,
+): "same_video" | "already_transitioned" | "unconfirmed" {
+  if (sameVideoContinuity(decided, live)) return "same_video";
+  const decidedIdentity = visibleVideoIdentityFingerprint(decided);
+  const liveIdentity = visibleVideoIdentityFingerprint(live);
+  if (decidedIdentity && liveIdentity && decidedIdentity === liveIdentity) return "same_video";
+  if (hasConfirmedVideoTransition(decided, live)) return "already_transitioned";
+  return "unconfirmed";
+}
+
+async function revalidateLiveFrameBeforeAdvance(decided: OcrResult, screenshot: string) {
+  // 推荐流会在视频播完后自动切页。资格判断与真正执行滑动之间必须再次读取
+  // 当前画面，否则会拿上一页的 OCR 决策去滑当前页，连续漏掉一至两条视频。
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await captureWindow(screenshot);
+    let live = await readOcr(screenshot);
+    live = await ensureVideoPlayerVisible(screenshot, live);
+    const state = classifyLiveFrameBeforeAdvance(decided, live);
+    if (state === "same_video") return { state, ocr: live } as const;
+    if (state === "already_transitioned") {
+      // 自动切到的新页也必须连续两帧保持同一身份与四项指标，确认后交回
+      // 主循环处理；这里绝不再补一次滑动。
+      const stable = await confirmVisibleInteractionMetrics(screenshot, live);
+      if (!sameVideoContinuity(live, stable)) continue;
+      return { state, ocr: stable } as const;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 160));
+  }
+  throw new Error("weixin_channels_live_frame_before_advance_unconfirmed");
+}
+
 async function advanceToNextVideo(previous: OcrResult, screenshot: string, deadlineAt?: number) {
   // 真实窗口里方向键会被播放器控制条或搜索输入焦点吞掉；在视频主体滚轮向下
   // 可稳定切到下一条，并且不依赖固定像素坐标。
@@ -1274,7 +2143,14 @@ async function advanceToNextVideo(previous: OcrResult, screenshot: string, deadl
       else await runSwiftControl(["key", "escape"]);
       continue;
     }
-    if (hasConfirmedVideoTransition(previous, next)) return next;
+    if (hasConfirmedVideoTransition(previous, next)) {
+      // 滑动后的第一帧可能仍是转场或上一条残影。只有第二帧证明仍是同一
+      // 新视频，才允许主循环在它上面做资格判断。
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      await captureWindow(screenshot);
+      const stable = await readOcr(screenshot);
+      if (sameVideoContinuity(next, stable)) return stable;
+    }
   }
   throw new Error("weixin_channels_next_video_not_visible_within_2s");
 }
@@ -1307,81 +2183,231 @@ async function searchKeyword(keyword: string, screenshot: string) {
   const safeKeyword = normalizeWeixinChannelsSearchQuery(keyword);
   if (!safeKeyword) throw new Error("weixin_channels_search_keyword_rejected");
   keyword = safeKeyword;
-  const { stdout: windowStdout } = await runSwiftControl(["window"]);
-  const currentWindow = JSON.parse(windowStdout) as { windowId: number };
-  if (!collectorSearchTabState || collectorSearchTabState.windowId !== currentWindow.windowId) {
-    collectorSearchTabState = await loadCollectorSearchTabState(currentWindow.windowId);
-    await persistCollectorSearchTabState(collectorSearchTabState);
-  }
+  const collectorSearchTabState = await getCollectorSearchTabState();
+  await persistCollectorSearchTabState(collectorSearchTabState);
   await captureWindow(screenshot);
   let ocr = await readOcr(screenshot);
   let point = findSearchInputPoint(ocr.lines);
+  let openedSearchThisAttempt = false;
   if (!point && shouldReuseExistingSearchTab(collectorSearchTabState.openedTabs)) {
     // 已有一个脚本搜索标签时，先关闭当前活动页并尝试复用；推荐页加搜索页
     // 总数最多两个，禁止每轮搜索都新增标签把微信内存撑满。
-    await runSwiftControl(["key", "closeTab"]);
-    collectorSearchTabState.openedTabs = Math.max(0, collectorSearchTabState.openedTabs - 1);
+    if (collectorSearchTabState.ownerPid !== process.pid && processIsAlive(collectorSearchTabState.ownerPid)) {
+      throw new Error("weixin_channels_search_tab_ownership_unconfirmed");
+    }
+    collectorSearchTabState.ownerPid = process.pid;
     await persistCollectorSearchTabState(collectorSearchTabState);
-    await new Promise((resolve) => setTimeout(resolve, 900));
-    await captureWindow(screenshot);
-    ocr = await readOcr(screenshot);
-    point = findSearchInputPoint(ocr.lines);
-  }
-  if (!point) {
-    // 顶栏放大镜使用动态窗口相对坐标。每次搜索最多点击一次；加载较慢时
-    // 只轮询 OCR，不得重复点击并意外再开一个标签。
-    await runSwiftControl([
-      "click-relative",
-      WEIXIN_CHANNELS_SEARCH_BUTTON_POINT.x.toFixed(5),
-      WEIXIN_CHANNELS_SEARCH_BUTTON_POINT.y.toFixed(5),
-    ]);
-    collectorSearchTabState.openedTabs += 1;
-    await persistCollectorSearchTabState(collectorSearchTabState);
-    for (let attempt = 0; !point && attempt < 5; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
+    const searchTabPoint = findAnySearchTabPoint(ocr.lines);
+    if (!searchTabPoint) {
+      // 状态文件可能来自已关闭标签；当前页必须先证明仍是播放器才可重置。
+      if (!dedupIdentityFingerprint(ocr) && !hasFourVisibleMetrics(ocr.lines)) {
+        throw new Error("weixin_channels_search_tab_not_found_for_reuse");
+      }
+      collectorSearchTabState.openedTabs = 0;
+      collectorSearchTabState.ownerPid = undefined;
+      await persistCollectorSearchTabState(collectorSearchTabState);
+    } else {
+      await runSwiftControl(["click-relative", searchTabPoint.x.toFixed(5), searchTabPoint.y.toFixed(5)]);
+      await new Promise((resolve) => setTimeout(resolve, 350));
       await captureWindow(screenshot);
       ocr = await readOcr(screenshot);
       point = findSearchInputPoint(ocr.lines);
     }
   }
   if (!point) {
-    // 点击放大镜后仍无法由 OCR 证明输入框存在，就保留计数供下一轮关闭该页，
-    // 但本轮绝不使用兜底坐标盲输、盲回车。
-    throw new Error("weixin_channels_search_input_not_confirmed_after_single_tab_open");
+    if (collectorSearchTabState.openedTabs >= 1
+      || totalCollectorSearchTabs() >= WEIXIN_CHANNELS_MAX_TOTAL_SEARCH_TABS) {
+      throw new Error("weixin_channels_search_tab_limit_reached");
+    }
+    // 顶栏放大镜使用动态窗口相对坐标。每次搜索最多点击一次；加载较慢时
+    // 只轮询 OCR，不得重复点击并意外再开一个标签。
+    collectorSearchTabState.openedTabs += 1;
+    collectorSearchTabState.ownerPid = process.pid;
+    await persistCollectorSearchTabState(collectorSearchTabState);
+    openedSearchThisAttempt = true;
   }
-  const inputPoint = point;
-  let typed: OcrResult | undefined;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    await runSwiftControl(["click-relative", inputPoint.x.toFixed(5), inputPoint.y.toFixed(5)]);
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    await runSwiftControl(["key", "clear"]);
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    await runSwiftControl(["type", keyword]);
-    await new Promise((resolve) => setTimeout(resolve, 250));
+  const inputPoint = point
+    || await loadCollectorSearchCalibration()
+    || findSearchButtonPoint(ocr.lines);
+  if (!inputPoint) throw new Error("weixin_channels_search_button_not_proven");
+  let submitted: OcrResult | undefined;
+  // 打开新搜索页时只允许点击一次放大镜；后续加载失败只能退出恢复，不能重复
+  // 点击并创建多个搜索标签。复用已证明的输入框时才允许一次重输。
+  const inputAttempts = point ? 2 : 1;
+  for (let attempt = 0; attempt < inputAttempts; attempt += 1) {
+    await runSwiftControl([
+      "open-search-and-type",
+      inputPoint.x.toFixed(5),
+      inputPoint.y.toFixed(5),
+      keyword,
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
     await captureWindow(screenshot);
-    typed = await readOcr(screenshot);
-    if (hasTypedSearchKeyword(typed.lines, keyword)) break;
-  }
-  if (!typed) throw new Error("weixin_channels_search_keyword_not_captured");
-  if (!hasTypedSearchKeyword(typed.lines, keyword)) throw new Error("weixin_channels_search_keyword_not_confirmed");
-  await runSwiftControl(["key", "return"]);
-  await new Promise((resolve) => setTimeout(resolve, 900));
-  await captureWindow(screenshot);
-  let submitted = await readOcr(screenshot);
-  if (!findFirstSearchVideoPoint(submitted.lines)) {
-    const suggestion = findExactSearchSuggestionPoint(submitted.lines, keyword)
-      || findExactSearchSuggestionPoint(typed.lines, keyword);
-    if (suggestion) {
-      await runSwiftControl(["click-relative", suggestion.x.toFixed(5), suggestion.y.toFixed(5)]);
-    } else {
-      // 有些微信版本第一次回车只确认输入法，第二次才提交搜索。
-      await runSwiftControl(["key", "return"]);
+    submitted = await readOcr(screenshot);
+    if (hasSubmittedSearchKeyword(submitted.lines, keyword)
+      && findSearchVideosTabPoint(submitted.lines)) break;
+    const submitPoint = findSearchSubmitPoint(submitted.lines);
+    if (hasSubmittedSearchKeyword(submitted.lines, keyword) && submitPoint) {
+      await runSwiftControl([
+        "click-confirmed-search-submit",
+        submitPoint.x.toFixed(5),
+        submitPoint.y.toFixed(5),
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      await captureWindow(screenshot);
+      submitted = await readOcr(screenshot);
+      if (hasSubmittedSearchKeyword(submitted.lines, keyword)
+        && findSearchVideosTabPoint(submitted.lines)) break;
     }
   }
-  const beforeResults = ocrFingerprint(submitted);
+  if (openedSearchThisAttempt && !submitted) {
+    throw new Error("weixin_channels_search_input_not_confirmed_after_single_tab_open");
+  }
+  if (!submitted) throw new Error("weixin_channels_search_keyword_not_captured");
+  const videosTab = findSearchVideosTabPoint(submitted.lines);
+  if (!videosTab) throw new Error("weixin_channels_search_videos_tab_not_confirmed");
+  await runSwiftControl(["click-relative", videosTab.x.toFixed(5), videosTab.y.toFixed(5)]);
   await waitForVisibleVideoLoad();
-  submitted = await waitForChangedFrame(beforeResults, screenshot);
-  return submitted;
+  await captureWindow(screenshot);
+  submitted = await readOcr(screenshot);
+  let latestPoint = findSearchSortPoint(submitted.lines, "latest");
+  let hottestPoint = findSearchSortPoint(submitted.lines, "hottest");
+  if (!latestPoint || !hottestPoint) {
+    // 部分微信结果页第一次点击“影片”只切换分类，仍保留首屏广告；再次点击
+    // 已由 OCR 证明的“影片”才展开排序栏。最多补点一次，禁止坐标盲点。
+    const confirmedVideosTab = findSearchVideosTabPoint(submitted.lines);
+    if (confirmedVideosTab) {
+      await runSwiftControl([
+        "click-relative",
+        confirmedVideosTab.x.toFixed(5),
+        confirmedVideosTab.y.toFixed(5),
+      ]);
+      await waitForVisibleVideoLoad();
+      await captureWindow(screenshot);
+      submitted = await readOcr(screenshot);
+      latestPoint = findSearchSortPoint(submitted.lines, "latest");
+      hottestPoint = findSearchSortPoint(submitted.lines, "hottest");
+    }
+  }
+  if (!latestPoint || !hottestPoint) throw new Error("weixin_channels_search_sort_controls_not_confirmed");
+
+  const inspectSort = async (sort: "latest" | "hottest", point: { x: number; y: number }) => {
+    await runSwiftControl(["click-relative", point.x.toFixed(5), point.y.toFixed(5)]);
+    await waitForVisibleVideoLoad();
+    const pages: WeixinChannelsSearchSortSummary[] = [];
+    let pageOcr = submitted!;
+    for (let page = 0; page < 12; page += 1) {
+      await captureWindow(screenshot);
+      pageOcr = await readOcr(screenshot);
+      const summary = summarizeSearchSort(pageOcr.lines, keyword);
+      pages.push(summary);
+      process.stderr.write(`search_sort_page_inspected:${JSON.stringify({ keyword, sort, page: page + 1, summary })}\n`);
+      // 首屏没有流量才继续向下；累计页面一旦找到近期高播就立即停止，避免
+      // 无意义滚到列表底部后丢失“最新/最热门”切换控件。
+      if (mergeSearchSortSummaries(pages).maxVisiblePlayCount >= WEIXIN_CHANNELS_SEARCH_HIGH_PLAY_THRESHOLD) break;
+      if (page >= 2 && pages.slice(-2).every((item) => item.matchingCount === 0)) break;
+      await runSwiftControl(["scroll-relative", "0.75", "0.68", "-6"]);
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    }
+    return { ocr: pageOcr, summary: mergeSearchSortSummaries(pages) };
+  };
+
+  const hottestInspection = await inspectSort("hottest", hottestPoint);
+  const hottestOcr = hottestInspection.ocr;
+  const hottest = hottestInspection.summary;
+  // 当前数据池优先补足爆款样本：搜索页只负责“最热门”；新内容由左右推荐流
+  // 持续提供。找到高播放卡片后立即点入，不再额外扫描“最新”拖慢采集。
+  const latest: WeixinChannelsSearchSortSummary = {
+    matchingCount: 0,
+    recentMatchingCount: 0,
+    newestMatchingAgeDays: undefined,
+    maxVisiblePlayCount: 0,
+    recentHighPlayCount: 0,
+    firstHighPlayPoint: undefined,
+    firstMatchingPoint: undefined,
+  };
+  process.stderr.write(`search_topic_inspected:${JSON.stringify({ keyword, latest, hottest, hottestOnly: true })}\n`);
+  return { latestOcr: hottestOcr, hottestOcr, latest, hottest };
+}
+
+async function closeSearchTabAndRestore(
+  keyword: string,
+  screenshot: string,
+  state: CollectorSearchTabState,
+  _targetOpenedTabs: number,
+) {
+  await captureWindow(screenshot);
+  let visible = await readOcr(screenshot);
+  // 搜索结果打开播放器后，当前活动页可能已经是视频号。先用 OCR 识别搜索
+  // 标签文字并点击其左侧安全区；不能直接猜 X，也不能关闭整个微信窗口。
+  if (dedupIdentityFingerprint(visible) || hasFourVisibleMetrics(visible.lines)) {
+    const searchTabPoint = findAnySearchTabPoint(visible.lines);
+    if (!searchTabPoint) {
+      if (state.openedTabs > 0) {
+        throw new Error("weixin_channels_search_tab_not_proven_for_close");
+      }
+      state.openedTabs = 0;
+      state.ownerPid = undefined;
+      await persistCollectorSearchTabState(state);
+      return visible;
+    }
+    await runSwiftControl([
+      "click-relative",
+      searchTabPoint.x.toFixed(5),
+      searchTabPoint.y.toFixed(5),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await captureWindow(screenshot);
+    visible = await readOcr(screenshot);
+  }
+  // 只有“影片”页、排序器或当前关键词可见时，才证明活动页确为搜索页。
+  // 再识别右侧搜索标签 X，走只能命中右侧 X 槽的 Swift 专用动作。
+  const searchPageConfirmed = Boolean(findSearchVideosTabPoint(visible.lines))
+    || Boolean(findSearchSortPoint(visible.lines, "latest") && findSearchSortPoint(visible.lines, "hottest"))
+    || hasTypedSearchKeyword(visible.lines, keyword);
+  if (!searchPageConfirmed) throw new Error("weixin_channels_search_page_not_confirmed_for_close");
+  const closePoint = findSearchTabClosePoint(visible.lines);
+  if (!closePoint) throw new Error("weixin_channels_search_tab_close_not_proven");
+  await runSwiftControl([
+    "click-confirmed-search-tab-close",
+    closePoint.x.toFixed(5),
+    closePoint.y.toFixed(5),
+  ]);
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  await captureWindow(screenshot);
+  const restored = await readOcr(screenshot);
+  if (!dedupIdentityFingerprint(restored) && !hasFourVisibleMetrics(restored.lines)) {
+    throw new Error("weixin_channels_search_original_video_not_restored");
+  }
+  state.openedTabs = 0;
+  state.ownerPid = undefined;
+  await persistCollectorSearchTabState(state);
+  return restored;
+}
+
+async function runBoundedSearchProbe(keyword: string, screenshot: string) {
+  const state = await getCollectorSearchTabState();
+  const beforeOpenedTabs = state.openedTabs;
+  let openedByProbe = false;
+  let latestResults: Awaited<ReturnType<typeof searchKeyword>> | undefined;
+  try {
+    const results = await searchKeyword(keyword, screenshot);
+    latestResults = results;
+    openedByProbe = state.openedTabs > beforeOpenedTabs && state.ownerPid === process.pid;
+    return {
+      ok: results.latest.recentMatchingCount > 0 && results.hottest.matchingCount > 0,
+      keyword,
+      latest: results.latest,
+      hottest: results.hottest,
+      openedTabs: state.openedTabs,
+    };
+  } finally {
+    openedByProbe ||= state.openedTabs > beforeOpenedTabs && state.ownerPid === process.pid;
+    openedByProbe ||= Boolean(latestResults);
+    if (openedByProbe) {
+      await closeSearchTabAndRestore(keyword, screenshot, state, beforeOpenedTabs);
+    }
+  }
 }
 
 export function parseVisibleMetric(text: string): number | undefined {
@@ -1394,7 +2420,7 @@ export function parseVisibleMetric(text: string): number | undefined {
 }
 
 function parseStandaloneMetric(text: string): number | undefined {
-  const normalized = String(text || "").replace(/[,，\s＋+]/g, "");
+  const normalized = String(text || "").replace(/[,，\s＋+]/g, "").replace(/^[~～≈≃]+/, "");
   if (!/^\d+(?:\.\d+)?(?:万|萬|w|W)?$/.test(normalized)) return undefined;
   return parseVisibleMetric(normalized);
 }
@@ -1438,8 +2464,10 @@ export function extractWeixinChannelsMetrics(lines: OcrLine[]) {
   // 当前桌面版常只显示横排数字而无文字标签。四项齐全时按顺序映射；
   // OCR 漏掉一项时按真实横向槽位就近归属，避免把三项可用数据整组丢弃。
   if (Object.values(result).filter((value) => value !== undefined).length < 2) {
-    const bottomNumbers = textLines
-      .filter((line) => line.y < 0.13 && line.x > 0.45)
+    const bottomNumbers = lines
+      .filter((line) => line.confidence >= 0.25 && line.y < 0.13 && line.x > 0.45)
+      .map((line) => ({ ...line, text: line.text.trim() }))
+      .filter((line) => line.text)
       .map((line) => ({ x: line.x, y: line.y, value: parseStandaloneMetric(line.text) }))
       .filter((entry): entry is { x: number; y: number; value: number } => entry.value !== undefined)
       .sort((left, right) => left.x - right.x);
@@ -1492,12 +2520,51 @@ async function heartbeatCollector(server: string, token: string, clientId: strin
 
 type CollectorCandidate = HeartbeatTask & {
   status?: "pending" | "claimed" | "scanned";
+  sourcePlatform?: string;
   category?: string;
   sourceTitle?: string;
   createdAt?: string;
 };
 
 const BLOCKED_DRAMA_QUERY = /(短剧|短劇|剧场|劇場|免费看|免費看|追剧|追劇|看剧|看劇|原创动画|原創動畫|男频|男頻|女频|女頻|爽文|爽剧|爽劇)/i;
+const ALLOWED_COLLECTOR_SEARCH_PLATFORMS = new Set(["douyin", "xiaohongshu"]);
+
+export function compactCollectorSearchQuery(value: string) {
+  const normalized = normalizeWeixinChannelsSearchQuery(value);
+  if (!normalized) return undefined;
+  let compact = normalized
+    .normalize("NFKC")
+    .replace(/[\s#＃，,。.!！?？:：'“”"·…⋯()（）【】\[\]<>《》]/g, "")
+    .replace(/^(?:聊聊|说说|說說|看看|盘点|盤點|关于|關於)+/, "")
+    .replace(/^(?:这家|這家|一个|一個|普通人)+/, "")
+    .replace(/^(?:如何用|怎么用|怎麼用|如何|为什么|為什麼)+/, "")
+    .replace(/的/g, "")
+    .replace(/真(?=牛$)/, "");
+  const chars = Array.from(compact);
+  if (chars.length < 4) return undefined;
+  if (chars.length > 6) compact = chars.slice(0, 6).join("");
+  return compact;
+}
+
+export function collectorSearchQueryVariants(value: string) {
+  const compact = compactCollectorSearchQuery(value);
+  if (!compact) return [];
+  const variants = [compact];
+  if (compact === "公司价值观" || compact === "公司價值觀") {
+    variants.push("企业价值观", "企业文化");
+  } else if (compact === "企业价值观" || compact === "企業價值觀") {
+    variants.push("公司价值观", "企业文化");
+  } else if (compact === "企业文化" || compact === "企業文化") {
+    variants.push("公司价值观", "企业价值观");
+  }
+  const chars = Array.from(compact);
+  if (chars.length >= 5 && /[牛火強强好讚赞]$/.test(compact)) {
+    variants.push(chars.slice(0, -1).join(""));
+  }
+  return Array.from(new Set(variants
+    .map((query) => compactCollectorSearchQuery(query))
+    .filter((query): query is string => Boolean(query))));
+}
 
 export function buildDiverseCollectorSearchQueries(params: {
   candidates: CollectorCandidate[];
@@ -1505,9 +2572,14 @@ export function buildDiverseCollectorSearchQueries(params: {
   recentlyUsed?: string[];
   limit?: number;
 }) {
-  const recentlyUsed = new Set((params.recentlyUsed || []).map((item) => item.trim().toLowerCase()));
+  const recentlyUsed = new Set((params.recentlyUsed || [])
+    .map((item) => compactCollectorSearchQuery(item)?.toLowerCase())
+    .filter((item): item is string => Boolean(item)));
   const byCategory = new Map<string, string[]>();
-  const ranked = [...params.candidates].sort((left, right) => {
+  const ranked = params.candidates
+    .filter((item) => ALLOWED_COLLECTOR_SEARCH_PLATFORMS.has(String(item.sourcePlatform || "")))
+    .filter((item) => !/probe|test[-_/ ]?run/i.test(`${item.taskId} ${item.category || ""}`))
+    .sort((left, right) => {
     const score = (item: CollectorCandidate) => {
       const text = `${item.category || ""} ${item.sourceTitle || ""} ${item.searchQueries.join(" ")}`;
       return (/AI|人工智能/i.test(text) ? 100 : 0)
@@ -1522,8 +2594,10 @@ export function buildDiverseCollectorSearchQueries(params: {
     const bucket = byCategory.get(category) || [];
     for (const raw of item.searchQueries) {
       for (const query of deriveWeixinChannelsSearchQueries(raw)) {
-        if (BLOCKED_DRAMA_QUERY.test(query) || bucket.includes(query)) continue;
-        bucket.push(query);
+        for (const variant of collectorSearchQueryVariants(query)) {
+          if (BLOCKED_DRAMA_QUERY.test(variant) || bucket.includes(variant)) continue;
+          bucket.push(variant);
+        }
       }
     }
     if (bucket.length) byCategory.set(category, bucket);
@@ -1537,7 +2611,7 @@ export function buildDiverseCollectorSearchQueries(params: {
       ordered.push(query);
     }
   };
-  // 跨类目轮询到所有真实七天候选耗尽，避免旧实现只取前三轮、后续新词永远进不了词池。
+  // 跨类目轮询到所有真实十五天候选耗尽，避免旧实现只取前三轮、后续新词永远进不了词池。
   const maxRounds = Math.max(0, ...Array.from(byCategory.values(), (bucket) => bucket.length));
   for (let round = 0; round < maxRounds; round += 1) {
     for (const bucket of Array.from(byCategory.values())) {
@@ -1546,7 +2620,9 @@ export function buildDiverseCollectorSearchQueries(params: {
   }
   for (const query of params.seedQueries || []) {
     for (const normalized of deriveWeixinChannelsSearchQueries(query)) {
-      if (!BLOCKED_DRAMA_QUERY.test(normalized)) append(normalized);
+      for (const variant of collectorSearchQueryVariants(normalized)) {
+        if (!BLOCKED_DRAMA_QUERY.test(variant)) append(variant);
+      }
     }
   }
   const fresh = ordered.filter((query) => !recentlyUsed.has(query.toLowerCase()));
@@ -1559,11 +2635,16 @@ function hydrateCollectorTask(params: {
   candidates: CollectorCandidate[];
   recentlyUsed: string[];
 }) {
+  const taskSource = params.candidates.find((candidate) => candidate.taskId === params.task.taskId);
+  const seedQueries = taskSource
+    && ALLOWED_COLLECTOR_SEARCH_PLATFORMS.has(String(taskSource.sourcePlatform || ""))
+    ? params.task.searchQueries
+    : [];
   return {
     ...params.task,
     searchQueries: buildDiverseCollectorSearchQueries({
       candidates: params.candidates,
-      seedQueries: params.task.searchQueries,
+      seedQueries,
       recentlyUsed: params.recentlyUsed,
     }),
   };
@@ -1585,10 +2666,13 @@ async function rememberCollectorQuery(query: string, tempDir = os.tmpdir()) {
   await fs.writeFile(path.join(tempDir, "weixin-channels-recent-queries.json"), JSON.stringify(next), "utf8");
 }
 
-async function refreshCollectorCandidates(server: string, token: string) {
-  const response = await fetch(`${server.replace(/\/$/, "")}/api/internal/weixin-channels/candidates`, {
+async function refreshCollectorCandidates(server: string, token: string, refresh = true) {
+  const response = await fetch(
+    `${server.replace(/\/$/, "")}/api/internal/weixin-channels/candidates${refresh ? "" : "?refresh=0"}`,
+    {
     headers: { "x-weixin-channels-collector-token": token },
-  });
+    },
+  );
   const text = await response.text();
   if (!response.ok) throw new Error(`candidate_refresh_failed:${response.status}:${text.slice(0, 500)}`);
   return (JSON.parse(text) as { candidates?: CollectorCandidate[] }).candidates || [];
@@ -1649,6 +2733,25 @@ type VideoCaptureRetryCache = {
   samplingActiveMs?: number;
 };
 
+export type WeixinChannelsPersistedObservationEvent = {
+  event: "observation_persisted";
+  observationId: string;
+  windowId: number;
+  query: string;
+  runKind: "formal" | "probe";
+  qualified: boolean;
+  serverQualified: boolean;
+  persisted: boolean;
+  newlyPersisted: boolean;
+  newlyQualifiedPersisted: boolean;
+  comments: number;
+  commentSampleCount: number;
+  captureElapsedMs: number;
+  captureBudgetMs?: number;
+  modelCalls: number;
+  analysisObservation: WeixinChannelsObservation;
+};
+
 async function captureVisibleQualifiedVideo(params: {
   ocr: OcrResult;
   screenshot: string;
@@ -1665,6 +2768,7 @@ async function captureVisibleQualifiedVideo(params: {
   outputOverride?: string;
   videoDurationHintSec?: number;
   retryCache: VideoCaptureRetryCache;
+  onObservationPersisted?: (event: WeixinChannelsPersistedObservationEvent) => void;
 }) {
   const captureStartedAt = Date.now();
   const metricsStartedAt = Date.now();
@@ -1673,7 +2777,16 @@ async function captureVisibleQualifiedVideo(params: {
   recordCollectorPhase(params.diagnostics, "metricsOcr", metricsStartedAt);
   const actualMetrics = [metrics.likes, metrics.comments, metrics.shares, metrics.favorites]
     .filter((value) => value !== undefined);
+  const definitiveUnqualified = hasDefinitiveVisibleUnqualifiedMetrics(params.ocr.lines);
   if (actualMetrics.length < 4) {
+    if (definitiveUnqualified) {
+      params.diagnostics.locallyUnqualified += 1;
+      return {
+        qualified: false as const,
+        reason: "至少两项前置互动明确低于门槛",
+        fingerprint: params.videoIdentity,
+      };
+    }
     params.diagnostics.metricsIncomplete += 1;
     // 评论数缺失时不能假定为 0；否则实际 comments>=80 的视频会绕过真实评论门禁。
     // 抛给同视频安全恢复，禁止把它改判为不达标后直接滑走。
@@ -1693,6 +2806,36 @@ async function captureVisibleQualifiedVideo(params: {
   const title = params.titleOverride || identity.title || "当前视频";
   const preliminary = qualifyWeixinChannelsObservationLocally({ ...metrics, query: params.query, title });
   if (!preliminary.qualified) {
+    if (!definitiveUnqualified
+      && (metrics.comments || 0) >= WEIXIN_CHANNELS_COMMENT_THRESHOLD) {
+      // 评论很高的视频一旦被 OCR 暂判为前置不达标，滑走前必须再做一轮完全
+      // 被动的四项复核。复核升级为高热或无法证明仍是同一视频时都抛给当前
+      // 视频恢复链，绝不能先滑走再依赖用户手动找回来。
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      await captureWindow(params.screenshot);
+      let advanceGuardOcr = await readOcr(params.screenshot);
+      advanceGuardOcr = await ensureInteractionMetricsVisible(params.screenshot, advanceGuardOcr);
+      advanceGuardOcr = await confirmVisibleInteractionMetrics(params.screenshot, advanceGuardOcr);
+      if (!sameVideoContinuity(params.ocr, advanceGuardOcr)) {
+        throw new Error("weixin_channels_unqualified_advance_same_video_not_proven");
+      }
+      const guardMetrics = extractWeixinChannelsMetrics(advanceGuardOcr.lines);
+      const guardQualification = qualifyWeixinChannelsObservationLocally({
+        ...guardMetrics,
+        query: params.query,
+        title: extractVisibleTitleAndAuthor(advanceGuardOcr.lines).title || title,
+      });
+      process.stderr.write(`unqualified_advance_guard:${JSON.stringify({
+        videoIdentity: params.videoIdentity,
+        metrics,
+        guardMetrics,
+        qualified: guardQualification.qualified,
+        requiresComments: guardQualification.requiresComments,
+      })}\n`);
+      if (guardQualification.qualified) {
+        throw new Error("weixin_channels_qualification_promoted_before_advance");
+      }
+    }
     params.diagnostics.locallyUnqualified += 1;
     if ((metrics.comments || 0) < WEIXIN_CHANNELS_COMMENT_THRESHOLD) params.diagnostics.commentsBelowThreshold += 1;
     return { qualified: false as const, reason: preliminary.reason, fingerprint: params.videoIdentity };
@@ -1702,31 +2845,13 @@ async function captureVisibleQualifiedVideo(params: {
   const reusedSampling = Boolean(params.retryCache.sampled);
   let sampled = params.retryCache.sampled;
   if (!sampled) {
-    params.diagnostics.durationDetectionAttempted += 1;
-    const durationStartedAt = Date.now();
-    let detectedVideoDurationSec: number;
-    try {
-      detectedVideoDurationSec = await detectVideoDurationBeforeSampling({
-        screenshot: params.screenshot,
-        baseMetrics: metrics,
-        videoDurationHintSec: params.videoDurationHintSec,
-      });
-      params.diagnostics.durationDetectionSucceeded += 1;
-    } catch (error) {
-      params.diagnostics.durationDetectionFailed += 1;
-      throw error;
-    } finally {
-      const elapsed = Date.now() - durationStartedAt;
-      params.diagnostics.durationDetectionMs += elapsed;
-      recordCollectorPhase(params.diagnostics, "duration", durationStartedAt);
-    }
     if (params.retryCache.samplingAttempts >= 2) {
       // 只有真正即将执行五点抽查时才消耗次数；控制条未出现不算一次五点。
       throw new Error("weixin_channels_content_sampling_retry_exhausted");
     }
     params.retryCache.samplingAttempts += 1;
     const samplingStartedAt = Date.now();
-    sampled = await sampleVideoContentAtProgress(params.screenshot, metrics, captureStartedAt, detectedVideoDurationSec);
+    sampled = await sampleVideoContentAtProgress(params.screenshot, metrics, captureStartedAt);
     recordCollectorPhase(params.diagnostics, "contentSampling", samplingStartedAt);
     params.retryCache.sampled = sampled;
     params.retryCache.samplingActiveMs = Date.now() - captureStartedAt;
@@ -1734,7 +2859,11 @@ async function captureVisibleQualifiedVideo(params: {
     // 评论或上传阶段恢复时复用已经完成的五点结果，不再次拖动。
     sampled = {
       ...sampled,
-      deadlineAt: captureStartedAt + Math.max(1_000, captureBudgetMsForVideo(sampled.videoDurationSec) - (params.retryCache.samplingActiveMs || 0)),
+      deadlineAt: captureStartedAt + Math.max(
+        1_000,
+        (sampled.videoDurationSec ? captureBudgetMsForVideo(sampled.videoDurationSec) : 60_000)
+          - (params.retryCache.samplingActiveMs || 0),
+      ),
     };
   }
   const { ocrTexts, videoDurationSec, deadlineAt } = sampled;
@@ -1769,8 +2898,8 @@ async function captureVisibleQualifiedVideo(params: {
   recordCollectorPhase(params.diagnostics, "cover", coverStartedAt);
   const captureElapsedMs = (reusedSampling ? (params.retryCache.samplingActiveMs || 0) : 0)
     + (Date.now() - captureStartedAt);
-  const captureBudgetMs = captureBudgetMsForVideo(videoDurationSec);
-  if (captureElapsedMs > captureBudgetMs) {
+  const captureBudgetMs = videoDurationSec ? captureBudgetMsForVideo(videoDurationSec) : undefined;
+  if (captureBudgetMs !== undefined && captureElapsedMs > captureBudgetMs) {
     throw new Error("weixin_channels_capture_time_budget_exceeded");
   }
   if (finalQualification.qualified) params.diagnostics.qualifiedBeforePersist += 1;
@@ -1802,6 +2931,10 @@ async function captureVisibleQualifiedVideo(params: {
     || path.join(os.tmpdir(), `weixin-channels-pending-${observation.observationId}.json`);
   await persistPendingFile(output, observation);
   let persisted = false;
+  let newlyPersisted = false;
+  let serverQualified = false;
+  let newlyQualifiedPersisted = false;
+  let modelCalls = 0;
   if (params.server) {
     if (!params.token) throw new Error("WEIXIN_CHANNELS_COLLECTOR_TOKEN is required for upload");
     const uploadStartedAt = Date.now();
@@ -1831,16 +2964,36 @@ async function captureVisibleQualifiedVideo(params: {
     }
     process.stderr.write(`uploaded:${JSON.stringify(payload)}\n`);
     persisted = payload.persisted === true;
+    newlyPersisted = payload.newlyPersisted === true;
+    serverQualified = payload.qualified === true;
+    newlyQualifiedPersisted = payload.newlyQualifiedPersisted === true;
+    modelCalls = Number(payload.modelCalls || 0);
+    if (modelCalls !== 0) throw new Error("weixin_channels_capture_model_call_detected");
   }
-  process.stdout.write(`${JSON.stringify({
+  const persistedEvent: WeixinChannelsPersistedObservationEvent = {
     event: "observation_persisted",
     observationId: observation.observationId,
+    windowId: requireCollectorWindowSession().windowId,
+    query: observation.query,
     runKind: observation.runKind,
     qualified: finalQualification.qualified,
+    serverQualified,
+    persisted,
+    newlyPersisted,
+    newlyQualifiedPersisted,
+    comments: observation.comments || 0,
     commentSampleCount: observation.commentSamples?.length || 0,
     captureElapsedMs: observation.captureElapsedMs,
     captureBudgetMs: observation.captureBudgetMs,
-  })}\n`);
+    modelCalls,
+    analysisObservation: {
+      ...observation,
+      coverImageBase64: undefined,
+      visualImageBase64: undefined,
+    },
+  };
+  params.onObservationPersisted?.(persistedEvent);
+  process.stdout.write(`${JSON.stringify(persistedEvent)}\n`);
   return {
     qualified: finalQualification.qualified,
     inspectedContent: true as const,
@@ -1848,20 +3001,49 @@ async function captureVisibleQualifiedVideo(params: {
     fingerprint: params.videoIdentity,
     observation,
     persisted,
+    newlyPersisted,
+    serverQualified,
+    newlyQualifiedPersisted,
   };
 }
 
 async function openFirstSearchResult(keyword: string, screenshot: string) {
-  let results = await searchKeyword(keyword, screenshot);
-  let point = findFirstSearchVideoPoint(results.lines);
-  for (let page = 0; !point && page < 3; page += 1) {
+  const inspected = await searchKeyword(keyword, screenshot);
+  let results = inspected.latestOcr;
+  let latest = inspected.latest;
+  let sourceSort: "latest" | "hottest" = inspected.hottest.maxVisiblePlayCount > latest.maxVisiblePlayCount
+    ? "hottest"
+    : "latest";
+  let point = sourceSort === "hottest" ? inspected.hottest.firstHighPlayPoint : latest.firstHighPlayPoint;
+  if (sourceSort === "hottest") {
+    let hottestPoint = findSearchSortPoint(results.lines, "hottest");
+    for (let attempt = 0; !hottestPoint && attempt < 4; attempt += 1) {
+      await runSwiftControl(["scroll-relative", "0.75", "0.68", "40"]);
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      await captureWindow(screenshot);
+      results = await readOcr(screenshot);
+      hottestPoint = findSearchSortPoint(results.lines, "hottest");
+    }
+    if (!hottestPoint) throw new Error("weixin_channels_search_hottest_control_not_confirmed_for_open");
+    await runSwiftControl(["click-relative", hottestPoint.x.toFixed(5), hottestPoint.y.toFixed(5)]);
+    await waitForVisibleVideoLoad();
+    await captureWindow(screenshot);
+    results = await readOcr(screenshot);
+    point = summarizeSearchSort(results.lines, keyword).firstHighPlayPoint;
+  }
+  let fallbackPoint = sourceSort === "hottest" ? inspected.hottest.firstMatchingPoint : latest.firstMatchingPoint;
+  for (let page = 0; !point && page < 12; page += 1) {
     await runSwiftControl(["scroll-relative", "0.75", "0.68", "-6"]);
     await new Promise((resolve) => setTimeout(resolve, 900));
     await captureWindow(screenshot);
     results = await readOcr(screenshot);
-    point = findFirstSearchVideoPoint(results.lines);
+    latest = summarizeSearchSort(results.lines, keyword);
+    fallbackPoint ||= latest.firstMatchingPoint;
+    point = latest.firstHighPlayPoint;
   }
-  if (!point) throw new Error("weixin_channels_organic_search_video_not_found");
+  point ||= fallbackPoint;
+  if (!point) throw new Error("weixin_channels_search_topic_has_no_visible_video");
+  process.stderr.write(`search_result_opening:${JSON.stringify({ windowId: requireCollectorWindowSession().windowId, keyword, sourceSort, point })}\n`);
   await runSwiftControl(["click-relative", point.x.toFixed(5), point.y.toFixed(5)]);
   await waitForVisibleVideoLoad();
   const startedAt = Date.now();
@@ -1878,11 +3060,81 @@ async function openFirstSearchResult(keyword: string, screenshot: string) {
     }
     const metrics = extractWeixinChannelsMetrics(opened.lines);
     if ([metrics.likes, metrics.shares, metrics.favorites, metrics.comments].filter((value) => value !== undefined).length >= 2) {
-      return { ocr: opened, videoDurationSec: point.videoDurationSec };
+      // 搜索结果已经在视频号播放器中打开。开始五点/评论采集前，先关闭本轮
+      // 搜索标签并重新证明播放器仍可见，避免搜索标签累计或误关视频号窗口。
+      const searchState = await getCollectorSearchTabState();
+      const restored = await closeSearchTabAndRestore(keyword, screenshot, searchState, 0);
+      return {
+        ocr: restored,
+        videoDurationSec: undefined,
+        searchInspection: { latest, hottest: inspected.hottest },
+      };
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error("weixin_channels_search_result_video_not_opened");
+}
+
+type CollectorPendingRecovery = Awaited<ReturnType<typeof retryPendingObservations>>;
+
+type CollectorSharedRuntime = {
+  seenRegistry: CollectorSeenRegistry;
+  inFlightVideoIdentities: Set<string>;
+  nextSearchQueryIndexByWindow: Map<number, number>;
+  abortReason?: string;
+  rememberSeen(entry: CollectorSeenEntry): Promise<void>;
+  retryPending(): Promise<CollectorPendingRecovery>;
+  markHealthyProgress(): Promise<void>;
+  qualifiedTargetReached(): boolean;
+  recordQualifiedPersisted(windowId: number): void;
+  qualifiedPersistedTotal(): number;
+  qualificationStartedAt: number;
+};
+
+async function prepareCollectorSharedRuntime(params: { server: string; token: string; maxQualified?: number }) {
+  const seenRegistry = await loadCollectorSeenRegistry();
+  // 旧 seen 不能作为事实。双窗启动前只做一次 Fly 对账，随后两窗共享同一份内存表。
+  const persistedIdentityCount = await syncPersistedCollectorIdentities({
+    server: params.server,
+    token: params.token,
+    registry: seenRegistry,
+  });
+  process.stderr.write(`persisted_identity_sync_completed:${persistedIdentityCount}\n`);
+  await restoreEligibleQuarantinedObservations();
+  const seenGate = createAsyncSerialGate();
+  const pendingGate = createAsyncSerialGate();
+  const recoveryResetGate = createAsyncSerialGate();
+  let healthyProgressMarked = false;
+  let qualifiedPersistedTotal = 0;
+  const qualificationStartedAt = Date.now();
+  const shared: CollectorSharedRuntime = {
+    seenRegistry,
+    inFlightVideoIdentities: new Set<string>(),
+    nextSearchQueryIndexByWindow: new Map<number, number>(),
+    rememberSeen: (entry: CollectorSeenEntry) => seenGate.run(() => rememberCollectorSeen(seenRegistry, entry)),
+    retryPending: () => pendingGate.run(() => retryPendingObservations(params)),
+    markHealthyProgress: () => recoveryResetGate.run(async () => {
+      if (healthyProgressMarked) return;
+      await resetCollectorRecoveryState();
+      healthyProgressMarked = true;
+    }),
+    qualifiedTargetReached: () => params.maxQualified !== undefined && qualifiedPersistedTotal >= params.maxQualified,
+    recordQualifiedPersisted: (windowId) => {
+      qualifiedPersistedTotal += 1;
+      process.stderr.write(`collector_qualified_persisted:${JSON.stringify({
+        windowId,
+        qualifiedPersistedTotal,
+        target: params.maxQualified,
+        elapsedMs: Date.now() - qualificationStartedAt,
+      })}\n`);
+    },
+    qualifiedPersistedTotal: () => qualifiedPersistedTotal,
+    qualificationStartedAt,
+  };
+  return {
+    shared,
+    initialRecovery: await pendingGate.run(() => retryPendingObservations(params)),
+  };
 }
 
 async function runCollectionPool(params: {
@@ -1891,32 +3143,34 @@ async function runCollectionPool(params: {
   token: string;
   probe: boolean;
   maxScanned?: number;
+  allowSearch: boolean;
+  searchScheduleManaged?: boolean;
+  startInSearch?: boolean;
+  deadlineAt?: number;
+  onObservationPersisted?: (event: WeixinChannelsPersistedObservationEvent) => void;
+  shared: CollectorSharedRuntime;
+  initialRecovery?: CollectorPendingRecovery;
+  onInitialVideoClaimed?: () => void;
 }) {
   const clientId = `mac-weixin-${os.hostname()}`.slice(0, 120);
-  const seenRegistry = await loadCollectorSeenRegistry();
-  // 本机 v1 seen 曾在处理前写入，不能作为跳过依据。启动时必须先用 Fly 的
-  // persistedAt 事实校准；同步失败直接停机，禁止带着不可信去重状态操作微信。
-  const persistedIdentityCount = await syncPersistedCollectorIdentities({
-    server: params.server,
-    token: params.token,
-    registry: seenRegistry,
-  });
-  process.stderr.write(`persisted_identity_sync_completed:${persistedIdentityCount}\n`);
+  const { seenRegistry, inFlightVideoIdentities } = params.shared;
   let diagnostics = createCollectorHourDiagnostics();
   let windowStartedAt = Date.parse(diagnostics.windowStartedAt);
   let checkpoint15Handled = false;
   let checkpoint30Handled = false;
   let forceSearchQueryRotation = false;
-  await restoreEligibleQuarantinedObservations();
-  const initialRecovery = await retryPendingObservations({ server: params.server, token: params.token });
+  const initialRecovery = params.initialRecovery || {
+    found: 0, persisted: 0, persistedUnique: 0, duplicatePersistRejected: 0, failed: 0,
+  };
   diagnostics.persistedUnique += initialRecovery.persistedUnique;
   diagnostics.duplicatePersistRejected += initialRecovery.duplicatePersistRejected;
-  let candidates = await refreshCollectorCandidates(params.server, params.token);
+  // 启动只读取 Fly 已有候选，不能在两个窗口已经固定后阻塞等待外部平台刷新。
+  let candidates = await refreshCollectorCandidates(params.server, params.token, false);
   let heartbeat = await heartbeatCollector(params.server, params.token, clientId);
   if (!heartbeat.enabled) return { stopped: "capture_disabled", scanned: 0, qualified: 0 };
   if (!heartbeat.nextTask) {
-    // 任务只能由 Fly 中抖音/B站/小红书最近七天真实数据生成；本机不维护固定热词。
-    candidates = await refreshCollectorCandidates(params.server, params.token);
+    // 任务只能由 Fly 中抖音/B站/小红书最近十五天真实数据生成；本机不维护固定热词。
+    candidates = await refreshCollectorCandidates(params.server, params.token, false);
     heartbeat = await heartbeatCollector(params.server, params.token, clientId);
     if (!heartbeat.nextTask) {
       const reusable = selectReusableCollectorCandidate(candidates);
@@ -1933,7 +3187,8 @@ async function runCollectionPool(params: {
     candidates,
     recentlyUsed: await readRecentCollectorQueries(),
   });
-  process.stderr.write(`search_query_pool_ready:${task.searchQueries.length}\n`);
+  const currentWindowId = requireCollectorWindowSession().windowId;
+  process.stderr.write(`search_query_pool_ready:${JSON.stringify({ windowId: currentWindowId, count: task.searchQueries.length })}\n`);
   let mode: "recommendation" | "search" = "recommendation";
   let recommendationStartedAt = Date.now();
   let recommendationQualified = 0;
@@ -1941,27 +3196,67 @@ async function runCollectionPool(params: {
   let totalScanned = 0;
   let totalQualified = 0;
   let totalRecovered = initialRecovery.persisted;
-  let searchQueryIndex = 0;
+  let searchQueryIndex = (params.shared.nextSearchQueryIndexByWindow.get(currentWindowId) || 0)
+    % Math.max(1, task.searchQueries.length);
   let scansOnCurrentQuery = 0;
   let qualifiedOnCurrentQuery = 0;
   let knownVideoDurationSec: number | undefined;
   let consecutiveDuplicates = 0;
-  const inFlightVideoIdentities = new Set<string>();
   let lastHeartbeatAt = Date.now();
-  await captureWindow(params.screenshot);
-  let ocr = await readOcr(params.screenshot);
-  ocr = await ensureVideoPlayerVisible(params.screenshot, ocr);
+  let ocr: OcrResult;
+  if (params.startInSearch) {
+    const firstQuery = task.searchQueries[searchQueryIndex];
+    if (!firstQuery) throw new Error("weixin_channels_dual_probe_search_query_missing");
+    params.shared.nextSearchQueryIndexByWindow.set(
+      currentWindowId,
+      nextCollectorSearchQueryIndex(searchQueryIndex, task.searchQueries.length),
+    );
+    const searchResult = await openFirstSearchResult(firstQuery, params.screenshot);
+    mode = "search";
+    ocr = searchResult.ocr;
+    knownVideoDurationSec = searchResult.videoDurationSec;
+    await rememberCollectorQuery(firstQuery);
+    process.stderr.write(`dual_window_probe_right_search_started:${firstQuery}\n`);
+  } else {
+    await captureWindow(params.screenshot);
+    ocr = await readOcr(params.screenshot);
+    ocr = await ensureVideoPlayerVisible(params.screenshot, ocr);
+  }
 
-  const advanceTracked = async (previous: OcrResult, deadlineAt?: number) => {
+  const advanceTracked = async (
+    previous: OcrResult,
+    evidence: CollectorAdvanceEvidence,
+    deadlineAt?: number,
+  ) => {
+    if (!collectorAdvanceAllowed(evidence)) {
+      throw new Error("weixin_channels_advance_without_terminal_evidence_blocked");
+    }
     const startedAt = Date.now();
     try {
-      return await advanceToNextVideoSafely(previous, params.screenshot, deadlineAt);
+      const live = await revalidateLiveFrameBeforeAdvance(previous, params.screenshot);
+      if (live.state === "already_transitioned") {
+        process.stderr.write("advance_skipped_video_already_auto_transitioned\n");
+        return live.ocr;
+      }
+      return await advanceToNextVideoSafely(live.ocr, params.screenshot, deadlineAt);
     } finally {
       recordCollectorPhase(diagnostics, "advance", startedAt);
     }
   };
 
-  while (totalScanned < (params.maxScanned ?? Number.POSITIVE_INFINITY)) {
+  while (totalScanned < (params.maxScanned ?? Number.POSITIVE_INFINITY)
+    && !params.shared.qualifiedTargetReached()
+    && (params.deadlineAt === undefined || Date.now() < params.deadlineAt)) {
+    if (params.searchScheduleManaged
+      && params.allowSearch !== shouldUseWeixinChannelsSearchAtHour(new Date().getHours())) {
+      return {
+        stopped: "search_schedule_changed",
+        scanned: totalScanned,
+        qualified: totalQualified,
+        recovered: totalRecovered,
+        mode,
+      };
+    }
     const windowElapsedMs = Date.now() - windowStartedAt;
     if (windowElapsedMs >= WEIXIN_CHANNELS_WATCHDOG_CHECKPOINTS[0].elapsedMs && !checkpoint15Handled) {
       checkpoint15Handled = true;
@@ -1975,8 +3270,8 @@ async function runCollectionPool(params: {
     }
     if (windowElapsedMs >= WEIXIN_CHANNELS_HOUR_MS) {
       const report = await buildCollectorHourReport(diagnostics);
-      if (diagnostics.persistedUnique < 50) {
-        // 停止当前低效小时窗口并立即执行无人值守修复：刷新七天候选、强制换源，
+      if (diagnostics.persistedUnique < WEIXIN_CHANNELS_HOURLY_UNIQUE_TARGET) {
+        // 停止当前低效小时窗口并立即执行无人值守修复：刷新十五天候选、强制换源，
         // 然后开启新的小时窗口。不能半夜永久停到用户早上手工重启。
         process.stderr.write(`collector_watchdog_60m_remediating:${JSON.stringify(report)}\n`);
         candidates = await refreshCollectorCandidates(params.server, params.token);
@@ -1987,7 +3282,7 @@ async function runCollectionPool(params: {
         });
         forceSearchQueryRotation = true;
       }
-      if (diagnostics.persistedUnique >= 50) {
+      if (diagnostics.persistedUnique >= WEIXIN_CHANNELS_HOURLY_UNIQUE_TARGET) {
         process.stderr.write(`collector_watchdog_60m_passed:${JSON.stringify(report)}\n`);
       }
       diagnostics = createCollectorHourDiagnostics();
@@ -1998,7 +3293,7 @@ async function runCollectionPool(params: {
 
     if (Date.now() - lastHeartbeatAt >= 30_000) {
       heartbeat = await heartbeatCollector(params.server, params.token, clientId);
-      const recovery = await retryPendingObservations({ server: params.server, token: params.token });
+      const recovery = await params.shared.retryPending();
       totalRecovered += recovery.persisted;
       diagnostics.persistedUnique += recovery.persistedUnique;
       diagnostics.duplicatePersistRejected += recovery.duplicatePersistRejected;
@@ -2016,7 +3311,15 @@ async function runCollectionPool(params: {
       }
     }
 
-    if (forceSearchQueryRotation && task.searchQueries.length) {
+    if (!params.allowSearch && forceSearchQueryRotation) {
+      forceSearchQueryRotation = false;
+      recommendationStartedAt = Date.now();
+      recommendationQualified = 0;
+      recommendationScanned = 0;
+      process.stderr.write("left_recommendation_window_retained_without_search\n");
+    }
+
+    if (params.allowSearch && forceSearchQueryRotation && task.searchQueries.length) {
       const nextIndex = mode === "search"
         ? nextCollectorSearchQueryIndex(searchQueryIndex, task.searchQueries.length)
         : searchQueryIndex;
@@ -2043,7 +3346,7 @@ async function runCollectionPool(params: {
       }
     }
 
-    if (mode === "recommendation" && shouldSwitchRecommendationToSearch({
+    if (params.allowSearch && mode === "recommendation" && shouldSwitchRecommendationToSearch({
       startedAt: recommendationStartedAt,
       now: Date.now(),
       qualifiedCount: recommendationQualified,
@@ -2061,7 +3364,7 @@ async function runCollectionPool(params: {
         await rememberCollectorQuery(query);
       } catch (error) {
         // 微信可能短暂停在“赞和收藏”等子页。搜索入口失败只重置采样窗，
-        // 不退出常驻进程；下一轮改试下一个七天新词，禁止反复卡在同一个词。
+        // 不退出常驻进程；下一轮改试下一个十五天新词，禁止反复卡在同一个词。
         const failedQuery = query;
         searchQueryIndex = nextCollectorSearchQueryIndex(searchQueryIndex, task.searchQueries.length);
         recommendationStartedAt = Date.now();
@@ -2076,6 +3379,23 @@ async function runCollectionPool(params: {
 
     // 先退出“赞和收藏”或搜索结果等辅助标签；只允许真实视频播放器进入计数。
     ocr = await ensureVideoPlayerVisible(params.screenshot, ocr);
+    // 广告是页面级最高优先级淘汰条件：无需等待四项指标稳定，更不能进入
+    // 时长、五点或评论链。只保留 scanned 事实，随后立即切到下一条。
+    if (containsWeixinChannelsAdvertisement(ocr.lines.map((line) => line.text))) {
+      diagnostics.advertisementRejected += 1;
+      diagnostics.locallyUnqualified += 1;
+      totalScanned += 1;
+      if (mode === "recommendation") recommendationScanned += 1;
+      else scansOnCurrentQuery += 1;
+      process.stdout.write(`${JSON.stringify({ event: "advertisement_rejected", scanned: true, qualified: false, modelCalls: 0 })}\n`);
+      await params.shared.markHealthyProgress();
+      ocr = await advanceTracked(ocr, {
+        metricsOcrConfirmed: true,
+        advertisementRejected: true,
+      });
+      knownVideoDurationSec = undefined;
+      continue;
+    }
     // 每条再关闭上一条可能残留的评论面板，并以四项互动指标重新出现作为断言。
     // 无法证明播放器状态时原地停机；禁止靠滑动“恢复”未知页面。
     try {
@@ -2089,6 +3409,7 @@ async function runCollectionPool(params: {
       process.stderr.write(`collector_safety_stopped:player_state_unconfirmed:${reason}\n`);
       return { stopped: "player_state_unconfirmed", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
     }
+    const currentMetrics = extractWeixinChannelsMetrics(ocr.lines);
     const videoIdentity = visibleVideoIdentityFingerprint(ocr);
     if (!videoIdentity) {
       diagnostics.metricsIncomplete += 1;
@@ -2096,42 +3417,96 @@ async function runCollectionPool(params: {
       return { stopped: "stable_identity_not_detected", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
     }
     const visibleIdentity = extractVisibleTitleAndAuthor(ocr.lines);
+    const query = mode === "recommendation"
+      ? "推荐页"
+      : task.searchQueries[searchQueryIndex] || task.searchQueries[0] || "网络热点";
+    const currentQualification = qualifyWeixinChannelsObservationLocally({
+      ...currentMetrics,
+      query,
+      title: visibleIdentity.title,
+    });
     const observationId = makeWeixinChannelsObservationId({
       taskId: task.taskId,
       title: visibleIdentity.title || "",
       author: visibleIdentity.author,
       videoIdentity,
     });
-    if (collectorSeenContains(seenRegistry, videoIdentity, observationId)) {
+    const seenEntry = seenRegistry.entries.get(videoIdentity);
+    if (seenEntry?.state === "terminal_unqualified" && currentQualification.qualified) {
+      // 旧 OCR 曾把当前视频错误写成不达标；当前四项已明确达标时撤销污染状态，
+      // 禁止沿历史快速路径滑走，重新进入完整内容与评论链。
+      seenRegistry.entries.delete(videoIdentity);
+      seenRegistry.observationIds.delete(observationId);
+      await persistCollectorSeenRegistry(seenRegistry, Date.now());
+      process.stderr.write(`terminal_unqualified_reopened_as_qualified:${videoIdentity}:${observationId}\n`);
+    } else if (collectorSeenContains(seenRegistry, videoIdentity, observationId)) {
       diagnostics.duplicateVideosSkipped += 1;
       consecutiveDuplicates += 1;
       process.stderr.write(`duplicate_visible_video_skipped:${videoIdentity}:${observationId}\n`);
       if (consecutiveDuplicates >= 3) {
-        // 不继续滑同一推荐流，也不退出等人工处理；下一轮改用另一条七天热词。
+        // 不继续滑同一推荐流，也不退出等人工处理；下一轮改用另一条十五天热词。
         consecutiveDuplicates = 0;
         forceSearchQueryRotation = true;
         process.stderr.write("collector_duplicate_loop_rotating_source\n");
         continue;
       }
       await waitForVisibleVideoLoad();
-      ocr = await advanceTracked(ocr);
+      ocr = await advanceTracked(ocr, {
+        metricsOcrConfirmed: true,
+        terminalDuplicate: true,
+      });
       knownVideoDurationSec = undefined;
       continue;
     }
+    if (inFlightVideoIdentities.has(videoIdentity) && currentQualification.qualified) {
+      // 达标重复副本不能马上滑走：先等负责窗口完成。只有 Fly 已持久化后
+      // 才可跳过；负责窗口失败释放 in-flight 时，本窗接手完整采集。
+      for (let attempt = 0; attempt < 60 && inFlightVideoIdentities.has(videoIdentity); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      const persistedByPeer = seenRegistry.entries.get(videoIdentity)?.state === "persisted"
+        || seenRegistry.observationIds.has(observationId);
+      if (persistedByPeer) {
+        diagnostics.duplicateVideosSkipped += 1;
+        process.stderr.write(`qualified_duplicate_skipped_after_peer_persisted:${videoIdentity}:${observationId}\n`);
+        ocr = await advanceTracked(ocr, {
+          metricsOcrConfirmed: true,
+          terminalDuplicate: true,
+        });
+        knownVideoDurationSec = undefined;
+        continue;
+      }
+      if (inFlightVideoIdentities.has(videoIdentity)) {
+        return { stopped: "qualified_duplicate_owner_unresolved", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
+      }
+    }
     if (inFlightVideoIdentities.has(videoIdentity)) {
-      process.stderr.write("collector_safety_stopped:inflight_video_reentered\n");
-      return { stopped: "inflight_video_reentered", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
+      // 截图所示双窗可能同时停在同一视频。已有另一窗完整保护该视频时，
+      // 本窗只把它视为跨窗重复并切到下一条；不抢采、不上传，也不污染 seen。
+      diagnostics.duplicateVideosSkipped += 1;
+      consecutiveDuplicates += 1;
+      process.stderr.write(`duplicate_inflight_video_skipped:${videoIdentity}:${observationId}\n`);
+      if (consecutiveDuplicates >= 3) {
+        consecutiveDuplicates = 0;
+        forceSearchQueryRotation = true;
+        process.stderr.write("collector_cross_window_duplicate_loop_rotating_source\n");
+      }
+      ocr = await advanceTracked(ocr, {
+        metricsOcrConfirmed: true,
+        unqualifiedInFlightDuplicate: true,
+      });
+      knownVideoDurationSec = undefined;
+      continue;
     }
     consecutiveDuplicates = 0;
     inFlightVideoIdentities.add(videoIdentity);
+    params.onInitialVideoClaimed?.();
+    params.onInitialVideoClaimed = undefined;
     diagnostics.uniqueVideosSeen += 1;
     totalScanned += 1;
     if (mode === "recommendation") recommendationScanned += 1;
     else scansOnCurrentQuery += 1;
     const itemStartedAt = Date.now();
-    const query = mode === "recommendation"
-      ? "推荐页"
-      : task.searchQueries[searchQueryIndex] || task.searchQueries[0] || "网络热点";
     const pendingOutput = path.join(os.tmpdir(), `weixin-channels-pending-${observationId}.json`);
     const retryCache: VideoCaptureRetryCache = { samplingAttempts: 0 };
     const captureCurrentVideo = (currentOcr: OcrResult) => captureVisibleQualifiedVideo({
@@ -2148,6 +3523,7 @@ async function runCollectionPool(params: {
       outputOverride: pendingOutput,
       videoDurationHintSec: knownVideoDurationSec,
       retryCache,
+      onObservationPersisted: params.onObservationPersisted,
     });
     let result!: Awaited<ReturnType<typeof captureVisibleQualifiedVideo>>;
     let captureOcr = ocr;
@@ -2180,6 +3556,9 @@ async function runCollectionPool(params: {
             fingerprint: videoIdentity,
             observation,
             persisted: payload.persisted === true,
+            newlyPersisted: payload.newlyPersisted === true,
+            serverQualified: payload.qualified === true,
+            newlyQualifiedPersisted: payload.newlyQualifiedPersisted === true,
           };
           if (payload.newlyQualifiedPersisted === true) diagnostics.persistedUnique += 1;
           else if (payload.newlyPersisted !== true) diagnostics.duplicatePersistRejected += 1;
@@ -2197,14 +3576,20 @@ async function runCollectionPool(params: {
         // 任一失败进入退避前都把鼠标停到独立窗左侧黑边；绝不能悬停在头像区，
         // Swift 底层同时拒绝头像禁区的 click/drag，形成双重门禁。
         await runSwiftControl(["move-relative", "0.02", "0.50"]).catch(() => undefined);
-        await rememberCollectorSeen(seenRegistry, {
+        await params.shared.rememberSeen({
           videoIdentity,
           observationId,
           seenAt: new Date().toISOString(),
           state: "retryable_failed",
           failureReason: reason,
         });
-        const delayMs = automaticRecoveryDelayMs(failureCount);
+        if (params.deadlineAt !== undefined && Date.now() >= params.deadlineAt) {
+          inFlightVideoIdentities.delete(videoIdentity);
+          return { stopped: "probe_deadline_reached", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
+        }
+        const delayMs = params.deadlineAt === undefined
+          ? automaticRecoveryDelayMs(failureCount)
+          : Math.min(10_000, automaticRecoveryDelayMs(failureCount));
         process.stderr.write(`collector_automatic_recovery_waiting:attempt=${failureCount}:delayMs=${delayMs}:pending=${pendingExists}:reason=${reason}\n`);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         heartbeat = await heartbeatCollector(params.server, params.token, clientId);
@@ -2214,17 +3599,16 @@ async function runCollectionPool(params: {
         }
         if (pendingExists) continue;
         // 不操作播放器，只被动截图；连续两张互动指标都证明是同一视频后，才允许再次完整采集。
-        while (stableRecoverySnapshots < 2) {
+        let passiveSnapshotAttempts = 0;
+        while (stableRecoverySnapshots < 2 && passiveSnapshotAttempts < WEIXIN_CHANNELS_MAX_PASSIVE_RECOVERY_SNAPSHOTS) {
+          passiveSnapshotAttempts += 1;
           await captureWindow(params.screenshot);
           let passiveOcr = await readOcr(params.screenshot);
           let sameVideo = false;
           if (!isWeixinChannelsAuxiliaryPage(passiveOcr.lines)) {
             try {
               passiveOcr = await ensureInteractionMetricsVisible(params.screenshot, passiveOcr);
-              sameVideo = metricsRemainOnSameVideo(
-                extractWeixinChannelsMetrics(ocr.lines),
-                extractWeixinChannelsMetrics(passiveOcr.lines),
-              );
+              sameVideo = sameVideoContinuity(ocr, passiveOcr);
             } catch {
               sameVideo = false;
             }
@@ -2236,7 +3620,7 @@ async function runCollectionPool(params: {
             stableRecoverySnapshots = 0;
           }
           if (stableRecoverySnapshots < 2) {
-            await new Promise((resolve) => setTimeout(resolve, Math.min(30_000, delayMs)));
+            await new Promise((resolve) => setTimeout(resolve, Math.min(3_000, delayMs)));
             heartbeat = await heartbeatCollector(params.server, params.token, clientId);
             if (!heartbeat.enabled) {
               inFlightVideoIdentities.delete(videoIdentity);
@@ -2244,11 +3628,26 @@ async function runCollectionPool(params: {
             }
           }
         }
+        if (stableRecoverySnapshots < 2) {
+          inFlightVideoIdentities.delete(videoIdentity);
+          return { stopped: "recovery_continuity_unconfirmed", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
+        }
       }
+    }
+    if (!qualifiedCaptureHasAdvanceEvidence(result)) {
+      inFlightVideoIdentities.delete(videoIdentity);
+      process.stderr.write("collector_safety_stopped:qualified_comments_evidence_missing_before_advance\n");
+      return {
+        stopped: "qualified_comments_evidence_missing_before_advance",
+        scanned: totalScanned,
+        qualified: totalQualified,
+        recovered: totalRecovered,
+        mode,
+      };
     }
     inFlightVideoIdentities.delete(videoIdentity);
     const terminal = collectorVideoStateAfterCapture(result);
-    await rememberCollectorSeen(seenRegistry, {
+    await params.shared.rememberSeen({
       videoIdentity,
       observationId,
       seenAt: new Date().toISOString(),
@@ -2259,7 +3658,13 @@ async function runCollectionPool(params: {
       process.stderr.write("collector_safety_stopped:qualified_video_not_persisted\n");
       return { stopped: "qualified_video_not_persisted", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
     }
-    if (result.qualified) {
+    await params.shared.markHealthyProgress();
+    if (result.qualified
+      && result.serverQualified
+      && result.persisted
+      && result.newlyPersisted
+      && result.newlyQualifiedPersisted) {
+      params.shared.recordQualifiedPersisted(requireCollectorWindowSession().windowId);
       totalQualified += 1;
       if (mode === "recommendation") recommendationQualified += 1;
       else qualifiedOnCurrentQuery += 1;
@@ -2269,9 +3674,15 @@ async function runCollectionPool(params: {
 
     if (!result.qualified && !("inspectedContent" in result)) {
       const deadlineAt = itemStartedAt + WEIXIN_CHANNELS_UNQUALIFIED_DWELL_MS;
-      ocr = await advanceTracked(ocr, deadlineAt);
+      ocr = await advanceTracked(ocr, {
+        metricsOcrConfirmed: true,
+        captureState: terminal.state,
+      }, deadlineAt);
     } else {
-      ocr = await advanceTracked(ocr);
+      ocr = await advanceTracked(ocr, {
+        metricsOcrConfirmed: true,
+        captureState: terminal.state,
+      });
     }
     // 推荐流/搜索结果向下切换后，禁止把上一条视频的时长提示复用给下一条。
     knownVideoDurationSec = undefined;
@@ -2311,7 +3722,354 @@ async function runCollectionPool(params: {
       }
     }
   }
-  return { stopped: "max_scanned_reached", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
+  return {
+    stopped: params.shared.qualifiedTargetReached()
+      ? "qualified_target_reached"
+      : params.deadlineAt !== undefined && Date.now() >= params.deadlineAt
+        ? "probe_deadline_reached"
+        : "max_scanned_reached",
+    scanned: totalScanned,
+    qualified: totalQualified,
+    recovered: totalRecovered,
+    mode,
+  };
+}
+
+export function parseCollectorWindowIds(args: string[]) {
+  const values = args
+    .filter((item) => item.startsWith("--window-id="))
+    .map((item) => Number(item.slice("--window-id=".length)));
+  if (values.some((value) => !Number.isInteger(value) || value <= 0)
+    || new Set(values).size !== values.length
+    || values.length > 2) throw new Error("weixin_channels_window_ids_invalid");
+  return values;
+}
+
+function collectorRecoveryStateFile() {
+  return path.join(os.tmpdir(), "weixin-channels-recovery-v1.json");
+}
+
+async function resetCollectorRecoveryState() {
+  const state: CollectorRecoveryState = {
+    consecutiveBlackScreens: 0,
+    consecutiveSameContent: 0,
+    lastIdentityByWindow: {},
+    lastStopReason: undefined,
+    updatedAt: new Date().toISOString(),
+  };
+  const file = collectorRecoveryStateFile();
+  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(temporary, JSON.stringify(state, null, 2), "utf8");
+  await fs.rename(temporary, file);
+}
+
+async function loadCollectorRecoveryState(): Promise<CollectorRecoveryState> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(collectorRecoveryStateFile(), "utf8")) as CollectorRecoveryState;
+    return {
+      consecutiveBlackScreens: Math.max(0, Math.floor(parsed.consecutiveBlackScreens || 0)),
+      consecutiveSameContent: Math.max(0, Math.floor(parsed.consecutiveSameContent || 0)),
+      lastIdentityByWindow: parsed.lastIdentityByWindow || {},
+      lastStopReason: parsed.lastStopReason,
+      updatedAt: parsed.updatedAt || new Date(0).toISOString(),
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return { consecutiveBlackScreens: 0, consecutiveSameContent: 0, lastIdentityByWindow: {}, updatedAt: new Date(0).toISOString() };
+  }
+}
+
+async function diagnoseCollectorFailure(params: {
+  sessions: WeixinChannelsWindowSession[];
+  screenshot: string;
+  stopReason: string;
+}) {
+  const previous = await loadCollectorRecoveryState();
+  const identities: Record<string, string> = {};
+  const blackEvidence: boolean[] = [];
+  for (const session of params.sessions) {
+    const screenshot = collectorScreenshotForWindow(params.screenshot, session.windowId);
+    try {
+      const metadata = await sharp(screenshot).metadata();
+      const width = metadata.width || 0;
+      const height = metadata.height || 0;
+      if (width < 100 || height < 100) throw new Error("diagnostic_screenshot_invalid");
+      const stats = await sharp(screenshot)
+        .extract({ left: 0, top: Math.round(height * 0.24), width, height: Math.round(height * 0.38) })
+        .greyscale()
+        .stats();
+      blackEvidence.push((stats.channels[0]?.mean || 0) < 18 && stats.entropy < 1);
+      const ocr = await readOcr(screenshot);
+      const identity = dedupIdentityFingerprint(ocr);
+      if (identity) identities[String(session.windowId)] = identity;
+    } catch {
+      blackEvidence.push(false);
+    }
+  }
+  const identityEntries = Object.entries(identities);
+  const allSameContent = identityEntries.length === params.sessions.length
+    && identityEntries.every(([windowId, identity]) => previous.lastIdentityByWindow[windowId] === identity);
+  const decision = nextCollectorRecoveryState(previous, {
+    allBlack: blackEvidence.length === params.sessions.length && blackEvidence.every(Boolean),
+    allSameContent,
+    identities,
+    stopReason: params.stopReason,
+  });
+  const file = collectorRecoveryStateFile();
+  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(temporary, JSON.stringify(decision.state, null, 2), "utf8");
+  await fs.rename(temporary, file);
+  return decision;
+}
+
+async function pauseCollectorForSafetyFuse(params: {
+  server: string;
+  token: string;
+  reason: "persistent_black_screen" | "persistent_same_content";
+  consecutiveFailures: number;
+}) {
+  const response = await fetch(`${params.server.replace(/\/$/, "")}/api/internal/weixin-channels/pause`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-weixin-channels-collector-token": params.token },
+    body: JSON.stringify({ reason: params.reason, consecutiveFailures: params.consecutiveFailures }),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`safety_pause_failed:${response.status}:${text.slice(0, 300)}`);
+  const payload = JSON.parse(text) as { capture?: { enabled?: boolean } };
+  if (payload.capture?.enabled !== false) throw new Error("safety_pause_not_confirmed");
+}
+
+export async function runDualWindowCaptureStateMachine(params: {
+  sessions: WeixinChannelsWindowSession[];
+  screenshot: string;
+  server: string;
+  token: string;
+  probe: boolean;
+  maxScanned?: number;
+  maxQualified?: number;
+  dualWindowProbe?: boolean;
+  deadlineAt?: number;
+}) {
+  collectorWindowScopeRequired = params.sessions.length > 1;
+  const searchRoutes = buildSearchPlaybackRoutes(params.sessions);
+  const leftRecommendationWindowId = [...params.sessions]
+    .sort((left, right) => left.bounds.x - right.bounds.x || left.windowId - right.windowId)[0]!.windowId;
+  const rightSearchWindowId = searchRoutes[0]?.searchWindowId;
+  const leftSession = params.sessions.find(
+    (session) => session.windowId === leftRecommendationWindowId,
+  )!;
+  const startupQualifiedWindowIds = new Set<number>();
+  // 推荐流播完会自动切下一条。任何 Fly 同步或搜索之前，先 OCR 两窗当前
+  // 视频；只有前置高热达标才拉回 10% 保留采集时间，不达标保持原语义滑走。
+  for (const session of [...params.sessions].sort((left, right) => left.bounds.x - right.bounds.x)) {
+    await collectorWindowContext.run(session, async () => {
+      const startupScreenshot = collectorScreenshotForWindow(params.screenshot, session.windowId);
+      await captureWindow(startupScreenshot);
+      let startupOcr = await readOcr(startupScreenshot);
+      startupOcr = await ensureVideoPlayerVisible(startupScreenshot, startupOcr);
+      if (!hasFourVisibleMetrics(startupOcr.lines)) {
+        process.stderr.write(`startup_hold_skipped_metrics_missing:${session.windowId}\n`);
+        return;
+      }
+      const startupMetrics = extractWeixinChannelsMetrics(startupOcr.lines);
+      const startupIdentity = extractVisibleTitleAndAuthor(startupOcr.lines);
+      const startupQualification = qualifyWeixinChannelsObservationLocally({
+        ...startupMetrics,
+        title: startupIdentity.title,
+      });
+      if (!startupQualification.qualified) {
+        process.stderr.write(`startup_hold_skipped_unqualified:${session.windowId}\n`);
+        return;
+      }
+      startupQualifiedWindowIds.add(session.windowId);
+      const track = await detectVisibleProgressTrackReliably(startupScreenshot);
+      const holdX = track.startX + (track.endX - track.startX) * WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS[0];
+      await runSwiftControl(["click-relative", holdX.toFixed(4), track.y.toFixed(4)]);
+      await new Promise((resolve) => setTimeout(resolve, 180));
+      await captureWindow(startupScreenshot);
+      const heldOcr = await readOcr(startupScreenshot);
+      if (!metricsRemainOnSameVideo(startupMetrics, extractWeixinChannelsMetrics(heldOcr.lines))) {
+        throw new Error(`weixin_channels_startup_hold_continuity_unconfirmed:${session.windowId}`);
+      }
+      process.stderr.write(`startup_qualified_video_held_at_10_percent:${session.windowId}\n`);
+    });
+  }
+  const prepared = await prepareCollectorSharedRuntime({
+    server: params.server,
+    token: params.token,
+    maxQualified: params.maxQualified,
+  });
+  for (const session of params.sessions) {
+    collectorSearchTabStates.set(session.windowId, await loadCollectorSearchTabState(session.windowId));
+  }
+  const events: WeixinChannelsPersistedObservationEvent[] = [];
+  const runSession = (
+    session: WeixinChannelsWindowSession,
+    initialRecovery: CollectorPendingRecovery | undefined,
+    onInitialVideoClaimed?: () => void,
+  ) => collectorWindowContext.run(session, async () => {
+    let lastFailure = "window_failed";
+    let restart = 0;
+    const isRightSearchWindow = searchRoutes.some(
+      (route) => route.searchWindowId === session.windowId,
+    );
+    let captureCurrentBeforeSearch = params.dualWindowProbe === true
+      && isRightSearchWindow
+      && startupQualifiedWindowIds.has(session.windowId);
+    while (!prepared.shared.qualifiedTargetReached()
+      && (params.deadlineAt === undefined || Date.now() < params.deadlineAt)) {
+      try {
+        const allowSearchNow = isRightSearchWindow
+          && shouldUseWeixinChannelsSearchAtHour(new Date().getHours());
+        const result = await runCollectionPool({
+          screenshot: collectorScreenshotForWindow(params.screenshot, session.windowId),
+          server: params.server,
+          token: params.token,
+          probe: params.probe,
+          maxScanned: captureCurrentBeforeSearch ? 1 : params.maxScanned,
+          allowSearch: allowSearchNow,
+          searchScheduleManaged: isRightSearchWindow,
+          startInSearch: params.dualWindowProbe && allowSearchNow && !captureCurrentBeforeSearch,
+          deadlineAt: params.deadlineAt,
+          onObservationPersisted: (event) => events.push(event),
+          shared: prepared.shared,
+          initialRecovery: restart === 0 ? initialRecovery : undefined,
+          onInitialVideoClaimed,
+        });
+        const reason = String(result.stopped);
+        if (captureCurrentBeforeSearch && reason === "max_scanned_reached") {
+          captureCurrentBeforeSearch = false;
+          process.stderr.write(`right_current_video_processed_before_search:${session.windowId}\n`);
+          continue;
+        }
+        if (reason.startsWith("max_scanned_reached") || reason.startsWith("qualified_target_reached")
+          || reason.startsWith("capture_disabled") || reason.startsWith("probe_deadline_reached")) {
+          return { windowId: session.windowId, ...result };
+        }
+        lastFailure = reason;
+      } catch (error) {
+        lastFailure = error instanceof Error ? error.message : String(error);
+      }
+      restart += 1;
+      process.stderr.write(`collector_window_recovering:${session.windowId}:attempt=${restart}:reason=${lastFailure}\n`);
+      const delayMs = params.deadlineAt === undefined
+        ? automaticRecoveryDelayMs(restart)
+        : Math.min(10_000, automaticRecoveryDelayMs(restart));
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    return {
+      windowId: session.windowId,
+      stopped: prepared.shared.qualifiedTargetReached() ? "qualified_target_reached" : "probe_deadline_reached",
+      error: lastFailure,
+    };
+  });
+  let resolveLeftInitialClaim!: () => void;
+  let leftInitialClaimed = false;
+  const leftInitialClaim = new Promise<void>((resolve) => {
+    resolveLeftInitialClaim = () => {
+      if (leftInitialClaimed) return;
+      leftInitialClaimed = true;
+      process.stderr.write(`left_initial_video_claimed:${leftRecommendationWindowId}\n`);
+      resolve();
+    };
+  });
+  // 左推荐流先完成当前画面的四项 OCR 与 identity claim，右窗才可开始多页搜索。
+  // 这只是启动屏障；claim 建立后两窗仍并行，物理 UI 动作继续走全局 FIFO。
+  const leftRun = runSession(leftSession, prepared.initialRecovery, resolveLeftInitialClaim);
+  let leftClaimTimer: NodeJS.Timeout | undefined;
+  await Promise.race([
+    leftInitialClaim,
+    new Promise<void>((resolve) => {
+      leftClaimTimer = setTimeout(() => {
+      process.stderr.write(`left_initial_video_claim_timeout:${leftRecommendationWindowId}\n`);
+      resolve();
+      }, 20_000);
+    }),
+  ]);
+  if (leftClaimTimer) clearTimeout(leftClaimTimer);
+  const otherRuns = params.sessions
+    .filter((session) => session.windowId !== leftRecommendationWindowId)
+    .map((session) => runSession(session, undefined));
+  const runs = [leftRun, ...otherRuns];
+  const windows = await Promise.all(runs);
+  const stoppedReasons = windows.map((result) => String(result.stopped));
+  let stopped = stoppedReasons.every((reason) => reason.startsWith("capture_disabled"))
+    ? "capture_disabled"
+    : stoppedReasons.every((reason) => reason === "qualified_target_reached")
+      ? "qualified_target_reached"
+    : stoppedReasons.every((reason) => reason === "max_scanned_reached")
+      ? "max_scanned_reached"
+      : "all_windows_stopped";
+  let recovery: Awaited<ReturnType<typeof diagnoseCollectorFailure>> | undefined;
+  if (stopped !== "qualified_target_reached"
+    && stopped !== "capture_disabled"
+    && stopped !== "max_scanned_reached") {
+    recovery = await diagnoseCollectorFailure({
+      sessions: params.sessions,
+      screenshot: params.screenshot,
+      stopReason: windows.map((window) => `window_${window.windowId}:${"error" in window ? window.error : window.stopped}`).join("|"),
+    });
+    if (recovery.fuseReason) {
+      const consecutiveFailures = recovery.fuseReason === "persistent_black_screen"
+        ? recovery.state.consecutiveBlackScreens
+        : recovery.state.consecutiveSameContent;
+      try {
+        await pauseCollectorForSafetyFuse({
+          server: params.server,
+          token: params.token,
+          reason: recovery.fuseReason,
+          consecutiveFailures,
+        });
+        stopped = "capture_disabled_safety_fuse";
+      } catch (error) {
+        // 远端没有确认暂停时绝不能在本地冒充已暂停，也不能继续自动重启撞 UI。
+        process.stderr.write(`collector_safety_pause_failed:${error instanceof Error ? error.message : String(error)}\n`);
+        stopped = "dual_window_fail_closed";
+      }
+    }
+  }
+  return {
+    stopped,
+    windows,
+    recovery,
+    scanned: windows.reduce((sum, result) => sum + ("scanned" in result ? Number(result.scanned || 0) : 0), 0),
+    qualified: windows.reduce((sum, result) => sum + ("qualified" in result ? Number(result.qualified || 0) : 0), 0),
+    qualifiedPersistedTotal: prepared.shared.qualifiedPersistedTotal(),
+    qualificationElapsedMs: Date.now() - prepared.shared.qualificationStartedAt,
+    modelCalls: 0,
+    events,
+    windowRoles: {
+      leftRecommendationWindowId,
+      rightSearchWindowId,
+    },
+  };
+}
+
+export async function executeDualWindowProbeEngine(params: {
+  windowIds: number[];
+  screenshot: string;
+  server: string;
+  token: string;
+  target: number;
+  timeoutMs: number;
+  calibrateSearchButtons?: boolean;
+}) {
+  await prepareWeixinCollectorExecutables();
+  const sessions = await discoverCollectorWindowSessions(params.windowIds);
+  if (sessions.length !== 2) throw new Error("weixin_channels_dual_window_probe_requires_two_windows");
+  if (params.calibrateSearchButtons) {
+    await calibrateCollectorSearchButtonsForSessions(sessions);
+  }
+  return runDualWindowCaptureStateMachine({
+    sessions,
+    screenshot: params.screenshot,
+    server: params.server,
+    token: params.token,
+    probe: false,
+    maxQualified: params.target,
+    dualWindowProbe: true,
+    deadlineAt: Date.now() + params.timeoutMs,
+  });
 }
 
 async function main() {
@@ -2320,6 +4078,8 @@ async function main() {
   const interact = args.includes("--interact");
   const pool = args.includes("--pool");
   const probe = args.includes("--probe");
+  const searchProbe = args.includes("--search-probe");
+  const dualWindowProbe = args.includes("--dual-window-probe");
   const screenshotArg = args.find((item) => item.startsWith("--screenshot="));
   const taskArg = args.find((item) => item.startsWith("--task-id="));
   const queryArg = args.find((item) => item.startsWith("--query="));
@@ -2327,28 +4087,84 @@ async function main() {
   const authorArg = args.find((item) => item.startsWith("--author="));
   const serverArg = args.find((item) => item.startsWith("--server="));
   const maxScannedArg = args.find((item) => item.startsWith("--max-scanned="));
+  const maxQualifiedArg = args.find((item) => item.startsWith("--max-qualified="));
+  const requestedWindowIds = parseCollectorWindowIds(args);
   const screenshot = screenshotArg?.slice("--screenshot=".length)
     || path.join(os.tmpdir(), `weixin-channels-window-${process.pid}.png`);
   await prepareWeixinCollectorExecutables();
+  if (searchProbe) {
+    if (!queryArg) throw new Error("--search-probe requires --query=...");
+    const sessions = await discoverCollectorWindowSessions(requestedWindowIds);
+    if (sessions.length !== 1) throw new Error("weixin_channels_search_probe_single_window_required");
+    collectorWindowScopeRequired = true;
+    collectorSearchTabStates.set(sessions[0]!.windowId, await loadCollectorSearchTabState(sessions[0]!.windowId));
+    const result = await collectorWindowContext.run(sessions[0]!, () => runBoundedSearchProbe(
+      queryArg.slice("--query=".length),
+      collectorScreenshotForWindow(screenshot, sessions[0]!.windowId),
+    ));
+    process.stdout.write(`${JSON.stringify({ event: "collector_session_summary", ...result })}\n`);
+    return;
+  }
   if (pool) {
     if (!serverArg) throw new Error("--pool requires --server=https://...");
     const token = String(process.env.WEIXIN_CHANNELS_COLLECTOR_TOKEN || "").trim();
     if (!token) throw new Error("WEIXIN_CHANNELS_COLLECTOR_TOKEN is required for pool mode");
     const maxScanned = maxScannedArg ? Number(maxScannedArg.slice("--max-scanned=".length)) : undefined;
-    const result = await runCollectionPool({
+    const maxQualified = maxQualifiedArg
+      ? Number(maxQualifiedArg.slice("--max-qualified=".length))
+      : dualWindowProbe ? 10 : undefined;
+    if (maxQualified !== undefined && (!Number.isInteger(maxQualified) || maxQualified <= 0)) {
+      throw new Error("weixin_channels_max_qualified_invalid");
+    }
+    const sessions = await discoverCollectorWindowSessions(requestedWindowIds);
+    if (dualWindowProbe && sessions.length !== 2) {
+      throw new Error("weixin_channels_dual_window_probe_requires_two_windows");
+    }
+    const result = await runDualWindowCaptureStateMachine({
+      sessions,
       screenshot,
       server: serverArg.slice("--server=".length).replace(/\/$/, ""),
       token,
       probe,
       maxScanned,
+      maxQualified,
+      dualWindowProbe,
     });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     // launchd 只重启临时退出；网页关采集、小时目标未达和有界探针都是有意终止。
-    if (shouldLaunchdRestartCollector(String(result.stopped || ""), maxScanned)) {
+    if (shouldLaunchdRestartCollector(String(result.stopped || ""), maxScanned, maxQualified)) {
       process.exitCode = 75;
     }
     return;
   }
+  if (automate || interact) {
+    const sessions = await discoverCollectorWindowSessions(requestedWindowIds);
+    if (sessions.length !== 1) throw new Error("weixin_channels_single_window_id_required");
+    collectorWindowScopeRequired = true;
+    return collectorWindowContext.run(sessions[0]!, () => runSingleCapture(args, {
+      screenshot, taskArg, queryArg, titleArg, authorArg, serverArg, automate, interact, probe,
+    }));
+  }
+  return runSingleCapture(args, {
+    screenshot, taskArg, queryArg, titleArg, authorArg, serverArg, automate, interact, probe,
+  });
+}
+
+async function runSingleCapture(
+  args: string[],
+  input: {
+    screenshot: string;
+    taskArg?: string;
+    queryArg?: string;
+    titleArg?: string;
+    authorArg?: string;
+    serverArg?: string;
+    automate: boolean;
+    interact: boolean;
+    probe: boolean;
+  },
+) {
+  const { screenshot, taskArg, queryArg, titleArg, authorArg, serverArg, automate, interact, probe } = input;
   if (!taskArg || !queryArg || (!titleArg && !automate && !interact)) {
     throw new Error("usage: pnpm tsx scripts/weixin-channels-capture.mts [--automate|--interact|--pool] [--probe] [--screenshot=/path/window.png] [--server=https://...] [--max-scanned=N] --task-id=... --query=... [--title=...] [--author=...]");
   }

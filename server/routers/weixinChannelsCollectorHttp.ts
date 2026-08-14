@@ -3,18 +3,18 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import {
   containsWeixinChannelsAdvertisement,
+  qualifyWeixinChannelsObservationLocally,
   weixinChannelsCaptureBudgetMs,
-  WEIXIN_CHANNELS_COMMENT_THRESHOLD,
   WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
 } from "../../shared/weixinChannelsRules";
 import {
   getWeixinChannelsMinerState,
   ingestWeixinChannelsObservations,
+  pauseWeixinChannelsCaptureForSafetyFuse,
   recordWeixinChannelsHeartbeat,
   refreshWeixinChannelsCandidates,
   summarizeCandidateSources,
 } from "../growth/weixinChannelsMinerStore";
-import { qualifyWeixinChannelsObservationLocally } from "../growth/weixinChannelsMiner";
 import { isTrendCoverCollectionActive } from "../growth/trendCoverSelection";
 
 function tokenDigest(value: string) {
@@ -73,12 +73,10 @@ export const weixinChannelsObservationSchema = z.object({
   runKind: z.enum(["formal", "probe"]).optional(),
 }).refine((item) => [item.likes, item.comments, item.shares, item.favorites, item.views].filter((value) => value !== undefined).length >= 2, {
   message: "至少需要两个真实互动指标，禁止用估算值补齐",
-}).refine((item) => (
-  containsWeixinChannelsAdvertisement(item.ocrTexts)
-  || item.comments === undefined
-  || item.comments < WEIXIN_CHANNELS_COMMENT_THRESHOLD
-  || Boolean(item.commentSamples?.length)
-), {
+}).refine((item) => {
+  const qualification = qualifyWeixinChannelsObservationLocally(item);
+  return !qualification.requiresComments || Boolean(item.commentSamples?.length);
+}, {
   message: "评论数达到 80 时必须采集真实评论样本，不能只记评论数量",
 }).refine((item) => {
   if (item.captureElapsedMs === undefined || item.videoDurationSec === undefined) return true;
@@ -105,6 +103,24 @@ export function registerWeixinChannelsCollectorHttpRoutes(app: Express) {
     try {
       const result = await recordWeixinChannelsHeartbeat(parsed.data.clientId);
       res.json({ ok: true, ...result });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post("/api/internal/weixin-channels/pause", async (req, res) => {
+    if (!authorize(req, res)) return;
+    const parsed = z.object({
+      reason: z.enum(["persistent_black_screen", "persistent_same_content"]),
+      consecutiveFailures: z.number().int().min(3).max(100),
+    }).safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ ok: false, error: "invalid_safety_pause" });
+      return;
+    }
+    try {
+      const state = await pauseWeixinChannelsCaptureForSafetyFuse(parsed.data.reason);
+      res.json({ ok: true, capture: state.capture });
     } catch (error) {
       res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
     }

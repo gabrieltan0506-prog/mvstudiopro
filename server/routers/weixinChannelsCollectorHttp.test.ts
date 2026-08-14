@@ -1,9 +1,57 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { verifyWeixinChannelsCollectorToken, weixinChannelsObservationSchema } from "./weixinChannelsCollectorHttp";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import type { Express, Request, RequestHandler, Response } from "express";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  registerWeixinChannelsCollectorHttpRoutes,
+  verifyWeixinChannelsCollectorToken,
+  weixinChannelsObservationSchema,
+} from "./weixinChannelsCollectorHttp";
+
+let storeFile = "";
+
+async function callSafetyPause(params: { token?: string; body: unknown }) {
+  let pauseHandler: RequestHandler | undefined;
+  const app = {
+    post(route: string, handler: RequestHandler) {
+      if (route === "/api/internal/weixin-channels/pause") pauseHandler = handler;
+      return app;
+    },
+    get() { return app; },
+  } as unknown as Express;
+  registerWeixinChannelsCollectorHttpRoutes(app);
+  if (!pauseHandler) throw new Error("collector_pause_handler_missing");
+
+  let statusCode = 200;
+  let payload: unknown;
+  const response = {
+    status(code: number) {
+      statusCode = code;
+      return response;
+    },
+    json(body: unknown) {
+      payload = body;
+      return response;
+    },
+  } as unknown as Response;
+  await pauseHandler({
+    headers: params.token ? { "x-weixin-channels-collector-token": params.token } : {},
+    body: params.body,
+  } as Request, response, () => undefined);
+  return { statusCode, payload };
+}
 
 describe("weixinChannelsCollectorHttp", () => {
+  beforeEach(async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-http-"));
+    storeFile = path.join(dir, "state.json");
+    process.env.WEIXIN_CHANNELS_MINER_STORE_FILE = storeFile;
+  });
+
   afterEach(() => {
     delete process.env.WEIXIN_CHANNELS_COLLECTOR_TOKEN;
+    delete process.env.WEIXIN_CHANNELS_MINER_STORE_FILE;
   });
 
   it("未配置令牌时安全拒绝", () => {
@@ -14,6 +62,36 @@ describe("weixinChannelsCollectorHttp", () => {
     process.env.WEIXIN_CHANNELS_COLLECTOR_TOKEN = "real-local-token";
     expect(verifyWeixinChannelsCollectorToken("real-local-token")).toBe(true);
     expect(verifyWeixinChannelsCollectorToken("real-local-token-x")).toBe(false);
+  });
+
+  it("安全暂停接口拒绝未鉴权和不足三次的请求，只接受带令牌的三次熔断", async () => {
+    process.env.WEIXIN_CHANNELS_COLLECTOR_TOKEN = "real-local-token";
+    const unauthorized = await callSafetyPause({
+      body: { reason: "persistent_black_screen", consecutiveFailures: 3 },
+    });
+    expect(unauthorized.statusCode).toBe(401);
+    expect(unauthorized.payload).toMatchObject({ ok: false, error: "unauthorized" });
+
+    const insufficient = await callSafetyPause({
+      token: "real-local-token",
+      body: { reason: "persistent_black_screen", consecutiveFailures: 2 },
+    });
+    expect(insufficient.statusCode).toBe(400);
+    expect(insufficient.payload).toMatchObject({ ok: false, error: "invalid_safety_pause" });
+
+    const accepted = await callSafetyPause({
+      token: "real-local-token",
+      body: { reason: "persistent_same_content", consecutiveFailures: 3 },
+    });
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.payload).toMatchObject({
+      ok: true,
+      capture: {
+        enabled: false,
+        pausedBy: "collector_safety_fuse",
+        pauseReason: "persistent_same_content",
+      },
+    });
   });
 
   it("允许五点与真实评论最低预算，并拒绝客户端抬高预算", () => {
@@ -63,6 +141,24 @@ describe("weixinChannelsCollectorHttp", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("前置互动不达标时即使评论超过 80 也不要求评论样本", () => {
+    const result = weixinChannelsObservationSchema.safeParse({
+      observationId: "comments-only-1",
+      taskId: "task-123",
+      query: "AI视频",
+      resultRank: 1,
+      title: "普通视频",
+      observedAt: "2026-08-14T00:00:00.000Z",
+      likes: 822,
+      shares: 32,
+      favorites: 321,
+      comments: 152,
+      evidence: "capture",
+    });
+
+    expect(result.success).toBe(true);
   });
 
   it("接受有真实语义的代表画面元数据，不再假称视频号原始封面", () => {

@@ -64,20 +64,26 @@ describe("weixinChannelsMiner", () => {
       douyin: collection("douyin"), bilibili: collection("bilibili"), xiaohongshu: collection("xiaohongshu"),
       kuaishou: collection("kuaishou"), toutiao: collection("toutiao"),
     });
-    expect(new Set(candidates.map((item) => item.sourcePlatform))).toEqual(new Set(["douyin", "bilibili", "xiaohongshu"]));
+    expect(new Set(candidates.map((item) => item.sourcePlatform))).toEqual(new Set(["douyin", "xiaohongshu"]));
   });
 
-  it("视频号搜索候选严格只使用最近七天热点", () => {
+  it("视频号搜索候选使用最近十五天热点", () => {
     const source = collection("douyin");
     source.items.push({
       ...source.items[0]!,
-      id: "douyin-old",
-      title: "八天前的旧热词",
-      publishedAt: new Date(Date.now() - 8 * 24 * 60 * 60_000).toISOString(),
+      id: "douyin-14d",
+      title: "十四天前仍有效的热词",
+      publishedAt: new Date(Date.now() - 14 * 24 * 60 * 60_000).toISOString(),
+    }, {
+      ...source.items[0]!,
+      id: "douyin-16d",
+      title: "十六天前的旧热词",
+      publishedAt: new Date(Date.now() - 16 * 24 * 60 * 60_000).toISOString(),
     });
     const candidates = buildWeixinChannelsCandidateQueue({ douyin: source });
-    expect(WEIXIN_CHANNELS_SEARCH_WINDOW_DAYS).toBe(7);
-    expect(candidates.some((item) => item.sourceItemId === "douyin-old")).toBe(false);
+    expect(WEIXIN_CHANNELS_SEARCH_WINDOW_DAYS).toBe(15);
+    expect(candidates.some((item) => item.sourceItemId === "douyin-14d")).toBe(true);
+    expect(candidates.some((item) => item.sourceItemId === "douyin-16d")).toBe(false);
   });
 
   it("从真实热点标题生成垂类与高意图搜索词，不注入无关固定词", () => {
@@ -92,6 +98,22 @@ describe("weixinChannelsMiner", () => {
     expect(item).toMatchObject({ scanned: true, qualified: false, invalid: false });
   });
 
+  it("评论不能单独放行前置互动不达标的视频", () => {
+    const item = persistableWeixinChannelsObservation(observation({
+      likes: 822,
+      shares: 32,
+      favorites: 321,
+      comments: 152,
+    }));
+    expect(item).toMatchObject({
+      scanned: true,
+      qualified: false,
+      invalid: false,
+      qualificationReason: "前置高热互动不足，不采样、不打开评论、不上传",
+    });
+    expect(item.commentSamples).toBeUndefined();
+  });
+
   it("高质样本达标且评论数达到 80 时保留真实评论", () => {
     const item = persistableWeixinChannelsObservation(observation({
       likes: 8_998, shares: 12_000, favorites: 3_981, comments: 361,
@@ -99,6 +121,17 @@ describe("weixinChannelsMiner", () => {
     }));
     expect(item).toMatchObject({ scanned: true, qualified: true, invalid: false });
     expect(item.commentSamples).toHaveLength(1);
+  });
+
+  it("前置高热达标但评论不足 80 时仍是有效样本，不要求评论", () => {
+    const item = persistableWeixinChannelsObservation(observation({
+      likes: 3_000,
+      shares: 2_000,
+      favorites: 200,
+      comments: 12,
+    }));
+    expect(item).toMatchObject({ scanned: true, qualified: true, invalid: false });
+    expect(item.commentSamples).toBeUndefined();
   });
 
   it("OCR 含广告时强制无效，不进入正式聚合", () => {
@@ -130,7 +163,8 @@ describe("weixinChannelsMiner", () => {
       author: `作者 ${index}`,
       likes: 3_000,
       shares: 2_000,
-      comments: 10,
+      comments: 100,
+      commentSamples: [{ text: `真实评论 ${index}` }],
     })));
     const cleaned = cleanWeixinChannelsObservationsLocally(rows);
     const selected = selectWeixinChannelsTerraInput(cleaned.kept);

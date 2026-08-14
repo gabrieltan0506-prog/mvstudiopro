@@ -11620,7 +11620,15 @@ export default function PlatformPage() {
                 <div>
                   <div className="text-[11px] font-semibold text-emerald-100">视频号本机采集</div>
                   <div className="mt-0.5 text-[10px] text-emerald-100/55">
-                    {weixinChannelsCollectorStatusQuery.data?.capture.enabled ? "已开启，等待本机心跳领取任务" : "已暂停，不影响其他平台采集"}
+                    {weixinChannelsCollectorStatusQuery.data?.capture.enabled
+                      ? "已开启，等待本机心跳领取任务"
+                      : weixinChannelsCollectorStatusQuery.data?.capture.pausedBy === "collector_safety_fuse"
+                        ? weixinChannelsCollectorStatusQuery.data.capture.pauseReason === "persistent_black_screen"
+                          ? "已安全暂停：连续检测到黑屏"
+                          : weixinChannelsCollectorStatusQuery.data.capture.pauseReason === "persistent_same_content"
+                            ? "已安全暂停：连续检测到相同内容"
+                            : "已安全暂停：采集环境持续异常"
+                        : "已暂停，不影响其他平台采集"}
                     {weixinChannelsCollectorStatusQuery.data?.capture.lastHeartbeatAt
                       ? ` · 最近心跳 ${new Date(weixinChannelsCollectorStatusQuery.data.capture.lastHeartbeatAt).toLocaleString()}`
                       : " · 尚无本机心跳"}

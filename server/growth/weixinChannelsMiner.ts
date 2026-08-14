@@ -34,11 +34,11 @@ export const WEIXIN_CHANNELS_FINAL_MODEL = "gpt-5.6-terra" as const;
 export const WEIXIN_CHANNELS_FINAL_REASONING = "high" as const;
 export const WEIXIN_CHANNELS_BATCH_MODEL_V2 = "deepseek/deepseek-v4-pro-0813" as const;
 export const WEIXIN_CHANNELS_BATCH_REASONING_V2 = "high" as const;
-/** 视频号搜索只追最近七天；更老数据仍留在历史库，但不得生成搜索任务。 */
-export const WEIXIN_CHANNELS_SEARCH_WINDOW_DAYS = 7;
+/** 视频号量级小于来源平台，搜索候选按用户确认放宽到最近十五天。 */
+export const WEIXIN_CHANNELS_SEARCH_WINDOW_DAYS = 15;
 
-/** 只从仍在 Fly 采集的平台产生视频号搜索任务；历史快手/头条数据仍可读取。 */
-const SOURCE_PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "bilibili"];
+/** 用户确认：视频号搜索词只取抖音和小红书，B 站候选不得进入任务。 */
+const SOURCE_PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu"];
 
 export type WeixinChannelsCandidate = {
   taskId: string;
@@ -170,6 +170,7 @@ function finiteMetric(value: unknown): number | undefined {
 function cleanQuery(title: string) {
   return String(title || "")
     .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/(?:^|[\s()（）_-])_?[0-9a-f]{8,}(?=$|[\s()（）_-])/gi, " ")
     .replace(/[#＃@＠]/g, " ")
     .replace(/[\s\u200b]+/g, " ")
     .trim()

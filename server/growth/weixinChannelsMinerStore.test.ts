@@ -12,9 +12,11 @@ import {
   createWeixinChannelsProbeJob,
   getWeixinChannelsMinerState,
   ingestWeixinChannelsObservations,
+  pauseWeixinChannelsCaptureForSafetyFuse,
   processWeixinChannelsAggregationJob,
   recordWeixinChannelsHeartbeat,
   refreshWeixinChannelsCandidates,
+  setWeixinChannelsCaptureEnabled,
 } from "./weixinChannelsMinerStore";
 
 let storeFile = "";
@@ -78,6 +80,31 @@ describe("weixinChannelsMinerStore", () => {
     expect(first.nextTask?.taskId).toBe("task-123");
     expect(second.nextTask?.taskId).toBe("task-123");
     expect((await getWeixinChannelsMinerState()).candidates.filter((item) => item.status === "claimed")).toHaveLength(1);
+  });
+
+  it("只有安全熔断会把网页采集开关暂停并留下原因", async () => {
+    await seed([]);
+    const state = await pauseWeixinChannelsCaptureForSafetyFuse("persistent_black_screen");
+    expect(state.capture).toMatchObject({
+      enabled: false,
+      pausedBy: "collector_safety_fuse",
+      pauseReason: "persistent_black_screen",
+    });
+  });
+
+  it("安全熔断后改为人工暂停会清除旧原因，重新开启会清空全部暂停元数据", async () => {
+    await seed([]);
+    await pauseWeixinChannelsCaptureForSafetyFuse("persistent_same_content");
+
+    const userPaused = await setWeixinChannelsCaptureEnabled(false);
+    expect(userPaused.capture).toMatchObject({ enabled: false, pausedBy: "user" });
+    expect(userPaused.capture.pauseReason).toBeUndefined();
+
+    const enabled = await setWeixinChannelsCaptureEnabled(true);
+    expect(enabled.capture).toMatchObject({ enabled: true });
+    expect(enabled.capture.pausedAt).toBeUndefined();
+    expect(enabled.capture.pausedBy).toBeUndefined();
+    expect(enabled.capture.pauseReason).toBeUndefined();
   });
 
   it("刷新七天候选后丢弃无历史数据的过期待办，避免继续领取旧热词", async () => {
