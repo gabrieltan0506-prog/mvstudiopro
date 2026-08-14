@@ -906,6 +906,21 @@ export async function sampleVideoContentAtProgress(
       previousX = targetX;
     }
     const results = await readOcrBatch(sampleScreenshots);
+    let lastOcr = results[results.length - 1];
+    if (!lastOcr || !metricsRemainOnSameVideo(baseMetrics, extractWeixinChannelsMetrics(lastOcr.lines))) {
+      // VPN seek 后最后一帧偶尔只漏掉互动指标，不能因此重跑整套五点。
+      // 保持在 90% 位置等待画面稳定，只允许补截当前帧一次。
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      await captureWindow(screenshot);
+      const continuityRetry = await readOcr(screenshot);
+      if (!metricsRemainOnSameVideo(baseMetrics, extractWeixinChannelsMetrics(continuityRetry.lines))) {
+        throw new Error("weixin_channels_video_continuity_unconfirmed_after_single_recapture");
+      }
+      const lastIndex = sampleScreenshots.length - 1;
+      await fs.copyFile(screenshot, sampleScreenshots[lastIndex]!);
+      results[lastIndex] = continuityRetry;
+      lastOcr = continuityRetry;
+    }
     for (let index = 0; index < results.length; index += 1) {
       const ocr = results[index]!;
       const progress = WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS[index];
@@ -915,10 +930,6 @@ export async function sampleVideoContentAtProgress(
       const text = ocr.lines.filter((line) => line.confidence >= 0.45).map((line) => line.text.trim()).filter(Boolean).join(" | ");
       ocrTexts.push(text);
       sampleRecords.push({ file: sampleScreenshots[index]!, progress, ocrText: text });
-    }
-    const lastOcr = results[results.length - 1];
-    if (!lastOcr || !metricsRemainOnSameVideo(baseMetrics, extractWeixinChannelsMetrics(lastOcr.lines))) {
-      throw new Error("weixin_channels_video_continuity_unconfirmed_after_sampling");
     }
     let representative = await selectRepresentativeFrame(sampleRecords);
     if (representativeFrameNeedsSingleRetry(representative)) {
@@ -1691,12 +1702,6 @@ async function captureVisibleQualifiedVideo(params: {
   const reusedSampling = Boolean(params.retryCache.sampled);
   let sampled = params.retryCache.sampled;
   if (!sampled) {
-    if (params.retryCache.samplingAttempts >= 2) {
-      // 原始五点加一次完整恢复机会均失败后，只允许外层被动等待；
-      // 禁止长时间运行时持续拖动同一条视频制造账号风险。
-      throw new Error("weixin_channels_content_sampling_retry_exhausted");
-    }
-    params.retryCache.samplingAttempts += 1;
     params.diagnostics.durationDetectionAttempted += 1;
     const durationStartedAt = Date.now();
     let detectedVideoDurationSec: number;
@@ -1715,6 +1720,11 @@ async function captureVisibleQualifiedVideo(params: {
       params.diagnostics.durationDetectionMs += elapsed;
       recordCollectorPhase(params.diagnostics, "duration", durationStartedAt);
     }
+    if (params.retryCache.samplingAttempts >= 2) {
+      // 只有真正即将执行五点抽查时才消耗次数；控制条未出现不算一次五点。
+      throw new Error("weixin_channels_content_sampling_retry_exhausted");
+    }
+    params.retryCache.samplingAttempts += 1;
     const samplingStartedAt = Date.now();
     sampled = await sampleVideoContentAtProgress(params.screenshot, metrics, captureStartedAt, detectedVideoDurationSec);
     recordCollectorPhase(params.diagnostics, "contentSampling", samplingStartedAt);
