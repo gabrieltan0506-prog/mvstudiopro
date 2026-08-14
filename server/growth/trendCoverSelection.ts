@@ -2,7 +2,9 @@ import type { GrowthPlatform } from "@shared/growth";
 import type { TrendItem } from "./trendCollector";
 import type { PlatformTrendCollection } from "./trendCollector";
 
-export const TREND_COVER_CANDIDATE_LIMIT = 30;
+/** 每个被选平台各自送 Terra 20 张真实封面，禁止跨平台互相挤占名额。 */
+export const TREND_COVER_CANDIDATE_LIMIT = 20;
+/** 每个平台前十名展示封面与高点击原因；11–20 名只展示标题和作者。 */
 export const TREND_COVER_DISPLAY_LIMIT = 10;
 export const TREND_COVER_BACKFILL_WINDOW_DAYS = 15;
 export const TREND_COVER_BACKFILL_LIMIT_PER_PLATFORM = 30;
@@ -193,7 +195,7 @@ export async function backfillRecentTrendCoverUrls(
   };
 }
 
-/** 同一平台内容只保留一条；允许类目重复，按真实互动信号选 Top30。 */
+/** 同一平台内容只保留一条；允许类目重复，按真实互动信号各选 Top20。 */
 export function selectTrendCoverCandidates(
   collections: Partial<Record<GrowthPlatform, { items?: TrendItem[] }>>,
   options?: { startAt?: string; contentStartAt?: number; endExclusive?: number },
@@ -223,10 +225,34 @@ export function selectTrendCoverCandidates(
       });
     }
   }
-  return rows
+  const platformOrder = Array.from(new Set(rows.map((row) => row.platform)));
+  return platformOrder.flatMap((platform) => rows
+    .filter((row) => row.platform === platform)
     .sort((a, b) => b.score - a.score || String(b.coverCapturedAt).localeCompare(String(a.coverCapturedAt)))
     .filter((row, index, all) => all.findIndex((other) => other.sourceId === row.sourceId) === index)
-    .slice(0, TREND_COVER_CANDIDATE_LIMIT);
+    .slice(0, TREND_COVER_CANDIDATE_LIMIT));
+}
+
+/**
+ * Terra 可重排每个平台的候选；若漏 ID、伪造 ID 或少于 20 条，服务端按真实
+ * 互动预排补齐。返回顺序固定为平台输入顺序、平台内 Terra 排名顺序。
+ */
+export function completeTrendCoverRanking(
+  candidates: readonly TrendCoverReference[],
+  selectedSourceIds: readonly string[],
+) {
+  const byId = new Map(candidates.map((row) => [row.sourceId, row]));
+  const platformOrder = Array.from(new Set(candidates.map((row) => row.platform)));
+  return platformOrder.flatMap((platform) => {
+    const platformCandidates = candidates.filter((row) => row.platform === platform);
+    const selected = selectedSourceIds
+      .map((id) => byId.get(String(id)))
+      .filter((row): row is TrendCoverReference => Boolean(row && row.platform === platform))
+      .filter((row, index, all) => all.findIndex((other) => other.sourceId === row.sourceId) === index);
+    const selectedIds = new Set(selected.map((row) => row.sourceId));
+    return [...selected, ...platformCandidates.filter((row) => !selectedIds.has(row.sourceId))]
+      .slice(0, TREND_COVER_CANDIDATE_LIMIT);
+  });
 }
 
 /** Terra 只返回 sourceId；服务端据此镜像最终 Top10，避免模型伪造标题、作者或 URL。 */
@@ -239,10 +265,13 @@ export async function mirrorSelectedTrendCovers(
     .map((id) => byId.get(String(id)))
     .filter((row): row is TrendCoverReference => Boolean(row?.coverUrl))
     .filter((row, index, all) => all.findIndex((other) => other.sourceId === row.sourceId) === index)
-    .slice(0, TREND_COVER_DISPLAY_LIMIT);
+    .filter((row, index, all) => all.slice(0, index).filter((other) => other.platform === row.platform).length < TREND_COVER_DISPLAY_LIMIT);
   const output: Array<TrendCoverReference & { rank: number; persisted: boolean }> = [];
+  const rankByPlatform = new Map<GrowthPlatform, number>();
   for (let index = 0; index < selected.length; index += 1) {
     const row = selected[index]!;
+    const rank = (rankByPlatform.get(row.platform) || 0) + 1;
+    rankByPlatform.set(row.platform, rank);
     let coverUrl = row.coverUrl;
     let persisted = false;
     try {
@@ -263,7 +292,7 @@ export async function mirrorSelectedTrendCovers(
     } catch (error) {
       console.warn(`[growth-cover] mirror failed sourceId=${row.sourceId}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    output.push({ ...row, coverUrl, rank: index + 1, persisted });
+    output.push({ ...row, coverUrl, rank, persisted });
   }
   return output;
 }

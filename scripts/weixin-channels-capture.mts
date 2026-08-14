@@ -652,6 +652,24 @@ export async function detectVisibleProgressTrack(screenshot: string) {
   };
 }
 
+async function detectVisibleProgressTrackReliably(screenshot: string) {
+  let lastError: unknown;
+  // 首次截图失败后只允许重拍一次，避免控制条识别反复消耗单条预算。
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await detectVisibleProgressTrack(screenshot);
+    } catch (error) {
+      lastError = error;
+      // 微信控制条有淡入动画，首张截图可能只拍到视频帧；保持鼠标位于
+      // 实测进度条高度并重拍，不能因一次瞬态截图等待二十秒或误造时长。
+      await runSwiftControl(["move-relative", "0.50", "0.785"]);
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      await captureWindow(screenshot);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("weixin_channels_progress_track_not_found");
+}
+
 async function detectVideoDurationBeforeSampling(params: {
   screenshot: string;
   baseIdentity: string;
@@ -667,7 +685,7 @@ async function detectVideoDurationBeforeSampling(params: {
   const revealed = await readOcr(params.screenshot);
   const revealedIdentity = visibleVideoIdentityFingerprint(revealed);
   if (revealedIdentity && revealedIdentity !== params.baseIdentity) throw new Error("weixin_channels_video_identity_changed_before_duration");
-  const track = await detectVisibleProgressTrack(params.screenshot);
+  const track = await detectVisibleProgressTrackReliably(params.screenshot);
   const text = revealed.lines.filter((line) => line.confidence >= 0.35).map((line) => line.text).join(" | ");
   let duration = parseVisibleVideoTotalDurationSeconds(text);
   if (!duration) {
@@ -680,7 +698,9 @@ async function detectVideoDurationBeforeSampling(params: {
       track.endX.toFixed(4),
       track.y.toFixed(4),
     ]);
-    await new Promise((resolve) => setTimeout(resolve, 180));
+    // VPN 下 seek 后可能先出现转圈/黑屏；给播放器一次有界缓冲时间，
+    // 随后只截一张用于 OCR，不连续截图追加载动画。
+    await new Promise((resolve) => setTimeout(resolve, 650));
     await captureWindow(params.screenshot);
     const atEnd = await readOcr(params.screenshot);
     const endIdentity = visibleVideoIdentityFingerprint(atEnd);
@@ -710,7 +730,7 @@ export async function sampleVideoContentAtProgress(
   await runSwiftControl(["move-relative", "0.50", "0.82"]);
   await new Promise((resolve) => setTimeout(resolve, 400));
   await captureWindow(screenshot);
-  const track = await detectVisibleProgressTrack(screenshot);
+  const track = await detectVisibleProgressTrackReliably(screenshot);
   const startX = track.startX;
   let previousX = startX;
   const sampleScreenshots: string[] = [];
@@ -722,7 +742,8 @@ export async function sampleVideoContentAtProgress(
       await runSwiftControl(["move-relative", "0.50", track.y.toFixed(4)]);
       await new Promise((resolve) => setTimeout(resolve, 100));
       await runSwiftControl(["drag-relative", previousX.toFixed(4), track.y.toFixed(4), targetX.toFixed(4), track.y.toFixed(4)]);
-      await new Promise((resolve) => setTimeout(resolve, 120));
+      // VPN 下拖动进度后先等画面完成同步，再只截一张内容样本。
+      await new Promise((resolve) => setTimeout(resolve, 650));
       await captureWindow(screenshot);
       const sampleFile = path.join(os.tmpdir(), `weixin-channels-sample-${process.pid}-${index}.png`);
       await fs.copyFile(screenshot, sampleFile);
@@ -994,7 +1015,9 @@ async function waitForChangedFrame(previous: string, screenshot: string, timeout
 }
 
 async function advanceToNextVideo(previousIdentity: string | undefined, screenshot: string, deadlineAt?: number) {
-  await runSwiftControl(["key", "down"]);
+  // 真实窗口里方向键会被播放器控制条或搜索输入焦点吞掉；在视频主体滚轮向下
+  // 可稳定切到下一条，并且不依赖固定像素坐标。
+  await runSwiftControl(["scroll-relative", "0.50", "0.50", "-6"]);
   const timeoutMs = deadlineAt === undefined
     ? WEIXIN_CHANNELS_UNQUALIFIED_DWELL_MS
     : Math.max(50, deadlineAt - Date.now());
@@ -1014,8 +1037,8 @@ async function advanceToNextVideoSafely(previousIdentity: string | undefined, sc
     return await advanceToNextVideo(previousIdentity, screenshot, deadlineAt);
   } catch (error) {
     process.stderr.write(`advance_recovering:${error instanceof Error ? error.message : String(error)}\n`);
-    // 搜索联想框或评论浮层可能吞掉方向键。先收起浮层，再点击视频主体把
-    // 键盘焦点交还播放器；否则直接重试方向键仍会被残留输入框吞掉。
+    // 搜索联想框或评论浮层可能吞掉滚轮。先收起浮层，再点击视频主体，
+    // 然后重试一次相对滚动；全过程不点击头像、短剧或未经验证的固定点。
     await runSwiftControl(["key", "escape"]);
     await runSwiftControl(["key", "escape"]);
     await runSwiftControl(["click-relative", "0.50", "0.45"]);

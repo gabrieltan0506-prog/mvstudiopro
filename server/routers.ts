@@ -69,6 +69,7 @@ import { buildAiManhuaRisingBoard, buildAiManhuaRisingByPlatform } from "./growt
 import { AI_MANHUA_RISING_BOARD_LIMIT } from "../shared/manhuaDramaClassify";
 import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
 import {
+  completeTrendCoverRanking,
   mirrorSelectedTrendCovers,
   selectTrendCoverCandidates,
   TREND_COVER_DISPLAY_LIMIT,
@@ -5032,7 +5033,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 - trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-4条）。**必须优先采用** user JSON 字段 officialCampaigns.globalTrafficSupport 中的条目（可略压缩说明），格式：["活动名称：详细说明"]
 - hotFestivals：根據今天 ${currentDateStr} 及前后 ${wd} 天范围，指出当下正在爆发或即将到来的节日、节气或社会热点（2-3个）。格式：["节日/热点：简要说明与内容切入角度"]
 - globalBlueOceanWords：**【必须输出 4–6 组，禁止空数组】** 聚合选定平台的高意图搜索词，一/二级分级。格式：[{"primary":"一级词","secondary":["二级词1","二级词2"]}]。须从 platformEvidence.topTitles、dramaMixNames、dramaRising、行业样本 key、各平台 hotTopics 提炼；含抖音漫剧样本时可输出「AI漫剧/重生漫剧」类一级词。无法核实月搜索量时仍须输出，**禁止**「尚未检索到蓝海词」等空话。
-- excellentCoverSelections：只从 user JSON 的 coverCandidates.sourceId 中选择，按预估自然点击吸引力由高到低输出最多 ${TREND_COVER_DISPLAY_LIMIT} 个，格式为 [{"sourceId":"平台:内容ID","highCtrReason":"15–40字，指出主体、文字、反差、情绪或构图为何能提高点击"}]。允许同类目重复；必须结合画面、标题、作者及真实互动指标判断，禁止伪造 ID，禁止空泛写「画面吸引人」。
+- excellentCoverSelections：必须对 user JSON 的 coverCandidates **按平台分别排名**，每个平台返回该平台全部候选（最多 20 条），禁止跨平台混排或让一个平台挤掉另一个平台。格式为 [{"sourceId":"平台:内容ID","platformRank":1,"highCtrReason":"15–40字"}]；每个平台 rank 1–10 必须填写 highCtrReason，指出主体、文字、反差、情绪或构图为何能提高点击；rank 11–20 的 highCtrReason 输出空字符串。只可使用真实 sourceId，允许同类目重复，必须结合封面画面、标题、作者及真实互动指标判断，禁止伪造 ID，禁止空泛写「画面吸引人」。
 
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 
@@ -5324,13 +5325,30 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             : [];
           const coverReasonById = new Map(coverSelections.map((row: { sourceId: string; highCtrReason: string }) => [row.sourceId, row.highCtrReason]));
           const requestedCoverIds = coverSelections.map((row: { sourceId: string }) => row.sourceId);
-          const rankedCoverIds = requestedCoverIds.length
-            ? requestedCoverIds
-            : coverCandidates.slice(0, TREND_COVER_DISPLAY_LIMIT).map((row) => row.sourceId);
-          const excellentCoverReferences = (await mirrorSelectedTrendCovers(coverCandidates, rankedCoverIds)).map((row) => ({
+          const completedCoverRanking = completeTrendCoverRanking(coverCandidates, requestedCoverIds);
+          const rankedCoverIds = completedCoverRanking.map((row) => row.sourceId);
+          const visualCoverReferences = (await mirrorSelectedTrendCovers(coverCandidates, rankedCoverIds)).map((row) => ({
             ...row,
             highCtrReason: coverReasonById.get(row.sourceId) || "真实互动领先，主体与标题信息在首屏更易识别",
           }));
+          const platformRank = new Map<string, number>();
+          const metadataCoverReferences = completedCoverRanking.flatMap((row) => {
+            const rank = (platformRank.get(row.platform) || 0) + 1;
+            platformRank.set(row.platform, rank);
+            if (rank <= TREND_COVER_DISPLAY_LIMIT) return [];
+            return [{
+              sourceId: row.sourceId,
+              platform: row.platform,
+              title: row.title,
+              author: row.author,
+              sourceUrl: row.sourceUrl,
+              rank,
+            }];
+          });
+          const platformOrder = new Map(input.platforms.map((platform, index) => [platform, index]));
+          const excellentCoverReferences = [...visualCoverReferences, ...metadataCoverReferences]
+            .sort((left, right) => (platformOrder.get(left.platform) ?? 999) - (platformOrder.get(right.platform) ?? 999)
+              || left.rank - right.rank);
           const topicHints = Array.isArray(parsed.topicExamples)
             ? parsed.topicExamples.flatMap((e: any) => [
                 safeStr(e?.structure || e),
