@@ -3013,11 +3013,14 @@ export default function PlatformPage() {
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [refreshManhuaLearnServerJobs, supervisorAccess, trendInsightTab, user?.id, user?.role]);
-  const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApproved.useQuery(undefined, {
-    enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
-    staleTime: 60_000,
-    retry: 1,
-  });
+  const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApproved.useQuery(
+    { supervisorToken: getSupervisorTrpcToken() },
+    {
+      enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
+      staleTime: 60_000,
+      retry: 1,
+    },
+  );
   const manhuaLearnSnapshotQuery = trpc.manhuaViralTemplate.getSeriesLearnSnapshot.useQuery(
     {
       seriesKey: manhuaLearnFocusSeriesKey,

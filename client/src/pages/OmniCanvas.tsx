@@ -6,6 +6,7 @@ import ManhuaClipDock from "@/components/canvas/ManhuaClipDock";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
 import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/lib/canvasTypes";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
+import { getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import { cropManhuaSheet2x2 } from "@/lib/manhuaSheetCropApi";
 import type { ManhuaSceneTileSlot } from "@shared/manhuaSceneTilePick";
 import {
@@ -2302,10 +2303,13 @@ export default function OmniCanvas() {
   const canvasTerraVisionMutation = trpc.mvAnalysis.canvasTerraVisionMarkdown.useMutation();
   const canvasTerraVideoReverseMutation = trpc.mvAnalysis.canvasTerraVideoReverse.useMutation();
   const expandWriterMutation = trpc.mvAnalysis.expandManhuaWriterPack.useMutation();
-  const manhuaViralTemplatesQuery = trpc.manhuaViralTemplate.listApproved.useQuery(undefined, {
-    staleTime: 60_000,
-    retry: 1,
-  });
+  const manhuaViralTemplatesQuery = trpc.manhuaViralTemplate.listApproved.useQuery(
+    { supervisorToken: getSupervisorTrpcToken() },
+    {
+      staleTime: 60_000,
+      retry: 1,
+    },
+  );
   const approvedViralTemplateCards = useMemo(
     () => (manhuaViralTemplatesQuery.data?.groups || []).flatMap((group) => group.items),
     [manhuaViralTemplatesQuery.data?.groups],
