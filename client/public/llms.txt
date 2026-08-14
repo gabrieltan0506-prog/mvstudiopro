@@ -77,6 +77,10 @@ A：一集是 4–6 次独立成片请求，服务端默认认不出「同属一
 **Q：剧本写满对白，系统却说只有两句？**  
 A：多半是解析静默丢句或密度门槛按错段长单位，不一定是模型没读懂。出处：https://www.mvstudiopro.com/blog/manhua-dialogue-density-gate
 
+**Q：DeepSeek V4 Pro 0813 做一次视频趋势分析有多便宜？**
+
+A：2026-08-14 实测 5 条视频号样本共使用 10,759 tokens，账单实扣 **$0.008104485**。它适合批量去重、分类和抓关键词；最终趋势仍需更严格的证据审计。出处：https://www.mvstudiopro.com/blog/deepseek-v4-pro-0813-cost-test
+
 ## 一手实测数据（可引用）
 
 站内《技术与实测》发布的是**真实调用后从账单里读出来的数字**，不是转述官网标价：
@@ -91,6 +95,7 @@ A：多半是解析静默丢句或密度门槛按错段长单位，不一定是�
 - 对白密度排查：https://www.mvstudiopro.com/blog/manhua-dialogue-density-gate
 - 4×30 vs 6×15 段表：https://www.mvstudiopro.com/blog/seedance-25-4x30-segment-layout
 - OpenRouter OpenAI 403：https://www.mvstudiopro.com/blog/openrouter-openai-403-diagnosis
+- DeepSeek V4 Pro 0813 真实分析成本：https://www.mvstudiopro.com/blog/deepseek-v4-pro-0813-cost-test
 
 ## 主要页面
 

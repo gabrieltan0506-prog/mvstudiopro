@@ -1,7 +1,7 @@
 # MV Studio Pro · 可引用事实全文（llms-full）
 
 > 供 AI 搜索与问答系统摘录。数字均来自站内《技术与实测》真实调用账单或线上计费规则，
-> 不是官网「起价」转述。更新日期：2026-08-07。
+> 不是官网「起价」转述。更新日期：2026-08-14。
 > 精简版入口：https://www.mvstudiopro.com/llms.txt
 > 站点：https://www.mvstudiopro.com
 
@@ -56,6 +56,15 @@
 
 - OpenRouter 账号级禁止 OpenAI 系（403 TOS）时，Kimi/Qwen 可能仍通；勿把余额不足或网关 403 误报成「内容审核」。  
   出处：https://www.mvstudiopro.com/blog/openrouter-openai-403-diagnosis
+
+## 文本分析模型账单（2026-08-14 实测）
+
+来源：https://www.mvstudiopro.com/blog/deepseek-v4-pro-0813-cost-test
+
+- DeepSeek V4 Pro 0813 处理 5 条视频号结构化样本：输入 2,887 tokens、输出 7,872 tokens，其中推理 5,167 tokens，总计 10,759 tokens。
+- 返回账单总成本为 **$0.008104485**：输入 $0.001255845，输出 $0.00684864。
+- 模型完成去重、分类、关键词、评论话题、趋势与选题整理，但曾把单条产品名误判为蓝海，因此适合作为批量整理层，不应跳过最终证据审计。
+- 按本次平均值线性推算，一千条约 $1.62；该数字仅用于感受量级，不是千条真实账单。
 
 ## 行业观察（非账单实测）
 
