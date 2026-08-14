@@ -242,7 +242,26 @@ export function isWeixinChannelsAuxiliaryPage(lines: OcrLine[]) {
   const hasSearchNavigation = text.some((value) => /^(全部)$/.test(value))
     && text.some((value) => /^(影片|视频|視頻)$/.test(value))
     && text.some((value) => /^(朋友圈|贴图|貼圖)$/.test(value));
-  return hasLikesCollectionNavigation || hasSearchNavigation;
+  return hasLikesCollectionNavigation || hasSearchNavigation || isWeixinChannelsMediaViewer(lines);
+}
+
+export function isWeixinChannelsMediaViewer(lines: OcrLine[]) {
+  return lines.some((line) => line.confidence >= 0.25
+    && /^(?:用新(?:窗口|視窗)(?:打开|打開|開啟)|在新(?:窗口|視窗)(?:中)?(?:打开|打開|開啟))$/.test(line.text.replace(/\s+/g, "")));
+}
+
+/** 图片/贴图查看器只点击 OCR 证明与“用新视窗开启”同排右侧的 X。 */
+export function findMediaViewerClosePoint(lines: OcrLine[]) {
+  const marker = lines
+    .filter((line) => line.confidence >= 0.25
+      && /^(?:用新(?:窗口|視窗)(?:打开|打開|開啟)|在新(?:窗口|視窗)(?:中)?(?:打开|打開|開啟))$/.test(line.text.replace(/\s+/g, "")))
+    .sort((left, right) => right.y - left.y)[0];
+  if (!marker) return null;
+  const close = lines
+    .filter((line) => /^(?:×|x|X|✕)$/.test(line.text.trim()) && line.x > marker.x)
+    .filter((line) => Math.abs((line.y + line.height / 2) - (marker.y + marker.height / 2)) <= Math.max(marker.height, 0.04))
+    .sort((left, right) => right.x - left.x)[0];
+  return close ? clickPoint(close) : null;
 }
 
 /** 先由 OCR 找到评论标题所在行，再取同一行最右侧关闭区；不使用固定屏幕坐标。 */
@@ -341,7 +360,7 @@ export async function loadCollectorSearchTabState(windowId: number, tempDir = os
   try {
     const parsed = JSON.parse(await fs.readFile(collectorSearchTabStateFile(tempDir), "utf8")) as CollectorSearchTabState;
     if (parsed.windowId === windowId && now - Date.parse(parsed.updatedAt) <= WEIXIN_CHANNELS_SEEN_TTL_MS) {
-      return { ...parsed, openedTabs: Math.max(0, Math.min(2, Math.floor(parsed.openedTabs || 0))) };
+      return { ...parsed, openedTabs: Math.max(0, Math.min(1, Math.floor(parsed.openedTabs || 0))) };
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -540,8 +559,9 @@ export async function buildCollectorHourReport(diagnostics: CollectorHourDiagnos
 }
 
 export function shouldReuseExistingSearchTab(openedTabs: number) {
-  // 视频号推荐页本身占一个标签；脚本最多再开两个搜索标签，总数上限为 3。
-  return openedTabs >= 2;
+  // 推荐页占一个标签；只允许额外一个搜索标签并反复复用，总数硬上限为 2，
+  // 比用户要求的最多 3 个更保守，避免进程重启前的旧标签撑爆微信内存。
+  return openedTabs >= 1;
 }
 
 async function compileSwiftExecutable(scriptName: string, binaryName: string) {
@@ -816,7 +836,16 @@ async function ensureVideoPlayerVisible(screenshot: string, ocr: OcrResult) {
   let current = ocr;
   for (let attempt = 0; attempt < 2 && isWeixinChannelsAuxiliaryPage(current.lines); attempt += 1) {
     process.stderr.write("auxiliary_page_closing\n");
-    await runSwiftControl(["key", "closeTab"]);
+    const mediaClosePoint = findMediaViewerClosePoint(current.lines);
+    if (isWeixinChannelsMediaViewer(current.lines)) {
+      if (mediaClosePoint) {
+        await runSwiftControl(["click-relative", mediaClosePoint.x.toFixed(5), mediaClosePoint.y.toFixed(5)]);
+      } else {
+        await runSwiftControl(["key", "escape"]);
+      }
+    } else {
+      await runSwiftControl(["key", "closeTab"]);
+    }
     await new Promise((resolve) => setTimeout(resolve, 700));
     await captureWindow(screenshot);
     current = await readOcr(screenshot);
@@ -1026,6 +1055,12 @@ async function advanceToNextVideo(previousIdentity: string | undefined, screensh
     await new Promise((resolve) => setTimeout(resolve, 150));
     await captureWindow(screenshot);
     const next = await readOcr(screenshot);
+    if (isWeixinChannelsMediaViewer(next.lines)) {
+      const closePoint = findMediaViewerClosePoint(next.lines);
+      if (closePoint) await runSwiftControl(["click-relative", closePoint.x.toFixed(5), closePoint.y.toFixed(5)]);
+      else await runSwiftControl(["key", "escape"]);
+      continue;
+    }
     const nextIdentity = visibleVideoIdentityFingerprint(next);
     if (nextIdentity && nextIdentity !== previousIdentity) return next;
   }
@@ -1037,11 +1072,10 @@ async function advanceToNextVideoSafely(previousIdentity: string | undefined, sc
     return await advanceToNextVideo(previousIdentity, screenshot, deadlineAt);
   } catch (error) {
     process.stderr.write(`advance_recovering:${error instanceof Error ? error.message : String(error)}\n`);
-    // 搜索联想框或评论浮层可能吞掉滚轮。先收起浮层，再点击视频主体，
-    // 然后重试一次相对滚动；全过程不点击头像、短剧或未经验证的固定点。
+    // 搜索联想框、评论或图片查看器可能吞掉滚轮。只收起浮层后重试；
+    // 禁止点击视频中心，因为图片帖子会把该盲点解释为“打开图片”。
     await runSwiftControl(["key", "escape"]);
     await runSwiftControl(["key", "escape"]);
-    await runSwiftControl(["click-relative", "0.50", "0.45"]);
     await new Promise((resolve) => setTimeout(resolve, 180));
     await captureWindow(screenshot);
     const recovered = await readOcr(screenshot);
@@ -1550,6 +1584,12 @@ async function openFirstSearchResult(keyword: string, screenshot: string) {
   while (Date.now() - startedAt < 15_000) {
     await captureWindow(screenshot);
     const opened = await readOcr(screenshot);
+    if (isWeixinChannelsMediaViewer(opened.lines)) {
+      const closePoint = findMediaViewerClosePoint(opened.lines);
+      if (closePoint) await runSwiftControl(["click-relative", closePoint.x.toFixed(5), closePoint.y.toFixed(5)]);
+      else await runSwiftControl(["key", "escape"]);
+      throw new Error("weixin_channels_search_result_media_viewer_not_video");
+    }
     const metrics = extractWeixinChannelsMetrics(opened.lines);
     if ([metrics.likes, metrics.shares, metrics.favorites, metrics.comments].filter((value) => value !== undefined).length >= 2) {
       return { ocr: opened, videoDurationSec: point.videoDurationSec };
