@@ -11,7 +11,7 @@ enum ControlError: Error, CustomStringConvertible {
         switch self {
         case .appNotRunning: return "weixin_channels_app_not_running"
         case .windowNotFound: return "weixin_channels_window_not_found"
-        case .invalidArguments: return "usage: control.swift window|focus|move-window-visible|move-relative <x> <y>|click-relative <x> <y>|drag-relative <fromX> <fromY> <toX> <toY>|scroll-relative <x> <y> <delta>|type <text>|key up|down|pageDown|return|selectAll|clear"
+        case .invalidArguments: return "usage: control.swift window|focus|move-window-visible|move-relative <x> <y>|click-relative <x> <y>|drag-relative <fromX> <fromY> <toX> <toY>|scroll-relative <x> <y> <delta>|type <text>|key up|down|pageDown|return|escape|closeTab|selectAll|clear"
         }
     }
 }
@@ -223,6 +223,8 @@ do {
         case "down": postKey(code: 125)
         case "pageDown": postKey(code: 121)
         case "return": postKey(code: 36)
+        case "escape": postKey(code: 53)
+        case "closeTab": postKey(code: 13, flags: .maskCommand)
         case "selectAll": postKey(code: 0, flags: .maskCommand)
         case "delete": postKey(code: 51)
         case "clear":

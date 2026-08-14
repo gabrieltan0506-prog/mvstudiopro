@@ -186,13 +186,27 @@ export function findCommentsOpenPoint(lines: OcrLine[]) {
   const bottomNumbers = lines
     .filter((line) => line.confidence >= 0.35 && line.y < 0.25 && line.x > 0.45 && parseVisibleMetric(line.text) !== undefined)
     .sort((left, right) => left.x - right.x);
-  return bottomNumbers.length >= 4 ? clickPoint(bottomNumbers[bottomNumbers.length - 1]!) : null;
+  if (bottomNumbers.length < 4) return null;
+  const rightmost = bottomNumbers[bottomNumbers.length - 1]!;
+  // 缺少评论数字时，最右可见数字可能其实是“收藏”。只有落在评论槽位
+  // 的数字才允许点击，禁止误入“赞和收藏”页，更不能靠头像或固定坐标猜。
+  return rightmost.x >= 0.84 ? clickPoint(rightmost) : null;
+}
+
+export function isWeixinChannelsAuxiliaryPage(lines: OcrLine[]) {
+  const text = lines.filter((line) => line.confidence >= 0.25).map((line) => line.text.trim());
+  const hasLikesCollectionNavigation = text.some((value) => /^(赞和收藏|讚和收藏)$/.test(value))
+    && text.some((value) => /^(浏览记录|瀏覽記錄|我的视频号|我的視頻號|发表视频|發表視頻)$/.test(value));
+  const hasSearchNavigation = text.some((value) => /^(全部)$/.test(value))
+    && text.some((value) => /^(影片|视频|視頻)$/.test(value))
+    && text.some((value) => /^(朋友圈|贴图|貼圖)$/.test(value));
+  return hasLikesCollectionNavigation || hasSearchNavigation;
 }
 
 /** 先由 OCR 找到评论标题所在行，再取同一行最右侧关闭区；不使用固定屏幕坐标。 */
 export function findCommentsClosePoint(lines: OcrLine[]) {
   const title = lines
-    .filter((line) => line.confidence >= 0.25 && /^(评论|評論)(\s*\d+)?$/.test(line.text.trim()))
+    .filter((line) => line.confidence >= 0.25 && /^(评论|評論)(?:\s*\d+(?:\.\d+)?(?:万|萬|w|W)?)?$/.test(line.text.trim()))
     .sort((left, right) => right.y - left.y)[0];
   if (!title) return null;
   const sameRow = lines.filter((line) => Math.abs((line.y + line.height / 2) - (title.y + title.height / 2)) <= Math.max(title.height, 0.04));
@@ -207,7 +221,7 @@ async function findCommentsClosePointFromScreenshot(screenshot: string, lines: O
   const ocrPoint = findCommentsClosePoint(lines);
   if (ocrPoint) return ocrPoint;
   const title = lines
-    .filter((line) => line.confidence >= 0.25 && /^(评论|評論)(\s*\d+)?$/.test(line.text.trim()))
+    .filter((line) => line.confidence >= 0.25 && /^(评论|評論)(?:\s*\d+(?:\.\d+)?(?:万|萬|w|W)?)?$/.test(line.text.trim()))
     .sort((left, right) => right.y - left.y)[0];
   if (!title) return null;
   const { data, info } = await sharp(screenshot).removeAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -274,6 +288,12 @@ export function extractCommentSamples(lines: OcrLine[]): WeixinChannelsCommentSa
 
 let controlExecutablePromise: Promise<string> | undefined;
 let ocrExecutablePromise: Promise<string> | undefined;
+let collectorSearchTabState: { windowId: number; openedTabs: number } | undefined;
+
+export function shouldReuseExistingSearchTab(openedTabs: number) {
+  // 视频号推荐页本身占一个标签；脚本最多再开两个搜索标签，总数上限为 3。
+  return openedTabs >= 2;
+}
 
 async function compileSwiftExecutable(scriptName: string, binaryName: string) {
   const script = path.join(path.dirname(new URL(import.meta.url).pathname), scriptName);
@@ -487,6 +507,21 @@ async function ensureInteractionMetricsVisible(screenshot: string, ocr: OcrResul
   return closed;
 }
 
+async function ensureVideoPlayerVisible(screenshot: string, ocr: OcrResult) {
+  let current = ocr;
+  for (let attempt = 0; attempt < 2 && isWeixinChannelsAuxiliaryPage(current.lines); attempt += 1) {
+    process.stderr.write("auxiliary_page_closing\n");
+    await runSwiftControl(["key", "closeTab"]);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await captureWindow(screenshot);
+    current = await readOcr(screenshot);
+  }
+  if (isWeixinChannelsAuxiliaryPage(current.lines)) {
+    throw new Error("weixin_channels_auxiliary_page_not_closed");
+  }
+  return current;
+}
+
 async function persistPendingFile(output: string, observation: unknown) {
   await fs.mkdir(path.dirname(output), { recursive: true });
   const temp = `${output}.${process.pid}.${Date.now()}.tmp`;
@@ -556,7 +591,14 @@ type PendingObservationEnvelope = {
   videoDurationSec?: number;
   captureElapsedMs?: number;
   captureBudgetMs?: number;
+  comments?: number;
+  commentSamples?: unknown[];
 };
+
+export function pendingObservationHasRequiredComments(observation: PendingObservationEnvelope) {
+  return (observation.comments || 0) < WEIXIN_CHANNELS_COMMENT_THRESHOLD
+    || (Array.isArray(observation.commentSamples) && observation.commentSamples.length > 0);
+}
 
 function exceedsAuthoritativeCaptureBudget(observation: PendingObservationEnvelope) {
   if (observation.captureElapsedMs === undefined) return false;
@@ -583,7 +625,7 @@ export async function restoreEligibleQuarantinedObservations(tempDir = os.tmpdir
     const quarantinedFile = path.join(quarantineDir, name);
     const pendingFile = path.join(tempDir, name);
     const observation = JSON.parse(await fs.readFile(quarantinedFile, "utf8")) as PendingObservationEnvelope;
-    if (exceedsAuthoritativeCaptureBudget(observation)) continue;
+    if (exceedsAuthoritativeCaptureBudget(observation) || !pendingObservationHasRequiredComments(observation)) continue;
     try {
       await fs.stat(pendingFile);
       continue;
@@ -615,6 +657,13 @@ export async function retryPendingObservations(params: {
     try {
       const observation = JSON.parse(await fs.readFile(pendingFile, "utf8")) as PendingObservationEnvelope;
       if (!observation.taskId) throw new Error("pending_observation_task_id_missing");
+      if (!pendingObservationHasRequiredComments(observation)) {
+        const quarantineDir = path.join(tempDir, "weixin-channels-quarantine");
+        await fs.mkdir(quarantineDir, { recursive: true });
+        await fs.rename(pendingFile, path.join(quarantineDir, name));
+        process.stderr.write(`pending_quarantined:${name}:required_comments_missing\n`);
+        continue;
+      }
       if (exceedsAuthoritativeCaptureBudget(observation)) {
         const quarantineDir = path.join(tempDir, "weixin-channels-quarantine");
         await fs.mkdir(quarantineDir, { recursive: true });
@@ -666,21 +715,64 @@ async function advanceToNextVideo(previous: string, screenshot: string, deadline
   throw new Error("weixin_channels_next_video_not_visible_within_2s");
 }
 
+async function advanceToNextVideoSafely(previous: string, screenshot: string, deadlineAt?: number) {
+  try {
+    return await advanceToNextVideo(previous, screenshot, deadlineAt);
+  } catch (error) {
+    process.stderr.write(`advance_recovering:${error instanceof Error ? error.message : String(error)}\n`);
+    // 搜索联想框或评论浮层可能吞掉方向键。先收起浮层，再点击视频主体把
+    // 键盘焦点交还播放器；否则直接重试方向键仍会被残留输入框吞掉。
+    await runSwiftControl(["key", "escape"]);
+    await runSwiftControl(["key", "escape"]);
+    await runSwiftControl(["click-relative", "0.50", "0.45"]);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    await captureWindow(screenshot);
+    const recovered = await readOcr(screenshot);
+    try {
+      return await advanceToNextVideo(ocrFingerprint(recovered), screenshot);
+    } catch (retryError) {
+      // 不能把同一画面交回采集循环，否则扫描计数会虚增，达标视频还可能
+      // 被重复上传。交给外层常驻监督器重新初始化窗口与任务。
+      process.stderr.write(`advance_recovery_exhausted:${retryError instanceof Error ? retryError.message : String(retryError)}\n`);
+      throw new Error("weixin_channels_advance_recovery_exhausted");
+    }
+  }
+}
+
 async function searchKeyword(keyword: string, screenshot: string) {
+  const { stdout: windowStdout } = await runSwiftControl(["window"]);
+  const currentWindow = JSON.parse(windowStdout) as { windowId: number };
+  if (!collectorSearchTabState || collectorSearchTabState.windowId !== currentWindow.windowId) {
+    collectorSearchTabState = { windowId: currentWindow.windowId, openedTabs: 0 };
+  }
   await captureWindow(screenshot);
   let ocr = await readOcr(screenshot);
   let point = findSearchInputPoint(ocr.lines);
-  for (let attempt = 0; !point && attempt < 2; attempt += 1) {
-    // 顶栏放大镜使用动态窗口相对坐标；点击后仍必须由 OCR 复核输入框，不能盲输关键词。
+  if (!point && shouldReuseExistingSearchTab(collectorSearchTabState.openedTabs)) {
+    // 达到三个标签后关闭当前活动视频标签，回到上一个搜索页继续改词；
+    // 禁止每轮搜索都新增标签把微信内存撑满。
+    await runSwiftControl(["key", "closeTab"]);
+    collectorSearchTabState.openedTabs = Math.max(0, collectorSearchTabState.openedTabs - 1);
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    await captureWindow(screenshot);
+    ocr = await readOcr(screenshot);
+    point = findSearchInputPoint(ocr.lines);
+  }
+  if (!point) {
+    // 顶栏放大镜使用动态窗口相对坐标。每次搜索最多点击一次；加载较慢时
+    // 只轮询 OCR，不得重复点击并意外再开一个标签。
     await runSwiftControl([
       "click-relative",
       WEIXIN_CHANNELS_SEARCH_BUTTON_POINT.x.toFixed(5),
       WEIXIN_CHANNELS_SEARCH_BUTTON_POINT.y.toFixed(5),
     ]);
-    await new Promise((resolve) => setTimeout(resolve, 900));
-    await captureWindow(screenshot);
-    ocr = await readOcr(screenshot);
-    point = findSearchInputPoint(ocr.lines);
+    collectorSearchTabState.openedTabs += 1;
+    for (let attempt = 0; !point && attempt < 5; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await captureWindow(screenshot);
+      ocr = await readOcr(screenshot);
+      point = findSearchInputPoint(ocr.lines);
+    }
   }
   const inputPoint = point || WEIXIN_CHANNELS_SEARCH_INPUT_POINT;
   let typed: OcrResult | undefined;
@@ -1135,6 +1227,7 @@ async function runCollectionPool(params: {
   let lastHeartbeatAt = Date.now();
   await captureWindow(params.screenshot);
   let ocr = await readOcr(params.screenshot);
+  ocr = await ensureVideoPlayerVisible(params.screenshot, ocr);
 
   while (totalScanned < (params.maxScanned ?? Number.POSITIVE_INFINITY)) {
     if (Date.now() - lastHeartbeatAt >= 30_000) {
@@ -1187,7 +1280,9 @@ async function runCollectionPool(params: {
       }
     }
 
-    // 每条先关闭上一条可能残留的评论面板，并以四项互动指标重新出现作为断言。
+    // 先退出“赞和收藏”或搜索结果等辅助标签；只允许真实视频播放器进入计数。
+    ocr = await ensureVideoPlayerVisible(params.screenshot, ocr);
+    // 每条再关闭上一条可能残留的评论面板，并以四项互动指标重新出现作为断言。
     // 单条界面异常只跳过当前视频，不能退出整条采集池。
     try {
       ocr = await ensureInteractionMetricsVisible(params.screenshot, ocr);
@@ -1209,10 +1304,12 @@ async function runCollectionPool(params: {
           process.stderr.write(`search_query_rotated:${nextQuery}:previous_query_failed\n`);
           continue;
         } catch (rotationError) {
+          searchQueryIndex = nextIndex;
+          knownVideoDurationSec = undefined;
           process.stderr.write(`search_query_rotation_deferred:${nextQuery}:${rotationError instanceof Error ? rotationError.message : String(rotationError)}\n`);
         }
       }
-      ocr = await advanceToNextVideo(ocrFingerprint(ocr), params.screenshot);
+      ocr = await advanceToNextVideoSafely(ocrFingerprint(ocr), params.screenshot);
       knownVideoDurationSec = undefined;
       continue;
     }
@@ -1240,7 +1337,7 @@ async function runCollectionPool(params: {
       else scansOnCurrentQuery += 1;
       process.stderr.write(`scan_skipped:${error instanceof Error ? error.message : String(error)}\n`);
       process.stderr.write(`collector_progress:${JSON.stringify({ scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode })}\n`);
-      ocr = await advanceToNextVideo(ocrFingerprint(ocr), params.screenshot);
+      ocr = await advanceToNextVideoSafely(ocrFingerprint(ocr), params.screenshot);
       continue;
     }
     totalScanned += 1;
@@ -1265,15 +1362,17 @@ async function runCollectionPool(params: {
         process.stderr.write(`search_query_rotated:${nextQuery}:one_result_per_query\n`);
         continue;
       } catch (error) {
+        searchQueryIndex = nextIndex;
+        knownVideoDurationSec = undefined;
         process.stderr.write(`search_query_rotation_deferred:${nextQuery}:${error instanceof Error ? error.message : String(error)}\n`);
       }
     }
 
     if (!result.qualified && !("inspectedContent" in result)) {
       const deadlineAt = itemStartedAt + WEIXIN_CHANNELS_UNQUALIFIED_DWELL_MS;
-      ocr = await advanceToNextVideo(result.fingerprint, params.screenshot, deadlineAt);
+      ocr = await advanceToNextVideoSafely(result.fingerprint, params.screenshot, deadlineAt);
     } else {
-      ocr = await advanceToNextVideo(result.fingerprint, params.screenshot);
+      ocr = await advanceToNextVideoSafely(result.fingerprint, params.screenshot);
     }
 
     if (mode === "recommendation" && Date.now() - recommendationStartedAt >= WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS) {
@@ -1302,6 +1401,8 @@ async function runCollectionPool(params: {
             await rememberCollectorQuery(nextQuery);
             process.stderr.write(`search_query_rotated:${nextQuery}:qualified_rate_below_40_percent\n`);
           } catch (error) {
+            searchQueryIndex = nextIndex;
+            knownVideoDurationSec = undefined;
             process.stderr.write(`search_query_rotation_deferred:${nextQuery}:${error instanceof Error ? error.message : String(error)}\n`);
           }
         }
@@ -1331,15 +1432,27 @@ async function main() {
     if (!serverArg) throw new Error("--pool requires --server=https://...");
     const token = String(process.env.WEIXIN_CHANNELS_COLLECTOR_TOKEN || "").trim();
     if (!token) throw new Error("WEIXIN_CHANNELS_COLLECTOR_TOKEN is required for pool mode");
-    const result = await runCollectionPool({
-      screenshot,
-      server: serverArg.slice("--server=".length).replace(/\/$/, ""),
-      token,
-      probe,
-      maxScanned: maxScannedArg ? Number(maxScannedArg.slice("--max-scanned=".length)) : undefined,
-    });
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    return;
+    const maxScanned = maxScannedArg ? Number(maxScannedArg.slice("--max-scanned=".length)) : undefined;
+    let restartAttempt = 0;
+    for (;;) {
+      try {
+        const result = await runCollectionPool({
+          screenshot,
+          server: serverArg.slice("--server=".length).replace(/\/$/, ""),
+          token,
+          probe,
+          maxScanned,
+        });
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return;
+      } catch (error) {
+        // 有界探针必须把失败直接暴露给调用方；只有整晚常驻池允许自动恢复。
+        if (maxScanned !== undefined) throw error;
+        restartAttempt += 1;
+        process.stderr.write(`collector_pool_restarting:${restartAttempt}:${error instanceof Error ? error.message : String(error)}\n`);
+        await new Promise((resolve) => setTimeout(resolve, Math.min(15_000, 2_000 * restartAttempt)));
+      }
+    }
   }
   if (!taskArg || !queryArg || (!titleArg && !automate && !interact)) {
     throw new Error("usage: pnpm tsx scripts/weixin-channels-capture.mts [--automate|--interact|--pool] [--probe] [--screenshot=/path/window.png] [--server=https://...] [--max-scanned=N] --task-id=... --query=... [--title=...] [--author=...]");
