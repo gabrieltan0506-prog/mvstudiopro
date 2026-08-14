@@ -13,7 +13,7 @@
   <key>RunAtLoad</key>
   <true/>
   <key>StartInterval</key>
-  <integer>60</integer>
+  <integer>15</integer>
   <key>StandardOutPath</key>
   <string>/private/tmp/mvstudiopro-weixin-collector-watchdog.log</string>
   <key>StandardErrorPath</key>

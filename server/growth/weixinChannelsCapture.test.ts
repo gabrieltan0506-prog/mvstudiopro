@@ -17,6 +17,7 @@ import {
   compactCollectorSearchQuery,
   collectorSearchQueryVariants,
   collectorAdvanceAllowed,
+  collectorCaptureActivityIsOverdue,
   collectorSamplingModeForComments,
   commentsPanelClosedOnSameVideo,
   collectorWatchdogDecision,
@@ -42,6 +43,7 @@ import {
   findExactSearchSuggestionPoint,
   findSearchInputPoint,
   findSearchSubmitPoint,
+  findSearchVideosTabPoint,
   findSearchButtonPoint,
   findSearchTabClosePoint,
   hasFourVisibleMetrics,
@@ -61,6 +63,7 @@ import {
   parseCollectorFormalPoolOptions,
   parseVisibleVideoClockSeconds,
   parseVisibleVideoTotalDurationSeconds,
+  planSearchResultSelection,
   pendingObservationHasRequiredComments,
   qualifiedCaptureHasAdvanceEvidence,
   restoreEligibleQuarantinedObservations,
@@ -77,6 +80,7 @@ import {
   shouldUseWeixinChannelsSearchAtHour,
   resolveCollectorWindowStartupMode,
   shouldRotateSearchQuery,
+  shouldReturnToRecommendationAfterSearchError,
   summarizeSearchSort,
   syncPersistedCollectorIdentities,
   uploadPendingObservation,
@@ -87,6 +91,8 @@ import {
   WEIXIN_CHANNELS_SEARCH_BUTTON_POINT,
   WEIXIN_CHANNELS_SEARCH_HIGH_PLAY_THRESHOLD,
   WEIXIN_CHANNELS_SEARCH_INPUT_POINT,
+  WEIXIN_CHANNELS_SINGLE_VIDEO_HARD_TIMEOUT_MS,
+  WEIXIN_CHANNELS_UNKNOWN_DURATION_CAPTURE_BUDGET_MS,
   waitForVisibleVideoLoad,
 } from "../../scripts/weixin-channels-capture.mts";
 
@@ -241,6 +247,10 @@ describe("weixin channels OCR", () => {
     expect(WEIXIN_CHANNELS_COMMENT_PANEL_SCREEN_COUNT).toBe(3);
     expect(captureBudgetMsForVideo(60)).toBe(25_000);
     expect(captureBudgetMsForVideo(600)).toBe(62_000);
+    expect(WEIXIN_CHANNELS_UNKNOWN_DURATION_CAPTURE_BUDGET_MS).toBe(40_000);
+    expect(WEIXIN_CHANNELS_SINGLE_VIDEO_HARD_TIMEOUT_MS).toBe(60_000);
+    expect(collectorCaptureActivityIsOverdue({ startedAtMs: 1_000 }, 61_000)).toBe(false);
+    expect(collectorCaptureActivityIsOverdue({ startedAtMs: 1_000 }, 61_001)).toBe(true);
   });
 
   it("历史去重身份忽略字幕与互动增长，播放器连续性容忍小幅增长", () => {
@@ -621,14 +631,20 @@ describe("weixin channels OCR", () => {
     ])).not.toBeNull();
   });
 
-  it("每次切换至少等待两秒且不超过三秒", async () => {
+  it("右窗窄布局仍能定位 x≈0.69 的影片标签", () => {
+    expect(findSearchVideosTabPoint([
+      { text: "影片", confidence: 0.99, x: 0.68, y: 0.82, width: 0.08, height: 0.03 },
+    ])).toEqual(expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }));
+  });
+
+  it("页面切换采用短等待，把是否加载成功交给 OCR 轮询", async () => {
     const startedAt = Date.now();
     const delay = await waitForVisibleVideoLoad();
     const elapsed = Date.now() - startedAt;
-    expect(delay).toBeGreaterThanOrEqual(2_000);
-    expect(delay).toBeLessThanOrEqual(3_000);
-    expect(elapsed).toBeGreaterThanOrEqual(1_950);
-  }, 4_000);
+    expect(delay).toBeGreaterThanOrEqual(450);
+    expect(delay).toBeLessThanOrEqual(900);
+    expect(elapsed).toBeGreaterThanOrEqual(400);
+  }, 2_000);
 
   it("搜索首屏无高播时合并后续页面，不会把后页近期高播漏掉", () => {
     const merged = mergeSearchSortSummaries([
@@ -638,6 +654,7 @@ describe("weixin channels OCR", () => {
         newestMatchingAgeDays: 730,
         maxVisiblePlayCount: 50_000,
         recentHighPlayCount: 0,
+        firstRecentHighPlayPoint: undefined,
         firstHighPlayPoint: undefined,
         firstMatchingPoint: { x: 0.2, y: 0.5 },
       },
@@ -647,6 +664,7 @@ describe("weixin channels OCR", () => {
         newestMatchingAgeDays: 5,
         maxVisiblePlayCount: 116_000,
         recentHighPlayCount: 1,
+        firstRecentHighPlayPoint: { x: 0.7, y: 0.5 },
         firstHighPlayPoint: { x: 0.7, y: 0.5 },
         firstMatchingPoint: { x: 0.7, y: 0.5 },
       },
@@ -657,6 +675,7 @@ describe("weixin channels OCR", () => {
       newestMatchingAgeDays: 5,
       maxVisiblePlayCount: 116_000,
       recentHighPlayCount: 1,
+      firstRecentHighPlayPoint: { x: 0.7, y: 0.5 },
       firstHighPlayPoint: { x: 0.7, y: 0.5 },
     });
   });
@@ -679,6 +698,43 @@ describe("weixin channels OCR", () => {
       { text: "广告", confidence: 0.99, x: 0.08, y: 0.44, width: 0.08, height: 0.03 },
     ], "陕西女人");
     expect(selectCurrentHottestSearchResultPoint(advertisement)).toBeNull();
+  });
+
+  it("搜索严格按最新优先、低流量再最热门、都无候选回推荐", () => {
+    const empty = {
+      matchingCount: 1,
+      recentMatchingCount: 1,
+      newestMatchingAgeDays: 2,
+      maxVisiblePlayCount: 500,
+      recentHighPlayCount: 0,
+      firstRecentHighPlayPoint: undefined,
+      firstHighPlayPoint: undefined,
+      firstMatchingPoint: { x: 0.2, y: 0.5 },
+    };
+    const latest = {
+      ...empty,
+      maxVisiblePlayCount: 5_000,
+      recentHighPlayCount: 1,
+      firstRecentHighPlayPoint: { x: 0.3, y: 0.4 },
+      firstHighPlayPoint: { x: 0.3, y: 0.4 },
+    };
+    expect(planSearchResultSelection({ latestCurrentPage: latest })).toEqual({
+      action: "open",
+      sourceSort: "latest",
+      point: { x: 0.3, y: 0.4 },
+    });
+    expect(planSearchResultSelection({ latestCurrentPage: empty })).toEqual({ action: "inspect_hottest" });
+    const hottest = { ...empty, firstHighPlayPoint: { x: 0.7, y: 0.6 }, maxVisiblePlayCount: 6_936 };
+    expect(planSearchResultSelection({ latestCurrentPage: empty, hottestCurrentPage: hottest })).toEqual({
+      action: "open",
+      sourceSort: "hottest",
+      point: { x: 0.7, y: 0.6 },
+    });
+    expect(planSearchResultSelection({ latestCurrentPage: empty, hottestCurrentPage: empty })).toEqual({
+      action: "return_to_recommendation",
+    });
+    expect(shouldReturnToRecommendationAfterSearchError("weixin_channels_search_video_sorts_not_confirmed")).toBe(true);
+    expect(shouldReturnToRecommendationAfterSearchError("weixin_channels_comments_open_not_confirmed")).toBe(false);
   });
 
   it("由 OCR 评论标题同行推导关闭点，并在关闭后要求四项指标重新出现", () => {
@@ -939,6 +995,8 @@ describe("weixin channels OCR", () => {
     expect(compactCollectorSearchQuery("聊聊这家公司的价值观")).toBe("公司价值观");
     expect(compactCollectorSearchQuery("陕西女人真牛")).toBe("陕西女人牛");
     expect(compactCollectorSearchQuery("AI工具实测")).toBe("AI工具实测");
+    expect(compactCollectorSearchQuery("谁考虑过鱼感")).toBeUndefined();
+    expect(compactCollectorSearchQuery("无所谓")).toBeUndefined();
     expect(compactCollectorSearchQuery("词一")).toBeUndefined();
     expect(collectorSearchQueryVariants("陕西女人真牛")).toEqual(["陕西女人牛", "陕西女人"]);
     expect(collectorSearchQueryVariants("聊聊这家公司的价值观")).toEqual([
