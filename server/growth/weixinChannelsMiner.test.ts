@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PlatformTrendCollection } from "./trendCollector";
+import { makeWeixinChannelsObservationId } from "../../shared/weixinChannelsRules";
 import {
   buildWeixinChannelsCandidateQueue,
   buildWeixinChannelsSearchQueries,
@@ -40,6 +41,24 @@ function observation(overrides: Partial<WeixinChannelsObservation> = {}): Weixin
 }
 
 describe("weixinChannelsMiner", () => {
+  it("内容身份存在时 observationId 不随互动指标变化，无内容身份时才回退到视频身份", () => {
+    const stableA = makeWeixinChannelsObservationId({
+      taskId: "task-123",
+      title: "AI 视频教程",
+      author: "作者",
+      videoIdentity: "a".repeat(64),
+    });
+    const stableB = makeWeixinChannelsObservationId({
+      taskId: "task-123",
+      title: "AI 视频教程",
+      author: "作者",
+      videoIdentity: "b".repeat(64),
+    });
+    expect(stableA).toBe(stableB);
+    expect(makeWeixinChannelsObservationId({ taskId: "task-123", title: "", videoIdentity: "a".repeat(64) }))
+      .not.toBe(makeWeixinChannelsObservationId({ taskId: "task-123", title: "", videoIdentity: "b".repeat(64) }));
+  });
+
   it("停止从快手和今日头条产生新任务，但保留其他平台", () => {
     const candidates = buildWeixinChannelsCandidateQueue({
       douyin: collection("douyin"), bilibili: collection("bilibili"), xiaohongshu: collection("xiaohongshu"),
@@ -62,12 +81,10 @@ describe("weixinChannelsMiner", () => {
   });
 
   it("从真实热点标题生成垂类与高意图搜索词，不注入无关固定词", () => {
-    expect(buildWeixinChannelsSearchQueries("原来可以批量生成 AI 真人短剧，这次卷成这样了")).toEqual([
-      "原来可以批量生成 AI 真人短剧，这次卷成这样了", "AI真人短剧", "AI真人短剧教程", "AI真人短剧批量生成",
-    ]);
-    expect(buildWeixinChannelsSearchQueries("别再说AI漫剧难了")).toEqual([
-      "别再说AI漫剧难了", "AI漫剧", "AI漫剧教程", "AI漫剧全流程", "AI漫剧变现",
-    ]);
+    expect(buildWeixinChannelsSearchQueries("原来可以批量生成 AI 真人短剧，这次卷成这样了")).toEqual([]);
+    expect(buildWeixinChannelsSearchQueries("别再说AI漫剧难了")).toEqual(["AI漫剧"]);
+    expect(buildWeixinChannelsSearchQueries("2026年8月全价位好物选购指南20款益生菌全价位实测")).toEqual([]);
+    expect(buildWeixinChannelsSearchQueries("#AI工作流 新手实测")).toEqual(["AI工作流", "新手实测"]);
   });
 
   it("低质样本只落扫描记录且模型调用条件为零", () => {

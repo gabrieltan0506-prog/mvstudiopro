@@ -33,7 +33,7 @@ type CandidateState = WeixinChannelsCandidate & {
 };
 
 export type WeixinChannelsMinerState = {
-  version: 2;
+  version: 3;
   updatedAt: string;
   capture: {
     enabled: boolean;
@@ -46,6 +46,8 @@ export type WeixinChannelsMinerState = {
   observations: PersistedWeixinChannelsObservation[];
   lunaBatches: LunaBatch[];
   jobs: FinalAnalysisJob[];
+  /** 只留最近一小时重复 ingest 事件，供真实吞吐诊断；不参与正式累计。 */
+  recentDuplicatePersistEvents: string[];
 };
 
 const DEFAULT_STORE_ROOT = path.resolve(process.cwd(), ".cache");
@@ -60,7 +62,7 @@ function storeFile() {
 function emptyState(): WeixinChannelsMinerState {
   const now = new Date().toISOString();
   return {
-    version: 2,
+    version: 3,
     updatedAt: now,
     capture: { enabled: false, updatedAt: now },
     aggregationPaused: false,
@@ -68,6 +70,7 @@ function emptyState(): WeixinChannelsMinerState {
     observations: [],
     lunaBatches: [],
     jobs: [],
+    recentDuplicatePersistEvents: [],
   };
 }
 
@@ -76,7 +79,7 @@ function migrateState(parsed: Record<string, unknown>): WeixinChannelsMinerState
   const rawCandidates = Array.isArray(parsed.candidates) ? parsed.candidates as CandidateState[] : [];
   const rawObservations = Array.isArray(parsed.observations) ? parsed.observations as WeixinChannelsObservation[] : [];
   return {
-    version: 2,
+    version: 3,
     updatedAt: String(parsed.updatedAt || base.updatedAt),
     capture: parsed.capture && typeof parsed.capture === "object"
       ? { ...base.capture, ...(parsed.capture as WeixinChannelsMinerState["capture"]) }
@@ -93,6 +96,9 @@ function migrateState(parsed: Record<string, unknown>): WeixinChannelsMinerState
       ...job,
       stage: job.stage || (job.sourceJobIds?.length ? "terra_cleanup" : "legacy_terra"),
     })) : [],
+    recentDuplicatePersistEvents: Array.isArray(parsed.recentDuplicatePersistEvents)
+      ? (parsed.recentDuplicatePersistEvents as unknown[]).filter((item): item is string => typeof item === "string")
+      : [],
   };
 }
 
@@ -108,7 +114,7 @@ async function readState(): Promise<WeixinChannelsMinerState> {
 async function writeState(state: WeixinChannelsMinerState) {
   const file = storeFile();
   await fs.mkdir(path.dirname(file), { recursive: true });
-  const next = { ...state, version: 2 as const, updatedAt: new Date().toISOString() };
+  const next = { ...state, version: 3 as const, updatedAt: new Date().toISOString() };
   const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
   await fs.writeFile(temp, JSON.stringify(next, null, 2), "utf8");
   await fs.rename(temp, file);
@@ -265,6 +271,8 @@ function mergeObservation(
     aggregationJobId: current.aggregationJobId,
     consumedAt: current.consumedAt,
     growthMergedAt: current.growthMergedAt,
+    observedAt: current.observedAt,
+    persistedAt: current.persistedAt || incoming.persistedAt,
   });
 }
 
@@ -280,15 +288,21 @@ export async function ingestWeixinChannelsObservations(params: {
       throw new Error("weixin_channels_observation_task_mismatch");
     }
     const currentById = new Map(state.observations.map((item) => [item.observationId, item]));
+    const ingestedAt = new Date().toISOString();
+    const duplicateFlags = params.observations.map((item) => currentById.has(item.observationId));
     const results = params.observations.map((raw) => {
-      const incoming = persistableWeixinChannelsObservation(raw);
+      const current = currentById.get(raw.observationId);
+      const incoming = persistableWeixinChannelsObservation({
+        ...raw,
+        persistedAt: current?.persistedAt || ingestedAt,
+      });
       if (incoming.comments !== undefined
         && incoming.comments >= WEIXIN_CHANNELS_COMMENT_THRESHOLD
         && !incoming.invalid
         && !incoming.commentSamples?.length) {
         throw new Error("weixin_channels_comments_required");
       }
-      const merged = mergeObservation(currentById.get(raw.observationId), incoming);
+      const merged = mergeObservation(current, incoming);
       currentById.set(raw.observationId, merged);
       return merged;
     });
@@ -298,6 +312,10 @@ export async function ingestWeixinChannelsObservations(params: {
       candidates: state.candidates.map((item) => item.taskId === params.taskId
         ? { ...item, status: "scanned", claimedBy: undefined, claimExpiresAt: undefined, updatedAt: new Date().toISOString() }
         : item),
+      recentDuplicatePersistEvents: [
+        ...state.recentDuplicatePersistEvents.filter((item) => Date.parse(item) >= Date.now() - 60 * 60_000),
+        ...duplicateFlags.filter(Boolean).map(() => ingestedAt),
+      ].slice(-2_000),
     };
     state = maybeCreateFormalJob(state);
     state = await writeState(state);
@@ -327,8 +345,11 @@ export async function ingestWeixinChannelsObservations(params: {
     const accumulatedQualifiedCount = formalAvailable(state).length;
     const aggregationJob = state.jobs.find((job) => job.kind === "formal" && job.status !== "completed");
     const first = results[0];
+    const firstNewlyPersisted = first ? !duplicateFlags[0] : false;
     return {
       persisted: true as const,
+      newlyPersisted: firstNewlyPersisted,
+      newlyQualifiedPersisted: Boolean(firstNewlyPersisted && first?.runKind !== "probe" && first?.qualified && !first?.invalid),
       scanned: true as const,
       qualified: first?.qualified ?? false,
       invalid: first?.invalid ?? false,
@@ -338,8 +359,10 @@ export async function ingestWeixinChannelsObservations(params: {
       aggregationQueued: Boolean(aggregationJob),
       aggregationJobId: aggregationJob?.jobId,
       growthMerged,
-      results: results.map((item) => ({
+      results: results.map((item, index) => ({
         observationId: item.observationId,
+        newlyPersisted: !duplicateFlags[index],
+        newlyQualifiedPersisted: Boolean(!duplicateFlags[index] && item.runKind !== "probe" && item.qualified && !item.invalid),
         scanned: true as const,
         qualified: item.qualified,
         invalid: item.invalid,

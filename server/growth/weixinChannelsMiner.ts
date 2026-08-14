@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { GrowthPlatform } from "@shared/growth";
 import {
+  deriveWeixinChannelsSearchQueries,
   normalizeWeixinChannelsText,
   qualifyWeixinChannelsObservationLocally,
   WEIXIN_CHANNELS_AGGREGATION_MAX_ITEMS,
@@ -55,6 +56,8 @@ export type WeixinChannelsCandidate = {
 
 export type WeixinChannelsObservation = {
   observationId: string;
+  /** 本机由稳定互动指标、标题和作者生成；字幕与播放画面变化不会改变它。 */
+  videoIdentity?: string;
   taskId: string;
   query: string;
   resultRank: number;
@@ -67,6 +70,8 @@ export type WeixinChannelsObservation = {
   coverCapturedAt?: string;
   publishedAt?: string;
   observedAt: string;
+  /** Fly 首次确认写入持久卷的时间；重复 ingest 不得覆盖。 */
+  persistedAt?: string;
   likes?: number;
   comments?: number;
   shares?: number;
@@ -160,7 +165,7 @@ function finiteMetric(value: unknown): number | undefined {
 function cleanQuery(title: string) {
   return String(title || "")
     .replace(/https?:\/\/\S+/gi, " ")
-    .replace(/[#＃@＠][^\s#＃@＠]+/g, " ")
+    .replace(/[#＃@＠]/g, " ")
     .replace(/[\s\u200b]+/g, " ")
     .trim()
     .slice(0, 80);
@@ -168,16 +173,7 @@ function cleanQuery(title: string) {
 
 /** 从真实热点标题抽取垂类词并追加高意图后缀；不维护固定种子列表。 */
 export function buildWeixinChannelsSearchQueries(title: string) {
-  const base = cleanQuery(title);
-  const queries = [base];
-  const matches = base.match(/(?:AI|Ai|ai|人工智能)\s*(?:真人短剧|漫剧|动漫|视频|短剧)/g) || [];
-  for (const raw of matches) {
-    const term = raw.replace(/^人工智能/i, "AI").replace(/^ai/i, "AI").replace(/\s+/g, "");
-    queries.push(term);
-    if (/真人短剧$/.test(term)) queries.push(`${term}教程`, `${term}批量生成`);
-    if (/漫剧$/.test(term)) queries.push(`${term}教程`, `${term}全流程`, `${term}变现`);
-  }
-  return Array.from(new Set(queries.filter(Boolean))).slice(0, 6);
+  return deriveWeixinChannelsSearchQueries(cleanQuery(title)).slice(0, 6);
 }
 
 export function buildWeixinChannelsCandidateQueue(
@@ -195,7 +191,8 @@ export function buildWeixinChannelsCandidateQueue(
     });
     for (const scored of selected) {
       const query = cleanQuery(scored.item.title);
-      if (!query) continue;
+      const searchQueries = buildWeixinChannelsSearchQueries(query);
+      if (!query || !searchQueries.length) continue;
       candidates.push({
         taskId: stableId("wxct", `${platform}:${scored.item.id}:${query}`),
         sourcePlatform: platform,
@@ -211,7 +208,7 @@ export function buildWeixinChannelsCandidateQueue(
           shares: finiteMetric(scored.item.shares),
           views: finiteMetric(scored.item.views),
         },
-        searchQueries: buildWeixinChannelsSearchQueries(query),
+        searchQueries,
         createdAt,
       });
     }

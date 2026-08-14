@@ -128,18 +128,75 @@ export function normalizeWeixinChannelsText(value: unknown) {
     .trim();
 }
 
+const WEIXIN_CHANNELS_SEARCH_QUERY_REJECT = /(?:直播(?:录制|錄製|回放)?|vlog|日常记录|日常記錄|生活记录|生活記錄|第\s*\d+\s*集|全集|完结|完結|短剧|短劇|爽文|爽剧|爽劇|sku|型号|型號|旗舰店|旗艦店|购买|購買|下单|下單)/i;
+
+/**
+ * 视频号搜索只接受短主题词。完整标题、商品型号和日期句子宁可丢弃，
+ * 也不能让本机在无法确认的长输入上反复浪费导航时间。
+ */
+export function normalizeWeixinChannelsSearchQuery(value: unknown) {
+  const normalized = String(value || "")
+    .normalize("NFKC")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/20\d{2}[年./-]\d{1,2}(?:[月./-]\d{1,2}日?)?/g, " ")
+    .replace(/\b\d{1,2}[月./-]\d{1,2}日?\b/g, " ")
+    .replace(/^[#＃]+|[#＃]+$/g, "")
+    .replace(/[【】\[\]（）()《》“”"'，,。.!！?？:：;；|｜/\\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized || WEIXIN_CHANNELS_SEARCH_QUERY_REJECT.test(normalized)) return undefined;
+  const compact = normalized.replace(/\s+/g, "");
+  const length = Array.from(compact).length;
+  if (length < 2 || length > 12) return undefined;
+  if (!/[\u3400-\u9fffA-Za-z]/.test(compact)) return undefined;
+  if (/^(?:ai|人工智能)$/i.test(compact)) return undefined;
+  if (/^(?:原来|原來|这次|這次|今天|居然|别再|別再|真的|终于|終於|为什么|為什麼|怎么|怎麼)/i.test(compact)) return undefined;
+  if (/(?:这样|這樣|而已|罢了|罷了|了|吗|嗎|呢|吧)$/.test(compact)) return undefined;
+  return compact;
+}
+
+/** 从最近七天真实标题中抽主题，不用固定热词或模型补词。 */
+export function deriveWeixinChannelsSearchQueries(value: unknown) {
+  const text = String(value || "").normalize("NFKC");
+  const candidates: string[] = [];
+  const hashtagPattern = /[#＃]([\u3400-\u9fffA-Za-z0-9]{2,12})/g;
+  let hashtagMatch: RegExpExecArray | null;
+  while ((hashtagMatch = hashtagPattern.exec(text)) !== null) candidates.push(hashtagMatch[1]!);
+  candidates.push(...text.split(/[\s，,。.!！?？:：;；|｜/\\【】\[\]（）()《》“”"']+/g));
+  if (!/\s/.test(text.trim())) candidates.push(text);
+  const aiTopicPattern = /(?:AI|人工智能)(?:视频|影片|工作流|教程|工具|智能体|副业|营销|变现|漫剧(?:教程|制作)?)/gi;
+  let aiTopicMatch: RegExpExecArray | null;
+  while ((aiTopicMatch = aiTopicPattern.exec(text)) !== null) candidates.push(aiTopicMatch[0]!);
+  const seen = new Set<string>();
+  const normalized = candidates.flatMap((candidate) => {
+    const query = normalizeWeixinChannelsSearchQuery(candidate);
+    if (!query || seen.has(query.toLowerCase())) return [];
+    seen.add(query.toLowerCase());
+    return [query];
+  });
+  return normalized.filter((query, index, all) => !all.some((other, otherIndex) => (
+    otherIndex !== index
+      && other.toLowerCase().startsWith(query.toLowerCase())
+      && Array.from(other).length > Array.from(query).length
+  )));
+}
+
 /** 同一内容重复采集时保持稳定；时间戳不得进入幂等键。 */
 export function makeWeixinChannelsObservationId(input: {
   taskId: string;
   title: string;
   author?: string;
   url?: string;
+  videoIdentity?: string;
 }) {
+  const title = normalizeWeixinChannelsText(input.title);
+  const author = normalizeWeixinChannelsText(input.author);
+  const stableContentIdentity = input.url || title || author
+    ? [input.url || "", author, title].join(":")
+    : input.videoIdentity || "";
   const identity = [
     input.taskId,
-    input.url || "",
-    normalizeWeixinChannelsText(input.author),
-    normalizeWeixinChannelsText(input.title),
+    stableContentIdentity,
   ].join(":");
   return `wxco_${createHash("sha256").update(identity).digest("hex").slice(0, 24)}`;
 }
