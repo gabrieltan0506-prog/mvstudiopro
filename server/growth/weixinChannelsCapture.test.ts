@@ -4,52 +4,77 @@ import path from "node:path";
 import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 import {
+  hasWeixinChannelsHighHeatSignals,
+  qualifyWeixinChannelsObservationLocally,
+  WEIXIN_CHANNELS_HIGH_HEAT_BANDS,
+} from "../../shared/weixinChannelsRules";
+import {
   automaticRecoveryDelayMs,
   extractCommentSamples,
   extractCommentPanelContentLines,
   captureBudgetMsForVideo,
   collectorSeenContains,
+  compactCollectorSearchQuery,
+  collectorSearchQueryVariants,
+  collectorAdvanceAllowed,
   collectorWatchdogDecision,
   collectorVideoStateAfterCapture,
   loadCollectorSearchTabState,
   loadCollectorSeenRegistry,
   rememberCollectorSeen,
   buildDiverseCollectorSearchQueries,
+  classifyLiveFrameBeforeAdvance,
   deriveVideoDurationSeconds,
+  dedupIdentityFingerprint,
   detectVisibleProgressTrack,
   extractVisibleTitleAndAuthor,
   extractWeixinChannelsMetrics,
   findCommentsClosePoint,
   findCommentsOpenPoint,
+  findAnySearchTabPoint,
+  findChannelsTabPoint,
   findMediaViewerClosePoint,
+  mergeSearchSortSummaries,
+  findPersonalDataTabClosePoint,
   findFirstSearchVideoPoint,
   findExactSearchSuggestionPoint,
   findSearchInputPoint,
+  findSearchSubmitPoint,
+  findSearchButtonPoint,
+  findSearchTabClosePoint,
   hasFourVisibleMetrics,
+  hasDefinitiveVisibleUnqualifiedMetrics,
   hasConfirmedVideoTransition,
   interactionMetricsConfirmed,
   isWeixinChannelsAuxiliaryPage,
+  isWeixinChannelsPersonalDataPage,
   isWeixinChannelsMediaViewer,
   hasTypedSearchKeyword,
   metricsRemainOnSameVideo,
+  sameVideoContinuity,
   nextCollectorSearchQueryIndex,
+  nextCollectorRecoveryState,
   parseVisibleMetric,
   parseVisibleVideoClockSeconds,
   parseVisibleVideoTotalDurationSeconds,
   pendingObservationHasRequiredComments,
+  qualifiedCaptureHasAdvanceEvidence,
   restoreEligibleQuarantinedObservations,
   retryPendingObservations,
   representativeFrameNeedsSingleRetry,
   scoreRepresentativeFrameCandidate,
   selectReusableCollectorCandidate,
   shouldReuseExistingSearchTab,
+  shouldOpenVisibleComments,
   shouldLaunchdRestartCollector,
   shouldSwitchRecommendationToSearch,
+  shouldUseWeixinChannelsSearchAtHour,
   shouldRotateSearchQuery,
   syncPersistedCollectorIdentities,
   uploadPendingObservation,
   visibleVideoIdentityFingerprint,
   WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS,
+  WEIXIN_CHANNELS_COMMENT_PANEL_SCREEN_COUNT,
   WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS,
   WEIXIN_CHANNELS_SEARCH_BUTTON_POINT,
   WEIXIN_CHANNELS_SEARCH_INPUT_POINT,
@@ -57,6 +82,63 @@ import {
 } from "../../scripts/weixin-channels-capture.mts";
 
 describe("weixin channels OCR", () => {
+  it("右窗只在零点至六点前启用搜索", () => {
+    expect(shouldUseWeixinChannelsSearchAtHour(0)).toBe(true);
+    expect(shouldUseWeixinChannelsSearchAtHour(5)).toBe(true);
+    expect(shouldUseWeixinChannelsSearchAtHour(6)).toBe(false);
+    expect(shouldUseWeixinChannelsSearchAtHour(23)).toBe(false);
+  });
+
+  it("新版爆款区间以区间下沿为门槛，1932 与 2000 同属达标", () => {
+    expect(WEIXIN_CHANNELS_HIGH_HEAT_BANDS).toEqual({
+      likes: { min: 1_000, referenceHigh: 2_000 },
+      shares: { min: 500, referenceHigh: 1_000 },
+      favorites: { min: 500, referenceHigh: 1_000 },
+    });
+    expect(hasWeixinChannelsHighHeatSignals({
+      likes: 1_932,
+      shares: 2_085,
+      favorites: 631,
+    })).toBe(true);
+    expect(qualifyWeixinChannelsObservationLocally({
+      likes: 1_932,
+      shares: 2_085,
+      favorites: 631,
+      comments: 71,
+    })).toEqual(expect.objectContaining({
+      qualified: true,
+      requiresComments: false,
+    }));
+    expect(hasWeixinChannelsHighHeatSignals({
+      likes: 999,
+      shares: 499,
+      favorites: 499,
+    })).toBe(false);
+    expect(hasWeixinChannelsHighHeatSignals({
+      likes: 1_000,
+      shares: 500,
+      favorites: 0,
+    })).toBe(true);
+  });
+
+  it("顶栏标签只返回文字安全区，搜索结束只识别右侧搜索标签 X", () => {
+    const top = [
+      { text: "X 视频号", confidence: 0.3, x: 0.401, y: 0.963, width: 0.145, height: 0.02 },
+      { text: "小猪看病", confidence: 1, x: 0.60, y: 0.965, width: 0.08, height: 0.016 },
+      { text: "X", confidence: 0.3, x: 0.668, y: 0.965, width: 0.023, height: 0.015 },
+    ];
+    expect(findChannelsTabPoint(top)).toEqual(expect.objectContaining({
+      x: expect.any(Number),
+      y: expect.any(Number),
+    }));
+    expect(findChannelsTabPoint(top)!.x).toBeLessThan(0.5);
+    expect(findChannelsTabPoint(top)!.y).toBeGreaterThanOrEqual(0.02);
+    expect(findAnySearchTabPoint(top)!.x).toBeLessThan(0.66);
+    expect(findAnySearchTabPoint(top)!.y).toBeLessThanOrEqual(0.05);
+    expect(findSearchTabClosePoint(top)!.x).toBeGreaterThanOrEqual(0.66);
+    expect(findSearchTabClosePoint(top)!.x).toBeLessThanOrEqual(0.72);
+  });
+
   it("推荐页十分钟内不足五条达标时才切换到搜索", () => {
     const startedAt = 1_000;
     expect(shouldSwitchRecommendationToSearch({
@@ -101,11 +183,12 @@ describe("weixin channels OCR", () => {
       { progress: 0.9, text: "0:54" },
     ])).toBe(60);
     expect(WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS).toEqual([0.1, 0.3, 0.5, 0.7, 0.9]);
+    expect(WEIXIN_CHANNELS_COMMENT_PANEL_SCREEN_COUNT).toBe(3);
     expect(captureBudgetMsForVideo(60)).toBe(25_000);
     expect(captureBudgetMsForVideo(600)).toBe(62_000);
   });
 
-  it("稳定视频身份忽略字幕变化，但指标、标题或作者变化都会改变", () => {
+  it("历史去重身份忽略字幕与互动增长，播放器连续性容忍小幅增长", () => {
     const lines = (subtitle: string, likes = "3000", title = "AI工作流实测", author = "工具研究所") => [
       { text: title, confidence: 0.99, x: 0.05, y: 0.12, width: 0.42, height: 0.04 },
       { text: author, confidence: 0.99, x: 0.05, y: 0.07, width: 0.18, height: 0.03 },
@@ -118,10 +201,52 @@ describe("weixin channels OCR", () => {
     const ocr = (value: ReturnType<typeof lines>) => ({ width: 483, height: 769, lines: value });
     const first = visibleVideoIdentityFingerprint(ocr(lines("第一句字幕")));
     expect(first).toBe(visibleVideoIdentityFingerprint(ocr(lines("第二句字幕"))));
-    expect(first).not.toBe(visibleVideoIdentityFingerprint(ocr(lines("第二句字幕", "3001"))));
+    expect(first).toBe(visibleVideoIdentityFingerprint(ocr(lines("第二句字幕", "3001"))));
+    expect(first).toBe(dedupIdentityFingerprint(ocr(lines("第二句字幕", "3001"))));
+    expect(first).toBe(visibleVideoIdentityFingerprint(ocr(lines(
+      "第二句字幕", "3001", "AI工作流实测⋯展开", "工具研究所⋯",
+    ))));
+    expect(sameVideoContinuity(ocr(lines("第一句字幕")), ocr(lines("第二句字幕", "3001")))).toBe(true);
     expect(first).not.toBe(visibleVideoIdentityFingerprint(ocr(lines("第二句字幕", "3000", "AI智能体教程"))));
     expect(first).not.toBe(visibleVideoIdentityFingerprint(ocr(lines("第二句字幕", "3000", "AI工作流实测", "另一作者"))));
-    expect(visibleVideoIdentityFingerprint(ocr(lines("字幕").slice(0, 4)))).toBeUndefined();
+    expect(visibleVideoIdentityFingerprint(ocr(lines("字幕").slice(2)))).toBeUndefined();
+  });
+
+  it("滑动前发现推荐流已经自动换页时禁止再滑一次", () => {
+    const makeVideo = (title: string, author: string, metrics: string[]) => ({
+      width: 483,
+      height: 769,
+      lines: [
+      { text: title, confidence: 0.99, x: 0.05, y: 0.12, width: 0.42, height: 0.04 },
+      { text: author, confidence: 0.99, x: 0.05, y: 0.07, width: 0.18, height: 0.03 },
+      ...metrics.map((text, index) => ({
+        text,
+        confidence: 0.99,
+        x: 0.55 + index * 0.1,
+        y: 0.05,
+        width: 0.06,
+        height: 0.03,
+      })),
+      ],
+    });
+    const decided = makeVideo("上一条爆款", "作者甲", ["3.6万", "6057", "1.1万", "1381"]);
+    const same = makeVideo("上一条爆款", "作者甲", ["3.6万", "6058", "1.1万", "1381"]);
+    const autoAdvanced = makeVideo("当前新爆款", "作者乙", ["8.8万", "7.4万", "6.3万", "6024"]);
+
+    expect(classifyLiveFrameBeforeAdvance(decided, same)).toBe("same_video");
+    expect(classifyLiveFrameBeforeAdvance(decided, autoAdvanced)).toBe("already_transitioned");
+  });
+
+  it("两项前置互动明确低于门槛时无需等缺失项即可安全淘汰", () => {
+    const partial = [
+      { text: "低热视频", confidence: 0.99, x: 0.05, y: 0.12, width: 0.42, height: 0.04 },
+      { text: "作者", confidence: 0.99, x: 0.05, y: 0.07, width: 0.18, height: 0.03 },
+      { text: "144", confidence: 1, x: 0.472, y: 0.036, width: 0.058, height: 0.016 },
+      { text: "66", confidence: 1, x: 0.744, y: 0.036, width: 0.043, height: 0.016 },
+      { text: "302", confidence: 1, x: 0.865, y: 0.036, width: 0.063, height: 0.018 },
+    ];
+    expect(hasFourVisibleMetrics(partial)).toBe(false);
+    expect(hasDefinitiveVisibleUnqualifiedMetrics(partial)).toBe(true);
   });
 
   it("七天身份与 observationId 去重跨监督器重启仍生效", async () => {
@@ -156,6 +281,27 @@ describe("weixin channels OCR", () => {
     expect(collectorVideoStateAfterCapture({ qualified: false, persisted: false })).toEqual({ state: "terminal_unqualified", stopWithoutAdvance: false });
   });
 
+  it("前置达标且评论达到 80 时，没有真实评论证据绝不允许滑下一条", () => {
+    const base = {
+      qualified: true,
+      persisted: true,
+      observation: { likes: 3_000, shares: 2_000, favorites: 100, comments: 80 },
+    };
+    expect(qualifiedCaptureHasAdvanceEvidence(base)).toBe(false);
+    expect(qualifiedCaptureHasAdvanceEvidence({
+      ...base,
+      observation: {
+        ...base.observation,
+        commentSamples: [{ text: "真实评论" }],
+      },
+    })).toBe(true);
+    expect(qualifiedCaptureHasAdvanceEvidence({
+      qualified: true,
+      persisted: true,
+      observation: { likes: 3_000, shares: 2_000, favorites: 100, comments: 79 },
+    })).toBe(true);
+  });
+
   it("夜间自动恢复使用有上限的指数退避，不要求人工重启", () => {
     expect(automaticRecoveryDelayMs(1)).toBe(5_000);
     expect(automaticRecoveryDelayMs(2)).toBe(10_000);
@@ -166,6 +312,24 @@ describe("weixin channels OCR", () => {
     expect(shouldLaunchdRestartCollector("capture_disabled_during_recovery")).toBe(false);
     expect(shouldLaunchdRestartCollector("hourly_target_missed")).toBe(true);
     expect(shouldLaunchdRestartCollector("max_scanned_reached", 1)).toBe(false);
+  });
+
+  it("普通双窗失败自动重启，只有连续三次黑屏或同内容才触发网页暂停熔断", () => {
+    const empty = { consecutiveBlackScreens: 0, consecutiveSameContent: 0, lastIdentityByWindow: {}, updatedAt: new Date(0).toISOString() };
+    const first = nextCollectorRecoveryState(empty, {
+      allBlack: true, allSameContent: false, identities: {}, stopReason: "window_failed",
+    }, 1);
+    const second = nextCollectorRecoveryState(first.state, {
+      allBlack: true, allSameContent: false, identities: {}, stopReason: "window_failed",
+    }, 2);
+    const third = nextCollectorRecoveryState(second.state, {
+      allBlack: true, allSameContent: false, identities: {}, stopReason: "window_failed",
+    }, 3);
+    expect(first.fuseReason).toBeUndefined();
+    expect(second.fuseReason).toBeUndefined();
+    expect(third.fuseReason).toBe("persistent_black_screen");
+    expect(shouldLaunchdRestartCollector("dual_window_recoverable_failure")).toBe(true);
+    expect(shouldLaunchdRestartCollector("capture_disabled_safety_fuse")).toBe(false);
   });
 
   it("只有 Fly persistedAt 同步结果会升级为跨重启重复", async () => {
@@ -209,7 +373,7 @@ describe("weixin channels OCR", () => {
     expect(collectorWatchdogDecision(15 * 60_000, 11)).toBe("checkpoint_15");
     expect(collectorWatchdogDecision(30 * 60_000, 24)).toBe("checkpoint_30");
     expect(collectorWatchdogDecision(60 * 60_000, 49)).toBe("remediate");
-    expect(collectorWatchdogDecision(60 * 60_000, 50)).toBe("rollover");
+    expect(collectorWatchdogDecision(60 * 60_000, 101)).toBe("rollover");
   });
 
   it("识别视频号半透明蓝灰进度轨道，不把可见轨道误报为缺失", async () => {
@@ -223,7 +387,7 @@ describe("weixin channels OCR", () => {
       .png()
       .toFile(file);
     const track = await detectVisibleProgressTrack(file);
-    expect(track.startX).toBeGreaterThanOrEqual(0.08);
+    expect(track.startX).toBeGreaterThanOrEqual(0.12);
     expect(track.endX).toBeGreaterThan(0.65);
     expect(track.y).toBeCloseTo(1262 / 1538, 2);
   });
@@ -283,7 +447,16 @@ describe("weixin channels OCR", () => {
     expect(point?.x).toBeCloseTo(0.43);
     expect(point?.y).toBeCloseTo(0.06);
     expect(findSearchInputPoint([])).toBeNull();
-    expect(WEIXIN_CHANNELS_SEARCH_BUTTON_POINT).toEqual({ x: 0.785, y: 0.026 });
+    expect(findSearchSubmitPoint([
+      { text: "搜尋", confidence: 1, x: 0.807, y: 0.878, width: 0.074, height: 0.024 },
+    ])).toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
+    expect(findSearchButtonPoint([
+      { text: "X视频号", confidence: 0.99, x: 0.44, y: 0.955, width: 0.12, height: 0.025 },
+      { text: "X", confidence: 0.99, x: 0.67, y: 0.955, width: 0.025, height: 0.025 },
+      { text: "Q", confidence: 0.7, x: 0.75, y: 0.952, width: 0.03, height: 0.03 },
+    ])).toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
+    expect(findSearchButtonPoint([])).toBeNull();
+    expect(WEIXIN_CHANNELS_SEARCH_BUTTON_POINT).toEqual({ x: 0.765, y: 0.026 });
     expect(WEIXIN_CHANNELS_SEARCH_INPUT_POINT).toEqual({ x: 0.58, y: 0.026 });
   });
 
@@ -342,6 +515,37 @@ describe("weixin channels OCR", () => {
     expect(elapsed).toBeGreaterThanOrEqual(1_950);
   }, 4_000);
 
+  it("搜索首屏无高播时合并后续页面，不会把后页近期高播漏掉", () => {
+    const merged = mergeSearchSortSummaries([
+      {
+        matchingCount: 2,
+        recentMatchingCount: 0,
+        newestMatchingAgeDays: 730,
+        maxVisiblePlayCount: 50_000,
+        recentHighPlayCount: 0,
+        firstHighPlayPoint: undefined,
+        firstMatchingPoint: { x: 0.2, y: 0.5 },
+      },
+      {
+        matchingCount: 2,
+        recentMatchingCount: 2,
+        newestMatchingAgeDays: 5,
+        maxVisiblePlayCount: 116_000,
+        recentHighPlayCount: 1,
+        firstHighPlayPoint: { x: 0.7, y: 0.5 },
+        firstMatchingPoint: { x: 0.7, y: 0.5 },
+      },
+    ]);
+    expect(merged).toMatchObject({
+      matchingCount: 4,
+      recentMatchingCount: 2,
+      newestMatchingAgeDays: 5,
+      maxVisiblePlayCount: 116_000,
+      recentHighPlayCount: 1,
+      firstHighPlayPoint: { x: 0.7, y: 0.5 },
+    });
+  });
+
   it("由 OCR 评论标题同行推导关闭点，并在关闭后要求四项指标重新出现", () => {
     const panel = [
       { text: "评论 1.5万", confidence: 0.99, x: 0.08, y: 0.86, width: 0.18, height: 0.04 },
@@ -354,13 +558,41 @@ describe("weixin channels OCR", () => {
     expect(findCommentsOpenPoint(metrics.slice(0, 3))).toBeNull();
     expect(findCommentsOpenPoint([{ text: "评论", confidence: 0.99, x: 0.1, y: 0.6, width: 0.1, height: 0.03 }])).toBeNull();
     expect(hasFourVisibleMetrics(metrics)).toBe(true);
+    expect(shouldOpenVisibleComments(metrics)).toBe(true);
+    expect(shouldOpenVisibleComments(metrics.map((line, index) => index === 3 ? { ...line, text: "3" } : line))).toBe(false);
+    expect(shouldOpenVisibleComments(metrics.slice(0, 3))).toBe(false);
+    const commentsOnly = ["822", "32", "321", "152"].map((text, index) => ({
+      text,
+      confidence: 0.99,
+      x: 0.55 + index * 0.1,
+      y: 0.1,
+      width: 0.04,
+      height: 0.03,
+    }));
+    expect(shouldOpenVisibleComments(commentsOnly)).toBe(false);
   });
 
   it("识别赞和收藏及搜索结果辅助页，禁止当成视频扫描", () => {
-    expect(isWeixinChannelsAuxiliaryPage([
+    const personalDataPage = [
       { text: "赞和收藏", confidence: 0.99, x: 0.07, y: 0.9, width: 0.15, height: 0.04 },
       { text: "浏览记录", confidence: 0.99, x: 0.07, y: 0.8, width: 0.15, height: 0.04 },
-    ])).toBe(true);
+      { text: "我的视频号", confidence: 0.99, x: 0.07, y: 0.7, width: 0.15, height: 0.04 },
+      { text: "视频号", confidence: 0.99, x: 0.4, y: 0.96, width: 0.12, height: 0.03 },
+      { text: "赞", confidence: 0.99, x: 0.58, y: 0.96, width: 0.04, height: 0.03 },
+    ];
+    expect(isWeixinChannelsPersonalDataPage(personalDataPage)).toBe(true);
+    expect(isWeixinChannelsAuxiliaryPage(personalDataPage)).toBe(true);
+    expect(findPersonalDataTabClosePoint(personalDataPage)).toMatchObject({
+      x: expect.any(Number),
+      y: expect.any(Number),
+    });
+    expect(isWeixinChannelsPersonalDataPage([
+      { text: "赞和收藏", confidence: 0.99, x: 0.07, y: 0.9, width: 0.15, height: 0.04 },
+      { text: "浏览记录", confidence: 0.99, x: 0.07, y: 0.8, width: 0.15, height: 0.04 },
+    ])).toBe(false);
+    expect(findPersonalDataTabClosePoint([
+      { text: "视频号", confidence: 0.99, x: 0.4, y: 0.96, width: 0.12, height: 0.03 },
+    ])).toBeNull();
     expect(isWeixinChannelsAuxiliaryPage([
       { text: "全部", confidence: 0.99, x: 0.2, y: 0.8, width: 0.1, height: 0.04 },
       { text: "影片", confidence: 0.99, x: 0.4, y: 0.8, width: 0.1, height: 0.04 },
@@ -458,14 +690,25 @@ describe("weixin channels OCR", () => {
   });
 
   it("评论达到 80 的旧待传记录缺真实评论时隔离且不再请求 Fly", async () => {
-    expect(pendingObservationHasRequiredComments({ comments: 79 })).toBe(true);
-    expect(pendingObservationHasRequiredComments({ comments: 80, commentSamples: [] })).toBe(false);
-    expect(pendingObservationHasRequiredComments({ comments: 80, commentSamples: [{ text: "真实评论" }] })).toBe(true);
+    expect(pendingObservationHasRequiredComments({
+      likes: 3_000, shares: 2_000, favorites: 100, comments: 79,
+    })).toBe(true);
+    expect(pendingObservationHasRequiredComments({
+      likes: 3_000, shares: 2_000, favorites: 100, comments: 80, commentSamples: [],
+    })).toBe(false);
+    expect(pendingObservationHasRequiredComments({
+      likes: 3_000, shares: 2_000, favorites: 100, comments: 80,
+      commentSamples: [{ text: "真实评论" }],
+    })).toBe(true);
+    expect(pendingObservationHasRequiredComments({
+      likes: 822, shares: 32, favorites: 321, comments: 152,
+    })).toBe(false);
 
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-missing-comments-"));
     const pending = path.join(dir, "weixin-channels-pending-invalid.json");
     await fs.writeFile(pending, JSON.stringify({
-      taskId: "task-invalid", comments: 558, commentSamples: [], captureElapsedMs: 1_000, videoDurationSec: 60,
+      taskId: "task-invalid", likes: 3_000, shares: 2_000, favorites: 100,
+      comments: 558, commentSamples: [], captureElapsedMs: 1_000, videoDurationSec: 60,
     }));
     const fetchImpl = vi.fn();
     const recovery = await retryPendingObservations({
@@ -484,10 +727,12 @@ describe("weixin channels OCR", () => {
     const eligibleName = "weixin-channels-pending-eligible.json";
     const excessiveName = "weixin-channels-pending-excessive.json";
     await fs.writeFile(path.join(quarantine, eligibleName), JSON.stringify({
-      taskId: "task-eligible", videoDurationSec: 274, captureBudgetMs: 27_400, captureElapsedMs: 27_442,
+      taskId: "task-eligible", likes: 3_000, shares: 2_000, favorites: 100, comments: 12,
+      videoDurationSec: 274, captureBudgetMs: 27_400, captureElapsedMs: 27_442,
     }));
     await fs.writeFile(path.join(quarantine, excessiveName), JSON.stringify({
-      taskId: "task-excessive", videoDurationSec: 60, captureBudgetMs: 25_000, captureElapsedMs: 25_001,
+      taskId: "task-excessive", likes: 3_000, shares: 2_000, favorites: 100, comments: 12,
+      videoDurationSec: 60, captureBudgetMs: 25_000, captureElapsedMs: 25_001,
     }));
     expect(await restoreEligibleQuarantinedObservations(dir)).toEqual({ found: 2, restored: 1 });
     await expect(fs.stat(path.join(dir, eligibleName))).resolves.toBeTruthy();
@@ -518,15 +763,15 @@ describe("weixin channels OCR", () => {
   it("最近七天热词跨类目轮换，短剧作品词剔除且已用词沉底", () => {
     const queries = buildDiverseCollectorSearchQueries({
       candidates: [
-        { taskId: "ai", category: "AI工具", searchQueries: ["AI工作流", "AI工具实测"], sourceTitle: "普通人AI工作流" },
-        { taskId: "career", category: "职场", searchQueries: ["普通人副业方法", "升职方法"], sourceTitle: "职场方法" },
-        { taskId: "drama", category: "娱乐", searchQueries: ["短剧免费看", "男频爽文全集"], sourceTitle: "短剧" },
+        { taskId: "ai", sourcePlatform: "xiaohongshu", category: "AI工具", searchQueries: ["AI工作流", "AI工具实测"], sourceTitle: "普通人AI工作流" },
+        { taskId: "career", sourcePlatform: "douyin", category: "职场", searchQueries: ["普通人副业方法", "升职方法"], sourceTitle: "职场方法" },
+        { taskId: "drama", sourcePlatform: "douyin", category: "娱乐", searchQueries: ["短剧免费看", "男频爽文全集"], sourceTitle: "短剧" },
       ],
       seedQueries: ["AI工作流"],
       recentlyUsed: ["AI工作流"],
       limit: 10,
     });
-    expect(queries).toEqual(["普通人副业方法", "AI工具实测", "升职方法", "AI工作流"]);
+    expect(queries).toEqual(["副业方法", "AI工具实测", "升职方法", "AI工作流"]);
     expect(queries.join(" ")).not.toMatch(/短剧|爽文|免费看/);
   });
 
@@ -534,6 +779,7 @@ describe("weixin channels OCR", () => {
     const queries = buildDiverseCollectorSearchQueries({
       candidates: [{
         taskId: "ai",
+        sourcePlatform: "xiaohongshu",
         category: "AI工具",
         searchQueries: ["内有教程", "AI漫剧新手小白教程", "AI工作流"],
       }],
@@ -542,17 +788,48 @@ describe("weixin channels OCR", () => {
     expect(queries).toEqual(["AI漫剧教程", "AI工作流"]);
   });
 
+  it("热词硬拒绝平台内部哈希和纯数字 ID", () => {
+    expect(buildDiverseCollectorSearchQueries({
+      candidates: [{
+        taskId: "bad-id",
+        sourcePlatform: "douyin",
+        category: "娱乐",
+        sourceTitle: "素材 (6)_760989efc2",
+        searchQueries: ["_760989efc2", "1234567890", "小猪看病"],
+      }],
+    })).toEqual(["小猪看病"]);
+  });
+
+  it("搜索词统一压缩为四至六字核心名词", () => {
+    expect(compactCollectorSearchQuery("聊聊这家公司的价值观")).toBe("公司价值观");
+    expect(compactCollectorSearchQuery("陕西女人真牛")).toBe("陕西女人牛");
+    expect(compactCollectorSearchQuery("AI工具实测")).toBe("AI工具实测");
+    expect(compactCollectorSearchQuery("词一")).toBeUndefined();
+    expect(collectorSearchQueryVariants("陕西女人真牛")).toEqual(["陕西女人牛", "陕西女人"]);
+    expect(collectorSearchQueryVariants("聊聊这家公司的价值观")).toEqual([
+      "公司价值观", "企业价值观", "企业文化",
+    ]);
+  });
+
+  it("未取得 OCR 和终态证据时底层禁止滑到下一条", () => {
+    expect(collectorAdvanceAllowed({ metricsOcrConfirmed: false, captureState: "persisted" })).toBe(false);
+    expect(collectorAdvanceAllowed({ metricsOcrConfirmed: true, captureState: "retryable_failed" })).toBe(false);
+    expect(collectorAdvanceAllowed({ metricsOcrConfirmed: true, captureState: "persisted" })).toBe(true);
+    expect(collectorAdvanceAllowed({ metricsOcrConfirmed: true, captureState: "terminal_unqualified" })).toBe(true);
+  });
+
   it("不会只取每个类目前三个热词，后续七天新词也进入轮换", () => {
     const queries = buildDiverseCollectorSearchQueries({
       candidates: [{
         taskId: "ai",
+        sourcePlatform: "xiaohongshu",
         category: "AI工具",
-        searchQueries: ["词一", "词二", "词三", "词四", "词五", "词六"],
+        searchQueries: ["热词一号", "热词二号", "热词三号", "热词四号", "热词五号", "热词六号"],
       }],
-      recentlyUsed: ["词一", "词二"],
+      recentlyUsed: ["热词一号", "热词二号"],
       limit: 6,
     });
-    expect(queries).toEqual(["词三", "词四", "词五", "词六", "词一", "词二"]);
+    expect(queries).toEqual(["热词三号", "热词四号", "热词五号", "热词六号", "热词一号", "热词二号"]);
   });
 
   it("进度抽查时四项指标必须仍属于同一视频", () => {

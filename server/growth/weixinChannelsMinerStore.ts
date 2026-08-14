@@ -3,8 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { GrowthPlatform } from "@shared/growth";
 import {
+  qualifyWeixinChannelsObservationLocally,
   WEIXIN_CHANNELS_AGGREGATION_MAX_ITEMS,
-  WEIXIN_CHANNELS_COMMENT_THRESHOLD,
   WEIXIN_CHANNELS_PROBE_TARGET,
   WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
 } from "@shared/weixinChannelsRules";
@@ -40,6 +40,9 @@ export type WeixinChannelsMinerState = {
     updatedAt: string;
     lastHeartbeatAt?: string;
     lastClientId?: string;
+    pausedAt?: string;
+    pausedBy?: "user" | "collector_safety_fuse";
+    pauseReason?: string;
   };
   aggregationPaused: boolean;
   candidates: CandidateState[];
@@ -228,7 +231,7 @@ export async function refreshWeixinChannelsCandidates(options?: { perPlatform?: 
     });
     for (const current of state.candidates) {
       if (!newIds.has(current.taskId) && state.observations.some((item) => item.taskId === current.taskId)) {
-        // 超出七天窗口的候选只为历史记录保留关联，强制终态，不能再被本机领取。
+        // 超出十五天窗口的候选只为历史记录保留关联，强制终态，不能再被本机领取。
         candidates.push({
           ...current,
           status: "scanned",
@@ -296,9 +299,9 @@ export async function ingestWeixinChannelsObservations(params: {
         ...raw,
         persistedAt: current?.persistedAt || ingestedAt,
       });
-      if (incoming.comments !== undefined
-        && incoming.comments >= WEIXIN_CHANNELS_COMMENT_THRESHOLD
-        && !incoming.invalid
+      const qualification = qualifyWeixinChannelsObservationLocally(incoming);
+      if (qualification.qualified
+        && qualification.requiresComments
         && !incoming.commentSamples?.length) {
         throw new Error("weixin_channels_comments_required");
       }
@@ -378,7 +381,32 @@ export async function setWeixinChannelsCaptureEnabled(enabled: boolean) {
     const state = await readState();
     return writeState({
       ...state,
-      capture: { ...state.capture, enabled, updatedAt: new Date().toISOString() },
+      capture: {
+        ...state.capture,
+        enabled,
+        updatedAt: new Date().toISOString(),
+        ...(enabled
+          ? { pausedAt: undefined, pausedBy: undefined, pauseReason: undefined }
+          : { pausedAt: new Date().toISOString(), pausedBy: "user" as const, pauseReason: undefined }),
+      },
+    });
+  });
+}
+
+export async function pauseWeixinChannelsCaptureForSafetyFuse(reason: "persistent_black_screen" | "persistent_same_content") {
+  return serializeMutation(async () => {
+    const state = await readState();
+    const now = new Date().toISOString();
+    return writeState({
+      ...state,
+      capture: {
+        ...state.capture,
+        enabled: false,
+        updatedAt: now,
+        pausedAt: now,
+        pausedBy: "collector_safety_fuse",
+        pauseReason: reason,
+      },
     });
   });
 }

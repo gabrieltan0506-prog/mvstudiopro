@@ -12,6 +12,15 @@ export const WEIXIN_CHANNELS_TERRA_MAX_COMPLETION_TOKENS = 100_000;
 export const WEIXIN_CHANNELS_LUNA_BATCH_SIZE = 100;
 export const WEIXIN_CHANNELS_PROBE_TARGET = 5;
 export const WEIXIN_CHANNELS_COMMENT_THRESHOLD = 80;
+/**
+ * 前置高热信号的业务校准区间。min 是采集硬门槛；referenceHigh 只表示
+ * 该指标已进入明显高热段，不是上限，超过它仍然达标。
+ */
+export const WEIXIN_CHANNELS_HIGH_HEAT_BANDS = {
+  likes: { min: 1_000, referenceHigh: 2_000 },
+  shares: { min: 500, referenceHigh: 1_000 },
+  favorites: { min: 500, referenceHigh: 1_000 },
+} as const;
 /** 完整五点与真实评论链至少需要 25 秒；长视频仍按时长约十分之一加 2 秒。 */
 export const WEIXIN_CHANNELS_CAPTURE_TOLERANCE_MS = 2_000;
 export const WEIXIN_CHANNELS_MIN_COMPLETE_CAPTURE_MS = 25_000;
@@ -68,6 +77,19 @@ export function containsWeixinChannelsAdvertisement(ocrTexts?: readonly string[]
   return (ocrTexts || []).some((text) => /广告|廣告/.test(String(text || "").replace(/\s+/g, "")));
 }
 
+/**
+ * 视频本身的前置高热门槛。评论只能证明讨论量，不能单独把低互动视频抬成达标。
+ */
+export function hasWeixinChannelsHighHeatSignals(
+  item: Pick<WeixinChannelsQualificationInput, "likes" | "shares" | "favorites">,
+) {
+  return [
+    (Number(item.likes) || 0) >= WEIXIN_CHANNELS_HIGH_HEAT_BANDS.likes.min,
+    (Number(item.shares) || 0) >= WEIXIN_CHANNELS_HIGH_HEAT_BANDS.shares.min,
+    (Number(item.favorites) || 0) >= WEIXIN_CHANNELS_HIGH_HEAT_BANDS.favorites.min,
+  ].filter(Boolean).length >= 2;
+}
+
 /** 单条采集的唯一资格真源：纯本地规则，禁止在这里调用模型。 */
 export function qualifyWeixinChannelsObservationLocally(
   item: WeixinChannelsQualificationInput,
@@ -90,35 +112,23 @@ export function qualifyWeixinChannelsObservationLocally(
     };
   }
 
-  const comments = Math.max(0, Number(item.comments) || 0);
-  if (comments >= WEIXIN_CHANNELS_COMMENT_THRESHOLD) {
+  if (!hasWeixinChannelsHighHeatSignals(item)) {
     return {
-      qualified: true,
+      qualified: false,
       invalid: false,
-      reason: "评论讨论达到采集门槛",
-      requiresComments: true,
-    };
-  }
-
-  const strongSignals = [
-    (Number(item.likes) || 0) >= 2_000,
-    (Number(item.shares) || 0) >= 1_000,
-    (Number(item.favorites) || 0) >= 1_000,
-  ].filter(Boolean).length;
-  if (strongSignals >= 2) {
-    return {
-      qualified: true,
-      invalid: false,
-      reason: "多个互动指标同时达到高热门槛",
+      reason: "前置高热互动不足，不采样、不打开评论、不上传",
       requiresComments: false,
     };
   }
 
+  const comments = Math.max(0, Number(item.comments) || 0);
   return {
-    qualified: false,
+    qualified: true,
     invalid: false,
-    reason: "互动指标不足，仅记录扫描结果，不进入模型队列",
-    requiresComments: false,
+    reason: comments >= WEIXIN_CHANNELS_COMMENT_THRESHOLD
+      ? "前置高热互动达标，评论达到附加采集门槛"
+      : "前置高热互动达标，记录数据和精华画面，不打开评论",
+    requiresComments: comments >= WEIXIN_CHANNELS_COMMENT_THRESHOLD,
   };
 }
 
@@ -151,6 +161,9 @@ export function normalizeWeixinChannelsSearchQuery(value: unknown) {
     .trim();
   if (!normalized || WEIXIN_CHANNELS_SEARCH_QUERY_REJECT.test(normalized)) return undefined;
   let compact = normalized.replace(/\s+/g, "");
+  // 平台标题偶尔带内部素材/导出后缀，例如 `_760989efc2`。这类 ID 不是用户
+  // 主题词；纯数字、纯十六进制及下划线哈希必须在共享真源直接拒绝。
+  if (/^_?[0-9a-f]{8,}$/i.test(compact) || /^\d+$/.test(compact)) return undefined;
   // 七天标题常把“新手/小白/教程”层层堆在主题后；视频号搜索需要主题词，
   // 保留具体 AI 垂类并压成“主题+教程”，避免输入整句修饰语。
   compact = compact.replace(
