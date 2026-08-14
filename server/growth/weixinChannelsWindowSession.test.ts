@@ -32,6 +32,38 @@ describe("视频号双窗口协调器", () => {
     expect(isEligibleWeixinChannelsWindow({ ...window(1, 0), title: "微信" }, true)).toBe(false);
   });
 
+  it("显式自动绑定只接受同 PID 的恰好两窗，并按屏幕位置固定左右槽位", () => {
+    const coordinator = createWeixinChannelsWindowCoordinator(
+      [window(56915, 500), window(56885, 0)],
+      [],
+      { allowExactTwoAutoBinding: true },
+    );
+    expect(coordinator.sessions.map((session) => ({
+      windowId: session.windowId,
+      pid: session.pid,
+      slot: session.slot,
+    }))).toEqual([
+      { windowId: 56885, pid: 900, slot: 1 },
+      { windowId: 56915, pid: 900, slot: 2 },
+    ]);
+  });
+
+  it("显式自动绑定遇到非两窗或跨 PID 时失败关闭", () => {
+    const options = { allowExactTwoAutoBinding: true };
+    expect(() => createWeixinChannelsWindowCoordinator(
+      [window(56885, 0)], [], options,
+    )).toThrow("weixin_channels_exact_two_windows_required");
+    expect(() => createWeixinChannelsWindowCoordinator(
+      [window(56885, 0), window(56915, 500), window(57000, 1_000)], [], options,
+    )).toThrow("weixin_channels_exact_two_windows_required");
+    expect(() => createWeixinChannelsWindowCoordinator(
+      [window(56885, 0), window(56915, 500, 901)], [], options,
+    )).toThrow("weixin_channels_windows_pid_mismatch");
+    expect(() => createWeixinChannelsWindowCoordinator(
+      [window(56885, 0), window(56915, 500)], [56885, 56915], options,
+    )).toThrow("weixin_channels_window_binding_mode_conflict");
+  });
+
   it("每个控制命令携带绑定 windowId，CLI 拒绝重复或第三个窗口", () => {
     const session = createWeixinChannelsWindowCoordinator([window(56885, 0)], [56885]).sessions[0]!;
     expect(buildWindowScopedControlArgs(session, ["key", "escape"]))

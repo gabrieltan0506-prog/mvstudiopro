@@ -81,13 +81,15 @@ unset collector_secret
 collector_pnpm="$(command -v pnpm 2>/dev/null)" || exit 69
 cd "${collector_repo_dir}" || exit 72
 
-# 两个 CGWindow ID 是正式入口的一部分。不得删除、自动补选或改成无作用域调用。
+# 正式入口只允许“恰好两窗、同一微信 PID”的受限自动绑定；每次由网页从停采
+# 切到开采时重新显示两窗放大镜校准层，禁用时由本机监督器待机而不是退出。
 /usr/bin/caffeinate -dimsu "${collector_pnpm}" exec tsx \
   scripts/weixin-channels-capture.mts \
   --pool \
   --server="${collector_server}" \
-  --window-id=56885 \
-  --window-id=56915 &
+  --auto-bind-exact-two-windows \
+  --calibrate-search-buttons \
+  --supervise-web-toggle &
 collector_child_pid=$!
 
 wait "${collector_child_pid}"

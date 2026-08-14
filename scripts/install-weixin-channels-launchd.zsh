@@ -35,12 +35,14 @@ validate_source() {
   /bin/zsh -f -o NO_BG_NICE -n "${source_launcher}" || fail "launcher_syntax_invalid"
   /bin/zsh -f -o NO_BG_NICE -n "${installer_file}" || fail "installer_syntax_invalid"
   /usr/bin/plutil -lint "${source_plist}" >/dev/null || fail "source_plist_invalid"
-  /usr/bin/grep -F -- "--window-id=56885" "${source_launcher}" >/dev/null \
-    || fail "left_window_id_missing"
-  /usr/bin/grep -F -- "--window-id=56915" "${source_launcher}" >/dev/null \
-    || fail "right_window_id_missing"
-  window_arg_count="$(/usr/bin/grep -Eo -- '--window-id=[0-9]+' "${source_launcher}" | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
-  [[ "${window_arg_count}" == 2 ]] || fail "unexpected_window_id_count:${window_arg_count}"
+  /usr/bin/grep -F -- "--auto-bind-exact-two-windows" "${source_launcher}" >/dev/null \
+    || fail "exact_two_window_auto_binding_missing"
+  /usr/bin/grep -F -- "--calibrate-search-buttons" "${source_launcher}" >/dev/null \
+    || fail "formal_search_calibration_missing"
+  /usr/bin/grep -F -- "--supervise-web-toggle" "${source_launcher}" >/dev/null \
+    || fail "web_toggle_supervisor_missing"
+  ! /usr/bin/grep -E -- '--window-id=[0-9]+' "${source_launcher}" >/dev/null \
+    || fail "hardcoded_window_id_forbidden"
   [[ "$(/usr/libexec/PlistBuddy -c 'Print :KeepAlive:SuccessfulExit' "${source_plist}")" == false ]] \
     || fail "launchd_keepalive_must_only_restart_nonzero_exit"
   [[ "$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "${source_plist}")" \
