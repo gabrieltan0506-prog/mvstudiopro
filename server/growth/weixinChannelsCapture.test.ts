@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  automaticRecoveryDelayMs,
   extractCommentSamples,
   captureBudgetMsForVideo,
   collectorSeenContains,
@@ -36,6 +37,7 @@ import {
   scoreRepresentativeFrameCandidate,
   selectReusableCollectorCandidate,
   shouldReuseExistingSearchTab,
+  shouldLaunchdRestartCollector,
   shouldSwitchRecommendationToSearch,
   shouldRotateSearchQuery,
   syncPersistedCollectorIdentities,
@@ -146,6 +148,17 @@ describe("weixin channels OCR", () => {
     expect(collectorVideoStateAfterCapture({ qualified: true, persisted: true })).toEqual({ state: "persisted", stopWithoutAdvance: false });
     expect(collectorVideoStateAfterCapture({ qualified: true, persisted: false })).toEqual({ state: "retryable_failed", stopWithoutAdvance: true });
     expect(collectorVideoStateAfterCapture({ qualified: false, persisted: false })).toEqual({ state: "terminal_unqualified", stopWithoutAdvance: false });
+  });
+
+  it("夜间自动恢复使用有上限的指数退避，不要求人工重启", () => {
+    expect(automaticRecoveryDelayMs(1)).toBe(5_000);
+    expect(automaticRecoveryDelayMs(2)).toBe(10_000);
+    expect(automaticRecoveryDelayMs(7)).toBe(300_000);
+    expect(automaticRecoveryDelayMs(100)).toBe(300_000);
+    expect(shouldLaunchdRestartCollector("player_state_unconfirmed")).toBe(true);
+    expect(shouldLaunchdRestartCollector("capture_disabled")).toBe(false);
+    expect(shouldLaunchdRestartCollector("hourly_target_missed")).toBe(false);
+    expect(shouldLaunchdRestartCollector("max_scanned_reached", 1)).toBe(false);
   });
 
   it("只有 Fly persistedAt 同步结果会升级为跨重启重复", async () => {
