@@ -35,8 +35,10 @@
 ## 零 token 本地 watchdog
 
 watchdog 每 60 秒只用本地进程、增量日志和 Fly heartbeat 做健康检查；正常状态不调用模型。
-只有新的持久故障证据才运行一次临时 Codex 修复任务，同一故障一小时内去重。自动任务可以诊断、
-修改工作树并跑测试，但明确禁止 commit、push、PR、部署、付费业务模型和真实微信 UI。
+只有新的持久故障证据才运行一次临时 Codex 修复任务，同一故障一小时内去重。自动任务先要求
+工作树干净，再创建独立修复分支；验证失败时继续诊断、修改和重跑，直到目标测试、TypeScript、
+构建和静态检查全部通过后才 commit、push 并创建 PR。真实阻塞时不推送；始终禁止自动合并、
+部署、付费业务模型和真实微信 UI。
 
 ```bash
 ./scripts/install-weixin-channels-watchdog.zsh --check-source
