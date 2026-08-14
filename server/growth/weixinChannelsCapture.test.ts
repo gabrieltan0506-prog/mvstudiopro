@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 import {
   automaticRecoveryDelayMs,
@@ -14,6 +15,7 @@ import {
   rememberCollectorSeen,
   buildDiverseCollectorSearchQueries,
   deriveVideoDurationSeconds,
+  detectVisibleProgressTrack,
   extractVisibleTitleAndAuthor,
   extractWeixinChannelsMetrics,
   findCommentsClosePoint,
@@ -201,6 +203,22 @@ describe("weixin channels OCR", () => {
     expect(collectorWatchdogDecision(30 * 60_000, 24)).toBe("checkpoint_30");
     expect(collectorWatchdogDecision(60 * 60_000, 49)).toBe("stop");
     expect(collectorWatchdogDecision(60 * 60_000, 50)).toBe("rollover");
+  });
+
+  it("识别视频号半透明蓝灰进度轨道，不把可见轨道误报为缺失", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-track-"));
+    const file = path.join(dir, "blue-gray-track.png");
+    await sharp({ create: { width: 966, height: 1538, channels: 3, background: { r: 0, g: 49, b: 83 } } })
+      .composite([
+        { input: { create: { width: 560, height: 5, channels: 3, background: { r: 94, g: 123, b: 146 } } }, left: 120, top: 1262 },
+        { input: { create: { width: 110, height: 5, channels: 3, background: { r: 255, g: 255, b: 255 } } }, left: 120, top: 1262 },
+      ])
+      .png()
+      .toFile(file);
+    const track = await detectVisibleProgressTrack(file);
+    expect(track.startX).toBeGreaterThanOrEqual(0.08);
+    expect(track.endX).toBeGreaterThan(0.65);
+    expect(track.y).toBeCloseTo(1262 / 1538, 2);
   });
 
   it("解析中文万单位且不伪造缺失数据", () => {

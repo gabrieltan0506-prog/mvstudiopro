@@ -699,7 +699,10 @@ export async function detectVisibleProgressTrack(screenshot: string) {
       const red = data[offset]!;
       const green = data[offset + 1]!;
       const blue = data[offset + 2]!;
-      const gray = Math.max(red, green, blue) - Math.min(red, green, blue) <= 45 && red >= 55 && red <= 255;
+      // 微信会把未播放轨道染成半透明蓝灰（实测 RGB 约 94/123/146，色差 52），
+      // 旧的 45 阈值只认中性灰，导致画面明明有轨道却无限重试。背景深蓝 red≈0，
+      // 继续由 red>=55 排除，因此放宽到 65 不会把整片视频背景当进度条。
+      const gray = Math.max(red, green, blue) - Math.min(red, green, blue) <= 65 && red >= 55 && red <= 255;
       if (gray) {
         if (runStart < 0 || (lastGray >= 0 && x - lastGray > Math.round(info.width * 0.025))) runStart = x;
         lastGray = x;
