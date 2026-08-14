@@ -12,11 +12,15 @@ export const WEIXIN_CHANNELS_TERRA_MAX_COMPLETION_TOKENS = 100_000;
 export const WEIXIN_CHANNELS_LUNA_BATCH_SIZE = 100;
 export const WEIXIN_CHANNELS_PROBE_TARGET = 5;
 export const WEIXIN_CHANNELS_COMMENT_THRESHOLD = 80;
-/** “视频时长约十分之一”允许 2 秒本机 OCR/窗口调度抖动。 */
+/** 完整五点与真实评论链至少需要 25 秒；长视频仍按时长约十分之一加 2 秒。 */
 export const WEIXIN_CHANNELS_CAPTURE_TOLERANCE_MS = 2_000;
+export const WEIXIN_CHANNELS_MIN_COMPLETE_CAPTURE_MS = 25_000;
 
 export function weixinChannelsCaptureBudgetMs(videoDurationSec: number) {
-  return Math.max(1_000, Math.round(videoDurationSec * 100) + WEIXIN_CHANNELS_CAPTURE_TOLERANCE_MS);
+  return Math.max(
+    WEIXIN_CHANNELS_MIN_COMPLETE_CAPTURE_MS,
+    Math.round(videoDurationSec * 100) + WEIXIN_CHANNELS_CAPTURE_TOLERANCE_MS,
+  );
 }
 
 export type WeixinChannelsCommentSignal =

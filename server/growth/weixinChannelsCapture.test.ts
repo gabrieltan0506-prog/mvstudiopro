@@ -91,7 +91,7 @@ describe("weixin channels OCR", () => {
     expect(nextCollectorSearchQueryIndex(0, 1)).toBe(0);
   });
 
-  it("从多点播放时钟推导时长，并将总采集预算限制为视频时长十分之一加两秒", () => {
+  it("从多点播放时钟推导时长，短视频保留真实评论最低预算", () => {
     expect(parseVisibleVideoClockSeconds("当前 0:12")).toBe(12);
     expect(deriveVideoDurationSeconds([
       { progress: 0.1, text: "0:06" },
@@ -101,7 +101,7 @@ describe("weixin channels OCR", () => {
       { progress: 0.9, text: "0:54" },
     ])).toBe(60);
     expect(WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS).toEqual([0.1, 0.3, 0.5, 0.7, 0.9]);
-    expect(captureBudgetMsForVideo(60)).toBe(8_000);
+    expect(captureBudgetMsForVideo(60)).toBe(25_000);
     expect(captureBudgetMsForVideo(600)).toBe(62_000);
   });
 
@@ -487,14 +487,14 @@ describe("weixin channels OCR", () => {
       taskId: "task-eligible", videoDurationSec: 274, captureBudgetMs: 27_400, captureElapsedMs: 27_442,
     }));
     await fs.writeFile(path.join(quarantine, excessiveName), JSON.stringify({
-      taskId: "task-excessive", videoDurationSec: 60, captureBudgetMs: 6_000, captureElapsedMs: 8_001,
+      taskId: "task-excessive", videoDurationSec: 60, captureBudgetMs: 25_000, captureElapsedMs: 25_001,
     }));
     expect(await restoreEligibleQuarantinedObservations(dir)).toEqual({ found: 2, restored: 1 });
     await expect(fs.stat(path.join(dir, eligibleName))).resolves.toBeTruthy();
     await expect(fs.stat(path.join(quarantine, excessiveName))).resolves.toBeTruthy();
 
     await fs.writeFile(path.join(dir, "weixin-channels-pending-second.json"), JSON.stringify({
-      taskId: "task-second", videoDurationSec: 60, captureBudgetMs: 8_000, captureElapsedMs: 7_000,
+      taskId: "task-second", videoDurationSec: 60, captureBudgetMs: 25_000, captureElapsedMs: 7_000,
     }));
     const persistedFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ persisted: true }), { status: 200 }));
     const recovery = await retryPendingObservations({
