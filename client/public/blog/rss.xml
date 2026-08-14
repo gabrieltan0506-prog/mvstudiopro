@@ -6,7 +6,14 @@
     <atom:link href="https://www.mvstudiopro.com/blog/rss.xml" rel="self" type="application/rss+xml"/>
     <description>AI 漫剧与视频生成实测：模型对比、真实价格、工作流拆解</description>
     <language>zh-CN</language>
-    <lastBuildDate>Thu, 13 Aug 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Fri, 14 Aug 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>5条视频分析费不到1美分：DeepSeek V4 Pro 0813，真把趋势分析打成白菜价了？</title>
+      <link>https://www.mvstudiopro.com/blog/deepseek-v4-pro-0813-cost-test</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/deepseek-v4-pro-0813-cost-test</guid>
+      <pubDate>Fri, 14 Aug 2026 00:00:00 GMT</pubDate>
+      <description>5条视频号样本、10759 tokens，DeepSeek V4 Pro 0813真实账单只扣了0.008104485美元。它能分类、去重、抓关键词，也会把一条孤证喊成“蓝海”。这篇实测讲清便宜模型和高阶模型该怎么分工。</description>
+    </item>
     <item>
       <title>十万字交给两个顶级 AI：一个浓缩成 4 页，一个写了 7 页——谁更懂「精炼」？</title>
       <link>https://www.mvstudiopro.com/blog/fde-knowledge-cards-claude-vs-gpt-sol</link>
