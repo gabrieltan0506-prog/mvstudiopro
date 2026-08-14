@@ -515,8 +515,29 @@ do {
             throw ControlError.invalidArguments
         }
         guard !isDangerousAvatarRegion(relX: relX, relY: relY),
-              !isDangerousTabCloseRegion(relX: relX, relY: relY),
-              !pointerPathCrossesDangerousAvatarRegion(window: window, toX: relX, toY: relY) else {
+              !isDangerousTabCloseRegion(relX: relX, relY: relY) else {
+            throw ControlError.dangerousAvatarRegion
+        }
+        // 上一步常停在评论关闭点 (≈0.944, 0.084)，直接移向搜索按钮会穿过
+        // 头像禁区。先移到左侧安全点再重新校验整段路径，目标禁区硬门不放宽。
+        if pointerPathCrossesDangerousAvatarRegion(window: window, toX: relX, toY: relY) {
+            let safe = CGPoint(
+                x: window.x + window.width * 0.02,
+                y: window.y + window.height * 0.50
+            )
+            CGEvent(
+                mouseEventSource: nil,
+                mouseType: .mouseMoved,
+                mouseCursorPosition: safe,
+                mouseButton: .left
+            )?.post(tap: .cghidEventTap)
+            usleep(80_000)
+        }
+        guard !pointerPathCrossesDangerousAvatarRegion(
+            window: window,
+            toX: relX,
+            toY: relY
+        ) else {
             throw ControlError.dangerousAvatarRegion
         }
         let target = CGPoint(

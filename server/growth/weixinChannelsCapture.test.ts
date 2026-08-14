@@ -17,6 +17,8 @@ import {
   compactCollectorSearchQuery,
   collectorSearchQueryVariants,
   collectorAdvanceAllowed,
+  collectorSamplingModeForComments,
+  commentsPanelClosedOnSameVideo,
   collectorWatchdogDecision,
   collectorVideoStateAfterCapture,
   loadCollectorSearchTabState,
@@ -46,6 +48,7 @@ import {
   hasDefinitiveVisibleUnqualifiedMetrics,
   hasConfirmedVideoTransition,
   interactionMetricsConfirmed,
+  isCollectorWindowBindingFailure,
   isWeixinChannelsAuxiliaryPage,
   isWeixinChannelsPersonalDataPage,
   isWeixinChannelsMediaViewer,
@@ -55,6 +58,7 @@ import {
   nextCollectorSearchQueryIndex,
   nextCollectorRecoveryState,
   parseVisibleMetric,
+  parseCollectorFormalPoolOptions,
   parseVisibleVideoClockSeconds,
   parseVisibleVideoTotalDurationSeconds,
   pendingObservationHasRequiredComments,
@@ -63,13 +67,17 @@ import {
   retryPendingObservations,
   representativeFrameNeedsSingleRetry,
   scoreRepresentativeFrameCandidate,
+  sampledCapturePersistenceDisposition,
+  selectCurrentHottestSearchResultPoint,
   selectReusableCollectorCandidate,
   shouldReuseExistingSearchTab,
   shouldOpenVisibleComments,
   shouldLaunchdRestartCollector,
   shouldSwitchRecommendationToSearch,
   shouldUseWeixinChannelsSearchAtHour,
+  resolveCollectorWindowStartupMode,
   shouldRotateSearchQuery,
+  summarizeSearchSort,
   syncPersistedCollectorIdentities,
   uploadPendingObservation,
   visibleVideoIdentityFingerprint,
@@ -77,6 +85,7 @@ import {
   WEIXIN_CHANNELS_COMMENT_PANEL_SCREEN_COUNT,
   WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS,
   WEIXIN_CHANNELS_SEARCH_BUTTON_POINT,
+  WEIXIN_CHANNELS_SEARCH_HIGH_PLAY_THRESHOLD,
   WEIXIN_CHANNELS_SEARCH_INPUT_POINT,
   waitForVisibleVideoLoad,
 } from "../../scripts/weixin-channels-capture.mts";
@@ -87,6 +96,46 @@ describe("weixin channels OCR", () => {
     expect(shouldUseWeixinChannelsSearchAtHour(5)).toBe(true);
     expect(shouldUseWeixinChannelsSearchAtHour(6)).toBe(false);
     expect(shouldUseWeixinChannelsSearchAtHour(23)).toBe(false);
+  });
+
+  it("正式启动旗标必须在 pool 模式成套生效，且不能混用固定窗口 ID", () => {
+    expect(parseCollectorFormalPoolOptions([
+      "--pool",
+      "--auto-bind-exact-two-windows",
+      "--calibrate-search-buttons",
+      "--supervise-web-toggle",
+    ])).toEqual({
+      autoBindExactTwoWindows: true,
+      calibrateSearchButtons: true,
+      superviseWebToggle: true,
+      windowIds: [],
+    });
+    expect(() => parseCollectorFormalPoolOptions([
+      "--auto-bind-exact-two-windows",
+    ])).toThrow("weixin_channels_formal_pool_flags_require_pool_mode");
+    expect(() => parseCollectorFormalPoolOptions([
+      "--pool",
+      "--auto-bind-exact-two-windows",
+      "--window-id=58442",
+    ])).toThrow("weixin_channels_window_binding_mode_conflict");
+  });
+
+  it("夜间右窗先保住已达标当前视频，否则首次直接搜索；恢复重启不盲搜", () => {
+    expect(resolveCollectorWindowStartupMode({
+      isRightSearchWindow: true, hour: 0, startupQualified: true, restart: 0,
+    })).toEqual({ captureCurrentBeforeSearch: true, startInSearch: false });
+    expect(resolveCollectorWindowStartupMode({
+      isRightSearchWindow: true, hour: 5, startupQualified: false, restart: 0,
+    })).toEqual({ captureCurrentBeforeSearch: false, startInSearch: true });
+    expect(resolveCollectorWindowStartupMode({
+      isRightSearchWindow: true, hour: 5, startupQualified: false, restart: 1,
+    })).toEqual({ captureCurrentBeforeSearch: false, startInSearch: false });
+    expect(resolveCollectorWindowStartupMode({
+      isRightSearchWindow: true, hour: 6, startupQualified: false, restart: 0,
+    })).toEqual({ captureCurrentBeforeSearch: false, startInSearch: false });
+    expect(resolveCollectorWindowStartupMode({
+      isRightSearchWindow: false, hour: 0, startupQualified: false, restart: 0,
+    })).toEqual({ captureCurrentBeforeSearch: false, startInSearch: false });
   });
 
   it("新版爆款区间以区间下沿为门槛，1932 与 2000 同属达标", () => {
@@ -119,6 +168,12 @@ describe("weixin channels OCR", () => {
       shares: 500,
       favorites: 0,
     })).toBe(true);
+  });
+
+  it("评论不足 80 只保留单帧，达到 80 才进入五点与评论链", () => {
+    expect(collectorSamplingModeForComments(0)).toBe("single_representative_frame");
+    expect(collectorSamplingModeForComments(79)).toBe("single_representative_frame");
+    expect(collectorSamplingModeForComments(80)).toBe("five_point_comments");
   });
 
   it("顶栏标签只返回文字安全区，搜索结束只识别右侧搜索标签 X", () => {
@@ -312,6 +367,9 @@ describe("weixin channels OCR", () => {
     expect(shouldLaunchdRestartCollector("capture_disabled_during_recovery")).toBe(false);
     expect(shouldLaunchdRestartCollector("hourly_target_missed")).toBe(true);
     expect(shouldLaunchdRestartCollector("max_scanned_reached", 1)).toBe(false);
+    expect(isCollectorWindowBindingFailure("weixin_channels_window_not_found")).toBe(true);
+    expect(isCollectorWindowBindingFailure("weixin_channels_required_window_not_found")).toBe(true);
+    expect(isCollectorWindowBindingFailure("weixin_channels_comments_close_not_found")).toBe(false);
   });
 
   it("普通双窗失败自动重启，只有连续三次黑屏或同内容才触发网页暂停熔断", () => {
@@ -419,6 +477,48 @@ describe("weixin channels OCR", () => {
     expect(interactionMetricsConfirmed(first, makeOcr(["8998", "12000", "3981"]))).toBe(false);
   });
 
+  it("评论关闭后必须在四项恢复的同时证明仍是打开前的同一视频", () => {
+    const makeOcr = (values: string[], title = "同一条视频", author = "同一作者") => ({
+      width: 483,
+      height: 769,
+      lines: [
+        ...values.map((text, index) => ({
+          text, confidence: 0.99, x: 0.52 + index * 0.12, y: 0.08, width: 0.06, height: 0.03,
+        })),
+        { text: title, confidence: 0.99, x: 0.05, y: 0.12, width: 0.5, height: 0.03 },
+        { text: author, confidence: 0.99, x: 0.12, y: 0.06, width: 0.16, height: 0.02 },
+      ],
+    });
+    const base = makeOcr(["8998", "12000", "3981", "361"]);
+    expect(commentsPanelClosedOnSameVideo(
+      base,
+      makeOcr(["8999", "12000", "3981", "361"]),
+    )).toBe(true);
+    expect(commentsPanelClosedOnSameVideo(
+      base,
+      makeOcr(["103", "80", "42", "14"], "下一条视频", "另一作者"),
+    )).toBe(false);
+    expect(commentsPanelClosedOnSameVideo(
+      base,
+      makeOcr(["8998", "12000", "3981"]),
+    )).toBe(false);
+  });
+
+  it("五点抽查检出广告时在 pending 和上传前终止", () => {
+    expect(sampledCapturePersistenceDisposition({
+      advertisementDetected: true,
+      qualified: false,
+    })).toBe("reject_without_persist");
+    expect(sampledCapturePersistenceDisposition({
+      advertisementDetected: true,
+      qualified: true,
+    })).toBe("reject_without_persist");
+    expect(sampledCapturePersistenceDisposition({
+      advertisementDetected: false,
+      qualified: true,
+    })).toBe("persist");
+  });
+
   it("横排 OCR 漏掉一项时按真实槽位保留其余指标", () => {
     const metrics = extractWeixinChannelsMetrics([
       { text: "2.7万", confidence: 0.99, x: 0.52, y: 0.05, width: 0.05, height: 0.03 },
@@ -465,6 +565,21 @@ describe("weixin channels OCR", () => {
     expect(shouldReuseExistingSearchTab(1)).toBe(true);
     expect(shouldReuseExistingSearchTab(2)).toBe(true);
     expect(shouldReuseExistingSearchTab(3)).toBe(true);
+  });
+
+  it("主视频号组合标签不冒充搜索标签，搜索关闭点始终符合 Swift 硬门", () => {
+    const line = (text: string, x: number, width = 0.08) => ({
+      text, confidence: 0.99, x, y: 0.95, width, height: 0.03,
+    });
+    expect(findAnySearchTabPoint([line("视×", 0.58)])).toBeNull();
+    expect(findAnySearchTabPoint([line("视频号×", 0.58)])).toBeNull();
+    expect(findAnySearchTabPoint([line("三角洲×", 0.58)])).toMatchObject({
+      x: expect.any(Number), y: expect.any(Number),
+    });
+    const close = findSearchTabClosePoint([line("×", 0.67, 0.02)]);
+    expect(close?.x).toBeGreaterThanOrEqual(0.66);
+    expect(close?.x).toBeLessThanOrEqual(0.72);
+    expect(findSearchTabClosePoint([line("×", 0.58, 0.02)])).toBeNull();
   });
 
   it("回车停在联想下拉框时只点击完全匹配的搜索词", () => {
@@ -546,6 +661,26 @@ describe("weixin channels OCR", () => {
     });
   });
 
+  it("最热门数千播放的老视频可召回，但只点击当前页坐标", () => {
+    expect(WEIXIN_CHANNELS_SEARCH_HIGH_PLAY_THRESHOLD).toBe(1_000);
+    const current = summarizeSearchSort([
+      { text: "2年前", confidence: 0.99, x: 0.06, y: 0.40, width: 0.12, height: 0.03 },
+      { text: "6936", confidence: 0.99, x: 0.28, y: 0.46, width: 0.10, height: 0.03 },
+    ], "陕西女人");
+    expect(current.firstHighPlayPoint).toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
+    expect(selectCurrentHottestSearchResultPoint(current)).toEqual(current.firstHighPlayPoint);
+    const staleMerged = { ...current, firstHighPlayPoint: { x: 0.2, y: 0.5 } };
+    const emptyCurrent = { ...current, firstHighPlayPoint: undefined };
+    expect(selectCurrentHottestSearchResultPoint(emptyCurrent)).toBeNull();
+    expect(staleMerged.firstHighPlayPoint).not.toEqual(selectCurrentHottestSearchResultPoint(emptyCurrent));
+    const advertisement = summarizeSearchSort([
+      { text: "2年前", confidence: 0.99, x: 0.06, y: 0.40, width: 0.12, height: 0.03 },
+      { text: "6936", confidence: 0.99, x: 0.28, y: 0.46, width: 0.10, height: 0.03 },
+      { text: "广告", confidence: 0.99, x: 0.08, y: 0.44, width: 0.08, height: 0.03 },
+    ], "陕西女人");
+    expect(selectCurrentHottestSearchResultPoint(advertisement)).toBeNull();
+  });
+
   it("由 OCR 评论标题同行推导关闭点，并在关闭后要求四项指标重新出现", () => {
     const panel = [
       { text: "评论 1.5万", confidence: 0.99, x: 0.08, y: 0.86, width: 0.18, height: 0.04 },
@@ -596,7 +731,7 @@ describe("weixin channels OCR", () => {
     expect(isWeixinChannelsAuxiliaryPage([
       { text: "全部", confidence: 0.99, x: 0.2, y: 0.8, width: 0.1, height: 0.04 },
       { text: "影片", confidence: 0.99, x: 0.4, y: 0.8, width: 0.1, height: 0.04 },
-      { text: "朋友圈", confidence: 0.99, x: 0.6, y: 0.8, width: 0.1, height: 0.04 },
+      { text: "问答", confidence: 0.99, x: 0.6, y: 0.8, width: 0.1, height: 0.04 },
     ])).toBe(true);
     expect(isWeixinChannelsAuxiliaryPage([
       { text: "客房没有捷径", confidence: 0.99, x: 0.1, y: 0.2, width: 0.3, height: 0.04 },

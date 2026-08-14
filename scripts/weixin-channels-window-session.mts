@@ -43,6 +43,14 @@ export type WeixinChannelsWindowCoordinator = {
   sharedDedupNamespace: typeof WEIXIN_CHANNELS_SHARED_DEDUP_NAMESPACE;
 };
 
+export type WeixinChannelsWindowSelectionOptions = {
+  /**
+   * 正式启动时唯一允许的自动绑定模式：必须恰好存在两个合格视频号窗口，
+   * 两窗必须属于同一微信 PID，并按屏幕 x 坐标固定为左/右会话。
+   */
+  allowExactTwoAutoBinding?: boolean;
+};
+
 export type SearchPlaybackRoute = {
   searchWindowId: number;
   playbackWindowId: number;
@@ -176,13 +184,20 @@ export function isEligibleWeixinChannelsWindow(window: WeixinChannelsWindowInfo,
     && [window.x, window.y, window.width, window.height].every(Number.isFinite);
 }
 
-/** 双窗必须给出完整 ID；单窗仅在唯一候选时允许兼容自动绑定。 */
+/** 默认双窗必须给出完整 ID；只有显式受限模式可自动绑定恰好两窗。 */
 export function selectStableWeixinChannelsWindows(
   windows: WeixinChannelsWindowInfo[],
   requiredWindowIds: number[] = [],
+  options: WeixinChannelsWindowSelectionOptions = {},
 ) {
   const requiredIds = new Set(requiredWindowIds);
-  const eligible = windows.filter((window) => isEligibleWeixinChannelsWindow(window, requiredIds.has(window.windowId)));
+  if (options.allowExactTwoAutoBinding && requiredWindowIds.length) {
+    throw new Error("weixin_channels_window_binding_mode_conflict");
+  }
+  const eligible = windows.filter((window) => isEligibleWeixinChannelsWindow(
+    window,
+    requiredIds.has(window.windowId) || options.allowExactTwoAutoBinding === true,
+  ));
   if (new Set(requiredWindowIds).size !== requiredWindowIds.length
     || requiredWindowIds.some((windowId) => !isFiniteInteger(windowId))
     || requiredWindowIds.length > WEIXIN_CHANNELS_MAX_CONCURRENT_WINDOWS) {
@@ -198,6 +213,15 @@ export function selectStableWeixinChannelsWindows(
     }
     return exact;
   }
+  if (options.allowExactTwoAutoBinding) {
+    if (eligible.length !== WEIXIN_CHANNELS_MAX_CONCURRENT_WINDOWS) {
+      throw new Error("weixin_channels_exact_two_windows_required");
+    }
+    if (new Set(eligible.map((window) => window.pid)).size !== 1) {
+      throw new Error("weixin_channels_windows_pid_mismatch");
+    }
+    return [...eligible].sort((left, right) => left.x - right.x || left.windowId - right.windowId);
+  }
   if (eligible.length > 1) {
     throw new Error("weixin_channels_window_id_required_for_multiple_windows");
   }
@@ -207,8 +231,9 @@ export function selectStableWeixinChannelsWindows(
 export function createWeixinChannelsWindowSessions(
   windows: WeixinChannelsWindowInfo[],
   requiredWindowIds: number[] = [],
+  options: WeixinChannelsWindowSelectionOptions = {},
 ): WeixinChannelsWindowSession[] {
-  return selectStableWeixinChannelsWindows(windows, requiredWindowIds)
+  return selectStableWeixinChannelsWindows(windows, requiredWindowIds, options)
     .sort((left, right) => left.x - right.x || left.windowId - right.windowId)
     .map((window, index) => ({
     sessionKey: `weixin-channels:${window.pid}:${window.windowId}`,
@@ -225,9 +250,10 @@ export function createWeixinChannelsWindowSessions(
 export function createWeixinChannelsWindowCoordinator(
   windows: WeixinChannelsWindowInfo[],
   requiredWindowIds: number[] = [],
+  options: WeixinChannelsWindowSelectionOptions = {},
 ): WeixinChannelsWindowCoordinator {
   return {
-    sessions: createWeixinChannelsWindowSessions(windows, requiredWindowIds),
+    sessions: createWeixinChannelsWindowSessions(windows, requiredWindowIds, options),
     maxConcurrentUiActions: WEIXIN_CHANNELS_MAX_CONCURRENT_UI_ACTIONS,
     sharedDedupNamespace: WEIXIN_CHANNELS_SHARED_DEDUP_NAMESPACE,
   };
