@@ -377,10 +377,25 @@ async function persistCollectorSearchTabState(state: CollectorSearchTabState, te
   await fs.rename(temp, file);
 }
 
+export type CollectorVideoState = "persisted" | "terminal_unqualified" | "retryable_failed";
+
+export function collectorVideoStateAfterCapture(result: { qualified: boolean; persisted?: boolean }) {
+  if (result.qualified && result.persisted !== true) {
+    return { state: "retryable_failed" as const, stopWithoutAdvance: true };
+  }
+  return {
+    state: result.persisted === true ? "persisted" as const : "terminal_unqualified" as const,
+    stopWithoutAdvance: false,
+  };
+}
+
 type CollectorSeenEntry = {
   videoIdentity: string;
   observationId?: string;
   seenAt: string;
+  state: CollectorVideoState;
+  retryAfter?: string;
+  failureReason?: string;
 };
 
 export type CollectorSeenRegistry = {
@@ -390,31 +405,57 @@ export type CollectorSeenRegistry = {
 };
 
 function collectorSeenFile(tempDir = os.tmpdir()) {
-  return path.join(tempDir, "weixin-channels-seen-videos-v1.json");
+  return path.join(tempDir, "weixin-channels-seen-videos-v2.json");
 }
 
 export async function loadCollectorSeenRegistry(tempDir = os.tmpdir(), now = Date.now()): Promise<CollectorSeenRegistry> {
   const file = collectorSeenFile(tempDir);
-  let rawEntries: CollectorSeenEntry[] = [];
+  let rawEntries: Array<Partial<CollectorSeenEntry> & Pick<CollectorSeenEntry, "videoIdentity" | "seenAt">> = [];
   try {
     const parsed = JSON.parse(await fs.readFile(file, "utf8")) as { entries?: CollectorSeenEntry[] };
     rawEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    // v1 的 seen 只代表“曾开始处理”，不能证明 Fly 已持久化。迁移为可重试失败，
+    // 防止旧污染状态继续把达标视频当成重复后直接滑走。
+    try {
+      const legacy = JSON.parse(await fs.readFile(path.join(tempDir, "weixin-channels-seen-videos-v1.json"), "utf8")) as { entries?: Array<Pick<CollectorSeenEntry, "videoIdentity" | "observationId" | "seenAt">> };
+      rawEntries = (legacy.entries || []).map((entry) => ({
+        ...entry,
+        state: "retryable_failed",
+        failureReason: "legacy_unverified_seen",
+      }));
+    } catch (legacyError) {
+      if ((legacyError as NodeJS.ErrnoException).code !== "ENOENT") throw legacyError;
+    }
   }
   const entries = new Map<string, CollectorSeenEntry>();
   const observationIds = new Set<string>();
   for (const entry of rawEntries) {
     const seenAt = Date.parse(entry.seenAt);
     if (!entry.videoIdentity || !Number.isFinite(seenAt) || now - seenAt > WEIXIN_CHANNELS_SEEN_TTL_MS) continue;
-    entries.set(entry.videoIdentity, entry);
-    if (entry.observationId) observationIds.add(entry.observationId);
+    const state = entry.state === "persisted" || entry.state === "terminal_unqualified"
+      ? entry.state
+      : "retryable_failed";
+    const normalized: CollectorSeenEntry = { ...entry, state };
+    entries.set(entry.videoIdentity, normalized);
+    if (entry.observationId && state !== "retryable_failed") observationIds.add(entry.observationId);
   }
   return { file, entries, observationIds };
 }
 
 export function collectorSeenContains(registry: CollectorSeenRegistry, videoIdentity: string, observationId?: string) {
-  return registry.entries.has(videoIdentity) || Boolean(observationId && registry.observationIds.has(observationId));
+  const entry = registry.entries.get(videoIdentity);
+  const terminal = entry?.state === "persisted" || entry?.state === "terminal_unqualified";
+  return terminal || Boolean(observationId && registry.observationIds.has(observationId));
+}
+
+async function persistCollectorSeenRegistry(registry: CollectorSeenRegistry, now: number) {
+  const fresh = Array.from(registry.entries.values()).filter((item) => now - Date.parse(item.seenAt) <= WEIXIN_CHANNELS_SEEN_TTL_MS);
+  await fs.mkdir(path.dirname(registry.file), { recursive: true });
+  const temp = `${registry.file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(temp, JSON.stringify({ version: 2, updatedAt: new Date(now).toISOString(), entries: fresh }, null, 2), "utf8");
+  await fs.rename(temp, registry.file);
 }
 
 export async function rememberCollectorSeen(
@@ -424,12 +465,8 @@ export async function rememberCollectorSeen(
 ) {
   const normalized = { ...entry, seenAt: new Date(now).toISOString() };
   registry.entries.set(normalized.videoIdentity, normalized);
-  if (normalized.observationId) registry.observationIds.add(normalized.observationId);
-  const fresh = Array.from(registry.entries.values()).filter((item) => now - Date.parse(item.seenAt) <= WEIXIN_CHANNELS_SEEN_TTL_MS);
-  await fs.mkdir(path.dirname(registry.file), { recursive: true });
-  const temp = `${registry.file}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(temp, JSON.stringify({ version: 1, updatedAt: new Date(now).toISOString(), entries: fresh }, null, 2), "utf8");
-  await fs.rename(temp, registry.file);
+  if (normalized.observationId && normalized.state !== "retryable_failed") registry.observationIds.add(normalized.observationId);
+  await persistCollectorSeenRegistry(registry, now);
 }
 
 type CollectorPhase = "metricsOcr" | "duration" | "contentSampling" | "comments" | "cover" | "upload" | "advance";
@@ -692,7 +729,7 @@ async function detectVisibleProgressTrackReliably(screenshot: string) {
 
 async function detectVideoDurationBeforeSampling(params: {
   screenshot: string;
-  baseIdentity: string;
+  baseMetrics: ReturnType<typeof extractWeixinChannelsMetrics>;
   videoDurationHintSec?: number;
 }) {
   if (params.videoDurationHintSec && params.videoDurationHintSec > 0) return params.videoDurationHintSec;
@@ -703,8 +740,9 @@ async function detectVideoDurationBeforeSampling(params: {
   await new Promise((resolve) => setTimeout(resolve, 300));
   await captureWindow(params.screenshot);
   const revealed = await readOcr(params.screenshot);
-  const revealedIdentity = visibleVideoIdentityFingerprint(revealed);
-  if (revealedIdentity && revealedIdentity !== params.baseIdentity) throw new Error("weixin_channels_video_identity_changed_before_duration");
+  if (!metricsRemainOnSameVideo(params.baseMetrics, extractWeixinChannelsMetrics(revealed.lines))) {
+    throw new Error("weixin_channels_video_continuity_unconfirmed_before_duration");
+  }
   const track = await detectVisibleProgressTrackReliably(params.screenshot);
   const text = revealed.lines.filter((line) => line.confidence >= 0.35).map((line) => line.text).join(" | ");
   let duration = parseVisibleVideoTotalDurationSeconds(text);
@@ -723,8 +761,9 @@ async function detectVideoDurationBeforeSampling(params: {
     await new Promise((resolve) => setTimeout(resolve, 650));
     await captureWindow(params.screenshot);
     const atEnd = await readOcr(params.screenshot);
-    const endIdentity = visibleVideoIdentityFingerprint(atEnd);
-    if (endIdentity && endIdentity !== params.baseIdentity) throw new Error("weixin_channels_video_identity_changed_before_duration");
+    if (!metricsRemainOnSameVideo(params.baseMetrics, extractWeixinChannelsMetrics(atEnd.lines))) {
+      throw new Error("weixin_channels_video_continuity_unconfirmed_after_seek");
+    }
     const clockText = atEnd.lines
       .filter((line) => line.confidence >= 0.35 && line.y >= 0.08 && line.y <= 0.32)
       .map((line) => line.text)
@@ -735,9 +774,48 @@ async function detectVideoDurationBeforeSampling(params: {
   return duration;
 }
 
+export function scoreRepresentativeFrameCandidate(params: {
+  progress: number;
+  ocrText: string;
+  entropy: number;
+  sharpness: number;
+  mean: number;
+}) {
+  const meaningfulText = params.ocrText
+    .replace(/(?:点赞|轉發|转发|收藏|评论|評論|倍速|推荐|推薦)/g, "")
+    .replace(/[\d\s|:：./]+/g, "");
+  const loadingPenalty = /(加载|加載|网络异常|網絡異常|重试|重試|缓冲|緩衝)/i.test(params.ocrText) ? 100 : 0;
+  const exposurePenalty = params.mean < 22 || params.mean > 238 ? 45 : 0;
+  const edgePreference = Math.max(0, 1 - Math.abs(params.progress - 0.5)) * 4;
+  return params.entropy * 12
+    + Math.min(params.sharpness, 20) * 2
+    + Math.min(meaningfulText.length, 80) * 0.25
+    + edgePreference
+    - loadingPenalty
+    - exposurePenalty;
+}
+
+async function selectRepresentativeFrame(samples: Array<{ file: string; progress: number; ocrText: string }>) {
+  if (!samples.length) throw new Error("weixin_channels_representative_frame_missing");
+  const scored = await Promise.all(samples.map(async (sample) => {
+    const stats = await sharp(sample.file).greyscale().stats();
+    return {
+      ...sample,
+      score: scoreRepresentativeFrameCandidate({
+        progress: sample.progress,
+        ocrText: sample.ocrText,
+        entropy: stats.entropy,
+        sharpness: stats.sharpness,
+        mean: stats.channels[0]?.mean || 0,
+      }),
+    };
+  }));
+  return scored.sort((left, right) => right.score - left.score)[0]!;
+}
+
 export async function sampleVideoContentAtProgress(
   screenshot: string,
-  _baseMetrics: ReturnType<typeof extractWeixinChannelsMetrics>,
+  baseMetrics: ReturnType<typeof extractWeixinChannelsMetrics>,
   captureStartedAt: number,
   videoDurationHintSec?: number,
 ) {
@@ -780,10 +858,27 @@ export async function sampleVideoContentAtProgress(
       const text = ocr.lines.filter((line) => line.confidence >= 0.45).map((line) => line.text.trim()).filter(Boolean).join(" | ");
       ocrTexts.push(text);
     }
+    const lastOcr = results[results.length - 1];
+    if (!lastOcr || !metricsRemainOnSameVideo(baseMetrics, extractWeixinChannelsMetrics(lastOcr.lines))) {
+      throw new Error("weixin_channels_video_continuity_unconfirmed_after_sampling");
+    }
+    const representative = await selectRepresentativeFrame(sampleScreenshots.map((file, index) => ({
+      file,
+      progress: WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS[index]!,
+      ocrText: ocrTexts[index] || "",
+    })));
+    const visualImageBase64 = await buildVisualFrameBase64(representative.file);
+    return {
+      ocrTexts,
+      videoDurationSec,
+      deadlineAt,
+      visualImageBase64,
+      visualAssetKind: "representative_frame" as const,
+      visualFrameProgress: representative.progress,
+    };
   } finally {
     await Promise.all(sampleScreenshots.map((sample) => fs.unlink(sample).catch(() => undefined)));
   }
-  return { ocrTexts, videoDurationSec, deadlineAt };
 }
 
 async function collectVisibleComments(screenshot: string, baseOcr: OcrResult, deadlineAt: number) {
@@ -863,11 +958,11 @@ async function persistPendingFile(output: string, observation: unknown) {
   await fs.rename(temp, output);
 }
 
-async function buildCoverBase64(screenshot: string) {
+async function buildVisualFrameBase64(screenshot: string) {
   const metadata = await sharp(screenshot).metadata();
   const width = metadata.width || 0;
   const height = metadata.height || 0;
-  if (width < 100 || height < 100) throw new Error("weixin_channels_cover_screenshot_invalid");
+  if (width < 100 || height < 100) throw new Error("weixin_channels_visual_frame_invalid");
   const top = Math.round(height * 0.07);
   const cropHeight = Math.max(80, Math.round(height * 0.76));
   return sharp(screenshot)
@@ -1378,6 +1473,39 @@ async function refreshCollectorCandidates(server: string, token: string) {
   return (JSON.parse(text) as { candidates?: CollectorCandidate[] }).candidates || [];
 }
 
+export async function syncPersistedCollectorIdentities(params: {
+  server: string;
+  token: string;
+  registry: CollectorSeenRegistry;
+  fetchImpl?: typeof fetch;
+  now?: number;
+}) {
+  const now = params.now ?? Date.now();
+  const since = new Date(now - WEIXIN_CHANNELS_SEEN_TTL_MS).toISOString();
+  const response = await (params.fetchImpl || fetch)(
+    `${params.server.replace(/\/$/, "")}/api/internal/weixin-channels/persisted-identities?since=${encodeURIComponent(since)}`,
+    { headers: { "x-weixin-channels-collector-token": params.token } },
+  );
+  const text = await response.text();
+  if (!response.ok) throw new Error(`persisted_identity_sync_failed:${response.status}:${text.slice(0, 300)}`);
+  const payload = JSON.parse(text) as { records?: Array<{ videoIdentity?: string; observationId?: string; persistedAt?: string }> };
+  let synced = 0;
+  for (const record of payload.records || []) {
+    if (!record.videoIdentity || !record.observationId || !record.persistedAt) continue;
+    const entry: CollectorSeenEntry = {
+      videoIdentity: record.videoIdentity,
+      observationId: record.observationId,
+      seenAt: record.persistedAt,
+      state: "persisted",
+    };
+    params.registry.entries.set(entry.videoIdentity, entry);
+    params.registry.observationIds.add(entry.observationId!);
+    synced += 1;
+  }
+  await persistCollectorSeenRegistry(params.registry, now);
+  return synced;
+}
+
 export function selectReusableCollectorCandidate(candidates: CollectorCandidate[]) {
   const usable = candidates.filter((item) => item.taskId && item.searchQueries?.length);
   return usable.sort((left, right) => {
@@ -1437,7 +1565,7 @@ async function captureVisibleQualifiedVideo(params: {
   try {
     detectedVideoDurationSec = await detectVideoDurationBeforeSampling({
       screenshot: params.screenshot,
-      baseIdentity: params.videoIdentity,
+      baseMetrics: metrics,
       videoDurationHintSec: params.videoDurationHintSec,
     });
     params.diagnostics.durationDetectionSucceeded += 1;
@@ -1480,17 +1608,12 @@ async function captureVisibleQualifiedVideo(params: {
     }
   }
   const coverStartedAt = Date.now();
-  const coverImageBase64 = !adDetected && finalQualification.qualified ? await buildCoverBase64(params.screenshot) : undefined;
+  const visualImageBase64 = !adDetected && finalQualification.qualified ? sampled.visualImageBase64 : undefined;
   recordCollectorPhase(params.diagnostics, "cover", coverStartedAt);
   const captureElapsedMs = Date.now() - captureStartedAt;
   const captureBudgetMs = captureBudgetMsForVideo(videoDurationSec);
   if (captureElapsedMs > captureBudgetMs) {
-    return {
-      qualified: false as const,
-      inspectedContent: true as const,
-      reason: "weixin_channels_capture_time_budget_exceeded",
-      fingerprint: params.videoIdentity,
-    };
+    throw new Error("weixin_channels_capture_time_budget_exceeded");
   }
   if (finalQualification.qualified) params.diagnostics.qualifiedBeforePersist += 1;
   const observation = {
@@ -1501,7 +1624,9 @@ async function captureVisibleQualifiedVideo(params: {
     resultRank: 1,
     title,
     author,
-    coverImageBase64,
+    visualImageBase64,
+    visualAssetKind: visualImageBase64 ? sampled.visualAssetKind : undefined,
+    visualFrameProgress: visualImageBase64 ? sampled.visualFrameProgress : undefined,
     observedAt: new Date().toISOString(),
     likes: metrics.likes,
     comments: metrics.comments,
@@ -1518,6 +1643,7 @@ async function captureVisibleQualifiedVideo(params: {
   const output = params.outputOverride
     || path.join(os.tmpdir(), `weixin-channels-pending-${observation.observationId}.json`);
   await persistPendingFile(output, observation);
+  let persisted = false;
   if (params.server) {
     if (!params.token) throw new Error("WEIXIN_CHANNELS_COLLECTOR_TOKEN is required for upload");
     const uploadStartedAt = Date.now();
@@ -1546,6 +1672,7 @@ async function captureVisibleQualifiedVideo(params: {
       process.stderr.write(`capture_sla_exceeded_after_persist:${observation.observationId}\n`);
     }
     process.stderr.write(`uploaded:${JSON.stringify(payload)}\n`);
+    persisted = payload.persisted === true;
   }
   process.stdout.write(`${JSON.stringify({
     event: "observation_persisted",
@@ -1562,6 +1689,7 @@ async function captureVisibleQualifiedVideo(params: {
     reason: finalQualification.reason,
     fingerprint: params.videoIdentity,
     observation,
+    persisted,
   };
 }
 
@@ -1608,6 +1736,14 @@ async function runCollectionPool(params: {
 }) {
   const clientId = `mac-weixin-${os.hostname()}`.slice(0, 120);
   const seenRegistry = await loadCollectorSeenRegistry();
+  // 本机 v1 seen 曾在处理前写入，不能作为跳过依据。启动时必须先用 Fly 的
+  // persistedAt 事实校准；同步失败直接停机，禁止带着不可信去重状态操作微信。
+  const persistedIdentityCount = await syncPersistedCollectorIdentities({
+    server: params.server,
+    token: params.token,
+    registry: seenRegistry,
+  });
+  process.stderr.write(`persisted_identity_sync_completed:${persistedIdentityCount}\n`);
   let diagnostics = createCollectorHourDiagnostics();
   let windowStartedAt = Date.parse(diagnostics.windowStartedAt);
   let checkpoint15Handled = false;
@@ -1651,6 +1787,8 @@ async function runCollectionPool(params: {
   let scansOnCurrentQuery = 0;
   let qualifiedOnCurrentQuery = 0;
   let knownVideoDurationSec: number | undefined;
+  let consecutiveDuplicates = 0;
+  const inFlightVideoIdentities = new Set<string>();
   let lastHeartbeatAt = Date.now();
   await captureWindow(params.screenshot);
   let ocr = await readOcr(params.screenshot);
@@ -1766,41 +1904,20 @@ async function runCollectionPool(params: {
     // 先退出“赞和收藏”或搜索结果等辅助标签；只允许真实视频播放器进入计数。
     ocr = await ensureVideoPlayerVisible(params.screenshot, ocr);
     // 每条再关闭上一条可能残留的评论面板，并以四项互动指标重新出现作为断言。
-    // 单条界面异常只跳过当前视频，不能退出整条采集池。
+    // 无法证明播放器状态时原地停机；禁止靠滑动“恢复”未知页面。
     try {
       ocr = await ensureInteractionMetricsVisible(params.screenshot, ocr);
     } catch (error) {
       diagnostics.metricsIncomplete += 1;
-      process.stderr.write(`scan_skipped:${error instanceof Error ? error.message : String(error)}\n`);
-      process.stderr.write(`collector_progress:${JSON.stringify({ scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode })}\n`);
-      if (mode === "search" && task.searchQueries.length > 1) {
-        const nextIndex = (searchQueryIndex + 1) % task.searchQueries.length;
-        const nextQuery = task.searchQueries[nextIndex]!;
-        try {
-          const searchResult = await openFirstSearchResult(nextQuery, params.screenshot);
-          searchQueryIndex = nextIndex;
-          ocr = searchResult.ocr;
-          knownVideoDurationSec = searchResult.videoDurationSec;
-          await rememberCollectorQuery(nextQuery);
-          process.stderr.write(`search_query_rotated:${nextQuery}:previous_query_failed\n`);
-          continue;
-        } catch (rotationError) {
-          searchQueryIndex = nextIndex;
-          knownVideoDurationSec = undefined;
-          process.stderr.write(`search_query_rotation_deferred:${nextQuery}:${rotationError instanceof Error ? rotationError.message : String(rotationError)}\n`);
-        }
-      }
-      ocr = await advanceTracked(visibleVideoIdentityFingerprint(ocr));
-      knownVideoDurationSec = undefined;
-      continue;
+      const reason = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`collector_safety_stopped:player_state_unconfirmed:${reason}\n`);
+      return { stopped: "player_state_unconfirmed", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
     }
     const videoIdentity = visibleVideoIdentityFingerprint(ocr);
     if (!videoIdentity) {
       diagnostics.metricsIncomplete += 1;
-      process.stderr.write("scan_skipped:weixin_channels_stable_identity_not_detected\n");
-      ocr = await advanceTracked(undefined);
-      knownVideoDurationSec = undefined;
-      continue;
+      process.stderr.write("collector_safety_stopped:weixin_channels_stable_identity_not_detected\n");
+      return { stopped: "stable_identity_not_detected", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
     }
     const visibleIdentity = extractVisibleTitleAndAuthor(ocr.lines);
     const observationId = makeWeixinChannelsObservationId({
@@ -1811,12 +1928,23 @@ async function runCollectionPool(params: {
     });
     if (collectorSeenContains(seenRegistry, videoIdentity, observationId)) {
       diagnostics.duplicateVideosSkipped += 1;
+      consecutiveDuplicates += 1;
       process.stderr.write(`duplicate_visible_video_skipped:${videoIdentity}:${observationId}\n`);
+      if (consecutiveDuplicates >= 3) {
+        process.stderr.write("collector_safety_stopped:duplicate_loop_detected\n");
+        return { stopped: "duplicate_loop_detected", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
+      }
+      await waitForVisibleVideoLoad();
       ocr = await advanceTracked(videoIdentity);
       knownVideoDurationSec = undefined;
       continue;
     }
-    await rememberCollectorSeen(seenRegistry, { videoIdentity, observationId, seenAt: new Date().toISOString() });
+    if (inFlightVideoIdentities.has(videoIdentity)) {
+      process.stderr.write("collector_safety_stopped:inflight_video_reentered\n");
+      return { stopped: "inflight_video_reentered", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
+    }
+    consecutiveDuplicates = 0;
+    inFlightVideoIdentities.add(videoIdentity);
     diagnostics.uniqueVideosSeen += 1;
     totalScanned += 1;
     if (mode === "recommendation") recommendationScanned += 1;
@@ -1841,15 +1969,30 @@ async function runCollectionPool(params: {
         videoDurationHintSec: knownVideoDurationSec,
       });
     } catch (error) {
-      // 单条视频超时、评论区识别失败或上传失败不能杀死整晚采集；
-      // 待传文件仍由 captureVisibleQualifiedVideo 保留，随后继续下一条。
-      process.stderr.write(`scan_skipped:${error instanceof Error ? error.message : String(error)}\n`);
-      process.stderr.write(`collector_progress:${JSON.stringify({ scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode })}\n`);
-      if (mode === "search") recordCollectorSearchOutcome(diagnostics, query, false);
-      ocr = await advanceTracked(videoIdentity);
-      // 搜索卡片时长只属于刚打开的首条结果；切到下一条后必须重新读取真实时长。
-      knownVideoDurationSec = undefined;
-      continue;
+      const reason = error instanceof Error ? error.message : String(error);
+      await rememberCollectorSeen(seenRegistry, {
+        videoIdentity,
+        observationId,
+        seenAt: new Date().toISOString(),
+        state: "retryable_failed",
+        failureReason: reason,
+      });
+      inFlightVideoIdentities.delete(videoIdentity);
+      process.stderr.write(`collector_safety_stopped:qualified_or_unknown_video_capture_failed:${reason}\n`);
+      return { stopped: "video_capture_failed_without_advance", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
+    }
+    inFlightVideoIdentities.delete(videoIdentity);
+    const terminal = collectorVideoStateAfterCapture(result);
+    await rememberCollectorSeen(seenRegistry, {
+      videoIdentity,
+      observationId,
+      seenAt: new Date().toISOString(),
+      state: terminal.state,
+      failureReason: terminal.stopWithoutAdvance ? "qualified_not_persisted" : undefined,
+    });
+    if (terminal.stopWithoutAdvance) {
+      process.stderr.write("collector_safety_stopped:qualified_video_not_persisted\n");
+      return { stopped: "qualified_video_not_persisted", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
     }
     if (result.qualified) {
       totalQualified += 1;
@@ -1925,26 +2068,15 @@ async function main() {
     const token = String(process.env.WEIXIN_CHANNELS_COLLECTOR_TOKEN || "").trim();
     if (!token) throw new Error("WEIXIN_CHANNELS_COLLECTOR_TOKEN is required for pool mode");
     const maxScanned = maxScannedArg ? Number(maxScannedArg.slice("--max-scanned=".length)) : undefined;
-    let restartAttempt = 0;
-    for (;;) {
-      try {
-        const result = await runCollectionPool({
-          screenshot,
-          server: serverArg.slice("--server=".length).replace(/\/$/, ""),
-          token,
-          probe,
-          maxScanned,
-        });
-        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-        return;
-      } catch (error) {
-        // 有界探针必须把失败直接暴露给调用方；只有整晚常驻池允许自动恢复。
-        if (maxScanned !== undefined) throw error;
-        restartAttempt += 1;
-        process.stderr.write(`collector_pool_restarting:${restartAttempt}:${error instanceof Error ? error.message : String(error)}\n`);
-        await new Promise((resolve) => setTimeout(resolve, Math.min(15_000, 2_000 * restartAttempt)));
-      }
-    }
+    const result = await runCollectionPool({
+      screenshot,
+      server: serverArg.slice("--server=".length).replace(/\/$/, ""),
+      token,
+      probe,
+      maxScanned,
+    });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
   }
   if (!taskArg || !queryArg || (!titleArg && !automate && !interact)) {
     throw new Error("usage: pnpm tsx scripts/weixin-channels-capture.mts [--automate|--interact|--pool] [--probe] [--screenshot=/path/window.png] [--server=https://...] [--max-scanned=N] --task-id=... --query=... [--title=...] [--author=...]");

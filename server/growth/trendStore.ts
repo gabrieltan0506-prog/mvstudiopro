@@ -534,6 +534,8 @@ function normalizeItem(item: TrendItem): TrendItem {
     url: item.url ? String(item.url).trim() : undefined,
     coverUrl: item.coverUrl ? String(item.coverUrl).trim() : undefined,
     coverCapturedAt: item.coverCapturedAt ? String(item.coverCapturedAt).trim() : undefined,
+    visualAssetKind: item.visualAssetKind === "representative_frame" ? "representative_frame" : item.visualAssetKind === "platform_cover" ? "platform_cover" : undefined,
+    visualFrameProgress: Number.isFinite(item.visualFrameProgress) ? item.visualFrameProgress : undefined,
     tags: normalizeStringList(item.tags),
     commentSamples: Array.isArray(item.commentSamples)
       ? item.commentSamples
@@ -616,6 +618,8 @@ function dedupeTrendItems(existing: TrendItem[] = [], incoming: TrendItem[] = []
           ? item.coverCapturedAt
           : current.coverCapturedAt;
       })(),
+      visualAssetKind: item.visualAssetKind || current.visualAssetKind,
+      visualFrameProgress: item.visualFrameProgress ?? current.visualFrameProgress,
       author: item.author || current.author,
       isDrama: Boolean(item.isDrama || current.isDrama) || undefined,
       dramaKind: item.dramaKind && item.dramaKind !== "unknown"

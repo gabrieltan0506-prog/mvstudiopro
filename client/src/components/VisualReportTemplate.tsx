@@ -16,6 +16,8 @@ export type VisualReportData = {
     author?: string;
     sourceUrl?: string;
     coverUrl?: string;
+    visualAssetKind?: "platform_cover" | "representative_frame";
+    visualFrameProgress?: number;
     rank: number;
     highCtrReason?: string;
   }>;
@@ -853,9 +855,9 @@ export const VisualReportCoverPage = React.forwardRef<HTMLDivElement, Props>(
         }}
       >
         <div style={{ borderBottom: `1px solid ${border}`, paddingBottom: "14px", marginBottom: "18px" }}>
-          <div style={{ fontSize: "26px", fontWeight: 900 }}>本期优秀封面 · Terra High 选秀</div>
+          <div style={{ fontSize: "26px", fontWeight: 900 }}>本期优秀封面 / 代表画面 · Terra High 选秀</div>
           <div style={{ marginTop: "5px", fontSize: "12px", color: "#6B4E3D" }}>
-            {data.dateRange} · 从真实平台封面候选中按点击吸引力排序
+            {data.dateRange} · 从真实平台封面或视频代表画面中按点击吸引力排序
           </div>
         </div>
         {coverGroups.map(([platform, covers]) => {
@@ -877,6 +879,11 @@ export const VisualReportCoverPage = React.forwardRef<HTMLDivElement, Props>(
                       <div style={{ fontSize: "18px", fontWeight: 900, color: C[(cover.rank - 1) % C.length] }}>#{cover.rank}</div>
                       <div style={{ marginTop: "7px", fontSize: "14px", fontWeight: 800, lineHeight: 1.45 }}>{safeTxt(cover.title)}</div>
                       <div style={{ marginTop: "6px", fontSize: "11px", color: "#6B4E3D" }}>{safeTxt(cover.author) || "作者未标注"}</div>
+                      {cover.visualAssetKind === "representative_frame" && (
+                        <div style={{ marginTop: "4px", fontSize: "10px", color: "#8B5A3C" }}>
+                          视频代表画面{typeof cover.visualFrameProgress === "number" ? ` · ${Math.round(cover.visualFrameProgress * 100)}%` : ""}
+                        </div>
+                      )}
                       <div style={{ marginTop: "auto", paddingTop: "10px", borderTop: `1px solid ${border}`, fontSize: "12px", color: bodyTxt, lineHeight: 1.6 }}>
                         <span style={{ color: C[(cover.rank + 2) % C.length], fontWeight: 900 }}>高 CTR 判断：</span>
                         {safeTxt(cover.highCtrReason) || "真实互动领先，首屏主体与标题信息易识别"}

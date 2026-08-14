@@ -18,6 +18,8 @@ export type TrendCoverReference = {
   sourceUrl?: string;
   coverUrl?: string;
   coverCapturedAt?: string;
+  visualAssetKind?: "platform_cover" | "representative_frame";
+  visualFrameProgress?: number;
   score: number;
 };
 
@@ -221,6 +223,8 @@ export function selectTrendCoverCandidates(
         sourceUrl: item.url,
         coverUrl: item.coverUrl,
         coverCapturedAt: item.coverCapturedAt,
+        visualAssetKind: item.visualAssetKind || "platform_cover",
+        visualFrameProgress: item.visualFrameProgress,
         score: trendCoverScore(item),
       });
     }

@@ -7,6 +7,7 @@ import {
   captureBudgetMsForVideo,
   collectorSeenContains,
   collectorWatchdogDecision,
+  collectorVideoStateAfterCapture,
   loadCollectorSearchTabState,
   loadCollectorSeenRegistry,
   rememberCollectorSeen,
@@ -32,10 +33,12 @@ import {
   pendingObservationHasRequiredComments,
   restoreEligibleQuarantinedObservations,
   retryPendingObservations,
+  scoreRepresentativeFrameCandidate,
   selectReusableCollectorCandidate,
   shouldReuseExistingSearchTab,
   shouldSwitchRecommendationToSearch,
   shouldRotateSearchQuery,
+  syncPersistedCollectorIdentities,
   uploadPendingObservation,
   visibleVideoIdentityFingerprint,
   WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS,
@@ -117,13 +120,53 @@ describe("weixin channels OCR", () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-seen-"));
     const first = await loadCollectorSeenRegistry(dir, Date.parse("2026-08-14T00:00:00.000Z"));
     await rememberCollectorSeen(first, {
-      videoIdentity: "a".repeat(64), observationId: "wxco_restart", seenAt: "",
+      videoIdentity: "a".repeat(64), observationId: "wxco_restart", seenAt: "", state: "persisted",
     }, Date.parse("2026-08-14T00:00:00.000Z"));
     const restarted = await loadCollectorSeenRegistry(dir, Date.parse("2026-08-14T01:00:00.000Z"));
     expect(collectorSeenContains(restarted, "a".repeat(64))).toBe(true);
     expect(collectorSeenContains(restarted, "b".repeat(64), "wxco_restart")).toBe(true);
     const expired = await loadCollectorSeenRegistry(dir, Date.parse("2026-08-22T00:00:01.000Z"));
     expect(collectorSeenContains(expired, "a".repeat(64))).toBe(false);
+  });
+
+  it("旧 seen 和可重试失败都不能把达标视频当重复跳过", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-seen-migrate-"));
+    await fs.writeFile(path.join(dir, "weixin-channels-seen-videos-v1.json"), JSON.stringify({ entries: [{
+      videoIdentity: "c".repeat(64), observationId: "wxco_unverified", seenAt: "2026-08-14T00:00:00.000Z",
+    }] }));
+    const registry = await loadCollectorSeenRegistry(dir, Date.parse("2026-08-14T01:00:00.000Z"));
+    expect(collectorSeenContains(registry, "c".repeat(64), "wxco_unverified")).toBe(false);
+    await rememberCollectorSeen(registry, {
+      videoIdentity: "d".repeat(64), observationId: "wxco_failed", seenAt: "", state: "retryable_failed",
+    }, Date.parse("2026-08-14T01:00:00.000Z"));
+    expect(collectorSeenContains(registry, "d".repeat(64), "wxco_failed")).toBe(false);
+  });
+
+  it("达标视频只有 Fly persisted=true 才允许进入终态", () => {
+    expect(collectorVideoStateAfterCapture({ qualified: true, persisted: true })).toEqual({ state: "persisted", stopWithoutAdvance: false });
+    expect(collectorVideoStateAfterCapture({ qualified: true, persisted: false })).toEqual({ state: "retryable_failed", stopWithoutAdvance: true });
+    expect(collectorVideoStateAfterCapture({ qualified: false, persisted: false })).toEqual({ state: "terminal_unqualified", stopWithoutAdvance: false });
+  });
+
+  it("只有 Fly persistedAt 同步结果会升级为跨重启重复", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-seen-sync-"));
+    const registry = await loadCollectorSeenRegistry(dir, Date.parse("2026-08-14T01:00:00.000Z"));
+    await syncPersistedCollectorIdentities({
+      server: "https://example.test",
+      token: "token",
+      registry,
+      now: Date.parse("2026-08-14T01:00:00.000Z"),
+      fetchImpl: vi.fn(async () => new Response(JSON.stringify({ records: [{
+        videoIdentity: "e".repeat(64), observationId: "wxco_fly", persistedAt: "2026-08-14T00:30:00.000Z",
+      }] }), { status: 200 })) as typeof fetch,
+    });
+    expect(collectorSeenContains(registry, "e".repeat(64), "wxco_fly")).toBe(true);
+  });
+
+  it("代表画面评分避开加载黑屏，并偏好清晰且有叙事文本的中段", () => {
+    const loading = scoreRepresentativeFrameCandidate({ progress: 0.5, ocrText: "网络加载中", entropy: 1, sharpness: 1, mean: 10 });
+    const narrative = scoreRepresentativeFrameCandidate({ progress: 0.5, ocrText: "AI工作流拆解 第三步生成分镜", entropy: 5, sharpness: 8, mean: 120 });
+    expect(narrative).toBeGreaterThan(loading);
   });
 
   it("跨进程只允许一个新增搜索标签，总数最多两个", async () => {
