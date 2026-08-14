@@ -39,6 +39,7 @@ function authorize(req: Request, res: Response) {
 const metric = z.number().finite().nonnegative().optional();
 export const weixinChannelsObservationSchema = z.object({
   observationId: z.string().min(6).max(120),
+  videoIdentity: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   taskId: z.string().min(6).max(120),
   query: z.string().min(1).max(100),
   resultRank: z.number().int().positive().max(500),
@@ -110,6 +111,7 @@ export function registerWeixinChannelsCollectorHttpRoutes(app: Express) {
     if (!authorize(req, res)) return;
     try {
       const state = await getWeixinChannelsMinerState();
+      const hourStartedAt = Date.now() - 60 * 60_000;
       res.json({
         ok: true,
         capture: state.capture,
@@ -118,6 +120,14 @@ export function registerWeixinChannelsCollectorHttpRoutes(app: Express) {
         probeQualifiedCount: state.observations.filter((item) => item.runKind === "probe" && item.qualified && !item.invalid).length,
         deepseekCompletedBatchCount: state.jobs.filter((item) => item.kind === "formal" && item.stage === "deepseek_batch" && item.status === "completed" && !item.cleanedByJobId).length,
         terraCleanupBatchTarget: WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
+        totalUniqueScanned: state.observations.length,
+        lastHourPersistedUnique: state.observations.filter((item) => item.runKind !== "probe"
+          && item.qualified
+          && !item.invalid
+          && Boolean(item.persistedAt)
+          && Date.parse(item.persistedAt!) >= hourStartedAt).length,
+        lastHourDuplicateCount: state.recentDuplicatePersistEvents.filter((item) => Date.parse(item) >= hourStartedAt).length,
+        collectorVersion: "weixin-channels-v3",
         jobs: state.jobs,
       });
     } catch (error) {

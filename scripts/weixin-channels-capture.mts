@@ -13,7 +13,9 @@ import sharp from "sharp";
 import {
   cleanWeixinChannelsCommentTexts,
   containsWeixinChannelsAdvertisement,
+  deriveWeixinChannelsSearchQueries,
   makeWeixinChannelsObservationId,
+  normalizeWeixinChannelsSearchQuery,
   qualifyWeixinChannelsObservationLocally,
   weixinChannelsCaptureBudgetMs,
   WEIXIN_CHANNELS_COMMENT_THRESHOLD,
@@ -28,6 +30,12 @@ export const WEIXIN_CHANNELS_UNQUALIFIED_DWELL_MS = 2_000;
 export const WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS = [0.1, 0.3, 0.5, 0.7, 0.9] as const;
 export const WEIXIN_CHANNELS_PRECISION_SAMPLE_SIZE = 10;
 export const WEIXIN_CHANNELS_MIN_QUALIFIED_RATE = 0.4;
+export const WEIXIN_CHANNELS_SEEN_TTL_MS = 7 * 24 * 60 * 60_000;
+export const WEIXIN_CHANNELS_HOUR_MS = 60 * 60_000;
+export const WEIXIN_CHANNELS_WATCHDOG_CHECKPOINTS = [
+  { elapsedMs: 15 * 60_000, minimumPersisted: 12 },
+  { elapsedMs: 30 * 60_000, minimumPersisted: 25 },
+] as const;
 /** 2026-08-14 在动态 483×769 / 966×1538 窗口均实测命中顶栏放大镜。 */
 export const WEIXIN_CHANNELS_SEARCH_BUTTON_POINT = { x: 0.785, y: 0.026 } as const;
 export const WEIXIN_CHANNELS_SEARCH_INPUT_POINT = { x: 0.58, y: 0.026 } as const;
@@ -48,6 +56,15 @@ export function shouldSwitchRecommendationToSearch(params: {
 export function shouldRotateSearchQuery(params: { scannedCount: number; qualifiedCount: number }) {
   return params.scannedCount >= WEIXIN_CHANNELS_PRECISION_SAMPLE_SIZE
     && params.qualifiedCount / params.scannedCount < WEIXIN_CHANNELS_MIN_QUALIFIED_RATE;
+}
+
+export function collectorWatchdogDecision(elapsedMs: number, persistedUnique: number) {
+  if (elapsedMs >= WEIXIN_CHANNELS_HOUR_MS) return persistedUnique < 50 ? "stop" as const : "rollover" as const;
+  if (elapsedMs >= WEIXIN_CHANNELS_WATCHDOG_CHECKPOINTS[1].elapsedMs
+    && persistedUnique < WEIXIN_CHANNELS_WATCHDOG_CHECKPOINTS[1].minimumPersisted) return "checkpoint_30" as const;
+  if (elapsedMs >= WEIXIN_CHANNELS_WATCHDOG_CHECKPOINTS[0].elapsedMs
+    && persistedUnique < WEIXIN_CHANNELS_WATCHDOG_CHECKPOINTS[0].minimumPersisted) return "checkpoint_15" as const;
+  return "continue" as const;
 }
 
 export function nextCollectorSearchQueryIndex(currentIndex: number, queryCount: number) {
@@ -74,6 +91,14 @@ export function deriveVideoDurationSeconds(samples: Array<{ progress: number; te
     .sort((left, right) => left - right);
   if (!estimates.length) return undefined;
   return Math.round(estimates[Math.floor(estimates.length / 2)]!);
+}
+
+export function parseVisibleVideoTotalDurationSeconds(text: string) {
+  const normalized = String(text || "").replace(/\s+/g, " ");
+  const slash = normalized.match(/\d{1,2}:[0-5]\d\s*[\/／]\s*(\d{1,2}:[0-5]\d)/);
+  if (slash?.[1]) return parseVisibleVideoClockSeconds(slash[1]);
+  const labelled = normalized.match(/(?:总时长|總時長|时长|時長)\s*[:：]?\s*(\d{1,2}:[0-5]\d)/i);
+  return labelled?.[1] ? parseVisibleVideoClockSeconds(labelled[1]) : undefined;
 }
 
 export function captureBudgetMsForVideo(videoDurationSec: number) {
@@ -172,6 +197,23 @@ export function ocrFingerprint(ocr: OcrResult) {
   return createHash("sha256").update(
     ocr.lines.filter((line) => line.confidence >= 0.35).map((line) => line.text.trim()).join("|"),
   ).digest("hex");
+}
+
+export function visibleVideoIdentityFingerprint(ocr: OcrResult) {
+  const metrics = extractWeixinChannelsMetrics(ocr.lines);
+  const identity = extractVisibleTitleAndAuthor(ocr.lines);
+  const stableMetrics = [
+    ["likes", metrics.likes],
+    ["shares", metrics.shares],
+    ["favorites", metrics.favorites],
+    ["comments", metrics.comments],
+  ].filter((entry): entry is [string, number] => entry[1] !== undefined);
+  if (stableMetrics.length < 2) return undefined;
+  return createHash("sha256").update(JSON.stringify({
+    metrics: stableMetrics,
+    title: identity.title || "",
+    author: identity.author || "",
+  })).digest("hex");
 }
 
 function clickPoint(line: OcrLine) {
@@ -288,7 +330,214 @@ export function extractCommentSamples(lines: OcrLine[]): WeixinChannelsCommentSa
 
 let controlExecutablePromise: Promise<string> | undefined;
 let ocrExecutablePromise: Promise<string> | undefined;
-let collectorSearchTabState: { windowId: number; openedTabs: number } | undefined;
+type CollectorSearchTabState = { windowId: number; openedTabs: number; updatedAt: string };
+let collectorSearchTabState: CollectorSearchTabState | undefined;
+
+function collectorSearchTabStateFile(tempDir = os.tmpdir()) {
+  return path.join(tempDir, "weixin-channels-search-tabs-v1.json");
+}
+
+export async function loadCollectorSearchTabState(windowId: number, tempDir = os.tmpdir(), now = Date.now()) {
+  try {
+    const parsed = JSON.parse(await fs.readFile(collectorSearchTabStateFile(tempDir), "utf8")) as CollectorSearchTabState;
+    if (parsed.windowId === windowId && now - Date.parse(parsed.updatedAt) <= WEIXIN_CHANNELS_SEEN_TTL_MS) {
+      return { ...parsed, openedTabs: Math.max(0, Math.min(2, Math.floor(parsed.openedTabs || 0))) };
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  // 当前窗口已经由 ensureVideoPlayerVisible 证明是播放器，基线只占推荐页一个标签。
+  return { windowId, openedTabs: 0, updatedAt: new Date(now).toISOString() };
+}
+
+async function persistCollectorSearchTabState(state: CollectorSearchTabState, tempDir = os.tmpdir()) {
+  state.updatedAt = new Date().toISOString();
+  const file = collectorSearchTabStateFile(tempDir);
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(temp, JSON.stringify(state, null, 2), "utf8");
+  await fs.rename(temp, file);
+}
+
+type CollectorSeenEntry = {
+  videoIdentity: string;
+  observationId?: string;
+  seenAt: string;
+};
+
+export type CollectorSeenRegistry = {
+  file: string;
+  entries: Map<string, CollectorSeenEntry>;
+  observationIds: Set<string>;
+};
+
+function collectorSeenFile(tempDir = os.tmpdir()) {
+  return path.join(tempDir, "weixin-channels-seen-videos-v1.json");
+}
+
+export async function loadCollectorSeenRegistry(tempDir = os.tmpdir(), now = Date.now()): Promise<CollectorSeenRegistry> {
+  const file = collectorSeenFile(tempDir);
+  let rawEntries: CollectorSeenEntry[] = [];
+  try {
+    const parsed = JSON.parse(await fs.readFile(file, "utf8")) as { entries?: CollectorSeenEntry[] };
+    rawEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const entries = new Map<string, CollectorSeenEntry>();
+  const observationIds = new Set<string>();
+  for (const entry of rawEntries) {
+    const seenAt = Date.parse(entry.seenAt);
+    if (!entry.videoIdentity || !Number.isFinite(seenAt) || now - seenAt > WEIXIN_CHANNELS_SEEN_TTL_MS) continue;
+    entries.set(entry.videoIdentity, entry);
+    if (entry.observationId) observationIds.add(entry.observationId);
+  }
+  return { file, entries, observationIds };
+}
+
+export function collectorSeenContains(registry: CollectorSeenRegistry, videoIdentity: string, observationId?: string) {
+  return registry.entries.has(videoIdentity) || Boolean(observationId && registry.observationIds.has(observationId));
+}
+
+export async function rememberCollectorSeen(
+  registry: CollectorSeenRegistry,
+  entry: CollectorSeenEntry,
+  now = Date.now(),
+) {
+  const normalized = { ...entry, seenAt: new Date(now).toISOString() };
+  registry.entries.set(normalized.videoIdentity, normalized);
+  if (normalized.observationId) registry.observationIds.add(normalized.observationId);
+  const fresh = Array.from(registry.entries.values()).filter((item) => now - Date.parse(item.seenAt) <= WEIXIN_CHANNELS_SEEN_TTL_MS);
+  await fs.mkdir(path.dirname(registry.file), { recursive: true });
+  const temp = `${registry.file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(temp, JSON.stringify({ version: 1, updatedAt: new Date(now).toISOString(), entries: fresh }, null, 2), "utf8");
+  await fs.rename(temp, registry.file);
+}
+
+type CollectorPhase = "metricsOcr" | "duration" | "contentSampling" | "comments" | "cover" | "upload" | "advance";
+
+export type CollectorHourDiagnostics = {
+  windowStartedAt: string;
+  uniqueVideosSeen: number;
+  duplicateVideosSkipped: number;
+  metricsIncomplete: number;
+  locallyUnqualified: number;
+  durationDetectionAttempted: number;
+  durationDetectionSucceeded: number;
+  durationDetectionFailed: number;
+  durationDetectionMs: number;
+  advertisementRejected: number;
+  commentsBelowThreshold: number;
+  commentsOpenFailed: number;
+  commentsCloseFailed: number;
+  qualifiedBeforePersist: number;
+  persistedUnique: number;
+  duplicatePersistRejected: number;
+  uploadFailed: number;
+  searchQueriesUsed: string[];
+  searchOutcomes: Record<string, { scanned: number; qualified: number }>;
+  phaseSamples: Record<CollectorPhase, number[]>;
+};
+
+export function createCollectorHourDiagnostics(now = Date.now()): CollectorHourDiagnostics {
+  return {
+    windowStartedAt: new Date(now).toISOString(),
+    uniqueVideosSeen: 0,
+    duplicateVideosSkipped: 0,
+    metricsIncomplete: 0,
+    locallyUnqualified: 0,
+    durationDetectionAttempted: 0,
+    durationDetectionSucceeded: 0,
+    durationDetectionFailed: 0,
+    durationDetectionMs: 0,
+    advertisementRejected: 0,
+    commentsBelowThreshold: 0,
+    commentsOpenFailed: 0,
+    commentsCloseFailed: 0,
+    qualifiedBeforePersist: 0,
+    persistedUnique: 0,
+    duplicatePersistRejected: 0,
+    uploadFailed: 0,
+    searchQueriesUsed: [],
+    searchOutcomes: {},
+    phaseSamples: { metricsOcr: [], duration: [], contentSampling: [], comments: [], cover: [], upload: [], advance: [] },
+  };
+}
+
+function recordCollectorPhase(diagnostics: CollectorHourDiagnostics, phase: CollectorPhase, startedAt: number) {
+  diagnostics.phaseSamples[phase].push(Math.max(0, Date.now() - startedAt));
+}
+
+function recordCollectorSearchOutcome(diagnostics: CollectorHourDiagnostics, query: string, qualified: boolean) {
+  if (!diagnostics.searchQueriesUsed.includes(query)) diagnostics.searchQueriesUsed.push(query);
+  const current = diagnostics.searchOutcomes[query] || { scanned: 0, qualified: 0 };
+  current.scanned += 1;
+  if (qualified) current.qualified += 1;
+  diagnostics.searchOutcomes[query] = current;
+}
+
+function percentile(values: number[], ratio: number) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * ratio) - 1))]!;
+}
+
+async function countCollectorFiles(tempDir = os.tmpdir()) {
+  const names = await fs.readdir(tempDir).catch(() => [] as string[]);
+  const pendingCount = names.filter((name) => name.startsWith("weixin-channels-pending-") && name.endsWith(".json")).length;
+  const quarantineNames = await fs.readdir(path.join(tempDir, "weixin-channels-quarantine")).catch(() => [] as string[]);
+  const quarantineCount = quarantineNames.filter((name) => name.startsWith("weixin-channels-pending-") && name.endsWith(".json")).length;
+  return { pendingCount, quarantineCount };
+}
+
+export async function buildCollectorHourReport(diagnostics: CollectorHourDiagnostics, now = Date.now(), tempDir = os.tmpdir()) {
+  const files = await countCollectorFiles(tempDir);
+  const timing = (phase: CollectorPhase) => ({
+    p50: percentile(diagnostics.phaseSamples[phase], 0.5),
+    p95: percentile(diagnostics.phaseSamples[phase], 0.95),
+  });
+  return {
+    windowStartedAt: diagnostics.windowStartedAt,
+    windowEndedAt: new Date(now).toISOString(),
+    uniqueVideosSeen: diagnostics.uniqueVideosSeen,
+    duplicateVideosSkipped: diagnostics.duplicateVideosSkipped,
+    metricsIncomplete: diagnostics.metricsIncomplete,
+    locallyUnqualified: diagnostics.locallyUnqualified,
+    durationDetectionAttempted: diagnostics.durationDetectionAttempted,
+    durationDetectionSucceeded: diagnostics.durationDetectionSucceeded,
+    durationDetectionFailed: diagnostics.durationDetectionFailed,
+    durationDetectionMs: diagnostics.durationDetectionMs,
+    advertisementRejected: diagnostics.advertisementRejected,
+    commentsBelowThreshold: diagnostics.commentsBelowThreshold,
+    commentsOpenFailed: diagnostics.commentsOpenFailed,
+    commentsCloseFailed: diagnostics.commentsCloseFailed,
+    qualifiedBeforePersist: diagnostics.qualifiedBeforePersist,
+    persistedUnique: diagnostics.persistedUnique,
+    duplicatePersistRejected: diagnostics.duplicatePersistRejected,
+    uploadFailed: diagnostics.uploadFailed,
+    ...files,
+    searchQueriesUsed: diagnostics.searchQueriesUsed,
+    searchQualifiedRate: Object.fromEntries(Object.entries(diagnostics.searchOutcomes).map(([query, value]) => [
+      query,
+      value.scanned ? Number((value.qualified / value.scanned).toFixed(4)) : 0,
+    ])),
+    phaseTimings: {
+      metricsOcrP50Ms: timing("metricsOcr").p50,
+      metricsOcrP95Ms: timing("metricsOcr").p95,
+      durationP50Ms: timing("duration").p50,
+      durationP95Ms: timing("duration").p95,
+      contentSamplingP50Ms: timing("contentSampling").p50,
+      contentSamplingP95Ms: timing("contentSampling").p95,
+      commentsP50Ms: timing("comments").p50,
+      commentsP95Ms: timing("comments").p95,
+      coverP50Ms: timing("cover").p50,
+      coverP95Ms: timing("cover").p95,
+      uploadP50Ms: timing("upload").p50,
+      uploadP95Ms: timing("upload").p95,
+      advanceP50Ms: timing("advance").p50,
+      advanceP95Ms: timing("advance").p95,
+    },
+  };
+}
 
 export function shouldReuseExistingSearchTab(openedTabs: number) {
   // 视频号推荐页本身占一个标签；脚本最多再开两个搜索标签，总数上限为 3。
@@ -403,18 +652,59 @@ export async function detectVisibleProgressTrack(screenshot: string) {
   };
 }
 
+async function detectVideoDurationBeforeSampling(params: {
+  screenshot: string;
+  baseIdentity: string;
+  videoDurationHintSec?: number;
+}) {
+  if (params.videoDurationHintSec && params.videoDurationHintSec > 0) return params.videoDurationHintSec;
+  // 推荐页没有搜索卡时长时，只允许读取播放器明确展示的总时长；
+  // 不再拖完五点后用进度比例估算一个假时长。
+  await runSwiftControl(["click-relative", "0.50", "0.50"]);
+  await runSwiftControl(["move-relative", "0.50", "0.82"]);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await captureWindow(params.screenshot);
+  const revealed = await readOcr(params.screenshot);
+  const revealedIdentity = visibleVideoIdentityFingerprint(revealed);
+  if (revealedIdentity && revealedIdentity !== params.baseIdentity) throw new Error("weixin_channels_video_identity_changed_before_duration");
+  const track = await detectVisibleProgressTrack(params.screenshot);
+  const text = revealed.lines.filter((line) => line.confidence >= 0.35).map((line) => line.text).join(" | ");
+  let duration = parseVisibleVideoTotalDurationSeconds(text);
+  if (!duration) {
+    // 拖到真实进度条末端后读取播放器当前时钟；末端时钟就是总时长，
+    // 不用固定值，也不按进度比例估算。
+    await runSwiftControl([
+      "drag-relative",
+      track.startX.toFixed(4),
+      track.y.toFixed(4),
+      track.endX.toFixed(4),
+      track.y.toFixed(4),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    await captureWindow(params.screenshot);
+    const atEnd = await readOcr(params.screenshot);
+    const endIdentity = visibleVideoIdentityFingerprint(atEnd);
+    if (endIdentity && endIdentity !== params.baseIdentity) throw new Error("weixin_channels_video_identity_changed_before_duration");
+    const clockText = atEnd.lines
+      .filter((line) => line.confidence >= 0.35 && line.y >= 0.08 && line.y <= 0.32)
+      .map((line) => line.text)
+      .join(" | ");
+    duration = parseVisibleVideoClockSeconds(clockText);
+  }
+  if (!duration) throw new Error("weixin_channels_video_duration_not_detected");
+  return duration;
+}
+
 export async function sampleVideoContentAtProgress(
   screenshot: string,
   _baseMetrics: ReturnType<typeof extractWeixinChannelsMetrics>,
   captureStartedAt: number,
   videoDurationHintSec?: number,
 ) {
+  if (!videoDurationHintSec) throw new Error("weixin_channels_video_duration_not_detected");
   const ocrTexts: string[] = [];
-  const clockSamples: Array<{ progress: number; text: string }> = [];
-  let videoDurationSec = videoDurationHintSec;
-  let deadlineAt = videoDurationSec
-    ? captureStartedAt + captureBudgetMsForVideo(videoDurationSec)
-    : undefined;
+  const videoDurationSec = videoDurationHintSec;
+  const deadlineAt = captureStartedAt + captureBudgetMsForVideo(videoDurationSec);
   // 点击视频使控制条出现；真实探针确认进度条横跨窗口宽度约 12.5%–91%、纵向约 82.3%。
   await runSwiftControl(["click-relative", "0.50", "0.50"]);
   await runSwiftControl(["move-relative", "0.50", "0.82"]);
@@ -448,16 +738,10 @@ export async function sampleVideoContentAtProgress(
       // 不用这些遮挡后的数字推翻进入抽查前已确认的互动指标。
       const text = ocr.lines.filter((line) => line.confidence >= 0.45).map((line) => line.text.trim()).filter(Boolean).join(" | ");
       ocrTexts.push(text);
-      clockSamples.push({ progress, text });
-    }
-    if (!videoDurationHintSec) {
-      videoDurationSec = deriveVideoDurationSeconds(clockSamples);
-      if (videoDurationSec) deadlineAt = captureStartedAt + captureBudgetMsForVideo(videoDurationSec);
     }
   } finally {
     await Promise.all(sampleScreenshots.map((sample) => fs.unlink(sample).catch(() => undefined)));
   }
-  if (!videoDurationSec || !deadlineAt) throw new Error("weixin_channels_video_duration_not_detected");
   return { ocrTexts, videoDurationSec, deadlineAt };
 }
 
@@ -465,7 +749,7 @@ async function collectVisibleComments(screenshot: string, baseOcr: OcrResult, de
   const openPoint = findCommentsOpenPoint(baseOcr.lines);
   if (!openPoint) throw new Error("weixin_channels_comments_entry_not_found");
   await runSwiftControl(["click-relative", openPoint.x.toFixed(5), openPoint.y.toFixed(5)]);
-  await waitWithinCaptureBudget(deadlineAt, 150, 500);
+  await waitWithinCaptureBudget(deadlineAt, 2_000, 3_000);
   await captureWindow(screenshot);
   let panel = await readOcr(screenshot);
   if (!await findCommentsClosePointFromScreenshot(screenshot, panel.lines)) throw new Error("weixin_channels_comments_open_not_confirmed");
@@ -577,7 +861,12 @@ export async function uploadPendingObservation(params: {
     const body = response.text();
     const text = timeoutPromise ? await Promise.race([body, timeoutPromise]) : await body;
     if (!response.ok) throw new Error(`upload_failed:${response.status}:${text.slice(0, 500)}`);
-    const payload = JSON.parse(text) as { persisted?: boolean };
+    const payload = JSON.parse(text) as {
+      persisted?: boolean;
+      newlyPersisted?: boolean;
+      newlyQualifiedPersisted?: boolean;
+      accumulatedQualifiedCount?: number;
+    };
     if (payload.persisted !== true) throw new Error("upload_not_persisted");
     await fs.unlink(params.pendingFile);
     return payload;
@@ -650,6 +939,8 @@ export async function retryPendingObservations(params: {
     .filter((name) => name.startsWith("weixin-channels-pending-") && name.endsWith(".json"))
     .sort();
   let persisted = 0;
+  let persistedUnique = 0;
+  let duplicatePersistRejected = 0;
   let failed = 0;
   // Fly 单机双核：每个心跳只恢复一个，避免封面上传与正常 ingest 叠加冲垮实例。
   for (const name of names.slice(0, 1)) {
@@ -671,7 +962,7 @@ export async function retryPendingObservations(params: {
         process.stderr.write(`pending_quarantined:${name}:capture_sla_exceeded\n`);
         continue;
       }
-      await uploadPendingObservation({
+      const payload = await uploadPendingObservation({
         server: params.server,
         token: params.token,
         taskId: observation.taskId,
@@ -680,13 +971,15 @@ export async function retryPendingObservations(params: {
         fetchImpl: params.fetchImpl,
       });
       persisted += 1;
+      if (payload.newlyQualifiedPersisted === true) persistedUnique += 1;
+      else if (payload.newlyPersisted === false) duplicatePersistRejected += 1;
       process.stderr.write(`pending_recovered:${name}\n`);
     } catch (error) {
       failed += 1;
       process.stderr.write(`pending_retry_failed:${name}:${error instanceof Error ? error.message : String(error)}\n`);
     }
   }
-  return { found: names.length, persisted, failed };
+  return { found: names.length, persisted, persistedUnique, duplicatePersistRejected, failed };
 }
 
 async function waitForChangedFrame(previous: string, screenshot: string, timeoutMs = 12_000) {
@@ -700,7 +993,7 @@ async function waitForChangedFrame(previous: string, screenshot: string, timeout
   throw new Error("weixin_channels_frame_did_not_change");
 }
 
-async function advanceToNextVideo(previous: string, screenshot: string, deadlineAt?: number) {
+async function advanceToNextVideo(previousIdentity: string | undefined, screenshot: string, deadlineAt?: number) {
   await runSwiftControl(["key", "down"]);
   const timeoutMs = deadlineAt === undefined
     ? WEIXIN_CHANNELS_UNQUALIFIED_DWELL_MS
@@ -710,14 +1003,15 @@ async function advanceToNextVideo(previous: string, screenshot: string, deadline
     await new Promise((resolve) => setTimeout(resolve, 150));
     await captureWindow(screenshot);
     const next = await readOcr(screenshot);
-    if (ocrFingerprint(next) !== previous) return next;
+    const nextIdentity = visibleVideoIdentityFingerprint(next);
+    if (nextIdentity && nextIdentity !== previousIdentity) return next;
   }
   throw new Error("weixin_channels_next_video_not_visible_within_2s");
 }
 
-async function advanceToNextVideoSafely(previous: string, screenshot: string, deadlineAt?: number) {
+async function advanceToNextVideoSafely(previousIdentity: string | undefined, screenshot: string, deadlineAt?: number) {
   try {
-    return await advanceToNextVideo(previous, screenshot, deadlineAt);
+    return await advanceToNextVideo(previousIdentity, screenshot, deadlineAt);
   } catch (error) {
     process.stderr.write(`advance_recovering:${error instanceof Error ? error.message : String(error)}\n`);
     // 搜索联想框或评论浮层可能吞掉方向键。先收起浮层，再点击视频主体把
@@ -728,8 +1022,10 @@ async function advanceToNextVideoSafely(previous: string, screenshot: string, de
     await new Promise((resolve) => setTimeout(resolve, 180));
     await captureWindow(screenshot);
     const recovered = await readOcr(screenshot);
+    const recoveredIdentity = visibleVideoIdentityFingerprint(recovered);
+    if (recoveredIdentity && recoveredIdentity !== previousIdentity) return recovered;
     try {
-      return await advanceToNextVideo(ocrFingerprint(recovered), screenshot);
+      return await advanceToNextVideo(previousIdentity, screenshot);
     } catch (retryError) {
       // 不能把同一画面交回采集循环，否则扫描计数会虚增，达标视频还可能
       // 被重复上传。交给外层常驻监督器重新初始化窗口与任务。
@@ -740,10 +1036,14 @@ async function advanceToNextVideoSafely(previous: string, screenshot: string, de
 }
 
 async function searchKeyword(keyword: string, screenshot: string) {
+  const safeKeyword = normalizeWeixinChannelsSearchQuery(keyword);
+  if (!safeKeyword) throw new Error("weixin_channels_search_keyword_rejected");
+  keyword = safeKeyword;
   const { stdout: windowStdout } = await runSwiftControl(["window"]);
   const currentWindow = JSON.parse(windowStdout) as { windowId: number };
   if (!collectorSearchTabState || collectorSearchTabState.windowId !== currentWindow.windowId) {
-    collectorSearchTabState = { windowId: currentWindow.windowId, openedTabs: 0 };
+    collectorSearchTabState = await loadCollectorSearchTabState(currentWindow.windowId);
+    await persistCollectorSearchTabState(collectorSearchTabState);
   }
   await captureWindow(screenshot);
   let ocr = await readOcr(screenshot);
@@ -753,6 +1053,7 @@ async function searchKeyword(keyword: string, screenshot: string) {
     // 禁止每轮搜索都新增标签把微信内存撑满。
     await runSwiftControl(["key", "closeTab"]);
     collectorSearchTabState.openedTabs = Math.max(0, collectorSearchTabState.openedTabs - 1);
+    await persistCollectorSearchTabState(collectorSearchTabState);
     await new Promise((resolve) => setTimeout(resolve, 900));
     await captureWindow(screenshot);
     ocr = await readOcr(screenshot);
@@ -767,6 +1068,7 @@ async function searchKeyword(keyword: string, screenshot: string) {
       WEIXIN_CHANNELS_SEARCH_BUTTON_POINT.y.toFixed(5),
     ]);
     collectorSearchTabState.openedTabs += 1;
+    await persistCollectorSearchTabState(collectorSearchTabState);
     for (let attempt = 0; !point && attempt < 5; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 500));
       await captureWindow(screenshot);
@@ -946,9 +1248,10 @@ export function buildDiverseCollectorSearchQueries(params: {
     const category = String(item.category || "其他").trim() || "其他";
     const bucket = byCategory.get(category) || [];
     for (const raw of item.searchQueries) {
-      const query = String(raw || "").replace(/^[【\[].*?[】\]]\s*/, "").replace(/\s+/g, " ").trim().slice(0, 80);
-      if (query.length < 2 || BLOCKED_DRAMA_QUERY.test(query) || bucket.includes(query)) continue;
-      bucket.push(query);
+      for (const query of deriveWeixinChannelsSearchQueries(raw)) {
+        if (BLOCKED_DRAMA_QUERY.test(query) || bucket.includes(query)) continue;
+        bucket.push(query);
+      }
     }
     if (bucket.length) byCategory.set(category, bucket);
   }
@@ -969,8 +1272,9 @@ export function buildDiverseCollectorSearchQueries(params: {
     }
   }
   for (const query of params.seedQueries || []) {
-    const normalized = String(query || "").replace(/\s+/g, " ").trim().slice(0, 80);
-    if (normalized.length >= 2 && !BLOCKED_DRAMA_QUERY.test(normalized)) append(normalized);
+    for (const normalized of deriveWeixinChannelsSearchQueries(query)) {
+      if (!BLOCKED_DRAMA_QUERY.test(normalized)) append(normalized);
+    }
   }
   const fresh = ordered.filter((query) => !recentlyUsed.has(query.toLowerCase()));
   const used = ordered.filter((query) => recentlyUsed.has(query.toLowerCase()));
@@ -1038,6 +1342,9 @@ async function captureVisibleQualifiedVideo(params: {
   screenshot: string;
   taskId: string;
   query: string;
+  videoIdentity: string;
+  observationId: string;
+  diagnostics: CollectorHourDiagnostics;
   probe: boolean;
   server?: string;
   token?: string;
@@ -1047,24 +1354,50 @@ async function captureVisibleQualifiedVideo(params: {
   videoDurationHintSec?: number;
 }) {
   const captureStartedAt = Date.now();
+  const metricsStartedAt = Date.now();
   const metrics = extractWeixinChannelsMetrics(params.ocr.lines);
   const identity = extractVisibleTitleAndAuthor(params.ocr.lines);
+  recordCollectorPhase(params.diagnostics, "metricsOcr", metricsStartedAt);
   const actualMetrics = [metrics.likes, metrics.comments, metrics.shares, metrics.favorites]
     .filter((value) => value !== undefined);
   if (actualMetrics.length < 2) {
-    return { qualified: false as const, reason: "ocr_metrics_incomplete", fingerprint: ocrFingerprint(params.ocr) };
+    params.diagnostics.metricsIncomplete += 1;
+    return { qualified: false as const, reason: "ocr_metrics_incomplete", fingerprint: params.videoIdentity };
   }
 
   const title = params.titleOverride || identity.title || "当前视频";
   const preliminary = qualifyWeixinChannelsObservationLocally({ ...metrics, query: params.query, title });
   if (!preliminary.qualified) {
-    return { qualified: false as const, reason: preliminary.reason, fingerprint: ocrFingerprint(params.ocr) };
+    params.diagnostics.locallyUnqualified += 1;
+    if ((metrics.comments || 0) < WEIXIN_CHANNELS_COMMENT_THRESHOLD) params.diagnostics.commentsBelowThreshold += 1;
+    return { qualified: false as const, reason: preliminary.reason, fingerprint: params.videoIdentity };
   }
 
   const author = params.authorOverride || identity.author;
-  const sampled = await sampleVideoContentAtProgress(params.screenshot, metrics, captureStartedAt, params.videoDurationHintSec);
+  params.diagnostics.durationDetectionAttempted += 1;
+  const durationStartedAt = Date.now();
+  let detectedVideoDurationSec: number;
+  try {
+    detectedVideoDurationSec = await detectVideoDurationBeforeSampling({
+      screenshot: params.screenshot,
+      baseIdentity: params.videoIdentity,
+      videoDurationHintSec: params.videoDurationHintSec,
+    });
+    params.diagnostics.durationDetectionSucceeded += 1;
+  } catch (error) {
+    params.diagnostics.durationDetectionFailed += 1;
+    throw error;
+  } finally {
+    const elapsed = Date.now() - durationStartedAt;
+    params.diagnostics.durationDetectionMs += elapsed;
+    recordCollectorPhase(params.diagnostics, "duration", durationStartedAt);
+  }
+  const samplingStartedAt = Date.now();
+  const sampled = await sampleVideoContentAtProgress(params.screenshot, metrics, captureStartedAt, detectedVideoDurationSec);
+  recordCollectorPhase(params.diagnostics, "contentSampling", samplingStartedAt);
   const { ocrTexts, videoDurationSec, deadlineAt } = sampled;
   const adDetected = containsWeixinChannelsAdvertisement(ocrTexts);
+  if (adDetected) params.diagnostics.advertisementRejected += 1;
   const finalQualification = qualifyWeixinChannelsObservationLocally({
     ...metrics,
     query: params.query,
@@ -1074,14 +1407,24 @@ async function captureVisibleQualifiedVideo(params: {
   let ocr = params.ocr;
   let commentSamples: WeixinChannelsCommentSample[] | undefined;
   if (!adDetected && finalQualification.requiresComments && (metrics.comments || 0) >= WEIXIN_CHANNELS_COMMENT_THRESHOLD) {
-    const comments = await collectVisibleComments(params.screenshot, ocr, deadlineAt);
-    commentSamples = comments.samples;
-    if (!commentSamples.length) throw new Error("weixin_channels_real_comments_not_found");
-    ocr = comments.closedOcr;
+    const commentsStartedAt = Date.now();
+    try {
+      const comments = await collectVisibleComments(params.screenshot, ocr, deadlineAt);
+      commentSamples = comments.samples;
+      if (!commentSamples.length) throw new Error("weixin_channels_real_comments_not_found");
+      ocr = comments.closedOcr;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/close/.test(message)) params.diagnostics.commentsCloseFailed += 1;
+      else params.diagnostics.commentsOpenFailed += 1;
+      throw error;
+    } finally {
+      recordCollectorPhase(params.diagnostics, "comments", commentsStartedAt);
+    }
   }
-  const coverImageBase64 = !adDetected && finalQualification.qualified
-    ? await buildCoverBase64(params.screenshot)
-    : undefined;
+  const coverStartedAt = Date.now();
+  const coverImageBase64 = !adDetected && finalQualification.qualified ? await buildCoverBase64(params.screenshot) : undefined;
+  recordCollectorPhase(params.diagnostics, "cover", coverStartedAt);
   const captureElapsedMs = Date.now() - captureStartedAt;
   const captureBudgetMs = captureBudgetMsForVideo(videoDurationSec);
   if (captureElapsedMs > captureBudgetMs) {
@@ -1089,11 +1432,13 @@ async function captureVisibleQualifiedVideo(params: {
       qualified: false as const,
       inspectedContent: true as const,
       reason: "weixin_channels_capture_time_budget_exceeded",
-      fingerprint: ocrFingerprint(ocr),
+      fingerprint: params.videoIdentity,
     };
   }
+  if (finalQualification.qualified) params.diagnostics.qualifiedBeforePersist += 1;
   const observation = {
-    observationId: makeWeixinChannelsObservationId({ taskId: params.taskId, title, author }),
+    observationId: params.observationId,
+    videoIdentity: params.videoIdentity,
     taskId: params.taskId,
     query: params.query,
     resultRank: 1,
@@ -1118,15 +1463,26 @@ async function captureVisibleQualifiedVideo(params: {
   await persistPendingFile(output, observation);
   if (params.server) {
     if (!params.token) throw new Error("WEIXIN_CHANNELS_COLLECTOR_TOKEN is required for upload");
-    const payload = await uploadPendingObservation({
-      server: params.server,
-      token: params.token,
-      taskId: params.taskId,
-      pendingFile: output,
-      // 视频内容采样 SLA 与远端持久化确认分离。若沿用采样截止时间，
-      // 客户端会在 Fly 仍处理中时 abort，随后重传同一大封面请求造成重叠负载。
-      deadlineAt: Date.now() + 60_000,
-    });
+    const uploadStartedAt = Date.now();
+    let payload: Awaited<ReturnType<typeof uploadPendingObservation>>;
+    try {
+      payload = await uploadPendingObservation({
+        server: params.server,
+        token: params.token,
+        taskId: params.taskId,
+        pendingFile: output,
+        // 视频内容采样 SLA 与远端持久化确认分离。若沿用采样截止时间，
+        // 客户端会在 Fly 仍处理中时 abort，随后重传同一大封面请求造成重叠负载。
+        deadlineAt: Date.now() + 60_000,
+      });
+      if (payload.newlyQualifiedPersisted === true) params.diagnostics.persistedUnique += 1;
+      else if (payload.newlyPersisted !== true) params.diagnostics.duplicatePersistRejected += 1;
+    } catch (error) {
+      params.diagnostics.uploadFailed += 1;
+      throw error;
+    } finally {
+      recordCollectorPhase(params.diagnostics, "upload", uploadStartedAt);
+    }
     // 服务端已确认 persisted=true 后，不能再把该条改判成“未达标/跳过”；
     // 超时属于 SLA 观测，入库事实与本地达标计数必须保持一致。
     if (Date.now() > deadlineAt) {
@@ -1147,7 +1503,7 @@ async function captureVisibleQualifiedVideo(params: {
     qualified: finalQualification.qualified,
     inspectedContent: true as const,
     reason: finalQualification.reason,
-    fingerprint: ocrFingerprint(ocr),
+    fingerprint: params.videoIdentity,
     observation,
   };
 }
@@ -1188,8 +1544,16 @@ async function runCollectionPool(params: {
   maxScanned?: number;
 }) {
   const clientId = `mac-weixin-${os.hostname()}`.slice(0, 120);
+  const seenRegistry = await loadCollectorSeenRegistry();
+  let diagnostics = createCollectorHourDiagnostics();
+  let windowStartedAt = Date.parse(diagnostics.windowStartedAt);
+  let checkpoint15Handled = false;
+  let checkpoint30Handled = false;
+  let forceSearchQueryRotation = false;
   await restoreEligibleQuarantinedObservations();
   const initialRecovery = await retryPendingObservations({ server: params.server, token: params.token });
+  diagnostics.persistedUnique += initialRecovery.persistedUnique;
+  diagnostics.duplicatePersistRejected += initialRecovery.duplicatePersistRejected;
   let candidates = await refreshCollectorCandidates(params.server, params.token);
   let heartbeat = await heartbeatCollector(params.server, params.token, clientId);
   if (!heartbeat.enabled) return { stopped: "capture_disabled", scanned: 0, qualified: 0 };
@@ -1229,11 +1593,46 @@ async function runCollectionPool(params: {
   let ocr = await readOcr(params.screenshot);
   ocr = await ensureVideoPlayerVisible(params.screenshot, ocr);
 
+  const advanceTracked = async (previousIdentity: string | undefined, deadlineAt?: number) => {
+    const startedAt = Date.now();
+    try {
+      return await advanceToNextVideoSafely(previousIdentity, params.screenshot, deadlineAt);
+    } finally {
+      recordCollectorPhase(diagnostics, "advance", startedAt);
+    }
+  };
+
   while (totalScanned < (params.maxScanned ?? Number.POSITIVE_INFINITY)) {
+    const windowElapsedMs = Date.now() - windowStartedAt;
+    if (windowElapsedMs >= WEIXIN_CHANNELS_WATCHDOG_CHECKPOINTS[0].elapsedMs && !checkpoint15Handled) {
+      checkpoint15Handled = true;
+      if (diagnostics.persistedUnique < WEIXIN_CHANNELS_WATCHDOG_CHECKPOINTS[0].minimumPersisted) forceSearchQueryRotation = true;
+      process.stderr.write(`collector_watchdog_15m:${JSON.stringify(await buildCollectorHourReport(diagnostics))}\n`);
+    }
+    if (windowElapsedMs >= WEIXIN_CHANNELS_WATCHDOG_CHECKPOINTS[1].elapsedMs && !checkpoint30Handled) {
+      checkpoint30Handled = true;
+      if (diagnostics.persistedUnique < WEIXIN_CHANNELS_WATCHDOG_CHECKPOINTS[1].minimumPersisted) forceSearchQueryRotation = true;
+      process.stderr.write(`collector_watchdog_30m:${JSON.stringify(await buildCollectorHourReport(diagnostics))}\n`);
+    }
+    if (windowElapsedMs >= WEIXIN_CHANNELS_HOUR_MS) {
+      const report = await buildCollectorHourReport(diagnostics);
+      if (diagnostics.persistedUnique < 50) {
+        process.stderr.write(`collector_watchdog_60m_stopped:${JSON.stringify(report)}\n`);
+        return { stopped: "hourly_target_missed", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode, report };
+      }
+      process.stderr.write(`collector_watchdog_60m_passed:${JSON.stringify(report)}\n`);
+      diagnostics = createCollectorHourDiagnostics();
+      windowStartedAt = Date.parse(diagnostics.windowStartedAt);
+      checkpoint15Handled = false;
+      checkpoint30Handled = false;
+    }
+
     if (Date.now() - lastHeartbeatAt >= 30_000) {
       heartbeat = await heartbeatCollector(params.server, params.token, clientId);
       const recovery = await retryPendingObservations({ server: params.server, token: params.token });
       totalRecovered += recovery.persisted;
+      diagnostics.persistedUnique += recovery.persistedUnique;
+      diagnostics.duplicatePersistRejected += recovery.duplicatePersistRejected;
       lastHeartbeatAt = Date.now();
       if (!heartbeat.enabled) return { stopped: "capture_disabled", scanned: totalScanned, qualified: totalQualified };
       if (heartbeat.nextTask && heartbeat.nextTask.taskId !== task.taskId) {
@@ -1248,6 +1647,28 @@ async function runCollectionPool(params: {
       }
     }
 
+    if (forceSearchQueryRotation && task.searchQueries.length) {
+      const nextIndex = mode === "search"
+        ? nextCollectorSearchQueryIndex(searchQueryIndex, task.searchQueries.length)
+        : searchQueryIndex;
+      const nextQuery = task.searchQueries[nextIndex]!;
+      try {
+        const searchResult = await openFirstSearchResult(nextQuery, params.screenshot);
+        mode = "search";
+        searchQueryIndex = nextIndex;
+        scansOnCurrentQuery = 0;
+        qualifiedOnCurrentQuery = 0;
+        ocr = searchResult.ocr;
+        knownVideoDurationSec = searchResult.videoDurationSec;
+        await rememberCollectorQuery(nextQuery);
+        forceSearchQueryRotation = false;
+        process.stderr.write(`search_query_rotated:${nextQuery}:watchdog\n`);
+      } catch (error) {
+        searchQueryIndex = nextIndex;
+        process.stderr.write(`search_query_rotation_deferred:${nextQuery}:watchdog:${error instanceof Error ? error.message : String(error)}\n`);
+      }
+    }
+
     if (mode === "recommendation" && shouldSwitchRecommendationToSearch({
       startedAt: recommendationStartedAt,
       now: Date.now(),
@@ -1259,7 +1680,6 @@ async function runCollectionPool(params: {
       try {
         const searchResult = await openFirstSearchResult(query, params.screenshot);
         mode = "search";
-        searchQueryIndex = 0;
         scansOnCurrentQuery = 0;
         qualifiedOnCurrentQuery = 0;
         ocr = searchResult.ocr;
@@ -1287,9 +1707,7 @@ async function runCollectionPool(params: {
     try {
       ocr = await ensureInteractionMetricsVisible(params.screenshot, ocr);
     } catch (error) {
-      totalScanned += 1;
-      if (mode === "recommendation") recommendationScanned += 1;
-      else scansOnCurrentQuery += 1;
+      diagnostics.metricsIncomplete += 1;
       process.stderr.write(`scan_skipped:${error instanceof Error ? error.message : String(error)}\n`);
       process.stderr.write(`collector_progress:${JSON.stringify({ scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode })}\n`);
       if (mode === "search" && task.searchQueries.length > 1) {
@@ -1309,10 +1727,37 @@ async function runCollectionPool(params: {
           process.stderr.write(`search_query_rotation_deferred:${nextQuery}:${rotationError instanceof Error ? rotationError.message : String(rotationError)}\n`);
         }
       }
-      ocr = await advanceToNextVideoSafely(ocrFingerprint(ocr), params.screenshot);
+      ocr = await advanceTracked(visibleVideoIdentityFingerprint(ocr));
       knownVideoDurationSec = undefined;
       continue;
     }
+    const videoIdentity = visibleVideoIdentityFingerprint(ocr);
+    if (!videoIdentity) {
+      diagnostics.metricsIncomplete += 1;
+      process.stderr.write("scan_skipped:weixin_channels_stable_identity_not_detected\n");
+      ocr = await advanceTracked(undefined);
+      knownVideoDurationSec = undefined;
+      continue;
+    }
+    const visibleIdentity = extractVisibleTitleAndAuthor(ocr.lines);
+    const observationId = makeWeixinChannelsObservationId({
+      taskId: task.taskId,
+      title: visibleIdentity.title || "",
+      author: visibleIdentity.author,
+      videoIdentity,
+    });
+    if (collectorSeenContains(seenRegistry, videoIdentity, observationId)) {
+      diagnostics.duplicateVideosSkipped += 1;
+      process.stderr.write(`duplicate_visible_video_skipped:${videoIdentity}:${observationId}\n`);
+      ocr = await advanceTracked(videoIdentity);
+      knownVideoDurationSec = undefined;
+      continue;
+    }
+    await rememberCollectorSeen(seenRegistry, { videoIdentity, observationId, seenAt: new Date().toISOString() });
+    diagnostics.uniqueVideosSeen += 1;
+    totalScanned += 1;
+    if (mode === "recommendation") recommendationScanned += 1;
+    else scansOnCurrentQuery += 1;
     const itemStartedAt = Date.now();
     const query = mode === "recommendation"
       ? "推荐页"
@@ -1324,6 +1769,9 @@ async function runCollectionPool(params: {
         screenshot: params.screenshot,
         taskId: task.taskId,
         query,
+        videoIdentity,
+        observationId,
+        diagnostics,
         probe: params.probe,
         server: params.server,
         token: params.token,
@@ -1332,48 +1780,30 @@ async function runCollectionPool(params: {
     } catch (error) {
       // 单条视频超时、评论区识别失败或上传失败不能杀死整晚采集；
       // 待传文件仍由 captureVisibleQualifiedVideo 保留，随后继续下一条。
-      totalScanned += 1;
-      if (mode === "recommendation") recommendationScanned += 1;
-      else scansOnCurrentQuery += 1;
       process.stderr.write(`scan_skipped:${error instanceof Error ? error.message : String(error)}\n`);
       process.stderr.write(`collector_progress:${JSON.stringify({ scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode })}\n`);
-      ocr = await advanceToNextVideoSafely(ocrFingerprint(ocr), params.screenshot);
+      if (mode === "search") recordCollectorSearchOutcome(diagnostics, query, false);
+      ocr = await advanceTracked(videoIdentity);
+      // 搜索卡片时长只属于刚打开的首条结果；切到下一条后必须重新读取真实时长。
+      knownVideoDurationSec = undefined;
       continue;
     }
-    totalScanned += 1;
-    if (mode === "recommendation") recommendationScanned += 1;
     if (result.qualified) {
       totalQualified += 1;
       if (mode === "recommendation") recommendationQualified += 1;
       else qualifiedOnCurrentQuery += 1;
     }
+    if (mode === "search") recordCollectorSearchOutcome(diagnostics, query, result.qualified);
     process.stderr.write(`collector_progress:${JSON.stringify({ scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode })}\n`);
-
-    if (mode === "search" && task.searchQueries.length > 1) {
-      const nextIndex = (searchQueryIndex + 1) % task.searchQueries.length;
-      const nextQuery = task.searchQueries[nextIndex]!;
-      try {
-        const searchResult = await openFirstSearchResult(nextQuery, params.screenshot);
-        searchQueryIndex = nextIndex;
-        scansOnCurrentQuery += 1;
-        ocr = searchResult.ocr;
-        knownVideoDurationSec = searchResult.videoDurationSec;
-        await rememberCollectorQuery(nextQuery);
-        process.stderr.write(`search_query_rotated:${nextQuery}:one_result_per_query\n`);
-        continue;
-      } catch (error) {
-        searchQueryIndex = nextIndex;
-        knownVideoDurationSec = undefined;
-        process.stderr.write(`search_query_rotation_deferred:${nextQuery}:${error instanceof Error ? error.message : String(error)}\n`);
-      }
-    }
 
     if (!result.qualified && !("inspectedContent" in result)) {
       const deadlineAt = itemStartedAt + WEIXIN_CHANNELS_UNQUALIFIED_DWELL_MS;
-      ocr = await advanceToNextVideoSafely(result.fingerprint, params.screenshot, deadlineAt);
+      ocr = await advanceTracked(result.fingerprint, deadlineAt);
     } else {
-      ocr = await advanceToNextVideoSafely(result.fingerprint, params.screenshot);
+      ocr = await advanceTracked(result.fingerprint);
     }
+    // 推荐流/搜索结果向下切换后，禁止把上一条视频的时长提示复用给下一条。
+    knownVideoDurationSec = undefined;
 
     if (mode === "recommendation" && Date.now() - recommendationStartedAt >= WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS) {
       if (recommendationQualified >= WEIXIN_CHANNELS_RECOMMENDATION_TARGET) {
@@ -1382,7 +1812,6 @@ async function runCollectionPool(params: {
         recommendationScanned = 0;
       }
     } else if (mode === "search") {
-      scansOnCurrentQuery += 1;
       if (scansOnCurrentQuery >= WEIXIN_CHANNELS_PRECISION_SAMPLE_SIZE) {
         const rotate = shouldRotateSearchQuery({
           scannedCount: scansOnCurrentQuery,
@@ -1474,16 +1903,25 @@ async function main() {
   if (!automate && !interact) throw new Error("weixin_channels_timed_capture_requires_live_interaction");
   const outputArg = args.find((item) => item.startsWith("--output="));
   const token = String(process.env.WEIXIN_CHANNELS_COLLECTOR_TOKEN || "").trim();
+  const videoIdentity = visibleVideoIdentityFingerprint(ocr);
+  if (!videoIdentity) throw new Error("weixin_channels_stable_identity_not_detected");
+  const extractedIdentity = extractVisibleTitleAndAuthor(ocr.lines);
+  const suppliedTitle = titleArg?.slice("--title=".length) || extractedIdentity.title || "";
+  const effectiveTitle = suppliedTitle || "当前视频";
+  const effectiveAuthor = authorArg?.slice("--author=".length) || extractedIdentity.author;
   const result = await captureVisibleQualifiedVideo({
     ocr,
     screenshot,
     taskId,
     query,
+    videoIdentity,
+    observationId: makeWeixinChannelsObservationId({ taskId, title: suppliedTitle, author: effectiveAuthor, videoIdentity }),
+    diagnostics: createCollectorHourDiagnostics(),
     probe,
     server: serverArg?.slice("--server=".length).replace(/\/$/, ""),
     token,
-    titleOverride: titleArg?.slice("--title=".length),
-    authorOverride: authorArg?.slice("--author=".length),
+    titleOverride: effectiveTitle,
+    authorOverride: effectiveAuthor,
     outputOverride: outputArg?.slice("--output=".length),
     videoDurationHintSec,
   });

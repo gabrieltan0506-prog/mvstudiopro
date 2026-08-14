@@ -18,12 +18,13 @@ describe("weixinChannelsCollectorHttp", () => {
 
   it("允许视频时长十分之一加两秒抖动，并拒绝客户端抬高预算", () => {
     const base = {
-      observationId: "observation-1", taskId: "task-123", query: "AI视频", resultRank: 1,
+      observationId: "observation-1", videoIdentity: "a".repeat(64), taskId: "task-123", query: "AI视频", resultRank: 1,
       title: "AI视频教程", observedAt: "2026-08-14T00:00:00.000Z",
       likes: 3_000, shares: 2_000, comments: 10, evidence: "capture" as const,
       videoDurationSec: 60, captureBudgetMs: 8_000,
     };
     expect(weixinChannelsObservationSchema.safeParse({ ...base, captureElapsedMs: 7_999 }).success).toBe(true);
+    expect(weixinChannelsObservationSchema.safeParse({ ...base, videoIdentity: "not-a-stable-id", captureElapsedMs: 7_999 }).success).toBe(false);
     expect(weixinChannelsObservationSchema.safeParse({ ...base, captureElapsedMs: 8_001 }).success).toBe(false);
     expect(weixinChannelsObservationSchema.safeParse({ ...base, captureBudgetMs: 10_000, captureElapsedMs: 7_000 }).success).toBe(false);
   });

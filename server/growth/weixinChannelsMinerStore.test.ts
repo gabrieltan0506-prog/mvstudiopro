@@ -55,6 +55,22 @@ afterEach(() => {
 });
 
 describe("weixinChannelsMinerStore", () => {
+  it("重复 observationId 只首次计入真实新增，并保留首次持久化时间", async () => {
+    await seed([]);
+    const first = await ingestWeixinChannelsObservations({ taskId: "task-123", observations: [persisted(1)] });
+    const firstPersistedAt = (await getWeixinChannelsMinerState()).observations[0]?.persistedAt;
+    const duplicate = await ingestWeixinChannelsObservations({
+      taskId: "task-123",
+      observations: [{ ...persisted(1), observedAt: "2026-08-14T01:00:00.000Z", likes: 9_999 }],
+    });
+    const state = await getWeixinChannelsMinerState();
+    expect(first).toMatchObject({ persisted: true, newlyPersisted: true, newlyQualifiedPersisted: true });
+    expect(duplicate).toMatchObject({ persisted: true, newlyPersisted: false, newlyQualifiedPersisted: false });
+    expect(state.observations).toHaveLength(1);
+    expect(state.observations[0]).toMatchObject({ observedAt: "2026-08-14T00:00:00.000Z", persistedAt: firstPersistedAt, likes: 9_999 });
+    expect(state.recentDuplicatePersistEvents).toHaveLength(1);
+  });
+
   it("同一本机连续心跳续租原任务，不会误占多个七天热词候选", async () => {
     await seed([]);
     const first = await recordWeixinChannelsHeartbeat("mac-client-1");

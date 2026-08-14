@@ -5,6 +5,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   extractCommentSamples,
   captureBudgetMsForVideo,
+  collectorSeenContains,
+  collectorWatchdogDecision,
+  loadCollectorSearchTabState,
+  loadCollectorSeenRegistry,
+  rememberCollectorSeen,
   buildDiverseCollectorSearchQueries,
   deriveVideoDurationSeconds,
   extractVisibleTitleAndAuthor,
@@ -21,6 +26,7 @@ import {
   nextCollectorSearchQueryIndex,
   parseVisibleMetric,
   parseVisibleVideoClockSeconds,
+  parseVisibleVideoTotalDurationSeconds,
   pendingObservationHasRequiredComments,
   restoreEligibleQuarantinedObservations,
   retryPendingObservations,
@@ -29,6 +35,7 @@ import {
   shouldSwitchRecommendationToSearch,
   shouldRotateSearchQuery,
   uploadPendingObservation,
+  visibleVideoIdentityFingerprint,
   WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS,
   WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS,
   WEIXIN_CHANNELS_SEARCH_BUTTON_POINT,
@@ -83,6 +90,58 @@ describe("weixin channels OCR", () => {
     expect(WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS).toEqual([0.1, 0.3, 0.5, 0.7, 0.9]);
     expect(captureBudgetMsForVideo(60)).toBe(8_000);
     expect(captureBudgetMsForVideo(600)).toBe(62_000);
+  });
+
+  it("稳定视频身份忽略字幕变化，但指标、标题或作者变化都会改变", () => {
+    const lines = (subtitle: string, likes = "3000", title = "AI工作流实测", author = "工具研究所") => [
+      { text: title, confidence: 0.99, x: 0.05, y: 0.12, width: 0.42, height: 0.04 },
+      { text: author, confidence: 0.99, x: 0.05, y: 0.07, width: 0.18, height: 0.03 },
+      { text: subtitle, confidence: 0.99, x: 0.2, y: 0.5, width: 0.6, height: 0.04 },
+      { text: likes, confidence: 0.99, x: 0.52, y: 0.08, width: 0.06, height: 0.03 },
+      { text: "2000", confidence: 0.99, x: 0.65, y: 0.08, width: 0.06, height: 0.03 },
+      { text: "1500", confidence: 0.99, x: 0.77, y: 0.08, width: 0.06, height: 0.03 },
+      { text: "120", confidence: 0.99, x: 0.89, y: 0.08, width: 0.06, height: 0.03 },
+    ];
+    const ocr = (value: ReturnType<typeof lines>) => ({ width: 483, height: 769, lines: value });
+    const first = visibleVideoIdentityFingerprint(ocr(lines("第一句字幕")));
+    expect(first).toBe(visibleVideoIdentityFingerprint(ocr(lines("第二句字幕"))));
+    expect(first).not.toBe(visibleVideoIdentityFingerprint(ocr(lines("第二句字幕", "3001"))));
+    expect(first).not.toBe(visibleVideoIdentityFingerprint(ocr(lines("第二句字幕", "3000", "AI智能体教程"))));
+    expect(first).not.toBe(visibleVideoIdentityFingerprint(ocr(lines("第二句字幕", "3000", "AI工作流实测", "另一作者"))));
+    expect(visibleVideoIdentityFingerprint(ocr(lines("字幕").slice(0, 4)))).toBeUndefined();
+  });
+
+  it("七天身份与 observationId 去重跨监督器重启仍生效", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-seen-"));
+    const first = await loadCollectorSeenRegistry(dir, Date.parse("2026-08-14T00:00:00.000Z"));
+    await rememberCollectorSeen(first, {
+      videoIdentity: "a".repeat(64), observationId: "wxco_restart", seenAt: "",
+    }, Date.parse("2026-08-14T00:00:00.000Z"));
+    const restarted = await loadCollectorSeenRegistry(dir, Date.parse("2026-08-14T01:00:00.000Z"));
+    expect(collectorSeenContains(restarted, "a".repeat(64))).toBe(true);
+    expect(collectorSeenContains(restarted, "b".repeat(64), "wxco_restart")).toBe(true);
+    const expired = await loadCollectorSeenRegistry(dir, Date.parse("2026-08-22T00:00:01.000Z"));
+    expect(collectorSeenContains(expired, "a".repeat(64))).toBe(false);
+  });
+
+  it("跨进程标签状态钳制为两个新增标签，总数永远不超过三个", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-tabs-"));
+    await fs.writeFile(path.join(dir, "weixin-channels-search-tabs-v1.json"), JSON.stringify({
+      windowId: 42, openedTabs: 99, updatedAt: "2026-08-14T00:00:00.000Z",
+    }));
+    const state = await loadCollectorSearchTabState(42, dir, Date.parse("2026-08-14T01:00:00.000Z"));
+    expect(state.openedTabs).toBe(2);
+    expect(shouldReuseExistingSearchTab(state.openedTabs)).toBe(true);
+  });
+
+  it("播放器只接受明确总时长，小时看门狗低于五十会停采", () => {
+    expect(parseVisibleVideoTotalDurationSeconds("01:12 / 03:40")).toBe(220);
+    expect(parseVisibleVideoTotalDurationSeconds("总时长 02:06")).toBe(126);
+    expect(parseVisibleVideoTotalDurationSeconds("当前 01:12")).toBeUndefined();
+    expect(collectorWatchdogDecision(15 * 60_000, 11)).toBe("checkpoint_15");
+    expect(collectorWatchdogDecision(30 * 60_000, 24)).toBe("checkpoint_30");
+    expect(collectorWatchdogDecision(60 * 60_000, 49)).toBe("stop");
+    expect(collectorWatchdogDecision(60 * 60_000, 50)).toBe("rollover");
   });
 
   it("解析中文万单位且不伪造缺失数据", () => {
@@ -280,7 +339,7 @@ describe("weixin channels OCR", () => {
     const recovery = await retryPendingObservations({
       server: "https://example.invalid", token: "token", tempDir: dir, fetchImpl,
     });
-    expect(recovery).toEqual({ found: 1, persisted: 0, failed: 0 });
+    expect(recovery).toEqual({ found: 1, persisted: 0, persistedUnique: 0, duplicatePersistRejected: 0, failed: 0 });
     expect(fetchImpl).not.toHaveBeenCalled();
     await expect(fs.stat(pending)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.stat(path.join(dir, "weixin-channels-quarantine", path.basename(pending)))).resolves.toBeTruthy();
@@ -309,7 +368,7 @@ describe("weixin channels OCR", () => {
     const recovery = await retryPendingObservations({
       server: "https://example.invalid", token: "token", tempDir: dir, fetchImpl: persistedFetch,
     });
-    expect(recovery).toEqual({ found: 2, persisted: 1, failed: 0 });
+    expect(recovery).toEqual({ found: 2, persisted: 1, persistedUnique: 0, duplicatePersistRejected: 0, failed: 0 });
     expect(persistedFetch).toHaveBeenCalledTimes(1);
     const remaining = (await fs.readdir(dir)).filter((name) => name.startsWith("weixin-channels-pending-"));
     expect(remaining).toHaveLength(1);
