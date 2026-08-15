@@ -5137,7 +5137,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 response_format: { type: "json_object" },
                 max_tokens: visualReportMaxTokens,
                 reasoningEffort: "high",
-                openAiGateway: "evolink_primary",
                 requestId: `visual-report:${input.billingRequestId}`,
                 messages: [
                   { role: "system", content: systemPrompt },
