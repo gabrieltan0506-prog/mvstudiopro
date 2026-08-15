@@ -4,6 +4,7 @@
 
 import {
   buildManhuaWriterSession,
+  migrateManhuaWriterTemplateId,
   type ManhuaWriterSession,
   type ManhuaWriterSessionPartial,
 } from "./manhuaWriterSession.js";
@@ -59,6 +60,8 @@ export type ManhuaCloudDraftPayload = {
   /** 客户端本地修订时间 ISO */
   clientUpdatedAt: string;
   writerSession: ManhuaWriterSession;
+  /** 只在读取旧草稿时出现；提示前端旧内部模板选择已安全清除。 */
+  migration?: { clearedLegacyPrivateTemplate: true };
   canvas: {
     blocks: ManhuaCloudDraftCanvasBlock[];
     edges: ManhuaCloudDraftEdge[];
@@ -194,10 +197,14 @@ export function buildManhuaCloudDraftPayload(input: {
     .filter((e): e is ManhuaCloudDraftEdge => Boolean(e))
     .slice(0, 800);
 
+  const templateMigration = migrateManhuaWriterTemplateId(input.writerSession);
   return {
     format: MANHUA_CLOUD_DRAFT_FORMAT,
     clientUpdatedAt,
     writerSession: buildManhuaWriterSession(input.writerSession),
+    migration: templateMigration.clearedLegacyPrivateTemplate
+      ? { clearedLegacyPrivateTemplate: true }
+      : undefined,
     canvas: { blocks, edges },
     factoryPrefs: input.factoryPrefs || null,
   };
@@ -217,7 +224,9 @@ export function parseManhuaCloudDraftPayload(raw: unknown): ManhuaCloudDraftPayl
   if (o.format !== MANHUA_CLOUD_DRAFT_FORMAT) return null;
   const clientUpdatedAt = String(o.clientUpdatedAt || "").trim();
   if (!clientUpdatedAt || Number.isNaN(Date.parse(clientUpdatedAt))) return null;
-  const writerSession = buildManhuaWriterSession(o.writerSession || {});
+  const rawWriterSession = o.writerSession || {};
+  const templateMigration = migrateManhuaWriterTemplateId(rawWriterSession);
+  const writerSession = buildManhuaWriterSession(rawWriterSession);
   const blocks = Array.isArray(o.canvas?.blocks)
     ? o.canvas!.blocks
         .map((b) => sanitizeManhuaCloudDraftBlock(b))
@@ -236,6 +245,9 @@ export function parseManhuaCloudDraftPayload(raw: unknown): ManhuaCloudDraftPayl
     format: MANHUA_CLOUD_DRAFT_FORMAT,
     clientUpdatedAt,
     writerSession,
+    migration: templateMigration.clearedLegacyPrivateTemplate
+      ? { clearedLegacyPrivateTemplate: true }
+      : undefined,
     canvas: { blocks, edges },
     factoryPrefs:
       o.factoryPrefs && typeof o.factoryPrefs === "object"

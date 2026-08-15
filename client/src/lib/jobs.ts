@@ -23,13 +23,10 @@ export type ManhuaLearnServerJob = {
   updatedAt?: string;
 };
 
-export async function listManhuaLearnServerJobs(
-  supervisorToken?: string,
-): Promise<{ maxConcurrent: number; items: ManhuaLearnServerJob[] }> {
+export async function listManhuaLearnServerJobs(): Promise<{ maxConcurrent: number; items: ManhuaLearnServerJob[] }> {
   const response = await fetch("/api/jobs/manhua-learn", {
     method: "GET",
     credentials: "include",
-    headers: supervisorToken ? { "x-supervisor-token": supervisorToken } : undefined,
     cache: "no-store",
   });
   if (!response.ok) throw new Error(await formatCreateJobError(response));
@@ -46,35 +43,32 @@ export async function listManhuaLearnServerJobs(
 async function controlManhuaLearnJob(
   jobId: string,
   action: "cancel" | "skip",
-  supervisorToken?: string,
 ): Promise<{ jobId: string; status: JobStatus; messageZh?: string }> {
   const response = await fetch(
     `/api/jobs/manhua-learn/${encodeURIComponent(jobId)}/${action}`,
     {
       method: "POST",
       credentials: "include",
-      headers: supervisorToken ? { "x-supervisor-token": supervisorToken } : undefined,
     },
   );
   if (!response.ok) throw new Error(await formatCreateJobError(response));
   return response.json();
 }
 
-export function cancelManhuaLearnServerJob(jobId: string, supervisorToken?: string) {
-  return controlManhuaLearnJob(jobId, "cancel", supervisorToken);
+export function cancelManhuaLearnServerJob(jobId: string) {
+  return controlManhuaLearnJob(jobId, "cancel");
 }
 
-export function skipManhuaLearnServerEpisode(jobId: string, supervisorToken?: string) {
-  return controlManhuaLearnJob(jobId, "skip", supervisorToken);
+export function skipManhuaLearnServerEpisode(jobId: string) {
+  return controlManhuaLearnJob(jobId, "skip");
 }
 
-export async function hideManhuaLearnServerSeries(jobId: string, supervisorToken?: string) {
+export async function hideManhuaLearnServerSeries(jobId: string) {
   const response = await fetch(
     `/api/jobs/manhua-learn/${encodeURIComponent(jobId)}/hide`,
     {
       method: "POST",
       credentials: "include",
-      headers: supervisorToken ? { "x-supervisor-token": supervisorToken } : undefined,
     },
   );
   if (!response.ok) throw new Error(await formatCreateJobError(response));
@@ -85,7 +79,6 @@ export async function createJob(payload: {
   type: JobType;
   userId: string;
   input: Record<string, unknown>;
-  supervisorToken?: string;
 }): Promise<{ jobId: string }> {
   const url = withLongJobsFlyDirect("/api/jobs");
   const response = await withFlyHealthGate(flyHealthProbeOriginForUrl(url), () =>

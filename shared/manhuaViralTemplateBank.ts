@@ -172,7 +172,7 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
       .filter((r) => r.url)
       .slice(0, 8),
     status,
-    publicCode: /^[A-Z0-9]{4,8}$/.test(String(o.publicCode || "")) ? String(o.publicCode) : undefined,
+    publicCode: /^[A-Z0-9]{4,16}$/.test(String(o.publicCode || "")) ? String(o.publicCode) : undefined,
     approvedAt: o.approvedAt ? String(o.approvedAt) : undefined,
     updatedAt: o.updatedAt ? String(o.updatedAt) : undefined,
     provenance: parseManhuaViralTemplateProvenance(o.provenance),
@@ -213,7 +213,7 @@ export function toPublicManhuaViralTemplateCard(
   copy?: { featureZh?: string; introZh?: string } | null,
 ): PublicManhuaViralTemplateCard | null {
   const code = String(card.publicCode || "").trim();
-  if (!/^[A-Z0-9]{4,8}$/.test(code)) return null;
+  if (!/^[A-Z0-9]{4,16}$/.test(code)) return null;
   return {
     publicId: makePublicTemplateId(code),
     nameZh: makeAnonymousTemplateNameZh(card.laneZh, code),

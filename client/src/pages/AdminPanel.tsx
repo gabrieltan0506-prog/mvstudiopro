@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
-import { SUPERVISOR_TRPC_TOKEN_SESSION_KEY } from "@/lib/supervisorTrpcToken";
+import { exchangeSupervisorSecret, hasSupervisorSessionHint } from "@/lib/supervisorTrpcToken";
 import { toast } from "sonner";
 import { Shield, DollarSign, Users, FileCheck, TrendingUp, CheckCircle, XCircle, Clock, Loader2, Copy, KeyRound, RefreshCw, Eraser } from "lucide-react";
 import { useLocation } from "wouter";
@@ -42,9 +42,10 @@ export default function AdminPanel() {
 
   const [verificationActingUserId, setVerificationActingUserId] = useState<number | null>(null);
   const [supervisorReapToken, setSupervisorReapToken] = useState("");
+  const [supervisorSessionReady, setSupervisorSessionReady] = useState(hasSupervisorSessionHint);
 
-  const isAdminOrSupervisor = isSupervisorUrl || (isAuthenticated && (user?.role === "admin" || user?.role === "supervisor"));
   const isAdminOnly = isAuthenticated && (user?.role === "admin" || user?.role === "supervisor");
+  const isAdminOrSupervisor = isAdminOnly || (isAuthenticated && isSupervisorUrl && supervisorSessionReady);
 
   // ── 所有 hooks 必须在 conditional return 之前 ──
   const myCodesList = trpc.betaCode.listMine.useQuery(undefined, { enabled: isAdminOrSupervisor });
@@ -57,7 +58,9 @@ export default function AdminPanel() {
   const { data: runtimeMx, isFetching: runtimeMxFetching, refetch: refetchRuntimeMx } =
     trpc.admin.runtimeMetricsOverview.useQuery(
       { tail: 480 },
-      { enabled: isAdminOrSupervisor, refetchInterval: 14000 },
+      // 该 procedure 仍是 adminProcedure；监管 cookie 只扩展明确接入的运维端点，
+      // 不能让普通角色会话每 14 秒制造一次必然的 FORBIDDEN 请求。
+      { enabled: isAdminOnly, refetchInterval: 14000 },
     );
 
   const [mascotCareNote, setMascotCareNote] = useState("");
@@ -154,18 +157,11 @@ export default function AdminPanel() {
     void fetchVerifications();
   }, [isAuthenticated, user?.role]);
 
-  useEffect(() => {
-    try {
-      const v = sessionStorage.getItem(SUPERVISOR_TRPC_TOKEN_SESSION_KEY);
-      if (v) setSupervisorReapToken(v);
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
   const isSupervisorOnly = isAuthenticated && user?.role === "supervisor";
   const canReapNeonJobs =
-    isAdminOnly || (isSupervisorUrl && supervisorReapToken.trim().length > 0);
+    isAdminOnly || (isAuthenticated && isSupervisorUrl && (
+      supervisorSessionReady || supervisorReapToken.trim().length > 0
+    ));
 
   // Redirect non-admin / non-supervisor（supervisor URL bypass 例外）
   if (!isSupervisorUrl && isAuthenticated && user?.role !== "admin" && user?.role !== "supervisor") {
@@ -452,11 +448,14 @@ export default function AdminPanel() {
                   variant="destructive"
                   className="gap-1.5"
                   disabled={!canReapNeonJobs || reapNeonJobsMutation.isPending}
-                  onClick={() =>
-                    reapNeonJobsMutation.mutate(
-                      isAdminOnly ? undefined : { supervisorToken: supervisorReapToken.trim() },
-                    )
-                  }
+                  onClick={() => void (async () => {
+                    if (!isAdminOnly && !supervisorSessionReady) {
+                      const ready = await exchangeSupervisorSecret(supervisorReapToken);
+                      setSupervisorSessionReady(ready);
+                      setSupervisorReapToken("");
+                    }
+                    await reapNeonJobsMutation.mutateAsync();
+                  })().catch((error) => toast.error(error instanceof Error ? error.message : "监管操作失败"))}
                 >
                   {reapNeonJobsMutation.isPending ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -470,7 +469,7 @@ export default function AdminPanel() {
                 {isSupervisorUrl && !isAdminOnly ? (
                   <div className="mb-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 space-y-1.5">
                     <label className="text-[11px] text-amber-200/90 font-medium block">
-                      Supervisor 密钥（与生成邀请码相同 <span className="font-mono">SUPERVISOR_SECRET</span>，免登入）
+                      Supervisor 密钥（登录后换取 HttpOnly 会话；不会保存在浏览器储存区）
                     </label>
                     <input
                       type="password"
@@ -478,13 +477,7 @@ export default function AdminPanel() {
                       placeholder="贴上后再点「一键清理」"
                       value={supervisorReapToken}
                       onChange={(e) => {
-                        const v = e.target.value;
-                        setSupervisorReapToken(v);
-                        try {
-                          sessionStorage.setItem(SUPERVISOR_TRPC_TOKEN_SESSION_KEY, v);
-                        } catch {
-                          /* ignore */
-                        }
+                        setSupervisorReapToken(e.target.value);
                       }}
                       className="w-full max-w-md bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground font-mono"
                     />

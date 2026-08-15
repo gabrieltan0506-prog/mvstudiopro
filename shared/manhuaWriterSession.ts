@@ -66,8 +66,8 @@ export type ManhuaWriterSession = {
   audioReferenceLock: ManhuaAudioReferenceLock | null;
   /** 生成资产图时授权匿名进库（半价） */
   shareAssetToLibrary: boolean;
-  /** 审定节奏模板 id（tpl_*）；扩写注入用 */
-  viralTemplateId: string;
+  /** 匿名化剧情增强方案公开句柄（mt_*）；扩写注入用 */
+  publicTemplateId: string;
   /**
    * 开场选定的成片引擎（2.0-mini / 2.0 / 2.0-fast / 2.5 / H3）。
    * 空字符串 = 尚未选择，扩写前必须选定。
@@ -90,7 +90,32 @@ export type ManhuaWriterSession = {
 
 export type ManhuaWriterSessionPartial = Partial<Omit<ManhuaWriterSession, "format">> & {
   format?: string;
+  /** @deprecated 旧草稿字段；只用于把 mt_* 平移到 publicTemplateId。 */
+  viralTemplateId?: string;
 };
+
+export type ManhuaWriterTemplateIdMigration = {
+  publicTemplateId: string;
+  /** 旧草稿保存了内部 tpl_*；客户端必须提示用户重新选择，不能继续回写。 */
+  clearedLegacyPrivateTemplate: boolean;
+};
+
+export function migrateManhuaWriterTemplateId(
+  input: Pick<ManhuaWriterSessionPartial, "publicTemplateId" | "viralTemplateId">,
+): ManhuaWriterTemplateIdMigration {
+  const current = String(input.publicTemplateId || "").trim().slice(0, 64);
+  if (/^mt_[a-z0-9]{4,16}$/i.test(current)) {
+    return { publicTemplateId: current.toLowerCase(), clearedLegacyPrivateTemplate: false };
+  }
+  const legacy = String(input.viralTemplateId || current).trim().slice(0, 64);
+  if (/^mt_[a-z0-9]{4,16}$/i.test(legacy)) {
+    return { publicTemplateId: legacy.toLowerCase(), clearedLegacyPrivateTemplate: false };
+  }
+  return {
+    publicTemplateId: "",
+    clearedLegacyPrivateTemplate: /^tpl_[a-z0-9_-]{1,60}$/i.test(legacy),
+  };
+}
 
 function normalizeWriterPack(raw: unknown): ManhuaWriterPack | null {
   if (!raw || typeof raw !== "object") return null;
@@ -148,7 +173,7 @@ export function buildManhuaWriterSession(input: ManhuaWriterSessionPartial): Man
     characterVoiceLocks: normalizeManhuaCharacterVoiceLocks(input.characterVoiceLocks),
     audioReferenceLock: normalizeManhuaAudioReferenceLock(input.audioReferenceLock),
     shareAssetToLibrary: Boolean(input.shareAssetToLibrary),
-    viralTemplateId: String(input.viralTemplateId || "").trim().slice(0, 64),
+    publicTemplateId: migrateManhuaWriterTemplateId(input).publicTemplateId,
     // 已移出漫剧的 happyhorse-1.1 旧会话迁到等价档 2.0-fast（同 6×15s 段表、同段价），
     // 不让它落到画布默认的 2.5——那会悄悄改段表、改权限门。其余未知值回到「未选引擎」。
     videoModel: migrateRetiredManhuaLayoutVideoModel(input.videoModel),

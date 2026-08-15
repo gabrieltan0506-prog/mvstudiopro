@@ -2,11 +2,14 @@ import type { CreateExpressContextOptions } from "@trpc/server/adapters/express"
 import type { User } from "../../drizzle/schema";
 import { HttpError } from "@shared/_core/errors";
 import { sdk } from "./sdk";
+import { readSupervisorSession, type SupervisorSession } from "../services/supervisor-session";
 
 export type TrpcContext = {
   req: CreateExpressContextOptions["req"];
   res: CreateExpressContextOptions["res"];
   user: User | null;
+  /** 已验签、未过期且与当前登录 user.id 一致的监管会话。 */
+  supervisorSession?: SupervisorSession;
   /**
    * `user` 为空的原因是鉴权依赖挂了（库连不上等），而不是没带/带错凭证。
    * 调用方应回 503 让客户端重试，**不要**提示用户重新登录。
@@ -56,6 +59,12 @@ export async function createContext(
     req: opts.req,
     res: opts.res,
     user,
+    supervisorSession: user
+      ? readSupervisorSession({
+          cookieHeader: opts.req.headers.cookie,
+          expectedUserId: user.id,
+        })
+      : undefined,
     authUnavailable,
     clientDisconnected: disconnect.signal,
   };

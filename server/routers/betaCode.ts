@@ -5,7 +5,7 @@ import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
 import { betaInviteCodes, betaCodeUsages } from "../../drizzle/schema-beta";
 import { addCredits } from "../credits";
-import { hasUnlimitedAccess, isValidSupervisorSecret } from "../services/access-policy";
+import { hasUnlimitedAccess, resolvePlatformSupervisorOpsAllowed } from "../services/access-policy";
 import { users } from "../../drizzle/schema";
 
 function generateCode(): string {
@@ -88,7 +88,6 @@ export const betaCodeRouter = router({
         maxUses: z.number().int().min(1).default(1),
         note: z.string().max(120).optional(),
         expiresInDays: z.number().int().min(1).max(365).optional(),
-        supervisorToken: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -97,13 +96,12 @@ export const betaCodeRouter = router({
 
       await ensureBetaTables(db);
 
-      // supervisor token 直接通过
-      const tokenOk = isValidSupervisorSecret(input.supervisorToken);
-
-      if (!tokenOk) {
-        // 需要登录 session
-        const userId = (ctx as any).user?.id;
-        if (!userId) throw new TRPCError({ code: "UNAUTHORIZED", message: "请先登录或提供 supervisor token" });
+      const sessionOk = Boolean(
+        ctx.user && resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession),
+      );
+      if (!sessionOk) {
+        const userId = ctx.user?.id;
+        if (!userId) throw new TRPCError({ code: "UNAUTHORIZED", message: "请先登录" });
         const [userRow] = await db.select({ role: users.role, email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
         if (!hasUnlimitedAccess({ role: userRow?.role, email: userRow?.email })) {
           throw new TRPCError({ code: "FORBIDDEN", message: `仅 Supervisor / Admin 可生成邀请码` });
@@ -216,16 +214,17 @@ export const betaCodeRouter = router({
     }),
 
   listMine: publicProcedure
-    .input(z.object({ supervisorToken: z.string().optional() }).optional())
-    .query(async ({ ctx, input }) => {
+    .query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
 
     await ensureBetaTables(db);
 
-    const tokenOk = isValidSupervisorSecret(input?.supervisorToken);
-    if (!tokenOk) {
-      const userId = (ctx as any).user?.id;
+    const sessionOk = Boolean(
+      ctx.user && resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession),
+    );
+    if (!sessionOk) {
+      const userId = ctx.user?.id;
       if (!userId) throw new TRPCError({ code: "UNAUTHORIZED", message: "请先登录" });
       const [userRow] = await db.select({ role: users.role, email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
       if (!hasUnlimitedAccess({ role: userRow?.role, email: userRow?.email })) {

@@ -13,6 +13,10 @@ import {
   type ManhuaViralTemplateCard,
 } from "../../shared/manhuaViralTemplateBank.js";
 import {
+  makeStableManhuaTemplatePublicId,
+  resolveStableManhuaTemplatePublicCode,
+} from "./manhuaTemplatePublicId.js";
+import {
   downloadGcsObject,
   listGcsObjectNamesByPrefix,
   uploadBufferToGcs,
@@ -138,9 +142,9 @@ export async function getMergedManhuaViralTemplateByPublicId(
   publicId?: string | null,
 ): Promise<ManhuaViralTemplateCard | null> {
   const key = String(publicId || "").trim().toLowerCase();
-  if (!/^mt_[a-z0-9]{4,8}$/.test(key)) return null;
+  if (!/^mt_[a-z0-9]{4,16}$/.test(key)) return null;
   const all = await listMergedApprovedManhuaViralTemplates();
-  return all.find((c) => c.publicCode && makePublicTemplateId(c.publicCode) === key) || null;
+  return all.find((c) => makeStableManhuaTemplatePublicId(c) === key) || null;
 }
 
 /**
@@ -156,7 +160,7 @@ export async function resolveViralTemplateForExpand(requestedTemplateId: string)
 } | { error: "bad_id" | "not_found" | "no_public_code" }> {
   const key = String(requestedTemplateId || "").trim();
   let card: ManhuaViralTemplateCard | null = null;
-  if (/^mt_[a-z0-9]{4,8}$/i.test(key)) {
+  if (/^mt_[a-z0-9]{4,16}$/i.test(key)) {
     card = await getMergedManhuaViralTemplateByPublicId(key.toLowerCase());
   } else if (/^tpl_[a-z0-9_-]{1,60}$/i.test(key)) {
     card = await getMergedManhuaViralTemplate(key);
@@ -164,8 +168,8 @@ export async function resolveViralTemplateForExpand(requestedTemplateId: string)
     return { error: "bad_id" };
   }
   if (!card || card.status !== "approved") return { error: "not_found" };
-  const code = String(card.publicCode || "").trim();
-  if (!/^[A-Z0-9]{4,8}$/.test(code)) return { error: "no_public_code" };
+  const code = resolveStableManhuaTemplatePublicCode(card);
+  if (!code) return { error: "no_public_code" };
   const { makeAnonymousTemplateNameZh } = await import("../../shared/manhuaViralTemplateBank.js");
   return {
     card,

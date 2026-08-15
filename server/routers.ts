@@ -36,7 +36,11 @@ import { paymentRouter } from "./routers/payment";
 import { emailAuthRouter } from "./routers/emailAuth";
 import { betaRouter } from "./routers/beta";
 import { betaCodeRouter } from "./routers/betaCode";
-import { isValidSupervisorSecret, resolvePlatformSupervisorOpsAllowed } from "./services/access-policy";
+import { resolvePlatformSupervisorOpsAllowed } from "./services/access-policy";
+import {
+  getSupervisorSessionCookieOptions,
+  SUPERVISOR_SESSION_COOKIE_NAME,
+} from "./services/supervisor-session";
 import {
   buildIndustryGrowthHintMap,
   filterVisualReportEvidenceItems,
@@ -2938,6 +2942,10 @@ export const appRouter = router({
 
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+      ctx.res.clearCookie(SUPERVISOR_SESSION_COOKIE_NAME, {
+        ...getSupervisorSessionCookieOptions(ctx.req),
+        maxAge: -1,
+      });
       return {
         success: true,
       } as const;
@@ -5532,8 +5540,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           enableTopicCoverDeepResearchPro: z.boolean().optional(),
           /** 可選第二條選題 sceneId（同用戶快照）；DR-Pro 雙條並行，皆失敗則單題 + GPT 5.4 */
           drProSecondarySceneId: z.string().min(1).max(128).optional(),
-          /** 與服端 env `SUPERVISOR_SECRET` 一致時，承認 coverProEngine／Deep Research Pro（不免扣積分）。 */
-          supervisorToken: z.string().max(512).optional(),
           /**
            * 封面平台母语偏好（决策智库 / 趋势选中平台）：优先取 platformVariants.coverHeadline。
            * 可为 douyin / xiaohongshu / bilibili / kuaishou / weixin_channels。
@@ -5544,7 +5550,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
+        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession);
         const topicCoverPixelEngine = supervisorOpsAllowed
           ? resolveSupervisorTopicCoverPixelEngineInput({
               topicCoverPixelEngine: input.topicCoverPixelEngine,
@@ -6312,7 +6318,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           qaModel: z.enum(["gpt-5.6-terra", "gpt-5.6-sol"]).optional(),
           /** 超额付费确认（前端 confirm 后传 true） */
           confirmPaid: z.boolean().optional(),
-          supervisorToken: z.string().max(512).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
@@ -6413,11 +6418,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             )
             .max(4)
             .optional(),
-          supervisorToken: z.string().max(512).optional(),
         }),
       )
       .mutation(async ({ input, ctx }) => {
-        const allowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
+        const allowed = resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession);
         if (!allowed) {
           throw new TRPCError({ code: "FORBIDDEN", message: "仅管理者可使用 Pro Agent" });
         }
@@ -6584,8 +6588,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           enableTopicCoverDeepResearchPro: z.boolean().optional(),
           /** 可選：第二條選題 sceneId（同用戶快照）· DR-Pro 雙條並行 */
           drProSecondarySceneId: z.string().min(1).max(128).optional(),
-          /** 與服端 env `SUPERVISOR_SECRET` 一致時，承認監管參數（不免扣積分）。 */
-          supervisorToken: z.string().max(512).optional(),
           /** 可選：用户上传人像照片 URL（公网直链）→ EvoLink GPT-Image-2 edit 换封面主角 */
           referencePhotoUrl: z.string().url().max(2048).optional(),
           /** 封面平台母语偏好：优先 platformVariants.coverHeadline */
@@ -6628,7 +6630,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
+        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession);
         const topicCoverPixelEngine = supervisorOpsAllowed
           ? resolveSupervisorTopicCoverPixelEngineInput({
               topicCoverPixelEngine: input.topicCoverPixelEngine,
@@ -6878,7 +6880,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           /** @deprecated 等同 `topicCoverPixelEngine: "nano_banana_2"` */
           coverProEngine: z.enum(["nano_banana_2", "nano_banana_pro"]).optional(),
           enableTopicCoverDeepResearchPro: z.boolean().optional(),
-          supervisorToken: z.string().max(512).optional(),
           compositeTitle: z.string().min(1).max(220),
           compositeScriptContext: z.string().min(1).max(12000),
           compositeKind: z.enum([
@@ -6904,7 +6905,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
+        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession);
         const topicCoverPixelEngine = supervisorOpsAllowed
           ? resolveSupervisorTopicCoverPixelEngineInput({
               topicCoverPixelEngine: input.topicCoverPixelEngine,
@@ -7614,8 +7615,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             imagePromptTranslator: zPlatformImagePromptTranslatorInput,
             /** Cam8：綁定 `user_creations`（deep_research_report）時寫入 metadata.storyboardSheetExport */
             creationRecordId: z.number().int().positive().optional(),
-            /** 與單幀封面同源：admin/supervisor + supervisorToken 時採納 */
-            supervisorToken: z.string().max(512).optional(),
+            /** 与单帧封面同源：角色或绑定当前账号的 HttpOnly 监管会话通过时采用。 */
             /** 监管：2×4 / 八格在英文化前插入 Deep Research Pro（与普通账号仅 env 总闸并行） */
             enableTopicCoverDeepResearchPro: z.boolean().optional(),
             /** IP / 身份锚点，供 DR Pro 与翻译链 */
@@ -7667,7 +7667,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
-        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, input.supervisorToken);
+        const supervisorOpsAllowed = resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession);
         const enableCompositeDeepResearchProAdmin =
           supervisorOpsAllowed && input.enableTopicCoverDeepResearchPro === true;
         void input.imagePromptTranslator;
@@ -8498,7 +8498,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
            * Stage 1 / Stage 2 文案线路：`vertex`=Gemini 3.5 Flash · `openai`=GPT‑5.5（默认）。
            */
           stage2LlmMode: zPlatformCopyLlmModeInput,
-          supervisorToken: z.string().max(512).optional(),
           /** /platform 勾选启用的 Skill id 列表（内置 + 用户上传） */
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
           /** UI：接受「博主/创作者」自称；默认 false */
@@ -9058,7 +9057,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           tier: z.enum(["excellent", "superb", "top", "transcendent"]).optional(),
           /** 一次用户动作一个 UUID；网络重试复用，用于原子幂等扣费。 */
           requestId: z.string().uuid(),
-          /** 可选创作 Skill；服务端只接受 GCS approved 真卡片。 */
+          /** 可选创作 Skill 公开句柄；服务端只接受 GCS approved 真卡片。 */
+          publicTemplateId: z.string().regex(/^mt_[a-z0-9]{4,16}$/i).optional(),
+          /** @deprecated 旧客户端兼容；普通用户仅允许其中的 mt_*，tpl_* 只向监管会话放行。 */
           viralTemplateId: z.string().max(64).optional(),
           /** 单集时长档位：90s 半强度 / 180s 全长（2.5 时由 videoModel 覆盖段表） */
           lengthTierId: z.string().max(32).optional(),
@@ -9106,7 +9107,26 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const { runManhuaWriterExpand } = await import("./services/manhuaWriterExpandRun.js");
 
         const layout = resolveManhuaSeedanceLayoutProfile(input.videoModel);
-        const requestedTemplateId = String(input.viralTemplateId || "").trim();
+        const { resolveManhuaWriterTemplateRequest } = await import(
+          "./services/manhuaWriterTemplateRequest.js"
+        );
+        const templateRequest = resolveManhuaWriterTemplateRequest({
+          publicTemplateId: input.publicTemplateId,
+          legacyViralTemplateId: input.viralTemplateId,
+          legacyPrivateAllowed: resolvePlatformSupervisorOpsAllowed(
+            ctx.user,
+            ctx.supervisorSession,
+          ),
+        });
+        if (!templateRequest.ok) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: templateRequest.reason === "conflict"
+              ? "剧情增强方案参数冲突，请刷新后重新选择"
+              : "剧情增强方案已更新，请刷新后重新选择",
+          });
+        }
+        const requestedTemplateId = templateRequest.requestedTemplateId;
         let appliedTemplate: { publicId: string; nameZh: string } | null = null;
         /** 内部 id 仅供服务端扩写流程/账目使用，永不回传浏览器 */
         let appliedInternalTemplateId: string | undefined;
@@ -9366,7 +9386,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           liveTrendWindowDays: z.number().int().min(3).max(15).optional(),
           /** 画布文本等：gpt-5.6-sol / gpt-5.6-terra / gpt-5.5 / gpt-5.4 */
           modelName: z.string().min(3).max(80).optional(),
-          supervisorToken: z.string().max(512).optional(),
           enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
           allowBloggerTitle: z.boolean().optional(),
         }),
@@ -9535,7 +9554,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         snapshotSummary: z.record(z.string(), z.any()),
         strategicDashboard: z.record(z.string(), z.any()).optional(),
         stage2LlmMode: zPlatformCopyLlmModeInput,
-        supervisorToken: z.string().max(512).optional(),
         enabledSkillIds: z.array(z.string().min(1).max(80)).max(24).optional(),
         allowBloggerTitle: z.boolean().optional(),
       }))
@@ -11793,18 +11811,14 @@ ${sceneSummary}
     /**
      * Neon `jobs` 表：與 `reapStaleJobsOnce`（staleJobsReaper）相同 DELETE 規則；
      * 手動觸發時 **會略過** `DISABLE_JOBS_STALE_REAPER`（與定時器 / worker 前置掃描不同）。
-     * 允許 admin/supervisor 登入，或未登入但提供與 `betaCode.generate` 相同的 `supervisorToken`（`SUPERVISOR_SECRET`）。
+     * 允许 admin/supervisor 角色，或当前登录账号持有已验签的 HttpOnly 监管会话。
      */
     reapStaleNeonJobs: publicProcedure
-      .input(z.object({ supervisorToken: z.string().optional() }).optional())
-      .mutation(async ({ ctx, input }) => {
-        const role = ctx.user?.role;
-        const sessionOk = role === "admin" || role === "supervisor";
-        const tokenOk = isValidSupervisorSecret(input?.supervisorToken);
-        if (!sessionOk && !tokenOk) {
+      .mutation(async ({ ctx }) => {
+        if (!ctx.user || !resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession)) {
           throw new TRPCError({
             code: "FORBIDDEN",
-            message: "需要管理員登入或有效的 supervisor token",
+            message: "需要管理员角色或有效监管会话",
           });
         }
         const { reapStaleJobsOnce } = await import("./jobs/staleJobsReaper");

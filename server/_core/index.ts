@@ -42,6 +42,7 @@ import { registerSpeechApiRoutes } from "../routers/speechApi";
 import { registerEnterpriseAgentUploadRoutes } from "../routers/enterpriseAgentUpload";
 import { registerManhuaAgentBridgeHttpRoutes } from "../routers/manhuaAgentBridgeHttp";
 import { registerWeixinChannelsCollectorHttpRoutes } from "../routers/weixinChannelsCollectorHttp";
+import { registerSupervisorSessionRoutes } from "../routers/supervisorSession";
 import { saveVideoShortLink } from "../services/video-short-links";
 import { bootstrapGrowthTrendScheduler } from "../growth/trendScheduler";
 import workflowJobsHandler from "../../api/jobs";
@@ -233,6 +234,7 @@ async function startServer() {
   registerEnterpriseAgentUploadRoutes(app);
   registerManhuaAgentBridgeHttpRoutes(app);
   registerWeixinChannelsCollectorHttpRoutes(app);
+  registerSupervisorSessionRoutes(app);
 
   app.all("/api/blob-put-image", async (req, res) => {
     return blobPutImageHandler(req as any, res as any);
@@ -273,6 +275,7 @@ async function startServer() {
       if (!input || typeof input !== "object") {
         return res.status(400).json({ error: "input is required" });
       }
+      const inputRecord = input as Record<string, unknown>;
 
       const ctx = await createContext({ req: req as any, res: res as any } as any);
       let resolvedUserId = "public";
@@ -306,13 +309,7 @@ async function startServer() {
           return res.status(401).json({ error: "请先登录后再学节奏" });
         }
         const { resolvePlatformSupervisorOpsAllowed } = await import("../services/access-policy");
-        const supervisorToken =
-          typeof (req.body as any)?.supervisorToken === "string"
-            ? String((req.body as any).supervisorToken)
-            : typeof (input as any)?.params?.supervisorToken === "string"
-              ? String((input as any).params.supervisorToken)
-              : "";
-        if (!resolvePlatformSupervisorOpsAllowed(ctx.user, supervisorToken)) {
+        if (!resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession)) {
           return res.status(403).json({ error: "学节奏为监管专用（下片+语音+读帧成本较高）" });
         }
         resolvedUserId = String(ctx.user.id);
@@ -367,13 +364,24 @@ async function startServer() {
         }
       }
 
+      // 旧客户端可能仍把监管密钥塞进 params；鉴权已改走 HttpOnly 会话，落库前必须剥掉，
+      // 不能让历史兼容流把明文密钥写进 jobs 表或后续列表响应。
+      let persistedInput = input;
+      if (action === "manhua_template_learn") {
+        const rawParams = inputRecord.params && typeof inputRecord.params === "object" && !Array.isArray(inputRecord.params)
+          ? inputRecord.params as Record<string, unknown>
+          : {};
+        const { supervisorToken: _legacySecret, ...safeParams } = rawParams;
+        persistedInput = { ...inputRecord, params: safeParams };
+      }
+
       const jobId = nanoid(16);
       await createJob({
         id: jobId,
         userId: resolvedUserId,
         type,
         provider,
-        input,
+        input: persistedInput,
       });
 
       void processJobsOnce().catch(() => {});
@@ -400,8 +408,7 @@ async function startServer() {
       const ctx = await createContext({ req: req as any, res: res as any } as any);
       if (!ctx.user) return res.status(401).json({ error: "请先登录" });
       const { resolvePlatformSupervisorOpsAllowed } = await import("../services/access-policy");
-      const supervisorToken = String(req.headers["x-supervisor-token"] || "").trim();
-      if (!resolvePlatformSupervisorOpsAllowed(ctx.user, supervisorToken)) {
+      if (!resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession)) {
         return res.status(403).json({ error: "学节奏为监管专用" });
       }
       const rows = await listManhuaTemplateLearnJobsForUser(String(ctx.user.id), 30);
@@ -438,8 +445,7 @@ async function startServer() {
       const ctx = await createContext({ req: req as any, res: res as any } as any);
       if (!ctx.user) return res.status(401).json({ error: "请先登录" });
       const { resolvePlatformSupervisorOpsAllowed } = await import("../services/access-policy");
-      const supervisorToken = String(req.headers["x-supervisor-token"] || "").trim();
-      if (!resolvePlatformSupervisorOpsAllowed(ctx.user, supervisorToken)) {
+      if (!resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession)) {
         return res.status(403).json({ error: "学节奏为监管专用" });
       }
       const job = await requestManhuaTemplateLearnJobCancel({
@@ -460,8 +466,7 @@ async function startServer() {
       const ctx = await createContext({ req: req as any, res: res as any } as any);
       if (!ctx.user) return res.status(401).json({ error: "请先登录" });
       const { resolvePlatformSupervisorOpsAllowed } = await import("../services/access-policy");
-      const supervisorToken = String(req.headers["x-supervisor-token"] || "").trim();
-      if (!resolvePlatformSupervisorOpsAllowed(ctx.user, supervisorToken)) {
+      if (!resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession)) {
         return res.status(403).json({ error: "学节奏为监管专用" });
       }
       const job = await requestManhuaTemplateLearnEpisodeSkip({
@@ -481,8 +486,7 @@ async function startServer() {
       const ctx = await createContext({ req: req as any, res: res as any } as any);
       if (!ctx.user) return res.status(401).json({ error: "请先登录" });
       const { resolvePlatformSupervisorOpsAllowed } = await import("../services/access-policy");
-      const supervisorToken = String(req.headers["x-supervisor-token"] || "").trim();
-      if (!resolvePlatformSupervisorOpsAllowed(ctx.user, supervisorToken)) {
+      if (!resolvePlatformSupervisorOpsAllowed(ctx.user, ctx.supervisorSession)) {
         return res.status(403).json({ error: "学节奏为监管专用" });
       }
       const hidden = await hideManhuaTemplateLearnSeriesForUser({

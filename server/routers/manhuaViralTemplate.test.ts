@@ -56,7 +56,10 @@ async function loadRouter() {
   return mod.manhuaViralTemplateRouter;
 }
 
-function makeCtx(role: "user" | "admin" | "supervisor"): TrpcContext {
+function makeCtx(
+  role: "user" | "admin" | "supervisor",
+  supervisorSession?: TrpcContext["supervisorSession"],
+): TrpcContext {
   return {
     user: {
       id: 7,
@@ -75,6 +78,7 @@ function makeCtx(role: "user" | "admin" | "supervisor"): TrpcContext {
       updatedAt: new Date(),
       lastSignedIn: new Date(),
     } as NonNullable<TrpcContext["user"]>,
+    supervisorSession,
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
     res: { clearCookie: () => {} } as unknown as TrpcContext["res"],
     clientDisconnected: new AbortController().signal,
@@ -119,32 +123,46 @@ describe("listApprovedPublic：普通用户只拿匿名功能卡", () => {
     expect(card.nameZh).toBe("爽文逆袭·爆款节奏 A7F2");
     expect(card.featureZh).toBe("特色文案A");
   });
+
+  it("配置 HMAC 密钥后，无码卡以稳定匿名句柄公开且仍不泄漏内部字段", async () => {
+    vi.stubEnv("MANHUA_TEMPLATE_PUBLIC_ID_SECRET", "template-public-test-secret");
+    const caller = (await loadRouter()).createCaller(makeCtx("user"));
+    const out = await caller.listApprovedPublic();
+    const items = out.groups[0]!.items;
+    expect(items).toHaveLength(2);
+    const fallback = items.find((item) => item.publicId !== "mt_a7f2");
+    expect(fallback?.publicId).toMatch(/^mt_[a-f0-9]{16}$/);
+    expect(JSON.stringify(fallback)).not.toContain("tpl_series_nocode");
+    expect(JSON.stringify(fallback)).not.toContain("SECRET_NOCODE");
+  });
 });
 
 describe("listApprovedPrivate：鉴权矩阵", () => {
-  it("普通用户（无 token）必须 FORBIDDEN", async () => {
+  it("普通用户（无监管会话）必须 FORBIDDEN", async () => {
     const caller = (await loadRouter()).createCaller(makeCtx("user"));
-    await expect(caller.listApprovedPrivate({})).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.listApprovedPrivate()).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
-  it("普通用户带错误 token 仍 FORBIDDEN", async () => {
-    vi.stubEnv("SUPERVISOR_SECRET", "right-secret");
-    const caller = (await loadRouter()).createCaller(makeCtx("user"));
-    await expect(
-      caller.listApprovedPrivate({ supervisorToken: "wrong" }),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  it("绑定其他账号的监管会话仍 FORBIDDEN", async () => {
+    const caller = (await loadRouter()).createCaller(makeCtx("user", {
+      userId: 8,
+      expiresAt: Date.now() + 60_000,
+    }));
+    await expect(caller.listApprovedPrivate()).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
   it("admin 角色可读全量（真名可见）", async () => {
     const caller = (await loadRouter()).createCaller(makeCtx("admin"));
-    const out = await caller.listApprovedPrivate({});
+    const out = await caller.listApprovedPrivate();
     expect(JSON.stringify(out)).toContain("某爆款剧真名节奏");
   });
 
-  it("正确 supervisor token 可读全量", async () => {
-    vi.stubEnv("SUPERVISOR_SECRET", "right-secret");
-    const caller = (await loadRouter()).createCaller(makeCtx("user"));
-    const out = await caller.listApprovedPrivate({ supervisorToken: "right-secret" });
+  it("与当前账号绑定的未过期监管会话可读全量", async () => {
+    const caller = (await loadRouter()).createCaller(makeCtx("user", {
+      userId: 7,
+      expiresAt: Date.now() + 60_000,
+    }));
+    const out = await caller.listApprovedPrivate();
     expect(JSON.stringify(out)).toContain("某爆款剧真名节奏");
   });
 });

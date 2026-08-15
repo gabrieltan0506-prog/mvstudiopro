@@ -3,7 +3,7 @@
  * mt_* / legacy tpl_* / 畸形 id 三分类；无 publicCode 卡两条路都进不了扩写；
  * 响应侧只回 { publicId, nameZh } 匿名句柄。
  */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ManhuaViralTemplateCard } from "../../shared/manhuaViralTemplateBank";
 
 const codedCard = {
@@ -41,6 +41,10 @@ vi.mock("./gcs.js", () => ({
 }));
 
 import { resolveViralTemplateForExpand } from "./manhuaViralTemplateStore";
+
+beforeEach(() => {
+  vi.stubEnv("MANHUA_TEMPLATE_PUBLIC_ID_SECRET", "");
+});
 
 describe("resolveViralTemplateForExpand", () => {
   it("公开句柄 mt_* 解析成功，响应只含匿名句柄", async () => {
