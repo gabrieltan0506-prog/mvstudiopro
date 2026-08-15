@@ -275,10 +275,10 @@ export function getPlatformStage2OpenAiModel(): string {
 /** @deprecated 与 {@link OPENROUTER_KIMI_K3_MODEL} 同值；保留旧导出名 */
 export const VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL = OPENROUTER_KIMI_K3_MODEL;
 
-/** 平台趋势 PNG 报表：Terra High 同时清洗结构化数据并完成封面选秀。 */
+/** 平台趋势 PNG 报表：Kimi K3 纯文本结构化分析，不再接收封面候选或视觉输入。 */
 export function getVisualReportOpenAiModel(): string {
   // 2026-08-16 用户拍板切回：Terra 高推理耗时数分钟，同步请求活不到交卷
-  //（断线即弃算），K3 一分钟内出活的年代报表从没死过。
+  //（断线即弃算），K3 历史实测通常 30–40 秒完成。
   return getOpenRouterKimiK3Model();
 }
 

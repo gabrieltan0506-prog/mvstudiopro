@@ -17,6 +17,11 @@ export type TrpcContext = {
    * Long LLM calls should pass this into `invokeLLM({ abortSignal })` to stop burning provider quota.
    */
   clientDisconnected: AbortSignal;
+  /**
+   * 仅由持久 jobs worker 注入：趋势报告已在入队时完成扣费与账本登记。
+   * 浏览器请求无法设置该字段，防止公开 input 绕过计费。
+   */
+  prepaidPlatformTrendJobId?: string;
 };
 
 export async function createContext(

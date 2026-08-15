@@ -209,12 +209,6 @@ export function mapGenerateVisualReportResult(
       ? (report.audiencesAndBiz as VisualReportData["audiencesAndBiz"])
       : [],
     topicExamples,
-    excellentCoverReferences: Array.isArray(report.excellentCoverReferences)
-      ? (report.excellentCoverReferences as VisualReportData["excellentCoverReferences"])
-      : [],
-    legacyCoverReferences: Array.isArray(report.legacyCoverReferences)
-      ? (report.legacyCoverReferences as VisualReportData["legacyCoverReferences"])
-      : [],
     trafficSupport: Array.isArray(report.trafficSupport) ? (report.trafficSupport as string[]) : [],
     hotFestivals: Array.isArray(report.hotFestivals) ? (report.hotFestivals as string[]) : [],
     globalBlueOceanWords,

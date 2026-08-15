@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -68,12 +68,6 @@ import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/prem
 import { buildAiManhuaRisingBoard, buildAiManhuaRisingByPlatform } from "./growth/aiManhuaRising";
 import { AI_MANHUA_RISING_BOARD_LIMIT } from "../shared/manhuaDramaClassify";
 import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
-import {
-  completeTrendCoverRanking,
-  mirrorSelectedTrendCovers,
-  selectTrendCoverCandidates,
-  TREND_COVER_DISPLAY_LIMIT,
-} from "./growth/trendCoverSelection";
 import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, loadDouyinDramaBaselineItems, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
 import { summarizeTrendWindowCounts } from "./growth/trendWindow";
@@ -184,6 +178,7 @@ import { invokePlatformFollowUpGpt55 } from "./services/platformFollowUpLlm.js";
 import {
   createJob as createJobRecord,
   getJobById,
+  getLatestPlatformJobForUserAction,
   markJobSucceeded,
   markJobFailed,
   insertRunningCompositeSheetProgressJob,
@@ -221,6 +216,21 @@ import { formatShanghaiDateZh, getShanghaiVisualReportWindows, nowShanghaiIso } 
 import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
 import { stripeUsageLogs } from "../drizzle/schema-stripe";
 import { and, desc, eq, gte, or, sql } from "drizzle-orm";
+
+const platformVisualReportInputSchema = z.object({
+  windowDays: z.enum(["3", "7", "15", "30"]),
+  theme: z.enum(["light", "dark"]),
+  platforms: z.array(z.enum(["douyin", "kuaishou", "xiaohongshu", "bilibili", "weixin_channels"])),
+  /** 可选：创作者人设补充，用于收窄热点解读与选题公式落点。 */
+  personaContext: z.string().max(4000).optional(),
+  /** 同一次用户点击的计费及任务幂等键。 */
+  billingRequestId: z.string().min(12).max(120),
+});
+
+export function buildPlatformVisualReportJobId(userId: number | string, billingRequestId: string): string {
+  const requestHash = createHash("sha256").update(String(billingRequestId)).digest("hex").slice(0, 24);
+  return `trend_${String(userId)}_${requestHash}`;
+}
 
 async function mapWithPool<T, R>(items: T[], pool: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
@@ -4813,17 +4823,115 @@ export const appRouter = router({
         return { ok: true as const, count: input.contentBlueprints.length };
       }),
 
+    /** 最近一次趋势长图任务：刷新时可续轮询；成功成品可直接恢复且无需再次扣费。 */
+    getLatestVisualReport: protectedProcedure.query(async ({ ctx }) => {
+      const job = await getLatestPlatformJobForUserAction(
+        String(ctx.user.id),
+        "platform_visual_report",
+      );
+      if (!job) {
+        return {
+          userId: String(ctx.user.id),
+          jobId: null,
+          status: null,
+          error: null,
+          result: null,
+          windowDays: null,
+          theme: null,
+          createdAt: null,
+        };
+      }
+      const envelope = job.input && typeof job.input === "object" && !Array.isArray(job.input)
+        ? job.input as { params?: Record<string, unknown> }
+        : {};
+      const params = envelope.params || {};
+      return {
+        userId: String(ctx.user.id),
+        jobId: job.id,
+        status: job.status,
+        error: job.status === "failed" ? String(job.error || "趋势报告生成失败") : null,
+        result:
+          job.status === "succeeded" && job.output && typeof job.output === "object" && !Array.isArray(job.output)
+            ? job.output as Record<string, unknown>
+            : null,
+        windowDays: String(params.windowDays || ""),
+        theme: String(params.theme || ""),
+        createdAt: job.createdAt ? new Date(job.createdAt).toISOString() : null,
+      };
+    }),
+
+    /**
+     * 趋势长图持久入队：HTTP 只负责幂等扣费与建 job，模型在 Fly worker 内继续运行。
+     * 浏览器断线、Vercel 请求时限或页面刷新均不会再取消报告。
+     */
+    enqueueVisualReport: protectedProcedure
+      .input(platformVisualReportInputSchema)
+      .mutation(async ({ input, ctx }) => {
+        const jobId = buildPlatformVisualReportJobId(ctx.user.id, input.billingRequestId);
+        const existing = await getJobById(jobId);
+        if (existing) {
+          if (String(existing.userId) !== String(ctx.user.id)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "趋势报告任务不属于当前用户" });
+          }
+          return { jobId, status: existing.status };
+        }
+
+        const credits = getPlatformTrendReportCredits(Number(input.windowDays));
+        const deduct = await deductCreditsAmount(
+          ctx.user.id,
+          credits,
+          "platformTrend",
+          `平台趋势报告（${input.windowDays}天）`,
+          { chargeKey: `platform-trend-job:${ctx.user.id}:${input.billingRequestId}` },
+        );
+
+        const { registerActiveJob, refundCreditsOnFailure } = await import("./services/paidJobLedger.js");
+        try {
+          await registerActiveJob({
+            jobId,
+            taskType: "platformAnalysis",
+            userId: ctx.user.id,
+            creditsBilled: deduct.cost,
+            action: `平台趋势报告（${input.windowDays}天）`,
+            externalApiCostHint: "Kimi K3 趋势结构化分析",
+            deduct,
+            metadata: {
+              action: "platform_visual_report",
+              windowDays: input.windowDays,
+              platforms: input.platforms,
+              billingRequestId: input.billingRequestId,
+            },
+          });
+          await createJobRecord({
+            id: jobId,
+            userId: String(ctx.user.id),
+            type: "platform",
+            provider: "openrouter",
+            input: {
+              action: "platform_visual_report",
+              params: input,
+            },
+          });
+          return { jobId, status: "queued" as const };
+        } catch (error) {
+          // 同一 billingRequestId 可能因双击或浏览器重试并发入队。扣费键本身幂等，
+          // 若另一个请求已经成功建出同一任务，就复用它，不能把正在执行的共享扣费退掉。
+          const raced = await getJobById(jobId).catch(() => null);
+          if (raced && String(raced.userId) === String(ctx.user.id)) {
+            return { jobId, status: raced.status };
+          }
+          await refundCreditsOnFailure(
+            jobId,
+            "platformAnalysis",
+            "task_failed",
+            "趋势报告入队失败，退回积分",
+          ).catch(() => {});
+          throw error;
+        }
+      }),
+
     generateVisualReport: protectedProcedure
-      .input(z.object({
-        // Extended to support short-form trend radar: 3d and 7d windows
-        windowDays: z.enum(["3", "7", "15", "30"]),
-        theme: z.enum(["light", "dark"]),
-        platforms: z.array(z.enum(["douyin", "kuaishou", "xiaohongshu", "bilibili", "weixin_channels"])),
-        /** 可選：創作者人設補充（職業、身份、興趣、專長等），用於收窄熱點解讀與選題公式落點 */
-        personaContext: z.string().max(4000).optional(),
-        /** 同一次用户点击的计费幂等键；重试不得重复扣分。 */
-        billingRequestId: z.string().min(12).max(120),
-      }))
+      .input(platformVisualReportInputSchema)
       .mutation(async ({ input, ctx }) => {
         const PLATFORM_NAMES: Record<string, string> = {
           douyin: "抖音",
@@ -4952,35 +5060,6 @@ export const appRouter = router({
           });
         }
 
-        const selectedCoverCollections = Object.fromEntries(
-          input.platforms.map((platform) => [platform, (store.collections as any)?.[platform]]),
-        );
-        // 封面评选只留 B 站+小红书（2026-08-16 用户拍板）：抖音/视频号图床防盗链，
-        // 服务器与视觉模型都拉不动，曾把整份趋势报表拖死。
-        const TREND_COVER_LLM_PLATFORMS = new Set(["bilibili", "xiaohongshu"]);
-        // 总闸（2026-08-16 用户拍板暂关）：封面第二页整体停用，报表回到单页稳定态；
-        // 复电只需设 env TREND_COVER_PAGE_ENABLED=1，无需改码。
-        const TREND_COVER_PAGE_ENABLED = process.env.TREND_COVER_PAGE_ENABLED === "1";
-        const coverCandidates = !TREND_COVER_PAGE_ENABLED
-          ? []
-          : selectTrendCoverCandidates(selectedCoverCollections as any, {
-              contentStartAt: shBounds.currentStart,
-              endExclusive: shBounds.currentEndExclusive,
-            }).filter((row) => TREND_COVER_LLM_PLATFORMS.has(String(row.platform)));
-        const legacyCoverReferences = input.platforms.flatMap((platform) => {
-          const items = (((store.collections as any)?.[platform]?.items || []) as TrendItem[]);
-          return items
-            .filter((item) => item.title && item.author && !item.coverUrl)
-            .slice(0, 20)
-            .map((item) => ({
-              sourceId: `${platform}:${item.id}`,
-              platform,
-              title: item.title,
-              author: item.author,
-              sourceUrl: item.url,
-            }));
-        }).slice(0, 20);
-
         const industryGrowthHintMap = buildIndustryGrowthHintMap(store, input.platforms as string[], wd, anchorMs);
         const industryGrowthHintsObj = Object.fromEntries(
           Array.from(industryGrowthHintMap.entries()).sort(([a], [b]) => a.localeCompare(b, "zh-Hans-CN")),
@@ -5043,23 +5122,23 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 - trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-4条）。**必须优先采用** user JSON 字段 officialCampaigns.globalTrafficSupport 中的条目（可略压缩说明），格式：["活动名称：详细说明"]
 - hotFestivals：根據今天 ${currentDateStr} 及前后 ${wd} 天范围，指出当下正在爆发或即将到来的节日、节气或社会热点（2-3个）。格式：["节日/热点：简要说明与内容切入角度"]
 - globalBlueOceanWords：**【必须输出 4–6 组，禁止空数组】** 聚合选定平台的高意图搜索词，一/二级分级。格式：[{"primary":"一级词","secondary":["二级词1","二级词2"]}]。须从 platformEvidence.topTitles、dramaMixNames、dramaRising、行业样本 key、各平台 hotTopics 提炼；含抖音漫剧样本时可输出「AI漫剧/重生漫剧」类一级词。无法核实月搜索量时仍须输出，**禁止**「尚未检索到蓝海词」等空话。
-- excellentCoverSelections：必须对 user JSON 的 coverCandidates **按平台分别排名**，每个平台返回该平台全部候选（最多 20 条），禁止跨平台混排或让一个平台挤掉另一个平台。visualAssetKind=platform_cover 表示平台原始封面，representative_frame 表示视频内容五点抽样选出的代表画面；二者都按真实画面分析，不得把代表画面谎称原始封面。格式为 [{"sourceId":"平台:内容ID","platformRank":1,"highCtrReason":"15–40字"}]；每个平台 rank 1–10 必须填写 highCtrReason，指出主体、文字、反差、情绪、叙事信息或构图为何能提高点击；rank 11–20 的 highCtrReason 输出空字符串。只可使用真实 sourceId，允许同类目重复，必须结合画面、标题、作者及真实互动指标判断，禁止伪造 ID，禁止空泛写「画面吸引人」。
-
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 
-        /** 平台趋势分析 + 封面选秀：统一由 GPT-5.6 Terra High 处理。 */
+        /** 平台趋势长图：默认 Kimi K3；持久 job 不受浏览器连接生命周期影响。 */
         const visualReportModel = getVisualReportOpenAiModel();
         const llmStartedAtMs = Date.now();
         let trendReportDeduct: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
         try {
-          const trendReportCredits = getPlatformTrendReportCredits(Number(input.windowDays));
-          trendReportDeduct = await deductCreditsAmount(
-            ctx.user.id,
-            trendReportCredits,
-            "platformTrend",
-            `平台趋势报告（${input.windowDays}天）`,
-            { chargeKey: `platform-trend:${ctx.user.id}:${input.billingRequestId}` },
-          );
+          if (!ctx.prepaidPlatformTrendJobId) {
+            const trendReportCredits = getPlatformTrendReportCredits(Number(input.windowDays));
+            trendReportDeduct = await deductCreditsAmount(
+              ctx.user.id,
+              trendReportCredits,
+              "platformTrend",
+              `平台趋势报告（${input.windowDays}天）`,
+              { chargeKey: `platform-trend:${ctx.user.id}:${input.billingRequestId}` },
+            );
+          }
           const { listOfficialCampaignLinesForReport, ensureOfficialCampaignSeedsLoaded } = await import(
             "./services/platformOfficialCampaigns"
           );
@@ -5083,7 +5162,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             platformEvidence: platformEvidenceForLlm,
             industrySampleGrowth: industryGrowthHintsObj,
             officialCampaigns,
-            coverCandidates: coverCandidates.map(({ coverUrl: _coverUrl, ...row }) => row),
             ...(String(input.personaContext || "").trim()
               ? { personaContext: String(input.personaContext).trim().slice(0, 4000) }
               : {}),
@@ -5094,36 +5172,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             Math.min(65_536, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 32_768),
           );
           const visualReportUser = `${userPayload}\n\n【輸出】僅輸出一個合法 JSON 物件（禁止 markdown围栏與前言後語）；首尾字元為 { 與 }。`;
-          // 报表救火（2026-08-16）：候选图先镜像到自有存储再喂视觉模型——原始防盗链 URL
-          // 上游拉不到会让三次重试全灭、整份报表陪葬。镜像失败的候选降级为纯文字条目。
-          const { mirrorTrendCoverCandidatesForLlm } = await import("./growth/trendCoverSelection.js");
-          const llmCoverUrlById = coverCandidates.length
-            ? await mirrorTrendCoverCandidatesForLlm(coverCandidates)
-            : new Map<string, string>();
-          const buildVisualReportContent = (withImages: boolean) =>
-            coverCandidates.length
-              ? [
-                  { type: "text" as const, text: visualReportUser },
-                  ...coverCandidates.flatMap((candidate, index) => {
-                    const mirrored = withImages ? llmCoverUrlById.get(candidate.sourceId) : undefined;
-                    const parts: Array<
-                      | { type: "text"; text: string }
-                      | { type: "image_url"; image_url: { url: string; detail: "high" } }
-                    > = [
-                      {
-                        type: "text" as const,
-                        text: `视觉候选 ${index + 1} · 类型=${candidate.visualAssetKind || "platform_cover"} · 进度=${candidate.visualFrameProgress ?? "原始封面"} · sourceId=${candidate.sourceId} · ${candidate.platform} · ${candidate.title} · 作者=${candidate.author || "未知"}${mirrored ? "" : " ·（封面图未获取，请按标题/作者/互动数据判断）"}`,
-                      },
-                    ];
-                    if (mirrored) {
-                      parts.push({ type: "image_url" as const, image_url: { url: mirrored, detail: "high" as const } });
-                    }
-                    return parts;
-                  }),
-                ]
-              : visualReportUser;
-          const visualReportHasImages = llmCoverUrlById.size > 0;
-          const visualReportUserContent = buildVisualReportContent(true);
 
           const VISUAL_REPORT_MAX_ATTEMPTS = 3;
           let response: Awaited<ReturnType<typeof invokeLLM>> | null = null;
@@ -5138,18 +5186,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 modelName: visualReportModel,
                 response_format: { type: "json_object" },
                 max_tokens: visualReportMaxTokens,
-                reasoningEffort: "high",
+                // 恢复封面功能加入前的已验证 Kimi 配置；K3 不需要额外深推理预算。
+                temperature: 0.55,
                 requestId: `visual-report:${input.billingRequestId}`,
+                abortSignal: ctx.clientDisconnected,
                 messages: [
                   { role: "system", content: systemPrompt },
-                  {
-                    role: "user",
-                    // 末次重试去图纯文本兜底：图片附件若为失败根因，报表也必须能出
-                    content:
-                      attempt === VISUAL_REPORT_MAX_ATTEMPTS && visualReportHasImages
-                        ? buildVisualReportContent(false)
-                        : visualReportUserContent,
-                  },
+                  { role: "user", content: visualReportUser },
                 ],
               });
               const choice0 = response.choices?.[0];
@@ -5354,40 +5397,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 };
               })
             : [];
-          const coverSelections = Array.isArray(parsed.excellentCoverSelections)
-            ? parsed.excellentCoverSelections.map((row: any) => ({
-                sourceId: safeStr(row?.sourceId),
-                highCtrReason: safeStr(row?.highCtrReason).slice(0, 80),
-              })).filter((row: { sourceId: string }) => row.sourceId)
-            : [];
-          const coverReasonById = new Map(coverSelections.map((row: { sourceId: string; highCtrReason: string }) => [row.sourceId, row.highCtrReason]));
-          const requestedCoverIds = coverSelections.map((row: { sourceId: string }) => row.sourceId);
-          const completedCoverRanking = completeTrendCoverRanking(coverCandidates, requestedCoverIds);
-          const rankedCoverIds = completedCoverRanking.map((row) => row.sourceId);
-          const visualCoverReferences = (await mirrorSelectedTrendCovers(coverCandidates, rankedCoverIds)).map((row) => ({
-            ...row,
-            highCtrReason: coverReasonById.get(row.sourceId) || "真实互动领先，主体与标题信息在首屏更易识别",
-          }));
-          const platformRank = new Map<string, number>();
-          const metadataCoverReferences = completedCoverRanking.flatMap((row) => {
-            const rank = (platformRank.get(row.platform) || 0) + 1;
-            platformRank.set(row.platform, rank);
-            if (rank <= TREND_COVER_DISPLAY_LIMIT) return [];
-            return [{
-              sourceId: row.sourceId,
-              platform: row.platform,
-              title: row.title,
-              author: row.author,
-              sourceUrl: row.sourceUrl,
-              rank,
-            }];
-          });
-          // 候选通用类型仍包含历史平台（如头条），而报告入口已停用该平台；
-          // 用字符串键承接兼容数据，未知平台稳定排到末尾。
-          const platformOrder = new Map<string, number>(input.platforms.map((platform, index) => [platform, index]));
-          const excellentCoverReferences = [...visualCoverReferences, ...metadataCoverReferences]
-            .sort((left, right) => (platformOrder.get(left.platform) ?? 999) - (platformOrder.get(right.platform) ?? 999)
-              || left.rank - right.rank);
           const topicHints = Array.isArray(parsed.topicExamples)
             ? parsed.topicExamples.flatMap((e: any) => [
                 safeStr(e?.structure || e),
@@ -5453,8 +5462,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               })(),
               hotFestivals: Array.isArray(parsed.hotFestivals) ? parsed.hotFestivals.map(safeStr) : [],
               globalBlueOceanWords,
-              excellentCoverReferences,
-              legacyCoverReferences,
               platformDetails,
               officialCampaignTopicExamples: officialCampaigns.topicExamples || [],
               aiManhuaRising: await (async () => {
