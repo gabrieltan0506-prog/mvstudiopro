@@ -8,7 +8,6 @@ const activePlatforms = ["douyin", "xiaohongshu", "bilibili", "weixin_channels"]
 
 function snapshot(platforms: Record<string, {
   currentTotal: number;
-  currentRetentionCap?: number;
   archivedTotal: number;
 }>) {
   return { platforms };
@@ -51,13 +50,12 @@ describe("growth monotonic guard", () => {
     ]);
   });
 
-  it("允许小红书当前热缓存按声明上限从历史大池压缩到两万条", () => {
+  it("小红书当前仓库不得从真实大池静默压缩到两万条", () => {
     const baseline = {
       activePlatforms,
       ...snapshot({
         xiaohongshu: {
           currentTotal: 79_549,
-          currentRetentionCap: 20_000,
           archivedTotal: 78_894,
         },
       }),
@@ -69,16 +67,17 @@ describe("growth monotonic guard", () => {
       xiaohongshu: { currentTotal: 20_000, archivedTotal: 591_343 },
     });
 
-    expect(findGrowthMonotonicRegressions({ baseline, before, after })).toEqual([]);
+    expect(findGrowthMonotonicRegressions({ baseline, before, after })).toEqual([
+      "xiaohongshu: currentTotal regressed 20000 < 532099 (floor 591222, tolerance 10%)",
+    ]);
   });
 
-  it("热缓存跌破声明上限的容差后仍然阻断", () => {
+  it("小红书恢复到真实当前仓库规模后通过", () => {
     const baseline = {
       activePlatforms,
       ...snapshot({
         xiaohongshu: {
           currentTotal: 79_549,
-          currentRetentionCap: 20_000,
           archivedTotal: 78_894,
         },
       }),
@@ -87,12 +86,10 @@ describe("growth monotonic guard", () => {
       xiaohongshu: { currentTotal: 591_222, archivedTotal: 591_343 },
     });
     const after = snapshot({
-      xiaohongshu: { currentTotal: 17_999, archivedTotal: 591_343 },
+      xiaohongshu: { currentTotal: 591_066, archivedTotal: 591_343 },
     });
 
-    expect(findGrowthMonotonicRegressions({ baseline, before, after })).toEqual([
-      "xiaohongshu: currentTotal regressed 17999 < 18000 (floor 20000, tolerance 10%)",
-    ]);
+    expect(findGrowthMonotonicRegressions({ baseline, before, after })).toEqual([]);
   });
 
   it("旧基线没有 activePlatforms 时保持原来的全平台并集规则", () => {

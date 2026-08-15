@@ -658,6 +658,19 @@ function getBucketCounts(items: TrendItem[]) {
   }, {});
 }
 
+function getItemLabelCounts(
+  items: TrendItem[],
+  key: "industryLabels" | "ageLabels" | "contentLabels",
+) {
+  const counts: Record<string, number> = {};
+  for (const item of items) {
+    for (const label of normalizeLabels(item[key])) {
+      counts[label] = (counts[label] || 0) + 1;
+    }
+  }
+  return counts;
+}
+
 function getReferenceRange(collection?: PlatformTrendCollection) {
   return {
     min: collection?.stats?.referenceMinItems || 0,
@@ -2029,12 +2042,12 @@ function getHotWindowDays() {
  * 按 publishedAt 裁掉超出热窗口的条目。历史不会丢：archive/、history-ledger/
  * 与 GitHub 冷备仍保有全量，这里只决定「每轮采集要 load 进内存的那份」有多大。
  *
- * 两条保险：缺少或无法解析 publishedAt 的条目会保留一个有界热池（判不了年龄但不能无限膨胀）；
+ * 两条保险：缺少或无法解析 publishedAt 的条目一律保留（判不了年龄就不能擅自把
+ * 当前仓库降格成历史抽样）；
  * 若裁剪后不足原量的 5%，视为日期字段异常，回退成按热度保留前 MIN_HOT_ITEMS 条，
  * 避免某个平台改了时间格式就把整池清空。
  */
 const MIN_HOT_ITEMS_ON_PRUNE_FALLBACK = 2000;
-export const MAX_UNDATED_HOT_ITEMS = 20_000;
 
 export function pruneTrendItemsToHotWindow(
   items: TrendItem[],
@@ -2043,24 +2056,13 @@ export function pruneTrendItemsToHotWindow(
 ): TrendItem[] {
   if (!items.length) return items;
   const cutoff = now - Math.max(30, windowDays) * 24 * 60 * 60 * 1000;
-  const keptBeforeUndatedCap = items.filter((item) => {
+  const kept = items.filter((item) => {
     const at = item.publishedAt ? new Date(item.publishedAt).getTime() : Number.NaN;
     if (!Number.isFinite(at)) return true;
     return at >= cutoff;
   });
-  if (keptBeforeUndatedCap.length < Math.ceil(items.length * 0.05)) {
-    return sortItems(items).slice(0, MIN_HOT_ITEMS_ON_PRUNE_FALLBACK);
-  }
-  const dated: TrendItem[] = [];
-  const undated: TrendItem[] = [];
-  for (const item of keptBeforeUndatedCap) {
-    const at = item.publishedAt ? new Date(item.publishedAt).getTime() : Number.NaN;
-    (Number.isFinite(at) ? dated : undated).push(item);
-  }
-  const cappedUndated = undated.length > MAX_UNDATED_HOT_ITEMS
-    ? sortItems(undated).slice(0, MAX_UNDATED_HOT_ITEMS)
-    : undated;
-  return [...dated, ...cappedUndated];
+  if (kept.length >= Math.ceil(items.length * 0.05)) return kept;
+  return sortItems(items).slice(0, MIN_HOT_ITEMS_ON_PRUNE_FALLBACK);
 }
 
 function mergeCollection(
@@ -2367,6 +2369,82 @@ export async function rebuildTrendDerivedFilesFromCurrentStore() {
 
 export async function mergeTrendCollections(collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>) {
   return mergeTrendCollectionsWithOptions(collections);
+}
+
+/**
+ * 只恢复一个平台的 current 真相：以完整基线为底，再合并生产库中基线之后的新观测。
+ * 不写 archive、不回滚其他平台，也不经过热窗裁剪。该入口只供受控数据恢复脚本使用。
+ */
+export async function restoreTrendPlatformCurrentFromBaseline(
+  platform: GrowthPlatform,
+  baseline: PlatformTrendCollection,
+) {
+  if (baseline.platform !== platform) {
+    throw new Error(`growth_restore_platform_mismatch:${baseline.platform}:${platform}`);
+  }
+  if (!baseline.items?.length) {
+    throw new Error(`growth_restore_baseline_empty:${platform}`);
+  }
+
+  const current = await readTrendStore({ preferDerivedFiles: true });
+  const live = current.collections?.[platform];
+  const baselineCount = baseline.items.length;
+  const liveCount = live?.items?.length || 0;
+  const items = dedupeTrendItems(baseline.items, live?.items || []);
+  const baselineIds = new Set(baseline.items.map((item) => getItemKey(item)).filter(Boolean));
+  const restoredIds = new Set(items.map((item) => getItemKey(item)).filter(Boolean));
+  const missingBaselineCount = Array.from(baselineIds).filter((id) => !restoredIds.has(id)).length;
+  if (missingBaselineCount > 0 || items.length < baselineCount) {
+    throw new Error(
+      `growth_restore_baseline_regressed:${platform}:baseline=${baselineCount}:restored=${items.length}:missing=${missingBaselineCount}`,
+    );
+  }
+
+  const restoredCollection: PlatformTrendCollection = {
+    ...baseline,
+    ...live,
+    platform,
+    source: "live",
+    collectedAt: [baseline.collectedAt, live?.collectedAt]
+      .filter(Boolean)
+      .sort()
+      .at(-1) || nowShanghaiIso(),
+    windowDays: Math.max(baseline.windowDays || 0, live?.windowDays || 0) || baseline.windowDays,
+    notes: Array.from(new Set([
+      ...(baseline.notes || []),
+      ...(live?.notes || []),
+      `Restored ${platform} current from verified baseline and merged post-baseline observations by stable item id.`,
+    ])),
+    items,
+    stats: {
+      ...(baseline.stats || {}),
+      ...(live?.stats || {}),
+      platform,
+      itemCount: items.length,
+      uniqueAuthorCount: new Set(items.map((item) => String(item.author || "").trim()).filter(Boolean)).size,
+      bucketCounts: getBucketCounts(items),
+      industryCounts: getItemLabelCounts(items, "industryLabels"),
+      ageCounts: getItemLabelCounts(items, "ageLabels"),
+      contentCounts: getItemLabelCounts(items, "contentLabels"),
+    },
+  };
+  const next: TrendStoreFile = {
+    ...current,
+    updatedAt: nowShanghaiIso(),
+    collections: {
+      ...(current.collections || {}),
+      [platform]: restoredCollection,
+    },
+  };
+  await writeStore(next);
+  return {
+    platform,
+    baselineCount,
+    liveCount,
+    restoredCount: items.length,
+    addedAfterBaseline: Math.max(0, items.length - baselineCount),
+    missingBaselineCount,
+  };
 }
 
 export async function mergeTrendCollectionsWithOptions(
