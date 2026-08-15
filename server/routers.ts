@@ -9065,29 +9065,41 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         const layout = resolveManhuaSeedanceLayoutProfile(input.videoModel);
         const requestedTemplateId = String(input.viralTemplateId || "").trim();
-        let appliedTemplate: { id: string; nameZh: string } | null = null;
+        let appliedTemplate: { publicId: string; nameZh: string } | null = null;
+        /** 内部 id 仅供服务端扩写流程/账目使用，永不回传浏览器 */
+        let appliedInternalTemplateId: string | undefined;
         let viralTemplateAddon = "";
         if (requestedTemplateId) {
-          const [{ getMergedManhuaViralTemplate }, { formatManhuaViralTemplateWriterSkillFromCard }] =
-            await Promise.all([
-              import("./services/manhuaViralTemplateStore.js"),
-              import("../shared/manhuaViralTemplateBank.js"),
-            ]);
-          const card = await getMergedManhuaViralTemplate(requestedTemplateId);
+          const [store, bank] = await Promise.all([
+            import("./services/manhuaViralTemplateStore.js"),
+            import("../shared/manhuaViralTemplateBank.js"),
+          ]);
+          // 双解析：新客户端只持有公开句柄 mt_*；内部 id 仅供监管/旧草稿兼容
+          const card = /^mt_[a-z0-9]{4,8}$/i.test(requestedTemplateId)
+            ? await store.getMergedManhuaViralTemplateByPublicId(requestedTemplateId)
+            : await store.getMergedManhuaViralTemplate(requestedTemplateId);
           if (!card || card.status !== "approved") {
             throw new TRPCError({
               code: "BAD_REQUEST",
               message: "所选剧情增强方案已下架或不存在，请刷新后重试",
             });
           }
-          viralTemplateAddon = formatManhuaViralTemplateWriterSkillFromCard(card);
+          viralTemplateAddon = bank.formatManhuaViralTemplateWriterSkillFromCard(card);
           if (!viralTemplateAddon) {
             throw new TRPCError({
               code: "BAD_REQUEST",
               message: "所选剧情增强方案内容不完整，未调用扩写模型",
             });
           }
-          appliedTemplate = { id: card.id, nameZh: card.nameZh };
+          appliedInternalTemplateId = card.id;
+          // 商业机密边界：完整卡只喂模型；浏览器响应一律匿名句柄（监管在监管面板看全量）
+          const code = String(card.publicCode || "").trim();
+          appliedTemplate = code
+            ? {
+                publicId: bank.makePublicTemplateId(code),
+                nameZh: bank.makeAnonymousTemplateNameZh(card.laneZh, code),
+              }
+            : { publicId: "", nameZh: `${card.laneZh}·剧情增强` };
         }
         const episodeCount = clampWriterEpisodeCount(input.episodeCount);
         // 局部改写按实际重写集数计费（按集计价的拍板语义）：fromEpisode 起重写到末集。
@@ -9125,7 +9137,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           fromEpisode: input.fromEpisode,
           fromSegment: input.fromSegment,
           lockedEpisodeBody: input.lockedEpisodeBody,
-          viralTemplateId: appliedTemplate?.id,
+          viralTemplateId: appliedInternalTemplateId,
           viralTemplateAddon,
         });
         const { createHash } = await import("node:crypto");

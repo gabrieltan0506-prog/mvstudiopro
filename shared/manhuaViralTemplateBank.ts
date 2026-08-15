@@ -77,6 +77,8 @@ export type ManhuaViralTemplateCard = {
   densityHints: ManhuaViralTemplateDensityHints;
   sourceRefs: ManhuaViralTemplateSourceRef[];
   status: ManhuaViralTemplateStatus;
+  /** 公开码（批准入库时随机生成并持久化，如 "A7F2"）：普通用户唯一可见的模板句柄来源 */
+  publicCode?: string;
   approvedAt?: string;
   updatedAt?: string;
   /** 学习链 provenance（审查必须修13）：证明读帧/润色各自真实跑过哪个模型，A/B 结果可解释 */
@@ -170,9 +172,59 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
       .filter((r) => r.url)
       .slice(0, 8),
     status,
+    publicCode: /^[A-Z0-9]{4,8}$/.test(String(o.publicCode || "")) ? String(o.publicCode) : undefined,
     approvedAt: o.approvedAt ? String(o.approvedAt) : undefined,
     updatedAt: o.updatedAt ? String(o.updatedAt) : undefined,
     provenance: parseManhuaViralTemplateProvenance(o.provenance),
+  };
+}
+
+/**
+ * 公开功能卡（普通用户唯一可见形态）。商业机密边界：内部 id / 真名 / 来源 / 学习出处 /
+ * 节拍与场景自由文本一概不出现——字段显式逐个构造，禁止从内部卡展开（fail-closed）。
+ */
+export type PublicManhuaViralTemplateCard = {
+  /** 稳定公开句柄：`mt_${publicCode 小写}`；扩写入参可直接用它选模板 */
+  publicId: string;
+  /** 匿名展示名：`${laneZh}·爆款节奏 ${publicCode}` */
+  nameZh: string;
+  laneZh: ManhuaViralTemplateLane;
+  beatCount: number;
+  densityLevel: "standard" | "dense";
+  /** 前台文案（人工润色的零具名稿，服务端文案表供给） */
+  featureZh: string;
+  introZh: string;
+};
+
+export function makePublicTemplateId(publicCode: string): string {
+  return `mt_${String(publicCode || "").trim().toLowerCase()}`;
+}
+
+export function makeAnonymousTemplateNameZh(
+  laneZh: ManhuaViralTemplateLane,
+  publicCode: string,
+): string {
+  return `${laneZh}·爆款节奏 ${String(publicCode || "").trim().toUpperCase()}`;
+}
+
+/** 无 publicCode 的卡返回 null（调用方跳过并告警）——逼着回填先行，绝不回退成可反查的内部 id */
+export function toPublicManhuaViralTemplateCard(
+  card: ManhuaViralTemplateCard,
+  copy?: { featureZh?: string; introZh?: string } | null,
+): PublicManhuaViralTemplateCard | null {
+  const code = String(card.publicCode || "").trim();
+  if (!/^[A-Z0-9]{4,8}$/.test(code)) return null;
+  return {
+    publicId: makePublicTemplateId(code),
+    nameZh: makeAnonymousTemplateNameZh(card.laneZh, code),
+    laneZh: card.laneZh,
+    beatCount: Array.isArray(card.beatGrid) ? card.beatGrid.length : 0,
+    densityLevel: (card.densityHints?.minDialogueLines ?? 0) >= 10 ? "dense" : "standard",
+    featureZh: String(copy?.featureZh || `${card.beatGrid.length} 拍连载节奏骨架`).slice(0, 120),
+    introZh: String(
+      copy?.introZh ||
+        `按 ${card.beatGrid.length} 个节拍位组织开场与连载钩子，适合${card.laneZh}题材的快节奏叙事。`,
+    ).slice(0, 200),
   };
 }
 
@@ -273,6 +325,21 @@ export function recommendApprovedManhuaViralTemplate(
   for (const lane of MANHUA_VIRAL_TEMPLATE_LANE_ORDER) {
     if (!MANHUA_VIRAL_TEMPLATE_LANE_TOPIC_RE[lane].test(text)) continue;
     const hit = approved.find((card) => card.laneZh === lane);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** 公开卡版推荐器：服务端只下发 approved，故无需 status 过滤；按赛道正则匹配题材 */
+export function recommendPublicManhuaViralTemplate(
+  cards: readonly PublicManhuaViralTemplateCard[],
+  topic: string | null | undefined,
+): PublicManhuaViralTemplateCard | null {
+  const text = String(topic || "").trim();
+  if (!text) return null;
+  for (const lane of MANHUA_VIRAL_TEMPLATE_LANE_ORDER) {
+    if (!MANHUA_VIRAL_TEMPLATE_LANE_TOPIC_RE[lane].test(text)) continue;
+    const hit = cards.find((card) => card.laneZh === lane);
     if (hit) return hit;
   }
   return null;

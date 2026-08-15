@@ -3,10 +3,12 @@
  * proposals/ = 待审；approved/ = 人审通过。产品列表 = GCS approved
  * （出厂种子 2026-08-10 已清空，shared 库只剩合并逻辑，见 manhuaViralTemplateBank.ts 文件头）。
  */
+import { randomBytes } from "node:crypto";
 import {
   getManhuaViralTemplate,
   listApprovedManhuaViralTemplates,
   listApprovedManhuaViralTemplatesGrouped,
+  makePublicTemplateId,
   parseManhuaViralTemplateCard,
   type ManhuaViralTemplateCard,
 } from "../../shared/manhuaViralTemplateBank.js";
@@ -109,6 +111,30 @@ export async function getGcsManhuaViralProposal(
  * 人审批准进库：写入 GCS approved/，并尽量把 proposals/ 同步为 approved。
  * 可传 id（读提案）或完整 card。
  */
+/** 随机公开码：与内部 id / 剧名 / 序号零关联，无法反查（审查必须修 2 的过渡实现，B 档可换 HMAC）。 */
+async function mintUniqueTemplatePublicCode(): Promise<string> {
+  const taken = new Set(
+    (await listCardsUnderPrefix(MANHUA_VIRAL_APPROVED_PREFIX))
+      .map((c) => String(c.publicCode || "").toUpperCase())
+      .filter(Boolean),
+  );
+  for (let i = 0; i < 24; i += 1) {
+    const code = randomBytes(3).toString("hex").toUpperCase().slice(0, 4);
+    if (!taken.has(code)) return code;
+  }
+  return randomBytes(4).toString("hex").toUpperCase().slice(0, 8);
+}
+
+/** 普通用户句柄（mt_xxxx）→ 完整卡；只在服务端解析，完整卡永不回传浏览器 */
+export async function getMergedManhuaViralTemplateByPublicId(
+  publicId?: string | null,
+): Promise<ManhuaViralTemplateCard | null> {
+  const key = String(publicId || "").trim().toLowerCase();
+  if (!/^mt_[a-z0-9]{4,8}$/.test(key)) return null;
+  const all = await listMergedApprovedManhuaViralTemplates();
+  return all.find((c) => c.publicCode && makePublicTemplateId(c.publicCode) === key) || null;
+}
+
 export async function approveManhuaViralTemplate(input: {
   id?: string;
   /** @deprecated 审查收紧（2026-08-10）：客户端完整卡不再被信任，只按 id 读落盘提案 */
@@ -128,6 +154,7 @@ export async function approveManhuaViralTemplate(input: {
   const approved: ManhuaViralTemplateCard = {
     ...card,
     status: "approved",
+    publicCode: card.publicCode || (await mintUniqueTemplatePublicCode()),
     approvedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };

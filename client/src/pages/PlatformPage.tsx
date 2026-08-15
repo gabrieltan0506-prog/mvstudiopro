@@ -3013,7 +3013,8 @@ export default function PlatformPage() {
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [refreshManhuaLearnServerJobs, supervisorAccess, trendInsightTab, user?.id, user?.role]);
-  const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApproved.useQuery(
+  /** 监管面板专用全量（真名可见）；无监管权限时服务端直接 FORBIDDEN，面板空态 */
+  const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApprovedPrivate.useQuery(
     { supervisorToken: getSupervisorTrpcToken() },
     {
       enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),

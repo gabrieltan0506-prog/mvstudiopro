@@ -20,39 +20,57 @@ function assertSupervisorOps(
 
 export const manhuaViralTemplateRouter = router({
   /**
-   * 编剧室 / 已登录：GCS approved 列表（出厂种子已清空；GCS 失败时返回空组，前端有空态）。
-   * 具名保护（2026-08-15 用户拍板：学习模板只有监管可见全貌）：普通用户拿匿名化功能卡——
-   * 剧名 nameZh 换成「赛道·爆款节奏 N号」，sourceRefs/provenance 一律剥除；
-   * 节拍网格等功能字段保留，编剧室骨架建议照常可用。监管带 token 走原样全量。
+   * 编剧室 / 已登录（公开面）：只下发匿名功能卡（fail-closed 白名单 DTO，见
+   * toPublicManhuaViralTemplateCard）。商业机密边界（2026-08-15 用户拍板）：内部 id/真名/
+   * 来源/学习出处/节拍与场景自由文本一概不出服务端；无 publicCode 的卡直接隐藏并告警。
    */
-  listApproved: protectedProcedure
+  listApprovedPublic: protectedProcedure.query(async () => {
+    try {
+      const [{ listMergedApprovedManhuaViralTemplatesGrouped }, { MANHUA_VIRAL_TEMPLATE_COPY }, bank] =
+        await Promise.all([
+          import("../services/manhuaViralTemplateStore"),
+          import("../services/manhuaViralTemplateCopy"),
+          import("../../shared/manhuaViralTemplateBank"),
+        ]);
+      const groups = await listMergedApprovedManhuaViralTemplatesGrouped();
+      return {
+        groups: groups
+          .map((g) => ({
+            laneZh: g.laneZh,
+            items: g.items
+              .map((c) => {
+                const pub = bank.toPublicManhuaViralTemplateCard(c, MANHUA_VIRAL_TEMPLATE_COPY[c.id]);
+                if (!pub) {
+                  console.warn("[listApprovedPublic] card missing publicCode, hidden:", c.id);
+                }
+                return pub;
+              })
+              .filter((x): x is NonNullable<typeof x> => Boolean(x)),
+          }))
+          .filter((g) => g.items.length > 0),
+      };
+    } catch (e) {
+      console.warn(
+        "[manhuaViralTemplate.listApprovedPublic] gcs failed, return empty:",
+        e instanceof Error ? e.message : e,
+      );
+      return { groups: [] };
+    }
+  }),
+
+  /** 监管全量（真名/来源/出处可见；缓存键与公开面天然分离） */
+  listApprovedPrivate: protectedProcedure
     .input(z.object({ supervisorToken: z.string().max(512).optional() }).optional())
     .query(async ({ ctx, input }) => {
+      assertSupervisorOps(ctx.user, input?.supervisorToken);
       try {
         const { listMergedApprovedManhuaViralTemplatesGrouped } = await import(
           "../services/manhuaViralTemplateStore"
         );
-        const groups = await listMergedApprovedManhuaViralTemplatesGrouped();
-        if (resolvePlatformSupervisorOpsAllowed(ctx.user, input?.supervisorToken)) {
-          return { groups };
-        }
-        return {
-          groups: groups.map((g) => ({
-            laneZh: g.laneZh,
-            items: g.items
-              .slice()
-              .sort((a, b) => a.id.localeCompare(b.id))
-              .map((c, i) => ({
-                ...c,
-                nameZh: `${g.laneZh}·爆款节奏 ${i + 1} 号`,
-                sourceRefs: [],
-                provenance: undefined,
-              })),
-          })),
-        };
+        return { groups: await listMergedApprovedManhuaViralTemplatesGrouped() };
       } catch (e) {
         console.warn(
-          "[manhuaViralTemplate.listApproved] gcs failed, return empty:",
+          "[manhuaViralTemplate.listApprovedPrivate] gcs failed, return empty:",
           e instanceof Error ? e.message : e,
         );
         return { groups: [] };
