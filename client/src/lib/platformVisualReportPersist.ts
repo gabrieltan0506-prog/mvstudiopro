@@ -6,6 +6,103 @@
 import type { VisualReportData } from "@/components/VisualReportTemplate";
 
 export const PLATFORM_VISUAL_REPORT_LS_KEY = "mvstudiopro.platform.visualReport.v1";
+export const PLATFORM_VISUAL_REPORT_JOB_LS_KEY = "mvstudiopro.platform.visualReportJob.v1";
+const PLATFORM_VISUAL_REPORT_JOB_MAX_AGE_MS = 24 * 60 * 60_000;
+
+export type PlatformVisualReportPendingJobV1 = {
+  v: 1;
+  jobId: string;
+  userId: string;
+  windowDays: "3" | "7" | "15" | "30";
+  theme: "dark" | "light";
+  createdAt: number;
+};
+
+export function readPlatformVisualReportPendingJob(
+  expectedUserId: string,
+  storage: Pick<Storage, "getItem" | "removeItem"> = localStorage,
+  nowMs = Date.now(),
+): PlatformVisualReportPendingJobV1 | null {
+  try {
+    const raw = storage.getItem(PLATFORM_VISUAL_REPORT_JOB_LS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PlatformVisualReportPendingJobV1>;
+    const valid =
+      parsed?.v === 1 &&
+      typeof parsed.jobId === "string" &&
+      parsed.jobId.startsWith("trend_") &&
+      String(parsed.userId || "") === expectedUserId &&
+      ["3", "7", "15", "30"].includes(String(parsed.windowDays || "")) &&
+      (parsed.theme === "dark" || parsed.theme === "light") &&
+      Number.isFinite(parsed.createdAt) &&
+      nowMs - Number(parsed.createdAt) <= PLATFORM_VISUAL_REPORT_JOB_MAX_AGE_MS;
+    if (!valid) {
+      storage.removeItem(PLATFORM_VISUAL_REPORT_JOB_LS_KEY);
+      return null;
+    }
+    return parsed as PlatformVisualReportPendingJobV1;
+  } catch {
+    try {
+      storage.removeItem(PLATFORM_VISUAL_REPORT_JOB_LS_KEY);
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+}
+
+export function writePlatformVisualReportPendingJob(
+  job: PlatformVisualReportPendingJobV1 | null,
+  storage: Pick<Storage, "setItem" | "removeItem"> = localStorage,
+): void {
+  try {
+    if (job) storage.setItem(PLATFORM_VISUAL_REPORT_JOB_LS_KEY, JSON.stringify(job));
+    else storage.removeItem(PLATFORM_VISUAL_REPORT_JOB_LS_KEY);
+  } catch {
+    /* 本机存储不可用时，当前页面轮询仍继续。 */
+  }
+}
+
+/** 服务端 jobId 优先；本机记录只允许补回同一个任务，不能把旧任务覆盖到新任务上。 */
+export function resolvePlatformVisualReportPendingJob(input: {
+  saved: PlatformVisualReportPendingJobV1 | null;
+  latestJobId: string;
+  userId: string;
+  windowDays: PlatformVisualReportPendingJobV1["windowDays"];
+  theme: PlatformVisualReportPendingJobV1["theme"];
+  createdAt: number;
+}): PlatformVisualReportPendingJobV1 {
+  if (input.saved?.jobId === input.latestJobId && input.saved.userId === input.userId) {
+    return input.saved;
+  }
+  return {
+    v: 1,
+    jobId: input.latestJobId,
+    userId: input.userId,
+    windowDays: input.windowDays,
+    theme: input.theme,
+    createdAt: input.createdAt,
+  };
+}
+
+/** 防止重跑期间或失败后，把上一份成功报表误显示成这次的新结果。 */
+export function shouldRestoreLatestVisualReport(input: {
+  currentUserId: string;
+  responseUserId: string;
+  hasPendingJob: boolean;
+  hasCurrentReport: boolean;
+  hasCurrentError: boolean;
+  busy: boolean;
+}): boolean {
+  return Boolean(
+    input.currentUserId &&
+    input.responseUserId === input.currentUserId &&
+    !input.hasPendingJob &&
+    !input.hasCurrentReport &&
+    !input.hasCurrentError &&
+    !input.busy,
+  );
+}
 
 export type PlatformVisualReportPersistV1 = {
   v: 1;

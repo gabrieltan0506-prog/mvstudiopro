@@ -54,6 +54,24 @@ describe("mapGenerateVisualReportResult", () => {
     expect(mapped?.platformDetails?.length).toBeGreaterThan(0);
     expect(mapped?.platformDetails?.[0]?.hotTopics?.length).toBeGreaterThan(0);
   });
+
+  it("does not expose removed cover candidates in the report DTO", () => {
+    const mapped = mapGenerateVisualReportResult(
+      {
+        report: {
+          reportTitle: "无封面趋势报表",
+          insightSummary: [],
+          trackGrowth: [],
+          platformDetails: [{ platform: "xiaohongshu", hotTopics: ["教程"] }],
+          excellentCoverReferences: [{ sourceId: "secret", coverUrl: "https://example.invalid/a.jpg" }],
+          legacyCoverReferences: [{ sourceId: "legacy" }],
+        },
+      },
+      { windowDays: "7", theme: "dark" },
+    );
+    expect(mapped).not.toHaveProperty("excellentCoverReferences");
+    expect(mapped).not.toHaveProperty("legacyCoverReferences");
+  });
 });
 
 describe("fallbackBlueOceanWords", () => {

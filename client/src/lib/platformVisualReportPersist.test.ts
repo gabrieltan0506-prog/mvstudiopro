@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   clearPlatformVisualReportPersist,
+  readPlatformVisualReportPendingJob,
   readPlatformVisualReportPersist,
+  resolvePlatformVisualReportPendingJob,
+  shouldRestoreLatestVisualReport,
   slimPlatformDashboardForPersist,
   writePlatformVisualReportPersist,
+  writePlatformVisualReportPendingJob,
 } from "./platformVisualReportPersist";
 import type { VisualReportData } from "@/components/VisualReportTemplate";
 
@@ -95,5 +99,78 @@ describe("platformVisualReportPersist", () => {
     writePlatformVisualReportPersist({ visualReport: sampleReport() }, storage);
     clearPlatformVisualReportPersist(storage);
     expect(readPlatformVisualReportPersist(storage)).toBeNull();
+  });
+
+  it("round-trips an unfinished report job for the same user", () => {
+    const storage = memoryStorage();
+    writePlatformVisualReportPendingJob({
+      v: 1,
+      jobId: "trend_42_request",
+      userId: "42",
+      windowDays: "7",
+      theme: "dark",
+      createdAt: 1_000,
+    }, storage);
+    expect(readPlatformVisualReportPendingJob("42", storage, 2_000)?.jobId).toBe("trend_42_request");
+    expect(readPlatformVisualReportPendingJob("43", storage, 2_000)).toBeNull();
+  });
+
+  it("drops expired or malformed pending report jobs", () => {
+    const storage = memoryStorage({
+      "mvstudiopro.platform.visualReportJob.v1": JSON.stringify({
+        v: 1,
+        jobId: "trend_42_old",
+        userId: "42",
+        windowDays: "7",
+        theme: "dark",
+        createdAt: 1,
+      }),
+    });
+    expect(readPlatformVisualReportPendingJob("42", storage, 25 * 60 * 60_000)).toBeNull();
+  });
+
+  it("uses the server latest job instead of a stale local pending job after refresh", () => {
+    const saved = {
+      v: 1,
+      jobId: "trend_42_old",
+      userId: "42",
+      windowDays: "7",
+      theme: "dark",
+      createdAt: 1_000,
+    } as const;
+    const resolved = resolvePlatformVisualReportPendingJob({
+      saved,
+      latestJobId: "trend_42_new",
+      userId: "42",
+      windowDays: "15",
+      theme: "light",
+      createdAt: 2_000,
+    });
+    expect(resolved).toEqual({
+      v: 1,
+      jobId: "trend_42_new",
+      userId: "42",
+      windowDays: "15",
+      theme: "light",
+      createdAt: 2_000,
+    });
+  });
+
+  it("never restores an old success while a rerun is pending or has failed", () => {
+    const base = {
+      currentUserId: "42",
+      responseUserId: "42",
+      hasCurrentReport: false,
+      busy: false,
+    };
+    expect(shouldRestoreLatestVisualReport({ ...base, hasPendingJob: true, hasCurrentError: false })).toBe(false);
+    expect(shouldRestoreLatestVisualReport({ ...base, hasPendingJob: false, hasCurrentError: true })).toBe(false);
+    expect(shouldRestoreLatestVisualReport({ ...base, hasPendingJob: false, hasCurrentError: false })).toBe(true);
+    expect(shouldRestoreLatestVisualReport({
+      ...base,
+      responseUserId: "43",
+      hasPendingJob: false,
+      hasCurrentError: false,
+    })).toBe(false);
   });
 });
