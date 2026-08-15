@@ -9,7 +9,13 @@ const gunzipAsync = promisify(gunzipCb);
 const gzipAsync = promisify(gzipCb);
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { growthPlatformValues, growthPlatformsForStatsAggregationList, isGrowthPlatformInStatsAggregate, type GrowthPlatform } from "@shared/growth";
+import {
+  growthPlatformsForStatsAggregationList,
+  isGrowthPlatformInStatsAggregate,
+  activeGrowthPlatformValues,
+  scheduledGrowthPlatformValues,
+  type GrowthPlatform,
+} from "@shared/growth";
 import type { PlatformTrendCollection, TrendItem } from "./trendCollector";
 import { nowShanghaiIso, toShanghaiIso } from "./time";
 import { normalizeStringList } from "./trendNormalize";
@@ -25,6 +31,8 @@ export type TrendSchedulerState = {
   failureCount: number;
   totalRuns?: number;
   totalFailures?: number;
+  /** 最近一次抓取失败的时间；前端只短暂展示，累计次数长期保留。 */
+  lastFailureAt?: string;
   successCount?: number;
   lastDurationMs?: number;
   lastCollectedCount?: number;
@@ -291,10 +299,10 @@ const HISTORY_LEDGER_DIR = path.join(STORE_DIR, "history-ledger");
 const GITHUB_OFFLOAD_CACHE_DIR = path.resolve(process.env.GROWTH_GITHUB_OFFLOAD_CACHE_DIR || path.join(DEFAULT_STORE_ROOT, "growth-github-cache"));
 const GITHUB_COLD_STORE_BASE_URL = String(process.env.GROWTH_GITHUB_COLD_STORE_BASE_URL || "").trim().replace(/\/$/, "");
 const BACKFILL_PLATFORMS = new Set<GrowthPlatform>(
-  growthPlatformValues.filter((platform): platform is GrowthPlatform => platform !== "weixin_channels"),
+  scheduledGrowthPlatformValues,
 );
-/** platform-current 拆文件 + gzip 读写适用的全部采集平台（含视频号，与 growthPlatformValues 一致） */
-const GROWTH_STORE_PLATFORM_VALUES: GrowthPlatform[] = [...growthPlatformValues];
+/** 当前仍会读写的正式平台；旧枚举仅保留反序列化兼容，退休平台不得再从备份回灌。 */
+const GROWTH_STORE_PLATFORM_VALUES: GrowthPlatform[] = [...activeGrowthPlatformValues];
 const RETENTION_DAYS = 365;
 const LOOKBACK_WINDOWS = [30, 60, 90, 120, 180, 270, 365];
 const DEFAULT_SELECTED_WINDOW_DAYS = Math.max(30, Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365);
@@ -403,7 +411,7 @@ function buildGrowthDebugSummary(store: TrendStoreFile): GrowthDebugSummary {
     isRecoveredCollectionSource(collection?.source);
 
   const platforms = Object.fromEntries(
-    growthPlatformValues.map((platform) => [
+    activeGrowthPlatformValues.map((platform) => [
       platform,
       {
         platform,
@@ -534,6 +542,7 @@ function normalizeItem(item: TrendItem): TrendItem {
     url: item.url ? String(item.url).trim() : undefined,
     coverUrl: item.coverUrl ? String(item.coverUrl).trim() : undefined,
     coverCapturedAt: item.coverCapturedAt ? String(item.coverCapturedAt).trim() : undefined,
+    observedAt: item.observedAt ? String(item.observedAt).trim() : undefined,
     visualAssetKind: item.visualAssetKind === "representative_frame" ? "representative_frame" : item.visualAssetKind === "platform_cover" ? "platform_cover" : undefined,
     visualFrameProgress: Number.isFinite(item.visualFrameProgress) ? item.visualFrameProgress : undefined,
     tags: normalizeStringList(item.tags),
@@ -837,7 +846,7 @@ export async function bootstrapTrendHistoryFromColdStore(): Promise<TrendHistory
   }
 
   const store = await readTrendStore({ preferDerivedFiles: true });
-  const targetPlatforms = growthPlatformValues.filter((platform): platform is GrowthPlatform => platform !== "weixin_channels");
+  const targetPlatforms: GrowthPlatform[] = [...scheduledGrowthPlatformValues];
   const needsBootstrap = targetPlatforms.some((platform) => {
     const summary = store.history?.platforms?.[platform];
     const archived = summary?.archivedItems || 0;
@@ -1066,21 +1075,35 @@ async function readArchiveIndexFile(): Promise<TrendArchiveEntry[]> {
     "archive-index.json.gz",
   );
   const entries = Array.isArray(parsed) ? parsed : (parsed?.archiveIndex || []);
-  return entries.map((entry) => ({
-    ...entry,
-    bucketCounts: entry.bucketCounts || {},
-    industryCounts: entry.industryCounts || {},
-    ageCounts: entry.ageCounts || {},
-    contentCounts: entry.contentCounts || {},
-  }));
+  return entries
+    .filter((entry) => activeGrowthPlatformValues.includes(
+      entry.platform as typeof activeGrowthPlatformValues[number],
+    ))
+    .map((entry) => ({
+      ...entry,
+      bucketCounts: entry.bucketCounts || {},
+      industryCounts: entry.industryCounts || {},
+      ageCounts: entry.ageCounts || {},
+      contentCounts: entry.contentCounts || {},
+    }));
 }
 
 async function readHistorySummaryFile(): Promise<TrendHistoryState | null> {
-  return readJsonWithGzipFallback<TrendHistoryState>(
+  const history = await readJsonWithGzipFallback<TrendHistoryState>(
     HISTORY_SUMMARY_FILE,
     "history-summary.json.gz",
     "history-summary.json.gz",
   );
+  if (!history) return null;
+  return {
+    ...history,
+    platforms: Object.fromEntries(
+      Object.entries(history.platforms || {}).filter(([platform]) =>
+        activeGrowthPlatformValues.includes(
+          platform as typeof activeGrowthPlatformValues[number],
+        )),
+    ),
+  };
 }
 
 async function readPlatformCollectionFile(platform: GrowthPlatform): Promise<PlatformTrendCollection | undefined> {
@@ -1336,7 +1359,8 @@ export async function readGrowthRuntimeControl(): Promise<{
     ? control.value.burst
     : "auto";
   const burstPlatforms = Array.isArray(control?.value?.burstPlatforms)
-    ? control!.value.burstPlatforms.filter((item): item is GrowthPlatform => growthPlatformValues.includes(item as GrowthPlatform))
+    ? control!.value.burstPlatforms.filter((item): item is GrowthPlatform =>
+        scheduledGrowthPlatformValues.includes(item as typeof scheduledGrowthPlatformValues[number]))
     : [];
   return {
     mode,
@@ -1768,7 +1792,7 @@ export async function reconcileTrendHistoryState(options?: { force?: boolean }) 
       return store;
     }
     const platforms = new Set<GrowthPlatform>(
-      growthPlatformValues.filter((platform) =>
+      activeGrowthPlatformValues.filter((platform) =>
         Boolean(store.collections?.[platform]?.items?.length)
           || (store.archiveIndex || []).some((entry) => entry.platform === platform),
       ),
@@ -1816,7 +1840,7 @@ export async function reconcileTrendHistoryState(options?: { force?: boolean }) 
     }
 
     const summaries: Partial<Record<GrowthPlatform, TrendHistoryPlatformSummary>> = {};
-    for (const platform of growthPlatformValues) {
+    for (const platform of activeGrowthPlatformValues) {
       const ledger = ledgers.get(platform) || {};
       await writeHistoryLedger(platform, ledger);
       summaries[platform] = summarizeHistoryLedger(platform, ledger);
@@ -1855,7 +1879,7 @@ async function writeStore(
     if (existing?.collections) {
       const protectedCollections = { ...(next.collections || {}) };
       let preservedAny = false;
-      for (const platform of growthPlatformValues) {
+      for (const platform of activeGrowthPlatformValues) {
         const existingCollection = existing.collections?.[platform];
         const nextCollection = protectedCollections?.[platform];
         const existingCount = existingCollection?.items?.length || 0;
@@ -2005,11 +2029,12 @@ function getHotWindowDays() {
  * 按 publishedAt 裁掉超出热窗口的条目。历史不会丢：archive/、history-ledger/
  * 与 GitHub 冷备仍保有全量，这里只决定「每轮采集要 load 进内存的那份」有多大。
  *
- * 两条保险：缺少或无法解析 publishedAt 的条目一律保留（判不了年龄就不删）；
+ * 两条保险：缺少或无法解析 publishedAt 的条目会保留一个有界热池（判不了年龄但不能无限膨胀）；
  * 若裁剪后不足原量的 5%，视为日期字段异常，回退成按热度保留前 MIN_HOT_ITEMS 条，
  * 避免某个平台改了时间格式就把整池清空。
  */
 const MIN_HOT_ITEMS_ON_PRUNE_FALLBACK = 2000;
+export const MAX_UNDATED_HOT_ITEMS = 20_000;
 
 export function pruneTrendItemsToHotWindow(
   items: TrendItem[],
@@ -2018,13 +2043,24 @@ export function pruneTrendItemsToHotWindow(
 ): TrendItem[] {
   if (!items.length) return items;
   const cutoff = now - Math.max(30, windowDays) * 24 * 60 * 60 * 1000;
-  const kept = items.filter((item) => {
+  const keptBeforeUndatedCap = items.filter((item) => {
     const at = item.publishedAt ? new Date(item.publishedAt).getTime() : Number.NaN;
     if (!Number.isFinite(at)) return true;
     return at >= cutoff;
   });
-  if (kept.length >= Math.ceil(items.length * 0.05)) return kept;
-  return sortItems(items).slice(0, MIN_HOT_ITEMS_ON_PRUNE_FALLBACK);
+  if (keptBeforeUndatedCap.length < Math.ceil(items.length * 0.05)) {
+    return sortItems(items).slice(0, MIN_HOT_ITEMS_ON_PRUNE_FALLBACK);
+  }
+  const dated: TrendItem[] = [];
+  const undated: TrendItem[] = [];
+  for (const item of keptBeforeUndatedCap) {
+    const at = item.publishedAt ? new Date(item.publishedAt).getTime() : Number.NaN;
+    (Number.isFinite(at) ? dated : undated).push(item);
+  }
+  const cappedUndated = undated.length > MAX_UNDATED_HOT_ITEMS
+    ? sortItems(undated).slice(0, MAX_UNDATED_HOT_ITEMS)
+    : undated;
+  return [...dated, ...cappedUndated];
 }
 
 function mergeCollection(
@@ -2042,9 +2078,13 @@ function mergeCollection(
     if (existingKeys.has(key)) mergedCount += 1;
     else addedCount += 1;
   }
+  const observedIncomingItems = (incoming.items || []).map((item) => ({
+    ...item,
+    observedAt: incoming.collectedAt,
+  }));
   const hotWindowDays = getHotWindowDays();
   const mergedItems = pruneTrendItemsToHotWindow(
-    dedupeTrendItems(current?.items || [], incoming.items || []),
+    dedupeTrendItems(current?.items || [], observedIncomingItems),
     hotWindowDays,
   );
   const mergedCollection: PlatformTrendCollection = {
@@ -2424,8 +2464,8 @@ export async function updateTrendBackfillProgress(progress: Partial<TrendBackfil
     ? (meta.backfillLive || createEmptyStore().backfillLive!)
     : (meta.backfillHistory || createEmptyStore().backfillHistory!);
   const summary = await readGrowthDebugSummary();
-  const currentPlatformMap = new Map(
-    growthPlatformValues.map((platform) => [
+  const currentPlatformMap = new Map<GrowthPlatform, { currentTotal: number; archivedTotal: number }>(
+    scheduledGrowthPlatformValues.map((platform) => [
       platform,
       {
         currentTotal: summary?.platforms?.[platform]?.currentTotal || 0,

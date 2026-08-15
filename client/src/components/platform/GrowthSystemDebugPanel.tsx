@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import {
@@ -7,7 +7,9 @@ import {
   formatTruthSource,
   getPlatformDescription,
   getPlatformLabel,
+  isRecentGrowthPlatformTimeout,
   GROWTH_BURST_PLATFORMS,
+  GROWTH_DEBUG_PLATFORMS,
   type GrowthBurstPlatform,
 } from "@/lib/growthSystemDebugHelpers";
 
@@ -57,19 +59,18 @@ export function GrowthSystemDebugPanel({
   });
 
   const data = growthSystemStatusQuery.data;
-  const growthAnomalies = data?.anomalies || [];
-  const growthHealthState = growthAnomalies.length ? "异常" : "正常";
-  const hasCriticalGrowthAnomaly = growthAnomalies.some((item) => item?.level === "critical");
+  const [statusNowMs, setStatusNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!enabled) return;
+    const timer = window.setInterval(() => setStatusNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [enabled]);
 
   const trySetBurstControl = useCallback(
     (payload: { burst: "auto" | "manual" | "off"; platforms: GrowthBurstPlatform[] }) => {
-      if (payload.burst !== "off" && hasCriticalGrowthAnomaly) {
-        toast.error("当前系统状态异常，不建议执行 burst。请先恢复健康度。");
-        return;
-      }
       setGrowthBurstControlMutation.mutate(payload);
     },
-    [hasCriticalGrowthAnomaly, setGrowthBurstControlMutation],
+    [setGrowthBurstControlMutation],
   );
 
   if (!enabled) return null;
@@ -77,27 +78,6 @@ export function GrowthSystemDebugPanel({
   return (
     <div className={`rounded-[24px] border border-fuchsia-300/20 bg-fuchsia-400/5 p-5 ${className}`}>
       <div className="text-sm font-semibold text-fuchsia-100">Growth 系统 Debug（live / 回填 / 各平台累计）</div>
-
-      <div
-        className={`mt-4 rounded-2xl border px-4 py-3 text-sm font-semibold ${
-          growthAnomalies.length
-            ? "border-red-300/40 bg-red-500/15 text-red-100"
-            : "border-emerald-300/30 bg-emerald-500/15 text-emerald-100"
-        }`}
-      >
-        系统状态：{growthHealthState}
-      </div>
-
-      {growthAnomalies.length ? (
-        <div className="mt-3 space-y-2 rounded-2xl border border-red-300/20 bg-red-500/10 p-4 text-sm text-red-50">
-          {growthAnomalies.map((item, index) => (
-            <div key={`growth-anomaly-${index}`} className="leading-6">
-              <span className="font-semibold">{String(item.title || "异常")}</span>
-              <span>：{String(item.message || "-")}</span>
-            </div>
-          ))}
-        </div>
-      ) : null}
 
       {growthSystemStatusQuery.isLoading && !data ? (
         <div className="mt-4 text-xs text-white/45">正在拉取 Growth 系统状态…</div>
@@ -117,8 +97,6 @@ export function GrowthSystemDebugPanel({
               已用空间：
               {data.storage ? `${String(data.storage.usedMb)} / ${String(data.storage.totalMb)} MB` : "-"}
             </div>
-            <div>服务健康度：{String(data.serviceHealth?.label || (growthAnomalies.length ? "critical" : "passing"))}</div>
-            <div>健康检查时间：{formatShanghaiDateTime(String(data.serviceHealth?.checkedAt || ""))}</div>
             <div>运行模式：{String(data.runtimeControl?.mode || "auto")}</div>
             <div>模式更新时间：{formatShanghaiDateTime(String(data.runtimeControl?.updatedAt || ""))}</div>
           </div>
@@ -218,9 +196,6 @@ export function GrowthSystemDebugPanel({
               })}
             </div>
 
-            {hasCriticalGrowthAnomaly ? (
-              <div className="mt-3 text-xs font-semibold text-red-200">当前系统状态异常，不建议开启 burst。</div>
-            ) : null}
           </div>
 
           {data.truthStore?.platforms?.length ? (
@@ -239,7 +214,9 @@ export function GrowthSystemDebugPanel({
                     </tr>
                   </thead>
                   <tbody>
-                    {data.truthStore.platforms.map((item) => {
+                    {data.truthStore.platforms.filter((item) =>
+                      GROWTH_DEBUG_PLATFORMS.includes(item.platform as typeof GROWTH_DEBUG_PLATFORMS[number]),
+                    ).map((item) => {
                       const pipeline = (item as { lastPipeline?: Record<string, unknown> }).lastPipeline;
                       return (
                         <tr key={String(item.platform)} className="border-b border-white/5">
@@ -262,7 +239,9 @@ export function GrowthSystemDebugPanel({
                 </table>
               </div>
               <div className="space-y-2 pt-2">
-                {data.truthStore.platforms.map((item) => (
+                {data.truthStore.platforms.filter((item) =>
+                  GROWTH_DEBUG_PLATFORMS.includes(item.platform as typeof GROWTH_DEBUG_PLATFORMS[number]),
+                ).map((item) => (
                   <div key={`desc-${String(item.platform)}`} className="text-[10px] leading-5 text-white/45">
                     {String(item.platformLabel || getPlatformLabel(item.platform))}：
                     {String(item.platformDescription || getPlatformDescription(item.platform))}
@@ -302,7 +281,9 @@ export function GrowthSystemDebugPanel({
                       </tr>
                     </thead>
                     <tbody>
-                      {Object.entries(growthSnapshotDebug.platformInventory as Record<string, Record<string, unknown>>).map(
+                      {Object.entries(growthSnapshotDebug.platformInventory as Record<string, Record<string, unknown>>).filter(
+                        ([platform]) => GROWTH_DEBUG_PLATFORMS.includes(platform as typeof GROWTH_DEBUG_PLATFORMS[number]),
+                      ).map(
                         ([platform, row]) => (
                           <tr key={platform} className="border-b border-white/5">
                             <td className="py-1 pr-2">{getPlatformLabel(platform)}</td>
@@ -353,8 +334,8 @@ export function GrowthSystemDebugPanel({
                     {formatShanghaiDateTime(String(item.nextRunAt || ""))}
                   </div>
                   <div>
-                    {String(item.platformLabel || getPlatformLabel(item.platform))} 失败次数：
-                    {String(item.failureCount ?? 0)}
+                    {String(item.platformLabel || getPlatformLabel(item.platform))} 累计抓取失败：
+                    {String((item as { totalFailures?: number }).totalFailures ?? item.failureCount ?? 0)}
                   </div>
                   <div>
                     {String(item.platformLabel || getPlatformLabel(item.platform))} 爆发模式：
@@ -375,10 +356,15 @@ export function GrowthSystemDebugPanel({
                     {String(item.platformLabel || getPlatformLabel(item.platform))} 爆发开始：
                     {formatShanghaiDateTime(String(item.burstTriggeredAt || ""))}
                   </div>
-                  <div className="md:col-span-2">
-                    {String(item.platformLabel || getPlatformLabel(item.platform))} 错误：
-                    {String(item.lastError || "-")}
-                  </div>
+                  {(() => {
+                    if (!isRecentGrowthPlatformTimeout(item, statusNowMs)) return null;
+                    return (
+                      <div className="md:col-span-2 font-semibold text-red-200">
+                        {String(item.platformLabel || getPlatformLabel(item.platform))}
+                        抓取超时未响应，提示将在 30 秒后消失。
+                      </div>
+                    );
+                  })()}
                 </div>
               ))}
             </div>

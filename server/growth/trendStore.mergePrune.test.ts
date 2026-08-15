@@ -117,6 +117,7 @@ describe("growth store merge + hot-window prune", () => {
     expect(douyin?.items.map((it) => it.id).sort()).toEqual(
       Array.from({ length: 10 }, (_, i) => `new-${i}`).sort(),
     );
+    expect(douyin?.items.every((it) => it.observedAt === freshCollectedAt)).toBe(true);
     expect(douyin?.windowDays).toBe(90);
 
     // 再读 derived 真相文件，确认落盘的不是内存幻象

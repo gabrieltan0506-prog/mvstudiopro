@@ -22,6 +22,7 @@ import {
   type GrowthSnapshot,
   type GrowthTitleExecution,
   type GrowthTopicLibraryItem,
+  activeGrowthPlatformValues,
   growthSnapshotSchema,
 } from "@shared/growth";
 import { matchIndustryTemplate } from "./industryTemplates";
@@ -79,9 +80,10 @@ const PLATFORM_BY_LABEL = Object.fromEntries(
 export function normalizePlatforms(input?: string[]): GrowthPlatform[] {
   const mapped = (input || [])
     .map((item) => PLATFORM_ALIASES[String(item || "").trim().toLowerCase()] || PLATFORM_ALIASES[String(item || "").trim()])
-    .filter((item): item is GrowthPlatform => Boolean(item));
+    .filter((item): item is GrowthPlatform =>
+      Boolean(item) && activeGrowthPlatformValues.includes(item as typeof activeGrowthPlatformValues[number]));
   const unique = Array.from(new Set(mapped));
-  return unique.length ? unique.slice(0, 4) : ["douyin", "kuaishou", "bilibili", "xiaohongshu"];
+  return unique.length ? unique.slice(0, 4) : [...activeGrowthPlatformValues];
 }
 
 function clamp(value: number, min: number, max: number) {

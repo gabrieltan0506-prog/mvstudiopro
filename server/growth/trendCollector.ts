@@ -73,6 +73,8 @@ export type TrendItem = {
   visualAssetKind?: "platform_cover" | "representative_frame";
   visualFrameProgress?: number;
   publishedAt?: string;
+  /** 本条内容最近一次被采集器真实观测到的时间；仅在平台不提供发布时间时作为窗口证据。 */
+  observedAt?: string;
   likes?: number;
   comments?: number;
   shares?: number;

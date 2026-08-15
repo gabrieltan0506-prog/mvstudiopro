@@ -1435,7 +1435,7 @@ async function processPlatformJob(
         const result = await caller.mvAnalysis.generateVisualReport({
           windowDays: params.windowDays as "3" | "7" | "15" | "30",
           theme: params.theme as "light" | "dark",
-          platforms: params.platforms as Array<"douyin" | "kuaishou" | "xiaohongshu" | "bilibili" | "weixin_channels">,
+          platforms: params.platforms as Array<"douyin" | "xiaohongshu" | "bilibili" | "weixin_channels">,
           personaContext: typeof params.personaContext === "string" ? params.personaContext : undefined,
           billingRequestId: String(params.billingRequestId || ""),
         });

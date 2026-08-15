@@ -14,7 +14,7 @@ function createCollection(platform: GrowthPlatform, items: number, authors: numb
     items: Array.from({ length: items }, (_, index) => ({
       id: `${platform}-${index}`,
       title: `${PLATFORM_LABELS[platform]} 内容 ${index}`,
-      bucket: platform === "douyin" ? "douyin_feed" : "kuaishou_feed",
+      bucket: `${platform}_feed`,
       author: `author-${index % authors}`,
       likes: 1000 - index,
       comments: 80,
@@ -26,7 +26,7 @@ function createCollection(platform: GrowthPlatform, items: number, authors: numb
       platform,
       itemCount: items,
       uniqueAuthorCount: authors,
-      bucketCounts: { [platform === "douyin" ? "douyin_feed" : "kuaishou_feed"]: items },
+      bucketCounts: { [`${platform}_feed`]: items },
       requestCount: Math.max(1, Math.ceil(items / 10)),
       pageDepth: 2,
       targetPerRun: 100,
@@ -51,16 +51,16 @@ describe("buildGrowthSnapshotFromCollections", () => {
       viralPotential: 86,
       strengths: ["结果表达清楚", "节奏有推进感"],
       improvements: ["还需要更聚焦一个主问题"],
-      platforms: ["快手", "抖音"],
+      platforms: ["小红书", "抖音"],
       summary: "适合先跑强钩子版本，再延展方法拆解。",
     });
 
     const snapshot = buildGrowthSnapshotFromCollections({
       analysis,
       context: "我想先验证短视频首发平台，再决定后续商业承接。",
-      requestedPlatforms: ["kuaishou", "douyin"],
+      requestedPlatforms: ["xiaohongshu", "douyin"],
       collections: {
-        kuaishou: createCollection("kuaishou", 12, 3, ["Kuaishou profile/feed 3x3t4yubwineeyc page 1 blocked with result=109."]),
+        xiaohongshu: createCollection("xiaohongshu", 12, 3),
         douyin: createCollection("douyin", 36, 8),
       },
       errors: {},

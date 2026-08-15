@@ -8,12 +8,44 @@ import type { TrendItem } from "../growth/trendCollector";
 import { inferTrendTrackBucketForVisualReport } from "../growth/trendGrowthScoring";
 
 export type TrackGrowthRow = { name: string; growth: string; isHot?: boolean };
+const MAX_LEGACY_UNDATED_EVIDENCE_ITEMS = 200;
 
-function itemTimeMs(item: any): number | null {
-  const ts = item?.collectedAt || item?.publishedAt || item?.date || null;
-  if (!ts) return null;
-  const ms = new Date(String(ts)).getTime();
+export function resolveVisualReportEvidenceTimeMs(
+  item: any,
+): number | null {
+  const effective = item?.publishedAt
+    || item?.collectedAt
+    || item?.date
+    || item?.observedAt
+    || item?.sourceEvidence?.observedAt
+    || null;
+  if (!effective) return null;
+  const ms = new Date(String(effective)).getTime();
   return Number.isFinite(ms) ? ms : null;
+}
+
+export function filterVisualReportEvidenceItems(
+  items: any[],
+  collectionObservedAt: string | null | undefined,
+  bounds: { currentStart: number; currentEndExclusive: number },
+): any[] {
+  const matched = items.filter((item) => {
+    const ms = resolveVisualReportEvidenceTimeMs(item);
+    return ms != null && ms >= bounds.currentStart && ms < bounds.currentEndExclusive;
+  });
+  if (matched.length) return matched;
+
+  // 旧小红书池没有逐条时间。只在集合本身确为当前窗口观测且逐条证据全空时，
+  // 有界取当前热池前 200 条过渡；禁止把几十万历史条目整体冒充当天样本。
+  const collectionMs = Date.parse(String(collectionObservedAt || ""));
+  if (!Number.isFinite(collectionMs)
+    || collectionMs < bounds.currentStart
+    || collectionMs >= bounds.currentEndExclusive) {
+    return [];
+  }
+  return items
+    .filter((item) => resolveVisualReportEvidenceTimeMs(item) == null)
+    .slice(0, MAX_LEGACY_UNDATED_EVIDENCE_ITEMS);
 }
 
 /** 与 generateVisualReport 一致：时间窗为 Asia/Shanghai（UTC+8）日界；无有效时间戳的样本不参与对照（避免归因错误） */
@@ -30,7 +62,7 @@ function collectIndustryWindowCounts(
   const prior = new Map<string, number>();
 
   for (const item of items) {
-    const ms = itemTimeMs(item);
+    const ms = resolveVisualReportEvidenceTimeMs(item);
     if (ms == null) continue;
 
     let target: Map<string, number> | null = null;
@@ -112,7 +144,7 @@ function formatGrowthPct(pct: number): string {
  * - 前窗 p=0：多条时用 +12%～+98% 递减刻度；单条用 c/maxC 映射到约 +10%～+98%（与旧版一致）
  */
 export function buildIndustryGrowthHintMap(
-  store: { collections?: Partial<Record<string, { items?: any[] }>> },
+  store: { collections?: Partial<Record<string, { items?: any[]; collectedAt?: string }>> },
   platforms: string[],
   windowDays: number,
   anchorMs?: number,

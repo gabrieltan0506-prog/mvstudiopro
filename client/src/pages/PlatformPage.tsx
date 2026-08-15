@@ -529,13 +529,12 @@ const WINDOW_OPTIONS = [
   { days: 45 as const, label: "45天", description: "看更长窗口的沉淀与长期可做性" },
 ] as const;
 
-type TrendPlatformKey = "xiaohongshu" | "bilibili" | "douyin" | "kuaishou" | "weixin_channels";
+type TrendPlatformKey = "xiaohongshu" | "bilibili" | "douyin" | "weixin_channels";
 
 const TREND_PLATFORM_OPTIONS: { key: TrendPlatformKey; label: string; comingSoon?: boolean }[] = [
   { key: "xiaohongshu", label: "小红书" },
   { key: "bilibili", label: "B站" },
   { key: "douyin", label: "抖音" },
-  { key: "kuaishou", label: "快手" },
   { key: "weixin_channels", label: "视频号" },
 ];
 
@@ -2396,19 +2395,8 @@ export default function PlatformPage() {
       ? "ai_manhua"
       : "overview",
   );
-  /** AI 漫剧专区内：抖音 / 快手子榜（随上方趋势平台筛选自动切换） */
+  /** AI 漫剧旧榜仍可只读，新的趋势采集平台选择不再包含快手。 */
   const [aiManhuaPlatformTab, setAiManhuaPlatformTab] = useState<"douyin" | "kuaishou">("douyin");
-  useEffect(() => {
-    const hasDy = selectedTrendPlatforms.includes("douyin");
-    const hasKs = selectedTrendPlatforms.includes("kuaishou");
-    if (hasKs && !hasDy) {
-      setAiManhuaPlatformTab("kuaishou");
-      return;
-    }
-    if (hasDy && !hasKs) {
-      setAiManhuaPlatformTab("douyin");
-    }
-  }, [selectedTrendPlatforms]);
   /** AI 漫剧「学节奏」：当前进行中的行 key；学习/分析结果即时展示后再决定是否进库 */
   const [manhuaLearnBusyKey, setManhuaLearnBusyKey] = useState<string | null>(null);
   const [manhuaPasteUrl, setManhuaPasteUrl] = useState("");
@@ -10190,7 +10178,7 @@ export default function PlatformPage() {
       const platforms =
         selectedTrendPlatforms.length > 0
           ? selectedTrendPlatforms
-          : (["xiaohongshu", "bilibili", "douyin", "kuaishou"] as typeof selectedTrendPlatforms);
+          : (["xiaohongshu", "bilibili", "douyin", "weixin_channels"] as typeof selectedTrendPlatforms);
 
       const dashResult = await getPlatformDashboardMutation.mutateAsync({
         context: ctx,

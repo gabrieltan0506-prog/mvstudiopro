@@ -169,7 +169,7 @@ const CURRENT_CACHE_PATH = path.resolve(
 const LEGACY_CACHE_PATH = path.resolve(
   process.env.GROWTH_LEGACY_STORE_FILE || path.join(DEFAULT_STORE_ROOT, "growth-trends.json"),
 );
-const SIGNAL_SOURCE_PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "bilibili", "kuaishou", "toutiao"];
+const SIGNAL_SOURCE_PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "bilibili"];
 
 function normalizeSeed(value: string) {
   return String(value || "")
