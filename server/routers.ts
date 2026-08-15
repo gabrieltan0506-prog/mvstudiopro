@@ -9073,36 +9073,32 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         let appliedInternalTemplateId: string | undefined;
         let viralTemplateAddon = "";
         if (requestedTemplateId) {
-          const [store, bank] = await Promise.all([
+          const [{ resolveViralTemplateForExpand }, bank] = await Promise.all([
             import("./services/manhuaViralTemplateStore.js"),
             import("../shared/manhuaViralTemplateBank.js"),
           ]);
-          // 双解析：新客户端只持有公开句柄 mt_*；内部 id 仅供监管/旧草稿兼容
-          const card = /^mt_[a-z0-9]{4,8}$/i.test(requestedTemplateId)
-            ? await store.getMergedManhuaViralTemplateByPublicId(requestedTemplateId)
-            : await store.getMergedManhuaViralTemplate(requestedTemplateId);
-          if (!card || card.status !== "approved") {
+          // fail-closed 三分类解析（mt_* / legacy tpl_* / 其余拒）；无 publicCode 一律不放行——
+          // 否则旧内部 id 就是绕过匿名层的后门（审查返工 3）
+          const resolved = await resolveViralTemplateForExpand(requestedTemplateId);
+          if ("error" in resolved) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: "所选剧情增强方案已下架或不存在，请刷新后重试",
+              message:
+                resolved.error === "no_public_code"
+                  ? "所选剧情增强方案暂不可用，请刷新后重新选择"
+                  : "所选剧情增强方案已下架或不存在，请刷新后重试",
             });
           }
-          viralTemplateAddon = bank.formatManhuaViralTemplateWriterSkillFromCard(card);
+          viralTemplateAddon = bank.formatManhuaViralTemplateWriterSkillFromCard(resolved.card);
           if (!viralTemplateAddon) {
             throw new TRPCError({
               code: "BAD_REQUEST",
               message: "所选剧情增强方案内容不完整，未调用扩写模型",
             });
           }
-          appliedInternalTemplateId = card.id;
+          appliedInternalTemplateId = resolved.card.id;
           // 商业机密边界：完整卡只喂模型；浏览器响应一律匿名句柄（监管在监管面板看全量）
-          const code = String(card.publicCode || "").trim();
-          appliedTemplate = code
-            ? {
-                publicId: bank.makePublicTemplateId(code),
-                nameZh: bank.makeAnonymousTemplateNameZh(card.laneZh, code),
-              }
-            : { publicId: "", nameZh: `${card.laneZh}·剧情增强` };
+          appliedTemplate = resolved.appliedTemplate;
         }
         const episodeCount = clampWriterEpisodeCount(input.episodeCount);
         // 局部改写按实际重写集数计费（按集计价的拍板语义）：fromEpisode 起重写到末集。

@@ -111,10 +111,14 @@ export async function getGcsManhuaViralProposal(
  * 人审批准进库：写入 GCS approved/，并尽量把 proposals/ 同步为 approved。
  * 可传 id（读提案）或完整 card。
  */
-/** 随机公开码：与内部 id / 剧名 / 序号零关联，无法反查（审查必须修 2 的过渡实现，B 档可换 HMAC）。 */
+/**
+ * 随机公开码：与内部 id / 剧名 / 序号零关联，无法反查（审查必须修 2 的过渡实现，B 档可换 HMAC）。
+ * 唯一性口径（审查返工 2026-08-15）：全量读 approved（上限 1000 远超库容）、4 位与 8 位兜底
+ * 均循环查重、耗尽即抛错。并发批准场景为单监管人操作，条件创建占位留给 B 档强化。
+ */
 async function mintUniqueTemplatePublicCode(): Promise<string> {
   const taken = new Set(
-    (await listCardsUnderPrefix(MANHUA_VIRAL_APPROVED_PREFIX))
+    (await listCardsUnderPrefix(MANHUA_VIRAL_APPROVED_PREFIX, 1000))
       .map((c) => String(c.publicCode || "").toUpperCase())
       .filter(Boolean),
   );
@@ -122,7 +126,11 @@ async function mintUniqueTemplatePublicCode(): Promise<string> {
     const code = randomBytes(3).toString("hex").toUpperCase().slice(0, 4);
     if (!taken.has(code)) return code;
   }
-  return randomBytes(4).toString("hex").toUpperCase().slice(0, 8);
+  for (let i = 0; i < 24; i += 1) {
+    const code = randomBytes(4).toString("hex").toUpperCase().slice(0, 8);
+    if (!taken.has(code)) return code;
+  }
+  throw new Error("公开码铸造失败：连续 48 次碰撞（请检查 approved 库异常膨胀）");
 }
 
 /** 普通用户句柄（mt_xxxx）→ 完整卡；只在服务端解析，完整卡永不回传浏览器 */
@@ -133,6 +141,39 @@ export async function getMergedManhuaViralTemplateByPublicId(
   if (!/^mt_[a-z0-9]{4,8}$/.test(key)) return null;
   const all = await listMergedApprovedManhuaViralTemplates();
   return all.find((c) => c.publicCode && makePublicTemplateId(c.publicCode) === key) || null;
+}
+
+/**
+ * 扩写用模板解析（审查返工 3+r4，2026-08-15）。入参三分类：
+ * 合法 mt_* → 按公开句柄查；合法 legacy tpl_*（旧草稿兼容）→ 按内部 id 查；其余直接拒。
+ * fail-closed：解析出的卡必须 approved 且持有合法 publicCode——无码卡列表隐藏、扩写同样
+ * 不放行（否则旧内部 id 就是绕过匿名层的后门）。完整卡只供服务端喂模型；
+ * 浏览器响应一律只回 { publicId, nameZh: 匿名名 }。
+ */
+export async function resolveViralTemplateForExpand(requestedTemplateId: string): Promise<{
+  card: ManhuaViralTemplateCard;
+  appliedTemplate: { publicId: string; nameZh: string };
+} | { error: "bad_id" | "not_found" | "no_public_code" }> {
+  const key = String(requestedTemplateId || "").trim();
+  let card: ManhuaViralTemplateCard | null = null;
+  if (/^mt_[a-z0-9]{4,8}$/i.test(key)) {
+    card = await getMergedManhuaViralTemplateByPublicId(key.toLowerCase());
+  } else if (/^tpl_[a-z0-9_-]{1,60}$/i.test(key)) {
+    card = await getMergedManhuaViralTemplate(key);
+  } else {
+    return { error: "bad_id" };
+  }
+  if (!card || card.status !== "approved") return { error: "not_found" };
+  const code = String(card.publicCode || "").trim();
+  if (!/^[A-Z0-9]{4,8}$/.test(code)) return { error: "no_public_code" };
+  const { makeAnonymousTemplateNameZh } = await import("../../shared/manhuaViralTemplateBank.js");
+  return {
+    card,
+    appliedTemplate: {
+      publicId: makePublicTemplateId(code),
+      nameZh: makeAnonymousTemplateNameZh(card.laneZh, code),
+    },
+  };
 }
 
 export async function approveManhuaViralTemplate(input: {
