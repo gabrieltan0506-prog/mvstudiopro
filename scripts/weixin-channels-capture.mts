@@ -2373,6 +2373,25 @@ async function ensureInteractionMetricsVisible(screenshot: string, ocr: OcrResul
   }
   closed = await enrichBottomMetricsFromFocusedOcr(screenshot, closed);
   if (hasFourVisibleMetrics(closed.lines)) return closed;
+
+  // 切到下一条后的短暂首帧有时会显示“喜欢/分享/赞/评论”按钮文字，
+  // 但数字尚未绘制；旧逻辑约一秒后就把这种真实播放器误判成不可恢复，
+  // 导致右窗连续两次推进后停在恢复循环。只清理控制层并在原窗口被动补拍，
+  // 不点击视频中心、不滑动，也不把未知指标当成不达标。
+  await runSwiftControl(["key", "escape"]);
+  await runSwiftControl(["move-relative", "0.02", "0.50"]);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 350 + attempt * 250));
+    await captureWindow(screenshot);
+    closed = await readOcr(screenshot);
+    if (hasFourVisibleMetrics(closed.lines)
+      || hasDefinitiveVisibleUnqualifiedMetrics(closed.lines)) return closed;
+    if (attempt === 1 || attempt === 3) {
+      closed = await enrichBottomMetricsFromFocusedOcr(screenshot, closed);
+      if (hasFourVisibleMetrics(closed.lines)
+        || hasDefinitiveVisibleUnqualifiedMetrics(closed.lines)) return closed;
+    }
+  }
   throw new Error("weixin_channels_previous_comments_close_not_confirmed");
 }
 
