@@ -3074,12 +3074,12 @@ export const appRouter = router({
   // Video PK Rating - upload video frame and get AI analysis
   mvAnalysis: router({
     getWeixinChannelsCollectorStatus: adminProcedure.query(async () => {
-      const { getWeixinChannelsMinerState } = await import("./growth/weixinChannelsMinerStore.js");
-      const state = await getWeixinChannelsMinerState();
+      const store = await import("./growth/weixinChannelsMinerStore.js");
+      const state = await store.getWeixinChannelsMinerState();
       return {
         capture: state.capture,
         aggregationPaused: state.aggregationPaused,
-        accumulatedQualifiedCount: state.observations.filter((item) => item.runKind !== "probe" && item.qualified && !item.invalid && !item.consumedAt && !item.aggregationJobId).length,
+        accumulatedQualifiedCount: store.countAvailableWeixinChannelsEffectiveSamples(state),
         probeQualifiedCount: state.observations.filter((item) => item.runKind === "probe" && item.qualified && !item.invalid).length,
         totalScanned: state.observations.length,
         deepseekCompletedBatchCount: state.jobs.filter((item) => item.kind === "formal" && item.stage === "deepseek_batch" && item.status === "completed" && !item.cleanedByJobId).length,
@@ -3114,7 +3114,9 @@ export const appRouter = router({
           ? (await store.createWeixinChannelsProbeJob()).job
           : input.jobId
             ? (await store.getWeixinChannelsMinerState()).jobs.find((item) => item.jobId === input.jobId)
-            : (await store.getWeixinChannelsMinerState()).jobs.find((item) => item.kind === "formal" && item.status !== "completed");
+            : (await store.getWeixinChannelsMinerState()).jobs.find((item) => item.kind === "formal"
+              && item.status !== "completed"
+              && item.status !== "discarded");
         if (!job) throw new Error("当前没有可启动的整理任务");
         const started = store.startWeixinChannelsAggregationInBackground(job.jobId);
         return { ok: true as const, started, jobId: job.jobId, kind: job.kind };

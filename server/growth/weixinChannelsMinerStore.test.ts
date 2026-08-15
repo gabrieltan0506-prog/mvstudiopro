@@ -41,6 +41,19 @@ function persisted(index: number, runKind: "formal" | "probe" = "formal") {
   };
 }
 
+function classifiedBatchResult() {
+  const item = {
+    label: "AI工具使用方法",
+    category: "AI与科技",
+    evidence: "obs-0互动达到门槛",
+    observationIds: ["obs-0"],
+  };
+  return {
+    duplicates: [], categories: [item], keywords: [item], commentTopics: [],
+    trends: [item], blueOceanKeywords: [], topicIdeas: [item], weeklySummary: [item],
+  };
+}
+
 async function seed(observations: ReturnType<typeof persisted>[], jobs: unknown[] = []) {
   await fs.writeFile(storeFile, JSON.stringify({
     version: 2, updatedAt: "2026-08-14T00:00:00.000Z",
@@ -183,10 +196,41 @@ describe("weixinChannelsMinerStore", () => {
     expect(state.lunaBatches).toHaveLength(0);
   }, 20_000);
 
+  it("语义重复不计入千条门槛，必须本地去重后严格满一千条才建 DeepSeek 任务", async () => {
+    const unique = Array.from({ length: 999 }, (_, index) => persisted(index));
+    const duplicate = {
+      ...persisted(10_000),
+      observationId: "obs-duplicate",
+      title: unique[0]!.title,
+      author: unique[0]!.author,
+    };
+    await seed([...unique, duplicate]);
+    const before = await ingestWeixinChannelsObservations({
+      taskId: "task-123",
+      observations: [duplicate],
+    });
+    expect(before.accumulatedQualifiedCount).toBe(999);
+    expect((await getWeixinChannelsMinerState()).jobs).toHaveLength(0);
+
+    await ingestWeixinChannelsObservations({
+      taskId: "task-123",
+      observations: [persisted(999)],
+    });
+    const state = await getWeixinChannelsMinerState();
+    expect(state.jobs).toHaveLength(1);
+    expect(state.jobs[0]).toMatchObject({
+      threshold: 1_000,
+      locallyDedupedCount: 1_000,
+      reasoningEffort: "medium",
+    });
+    expect(state.jobs[0]!.analysisObservationIds).toHaveLength(1_000);
+    expect(state.jobs[0]!.observationIds).toContain("obs-duplicate");
+  }, 20_000);
+
   it("5 条 probe 照常持久化，只调用一次 DeepSeek，且不计入正式额度", async () => {
     await seed(Array.from({ length: 5 }, (_, index) => persisted(index, "probe")));
     const { job } = await createWeixinChannelsProbeJob();
-    const result = Object.fromEntries(["duplicates", "categories", "keywords", "commentTopics", "trends", "blueOceanKeywords", "topicIdeas", "weeklySummary"].map((key) => [key, [key]]));
+    const result = classifiedBatchResult();
     const invoke = vi.fn().mockResolvedValueOnce({ id: "deepseek", created: 1, model: "deepseek/deepseek-v4-pro-0813", provider: "DeepSeek", choices: [{ message: { content: JSON.stringify(result) } }] });
     const completed = await processWeixinChannelsAggregationJob(job.jobId, { invoke: invoke as never });
     expect(completed.status).toBe("completed");
@@ -200,8 +244,27 @@ describe("weixinChannelsMinerStore", () => {
     expect((await getWeixinChannelsMinerState()).jobs.filter((item) => item.kind === "probe")).toHaveLength(1);
   });
 
+  it("DeepSeek 两次返回非法结构后丢弃该批并保留已付调用用量", async () => {
+    await seed(Array.from({ length: 5 }, (_, index) => persisted(index, "probe")));
+    const { job } = await createWeixinChannelsProbeJob();
+    const invalid = { categories: [{ category: "自造类目" }] };
+    const invoke = vi.fn()
+      .mockResolvedValueOnce({ provider: "DeepSeek", usage: { prompt_tokens: 10, completion_tokens: 20, cost: 0.01 }, choices: [{ message: { content: JSON.stringify(invalid) }, finish_reason: "stop" }] })
+      .mockResolvedValueOnce({ provider: "DeepSeek", usage: { prompt_tokens: 11, completion_tokens: 21, cost: 0.02 }, choices: [{ message: { content: JSON.stringify(invalid) }, finish_reason: "stop" }] });
+    await expect(processWeixinChannelsAggregationJob(job.jobId, { invoke: invoke as never }))
+      .rejects.toThrow("weixin_channels_deepseek_validation_failed");
+    const state = await getWeixinChannelsMinerState();
+    expect(state.jobs[0]).toMatchObject({
+      status: "discarded",
+      usage: { inputTokens: 21, outputTokens: 41, costUsd: 0.03 },
+    });
+    await expect(processWeixinChannelsAggregationJob(job.jobId, { invoke: invoke as never }))
+      .rejects.toThrow("weixin_channels_aggregation_job_discarded");
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
   it("累计八个千条 DeepSeek 结果后只创建一个 Terra 清洗任务，且不重新发送原始记录", async () => {
-    const eightFields = Object.fromEntries(["duplicates", "categories", "keywords", "commentTopics", "trends", "blueOceanKeywords", "topicIdeas", "weeklySummary"].map((key) => [key, [key]]));
+    const eightFields = classifiedBatchResult();
     const oldJobs = Array.from({ length: 7 }, (_, index) => ({
       jobId: `ds-old-${index}`, kind: "formal", stage: "deepseek_batch", threshold: 1_000,
       rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [], analysisObservationIds: [], lunaBatchIds: [],

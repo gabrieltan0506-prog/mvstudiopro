@@ -5,7 +5,9 @@ import path from "node:path";
 
 export const WEIXIN_CHANNELS_RAW_BATCH_LIMIT = 2_000;
 export const WEIXIN_CHANNELS_RAW_LATEST_LIMIT = 50;
-export const WEIXIN_CHANNELS_RAW_BATCH_INTERVAL_MS = 30 * 60_000;
+/** 每轮只让 UI 子进程连续工作二十分钟，随后由 launcher 换新进程。 */
+export const WEIXIN_CHANNELS_RAW_BATCH_INTERVAL_MS = 20 * 60_000;
+export const WEIXIN_CHANNELS_RAW_COMPLETED_RUNS_WITH_ASSETS = 2;
 
 export type WeixinChannelsRawSource =
   | "recommendation"
@@ -74,7 +76,12 @@ export type WeixinChannelsRawRunState = {
   harvestUntil: string;
   maxItems: number;
   latestLimit: number;
-  phase: "harvesting" | "processing" | "complete";
+  phase: "harvesting" | "processing" | "complete" | "failed";
+  sealedAt?: string;
+  abandonedReservations?: number;
+  failedAt?: string;
+  failureReason?: string;
+  processingFailures?: number;
 };
 
 export type WeixinChannelsRawSpoolSnapshot = {
@@ -87,7 +94,10 @@ export type WeixinChannelsRawSpoolSnapshot = {
 };
 
 const ACTIVE_RUN_FILE = "active-run.json";
+const RUN_STATE_FILE = "run.json";
+const RUN_SUMMARY_FILE = "summary.json";
 const SPOOL_LOCK_DIRECTORY = ".spool-lock";
+const SPOOL_LOCK_OWNER_FILE = "owner.json";
 
 async function withSpoolLock<T>(root: string, operation: () => Promise<T>) {
   const lock = path.join(root, SPOOL_LOCK_DIRECTORY);
@@ -96,15 +106,38 @@ async function withSpoolLock<T>(root: string, operation: () => Promise<T>) {
     try {
       await fs.mkdir(lock);
       try {
+        await fs.writeFile(
+          path.join(lock, SPOOL_LOCK_OWNER_FILE),
+          `${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`,
+          { encoding: "utf8", mode: 0o600 },
+        );
         return await operation();
       } finally {
-        await fs.rmdir(lock).catch(() => undefined);
+        await fs.rm(lock, { recursive: true, force: true }).catch(() => undefined);
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      let deadOwner = false;
+      try {
+        const owner = await readJson<{ pid?: number }>(path.join(lock, SPOOL_LOCK_OWNER_FILE));
+        if (Number.isInteger(owner.pid) && Number(owner.pid) > 0) {
+          try {
+            process.kill(Number(owner.pid), 0);
+          } catch (ownerError) {
+            if ((ownerError as NodeJS.ErrnoException).code === "ESRCH") deadOwner = true;
+          }
+        }
+      } catch (ownerReadError) {
+        if ((ownerReadError as NodeJS.ErrnoException).code !== "ENOENT"
+          && !(ownerReadError instanceof SyntaxError)) throw ownerReadError;
+      }
+      if (deadOwner) {
+        await fs.rm(lock, { recursive: true, force: true });
+        continue;
+      }
       const stat = await fs.stat(lock).catch(() => undefined);
       if (stat && Date.now() - stat.mtimeMs > 60_000) {
-        await fs.rmdir(lock).catch(() => undefined);
+        await fs.rm(lock, { recursive: true, force: true }).catch(() => undefined);
         continue;
       }
       await new Promise((resolve) => setTimeout(resolve, 20 + attempt * 2));
@@ -113,7 +146,7 @@ async function withSpoolLock<T>(root: string, operation: () => Promise<T>) {
   throw new Error("weixin_channels_raw_spool_lock_timeout");
 }
 
-function defaultRawSpoolRoot() {
+export function defaultWeixinChannelsRawSpoolRoot() {
   return path.join(
     os.homedir(),
     "Library",
@@ -132,6 +165,10 @@ function assertSafeSegment(value: string, field: string) {
 
 function runDirectory(root: string, runId: string) {
   return path.join(root, "runs", assertSafeSegment(runId, "run_id"));
+}
+
+function runStateFile(root: string, runId: string) {
+  return path.join(runDirectory(root, runId), RUN_STATE_FILE);
 }
 
 function manifestDirectory(root: string, runId: string) {
@@ -203,7 +240,7 @@ export async function ensureWeixinChannelsRawRun(params: {
   batchIntervalMs?: number;
   now?: number;
 }) {
-  const root = params.root || defaultRawSpoolRoot();
+  const root = params.root || defaultWeixinChannelsRawSpoolRoot();
   return withSpoolLock(root, async () => {
     const activeFile = path.join(root, ACTIVE_RUN_FILE);
     try {
@@ -236,6 +273,38 @@ export async function ensureWeixinChannelsRawRun(params: {
     await writeJsonAtomic(activeFile, run);
     return { root, run };
   });
+}
+
+export async function readWeixinChannelsRawRun(params: {
+  root: string;
+  runId: string;
+}) {
+  return readJson<WeixinChannelsRawRunState>(runStateFile(
+    params.root,
+    params.runId,
+  ));
+}
+
+export async function listWeixinChannelsRawRuns(params: {
+  root?: string;
+  phase?: WeixinChannelsRawRunState["phase"];
+}) {
+  const root = params.root || defaultWeixinChannelsRawSpoolRoot();
+  const directories = await listItemDirectories(path.join(root, "runs"));
+  const runs: WeixinChannelsRawRunState[] = [];
+  for (const directory of directories) {
+    try {
+      const run = await readJson<WeixinChannelsRawRunState>(
+        path.join(directory, RUN_STATE_FILE),
+      );
+      if (run.version !== 1 || !run.runId) continue;
+      if (params.phase && run.phase !== params.phase) continue;
+      runs.push(run);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  return runs.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
 export async function listWeixinChannelsRawManifests(params: {
@@ -417,19 +486,14 @@ export async function updateWeixinChannelsRawManifest(params: {
   return next;
 }
 
-export async function setWeixinChannelsRawRunPhase(params: {
+/**
+ * 封存本轮采集并立即让下一轮获得新的 active-run。只有已经原子提交 manifest
+ * 的素材进入离线 worker；未完成预约会被明确放弃，不能永久卡住批次。
+ */
+export async function sealWeixinChannelsRawRun(params: {
   root: string;
   run: WeixinChannelsRawRunState;
-  phase: WeixinChannelsRawRunState["phase"];
-}) {
-  const next = { ...params.run, phase: params.phase };
-  await writeJsonAtomic(path.join(params.root, ACTIVE_RUN_FILE), next);
-  return next;
-}
-
-export async function closeWeixinChannelsRawRun(params: {
-  root: string;
-  run: WeixinChannelsRawRunState;
+  now?: number;
 }) {
   return withSpoolLock(params.root, async () => {
     const activeFile = path.join(params.root, ACTIVE_RUN_FILE);
@@ -437,14 +501,167 @@ export async function closeWeixinChannelsRawRun(params: {
     if (active.runId !== params.run.runId) {
       throw new Error("weixin_channels_raw_active_run_changed");
     }
-    const complete = { ...active, phase: "complete" as const };
-    await writeJsonAtomic(
-      path.join(runDirectory(params.root, params.run.runId), "run.json"),
-      complete,
-    );
+    const reservations = await listJsonFiles(reservationDirectory(
+      params.root,
+      active.runId,
+    ));
+    await Promise.all(reservations.map((file) => fs.unlink(file).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    })));
+    const sealed: WeixinChannelsRawRunState = {
+      ...active,
+      phase: "processing",
+      sealedAt: new Date(params.now ?? Date.now()).toISOString(),
+      abandonedReservations: reservations.length,
+    };
+    await writeJsonAtomic(runStateFile(params.root, active.runId), sealed);
     await fs.unlink(activeFile);
+    return sealed;
+  });
+}
+
+export async function closeWeixinChannelsRawRun(params: {
+  root: string;
+  run: WeixinChannelsRawRunState;
+}) {
+  return withSpoolLock(params.root, async () => {
+    const stored = await readWeixinChannelsRawRun({
+      root: params.root,
+      runId: params.run.runId,
+    });
+    if (stored.phase !== "processing") {
+      throw new Error("weixin_channels_raw_run_not_processing");
+    }
+    const complete = { ...stored, phase: "complete" as const };
+    await writeJsonAtomic(runStateFile(params.root, params.run.runId), complete);
     return complete;
   });
+}
+
+/**
+ * 单个损坏批次连续失败后隔离该批，保留全部素材和错误证据，避免它永久
+ * 占住 processing 队首、让后续正常批次无法 OCR/入库。
+ */
+export async function failWeixinChannelsRawRun(params: {
+  root: string;
+  run: WeixinChannelsRawRunState;
+  reason: string;
+  attempts: number;
+  now?: number;
+}) {
+  return withSpoolLock(params.root, async () => {
+    const stored = await readWeixinChannelsRawRun({
+      root: params.root,
+      runId: params.run.runId,
+    });
+    if (stored.phase !== "processing") return stored;
+    const failed: WeixinChannelsRawRunState = {
+      ...stored,
+      phase: "failed",
+      failedAt: new Date(params.now ?? Date.now()).toISOString(),
+      failureReason: String(params.reason || "raw_offline_processing_failed").slice(0, 1_000),
+      processingFailures: Math.max(1, Math.floor(params.attempts)),
+    };
+    await writeJsonAtomic(runStateFile(params.root, params.run.runId), failed);
+    return failed;
+  });
+}
+
+export async function writeWeixinChannelsRawRunSummary(params: {
+  root: string;
+  runId: string;
+  summary: unknown;
+}) {
+  await writeJsonAtomic(
+    path.join(runDirectory(params.root, params.runId), RUN_SUMMARY_FILE),
+    params.summary,
+  );
+}
+
+async function directoryBytes(directory: string): Promise<number> {
+  let entries: Array<import("node:fs").Dirent>;
+  try {
+    entries = await fs.readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error;
+  }
+  let total = 0;
+  for (const entry of entries) {
+    const file = path.join(directory, entry.name);
+    if (entry.isDirectory()) total += await directoryBytes(file);
+    else if (entry.isFile()) total += (await fs.stat(file)).size;
+  }
+  return total;
+}
+
+/**
+ * 只清理已经完成离线处理的旧批次图片，保留 run.json/summary.json 审计信息。
+ * 最近两批原图继续保留，processing/harvesting 与 pending 永不在这里删除。
+ */
+export async function pruneWeixinChannelsCompletedRawRuns(params: {
+  root?: string;
+  keepRunsWithAssets?: number;
+}) {
+  const root = params.root || defaultWeixinChannelsRawSpoolRoot();
+  const keep = Math.max(0, Math.floor(
+    params.keepRunsWithAssets ?? WEIXIN_CHANNELS_RAW_COMPLETED_RUNS_WITH_ASSETS,
+  ));
+  const completed = (await listWeixinChannelsRawRuns({ root, phase: "complete" }))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  let prunedRuns = 0;
+  let releasedBytes = 0;
+  for (const run of completed.slice(keep)) {
+    const items = manifestDirectory(root, run.runId);
+    const reservations = reservationDirectory(root, run.runId);
+    releasedBytes += await directoryBytes(items);
+    releasedBytes += await directoryBytes(reservations);
+    await fs.rm(items, { recursive: true, force: true });
+    await fs.rm(reservations, { recursive: true, force: true });
+    prunedRuns += 1;
+  }
+  return { completedRuns: completed.length, prunedRuns, releasedBytes };
+}
+
+export async function cleanupWeixinChannelsCollectorTempFiles(params: {
+  tempDir?: string;
+  olderThanMs?: number;
+  now?: number;
+}) {
+  const tempDir = params.tempDir || os.tmpdir();
+  const olderThanMs = Math.max(60_000, Math.floor(params.olderThanMs ?? 30 * 60_000));
+  const now = params.now ?? Date.now();
+  const prefixes = [
+    "weixin-channels-raw-",
+    "weixin-channels-sample-",
+    "weixin-channels-window-",
+    "mvstudiopro-weixin-channels-dual-probe-",
+  ];
+  let names: string[];
+  try {
+    names = await fs.readdir(tempDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { removedFiles: 0, releasedBytes: 0 };
+    }
+    throw error;
+  }
+  let removedFiles = 0;
+  let releasedBytes = 0;
+  for (const name of names) {
+    if (!prefixes.some((prefix) => name.startsWith(prefix))) continue;
+    const file = path.join(tempDir, name);
+    try {
+      const stat = await fs.stat(file);
+      if (!stat.isFile() || now - stat.mtimeMs < olderThanMs) continue;
+      await fs.unlink(file);
+      removedFiles += 1;
+      releasedBytes += stat.size;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  return { removedFiles, releasedBytes };
 }
 
 export function resolveWeixinChannelsRawAssetPath(params: {

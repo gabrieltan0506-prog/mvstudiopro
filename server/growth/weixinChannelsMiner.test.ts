@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PlatformTrendCollection } from "./trendCollector";
-import { makeWeixinChannelsObservationId } from "../../shared/weixinChannelsRules";
+import {
+  makeWeixinChannelsObservationId,
+  WEIXIN_CHANNELS_DEEPSEEK_MAX_COMPLETION_TOKENS,
+} from "../../shared/weixinChannelsRules";
 import {
   buildWeixinChannelsCandidateQueue,
   buildWeixinChannelsSearchQueries,
@@ -10,6 +13,7 @@ import {
   invokeWeixinChannelsTerraDirect,
   persistableWeixinChannelsObservation,
   selectWeixinChannelsTerraInput,
+  toWeixinChannelsDeepSeekInputObservation,
   WEIXIN_CHANNELS_SEARCH_WINDOW_DAYS,
   WEIXIN_CHANNELS_TERRA_MAX_COMPLETION_TOKENS,
   type FinalAnalysisJob,
@@ -37,6 +41,25 @@ function observation(overrides: Partial<WeixinChannelsObservation> = {}): Weixin
     observedAt: "2026-08-14T00:00:00.000Z",
     evidence: "capture",
     ...overrides,
+  };
+}
+
+function classifiedBatchResult() {
+  const item = {
+    label: "AI工具使用方法",
+    category: "AI与科技",
+    evidence: "observation-1互动达到门槛",
+    observationIds: ["observation-1"],
+  };
+  return {
+    duplicates: [],
+    categories: [item],
+    keywords: [item],
+    commentTopics: [],
+    trends: [item],
+    blueOceanKeywords: [],
+    topicIdeas: [item],
+    weeklySummary: [item],
   };
 }
 
@@ -171,23 +194,81 @@ describe("weixinChannelsMiner", () => {
     expect(selected.selected).toHaveLength(1_000);
   });
 
-  it("千条批次固定使用 DeepSeek 0813 High、JSON、100K 与价格帽", async () => {
-    const result = Object.fromEntries(["duplicates", "categories", "keywords", "commentTopics", "trends", "blueOceanKeywords", "topicIdeas", "weeklySummary"].map((key) => [key, [key]]));
-    const invoke = vi.fn().mockResolvedValueOnce({ provider: "DeepSeek", usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30, cost: 0.01, completion_tokens_details: { reasoning_tokens: 5 } }, choices: [{ message: { content: JSON.stringify(result) } }] });
+  it("DeepSeek 千条输入只保留分类证据，剥离图片与内部采集字段", () => {
+    const item = persistableWeixinChannelsObservation(observation({
+      likes: 3_000,
+      shares: 2_000,
+      comments: 100,
+      coverImageBase64: "SECRET_IMAGE",
+      visualImageBase64: "SECRET_VISUAL",
+      ocrTexts: ["甲".repeat(200), "乙".repeat(200), "不得发送"],
+      commentSamples: [
+        { text: "评论".repeat(100), likeCount: 10 },
+        { text: "第二条", likeCount: 3 },
+        { text: "不得发送第三条" },
+      ],
+    }));
+    const projected = toWeixinChannelsDeepSeekInputObservation(item);
+    expect(Object.keys(projected)).toEqual([
+      "observationId", "query", "title", "author", "likes", "shares",
+      "favorites", "comments", "commentSamples", "ocrTexts",
+    ]);
+    expect(JSON.stringify(projected)).not.toContain("SECRET");
+    expect(projected.ocrTexts).toHaveLength(2);
+    expect(projected.ocrTexts?.every((text) => text.length <= 80)).toBe(true);
+    expect(projected.commentSamples).toHaveLength(2);
+    expect(projected.commentSamples?.every((sample) => sample.text.length <= 80)).toBe(true);
+  });
+
+  it("千条批次固定使用 DeepSeek 0813 Medium、JSON、65K，且不传采样参数", async () => {
+    const result = classifiedBatchResult();
+    const invoke = vi.fn().mockResolvedValueOnce({ provider: "DeepSeek", usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30, cost: 0.01, completion_tokens_details: { reasoning_tokens: 5 } }, choices: [{ message: { content: JSON.stringify(result) }, finish_reason: "stop" }] });
     const persisted = persistableWeixinChannelsObservation(observation({ likes: 3_000, shares: 2_000, comments: 10 }));
-    const job: FinalAnalysisJob = { jobId: "ds-1", kind: "formal", stage: "deepseek_batch", threshold: 1_000, rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [persisted.observationId], analysisObservationIds: [persisted.observationId], lunaBatchIds: [], status: "processing", terraModel: "deepseek/deepseek-v4-pro-0813", reasoningEffort: "high", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };
+    const job: FinalAnalysisJob = { jobId: "ds-1", kind: "formal", stage: "deepseek_batch", threshold: 1_000, rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [persisted.observationId], analysisObservationIds: [persisted.observationId], lunaBatchIds: [], status: "processing", terraModel: "deepseek/deepseek-v4-pro-0813", reasoningEffort: "medium", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };
     const output = await invokeWeixinChannelsDeepSeekBatch({ job, observations: [persisted], invoke: invoke as never });
     expect(invoke.mock.calls[0][0]).toMatchObject({
-      modelName: "deepseek/deepseek-v4-pro-0813", reasoningEffort: "high", requestId: "ds-1",
-      max_tokens: WEIXIN_CHANNELS_TERRA_MAX_COMPLETION_TOKENS, temperature: 1,
+      modelName: "deepseek/deepseek-v4-pro-0813", reasoningEffort: "medium", requestId: "ds-1",
+      max_tokens: WEIXIN_CHANNELS_DEEPSEEK_MAX_COMPLETION_TOKENS,
       response_format: { type: "json_object" },
-      openRouterProviderPreferences: { require_parameters: true, data_collection: "allow", max_price: { prompt: 0.5, completion: 1 } },
+      openRouterProviderPreferences: { require_parameters: true },
     });
+    expect(invoke.mock.calls[0][0].temperature).toBeUndefined();
+    expect(invoke.mock.calls[0][0].topP).toBeUndefined();
     expect(output).toMatchObject({ provider: "openrouter", usage: { reasoningTokens: 5, costUsd: 0.01 } });
   });
 
+  it("DeepSeek 截断或 schema 越界时只重试一次，并累计两次用量", async () => {
+    const valid = classifiedBatchResult();
+    const invoke = vi.fn()
+      .mockResolvedValueOnce({ provider: "DeepSeek", usage: { prompt_tokens: 3, completion_tokens: 4, cost: 0.01 }, choices: [{ message: { content: JSON.stringify(valid) }, finish_reason: "length" }] })
+      .mockResolvedValueOnce({ provider: "DeepSeek", usage: { prompt_tokens: 5, completion_tokens: 6, cost: 0.02 }, choices: [{ message: { content: JSON.stringify(valid) }, finish_reason: "stop" }] });
+    const persisted = persistableWeixinChannelsObservation(observation({ likes: 3_000, shares: 2_000 }));
+    const job: FinalAnalysisJob = { jobId: "ds-retry", kind: "formal", stage: "deepseek_batch", threshold: 1_000, rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [persisted.observationId], analysisObservationIds: [persisted.observationId], lunaBatchIds: [], status: "processing", terraModel: "deepseek/deepseek-v4-pro-0813", reasoningEffort: "medium", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };
+    const output = await invokeWeixinChannelsDeepSeekBatch({ job, observations: [persisted], invoke: invoke as never });
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke.mock.calls[1][0].requestId).toBe("ds-retry:validation-retry");
+    expect(output.usage).toMatchObject({ inputTokens: 8, outputTokens: 10, costUsd: 0.03 });
+  });
+
+  it("DeepSeek 新字段、枚举外值与超过四十字文本都不能进入下游", async () => {
+    const invalid = classifiedBatchResult();
+    invalid.categories = [{
+      ...invalid.categories[0]!,
+      category: "模型自造类目",
+      extraField: "SECRET",
+    } as never];
+    const invoke = vi.fn()
+      .mockResolvedValueOnce({ provider: "DeepSeek", choices: [{ message: { content: JSON.stringify(invalid) }, finish_reason: "stop" }] })
+      .mockResolvedValueOnce({ provider: "DeepSeek", choices: [{ message: { content: JSON.stringify(invalid) }, finish_reason: "stop" }] });
+    const persisted = persistableWeixinChannelsObservation(observation({ likes: 3_000, shares: 2_000 }));
+    const job: FinalAnalysisJob = { jobId: "ds-invalid", kind: "formal", stage: "deepseek_batch", threshold: 1_000, rawCount: 1_000, locallyDedupedCount: 1_000, observationIds: [persisted.observationId], analysisObservationIds: [persisted.observationId], lunaBatchIds: [], status: "processing", terraModel: "deepseek/deepseek-v4-pro-0813", reasoningEffort: "medium", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };
+    await expect(invokeWeixinChannelsDeepSeekBatch({ job, observations: [persisted], invoke: invoke as never }))
+      .rejects.toThrow("weixin_channels_deepseek_validation_failed");
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
   it("Terra High 只读取八个 DeepSeek 结果并输出清洗报告", async () => {
-    const base = Object.fromEntries(["duplicates", "categories", "keywords", "commentTopics", "trends", "blueOceanKeywords", "topicIdeas", "weeklySummary"].map((key) => [key, [key]]));
+    const base = classifiedBatchResult();
     const result = { ...base, cleaningReport: { removedNoise: ["UI"], downgradedClaims: [], preservedEvidence: ["obs-1"] } };
     const invoke = vi.fn().mockResolvedValueOnce({ provider: "evolink", choices: [{ message: { content: JSON.stringify(result) } }] });
     const job: FinalAnalysisJob = { jobId: "clean-1", kind: "formal", stage: "terra_cleanup", threshold: 8_000, rawCount: 8_000, locallyDedupedCount: 7_900, observationIds: [], sourceJobIds: Array.from({ length: 8 }, (_, i) => `ds-${i}`), lunaBatchIds: [], status: "processing", terraModel: "gpt-5.6-terra", reasoningEffort: "high", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };
@@ -200,7 +281,7 @@ describe("weixinChannelsMiner", () => {
   });
 
   it("一次 Terra high 直接产出八项结果，使用同一任务 ID 和 100K 输出上限", async () => {
-    const result = Object.fromEntries(["duplicates", "categories", "keywords", "commentTopics", "trends", "blueOceanKeywords", "topicIdeas", "weeklySummary"].map((key) => [key, [key]]));
+    const result = classifiedBatchResult();
     const invoke = vi.fn().mockResolvedValueOnce({ provider: "evolink", choices: [{ message: { content: JSON.stringify(result) } }] });
     const persisted = persistableWeixinChannelsObservation(observation({ likes: 3_000, shares: 2_000, comments: 10 }));
     const job: FinalAnalysisJob = { jobId: "job-1", kind: "probe", threshold: 5, rawCount: 5, locallyDedupedCount: 5, observationIds: [persisted.observationId], analysisObservationIds: [persisted.observationId], lunaBatchIds: [], status: "processing", terraModel: "gpt-5.6-terra", reasoningEffort: "high", createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" };

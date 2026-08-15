@@ -5,6 +5,7 @@ import type { Express, Request, RequestHandler, Response } from "express";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   registerWeixinChannelsCollectorHttpRoutes,
+  stripWeixinChannelsImagePayload,
   verifyWeixinChannelsCollectorToken,
   weixinChannelsObservationSchema,
 } from "./weixinChannelsCollectorHttp";
@@ -272,5 +273,20 @@ describe("weixinChannelsCollectorHttp", () => {
       evidence: "capture", visualImageBase64: "a".repeat(100), visualAssetKind: "representative_frame", visualFrameProgress: 0.5,
     });
     expect(result.success).toBe(true);
+  });
+
+  it("服务端兼容旧图片字段但在入库前一律剥离，视频号不再上传 GCS", () => {
+    const structured = stripWeixinChannelsImagePayload({
+      observationId: "visual-frame-1",
+      title: "真实视频",
+      coverImageBase64: "cover",
+      visualImageBase64: "visual",
+      visualAssetKind: "representative_frame",
+      visualFrameProgress: 0.5,
+    });
+    expect(structured).toEqual({
+      observationId: "visual-frame-1",
+      title: "真实视频",
+    });
   });
 });

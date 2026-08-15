@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 /** 每累计 1,000 条，由 DeepSeek V4 Pro 0813 做一次八项结构化整理。 */
 export const WEIXIN_CHANNELS_ACCUMULATION_TARGET = 1_000;
 export const WEIXIN_CHANNELS_AGGREGATION_MAX_ITEMS = 1_000;
+/** DeepSeek V4 Pro 0813 千条判别任务的正文预算。 */
+export const WEIXIN_CHANNELS_DEEPSEEK_MAX_COMPLETION_TOKENS = 65_536;
 /** 8 个千条结果（8,000 条）累计后，Terra High 才做一次最终去噪/UI 清洗。 */
 export const WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT = 8;
 /** 1.05M 上下文为 100K 输出和消息协议留安全余量。 */

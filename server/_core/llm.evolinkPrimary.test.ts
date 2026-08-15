@@ -22,7 +22,32 @@ afterEach(() => {
 });
 
 describe("invokeLLM evolink_primary", () => {
-  it("DeepSeek V4 Pro 0813 明确开启 High thinking，并透传JSON、100K与价格帽", async () => {
+  it("DeepSeek 千条分类透传 Medium 且不自行补 temperature/top_p", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...completion("deepseek/deepseek-v4-pro-0813"),
+      provider: "DeepSeek",
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    global.fetch = fetchMock as typeof fetch;
+    await invokeLLM({
+      model: "pro", provider: "openai", modelName: "deepseek/deepseek-v4-pro-0813",
+      reasoningEffort: "medium", max_tokens: 65_536,
+      response_format: { type: "json_object" },
+      openRouterProviderPreferences: { require_parameters: true },
+      messages: [{ role: "user", content: "test" }],
+    });
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(body).toMatchObject({
+      model: "deepseek/deepseek-v4-pro-0813",
+      max_tokens: 65_536,
+      response_format: { type: "json_object" },
+      provider: { require_parameters: true },
+    });
+    expect(body.reasoning).toEqual({ effort: "medium" });
+    expect(body.temperature).toBeUndefined();
+    expect(body.top_p).toBeUndefined();
+  });
+
+  it("DeepSeek V4 Pro 0813 明确开启 High thinking，并忽略不兼容采样参数", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       ...completion("deepseek/deepseek-v4-pro-0813"),
       provider: "DeepSeek",
@@ -40,14 +65,15 @@ describe("invokeLLM evolink_primary", () => {
     expect(fetchMock.mock.calls[0][0]).toContain("openrouter.ai");
     expect(body).toMatchObject({
       model: "deepseek/deepseek-v4-pro-0813",
-      reasoning: { effort: "high", exclude: true },
       max_tokens: 100_000,
-      temperature: 1,
       response_format: { type: "json_object" },
       provider: { require_parameters: true, data_collection: "allow", max_price: { prompt: 0.5, completion: 1 } },
     });
+    expect(body.reasoning).toEqual({ effort: "high" });
     expect(body.reasoning_effort).toBeUndefined();
     expect(body.max_completion_tokens).toBeUndefined();
+    expect(body.temperature).toBeUndefined();
+    expect(body.top_p).toBeUndefined();
     expect(result.usage).toMatchObject({ cost: 0.01, completion_tokens_details: { reasoning_tokens: 5 } });
   });
 
