@@ -22,6 +22,7 @@ import {
   collectorBoundWindowPresent,
   collectorPendingFileExists,
   collectorControlStopReason,
+  collectorWindowRecoveryDelayMs,
   collectorSamplingModeForComments,
   commentsPanelClosedOnSameVideo,
   collectorWatchdogDecision,
@@ -513,6 +514,14 @@ describe("weixin channels OCR", () => {
     expect(isCollectorWindowBindingFailure("weixin_channels_window_not_found")).toBe(true);
     expect(isCollectorWindowBindingFailure("weixin_channels_required_window_not_found")).toBe(true);
     expect(isCollectorWindowBindingFailure("weixin_channels_comments_close_not_found")).toBe(false);
+  });
+
+  it("播放器首帧和切页瞬态失败只在原窗短退避，不升级为指数停窗", () => {
+    expect(collectorWindowRecoveryDelayMs("player_state_unconfirmed", 8)).toBe(1_250);
+    expect(collectorWindowRecoveryDelayMs("stable_identity_not_detected", 8)).toBe(1_250);
+    expect(collectorWindowRecoveryDelayMs("weixin_channels_advance_recovery_exhausted", 8)).toBe(1_250);
+    expect(collectorWindowRecoveryDelayMs("weixin_channels_comments_close_not_found", 2)).toBe(10_000);
+    expect(collectorWindowRecoveryDelayMs("player_state_unconfirmed", 8, Date.now() + 5_000)).toBe(1_250);
   });
 
   it("窗口重绑必须同时匹配原 windowId 与 PID", () => {
