@@ -631,8 +631,9 @@ const EXPAND_QWEN_MAX_COMPLETION_TOKENS = 65_536;
 const EXPAND_DEEPSEEK_OR_MODEL = "deepseek/deepseek-v4-pro-0813";
 
 /**
- * 经济档直连 OpenRouter。缰绳纪律（同日 PK 探针实锤）：必须显式关推理——
- * 默认深推理会把整个 max_tokens 烧成 reasoning_tokens，正文零字、finish=length 照扣钱。
+ * 经济档直连 OpenRouter。口径修正（2026-08-15 用户复核）：推理要开（high，与稳定/轻快档
+ * 对等公平，实测质量更强、推理 token 也便宜），教训在「预算」——max_tokens 给 65K
+ * （用户实战口径：平时 65K、大批量 200K 也照样便宜），小预算才会被推理吃光正文零字。
  */
 async function invokeExpandViaDeepSeek(params: { system: string; user: string }): Promise<string> {
   const key = String(process.env.OPENROUTER_API_KEY || "").trim();
@@ -653,9 +654,9 @@ async function invokeExpandViaDeepSeek(params: { system: string; user: string })
         { role: "user", content: params.user },
       ],
       temperature: 0.55,
-      max_tokens: 8_000,
+      max_tokens: 65_536,
       response_format: { type: "json_object" },
-      reasoning: { enabled: false },
+      reasoning: { effort: "high" },
     }),
   });
   const raw = await res.text();
@@ -667,7 +668,7 @@ async function invokeExpandViaDeepSeek(params: { system: string; user: string })
     throw new Error(`DeepSeek 经济档非 JSON 响应：${raw.slice(0, 120)}`);
   }
   if (String(json.choices?.[0]?.finish_reason || "") === "length") {
-    throw new Error("DeepSeek 经济档输出被截断（疑似推理未关）");
+    throw new Error("DeepSeek 经济档输出被截断（65K 预算耗尽，异常长输出）");
   }
   const content = json.choices?.[0]?.message?.content;
   const text = typeof content === "string" ? content.trim() : "";

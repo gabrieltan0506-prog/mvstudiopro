@@ -1517,9 +1517,10 @@ async function polishAndPersistManhuaProposal(input: {
         body: JSON.stringify({
           model: MANHUA_TEMPLATE_LEARN_DEEPSEEK_MODEL,
           temperature: 0.3,
-          max_tokens: 4096,
+          // 推理开 medium + 16K 预算（2026-08-15 用户复核口径：预算给足，推理照开也便宜）
+          max_tokens: 16_384,
           response_format: { type: "json_object" },
-          reasoning: { enabled: false },
+          reasoning: { effort: "medium" },
           messages: polishMessages,
         }),
       });
