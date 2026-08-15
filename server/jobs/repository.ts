@@ -629,6 +629,31 @@ export async function markJobSucceeded(id: string, output: unknown, provider?: s
   return true;
 }
 
+/** 最近一份平台动作任务（含运行中/成功/失败）；供持久任务在刷新后恢复。 */
+export async function getLatestPlatformJobForUserAction(
+  userId: string,
+  action: string,
+): Promise<NormalizedJob | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db
+    .select()
+    .from(jobs)
+    .where(and(
+      eq(jobs.userId, userId),
+      eq(jobs.type, "platform"),
+      sql`coalesce(${jobs.input}::jsonb->>'action', '') = ${action}`,
+    ))
+    .orderBy(desc(jobs.updatedAt))
+    .limit(1);
+  if (!row) return null;
+  return {
+    ...row,
+    input: parseMaybeJson(row.input),
+    output: parseMaybeJson(row.output),
+  };
+}
+
 export async function markJobFailed(id: string, error: string): Promise<void> {
   const db = await getDb();
   if (!db) return;

@@ -1186,6 +1186,12 @@ function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
         // Stage 2：冷數據讀取 + 大 JSON LLM（預設 20min，可用 PLATFORM_BUILD_CONTENT_JOB_TIMEOUT_MS 覆蓋）
         return 20 * 60_000;
       }
+      if (input.action === "platform_visual_report") {
+        const raw = Number(process.env.PLATFORM_VISUAL_REPORT_JOB_TIMEOUT_MS);
+        if (Number.isFinite(raw) && raw >= 120_000) return raw;
+        // 报表通常 30–40 秒；给冷数据读取、三次模型重试和 Fly 短抖动留足墙钟。
+        return 15 * 60_000;
+      }
       if (input.action === "platform_topic_image") {
         const raw = Number(process.env.PLATFORM_TOPIC_IMAGE_JOB_TIMEOUT_MS);
         if (Number.isFinite(raw) && raw >= 60_000) return raw;
@@ -1401,6 +1407,50 @@ async function processPlatformJob(
       throw new Error(
         "[jobs] platform_composite_sheet_progress 僅為寬幅合成 TRPC 旁路進度占位（插入時即 running），不應進入 worker；請檢查 jobs 是否被誤改為 queued。",
       );
+    }
+    // ── platform_visual_report ────────────────────────────────────────────────
+    // 通过内部 caller 复用唯一报告实现；prepaidPlatformTrendJobId 仅存在于
+    // worker context，表示扣费与持久账本已在 enqueueVisualReport 完成。
+    if (input.action === "platform_visual_report") {
+      if (!platformJobId || !jobUserId) {
+        throw new Error("趋势报告任务缺少 jobId 或 userId");
+      }
+      const user = await resolveUserForJob(jobUserId);
+      const controller = new AbortController();
+      const hardAbort = setTimeout(() => controller.abort(), 14 * 60_000);
+      const caller = appRouter.createCaller({
+        req: {} as any,
+        res: {} as any,
+        user,
+        clientDisconnected: controller.signal,
+        prepaidPlatformTrendJobId: platformJobId,
+      });
+      const { heartbeatActiveJob } = await import("../services/paidJobLedger.js");
+      const heartbeat = platformJobId
+        ? setInterval(() => {
+            void heartbeatActiveJob(platformJobId, "platformAnalysis");
+          }, 30_000)
+        : null;
+      try {
+        const result = await caller.mvAnalysis.generateVisualReport({
+          windowDays: params.windowDays as "3" | "7" | "15" | "30",
+          theme: params.theme as "light" | "dark",
+          platforms: params.platforms as Array<"douyin" | "kuaishou" | "xiaohongshu" | "bilibili" | "weixin_channels">,
+          personaContext: typeof params.personaContext === "string" ? params.personaContext : undefined,
+          billingRequestId: String(params.billingRequestId || ""),
+        });
+        if (!result.success || !result.report) {
+          throw new Error(result.error || "趋势报告生成失败");
+        }
+        return {
+          provider: "openrouter",
+          output: result,
+        };
+      } finally {
+        if (heartbeat) clearInterval(heartbeat);
+        clearTimeout(hardAbort);
+        controller.abort();
+      }
     }
     // ── platform_analysis ────────────────────────────────────────────────────────
     if (input.action === "platform_analysis") {
@@ -2555,6 +2605,10 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
       isRecord(job.input) &&
       isRecord(job.input.params) &&
       (job.input.params.assetStandardizeQuality === "medium" || job.input.params.assetStandardizeQuality === "high");
+    const paidPlatformVisualReport =
+      jobType === "platform" &&
+      isRecord(job.input) &&
+      job.input.action === "platform_visual_report";
     if (paidAssetStandardize) {
       if (!succeededPersisted) {
         // 上游有图但 job.output 没落库，用户拿不到产物；不能先结算后留下永久扣费。
@@ -2574,6 +2628,28 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
       } catch {
         // job.output 已经持久化，不能退款；reaper 只补结算，不会把成功单退掉。
         await markSettlementPending(job.id, "manhuaAssetStandardize");
+      }
+    }
+    if (paidPlatformVisualReport) {
+      if (!succeededPersisted) {
+        const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
+        await refundCreditsOnFailure(
+          job.id,
+          "platformAnalysis",
+          "task_failed",
+          "趋势报告结果保存失败·退回积分",
+        ).catch((refundError) =>
+          console.error("[Jobs] trend report persistence refund failed:", refundError),
+        );
+        await markJobFailed(job.id, "趋势报告结果保存失败，已进入退分流程");
+        return;
+      }
+      const { markSettlementPending, unregisterActiveJob } = await import("../services/paidJobLedger.js");
+      try {
+        await unregisterActiveJob(job.id, "platformAnalysis", "settled");
+      } catch {
+        // 结果已经落库，不能退款；由 ledger reaper 只补结算。
+        await markSettlementPending(job.id, "platformAnalysis");
       }
     }
   } catch (error) {
@@ -2600,6 +2676,22 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
         "资产标准化失败或超时·退回积分",
       ).catch((refundError) =>
         console.error("[Jobs] manhua asset standardize refund failed:", refundError),
+      );
+      await markJobFailed(job.id, message);
+    } else if (
+      job.type === "platform" &&
+      isRecord(job.input) &&
+      job.input.action === "platform_visual_report"
+    ) {
+      // generateVisualReport 内部已完成三次模型重试；worker 不再重排整单重复烧模型。
+      const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
+      await refundCreditsOnFailure(
+        job.id,
+        "platformAnalysis",
+        "external_api_error",
+        "趋势报告生成失败或超时·退回积分",
+      ).catch((refundError) =>
+        console.error("[Jobs] trend report refund failed:", refundError),
       );
       await markJobFailed(job.id, message);
     } else if ((job.attempts ?? 0) < 2) {

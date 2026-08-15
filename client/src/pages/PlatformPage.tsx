@@ -60,7 +60,7 @@ import {
 } from "@/lib/platformWorkbenchCta";
 import InfographicTemplatePicker from "@/components/InfographicTemplatePicker";
 import { extractInfographicSubjectFromUserCopy } from "@shared/infographicNoteTemplates";
-import { VisualReportCoverPage, VisualReportTemplate, type VisualReportData } from "@/components/VisualReportTemplate";
+import { VisualReportTemplate, type VisualReportData } from "@/components/VisualReportTemplate";
 import { PlatformReportDashboard } from "@/components/PlatformReportDashboard";
 import {
   mapGenerateVisualReportResult,
@@ -68,7 +68,14 @@ import {
   toVisualReportWindowDays,
   type VisualReportTheme,
 } from "@/lib/visualReportMapper";
-import { clearPlatformVisualReportPersist } from "@/lib/platformVisualReportPersist";
+import {
+  clearPlatformVisualReportPersist,
+  readPlatformVisualReportPendingJob,
+  resolvePlatformVisualReportPendingJob,
+  shouldRestoreLatestVisualReport,
+  writePlatformVisualReportPendingJob,
+  type PlatformVisualReportPendingJobV1,
+} from "@/lib/platformVisualReportPersist";
 import {
   readShortlistExpandPersist,
   writeShortlistExpandPersist,
@@ -160,7 +167,6 @@ import {
 } from "@shared/plans";
 import {
   getPlatformTrendReportCredits,
-  isPlatformTrendCoverPromo,
 } from "@shared/platformTrendPricing";
 import type { PlatformMattingAspectRatio, PlatformMattingBatchCount } from "@shared/plans";
 import {
@@ -2349,8 +2355,8 @@ export default function PlatformPage() {
     }
   }, [platformCopyLlmEngine]);
 
-  // Separate state for dashboard — populated by the second call after snapshot loads
-  // 趋势分析不落本机：刷新即清空，避免旧报表/看板粘住挡住新结果
+  // Separate state for dashboard — populated by the second call after snapshot loads.
+  // 趋势长图以服务端 job 为持久真源；刷新后恢复最新任务，不再依赖旧版完整报表 localStorage。
   const [platformDashboard, setPlatformDashboard] = useState<PlatformDashboard | null>(null);
   const [dashboardDebug, setDashboardDebug] = useState<Record<string, unknown> | null>(null);
   const [isDashboardLoading, setIsDashboardLoading] = useState(false);
@@ -2358,13 +2364,31 @@ export default function PlatformPage() {
   const [visualReportTheme] = useState<VisualReportTheme>("dark");
   const [isVisualReportLoading, setIsVisualReportLoading] = useState(false);
   const [isVisualReportDownloading, setIsVisualReportDownloading] = useState(false);
+  const [visualReportError, setVisualReportError] = useState<string | null>(null);
+  const visualReportPollingJobRef = useRef<string | null>(null);
+  const visualReportOwnerRef = useRef<string | null>(null);
   /** 整段趋势独立分析（快照+看板+PNG）统一忙碌旗，避免只靠 isFetching 卡死「趋势分析中」 */
   const [trendStandaloneBusy, setTrendStandaloneBusy] = useState(false);
 
-  /** 清掉历史 localStorage 粘滞键（旧版「刷新不丢」） */
+  /** 清掉旧版直接塞完整报表的 localStorage；新版本以服务端成功 job 为唯一持久真源。 */
   useEffect(() => {
     clearPlatformVisualReportPersist();
   }, []);
+
+  useEffect(() => {
+    const currentUserId = String(user?.id || "").trim() || null;
+    if (visualReportOwnerRef.current && visualReportOwnerRef.current !== currentUserId) {
+      setVisualReportData(null);
+      setVisualReportError(null);
+    }
+    visualReportOwnerRef.current = currentUserId;
+  }, [user?.id]);
+
+  const latestVisualReportQuery = trpc.mvAnalysis.getLatestVisualReport.useQuery(undefined, {
+    enabled: isAuthenticated,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
 
   /** 平台趋势区子 Tab：指定平台分析 / AI 漫剧专区 */
   const [trendInsightTab, setTrendInsightTab] = useState<"overview" | "ai_manhua">(() =>
@@ -2529,7 +2553,6 @@ export default function PlatformPage() {
     });
   }, [manhuaLearnResult, user?.id]);
   const visualReportRef = useRef<HTMLDivElement>(null);
-  const visualReportCoverRef = useRef<HTMLDivElement>(null);
   // Call 3 state — content blueprints and monetization
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
   const [contentDebug, setContentDebug] = useState<Record<string, unknown> | null>(null);
@@ -5623,7 +5646,131 @@ export default function PlatformPage() {
   const generatePlatformMonetizationLanesMutation =
     trpc.mvAnalysis.generatePlatformMonetizationLanes.useMutation();
 
-  const generateVisualReportMutation = trpc.mvAnalysis.generateVisualReport.useMutation();
+  const enqueueVisualReportMutation = trpc.mvAnalysis.enqueueVisualReport.useMutation();
+
+  const monitorVisualReportJob = useCallback(async (
+    pending: PlatformVisualReportPendingJobV1,
+    announceSuccess: boolean,
+  ) => {
+    if (visualReportPollingJobRef.current === pending.jobId) return;
+    visualReportPollingJobRef.current = pending.jobId;
+    setVisualReportError(null);
+    setTrendStandaloneBusy(true);
+    setIsVisualReportLoading(true);
+    try {
+      const job = await pollJobUntilTerminal(pending.jobId, {
+        intervalMs: 2_000,
+        maxWaitMs: 15 * 60_000,
+      });
+      if (job.status === "failed") {
+        writePlatformVisualReportPendingJob(null);
+        const message = sanitizePlatformUserMessage(
+          String(job.error || ""),
+          "趋势报表生成失败，积分已进入退回流程，请重试",
+        );
+        setVisualReportError(message);
+        toast.error(message);
+        return;
+      }
+      const mapped = mapGenerateVisualReportResult(job.output || {}, {
+        windowDays: pending.windowDays,
+        theme: pending.theme,
+      });
+      if (!mapped) {
+        writePlatformVisualReportPendingJob(null);
+        const message = `后台任务 ${pending.jobId} 已结束，但返回格式异常，请联系客服核对`;
+        setVisualReportError(message);
+        toast.error(message);
+        return;
+      }
+      writePlatformVisualReportPendingJob(null);
+      visualReportOwnerRef.current = pending.userId;
+      setVisualReportData(mapped);
+      setTrendInsightTab("overview");
+      setHasAnalyzed(true);
+      if (announceSuccess) toast.success("平台趋势 PNG 报表已生成");
+      window.setTimeout(() => {
+        document
+          .getElementById("platform-trend-visual-report")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 120);
+    } catch (error) {
+      // 轮询网络中断或页面停留超时不删除 pending；刷新页面后继续同一 job，不重复扣费。
+      const message = sanitizePlatformUserMessage(
+        error instanceof Error ? error.message : String(error),
+        "趋势报表仍在后台生成，可刷新页面继续查看",
+      );
+      setVisualReportError(message);
+      toast.error(message);
+    } finally {
+      visualReportPollingJobRef.current = null;
+      setTrendStandaloneBusy(false);
+      setIsVisualReportLoading(false);
+    }
+  }, []);
+
+  /**
+   * 服务端最新任务是刷新恢复的唯一真源；本机 pending 只补充窗口/主题，不能盖过服务端更新的 jobId。
+   * 这样可避免另一标签页已重跑时，本页刷新却继续轮询旧任务并覆盖新结果。
+   */
+  useEffect(() => {
+    if (latestVisualReportQuery.isLoading) return;
+    const userId = String(user?.id || "").trim();
+    const latest = latestVisualReportQuery.data;
+    if (!userId || !latest || String(latest.userId || "") !== userId || !latest.jobId) return;
+    const windowDays = ["3", "7", "15", "30"].includes(String(latest.windowDays))
+      ? String(latest.windowDays) as "3" | "7" | "15" | "30"
+      : "7";
+    const theme = latest.theme === "light" ? "light" : "dark";
+    if (latest.status === "queued" || latest.status === "running") {
+      const savedPending = readPlatformVisualReportPendingJob(userId);
+      const pending = resolvePlatformVisualReportPendingJob({
+        saved: savedPending,
+        latestJobId: latest.jobId,
+        userId,
+        windowDays,
+        theme,
+        createdAt: Date.parse(String(latest.createdAt || "")) || Date.now(),
+      });
+      writePlatformVisualReportPendingJob(pending);
+      void monitorVisualReportJob(pending, true);
+      return;
+    }
+    if (latest.status === "failed") {
+      writePlatformVisualReportPendingJob(null);
+      if (!visualReportData) {
+        setVisualReportError(sanitizePlatformUserMessage(
+          String(latest.error || ""),
+          "最近一次趋势报表生成失败，积分已进入退回流程",
+        ));
+      }
+      return;
+    }
+    if (!latest.result) return;
+    const hasPendingJob = Boolean(readPlatformVisualReportPendingJob(userId));
+    if (!shouldRestoreLatestVisualReport({
+      currentUserId: userId,
+      responseUserId: String(latest.userId || ""),
+      hasPendingJob,
+      hasCurrentReport: Boolean(visualReportData),
+      hasCurrentError: Boolean(visualReportError),
+      busy: trendStandaloneBusy,
+    })) return;
+    const mapped = mapGenerateVisualReportResult(latest.result, { windowDays, theme });
+    if (mapped) {
+      visualReportOwnerRef.current = userId;
+      setVisualReportData(mapped);
+      setHasAnalyzed(true);
+    }
+  }, [
+    latestVisualReportQuery.data,
+    latestVisualReportQuery.isLoading,
+    monitorVisualReportJob,
+    trendStandaloneBusy,
+    user?.id,
+    visualReportData,
+    visualReportError,
+  ]);
 
   const askPlatformFollowUpMutation = trpc.mvAnalysis.askPlatformFollowUp.useMutation({
     onSuccess: (result) => {
@@ -9924,10 +10071,7 @@ export default function PlatformPage() {
     return () => window.clearInterval(timer);
   }, [isAnalyzing]);
 
-  /**
-   * 轻量版趋势分析：Stage 1 看板 + 可下载 PNG 图文报表（generateVisualReport），不入队 Stage 2。
-   * 供工作台顶部「平台趋势分析报表」区块独立启动，无需等全案分析。
-   */
+  /** 独立趋势 PNG：持久入队，浏览器断线或刷新不会取消模型任务。 */
   const handleTrendStandaloneAnalyze = async () => {
     if (selectedTrendPlatforms.length !== 1) {
       toast.error("请选择一个分析平台");
@@ -9951,130 +10095,45 @@ export default function PlatformPage() {
         : "";
     if (
       !window.confirm(
-        `【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天样本，生成四格战略摘要、Stage 1 看板与趋势 PNG${windowNote}。\n\n扣除 ${cost} 积分，不含专属文案 / 决策智库全景（需另行加购）。是否开始？`,
+        `【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天样本，后台生成趋势 PNG${windowNote}。\n\n扣除 ${cost} 积分；页面刷新后仍可继续取回结果。是否开始？`,
       )
     ) {
       return;
     }
 
-    platformAnalysisEpochRef.current += 1;
-    void trpcUtils.mvAnalysis.getGrowthSnapshot.cancel();
-    queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
-
-    setAskResult(null);
-    // 重跑先清旧看板/报表，避免粘滞结果挡住新图展示
+    // 重跑只清本区旧报表；不重跑下方决策智库/Stage 1，避免无关慢任务阻塞 PNG。
     clearPlatformVisualReportPersist();
-    setPlatformDashboard(null);
     setVisualReportData(null);
+    setVisualReportError(null);
     setTrendInsightTab("overview");
-    setDashboardDebug(null);
     setTrendStandaloneBusy(true);
-    setIsDashboardLoading(true);
     setIsVisualReportLoading(true);
-    setPlatformContent(null);
-    setContentDebug(null);
-    setIsContentLoading(false);
-    setStage2Failed(false);
-    setContentJobError(null);
-    setContentJobPollTrace(null);
-    setElapsedTime(0);
 
     try {
-      const result = await growthSnapshotQuery.refetch();
-      if (!result.data?.snapshot) {
-        toast.error("平台趋势分析暂时没有返回结果");
-        return;
-      }
-      setHasAnalyzed(true);
-      toast.success("快照已就绪，正在生成看板与 PNG 图文报表…");
-
-      const snap = result.data.snapshot;
-      // 指定平台分析：只读窗口样本，不带入人物背景 / 创作诉求
-      const [dashSettled, visualSettled] = await Promise.allSettled([
-        getPlatformDashboardMutation.mutateAsync({
-          windowDays: selectedWindowDays,
-          snapshotSummary: snap as any,
-          copyLlmMode: "openai" as const,
-          requestedPlatforms: selectedTrendPlatforms,
-        }),
-        generateVisualReportMutation.mutateAsync({
-          windowDays: reportWindowDays,
-          theme: visualReportTheme,
-          platforms: visualPlatforms,
-          billingRequestId: crypto.randomUUID(),
-        }),
-      ]);
-
-      let hasDash = false;
-      let hasReport = false;
-      const errors: string[] = [];
-
-      if (dashSettled.status === "fulfilled") {
-        const dashResult = dashSettled.value;
-        if (dashResult.platformDashboard) {
-          setPlatformDashboard(dashResult.platformDashboard as unknown as PlatformDashboard);
-          hasDash = true;
-        } else {
-          errors.push(
-            sanitizePlatformUserMessage(
-              String((dashResult as { debug?: { error?: string } }).debug?.error || ""),
-              "趋势看板生成失败，请重试",
-            ),
-          );
-        }
-      } else {
-        const msg = dashSettled.reason instanceof Error ? dashSettled.reason.message : String(dashSettled.reason);
-        errors.push(sanitizePlatformUserMessage(msg, "趋势看板生成失败，请稍后重试"));
-      }
-
-      if (visualSettled.status === "fulfilled") {
-        const mappedReport = mapGenerateVisualReportResult(visualSettled.value, {
-          windowDays: reportWindowDays,
-          theme: visualReportTheme,
-        });
-        if (mappedReport) {
-          setVisualReportData(mappedReport);
-          setTrendInsightTab("overview");
-          hasReport = true;
-        } else {
-          const softErr =
-            typeof (visualSettled.value as { error?: unknown })?.error === "string"
-              ? String((visualSettled.value as { error?: string }).error)
-              : "";
-          errors.push(sanitizePlatformUserMessage(softErr, "PNG 图文报表生成失败，请重试"));
-        }
-      } else {
-        const msg =
-          visualSettled.reason instanceof Error ? visualSettled.reason.message : String(visualSettled.reason);
-        errors.push(sanitizePlatformUserMessage(msg, "PNG 图文报表生成失败，请稍后重试"));
-      }
-
-      if (hasDash && hasReport) {
-        toast.success("平台趋势分析报表已就绪：右侧浅色摘要 + 下方完整长图可下载。");
-      } else if (hasReport) {
-        toast.success("PNG 趋势报表已就绪：请看右侧浅色卡与下方完整长图。");
-        if (errors[0]) toast.error(`看板摘要：${errors[0].slice(0, 100)}`);
-      } else if (hasDash) {
-        toast.error(
-          `趋势 PNG 报表未生成：${(errors.find((e) => /报表|PNG|JSON|Evolink|网关|超时|算力/i.test(e)) || errors[0] || "请重试").slice(0, 140)}`,
-        );
-      } else {
-        toast.error(errors[0] || "平台趋势分析失败，请稍后重试");
-      }
-
-      if (hasReport) {
-        window.setTimeout(() => {
-          document
-            .getElementById("platform-trend-visual-report")
-            ?.scrollIntoView({ behavior: "smooth", block: "start" });
-        }, 120);
-      }
+      const billingRequestId = crypto.randomUUID();
+      const queued = await enqueueVisualReportMutation.mutateAsync({
+        windowDays: reportWindowDays,
+        theme: visualReportTheme,
+        platforms: visualPlatforms,
+        billingRequestId,
+      });
+      const pending: PlatformVisualReportPendingJobV1 = {
+        v: 1,
+        jobId: queued.jobId,
+        userId: String(user?.id || ""),
+        windowDays: reportWindowDays,
+        theme: visualReportTheme,
+        createdAt: Date.now(),
+      };
+      writePlatformVisualReportPendingJob(pending);
+      toast.success("趋势报告已进入后台生成，通常约 30–40 秒");
+      await monitorVisualReportJob(pending, true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      toast.error(sanitizePlatformUserMessage(msg, "趋势分析失败，请稍后重试"));
-    } finally {
+      const message = sanitizePlatformUserMessage(msg, "趋势报告入队失败，请稍后重试");
+      setVisualReportError(message);
+      toast.error(message);
       setTrendStandaloneBusy(false);
-      setIsDashboardLoading(false);
       setIsVisualReportLoading(false);
     }
   };
@@ -10093,17 +10152,7 @@ export default function PlatformPage() {
       link.download = `mvstudiopro-trend-report-${reportWindowDays}d-${visualReportTheme}.png`;
       link.href = dataUrl;
       link.click();
-      if (visualReportCoverRef.current && (visualReportData.excellentCoverReferences?.length || 0) > 0) {
-        const coverDataUrl = await toPng(visualReportCoverRef.current, {
-          pixelRatio: 2,
-          backgroundColor: visualReportTheme === "dark" ? "#E4B8A8" : "#F3E0D6",
-        });
-        const coverLink = document.createElement("a");
-        coverLink.download = `mvstudiopro-cover-selection-${reportWindowDays}d-${visualReportTheme}.png`;
-        coverLink.href = coverDataUrl;
-        coverLink.click();
-      }
-      toast.success("主周报 PNG 已下载");
+      toast.success("趋势报告 PNG 已下载");
     } catch {
       toast.error("下载失败，请重试");
     } finally {
@@ -11554,7 +11603,7 @@ export default function PlatformPage() {
                   )}
                 </div>
                 <p className="mt-1 max-w-2xl text-xs leading-relaxed text-[#c9c0e6]/60">
-                  一次启动即可得到四格战略摘要、Stage 1 看板与 PNG 图文报表。「总览」看多平台；「AI 漫剧」专区含抖音/快手飙升子榜（同源数据，不另开抓取）。不含决策智库全景。
+                  选择一个平台与时间窗口后，后台生成可下载的 PNG 趋势长图；刷新或短暂断线不会取消任务。不含决策智库全景。
                 </p>
               </div>
               {platformDashboard ? (
@@ -11673,10 +11722,10 @@ export default function PlatformPage() {
                   <button
                     type="button"
                     onClick={() => void handleTrendStandaloneAnalyze()}
-                    disabled={growthSnapshotQuery.isFetching}
+                    disabled={trendStandaloneBusy || enqueueVisualReportMutation.isPending}
                     className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_28px_rgba(73,230,255,0.16)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {growthSnapshotQuery.isFetching ? (
+                    {trendStandaloneBusy || enqueueVisualReportMutation.isPending ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
                       <Sparkles className="h-4 w-4" />
@@ -11687,7 +11736,7 @@ export default function PlatformPage() {
                     {getPlatformTrendReportCredits(selectedWindowDays)} 积分/次
                   </span>
                   <span className="text-[11px] text-[#c9c0e6]/50">
-                    {"含四格战略摘要与趋势报告"}
+                    {"含四格趋势摘要与可下载 PNG 长图"}
                   </span>
                 </div>
               </div>
@@ -11698,9 +11747,7 @@ export default function PlatformPage() {
               <div className="mt-4 rounded-2xl border border-[#49e6ff]/20 bg-[rgba(73,230,255,0.06)] p-4">
                 <div className="flex items-center gap-2 text-sm text-[#8cefff]">
                   <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                  {platformDashboard
-                    ? "战略看板已出，正在生成右侧浅色摘要与含蓝海词的 PNG 图文报表…"
-                    : `正在读取近 ${selectedWindowDays} 天样本，生成战略看板与含蓝海词的 PNG 图文报表…`}
+                  {`后台正在读取近 ${selectedWindowDays} 天样本并生成 PNG 趋势长图；通常约 30–40 秒，刷新后可继续取回…`}
                 </div>
                 <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.08]">
                   <div
@@ -11709,6 +11756,12 @@ export default function PlatformPage() {
                     }`}
                   />
                 </div>
+              </div>
+            ) : null}
+
+            {visualReportError && !isVisualReportLoading ? (
+              <div className="mt-4 rounded-xl border border-red-400/25 bg-red-400/[0.08] px-4 py-3 text-xs leading-relaxed text-red-100">
+                {visualReportError}
               </div>
             ) : null}
 
@@ -11740,7 +11793,7 @@ export default function PlatformPage() {
                   <div>
                     <div className="text-sm font-semibold text-[#6fffb0]">浅色趋势分析报表已就绪</div>
                     <p className="mt-1 text-[11px] text-[#c9c0e6]/60">
-                      右侧为摘要卡；下方为完整长图（含蓝海词）。刷新页面会清空，需重新分析。
+                      右侧为摘要卡；下方为完整长图（含蓝海词）。
                     </p>
                   </div>
                   <button
@@ -11760,11 +11813,6 @@ export default function PlatformPage() {
                 <div className="mt-3 overflow-x-auto rounded-2xl border border-white/10">
                   <VisualReportTemplate data={visualReportData} ref={visualReportRef} />
                 </div>
-                {(visualReportData.excellentCoverReferences?.length || 0) > 0 ? (
-                  <div className="mt-3 overflow-x-auto rounded-2xl border border-white/10">
-                    <VisualReportCoverPage data={visualReportData} ref={visualReportCoverRef} />
-                  </div>
-                ) : null}
               </div>
             ) : null}
 
@@ -11776,7 +11824,7 @@ export default function PlatformPage() {
             !isDashboardLoading &&
             !isVisualReportLoading ? (
               <p className="mt-4 text-xs leading-relaxed text-[#c9c0e6]/45">
-                启动分析后，上方四格会先出战略摘要；完成后右侧出现浅色趋势摘要，下方可下载含蓝海词的 PNG 长图。
+                启动后任务在后台持续生成；完成后右侧出现摘要，下方可下载含蓝海词的 PNG 长图。
               </p>
             ) : null}
 
@@ -14034,7 +14082,7 @@ export default function PlatformPage() {
                         </span>
                       </div>
                       <p className="mt-1 text-sm leading-snug text-[#c4b8e8] md:text-[15px]">
-                        四格战略摘要、Stage 1 看板与可下载 PNG 图文报表（不含专属文案 / 决策智库）
+                        四格趋势摘要与可下载 PNG 图文报表（不含专属文案 / 决策智库）
                       </p>
                     </div>
                   </button>
@@ -14517,7 +14565,7 @@ export default function PlatformPage() {
                       </span>
                     </div>
                     <p className="mt-1 text-xs leading-snug text-[#c4b8e8]">
-                      四格战略摘要、Stage 1 看板与可下载 PNG 图文报表（不含专属文案 / 决策智库）
+                      四格趋势摘要与可下载 PNG 图文报表（不含专属文案 / 决策智库）
                     </p>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3">
