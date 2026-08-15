@@ -1,26 +1,34 @@
-const SUPERVISOR_SECRET = process.env.SUPERVISOR_SECRET ?? "";
+import { timingSafeEqual } from "node:crypto";
 
 const SUPERVISOR_EMAILS = new Set([
   "gabrieltan0506@gmail.com",
   "benjamintan0506@163.com",
 ]);
 
-/** 與 env `SUPERVISOR_SECRET` 比對；用於免登入的高權限維運操作（如 betaCode.generate、reapStaleNeonJobs）。 */
+/** 与 env `SUPERVISOR_SECRET` 做恒定时间比较；仅供登录后换取绑定账号的监管会话。 */
 export function isValidSupervisorSecret(token: string | null | undefined): boolean {
-  return !!SUPERVISOR_SECRET && !!token && token === SUPERVISOR_SECRET;
+  const expected = Buffer.from(String(process.env.SUPERVISOR_SECRET || ""), "utf8");
+  const supplied = Buffer.from(String(token || ""), "utf8");
+  return expected.length > 0
+    && supplied.length === expected.length
+    && timingSafeEqual(supplied, expected);
 }
 
 /**
- * 平台選題封面等高階管線開關：DB 角色為 admin/supervisor，或請求攜帶與 env `SUPERVISOR_SECRET` 一致的 token。
+ * 平台选题封面等高阶管线开关：DB 角色为 admin/supervisor，或当前账号持有已验签监管会话。
  * 積分／免扣費仍應僅依角色等既有邏輯，不得以 token 繞過。
  */
 export function resolvePlatformSupervisorOpsAllowed(
-  user: { role?: string | null },
-  supervisorToken: string | null | undefined,
+  user: { id?: number | null; role?: string | null },
+  supervisorSession?: { userId: number; expiresAt: number } | null,
 ): boolean {
   if (user.role === "admin" || user.role === "supervisor") return true;
-  const t = typeof supervisorToken === "string" ? supervisorToken.trim() : "";
-  return isValidSupervisorSecret(t || null);
+  return Boolean(
+    user.id
+      && supervisorSession
+      && supervisorSession.userId === user.id
+      && supervisorSession.expiresAt > Date.now(),
+  );
 }
 
 function normalizeEmail(email: string | null | undefined): string {

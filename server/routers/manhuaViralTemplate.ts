@@ -7,10 +7,10 @@ import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { resolvePlatformSupervisorOpsAllowed } from "../services/access-policy";
 
 function assertSupervisorOps(
-  user: { role?: string | null },
-  supervisorToken?: string | null,
+  user: { id?: number | null; role?: string | null },
+  supervisorSession?: { userId: number; expiresAt: number } | null,
 ) {
-  if (!resolvePlatformSupervisorOpsAllowed(user, supervisorToken)) {
+  if (!resolvePlatformSupervisorOpsAllowed(user, supervisorSession)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "需要监管权限",
@@ -22,14 +22,21 @@ export const manhuaViralTemplateRouter = router({
   /**
    * 编剧室 / 已登录（公开面）：只下发匿名功能卡（fail-closed 白名单 DTO，见
    * toPublicManhuaViralTemplateCard）。商业机密边界（2026-08-15 用户拍板）：内部 id/真名/
-   * 来源/学习出处/节拍与场景自由文本一概不出服务端；无 publicCode 的卡直接隐藏并告警。
+   * 来源/学习出处/节拍与场景自由文本一概不出服务端；存量公开码优先，无码卡仅在配置
+   * HMAC 专用密钥后生成不可反查的稳定句柄，否则隐藏并告警。
    */
   listApprovedPublic: protectedProcedure.query(async () => {
     try {
-      const [{ listMergedApprovedManhuaViralTemplatesGrouped }, { MANHUA_VIRAL_TEMPLATE_COPY }, bank] =
+      const [
+        { listMergedApprovedManhuaViralTemplatesGrouped },
+        { MANHUA_VIRAL_TEMPLATE_COPY },
+        { resolveStableManhuaTemplatePublicCode },
+        bank,
+      ] =
         await Promise.all([
           import("../services/manhuaViralTemplateStore"),
           import("../services/manhuaViralTemplateCopy"),
+          import("../services/manhuaTemplatePublicId"),
           import("../../shared/manhuaViralTemplateBank"),
         ]);
       const groups = await listMergedApprovedManhuaViralTemplatesGrouped();
@@ -39,7 +46,13 @@ export const manhuaViralTemplateRouter = router({
             laneZh: g.laneZh,
             items: g.items
               .map((c) => {
-                const pub = bank.toPublicManhuaViralTemplateCard(c, MANHUA_VIRAL_TEMPLATE_COPY[c.id]);
+                const publicCode = resolveStableManhuaTemplatePublicCode(c);
+                const pub = publicCode
+                  ? bank.toPublicManhuaViralTemplateCard(
+                      { ...c, publicCode },
+                      MANHUA_VIRAL_TEMPLATE_COPY[c.id],
+                    )
+                  : null;
                 if (!pub) {
                   console.warn("[listApprovedPublic] card missing publicCode, hidden:", c.id);
                 }
@@ -60,9 +73,8 @@ export const manhuaViralTemplateRouter = router({
 
   /** 监管全量（真名/来源/出处可见；缓存键与公开面天然分离） */
   listApprovedPrivate: protectedProcedure
-    .input(z.object({ supervisorToken: z.string().max(512).optional() }).optional())
-    .query(async ({ ctx, input }) => {
-      assertSupervisorOps(ctx.user, input?.supervisorToken);
+    .query(async ({ ctx }) => {
+      assertSupervisorOps(ctx.user, ctx.supervisorSession);
       try {
         const { listMergedApprovedManhuaViralTemplatesGrouped } = await import(
           "../services/manhuaViralTemplateStore"
@@ -79,9 +91,8 @@ export const manhuaViralTemplateRouter = router({
 
   /** 监管：待审提案（GCS proposals，含已批准副本） */
   listProposals: protectedProcedure
-    .input(z.object({ supervisorToken: z.string().max(512).optional() }).optional())
-    .query(async ({ ctx, input }) => {
-      assertSupervisorOps(ctx.user, input?.supervisorToken);
+    .query(async ({ ctx }) => {
+      assertSupervisorOps(ctx.user, ctx.supervisorSession);
       const { listGcsManhuaViralProposals } = await import("../services/manhuaViralTemplateStore");
       const items = await listGcsManhuaViralProposals();
       return {
@@ -103,13 +114,12 @@ export const manhuaViralTemplateRouter = router({
       z.object({
         id: z.string().max(64).optional(),
         card: z.record(z.string(), z.any()).optional(),
-        supervisorToken: z.string().max(512).optional(),
         /** 须为 true，表示用户明文确认批准 */
         confirmApprove: z.literal(true),
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      assertSupervisorOps(ctx.user, input.supervisorToken);
+      assertSupervisorOps(ctx.user, ctx.supervisorSession);
       if (!input.id && !input.card) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "请提供提案 id 或完整卡片" });
       }
@@ -140,11 +150,10 @@ export const manhuaViralTemplateRouter = router({
     .input(
       z.object({
         seriesKey: z.string().min(4).max(64),
-        supervisorToken: z.string().max(512).optional(),
       }),
     )
     .query(async ({ ctx, input }) => {
-      assertSupervisorOps(ctx.user, input.supervisorToken);
+      assertSupervisorOps(ctx.user, ctx.supervisorSession);
       const { getManhuaSeriesLearnSnapshot } = await import(
         "../services/manhuaTemplateLearnService"
       );

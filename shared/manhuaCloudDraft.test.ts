@@ -126,6 +126,29 @@ describe("manhuaCloudDraft", () => {
     expect(again?.canvas.blocks.find((b) => b.id.startsWith("clip"))?.outputUrl).toBeUndefined();
   });
 
+  it("旧草稿 mt_* 平移；tpl_* 清空并附一次性迁移提示", () => {
+    const base = {
+      format: "mv-manhua-cloud-draft-v1",
+      clientUpdatedAt: "2026-08-15T10:00:00.000Z",
+      canvas: { blocks: [], edges: [] },
+    };
+    const publicDraft = parseManhuaCloudDraftPayload({
+      ...base,
+      writerSession: { viralTemplateId: "mt_A7F2" },
+    });
+    expect(publicDraft?.writerSession.publicTemplateId).toBe("mt_a7f2");
+    expect(publicDraft?.migration).toBeUndefined();
+
+    const privateDraft = parseManhuaCloudDraftPayload({
+      ...base,
+      writerSession: { viralTemplateId: "tpl_series_secret" },
+    });
+    expect(privateDraft?.writerSession.publicTemplateId).toBe("");
+    expect(privateDraft?.migration).toEqual({ clearedLegacyPrivateTemplate: true });
+    expect(JSON.stringify(privateDraft?.writerSession)).not.toContain("tpl_series_secret");
+    expect(JSON.stringify(privateDraft?.writerSession)).not.toContain("viralTemplateId");
+  });
+
   it("compares cloud vs local timestamps", () => {
     expect(isManhuaCloudDraftNewer("2026-07-20T08:00:00.000Z", "2026-07-20T07:00:00.000Z")).toBe(
       true,

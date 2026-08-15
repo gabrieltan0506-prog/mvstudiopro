@@ -61,16 +61,26 @@ describe("manhuaWriterSession", () => {
     expect(again?.assetsSkipped).toBe(false);
     expect(again?.workflowPhase).toBe("storyboard");
     expect(again?.customAssetRefs).toEqual([]);
-    expect(again?.viralTemplateId).toBe("");
+    expect(again?.publicTemplateId).toBe("");
   });
 
-  it("persists viralTemplateId", () => {
+  it("persists publicTemplateId", () => {
     const session = buildManhuaWriterSession({
       topic: "边关",
-      viralTemplateId: "tpl_border_farm_revenge",
+      publicTemplateId: "mt_a7f2",
     });
     const again = parseManhuaWriterSession(serializeManhuaWriterSession(session));
-    expect(again?.viralTemplateId).toBe("tpl_border_farm_revenge");
+    expect(again?.publicTemplateId).toBe("mt_a7f2");
+    expect(JSON.parse(serializeManhuaWriterSession(session))).not.toHaveProperty("viralTemplateId");
+  });
+
+  it("migrates legacy public mt_* but clears private tpl_*", () => {
+    expect(buildManhuaWriterSession({ viralTemplateId: "mt_BEEF" }).publicTemplateId).toBe(
+      "mt_beef",
+    );
+    expect(
+      buildManhuaWriterSession({ viralTemplateId: "tpl_border_farm_revenge" }).publicTemplateId,
+    ).toBe("");
   });
 
   it("round-trips customAssetRefs https urls", () => {

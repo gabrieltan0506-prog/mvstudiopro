@@ -19,20 +19,15 @@ function DomainRedirector() {
   const { user, loading } = useAuth();
   
   useEffect(() => {
-    captureSupervisorTokenFromUrl();
-    
     if (loading) return;
+    // 监管会话必须绑定当前登录账号；未登录时不能先消费并丢弃 URL 密钥。
+    if (user?.id) void captureSupervisorTokenFromUrl();
     
     const hostname = window.location.hostname;
     // 如果访问的是 fly.dev 测试域名
     if (hostname.endsWith("mvstudiopro.fly.dev")) {
       // 豁免 /login，让管理员有机会在此域名登入取得权限
       if (window.location.pathname.startsWith("/login")) {
-        return;
-      }
-      
-      // 豁免 ?supervisor=1 带有 token 的请求，让管理员直接使用免登入 URL
-      if (window.location.search.includes("supervisor=1")) {
         return;
       }
       

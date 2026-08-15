@@ -109,8 +109,11 @@ import {
   focusGraphicNoteReaderScript,
   isGraphicNoteMetaCreatorGuidance,
 } from "@shared/graphicNoteReaderFacing";
-import { captureSupervisorTokenFromUrl, getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import { readTopicCoverDeepResearchProFromLs } from "@/lib/platformCoverDrProLs";
+import {
+  hasSupervisorSessionHint,
+  SUPERVISOR_SESSION_CHANGED_EVENT,
+} from "@/lib/supervisorTrpcToken";
 import {
   getManhuaLearnContinueControl,
   isManhuaLearnEmptyBatchFailure,
@@ -2263,20 +2266,29 @@ function resolveKnowledgeCardSourceText(existing: string, fileCount: number): st
 
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
+  const [supervisorSessionReady, setSupervisorSessionReady] = useState(
+    hasSupervisorSessionHint,
+  );
   const [debugMode, setDebugMode] = useState(false);
   /** Debug 开启时加快轮询与刷新，让进度面板更接近即时 */
   const platformImageFlowPollIntervalMs = debugMode ? 650 : 2500;
   const compositeSheetLivePollIntervalMs = debugMode ? 380 : 850;
 
-  useEffect(() => {
-    captureSupervisorTokenFromUrl();
-  }, []);
-
   const { isAuthenticated, loading, user } = useAuth({
     autoFetch: true,
-    redirectOnUnauthenticated: !supervisorAccess,
+    redirectOnUnauthenticated: true,
     redirectPath: getLoginUrl(),
   });
+  useEffect(() => {
+    const refresh = () => setSupervisorSessionReady(hasSupervisorSessionHint());
+    window.addEventListener(SUPERVISOR_SESSION_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(SUPERVISOR_SESSION_CHANGED_EVENT, refresh);
+  }, []);
+  const hasSupervisorOpsAccess = Boolean(
+    user?.role === "admin" ||
+    user?.role === "supervisor" ||
+    (supervisorAccess && supervisorSessionReady),
+  );
   const queryClient = useQueryClient();
   const trpcUtils = trpc.useUtils();
   const [selectedWindowDays, setSelectedWindowDays] = useState<PlatformWindowDays>(15);
@@ -2307,15 +2319,12 @@ export default function PlatformPage() {
     }
   }, [platformComposite2x4Engine]);
 
-  const canConfigureCompositeImageTranslator =
-    supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+  const canConfigureCompositeImageTranslator = hasSupervisorOpsAccess;
 
   /** 与封面进阶开关一致：supervisor 入口 / admin / supervisor，一般用户不可见 */
-  const canConfigureStage2CopyEngine =
-    supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+  const canConfigureStage2CopyEngine = hasSupervisorOpsAccess;
 
-  const canManageWeixinChannelsCollector =
-    supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+  const canManageWeixinChannelsCollector = hasSupervisorOpsAccess;
   const weixinChannelsCollectorStatusQuery = trpc.mvAnalysis.getWeixinChannelsCollectorStatus.useQuery(
     undefined,
     {
@@ -2906,11 +2915,11 @@ export default function PlatformPage() {
   const confirmPlatformSkillQaImageMutation = trpc.mvAnalysis.confirmPlatformSkillQaImage.useMutation();
   const approveManhuaViralTemplateMutation = trpc.manhuaViralTemplate.approve.useMutation();
   const manhuaViralProposalsQuery = trpc.manhuaViralTemplate.listProposals.useQuery(
-    { supervisorToken: getSupervisorTrpcToken() },
+    undefined,
     {
       enabled:
         trendInsightTab === "ai_manhua" &&
-        Boolean(supervisorAccess || user?.role === "admin" || user?.role === "supervisor"),
+        hasSupervisorOpsAccess,
       staleTime: 30_000,
       retry: false,
     },
@@ -2937,7 +2946,7 @@ export default function PlatformPage() {
   }, [pendingManhuaViralProposals, selectedManhuaProposalId]);
 
   const refreshManhuaLearnServerJobs = useCallback(async () => {
-    const listed = await listManhuaLearnServerJobs(getSupervisorTrpcToken());
+    const listed = await listManhuaLearnServerJobs();
     setManhuaLearnServerJobs(listed.items);
     setManhuaLearnServerJobsHydrated(true);
     setManhuaLearnBasket((prev) => {
@@ -2964,7 +2973,7 @@ export default function PlatformPage() {
     if (!window.confirm("停止这部剧的学习？已落盘分集和静帧会保留，后续媒体流读取与模型调用将停止。")) return;
     setManhuaLearnControlBusy("cancel");
     try {
-      await cancelManhuaLearnServerJob(jobId, getSupervisorTrpcToken());
+      await cancelManhuaLearnServerJob(jobId);
       await refreshManhuaLearnServerJobs();
       toast.success("已请求停止这部剧", { description: "已落盘内容保留，不再继续下一集。" });
     } catch (error) {
@@ -2982,7 +2991,7 @@ export default function PlatformPage() {
     if (!jobId || !jobRunning || focusedManhuaLearnEpisodeIndex <= 0 || manhuaLearnControlBusy) return;
     setManhuaLearnControlBusy("skip");
     try {
-      await skipManhuaLearnServerEpisode(jobId, getSupervisorTrpcToken());
+      await skipManhuaLearnServerEpisode(jobId);
       toast.success("已请求跳过本集", { description: "服务器会保留此前检查点并转到下一集。" });
     } catch (error) {
       toast.error("跳过失败", { description: sanitizePlatformUserMessage(error instanceof Error ? error.message : String(error)) });
@@ -2993,7 +3002,7 @@ export default function PlatformPage() {
 
   useEffect(() => {
     const allowed = Boolean(
-      user?.id && (supervisorAccess || user.role === "admin" || user.role === "supervisor"),
+      user?.id && hasSupervisorOpsAccess,
     );
     if (!allowed || trendInsightTab !== "ai_manhua") return;
     let disposed = false;
@@ -3014,12 +3023,14 @@ export default function PlatformPage() {
       disposed = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [refreshManhuaLearnServerJobs, supervisorAccess, trendInsightTab, user?.id, user?.role]);
+  }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id]);
   /** 监管面板专用全量（真名可见）；无监管权限时服务端直接 FORBIDDEN，面板空态 */
   const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApprovedPrivate.useQuery(
-    { supervisorToken: getSupervisorTrpcToken() },
+    undefined,
     {
-      enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
+      enabled:
+        trendInsightTab === "ai_manhua" &&
+        hasSupervisorOpsAccess,
       staleTime: 60_000,
       retry: 1,
     },
@@ -3027,13 +3038,12 @@ export default function PlatformPage() {
   const manhuaLearnSnapshotQuery = trpc.manhuaViralTemplate.getSeriesLearnSnapshot.useQuery(
     {
       seriesKey: manhuaLearnFocusSeriesKey,
-      supervisorToken: getSupervisorTrpcToken(),
     },
     {
       enabled:
         trendInsightTab === "ai_manhua" &&
         manhuaLearnFocusSeriesKey.length >= 4 &&
-        Boolean(supervisorAccess || user?.role === "admin" || user?.role === "supervisor"),
+        hasSupervisorOpsAccess,
       staleTime: 15_000,
       refetchInterval: focusedManhuaLearnJobActive ? 15_000 : false,
       retry: false,
@@ -3127,7 +3137,7 @@ export default function PlatformPage() {
     setManhuaLearnControlBusy("delete");
     try {
       const hidden = jobId
-        ? await hideManhuaLearnServerSeries(jobId, getSupervisorTrpcToken())
+        ? await hideManhuaLearnServerSeries(jobId)
         : null;
       const nextBasket = removeManhuaLearnBasketItem(manhuaLearnBasket, seriesKey);
       setManhuaLearnBasket(nextBasket);
@@ -3716,14 +3726,12 @@ export default function PlatformPage() {
       confirmPaid = true;
     }
     try {
-      const supervisorTok = getSupervisorTrpcToken();
       const res = await askPlatformSkillQaMutation.mutateAsync({
         question: q,
         enabledSkillIds: Array.from(enabledPlatformSkillIds),
         allowBloggerTitle,
         qaModel: skillQaModel,
         confirmPaid,
-        ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
       });
       setSkillQaAnswer(res.answer || "");
       setSkillQaRemaining(res.remainingFreeToday);
@@ -3738,14 +3746,12 @@ export default function PlatformPage() {
         const ok = window.confirm(`${sanitizePlatformUserMessage(msg, "")}\n\n确认扣点继续？`);
         if (ok) {
           try {
-            const supervisorTok = getSupervisorTrpcToken();
             const res = await askPlatformSkillQaMutation.mutateAsync({
               question: q,
               enabledSkillIds: Array.from(enabledPlatformSkillIds),
               allowBloggerTitle,
               qaModel: skillQaModel,
               confirmPaid: true,
-              ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
             });
             setSkillQaAnswer(res.answer || "");
             setSkillQaRemaining(res.remainingFreeToday);
@@ -4852,7 +4858,6 @@ export default function PlatformPage() {
       setContentLoadingText("正在提交专属文案后台任务…");
       setContentDebug(null);
       try {
-        const supervisorTok = getSupervisorTrpcToken();
         const ctxForJob =
           capturedJudgment !== undefined
             ? String(capturedJudgment).trim() || undefined
@@ -4867,7 +4872,6 @@ export default function PlatformPage() {
           stage2LlmMode: "openai" as const,
           enabledSkillIds: Array.from(enabledPlatformSkillIds),
           allowBloggerTitle,
-          ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
         });
         setContentJobPollTrace({
           jobId,
@@ -5031,8 +5035,7 @@ export default function PlatformPage() {
       resumeSeriesKey?: string,
       options?: { refreshPreviewFrames?: boolean; retrySkippedEpisodes?: boolean },
     ) => {
-      const canOps =
-        supervisorAccess || user?.role === "admin" || user?.role === "supervisor";
+      const canOps = hasSupervisorOpsAccess;
       if (!canOps) {
         toast.error("学节奏为监管专用");
         return;
@@ -5113,7 +5116,6 @@ export default function PlatformPage() {
         const { jobId } = await createJob({
           type: "video",
           userId: String(user.id),
-          supervisorToken: getSupervisorTrpcToken(),
           input: {
             action: "manhua_template_learn",
             params: {
@@ -5390,9 +5392,8 @@ export default function PlatformPage() {
       }
     },
     [
-      supervisorAccess,
+      hasSupervisorOpsAccess,
       user?.id,
-      user?.role,
       copyManhuaLocalLearnFallback,
       manhuaViralProposalsQuery.refetch,
       applyManhuaLearnJobOutput,
@@ -5408,7 +5409,7 @@ export default function PlatformPage() {
     const active = manhuaLearnActiveJob;
     if (!manhuaLearnServerJobsHydrated) return;
     if (!active || !user?.id) return;
-    if (!(supervisorAccess || user.role === "admin" || user.role === "supervisor")) return;
+    if (!hasSupervisorOpsAccess) return;
     if (manhuaLearnPollingJobIdRef.current === active.jobId) return;
 
     let cancelled = false;
@@ -5564,9 +5565,8 @@ export default function PlatformPage() {
     manhuaLearnActiveJob,
     manhuaLearnServerJobsHydrated,
     manhuaViralProposalsQuery.refetch,
-    supervisorAccess,
+    hasSupervisorOpsAccess,
     user?.id,
-    user?.role,
   ]);
 
   const approveManhuaLearnProposal = useCallback(
@@ -5579,7 +5579,6 @@ export default function PlatformPage() {
         const res = await approveManhuaViralTemplateMutation.mutateAsync({
           id,
           confirmApprove: true,
-          supervisorToken: getSupervisorTrpcToken(),
         });
         toast.success(`已批准进库：${res.card.nameZh}`);
         setManhuaLearnResult((prev) =>
@@ -5990,7 +5989,6 @@ export default function PlatformPage() {
       const pollLabel =
         inp.pollDebugLabel ??
         (inp.sceneId ? `套装 · ${inp.sceneId}` : "套装 · platform_topic_cover_composite_bundle");
-      const supervisorToken = getSupervisorTrpcToken();
       const { jobId } = await enqueueTopicCoverAndCompositeBundleMutation.mutateAsync({
         sceneId: inp.sceneId,
         coverPersonaContext: inp.coverPersonaContext,
@@ -6007,7 +6005,6 @@ export default function PlatformPage() {
         ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
           ? { enableTopicCoverDeepResearchPro: true }
           : {}),
-        ...(supervisorToken ? { supervisorToken } : {}),
         compositeImageEngine: inp.compositeImageEngine ?? (inp.referencePhotoUrl ? "gpt_image2" : platformComposite2x4Engine),
         ...(inp.referencePhotoUrl ? { referencePhotoUrl: inp.referencePhotoUrl } : {}),
         enabledSkillIds: Array.from(enabledPlatformSkillIds),
@@ -6182,7 +6179,6 @@ export default function PlatformPage() {
     }) => {
       const pollLabel =
         inp.pollDebugLabel ?? (inp.sceneId ? `封面 · ${inp.sceneId}` : "封面 · platform_topic_image");
-      const supervisorToken = getSupervisorTrpcToken();
       const { jobId } = await enqueueGenerateTopicImageMutation.mutateAsync({
         topicHook: (inp.topicHook ?? "").slice(0, 500),
         format: inp.format,
@@ -6195,7 +6191,6 @@ export default function PlatformPage() {
         ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
           ? { enableTopicCoverDeepResearchPro: true }
           : {}),
-        ...(supervisorToken ? { supervisorToken } : {}),
         ...(inp.bulkCoverPack ? { bulkCoverPack: inp.bulkCoverPack } : {}),
         ...(inp.referencePhotoUrl ? { referencePhotoUrl: inp.referencePhotoUrl } : {}),
         coverPlatformHint: selectedTrendPlatforms[0],
@@ -7719,13 +7714,11 @@ export default function PlatformPage() {
         const headlineTitle = item.title;
         const isGraphicFormat = item.format === "图文" || item.format === "小红书";
         const compositeKind = isGraphicFormat ? "xiaohongshu_dual_note" : "storyboard_sheet_landscape";
-        const supervisorTok = getSupervisorTrpcToken();
         const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
         const compositeSupervisorExtras = {
           ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
             ? { enableTopicCoverDeepResearchPro: true as const }
             : {}),
-          ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
           ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
         };
         liveLines.push(`${new Date().toISOString()}  [客户端] 开始合成 · sceneId=${item.id} · kind=${compositeKind}`);
@@ -9614,13 +9607,11 @@ export default function PlatformPage() {
               ) {
                 return;
               }
-              const supervisorTok = getSupervisorTrpcToken();
               const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
               const compositeSupervisorExtras = {
                 ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
                   ? { enableTopicCoverDeepResearchPro: true as const }
                   : {}),
-                ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
                 ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
               };
               void (async () => {
@@ -10674,8 +10665,7 @@ export default function PlatformPage() {
 
 
   /** Debug UI：优先 hasSupervisorAccess（含 ?supervisor=1），兼角色 admin/supervisor */
-  const canShowPlatformDebug =
-    supervisorAccess || user?.role === "supervisor" || user?.role === "admin";
+  const canShowPlatformDebug = hasSupervisorOpsAccess;
 
   useEffect(() => {
     if (!canShowPlatformDebug && debugMode) setDebugMode(false);
@@ -11208,7 +11198,7 @@ export default function PlatformPage() {
     );
   }
 
-  if (!isAuthenticated && !supervisorAccess) {
+  if (!isAuthenticated) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-transparent px-6 text-white">
         <div className="max-w-lg rounded-[28px] border border-[#2b1f52] bg-[#100926]/95 p-8 text-center shadow-[0_20px_80px_rgba(0,0,0,0.35)]">
@@ -13709,7 +13699,7 @@ export default function PlatformPage() {
             <>
               <PlatformAssetAnalysisPanel
                 debugMode={debugMode}
-                supervisorAccess={Boolean(supervisorAccess || user?.role === "supervisor" || user?.role === "admin")}
+                supervisorAccess={hasSupervisorOpsAccess}
                 disabled={customNoteBusy || customTopicBusy || customMattingBusy}
                 personaSummary={personaSummary}
                 ipProfile={undefined}
@@ -16388,13 +16378,11 @@ export default function PlatformPage() {
                                   ? ""
                                   : `将消耗 ${compositeCost} 积分，生成${compositeLabel}，是否继续？`;
                                 if (!supervisorAccess && !window.confirm(note)) return;
-                                const supervisorTok = getSupervisorTrpcToken();
                                 const coverPersona = buildCoverPersonaContextForImageGen(personaSummary, ipProfile).trim();
                             const compositeSupervisorExtras = {
                               ...(canConfigureCompositeImageTranslator && readTopicCoverDeepResearchProFromLs()
                                 ? { enableTopicCoverDeepResearchPro: true as const }
                                 : {}),
-                              ...(supervisorTok ? { supervisorToken: supervisorTok } : {}),
                               ...(coverPersona ? { coverPersonaContext: coverPersona } : {}),
                             };
                                 void runThrottledPlatformImageRequest(`composite:${item.id}:${compositeKind}`, () =>

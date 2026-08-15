@@ -7,7 +7,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Loader2, MessageSquare, Paperclip, X } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { hasSupervisorAccess } from "@/lib/supervisorAccess";
-import { getSupervisorTrpcToken } from "@/lib/supervisorTrpcToken";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 
@@ -130,13 +129,11 @@ export default function PlatformProAgentDock() {
       byteLength: p.byteLength,
     }));
     setPending([]);
-    const tok = getSupervisorTrpcToken();
     void (async () => {
       try {
         const res = await chatMutation.mutateAsync({
           messages: next,
           ...(attachments.length ? { attachments } : {}),
-          ...(tok ? { supervisorToken: tok } : {}),
         });
         setMessages((prev) => [...prev, { role: "assistant", content: res.reply }]);
       } catch (e) {

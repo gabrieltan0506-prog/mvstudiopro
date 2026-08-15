@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { appRouter } from "./routers";
 import { COOKIE_NAME } from "../shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
+import {
+  getSupervisorSessionCookieOptions,
+  SUPERVISOR_SESSION_COOKIE_NAME,
+} from "./services/supervisor-session";
 import type { TrpcContext } from "./_core/context";
 
 type CookieCall = {
@@ -57,7 +61,7 @@ describe("auth.logout", () => {
     const result = await caller.auth.logout();
 
     expect(result).toEqual({ success: true });
-    expect(clearedCookies).toHaveLength(1);
+    expect(clearedCookies).toHaveLength(2);
     expect(clearedCookies[0]?.name).toBe(COOKIE_NAME);
     // secure / sameSite 随 NODE_ENV 变（生产才 secure+none），写死会在本地假红。
     // 真正要守的是：清 cookie 的属性必须与设置时逐项一致，否则浏览器不会真的删掉它。
@@ -68,6 +72,13 @@ describe("auth.logout", () => {
     expect(clearedCookies[0]?.options).toMatchObject({
       httpOnly: true,
       path: "/",
+    });
+    expect(clearedCookies[1]).toMatchObject({
+      name: SUPERVISOR_SESSION_COOKIE_NAME,
+      options: {
+        ...getSupervisorSessionCookieOptions(ctx.req),
+        maxAge: -1,
+      },
     });
   });
 });

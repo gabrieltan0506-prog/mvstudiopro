@@ -178,6 +178,7 @@ import {
 import {
   healManhuaWriterSessionCanonDrift,
   loadManhuaWriterSessionFromStorage,
+  migrateManhuaWriterTemplateId,
   saveManhuaWriterSessionToStorage,
 } from "@shared/manhuaWriterSession";
 import {
@@ -411,7 +412,18 @@ function saveFactoryCharacterPrefs(prefs: FactoryCharacterPrefs) {
 
 /** 本机编剧会话（剧情包 / 确认态 / Bible）；硬刷新恢复，避免线上重扩 */
 function bootWriterSession() {
-  return loadManhuaWriterSessionFromStorage();
+  const session = loadManhuaWriterSessionFromStorage();
+  let clearedLegacyPrivateTemplate = false;
+  try {
+    const raw = localStorage.getItem("mv-manhua-writer-session-v1");
+    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+    clearedLegacyPrivateTemplate = parsed
+      ? migrateManhuaWriterTemplateId(parsed).clearedLegacyPrivateTemplate
+      : false;
+  } catch {
+    /* 迁移提示失败不阻断草稿恢复；实际会话仍由严格解析器清理。 */
+  }
+  return { session, clearedLegacyPrivateTemplate };
 }
 
 
@@ -509,7 +521,13 @@ export default function OmniCanvas() {
 
   const initial = useMemo(() => loadCanvasState(), []);
   const initialFactoryPrefs = useMemo(() => loadFactoryCharacterPrefs(), []);
-  const initialWriterSession = useMemo(() => bootWriterSession(), []);
+  const initialWriterBoot = useMemo(() => bootWriterSession(), []);
+  const initialWriterSession = initialWriterBoot.session;
+
+  useEffect(() => {
+    if (!initialWriterBoot.clearedLegacyPrivateTemplate) return;
+    toast.message("剧情增强方案已更新，请重新选择");
+  }, [initialWriterBoot.clearedLegacyPrivateTemplate]);
 
   useEffect(() => {
     if (!initialWriterSession?.writerPack && !initialWriterSession?.projectBible) return;
@@ -695,8 +713,8 @@ export default function OmniCanvas() {
     castNames: string[];
   } | null>(null);
   const [writerBrief, setWriterBrief] = useState(() => initialWriterSession?.brief || "");
-  const [viralTemplateId, setViralTemplateId] = useState(
-    () => String(initialWriterSession?.viralTemplateId || "").trim(),
+  const [publicTemplateId, setPublicTemplateId] = useState(
+    () => String(initialWriterSession?.publicTemplateId || "").trim(),
   );
   const [writerEpisodeCount, setWriterEpisodeCount] = useState(() =>
     clampWriterEpisodeCount(initialWriterSession?.episodeCount ?? MANHUA_WRITER_EPISODE_DEFAULT),
@@ -1510,7 +1528,7 @@ export default function OmniCanvas() {
         characterVoiceLocks,
         audioReferenceLock,
         shareAssetToLibrary,
-        viralTemplateId,
+        publicTemplateId,
         stylePack,
       });
     } catch {
@@ -1532,7 +1550,7 @@ export default function OmniCanvas() {
     characterVoiceLocks,
     audioReferenceLock,
     shareAssetToLibrary,
-    viralTemplateId,
+    publicTemplateId,
     stylePack,
   ]);
 
@@ -1586,7 +1604,10 @@ export default function OmniCanvas() {
     );
     setStylePack(session.stylePack ?? null);
     setShareAssetToLibrary(Boolean(session.shareAssetToLibrary));
-    setViralTemplateId(String(session.viralTemplateId || "").trim());
+    if (draft.migration?.clearedLegacyPrivateTemplate) {
+      toast.message("剧情增强方案已更新，请重新选择");
+    }
+    setPublicTemplateId(String(session.publicTemplateId || "").trim());
     {
       // 已下线引擎先迁到等价档（Happy Horse → 2.0-fast），别让它经由「不认得」滑到 2.5
       const v = migrateRetiredManhuaLayoutVideoModel(session.videoModel);
@@ -1905,7 +1926,7 @@ export default function OmniCanvas() {
       segmentLookBindings,
       stylePack,
       shareAssetToLibrary,
-      viralTemplateId,
+      publicTemplateId,
       // 只存真选过的档。存自动预选值会让下次打开时把它当显式选型，
       // 一张历史 2.5 画布重开两次就被静默改成 mini
       videoModel: explicitWriterVideoModel,
@@ -1952,7 +1973,7 @@ export default function OmniCanvas() {
     shareAssetToLibrary,
     directorBoardMainByEpisode,
     directorBoardBySegment,
-    viralTemplateId,
+    publicTemplateId,
     explicitWriterVideoModel,
     deliveryPackage,
     factoryCineVocabLocale,
@@ -2311,8 +2332,8 @@ export default function OmniCanvas() {
     [manhuaViralTemplatesQuery.data?.groups],
   );
   const selectedViralTemplate = useMemo(
-    () => approvedViralTemplateCards.find((card) => card.publicId === viralTemplateId) || null,
-    [approvedViralTemplateCards, viralTemplateId],
+    () => approvedViralTemplateCards.find((card) => card.publicId === publicTemplateId) || null,
+    [approvedViralTemplateCards, publicTemplateId],
   );
   const recommendedViralTemplate = useMemo(
     () =>
@@ -2333,12 +2354,12 @@ export default function OmniCanvas() {
     return out;
   }, [manhuaViralTemplatesQuery.data?.groups]);
   useEffect(() => {
-    if (!manhuaViralTemplatesQuery.isSuccess || !viralTemplateId) return;
-    // 旧草稿存的内部 id（tpl_series_*）在公开卡集里必然 miss → 自动清空要求重选（隐私迁移）
-    if (!approvedViralTemplateCards.some((card) => card.publicId === viralTemplateId)) {
-      setViralTemplateId("");
+    if (!manhuaViralTemplatesQuery.isSuccess || !publicTemplateId) return;
+    if (!approvedViralTemplateCards.some((card) => card.publicId === publicTemplateId)) {
+      setPublicTemplateId("");
+      toast.message("剧情增强方案已更新，请重新选择");
     }
-  }, [approvedViralTemplateCards, manhuaViralTemplatesQuery.isSuccess, viralTemplateId]);
+  }, [approvedViralTemplateCards, manhuaViralTemplatesQuery.isSuccess, publicTemplateId]);
   const getSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const splitPropSheetMutation = trpc.mvAnalysis.splitManhuaPropSheet.useMutation();
   const cropDirectorBoardMutation = trpc.mvAnalysis.cropManhuaDirectorBoardMain.useMutation();
@@ -3406,9 +3427,9 @@ export default function OmniCanvas() {
       .filter(Boolean)
       .join("\n\n");
     const mergedBrief = [brief, designInject].filter(Boolean).join("\n\n");
-    const reqPreview = `topic=${topic}\nepisodes=${count}\nbrief:\n${mergedBrief.slice(0, 4000)}\nviralTemplate=${viralTemplateId || "off"}\nvideoModel=${selectedVideoModel}`;
+    const reqPreview = `topic=${topic}\nepisodes=${count}\nbrief:\n${mergedBrief.slice(0, 4000)}\npublicTemplate=${publicTemplateId || "off"}\nvideoModel=${selectedVideoModel}`;
     pushDebug("expandWriterPack:start", {
-      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count} overwriteOld=1 viralTemplate=${viralTemplateId || "off"} videoModel=${selectedVideoModel}`,
+      detail: `topicLen=${topic.length} briefLen=${brief.length} episodes=${count} overwriteOld=1 publicTemplate=${publicTemplateId || "off"} videoModel=${selectedVideoModel}`,
       request: reqPreview,
     });
     /** 服务端 300s；客户端略宽一点，超时必须解锁，避免旧稿挂着却一直「正在扩写」 */
@@ -3418,7 +3439,7 @@ export default function OmniCanvas() {
       mergedBrief,
       count,
       writerExpandTier,
-      viralTemplateId,
+      publicTemplateId,
       writerLengthTierId,
       selectedVideoModel,
       fromEpisode,
@@ -3437,7 +3458,7 @@ export default function OmniCanvas() {
           episodeCount: count,
           tier: writerExpandTier,
           requestId: expandRequestId,
-          viralTemplateId: viralTemplateId || undefined,
+          publicTemplateId: publicTemplateId || undefined,
           lengthTierId: writerLengthTierId,
           videoModel: selectedVideoModel,
           fromEpisode: fromEpisode || undefined,
@@ -3522,7 +3543,7 @@ export default function OmniCanvas() {
         characterVoiceLocks: [] as ManhuaCharacterVoiceLock[],
         audioReferenceLock: null as ManhuaAudioReferenceLock | null,
         shareAssetToLibrary,
-        viralTemplateId,
+        publicTemplateId,
         videoModel: selectedVideoModel,
       };
       const factoryPrefs = {
@@ -3551,7 +3572,7 @@ export default function OmniCanvas() {
       pushDebug("expandWriterPack:ok", {
         level: "ok",
         ms: Date.now() - t0,
-        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount} · archivedPaid=${cleaned.archivedCount} · overwritten=1 · viralTemplate=${viralTemplateId || "off"} · videoModel=${selectedVideoModel}`,
+        detail: `${pack.seriesTitle || "—"} · ${pack.episodes.length}ep · ready=${Boolean(res.ready)} · clearedFactory=${cleaned.removedCount} · archivedPaid=${cleaned.archivedCount} · overwritten=1 · publicTemplate=${publicTemplateId || "off"} · videoModel=${selectedVideoModel}`,
         request: reqPreview,
         response: `${pack.seriesTitle || ""}\n${pack.logline || ""}\n${epDigest}`.slice(0, 8000),
       });
@@ -3594,7 +3615,7 @@ export default function OmniCanvas() {
     writerVideoModel,
     writerFromEpisode,
     writerFromSegment,
-    viralTemplateId,
+    publicTemplateId,
     writerExpandTier,
     customAssetRefs,
     selectedCharacterIds,
@@ -7954,12 +7975,12 @@ export default function OmniCanvas() {
                 <label className="block text-[11px] font-semibold text-cyan-50/80">
                   剧情增强（可选）
                 </label>
-                {recommendedViralTemplate && recommendedViralTemplate.publicId !== viralTemplateId ? (
+                {recommendedViralTemplate && recommendedViralTemplate.publicId !== publicTemplateId ? (
                   <button
                     type="button"
                     disabled={writerBusy || factoryBusy}
                     onClick={() => {
-                      setViralTemplateId(recommendedViralTemplate.publicId);
+                      setPublicTemplateId(recommendedViralTemplate.publicId);
                       setWriterConfirmed(false);
                     }}
                     className="mt-1.5 rounded-lg border border-amber-300/25 bg-amber-400/10 px-2.5 py-1.5 text-[10px] font-semibold text-amber-100 hover:bg-amber-400/15 disabled:opacity-50"
@@ -7968,9 +7989,9 @@ export default function OmniCanvas() {
                   </button>
                 ) : null}
                 <select
-                  value={viralTemplateId}
+                  value={publicTemplateId}
                   onChange={(e) => {
-                    setViralTemplateId(e.target.value);
+                    setPublicTemplateId(e.target.value);
                     setWriterConfirmed(false);
                   }}
                   disabled={writerBusy || factoryBusy || manhuaViralTemplatesQuery.isLoading}

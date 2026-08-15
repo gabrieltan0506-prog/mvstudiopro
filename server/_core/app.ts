@@ -7,6 +7,7 @@ import { resolveUserTier, type UserTier } from "../services/tier-provider-routin
 import { registerAuthApiRoutes } from "../routers/authApi";
 import { registerSmsAuthRoutes } from "../routers/smsAuth";
 import { registerSpeechApiRoutes } from "../routers/speechApi";
+import { registerSupervisorSessionRoutes } from "../routers/supervisorSession";
 
 export function createApp() {
   if (!process.env.JWT_SECRET) {
@@ -21,6 +22,7 @@ export function createApp() {
   registerAuthApiRoutes(app);
   registerSmsAuthRoutes(app);
   registerSpeechApiRoutes(app);
+  registerSupervisorSessionRoutes(app);
 
   // health check
   app.get("/api/health", (_req, res) => {

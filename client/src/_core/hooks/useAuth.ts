@@ -1,5 +1,5 @@
 import { getLoginUrl } from "@/const";
-import { SUPERVISOR_TRPC_TOKEN_SESSION_KEY } from "@/lib/supervisorTrpcToken";
+import { clearSupervisorSession } from "@/lib/supervisorTrpcToken";
 import { trpc } from "@/lib/trpc";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TRPCClientError } from "@trpc/client";
@@ -63,11 +63,6 @@ export function useAuth(options?: UseAuthOptions) {
    * 残留的 supervisor token 会让服务端 OR 判定把普通账号当监管；监管查询缓存同理。
    */
   const clearSupervisorClientState = useCallback(() => {
-    try {
-      sessionStorage.removeItem(SUPERVISOR_TRPC_TOKEN_SESSION_KEY);
-    } catch {
-      // ignore
-    }
     queryClient.removeQueries({
       predicate: (query) => {
         const raw = JSON.stringify(query.queryKey || []);
@@ -101,6 +96,7 @@ export function useAuth(options?: UseAuthOptions) {
       queryClient.setQueryData(["api-me"], null);
       localStorage.removeItem("manus-runtime-user-info");
       clearSupervisorClientState();
+      await clearSupervisorSession();
       await utils.auth.me.invalidate();
     }
   }, [clearSupervisorClientState, logoutMutation, queryClient, utils]);
