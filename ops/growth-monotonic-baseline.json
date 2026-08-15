@@ -1,4 +1,10 @@
 {
+  "activePlatforms": [
+    "douyin",
+    "xiaohongshu",
+    "bilibili",
+    "weixin_channels"
+  ],
   "platforms": {
     "douyin": {
       "currentTotal": 121328,
