@@ -255,8 +255,8 @@ export type ManhuaLearnSeriesProgress = {
   seriesKey: string;
   sourceUrl: string;
   titleHint: string;
-  /** provenance：本系列由哪条学习链产出（A/B 隔离；seriesKey 已按此分命名空间） */
-  learnLlm?: "gpt" | "claude";
+  /** provenance：本系列由哪条学习链产出（A/B 隔离；seriesKey 已按此分命名空间；deepseek 只管文本阶段） */
+  learnLlm?: "gpt" | "claude" | "deepseek";
   mixId?: string;
   listedEpisodeCount: number;
   /** 列表里出现过的全部集号（判「合集全学完」用集合包含，不用数量比较） */

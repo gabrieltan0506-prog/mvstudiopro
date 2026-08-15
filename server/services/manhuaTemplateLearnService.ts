@@ -292,9 +292,10 @@ function seriesKeyFrom(input: {
   url: string;
   mixId?: string;
   title?: string;
-  learnLlm?: "gpt" | "claude";
+  learnLlm?: "gpt" | "claude" | "deepseek";
 }): string {
-  const ns = input.learnLlm === "claude" ? ":claude" : "";
+  const ns =
+    input.learnLlm === "claude" ? ":claude" : input.learnLlm === "deepseek" ? ":deepseek" : "";
   const mix = String(input.mixId || "").trim();
   if (mix) return createHash("sha1").update(`mix:${mix}${ns}`).digest("hex").slice(0, 12);
   return createHash("sha1")
@@ -1463,11 +1464,70 @@ async function polishAndPersistManhuaProposal(input: {
       MANHUA_TEMPLATE_FRAME_VISION_MODEL,
       MANHUA_TEMPLATE_FRAME_VISION_REASONING,
       MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL,
+      MANHUA_TEMPLATE_LEARN_DEEPSEEK_MODEL,
     } = await import("../../shared/manhuaTemplateLearnFrameVision.js");
     const isClaude = learnLlm === "claude";
+    const isDeepseek = learnLlm === "deepseek";
+    const polishMessages = [
+      {
+        role: "system" as const,
+        content:
+          "你根据多集漫剧学习摘要，输出一张中性节奏模板 JSON（nameZh,laneZh,summaryZh,hook3sZh,beatGrid,scenePoolHints,castShape）。禁止外部剧名/台词。只返回 JSON。",
+      },
+      {
+        role: "user" as const,
+        content: JSON.stringify({
+          titleHint: prog.titleHint,
+          digests: digests.slice(0, MANHUA_LEARN_ANALYSIS_TARGET).map((d) => ({
+            episodeIndex: d.episodeIndex,
+            hookNoteZh: d.hookNoteZh,
+            transcriptPreview: d.transcriptPreview.slice(0, 800),
+            climaxNotes: d.climaxNotes,
+            sceneHints: d.sceneHints,
+            beatHints: d.beatHints.slice(0, 6),
+          })),
+          seed: {
+            nameZh: proposal.nameZh,
+            laneZh: proposal.laneZh,
+            hook3sZh: proposal.hook3sZh,
+          },
+        }),
+      },
+    ];
     // 调用前先记计划模型：失败时 provenance 也能说明「试过哪个模型」
-    polishModelUsed = isClaude ? MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL : MANHUA_TEMPLATE_FRAME_VISION_MODEL;
-    const resp = await invokeLLM({
+    polishModelUsed = isClaude
+      ? MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL
+      : isDeepseek
+        ? MANHUA_TEMPLATE_LEARN_DEEPSEEK_MODEL
+        : MANHUA_TEMPLATE_FRAME_VISION_MODEL;
+    const deepseekPolish = async () => {
+      // 经济档文本润色（2026-08-15 用户拍板）：必须显式关推理——默认深推理会把
+      // max_tokens 全烧成 reasoning_tokens，正文零字照扣钱（同日 PK 探针实锤）
+      const key = String(process.env.OPENROUTER_API_KEY || "").trim();
+      if (!key) throw new Error("deepseek polish 通道未配置");
+      const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://www.mvstudiopro.com",
+          "X-OpenRouter-Title": "MVStudioPro",
+        },
+        signal: input.abortSignal ?? AbortSignal.timeout(180_000),
+        body: JSON.stringify({
+          model: MANHUA_TEMPLATE_LEARN_DEEPSEEK_MODEL,
+          temperature: 0.3,
+          max_tokens: 4096,
+          response_format: { type: "json_object" },
+          reasoning: { enabled: false },
+          messages: polishMessages,
+        }),
+      });
+      const raw = await r.text();
+      if (!r.ok) throw new Error(`deepseek polish HTTP ${r.status}: ${raw.slice(0, 120)}`);
+      return JSON.parse(raw) as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }> };
+    };
+    const resp = isDeepseek ? await deepseekPolish() : await invokeLLM({
       model: "pro",
       provider: isClaude ? "anthropic" : "openai",
       modelName: isClaude ? MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL : MANHUA_TEMPLATE_FRAME_VISION_MODEL,
@@ -1476,34 +1536,10 @@ async function polishAndPersistManhuaProposal(input: {
       abortSignal: input.abortSignal,
       // claude-opus-5 不收采样控件与 response_format，仅 GPT 路径带
       ...(isClaude ? {} : { temperature: 0.3, response_format: { type: "json_object" as const } }),
-      messages: [
-        {
-          role: "system",
-          content:
-            "你根据多集漫剧学习摘要，输出一张中性节奏模板 JSON（nameZh,laneZh,summaryZh,hook3sZh,beatGrid,scenePoolHints,castShape）。禁止外部剧名/台词。只返回 JSON。",
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            titleHint: prog.titleHint,
-            digests: digests.slice(0, MANHUA_LEARN_ANALYSIS_TARGET).map((d) => ({
-              episodeIndex: d.episodeIndex,
-              hookNoteZh: d.hookNoteZh,
-              transcriptPreview: d.transcriptPreview.slice(0, 800),
-              climaxNotes: d.climaxNotes,
-              sceneHints: d.sceneHints,
-              beatHints: d.beatHints.slice(0, 6),
-            })),
-            seed: {
-              nameZh: proposal.nameZh,
-              laneZh: proposal.laneZh,
-              hook3sZh: proposal.hook3sZh,
-            },
-          }),
-        },
-      ],
+      messages: polishMessages,
     });
-    if (String(resp.choices?.[0]?.finish_reason || "") === "max_tokens") {
+    const finishReason = String(resp.choices?.[0]?.finish_reason || "");
+    if (finishReason === "max_tokens" || finishReason === "length") {
       throw new Error("polish_truncated");
     }
     const raw = String(resp.choices?.[0]?.message?.content || "");
@@ -1533,7 +1569,8 @@ async function polishAndPersistManhuaProposal(input: {
     provenance: {
       frameVision: frameVisionAgg,
       proposalPolish: {
-        provider: learnLlm === "claude" ? "anthropic" : "openai",
+        provider:
+          learnLlm === "claude" ? "anthropic" : learnLlm === "deepseek" ? "deepseek" : "openai",
         model: polishModelUsed,
         attempted: true,
         success: polishOk,

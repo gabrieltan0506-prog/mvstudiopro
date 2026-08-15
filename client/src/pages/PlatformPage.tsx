@@ -3013,11 +3013,15 @@ export default function PlatformPage() {
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [refreshManhuaLearnServerJobs, supervisorAccess, trendInsightTab, user?.id, user?.role]);
-  const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApproved.useQuery(undefined, {
-    enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
-    staleTime: 60_000,
-    retry: 1,
-  });
+  /** 监管面板专用全量（真名可见）；无监管权限时服务端直接 FORBIDDEN，面板空态 */
+  const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApprovedPrivate.useQuery(
+    { supervisorToken: getSupervisorTrpcToken() },
+    {
+      enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
+      staleTime: 60_000,
+      retry: 1,
+    },
+  );
   const manhuaLearnSnapshotQuery = trpc.manhuaViralTemplate.getSeriesLearnSnapshot.useQuery(
     {
       seriesKey: manhuaLearnFocusSeriesKey,
@@ -4125,6 +4129,7 @@ export default function PlatformPage() {
               >
                 <option value="kimi-k3">扩写·稳定档</option>
                 <option value="qwen3.8-max">扩写·轻快档</option>
+                <option value="deepseek-v4">扩写·经济档</option>
               </select>
               <span className="text-[11px] text-gray-500">
                 已勾 {selectedShortlistIds.length}/{PLATFORM_TOPIC_EXPAND_MAX}

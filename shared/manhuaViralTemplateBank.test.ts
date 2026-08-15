@@ -11,6 +11,7 @@ import {
   mergeManhuaViralTemplateBanks,
   parseManhuaViralTemplateCard,
   recommendApprovedManhuaViralTemplate,
+  toPublicManhuaViralTemplateCard,
   type ManhuaViralTemplateCard,
 } from "./manhuaViralTemplateBank";
 import { buildManhuaWriterExpandPrompt } from "./manhuaWriterRoom";
@@ -141,5 +142,63 @@ describe("manhuaViralTemplateBank", () => {
     expect(prompt).toMatch(/增强策略，不是固定公式/);
     expect(prompt).toMatch(/与本剧冲突的节拍直接舍弃/);
     expect(prompt).not.toMatch(/节拍格|密度建议|正文≥|人设槽|场景池/);
+  });
+});
+
+describe("PublicManhuaViralTemplateCard 匿名化边界（2026-08-15 审查必须修）", () => {
+  const secretCard = {
+    id: "tpl_series_deadbeef0001",
+    nameZh: "某爆款剧真名节奏",
+    laneZh: "爽文逆袭",
+    summaryZh: "内部摘要SECRET_SUMMARY",
+    hook3sZh: "内部钩子SECRET_HOOK",
+    beatGrid: [
+      { atSec: 0, conflictZh: "冲突SECRET_BEAT", visualZh: "画面SECRET_VISUAL" },
+      { atSec: 3, conflictZh: "冲突2", visualZh: "画面2" },
+    ],
+    scenePoolHints: ["场景SECRET_SCENE"],
+    castShape: { leadDesireZh: "欲望SECRET", pressureZh: "压力SECRET" },
+    densityHints: { minBodyChars: 280, minDialogueLines: 12, minLocationHits: 2 },
+    sourceRefs: [{ url: "https://douyin.example/SECRET_URL", fetchedAt: "2026-08-01" }],
+    status: "approved",
+    publicCode: "A7F2",
+    provenance: { proposalPolish: { provider: "SECRET_PROVIDER", model: "m", attempted: true, success: true } },
+    privateFutureField: "SECRET_FUTURE",
+  } as unknown as ManhuaViralTemplateCard;
+
+  it("公开卡不含任何内部字段与自由文本（含未来新增字段）", () => {
+    const pub = toPublicManhuaViralTemplateCard(secretCard, { featureZh: "特色A", introZh: "简介B" });
+    expect(pub).not.toBeNull();
+    const wire = JSON.stringify(pub);
+    for (const leak of [
+      "tpl_series", "真名", "SECRET_SUMMARY", "SECRET_HOOK", "SECRET_BEAT", "SECRET_VISUAL",
+      "SECRET_SCENE", "SECRET_URL", "SECRET_PROVIDER", "SECRET_FUTURE", "sourceRefs", "provenance",
+    ]) {
+      expect(wire).not.toContain(leak);
+    }
+    expect(Object.keys(pub!).sort()).toEqual(
+      ["beatCount", "densityLevel", "featureZh", "introZh", "laneZh", "nameZh", "publicId"].sort(),
+    );
+  });
+
+  it("句柄/名称/密度档正确派生", () => {
+    const pub = toPublicManhuaViralTemplateCard(secretCard, null)!;
+    expect(pub.publicId).toBe("mt_a7f2");
+    expect(pub.publicId).toMatch(/^mt_[a-z0-9]{4,8}$/);
+    expect(pub.nameZh).toBe("爽文逆袭·爆款节奏 A7F2");
+    expect(pub.beatCount).toBe(2);
+    expect(pub.densityLevel).toBe("dense");
+  });
+
+  it("无 publicCode 的卡拒绝公开（返回 null，不回退内部 id）", () => {
+    const noCode = { ...secretCard, publicCode: undefined } as ManhuaViralTemplateCard;
+    expect(toPublicManhuaViralTemplateCard(noCode, null)).toBeNull();
+  });
+
+  it("parse 白名单接受合法 publicCode、拒绝畸形值", () => {
+    const ok = parseManhuaViralTemplateCard({ ...secretCard });
+    expect(ok?.publicCode).toBe("A7F2");
+    const bad = parseManhuaViralTemplateCard({ ...secretCard, publicCode: "tpl_series_x" });
+    expect(bad?.publicCode).toBeUndefined();
   });
 });

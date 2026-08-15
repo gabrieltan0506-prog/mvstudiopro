@@ -6196,7 +6196,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             .min(1)
             .max(PLATFORM_TOPIC_EXPAND_MAX),
           /** 扩写引擎（用户可选）：缺省 kimi-k3（OpenRouter 主/Evolink 兜底）；qwen3.8-max（Evolink 主/OpenRouter 兜底） */
-          expandEngine: z.enum(["kimi-k3", "qwen3.8-max"]).optional(),
+          expandEngine: z.enum(["kimi-k3", "qwen3.8-max", "deepseek-v4"]).optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -6241,7 +6241,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               picks: input.picks,
               enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : [],
               allowBloggerTitle: Boolean(input.allowBloggerTitle),
-              expandEngine: input.expandEngine === "qwen3.8-max" ? "qwen3.8-max" : "kimi-k3",
+              expandEngine:
+                input.expandEngine === "qwen3.8-max" || input.expandEngine === "deepseek-v4"
+                  ? input.expandEngine
+                  : "kimi-k3",
               chargedCredits: shouldCharge ? cost : 0,
               perItemCredits: shouldCharge ? perItemCost : 0,
             },
@@ -9065,29 +9068,37 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         const layout = resolveManhuaSeedanceLayoutProfile(input.videoModel);
         const requestedTemplateId = String(input.viralTemplateId || "").trim();
-        let appliedTemplate: { id: string; nameZh: string } | null = null;
+        let appliedTemplate: { publicId: string; nameZh: string } | null = null;
+        /** 内部 id 仅供服务端扩写流程/账目使用，永不回传浏览器 */
+        let appliedInternalTemplateId: string | undefined;
         let viralTemplateAddon = "";
         if (requestedTemplateId) {
-          const [{ getMergedManhuaViralTemplate }, { formatManhuaViralTemplateWriterSkillFromCard }] =
-            await Promise.all([
-              import("./services/manhuaViralTemplateStore.js"),
-              import("../shared/manhuaViralTemplateBank.js"),
-            ]);
-          const card = await getMergedManhuaViralTemplate(requestedTemplateId);
-          if (!card || card.status !== "approved") {
+          const [{ resolveViralTemplateForExpand }, bank] = await Promise.all([
+            import("./services/manhuaViralTemplateStore.js"),
+            import("../shared/manhuaViralTemplateBank.js"),
+          ]);
+          // fail-closed 三分类解析（mt_* / legacy tpl_* / 其余拒）；无 publicCode 一律不放行——
+          // 否则旧内部 id 就是绕过匿名层的后门（审查返工 3）
+          const resolved = await resolveViralTemplateForExpand(requestedTemplateId);
+          if ("error" in resolved) {
             throw new TRPCError({
               code: "BAD_REQUEST",
-              message: "所选剧情增强方案已下架或不存在，请刷新后重试",
+              message:
+                resolved.error === "no_public_code"
+                  ? "所选剧情增强方案暂不可用，请刷新后重新选择"
+                  : "所选剧情增强方案已下架或不存在，请刷新后重试",
             });
           }
-          viralTemplateAddon = formatManhuaViralTemplateWriterSkillFromCard(card);
+          viralTemplateAddon = bank.formatManhuaViralTemplateWriterSkillFromCard(resolved.card);
           if (!viralTemplateAddon) {
             throw new TRPCError({
               code: "BAD_REQUEST",
               message: "所选剧情增强方案内容不完整，未调用扩写模型",
             });
           }
-          appliedTemplate = { id: card.id, nameZh: card.nameZh };
+          appliedInternalTemplateId = resolved.card.id;
+          // 商业机密边界：完整卡只喂模型；浏览器响应一律匿名句柄（监管在监管面板看全量）
+          appliedTemplate = resolved.appliedTemplate;
         }
         const episodeCount = clampWriterEpisodeCount(input.episodeCount);
         // 局部改写按实际重写集数计费（按集计价的拍板语义）：fromEpisode 起重写到末集。
@@ -9125,7 +9136,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           fromEpisode: input.fromEpisode,
           fromSegment: input.fromSegment,
           lockedEpisodeBody: input.lockedEpisodeBody,
-          viralTemplateId: appliedTemplate?.id,
+          viralTemplateId: appliedInternalTemplateId,
           viralTemplateAddon,
         });
         const { createHash } = await import("node:crypto");

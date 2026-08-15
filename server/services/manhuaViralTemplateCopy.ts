@@ -1,7 +1,7 @@
 /**
  * 爆款模板前台文案定稿（用户 2026-08-12 润色过关）。
- * 前台零具名：不出现学习源剧名；键=模板 id，缺席时由画布侧按节拍数据现场合成兜底。
- * 增改文案：编辑本表即可，无需动 UI。
+ * 2026-08-15 迁入服务端：键=内部模板 id 属商业机密（可反查学习源），不得进前端 bundle；
+ * 公开接口只把值（featureZh/introZh 零具名文案）随匿名卡下发。增改文案：编辑本表即可。
  */
 
 export type ManhuaViralTemplateCopy = { featureZh: string; introZh: string };

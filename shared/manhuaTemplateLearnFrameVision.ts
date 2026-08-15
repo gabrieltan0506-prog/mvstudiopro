@@ -23,15 +23,22 @@ export const MANHUA_TEMPLATE_FRAME_VISION_MAX_FRAMES = 24;
  * env `MANHUA_TEMPLATE_LEARN_LLM_PROVIDER=claude` 切 Claude（帧视觉+模板润色同切），
  * 缺省走 GPT。产出两版模板各生成剧本，用户亲选哪版有拍的欲望＝唯一验收标准。
  */
-export type ManhuaTemplateLearnLlmProvider = "gpt" | "claude";
+/**
+ * deepseek（2026-08-15 用户拍板）只接管**文本阶段**（提案润色/digest 合成），
+ * 读帧视觉一律回落 gpt——它不是多模态模型，不长眼睛。
+ */
+export type ManhuaTemplateLearnLlmProvider = "gpt" | "claude" | "deepseek";
 /** Claude 档：claude-opus-5（带高分辨率 vision；模型口径取自 claude-api skill 2026-08） */
 export const MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL = "claude-opus-5" as const;
+/** 经济档文本润色（2026-08-15 用户拍板）：仅 polish/digest 文本阶段，读帧不许用 */
+export const MANHUA_TEMPLATE_LEARN_DEEPSEEK_MODEL = "deepseek/deepseek-v4-pro-0813" as const;
 
 export function resolveManhuaTemplateLearnLlmProvider(
   raw?: string | null,
 ): ManhuaTemplateLearnLlmProvider {
   const t = String(raw || "").trim().toLowerCase();
   if (t === "claude" || t === "anthropic") return "claude";
+  if (t === "deepseek") return "deepseek";
   if (t && t !== "gpt" && t !== "openai" && t !== "terra") {
     // A/B 部署变量拼错会静默产出错误实验组——留告警别静默
     console.warn(`[manhuaTemplateLearn] 未知的 LLM provider 环境值「${t}」，按 gpt 处理`);
