@@ -157,10 +157,14 @@ export const WEIXIN_CHANNELS_SEARCH_FRESHNESS_DAYS = 15;
 // 搜索卡片播放量只负责候选召回，最终是否达标仍由播放器四项硬门决定。
 // “最热门”数千播放的卡片也可能有爆款互动，不能在结果页先误杀。
 export const WEIXIN_CHANNELS_SEARCH_HIGH_PLAY_THRESHOLD = 1_000;
-/** 无法读出总时长时保留慢 OCR/网络容差，但不再退回旧的 60 秒宽松预算。 */
-export const WEIXIN_CHANNELS_UNKNOWN_DURATION_CAPTURE_BUDGET_MS = 40_000;
+/** 用户要求单条 UI 采集必须在 30–35 秒内结束；Fly 上传由后台批量链承担。 */
+export const WEIXIN_CHANNELS_UNKNOWN_DURATION_CAPTURE_BUDGET_MS = 35_000;
 /** watchdog 的单条端到端硬上限；包含安全重试与 Fly 持久化确认。 */
 export const WEIXIN_CHANNELS_SINGLE_VIDEO_HARD_TIMEOUT_MS = 60_000;
+/** 打开评论前必须完整预留三屏读取、专用关闭和同视频恢复时间。 */
+export const WEIXIN_CHANNELS_COMMENT_CAPTURE_MIN_BUDGET_MS = 10_000;
+/** 无 pending 时同一视频最多自动补做一次 UI；第二次失败必须退出本轮。 */
+export const WEIXIN_CHANNELS_MAX_SAME_VIDEO_UI_FAILURES = 2;
 export type WeixinChannelsCaptureActivity = {
   observationId: string;
   videoIdentity: string;
@@ -297,10 +301,29 @@ async function finishCollectorCaptureActivity(activity: WeixinChannelsCaptureAct
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  process.stderr.write(`collector_video_capture_finished:${JSON.stringify({
+  process.stderr.write(`collector_video_capture_activity_finished:${JSON.stringify({
     observationId: activity.observationId,
     windowId: activity.windowId,
     elapsedMs,
+  })}\n`);
+}
+
+async function failCollectorCaptureActivity(
+  activity: WeixinChannelsCaptureActivity,
+  reason: string,
+) {
+  const file = collectorCaptureActivityFile(activity.windowId);
+  try {
+    const current = JSON.parse(await fs.readFile(file, "utf8")) as WeixinChannelsCaptureActivity;
+    if (current.observationId === activity.observationId) await fs.unlink(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  process.stderr.write(`collector_video_capture_failed:${JSON.stringify({
+    observationId: activity.observationId,
+    windowId: activity.windowId,
+    elapsedMs: Date.now() - activity.startedAtMs,
+    reason,
   })}\n`);
 }
 
@@ -340,6 +363,38 @@ export function captureBudgetMsForVideo(videoDurationSec: number) {
 
 function remainingBudgetMs(deadlineAt?: number) {
   return deadlineAt === undefined ? Number.POSITIVE_INFINITY : Math.max(0, deadlineAt - Date.now());
+}
+
+export function hasMinimumCommentCaptureBudget(deadlineAt: number, now = Date.now()) {
+  return deadlineAt - now >= WEIXIN_CHANNELS_COMMENT_CAPTURE_MIN_BUDGET_MS;
+}
+
+export function collectorCaptureFailureAction(params: {
+  reason: string;
+  failureCount: number;
+  pendingExists: boolean;
+}) {
+  // pending 已经证明 UI 全部结束，只需继续网络补传，绝不能重新操作播放器。
+  if (params.pendingExists) return "retry_pending_upload" as const;
+  if (/weixin_channels_(?:comments_(?:capture_budget_missing_before_open|two_page_budget_missing)|capture_time_budget_(?:exhausted|exceeded)|single_video_capture_hard_timeout)/
+    .test(params.reason)) {
+    return "stop_budget_exhausted" as const;
+  }
+  return params.failureCount >= WEIXIN_CHANNELS_MAX_SAME_VIDEO_UI_FAILURES
+    ? "stop_ui_retry_exhausted" as const
+    : "retry_ui_once" as const;
+}
+
+export function shouldDeferCollectorUploads(params: {
+  probe: boolean;
+  maxScanned?: number;
+  maxQualified?: number;
+  deadlineAt?: number;
+}) {
+  return !params.probe
+    && params.maxScanned === undefined
+    && params.maxQualified === undefined
+    && params.deadlineAt === undefined;
 }
 
 async function waitWithinCaptureBudget(deadlineAt: number | undefined, preferredMinMs: number, preferredMaxMs: number) {
@@ -807,14 +862,11 @@ export function findCommentsOpenPoint(lines: OcrLine[]) {
     .filter((line) => line.x >= 0.82 && line.y < 0.2)
     .sort((left, right) => left.y - right.y)[0];
   if (label) return clickPoint(label);
-  const bottomNumbers = lines
-    .filter((line) => line.confidence >= 0.25 && line.y < 0.25 && line.x > 0.45 && parseVisibleMetric(line.text) !== undefined)
-    .sort((left, right) => left.x - right.x);
-  if (bottomNumbers.length < 4) return null;
-  const rightmost = bottomNumbers[bottomNumbers.length - 1]!;
-  // 缺少评论数字时，最右可见数字可能其实是“收藏”。只有落在评论槽位
-  // 的数字才允许点击，禁止误入“赞和收藏”页，更不能靠头像或固定坐标猜。
-  return rightmost.x >= 0.84 ? clickPoint(rightmost) : null;
+  const slots = assignBottomMetricSlots(lines);
+  if (!slots.likes || !slots.shares || !slots.favorites || !slots.comments) return null;
+  // 必须先由同一底部横排证明四项槽位；只点击真实评论数字所在行，
+  // 禁止把收藏、头像或固定坐标误当作评论入口。
+  return clickPoint(slots.comments.line);
 }
 
 export function shouldOpenVisibleComments(lines: OcrLine[]) {
@@ -1012,6 +1064,9 @@ type CollectorSearchTabState = { windowId: number; openedTabs: number; ownerPid?
 const collectorSearchTabStates = new Map<number, CollectorSearchTabState>();
 const collectorWindowContext = new AsyncLocalStorage<WeixinChannelsWindowSession>();
 const collectorUiGate = createAsyncSerialGate();
+// Fly 单机处理封面时，两窗同时 POST 会把同一实例拖到客户端超时；UI 可以并行等待，
+// 但上传必须 FIFO。排队时间不计入单次 HTTP 超时，真实请求开始后才启动计时。
+const collectorUploadGate = createAsyncSerialGate();
 let collectorWindowScopeRequired = false;
 
 function requireCollectorWindowSession() {
@@ -1209,16 +1264,25 @@ async function persistCollectorSearchTabState(state: CollectorSearchTabState, te
 export type CollectorVideoState =
   | "in_flight"
   | "persisted"
+  | "pending_upload"
   | "terminal_unqualified"
   | "retryable_failed"
   | "unsafe_ui_state";
 
-export function collectorVideoStateAfterCapture(result: { qualified: boolean; persisted?: boolean }) {
-  if (result.qualified && result.persisted !== true) {
+export function collectorVideoStateAfterCapture(result: {
+  qualified: boolean;
+  persisted?: boolean;
+  queuedForUpload?: boolean;
+}) {
+  if (result.qualified && result.persisted !== true && result.queuedForUpload !== true) {
     return { state: "retryable_failed" as const, stopWithoutAdvance: true };
   }
   return {
-    state: result.persisted === true ? "persisted" as const : "terminal_unqualified" as const,
+    state: result.persisted === true
+      ? "persisted" as const
+      : result.queuedForUpload === true
+        ? "pending_upload" as const
+        : "terminal_unqualified" as const,
     stopWithoutAdvance: false,
   };
 }
@@ -1237,16 +1301,18 @@ export function collectorAdvanceAllowed(evidence: CollectorAdvanceEvidence) {
     || evidence.terminalDuplicate === true
     || evidence.unqualifiedInFlightDuplicate === true
     || evidence.captureState === "persisted"
+    || evidence.captureState === "pending_upload"
     || evidence.captureState === "terminal_unqualified";
 }
 
 export function qualifiedCaptureHasAdvanceEvidence(result: {
   qualified: boolean;
   persisted?: boolean;
+  queuedForUpload?: boolean;
   observation?: Record<string, unknown>;
 }) {
   if (!result.qualified) return true;
-  if (result.persisted !== true || !result.observation) return false;
+  if ((result.persisted !== true && result.queuedForUpload !== true) || !result.observation) return false;
   const qualification = qualifyWeixinChannelsObservationLocally(result.observation);
   return !qualification.requiresComments
     || (Array.isArray(result.observation.commentSamples)
@@ -1298,7 +1364,9 @@ export async function loadCollectorSeenRegistry(tempDir = os.tmpdir(), now = Dat
   for (const entry of rawEntries) {
     const seenAt = Date.parse(entry.seenAt);
     if (!entry.videoIdentity || !Number.isFinite(seenAt) || now - seenAt > WEIXIN_CHANNELS_SEEN_TTL_MS) continue;
-    const state = entry.state === "persisted" || entry.state === "terminal_unqualified"
+    const state = entry.state === "persisted"
+      || entry.state === "pending_upload"
+      || entry.state === "terminal_unqualified"
       ? entry.state
       : "retryable_failed";
     const normalized: CollectorSeenEntry = { ...entry, state };
@@ -1310,7 +1378,9 @@ export async function loadCollectorSeenRegistry(tempDir = os.tmpdir(), now = Dat
 
 export function collectorSeenContains(registry: CollectorSeenRegistry, videoIdentity: string, observationId?: string) {
   const entry = registry.entries.get(videoIdentity);
-  const terminal = entry?.state === "persisted" || entry?.state === "terminal_unqualified";
+  const terminal = entry?.state === "persisted"
+    || entry?.state === "pending_upload"
+    || entry?.state === "terminal_unqualified";
   return terminal || Boolean(observationId && registry.observationIds.has(observationId));
 }
 
@@ -1321,6 +1391,32 @@ export function automaticRecoveryDelayMs(failureCount: number) {
 export function isCollectorWindowBindingFailure(reason: string) {
   return /weixin_channels_(?:window_not_found|required_window_not_found|window_binding|windows_pid_mismatch)/
     .test(String(reason || ""));
+}
+
+export function collectorBoundWindowPresent(
+  windows: WeixinChannelsWindowInfo[],
+  session: Pick<WeixinChannelsWindowSession, "windowId" | "pid">,
+) {
+  return windows.some((window) => window.windowId === session.windowId && window.pid === session.pid);
+}
+
+async function collectorWindowBindingMissingPersistently(session: WeixinChannelsWindowSession) {
+  const executable = await getControlExecutable();
+  // AX/CGWindow 在评论抽屉关闭动画期间偶尔会返回一次空结果。连续三次都找不到
+  // 原 windowId+PID 才交给外层重绑；任一次重新出现就按瞬态 UI 错误恢复。
+  for (const delayMs of [0, 180, 420]) {
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    try {
+      const { stdout } = await execFileAsync(executable, ["windows"], {
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      const windows = JSON.parse(stdout) as WeixinChannelsWindowInfo[];
+      if (collectorBoundWindowPresent(windows, session)) return false;
+    } catch {
+      // 读取失败也必须经过完整三次确认，不能一次异常就终止双窗。
+    }
+  }
+  return true;
 }
 
 export function shouldLaunchdRestartCollector(stopped: string, maxScanned?: number, maxQualified?: number) {
@@ -1343,9 +1439,13 @@ export function nextCollectorRecoveryState(
   evidence: { allBlack: boolean; allSameContent: boolean; identities: Record<string, string>; stopReason: string },
   now = Date.now(),
 ) {
+  const sameContentEligible = /(?:next_video_not_visible|advance_recovery_exhausted|persistent_same_content)/
+    .test(evidence.stopReason);
   const state: CollectorRecoveryState = {
     consecutiveBlackScreens: evidence.allBlack ? previous.consecutiveBlackScreens + 1 : 0,
-    consecutiveSameContent: evidence.allSameContent ? previous.consecutiveSameContent + 1 : 0,
+    consecutiveSameContent: evidence.allSameContent && sameContentEligible
+      ? previous.consecutiveSameContent + 1
+      : 0,
     lastIdentityByWindow: evidence.identities,
     lastStopReason: evidence.stopReason,
     updatedAt: new Date(now).toISOString(),
@@ -1641,6 +1741,57 @@ async function readOcrBatch(screenshots: string[]): Promise<OcrResult[]> {
   return JSON.parse(stdout) as OcrResult[];
 }
 
+const FOCUSED_METRICS_REGION = { left: 0.39, top: 0.935, width: 0.58, height: 0.05 } as const;
+
+export function mergeFocusedMetricOcr(
+  base: OcrResult,
+  focused: OcrResult,
+  region = FOCUSED_METRICS_REGION,
+): OcrResult {
+  const bottomOffset = 1 - region.top - region.height;
+  return {
+    ...base,
+    lines: [
+      ...base.lines,
+      ...focused.lines.map((line) => ({
+        ...line,
+        x: region.left + line.x * region.width,
+        y: bottomOffset + line.y * region.height,
+        width: line.width * region.width,
+        height: line.height * region.height,
+      })),
+    ],
+  };
+}
+
+async function enrichBottomMetricsFromFocusedOcr(screenshot: string, base: OcrResult) {
+  if (hasFourVisibleMetrics(base.lines)) return base;
+  const metadata = await sharp(screenshot).metadata();
+  const width = metadata.width || 0;
+  const height = metadata.height || 0;
+  if (width < 100 || height < 100) return base;
+  const left = Math.round(width * FOCUSED_METRICS_REGION.left);
+  const top = Math.round(height * FOCUSED_METRICS_REGION.top);
+  const cropWidth = Math.min(width - left, Math.round(width * FOCUSED_METRICS_REGION.width));
+  const cropHeight = Math.min(height - top, Math.round(height * FOCUSED_METRICS_REGION.height));
+  const focusedFile = `${screenshot}.metrics-${process.pid}-${Date.now()}.png`;
+  try {
+    // 只在全图 OCR 连续漏底部数字时执行一次。高阈值去掉视频自带的灰色
+    // 相机水印，实测可把重叠的“1408 / 508 / ISO3200”拆回四个白字指标。
+    await sharp(screenshot)
+      .extract({ left, top, width: cropWidth, height: cropHeight })
+      .resize({ width: cropWidth * 3 })
+      .greyscale()
+      .threshold(205)
+      .png()
+      .toFile(focusedFile);
+    const focused = (await readOcrBatch([focusedFile]))[0];
+    return focused ? mergeFocusedMetricOcr(base, focused) : base;
+  } finally {
+    await fs.unlink(focusedFile).catch(() => undefined);
+  }
+}
+
 async function captureWindow(output: string) {
   const session = collectorWindowContext.getStore();
   if (collectorWindowScopeRequired && !session) throw new Error("weixin_channels_unscoped_ui_action_blocked");
@@ -1656,6 +1807,40 @@ async function captureWindow(output: string) {
   });
 }
 
+async function captureWindowAfterHover(
+  output: string,
+  relX: number,
+  relY: number,
+  settleMs: number,
+) {
+  const session = collectorWindowContext.getStore();
+  if (collectorWindowScopeRequired && !session) {
+    throw new Error("weixin_channels_unscoped_ui_action_blocked");
+  }
+  const scoped = (args: string[]) => session
+    ? buildWindowScopedControlArgs(session, args)
+    : args;
+  await collectorUiGate.run(async () => {
+    const executable = await getControlExecutable();
+    // 悬停、控件显现与截图必须是同一个 UI 临界区。旧版在等待 180–400ms
+    // 时释放 FIFO，另一窗会抢走焦点和鼠标，导致本窗进度条明明存在却识别失败。
+    await execFileAsync(executable, scoped([
+      "move-relative",
+      relX.toFixed(4),
+      relY.toFixed(4),
+    ]), { maxBuffer: 10 * 1024 * 1024 });
+    await new Promise((resolve) => setTimeout(resolve, settleMs));
+    const { stdout } = await execFileAsync(executable, scoped(["window"]), {
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    const window = JSON.parse(stdout) as { x: number; y: number; width: number; height: number };
+    const region = [window.x, window.y, window.width, window.height]
+      .map((value) => Math.round(value))
+      .join(",");
+    await execFileAsync("/usr/sbin/screencapture", ["-x", `-R${region}`, output]);
+  });
+}
+
 export function metricsRemainOnSameVideo(
   base: ReturnType<typeof extractWeixinChannelsMetrics>,
   sample: ReturnType<typeof extractWeixinChannelsMetrics>,
@@ -1663,9 +1848,13 @@ export function metricsRemainOnSameVideo(
   const keys = ["likes", "shares", "favorites", "comments"] as const;
   const comparable = keys.filter((key) => base[key] !== undefined && sample[key] !== undefined);
   // 进度控制条会遮住一至两项底部指标；两项稳定即可确认仍为同一视频，
-  // 少于两项才视为无法证明，避免把 OCR 遮挡误判成切片换视频。
+  // 少于两项才视为无法证明。四项齐全时允许一项 OCR 补回漏掉的首位数字
+  // （实测 860→1860），但至少三项必须稳定，不能把新视频拼进旧 observation。
   if (comparable.length < 2) return false;
-  return comparable.every((key) => Math.abs(sample[key]! - base[key]!) <= Math.max(5, base[key]! * 0.03));
+  const stable = comparable.filter(
+    (key) => Math.abs(sample[key]! - base[key]!) <= Math.max(5, base[key]! * 0.03),
+  );
+  return stable.length >= Math.max(2, comparable.length - 1);
 }
 
 /** 当前播放器连续性只做短时容错判断，不参与跨重启历史去重。 */
@@ -1764,8 +1953,10 @@ export async function detectVisibleProgressTrack(screenshot: string) {
       let score = 0;
       for (let x = start; x <= end; x += 1) {
         const contrast = luminance(x, y) - (luminance(x, y - 6) + luminance(x, y + 6)) / 2;
-        if (contrast > 25) count += 1;
-        score += Math.max(0, contrast);
+        // 深色视频上的轨道比背景亮，浅色视频上的灰轨道则比背景暗。
+        // 两者都是同一条横向边缘，不能只接受正向亮度差。
+        if (Math.abs(contrast) > 25) count += 1;
+        score += Math.abs(contrast);
       }
       if (count >= info.width * 0.25 && (!edgeBest || count > edgeBest.count || (count === edgeBest.count && score > edgeBest.score))) {
         edgeBest = { y, count, score };
@@ -1792,14 +1983,21 @@ async function detectVisibleProgressTrackReliably(screenshot: string) {
   }
   let lastError: unknown;
   for (const hoverY of ["0.73", "0.82"] as const) {
-    await runSwiftControl(["move-relative", "0.50", hoverY]);
-    await new Promise((resolve) => setTimeout(resolve, 180));
-    await captureWindow(screenshot);
+    await captureWindowAfterHover(screenshot, 0.50, Number(hoverY), 180);
     try {
       return await detectVisibleProgressTrack(screenshot);
     } catch (error) {
       lastError = error;
     }
+  }
+  // 部分横版视频仅移动鼠标不会显示控制条；点击视频安全中心只切换暂停，
+  // 再悬停底部即可定位轨道。该点不在头像、标签 X 或作者区域。
+  await runSwiftControl(["click-relative", "0.5000", "0.5000"]);
+  await captureWindowAfterHover(screenshot, 0.50, 0.82, 180);
+  try {
+    return await detectVisibleProgressTrack(screenshot);
+  } catch (error) {
+    lastError = error;
   }
   throw lastError instanceof Error ? lastError : new Error("weixin_channels_progress_track_not_found");
 }
@@ -1972,9 +2170,7 @@ export async function sampleVideoContentAtProgress(
     : WEIXIN_CHANNELS_UNKNOWN_DURATION_CAPTURE_BUDGET_MS);
   // 点击视频使控制条出现；真实探针确认进度条横跨窗口宽度约 12.5%–91%、纵向约 82.3%。
   await runSwiftControl(["click-relative", "0.50", "0.50"]);
-  await runSwiftControl(["move-relative", "0.50", "0.82"]);
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  await captureWindow(screenshot);
+  await captureWindowAfterHover(screenshot, 0.50, 0.82, 400);
   const track = await detectVisibleProgressTrackReliably(screenshot);
   const startX = track.startX;
   let previousX = startX;
@@ -1986,8 +2182,8 @@ export async function sampleVideoContentAtProgress(
     for (let index = 0; index < WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS.length; index += 1) {
       const progress = WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS[index]!;
       const targetX = startX + (track.endX - startX) * progress;
-      await runSwiftControl(["move-relative", "0.50", track.y.toFixed(4)]);
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // drag-relative 已在同一个 Swift 原子动作内处理跨窗安全归位与头像路径门禁；
+      // 旧版每个采样点额外启动一次 move 进程，五点会重复 Raise/焦点确认五次。
       await runSwiftControl(["drag-relative", previousX.toFixed(4), track.y.toFixed(4), targetX.toFixed(4), track.y.toFixed(4)]);
       // VPN 下拖动进度后先等画面完成同步，再只截一张内容样本。
       await new Promise((resolve) => setTimeout(resolve, 650));
@@ -2094,6 +2290,11 @@ async function collectVisibleComments(screenshot: string, baseOcr: OcrResult, de
   }
   const openPoint = findCommentsOpenPoint(baseOcr.lines);
   if (!openPoint) throw new Error("weixin_channels_comments_entry_not_found");
+  // 必须在任何评论点击之前检查完整阶段预算。旧实现先打开再检查，预算不足时
+  // 恢复链会关闭面板，下一轮又重新打开，形成真实的开关死循环。
+  if (!hasMinimumCommentCaptureBudget(deadlineAt)) {
+    throw new Error("weixin_channels_comments_capture_budget_missing_before_open");
+  }
   await runSwiftControl(["click-relative", openPoint.x.toFixed(5), openPoint.y.toFixed(5)]);
   let panel: OcrResult | undefined;
   for (let attempt = 0; attempt < 6; attempt += 1) {
@@ -2122,8 +2323,8 @@ async function collectVisibleComments(screenshot: string, baseOcr: OcrResult, de
       await waitWithinCaptureBudget(deadlineAt, 150, 500);
     }
   }
-  await captureWindow(screenshot);
-  panel = await readOcr(screenshot);
+  // 循环最后一页的 panel 与当前 UI 属于同一帧；旧实现无页面变化却又截图和
+  // 精确 OCR 一次，只为重新找同一个 X，平白增加数秒。
   if (!await closeConfirmedCommentsPanel(screenshot, panel.lines)) {
     throw new Error("weixin_channels_comments_close_not_found");
   }
@@ -2132,7 +2333,10 @@ async function collectVisibleComments(screenshot: string, baseOcr: OcrResult, de
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await waitWithinCaptureBudget(deadlineAt, 100 + attempt * 100, 350 + attempt * 150);
     await captureWindow(screenshot);
-    const closed = await readOcr(screenshot);
+    let closed = await readOcr(screenshot);
+    if (attempt === 0 && !hasFourVisibleMetrics(closed.lines)) {
+      closed = await enrichBottomMetricsFromFocusedOcr(screenshot, closed);
+    }
     if (commentsPanelClosedOnSameVideo(baseOcr, closed)) {
       if (Date.now() > deadlineAt) throw new Error("weixin_channels_capture_time_budget_exceeded");
       return { samples: extractCommentSamples(collected), closedOcr: closed };
@@ -2150,13 +2354,17 @@ async function ensureInteractionMetricsVisible(screenshot: string, ocr: OcrResul
   await captureWindow(screenshot);
   let closed = await readOcr(screenshot);
   if (hasFourVisibleMetrics(closed.lines)) return closed;
-  if (!await closeConfirmedCommentsPanel(screenshot, closed.lines)) return closed;
+  if (!await closeConfirmedCommentsPanel(screenshot, closed.lines)) {
+    return enrichBottomMetricsFromFocusedOcr(screenshot, closed);
+  }
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 200 + attempt * 150));
     await captureWindow(screenshot);
     closed = await readOcr(screenshot);
     if (hasFourVisibleMetrics(closed.lines)) return closed;
   }
+  closed = await enrichBottomMetricsFromFocusedOcr(screenshot, closed);
+  if (hasFourVisibleMetrics(closed.lines)) return closed;
   throw new Error("weixin_channels_previous_comments_close_not_confirmed");
 }
 
@@ -2174,13 +2382,21 @@ async function confirmVisibleInteractionMetrics(screenshot: string, first: OcrRe
   }
   if (!hasFourVisibleMetrics(stableFirst.lines)
     && !hasDefinitiveVisibleUnqualifiedMetrics(stableFirst.lines)) {
-    throw new Error("weixin_channels_qualification_metrics_not_visible");
+    stableFirst = await enrichBottomMetricsFromFocusedOcr(screenshot, stableFirst);
+    if (!hasFourVisibleMetrics(stableFirst.lines)
+      && !hasDefinitiveVisibleUnqualifiedMetrics(stableFirst.lines)) {
+      throw new Error("weixin_channels_qualification_metrics_not_visible");
+    }
   }
   let second: OcrResult | undefined;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 160));
     await captureWindow(screenshot);
-    const candidate = await readOcr(screenshot);
+    let candidate = await readOcr(screenshot);
+    if (!hasFourVisibleMetrics(candidate.lines)
+      && !hasDefinitiveVisibleUnqualifiedMetrics(candidate.lines)) {
+      candidate = await enrichBottomMetricsFromFocusedOcr(screenshot, candidate);
+    }
     if (interactionMetricsConfirmed(stableFirst, candidate)
       || (hasDefinitiveVisibleUnqualifiedMetrics(stableFirst.lines)
         && hasDefinitiveVisibleUnqualifiedMetrics(candidate.lines)
@@ -2243,6 +2459,16 @@ async function persistPendingFile(output: string, observation: unknown) {
   await fs.rename(temp, output);
 }
 
+export async function collectorPendingFileExists(file: string) {
+  try {
+    await fs.access(file);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 async function buildVisualFrameBase64(screenshot: string) {
   const metadata = await sharp(screenshot).metadata();
   const width = metadata.width || 0;
@@ -2258,18 +2484,72 @@ async function buildVisualFrameBase64(screenshot: string) {
     .then((buffer) => buffer.toString("base64"));
 }
 
+type PendingUploadPayload = {
+  qualified?: boolean;
+  invalid?: boolean;
+  persisted?: boolean;
+  newlyPersisted?: boolean;
+  newlyQualifiedPersisted?: boolean;
+  accumulatedQualifiedCount?: number;
+  modelCalls?: number;
+  results?: Array<{
+    observationId?: string;
+    newlyPersisted?: boolean;
+    newlyQualifiedPersisted?: boolean;
+    qualified?: boolean;
+    invalid?: boolean;
+    modelCalls?: number;
+  }>;
+};
+
 export async function uploadPendingObservation(params: {
   server: string;
   token: string;
   taskId: string;
   pendingFile: string;
   deadlineAt?: number;
+  timeoutMs?: number;
   fetchImpl?: typeof fetch;
 }) {
-  const raw = await fs.readFile(params.pendingFile, "utf8");
-  const observation = JSON.parse(raw) as unknown;
+  return uploadPendingObservationBatch({
+    ...params,
+    pendingFiles: [params.pendingFile],
+  });
+}
+
+export async function uploadPendingObservationBatch(params: {
+  server: string;
+  token: string;
+  taskId: string;
+  pendingFiles: string[];
+  deadlineAt?: number;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}) {
+  if (!params.pendingFiles.length || params.pendingFiles.length > 100) {
+    throw new Error("pending_upload_batch_size_invalid");
+  }
+  return collectorUploadGate.run(() => uploadPendingObservationBatchUnlocked(params));
+}
+
+async function uploadPendingObservationBatchUnlocked(params: {
+  server: string;
+  token: string;
+  taskId: string;
+  pendingFiles: string[];
+  deadlineAt?: number;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}) {
+  const observations = await Promise.all(params.pendingFiles.map(async (file) => {
+    const raw = await fs.readFile(file, "utf8");
+    return JSON.parse(raw) as unknown;
+  }));
   const controller = new AbortController();
-  const remaining = params.deadlineAt === undefined ? undefined : remainingBudgetMs(params.deadlineAt);
+  const requestDeadlineAt = params.timeoutMs === undefined
+    ? params.deadlineAt
+    : Date.now() + params.timeoutMs;
+  const remaining = requestDeadlineAt === undefined ? undefined : remainingBudgetMs(requestDeadlineAt);
   if (remaining !== undefined && remaining <= 0) throw new Error("upload_capture_time_budget_exhausted");
   let timeout: NodeJS.Timeout | undefined;
   const timeoutPromise = remaining === undefined
@@ -2284,24 +2564,20 @@ export async function uploadPendingObservation(params: {
     const request = (params.fetchImpl || fetch)(`${params.server.replace(/\/$/, "")}/api/internal/weixin-channels/observations`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-weixin-channels-collector-token": params.token },
-      body: JSON.stringify({ taskId: params.taskId, observations: [observation] }),
+      body: JSON.stringify({ taskId: params.taskId, observations }),
       signal: controller.signal,
     });
     const response = timeoutPromise ? await Promise.race([request, timeoutPromise]) : await request;
     const body = response.text();
     const text = timeoutPromise ? await Promise.race([body, timeoutPromise]) : await body;
     if (!response.ok) throw new Error(`upload_failed:${response.status}:${text.slice(0, 500)}`);
-    const payload = JSON.parse(text) as {
-      qualified?: boolean;
-      invalid?: boolean;
-      persisted?: boolean;
-      newlyPersisted?: boolean;
-      newlyQualifiedPersisted?: boolean;
-      accumulatedQualifiedCount?: number;
-      modelCalls?: number;
-    };
+    const payload = JSON.parse(text) as PendingUploadPayload;
     if (payload.persisted !== true) throw new Error("upload_not_persisted");
-    await fs.unlink(params.pendingFile);
+    if (params.pendingFiles.length > 1
+      && (!Array.isArray(payload.results) || payload.results.length !== params.pendingFiles.length)) {
+      throw new Error("upload_batch_result_count_mismatch");
+    }
+    await Promise.all(params.pendingFiles.map((file) => fs.unlink(file)));
     return payload;
   } finally {
     if (timeout) clearTimeout(timeout);
@@ -2309,9 +2585,13 @@ export async function uploadPendingObservation(params: {
 }
 
 type PendingObservationEnvelope = {
+  observationId?: string;
+  videoIdentity?: string;
   taskId?: string;
   query?: string;
   title?: string;
+  runKind?: "formal" | "probe";
+  collectorWindowId?: number;
   likes?: number;
   shares?: number;
   favorites?: number;
@@ -2383,11 +2663,17 @@ export async function retryPendingObservations(params: {
   let persistedUnique = 0;
   let duplicatePersistRejected = 0;
   let failed = 0;
-  // Fly 单机双核：每个心跳只恢复一个，避免封面上传与正常 ingest 叠加冲垮实例。
-  for (const name of names.slice(0, 1)) {
+  const events: WeixinChannelsPersistedObservationEvent[] = [];
+  const eligible: Array<{
+    name: string;
+    pendingFile: string;
+    mtimeMs: number;
+    observation: PendingObservationEnvelope & Record<string, unknown>;
+  }> = [];
+  for (const name of names) {
     const pendingFile = path.join(tempDir, name);
     try {
-      const observation = JSON.parse(await fs.readFile(pendingFile, "utf8")) as PendingObservationEnvelope;
+      const observation = JSON.parse(await fs.readFile(pendingFile, "utf8")) as PendingObservationEnvelope & Record<string, unknown>;
       if (!observation.taskId) throw new Error("pending_observation_task_id_missing");
       if (!pendingObservationHasRequiredComments(observation)) {
         const quarantineDir = path.join(tempDir, "weixin-channels-quarantine");
@@ -2403,24 +2689,97 @@ export async function retryPendingObservations(params: {
         process.stderr.write(`pending_quarantined:${name}:capture_sla_exceeded\n`);
         continue;
       }
-      const payload = await uploadPendingObservation({
-        server: params.server,
-        token: params.token,
-        taskId: observation.taskId,
-        pendingFile,
-        deadlineAt: Date.now() + 60_000,
-        fetchImpl: params.fetchImpl,
-      });
-      persisted += 1;
-      if (payload.newlyQualifiedPersisted === true) persistedUnique += 1;
-      else if (payload.newlyPersisted === false) duplicatePersistRejected += 1;
-      process.stderr.write(`pending_recovered:${name}\n`);
+      const { mtimeMs } = await fs.stat(pendingFile);
+      eligible.push({ name, pendingFile, mtimeMs, observation });
     } catch (error) {
       failed += 1;
       process.stderr.write(`pending_retry_failed:${name}:${error instanceof Error ? error.message : String(error)}\n`);
     }
   }
-  return { found: names.length, persisted, persistedUnique, duplicatePersistRejected, failed };
+  const groups = new Map<string, typeof eligible>();
+  for (const entry of eligible) {
+    const taskId = entry.observation.taskId!;
+    const group = groups.get(taskId) || [];
+    group.push(entry);
+    groups.set(taskId, group);
+  }
+  const selected = Array.from(groups.entries())
+    .sort((left, right) => {
+      const leftNewest = Math.max(...left[1].map((entry) => entry.mtimeMs));
+      const rightNewest = Math.max(...right[1].map((entry) => entry.mtimeMs));
+      return right[1].length - left[1].length
+        || rightNewest - leftNewest
+        || left[0].localeCompare(right[0]);
+    })[0];
+  if (selected) {
+    const [taskId, entries] = selected;
+    const batch = entries.slice(0, 100);
+    try {
+      const payload = await uploadPendingObservationBatch({
+        server: params.server,
+        token: params.token,
+        taskId,
+        pendingFiles: batch.map((entry) => entry.pendingFile),
+        timeoutMs: 60_000,
+        fetchImpl: params.fetchImpl,
+      });
+      persisted = batch.length;
+      const resultByObservationId = new Map(
+        (payload.results || []).map((result) => [String(result.observationId || ""), result]),
+      );
+      for (const entry of batch) {
+        const observation = entry.observation;
+        const result = resultByObservationId.get(String(observation.observationId || ""));
+        const newlyPersisted = result?.newlyPersisted ?? payload.newlyPersisted === true;
+        const newlyQualifiedPersisted = result?.newlyQualifiedPersisted
+          ?? payload.newlyQualifiedPersisted === true;
+        if (newlyQualifiedPersisted) persistedUnique += 1;
+        else if (!newlyPersisted) duplicatePersistRejected += 1;
+        const qualification = qualifyWeixinChannelsObservationLocally(observation);
+        events.push({
+          event: "observation_persisted",
+          observationId: String(observation.observationId || ""),
+          windowId: Number(observation.collectorWindowId || 0),
+          query: String(observation.query || ""),
+          runKind: observation.runKind === "probe" ? "probe" : "formal",
+          qualified: qualification.qualified,
+          serverQualified: result?.qualified ?? payload.qualified === true,
+          persisted: true,
+          newlyPersisted,
+          newlyQualifiedPersisted,
+          comments: Number(observation.comments || 0),
+          commentSampleCount: Array.isArray(observation.commentSamples)
+            ? observation.commentSamples.length
+            : 0,
+          captureElapsedMs: Number(observation.captureElapsedMs || 0),
+          captureBudgetMs: observation.captureBudgetMs,
+          modelCalls: Number(result?.modelCalls ?? payload.modelCalls ?? 0),
+          analysisObservation: {
+            ...observation,
+            collectorWindowId: undefined,
+            coverImageBase64: undefined,
+            visualImageBase64: undefined,
+          } as unknown as WeixinChannelsObservation,
+        });
+      }
+      process.stderr.write(`pending_batch_recovered:${JSON.stringify({ taskId, count: batch.length })}\n`);
+    } catch (error) {
+      failed += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      if (/weixin_channels_candidate_not_found/.test(message)) {
+        const quarantineDir = path.join(tempDir, "weixin-channels-quarantine");
+        await fs.mkdir(quarantineDir, { recursive: true });
+        await Promise.all(batch.map((entry) => fs.rename(
+          entry.pendingFile,
+          path.join(quarantineDir, entry.name),
+        )));
+        process.stderr.write(`pending_batch_quarantined:${taskId}:${batch.length}:candidate_not_found\n`);
+      } else {
+        process.stderr.write(`pending_batch_retry_failed:${taskId}:${batch.length}:${message}\n`);
+      }
+    }
+  }
+  return { found: names.length, persisted, persistedUnique, duplicatePersistRejected, failed, events };
 }
 
 async function waitForChangedFrame(previous: string, screenshot: string, timeoutMs = 12_000) {
@@ -2848,6 +3207,45 @@ function parseStandaloneMetric(text: string): number | undefined {
   return parseVisibleMetric(normalized);
 }
 
+type WeixinChannelsMetricSlot = "likes" | "shares" | "favorites" | "comments";
+
+function parseBottomMetricForSlot(text: string, slot: WeixinChannelsMetricSlot) {
+  const parsed = parseStandaloneMetric(text);
+  if (parsed !== undefined) return parsed;
+  if (slot !== "likes") return undefined;
+  // Vision 偶尔把点赞图标和首位 4 合并为“［A609”。只在底部点赞槽位
+  // 接受这一种受限纠错，避免把画面正文中的 A+数字误当互动指标。
+  const normalized = String(text || "").replace(/[,，\s＋+]/g, "");
+  const mistakenFour = normalized.match(/^[\[［(（|丨I]?A(\d{2,})(万|萬|w|W)?$/i);
+  if (!mistakenFour) return undefined;
+  return parseVisibleMetric(`4${mistakenFour[1]}${mistakenFour[2] || ""}`);
+}
+
+function assignBottomMetricSlots(lines: OcrLine[]) {
+  const slots = [
+    { key: "likes", x: 0.53 },
+    { key: "shares", x: 0.65 },
+    { key: "favorites", x: 0.77 },
+    { key: "comments", x: 0.89 },
+  ] as const;
+  const assigned: Partial<Record<WeixinChannelsMetricSlot, { line: OcrLine; value: number }>> = {};
+  const candidates = lines
+    .filter((line) => line.confidence >= 0.25 && line.y < 0.13 && line.x >= 0.42)
+    .map((line) => ({ line, centerX: line.x + line.width / 2 }))
+    .sort((left, right) => left.centerX - right.centerX);
+  for (const candidate of candidates) {
+    const nearest = slots
+      .filter((slot) => !assigned[slot.key])
+      .map((slot) => ({ ...slot, distance: Math.abs(candidate.centerX - slot.x) }))
+      .sort((left, right) => left.distance - right.distance)[0];
+    if (!nearest || nearest.distance > 0.08) continue;
+    const value = parseBottomMetricForSlot(candidate.line.text.trim(), nearest.key);
+    if (value === undefined) continue;
+    assigned[nearest.key] = { line: candidate.line, value };
+  }
+  return assigned;
+}
+
 export function extractVisibleTitleAndAuthor(lines: OcrLine[]) {
   const visible = lines.filter((line) => line.confidence >= 0.25 && line.text.trim());
   const title = visible
@@ -2884,36 +3282,12 @@ export function extractWeixinChannelsMetrics(lines: OcrLine[]) {
       if (nearby !== undefined) result[key] = nearby;
     }
   }
-  // 当前桌面版常只显示横排数字而无文字标签。四项齐全时按顺序映射；
-  // OCR 漏掉一项时按真实横向槽位就近归属，避免把三项可用数据整组丢弃。
+  // 当前桌面版常只显示横排数字而无文字标签。按每行中心点匹配真实槽位；
+  // OCR 漏掉或轻微错读一项时保留其余指标，不能整组丢弃。
   if (Object.values(result).filter((value) => value !== undefined).length < 2) {
-    const bottomNumbers = lines
-      .filter((line) => line.confidence >= 0.25 && line.y < 0.13 && line.x > 0.45)
-      .map((line) => ({ ...line, text: line.text.trim() }))
-      .filter((line) => line.text)
-      .map((line) => ({ x: line.x, y: line.y, value: parseStandaloneMetric(line.text) }))
-      .filter((entry): entry is { x: number; y: number; value: number } => entry.value !== undefined)
-      .sort((left, right) => left.x - right.x);
-    if (bottomNumbers.length >= 4) {
-      [result.likes, result.shares, result.favorites, result.comments] = bottomNumbers.slice(-4).map((entry) => entry.value);
-    } else if (bottomNumbers.length >= 2) {
-      const slots = [
-        { key: "likes", x: 0.53 },
-        { key: "shares", x: 0.65 },
-        { key: "favorites", x: 0.77 },
-        { key: "comments", x: 0.89 },
-      ] as const;
-      const claimed = new Set<string>();
-      for (const entry of bottomNumbers) {
-        const nearest = slots
-          .filter((slot) => !claimed.has(slot.key))
-          .map((slot) => ({ ...slot, distance: Math.abs(entry.x - slot.x) }))
-          .sort((left, right) => left.distance - right.distance)[0];
-        if (nearest && nearest.distance <= 0.075) {
-          result[nearest.key] = entry.value;
-          claimed.add(nearest.key);
-        }
-      }
+    const slots = assignBottomMetricSlots(lines);
+    for (const key of ["likes", "shares", "favorites", "comments"] as const) {
+      if (slots[key]) result[key] = slots[key]!.value;
     }
   }
   return {
@@ -3261,6 +3635,7 @@ async function captureVisibleQualifiedVideo(params: {
   probe: boolean;
   server?: string;
   token?: string;
+  deferUpload?: boolean;
   titleOverride?: string;
   authorOverride?: string;
   outputOverride?: string;
@@ -3453,10 +3828,32 @@ async function captureVisibleQualifiedVideo(params: {
     captureElapsedMs,
     evidence: "capture" as const,
     runKind: params.probe ? "probe" as const : "formal" as const,
+    // 仅用于本机 pending 的回调与去重；服务端 Zod 白名单会剥离该字段。
+    collectorWindowId: requireCollectorWindowSession().windowId,
   };
   const output = params.outputOverride
     || path.join(os.tmpdir(), `weixin-channels-pending-${observation.observationId}.json`);
   await persistPendingFile(output, observation);
+  if (params.deferUpload) {
+    process.stderr.write(`collector_observation_queued:${JSON.stringify({
+      observationId: observation.observationId,
+      windowId: observation.collectorWindowId,
+      captureElapsedMs: observation.captureElapsedMs,
+      pendingFile: output,
+    })}\n`);
+    return {
+      qualified: finalQualification.qualified,
+      inspectedContent: true as const,
+      reason: finalQualification.reason,
+      fingerprint: params.videoIdentity,
+      observation,
+      queuedForUpload: true as const,
+      persisted: false,
+      newlyPersisted: false,
+      serverQualified: false,
+      newlyQualifiedPersisted: false,
+    };
+  }
   let persisted = false;
   let newlyPersisted = false;
   let serverQualified = false;
@@ -3474,7 +3871,7 @@ async function captureVisibleQualifiedVideo(params: {
         pendingFile: output,
         // 视频内容采样 SLA 与远端持久化确认分离。若沿用采样截止时间，
         // 客户端会在 Fly 仍处理中时 abort，随后重传同一大封面请求造成重叠负载。
-        deadlineAt: Date.now() + 12_000,
+        timeoutMs: 12_000,
       });
       if (payload.newlyQualifiedPersisted === true) params.diagnostics.persistedUnique += 1;
       else if (payload.newlyPersisted !== true) params.diagnostics.duplicatePersistRejected += 1;
@@ -3611,6 +4008,8 @@ type CollectorSharedRuntime = {
   observeHeartbeat(heartbeat: CollectorHeartbeat): string | null;
   rememberSeen(entry: CollectorSeenEntry): Promise<void>;
   retryPending(): Promise<CollectorPendingRecovery>;
+  schedulePendingUpload(): void;
+  awaitPendingUploads(): Promise<void>;
   markHealthyProgress(): Promise<void>;
   qualifiedTargetReached(): boolean;
   recordQualifiedPersisted(windowId: number): void;
@@ -3623,6 +4022,7 @@ async function prepareCollectorSharedRuntime(params: {
   token: string;
   maxQualified?: number;
   controlRevision?: number;
+  onObservationPersisted?: (event: WeixinChannelsPersistedObservationEvent) => void;
 }) {
   const seenRegistry = await loadCollectorSeenRegistry();
   // 旧 seen 不能作为事实。双窗启动前只做一次 Fly 对账，随后两窗共享同一份内存表。
@@ -3636,8 +4036,56 @@ async function prepareCollectorSharedRuntime(params: {
   const seenGate = createAsyncSerialGate();
   const pendingGate = createAsyncSerialGate();
   const recoveryResetGate = createAsyncSerialGate();
+  let pendingUploadScheduled = false;
+  let pendingUploadChain = Promise.resolve();
   let qualifiedPersistedTotal = 0;
   const qualificationStartedAt = Date.now();
+  const consumePendingRecovery = async (recovery: CollectorPendingRecovery) => {
+    for (const event of recovery.events) {
+      if (event.modelCalls !== 0) {
+        process.stderr.write(`collector_pending_model_call_rejected:${event.observationId}\n`);
+        continue;
+      }
+      const persistedVideoIdentity = event.analysisObservation.videoIdentity;
+      if (event.persisted && event.observationId && persistedVideoIdentity) {
+        await seenGate.run(() => rememberCollectorSeen(seenRegistry, {
+          videoIdentity: persistedVideoIdentity,
+          observationId: event.observationId,
+          seenAt: new Date().toISOString(),
+          state: "persisted",
+        }));
+      }
+      if (event.newlyQualifiedPersisted) {
+        qualifiedPersistedTotal += 1;
+        process.stderr.write(`collector_qualified_persisted:${JSON.stringify({
+          windowId: event.windowId,
+          qualifiedPersistedTotal,
+          target: params.maxQualified,
+          elapsedMs: Date.now() - qualificationStartedAt,
+        })}\n`);
+      }
+      params.onObservationPersisted?.(event);
+      process.stdout.write(`${JSON.stringify(event)}\n`);
+    }
+  };
+  const schedulePendingUpload = () => {
+    if (pendingUploadScheduled) return;
+    pendingUploadScheduled = true;
+    pendingUploadChain = pendingUploadChain
+      .then(async () => {
+        // 给左右窗一个很短的合批窗口；UI 不等待这条 Promise。
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        pendingUploadScheduled = false;
+        const recovery = await pendingGate.run(() => retryPendingObservations(params));
+        await consumePendingRecovery(recovery);
+      })
+      .catch((error) => {
+        pendingUploadScheduled = false;
+        process.stderr.write(`collector_background_upload_failed:${
+          error instanceof Error ? error.message : String(error)
+        }\n`);
+      });
+  };
   const shared: CollectorSharedRuntime = {
     seenRegistry,
     inFlightVideoIdentities: new Set<string>(),
@@ -3650,6 +4098,8 @@ async function prepareCollectorSharedRuntime(params: {
     },
     rememberSeen: (entry: CollectorSeenEntry) => seenGate.run(() => rememberCollectorSeen(seenRegistry, entry)),
     retryPending: () => pendingGate.run(() => retryPendingObservations(params)),
+    schedulePendingUpload,
+    awaitPendingUploads: () => pendingUploadChain,
     markHealthyProgress: () => recoveryResetGate.run(async () => {
       await resetCollectorRecoveryState();
     }),
@@ -3666,9 +4116,18 @@ async function prepareCollectorSharedRuntime(params: {
     qualifiedPersistedTotal: () => qualifiedPersistedTotal,
     qualificationStartedAt,
   };
+  schedulePendingUpload();
   return {
     shared,
-    initialRecovery: await pendingGate.run(() => retryPendingObservations(params)),
+    // 历史 pending 在后台恢复，不能在正式 UI 启动前阻塞最长 60 秒。
+    initialRecovery: {
+      found: 0,
+      persisted: 0,
+      persistedUnique: 0,
+      duplicatePersistRejected: 0,
+      failed: 0,
+      events: [],
+    },
   };
 }
 
@@ -3679,6 +4138,7 @@ async function runCollectionPool(params: {
   probe: boolean;
   maxScanned?: number;
   allowSearch: boolean;
+  deferUploads?: boolean;
   searchScheduleManaged?: boolean;
   startInSearch?: boolean;
   deadlineAt?: number;
@@ -3695,7 +4155,7 @@ async function runCollectionPool(params: {
   let checkpoint30Handled = false;
   let forceSearchQueryRotation = false;
   const initialRecovery = params.initialRecovery || {
-    found: 0, persisted: 0, persistedUnique: 0, duplicatePersistRejected: 0, failed: 0,
+    found: 0, persisted: 0, persistedUnique: 0, duplicatePersistRejected: 0, failed: 0, events: [],
   };
   diagnostics.persistedUnique += initialRecovery.persistedUnique;
   diagnostics.duplicatePersistRejected += initialRecovery.duplicatePersistRejected;
@@ -3856,10 +4316,14 @@ async function runCollectionPool(params: {
       if (controlStopReason) {
         return { stopped: controlStopReason, scanned: totalScanned, qualified: totalQualified };
       }
-      const recovery = await params.shared.retryPending();
-      totalRecovered += recovery.persisted;
-      diagnostics.persistedUnique += recovery.persistedUnique;
-      diagnostics.duplicatePersistRejected += recovery.duplicatePersistRejected;
+      if (params.deferUploads) {
+        params.shared.schedulePendingUpload();
+      } else {
+        const recovery = await params.shared.retryPending();
+        totalRecovered += recovery.persisted;
+        diagnostics.persistedUnique += recovery.persistedUnique;
+        diagnostics.duplicatePersistRejected += recovery.duplicatePersistRejected;
+      }
       lastHeartbeatAt = Date.now();
       if (heartbeat.nextTask && heartbeat.nextTask.taskId !== task.taskId) {
         candidates = await refreshCollectorCandidates(params.server, params.token);
@@ -4104,6 +4568,7 @@ async function runCollectionPool(params: {
       probe: params.probe,
       server: params.server,
       token: params.token,
+      deferUpload: params.deferUploads,
       outputOverride: pendingOutput,
       videoDurationHintSec: knownVideoDurationSec,
       retryCache,
@@ -4114,13 +4579,7 @@ async function runCollectionPool(params: {
     let failureCount = 0;
     let stableRecoverySnapshots = 0;
     for (;;) {
-      let pendingExists = false;
-      try {
-        await fs.access(pendingOutput);
-        pendingExists = true;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
+      const pendingExists = await collectorPendingFileExists(pendingOutput);
       try {
         if (pendingExists) {
           await updateCollectorCaptureActivity(captureActivity, "upload_pending");
@@ -4132,7 +4591,7 @@ async function runCollectionPool(params: {
             token: params.token,
             taskId: task.taskId,
             pendingFile: pendingOutput,
-            deadlineAt: Date.now() + 12_000,
+            timeoutMs: 12_000,
           });
           result = {
             qualified: qualification.qualified,
@@ -4196,14 +4655,52 @@ async function runCollectionPool(params: {
           state: "retryable_failed",
           failureReason: reason,
         });
+        // captureVisibleQualifiedVideo 会先原子落盘 pending，再请求 Fly。上传若超时，
+        // 本轮开始时读取的 pendingExists 仍是 false；必须在 catch 中重新读取文件系统。
+        // 一旦 pending 已存在，UI 采集即已结束，后续只能补传，绝不能重拖进度或重开评论。
+        const pendingExistsAfterFailure = pendingExists
+          || await collectorPendingFileExists(pendingOutput);
+        if (pendingExistsAfterFailure && !pendingExists) {
+          await updateCollectorCaptureActivity(captureActivity, "upload_pending");
+          process.stderr.write(`collector_pending_created_before_upload_failure:${observationId}:${reason}\n`);
+        }
         if (params.deadlineAt !== undefined && Date.now() >= params.deadlineAt) {
           inFlightVideoIdentities.delete(videoIdentity);
           return { stopped: "probe_deadline_reached", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
         }
+        const failureAction = collectorCaptureFailureAction({
+          reason,
+          failureCount,
+          pendingExists: pendingExistsAfterFailure,
+        });
+        if (failureAction === "stop_budget_exhausted"
+          || failureAction === "stop_ui_retry_exhausted") {
+          // 预算耗尽或同视频第二次 UI 失败时，只允许严格证明评论面板后关闭一次。
+          // 不滑走、不上传，也不再重进评论链；外层窗口恢复可继续保留另一窗运行。
+          try {
+            await captureWindow(params.screenshot);
+            const failureOcr = await readOcr(params.screenshot);
+            await ensureInteractionMetricsVisible(params.screenshot, failureOcr);
+          } catch (restoreError) {
+            process.stderr.write(`collector_capture_failure_restore_unconfirmed:${
+              restoreError instanceof Error ? restoreError.message : String(restoreError)
+            }\n`);
+          }
+          await failCollectorCaptureActivity(captureActivity, reason);
+          inFlightVideoIdentities.delete(videoIdentity);
+          return {
+            stopped: failureAction,
+            error: reason,
+            scanned: totalScanned,
+            qualified: totalQualified,
+            recovered: totalRecovered,
+            mode,
+          };
+        }
         // 当前视频的安全补传/补拍不走整窗 5/10/20 秒指数退避；超过一分钟
         // 由独立 watchdog 报硬异常并重启采集轮次。
         const delayMs = Math.min(1_000, automaticRecoveryDelayMs(failureCount));
-        process.stderr.write(`collector_automatic_recovery_waiting:attempt=${failureCount}:delayMs=${delayMs}:pending=${pendingExists}:reason=${reason}\n`);
+        process.stderr.write(`collector_automatic_recovery_waiting:attempt=${failureCount}:delayMs=${delayMs}:pending=${pendingExistsAfterFailure}:reason=${reason}\n`);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         heartbeat = await heartbeatCollector(params.server, params.token, clientId);
         controlStopReason = params.shared.observeHeartbeat(heartbeat);
@@ -4219,7 +4716,7 @@ async function runCollectionPool(params: {
             mode,
           };
         }
-        if (pendingExists) continue;
+        if (pendingExistsAfterFailure) continue;
         // 不操作播放器，只被动截图；连续两张互动指标都证明是同一视频后，才允许再次完整采集。
         let passiveSnapshotAttempts = 0;
         while (stableRecoverySnapshots < 2 && passiveSnapshotAttempts < WEIXIN_CHANNELS_MAX_PASSIVE_RECOVERY_SNAPSHOTS) {
@@ -4286,6 +4783,7 @@ async function runCollectionPool(params: {
       state: terminal.state,
       failureReason: terminal.stopWithoutAdvance ? "qualified_not_persisted" : undefined,
     });
+    if (result.queuedForUpload) params.shared.schedulePendingUpload();
     if (terminal.stopWithoutAdvance) {
       process.stderr.write("collector_safety_stopped:qualified_video_not_persisted\n");
       return { stopped: "qualified_video_not_persisted", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
@@ -4542,28 +5040,41 @@ export async function runDualWindowCaptureStateMachine(params: {
         return;
       }
       startupQualifiedWindowIds.add(session.windowId);
-      const track = await detectVisibleProgressTrackReliably(startupScreenshot);
-      const holdX = track.startX + (track.endX - track.startX) * WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS[0];
-      await runSwiftControl(["click-relative", holdX.toFixed(4), track.y.toFixed(4)]);
-      await new Promise((resolve) => setTimeout(resolve, 180));
-      await captureWindow(startupScreenshot);
-      const heldOcr = await readOcr(startupScreenshot);
-      if (!metricsRemainOnSameVideo(startupMetrics, extractWeixinChannelsMetrics(heldOcr.lines))) {
-        throw new Error(`weixin_channels_startup_hold_continuity_unconfirmed:${session.windowId}`);
+      try {
+        const track = await detectVisibleProgressTrackReliably(startupScreenshot);
+        const holdX = track.startX + (track.endX - track.startX) * WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS[0];
+        await runSwiftControl(["click-relative", holdX.toFixed(4), track.y.toFixed(4)]);
+        await new Promise((resolve) => setTimeout(resolve, 180));
+        await captureWindow(startupScreenshot);
+        const heldOcr = await readOcr(startupScreenshot);
+        if (!metricsRemainOnSameVideo(startupMetrics, extractWeixinChannelsMetrics(heldOcr.lines))) {
+          throw new Error(`weixin_channels_startup_hold_continuity_unconfirmed:${session.windowId}`);
+        }
+        process.stderr.write(`startup_qualified_video_held_at_10_percent:${session.windowId}\n`);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        // 启动停帧是防自动切页的优化，不能因一窗轨道暂不可见而阻断另一窗。
+        // 真正的窗口绑定丢失仍向外抛出，禁止对错误窗口继续操作。
+        if (isCollectorWindowBindingFailure(reason)) throw error;
+        process.stderr.write(`startup_hold_skipped:${session.windowId}:${reason}\n`);
       }
-      process.stderr.write(`startup_qualified_video_held_at_10_percent:${session.windowId}\n`);
     });
   }
+  const events: WeixinChannelsPersistedObservationEvent[] = [];
+  const recordPersistedEvent = (event: WeixinChannelsPersistedObservationEvent) => {
+    events.push(event);
+    params.onObservationPersisted?.(event);
+  };
   const prepared = await prepareCollectorSharedRuntime({
     server: params.server,
     token: params.token,
     maxQualified: params.maxQualified,
     controlRevision: params.controlRevision,
+    onObservationPersisted: recordPersistedEvent,
   });
   for (const session of params.sessions) {
     collectorSearchTabStates.set(session.windowId, await loadCollectorSearchTabState(session.windowId));
   }
-  const events: WeixinChannelsPersistedObservationEvent[] = [];
   const failureDiagnosisGate = createAsyncSerialGate();
   const runSession = (
     session: WeixinChannelsWindowSession,
@@ -4598,16 +5109,21 @@ export async function runDualWindowCaptureStateMachine(params: {
           token: params.token,
           probe: params.probe,
           maxScanned: captureCurrentBeforeSearch ? 1 : params.maxScanned,
+          // 正式无人值守长跑先原子落盘，再由共享后台批量传 Fly；有目标数或
+          // 截止时间的验收探针仍同步等服务器确认，避免把 queued 冒充验收成功。
+          deferUploads: shouldDeferCollectorUploads({
+            probe: params.probe,
+            maxScanned: params.maxScanned,
+            maxQualified: params.maxQualified,
+            deadlineAt: params.deadlineAt,
+          }),
           allowSearch: allowSearchNow,
           searchScheduleManaged: isRightSearchWindow,
           // 夜间正式右窗与探针使用同一启动语义：先保住启动时已达标的
           // 当前视频；否则首次进入最热门搜索。恢复重启不得从未知页面直搜。
           startInSearch: startupMode.startInSearch,
           deadlineAt: params.deadlineAt,
-          onObservationPersisted: (event) => {
-            events.push(event);
-            params.onObservationPersisted?.(event);
-          },
+          onObservationPersisted: recordPersistedEvent,
           shared: prepared.shared,
           initialRecovery: restart === 0 ? initialRecovery : undefined,
           onInitialVideoClaimed,
@@ -4628,12 +5144,15 @@ export async function runDualWindowCaptureStateMachine(params: {
         lastFailure = error instanceof Error ? error.message : String(error);
       }
       if (isCollectorWindowBindingFailure(lastFailure)) {
-        prepared.shared.abortReason = "window_rebind_required";
-        return {
-          windowId: session.windowId,
-          stopped: "window_rebind_required",
-          error: lastFailure,
-        };
+        if (await collectorWindowBindingMissingPersistently(session)) {
+          prepared.shared.abortReason = "window_rebind_required";
+          return {
+            windowId: session.windowId,
+            stopped: "window_rebind_required",
+            error: lastFailure,
+          };
+        }
+        process.stderr.write(`collector_window_binding_transient:${session.windowId}:${lastFailure}\n`);
       }
       const diagnosis = await failureDiagnosisGate.run(() => diagnoseCollectorFailure({
         sessions: [session],
