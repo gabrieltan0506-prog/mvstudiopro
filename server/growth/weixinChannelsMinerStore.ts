@@ -37,6 +37,8 @@ export type WeixinChannelsMinerState = {
   updatedAt: string;
   capture: {
     enabled: boolean;
+    /** 每次网页开关或安全熔断都递增；本机据此识别被心跳轮询漏掉的关→开边沿。 */
+    controlRevision: number;
     updatedAt: string;
     lastHeartbeatAt?: string;
     lastClientId?: string;
@@ -67,7 +69,7 @@ function emptyState(): WeixinChannelsMinerState {
   return {
     version: 3,
     updatedAt: now,
-    capture: { enabled: false, updatedAt: now },
+    capture: { enabled: false, controlRevision: 0, updatedAt: now },
     aggregationPaused: false,
     candidates: [],
     observations: [],
@@ -85,7 +87,14 @@ function migrateState(parsed: Record<string, unknown>): WeixinChannelsMinerState
     version: 3,
     updatedAt: String(parsed.updatedAt || base.updatedAt),
     capture: parsed.capture && typeof parsed.capture === "object"
-      ? { ...base.capture, ...(parsed.capture as WeixinChannelsMinerState["capture"]) }
+      ? {
+        ...base.capture,
+        ...(parsed.capture as WeixinChannelsMinerState["capture"]),
+        controlRevision: Math.max(
+          0,
+          Math.floor(Number((parsed.capture as { controlRevision?: unknown }).controlRevision) || 0),
+        ),
+      }
       : base.capture,
     aggregationPaused: Boolean(parsed.aggregationPaused),
     candidates: rawCandidates.map((item) => ({
@@ -379,15 +388,17 @@ export async function ingestWeixinChannelsObservations(params: {
 export async function setWeixinChannelsCaptureEnabled(enabled: boolean) {
   return serializeMutation(async () => {
     const state = await readState();
+    const now = new Date().toISOString();
     return writeState({
       ...state,
       capture: {
         ...state.capture,
         enabled,
-        updatedAt: new Date().toISOString(),
+        controlRevision: state.capture.controlRevision + 1,
+        updatedAt: now,
         ...(enabled
           ? { pausedAt: undefined, pausedBy: undefined, pauseReason: undefined }
-          : { pausedAt: new Date().toISOString(), pausedBy: "user" as const, pauseReason: undefined }),
+          : { pausedAt: now, pausedBy: "user" as const, pauseReason: undefined }),
       },
     });
   });
@@ -402,6 +413,7 @@ export async function pauseWeixinChannelsCaptureForSafetyFuse(reason: "persisten
       capture: {
         ...state.capture,
         enabled: false,
+        controlRevision: state.capture.controlRevision + 1,
         updatedAt: now,
         pausedAt: now,
         pausedBy: "collector_safety_fuse",
@@ -465,7 +477,12 @@ export async function recordWeixinChannelsHeartbeat(clientId: string) {
       ...state,
       capture: { ...state.capture, lastHeartbeatAt: nowIso, lastClientId: clientId },
     });
-    return { enabled: state.capture.enabled, nextTask, serverTime: nowIso };
+    return {
+      enabled: state.capture.enabled,
+      controlRevision: state.capture.controlRevision,
+      nextTask,
+      serverTime: nowIso,
+    };
   });
 }
 
