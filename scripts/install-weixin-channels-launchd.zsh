@@ -11,6 +11,7 @@ readonly installer_file="${0:A}"
 readonly launchd_label="com.mvstudiopro.weixin-channels-collector"
 readonly repo_dir="${installer_file:h:h}"
 readonly source_launcher="${repo_dir}/scripts/mvstudiopro-weixin-collector-launcher.zsh"
+readonly source_raw_worker="${repo_dir}/scripts/weixin-channels-raw-worker.mts"
 readonly source_plist="${repo_dir}/scripts/launchd/${launchd_label}.plist"
 readonly target_dir="${HOME}/Library/LaunchAgents"
 readonly target_plist="${target_dir}/${launchd_label}.plist"
@@ -41,6 +42,15 @@ validate_source() {
     || fail "formal_search_calibration_missing"
   /usr/bin/grep -F -- "--raw-harvest" "${source_launcher}" >/dev/null \
     || fail "formal_raw_harvest_missing"
+  /usr/bin/grep -F -- "--raw-offline-worker-managed" "${source_launcher}" >/dev/null \
+    || fail "formal_raw_worker_management_missing"
+  /usr/bin/grep -F -- "scripts/weixin-channels-raw-worker.mts" "${source_launcher}" >/dev/null \
+    || fail "formal_raw_worker_entry_missing"
+  /usr/bin/grep -F -- "/usr/bin/nice -n 10" "${source_launcher}" >/dev/null \
+    || fail "formal_raw_worker_priority_isolation_missing"
+  /usr/bin/grep -F -- "collector_start_raw_worker" "${source_launcher}" >/dev/null \
+    || fail "formal_raw_worker_restart_missing"
+  [[ -f "${source_raw_worker}" ]] || fail "formal_raw_worker_source_missing"
   /usr/bin/grep -F -- "--supervise-web-toggle" "${source_launcher}" >/dev/null \
     || fail "web_toggle_supervisor_missing"
   ! /usr/bin/grep -E -- '--window-id=[0-9]+' "${source_launcher}" >/dev/null \

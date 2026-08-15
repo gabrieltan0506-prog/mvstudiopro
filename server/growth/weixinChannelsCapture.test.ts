@@ -65,6 +65,7 @@ import {
   mergeFocusedMetricOcr,
   sameVideoContinuity,
   nextCollectorSearchQueryIndex,
+  nextWeixinChannelsRawFailureCount,
   nextCollectorRecoveryState,
   nextCollectorFloatingCounts,
   parseVisibleMetric,
@@ -76,9 +77,7 @@ import {
   qualifiedCaptureHasAdvanceEvidence,
   restoreEligibleQuarantinedObservations,
   retryPendingObservations,
-  representativeFrameNeedsSingleRetry,
   remainingWeixinChannelsRawVideoDwellMs,
-  scoreRepresentativeFrameCandidate,
   sampledCapturePersistenceDisposition,
   selectCurrentHottestSearchResultPoint,
   selectReusableCollectorCandidate,
@@ -92,6 +91,7 @@ import {
   resolveCollectorWindowStartupMode,
   shouldRotateSearchQuery,
   shouldReturnToRecommendationAfterSearchError,
+  shouldRestartWeixinChannelsRawChild,
   summarizeSearchSort,
   syncPersistedCollectorIdentities,
   uploadPendingObservation,
@@ -102,6 +102,8 @@ import {
   WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS,
   WEIXIN_CHANNELS_RAW_VIDEO_DWELL_MAX_MS,
   WEIXIN_CHANNELS_RAW_VIDEO_DWELL_MIN_MS,
+  WEIXIN_CHANNELS_RAW_ROTATION_GRACE_MS,
+  WEIXIN_CHANNELS_RAW_MAX_CONSECUTIVE_FAILURES,
   WEIXIN_CHANNELS_SEARCH_BUTTON_POINT,
   WEIXIN_CHANNELS_SEARCH_HIGH_PLAY_THRESHOLD,
   WEIXIN_CHANNELS_SEARCH_INPUT_POINT,
@@ -111,13 +113,13 @@ import {
 } from "../../scripts/weixin-channels-capture.mts";
 
 describe("weixin channels OCR", () => {
-  it("raw 视频从确认当前页起总停留 5–8 秒，采集本身已超时则不重复空等", () => {
-    expect(WEIXIN_CHANNELS_RAW_VIDEO_DWELL_MIN_MS).toBe(5_000);
-    expect(WEIXIN_CHANNELS_RAW_VIDEO_DWELL_MAX_MS).toBe(8_000);
-    expect(remainingWeixinChannelsRawVideoDwellMs(1_000, 2_000, 6_500)).toBe(5_500);
-    expect(remainingWeixinChannelsRawVideoDwellMs(1_000, 9_500, 6_500)).toBe(0);
-    expect(remainingWeixinChannelsRawVideoDwellMs(1_000, 2_000, 1_000)).toBe(4_000);
-    expect(remainingWeixinChannelsRawVideoDwellMs(1_000, 2_000, 20_000)).toBe(7_000);
+  it("raw 视频从确认当前页起总停留 10–15 秒，采集本身已超时则不重复空等", () => {
+    expect(WEIXIN_CHANNELS_RAW_VIDEO_DWELL_MIN_MS).toBe(10_000);
+    expect(WEIXIN_CHANNELS_RAW_VIDEO_DWELL_MAX_MS).toBe(15_000);
+    expect(remainingWeixinChannelsRawVideoDwellMs(1_000, 2_000, 12_500)).toBe(11_500);
+    expect(remainingWeixinChannelsRawVideoDwellMs(1_000, 14_500, 12_500)).toBe(0);
+    expect(remainingWeixinChannelsRawVideoDwellMs(1_000, 2_000, 1_000)).toBe(9_000);
+    expect(remainingWeixinChannelsRawVideoDwellMs(1_000, 2_000, 20_000)).toBe(14_000);
   });
 
   it("悬浮面板只统计本轮正式 newlyQualifiedPersisted 资产", () => {
@@ -167,6 +169,8 @@ describe("weixin channels OCR", () => {
       autoBindExactTwoWindows: true,
       calibrateSearchButtons: true,
       rawHarvest: true,
+      rawOfflineWorkerManaged: false,
+      reuseSearchCalibration: false,
       superviseWebToggle: true,
       windowIds: [],
     });
@@ -178,6 +182,29 @@ describe("weixin channels OCR", () => {
       "--auto-bind-exact-two-windows",
       "--window-id=58442",
     ])).toThrow("weixin_channels_window_binding_mode_conflict");
+    expect(() => parseCollectorFormalPoolOptions([
+      "--pool",
+      "--raw-offline-worker-managed",
+    ])).toThrow("weixin_channels_raw_worker_requires_raw_harvest");
+    expect(() => parseCollectorFormalPoolOptions([
+      "--pool",
+      "--reuse-search-calibration",
+    ])).toThrow("weixin_channels_calibration_reuse_requires_calibration");
+  });
+
+  it("raw 子进程到点后最多只留一分钟收尾", () => {
+    expect(WEIXIN_CHANNELS_RAW_ROTATION_GRACE_MS).toBe(60_000);
+  });
+
+  it("raw 窗口连续三次失败重启共享 UI 子进程，成功推进后清零", () => {
+    let failures = 0;
+    failures = nextWeixinChannelsRawFailureCount(failures, "failure");
+    failures = nextWeixinChannelsRawFailureCount(failures, "failure");
+    expect(shouldRestartWeixinChannelsRawChild(failures)).toBe(false);
+    failures = nextWeixinChannelsRawFailureCount(failures, "failure");
+    expect(failures).toBe(WEIXIN_CHANNELS_RAW_MAX_CONSECUTIVE_FAILURES);
+    expect(shouldRestartWeixinChannelsRawChild(failures)).toBe(true);
+    expect(nextWeixinChannelsRawFailureCount(failures, "video_advanced")).toBe(0);
   });
 
   it("网页开关即使关后立刻再开，也会以控制版本终止旧轮次并重新校准", () => {
@@ -595,14 +622,6 @@ describe("weixin channels OCR", () => {
       }] }), { status: 200 })) as typeof fetch,
     });
     expect(collectorSeenContains(registry, "e".repeat(64), "wxco_fly")).toBe(true);
-  });
-
-  it("代表画面评分避开加载黑屏，并偏好清晰且有叙事文本的中段", () => {
-    const loading = scoreRepresentativeFrameCandidate({ progress: 0.5, ocrText: "网络加载中", entropy: 1, sharpness: 1, mean: 10 });
-    const narrative = scoreRepresentativeFrameCandidate({ progress: 0.5, ocrText: "AI工作流拆解 第三步生成分镜", entropy: 5, sharpness: 8, mean: 120 });
-    expect(narrative).toBeGreaterThan(loading);
-    expect(representativeFrameNeedsSingleRetry({ ocrText: "网络加载中", entropy: 1, sharpness: 1, mean: 10 })).toBe(true);
-    expect(representativeFrameNeedsSingleRetry({ ocrText: "AI工作流拆解", entropy: 5, sharpness: 8, mean: 120 })).toBe(false);
   });
 
   it("跨进程只允许一个新增搜索标签，总数最多两个", async () => {

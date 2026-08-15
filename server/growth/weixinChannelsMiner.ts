@@ -7,6 +7,7 @@ import {
   qualifyWeixinChannelsObservationLocally,
   WEIXIN_CHANNELS_AGGREGATION_MAX_ITEMS,
   WEIXIN_CHANNELS_ACCUMULATION_TARGET,
+  WEIXIN_CHANNELS_DEEPSEEK_MAX_COMPLETION_TOKENS,
   WEIXIN_CHANNELS_LUNA_BATCH_SIZE,
   WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
   WEIXIN_CHANNELS_TERRA_INPUT_TOKEN_BUDGET,
@@ -22,6 +23,7 @@ export {
   qualifyWeixinChannelsObservationLocally,
   WEIXIN_CHANNELS_AGGREGATION_MAX_ITEMS,
   WEIXIN_CHANNELS_ACCUMULATION_TARGET,
+  WEIXIN_CHANNELS_DEEPSEEK_MAX_COMPLETION_TOKENS,
   WEIXIN_CHANNELS_LUNA_BATCH_SIZE,
   WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
   WEIXIN_CHANNELS_TERRA_INPUT_TOKEN_BUDGET,
@@ -33,7 +35,7 @@ export const WEIXIN_CHANNELS_BATCH_REASONING = "low" as const;
 export const WEIXIN_CHANNELS_FINAL_MODEL = "gpt-5.6-terra" as const;
 export const WEIXIN_CHANNELS_FINAL_REASONING = "high" as const;
 export const WEIXIN_CHANNELS_BATCH_MODEL_V2 = "deepseek/deepseek-v4-pro-0813" as const;
-export const WEIXIN_CHANNELS_BATCH_REASONING_V2 = "high" as const;
+export const WEIXIN_CHANNELS_BATCH_REASONING_V2 = "medium" as const;
 /** 视频号量级小于来源平台，搜索候选按用户确认放宽到最近十五天。 */
 export const WEIXIN_CHANNELS_SEARCH_WINDOW_DAYS = 15;
 
@@ -145,11 +147,11 @@ export type FinalAnalysisJob = {
   lunaBatchIds: string[];
   sourceJobIds?: string[];
   cleanedByJobId?: string;
-  status: "pending" | "processing" | "paused" | "completed" | "failed";
+  status: "pending" | "processing" | "paused" | "completed" | "failed" | "discarded";
   claimToken?: string;
   terraProvider?: "evolink" | "openai" | "openrouter";
   terraModel: typeof WEIXIN_CHANNELS_FINAL_MODEL | typeof WEIXIN_CHANNELS_BATCH_MODEL_V2;
-  reasoningEffort: "high";
+  reasoningEffort: "medium" | "high";
   finalResult?: unknown;
   usage?: { inputTokens?: number; outputTokens?: number; reasoningTokens?: number; costUsd?: number };
   error?: string;
@@ -313,23 +315,41 @@ export function selectWeixinChannelsTerraInput(
   return { selected, estimatedInputTokens };
 }
 
+export const WEIXIN_CHANNELS_DEEPSEEK_CATEGORY_VALUES = [
+  "AI与科技",
+  "商业与职场",
+  "社会民生",
+  "知识教育",
+  "生活消费",
+  "健康运动",
+  "情感家庭",
+  "文化娱乐",
+  "时事热点",
+  "其他",
+  "unknown",
+] as const;
+
+const deepSeekEvidenceItemSchema = z.object({
+  label: z.string().trim().min(1).max(40),
+  category: z.enum(WEIXIN_CHANNELS_DEEPSEEK_CATEGORY_VALUES),
+  evidence: z.string().trim().min(1).max(40),
+  observationIds: z.array(z.string().trim().min(1).max(160)).min(1).max(50),
+}).strict();
+
+/**
+ * 千条分类的公开契约：八个顶层字段及每条结论的四个字段均为白名单。
+ * 无证据的分组允许空数组，禁止为了“非空”而编造；分类和批次摘要必须存在。
+ */
 const terraDirectResultSchema = z.object({
-  duplicates: z.unknown(),
-  categories: z.unknown(),
-  keywords: z.unknown(),
-  commentTopics: z.unknown(),
-  trends: z.unknown(),
-  blueOceanKeywords: z.unknown(),
-  topicIdeas: z.unknown(),
-  weeklySummary: z.unknown(),
-}).superRefine((result, context) => {
-  for (const [field, value] of Object.entries(result)) {
-    const populated = Array.isArray(value)
-      ? value.length > 0
-      : Boolean(value && typeof value === "object" ? Object.keys(value as object).length : value);
-    if (!populated) context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field}_empty` });
-  }
-});
+  duplicates: z.array(deepSeekEvidenceItemSchema).max(200),
+  categories: z.array(deepSeekEvidenceItemSchema).min(1).max(200),
+  keywords: z.array(deepSeekEvidenceItemSchema).max(200),
+  commentTopics: z.array(deepSeekEvidenceItemSchema).max(200),
+  trends: z.array(deepSeekEvidenceItemSchema).max(200),
+  blueOceanKeywords: z.array(deepSeekEvidenceItemSchema).max(200),
+  topicIdeas: z.array(deepSeekEvidenceItemSchema).max(200),
+  weeklySummary: z.array(deepSeekEvidenceItemSchema).min(1).max(50),
+}).strict();
 
 const terraCleanupResultSchema = terraDirectResultSchema.safeExtend({
   cleaningReport: z.object({
@@ -355,37 +375,122 @@ function usageOf(result: InvokeResult) {
   };
 }
 
-/** 每 1,000 条调用一次；Thinking High 明确传参，不依赖供应商默认值。 */
+function deepSeekBatchSystemPrompt() {
+  return `你是短视频增长数据的客观分类与清洗器。基于当前不超过1,000条正式有效记录，完成语义去重、分类、关键词、评论话题、趋势、蓝海词、选题和批次摘要。
+
+Schema锁：只输出八个顶层字段 duplicates,categories,keywords,commentTopics,trends,blueOceanKeywords,topicIdeas,weeklySummary。每个字段只能是数组；数组元素只能包含 label,category,evidence,observationIds 四个字段。category 只能取：${WEIXIN_CHANNELS_DEEPSEEK_CATEGORY_VALUES.join("、")}。禁止新增字段或类目；不确定时用 unknown。没有可验证结论的字段输出空数组，categories 与 weeklySummary 至少一项。
+文风锁：label 和 evidence 各不超过40字，只写可验证的客观事实。禁止形容词、副词堆叠、比喻、排比、感叹号及“非常、极其、爆炸式、惊人”等程度词。
+证据锁：每条结论必须在 observationIds 中列出对应输入记录；输入没有的信息不得输出。UI、OCR疑似噪音不能当作用户观点；缺失评论只能标记为数据缺口。
+终检锁：输出前删除主观修饰词，确认字段和枚举合法。只输出JSON，首字符为{，尾字符为}。`;
+}
+
+function addUsage(
+  total: ReturnType<typeof usageOf>,
+  current: ReturnType<typeof usageOf>,
+) {
+  return {
+    inputTokens: (total.inputTokens || 0) + (current.inputTokens || 0),
+    outputTokens: (total.outputTokens || 0) + (current.outputTokens || 0),
+    reasoningTokens: (total.reasoningTokens || 0) + (current.reasoningTokens || 0),
+    costUsd: (total.costUsd || 0) + (current.costUsd || 0),
+  };
+}
+
+/**
+ * 千条请求只发送分类所需证据，明确剥离图片、采集内部状态和长篇 OCR。
+ * 保留全部 1,000 个 observationId，同时把最坏输入控制在模型上下文预算内。
+ */
+export function toWeixinChannelsDeepSeekInputObservation(
+  item: PersistedWeixinChannelsObservation,
+) {
+  const clip = (value: unknown, limit: number) => String(value || "").trim().slice(0, limit);
+  return {
+    observationId: item.observationId,
+    query: clip(item.query, 40),
+    title: clip(item.title, 120),
+    author: item.author ? clip(item.author, 40) : undefined,
+    likes: item.likes,
+    shares: item.shares,
+    favorites: item.favorites,
+    comments: item.comments,
+    commentSamples: item.commentSamples?.slice(0, 2).map((sample) => ({
+      text: clip(sample.text, 80),
+      likeCount: sample.likeCount,
+      signals: sample.signals,
+    })),
+    ocrTexts: item.ocrTexts?.slice(0, 2).map((text) => clip(text, 80)),
+  };
+}
+
+/** 每 1,000 条调用一次；Medium 推理、严格 JSON 与一次校验重试均显式固定。 */
 export async function invokeWeixinChannelsDeepSeekBatch(params: {
   job: FinalAnalysisJob;
   observations: PersistedWeixinChannelsObservation[];
   invoke?: typeof invokeLLM;
 }) {
   const call = params.invoke || invokeLLM;
-  const response = await call({
-    model: "pro",
-    provider: "openai",
-    modelName: WEIXIN_CHANNELS_BATCH_MODEL_V2,
-    reasoningEffort: WEIXIN_CHANNELS_BATCH_REASONING_V2,
-    requestId: params.job.jobId,
-    max_tokens: WEIXIN_CHANNELS_TERRA_MAX_COMPLETION_TOKENS,
-    temperature: 1,
-    response_format: { type: "json_object" },
-    openRouterProviderPreferences: {
-      require_parameters: true,
-      data_collection: "allow",
-      max_price: { prompt: 0.5, completion: 1 },
-    },
-    messages: [
-      {
-        role: "system",
-        content: "你是短视频增长数据分析师。基于当前1,000条以内原始记录，一次完成语义去重、分类、关键词、评论话题聚类、趋势判断、蓝海词候选、选题建议和批次摘要。不得编造输入外数据；缺失评论必须标记数据缺口；UI/OCR疑似噪音必须标记，不能当作用户观点。只输出合法JSON，八个顶层字段必须全部非空：duplicates,categories,keywords,commentTopics,trends,blueOceanKeywords,topicIdeas,weeklySummary。每项结论附observationId或指标证据。",
-      },
-      { role: "user", content: JSON.stringify({ jobId: params.job.jobId, observations: params.observations }) },
-    ],
+  const observations = params.observations.map(toWeixinChannelsDeepSeekInputObservation);
+  const estimatedInputTokens = estimateWeixinChannelsTerraInputTokens({
+    jobId: params.job.jobId,
+    observations,
   });
-  const result = terraDirectResultSchema.parse(JSON.parse(extractJsonString(extractFirstChoicePlainText(response))));
-  return { result, provider: providerOf(response), usage: usageOf(response) };
+  if (estimatedInputTokens > WEIXIN_CHANNELS_TERRA_INPUT_TOKEN_BUDGET) {
+    throw new Error(`weixin_channels_deepseek_input_budget_exceeded:${estimatedInputTokens}`);
+  }
+  let totalUsage: ReturnType<typeof usageOf> = {
+    inputTokens: undefined,
+    outputTokens: undefined,
+    reasoningTokens: undefined,
+    costUsd: undefined,
+  };
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await call({
+      model: "pro",
+      provider: "openai",
+      modelName: WEIXIN_CHANNELS_BATCH_MODEL_V2,
+      reasoningEffort: WEIXIN_CHANNELS_BATCH_REASONING_V2,
+      requestId: attempt === 0 ? params.job.jobId : `${params.job.jobId}:validation-retry`,
+      max_tokens: WEIXIN_CHANNELS_DEEPSEEK_MAX_COMPLETION_TOKENS,
+      response_format: { type: "json_object" },
+      openRouterProviderPreferences: {
+        require_parameters: true,
+      },
+      messages: [
+        { role: "system", content: deepSeekBatchSystemPrompt() },
+        { role: "user", content: JSON.stringify({ jobId: params.job.jobId, observations }) },
+      ],
+    });
+    totalUsage = addUsage(totalUsage, usageOf(response));
+    try {
+      if (response.choices.some((choice) => choice.finish_reason === "length")) {
+        throw new Error("weixin_channels_deepseek_output_truncated");
+      }
+      const plain = extractFirstChoicePlainText(response).trim();
+      if (plain.length < 20) throw new Error("weixin_channels_deepseek_output_empty");
+      if (!plain.startsWith("{") || !plain.endsWith("}")) {
+        throw new Error("weixin_channels_deepseek_output_not_bare_json");
+      }
+      const result = terraDirectResultSchema.parse(JSON.parse(extractJsonString(plain)));
+      const sourceIds = new Set(params.observations.map((item) => item.observationId));
+      for (const values of Object.values(result)) {
+        for (const item of values) {
+          if (item.observationIds.some((observationId) => !sourceIds.has(observationId))) {
+            throw new Error("weixin_channels_deepseek_evidence_id_not_in_input");
+          }
+        }
+      }
+      return { result, provider: providerOf(response), usage: totalUsage };
+    } catch (error) {
+      lastError = error;
+      if (attempt === 0) continue;
+    }
+  }
+  const finalError = new Error(`weixin_channels_deepseek_validation_failed:${
+    lastError instanceof Error ? lastError.message : String(lastError)
+  }`) as Error & { usage?: ReturnType<typeof usageOf> };
+  finalError.usage = totalUsage;
+  throw finalError;
 }
 
 /** 只读取 8 个 DeepSeek 千条批次结果，不重新上传 8,000 条完整 OCR。 */
@@ -407,7 +512,9 @@ export async function invokeWeixinChannelsTerraCleanup(params: {
     messages: [
       {
         role: "system",
-        content: "你是最终数据质量审计与清洗器。输入是8个DeepSeek千条批次的结构化结果。删除评论UI、作者信息、地区日期、按钮、标题回显、OCR错字等噪音；删除或降级证据不足的蓝海词和趋势；合并重复分类、关键词与选题；保留observationId和指标证据。只输出合法JSON，必须保留八个非空字段duplicates,categories,keywords,commentTopics,trends,blueOceanKeywords,topicIdeas,weeklySummary，并新增cleaningReport={removedNoise,downgradedClaims,preservedEvidence}。",
+        content: `你是最终数据质量审计与清洗器。输入是8个DeepSeek千条批次的结构化结果。删除评论UI、作者信息、地区日期、按钮、标题回显、OCR错字等噪音；删除或降级证据不足的蓝海词和趋势；合并重复分类、关键词与选题；保留observationId和指标证据。
+
+输出必须保留八个顶层数组：duplicates,categories,keywords,commentTopics,trends,blueOceanKeywords,topicIdeas,weeklySummary。每个数组元素只能包含 label,category,evidence,observationIds；category 只能取：${WEIXIN_CHANNELS_DEEPSEEK_CATEGORY_VALUES.join("、")}；label 与 evidence 各不超过40字。另增加 cleaningReport={removedNoise,downgradedClaims,preservedEvidence}。不得新增其他顶层字段或结论字段，不确定时用 unknown，只输出合法JSON。`,
       },
       { role: "user", content: JSON.stringify({ jobId: params.job.jobId, batchResults: params.batchResults }) },
     ],
@@ -435,7 +542,9 @@ export async function invokeWeixinChannelsTerraDirect(params: {
     messages: [
       {
         role: "system",
-        content: "你是短视频增长数据分析师。直接基于原始记录一次完成语义去重、分类、关键词、评论话题聚类、趋势判断、蓝海词候选、选题建议和周报摘要。不得编造输入外数据；单平台样本不得伪造平台差异；缺失评论必须标记数据缺口。只输出合法 JSON，八个顶层字段必须全部非空：duplicates,categories,keywords,commentTopics,trends,blueOceanKeywords,topicIdeas,weeklySummary。每项结论附 observationId 或指标证据。",
+        content: `你是短视频增长数据分析师。直接基于原始记录一次完成语义去重、分类、关键词、评论话题聚类、趋势判断、蓝海词候选、选题建议和周报摘要。不得编造输入外数据；单平台样本不得伪造平台差异；缺失评论必须标记数据缺口。
+
+只输出八个顶层数组：duplicates,categories,keywords,commentTopics,trends,blueOceanKeywords,topicIdeas,weeklySummary。每个数组元素只能包含 label,category,evidence,observationIds；category 只能取：${WEIXIN_CHANNELS_DEEPSEEK_CATEGORY_VALUES.join("、")}；label 与 evidence 各不超过40字。不得新增字段，不确定时用 unknown，只输出合法JSON。`,
       },
       {
         role: "user",

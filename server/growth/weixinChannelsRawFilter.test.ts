@@ -30,7 +30,6 @@ const qualified = {
   favorites: 700,
   comments: 79,
   ocrTexts: ["真实内容"],
-  visualImageBase64: "image",
 };
 
 describe("视频号 raw 离线筛选", () => {
@@ -43,6 +42,9 @@ describe("视频号 raw 离线筛选", () => {
     if (decision.state === "accepted") {
       expect(decision.observation.commentSamples).toBeUndefined();
       expect(decision.observation.rawCaptureId).toBe("raw-1");
+      expect(decision.observation).not.toHaveProperty("coverImageBase64");
+      expect(decision.observation).not.toHaveProperty("visualImageBase64");
+      expect(decision.observation).not.toHaveProperty("visualUrl");
     }
   });
 

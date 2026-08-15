@@ -1327,9 +1327,12 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
   const modelId = String(target.modelName || "").trim();
   const isKimiK3 = isOpenRouterKimiK3Model(modelId);
   const isDeepSeekV4Pro0813 = modelId === "deepseek/deepseek-v4-pro-0813";
-  /** Kimi K3：官方文档要求勿传 temperature/top_p（固定）；GPT-5 系亦不用采样控件 */
+  /** Kimi K3、DeepSeek V4 Pro reasoning 与 GPT-5 系均不发送 temperature/top_p。 */
   const supportsSamplingControls =
-    !isKimiK3 && !/^gpt-5(?:[.-]|$)/i.test(modelId) && !/^openai\/gpt-5/i.test(modelId);
+    !isKimiK3
+    && !isDeepSeekV4Pro0813
+    && !/^gpt-5(?:[.-]|$)/i.test(modelId)
+    && !/^openai\/gpt-5/i.test(modelId);
   const isGpt5Family = /^gpt-5(?:[.-]|$)/i.test(modelId) || /^openai\/gpt-5/i.test(modelId);
   /** gpt-5.5 官方默认 medium；JSON 与纯文本重试分别可用环境变量覆盖。 */
   const jsonReasoningFallback = parseGpt5ReasoningEffortEnv("OPENAI_GPT5_JSON_REASONING_EFFORT", "medium");
@@ -1347,7 +1350,10 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     }
   } else if (isDeepSeekV4Pro0813) {
     const requested = String(params.reasoningEffort || "high").trim().toLowerCase();
-    reasoningEffort = requested === "low" || requested === "max" ? requested : "high";
+    reasoningEffort = requested === "low" || requested === "medium"
+      || requested === "high" || requested === "max"
+      ? requested
+      : "high";
   } else if (isGpt5Family) {
     if (params.reasoningEffort) {
       reasoningEffort = params.reasoningEffort;
@@ -1363,7 +1369,7 @@ async function invokeOpenAI(params: InvokeParams & { model?: ModelTier }, target
     messages: params.messages.map(normalizeMessage),
   };
   if (isDeepSeekV4Pro0813 && reasoningEffort) {
-    payload.reasoning = { effort: reasoningEffort, exclude: true };
+    payload.reasoning = { effort: reasoningEffort };
   } else if (reasoningEffort) {
     payload.reasoning_effort = reasoningEffort;
   }

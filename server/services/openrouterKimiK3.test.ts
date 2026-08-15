@@ -15,13 +15,13 @@ describe("openrouterKimiK3", () => {
     expect(isOpenRouterKimiK3Model("openai/gpt-5.6-terra")).toBe(false);
   });
 
-  it("keeps platform stage2 on Kimi K3 but routes visual report to Terra", () => {
+  it("keeps platform stage2 and the synchronous visual report on Kimi K3", () => {
     delete process.env.PLATFORM_OPENROUTER_MODEL;
     delete process.env.VISUAL_REPORT_OPENROUTER_MODEL;
     delete process.env.VISUAL_REPORT_OPENAI_MODEL;
     expect(getOpenRouterKimiK3Model()).toBe(OPENROUTER_KIMI_K3_MODEL);
     expect(getPlatformStage2OpenAiModel()).toBe(OPENROUTER_KIMI_K3_MODEL);
-    expect(getVisualReportOpenAiModel()).toBe("gpt-5.6-terra");
+    expect(getVisualReportOpenAiModel()).toBe(OPENROUTER_KIMI_K3_MODEL);
     expect(OPENROUTER_KIMI_K3_REASONING_EFFORT).toBe("max");
   });
 

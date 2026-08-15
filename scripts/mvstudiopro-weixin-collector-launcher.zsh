@@ -9,17 +9,24 @@ umask 077
 readonly collector_repo_dir="${0:A:h:h}"
 readonly collector_lock_dir="/private/tmp/mvstudiopro-weixin-channels-collector.lock"
 readonly collector_pid_file="${collector_lock_dir}/launcher.pid"
+readonly collector_child_restart_request="/private/tmp/mvstudiopro-weixin-channels-child-restart.request"
 readonly collector_keychain_service="mvstudiopro-weixin-channels-collector"
 readonly collector_server="https://api.mvstudiopro.com"
 
 collector_child_pid=""
+collector_raw_worker_pid=""
 collector_owns_lock=false
+collector_stopping=false
 
 collector_cleanup() {
   trap - EXIT HUP INT TERM
   if [[ -n "${collector_child_pid}" ]] && /bin/kill -0 "${collector_child_pid}" 2>/dev/null; then
     /bin/kill -TERM "${collector_child_pid}" 2>/dev/null || true
     wait "${collector_child_pid}" 2>/dev/null || true
+  fi
+  if [[ -n "${collector_raw_worker_pid}" ]] && /bin/kill -0 "${collector_raw_worker_pid}" 2>/dev/null; then
+    /bin/kill -TERM "${collector_raw_worker_pid}" 2>/dev/null || true
+    wait "${collector_raw_worker_pid}" 2>/dev/null || true
   fi
   if [[ "${collector_owns_lock}" == true ]]; then
     local recorded_pid=""
@@ -32,8 +39,12 @@ collector_cleanup() {
 }
 
 collector_forward_signal() {
+  collector_stopping=true
   if [[ -n "${collector_child_pid}" ]] && /bin/kill -0 "${collector_child_pid}" 2>/dev/null; then
     /bin/kill -TERM "${collector_child_pid}" 2>/dev/null || true
+  fi
+  if [[ -n "${collector_raw_worker_pid}" ]] && /bin/kill -0 "${collector_raw_worker_pid}" 2>/dev/null; then
+    /bin/kill -TERM "${collector_raw_worker_pid}" 2>/dev/null || true
   fi
 }
 
@@ -81,19 +92,66 @@ unset collector_secret
 collector_pnpm="$(command -v pnpm 2>/dev/null)" || exit 69
 cd "${collector_repo_dir}" || exit 72
 
-# 正式入口只允许“恰好两窗、同一微信 PID”的受限自动绑定；每次由网页从停采
-# 切到开采时重新显示两窗放大镜校准层，禁用时由本机监督器待机而不是退出。
-/usr/bin/caffeinate -dimsu "${collector_pnpm}" exec tsx \
-  scripts/weixin-channels-capture.mts \
-  --pool \
-  --server="${collector_server}" \
-  --auto-bind-exact-two-windows \
-  --calibrate-search-buttons \
-  --raw-harvest \
-  --supervise-web-toggle &
-collector_child_pid=$!
+collector_start_raw_worker() {
+  if [[ -n "${collector_raw_worker_pid}" ]] \
+    && /bin/kill -0 "${collector_raw_worker_pid}" 2>/dev/null; then
+    return 0
+  fi
+  # OCR、去重和网络批传降到后台优先级，避免与前台双窗截图/键鼠争抢 CPU。
+  /usr/bin/nice -n 10 "${collector_pnpm}" exec tsx \
+    scripts/weixin-channels-raw-worker.mts \
+    --server="${collector_server}" &
+  collector_raw_worker_pid=$!
+  /bin/sleep 0.2
+  if ! /bin/kill -0 "${collector_raw_worker_pid}" 2>/dev/null; then
+    wait "${collector_raw_worker_pid}" 2>/dev/null || true
+    collector_raw_worker_pid=""
+    print -u2 -- "weixin_channels_raw_worker_start_failed"
+    return 1
+  fi
+}
 
-wait "${collector_child_pid}"
-collector_status=$?
-collector_child_pid=""
-exit "${collector_status}"
+# 离线 OCR/去重/批传是独立常驻 worker。UI 子进程每二十分钟退出一次时，
+# worker 继续处理刚封存批次，因此不会用 OCR 或上传阻塞下一轮采集。
+collector_start_raw_worker || exit 75
+
+# 正式入口只允许“恰好两窗、同一微信 PID”的受限自动绑定。网页从停采切到
+# 开采时强制重新校准；正常二十分钟轮换只复用绑定当前 windowId/PID 的相对点。
+collector_reuse_calibration=false
+while true; do
+  collector_start_raw_worker || exit 75
+  collector_capture_args=(
+    exec tsx
+    scripts/weixin-channels-capture.mts
+    --pool
+    --server="${collector_server}"
+    --auto-bind-exact-two-windows
+    --calibrate-search-buttons
+    --raw-harvest
+    --raw-offline-worker-managed
+    --supervise-web-toggle
+  )
+  if [[ "${collector_reuse_calibration}" == true ]]; then
+    collector_capture_args+=(--reuse-search-calibration)
+  fi
+  /usr/bin/caffeinate -dimsu "${collector_pnpm}" "${collector_capture_args[@]}" &
+  collector_child_pid=$!
+  wait "${collector_child_pid}"
+  collector_status=$?
+  collector_child_pid=""
+  if [[ "${collector_stopping}" == true ]]; then
+    exit 0
+  fi
+  if [[ -f "${collector_child_restart_request}" ]]; then
+    /bin/rm -f "${collector_child_restart_request}"
+    print -- "weixin_channels_collector_child_watchdog_restart"
+    collector_reuse_calibration=true
+    continue
+  fi
+  if [[ "${collector_status}" -eq 76 ]]; then
+    print -- "weixin_channels_collector_child_rotating"
+    collector_reuse_calibration=true
+    continue
+  fi
+  exit "${collector_status}"
+done

@@ -8,15 +8,16 @@ import {
   WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
 } from "../../shared/weixinChannelsRules";
 import {
+  countAvailableWeixinChannelsEffectiveSamples,
   getWeixinChannelsMinerState,
   ingestWeixinChannelsObservations,
   pauseWeixinChannelsCaptureForSafetyFuse,
   recordWeixinChannelsHeartbeat,
   refreshWeixinChannelsCandidates,
   setWeixinChannelsCaptureEnabled,
+  startWeixinChannelsAggregationInBackground,
   summarizeCandidateSources,
 } from "../growth/weixinChannelsMinerStore";
-import { isTrendCoverCollectionActive } from "../growth/trendCoverSelection";
 
 function tokenDigest(value: string) {
   return createHash("sha256").update(value).digest();
@@ -27,6 +28,21 @@ export function verifyWeixinChannelsCollectorToken(token: string) {
   const actual = String(token || "").trim();
   if (!expected || !actual) return false;
   return timingSafeEqual(tokenDigest(expected), tokenDigest(actual));
+}
+
+/**
+ * 视频号客户端允许继续携带旧图片字段以兼容已安装版本，但服务端永不转存，
+ * 也不让 Base64 进入正式 observation。新采集器已经不会发送这些字段。
+ */
+export function stripWeixinChannelsImagePayload<T extends Record<string, unknown>>(observation: T) {
+  const {
+    coverImageBase64: _coverImageBase64,
+    visualImageBase64: _visualImageBase64,
+    visualAssetKind: _visualAssetKind,
+    visualFrameProgress: _visualFrameProgress,
+    ...structured
+  } = observation;
+  return structured;
 }
 
 function authorize(req: Request, res: Response) {
@@ -154,7 +170,7 @@ export function registerWeixinChannelsCollectorHttpRoutes(app: Express) {
         ok: true,
         capture: state.capture,
         aggregationPaused: state.aggregationPaused,
-        accumulatedQualifiedCount: state.observations.filter((item) => item.runKind !== "probe" && item.qualified && !item.invalid && !item.consumedAt && !item.aggregationJobId).length,
+        accumulatedQualifiedCount: countAvailableWeixinChannelsEffectiveSamples(state),
         probeQualifiedCount: state.observations.filter((item) => item.runKind === "probe" && item.qualified && !item.invalid).length,
         deepseekCompletedBatchCount: state.jobs.filter((item) => item.kind === "formal" && item.stage === "deepseek_batch" && item.status === "completed" && !item.cleanedByJobId).length,
         terraCleanupBatchTarget: WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
@@ -217,30 +233,13 @@ export function registerWeixinChannelsCollectorHttpRoutes(app: Express) {
       return;
     }
     try {
-      const observations = await Promise.all(parsed.data.observations.map(async (observation) => {
-        const qualification = qualifyWeixinChannelsObservationLocally(observation);
-        const isRepresentativeFrame = Boolean(observation.visualImageBase64);
-        const visualImageBase64 = observation.visualImageBase64 || observation.coverImageBase64;
-        if (!qualification.qualified || !visualImageBase64 || (!isRepresentativeFrame && !isTrendCoverCollectionActive())) {
-          return observation;
-        }
-        const buffer = Buffer.from(visualImageBase64, "base64");
-        if (buffer.length < 64 || buffer.length > 500_000) throw new Error("weixin_channels_cover_invalid");
-        const { uploadBufferToPlatformStorage } = await import("../services/evolinkGptImage2.js");
-        const assetUrl = await uploadBufferToPlatformStorage(
-          buffer,
-          isRepresentativeFrame ? "growth_visual_frames/weixin_channels" : "growth_cover_candidates/weixin_channels",
-        );
-        return {
-          ...observation,
-          coverImageBase64: undefined,
-          visualImageBase64: undefined,
-          ...(isRepresentativeFrame
-            ? { visualUrl: assetUrl, visualCapturedAt: new Date().toISOString(), visualAssetKind: "representative_frame" as const }
-            : { coverUrl: assetUrl, coverCapturedAt: new Date().toISOString() }),
-        };
-      }));
+      const observations = parsed.data.observations.map((observation) => (
+        stripWeixinChannelsImagePayload(observation)
+      ));
       const result = await ingestWeixinChannelsObservations({ ...parsed.data, observations });
+      if (result.aggregationQueued && result.aggregationJobId) {
+        startWeixinChannelsAggregationInBackground(result.aggregationJobId);
+      }
       res.json({
         ok: true,
         ...result,

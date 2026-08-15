@@ -12,8 +12,6 @@ export type WeixinChannelsRawOfflineAnalysis = WeixinChannelsQualificationInput 
   title: string;
   author?: string;
   videoIdentity?: string;
-  visualImageBase64?: string;
-  visualFrameProgress?: number;
   commentSamples?: WeixinChannelsCommentSample[];
 };
 
@@ -44,9 +42,6 @@ export function decideWeixinChannelsRawOfflineItem(params: {
   }
   if (!analysis.videoIdentity) {
     return { state: "rejected", reason: "offline_video_identity_missing" };
-  }
-  if (!analysis.visualImageBase64) {
-    return { state: "rejected", reason: "offline_representative_frame_missing" };
   }
   const qualification = qualifyWeixinChannelsObservationLocally({
     query: manifest.query,
@@ -87,9 +82,6 @@ export function decideWeixinChannelsRawOfflineItem(params: {
       resultRank: 1,
       title: analysis.title || "当前视频",
       author: analysis.author,
-      visualImageBase64: analysis.visualImageBase64,
-      visualAssetKind: "representative_frame",
-      visualFrameProgress: analysis.visualFrameProgress ?? 0.5,
       observedAt: manifest.capturedAt,
       likes: analysis.likes,
       comments: analysis.comments,

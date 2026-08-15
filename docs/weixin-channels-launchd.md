@@ -11,18 +11,28 @@
 - launcher 使用 `--supervise-web-toggle` 常驻监督网页开关：停采时只待机且不触碰微信，
   重新开采时由同一本机进程恢复，不依赖 Vercel/Fly 远程启动 Mac 进程。
 - 正式入口使用 `--raw-harvest` 两阶段采集。实时阶段只做播放器/评论/搜索导航的
-  安全识别，机械保存五个进度帧和评论页，不做内容资格、广告或去重判断；每 30 分钟
-  封批后才在本机用 macOS Vision OCR 统一筛选。搜索“最新”每批最多保留 50 个 raw，
+  安全识别，机械保存五个进度帧和评论页，不做内容资格、广告或去重判断；每 20 分钟
+  原子封批并更换全新的 UI 采集子进程。独立 raw worker 同时用 macOS Vision OCR 筛选
+  上一批，所以 OCR、去重和批传不会阻塞新一轮采集。搜索“最新”每批最多保留 50 个 raw，
   搜索结果超过一年、广告、低热和重复项在本机淘汰，只有有效项进入现有 Fly pending。
-- 每条 raw 视频从当前页确认到允许切换下一条之间随机停留 5–8 秒；五点截图与评论操作
-  已经耗掉的时间计入停留，不会在采集完成后再固定追加 5–8 秒，也禁止连续高速刷页。
+- 视频号图片只作为本机短期 OCR/页面安全证据，绝不进入 observation JSON、Fly 持久卷或 GCS；
+  服务端也会剥离旧客户端仍携带的图片字段。DeepSeek/Terra 只读取精简后的文字与指标。
+- 每条 raw 视频从当前页确认到允许切换下一条之间随机停留 10–15 秒；五点截图与评论操作
+  已经耗掉的时间计入停留，不会在采集完成后再固定追加 10–15 秒，也禁止连续高速刷页。
 - raw 批次容量硬上限仍为 2,000 条，用于阻止异常页面造成无界磁盘增长；正常切批以
-  30 分钟为准，不会等待凑满 2,000 条。raw、淘汰项和重复项均不计有效数据，也不进入
-  DeepSeek/Terra 计数。
+  20 分钟为准，不会等待凑满 2,000 条。封批后未完成的预约会明确记为 abandoned，只有
+  已原子提交的 manifest 进入离线处理。最近两批完整素材保留用于现场审计，更旧的已完成
+  批次只保留 `run.json` 与 `summary.json`，回收图片空间；pending 与处理中批次绝不清理。
+  raw、淘汰项和重复项均不计有效数据，也不进入 DeepSeek/Terra 计数。单个离线批次连续
+  三次无法解析时转入 `failed` 隔离态并保留素材与原因，后续批次继续处理，不能被坏批永久堵塞。
 - 模型聚合沿用原有正式口径：只有 Fly 已持久化的正式、达标、有效且未消费 observation
-  才参与累计。每满 1,000 条创建一次 DeepSeek V4 Pro 0813 八项整理；每累计 8 个已完成、
+  经本地语义去重后才参与累计。每严格满 1,000 条创建一次 DeepSeek V4 Pro 0813 八项整理；
+  请求固定 `max_tokens=65536`、`reasoning.effort=medium`、JSON object 与
+  `provider.require_parameters=true`，不传 temperature/top_p。输出使用字段/枚举白名单、
+  40 字文风上限和 observationId 证据锁；截断、非裸 JSON、空壳或 schema/枚举越界只重试
+  一次，再失败就把该批标为 `discarded`，不让脏结果下行。每累计 8 个已完成、
   尚未清洗的千条 DeepSeek 结果（即 8,000 条正式有效数据）才创建一次 Terra High 清洗。
-  30 分钟 raw 封批次数、本批原始条数、本地淘汰数与 pending 数均不得触发模型。
+  20 分钟 raw 封批次数、本批原始条数、本地淘汰数与 pending 数均不得触发模型。
 - 左上角悬浮窗同时显示“本批原始”和“有效新增”：前者在 raw 原子落盘后立即增长，
   后者只在离线筛选通过且 Fly 确认正式新增后增长，避免把原始素材冒充有效数据。
 - 采集令牌只在进程启动时从登录用户 Keychain 的 `mvstudiopro-weixin-channels-collector` 服务读取，不写入仓库、plist、日志或锁文件。
@@ -35,7 +45,7 @@
 ./scripts/install-weixin-channels-launchd.zsh --check-source
 ```
 
-该命令检查 shell 语法、plist、受限双窗自动绑定、正式十字星校准、raw 两阶段采集、网页开关监督、
+该命令检查 shell 语法、plist、受限双窗自动绑定、正式十字星校准、raw 两阶段采集、独立离线 worker、网页开关监督、
 禁止硬编码 windowId、Keychain 读取入口及 KeepAlive 契约；不读取令牌，也不修改 launchd。
 
 ## 合并后安装
@@ -51,7 +61,9 @@
 
 watchdog 每 15 秒检查本地单条采集活动文件，并用 Fly heartbeat 确认网页开关；正常状态不调用模型。
 任一视频从资格采集开始到 Fly 最终确认超过 60 秒，会记录
-`collector_single_video_capture_timeout`、终止卡死的 collector job，并只对该新故障调用一次 Agent。
+`collector_single_video_capture_timeout`；raw 任一窗口 75 秒无进展、或离线 worker 消失时，
+只重启共享 UI 子进程并复用现有校准，launcher 随即恢复低优先级离线 worker。spool、pending、
+已封批次和网页开关均不重置。随后只对该新故障调用一次 Agent。
 只有新的持久故障证据才运行一次临时 Codex 修复任务，同一故障一小时内去重。自动任务先要求
 工作树干净，再创建独立修复分支；验证失败时继续诊断、修改和重跑，直到目标测试、TypeScript、
 构建和静态检查全部通过后才 commit、push 并创建 PR。真实阻塞时不推送；始终禁止自动合并、

@@ -190,6 +190,12 @@ function formalAvailable(state: WeixinChannelsMinerState) {
   return state.observations.filter((item) => item.runKind !== "probe" && item.qualified && !item.invalid && !item.consumedAt && !item.aggregationJobId);
 }
 
+export function countAvailableWeixinChannelsEffectiveSamples(
+  state: WeixinChannelsMinerState,
+) {
+  return cleanWeixinChannelsObservationsLocally(formalAvailable(state)).kept.length;
+}
+
 function createJob(
   state: WeixinChannelsMinerState,
   kind: "formal" | "probe",
@@ -199,11 +205,19 @@ function createJob(
   const jobId = `wxc_${kind}_${now.replace(/\D/g, "").slice(0, 14)}_${randomUUID().slice(0, 8)}`;
   const cleaned = cleanWeixinChannelsObservationsLocally(source);
   const selected = cleaned.kept.slice(0, kind === "formal" ? WEIXIN_CHANNELS_AGGREGATION_MAX_ITEMS : WEIXIN_CHANNELS_PROBE_TARGET);
-  if (kind === "formal" && source.length < WEIXIN_CHANNELS_ACCUMULATION_TARGET) {
+  if (kind === "formal" && selected.length < WEIXIN_CHANNELS_ACCUMULATION_TARGET) {
     return state;
   }
   if (!selected.length) return state;
-  const claimedSource = source;
+  const claimedIds = new Set([
+    ...selected.map((item) => item.observationId),
+    ...cleaned.removed.map((item) => item.observationId),
+  ]);
+  // 只领取本批严格 1,000 条有效样本及随它们被本地判定的重复项；超过
+  // 1,000 的有效样本留给下一批，不能被本次任务提前消费。
+  const claimedSource = kind === "formal"
+    ? source.filter((item) => claimedIds.has(item.observationId))
+    : source;
   const job: FinalAnalysisJob = {
     jobId,
     kind,
@@ -217,7 +231,7 @@ function createJob(
     lunaBatchIds: [],
     status: "pending",
     terraModel: "deepseek/deepseek-v4-pro-0813",
-    reasoningEffort: "high",
+    reasoningEffort: "medium",
     createdAt: now,
     updatedAt: now,
   };
@@ -231,11 +245,14 @@ function createJob(
 }
 
 function maybeCreateFormalJob(state: WeixinChannelsMinerState) {
-  const active = state.jobs.some((job) => job.kind === "formal" && job.stage === "deepseek_batch" && job.status !== "completed");
+  const active = state.jobs.some((job) => job.kind === "formal"
+    && job.stage === "deepseek_batch"
+    && job.status !== "completed"
+    && job.status !== "discarded");
   if (active) return state;
   const available = formalAvailable(state);
-  if (available.length < WEIXIN_CHANNELS_ACCUMULATION_TARGET) return state;
-  return createJob(state, "formal", available.slice(0, WEIXIN_CHANNELS_AGGREGATION_MAX_ITEMS));
+  if (cleanWeixinChannelsObservationsLocally(available).kept.length < WEIXIN_CHANNELS_ACCUMULATION_TARGET) return state;
+  return createJob(state, "formal", available);
 }
 
 function maybeCreateTerraCleanupJob(state: WeixinChannelsMinerState) {
@@ -385,8 +402,10 @@ export async function ingestWeixinChannelsObservations(params: {
     if (qualifiedForGrowth.length) scheduleWeixinChannelsGrowthMerge();
     const growthMerged = qualifiedForGrowth.length === 0;
 
-    const accumulatedQualifiedCount = formalAvailable(state).length;
-    const aggregationJob = state.jobs.find((job) => job.kind === "formal" && job.status !== "completed");
+    const accumulatedQualifiedCount = countAvailableWeixinChannelsEffectiveSamples(state);
+    const aggregationJob = state.jobs.find((job) => job.kind === "formal"
+      && job.status !== "completed"
+      && job.status !== "discarded");
     const first = results[0];
     const firstNewlyPersisted = first ? !duplicateFlags[0] : false;
     return {
@@ -566,6 +585,7 @@ export async function processWeixinChannelsAggregationJob(
       : state.jobs.find((item) => item.status === "pending" || item.status === "failed" || item.status === "paused");
     if (!job) throw new Error("weixin_channels_aggregation_job_not_found");
     if (job.status === "completed") return { state, job };
+    if (job.status === "discarded") throw new Error("weixin_channels_aggregation_job_discarded");
     const claimAge = Date.now() - Date.parse(job.updatedAt);
     if (job.status === "processing" && job.claimToken && claimAge < (options?.staleClaimMs ?? 15 * 60_000)) {
       throw new Error("weixin_channels_aggregation_already_claimed");
@@ -649,17 +669,28 @@ export async function processWeixinChannelsAggregationJob(
     return claimed.job;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const failedUsage = (error as Error & { usage?: FinalAnalysisJob["usage"] })?.usage;
+    const discarded = message.startsWith("weixin_channels_deepseek_validation_failed:");
     await serializeMutation(async () => {
       const state = await readState();
-      await writeState({
+      let next: WeixinChannelsMinerState = {
         ...state,
         jobs: state.jobs.map((item) => item.jobId === targetJobId && item.status !== "paused"
-          ? { ...item, status: "failed", claimToken: undefined, error: message, updatedAt: new Date().toISOString() }
+          ? {
+              ...item,
+              status: discarded ? "discarded" : "failed",
+              claimToken: undefined,
+              usage: failedUsage || item.usage,
+              error: message,
+              updatedAt: new Date().toISOString(),
+            }
           : item),
         lunaBatches: state.lunaBatches.map((item) => item.jobId === targetJobId && item.status === "running"
           ? { ...item, status: "failed", error: message, updatedAt: new Date().toISOString() }
           : item),
-      });
+      };
+      if (discarded) next = maybeCreateFormalJob(next);
+      await writeState(next);
     });
     throw error;
   }

@@ -12,6 +12,7 @@ import {
   toOpenRouterGpt56Model,
 } from "./gpt56CopywritingGateway.js";
 import { normalizeEvolinkChatModel } from "./evolinkChatModel.js";
+import { OPENROUTER_KIMI_K3_MODEL } from "./openrouterKimiK3.js";
 
 const ENV_KEYS = [
   "OPENAI_API_KEY",
@@ -90,11 +91,11 @@ describe("resolveGpt56CopywritingTarget", () => {
     expect(t.modelName).toBe("moonshotai/kimi-k3");
   });
 
-  it("visual report defaults to GPT-5.6 Terra", () => {
+  it("visual report defaults to Kimi K3 after the synchronous-report rollback", () => {
     delete process.env.PLATFORM_OPENROUTER_MODEL;
     delete process.env.VISUAL_REPORT_OPENROUTER_MODEL;
     delete process.env.VISUAL_REPORT_OPENAI_MODEL;
-    expect(getVisualReportOpenAiModel()).toBe("gpt-5.6-terra");
+    expect(getVisualReportOpenAiModel()).toBe(OPENROUTER_KIMI_K3_MODEL);
   });
 
   it("official_only prefers api.openai.com when key present", () => {
