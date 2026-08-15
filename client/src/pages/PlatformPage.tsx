@@ -9951,7 +9951,7 @@ export default function PlatformPage() {
         : "";
     if (
       !window.confirm(
-        `【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天样本，生成四格战略摘要、Stage 1 看板、趋势 PNG 与本期优秀封面页${windowNote}。\n\n${isPlatformTrendCoverPromo(selectedWindowDays) ? "限时特价：优秀封面页免费赠送至 9 月 15 日。\n" : ""}扣除 ${cost} 积分，不含专属文案 / 决策智库全景（需另行加购）。是否开始？`,
+        `【平台趋势分析】将读取${selectedPlatformLabels || "所选平台"}近 ${selectedWindowDays} 天样本，生成四格战略摘要、Stage 1 看板与趋势 PNG${windowNote}。\n\n扣除 ${cost} 积分，不含专属文案 / 决策智库全景（需另行加购）。是否开始？`,
       )
     ) {
       return;
@@ -10103,7 +10103,7 @@ export default function PlatformPage() {
         coverLink.href = coverDataUrl;
         coverLink.click();
       }
-      toast.success("主周报与本期优秀封面 PNG 已下载");
+      toast.success("主周报 PNG 已下载");
     } catch {
       toast.error("下载失败，请重试");
     } finally {
@@ -11687,7 +11687,7 @@ export default function PlatformPage() {
                     {getPlatformTrendReportCredits(selectedWindowDays)} 积分/次
                   </span>
                   <span className="text-[11px] text-[#c9c0e6]/50">
-                    {isPlatformTrendCoverPromo(selectedWindowDays) ? "限时特价至 9 月 15 日 · 免费含优秀封面页" : "含趋势报告与优秀封面页"}
+                    {"含四格战略摘要与趋势报告"}
                   </span>
                 </div>
               </div>
