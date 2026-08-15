@@ -135,18 +135,26 @@ export const WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS = [0.1, 0.3, 0.5, 0.7, 0.9] a
 export const WEIXIN_CHANNELS_PRECISION_SAMPLE_SIZE = 10;
 export const WEIXIN_CHANNELS_MIN_QUALIFIED_RATE = 0.4;
 
-export function shouldUseWeixinChannelsSearchAtHour(hour: number) {
-  return Number.isInteger(hour) && hour >= 0 && hour < 6;
+export function shouldUseWeixinChannelsSearchAtHour(hour: number, dayOfWeek: number) {
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  return Number.isInteger(hour)
+    && Number.isInteger(dayOfWeek)
+    && dayOfWeek >= 0
+    && dayOfWeek <= 6
+    && !isWeekend
+    && hour >= 0
+    && hour < 6;
 }
 
 export function resolveCollectorWindowStartupMode(params: {
   isRightSearchWindow: boolean;
   hour: number;
+  dayOfWeek: number;
   startupQualified: boolean;
   restart: number;
 }) {
   const searchScheduled = params.isRightSearchWindow
-    && shouldUseWeixinChannelsSearchAtHour(params.hour);
+    && shouldUseWeixinChannelsSearchAtHour(params.hour, params.dayOfWeek);
   return {
     captureCurrentBeforeSearch: searchScheduled && params.startupQualified,
     startInSearch: searchScheduled && !params.startupQualified && params.restart === 0,
@@ -4266,8 +4274,12 @@ async function runCollectionPool(params: {
         mode,
       };
     }
+    const scheduleTime = new Date();
     if (params.searchScheduleManaged
-      && params.allowSearch !== shouldUseWeixinChannelsSearchAtHour(new Date().getHours())) {
+      && params.allowSearch !== shouldUseWeixinChannelsSearchAtHour(
+        scheduleTime.getHours(),
+        scheduleTime.getDay(),
+      )) {
       return {
         stopped: "search_schedule_changed",
         scanned: totalScanned,
@@ -5086,20 +5098,27 @@ export async function runDualWindowCaptureStateMachine(params: {
     const isRightSearchWindow = searchRoutes.some(
       (route) => route.searchWindowId === session.windowId,
     );
+    const initialScheduleTime = new Date();
     let captureCurrentBeforeSearch = resolveCollectorWindowStartupMode({
       isRightSearchWindow,
-      hour: new Date().getHours(),
+      hour: initialScheduleTime.getHours(),
+      dayOfWeek: initialScheduleTime.getDay(),
       startupQualified: startupQualifiedWindowIds.has(session.windowId),
       restart: 0,
     }).captureCurrentBeforeSearch;
     while (!prepared.shared.qualifiedTargetReached()
       && (params.deadlineAt === undefined || Date.now() < params.deadlineAt)) {
       try {
+        const scheduleTime = new Date();
         const allowSearchNow = isRightSearchWindow
-          && shouldUseWeixinChannelsSearchAtHour(new Date().getHours());
+          && shouldUseWeixinChannelsSearchAtHour(
+            scheduleTime.getHours(),
+            scheduleTime.getDay(),
+          );
         const startupMode = resolveCollectorWindowStartupMode({
           isRightSearchWindow,
-          hour: new Date().getHours(),
+          hour: scheduleTime.getHours(),
+          dayOfWeek: scheduleTime.getDay(),
           startupQualified: captureCurrentBeforeSearch,
           restart,
         });

@@ -130,11 +130,17 @@ describe("weixin channels OCR", () => {
     })).toEqual({ sessionNew: 1, formalQualifiedTotal: undefined });
   });
 
-  it("右窗只在零点至六点前启用搜索", () => {
-    expect(shouldUseWeixinChannelsSearchAtHour(0)).toBe(true);
-    expect(shouldUseWeixinChannelsSearchAtHour(5)).toBe(true);
-    expect(shouldUseWeixinChannelsSearchAtHour(6)).toBe(false);
-    expect(shouldUseWeixinChannelsSearchAtHour(23)).toBe(false);
+  it("工作日右窗只在零点至六点前启用搜索，周末全天只跑推荐页", () => {
+    expect(shouldUseWeixinChannelsSearchAtHour(0, 1)).toBe(true);
+    expect(shouldUseWeixinChannelsSearchAtHour(5, 5)).toBe(true);
+    expect(shouldUseWeixinChannelsSearchAtHour(6, 1)).toBe(false);
+    expect(shouldUseWeixinChannelsSearchAtHour(23, 5)).toBe(false);
+    for (const weekendDay of [0, 6]) {
+      expect(shouldUseWeixinChannelsSearchAtHour(0, weekendDay)).toBe(false);
+      expect(shouldUseWeixinChannelsSearchAtHour(5, weekendDay)).toBe(false);
+      expect(shouldUseWeixinChannelsSearchAtHour(12, weekendDay)).toBe(false);
+      expect(shouldUseWeixinChannelsSearchAtHour(23, weekendDay)).toBe(false);
+    }
   });
 
   it("正式启动旗标必须在 pool 模式成套生效，且不能混用固定窗口 ID", () => {
@@ -179,19 +185,22 @@ describe("weixin channels OCR", () => {
 
   it("夜间右窗先保住已达标当前视频，否则首次直接搜索；恢复重启不盲搜", () => {
     expect(resolveCollectorWindowStartupMode({
-      isRightSearchWindow: true, hour: 0, startupQualified: true, restart: 0,
+      isRightSearchWindow: true, hour: 0, dayOfWeek: 1, startupQualified: true, restart: 0,
     })).toEqual({ captureCurrentBeforeSearch: true, startInSearch: false });
     expect(resolveCollectorWindowStartupMode({
-      isRightSearchWindow: true, hour: 5, startupQualified: false, restart: 0,
+      isRightSearchWindow: true, hour: 5, dayOfWeek: 5, startupQualified: false, restart: 0,
     })).toEqual({ captureCurrentBeforeSearch: false, startInSearch: true });
     expect(resolveCollectorWindowStartupMode({
-      isRightSearchWindow: true, hour: 5, startupQualified: false, restart: 1,
+      isRightSearchWindow: true, hour: 5, dayOfWeek: 1, startupQualified: false, restart: 1,
     })).toEqual({ captureCurrentBeforeSearch: false, startInSearch: false });
     expect(resolveCollectorWindowStartupMode({
-      isRightSearchWindow: true, hour: 6, startupQualified: false, restart: 0,
+      isRightSearchWindow: true, hour: 6, dayOfWeek: 1, startupQualified: false, restart: 0,
     })).toEqual({ captureCurrentBeforeSearch: false, startInSearch: false });
     expect(resolveCollectorWindowStartupMode({
-      isRightSearchWindow: false, hour: 0, startupQualified: false, restart: 0,
+      isRightSearchWindow: false, hour: 0, dayOfWeek: 1, startupQualified: false, restart: 0,
+    })).toEqual({ captureCurrentBeforeSearch: false, startInSearch: false });
+    expect(resolveCollectorWindowStartupMode({
+      isRightSearchWindow: true, hour: 2, dayOfWeek: 6, startupQualified: true, restart: 0,
     })).toEqual({ captureCurrentBeforeSearch: false, startInSearch: false });
   });
 
