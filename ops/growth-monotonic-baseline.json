@@ -12,6 +12,7 @@
     },
     "xiaohongshu": {
       "currentTotal": 79549,
+      "currentRetentionCap": 20000,
       "archivedTotal": 78894
     },
     "bilibili": {
