@@ -4,11 +4,6 @@ import fs from "node:fs/promises";
 
 const [baselinePath, beforePath, afterPath] = process.argv.slice(2);
 
-if (!baselinePath || !beforePath || !afterPath) {
-  console.error("Usage: node scripts/verify-growth-monotonic.mjs <baseline-json> <before-json> <after-json>");
-  process.exit(1);
-}
-
 function num(value) {
   return Number(value || 0);
 }
@@ -27,22 +22,31 @@ async function readJson(file) {
   return JSON.parse(await fs.readFile(file, "utf8"));
 }
 
-async function main() {
-  const [baseline, before, after] = await Promise.all([
-    readJson(baselinePath),
-    readJson(beforePath),
-    readJson(afterPath),
-  ]);
+export function resolveGuardPlatforms(baseline, before, after) {
+  const configured = Array.isArray(baseline?.activePlatforms)
+    ? baseline.activePlatforms
+        .map((platform) => String(platform || "").trim())
+        .filter(Boolean)
+    : [];
+  if (configured.length) return new Set(configured);
 
-  const platformNames = new Set([
-    ...Object.keys(baseline.platforms || {}),
-    ...Object.keys(before.platforms || {}),
-    ...Object.keys(after.platforms || {}),
+  // 兼容尚未声明 activePlatforms 的旧基线：继续沿用原来的全平台并集语义。
+  return new Set([
+    ...Object.keys(baseline?.platforms || {}),
+    ...Object.keys(before?.platforms || {}),
+    ...Object.keys(after?.platforms || {}),
   ]);
+}
 
+export function findGrowthMonotonicRegressions({
+  baseline,
+  before,
+  after,
+  enforceArchived = false,
+  currentTolerance = 0.1,
+}) {
+  const platformNames = resolveGuardPlatforms(baseline, before, after);
   const regressions = [];
-  const enforceArchived = shouldEnforceArchivedGuard();
-  const currentTolerance = currentToleranceRatio();
 
   for (const platform of platformNames) {
     const floorCurrent = Math.max(
@@ -68,6 +72,29 @@ async function main() {
     }
   }
 
+  return regressions;
+}
+
+async function main() {
+  if (!baselinePath || !beforePath || !afterPath) {
+    throw new Error("Usage: node scripts/verify-growth-monotonic.mjs <baseline-json> <before-json> <after-json>");
+  }
+  const [baseline, before, after] = await Promise.all([
+    readJson(baselinePath),
+    readJson(beforePath),
+    readJson(afterPath),
+  ]);
+
+  const enforceArchived = shouldEnforceArchivedGuard();
+  const currentTolerance = currentToleranceRatio();
+  const regressions = findGrowthMonotonicRegressions({
+    baseline,
+    before,
+    after,
+    enforceArchived,
+    currentTolerance,
+  });
+
   if (regressions.length) {
     console.error("Growth monotonic guard failed:");
     for (const line of regressions) console.error(`- ${line}`);
@@ -77,7 +104,9 @@ async function main() {
   console.log("Growth monotonic guard passed.");
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}
