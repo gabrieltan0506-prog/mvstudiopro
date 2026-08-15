@@ -300,3 +300,44 @@ export async function mirrorSelectedTrendCovers(
   }
   return output;
 }
+
+/**
+ * LLM 前置镜像（2026-08-16 报表救火）：候选封面原始 URL 全是平台防盗链图床，
+ * 直塞视觉模型会让上游拉图失败、三次重试全灭、整份趋势报表陪葬。
+ * 此函数在进入 LLM 之前把候选图搬到自有存储；单条失败只降级该候选（无图纯文本），
+ * 永不抛错——报表必须能出，封面页数据不足时优雅缺席。
+ */
+export async function mirrorTrendCoverCandidatesForLlm(
+  candidates: readonly TrendCoverReference[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const CONCURRENCY = 4;
+  const queue = [...candidates];
+  const worker = async () => {
+    for (;;) {
+      const row = queue.shift();
+      if (!row) return;
+      try {
+        if (!row.coverUrl || !isAllowedPlatformRemoteUrl(row.platform, row.coverUrl)) continue;
+        const response = await fetch(String(row.coverUrl), { signal: AbortSignal.timeout(15_000) });
+        if (!response.ok) continue;
+        const original = Buffer.from(await response.arrayBuffer());
+        if (original.length < 64 || original.length > 12 * 1024 * 1024) continue;
+        const { default: sharp } = await import("sharp");
+        const normalized = await sharp(original, { failOn: "none" })
+          .rotate()
+          .resize({ width: 512, height: 768, fit: "inside", withoutEnlargement: true })
+          .jpeg({ quality: 72, mozjpeg: true })
+          .toBuffer();
+        const { uploadBufferToPlatformStorage } = await import("../services/evolinkGptImage2.js");
+        out.set(row.sourceId, await uploadBufferToPlatformStorage(normalized, `growth_cover_llm/${row.platform}`));
+      } catch (error) {
+        console.warn(
+          `[growth-cover] llm mirror failed sourceId=${row.sourceId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+  return out;
+}

@@ -4953,10 +4953,13 @@ export const appRouter = router({
         const selectedCoverCollections = Object.fromEntries(
           input.platforms.map((platform) => [platform, (store.collections as any)?.[platform]]),
         );
+        // 封面评选只留 B 站+小红书（2026-08-16 用户拍板）：抖音/视频号图床防盗链，
+        // 服务器与视觉模型都拉不动，曾把整份趋势报表拖死。
+        const TREND_COVER_LLM_PLATFORMS = new Set(["bilibili", "xiaohongshu"]);
         const coverCandidates = selectTrendCoverCandidates(selectedCoverCollections as any, {
           contentStartAt: shBounds.currentStart,
           endExclusive: shBounds.currentEndExclusive,
-        });
+        }).filter((row) => TREND_COVER_LLM_PLATFORMS.has(String(row.platform)));
         const legacyCoverReferences = input.platforms.flatMap((platform) => {
           const items = (((store.collections as any)?.[platform]?.items || []) as TrendItem[]);
           return items
@@ -5084,15 +5087,36 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             Math.min(65_536, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 32_768),
           );
           const visualReportUser = `${userPayload}\n\n【輸出】僅輸出一個合法 JSON 物件（禁止 markdown围栏與前言後語）；首尾字元為 { 與 }。`;
-          const visualReportUserContent = coverCandidates.length
-            ? [
-                { type: "text" as const, text: visualReportUser },
-                ...coverCandidates.flatMap((candidate, index) => [
-                  { type: "text" as const, text: `视觉候选 ${index + 1} · 类型=${candidate.visualAssetKind || "platform_cover"} · 进度=${candidate.visualFrameProgress ?? "原始封面"} · sourceId=${candidate.sourceId} · ${candidate.platform} · ${candidate.title} · 作者=${candidate.author || "未知"}` },
-                  { type: "image_url" as const, image_url: { url: String(candidate.coverUrl), detail: "high" as const } },
-                ]),
-              ]
-            : visualReportUser;
+          // 报表救火（2026-08-16）：候选图先镜像到自有存储再喂视觉模型——原始防盗链 URL
+          // 上游拉不到会让三次重试全灭、整份报表陪葬。镜像失败的候选降级为纯文字条目。
+          const { mirrorTrendCoverCandidatesForLlm } = await import("./growth/trendCoverSelection.js");
+          const llmCoverUrlById = coverCandidates.length
+            ? await mirrorTrendCoverCandidatesForLlm(coverCandidates)
+            : new Map<string, string>();
+          const buildVisualReportContent = (withImages: boolean) =>
+            coverCandidates.length
+              ? [
+                  { type: "text" as const, text: visualReportUser },
+                  ...coverCandidates.flatMap((candidate, index) => {
+                    const mirrored = withImages ? llmCoverUrlById.get(candidate.sourceId) : undefined;
+                    const parts: Array<
+                      | { type: "text"; text: string }
+                      | { type: "image_url"; image_url: { url: string; detail: "high" } }
+                    > = [
+                      {
+                        type: "text" as const,
+                        text: `视觉候选 ${index + 1} · 类型=${candidate.visualAssetKind || "platform_cover"} · 进度=${candidate.visualFrameProgress ?? "原始封面"} · sourceId=${candidate.sourceId} · ${candidate.platform} · ${candidate.title} · 作者=${candidate.author || "未知"}${mirrored ? "" : " ·（封面图未获取，请按标题/作者/互动数据判断）"}`,
+                      },
+                    ];
+                    if (mirrored) {
+                      parts.push({ type: "image_url" as const, image_url: { url: mirrored, detail: "high" as const } });
+                    }
+                    return parts;
+                  }),
+                ]
+              : visualReportUser;
+          const visualReportHasImages = llmCoverUrlById.size > 0;
+          const visualReportUserContent = buildVisualReportContent(true);
 
           const VISUAL_REPORT_MAX_ATTEMPTS = 3;
           let response: Awaited<ReturnType<typeof invokeLLM>> | null = null;
@@ -5112,7 +5136,14 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 requestId: `visual-report:${input.billingRequestId}`,
                 messages: [
                   { role: "system", content: systemPrompt },
-                  { role: "user", content: visualReportUserContent },
+                  {
+                    role: "user",
+                    // 末次重试去图纯文本兜底：图片附件若为失败根因，报表也必须能出
+                    content:
+                      attempt === VISUAL_REPORT_MAX_ATTEMPTS && visualReportHasImages
+                        ? buildVisualReportContent(false)
+                        : visualReportUserContent,
+                  },
                 ],
               });
               const choice0 = response.choices?.[0];
