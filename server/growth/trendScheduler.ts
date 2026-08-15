@@ -28,7 +28,7 @@ import {
   withAbortableTimeout,
 } from "./collectorAbort.js";
 
-/** 仅停止新抓取；快手/头条类型和历史集合仍保留给报表读取。 */
+/** Fly 只调度仍在运营的三个远端平台；视频号由本机采集，快手/头条已退休。 */
 const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "bilibili", "xiaohongshu"];
 const RETRY_BASE_MS = 5 * 60 * 1000;
 const RETRY_MAX_MS = Math.max(
@@ -506,6 +506,7 @@ async function runPlatform(platform: GrowthPlatform) {
       timeoutCooldownUntil: cooldownUntil,
       totalRuns: (current?.totalRuns || 0) + 1,
       totalFailures: (current?.totalFailures || 0) + 1,
+      lastFailureAt: nowShanghaiIso(),
       lastDurationMs: Date.now() - startedAtMs,
       lastError: message,
       burstMode: forcedBurst,

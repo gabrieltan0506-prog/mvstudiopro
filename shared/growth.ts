@@ -11,16 +11,33 @@ export const growthPlatformValues = [
 
 export const growthPlatformSchema = z.enum(growthPlatformValues);
 
-/** 不纳入增长统计聚合的平台（样本过少会拉歪口径；仍可采集与单独展示）。 */
-const growthPlatformsExcludedFromStatsAggregate = new Set<string>(["toutiao"]);
+/** 当前产品仍在采集、展示和生成新趋势报告的平台。旧平台类型继续保留，仅用于兼容历史数据。 */
+export const activeGrowthPlatformValues = [
+  "douyin",
+  "xiaohongshu",
+  "bilibili",
+  "weixin_channels",
+] as const;
+
+export const activeGrowthPlatformSchema = z.enum(activeGrowthPlatformValues);
+export type ActiveGrowthPlatform = z.infer<typeof activeGrowthPlatformSchema>;
+
+/** 由 Fly 趋势调度器直接抓取的平台；视频号使用独立的本机采集链。 */
+export const scheduledGrowthPlatformValues = [
+  "douyin",
+  "xiaohongshu",
+  "bilibili",
+] as const;
+
+export const scheduledGrowthPlatformSchema = z.enum(scheduledGrowthPlatformValues);
 
 export function isGrowthPlatformInStatsAggregate(platform: (typeof growthPlatformValues)[number]): boolean {
-  return !growthPlatformsExcludedFromStatsAggregate.has(platform);
+  return activeGrowthPlatformValues.includes(platform as ActiveGrowthPlatform);
 }
 
 /** 参与全站 trend 汇总、覆盖窗口等统计的平台列表（与采集列表分离）。 */
 export function growthPlatformsForStatsAggregationList(): (typeof growthPlatformValues)[number][] {
-  return growthPlatformValues.filter((p) => isGrowthPlatformInStatsAggregate(p));
+  return [...activeGrowthPlatformValues];
 }
 
 /** Phase2 主力 gpt-5.6-sol；gemini 仅语音 scan；gpt-5.5 兼容旧入参 */

@@ -3,14 +3,15 @@ import os from "node:os";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { growthPlatformValues, type GrowthPlatform } from "@shared/growth";
+import { activeGrowthPlatformValues, growthPlatformValues, type GrowthPlatform } from "@shared/growth";
 import type { PlatformTrendCollection } from "./trendCollector";
 
 // 用例体内 await import("./trendStore") 大模块，导入成本计入用例预算，全量并发下 5s 默认线会被踩爆（2026-08-10 实爆过）
 vi.setConfig({ testTimeout: 60_000 });
 
 const ORIGINAL_STORE_DIR = process.env.GROWTH_STORE_DIR;
-const TEST_PLATFORMS = ["douyin", "xiaohongshu", "kuaishou", "bilibili", "toutiao", "weixin_channels"] as const;
+const TEST_PLATFORMS = activeGrowthPlatformValues;
+const RETIRED_PLATFORMS = ["kuaishou", "toutiao"] as const;
 
 function createCollection(platform: GrowthPlatform, suffix: string): PlatformTrendCollection {
   return {
@@ -89,7 +90,8 @@ describe("growth store split + gzip layout", () => {
     } = await import("./trendStore");
 
     const collections = Object.fromEntries(
-      TEST_PLATFORMS.map((platform) => [platform, createCollection(platform, "a")]),
+      [...TEST_PLATFORMS, ...RETIRED_PLATFORMS]
+        .map((platform) => [platform, createCollection(platform, "a")]),
     );
 
     await fs.writeFile(
@@ -121,10 +123,17 @@ describe("growth store split + gzip layout", () => {
       expect(truth.collection?.items?.length).toBe(1);
       await expect(fs.access(path.join(tempRoot, "platforms", `${platform}.json.gz`))).resolves.toBeUndefined();
     }
+    for (const platform of RETIRED_PLATFORMS) {
+      await expect(fs.access(path.join(tempRoot, "platform-current", `${platform}.current.json.gz`))).rejects.toThrow();
+      await expect(fs.access(path.join(tempRoot, "platforms", `${platform}.json.gz`))).rejects.toThrow();
+    }
 
     const hydrated = await readTrendStore({ preferDerivedFiles: true });
     for (const platform of TEST_PLATFORMS) {
       expect(hydrated.collections?.[platform]?.items?.length).toBe(1);
+    }
+    for (const platform of RETIRED_PLATFORMS) {
+      expect(hydrated.collections?.[platform]).toBeUndefined();
     }
 
     const partial = await readTrendStoreForPlatforms(["douyin", "weixin_channels"], { preferDerivedFiles: true });

@@ -554,6 +554,7 @@ type PersonalizedDirectionCard = {
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 const FULL_PLATFORM_ORDER = ["douyin", "kuaishou", "bilibili", "xiaohongshu"] as const;
+const ACTIVE_REFRESH_PLATFORM_ORDER = ["douyin", "bilibili", "xiaohongshu"] as const;
 
 const GROWTH_CAMP_ANALYSIS_MODEL_LS = "mv-growth-camp-analysis-model";
 const GROWTH_CAMP_ANALYSIS_PROFILE_LS = "mv-growth-camp-analysis-profile";
@@ -2527,7 +2528,7 @@ export default function MVAnalysisPage() {
   const handleRefreshGrowth = useCallback(async () => {
     try {
       await refreshGrowthMutation.mutateAsync({
-        platforms: [...FULL_PLATFORM_ORDER],
+        platforms: [...ACTIVE_REFRESH_PLATFORM_ORDER],
       });
       await growthSnapshotQuery.refetch();
       toast.success("趋势数据已刷新");

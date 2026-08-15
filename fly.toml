@@ -60,9 +60,11 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   # prepareKnowledgeCardCopy 都断在读请求体阶段，模型一次都没被调用）。
   # 取舍很明确：抓不到就下一轮再来，不许占着主线程干等。
   GROWTH_BURST_INTERVAL_MINUTES = '30'  # 原 15；趋势数据不会一刻钟就变天
-  GROWTH_PLATFORM_RUN_TIMEOUT_MS = '30000'  # 原 90000；B站等默认走这个
-  GROWTH_DOUYIN_PLATFORM_RUN_TIMEOUT_MS = '60000'  # 原 90000 / 更早 600000
-  GROWTH_KUAISHOU_PLATFORM_RUN_TIMEOUT_MS = '60000'  # 原 90000 / 更早 600000
+  # 单并发 + 可中止信号保留；30/60 秒已在线上连续截断三平台的正常请求。
+  GROWTH_PLATFORM_RUN_TIMEOUT_MS = '120000'
+  GROWTH_DOUYIN_PLATFORM_RUN_TIMEOUT_MS = '180000'
+  GROWTH_BILIBILI_PLATFORM_RUN_TIMEOUT_MS = '120000'
+  GROWTH_XIAOHONGSHU_PLATFORM_RUN_TIMEOUT_MS = '120000'
   GROWTH_BACKFILL_PLATFORM_TIMEOUT_MS = '60000'  # 原 90000；回填是补历史，不紧急
   GROWTH_LIVE_WINDOW_START_HOUR = '7'
   GROWTH_LIVE_WINDOW_END_HOUR = '1'
@@ -84,7 +86,7 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   GROWTH_BACKFILL_STORE_SIZE_LIMIT_MB = '512'  # secret 接管
   # 这两条是某次冲量补数据留下的，UNTIL 已过期，isForceBurstActive 里的
   # `FORCE_BURST_UNTIL_MS > Date.now()` 让它自 2026-03-27 起就不再生效，属可清理的死配置。
-  GROWTH_FORCE_BURST_PLATFORMS = 'douyin,kuaishou,bilibili,xiaohongshu,toutiao'  # secret 接管
+  GROWTH_FORCE_BURST_PLATFORMS = 'douyin,bilibili,xiaohongshu'  # secret 若存在会接管；退休平台不得进入调度
   GROWTH_FORCE_BURST_UNTIL = '2026-03-27T01:00:00+08:00'  # secret 接管（已过期）
   # 每页 12 条，2026-07-26 由 40 降到 24（约 480→288 条/轮，每 15 分钟一轮）。
   DOUYIN_TREND_PAGES = '24'  # secret 接管

@@ -39,6 +39,7 @@ import { betaCodeRouter } from "./routers/betaCode";
 import { isValidSupervisorSecret, resolvePlatformSupervisorOpsAllowed } from "./services/access-policy";
 import {
   buildIndustryGrowthHintMap,
+  filterVisualReportEvidenceItems,
   filterTrackGrowthHotOnly,
   reconcilePlatformHotTopicsWithGlobalTrackGrowth,
   repairTrackGrowthRows,
@@ -191,7 +192,10 @@ import { nanoid } from "nanoid";
 import {
   growthAssetAdaptationSchema,
   growthAnalysisModeSchema,
-  growthPlatformValues,
+  activeGrowthPlatformValues,
+  activeGrowthPlatformSchema,
+  scheduledGrowthPlatformValues,
+  scheduledGrowthPlatformSchema,
   growthAnalysisScoresSchema,
   growthBusinessInsightSchema,
   growthCampModelSchema,
@@ -220,7 +224,7 @@ import { and, desc, eq, gte, or, sql } from "drizzle-orm";
 const platformVisualReportInputSchema = z.object({
   windowDays: z.enum(["3", "7", "15", "30"]),
   theme: z.enum(["light", "dark"]),
-  platforms: z.array(z.enum(["douyin", "kuaishou", "xiaohongshu", "bilibili", "weixin_channels"])),
+  platforms: z.array(activeGrowthPlatformSchema).min(1).max(1),
   /** 可选：创作者人设补充，用于收窄热点解读与选题公式落点。 */
   personaContext: z.string().max(4000).optional(),
   /** 同一次用户点击的计费及任务幂等键。 */
@@ -278,9 +282,8 @@ const DOUYIN_CREATOR_CENTER_BUCKET_PREFIXES = [
 const GROWTH_PLATFORM_META: Record<string, { label: string; description: string }> = {
   douyin: { label: "抖音", description: "短视频主阵地，当前样本量最大，优先看热点与爆发趋势。" },
   xiaohongshu: { label: "小红书", description: "种草与搜索场景为主，适合看内容沉淀与转化线索。" },
-  kuaishou: { label: "快手", description: "下沉与直播氛围更强，适合看高频更新和稳定增量。" },
-  toutiao: { label: "头条", description: "资讯分发场景，样本量相对小，适合单独看补齐情况。" },
   bilibili: { label: "B站", description: "中长视频与社区互动更强，适合看内容深度与长期沉淀。" },
+  weixin_channels: { label: "视频号", description: "本机双窗口采集的推荐流样本，用于补充微信生态热点。" },
 };
 
 function getGrowthPlatformMeta(platform?: string) {
@@ -4933,11 +4936,9 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const PLATFORM_NAMES: Record<string, string> = {
           douyin: "抖音",
-          kuaishou: "快手",
           xiaohongshu: "小红书",
           bilibili: "B站",
           weixin_channels: "视频号",
-          toutiao: "今日头条",
         };
         const platformListStr = input.platforms.map((p) => PLATFORM_NAMES[p] || p).join("、");
 
@@ -4997,13 +4998,7 @@ export const appRouter = router({
         const platformEvidence = input.platforms.map((platform) => {
           const col = (store.collections as any)?.[platform];
           const items: any[] = col?.items || [];
-          const windowCutoff = shBounds.currentStart;
-          const windowItems = items.filter((item: any) => {
-            const ts = item?.collectedAt || item?.publishedAt || item?.date || null;
-            if (!ts) return false;
-            const ms = new Date(String(ts)).getTime();
-            return Number.isFinite(ms) && ms >= windowCutoff && ms < shBounds.currentEndExclusive;
-          });
+          const windowItems = filterVisualReportEvidenceItems(items, col?.collectedAt, shBounds);
           const evidenceItems = windowItems;
           const hotTitles = evidenceItems.slice(0, 15).map((i: any) => i.title || i.keyword || "").filter(Boolean);
           const playCounts = evidenceItems
@@ -9773,13 +9768,17 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             ? `近期回填运行中：窗口 ${selectedWindowDays} 天，夜间模式，默认每 ${formatBackfillIntervalLabel(configuredMinutes)} 一次。`
             : `历史回填运行中：窗口 ${selectedWindowDays} 天，夜间模式，默认每 ${formatBackfillIntervalLabel(configuredMinutes)} 一次。`;
           const backfillPlatforms = new Map(
-            (backfill.platforms || []).map((item) => [String(item.platform), {
+            (backfill.platforms || [])
+              .filter((item) => scheduledGrowthPlatformValues.includes(
+                item.platform as typeof scheduledGrowthPlatformValues[number],
+              ))
+              .map((item) => [String(item.platform), {
               ...item,
               startedAt: item.startedAt || startedAt,
               nextRunAt: item.nextRunAt || nextRunAt,
-            }]),
+              }]),
           );
-          for (const platform of growthPlatformValues.filter((item) => item !== "weixin_channels")) {
+          for (const platform of scheduledGrowthPlatformValues) {
             if (backfillPlatforms.has(platform)) continue;
             backfillPlatforms.set(platform, {
               platform,
@@ -9808,7 +9807,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const backfillLive = normalizeBackfill(runtimeMeta.backfillLive);
         const backfillHistory = normalizeBackfill(runtimeMeta.backfillHistory);
         const scheduler = Object.values(runtimeMeta.scheduler || {})
-          .filter((item) => item?.platform && item.platform !== "weixin_channels")
+          .filter((item) => item?.platform && scheduledGrowthPlatformValues.includes(
+            item.platform as typeof scheduledGrowthPlatformValues[number],
+          ))
           .map((item) => ({
             platform: item?.platform,
             platformLabel: getGrowthPlatformMeta(item?.platform).label,
@@ -9817,6 +9818,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             lastSuccessAt: item?.lastSuccessAt,
             nextRunAt: item?.nextRunAt,
             failureCount: item?.failureCount ?? 0,
+            totalFailures: item?.totalFailures ?? 0,
+            lastFailureAt: item?.lastFailureAt,
             burstMode: item?.burstMode ?? false,
             burstTriggeredAt: item?.burstTriggeredAt,
             lastCollectedCount: item?.lastCollectedCount ?? 0,
@@ -9835,31 +9838,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             message: `Fly /data 剩餘 ${storage.freeMb} MB，低於 300 MB 門檻。`,
           });
         }
-        const effectiveMode = runtimeControl?.mode || "auto";
-        const now = Date.now();
-        // Only check live scheduler staleness when mode is "auto" or "live".
-        // When mode is "backfill", live scheduler is intentionally paused.
-        const staleSchedulers = effectiveMode === "backfill" ? [] : scheduler.filter((item) => {
-          if (!item.nextRunAt) return false;
-          const nextRun = Date.parse(String(item.nextRunAt));
-          if (!Number.isFinite(nextRun)) return false;
-          return nextRun < now - 5 * 60 * 1000;
-        });
-        if (staleSchedulers.length) {
-          anomalies.push({
-            level: "critical",
-            title: "Live 排程逾期未推进",
-            message: `${staleSchedulers.map((item) => item.platformLabel || getGrowthPlatformMeta(item.platform).label).join("、")} 已超过 5 分钟未按 nextRunAt 启动。`,
-          });
-        }
-        const schedulerErrors = scheduler.filter((item) => item.lastError);
-        if (schedulerErrors.length) {
-          anomalies.push({
-            level: "warning",
-            title: "平台抓取出錯",
-            message: `${schedulerErrors.map((item) => `${item.platformLabel || getGrowthPlatformMeta(item.platform).label}：${String(item.lastError)}`).join("；")}`,
-          });
-        }
+        // 平台抓取超时是单平台运行事件，不再升级为全局异常；
+        // 前端仅依据 lastFailureAt 在对应平台卡片显示 30 秒，并长期保留累计失败次数。
         const failedBackfills = [backfillLive, backfillHistory].filter((item) => item?.active && item?.status === "failed");
         if (failedBackfills.length) {
           anomalies.push({
@@ -9870,8 +9850,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         }
         const criticalAnomalies = anomalies.filter((item) => item.level === "critical");
         const warningAnomalies = anomalies.filter((item) => item.level === "warning");
-        const currentSupportActivities = growthPlatformValues
-          .filter((platform) => platform !== "weixin_channels")
+        const currentSupportActivities = activeGrowthPlatformValues
           .map((platform) => {
             const platformLabel = getGrowthPlatformMeta(platform).label;
             const collection = store?.collections?.[platform];
@@ -9898,8 +9877,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             updatedAt: debugSummary?.updatedAt || runtimeMeta.updatedAt || null,
             currentItems: debugSummary?.totals.currentItems || 0,
             archivedItems: debugSummary?.totals.archivedItems || 0,
-            platforms: growthPlatformValues
-              .filter((platform) => platform !== "weixin_channels")
+            platforms: activeGrowthPlatformValues
               .map((platform) => {
                 const items = store?.collections?.[platform]?.items || [];
                 const w15 = summarizeTrendWindowCounts(items, 15);
@@ -9966,8 +9944,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         if (input.mode === "live") {
           const nextRunAt = nowShanghaiIso();
           await Promise.all(
-            growthPlatformValues
-              .filter((platform) => platform !== "weixin_channels")
+            scheduledGrowthPlatformValues
               .map((platform) => {
                 const currentState = schedulerState[platform];
                 const currentNextRunAt = currentState?.nextRunAt ? Date.parse(String(currentState.nextRunAt)) : 0;
@@ -9995,13 +9972,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     setGrowthBurstControl: adminProcedure
       .input(z.object({
         burst: z.enum(["auto", "manual", "off"]),
-        platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels", "toutiao"])).default([]),
+        platforms: z.array(scheduledGrowthPlatformSchema).default([]),
       }))
       .mutation(async ({ input }) => {
         const current = await readGrowthRuntimeControl();
         const schedulerState = await readTrendSchedulerState();
         const burstPlatforms = input.burst === "manual"
-          ? input.platforms.filter((platform) => platform !== "weixin_channels")
+          ? input.platforms
           : [];
         const saved = await writeGrowthRuntimeControl({
           mode: current?.mode || "auto",
@@ -10010,8 +9987,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         });
         const nextRunAt = nowShanghaiIso();
         await Promise.all(
-          growthPlatformValues
-            .filter((platform) => platform !== "weixin_channels")
+          scheduledGrowthPlatformValues
             .map((platform) => {
               const currentState = schedulerState[platform];
               const enabled = input.burst === "manual"
@@ -10023,6 +9999,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 nextRunAt: enabled ? nextRunAt : (currentState?.nextRunAt || nextRunAt),
                 failureCount: 0,
                 lastError: undefined,
+                timeoutStreak: enabled ? 0 : currentState?.timeoutStreak,
+                timeoutCooldownUntil: enabled ? undefined : currentState?.timeoutCooldownUntil,
                 burstMode: enabled,
                 burstTriggeredAt: enabled ? nextRunAt : undefined,
                 lastFrequencyLabel: input.burst === "manual"
@@ -10088,7 +10066,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
     getHotTopicsByWindow: publicProcedure
       .input(z.object({
         windowDays: z.number().int().min(7).max(90).default(15),
-        platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "toutiao"])).default(["douyin", "xiaohongshu", "bilibili", "kuaishou"]),
+        platforms: z.array(activeGrowthPlatformSchema).default([...activeGrowthPlatformValues]),
       }))
       .query(async ({ input }) => {
         const store = await readTrendStore({ preferDerivedFiles: true }).catch(() => null);
@@ -10117,7 +10095,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             .slice(0, 8);
           return {
             platform,
-            platformLabel: { douyin: "抖音", xiaohongshu: "小红书", bilibili: "B站", kuaishou: "快手", toutiao: "今日头条" }[platform] || platform,
+            platformLabel: { douyin: "抖音", xiaohongshu: "小红书", bilibili: "B站", weixin_channels: "视频号" }[platform] || platform,
             windowDays: input.windowDays,
             itemCount: items.length,
             hotTopics: scored,
@@ -10135,7 +10113,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
     refreshGrowthTrends: publicProcedure
       .input(z.object({
-        platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels", "toutiao"])).default(["douyin", "kuaishou", "bilibili", "xiaohongshu"]),
+        platforms: z.array(scheduledGrowthPlatformSchema).default([...scheduledGrowthPlatformValues]),
       }))
       .mutation(async ({ input }) => {
         const collected = await collectTrendPlatforms(input.platforms);

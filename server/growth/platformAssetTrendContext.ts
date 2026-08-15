@@ -5,7 +5,7 @@ import {
   pickRelevantTrendHotspots,
 } from "../../shared/platformTrendRelevance";
 
-const DEFAULT_PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "bilibili", "kuaishou"];
+const DEFAULT_PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "bilibili", "weixin_channels"];
 
 /**
  * Platform 素材分析：把各平台近期爆款中与本轮选题相关的 2–3 条注入 LLM context。
