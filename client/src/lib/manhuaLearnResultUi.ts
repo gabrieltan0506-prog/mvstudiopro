@@ -31,7 +31,7 @@ export type ManhuaLearnActiveJobRecord = {
       gcsUri?: string | null;
       fileName?: string | null;
       localFileName?: string | null;
-      learnLlm?: "claude" | "gpt";
+      learnLlm?: "claude" | "gpt" | "deepseek";
       mixName?: string | null;
       mixId?: string | null;
       platform?: string | null;
@@ -370,9 +370,10 @@ export function readManhuaLearnActiveJob(): ManhuaLearnActiveJobRecord | null {
       localStorage.removeItem(LS_MANHUA_LEARN_ACTIVE_JOB);
       return null;
     }
-    const learnLlm = row?.learnLlm === "claude" || row?.learnLlm === "gpt"
-      ? row.learnLlm
-      : undefined;
+    const learnLlm =
+      row?.learnLlm === "claude" || row?.learnLlm === "gpt" || row?.learnLlm === "deepseek"
+        ? row.learnLlm
+        : undefined;
     return {
       jobId,
       busyKey: String(parsed.busyKey || jobId).trim() || jobId,

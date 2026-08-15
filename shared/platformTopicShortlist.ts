@@ -504,3 +504,15 @@ export function buildGraphicNotePagesFromBlueprint(bp: {
     },
   ];
 }
+
+/** 扩写引擎单一真源（2026-08-15 审查返工：前端/路由/worker 各自 fallback 到 kimi 导致经济档不可达） */
+export const PLATFORM_TOPIC_EXPAND_ENGINES = ["kimi-k3", "qwen3.8-max", "deepseek-v4"] as const;
+export type PlatformTopicExpandEngineId = (typeof PLATFORM_TOPIC_EXPAND_ENGINES)[number];
+
+/** 任意输入归一化为合法引擎 id；未知值回落稳定档。前端 select/路由入参/worker 三处必须共用本函数。 */
+export function normalizePlatformTopicExpandEngine(raw: unknown): PlatformTopicExpandEngineId {
+  const t = String(raw || "").trim();
+  return (PLATFORM_TOPIC_EXPAND_ENGINES as readonly string[]).includes(t)
+    ? (t as PlatformTopicExpandEngineId)
+    : "kimi-k3";
+}

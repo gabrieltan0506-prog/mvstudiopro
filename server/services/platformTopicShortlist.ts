@@ -17,6 +17,8 @@ import {
   normalizeCommentHook,
   platformTopicShortlistItemSchema,
   rankTopicShortlistByViralScore,
+  normalizePlatformTopicExpandEngine,
+  type PlatformTopicExpandEngineId,
   type PlatformTopicShortlistItem,
 } from "../../shared/platformTopicShortlist.js";
 import { ensureMedicalResourceCiteInCopy } from "../../shared/medicalResourceLibrary.js";
@@ -611,8 +613,9 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
 /**
  * 扩写可选引擎：kimi-k3 主走 OpenRouter（Evolink 兜底）；qwen3.8-max 直走 Evolink；
  * deepseek-v4 经济档（2026-08-15 用户拍板）走 OpenRouter，两抖后兜底轻快档。
+ * 真源在 shared/platformTopicShortlist（前端/路由/worker 共用归一化，防各自回落 kimi）。
  */
-export type PlatformTopicExpandEngine = "kimi-k3" | "qwen3.8-max" | "deepseek-v4";
+export type PlatformTopicExpandEngine = PlatformTopicExpandEngineId;
 
 const EXPAND_EVOLINK_DIRECT_CHAT_URL = String(
   process.env.EVOLINK_DIRECT_CHAT_COMPLETIONS_URL || "https://direct.evolink.ai/v1/chat/completions",
@@ -635,6 +638,27 @@ const EXPAND_DEEPSEEK_OR_MODEL = "deepseek/deepseek-v4-pro-0813";
  * 对等公平，实测质量更强、推理 token 也便宜），教训在「预算」——max_tokens 给 65K
  * （用户实战口径：平时 65K、大批量 200K 也照样便宜），小预算才会被推理吃光正文零字。
  */
+/** 请求体独立成函数供测试断言（审查返工 7：65K/推理档/require_parameters 全链可验证） */
+export function buildDeepSeekExpandRequestBody(params: {
+  system: string;
+  user: string;
+}): Record<string, unknown> {
+  return {
+    model: EXPAND_DEEPSEEK_OR_MODEL,
+    messages: [
+      { role: "system", content: params.system },
+      { role: "user", content: params.user },
+    ],
+    temperature: 0.55,
+    max_tokens: 65_536,
+    response_format: { type: "json_object" },
+    reasoning: { effort: "high" },
+    // 审查返工 6：不带此标志时 OpenRouter 可能把请求路由给不支持 reasoning/response_format
+    // 的供应商并静默忽略参数——强制只选支持全部参数的供应商
+    provider: { require_parameters: true },
+  };
+}
+
 async function invokeExpandViaDeepSeek(params: { system: string; user: string }): Promise<string> {
   const key = String(process.env.OPENROUTER_API_KEY || "").trim();
   if (!key) throw new Error("经济档通道未配置");
@@ -647,17 +671,7 @@ async function invokeExpandViaDeepSeek(params: { system: string; user: string })
       "X-OpenRouter-Title": "MVStudioPro",
     },
     signal: AbortSignal.timeout(240_000),
-    body: JSON.stringify({
-      model: EXPAND_DEEPSEEK_OR_MODEL,
-      messages: [
-        { role: "system", content: params.system },
-        { role: "user", content: params.user },
-      ],
-      temperature: 0.55,
-      max_tokens: 65_536,
-      response_format: { type: "json_object" },
-      reasoning: { effort: "high" },
-    }),
+    body: JSON.stringify(buildDeepSeekExpandRequestBody(params)),
   });
   const raw = await res.text();
   if (!res.ok) throw new Error(`DeepSeek 经济档 HTTP ${res.status}: ${raw.slice(0, 160)}`);
@@ -673,6 +687,11 @@ async function invokeExpandViaDeepSeek(params: { system: string; user: string })
   const content = json.choices?.[0]?.message?.content;
   const text = typeof content === "string" ? content.trim() : "";
   if (text.length < 20) throw new Error(`DeepSeek 经济档内容过短（${text.length} 字符）`);
+  // 审查返工 4：外层 200 不代表业务 JSON 合法——content 解析不出对象就抛错换通道，
+  // 不许让非 JSON 文本流到下游被拼成骨架空壳还照常收费
+  if (!extractJsonObject(text)) {
+    throw new Error(`DeepSeek 经济档业务 JSON 解析失败：${text.slice(0, 120)}`);
+  }
   return text;
 }
 
@@ -836,10 +855,7 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     // Kimi K3 两家同价（$3/$15），主走 OpenRouter、两次抖动后切 Evolink 保稳；
     // Qwen 3.8 Max Evolink（$1.765/$5.295）比 OpenRouter（$2/$6）便宜 ~12%，
     // 主走 Evolink、兜底 OpenRouter（qwen/qwen3.8-max）。
-    const engine: PlatformTopicExpandEngine =
-      params.engine === "qwen3.8-max" || params.engine === "deepseek-v4"
-        ? params.engine
-        : "kimi-k3";
+    const engine: PlatformTopicExpandEngine = normalizePlatformTopicExpandEngine(params.engine);
     const attempts =
       engine === "deepseek-v4"
         ? [
