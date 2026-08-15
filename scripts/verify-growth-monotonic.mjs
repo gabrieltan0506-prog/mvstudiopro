@@ -49,10 +49,16 @@ export function findGrowthMonotonicRegressions({
   const regressions = [];
 
   for (const platform of platformNames) {
-    const floorCurrent = Math.max(
+    const observedCurrentFloor = Math.max(
       num(baseline.platforms?.[platform]?.currentTotal),
       num(before.platforms?.[platform]?.currentTotal),
     );
+    const retentionCap = num(baseline.platforms?.[platform]?.currentRetentionCap);
+    // currentTotal 是热缓存而非累计资产。平台若明确设置保留上限，计划内裁剪到该上限不算回退；
+    // archivedTotal 仍按原规则保护，不能借热缓存裁剪丢历史账本。
+    const floorCurrent = retentionCap > 0
+      ? Math.min(observedCurrentFloor, retentionCap)
+      : observedCurrentFloor;
     const floorArchived = Math.max(
       num(baseline.platforms?.[platform]?.archivedTotal),
       num(before.platforms?.[platform]?.archivedTotal),
