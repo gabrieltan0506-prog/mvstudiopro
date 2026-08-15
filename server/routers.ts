@@ -4009,7 +4009,7 @@ export const appRouter = router({
               ctx.user.id,
               cost,
               "platformTrend",
-              `平台数据分析（${input.windowDays}天窗口，含优秀封面页）`,
+              `平台数据分析（${input.windowDays}天窗口）`,
               { chargeKey: `platform-trend-job:${ctx.user.id}:${jobId}` },
             );
             creditsBilled = cost;
@@ -4956,10 +4956,15 @@ export const appRouter = router({
         // 封面评选只留 B 站+小红书（2026-08-16 用户拍板）：抖音/视频号图床防盗链，
         // 服务器与视觉模型都拉不动，曾把整份趋势报表拖死。
         const TREND_COVER_LLM_PLATFORMS = new Set(["bilibili", "xiaohongshu"]);
-        const coverCandidates = selectTrendCoverCandidates(selectedCoverCollections as any, {
-          contentStartAt: shBounds.currentStart,
-          endExclusive: shBounds.currentEndExclusive,
-        }).filter((row) => TREND_COVER_LLM_PLATFORMS.has(String(row.platform)));
+        // 总闸（2026-08-16 用户拍板暂关）：封面第二页整体停用，报表回到单页稳定态；
+        // 复电只需设 env TREND_COVER_PAGE_ENABLED=1，无需改码。
+        const TREND_COVER_PAGE_ENABLED = process.env.TREND_COVER_PAGE_ENABLED === "1";
+        const coverCandidates = !TREND_COVER_PAGE_ENABLED
+          ? []
+          : selectTrendCoverCandidates(selectedCoverCollections as any, {
+              contentStartAt: shBounds.currentStart,
+              endExclusive: shBounds.currentEndExclusive,
+            }).filter((row) => TREND_COVER_LLM_PLATFORMS.has(String(row.platform)));
         const legacyCoverReferences = input.platforms.flatMap((platform) => {
           const items = (((store.collections as any)?.[platform]?.items || []) as TrendItem[]);
           return items
@@ -5050,7 +5055,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             ctx.user.id,
             trendReportCredits,
             "platformTrend",
-            `平台趋势报告（${input.windowDays}天，含本期优秀封面页）`,
+            `平台趋势报告（${input.windowDays}天）`,
             { chargeKey: `platform-trend:${ctx.user.id}:${input.billingRequestId}` },
           );
           const { listOfficialCampaignLinesForReport, ensureOfficialCampaignSeedsLoaded } = await import(
