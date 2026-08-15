@@ -39,6 +39,8 @@ validate_source() {
     || fail "exact_two_window_auto_binding_missing"
   /usr/bin/grep -F -- "--calibrate-search-buttons" "${source_launcher}" >/dev/null \
     || fail "formal_search_calibration_missing"
+  /usr/bin/grep -F -- "--raw-harvest" "${source_launcher}" >/dev/null \
+    || fail "formal_raw_harvest_missing"
   /usr/bin/grep -F -- "--supervise-web-toggle" "${source_launcher}" >/dev/null \
     || fail "web_toggle_supervisor_missing"
   ! /usr/bin/grep -E -- '--window-id=[0-9]+' "${source_launcher}" >/dev/null \
