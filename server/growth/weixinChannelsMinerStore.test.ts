@@ -81,7 +81,14 @@ describe("weixinChannelsMinerStore", () => {
     expect(second.nextTask?.taskId).toBe("task-123");
     expect(first.controlRevision).toBe(0);
     expect(second.controlRevision).toBe(0);
+    expect(first.formalQualifiedTotal).toBe(0);
     expect((await getWeixinChannelsMinerState()).candidates.filter((item) => item.status === "claimed")).toHaveLength(1);
+  });
+
+  it("心跳正式有效总数排除 probe，供悬浮面板显示真实资产数", async () => {
+    await seed([persisted(1), persisted(2, "probe")]);
+    const heartbeat = await recordWeixinChannelsHeartbeat("mac-client-1");
+    expect(heartbeat.formalQualifiedTotal).toBe(1);
   });
 
   it("每次网页开关都递增控制版本，关后立刻再开也不会被本机心跳漏掉", async () => {

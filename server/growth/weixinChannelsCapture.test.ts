@@ -60,6 +60,7 @@ import {
   sameVideoContinuity,
   nextCollectorSearchQueryIndex,
   nextCollectorRecoveryState,
+  nextCollectorFloatingCounts,
   parseVisibleMetric,
   parseCollectorFormalPoolOptions,
   parseVisibleVideoClockSeconds,
@@ -99,6 +100,29 @@ import {
 } from "../../scripts/weixin-channels-capture.mts";
 
 describe("weixin channels OCR", () => {
+  it("悬浮面板只统计本轮正式 newlyQualifiedPersisted 资产", () => {
+    const current = { sessionNew: 3, formalQualifiedTotal: 100 };
+    expect(nextCollectorFloatingCounts(current, {
+      runKind: "probe",
+      newlyQualifiedPersisted: true,
+    })).toEqual(current);
+    expect(nextCollectorFloatingCounts(current, {
+      runKind: "formal",
+      newlyQualifiedPersisted: false,
+    })).toEqual(current);
+    expect(nextCollectorFloatingCounts(current, {
+      runKind: "formal",
+      newlyQualifiedPersisted: true,
+    })).toEqual({ sessionNew: 4, formalQualifiedTotal: 101 });
+    expect(nextCollectorFloatingCounts({
+      sessionNew: 0,
+      formalQualifiedTotal: undefined,
+    }, {
+      runKind: "formal",
+      newlyQualifiedPersisted: true,
+    })).toEqual({ sessionNew: 1, formalQualifiedTotal: undefined });
+  });
+
   it("右窗只在零点至六点前启用搜索", () => {
     expect(shouldUseWeixinChannelsSearchAtHour(0)).toBe(true);
     expect(shouldUseWeixinChannelsSearchAtHour(5)).toBe(true);

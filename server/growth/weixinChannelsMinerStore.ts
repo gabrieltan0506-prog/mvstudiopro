@@ -480,6 +480,8 @@ export async function recordWeixinChannelsHeartbeat(clientId: string) {
     return {
       enabled: state.capture.enabled,
       controlRevision: state.capture.controlRevision,
+      formalQualifiedTotal: state.observations.filter((item) =>
+        item.runKind !== "probe" && item.qualified && !item.invalid).length,
       nextTask,
       serverTime: nowIso,
     };

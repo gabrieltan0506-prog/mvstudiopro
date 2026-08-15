@@ -4,7 +4,7 @@
  * 不读取 Cookie、不调用私有接口、不点赞/关注/评论；搜索与翻页自动化单独启用。
  */
 import { createHash, randomInt } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -35,6 +35,96 @@ import {
 } from "./weixin-channels-window-session.mts";
 
 const execFileAsync = promisify(execFile);
+const FORMAL_STOP_REQUEST_FILE = "/private/tmp/mvstudiopro-weixin-channels-local-stop.request";
+const FORMAL_STOP_STATUS_FILE = "/private/tmp/mvstudiopro-weixin-channels-floating-status.json";
+
+type CollectorFloatingStatus = {
+  state: "collecting" | "stopping";
+  sessionNew: number;
+  formalQualifiedTotal?: number;
+  updatedAt: string;
+};
+
+export function nextCollectorFloatingCounts(
+  current: Pick<CollectorFloatingStatus, "sessionNew" | "formalQualifiedTotal">,
+  event: Pick<WeixinChannelsPersistedObservationEvent, "runKind" | "newlyQualifiedPersisted">,
+) {
+  if (event.runKind !== "formal" || !event.newlyQualifiedPersisted) return current;
+  return {
+    sessionNew: current.sessionNew + 1,
+    formalQualifiedTotal: current.formalQualifiedTotal === undefined
+      ? undefined
+      : current.formalQualifiedTotal + 1,
+  };
+}
+
+async function writeCollectorFloatingStatus(status: CollectorFloatingStatus) {
+  const temporary = `${FORMAL_STOP_STATUS_FILE}.${process.pid}.tmp`;
+  await fs.writeFile(temporary, `${JSON.stringify(status)}\n`, { mode: 0o600 });
+  await fs.rename(temporary, FORMAL_STOP_STATUS_FILE);
+}
+
+async function removeCollectorFloatingStatus() {
+  await fs.unlink(FORMAL_STOP_STATUS_FILE).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  });
+}
+
+async function launchCollectorFloatingControl() {
+  const executable = await getFloatingControlExecutable();
+  return spawn(executable, [
+    String(process.pid),
+    FORMAL_STOP_REQUEST_FILE,
+    FORMAL_STOP_STATUS_FILE,
+  ], {
+    stdio: "ignore",
+  });
+}
+
+async function collectorLocalStopRequested() {
+  try {
+    await fs.access(FORMAL_STOP_REQUEST_FILE);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function persistCollectorLocalStopRequest(server: string, token: string) {
+  let failureLogged = false;
+  while (await collectorLocalStopRequested()) {
+    try {
+      const response = await fetch(`${server.replace(/\/$/, "")}/api/internal/weixin-channels/stop`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-weixin-channels-collector-token": token,
+        },
+        body: JSON.stringify({
+          clientId: `mac-weixin-${os.hostname()}`.slice(0, 120),
+          source: "floating_control",
+        }),
+      });
+      const text = await response.text();
+      if (!response.ok) throw new Error(`local_stop_failed:${response.status}:${text.slice(0, 300)}`);
+      const payload = JSON.parse(text) as { capture?: { enabled?: boolean } };
+      if (payload.capture?.enabled !== false) throw new Error("local_stop_not_confirmed");
+      await fs.unlink(FORMAL_STOP_REQUEST_FILE);
+      await removeCollectorFloatingStatus();
+      process.stderr.write("collector_floating_stop_persisted\n");
+      return;
+    } catch (error) {
+      if (!failureLogged) {
+        process.stderr.write(`collector_floating_stop_retrying:${
+          error instanceof Error ? error.message : String(error)
+        }\n`);
+        failureLogged = true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  }
+}
 
 export const WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS = 10 * 60_000;
 export const WEIXIN_CHANNELS_RECOMMENDATION_TARGET = 5;
@@ -917,6 +1007,7 @@ export function extractCommentPanelContentLines(lines: OcrLine[]) {
 
 let controlExecutablePromise: Promise<string> | undefined;
 let ocrExecutablePromise: Promise<string> | undefined;
+let floatingControlExecutablePromise: Promise<string> | undefined;
 type CollectorSearchTabState = { windowId: number; openedTabs: number; ownerPid?: number; updatedAt: string };
 const collectorSearchTabStates = new Map<number, CollectorSearchTabState>();
 const collectorWindowContext = new AsyncLocalStorage<WeixinChannelsWindowSession>();
@@ -1439,19 +1530,29 @@ async function compileSwiftExecutable(scriptName: string, binaryName: string) {
     try {
       await execFileAsync("/usr/bin/swiftc", compilerArgs, compilerOptions);
     } catch (primaryError) {
-      // 部分 CommandLineTools 更新会短暂留下“新编译器 + 旧 26 SDK”的不配套组合。
-      // 本控制器只用 macOS 12 已有 API；存在 12.1 SDK 时用明确 target 重试一次。
-      const compatibilitySdk = "/Library/Developer/CommandLineTools/SDKs/MacOSX12.1.sdk";
-      try {
-        await fs.access(compatibilitySdk);
-        await execFileAsync("/usr/bin/swiftc", [
-          "-sdk", compatibilitySdk,
-          "-target", "arm64-apple-macosx12.0",
-          ...compilerArgs,
-        ], compilerOptions);
-      } catch {
-        throw primaryError;
+      // CommandLineTools 更新有时会让 MacOSX.sdk 指向与当前 swiftc 小版本不配套的 SDK。
+      // 依次尝试本机保留的具名 SDK；当前机器的 6.2 编译器与 26.0 SDK 已实编验证。
+      const compatibilitySdks = [
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX26.0.sdk",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX12.1.sdk",
+      ];
+      let compiled = false;
+      for (const compatibilitySdk of compatibilitySdks) {
+        try {
+          await fs.access(compatibilitySdk);
+          await execFileAsync("/usr/bin/swiftc", [
+            "-sdk", compatibilitySdk,
+            "-target", "arm64-apple-macosx12.0",
+            ...compilerArgs,
+          ], compilerOptions);
+          compiled = true;
+          break;
+        } catch {
+          // 当前 SDK 不兼容时继续尝试下一份已安装 SDK。
+        }
       }
+      if (!compiled) throw primaryError;
     }
     await fs.rename(temporary, executable).catch(async (error) => {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -1513,10 +1614,19 @@ async function getOcrExecutable() {
   return ocrExecutablePromise;
 }
 
+async function getFloatingControlExecutable() {
+  floatingControlExecutablePromise ||= compileSwiftExecutable(
+    "weixin-channels-emergency-stop.swift",
+    "mvstudiopro-weixin-channels-floating-control",
+  );
+  return floatingControlExecutablePromise;
+}
+
 export async function prepareWeixinCollectorExecutables() {
   // 双核机器串行预编译；编译发生在单条 SLA 计时之前，后续 OCR/控制动作复用二进制。
   await getControlExecutable();
   await getOcrExecutable();
+  await getFloatingControlExecutable();
 }
 
 async function readOcr(screenshot: string): Promise<OcrResult> {
@@ -2823,6 +2933,7 @@ type HeartbeatTask = {
 type CollectorHeartbeat = {
   enabled: boolean;
   controlRevision?: number;
+  formalQualifiedTotal?: number;
   nextTask?: HeartbeatTask;
 };
 
@@ -4034,6 +4145,32 @@ async function runCollectionPool(params: {
             serverQualified: payload.qualified === true,
             newlyQualifiedPersisted: payload.newlyQualifiedPersisted === true,
           };
+          const persistedEvent: WeixinChannelsPersistedObservationEvent = {
+            event: "observation_persisted",
+            observationId: observation.observationId,
+            windowId: requireCollectorWindowSession().windowId,
+            query: observation.query,
+            runKind: observation.runKind === "probe" ? "probe" : "formal",
+            qualified: qualification.qualified,
+            serverQualified: payload.qualified === true,
+            persisted: payload.persisted === true,
+            newlyPersisted: payload.newlyPersisted === true,
+            newlyQualifiedPersisted: payload.newlyQualifiedPersisted === true,
+            comments: Number(observation.comments || 0),
+            commentSampleCount: Array.isArray(observation.commentSamples)
+              ? observation.commentSamples.length
+              : 0,
+            captureElapsedMs: Number(observation.captureElapsedMs || 0),
+            captureBudgetMs: observation.captureBudgetMs,
+            modelCalls: Number(payload.modelCalls || 0),
+            analysisObservation: {
+              ...observation,
+              coverImageBase64: undefined,
+              visualImageBase64: undefined,
+            },
+          };
+          params.onObservationPersisted?.(persistedEvent);
+          process.stdout.write(`${JSON.stringify(persistedEvent)}\n`);
           if (payload.newlyQualifiedPersisted === true) diagnostics.persistedUnique += 1;
           else if (payload.newlyPersisted !== true) diagnostics.duplicatePersistRejected += 1;
           if (failureCount > 0) process.stderr.write(`collector_safe_retry_succeeded:attempt=${failureCount}\n`);
@@ -4371,6 +4508,7 @@ export async function runDualWindowCaptureStateMachine(params: {
   dualWindowProbe?: boolean;
   deadlineAt?: number;
   controlRevision?: number;
+  onObservationPersisted?: (event: WeixinChannelsPersistedObservationEvent) => void;
 }) {
   collectorWindowScopeRequired = params.sessions.length > 1;
   const searchRoutes = buildSearchPlaybackRoutes(params.sessions);
@@ -4466,7 +4604,10 @@ export async function runDualWindowCaptureStateMachine(params: {
           // 当前视频；否则首次进入最热门搜索。恢复重启不得从未知页面直搜。
           startInSearch: startupMode.startInSearch,
           deadlineAt: params.deadlineAt,
-          onObservationPersisted: (event) => events.push(event),
+          onObservationPersisted: (event) => {
+            events.push(event);
+            params.onObservationPersisted?.(event);
+          },
           shared: prepared.shared,
           initialRecovery: restart === 0 ? initialRecovery : undefined,
           onInitialVideoClaimed,
@@ -4717,6 +4858,11 @@ async function main() {
     }
     const server = serverArg.slice("--server=".length).replace(/\/$/, "");
     for (;;) {
+      if (superviseWebToggle) {
+        // 左上角按钮先写本地持久请求再终止旧进程。launchd 拉起的新进程
+        // 必须先把 Fly 开关确认关闭，期间绝不发现窗口或触碰微信。
+        await persistCollectorLocalStopRequest(server, token);
+      }
       // 正式 launchd 进程常驻等待网页开关；停采期间不发现窗口、不截图、
       // 不弹校准层，也不触碰微信。重新开启后才重新绑定当前两窗。
       const controlHeartbeat = superviseWebToggle
@@ -4737,17 +4883,63 @@ async function main() {
           force: true,
         });
       }
-      const result = await runDualWindowCaptureStateMachine({
-        sessions,
-        screenshot,
-        server,
-        token,
-        probe,
-        maxScanned,
-        maxQualified,
-        dualWindowProbe,
-        controlRevision: controlHeartbeat?.controlRevision,
-      });
+      let floatingControl: ChildProcess | undefined;
+      let sessionNew = 0;
+      let formalQualifiedTotal = controlHeartbeat?.formalQualifiedTotal;
+      const floatingStatusGate = createAsyncSerialGate();
+      if (superviseWebToggle) {
+        await writeCollectorFloatingStatus({
+          state: "collecting",
+          sessionNew,
+          formalQualifiedTotal,
+          updatedAt: new Date().toISOString(),
+        });
+        floatingControl = await launchCollectorFloatingControl();
+        floatingControl.once("error", (error) => {
+          process.stderr.write(`collector_floating_control_failed:${error.message}\n`);
+        });
+      }
+      let result: Awaited<ReturnType<typeof runDualWindowCaptureStateMachine>>;
+      try {
+        result = await runDualWindowCaptureStateMachine({
+          sessions,
+          screenshot,
+          server,
+          token,
+          probe,
+          maxScanned,
+          maxQualified,
+          dualWindowProbe,
+          controlRevision: controlHeartbeat?.controlRevision,
+          onObservationPersisted: superviseWebToggle
+            ? (event) => {
+              const nextCounts = nextCollectorFloatingCounts({
+                sessionNew,
+                formalQualifiedTotal,
+              }, event);
+              if (nextCounts.sessionNew === sessionNew) return;
+              sessionNew = nextCounts.sessionNew;
+              formalQualifiedTotal = nextCounts.formalQualifiedTotal;
+              void floatingStatusGate.run(() => writeCollectorFloatingStatus({
+                state: "collecting",
+                sessionNew,
+                formalQualifiedTotal,
+                updatedAt: new Date().toISOString(),
+              })).catch((error) => {
+                process.stderr.write(`collector_floating_status_failed:${
+                  error instanceof Error ? error.message : String(error)
+                }\n`);
+              });
+            }
+            : undefined,
+        });
+      } finally {
+        floatingControl?.kill("SIGTERM");
+        // 等所有已排队的入库计数落盘后再删除状态，避免最后一个异步写入
+        // 在清理之后重新创建文件，让下次启动显示上一轮的陈旧数字。
+        await floatingStatusGate.run(async () => undefined);
+        await removeCollectorFloatingStatus();
+      }
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       if (superviseWebToggle
         && shouldRestartCollectorSupervisorAfterStop(String(result.stopped || ""))) {

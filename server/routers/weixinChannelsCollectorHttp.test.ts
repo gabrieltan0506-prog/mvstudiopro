@@ -8,6 +8,7 @@ import {
   verifyWeixinChannelsCollectorToken,
   weixinChannelsObservationSchema,
 } from "./weixinChannelsCollectorHttp";
+import { setWeixinChannelsCaptureEnabled } from "../growth/weixinChannelsMinerStore";
 
 let storeFile = "";
 
@@ -73,6 +74,37 @@ async function callHeartbeat(params: { token?: string; body: unknown }) {
   return { statusCode, payload };
 }
 
+async function callLocalStop(params: { token?: string; body: unknown }) {
+  let stopHandler: RequestHandler | undefined;
+  const app = {
+    post(route: string, handler: RequestHandler) {
+      if (route === "/api/internal/weixin-channels/stop") stopHandler = handler;
+      return app;
+    },
+    get() { return app; },
+  } as unknown as Express;
+  registerWeixinChannelsCollectorHttpRoutes(app);
+  if (!stopHandler) throw new Error("collector_stop_handler_missing");
+
+  let statusCode = 200;
+  let payload: unknown;
+  const response = {
+    status(code: number) {
+      statusCode = code;
+      return response;
+    },
+    json(body: unknown) {
+      payload = body;
+      return response;
+    },
+  } as unknown as Response;
+  await stopHandler({
+    headers: params.token ? { "x-weixin-channels-collector-token": params.token } : {},
+    body: params.body,
+  } as Request, response, () => undefined);
+  return { statusCode, payload };
+}
+
 describe("weixinChannelsCollectorHttp", () => {
   beforeEach(async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-http-"));
@@ -106,6 +138,33 @@ describe("weixinChannelsCollectorHttp", () => {
       ok: true,
       enabled: false,
       controlRevision: 0,
+      formalQualifiedTotal: 0,
+    });
+  });
+
+  it("左上角停止面板只能经采集令牌持久关闭网页开关", async () => {
+    process.env.WEIXIN_CHANNELS_COLLECTOR_TOKEN = "real-local-token";
+    await setWeixinChannelsCaptureEnabled(true);
+
+    const unauthorized = await callLocalStop({
+      body: { clientId: "mac-client-1", source: "floating_control" },
+    });
+    expect(unauthorized.statusCode).toBe(401);
+
+    const invalid = await callLocalStop({
+      token: "real-local-token",
+      body: { clientId: "mac-client-1", source: "browser" },
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const stopped = await callLocalStop({
+      token: "real-local-token",
+      body: { clientId: "mac-client-1", source: "floating_control" },
+    });
+    expect(stopped.statusCode).toBe(200);
+    expect(stopped.payload).toMatchObject({
+      ok: true,
+      capture: { enabled: false, pausedBy: "user" },
     });
   });
 

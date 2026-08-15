@@ -13,6 +13,7 @@ import {
   pauseWeixinChannelsCaptureForSafetyFuse,
   recordWeixinChannelsHeartbeat,
   refreshWeixinChannelsCandidates,
+  setWeixinChannelsCaptureEnabled,
   summarizeCandidateSources,
 } from "../growth/weixinChannelsMinerStore";
 import { isTrendCoverCollectionActive } from "../growth/trendCoverSelection";
@@ -120,6 +121,24 @@ export function registerWeixinChannelsCollectorHttpRoutes(app: Express) {
     }
     try {
       const state = await pauseWeixinChannelsCaptureForSafetyFuse(parsed.data.reason);
+      res.json({ ok: true, capture: state.capture });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post("/api/internal/weixin-channels/stop", async (req, res) => {
+    if (!authorize(req, res)) return;
+    const parsed = z.object({
+      clientId: z.string().min(3).max(120),
+      source: z.literal("floating_control"),
+    }).safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ ok: false, error: "invalid_stop_request" });
+      return;
+    }
+    try {
+      const state = await setWeixinChannelsCaptureEnabled(false);
       res.json({ ok: true, capture: state.capture });
     } catch (error) {
       res.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
