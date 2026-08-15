@@ -128,7 +128,10 @@ async function persistCollectorLocalStopRequest(server: string, token: string) {
 
 export const WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS = 10 * 60_000;
 export const WEIXIN_CHANNELS_RECOMMENDATION_TARGET = 5;
-export const WEIXIN_CHANNELS_UNQUALIFIED_DWELL_MS = 2_000;
+// 正常切页会在首帧确认后立即返回；4 秒仅是新视频首帧/指标迟到时的异常上限。
+// 不能把整个“判断 + 滑动”压进 2 秒，否则 OCR 已完成时切页预算已耗尽，
+// 右窗会误报 next_video_not_visible 并停在恢复循环。
+export const WEIXIN_CHANNELS_UNQUALIFIED_DWELL_MS = 4_000;
 /** 评论首屏加两次向下翻页，共读取三屏。 */
 export const WEIXIN_CHANNELS_COMMENT_PANEL_SCREEN_COUNT = 3;
 export const WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS = [0.1, 0.3, 0.5, 0.7, 0.9] as const;
@@ -144,6 +147,17 @@ export function shouldUseWeixinChannelsSearchAtHour(hour: number, dayOfWeek: num
     && !isWeekend
     && hour >= 0
     && hour < 6;
+}
+
+/**
+ * 播放器刚切页时的 OCR/身份短暂缺失不等于窗口故障。保留同窗短退避，
+ * 让下一帧重新确认；黑屏或持续同内容仍由诊断熔断处理。
+ */
+export function collectorWindowRecoveryDelayMs(reason: string, restart: number, deadlineAt?: number) {
+  const isTransientPlayerFrame = /(?:player_state_unconfirmed|stable_identity_not_detected|recovery_continuity_unconfirmed|advance_recovery_exhausted)/
+    .test(reason);
+  const delayMs = isTransientPlayerFrame ? 1_250 : automaticRecoveryDelayMs(restart);
+  return deadlineAt === undefined ? delayMs : Math.min(10_000, delayMs);
 }
 
 export function resolveCollectorWindowStartupMode(params: {
@@ -4172,7 +4186,6 @@ async function runCollectionPool(params: {
   onObservationPersisted?: (event: WeixinChannelsPersistedObservationEvent) => void;
   shared: CollectorSharedRuntime;
   initialRecovery?: CollectorPendingRecovery;
-  onInitialVideoClaimed?: () => void;
 }) {
   const clientId = `mac-weixin-${os.hostname()}`.slice(0, 120);
   const { seenRegistry, inFlightVideoIdentities } = params.shared;
@@ -4451,10 +4464,6 @@ async function runCollectionPool(params: {
 
     // 先退出“赞和收藏”或搜索结果等辅助标签；只允许真实视频播放器进入计数。
     ocr = await ensureVideoPlayerVisible(params.screenshot, ocr);
-    // 右窗只操作自己的播放器；左窗完成首帧页面门禁后即可并行启动。广告、
-    // 历史重复或不达标也必须释放屏障，不能让右窗无故空等 20 秒。
-    params.onInitialVideoClaimed?.();
-    params.onInitialVideoClaimed = undefined;
     // 广告是页面级最高优先级淘汰条件：无需等待四项指标稳定，更不能进入
     // 时长、五点或评论链。只保留 scanned 事实，随后立即切到下一条。
     if (containsWeixinChannelsAdvertisement(ocr.lines.map((line) => line.text))) {
@@ -4834,11 +4843,10 @@ async function runCollectionPool(params: {
     process.stderr.write(`collector_progress:${JSON.stringify({ scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode })}\n`);
 
     if (!result.qualified && !("inspectedContent" in result)) {
-      const deadlineAt = itemStartedAt + WEIXIN_CHANNELS_UNQUALIFIED_DWELL_MS;
       ocr = await advanceTracked(ocr, {
         metricsOcrConfirmed: true,
         captureState: terminal.state,
-      }, deadlineAt);
+      });
     } else {
       ocr = await advanceTracked(ocr, {
         metricsOcrConfirmed: true,
@@ -5044,9 +5052,6 @@ export async function runDualWindowCaptureStateMachine(params: {
   const leftRecommendationWindowId = [...params.sessions]
     .sort((left, right) => left.bounds.x - right.bounds.x || left.windowId - right.windowId)[0]!.windowId;
   const rightSearchWindowId = searchRoutes[0]?.searchWindowId;
-  const leftSession = params.sessions.find(
-    (session) => session.windowId === leftRecommendationWindowId,
-  )!;
   const startupQualifiedWindowIds = new Set<number>();
   // 推荐流播完会自动切下一条。任何 Fly 同步或搜索之前，先 OCR 两窗当前
   // 视频；只有前置高热达标才拉回 10% 保留采集时间，不达标保持原语义滑走。
@@ -5110,7 +5115,6 @@ export async function runDualWindowCaptureStateMachine(params: {
   const runSession = (
     session: WeixinChannelsWindowSession,
     initialRecovery: CollectorPendingRecovery | undefined,
-    onInitialVideoClaimed?: () => void,
   ) => collectorWindowContext.run(session, async () => {
     let lastFailure = "window_failed";
     let restart = 0;
@@ -5164,7 +5168,6 @@ export async function runDualWindowCaptureStateMachine(params: {
           onObservationPersisted: recordPersistedEvent,
           shared: prepared.shared,
           initialRecovery: restart === 0 ? initialRecovery : undefined,
-          onInitialVideoClaimed,
         });
         const reason = String(result.stopped);
         if (captureCurrentBeforeSearch && reason === "max_scanned_reached") {
@@ -5221,9 +5224,11 @@ export async function runDualWindowCaptureStateMachine(params: {
       }
       restart += 1;
       process.stderr.write(`collector_window_recovering:${session.windowId}:attempt=${restart}:reason=${lastFailure}\n`);
-      const delayMs = params.deadlineAt === undefined
-        ? automaticRecoveryDelayMs(restart)
-        : Math.min(10_000, automaticRecoveryDelayMs(restart));
+      const delayMs = collectorWindowRecoveryDelayMs(
+        lastFailure,
+        restart,
+        params.deadlineAt,
+      );
       const controlStopReason = await waitForCollectorRecoveryDelay({
         delayMs,
         server: params.server,
@@ -5244,34 +5249,12 @@ export async function runDualWindowCaptureStateMachine(params: {
       error: lastFailure,
     };
   });
-  let resolveLeftInitialClaim!: () => void;
-  let leftInitialClaimed = false;
-  const leftInitialClaim = new Promise<void>((resolve) => {
-    resolveLeftInitialClaim = () => {
-      if (leftInitialClaimed) return;
-      leftInitialClaimed = true;
-      process.stderr.write(`left_initial_video_claimed:${leftRecommendationWindowId}\n`);
-      resolve();
-    };
-  });
-  // 左推荐流先完成当前画面的四项 OCR 与 identity claim，右窗才可开始多页搜索。
-  // 这只是启动屏障；claim 建立后两窗仍并行，物理 UI 动作继续走全局 FIFO。
-  const leftRun = runSession(leftSession, prepared.initialRecovery, resolveLeftInitialClaim);
-  let leftClaimTimer: NodeJS.Timeout | undefined;
-  await Promise.race([
-    leftInitialClaim,
-    new Promise<void>((resolve) => {
-      leftClaimTimer = setTimeout(() => {
-      process.stderr.write(`left_initial_video_claim_timeout:${leftRecommendationWindowId}\n`);
-      resolve();
-      }, 20_000);
-    }),
-  ]);
-  if (leftClaimTimer) clearTimeout(leftClaimTimer);
-  const otherRuns = params.sessions
-    .filter((session) => session.windowId !== leftRecommendationWindowId)
-    .map((session) => runSession(session, undefined));
-  const runs = [leftRun, ...otherRuns];
+  // 两窗独立推进：禁止右窗等待左窗的首帧 OCR。鼠标、键盘与截图仍由全局
+  // FIFO 串行，所以不会互抢物理输入；OCR、网络与等待阶段可以真正并发。
+  const runs = params.sessions.map((session) => runSession(
+    session,
+    session.windowId === leftRecommendationWindowId ? prepared.initialRecovery : undefined,
+  ));
   const windows = await Promise.all(runs);
   const stoppedReasons = windows.map((result) => String(result.stopped));
   let stopped = prepared.shared.abortReason === "capture_control_changed"
