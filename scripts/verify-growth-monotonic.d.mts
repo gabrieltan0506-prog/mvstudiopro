@@ -2,7 +2,6 @@ export type GrowthMonotonicSnapshot = {
   activePlatforms?: unknown;
   platforms?: Record<string, {
     currentTotal?: unknown;
-    currentRetentionCap?: unknown;
     archivedTotal?: unknown;
   }>;
 };

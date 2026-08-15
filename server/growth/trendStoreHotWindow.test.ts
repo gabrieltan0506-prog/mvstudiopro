@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_UNDATED_HOT_ITEMS, pruneTrendItemsToHotWindow } from "./trendStore";
+import { pruneTrendItemsToHotWindow } from "./trendStore";
 import type { TrendItem } from "./trendCollector";
 
 const NOW = Date.parse("2026-07-26T00:00:00Z");
@@ -37,14 +37,11 @@ describe("热窗口裁剪", () => {
     expect(pruneTrendItemsToHotWindow([bad], 90, NOW).map((i) => i.id)).toEqual(["bad"]);
   });
 
-  it("无日期热池有上限，避免 current 文件无限膨胀拖垮调度器", () => {
-    const items = Array.from(
-      { length: MAX_UNDATED_HOT_ITEMS + 25 },
-      (_, i) => item(`undated-${i}`, null, i),
-    );
+  it("无日期条目全部留在当前仓库，不得按热度截成历史抽样", () => {
+    const items = Array.from({ length: 20_025 }, (_, i) => item(`undated-${i}`, null, i));
     const kept = pruneTrendItemsToHotWindow(items, 90, NOW);
-    expect(kept).toHaveLength(MAX_UNDATED_HOT_ITEMS);
-    expect(kept[0].id).toBe(`undated-${MAX_UNDATED_HOT_ITEMS + 24}`);
+    expect(kept).toHaveLength(items.length);
+    expect(new Set(kept.map((entry) => entry.id))).toEqual(new Set(items.map((entry) => entry.id)));
   });
 
   /**

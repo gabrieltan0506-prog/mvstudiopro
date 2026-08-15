@@ -156,4 +156,52 @@ describe("growth store merge + hot-window prune", () => {
     expect(ids).toContain("fresh-1");
     expect(ids.filter((id) => id.startsWith("keep-"))).toHaveLength(30);
   });
+
+  it("受控恢复以完整基线为底并保留基线后的新观测，不改其他平台", async () => {
+    const {
+      readTrendStore,
+      restoreTrendPlatformCurrentFromBaseline,
+    } = await import("./trendStore");
+    const now = Date.now();
+    const baselineAt = new Date(now - 60_000).toISOString();
+    const liveAt = new Date(now).toISOString();
+    const baseline = makeCollection([
+      makeItem("base-1", baselineAt),
+      makeItem("shared", baselineAt),
+    ], baselineAt);
+    baseline.platform = "xiaohongshu";
+    const live = makeCollection([
+      { ...makeItem("shared", liveAt), likes: 999 },
+      makeItem("post-baseline", liveAt),
+    ], liveAt);
+    live.platform = "xiaohongshu";
+    const other = makeCollection([makeItem("other-platform", liveAt)], liveAt);
+    await fs.writeFile(
+      path.join(tempRoot, "current.json"),
+      JSON.stringify({
+        updatedAt: liveAt,
+        collections: { xiaohongshu: live, douyin: other },
+        scheduler: {},
+        archiveIndex: [],
+      }),
+      "utf8",
+    );
+
+    const result = await restoreTrendPlatformCurrentFromBaseline("xiaohongshu", baseline);
+    expect(result).toMatchObject({
+      baselineCount: 2,
+      liveCount: 2,
+      restoredCount: 3,
+      addedAfterBaseline: 1,
+      missingBaselineCount: 0,
+    });
+    const store = await readTrendStore({ preferDerivedFiles: true });
+    expect(store.collections?.xiaohongshu?.items.map((item) => item.id).sort()).toEqual([
+      "base-1",
+      "post-baseline",
+      "shared",
+    ]);
+    expect(store.collections?.xiaohongshu?.items.find((item) => item.id === "shared")?.likes).toBe(999);
+    expect(store.collections?.douyin?.items.map((item) => item.id)).toEqual(["other-platform"]);
+  });
 });
