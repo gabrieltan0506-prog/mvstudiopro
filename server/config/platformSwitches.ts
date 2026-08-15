@@ -277,7 +277,9 @@ export const VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL = OPENROUTER_KIMI_K3_MODEL;
 
 /** 平台趋势 PNG 报表：Terra High 同时清洗结构化数据并完成封面选秀。 */
 export function getVisualReportOpenAiModel(): string {
-  return getEvolinkGpt56TerraModel();
+  // 2026-08-16 用户拍板切回：Terra 高推理耗时数分钟，同步请求活不到交卷
+  //（断线即弃算），K3 一分钟内出活的年代报表从没死过。
+  return getOpenRouterKimiK3Model();
 }
 
 /**
