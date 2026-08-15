@@ -341,7 +341,8 @@ async function resolveManhuaSeriesKey(input: {
     }
     // 旧数据未匹配时，新剧改用「剧名+模型档」的确定 key：
     // 同名大合集/分集即使 URL、mixId 不同，并发首次学习也落在同一系列。
-    const ns = input.learnLlm === "claude" ? ":claude" : "";
+    const ns =
+      input.learnLlm === "claude" ? ":claude" : input.learnLlm === "deepseek" ? ":deepseek" : "";
     return createHash("sha1")
       .update(`title:${normalizedTitle}${ns}`)
       .digest("hex")
@@ -1513,7 +1514,10 @@ async function polishAndPersistManhuaProposal(input: {
           "HTTP-Referer": "https://www.mvstudiopro.com",
           "X-OpenRouter-Title": "MVStudioPro",
         },
-        signal: input.abortSignal ?? AbortSignal.timeout(180_000),
+        // 审查返工 5：runner 恒传 abortSignal，?? 写法让 180s 超时永不生效——双保险取消
+        signal: input.abortSignal
+          ? AbortSignal.any([input.abortSignal, AbortSignal.timeout(180_000)])
+          : AbortSignal.timeout(180_000),
         body: JSON.stringify({
           model: MANHUA_TEMPLATE_LEARN_DEEPSEEK_MODEL,
           temperature: 0.3,
@@ -1521,6 +1525,8 @@ async function polishAndPersistManhuaProposal(input: {
           max_tokens: 16_384,
           response_format: { type: "json_object" },
           reasoning: { effort: "medium" },
+          // 审查返工 6：强制只路由到支持 reasoning/response_format 的供应商
+          provider: { require_parameters: true },
           messages: polishMessages,
         }),
       });

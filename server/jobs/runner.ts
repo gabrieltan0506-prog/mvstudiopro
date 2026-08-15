@@ -28,6 +28,7 @@ import {
 } from "../kling/fal-proxy";
 import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "../gemini-image";
 import { normalizeOpenAiImageLane } from "../../shared/openaiImageLane.js";
+import { normalizePlatformTopicExpandEngine } from "../../shared/platformTopicShortlist.js";
 import { appRouter, buildPlatformContent, slimBuildPlatformContentDiagnosticsForJob } from "../routers";
 import { invokeLLM, extractJsonString, type FileContent } from "../_core/llm";
 import { deleteGcsObject, getGcsBucketName } from "../services/gcs";
@@ -394,7 +395,8 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
       batchSize: typeof params.batchSize === "number" ? params.batchSize : undefined,
       refreshPreviewFrames: params.refreshPreviewFrames === true,
       retrySkippedEpisodes: params.retrySkippedEpisodes === true,
-      learnLlm: params.learnLlm === "claude" ? "claude" : undefined,
+      learnLlm:
+        params.learnLlm === "claude" || params.learnLlm === "deepseek" ? params.learnLlm : undefined,
       onProgress: reportLearnProgress,
       abortSignal: abortController.signal,
       checkControl: async () => {
@@ -1538,7 +1540,7 @@ async function processPlatformJob(
           ? (params.enabledSkillIds as unknown[]).filter((s): s is string => typeof s === "string")
           : null,
         allowBloggerTitle: params.allowBloggerTitle === true,
-        engine: params.expandEngine === "qwen3.8-max" ? "qwen3.8-max" : "kimi-k3",
+        engine: normalizePlatformTopicExpandEngine(params.expandEngine),
         onItem: platformJobId
           ? async ({ blueprint, index, total, elapsedMs }) => {
               streamed.push(blueprint);

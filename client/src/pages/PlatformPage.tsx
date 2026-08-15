@@ -213,7 +213,9 @@ import {
   PLATFORM_TOPIC_TOP_PICK_COUNT,
   PLATFORM_TOPIC_SHORTLIST_MAX,
   clampTopicShortlistCount,
+  normalizePlatformTopicExpandEngine,
   platformTopicShortlistTotalCredits,
+  type PlatformTopicExpandEngineId,
   type PlatformTopicShortlistItem,
 } from "@shared/platformTopicShortlist";
 import {
@@ -2084,7 +2086,7 @@ type ManhuaLearnSourceRow = {
   gcsUri?: string | null;
   fileName?: string | null;
   localFileName?: string | null;
-  learnLlm?: "claude" | "gpt";
+  learnLlm?: "claude" | "gpt" | "deepseek";
   mixName?: string | null;
   mixId?: string | null;
   platform?: "douyin" | "kuaishou" | "upload" | string | null;
@@ -3210,10 +3212,10 @@ export default function PlatformPage() {
   });
   const expandTopicPicksMutation = trpc.mvAnalysis.expandPlatformTopicPicks.useMutation();
   /** 扩写引擎（用户可选，2026-08-12）：稳定档主走 OpenRouter 抖动自动换备用通道；轻快档直走备用通道 */
-  const [platformExpandEngine, setPlatformExpandEngine] = useState<"kimi-k3" | "qwen3.8-max">(() => {
+  const [platformExpandEngine, setPlatformExpandEngine] = useState<PlatformTopicExpandEngineId>(() => {
     try {
       const raw = window.localStorage.getItem("mvstudiopro.platform.expandEngine.v1");
-      return raw === "qwen3.8-max" ? "qwen3.8-max" : "kimi-k3";
+      return normalizePlatformTopicExpandEngine(raw);
     } catch {
       return "kimi-k3";
     }
@@ -4121,9 +4123,7 @@ export default function PlatformPage() {
               </button>
               <select
                 value={platformExpandEngine}
-                onChange={(e) =>
-                  setPlatformExpandEngine(e.target.value === "qwen3.8-max" ? "qwen3.8-max" : "kimi-k3")
-                }
+                onChange={(e) => setPlatformExpandEngine(normalizePlatformTopicExpandEngine(e.target.value))}
                 title="扩写引擎：稳定档遇高峰自动切备用通道；轻快档速度更快、文风更简"
                 className="rounded-lg border border-white/15 bg-black/45 px-2 py-1.5 text-[11px] text-gray-300"
               >
