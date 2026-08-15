@@ -42,6 +42,37 @@ async function callSafetyPause(params: { token?: string; body: unknown }) {
   return { statusCode, payload };
 }
 
+async function callHeartbeat(params: { token?: string; body: unknown }) {
+  let heartbeatHandler: RequestHandler | undefined;
+  const app = {
+    post(route: string, handler: RequestHandler) {
+      if (route === "/api/internal/weixin-channels/heartbeat") heartbeatHandler = handler;
+      return app;
+    },
+    get() { return app; },
+  } as unknown as Express;
+  registerWeixinChannelsCollectorHttpRoutes(app);
+  if (!heartbeatHandler) throw new Error("collector_heartbeat_handler_missing");
+
+  let statusCode = 200;
+  let payload: unknown;
+  const response = {
+    status(code: number) {
+      statusCode = code;
+      return response;
+    },
+    json(body: unknown) {
+      payload = body;
+      return response;
+    },
+  } as unknown as Response;
+  await heartbeatHandler({
+    headers: params.token ? { "x-weixin-channels-collector-token": params.token } : {},
+    body: params.body,
+  } as Request, response, () => undefined);
+  return { statusCode, payload };
+}
+
 describe("weixinChannelsCollectorHttp", () => {
   beforeEach(async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-http-"));
@@ -62,6 +93,20 @@ describe("weixinChannelsCollectorHttp", () => {
     process.env.WEIXIN_CHANNELS_COLLECTOR_TOKEN = "real-local-token";
     expect(verifyWeixinChannelsCollectorToken("real-local-token")).toBe(true);
     expect(verifyWeixinChannelsCollectorToken("real-local-token-x")).toBe(false);
+  });
+
+  it("心跳把网页控制版本返回给本机采集器", async () => {
+    process.env.WEIXIN_CHANNELS_COLLECTOR_TOKEN = "real-local-token";
+    const result = await callHeartbeat({
+      token: "real-local-token",
+      body: { clientId: "mac-client-1" },
+    });
+    expect(result.statusCode).toBe(200);
+    expect(result.payload).toMatchObject({
+      ok: true,
+      enabled: false,
+      controlRevision: 0,
+    });
   });
 
   it("安全暂停接口拒绝未鉴权和不足三次的请求，只接受带令牌的三次熔断", async () => {

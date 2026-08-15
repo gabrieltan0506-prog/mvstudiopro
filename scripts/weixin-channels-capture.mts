@@ -2820,6 +2820,29 @@ type HeartbeatTask = {
   searchQueries: string[];
 };
 
+type CollectorHeartbeat = {
+  enabled: boolean;
+  controlRevision?: number;
+  nextTask?: HeartbeatTask;
+};
+
+export function collectorControlStopReason(
+  baselineRevision: number | undefined,
+  heartbeat: Pick<CollectorHeartbeat, "enabled" | "controlRevision">,
+) {
+  if (!heartbeat.enabled) return "capture_disabled" as const;
+  if (baselineRevision !== undefined
+    && heartbeat.controlRevision !== undefined
+    && heartbeat.controlRevision !== baselineRevision) {
+    return "capture_control_changed" as const;
+  }
+  return null;
+}
+
+export function shouldRestartCollectorSupervisorAfterStop(reason: string) {
+  return reason.startsWith("capture_disabled") || reason === "capture_control_changed";
+}
+
 async function heartbeatCollector(server: string, token: string, clientId: string) {
   const response = await fetch(`${server.replace(/\/$/, "")}/api/internal/weixin-channels/heartbeat`, {
     method: "POST",
@@ -2828,7 +2851,7 @@ async function heartbeatCollector(server: string, token: string, clientId: strin
   });
   const text = await response.text();
   if (!response.ok) throw new Error(`heartbeat_failed:${response.status}:${text.slice(0, 500)}`);
-  return JSON.parse(text) as { enabled: boolean; nextTask?: HeartbeatTask };
+  return JSON.parse(text) as CollectorHeartbeat;
 }
 
 async function waitForCollectorWebToggleEnabled(server: string, token: string) {
@@ -2838,7 +2861,7 @@ async function waitForCollectorWebToggleEnabled(server: string, token: string) {
     const heartbeat = await heartbeatCollector(server, token, clientId);
     if (heartbeat.enabled) {
       if (waitingLogged) process.stderr.write("collector_web_toggle_enabled\n");
-      return;
+      return heartbeat;
     }
     if (!waitingLogged) {
       process.stderr.write("collector_waiting_for_web_toggle\n");
@@ -2846,6 +2869,34 @@ async function waitForCollectorWebToggleEnabled(server: string, token: string) {
     }
     await new Promise((resolve) => setTimeout(resolve, 5_000));
   }
+}
+
+async function waitForCollectorRecoveryDelay(params: {
+  delayMs: number;
+  server: string;
+  token: string;
+  shared: CollectorSharedRuntime;
+}) {
+  const clientId = `mac-weixin-${os.hostname()}`.slice(0, 120);
+  const deadlineAt = Date.now() + params.delayMs;
+  while (Date.now() < deadlineAt) {
+    if (params.shared.abortReason) return params.shared.abortReason;
+    await new Promise((resolve) => setTimeout(
+      resolve,
+      Math.min(1_000, Math.max(0, deadlineAt - Date.now())),
+    ));
+    try {
+      const heartbeat = await heartbeatCollector(params.server, params.token, clientId);
+      const reason = params.shared.observeHeartbeat(heartbeat);
+      if (reason) return reason;
+    } catch (error) {
+      // 网络瞬断不能把 UI 恢复误判成网页停采；保留本轮退避并由后续心跳重试。
+      process.stderr.write(`collector_recovery_heartbeat_failed:${
+        error instanceof Error ? error.message : String(error)
+      }\n`);
+    }
+  }
+  return null;
 }
 
 type CollectorCandidate = HeartbeatTask & {
@@ -3444,7 +3495,9 @@ type CollectorSharedRuntime = {
   seenRegistry: CollectorSeenRegistry;
   inFlightVideoIdentities: Set<string>;
   nextSearchQueryIndexByWindow: Map<number, number>;
+  controlRevision?: number;
   abortReason?: string;
+  observeHeartbeat(heartbeat: CollectorHeartbeat): string | null;
   rememberSeen(entry: CollectorSeenEntry): Promise<void>;
   retryPending(): Promise<CollectorPendingRecovery>;
   markHealthyProgress(): Promise<void>;
@@ -3454,7 +3507,12 @@ type CollectorSharedRuntime = {
   qualificationStartedAt: number;
 };
 
-async function prepareCollectorSharedRuntime(params: { server: string; token: string; maxQualified?: number }) {
+async function prepareCollectorSharedRuntime(params: {
+  server: string;
+  token: string;
+  maxQualified?: number;
+  controlRevision?: number;
+}) {
   const seenRegistry = await loadCollectorSeenRegistry();
   // 旧 seen 不能作为事实。双窗启动前只做一次 Fly 对账，随后两窗共享同一份内存表。
   const persistedIdentityCount = await syncPersistedCollectorIdentities({
@@ -3473,6 +3531,12 @@ async function prepareCollectorSharedRuntime(params: { server: string; token: st
     seenRegistry,
     inFlightVideoIdentities: new Set<string>(),
     nextSearchQueryIndexByWindow: new Map<number, number>(),
+    controlRevision: params.controlRevision,
+    observeHeartbeat: (heartbeat) => {
+      const reason = collectorControlStopReason(params.controlRevision, heartbeat);
+      if (reason && !shared.abortReason) shared.abortReason = reason;
+      return shared.abortReason || null;
+    },
     rememberSeen: (entry: CollectorSeenEntry) => seenGate.run(() => rememberCollectorSeen(seenRegistry, entry)),
     retryPending: () => pendingGate.run(() => retryPendingObservations(params)),
     markHealthyProgress: () => recoveryResetGate.run(async () => {
@@ -3527,11 +3591,14 @@ async function runCollectionPool(params: {
   // 启动只读取 Fly 已有候选，不能在两个窗口已经固定后阻塞等待外部平台刷新。
   let candidates = await refreshCollectorCandidates(params.server, params.token, false);
   let heartbeat = await heartbeatCollector(params.server, params.token, clientId);
-  if (!heartbeat.enabled) return { stopped: "capture_disabled", scanned: 0, qualified: 0 };
+  let controlStopReason = params.shared.observeHeartbeat(heartbeat);
+  if (controlStopReason) return { stopped: controlStopReason, scanned: 0, qualified: 0 };
   if (!heartbeat.nextTask) {
     // 任务只能由 Fly 中抖音/B站/小红书最近十五天真实数据生成；本机不维护固定热词。
     candidates = await refreshCollectorCandidates(params.server, params.token, false);
     heartbeat = await heartbeatCollector(params.server, params.token, clientId);
+    controlStopReason = params.shared.observeHeartbeat(heartbeat);
+    if (controlStopReason) return { stopped: controlStopReason, scanned: 0, qualified: 0 };
     if (!heartbeat.nextTask) {
       const reusable = selectReusableCollectorCandidate(candidates);
       if (reusable) {
@@ -3674,12 +3741,15 @@ async function runCollectionPool(params: {
 
     if (Date.now() - lastHeartbeatAt >= 30_000) {
       heartbeat = await heartbeatCollector(params.server, params.token, clientId);
+      controlStopReason = params.shared.observeHeartbeat(heartbeat);
+      if (controlStopReason) {
+        return { stopped: controlStopReason, scanned: totalScanned, qualified: totalQualified };
+      }
       const recovery = await params.shared.retryPending();
       totalRecovered += recovery.persisted;
       diagnostics.persistedUnique += recovery.persistedUnique;
       diagnostics.duplicatePersistRejected += recovery.duplicatePersistRejected;
       lastHeartbeatAt = Date.now();
-      if (!heartbeat.enabled) return { stopped: "capture_disabled", scanned: totalScanned, qualified: totalQualified };
       if (heartbeat.nextTask && heartbeat.nextTask.taskId !== task.taskId) {
         candidates = await refreshCollectorCandidates(params.server, params.token);
         task = hydrateCollectorTask({
@@ -3999,9 +4069,18 @@ async function runCollectionPool(params: {
         process.stderr.write(`collector_automatic_recovery_waiting:attempt=${failureCount}:delayMs=${delayMs}:pending=${pendingExists}:reason=${reason}\n`);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
         heartbeat = await heartbeatCollector(params.server, params.token, clientId);
-        if (!heartbeat.enabled) {
+        controlStopReason = params.shared.observeHeartbeat(heartbeat);
+        if (controlStopReason) {
           inFlightVideoIdentities.delete(videoIdentity);
-          return { stopped: "capture_disabled_during_recovery", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
+          return {
+            stopped: controlStopReason === "capture_disabled"
+              ? "capture_disabled_during_recovery"
+              : controlStopReason,
+            scanned: totalScanned,
+            qualified: totalQualified,
+            recovered: totalRecovered,
+            mode,
+          };
         }
         if (pendingExists) continue;
         // 不操作播放器，只被动截图；连续两张互动指标都证明是同一视频后，才允许再次完整采集。
@@ -4028,9 +4107,18 @@ async function runCollectionPool(params: {
           if (stableRecoverySnapshots < 2) {
             await new Promise((resolve) => setTimeout(resolve, Math.min(3_000, delayMs)));
             heartbeat = await heartbeatCollector(params.server, params.token, clientId);
-            if (!heartbeat.enabled) {
+            controlStopReason = params.shared.observeHeartbeat(heartbeat);
+            if (controlStopReason) {
               inFlightVideoIdentities.delete(videoIdentity);
-              return { stopped: "capture_disabled_during_recovery", scanned: totalScanned, qualified: totalQualified, recovered: totalRecovered, mode };
+              return {
+                stopped: controlStopReason === "capture_disabled"
+                  ? "capture_disabled_during_recovery"
+                  : controlStopReason,
+                scanned: totalScanned,
+                qualified: totalQualified,
+                recovered: totalRecovered,
+                mode,
+              };
             }
           }
         }
@@ -4282,6 +4370,7 @@ export async function runDualWindowCaptureStateMachine(params: {
   maxQualified?: number;
   dualWindowProbe?: boolean;
   deadlineAt?: number;
+  controlRevision?: number;
 }) {
   collectorWindowScopeRequired = params.sessions.length > 1;
   const searchRoutes = buildSearchPlaybackRoutes(params.sessions);
@@ -4331,6 +4420,7 @@ export async function runDualWindowCaptureStateMachine(params: {
     server: params.server,
     token: params.token,
     maxQualified: params.maxQualified,
+    controlRevision: params.controlRevision,
   });
   for (const session of params.sessions) {
     collectorSearchTabStates.set(session.windowId, await loadCollectorSearchTabState(session.windowId));
@@ -4388,7 +4478,8 @@ export async function runDualWindowCaptureStateMachine(params: {
           continue;
         }
         if (reason.startsWith("max_scanned_reached") || reason.startsWith("qualified_target_reached")
-          || reason.startsWith("capture_disabled") || reason.startsWith("probe_deadline_reached")) {
+          || reason.startsWith("capture_disabled") || reason === "capture_control_changed"
+          || reason.startsWith("probe_deadline_reached")) {
           return { windowId: session.windowId, ...result };
         }
         lastFailure = reason;
@@ -4435,7 +4526,19 @@ export async function runDualWindowCaptureStateMachine(params: {
       const delayMs = params.deadlineAt === undefined
         ? automaticRecoveryDelayMs(restart)
         : Math.min(10_000, automaticRecoveryDelayMs(restart));
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const controlStopReason = await waitForCollectorRecoveryDelay({
+        delayMs,
+        server: params.server,
+        token: params.token,
+        shared: prepared.shared,
+      });
+      if (controlStopReason) {
+        return {
+          windowId: session.windowId,
+          stopped: controlStopReason,
+          error: lastFailure,
+        };
+      }
     }
     return {
       windowId: session.windowId,
@@ -4473,8 +4576,12 @@ export async function runDualWindowCaptureStateMachine(params: {
   const runs = [leftRun, ...otherRuns];
   const windows = await Promise.all(runs);
   const stoppedReasons = windows.map((result) => String(result.stopped));
-  let stopped = stoppedReasons.every((reason) => reason.startsWith("capture_disabled"))
-    ? "capture_disabled"
+  let stopped = prepared.shared.abortReason === "capture_control_changed"
+    ? "capture_control_changed"
+    : prepared.shared.abortReason === "capture_disabled"
+      ? "capture_disabled"
+      : stoppedReasons.every((reason) => reason.startsWith("capture_disabled"))
+        ? "capture_disabled"
     : stoppedReasons.every((reason) => reason === "dual_window_fail_closed")
       ? "dual_window_fail_closed"
       : stoppedReasons.every((reason) => reason === "window_rebind_required")
@@ -4487,6 +4594,7 @@ export async function runDualWindowCaptureStateMachine(params: {
   let recovery: Awaited<ReturnType<typeof diagnoseCollectorFailure>> | undefined;
   if (stopped !== "qualified_target_reached"
     && stopped !== "capture_disabled"
+    && stopped !== "capture_control_changed"
     && stopped !== "max_scanned_reached"
     && stopped !== "window_rebind_required"
     && stopped !== "dual_window_fail_closed") {
@@ -4611,7 +4719,9 @@ async function main() {
     for (;;) {
       // 正式 launchd 进程常驻等待网页开关；停采期间不发现窗口、不截图、
       // 不弹校准层，也不触碰微信。重新开启后才重新绑定当前两窗。
-      if (superviseWebToggle) await waitForCollectorWebToggleEnabled(server, token);
+      const controlHeartbeat = superviseWebToggle
+        ? await waitForCollectorWebToggleEnabled(server, token)
+        : undefined;
       const sessions = await discoverCollectorWindowSessions(
         requestedWindowIds,
         autoBindExactTwoWindows,
@@ -4636,9 +4746,11 @@ async function main() {
         maxScanned,
         maxQualified,
         dualWindowProbe,
+        controlRevision: controlHeartbeat?.controlRevision,
       });
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-      if (superviseWebToggle && String(result.stopped || "").startsWith("capture_disabled")) {
+      if (superviseWebToggle
+        && shouldRestartCollectorSupervisorAfterStop(String(result.stopped || ""))) {
         continue;
       }
       // 非正式监督模式保留原有 launchd 重启契约；有界探针永不循环。

@@ -18,6 +18,7 @@ import {
   collectorSearchQueryVariants,
   collectorAdvanceAllowed,
   collectorCaptureActivityIsOverdue,
+  collectorControlStopReason,
   collectorSamplingModeForComments,
   commentsPanelClosedOnSameVideo,
   collectorWatchdogDecision,
@@ -76,6 +77,7 @@ import {
   shouldReuseExistingSearchTab,
   shouldOpenVisibleComments,
   shouldLaunchdRestartCollector,
+  shouldRestartCollectorSupervisorAfterStop,
   shouldSwitchRecommendationToSearch,
   shouldUseWeixinChannelsSearchAtHour,
   resolveCollectorWindowStartupMode,
@@ -124,6 +126,24 @@ describe("weixin channels OCR", () => {
       "--auto-bind-exact-two-windows",
       "--window-id=58442",
     ])).toThrow("weixin_channels_window_binding_mode_conflict");
+  });
+
+  it("网页开关即使关后立刻再开，也会以控制版本终止旧轮次并重新校准", () => {
+    expect(collectorControlStopReason(7, {
+      enabled: true,
+      controlRevision: 7,
+    })).toBeNull();
+    expect(collectorControlStopReason(7, {
+      enabled: false,
+      controlRevision: 8,
+    })).toBe("capture_disabled");
+    expect(collectorControlStopReason(7, {
+      enabled: true,
+      controlRevision: 9,
+    })).toBe("capture_control_changed");
+    expect(shouldRestartCollectorSupervisorAfterStop("capture_control_changed")).toBe(true);
+    expect(shouldRestartCollectorSupervisorAfterStop("capture_disabled_during_recovery")).toBe(true);
+    expect(shouldRestartCollectorSupervisorAfterStop("dual_window_fail_closed")).toBe(false);
   });
 
   it("夜间右窗先保住已达标当前视频，否则首次直接搜索；恢复重启不盲搜", () => {

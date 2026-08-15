@@ -79,7 +79,24 @@ describe("weixinChannelsMinerStore", () => {
     const second = await recordWeixinChannelsHeartbeat("mac-client-1");
     expect(first.nextTask?.taskId).toBe("task-123");
     expect(second.nextTask?.taskId).toBe("task-123");
+    expect(first.controlRevision).toBe(0);
+    expect(second.controlRevision).toBe(0);
     expect((await getWeixinChannelsMinerState()).candidates.filter((item) => item.status === "claimed")).toHaveLength(1);
+  });
+
+  it("每次网页开关都递增控制版本，关后立刻再开也不会被本机心跳漏掉", async () => {
+    await seed([]);
+    const before = await recordWeixinChannelsHeartbeat("mac-client-1");
+    const disabled = await setWeixinChannelsCaptureEnabled(false);
+    const enabled = await setWeixinChannelsCaptureEnabled(true);
+    const after = await recordWeixinChannelsHeartbeat("mac-client-1");
+
+    expect(disabled.capture.controlRevision).toBe(before.controlRevision + 1);
+    expect(enabled.capture.controlRevision).toBe(before.controlRevision + 2);
+    expect(after).toMatchObject({
+      enabled: true,
+      controlRevision: before.controlRevision + 2,
+    });
   });
 
   it("只有安全熔断会把网页采集开关暂停并留下原因", async () => {
