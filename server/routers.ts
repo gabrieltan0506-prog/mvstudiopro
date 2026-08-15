@@ -6196,7 +6196,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             .min(1)
             .max(PLATFORM_TOPIC_EXPAND_MAX),
           /** 扩写引擎（用户可选）：缺省 kimi-k3（OpenRouter 主/Evolink 兜底）；qwen3.8-max（Evolink 主/OpenRouter 兜底） */
-          expandEngine: z.enum(["kimi-k3", "qwen3.8-max"]).optional(),
+          expandEngine: z.enum(["kimi-k3", "qwen3.8-max", "deepseek-v4"]).optional(),
         }),
       )
       .mutation(async ({ ctx, input }) => {
@@ -6241,7 +6241,10 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               picks: input.picks,
               enabledSkillIds: Array.isArray(input.enabledSkillIds) ? input.enabledSkillIds : [],
               allowBloggerTitle: Boolean(input.allowBloggerTitle),
-              expandEngine: input.expandEngine === "qwen3.8-max" ? "qwen3.8-max" : "kimi-k3",
+              expandEngine:
+                input.expandEngine === "qwen3.8-max" || input.expandEngine === "deepseek-v4"
+                  ? input.expandEngine
+                  : "kimi-k3",
               chargedCredits: shouldCharge ? cost : 0,
               perItemCredits: shouldCharge ? perItemCost : 0,
             },

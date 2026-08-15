@@ -608,8 +608,11 @@ ${goalPromptLine ? `17. **本轮目标（硬）**：${goalPromptLine}` : ""}
   };
 }
 
-/** 扩写可选引擎：kimi-k3 主走 OpenRouter（Evolink 兜底）；qwen3.8-max 直走 Evolink */
-export type PlatformTopicExpandEngine = "kimi-k3" | "qwen3.8-max";
+/**
+ * 扩写可选引擎：kimi-k3 主走 OpenRouter（Evolink 兜底）；qwen3.8-max 直走 Evolink；
+ * deepseek-v4 经济档（2026-08-15 用户拍板）走 OpenRouter，两抖后兜底轻快档。
+ */
+export type PlatformTopicExpandEngine = "kimi-k3" | "qwen3.8-max" | "deepseek-v4";
 
 const EXPAND_EVOLINK_DIRECT_CHAT_URL = String(
   process.env.EVOLINK_DIRECT_CHAT_COMPLETIONS_URL || "https://direct.evolink.ai/v1/chat/completions",
@@ -623,6 +626,54 @@ const EXPAND_EVOLINK_DIRECT_CHAT_URL = String(
 const EXPAND_MAX_COMPLETION_TOKENS = 32_000;
 /** Qwen 3.8 Max 输出上限（2026-08-12 用户拍板 65k）：单价低（$5.295/M），给足思考与长稿余量 */
 const EXPAND_QWEN_MAX_COMPLETION_TOKENS = 65_536;
+
+/** 经济档模型：$0.435/$0.87 per M，输出价约为 Kimi K3 的 1/17（2026-08-15 同题 PK 质量过关） */
+const EXPAND_DEEPSEEK_OR_MODEL = "deepseek/deepseek-v4-pro-0813";
+
+/**
+ * 经济档直连 OpenRouter。缰绳纪律（同日 PK 探针实锤）：必须显式关推理——
+ * 默认深推理会把整个 max_tokens 烧成 reasoning_tokens，正文零字、finish=length 照扣钱。
+ */
+async function invokeExpandViaDeepSeek(params: { system: string; user: string }): Promise<string> {
+  const key = String(process.env.OPENROUTER_API_KEY || "").trim();
+  if (!key) throw new Error("经济档通道未配置");
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://www.mvstudiopro.com",
+      "X-OpenRouter-Title": "MVStudioPro",
+    },
+    signal: AbortSignal.timeout(240_000),
+    body: JSON.stringify({
+      model: EXPAND_DEEPSEEK_OR_MODEL,
+      messages: [
+        { role: "system", content: params.system },
+        { role: "user", content: params.user },
+      ],
+      temperature: 0.55,
+      max_tokens: 8_000,
+      response_format: { type: "json_object" },
+      reasoning: { enabled: false },
+    }),
+  });
+  const raw = await res.text();
+  if (!res.ok) throw new Error(`DeepSeek 经济档 HTTP ${res.status}: ${raw.slice(0, 160)}`);
+  let json: { choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }> };
+  try {
+    json = JSON.parse(raw) as typeof json;
+  } catch {
+    throw new Error(`DeepSeek 经济档非 JSON 响应：${raw.slice(0, 120)}`);
+  }
+  if (String(json.choices?.[0]?.finish_reason || "") === "length") {
+    throw new Error("DeepSeek 经济档输出被截断（疑似推理未关）");
+  }
+  const content = json.choices?.[0]?.message?.content;
+  const text = typeof content === "string" ? content.trim() : "";
+  if (text.length < 20) throw new Error(`DeepSeek 经济档内容过短（${text.length} 字符）`);
+  return text;
+}
 
 async function invokeExpandViaEvolink(params: {
   model: PlatformTopicExpandEngine;
@@ -785,19 +836,28 @@ conveyGoal（须兑现）：${pick.conveyGoal}`;
     // Qwen 3.8 Max Evolink（$1.765/$5.295）比 OpenRouter（$2/$6）便宜 ~12%，
     // 主走 Evolink、兜底 OpenRouter（qwen/qwen3.8-max）。
     const engine: PlatformTopicExpandEngine =
-      params.engine === "qwen3.8-max" ? "qwen3.8-max" : "kimi-k3";
+      params.engine === "qwen3.8-max" || params.engine === "deepseek-v4"
+        ? params.engine
+        : "kimi-k3";
     const attempts =
-      engine === "qwen3.8-max"
+      engine === "deepseek-v4"
         ? [
+            // 经济档：OpenRouter 两次抖动后兜底轻快档（Evolink Qwen），保交付不保档位
+            () => invokeExpandViaDeepSeek({ system, user }),
+            () => invokeExpandViaDeepSeek({ system, user }),
             invokeExpandEvolink("qwen3.8-max"),
-            invokeExpandEvolink("qwen3.8-max"),
-            invokeExpandOpenRouter("qwen/qwen3.8-max"),
           ]
-        : [
-            invokeExpandOpenRouter(getPlatformStage2OpenAiModel()),
-            invokeExpandOpenRouter(getPlatformStage2OpenAiModel()),
-            invokeExpandEvolink("kimi-k3"),
-          ];
+        : engine === "qwen3.8-max"
+          ? [
+              invokeExpandEvolink("qwen3.8-max"),
+              invokeExpandEvolink("qwen3.8-max"),
+              invokeExpandOpenRouter("qwen/qwen3.8-max"),
+            ]
+          : [
+              invokeExpandOpenRouter(getPlatformStage2OpenAiModel()),
+              invokeExpandOpenRouter(getPlatformStage2OpenAiModel()),
+              invokeExpandEvolink("kimi-k3"),
+            ];
 
     console.info(
       `[expandPlatformTopicPicks] ${i + 1}/${uniquePicks.length} engine=${engine} title=${pick.title.slice(0, 40)}`,

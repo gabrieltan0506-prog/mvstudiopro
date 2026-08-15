@@ -4129,6 +4129,7 @@ export default function PlatformPage() {
               >
                 <option value="kimi-k3">扩写·稳定档</option>
                 <option value="qwen3.8-max">扩写·轻快档</option>
+                <option value="deepseek-v4">扩写·经济档</option>
               </select>
               <span className="text-[11px] text-gray-500">
                 已勾 {selectedShortlistIds.length}/{PLATFORM_TOPIC_EXPAND_MAX}
