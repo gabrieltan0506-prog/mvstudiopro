@@ -58,6 +58,8 @@ export type WeixinChannelsMinerState = {
 const DEFAULT_STORE_ROOT = path.resolve(process.cwd(), ".cache");
 let mutationQueue: Promise<unknown> = Promise.resolve();
 let backgroundWorker: Promise<void> | null = null;
+let growthMergeWorker: Promise<void> | null = null;
+let growthMergeRequested = false;
 
 function storeFile() {
   const dir = path.resolve(process.env.GROWTH_STORE_DIR || path.join(DEFAULT_STORE_ROOT, "growth"));
@@ -137,6 +139,51 @@ function serializeMutation<T>(work: () => Promise<T>): Promise<T> {
   const next = mutationQueue.then(work, work);
   mutationQueue = next.then(() => undefined, () => undefined);
   return next;
+}
+
+function scheduleWeixinChannelsGrowthMerge() {
+  growthMergeRequested = true;
+  if (growthMergeWorker) return;
+  growthMergeWorker = (async () => {
+    while (growthMergeRequested) {
+      growthMergeRequested = false;
+      const snapshot = await readState();
+      const pending = snapshot.observations.filter(
+        (item) => item.qualified && !item.invalid && !item.growthMergedAt,
+      );
+      if (!pending.length) continue;
+      try {
+        await mergeTrendCollections({
+          weixin_channels: buildWeixinChannelsTrendCollection({
+            observations: pending,
+            candidateByTaskId: new Map(snapshot.candidates.map((item) => [item.taskId, item])),
+          }),
+        });
+        const mergedAt = new Date().toISOString();
+        const ids = new Set(pending.map((item) => item.observationId));
+        await serializeMutation(async () => {
+          const current = await readState();
+          await writeState({
+            ...current,
+            observations: current.observations.map((item) => ids.has(item.observationId)
+              ? { ...item, growthMergedAt: mergedAt }
+              : item),
+          });
+        });
+        // 合并期间可能又入库；再读一轮，不能遗漏进程崩溃前已持久化的资产。
+        growthMergeRequested = true;
+      } catch (error) {
+        console.error("[weixin-channels] raw persisted; background trend merge failed", error);
+      }
+    }
+  })().finally(() => {
+    growthMergeWorker = null;
+    if (growthMergeRequested) scheduleWeixinChannelsGrowthMerge();
+  });
+}
+
+export async function awaitWeixinChannelsGrowthMergeIdle() {
+  await growthMergeWorker;
 }
 
 function formalAvailable(state: WeixinChannelsMinerState) {
@@ -333,26 +380,10 @@ export async function ingestWeixinChannelsObservations(params: {
     state = await writeState(state);
 
     const qualifiedForGrowth = results.filter((item) => item.qualified && !item.invalid && !item.growthMergedAt);
-    let growthMerged = qualifiedForGrowth.length === 0;
-    if (qualifiedForGrowth.length) {
-      try {
-        await mergeTrendCollections({
-          weixin_channels: buildWeixinChannelsTrendCollection({
-            observations: qualifiedForGrowth,
-            candidateByTaskId: new Map(state.candidates.map((item) => [item.taskId, item])),
-          }),
-        });
-        const mergedAt = new Date().toISOString();
-        const ids = new Set(qualifiedForGrowth.map((item) => item.observationId));
-        state = await writeState({
-          ...state,
-          observations: state.observations.map((item) => ids.has(item.observationId) ? { ...item, growthMergedAt: mergedAt } : item),
-        });
-        growthMerged = true;
-      } catch (error) {
-        console.error("[weixin-channels] raw persisted but trend merge failed", error);
-      }
-    }
+    // Fly 先确认原始 observation 已耐久写入；93MB 趋势库的 archive/history
+    // 合并转到进程内可恢复队列。它不再把本机采集窗口同步堵住几十秒。
+    if (qualifiedForGrowth.length) scheduleWeixinChannelsGrowthMerge();
+    const growthMerged = qualifiedForGrowth.length === 0;
 
     const accumulatedQualifiedCount = formalAvailable(state).length;
     const aggregationJob = state.jobs.find((job) => job.kind === "formal" && job.status !== "completed");
@@ -477,6 +508,9 @@ export async function recordWeixinChannelsHeartbeat(clientId: string) {
       ...state,
       capture: { ...state.capture, lastHeartbeatAt: nowIso, lastClientId: clientId },
     });
+    if (state.observations.some((item) => item.qualified && !item.invalid && !item.growthMergedAt)) {
+      scheduleWeixinChannelsGrowthMerge();
+    }
     return {
       enabled: state.capture.enabled,
       controlRevision: state.capture.controlRevision,

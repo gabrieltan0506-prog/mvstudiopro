@@ -8,8 +8,11 @@ vi.mock("./trendStore", () => ({
   readTrendStore: vi.fn().mockResolvedValue({ collections: {} }),
 }));
 
+import { mergeTrendCollections } from "./trendStore";
+
 import {
   createWeixinChannelsProbeJob,
+  awaitWeixinChannelsGrowthMergeIdle,
   getWeixinChannelsMinerState,
   ingestWeixinChannelsObservations,
   pauseWeixinChannelsCaptureForSafetyFuse,
@@ -47,16 +50,43 @@ async function seed(observations: ReturnType<typeof persisted>[], jobs: unknown[
 }
 
 beforeEach(async () => {
+  await awaitWeixinChannelsGrowthMergeIdle();
+  vi.mocked(mergeTrendCollections).mockReset().mockResolvedValue(undefined as never);
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-store-"));
   storeFile = path.join(dir, "state.json");
   process.env.WEIXIN_CHANNELS_MINER_STORE_FILE = storeFile;
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await awaitWeixinChannelsGrowthMergeIdle();
   delete process.env.WEIXIN_CHANNELS_MINER_STORE_FILE;
 });
 
 describe("weixinChannelsMinerStore", () => {
+  it("原始 observation 先响应，慢趋势合并在后台完成且可恢复标记", async () => {
+    await seed([]);
+    let releaseMerge!: () => void;
+    vi.mocked(mergeTrendCollections).mockImplementationOnce(() => new Promise((resolve) => {
+      releaseMerge = () => resolve(undefined as never);
+    }));
+    const result = await ingestWeixinChannelsObservations({
+      taskId: "task-123",
+      observations: [persisted(100)],
+    });
+    expect(result).toMatchObject({
+      persisted: true,
+      newlyPersisted: true,
+      growthMerged: false,
+    });
+    expect((await getWeixinChannelsMinerState()).observations[0]).toMatchObject({
+      observationId: "obs-100",
+    });
+    expect((await getWeixinChannelsMinerState()).observations[0]?.growthMergedAt).toBeUndefined();
+    releaseMerge();
+    await awaitWeixinChannelsGrowthMergeIdle();
+    expect((await getWeixinChannelsMinerState()).observations[0]?.growthMergedAt).toBeTruthy();
+  });
+
   it("重复 observationId 只首次计入真实新增，并保留首次持久化时间", async () => {
     await seed([]);
     const first = await ingestWeixinChannelsObservations({ taskId: "task-123", observations: [persisted(1)] });

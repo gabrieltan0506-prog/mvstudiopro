@@ -18,6 +18,9 @@ import {
   collectorSearchQueryVariants,
   collectorAdvanceAllowed,
   collectorCaptureActivityIsOverdue,
+  collectorCaptureFailureAction,
+  collectorBoundWindowPresent,
+  collectorPendingFileExists,
   collectorControlStopReason,
   collectorSamplingModeForComments,
   commentsPanelClosedOnSameVideo,
@@ -48,6 +51,7 @@ import {
   findSearchButtonPoint,
   findSearchTabClosePoint,
   hasFourVisibleMetrics,
+  hasMinimumCommentCaptureBudget,
   hasDefinitiveVisibleUnqualifiedMetrics,
   hasConfirmedVideoTransition,
   interactionMetricsConfirmed,
@@ -57,6 +61,7 @@ import {
   isWeixinChannelsMediaViewer,
   hasTypedSearchKeyword,
   metricsRemainOnSameVideo,
+  mergeFocusedMetricOcr,
   sameVideoContinuity,
   nextCollectorSearchQueryIndex,
   nextCollectorRecoveryState,
@@ -78,6 +83,7 @@ import {
   shouldReuseExistingSearchTab,
   shouldOpenVisibleComments,
   shouldLaunchdRestartCollector,
+  shouldDeferCollectorUploads,
   shouldRestartCollectorSupervisorAfterStop,
   shouldSwitchRecommendationToSearch,
   shouldUseWeixinChannelsSearchAtHour,
@@ -89,6 +95,7 @@ import {
   uploadPendingObservation,
   visibleVideoIdentityFingerprint,
   WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS,
+  WEIXIN_CHANNELS_COMMENT_CAPTURE_MIN_BUDGET_MS,
   WEIXIN_CHANNELS_COMMENT_PANEL_SCREEN_COUNT,
   WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS,
   WEIXIN_CHANNELS_SEARCH_BUTTON_POINT,
@@ -291,10 +298,65 @@ describe("weixin channels OCR", () => {
     expect(WEIXIN_CHANNELS_COMMENT_PANEL_SCREEN_COUNT).toBe(3);
     expect(captureBudgetMsForVideo(60)).toBe(25_000);
     expect(captureBudgetMsForVideo(600)).toBe(62_000);
-    expect(WEIXIN_CHANNELS_UNKNOWN_DURATION_CAPTURE_BUDGET_MS).toBe(40_000);
+    expect(WEIXIN_CHANNELS_UNKNOWN_DURATION_CAPTURE_BUDGET_MS).toBe(35_000);
     expect(WEIXIN_CHANNELS_SINGLE_VIDEO_HARD_TIMEOUT_MS).toBe(60_000);
+    expect(WEIXIN_CHANNELS_UNKNOWN_DURATION_CAPTURE_BUDGET_MS)
+      .toBeLessThan(WEIXIN_CHANNELS_SINGLE_VIDEO_HARD_TIMEOUT_MS);
     expect(collectorCaptureActivityIsOverdue({ startedAtMs: 1_000 }, 61_000)).toBe(false);
     expect(collectorCaptureActivityIsOverdue({ startedAtMs: 1_000 }, 61_001)).toBe(true);
+  });
+
+  it("评论预算必须在点击前完整预留，预算耗尽绝不重进 UI", () => {
+    const now = 1_000_000;
+    expect(hasMinimumCommentCaptureBudget(
+      now + WEIXIN_CHANNELS_COMMENT_CAPTURE_MIN_BUDGET_MS,
+      now,
+    )).toBe(true);
+    expect(hasMinimumCommentCaptureBudget(
+      now + WEIXIN_CHANNELS_COMMENT_CAPTURE_MIN_BUDGET_MS - 1,
+      now,
+    )).toBe(false);
+    expect(collectorCaptureFailureAction({
+      reason: "weixin_channels_comments_capture_budget_missing_before_open",
+      failureCount: 1,
+      pendingExists: false,
+    })).toBe("stop_budget_exhausted");
+    expect(collectorCaptureFailureAction({
+      reason: "weixin_channels_comments_two_page_budget_missing",
+      failureCount: 1,
+      pendingExists: false,
+    })).toBe("stop_budget_exhausted");
+  });
+
+  it("普通 UI 只补做一次，pending 网络补传不重新操作播放器", () => {
+    expect(collectorCaptureFailureAction({
+      reason: "weixin_channels_comments_open_not_confirmed",
+      failureCount: 1,
+      pendingExists: false,
+    })).toBe("retry_ui_once");
+    expect(collectorCaptureFailureAction({
+      reason: "weixin_channels_comments_open_not_confirmed",
+      failureCount: 2,
+      pendingExists: false,
+    })).toBe("stop_ui_retry_exhausted");
+    expect(collectorCaptureFailureAction({
+      reason: "upload_timeout",
+      failureCount: 30,
+      pendingExists: true,
+    })).toBe("retry_pending_upload");
+  });
+
+  it("上传失败后能重新发现刚落盘的 pending，避免重进 UI", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-pending-after-failure-"));
+    const pending = path.join(dir, "weixin-channels-pending-observation.json");
+    expect(await collectorPendingFileExists(pending)).toBe(false);
+    await fs.writeFile(pending, JSON.stringify({ observationId: "observation" }));
+    expect(await collectorPendingFileExists(pending)).toBe(true);
+    expect(collectorCaptureFailureAction({
+      reason: "upload_timeout",
+      failureCount: 1,
+      pendingExists: await collectorPendingFileExists(pending),
+    })).toBe("retry_pending_upload");
   });
 
   it("历史去重身份忽略字幕与互动增长，播放器连续性容忍小幅增长", () => {
@@ -384,10 +446,20 @@ describe("weixin channels OCR", () => {
     expect(collectorSeenContains(registry, "d".repeat(64), "wxco_failed")).toBe(false);
   });
 
-  it("达标视频只有 Fly persisted=true 才允许进入终态", () => {
+  it("达标视频只有 Fly 持久化或本机 pending 原子落盘后才允许推进", () => {
     expect(collectorVideoStateAfterCapture({ qualified: true, persisted: true })).toEqual({ state: "persisted", stopWithoutAdvance: false });
+    expect(collectorVideoStateAfterCapture({ qualified: true, persisted: false, queuedForUpload: true }))
+      .toEqual({ state: "pending_upload", stopWithoutAdvance: false });
     expect(collectorVideoStateAfterCapture({ qualified: true, persisted: false })).toEqual({ state: "retryable_failed", stopWithoutAdvance: true });
     expect(collectorVideoStateAfterCapture({ qualified: false, persisted: false })).toEqual({ state: "terminal_unqualified", stopWithoutAdvance: false });
+  });
+
+  it("只有无目标无截止时间的正式常驻采集才后台上传", () => {
+    expect(shouldDeferCollectorUploads({ probe: false })).toBe(true);
+    expect(shouldDeferCollectorUploads({ probe: true })).toBe(false);
+    expect(shouldDeferCollectorUploads({ probe: false, maxScanned: 1 })).toBe(false);
+    expect(shouldDeferCollectorUploads({ probe: false, maxQualified: 10 })).toBe(false);
+    expect(shouldDeferCollectorUploads({ probe: false, deadlineAt: Date.now() + 60_000 })).toBe(false);
   });
 
   it("前置达标且评论达到 80 时，没有真实评论证据绝不允许滑下一条", () => {
@@ -409,6 +481,14 @@ describe("weixin channels OCR", () => {
       persisted: true,
       observation: { likes: 3_000, shares: 2_000, favorites: 100, comments: 79 },
     })).toBe(true);
+    expect(qualifiedCaptureHasAdvanceEvidence({
+      qualified: true,
+      queuedForUpload: true,
+      observation: {
+        likes: 3_000, shares: 2_000, favorites: 100, comments: 80,
+        commentSamples: [{ text: "真实评论" }],
+      },
+    })).toBe(true);
   });
 
   it("夜间自动恢复使用有上限的指数退避，不要求人工重启", () => {
@@ -424,6 +504,18 @@ describe("weixin channels OCR", () => {
     expect(isCollectorWindowBindingFailure("weixin_channels_window_not_found")).toBe(true);
     expect(isCollectorWindowBindingFailure("weixin_channels_required_window_not_found")).toBe(true);
     expect(isCollectorWindowBindingFailure("weixin_channels_comments_close_not_found")).toBe(false);
+  });
+
+  it("窗口重绑必须同时匹配原 windowId 与 PID", () => {
+    const windows = [
+      { windowId: 58442, pid: 12256, owner: "WeChat", title: "WeChat", x: 0, y: 0, width: 440, height: 769 },
+      { windowId: 58429, pid: 12256, owner: "WeChat", title: "WeChat", x: 440, y: 0, width: 440, height: 769 },
+    ];
+    expect(collectorBoundWindowPresent(windows, { windowId: 58429, pid: 12256 })).toBe(true);
+    expect(collectorBoundWindowPresent(windows, { windowId: 58429, pid: 99999 })).toBe(false);
+    expect(collectorBoundWindowPresent(windows, { windowId: 99999, pid: 12256 })).toBe(false);
+    expect(isCollectorWindowBindingFailure("weixin_channels_progress_track_not_found")).toBe(false);
+    expect(isCollectorWindowBindingFailure("weixin_channels_window_not_found")).toBe(true);
   });
 
   it("普通双窗失败自动重启，只有连续三次黑屏或同内容才触发网页暂停熔断", () => {
@@ -442,6 +534,20 @@ describe("weixin channels OCR", () => {
     expect(third.fuseReason).toBe("persistent_black_screen");
     expect(shouldLaunchdRestartCollector("dual_window_recoverable_failure")).toBe(true);
     expect(shouldLaunchdRestartCollector("capture_disabled_safety_fuse")).toBe(false);
+    const ordinarySame = nextCollectorRecoveryState(empty, {
+      allBlack: false,
+      allSameContent: true,
+      identities: { "58429": "same" },
+      stopReason: "window_58429:player_state_unconfirmed",
+    });
+    expect(ordinarySame.state.consecutiveSameContent).toBe(0);
+    const stuckFirst = nextCollectorRecoveryState(empty, {
+      allBlack: false,
+      allSameContent: true,
+      identities: { "58429": "same" },
+      stopReason: "window_58429:weixin_channels_advance_recovery_exhausted",
+    });
+    expect(stuckFirst.state.consecutiveSameContent).toBe(1);
   });
 
   it("只有 Fly persistedAt 同步结果会升级为跨重启重复", async () => {
@@ -504,6 +610,21 @@ describe("weixin channels OCR", () => {
     expect(track.y).toBeCloseTo(1262 / 1538, 2);
   });
 
+  it("识别浅色画面上比背景更暗的灰色进度轨道", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-light-track-"));
+    const file = path.join(dir, "light-track.png");
+    await sharp({ create: { width: 880, height: 1538, channels: 3, background: { r: 246, g: 243, b: 238 } } })
+      .composite([
+        { input: { create: { width: 497, height: 6, channels: 3, background: { r: 164, g: 170, b: 180 } } }, left: 120, top: 1262 },
+      ])
+      .png()
+      .toFile(file);
+    const track = await detectVisibleProgressTrack(file);
+    expect(track.startX).toBeCloseTo(0.136, 2);
+    expect(track.endX).toBeCloseTo(0.70, 2);
+    expect(track.y).toBeCloseTo(1264 / 1538, 2);
+  });
+
   it("解析中文万单位且不伪造缺失数据", () => {
     expect(parseVisibleMetric("1.2万+")).toBe(12_000);
     expect(parseVisibleMetric("没有数字")).toBeUndefined();
@@ -517,6 +638,45 @@ describe("weixin channels OCR", () => {
       { text: "17", confidence: 0.99, x: 0.85, y: 0.1, width: 0.04, height: 0.03 },
     ]);
     expect(metrics).toMatchObject({ likes: 2985, shares: 6234, favorites: 2641, comments: 17 });
+  });
+
+  it("只在点赞槽位修正 Vision 的［A609，并保留真实评论点击位置", () => {
+    const lines = [
+      { text: "［A609", confidence: 0.3, x: 0.44923857896110553, y: 0.026007802925012036, width: 0.12944162542169746, height: 0.026317778737399267 },
+      { text: "860", confidence: 0.5, x: 0.6065989854334486, y: 0.030523256334245463, width: 0.06598984544927422, height: 0.02180232431240603 },
+      { text: "1408", confidence: 1, x: 0.7258883243153318, y: 0.036337209166633855, width: 0.07868020317771218, height: 0.0159883722372266 },
+      { text: "508", confidence: 0.5, x: 0.8578680198139536, y: 0.031859557823640916, width: 0.0710659894076261, height: 0.020466023210741313 },
+      { text: "正文 A609", confidence: 1, x: 0.2, y: 0.5, width: 0.2, height: 0.03 },
+    ];
+    expect(extractWeixinChannelsMetrics(lines)).toMatchObject({
+      likes: 4_609,
+      shares: 860,
+      favorites: 1_408,
+      comments: 508,
+    });
+    expect(findCommentsOpenPoint(lines)?.x).toBeCloseTo(0.8934, 3);
+  });
+
+  it("把底部高阈值裁片 OCR 映射回原图四个真实槽位", () => {
+    const merged = mergeFocusedMetricOcr(
+      { width: 880, height: 1538, lines: [] },
+      {
+        width: 1515,
+        height: 195,
+        lines: [
+          { text: "4609", confidence: 1, x: 0.116, y: 0.436, width: 0.138, height: 0.34 },
+          { text: "1860", confidence: 1, x: 0.347, y: 0.424, width: 0.131, height: 0.36 },
+          { text: "1408", confidence: 1, x: 0.575, y: 0.413, width: 0.138, height: 0.40 },
+          { text: "508", confidence: 1, x: 0.821, y: 0.438, width: 0.100, height: 0.33 },
+        ],
+      },
+    );
+    expect(extractWeixinChannelsMetrics(merged.lines)).toMatchObject({
+      likes: 4_609,
+      shares: 1_860,
+      favorites: 1_408,
+      comments: 508,
+    });
   });
 
   it("四项指标必须由连续两张截图确认，单次 OCR 高值不能触发采集", () => {
@@ -924,6 +1084,44 @@ describe("weixin channels OCR", () => {
     await expect(fs.stat(pending)).resolves.toBeTruthy();
   });
 
+  it("双窗 Fly 上传全局 FIFO，避免同时处理封面拖垮单实例", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-upload-fifo-"));
+    const files = ["left.json", "right.json"].map((name, index) => {
+      const file = path.join(dir, name);
+      return fs.writeFile(file, JSON.stringify({ observationId: `obs-${index}` })).then(() => file);
+    });
+    const [left, right] = await Promise.all(files);
+    let active = 0;
+    let maximumActive = 0;
+    const fetchImpl = vi.fn(async () => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      active -= 1;
+      return new Response(JSON.stringify({ ok: true, persisted: true }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await Promise.all([
+      uploadPendingObservation({
+        server: "https://example.invalid",
+        token: "token",
+        taskId: "task-left",
+        pendingFile: left,
+        timeoutMs: 200,
+        fetchImpl,
+      }),
+      uploadPendingObservation({
+        server: "https://example.invalid",
+        token: "token",
+        taskId: "task-right",
+        pendingFile: right,
+        timeoutMs: 200,
+        fetchImpl,
+      }),
+    ]);
+    expect(maximumActive).toBe(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it("评论达到 80 的旧待传记录缺真实评论时隔离且不再请求 Fly", async () => {
     expect(pendingObservationHasRequiredComments({
       likes: 3_000, shares: 2_000, favorites: 100, comments: 79,
@@ -949,19 +1147,23 @@ describe("weixin channels OCR", () => {
     const recovery = await retryPendingObservations({
       server: "https://example.invalid", token: "token", tempDir: dir, fetchImpl,
     });
-    expect(recovery).toEqual({ found: 1, persisted: 0, persistedUnique: 0, duplicatePersistRejected: 0, failed: 0 });
+    expect(recovery).toEqual({
+      found: 1, persisted: 0, persistedUnique: 0,
+      duplicatePersistRejected: 0, failed: 0, events: [],
+    });
     expect(fetchImpl).not.toHaveBeenCalled();
     await expect(fs.stat(pending)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.stat(path.join(dir, "weixin-channels-quarantine", path.basename(pending)))).resolves.toBeTruthy();
   });
 
-  it("按新容差救回旧隔离记录，并在单次心跳只补传一条", async () => {
+  it("按新容差救回旧隔离记录，并在一次请求批量补传同任务最多百条", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-recovery-"));
     const quarantine = path.join(dir, "weixin-channels-quarantine");
     await fs.mkdir(quarantine);
     const eligibleName = "weixin-channels-pending-eligible.json";
     const excessiveName = "weixin-channels-pending-excessive.json";
     await fs.writeFile(path.join(quarantine, eligibleName), JSON.stringify({
+      observationId: "obs-eligible", videoIdentity: "a".repeat(64), query: "热词", title: "视频一",
       taskId: "task-eligible", likes: 3_000, shares: 2_000, favorites: 100, comments: 12,
       videoDurationSec: 274, captureBudgetMs: 27_400, captureElapsedMs: 27_442,
     }));
@@ -974,16 +1176,63 @@ describe("weixin channels OCR", () => {
     await expect(fs.stat(path.join(quarantine, excessiveName))).resolves.toBeTruthy();
 
     await fs.writeFile(path.join(dir, "weixin-channels-pending-second.json"), JSON.stringify({
-      taskId: "task-second", videoDurationSec: 60, captureBudgetMs: 25_000, captureElapsedMs: 7_000,
+      observationId: "obs-second", videoIdentity: "b".repeat(64), query: "热词", title: "视频二",
+      taskId: "task-eligible", likes: 3_000, shares: 2_000, favorites: 100, comments: 12,
+      videoDurationSec: 60, captureBudgetMs: 25_000, captureElapsedMs: 7_000,
     }));
-    const persistedFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ persisted: true }), { status: 200 }));
+    const persistedFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      persisted: true,
+      results: [
+        { observationId: "obs-eligible", newlyPersisted: true, newlyQualifiedPersisted: true, qualified: true },
+        { observationId: "obs-second", newlyPersisted: true, newlyQualifiedPersisted: true, qualified: true },
+      ],
+    }), { status: 200 }));
     const recovery = await retryPendingObservations({
       server: "https://example.invalid", token: "token", tempDir: dir, fetchImpl: persistedFetch,
     });
-    expect(recovery).toEqual({ found: 2, persisted: 1, persistedUnique: 0, duplicatePersistRejected: 0, failed: 0 });
+    expect(recovery).toMatchObject({
+      found: 2, persisted: 2, persistedUnique: 2,
+      duplicatePersistRejected: 0, failed: 0,
+    });
+    expect(recovery.events).toHaveLength(2);
     expect(persistedFetch).toHaveBeenCalledTimes(1);
+    const request = persistedFetch.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body)).observations).toHaveLength(2);
     const remaining = (await fs.readdir(dir)).filter((name) => name.startsWith("weixin-channels-pending-"));
-    expect(remaining).toHaveLength(1);
+    expect(remaining).toHaveLength(0);
+  });
+
+  it("后台批传优先最新任务，过期假 task 不得饿死新资产", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-recovery-priority-"));
+    const makeObservation = (taskId: string, observationId: string) => ({
+      observationId,
+      videoIdentity: observationId.padEnd(64, "a"),
+      taskId,
+      query: "热词",
+      title: observationId,
+      likes: 3_000,
+      shares: 2_000,
+      favorites: 100,
+      comments: 12,
+      captureElapsedMs: 20_000,
+      captureBudgetMs: 35_000,
+    });
+    const oldFile = path.join(dir, "weixin-channels-pending-old.json");
+    const newFile = path.join(dir, "weixin-channels-pending-new.json");
+    await fs.writeFile(oldFile, JSON.stringify(makeObservation("task-old", "obs-old")));
+    await fs.utimes(oldFile, new Date(1_000), new Date(1_000));
+    await fs.writeFile(newFile, JSON.stringify(makeObservation("task-new", "obs-new")));
+    const fetchImpl = vi.fn(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.taskId).toBe("task-new");
+      return new Response(JSON.stringify({ persisted: true, newlyPersisted: true }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const recovery = await retryPendingObservations({
+      server: "https://example.invalid", token: "token", tempDir: dir, fetchImpl,
+    });
+    expect(recovery).toMatchObject({ found: 2, persisted: 1, failed: 0 });
+    await expect(fs.stat(newFile)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(oldFile)).resolves.toBeTruthy();
   });
 
   it("候选任务耗尽时优先复用 AI 或漫剧主题，不返回空壳任务", () => {
@@ -1052,6 +1301,7 @@ describe("weixin channels OCR", () => {
     expect(collectorAdvanceAllowed({ metricsOcrConfirmed: false, captureState: "persisted" })).toBe(false);
     expect(collectorAdvanceAllowed({ metricsOcrConfirmed: true, captureState: "retryable_failed" })).toBe(false);
     expect(collectorAdvanceAllowed({ metricsOcrConfirmed: true, captureState: "persisted" })).toBe(true);
+    expect(collectorAdvanceAllowed({ metricsOcrConfirmed: true, captureState: "pending_upload" })).toBe(true);
     expect(collectorAdvanceAllowed({ metricsOcrConfirmed: true, captureState: "terminal_unqualified" })).toBe(true);
   });
 
@@ -1073,6 +1323,7 @@ describe("weixin channels OCR", () => {
     const base = { likes: 4_855, shares: 1_766, favorites: 1_997, comments: 254, rawText: [] };
     expect(metricsRemainOnSameVideo(base, { likes: 4_856, shares: 1_766, favorites: 1_997, comments: 254, rawText: [] })).toBe(true);
     expect(metricsRemainOnSameVideo(base, { likes: 34_000, shares: 27_000, favorites: 9_726, comments: 2_147, rawText: [] })).toBe(false);
+    expect(metricsRemainOnSameVideo(base, { likes: 4_856, shares: 766, favorites: 1_997, comments: 254, rawText: [] })).toBe(true);
     expect(metricsRemainOnSameVideo(base, { likes: 4_856, shares: 1_766, favorites: undefined, comments: undefined, rawText: [] })).toBe(true);
     expect(metricsRemainOnSameVideo(base, { likes: 4_856, shares: undefined, favorites: undefined, comments: undefined, rawText: [] })).toBe(false);
   });

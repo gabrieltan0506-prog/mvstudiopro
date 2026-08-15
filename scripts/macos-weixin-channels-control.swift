@@ -437,7 +437,9 @@ do {
     if let selectedWindow {
         _ = app.activate(options: [])
         guard raiseExactWindow(selectedWindow) else { throw ControlError.windowNotFound }
-        usleep(250_000)
+        // raiseExactWindow 已等待 80ms 并反查 focusedWindow；旧版又固定等待
+        // 250ms，使五点与评论链的每个原子动作都重复付费。仅保留一个事件循环间隔。
+        usleep(20_000)
     }
 
     switch action {
