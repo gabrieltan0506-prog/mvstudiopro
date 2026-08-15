@@ -77,6 +77,7 @@ import {
   restoreEligibleQuarantinedObservations,
   retryPendingObservations,
   representativeFrameNeedsSingleRetry,
+  remainingWeixinChannelsRawVideoDwellMs,
   scoreRepresentativeFrameCandidate,
   sampledCapturePersistenceDisposition,
   selectCurrentHottestSearchResultPoint,
@@ -99,6 +100,8 @@ import {
   WEIXIN_CHANNELS_COMMENT_CAPTURE_MIN_BUDGET_MS,
   WEIXIN_CHANNELS_COMMENT_PANEL_SCREEN_COUNT,
   WEIXIN_CHANNELS_RECOMMENDATION_WINDOW_MS,
+  WEIXIN_CHANNELS_RAW_VIDEO_DWELL_MAX_MS,
+  WEIXIN_CHANNELS_RAW_VIDEO_DWELL_MIN_MS,
   WEIXIN_CHANNELS_SEARCH_BUTTON_POINT,
   WEIXIN_CHANNELS_SEARCH_HIGH_PLAY_THRESHOLD,
   WEIXIN_CHANNELS_SEARCH_INPUT_POINT,
@@ -108,6 +111,15 @@ import {
 } from "../../scripts/weixin-channels-capture.mts";
 
 describe("weixin channels OCR", () => {
+  it("raw 视频从确认当前页起总停留 5–8 秒，采集本身已超时则不重复空等", () => {
+    expect(WEIXIN_CHANNELS_RAW_VIDEO_DWELL_MIN_MS).toBe(5_000);
+    expect(WEIXIN_CHANNELS_RAW_VIDEO_DWELL_MAX_MS).toBe(8_000);
+    expect(remainingWeixinChannelsRawVideoDwellMs(1_000, 2_000, 6_500)).toBe(5_500);
+    expect(remainingWeixinChannelsRawVideoDwellMs(1_000, 9_500, 6_500)).toBe(0);
+    expect(remainingWeixinChannelsRawVideoDwellMs(1_000, 2_000, 1_000)).toBe(4_000);
+    expect(remainingWeixinChannelsRawVideoDwellMs(1_000, 2_000, 20_000)).toBe(7_000);
+  });
+
   it("悬浮面板只统计本轮正式 newlyQualifiedPersisted 资产", () => {
     const current = { sessionNew: 3, formalQualifiedTotal: 100 };
     expect(nextCollectorFloatingCounts(current, {
@@ -149,10 +161,12 @@ describe("weixin channels OCR", () => {
       "--pool",
       "--auto-bind-exact-two-windows",
       "--calibrate-search-buttons",
+      "--raw-harvest",
       "--supervise-web-toggle",
     ])).toEqual({
       autoBindExactTwoWindows: true,
       calibrateSearchButtons: true,
+      rawHarvest: true,
       superviseWebToggle: true,
       windowIds: [],
     });

@@ -89,6 +89,7 @@ cd "${collector_repo_dir}" || exit 72
   --server="${collector_server}" \
   --auto-bind-exact-two-windows \
   --calibrate-search-buttons \
+  --raw-harvest \
   --supervise-web-toggle &
 collector_child_pid=$!
 

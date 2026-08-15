@@ -25,7 +25,7 @@ final class EmergencyStopDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let formal = stopRequestFile != nil && statusFile != nil
         let size = formal
-            ? NSSize(width: 224, height: 126)
+            ? NSSize(width: 280, height: 126)
             : NSSize(width: 190, height: 64)
         let visible = NSScreen.main?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -110,7 +110,11 @@ final class EmergencyStopDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if let sessionNew = status["sessionNew"] as? Int {
-            sessionLabel?.stringValue = "本轮新增：\(sessionNew)"
+            if let rawCaptured = status["rawCaptured"] as? Int {
+                sessionLabel?.stringValue = "本批原始：\(rawCaptured)｜有效新增：\(sessionNew)"
+            } else {
+                sessionLabel?.stringValue = "本轮新增：\(sessionNew)"
+            }
         }
         if let formalQualifiedTotal = status["formalQualifiedTotal"] as? Int {
             totalLabel?.stringValue = "正式有效总数：\(formalQualifiedTotal)"
