@@ -8,7 +8,12 @@ import {
   WEIXIN_CHANNELS_PROBE_TARGET,
   WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
 } from "@shared/weixinChannelsRules";
-import { mergeTrendCollections, readTrendStore } from "./trendStore";
+import {
+  mergeTrendCollections,
+  readTrendSchedulerState,
+  readTrendStore,
+  updateTrendSchedulerState,
+} from "./trendStore";
 import {
   WEIXIN_CHANNELS_ACCUMULATION_TARGET,
   buildWeixinChannelsCandidateQueue,
@@ -153,11 +158,37 @@ function scheduleWeixinChannelsGrowthMerge() {
       );
       if (!pending.length) continue;
       try {
-        await mergeTrendCollections({
-          weixin_channels: buildWeixinChannelsTrendCollection({
-            observations: pending,
-            candidateByTaskId: new Map(snapshot.candidates.map((item) => [item.taskId, item])),
-          }),
+        const collection = buildWeixinChannelsTrendCollection({
+          observations: pending,
+          candidateByTaskId: new Map(snapshot.candidates.map((item) => [item.taskId, item])),
+        });
+        const mergedStore = await mergeTrendCollections({ weixin_channels: collection });
+        const mergeStats = mergedStore?.mergeStats?.weixin_channels;
+        const currentScheduler = (await readTrendSchedulerState()).weixin_channels;
+        const addedCount = mergeStats?.addedCount || 0;
+        await updateTrendSchedulerState("weixin_channels", {
+          lastRunAt: collection.collectedAt,
+          lastSuccessAt: collection.collectedAt,
+          failureCount: 0,
+          totalRuns: (currentScheduler?.totalRuns || 0) + 1,
+          successCount: (currentScheduler?.successCount || 0) + 1,
+          lastCollectedCount: pending.length,
+          lastAddedCount: addedCount,
+          // 只有 current 真正新增时才刷新；重复 observation 的成功 merge 不能掩盖断流。
+          lastNewDataAt: addedCount > 0
+            ? collection.collectedAt
+            : currentScheduler?.lastNewDataAt
+              || ((currentScheduler?.lastAddedCount || 0) > 0 ? currentScheduler?.lastSuccessAt : undefined),
+          newDataMonitoringStartedAt: currentScheduler?.newDataMonitoringStartedAt
+            || currentScheduler?.lastSuccessAt
+            || currentScheduler?.lastRunAt
+            || collection.collectedAt,
+          lastMergedCount: mergeStats?.mergedCount || 0,
+          lastRawFetchedCount: pending.length,
+          lastAfterDedupCount: collection.items.length,
+          lastAfterWindowFilterCount: collection.items.length,
+          lastFrequencyLabel: "本机双窗持续采集",
+          lastError: undefined,
         });
         const mergedAt = new Date().toISOString();
         const ids = new Set(pending.map((item) => item.observationId));
@@ -174,6 +205,23 @@ function scheduleWeixinChannelsGrowthMerge() {
         growthMergeRequested = true;
       } catch (error) {
         console.error("[weixin-channels] raw persisted; background trend merge failed", error);
+        const failedAt = new Date().toISOString();
+        const currentScheduler = (await readTrendSchedulerState()).weixin_channels;
+        await updateTrendSchedulerState("weixin_channels", {
+          lastRunAt: failedAt,
+          failureCount: (currentScheduler?.failureCount || 0) + 1,
+          totalRuns: (currentScheduler?.totalRuns || 0) + 1,
+          totalFailures: (currentScheduler?.totalFailures || 0) + 1,
+          lastFailureAt: failedAt,
+          newDataMonitoringStartedAt: currentScheduler?.newDataMonitoringStartedAt
+            || currentScheduler?.lastSuccessAt
+            || currentScheduler?.lastRunAt
+            || failedAt,
+          lastFrequencyLabel: "本机双窗持续采集",
+          lastError: error instanceof Error ? error.message : String(error),
+        }).catch((stateError) => {
+          console.error("[weixin-channels] failed to persist growth health", stateError);
+        });
       }
     }
   })().finally(() => {

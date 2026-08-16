@@ -4,12 +4,24 @@ import {
   resolveLastNewDataAt,
   resolveNextRunPlan,
   resolveNewDataMonitoringStartedAt,
+  runPostMergeCoverEnhancement,
+  resolveTimeoutCooldownGate,
   resolvePlatformRunTimeoutMs,
   resolvePreviousRunCollectedCount,
   shouldClearBurstStatesBecauseDisabled,
 } from "./trendScheduler";
 
 describe("trendScheduler burst runtime", () => {
+  it("核心数据已 merge 后，前台抢占只跳过封面增强，不把真实采集轮次改记为暂停", async () => {
+    const outcome = await runPostMergeCoverEnhancement(async () => {
+      throw new Error("growth_background_paused_for_interactive_workload");
+    });
+    expect(outcome).toMatchObject({
+      ok: false,
+      priorityAborted: true,
+    });
+  });
+
   it("忽略覆盖为 60 秒的旧抖音 secret，保留正式 180 秒下限", () => {
     expect(resolvePlatformRunTimeoutMs("douyin", {
       preferred: "60000",
@@ -36,6 +48,25 @@ describe("trendScheduler burst runtime", () => {
     expect(shouldClearBurstStatesBecauseDisabled("auto")).toBe(false);
     expect(shouldClearBurstStatesBecauseDisabled("manual")).toBe(false);
     expect(shouldClearBurstStatesBecauseDisabled("off")).toBe(true);
+  });
+
+  it("burst 关闭后高增量也不能自动重开，手动模式未选平台同样保持关闭", () => {
+    const base = {
+      platform: "douyin" as const,
+      currentCount: 500,
+      previousCount: 100,
+      burstMode: false,
+      burstStableRuns: 0,
+      burstLowYieldRuns: 0,
+    };
+    expect(resolveNextRunPlan({ ...base, burstControl: "off" })).toMatchObject({
+      burstMode: false,
+      burstEvent: "none",
+    });
+    expect(resolveNextRunPlan({ ...base, burstControl: "manual" })).toMatchObject({
+      burstMode: false,
+      burstEvent: "none",
+    });
   });
 
   it("只有真实新增才刷新 24 小时监测基线，零新增保留旧时间", () => {
@@ -69,7 +100,7 @@ describe("trendScheduler burst runtime", () => {
       burstMode: false,
       burstStableRuns: 0,
       burstLowYieldRuns: 0,
-    })).toMatchObject({ burstMode: true, burstEvent: "enter" });
+    })).toMatchObject({ burstMode: true, burstEvent: "enter", frequencyLabel: "15 分钟一次" });
   });
 
   it("连续失败时固定无新增监测起点，不随每轮尝试后移", () => {
@@ -82,5 +113,35 @@ describe("trendScheduler burst runtime", () => {
       lastRunAt: "2026-08-08T00:00:00.000Z",
       startedAt: "2026-08-16T01:00:00.000Z",
     })).toBe("2026-08-08T00:00:00.000Z");
+  });
+
+  it("旧四小时超时状态会按失败时间钳位到十分钟，过期后立即放行", () => {
+    const failedAtMs = Date.parse("2026-08-16T10:00:00.000Z");
+    const legacy = {
+      lastError: "[growth.scheduler] douyin timed out after 180000ms",
+      lastFailureAt: new Date(failedAtMs).toISOString(),
+      nextRunAt: new Date(failedAtMs + 4 * 60 * 60 * 1000).toISOString(),
+      timeoutStreak: 3,
+    };
+    expect(resolveTimeoutCooldownGate(legacy, failedAtMs + 5 * 60 * 1000)).toEqual({
+      active: true,
+      shouldNormalize: true,
+      normalizedUntilMs: failedAtMs + 10 * 60 * 1000,
+    });
+    expect(resolveTimeoutCooldownGate(legacy, failedAtMs + 11 * 60 * 1000)).toEqual({
+      active: false,
+      shouldNormalize: true,
+      normalizedUntilMs: failedAtMs + 10 * 60 * 1000,
+    });
+
+    expect(resolveTimeoutCooldownGate({
+      ...legacy,
+      lastError: undefined,
+      timeoutCooldownUntil: legacy.nextRunAt,
+    }, failedAtMs + 5 * 60 * 1000)).toEqual({
+      active: true,
+      shouldNormalize: true,
+      normalizedUntilMs: failedAtMs + 10 * 60 * 1000,
+    });
   });
 });

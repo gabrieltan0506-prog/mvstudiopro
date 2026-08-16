@@ -5,6 +5,10 @@ import { notifyGrowthCollectionUpdate } from "./trendMailDigest";
 import { nowShanghaiIso } from "./time";
 import { withAbortableTimeout } from "./collectorAbort.js";
 import { runInGrowthPlatformCollectionLane } from "./platformCollectionLane";
+import {
+  hasActiveGrowthInteractiveWorkload,
+  isGrowthInteractivePriorityAbortError,
+} from "./growthWorkloadPriority";
 
 type BackfillKind = "live" | "history";
 
@@ -101,6 +105,7 @@ type WorkerState = {
   fastStartRoundsDone: number;
   lastHadPendingPlatforms: boolean;
   bootstrapStepsDone: number;
+  abortController: AbortController | null;
 };
 
 const workerState: Record<BackfillKind, WorkerState> = {
@@ -114,6 +119,7 @@ const workerState: Record<BackfillKind, WorkerState> = {
     fastStartRoundsDone: 0,
     lastHadPendingPlatforms: false,
     bootstrapStepsDone: 0,
+    abortController: null,
   },
   history: {
     started: false,
@@ -125,6 +131,7 @@ const workerState: Record<BackfillKind, WorkerState> = {
     fastStartRoundsDone: 0,
     lastHadPendingPlatforms: false,
     bootstrapStepsDone: 0,
+    abortController: null,
   },
 };
 
@@ -188,11 +195,13 @@ async function runBackfillPlatformTasks(
   stepFallback: number,
   windowDays: number,
   statsBefore: BackfillRuntimeSnapshot,
+  signal: AbortSignal,
 ) {
   const mergedStats: Record<string, { addedCount?: number; mergedCount?: number }> = {};
   const collectedErrors: Record<string, string | undefined> = {};
 
   for (const platform of pending) {
+    if (signal.aborted) throw new Error("growth_collector_aborted");
     await runInGrowthPlatformCollectionLane(platform, kind === "live" ? "live" : "backfill", async () => {
       const envNames = [
         "GROWTH_BACKFILL_ACTIVE",
@@ -209,9 +218,17 @@ async function runBackfillPlatformTasks(
       process.env.GROWTH_BACKFILL_COOKIE_OFFSET = String(Math.max(0, nextRound - 1));
       try {
         const collected = await withAbortableTimeout(
-          (signal) => collectTrendPlatforms([platform], { signal }),
+          (signal) => collectTrendPlatforms([platform], {
+            signal,
+            collectionSource: kind === "live" ? "live" : "backfill",
+            serializedExternally: true,
+          }),
           BACKFILL_PLATFORM_TIMEOUT_MS,
           `[${label}] ${platform}`,
+          {
+            signal,
+            abortWhen: hasActiveGrowthInteractiveWorkload,
+          },
         );
         if (collected.errors[platform]) {
           collectedErrors[platform] = collected.errors[platform];
@@ -242,6 +259,7 @@ async function runBackfillPlatformTasks(
           });
         }
       } catch (error) {
+        if (isGrowthInteractivePriorityAbortError(error)) throw error;
         collectedErrors[platform] = error instanceof Error ? error.message : String(error);
         console.warn(`[${label}] ${platform} failed:`, error);
       } finally {
@@ -421,7 +439,10 @@ async function runBackfillStep(kind: BackfillKind) {
   const state = workerState[kind];
   if (state.inFlight) return;
   if (!canRunBackfillNow(kind)) return;
+  if (await hasActiveGrowthInteractiveWorkload()) return;
   state.inFlight = true;
+  const abortController = new AbortController();
+  state.abortController = abortController;
   const roundStartedAt = nowShanghaiIso();
   try {
     const statsBefore = await readBackfillSnapshotFor(kind);
@@ -500,6 +521,7 @@ async function runBackfillStep(kind: BackfillKind) {
       stepFallback,
       windowDays,
       statsBefore,
+      abortController.signal,
     );
     if (kind === "history" && nextRound % HISTORY_LEDGER_BATCH_ROUNDS === 0) {
       await reconcileTrendHistoryState({ force: true }).catch((error) => {
@@ -548,6 +570,16 @@ async function runBackfillStep(kind: BackfillKind) {
       }),
     });
   } catch (error) {
+    if (isGrowthInteractivePriorityAbortError(error)) {
+      await updateTrendBackfillProgress({
+        mode: kind,
+        active: true,
+        status: "running",
+        nextRunAt: nowShanghaiIso(Date.now() + 5 * 60_000),
+        note: "前台平台任务优先，后台回填已暂停；任务结束后自动续跑。",
+      }).catch(() => undefined);
+      return;
+    }
     const stats = await readBackfillSnapshotFor(kind).catch(() => null);
     const storageFull = isStorageFullError(error);
     await updateTrendBackfillProgress({
@@ -576,6 +608,7 @@ async function runBackfillStep(kind: BackfillKind) {
     });
     console.warn(`[${getWorkerLabel(kind)}] step failed:`, error);
   } finally {
+    if (state.abortController === abortController) state.abortController = null;
     state.inFlight = false;
   }
 }
@@ -618,6 +651,8 @@ async function bootstrapWorker(kind: BackfillKind) {
 
 function stopWorker(kind: BackfillKind) {
   const state = workerState[kind];
+  state.abortController?.abort("growth_runtime_mode_stopped_backfill");
+  state.abortController = null;
   if (state.timer) {
     clearTimeout(state.timer);
     state.timer = null;

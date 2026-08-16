@@ -8,7 +8,12 @@ import { COOKIE_NAME, TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../s
 import { HTML_PPT_VIZ_KINDS, type HtmlPptVizKind } from "../shared/htmlPptMaker.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_core/trpc";
+import {
+  publicProcedure,
+  protectedProcedure,
+  adminProcedure,
+  router,
+} from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
 import * as db from "./db";
 import * as sessionDb from "./sessionDb";
@@ -73,7 +78,9 @@ import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/prem
 import { buildAiManhuaRisingBoard, buildAiManhuaRisingByPlatform } from "./growth/aiManhuaRising";
 import { AI_MANHUA_RISING_BOARD_LIMIT } from "../shared/manhuaDramaClassify";
 import { collectTrendPlatforms, type TrendItem } from "./growth/trendCollector";
+import { withAbortableTimeout } from "./growth/collectorAbort";
 import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, loadDouyinDramaBaselineItems, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
+import { readDouyinCredentialHealthReport } from "./growth/douyinCredentialHealth";
 import { selectByGrowthPotential } from "./growth/trendGrowthScoring.js";
 import { summarizeTrendWindowCounts } from "./growth/trendWindow";
 import { filterTrendItemsWithEngagementFloor } from "./services/trendEngagementVisualBrief.js";
@@ -224,6 +231,8 @@ import { formatShanghaiDateZh, getShanghaiVisualReportWindows, nowShanghaiIso } 
 import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
 import { stripeUsageLogs } from "../drizzle/schema-stripe";
 import { and, desc, eq, gte, or, sql } from "drizzle-orm";
+
+let manualGrowthRefreshInFlight = false;
 
 const platformVisualReportInputSchema = z.object({
   windowDays: z.enum(["3", "7", "15", "30"]),
@@ -9747,6 +9756,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const runtimeMeta = snapshot?.runtimeMeta || await readTrendRuntimeMeta();
         const runtimeControl = snapshot?.runtimeControl || await readGrowthRuntimeControl();
         const debugSummary = snapshot?.debugSummary !== undefined ? snapshot.debugSummary : await readGrowthDebugSummary();
+        const douyinCredentialHealth = await readDouyinCredentialHealthReport();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
         let storage: {
           totalBytes: number;
@@ -9826,37 +9836,47 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         const backfill = normalizeBackfill(runtimeMeta.backfill);
         const backfillLive = normalizeBackfill(runtimeMeta.backfillLive);
         const backfillHistory = normalizeBackfill(runtimeMeta.backfillHistory);
-        const scheduler = Object.values(runtimeMeta.scheduler || {})
-          .filter((item) => item?.platform && scheduledGrowthPlatformValues.includes(
-            item.platform as typeof scheduledGrowthPlatformValues[number],
-          ))
-          .map((item) => ({
-            platform: item?.platform,
-            platformLabel: getGrowthPlatformMeta(item?.platform).label,
-            platformDescription: getGrowthPlatformMeta(item?.platform).description,
-            lastRunAt: item?.lastRunAt,
-            lastSuccessAt: item?.lastSuccessAt,
-            nextRunAt: item?.nextRunAt,
-            failureCount: item?.failureCount ?? 0,
-            totalFailures: item?.totalFailures ?? 0,
-            lastFailureAt: item?.lastFailureAt,
-            burstMode: item?.burstMode ?? false,
-            burstTriggeredAt: item?.burstTriggeredAt,
-            lastCollectedCount: item?.lastCollectedCount ?? 0,
-            lastAddedCount: item?.lastAddedCount ?? 0,
-            // 旧 runtime 状态没有该字段；若最后一轮确有新增，以当时成功时间建立兼容基线。
-            lastNewDataAt: item?.lastNewDataAt
-              || ((item?.lastAddedCount || 0) > 0 ? item?.lastSuccessAt : undefined),
-            newDataMonitoringStartedAt: item?.newDataMonitoringStartedAt
-              || item?.lastSuccessAt
-              || item?.lastRunAt,
-            lastMergedCount: item?.lastMergedCount ?? 0,
-            lastRawFetchedCount: item?.lastRawFetchedCount,
-            lastAfterDedupCount: item?.lastAfterDedupCount,
-            lastAfterWindowFilterCount: item?.lastAfterWindowFilterCount,
-            lastFrequencyLabel: item?.lastFrequencyLabel,
-            lastError: item?.lastError,
-          }));
+        const scheduler = activeGrowthPlatformValues
+          .map((platform) => {
+            const item = runtimeMeta.scheduler?.[platform];
+            const collection = store?.collections?.[platform];
+            if (!item && !collection) return null;
+            const isLocalWeixinChannels = platform === "weixin_channels";
+            const migratedCollectionBaseline = isLocalWeixinChannels && !item
+              ? collection?.collectedAt
+              : undefined;
+            return {
+              platform,
+              platformLabel: getGrowthPlatformMeta(platform).label,
+              platformDescription: getGrowthPlatformMeta(platform).description,
+              lastRunAt: item?.lastRunAt || migratedCollectionBaseline,
+              lastSuccessAt: item?.lastSuccessAt || migratedCollectionBaseline,
+              nextRunAt: item?.nextRunAt,
+              failureCount: item?.failureCount ?? 0,
+              totalFailures: item?.totalFailures ?? 0,
+              lastFailureAt: item?.lastFailureAt,
+              burstMode: item?.burstMode ?? false,
+              burstTriggeredAt: item?.burstTriggeredAt,
+              lastCollectedCount: item?.lastCollectedCount ?? collection?.items.length ?? 0,
+              lastAddedCount: item?.lastAddedCount ?? 0,
+              // 旧 runtime 状态没有该字段；视频号首次上线健康状态前以现有 collection 建迁移基线。
+              lastNewDataAt: item?.lastNewDataAt
+                || ((item?.lastAddedCount || 0) > 0 ? item?.lastSuccessAt : undefined)
+                || migratedCollectionBaseline,
+              newDataMonitoringStartedAt: item?.newDataMonitoringStartedAt
+                || item?.lastSuccessAt
+                || item?.lastRunAt
+                || migratedCollectionBaseline,
+              lastMergedCount: item?.lastMergedCount ?? 0,
+              lastRawFetchedCount: item?.lastRawFetchedCount,
+              lastAfterDedupCount: item?.lastAfterDedupCount,
+              lastAfterWindowFilterCount: item?.lastAfterWindowFilterCount,
+              lastFrequencyLabel: item?.lastFrequencyLabel
+                || (isLocalWeixinChannels ? "本机双窗持续采集" : undefined),
+              lastError: item?.lastError,
+            };
+          })
+          .filter((item): item is NonNullable<typeof item> => Boolean(item));
         const anomalies: Array<{ level: "warning" | "critical"; title: string; message: string }> = [];
         if (storage?.lowSpace) {
           anomalies.push({
@@ -9873,6 +9893,22 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             level: "warning",
             title: "回填失敗",
             message: failedBackfills.map((item) => String(item?.note || "回填失败")).join("；"),
+          });
+        }
+        const invalidDouyinCredentials = (douyinCredentialHealth?.entries || []).filter(
+          (entry) => entry.enabled && (
+            entry.status === "invalid"
+              || entry.status === "missing"
+              || entry.status === "probe_error"
+          ),
+        );
+        if (invalidDouyinCredentials.length) {
+          anomalies.push({
+            level: "warning",
+            title: "抖音凭证自检异常",
+            message: invalidDouyinCredentials
+              .map((entry) => `${entry.label}：${entry.reason}`)
+              .join("；"),
           });
         }
         const criticalAnomalies = anomalies.filter((item) => item.level === "critical");
@@ -9944,6 +9980,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             checkedAt: new Date().toISOString(),
           },
           anomalies,
+          douyinCredentialHealth,
           currentSupportActivities,
           storage,
           backfill,
@@ -9973,12 +10010,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           await Promise.all(
             scheduledGrowthPlatformValues
               .map((platform) => {
-                const currentState = schedulerState[platform];
-                const currentNextRunAt = currentState?.nextRunAt ? Date.parse(String(currentState.nextRunAt)) : 0;
-                const shouldResetRunAt = !Number.isFinite(currentNextRunAt) || currentNextRunAt <= Date.now();
                 return updateTrendSchedulerState(platform, {
-                  nextRunAt: shouldResetRunAt ? nextRunAt : currentState?.nextRunAt,
+                  // 显式切到“只跑 live”就是人工解冻动作；不能保留 2028 冻结值或旧四小时冷却。
+                  nextRunAt,
                   failureCount: 0,
+                  timeoutStreak: 0,
+                  timeoutCooldownUntil: undefined,
                   lastError: undefined,
                   burstMode: false,
                   burstTriggeredAt: undefined,
@@ -10138,26 +10175,65 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
         };
       }),
 
-    refreshGrowthTrends: publicProcedure
+    refreshGrowthTrends: adminProcedure
       .input(z.object({
-        platforms: z.array(scheduledGrowthPlatformSchema).default([...scheduledGrowthPlatformValues]),
+        // 同步管理入口一次只允许一个平台；三平台会单纯等待两段 3–5 分钟间隔并占满请求。
+        platforms: z.array(scheduledGrowthPlatformSchema).min(1).max(1).default(["douyin"]),
       }))
-      .mutation(async ({ input }) => {
-        const collected = await collectTrendPlatforms(input.platforms);
-        const store = await mergeTrendCollections(collected.collections);
-
-        return {
-          success: true,
-          updatedAt: store.updatedAt,
-          collections: Object.values(store.collections).map((item) => ({
-            platform: item?.platform,
-            collectedAt: item?.collectedAt,
-            source: item?.source,
-            count: item?.items.length ?? 0,
-          })),
-          mergeStats: store.mergeStats || {},
-          errors: collected.errors,
-        };
+      .mutation(async ({ input, ctx }) => {
+        if (manualGrowthRefreshInFlight) {
+          throw new TRPCError({
+            code: "TOO_MANY_REQUESTS",
+            message: "已有手动 Growth 刷新在执行，请等待本轮结束。",
+          });
+        }
+        manualGrowthRefreshInFlight = true;
+        const platform = input.platforms[0];
+        try {
+          const timeoutMs = Math.max(
+            30_000,
+            Number(process.env.GROWTH_MANUAL_REFRESH_TIMEOUT_MS || 4 * 60_000) || 4 * 60_000,
+          );
+          const collected = await withAbortableTimeout(
+            (signal) => collectTrendPlatforms([platform], {
+              signal,
+              collectionSource: "live",
+            }),
+            timeoutMs,
+            `[growth.manual-refresh] ${platform}`,
+            { signal: ctx.clientDisconnected },
+          );
+          const collection = collected.collections[platform];
+          const collectionError = collected.errors[platform];
+          if (collectionError || !collection?.items.length) {
+            throw new TRPCError({
+              code: "BAD_GATEWAY",
+              message: collectionError || `${platform} 本轮没有产生可提交数据。`,
+            });
+          }
+          const store = await mergeTrendCollections({ [platform]: collection });
+          const readBack = store.collections[platform];
+          if (!readBack?.items.length) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: `${platform} 合并后读回为空，已拒绝假报刷新成功。`,
+            });
+          }
+          return {
+            success: true,
+            updatedAt: store.updatedAt,
+            collections: [{
+              platform: readBack.platform,
+              collectedAt: readBack.collectedAt,
+              source: readBack.source,
+              count: readBack.items.length,
+            }],
+            mergeStats: store.mergeStats || {},
+            errors: collected.errors,
+          };
+        } finally {
+          manualGrowthRefreshInFlight = false;
+        }
       }),
 
     exportGrowthTrendsCsv: publicProcedure

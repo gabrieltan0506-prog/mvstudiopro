@@ -554,7 +554,6 @@ type PersonalizedDirectionCard = {
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 const FULL_PLATFORM_ORDER = ["douyin", "kuaishou", "bilibili", "xiaohongshu"] as const;
-const ACTIVE_REFRESH_PLATFORM_ORDER = ["douyin", "bilibili", "xiaohongshu"] as const;
 
 const GROWTH_CAMP_ANALYSIS_MODEL_LS = "mv-growth-camp-analysis-model";
 const GROWTH_CAMP_ANALYSIS_PROFILE_LS = "mv-growth-camp-analysis-profile";
@@ -1818,7 +1817,6 @@ export default function MVAnalysisPage() {
   const synthesizeGrowthCampAnalysesMutation = trpc.mvAnalysis.synthesizeGrowthCampAnalyses.useMutation();
   const getVideoUploadSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
-  const refreshGrowthMutation = trpc.mvAnalysis.refreshGrowthTrends.useMutation();
   const usageStatsQuery = trpc.usage.getUsageStats.useQuery(undefined, {
     enabled: isAuthenticated && !loading && !supervisorAccess,
     refetchOnMount: true,
@@ -2524,18 +2522,6 @@ export default function MVAnalysisPage() {
     user?.id,
     trpcUtils,
   ]);
-
-  const handleRefreshGrowth = useCallback(async () => {
-    try {
-      await refreshGrowthMutation.mutateAsync({
-        platforms: [...ACTIVE_REFRESH_PLATFORM_ORDER],
-      });
-      await growthSnapshotQuery.refetch();
-      toast.success("趋势数据已刷新");
-    } catch (refreshError: any) {
-      toast.error(refreshError.message || "趋势数据刷新失败");
-    }
-  }, [refreshGrowthMutation, growthSnapshotQuery]);
 
   const handlePlayGeneratedMusic = useCallback((url: string) => {
     const audio = musicAudioRef.current;

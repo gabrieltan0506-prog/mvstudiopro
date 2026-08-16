@@ -4,11 +4,15 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./trendStore", () => ({
-  mergeTrendCollections: vi.fn().mockResolvedValue(undefined),
+  mergeTrendCollections: vi.fn().mockResolvedValue({
+    mergeStats: { weixin_channels: { addedCount: 1, mergedCount: 1 } },
+  }),
+  readTrendSchedulerState: vi.fn().mockResolvedValue({}),
   readTrendStore: vi.fn().mockResolvedValue({ collections: {} }),
+  updateTrendSchedulerState: vi.fn().mockResolvedValue({}),
 }));
 
-import { mergeTrendCollections } from "./trendStore";
+import { mergeTrendCollections, updateTrendSchedulerState } from "./trendStore";
 
 import {
   createWeixinChannelsProbeJob,
@@ -64,7 +68,10 @@ async function seed(observations: ReturnType<typeof persisted>[], jobs: unknown[
 
 beforeEach(async () => {
   await awaitWeixinChannelsGrowthMergeIdle();
-  vi.mocked(mergeTrendCollections).mockReset().mockResolvedValue(undefined as never);
+  vi.mocked(mergeTrendCollections).mockReset().mockResolvedValue({
+    mergeStats: { weixin_channels: { addedCount: 1, mergedCount: 1 } },
+  } as never);
+  vi.mocked(updateTrendSchedulerState).mockClear();
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-store-"));
   storeFile = path.join(dir, "state.json");
   process.env.WEIXIN_CHANNELS_MINER_STORE_FILE = storeFile;
@@ -80,7 +87,9 @@ describe("weixinChannelsMinerStore", () => {
     await seed([]);
     let releaseMerge!: () => void;
     vi.mocked(mergeTrendCollections).mockImplementationOnce(() => new Promise((resolve) => {
-      releaseMerge = () => resolve(undefined as never);
+      releaseMerge = () => resolve({
+        mergeStats: { weixin_channels: { addedCount: 1, mergedCount: 1 } },
+      } as never);
     }));
     const result = await ingestWeixinChannelsObservations({
       taskId: "task-123",
@@ -98,6 +107,11 @@ describe("weixinChannelsMinerStore", () => {
     releaseMerge();
     await awaitWeixinChannelsGrowthMergeIdle();
     expect((await getWeixinChannelsMinerState()).observations[0]?.growthMergedAt).toBeTruthy();
+    expect(updateTrendSchedulerState).toHaveBeenCalledWith("weixin_channels", expect.objectContaining({
+      lastAddedCount: 1,
+      lastNewDataAt: expect.any(String),
+      lastFrequencyLabel: "本机双窗持续采集",
+    }));
   });
 
   it("重复 observationId 只首次计入真实新增，并保留首次持久化时间", async () => {

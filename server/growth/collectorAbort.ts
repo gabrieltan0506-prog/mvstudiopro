@@ -7,6 +7,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { GROWTH_BACKGROUND_PAUSED_FOR_INTERACTIVE_WORKLOAD } from "./growthWorkloadPriority";
 
 type CollectorAbortContext = {
   signal: AbortSignal;
@@ -41,6 +42,23 @@ export async function runWithCollectorAbort<T>(
   return storage.run({ signal, deadlineMs: options?.deadlineMs }, work);
 }
 
+/**
+ * 公共采集入口传入显式 signal 时也接入 ALS；若外层已有调度器 signal，则合并两者
+ * 并保留原 deadline，避免只有 scheduler/backfill 内部调用才能真正中止 fetch。
+ */
+export async function runWithOptionalCollectorAbortSignal<T>(
+  signal: AbortSignal | undefined,
+  work: () => Promise<T>,
+): Promise<T> {
+  const contextualSignal = getCollectorAbortSignal();
+  if (!signal || signal === contextualSignal) return work();
+  const merged = mergeAbortSignals(contextualSignal, signal) || signal;
+  const remainingMs = getCollectorTimeRemainingMs();
+  return runWithCollectorAbort(merged, work, {
+    deadlineMs: remainingMs === undefined ? undefined : Date.now() + remainingMs,
+  });
+}
+
 export function mergeAbortSignals(
   ...signals: Array<AbortSignal | undefined | null>
 ): AbortSignal | undefined {
@@ -71,15 +89,68 @@ export async function withAbortableTimeout<T>(
   work: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
   label: string,
+  options?: {
+    signal?: AbortSignal;
+    abortWhen?: () => boolean | Promise<boolean>;
+    abortPollMs?: number;
+  },
 ): Promise<T> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let abortPollTimer: ReturnType<typeof setInterval> | null = null;
+  let removeExternalAbortListener: (() => void) | null = null;
+  let rejectPriorityAbort: ((error: Error) => void) | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller.abort();
       reject(new Error(`${label} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
   });
+  const externalAbortPromise = new Promise<never>((_, reject) => {
+    const external = options?.signal;
+    if (!external) return;
+    const abort = () => {
+      if (!controller.signal.aborted) controller.abort(external.reason);
+      reject(new Error("growth_collector_aborted"));
+    };
+    if (external.aborted) {
+      abort();
+      return;
+    }
+    external.addEventListener("abort", abort, { once: true });
+    removeExternalAbortListener = () => external.removeEventListener("abort", abort);
+  });
+  const priorityAbortPromise = new Promise<never>((_, reject) => {
+    if (!options?.abortWhen) return;
+    rejectPriorityAbort = reject;
+  });
+  if (options?.abortWhen) {
+    let checking = false;
+    const checkPriority = () => {
+      if (checking || controller.signal.aborted) return;
+      checking = true;
+      void Promise.resolve()
+        .then(() => options.abortWhen?.())
+        .then((shouldAbort) => {
+          if (!shouldAbort || controller.signal.aborted) return;
+          rejectPriorityAbort?.(new Error(GROWTH_BACKGROUND_PAUSED_FOR_INTERACTIVE_WORKLOAD));
+          controller.abort("growth_interactive_workload_started");
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return;
+          console.warn("[growth.priority] 前台租约探针失败，安全暂停后台工作", error);
+          rejectPriorityAbort?.(new Error(
+            `${GROWTH_BACKGROUND_PAUSED_FOR_INTERACTIVE_WORKLOAD}:priority_probe_failed`,
+          ));
+          controller.abort("growth_interactive_workload_probe_failed");
+        })
+        .finally(() => {
+          checking = false;
+        });
+    };
+    checkPriority();
+    abortPollTimer = setInterval(checkPriority, Math.max(250, options.abortPollMs || 1_000));
+  }
   try {
     return await Promise.race([
       runWithCollectorAbort(
@@ -88,9 +159,14 @@ export async function withAbortableTimeout<T>(
         { deadlineMs: Date.now() + timeoutMs },
       ),
       timeoutPromise,
+      externalAbortPromise,
+      priorityAbortPromise,
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+    if (abortPollTimer) clearInterval(abortPollTimer);
+    const cleanupExternalAbort = removeExternalAbortListener as (() => void) | null;
+    cleanupExternalAbort?.();
     if (!controller.signal.aborted) controller.abort();
   }
 }

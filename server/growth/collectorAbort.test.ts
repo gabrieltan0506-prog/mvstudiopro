@@ -6,6 +6,7 @@ import {
   getCollectorTimeRemainingMs,
   isSchedulerTimeoutOrAbortError,
   runWithCollectorAbort,
+  runWithOptionalCollectorAbortSignal,
   withAbortableTimeout,
 } from "./collectorAbort";
 
@@ -26,11 +27,79 @@ describe("collectorAbort", () => {
     expect(Date.now() - started).toBeLessThan(1_500);
   });
 
+  it("运行模式切换可以主动中止尚未完成的 backfill 采集", async () => {
+    const external = new AbortController();
+    const running = withAbortableTimeout(
+      async (signal) => {
+        await new Promise<void>((resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("aborted by mode switch")), { once: true });
+          setTimeout(resolve, 10_000);
+        });
+        return "unexpected";
+      },
+      20_000,
+      "backfill",
+      { signal: external.signal },
+    );
+    external.abort();
+    await expect(running).rejects.toThrow(/aborted/i);
+  });
+
+  it("前台平台指令出现后会中止后台采集并让出资源", async () => {
+    let foregroundActive = false;
+    const running = withAbortableTimeout(
+      async (signal) => {
+        await new Promise<void>((resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("collector stopped")), { once: true });
+          setTimeout(resolve, 10_000);
+        });
+        return "unexpected";
+      },
+      20_000,
+      "scheduler",
+      {
+        abortWhen: () => foregroundActive,
+        abortPollMs: 10,
+      },
+    );
+    foregroundActive = true;
+    await expect(running).rejects.toThrow(/interactive_workload/);
+  });
+
+  it("前台租约探针异常时安全暂停后台，不产生未处理 rejection", async () => {
+    const running = withAbortableTimeout(
+      async (signal) => {
+        await new Promise<void>((resolve, reject) => {
+          signal.addEventListener("abort", () => reject(new Error("collector stopped")), { once: true });
+          setTimeout(resolve, 10_000);
+        });
+        return "unexpected";
+      },
+      20_000,
+      "scheduler",
+      {
+        abortWhen: async () => {
+          throw new Error("lease directory unavailable");
+        },
+        abortPollMs: 10,
+      },
+    );
+    await expect(running).rejects.toThrow(/priority_probe_failed/);
+  });
+
   it("AsyncLocalStorage 在采集上下文中可取到 signal", async () => {
     const controller = new AbortController();
     const seen = await runWithCollectorAbort(controller.signal, async () => {
       return getCollectorAbortSignal() === controller.signal;
     });
+    expect(seen).toBe(true);
+  });
+
+  it("公共采集入口的显式 signal 会进入取消上下文", async () => {
+    const controller = new AbortController();
+    const seen = await runWithOptionalCollectorAbortSignal(controller.signal, async () => (
+      getCollectorAbortSignal() === controller.signal
+    ));
     expect(seen).toBe(true);
   });
 

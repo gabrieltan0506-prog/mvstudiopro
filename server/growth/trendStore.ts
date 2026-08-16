@@ -2078,6 +2078,8 @@ async function writeStoreUnlocked(
     writeDerivedPlatformFiles?: boolean;
     writeLegacyMirror?: boolean;
     allowLowerTotals?: boolean;
+    /** 单平台 merge 只重写真实发生变化的平台大文件，避免四个平台重复 gzip 造成资源尖峰。 */
+    changedPlatforms?: GrowthPlatform[];
   },
 ) {
   await ensureStoreDir();
@@ -2141,10 +2143,16 @@ async function writeStoreUnlocked(
   if (!(options?.writeDerivedPlatformFiles ?? SHOULD_WRITE_DERIVED_PLATFORM_FILES)) {
     return next;
   }
+  const changedPlatformSet = options?.changedPlatforms?.length
+    ? new Set(options.changedPlatforms)
+    : null;
+  const existingManifest = changedPlatformSet
+    ? await readPlatformCurrentManifest()
+    : null;
   const platformManifest: PlatformCurrentManifest = {
     updatedAt: next.updatedAt,
     truthSource: "platform-current",
-    platforms: {},
+    platforms: { ...(existingManifest?.platforms || {}) },
   };
   await Promise.all(
     GROWTH_STORE_PLATFORM_VALUES.map(async (platform) => {
@@ -2152,11 +2160,17 @@ async function writeStoreUnlocked(
       const platformFile = path.join(PLATFORM_DIR, `${platform}.json`);
       const bucketDir = path.join(PLATFORM_DIR, platform);
       const truthFile = getPlatformCurrentTruthFile(platform);
+      // 旧部署可能尚无 manifest；这种情况下仍补写一次，不能为了省 I/O 留下缺失真值。
+      const shouldRewrite = !changedPlatformSet
+        || changedPlatformSet.has(platform)
+        || !existingManifest?.platforms?.[platform];
+      if (!shouldRewrite) return;
       if (!collection || isRecoveredCollectionSource(collection.source)) {
         await fs.rm(platformFile, { force: true });
         await fs.rm(truthFile, { force: true });
         await fs.rm(`${truthFile}.gz`, { force: true });
         await fs.rm(bucketDir, { recursive: true, force: true });
+        delete platformManifest.platforms[platform];
         return;
       }
       const historySummary = next.history?.platforms?.[platform];
@@ -2211,6 +2225,7 @@ async function writeStore(
     writeDerivedPlatformFiles?: boolean;
     writeLegacyMirror?: boolean;
     allowLowerTotals?: boolean;
+    changedPlatforms?: GrowthPlatform[];
   },
 ) {
   return withGrowthStoreMutationLock("write-store", () => writeStoreUnlocked(next, options));
@@ -2291,9 +2306,25 @@ function mergeCollection(
     observedAt: incoming.collectedAt,
   }));
   const hotWindowDays = getHotWindowDays();
+  // 兼容本 PR 部署前已经完成的单平台恢复：旧恢复函数已写入可审计 note，
+  // 但当时 schema 还没有 minimumRetentionDays。首轮 live merge 必须把它迁移成正式字段，
+  // 否则解冻后的第一轮就会把完整基线按 90 天热窗重新裁掉。
+  const legacyVerifiedRestoreRetentionDays = (current?.notes || []).some((note) =>
+    /restored .+ current from verified baseline/i.test(String(note)),
+  )
+    ? RETENTION_DAYS
+    : 0;
+  const minimumRetentionDays = Math.max(
+    legacyVerifiedRestoreRetentionDays,
+    Math.min(RETENTION_DAYS, Math.max(0, Number(current?.minimumRetentionDays) || 0)),
+    Math.min(RETENTION_DAYS, Math.max(0, Number(incoming.minimumRetentionDays) || 0)),
+  );
+  // 受控恢复写入的是经过大小、SHA-256 与 read-back 验证的完整 current。
+  // 后续 live merge 必须继承其保留契约，不能再被部署环境的 90 天热窗口立刻裁掉。
+  const effectiveRetentionDays = Math.max(hotWindowDays, minimumRetentionDays);
   const mergedItems = pruneTrendItemsToHotWindow(
     dedupeTrendItems(current?.items || [], observedIncomingItems),
-    hotWindowDays,
+    effectiveRetentionDays,
   );
   const mergedCollection: PlatformTrendCollection = {
     ...incoming,
@@ -2302,9 +2333,10 @@ function mergeCollection(
     collectedAt: incoming.collectedAt,
     // 原来取 max 只增不减，窗口收窄后就再也降不回来了
     windowDays: Math.min(
-      hotWindowDays,
-      Math.max(current?.windowDays || 0, incoming.windowDays || 0) || hotWindowDays,
+      effectiveRetentionDays,
+      Math.max(current?.windowDays || 0, incoming.windowDays || 0) || effectiveRetentionDays,
     ),
+    ...(minimumRetentionDays > 0 ? { minimumRetentionDays } : {}),
   };
   return {
     collection: mergedCollection,
@@ -2775,6 +2807,7 @@ export async function restoreTrendPlatformCurrentFromBaseline(
       source: "live",
       collectedAt: [baseline.collectedAt, live?.collectedAt].filter(Boolean).sort().at(-1) || nowShanghaiIso(),
       windowDays: Math.max(baseline.windowDays || 0, live?.windowDays || 0) || baseline.windowDays,
+      minimumRetentionDays: RETENTION_DAYS,
       notes: Array.from(new Set([
         ...(baseline.notes || []),
         ...(live?.notes || []),
@@ -2920,7 +2953,10 @@ async function mergeTrendCollectionsWithOptionsUnlocked(
   // 在 merge 里只会并进大池，根本产不出更小的 next。保护若拦在这里，热窗裁剪（#995）
   // 会被整体换回旧档：douyin/kuaishou/bilibili/toutiao 曾因此永久卡 365 天旧窗口、
   // collectedAt 冻结，每轮还在 parse+重写 93MB 旧载荷。故 merge 路径显式放行。
-  const written = await writeStoreUnlocked(next, { allowLowerTotals: true });
+  const written = await writeStoreUnlocked(next, {
+    allowLowerTotals: true,
+    changedPlatforms: Object.keys(collections) as GrowthPlatform[],
+  });
   return {
     ...written,
     mergeStats,
@@ -2941,21 +2977,25 @@ export async function updateTrendSchedulerState(
   platform: GrowthPlatform,
   patch: Partial<TrendSchedulerState>,
 ) {
-  const meta = await readRuntimeMeta();
-  const scheduler = { ...(meta.scheduler || {}) };
-  const current = scheduler[platform] || {
-    platform,
-    failureCount: 0,
-  };
-  scheduler[platform] = {
-    ...current,
-    ...patch,
-    platform,
-  };
-  const updatedAt = nowShanghaiIso();
-  await writeRuntimeSegment(RUNTIME_SCHEDULER_FILE, scheduler, updatedAt);
-  await writeRuntimeMetaSnapshot(updatedAt);
-  return scheduler[platform];
+  // 控制面会同时更新三个平台，视频号后台 merge 也可能在同一时刻写健康状态。
+  // 旧的 read-modify-write 没有锁，并行写会让最后一个写入者覆盖其他平台刚落盘的状态。
+  return withGrowthStoreMutationLock(`update-trend-scheduler:${platform}`, async () => {
+    const meta = await readRuntimeMeta();
+    const scheduler = { ...(meta.scheduler || {}) };
+    const current = scheduler[platform] || {
+      platform,
+      failureCount: 0,
+    };
+    scheduler[platform] = {
+      ...current,
+      ...patch,
+      platform,
+    };
+    const updatedAt = nowShanghaiIso();
+    await writeRuntimeSegment(RUNTIME_SCHEDULER_FILE, scheduler, updatedAt);
+    await writeRuntimeMetaSnapshot(updatedAt);
+    return scheduler[platform];
+  });
 }
 
 export async function readTrendSchedulerState() {

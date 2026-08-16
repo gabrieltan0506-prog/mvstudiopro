@@ -21,8 +21,14 @@ import {
   isCollectorAbortError,
   mergeAbortSignals,
   runWithCollectorAbort,
+  runWithOptionalCollectorAbortSignal,
 } from "./collectorAbort.js";
 import { extractPlatformCoverUrl, isTrendCoverCollectionActive } from "./trendCoverSelection";
+import {
+  runInGrowthPlatformCollectionLane,
+  type GrowthCollectionSource,
+} from "./platformCollectionLane";
+import { isGrowthInteractivePriorityAbortError } from "./growthWorkloadPriority";
 
 const nativeFetch = globalThis.fetch.bind(globalThis);
 
@@ -419,6 +425,8 @@ export type PlatformTrendCollection = {
   source: TrendSource;
   collectedAt: string;
   windowDays: number;
+  /** 受控恢复后的 current 最低保留天数；普通采集不设置，继续服从全局热窗口。 */
+  minimumRetentionDays?: number;
   items: TrendItem[];
   notes: string[];
   stats: TrendCollectionStats;
@@ -1468,6 +1476,87 @@ function buildDouyinCreatorIndexSignalItem(params: {
   } satisfies TrendItem;
 }
 
+async function openCollectorWebSocket(WebSocketCtor: any, url: string, label: string) {
+  assertCollectorNotAborted();
+  const socket = new WebSocketCtor(url);
+  const signal = getCollectorAbortSignal();
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      cleanup();
+      try { socket.close(); } catch { /* 忽略关闭异常 */ }
+      reject(new Error("growth_collector_aborted"));
+    };
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    socket.onopen = () => {
+      cleanup();
+      resolve();
+    };
+    socket.onerror = () => {
+      cleanup();
+      reject(new Error(`${label} websocket connection failed`));
+    };
+  });
+  return socket;
+}
+
+function createCollectorCdpSender(socket: any, label: string) {
+  let messageId = 0;
+  const signal = getCollectorAbortSignal();
+  const pending = new Map<number, {
+    resolve: (value: any) => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+  const rejectAll = (error: Error) => {
+    pending.forEach((entry) => {
+      clearTimeout(entry.timer);
+      entry.reject(error);
+    });
+    pending.clear();
+  };
+  const onAbort = () => rejectAll(new Error("growth_collector_aborted"));
+  signal?.addEventListener("abort", onAbort, { once: true });
+  socket.onmessage = (event: MessageEvent) => {
+    const message = JSON.parse(String(event.data || "{}"));
+    const entry = message.id ? pending.get(message.id) : undefined;
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    pending.delete(message.id);
+    if (message.error) entry.reject(new Error(`${label} CDP error: ${JSON.stringify(message.error)}`));
+    else entry.resolve(message);
+  };
+  socket.onclose = () => rejectAll(new Error(`${label} websocket closed`));
+  return {
+    send(method: string, params: Record<string, any> = {}) {
+      assertCollectorNotAborted();
+      return new Promise<any>((resolve, reject) => {
+        const id = ++messageId;
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error(`${label} CDP command timed out: ${method}`));
+        }, 15_000);
+        pending.set(id, { resolve, reject, timer });
+        try {
+          socket.send(JSON.stringify({ id, method, params }));
+        } catch (error) {
+          clearTimeout(timer);
+          pending.delete(id);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+    },
+    dispose() {
+      signal?.removeEventListener("abort", onAbort);
+      rejectAll(new Error(`${label} CDP sender disposed`));
+    },
+  };
+}
+
 async function captureDouyinCreatorPageText(url: string, cookie: string) {
   const cdpVersionUrl = String(process.env.DOUYIN_CREATOR_INDEX_CDP_URL || "http://127.0.0.1:9223").replace(/\/$/, "");
   const version = await fetch(`${cdpVersionUrl}/json/version`).then((response) => {
@@ -1479,94 +1568,72 @@ async function captureDouyinCreatorPageText(url: string, cookie: string) {
 
   const BrowserWebSocket = (globalThis as any).WebSocket;
   if (!BrowserWebSocket) throw new Error("Global WebSocket unavailable.");
+  let browserSocket: any;
+  let pageSocket: any;
+  let browserSender: ReturnType<typeof createCollectorCdpSender> | undefined;
+  let pageSender: ReturnType<typeof createCollectorCdpSender> | undefined;
+  let targetId: string | undefined;
+  try {
+    browserSocket = await openCollectorWebSocket(BrowserWebSocket, browserWsUrl, "browser");
+    browserSender = createCollectorCdpSender(browserSocket, "browser");
+    const created = await browserSender.send("Target.createTarget", { url: "about:blank" });
+    targetId = created?.result?.targetId as string | undefined;
+    if (!targetId) throw new Error("Failed to create CDP target.");
 
-  const browserSocket = new BrowserWebSocket(browserWsUrl);
-  await new Promise<void>((resolve, reject) => {
-    browserSocket.onopen = () => resolve();
-    browserSocket.onerror = (error: unknown) => reject(error);
-  });
-
-  let browserMessageId = 0;
-  const browserPending = new Map<number, (value: any) => void>();
-  browserSocket.onmessage = (event: MessageEvent) => {
-    const message = JSON.parse(String(event.data || "{}"));
-    if (message.id && browserPending.has(message.id)) {
-      browserPending.get(message.id)?.(message);
-      browserPending.delete(message.id);
-    }
-  };
-  const sendBrowser = (method: string, params: Record<string, any> = {}) => new Promise<any>((resolve) => {
-    const id = ++browserMessageId;
-    browserPending.set(id, resolve);
-    browserSocket.send(JSON.stringify({ id, method, params }));
-  });
-
-  const created = await sendBrowser("Target.createTarget", { url: "about:blank" });
-  const targetId = created?.result?.targetId as string | undefined;
-  if (!targetId) throw new Error("Failed to create CDP target.");
-
-  const targets = await fetch(`${cdpVersionUrl}/json/list`).then((response) => {
-    if (!response.ok) throw new Error(`CDP list responded with ${response.status}`);
-    return response.json() as Promise<Array<{ id: string; webSocketDebuggerUrl?: string }>>;
-  });
-  const page = targets.find((entry) => entry.id === targetId);
-  const pageWsUrl = String(page?.webSocketDebuggerUrl || "").trim();
-  if (!pageWsUrl) throw new Error("CDP page websocket unavailable.");
-
-  const pageSocket = new BrowserWebSocket(pageWsUrl);
-  await new Promise<void>((resolve, reject) => {
-    pageSocket.onopen = () => resolve();
-    pageSocket.onerror = (error: unknown) => reject(error);
-  });
-
-  let pageMessageId = 0;
-  const pagePending = new Map<number, (value: any) => void>();
-  pageSocket.onmessage = (event: MessageEvent) => {
-    const message = JSON.parse(String(event.data || "{}"));
-    if (message.id && pagePending.has(message.id)) {
-      pagePending.get(message.id)?.(message);
-      pagePending.delete(message.id);
-    }
-  };
-  const sendPage = (method: string, params: Record<string, any> = {}) => new Promise<any>((resolve) => {
-    const id = ++pageMessageId;
-    pagePending.set(id, resolve);
-    pageSocket.send(JSON.stringify({ id, method, params }));
-  });
-
-  await sendPage("Network.enable");
-  await sendPage("Page.enable");
-  for (const parsedCookie of parseCookieHeader(cookie)) {
-    await sendPage("Network.setCookie", {
-      name: parsedCookie.name,
-      value: parsedCookie.value,
-      domain: "creator.douyin.com",
-      path: "/",
-      secure: true,
+    const targets = await fetch(`${cdpVersionUrl}/json/list`).then((response) => {
+      if (!response.ok) throw new Error(`CDP list responded with ${response.status}`);
+      return response.json() as Promise<Array<{ id: string; webSocketDebuggerUrl?: string }>>;
     });
+    const page = targets.find((entry) => entry.id === targetId);
+    const pageWsUrl = String(page?.webSocketDebuggerUrl || "").trim();
+    if (!pageWsUrl) throw new Error("CDP page websocket unavailable.");
+
+    pageSocket = await openCollectorWebSocket(BrowserWebSocket, pageWsUrl, "page");
+    pageSender = createCollectorCdpSender(pageSocket, "page");
+    await pageSender.send("Network.enable");
+    await pageSender.send("Page.enable");
+    for (const parsedCookie of parseCookieHeader(cookie)) {
+      await pageSender.send("Network.setCookie", {
+        name: parsedCookie.name,
+        value: parsedCookie.value,
+        domain: "creator.douyin.com",
+        path: "/",
+        secure: true,
+      });
+    }
+
+    await pageSender.send("Page.navigate", { url });
+    await sleep(10_000);
+    await pageSender.send("Runtime.evaluate", {
+      expression: `(() => {
+        const trigger = [...document.querySelectorAll('button,div,span')].find((node) => /确认/.test(node.textContent || ""));
+        if (trigger) trigger.click();
+        return true;
+      })()`,
+      returnByValue: true,
+    });
+    await sleep(2_000);
+
+    const evaluated = await pageSender.send("Runtime.evaluate", {
+      expression: "document.body ? document.body.innerText : ''",
+      returnByValue: true,
+    });
+    return String(evaluated?.result?.result?.value || "").trim();
+  } finally {
+    if (targetId && browserSocket) {
+      try {
+        browserSocket.send(JSON.stringify({
+          id: Date.now(),
+          method: "Target.closeTarget",
+          params: { targetId },
+        }));
+      } catch { /* 忽略关闭异常 */ }
+    }
+    pageSender?.dispose();
+    browserSender?.dispose();
+    try { pageSocket?.close(); } catch { /* 忽略关闭异常 */ }
+    try { browserSocket?.close(); } catch { /* 忽略关闭异常 */ }
   }
-
-  await sendPage("Page.navigate", { url });
-  await new Promise((resolve) => setTimeout(resolve, 10_000));
-  await sendPage("Runtime.evaluate", {
-    expression: `(() => {
-      const trigger = [...document.querySelectorAll('button,div,span')].find((node) => /确认/.test(node.textContent || ""));
-      if (trigger) trigger.click();
-      return true;
-    })()`,
-    returnByValue: true,
-  });
-  await new Promise((resolve) => setTimeout(resolve, 2_000));
-
-  const evaluated = await sendPage("Runtime.evaluate", {
-    expression: "document.body ? document.body.innerText : ''",
-    returnByValue: true,
-  });
-  const text = String(evaluated?.result?.result?.value || "").trim();
-
-  pageSocket.close();
-  browserSocket.close();
-  return text;
 }
 
 function parseDouyinCreatorPageMetric(text: string) {
@@ -2147,7 +2214,8 @@ async function fetchXhsCommentSamples(
     if (!response.ok) return undefined;
     const payload = await response.json();
     return extractXhsCommentSamples(payload, limit);
-  } catch {
+  } catch (error) {
+    rethrowCollectorAbort(error);
     return undefined;
   }
 }
@@ -3386,6 +3454,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
           pcursor = String(payload.data?.visionFeedRecommend?.pcursor || "").trim();
           if (!pcursor || !feeds.length) break;
         } catch (error) {
+          rethrowCollectorAbort(error);
           notes.push(`Kuaishou visionFeedRecommend cookie ${cookieIndex + 1} page ${page + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
           break;
         }
@@ -3448,6 +3517,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
             pcursor = extractKuaishouSearchCursor(payload);
             if (!pcursor || !list.length) break;
           } catch (error) {
+            rethrowCollectorAbort(error);
             notes.push(`Kuaishou search/feed cookie ${cookieIndex + 1} ${keyword} page ${page + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
             break;
           }
@@ -3510,6 +3580,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
           pcursor = extractKuaishouSearchUserCursor(payload);
           if (!pcursor || !users.length) break;
         } catch (error) {
+          rethrowCollectorAbort(error);
           notes.push(`Kuaishou search/user ${keyword} page ${page + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
           break;
         }
@@ -3601,6 +3672,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
           if (!profileCursor || !feedList.length) break;
         }
       } catch (error) {
+        rethrowCollectorAbort(error);
         notes.push(`Kuaishou public profile fallback ${creator.userId} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
@@ -3680,6 +3752,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
           pcursor = String(payload.data?.publicFeeds?.pcursor || "").trim();
           if (!pcursor || !list.length) break;
         } catch (error) {
+          rethrowCollectorAbort(error);
           notes.push(`Kuaishou publicFeeds ${principalId} page ${page + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
           break;
         }
@@ -3845,6 +3918,7 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
           items.push(...searchItems);
           notes.push(`Fetched ${searchItems.length} Toutiao search items for ${keyword} page ${pageIndex + 1}.`);
         } catch (error) {
+          rethrowCollectorAbort(error);
           requestCount += 1;
           notes.push(`Toutiao search ${keyword} page ${pageIndex + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -3987,63 +4061,86 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
 
 export async function collectPlatformTrends(
   platform: GrowthPlatform,
-  _options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal },
 ): Promise<PlatformTrendCollection> {
-  assertCollectorNotAborted();
-  switch (platform) {
-    case "bilibili":
-      return collectBilibili();
-    case "douyin":
-      return collectDouyin();
-    case "kuaishou":
-      return collectKuaishou();
-    case "toutiao":
-      return collectToutiao();
-    case "xiaohongshu":
-      return collectXiaohongshu();
-    case "weixin_channels":
-      // 视频号数据抓取即将启动 — 当前以 seed 模式占位，不采集，等微信公众号 API 打通后接入
-      return finalizeCollection(platform, "seed", [], ["weixin_channels: collector not yet configured — data ingestion roadmap Q3 2026."], {
-        collectorMode: "seed",
-        requestCount: 0,
-        pageDepth: 0,
-        targetPerRun: 0,
-        referenceMinItems: 0,
-        referenceMaxItems: 0,
-      });
-    default:
-      return finalizeCollection(platform, "seed", [], [`No live collector configured for ${platform}.`], {
-        collectorMode: "seed",
-        requestCount: 0,
-        pageDepth: 0,
-        targetPerRun: 0,
-        referenceMinItems: 0,
-        referenceMaxItems: 0,
-      });
-  }
+  return runWithOptionalCollectorAbortSignal(options?.signal, async () => {
+    assertCollectorNotAborted();
+    switch (platform) {
+      case "bilibili":
+        return collectBilibili();
+      case "douyin":
+        return collectDouyin();
+      case "kuaishou":
+        return collectKuaishou();
+      case "toutiao":
+        return collectToutiao();
+      case "xiaohongshu":
+        return collectXiaohongshu();
+      case "weixin_channels":
+        // 视频号数据抓取即将启动 — 当前以 seed 模式占位，不采集，等微信公众号 API 打通后接入
+        return finalizeCollection(platform, "seed", [], ["weixin_channels: collector not yet configured — data ingestion roadmap Q3 2026."], {
+          collectorMode: "seed",
+          requestCount: 0,
+          pageDepth: 0,
+          targetPerRun: 0,
+          referenceMinItems: 0,
+          referenceMaxItems: 0,
+        });
+      default:
+        return finalizeCollection(platform, "seed", [], [`No live collector configured for ${platform}.`], {
+          collectorMode: "seed",
+          requestCount: 0,
+          pageDepth: 0,
+          targetPerRun: 0,
+          referenceMinItems: 0,
+          referenceMaxItems: 0,
+        });
+    }
+  });
 }
 
 export async function collectTrendPlatforms(
   platforms: GrowthPlatform[],
-  options?: { signal?: AbortSignal },
+  options?: {
+    signal?: AbortSignal;
+    collectionSource?: GrowthCollectionSource;
+    /** 调用者已经持有全局 collection lane 时必须设为 true，避免同 lane 重入死锁。 */
+    serializedExternally?: boolean;
+  },
 ) {
   const normalized = Array.from(
     new Set(platforms.filter((platform): platform is GrowthPlatform => growthPlatformValues.includes(platform))),
   );
-  const results = await Promise.allSettled(
-    normalized.map((platform) => collectPlatformTrends(platform, options)),
-  );
+  if (options?.serializedExternally && normalized.length !== 1) {
+    throw new Error("growth_collection_external_lane_requires_single_platform");
+  }
   const collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>> = {};
   const errors: Partial<Record<GrowthPlatform, string>> = {};
 
-  results.forEach((result, index) => {
-    const platform = normalized[index];
-    if (result.status === "fulfilled") {
-      collections[platform] = result.value;
-    } else {
-      errors[platform] = result.reason instanceof Error ? result.reason.message : String(result.reason);
+  // 公共入口必须自己兜住串行契约；手动刷新与脚本不能绕过 scheduler/backfill
+  // 已使用的全局 lane。按平台逐个等待；普通平台失败记录后继续，取消/前台抢占立即停止。
+  for (const platform of normalized) {
+    try {
+      const collect = () => collectPlatformTrends(platform, { signal: options?.signal });
+      collections[platform] = options?.serializedExternally
+        ? await collect()
+        : await runInGrowthPlatformCollectionLane(
+          platform,
+          options?.collectionSource || "live",
+          collect,
+        );
+    } catch (error) {
+      if (
+        options?.signal?.aborted
+        || getCollectorAbortSignal()?.aborted
+        || isCollectorAbortError(error)
+        || isGrowthInteractivePriorityAbortError(error)
+      ) {
+        throw error;
+      }
+      errors[platform] = error instanceof Error ? error.message : String(error);
     }
-  });
+  }
 
   return { collections, errors };
 }

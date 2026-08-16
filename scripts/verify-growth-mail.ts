@@ -14,7 +14,20 @@ async function main() {
   }
 
   const collected = await collectTrendPlatforms(selectedPlatforms);
+  const failedPlatforms = selectedPlatforms.filter((platform) => (
+    collected.errors[platform] || !collected.collections[platform]?.items.length
+  ));
+  if (failedPlatforms.length) {
+    throw new Error(`growth_verify_collection_failed:${failedPlatforms.map((platform) => (
+      `${platform}:${collected.errors[platform] || "empty_collection"}`
+    )).join(",")}`);
+  }
   const store = await mergeTrendCollections(collected.collections);
+  for (const platform of selectedPlatforms) {
+    if (!store.collections[platform]?.items.length) {
+      throw new Error(`growth_verify_readback_empty:${platform}`);
+    }
+  }
   const exported = await exportTrendCollectionsCsv();
 
   await sendMailWithAttachments({

@@ -28,6 +28,11 @@ import {
   withAbortableTimeout,
 } from "./collectorAbort.js";
 import { runInGrowthPlatformCollectionLane } from "./platformCollectionLane";
+import { maybeCheckDouyinCredentialHealth } from "./douyinCredentialHealth";
+import {
+  hasActiveGrowthInteractiveWorkload,
+  isGrowthInteractivePriorityAbortError,
+} from "./growthWorkloadPriority";
 
 /** Fly 只调度仍在运营的三个远端平台；视频号由本机采集，快手/头条已退休。 */
 const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "bilibili", "xiaohongshu"];
@@ -42,9 +47,7 @@ const JITTER_MAX_MS = Math.max(
   Number(process.env.GROWTH_SCHEDULER_JITTER_MAX_MS || 0) || 0,
 );
 const SCHEDULER_INTERVAL_MINUTES = Math.max(5, Number(process.env.GROWTH_SCHEDULER_INTERVAL_MINUTES || 30) || 30);
-const BURST_INTERVAL_MINUTES = Math.max(5, Number(process.env.GROWTH_BURST_INTERVAL_MINUTES || 10) || 10);
-const LOW_YIELD_INTERVAL_MINUTES = Math.max(1, Number(process.env.GROWTH_BURST_LOW_YIELD_INTERVAL_MINUTES || 2) || 2);
-const LOW_YIELD_LIMIT = Math.max(1, Number(process.env.GROWTH_BURST_LOW_YIELD_LIMIT || 5) || 5);
+const BURST_INTERVAL_MINUTES = 15;
 const BURST_TRIGGER_MIN_COUNT = Math.max(6, Number(process.env.GROWTH_BURST_TRIGGER_MIN_COUNT || 10) || 10);
 const BURST_TRIGGER_GROWTH_RATIO = Math.max(0.1, Number(process.env.GROWTH_BURST_TRIGGER_GROWTH_RATIO || 0.2) || 0.2);
 const BURST_EXIT_DROP_RATIO = Math.max(0.05, Number(process.env.GROWTH_BURST_EXIT_DROP_RATIO || 0.3) || 0.3);
@@ -84,6 +87,10 @@ const PLATFORM_RUN_TIMEOUT_MS = Math.max(
   Number(process.env.GROWTH_PLATFORM_RUN_TIMEOUT_MS || 90 * 1000) || 90 * 1000,
 );
 const DOUYIN_MIN_RUN_TIMEOUT_MS = 180 * 1000;
+const COVER_BACKFILL_RUN_TIMEOUT_MS = Math.max(
+  30 * 1000,
+  Number(process.env.GROWTH_COVER_BACKFILL_RUN_TIMEOUT_MS || 90 * 1000) || 90 * 1000,
+);
 const STALE_SCHEDULER_FORCE_RUN_MS = Math.max(
   5 * 60 * 1000,
   Number(process.env.GROWTH_SCHEDULER_STALE_FORCE_RUN_MS || 20 * 60 * 1000) || 20 * 60 * 1000,
@@ -133,8 +140,9 @@ function readPlatformMinutesEnv(platform: GrowthPlatform, suffix: string, fallba
   return Number.isFinite(value) ? Math.max(1, value) : fallbackMinutes;
 }
 
-function getPlatformBurstIntervalMinutes(platform: GrowthPlatform) {
-  return readPlatformMinutesEnv(platform, "BURST_INTERVAL_MINUTES", BURST_INTERVAL_MINUTES);
+function getPlatformBurstIntervalMinutes(_platform: GrowthPlatform) {
+  // burst 是正式 15 分钟节奏；不再允许遗留平台级 secret 把某个平台改回旧频率。
+  return BURST_INTERVAL_MINUTES;
 }
 
 export function resolvePlatformRunTimeoutMs(
@@ -162,14 +170,6 @@ function getPlatformRunTimeoutMs(platform: GrowthPlatform) {
 
 function getPlatformBurstIntervalMs(platform: GrowthPlatform) {
   return getPlatformBurstIntervalMinutes(platform) * 60 * 1000;
-}
-
-function getPlatformLowYieldIntervalMinutes(platform: GrowthPlatform) {
-  return readPlatformMinutesEnv(platform, "BURST_LOW_YIELD_INTERVAL_MINUTES", LOW_YIELD_INTERVAL_MINUTES);
-}
-
-function getPlatformLowYieldIntervalMs(platform: GrowthPlatform) {
-  return getPlatformLowYieldIntervalMinutes(platform) * 60 * 1000;
 }
 
 function getPlatformBurstTriggerMinCount(platform: GrowthPlatform) {
@@ -260,10 +260,6 @@ function getBurstFrequencyLabel(platform: GrowthPlatform) {
   return `${getPlatformBurstIntervalMinutes(platform)} 分钟一次`;
 }
 
-function getLowYieldFrequencyLabel(platform: GrowthPlatform) {
-  return `低产出回退 / 每 ${getPlatformLowYieldIntervalMinutes(platform)} 分钟一次`;
-}
-
 function getForceBurstLabel(platform: GrowthPlatform) {
   if (runtimeBurstOverride === "manual" && runtimeBurstPlatformsOverride.has(platform)) {
     return `手动 burst / ${getPlatformBurstIntervalMinutes(platform)} 分钟一次`;
@@ -349,6 +345,7 @@ export function resolveNextRunPlan(params: {
   burstMode: boolean;
   burstStableRuns: number;
   burstLowYieldRuns: number;
+  burstControl?: "auto" | "manual" | "off";
 }) {
   if (isForceBurstActive(params.platform)) {
     return {
@@ -358,6 +355,19 @@ export function resolveNextRunPlan(params: {
       burstStableRuns: 0,
       burstLowYieldRuns: 0,
       burstEvent: params.burstMode ? ("stay" as const) : ("enter" as const),
+    };
+  }
+
+  // “全部关闭”与未勾选的手动平台都必须禁止自动重新进入 burst；此前高增量
+  // 仍会穿透 UI 控制重新开启。manual 被勾选的平台已在上方 force 分支处理。
+  if (params.burstControl === "off" || params.burstControl === "manual") {
+    return {
+      burstMode: false,
+      nextRunAt: nextScheduledRunIso(),
+      frequencyLabel: getSchedulerFrequencyLabel(),
+      burstStableRuns: 0,
+      burstLowYieldRuns: 0,
+      burstEvent: params.burstMode ? ("exit" as const) : ("none" as const),
     };
   }
 
@@ -376,11 +386,11 @@ export function resolveNextRunPlan(params: {
     const lowYieldRuns = isClearlyHigherThanPrevious(params.platform, params.currentCount, params.previousCount)
       ? 0
       : params.burstLowYieldRuns + 1;
-    const lowYieldMode = lowYieldRuns >= LOW_YIELD_LIMIT;
     return {
       burstMode: true,
-      nextRunAt: nextRunIso(lowYieldMode ? getPlatformLowYieldIntervalMs(params.platform) : getPlatformBurstIntervalMs(params.platform)),
-      frequencyLabel: lowYieldMode ? getLowYieldFrequencyLabel(params.platform) : getBurstFrequencyLabel(params.platform),
+      // burst 的正式节奏固定为 15 分钟；低产出只保留诊断计数，不再偷偷切成 2 分钟。
+      nextRunAt: nextRunIso(getPlatformBurstIntervalMs(params.platform)),
+      frequencyLabel: getBurstFrequencyLabel(params.platform),
       burstStableRuns: params.currentCount >= params.previousCount ? params.burstStableRuns + 1 : 0,
       burstLowYieldRuns: lowYieldRuns,
       burstEvent: "stay" as const,
@@ -423,26 +433,72 @@ function buildRetryDelayMs(failureCount: number) {
   return Math.min(RETRY_MAX_MS, RETRY_BASE_MS * Math.max(1, 2 ** Math.max(0, failureCount - 1)));
 }
 
-function isInTimeoutCooldown(state?: {
+export function resolveTimeoutCooldownGate(state?: {
   timeoutCooldownUntil?: string;
   nextRunAt?: string;
   lastError?: string;
-}): boolean {
-  if (!state) return false;
-  const cooldownUntilMs = state.timeoutCooldownUntil
-    ? new Date(state.timeoutCooldownUntil).getTime()
-    : 0;
-  if (cooldownUntilMs > Date.now()) return true;
-  // 兼容旧状态：只有 lastError 是超时、且 nextRunAt 仍在未来
-  if (
-    state.lastError &&
-    isSchedulerTimeoutOrAbortError(state.lastError) &&
-    state.nextRunAt &&
-    new Date(state.nextRunAt).getTime() > Date.now()
-  ) {
-    return true;
+  lastFailureAt?: string;
+  lastRunAt?: string;
+  timeoutStreak?: number;
+}, nowMs = Date.now()): {
+  active: boolean;
+  shouldNormalize: boolean;
+  normalizedUntilMs?: number;
+} {
+  const hasPersistedTimeout = Boolean(
+    state?.timeoutCooldownUntil
+      && (state.timeoutStreak || 0) > 0,
+  );
+  if (!state || (!hasPersistedTimeout && !isSchedulerTimeoutOrAbortError(state.lastError))) {
+    return { active: false, shouldNormalize: false };
   }
-  return false;
+  const persistedUntilMs = state.timeoutCooldownUntil
+    ? new Date(state.timeoutCooldownUntil).getTime()
+    : state.nextRunAt
+      ? new Date(state.nextRunAt).getTime()
+      : 0;
+  if (!Number.isFinite(persistedUntilMs) || persistedUntilMs <= nowMs) {
+    return { active: false, shouldNormalize: false };
+  }
+  const failedAtMs = state.lastFailureAt
+    ? new Date(state.lastFailureAt).getTime()
+    : state.lastRunAt
+      ? new Date(state.lastRunAt).getTime()
+      : NaN;
+  const policyUntilMs = Number.isFinite(failedAtMs)
+    ? failedAtMs + buildTimeoutCooldownMs(state.timeoutStreak || 1)
+    : nowMs + buildTimeoutCooldownMs(state.timeoutStreak || 1);
+  const normalizedUntilMs = Math.min(persistedUntilMs, policyUntilMs);
+  return {
+    active: normalizedUntilMs > nowMs,
+    shouldNormalize: normalizedUntilMs !== persistedUntilMs || !state.timeoutCooldownUntil,
+    normalizedUntilMs,
+  };
+}
+
+function isInTimeoutCooldown(state?: Parameters<typeof resolveTimeoutCooldownGate>[0]): boolean {
+  return resolveTimeoutCooldownGate(state).active;
+}
+
+/**
+ * 核心 collection 已 merge 后，封面回补只属于非核心增强。即使为前台任务主动
+ * abort，也必须保留本轮真实新增并继续写 lastSuccess/lastAdded，避免 24h 假告警。
+ */
+export async function runPostMergeCoverEnhancement<T>(
+  work: () => Promise<T>,
+): Promise<
+  | { ok: true; value: T }
+  | { ok: false; error: unknown; priorityAborted: boolean }
+> {
+  try {
+    return { ok: true, value: await work() };
+  } catch (error) {
+    return {
+      ok: false,
+      error,
+      priorityAborted: isGrowthInteractivePriorityAbortError(error),
+    };
+  }
 }
 
 async function runPlatformTask(platform: GrowthPlatform) {
@@ -473,15 +529,34 @@ async function runPlatformTask(platform: GrowthPlatform) {
       (signal) => collectPlatformTrends(platform, { signal }),
       getPlatformRunTimeoutMs(platform),
       `[growth.scheduler] ${platform}`,
+      { abortWhen: hasActiveGrowthInteractiveWorkload },
     );
     let mergedStore = await mergeTrendCollections({ [platform]: collection });
     // 封面回填会再执行一次 merge；第二次通常 addedCount=0，不能覆盖真实抓取轮的新增量。
     const collectionMergeStat = mergedStore.mergeStats?.[platform];
     const mergedBeforeBackfill = mergedStore.collections[platform];
     if (mergedBeforeBackfill) {
-      const backfilled = await backfillRecentTrendCoverUrls(platform, mergedBeforeBackfill);
-      if (backfilled.resolved > 0) {
-        mergedStore = await mergeTrendCollections({ [platform]: backfilled.collection });
+      const coverOutcome = await runPostMergeCoverEnhancement(() => withAbortableTimeout(
+          (signal) => backfillRecentTrendCoverUrls(
+            platform,
+            mergedBeforeBackfill,
+            Date.now(),
+            { signal },
+          ),
+          COVER_BACKFILL_RUN_TIMEOUT_MS,
+          `[growth.scheduler.cover-backfill] ${platform}`,
+          { abortWhen: hasActiveGrowthInteractiveWorkload },
+        ));
+      if (coverOutcome.ok) {
+        if (coverOutcome.value.resolved > 0) {
+          mergedStore = await mergeTrendCollections({ [platform]: coverOutcome.value.collection });
+        }
+      } else if (coverOutcome.priorityAborted) {
+        console.info(`[growth.scheduler] ${platform} 核心数据已提交；封面回补为前台任务让路。`);
+      } else {
+        // 封面是非核心增强：独立超时/网络失败时保留已提交的真实趋势数据，
+        // 但该阶段自身仍会 abort，不能留下孤儿公网请求。
+        console.warn(`[growth.scheduler] cover backfill skipped for ${platform}:`, coverOutcome.error);
       }
     }
     const currentCount = collection.stats?.itemCount || collection.items.length;
@@ -495,6 +570,7 @@ async function runPlatformTask(platform: GrowthPlatform) {
       burstMode: Boolean(currentState?.burstMode),
       burstStableRuns: currentState?.burstStableRuns || 0,
       burstLowYieldRuns: currentState?.burstLowYieldRuns || 0,
+      burstControl: runtimeBurstOverride,
     });
     const addedCount = collectionMergeStat?.addedCount || 0;
     await updateTrendSchedulerState(platform, {
@@ -553,6 +629,21 @@ async function runPlatformTask(platform: GrowthPlatform) {
       });
     }
   } catch (error) {
+    if (isGrowthInteractivePriorityAbortError(error)) {
+      const current = (await readTrendSchedulerState())[platform];
+      await updateTrendSchedulerState(platform, {
+        nextRunAt: nowShanghaiIso(Date.now() + 5 * 60_000),
+        timeoutStreak: 0,
+        timeoutCooldownUntil: undefined,
+        burstMode: false,
+        burstTriggeredAt: undefined,
+        lastError: undefined,
+        failureCount: current?.failureCount || 0,
+        lastFrequencyLabel: "前台平台任务优先，后台采集已暂停",
+      });
+      console.info(`[growth.scheduler] ${platform} 已为前台平台任务让路。`);
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     const current = (await readTrendSchedulerState())[platform];
     const failureCount = (current?.failureCount || 0) + 1;
@@ -617,9 +708,34 @@ async function runPlatform(platform: GrowthPlatform) {
 async function runDuePlatforms() {
   if (runInFlight) return;
   if (!isLiveWindow()) return;
+  if (await hasActiveGrowthInteractiveWorkload()) return;
   runInFlight = true;
   try {
     let scheduler = await readTrendSchedulerState();
+    // PR #1250 前的状态可能把超时 nextRunAt 写到四小时以后。仅改新失败的常量不会
+    // 迁移这批磁盘状态；每轮先按“失败时间 + 10 分钟”钳位，已过期的立即恢复可执行。
+    let normalizedLegacyCooldown = false;
+    for (const platform of PRIORITY_PLATFORMS) {
+      const state = scheduler[platform];
+      const gate = resolveTimeoutCooldownGate(state);
+      if (!gate.shouldNormalize) continue;
+      await updateTrendSchedulerState(platform, {
+        nextRunAt: gate.active && gate.normalizedUntilMs
+          ? nowShanghaiIso(gate.normalizedUntilMs)
+          : nowShanghaiIso(),
+        timeoutCooldownUntil: gate.active && gate.normalizedUntilMs
+          ? nowShanghaiIso(gate.normalizedUntilMs)
+          : undefined,
+        timeoutStreak: gate.active ? state?.timeoutStreak : 0,
+        lastFrequencyLabel: gate.active && gate.normalizedUntilMs
+          ? formatTimeoutCooldownLabel(Math.max(0, gate.normalizedUntilMs - Date.now()))
+          : getSchedulerFrequencyLabel(),
+      });
+      normalizedLegacyCooldown = true;
+    }
+    if (normalizedLegacyCooldown) {
+      scheduler = await readTrendSchedulerState();
+    }
     if (runtimeModeOverride === "live") {
       let touched = false;
       for (const platform of PRIORITY_PLATFORMS) {
@@ -706,6 +822,8 @@ async function shouldBootstrapBackfill() {
 }
 
 function shouldRunBackfillWorkersNow() {
+  if (runtimeModeOverride === "live") return false;
+  if (runtimeModeOverride === "backfill") return true;
   return isBackfillWindow() || BACKFILL_FAST_START_ENABLED;
 }
 
@@ -734,6 +852,12 @@ export async function bootstrapGrowthTrendScheduler() {
 
   await ensureGrowthStoreSplitGzipLayout().catch((error) => {
     console.warn("[growth.store] split+gzip bootstrap migration failed:", error);
+  });
+
+  // 凭证探针独立于平台采集和 backfill；读取持久化时间戳，24 小时内不会重复请求。
+  // fire-and-forget 避免登录态探针阻塞调度器启动。
+  void maybeCheckDouyinCredentialHealth().catch((error) => {
+    console.warn("[growth.douyin.credentials] bootstrap probe failed:", error);
   });
 
   const scheduler = await readTrendSchedulerState();
@@ -779,23 +903,28 @@ export async function bootstrapGrowthTrendScheduler() {
   }, SCHEDULER_BOOT_GRACE_MS);
 
   tickTimer = setInterval(() => {
-    refreshRuntimeModeOverride().catch((error) => {
-      console.warn("[growth.scheduler] runtime mode refresh failed:", error);
-    });
-    if (shouldRunBackfillWorkersNow()) {
-      bootstrapGrowthTrendBackfillWorker().catch((error) => {
-        console.warn("[growth.backfill] periodic bootstrap failed:", error);
+    void (async () => {
+      await refreshRuntimeModeOverride().catch((error) => {
+        console.warn("[growth.scheduler] runtime mode refresh failed:", error);
       });
-      bootstrapGrowthTrendLiveBackfillWorker().catch((error) => {
-        console.warn("[growth.backfill.live] periodic bootstrap failed:", error);
+      if (shouldRunBackfillWorkersNow()) {
+        bootstrapGrowthTrendBackfillWorker().catch((error) => {
+          console.warn("[growth.backfill] periodic bootstrap failed:", error);
+        });
+        bootstrapGrowthTrendLiveBackfillWorker().catch((error) => {
+          console.warn("[growth.backfill.live] periodic bootstrap failed:", error);
+        });
+      } else {
+        stopGrowthTrendBackfillWorker();
+        stopGrowthTrendLiveBackfillWorker();
+      }
+      runDuePlatforms().catch((error) => {
+        console.warn("[growth.scheduler] periodic tick failed:", error);
       });
-    } else {
-      stopGrowthTrendBackfillWorker();
-      stopGrowthTrendLiveBackfillWorker();
-    }
-    runDuePlatforms().catch((error) => {
-      console.warn("[growth.scheduler] periodic tick failed:", error);
-    });
+      void maybeCheckDouyinCredentialHealth().catch((error) => {
+        console.warn("[growth.douyin.credentials] periodic probe failed:", error);
+      });
+    })();
   }, CHECK_INTERVAL_MS);
 }
 
