@@ -92,7 +92,7 @@ Your ONLY task is to translate and elevate the following Chinese visual brief in
 STRICT REQUIREMENTS:
 1. Tone & Style: Use elegant, cinematic, and evocative vocabulary.
 2. Elements: Explicitly describe lighting (e.g., chiaroscuro, volumetric), mood (e.g., ethereal, melancholic), textures, and camera angles (e.g., extreme wide shot, hyper-realistic).
-3. Do not explain your response. Output ONLY the English image prompt. Make it rich, comma-separated or beautifully structured for an image generator (like Imagen 4 Ultra or Midjourney).`;
+3. Do not explain your response. Output ONLY the English image prompt. Make it rich, comma-separated or beautifully structured for a modern image generator.`;
 
 function readCopywritingTemperature(): number {
   const raw = process.env.GEMINI_35_FLASH_COPYWRITING_TEMPERATURE;

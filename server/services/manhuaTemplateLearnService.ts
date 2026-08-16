@@ -25,6 +25,7 @@ import {
   MANHUA_LEARN_ANALYSIS_TARGET,
   MANHUA_LEARN_BATCH_DEFAULT,
   MANHUA_LEARN_CHECKPOINT_SEC,
+  MANHUA_LEARN_CONSECUTIVE_FAIL_STOP,
   MANHUA_LEARN_EPISODE_RETRY_MAX,
   MANHUA_LEARN_MAX_DURATION_SEC,
   canEmitManhuaLearnAnalysis,
@@ -34,6 +35,7 @@ import {
   isManhuaLearnEpisodeComplete,
   mergeEpisodeDigestsIntoProposal,
   mergeManhuaLearnChunkIntoDigest,
+  nextManhuaLearnEpisodeFailureStreak,
   pickNextEpisodeIndexes,
   pickManhuaLearnEpisodeGapMs,
   pickRetrySkippedEpisodeIndexes,
@@ -61,11 +63,12 @@ import {
   type ManhuaViralTemplateLane,
 } from "../../shared/manhuaViralTemplateBank.js";
 import {
-  analyzeManhuaDramaAudioWithGemini,
-  isGeminiAudioAvailable,
+  analyzeManhuaDramaAudioWithFallback,
+  isManhuaAudioFailureRetryable,
+  isManhuaDramaAudioAvailable,
   type ManhuaDramaAudioScanResult,
 } from "../gemini-audio.js";
-import { analyzeManhuaTemplateFramesWithTerra } from "../manhuaTemplateFrameVision.js";
+import { analyzeManhuaTemplateFrames } from "../manhuaTemplateFrameVision.js";
 import { assertManhuaPreviewFramesHaveMotion } from "./manhuaFramePreviewGuard.js";
 import {
   extractRemoteManhuaAudio,
@@ -282,12 +285,7 @@ function stripBookTitleMarks(raw?: string | null): string {
   return m && !m[1].includes("《") && !m[1].includes("》") ? m[1].trim() : t;
 }
 
-/**
- * A/B 隔离（审查必须修）：provider 进 seriesKey 命名空间。
- * GPT 档 key 与存量完全兼容；Claude 档独立 key = 独立 digest/progress/提案存储，
- * 两档互不复用互不覆盖（Claude 轮从头下片读帧，实验组干净），
- * 也不再需要 _claude 后缀 hack（快照/批准按 key 天然取对版本）。
- */
+/** 旧 Claude/DeepSeek 进度保留原命名空间；所有新任务在调用前已归一为 GPT 主命名空间。 */
 function seriesKeyFrom(input: {
   url: string;
   mixId?: string;
@@ -339,7 +337,7 @@ async function resolveManhuaSeriesKey(input: {
         return read.value.seriesKey || existingKey;
       }
     }
-    // 旧数据未匹配时，新剧改用「剧名+模型档」的确定 key：
+    // 旧数据未匹配时，新剧改用「剧名+历史模型档」的确定 key：
     // 同名大合集/分集即使 URL、mixId 不同，并发首次学习也落在同一系列。
     const ns =
       input.learnLlm === "claude" ? ":claude" : input.learnLlm === "deepseek" ? ":deepseek" : "";
@@ -1017,7 +1015,7 @@ async function learnOneEpisodeChunk(input: {
     outputPath: audioPath,
   });
 
-  if (!isGeminiAudioAvailable()) throw new Error("语音分析模型不可用，本分片未计入已学");
+  if (!isManhuaDramaAudioAvailable()) throw new Error("语音分析服务未配置，本分片未计入已学");
   const audioBuf = await fs.readFile(audioPath);
   if (audioBuf.length > 18 * 1024 * 1024) {
     throw new Error("语音分片超过分析上限，本分片未计入已学");
@@ -1025,12 +1023,13 @@ async function learnOneEpisodeChunk(input: {
   await assertManhuaLearnControl(input);
   let geminiScan: ManhuaDramaAudioScanResult;
   try {
-    geminiScan = await analyzeManhuaDramaAudioWithGemini({
+    geminiScan = await analyzeManhuaDramaAudioWithFallback({
       audioBase64: audioBuf.toString("base64"),
       mimeType: "audio/mpeg",
     });
-  } catch {
-    throw new Error("语音分析失败，本分片未计入已学");
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "语音分析失败";
+    throw new Error(`${reason}，本分片未计入已学`);
   }
   if (!String(geminiScan.transcriptSummary || "").trim() && !geminiScan.sections?.length) {
     throw new Error("语音分析没有产出可用内容，本分片未计入已学");
@@ -1101,6 +1100,7 @@ async function learnOneEpisodeChunk(input: {
     visualZh: `关键帧 @${t.toFixed(1)}s`,
   }));
   const sceneHints: string[] = [];
+  let seriesDraftEvidence: ManhuaLearnEpisodeChunk["seriesDraftEvidence"];
 
   await input.onProgress?.(
     MANHUA_LEARN_STAGE.vision,
@@ -1111,16 +1111,13 @@ async function learnOneEpisodeChunk(input: {
     ),
   );
   // 读帧 provenance（审查必须修13）：真实尝试/成功分别记账，异常不再被吞成「像成功」
-  const { MANHUA_TEMPLATE_FRAME_VISION_MODEL, MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL } = await import(
+  const { MANHUA_TEMPLATE_FRAME_VISION_MODEL } = await import(
     "../../shared/manhuaTemplateLearnFrameVision.js"
   );
-  const visionProvider = input.learnLlm === "claude" ? "anthropic" : "openai";
+  const visionProvider = "openai";
   const visionProvenance: NonNullable<ManhuaLearnEpisodeChunk["vision"]> = {
     provider: visionProvider,
-    model:
-      visionProvider === "anthropic"
-        ? MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL
-        : MANHUA_TEMPLATE_FRAME_VISION_MODEL,
+    model: MANHUA_TEMPLATE_FRAME_VISION_MODEL,
     attempted: false,
     success: false,
   };
@@ -1159,7 +1156,7 @@ async function learnOneEpisodeChunk(input: {
       };
       visionProvenance.attempted = true;
       await assertManhuaLearnControl(input);
-      const vision = await analyzeManhuaTemplateFramesWithTerra({
+      const vision = await analyzeManhuaTemplateFrames({
         frames,
         titleHint: `${input.titleHint} · ${input.ep.title} · ${rangeZh}`,
         durationSec: chunkLen,
@@ -1167,6 +1164,7 @@ async function learnOneEpisodeChunk(input: {
         climaxNotes: plan.climaxWindows.map((w) => w.reasonZh),
         fallbackLane: draft.laneZh,
         learnProvider: input.learnLlm,
+        requestId: `manhua-frame-${input.seriesKey}-${input.ep.index}-${Math.round(input.startSec)}-${Math.round(input.endSec)}`,
         abortSignal: input.abortSignal,
       });
       await assertManhuaLearnControl(input);
@@ -1175,6 +1173,15 @@ async function learnOneEpisodeChunk(input: {
       const filled = applyFrameVisionToProposal(draft, vision);
       if (filled) {
         hookNoteZh = filled.hook3sZh;
+        seriesDraftEvidence = {
+          laneZh: filled.laneZh,
+          summaryZh: filled.summaryZh,
+          castShape: {
+            leadDesireZh: filled.castShape.leadDesireZh,
+            pressureZh: filled.castShape.pressureZh,
+            foilZh: filled.castShape.foilZh,
+          },
+        };
         beatHints = filled.beatGrid.map((b) => ({
           ...b,
           // 读帧若返回相对秒，叠回绝对时间；已是绝对则保持
@@ -1184,6 +1191,8 @@ async function learnOneEpisodeChunk(input: {
               : Math.round(Number(b.atSec) || 0),
         }));
         sceneHints.push(...(filled.scenePoolHints || []));
+      } else {
+        throw new Error("关键帧结果未能生成可聚合的系列底稿结构");
       }
     } else {
       throw new Error("高密度抽帧没有可供视觉分析的画面");
@@ -1209,6 +1218,7 @@ async function learnOneEpisodeChunk(input: {
     beatHints,
     climaxNotes: plan.climaxWindows.map((w) => w.reasonZh).slice(0, 6),
     sceneHints: sceneHints.slice(0, 8),
+    seriesDraftEvidence,
     learnedAt: new Date().toISOString(),
     previewFrameGcsUris: previewFrameGcsUris.length ? previewFrameGcsUris : undefined,
     audioAnalysis,
@@ -1378,6 +1388,7 @@ async function learnOneEpisode(input: {
             MANHUA_LEARN_STAGE.failed,
             `第 ${input.ep.index} 集分片失败（${attempt}/${retryMax}）：${lastErrZh}`,
           );
+          if (!isManhuaAudioFailureRetryable(lastErrZh)) break;
         }
       }
       if (!chunk) {
@@ -1431,157 +1442,47 @@ async function learnOneEpisode(input: {
   }
 }
 
-/**
- * 停止时润色（2026-08-11 用户拍板）：无论学到几集、正常收尾、手动叫停还是失败停止，
- * 结束那一刻统一对已学摘要跑一次模型润色并落盘等批准；润色失败保留启发式稿（degraded）。
- * 历史「学了但没落盘提案」的系列也走这里补账。
- */
-async function polishAndPersistManhuaProposal(input: {
+function isManhuaProposalSeriesAggregationReady(
+  proposal: ManhuaViralTemplateCard,
+): boolean {
+  return proposal.provenance?.seriesAggregation?.success === true
+    // 旧提案兼容：迁移前只有 proposalPolish 标记，读取时不强制重跑模型。
+    || proposal.provenance?.proposalPolish?.success === true;
+}
+
+/** 关键帧 API 已同时产出底稿结构；系列结束只做确定性聚合与落盘，不再调用第二次模型。 */
+async function aggregateAndPersistManhuaProposal(input: {
   seriesKey: string;
   prog: ManhuaLearnSeriesProgress;
   digests: ManhuaLearnEpisodeDigest[];
-  learnLlm: ManhuaTemplateLearnLlmProvider;
-  abortSignal?: AbortSignal;
 }): Promise<{
   proposal: ManhuaViralTemplateCard;
   proposalGcsUri: string;
-  polishOk: boolean;
+  aggregationOk: boolean;
   visionOk: boolean;
 }> {
-  const { seriesKey, prog, digests, learnLlm } = input;
-  let proposal = mergeEpisodeDigestsIntoProposal({
+  const { seriesKey, prog, digests } = input;
+  const proposalBase = mergeEpisodeDigestsIntoProposal({
     seriesKey,
     titleHint: prog.titleHint,
     sourceUrl: prog.sourceUrl,
-    digests: digests.slice(0, MANHUA_LEARN_ANALYSIS_TARGET),
+    digests,
   });
-  if (!proposal) throw new Error("合成提案失败");
-
-  let polishOk = false;
-  let polishModelUsed = "";
-  try {
-    const { invokeLLM, extractJsonString } = await import("../_core/llm.js");
-    const {
-      MANHUA_TEMPLATE_FRAME_VISION_MODEL,
-      MANHUA_TEMPLATE_FRAME_VISION_REASONING,
-      MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL,
-      MANHUA_TEMPLATE_LEARN_DEEPSEEK_MODEL,
-    } = await import("../../shared/manhuaTemplateLearnFrameVision.js");
-    const isClaude = learnLlm === "claude";
-    const isDeepseek = learnLlm === "deepseek";
-    const polishMessages = [
-      {
-        role: "system" as const,
-        content:
-          "你根据多集漫剧学习摘要，输出一张中性节奏模板 JSON（nameZh,laneZh,summaryZh,hook3sZh,beatGrid,scenePoolHints,castShape）。禁止外部剧名/台词。只返回 JSON。",
-      },
-      {
-        role: "user" as const,
-        content: JSON.stringify({
-          titleHint: prog.titleHint,
-          digests: digests.slice(0, MANHUA_LEARN_ANALYSIS_TARGET).map((d) => ({
-            episodeIndex: d.episodeIndex,
-            hookNoteZh: d.hookNoteZh,
-            transcriptPreview: d.transcriptPreview.slice(0, 800),
-            climaxNotes: d.climaxNotes,
-            sceneHints: d.sceneHints,
-            beatHints: d.beatHints.slice(0, 6),
-          })),
-          seed: {
-            nameZh: proposal.nameZh,
-            laneZh: proposal.laneZh,
-            hook3sZh: proposal.hook3sZh,
-          },
-        }),
-      },
-    ];
-    // 调用前先记计划模型：失败时 provenance 也能说明「试过哪个模型」
-    polishModelUsed = isClaude
-      ? MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL
-      : isDeepseek
-        ? MANHUA_TEMPLATE_LEARN_DEEPSEEK_MODEL
-        : MANHUA_TEMPLATE_FRAME_VISION_MODEL;
-    const deepseekPolish = async () => {
-      // 经济档文本润色（2026-08-15 用户拍板）：必须显式关推理——默认深推理会把
-      // max_tokens 全烧成 reasoning_tokens，正文零字照扣钱（同日 PK 探针实锤）
-      const key = String(process.env.OPENROUTER_API_KEY || "").trim();
-      if (!key) throw new Error("deepseek polish 通道未配置");
-      const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${key}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://www.mvstudiopro.com",
-          "X-OpenRouter-Title": "MVStudioPro",
-        },
-        // 审查返工 5：runner 恒传 abortSignal，?? 写法让 180s 超时永不生效——双保险取消
-        signal: input.abortSignal
-          ? AbortSignal.any([input.abortSignal, AbortSignal.timeout(180_000)])
-          : AbortSignal.timeout(180_000),
-        body: JSON.stringify({
-          model: MANHUA_TEMPLATE_LEARN_DEEPSEEK_MODEL,
-          temperature: 0.3,
-          // 推理开 medium + 16K 预算（2026-08-15 用户复核口径：预算给足，推理照开也便宜）
-          max_tokens: 16_384,
-          response_format: { type: "json_object" },
-          reasoning: { effort: "medium" },
-          // 审查返工 6：强制只路由到支持 reasoning/response_format 的供应商
-          provider: { require_parameters: true },
-          messages: polishMessages,
-        }),
-      });
-      const raw = await r.text();
-      if (!r.ok) throw new Error(`deepseek polish HTTP ${r.status}: ${raw.slice(0, 120)}`);
-      return JSON.parse(raw) as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }> };
-    };
-    const resp = isDeepseek ? await deepseekPolish() : await invokeLLM({
-      model: "pro",
-      provider: isClaude ? "anthropic" : "openai",
-      modelName: isClaude ? MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL : MANHUA_TEMPLATE_FRAME_VISION_MODEL,
-      reasoningEffort: MANHUA_TEMPLATE_FRAME_VISION_REASONING,
-      max_tokens: 4096,
-      abortSignal: input.abortSignal,
-      // claude-opus-5 不收采样控件与 response_format，仅 GPT 路径带
-      ...(isClaude ? {} : { temperature: 0.3, response_format: { type: "json_object" as const } }),
-      messages: polishMessages,
-    });
-    const finishReason = String(resp.choices?.[0]?.finish_reason || "");
-    if (finishReason === "max_tokens" || finishReason === "length") {
-      throw new Error("polish_truncated");
-    }
-    const raw = String(resp.choices?.[0]?.message?.content || "");
-    const parsed = JSON.parse(extractJsonString(raw)) as Record<string, unknown>;
-    const polished = parseManhuaViralTemplateCard({
-      ...proposal,
-      ...parsed,
-      id: proposal.id,
-      status: "proposed",
-      sourceRefs: proposal.sourceRefs,
-    });
-    if (polished) {
-      proposal = polished;
-      polishOk = true;
-    }
-  } catch (e) {
-    console.warn(
-      "[manhuaTemplateLearn] polish failed, keep heuristic:",
-      e instanceof Error ? e.message : e,
-    );
-  }
-
-  // provenance 落盘（审查必须修13）：读帧与润色分开记，快照/no-batch/UI 同源消费
+  if (!proposalBase) throw new Error("合成提案失败");
   const frameVisionAgg = aggregateDigestFrameVision(digests);
-  proposal = {
-    ...proposal,
+  const sourceChunks = digests.reduce(
+    (count, digest) => count + (digest.chunks || []).filter((chunk) => chunk.seriesDraftEvidence).length,
+    0,
+  );
+  const aggregationOk = sourceChunks > 0 && (frameVisionAgg?.successChunks ?? 0) > 0;
+  const proposal = {
+    ...proposalBase,
     provenance: {
       frameVision: frameVisionAgg,
-      proposalPolish: {
-        provider:
-          learnLlm === "claude" ? "anthropic" : learnLlm === "deepseek" ? "deepseek" : "openai",
-        model: polishModelUsed,
-        attempted: true,
-        success: polishOk,
-        degraded: polishOk ? undefined : true,
+      seriesAggregation: {
+        mode: "frame_vision_deterministic" as const,
+        sourceChunks,
+        success: aggregationOk,
       },
     },
   };
@@ -1592,7 +1493,7 @@ async function polishAndPersistManhuaProposal(input: {
   return {
     proposal,
     proposalGcsUri,
-    polishOk,
+    aggregationOk,
     visionOk: (frameVisionAgg?.successChunks ?? 0) > 0,
   };
 }
@@ -1668,8 +1569,8 @@ export async function runManhuaTemplateLearn(
   }
 
   const batchSize = clampManhuaLearnBatchSize(input.batchSize ?? MANHUA_LEARN_BATCH_DEFAULT);
-  const learnLlm = input.learnLlm || resolveManhuaTemplateLearnLlmProvider(
-    process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER,
+  const learnLlm = resolveManhuaTemplateLearnLlmProvider(
+    input.learnLlm || process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER,
   );
   // 列表接口可能才能回填真剧名；先用临时 key 建工作目录，
   // 取到 titleHint 后再按剧名核对已有系列。
@@ -1867,35 +1768,32 @@ export async function runManhuaTemplateLearn(
           proposalGcsUri = `gs://${gcsBucketHint()}/${proposalObjectName}`;
           proposal = null;
           visionFilled =
-            existingParsed.provenance?.proposalPolish?.success === true &&
+            isManhuaProposalSeriesAggregationReady(existingParsed) &&
             (existingParsed.provenance?.frameVision?.successChunks ?? 0) > 0;
           noBatchMessage =
             existingParsed.status === "approved"
               ? `该系列模板已批准进库（累计 ${digests.length} 集），无需重复批准。`
               : `该系列提案此前已被拒绝（累计 ${digests.length} 集）；如需重出提案请继续学新集。`;
-        } else if (existingParsed && existingParsed.provenance?.proposalPolish?.success === true) {
+        } else if (existingParsed && isManhuaProposalSeriesAggregationReady(existingParsed)) {
           proposal = existingParsed;
           proposalGcsUri = `gs://${gcsBucketHint()}/${proposalObjectName}`;
-          // provenance 诚实化：落盘卡说了算；「模型已填」须润色成功且读帧真实成功过
+          // provenance 诚实化：落盘卡说了算；关键帧结构须已成功聚合。
           visionFilled =
             (existingParsed.provenance?.frameVision?.successChunks ?? 0) > 0;
           noBatchMessage = `已累计 ${digests.length} 集，分析提案已就绪（网页可预览后再决定是否进库）。`;
         } else {
-          // 无卡或历史卡从未润色成功（老门槛年代欠的账 / 异常终止没走到收尾）：
-          // 停止时润色拍板——这次统一补润色落盘，让用户能批准入库
-          const polished = await polishAndPersistManhuaProposal({
+          // 无卡或历史卡尚未聚合：用已落盘关键帧字段确定性生成系列底稿，零额外模型调用。
+          const aggregated = await aggregateAndPersistManhuaProposal({
             seriesKey,
             prog,
             digests,
-            learnLlm,
-            abortSignal: input.abortSignal,
           });
-          proposal = polished.proposal;
-          proposalGcsUri = polished.proposalGcsUri;
-          visionFilled = polished.polishOk && polished.visionOk;
-          noBatchMessage = polished.polishOk
-            ? `已累计 ${digests.length} 集，总分析已补润色落盘，可预览后决定是否进库。`
-            : `已累计 ${digests.length} 集，总分析已落盘（模型润色未成功，为启发式稿；重跑可再试）。`;
+          proposal = aggregated.proposal;
+          proposalGcsUri = aggregated.proposalGcsUri;
+          visionFilled = aggregated.aggregationOk && aggregated.visionOk;
+          noBatchMessage = aggregated.aggregationOk
+            ? `已累计 ${digests.length} 集，关键帧结构已聚合为系列底稿，可预览后决定是否进库。`
+            : `已累计 ${digests.length} 集，但旧分集缺少可聚合的关键帧结构；已保留启发式底稿。`;
         }
         let proposalReadUrl: string | undefined;
         try {
@@ -1952,8 +1850,9 @@ export async function runManhuaTemplateLearn(
     const byIndex = new Map(listed.map((e) => [e.index, e]));
     const batchLearnedIndexes: number[] = [];
     const episodeFailNotes: string[] = [];
-    // 手动叫停/abort：跳出学习循环但仍走收尾润色（停止时润色拍板）
+    // 手动叫停/abort：跳出学习循环但仍用已落盘关键帧字段聚合系列底稿。
     let cancelledMidRun = false;
+    let consecutiveEpisodeFailures = 0;
     // 本轮真实开下的集数（用于集间礼貌间隔：第一集不等，跳过/已学过不计）
     let downloadedThisRun = 0;
     for (const idx of batchIndexes) {
@@ -1978,6 +1877,10 @@ export async function runManhuaTemplateLearn(
           await writeJsonGcs(episodeObjectName(seriesKey, idx), repaired);
           await input.onEpisodeCheckpoint?.(toDigestPreview(repaired));
           batchLearnedIndexes.push(idx);
+          consecutiveEpisodeFailures = nextManhuaLearnEpisodeFailureStreak(
+            consecutiveEpisodeFailures,
+            "success",
+          ).count;
           continue;
         } catch (e) {
           if (e instanceof Error && e.name === "ManhuaLearnCancelledError") {
@@ -1988,6 +1891,18 @@ export async function runManhuaTemplateLearn(
           const errZh = mapManhuaLearnFetchError(e);
           episodeFailNotes.push(`第 ${idx} 集静帧补抽失败：${errZh}`);
           await progress(MANHUA_LEARN_STAGE.failed, `第 ${idx} 集静帧补抽失败：${errZh}`);
+          const failureState = nextManhuaLearnEpisodeFailureStreak(
+            consecutiveEpisodeFailures,
+            "failure",
+          );
+          consecutiveEpisodeFailures = failureState.count;
+          if (failureState.shouldStop) {
+            await progress(
+              MANHUA_LEARN_STAGE.failed,
+              `连续 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 集失败，本轮已自动停止`,
+            );
+            break;
+          }
           continue;
         }
       }
@@ -2047,6 +1962,10 @@ export async function runManhuaTemplateLearn(
           throw new Error(`第 ${idx} 集未学完（检查点已保留，可续学）`);
         }
         batchLearnedIndexes.push(idx);
+        consecutiveEpisodeFailures = nextManhuaLearnEpisodeFailureStreak(
+          consecutiveEpisodeFailures,
+          "success",
+        ).count;
         prog.learnedEpisodeIndexes = Array.from(
           new Set([...prog.learnedEpisodeIndexes, idx]),
         ).sort((a, b) => a - b);
@@ -2065,7 +1984,7 @@ export async function runManhuaTemplateLearn(
         );
       } catch (e) {
         if (e instanceof Error && e.name === "ManhuaLearnCancelledError") {
-          // 停止≠报废（2026-08-11 拍板）：不再学新集，转入收尾润色让用户批准入库
+          // 停止≠报废：不再学新集，转入零额外模型调用的系列底稿聚合。
           cancelledMidRun = true;
           await progress(
             MANHUA_LEARN_STAGE.persist,
@@ -2098,6 +2017,18 @@ export async function runManhuaTemplateLearn(
           errZh,
         );
         await progress(MANHUA_LEARN_STAGE.failed, note);
+        const failureState = nextManhuaLearnEpisodeFailureStreak(
+          consecutiveEpisodeFailures,
+          "failure",
+        );
+        consecutiveEpisodeFailures = failureState.count;
+        if (failureState.shouldStop) {
+          await progress(
+            MANHUA_LEARN_STAGE.failed,
+            `连续 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 集失败，本轮已自动停止`,
+          );
+          break;
+        }
       }
     }
 
@@ -2151,8 +2082,8 @@ export async function runManhuaTemplateLearn(
       MANHUA_LEARN_STAGE.analysis,
       manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.analysis),
     );
-    // 修12 三态读取 + 停止时润色（2026-08-11 拍板）：已批准/已拒不覆盖不重润；
-    // 已润色成功且本轮无新集 → 零模型成本沿用；其余（无卡/未润色/有新集）收尾润色一次
+    // 三态读取：已批准/已拒绝不覆盖；无新集且已有聚合卡零成本沿用；
+    // 有新集时只重新做程序聚合，不发第二次模型请求。
     const proposalObjectName = `manhua-template-learn/proposals/tpl_series_${seriesKey}.json`;
     const existingRead = await readJsonGcsDetailed<ManhuaViralTemplateCard>(proposalObjectName);
     if (existingRead.status === "error") {
@@ -2186,7 +2117,7 @@ export async function runManhuaTemplateLearn(
         proposal: null,
         proposalGcsUri: `gs://${gcsBucketHint()}/${proposalObjectName}`,
         visionFilled:
-          existingParsed.provenance?.proposalPolish?.success === true
+          isManhuaProposalSeriesAggregationReady(existingParsed)
           && (existingParsed.provenance?.frameVision?.successChunks ?? 0) > 0,
         messageZh: existingParsed.status === "approved"
           ? `${stoppedHint}本轮 +${batchLearnedIndexes.length} 集，该系列模板已批准进库，无需重复批准。${skippedHint}`
@@ -2195,31 +2126,28 @@ export async function runManhuaTemplateLearn(
     }
     let proposal: ManhuaViralTemplateCard;
     let proposalGcsUri: string;
-    let polishOk: boolean;
+    let aggregationOk: boolean;
     let visionOk: boolean;
     if (
       existingParsed
-      && existingParsed.provenance?.proposalPolish?.success === true
+      && isManhuaProposalSeriesAggregationReady(existingParsed)
       && batchLearnedIndexes.length === 0
     ) {
-      // 无新集且已有润色成卡：沿用，零模型成本
+      // 无新集且已有系列底稿：沿用，零模型成本。
       proposal = existingParsed;
       proposalGcsUri = `gs://${gcsBucketHint()}/${proposalObjectName}`;
-      polishOk = true;
+      aggregationOk = true;
       visionOk = (existingParsed.provenance?.frameVision?.successChunks ?? 0) > 0;
     } else {
-      const polished = await polishAndPersistManhuaProposal({
+      const aggregated = await aggregateAndPersistManhuaProposal({
         seriesKey,
         prog,
         digests,
-        learnLlm,
-        // 停止收尾时 abortSignal 已被停止按钮触发，传入会让润色立刻中止
-        abortSignal: cancelledMidRun ? undefined : input.abortSignal,
       });
-      proposal = polished.proposal;
-      proposalGcsUri = polished.proposalGcsUri;
-      polishOk = polished.polishOk;
-      visionOk = polished.visionOk;
+      proposal = aggregated.proposal;
+      proposalGcsUri = aggregated.proposalGcsUri;
+      aggregationOk = aggregated.aggregationOk;
+      visionOk = aggregated.visionOk;
     }
     let proposalReadUrl: string | undefined;
     try {
@@ -2234,10 +2162,10 @@ export async function runManhuaTemplateLearn(
       proposal,
       proposalGcsUri,
       proposalReadUrl,
-      // provenance 诚实化（审查必须修13）：「模型已填」= 读帧真实成功过 且 润色成功
-      visionFilled: polishOk && visionOk,
+      // 「模型已填」= 关键帧读取成功，且同次产出的底稿字段已由程序聚合。
+      visionFilled: aggregationOk && visionOk,
       messageZh: `${stoppedHint}本轮 +${batchLearnedIndexes.length} 集（未落视频文件），累计 ${learnedCount} 集，系列分析已可在网页预览${
-        polishOk ? "" : "（本轮为启发式草稿，模型润色未成功）"
+        aggregationOk ? "" : "（旧分集缺少可聚合的关键帧结构，保留启发式底稿）"
       }${visionOk ? "" : "（视觉读帧未成功，节奏点为启发式）"}${skippedHint}，是否进库由你决定。`,
     };
   } finally {

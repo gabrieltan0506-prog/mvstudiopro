@@ -40,6 +40,29 @@ export type QwenDialogueTtsResult = {
   generationId: string;
 };
 
+export type QwenDialogueTtsRequestBody = {
+  model: typeof QWEN_DIALOGUE_TTS_MODEL;
+  input: string;
+  voice: string;
+  response_format: "mp3";
+  seed: number;
+};
+
+/** OpenRouter 此端点只允许这五个字段；角色后制参数绝不混入上游请求。 */
+export function buildQwenDialogueTtsRequestBody(
+  params: QwenDialogueTtsInput,
+): QwenDialogueTtsRequestBody {
+  const input = String(params.input || "").trim();
+  if (!input) throw new Error("对白文本为空");
+  return {
+    model: QWEN_DIALOGUE_TTS_MODEL,
+    input: input.slice(0, 4000),
+    voice: String(params.voice || "").trim() || QWEN_TTS_SYSTEM_VOICES[0].id,
+    response_format: "mp3",
+    seed: Number.isFinite(params.seed) ? Math.floor(Number(params.seed)) : 0,
+  };
+}
+
 /**
  * 合成一段对白 mp3 并落 GCS。
  * 注意：错误文案不携带任何带签名的 URL 或密钥（execFile 教训同款纪律）。
@@ -49,17 +72,8 @@ export async function synthesizeQwenDialogue(
 ): Promise<QwenDialogueTtsResult> {
   const apiKey = String(process.env.OPENROUTER_API_KEY || "").trim();
   if (!apiKey) throw new Error("OPENROUTER_API_KEY 未配置");
-  const input = String(params.input || "").trim();
-  if (!input) throw new Error("对白文本为空");
-  const voice = String(params.voice || "").trim() || QWEN_TTS_SYSTEM_VOICES[0].id;
-
-  const body: Record<string, unknown> = {
-    model: QWEN_DIALOGUE_TTS_MODEL,
-    input: input.slice(0, 4000),
-    voice,
-    response_format: "mp3",
-  };
-  if (Number.isFinite(params.seed)) body.seed = Math.floor(Number(params.seed));
+  const body = buildQwenDialogueTtsRequestBody(params);
+  const voice = body.voice;
 
   const response = await fetch(OPENROUTER_TTS_ENDPOINT, {
     method: "POST",

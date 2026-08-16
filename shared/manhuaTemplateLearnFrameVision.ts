@@ -1,6 +1,6 @@
 /**
  * 漫剧节奏模板 · 关键帧视觉分析（内部学习链路）。
- * 模型：GPT-5.6 Terra · reasoning=high（经 Fly invokeLLM）。
+ * 模型：GPT-5.6 Terra · reasoning=high（EvoLink 主链，OpenAI 官方备用）。
  * 产物只填提案字段，status 仍为 proposed，须人审批准进库。
  * 成稿禁止外部剧名/抄台词画面；本模块输出亦须中性结构。
  */
@@ -15,30 +15,28 @@ import {
 
 export const MANHUA_TEMPLATE_FRAME_VISION_MODEL = "gpt-5.6-terra" as const;
 export const MANHUA_TEMPLATE_FRAME_VISION_REASONING = "high" as const;
+export const MANHUA_TEMPLATE_FRAME_VISION_LABEL = "GPT-5.6 Terra · High" as const;
+export const MANHUA_TEMPLATE_FRAME_VISION_MAX_OUTPUT_TOKENS = 32_768;
 /** 单次读帧上限（控制请求体与上下文） */
 export const MANHUA_TEMPLATE_FRAME_VISION_MAX_FRAMES = 24;
 
 /**
- * 学习链 LLM 供应商 A/B 开关（2026-08-10 拍板）：
- * env `MANHUA_TEMPLATE_LEARN_LLM_PROVIDER=claude` 切 Claude（帧视觉+模板润色同切），
- * 缺省走 GPT。产出两版模板各生成剧本，用户亲选哪版有拍的欲望＝唯一验收标准。
- */
-/**
- * deepseek（2026-08-15 用户拍板）只接管**文本阶段**（提案润色/digest 合成），
- * 读帧视觉一律回落 gpt——它不是多模态模型，不长眼睛。
+ * `claude` / `deepseek` 只为读取旧任务与旧进度保留；新旧入口实际都固定归一到 GPT。
  */
 export type ManhuaTemplateLearnLlmProvider = "gpt" | "claude" | "deepseek";
-/** Claude 档：claude-opus-5（带高分辨率 vision；模型口径取自 claude-api skill 2026-08） */
-export const MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL = "claude-opus-5" as const;
-/** 经济档文本润色（2026-08-15 用户拍板）：仅 polish/digest 文本阶段，读帧不许用 */
-export const MANHUA_TEMPLATE_LEARN_DEEPSEEK_MODEL = "deepseek/deepseek-v4-pro-0813" as const;
 
 export function resolveManhuaTemplateLearnLlmProvider(
   raw?: string | null,
 ): ManhuaTemplateLearnLlmProvider {
   const t = String(raw || "").trim().toLowerCase();
-  if (t === "claude" || t === "anthropic") return "claude";
-  if (t === "deepseek") return "deepseek";
+  if (t === "claude" || t === "anthropic") {
+    console.warn("[manhuaTemplateLearn] Claude 学习档已停用，改走 GPT-5.6 Terra high");
+    return "gpt";
+  }
+  if (t === "deepseek") {
+    console.warn("[manhuaTemplateLearn] DeepSeek 学习档已停用，改走 GPT-5.6 Terra high");
+    return "gpt";
+  }
   if (t && t !== "gpt" && t !== "openai" && t !== "terra") {
     // A/B 部署变量拼错会静默产出错误实验组——留告警别静默
     console.warn(`[manhuaTemplateLearn] 未知的 LLM provider 环境值「${t}」，按 gpt 处理`);

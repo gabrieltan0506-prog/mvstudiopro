@@ -110,6 +110,22 @@ describe("提案卡 provenance parse 保留", () => {
     expect(parsed?.provenance?.proposalPolish?.degraded).toBe(true);
   });
 
+  it("新系列底稿记录为程序聚合，不冒充第二次模型润色", () => {
+    const parsed = parseManhuaViralTemplateCard({
+      ...base,
+      provenance: {
+        frameVision: { provider: "openai", model: "gpt-5.6-terra", attemptedChunks: 8, successChunks: 8 },
+        seriesAggregation: { mode: "frame_vision_deterministic", sourceChunks: 8, success: true },
+      },
+    });
+    expect(parsed?.provenance?.seriesAggregation).toEqual({
+      mode: "frame_vision_deterministic",
+      sourceChunks: 8,
+      success: true,
+    });
+    expect(parsed?.provenance?.proposalPolish).toBeUndefined();
+  });
+
   it("无 provenance 的旧卡 parse 后仍无 provenance（不冒充）", () => {
     const parsed = parseManhuaViralTemplateCard(base);
     expect(parsed?.provenance).toBeUndefined();

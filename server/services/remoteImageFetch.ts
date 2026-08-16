@@ -45,15 +45,19 @@ async function assertSafePublicUrl(url: URL): Promise<void> {
 async function requestWithSafeRedirects(
   url: URL,
   headers: Record<string, string>,
+  abortSignal?: AbortSignal,
 ): Promise<Response> {
   let current = url;
   let currentHeaders = { ...headers };
   for (let redirectCount = 0; redirectCount <= 4; redirectCount += 1) {
     await assertSafePublicUrl(current);
+    const timeoutSignal = AbortSignal.timeout(60_000);
     const response = await fetch(current, {
       redirect: "manual",
       headers: currentHeaders,
-      signal: AbortSignal.timeout(60_000),
+      signal: abortSignal
+        ? AbortSignal.any([abortSignal, timeoutSignal])
+        : timeoutSignal,
     });
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
     const location = response.headers.get("location");
@@ -72,28 +76,38 @@ export async function fetchSafeRemoteImage(input: {
   imageUrl: string;
   maxBytes: number;
   userAgent: string;
+  /** 默认可在可信 Blob 域名 403/404 时带服务端令牌重试；外部供应商可读性探针必须关闭。 */
+  allowTrustedBlobBearer?: boolean;
+  /** 调用方整单墙钟信号；每次重定向仍另有 60 秒单请求上限。 */
+  abortSignal?: AbortSignal;
 }): Promise<{ buffer: Buffer; contentType: string }> {
   const parsed = new URL(input.imageUrl);
   await assertSafePublicUrl(parsed);
   const tokens = Array.from(
     new Set(
-      [process.env.MVSP_READ_WRITE_TOKEN, process.env.BLOB_READ_WRITE_TOKEN]
+      (input.allowTrustedBlobBearer === false
+        ? []
+        : [process.env.MVSP_READ_WRITE_TOKEN, process.env.BLOB_READ_WRITE_TOKEN])
         .map(value => String(value || "").trim())
         .filter(Boolean),
     ),
   );
   const headers: Record<string, string> = { "User-Agent": input.userAgent };
-  let response = await requestWithSafeRedirects(parsed, headers);
+  let response = await requestWithSafeRedirects(parsed, headers, input.abortSignal);
   if (
     (response.status === 403 || response.status === 404) &&
     tokens.length &&
     isTrustedBlobBearerHost(parsed.hostname)
   ) {
     for (const token of tokens) {
-      response = await requestWithSafeRedirects(parsed, {
-        ...headers,
-        Authorization: `Bearer ${token}`,
-      });
+      response = await requestWithSafeRedirects(
+        parsed,
+        {
+          ...headers,
+          Authorization: `Bearer ${token}`,
+        },
+        input.abortSignal,
+      );
       if (response.ok) break;
     }
   }

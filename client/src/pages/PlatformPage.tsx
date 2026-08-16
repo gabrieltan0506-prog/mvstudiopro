@@ -147,6 +147,10 @@ import {
   type ManhuaLearnResultUi,
 } from "@/lib/manhuaLearnResultUi";
 import { getManhuaLearnPipelineMeta } from "@shared/manhuaTemplateLearnPipeline";
+import { clampManhuaLearnBatchSize } from "@shared/manhuaTemplateLearnSeries";
+import {
+  MANHUA_TEMPLATE_FRAME_VISION_LABEL,
+} from "@shared/manhuaTemplateLearnFrameVision";
 import type {
   GrowthAnalysisScores,
   GrowthMonetizationStrategy,
@@ -2113,6 +2117,29 @@ type ManhuaLearnActiveJob = ManhuaLearnActiveJobRecord & {
 };
 
 const MANHUA_LEARN_CONTINUATION_LS_KEY = "mvs-manhua-learn-continuation-v1";
+const MANHUA_LEARN_BATCH_SIZE_LS_KEY = "mvs-manhua-learn-batch-size-v1";
+
+function readManhuaLearnBatchSize(): number {
+  const fallback = getManhuaLearnPipelineMeta().batchDefault;
+  try {
+    const raw = window.localStorage.getItem(MANHUA_LEARN_BATCH_SIZE_LS_KEY);
+    if (!raw) return fallback;
+    return clampManhuaLearnBatchSize(Number(raw));
+  } catch {
+    return fallback;
+  }
+}
+
+function writeManhuaLearnBatchSize(value: number): void {
+  try {
+    window.localStorage.setItem(
+      MANHUA_LEARN_BATCH_SIZE_LS_KEY,
+      String(clampManhuaLearnBatchSize(value)),
+    );
+  } catch {
+    // 浏览器禁用本地存储时，本次页面状态仍然有效。
+  }
+}
 
 function readManhuaLearnContinuation(): ManhuaLearnContinuation | null {
   try {
@@ -2410,6 +2437,7 @@ export default function PlatformPage() {
   const [manhuaLearnBusyKey, setManhuaLearnBusyKey] = useState<string | null>(null);
   const [manhuaPasteUrl, setManhuaPasteUrl] = useState("");
   const [manhuaPasteTitle, setManhuaPasteTitle] = useState("");
+  const [manhuaLearnBatchSize, setManhuaLearnBatchSize] = useState(readManhuaLearnBatchSize);
   const [manhuaLearnFocusSeriesKey, setManhuaLearnFocusSeriesKey] = useState(() =>
     readManhuaLearnFocusSeriesKey(),
   );
@@ -4952,9 +4980,7 @@ export default function PlatformPage() {
     const localFileName = String(row.localFileName || "").trim();
     if (localFileName) {
       const command = `pnpm run manhua:template-learn -- --video ${JSON.stringify(`/完整路径/${localFileName}`)} --title ${JSON.stringify(title)}`;
-      return row.learnLlm === "claude"
-        ? `MANHUA_TEMPLATE_LEARN_LLM_PROVIDER=claude ${command}`
-        : command;
+      return command;
     }
     if (url) {
       // 远程学习不再回退到本机 yt-dlp 下载；只保留用户主动导入本地文件的 CLI。
@@ -5139,7 +5165,7 @@ export default function PlatformPage() {
               rank,
               seriesKey: startUi.seriesKey,
               dedupeKey: source,
-              batchSize: 8,
+              batchSize: options?.refreshPreviewFrames ? 8 : manhuaLearnBatchSize,
               refreshPreviewFrames: options?.refreshPreviewFrames === true,
               retrySkippedEpisodes: options?.retrySkippedEpisodes === true,
               learnLlm: row.learnLlm,
@@ -5203,7 +5229,7 @@ export default function PlatformPage() {
               title,
               mixId: String(row.mixId || "").trim() || undefined,
               rank,
-              batchSize: 8,
+              batchSize: options?.refreshPreviewFrames ? 8 : manhuaLearnBatchSize,
               learnLlm: row.learnLlm,
             },
           },
@@ -5409,6 +5435,7 @@ export default function PlatformPage() {
       manhuaViralProposalsQuery.refetch,
       applyManhuaLearnJobOutput,
       refreshManhuaLearnServerJobs,
+      manhuaLearnBatchSize,
     ],
   );
 
@@ -11943,7 +11970,7 @@ export default function PlatformPage() {
                             {rising?.note
                               || "与总览报表数据同源：抖音/快手采集中的合集与漫剧样本单独聚合。其它种草、口播样本仍在「总览」里。"}
                             {" "}
-                            学节奏：有成片/合集链时可一点学习；无链仅展示剧名与归类。按集顺序每轮采 8–10 集（不落视频文件）。学
+                            学节奏：有成片/合集链时可一点学习；无链仅展示剧名与归类。按集顺序学习你设置的本轮集数（不落视频文件）。学
                             1 集即可出草版总分析并入库（约 16 集更准）；结果立刻在本页展示，你看完再决定是否「批准进库」。
                           </p>
                         </div>
@@ -12023,6 +12050,36 @@ export default function PlatformPage() {
                         </button>
                       </div>
 
+                      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-[#8cefff]/15 bg-[rgba(140,239,255,0.06)] px-3 py-2">
+                        <label
+                          htmlFor="manhua-learn-batch-size"
+                          className="text-[11px] font-semibold text-[#c9c0e6]/90"
+                        >
+                          单次学习集数
+                        </label>
+                        <input
+                          id="manhua-learn-batch-size"
+                          type="number"
+                          min={getManhuaLearnPipelineMeta().batchMin}
+                          max={getManhuaLearnPipelineMeta().batchMax}
+                          step={1}
+                          value={manhuaLearnBatchSize}
+                          disabled={Boolean(manhuaLearnBusyKey)}
+                          onChange={(event) => {
+                            const next = clampManhuaLearnBatchSize(Number(event.target.value));
+                            setManhuaLearnBatchSize(next);
+                            writeManhuaLearnBatchSize(next);
+                          }}
+                          className="w-20 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 text-[11px] tabular-nums text-white disabled:opacity-45"
+                        />
+                        <span className="text-[10px] text-[#c9c0e6]/50">
+                          可选 {getManhuaLearnPipelineMeta().batchMin}–{getManhuaLearnPipelineMeta().batchMax} 集，默认 {getManhuaLearnPipelineMeta().batchDefault}；连续失败 8 集自动停止
+                        </span>
+                        <span className="rounded-md border border-[#8cefff]/20 bg-black/25 px-2 py-1 text-[10px] font-semibold text-[#8cefff]">
+                          模型：{MANHUA_TEMPLATE_FRAME_VISION_LABEL}
+                        </span>
+                      </div>
+
                       {aiManhuaPlatformTab === "douyin" ? (
                         <div className="mt-3 rounded-xl border border-white/10 bg-black/25 px-3 py-2.5">
                           <div className="text-[11px] font-semibold text-[#c9c0e6]/90">贴链接学节奏</div>
@@ -12067,7 +12124,7 @@ export default function PlatformPage() {
                             >
                               {manhuaLearnBusyKey === manhuaPasteUrl.trim()
                                 ? "学习中…"
-                                : "开始学习"}
+                                : `开始学 ${manhuaLearnBatchSize} 集`}
                             </button>
                           </div>
                         </div>
@@ -12437,7 +12494,7 @@ export default function PlatformPage() {
                                   }}
                                   className="rounded-md border border-sky-200/40 bg-sky-400/20 px-2.5 py-1 font-semibold text-sky-50 hover:bg-sky-400/30 disabled:opacity-45"
                                 >
-                                  继续下一批
+                                  继续学 {manhuaLearnBatchSize} 集
                                 </button>
                                 <button
                                   type="button"
@@ -12711,7 +12768,7 @@ export default function PlatformPage() {
                                   }
                                   className="justify-self-end rounded-md border border-[#8cefff]/25 bg-[rgba(140,239,255,0.08)] px-1.5 py-0.5 text-[10px] font-semibold text-[#8cefff] hover:bg-[rgba(140,239,255,0.16)] disabled:opacity-40"
                                 >
-                                  {busy ? "学习中…" : "学节奏"}
+                                  {busy ? "学习中…" : `学 ${manhuaLearnBatchSize} 集`}
                                 </button>
                               </div>
                             );
@@ -13760,7 +13817,7 @@ export default function PlatformPage() {
                       localFileName: fileName,
                       mixName: title,
                       platform: "upload",
-                      learnLlm: "claude",
+                      learnLlm: "gpt",
                     },
                     0,
                   );

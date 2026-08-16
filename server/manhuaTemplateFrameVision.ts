@@ -1,16 +1,14 @@
 /**
  * 漫剧模板学习 · 关键帧视觉。
- * 默认 GPT-5.6 Terra（reasoning=high）；env MANHUA_TEMPLATE_LEARN_LLM_PROVIDER=claude
- * 切 claude-opus-5（A/B 拍板，帧走 GCS 签名 URL 绝不 base64）。
+ * 固定 GPT-5.6 Terra（reasoning=high）；EvoLink 主链失败后才回落 OpenAI 官方 API。
  * 供 Fly `manhuaTemplateFrameScan` 与本机学习脚本调用。
  */
-import { createHash } from "node:crypto";
 import { invokeLLM, extractJsonString } from "./_core/llm.js";
 import {
   MANHUA_TEMPLATE_FRAME_VISION_MAX_FRAMES,
+  MANHUA_TEMPLATE_FRAME_VISION_MAX_OUTPUT_TOKENS,
   MANHUA_TEMPLATE_FRAME_VISION_MODEL,
   MANHUA_TEMPLATE_FRAME_VISION_REASONING,
-  MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL,
   buildManhuaTemplateFrameVisionSystemPrompt,
   buildManhuaTemplateFrameVisionUserText,
   parseManhuaTemplateFrameVisionJson,
@@ -29,8 +27,10 @@ export type AnalyzeManhuaTemplateFramesInput = {
   transcriptPreview?: string;
   climaxNotes?: string[];
   fallbackLane?: ManhuaViralTemplateLane | string;
-  /** 手动导入等受控入口可显式选实验组；未传时仍读部署 env。 */
+  /** 兼容旧任务字段；Claude/DeepSeek 值会被统一归一到 GPT。 */
   learnProvider?: ManhuaTemplateLearnLlmProvider;
+  /** 主备通道共用的幂等键；同一分片重试不可换键。 */
+  requestId?: string;
   abortSignal?: AbortSignal;
 };
 
@@ -68,57 +68,7 @@ async function resolveFrameDataUrl(frame: ManhuaTemplateFrameVisionInputFrame): 
   return { atSec, dataUrl: `data:${ct};base64,${buf.toString("base64")}` };
 }
 
-/** Claude 拉取用签名 URL 时长：给足 2 小时，防长队列里签名过期（拍板要求） */
-const FRAME_SIGNED_URL_TTL_SEC = 2 * 3600;
-
-/**
- * Claude 路径：帧一律转成可拉取的 https URL，绝不 base64 进请求体（2026-08-10 拍板，
- * 防请求体膨胀；与 Seedance 侧 64MB 约束同源）。
- * dataUrl 形态 → 帧上传 GCS（frames-tmp/，内容哈希+请求随机段命名，用后即删，
- * 不做跨请求去重——并发请求共用同名对象会互删）→ V4 签名 URL；
- * gs:// 形态 → 直接签名（Claude 拉不动 gs://）。
- */
-async function resolveFrameHttpsUrl(frame: ManhuaTemplateFrameVisionInputFrame): Promise<{
-  atSec: number;
-  url: string;
-  /** 本次为发请求临时上传的 frames-tmp 对象（用后清理）；直连已有 URL/gcsUri 时为空 */
-  tmpObjectName?: string;
-}> {
-  const atSec = Math.max(0, Number(frame.atSec) || 0);
-  const direct = String(frame.url || "").trim();
-  if (/^https?:\/\//i.test(direct)) return { atSec, url: direct };
-
-  const gcsUri = String(frame.gcsUri || "").trim();
-  if (gcsUri.startsWith("gs://")) {
-    const { signGsUriV4ReadUrl } = await import("./services/gcs.js");
-    return { atSec, url: signGsUriV4ReadUrl(gcsUri, FRAME_SIGNED_URL_TTL_SEC) };
-  }
-
-  const dataUrl = String(frame.dataUrl || "").trim();
-  const match = /^data:([^;,]+);base64,([\s\S]+)$/.exec(dataUrl);
-  if (!match) throw new Error("frame_missing_data");
-  const mime = match[1] || "image/jpeg";
-  const buffer = Buffer.from(match[2]!, "base64");
-  const ext = /png/i.test(mime) ? "png" : /webp/i.test(mime) ? "webp" : "jpg";
-  const hash = createHash("sha1").update(buffer).digest("hex").slice(0, 20);
-  const { uploadBufferToGcs, signGsUriV4ReadUrl } = await import("./services/gcs.js");
-  const objectName = `manhua-template-learn/frames-tmp/${hash}-${createHash("sha1")
-    .update(`${process.pid}:${Date.now()}:${Math.random()}`)
-    .digest("hex")
-    .slice(0, 8)}.${ext}`;
-  const uploaded = await uploadBufferToGcs({
-    objectName,
-    buffer,
-    contentType: mime,
-  });
-  return {
-    atSec,
-    url: signGsUriV4ReadUrl(uploaded.gcsUri, FRAME_SIGNED_URL_TTL_SEC),
-    tmpObjectName: objectName,
-  };
-}
-
-export async function analyzeManhuaTemplateFramesWithTerra(
+export async function analyzeManhuaTemplateFrames(
   input: AnalyzeManhuaTemplateFramesInput,
 ): Promise<ManhuaTemplateFrameVisionResult> {
   const selected = selectFramesForVisionAnalysis(
@@ -127,45 +77,28 @@ export async function analyzeManhuaTemplateFramesWithTerra(
   );
   if (!selected.length) throw new Error("missing_frames");
 
-  const learnProvider = input.learnProvider || resolveManhuaTemplateLearnLlmProvider(
-    process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER,
+  const learnProvider = resolveManhuaTemplateLearnLlmProvider(
+    input.learnProvider || process.env.MANHUA_TEMPLATE_LEARN_LLM_PROVIDER,
   );
-  const isClaude = learnProvider === "claude";
+  if (learnProvider !== "gpt") throw new Error("manhua_frame_vision_provider_not_supported");
 
-  // GPT 路径帧转 dataUrl 内联；Claude 路径帧一律转 https URL（GCS 签名），绝不 base64
   const resolved: Array<{ atSec: number; imageUrl: string }> = [];
-  const tmpFrameObjects: string[] = [];
-  // frames-tmp 请求后 best-effort 清理：签名 URL 只在本次请求内有用。
-  // 清理定义在 resolve 循环之前、循环也在 try 内——前几帧已上传、后一帧失败同样会清
-  const cleanupTmpFrames = async () => {
-    if (!tmpFrameObjects.length) return;
-    const { deleteGcsObject } = await import("./services/gcs.js");
-    await Promise.all(
-      tmpFrameObjects.map((objectName) => deleteGcsObject({ objectName }).catch(() => {})),
-    );
-  };
-  try {
   for (const frame of selected) {
-    if (isClaude) {
-      const { atSec, url, tmpObjectName } = await resolveFrameHttpsUrl(frame);
-      resolved.push({ atSec, imageUrl: url });
-      if (tmpObjectName) tmpFrameObjects.push(tmpObjectName);
-    } else {
-      const { atSec, dataUrl } = await resolveFrameDataUrl(frame);
-      resolved.push({ atSec, imageUrl: dataUrl });
-    }
+    const { atSec, dataUrl } = await resolveFrameDataUrl(frame);
+    resolved.push({ atSec, imageUrl: dataUrl });
   }
 
-  const modelName = isClaude ? MANHUA_TEMPLATE_LEARN_CLAUDE_MODEL : MANHUA_TEMPLATE_FRAME_VISION_MODEL;
   const response = await invokeLLM({
     model: "pro",
-    provider: isClaude ? "anthropic" : "openai",
-    modelName,
+    provider: "openai",
+    modelName: MANHUA_TEMPLATE_FRAME_VISION_MODEL,
     reasoningEffort: MANHUA_TEMPLATE_FRAME_VISION_REASONING,
-    max_tokens: 16_384,
+    openAiGateway: "evolink_primary",
+    requestId: input.requestId,
+    max_tokens: MANHUA_TEMPLATE_FRAME_VISION_MAX_OUTPUT_TOKENS,
     abortSignal: input.abortSignal,
-    // claude-opus-5 不收采样控件与 response_format，仅 GPT 路径带
-    ...(isClaude ? {} : { temperature: 0.3, response_format: { type: "json_object" as const } }),
+    temperature: 0.3,
+    response_format: { type: "json_object" as const },
     messages: [
       {
         role: "system",
@@ -214,10 +147,10 @@ export async function analyzeManhuaTemplateFramesWithTerra(
   if (!vision) throw new Error("frame_vision_parse_failed");
   return {
     ...vision,
-    model: modelName,
+    model: MANHUA_TEMPLATE_FRAME_VISION_MODEL,
     reasoningEffort: MANHUA_TEMPLATE_FRAME_VISION_REASONING,
   };
-  } finally {
-    await cleanupTmpFrames();
-  }
 }
+
+/** @deprecated 旧本机脚本兼容名；实际模型已是 GPT-5.6 Terra high。 */
+export const analyzeManhuaTemplateFramesWithTerra = analyzeManhuaTemplateFrames;
