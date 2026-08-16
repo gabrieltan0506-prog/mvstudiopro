@@ -1,6 +1,7 @@
 import type { GrowthPlatform } from "@shared/growth";
 import type { TrendItem } from "./trendCollector";
 import type { PlatformTrendCollection } from "./trendCollector";
+import { mergeAbortSignals } from "./collectorAbort";
 
 /** 每个被选平台各自送 Terra 20 张真实封面，禁止跨平台互相挤占名额。 */
 export const TREND_COVER_CANDIDATE_LIMIT = 20;
@@ -141,8 +142,13 @@ function coverBackfillCookie(platform: GrowthPlatform) {
   return "";
 }
 
-async function resolveCoverFromPublicPage(platform: GrowthPlatform, item: TrendItem) {
+async function resolveCoverFromPublicPage(
+  platform: GrowthPlatform,
+  item: TrendItem,
+  signal?: AbortSignal,
+) {
   if (!item.url || !isAllowedPlatformRemoteUrl(platform, item.url)) return undefined;
+  const requestSignal = mergeAbortSignals(signal, AbortSignal.timeout(8_000));
   const response = await fetch(item.url, {
     headers: {
       accept: "text/html,application/xhtml+xml",
@@ -150,7 +156,7 @@ async function resolveCoverFromPublicPage(platform: GrowthPlatform, item: TrendI
       ...(coverBackfillCookie(platform) ? { cookie: coverBackfillCookie(platform) } : {}),
     },
     redirect: "follow",
-    signal: AbortSignal.timeout(8_000),
+    signal: requestSignal,
   });
   if (!response.ok) return undefined;
   const coverUrl = htmlImageMeta(await response.text());
@@ -165,6 +171,7 @@ export async function backfillRecentTrendCoverUrls(
   platform: GrowthPlatform,
   collection: PlatformTrendCollection,
   now = Date.now(),
+  options?: { signal?: AbortSignal },
 ) {
   if (!isTrendCoverCollectionActive(new Date(now))) return { collection, attempted: 0, resolved: 0 };
   const cutoff = now - TREND_COVER_BACKFILL_WINDOW_DAYS * 24 * 60 * 60 * 1000;
@@ -179,10 +186,12 @@ export async function backfillRecentTrendCoverUrls(
   if (!targets.length) return { collection, attempted: 0, resolved: 0 };
   const coverById = new Map<string, { coverUrl: string; coverCapturedAt: string }>();
   for (const item of targets) {
+    if (options?.signal?.aborted) throw new Error("growth_collector_aborted");
     try {
-      const coverUrl = await resolveCoverFromPublicPage(platform, item);
+      const coverUrl = await resolveCoverFromPublicPage(platform, item, options?.signal);
       if (coverUrl) coverById.set(item.id, { coverUrl, coverCapturedAt: new Date(now).toISOString() });
     } catch (error) {
+      if (options?.signal?.aborted) throw new Error("growth_collector_aborted");
       console.warn(`[growth-cover] backfill failed platform=${platform} id=${item.id}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }

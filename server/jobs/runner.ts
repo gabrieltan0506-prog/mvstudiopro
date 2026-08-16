@@ -69,6 +69,10 @@ import {
 } from "./repository";
 import { processPdfExportJob } from "./pdfExportJob";
 import { resolveGrowthCampJobServerTimeoutMs } from "../../shared/growthCampJobTiming.js";
+import {
+  beginGrowthInteractiveWorkload,
+  isAuthenticatedRunningPlatformJob,
+} from "../growth/growthWorkloadPriority";
 
 const JOB_TIMEOUT_MS: Record<JobType, number> = {
   image: 12_000,
@@ -2591,9 +2595,16 @@ async function executeJob(
 
 async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>> & object) {
   if (!job) return;
+  let releaseInteractiveWorkload: (() => Promise<void>) | undefined;
   try {
     const jobType = job.type as JobType;
     const timeoutMs = resolveJobTimeoutMs(jobType, job.input);
+    // claimNextQueuedJob 已经用数据库 CAS 把 queued 改为 running；再同时核对正整数
+    // users.id，确保 public/匿名/伪造字符串不会持有前台租约。租约由本函数 finally
+    // 释放，因此墙钟超时/requeue 后不会被仍未 settle 的孤儿 Promise 永久续心跳。
+    if (isAuthenticatedRunningPlatformJob(job)) {
+      releaseInteractiveWorkload = await beginGrowthInteractiveWorkload(`platform-job:${job.id}`);
+    }
     const { output, provider } = await withTimeout(
       executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
       timeoutMs,
@@ -2699,6 +2710,8 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
     } else {
       await markJobFailed(job.id, message);
     }
+  } finally {
+    await releaseInteractiveWorkload?.();
   }
 }
 

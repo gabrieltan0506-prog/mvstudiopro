@@ -328,6 +328,63 @@ export function GrowthSystemDebugPanel({
             </div>
           ) : null}
 
+          <div className="mt-4 space-y-2 rounded-2xl border border-violet-200/15 bg-black/15 p-4 text-xs text-white/72">
+            <div className="font-semibold text-violet-100">抖音 Cookie 每日自检</div>
+            {data.douyinCredentialHealth ? (
+              <>
+                <div className="grid gap-1 md:grid-cols-2">
+                  <div>
+                    最近自检：
+                    {formatShanghaiDateTime(String(data.douyinCredentialHealth.checkedAt || ""))}
+                  </div>
+                  <div>
+                    下次自检：
+                    {formatShanghaiDateTime(String(data.douyinCredentialHealth.nextCheckAt || ""))}
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  {data.douyinCredentialHealth.entries.map((entry) => {
+                    const failed = entry.status === "invalid" || entry.status === "missing";
+                    const probeError = entry.status === "probe_error";
+                    const disabled = entry.status === "disabled";
+                    return (
+                      <div
+                        key={entry.key}
+                        className={`rounded-xl border p-3 leading-5 ${
+                          failed
+                            ? "border-red-300/50 bg-red-500/15 text-red-100"
+                            : probeError
+                              ? "border-amber-300/40 bg-amber-500/10 text-amber-100"
+                            : disabled
+                              ? "border-white/10 bg-white/[0.03] text-white/45"
+                              : "border-emerald-300/25 bg-emerald-500/10 text-emerald-100"
+                        }`}
+                      >
+                        <div className="font-semibold">
+                          {entry.label}：
+                          {entry.status === "valid"
+                            ? "有效"
+                            : entry.status === "probe_error"
+                              ? "探针失败（未判定失效）"
+                            : entry.status === "disabled"
+                              ? "已停用"
+                              : entry.status === "missing"
+                                ? "未配置"
+                                : "已失效"}
+                        </div>
+                        <div className="mt-1 opacity-80">{entry.reason}</div>
+                        {entry.httpStatus ? <div>HTTP：{String(entry.httpStatus)}</div> : null}
+                        {entry.businessCode ? <div>业务状态：{String(entry.businessCode)}</div> : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <div className="text-white/45">尚无自检结果；服务启动后会执行首次探针。</div>
+            )}
+          </div>
+
           {data.scheduler?.length && data.runtimeControl?.mode !== "backfill" ? (
             <div className="mt-4 space-y-2 rounded-2xl border border-cyan-200/15 bg-black/15 p-4 text-xs text-white/72">
               <div className="font-semibold text-cyan-100">抓取调度状态</div>
@@ -350,7 +407,9 @@ export function GrowthSystemDebugPanel({
                   </div>
                   <div>
                     {String(item.platformLabel || getPlatformLabel(item.platform))} 下次执行：
-                    {formatShanghaiDateTime(String(item.nextRunAt || ""))}
+                    {item.platform === "weixin_channels"
+                      ? "本机双窗持续采集（无定时轮次）"
+                      : formatShanghaiDateTime(String(item.nextRunAt || ""))}
                   </div>
                   <div>
                     {String(item.platformLabel || getPlatformLabel(item.platform))} 累计抓取失败：

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  backfillRecentTrendCoverUrls,
   completeTrendCoverRanking,
   extractPlatformCoverUrl,
   selectTrendCoverCandidates,
@@ -54,5 +55,40 @@ describe("trendCoverSelection", () => {
     expect(completed.filter((row) => row.platform === "douyin")[0]?.sourceId).toBe("douyin:d-3");
     expect(completed.filter((row) => row.platform === "bilibili")[0]?.sourceId).toBe("bilibili:b-2");
     expect(completed.some((row) => row.sourceId === "fake:invented")).toBe(false);
+  });
+
+  it("前台任务中止信号出现时，封面公网回补不会继续下一条请求", async () => {
+    const controller = new AbortController();
+    controller.abort("foreground-started");
+    await expect(backfillRecentTrendCoverUrls("douyin", {
+      platform: "douyin",
+      source: "live",
+      collectedAt: "2026-08-16T12:00:00.000Z",
+      windowDays: 30,
+      items: [{
+        id: "abort-cover-1",
+        title: "待回补封面",
+        url: "https://www.douyin.com/video/1",
+        publishedAt: "2026-08-16T10:00:00.000Z",
+      }],
+      notes: [],
+      stats: {
+        platform: "douyin",
+        itemCount: 1,
+        uniqueAuthorCount: 1,
+        bucketCounts: {},
+        requestCount: 1,
+        pageDepth: 1,
+        targetPerRun: 1,
+        referenceMinItems: 1,
+        referenceMaxItems: 1,
+        collectorMode: "public_feed",
+        industryCounts: {},
+        ageCounts: {},
+        contentCounts: {},
+      },
+    }, Date.parse("2026-08-16T12:00:00.000Z"), {
+      signal: controller.signal,
+    })).rejects.toThrow("growth_collector_aborted");
   });
 });

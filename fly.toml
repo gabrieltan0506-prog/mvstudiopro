@@ -58,7 +58,7 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   # 期间用户的上传会被 Fly 代理判为实例不健康而掐断连接（凌晨实测：连续五次
   # prepareKnowledgeCardCopy 都断在读请求体阶段，模型一次都没被调用）。
   # 取舍很明确：抓不到就下一轮再来，不许占着主线程干等。
-  GROWTH_BURST_INTERVAL_MINUTES = '30'  # 原 15；趋势数据不会一刻钟就变天
+  GROWTH_BURST_INTERVAL_MINUTES = '15'  # 用户手动 burst：每 15 分钟调度一次
   GROWTH_PLATFORM_COLLECTION_GAP_MS = '240000'
   # 串行通道 + 可中止信号保留；30/60 秒已在线上连续截断三平台的正常请求。
   GROWTH_PLATFORM_RUN_TIMEOUT_MS = '120000'

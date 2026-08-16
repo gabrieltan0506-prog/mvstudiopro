@@ -167,6 +167,46 @@ describe("growth store merge + hot-window prune", () => {
     expect(ids.filter((id) => id.startsWith("keep-"))).toHaveLength(30);
   });
 
+  it("单平台 merge 不重新 gzip 其他平台真值文件", async () => {
+    const {
+      mergeTrendCollections,
+      writeTrendStore,
+    } = await import("./trendStore");
+    const now = Date.now();
+    const collectedAt = new Date(now - 60_000).toISOString();
+    const douyin = makeCollection([makeItem("douyin-existing", collectedAt)], collectedAt);
+    const xiaohongshu = makeCollection([makeItem("xhs-existing", collectedAt)], collectedAt);
+    xiaohongshu.platform = "xiaohongshu";
+    await writeTrendStore({ douyin, xiaohongshu });
+
+    const untouchedFiles = [
+      path.join(tempRoot, "platform-current", "xiaohongshu.current.json.gz"),
+      path.join(tempRoot, "platforms", "xiaohongshu.json.gz"),
+    ];
+    const oldMtime = new Date(now - 60 * 60_000);
+    for (const file of untouchedFiles) await fs.utimes(file, oldMtime, oldMtime);
+    const before = await Promise.all(untouchedFiles.map(async (file) => ({
+      bytes: await fs.readFile(file),
+      mtimeMs: (await fs.stat(file)).mtimeMs,
+    })));
+
+    const nextAt = new Date(now).toISOString();
+    await mergeTrendCollections({
+      douyin: makeCollection([makeItem("douyin-next", nextAt)], nextAt),
+    });
+
+    const after = await Promise.all(untouchedFiles.map(async (file) => ({
+      bytes: await fs.readFile(file),
+      mtimeMs: (await fs.stat(file)).mtimeMs,
+    })));
+    expect(after.map((entry) => entry.bytes)).toEqual(before.map((entry) => entry.bytes));
+    expect(after.map((entry) => entry.mtimeMs)).toEqual(before.map((entry) => entry.mtimeMs));
+    const manifest = JSON.parse(
+      await fs.readFile(path.join(tempRoot, "platform-current-manifest.json"), "utf8"),
+    ) as { platforms?: Record<string, { currentTotal?: number }> };
+    expect(manifest.platforms?.xiaohongshu?.currentTotal).toBe(1);
+  });
+
   it("受控恢复以完整基线为底并保留基线后的新观测，不改其他平台", async () => {
     const {
       readTrendStore,
@@ -222,7 +262,80 @@ describe("growth store merge + hot-window prune", () => {
       "shared",
     ]);
     expect(store.collections?.xiaohongshu?.items.find((item) => item.id === "shared")?.likes).toBe(999);
+    expect(store.collections?.xiaohongshu?.minimumRetentionDays).toBe(365);
     expect(store.collections?.douyin?.items.map((item) => item.id)).toEqual(["other-platform"]);
+  });
+
+  it("受控恢复的完整 current 在下一轮 live merge 后不被 90 天热窗口裁掉", async () => {
+    const {
+      mergeTrendCollections,
+      readTrendStore,
+      restoreTrendPlatformCurrentFromBaseline,
+      writeTrendStore,
+    } = await import("./trendStore");
+    const day = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const oldAt = new Date(now - 120 * day).toISOString();
+    const liveAt = new Date(now - day).toISOString();
+    const baseline = makeCollection([makeItem("restored-120-days-old", oldAt)], oldAt);
+    const live = makeCollection([makeItem("live-before-restore", liveAt)], liveAt);
+    await writeTrendStore({ douyin: live });
+
+    const artifact = makeRestoreArtifact(baseline);
+    await restoreTrendPlatformCurrentFromBaseline("douyin", artifact.raw, {
+      apply: true,
+      minimumBaselineItems: 1,
+      expectedBaselineBytes: artifact.expectedBaselineBytes,
+      expectedBaselineSha256: artifact.expectedBaselineSha256,
+    });
+
+    const nextAt = new Date(now).toISOString();
+    await mergeTrendCollections({
+      douyin: makeCollection([makeItem("next-live-item", nextAt)], nextAt),
+    });
+
+    const store = await readTrendStore({ preferDerivedFiles: true });
+    expect(store.collections?.douyin?.items.map((item) => item.id).sort()).toEqual([
+      "live-before-restore",
+      "next-live-item",
+      "restored-120-days-old",
+    ]);
+    expect(store.collections?.douyin?.minimumRetentionDays).toBe(365);
+    expect(store.collections?.douyin?.windowDays).toBe(365);
+  });
+
+  it("兼容已在旧版本完成恢复但尚无 minimumRetentionDays 的生产基线", async () => {
+    const { mergeTrendCollections, readTrendStore } = await import("./trendStore");
+    const day = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const oldAt = new Date(now - 120 * day).toISOString();
+    const legacyRestored = makeCollection([makeItem("legacy-restored-old", oldAt)], oldAt);
+    legacyRestored.windowDays = 90;
+    legacyRestored.notes = [
+      "Restored douyin current from verified baseline and merged post-baseline observations by stable item id.",
+    ];
+    await fs.writeFile(
+      path.join(tempRoot, "current.json"),
+      JSON.stringify({
+        updatedAt: oldAt,
+        collections: { douyin: legacyRestored },
+        scheduler: {},
+        archiveIndex: [],
+      }),
+      "utf8",
+    );
+
+    const nextAt = new Date(now).toISOString();
+    await mergeTrendCollections({
+      douyin: makeCollection([makeItem("next-after-deploy", nextAt)], nextAt),
+    });
+
+    const store = await readTrendStore({ preferDerivedFiles: true });
+    expect(store.collections?.douyin?.items.map((item) => item.id).sort()).toEqual([
+      "legacy-restored-old",
+      "next-after-deploy",
+    ]);
+    expect(store.collections?.douyin?.minimumRetentionDays).toBe(365);
   });
 
   it("受控恢复默认 dry-run，且拒绝低于最低条数的伪基线", async () => {

@@ -73,6 +73,21 @@ jobs:
             return 1
           }
 
+          # 前台平台 Job 拥有最高优先级；最多等待 30 分钟，仍繁忙则让本轮冷备失败并由下个周期重试。
+          PRIORITY_READY=false
+          for attempt in $(seq 1 60); do
+            if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C "sh -lc '
+              find /data/growth/runtime-interactive-workloads -type f -mmin +2 -delete 2>/dev/null || true
+              test -z \"\$(find /data/growth/runtime-interactive-workloads -type f -mmin -2 -print -quit 2>/dev/null)\"
+            '"; then
+              PRIORITY_READY=true
+              break
+            fi
+            echo "前台平台任务运行中，冷备评估暂停 30 秒（${attempt}/60）"
+            sleep 30
+          done
+          test "$PRIORITY_READY" = "true"
+
           for attempt in 1 2 3 4 5; do
             if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C "sh -lc '
               current=$(stat -c%s /data/growth/current.json 2>/dev/null || echo 0)
@@ -129,6 +144,106 @@ jobs:
             return 1
           }
 
+          acquire_backup_lane() {
+            cat >/tmp/acquire-growth-backup-lane.sh <<'SH'
+          set -eu
+          ROOT=/data/growth
+          LOCK="$ROOT/.growth-platform-collection.lock"
+          find "$ROOT/runtime-interactive-workloads" -type f -mmin +2 -delete 2>/dev/null || true
+          if [ -n "$(find "$ROOT/runtime-interactive-workloads" -type f -mmin -2 -print -quit 2>/dev/null)" ]; then
+            exit 42
+          fi
+          if [ -e "$LOCK" ]; then
+            if find "$LOCK" -mmin +15 -print -quit 2>/dev/null | grep -q .; then
+              rm -f "$LOCK"
+            else
+              exit 43
+            fi
+          fi
+          (set -C; printf '%s' 'github-growth-backup' > "$LOCK") 2>/dev/null
+          SH
+            for attempt in $(seq 1 60); do
+              if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C 'sh -s' < /tmp/acquire-growth-backup-lane.sh; then
+                return 0
+              fi
+              echo "采集或前台平台任务仍在运行，冷备暂停 30 秒（${attempt}/60）"
+              sleep 30
+            done
+            return 1
+          }
+
+          wait_for_interactive_workload() {
+            for attempt in $(seq 1 60); do
+              if wait_for_started_vm && timeout 20 flyctl ssh console -a mvstudiopro -C "sh -lc '
+                find /data/growth/runtime-interactive-workloads -type f -mmin +2 -delete 2>/dev/null || true
+                test -z \"\$(find /data/growth/runtime-interactive-workloads -type f -mmin -2 -print -quit 2>/dev/null)\"
+              '"; then
+                return 0
+              fi
+              echo "前台平台任务运行中，冷备传输暂停 30 秒（${attempt}/60）"
+              sleep 30
+            done
+            return 1
+          }
+
+          interactive_workload_is_idle() {
+            timeout 20 flyctl ssh console -a mvstudiopro -C "sh -lc '
+              find /data/growth/runtime-interactive-workloads -type f -mmin +2 -delete 2>/dev/null || true
+              test -z \"\$(find /data/growth/runtime-interactive-workloads -type f -mmin -2 -print -quit 2>/dev/null)\"
+            '" >/dev/null 2>&1
+          }
+
+          # 长 SFTP/tar/dd 不能只在开始前看一次租约。每 10 秒复检；前台任务出现
+          # 或租约状态无法证明为空时，立即终止本地 SSH 进程组，由调用方等待后重试。
+          run_with_interactive_preemption() {
+            BACKUP_REMOTE_WORK_STARTED=true
+            setsid "$@" &
+            local command_pid=$!
+            while kill -0 "$command_pid" 2>/dev/null; do
+              sleep 10
+              if ! kill -0 "$command_pid" 2>/dev/null; then
+                break
+              fi
+              if ! interactive_workload_is_idle; then
+                echo "前台平台任务出现，中止当前冷备远程阶段并等待续跑。" >&2
+                kill -TERM -- "-$command_pid" 2>/dev/null || true
+                sleep 2
+                kill -KILL -- "-$command_pid" 2>/dev/null || true
+                wait "$command_pid" 2>/dev/null || true
+                return 75
+              fi
+            done
+            wait "$command_pid"
+          }
+
+          release_backup_lane() {
+            if [ -n "${BACKUP_HEARTBEAT_PID:-}" ]; then
+              kill "$BACKUP_HEARTBEAT_PID" 2>/dev/null || true
+              wait "$BACKUP_HEARTBEAT_PID" 2>/dev/null || true
+            fi
+            flyctl ssh console -a mvstudiopro -C "sh -lc '
+              now_ms=\$(date +%s)000
+              state=/data/growth/.growth-platform-collection-state.json
+              if [ \"${BACKUP_REMOTE_WORK_STARTED:-false}\" = \"true\" ]; then
+                printf \"{\\\"version\\\":1,\\\"lastFinishedAtMs\\\":%s,\\\"lastFinishedAt\\\":\\\"%s\\\",\\\"platform\\\":\\\"all\\\",\\\"source\\\":\\\"backup\\\"}\" \"\$now_ms\" \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" > \"\$state.next\"
+                mv \"\$state.next\" \"\$state\"
+              fi
+              if [ \"\$(cat /data/growth/.growth-platform-collection.lock 2>/dev/null || true)\" = \"github-growth-backup\" ]; then
+                rm -f /data/growth/.growth-platform-collection.lock
+              fi
+            '" >/dev/null 2>&1 || true
+          }
+
+          acquire_backup_lane
+          BACKUP_REMOTE_WORK_STARTED=false
+          (
+            while sleep 60; do
+              flyctl ssh console -a mvstudiopro -C 'touch /data/growth/.growth-platform-collection.lock' >/dev/null 2>&1 || true
+            done
+          ) &
+          BACKUP_HEARTBEAT_PID=$!
+          trap release_backup_lane EXIT
+
           fetch_file_from_fly() {
             local remote_path="$1"
             local output_path="$2"
@@ -136,7 +251,7 @@ jobs:
             local timeout_seconds="${4:-180}"
             for attempt in 1 2 3 4 5; do
               echo "Fetching file from Fly: ${remote_path} -> ${output_path} (attempt ${attempt}/5)"
-              if wait_for_started_vm && timeout "${timeout_seconds}" flyctl ssh sftp get -a mvstudiopro "$remote_path" "$output_path"; then
+              if wait_for_interactive_workload && run_with_interactive_preemption timeout "${timeout_seconds}" flyctl ssh sftp get -a mvstudiopro "$remote_path" "$output_path"; then
                 return 0
               fi
               if [ "$required" != "true" ]; then
@@ -156,7 +271,7 @@ jobs:
             local timeout_seconds="${3:-480}"
             for attempt in 1 2 3 4 5; do
               echo "Capturing from Fly -> ${output_path} (attempt ${attempt}/5)"
-              if wait_for_started_vm && timeout "${timeout_seconds}" flyctl ssh console -a mvstudiopro -C "sh -lc '$command'" > "$output_path"; then
+              if wait_for_interactive_workload && run_with_interactive_preemption timeout "${timeout_seconds}" flyctl ssh console -a mvstudiopro -C "sh -lc '$command'" > "$output_path"; then
                 return 0
               fi
               echo "Fly fetch failed, retrying in 20s (attempt $attempt/5)"
@@ -175,14 +290,14 @@ jobs:
           fetch_file_from_fly /data/growth/weixin-channels-miner.json /tmp/growth-backup/store/weixin-channels-miner.json false
 
           if [ "${EXTERNALIZE_PLATFORMS:-false}" = "true" ]; then
-            capture_from_fly "if [ -d /data/growth/platforms ]; then tar -C /data/growth -czf - platforms 2>/dev/null; fi" /tmp/growth-backup/growth-platforms.tar.gz 720 || true
+            capture_from_fly "if [ -d /data/growth/platforms ]; then nice -n 15 tar -C /data/growth -czf - platforms 2>/dev/null; fi" /tmp/growth-backup/growth-platforms.tar.gz 720 || true
           else
-            capture_from_fly "if [ -d /data/growth/platforms ]; then tar -C /data/growth -czf - platforms 2>/dev/null; fi" /tmp/growth-backup/platforms.tar.gz || true
+            capture_from_fly "if [ -d /data/growth/platforms ]; then nice -n 15 tar -C /data/growth -czf - platforms 2>/dev/null; fi" /tmp/growth-backup/platforms.tar.gz || true
           fi
           if [ "${EXTERNALIZE_HISTORY_LEDGER:-false}" = "true" ]; then
-            capture_from_fly "if [ -d /data/growth/history-ledger ]; then tar -C /data/growth -czf - history-ledger 2>/dev/null; fi" /tmp/growth-backup/growth-history-ledger.tar.gz 720 || true
+            capture_from_fly "if [ -d /data/growth/history-ledger ]; then nice -n 15 tar -C /data/growth -czf - history-ledger 2>/dev/null; fi" /tmp/growth-backup/growth-history-ledger.tar.gz 720 || true
           else
-            capture_from_fly "if [ -d /data/growth/history-ledger ]; then tar -C /data/growth -czf - history-ledger 2>/dev/null; fi" /tmp/growth-backup/history-ledger.tar.gz || true
+            capture_from_fly "if [ -d /data/growth/history-ledger ]; then nice -n 15 tar -C /data/growth -czf - history-ledger 2>/dev/null; fi" /tmp/growth-backup/history-ledger.tar.gz || true
           fi
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-backup/fetched-at.txt
 
@@ -197,18 +312,13 @@ jobs:
           # 四个平台先在同一把 store mutation lock 内创建 hardlink 快照，再按 32MiB
           # 顺序下载；每片大小和 SHA-256 不匹配就重试，禁止并行分片与截断拼接。
           BATCH_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          ASSET_GENERATION="slot-0"
-          mkdir -p /tmp/growth-backup/previous-release
-          if gh release download growth-cold-store-latest \
-            -p platform-current-batch-manifest.json \
-            -D /tmp/growth-backup/previous-release \
-            --clobber >/dev/null 2>&1; then
-            ACTIVE_GENERATION=$(jq -r '.assetGeneration // ""' /tmp/growth-backup/previous-release/platform-current-batch-manifest.json)
-            if [ "$ACTIVE_GENERATION" = "slot-0" ]; then ASSET_GENERATION="slot-1"; fi
-          fi
+          # 每批使用唯一 generation。旧双 slot 方案在旧清单下载失败时会默认覆盖
+          # slot-0，可能先破坏仍被线上清单引用的完整批次，再上传新清单。
+          ASSET_GENERATION="batch-${BATCH_ID}"
           REMOTE_BATCH_DIR="/data/growth/backups/current-batches/${BATCH_ID}"
-          wait_for_started_vm
-          flyctl ssh console -a mvstudiopro -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth pnpm exec tsx scripts/snapshot-growth-platform-current-batch.mts --output=${REMOTE_BATCH_DIR} --batch-id=${BATCH_ID} --asset-generation=${ASSET_GENERATION}'"
+          printf '%s\n' "$REMOTE_BATCH_DIR" > /tmp/growth-backup/remote-current-batch-dir.txt
+          wait_for_interactive_workload
+          run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth pnpm exec tsx scripts/snapshot-growth-platform-current-batch.mts --output=${REMOTE_BATCH_DIR} --batch-id=${BATCH_ID} --asset-generation=${ASSET_GENERATION}'"
           fetch_file_from_fly "${REMOTE_BATCH_DIR}/snapshot-manifest.json" /tmp/growth-backup/platform-current-snapshot-manifest.json true
           test "$(jq '.files | length' /tmp/growth-backup/platform-current-snapshot-manifest.json)" -eq 4
           mkdir -p /tmp/growth-backup/release-current
@@ -235,7 +345,7 @@ jobs:
             for attempt in 1 2 3 4 5; do
               local next_path="${output_path}.next"
               rm -f "$next_path"
-              if wait_for_started_vm && timeout 720 flyctl ssh console -a mvstudiopro -C "sh -lc 'dd if=${remote_file} bs=${block_bytes} skip=${skip_blocks} count=${count_blocks} status=none'" > "$next_path"; then
+              if wait_for_interactive_workload && run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro -C "sh -lc 'nice -n 15 dd if=${remote_file} bs=${block_bytes} skip=${skip_blocks} count=${count_blocks} status=none'" > "$next_path"; then
                 local actual_bytes
                 local actual_sha
                 actual_bytes=$(stat -c%s "$next_path")
@@ -269,9 +379,8 @@ jobs:
             /tmp/growth-backup/platform-current-snapshot-manifest.json \
             /tmp/growth-backup/platform-current \
             /tmp/growth-backup/release-current
-          # 本地四个整文件与 bundle 均已完成 read-back；及时释放 Fly hardlink。
-          # 若本 step 异常退出，下轮三小时 stale cleanup 会回收残留批次。
-          flyctl ssh console -a mvstudiopro -C "sh -lc 'rm -rf -- ${REMOTE_BATCH_DIR}'"
+          # 此处仅完成本机重组校验；Fly hardlink 必须保留到 Release 逐片回读与清单回读全部成功。
+          # 任一上传/回读失败时，由下轮三小时 stale cleanup 回收临时快照，源 platform-current 始终保留。
           for ledger_file in /tmp/growth-backup/store/history-ledger/*.json; do
             [ -f "$ledger_file" ] || continue
             gzip -c "$ledger_file" > "/tmp/growth-backup/history-ledger-$(basename "$ledger_file" .json).json.gz"
@@ -346,6 +455,7 @@ jobs:
       - name: Publish cold-store restore assets
         env:
           GH_TOKEN: ${{ github.token }}
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           upload_and_readback_asset() {
             local asset="$1"
@@ -424,11 +534,22 @@ jobs:
             upload_and_readback_asset "$asset"
           done
           upload_and_readback_asset /tmp/growth-backup/release-current/platform-current-batch-manifest.json
-      - name: Build archive offload list from Fly
-        if: hashFiles('/tmp/growth-backup/storage.env') != ''
+          touch /tmp/growth-backup/PLATFORM_CURRENT_RELEASE_VERIFIED
+          REMOTE_BATCH_DIR=$(cat /tmp/growth-backup/remote-current-batch-dir.txt)
+          case "$REMOTE_BATCH_DIR" in
+            /data/growth/backups/current-batches/[0-9]*-[0-9]*) ;;
+            *) echo "非法 current hardlink 批次目录: $REMOTE_BATCH_DIR"; exit 1 ;;
+          esac
+          flyctl ssh console -a mvstudiopro -C "sh -lc 'rm -rf -- \"$REMOTE_BATCH_DIR\"'"
+      - name: Create leased archive snapshot on Fly
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
+          if [ ! -f /tmp/growth-backup/storage.env ]; then
+            echo "Missing storage assessment; archive offload stays disabled"
+            touch /tmp/growth-backup/OFFLOAD_SKIP
+            exit 0
+          fi
           . /tmp/growth-backup/storage.env
           if [ "$SHOULD_OFFLOAD" != "true" ]; then
             echo "No offload needed"
@@ -436,97 +557,179 @@ jobs:
             exit 0
           fi
           mkdir -p /tmp/growth-archive-offload
-          cat > /tmp/growth-archive-offload/build-offload-list.sh <<'SH'
-          cd /data/growth/archive || exit 0
-          find . -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort > /tmp/archive-all-dirs.txt
-          grep -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" /tmp/archive-all-dirs.txt | sort > /tmp/archive-date-dirs.txt || true
-          head -n -2 /tmp/archive-date-dirs.txt > /tmp/archive-offload-date-dirs.txt || true
-          grep -v -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" /tmp/archive-all-dirs.txt > /tmp/archive-offload-other-dirs.txt || true
-          cat /tmp/archive-offload-date-dirs.txt /tmp/archive-offload-other-dirs.txt | sed "/^[[:space:]]*$/d" > /tmp/archive-offload-dirs.txt
-          avail=$(df -B1 /data | awk "NR==2{print \$4}")
-          target=$((1200 * 1024 * 1024))
-          if [ ! -s /tmp/archive-offload-dirs.txt ] && [ -s /tmp/archive-date-dirs.txt ] && [ ${avail:-0} -lt $target ]; then
-            need=$((target - avail))
-            selected=0
-            : > /tmp/archive-offload-dirs.txt
-            while IFS= read -r dir; do
-              [ -n "$dir" ] || continue
-              echo "$dir" >> /tmp/archive-offload-dirs.txt
-              size=$(du -sb "$dir" 2>/dev/null | awk "{print \$1}")
-              need=$((need - ${size:-0}))
-              selected=$((selected + 1))
-              if [ $need -le 0 ] && [ $selected -ge 2 ]; then
-                break
-              fi
-            done < /tmp/archive-date-dirs.txt
-          fi
-          sort -u /tmp/archive-offload-dirs.txt -o /tmp/archive-offload-dirs.txt
-          cat /tmp/archive-offload-dirs.txt
-          SH
-          flyctl ssh console -a mvstudiopro -C 'sh -s' < /tmp/growth-archive-offload/build-offload-list.sh > /tmp/growth-archive-offload/dirs.txt
+          BATCH_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-backup"
+          printf '%s\n' "$BATCH_ID" > /tmp/growth-archive-offload/batch-id.txt
+          SNAPSHOT_READY=false
+          for attempt in $(seq 1 20); do
+            rm -f /tmp/growth-archive-offload/snapshot.tsv.next
+            if flyctl ssh console -a mvstudiopro \
+              -C "sh -s -- prepare '$BATCH_ID'" \
+              < scripts/growth-archive-offload-remote.sh \
+              > /tmp/growth-archive-offload/snapshot.tsv.next; then
+              mv /tmp/growth-archive-offload/snapshot.tsv.next /tmp/growth-archive-offload/snapshot.tsv
+              SNAPSHOT_READY=true
+              break
+            fi
+            echo "采集 lease 或前台任务繁忙，archive 快照让行 30 秒（${attempt}/20）"
+            sleep 30
+          done
+          test "$SNAPSHOT_READY" = "true"
+          cut -f1 /tmp/growth-archive-offload/snapshot.tsv > /tmp/growth-archive-offload/dirs.txt
           if [ ! -s /tmp/growth-archive-offload/dirs.txt ]; then
             touch /tmp/growth-archive-offload/EMPTY
+          fi
+      - name: Download and verify archive bundles locally
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ]; then
+            echo "No archive shards to offload"
             exit 0
           fi
+          test -s /tmp/growth-archive-offload/snapshot.tsv
+          BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
+          mkdir -p /tmp/growth-archive-offload/assets
+          : > /tmp/growth-archive-offload/assets.tsv.next
+          while IFS=$'\t' read -r dir source_fingerprint source_bytes; do
+            [ -n "$dir" ] || continue
+            case "$dir" in ""|.|..|*[!0-9A-Za-z._-]*) echo "非法目录名: $dir"; exit 1 ;; esac
+            output="/tmp/growth-archive-offload/assets/archive-$dir.tar.gz"
+            BUNDLE_READY=false
+            for attempt in $(seq 1 20); do
+              rm -f "$output.next"
+              if flyctl ssh console -a mvstudiopro \
+                -C "sh -s -- bundle '$BATCH_ID' '$dir'" \
+                < scripts/growth-archive-offload-remote.sh \
+                > "$output.next"; then
+                mv "$output.next" "$output"
+                BUNDLE_READY=true
+                break
+              fi
+              echo "前台任务繁忙，archive bundle 让行 30 秒：$dir（${attempt}/20）"
+              sleep 30
+            done
+            test "$BUNDLE_READY" = "true"
+            gzip -t "$output"
+            tar -tzf "$output" > "$output.list"
+            awk -v root="$dir" '$0 != root && index($0, root "/") != 1 { exit 1 }' "$output.list"
+            asset_bytes=$(stat -c%s "$output")
+            asset_sha=$(sha256sum "$output" | awk '{print $1}')
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+              "$dir" "$(basename "$output")" "$asset_bytes" "$asset_sha" "$source_fingerprint" "$source_bytes" \
+              >> /tmp/growth-archive-offload/assets.tsv.next
+            sleep 5
+          done < /tmp/growth-archive-offload/snapshot.tsv
+          mv /tmp/growth-archive-offload/assets.tsv.next /tmp/growth-archive-offload/assets.tsv
+          test "$(wc -l < /tmp/growth-archive-offload/assets.tsv)" -eq "$(wc -l < /tmp/growth-archive-offload/snapshot.tsv)"
+      - name: Publish and read back archive bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ]; then
+            echo "No archive shards to publish"
+            exit 0
+          fi
+          upload_and_readback_asset() {
+            local asset="$1"
+            local asset_name expected_bytes expected_sha verify_dir actual_bytes actual_sha
+            asset_name=$(basename "$asset")
+            expected_bytes=$(stat -c%s "$asset")
+            expected_sha=$(sha256sum "$asset" | awk '{print $1}')
+            verify_dir=/tmp/growth-archive-offload/release-readback
+            mkdir -p "$verify_dir"
+            for attempt in 1 2 3 4 5; do
+              if gh release upload growth-cold-store-latest "$asset#$asset_name" --clobber; then
+                rm -f "$verify_dir/$asset_name"
+                if gh release download growth-cold-store-latest -p "$asset_name" -D "$verify_dir" --clobber; then
+                  actual_bytes=$(stat -c%s "$verify_dir/$asset_name")
+                  actual_sha=$(sha256sum "$verify_dir/$asset_name" | awk '{print $1}')
+                  if [ "$actual_bytes" = "$expected_bytes" ] && [ "$actual_sha" = "$expected_sha" ]; then
+                    printf '%s\t%s\t%s\n' "$asset_name" "$expected_bytes" "$expected_sha" \
+                      >> /tmp/growth-archive-offload/verified-assets.tsv
+                    return 0
+                  fi
+                fi
+              fi
+              echo "Release 上传/回读重试：$asset_name（${attempt}/5）"
+              sleep 20
+            done
+            return 1
+          }
+
+          gh release view growth-cold-store-latest >/dev/null 2>&1 || \
+            gh release create growth-cold-store-latest --title "Growth Cold Store Latest" --notes "Latest cold-store restore assets"
+          : > /tmp/growth-archive-offload/verified-assets.tsv
+          while IFS=$'\t' read -r dir asset_name asset_bytes asset_sha source_fingerprint source_bytes; do
+            [ -n "$dir" ] || continue
+            upload_and_readback_asset "/tmp/growth-archive-offload/assets/$asset_name"
+          done < /tmp/growth-archive-offload/assets.tsv
           node <<'NODE'
           const fs = require("fs");
-          const dirs = fs.readFileSync("/tmp/growth-archive-offload/dirs.txt","utf8").split(/\r?\n/).map((s)=>s.trim()).filter(Boolean);
+          const parse = (file) => fs.readFileSync(file, "utf8").trim().split(/\r?\n/).filter(Boolean).map((line) => line.split("\t"));
+          const batchId = fs.readFileSync("/tmp/growth-archive-offload/batch-id.txt", "utf8").trim();
+          const archives = parse("/tmp/growth-archive-offload/assets.tsv").map(([dir, asset, bytes, sha256, sourceFingerprint, sourceBytes]) => ({
+            dir, asset, bytes: Number(bytes), sha256, sourceFingerprint, sourceBytes: Number(sourceBytes),
+          }));
+          const verified = new Set(parse("/tmp/growth-archive-offload/verified-assets.tsv").map(([asset]) => asset));
+          if (!archives.length || archives.some((entry) => !verified.has(entry.asset))) throw new Error("archive release read-back incomplete");
           const manifest = {
+            schemaVersion: 2,
+            batchId,
             createdAt: new Date().toISOString(),
             baseUrl: "https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-cold-store-latest",
-            archiveDirs: dirs,
-            thresholdsMb: { singleFile: 400, directory: 800, hotData: 800, availableSpaceTrigger: 800, targetAvailableSpace: 1200 }
+            archiveDirs: archives.map((entry) => entry.dir),
+            archives,
+            thresholdsMb: { targetAvailableSpace: 1200 },
           };
           fs.writeFileSync("/tmp/growth-archive-offload/offload-manifest.json", JSON.stringify(manifest, null, 2));
           NODE
-      - name: Publish archive offload bundles
-        if: hashFiles('/tmp/growth-backup/OFFLOAD_SKIP') == '' && hashFiles('/tmp/growth-archive-offload/EMPTY') == ''
+          upload_and_readback_asset /tmp/growth-archive-offload/offload-manifest.json
+          sha256sum /tmp/growth-archive-offload/offload-manifest.json > /tmp/growth-archive-offload/DELETE_READY
+      - name: Delete only release-verified unchanged archive shards from Fly
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ ! -f /tmp/growth-archive-offload/dirs.txt ] || [ ! -f /tmp/growth-archive-offload/offload-manifest.json ]; then
-            echo "Missing offload inputs, skip publish"
+          if [ -f /tmp/growth-backup/OFFLOAD_SKIP ] || [ -f /tmp/growth-archive-offload/EMPTY ]; then
             exit 0
           fi
-          mkdir -p /tmp/growth-archive-offload/assets
-          while IFS= read -r dir; do
+          test -s /tmp/growth-archive-offload/DELETE_READY
+          test -s /tmp/growth-archive-offload/verified-assets.tsv
+          BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
+          while IFS=$'\t' read -r dir asset_name asset_bytes asset_sha source_fingerprint source_bytes; do
             [ -n "$dir" ] || continue
-            flyctl ssh console -a mvstudiopro -C "sh -lc 'cd /data/growth/archive && tar -czf - $dir'" > "/tmp/growth-archive-offload/assets/archive-$dir.tar.gz"
-          done < /tmp/growth-archive-offload/dirs.txt
-          gh release view growth-cold-store-latest >/dev/null 2>&1 || \
-            gh release create growth-cold-store-latest --title "Growth Cold Store Latest" --notes "Latest cold-store restore assets"
-          gh release upload growth-cold-store-latest /tmp/growth-archive-offload/offload-manifest.json#offload-manifest.json --clobber
-          for file in /tmp/growth-archive-offload/assets/*.tar.gz; do
-            [ -f "$file" ] || continue
-            gh release upload growth-cold-store-latest "$file#$(basename "$file")" --clobber
-          done
-      - name: Delete offloaded archive shards from Fly
-        if: hashFiles('/tmp/growth-backup/OFFLOAD_SKIP') == '' && hashFiles('/tmp/growth-archive-offload/EMPTY') == ''
+            awk -F '\t' -v asset="$asset_name" -v bytes="$asset_bytes" -v sha="$asset_sha" \
+              '$1 == asset && $2 == bytes && $3 == sha { found=1 } END { exit(found ? 0 : 1) }' \
+              /tmp/growth-archive-offload/verified-assets.tsv
+            DELETED=false
+            for attempt in $(seq 1 20); do
+              if flyctl ssh console -a mvstudiopro \
+                -C "sh -s -- delete '$BATCH_ID' '$dir' '$source_fingerprint'" \
+                < scripts/growth-archive-offload-remote.sh; then
+                DELETED=true
+                break
+              fi
+              echo "采集 lease 或前台任务繁忙，删除继续让行：$dir（${attempt}/20）"
+              sleep 30
+            done
+            test "$DELETED" = "true"
+          done < /tmp/growth-archive-offload/assets.tsv
+          flyctl ssh console -a mvstudiopro \
+            -C "sh -s -- cleanup '$BATCH_ID'" \
+            < scripts/growth-archive-offload-remote.sh
+      - name: Retain platform-current on Fly after cold backup
+        run: |
+          # 四平台 current 本轮只执行“Fly → 本机校验 → Release 回读”的冷备。
+          # 禁止自动删除后再依赖 GitHub → Fly 恢复；空间回收只处理已逐包验真的 archive 分片。
+          echo "platform-current retained on Fly; no automatic GitHub-to-Fly recovery path was invoked"
+      - name: Always release archive hardlink snapshot
+        if: always()
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          if [ ! -f /tmp/growth-archive-offload/dirs.txt ]; then
-            echo "Missing dirs.txt, skip delete"
+          if [ ! -s /tmp/growth-archive-offload/batch-id.txt ]; then
             exit 0
           fi
-          while IFS= read -r dir; do
-            [ -n "$dir" ] || continue
-            flyctl ssh console -a mvstudiopro -C "rm -rf /data/growth/archive/$dir"
-          done < /tmp/growth-archive-offload/dirs.txt
-      - name: Delete offloaded platform-current from Fly
-        if: hashFiles('/tmp/growth-backup/storage.env') != ''
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: |
-          . /tmp/growth-backup/storage.env
-          if [ "${PLATFORM_CURRENT_BYTES:-0}" -le $((400 * 1024 * 1024)) ]; then
-            echo "platform-current below offload threshold"
-            exit 0
-          fi
-          flyctl ssh console -a mvstudiopro -C "sh -lc '
-            if [ -f /data/growth/current.json ] && [ -d /data/growth/platforms ] && [ -d /data/growth/platform-current ]; then
-              rm -rf /data/growth/platform-current
-              rm -f /data/growth/platform-current-manifest.json
-            fi
-          '"
+          BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
+          flyctl ssh console -a mvstudiopro \
+            -C "sh -s -- cleanup '$BATCH_ID'" \
+            < scripts/growth-archive-offload-remote.sh || true

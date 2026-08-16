@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { runGrowthTrendBackfillStep } from "../server/growth/trendBackfill";
+import { updateTrendBackfillProgress } from "../server/growth/trendStore";
 
 async function main() {
   await runGrowthTrendBackfillStep();
@@ -8,6 +9,7 @@ async function main() {
 main().catch((error) => {
   console.error("[backfill] failed", error);
   updateTrendBackfillProgress({
+    mode: "history",
     active: false,
     finishedAt: new Date().toISOString(),
     status: "failed",
