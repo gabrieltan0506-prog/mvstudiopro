@@ -24,6 +24,7 @@ import {
 
 export const MANHUA_VIRAL_PROPOSALS_PREFIX = "manhua-template-learn/proposals/";
 export const MANHUA_VIRAL_APPROVED_PREFIX = "manhua-template-learn/approved/";
+export const MANHUA_VIRAL_ARCHIVE_PREFIX = "manhua-template-learn/archive/";
 
 async function readCardFromObject(objectName: string): Promise<ManhuaViralTemplateCard | null> {
   const bucket = String(
@@ -111,6 +112,31 @@ export async function getGcsManhuaViralProposal(
   return readCardFromObject(objectName);
 }
 
+export async function getGcsManhuaViralApproved(
+  id: string,
+): Promise<ManhuaViralTemplateCard | null> {
+  const key = String(id || "").trim();
+  if (!/^tpl_[a-z0-9_-]{1,60}$/i.test(key)) return null;
+  return readCardFromObject(`${MANHUA_VIRAL_APPROVED_PREFIX}${key}.json`);
+}
+
+/** 优化成功后只写 proposals/；正式 approved/ 在 owner 再次批准前保持不变。 */
+export async function saveManhuaViralTemplateRevisionProposal(
+  card: ManhuaViralTemplateCard,
+): Promise<ManhuaViralTemplateCard> {
+  const validated = parseManhuaViralTemplateCard(card);
+  if (!validated || validated.status !== "proposed" || !validated.revision) {
+    throw new Error("待审模板修订校验失败");
+  }
+  const body = `${JSON.stringify(validated, null, 2)}\n`;
+  await uploadBufferToGcs({
+    objectName: `${MANHUA_VIRAL_PROPOSALS_PREFIX}${validated.id}.json`,
+    buffer: Buffer.from(body, "utf8"),
+    contentType: "application/json",
+  });
+  return validated;
+}
+
 /**
  * 人审批准进库：写入 GCS approved/，并尽量把 proposals/ 同步为 approved。
  * 可传 id（读提案）或完整 card。
@@ -194,6 +220,63 @@ export async function approveManhuaViralTemplate(input: {
   if (!card) throw new Error("提案文件不存在或已失效，请重新学习后再批准");
   if (card.status !== "proposed") {
     throw new Error("该提案不是待审状态（可能已批准入库），无需重复批准");
+  }
+
+  if (card.revision) {
+    const original = await getGcsManhuaViralApproved(card.revision.parentTemplateId);
+    if (!original || original.status !== "approved") {
+      throw new Error("待替换的原正式模板不存在，已停止批准");
+    }
+    const now = new Date().toISOString();
+    const replacement = parseManhuaViralTemplateCard({
+      ...card,
+      id: original.id,
+      status: "approved",
+      publicCode: original.publicCode,
+      sourceRefs: original.sourceRefs,
+      provenance: original.provenance,
+      revision: undefined,
+      approvedAt: original.approvedAt || now,
+      updatedAt: now,
+    });
+    if (!replacement || replacement.status !== "approved") {
+      throw new Error("模板修订替换校验失败");
+    }
+
+    // 先归档旧正式版；归档成功、正式替换失败时，approved/ 仍保留旧版，可安全重试。
+    const archiveStamp = now.replace(/[^0-9]/g, "").slice(0, 17);
+    await uploadBufferToGcs({
+      objectName: `${MANHUA_VIRAL_ARCHIVE_PREFIX}${original.id}/${archiveStamp}.json`,
+      buffer: Buffer.from(`${JSON.stringify(original, null, 2)}\n`, "utf8"),
+      contentType: "application/json",
+    });
+    await uploadBufferToGcs({
+      objectName: `${MANHUA_VIRAL_APPROVED_PREFIX}${original.id}.json`,
+      buffer: Buffer.from(`${JSON.stringify(replacement, null, 2)}\n`, "utf8"),
+      contentType: "application/json",
+    });
+    try {
+      const auditProposal = parseManhuaViralTemplateCard({
+        ...card,
+        status: "approved",
+        publicCode: original.publicCode,
+        approvedAt: now,
+        updatedAt: now,
+      });
+      if (auditProposal) {
+        await uploadBufferToGcs({
+          objectName: `${MANHUA_VIRAL_PROPOSALS_PREFIX}${card.id}.json`,
+          buffer: Buffer.from(`${JSON.stringify(auditProposal, null, 2)}\n`, "utf8"),
+          contentType: "application/json",
+        });
+      }
+    } catch (e) {
+      console.warn(
+        "[manhuaViralTemplateStore] sync approved revision audit failed:",
+        e instanceof Error ? e.message : e,
+      );
+    }
+    return replacement;
   }
 
   const approved: ManhuaViralTemplateCard = {

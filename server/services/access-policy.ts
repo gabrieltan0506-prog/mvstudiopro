@@ -31,6 +31,19 @@ export function resolvePlatformSupervisorOpsAllowed(
   );
 }
 
+/**
+ * 站点拥有者专属操作。角色与监管会话都不能绕过；OWNER_OPEN_ID 缺失时 fail closed。
+ * 用于保护爆款蒸馏模板的全文查看、模型优化与修订替换。
+ */
+export function resolveSiteOwnerOnlyAllowed(
+  user: { openId?: string | null },
+  configuredOwnerOpenId: string | null | undefined = process.env.OWNER_OPEN_ID,
+): boolean {
+  const expected = String(configuredOwnerOpenId || "").trim();
+  const actual = String(user.openId || "").trim();
+  return Boolean(expected && actual && actual === expected);
+}
+
 function normalizeEmail(email: string | null | undefined): string {
   return (email ?? "").trim().toLowerCase();
 }

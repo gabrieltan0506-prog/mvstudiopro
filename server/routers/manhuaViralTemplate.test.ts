@@ -35,15 +35,53 @@ const noCodeCard = {
   publicCode: undefined,
 } as unknown as ManhuaViralTemplateCard;
 
+const revisionCard = {
+  ...secretCard,
+  id: "tpl_revision_owner0001",
+  status: "proposed",
+  publicCode: undefined,
+  revision: {
+    parentTemplateId: secretCard.id,
+    requestId: "request_owner_1234",
+    model: "deepseek_v4_0813_high",
+    modelName: "deepseek/deepseek-v4-pro-0813",
+    reasoningEffort: "high",
+    promptZh: "强化钩子。",
+    changedFields: ["hook3sZh"],
+    reasons: [{ field: "hook3sZh", reasonZh: "强化前三秒。" }],
+    createdByUserId: 7,
+    createdAt: "2026-08-17T00:00:00.000Z",
+  },
+} as unknown as ManhuaViralTemplateCard;
+
+let proposalForRouter: ManhuaViralTemplateCard | null = revisionCard;
+
 vi.mock("../services/manhuaViralTemplateStore", () => ({
   listMergedApprovedManhuaViralTemplatesGrouped: vi.fn(async () => [
     { laneZh: "爽文逆袭", items: [secretCard, noCodeCard] },
   ]),
+  listGcsManhuaViralProposals: vi.fn(async () => [revisionCard]),
+  listGcsManhuaViralApproved: vi.fn(async () => [secretCard]),
+  getGcsManhuaViralApproved: vi.fn(async () => secretCard),
+  getGcsManhuaViralProposal: vi.fn(async () => proposalForRouter),
+  saveManhuaViralTemplateRevisionProposal: vi.fn(async (card: ManhuaViralTemplateCard) => card),
+  approveManhuaViralTemplate: vi.fn(async () => secretCard),
 }));
 vi.mock("../services/manhuaViralTemplateCopy", () => ({
   MANHUA_VIRAL_TEMPLATE_COPY: {
     tpl_series_deadbeef0001: { featureZh: "特色文案A", introZh: "简介文案B" },
   },
+}));
+vi.mock("../services/manhuaViralTemplateOptimize", () => ({
+  MANHUA_VIRAL_TEMPLATE_OPTIMIZE_MODELS: [
+    { id: "terra_high", labelZh: "GPT-5.6 Terra · High", reasoningEffort: "high" },
+  ],
+  optimizeApprovedManhuaViralTemplate: vi.fn(async () => ({
+    original: secretCard,
+    proposal: revisionCard,
+    changedFields: ["hook3sZh"],
+    reasons: [{ field: "hook3sZh", reasonZh: "强化前三秒。" }],
+  })),
 }));
 
 /**
@@ -59,11 +97,12 @@ async function loadRouter() {
 function makeCtx(
   role: "user" | "admin" | "supervisor",
   supervisorSession?: TrpcContext["supervisorSession"],
+  openId = "t",
 ): TrpcContext {
   return {
     user: {
       id: 7,
-      openId: "t",
+      openId,
       email: "t@example.com",
       name: "T",
       loginMethod: "manus",
@@ -87,6 +126,7 @@ function makeCtx(
 
 beforeEach(() => {
   vi.unstubAllEnvs();
+  proposalForRouter = revisionCard;
 });
 
 describe("listApprovedPublic：普通用户只拿匿名功能卡", () => {
@@ -137,7 +177,7 @@ describe("listApprovedPublic：普通用户只拿匿名功能卡", () => {
   });
 });
 
-describe("listApprovedPrivate：鉴权矩阵", () => {
+describe("listApprovedPrivate：owner-only 鉴权矩阵", () => {
   it("普通用户（无监管会话）必须 FORBIDDEN", async () => {
     const caller = (await loadRouter()).createCaller(makeCtx("user"));
     await expect(caller.listApprovedPrivate()).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -151,18 +191,108 @@ describe("listApprovedPrivate：鉴权矩阵", () => {
     await expect(caller.listApprovedPrivate()).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
-  it("admin 角色可读全量（真名可见）", async () => {
-    const caller = (await loadRouter()).createCaller(makeCtx("admin"));
-    const out = await caller.listApprovedPrivate();
-    expect(JSON.stringify(out)).toContain("某爆款剧真名节奏");
+  it("其他 admin/supervisor 角色也不能读取全量", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const router = await loadRouter();
+    await expect(router.createCaller(makeCtx("admin", undefined, "other-admin")).listApprovedPrivate())
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(router.createCaller(makeCtx("supervisor", undefined, "other-supervisor")).listApprovedPrivate())
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
-  it("与当前账号绑定的未过期监管会话可读全量", async () => {
+  it("监管会话不能替代 owner 身份", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
     const caller = (await loadRouter()).createCaller(makeCtx("user", {
       userId: 7,
       expiresAt: Date.now() + 60_000,
-    }));
-    const out = await caller.listApprovedPrivate();
-    expect(JSON.stringify(out)).toContain("某爆款剧真名节奏");
+    }, "other-user"));
+    await expect(caller.listApprovedPrivate()).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("OWNER_OPEN_ID 本人可读完整模板和原始 GCS 清单", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const caller = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
+    expect(JSON.stringify(await caller.listApprovedPrivate())).toContain("某爆款剧真名节奏");
+    expect(JSON.stringify(await caller.listApprovedGcsOnly())).toContain("某爆款剧真名节奏");
+  });
+});
+
+describe("owner 模板查看与优化", () => {
+  it("只有 OWNER_OPEN_ID 本人获得查看能力，admin/supervisor 角色不能替代", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const router = await loadRouter();
+    const owner = router.createCaller(makeCtx("user", undefined, "owner-open-id"));
+    const otherAdmin = router.createCaller(makeCtx("admin", undefined, "other-admin"));
+    const ownerCaps = await owner.getOwnerOptimizeCapabilities();
+    expect(ownerCaps.allowed).toBe(true);
+    expect(ownerCaps.models).toEqual([
+      { id: "terra_high", labelZh: "GPT-5.6 Terra · High", reasoningEffort: "high" },
+    ]);
+    expect(await otherAdmin.getOwnerOptimizeCapabilities()).toEqual({ allowed: false, models: [] });
+    await expect(otherAdmin.getApprovedOwnerDetail({ id: secretCard.id })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    expect((await owner.getApprovedOwnerDetail({ id: secretCard.id })).card.nameZh)
+      .toContain("真名");
+  });
+
+  it("owner 优化成功后返回真实变更和待审修订；其他 admin 不能调用", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const router = await loadRouter();
+    const input = {
+      id: secretCard.id,
+      model: "terra_high" as const,
+      promptZh: "强化前三秒。",
+      requestId: "request_owner_1234",
+      confirmPaidCall: true as const,
+    };
+    const owner = router.createCaller(makeCtx("user", undefined, "owner-open-id"));
+    const result = await owner.optimizeApproved(input);
+    expect(result).toMatchObject({
+      ok: true,
+      changedFields: ["hook3sZh"],
+      proposal: { id: "tpl_revision_owner0001", status: "proposed" },
+    });
+    const otherAdmin = router.createCaller(makeCtx("admin", undefined, "other-admin"));
+    await expect(otherAdmin.optimizeApproved(input)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("非 owner 的监管账号看不到优化修订，也不能批准替换", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const router = await loadRouter();
+    const otherAdmin = router.createCaller(makeCtx("admin", undefined, "other-admin"));
+    expect((await otherAdmin.listProposals()).items).toEqual([]);
+    await expect(otherAdmin.approve({
+      id: revisionCard.id,
+      confirmApprove: true,
+    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(otherAdmin.approve({
+      card: { id: revisionCard.id },
+      confirmApprove: true,
+    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("首次 GCS 读取缺失时，修订 id 仍对非 owner fail closed", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    proposalForRouter = null;
+    const otherAdmin = (await loadRouter()).createCaller(
+      makeCtx("admin", undefined, "other-admin"),
+    );
+    await expect(otherAdmin.approve({
+      id: "tpl_revision_temporarily_missing",
+      confirmApprove: true,
+    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("owner 即使没有监管角色，也能查看并批准自己的优化修订", async () => {
+    vi.stubEnv("OWNER_OPEN_ID", "owner-open-id");
+    const owner = (await loadRouter()).createCaller(makeCtx("user", undefined, "owner-open-id"));
+    expect((await owner.listProposals()).items).toMatchObject([
+      { id: revisionCard.id, revisionOf: secretCard.id },
+    ]);
+    await expect(owner.approve({
+      id: revisionCard.id,
+      confirmApprove: true,
+    })).resolves.toMatchObject({ ok: true });
   });
 });

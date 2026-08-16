@@ -59,6 +59,45 @@ export type ManhuaViralTemplateSourceRef = {
   noteZh?: string;
 };
 
+export const MANHUA_VIRAL_TEMPLATE_OPTIMIZE_FIELDS = [
+  "nameZh",
+  "laneZh",
+  "summaryZh",
+  "hook3sZh",
+  "beatGrid",
+  "scenePoolHints",
+  "castShape",
+  "densityHints",
+] as const;
+
+export type ManhuaViralTemplateOptimizeField =
+  (typeof MANHUA_VIRAL_TEMPLATE_OPTIMIZE_FIELDS)[number];
+
+export type ManhuaViralTemplateOptimizeModel =
+  | "terra_high"
+  | "kimi_k3_max"
+  | "claude_opus_5_high"
+  | "deepseek_v4_0813_high";
+
+export type ManhuaViralTemplateChangeReason = {
+  field: ManhuaViralTemplateOptimizeField;
+  reasonZh: string;
+};
+
+/** 待审优化修订；只存在于监管私有卡，公开 DTO 不读取这些字段。 */
+export type ManhuaViralTemplateRevision = {
+  parentTemplateId: string;
+  requestId: string;
+  model: ManhuaViralTemplateOptimizeModel;
+  modelName: string;
+  reasoningEffort: "medium" | "high" | "max";
+  promptZh: string;
+  changedFields: ManhuaViralTemplateOptimizeField[];
+  reasons: ManhuaViralTemplateChangeReason[];
+  createdByUserId: number;
+  createdAt: string;
+};
+
 export type ManhuaViralTemplateCard = {
   id: string;
   /** UI 短名（中性，不写竞品剧名） */
@@ -83,6 +122,8 @@ export type ManhuaViralTemplateCard = {
   updatedAt?: string;
   /** 学习链 provenance：证明读帧模型与系列聚合方式；兼容旧润色记录。 */
   provenance?: ManhuaViralTemplateProvenance;
+  /** 已批准模板经 owner 优化后形成的待审修订；普通学习提案没有此字段。 */
+  revision?: ManhuaViralTemplateRevision;
 };
 
 /** 读帧与聚合分开记；proposalPolish 只为读取迁移前旧卡保留。 */
@@ -139,6 +180,9 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
         .slice(0, 24)
     : [];
   const cast = o.castShape || { leadDesireZh: "", pressureZh: "" };
+  const revision = parseManhuaViralTemplateRevision(o.revision);
+  // 只要声明了 revision 或使用修订 id，就必须完整通过修订契约，禁止降级成普通提案。
+  if ((o.revision != null || /^tpl_revision_/i.test(id)) && !revision) return null;
   return {
     id: id.slice(0, 64),
     nameZh: nameZh.slice(0, 32),
@@ -182,6 +226,70 @@ export function parseManhuaViralTemplateCard(raw: unknown): ManhuaViralTemplateC
     approvedAt: o.approvedAt ? String(o.approvedAt) : undefined,
     updatedAt: o.updatedAt ? String(o.updatedAt) : undefined,
     provenance: parseManhuaViralTemplateProvenance(o.provenance),
+    revision,
+  };
+}
+
+function parseManhuaViralTemplateRevision(
+  raw: unknown,
+): ManhuaViralTemplateRevision | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Partial<ManhuaViralTemplateRevision>;
+  const parentTemplateId = String(o.parentTemplateId || "").trim();
+  const requestId = String(o.requestId || "").trim();
+  const promptZh = String(o.promptZh || "").trim();
+  const modelName = String(o.modelName || "").trim();
+  const createdAt = String(o.createdAt || "").trim();
+  const model = o.model;
+  const modelValues: readonly ManhuaViralTemplateOptimizeModel[] = [
+    "terra_high",
+    "kimi_k3_max",
+    "claude_opus_5_high",
+    "deepseek_v4_0813_high",
+  ];
+  const effort = o.reasoningEffort;
+  if (
+    !/^tpl_[a-z0-9_-]{1,60}$/i.test(parentTemplateId)
+    || !/^[a-zA-Z0-9_-]{8,80}$/.test(requestId)
+    || !modelValues.includes(model as ManhuaViralTemplateOptimizeModel)
+    || (effort !== "medium" && effort !== "high" && effort !== "max")
+    || !promptZh
+    || !modelName
+    || modelName.length > 80
+    || !createdAt
+    || createdAt.length > 40
+    || !Number.isFinite(Date.parse(createdAt))
+    || !Number.isInteger(o.createdByUserId)
+    || Number(o.createdByUserId) <= 0
+  ) {
+    return undefined;
+  }
+  const changedFields = (Array.isArray(o.changedFields) ? o.changedFields : [])
+    .filter((field): field is ManhuaViralTemplateOptimizeField =>
+      MANHUA_VIRAL_TEMPLATE_OPTIMIZE_FIELDS.includes(field as ManhuaViralTemplateOptimizeField),
+    );
+  const reasons = (Array.isArray(o.reasons) ? o.reasons : [])
+    .map((reason) => ({
+      field: String((reason as ManhuaViralTemplateChangeReason).field || "") as ManhuaViralTemplateOptimizeField,
+      reasonZh: String((reason as ManhuaViralTemplateChangeReason).reasonZh || "").trim().slice(0, 240),
+    }))
+    .filter((reason) =>
+      MANHUA_VIRAL_TEMPLATE_OPTIMIZE_FIELDS.includes(reason.field) && Boolean(reason.reasonZh),
+    );
+  if (!changedFields.length || changedFields.some((field) => !reasons.some((r) => r.field === field))) {
+    return undefined;
+  }
+  return {
+    parentTemplateId: parentTemplateId.slice(0, 64),
+    requestId: requestId.slice(0, 80),
+    model: model as ManhuaViralTemplateOptimizeModel,
+    modelName,
+    reasoningEffort: effort,
+    promptZh: promptZh.slice(0, 2_000),
+    changedFields: Array.from(new Set(changedFields)),
+    reasons,
+    createdByUserId: Number(o.createdByUserId),
+    createdAt,
   };
 }
 

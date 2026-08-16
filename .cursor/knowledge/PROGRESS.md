@@ -282,6 +282,8 @@ Seedance 2.5 A3 内部联调：小云雀 `XYQ_ACCESS_KEY`（**仅 Fly secrets**�
 
 **视频号双窗启动校准修复（本地已实现，未部署）**：本机日志确认历史版本虽然能分别保存左右窗坐标，但正常子进程轮换使用的 `--reuse-search-calibration` 可能跨越网页停采/开采继续复用旧文件。校准文件现写入服务端 `controlRevision`；仅同一控制版本内的二十分钟轮换允许复用，网页每次暂停再开启后左右窗都会按屏幕位置逐一弹出十字校准。正式采集新增恰好两个不同 windowId 的覆盖门，任一窗未完成就不进入采集。暂停只停止继续操作微信；独立 raw worker 保持原行为，继续 OCR、去重、上传和入库暂停前已落盘的数据。目标测试 91/91 通过，`tsc --noEmit --incremental false` 通过，尚未重启本机采集器做真实双窗点击验收。
 
+**漫剧批准模板 owner 查看与优化（本地已实现并静态验证，未部署）**：`/platform` 的「模板库（已批准 · 编剧室可选）」为 `OWNER_OPEN_ID` 本人增加完整模板查看抽屉、四模型选择、用户提示词、原稿/优化稿逐字段 Diff、高亮变更及原因；其他 admin/supervisor 与监管会话都不能读取完整库、原始 GCS 清单或优化修订。优化只在用户二次确认后调用一次模型并写 `proposals/`，不自动重试；批准修订会先把旧版写入 `archive/`，再以原 id/publicCode 替换 `approved/`，因此 `/canvas` 仍只消费匿名 `listApprovedPublic` 且公开句柄不变。DeepSeek V4 Pro 0813 固定 High、65536、JSON、`require_parameters=true`，不发送 temperature/top_p；原有分类清洗 Medium 未改。同步修复 `canvasVideoTask` 并发写同一任务时临时文件名碰撞的 rename 竞态，原失败用例连续复跑 10 次通过。`pnpm check`、`pnpm build`、49 项相关测试及全量 2059 项测试通过（7 项按配置跳过）。未执行真实模型调用、GCS 写入、登录态 UI 点击、部署或远程操作。
+
 ## 如何更新本文件
 
 合完 PR 或用户改口径后，在**当日**下追加表格行；下一自然日新开 `## YYYY-MM-DD`。  

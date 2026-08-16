@@ -24,6 +24,7 @@ import { PlatformDraftPresetsBar } from "@/components/platform/PlatformDraftPres
 import { PlatformAdvancedSettingsFold } from "@/components/platform/PlatformAdvancedSettingsFold";
 import { PlatformSkillDrawer } from "@/components/platform/PlatformSkillDrawer";
 import PlatformHtmlPptPanel from "@/components/PlatformHtmlPptPanel";
+import { ManhuaApprovedTemplateOwnerDrawer } from "@/components/ManhuaApprovedTemplateOwnerDrawer";
 import { uploadFileToSignedUrl } from "@/lib/growthCampImagePipeline";
 import PlatformImageGenPanel from "@/components/platform/PlatformImageGenPanel";
 import {
@@ -148,6 +149,12 @@ import {
 } from "@/lib/manhuaLearnResultUi";
 import { getManhuaLearnPipelineMeta } from "@shared/manhuaTemplateLearnPipeline";
 import { clampManhuaLearnBatchSize } from "@shared/manhuaTemplateLearnSeries";
+import type {
+  ManhuaViralTemplateCard,
+  ManhuaViralTemplateChangeReason,
+  ManhuaViralTemplateOptimizeField,
+  ManhuaViralTemplateOptimizeModel,
+} from "@shared/manhuaViralTemplateBank";
 import {
   MANHUA_TEMPLATE_FRAME_VISION_LABEL,
 } from "@shared/manhuaTemplateLearnFrameVision";
@@ -3063,17 +3070,97 @@ export default function PlatformPage() {
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [refreshManhuaLearnServerJobs, hasSupervisorOpsAccess, trendInsightTab, user?.id]);
-  /** 监管面板专用全量（真名可见）；无监管权限时服务端直接 FORBIDDEN，面板空态 */
+  const manhuaTemplateOwnerCapabilitiesQuery =
+    trpc.manhuaViralTemplate.getOwnerOptimizeCapabilities.useQuery(undefined, {
+      enabled: trendInsightTab === "ai_manhua" && Boolean(user?.id),
+      staleTime: 5 * 60_000,
+      retry: false,
+    });
+  const ownerTemplateOptimizeAllowed =
+    manhuaTemplateOwnerCapabilitiesQuery.data?.allowed === true;
+  const ownerTemplateOptimizeModels =
+    manhuaTemplateOwnerCapabilitiesQuery.data?.models || [];
+  /** owner 专用完整库；先通过能力查询再请求，其他监管账号不会触发私有列表请求。 */
   const manhuaViralApprovedQuery = trpc.manhuaViralTemplate.listApprovedPrivate.useQuery(
     undefined,
     {
       enabled:
         trendInsightTab === "ai_manhua" &&
-        hasSupervisorOpsAccess,
+        ownerTemplateOptimizeAllowed,
       staleTime: 60_000,
-      retry: 1,
+      retry: false,
     },
   );
+  const [ownerTemplateDetailId, setOwnerTemplateDetailId] = useState<string | null>(null);
+  const [ownerTemplateOptimizeModel, setOwnerTemplateOptimizeModel] =
+    useState<ManhuaViralTemplateOptimizeModel>("terra_high");
+  const [ownerTemplateOptimizePrompt, setOwnerTemplateOptimizePrompt] = useState("");
+  const [ownerTemplateOptimizeResult, setOwnerTemplateOptimizeResult] = useState<null | {
+    original: ManhuaViralTemplateCard;
+    proposal: ManhuaViralTemplateCard;
+    changedFields: ManhuaViralTemplateOptimizeField[];
+    reasons: ManhuaViralTemplateChangeReason[];
+  }>(null);
+  const ownerTemplateDetailQuery = trpc.manhuaViralTemplate.getApprovedOwnerDetail.useQuery(
+    { id: ownerTemplateDetailId || "tpl_placeholder" },
+    {
+      enabled: ownerTemplateOptimizeAllowed && Boolean(ownerTemplateDetailId),
+      staleTime: 10_000,
+      retry: false,
+    },
+  );
+  const ownerTemplateOptimizeMutation =
+    trpc.manhuaViralTemplate.optimizeApproved.useMutation();
+  useEffect(() => {
+    if (manhuaTemplateOwnerCapabilitiesQuery.isSuccess && !ownerTemplateOptimizeAllowed) {
+      setOwnerTemplateDetailId(null);
+      setOwnerTemplateOptimizeResult(null);
+    }
+  }, [manhuaTemplateOwnerCapabilitiesQuery.isSuccess, ownerTemplateOptimizeAllowed]);
+  const openOwnerTemplateDetail = useCallback((id: string) => {
+    setOwnerTemplateDetailId(id);
+    setOwnerTemplateOptimizePrompt("");
+    setOwnerTemplateOptimizeResult(null);
+  }, []);
+  const runOwnerTemplateOptimize = useCallback(async () => {
+    const id = String(ownerTemplateDetailId || "").trim();
+    const promptZh = ownerTemplateOptimizePrompt.trim();
+    const selected = ownerTemplateOptimizeModels.find(
+      (model) => model.id === ownerTemplateOptimizeModel,
+    );
+    if (!id || promptZh.length < 2 || !selected) return;
+    if (!window.confirm(
+      `确认使用「${selected.labelZh}」按你的提示词优化该模板？\n\n` +
+      "这会产生一次真实模型调用。结果只进入待审修订，不会自动覆盖正式模板；失败不自动重试。",
+    )) {
+      return;
+    }
+    try {
+      const result = await ownerTemplateOptimizeMutation.mutateAsync({
+        id,
+        model: ownerTemplateOptimizeModel,
+        promptZh,
+        requestId: `tplopt_${crypto.randomUUID()}`,
+        confirmPaidCall: true,
+      });
+      setOwnerTemplateOptimizeResult(result);
+      await manhuaViralProposalsQuery.refetch();
+      toast.success("已生成待审优化稿", {
+        description: `共 ${result.changedFields.length} 项真实变更，正式模板尚未替换。`,
+      });
+    } catch (error) {
+      toast.error(sanitizePlatformUserMessage(
+        error instanceof Error ? error.message : String(error),
+      ));
+    }
+  }, [
+    manhuaViralProposalsQuery,
+    ownerTemplateDetailId,
+    ownerTemplateOptimizeModel,
+    ownerTemplateOptimizeModels,
+    ownerTemplateOptimizeMutation,
+    ownerTemplateOptimizePrompt,
+  ]);
   const manhuaLearnSnapshotQuery = trpc.manhuaViralTemplate.getSeriesLearnSnapshot.useQuery(
     {
       seriesKey: manhuaLearnFocusSeriesKey,
@@ -5608,8 +5695,11 @@ export default function PlatformPage() {
   ]);
 
   const approveManhuaLearnProposal = useCallback(
-    async (id: string, nameZh?: string) => {
-      if (!window.confirm(`确认批准「${nameZh || "该节奏模板"}」进节奏模板库？批准后编剧室可选，无需改代码发版。`)) {
+    async (id: string, nameZh?: string, revisionOf?: string) => {
+      const confirmMessage = revisionOf
+        ? `确认批准「${nameZh || "该优化修订"}」并替换原正式模板？原版会先归档，公开句柄保持不变。`
+        : `确认批准「${nameZh || "该节奏模板"}」进节奏模板库？批准后编剧室可选，无需改代码发版。`;
+      if (!window.confirm(confirmMessage)) {
         return;
       }
       try {
@@ -5618,7 +5708,7 @@ export default function PlatformPage() {
           id,
           confirmApprove: true,
         });
-        toast.success(`已批准进库：${res.card.nameZh}`);
+        toast.success(revisionOf ? `已替换正式模板：${res.card.nameZh}` : `已批准进库：${res.card.nameZh}`);
         setManhuaLearnResult((prev) =>
           prev
             ? {
@@ -12619,19 +12709,72 @@ export default function PlatformPage() {
                                 </div>
                                 <div className="flex flex-wrap gap-1.5">
                                   {group.items.map((tpl) => (
-                                    <span
+                                    <div
                                       key={tpl.id}
                                       title={tpl.summaryZh}
-                                      className="rounded-lg border border-emerald-300/25 bg-black/25 px-2 py-1 text-[10px] text-emerald-50/80"
+                                      className="flex flex-wrap items-center gap-1.5 rounded-lg border border-emerald-300/25 bg-black/25 px-2 py-1 text-[10px] text-emerald-50/80"
                                     >
                                       <span className="font-semibold">{tpl.nameZh}</span>
-                                    </span>
+                                      {ownerTemplateOptimizeAllowed ? (
+                                        <>
+                                          <select
+                                            aria-label={`优化模型：${tpl.nameZh}`}
+                                            value={ownerTemplateOptimizeModel}
+                                            onChange={(event) => {
+                                              setOwnerTemplateOptimizeModel(
+                                                event.target.value as ManhuaViralTemplateOptimizeModel,
+                                              );
+                                              setOwnerTemplateOptimizeResult(null);
+                                            }}
+                                            onClick={(event) => event.stopPropagation()}
+                                            className="max-w-[190px] rounded-md border border-emerald-200/15 bg-black/55 px-1.5 py-0.5 text-[9px] text-emerald-50 outline-none"
+                                          >
+                                            {ownerTemplateOptimizeModels.map((model) => (
+                                              <option key={model.id} value={model.id}>{model.labelZh}</option>
+                                            ))}
+                                          </select>
+                                          <button
+                                            type="button"
+                                            onClick={() => openOwnerTemplateDetail(tpl.id)}
+                                            className="rounded-md border border-amber-300/25 bg-amber-400/10 px-2 py-0.5 font-semibold text-amber-100 hover:bg-amber-400/15"
+                                          >
+                                            查看
+                                          </button>
+                                        </>
+                                      ) : null}
+                                    </div>
                                   ))}
                                 </div>
                               </div>
                             ))}
                           </div>
                         </div>
+                      ) : null}
+
+                      {ownerTemplateOptimizeAllowed ? (
+                        <ManhuaApprovedTemplateOwnerDrawer
+                          open={Boolean(ownerTemplateDetailId)}
+                          detail={ownerTemplateDetailQuery.data?.card || null}
+                          detailLoading={ownerTemplateDetailQuery.isLoading}
+                          models={ownerTemplateOptimizeModels}
+                          selectedModel={ownerTemplateOptimizeModel}
+                          promptZh={ownerTemplateOptimizePrompt}
+                          optimizePending={ownerTemplateOptimizeMutation.isPending}
+                          result={ownerTemplateOptimizeResult}
+                          onClose={() => {
+                            setOwnerTemplateDetailId(null);
+                            setOwnerTemplateOptimizeResult(null);
+                          }}
+                          onModelChange={(model) => {
+                            setOwnerTemplateOptimizeModel(model);
+                            setOwnerTemplateOptimizeResult(null);
+                          }}
+                          onPromptChange={(value) => {
+                            setOwnerTemplateOptimizePrompt(value);
+                            setOwnerTemplateOptimizeResult(null);
+                          }}
+                          onOptimize={() => void runOwnerTemplateOptimize()}
+                        />
                       ) : null}
 
                       {pendingManhuaViralProposals.length > 0 && selectedManhuaProposal ? (
@@ -12651,7 +12794,7 @@ export default function PlatformPage() {
                             >
                               {pendingManhuaViralProposals.map((proposal) => (
                                 <option key={proposal.id} value={proposal.id}>
-                                  {proposal.nameZh} · {proposal.laneZh}
+                                  {proposal.nameZh} · {proposal.laneZh}{proposal.revisionOf ? " · 优化修订" : ""}
                                 </option>
                               ))}
                             </select>
@@ -12662,11 +12805,16 @@ export default function PlatformPage() {
                                 void approveManhuaLearnProposal(
                                   selectedManhuaProposal.id,
                                   selectedManhuaProposal.nameZh,
+                                  selectedManhuaProposal.revisionOf,
                                 )
                               }
                               className="shrink-0 rounded-lg border border-[#8cefff]/30 bg-[rgba(140,239,255,0.1)] px-2.5 py-1.5 font-semibold text-[#8cefff] disabled:opacity-50"
                             >
-                              {approveManhuaViralTemplateMutation.isPending ? "入库中…" : "批准入库"}
+                              {approveManhuaViralTemplateMutation.isPending
+                                ? "处理中…"
+                                : selectedManhuaProposal.revisionOf
+                                  ? "批准替换原版"
+                                  : "批准入库"}
                             </button>
                           </div>
                           {selectedManhuaProposal.hook3sZh ? (
@@ -12678,6 +12826,13 @@ export default function PlatformPage() {
                             <p className="mt-1 line-clamp-2 text-[#c9c0e6]/45">
                               {selectedManhuaProposal.summaryZh}
                             </p>
+                          ) : null}
+                          {selectedManhuaProposal.revisionOf && selectedManhuaProposal.reasons?.length ? (
+                            <div className="mt-2 space-y-1 rounded-lg border border-amber-300/15 bg-amber-400/[0.05] px-2.5 py-2 text-amber-100/70">
+                              {selectedManhuaProposal.reasons.map((reason) => (
+                                <p key={reason.field}>{reason.field}：{reason.reasonZh}</p>
+                              ))}
+                            </div>
                           ) : null}
                         </div>
                       ) : null}
