@@ -27,6 +27,7 @@ import {
   isSchedulerTimeoutOrAbortError,
   withAbortableTimeout,
 } from "./collectorAbort.js";
+import { runInGrowthPlatformCollectionLane } from "./platformCollectionLane";
 
 /** Fly 只调度仍在运营的三个远端平台；视频号由本机采集，快手/头条已退休。 */
 const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "bilibili", "xiaohongshu"];
@@ -82,10 +83,7 @@ const PLATFORM_RUN_TIMEOUT_MS = Math.max(
   30 * 1000,
   Number(process.env.GROWTH_PLATFORM_RUN_TIMEOUT_MS || 90 * 1000) || 90 * 1000,
 );
-const SCHEDULER_CONCURRENCY = Math.max(
-  1,
-  Number(process.env.GROWTH_SCHEDULER_CONCURRENCY || 1) || 1,
-);
+const DOUYIN_MIN_RUN_TIMEOUT_MS = 180 * 1000;
 const STALE_SCHEDULER_FORCE_RUN_MS = Math.max(
   5 * 60 * 1000,
   Number(process.env.GROWTH_SCHEDULER_STALE_FORCE_RUN_MS || 20 * 60 * 1000) || 20 * 60 * 1000,
@@ -139,12 +137,27 @@ function getPlatformBurstIntervalMinutes(platform: GrowthPlatform) {
   return readPlatformMinutesEnv(platform, "BURST_INTERVAL_MINUTES", BURST_INTERVAL_MINUTES);
 }
 
+export function resolvePlatformRunTimeoutMs(
+  platform: GrowthPlatform,
+  values: { preferred?: unknown; legacy?: unknown; fallback?: unknown },
+) {
+  const candidates = [values.preferred, values.legacy, values.fallback]
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value >= 30 * 1000);
+  const configured = candidates[0] || PLATFORM_RUN_TIMEOUT_MS;
+  // 线上遗留 secret 曾把抖音覆盖回 60 秒；24 页 feed 加正式增强路由无法在该预算内完成，
+  // 结果整轮连续超时且零提交。抖音的 180 秒下限与 fly.toml 的正式配置保持一致。
+  return platform === "douyin"
+    ? Math.max(DOUYIN_MIN_RUN_TIMEOUT_MS, configured)
+    : configured;
+}
+
 function getPlatformRunTimeoutMs(platform: GrowthPlatform) {
-  const preferred = Number(process.env[`GROWTH_${platform.toUpperCase()}_PLATFORM_RUN_TIMEOUT_MS`] || "");
-  if (Number.isFinite(preferred) && preferred >= 30 * 1000) return preferred;
-  const legacy = Number(process.env[`${platform.toUpperCase()}_PLATFORM_RUN_TIMEOUT_MS`] || "");
-  if (Number.isFinite(legacy) && legacy >= 30 * 1000) return legacy;
-  return PLATFORM_RUN_TIMEOUT_MS;
+  return resolvePlatformRunTimeoutMs(platform, {
+    preferred: process.env[`GROWTH_${platform.toUpperCase()}_PLATFORM_RUN_TIMEOUT_MS`],
+    legacy: process.env[`${platform.toUpperCase()}_PLATFORM_RUN_TIMEOUT_MS`],
+    fallback: PLATFORM_RUN_TIMEOUT_MS,
+  });
 }
 
 function getPlatformBurstIntervalMs(platform: GrowthPlatform) {
@@ -277,10 +290,32 @@ function isForceBurstActive(platform: GrowthPlatform) {
     && FORCE_BURST_PLATFORMS.has(platform);
 }
 
-function hasAnyForcedBurstConfig() {
-  if (runtimeBurstOverride === "off") return false;
-  if (runtimeBurstOverride === "manual") return runtimeBurstPlatformsOverride.size > 0;
-  return isLiveWindow() && !isBackfillWindow() && FORCE_BURST_UNTIL_MS > Date.now() && FORCE_BURST_PLATFORMS.size > 0;
+export function shouldClearBurstStatesBecauseDisabled(mode: "auto" | "manual" | "off") {
+  return mode === "off";
+}
+
+export function resolveLastNewDataAt(input: {
+  addedCount: number;
+  collectedAt: string;
+  lastNewDataAt?: string;
+  lastAddedCount?: number;
+  lastSuccessAt?: string;
+}) {
+  if (input.addedCount > 0) return input.collectedAt;
+  return input.lastNewDataAt
+    || ((input.lastAddedCount || 0) > 0 ? input.lastSuccessAt : undefined);
+}
+
+export function resolveNewDataMonitoringStartedAt(input: {
+  monitoringStartedAt?: string;
+  lastSuccessAt?: string;
+  lastRunAt?: string;
+  startedAt: string;
+}) {
+  return input.monitoringStartedAt
+    || input.lastSuccessAt
+    || input.lastRunAt
+    || input.startedAt;
 }
 
 async function clearStaleBurstStates(reason: "disabled" | "backfill-window") {
@@ -307,7 +342,7 @@ function isClearlyHigherThanPrevious(platform: GrowthPlatform, currentCount: num
   return currentCount >= previousCount + Math.max(3, Math.ceil(previousCount * getPlatformBurstTriggerGrowthRatio(platform)));
 }
 
-function resolveNextRunPlan(params: {
+export function resolveNextRunPlan(params: {
   platform: GrowthPlatform;
   currentCount: number;
   previousCount: number;
@@ -373,6 +408,17 @@ function resolveNextRunPlan(params: {
   };
 }
 
+export function resolvePreviousRunCollectedCount(state?: {
+  lastAfterWindowFilterCount?: number;
+  lastAfterDedupCount?: number;
+  lastCollectedCount?: number;
+}) {
+  return state?.lastAfterWindowFilterCount
+    ?? state?.lastAfterDedupCount
+    ?? state?.lastCollectedCount
+    ?? 0;
+}
+
 function buildRetryDelayMs(failureCount: number) {
   return Math.min(RETRY_MAX_MS, RETRY_BASE_MS * Math.max(1, 2 ** Math.max(0, failureCount - 1)));
 }
@@ -399,7 +445,7 @@ function isInTimeoutCooldown(state?: {
   return false;
 }
 
-async function runPlatform(platform: GrowthPlatform) {
+async function runPlatformTask(platform: GrowthPlatform) {
   const startedAt = nowShanghaiIso();
   const startedAtMs = Date.now();
   const currentState = (await readTrendSchedulerState())[platform];
@@ -412,6 +458,13 @@ async function runPlatform(platform: GrowthPlatform) {
     lastFrequencyLabel: provisionalBurst
       ? (isForceBurstActive(platform) ? getForceBurstLabel(platform) : getBurstFrequencyLabel(platform))
       : getSchedulerFrequencyLabel(),
+    // 首次尝试即固定监测起点；后续连续失败不得用新的 lastRunAt 把 24 小时告警往后推。
+    newDataMonitoringStartedAt: resolveNewDataMonitoringStartedAt({
+      monitoringStartedAt: currentState?.newDataMonitoringStartedAt,
+      lastSuccessAt: currentState?.lastSuccessAt,
+      lastRunAt: currentState?.lastRunAt,
+      startedAt,
+    }),
     lastError: undefined,
   });
 
@@ -422,6 +475,8 @@ async function runPlatform(platform: GrowthPlatform) {
       `[growth.scheduler] ${platform}`,
     );
     let mergedStore = await mergeTrendCollections({ [platform]: collection });
+    // 封面回填会再执行一次 merge；第二次通常 addedCount=0，不能覆盖真实抓取轮的新增量。
+    const collectionMergeStat = mergedStore.mergeStats?.[platform];
     const mergedBeforeBackfill = mergedStore.collections[platform];
     if (mergedBeforeBackfill) {
       const backfilled = await backfillRecentTrendCoverUrls(platform, mergedBeforeBackfill);
@@ -429,9 +484,10 @@ async function runPlatform(platform: GrowthPlatform) {
         mergedStore = await mergeTrendCollections({ [platform]: backfilled.collection });
       }
     }
-    const mergedCollection = mergedStore.collections[platform];
     const currentCount = collection.stats?.itemCount || collection.items.length;
-    const previousCount = currentState?.lastCollectedCount || 0;
+    // burst 比较必须保持“本轮采集量 vs 上轮采集量”同口径。旧逻辑把上轮字段写成
+    // 整个仓库总量，几十万库存与几百条本轮结果比较，导致自动 burst 永远无法触发。
+    const previousCount = resolvePreviousRunCollectedCount(currentState);
     const plan = resolveNextRunPlan({
       platform,
       currentCount,
@@ -440,6 +496,7 @@ async function runPlatform(platform: GrowthPlatform) {
       burstStableRuns: currentState?.burstStableRuns || 0,
       burstLowYieldRuns: currentState?.burstLowYieldRuns || 0,
     });
+    const addedCount = collectionMergeStat?.addedCount || 0;
     await updateTrendSchedulerState(platform, {
       lastSuccessAt: collection.collectedAt,
       nextRunAt: plan.nextRunAt,
@@ -449,9 +506,22 @@ async function runPlatform(platform: GrowthPlatform) {
       totalRuns: (currentState?.totalRuns || 0) + 1,
       successCount: (currentState?.successCount || 0) + 1,
       lastDurationMs: Date.now() - startedAtMs,
-      lastCollectedCount: mergedCollection?.items.length || currentCount,
-      lastAddedCount: mergedStore.mergeStats?.[platform]?.addedCount || 0,
-      lastMergedCount: mergedStore.mergeStats?.[platform]?.mergedCount || 0,
+      lastCollectedCount: currentCount,
+      lastAddedCount: addedCount,
+      lastNewDataAt: resolveLastNewDataAt({
+        addedCount,
+        collectedAt: collection.collectedAt,
+        lastNewDataAt: currentState?.lastNewDataAt,
+        lastAddedCount: currentState?.lastAddedCount,
+        lastSuccessAt: currentState?.lastSuccessAt,
+      }),
+      newDataMonitoringStartedAt: resolveNewDataMonitoringStartedAt({
+        monitoringStartedAt: currentState?.newDataMonitoringStartedAt,
+        lastSuccessAt: currentState?.lastSuccessAt,
+        lastRunAt: currentState?.lastRunAt,
+        startedAt,
+      }),
+      lastMergedCount: collectionMergeStat?.mergedCount || 0,
       lastRawFetchedCount: collection.stats?.rawFetchedCount,
       lastAfterDedupCount: collection.stats?.afterDedupCount ?? collection.items.length,
       lastAfterWindowFilterCount: collection.stats?.afterWindowFilterCount,
@@ -467,12 +537,11 @@ async function runPlatform(platform: GrowthPlatform) {
       lastError: undefined,
     });
     if (collection.source === "live" && currentCount > 0) {
-      const mergeStat = mergedStore.mergeStats?.[platform];
       await notifyGrowthCollectionUpdate({
         platform,
         itemCount: currentCount,
-        addedCount: mergeStat?.addedCount || 0,
-        mergedCount: mergeStat?.mergedCount || 0,
+        addedCount,
+        mergedCount: collectionMergeStat?.mergedCount || 0,
         collectedAt: collection.collectedAt,
         nextRunAt: plan.nextRunAt,
         frequencyLabel: plan.frequencyLabel,
@@ -533,6 +602,16 @@ async function runPlatform(platform: GrowthPlatform) {
       console.warn(`[growth.scheduler] ${platform} failed:`, message);
     }
   }
+}
+
+async function runPlatform(platform: GrowthPlatform) {
+  const state = (await readTrendSchedulerState())[platform];
+  const source = state?.burstMode || isForceBurstActive(platform)
+    ? "burst"
+    : runtimeModeOverride === "live"
+      ? "live"
+      : "scheduler";
+  return runInGrowthPlatformCollectionLane(platform, source, () => runPlatformTask(platform));
 }
 
 async function runDuePlatforms() {
@@ -596,9 +675,8 @@ async function runDuePlatforms() {
       }
       return [];
     })();
-    for (let index = 0; index < liveQueue.length; index += SCHEDULER_CONCURRENCY) {
-      const batch = liveQueue.slice(index, index + SCHEDULER_CONCURRENCY);
-      await Promise.all(batch.map((platform) => runPlatform(platform)));
+    for (const platform of liveQueue) {
+      await runPlatform(platform);
     }
   } finally {
     runInFlight = false;
@@ -659,7 +737,9 @@ export async function bootstrapGrowthTrendScheduler() {
   });
 
   const scheduler = await readTrendSchedulerState();
-  if (!hasAnyForcedBurstConfig()) {
+  // auto 代表按采集增量自动进入 burst，不等于 disabled。旧逻辑只检查是否存在
+  // force-burst 配置，过期后会在每次启动时误清自然 burst 状态。
+  if (shouldClearBurstStatesBecauseDisabled(runtimeBurstOverride)) {
     await clearStaleBurstStates("disabled");
   }
   if (isBackfillWindow()) {

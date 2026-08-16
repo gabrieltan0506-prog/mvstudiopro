@@ -300,4 +300,54 @@ describe("collectPlatformTrends douyin", () => {
     expect(result.notes.some((note) => note.includes("topics (1) returned encrypted payload"))).toBe(true);
     expect(result.notes.some((note) => note.includes("brand radar returned encrypted payload"))).toBe(true);
   });
+
+  it("剩余预算不足时提交核心 feed，不启动可选增强路由", async () => {
+    const calledUrls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calledUrls.push(url);
+      if (url.includes("hotsearch/billboard")) {
+        return {
+          ok: true,
+          json: async () => ({ word_list: [] }),
+        } as Response;
+      }
+      if (url.includes("/aweme/v1/web/tab/feed/")) {
+        return {
+          ok: true,
+          json: async () => ({
+            aweme_list: [{
+              aweme_id: "feed-core",
+              desc: "核心 feed 结果",
+              create_time: Math.floor(Date.now() / 1000),
+              author: { nickname: "core-user" },
+              statistics: { digg_count: 10, comment_count: 1 },
+            }],
+            has_more: 0,
+            max_cursor: 0,
+          }),
+        } as Response;
+      }
+      throw new Error(`Optional route should not run: ${url}`);
+    }));
+
+    const controller = new AbortController();
+    const { runWithCollectorAbort } = await import("./collectorAbort");
+    const mod = await import("./trendCollector");
+    const result = await runWithCollectorAbort(
+      controller.signal,
+      () => mod.collectPlatformTrends("douyin"),
+      { deadlineMs: Date.now() + 5_000 },
+    );
+
+    expect(result.items.map((item) => item.id)).toContain("feed-core");
+    expect(result.notes).toContain(
+      "Douyin creator index skipped: collector deadline budget reserved for core feed commit.",
+    );
+    expect(result.notes).toContain(
+      "Douyin web search skipped: collector deadline budget reserved for core feed commit.",
+    );
+    expect(calledUrls.some((url) => url.includes("creator.douyin.com"))).toBe(false);
+    expect(calledUrls.some((url) => url.includes("/general/search/"))).toBe(false);
+  });
 });

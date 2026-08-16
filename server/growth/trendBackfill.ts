@@ -4,6 +4,7 @@ import { mergeTrendCollectionsWithOptions, readGrowthDebugSummary, readTrendRunt
 import { notifyGrowthCollectionUpdate } from "./trendMailDigest";
 import { nowShanghaiIso } from "./time";
 import { withAbortableTimeout } from "./collectorAbort.js";
+import { runInGrowthPlatformCollectionLane } from "./platformCollectionLane";
 
 type BackfillKind = "live" | "history";
 
@@ -88,10 +89,6 @@ const ENABLE_LIVE_BACKFILL_BOOTSTRAP = /^(1|true|yes)$/i.test(
 const BACKFILL_PLATFORM_TIMEOUT_MS = Math.max(
   30 * 1000,
   Number(process.env.GROWTH_BACKFILL_PLATFORM_TIMEOUT_MS || 60 * 1000) || 60 * 1000,
-);
-const BACKFILL_PLATFORM_CONCURRENCY = Math.max(
-  1,
-  Math.min(4, Number(process.env.GROWTH_BACKFILL_PLATFORM_CONCURRENCY || 2) || 2),
 );
 
 type WorkerState = {
@@ -195,56 +192,66 @@ async function runBackfillPlatformTasks(
   const mergedStats: Record<string, { addedCount?: number; mergedCount?: number }> = {};
   const collectedErrors: Record<string, string | undefined> = {};
 
-  process.env.GROWTH_BACKFILL_ACTIVE = "1";
-  process.env.GROWTH_BACKFILL_MODE = kind;
-  process.env.GROWTH_BACKFILL_STEP_TARGET = String(stepTarget);
-  process.env.GROWTH_BACKFILL_STEP_FALLBACK = String(stepFallback);
-  process.env.GROWTH_BACKFILL_COOKIE_OFFSET = String(Math.max(0, nextRound - 1));
-
-  const tasks = pending.map((platform) => async () => {
-    try {
-      const collected = await withAbortableTimeout(
-        (signal) => collectTrendPlatforms([platform], { signal }),
-        BACKFILL_PLATFORM_TIMEOUT_MS,
-        `[${label}] ${platform}`,
-      );
-      if (collected.errors[platform]) {
-        collectedErrors[platform] = collected.errors[platform];
-      }
-      const merged = await mergeTrendCollectionsWithOptions(collected.collections, {
-        deferHistoryLedger: kind === "history",
-      });
-      if (merged.mergeStats?.[platform]) {
-        mergedStats[platform] = merged.mergeStats[platform];
-      }
-      const collection = collected.collections[platform];
-      if (collection?.source === "live" && collection.items.length) {
-        await notifyGrowthCollectionUpdate({
-          platform,
-          itemCount: collection.items.length,
-          addedCount: merged.mergeStats?.[platform]?.addedCount || 0,
-          mergedCount: merged.mergeStats?.[platform]?.mergedCount || 0,
-          collectedAt: collection.collectedAt,
-          nextRunAt: nowShanghaiIso(Date.now() + nextHistoryDelayMs()),
-          frequencyLabel: kind === "live"
-            ? `近 ${windowDays} 天 live 回填 / ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket / 目标步长 ${stepTarget}`
-            : `历史回填 / ${statsBefore.selectedWindowDays} 天窗口 / 目标步长 ${stepTarget}`,
-          burstMode: false,
-          live: true,
-          collection,
-        }).catch((error) => {
-          console.warn(`[${label}] email notify skipped for ${platform}:`, error);
+  for (const platform of pending) {
+    await runInGrowthPlatformCollectionLane(platform, kind === "live" ? "live" : "backfill", async () => {
+      const envNames = [
+        "GROWTH_BACKFILL_ACTIVE",
+        "GROWTH_BACKFILL_MODE",
+        "GROWTH_BACKFILL_STEP_TARGET",
+        "GROWTH_BACKFILL_STEP_FALLBACK",
+        "GROWTH_BACKFILL_COOKIE_OFFSET",
+      ] as const;
+      const previousEnv = Object.fromEntries(envNames.map((name) => [name, process.env[name]]));
+      process.env.GROWTH_BACKFILL_ACTIVE = "1";
+      process.env.GROWTH_BACKFILL_MODE = kind;
+      process.env.GROWTH_BACKFILL_STEP_TARGET = String(stepTarget);
+      process.env.GROWTH_BACKFILL_STEP_FALLBACK = String(stepFallback);
+      process.env.GROWTH_BACKFILL_COOKIE_OFFSET = String(Math.max(0, nextRound - 1));
+      try {
+        const collected = await withAbortableTimeout(
+          (signal) => collectTrendPlatforms([platform], { signal }),
+          BACKFILL_PLATFORM_TIMEOUT_MS,
+          `[${label}] ${platform}`,
+        );
+        if (collected.errors[platform]) {
+          collectedErrors[platform] = collected.errors[platform];
+        }
+        const merged = await mergeTrendCollectionsWithOptions(collected.collections, {
+          deferHistoryLedger: kind === "history",
         });
+        if (merged.mergeStats?.[platform]) {
+          mergedStats[platform] = merged.mergeStats[platform];
+        }
+        const collection = collected.collections[platform];
+        if (collection?.source === "live" && collection.items.length) {
+          await notifyGrowthCollectionUpdate({
+            platform,
+            itemCount: collection.items.length,
+            addedCount: merged.mergeStats?.[platform]?.addedCount || 0,
+            mergedCount: merged.mergeStats?.[platform]?.mergedCount || 0,
+            collectedAt: collection.collectedAt,
+            nextRunAt: nowShanghaiIso(Date.now() + nextHistoryDelayMs()),
+            frequencyLabel: kind === "live"
+              ? `近 ${windowDays} 天 live 回填 / ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket / 目标步长 ${stepTarget}`
+              : `历史回填 / ${statsBefore.selectedWindowDays} 天窗口 / 目标步长 ${stepTarget}`,
+            burstMode: false,
+            live: true,
+            collection,
+          }).catch((error) => {
+            console.warn(`[${label}] email notify skipped for ${platform}:`, error);
+          });
+        }
+      } catch (error) {
+        collectedErrors[platform] = error instanceof Error ? error.message : String(error);
+        console.warn(`[${label}] ${platform} failed:`, error);
+      } finally {
+        for (const name of envNames) {
+          const value = previousEnv[name];
+          if (value === undefined) delete process.env[name];
+          else process.env[name] = value;
+        }
       }
-    } catch (error) {
-      collectedErrors[platform] = error instanceof Error ? error.message : String(error);
-      console.warn(`[${label}] ${platform} failed:`, error);
-    }
-  });
-
-  for (let index = 0; index < tasks.length; index += BACKFILL_PLATFORM_CONCURRENCY) {
-    const batch = tasks.slice(index, index + BACKFILL_PLATFORM_CONCURRENCY);
-    await Promise.allSettled(batch.map((task) => task()));
+    });
   }
 
   return { mergedStats, collectedErrors };
@@ -522,7 +529,7 @@ async function runBackfillStep(kind: BackfillKind) {
       status: "running",
       note: kind === "live"
         ? `近期回填运行中：窗口 ${windowDays} 天，夜间模式，优先按 ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket 扫描硬缺口；无硬缺口时退到 ${LIVE_FINE_GAP_BUCKET_MINUTES} 分钟细桶继续补齐，并复用跨平台关键词/话题种子。`
-        : `历史回填运行中：窗口 ${statsAfter.selectedWindowDays} 天；并发 ${BACKFILL_PLATFORM_CONCURRENCY} 平台/step，按 merge addedCount 判断产出，history-ledger 每 ${HISTORY_LEDGER_BATCH_ROUNDS} 轮批量刷新。`,
+        : `历史回填运行中：窗口 ${statsAfter.selectedWindowDays} 天；三平台与常规/burst/live 共用串行通道，任务间隔 3–5 分钟，按 merge addedCount 判断产出，history-ledger 每 ${HISTORY_LEDGER_BATCH_ROUNDS} 轮批量刷新。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsAfter.platforms.find((item) => item.platform === platform);
         const stalled = pending.includes(platform) && (state.plateau.get(platform) || 0) >= PLATEAU_LIMIT;

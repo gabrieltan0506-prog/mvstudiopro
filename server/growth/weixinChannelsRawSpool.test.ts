@@ -12,6 +12,7 @@ import {
   listWeixinChannelsRawManifests,
   listWeixinChannelsRawRuns,
   pruneWeixinChannelsCompletedRawRuns,
+  recordWeixinChannelsRawFailureEvidence,
   reserveWeixinChannelsRawSlot,
   resolveWeixinChannelsRawAssetPath,
   sealWeixinChannelsRawRun,
@@ -191,6 +192,34 @@ describe("视频号 raw spool", () => {
     const snapshot = await inspectWeixinChannelsRawSpool({ root, run });
     expect(snapshot.complete).toBe(1);
     expect(snapshot.reservations).toBe(0);
+  });
+
+  it("右窗 UI 失败保留当前截图与 OCR 证据，但不伪造 complete raw item", async () => {
+    const root = await makeRoot();
+    const screenshot = await makePngLikeFile(root, "right-close-failed.jpg", "right-frame");
+    const { run } = await ensureWeixinChannelsRawRun({ root, maxItems: 2 });
+    const slot = await reserveWeixinChannelsRawSlot({
+      root,
+      run,
+      source: "recommendation",
+      taskId: "task-right",
+      query: "推荐页",
+      windowId: 58429,
+    });
+    const evidence = await recordWeixinChannelsRawFailureEvidence({
+      root,
+      reservation: slot!.reservation,
+      reason: "weixin_channels_raw_comments_close_click_not_effective",
+      screenshot,
+      ocrLines: [{ text: "评论 80", confidence: 0.99, x: 0.08, y: 0.86, width: 0.16, height: 0.04 }],
+    });
+    const directory = path.join(root, "runs", run.runId, "failures");
+    expect(evidence.windowId).toBe(58429);
+    expect(evidence.screenshot).toMatch(/\.jpg$/);
+    expect(JSON.parse(await fs.readFile(path.join(directory, `${path.basename(evidence.screenshot!, ".jpg")}.json`), "utf8")))
+      .toMatchObject({ reason: "weixin_channels_raw_comments_close_click_not_effective", windowId: 58429 });
+    expect(await fs.readFile(path.join(directory, evidence.screenshot!), "utf8")).toBe("right-frame");
+    expect(await listWeixinChannelsRawManifests({ root, runId: run.runId })).toHaveLength(0);
   });
 
   it("离线状态只更新 manifest，不改写原始素材", async () => {

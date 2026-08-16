@@ -17,7 +17,10 @@ import {
 import {
   assertCollectorNotAborted,
   getCollectorAbortSignal,
+  getCollectorTimeRemainingMs,
+  isCollectorAbortError,
   mergeAbortSignals,
+  runWithCollectorAbort,
 } from "./collectorAbort.js";
 import { extractPlatformCoverUrl, isTrendCoverCollectionActive } from "./trendCoverSelection";
 
@@ -31,6 +34,79 @@ function fetch(
   assertCollectorNotAborted();
   const signal = mergeAbortSignals(init?.signal, getCollectorAbortSignal());
   return nativeFetch(input, signal ? { ...init, signal } : init);
+}
+
+function rethrowCollectorAbort(error: unknown) {
+  if (getCollectorAbortSignal()?.aborted || isCollectorAbortError(error)) {
+    throw error instanceof Error ? error : new Error("growth_collector_aborted");
+  }
+}
+
+function hasCollectorTimeBudget(minimumMs: number) {
+  const remainingMs = getCollectorTimeRemainingMs();
+  return remainingMs === undefined || remainingMs >= minimumMs;
+}
+
+type OptionalCollectorStepResult<T> = {
+  status: "completed" | "skipped" | "timed-out" | "failed";
+  value?: T;
+  error?: string;
+};
+
+function skippedOptionalCollectorStep<T>(): OptionalCollectorStepResult<T> {
+  return { status: "skipped" };
+}
+
+/**
+ * 给增强路由单独设截止时间，并为最终组装/提交保留预算。
+ * 子步骤超时只丢弃该增强结果；外层调度器 abort 仍必须原样向上抛出。
+ */
+async function runOptionalCollectorStep<T>(input: {
+  work: () => Promise<T>;
+  minimumStartMs: number;
+  maximumRunMs: number;
+  reserveCommitMs: number;
+}): Promise<OptionalCollectorStepResult<T>> {
+  const outerSignal = getCollectorAbortSignal();
+  const remainingMs = getCollectorTimeRemainingMs();
+  if (remainingMs === undefined) {
+    try {
+      return { status: "completed", value: await input.work() };
+    } catch (error) {
+      if (outerSignal?.aborted || isCollectorAbortError(error)) throw error;
+      return {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  const availableMs = remainingMs - input.reserveCommitMs;
+  if (availableMs < input.minimumStartMs) return { status: "skipped" };
+
+  const stepTimeoutMs = Math.max(1_000, Math.min(input.maximumRunMs, availableMs));
+  const controller = new AbortController();
+  const signal = mergeAbortSignals(outerSignal, controller.signal) || controller.signal;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new Error("growth_optional_collector_step_timeout"));
+  }, stepTimeoutMs);
+  try {
+    const value = await runWithCollectorAbort(signal, input.work, {
+      deadlineMs: Date.now() + stepTimeoutMs,
+    });
+    return { status: "completed", value };
+  } catch (error) {
+    if (outerSignal?.aborted) throw error;
+    if (timedOut) return { status: "timed-out" };
+    return {
+      status: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    clearTimeout(timer);
+    if (!controller.signal.aborted) controller.abort();
+  }
 }
 
 export type TrendSource = "live" | "seed";
@@ -1105,6 +1181,7 @@ async function runBatches<T>(tasks: Array<() => Promise<T>>, concurrency: number
     const settled = await Promise.allSettled(batch.map((task) => task()));
     for (const item of settled) {
       if (item.status === "fulfilled") results.push(item.value);
+      else if (getCollectorAbortSignal()?.aborted || isCollectorAbortError(item.reason)) throw item.reason;
     }
   }
   return results;
@@ -1208,6 +1285,7 @@ async function collectDouyinCreatorCenterItems(cookies: string[], _keywords: str
         notes.push(`Fetched ${pageItems.length} Douyin creator center items for billboard ${billboardType}.`);
         if (pageItems.length) return;
       } catch (error) {
+        rethrowCollectorAbort(error);
         requestCount += 1;
         notes.push(`Douyin creator center billboard ${billboardType} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -1261,7 +1339,9 @@ async function resolveDouyinCreatorIndexCsrfToken(cookies: string[]) {
           note: "Douyin creator index csrf token: resolved from creator home response header.",
         };
       }
-    } catch {}
+    } catch (error) {
+      rethrowCollectorAbort(error);
+    }
   }
 
   return {
@@ -1563,6 +1643,7 @@ async function collectDouyinCreatorIndexPageItems(
       ];
       notes.push(`${target.title} page capture summary: ${summaryParts.join(", ")}.`);
     } catch (error) {
+      rethrowCollectorAbort(error);
       requestCount += 1;
       notes.push(`${target.title} page capture failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1686,6 +1767,7 @@ async function collectDouyinCreatorIndexItems(
           ].filter(Boolean),
         });
       } catch (error) {
+        rethrowCollectorAbort(error);
         requestCount += 1;
         notes.push(`Douyin creator index video ${itemId} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -1730,6 +1812,7 @@ async function collectDouyinCreatorIndexItems(
           ].filter(Boolean),
         });
       } catch (error) {
+        rethrowCollectorAbort(error);
         requestCount += 1;
         notes.push(`Douyin creator index author ${userId} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -2433,6 +2516,7 @@ async function collectDouyinWebSearchItems(
         notes.push(`Fetched ${awemes.length} Douyin web search items for "${keyword}" page ${page + 1}.`);
         if (!awemes.length) break;
       } catch (error) {
+        rethrowCollectorAbort(error);
         notes.push(`Douyin web search "${keyword}" page ${page + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
         break;
       }
@@ -2596,28 +2680,79 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
     });
     notes.push(`Douyin adaptive feed route weight=${feedRoute.weight.toFixed(2)}, pages=${pageLimit}, concurrency=${concurrency}.`);
 
-    if (creatorCenterEnabled) {
-      const creatorCenter = await collectDouyinCreatorCenterItems(cookies, creatorKeywords);
-      items.push(...creatorCenter.items);
-      notes.push(...creatorCenter.notes);
-      requestCount += creatorCenter.requestCount;
-    } else {
+    // 核心 feed 已经拿到后，创作者中心与指数增强并行；指数增强只在剩余预算足够时启动，
+    // 避免可选路由拖到外层 deadline 后把整轮 feed 一并丢弃。
+    const coreItems = [...items];
+    const creatorCenterCanRun = creatorCenterEnabled && hasCollectorTimeBudget(30_000);
+    const creatorIndexCanRun = creatorIndexEnabled
+      && creatorIndexRoute.enabled
+      && hasCollectorTimeBudget(90_000);
+    const [creatorCenterStep, creatorIndexStep] = await Promise.all([
+      creatorCenterCanRun
+        ? runOptionalCollectorStep({
+            work: () => collectDouyinCreatorCenterItems(cookies, creatorKeywords),
+            minimumStartMs: 10_000,
+            maximumRunMs: 35_000,
+            reserveCommitMs: 20_000,
+          })
+        : Promise.resolve(skippedOptionalCollectorStep<Awaited<ReturnType<typeof collectDouyinCreatorCenterItems>>>()),
+      creatorIndexCanRun
+        ? runOptionalCollectorStep({
+            work: () => collectDouyinCreatorIndexItems(cookies, coreItems, creatorKeywords),
+            minimumStartMs: 30_000,
+            maximumRunMs: 70_000,
+            reserveCommitMs: 20_000,
+          })
+        : Promise.resolve(skippedOptionalCollectorStep<Awaited<ReturnType<typeof collectDouyinCreatorIndexItems>>>()),
+    ]);
+    const creatorCenter = creatorCenterStep.value
+      || { items: [] as TrendItem[], notes: [] as string[], requestCount: 0 };
+    const creatorIndex = creatorIndexStep.value
+      || { items: [] as TrendItem[], notes: [] as string[], requestCount: 0 };
+    items.push(...creatorCenter.items, ...creatorIndex.items);
+    notes.push(...creatorCenter.notes, ...creatorIndex.notes);
+    requestCount += creatorCenter.requestCount + creatorIndex.requestCount;
+    if (!creatorCenterEnabled) {
       notes.push("Douyin creator center skipped: disabled by DOUYIN_CREATOR_CENTER_ENABLED=0.");
+    } else if (!creatorCenterCanRun) {
+      notes.push("Douyin creator center skipped: collector deadline budget reserved for core feed commit.");
+    } else if (creatorCenterStep.status === "timed-out") {
+      notes.push("Douyin creator center stopped at its optional-route deadline; core feed will still commit.");
+    } else if (creatorCenterStep.status === "failed") {
+      notes.push(`Douyin creator center failed without blocking core feed: ${creatorCenterStep.error || "unknown"}.`);
     }
-
-    if (creatorIndexEnabled && creatorIndexRoute.enabled) {
-      const creatorIndex = await collectDouyinCreatorIndexItems(cookies, items, creatorKeywords);
-      items.push(...creatorIndex.items);
-      notes.push(...creatorIndex.notes);
-      requestCount += creatorIndex.requestCount;
-      notes.push(`Douyin adaptive creator index weight=${creatorIndexRoute.weight.toFixed(2)}, keywords=${creatorKeywords.join(", ")}.`);
-    } else if (creatorIndexEnabled) {
-      notes.push("Douyin creator index skipped by adaptive config due to sustained low yield.");
-    } else {
+    if (!creatorIndexEnabled) {
       notes.push("Douyin creator index skipped: disabled by DOUYIN_CREATOR_INDEX_ENABLED=0.");
+    } else if (!creatorIndexRoute.enabled) {
+      notes.push("Douyin creator index skipped by adaptive config due to sustained low yield.");
+    } else if (!creatorIndexCanRun) {
+      notes.push("Douyin creator index skipped: collector deadline budget reserved for core feed commit.");
+    } else if (creatorIndexStep.status === "timed-out") {
+      notes.push("Douyin creator index stopped at its optional-route deadline; core feed will still commit.");
+    } else if (creatorIndexStep.status === "failed") {
+      notes.push(`Douyin creator index failed without blocking core feed: ${creatorIndexStep.error || "unknown"}.`);
+    } else {
+      notes.push(`Douyin adaptive creator index weight=${creatorIndexRoute.weight.toFixed(2)}, keywords=${creatorKeywords.join(", ")}.`);
     }
 
-    const dramaSearch = await collectDouyinWebSearchItems(cookies, dramaSearchKeywords);
+    const dramaSearchCanRun = hasCollectorTimeBudget(25_000);
+    const dramaSearchStep = dramaSearchCanRun
+      ? await runOptionalCollectorStep({
+          work: () => collectDouyinWebSearchItems(cookies, dramaSearchKeywords),
+          minimumStartMs: 10_000,
+          maximumRunMs: 15_000,
+          reserveCommitMs: 10_000,
+        })
+      : skippedOptionalCollectorStep<Awaited<ReturnType<typeof collectDouyinWebSearchItems>>>();
+    const dramaSearch = dramaSearchStep.value || {
+      items: [] as TrendItem[],
+      notes: [dramaSearchStep.status === "timed-out"
+        ? "Douyin web search stopped at its optional-route deadline; core feed will still commit."
+        : dramaSearchStep.status === "failed"
+          ? `Douyin web search failed without blocking core feed: ${dramaSearchStep.error || "unknown"}.`
+        : "Douyin web search skipped: collector deadline budget reserved for core feed commit."],
+      requestCount: 0,
+    };
     items.push(...dramaSearch.items);
     notes.push(...dramaSearch.notes);
     requestCount += dramaSearch.requestCount;
@@ -2635,12 +2770,12 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
         yieldCount: feedYield,
         requestCount: feedRequestCount,
       });
-      if (creatorIndexEnabled) {
+      if (creatorIndexStep.status === "completed") {
         await recordAdaptiveRouteRun({
           platform: "douyin",
           routeKey: "creator_index",
           yieldCount: creatorYield,
-          requestCount: Math.max(0, requestCount - feedRequestCount - dramaSearch.requestCount),
+          requestCount: creatorIndex.requestCount,
         });
         await recordAdaptiveSeedRun({
           platform: "douyin",

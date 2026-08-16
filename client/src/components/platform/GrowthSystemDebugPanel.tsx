@@ -5,6 +5,7 @@ import {
   formatPlatformList,
   formatShanghaiDateTime,
   formatTruthSource,
+  getGrowthNoNewDataState,
   getPlatformDescription,
   getPlatformLabel,
   isRecentGrowthPlatformTimeout,
@@ -65,6 +66,14 @@ export function GrowthSystemDebugPanel({
     const timer = window.setInterval(() => setStatusNowMs(Date.now()), 1_000);
     return () => window.clearInterval(timer);
   }, [enabled]);
+  const staleNoNewDataPlatforms = (data?.scheduler || []).filter(
+    (item) => getGrowthNoNewDataState(
+      item.lastNewDataAt,
+      statusNowMs,
+      undefined,
+      item.newDataMonitoringStartedAt,
+    ).status === "stale",
+  );
 
   const trySetBurstControl = useCallback(
     (payload: { burst: "auto" | "manual" | "off"; platforms: GrowthBurstPlatform[] }) => {
@@ -309,11 +318,21 @@ export function GrowthSystemDebugPanel({
             </div>
           ) : null}
 
+          {staleNoNewDataPlatforms.length ? (
+            <div className="mt-4 rounded-xl border border-red-300/50 bg-red-500/15 p-3 text-xs font-semibold leading-6 text-red-100">
+              24 小时无新增数据：
+              {staleNoNewDataPlatforms
+                .map((item) => String(item.platformLabel || getPlatformLabel(item.platform)))
+                .join("、")}
+              。请立即检查平台采集链，不会因“抓取成功但新增 0 条”自动消失。
+            </div>
+          ) : null}
+
           {data.scheduler?.length && data.runtimeControl?.mode !== "backfill" ? (
             <div className="mt-4 space-y-2 rounded-2xl border border-cyan-200/15 bg-black/15 p-4 text-xs text-white/72">
               <div className="font-semibold text-cyan-100">抓取调度状态</div>
               <div className="rounded-xl border border-cyan-200/15 bg-cyan-400/5 p-3 leading-6">
-                <div>全部平台 live：统一每 30 分钟抓取一次</div>
+                <div>全部平台 live：按部署配置调度；各平台实际频率见下方</div>
                 <div>burst 控制：{String(data.runtimeControl?.burst || "auto")}</div>
                 <div>
                   burst 平台：
@@ -342,8 +361,35 @@ export function GrowthSystemDebugPanel({
                     {String(item.burstMode ?? false)}
                   </div>
                   <div>
-                    {String(item.platformLabel || getPlatformLabel(item.platform))} 最近抓取量（仓库）：
+                    {String(item.platformLabel || getPlatformLabel(item.platform))} 最近抓取量（本轮）：
                     {String(item.lastCollectedCount ?? 0)}
+                  </div>
+                  <div>
+                    {String(item.platformLabel || getPlatformLabel(item.platform))} 当前调度频率：
+                    {String(item.lastFrequencyLabel || "-")}
+                  </div>
+                  <div className={getGrowthNoNewDataState(
+                    item.lastNewDataAt,
+                    statusNowMs,
+                    undefined,
+                    item.newDataMonitoringStartedAt,
+                  ).status === "stale"
+                    ? "font-semibold text-red-200"
+                    : getGrowthNoNewDataState(
+                        item.lastNewDataAt,
+                        statusNowMs,
+                        undefined,
+                        item.newDataMonitoringStartedAt,
+                      ).status === "unknown"
+                      ? "text-amber-200"
+                      : ""}
+                  >
+                    {String(item.platformLabel || getPlatformLabel(item.platform))} 最近真实新增：
+                    {item.lastNewDataAt
+                      ? formatShanghaiDateTime(String(item.lastNewDataAt))
+                      : item.newDataMonitoringStartedAt
+                        ? `尚无新增（从 ${formatShanghaiDateTime(String(item.newDataMonitoringStartedAt))} 开始监测）`
+                        : "尚未建立监测基线"}
                   </div>
                   <div>
                     {String(item.platformLabel || getPlatformLabel(item.platform))} Pipeline：

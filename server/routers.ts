@@ -9844,10 +9844,17 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             burstTriggeredAt: item?.burstTriggeredAt,
             lastCollectedCount: item?.lastCollectedCount ?? 0,
             lastAddedCount: item?.lastAddedCount ?? 0,
+            // 旧 runtime 状态没有该字段；若最后一轮确有新增，以当时成功时间建立兼容基线。
+            lastNewDataAt: item?.lastNewDataAt
+              || ((item?.lastAddedCount || 0) > 0 ? item?.lastSuccessAt : undefined),
+            newDataMonitoringStartedAt: item?.newDataMonitoringStartedAt
+              || item?.lastSuccessAt
+              || item?.lastRunAt,
             lastMergedCount: item?.lastMergedCount ?? 0,
             lastRawFetchedCount: item?.lastRawFetchedCount,
             lastAfterDedupCount: item?.lastAfterDedupCount,
             lastAfterWindowFilterCount: item?.lastAfterWindowFilterCount,
+            lastFrequencyLabel: item?.lastFrequencyLabel,
             lastError: item?.lastError,
           }));
         const anomalies: Array<{ level: "warning" | "critical"; title: string; message: string }> = [];
@@ -9975,7 +9982,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                   lastError: undefined,
                   burstMode: false,
                   burstTriggeredAt: undefined,
-                  lastFrequencyLabel: "每 20 分钟一次",
+                  lastFrequencyLabel: "常规 live 调度 / 下一轮立即执行",
                 });
               }),
           );
@@ -10024,9 +10031,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
                 burstMode: enabled,
                 burstTriggeredAt: enabled ? nextRunAt : undefined,
                 lastFrequencyLabel: input.burst === "manual"
-                  ? (enabled ? "手动 burst / 15 分钟一次" : (currentState?.lastFrequencyLabel || "每 20 分钟一次"))
+                  ? (enabled ? "手动 burst / 下一轮立即执行" : (currentState?.lastFrequencyLabel || "常规 live 调度"))
                   : input.burst === "off"
-                    ? "每 20 分钟一次"
+                    ? "常规 live 调度"
                     : undefined,
               });
             }),
