@@ -19,3 +19,8 @@ export function findGrowthMonotonicRegressions(input: {
   enforceArchived?: boolean;
   currentTolerance?: number;
 }): string[];
+
+export function hasGrowthMonotonicRegressionForPlatform(
+  regressions: string[],
+  platform: string,
+): boolean;

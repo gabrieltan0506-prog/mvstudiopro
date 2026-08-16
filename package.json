@@ -24,6 +24,8 @@
     "growth:fill-missing-ranges": "node scripts/fill-growth-missing-ranges.mjs",
     "growth:fetch-status": "node scripts/fetch-growth-status.mjs",
     "growth:verify-monotonic": "node scripts/verify-growth-monotonic.mjs",
+    "growth:check-platform-restore": "node scripts/check-growth-platform-restore.mjs",
+    "growth:restore-platform-current": "tsx scripts/restore-growth-platform-current.mts",
     "growth:build-backup-manifest": "node scripts/build-growth-backup-manifest.mjs",
     "growth:migrate-split-gzip": "tsx scripts/migrate-growth-store-split-gzip.ts",
     "ambient:ping-gemini": "tsx scripts/ping-dashboard-gemini-models.mts",

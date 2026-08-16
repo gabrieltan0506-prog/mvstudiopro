@@ -76,6 +76,11 @@ export function findGrowthMonotonicRegressions({
   return regressions;
 }
 
+export function hasGrowthMonotonicRegressionForPlatform(regressions, platform) {
+  const prefix = `${String(platform || "").trim()}:`;
+  return Boolean(prefix !== ":" && regressions.some((line) => String(line).startsWith(prefix)));
+}
+
 async function main() {
   if (!baselinePath || !beforePath || !afterPath) {
     throw new Error("Usage: node scripts/verify-growth-monotonic.mjs <baseline-json> <before-json> <after-json>");

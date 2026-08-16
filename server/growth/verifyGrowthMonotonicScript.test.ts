@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   findGrowthMonotonicRegressions,
+  hasGrowthMonotonicRegressionForPlatform,
   resolveGuardPlatforms,
 } from "../../scripts/verify-growth-monotonic.mjs";
 
@@ -99,5 +100,13 @@ describe("growth monotonic guard", () => {
 
     expect(resolveGuardPlatforms(baseline, before, after)).toEqual(new Set(["kuaishou"]));
     expect(findGrowthMonotonicRegressions({ baseline, before, after })).toHaveLength(1);
+  });
+
+  it("只为实际回退的平台触发定向恢复", () => {
+    const regressions = [
+      "xiaohongshu: currentTotal regressed 20000 < 71594 (floor 79549, tolerance 10%)",
+    ];
+    expect(hasGrowthMonotonicRegressionForPlatform(regressions, "xiaohongshu")).toBe(true);
+    expect(hasGrowthMonotonicRegressionForPlatform(regressions, "douyin")).toBe(false);
   });
 });

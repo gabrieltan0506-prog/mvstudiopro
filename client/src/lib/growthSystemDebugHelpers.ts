@@ -68,3 +68,34 @@ export function isRecentGrowthPlatformTimeout(
   if (!Number.isFinite(failedAt) || nowMs < failedAt || nowMs - failedAt > visibleMs) return false;
   return /timed out|timeout|aborted|abort/i.test(String(failure.lastError || ""));
 }
+
+export const GROWTH_NO_NEW_DATA_ALERT_MS = 24 * 60 * 60 * 1000;
+
+export type GrowthNoNewDataState = {
+  status: "unknown" | "fresh" | "stale";
+  ageMs: number | null;
+  basis: "new-data" | "monitoring" | "none";
+};
+
+/** 只按真实新增时间计时；普通抓取成功、addedCount=0 都不能掩盖断流。 */
+export function getGrowthNoNewDataState(
+  lastNewDataAt?: string | null,
+  nowMs = Date.now(),
+  alertAfterMs = GROWTH_NO_NEW_DATA_ALERT_MS,
+  monitoringStartedAt?: string | null,
+): GrowthNoNewDataState {
+  const addedAt = Date.parse(String(lastNewDataAt || ""));
+  const monitoringAt = Date.parse(String(monitoringStartedAt || ""));
+  const hasAddedAt = Number.isFinite(addedAt) && Number.isFinite(nowMs) && nowMs >= addedAt;
+  const hasMonitoringAt = Number.isFinite(monitoringAt) && Number.isFinite(nowMs) && nowMs >= monitoringAt;
+  const referenceAt = hasAddedAt ? addedAt : hasMonitoringAt ? monitoringAt : null;
+  if (referenceAt === null) {
+    return { status: "unknown", ageMs: null, basis: "none" };
+  }
+  const ageMs = nowMs - referenceAt;
+  return {
+    status: ageMs >= alertAfterMs ? "stale" : "fresh",
+    ageMs,
+    basis: hasAddedAt ? "new-data" : "monitoring",
+  };
+}

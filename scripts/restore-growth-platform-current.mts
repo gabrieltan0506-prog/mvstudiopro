@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { gunzip } from "node:zlib";
 import { promisify } from "node:util";
 
@@ -23,21 +24,46 @@ async function readBaseline(filePath: string): Promise<PlatformTrendCollection> 
 }
 
 async function main() {
-  const [platformArg, baselineArg, mode] = process.argv.slice(2);
+  const [platformArg, baselineArg, ...flags] = process.argv.slice(2);
   const platform = String(platformArg || "").trim() as GrowthPlatform;
   if (!activeGrowthPlatformValues.includes(platform as typeof activeGrowthPlatformValues[number])) {
     throw new Error(`growth_restore_invalid_platform:${platform}`);
   }
   if (!baselineArg) {
-    throw new Error("Usage: tsx scripts/restore-growth-platform-current.mts <platform> <baseline.json[.gz]> --apply");
+    throw new Error("Usage: tsx scripts/restore-growth-platform-current.mts <platform> <baseline.json[.gz]> --min-items=N [--backup-dir=DIR] [--apply]");
   }
-  if (mode !== "--apply") {
-    throw new Error("growth_restore_apply_flag_required");
+  const supportedFlags = flags.filter((flag) => (
+    flag === "--apply"
+    || flag.startsWith("--min-items=")
+    || flag.startsWith("--backup-dir=")
+  ));
+  if (supportedFlags.length !== flags.length) {
+    throw new Error(`growth_restore_unknown_flag:${flags.find((flag) => !supportedFlags.includes(flag))}`);
   }
+  const minimumBaselineItems = Number(
+    flags.find((flag) => flag.startsWith("--min-items="))?.split("=").slice(1).join("="),
+  );
+  if (!Number.isFinite(minimumBaselineItems) || minimumBaselineItems < 1) {
+    throw new Error("growth_restore_min_items_required");
+  }
+  const apply = flags.includes("--apply");
+  const backupDirArg = flags.find((flag) => flag.startsWith("--backup-dir="))?.split("=").slice(1).join("=");
   const baselinePath = path.resolve(baselineArg);
+  const baselineRaw = await fs.readFile(baselinePath);
+  const baselineSha256 = createHash("sha256").update(baselineRaw).digest("hex");
   const baseline = await readBaseline(baselinePath);
-  const result = await restoreTrendPlatformCurrentFromBaseline(platform, baseline);
-  console.log(JSON.stringify({ ok: true, baselinePath, ...result }));
+  const result = await restoreTrendPlatformCurrentFromBaseline(platform, baseline, {
+    apply,
+    minimumBaselineItems,
+    backupDir: backupDirArg ? path.resolve(backupDirArg) : undefined,
+  });
+  console.log(JSON.stringify({
+    ok: true,
+    mode: apply ? "apply" : "dry-run",
+    baselinePath,
+    baselineSha256,
+    ...result,
+  }));
 }
 
 main().catch((error) => {

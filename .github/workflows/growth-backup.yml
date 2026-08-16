@@ -202,6 +202,18 @@ jobs:
             tar -C /tmp/growth-backup/store -xzf /tmp/growth-backup/platform-current.tar.gz
           fi
           mkdir -p /tmp/growth-backup/store/backups /tmp/growth-backup/store/platforms /tmp/growth-backup/store/history-ledger
+          mkdir -p /tmp/growth-backup/platform-current
+          # 生产真值已经是 *.current.json.gz。旧逻辑只遍历 *.json，因此最新完整 current
+          # 从未成为独立冷备资产；同时旧产物名还漏了 `.current`，读取器无法命中。
+          for platform in douyin bilibili xiaohongshu weixin_channels; do
+            output="/tmp/growth-backup/platform-current/platform-current-${platform}.current.json.gz"
+            capture_from_fly "if [ -s /data/growth/platform-current/${platform}.current.json.gz ]; then cat /data/growth/platform-current/${platform}.current.json.gz; elif [ -s /data/growth/platform-current/${platform}.current.json ]; then gzip -c /data/growth/platform-current/${platform}.current.json; else exit 1; fi" "$output" 720
+            gzip -t "$output"
+          done
+          (
+            cd /tmp/growth-backup/platform-current
+            sha256sum ./*.current.json.gz > /tmp/growth-backup/platform-current-sha256.txt
+          )
           for ledger_file in /tmp/growth-backup/store/history-ledger/*.json; do
             [ -f "$ledger_file" ] || continue
             gzip -c "$ledger_file" > "/tmp/growth-backup/history-ledger-$(basename "$ledger_file" .json).json.gz"
@@ -213,7 +225,7 @@ jobs:
           if [ -d /tmp/growth-backup/store/platform-current ]; then
             for platform_file in /tmp/growth-backup/store/platform-current/*.json; do
               [ -f "$platform_file" ] || continue
-              gzip -c "$platform_file" > "/tmp/growth-backup/platform-current-$(basename "$platform_file" .current.json).json.gz"
+              gzip -c "$platform_file" > "/tmp/growth-backup/platform-current/platform-current-$(basename "$platform_file" .json).json.gz"
             done
           fi
           npm run growth:build-backup-manifest -- /tmp/growth-backup/store /tmp/growth-backup/backup-manifest.json
@@ -324,6 +336,10 @@ jobs:
             [ -f "$asset" ] || continue
             gh release upload growth-cold-store-latest "$asset#$(basename "$asset")" --clobber
           done
+          # 四个平台全部上传成功后才更新校验清单；若中途失败，旧清单会与混合资产不匹配，避免静默误认完整冷备。
+          gh release upload growth-cold-store-latest \
+            /tmp/growth-backup/platform-current-sha256.txt#platform-current-sha256.txt \
+            --clobber
       - name: Build archive offload list from Fly
         if: hashFiles('/tmp/growth-backup/storage.env') != ''
         env:

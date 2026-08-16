@@ -104,14 +104,24 @@ jobs:
         run: |
           echo "Waiting 30s for Fly.dev cold-start..."
           sleep 30
-          for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            echo "Attempt $attempt/10..."
+          # 大型 platform-current 会在启动后分段挂回真值。HTTP 已可用不代表 59 万条
+          # 小红书 current 已完成读取；#1249 正是首个 200 快照过早只有 2 万条而误报。
+          # 最多等待 15 分钟，只做只读快照与单调校验，不在部署流程自动改生产数据。
+          for attempt in $(seq 1 30); do
+            echo "Attempt $attempt/30..."
             if npm run growth:fetch-status -- "$APP_URL" /tmp/growth-after.json; then
-              exit 0
+              if [ ! -f /tmp/growth-before.json ]; then
+                exit 0
+              fi
+              if npm run growth:verify-monotonic -- ops/growth-monotonic-baseline.json /tmp/growth-before.json /tmp/growth-after.json; then
+                echo "Post-deploy growth truth is monotonic."
+                exit 0
+              fi
+              echo "Growth truth is still warming; retrying in 30s."
             fi
-            sleep 15
+            sleep 30
           done
-          echo "Warning: failed to fetch post-deploy growth status, but deploy succeeded"
+          echo "Warning: post-deploy growth truth did not become monotonic within 15 minutes; final guard will report the regression"
       - name: Verify monotonic growth
         run: |
           if [ -f /tmp/growth-before.json ] && [ -f /tmp/growth-after.json ]; then

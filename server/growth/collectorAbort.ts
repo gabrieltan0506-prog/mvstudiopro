@@ -8,10 +8,22 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
-const storage = new AsyncLocalStorage<AbortSignal>();
+type CollectorAbortContext = {
+  signal: AbortSignal;
+  deadlineMs?: number;
+};
+
+const storage = new AsyncLocalStorage<CollectorAbortContext>();
 
 export function getCollectorAbortSignal(): AbortSignal | undefined {
-  return storage.getStore();
+  return storage.getStore()?.signal;
+}
+
+export function getCollectorTimeRemainingMs(nowMs = Date.now()): number | undefined {
+  const deadlineMs = storage.getStore()?.deadlineMs;
+  return typeof deadlineMs === "number"
+    ? Math.max(0, deadlineMs - nowMs)
+    : undefined;
 }
 
 export function assertCollectorNotAborted(): void {
@@ -24,8 +36,9 @@ export function assertCollectorNotAborted(): void {
 export async function runWithCollectorAbort<T>(
   signal: AbortSignal,
   work: () => Promise<T>,
+  options?: { deadlineMs?: number },
 ): Promise<T> {
-  return storage.run(signal, work);
+  return storage.run({ signal, deadlineMs: options?.deadlineMs }, work);
 }
 
 export function mergeAbortSignals(
@@ -69,7 +82,11 @@ export async function withAbortableTimeout<T>(
   });
   try {
     return await Promise.race([
-      runWithCollectorAbort(controller.signal, () => work(controller.signal)),
+      runWithCollectorAbort(
+        controller.signal,
+        () => work(controller.signal),
+        { deadlineMs: Date.now() + timeoutMs },
+      ),
       timeoutPromise,
     ]);
   } finally {
@@ -93,14 +110,11 @@ export function isSchedulerTimeoutOrAbortError(error: unknown): boolean {
 }
 
 /**
- * 超时冷却：第 1 次 45 分钟，第 2 次 2 小时，第 3 次起 4 小时。
- * 目的是终止后真正退出本轮，给用户成片/上传让出机器。
+ * 超时后固定冷却 10 分钟。仍先 abort 当前采集，避免孤儿请求继续占用机器；
+ * 但不再因连续超时把正式 burst 逐级锁死 45 分钟、2 小时甚至 4 小时。
  */
-export function buildTimeoutCooldownMs(timeoutStreak: number): number {
-  const streak = Math.max(1, Math.floor(timeoutStreak) || 1);
-  if (streak <= 1) return 45 * 60 * 1000;
-  if (streak === 2) return 2 * 60 * 60 * 1000;
-  return 4 * 60 * 60 * 1000;
+export function buildTimeoutCooldownMs(_timeoutStreak: number): number {
+  return 10 * 60 * 1000;
 }
 
 export function formatTimeoutCooldownLabel(cooldownMs: number): string {

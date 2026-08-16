@@ -187,14 +187,24 @@ describe("growth store merge + hot-window prune", () => {
       "utf8",
     );
 
-    const result = await restoreTrendPlatformCurrentFromBaseline("xiaohongshu", baseline);
+    const backupDir = path.join(tempRoot, "restore-temp");
+    const result = await restoreTrendPlatformCurrentFromBaseline("xiaohongshu", baseline, {
+      apply: true,
+      minimumBaselineItems: 2,
+      backupDir,
+    });
     expect(result).toMatchObject({
       baselineCount: 2,
+      baselineUniqueCount: 2,
       liveCount: 2,
       restoredCount: 3,
       addedAfterBaseline: 1,
       missingBaselineCount: 0,
+      applied: true,
+      verifiedCount: 3,
     });
+    expect(result.backupPath).toMatch(/xiaohongshu-before-restore-.+\.json\.gz$/);
+    await expect(fs.access(String(result.backupPath))).resolves.toBeUndefined();
     const store = await readTrendStore({ preferDerivedFiles: true });
     expect(store.collections?.xiaohongshu?.items.map((item) => item.id).sort()).toEqual([
       "base-1",
@@ -203,5 +213,39 @@ describe("growth store merge + hot-window prune", () => {
     ]);
     expect(store.collections?.xiaohongshu?.items.find((item) => item.id === "shared")?.likes).toBe(999);
     expect(store.collections?.douyin?.items.map((item) => item.id)).toEqual(["other-platform"]);
+  });
+
+  it("受控恢复默认 dry-run，且拒绝低于最低条数的伪基线", async () => {
+    const {
+      readTrendStore,
+      restoreTrendPlatformCurrentFromBaseline,
+    } = await import("./trendStore");
+    const collectedAt = new Date().toISOString();
+    const baseline = makeCollection([makeItem("base-1", collectedAt)], collectedAt);
+    baseline.platform = "xiaohongshu";
+    await fs.writeFile(
+      path.join(tempRoot, "current.json"),
+      JSON.stringify({
+        updatedAt: collectedAt,
+        collections: { xiaohongshu: makeCollection([makeItem("live-1", collectedAt)], collectedAt) },
+        scheduler: {},
+        archiveIndex: [],
+      }),
+      "utf8",
+    );
+
+    await expect(restoreTrendPlatformCurrentFromBaseline("xiaohongshu", baseline, {
+      minimumBaselineItems: 2,
+    })).rejects.toThrow("growth_restore_baseline_below_minimum:xiaohongshu:unique=1:minimum=2");
+    await expect(restoreTrendPlatformCurrentFromBaseline("xiaohongshu", baseline, {
+      minimumBaselineItems: Number.NaN,
+    })).rejects.toThrow("growth_restore_invalid_minimum:xiaohongshu:NaN");
+
+    const result = await restoreTrendPlatformCurrentFromBaseline("xiaohongshu", baseline, {
+      minimumBaselineItems: 1,
+    });
+    expect(result).toMatchObject({ applied: false, restoredCount: 2, liveCount: 1 });
+    const store = await readTrendStore({ preferDerivedFiles: true });
+    expect(store.collections?.xiaohongshu?.items.map((item) => item.id)).toEqual(["live-1"]);
   });
 });

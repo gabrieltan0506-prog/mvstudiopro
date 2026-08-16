@@ -37,6 +37,10 @@ export type TrendSchedulerState = {
   lastDurationMs?: number;
   lastCollectedCount?: number;
   lastAddedCount?: number;
+  /** 最近一次确实向平台 current 新增条目的时间；普通成功但新增 0 条不得刷新。 */
+  lastNewDataAt?: string;
+  /** 无历史新增时间时的监测起点；用于识别连续 24 小时从未新增。 */
+  newDataMonitoringStartedAt?: string;
   lastMergedCount?: number;
   lastRawFetchedCount?: number;
   lastAfterDedupCount?: number;
@@ -338,7 +342,11 @@ function getColdStoreAssetUrl(assetName: string) {
   return `${GITHUB_COLD_STORE_BASE_URL}/${assetName}`;
 }
 
-async function downloadColdStoreAsset(assetName: string, cacheRelativePath: string) {
+async function downloadColdStoreAsset(
+  assetName: string,
+  cacheRelativePath: string,
+  timeoutMs = 15_000,
+) {
   if (!canUseGithubColdStore()) return null;
   const url = getColdStoreAssetUrl(assetName);
   if (!url) return null;
@@ -347,11 +355,13 @@ async function downloadColdStoreAsset(assetName: string, cacheRelativePath: stri
     await fs.access(cachePath);
     return cachePath;
   } catch {}
-  const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
   if (!response.ok) return null;
   const bytes = Buffer.from(await response.arrayBuffer());
   await fs.mkdir(path.dirname(cachePath), { recursive: true });
-  await fs.writeFile(cachePath, bytes);
+  const nextPath = `${cachePath}.next-${process.pid}-${Date.now()}`;
+  await fs.writeFile(nextPath, bytes);
+  await fs.rename(nextPath, cachePath);
   return cachePath;
 }
 
@@ -367,15 +377,23 @@ async function readLocalJsonOrGzip<T>(plainPath: string): Promise<T | null> {
   return null;
 }
 
-async function readJsonWithGzipFallback<T>(localPath: string, assetName: string, cacheRelativePath: string): Promise<T | null> {
+async function readJsonWithGzipFallback<T>(
+  localPath: string,
+  assetName: string,
+  cacheRelativePath: string,
+  downloadTimeoutMs = 15_000,
+): Promise<T | null> {
   const local = await readLocalJsonOrGzip<T>(localPath);
   if (local) return local;
-  const downloaded = await downloadColdStoreAsset(assetName, cacheRelativePath);
+  const downloaded = await downloadColdStoreAsset(assetName, cacheRelativePath, downloadTimeoutMs);
   if (!downloaded) return null;
   try {
-    const { stdout } = await execFileAsync("gzip", ["-dfc", downloaded], { maxBuffer: 64 * 1024 * 1024 });
-    return JSON.parse(stdout) as T;
+    const raw = await fs.readFile(downloaded);
+    const json = downloaded.endsWith(".gz") ? await gunzipAsync(raw) : raw;
+    return JSON.parse(json.toString("utf8")) as T;
   } catch {
+    // 下载中断或旧缓存损坏时必须删除，否则后续启动会永久命中同一坏资产。
+    await fs.unlink(downloaded).catch(() => {});
     return null;
   }
 }
@@ -1161,11 +1179,21 @@ async function readPlatformCurrentManifest(): Promise<PlatformCurrentManifest | 
 }
 
 async function readPlatformCurrentTruthFile(platform: GrowthPlatform): Promise<PlatformCurrentTruthFile | null> {
-  const parsed = await readJsonWithGzipFallback<PlatformCurrentTruthFile>(
+  let parsed = await readJsonWithGzipFallback<PlatformCurrentTruthFile>(
     getPlatformCurrentTruthFile(platform),
     `platform-current-${platform}.current.json.gz`,
     `platform-current-${platform}.current.json.gz`,
+    180_000,
   );
+  // 兼容旧备份任务漏掉 `.current` 的资产名；新恢复链优先使用 Fly 卷内的部署前快照。
+  if (!parsed) {
+    parsed = await readJsonWithGzipFallback<PlatformCurrentTruthFile>(
+      getPlatformCurrentTruthFile(platform),
+      `platform-current-${platform}.json.gz`,
+      `legacy/platform-current-${platform}.json.gz`,
+      180_000,
+    );
+  }
   if (!parsed?.collection || isRecoveredCollectionSource(parsed.collection?.source)) return null;
   return parsed;
 }
@@ -2375,9 +2403,16 @@ export async function mergeTrendCollections(collections: Partial<Record<GrowthPl
  * 只恢复一个平台的 current 真相：以完整基线为底，再合并生产库中基线之后的新观测。
  * 不写 archive、不回滚其他平台，也不经过热窗裁剪。该入口只供受控数据恢复脚本使用。
  */
+export type TrendPlatformCurrentRestoreOptions = {
+  apply?: boolean;
+  minimumBaselineItems?: number;
+  backupDir?: string;
+};
+
 export async function restoreTrendPlatformCurrentFromBaseline(
   platform: GrowthPlatform,
   baseline: PlatformTrendCollection,
+  options: TrendPlatformCurrentRestoreOptions = {},
 ) {
   if (baseline.platform !== platform) {
     throw new Error(`growth_restore_platform_mismatch:${baseline.platform}:${platform}`);
@@ -2389,9 +2424,20 @@ export async function restoreTrendPlatformCurrentFromBaseline(
   const current = await readTrendStore({ preferDerivedFiles: true });
   const live = current.collections?.[platform];
   const baselineCount = baseline.items.length;
+  const baselineIds = new Set(baseline.items.map((item) => getItemKey(item)).filter(Boolean));
+  const baselineUniqueCount = baselineIds.size;
+  const requestedMinimum = options.minimumBaselineItems ?? 1;
+  if (!Number.isFinite(requestedMinimum) || requestedMinimum < 1) {
+    throw new Error(`growth_restore_invalid_minimum:${platform}:${requestedMinimum}`);
+  }
+  const minimumBaselineItems = Math.max(1, Math.floor(requestedMinimum));
+  if (baselineUniqueCount < minimumBaselineItems) {
+    throw new Error(
+      `growth_restore_baseline_below_minimum:${platform}:unique=${baselineUniqueCount}:minimum=${minimumBaselineItems}`,
+    );
+  }
   const liveCount = live?.items?.length || 0;
   const items = dedupeTrendItems(baseline.items, live?.items || []);
-  const baselineIds = new Set(baseline.items.map((item) => getItemKey(item)).filter(Boolean));
   const restoredIds = new Set(items.map((item) => getItemKey(item)).filter(Boolean));
   const missingBaselineCount = Array.from(baselineIds).filter((id) => !restoredIds.has(id)).length;
   if (missingBaselineCount > 0 || items.length < baselineCount) {
@@ -2436,15 +2482,75 @@ export async function restoreTrendPlatformCurrentFromBaseline(
       [platform]: restoredCollection,
     },
   };
-  await writeStore(next);
-  return {
+  const baseResult = {
     platform,
     baselineCount,
+    baselineUniqueCount,
+    minimumBaselineItems,
     liveCount,
     restoredCount: items.length,
     addedAfterBaseline: Math.max(0, items.length - baselineCount),
     missingBaselineCount,
   };
+  if (!options.apply) {
+    return {
+      ...baseResult,
+      applied: false,
+      verifiedCount: liveCount,
+      backupPath: null,
+    };
+  }
+
+  const backupDir = path.resolve(options.backupDir || path.join(STORE_DIR, "restore-temp"));
+  await fs.mkdir(backupDir, { recursive: true });
+  const stamp = nowShanghaiIso().replace(/[^0-9A-Za-z]+/g, "-");
+  const backupPlainPath = path.join(backupDir, `${platform}-before-restore-${stamp}.json`);
+  const backupPath = `${backupPlainPath}.gz`;
+  await writeJsonGzipAtomic(backupPlainPath, {
+    updatedAt: nowShanghaiIso(),
+    platform,
+    collection: live || null,
+  });
+
+  try {
+    await writeStore(next);
+    const verified = await readPlatformCurrentTruthFile(platform);
+    const verifiedItems = verified?.collection?.items || [];
+    const verifiedIds = new Set(verifiedItems.map((item) => getItemKey(item)).filter(Boolean));
+    const missingAfterWrite = Array.from(baselineIds).filter((id) => !verifiedIds.has(id)).length;
+    if (verifiedItems.length < items.length || missingAfterWrite > 0) {
+      throw new Error(
+        `growth_restore_post_write_verification_failed:${platform}:expected=${items.length}:actual=${verifiedItems.length}:missing=${missingAfterWrite}`,
+      );
+    }
+    return {
+      ...baseResult,
+      applied: true,
+      verifiedCount: verifiedItems.length,
+      backupPath,
+    };
+  } catch (error) {
+    let rollbackError = "";
+    try {
+      const latest = await readTrendStore({ preferDerivedFiles: true });
+      await writeStore({
+        ...latest,
+        updatedAt: nowShanghaiIso(),
+        collections: {
+          ...(latest.collections || {}),
+          [platform]: live,
+        },
+      }, { allowLowerTotals: true });
+    } catch (rollback) {
+      rollbackError = rollback instanceof Error ? rollback.message : String(rollback);
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      rollbackError
+        ? `growth_restore_failed_and_rollback_failed:${message}:rollback=${rollbackError}:backup=${backupPath}`
+        : `growth_restore_failed_rolled_back:${message}:backup=${backupPath}`,
+    );
+  }
 }
 
 export async function mergeTrendCollectionsWithOptions(
