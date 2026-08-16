@@ -34,7 +34,7 @@ export const config = {
  * Google Gateway (single function)
  * - op=geminiScript    (Gemini text)
  * - op=vertexTranslate（Vertex IAM 纯文本翻译；**locations/global**；模型 gemini-3-flash-preview，供 TestLab）
- * - op=nanoImage       Vertex **`generateContent` 圖像**：**Nano Banana 2**（Flash）/ **Nano Banana Pro**；**不再**提供 Imagen `:predict` 生圖。若請求帶舊版 `imagen-4.0*`（或 `GEMINI_IMAGEN_ULTRA_MODEL` 別名）**自動改走** Nano Banana 2（Flash、Vertex IAM）。回傳預設將 `data:` 落地 GCS 簽名 URL。詳見程式內 `nanoImage` 分支。
+ * - op=nanoImage       Vertex **`generateContent` 圖像**：Nano Banana 2（Flash）/ Nano Banana Pro。
  * - op=veoCreate       (Veo create)
  * - op=veoTask         (Veo polling)
  * - op=omniVideoCreate (Gemini Omni · Vertex generateVideos)
@@ -47,7 +47,6 @@ export const config = {
  * - **Vertex IAM（`generateContent` 圖像、Gemini Script、Veo 等 `aiplatform` 呼叫）**：`GOOGLE_APPLICATION_CREDENTIALS_JSON` **或** `GOOGLE_APPLICATION_CREDENTIALS`（金鑰檔路徑）；換取短效 **Bearer token**，**非** URL `?key=`。
  * - GEMINI_API_KEY：僅 **Consumer** `generativelanguage`（transcribeAudio、translateForVeo）；**不**用於 Vertex 圖像。
  * - VERTEX_PROJECT_ID（Vertex 圖像 / geminiScript / Veo 等必填；可另備 GOOGLE_CLOUD_PROJECT）
- * - VERTEX_IMAGEN_LOCATION（可選；**本閘道生圖已不再走 Imagen**，保留僅為歷史 env 相容）
  * - VERTEX_IMAGE_MODEL_FLASH / VERTEX_IMAGE_MODEL_PRO
  * - VERTEX_VEO_MODEL_RAPID / VERTEX_VEO_MODEL_PRO
  * - VERTEX_VIDEO_LOCATION_RAPID / VERTEX_VIDEO_LOCATION_PRO
@@ -61,6 +60,40 @@ function getBody(req:VercelRequest){
   if(!b) return {};
   if(typeof b==="string") return jparse(b) ?? {};
   return b;
+}
+
+async function resolveGoogleGatewayUser(
+  req: VercelRequest,
+): Promise<{ userId: number; role: string } | null> {
+  try {
+    const { sdk } = await import("../server/_core/sdk.js");
+    const user = await sdk.authenticateRequest(req as any, { silentMissing: true });
+    const userId = Number((user as any)?.id);
+    if (!Number.isFinite(userId) || userId <= 0) return null;
+    return { userId, role: String((user as any)?.role || "") };
+  } catch {
+    return null;
+  }
+}
+
+export function validateLegacyUpscaleAccess(input: {
+  method?: string;
+  role?: string;
+  upscaleFactor?: string;
+}):
+  | { ok: true; upscaleFactor: "x2" | "x4" }
+  | { ok: false; status: 400 | 403 | 405; error: string } {
+  if (input.method !== "POST") {
+    return { ok: false, status: 405, error: "Method not allowed" };
+  }
+  if (input.role !== "admin" && input.role !== "supervisor") {
+    return { ok: false, status: 403, error: "admin_or_supervisor_required" };
+  }
+  const factor = String(input.upscaleFactor || "").trim().toLowerCase();
+  if (factor !== "x2" && factor !== "x4") {
+    return { ok: false, status: 400, error: "unsupported_upscale_factor" };
+  }
+  return { ok: true, upscaleFactor: factor };
 }
 
 function baseUrlFor(location:string){
@@ -208,18 +241,6 @@ function shouldRetryVertexText(status: number, json: any, rawText: string) {
 async function sleep(ms:number){
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
-
-/** 舊 Imagen 4 `imagen-4.0*` 前綴，或與 `GEMINI_IMAGEN_ULTRA_MODEL` **完全一致**的別名 → 由 `nanoImage` 強制 remap。 */
-function isLegacyImagenModelId(rawModel: string): boolean {
-  const m = s(rawModel).trim();
-  if (!m) return false;
-  const alias = s(process.env.GEMINI_IMAGEN_ULTRA_MODEL || "").trim();
-  if (alias.length > 0 && m === alias) return true;
-  return m.toLowerCase().startsWith("imagen-4.0");
-}
-
-/** 舊 `:predict` 文生圖 ID 攔截後 **固定**使用的 Nano Banana 2（與 `VERTEX_IMAGE_MODEL_FLASH` 預設一致）。 */
-const LEGACY_IMAGEN_REMAP_TARGET_MODEL = "gemini-3.1-flash-image-preview";
 
 const NANO_IMAGE_GCS_PREFIX = "generated/nano-image";
 
@@ -391,16 +412,13 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       }
     }
 
-    // ---------------- 漫剧学习 A：Fly 按 audioUrl/gcsUri 代下 → Gemini 3.5 Flash 高潮扫 ----------------
+    // ---------------- 漫剧学习 A：Fly 代下音频 → Gemini 3.6 Flash 四路语音分析 ----------------
     if (op === "manhuaAudioClimaxScan") {
       const audioUrl = s(b.audioUrl || q.audioUrl);
       const gcsUri = s(b.gcsUri || q.gcsUri);
       const mimeType = s(b.mimeType || q.mimeType || "audio/mpeg") || "audio/mpeg";
       if (!audioUrl && !gcsUri) {
         return res.status(400).json({ ok: false, error: "missing_audioUrl_or_gcsUri" });
-      }
-      if (!s(process.env.GEMINI_API_KEY).trim()) {
-        return res.status(500).json({ ok: false, error: "missing_env", detail: "GEMINI_API_KEY" });
       }
       try {
         const {
@@ -533,6 +551,27 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         const msg = e instanceof Error ? e.message : String(e);
         return res.status(500).json({ ok: false, error: "ping_failed", detail: msg.slice(0, 200) });
       }
+    }
+
+    // 旧高清放大兼容入口只供管理员/监管调试。正式用户入口必须走受保护且扣费的 tRPC/jobs。
+    // 放在全局 Vertex token 初始化之前：统一 fallback 不应被无关的 Vertex 配置提前阻断。
+    if (op === "upscaleImage") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      const viewer = await resolveGoogleGatewayUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required" });
+      const imageUrl = s(b.imageUrl || "").trim();
+      if (!imageUrl) return res.status(400).json({ ok: false, error: "missing_image_url" });
+      const access = validateLegacyUpscaleAccess({
+        method: req.method,
+        role: viewer.role,
+        upscaleFactor: s(b.upscaleFactor || ""),
+      });
+      if (!access.ok) return res.status(access.status).json({ ok: false, error: access.error });
+      const result = await runVertexUpscaleImage({
+        imageUrl,
+        upscaleFactor: access.upscaleFactor,
+      });
+      return res.status(result.ok ? 200 : 502).json(result);
     }
 
     const projectId = s(process.env.VERTEX_PROJECT_ID).trim();
@@ -913,7 +952,6 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     }
 
     // ---------------- Nano Banana (image) ----------------
-    // 舊 Imagen `imagen-4.0*` / GEMINI_IMAGEN_ULTRA_MODEL 別名 → 強制 LEGACY_IMAGEN_REMAP_TARGET_MODEL，JSON 附 remappedFromLegacyImagen。
     // op=nanoImage, tier=flash|pro, size=1K|2K|4K, aspectRatio=16:9...
     // Pro · 4K：imageConfig.imageSize + outputResolution（產品文檔口徑）；Flash 僅在 2K/4K 時寫 imageSize。
     // fetch 一律 120s：4K Base64 體量大可導致讀取超時。
@@ -925,16 +963,11 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const size = s(b.imageSize || q.imageSize || "1K").toUpperCase(); // 1K|2K|4K
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9");
       const negativePrompt = s(b.negativePrompt || q.negativePrompt || "");
-      const numberOfImages = Math.max(1, Math.min(4, Number(b.numberOfImages || q.numberOfImages || 1) || 1));
       const guidanceScale = Number(b.guidanceScale || q.guidanceScale || 0);
       const seed = q.seed != null || b.seed != null ? Number(b.seed || q.seed) : undefined;
       const personGeneration = s(b.personGeneration || q.personGeneration || "");
 
-      let rawModel = s(b.model || q.model || "");
-      const legacyImagenRemap = isLegacyImagenModelId(rawModel);
-      if (legacyImagenRemap) {
-        rawModel = LEGACY_IMAGEN_REMAP_TARGET_MODEL;
-      }
+      const rawModel = s(b.model || q.model || "");
 
       const resolvedTier = rawModel
         ? (
@@ -949,7 +982,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         ? rawModel
         : resolvedTier === "pro"
           ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-preview")
-          : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-3.1-flash-image-preview");
+          : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-3.1-flash-image");
 
       const location = resolvedTier === "pro"
         ? (s(process.env.VERTEX_IMAGE_LOCATION_PRO || process.env.VERTEX_IMAGE_LOCATION) || "global").trim()
@@ -958,7 +991,6 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const url = `${base}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
       const imageConfig:any = { aspectRatio };
-      if(numberOfImages > 1) imageConfig.numberOfImages = numberOfImages;
       if(Number.isFinite(seed as number)) imageConfig.seed = Math.floor(seed as number);
       if(personGeneration) imageConfig.personGeneration = personGeneration;
       if (resolvedTier === "pro") {
@@ -996,20 +1028,8 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         raw,
         imageUrls,
         forceInlineBase64: nanoForceInlineBase64,
-        extra: legacyImagenRemap ? { remappedFromLegacyImagen: true as const } : undefined,
       });
       return res.status(r.ok ? 200 : 502).json(bodyNb);
-    }
-
-    if(op === "upscaleImage"){
-      const imageUrl = s(b.imageUrl || q.imageUrl || "");
-      if(!imageUrl) return res.status(400).json({ok:false,error:"missing_image_url"});
-      const prompt = s(b.prompt || q.prompt || "");
-      const outputMimeType = s(b.outputMimeType || q.outputMimeType || "image/png").trim() || "image/png";
-      const requestedFactor = s(b.upscaleFactor || q.upscaleFactor || "x2").toLowerCase();
-      const upscaleFactor = (requestedFactor === "x4" ? "x4" : requestedFactor === "x3" ? "x3" : "x2") as "x2"|"x3"|"x4";
-      const result = await runVertexUpscaleImage({ imageUrl, prompt, upscaleFactor, outputMimeType });
-      return res.status(result.ok ? 200 : 502).json(result);
     }
 
     // ---------------- Veo (video) ----------------

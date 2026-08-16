@@ -70,14 +70,13 @@ describe("mergeManhuaDialogueTtsLinesByVoice", () => {
       voiceByTag: { "@角色1": "longanlufeng", "@角色2": "longanlufeng" },
     });
     const mergedOne = mergeManhuaDialogueTtsLinesByVoice(sameVoice);
-    // 四句各自带情绪标签（自带即重置），可并成一组；句间补句读、破折号结尾不重复加
-    expect(mergedOne).toHaveLength(1);
-    expect(mergedOne[0]!.input).toBe(
-      "[crying]爹——[serious]认错人不要紧。[angry]我没有认错。[very slowly]别认错东西",
-    );
+    // 秒轴 5→6、12→13、18→20 都有明确停顿；即使音色相同也不能吞掉换气。
+    expect(mergedOne).toHaveLength(4);
+    expect(mergedOne.map((item) => item.input)).toEqual([
+      "[crying]爹——", "[serious]认错人不要紧", "[angry]我没有认错", "[very slowly]别认错东西",
+    ]);
     expect(mergedOne[0]!.startSec).toBe(0);
-    expect(mergedOne[0]!.endSec).toBe(28);
-    expect(mergedOne[0]!.speakerTags.sort()).toEqual(["@角色1", "@角色2"]);
+    expect(mergedOne[3]!.endSec).toBe(28);
   });
 
   it("无标签句不并进带标签的组——前句情绪不许管到后句", () => {
@@ -88,7 +87,17 @@ describe("mergeManhuaDialogueTtsLinesByVoice", () => {
     expect(withPlainTail).toHaveLength(5);
     expect(withPlainTail[4]!.emotionTags).toEqual([]);
     const merged = mergeManhuaDialogueTtsLinesByVoice(withPlainTail);
-    expect(merged).toHaveLength(2);
-    expect(merged[1]!.input).toBe("嗯");
+    expect(merged).toHaveLength(5);
+    expect(merged[4]!.input).toBe("嗯");
+  });
+
+  it("时间真正连续的同音色句仍可合并", () => {
+    const plan = compileManhuaDialogueTtsPlan(
+      "0–1s：@角色1 沉声说「先走」。\n1–2s：@角色2 咬牙说「我断后」。",
+      { voiceByTag: { "@角色1": "same", "@角色2": "same" } },
+    );
+    const merged = mergeManhuaDialogueTtsLinesByVoice(plan);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({ startSec: 0, endSec: 2, input: "[serious]先走。[angry]我断后" });
   });
 });

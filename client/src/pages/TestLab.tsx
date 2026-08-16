@@ -220,7 +220,7 @@ export default function TestLab() {
   const [imageTaskId, setImageTaskId] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [upscaleBusy, setUpscaleBusy] = useState(false);
-  const [upscaleFactor, setUpscaleFactor] = useState<"x2" | "x3" | "x4">("x2");
+  const [upscaleFactor, setUpscaleFactor] = useState<"x2" | "x4">("x2");
   const [upscaledImageUrl, setUpscaledImageUrl] = useState("");
   const [editPrompt, setEditPrompt] = useState("");
   const [editBusy, setEditBusy] = useState(false);
@@ -977,7 +977,7 @@ export default function TestLab() {
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 <div>
                 <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>模型</div>
-                {/* 仅 Flash / Pro；若自订栏填 imagen-4.0* 等旧 ID，后端 /api/google op=nanoImage 会强制改为 gemini-3.1-flash-image-preview 并附 remappedFromLegacyImagen */}
+                {/* 仅 Flash / Pro；高清放大由统一 provider 路由处理。 */}
                 <select
                   value={googleImageModel}
                   onChange={(e) => setGoogleImageModel(e.target.value as GoogleImageModel)}
@@ -986,9 +986,6 @@ export default function TestLab() {
                   <option value="gemini-3.1-flash-image-preview">Nano Banana 2（gemini-3.1-flash-image-preview）</option>
                   <option value="gemini-3-pro-image-preview">Nano Banana Pro（gemini-3-pro-image-preview）</option>
                 </select>
-                <p style={{ margin: "8px 0 0", fontSize: 11, opacity: 0.65, lineHeight: 1.45 }}>
-                  若手动填写旧版 <code style={{ fontSize: 10 }}>imagen-4.0*</code> 模型 ID，闸道会自动改走 Vertex Nano Banana 2（Flash）。
-                </p>
                 </div>
                 <div>
                   <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>自定义 model ID（可选，非空覆盖下拉）</div>
@@ -1193,11 +1190,10 @@ export default function TestLab() {
                   <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>倍率</div>
                   <select
                     value={upscaleFactor}
-                    onChange={(e) => setUpscaleFactor(e.target.value as "x2" | "x3" | "x4")}
+                    onChange={(e) => setUpscaleFactor(e.target.value as "x2" | "x4")}
                     style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
                   >
                     <option value="x2">x2</option>
-                    <option value="x3">x3</option>
                     <option value="x4">x4</option>
                   </select>
                 </div>

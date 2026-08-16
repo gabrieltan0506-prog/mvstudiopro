@@ -2,8 +2,8 @@
  * 首页照片高清放大：异步任务（落盘 + 短轮询 + 部署后续跑）。
  *
  * 根因：原先 tRPC 同步等 Gemini 2K/4K，客户端/SDK 120s abort 或 Fly 部署 SIGINT
- * 会直接掐断，前端停住且无结果。现改为：扣费 → 立刻返回 taskId → 后台跑 Gemini →
- * 状态接口短轮询；进程被杀后启动时可按落盘记录续跑（重试上游）。
+ * 会直接掐断，前端停住且无结果。现改为：扣费 → 立刻返回 taskId → 后台跑供应商链 →
+ * 状态接口短轮询。外部创建一旦开始便不在部署恢复时盲目重建；未确认结果按失败退款。
  */
 
 import { randomUUID } from "node:crypto";
@@ -26,18 +26,25 @@ import {
   type PaidJobDeductSnapshot,
 } from "./paidJobLedger.js";
 import {
-  isGeminiApiImageUpscaleConfigured,
-  runGeminiApiImageUpscale,
+  isImageUpscaleConfigured,
+  runImageUpscaleWithFallback,
   type GeminiApiUpscaleFactor,
+  type ImageUpscaleProvider,
 } from "./geminiApiImageUpscale.js";
+import {
+  releaseHomePhotoUpscaleLease,
+  tryAcquireHomePhotoUpscaleLease,
+} from "./homePhotoUpscaleLease.js";
 
 const TASK_TYPE = "homePhotoUpscale" as const;
 const PRIMARY_DIR =
   process.env.HOME_PHOTO_UPSCALE_TASK_DIR || "/data/growth/home-photo-upscale";
-/** 整单墙钟上限（含部署后重试） */
+/** 整单墙钟上限（含排队与一次外部创建） */
 const MAX_WALL_MS = 15 * 60_000;
-/** 部署中断后最多再跑几次 Gemini */
-const MAX_ATTEMPTS = 3;
+/** 外部请求结果可能已计费；整条 provider 链只允许创建一次，部署中断后不盲重建。 */
+const MAX_ATTEMPTS = 1;
+/** 比任务墙钟多留一倍：旧进程仍在收尾时，新进程不得误接管。 */
+const LEASE_STALE_MS = MAX_WALL_MS * 2;
 const WORKER_TICK_MS = 5_000;
 const HEARTBEAT_MS = 30_000;
 
@@ -63,6 +70,8 @@ export type HomePhotoUpscaleTaskRecord = {
   inputHeight?: number;
   outputWidth?: number;
   outputHeight?: number;
+  resultProvider?: ImageUpscaleProvider;
+  resultModel?: string;
   attempts: number;
   error?: string;
   createdAt: string;
@@ -247,6 +256,8 @@ async function succeedTask(
     inputHeight?: number;
     outputWidth?: number;
     outputHeight?: number;
+    provider?: ImageUpscaleProvider;
+    model?: string;
   },
 ): Promise<HomePhotoUpscaleTaskRecord> {
   task.status = "succeeded";
@@ -255,6 +266,8 @@ async function succeedTask(
   task.inputHeight = dims.inputHeight;
   task.outputWidth = dims.outputWidth;
   task.outputHeight = dims.outputHeight;
+  task.resultProvider = dims.provider;
+  task.resultModel = dims.model;
   task.finishedAt = new Date().toISOString();
   task.error = undefined;
   await writeTask(task);
@@ -284,6 +297,8 @@ async function succeedTask(
         inputHeight: dims.inputHeight,
         outputWidth: dims.outputWidth,
         outputHeight: dims.outputHeight,
+        provider: dims.provider,
+        model: dims.model,
         qualityWarningAccepted: task.qualityWarningAccepted === true,
         sourceBlurScore: task.sourceBlurScore,
         tool: "home_photo_upscale",
@@ -300,6 +315,12 @@ async function advanceTask(taskId: string): Promise<HomePhotoUpscaleTaskRecord |
   if (inflight.has(taskId)) {
     return readTask(taskId);
   }
+  const dir = await getTaskDir();
+  const lease = await tryAcquireHomePhotoUpscaleLease({
+    leasePath: `${taskPath(dir, taskId)}.lock`,
+    staleAfterMs: LEASE_STALE_MS,
+  });
+  if (!lease) return readTask(taskId);
   inflight.add(taskId);
   try {
     const task = await readTask(taskId);
@@ -314,12 +335,15 @@ async function advanceTask(taskId: string): Promise<HomePhotoUpscaleTaskRecord |
       );
     }
 
-    if (!isGeminiApiImageUpscaleConfigured()) {
+    if (!isImageUpscaleConfigured(task.upscaleFactor)) {
       return failTask(task, "高清放大服务暂不可用，请稍后重试");
     }
 
     if (task.attempts >= MAX_ATTEMPTS) {
-      return failTask(task, "高清放大多次失败，请稍后重试");
+      return failTask(
+        task,
+        "上次高清放大执行已中断；为避免重复创建外部任务，本次不自动重试",
+      );
     }
 
     task.status = "running";
@@ -334,27 +358,15 @@ async function advanceTask(taskId: string): Promise<HomePhotoUpscaleTaskRecord |
     heartbeat.unref?.();
 
     try {
-      const result = await runGeminiApiImageUpscale({
+      const remainingWallMs = Math.max(1_000, MAX_WALL_MS - (Date.now() - createdMs));
+      const result = await runImageUpscaleWithFallback({
         imageUrl: resolveImageUrlForServerFetch(task.imageUrl),
         upscaleFactor: task.upscaleFactor,
+        abortSignal: AbortSignal.timeout(remainingWallMs),
       });
       let imageUrl = String(result.imageUrl || "").trim();
       if (!result.ok || !imageUrl) {
         const err = String(result.error || "放大失败");
-        // 可重试错误（超时/中断）且未超次数：回到 queued 等 worker 再跑
-        if (
-          task.attempts < MAX_ATTEMPTS &&
-          /abort|timeout|aborted|ETIMEDOUT|ECONNRESET|socket hang up/i.test(err)
-        ) {
-          task.status = "queued";
-          task.error = `第 ${task.attempts} 次未完成：${err.slice(0, 160)}`;
-          await writeTask(task);
-          console.warn(
-            `[homePhotoUpscaleTask] retryable failure taskId=${task.taskId} attempt=${task.attempts}`,
-            err,
-          );
-          return task;
-        }
         return failTask(task, err);
       }
 
@@ -370,25 +382,21 @@ async function advanceTask(taskId: string): Promise<HomePhotoUpscaleTaskRecord |
         inputHeight: result.inputHeight,
         outputWidth: result.outputWidth,
         outputHeight: result.outputHeight,
+        provider: result.provider,
+        model: result.model,
       });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "高清放大失败";
-      if (
-        task.attempts < MAX_ATTEMPTS &&
-        /abort|timeout|aborted|ETIMEDOUT|ECONNRESET|socket hang up/i.test(message)
-      ) {
-        task.status = "queued";
-        task.error = `第 ${task.attempts} 次未完成：${message.slice(0, 160)}`;
-        await writeTask(task);
-        return task;
-      }
       return failTask(task, message);
     } finally {
       clearInterval(heartbeat);
     }
   } finally {
     inflight.delete(taskId);
+    await releaseHomePhotoUpscaleLease(lease).catch((error) => {
+      console.error("[homePhotoUpscaleTask] release lease failed", taskId, error);
+    });
   }
 }
 
@@ -402,7 +410,7 @@ export async function createHomePhotoUpscaleTask(input: {
   qualityWarningAccepted?: boolean;
   sourceBlurScore?: number;
 }): Promise<HomePhotoUpscaleTaskRecord> {
-  if (!isGeminiApiImageUpscaleConfigured()) {
+  if (!isImageUpscaleConfigured(input.upscaleFactor)) {
     throw new Error("高清放大服务暂不可用，请稍后重试");
   }
   const factor = input.upscaleFactor;

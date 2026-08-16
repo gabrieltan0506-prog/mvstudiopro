@@ -25,6 +25,27 @@ export function buildQwenTtsVoiceId(model: QwenTtsVoiceModel, suffix: string): s
   return `qwen-audio-3.0-tts-${model}-${suffix}`;
 }
 
+export type QwenTtsCatalogVoiceCandidate = {
+  voiceId: string;
+  suffix: string;
+  nameZh: string;
+  availability: "candidate_unprobed";
+};
+
+/** 目录音色尚未经过 OpenRouter 试听探针；只能生成候选，不能冒充已可用。 */
+export function qwenTtsCatalogVoiceCandidate(
+  suffix: string,
+  model: QwenTtsVoiceModel = "plus",
+): QwenTtsCatalogVoiceCandidate | null {
+  const entry = QWEN_TTS_VOICE_CATALOG.find((item) => item.suffix === suffix);
+  return entry ? {
+    voiceId: buildQwenTtsVoiceId(model, entry.suffix),
+    suffix: entry.suffix,
+    nameZh: entry.nameZh,
+    availability: "candidate_unprobed",
+  } : null;
+}
+
 /**
  * 按性别/年龄段/特质关键词挑音色（确定性取第一条，便于复现）。
  * 老人/小孩直接用 minAge/maxAge 圈（如老人 55+、小孩 ≤12），不再依赖克隆音色。

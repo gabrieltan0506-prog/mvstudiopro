@@ -2,7 +2,7 @@
  * 戰略/場景圖：Fly 端直連 Vertex **`generateContent` 圖像**（Nano Banana Pro / Nano Banana 2），取圖後上傳 GCS 並回簽名 URL（**不走** `/api/google` 閘道）。
  *
  * **生圖**：皆為 Gemini 圖像模型（**非** Imagen `:predict`）。
- * **放大**：見 `vertexImage.ts`（`imagen-4.0-upscale-preview` 等，與本檔無關）。
+ * **放大**：见 `geminiApiImageUpscale.ts` 的统一 provider 编排，与本文件无关。
  */
 import {
   buildGptImage2AlignedPlatformTopicCoverPrompt,

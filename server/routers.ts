@@ -115,8 +115,8 @@ import { ensureMinGraphicNoteBlueprints } from "../shared/ensureMinGraphicNoteBl
 import { PLATFORM_TOPIC_EXPAND_MAX, normalizeCommentHooksList } from "../shared/platformTopicShortlist.js";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import {
-  isGeminiApiImageUpscaleConfigured,
-  runGeminiApiImageUpscale,
+  isImageUpscaleConfigured,
+  runImageUpscaleWithFallback,
 } from "./services/geminiApiImageUpscale.js";
 import {
   appendRuntimeMetric,
@@ -12460,7 +12460,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           input.baseCreditKey as ImageUpscaleBaseCreditKey,
           input.upscaleFactor,
         );
-        if (!isGeminiApiImageUpscaleConfigured()) {
+        if (!isImageUpscaleConfigured(input.upscaleFactor)) {
           return { success: false as const, error: "高清放大服务暂不可用，请稍后重试" };
         }
 
@@ -12483,7 +12483,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           };
         }
 
-        const result = await runGeminiApiImageUpscale({
+        const result = await runImageUpscaleWithFallback({
           imageUrl: resolveImageUrlForServerFetch(input.imageUrl),
           upscaleFactor: input.upscaleFactor,
         });
@@ -12534,6 +12534,8 @@ ${input.lyrics || "（纯音乐，无歌词）"}
                 inputHeight: result.inputHeight,
                 outputWidth: result.outputWidth,
                 outputHeight: result.outputHeight,
+                provider: result.provider,
+                model: result.model,
                 qualityWarningAccepted: input.qualityWarningAccepted === true,
                 sourceBlurScore: input.sourceBlurScore,
                 tool: "home_photo_upscale",

@@ -9,12 +9,24 @@ function appendImageFlowLog(log: string[] | undefined, message: string): void {
 
 const EVOLINK_BASE = String(process.env.EVOLINK_API_BASE || "https://api.evolink.ai").replace(/\/$/, "");
 const EVOLINK_MODEL = "gpt-image-2" as const;
+export const EVOLINK_NANO_BANANA_PRO_MODEL = "gemini-3-pro-image-preview" as const;
 /** EvoLink 默认 quality；请求方可传 `quality` 覆写（如 2×4 宽幅固定 low）。 */
 /** 默认 high：对标文档 text_to_image_hd / 可发笔记清晰度；可用 EVOLINK_GPT_IMAGE2_QUALITY 下调。 */
 const EVOLINK_DEFAULT_QUALITY = String(process.env.EVOLINK_GPT_IMAGE2_QUALITY || "high").trim() || "high";
 /** 比例模式下默认分辨率；封面/分镜维持 2K。自定义图文笔记可覆写为 4K。 */
 const EVOLINK_RESOLUTION_DEFAULT = String(process.env.EVOLINK_GPT_IMAGE2_RESOLUTION || "2K").trim() || "2K";
 export type EvolinkGptImage2Resolution = "1K" | "2K" | "4K";
+export type EvolinkImageAspectRatio =
+  | "1:1"
+  | "2:3"
+  | "3:2"
+  | "3:4"
+  | "4:3"
+  | "4:5"
+  | "5:4"
+  | "9:16"
+  | "16:9"
+  | "21:9";
 
 function normalizeEvolinkResolution(raw: string | undefined | null): EvolinkGptImage2Resolution {
   const v = String(raw || "").trim().toUpperCase();
@@ -47,8 +59,25 @@ export function isEvolinkGptImage2Configured(): boolean {
   return Boolean(String(process.env.EVOLINK_API_KEY || "").trim());
 }
 
-function sleepMs(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function withTimeoutSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+function sleepMs(ms: number, abortSignal?: AbortSignal): Promise<void> {
+  if (!abortSignal) return new Promise((resolve) => setTimeout(resolve, ms));
+  if (abortSignal.aborted) return Promise.reject(abortSignal.reason || new Error("aborted"));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      abortSignal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortSignal.reason || new Error("aborted"));
+    };
+    abortSignal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function sniffBinaryImageMime(buffer: Buffer): "image/png" | "image/jpeg" {
@@ -58,14 +87,15 @@ function sniffBinaryImageMime(buffer: Buffer): "image/png" | "image/jpeg" {
   return "image/png";
 }
 
-function resolveEvolinkSize(aspectRatio: "9:16" | "16:9", explicitSize?: string): string {
+function resolveEvolinkSize(aspectRatio: EvolinkImageAspectRatio, explicitSize?: string): string {
   const custom = String(explicitSize || "").trim();
   if (custom) return custom;
-  return aspectRatio === "16:9" ? EVOLINK_GPT_IMAGE2_LANDSCAPE_SIZE : EVOLINK_GPT_IMAGE2_PORTRAIT_SIZE;
+  return aspectRatio;
 }
 
 /** 显式 WxH 时 EvoLink 忽略 resolution；比例模式才传 resolution（默认 2K）。 */
-function buildEvolinkRequestBody(
+export function buildEvolinkRequestBody(
+  model: string,
   prompt: string,
   size: string,
   quality: string,
@@ -75,13 +105,15 @@ function buildEvolinkRequestBody(
 ): Record<string, unknown> {
   const isRatio = size.includes(":");
   const body: Record<string, unknown> = {
-    model: EVOLINK_MODEL,
+    model,
     prompt,
     size,
     quality,
-    n: 1,
   };
-  if (isRatio) {
+  if (model === EVOLINK_MODEL) {
+    body.n = 1;
+  }
+  if (isRatio && model === EVOLINK_MODEL) {
     body.resolution = normalizeEvolinkResolution(resolution || EVOLINK_RESOLUTION_DEFAULT);
   }
   // image-to-image / edit：附参考图（1~16 张，URL 须服务器可直接抓取）。
@@ -102,7 +134,11 @@ type EvolinkTaskDetail = {
   error?: { code?: string; message?: string };
 };
 
-async function pollEvolinkTask(taskId: string, flowLog?: string[]): Promise<string[]> {
+async function pollEvolinkTask(
+  taskId: string,
+  flowLog?: string[],
+  abortSignal?: AbortSignal,
+): Promise<string[]> {
   const apiKey = String(process.env.EVOLINK_API_KEY || "").trim();
   const started = Date.now();
   let lastStatus = "";
@@ -111,7 +147,7 @@ async function pollEvolinkTask(taskId: string, flowLog?: string[]): Promise<stri
     const r = await fetch(`${EVOLINK_BASE}/v1/tasks/${encodeURIComponent(taskId)}`, {
       method: "GET",
       headers: { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(60_000),
+      signal: withTimeoutSignal(abortSignal, 60_000),
     });
     const json = (await r.json().catch(() => ({}))) as EvolinkTaskDetail;
     if (!r.ok) {
@@ -138,13 +174,13 @@ async function pollEvolinkTask(taskId: string, flowLog?: string[]): Promise<stri
       throw new Error(`EvoLink task failed: ${err}`);
     }
 
-    await sleepMs(POLL_INTERVAL_MS);
+    await sleepMs(POLL_INTERVAL_MS, abortSignal);
   }
   throw new Error(`EvoLink task poll timeout after ${MAX_POLL_MS}ms · taskId=${taskId}`);
 }
 
-async function downloadEvolinkImage(url: string): Promise<Buffer> {
-  const r = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+async function downloadEvolinkImage(url: string, abortSignal?: AbortSignal): Promise<Buffer> {
+  const r = await fetch(url, { signal: withTimeoutSignal(abortSignal, 120_000) });
   if (!r.ok) throw new Error(`EvoLink image download HTTP ${r.status}`);
   const ab = await r.arrayBuffer();
   return Buffer.from(ab);
@@ -189,11 +225,13 @@ export async function postEvolinkGptImage2AndUpload(
   prompt: string,
   gcsSubdir: string,
   opts: {
-    aspectRatio?: "9:16" | "16:9";
+    aspectRatio?: EvolinkImageAspectRatio;
     size?: string;
     flowLog?: string[];
     /** 覆写 EvoLink quality；未传则用 EVOLINK_GPT_IMAGE2_QUALITY（默认 high） */
     quality?: string;
+    /** 省略时保持旧 GPT Image 2；4K 放大显式传 Nano Banana Pro。 */
+    model?: typeof EVOLINK_MODEL | typeof EVOLINK_NANO_BANANA_PRO_MODEL;
     /**
      * 比例模式下的分辨率覆写。默认 2K（封面/分镜）；
      * 自定义图文笔记（single_page_knowledge_card）传 4K。
@@ -202,6 +240,7 @@ export async function postEvolinkGptImage2AndUpload(
     resolution?: EvolinkGptImage2Resolution;
     /** image-to-image / edit：参考图 URL（1~16 张，须公网可直接抓取）。换脸/换人时传上传的人像 URL。 */
     imageUrls?: string[];
+    abortSignal?: AbortSignal;
     /** 局部重绘遮罩 PNG（alpha 通道）URL，仅在传了 imageUrls 时生效。 */
     maskUrl?: string;
     /**
@@ -220,7 +259,13 @@ export async function postEvolinkGptImage2AndUpload(
 
   const aspectRatio = opts.aspectRatio ?? "9:16";
   const size = resolveEvolinkSize(aspectRatio, opts.size);
-  const quality = String(opts.quality || EVOLINK_DEFAULT_QUALITY).trim() || EVOLINK_DEFAULT_QUALITY;
+  const model = opts.model || EVOLINK_MODEL;
+  const quality = String(
+    opts.quality ||
+      (model === EVOLINK_NANO_BANANA_PRO_MODEL
+        ? opts.resolution || "2K"
+        : EVOLINK_DEFAULT_QUALITY),
+  ).trim();
   const resolution = normalizeEvolinkResolution(opts.resolution || EVOLINK_RESOLUTION_DEFAULT);
   // 分镜/图文/封面：送 EvoLink 前强制简体（OpenCC + 屏内字锁）
   const promptTrimmed = enforceSimplifiedChineseImagePrompt(String(prompt || "").trim());
@@ -232,7 +277,7 @@ export async function postEvolinkGptImage2AndUpload(
   const refImageUrls = (opts.imageUrls || []).map((u) => String(u || "").trim()).filter(Boolean).slice(0, 16);
   appendImageFlowLog(
     L,
-    `[GPT-IMAGE-2·EvoLink] POST ${EVOLINK_BASE}/v1/images/generations · size=${size} · quality=${quality}${size.includes(":") ? ` · resolution=${resolution}` : " · resolution=ignored(WxH)"}${refImageUrls.length ? ` · edit模式·参考图=${refImageUrls.length}张` : ""}`,
+    `[Image·EvoLink] POST ${EVOLINK_BASE}/v1/images/generations · model=${model} · size=${size} · quality=${quality}${model === EVOLINK_MODEL && size.includes(":") ? ` · resolution=${resolution}` : ""}${refImageUrls.length ? ` · edit模式·参考图=${refImageUrls.length}张` : ""}`,
   );
 
   try {
@@ -243,9 +288,9 @@ export async function postEvolinkGptImage2AndUpload(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(
-        buildEvolinkRequestBody(promptTrimmed, size, quality, refImageUrls, opts.maskUrl, resolution),
+        buildEvolinkRequestBody(model, promptTrimmed, size, quality, refImageUrls, opts.maskUrl, resolution),
       ),
-      signal: AbortSignal.timeout(60_000),
+      signal: withTimeoutSignal(opts.abortSignal, 60_000),
     });
     const createJson = (await createRes.json().catch(() => ({}))) as EvolinkTaskDetail & {
       error?: { message?: string };
@@ -265,10 +310,10 @@ export async function postEvolinkGptImage2AndUpload(
     }
     appendImageFlowLog(L, `[GPT-IMAGE-2·EvoLink] 任务已创建 · id=${taskId} · 开始轮询…`);
 
-    const resultUrls = await pollEvolinkTask(taskId, L);
+    const resultUrls = await pollEvolinkTask(taskId, L, opts.abortSignal);
     const imageUrl = resultUrls[0];
     appendImageFlowLog(L, `[GPT-IMAGE-2·EvoLink] 生图完成 · 下载 ${String(imageUrl).slice(0, 120)}…`);
-    const buffer = await downloadEvolinkImage(imageUrl);
+    const buffer = await downloadEvolinkImage(imageUrl, opts.abortSignal);
     const publicUrl = await uploadBufferToPlatformStorage(buffer, gcsSubdir, L);
     appendImageFlowLog(L, `[GPT-IMAGE-2·EvoLink] 成功 · 公开 URL 预览：${String(publicUrl).slice(0, 180)}…`);
     return publicUrl;

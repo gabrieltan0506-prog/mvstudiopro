@@ -4523,10 +4523,10 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
           : undefined;
 
       try {
-        const { isGeminiApiImageUpscaleConfigured } = await import(
+        const { isImageUpscaleConfigured } = await import(
           "../server/services/geminiApiImageUpscale.js"
         );
-        if (!isGeminiApiImageUpscaleConfigured()) {
+        if (!isImageUpscaleConfigured(upscaleFactor)) {
           return res.status(503).json({ ok: false, error: "高清放大服务暂不可用，请稍后重试" });
         }
 

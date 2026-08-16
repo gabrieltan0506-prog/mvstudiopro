@@ -126,7 +126,10 @@ export function mergeManhuaDialogueTtsLinesByVoice(
   for (const line of lines) {
     const prev = out[out.length - 1];
     const canInherit = line.emotionTags.length > 0 || lastTags.length === 0;
-    if (prev && prev.voice === line.voice && canInherit) {
+    // 秒轴存在正停顿时不得合并成一次 TTS；上游不支持精确 pause 字段，硬拼文本
+    // 会吞掉角色换气。只有时间连续/重叠的同音色句才允许合并。
+    const timelineContiguous = Boolean(prev) && line.startSec <= prev!.endSec + 0.001;
+    if (prev && prev.voice === line.voice && canInherit && timelineContiguous) {
       const needsStop = !/[。！？…—”」]$/.test(prev.input);
       prev.input += (needsStop ? "。" : "") + line.input;
       prev.endSec = line.endSec;

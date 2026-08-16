@@ -1,5 +1,9 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { getOpenRouterApiKey, isOpenRouterGptImage2Configured } from "./openrouterGptImage2.js";
+import {
+  buildOpenRouterImageRequestBody,
+  getOpenRouterApiKey,
+  isOpenRouterGptImage2Configured,
+} from "./openrouterGptImage2.js";
 
 const KEY = "OPENROUTER_API_KEY";
 
@@ -26,5 +30,28 @@ describe("openrouterGptImage2 config", () => {
     expect(isOpenRouterGptImage2Configured()).toBe(false);
     process.env[KEY] = "[placeholder]";
     expect(getOpenRouterApiKey()).toBe("");
+  });
+
+  it("Pro Image 4K 使用官方 resolution 与带 type 的参考图契约", () => {
+    expect(
+      buildOpenRouterImageRequestBody({
+        model: "google/gemini-3-pro-image",
+        prompt: "upscale",
+        aspectRatio: "16:9",
+        quality: "high",
+        resolution: "4K",
+        imageUrls: ["https://example.com/input.png"],
+      }),
+    ).toMatchObject({
+      model: "google/gemini-3-pro-image",
+      resolution: "4K",
+      aspect_ratio: "16:9",
+      input_references: [
+        {
+          type: "image_url",
+          image_url: { url: "https://example.com/input.png" },
+        },
+      ],
+    });
   });
 });

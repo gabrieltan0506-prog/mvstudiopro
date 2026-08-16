@@ -1,8 +1,6 @@
 /**
- * Vertex AI image generation（平台政策：**僅 Nano Banana 2**）。
- * **模型 ID 固定為** {@link VERTEX_NANO_BANANA_2_MODEL}`gemini-3.1-flash-image-preview`（`generateContent` + `responseModalities: IMAGE`；**不可**改用 `gemini-3-flash-image` 等未對齊本鏈的別名）。
- * 與 **`VERTEX_IMAGE_MODEL_FLASH`**（僅供 Google 端遷移時覆寫）及區域 `getVertexImageFlashLocation`。
- * 像素主路徑另可走 OhMyGPT **GPT-IMAGE-2**（見 proxyImageService）；本模組不調用 `gemini-3-pro-image-preview`。
+ * Vertex AI Gemini 图片生成。
+ * 2K 使用 Gemini 3.1 Flash Image；4K 高清放大必须显式选择 Gemini 3 Pro Image。
  */
 import { storagePut } from "./storage";
 import { enforceSimplifiedChineseImagePrompt } from "./services/simplifiedChinese.js";
@@ -13,6 +11,7 @@ import {
   fetchVertexJson,
   getVertexAuthHeaders,
   getVertexImageFlashLocation,
+  getVertexImageProLocation,
   getVertexProjectId,
 } from "./services/vertexMedia";
 
@@ -23,11 +22,29 @@ export interface GeminiImageOptions {
   quality: ImageQuality;
   referenceImageUrl?: string;
   negativePrompt?: string;
-  aspectRatio?: "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
+  aspectRatio?:
+    | "1:1"
+    | "2:3"
+    | "3:2"
+    | "3:4"
+    | "4:3"
+    | "4:5"
+    | "5:4"
+    | "9:16"
+    | "16:9"
+    | "21:9";
   numberOfImages?: number;
   guidanceScale?: number;
   seed?: number;
   personGeneration?: "DONT_ALLOW" | "ALLOW_ADULT" | "ALLOW_ALL";
+  /** 上游 429 时的额外重试次数；高清放大编排传 0，立即切下一供应商。 */
+  maxRetries?: number;
+  /** 默认 Flash；4K 高清放大必须传 Pro，禁止用 Flash 冒充 4K。 */
+  modelTier?: "flash" | "pro";
+  /** 长任务取消信号；取消仅停止本机等待，供应商可能仍已计费。 */
+  abortSignal?: AbortSignal;
+  /** 单次 Vertex HTTP 墙钟上限；高清放大显式传入，避免无期限挂住。 */
+  requestTimeoutMs?: number;
   /**
    * 可選：與 {@link proxyImageService.appendImageFlowLog} 同格式寫入，平台 jobs 前端可見「Vertex 出圖後存 Fly/GCS」步驟。
    */
@@ -46,12 +63,39 @@ export interface GeminiImageResult {
  * Vertex **Nano Banana 2** 官方（本倉）綁定模型 ID；平台出圖、proxy、TestLab 均以此為準。
  * 勿改為 `gemini-3-flash-image`；若 Google 發布新穩定 ID，應在此統一替換並回歸測試整鏈。
  */
-export const VERTEX_NANO_BANANA_2_MODEL = "gemini-3.1-flash-image-preview" as const;
+export const VERTEX_NANO_BANANA_2_MODEL = "gemini-3.1-flash-image" as const;
+/** Vertex 当前可用的稳定 Pro Image 模型 ID（真实 countTokens 探针已返回 200）。 */
+export const VERTEX_NANO_BANANA_PRO_MODEL = "gemini-3-pro-image" as const;
 
 /** 僅 Nano Banana 2（Flash）；不串 Pro。`quality` 仍影響 Vertex `imageSize`（建議平台路徑傳 `2k`）。 */
-function resolveVertexNanoImageModelAndIds(): string[] {
-  const flashModel = String(process.env.VERTEX_IMAGE_MODEL_FLASH || VERTEX_NANO_BANANA_2_MODEL).trim();
-  return flashModel ? [flashModel] : [VERTEX_NANO_BANANA_2_MODEL];
+export function resolveVertexImageRoute(modelTier: "flash" | "pro" = "flash") {
+  if (modelTier === "pro") {
+    const configured = String(process.env.VERTEX_IMAGE_MODEL_PRO || "").trim();
+    return {
+      model:
+        configured === VERTEX_NANO_BANANA_PRO_MODEL
+          ? configured
+          : VERTEX_NANO_BANANA_PRO_MODEL,
+      location: getVertexImageProLocation(),
+    };
+  }
+  const configured = String(process.env.VERTEX_IMAGE_MODEL_FLASH || "").trim();
+  return {
+    model:
+      configured === VERTEX_NANO_BANANA_2_MODEL
+        ? configured
+        : VERTEX_NANO_BANANA_2_MODEL,
+    location: getVertexImageFlashLocation(),
+  };
+}
+
+export function buildVertexFlashImageConfig(opts: GeminiImageOptions) {
+  return {
+    aspectRatio: opts.aspectRatio || "16:9",
+    ...(typeof opts.seed === "number" ? { seed: Math.floor(opts.seed) } : {}),
+    ...(opts.personGeneration ? { personGeneration: opts.personGeneration } : {}),
+    ...(opts.quality !== "1k" ? { imageSize: opts.quality.toUpperCase() } : {}),
+  };
 }
 
 function shouldRetryVertexImage(status: number, json: any, rawText: string) {
@@ -186,13 +230,22 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
     },
   ];
 
-  const modelIds = resolveVertexNanoImageModelAndIds();
+  const route = resolveVertexImageRoute(opts.modelTier);
+  const modelIds = [route.model];
   let generated: { data: string; mimeType: string }[] | null = null;
   let selectedModel = "";
   let selectedLocation = "";
   let lastError = "";
 
-  const location = getVertexImageFlashLocation();
+  const location = route.location;
+  const maxRetries = Math.max(0, Math.min(4, Math.floor(opts.maxRetries ?? 4)));
+  const requestSignal = () => {
+    const rawTimeoutMs = Number(opts.requestTimeoutMs);
+    if (!Number.isFinite(rawTimeoutMs) || rawTimeoutMs <= 0) return opts.abortSignal;
+    const timeoutMs = Math.max(1_000, Math.floor(rawTimeoutMs));
+    const timeout = AbortSignal.timeout(timeoutMs);
+    return opts.abortSignal ? AbortSignal.any([opts.abortSignal, timeout]) : timeout;
+  };
 
   for (const model of modelIds) {
     const baseUrl = baseUrlForVertex(location);
@@ -200,37 +253,27 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
     let response = await fetchVertexJson(url, {
       method: "POST",
       headers,
+      signal: requestSignal(),
       body: JSON.stringify({
         contents,
         generationConfig: {
-          responseModalities: ["IMAGE"],
-          imageConfig: {
-            aspectRatio: opts.aspectRatio || "16:9",
-            ...(typeof opts.numberOfImages === "number" ? { numberOfImages: Math.max(1, Math.min(4, Math.floor(opts.numberOfImages))) } : {}),
-            ...(typeof opts.seed === "number" ? { seed: Math.floor(opts.seed) } : {}),
-            ...(opts.personGeneration ? { personGeneration: opts.personGeneration } : {}),
-            ...(opts.quality !== "1k" ? { imageSize: opts.quality.toUpperCase() } : {}),
-          },
+          responseModalities: opts.modelTier === "pro" ? ["TEXT", "IMAGE"] : ["IMAGE"],
+          imageConfig: buildVertexFlashImageConfig(opts),
         },
       }),
     });
 
-    for (let attempt = 0; attempt < 4 && shouldRetryVertexImage(response.status, response.json, response.rawText); attempt += 1) {
+    for (let attempt = 0; attempt < maxRetries && shouldRetryVertexImage(response.status, response.json, response.rawText); attempt += 1) {
       await sleep((2 ** attempt) * 1000 + Math.floor(Math.random() * 300));
       response = await fetchVertexJson(url, {
         method: "POST",
         headers,
+        signal: requestSignal(),
         body: JSON.stringify({
           contents,
           generationConfig: {
-            responseModalities: ["IMAGE"],
-            imageConfig: {
-              aspectRatio: opts.aspectRatio || "16:9",
-              ...(typeof opts.numberOfImages === "number" ? { numberOfImages: Math.max(1, Math.min(4, Math.floor(opts.numberOfImages))) } : {}),
-              ...(typeof opts.seed === "number" ? { seed: Math.floor(opts.seed) } : {}),
-              ...(opts.personGeneration ? { personGeneration: opts.personGeneration } : {}),
-              ...(opts.quality !== "1k" ? { imageSize: opts.quality.toUpperCase() } : {}),
-            },
+            responseModalities: opts.modelTier === "pro" ? ["TEXT", "IMAGE"] : ["IMAGE"],
+            imageConfig: buildVertexFlashImageConfig(opts),
           },
         }),
       });
@@ -283,7 +326,11 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
 
 export function isGeminiImageAvailable() {
   return Boolean(
-    String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim() &&
+    String(
+      process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ||
+        process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+        "",
+    ).trim() &&
       String(process.env.VERTEX_PROJECT_ID || "").trim(),
   );
 }
