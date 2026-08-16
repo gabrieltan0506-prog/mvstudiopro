@@ -1,14 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
+  MANHUA_TEMPLATE_FRAME_VISION_LABEL,
+  MANHUA_TEMPLATE_FRAME_VISION_MAX_OUTPUT_TOKENS,
   MANHUA_TEMPLATE_FRAME_VISION_MODEL,
   MANHUA_TEMPLATE_FRAME_VISION_REASONING,
   applyFrameVisionToProposal,
   parseManhuaTemplateFrameVisionJson,
+  resolveManhuaTemplateLearnLlmProvider,
   selectFramesForVisionAnalysis,
 } from "./manhuaTemplateLearnFrameVision";
 import type { ManhuaViralTemplateCard } from "./manhuaViralTemplateBank";
 
 describe("manhuaTemplateLearnFrameVision", () => {
+  it("固定 Terra High / 32K，旧模型选项统一迁移到 GPT", () => {
+    expect(MANHUA_TEMPLATE_FRAME_VISION_MODEL).toBe("gpt-5.6-terra");
+    expect(MANHUA_TEMPLATE_FRAME_VISION_REASONING).toBe("high");
+    expect(MANHUA_TEMPLATE_FRAME_VISION_MAX_OUTPUT_TOKENS).toBe(32_768);
+    expect(MANHUA_TEMPLATE_FRAME_VISION_LABEL).toBe("GPT-5.6 Terra · High");
+    expect(resolveManhuaTemplateLearnLlmProvider("claude")).toBe("gpt");
+    expect(resolveManhuaTemplateLearnLlmProvider("deepseek")).toBe("gpt");
+  });
+
   it("selectFramesForVisionAnalysis keeps hook frames and caps size", () => {
     const frames = Array.from({ length: 40 }, (_, i) => ({ atSec: i * 5 }));
     const picked = selectFramesForVisionAnalysis(frames, 12);

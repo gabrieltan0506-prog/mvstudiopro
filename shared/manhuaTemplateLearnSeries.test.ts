@@ -3,10 +3,14 @@ import {
   isManhuaLearnListComplete,
   MANHUA_LEARN_ANALYSIS_MIN,
   MANHUA_LEARN_BATCH_DEFAULT,
+  MANHUA_LEARN_BATCH_MAX,
+  MANHUA_LEARN_BATCH_MIN,
+  MANHUA_LEARN_CONSECUTIVE_FAIL_STOP,
   canEmitManhuaLearnAnalysis,
   clampManhuaLearnBatchSize,
   classifyManhuaLearnTitle,
   mergeEpisodeDigestsIntoProposal,
+  nextManhuaLearnEpisodeFailureStreak,
   pickNextEpisodeIndexes,
   type ManhuaLearnEpisodeDigest,
   pickManhuaLearnEpisodeGapMs,
@@ -35,12 +39,31 @@ describe("manhuaTemplateLearnSeries", () => {
     expect(c.tagLabelsZh).toContain("重生");
   });
 
-  it("clamps batch to 8–10", () => {
-    expect(clampManhuaLearnBatchSize(3)).toBe(8);
+  it("允许自定义 1–80 集，缺省仍为 8", () => {
+    expect(clampManhuaLearnBatchSize(-1)).toBe(MANHUA_LEARN_BATCH_MIN);
+    expect(clampManhuaLearnBatchSize(3)).toBe(3);
     expect(clampManhuaLearnBatchSize(8)).toBe(8);
-    expect(clampManhuaLearnBatchSize(9)).toBe(9);
-    expect(clampManhuaLearnBatchSize(12)).toBe(10);
+    expect(clampManhuaLearnBatchSize(31)).toBe(31);
+    expect(clampManhuaLearnBatchSize(999)).toBe(MANHUA_LEARN_BATCH_MAX);
     expect(clampManhuaLearnBatchSize(undefined)).toBe(MANHUA_LEARN_BATCH_DEFAULT);
+  });
+
+  it("连续失败 8 集停止；任一集成功会清零", () => {
+    let count = 0;
+    for (let i = 1; i < MANHUA_LEARN_CONSECUTIVE_FAIL_STOP; i += 1) {
+      const state = nextManhuaLearnEpisodeFailureStreak(count, "failure");
+      count = state.count;
+      expect(state.shouldStop).toBe(false);
+    }
+    const stopped = nextManhuaLearnEpisodeFailureStreak(count, "failure");
+    expect(stopped).toEqual({
+      count: MANHUA_LEARN_CONSECUTIVE_FAIL_STOP,
+      shouldStop: true,
+    });
+    expect(nextManhuaLearnEpisodeFailureStreak(stopped.count, "success")).toEqual({
+      count: 0,
+      shouldStop: false,
+    });
   });
 
   it("picks next episodes in order skipping learned", () => {
@@ -128,6 +151,33 @@ describe("manhuaTemplateLearnSeries", () => {
     expect(card?.id).toMatch(/^tpl_series_/);
     expect(card?.hook3sZh).toMatch(/贬令|开场/);
     expect(card?.beatGrid.length).toBeGreaterThan(0);
+  });
+
+  it("系列底稿聚合全部已学分片，不再只读取前 20 集", () => {
+    const all = Array.from({ length: 25 }, (_, index) => ({
+      ...digest(index + 1),
+      seriesDraftEvidence: index < 10
+        ? {
+            laneZh: "古言种田" as const,
+            summaryZh: "前段开荒",
+            castShape: { leadDesireZh: "守住家园", pressureZh: "断粮" },
+          }
+        : {
+            laneZh: "系统觉醒" as const,
+            summaryZh: "后段系统升级",
+            castShape: { leadDesireZh: "完成进化", pressureZh: "强敌追杀" },
+          },
+    }));
+    const card = mergeEpisodeDigestsIntoProposal({
+      seriesKey: "all-evidence",
+      titleHint: "完整系列",
+      sourceUrl: "https://example.com/mix",
+      digests: all,
+    });
+    expect(card?.laneZh).toBe("系统觉醒");
+    expect(card?.summaryZh).toContain("后段系统升级");
+    expect(card?.castShape.leadDesireZh).toBe("完成进化");
+    expect(card?.sourceRefs[0]?.noteZh).toContain("累计学习25集");
   });
 });
 

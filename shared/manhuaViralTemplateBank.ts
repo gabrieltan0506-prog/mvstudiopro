@@ -81,11 +81,11 @@ export type ManhuaViralTemplateCard = {
   publicCode?: string;
   approvedAt?: string;
   updatedAt?: string;
-  /** 学习链 provenance（审查必须修13）：证明读帧/润色各自真实跑过哪个模型，A/B 结果可解释 */
+  /** 学习链 provenance：证明读帧模型与系列聚合方式；兼容旧润色记录。 */
   provenance?: ManhuaViralTemplateProvenance;
 };
 
-/** 读帧与润色分开记：visionFilled 不再把「文本润色成功」冒充「模型读过帧」 */
+/** 读帧与聚合分开记；proposalPolish 只为读取迁移前旧卡保留。 */
 export type ManhuaViralTemplateProvenance = {
   frameVision?: {
     provider: string;
@@ -100,6 +100,12 @@ export type ManhuaViralTemplateProvenance = {
     success: boolean;
     /** true = 润色失败、卡面是启发式草稿 */
     degraded?: boolean;
+  };
+  /** 关键帧 API 已同时产出底稿字段；这里证明系列卡由程序聚合且没有第二次模型调用。 */
+  seriesAggregation?: {
+    mode: "frame_vision_deterministic";
+    sourceChunks: number;
+    success: boolean;
   };
 };
 
@@ -251,7 +257,14 @@ function parseManhuaViralTemplateProvenance(
       degraded: o.proposalPolish.degraded === true || undefined,
     };
   }
-  return out.frameVision || out.proposalPolish ? out : undefined;
+  if (o.seriesAggregation && typeof o.seriesAggregation === "object") {
+    out.seriesAggregation = {
+      mode: "frame_vision_deterministic",
+      sourceChunks: Math.max(0, Math.floor(Number(o.seriesAggregation.sourceChunks) || 0)),
+      success: o.seriesAggregation.success === true,
+    };
+  }
+  return out.frameVision || out.proposalPolish || out.seriesAggregation ? out : undefined;
 }
 
 /**

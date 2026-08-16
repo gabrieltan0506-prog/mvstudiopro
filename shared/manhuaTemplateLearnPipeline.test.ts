@@ -12,10 +12,13 @@ import {
 describe("manhuaTemplateLearnPipeline", () => {
   it("exposes product meta matching series thresholds", () => {
     const meta = getManhuaLearnPipelineMeta();
+    expect(meta.batchMin).toBe(1);
+    expect(meta.batchMax).toBe(80);
+    expect(meta.batchDefault).toBe(8);
     expect(meta.analysisMin).toBe(16);
     expect(meta.analysisTarget).toBe(20);
     expect(meta.stepsZh.length).toBeGreaterThanOrEqual(5);
-    expect(meta.summaryZh).toMatch(/合集|打点|连续失败/);
+    expect(meta.summaryZh).toMatch(/合集|打点|连续失败 8 集/);
   });
 
   it("formats episode details for panel", () => {

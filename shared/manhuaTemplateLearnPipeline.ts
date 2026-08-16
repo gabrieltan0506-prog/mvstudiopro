@@ -4,7 +4,7 @@
  *
  * 流程：
  * 入口(榜单/贴链) → 解析列表 → 按集：探测时长→远程语音→高密度抽帧→读帧
- * → 累计摘要 →（满 4 集或合集学完出草版；约 16 集更准）总分析提案 → 人审批准进库
+ * → 分片 checkpoint → 程序聚合系列底稿（无第二次润色 API）→ 人审批准进库
  */
 
 import {
@@ -71,7 +71,7 @@ export function getManhuaLearnPipelineMeta(): ManhuaLearnPipelineMeta {
       `有合集 id 时优先展开多集；单条大合集最长约 ${Math.round(MANHUA_LEARN_MAX_DURATION_SEC / 60)} 分钟，按同一剧名并入原剧。不落 MP4，每约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟直接从媒体流提取语音与高密度画面并写入 JSON（中断可续）。语音、抽帧密度、有效画面和读帧必须同时通过才计入已学。连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次才停本轮。学 1 集即可出草版总分析并入库（约 16 集更准）。`,
     stepsZh: [
       "解析可学剧集列表（有合集 id 优先展开多集）",
-      `按序采本轮剧集（短链有几集采几集；长合集约 ${MANHUA_LEARN_BATCH_MIN}–${MANHUA_LEARN_BATCH_MAX} 集）；已学完的集跳过`,
+      `按用户设置顺序采本轮剧集（可选 ${MANHUA_LEARN_BATCH_MIN}–${MANHUA_LEARN_BATCH_MAX} 集，默认 ${MANHUA_LEARN_BATCH_DEFAULT} 集）；已学完的集跳过`,
       `逐集：读取时长 → 按约 ${Math.round(MANHUA_LEARN_CHECKPOINT_SEC / 60)} 分钟流式提取语音 → 每 3 秒抽帧、高能段每 0.5 秒加密 → 读帧 → 双通道成功才合并 JSON`,
       `媒体流/学习失败则跳下一集（权限不足会标注）；连续失败 ${MANHUA_LEARN_CONSECUTIVE_FAIL_STOP} 次停止本轮`,
       "累计分集摘要（本页即时可见）",

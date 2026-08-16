@@ -6,6 +6,12 @@
  */
 import { enforceSimplifiedChineseImagePrompt } from "./simplifiedChinese.js";
 import { uploadBufferToPlatformStorage } from "./evolinkGptImage2.js";
+import {
+  buildOpenRouterAuthHeaders,
+  getOpenRouterApiKey,
+} from "./openrouterAuth.js";
+
+export { buildOpenRouterAuthHeaders, getOpenRouterApiKey } from "./openrouterAuth.js";
 
 const OPENROUTER_BASE = String(process.env.OPENROUTER_API_BASE || "https://openrouter.ai/api/v1").replace(
   /\/$/,
@@ -22,13 +28,6 @@ function appendImageFlowLog(log: string[] | undefined, message: string): void {
   log.push(message);
 }
 
-export function getOpenRouterApiKey(): string {
-  const raw = String(process.env.OPENROUTER_API_KEY || "").trim();
-  // OpenRouter 钥多为 sk-or-…；亦接受其它 sk- 形，过滤中文/方括号占位
-  if (!raw || !/^sk-[A-Za-z0-9]/.test(raw)) return "";
-  return raw;
-}
-
 export function isOpenRouterGptImage2Configured(): boolean {
   return Boolean(getOpenRouterApiKey());
 }
@@ -43,21 +42,6 @@ function resolveQuality(raw?: string): "low" | "medium" | "high" {
     .toLowerCase();
   if (q === "low" || q === "medium" || q === "high") return q;
   return "high";
-}
-
-/** OpenRouter 通用鉴权头（生图 / 视频共用） */
-export function buildOpenRouterAuthHeaders(apiKey: string): Record<string, string> {
-  const referer = String(process.env.OPENROUTER_HTTP_REFERER || process.env.APP_URL || "https://www.mvstudiopro.com")
-    .trim()
-    .replace(/\/+$/, "");
-  const title = String(process.env.OPENROUTER_APP_TITLE || "MV Studio Pro").trim() || "MV Studio Pro";
-  return {
-    Authorization: `Bearer ${apiKey}`,
-    "Content-Type": "application/json",
-    "HTTP-Referer": referer || "https://www.mvstudiopro.com",
-    "X-Title": title,
-    "X-OpenRouter-Title": title,
-  };
 }
 
 function openRouterHeaders(apiKey: string): Record<string, string> {

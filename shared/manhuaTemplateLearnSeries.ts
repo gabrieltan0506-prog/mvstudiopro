@@ -1,6 +1,6 @@
 /**
- * 漫剧节奏学习：单集或合集均可；每轮顺序采（短链有几集采几集，长合集约 8–10）。
- * 累计 ≥16（目标约 20）才出一张总分析提案；不足也可先看分集结果。
+ * 漫剧节奏学习：单集或合集均可；每轮按用户设定的集数顺序采集。
+ * 学完 1 集即可出草版；约 16–20 集更稳，用户可继续学习并重做程序聚合。
  * 只借结构/节奏；成稿不写外部剧名。
  */
 
@@ -17,13 +17,13 @@ import {
   type ManhuaViralTemplateLane,
 } from "./manhuaViralTemplateBank.js";
 
-/** 每轮最少采几集 */
-/** 连续下片失败多少次停本轮（#1162 误删导出，热修补回：pipeline 引用 3 处） */
-export const MANHUA_LEARN_CONSECUTIVE_FAIL_STOP = 3;
+/** 连续整集失败多少次停本轮；任一整集成功后重新计数。 */
+export const MANHUA_LEARN_CONSECUTIVE_FAIL_STOP = 8;
 
-export const MANHUA_LEARN_BATCH_MIN = 8;
+/** 每轮最少采几集 */
+export const MANHUA_LEARN_BATCH_MIN = 1;
 /** 每轮最多采几集 */
-export const MANHUA_LEARN_BATCH_MAX = 10;
+export const MANHUA_LEARN_BATCH_MAX = 80;
 /** 每轮默认采几集 */
 export const MANHUA_LEARN_BATCH_DEFAULT = 8;
 /** 出分析最少累计集数 */
@@ -50,6 +50,16 @@ export const MANHUA_LEARN_EPISODE_RETRY_MAX = 3;
 export const MANHUA_LEARN_EPISODE_GAP_MIN_MS = 10_000;
 export const MANHUA_LEARN_EPISODE_GAP_MAX_MS = 15_000;
 
+export type ManhuaLearnSeriesDraftEvidence = {
+  laneZh: ManhuaViralTemplateLane;
+  summaryZh: string;
+  castShape: {
+    leadDesireZh: string;
+    pressureZh: string;
+    foilZh?: string;
+  };
+};
+
 /** [min,max] 内取一个礼貌间隔毫秒数（seed 传 0–1 随机源，便于测试确定化） */
 export function pickManhuaLearnEpisodeGapMs(seed: number): number {
   const lo = MANHUA_LEARN_EPISODE_GAP_MIN_MS;
@@ -67,6 +77,8 @@ export type ManhuaLearnEpisodeChunk = {
   beatHints: ManhuaViralTemplateBeat[];
   climaxNotes: string[];
   sceneHints: string[];
+  /** 关键帧 API 同次产出的系列底稿结构；系列结束只做程序聚合，不再调用润色模型。 */
+  seriesDraftEvidence?: ManhuaLearnSeriesDraftEvidence;
   learnedAt: string;
   /** 供人工甄别题材的代表帧；稳定 GCS 对象，不随临时目录删除。 */
   previewFrameGcsUris?: string[];
@@ -125,6 +137,8 @@ export type ManhuaLearnEpisodeDigest = {
   beatHints: ManhuaViralTemplateBeat[];
   climaxNotes: string[];
   sceneHints: string[];
+  /** 本集各分片关键帧结构的确定性聚合。 */
+  seriesDraftEvidence?: ManhuaLearnSeriesDraftEvidence;
   learnedAt: string;
   /** 每集最多 3 张代表帧，刷新后仍可查看。 */
   previewFrameGcsUris?: string[];
@@ -225,6 +239,31 @@ export function mergeManhuaLearnChunkIntoDigest(input: {
     ...(prev?.previewFrameGcsUris || []),
     ...(input.chunk.previewFrameGcsUris || []),
   ])).slice(0, 3);
+  const evidenceRows = chunks
+    .map((chunk) => chunk.seriesDraftEvidence)
+    .filter((row): row is ManhuaLearnSeriesDraftEvidence => Boolean(row));
+  const pickMode = <T extends string>(values: T[]): T | undefined => {
+    const counts = new Map<T, number>();
+    for (const value of values.filter(Boolean)) counts.set(value, (counts.get(value) || 0) + 1);
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
+  };
+  const seriesDraftEvidence = evidenceRows.length
+    ? {
+        laneZh: pickMode(evidenceRows.map((row) => row.laneZh)) || evidenceRows[0]!.laneZh,
+        summaryZh: Array.from(new Set(evidenceRows.map((row) => row.summaryZh).filter(Boolean)))
+          .join("；")
+          .slice(0, 400),
+        castShape: {
+          leadDesireZh:
+            pickMode(evidenceRows.map((row) => row.castShape.leadDesireZh)) || "",
+          pressureZh:
+            pickMode(evidenceRows.map((row) => row.castShape.pressureZh)) || "",
+          foilZh: pickMode(
+            evidenceRows.map((row) => row.castShape.foilZh || "").filter(Boolean),
+          ) || undefined,
+        },
+      }
+    : prev?.seriesDraftEvidence;
 
   return {
     episodeIndex: input.episodeIndex,
@@ -239,6 +278,7 @@ export function mergeManhuaLearnChunkIntoDigest(input: {
     beatHints: beatHints.length ? beatHints : prev?.beatHints || [],
     climaxNotes: climaxNotes.length ? climaxNotes : prev?.climaxNotes || [],
     sceneHints: sceneHints.length ? sceneHints : prev?.sceneHints || [],
+    seriesDraftEvidence,
     learnedAt: input.chunk.learnedAt,
     previewFrameGcsUris: previewFrameGcsUris.length ? previewFrameGcsUris : undefined,
     dramaKind: input.dramaKind || prev?.dramaKind,
@@ -255,7 +295,7 @@ export type ManhuaLearnSeriesProgress = {
   seriesKey: string;
   sourceUrl: string;
   titleHint: string;
-  /** provenance：本系列由哪条学习链产出（A/B 隔离；seriesKey 已按此分命名空间；deepseek 只管文本阶段） */
+  /** 历史 provenance；新任务统一写 gpt，claude/deepseek 仅用于兼容旧进度命名空间。 */
   learnLlm?: "gpt" | "claude" | "deepseek";
   mixId?: string;
   listedEpisodeCount: number;
@@ -292,6 +332,18 @@ export function clampManhuaLearnBatchSize(raw?: number): number {
   const n = Math.floor(Number(raw));
   if (!Number.isFinite(n)) return MANHUA_LEARN_BATCH_DEFAULT;
   return Math.max(MANHUA_LEARN_BATCH_MIN, Math.min(MANHUA_LEARN_BATCH_MAX, n));
+}
+
+export function nextManhuaLearnEpisodeFailureStreak(
+  current: number,
+  outcome: "success" | "failure",
+): { count: number; shouldStop: boolean } {
+  if (outcome === "success") return { count: 0, shouldStop: false };
+  const count = Math.max(0, Math.floor(Number(current) || 0)) + 1;
+  return {
+    count,
+    shouldStop: count >= MANHUA_LEARN_CONSECUTIVE_FAIL_STOP,
+  };
 }
 
 /**
@@ -375,7 +427,7 @@ function guessLane(text: string): ManhuaViralTemplateLane {
   return "爽文逆袭";
 }
 
-/** 多集 digest → 一张系列节奏提案（启发式合成；服务端可再用模型润色） */
+/** 多集 digest → 一张系列节奏提案；只做确定性聚合，不再调用润色模型。 */
 export function mergeEpisodeDigestsIntoProposal(input: {
   seriesKey: string;
   titleHint: string;
@@ -384,15 +436,23 @@ export function mergeEpisodeDigestsIntoProposal(input: {
 }): ManhuaViralTemplateCard | null {
   const digests = [...input.digests]
     .filter((d) => d && d.episodeIndex >= 1)
-    .sort((a, b) => a.episodeIndex - b.episodeIndex)
-    .slice(0, MANHUA_LEARN_ANALYSIS_TARGET);
+    .sort((a, b) => a.episodeIndex - b.episodeIndex);
   // 草版口径：有多少集合成多少集；是否达到出分析门槛由 canEmitManhuaLearnAnalysis 把关
   if (!digests.length) return null;
 
   const blob = digests
     .map((d) => [d.title, d.transcriptPreview, d.hookNoteZh, ...d.sceneHints].join(" "))
     .join("\n");
-  const laneZh = guessLane(`${input.titleHint}\n${blob}`);
+  const seriesEvidence = digests
+    .map((digest) => digest.seriesDraftEvidence)
+    .filter((row): row is ManhuaLearnSeriesDraftEvidence => Boolean(row));
+  const pickMode = <T extends string>(values: T[]): T | undefined => {
+    const counts = new Map<T, number>();
+    for (const value of values.filter(Boolean)) counts.set(value, (counts.get(value) || 0) + 1);
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
+  };
+  const laneZh = pickMode(seriesEvidence.map((row) => row.laneZh))
+    || guessLane(`${input.titleHint}\n${blob}`);
   const today = new Date().toISOString().slice(0, 10);
 
   const hook3sZh =
@@ -438,14 +498,30 @@ export function mergeEpisodeDigestsIntoProposal(input: {
     id: `tpl_series_${input.seriesKey}`.slice(0, 64),
     nameZh: `${nameBase || "合集"}节奏`.slice(0, 32),
     laneZh,
-    summaryZh: `多集采样合成（${digests.length}集）：只借开场钩子与连载节拍，不抄剧名台词。`.slice(0, 120),
+    summaryZh: seriesEvidence.length
+      ? `关键帧结构聚合（${digests.length}集）：${Array.from(new Set(
+          seriesEvidence.map((row) => row.summaryZh).filter(Boolean),
+        )).join("；")}`.slice(0, 120)
+      : `多集采样合成（${digests.length}集）：只借开场钩子与连载节拍，不抄剧名台词。`.slice(0, 120),
     hook3sZh,
     beatGrid,
     scenePoolHints,
-    castShape: {
-      leadDesireZh: "在压迫中夺回主动权",
-      pressureZh: "连载式外部压力与身份冲突（多集共性）",
-    },
+    castShape: seriesEvidence.length
+      ? {
+          leadDesireZh:
+            pickMode(seriesEvidence.map((row) => row.castShape.leadDesireZh))
+            || "在压迫中夺回主动权",
+          pressureZh:
+            pickMode(seriesEvidence.map((row) => row.castShape.pressureZh))
+            || "连载式外部压力与身份冲突（多集共性）",
+          foilZh: pickMode(
+            seriesEvidence.map((row) => row.castShape.foilZh || "").filter(Boolean),
+          ) || undefined,
+        }
+      : {
+          leadDesireZh: "在压迫中夺回主动权",
+          pressureZh: "连载式外部压力与身份冲突（多集共性）",
+        },
     densityHints: {
       minBodyChars: 280,
       minDialogueLines: 8,
