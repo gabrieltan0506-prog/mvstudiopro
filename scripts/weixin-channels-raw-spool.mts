@@ -52,7 +52,15 @@ export type WeixinChannelsRawManifest = {
   capturedAt: string;
   completedAt: string;
   captureElapsedMs: number;
-  commentsStatus: "captured" | "entry_missing" | "open_unconfirmed" | "closed_confirmed";
+  /** v1 旧批次可能没有；35 秒是本机 UI 退让诊断值，不是离线/服务端拒收上限。 */
+  captureBudgetMs?: number;
+  commentsStatus:
+    | "captured"
+    | "entry_missing"
+    | "open_unconfirmed"
+    | "closed_confirmed"
+    | "skipped_not_required"
+    | "skipped_budget";
   searchSelectedAgeDays?: number;
   assets: WeixinChannelsRawAsset[];
   rejectionReason?: string;
@@ -446,6 +454,7 @@ export async function commitWeixinChannelsRawItem(params: {
   capturedAt: string;
   completedAt: string;
   captureElapsedMs: number;
+  captureBudgetMs?: number;
   commentsStatus: WeixinChannelsRawManifest["commentsStatus"];
   assets: Array<{
     kind: WeixinChannelsRawAssetKind;
@@ -496,6 +505,9 @@ export async function commitWeixinChannelsRawItem(params: {
       capturedAt: params.capturedAt,
       completedAt: params.completedAt,
       captureElapsedMs: Math.max(0, Math.round(params.captureElapsedMs)),
+      captureBudgetMs: params.captureBudgetMs === undefined
+        ? undefined
+        : Math.max(1, Math.round(params.captureBudgetMs)),
       commentsStatus: params.commentsStatus,
       searchSelectedAgeDays: params.reservation.searchSelectedAgeDays,
       assets,
@@ -717,4 +729,29 @@ export function resolveWeixinChannelsRawAssetPath(params: {
     path.dirname(manifestFile(params.root, params.manifest.runId, params.manifest.rawId)),
     assertSafeSegment(params.asset.file, "asset_file"),
   );
+}
+
+/**
+ * manifest 里的大小与 SHA-256 是离线 OCR 的输入契约，不只是提交时的审计信息。
+ * 每次消费前重新读取实际文件，防止截断、替换或半同步素材进入 OCR/入库链。
+ */
+export async function verifyWeixinChannelsRawAsset(params: {
+  root: string;
+  manifest: WeixinChannelsRawManifest;
+  asset: WeixinChannelsRawAsset;
+}) {
+  const file = resolveWeixinChannelsRawAssetPath(params);
+  const actual = await sha256File(file).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("weixin_channels_raw_asset_missing");
+    }
+    throw error;
+  });
+  if (actual.bytes !== params.asset.bytes) {
+    throw new Error("weixin_channels_raw_asset_size_mismatch");
+  }
+  if (actual.sha256 !== params.asset.sha256) {
+    throw new Error("weixin_channels_raw_asset_sha256_mismatch");
+  }
+  return { file, ...actual };
 }

@@ -18,10 +18,14 @@ readonly watchdog_agent_report="${WEIXIN_CHANNELS_WATCHDOG_AGENT_REPORT:-/privat
 readonly watchdog_codex="/Applications/ChatGPT.app/Contents/Resources/codex"
 readonly watchdog_domain="gui/$(/usr/bin/id -u)"
 readonly watchdog_capture_prefix="${WEIXIN_CHANNELS_CAPTURE_ACTIVITY_PREFIX:-/private/tmp/mvstudiopro-weixin-channels-active-capture}"
-readonly watchdog_capture_timeout_ms=60000
+readonly watchdog_capture_timeout_ms=180000
 readonly watchdog_raw_progress_prefix="${WEIXIN_CHANNELS_RAW_PROGRESS_PREFIX:-/private/tmp/mvstudiopro-weixin-channels-raw-progress}"
-readonly watchdog_raw_stall_timeout_ms=75000
+readonly watchdog_raw_stall_timeout_ms=180000
 readonly watchdog_child_restart_request="/private/tmp/mvstudiopro-weixin-channels-child-restart.request"
+
+for watchdog_private_log in "${watchdog_log}" "${watchdog_agent_log}"; do
+  [[ -e "${watchdog_private_log}" ]] && /bin/chmod 600 "${watchdog_private_log}"
+done
 
 watchdog_capture_timeout_for_file() {
   local activity_file="$1"
@@ -34,6 +38,8 @@ try:
         item = json.load(handle)
     started = int(item.get("startedAtMs", 0))
     owner_pid = int(item.get("ownerPid", 0))
+    if str(item.get("stage", "")) == "upload_pending":
+        raise SystemExit(0)
     if owner_pid <= 0:
         raise SystemExit(0)
     if os.environ.get("WEIXIN_CHANNELS_WATCHDOG_SKIP_OWNER_CHECK") != "1":
@@ -171,18 +177,31 @@ fi
 
 if [[ -z "${watchdog_incident}" ]]; then
   watchdog_now_ms="$(( $(/bin/date +%s) * 1000 ))"
+  watchdog_capture_incidents=()
   for watchdog_activity_file in ${watchdog_capture_prefix}-*.json(N); do
-    watchdog_incident="$(watchdog_capture_timeout_for_file "${watchdog_activity_file}" "${watchdog_now_ms}")"
-    [[ -n "${watchdog_incident}" ]] && break
+    watchdog_local_incident="$(watchdog_capture_timeout_for_file "${watchdog_activity_file}" "${watchdog_now_ms}")"
+    [[ -n "${watchdog_local_incident}" ]] && watchdog_capture_incidents+=("${watchdog_local_incident}")
   done
+  if (( ${#watchdog_capture_incidents} >= 2 )); then
+    watchdog_incident="collector_all_capture_windows_stalled:${(j:;:)watchdog_capture_incidents}"
+  elif (( ${#watchdog_capture_incidents} == 1 )); then
+    # 单窗故障由该 window worker 自己局部恢复；左窗仍提交时绝不能杀 pool。
+    print -u2 -- "watchdog_single_capture_window_stalled_isolated:${watchdog_capture_incidents[1]}"
+  fi
 fi
 
 if [[ -z "${watchdog_incident}" ]]; then
   watchdog_now_ms="$(( $(/bin/date +%s) * 1000 ))"
+  watchdog_raw_incidents=()
   for watchdog_progress_file in ${watchdog_raw_progress_prefix}-*.json(N); do
-    watchdog_incident="$(watchdog_raw_stall_for_file "${watchdog_progress_file}" "${watchdog_now_ms}")"
-    [[ -n "${watchdog_incident}" ]] && break
+    watchdog_local_incident="$(watchdog_raw_stall_for_file "${watchdog_progress_file}" "${watchdog_now_ms}")"
+    [[ -n "${watchdog_local_incident}" ]] && watchdog_raw_incidents+=("${watchdog_local_incident}")
   done
+  if (( ${#watchdog_raw_incidents} >= 2 )); then
+    watchdog_incident="collector_all_raw_windows_stalled:${(j:;:)watchdog_raw_incidents}"
+  elif (( ${#watchdog_raw_incidents} == 1 )); then
+    print -u2 -- "watchdog_single_raw_window_stalled_isolated:${watchdog_raw_incidents[1]}"
+  fi
 fi
 
 watchdog_log_size=0
@@ -199,7 +218,7 @@ fi
 if [[ -z "${watchdog_incident}" && "${watchdog_log_size}" -gt "${watchdog_previous_size}" ]]; then
   watchdog_new_log="$(/usr/bin/tail -c "+$((watchdog_previous_size + 1))" "${watchdog_log}" 2>/dev/null || true)"
   watchdog_incident="$(print -r -- "${watchdog_new_log}" | /usr/bin/grep -E \
-    'dual_window_fail_closed|collector_safety_pause_failed|collector_single_video_capture_timeout|collector_raw_window_stalled|raw_child_restart_required|collector_watchdog_60m_remediating|collector_window_recovering:.*attempt=([3-9]|[1-9][0-9]+)|uncaught|unhandled|fatal' \
+    'dual_window_fail_closed|collector_safety_pause_failed|collector_all_capture_windows_stalled|collector_all_raw_windows_stalled|raw_child_restart_required|collector_watchdog_60m_remediating|uncaught|unhandled|fatal' \
     | /usr/bin/tail -n 1 || true)"
 fi
 
@@ -217,11 +236,9 @@ if [[ "${WEIXIN_CHANNELS_WATCHDOG_DRY_RUN:-0}" == "1" ]]; then
   exit 0
 fi
 
-# 自愈不能被“一小时内不重复叫 Agent”的去重门挡住。同一 worker 若再次
-# 消失，仍必须每次重启 UI 子进程让 launcher 拉回 worker；只抑制重复 Agent。
-if [[ "${watchdog_incident}" == collector_single_video_capture_timeout:* \
-  || "${watchdog_incident}" == collector_raw_window_stalled:* \
-  || "${watchdog_incident}" == "collector_raw_worker_process_missing" ]]; then
+# UI stall 由进程内按绑定 windowId/PID 做局部 reset，watchdog 绝不能因此杀
+# pool 或健康左窗。只有独立 raw worker 进程真实消失时才请求 launcher 拉回。
+if [[ "${watchdog_incident}" == "collector_raw_worker_process_missing" ]]; then
   print -r -- "${watchdog_now}|${watchdog_incident}" > "${watchdog_child_restart_request}"
   for watchdog_pool_pid in $(/usr/bin/pgrep -f '[s]cripts/weixin-channels-capture.mts.*--pool' || true); do
     /bin/kill -TERM "${watchdog_pool_pid}" 2>/dev/null || true

@@ -23,14 +23,25 @@ export const WEIXIN_CHANNELS_HIGH_HEAT_BANDS = {
   shares: { min: 500, referenceHigh: 1_000 },
   favorites: { min: 500, referenceHigh: 1_000 },
 } as const;
-/** 完整五点与真实评论链至少需要 25 秒；长视频仍按时长约十分之一加 2 秒。 */
+/**
+ * 完整五点与真实评论链至少需要 25 秒；35 秒只表示同视频 UI 应停止重复定位并
+ * 进入安全收尾，不是服务端拒收上限。已完成素材可超时提交，真正卡死由 180 秒
+ * 每窗局部 reset 自检处理。
+ */
 export const WEIXIN_CHANNELS_CAPTURE_TOLERANCE_MS = 2_000;
 export const WEIXIN_CHANNELS_MIN_COMPLETE_CAPTURE_MS = 25_000;
+export const WEIXIN_CHANNELS_CAPTURE_SOFT_RETREAT_MS = 35_000;
+export const WEIXIN_CHANNELS_CAPTURE_HARD_UI_ADVANCE_MS = 40_000;
+/** 兼容既有预算字段；其语义是 35 秒软目标，不是拒收或丢数据上限。 */
+export const WEIXIN_CHANNELS_MAX_COMPLETE_CAPTURE_MS = WEIXIN_CHANNELS_CAPTURE_SOFT_RETREAT_MS;
 
 export function weixinChannelsCaptureBudgetMs(videoDurationSec: number) {
-  return Math.max(
-    WEIXIN_CHANNELS_MIN_COMPLETE_CAPTURE_MS,
-    Math.round(videoDurationSec * 100) + WEIXIN_CHANNELS_CAPTURE_TOLERANCE_MS,
+  return Math.min(
+    WEIXIN_CHANNELS_MAX_COMPLETE_CAPTURE_MS,
+    Math.max(
+      WEIXIN_CHANNELS_MIN_COMPLETE_CAPTURE_MS,
+      Math.round(videoDurationSec * 100) + WEIXIN_CHANNELS_CAPTURE_TOLERANCE_MS,
+    ),
   );
 }
 

@@ -17,6 +17,7 @@ import {
   resolveWeixinChannelsRawAssetPath,
   sealWeixinChannelsRawRun,
   updateWeixinChannelsRawManifest,
+  verifyWeixinChannelsRawAsset,
   WEIXIN_CHANNELS_RAW_BATCH_INTERVAL_MS,
 } from "../../scripts/weixin-channels-raw-spool.mts";
 
@@ -192,6 +193,40 @@ describe("视频号 raw spool", () => {
     const snapshot = await inspectWeixinChannelsRawSpool({ root, run });
     expect(snapshot.complete).toBe(1);
     expect(snapshot.reservations).toBe(0);
+  });
+
+  it("离线消费前重新校验素材大小和 SHA-256", async () => {
+    const root = await makeRoot();
+    const source = await makePngLikeFile(root, "verified.png", "original-image");
+    const { run } = await ensureWeixinChannelsRawRun({ root, maxItems: 1 });
+    const slot = await reserveWeixinChannelsRawSlot({
+      root,
+      run,
+      source: "recommendation",
+      taskId: "task-verify",
+      query: "推荐页",
+      windowId: 101,
+    });
+    const committed = await commitWeixinChannelsRawItem({
+      root,
+      reservation: slot!.reservation,
+      capturedAt: "2026-08-15T00:00:00.000Z",
+      completedAt: "2026-08-15T00:00:20.000Z",
+      captureElapsedMs: 20_000,
+      captureBudgetMs: 35_000,
+      commentsStatus: "skipped_not_required",
+      assets: [{ kind: "player_base", sourceFile: source }],
+    });
+    const asset = committed.manifest.assets[0]!;
+    await expect(verifyWeixinChannelsRawAsset({ root, manifest: committed.manifest, asset }))
+      .resolves.toMatchObject({ bytes: Buffer.byteLength("original-image"), sha256: asset.sha256 });
+    const assetPath = resolveWeixinChannelsRawAssetPath({ root, manifest: committed.manifest, asset });
+    await fs.writeFile(assetPath, "truncated");
+    await expect(verifyWeixinChannelsRawAsset({ root, manifest: committed.manifest, asset }))
+      .rejects.toThrow("weixin_channels_raw_asset_size_mismatch");
+    await fs.writeFile(assetPath, "changed!-image");
+    await expect(verifyWeixinChannelsRawAsset({ root, manifest: committed.manifest, asset }))
+      .rejects.toThrow("weixin_channels_raw_asset_sha256_mismatch");
   });
 
   it("右窗 UI 失败保留当前截图与 OCR 证据，但不伪造 complete raw item", async () => {

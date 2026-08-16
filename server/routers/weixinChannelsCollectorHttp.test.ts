@@ -199,7 +199,7 @@ describe("weixinChannelsCollectorHttp", () => {
     });
   });
 
-  it("允许五点与真实评论最低预算，并拒绝客户端抬高预算", () => {
+  it("35 秒只作本机退让诊断，服务端不丢弃已完成的真实观测", () => {
     const base = {
       observationId: "observation-1", videoIdentity: "a".repeat(64), taskId: "task-123", query: "AI视频", resultRank: 1,
       title: "AI视频教程", observedAt: "2026-08-14T00:00:00.000Z",
@@ -208,8 +208,17 @@ describe("weixinChannelsCollectorHttp", () => {
     };
     expect(weixinChannelsObservationSchema.safeParse({ ...base, captureElapsedMs: 24_999 }).success).toBe(true);
     expect(weixinChannelsObservationSchema.safeParse({ ...base, videoIdentity: "not-a-stable-id", captureElapsedMs: 24_999 }).success).toBe(false);
-    expect(weixinChannelsObservationSchema.safeParse({ ...base, captureElapsedMs: 25_001 }).success).toBe(false);
-    expect(weixinChannelsObservationSchema.safeParse({ ...base, captureBudgetMs: 26_000, captureElapsedMs: 24_000 }).success).toBe(false);
+    expect(weixinChannelsObservationSchema.safeParse({ ...base, captureElapsedMs: 25_001 }).success).toBe(true);
+    expect(weixinChannelsObservationSchema.safeParse({ ...base, captureBudgetMs: 26_000, captureElapsedMs: 24_000 }).success).toBe(true);
+    const unknownDuration = {
+      ...base,
+      videoDurationSec: undefined,
+      captureBudgetMs: 35_000,
+    };
+    expect(weixinChannelsObservationSchema.safeParse({ ...unknownDuration, captureElapsedMs: 35_000 }).success).toBe(true);
+    expect(weixinChannelsObservationSchema.safeParse({ ...unknownDuration, captureElapsedMs: 35_001 }).success).toBe(true);
+    expect(weixinChannelsObservationSchema.safeParse({ ...unknownDuration, captureElapsedMs: 40_001 }).success).toBe(true);
+    expect(weixinChannelsObservationSchema.safeParse({ ...unknownDuration, captureBudgetMs: 35_001, captureElapsedMs: 20_000 }).success).toBe(true);
   });
 
   it("广告视频即使评论数达到门槛也不要求打开评论区", () => {

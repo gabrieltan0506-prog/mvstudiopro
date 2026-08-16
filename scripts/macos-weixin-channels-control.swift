@@ -713,6 +713,9 @@ do {
         case "pageDown": postKey(code: 121)
         case "return": postKey(code: 36)
         case "escape": postKey(code: 53)
+        // 只在已经通过 --window-id + --window-pid 聚焦并反查成功的当前微信窗
+        // 发送 Command+R；用于三分钟局部 reset，不重新校准、不影响另一窗。
+        case "reload": postKey(code: 15, flags: .maskCommand)
         case "back": postKey(code: 33, flags: .maskCommand)
         case "closeTab": postKey(code: 13, flags: .maskCommand)
         case "selectAll": postKey(code: 0, flags: .maskCommand)

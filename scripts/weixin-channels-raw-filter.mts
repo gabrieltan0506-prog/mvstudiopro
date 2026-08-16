@@ -1,6 +1,7 @@
 import {
   makeWeixinChannelsObservationId,
   qualifyWeixinChannelsObservationLocally,
+  WEIXIN_CHANNELS_MAX_COMPLETE_CAPTURE_MS,
   type WeixinChannelsCommentSample,
   type WeixinChannelsQualificationInput,
 } from "../shared/weixinChannelsRules";
@@ -32,6 +33,10 @@ export function decideWeixinChannelsRawOfflineItem(params: {
   runKind?: "formal" | "probe";
 }): WeixinChannelsRawOfflineDecision {
   const { manifest, analysis } = params;
+  const captureBudgetMs = manifest.captureBudgetMs
+    ?? WEIXIN_CHANNELS_MAX_COMPLETE_CAPTURE_MS;
+  // 该预算只记录本机何时应退出重复 UI 操作；完成并校验过的真实素材即使
+  // 收尾超过 35 秒也不能在离线阶段被静默丢弃。
   if (manifest.source !== "recommendation") {
     if (manifest.searchSelectedAgeDays === undefined) {
       return { state: "rejected", reason: "search_result_age_unconfirmed" };
@@ -89,6 +94,7 @@ export function decideWeixinChannelsRawOfflineItem(params: {
       favorites: analysis.favorites,
       commentSamples: analysis.commentSamples?.length ? analysis.commentSamples : undefined,
       ocrTexts: analysis.ocrTexts,
+      captureBudgetMs,
       captureElapsedMs: manifest.captureElapsedMs,
       evidence: "capture",
       runKind: params.runKind || "formal",

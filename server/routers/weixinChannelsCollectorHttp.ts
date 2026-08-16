@@ -4,7 +4,6 @@ import { z } from "zod";
 import {
   containsWeixinChannelsAdvertisement,
   qualifyWeixinChannelsObservationLocally,
-  weixinChannelsCaptureBudgetMs,
   WEIXIN_CHANNELS_TERRA_CLEANUP_BATCH_COUNT,
 } from "../../shared/weixinChannelsRules";
 import {
@@ -84,6 +83,7 @@ export const weixinChannelsObservationSchema = z.object({
   })).max(20).optional(),
   ocrTexts: z.array(z.string().max(4_000)).max(12).optional(),
   videoDurationSec: z.number().finite().positive().max(86_400).optional(),
+  // 35 秒是本机 UI 的退让/诊断阈值，不是服务端拒绝真实观测的硬上限。
   captureBudgetMs: z.number().int().positive().max(8_642_000).optional(),
   captureElapsedMs: z.number().int().nonnegative().max(8_642_000).optional(),
   evidence: z.enum(["capture", "manual"]),
@@ -95,13 +95,6 @@ export const weixinChannelsObservationSchema = z.object({
   return !qualification.requiresComments || Boolean(item.commentSamples?.length);
 }, {
   message: "评论数达到 80 时必须采集真实评论样本，不能只记评论数量",
-}).refine((item) => {
-  if (item.captureElapsedMs === undefined || item.videoDurationSec === undefined) return true;
-  const authoritativeBudget = weixinChannelsCaptureBudgetMs(item.videoDurationSec);
-  return item.captureElapsedMs <= authoritativeBudget
-    && (item.captureBudgetMs === undefined || item.captureBudgetMs <= authoritativeBudget);
-}, {
-  message: "单条采集总耗时不得超过视频时长约十分之一加 2 秒容差",
 });
 
 const ingestSchema = z.object({
