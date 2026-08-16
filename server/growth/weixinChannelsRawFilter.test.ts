@@ -45,6 +45,20 @@ describe("视频号 raw 离线筛选", () => {
       expect(decision.observation).not.toHaveProperty("coverImageBase64");
       expect(decision.observation).not.toHaveProperty("visualImageBase64");
       expect(decision.observation).not.toHaveProperty("visualUrl");
+      expect(decision.observation.captureBudgetMs).toBe(35_000);
+    }
+  });
+
+  it("raw 收尾超过 35 秒仍保留通过校验的真实数据", () => {
+    for (const timing of [
+      { captureElapsedMs: 35_001 },
+      { captureBudgetMs: 25_000, captureElapsedMs: 25_001 },
+      { captureBudgetMs: 35_001, captureElapsedMs: 40_000 },
+    ]) {
+      expect(decideWeixinChannelsRawOfflineItem({
+        manifest: manifest(timing),
+        analysis: qualified,
+      }).state).toBe("accepted");
     }
   });
 

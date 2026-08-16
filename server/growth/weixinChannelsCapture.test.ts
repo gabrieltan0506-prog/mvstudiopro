@@ -10,6 +10,8 @@ import {
 } from "../../shared/weixinChannelsRules";
 import {
   automaticRecoveryDelayMs,
+  buildCollectorWindowResetDiagnostic,
+  buildIncompleteProgressBaseObservation,
   extractCommentSamples,
   extractCommentPanelContentLines,
   captureBudgetMsForVideo,
@@ -19,10 +21,13 @@ import {
   collectorAdvanceAllowed,
   collectorCaptureActivityIsOverdue,
   collectorCaptureFailureAction,
+  collectorCurrentVideoUiDisposition,
   collectorBoundWindowPresent,
   collectorPendingFileExists,
+  collectorRawWindowProgressFile,
   collectorControlStopReason,
   collectorWindowRecoveryDelayMs,
+  collectorWindowLocalResetRequired,
   collectorSamplingModeForComments,
   commentsPanelClosedOnSameVideo,
   collectorWatchdogDecision,
@@ -32,6 +37,7 @@ import {
   rememberCollectorSeen,
   buildDiverseCollectorSearchQueries,
   classifyLiveFrameBeforeAdvance,
+  classifyRawFrameAfterAdvance,
   deriveVideoDurationSeconds,
   dedupIdentityFingerprint,
   detectVisibleProgressTrack,
@@ -57,7 +63,9 @@ import {
   hasMinimumCommentCaptureBudget,
   hasDefinitiveVisibleUnqualifiedMetrics,
   hasConfirmedVideoTransition,
+  hasConfirmedRawMetricTransition,
   interactionMetricsConfirmed,
+  isWeixinChannelsProgressTrackUnavailable,
   isCollectorWindowBindingFailure,
   isWeixinChannelsAuxiliaryPage,
   isWeixinChannelsPersonalDataPage,
@@ -70,6 +78,7 @@ import {
   nextWeixinChannelsRawFailureCount,
   nextCollectorRecoveryState,
   nextCollectorFloatingCounts,
+  nextCollectorWindowResetFailureState,
   parseVisibleMetric,
   parseCollectorFormalPoolOptions,
   parseVisibleVideoClockSeconds,
@@ -78,6 +87,7 @@ import {
   pendingObservationHasRequiredComments,
   qualifiedCaptureHasAdvanceEvidence,
   restoreEligibleQuarantinedObservations,
+  rawCommentsCaptureDisposition,
   retryPendingObservations,
   remainingWeixinChannelsRawVideoDwellMs,
   sampledCapturePersistenceDisposition,
@@ -109,12 +119,119 @@ import {
   WEIXIN_CHANNELS_SEARCH_BUTTON_POINT,
   WEIXIN_CHANNELS_SEARCH_HIGH_PLAY_THRESHOLD,
   WEIXIN_CHANNELS_SEARCH_INPUT_POINT,
-  WEIXIN_CHANNELS_SINGLE_VIDEO_HARD_TIMEOUT_MS,
   WEIXIN_CHANNELS_UNKNOWN_DURATION_CAPTURE_BUDGET_MS,
+  WEIXIN_CHANNELS_WINDOW_LOCAL_RESET_MS,
   waitForVisibleVideoLoad,
+  writeCollectorRawWindowProgress,
 } from "../../scripts/weixin-channels-capture.mts";
 
 describe("weixin channels OCR", () => {
+  it("watchdog 的 UI stall 不杀 pool，三分钟阻塞交给本窗局部 reset", async () => {
+    const source = await fs.readFile(
+      path.resolve("scripts/mvstudiopro-weixin-collector-watchdog.zsh"),
+      "utf8",
+    );
+    expect(source).toContain("collector_all_capture_windows_stalled");
+    expect(source).toContain("collector_all_raw_windows_stalled");
+    expect(source).toContain("watchdog_single_raw_window_stalled_isolated");
+    const restartSection = source.slice(
+      source.indexOf("# UI stall"),
+      source.indexOf("if [[ \"${watchdog_incident_hash}\""),
+    );
+    expect(restartSection).toContain("collector_raw_worker_process_missing");
+    expect(restartSection).not.toContain("== collector_all_raw_windows_stalled:");
+    expect(restartSection).not.toContain("== collector_all_capture_windows_stalled:");
+    expect(restartSection).not.toContain("== collector_raw_window_stalled:");
+    expect(restartSection).not.toContain("== collector_single_video_capture_timeout:");
+  });
+
+  it("180000ms 不 reset，180001ms 只标记停滞的右窗", () => {
+    expect(WEIXIN_CHANNELS_WINDOW_LOCAL_RESET_MS).toBe(180_000);
+    expect(collectorWindowLocalResetRequired(1_000, 181_000)).toBe(false);
+    expect(collectorWindowLocalResetRequired(1_000, 181_001)).toBe(true);
+    const windows = [
+      { windowId: 101, lastProgressAt: 180_000 },
+      { windowId: 202, lastProgressAt: 1_000 },
+    ];
+    expect(windows.filter((item) => collectorWindowLocalResetRequired(item.lastProgressAt, 181_001))
+      .map((item) => item.windowId)).toEqual([202]);
+  });
+
+  it("raw commit 与 advance 都刷新同窗 progress，最新事件原子覆盖", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wxc-window-progress-"));
+    try {
+      await writeCollectorRawWindowProgress({
+        windowId: 202,
+        state: "raw_capture_committed",
+        rawId: "raw-1",
+        tempDir: dir,
+      });
+      await writeCollectorRawWindowProgress({
+        windowId: 202,
+        state: "video_advanced",
+        rawId: "raw-1",
+        tempDir: dir,
+      });
+      const stored = JSON.parse(await fs.readFile(
+        collectorRawWindowProgressFile(202, dir),
+        "utf8",
+      ));
+      expect(stored).toMatchObject({ windowId: 202, state: "video_advanced", rawId: "raw-1" });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("局部 reload 复用已绑定 windowId/PID，源码不触发十字星或重新校准", async () => {
+    const swift = await fs.readFile(path.resolve("scripts/macos-weixin-channels-control.swift"), "utf8");
+    expect(swift).toContain("case \"reload\": postKey(code: 15, flags: .maskCommand)");
+    const captureSource = await fs.readFile(path.resolve("scripts/weixin-channels-capture.mts"), "utf8");
+    const resetBody = captureSource.slice(
+      captureSource.indexOf("async function resetBoundCollectorWindowPlayer"),
+      captureSource.indexOf("export async function runDualWindowCaptureStateMachine"),
+    );
+    expect(resetBody).toContain("collectorWindowBindingMissingPersistently(params.session)");
+    expect(resetBody).toContain("runSwiftControl([\"key\", \"reload\"])");
+    expect(resetBody).not.toContain("calibrate-point");
+    expect(resetBody).not.toContain("move-window-visible");
+  });
+
+  it("三次 reset 后三分钟内再失败生成无密钥的结构化诊断", () => {
+    const binding = { windowIndex: 2, windowId: 202, pid: 9988 };
+    let state;
+    for (let index = 0; index < 3; index += 1) {
+      const resetAt = 1_000_000 + index * 10_000;
+      state = nextCollectorWindowResetFailureState(state, binding, {
+        resetAt: new Date(resetAt).toISOString(),
+        failedAt: new Date(resetAt + 1_000).toISOString(),
+        stage: "comments_close",
+        errorClassification: "comments_close_click_not_effective",
+        screenshotPath: `right-${index}.png`,
+        ocrEvidencePath: `right-${index}.json`,
+      });
+    }
+    const diagnostic = buildCollectorWindowResetDiagnostic({
+      state: state!,
+      nowMs: 1_030_000,
+      lastSameVideoAtMs: 1_000_000,
+      lastCommitAtMs: 1_005_000,
+      lastAdvanceAtMs: 1_004_000,
+    });
+    expect(diagnostic).toMatchObject({
+      event: "weixin_channels_window_reset_diagnostic",
+      windowIndex: 2,
+      windowId: 202,
+      pid: 9988,
+      code_change_assessment: "likely_code_state_machine",
+      recommended_capture_method: "scoped_comments_recovery_then_bound_window_reload",
+      lastCommitAgeMs: 25_000,
+      lastAdvanceAgeMs: 26_000,
+    });
+    expect(JSON.stringify(diagnostic)).not.toMatch(/cookie|token|authorization/i);
+    expect(diagnostic?.currentScreenshotPath).toBe("right-2.png");
+    expect(JSON.stringify(diagnostic)).not.toContain("/private/tmp");
+  });
+
   it("raw 视频从确认当前页起总停留 10–15 秒，采集本身已超时则不重复空等", () => {
     expect(WEIXIN_CHANNELS_RAW_VIDEO_DWELL_MIN_MS).toBe(10_000);
     expect(WEIXIN_CHANNELS_RAW_VIDEO_DWELL_MAX_MS).toBe(15_000);
@@ -350,16 +467,17 @@ describe("weixin channels OCR", () => {
     expect(WEIXIN_CHANNELS_CONTENT_SAMPLE_POINTS).toEqual([0.1, 0.3, 0.5, 0.7, 0.9]);
     expect(WEIXIN_CHANNELS_COMMENT_PANEL_SCREEN_COUNT).toBe(3);
     expect(captureBudgetMsForVideo(60)).toBe(25_000);
-    expect(captureBudgetMsForVideo(600)).toBe(62_000);
+    expect(captureBudgetMsForVideo(600)).toBe(35_000);
     expect(WEIXIN_CHANNELS_UNKNOWN_DURATION_CAPTURE_BUDGET_MS).toBe(35_000);
-    expect(WEIXIN_CHANNELS_SINGLE_VIDEO_HARD_TIMEOUT_MS).toBe(60_000);
+    expect(WEIXIN_CHANNELS_WINDOW_LOCAL_RESET_MS).toBe(180_000);
     expect(WEIXIN_CHANNELS_UNKNOWN_DURATION_CAPTURE_BUDGET_MS)
-      .toBeLessThan(WEIXIN_CHANNELS_SINGLE_VIDEO_HARD_TIMEOUT_MS);
-    expect(collectorCaptureActivityIsOverdue({ startedAtMs: 1_000 }, 61_000)).toBe(false);
-    expect(collectorCaptureActivityIsOverdue({ startedAtMs: 1_000 }, 61_001)).toBe(true);
+      .toBeLessThan(WEIXIN_CHANNELS_WINDOW_LOCAL_RESET_MS);
+    expect(collectorCaptureActivityIsOverdue({ startedAtMs: 1_000, stage: "capture" }, 181_000)).toBe(false);
+    expect(collectorCaptureActivityIsOverdue({ startedAtMs: 1_000, stage: "capture" }, 181_001)).toBe(true);
+    expect(collectorCaptureActivityIsOverdue({ startedAtMs: 1_000, stage: "upload_pending" }, 999_999)).toBe(false);
   });
 
-  it("评论预算必须在点击前完整预留，预算耗尽绝不重进 UI", () => {
+  it("35秒后评论失败保存 base 并安全滑走，不重进同视频 UI", () => {
     const now = 1_000_000;
     expect(hasMinimumCommentCaptureBudget(
       now + WEIXIN_CHANNELS_COMMENT_CAPTURE_MIN_BUDGET_MS,
@@ -373,30 +491,82 @@ describe("weixin channels OCR", () => {
       reason: "weixin_channels_comments_capture_budget_missing_before_open",
       failureCount: 1,
       pendingExists: false,
-    })).toBe("stop_budget_exhausted");
+    })).toBe("advance_comments_unavailable");
     expect(collectorCaptureFailureAction({
       reason: "weixin_channels_comments_two_page_budget_missing",
       failureCount: 1,
       pendingExists: false,
-    })).toBe("stop_budget_exhausted");
+    })).toBe("advance_comments_unavailable");
   });
 
-  it("普通 UI 只补做一次，pending 网络补传不重新操作播放器", () => {
+  it("35秒软退让、40秒硬退让，hard 错误绝不重试同一视频", () => {
+    const startedAt = 1_000;
+    expect(collectorCurrentVideoUiDisposition(startedAt, startedAt + 35_000)).toBe("continue");
+    expect(collectorCurrentVideoUiDisposition(startedAt, startedAt + 35_001)).toBe("soft_retreat");
+    expect(collectorCurrentVideoUiDisposition(startedAt, startedAt + 39_999)).toBe("soft_retreat");
+    expect(collectorCurrentVideoUiDisposition(startedAt, startedAt + 40_001)).toBe("hard_retreat");
+    expect(collectorCaptureFailureAction({
+      reason: "weixin_channels_current_video_ui_hard_advance_limit_reached",
+      failureCount: 1,
+      pendingExists: false,
+    })).toBe("advance_ui_soft_limit");
+  });
+
+  it("评论失败直接安全收尾，pending 网络补传不重新操作播放器", () => {
     expect(collectorCaptureFailureAction({
       reason: "weixin_channels_comments_open_not_confirmed",
       failureCount: 1,
       pendingExists: false,
-    })).toBe("retry_ui_once");
+    })).toBe("advance_comments_unavailable");
     expect(collectorCaptureFailureAction({
       reason: "weixin_channels_comments_open_not_confirmed",
       failureCount: 2,
       pendingExists: false,
-    })).toBe("stop_ui_retry_exhausted");
+    })).toBe("advance_comments_unavailable");
     expect(collectorCaptureFailureAction({
       reason: "upload_timeout",
       failureCount: 30,
       pendingExists: true,
     })).toBe("retry_pending_upload");
+  });
+
+  it("左右窗进度条单帧定位失败时立即滑走，不进入同视频重试", () => {
+    expect(isWeixinChannelsProgressTrackUnavailable("weixin_channels_progress_track_not_found")).toBe(true);
+    expect(isWeixinChannelsProgressTrackUnavailable("weixin_channels_progress_playhead_not_found")).toBe(true);
+    expect(isWeixinChannelsProgressTrackUnavailable("weixin_channels_comments_open_not_confirmed")).toBe(false);
+    expect(collectorCaptureFailureAction({
+      reason: "weixin_channels_progress_track_not_found",
+      failureCount: 1,
+      pendingExists: false,
+    })).toBe("advance_progress_unavailable");
+    expect(collectorCaptureFailureAction({
+      reason: "weixin_channels_progress_track_not_found",
+      failureCount: 99,
+      pendingExists: true,
+    })).toBe("retry_pending_upload");
+    const incomplete = buildIncompleteProgressBaseObservation({
+      observationId: "observation-incomplete",
+      taskId: "task-incomplete",
+      query: "推荐页",
+      videoIdentity: "f".repeat(64),
+      windowId: 202,
+      reason: "weixin_channels_progress_track_not_found",
+      ocr: {
+        width: 440,
+        height: 769,
+        lines: ["2985", "6234", "2641", "80"].map((text, index) => ({
+          text, confidence: 0.99, x: 0.55 + index * 0.1, y: 0.1, width: 0.04, height: 0.03,
+        })),
+      },
+    });
+    expect(incomplete).toMatchObject({
+      state: "incomplete",
+      eligibleForIngest: false,
+      likes: 2985,
+      shares: 6234,
+      favorites: 2641,
+      comments: 80,
+    });
   });
 
   it("上传失败后能重新发现刚落盘的 pending，避免重进 UI", async () => {
@@ -1001,6 +1171,10 @@ describe("weixin channels OCR", () => {
     ];
     expect(findCommentsClosePoint(panel)).toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
     expect(findCommentsPanelTitle(panel)).toMatchObject({ text: "评论 1.5万" });
+    const realHeader = [{ text: "评论", confidence: 1, x: 0.27, y: 0.91, width: 0.09, height: 0.03 }];
+    const bottomEntry = [{ text: "评论", confidence: 1, x: 0.86548, y: 0.03488, width: 0.08, height: 0.03 }];
+    expect(findCommentsPanelTitle(realHeader)).toMatchObject({ text: "评论" });
+    expect(findCommentsPanelTitle(bottomEntry)).toBeUndefined();
     expect(findCommentsClosePoint([])).toBeNull();
     const metrics = ["2985", "6234", "2641", "80"].map((text, index) => ({ text, confidence: 0.99, x: 0.55 + index * 0.1, y: 0.1, width: 0.04, height: 0.03 }));
     expect(findCommentsOpenPoint(metrics)?.x).toBeGreaterThan(0.8);
@@ -1008,7 +1182,14 @@ describe("weixin channels OCR", () => {
     expect(findCommentsOpenPoint([{ text: "评论", confidence: 0.99, x: 0.1, y: 0.6, width: 0.1, height: 0.03 }])).toBeNull();
     expect(hasFourVisibleMetrics(metrics)).toBe(true);
     expect(shouldOpenVisibleComments(metrics)).toBe(true);
+    expect(rawCommentsCaptureDisposition(metrics, 20_000, 1_000)).toBe("capture_required");
+    expect(rawCommentsCaptureDisposition(metrics, 9_000, 1_000)).toBe("capture_required");
     expect(shouldOpenVisibleComments(metrics.map((line, index) => index === 3 ? { ...line, text: "3" } : line))).toBe(false);
+    expect(rawCommentsCaptureDisposition(
+      metrics.map((line, index) => index === 3 ? { ...line, text: "3" } : line),
+      20_000,
+      1_000,
+    )).toBe("skipped_not_required");
     expect(shouldOpenVisibleComments(metrics.slice(0, 3))).toBe(false);
     const commentsOnly = ["822", "32", "321", "152"].map((text, index) => ({
       text,
@@ -1427,5 +1608,32 @@ describe("weixin channels OCR", () => {
     const before = makeOcr("AI工作流实测", "4855");
     expect(hasConfirmedVideoTransition(before, makeOcr("AI工作流实测", "4856"))).toBe(false);
     expect(hasConfirmedVideoTransition(before, makeOcr("另一条视频", "34000", "2147"))).toBe(true);
+    expect(classifyRawFrameAfterAdvance(before, makeOcr("AI工作流实测", "4856")))
+      .toBe("same_video");
+    // 新视频即使 OCR 漏掉底部“评论”入口文字，也能以身份/指标变化确认转场。
+    expect(classifyRawFrameAfterAdvance(before, makeOcr("另一条视频", "34000", "2147")))
+      .toBe("transitioned");
+
+    const metricOnly = (values: string[]) => ({
+      width: 483,
+      height: 769,
+      lines: values.map((text, index) => ({
+        text,
+        confidence: 0.99,
+        x: 0.52 + index * 0.12,
+        y: 0.08,
+        width: 0.06,
+        height: 0.03,
+      })),
+    });
+    const metricBefore = metricOnly(["4855", "1766", "1997", "254"]);
+    const metricAfter = metricOnly(["34000", "27000", "9726", "2147"]);
+    expect(hasConfirmedRawMetricTransition(metricBefore, metricAfter)).toBe(true);
+    expect(classifyRawFrameAfterAdvance(metricBefore, metricAfter)).toBe("transitioned");
+    expect(classifyRawFrameAfterAdvance(before, {
+      width: 483,
+      height: 769,
+      lines: [{ text: "评论 254", confidence: 0.99, x: 0.08, y: 0.86, width: 0.16, height: 0.04 }],
+    })).toBe("comments_panel_visible");
   });
 });
