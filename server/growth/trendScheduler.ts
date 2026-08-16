@@ -27,6 +27,7 @@ import {
   isSchedulerTimeoutOrAbortError,
   withAbortableTimeout,
 } from "./collectorAbort.js";
+import { runInGrowthPlatformCollectionLane } from "./platformCollectionLane";
 
 /** Fly 只调度仍在运营的三个远端平台；视频号由本机采集，快手/头条已退休。 */
 const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "bilibili", "xiaohongshu"];
@@ -83,10 +84,6 @@ const PLATFORM_RUN_TIMEOUT_MS = Math.max(
   Number(process.env.GROWTH_PLATFORM_RUN_TIMEOUT_MS || 90 * 1000) || 90 * 1000,
 );
 const DOUYIN_MIN_RUN_TIMEOUT_MS = 180 * 1000;
-const SCHEDULER_CONCURRENCY = Math.max(
-  1,
-  Number(process.env.GROWTH_SCHEDULER_CONCURRENCY || 1) || 1,
-);
 const STALE_SCHEDULER_FORCE_RUN_MS = Math.max(
   5 * 60 * 1000,
   Number(process.env.GROWTH_SCHEDULER_STALE_FORCE_RUN_MS || 20 * 60 * 1000) || 20 * 60 * 1000,
@@ -448,7 +445,7 @@ function isInTimeoutCooldown(state?: {
   return false;
 }
 
-async function runPlatform(platform: GrowthPlatform) {
+async function runPlatformTask(platform: GrowthPlatform) {
   const startedAt = nowShanghaiIso();
   const startedAtMs = Date.now();
   const currentState = (await readTrendSchedulerState())[platform];
@@ -607,6 +604,16 @@ async function runPlatform(platform: GrowthPlatform) {
   }
 }
 
+async function runPlatform(platform: GrowthPlatform) {
+  const state = (await readTrendSchedulerState())[platform];
+  const source = state?.burstMode || isForceBurstActive(platform)
+    ? "burst"
+    : runtimeModeOverride === "live"
+      ? "live"
+      : "scheduler";
+  return runInGrowthPlatformCollectionLane(platform, source, () => runPlatformTask(platform));
+}
+
 async function runDuePlatforms() {
   if (runInFlight) return;
   if (!isLiveWindow()) return;
@@ -668,9 +675,8 @@ async function runDuePlatforms() {
       }
       return [];
     })();
-    for (let index = 0; index < liveQueue.length; index += SCHEDULER_CONCURRENCY) {
-      const batch = liveQueue.slice(index, index + SCHEDULER_CONCURRENCY);
-      await Promise.all(batch.map((platform) => runPlatform(platform)));
+    for (const platform of liveQueue) {
+      await runPlatform(platform);
     }
   } finally {
     runInFlight = false;

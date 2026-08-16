@@ -19,6 +19,7 @@ import {
 import type { PlatformTrendCollection, TrendItem } from "./trendCollector";
 import { nowShanghaiIso, toShanghaiIso } from "./time";
 import { normalizeStringList } from "./trendNormalize";
+import { withGrowthStoreMutationLock } from "./growthStoreMutationLock";
 const execFileAsync = promisify(execFile);
 const FLYCTL_BIN = process.env.FLYCTL_BIN || path.join(process.env.HOME || "", ".fly/bin/flyctl");
 const FLY_APP_NAME = String(process.env.FLY_APP || "mvstudiopro").trim() || "mvstudiopro";
@@ -342,12 +343,171 @@ function getColdStoreAssetUrl(assetName: string) {
   return `${GITHUB_COLD_STORE_BASE_URL}/${assetName}`;
 }
 
+type PlatformCurrentBatchPart = {
+  index: number;
+  offset: number;
+  bytes: number;
+  sha256: string;
+  assetName: string;
+};
+
+type PlatformCurrentBatchManifest = {
+  schemaVersion: number;
+  batchId: string;
+  assetGeneration?: string;
+  files: Array<{
+    platform: GrowthPlatform;
+    logicalAssetName: string;
+    bytes: number;
+    sha256: string;
+    parts: PlatformCurrentBatchPart[];
+  }>;
+};
+
+export function assertGrowthColdStoreChunkIntegrity(
+  label: string,
+  bytes: Uint8Array,
+  expected: { bytes: number; sha256: string },
+) {
+  const raw = Buffer.from(bytes);
+  const sha256 = createHash("sha256").update(raw).digest("hex");
+  if (raw.length !== expected.bytes || sha256 !== expected.sha256) {
+    throw new Error(
+      `growth_cold_store_chunk_mismatch:${label}:bytes=${raw.length}/${expected.bytes}:sha256=${sha256}/${expected.sha256}`,
+    );
+  }
+}
+
+function isSafeColdStoreAssetName(value: string) {
+  return /^[0-9A-Za-z._-]+$/.test(value) && path.basename(value) === value;
+}
+
+async function hashLocalFile(filePath: string) {
+  const handle = await fs.open(filePath, "r");
+  const hash = createHash("sha256");
+  let bytes = 0;
+  try {
+    while (true) {
+      const buffer = Buffer.allocUnsafe(8 * 1024 * 1024);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, bytes);
+      if (!bytesRead) break;
+      hash.update(buffer.subarray(0, bytesRead));
+      bytes += bytesRead;
+    }
+  } finally {
+    await handle.close();
+  }
+  return { bytes, sha256: hash.digest("hex") };
+}
+
+async function downloadPlatformCurrentBatchAsset(
+  logicalAssetName: string,
+  timeoutMs: number,
+): Promise<{ attempted: boolean; filePath: string | null }> {
+  if (!/^platform-current-[0-9a-z_]+\.current\.json\.gz$/.test(logicalAssetName)) {
+    return { attempted: false, filePath: null };
+  }
+  const manifestUrl = getColdStoreAssetUrl("platform-current-batch-manifest.json");
+  if (!manifestUrl) return { attempted: false, filePath: null };
+  let manifest: PlatformCurrentBatchManifest;
+  try {
+    const response = await fetch(`${manifestUrl}?ts=${Date.now()}`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (response.status === 404) return { attempted: false, filePath: null };
+    if (!response.ok) return { attempted: false, filePath: null };
+    manifest = JSON.parse(await response.text()) as PlatformCurrentBatchManifest;
+  } catch {
+    return { attempted: false, filePath: null };
+  }
+  const file = manifest.files?.find((entry) => entry.logicalAssetName === logicalAssetName);
+  if (!file) return { attempted: false, filePath: null };
+  if (
+    manifest.schemaVersion !== 1
+    || !isSafeColdStoreAssetName(manifest.batchId)
+    || !Number.isSafeInteger(file.bytes)
+    || file.bytes <= 0
+    || !/^[a-f0-9]{64}$/.test(file.sha256)
+    || !file.parts?.length
+  ) {
+    return { attempted: true, filePath: null };
+  }
+
+  const cacheDir = path.join(GITHUB_OFFLOAD_CACHE_DIR, "platform-current-batches", manifest.batchId);
+  const assembledPath = path.join(cacheDir, logicalAssetName);
+  const cachedIntegrity = await hashLocalFile(assembledPath).catch(() => null);
+  if (cachedIntegrity?.bytes === file.bytes && cachedIntegrity.sha256 === file.sha256) {
+    return { attempted: true, filePath: assembledPath };
+  }
+  await fs.mkdir(cacheDir, { recursive: true });
+  const sortedParts = [...file.parts].sort((left, right) => left.index - right.index);
+  let expectedOffset = 0;
+  for (const part of sortedParts) {
+    if (
+      part.offset !== expectedOffset
+      || !Number.isSafeInteger(part.bytes)
+      || part.bytes <= 0
+      || !/^[a-f0-9]{64}$/.test(part.sha256)
+      || !isSafeColdStoreAssetName(part.assetName)
+    ) {
+      return { attempted: true, filePath: null };
+    }
+    expectedOffset += part.bytes;
+  }
+  if (expectedOffset !== file.bytes) return { attempted: true, filePath: null };
+
+  const tempPath = `${assembledPath}.next-${process.pid}-${Date.now()}`;
+  await fs.unlink(tempPath).catch(() => {});
+  try {
+    for (const part of sortedParts) {
+      const partPath = path.join(cacheDir, part.assetName);
+      let raw = await fs.readFile(partPath).catch(() => null);
+      try {
+        if (raw) assertGrowthColdStoreChunkIntegrity(part.assetName, raw, part);
+      } catch {
+        raw = null;
+        await fs.unlink(partPath).catch(() => {});
+      }
+      for (let attempt = 1; !raw && attempt <= 3; attempt += 1) {
+        try {
+          const response = await fetch(`${getColdStoreAssetUrl(part.assetName)}?batch=${encodeURIComponent(manifest.batchId)}`, {
+            cache: "no-store",
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          if (!response.ok) continue;
+          const candidate = Buffer.from(await response.arrayBuffer());
+          assertGrowthColdStoreChunkIntegrity(part.assetName, candidate, part);
+          await writeBufferAtomic(partPath, candidate);
+          raw = candidate;
+        } catch {
+          raw = null;
+        }
+      }
+      if (!raw) throw new Error(`growth_cold_store_part_download_failed:${part.assetName}`);
+      await fs.appendFile(tempPath, raw);
+    }
+    const assembledIntegrity = await hashLocalFile(tempPath);
+    if (assembledIntegrity.bytes !== file.bytes || assembledIntegrity.sha256 !== file.sha256) {
+      throw new Error(`growth_cold_store_reassembly_failed:${logicalAssetName}`);
+    }
+    await fs.rename(tempPath, assembledPath);
+    return { attempted: true, filePath: assembledPath };
+  } catch (error) {
+    console.warn(`[growth.cold-store] batch asset unavailable: ${logicalAssetName}`, error);
+    await fs.unlink(tempPath).catch(() => {});
+    return { attempted: true, filePath: null };
+  }
+}
+
 async function downloadColdStoreAsset(
   assetName: string,
   cacheRelativePath: string,
   timeoutMs = 15_000,
 ) {
   if (!canUseGithubColdStore()) return null;
+  const batchAsset = await downloadPlatformCurrentBatchAsset(assetName, timeoutMs);
+  if (batchAsset.attempted) return batchAsset.filePath;
   const url = getColdStoreAssetUrl(assetName);
   if (!url) return null;
   const cachePath = path.join(GITHUB_OFFLOAD_CACHE_DIR, cacheRelativePath);
@@ -1609,6 +1769,13 @@ async function writeJsonAtomic(filePath: string, value: unknown, options?: { com
   await fs.rename(tempPath, filePath);
 }
 
+async function writeBufferAtomic(filePath: string, payload: Buffer) {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.next`;
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(tempPath, payload);
+  await fs.rename(tempPath, filePath);
+}
+
 async function writeJsonGzipAtomic(plainPath: string, value: unknown) {
   const gzPath = `${plainPath}.gz`;
   const tempPath = `${gzPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.next`;
@@ -1823,7 +1990,7 @@ export async function readLocalTrendCollectionsForPlatforms(
 export async function reconcileTrendHistoryState(options?: { force?: boolean }) {
   if (!options?.force && historyReconcilePromise) return historyReconcilePromise;
 
-  const run = (async () => {
+  const run = withGrowthStoreMutationLock("reconcile-trend-history", async () => {
     const store = await readTrendStore();
     if (
       !options?.force
@@ -1893,9 +2060,9 @@ export async function reconcileTrendHistoryState(options?: { force?: boolean }) 
       platforms: summaries,
     };
     store.updatedAt = nowShanghaiIso();
-    await writeStore(store);
+    await writeStoreUnlocked(store);
     return store;
-  })();
+  });
 
   if (!options?.force) historyReconcilePromise = run;
   try {
@@ -1905,7 +2072,7 @@ export async function reconcileTrendHistoryState(options?: { force?: boolean }) 
   }
 }
 
-async function writeStore(
+async function writeStoreUnlocked(
   next: TrendStoreFile,
   options?: {
     writeDerivedPlatformFiles?: boolean;
@@ -2036,6 +2203,17 @@ async function writeStore(
   );
   await writeJsonAtomic(PLATFORM_CURRENT_MANIFEST_FILE, platformManifest);
   return next;
+}
+
+async function writeStore(
+  next: TrendStoreFile,
+  options?: {
+    writeDerivedPlatformFiles?: boolean;
+    writeLegacyMirror?: boolean;
+    allowLowerTotals?: boolean;
+  },
+) {
+  return withGrowthStoreMutationLock("write-store", () => writeStoreUnlocked(next, options));
 }
 
 async function pruneOldArchives(entries: TrendArchiveEntry[]) {
@@ -2407,13 +2585,157 @@ export type TrendPlatformCurrentRestoreOptions = {
   apply?: boolean;
   minimumBaselineItems?: number;
   backupDir?: string;
+  expectedBaselineBytes?: number;
+  expectedBaselineSha256?: string;
 };
+
+async function parseTrendPlatformRestoreArtifact(raw: Buffer): Promise<PlatformTrendCollection> {
+  let json = raw;
+  if (raw.length >= 2 && raw[0] === 0x1f && raw[1] === 0x8b) {
+    json = await gunzipAsync(raw);
+  }
+  const parsed = JSON.parse(json.toString("utf8")) as {
+    collection?: PlatformTrendCollection;
+  } & Partial<PlatformTrendCollection>;
+  const collection = parsed.collection || parsed as PlatformTrendCollection;
+  if (!collection?.platform || !Array.isArray(collection.items)) {
+    throw new Error("growth_restore_invalid_baseline");
+  }
+  return collection;
+}
+
+async function readLocalPlatformCurrentForRestore(platform: GrowthPlatform) {
+  const truth = await readLocalJsonOrGzip<PlatformCurrentTruthFile>(getPlatformCurrentTruthFile(platform));
+  if (truth?.collection && !isRecoveredCollectionSource(truth.collection.source)) {
+    return { collection: truth.collection, history: truth.history };
+  }
+  const derived = await readLocalJsonOrGzip<{ collection?: PlatformTrendCollection }>(
+    path.join(PLATFORM_DIR, `${platform}.json`),
+  );
+  if (derived?.collection && !isRecoveredCollectionSource(derived.collection.source)) {
+    return { collection: derived.collection, history: undefined };
+  }
+  try {
+    // 仅作旧布局兼容；正式布局的 current.json 只有轻量 stub，不会触发其他平台真相文件读取。
+    const current = JSON.parse(await fs.readFile(STORE_FILE, "utf8")) as TrendStoreFile;
+    const collection = current.collections?.[platform];
+    if (collection && !isRecoveredCollectionSource(collection.source)) {
+      return { collection, history: current.history?.platforms?.[platform] };
+    }
+  } catch {}
+  return { collection: undefined, history: undefined };
+}
+
+type RestoreFileSnapshot = { filePath: string; bytes: Buffer | null };
+
+async function snapshotRestoreFiles(filePaths: string[]): Promise<RestoreFileSnapshot[]> {
+  return Promise.all(filePaths.map(async (filePath) => ({
+    filePath,
+    bytes: await fs.readFile(filePath).catch(() => null),
+  })));
+}
+
+async function restoreFileSnapshots(snapshots: RestoreFileSnapshot[]) {
+  for (const snapshot of snapshots) {
+    if (snapshot.bytes) await writeBufferAtomic(snapshot.filePath, snapshot.bytes);
+    else await fs.unlink(snapshot.filePath).catch(() => {});
+  }
+}
+
+async function writeSinglePlatformCurrent(
+  platform: GrowthPlatform,
+  collection: PlatformTrendCollection,
+  history: TrendHistoryPlatformSummary | undefined,
+  updatedAt: string,
+) {
+  await ensureStoreDir();
+  const truthFile = getPlatformCurrentTruthFile(platform);
+  await writeJsonGzipAtomic(truthFile, {
+    updatedAt,
+    truthSource: "platform-current",
+    platform,
+    collection,
+    history,
+  } satisfies PlatformCurrentTruthFile);
+  await writeJsonGzipAtomic(path.join(PLATFORM_DIR, `${platform}.json`), {
+    updatedAt,
+    platform,
+    collection,
+  });
+
+  const existingManifest = await readPlatformCurrentManifest();
+  const manifest: PlatformCurrentManifest = existingManifest || {
+    updatedAt,
+    truthSource: "platform-current",
+    platforms: {},
+  };
+  manifest.updatedAt = updatedAt;
+  manifest.platforms = {
+    ...(manifest.platforms || {}),
+    [platform]: {
+      file: `${truthFile}.gz`,
+      currentTotal: collection.items.length,
+      archivedTotal: history?.archivedItems || manifest.platforms?.[platform]?.archivedTotal || 0,
+    },
+  };
+  await writeJsonAtomic(PLATFORM_CURRENT_MANIFEST_FILE, manifest);
+
+  const existingSummary = await readGrowthDebugSummary();
+  const summaryPlatforms = { ...(existingSummary?.platforms || {}) };
+  for (const [manifestPlatform, entry] of Object.entries(manifest.platforms || {})) {
+    const typedPlatform = manifestPlatform as GrowthPlatform;
+    summaryPlatforms[typedPlatform] ||= {
+      platform: typedPlatform,
+      currentTotal: entry?.currentTotal || 0,
+      archivedTotal: entry?.archivedTotal || 0,
+    };
+  }
+  summaryPlatforms[platform] = {
+    platform,
+    currentTotal: collection.items.length,
+    archivedTotal: history?.archivedItems || summaryPlatforms[platform]?.archivedTotal || 0,
+  };
+  const summary: GrowthDebugSummary = {
+    updatedAt,
+    truthSource: "platform-current",
+    platforms: summaryPlatforms,
+    totals: {
+      currentItems: growthPlatformsForStatsAggregationList().reduce(
+        (sum, itemPlatform) => sum + Number(summaryPlatforms[itemPlatform]?.currentTotal || 0),
+        0,
+      ),
+      archivedItems: growthPlatformsForStatsAggregationList().reduce(
+        (sum, itemPlatform) => sum + Number(summaryPlatforms[itemPlatform]?.archivedTotal || 0),
+        0,
+      ),
+    },
+  };
+  await writeJsonAtomic(DEBUG_SUMMARY_FILE, summary);
+  await refreshGrowthStatusSnapshot(summary).catch(() => {});
+}
 
 export async function restoreTrendPlatformCurrentFromBaseline(
   platform: GrowthPlatform,
-  baseline: PlatformTrendCollection,
+  baselineArtifact: Uint8Array,
   options: TrendPlatformCurrentRestoreOptions = {},
 ) {
+  const baselineRaw = Buffer.from(baselineArtifact);
+  const baselineBytes = baselineRaw.length;
+  const baselineSha256 = createHash("sha256").update(baselineRaw).digest("hex");
+  if (options.apply) {
+    const expectedBytes = Number(options.expectedBaselineBytes);
+    const expectedSha256 = String(options.expectedBaselineSha256 || "").trim().toLowerCase();
+    if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0 || !/^[a-f0-9]{64}$/.test(expectedSha256)) {
+      throw new Error(`growth_restore_integrity_required:${platform}`);
+    }
+    if (baselineBytes !== expectedBytes) {
+      throw new Error(`growth_restore_bytes_mismatch:${platform}:expected=${expectedBytes}:actual=${baselineBytes}`);
+    }
+    if (baselineSha256 !== expectedSha256) {
+      throw new Error(`growth_restore_sha256_mismatch:${platform}:expected=${expectedSha256}:actual=${baselineSha256}`);
+    }
+  }
+  const baseline = await parseTrendPlatformRestoreArtifact(baselineRaw);
   if (baseline.platform !== platform) {
     throw new Error(`growth_restore_platform_mismatch:${baseline.platform}:${platform}`);
   }
@@ -2421,8 +2743,6 @@ export async function restoreTrendPlatformCurrentFromBaseline(
     throw new Error(`growth_restore_baseline_empty:${platform}`);
   }
 
-  const current = await readTrendStore({ preferDerivedFiles: true });
-  const live = current.collections?.[platform];
   const baselineCount = baseline.items.length;
   const baselineIds = new Set(baseline.items.map((item) => getItemKey(item)).filter(Boolean));
   const baselineUniqueCount = baselineIds.size;
@@ -2436,124 +2756,116 @@ export async function restoreTrendPlatformCurrentFromBaseline(
       `growth_restore_baseline_below_minimum:${platform}:unique=${baselineUniqueCount}:minimum=${minimumBaselineItems}`,
     );
   }
-  const liveCount = live?.items?.length || 0;
-  const items = dedupeTrendItems(baseline.items, live?.items || []);
-  const restoredIds = new Set(items.map((item) => getItemKey(item)).filter(Boolean));
-  const missingBaselineCount = Array.from(baselineIds).filter((id) => !restoredIds.has(id)).length;
-  if (missingBaselineCount > 0 || items.length < baselineCount) {
-    throw new Error(
-      `growth_restore_baseline_regressed:${platform}:baseline=${baselineCount}:restored=${items.length}:missing=${missingBaselineCount}`,
-    );
-  }
-
-  const restoredCollection: PlatformTrendCollection = {
-    ...baseline,
-    ...live,
-    platform,
-    source: "live",
-    collectedAt: [baseline.collectedAt, live?.collectedAt]
-      .filter(Boolean)
-      .sort()
-      .at(-1) || nowShanghaiIso(),
-    windowDays: Math.max(baseline.windowDays || 0, live?.windowDays || 0) || baseline.windowDays,
-    notes: Array.from(new Set([
-      ...(baseline.notes || []),
-      ...(live?.notes || []),
-      `Restored ${platform} current from verified baseline and merged post-baseline observations by stable item id.`,
-    ])),
-    items,
-    stats: {
-      ...(baseline.stats || {}),
-      ...(live?.stats || {}),
-      platform,
-      itemCount: items.length,
-      uniqueAuthorCount: new Set(items.map((item) => String(item.author || "").trim()).filter(Boolean)).size,
-      bucketCounts: getBucketCounts(items),
-      industryCounts: getItemLabelCounts(items, "industryLabels"),
-      ageCounts: getItemLabelCounts(items, "ageLabels"),
-      contentCounts: getItemLabelCounts(items, "contentLabels"),
-    },
-  };
-  const next: TrendStoreFile = {
-    ...current,
-    updatedAt: nowShanghaiIso(),
-    collections: {
-      ...(current.collections || {}),
-      [platform]: restoredCollection,
-    },
-  };
-  const baseResult = {
-    platform,
-    baselineCount,
-    baselineUniqueCount,
-    minimumBaselineItems,
-    liveCount,
-    restoredCount: items.length,
-    addedAfterBaseline: Math.max(0, items.length - baselineCount),
-    missingBaselineCount,
-  };
-  if (!options.apply) {
-    return {
-      ...baseResult,
-      applied: false,
-      verifiedCount: liveCount,
-      backupPath: null,
-    };
-  }
-
-  const backupDir = path.resolve(options.backupDir || path.join(STORE_DIR, "restore-temp"));
-  await fs.mkdir(backupDir, { recursive: true });
-  const stamp = nowShanghaiIso().replace(/[^0-9A-Za-z]+/g, "-");
-  const backupPlainPath = path.join(backupDir, `${platform}-before-restore-${stamp}.json`);
-  const backupPath = `${backupPlainPath}.gz`;
-  await writeJsonGzipAtomic(backupPlainPath, {
-    updatedAt: nowShanghaiIso(),
-    platform,
-    collection: live || null,
-  });
-
-  try {
-    await writeStore(next);
-    const verified = await readPlatformCurrentTruthFile(platform);
-    const verifiedItems = verified?.collection?.items || [];
-    const verifiedIds = new Set(verifiedItems.map((item) => getItemKey(item)).filter(Boolean));
-    const missingAfterWrite = Array.from(baselineIds).filter((id) => !verifiedIds.has(id)).length;
-    if (verifiedItems.length < items.length || missingAfterWrite > 0) {
+  return withGrowthStoreMutationLock("restore-platform-current", async () => {
+    const local = await readLocalPlatformCurrentForRestore(platform);
+    const live = local.collection;
+    const liveCount = live?.items?.length || 0;
+    const items = dedupeTrendItems(baseline.items, live?.items || []);
+    const restoredIds = new Set(items.map((item) => getItemKey(item)).filter(Boolean));
+    const missingBaselineCount = Array.from(baselineIds).filter((id) => !restoredIds.has(id)).length;
+    if (missingBaselineCount > 0 || items.length < baselineCount) {
       throw new Error(
-        `growth_restore_post_write_verification_failed:${platform}:expected=${items.length}:actual=${verifiedItems.length}:missing=${missingAfterWrite}`,
+        `growth_restore_baseline_regressed:${platform}:baseline=${baselineCount}:restored=${items.length}:missing=${missingBaselineCount}`,
       );
     }
-    return {
-      ...baseResult,
-      applied: true,
-      verifiedCount: verifiedItems.length,
-      backupPath,
+    const restoredCollection: PlatformTrendCollection = {
+      ...baseline,
+      ...live,
+      platform,
+      source: "live",
+      collectedAt: [baseline.collectedAt, live?.collectedAt].filter(Boolean).sort().at(-1) || nowShanghaiIso(),
+      windowDays: Math.max(baseline.windowDays || 0, live?.windowDays || 0) || baseline.windowDays,
+      notes: Array.from(new Set([
+        ...(baseline.notes || []),
+        ...(live?.notes || []),
+        `Restored ${platform} current from verified baseline and merged post-baseline observations by stable item id.`,
+      ])),
+      items,
+      stats: {
+        ...(baseline.stats || {}),
+        ...(live?.stats || {}),
+        platform,
+        itemCount: items.length,
+        uniqueAuthorCount: new Set(items.map((item) => String(item.author || "").trim()).filter(Boolean)).size,
+        bucketCounts: getBucketCounts(items),
+        industryCounts: getItemLabelCounts(items, "industryLabels"),
+        ageCounts: getItemLabelCounts(items, "ageLabels"),
+        contentCounts: getItemLabelCounts(items, "contentLabels"),
+      },
     };
-  } catch (error) {
-    let rollbackError = "";
-    try {
-      const latest = await readTrendStore({ preferDerivedFiles: true });
-      await writeStore({
-        ...latest,
-        updatedAt: nowShanghaiIso(),
-        collections: {
-          ...(latest.collections || {}),
-          [platform]: live,
-        },
-      }, { allowLowerTotals: true });
-    } catch (rollback) {
-      rollbackError = rollback instanceof Error ? rollback.message : String(rollback);
+    const baseResult = {
+      platform,
+      baselineCount,
+      baselineUniqueCount,
+      baselineBytes,
+      baselineSha256,
+      minimumBaselineItems,
+      liveCount,
+      restoredCount: items.length,
+      addedAfterBaseline: Math.max(0, items.length - baselineCount),
+      missingBaselineCount,
+    };
+    if (!options.apply) {
+      return { ...baseResult, applied: false, verifiedCount: liveCount, backupPath: null };
     }
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      rollbackError
-        ? `growth_restore_failed_and_rollback_failed:${message}:rollback=${rollbackError}:backup=${backupPath}`
-        : `growth_restore_failed_rolled_back:${message}:backup=${backupPath}`,
-    );
-  }
+
+    const backupDir = path.resolve(options.backupDir || path.join(STORE_DIR, "restore-temp"));
+    await fs.mkdir(backupDir, { recursive: true });
+    const stamp = nowShanghaiIso().replace(/[^0-9A-Za-z]+/g, "-");
+    const backupPlainPath = path.join(backupDir, `${platform}-before-restore-${stamp}.json`);
+    const backupPath = `${backupPlainPath}.gz`;
+    await writeJsonGzipAtomic(backupPlainPath, { updatedAt: nowShanghaiIso(), platform, collection: live || null });
+
+    const truthFile = getPlatformCurrentTruthFile(platform);
+    const touchedFiles = [
+      truthFile,
+      `${truthFile}.gz`,
+      path.join(PLATFORM_DIR, `${platform}.json`),
+      path.join(PLATFORM_DIR, `${platform}.json.gz`),
+      PLATFORM_CURRENT_MANIFEST_FILE,
+      DEBUG_SUMMARY_FILE,
+      STATUS_SNAPSHOT_FILE,
+    ];
+    const snapshots = await snapshotRestoreFiles(touchedFiles);
+    try {
+      const updatedAt = nowShanghaiIso();
+      await writeSinglePlatformCurrent(platform, restoredCollection, local.history, updatedAt);
+      const verified = await readLocalJsonOrGzip<PlatformCurrentTruthFile>(truthFile);
+      const verifiedItems = verified?.collection?.items || [];
+      const verifiedIds = new Set(verifiedItems.map((item) => getItemKey(item)).filter(Boolean));
+      const missingAfterWrite = Array.from(baselineIds).filter((id) => !verifiedIds.has(id)).length;
+      if (verifiedItems.length !== items.length || missingAfterWrite > 0) {
+        throw new Error(
+          `growth_restore_post_write_verification_failed:${platform}:expected=${items.length}:actual=${verifiedItems.length}:missing=${missingAfterWrite}`,
+        );
+      }
+      const targetRaw = await fs.readFile(`${truthFile}.gz`);
+      return {
+        ...baseResult,
+        applied: true,
+        verifiedCount: verifiedItems.length,
+        backupPath,
+        writtenBytes: targetRaw.length,
+        writtenSha256: createHash("sha256").update(targetRaw).digest("hex"),
+      };
+    } catch (error) {
+      let rollbackError = "";
+      try {
+        await restoreFileSnapshots(snapshots);
+      } catch (rollback) {
+        rollbackError = rollback instanceof Error ? rollback.message : String(rollback);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        rollbackError
+          ? `growth_restore_failed_and_rollback_failed:${message}:rollback=${rollbackError}:backup=${backupPath}`
+          : `growth_restore_failed_rolled_back:${message}:backup=${backupPath}`,
+      );
+    }
+  });
 }
 
-export async function mergeTrendCollectionsWithOptions(
+async function mergeTrendCollectionsWithOptionsUnlocked(
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
   options?: { deferHistoryLedger?: boolean },
 ) {
@@ -2608,11 +2920,21 @@ export async function mergeTrendCollectionsWithOptions(
   // 在 merge 里只会并进大池，根本产不出更小的 next。保护若拦在这里，热窗裁剪（#995）
   // 会被整体换回旧档：douyin/kuaishou/bilibili/toutiao 曾因此永久卡 365 天旧窗口、
   // collectedAt 冻结，每轮还在 parse+重写 93MB 旧载荷。故 merge 路径显式放行。
-  const written = await writeStore(next, { allowLowerTotals: true });
+  const written = await writeStoreUnlocked(next, { allowLowerTotals: true });
   return {
     ...written,
     mergeStats,
   };
+}
+
+export async function mergeTrendCollectionsWithOptions(
+  collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
+  options?: { deferHistoryLedger?: boolean },
+) {
+  return withGrowthStoreMutationLock(
+    "merge-trend-collections",
+    () => mergeTrendCollectionsWithOptionsUnlocked(collections, options),
+  );
 }
 
 export async function updateTrendSchedulerState(

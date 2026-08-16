@@ -52,15 +52,15 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   # 2026-07-26 已 `fly secrets set GROWTH_TARGET_WINDOW_DAYS=90` 真正落地。
   GROWTH_TARGET_WINDOW_DAYS = '90'  # secret 接管
   GROWTH_SCHEDULER_INTERVAL_MINUTES = '15'
-  # 2026-08-08：线上 secret 曾把 concurrency=2 / timeout=90000 盖回，抖音/B站超时后
-  # 孤儿抓取仍占满主线程 → 健康检查 critical。代码已可 abort；配置也收紧为单并发。
-  GROWTH_SCHEDULER_CONCURRENCY = '1'
+  # 2026-08-16：常规/burst/live/backfill 已在代码层共用单一串行通道；旧 concurrency
+  # 环境变量已移除，secret 也不能重新打开并发。每个平台任务结束后固定间隔 4 分钟。
   # 2026-08-06 全线收紧：这台机器是 2 核单进程，抓取跑多久就占多久主线程，
   # 期间用户的上传会被 Fly 代理判为实例不健康而掐断连接（凌晨实测：连续五次
   # prepareKnowledgeCardCopy 都断在读请求体阶段，模型一次都没被调用）。
   # 取舍很明确：抓不到就下一轮再来，不许占着主线程干等。
   GROWTH_BURST_INTERVAL_MINUTES = '30'  # 原 15；趋势数据不会一刻钟就变天
-  # 单并发 + 可中止信号保留；30/60 秒已在线上连续截断三平台的正常请求。
+  GROWTH_PLATFORM_COLLECTION_GAP_MS = '240000'
+  # 串行通道 + 可中止信号保留；30/60 秒已在线上连续截断三平台的正常请求。
   GROWTH_PLATFORM_RUN_TIMEOUT_MS = '120000'
   GROWTH_DOUYIN_PLATFORM_RUN_TIMEOUT_MS = '180000'
   GROWTH_BILIBILI_PLATFORM_RUN_TIMEOUT_MS = '120000'
@@ -80,7 +80,6 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   GROWTH_BACKFILL_STEP_FALLBACK = '1'  # secret 接管
   GROWTH_LIVE_BACKFILL_STEP_TARGET = '3'  # secret 接管
   GROWTH_LIVE_BACKFILL_STEP_FALLBACK = '2'  # secret 接管
-  GROWTH_BACKFILL_PLATFORM_CONCURRENCY = '1'
   GROWTH_BACKFILL_FAST_START_MAX_ROUNDS = '4'
   GROWTH_HISTORY_LEDGER_BATCH_ROUNDS = '2'
   GROWTH_BACKFILL_STORE_SIZE_LIMIT_MB = '512'  # secret 接管

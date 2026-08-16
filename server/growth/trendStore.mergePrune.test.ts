@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlatformTrendCollection } from "./trendCollector";
 
@@ -51,6 +52,15 @@ function makeCollection(items: ReturnType<typeof makeItem>[], collectedAt: strin
       contentCounts: {},
     },
     notes: [],
+  };
+}
+
+function makeRestoreArtifact(collection: PlatformTrendCollection) {
+  const raw = Buffer.from(JSON.stringify({ collection }), "utf8");
+  return {
+    raw,
+    expectedBaselineBytes: raw.length,
+    expectedBaselineSha256: createHash("sha256").update(raw).digest("hex"),
   };
 }
 
@@ -161,6 +171,7 @@ describe("growth store merge + hot-window prune", () => {
     const {
       readTrendStore,
       restoreTrendPlatformCurrentFromBaseline,
+      writeTrendStore,
     } = await import("./trendStore");
     const now = Date.now();
     const baselineAt = new Date(now - 60_000).toISOString();
@@ -176,22 +187,19 @@ describe("growth store merge + hot-window prune", () => {
     ], liveAt);
     live.platform = "xiaohongshu";
     const other = makeCollection([makeItem("other-platform", liveAt)], liveAt);
-    await fs.writeFile(
-      path.join(tempRoot, "current.json"),
-      JSON.stringify({
-        updatedAt: liveAt,
-        collections: { xiaohongshu: live, douyin: other },
-        scheduler: {},
-        archiveIndex: [],
-      }),
-      "utf8",
-    );
+    await writeTrendStore({ xiaohongshu: live, douyin: other });
 
     const backupDir = path.join(tempRoot, "restore-temp");
-    const result = await restoreTrendPlatformCurrentFromBaseline("xiaohongshu", baseline, {
+    const baselineArtifact = makeRestoreArtifact(baseline);
+    const currentJsonBefore = await fs.readFile(path.join(tempRoot, "current.json"));
+    const douyinTruthPath = path.join(tempRoot, "platform-current", "douyin.current.json.gz");
+    const douyinTruthBefore = await fs.readFile(douyinTruthPath);
+    const result = await restoreTrendPlatformCurrentFromBaseline("xiaohongshu", baselineArtifact.raw, {
       apply: true,
       minimumBaselineItems: 2,
       backupDir,
+      expectedBaselineBytes: baselineArtifact.expectedBaselineBytes,
+      expectedBaselineSha256: baselineArtifact.expectedBaselineSha256,
     });
     expect(result).toMatchObject({
       baselineCount: 2,
@@ -205,6 +213,8 @@ describe("growth store merge + hot-window prune", () => {
     });
     expect(result.backupPath).toMatch(/xiaohongshu-before-restore-.+\.json\.gz$/);
     await expect(fs.access(String(result.backupPath))).resolves.toBeUndefined();
+    expect(await fs.readFile(path.join(tempRoot, "current.json"))).toEqual(currentJsonBefore);
+    expect(await fs.readFile(douyinTruthPath)).toEqual(douyinTruthBefore);
     const store = await readTrendStore({ preferDerivedFiles: true });
     expect(store.collections?.xiaohongshu?.items.map((item) => item.id).sort()).toEqual([
       "base-1",
@@ -234,18 +244,84 @@ describe("growth store merge + hot-window prune", () => {
       "utf8",
     );
 
-    await expect(restoreTrendPlatformCurrentFromBaseline("xiaohongshu", baseline, {
+    const baselineArtifact = makeRestoreArtifact(baseline);
+    await expect(restoreTrendPlatformCurrentFromBaseline("xiaohongshu", baselineArtifact.raw, {
       minimumBaselineItems: 2,
     })).rejects.toThrow("growth_restore_baseline_below_minimum:xiaohongshu:unique=1:minimum=2");
-    await expect(restoreTrendPlatformCurrentFromBaseline("xiaohongshu", baseline, {
+    await expect(restoreTrendPlatformCurrentFromBaseline("xiaohongshu", baselineArtifact.raw, {
       minimumBaselineItems: Number.NaN,
     })).rejects.toThrow("growth_restore_invalid_minimum:xiaohongshu:NaN");
 
-    const result = await restoreTrendPlatformCurrentFromBaseline("xiaohongshu", baseline, {
+    const result = await restoreTrendPlatformCurrentFromBaseline("xiaohongshu", baselineArtifact.raw, {
       minimumBaselineItems: 1,
     });
     expect(result).toMatchObject({ applied: false, restoredCount: 2, liveCount: 1 });
     const store = await readTrendStore({ preferDerivedFiles: true });
     expect(store.collections?.xiaohongshu?.items.map((item) => item.id)).toEqual(["live-1"]);
+  });
+
+  it("apply 在写入前强制核对备份大小和SHA-256", async () => {
+    const { restoreTrendPlatformCurrentFromBaseline } = await import("./trendStore");
+    const collectedAt = new Date().toISOString();
+    const baseline = makeCollection([makeItem("base-1", collectedAt)], collectedAt);
+    baseline.platform = "xiaohongshu";
+    const artifact = makeRestoreArtifact(baseline);
+
+    await expect(restoreTrendPlatformCurrentFromBaseline("xiaohongshu", artifact.raw, {
+      apply: true,
+      minimumBaselineItems: 1,
+    })).rejects.toThrow("growth_restore_integrity_required:xiaohongshu");
+    await expect(restoreTrendPlatformCurrentFromBaseline("xiaohongshu", artifact.raw, {
+      apply: true,
+      minimumBaselineItems: 1,
+      expectedBaselineBytes: artifact.raw.length - 1,
+      expectedBaselineSha256: artifact.expectedBaselineSha256,
+    })).rejects.toThrow("growth_restore_bytes_mismatch:xiaohongshu");
+    await expect(restoreTrendPlatformCurrentFromBaseline("xiaohongshu", artifact.raw, {
+      apply: true,
+      minimumBaselineItems: 1,
+      expectedBaselineBytes: artifact.raw.length,
+      expectedBaselineSha256: "0".repeat(64),
+    })).rejects.toThrow("growth_restore_sha256_mismatch:xiaohongshu");
+  });
+
+  it("恢复与后台merge竞态时不丢任一平台的新数据", async () => {
+    const {
+      mergeTrendCollections,
+      readTrendStore,
+      restoreTrendPlatformCurrentFromBaseline,
+      writeTrendStore,
+    } = await import("./trendStore");
+    const now = Date.now();
+    const oldAt = new Date(now - 60_000).toISOString();
+    const newAt = new Date(now).toISOString();
+    const xhsLive = makeCollection([makeItem("xhs-live", oldAt)], oldAt);
+    xhsLive.platform = "xiaohongshu";
+    const douyinLive = makeCollection([makeItem("douyin-live", oldAt)], oldAt);
+    await writeTrendStore({ xiaohongshu: xhsLive, douyin: douyinLive });
+
+    const baseline = makeCollection([makeItem("xhs-baseline", oldAt)], oldAt);
+    baseline.platform = "xiaohongshu";
+    const artifact = makeRestoreArtifact(baseline);
+    const douyinIncoming = makeCollection([makeItem("douyin-after-restore-start", newAt)], newAt);
+    await Promise.all([
+      restoreTrendPlatformCurrentFromBaseline("xiaohongshu", artifact.raw, {
+        apply: true,
+        minimumBaselineItems: 1,
+        expectedBaselineBytes: artifact.expectedBaselineBytes,
+        expectedBaselineSha256: artifact.expectedBaselineSha256,
+      }),
+      mergeTrendCollections({ douyin: douyinIncoming }),
+    ]);
+
+    const store = await readTrendStore({ preferDerivedFiles: true });
+    expect(store.collections?.xiaohongshu?.items.map((item) => item.id).sort()).toEqual([
+      "xhs-baseline",
+      "xhs-live",
+    ]);
+    expect(store.collections?.douyin?.items.map((item) => item.id).sort()).toEqual([
+      "douyin-after-restore-start",
+      "douyin-live",
+    ]);
   });
 });

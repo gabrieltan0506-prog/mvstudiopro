@@ -47,6 +47,7 @@ jobs:
           for attempt in 1 2 3 4 5; do
             if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C "sh -lc '
               find /data/growth -type f -name \"*.next\" -mmin +15 -print -delete 2>/dev/null || true
+              find /data/growth/backups/current-batches -mindepth 1 -maxdepth 1 -type d -mmin +180 -print -exec rm -rf -- {} + 2>/dev/null || true
             '"; then
               exit 0
             fi
@@ -94,7 +95,6 @@ jobs:
           HOT_BYTES=$((CURRENT_BYTES + PLATFORMS_BYTES))
           SHOULD_OFFLOAD=false
           EXTERNALIZE_PLATFORMS=false
-          EXTERNALIZE_PLATFORM_CURRENT=false
           EXTERNALIZE_HISTORY_LEDGER=false
           if [ "${LARGEST_FILE_BYTES:-0}" -gt $((400 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
           if [ "${ARCHIVE_BYTES:-0}" -gt $((800 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
@@ -102,17 +102,16 @@ jobs:
           if [ "${HOT_BYTES:-0}" -gt $((800 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
           if [ "${AVAILABLE_BYTES:-0}" -lt $((800 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
           if [ "${PLATFORMS_BYTES:-0}" -gt $((400 * 1024 * 1024)) ] || [ "${HOT_BYTES:-0}" -gt $((800 * 1024 * 1024)) ] || [ "${AVAILABLE_BYTES:-0}" -lt $((800 * 1024 * 1024)) ]; then EXTERNALIZE_PLATFORMS=true; fi
-          if [ "${PLATFORM_CURRENT_BYTES:-0}" -gt $((400 * 1024 * 1024)) ]; then EXTERNALIZE_PLATFORM_CURRENT=true; fi
           if [ "${HOT_BYTES:-0}" -gt $((800 * 1024 * 1024)) ] || [ "${AVAILABLE_BYTES:-0}" -lt $((800 * 1024 * 1024)) ]; then EXTERNALIZE_HISTORY_LEDGER=true; fi
           echo "HOT_BYTES=$HOT_BYTES" >> /tmp/growth-backup/storage.env
           echo "SHOULD_OFFLOAD=$SHOULD_OFFLOAD" >> /tmp/growth-backup/storage.env
           echo "EXTERNALIZE_PLATFORMS=$EXTERNALIZE_PLATFORMS" >> /tmp/growth-backup/storage.env
-          echo "EXTERNALIZE_PLATFORM_CURRENT=$EXTERNALIZE_PLATFORM_CURRENT" >> /tmp/growth-backup/storage.env
           echo "EXTERNALIZE_HISTORY_LEDGER=$EXTERNALIZE_HISTORY_LEDGER" >> /tmp/growth-backup/storage.env
           cat /tmp/growth-backup/storage.env
       - name: Fetch growth store files from Fly
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p /tmp/growth-backup
           mkdir -p /tmp/growth-backup/store/backups
@@ -185,11 +184,6 @@ jobs:
           else
             capture_from_fly "if [ -d /data/growth/history-ledger ]; then tar -C /data/growth -czf - history-ledger 2>/dev/null; fi" /tmp/growth-backup/history-ledger.tar.gz || true
           fi
-          if [ "${EXTERNALIZE_PLATFORM_CURRENT:-false}" = "true" ]; then
-            capture_from_fly "FILES=''; if [ -d /data/growth/platform-current ]; then FILES='platform-current'; fi; if [ -f /data/growth/platform-current-manifest.json ]; then FILES=\"$FILES platform-current-manifest.json\"; fi; if [ -n \"$FILES\" ]; then tar -C /data/growth -czf - $FILES 2>/dev/null; fi" /tmp/growth-backup/growth-platform-current.tar.gz 720 || true
-          else
-            capture_from_fly "FILES=''; if [ -d /data/growth/platform-current ]; then FILES='platform-current'; fi; if [ -f /data/growth/platform-current-manifest.json ]; then FILES=\"$FILES platform-current-manifest.json\"; fi; if [ -n \"$FILES\" ]; then tar -C /data/growth -czf - $FILES 2>/dev/null; fi" /tmp/growth-backup/platform-current.tar.gz || true
-          fi
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-backup/fetched-at.txt
 
           if [ -s /tmp/growth-backup/platforms.tar.gz ] && [ "${EXTERNALIZE_PLATFORMS:-false}" != "true" ]; then
@@ -198,22 +192,86 @@ jobs:
           if [ -s /tmp/growth-backup/history-ledger.tar.gz ] && [ "${EXTERNALIZE_HISTORY_LEDGER:-false}" != "true" ]; then
             tar -C /tmp/growth-backup/store -xzf /tmp/growth-backup/history-ledger.tar.gz
           fi
-          if [ -s /tmp/growth-backup/platform-current.tar.gz ] && [ "${EXTERNALIZE_PLATFORM_CURRENT:-false}" != "true" ]; then
-            tar -C /tmp/growth-backup/store -xzf /tmp/growth-backup/platform-current.tar.gz
-          fi
           mkdir -p /tmp/growth-backup/store/backups /tmp/growth-backup/store/platforms /tmp/growth-backup/store/history-ledger
           mkdir -p /tmp/growth-backup/platform-current
-          # 生产真值已经是 *.current.json.gz。旧逻辑只遍历 *.json，因此最新完整 current
-          # 从未成为独立冷备资产；同时旧产物名还漏了 `.current`，读取器无法命中。
-          for platform in douyin bilibili xiaohongshu weixin_channels; do
-            output="/tmp/growth-backup/platform-current/platform-current-${platform}.current.json.gz"
-            capture_from_fly "if [ -s /data/growth/platform-current/${platform}.current.json.gz ]; then cat /data/growth/platform-current/${platform}.current.json.gz; elif [ -s /data/growth/platform-current/${platform}.current.json ]; then gzip -c /data/growth/platform-current/${platform}.current.json; else exit 1; fi" "$output" 720
+          # 四个平台先在同一把 store mutation lock 内创建 hardlink 快照，再按 32MiB
+          # 顺序下载；每片大小和 SHA-256 不匹配就重试，禁止并行分片与截断拼接。
+          BATCH_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ASSET_GENERATION="slot-0"
+          mkdir -p /tmp/growth-backup/previous-release
+          if gh release download growth-cold-store-latest \
+            -p platform-current-batch-manifest.json \
+            -D /tmp/growth-backup/previous-release \
+            --clobber >/dev/null 2>&1; then
+            ACTIVE_GENERATION=$(jq -r '.assetGeneration // ""' /tmp/growth-backup/previous-release/platform-current-batch-manifest.json)
+            if [ "$ACTIVE_GENERATION" = "slot-0" ]; then ASSET_GENERATION="slot-1"; fi
+          fi
+          REMOTE_BATCH_DIR="/data/growth/backups/current-batches/${BATCH_ID}"
+          wait_for_started_vm
+          flyctl ssh console -a mvstudiopro -C "sh -lc 'cd /app && GROWTH_STORE_DIR=/data/growth pnpm exec tsx scripts/snapshot-growth-platform-current-batch.mts --output=${REMOTE_BATCH_DIR} --batch-id=${BATCH_ID} --asset-generation=${ASSET_GENERATION}'"
+          fetch_file_from_fly "${REMOTE_BATCH_DIR}/snapshot-manifest.json" /tmp/growth-backup/platform-current-snapshot-manifest.json true
+          test "$(jq '.files | length' /tmp/growth-backup/platform-current-snapshot-manifest.json)" -eq 4
+          mkdir -p /tmp/growth-backup/release-current
+
+          fetch_verified_part() {
+            local remote_file="$1"
+            local offset="$2"
+            local expected_bytes="$3"
+            local expected_sha="$4"
+            local output_path="$5"
+            local block_bytes=4194304
+            local skip_blocks=$((offset / block_bytes))
+            local count_blocks=$(((expected_bytes + block_bytes - 1) / block_bytes))
+            if [ -s "$output_path" ]; then
+              local cached_bytes
+              local cached_sha
+              cached_bytes=$(stat -c%s "$output_path")
+              cached_sha=$(sha256sum "$output_path" | awk '{print $1}')
+              if [ "$cached_bytes" = "$expected_bytes" ] && [ "$cached_sha" = "$expected_sha" ]; then
+                echo "Reusing verified part: $(basename "$output_path")"
+                return 0
+              fi
+            fi
+            for attempt in 1 2 3 4 5; do
+              local next_path="${output_path}.next"
+              rm -f "$next_path"
+              if wait_for_started_vm && timeout 720 flyctl ssh console -a mvstudiopro -C "sh -lc 'dd if=${remote_file} bs=${block_bytes} skip=${skip_blocks} count=${count_blocks} status=none'" > "$next_path"; then
+                local actual_bytes
+                local actual_sha
+                actual_bytes=$(stat -c%s "$next_path")
+                actual_sha=$(sha256sum "$next_path" | awk '{print $1}')
+                if [ "$actual_bytes" = "$expected_bytes" ] && [ "$actual_sha" = "$expected_sha" ]; then
+                  mv "$next_path" "$output_path"
+                  return 0
+                fi
+                echo "Part verification failed: bytes=${actual_bytes}/${expected_bytes} sha=${actual_sha}/${expected_sha}"
+              fi
+              sleep 20
+            done
+            echo "Verified part fetch failed: ${remote_file}@${offset}"
+            return 1
+          }
+
+          while IFS=$'\t' read -r platform snapshot_file logical_name expected_bytes expected_sha; do
+            output="/tmp/growth-backup/platform-current/${logical_name}"
+            : > "$output"
+            while IFS=$'\t' read -r offset part_bytes part_sha part_asset; do
+              part_output="/tmp/growth-backup/release-current/${part_asset}"
+              fetch_verified_part "${REMOTE_BATCH_DIR}/${snapshot_file}" "$offset" "$part_bytes" "$part_sha" "$part_output"
+              cat "$part_output" >> "$output"
+            done < <(jq -r --arg platform "$platform" '.files[] | select(.platform == $platform) | .parts[] | [.offset,.bytes,.sha256,.assetName] | @tsv' /tmp/growth-backup/platform-current-snapshot-manifest.json)
+            test "$(stat -c%s "$output")" = "$expected_bytes"
+            test "$(sha256sum "$output" | awk '{print $1}')" = "$expected_sha"
             gzip -t "$output"
-          done
-          (
-            cd /tmp/growth-backup/platform-current
-            sha256sum ./*.current.json.gz > /tmp/growth-backup/platform-current-sha256.txt
-          )
+          done < <(jq -r '.files[] | [.platform,.snapshotFile,.logicalAssetName,.bytes,.sha256] | @tsv' /tmp/growth-backup/platform-current-snapshot-manifest.json)
+
+          node scripts/finalize-growth-platform-current-batch.mjs \
+            /tmp/growth-backup/platform-current-snapshot-manifest.json \
+            /tmp/growth-backup/platform-current \
+            /tmp/growth-backup/release-current
+          # 本地四个整文件与 bundle 均已完成 read-back；及时释放 Fly hardlink。
+          # 若本 step 异常退出，下轮三小时 stale cleanup 会回收残留批次。
+          flyctl ssh console -a mvstudiopro -C "sh -lc 'rm -rf -- ${REMOTE_BATCH_DIR}'"
           for ledger_file in /tmp/growth-backup/store/history-ledger/*.json; do
             [ -f "$ledger_file" ] || continue
             gzip -c "$ledger_file" > "/tmp/growth-backup/history-ledger-$(basename "$ledger_file" .json).json.gz"
@@ -252,9 +310,7 @@ jobs:
               historyLedger: env.EXTERNALIZE_HISTORY_LEDGER === "true"
                 ? { asset: "growth-history-ledger.tar.gz", required: false }
                 : null,
-              platformCurrent: env.EXTERNALIZE_PLATFORM_CURRENT === "true"
-                ? { asset: "growth-platform-current.tar.gz", required: false }
-                : null,
+              platformCurrent: { asset: "platform-current-batch-manifest.json", required: true },
             },
             thresholdsMb: {
               singleFile: 400,
@@ -278,12 +334,6 @@ jobs:
             if [ -d platforms ] && [ "${EXTERNALIZE_PLATFORMS:-false}" != "true" ]; then
               FILES="$FILES platforms"
             fi
-            if [ -d platform-current ] && [ "${EXTERNALIZE_PLATFORM_CURRENT:-false}" != "true" ]; then
-              FILES="$FILES platform-current"
-            fi
-            if [ -f platform-current-manifest.json ] && [ "${EXTERNALIZE_PLATFORM_CURRENT:-false}" != "true" ]; then
-              FILES="$FILES platform-current-manifest.json"
-            fi
             tar -czf /tmp/growth-backup/growth-restore-bundle.tar.gz $FILES
           )
       - name: Upload GitHub backup artifact
@@ -297,6 +347,37 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          upload_and_readback_asset() {
+            local asset="$1"
+            local asset_name
+            local expected_bytes
+            local expected_sha
+            local verify_dir="/tmp/growth-backup/release-readback"
+            asset_name=$(basename "$asset")
+            expected_bytes=$(stat -c%s "$asset")
+            expected_sha=$(sha256sum "$asset" | awk '{print $1}')
+            mkdir -p "$verify_dir"
+            for attempt in 1 2 3 4 5; do
+              if gh release upload growth-cold-store-latest "$asset#$asset_name" --clobber; then
+                rm -f "$verify_dir/$asset_name"
+                if gh release download growth-cold-store-latest -p "$asset_name" -D "$verify_dir" --clobber; then
+                  local actual_bytes
+                  local actual_sha
+                  actual_bytes=$(stat -c%s "$verify_dir/$asset_name")
+                  actual_sha=$(sha256sum "$verify_dir/$asset_name" | awk '{print $1}')
+                  if [ "$actual_bytes" = "$expected_bytes" ] && [ "$actual_sha" = "$expected_sha" ]; then
+                    echo "Release read-back verified: $asset_name"
+                    return 0
+                  fi
+                fi
+              fi
+              echo "Release upload/read-back retry: $asset_name ($attempt/5)"
+              sleep 20
+            done
+            echo "Release upload/read-back failed: $asset_name"
+            return 1
+          }
+
           gh release view growth-cold-store-latest >/dev/null 2>&1 || \
             gh release create growth-cold-store-latest --title "Growth Cold Store Latest" --notes "Latest cold-store restore assets"
           gzip -c /tmp/growth-backup/store/current.json > /tmp/growth-backup/current.json.gz
@@ -322,7 +403,7 @@ jobs:
               /tmp/growth-backup/weixin-channels-miner.json.gz#weixin-channels-miner.json.gz \
               --clobber
           fi
-          for asset in /tmp/growth-backup/growth-platforms.tar.gz /tmp/growth-backup/growth-platform-current.tar.gz /tmp/growth-backup/growth-history-ledger.tar.gz; do
+          for asset in /tmp/growth-backup/growth-platforms.tar.gz /tmp/growth-backup/growth-history-ledger.tar.gz; do
             [ -f "$asset" ] || continue
             gh release upload growth-cold-store-latest "$asset#$(basename "$asset")" --clobber
           done
@@ -332,14 +413,17 @@ jobs:
             esac
             gh release upload growth-cold-store-latest "$asset#$(basename "$asset")" --clobber
           done
-          for asset in /tmp/growth-backup/platforms/*.json.gz /tmp/growth-backup/history-ledger/*.json.gz /tmp/growth-backup/platform-current/*.json.gz; do
+          for asset in /tmp/growth-backup/platforms/*.json.gz /tmp/growth-backup/history-ledger/*.json.gz; do
             [ -f "$asset" ] || continue
             gh release upload growth-cold-store-latest "$asset#$(basename "$asset")" --clobber
           done
-          # 四个平台全部上传成功后才更新校验清单；若中途失败，旧清单会与混合资产不匹配，避免静默误认完整冷备。
-          gh release upload growth-cold-store-latest \
-            /tmp/growth-backup/platform-current-sha256.txt#platform-current-sha256.txt \
-            --clobber
+          # 分片严格串行上传；只有四个平台和完整 bundle 的所有分片成功后才发布新批次清单。
+          # 分片名含 batchId，上传中断时旧清单仍只引用上一批完整资产，不会形成混合批次。
+          for asset in /tmp/growth-backup/release-current/*.part-*; do
+            [ -f "$asset" ] || continue
+            upload_and_readback_asset "$asset"
+          done
+          upload_and_readback_asset /tmp/growth-backup/release-current/platform-current-batch-manifest.json
       - name: Build archive offload list from Fly
         if: hashFiles('/tmp/growth-backup/storage.env') != ''
         env:

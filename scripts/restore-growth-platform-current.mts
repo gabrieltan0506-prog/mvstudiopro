@@ -1,27 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { gunzip } from "node:zlib";
-import { promisify } from "node:util";
 
 import { activeGrowthPlatformValues, type GrowthPlatform } from "@shared/growth";
-import type { PlatformTrendCollection } from "../server/growth/trendCollector";
 import { restoreTrendPlatformCurrentFromBaseline } from "../server/growth/trendStore";
-
-const gunzipAsync = promisify(gunzip);
-
-async function readBaseline(filePath: string): Promise<PlatformTrendCollection> {
-  const raw = await fs.readFile(filePath);
-  const json = filePath.endsWith(".gz") ? await gunzipAsync(raw) : raw;
-  const parsed = JSON.parse(json.toString("utf8")) as {
-    collection?: PlatformTrendCollection;
-  } & Partial<PlatformTrendCollection>;
-  const collection = parsed.collection || parsed as PlatformTrendCollection;
-  if (!collection?.platform || !Array.isArray(collection.items)) {
-    throw new Error("growth_restore_invalid_baseline");
-  }
-  return collection;
-}
 
 async function main() {
   const [platformArg, baselineArg, ...flags] = process.argv.slice(2);
@@ -30,12 +12,14 @@ async function main() {
     throw new Error(`growth_restore_invalid_platform:${platform}`);
   }
   if (!baselineArg) {
-    throw new Error("Usage: tsx scripts/restore-growth-platform-current.mts <platform> <baseline.json[.gz]> --min-items=N [--backup-dir=DIR] [--apply]");
+    throw new Error("Usage: tsx scripts/restore-growth-platform-current.mts <platform> <baseline.json[.gz]> --min-items=N [--backup-dir=DIR] [--apply --expected-bytes=N --expected-sha256=HEX]");
   }
   const supportedFlags = flags.filter((flag) => (
     flag === "--apply"
     || flag.startsWith("--min-items=")
     || flag.startsWith("--backup-dir=")
+    || flag.startsWith("--expected-bytes=")
+    || flag.startsWith("--expected-sha256=")
   ));
   if (supportedFlags.length !== flags.length) {
     throw new Error(`growth_restore_unknown_flag:${flags.find((flag) => !supportedFlags.includes(flag))}`);
@@ -51,11 +35,14 @@ async function main() {
   const baselinePath = path.resolve(baselineArg);
   const baselineRaw = await fs.readFile(baselinePath);
   const baselineSha256 = createHash("sha256").update(baselineRaw).digest("hex");
-  const baseline = await readBaseline(baselinePath);
-  const result = await restoreTrendPlatformCurrentFromBaseline(platform, baseline, {
+  const expectedBaselineBytes = Number(flags.find((flag) => flag.startsWith("--expected-bytes="))?.split("=").slice(1).join("="));
+  const expectedBaselineSha256 = flags.find((flag) => flag.startsWith("--expected-sha256="))?.split("=").slice(1).join("=");
+  const result = await restoreTrendPlatformCurrentFromBaseline(platform, baselineRaw, {
     apply,
     minimumBaselineItems,
     backupDir: backupDirArg ? path.resolve(backupDirArg) : undefined,
+    expectedBaselineBytes,
+    expectedBaselineSha256,
   });
   console.log(JSON.stringify({
     ok: true,
