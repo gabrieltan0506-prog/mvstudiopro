@@ -18,6 +18,8 @@ export type WeixinChannelsRawAssetKind =
   | "player_base"
   | "player_progress"
   | "comments_page"
+  | "comments_close_attempt"
+  | "comments_close_result"
   | "player_closed"
   | "search_result";
 
@@ -50,7 +52,7 @@ export type WeixinChannelsRawManifest = {
   capturedAt: string;
   completedAt: string;
   captureElapsedMs: number;
-  commentsStatus: "captured" | "entry_missing" | "open_unconfirmed";
+  commentsStatus: "captured" | "entry_missing" | "open_unconfirmed" | "closed_confirmed";
   searchSelectedAgeDays?: number;
   assets: WeixinChannelsRawAsset[];
   rejectionReason?: string;
@@ -67,6 +69,17 @@ export type WeixinChannelsRawReservation = {
   windowId: number;
   searchSelectedAgeDays?: number;
   reservedAt: string;
+};
+
+export type WeixinChannelsRawFailureEvidence = {
+  version: 1;
+  rawId: string;
+  runId: string;
+  windowId: number;
+  recordedAt: string;
+  reason: string;
+  ocrLines: Array<{ text: string; confidence: number; x: number; y: number; width: number; height: number }>;
+  screenshot?: string;
 };
 
 export type WeixinChannelsRawRunState = {
@@ -394,6 +407,37 @@ export async function releaseWeixinChannelsRawSlot(params: {
   await fs.unlink(file).catch((error) => {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   });
+}
+
+/** UI 失败不进入离线上传队列，但必须保留当前帧和 OCR，供右窗局部恢复复盘。 */
+export async function recordWeixinChannelsRawFailureEvidence(params: {
+  root: string;
+  reservation: WeixinChannelsRawReservation;
+  reason: string;
+  ocrLines: WeixinChannelsRawFailureEvidence["ocrLines"];
+  screenshot?: string;
+}) {
+  const directory = path.join(runDirectory(params.root, params.reservation.runId), "failures");
+  await fs.mkdir(directory, { recursive: true });
+  const suffix = `${assertSafeSegment(params.reservation.rawId, "raw_id")}-${Date.now()}`;
+  let screenshot: string | undefined;
+  if (params.screenshot) {
+    const extension = path.extname(params.screenshot).toLowerCase() || ".png";
+    screenshot = `${suffix}${extension}`;
+    await fs.copyFile(params.screenshot, path.join(directory, screenshot)).catch(() => undefined);
+  }
+  const evidence: WeixinChannelsRawFailureEvidence = {
+    version: 1,
+    rawId: params.reservation.rawId,
+    runId: params.reservation.runId,
+    windowId: params.reservation.windowId,
+    recordedAt: new Date().toISOString(),
+    reason: String(params.reason).slice(0, 1_000),
+    ocrLines: params.ocrLines,
+    screenshot,
+  };
+  await writeJsonAtomic(path.join(directory, `${suffix}.json`), evidence);
+  return evidence;
 }
 
 export async function commitWeixinChannelsRawItem(params: {

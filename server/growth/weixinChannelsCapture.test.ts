@@ -37,7 +37,9 @@ import {
   detectVisibleProgressTrack,
   extractVisibleTitleAndAuthor,
   extractWeixinChannelsMetrics,
+  classifyRawCommentsPanelRecovery,
   findCommentsClosePoint,
+  findCommentsPanelTitle,
   findCommentsOpenPoint,
   findAnySearchTabPoint,
   findChannelsTabPoint,
@@ -196,7 +198,7 @@ describe("weixin channels OCR", () => {
     expect(WEIXIN_CHANNELS_RAW_ROTATION_GRACE_MS).toBe(60_000);
   });
 
-  it("raw 窗口连续三次失败重启共享 UI 子进程，成功推进后清零", () => {
+  it("raw 窗口连续三次失败只触发该窗口的局部恢复计数，成功推进后清零", () => {
     let failures = 0;
     failures = nextWeixinChannelsRawFailureCount(failures, "failure");
     failures = nextWeixinChannelsRawFailureCount(failures, "failure");
@@ -998,6 +1000,7 @@ describe("weixin channels OCR", () => {
       { text: "×", confidence: 0.99, x: 0.92, y: 0.86, width: 0.03, height: 0.04 },
     ];
     expect(findCommentsClosePoint(panel)).toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
+    expect(findCommentsPanelTitle(panel)).toMatchObject({ text: "评论 1.5万" });
     expect(findCommentsClosePoint([])).toBeNull();
     const metrics = ["2985", "6234", "2641", "80"].map((text, index) => ({ text, confidence: 0.99, x: 0.55 + index * 0.1, y: 0.1, width: 0.04, height: 0.03 }));
     expect(findCommentsOpenPoint(metrics)?.x).toBeGreaterThan(0.8);
@@ -1016,6 +1019,38 @@ describe("weixin channels OCR", () => {
       height: 0.03,
     }));
     expect(shouldOpenVisibleComments(commentsOnly)).toBe(false);
+  });
+
+  it("评论抽屉关闭验证不依赖关闭后再次识别到底部评论入口", () => {
+    const base = {
+      width: 440,
+      height: 769,
+      lines: [
+        { text: "同一条视频", confidence: 0.99, x: 0.12, y: 0.62, width: 0.22, height: 0.04 },
+        { text: "作者甲", confidence: 0.99, x: 0.12, y: 0.56, width: 0.14, height: 0.04 },
+        ...["2985", "6234", "2641", "80"].map((text, index) => ({ text, confidence: 0.99, x: 0.55 + index * 0.1, y: 0.1, width: 0.04, height: 0.03 })),
+      ],
+    };
+    const stillOpen = {
+      width: 440,
+      height: 769,
+      lines: [
+        { text: "评论 80", confidence: 0.99, x: 0.08, y: 0.86, width: 0.16, height: 0.04 },
+        { text: "×", confidence: 0.99, x: 0.92, y: 0.86, width: 0.03, height: 0.04 },
+      ],
+    };
+    const closedWithoutCommentLabel = {
+      width: 440,
+      height: 769,
+      lines: [
+        { text: "同一条视频", confidence: 0.99, x: 0.12, y: 0.62, width: 0.22, height: 0.04 },
+        { text: "作者甲", confidence: 0.99, x: 0.12, y: 0.56, width: 0.14, height: 0.04 },
+        ...["2986", "6235", "2641", "80"].map((text, index) => ({ text, confidence: 0.99, x: 0.55 + index * 0.1, y: 0.1, width: 0.04, height: 0.03 })),
+      ],
+    };
+    expect(classifyRawCommentsPanelRecovery(base, stillOpen)).toBe("panel_still_visible");
+    expect(classifyRawCommentsPanelRecovery(base, closedWithoutCommentLabel)).toBe("closed_confirmed");
+    expect(classifyRawCommentsPanelRecovery(base, { width: 440, height: 769, lines: [] })).toBe("player_structure_not_restored");
   });
 
   it("识别赞和收藏及搜索结果辅助页，禁止当成视频扫描", () => {

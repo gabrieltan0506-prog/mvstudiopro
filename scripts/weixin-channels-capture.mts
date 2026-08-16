@@ -41,11 +41,13 @@ import {
   listWeixinChannelsRawManifests,
   releaseWeixinChannelsRawSlot,
   reserveWeixinChannelsRawSlot,
+  recordWeixinChannelsRawFailureEvidence,
   resolveWeixinChannelsRawAssetPath,
   sealWeixinChannelsRawRun,
   updateWeixinChannelsRawManifest,
   writeWeixinChannelsRawRunSummary,
   type WeixinChannelsRawManifest,
+  type WeixinChannelsRawAssetKind,
   type WeixinChannelsRawRunState,
   type WeixinChannelsRawSource,
 } from "./weixin-channels-raw-spool.mts";
@@ -1036,9 +1038,7 @@ export function findMediaViewerClosePoint(lines: OcrLine[]) {
 
 /** 先由 OCR 找到评论标题所在行，再取同一行最右侧关闭区；不使用固定屏幕坐标。 */
 export function findCommentsClosePoint(lines: OcrLine[]) {
-  const title = lines
-    .filter((line) => line.confidence >= 0.25 && /^(评论|評論)(?:\s*\d+(?:\.\d+)?(?:万|萬|w|W)?)?$/.test(line.text.trim()))
-    .sort((left, right) => right.y - left.y)[0];
+  const title = findCommentsPanelTitle(lines);
   if (!title) return null;
   const sameRow = lines.filter((line) => Math.abs((line.y + line.height / 2) - (title.y + title.height / 2)) <= Math.max(title.height, 0.04));
   const closeGlyph = sameRow
@@ -1048,12 +1048,34 @@ export function findCommentsClosePoint(lines: OcrLine[]) {
   return null;
 }
 
+/** 评论标题本身就是抽屉仍打开的证据；不能用底部入口是否被 OCR 识别来反推。 */
+export function findCommentsPanelTitle(lines: OcrLine[]) {
+  return lines
+    .filter((line) => line.confidence >= 0.25 && /^(评论|評論)(?:\s*\d+(?:\.\d+)?(?:万|萬|w|W)?)?$/.test(line.text.trim()))
+    .sort((left, right) => right.y - left.y)[0];
+}
+
+export type RawCommentsPanelRecovery =
+  | "panel_still_visible"
+  | "closed_confirmed"
+  | "player_structure_not_restored";
+
+/**
+ * 关闭验证只接受三种互斥结论。评论入口图标会被控件、字幕或 OCR 漏帧遮住，
+ * 因而不能作为“已恢复”的必要条件。
+ */
+export function classifyRawCommentsPanelRecovery(base: OcrResult, current: OcrResult): RawCommentsPanelRecovery {
+  if (findCommentsPanelTitle(current.lines)) return "panel_still_visible";
+  if (isWeixinChannelsAuxiliaryPage(current.lines)) return "player_structure_not_restored";
+  return commentsPanelClosedOnSameVideo(base, current)
+    ? "closed_confirmed"
+    : "player_structure_not_restored";
+}
+
 async function findCommentsClosePointFromScreenshot(screenshot: string, lines: OcrLine[]) {
   const ocrPoint = findCommentsClosePoint(lines);
   if (ocrPoint) return ocrPoint;
-  const title = lines
-    .filter((line) => line.confidence >= 0.25 && /^(评论|評論)(?:\s*\d+(?:\.\d+)?(?:万|萬|w|W)?)?$/.test(line.text.trim()))
-    .sort((left, right) => right.y - left.y)[0];
+  const title = findCommentsPanelTitle(lines);
   if (!title) return null;
   const { data, info } = await sharp(screenshot).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const centerY = Math.round((1 - (title.y + title.height / 2)) * info.height);
@@ -2386,7 +2408,7 @@ async function captureVisibleVideoToRawSpool(params: {
   const capturedAt = new Date(captureStartedAt).toISOString();
   const temporaryFiles: string[] = [];
   const assets: Array<{
-    kind: "player_base" | "player_progress" | "comments_page" | "player_closed" | "search_result";
+    kind: WeixinChannelsRawAssetKind;
     sourceFile: string;
     progress?: number;
     page?: number;
@@ -2446,7 +2468,10 @@ async function captureVisibleVideoToRawSpool(params: {
       await runSwiftControl(["key", "escape"]).catch(() => undefined);
     }
 
-    // 评论入口和关闭 X 仍属于安全动作：OCR 只证明 UI 结构，不读取评论内容。
+    // 评论入口和关闭 X 仍属于安全动作：每次点击前都重新取当前帧 OCR。
+    // 进度抽查、控制条出现和 Escape 都会让进入函数时的 OCR 坐标过期。
+    await captureWindow(params.screenshot);
+    currentSafetyOcr = await readOcr(params.screenshot);
     const commentPoint = findCommentsOpenPoint(currentSafetyOcr.lines);
     if (commentPoint) {
       await runSwiftControl([
@@ -2475,33 +2500,75 @@ async function captureVisibleVideoToRawSpool(params: {
           }
           await saveCurrentFrame("comments_page", "comments-" + page, { page });
         }
-        if (!await closeConfirmedCommentsPanel(params.screenshot, panel.lines)) {
-          throw new Error("weixin_channels_raw_comments_close_not_proven");
+        let closed = false;
+        let closeFailure: string | undefined;
+        // 关闭按钮必须在点击前的当前帧重新定位；每次点击后都保留截图，再以
+        // 抽屉标题/X、播放器结构与同视频连续性分别判断，而非猜测底部入口。
+        for (let closeAttempt = 0; closeAttempt < 3; closeAttempt += 1) {
+          await captureWindow(params.screenshot);
+          const beforeClose = await readOcr(params.screenshot);
+          await saveCurrentFrame("comments_close_attempt", "comments-close-attempt-" + closeAttempt);
+          const closePoint = await findCommentsClosePointFromScreenshot(
+            params.screenshot,
+            beforeClose.lines,
+          );
+          if (!closePoint) {
+            closeFailure = findCommentsPanelTitle(beforeClose.lines)
+              ? "weixin_channels_raw_comments_close_button_not_found"
+              : "weixin_channels_raw_player_structure_not_restored";
+            break;
+          }
+          await runSwiftControl([
+            "click-confirmed-comments-close",
+            closePoint.x.toFixed(5),
+            closePoint.y.toFixed(5),
+          ]);
+          await new Promise((resolve) => setTimeout(resolve, 220 + closeAttempt * 100));
+          await captureWindow(params.screenshot);
+          const afterClose = await readOcr(params.screenshot);
+          await saveCurrentFrame("comments_close_result", "comments-close-result-" + closeAttempt);
+          const recovery = classifyRawCommentsPanelRecovery(currentSafetyOcr, afterClose);
+          if (recovery === "closed_confirmed") {
+            currentSafetyOcr = afterClose;
+            commentsStatus = "closed_confirmed";
+            closed = true;
+            break;
+          }
+          if (recovery === "panel_still_visible") {
+            closeFailure = closeAttempt === 2
+              ? "weixin_channels_raw_comments_close_click_not_effective"
+              : undefined;
+            // 抽屉仍打开时只在本窗口、当前帧重新找 X；禁止滚动、上传或推进。
+            continue;
+          }
+          closeFailure = "weixin_channels_raw_player_structure_not_restored";
+          break;
+        }
+        if (!closed) {
+          throw new Error(closeFailure || "weixin_channels_raw_comments_panel_still_visible");
         }
       } else {
         commentsStatus = "open_unconfirmed";
         await runSwiftControl(["key", "escape"]);
+        await new Promise((resolve) => setTimeout(resolve, 220));
+        await captureWindow(params.screenshot);
+        currentSafetyOcr = await readOcr(params.screenshot);
+        if (findCommentsPanelTitle(currentSafetyOcr.lines)) {
+          throw new Error("weixin_channels_raw_comments_panel_still_visible");
+        }
+        if (!commentsPanelClosedOnSameVideo(params.safetyOcr, currentSafetyOcr)) {
+          throw new Error("weixin_channels_raw_player_structure_not_restored");
+        }
       }
     }
 
-    // 关闭后最多被动补拍三帧；这里只确认评论面板消失和播放器评论入口恢复，
-    // 不读取互动数字，不据此筛选内容。
-    let playerRestored = false;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 180 + attempt * 120));
-      await captureWindow(params.screenshot);
-      currentSafetyOcr = await readOcr(params.screenshot);
-      const closePoint = await findCommentsClosePointFromScreenshot(
-        params.screenshot,
-        currentSafetyOcr.lines,
-      );
-      if (!closePoint && findCommentsOpenPoint(currentSafetyOcr.lines)) {
-        playerRestored = true;
-        break;
+    // entry_missing 从未打开抽屉，不能走“关闭后恢复”校验；已经在关闭循环确认
+    // 的 closed_confirmed 也不再额外要求评论入口二次 OCR，避免右窗误判死循环。
+    if (commentsStatus === "entry_missing") {
+      if (isWeixinChannelsAuxiliaryPage(currentSafetyOcr.lines)
+        || !commentsPanelClosedOnSameVideo(params.safetyOcr, currentSafetyOcr)) {
+        throw new Error("weixin_channels_raw_player_structure_not_confirmed_without_comments");
       }
-    }
-    if (!playerRestored) {
-      throw new Error("weixin_channels_raw_player_not_restored_after_comments");
     }
     await saveCurrentFrame("player_closed", "closed");
     const dwellRemainingMs = remainingWeixinChannelsRawVideoDwellMs(
@@ -2538,6 +2605,18 @@ async function captureVisibleVideoToRawSpool(params: {
       safetyOcr: currentSafetyOcr,
     };
   } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    await recordWeixinChannelsRawFailureEvidence({
+      root: params.root,
+      reservation: slot.reservation,
+      reason,
+      ocrLines: currentSafetyOcr.lines,
+      screenshot: params.screenshot,
+    }).catch((evidenceError) => {
+      process.stderr.write(`raw_failure_evidence_write_failed:${
+        evidenceError instanceof Error ? evidenceError.message : String(evidenceError)
+      }\n`);
+    });
     await releaseWeixinChannelsRawSlot({
       root: params.root,
       reservation: slot.reservation,
@@ -5876,22 +5955,20 @@ export async function runDualWindowCaptureStateMachine(params: {
       restart = nextWeixinChannelsRawFailureCount(restart, "failure");
       process.stderr.write(`collector_window_recovering:${session.windowId}:attempt=${restart}:reason=${lastFailure}\n`);
 
-      // 原始采集是可丢弃、可重做的 UI 子进程。连续三次失败时先退出并由
-      // launcher 重建双窗子进程；不得先沿用旧精准采集熔断把网页总开关暂停。
-      // 离线 OCR、pending、上传与千条模型任务均在独立 worker/Fly 继续运行。
+      // 普通 raw UI 故障（特别是右窗评论抽屉）只能在当前窗口局部恢复，绝不能
+      // 写 shared.abortReason 让本来持续提交的左窗一起退出。仅 windowId/PID
+      // 丢失会在上方进入 window_rebind_required；网页开关和全局安全熔断也有
+      // 各自的共享终止语义。
       if (params.rawHarvest) {
         if (shouldRestartWeixinChannelsRawChild(restart)) {
-          prepared.shared.abortReason = "raw_child_restart_required";
-          process.stderr.write(`raw_child_restart_required:${JSON.stringify({
+          process.stderr.write(`raw_window_recovery_isolated:${JSON.stringify({
             windowId: session.windowId,
             consecutiveFailures: restart,
             reason: lastFailure,
           })}\n`);
-          return {
-            windowId: session.windowId,
-            stopped: "raw_child_restart_required",
-            error: lastFailure,
-          };
+          // 计数只用于拉长本窗口退避，达到阈值后归零开始下一轮局部恢复；
+          // 不启动 launcher 重建，不让另一个健康窗口停止。
+          restart = 0;
         }
         const delayMs = collectorWindowRecoveryDelayMs(
           lastFailure,
