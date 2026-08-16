@@ -68,6 +68,28 @@ describe("manhuaViralTemplateBank", () => {
     expect(approved.every((t) => t.status === "approved")).toBe(true);
   });
 
+  it("严格保留合法优化修订元数据，缺少变更原因时 fail closed 丢弃 revision", () => {
+    const revision = {
+      parentTemplateId: "tpl_series_fixture01",
+      requestId: "request_owner_1234",
+      model: "deepseek_v4_0813_high",
+      modelName: "deepseek/deepseek-v4-pro-0813",
+      reasoningEffort: "high",
+      promptZh: "强化前三秒。",
+      changedFields: ["hook3sZh"],
+      reasons: [{ field: "hook3sZh", reasonZh: "强化悬念。" }],
+      createdByUserId: 7,
+      createdAt: "2026-08-17T00:00:00.000Z",
+    } as const;
+    expect(parseManhuaViralTemplateCard({ ...learnedCard(), status: "proposed", revision })?.revision)
+      .toMatchObject({ parentTemplateId: "tpl_series_fixture01", changedFields: ["hook3sZh"] });
+    expect(parseManhuaViralTemplateCard({
+      ...learnedCard(),
+      status: "proposed",
+      revision: { ...revision, reasons: [] },
+    })).toBeNull();
+  });
+
   it("groups by lane order without empty lanes", () => {
     const groups = listApprovedManhuaViralTemplatesGrouped([
       learnedCard(),

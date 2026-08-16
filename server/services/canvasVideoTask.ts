@@ -200,7 +200,9 @@ function taskPath(dir: string, taskId: string): string {
 async function writeTask(record: CanvasVideoTaskRecord): Promise<void> {
   const dir = await getTaskDir();
   const file = taskPath(dir, record.taskId);
-  const tmp = `${file}.tmp.${process.pid}.${Date.now()}`;
+  // 同一进程可在同一毫秒并发写同一任务；仅用 pid + Date.now() 会让两个写入撞临时文件，
+  // 先完成 rename 的请求会令另一个请求得到 ENOENT。每次写入使用独立 UUID 保持原子替换。
+  const tmp = `${file}.tmp.${process.pid}.${randomUUID()}`;
   record.updatedAt = new Date().toISOString();
   await fs.writeFile(tmp, JSON.stringify(record, null, 2));
   await fs.rename(tmp, file);

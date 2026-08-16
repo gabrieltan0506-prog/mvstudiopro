@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolvePlatformSupervisorOpsAllowed } from "./access-policy";
+import { resolvePlatformSupervisorOpsAllowed, resolveSiteOwnerOnlyAllowed } from "./access-policy";
 import {
   createSupervisorSessionToken,
   readSupervisorSession,
@@ -44,5 +44,12 @@ describe("监管 HttpOnly 会话", () => {
       { id: 1, role: "user" },
       { userId: 1, expiresAt: future },
     )).toBe(true);
+  });
+
+  it("owner 专属权限只认 OWNER_OPEN_ID，admin/supervisor 不能替代", () => {
+    expect(resolveSiteOwnerOnlyAllowed({ openId: "owner-open-id" }, "owner-open-id")).toBe(true);
+    expect(resolveSiteOwnerOnlyAllowed({ openId: "other" }, "owner-open-id")).toBe(false);
+    expect(resolveSiteOwnerOnlyAllowed({ openId: "owner-open-id" }, "")).toBe(false);
+    expect(resolveSiteOwnerOnlyAllowed({ openId: "" }, "owner-open-id")).toBe(false);
   });
 });
