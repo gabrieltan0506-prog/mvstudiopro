@@ -21,6 +21,8 @@ import {
   collectorAdvanceAllowed,
   collectorCaptureActivityIsOverdue,
   collectorCaptureFailureAction,
+  collectorCalibrationCoversExactDualWindows,
+  collectorCalibrationRevisionMatches,
   collectorCurrentVideoUiDisposition,
   collectorBoundWindowPresent,
   collectorPendingFileExists,
@@ -309,6 +311,28 @@ describe("weixin channels OCR", () => {
       "--pool",
       "--reuse-search-calibration",
     ])).toThrow("weixin_channels_calibration_reuse_requires_calibration");
+  });
+
+  it("网页暂停再开启后旧版本校准失效，且左右窗缺一不可", () => {
+    expect(collectorCalibrationRevisionMatches(11, 11)).toBe(true);
+    expect(collectorCalibrationRevisionMatches(11, 13)).toBe(false);
+    // 旧文件没有控制版本，部署后首次启动也必须重校，不能静默复用。
+    expect(collectorCalibrationRevisionMatches(undefined, 13)).toBe(false);
+    // probe 没有网页控制版本时仍允许使用自己的会话级校准。
+    expect(collectorCalibrationRevisionMatches(undefined, undefined)).toBe(true);
+
+    expect(collectorCalibrationCoversExactDualWindows(
+      [58442, 58429],
+      [58429, 58442],
+    )).toBe(true);
+    expect(collectorCalibrationCoversExactDualWindows(
+      [58442, 58429],
+      [58442],
+    )).toBe(false);
+    expect(collectorCalibrationCoversExactDualWindows(
+      [58442, 58429],
+      [58442, 58442],
+    )).toBe(false);
   });
 
   it("raw 子进程到点后最多只留一分钟收尾", () => {

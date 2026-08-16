@@ -1536,6 +1536,11 @@ type CollectorSearchCalibration = {
   point: { x: number; y: number };
   calibratedAt: string;
   scope?: "probe" | "formal";
+  /**
+   * 网页采集开关每次停/开都会递增。只有同一控制版本内的二十分钟子进程
+   * 轮换才允许复用；恢复采集后必须让左右窗各自重新校准。
+   */
+  controlRevision?: number;
 };
 
 function collectorSearchCalibrationFile(session: WeixinChannelsWindowSession, tempDir = os.tmpdir()) {
@@ -1545,7 +1550,28 @@ function collectorSearchCalibrationFile(session: WeixinChannelsWindowSession, te
   );
 }
 
-async function loadCollectorSearchCalibration(requiredScope?: "formal") {
+export function collectorCalibrationRevisionMatches(
+  savedRevision: number | undefined,
+  requiredRevision: number | undefined,
+) {
+  return requiredRevision === undefined || savedRevision === requiredRevision;
+}
+
+export function collectorCalibrationCoversExactDualWindows(
+  sessionWindowIds: number[],
+  calibratedWindowIds: number[],
+) {
+  const expected = Array.from(new Set(sessionWindowIds)).sort((left, right) => left - right);
+  const actual = Array.from(new Set(calibratedWindowIds)).sort((left, right) => left - right);
+  return expected.length === 2
+    && actual.length === 2
+    && expected.every((windowId, index) => actual[index] === windowId);
+}
+
+async function loadCollectorSearchCalibration(
+  requiredScope?: "formal",
+  requiredControlRevision?: number,
+) {
   const session = requireCollectorWindowSession();
   try {
     const parsed = JSON.parse(
@@ -1554,6 +1580,7 @@ async function loadCollectorSearchCalibration(requiredScope?: "formal") {
     if (parsed.windowId !== session.windowId
       || parsed.pid !== session.pid
       || (requiredScope && parsed.scope !== requiredScope)
+      || !collectorCalibrationRevisionMatches(parsed.controlRevision, requiredControlRevision)
       || parsed.point.x < 0.55
       || parsed.point.x > 0.9
       || parsed.point.y < 0.005
@@ -1569,6 +1596,7 @@ async function calibrateCollectorSearchButton(
   session: WeixinChannelsWindowSession,
   label: string,
   scope: "probe" | "formal" = "probe",
+  controlRevision?: number,
 ) {
   return collectorWindowContext.run(session, async () => {
     const { stdout } = await runSwiftControl(["calibrate-point", label]);
@@ -1584,6 +1612,7 @@ async function calibrateCollectorSearchButton(
       point: { x: point.x!, y: point.y! },
       calibratedAt: new Date().toISOString(),
       scope,
+      controlRevision,
     };
     const file = collectorSearchCalibrationFile(session);
     const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
@@ -1596,8 +1625,11 @@ async function calibrateCollectorSearchButton(
 
 async function calibrateCollectorSearchButtonsForSessions(
   sessions: WeixinChannelsWindowSession[],
-  options: { formal?: boolean; force?: boolean } = {},
+  options: { formal?: boolean; force?: boolean; controlRevision?: number } = {},
 ) {
+  if (options.formal && sessions.length !== 2) {
+    throw new Error("weixin_channels_formal_calibration_requires_exact_two_windows");
+  }
   collectorWindowScopeRequired = true;
   const points: Array<{ windowId: number; point: { x: number; y: number } }> = [];
   for (const session of [...sessions].sort((left, right) => left.bounds.x - right.bounds.x)) {
@@ -1605,12 +1637,16 @@ async function calibrateCollectorSearchButtonsForSessions(
       ? null
       : await collectorWindowContext.run(
         session,
-        () => loadCollectorSearchCalibration(options.formal ? "formal" : undefined),
+        () => loadCollectorSearchCalibration(
+          options.formal ? "formal" : undefined,
+          options.controlRevision,
+        ),
       );
     const point = saved || await calibrateCollectorSearchButton(
       session,
       `${session.slot === 1 ? "左窗" : "右窗"}：请点击顶部方框放大镜`,
       options.formal ? "formal" : "probe",
+      options.controlRevision,
     );
     if (saved) {
       process.stderr.write(`search_button_calibration_reused:${JSON.stringify({
@@ -1620,6 +1656,19 @@ async function calibrateCollectorSearchButtonsForSessions(
       })}\n`);
     }
     points.push({ windowId: session.windowId, point });
+  }
+  if (options.formal && !collectorCalibrationCoversExactDualWindows(
+    sessions.map((session) => session.windowId),
+    points.map((item) => item.windowId),
+  )) {
+    throw new Error("weixin_channels_dual_window_calibration_incomplete");
+  }
+  if (options.formal) {
+    process.stderr.write(`dual_window_search_calibration_complete:${JSON.stringify({
+      windowIds: points.map((item) => item.windowId),
+      controlRevision: options.controlRevision,
+      forced: Boolean(options.force),
+    })}\n`);
   }
   return points;
 }
@@ -7057,19 +7106,17 @@ async function main() {
       if (dualWindowProbe && sessions.length !== 2) {
         throw new Error("weixin_channels_dual_window_probe_requires_two_windows");
       }
-      if (calibrateSearchButtons && !reuseCalibrationForRawCycle) {
+      if (calibrateSearchButtons) {
+        const controlRevision = controlHeartbeat?.controlRevision;
+        // 只有同一网页控制版本内的二十分钟子进程轮换允许复用。旧校准文件
+        // 没有 controlRevision，或用户停采后再开采导致版本变化时，左右窗都会
+        // 逐一重新弹出十字校准；任一窗未完成就不会进入采集状态机。
+        const canReuseCurrentControlRevision = reuseCalibrationForRawCycle
+          && Number.isInteger(controlRevision);
         await calibrateCollectorSearchButtonsForSessions(sessions, {
           formal: true,
-          // 网页每次重新开启都要求左右窗重新定位；即使窗口身份不变，
-          // 用户也可能移动或缩放窗口，不能静默复用上次坐标。
-          force: true,
-        });
-      } else if (calibrateSearchButtons) {
-        // 采集子进程轮换后复用与 windowId/PID/窗口尺寸绑定的相对坐标；
-        // 校准文件校验不通过时内部会 fail-closed，不能回退到历史固定坐标。
-        await calibrateCollectorSearchButtonsForSessions(sessions, {
-          formal: true,
-          force: false,
+          force: !canReuseCurrentControlRevision,
+          controlRevision,
         });
       }
       let floatingControl: ChildProcess | undefined;
