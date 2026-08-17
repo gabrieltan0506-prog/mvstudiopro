@@ -10,11 +10,13 @@ import {
   readManhuaLearnActiveJob,
   readManhuaLearnBasket,
   readManhuaLearnResult,
+  readManhuaLearnMissingDismissedKeys,
   removeManhuaLearnBasketItem,
   upsertManhuaLearnBasketItem,
   writeManhuaLearnActiveJob,
   writeManhuaLearnBasket,
   writeManhuaLearnResult,
+  writeManhuaLearnMissingDismissedKeys,
 } from "./manhuaLearnResultUi";
 
 function installMemoryLocalStorage() {
@@ -187,6 +189,25 @@ describe("manhuaLearnResultUi soft-fail", () => {
       listedEpisodeCount: 99,
       pendingCount: 90,
     });
+  });
+
+  it("付费缺集不算普通待学，并可持久删除缺集提示", () => {
+    installMemoryLocalStorage();
+    const result = manhuaLearnResultFromJobOutput({
+      seriesKey: "paid_series",
+      learnedCount: 13,
+      listedEpisodeCount: 72,
+      paywallStartEpisodeIndex: 14,
+      paywallEpisodeIndexes: Array.from({ length: 59 }, (_, i) => i + 14),
+      missingEpisodeCount: 59,
+      digestsPreview: [],
+      messageZh: "免费段已学完",
+    });
+    expect(result.pendingCount).toBe(0);
+    expect(result.missingEpisodeCount).toBe(59);
+    expect(result.paywallStartEpisodeIndex).toBe(14);
+    writeManhuaLearnMissingDismissedKeys(["paid_series"]);
+    expect(readManhuaLearnMissingDismissedKeys()).toEqual(["paid_series"]);
   });
 
   it("keeps multiple dramas separate and removes a completed drama", () => {

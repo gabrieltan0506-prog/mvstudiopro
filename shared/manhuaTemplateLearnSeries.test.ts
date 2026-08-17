@@ -11,6 +11,7 @@ import {
   classifyManhuaLearnTitle,
   mergeEpisodeDigestsIntoProposal,
   nextManhuaLearnEpisodeFailureStreak,
+  deriveManhuaLearnPaywallState,
   pickNextEpisodeIndexes,
   type ManhuaLearnEpisodeDigest,
   pickManhuaLearnEpisodeGapMs,
@@ -214,6 +215,35 @@ describe("pickRetrySkippedEpisodeIndexes（重试暂跳集批次）", () => {
         batchSize: 2,
       }),
     ).toEqual([1, 2]);
+  });
+});
+
+describe("deriveManhuaLearnPaywallState（付费边界）", () => {
+  it("第14集明确付费后跳过14及以后，保留1–13可学", () => {
+    const listed = Array.from({ length: 72 }, (_, offset) => ({
+      index: offset + 1,
+      access: offset + 1 >= 14 ? "paid_locked" as const : "free" as const,
+    }));
+    const state = deriveManhuaLearnPaywallState({ listed, reliable: true });
+    expect(state.paywallStartEpisodeIndex).toBe(14);
+    expect(state.paywallEpisodeIndexes).toHaveLength(59);
+    expect(state.paywallEpisodeIndexes[0]).toBe(14);
+    expect(state.paywallEpisodeIndexes.at(-1)).toBe(72);
+  });
+
+  it("接口瞬时缺字段时保留旧边界；完整明确免费时才解冻", () => {
+    expect(deriveManhuaLearnPaywallState({
+      listed: [{ index: 13 }, { index: 14 }],
+      reliable: true,
+      previousIndexes: [14, 15],
+      previousStartIndex: 14,
+    })).toMatchObject({ paywallStartEpisodeIndex: 14, paywallEpisodeIndexes: [14, 15] });
+    expect(deriveManhuaLearnPaywallState({
+      listed: [{ index: 13, access: "free" }, { index: 14, access: "free" }],
+      reliable: true,
+      previousIndexes: [14, 15],
+      previousStartIndex: 14,
+    })).toEqual({ paywallEpisodeIndexes: [], detected: true });
   });
 });
 

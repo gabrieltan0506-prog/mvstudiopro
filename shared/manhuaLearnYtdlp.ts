@@ -154,6 +154,19 @@ export function isManhuaLearnPermissionDeniedHint(raw: unknown): boolean {
   );
 }
 
+/**
+ * 只认明确的付费墙语义。普通「无权/权限不足」也可能来自登录态、CDN 或风控，
+ * 不足以把本集及后续分集永久划入付费段。
+ */
+export function isManhuaLearnExplicitPaywallHint(raw: unknown): boolean {
+  const text = raw instanceof Error
+    ? `${raw.message}\n${raw.cause ? String(raw.cause) : ""}`
+    : String(raw || "");
+  return /付费|付費|购买后可看|購買後可看|需购买|需購買|会员专享|會員專享|需开通会员|需開通會員|VIP专享|VIP專享|paywall|paid content|premium only/i.test(
+    text,
+  );
+}
+
 /** 合集 mixId → 候选合集页 URL（优先 collection，再 mix） */
 export function buildDouyinMixCandidateUrls(mixId: string): string[] {
   const id = String(mixId || "").trim();

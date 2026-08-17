@@ -21,6 +21,7 @@ export const LS_MANHUA_LEARN_SERIES_KEY = "mv-manhua-learn-focus-series-v1";
 export const LS_MANHUA_LEARN_ACTIVE_JOB = "mvs-manhua-learn-active-job-v1";
 export const LS_MANHUA_LEARN_RESULT = "mvs-manhua-learn-result-v1";
 const LS_MANHUA_LEARN_BASKET_PREFIX = "mvs-manhua-learn-basket-v1";
+const LS_MANHUA_LEARN_MISSING_DISMISSED = "mvs-manhua-learn-missing-dismissed-v1";
 
 export type ManhuaLearnActiveJobRecord = {
   jobId: string;
@@ -70,6 +71,10 @@ export type ManhuaLearnResultUi = {
   pendingCount?: number;
   /** 因来源受限暂跳的集号；不计入已学，可在来源恢复后重试 */
   skippedEpisodeIndexes?: number[];
+  paywallEpisodeIndexes?: number[];
+  paywallStartEpisodeIndex?: number;
+  /** 付费段尚缺集数；与可继续学习的 pendingCount 分开。 */
+  missingEpisodeCount?: number;
   /** cloud | local */
   channel?: ManhuaLearnChannel;
   /** queued | running | succeeded | failed | local */
@@ -215,6 +220,9 @@ export function mergeManhuaLearnLiveProgress(
     Math.floor(Number(out.listedEpisodeCount) || 0),
     logCounts.listed,
   );
+  const livePaywallEpisodeIndexes = Array.isArray(out.paywallEpisodeIndexes)
+    ? out.paywallEpisodeIndexes.map(Number).filter((index) => Number.isFinite(index) && index >= 1)
+    : base.paywallEpisodeIndexes;
   const liveDigests = Array.isArray(out.digestsPreview)
     ? out.digestsPreview.map((raw) => {
         const row = raw as Record<string, unknown>;
@@ -249,8 +257,24 @@ export function mergeManhuaLearnLiveProgress(
     batchLearned,
     listedEpisodeCount: listedEpisodeCount || undefined,
     pendingCount: listedEpisodeCount > 0
-      ? Math.max(0, listedEpisodeCount - learnedCount)
+      ? Math.max(
+          0,
+          listedEpisodeCount
+            - learnedCount
+            - (base.skippedEpisodeIndexes?.length || 0)
+            - (livePaywallEpisodeIndexes?.length || 0),
+        )
       : base.pendingCount,
+    paywallEpisodeIndexes: livePaywallEpisodeIndexes?.length
+      ? livePaywallEpisodeIndexes
+      : undefined,
+    paywallStartEpisodeIndex:
+      Math.max(0, Math.floor(Number(out.paywallStartEpisodeIndex) || 0))
+      || base.paywallStartEpisodeIndex,
+    missingEpisodeCount: Math.max(
+      0,
+      Math.floor(Number(out.missingEpisodeCount) || livePaywallEpisodeIndexes?.length || 0),
+    ),
     digestsPreview: liveDigests.length ? liveDigests : base.digestsPreview,
   };
 }
@@ -296,6 +320,10 @@ export function manhuaLearnResultFromFailure(input: {
     tagLabelsZh: input.prev?.tagLabelsZh,
     listedEpisodeCount: input.prev?.listedEpisodeCount,
     pendingCount: input.prev?.pendingCount,
+    skippedEpisodeIndexes: input.prev?.skippedEpisodeIndexes,
+    paywallEpisodeIndexes: input.prev?.paywallEpisodeIndexes,
+    paywallStartEpisodeIndex: input.prev?.paywallStartEpisodeIndex,
+    missingEpisodeCount: input.prev?.missingEpisodeCount,
   };
 }
 
@@ -448,6 +476,27 @@ export function writeManhuaLearnResult(value: ManhuaLearnResultUi | null): void 
   }
 }
 
+export function readManhuaLearnMissingDismissedKeys(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LS_MANHUA_LEARN_MISSING_DISMISSED) || "[]");
+    return Array.isArray(parsed)
+      ? parsed.map((key) => String(key || "").trim()).filter(Boolean).slice(-100)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function writeManhuaLearnMissingDismissedKeys(keys: readonly string[]): void {
+  try {
+    const normalized = Array.from(new Set(keys.map((key) => String(key || "").trim()).filter(Boolean))).slice(-100);
+    if (normalized.length) localStorage.setItem(LS_MANHUA_LEARN_MISSING_DISMISSED, JSON.stringify(normalized));
+    else localStorage.removeItem(LS_MANHUA_LEARN_MISSING_DISMISSED);
+  } catch {
+    /* ignore */
+  }
+}
+
 function manhuaLearnBasketStorageKey(userKey: string): string {
   const safe = String(userKey || "").trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
   return `${LS_MANHUA_LEARN_BASKET_PREFIX}:${safe || "anonymous"}`;
@@ -468,7 +517,11 @@ export function readManhuaLearnBasket(userKey: string): ManhuaLearnBasketItem[] 
           String(item.seriesKey || "").trim()
           && /^https?:\/\//i.test(sourceUrl)
           && item.result
-          && (typeof item.result.pendingCount !== "number" || item.result.pendingCount > 0),
+          && (
+            typeof item.result.pendingCount !== "number"
+            || item.result.pendingCount > 0
+            || (item.result.missingEpisodeCount || 0) > 0
+          ),
         );
       })
       .map((item) => item as ManhuaLearnBasketItem)
@@ -484,7 +537,11 @@ export function writeManhuaLearnBasket(userKey: string, items: ManhuaLearnBasket
     const pending = (items || [])
       .filter(
         (item) => /^https?:\/\//i.test(String(item.continuation.row.url || "").trim())
-          && (typeof item.result.pendingCount !== "number" || item.result.pendingCount > 0),
+          && (
+            typeof item.result.pendingCount !== "number"
+            || item.result.pendingCount > 0
+            || (item.result.missingEpisodeCount || 0) > 0
+          ),
       )
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, 30);
@@ -512,7 +569,11 @@ export function upsertManhuaLearnBasketItem(
     ).trim();
     return current.seriesKey !== item.seriesKey && (!source || currentSource !== source);
   });
-  if (typeof item.result.pendingCount === "number" && item.result.pendingCount <= 0) {
+  if (
+    typeof item.result.pendingCount === "number"
+    && item.result.pendingCount <= 0
+    && (item.result.missingEpisodeCount || 0) <= 0
+  ) {
     return kept;
   }
   return [item, ...kept].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 30);
@@ -754,6 +815,13 @@ export function manhuaLearnResultFromJobOutput(
         .filter((n) => n >= 1)
         .sort((a, b) => a - b)
     : [];
+  const paywallEpisodeIndexes = Array.isArray(out.paywallEpisodeIndexes)
+    ? out.paywallEpisodeIndexes
+        .map((n) => Math.floor(Number(n) || 0))
+        .filter((n) => n >= 1)
+        .sort((a, b) => a - b)
+    : [];
+  const paywallStartEpisodeIndex = Math.max(0, Math.floor(Number(out.paywallStartEpisodeIndex) || 0));
   const progressLines = parseProgressLines(out.learnProgressLog);
   const messageZh = String(out.messageZh || "").trim();
   const emptyFail = isManhuaLearnEmptyBatchFailure({
@@ -786,8 +854,16 @@ export function manhuaLearnResultFromJobOutput(
     listedEpisodeCount: listed || undefined,
     // 待学 = 列表 − 已学 − 暂跳：暂跳集要走「重试暂跳集」，不算普通待学
     pendingCount:
-      listed > 0 ? Math.max(0, listed - learnedCount - skippedEpisodeIndexes.length) : undefined,
+      listed > 0
+        ? Math.max(0, listed - learnedCount - skippedEpisodeIndexes.length - paywallEpisodeIndexes.length)
+        : undefined,
     skippedEpisodeIndexes: skippedEpisodeIndexes.length ? skippedEpisodeIndexes : undefined,
+    paywallEpisodeIndexes: paywallEpisodeIndexes.length ? paywallEpisodeIndexes : undefined,
+    paywallStartEpisodeIndex: paywallStartEpisodeIndex || undefined,
+    missingEpisodeCount: Math.max(
+      0,
+      Math.floor(Number(out.missingEpisodeCount) || paywallEpisodeIndexes.length),
+    ),
     channel: out.learnChannel === "local" ? "local" : "cloud",
     liveStatus: emptyFail ? "failed" : "succeeded",
     livePhase: emptyFail ? MANHUA_LEARN_STAGE.failed : MANHUA_LEARN_STAGE.done,
@@ -819,6 +895,8 @@ export function manhuaLearnResultFromSnapshot(input: {
     categoryLabelZh?: string;
     tagLabelsZh?: string[] | null;
     skippedEpisodeIndexes?: number[] | null;
+    paywallEpisodeIndexes?: number[] | null;
+    paywallStartEpisodeIndex?: number;
   } | null;
   digestsPreview: ManhuaLearnResultUi["digestsPreview"];
   /** 服务端已整集学完数；preview 含未学完检查点，不能拿长度冒充完成数 */
@@ -836,6 +914,16 @@ export function manhuaLearnResultFromSnapshot(input: {
         .filter((n) => n >= 1)
         .sort((a, b) => a - b)
     : [];
+  const paywallEpisodeIndexes = Array.isArray(input.progress?.paywallEpisodeIndexes)
+    ? input.progress!.paywallEpisodeIndexes!
+        .map((n) => Math.floor(Number(n) || 0))
+        .filter((n) => n >= 1)
+        .sort((a, b) => a - b)
+    : [];
+  const paywallStartEpisodeIndex = Math.max(
+    0,
+    Math.floor(Number(input.progress?.paywallStartEpisodeIndex) || 0),
+  );
   const tags = Array.isArray(input.progress?.tagLabelsZh)
     ? input.progress!.tagLabelsZh!.map((t) => String(t || "").trim()).filter(Boolean)
     : [];
@@ -858,8 +946,15 @@ export function manhuaLearnResultFromSnapshot(input: {
     tagLabelsZh: tags.length ? tags : undefined,
     listedEpisodeCount: listed || undefined,
     pendingCount:
-      listed > 0 ? Math.max(0, listed - learnedCount - skippedEpisodeIndexes.length) : undefined,
+      listed > 0
+        ? Math.max(0, listed - learnedCount - skippedEpisodeIndexes.length - paywallEpisodeIndexes.length)
+        : undefined,
     skippedEpisodeIndexes: skippedEpisodeIndexes.length ? skippedEpisodeIndexes : undefined,
+    paywallEpisodeIndexes: paywallEpisodeIndexes.length ? paywallEpisodeIndexes : undefined,
+    paywallStartEpisodeIndex: paywallStartEpisodeIndex || undefined,
+    missingEpisodeCount: paywallEpisodeIndexes.filter(
+      (episodeIndex) => !input.digestsPreview.some((digest) => digest.episodeIndex === episodeIndex && digest.complete),
+    ).length,
     digestsPreview: input.digestsPreview,
     proposal:
       analysisReady && proposalRaw

@@ -136,12 +136,14 @@ import {
   readManhuaLearnActiveJob,
   readManhuaLearnBasket,
   readManhuaLearnFocusSeriesKey,
+  readManhuaLearnMissingDismissedKeys,
   readManhuaLearnResult,
   removeManhuaLearnBasketItem,
   upsertManhuaLearnBasketItem,
   writeManhuaLearnActiveJob,
   writeManhuaLearnBasket,
   writeManhuaLearnFocusSeriesKey,
+  writeManhuaLearnMissingDismissedKeys,
   writeManhuaLearnResult,
   type ManhuaLearnActiveJobRecord,
   type ManhuaLearnBasketItem,
@@ -2467,6 +2469,9 @@ export default function PlatformPage() {
   /** 同一页面只允许一个轮询 owner；刷新后新页面从 active job 接手。 */
   const manhuaLearnPollingJobIdRef = useRef<string | null>(null);
   const [manhuaLearnContinueDismissedKey, setManhuaLearnContinueDismissedKey] = useState("");
+  const [manhuaLearnMissingDismissedKeys, setManhuaLearnMissingDismissedKeys] = useState<string[]>(
+    readManhuaLearnMissingDismissedKeys,
+  );
   const focusedManhuaLearnBasketItem = manhuaLearnBasket.find(
     (item) => item.seriesKey === manhuaLearnFocusSeriesKey,
   );
@@ -12535,6 +12540,38 @@ export default function PlatformPage() {
                               </>
                             ) : null}
                           </div>
+                          {(manhuaLearnResult.missingEpisodeCount || 0) > 0
+                            && !manhuaLearnMissingDismissedKeys.includes(manhuaLearnResult.seriesKey) ? (
+                            <div className="rounded-lg border border-orange-300/35 bg-orange-500/10 px-2.5 py-2 text-orange-50/90">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="font-semibold">
+                                    本季尚缺 {manhuaLearnResult.missingEpisodeCount} 集
+                                  </p>
+                                  <p className="mt-1 text-[10px] text-orange-100/70">
+                                    {manhuaLearnResult.paywallStartEpisodeIndex
+                                      ? `已确认第 ${manhuaLearnResult.paywallStartEpisodeIndex} 集起需要购买；系统不再尝试付费段，也不计入连续失败。`
+                                      : "已识别付费缺集；系统不再尝试，也不计入连续失败。"}
+                                    后续可贴同剧名混剪补学；混剪覆盖范围不明确，因此不会自动冒充补齐原集。
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const next = Array.from(new Set([
+                                      ...manhuaLearnMissingDismissedKeys,
+                                      manhuaLearnResult.seriesKey,
+                                    ]));
+                                    setManhuaLearnMissingDismissedKeys(next);
+                                    writeManhuaLearnMissingDismissedKeys(next);
+                                  }}
+                                  className="shrink-0 rounded-md border border-orange-200/30 px-2 py-0.5 text-[10px] hover:bg-orange-400/15"
+                                >
+                                  删除提示
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
                           {(manhuaLearnResult.categoryLabelZh
                             || (manhuaLearnResult.tagLabelsZh?.length || 0) > 0) ? (
                             <div className="flex flex-wrap gap-1.5">

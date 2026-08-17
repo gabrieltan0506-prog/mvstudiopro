@@ -5,6 +5,7 @@ import {
   hasManhuaLearnYtdlpCookieSource,
   isDouyinSingleVideoUrl,
   normalizeDouyinVideoUrl,
+  isManhuaLearnExplicitPaywallHint,
   isManhuaLearnPermissionDeniedHint,
   listedSingleEpisodeFromUrl,
   mapManhuaLearnFetchError,
@@ -16,6 +17,12 @@ import {
 } from "./manhuaLearnYtdlp";
 
 describe("manhuaLearnYtdlp", () => {
+  it("只把明确购买语义认作付费墙，不把普通权限错误永久划成付费段", () => {
+    expect(isManhuaLearnExplicitPaywallHint("购买后可看")).toBe(true);
+    expect(isManhuaLearnExplicitPaywallHint("paid content")).toBe(true);
+    expect(isManhuaLearnExplicitPaywallHint("HTTP 403 权限不足")).toBe(false);
+  });
+
   it("detects douyin single video urls", () => {
     expect(
       isDouyinSingleVideoUrl("https://www.douyin.com/video/7658227988223380788"),
