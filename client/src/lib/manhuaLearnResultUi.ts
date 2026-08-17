@@ -155,9 +155,12 @@ export function mergeManhuaLearnLiveProgress(
     prev ||
     manhuaLearnResultFromStart({ channel: "cloud" });
   const out = tick.output || {};
+  const rawStage = String(out.analysisStage || "").replace(/^manhua_learn_/, "");
   const label =
     String(out.analysisStageLabel || "").trim() ||
-    manhuaLearnStageLabelZh(String(out.analysisStage || "").replace(/^manhua_learn_/, ""));
+    manhuaLearnStageLabelZh(
+      tick.status === "queued" && !rawStage ? MANHUA_LEARN_STAGE.queued : rawStage,
+    );
   const fromJob = parseProgressLines(out.learnProgressLog);
   const progressLines =
     fromJob.length > 0
@@ -165,7 +168,7 @@ export function mergeManhuaLearnLiveProgress(
       : label
         ? appendManhuaLearnProgressLine(
             base.progressLines,
-            String(out.analysisStage || "").replace(/^manhua_learn_/, "") ||
+            rawStage ||
               MANHUA_LEARN_STAGE.queued,
             label,
           )
@@ -238,7 +241,7 @@ export function mergeManhuaLearnLiveProgress(
     seriesKey: String(out.seriesKey || base.seriesKey).trim() || base.seriesKey,
     channel: "cloud",
     liveStatus,
-    livePhase: String(out.analysisStage || base.livePhase || "").replace(/^manhua_learn_/, ""),
+    livePhase: rawStage || (tick.status === "queued" ? MANHUA_LEARN_STAGE.queued : base.livePhase),
     liveLabelZh: label || base.liveLabelZh,
     progressLines,
     messageZh: label || base.messageZh,

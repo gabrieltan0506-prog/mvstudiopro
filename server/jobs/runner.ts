@@ -62,6 +62,7 @@ import {
   getJobById,
   isManhuaTemplateLearnJobCancelRequested,
   markJobFailed,
+  markManhuaLearnJobSucceededWithRetry,
   markJobSucceeded,
   patchJobRunningProgress,
   requeueJob,
@@ -458,18 +459,22 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.done),
       );
     }
+    const terminalOutput = {
+      ...result,
+      proposalId: result.proposal?.id || null,
+      nameZh: result.proposal?.nameZh || null,
+      status: result.proposal?.status || null,
+      learnChannel: "cloud",
+      analysisStage: `manhua_learn_${MANHUA_LEARN_STAGE.done}`,
+      analysisStageLabel: manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.done),
+      learnProgressLog,
+    };
+    // 先保存完整终态 payload，再由 runClaimedJob 把 status 原子推进到 succeeded。
+    // 部署若刚好切在两次写入之间，启动恢复会认出 done，而不是重跑整条学习链。
+    if (jobId) await patchJobRunningProgress(jobId, terminalOutput);
     return {
       provider: "manhua-template-learn",
-      output: {
-        ...result,
-        proposalId: result.proposal?.id || null,
-        nameZh: result.proposal?.nameZh || null,
-        status: result.proposal?.status || null,
-        learnChannel: "cloud",
-        analysisStage: `manhua_learn_${MANHUA_LEARN_STAGE.done}`,
-        analysisStageLabel: manhuaLearnStageLabelZh(MANHUA_LEARN_STAGE.done),
-        learnProgressLog,
-      },
+      output: terminalOutput,
     };
   }
 
@@ -2610,7 +2615,19 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
       timeoutMs,
       `${job.type} job timed out after ${timeoutMs}ms`,
     );
-    const succeededPersisted = await markJobSucceeded(job.id, output, provider);
+    const manhuaLearnJob =
+      jobType === "video"
+      && isRecord(job.input)
+      && job.input.action === "manhua_template_learn";
+    const succeededPersisted = manhuaLearnJob
+      ? await markManhuaLearnJobSucceededWithRetry(job.id, output, provider)
+      : await markJobSucceeded(job.id, output, provider);
+    if (manhuaLearnJob && !succeededPersisted) {
+      // terminalOutput 已先写入 running.output；列表端与下次启动都能按 done 收敛成功。
+      // 此处绝不 throw/requeue，否则会把已经完成的媒体与模型工作整条再烧一次。
+      console.error(`[Jobs] manhua learn finished but status persistence is pending: jobId=${job.id}`);
+      return;
+    }
     const paidAssetStandardize =
       jobType === "image" &&
       isRecord(job.input) &&

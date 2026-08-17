@@ -34,6 +34,21 @@ afterEach(() => {
 });
 
 describe("manhuaLearnResultUi soft-fail", () => {
+  it("queued 且尚无 worker 输出时明确显示排队，不冒充学习进行中", () => {
+    const ui = mergeManhuaLearnLiveProgress(
+      manhuaLearnResultFromStart({
+        channel: "cloud",
+        url: "https://www.douyin.com/collection/queued",
+        title: "排队剧",
+      }),
+      { status: "queued", output: {} },
+    );
+    expect(ui.liveStatus).toBe("queued");
+    expect(ui.livePhase).toBe("queued");
+    expect(ui.liveLabelZh).toContain("等待开始");
+    expect(ui.liveLabelZh).not.toContain("学习进行中");
+  });
+
   it("detects empty-batch failure message", () => {
     expect(
       isManhuaLearnEmptyBatchFailure({

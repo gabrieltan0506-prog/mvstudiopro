@@ -677,19 +677,33 @@ async function startServer() {
     console.log(`Server listening on http://${host}:${port}/ (NODE_ENV=${process.env.NODE_ENV || "undefined"})`);
     // 漫剧学习逐集落盘；部署/崩溃会留下 running 行。先恢复为 queued 再启动 worker，
     // 让任务跳过已完成集并继续总分析，避免页面永久卡在“正在合成”。
-    void recoverInterruptedManhuaTemplateLearnJobsOnStartup()
-      .then(({ requeued, cancelled }) => {
-        if (requeued > 0 || cancelled > 0) {
-          console.warn(`[manhua-learn] startup recovery: requeued=${requeued} cancelled=${cancelled}`);
+    const recoverManhuaThenStartWorkers = async (attempt = 1): Promise<void> => {
+      try {
+        const { requeued, cancelled, completed, exhausted } =
+          await recoverInterruptedManhuaTemplateLearnJobsOnStartup();
+        if (requeued > 0 || cancelled > 0 || completed > 0 || exhausted > 0) {
+          console.warn(
+            `[manhua-learn] startup recovery: requeued=${requeued} cancelled=${cancelled} completed=${completed} exhausted=${exhausted}`,
+          );
         }
-      })
-      .catch((error) => {
-        console.error("[manhua-learn] startup recovery failed:", error);
-      })
-      .finally(() => {
         startJobWorker();
         startStaleJobsReaper();
-      });
+      } catch (error) {
+        // 不可在恢复失败后直接启动 worker：数据库稍后恢复时，queued 会继续跑，
+        // 旧 running 却永远无人接管，形成“前一条僵尸挡住后一条”的假学习中。
+        const retryMs = Math.min(30_000, 2_000 * attempt);
+        console.error(
+          `[manhua-learn] startup recovery failed; retrying in ${retryMs}ms:`,
+          error,
+        );
+        const retryTimer = setTimeout(
+          () => void recoverManhuaThenStartWorkers(attempt + 1),
+          retryMs,
+        );
+        if (typeof retryTimer.unref === "function") retryTimer.unref();
+      }
+    };
+    void recoverManhuaThenStartWorkers();
     // 启动时扫描并恢复孤儿 deepResearch 任务（机器重启/部署可能中断异步任务）
     import("../services/deepResearchService").then(({ recoverOrphanedJobs }) => {
       recoverOrphanedJobs().catch((e) => console.warn("[deepResearch] recover failed:", e));
