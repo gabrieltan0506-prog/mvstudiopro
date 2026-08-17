@@ -6755,10 +6755,29 @@ export async function runDualWindowCaptureStateMachine(params: {
       }
       if (isCollectorWindowBindingFailure(lastFailure)) {
         if (await collectorWindowBindingMissingPersistently(session)) {
-          prepared.shared.abortReason = "window_rebind_required";
+          const bindingFailureAtMs = Date.now();
+          prepared.shared.abortReason = "collector_cache_reset_restart_required";
+          if (params.rawHarvest) {
+            await writeCollectorRawWindowProgress({
+              windowId: session.windowId,
+              state: "global_restart_requested",
+            });
+          }
+          await recordResetFailure(
+            bindingFailureAtMs,
+            bindingFailureAtMs,
+            lastFailure,
+            false,
+          );
+          await requestGlobalCollectorRestart({
+            windowId: session.windowId,
+            pid: session.pid,
+            reason: lastFailure,
+            consecutiveFailures: Math.max(1, restart + 1),
+          });
           return {
             windowId: session.windowId,
-            stopped: "window_rebind_required",
+            stopped: "collector_cache_reset_restart_required",
             error: lastFailure,
           };
         }

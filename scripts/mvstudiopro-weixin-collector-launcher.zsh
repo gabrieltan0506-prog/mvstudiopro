@@ -26,11 +26,22 @@ collector_clear_transient_capture_cache() {
     /private/tmp/mvstudiopro-weixin-channels-raw-progress-*.json(N) \
     /private/tmp/weixin-channels-window-*.png(N) \
     /private/tmp/weixin-channels-sample-*.png(N) \
-    /private/tmp/weixin-channels-recovery-v1.json(N); do
+    /private/tmp/weixin-channels-recovery-v1.json(N) \
+    /private/tmp/weixin-channels-search-tabs-v2-*.json(N) \
+    /private/tmp/mvstudiopro-weixin-channels-reset-failures-*.json(N) \
+    /private/tmp/mvstudiopro-weixin-channels-control-*(N) \
+    /private/tmp/mvstudiopro-weixin-channels-ocr-*(N) \
+    /private/tmp/mvstudiopro-weixin-channels-floating-control-*(N); do
     /bin/rm -f -- "${transient_file}"
     cleared=$((cleared + 1))
   done
-  # 保留 calibration、raw spool、pending、seen、搜索状态、失败证据与 reset 诊断。
+  if [[ -d /private/tmp/mvstudiopro-swift-module-cache \
+    && ! -L /private/tmp/mvstudiopro-swift-module-cache ]]; then
+    /bin/rm -rf -- /private/tmp/mvstudiopro-swift-module-cache
+    cleared=$((cleared + 1))
+  fi
+  # 保留 calibration、raw spool、pending、seen 与失败证据；重启后重新绑定窗口，
+  # 但复用用户已经完成的双窗相对校准点，不要求再次点击十字星。
   print -- "weixin_channels_collector_transient_cache_cleared:${cleared}"
 }
 
