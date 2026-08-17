@@ -198,7 +198,51 @@ describe("weixin channels OCR", () => {
     );
     expect(launcher).toContain("collector_clear_transient_capture_cache");
     expect(launcher).toContain("collector_reuse_calibration=true");
+    expect(launcher).toContain("weixin-channels-search-tabs-v2-");
+    expect(launcher).toContain("mvstudiopro-swift-module-cache");
     expect(launcher).not.toContain("weixin-channels-search-calibration-v1-");
+  });
+
+  it("持续 window_not_found 绕过局部恢复并请求整组清缓存重启", async () => {
+    const captureSource = await fs.readFile(
+      path.resolve("scripts/weixin-channels-capture.mts"),
+      "utf8",
+    );
+    const bindingFailureBlock = captureSource.slice(
+      captureSource.indexOf("if (isCollectorWindowBindingFailure(lastFailure))"),
+      captureSource.indexOf("const failureAtMs = Date.now();"),
+    );
+    expect(bindingFailureBlock).toContain("collectorWindowBindingMissingPersistently(session)");
+    expect(bindingFailureBlock).toContain(
+      'prepared.shared.abortReason = "collector_cache_reset_restart_required"',
+    );
+    expect(bindingFailureBlock).toContain("requestGlobalCollectorRestart({");
+    expect(bindingFailureBlock).toContain(
+      'stopped: "collector_cache_reset_restart_required"',
+    );
+    expect(bindingFailureBlock).not.toContain('stopped: "window_rebind_required"');
+  });
+
+  it("本机 runtime 只从干净提交显式同步采集代码并重装双窗服务", async () => {
+    const source = await fs.readFile(
+      path.resolve("scripts/sync-weixin-channels-runtime.zsh"),
+      "utf8",
+    );
+    expect(source).toContain(
+      'readonly runtime_target_dir="/private/tmp/mvstudiopro-weixin-channels"',
+    );
+    expect(source).toContain("for runtime_tree in scripts shared server; do");
+    expect(source).toContain("runtime_source_dirty");
+    expect(source).toContain("runtime_sync_already_running");
+    expect(source).toContain("launchctl bootout");
+    expect(source).toContain("rsync -a");
+    expect(source).not.toContain("rsync --delete");
+    expect(source).not.toContain('${runtime_source_dir}/.env');
+    expect(source).not.toContain("runtime_root_file in .env");
+    expect(source).toContain(".mvstudiopro-weixin-runtime.json");
+    expect(source).toContain('install-weixin-channels-launchd.zsh" --install');
+    expect(source).toContain('install-weixin-channels-watchdog.zsh" --install');
+    expect(source.indexOf("launchctl bootout")).toBeLessThan(source.indexOf("rsync -a"));
   });
 
   it("三次 reset 后三分钟内再失败生成无密钥的结构化诊断", () => {
