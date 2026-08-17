@@ -304,6 +304,10 @@ export type ManhuaLearnSeriesProgress = {
   learnedEpisodeIndexes: number[];
   /** 当前来源不可用而暂跳的集号；用于下轮从后续集继续，不计入已学。 */
   skippedEpisodeIndexes?: number[];
+  /** 明确需要购买的集号；与技术失败暂跳分开，永不进入失败熔断或重试。 */
+  paywallEpisodeIndexes?: number[];
+  /** 本季首个明确付费集。 */
+  paywallStartEpisodeIndex?: number;
   updatedAt: string;
   dramaKind?: ManhuaDramaKind;
   categoryLabelZh?: string;
@@ -343,6 +347,52 @@ export function nextManhuaLearnEpisodeFailureStreak(
   return {
     count,
     shouldStop: count >= MANHUA_LEARN_CONSECUTIVE_FAIL_STOP,
+  };
+}
+
+export type ManhuaLearnEpisodeAccessRow = {
+  index: number;
+  access?: "free" | "paid_locked" | "unknown";
+};
+
+/**
+ * 把逐集付费信号收敛为稳定边界。发现首个付费集后，该集及其后的本季分集均跳过；
+ * 只有可靠列表且每一集都有明确免费信号时才清除旧边界，避免接口瞬时缺字段误解冻。
+ */
+export function deriveManhuaLearnPaywallState(input: {
+  listed: readonly ManhuaLearnEpisodeAccessRow[];
+  reliable: boolean;
+  previousIndexes?: readonly number[];
+  previousStartIndex?: number;
+}): { paywallEpisodeIndexes: number[]; paywallStartEpisodeIndex?: number; detected: boolean } {
+  const listed = input.listed
+    .filter((row) => Number.isFinite(row.index) && row.index >= 1)
+    .slice()
+    .sort((a, b) => a.index - b.index);
+  const paid = listed.filter((row) => row.access === "paid_locked").map((row) => row.index);
+  if (paid.length) {
+    const start = Math.min(...paid);
+    return {
+      paywallStartEpisodeIndex: start,
+      paywallEpisodeIndexes: listed.filter((row) => row.index >= start).map((row) => row.index),
+      detected: true,
+    };
+  }
+  const allExplicitFree = listed.length > 0 && listed.every((row) => row.access === "free");
+  if (input.reliable && allExplicitFree) {
+    return { paywallEpisodeIndexes: [], detected: true };
+  }
+  const previousIndexes = Array.from(new Set(input.previousIndexes || []))
+    .filter((index) => Number.isFinite(index) && index >= 1)
+    .sort((a, b) => a - b);
+  const previousStart = Number(input.previousStartIndex);
+  return {
+    paywallEpisodeIndexes: previousIndexes,
+    paywallStartEpisodeIndex:
+      Number.isFinite(previousStart) && previousStart >= 1
+        ? Math.floor(previousStart)
+        : previousIndexes[0],
+    detected: false,
   };
 }
 

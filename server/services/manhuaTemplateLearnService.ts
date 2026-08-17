@@ -35,6 +35,7 @@ import {
   isManhuaLearnEpisodeComplete,
   mergeEpisodeDigestsIntoProposal,
   mergeManhuaLearnChunkIntoDigest,
+  deriveManhuaLearnPaywallState,
   nextManhuaLearnEpisodeFailureStreak,
   pickNextEpisodeIndexes,
   pickManhuaLearnEpisodeGapMs,
@@ -86,6 +87,7 @@ import {
   buildDouyinMixCandidateUrls,
   isDouyinHostUrl,
   isDouyinSingleVideoUrl,
+  isManhuaLearnExplicitPaywallHint,
   normalizeDouyinVideoUrl,
   listedSingleEpisodeFromUrl,
   mapManhuaLearnFetchError,
@@ -95,6 +97,7 @@ import {
   extractDouyinMixIdFromUrl,
   extractDouyinVideoIdFromUrl,
   isTrustedDouyinPlaybackUrl,
+  type DouyinEpisodeAccess,
 } from "../../shared/manhuaLearnDouyinWebApi.js";
 import {
   fetchDouyinAwemeDetailViaWebApi,
@@ -157,6 +160,11 @@ export type ManhuaTemplateLearnResult = {
   listedEpisodeCount: number;
   /** 因来源受限暂跳的集号（不计入已学；可用「重试暂跳集」在地址刷新后重试） */
   skippedEpisodeIndexes?: number[];
+  /** 明确付费段，不进入技术失败重试。 */
+  paywallEpisodeIndexes?: number[];
+  paywallStartEpisodeIndex?: number;
+  /** 已确认付费段中尚未学完的集数，供后续混剪补学提示。 */
+  missingEpisodeCount?: number;
   /** 网页即时展示：已学分集摘要（不落视频，只留结构化结果和代表帧） */
   digestsPreview: ManhuaLearnDigestPreview[];
   /** 与飙升榜同源：类别 / 题材标签（前台中文） */
@@ -185,6 +193,23 @@ function aggregateDigestFrameVision(
     model: last.model,
     attemptedChunks: rows.reduce((a, r) => a + r.attemptedChunks, 0),
     successChunks: rows.reduce((a, r) => a + r.successChunks, 0),
+  };
+}
+
+function paywallResultFields(prog: ManhuaLearnSeriesProgress): Pick<
+  ManhuaTemplateLearnResult,
+  "paywallEpisodeIndexes" | "paywallStartEpisodeIndex" | "missingEpisodeCount"
+> {
+  const learned = new Set(prog.learnedEpisodeIndexes || []);
+  const paywallEpisodeIndexes = Array.from(new Set(prog.paywallEpisodeIndexes || []))
+    .filter((index) => Number.isFinite(index) && index >= 1)
+    .sort((a, b) => a - b);
+  return {
+    paywallEpisodeIndexes: paywallEpisodeIndexes.length ? paywallEpisodeIndexes : undefined,
+    paywallStartEpisodeIndex: paywallEpisodeIndexes.length
+      ? prog.paywallStartEpisodeIndex || paywallEpisodeIndexes[0]
+      : undefined,
+    missingEpisodeCount: paywallEpisodeIndexes.filter((index) => !learned.has(index)).length,
   };
 }
 
@@ -796,7 +821,13 @@ async function listOrderedEpisodes(
   sourceUrl: string,
   titleHint?: string,
   mixId?: string,
-  single?: { titleZh?: string; episodeIndex?: number; playbackUrl?: string; playbackUrls?: string[] },
+  single?: {
+    titleZh?: string;
+    episodeIndex?: number;
+    playbackUrl?: string;
+    playbackUrls?: string[];
+    access?: DouyinEpisodeAccess;
+  },
 ): Promise<ListedEpisodesResult> {
   const id = String(mixId || "").trim();
   if (/^\d{6,}$/.test(id)) {
@@ -850,6 +881,7 @@ async function listOrderedEpisodes(
         ...e,
         playbackUrl: single?.playbackUrl,
         playbackUrls: single?.playbackUrls,
+        access: single?.access,
       })),
       // 有 mixId 却走到单集回退 = 合集展开失败的降级列表，不可靠
       reliable: !/^\d{6,}$/.test(id),
@@ -1528,6 +1560,7 @@ export async function runManhuaTemplateLearn(
     episodeIndex?: number;
     playbackUrl?: string;
     playbackUrls?: string[];
+    access?: DouyinEpisodeAccess;
   } | undefined;
   if (!sourceGcsUri && isDouyinHostUrl(url)) {
     if (!/^\d{6,}$/.test(mixId)) {
@@ -1543,6 +1576,7 @@ export async function runManhuaTemplateLearn(
           episodeIndex: detail.episodeIndex,
           playbackUrl: detail.playbackUrl,
           playbackUrls: detail.playbackUrls,
+          access: detail.access,
         };
         if (!/^\d{6,}$/.test(mixId) && detail.mixId && /^\d{6,}$/.test(detail.mixId)) {
           mixId = detail.mixId;
@@ -1640,6 +1674,7 @@ export async function runManhuaTemplateLearn(
           : undefined,
         learnedEpisodeIndexes: [],
         skippedEpisodeIndexes: [],
+        paywallEpisodeIndexes: [],
         updatedAt: new Date().toISOString(),
         dramaKind: seriesClassify.dramaKind,
         categoryLabelZh: seriesClassify.categoryLabelZh,
@@ -1678,6 +1713,25 @@ export async function runManhuaTemplateLearn(
         .filter((index) => !completeIndexes.includes(index)),
       updatedAt: new Date().toISOString(),
     };
+    const paywallState = deriveManhuaLearnPaywallState({
+      listed,
+      reliable: listedRes.reliable,
+      previousIndexes: prog.paywallEpisodeIndexes,
+      previousStartIndex: prog.paywallStartEpisodeIndex,
+    });
+    prog.paywallEpisodeIndexes = paywallState.paywallEpisodeIndexes;
+    prog.paywallStartEpisodeIndex = paywallState.paywallStartEpisodeIndex;
+    const paywallIndexSet = new Set(paywallState.paywallEpisodeIndexes);
+    // 旧版本曾把付费页混入“来源受限暂跳”；迁移时摘出，避免重试按钮再次撞付费页。
+    prog.skippedEpisodeIndexes = (prog.skippedEpisodeIndexes || []).filter(
+      (index) => !paywallIndexSet.has(index),
+    );
+    if (paywallState.paywallStartEpisodeIndex) {
+      await progress(
+        MANHUA_LEARN_STAGE.list,
+        `已识别付费边界：免费可学至第 ${paywallState.paywallStartEpisodeIndex - 1} 集；第 ${paywallState.paywallStartEpisodeIndex} 集起共 ${paywallState.paywallEpisodeIndexes.length} 集标记为付费缺集，不再尝试`,
+      );
+    }
     await writeJsonGcs(
       `manhua-template-learn/series/${seriesKey}/progress.json`,
       prog,
@@ -1702,7 +1756,10 @@ export async function runManhuaTemplateLearn(
         : pickNextEpisodeIndexes({
             listedIndexes,
             learnedIndexes: prog.learnedEpisodeIndexes,
-            skippedIndexes: prog.skippedEpisodeIndexes,
+            skippedIndexes: [
+              ...(prog.skippedEpisodeIndexes || []),
+              ...(prog.paywallEpisodeIndexes || []),
+            ],
             batchSize,
           });
     if (input.retrySkippedEpisodes && !batchIndexes.length) {
@@ -1719,6 +1776,7 @@ export async function runManhuaTemplateLearn(
         skippedEpisodeIndexes: prog.skippedEpisodeIndexes?.length
           ? prog.skippedEpisodeIndexes
           : undefined,
+        ...paywallResultFields(prog),
         digestsPreview: existingDigests.map(toDigestPreview),
         categoryLabelZh: prog.categoryLabelZh,
         tagLabelsZh: prog.tagLabelsZh,
@@ -1810,6 +1868,7 @@ export async function runManhuaTemplateLearn(
           batchIndexes: [],
           listedEpisodeCount: listedRes.reliable ? Math.max(prog.listedEpisodeCount || 0, listed.length) : (prog.listedEpisodeCount || 0),
           skippedEpisodeIndexes: prog.skippedEpisodeIndexes?.length ? prog.skippedEpisodeIndexes : undefined,
+          ...paywallResultFields(prog),
           digestsPreview: digestsAll.map(toDigestPreview),
           categoryLabelZh: prog.categoryLabelZh,
           tagLabelsZh: prog.tagLabelsZh,
@@ -1832,6 +1891,7 @@ export async function runManhuaTemplateLearn(
         batchIndexes: [],
         listedEpisodeCount: listedRes.reliable ? Math.max(prog.listedEpisodeCount || 0, listed.length) : (prog.listedEpisodeCount || 0),
         skippedEpisodeIndexes: prog.skippedEpisodeIndexes?.length ? prog.skippedEpisodeIndexes : undefined,
+        ...paywallResultFields(prog),
         digestsPreview: digestsAll.map(toDigestPreview),
         categoryLabelZh: prog.categoryLabelZh,
         tagLabelsZh: prog.tagLabelsZh,
@@ -1857,6 +1917,10 @@ export async function runManhuaTemplateLearn(
     for (const idx of batchIndexes) {
       const ep = byIndex.get(idx);
       if (!ep) continue;
+      if ((prog.paywallEpisodeIndexes || []).includes(idx)) {
+        await progress(MANHUA_LEARN_STAGE.persist, `第 ${idx} 集位于已知付费段，已跳过且不计失败`);
+        continue;
+      }
       const existing = await readJsonGcs<ManhuaLearnEpisodeDigest>(
         episodeObjectName(seriesKey, idx),
       );
@@ -1996,11 +2060,30 @@ export async function runManhuaTemplateLearn(
           continue;
         }
         const errZh = mapManhuaLearnFetchError(e);
-        const isPerm = errZh === MANHUA_LEARN_FETCH_ERR.permissionDenied
-          || /权限不足/.test(errZh);
-        const note = isPerm
-          ? `第 ${idx} 集权限不足，已跳过`
-          : `第 ${idx} 集失败已跳过：${errZh}`;
+        const isExplicitPaywall = ep.access === "paid_locked"
+          || isManhuaLearnExplicitPaywallHint(e);
+        if (isExplicitPaywall) {
+          const start = Math.min(prog.paywallStartEpisodeIndex || idx, idx);
+          const paywallEpisodeIndexes = listedIndexes
+            .filter((episodeIndex) => episodeIndex >= start)
+            .sort((a, b) => a - b);
+          prog.paywallStartEpisodeIndex = start;
+          prog.paywallEpisodeIndexes = paywallEpisodeIndexes;
+          const paywallSet = new Set(paywallEpisodeIndexes);
+          prog.skippedEpisodeIndexes = (prog.skippedEpisodeIndexes || []).filter(
+            (episodeIndex) => !paywallSet.has(episodeIndex),
+          );
+          prog.updatedAt = new Date().toISOString();
+          await writeJsonGcs(
+            `manhua-template-learn/series/${seriesKey}/progress.json`,
+            prog,
+          );
+          const note = `第 ${idx} 集确认需要购买；已将第 ${start} 集起 ${paywallEpisodeIndexes.length} 集标记为付费缺集，后续不再尝试且不计入连续失败`;
+          episodeFailNotes.push(note);
+          await progress(MANHUA_LEARN_STAGE.persist, note);
+          continue;
+        }
+        const note = `第 ${idx} 集失败已跳过：${errZh}`;
         episodeFailNotes.push(note);
         prog.skippedEpisodeIndexes = Array.from(
           new Set([...(prog.skippedEpisodeIndexes || []), idx]),
@@ -2064,6 +2147,7 @@ export async function runManhuaTemplateLearn(
         batchIndexes: batchLearnedIndexes,
         listedEpisodeCount: listedRes.reliable ? Math.max(prog.listedEpisodeCount || 0, listed.length) : (prog.listedEpisodeCount || 0),
         skippedEpisodeIndexes: prog.skippedEpisodeIndexes?.length ? prog.skippedEpisodeIndexes : undefined,
+        ...paywallResultFields(prog),
         digestsPreview: digestsAll.map(toDigestPreview),
         categoryLabelZh: prog.categoryLabelZh,
         tagLabelsZh: prog.tagLabelsZh,
@@ -2103,6 +2187,7 @@ export async function runManhuaTemplateLearn(
       batchIndexes: batchLearnedIndexes,
       listedEpisodeCount: listedRes.reliable ? Math.max(prog.listedEpisodeCount || 0, listed.length) : (prog.listedEpisodeCount || 0),
       skippedEpisodeIndexes: prog.skippedEpisodeIndexes?.length ? prog.skippedEpisodeIndexes : undefined,
+      ...paywallResultFields(prog),
       digestsPreview: digestsAll.map(toDigestPreview),
       categoryLabelZh: prog.categoryLabelZh,
       tagLabelsZh: prog.tagLabelsZh,

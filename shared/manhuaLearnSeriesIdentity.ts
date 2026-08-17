@@ -1,4 +1,7 @@
-import { extractDouyinVideoIdFromUrl } from "./manhuaLearnDouyinWebApi.js";
+import {
+  extractDouyinVideoIdFromUrl,
+  type DouyinEpisodeAccess,
+} from "./manhuaLearnDouyinWebApi.js";
 import type { ManhuaLearnEpisodeDigest } from "./manhuaTemplateLearnSeries.js";
 
 export type ManhuaLearnListedSource = {
@@ -7,6 +10,7 @@ export type ManhuaLearnListedSource = {
   title: string;
   playbackUrl?: string;
   playbackUrls?: string[];
+  access?: DouyinEpisodeAccess;
 };
 
 /** 直接视频达 60 分钟时按大合集源学习。 */

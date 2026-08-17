@@ -19,7 +19,11 @@ export type DouyinListedEpisode = {
   playbackUrl?: string;
   /** 同一条视频的全部可信候选；播放地址过期、无音轨或 CDN 拒绝时逐个切换。 */
   playbackUrls?: string[];
+  /** 抖音逐集付费信号；合集“含付费内容”的总标记不能冒充逐集锁定。 */
+  access?: DouyinEpisodeAccess;
 };
+
+export type DouyinEpisodeAccess = "free" | "paid_locked" | "unknown";
 
 export type DouyinMixAwemePageParse = {
   /** 本页解析出的分集（index 优先取 mix_info.statis.current_episode） */
@@ -49,6 +53,7 @@ export type DouyinAwemeDetailParse = {
   /** 官方播放地址（同 DouyinListedEpisode.playbackUrl 口径，短时效不持久化） */
   playbackUrl?: string;
   playbackUrls?: string[];
+  access?: DouyinEpisodeAccess;
 };
 
 const DOUYIN_WEB_API_COMMON_PARAMS: ReadonlyArray<[string, string]> = [
@@ -210,6 +215,25 @@ function readCurrentEpisode(mix: AnyRecord | null): number {
 }
 
 /**
+ * 只读取逐集信号。`series_info.is_charge_series=1` 仅表示本季含付费集，
+ * 不能据此把免费前段全部判成付费。
+ */
+export function readDouyinEpisodeAccess(item: unknown): DouyinEpisodeAccess {
+  const root = asRecord(item);
+  if (!root) return "unknown";
+  const paidWay = asRecord(root.entertainment_video_paid_way);
+  const paidTypeRaw = paidWay?.paid_type ?? paidWay?.paidType;
+  if (paidTypeRaw !== undefined && paidTypeRaw !== null) {
+    const paidType = Number(paidTypeRaw);
+    if (Number.isFinite(paidType)) return paidType > 0 ? "paid_locked" : "free";
+  }
+  const chargeInfo = asRecord(root.charge_info);
+  const charge = Number(chargeInfo?.is_charge ?? chargeInfo?.isCharge);
+  if (Number.isFinite(charge) && charge > 0) return "paid_locked";
+  return "unknown";
+}
+
+/**
  * 解析 mix/aweme 一页。fallbackOrderBase = 之前已收的条数（分集缺 current_episode
  * 时按到达顺序补号，跨页续接不重号）。
  */
@@ -241,12 +265,14 @@ export function parseDouyinMixAwemeResponse(
     const index = epNo > 0 ? epNo : fallbackOrderBase + episodes.length + 1;
     const title = String(item.desc ?? item.caption ?? "").trim().slice(0, 120) || `第${index}集`;
     const playbackUrls = readDouyinPlaybackUrls(item);
+    const access = readDouyinEpisodeAccess(item);
     episodes.push({
       index,
       url: `https://www.douyin.com/video/${awemeId}`,
       title,
       playbackUrl: playbackUrls[0],
       playbackUrls: playbackUrls.length ? playbackUrls : undefined,
+      access: access === "unknown" ? undefined : access,
     });
   }
   return {
@@ -270,6 +296,7 @@ export function parseDouyinAwemeDetailResponse(payload: unknown): DouyinAwemeDet
   const mixNameZh = readMixName(mix) || undefined;
   const episodeIndex = readCurrentEpisode(mix) || undefined;
   const playbackUrls = readDouyinPlaybackUrls(detail);
+  const access = readDouyinEpisodeAccess(detail);
   const playbackUrl = playbackUrls[0];
   if (!titleZh && !mixId && !mixNameZh && !playbackUrl) return null;
   return {
@@ -279,6 +306,7 @@ export function parseDouyinAwemeDetailResponse(payload: unknown): DouyinAwemeDet
     episodeIndex,
     playbackUrl,
     playbackUrls: playbackUrls.length ? playbackUrls : undefined,
+    access: access === "unknown" ? undefined : access,
   };
 }
 

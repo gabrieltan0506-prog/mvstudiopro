@@ -8,6 +8,7 @@ import {
   mergeDouyinMixEpisodePages,
   parseDouyinAwemeDetailResponse,
   parseDouyinMixAwemeResponse,
+  readDouyinEpisodeAccess,
   readDouyinPlaybackUrl,
   readDouyinPlaybackUrls,
 } from "./manhuaLearnDouyinWebApi";
@@ -92,6 +93,31 @@ function mixItem(awemeId: string, epNo: number | null, desc = "", mixName = "测
 }
 
 describe("parseDouyinMixAwemeResponse", () => {
+  it("逐集付费信号只认当前条目，不把整季含付费误判成全付费", () => {
+    expect(readDouyinEpisodeAccess({
+      entertainment_video_paid_way: { paid_type: 0 },
+      series_info: { is_charge_series: 1 },
+    })).toBe("free");
+    expect(readDouyinEpisodeAccess({
+      entertainment_video_paid_way: { paid_type: 1, paid_ways: [{ type: 1 }] },
+    })).toBe("paid_locked");
+    expect(readDouyinEpisodeAccess({ series_info: { is_charge_series: 1 } })).toBe("unknown");
+  });
+
+  it("把第13集免费、第14集付费带进合集分集", () => {
+    const parsed = parseDouyinMixAwemeResponse({
+      status_code: 0,
+      aweme_list: [
+        { ...mixItem("7648291969596181794", 13), entertainment_video_paid_way: { paid_type: 0 } },
+        { ...mixItem("7648292002806664482", 14), entertainment_video_paid_way: { paid_type: 1 } },
+      ],
+    });
+    expect(parsed.episodes.map(({ index, access }) => ({ index, access }))).toEqual([
+      { index: 13, access: "free" },
+      { index: 14, access: "paid_locked" },
+    ]);
+  });
+
   it("正常页：集号取 current_episode，标题优先 desc，剧名取 mix_name", () => {
     const parsed = parseDouyinMixAwemeResponse({
       status_code: 0,
@@ -149,6 +175,16 @@ describe("parseDouyinMixAwemeResponse", () => {
 });
 
 describe("parseDouyinAwemeDetailResponse", () => {
+  it("单集详情保留明确付费锁", () => {
+    const parsed = parseDouyinAwemeDetailResponse({
+      status_code: 0,
+      aweme_detail: {
+        desc: "第14集",
+        entertainment_video_paid_way: { paid_type: 1 },
+      },
+    });
+    expect(parsed?.access).toBe("paid_locked");
+  });
   it("单集详情：回填标题/所属合集/集号", () => {
     const parsed = parseDouyinAwemeDetailResponse({
       status_code: 0,
