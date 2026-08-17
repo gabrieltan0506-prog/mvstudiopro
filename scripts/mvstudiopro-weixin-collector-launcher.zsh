@@ -18,6 +18,22 @@ collector_raw_worker_pid=""
 collector_owns_lock=false
 collector_stopping=false
 
+collector_clear_transient_capture_cache() {
+  local cleared=0
+  local transient_file=""
+  for transient_file in \
+    /private/tmp/mvstudiopro-weixin-channels-active-capture-*.json(N) \
+    /private/tmp/mvstudiopro-weixin-channels-raw-progress-*.json(N) \
+    /private/tmp/weixin-channels-window-*.png(N) \
+    /private/tmp/weixin-channels-sample-*.png(N) \
+    /private/tmp/weixin-channels-recovery-v1.json(N); do
+    /bin/rm -f -- "${transient_file}"
+    cleared=$((cleared + 1))
+  done
+  # 保留 calibration、raw spool、pending、seen、搜索状态、失败证据与 reset 诊断。
+  print -- "weixin_channels_collector_transient_cache_cleared:${cleared}"
+}
+
 collector_cleanup() {
   trap - EXIT HUP INT TERM
   if [[ -n "${collector_child_pid}" ]] && /bin/kill -0 "${collector_child_pid}" 2>/dev/null; then
@@ -143,8 +159,10 @@ while true; do
     exit 0
   fi
   if [[ -f "${collector_child_restart_request}" ]]; then
+    collector_restart_reason="$(<"${collector_child_restart_request}")"
     /bin/rm -f "${collector_child_restart_request}"
-    print -- "weixin_channels_collector_child_watchdog_restart"
+    collector_clear_transient_capture_cache
+    print -- "weixin_channels_collector_global_restart:${collector_restart_reason}"
     collector_reuse_calibration=true
     continue
   fi

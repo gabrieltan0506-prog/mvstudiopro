@@ -78,6 +78,7 @@ import {
   sameVideoContinuity,
   nextCollectorSearchQueryIndex,
   nextWeixinChannelsRawFailureCount,
+  nextRawCommittedVideoRepetition,
   nextCollectorRecoveryState,
   nextCollectorFloatingCounts,
   nextCollectorWindowResetFailureState,
@@ -128,26 +129,25 @@ import {
 } from "../../scripts/weixin-channels-capture.mts";
 
 describe("weixin channels OCR", () => {
-  it("watchdog 的 UI stall 不杀 pool，三分钟阻塞交给本窗局部 reset", async () => {
+  it("watchdog 发现任一窗口阻塞即强制回收整个双窗子进程", async () => {
     const source = await fs.readFile(
       path.resolve("scripts/mvstudiopro-weixin-collector-watchdog.zsh"),
       "utf8",
     );
-    expect(source).toContain("collector_all_capture_windows_stalled");
-    expect(source).toContain("collector_all_raw_windows_stalled");
-    expect(source).toContain("watchdog_single_raw_window_stalled_isolated");
+    expect(source).toContain("collector_any_capture_window_stalled");
+    expect(source).toContain("collector_any_raw_window_stalled");
+    expect(source).not.toContain("watchdog_single_raw_window_stalled_isolated");
     const restartSection = source.slice(
-      source.indexOf("# UI stall"),
+      source.indexOf("# 任一窗口阻塞"),
       source.indexOf("if [[ \"${watchdog_incident_hash}\""),
     );
     expect(restartSection).toContain("collector_raw_worker_process_missing");
-    expect(restartSection).not.toContain("== collector_all_raw_windows_stalled:");
-    expect(restartSection).not.toContain("== collector_all_capture_windows_stalled:");
-    expect(restartSection).not.toContain("== collector_raw_window_stalled:");
-    expect(restartSection).not.toContain("== collector_single_video_capture_timeout:");
+    expect(restartSection).toContain("collector_any_raw_window_stalled:");
+    expect(restartSection).toContain("collector_any_capture_window_stalled:");
+    expect(restartSection).toContain("/bin/kill -KILL");
   });
 
-  it("180000ms 不 reset，180001ms 只标记停滞的右窗", () => {
+  it("180000ms 不判阻塞，180001ms 任一停滞窗口会触发整组回收", () => {
     expect(WEIXIN_CHANNELS_WINDOW_LOCAL_RESET_MS).toBe(180_000);
     expect(collectorWindowLocalResetRequired(1_000, 181_000)).toBe(false);
     expect(collectorWindowLocalResetRequired(1_000, 181_001)).toBe(true);
@@ -184,18 +184,21 @@ describe("weixin channels OCR", () => {
     }
   });
 
-  it("局部 reload 复用已绑定 windowId/PID，源码不触发十字星或重新校准", async () => {
+  it("阻塞恢复不发送 reload，launcher 清临时缓存并复用校准重启双窗", async () => {
     const swift = await fs.readFile(path.resolve("scripts/macos-weixin-channels-control.swift"), "utf8");
-    expect(swift).toContain("case \"reload\": postKey(code: 15, flags: .maskCommand)");
+    expect(swift).not.toContain("case \"reload\"");
     const captureSource = await fs.readFile(path.resolve("scripts/weixin-channels-capture.mts"), "utf8");
-    const resetBody = captureSource.slice(
-      captureSource.indexOf("async function resetBoundCollectorWindowPlayer"),
-      captureSource.indexOf("export async function runDualWindowCaptureStateMachine"),
+    expect(captureSource).not.toContain("resetBoundCollectorWindowPlayer");
+    expect(captureSource).not.toContain("runSwiftControl([\"key\", \"reload\"])");
+    expect(captureSource).toContain("collector_cache_reset_restart_required");
+    expect(captureSource).toContain("process.exit(76)");
+    const launcher = await fs.readFile(
+      path.resolve("scripts/mvstudiopro-weixin-collector-launcher.zsh"),
+      "utf8",
     );
-    expect(resetBody).toContain("collectorWindowBindingMissingPersistently(params.session)");
-    expect(resetBody).toContain("runSwiftControl([\"key\", \"reload\"])");
-    expect(resetBody).not.toContain("calibrate-point");
-    expect(resetBody).not.toContain("move-window-visible");
+    expect(launcher).toContain("collector_clear_transient_capture_cache");
+    expect(launcher).toContain("collector_reuse_calibration=true");
+    expect(launcher).not.toContain("weixin-channels-search-calibration-v1-");
   });
 
   it("三次 reset 后三分钟内再失败生成无密钥的结构化诊断", () => {
@@ -225,7 +228,7 @@ describe("weixin channels OCR", () => {
       windowId: 202,
       pid: 9988,
       code_change_assessment: "likely_code_state_machine",
-      recommended_capture_method: "scoped_comments_recovery_then_bound_window_reload",
+      recommended_capture_method: "stop_both_windows_clear_transient_cache_restart_collector",
       lastCommitAgeMs: 25_000,
       lastAdvanceAgeMs: 26_000,
     });
@@ -339,15 +342,23 @@ describe("weixin channels OCR", () => {
     expect(WEIXIN_CHANNELS_RAW_ROTATION_GRACE_MS).toBe(60_000);
   });
 
-  it("raw 窗口连续三次失败只触发该窗口的局部恢复计数，成功推进后清零", () => {
+  it("raw 任一窗口连续两次失败触发整组重启门槛，成功推进后清零", () => {
     let failures = 0;
-    failures = nextWeixinChannelsRawFailureCount(failures, "failure");
     failures = nextWeixinChannelsRawFailureCount(failures, "failure");
     expect(shouldRestartWeixinChannelsRawChild(failures)).toBe(false);
     failures = nextWeixinChannelsRawFailureCount(failures, "failure");
     expect(failures).toBe(WEIXIN_CHANNELS_RAW_MAX_CONSECUTIVE_FAILURES);
     expect(shouldRestartWeixinChannelsRawChild(failures)).toBe(true);
     expect(nextWeixinChannelsRawFailureCount(failures, "video_advanced")).toBe(0);
+  });
+
+  it("同一窗口连续两次提交相同视频身份即判阻塞，换视频会重置", () => {
+    const first = nextRawCommittedVideoRepetition(undefined, 0, "video-a");
+    expect(first).toEqual({ videoIdentity: "video-a", count: 1, blocked: false });
+    const repeated = nextRawCommittedVideoRepetition(first.videoIdentity, first.count, "video-a");
+    expect(repeated).toEqual({ videoIdentity: "video-a", count: 2, blocked: true });
+    expect(nextRawCommittedVideoRepetition(repeated.videoIdentity, repeated.count, "video-b"))
+      .toEqual({ videoIdentity: "video-b", count: 1, blocked: false });
   });
 
   it("网页开关即使关后立刻再开，也会以控制版本终止旧轮次并重新校准", () => {

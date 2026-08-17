@@ -182,11 +182,8 @@ if [[ -z "${watchdog_incident}" ]]; then
     watchdog_local_incident="$(watchdog_capture_timeout_for_file "${watchdog_activity_file}" "${watchdog_now_ms}")"
     [[ -n "${watchdog_local_incident}" ]] && watchdog_capture_incidents+=("${watchdog_local_incident}")
   done
-  if (( ${#watchdog_capture_incidents} >= 2 )); then
-    watchdog_incident="collector_all_capture_windows_stalled:${(j:;:)watchdog_capture_incidents}"
-  elif (( ${#watchdog_capture_incidents} == 1 )); then
-    # 单窗故障由该 window worker 自己局部恢复；左窗仍提交时绝不能杀 pool。
-    print -u2 -- "watchdog_single_capture_window_stalled_isolated:${watchdog_capture_incidents[1]}"
+  if (( ${#watchdog_capture_incidents} >= 1 )); then
+    watchdog_incident="collector_any_capture_window_stalled:${(j:;:)watchdog_capture_incidents}"
   fi
 fi
 
@@ -197,10 +194,8 @@ if [[ -z "${watchdog_incident}" ]]; then
     watchdog_local_incident="$(watchdog_raw_stall_for_file "${watchdog_progress_file}" "${watchdog_now_ms}")"
     [[ -n "${watchdog_local_incident}" ]] && watchdog_raw_incidents+=("${watchdog_local_incident}")
   done
-  if (( ${#watchdog_raw_incidents} >= 2 )); then
-    watchdog_incident="collector_all_raw_windows_stalled:${(j:;:)watchdog_raw_incidents}"
-  elif (( ${#watchdog_raw_incidents} == 1 )); then
-    print -u2 -- "watchdog_single_raw_window_stalled_isolated:${watchdog_raw_incidents[1]}"
+  if (( ${#watchdog_raw_incidents} >= 1 )); then
+    watchdog_incident="collector_any_raw_window_stalled:${(j:;:)watchdog_raw_incidents}"
   fi
 fi
 
@@ -218,7 +213,7 @@ fi
 if [[ -z "${watchdog_incident}" && "${watchdog_log_size}" -gt "${watchdog_previous_size}" ]]; then
   watchdog_new_log="$(/usr/bin/tail -c "+$((watchdog_previous_size + 1))" "${watchdog_log}" 2>/dev/null || true)"
   watchdog_incident="$(print -r -- "${watchdog_new_log}" | /usr/bin/grep -E \
-    'dual_window_fail_closed|collector_safety_pause_failed|collector_all_capture_windows_stalled|collector_all_raw_windows_stalled|raw_child_restart_required|collector_watchdog_60m_remediating|uncaught|unhandled|fatal' \
+    'dual_window_fail_closed|collector_safety_pause_failed|collector_any_capture_window_stalled|collector_any_raw_window_stalled|collector_global_cache_reset_restart_requested|raw_child_restart_required|collector_watchdog_60m_remediating|uncaught|unhandled|fatal' \
     | /usr/bin/tail -n 1 || true)"
 fi
 
@@ -236,14 +231,19 @@ if [[ "${WEIXIN_CHANNELS_WATCHDOG_DRY_RUN:-0}" == "1" ]]; then
   exit 0
 fi
 
-# UI stall 由进程内按绑定 windowId/PID 做局部 reset，watchdog 绝不能因此杀
-# pool 或健康左窗。只有独立 raw worker 进程真实消失时才请求 launcher 拉回。
-if [[ "${watchdog_incident}" == "collector_raw_worker_process_missing" ]]; then
+# 任一窗口阻塞就回收整个双窗 UI 子进程；不能等待阻塞 Promise 自己退出。
+if [[ "${watchdog_incident}" == "collector_raw_worker_process_missing" \
+  || "${watchdog_incident}" == collector_any_capture_window_stalled:* \
+  || "${watchdog_incident}" == collector_any_raw_window_stalled:* ]]; then
   print -r -- "${watchdog_now}|${watchdog_incident}" > "${watchdog_child_restart_request}"
   for watchdog_pool_pid in $(/usr/bin/pgrep -f '[s]cripts/weixin-channels-capture.mts.*--pool' || true); do
     /bin/kill -TERM "${watchdog_pool_pid}" 2>/dev/null || true
   done
-  print -- "watchdog_collector_child_restart_requested"
+  /bin/sleep 2
+  for watchdog_pool_pid in $(/usr/bin/pgrep -f '[s]cripts/weixin-channels-capture.mts.*--pool' || true); do
+    /bin/kill -KILL "${watchdog_pool_pid}" 2>/dev/null || true
+  done
+  print -- "watchdog_collector_global_restart_requested"
 fi
 
 if [[ "${watchdog_incident_hash}" == "${watchdog_previous_hash}" \
