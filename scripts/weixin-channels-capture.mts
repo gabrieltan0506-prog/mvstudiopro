@@ -58,6 +58,7 @@ import { decideWeixinChannelsRawOfflineItem } from "./weixin-channels-raw-filter
 const execFileAsync = promisify(execFile);
 const FORMAL_STOP_REQUEST_FILE = "/private/tmp/mvstudiopro-weixin-channels-local-stop.request";
 const FORMAL_STOP_STATUS_FILE = "/private/tmp/mvstudiopro-weixin-channels-floating-status.json";
+const COLLECTOR_CHILD_RESTART_REQUEST_FILE = "/private/tmp/mvstudiopro-weixin-channels-child-restart.request";
 
 type CollectorFloatingStatus = {
   state: "collecting" | "stopping";
@@ -163,8 +164,9 @@ export const WEIXIN_CHANNELS_RAW_VIDEO_DWELL_MIN_MS = 10_000;
 export const WEIXIN_CHANNELS_RAW_VIDEO_DWELL_MAX_MS = 15_000;
 /** 到点后只允许当前原子 UI 动作收尾；禁止异常窗口无限拖住封批。 */
 export const WEIXIN_CHANNELS_RAW_ROTATION_GRACE_MS = 60_000;
-export const WEIXIN_CHANNELS_RAW_MAX_CONSECUTIVE_FAILURES = 3;
-/** 三分钟无提交/换页才触发本窗口局部 reload；不能用短阈值误杀健康慢链。 */
+/** 任一窗口连续两次失败即重启整个双窗采集子进程。 */
+export const WEIXIN_CHANNELS_RAW_MAX_CONSECUTIVE_FAILURES = 2;
+/** 三分钟无提交/换页由外部 watchdog 强制回收整个双窗采集子进程。 */
 export const WEIXIN_CHANNELS_WINDOW_LOCAL_RESET_MS = 3 * 60_000;
 export const WEIXIN_CHANNELS_RAW_WINDOW_STALL_TIMEOUT_MS = WEIXIN_CHANNELS_WINDOW_LOCAL_RESET_MS;
 export function collectorWindowLocalResetRequired(lastCommitOrAdvanceAtMs: number, nowMs = Date.now()) {
@@ -320,11 +322,24 @@ export function shouldRestartWeixinChannelsRawChild(consecutiveFailures: number)
   return consecutiveFailures >= WEIXIN_CHANNELS_RAW_MAX_CONSECUTIVE_FAILURES;
 }
 
+export function nextRawCommittedVideoRepetition(
+  previousVideoIdentity: string | undefined,
+  previousCount: number,
+  currentVideoIdentity: string | undefined,
+) {
+  const current = currentVideoIdentity?.trim();
+  if (!current) return { videoIdentity: undefined, count: 0, blocked: false };
+  const count = current === previousVideoIdentity
+    ? Math.max(0, Math.floor(previousCount)) + 1
+    : 1;
+  return { videoIdentity: current, count, blocked: count >= 2 };
+}
+
 export type WeixinChannelsRawWindowProgress = {
   version: 1;
   windowId: number;
   ownerPid: number;
-  state: "started" | "raw_capture_committed" | "video_advanced" | "local_reset";
+  state: "started" | "raw_capture_committed" | "video_advanced" | "global_restart_requested";
   rawId?: string;
   updatedAtMs: number;
 };
@@ -371,7 +386,7 @@ export function classifyCollectorWindowFailureStage(reason: string): CollectorWi
   if (/comments_(?:close|panel|player_verification)|player_not_restored_after_comments/.test(reason)) {
     return "comments_close";
   }
-  if (/(?:next_video|advance|transition)/.test(reason)) return "page_transition";
+  if (/(?:next_video|advance|transition|repeated_same_(?:video|frame))/.test(reason)) return "page_transition";
   if (/(?:player|auxiliary_page|window)/.test(reason)) return "player_restore";
   return "unknown";
 }
@@ -386,7 +401,8 @@ export function classifyCollectorWindowErrorCode(reason: string): CollectorWindo
   if (/player_not_restored_after_comments|comments_closed_player_verification_unconfirmed/.test(normalized)) {
     return "comments_player_restore_unconfirmed";
   }
-  if (/(?:next_video|advance|transition).*(?:unconfirmed|not_detected|failed)/.test(normalized)) {
+  if (/repeated_same_(?:video|frame)/.test(normalized)
+    || /(?:next_video|advance|transition).*(?:unconfirmed|not_detected|failed)/.test(normalized)) {
     return "page_transition_unconfirmed";
   }
   if (/window_binding.*(?:missing|lost)|window_not_found/.test(normalized)) return "window_binding_missing";
@@ -444,10 +460,10 @@ export function buildCollectorWindowResetDiagnostic(params: {
   const recommendedCaptureMethod = dominantStage === "progress_locate"
     ? "single_progress_probe_then_skip_current_video"
     : dominantStage === "comments_close"
-      ? "scoped_comments_recovery_then_bound_window_reload"
+      ? "stop_both_windows_clear_transient_cache_restart_collector"
       : dominantStage === "page_transition"
-        ? "bound_window_reload_then_reenter_recommendation"
-        : "inspect_bound_window_page_state_before_next_local_reset";
+        ? "stop_both_windows_after_two_failed_advances_then_restart_collector"
+        : "inspect_window_state_before_global_collector_restart";
   const latest = params.state.failures[params.state.failures.length - 1]!;
   return {
     event: "weixin_channels_window_reset_diagnostic" as const,
@@ -3011,6 +3027,7 @@ async function captureVisibleVideoToRawSpool(params: {
       captureElapsedMs,
       captureBudgetMs: WEIXIN_CHANNELS_MAX_COMPLETE_CAPTURE_MS,
       commentsStatus,
+      videoIdentity: visibleVideoIdentityFingerprint(currentSafetyOcr),
       assets,
     });
     process.stdout.write(JSON.stringify({
@@ -3083,37 +3100,39 @@ export function classifyRawFrameAfterAdvance(
 }
 
 async function advanceRawToNextVideo(previous: OcrResult, screenshot: string) {
-  // raw 每条只允许一次向下滑动。之后只被动确认“新身份/新指标组合 + 第二帧
-  // 稳定”；评论入口可能 OCR 漏帧，绝不能再作为转场成功的必要条件。
-  await runSwiftControl(["scroll-relative", "0.50", "0.50", "-6"]);
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 220 + attempt * 80));
-    await captureWindow(screenshot);
-    const candidate = await readOcr(screenshot);
-    if (isWeixinChannelsMediaViewer(candidate.lines)) {
-      const closePoint = findMediaViewerClosePoint(candidate.lines);
-      if (closePoint) {
-        await runSwiftControl([
-          "click-relative",
-          closePoint.x.toFixed(5),
-          closePoint.y.toFixed(5),
-        ]);
-      } else {
-        await runSwiftControl(["key", "escape"]);
+  // 每条最多实际滑动两次。两次都不能证明新视频身份/指标已稳定，就由外层
+  // 强制重启整个双窗采集进程，不能留一个窗口继续制造重复数据。
+  for (let scrollAttempt = 0; scrollAttempt < WEIXIN_CHANNELS_RAW_MAX_CONSECUTIVE_FAILURES; scrollAttempt += 1) {
+    await runSwiftControl(["scroll-relative", "0.50", "0.50", "-6"]);
+    for (let frameAttempt = 0; frameAttempt < 3; frameAttempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 220 + frameAttempt * 100));
+      await captureWindow(screenshot);
+      const candidate = await readOcr(screenshot);
+      if (isWeixinChannelsMediaViewer(candidate.lines)) {
+        const closePoint = findMediaViewerClosePoint(candidate.lines);
+        if (closePoint) {
+          await runSwiftControl([
+            "click-relative",
+            closePoint.x.toFixed(5),
+            closePoint.y.toFixed(5),
+          ]);
+        } else {
+          await runSwiftControl(["key", "escape"]);
+        }
+        continue;
       }
-      continue;
+      const state = classifyRawFrameAfterAdvance(previous, candidate);
+      if (state === "comments_panel_visible") {
+        throw new Error("weixin_channels_raw_comments_panel_still_visible_before_advance");
+      }
+      if (state !== "transitioned") continue;
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      await captureWindow(screenshot);
+      const stable = await readOcr(screenshot);
+      if (sameVideoContinuity(candidate, stable)) return stable;
     }
-    const state = classifyRawFrameAfterAdvance(previous, candidate);
-    if (state === "comments_panel_visible") {
-      throw new Error("weixin_channels_raw_comments_panel_still_visible_before_advance");
-    }
-    if (state !== "transitioned") continue;
-    await new Promise((resolve) => setTimeout(resolve, 160));
-    await captureWindow(screenshot);
-    const stable = await readOcr(screenshot);
-    if (sameVideoContinuity(candidate, stable)) return stable;
   }
-  throw new Error("weixin_channels_raw_next_video_transition_not_confirmed");
+  throw new Error("weixin_channels_raw_next_video_transition_not_confirmed_after_two_attempts");
 }
 
 export async function processWeixinChannelsRawRun(params: {
@@ -6408,53 +6427,30 @@ async function captureCollectorWindowResetEvidence(params: {
   return { screenshotPath: evidenceScreenshot, ocrEvidencePath: evidenceOcr, ocr };
 }
 
-async function resetBoundCollectorWindowPlayer(params: {
-  session: WeixinChannelsWindowSession;
-  screenshot: string;
+let collectorGlobalRestartScheduled = false;
+
+async function requestGlobalCollectorRestart(params: {
+  windowId: number;
+  pid: number;
+  reason: string;
+  consecutiveFailures: number;
 }) {
-  if (await collectorWindowBindingMissingPersistently(params.session)) {
-    throw new Error("weixin_channels_window_binding_missing_before_local_reset");
-  }
-  await captureWindow(params.screenshot);
-  let beforeReload = await readOcr(params.screenshot);
-  // 评论抽屉仍开时不能盲滑。先按当前帧 X 尝试关闭；X 漏识别时只允许
-  // 本窗 Escape。无论是否成功，后续 scoped reload 都只作用于已绑定 windowId/PID。
-  for (let attempt = 0; attempt < 3 && findCommentsPanelTitle(beforeReload.lines); attempt += 1) {
-    const closePoint = await findCommentsClosePointFromScreenshot(
-      params.screenshot,
-      beforeReload.lines,
-    );
-    if (closePoint) {
-      await runSwiftControl([
-        "click-confirmed-comments-close",
-        closePoint.x.toFixed(5),
-        closePoint.y.toFixed(5),
-      ]);
-    } else {
-      await runSwiftControl(["key", "escape"]);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 180 + attempt * 120));
-    await captureWindow(params.screenshot);
-    beforeReload = await readOcr(params.screenshot);
-  }
-  await runSwiftControl(["key", "reload"]);
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 500 + attempt * 180));
-    await captureWindow(params.screenshot);
-    let restored = await readOcr(params.screenshot);
-    if (findCommentsPanelTitle(restored.lines)) continue;
-    try {
-      restored = await ensureVideoPlayerVisible(params.screenshot, restored);
-      if (dedupIdentityFingerprint(restored)
-        || hasFourVisibleMetrics(restored.lines)
-        || hasDefinitiveVisibleUnqualifiedMetrics(restored.lines)) return restored;
-    } catch (error) {
-      if (isCollectorWindowBindingFailure(error instanceof Error ? error.message : String(error))) {
-        throw error;
-      }
-    }
-  }
-  throw new Error("weixin_channels_local_window_reload_player_not_restored");
+  if (collectorGlobalRestartScheduled) return;
+  collectorGlobalRestartScheduled = true;
+  const payload = {
+    requestedAt: new Date().toISOString(),
+    event: "collector_global_cache_reset_restart_requested",
+    windowId: params.windowId,
+    pid: params.pid,
+    reason: classifyCollectorWindowErrorCode(params.reason),
+    consecutiveFailures: params.consecutiveFailures,
+  };
+  const temporary = `${COLLECTOR_CHILD_RESTART_REQUEST_FILE}.${process.pid}.tmp`;
+  await fs.writeFile(temporary, `${JSON.stringify(payload)}\n`, { mode: 0o600 });
+  await fs.rename(temporary, COLLECTOR_CHILD_RESTART_REQUEST_FILE);
+  process.stderr.write(`collector_global_cache_reset_restart_requested:${JSON.stringify(payload)}\n`);
+  // 不能等待阻塞窗口自行退出。launcher 会在进程死亡后清临时缓存，复用校准重启。
+  setTimeout(() => process.exit(76), 250);
 }
 
 export async function runDualWindowCaptureStateMachine(params: {
@@ -6561,7 +6557,8 @@ export async function runDualWindowCaptureStateMachine(params: {
     let lastCommitAtMs = lastWindowProgressAtMs;
     let lastAdvanceAtMs = lastWindowProgressAtMs;
     let lastSameVideoAtMs = lastWindowProgressAtMs;
-    let lastResetAtMs: number | undefined;
+    let lastRawCommittedVideoIdentity: string | undefined;
+    let consecutiveSameRawVideoCommits = 0;
     const markWindowHealthyProgress = (kind: "commit" | "advance") => {
       const now = Date.now();
       lastWindowProgressAtMs = now;
@@ -6572,21 +6569,27 @@ export async function runDualWindowCaptureStateMachine(params: {
         lastSameVideoAtMs = now;
         // commit 只能证明数据已落盘，不能证明窗口已经离开故障视频；只有
         // advance/新视频连续性成立后，才清除连续 reset 失败链。
-        lastResetAtMs = undefined;
         resetFailureState = undefined;
         void clearCollectorWindowResetFailureState(session.windowId).catch((error) => {
           process.stderr.write(`collector_window_reset_state_clear_failed:${session.windowId}:json_error\n`);
         });
       }
     };
-    const recordResetFailure = async (resetAtMs: number, failedAtMs: number, reason: string) => {
+    const recordResetFailure = async (
+      resetAtMs: number,
+      failedAtMs: number,
+      reason: string,
+      captureEvidence = true,
+    ) => {
       let evidence: Awaited<ReturnType<typeof captureCollectorWindowResetEvidence>> | undefined;
       try {
-        evidence = await captureCollectorWindowResetEvidence({
-          session,
-          screenshot: collectorScreenshotForWindow(params.screenshot, session.windowId),
-          reason,
-        });
+        if (captureEvidence) {
+          evidence = await captureCollectorWindowResetEvidence({
+            session,
+            screenshot: collectorScreenshotForWindow(params.screenshot, session.windowId),
+            reason,
+          });
+        }
       } catch (evidenceError) {
         process.stderr.write(`collector_window_reset_evidence_failed:${session.windowId}:${
           evidenceError instanceof Error ? evidenceError.message : String(evidenceError)
@@ -6689,6 +6692,36 @@ export async function runDualWindowCaptureStateMachine(params: {
               state: "raw_capture_committed",
               rawId: manifest.rawId,
             });
+            const repetition = nextRawCommittedVideoRepetition(
+              lastRawCommittedVideoIdentity,
+              consecutiveSameRawVideoCommits,
+              manifest.videoIdentity,
+            );
+            lastRawCommittedVideoIdentity = repetition.videoIdentity;
+            consecutiveSameRawVideoCommits = repetition.count;
+            if (repetition.blocked) {
+              const repeatedAtMs = Date.now();
+              const repeatedReason = "weixin_channels_repeated_same_video_committed_twice";
+              prepared.shared.abortReason = "collector_cache_reset_restart_required";
+              await recordResetFailure(repeatedAtMs, repeatedAtMs, repeatedReason, false);
+              await writeCollectorRawWindowProgress({
+                windowId: session.windowId,
+                state: "global_restart_requested",
+                rawId: manifest.rawId,
+              });
+              process.stderr.write(`collector_repeated_same_video_blocked:${JSON.stringify({
+                windowId: session.windowId,
+                rawId: manifest.rawId,
+                consecutiveSameRawVideoCommits,
+              })}\n`);
+              await requestGlobalCollectorRestart({
+                windowId: session.windowId,
+                pid: session.pid,
+                reason: repeatedReason,
+                consecutiveFailures: consecutiveSameRawVideoCommits,
+              });
+              return;
+            }
             await params.onRawCaptureCommitted?.(manifest);
           },
           onRawVideoAdvanced: params.rawHarvest
@@ -6733,82 +6766,37 @@ export async function runDualWindowCaptureStateMachine(params: {
       }
 
       const failureAtMs = Date.now();
-      const failedSoonAfterReset = lastResetAtMs !== undefined
-        && failureAtMs - lastResetAtMs <= WEIXIN_CHANNELS_WINDOW_LOCAL_RESET_MS;
       const failureStage = classifyCollectorWindowFailureStage(lastFailure);
-      const rawRequiresImmediateLocalReset = params.rawHarvest
-        && (failureStage === "comments_close" || failureStage === "page_transition");
-      const localWindowStalled = lastFailure === "weixin_channels_local_window_stall_180s"
-        || lastFailure.startsWith("window_local_reset_required:")
-        || rawRequiresImmediateLocalReset
-        || collectorWindowLocalResetRequired(lastWindowProgressAtMs, failureAtMs);
-      if (failedSoonAfterReset || localWindowStalled) {
-        if (failedSoonAfterReset) {
-          await recordResetFailure(lastResetAtMs!, failureAtMs, lastFailure);
-        }
-        const resetStartedAtMs = Date.now();
-        try {
-          await resetBoundCollectorWindowPlayer({
-            session,
-            screenshot: collectorScreenshotForWindow(params.screenshot, session.windowId),
-          });
-          lastResetAtMs = resetStartedAtMs;
-          lastWindowProgressAtMs = Date.now();
-          restart = 0;
-          if (params.rawHarvest) {
-            await writeCollectorRawWindowProgress({
-              windowId: session.windowId,
-              state: "local_reset",
-            });
-          }
-          process.stderr.write(`collector_window_local_reset_succeeded:${JSON.stringify({
-            windowIndex: resetBinding.windowIndex,
-            windowId: session.windowId,
-            pid: session.pid,
-            reason: lastFailure,
-          })}\n`);
-          continue;
-        } catch (resetError) {
-          const resetReason = resetError instanceof Error ? resetError.message : String(resetError);
-          await recordResetFailure(resetStartedAtMs, Date.now(), resetReason);
-          lastResetAtMs = undefined;
-          process.stderr.write(`collector_window_local_reset_failed:${JSON.stringify({
-            windowIndex: resetBinding.windowIndex,
-            windowId: session.windowId,
-            pid: session.pid,
-            reason: resetReason,
-          })}\n`);
-          if (isCollectorWindowBindingFailure(resetReason)
-            && await collectorWindowBindingMissingPersistently(session)) {
-            prepared.shared.abortReason = "window_rebind_required";
-            return {
-              windowId: session.windowId,
-              stopped: "window_rebind_required",
-              error: resetReason,
-            };
-          }
-          await new Promise((resolve) => setTimeout(resolve, 500));
-          continue;
-        }
-      }
-
       restart = nextWeixinChannelsRawFailureCount(restart, "failure");
+      const windowStalled = lastFailure === "weixin_channels_local_window_stall_180s"
+        || lastFailure.startsWith("window_local_reset_required:")
+        || collectorWindowLocalResetRequired(lastWindowProgressAtMs, failureAtMs);
       process.stderr.write(`collector_window_recovering:${session.windowId}:attempt=${restart}:reason=${lastFailure}\n`);
 
-      // 普通 raw UI 故障（特别是右窗评论抽屉）只能在当前窗口局部恢复，绝不能
-      // 写 shared.abortReason 让本来持续提交的左窗一起退出。仅 windowId/PID
-      // 丢失会在上方进入 window_rebind_required；网页开关和全局安全熔断也有
-      // 各自的共享终止语义。
       if (params.rawHarvest) {
-        if (shouldRestartWeixinChannelsRawChild(restart)) {
-          process.stderr.write(`raw_window_recovery_isolated:${JSON.stringify({
+        // page_transition 已在 advanceRawToNextVideo 内实际滑动两次。其他错误
+        // 连续两次、或任一窗口确认阻塞时，也停止整组，不能只剩单窗运行。
+        const globalRestartRequired = windowStalled
+          || failureStage === "page_transition"
+          || shouldRestartWeixinChannelsRawChild(restart);
+        if (globalRestartRequired) {
+          prepared.shared.abortReason = "collector_cache_reset_restart_required";
+          await writeCollectorRawWindowProgress({
             windowId: session.windowId,
-            consecutiveFailures: restart,
+            state: "global_restart_requested",
+          });
+          await recordResetFailure(failureAtMs, failureAtMs, lastFailure, false);
+          await requestGlobalCollectorRestart({
+            windowId: session.windowId,
+            pid: session.pid,
             reason: lastFailure,
-          })}\n`);
-          // 计数只用于拉长本窗口退避，达到阈值后归零开始下一轮局部恢复；
-          // 不启动 launcher 重建，不让另一个健康窗口停止。
-          restart = 0;
+            consecutiveFailures: restart,
+          });
+          return {
+            windowId: session.windowId,
+            stopped: "collector_cache_reset_restart_required",
+            error: lastFailure,
+          };
         }
         const delayMs = collectorWindowRecoveryDelayMs(
           lastFailure,
@@ -6897,6 +6885,8 @@ export async function runDualWindowCaptureStateMachine(params: {
   const stoppedReasons = windows.map((result) => String(result.stopped));
   let stopped = prepared.shared.abortReason === "capture_control_changed"
     ? "capture_control_changed"
+    : prepared.shared.abortReason === "collector_cache_reset_restart_required"
+      ? "collector_cache_reset_restart_required"
     : prepared.shared.abortReason === "raw_child_restart_required"
       ? "raw_child_restart_required"
     : prepared.shared.abortReason === "capture_disabled"
@@ -6960,6 +6950,7 @@ export async function runDualWindowCaptureStateMachine(params: {
     && stopped !== "capture_disabled"
     && stopped !== "capture_control_changed"
     && stopped !== "max_scanned_reached"
+    && stopped !== "collector_cache_reset_restart_required"
     && stopped !== "raw_child_restart_required"
     && stopped !== "raw_batch_sealed"
     && stopped !== "raw_offline_batch_processed"
@@ -7199,8 +7190,9 @@ async function main() {
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       if (rawOfflineWorkerManaged
         && (result.stopped === "raw_batch_sealed"
+          || result.stopped === "collector_cache_reset_restart_required"
           || result.stopped === "raw_child_restart_required")) {
-        // launcher 识别 76 为预期的二十分钟轮换；监督器与离线 worker 均不退出。
+        // launcher 识别 76 为预期轮换/整组恢复；离线 worker 不退出。
         process.exitCode = 76;
         return;
       }

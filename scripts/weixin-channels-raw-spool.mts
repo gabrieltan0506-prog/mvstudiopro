@@ -49,6 +49,8 @@ export type WeixinChannelsRawManifest = {
   taskId: string;
   query: string;
   windowId: number;
+  /** 前台 OCR 的稳定视频身份；用于在离线去重前识别同窗重复抓取。 */
+  videoIdentity?: string;
   capturedAt: string;
   completedAt: string;
   captureElapsedMs: number;
@@ -456,6 +458,7 @@ export async function commitWeixinChannelsRawItem(params: {
   captureElapsedMs: number;
   captureBudgetMs?: number;
   commentsStatus: WeixinChannelsRawManifest["commentsStatus"];
+  videoIdentity?: string;
   assets: Array<{
     kind: WeixinChannelsRawAssetKind;
     sourceFile: string;
@@ -502,6 +505,7 @@ export async function commitWeixinChannelsRawItem(params: {
       taskId: params.reservation.taskId,
       query: params.reservation.query,
       windowId: params.reservation.windowId,
+      videoIdentity: params.videoIdentity,
       capturedAt: params.capturedAt,
       completedAt: params.completedAt,
       captureElapsedMs: Math.max(0, Math.round(params.captureElapsedMs)),
