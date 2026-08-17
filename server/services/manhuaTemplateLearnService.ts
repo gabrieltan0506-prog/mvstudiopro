@@ -73,6 +73,7 @@ import { assertManhuaPreviewFramesHaveMotion } from "./manhuaFramePreviewGuard.j
 import {
   extractRemoteManhuaAudio,
   extractRemoteManhuaDenseFrames,
+  probeRemoteManhuaMediaDecodability,
   type ManhuaRemoteMediaSource,
 } from "./manhuaRemoteMediaSampler.js";
 import {
@@ -430,7 +431,7 @@ type EpisodeSourceState = {
   triedStreamUrls?: string[];
 };
 
-function readMuxedPlaybackUrlsFromYtdlpInfo(data: unknown): string[] {
+export function readMuxedPlaybackUrlsFromYtdlpInfo(data: unknown): string[] {
   if (!data || typeof data !== "object" || Array.isArray(data)) return [];
   const root = data as Record<string, unknown>;
   const candidates: string[] = [];
@@ -438,18 +439,35 @@ function readMuxedPlaybackUrlsFromYtdlpInfo(data: unknown): string[] {
     const url = typeof raw === "string" ? raw.trim() : "";
     if (url && isTrustedDouyinPlaybackUrl(url) && !candidates.includes(url)) candidates.push(url);
   };
-  append(root.url);
   const formats = Array.isArray(root.formats) ? root.formats : [];
-  for (const raw of formats) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+  const muxedFormats = formats.flatMap((raw, index) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
     const format = raw as Record<string, unknown>;
     const audioCodec = String(format.acodec || "").trim().toLowerCase();
     const videoCodec = String(format.vcodec || "").trim().toLowerCase();
     // 当前采样器要求同一地址同时具备语音与画面；分离轨不能冒充成功。
-    if (!audioCodec || !videoCodec || audioCodec === "none" || videoCodec === "none") continue;
+    if (!audioCodec || !videoCodec || audioCodec === "none" || videoCodec === "none") return [];
+    return [{
+      url: format.url,
+      height: Number(format.height) || 0,
+      bitrate: Number(format.tbr) || Number(format.vbr) || 0,
+      index,
+    }];
+  }).sort((a, b) => b.height - a.height || b.bitrate - a.bitrate || a.index - b.index);
+  for (const format of muxedFormats) {
     append(format.url);
   }
+  // root.url 经常与 Web API 的受限默认流相同；放到明确的 muxed formats 之后。
+  append(root.url);
   return candidates;
+}
+
+/** 媒体解码失败后优先换来源家族，避免三个 Web API 镜像耗尽整集重试。 */
+export function orderEpisodeMediaFallbackUrls(
+  webApiUrls: string[],
+  ytdlpUrls: string[],
+): string[] {
+  return Array.from(new Set([...ytdlpUrls, ...webApiUrls]));
 }
 
 async function refreshEpisodePlaybackUrlsViaYtdlp(
@@ -566,6 +584,10 @@ async function ffprobeRemoteMedia(url: string): Promise<number> {
   if (!Number.isFinite(durationSec) || durationSec <= 0) throw new Error("播放地址无法读取时长");
   if (!streamTypes.has("audio")) throw new Error("播放地址不含音轨");
   if (!streamTypes.has("video")) throw new Error("播放地址不含画面");
+  await probeRemoteManhuaMediaDecodability({
+    url,
+    referer: DOUYIN_PLAYBACK_REFERER,
+  });
   return durationSec;
 }
 
@@ -614,9 +636,8 @@ async function probeEpisodeDurationWithSourceFailover(
     }
   }
   const refreshedUrls = await refreshEpisodePlaybackUrls(ep, state);
-  const fallbackUrls = refreshedUrls.length
-    ? refreshedUrls
-    : await refreshEpisodePlaybackUrlsViaYtdlp(ep, state);
+  const ytdlpUrls = await refreshEpisodePlaybackUrlsViaYtdlp(ep, state);
+  const fallbackUrls = orderEpisodeMediaFallbackUrls(refreshedUrls, ytdlpUrls);
   for (let index = 0; index < fallbackUrls.length; index++) {
     try {
       state.playbackUrl = fallbackUrls[index];
@@ -633,28 +654,6 @@ async function probeEpisodeDurationWithSourceFailover(
         ep.index,
         `candidate=${index + 1}/${fallbackUrls.length}`,
       );
-    }
-  }
-  if (refreshedUrls.length) {
-    const ytdlpUrls = await refreshEpisodePlaybackUrlsViaYtdlp(ep, state);
-    for (let index = 0; index < ytdlpUrls.length; index++) {
-      if ((state.triedStreamUrls || []).includes(ytdlpUrls[index]!)) continue;
-      try {
-        const durationSec = await ffprobeRemoteMedia(ytdlpUrls[index]!);
-        state.playbackUrl = ytdlpUrls[index];
-        state.resolvedStreamUrl = ytdlpUrls[index];
-        state.triedStreamUrls = Array.from(new Set([
-          ...(state.triedStreamUrls || []),
-          ytdlpUrls[index]!,
-        ]));
-        return durationSec;
-      } catch {
-        console.warn(
-          "[manhuaTemplateLearn] yt-dlp playback probe failed, trying next:",
-          ep.index,
-          `candidate=${index + 1}/${ytdlpUrls.length}`,
-        );
-      }
     }
   }
   state.playbackDead = true;
@@ -680,7 +679,7 @@ async function advanceEpisodeMediaSource(
   if (!isDouyinHostUrl(ep.url)) return false;
   const webApiUrls = await refreshEpisodePlaybackUrls(ep, state);
   const ytdlpUrls = await refreshEpisodePlaybackUrlsViaYtdlp(ep, state);
-  const urls = Array.from(new Set([...webApiUrls, ...ytdlpUrls]));
+  const urls = orderEpisodeMediaFallbackUrls(webApiUrls, ytdlpUrls);
   const tried = new Set<string>(
     [...(state.triedStreamUrls || []), state.resolvedStreamUrl]
       .filter((url): url is string => Boolean(url)),
@@ -1376,7 +1375,7 @@ async function learnOneEpisode(input: {
           if (e instanceof Error && /ManhuaLearn(Cancelled|SkipEpisode)Error/.test(e.name)) throw e;
           lastErrZh = mapManhuaLearnFetchError(e);
           if (
-            /媒体流|语音流|抽帧|画面不可解码|节点拒绝/.test(lastErrZh)
+            /媒体流|语音流|抽帧|画面不可解码|数据体|不可解码|节点拒绝|地址已失效|读取超时|连接中断/.test(lastErrZh)
             && attempt < retryMax
           ) {
             const advanced = await advanceEpisodeMediaSource(input.ep, srcState).catch(() => false);
