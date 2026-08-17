@@ -12376,9 +12376,10 @@ export default function PlatformPage() {
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="font-semibold">
-                              {manhuaLearnResult.liveStatus === "running" ||
-                              manhuaLearnResult.liveStatus === "queued"
+                              {manhuaLearnResult.liveStatus === "running"
                                 ? "学习进行中"
+                                : manhuaLearnResult.liveStatus === "queued"
+                                  ? "排队中"
                                 : manhuaLearnResult.liveStatus === "local"
                                   ? "本机学习"
                                   : manhuaLearnResult.errorZh || manhuaLearnResult.liveStatus === "failed"

@@ -134,6 +134,8 @@ export async function claimNextManhuaTemplateLearnJob(): Promise<NormalizedJob |
           eq(jobs.type, "video"),
           sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
           sql`coalesce(${jobs.input}::jsonb->>'hiddenAt', '') = ''`,
+          // attempts 在领取时 +1；已跑满两次的旧 queued 行不能再被部署/轮询复活。
+          sql`coalesce(${jobs.attempts}, 0) < 2`,
         ),
       )
       .orderBy(asc(jobs.createdAt))
@@ -157,6 +159,8 @@ export async function claimNextManhuaTemplateLearnJob(): Promise<NormalizedJob |
 export async function recoverInterruptedManhuaTemplateLearnJobsOnStartup(): Promise<{
   requeued: number;
   cancelled: number;
+  completed: number;
+  exhausted: number;
 }> {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable — cannot recover manhua learn jobs");
@@ -165,19 +169,26 @@ export async function recoverInterruptedManhuaTemplateLearnJobsOnStartup(): Prom
     .update(jobs)
     .set({
       status: sql<JobStatus>`case
+        when coalesce(${jobs.output}::jsonb->>'analysisStage', '') = 'manhua_learn_done'
+          then 'succeeded'
         when coalesce(${jobs.input}::jsonb->>'cancelRequestedAt', '') <> '' then 'failed'
+        when coalesce(${jobs.attempts}, 0) >= 2 then 'failed'
         else 'queued'
       end`,
-      error: sql<string>`case
+      error: sql<string | null>`case
+        when coalesce(${jobs.output}::jsonb->>'analysisStage', '') = 'manhua_learn_done'
+          then null
         when coalesce(${jobs.input}::jsonb->>'cancelRequestedAt', '') <> ''
           then '用户已停止学习；已落盘内容保留'
+        when coalesce(${jobs.attempts}, 0) >= 2
+          then '任务在服务重启前已达重试上限；已落盘内容保留，可手动续学'
         else '服务重启，已自动恢复排队'
       end`,
       updatedAt: new Date(),
     })
     .where(
       and(
-        eq(jobs.status, "running"),
+        sql`(${jobs.status} = 'running' or (${jobs.status} = 'queued' and coalesce(${jobs.attempts}, 0) >= 2))`,
         eq(jobs.type, "video"),
         sql`(${jobs.input}::jsonb->>'action') = 'manhua_template_learn'`,
       ),
@@ -185,15 +196,19 @@ export async function recoverInterruptedManhuaTemplateLearnJobsOnStartup(): Prom
     .returning({
       id: jobs.id,
       status: jobs.status,
+      error: jobs.error,
+      output: jobs.output,
     });
 
   return recovered.reduce(
     (acc, row) => {
       if (row.status === "queued") acc.requeued += 1;
-      if (row.status === "failed") acc.cancelled += 1;
+      if (row.status === "succeeded") acc.completed += 1;
+      if (row.status === "failed" && String(row.error || "").includes("重试上限")) acc.exhausted += 1;
+      if (row.status === "failed" && !String(row.error || "").includes("重试上限")) acc.cancelled += 1;
       return acc;
     },
-    { requeued: 0, cancelled: 0 },
+    { requeued: 0, cancelled: 0, completed: 0, exhausted: 0 },
   );
 }
 
@@ -218,7 +233,22 @@ export async function listManhuaTemplateLearnJobsForUser(
       )
       .orderBy(desc(jobs.createdAt))
       .limit(Math.max(1, Math.min(50, Math.floor(limit) || 30)));
-    return rows.map(normalizeJob);
+    return rows.map((row) => {
+      const normalized = normalizeJob(row);
+      const output = normalized.output;
+      // 终态 payload 会在 status 更新前先落库。若两次写入之间进程退出或 Neon
+      // 短抖动，消费者仍必须把完整 done payload 识别为成功，不能复活成“学习中”。
+      if (
+        normalized.status === "running"
+        && output != null
+        && typeof output === "object"
+        && !Array.isArray(output)
+        && String((output as Record<string, unknown>).analysisStage || "") === "manhua_learn_done"
+      ) {
+        return { ...normalized, status: "succeeded" as const, error: null };
+      }
+      return normalized;
+    });
   } catch (error) {
     console.error("[JobsRepo] listManhuaTemplateLearnJobsForUser failed:", error);
     return [];
@@ -627,6 +657,28 @@ export async function markJobSucceeded(id: string, output: unknown, provider?: s
   }
   await maybeDeleteDrProSecondaryStagingForTerminalPlatformJob(id);
   return true;
+}
+
+/**
+ * 漫剧学习已经完成媒体/模型工作后，只重试“同一份终态结果”的数据库写入；
+ * 绝不重新执行学习链，避免因 Neon 短抖动重复下载、抽帧或调用模型。
+ */
+export async function markManhuaLearnJobSucceededWithRetry(
+  id: string,
+  output: unknown,
+  provider?: string,
+  options?: { attempts?: number; delayMs?: number },
+): Promise<boolean> {
+  const attempts = Math.max(1, Math.min(6, Math.floor(options?.attempts ?? 4)));
+  const delayMs = Math.max(0, Math.min(5_000, Math.floor(options?.delayMs ?? 250)));
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (await markJobSucceeded(id, output, provider)) return true;
+    if (attempt < attempts && delayMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs * attempt));
+    }
+  }
+  console.error(`[JobsRepo] manhua learn terminal persistence exhausted: jobId=${id}`);
+  return false;
 }
 
 /** 最近一份平台动作任务（含运行中/成功/失败）；供持久任务在刷新后恢复。 */

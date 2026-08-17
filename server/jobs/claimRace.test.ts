@@ -11,6 +11,7 @@ vi.mock("../services/drProSecondaryStaging.js", () => ({
 
 import {
   claimNextQueuedJobExcluding,
+  markManhuaLearnJobSucceededWithRetry,
   recoverInterruptedManhuaTemplateLearnJobsOnStartup,
 } from "./repository";
 
@@ -89,9 +90,38 @@ describe("漫剧学习启动恢复", () => {
     await expect(recoverInterruptedManhuaTemplateLearnJobsOnStartup()).resolves.toEqual({
       requeued: 1,
       cancelled: 1,
+      completed: 0,
+      exhausted: 0,
     });
     expect(set).toHaveBeenCalledOnce();
     expect(where).toHaveBeenCalledOnce();
+  });
+
+  it("部署切在 done payload 与 status 之间时直接收敛成功，不重新排队", async () => {
+    const returning = vi.fn().mockResolvedValue([
+      {
+        id: "learn-done",
+        status: "succeeded",
+        error: null,
+        output: { analysisStage: "manhua_learn_done" },
+      },
+      {
+        id: "learn-exhausted",
+        status: "failed",
+        error: "任务在服务重启前已达重试上限；已落盘内容保留，可手动续学",
+        output: null,
+      },
+    ]);
+    const where = vi.fn(() => ({ returning }));
+    const set = vi.fn(() => ({ where }));
+    getDb.mockResolvedValue({ update: vi.fn(() => ({ set })) });
+
+    await expect(recoverInterruptedManhuaTemplateLearnJobsOnStartup()).resolves.toEqual({
+      requeued: 0,
+      cancelled: 0,
+      completed: 1,
+      exhausted: 1,
+    });
   });
 
   it("数据库不可用时明确失败，不伪装成已恢复", async () => {
@@ -99,5 +129,64 @@ describe("漫剧学习启动恢复", () => {
     await expect(recoverInterruptedManhuaTemplateLearnJobsOnStartup()).rejects.toThrow(
       "cannot recover manhua learn jobs",
     );
+  });
+});
+
+describe("漫剧学习终态落库", () => {
+  beforeEach(() => getDb.mockReset());
+
+  it("只重试同一份终态写入，不重跑学习链", async () => {
+    let writes = 0;
+    const selectChain = {
+      from: () => selectChain,
+      where: () => selectChain,
+      limit: async () => [{ ...QUEUED_ROW, input: { action: "manhua_template_learn" } }],
+    };
+    const db = {
+      select: () => selectChain,
+      update: () => ({
+        set: () => ({
+          where: async () => {
+            writes += 1;
+            if (writes < 3) throw new Error("neon transient");
+          },
+        }),
+      }),
+    };
+    getDb.mockResolvedValue(db);
+
+    await expect(
+      markManhuaLearnJobSucceededWithRetry(
+        "learn-terminal",
+        { analysisStage: "manhua_learn_done", learnedCount: 6 },
+        "manhua-template-learn",
+        { attempts: 4, delayMs: 0 },
+      ),
+    ).resolves.toBe(true);
+    expect(writes).toBe(3);
+  });
+
+  it("达到终态写入重试上限后明确返回 false", async () => {
+    let writes = 0;
+    getDb.mockResolvedValue({
+      update: () => ({
+        set: () => ({
+          where: async () => {
+            writes += 1;
+            throw new Error("neon unavailable");
+          },
+        }),
+      }),
+    });
+
+    await expect(
+      markManhuaLearnJobSucceededWithRetry(
+        "learn-terminal-fail",
+        { analysisStage: "manhua_learn_done" },
+        undefined,
+        { attempts: 2, delayMs: 0 },
+      ),
+    ).resolves.toBe(false);
+    expect(writes).toBe(2);
   });
 });
