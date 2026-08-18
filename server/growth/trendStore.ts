@@ -2352,7 +2352,10 @@ async function archiveCollection(
   dedupedCount: number,
 ): Promise<TrendArchiveEntry> {
   await ensureStoreDir();
-  const datePrefix = collection.collectedAt.slice(0, 10);
+  // 按小时分桶，避免当天目录在数 GB 的 Release 上传期间持续被采集写入，
+  // 导致源指纹校验必然失败、Fly 空间始终无法释放。旧 YYYY-MM-DD 目录仍可恢复，
+  // 新目录只是把同一归档格式拆成可封存的 YYYY-MM-DD-HH 小分片。
+  const datePrefix = collection.collectedAt.slice(0, 13).replace("T", "-");
   const bucketCounts = collection.stats?.bucketCounts || getBucketCounts(collection.items);
   const bucket = Object.keys(bucketCounts).sort().join("+") || "default";
   const bucketPreview = Object.keys(bucketCounts)

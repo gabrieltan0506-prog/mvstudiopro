@@ -142,30 +142,14 @@ prepare_snapshot() {
   mkdir "$snapshot_next"
 
   all_dirs="$snapshot_next/.all-dirs"
-  date_dirs="$snapshot_next/.date-dirs"
+  archive_dirs="$snapshot_next/.archive-dirs"
   selected_dirs="$snapshot_next/.selected-dirs"
   find "$ARCHIVE_ROOT" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | LC_ALL=C sort > "$all_dirs"
-  grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' "$all_dirs" | LC_ALL=C sort > "$date_dirs" || true
-  awk '{ lines[NR]=$0 } END { for (i=1; i<=NR-2; i++) print lines[i] }' "$date_dirs" > "$selected_dirs"
-  grep -v -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' "$all_dirs" >> "$selected_dirs" || true
-
-  available_bytes=$(df -Pk "$ROOT" | awk 'NR==2{printf "%.0f\n", $4 * 1024}')
-  target_bytes=$((1200 * 1024 * 1024))
-  if [ ! -s "$selected_dirs" ] && [ -s "$date_dirs" ] && [ "${available_bytes:-0}" -lt "$target_bytes" ]; then
-    needed_bytes=$((target_bytes - available_bytes))
-    selected_count=0
-    : > "$selected_dirs"
-    while IFS= read -r dir; do
-      validate_dir_name "$dir"
-      printf '%s\n' "$dir" >> "$selected_dirs"
-      dir_bytes=$(du -sk "$ARCHIVE_ROOT/$dir" 2>/dev/null | awk '{printf "%.0f\n", $1 * 1024}')
-      needed_bytes=$((needed_bytes - ${dir_bytes:-0}))
-      selected_count=$((selected_count + 1))
-      if [ "$needed_bytes" -le 0 ] && [ "$selected_count" -ge 2 ]; then
-        break
-      fi
-    done < "$date_dirs"
-  fi
+  # 同时兼容旧的日目录与新的小时目录。无论磁盘多紧，都保留最新两个分桶，
+  # 绝不再把仍由采集写入的活动目录拿去上传；否则上传完成后的源指纹必然变化。
+  grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]{2})?$' "$all_dirs" | LC_ALL=C sort > "$archive_dirs" || true
+  awk '{ lines[NR]=$0 } END { for (i=1; i<=NR-2; i++) print lines[i] }' "$archive_dirs" > "$selected_dirs"
+  grep -v -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]{2})?$' "$all_dirs" >> "$selected_dirs" || true
   LC_ALL=C sort -u "$selected_dirs" -o "$selected_dirs"
 
   plan="$snapshot_next/snapshot.tsv"
@@ -183,7 +167,7 @@ prepare_snapshot() {
     printf '%s\t%s\t%s\n' "$dir" "$fingerprint" "${bytes:-0}" >> "$plan"
   done < "$selected_dirs"
 
-  rm -f -- "$all_dirs" "$date_dirs" "$selected_dirs"
+  rm -f -- "$all_dirs" "$archive_dirs" "$selected_dirs"
   mv "$snapshot_next" "$snapshot_root"
   cat "$snapshot_root/snapshot.tsv"
 }
