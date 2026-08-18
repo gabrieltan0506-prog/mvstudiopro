@@ -186,34 +186,12 @@ jobs:
             return 1
           }
 
-          interactive_workload_is_idle() {
-            timeout 20 flyctl ssh console -a mvstudiopro -C "sh -lc '
-              find /data/growth/runtime-interactive-workloads -type f -mmin +2 -delete 2>/dev/null || true
-              test -z \"\$(find /data/growth/runtime-interactive-workloads -type f -mmin -2 -print -quit 2>/dev/null)\"
-            '" >/dev/null 2>&1
-          }
-
-          # 长 SFTP/tar/dd 不能只在开始前看一次租约。每 10 秒复检；前台任务出现
-          # 或租约状态无法证明为空时，立即终止本地 SSH 进程组，由调用方等待后重试。
+          # Runner 不得在长 SSH 传输期间另开 SSH 探针：实测 32MiB 分片需约 79 秒，
+          # 第二条探针连接会争抢 Fly SSH 资源并把健康传输误判为繁忙。长流由同一
+          # SSH 会话内的 growth-backup-stream-remote.sh 监控前台 marker。
           run_with_interactive_preemption() {
             BACKUP_REMOTE_WORK_STARTED=true
-            setsid "$@" &
-            local command_pid=$!
-            while kill -0 "$command_pid" 2>/dev/null; do
-              sleep 10
-              if ! kill -0 "$command_pid" 2>/dev/null; then
-                break
-              fi
-              if ! interactive_workload_is_idle; then
-                echo "前台平台任务出现，中止当前冷备远程阶段并等待续跑。" >&2
-                kill -TERM -- "-$command_pid" 2>/dev/null || true
-                sleep 2
-                kill -KILL -- "-$command_pid" 2>/dev/null || true
-                wait "$command_pid" 2>/dev/null || true
-                return 75
-              fi
-            done
-            wait "$command_pid"
+            "$@"
           }
 
           release_backup_lane() {
@@ -265,19 +243,20 @@ jobs:
             return 1
           }
 
-          capture_from_fly() {
-            local command="$1"
+          capture_directory_from_fly() {
+            local directory="$1"
             local output_path="$2"
             local timeout_seconds="${3:-480}"
             for attempt in 1 2 3 4 5; do
-              echo "Capturing from Fly -> ${output_path} (attempt ${attempt}/5)"
-              if wait_for_interactive_workload && run_with_interactive_preemption timeout "${timeout_seconds}" flyctl ssh console -a mvstudiopro -C "sh -lc '$command'" > "$output_path"; then
+              echo "Capturing Growth directory from Fly: ${directory} (attempt ${attempt}/5)"
+              if wait_for_interactive_workload && run_with_interactive_preemption timeout "${timeout_seconds}" \
+                flyctl ssh console -a mvstudiopro -C "sh -s -- stream-directory '${directory}'" \
+                < scripts/growth-backup-stream-remote.sh > "$output_path"; then
                 return 0
               fi
-              echo "Fly fetch failed, retrying in 20s (attempt $attempt/5)"
+              echo "Fly directory capture failed, retrying in 20s: ${directory}"
               sleep 20
             done
-            echo "Fly fetch failed after retries: $command"
             return 1
           }
 
@@ -290,14 +269,14 @@ jobs:
           fetch_file_from_fly /data/growth/weixin-channels-miner.json /tmp/growth-backup/store/weixin-channels-miner.json false
 
           if [ "${EXTERNALIZE_PLATFORMS:-false}" = "true" ]; then
-            capture_from_fly "if [ -d /data/growth/platforms ]; then nice -n 15 tar -C /data/growth -czf - platforms 2>/dev/null; fi" /tmp/growth-backup/growth-platforms.tar.gz 720 || true
+            capture_directory_from_fly platforms /tmp/growth-backup/growth-platforms.tar.gz 720 || true
           else
-            capture_from_fly "if [ -d /data/growth/platforms ]; then nice -n 15 tar -C /data/growth -czf - platforms 2>/dev/null; fi" /tmp/growth-backup/platforms.tar.gz || true
+            capture_directory_from_fly platforms /tmp/growth-backup/platforms.tar.gz || true
           fi
           if [ "${EXTERNALIZE_HISTORY_LEDGER:-false}" = "true" ]; then
-            capture_from_fly "if [ -d /data/growth/history-ledger ]; then nice -n 15 tar -C /data/growth -czf - history-ledger 2>/dev/null; fi" /tmp/growth-backup/growth-history-ledger.tar.gz 720 || true
+            capture_directory_from_fly history-ledger /tmp/growth-backup/growth-history-ledger.tar.gz 720 || true
           else
-            capture_from_fly "if [ -d /data/growth/history-ledger ]; then nice -n 15 tar -C /data/growth -czf - history-ledger 2>/dev/null; fi" /tmp/growth-backup/history-ledger.tar.gz || true
+            capture_directory_from_fly history-ledger /tmp/growth-backup/history-ledger.tar.gz || true
           fi
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-backup/fetched-at.txt
 
@@ -345,7 +324,9 @@ jobs:
             for attempt in 1 2 3 4 5; do
               local next_path="${output_path}.next"
               rm -f "$next_path"
-              if wait_for_interactive_workload && run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro -C "sh -lc 'nice -n 15 dd if=${remote_file} bs=${block_bytes} skip=${skip_blocks} count=${count_blocks} status=none'" > "$next_path"; then
+              if wait_for_interactive_workload && run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro \
+                -C "sh -s -- stream-file '${remote_file}' '${block_bytes}' '${skip_blocks}' '${count_blocks}'" \
+                < scripts/growth-backup-stream-remote.sh > "$next_path"; then
                 local actual_bytes
                 local actual_sha
                 actual_bytes=$(stat -c%s "$next_path")
