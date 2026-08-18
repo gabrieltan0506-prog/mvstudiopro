@@ -1,7 +1,9 @@
 import React, { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
+import { copyText } from "@/lib/copyText";
 import { formatDateGMT8 } from "@/lib/utils";
+import { toast } from "sonner";
 import { Image as ImageIcon, Video, Layers, Music, Box, FolderOpen, ArrowRight, FileText, BarChart2, Copy, Check, ExternalLink } from "lucide-react";
 
 const TYPE_ICONS: Record<string, React.ElementType> = {
@@ -161,13 +163,15 @@ function SnapshotCard({ item, analysisType, summary, snapshotLabel, snapshotGrad
 }) {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = (e: React.MouseEvent) => {
+  const handleCopy = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    navigator.clipboard.writeText(fullUrl).then(() => {
+    if (await copyText(fullUrl)) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+    } else {
+      toast.error("链接复制没成功", { description: fullUrl });
+    }
   };
 
   // Extract a clean 1-2 sentence brief from summary

@@ -5,30 +5,12 @@
  */
 
 import { useState } from "react";
+import { copyText } from "@/lib/copyText";
 import { toast } from "sonner";
 import {
   formatPlatformStoryboardCellsMarkdown,
   type PlatformStoryboardCell,
 } from "@shared/platformStoryboardCells";
-
-/** 剪贴板降级：clipboard API 被权限/沙箱挡下时走老 execCommand，再不行必须让用户知道 */
-function copyTextWithFallback(text: string): boolean {
-  const ta = document.createElement("textarea");
-  ta.value = text;
-  ta.style.position = "fixed";
-  ta.style.opacity = "0";
-  document.body.appendChild(ta);
-  ta.focus();
-  ta.select();
-  let ok = false;
-  try {
-    ok = document.execCommand("copy");
-  } catch {
-    ok = false;
-  }
-  document.body.removeChild(ta);
-  return ok;
-}
 
 const HEADERS = ["镜", "台词文案", "场景", "景别", "动作·画面", "运镜", "剪辑备注"] as const;
 
@@ -39,24 +21,14 @@ export default function PlatformStoryboardCellsTable(props: {
   const [copied, setCopied] = useState(false);
   if (!cells.length) return null;
 
-  const onCopy = () => {
+  // 失败不许静默吞：clipboard API → execCommand 降级 → 明确报错（用户实测贴不上，2026-08-12）
+  const onCopy = async () => {
     const md = formatPlatformStoryboardCellsMarkdown(cells);
-    const markCopied = () => {
+    if (await copyText(md)) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
-    };
-    // 失败不许静默吞：clipboard API → execCommand 降级 → 明确报错（用户实测贴不上，2026-08-12）
-    const tryFallback = () => {
-      if (copyTextWithFallback(md)) {
-        markCopied();
-      } else {
-        toast.error("复制没成功——请手动框选表格复制，或换浏览器再试");
-      }
-    };
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(md).then(markCopied).catch(tryFallback);
     } else {
-      tryFallback();
+      toast.error("复制没成功——请手动框选表格复制，或换浏览器再试");
     }
   };
 

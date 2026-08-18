@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Mail, X, Wallet, GitCommitHorizontal, UserMinus, UserPlus, Loader2, ChevronsUpDown, Check } from "lucide-react";
 
 import { useAuth } from "@/_core/hooks/useAuth";
+import { copyTextWithToast } from "@/lib/copyText";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -186,8 +187,11 @@ export default function TeamManagementPage() {
   }, [utils]);
 
   const copyInviteCode = async (code: string) => {
-    await navigator.clipboard.writeText(code);
-    toast.success(`邀请码 ${code} 已复制到剪贴板`);
+    await copyTextWithToast(code, {
+      successZh: `邀请码 ${code} 已复制到剪贴板`,
+      errorZh: "邀请码复制没成功",
+      errorDescriptionZh: `请手动记下邀请码：${code}`,
+    });
   };
 
   const team = teamQuery.data;

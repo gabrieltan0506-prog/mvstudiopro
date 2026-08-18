@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
+import { copyText } from "@/lib/copyText";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { Button } from "@/components/ui/button";
@@ -121,10 +122,13 @@ export function VideoInteraction({ videoUrl, title, compact = false }: VideoInte
       }
     }
 
-    await navigator.clipboard.writeText(shareUrl);
-    setCopied(true);
-    toast.success("分享链接已复制到剪贴板");
-    setTimeout(() => setCopied(false), 2000);
+    if (await copyText(shareUrl)) {
+      setCopied(true);
+      toast.success("分享链接已复制到剪贴板");
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      toast.error("分享链接复制没成功", { description: shareUrl });
+    }
   };
 
   const liked = likeStatusQuery.data?.liked ?? false;

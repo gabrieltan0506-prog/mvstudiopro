@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
+import { copyText, copyTextWithToast } from "@/lib/copyText";
 import { exchangeSupervisorSecret, hasSupervisorSessionHint } from "@/lib/supervisorTrpcToken";
 import { toast } from "sonner";
 import { Shield, DollarSign, Users, FileCheck, TrendingUp, CheckCircle, XCircle, Clock, Loader2, Copy, KeyRound, RefreshCw, Eraser } from "lucide-react";
@@ -112,11 +113,13 @@ export default function AdminPanel() {
     onError: () => toast.error("操作失败"),
   });
 
-  function copyCode(code: string) {
-    navigator.clipboard.writeText(code).then(() => {
+  async function copyCode(code: string) {
+    if (await copyText(code)) {
       setCopiedCode(code);
       setTimeout(() => setCopiedCode(null), 1500);
-    });
+    } else {
+      toast.error("复制没成功", { description: `请手动记下邀请码：${code}` });
+    }
   }
 
   const fetchVerifications = async () => {
@@ -710,8 +713,11 @@ export default function AdminPanel() {
                       </p>
                       <button
                         onClick={() => {
-                          navigator.clipboard.writeText(generatedCodes.join("\n"));
-                          toast.success("已复制全部邀请码");
+                          void copyTextWithToast(generatedCodes.join("\n"), {
+                            successZh: "已复制全部邀请码",
+                            errorZh: "复制没成功",
+                            errorDescriptionZh: "请手动逐个选中下方邀请码复制。",
+                          });
                         }}
                         className="text-xs text-muted-foreground hover:text-foreground border border-border rounded px-2 py-1 transition-colors"
                       >
