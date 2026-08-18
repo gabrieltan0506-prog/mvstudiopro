@@ -26,7 +26,6 @@ import {
 } from "./_core/llm";
 import {
   getPlatformStage2OpenAiModel,
-  getVisualReportOpenAiModel,
   resolvePlatformStage2LlmMode,
   resolvePlatformStage2OpenAiReasoningEffort,
   resolveSupervisorTopicCoverPixelEngineInput,
@@ -5141,8 +5140,12 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
          * 持久 job 不受断线影响，推理慢也无碍）；前两攻 DeepSeek，第三攻兜底回落 K3
          * ——省钱是常态，交付是底线。
          */
-        const visualReportFallbackModel = getVisualReportOpenAiModel();
-        let visualReportModel = "deepseek/deepseek-v4-pro-0813";
+        const { runVisualReportLlmAttempts, buildVisualReportFailureTelemetry } = await import(
+          "./services/visualReportLlm"
+        );
+        const { invokeGlmJsonChatWithGatewayFallback, BAILIAN_GLM_MODEL } = await import("./services/bailianChat");
+        let llmResult: Awaited<ReturnType<typeof runVisualReportLlmAttempts>> | null = null;
+        let visualReportStage: "before_llm" | "llm" | "post_llm" = "before_llm";
         const llmStartedAtMs = Date.now();
         let trendReportDeduct: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
         try {
@@ -5192,32 +5195,26 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           );
           const visualReportUser = `${userPayload}\n\n【輸出】僅輸出一個合法 JSON 物件（禁止 markdown围栏與前言後語）；首尾字元為 { 與 }。`;
 
-          // 三攻路由抽至 services/visualReportLlm（审查返工 2026-08-18）：
-          // attempt 1-2 DeepSeek（带 job 硬截止信号与报表 max-token 配置）→ attempt 3 K3 兜底；
-          // 全部失败时该函数抛错，进入下方 catch 走既有退款语义。
-          const { runVisualReportLlmAttempts } = await import("./services/visualReportLlm");
-          const llmResult = await runVisualReportLlmAttempts({
+          // 三攻路由（审查返工 2026-08-18）：attempt 1-2 DeepSeek（带 job 硬截止信号与
+          // 报表 max-token 配置）→ attempt 3 兜底百炼 GLM-5.2（K3 出局）；
+          // 全部失败时抛 VisualReportAttemptsError,进入下方 catch 走既有退款语义。
+          visualReportStage = "llm";
+          llmResult = await runVisualReportLlmAttempts({
             systemPrompt,
             userPrompt: visualReportUser,
             maxTokens: visualReportMaxTokens,
-            fallbackModelName: visualReportFallbackModel,
+            fallbackModelName: BAILIAN_GLM_MODEL,
             abortSignal: ctx.clientDisconnected,
-            fallbackInvoke: (modelName) =>
-              invokeLLM({
-                provider: "openai",
-                modelName,
-                response_format: { type: "json_object" },
-                max_tokens: visualReportMaxTokens,
-                temperature: 0.55,
-                requestId: `visual-report:${input.billingRequestId}`,
+            // 兜底 = GLM-5.2 三网关链(百炼→EvoLink→OpenRouter;K3 出局);三网关全灭则如实失败退款
+            fallbackInvoke: () =>
+              invokeGlmJsonChatWithGatewayFallback({
+                system: systemPrompt,
+                user: visualReportUser,
+                maxTokens: visualReportMaxTokens,
                 abortSignal: ctx.clientDisconnected,
-                messages: [
-                  { role: "system", content: systemPrompt },
-                  { role: "user", content: visualReportUser },
-                ],
               }),
           });
-          visualReportModel = llmResult.modelName;
+          visualReportStage = "post_llm";
           const parsed: any = llmResult.parsed;
 
           // safeStr: smart object-aware extractor — prevents [object Object] strings in arrays
@@ -5467,11 +5464,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               console.error("[generateVisualReport] refund failed", refundError);
             });
           }
+          // 复审 P1-1：失败遥测按真实阶段与尝试轨迹如实记账,不再虚报「三攻全灭」
+          const failTelemetry = buildVisualReportFailureTelemetry({
+            error,
+            llmResult,
+            stage: visualReportStage,
+          });
           appendRuntimeMetric("visual.report", {
             ok: false,
-            // 失败 = 三攻全灭（DeepSeek×2 + K3 兜底），如实记录混合路由
-            engineEnv: "openrouter_deepseek+evolink_k3",
-            provider: `visual_report_all_attempts_failed:${visualReportModel}`,
+            engineEnv: failTelemetry.engineEnv,
+            provider: failTelemetry.provider,
+            attemptsPerformed: failTelemetry.attemptsPerformed,
+            aborted: failTelemetry.aborted,
             durationMs: Date.now() - llmStartedAtMs,
             message: message.slice(0, 800),
             windowDays: input.windowDays,

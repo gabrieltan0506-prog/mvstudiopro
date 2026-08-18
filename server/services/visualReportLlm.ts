@@ -1,6 +1,6 @@
 /**
  * 趋势报表三攻路由（2026-08-18 审查返工后抽出为独立可测模块）：
- * attempt 1-2 走 DeepSeek 经济档（省钱常态），attempt 3 回落 K3（交付底线）。
+ * attempt 1-2 走 DeepSeek 经济档,attempt 3 兜底百炼 GLM-5.2(用户拍板:K3 出局,不回落 Evolink/OpenRouter 贵档)。
  * 遥测以本模块返回的真实路由为准（审查 P1-3：禁止把 OpenRouter 记成 Evolink）。
  */
 import {
@@ -9,7 +9,60 @@ import {
   type DeepSeekJsonChatResponse,
 } from "./platformTopicShortlist";
 
-export type VisualReportEngine = "openrouter_deepseek" | "evolink_k3";
+export type VisualReportEngine = "openrouter_deepseek" | "glm_5_2";
+
+/** 单次尝试的真实路由痕迹（复审 P1-1：失败遥测必须记真账） */
+export type VisualReportAttemptTrace = {
+  attempt: number;
+  engine: VisualReportEngine;
+  modelName: string;
+};
+
+/** 三攻失败结构化错误：携带真实尝试轨迹与是否硬截止,供上层遥测/退款文案如实记录 */
+export class VisualReportAttemptsError extends Error {
+  readonly code = "visual_report_attempts_failed";
+  constructor(
+    message: string,
+    readonly attempts: VisualReportAttemptTrace[],
+    readonly aborted: boolean,
+  ) {
+    super(message);
+    this.name = "VisualReportAttemptsError";
+  }
+}
+
+/** 失败遥测统一口径（routers catch 复用;抽成纯函数以便直接测试——复审 P1-4） */
+export function buildVisualReportFailureTelemetry(params: {
+  error: unknown;
+  llmResult: VisualReportLlmResult | null;
+  stage: "before_llm" | "llm" | "post_llm";
+}): { engineEnv: string; provider: string; attemptsPerformed: number; aborted: boolean } {
+  const attemptsError = params.error instanceof VisualReportAttemptsError ? params.error : null;
+  if (attemptsError) {
+    return {
+      engineEnv: attemptsError.attempts.map((x) => x.engine).join("+") || "not_started",
+      provider: `visual_report_attempts_failed:${attemptsError.attempts
+        .map((x) => `${x.attempt}:${x.engine}:${x.modelName}`)
+        .join("|")}`,
+      attemptsPerformed: attemptsError.attempts.length,
+      aborted: attemptsError.aborted,
+    };
+  }
+  if (params.llmResult) {
+    return {
+      engineEnv: params.llmResult.engine,
+      provider: `visual_report_postprocess_failed:${params.llmResult.engine}:${params.llmResult.modelName}`,
+      attemptsPerformed: params.llmResult.attempt,
+      aborted: false,
+    };
+  }
+  return {
+    engineEnv: "not_started",
+    provider: `visual_report_${params.stage}_failed`,
+    attemptsPerformed: 0,
+    aborted: false,
+  };
+}
 
 export type VisualReportLlmResult = {
   parsed: Record<string, unknown>;
@@ -86,10 +139,22 @@ export async function runVisualReportLlmAttempts(params: {
   const deepSeekInvoke = params.deepSeekInvoke ?? invokeDeepSeekJsonChatRaw;
   const sleep = params.sleepMs ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   let lastErr = "";
+  const attempts: VisualReportAttemptTrace[] = [];
+  const buildErr = (aborted: boolean) =>
+    new VisualReportAttemptsError(
+      aborted
+        ? `趋势报表任务已截止（实际执行 ${attempts.length}/${maxAttempts} 次）${lastErr ? `：${lastErr.slice(0, 200)}` : ""}`
+        : `趋势报表生成失败（实际执行 ${attempts.length}/${maxAttempts} 次）${lastErr ? `：${lastErr.slice(0, 200)}` : ""}`,
+      attempts,
+      aborted,
+    );
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    // 复审 P1-3：每轮顶部先查硬截止,截止后一个通道都不许再碰
+    if (params.abortSignal?.aborted) throw buildErr(true);
     const useFallback = attempt >= maxAttempts;
-    const engine: VisualReportEngine = useFallback ? "evolink_k3" : "openrouter_deepseek";
+    const engine: VisualReportEngine = useFallback ? "glm_5_2" : "openrouter_deepseek";
     const modelName = useFallback ? params.fallbackModelName : DEEPSEEK_ECONOMY_MODEL;
+    attempts.push({ attempt, engine, modelName });
     try {
       const response: FallbackResponse = useFallback
         ? await params.fallbackInvoke(modelName)
@@ -117,14 +182,13 @@ export async function runVisualReportLlmAttempts(params: {
     } catch (attemptErr) {
       lastErr = attemptErr instanceof Error ? attemptErr.message : String(attemptErr);
       console.warn(`[generateVisualReport] LLM 第 ${attempt}/${maxAttempts} 次失败: ${lastErr.slice(0, 240)}`);
-      // 硬截止已触发时立即放弃（审查 P1-1）：不再烧后续尝试
-      if (params.abortSignal?.aborted) break;
-      if (attempt < maxAttempts) await sleep(400 * attempt);
+      // 硬截止已触发时立即放弃（复审 P1-2/P1-3）：真实次数入错误,退避可被截止打断
+      if (params.abortSignal?.aborted) throw buildErr(true);
+      if (attempt < maxAttempts) {
+        await sleep(400 * attempt);
+        if (params.abortSignal?.aborted) throw buildErr(true);
+      }
     }
   }
-  throw new Error(
-    lastErr
-      ? `趋势报表生成失败（已重试 ${maxAttempts} 次）：${lastErr.slice(0, 200)}`
-      : `趋势报表生成失败（已重试 ${maxAttempts} 次）`,
-  );
+  throw buildErr(false);
 }

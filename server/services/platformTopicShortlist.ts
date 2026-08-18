@@ -654,7 +654,7 @@ export function buildDeepSeekExpandRequestBody(params: {
       { role: "user", content: params.user },
     ],
     temperature: 0.55,
-    max_tokens: Math.max(8_192, Number(params.maxTokens) || 65_536),
+    max_tokens: Math.max(8_192, Math.min(65_536, Math.floor(Number(params.maxTokens) || 65_536))),
     response_format: { type: "json_object" },
     reasoning: { effort: "high" },
     // 审查返工 6：不带此标志时 OpenRouter 可能把请求路由给不支持 reasoning/response_format
