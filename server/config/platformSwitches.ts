@@ -277,8 +277,9 @@ export const VISUAL_REPORT_DEFAULT_OPENROUTER_MODEL = OPENROUTER_KIMI_K3_MODEL;
 
 /** 平台趋势 PNG 报表：Kimi K3 纯文本结构化分析，不再接收封面候选或视觉输入。 */
 export function getVisualReportOpenAiModel(): string {
-  // 2026-08-16 用户拍板切回：Terra 高推理耗时数分钟，同步请求活不到交卷
-  //（断线即弃算），K3 历史实测通常 30–40 秒完成。
+  // 2026-08-18 用户拍板：报表主力改 DeepSeek 经济档（routers 内直连，约 K3 价 1/16，
+  // 异步 job 后慢推理无碍——"用 K3 就像拿大炮轰小鸡"）。本函数现仅提供第三攻兜底模型：
+  // K3 历史实测 30–40 秒稳定交卷，省钱是常态、交付是底线。
   return getOpenRouterKimiK3Model();
 }
 

@@ -5136,8 +5136,13 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 - globalBlueOceanWords：**【必须输出 4–6 组，禁止空数组】** 聚合选定平台的高意图搜索词，一/二级分级。格式：[{"primary":"一级词","secondary":["二级词1","二级词2"]}]。须从 platformEvidence.topTitles、dramaMixNames、dramaRising、行业样本 key、各平台 hotTopics 提炼；含抖音漫剧样本时可输出「AI漫剧/重生漫剧」类一级词。无法核实月搜索量时仍须输出，**禁止**「尚未检索到蓝海词」等空话。
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 
-        /** 平台趋势长图：默认 Kimi K3；持久 job 不受浏览器连接生命周期影响。 */
-        const visualReportModel = getVisualReportOpenAiModel();
+        /**
+         * 平台趋势长图（2026-08-18 用户拍板）：主力 DeepSeek 经济档（约 K3 价 1/16，
+         * 持久 job 不受断线影响，推理慢也无碍）；前两攻 DeepSeek，第三攻兜底回落 K3
+         * ——省钱是常态，交付是底线。
+         */
+        const visualReportFallbackModel = getVisualReportOpenAiModel();
+        let visualReportModel = "deepseek/deepseek-v4-pro-0813";
         const llmStartedAtMs = Date.now();
         let trendReportDeduct: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
         try {
@@ -5193,20 +5198,32 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
           for (let attempt = 1; attempt <= VISUAL_REPORT_MAX_ATTEMPTS; attempt += 1) {
             try {
-              response = await invokeLLM({
-                provider: "openai",
-                modelName: visualReportModel,
-                response_format: { type: "json_object" },
-                max_tokens: visualReportMaxTokens,
-                // 恢复封面功能加入前的已验证 Kimi 配置；K3 不需要额外深推理预算。
-                temperature: 0.55,
-                requestId: `visual-report:${input.billingRequestId}`,
-                abortSignal: ctx.clientDisconnected,
-                messages: [
-                  { role: "system", content: systemPrompt },
-                  { role: "user", content: visualReportUser },
-                ],
-              });
+              if (attempt < VISUAL_REPORT_MAX_ATTEMPTS) {
+                // 主力：DeepSeek 经济档，复用扩写已验证口径（65K 预算/推理 high/
+                // require_parameters/业务 JSON 验真），报表已是持久 job，慢无碍
+                visualReportModel = "deepseek/deepseek-v4-pro-0813";
+                const { invokeDeepSeekJsonChatRaw } = await import("./services/platformTopicShortlist");
+                response = (await invokeDeepSeekJsonChatRaw({
+                  system: systemPrompt,
+                  user: visualReportUser,
+                })) as unknown as Awaited<ReturnType<typeof invokeLLM>>;
+              } else {
+                // 兜底：回落 K3（恢复封面功能前的已验证 Kimi 配置，历史实测 30–40 秒交卷）
+                visualReportModel = visualReportFallbackModel;
+                response = await invokeLLM({
+                  provider: "openai",
+                  modelName: visualReportModel,
+                  response_format: { type: "json_object" },
+                  max_tokens: visualReportMaxTokens,
+                  temperature: 0.55,
+                  requestId: `visual-report:${input.billingRequestId}`,
+                  abortSignal: ctx.clientDisconnected,
+                  messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: visualReportUser },
+                  ],
+                });
+              }
               const choice0 = response.choices?.[0];
               rawBody =
                 typeof choice0?.message?.content === "string"

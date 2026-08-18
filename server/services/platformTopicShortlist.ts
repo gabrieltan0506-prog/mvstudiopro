@@ -659,7 +659,22 @@ export function buildDeepSeekExpandRequestBody(params: {
   };
 }
 
-async function invokeExpandViaDeepSeek(params: { system: string; user: string }): Promise<string> {
+/** DeepSeek 经济档 OpenRouter 响应（choices/usage/model 供上层遥测与解析复用） */
+export type DeepSeekJsonChatResponse = {
+  choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  model?: string;
+  provider?: string;
+};
+
+/**
+ * 通用 DeepSeek 经济档 JSON 对话（扩写与趋势报表共用；2026-08-18 用户拍板报表切经济档）。
+ * 返回完整响应对象，content 已通过业务 JSON 验真（截断/过短/非对象一律抛错，不流空壳给下游）。
+ */
+export async function invokeDeepSeekJsonChatRaw(params: {
+  system: string;
+  user: string;
+}): Promise<DeepSeekJsonChatResponse> {
   const key = String(process.env.OPENROUTER_API_KEY || "").trim();
   if (!key) throw new Error("经济档通道未配置");
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -675,9 +690,9 @@ async function invokeExpandViaDeepSeek(params: { system: string; user: string })
   });
   const raw = await res.text();
   if (!res.ok) throw new Error(`DeepSeek 经济档 HTTP ${res.status}: ${raw.slice(0, 160)}`);
-  let json: { choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }> };
+  let json: DeepSeekJsonChatResponse;
   try {
-    json = JSON.parse(raw) as typeof json;
+    json = JSON.parse(raw) as DeepSeekJsonChatResponse;
   } catch {
     throw new Error(`DeepSeek 经济档非 JSON 响应：${raw.slice(0, 120)}`);
   }
@@ -692,7 +707,13 @@ async function invokeExpandViaDeepSeek(params: { system: string; user: string })
   if (!extractJsonObject(text)) {
     throw new Error(`DeepSeek 经济档业务 JSON 解析失败：${text.slice(0, 120)}`);
   }
-  return text;
+  return json;
+}
+
+async function invokeExpandViaDeepSeek(params: { system: string; user: string }): Promise<string> {
+  const json = await invokeDeepSeekJsonChatRaw(params);
+  const content = json.choices?.[0]?.message?.content;
+  return typeof content === "string" ? content.trim() : "";
 }
 
 async function invokeExpandViaEvolink(params: {
