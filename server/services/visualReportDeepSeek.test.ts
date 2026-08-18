@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invokeDeepSeekJsonChatRaw } from "./platformTopicShortlist";
 
-const VALID_CONTENT = JSON.stringify({ reportTitle: "测试报表", insightSummary: [] });
+const VALID_CONTENT = JSON.stringify({ reportTitle: "测试报表", insightSummary: [{ role: "判断", title: "t", description: "d" }], trackGrowth: [{ name: "n", growth: "+1%" }] });
 
 function mockFetchOnce(payload: unknown, ok = true, status = 200) {
   vi.stubGlobal(

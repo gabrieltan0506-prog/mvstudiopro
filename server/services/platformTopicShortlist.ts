@@ -683,7 +683,12 @@ export async function invokeDeepSeekJsonChatRaw(params: {
   abortSignal?: AbortSignal;
 }): Promise<DeepSeekJsonChatResponse> {
   const key = String(process.env.OPENROUTER_API_KEY || "").trim();
-  if (!key) throw new Error("经济档通道未配置");
+  if (!key) {
+    const err = new Error("经济档通道未配置") as Error & { gatewayTrace?: unknown };
+    // 复审五轮 P1-1:fetch 未发生,标记 skipped 供外呼计数排除
+    err.gatewayTrace = [{ gateway: "openrouter", model: DEEPSEEK_ECONOMY_MODEL, outcome: "skipped_not_configured" }];
+    throw err;
+  }
   const timeoutSignal = AbortSignal.timeout(240_000);
   const signal = params.abortSignal ? AbortSignal.any([params.abortSignal, timeoutSignal]) : timeoutSignal;
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {

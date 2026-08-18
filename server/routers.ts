@@ -5137,8 +5137,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 
         /**
          * 平台趋势长图（2026-08-18 用户拍板）：主力 DeepSeek 经济档（约 K3 价 1/16，
-         * 持久 job 不受断线影响，推理慢也无碍）；前两攻 DeepSeek，第三攻兜底回落 K3
-         * ——省钱是常态，交付是底线。
+         * 持久 job 不受断线影响,推理慢也无碍);前两攻 DeepSeek,第三攻兜底 GLM-5.2 三网关。
          */
         const { runVisualReportLlmAttempts, buildVisualReportFailureTelemetry, parseVisualReportJson } = await import(
           "./services/visualReportLlm"
@@ -5196,7 +5195,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           const visualReportUser = `${userPayload}\n\n【輸出】僅輸出一個合法 JSON 物件（禁止 markdown围栏與前言後語）；首尾字元為 { 與 }。`;
 
           // 三攻路由（审查返工 2026-08-18）：attempt 1-2 DeepSeek（带 job 硬截止信号与
-          // 报表 max-token 配置）→ attempt 3 兜底百炼 GLM-5.2（K3 出局）；
+          // 报表 max-token 配置）→ attempt 3 兜底 GLM-5.2 三网关；
           // 全部失败时抛 VisualReportAttemptsError,进入下方 catch 走既有退款语义。
           visualReportStage = "llm";
           llmResult = await runVisualReportLlmAttempts({
@@ -5402,7 +5401,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             routeMeta: {
               engine: llmResult.engine,
               gateway: llmResult.gateway,
-              modelName: llmResult.modelName,
+              // 复审五轮 P1-3:账本记真实上游模型(如 openrouter 网关的 z-ai/glm-5.2)
+              modelName: llmResult.upstreamModel ?? llmResult.modelName,
               attempt: llmResult.attempt,
             },
             report: {
@@ -5455,7 +5455,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             gateway: llmResult.gateway,
             gatewayAttemptsPerformed: llmResult.gatewayAttemptsPerformed,
             gatewayTrace: llmResult.gatewayTraceSummary,
-            provider: `${llmResult.gateway || llmResult.engine}:${llmResult.modelName}`,
+            provider: `${llmResult.gateway || llmResult.engine}:${llmResult.upstreamModel ?? llmResult.modelName}`,
             durationMs: Date.now() - llmStartedAtMs,
             upstreamModel: llmResult.upstreamModel ?? llmResult.modelName,
             finishReason: llmResult.finishReason,

@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GlmGatewayError, invokeGlmJsonChatWithGatewayFallback } from "./bailianChat";
 
-const GOOD = JSON.stringify({ reportTitle: "报表", insightSummary: [] });
+const GOOD = JSON.stringify({ reportTitle: "报表", insightSummary: [{ role: "判断", title: "t", description: "d" }], trackGrowth: [{ name: "n", growth: "+1%" }] });
 const okBody = (content: string, model = "glm-5.2") =>
   JSON.stringify({ choices: [{ message: { content }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 2 }, model });
 

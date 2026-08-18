@@ -23,9 +23,9 @@ export type VisualReportAttemptTrace = {
 /** 真实 HTTP 外呼数:DeepSeek 攻=1;GLM 攻=网关轨迹中真实外呼条数(skipped_not_configured 不计;无轨迹按 1 计) */
 export function countGatewayCalls(trace: VisualReportAttemptTrace[]): number {
   return trace.reduce((sum, t) => {
-    if (t.engine === "openrouter_deepseek") return sum + 1;
-    if (!t.gatewayTrace) return sum + 1;
-    return sum + t.gatewayTrace.filter((g) => g.outcome !== "skipped_not_configured").length;
+    // 复审五轮 P1-1:有轨迹以轨迹为准(skipped=零外呼);无轨迹的攻按 1 次真实 fetch 计
+    if (t.gatewayTrace) return sum + t.gatewayTrace.filter((g) => g.outcome !== "skipped_not_configured").length;
+    return sum + 1;
   }, 0);
 }
 
@@ -124,7 +124,7 @@ type FallbackResponse = {
   gatewayTrace?: Array<{ gateway: string; model: string; outcome: string; detail?: string }>;
 };
 
-/** 报表 JSON 解析与空壳校验（DeepSeek/K3 两路共用同一把尺） */
+/** 报表 JSON 解析与空壳校验(DeepSeek 与 GLM 兜底共用同一把尺) */
 export function parseVisualReportJson(rawText: string): { parsed: Record<string, unknown>; rawBody: string } {
   const text = String(rawText || "").trim();
   if (!text) throw new Error("上游返回空内容");
@@ -152,8 +152,15 @@ export function parseVisualReportJson(rawText: string): { parsed: Record<string,
     throw new Error("解析结果不是 JSON 对象");
   }
   const obj = parsed as Record<string, unknown>;
-  if (!obj.reportTitle && !Array.isArray(obj.insightSummary) && !Array.isArray(obj.trackGrowth)) {
-    throw new Error("JSON 缺少 reportTitle/insightSummary/trackGrowth");
+  // 复审五轮 P1-2:三主键必须同时实质非空,只带标题或空数组的空壳一律拒绝并继续降级
+  if (typeof obj.reportTitle !== "string" || !obj.reportTitle.trim()) {
+    throw new Error("报表空壳:reportTitle 缺失或为空");
+  }
+  if (!Array.isArray(obj.insightSummary) || obj.insightSummary.length === 0) {
+    throw new Error("报表空壳:insightSummary 为空");
+  }
+  if (!Array.isArray(obj.trackGrowth) || obj.trackGrowth.length === 0) {
+    throw new Error("报表空壳:trackGrowth 为空");
   }
   return { parsed: obj, rawBody: text };
 }

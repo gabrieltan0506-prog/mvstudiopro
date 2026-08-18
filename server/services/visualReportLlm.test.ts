@@ -12,7 +12,7 @@ import {
 } from "./visualReportLlm";
 import { DEEPSEEK_ECONOMY_MODEL } from "./platformTopicShortlist";
 
-const GOOD = JSON.stringify({ reportTitle: "周报", insightSummary: [], trackGrowth: [] });
+const GOOD = JSON.stringify({ reportTitle: "周报", insightSummary: [{ role: "判断", title: "t", description: "d" }], trackGrowth: [{ name: "赛道", growth: "+10%" }] });
 const asResp = (content: string, extra: Record<string, unknown> = {}) => ({
   choices: [{ message: { content }, finish_reason: "stop" }],
   usage: { prompt_tokens: 10, completion_tokens: 20 },
@@ -111,7 +111,13 @@ describe("parseVisualReportJson(两路共用同一把尺)", () => {
     expect(parseVisualReportJson("以下是报表:" + GOOD).parsed.reportTitle).toBe("周报");
   });
   it("空壳(缺三主键)必拒", () => {
-    expect(() => parseVisualReportJson(JSON.stringify({ hello: 1 }))).toThrow("缺少 reportTitle");
+    expect(() => parseVisualReportJson(JSON.stringify({ hello: 1 }))).toThrow("reportTitle");
+  });
+  it("只有标题的空壳必拒(复审五轮 P1-2)", () => {
+    expect(() => parseVisualReportJson(JSON.stringify({ reportTitle: "周报" }))).toThrow("insightSummary");
+  });
+  it("洞察与赛道为空数组的空壳必拒(复审五轮 P1-2)", () => {
+    expect(() => parseVisualReportJson(JSON.stringify({ reportTitle: "周报", insightSummary: [], trackGrowth: [] }))).toThrow("为空");
   });
   it("HTML/错误页必拒", () => {
     expect(() => parseVisualReportJson("<html>bad gateway</html>")).toThrow("非 JSON");
@@ -229,5 +235,28 @@ describe("countGatewayCalls(真实外呼计数,复审四轮 P1-1)", () => {
     const t = buildVisualReportFailureTelemetry({ error: err, llmResult: null, stage: "llm" });
     expect(t.gatewayAttemptsPerformed).toBe(4);
     expect(t.gatewayTrace).toBe("3:bailian=skipped_not_configured|3:evolink=http_error|3:openrouter=http_error");
+  });
+});
+
+describe("DeepSeek 未配置零外呼(复审五轮 P1-1)", () => {
+  it("两攻 DeepSeek 均 skipped + GLM 首网关成功 → gatewayAttemptsPerformed=1", async () => {
+    const ds = vi.fn(async () => {
+      const err = new Error("经济档通道未配置") as Error & { gatewayTrace?: unknown };
+      err.gatewayTrace = [{ gateway: "openrouter", model: "deepseek/deepseek-v4-pro-0813", outcome: "skipped_not_configured" }];
+      throw err;
+    });
+    const glm = vi.fn(async () => ({
+      choices: [{ message: { content: GOOD }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 2 },
+      model: "glm-5.2",
+      gateway: "bailian",
+      gatewayTrace: [{ gateway: "bailian", model: "glm-5.2", outcome: "ok" }],
+    }));
+    const r = await runVisualReportLlmAttempts({
+      systemPrompt: "s", userPrompt: "u", maxTokens: 40_000, fallbackModelName: "glm-5.2",
+      deepSeekInvoke: ds as any, fallbackInvoke: glm as any, sleepMs: async () => {},
+    });
+    expect(r.gatewayAttemptsPerformed).toBe(1);
+    expect(r.gateway).toBe("bailian");
   });
 });
