@@ -402,6 +402,25 @@ async function startServer() {
     }
   });
 
+  // 博客媒体:桶是私有的,静态博客页不能写死会过期的签名链接。
+  // 固定站内地址 → 请求时现签短时读链接 302 跳转;拖动进度由 GCS 原生 Range/206 承担。
+  app.get("/api/blog-media/:file", async (req, res) => {
+    try {
+      const file = String(req.params.file || "");
+      // 白名单:仅普通文件名的 mp4,防路径穿越/防签任意对象
+      if (!/^[A-Za-z0-9_.-]+\.mp4$/.test(file) || file.includes("..")) {
+        return res.status(404).json({ error: "not found" });
+      }
+      const { signGcsObjectPathV4ReadUrl, getGcsBucketName } = await import("../services/gcs");
+      const url = signGcsObjectPathV4ReadUrl(getGcsBucketName(), `blog-media/dual-engine-night/${file}`, 3600);
+      res.setHeader("Cache-Control", "private, max-age=0");
+      return res.redirect(302, url);
+    } catch (error) {
+      console.error("[BlogMedia] sign failed:", error);
+      return res.status(404).json({ error: "not found" });
+    }
+  });
+
   app.get("/api/jobs/manhua-learn", async (req, res) => {
     try {
       res.setHeader("Cache-Control", "private, no-store, max-age=0");

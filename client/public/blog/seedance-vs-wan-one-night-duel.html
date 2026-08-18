@@ -170,7 +170,7 @@
 <nav class="top"><a href="/">首页</a> › <a href="/blog/">文章</a></nav>
 <article>
 <h1>同一套素材，我让 Seedance 2.5 和 Wan 3.0 跑了一夜：8 分钟与 74 分钟之后</h1>
-<p class="meta">2026-08-19 · 约 11 分钟</p>
+<p class="meta">2026-08-19 · 约 12 分钟</p>
 <blockquote>
 <p>这是 AI 漫剧工厂实测系列的上篇。我们在同一个晚上，用同一套素材和同一份提示词，分别生成了一支 30 秒谍战短片；随后又用一支兽首乐队 MV，把三条不同的 API 路线都跑了一遍。后来，这支 MV 又补成了 50 秒完整版本。文中的耗时、费用和失误，均来自当晚的真实记录。</p>
 </blockquote>
@@ -181,7 +181,8 @@
 <li><strong>真正拉开体验差距的是音频。</strong> 同一个 Seedance 2.5，经不同接口调用，参考音频的处理方式完全不同。这是整次测试里最容易踩坑、也最值得提前知道的一点。</li>
 </ul>
 <h2>我们是怎么测的</h2>
-<p><img src="/blog-assets/dual-engine-night/de-06-opening-array.jpg" alt="天雷劫开场:雷暴法阵穹拍(720P 原帧,已加水印)" oncontextmenu="return false" draggable="false"></p>
+<p><video controls preload="metadata" width="100%" src="/api/blog-media/wm4k_diebao.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
+<p><em>《谍报追凶》终稿(4K,引擎原生全息+卡点配乐,水印版)</em></p><p><img src="/blog-assets/dual-engine-night/de-06-opening-array.jpg" alt="天雷劫开场:雷暴法阵穹拍(720P 原帧,已加水印)" oncontextmenu="return false" draggable="false"></p>
 <p>这一晚一共跑了三组内容：</p>
 <ol>
 <li>《谍报追凶》：30 秒雷暴夜追车戏，包含机枪扫射、荒诞反杀和智能座舱。人物采用写实面孔，素材包括 10 张角色与场景锁定图，以及 4 段按秒定位的 TTS 对白。</li>
@@ -201,7 +202,8 @@
 </ul>
 <p>同一个模型，因为入口不同而出现截然不同的音频行为。只看模型名称，很容易误以为两边效果相同；真正跑一遍才知道不是这么回事。</p>
 <h2>把唱段补到 50 秒后，我反而看见了它的边界</h2>
-<p>20 秒版本更像一段能力展示：主唱亮相、乐队接力、群像收束，信息密度高，几乎没有空拍。50 秒版本则更接近一场完整演出——主唱退场后，灯光逐步熄灭，黑猫钢琴手留在舞台中央，把情绪慢慢送到结束。</p>
+<p><video controls preload="metadata" width="100%" src="/api/blog-media/wm_yiwang.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
+<p><em>《意网情深》兽首乐坊 50 秒完整版:20 秒主唱原曲进片 + 安可猫钢琴尾奏</em></p><p>20 秒版本更像一段能力展示：主唱亮相、乐队接力、群像收束，信息密度高，几乎没有空拍。50 秒版本则更接近一场完整演出——主唱退场后，灯光逐步熄灭，黑猫钢琴手留在舞台中央，把情绪慢慢送到结束。</p>
 <p>这一段尾奏并不是简单的黑屏填时长。成片全长 <strong>50.08 秒</strong>，综合响度约 <strong>-14.7 LUFS</strong>，前后音轨没有明显断层；从热闹的群像过渡到单束顶光下的钢琴，听觉和画面都在有意识地收束。黑猫最后被幕布一点点吞没，只留下两只发亮的眼睛，这个结尾是有记忆点的。</p>
 <p>但它也暴露了一个很现实的问题：<strong>完整，不等于紧凑。</strong> 前 20 秒有主唱、鼓手、贝斯手和吉他手之间的镜头交换；进入钢琴尾奏后，画面连续二十多秒停留在相近机位，情绪降下来了，视觉信息却没有继续推进。作为模型能力样片，这种长镜头能证明角色稳定性和舞台连续性；如果直接拿去发布，我会保留 50 秒完整测试版，同时再剪一支约 32—36 秒的观看版，在钢琴段补两三个手部、琴键和观众反应的近景。这样既留住余韵，也不至于让观众误以为视频已经结束。</p>
 <h2>第三件事：Wan 3.0 很慢，但并非没有吸引力</h2>
@@ -222,7 +224,8 @@
 </ul>
 <p>这些步骤不如“生成一支大片”听起来有趣，却直接决定了一条生产线能不能稳定运转。</p>
 <h2>第五件事：不要把 BGM 提前混进参考对白</h2>
-<p>第二晚，我们又花了约 29 元验证一个想法：能不能把对白和配乐提前混成一条完整音轨，再让模型一次生成成片？如果可行，就能少做一道后期。</p>
+<p><video controls preload="metadata" width="100%" src="/api/blog-media/wm_tlj_v3_bad.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
+<p><em>反面教材:BGM 预混进参考音轨后,引擎重新演绎了对白(台词换人)</em></p><p>第二晚，我们又花了约 29 元验证一个想法：能不能把对白和配乐提前混成一条完整音轨，再让模型一次生成成片？如果可行，就能少做一道后期。</p>
 <p>结果并不理想：</p>
 <ul>
 <li>使用纯对白轨时，句子之间保留真正的静音，五句台词都按原声和原有时间进入成片。</li>
@@ -233,7 +236,8 @@
 <p>我们还尝试把写实风格的 3D 国漫角色提交到官方通道。四张图全部被判定为 <code>may contain real person</code>。</p>
 <p>这些素材是纯 3D 渲染，并非照片。这说明当时的审核更在意角色看起来有多逼真，而不是文件究竟来自摄影还是渲染。好在建单失败没有扣费，也算免费换来一条经验：Q 版、兽首和强风格化角色可以先试官方通道；皮肤和五官过于写实的 3D 角色，最好直接按真人素材准备备用路线。</p>
 <h2>第七件事：画面清楚了，演员也可能变成蜡像</h2>
-<p>为了减少运动模糊，我们一度在提示词里反复强调 <code>motionless</code>、<code>frozen</code> 和“保持静止”。画面确实锐利了，但演员也失去了呼吸感：眼神不动，脸上没有细微变化，一看就不像活人。</p>
+<p><video controls preload="metadata" width="100%" src="/api/blog-media/wm_tianleijie.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
+<p><em>《天雷劫》v4 终稿(纯对白轨+逐秒演技提示词+后期配乐)</em></p><p>为了减少运动模糊，我们一度在提示词里反复强调 <code>motionless</code>、<code>frozen</code> 和“保持静止”。画面确实锐利了，但演员也失去了呼吸感：眼神不动，脸上没有细微变化，一看就不像活人。</p>
 <p>后来我们把写法调整为：</p>
 <ul>
 <li>用摄影语言控制清晰度，例如“每一帧都像 1/500 秒高速快门拍下”，而不是命令演员完全不动。</li>

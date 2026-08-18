@@ -18,6 +18,10 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 
 ## 我们是怎么测的
 
+<video controls preload="metadata" width="100%" src="/api/blog-media/wm4k_diebao.mp4"></video>
+<p><em>《谍报追凶》终稿(4K,引擎原生全息+卡点配乐,水印版)</em></p>
+
+
 ![天雷劫开场:雷暴法阵穹拍(720P 原帧,已加水印)](/blog-assets/dual-engine-night/de-06-opening-array.jpg)
 
 
@@ -49,6 +53,10 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 
 ## 把唱段补到 50 秒后，我反而看见了它的边界
 
+<video controls preload="metadata" width="100%" src="/api/blog-media/wm_yiwang.mp4"></video>
+<p><em>《意网情深》兽首乐坊 50 秒完整版:20 秒主唱原曲进片 + 安可猫钢琴尾奏</em></p>
+
+
 20 秒版本更像一段能力展示：主唱亮相、乐队接力、群像收束，信息密度高，几乎没有空拍。50 秒版本则更接近一场完整演出——主唱退场后，灯光逐步熄灭，黑猫钢琴手留在舞台中央，把情绪慢慢送到结束。
 
 这一段尾奏并不是简单的黑屏填时长。成片全长 **50.08 秒**，综合响度约 **-14.7 LUFS**，前后音轨没有明显断层；从热闹的群像过渡到单束顶光下的钢琴，听觉和画面都在有意识地收束。黑猫最后被幕布一点点吞没，只留下两只发亮的眼睛，这个结尾是有记忆点的。
@@ -79,6 +87,10 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 
 ## 第五件事：不要把 BGM 提前混进参考对白
 
+<video controls preload="metadata" width="100%" src="/api/blog-media/wm_tlj_v3_bad.mp4"></video>
+<p><em>反面教材:BGM 预混进参考音轨后,引擎重新演绎了对白(台词换人)</em></p>
+
+
 第二晚，我们又花了约 29 元验证一个想法：能不能把对白和配乐提前混成一条完整音轨，再让模型一次生成成片？如果可行，就能少做一道后期。
 
 结果并不理想：
@@ -95,6 +107,10 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 这些素材是纯 3D 渲染，并非照片。这说明当时的审核更在意角色看起来有多逼真，而不是文件究竟来自摄影还是渲染。好在建单失败没有扣费，也算免费换来一条经验：Q 版、兽首和强风格化角色可以先试官方通道；皮肤和五官过于写实的 3D 角色，最好直接按真人素材准备备用路线。
 
 ## 第七件事：画面清楚了，演员也可能变成蜡像
+
+<video controls preload="metadata" width="100%" src="/api/blog-media/wm_tianleijie.mp4"></video>
+<p><em>《天雷劫》v4 终稿(纯对白轨+逐秒演技提示词+后期配乐)</em></p>
+
 
 为了减少运动模糊，我们一度在提示词里反复强调 `motionless`、`frozen` 和“保持静止”。画面确实锐利了，但演员也失去了呼吸感：眼神不动，脸上没有细微变化，一看就不像活人。
 
