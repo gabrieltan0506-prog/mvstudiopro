@@ -307,6 +307,7 @@ import {
 import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { copyText, copyTextWithToast } from "@/lib/copyText";
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 
@@ -5093,12 +5094,7 @@ export default function PlatformPage() {
         });
         return;
       }
-      try {
-        await navigator.clipboard.writeText(learnCmd);
-        copied = true;
-      } catch {
-        copied = false;
-      }
+      copied = await copyText(learnCmd);
       setManhuaLearnResult((prev) =>
         manhuaLearnResultFromLocalFallback({
           reasonZh: copied
@@ -5181,12 +5177,11 @@ export default function PlatformPage() {
       const isKuaishou = row.platform === "kuaishou";
       if (!source) {
         if (isKuaishou && title) {
-          try {
-            await navigator.clipboard.writeText(title);
+          if (await copyText(title)) {
             toast.message("暂无成片链接", {
               description: "已复制剧名，请自行找到合集/成片后再学节奏。",
             });
-          } catch {
+          } else {
             toast.message("暂无成片链接", {
               description: title ? `可搜索剧名：${title}` : "该行无可用链接，无法下片学习。",
             });
@@ -15222,12 +15217,11 @@ export default function PlatformPage() {
                             <button
                               type="button"
                               onClick={async () => {
-                                try {
-                                  await navigator.clipboard.writeText(snap.lines.join("\n"));
-                                  toast.success("已复制本段日志（含 TRPC 详情）");
-                                } catch {
-                                  toast.error("复制失败，请手动选中下方文本");
-                                }
+                                await copyTextWithToast(snap.lines.join("\n"), {
+                                  successZh: "已复制本段日志（含 TRPC 详情）",
+                                  errorZh: "复制没成功",
+                                  errorDescriptionZh: "请手动选中下方文本复制。",
+                                });
                               }}
                               className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-2 py-1 text-[10px] text-rose-200 hover:bg-rose-500/20"
                             >

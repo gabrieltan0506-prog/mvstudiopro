@@ -7,6 +7,7 @@ import {
   type ManhuaCharacterTemplate,
 } from "@shared/manhuaCharacterAssetLibrary";
 import { copyText } from "@/lib/manhuaCharacterGalleryStorage";
+import { toast } from "sonner";
 import ManhuaTriViewStrip from "@/components/ManhuaTriViewStrip";
 
 export default function ManhuaCharacterSheetPreview({
@@ -27,8 +28,11 @@ export default function ManhuaCharacterSheetPreview({
   const style = getManhuaArtStylePreset(artStyleId);
 
   const copyId = async () => {
-    const ok = await copyText(character.id);
-    if (!ok) return;
+    // 失败必须让用户看见——原先直接 return，用户点了没反应也不知道为什么
+    if (!(await copyText(character.id))) {
+      toast.error("角色 ID 复制没成功", { description: `请手动记下：${character.id}` });
+      return;
+    }
     setIdFlash(true);
     window.setTimeout(() => setIdFlash(false), 1200);
   };

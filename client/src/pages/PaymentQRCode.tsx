@@ -2,6 +2,7 @@
 import { useState, useRef, ChangeEvent } from "react";
 import { useLocation, Link } from "wouter";
 import { trpc } from "@/lib/trpc";
+import { copyTextWithToast } from "@/lib/copyText";
 import { toast } from "sonner";
 import { Loader2, Camera, Copy } from "lucide-react";
 
@@ -86,8 +87,11 @@ export default function PaymentQRCode() {
   };
 
   const handleCopyOrderId = async () => {
-    await navigator.clipboard.writeText(params.orderId);
-    toast.success("订单号已复制到剪贴板");
+    await copyTextWithToast(params.orderId, {
+      successZh: "订单号已复制到剪贴板",
+      errorZh: "订单号复制没成功",
+      errorDescriptionZh: `请手动记下订单号：${params.orderId}`,
+    });
   };
 
   const paymentMethodName = params.paymentMethod === "wechat" ? "微信支付" : "支付宝";

@@ -2,6 +2,8 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { copyText } from "@/lib/copyText";
+import { toast } from "sonner";
 import { Sparkles, Tv, Music, Video, Heart, TrendingUp, GraduationCap, Film, Trophy, Handshake, Sun, Cloud, Moon, ArrowLeft, RefreshCw, Settings, Send, Check, Globe, Newspaper, Pencil, Clock, RectangleHorizontal, Copy, CheckCircle, Loader2 } from "lucide-react";
 
 /* ===== Platform Data ===== */
@@ -106,12 +108,11 @@ export default function VFXEngine() {
   }, []);
 
   const handleCopy = useCallback(async (text: string, field: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
+    if (await copyText(text)) {
       setCopiedField(field);
       setTimeout(() => setCopiedField(null), 2000);
-    } catch (err) {
-      console.error("Failed to copy: ", err);
+    } else {
+      toast.error("复制没成功", { description: "请手动选中文本复制。" });
     }
   }, []);
 

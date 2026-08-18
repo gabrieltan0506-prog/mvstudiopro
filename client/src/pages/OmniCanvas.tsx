@@ -6,6 +6,7 @@ import ManhuaClipDock from "@/components/canvas/ManhuaClipDock";
 import type { CanvasBlock, CanvasEdge } from "@/lib/canvasTypes";
 import { defaultCanvasBlock, makeCanvasBlockId, normalizeCanvasBlock } from "@/lib/canvasTypes";
 import { runCanvasBlock, type CanvasRunDeps } from "@/lib/canvasRunBlock";
+import { copyText } from "@/lib/copyText";
 import { cropManhuaSheet2x2 } from "@/lib/manhuaSheetCropApi";
 import type { ManhuaSceneTileSlot } from "@shared/manhuaSceneTilePick";
 import {
@@ -2807,9 +2808,29 @@ export default function OmniCanvas() {
     });
     const textPrompt = String(res?.promptZh || "").trim();
     if (!textPrompt) throw new Error("导演板提示词为空");
-    await navigator.clipboard.writeText(textPrompt);
-    toast.success("已复制导演板提示词", {
-      description: "请先出齐定妆/场景/道具，再出导演板整版图，最后点「上传导演板」裁切接入。",
+    const nextStepZh =
+      "请先出齐定妆/场景/道具，再出导演板整版图，最后点「上传导演板」裁切接入。";
+    if (await copyText(textPrompt)) {
+      toast.success("已复制导演板提示词", { description: nextStepZh });
+      return;
+    }
+    // 提示词是等服务端生成完才复制的，此时用户那次点击的手势已过期，浏览器会拒写剪贴板。
+    // 不能假装复制成功，也不能让辛苦生成的提示词就此丢掉——给一个重试按钮，
+    // 用户点它是一次全新手势，剪贴板才允许写入。
+    toast.error("提示词已生成，但没能自动复制", {
+      // 固定 id：常驻 toast 反复失败时只留一条，不堆积
+      id: "director-board-prompt-copy-failed",
+      description: "点「再复制一次」即可——那一次点击浏览器才放行剪贴板。",
+      duration: Infinity,
+      action: {
+        label: "再复制一次",
+        onClick: () => {
+          void copyText(textPrompt).then((ok) => {
+            if (ok) toast.success("已复制导演板提示词", { description: nextStepZh });
+            else toast.error("还是没复制成功", { description: "请换浏览器再试，或改用截图记录。" });
+          });
+        },
+      },
     });
   }, [writerFocusEpisode, writerPack, buildDirectorBoardPromptMutation]);
 

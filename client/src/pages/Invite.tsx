@@ -7,6 +7,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
 import { User, ThumbsUp, Star, Trophy, Flame, Lock, Hourglass, ArrowLeft, Copy, Check, Share2, Link as LinkIcon, CheckCircle, Loader2 } from "lucide-react";
 
+import { copyText } from "@/lib/copyText";
 // Beta Tester levels
 const BETA_LEVELS = [
   { name: "Starter", minReferrals: 0, color: "#9B9691", icon: User, desc: "内测新手" },
@@ -59,14 +60,12 @@ export default function InvitePage() {
 
   const handleCopy = useCallback(async (text: string) => {
     if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
+    if (await copyText(text)) {
       setCopied(true);
       toast.success("已复制到剪贴板！");
       setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error("Copy failed:", err);
-      toast.error("复制失败");
+    } else {
+      toast.error("复制没成功", { description: text });
     }
   }, []);
 

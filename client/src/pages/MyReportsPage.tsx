@@ -12,6 +12,7 @@ import { TemplateStripBanner, type PdfStyleKey } from "@/components/TemplatePick
 import { optimizePdfSnapshotHtml } from "@/lib/pdfHtmlOptimize";
 import { RESEARCH_HUB_GOD_VIEW_PATH } from "@/lib/researchHubRoutes";
 
+import { copyTextWithToast } from "@/lib/copyText";
 /** 作品库阅读模式：PDF 只克隆此容器（封面 + 正文），避免整页 document 带入 Toast / #root 等污染 */
 const MYREPORTS_PDF_SNAPSHOT_ROOT_ID = "myreports-pdf-root";
 
@@ -946,12 +947,11 @@ export default function MyReportsPage() {
                 <button
                   type="button"
                   onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(myReportsPdfDebugLines.join("\n"));
-                      toast.success("已复制诊断日志");
-                    } catch {
-                      toast.error("复制失败");
-                    }
+                    await copyTextWithToast(myReportsPdfDebugLines.join("\n"), {
+                      successZh: "已复制诊断日志",
+                      errorZh: "复制没成功",
+                      errorDescriptionZh: "请手动选中诊断文本复制。",
+                    });
                   }}
                   style={{
                     padding: "4px 8px",

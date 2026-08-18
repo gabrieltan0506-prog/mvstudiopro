@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { trpc } from '@/lib/trpc';
+import { copyTextWithToast } from '@/lib/copyText';
 import { Download, Loader2, Zap, AlertCircle, CheckCircle } from 'lucide-react';
 
 interface ParseResult {
@@ -245,9 +246,11 @@ export default function VideoParserWidget() {
                     nativeSetter?.call(input, result.downloadUrl);
                     input.dispatchEvent(new Event('input', { bubbles: true }));
                   }
-                  navigator.clipboard
-                    .writeText(result.downloadUrl)
-                    .catch(() => {});
+                  void copyTextWithToast(result.downloadUrl, {
+                    successZh: '已复制视频直链',
+                    errorZh: '直链复制没成功',
+                    errorDescriptionZh: '已填入上方输入框，可从那里手动选中复制。',
+                  });
                 }}
                 style={{
                   display: 'inline-flex',

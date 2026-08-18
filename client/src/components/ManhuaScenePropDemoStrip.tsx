@@ -2,6 +2,8 @@
  * 场景/道具示范图轻量预览：仅展示已落盘 jpg，未生成不占位。
  */
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
+import { copyText } from "@/lib/copyText";
 import {
   MANHUA_CONTENT_LANE_LABEL_ZH,
   getManhuaDemoAssetPublicUrl,
@@ -233,7 +235,10 @@ export default function ManhuaScenePropDemoStrip({
               ]
                 .filter(Boolean)
                 .join("\n");
-              void navigator.clipboard?.writeText(text);
+              void copyText(text).then((ok) => {
+                if (ok) toast.success("已复制锚点");
+                else toast.error("复制没成功", { description: "请手动选中锚点文本复制。" });
+              });
             }}
           >
             复制锚点

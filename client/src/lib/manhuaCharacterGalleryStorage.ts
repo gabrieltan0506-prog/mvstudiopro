@@ -266,25 +266,6 @@ export function applyManhuaGalleryWorkspace(ws: ManhuaGalleryWorkspace): ManhuaG
   };
 }
 
-export async function copyText(text: string): Promise<boolean> {
-  const t = String(text || "").trim();
-  if (!t) return false;
-  try {
-    await navigator.clipboard.writeText(t);
-    return true;
-  } catch {
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = t;
-      ta.style.position = "fixed";
-      ta.style.left = "-9999px";
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand("copy");
-      document.body.removeChild(ta);
-      return ok;
-    } catch {
-      return false;
-    }
-  }
-}
+// 复制实现已收口到 @/lib/copyText（全站单一真源，含 iOS Safari 选区兼容）。
+// 此处保留同名再导出，让画廊侧既有的十余个 `await copyText(...)` 调用点零改动继续工作。
+export { copyText } from "./copyText";

@@ -2,6 +2,8 @@
  * 剪辑阶段 · 多轨：细剪 / 字幕 / 包装 / 质检返工 / 导出勾选。
  */
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
+import { copyText } from "@/lib/copyText";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -396,7 +398,10 @@ export default function ManhuaEditMultitrackPanel({
                 type="button"
                 className="text-[9px] text-cyan-200/80 underline-offset-2 hover:underline"
                 onClick={() => {
-                  void navigator.clipboard?.writeText(srtPreview);
+                  void copyText(srtPreview).then((ok) => {
+                    if (ok) toast.success("已复制 SRT");
+                    else toast.error("复制没成功", { description: "请手动选中下方字幕文本复制。" });
+                  });
                 }}
               >
                 复制 SRT
