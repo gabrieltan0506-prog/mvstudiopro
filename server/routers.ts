@@ -4912,7 +4912,7 @@ export const appRouter = router({
             userId: ctx.user.id,
             creditsBilled: deduct.cost,
             action: `平台趋势报告（${input.windowDays}天）`,
-            externalApiCostHint: "Kimi K3 趋势结构化分析",
+            externalApiCostHint: "趋势结构化分析(DeepSeek→GLM 自动路由)",
             deduct,
             metadata: {
               action: "platform_visual_report",
@@ -5140,7 +5140,7 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
          * 持久 job 不受断线影响，推理慢也无碍）；前两攻 DeepSeek，第三攻兜底回落 K3
          * ——省钱是常态，交付是底线。
          */
-        const { runVisualReportLlmAttempts, buildVisualReportFailureTelemetry } = await import(
+        const { runVisualReportLlmAttempts, buildVisualReportFailureTelemetry, parseVisualReportJson } = await import(
           "./services/visualReportLlm"
         );
         const { invokeGlmJsonChatWithGatewayFallback, BAILIAN_GLM_MODEL } = await import("./services/bailianChat");
@@ -5205,13 +5205,17 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             maxTokens: visualReportMaxTokens,
             fallbackModelName: BAILIAN_GLM_MODEL,
             abortSignal: ctx.clientDisconnected,
-            // 兜底 = GLM-5.2 三网关链(百炼→EvoLink→OpenRouter;K3 出局);三网关全灭则如实失败退款
+            // 兜底 = GLM-5.2 三网关链(百炼→EvoLink→OpenRouter);每网关先过报表业务验真
+            // 才算成功(复审三轮 P1-1),三网关全灭则如实失败退款
             fallbackInvoke: () =>
               invokeGlmJsonChatWithGatewayFallback({
                 system: systemPrompt,
                 user: visualReportUser,
                 maxTokens: visualReportMaxTokens,
                 abortSignal: ctx.clientDisconnected,
+                validateContent: (text) => {
+                  parseVisualReportJson(text);
+                },
               }),
           });
           visualReportStage = "post_llm";
@@ -5316,20 +5320,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
             return out;
           };
-          appendRuntimeMetric("visual.report", {
-            ok: true,
-            // 审查 P1-3：遥测以三攻模块返回的真实路由为准，不再猜测/写死 Evolink
-            engineEnv: llmResult.engine,
-            attempt: llmResult.attempt,
-            provider: `${llmResult.upstreamProvider || llmResult.engine}:${llmResult.modelName}`,
-            durationMs: Date.now() - llmStartedAtMs,
-            upstreamModel: llmResult.upstreamModel ?? llmResult.modelName,
-            finishReason: llmResult.finishReason,
-            promptTokens: llmResult.promptTokens,
-            completionTokens: llmResult.completionTokens,
-            windowDays: input.windowDays,
-            platformCount: input.platforms.length,
-          });
           const repairedTrackGrowth = repairTrackGrowthRows(
             Array.isArray(parsed.trackGrowth)
               ? parsed.trackGrowth.map((t: any) => ({
@@ -5406,8 +5396,30 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               }
             }
           }
+          // 复审三轮 P1-2:成功遥测在全部后处理完成、返回对象就绪后才写,杜绝双终态
+          appendRuntimeMetric("visual.report", {
+            ok: true,
+            engineEnv: llmResult.engine,
+            attempt: llmResult.attempt,
+            gateway: llmResult.gateway,
+            gatewayAttemptsPerformed: llmResult.gatewayAttemptsPerformed,
+            provider: `${llmResult.gateway || llmResult.engine}:${llmResult.modelName}`,
+            durationMs: Date.now() - llmStartedAtMs,
+            upstreamModel: llmResult.upstreamModel ?? llmResult.modelName,
+            finishReason: llmResult.finishReason,
+            promptTokens: llmResult.promptTokens,
+            completionTokens: llmResult.completionTokens,
+            windowDays: input.windowDays,
+            platformCount: input.platforms.length,
+          });
           return {
             success: true,
+            routeMeta: {
+              engine: llmResult.engine,
+              gateway: llmResult.gateway,
+              modelName: llmResult.modelName,
+              attempt: llmResult.attempt,
+            },
             report: {
               reportTitle: safeStr(parsed.reportTitle || `平台趋势看板 · ${pastStr}–${todayStr}`),
               // insightSummary：固定 判断/热点/结构/建议 四栏；清洗后台条数口径

@@ -20,7 +20,7 @@ const asResp = (content: string, extra: Record<string, unknown> = {}) => ({
 const noSleep = async () => {};
 
 describe("runVisualReportLlmAttempts（三攻路由）", () => {
-  it("首攻 DeepSeek 成功即停:不打第二攻、不碰 K3,遥测记录真实路由", async () => {
+  it("首攻 DeepSeek 成功即停:不打第二攻、不碰兜底,遥测记录真实路由", async () => {
     const ds = vi.fn(async () => asResp(GOOD, { model: "deepseek/deepseek-v4-pro-0813", provider: "openrouter" }));
     const k3 = vi.fn();
     const r = await runVisualReportLlmAttempts({
@@ -162,6 +162,7 @@ describe("兜底引擎标签与失败遥测(复审 P1-1/P1-4)", () => {
         modelName: "deepseek/deepseek-v4-pro-0813", attempt: 1,
         finishReason: "stop", promptTokens: 1, completionTokens: 2,
         upstreamModel: null, upstreamProvider: null,
+        gateway: "openrouter", gatewayAttemptsPerformed: 1,
       },
       stage: "post_llm",
     });

@@ -1,6 +1,6 @@
 /**
  * 趋势报表三攻路由（2026-08-18 审查返工后抽出为独立可测模块）：
- * attempt 1-2 走 DeepSeek 经济档,attempt 3 兜底百炼 GLM-5.2(用户拍板:K3 出局,不回落 Evolink/OpenRouter 贵档)。
+ * attempt 1-2 走 DeepSeek 经济档,attempt 3 兜底 GLM-5.2(三网关链:百炼→EvoLink→OpenRouter)。遥测同时记录逻辑尝试(llm)与真实外呼(gateway)两层次数。
  * 遥测以本模块返回的真实路由为准（审查 P1-3：禁止把 OpenRouter 记成 Evolink）。
  */
 import {
@@ -16,7 +16,14 @@ export type VisualReportAttemptTrace = {
   attempt: number;
   engine: VisualReportEngine;
   modelName: string;
+  /** GLM 兜底攻的真实网关外呼轨迹(复审三轮 P1-3) */
+  gatewayTrace?: Array<{ gateway: string; model: string; outcome: string; detail?: string }>;
 };
+
+/** 单次逻辑尝试对应的真实 HTTP 外呼数:DeepSeek=1;GLM=网关轨迹长度(缺省按 1 计) */
+export function countGatewayCalls(trace: VisualReportAttemptTrace[]): number {
+  return trace.reduce((sum, t) => sum + Math.max(1, t.gatewayTrace?.length ?? 1), 0);
+}
 
 /** 三攻失败结构化错误：携带真实尝试轨迹与是否硬截止,供上层遥测/退款文案如实记录 */
 export class VisualReportAttemptsError extends Error {
@@ -36,7 +43,14 @@ export function buildVisualReportFailureTelemetry(params: {
   error: unknown;
   llmResult: VisualReportLlmResult | null;
   stage: "before_llm" | "llm" | "post_llm";
-}): { engineEnv: string; provider: string; attemptsPerformed: number; aborted: boolean } {
+}): {
+  engineEnv: string;
+  provider: string;
+  attemptsPerformed: number;
+  gatewayAttemptsPerformed: number;
+  gatewayTrace: string;
+  aborted: boolean;
+} {
   const attemptsError = params.error instanceof VisualReportAttemptsError ? params.error : null;
   if (attemptsError) {
     return {
@@ -45,6 +59,10 @@ export function buildVisualReportFailureTelemetry(params: {
         .map((x) => `${x.attempt}:${x.engine}:${x.modelName}`)
         .join("|")}`,
       attemptsPerformed: attemptsError.attempts.length,
+      gatewayAttemptsPerformed: countGatewayCalls(attemptsError.attempts),
+      gatewayTrace: attemptsError.attempts
+        .flatMap((x) => (x.gatewayTrace ?? []).map((g) => `${x.attempt}:${g.gateway}=${g.outcome}`))
+        .join("|"),
       aborted: attemptsError.aborted,
     };
   }
@@ -53,6 +71,8 @@ export function buildVisualReportFailureTelemetry(params: {
       engineEnv: params.llmResult.engine,
       provider: `visual_report_postprocess_failed:${params.llmResult.engine}:${params.llmResult.modelName}`,
       attemptsPerformed: params.llmResult.attempt,
+      gatewayAttemptsPerformed: params.llmResult.attempt,
+      gatewayTrace: "",
       aborted: false,
     };
   }
@@ -60,6 +80,8 @@ export function buildVisualReportFailureTelemetry(params: {
     engineEnv: "not_started",
     provider: `visual_report_${params.stage}_failed`,
     attemptsPerformed: 0,
+    gatewayAttemptsPerformed: 0,
+    gatewayTrace: "",
     aborted: false,
   };
 }
@@ -75,6 +97,10 @@ export type VisualReportLlmResult = {
   completionTokens: number | null;
   upstreamModel: string | null;
   upstreamProvider: string | null;
+  /** GLM 兜底成功时的实际交卷网关(bailian/evolink/openrouter);DeepSeek 攻为 "openrouter" */
+  gateway: string | null;
+  /** 全程真实 HTTP 外呼数(含失败攻) */
+  gatewayAttemptsPerformed: number;
 };
 
 type FallbackResponse = {
@@ -82,6 +108,8 @@ type FallbackResponse = {
   usage?: { prompt_tokens?: number; completion_tokens?: number };
   model?: string;
   provider?: string;
+  gateway?: string;
+  gatewayTrace?: Array<{ gateway: string; model: string; outcome: string; detail?: string }>;
 };
 
 /** 报表 JSON 解析与空壳校验（DeepSeek/K3 两路共用同一把尺） */
@@ -137,7 +165,20 @@ export async function runVisualReportLlmAttempts(params: {
 }): Promise<VisualReportLlmResult> {
   const maxAttempts = Math.max(2, params.maxAttempts ?? 3);
   const deepSeekInvoke = params.deepSeekInvoke ?? invokeDeepSeekJsonChatRaw;
-  const sleep = params.sleepMs ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const sleep =
+    params.sleepMs ??
+    ((ms: number) =>
+      new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, ms);
+        params.abortSignal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(t);
+            resolve();
+          },
+          { once: true },
+        );
+      }));
   let lastErr = "";
   const attempts: VisualReportAttemptTrace[] = [];
   const buildErr = (aborted: boolean) =>
@@ -167,6 +208,7 @@ export async function runVisualReportLlmAttempts(params: {
       const choice0 = response.choices?.[0];
       const content = choice0?.message?.content;
       const { parsed, rawBody } = parseVisualReportJson(typeof content === "string" ? content : "");
+      if (response.gatewayTrace) attempts[attempts.length - 1].gatewayTrace = response.gatewayTrace;
       return {
         parsed,
         rawBody,
@@ -178,9 +220,13 @@ export async function runVisualReportLlmAttempts(params: {
         completionTokens: response.usage?.completion_tokens ?? null,
         upstreamModel: String(response.model ?? "").trim() || null,
         upstreamProvider: String(response.provider ?? "").trim() || null,
+        gateway: String(response.gateway ?? response.provider ?? (useFallback ? "" : "openrouter")).trim() || null,
+        gatewayAttemptsPerformed: countGatewayCalls(attempts),
       };
     } catch (attemptErr) {
       lastErr = attemptErr instanceof Error ? attemptErr.message : String(attemptErr);
+      const gwTrace = (attemptErr as { gatewayTrace?: VisualReportAttemptTrace["gatewayTrace"] })?.gatewayTrace;
+      if (gwTrace) attempts[attempts.length - 1].gatewayTrace = gwTrace;
       console.warn(`[generateVisualReport] LLM 第 ${attempt}/${maxAttempts} 次失败: ${lastErr.slice(0, 240)}`);
       // 硬截止已触发时立即放弃（复审 P1-2/P1-3）：真实次数入错误,退避可被截止打断
       if (params.abortSignal?.aborted) throw buildErr(true);
