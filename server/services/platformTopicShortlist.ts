@@ -631,7 +631,9 @@ const EXPAND_MAX_COMPLETION_TOKENS = 32_000;
 const EXPAND_QWEN_MAX_COMPLETION_TOKENS = 65_536;
 
 /** 经济档模型：$0.435/$0.87 per M，输出价约为 Kimi K3 的 1/17（2026-08-15 同题 PK 质量过关） */
-const EXPAND_DEEPSEEK_OR_MODEL = "deepseek/deepseek-v4-pro-0813";
+/** DeepSeek 经济档唯一模型常量（审查 2026-08-18 建议2：请求与遥测必须同源，禁止双份定义） */
+export const DEEPSEEK_ECONOMY_MODEL = "deepseek/deepseek-v4-pro-0813";
+const EXPAND_DEEPSEEK_OR_MODEL = DEEPSEEK_ECONOMY_MODEL;
 
 /**
  * 经济档直连 OpenRouter。口径修正（2026-08-15 用户复核）：推理要开（high，与稳定/轻快档
@@ -642,6 +644,8 @@ const EXPAND_DEEPSEEK_OR_MODEL = "deepseek/deepseek-v4-pro-0813";
 export function buildDeepSeekExpandRequestBody(params: {
   system: string;
   user: string;
+  /** 可选输出预算；缺省 65_536 维持扩写既有口径（审查 P1-2：报表须传自己的运维配置值） */
+  maxTokens?: number;
 }): Record<string, unknown> {
   return {
     model: EXPAND_DEEPSEEK_OR_MODEL,
@@ -650,7 +654,7 @@ export function buildDeepSeekExpandRequestBody(params: {
       { role: "user", content: params.user },
     ],
     temperature: 0.55,
-    max_tokens: 65_536,
+    max_tokens: Math.max(8_192, Number(params.maxTokens) || 65_536),
     response_format: { type: "json_object" },
     reasoning: { effort: "high" },
     // 审查返工 6：不带此标志时 OpenRouter 可能把请求路由给不支持 reasoning/response_format
@@ -674,9 +678,14 @@ export type DeepSeekJsonChatResponse = {
 export async function invokeDeepSeekJsonChatRaw(params: {
   system: string;
   user: string;
+  maxTokens?: number;
+  /** 上游硬截止（审查 P1-1：报表 job 的 14 分钟 AbortController 必须能掐断本请求） */
+  abortSignal?: AbortSignal;
 }): Promise<DeepSeekJsonChatResponse> {
   const key = String(process.env.OPENROUTER_API_KEY || "").trim();
   if (!key) throw new Error("经济档通道未配置");
+  const timeoutSignal = AbortSignal.timeout(240_000);
+  const signal = params.abortSignal ? AbortSignal.any([params.abortSignal, timeoutSignal]) : timeoutSignal;
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -685,7 +694,7 @@ export async function invokeDeepSeekJsonChatRaw(params: {
       "HTTP-Referer": "https://www.mvstudiopro.com",
       "X-OpenRouter-Title": "MVStudioPro",
     },
-    signal: AbortSignal.timeout(240_000),
+    signal,
     body: JSON.stringify(buildDeepSeekExpandRequestBody(params)),
   });
   const raw = await res.text();

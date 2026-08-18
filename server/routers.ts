@@ -5184,99 +5184,41 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               : {}),
           });
 
+          // 该配置对全部三攻生效（审查 P1-2）；缺省抬到 65_536 对齐 DeepSeek 经济档口径
+          //（推理 high 会先吃预算，小预算会推理耗尽零正文——2026-08-15 血泪教训）
           const visualReportMaxTokens = Math.max(
             8_192,
-            Math.min(65_536, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 32_768),
+            Math.min(65_536, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 65_536),
           );
           const visualReportUser = `${userPayload}\n\n【輸出】僅輸出一個合法 JSON 物件（禁止 markdown围栏與前言後語）；首尾字元為 { 與 }。`;
 
-          const VISUAL_REPORT_MAX_ATTEMPTS = 3;
-          let response: Awaited<ReturnType<typeof invokeLLM>> | null = null;
-          let rawBody = "";
-          let parsed: any = {};
-          let lastErr = "";
-
-          for (let attempt = 1; attempt <= VISUAL_REPORT_MAX_ATTEMPTS; attempt += 1) {
-            try {
-              if (attempt < VISUAL_REPORT_MAX_ATTEMPTS) {
-                // 主力：DeepSeek 经济档，复用扩写已验证口径（65K 预算/推理 high/
-                // require_parameters/业务 JSON 验真），报表已是持久 job，慢无碍
-                visualReportModel = "deepseek/deepseek-v4-pro-0813";
-                const { invokeDeepSeekJsonChatRaw } = await import("./services/platformTopicShortlist");
-                response = (await invokeDeepSeekJsonChatRaw({
-                  system: systemPrompt,
-                  user: visualReportUser,
-                })) as unknown as Awaited<ReturnType<typeof invokeLLM>>;
-              } else {
-                // 兜底：回落 K3（恢复封面功能前的已验证 Kimi 配置，历史实测 30–40 秒交卷）
-                visualReportModel = visualReportFallbackModel;
-                response = await invokeLLM({
-                  provider: "openai",
-                  modelName: visualReportModel,
-                  response_format: { type: "json_object" },
-                  max_tokens: visualReportMaxTokens,
-                  temperature: 0.55,
-                  requestId: `visual-report:${input.billingRequestId}`,
-                  abortSignal: ctx.clientDisconnected,
-                  messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: visualReportUser },
-                  ],
-                });
-              }
-              const choice0 = response.choices?.[0];
-              rawBody =
-                typeof choice0?.message?.content === "string"
-                  ? choice0.message.content
-                  : extractFirstChoicePlainText(response) || "";
-              const text = String(rawBody || "").trim();
-              if (!text) {
-                throw new Error("Evolink 返回空内容");
-              }
-              if (/^An error\b/i.test(text) || text.startsWith("<!DOCTYPE") || text.startsWith("<html")) {
-                throw new Error(`上游网关非 JSON：${text.slice(0, 80)}`);
-              }
-              const fenceMatch = text.match(/```(?:json)?\s*([\s\S]+?)```/);
-              const stripped = fenceMatch
-                ? fenceMatch[1].trim()
-                : text.replace(/^```(?:json)?[\r\n]*/i, "").replace(/[\r\n]*```\s*$/i, "").trim();
-              try {
-                parsed = JSON.parse(stripped);
-              } catch {
-                parsed = JSON.parse(text);
-              }
-              if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-                throw new Error("解析结果不是 JSON 对象");
-              }
-              // 至少要有标题或洞察之一，否则视为空壳重试
-              if (!parsed.reportTitle && !Array.isArray(parsed.insightSummary) && !Array.isArray(parsed.trackGrowth)) {
-                throw new Error("JSON 缺少 reportTitle/insightSummary/trackGrowth");
-              }
-              lastErr = "";
-              break;
-            } catch (attemptErr) {
-              lastErr = attemptErr instanceof Error ? attemptErr.message : String(attemptErr);
-              console.warn(
-                `[generateVisualReport] LLM 第 ${attempt}/${VISUAL_REPORT_MAX_ATTEMPTS} 次失败: ${lastErr.slice(0, 240)}`,
-              );
-              parsed = {};
-              rawBody = "";
-              response = null;
-              if (attempt < VISUAL_REPORT_MAX_ATTEMPTS) {
-                await new Promise((r) => setTimeout(r, 400 * attempt));
-              }
-            }
-          }
-
-          if (!response || !parsed || typeof parsed !== "object" || Object.keys(parsed).length === 0) {
-            throw new Error(
-              lastErr
-                ? `趋势报表生成失败（已重试 ${VISUAL_REPORT_MAX_ATTEMPTS} 次）：${lastErr.slice(0, 200)}`
-                : `趋势报表生成失败（已重试 ${VISUAL_REPORT_MAX_ATTEMPTS} 次）`,
-            );
-          }
-
-          const choice0 = response.choices?.[0];
+          // 三攻路由抽至 services/visualReportLlm（审查返工 2026-08-18）：
+          // attempt 1-2 DeepSeek（带 job 硬截止信号与报表 max-token 配置）→ attempt 3 K3 兜底；
+          // 全部失败时该函数抛错，进入下方 catch 走既有退款语义。
+          const { runVisualReportLlmAttempts } = await import("./services/visualReportLlm");
+          const llmResult = await runVisualReportLlmAttempts({
+            systemPrompt,
+            userPrompt: visualReportUser,
+            maxTokens: visualReportMaxTokens,
+            fallbackModelName: visualReportFallbackModel,
+            abortSignal: ctx.clientDisconnected,
+            fallbackInvoke: (modelName) =>
+              invokeLLM({
+                provider: "openai",
+                modelName,
+                response_format: { type: "json_object" },
+                max_tokens: visualReportMaxTokens,
+                temperature: 0.55,
+                requestId: `visual-report:${input.billingRequestId}`,
+                abortSignal: ctx.clientDisconnected,
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  { role: "user", content: visualReportUser },
+                ],
+              }),
+          });
+          visualReportModel = llmResult.modelName;
+          const parsed: any = llmResult.parsed;
 
           // safeStr: smart object-aware extractor — prevents [object Object] strings in arrays
           const safeStr = (v: any): string => {
@@ -5379,13 +5321,15 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           };
           appendRuntimeMetric("visual.report", {
             ok: true,
-            engineEnv: "evolink_primary",
-            provider: `${String(response?.provider || "evolink_primary")}:${visualReportModel}`,
+            // 审查 P1-3：遥测以三攻模块返回的真实路由为准，不再猜测/写死 Evolink
+            engineEnv: llmResult.engine,
+            attempt: llmResult.attempt,
+            provider: `${llmResult.upstreamProvider || llmResult.engine}:${llmResult.modelName}`,
             durationMs: Date.now() - llmStartedAtMs,
-            upstreamModel: String(response?.model ?? visualReportModel).trim() || null,
-            finishReason: choice0?.finish_reason ?? null,
-            promptTokens: response.usage?.prompt_tokens ?? null,
-            completionTokens: response.usage?.completion_tokens ?? null,
+            upstreamModel: llmResult.upstreamModel ?? llmResult.modelName,
+            finishReason: llmResult.finishReason,
+            promptTokens: llmResult.promptTokens,
+            completionTokens: llmResult.completionTokens,
             windowDays: input.windowDays,
             platformCount: input.platforms.length,
           });
@@ -5525,8 +5469,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           }
           appendRuntimeMetric("visual.report", {
             ok: false,
-            engineEnv: "evolink_primary",
-            provider: `evolink_primary:${visualReportModel}`,
+            // 失败 = 三攻全灭（DeepSeek×2 + K3 兜底），如实记录混合路由
+            engineEnv: "openrouter_deepseek+evolink_k3",
+            provider: `visual_report_all_attempts_failed:${visualReportModel}`,
             durationMs: Date.now() - llmStartedAtMs,
             message: message.slice(0, 800),
             windowDays: input.windowDays,

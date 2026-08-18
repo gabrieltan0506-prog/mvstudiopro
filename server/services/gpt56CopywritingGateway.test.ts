@@ -93,7 +93,7 @@ describe("resolveGpt56CopywritingTarget", () => {
     expect(t.modelName).toBe("moonshotai/kimi-k3");
   });
 
-  it("visual report defaults to the proven Kimi K3 text path", () => {
+  it("visual report FALLBACK (attempt 3) remains Kimi K3; primary is DeepSeek in visualReportLlm", () => {
     setEnv("PLATFORM_OPENROUTER_MODEL", undefined);
     setEnv("VISUAL_REPORT_OPENROUTER_MODEL", undefined);
     setEnv("VISUAL_REPORT_OPENAI_MODEL", undefined);

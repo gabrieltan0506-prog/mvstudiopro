@@ -15,7 +15,7 @@ describe("openrouterKimiK3", () => {
     expect(isOpenRouterKimiK3Model("openai/gpt-5.6-terra")).toBe(false);
   });
 
-  it("keeps platform stage2 and the text-only visual report on Kimi K3", () => {
+  it("keeps platform stage2 on Kimi K3; visual report keeps K3 only as attempt-3 fallback", () => {
     delete process.env.PLATFORM_OPENROUTER_MODEL;
     delete process.env.VISUAL_REPORT_OPENROUTER_MODEL;
     delete process.env.VISUAL_REPORT_OPENAI_MODEL;
