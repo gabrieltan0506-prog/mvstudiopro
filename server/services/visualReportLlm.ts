@@ -20,9 +20,20 @@ export type VisualReportAttemptTrace = {
   gatewayTrace?: Array<{ gateway: string; model: string; outcome: string; detail?: string }>;
 };
 
-/** 单次逻辑尝试对应的真实 HTTP 外呼数:DeepSeek=1;GLM=网关轨迹长度(缺省按 1 计) */
+/** 真实 HTTP 外呼数:DeepSeek 攻=1;GLM 攻=网关轨迹中真实外呼条数(skipped_not_configured 不计;无轨迹按 1 计) */
 export function countGatewayCalls(trace: VisualReportAttemptTrace[]): number {
-  return trace.reduce((sum, t) => sum + Math.max(1, t.gatewayTrace?.length ?? 1), 0);
+  return trace.reduce((sum, t) => {
+    if (t.engine === "openrouter_deepseek") return sum + 1;
+    if (!t.gatewayTrace) return sum + 1;
+    return sum + t.gatewayTrace.filter((g) => g.outcome !== "skipped_not_configured").length;
+  }, 0);
+}
+
+/** 全轨迹压成可入指标的字符串(attempt:gateway=outcome|…) */
+export function summarizeGatewayTrace(trace: VisualReportAttemptTrace[]): string {
+  return trace
+    .flatMap((t) => (t.gatewayTrace ?? []).map((g) => `${t.attempt}:${g.gateway}=${g.outcome}`))
+    .join("|");
 }
 
 /** 三攻失败结构化错误：携带真实尝试轨迹与是否硬截止,供上层遥测/退款文案如实记录 */
@@ -60,9 +71,7 @@ export function buildVisualReportFailureTelemetry(params: {
         .join("|")}`,
       attemptsPerformed: attemptsError.attempts.length,
       gatewayAttemptsPerformed: countGatewayCalls(attemptsError.attempts),
-      gatewayTrace: attemptsError.attempts
-        .flatMap((x) => (x.gatewayTrace ?? []).map((g) => `${x.attempt}:${g.gateway}=${g.outcome}`))
-        .join("|"),
+      gatewayTrace: summarizeGatewayTrace(attemptsError.attempts),
       aborted: attemptsError.aborted,
     };
   }
@@ -71,8 +80,9 @@ export function buildVisualReportFailureTelemetry(params: {
       engineEnv: params.llmResult.engine,
       provider: `visual_report_postprocess_failed:${params.llmResult.engine}:${params.llmResult.modelName}`,
       attemptsPerformed: params.llmResult.attempt,
-      gatewayAttemptsPerformed: params.llmResult.attempt,
-      gatewayTrace: "",
+      // 复审四轮 P1-3:后处理失败也要记真实外呼数与轨迹,不拿逻辑 attempt 充数
+      gatewayAttemptsPerformed: params.llmResult.gatewayAttemptsPerformed,
+      gatewayTrace: params.llmResult.gatewayTraceSummary,
       aborted: false,
     };
   }
@@ -99,8 +109,10 @@ export type VisualReportLlmResult = {
   upstreamProvider: string | null;
   /** GLM 兜底成功时的实际交卷网关(bailian/evolink/openrouter);DeepSeek 攻为 "openrouter" */
   gateway: string | null;
-  /** 全程真实 HTTP 外呼数(含失败攻) */
+  /** 全程真实 HTTP 外呼数(含失败攻;不计未配置跳过) */
   gatewayAttemptsPerformed: number;
+  /** 全程网关轨迹摘要(attempt:gateway=outcome|…) */
+  gatewayTraceSummary: string;
 };
 
 type FallbackResponse = {
@@ -169,15 +181,15 @@ export async function runVisualReportLlmAttempts(params: {
     params.sleepMs ??
     ((ms: number) =>
       new Promise<void>((resolve) => {
-        const t = setTimeout(resolve, ms);
-        params.abortSignal?.addEventListener(
-          "abort",
-          () => {
-            clearTimeout(t);
-            resolve();
-          },
-          { once: true },
-        );
+        const onAbort = () => {
+          clearTimeout(t);
+          resolve();
+        };
+        const t = setTimeout(() => {
+          params.abortSignal?.removeEventListener("abort", onAbort);
+          resolve();
+        }, ms);
+        params.abortSignal?.addEventListener("abort", onAbort, { once: true });
       }));
   let lastErr = "";
   const attempts: VisualReportAttemptTrace[] = [];
@@ -222,6 +234,7 @@ export async function runVisualReportLlmAttempts(params: {
         upstreamProvider: String(response.provider ?? "").trim() || null,
         gateway: String(response.gateway ?? response.provider ?? (useFallback ? "" : "openrouter")).trim() || null,
         gatewayAttemptsPerformed: countGatewayCalls(attempts),
+        gatewayTraceSummary: summarizeGatewayTrace(attempts),
       };
     } catch (attemptErr) {
       lastErr = attemptErr instanceof Error ? attemptErr.message : String(attemptErr);

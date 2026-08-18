@@ -5396,24 +5396,9 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               }
             }
           }
-          // 复审三轮 P1-2:成功遥测在全部后处理完成、返回对象就绪后才写,杜绝双终态
-          appendRuntimeMetric("visual.report", {
-            ok: true,
-            engineEnv: llmResult.engine,
-            attempt: llmResult.attempt,
-            gateway: llmResult.gateway,
-            gatewayAttemptsPerformed: llmResult.gatewayAttemptsPerformed,
-            provider: `${llmResult.gateway || llmResult.engine}:${llmResult.modelName}`,
-            durationMs: Date.now() - llmStartedAtMs,
-            upstreamModel: llmResult.upstreamModel ?? llmResult.modelName,
-            finishReason: llmResult.finishReason,
-            promptTokens: llmResult.promptTokens,
-            completionTokens: llmResult.completionTokens,
-            windowDays: input.windowDays,
-            platformCount: input.platforms.length,
-          });
-          return {
-            success: true,
+          // 复审四轮 P1-4:先完整构造返回对象(数组转换与内部 await 全部完成),再写成功指标
+          const visualReportResult = {
+            success: true as const,
             routeMeta: {
               engine: llmResult.engine,
               gateway: llmResult.gateway,
@@ -5463,6 +5448,23 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               })(),
             },
           };
+          appendRuntimeMetric("visual.report", {
+            ok: true,
+            engineEnv: llmResult.engine,
+            attempt: llmResult.attempt,
+            gateway: llmResult.gateway,
+            gatewayAttemptsPerformed: llmResult.gatewayAttemptsPerformed,
+            gatewayTrace: llmResult.gatewayTraceSummary,
+            provider: `${llmResult.gateway || llmResult.engine}:${llmResult.modelName}`,
+            durationMs: Date.now() - llmStartedAtMs,
+            upstreamModel: llmResult.upstreamModel ?? llmResult.modelName,
+            finishReason: llmResult.finishReason,
+            promptTokens: llmResult.promptTokens,
+            completionTokens: llmResult.completionTokens,
+            windowDays: input.windowDays,
+            platformCount: input.platforms.length,
+          });
+          return visualReportResult;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (trendReportDeduct && !trendReportDeduct.alreadyCharged) {
@@ -5487,6 +5489,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             engineEnv: failTelemetry.engineEnv,
             provider: failTelemetry.provider,
             attemptsPerformed: failTelemetry.attemptsPerformed,
+            gatewayAttemptsPerformed: failTelemetry.gatewayAttemptsPerformed,
+            gatewayTrace: failTelemetry.gatewayTrace,
             aborted: failTelemetry.aborted,
             durationMs: Date.now() - llmStartedAtMs,
             message: message.slice(0, 800),

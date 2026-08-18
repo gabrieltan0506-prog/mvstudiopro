@@ -5,6 +5,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildVisualReportFailureTelemetry,
+  countGatewayCalls,
   parseVisualReportJson,
   runVisualReportLlmAttempts,
   VisualReportAttemptsError,
@@ -162,12 +163,16 @@ describe("兜底引擎标签与失败遥测(复审 P1-1/P1-4)", () => {
         modelName: "deepseek/deepseek-v4-pro-0813", attempt: 1,
         finishReason: "stop", promptTokens: 1, completionTokens: 2,
         upstreamModel: null, upstreamProvider: null,
-        gateway: "openrouter", gatewayAttemptsPerformed: 1,
+        gateway: "openrouter", gatewayAttemptsPerformed: 4,
+        gatewayTraceSummary: "3:bailian=http_error|3:evolink=ok",
       },
       stage: "post_llm",
     });
     expect(t.provider).toContain("visual_report_postprocess_failed:openrouter_deepseek");
     expect(t.provider).not.toContain("attempts_failed");
+    // 复审四轮 P1-3:后处理失败沿用真实外呼数与轨迹,不拿逻辑 attempt 充数
+    expect(t.gatewayAttemptsPerformed).toBe(4);
+    expect(t.gatewayTrace).toBe("3:bailian=http_error|3:evolink=ok");
   });
 
   it("LLM 前置准备失败:记 before_llm/not_started", () => {
@@ -175,5 +180,54 @@ describe("兜底引擎标签与失败遥测(复审 P1-1/P1-4)", () => {
     expect(t.engineEnv).toBe("not_started");
     expect(t.provider).toBe("visual_report_before_llm_failed");
     expect(t.attemptsPerformed).toBe(0);
+  });
+});
+
+describe("countGatewayCalls(真实外呼计数,复审四轮 P1-1)", () => {
+  it("skipped_not_configured 不计入;DeepSeek 每攻计 1", () => {
+    const n = countGatewayCalls([
+      { attempt: 1, engine: "openrouter_deepseek", modelName: "ds" },
+      { attempt: 2, engine: "openrouter_deepseek", modelName: "ds" },
+      {
+        attempt: 3, engine: "glm_5_2", modelName: "glm-5.2",
+        gatewayTrace: [
+          { gateway: "bailian", model: "glm-5.2", outcome: "skipped_not_configured" },
+          { gateway: "evolink", model: "glm-5.2", outcome: "ok" },
+        ],
+      },
+    ]);
+    expect(n).toBe(3);
+  });
+
+  it("GLM 攻多网关降级全部计入", () => {
+    const n = countGatewayCalls([
+      {
+        attempt: 3, engine: "glm_5_2", modelName: "glm-5.2",
+        gatewayTrace: [
+          { gateway: "bailian", model: "glm-5.2", outcome: "http_error" },
+          { gateway: "evolink", model: "glm-5.2", outcome: "content_invalid" },
+          { gateway: "openrouter", model: "z-ai/glm-5.2", outcome: "ok" },
+        ],
+      },
+    ]);
+    expect(n).toBe(3);
+  });
+
+  it("三攻全灭的失败遥测带真实外呼数与轨迹", () => {
+    const err = new VisualReportAttemptsError("msg", [
+      { attempt: 1, engine: "openrouter_deepseek", modelName: "ds" },
+      { attempt: 2, engine: "openrouter_deepseek", modelName: "ds" },
+      {
+        attempt: 3, engine: "glm_5_2", modelName: "glm-5.2",
+        gatewayTrace: [
+          { gateway: "bailian", model: "glm-5.2", outcome: "skipped_not_configured" },
+          { gateway: "evolink", model: "glm-5.2", outcome: "http_error" },
+          { gateway: "openrouter", model: "z-ai/glm-5.2", outcome: "http_error" },
+        ],
+      },
+    ], false);
+    const t = buildVisualReportFailureTelemetry({ error: err, llmResult: null, stage: "llm" });
+    expect(t.gatewayAttemptsPerformed).toBe(4);
+    expect(t.gatewayTrace).toBe("3:bailian=skipped_not_configured|3:evolink=http_error|3:openrouter=http_error");
   });
 });
