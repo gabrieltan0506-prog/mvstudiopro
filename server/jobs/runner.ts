@@ -1451,8 +1451,12 @@ async function processPlatformJob(
         if (!result.success || !result.report) {
           throw new Error(result.error || "趋势报告生成失败");
         }
+        const routeMeta = (result as { routeMeta?: { gateway?: string | null; modelName?: string; engine?: string } }).routeMeta;
         return {
-          provider: "openrouter",
+          // 复审三轮 P1-4:provider 写真实交卷路由,不再硬编码 openrouter
+          provider: routeMeta?.gateway
+            ? `${routeMeta.gateway}:${routeMeta.modelName ?? ""}`
+            : routeMeta?.engine || "visual_report_router",
           output: result,
         };
       } finally {

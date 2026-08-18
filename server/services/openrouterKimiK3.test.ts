@@ -6,7 +6,7 @@ import {
   OPENROUTER_KIMI_K3_REASONING_EFFORT,
   resolveOpenRouterKimiK3MaxCompletionTokens,
 } from "./openrouterKimiK3.js";
-import { getPlatformStage2OpenAiModel, getVisualReportOpenAiModel } from "../config/platformSwitches.js";
+import { getPlatformStage2OpenAiModel } from "../config/platformSwitches.js";
 
 describe("openrouterKimiK3", () => {
   it("identifies OpenRouter / bare kimi-k3 slugs", () => {
@@ -15,13 +15,12 @@ describe("openrouterKimiK3", () => {
     expect(isOpenRouterKimiK3Model("openai/gpt-5.6-terra")).toBe(false);
   });
 
-  it("keeps platform stage2 and the text-only visual report on Kimi K3", () => {
+  it("keeps platform stage2 on Kimi K3 (visual report no longer uses K3)", () => {
     delete process.env.PLATFORM_OPENROUTER_MODEL;
     delete process.env.VISUAL_REPORT_OPENROUTER_MODEL;
     delete process.env.VISUAL_REPORT_OPENAI_MODEL;
     expect(getOpenRouterKimiK3Model()).toBe(OPENROUTER_KIMI_K3_MODEL);
     expect(getPlatformStage2OpenAiModel()).toBe(OPENROUTER_KIMI_K3_MODEL);
-    expect(getVisualReportOpenAiModel()).toBe(OPENROUTER_KIMI_K3_MODEL);
     expect(OPENROUTER_KIMI_K3_REASONING_EFFORT).toBe("max");
   });
 

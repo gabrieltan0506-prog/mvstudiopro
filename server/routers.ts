@@ -26,7 +26,6 @@ import {
 } from "./_core/llm";
 import {
   getPlatformStage2OpenAiModel,
-  getVisualReportOpenAiModel,
   resolvePlatformStage2LlmMode,
   resolvePlatformStage2OpenAiReasoningEffort,
   resolveSupervisorTopicCoverPixelEngineInput,
@@ -4913,7 +4912,7 @@ export const appRouter = router({
             userId: ctx.user.id,
             creditsBilled: deduct.cost,
             action: `平台趋势报告（${input.windowDays}天）`,
-            externalApiCostHint: "Kimi K3 趋势结构化分析",
+            externalApiCostHint: "趋势结构化分析(DeepSeek→GLM 自动路由)",
             deduct,
             metadata: {
               action: "platform_visual_report",
@@ -5136,8 +5135,16 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 - globalBlueOceanWords：**【必须输出 4–6 组，禁止空数组】** 聚合选定平台的高意图搜索词，一/二级分级。格式：[{"primary":"一级词","secondary":["二级词1","二级词2"]}]。须从 platformEvidence.topTitles、dramaMixNames、dramaRising、行业样本 key、各平台 hotTopics 提炼；含抖音漫剧样本时可输出「AI漫剧/重生漫剧」类一级词。无法核实月搜索量时仍须输出，**禁止**「尚未检索到蓝海词」等空话。
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 
-        /** 平台趋势长图：默认 Kimi K3；持久 job 不受浏览器连接生命周期影响。 */
-        const visualReportModel = getVisualReportOpenAiModel();
+        /**
+         * 平台趋势长图（2026-08-18 用户拍板）：主力 DeepSeek 经济档（约 K3 价 1/16，
+         * 持久 job 不受断线影响,推理慢也无碍);前两攻 DeepSeek,第三攻兜底 GLM-5.2 三网关。
+         */
+        const { runVisualReportLlmAttempts, buildVisualReportFailureTelemetry, parseVisualReportJson } = await import(
+          "./services/visualReportLlm"
+        );
+        const { invokeGlmJsonChatWithGatewayFallback, BAILIAN_GLM_MODEL } = await import("./services/bailianChat");
+        let llmResult: Awaited<ReturnType<typeof runVisualReportLlmAttempts>> | null = null;
+        let visualReportStage: "before_llm" | "llm" | "post_llm" = "before_llm";
         const llmStartedAtMs = Date.now();
         let trendReportDeduct: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
         try {
@@ -5179,87 +5186,39 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               : {}),
           });
 
+          // 该配置对全部三攻生效（审查 P1-2）；缺省抬到 65_536 对齐 DeepSeek 经济档口径
+          //（推理 high 会先吃预算，小预算会推理耗尽零正文——2026-08-15 血泪教训）
           const visualReportMaxTokens = Math.max(
             8_192,
-            Math.min(65_536, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 32_768),
+            Math.min(65_536, Number(process.env.VISUAL_REPORT_MAX_COMPLETION_TOKENS) || 65_536),
           );
           const visualReportUser = `${userPayload}\n\n【輸出】僅輸出一個合法 JSON 物件（禁止 markdown围栏與前言後語）；首尾字元為 { 與 }。`;
 
-          const VISUAL_REPORT_MAX_ATTEMPTS = 3;
-          let response: Awaited<ReturnType<typeof invokeLLM>> | null = null;
-          let rawBody = "";
-          let parsed: any = {};
-          let lastErr = "";
-
-          for (let attempt = 1; attempt <= VISUAL_REPORT_MAX_ATTEMPTS; attempt += 1) {
-            try {
-              response = await invokeLLM({
-                provider: "openai",
-                modelName: visualReportModel,
-                response_format: { type: "json_object" },
-                max_tokens: visualReportMaxTokens,
-                // 恢复封面功能加入前的已验证 Kimi 配置；K3 不需要额外深推理预算。
-                temperature: 0.55,
-                requestId: `visual-report:${input.billingRequestId}`,
+          // 三攻路由（审查返工 2026-08-18）：attempt 1-2 DeepSeek（带 job 硬截止信号与
+          // 报表 max-token 配置）→ attempt 3 兜底 GLM-5.2 三网关；
+          // 全部失败时抛 VisualReportAttemptsError,进入下方 catch 走既有退款语义。
+          visualReportStage = "llm";
+          llmResult = await runVisualReportLlmAttempts({
+            systemPrompt,
+            userPrompt: visualReportUser,
+            maxTokens: visualReportMaxTokens,
+            fallbackModelName: BAILIAN_GLM_MODEL,
+            abortSignal: ctx.clientDisconnected,
+            // 兜底 = GLM-5.2 三网关链(百炼→EvoLink→OpenRouter);每网关先过报表业务验真
+            // 才算成功(复审三轮 P1-1),三网关全灭则如实失败退款
+            fallbackInvoke: () =>
+              invokeGlmJsonChatWithGatewayFallback({
+                system: systemPrompt,
+                user: visualReportUser,
+                maxTokens: visualReportMaxTokens,
                 abortSignal: ctx.clientDisconnected,
-                messages: [
-                  { role: "system", content: systemPrompt },
-                  { role: "user", content: visualReportUser },
-                ],
-              });
-              const choice0 = response.choices?.[0];
-              rawBody =
-                typeof choice0?.message?.content === "string"
-                  ? choice0.message.content
-                  : extractFirstChoicePlainText(response) || "";
-              const text = String(rawBody || "").trim();
-              if (!text) {
-                throw new Error("Evolink 返回空内容");
-              }
-              if (/^An error\b/i.test(text) || text.startsWith("<!DOCTYPE") || text.startsWith("<html")) {
-                throw new Error(`上游网关非 JSON：${text.slice(0, 80)}`);
-              }
-              const fenceMatch = text.match(/```(?:json)?\s*([\s\S]+?)```/);
-              const stripped = fenceMatch
-                ? fenceMatch[1].trim()
-                : text.replace(/^```(?:json)?[\r\n]*/i, "").replace(/[\r\n]*```\s*$/i, "").trim();
-              try {
-                parsed = JSON.parse(stripped);
-              } catch {
-                parsed = JSON.parse(text);
-              }
-              if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-                throw new Error("解析结果不是 JSON 对象");
-              }
-              // 至少要有标题或洞察之一，否则视为空壳重试
-              if (!parsed.reportTitle && !Array.isArray(parsed.insightSummary) && !Array.isArray(parsed.trackGrowth)) {
-                throw new Error("JSON 缺少 reportTitle/insightSummary/trackGrowth");
-              }
-              lastErr = "";
-              break;
-            } catch (attemptErr) {
-              lastErr = attemptErr instanceof Error ? attemptErr.message : String(attemptErr);
-              console.warn(
-                `[generateVisualReport] LLM 第 ${attempt}/${VISUAL_REPORT_MAX_ATTEMPTS} 次失败: ${lastErr.slice(0, 240)}`,
-              );
-              parsed = {};
-              rawBody = "";
-              response = null;
-              if (attempt < VISUAL_REPORT_MAX_ATTEMPTS) {
-                await new Promise((r) => setTimeout(r, 400 * attempt));
-              }
-            }
-          }
-
-          if (!response || !parsed || typeof parsed !== "object" || Object.keys(parsed).length === 0) {
-            throw new Error(
-              lastErr
-                ? `趋势报表生成失败（已重试 ${VISUAL_REPORT_MAX_ATTEMPTS} 次）：${lastErr.slice(0, 200)}`
-                : `趋势报表生成失败（已重试 ${VISUAL_REPORT_MAX_ATTEMPTS} 次）`,
-            );
-          }
-
-          const choice0 = response.choices?.[0];
+                validateContent: (text) => {
+                  parseVisualReportJson(text);
+                },
+              }),
+          });
+          visualReportStage = "post_llm";
+          const parsed: any = llmResult.parsed;
 
           // safeStr: smart object-aware extractor — prevents [object Object] strings in arrays
           const safeStr = (v: any): string => {
@@ -5360,18 +5319,6 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
             }
             return out;
           };
-          appendRuntimeMetric("visual.report", {
-            ok: true,
-            engineEnv: "evolink_primary",
-            provider: `${String(response?.provider || "evolink_primary")}:${visualReportModel}`,
-            durationMs: Date.now() - llmStartedAtMs,
-            upstreamModel: String(response?.model ?? visualReportModel).trim() || null,
-            finishReason: choice0?.finish_reason ?? null,
-            promptTokens: response.usage?.prompt_tokens ?? null,
-            completionTokens: response.usage?.completion_tokens ?? null,
-            windowDays: input.windowDays,
-            platformCount: input.platforms.length,
-          });
           const repairedTrackGrowth = repairTrackGrowthRows(
             Array.isArray(parsed.trackGrowth)
               ? parsed.trackGrowth.map((t: any) => ({
@@ -5448,8 +5395,16 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               }
             }
           }
-          return {
-            success: true,
+          // 复审四轮 P1-4:先完整构造返回对象(数组转换与内部 await 全部完成),再写成功指标
+          const visualReportResult = {
+            success: true as const,
+            routeMeta: {
+              engine: llmResult.engine,
+              gateway: llmResult.gateway,
+              // 复审五轮 P1-3:账本记真实上游模型(如 openrouter 网关的 z-ai/glm-5.2)
+              modelName: llmResult.upstreamModel ?? llmResult.modelName,
+              attempt: llmResult.attempt,
+            },
             report: {
               reportTitle: safeStr(parsed.reportTitle || `平台趋势看板 · ${pastStr}–${todayStr}`),
               // insightSummary：固定 判断/热点/结构/建议 四栏；清洗后台条数口径
@@ -5493,6 +5448,23 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               })(),
             },
           };
+          appendRuntimeMetric("visual.report", {
+            ok: true,
+            engineEnv: llmResult.engine,
+            attempt: llmResult.attempt,
+            gateway: llmResult.gateway,
+            gatewayAttemptsPerformed: llmResult.gatewayAttemptsPerformed,
+            gatewayTrace: llmResult.gatewayTraceSummary,
+            provider: `${llmResult.gateway || llmResult.engine}:${llmResult.upstreamModel ?? llmResult.modelName}`,
+            durationMs: Date.now() - llmStartedAtMs,
+            upstreamModel: llmResult.upstreamModel ?? llmResult.modelName,
+            finishReason: llmResult.finishReason,
+            promptTokens: llmResult.promptTokens,
+            completionTokens: llmResult.completionTokens,
+            windowDays: input.windowDays,
+            platformCount: input.platforms.length,
+          });
+          return visualReportResult;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (trendReportDeduct && !trendReportDeduct.alreadyCharged) {
@@ -5506,10 +5478,20 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
               console.error("[generateVisualReport] refund failed", refundError);
             });
           }
+          // 复审 P1-1：失败遥测按真实阶段与尝试轨迹如实记账,不再虚报「三攻全灭」
+          const failTelemetry = buildVisualReportFailureTelemetry({
+            error,
+            llmResult,
+            stage: visualReportStage,
+          });
           appendRuntimeMetric("visual.report", {
             ok: false,
-            engineEnv: "evolink_primary",
-            provider: `evolink_primary:${visualReportModel}`,
+            engineEnv: failTelemetry.engineEnv,
+            provider: failTelemetry.provider,
+            attemptsPerformed: failTelemetry.attemptsPerformed,
+            gatewayAttemptsPerformed: failTelemetry.gatewayAttemptsPerformed,
+            gatewayTrace: failTelemetry.gatewayTrace,
+            aborted: failTelemetry.aborted,
             durationMs: Date.now() - llmStartedAtMs,
             message: message.slice(0, 800),
             windowDays: input.windowDays,

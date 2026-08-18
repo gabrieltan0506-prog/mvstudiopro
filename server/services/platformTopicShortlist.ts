@@ -631,7 +631,9 @@ const EXPAND_MAX_COMPLETION_TOKENS = 32_000;
 const EXPAND_QWEN_MAX_COMPLETION_TOKENS = 65_536;
 
 /** 经济档模型：$0.435/$0.87 per M，输出价约为 Kimi K3 的 1/17（2026-08-15 同题 PK 质量过关） */
-const EXPAND_DEEPSEEK_OR_MODEL = "deepseek/deepseek-v4-pro-0813";
+/** DeepSeek 经济档唯一模型常量（审查 2026-08-18 建议2：请求与遥测必须同源，禁止双份定义） */
+export const DEEPSEEK_ECONOMY_MODEL = "deepseek/deepseek-v4-pro-0813";
+const EXPAND_DEEPSEEK_OR_MODEL = DEEPSEEK_ECONOMY_MODEL;
 
 /**
  * 经济档直连 OpenRouter。口径修正（2026-08-15 用户复核）：推理要开（high，与稳定/轻快档
@@ -642,6 +644,8 @@ const EXPAND_DEEPSEEK_OR_MODEL = "deepseek/deepseek-v4-pro-0813";
 export function buildDeepSeekExpandRequestBody(params: {
   system: string;
   user: string;
+  /** 可选输出预算；缺省 65_536 维持扩写既有口径（审查 P1-2：报表须传自己的运维配置值） */
+  maxTokens?: number;
 }): Record<string, unknown> {
   return {
     model: EXPAND_DEEPSEEK_OR_MODEL,
@@ -650,7 +654,7 @@ export function buildDeepSeekExpandRequestBody(params: {
       { role: "user", content: params.user },
     ],
     temperature: 0.55,
-    max_tokens: 65_536,
+    max_tokens: Math.max(8_192, Math.min(65_536, Math.floor(Number(params.maxTokens) || 65_536))),
     response_format: { type: "json_object" },
     reasoning: { effort: "high" },
     // 审查返工 6：不带此标志时 OpenRouter 可能把请求路由给不支持 reasoning/response_format
@@ -659,9 +663,34 @@ export function buildDeepSeekExpandRequestBody(params: {
   };
 }
 
-async function invokeExpandViaDeepSeek(params: { system: string; user: string }): Promise<string> {
+/** DeepSeek 经济档 OpenRouter 响应（choices/usage/model 供上层遥测与解析复用） */
+export type DeepSeekJsonChatResponse = {
+  choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  model?: string;
+  provider?: string;
+};
+
+/**
+ * 通用 DeepSeek 经济档 JSON 对话（扩写与趋势报表共用；2026-08-18 用户拍板报表切经济档）。
+ * 返回完整响应对象，content 已通过业务 JSON 验真（截断/过短/非对象一律抛错，不流空壳给下游）。
+ */
+export async function invokeDeepSeekJsonChatRaw(params: {
+  system: string;
+  user: string;
+  maxTokens?: number;
+  /** 上游硬截止（审查 P1-1：报表 job 的 14 分钟 AbortController 必须能掐断本请求） */
+  abortSignal?: AbortSignal;
+}): Promise<DeepSeekJsonChatResponse> {
   const key = String(process.env.OPENROUTER_API_KEY || "").trim();
-  if (!key) throw new Error("经济档通道未配置");
+  if (!key) {
+    const err = new Error("经济档通道未配置") as Error & { gatewayTrace?: unknown };
+    // 复审五轮 P1-1:fetch 未发生,标记 skipped 供外呼计数排除
+    err.gatewayTrace = [{ gateway: "openrouter", model: DEEPSEEK_ECONOMY_MODEL, outcome: "skipped_not_configured" }];
+    throw err;
+  }
+  const timeoutSignal = AbortSignal.timeout(240_000);
+  const signal = params.abortSignal ? AbortSignal.any([params.abortSignal, timeoutSignal]) : timeoutSignal;
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -670,14 +699,14 @@ async function invokeExpandViaDeepSeek(params: { system: string; user: string })
       "HTTP-Referer": "https://www.mvstudiopro.com",
       "X-OpenRouter-Title": "MVStudioPro",
     },
-    signal: AbortSignal.timeout(240_000),
+    signal,
     body: JSON.stringify(buildDeepSeekExpandRequestBody(params)),
   });
   const raw = await res.text();
   if (!res.ok) throw new Error(`DeepSeek 经济档 HTTP ${res.status}: ${raw.slice(0, 160)}`);
-  let json: { choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }> };
+  let json: DeepSeekJsonChatResponse;
   try {
-    json = JSON.parse(raw) as typeof json;
+    json = JSON.parse(raw) as DeepSeekJsonChatResponse;
   } catch {
     throw new Error(`DeepSeek 经济档非 JSON 响应：${raw.slice(0, 120)}`);
   }
@@ -692,7 +721,13 @@ async function invokeExpandViaDeepSeek(params: { system: string; user: string })
   if (!extractJsonObject(text)) {
     throw new Error(`DeepSeek 经济档业务 JSON 解析失败：${text.slice(0, 120)}`);
   }
-  return text;
+  return json;
+}
+
+async function invokeExpandViaDeepSeek(params: { system: string; user: string }): Promise<string> {
+  const json = await invokeDeepSeekJsonChatRaw(params);
+  const content = json.choices?.[0]?.message?.content;
+  return typeof content === "string" ? content.trim() : "";
 }
 
 async function invokeExpandViaEvolink(params: {

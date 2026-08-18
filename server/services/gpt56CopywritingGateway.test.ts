@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { getVisualReportOpenAiModel } from "../config/platformSwitches.js";
 import {
   EVOLINK_CHAT_COMPLETIONS_URL,
   isDirectOpenRouterModelSlug,
@@ -91,13 +90,6 @@ describe("resolveGpt56CopywritingTarget", () => {
     expect(t.gateway).toBe("openrouter");
     expect(t.apiUrl).toBe(OPENROUTER_CHAT_COMPLETIONS_URL);
     expect(t.modelName).toBe("moonshotai/kimi-k3");
-  });
-
-  it("visual report defaults to the proven Kimi K3 text path", () => {
-    setEnv("PLATFORM_OPENROUTER_MODEL", undefined);
-    setEnv("VISUAL_REPORT_OPENROUTER_MODEL", undefined);
-    setEnv("VISUAL_REPORT_OPENAI_MODEL", undefined);
-    expect(getVisualReportOpenAiModel()).toBe("moonshotai/kimi-k3");
   });
 
   it("official_only prefers api.openai.com when key present", () => {
