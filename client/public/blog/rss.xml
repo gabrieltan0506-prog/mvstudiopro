@@ -6,7 +6,14 @@
     <atom:link href="https://www.mvstudiopro.com/blog/rss.xml" rel="self" type="application/rss+xml"/>
     <description>AI 漫剧与视频生成实测：模型对比、真实价格、工作流拆解</description>
     <language>zh-CN</language>
-    <lastBuildDate>Wed, 19 Aug 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Thu, 20 Aug 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>Seedance 2.5 vs Wan 3.0 实测：同一套素材，8 分钟和 74 分钟到底差在哪？</title>
+      <link>https://www.mvstudiopro.com/blog/seedance-wan-shootout-verdict</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/seedance-wan-shootout-verdict</guid>
+      <pubDate>Thu, 20 Aug 2026 00:00:00 GMT</pubDate>
+      <description>同一套素材、同一份提示词,Seedance 2.5 与 Wan 3.0 的正面对决:8 分钟与 74 分钟背后的速度、价格、音频行为与审核边界,全部来自真实账单。</description>
+    </item>
     <item>
       <title>同一套素材，我让 Seedance 2.5 和 Wan 3.0 跑了一夜：8 分钟与 74 分钟之后</title>
       <link>https://www.mvstudiopro.com/blog/seedance-vs-wan-one-night-duel</link>
