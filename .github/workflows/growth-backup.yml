@@ -33,11 +33,12 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           wait_for_started_vm() {
-            for attempt in 1 2 3 4 5 6 7 8 9 10; do
-              if flyctl status -a mvstudiopro | grep -q "started"; then
+            local vm_attempt
+            for vm_attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if flyctl status -a mvstudiopro </dev/null | grep -q "started"; then
                 return 0
               fi
-              echo "No started VM yet, retrying in 15s (attempt $attempt/10)"
+              echo "No started VM yet, retrying in 15s (attempt $vm_attempt/10)"
               sleep 15
             done
             echo "No started VM became available in time"
@@ -62,11 +63,12 @@ jobs:
         run: |
           mkdir -p /tmp/growth-backup
           wait_for_started_vm() {
-            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            local vm_attempt
+            for vm_attempt in 1 2 3 4 5 6 7 8 9 10; do
               if flyctl status -a mvstudiopro | grep -q "started"; then
                 return 0
               fi
-              echo "No started VM yet, retrying in 15s (attempt $attempt/10)"
+              echo "No started VM yet, retrying in 15s (attempt $vm_attempt/10)"
               sleep 15
             done
             echo "No started VM became available in time"
@@ -133,11 +135,12 @@ jobs:
           . /tmp/growth-backup/storage.env
 
           wait_for_started_vm() {
-            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            local vm_attempt
+            for vm_attempt in 1 2 3 4 5 6 7 8 9 10; do
               if flyctl status -a mvstudiopro | grep -q "started"; then
                 return 0
               fi
-              echo "No started VM yet, retrying in 15s (attempt $attempt/10)"
+              echo "No started VM yet, retrying in 15s (attempt $vm_attempt/10)"
               sleep 15
             done
             echo "No started VM became available in time"
@@ -162,58 +165,50 @@ jobs:
           fi
           (set -C; printf '%s' 'github-growth-backup' > "$LOCK") 2>/dev/null
           SH
-            for attempt in $(seq 1 60); do
+            local lane_attempt
+            for lane_attempt in $(seq 1 60); do
               if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C 'sh -s' < /tmp/acquire-growth-backup-lane.sh; then
                 return 0
               fi
-              echo "采集或前台平台任务仍在运行，冷备暂停 30 秒（${attempt}/60）"
+              echo "采集或前台平台任务仍在运行，冷备暂停 30 秒（${lane_attempt}/60）"
               sleep 30
             done
             return 1
           }
 
           wait_for_interactive_workload() {
-            for attempt in $(seq 1 60); do
+            local priority_attempt
+            for priority_attempt in $(seq 1 60); do
+              # 本函数会从 `while read ... < <(jq ...)` 内调用。SSH 若继承循环 stdin，
+              # 会把尚未读取的分片清单吞掉，表现为首片成功后整文件大小校验失败。
+              # 探针不需要请求体，必须与清单文件描述符隔离。
               if wait_for_started_vm && timeout 20 flyctl ssh console -a mvstudiopro -C "sh -lc '
                 find /data/growth/runtime-interactive-workloads -type f -mmin +2 -delete 2>/dev/null || true
                 test -z \"\$(find /data/growth/runtime-interactive-workloads -type f -mmin -2 -print -quit 2>/dev/null)\"
-              '"; then
+              '" </dev/null; then
                 return 0
               fi
-              echo "前台平台任务运行中，冷备传输暂停 30 秒（${attempt}/60）"
+              echo "前台平台任务运行中，冷备传输暂停 30 秒（${priority_attempt}/60）"
               sleep 30
             done
             return 1
           }
 
-          interactive_workload_is_idle() {
-            timeout 20 flyctl ssh console -a mvstudiopro -C "sh -lc '
-              find /data/growth/runtime-interactive-workloads -type f -mmin +2 -delete 2>/dev/null || true
-              test -z \"\$(find /data/growth/runtime-interactive-workloads -type f -mmin -2 -print -quit 2>/dev/null)\"
-            '" >/dev/null 2>&1
-          }
-
-          # 长 SFTP/tar/dd 不能只在开始前看一次租约。每 10 秒复检；前台任务出现
-          # 或租约状态无法证明为空时，立即终止本地 SSH 进程组，由调用方等待后重试。
+          # Runner 不得在长 SSH 传输期间另开 SSH 探针：实测 32MiB 分片需约 79 秒，
+          # 第二条探针连接会争抢 Fly SSH 资源并把健康传输误判为繁忙。长流由同一
+          # SSH 会话内的 growth-backup-stream-remote.sh 监控前台 marker。
           run_with_interactive_preemption() {
             BACKUP_REMOTE_WORK_STARTED=true
-            setsid "$@" &
-            local command_pid=$!
-            while kill -0 "$command_pid" 2>/dev/null; do
-              sleep 10
-              if ! kill -0 "$command_pid" 2>/dev/null; then
-                break
-              fi
-              if ! interactive_workload_is_idle; then
-                echo "前台平台任务出现，中止当前冷备远程阶段并等待续跑。" >&2
-                kill -TERM -- "-$command_pid" 2>/dev/null || true
-                sleep 2
-                kill -KILL -- "-$command_pid" 2>/dev/null || true
-                wait "$command_pid" 2>/dev/null || true
-                return 75
-              fi
-            done
-            wait "$command_pid"
+            # 本步骤以 bash -e 运行。远端读取发现前台任务时会按设计返回 75；若直接
+            # 裸执行，errexit 会在调用方进入重试分支前终止整次 Action。必须把命令
+            # 放进显式条件并原样返回状态，让 fetch/capture 的重试循环接管。
+            if "$@"; then
+              return 0
+            else
+              local command_status=$?
+              echo "冷备远端操作暂未完成，交给调用方重试（status=${command_status}）" >&2
+              return "$command_status"
+            fi
           }
 
           release_backup_lane() {
@@ -265,19 +260,20 @@ jobs:
             return 1
           }
 
-          capture_from_fly() {
-            local command="$1"
+          capture_directory_from_fly() {
+            local directory="$1"
             local output_path="$2"
             local timeout_seconds="${3:-480}"
             for attempt in 1 2 3 4 5; do
-              echo "Capturing from Fly -> ${output_path} (attempt ${attempt}/5)"
-              if wait_for_interactive_workload && run_with_interactive_preemption timeout "${timeout_seconds}" flyctl ssh console -a mvstudiopro -C "sh -lc '$command'" > "$output_path"; then
+              echo "Capturing Growth directory from Fly: ${directory} (attempt ${attempt}/5)"
+              if wait_for_interactive_workload && run_with_interactive_preemption timeout "${timeout_seconds}" \
+                flyctl ssh console -a mvstudiopro -C "sh -s -- stream-directory '${directory}'" \
+                < scripts/growth-backup-stream-remote.sh > "$output_path"; then
                 return 0
               fi
-              echo "Fly fetch failed, retrying in 20s (attempt $attempt/5)"
+              echo "Fly directory capture failed, retrying in 20s: ${directory}"
               sleep 20
             done
-            echo "Fly fetch failed after retries: $command"
             return 1
           }
 
@@ -290,14 +286,14 @@ jobs:
           fetch_file_from_fly /data/growth/weixin-channels-miner.json /tmp/growth-backup/store/weixin-channels-miner.json false
 
           if [ "${EXTERNALIZE_PLATFORMS:-false}" = "true" ]; then
-            capture_from_fly "if [ -d /data/growth/platforms ]; then nice -n 15 tar -C /data/growth -czf - platforms 2>/dev/null; fi" /tmp/growth-backup/growth-platforms.tar.gz 720 || true
+            capture_directory_from_fly platforms /tmp/growth-backup/growth-platforms.tar.gz 720 || true
           else
-            capture_from_fly "if [ -d /data/growth/platforms ]; then nice -n 15 tar -C /data/growth -czf - platforms 2>/dev/null; fi" /tmp/growth-backup/platforms.tar.gz || true
+            capture_directory_from_fly platforms /tmp/growth-backup/platforms.tar.gz || true
           fi
           if [ "${EXTERNALIZE_HISTORY_LEDGER:-false}" = "true" ]; then
-            capture_from_fly "if [ -d /data/growth/history-ledger ]; then nice -n 15 tar -C /data/growth -czf - history-ledger 2>/dev/null; fi" /tmp/growth-backup/growth-history-ledger.tar.gz 720 || true
+            capture_directory_from_fly history-ledger /tmp/growth-backup/growth-history-ledger.tar.gz 720 || true
           else
-            capture_from_fly "if [ -d /data/growth/history-ledger ]; then nice -n 15 tar -C /data/growth -czf - history-ledger 2>/dev/null; fi" /tmp/growth-backup/history-ledger.tar.gz || true
+            capture_directory_from_fly history-ledger /tmp/growth-backup/history-ledger.tar.gz || true
           fi
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-backup/fetched-at.txt
 
@@ -344,18 +340,42 @@ jobs:
             fi
             for attempt in 1 2 3 4 5; do
               local next_path="${output_path}.next"
+              local transfer_status=1
+              local actual_bytes="missing"
+              local actual_sha="missing"
               rm -f "$next_path"
-              if wait_for_interactive_workload && run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro -C "sh -lc 'nice -n 15 dd if=${remote_file} bs=${block_bytes} skip=${skip_blocks} count=${count_blocks} status=none'" > "$next_path"; then
-                local actual_bytes
-                local actual_sha
-                actual_bytes=$(stat -c%s "$next_path")
-                actual_sha=$(sha256sum "$next_path" | awk '{print $1}')
-                if [ "$actual_bytes" = "$expected_bytes" ] && [ "$actual_sha" = "$expected_sha" ]; then
-                  mv "$next_path" "$output_path"
-                  return 0
+              echo "Fetching verified part: $(basename "$remote_file") offset=${offset} attempt=${attempt}/5"
+              if wait_for_interactive_workload; then
+                if run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro \
+                  -C "sh -s -- stream-file '${remote_file}' '${block_bytes}' '${skip_blocks}' '${count_blocks}'" \
+                  < scripts/growth-backup-stream-remote.sh > "$next_path"; then
+                  transfer_status=0
+                else
+                  transfer_status=$?
                 fi
-                echo "Part verification failed: bytes=${actual_bytes}/${expected_bytes} sha=${actual_sha}/${expected_sha}"
+              else
+                transfer_status=$?
               fi
+              if [ "$transfer_status" -eq 0 ] && [ -f "$next_path" ]; then
+                if actual_bytes=$(stat -c%s "$next_path") && actual_sha=$(sha256sum "$next_path" | awk '{print $1}'); then
+                  :
+                else
+                  echo "Part local verification tools failed: $(basename "$next_path")" >&2
+                  actual_bytes="verification_error"
+                  actual_sha="verification_error"
+                fi
+                if [ "$actual_bytes" = "$expected_bytes" ] && [ "$actual_sha" = "$expected_sha" ]; then
+                  if mv "$next_path" "$output_path"; then
+                    echo "Verified part fetched: $(basename "$output_path") bytes=${actual_bytes}"
+                    return 0
+                  fi
+                  echo "Part move failed: ${next_path} -> ${output_path}" >&2
+                fi
+              else
+                echo "Part transfer failed: status=${transfer_status} file_present=$([ -f "$next_path" ] && echo yes || echo no)" >&2
+              fi
+              echo "Part verification failed: bytes=${actual_bytes}/${expected_bytes} sha=${actual_sha}/${expected_sha}" >&2
+              rm -f "$next_path"
               sleep 20
             done
             echo "Verified part fetch failed: ${remote_file}@${offset}"
@@ -367,7 +387,14 @@ jobs:
             : > "$output"
             while IFS=$'\t' read -r offset part_bytes part_sha part_asset; do
               part_output="/tmp/growth-backup/release-current/${part_asset}"
-              fetch_verified_part "${REMOTE_BATCH_DIR}/${snapshot_file}" "$offset" "$part_bytes" "$part_sha" "$part_output"
+              if ! fetch_verified_part "${REMOTE_BATCH_DIR}/${snapshot_file}" "$offset" "$part_bytes" "$part_sha" "$part_output"; then
+                echo "Cannot assemble ${logical_name}: verified part unavailable at offset ${offset}" >&2
+                exit 1
+              fi
+              if [ ! -f "$part_output" ]; then
+                echo "Cannot assemble ${logical_name}: verified part file is missing: ${part_output}" >&2
+                exit 1
+              fi
               cat "$part_output" >> "$output"
             done < <(jq -r --arg platform "$platform" '.files[] | select(.platform == $platform) | .parts[] | [.offset,.bytes,.sha256,.assetName] | @tsv' /tmp/growth-backup/platform-current-snapshot-manifest.json)
             test "$(stat -c%s "$output")" = "$expected_bytes"
@@ -590,6 +617,7 @@ jobs:
           BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
           mkdir -p /tmp/growth-archive-offload/assets
           : > /tmp/growth-archive-offload/assets.tsv.next
+          : > /tmp/growth-archive-offload/archives.tsv.next
           while IFS=$'\t' read -r dir source_fingerprint source_bytes; do
             [ -n "$dir" ] || continue
             case "$dir" in ""|.|..|*[!0-9A-Za-z._-]*) echo "非法目录名: $dir"; exit 1 ;; esac
@@ -614,13 +642,31 @@ jobs:
             awk -v root="$dir" '$0 != root && index($0, root "/") != 1 { exit 1 }' "$output.list"
             asset_bytes=$(stat -c%s "$output")
             asset_sha=$(sha256sum "$output" | awk '{print $1}')
-            printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-              "$dir" "$(basename "$output")" "$asset_bytes" "$asset_sha" "$source_fingerprint" "$source_bytes" \
-              >> /tmp/growth-archive-offload/assets.tsv.next
+            asset_name=$(basename "$output")
+            # GitHub 单 asset 上限为 2GiB，但接近上限的大文件无法断点续传；
+            # 采用 256MiB 分片，把单次失败的重传成本限制在可接受范围内。
+            split -b 268435456 -d -a 4 "$output" "$output.part-"
+            part_count=0
+            for part in "$output".part-*; do
+              test -f "$part"
+              part_bytes=$(stat -c%s "$part")
+              part_sha=$(sha256sum "$part" | awk '{print $1}')
+              test "$part_bytes" -lt 2147483648
+              printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "$dir" "$(basename "$part")" "$part_bytes" "$part_sha" "$asset_name" "$part_count" \
+                >> /tmp/growth-archive-offload/assets.tsv.next
+              part_count=$((part_count + 1))
+            done
+            test "$part_count" -gt 0
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+              "$dir" "$asset_name" "$asset_bytes" "$asset_sha" "$source_fingerprint" "$source_bytes" "$part_count" \
+              >> /tmp/growth-archive-offload/archives.tsv.next
+            rm -f "$output" "$output.list"
             sleep 5
           done < /tmp/growth-archive-offload/snapshot.tsv
           mv /tmp/growth-archive-offload/assets.tsv.next /tmp/growth-archive-offload/assets.tsv
-          test "$(wc -l < /tmp/growth-archive-offload/assets.tsv)" -eq "$(wc -l < /tmp/growth-archive-offload/snapshot.tsv)"
+          mv /tmp/growth-archive-offload/archives.tsv.next /tmp/growth-archive-offload/archives.tsv
+          test "$(wc -l < /tmp/growth-archive-offload/archives.tsv)" -eq "$(wc -l < /tmp/growth-archive-offload/snapshot.tsv)"
       - name: Publish and read back archive bundles
         env:
           GH_TOKEN: ${{ github.token }}
@@ -659,7 +705,7 @@ jobs:
           gh release view growth-cold-store-latest >/dev/null 2>&1 || \
             gh release create growth-cold-store-latest --title "Growth Cold Store Latest" --notes "Latest cold-store restore assets"
           : > /tmp/growth-archive-offload/verified-assets.tsv
-          while IFS=$'\t' read -r dir asset_name asset_bytes asset_sha source_fingerprint source_bytes; do
+          while IFS=$'\t' read -r dir asset_name asset_bytes asset_sha archive_name part_index; do
             [ -n "$dir" ] || continue
             upload_and_readback_asset "/tmp/growth-archive-offload/assets/$asset_name"
           done < /tmp/growth-archive-offload/assets.tsv
@@ -667,13 +713,18 @@ jobs:
           const fs = require("fs");
           const parse = (file) => fs.readFileSync(file, "utf8").trim().split(/\r?\n/).filter(Boolean).map((line) => line.split("\t"));
           const batchId = fs.readFileSync("/tmp/growth-archive-offload/batch-id.txt", "utf8").trim();
-          const archives = parse("/tmp/growth-archive-offload/assets.tsv").map(([dir, asset, bytes, sha256, sourceFingerprint, sourceBytes]) => ({
+          const parts = parse("/tmp/growth-archive-offload/assets.tsv").map(([dir, asset, bytes, sha256, archive, partIndex]) => ({
+            dir, asset, bytes: Number(bytes), sha256, archive, partIndex: Number(partIndex),
+          }));
+          const archives = parse("/tmp/growth-archive-offload/archives.tsv").map(([dir, asset, bytes, sha256, sourceFingerprint, sourceBytes, partCount]) => ({
             dir, asset, bytes: Number(bytes), sha256, sourceFingerprint, sourceBytes: Number(sourceBytes),
+            parts: parts.filter((entry) => entry.dir === dir).sort((a, b) => a.partIndex - b.partIndex).map(({ asset: partAsset, bytes: partBytes, sha256: partSha, partIndex }) => ({ asset: partAsset, bytes: partBytes, sha256: partSha, partIndex })),
+            partCount: Number(partCount),
           }));
           const verified = new Set(parse("/tmp/growth-archive-offload/verified-assets.tsv").map(([asset]) => asset));
-          if (!archives.length || archives.some((entry) => !verified.has(entry.asset))) throw new Error("archive release read-back incomplete");
+          if (!archives.length || archives.some((entry) => entry.parts.length !== entry.partCount || entry.parts.some((part) => !verified.has(part.asset)))) throw new Error("archive release read-back incomplete");
           const manifest = {
-            schemaVersion: 2,
+            schemaVersion: 3,
             batchId,
             createdAt: new Date().toISOString(),
             baseUrl: "https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-cold-store-latest",
@@ -695,11 +746,17 @@ jobs:
           test -s /tmp/growth-archive-offload/DELETE_READY
           test -s /tmp/growth-archive-offload/verified-assets.tsv
           BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
-          while IFS=$'\t' read -r dir asset_name asset_bytes asset_sha source_fingerprint source_bytes; do
+          while IFS=$'\t' read -r dir archive_name archive_bytes archive_sha source_fingerprint source_bytes part_count; do
             [ -n "$dir" ] || continue
-            awk -F '\t' -v asset="$asset_name" -v bytes="$asset_bytes" -v sha="$asset_sha" \
-              '$1 == asset && $2 == bytes && $3 == sha { found=1 } END { exit(found ? 0 : 1) }' \
-              /tmp/growth-archive-offload/verified-assets.tsv
+            verified_part_count=0
+            while IFS=$'\t' read -r part_dir part_asset part_bytes part_sha part_archive part_index; do
+              [ "$part_dir" = "$dir" ] || continue
+              awk -F '\t' -v asset="$part_asset" -v bytes="$part_bytes" -v sha="$part_sha" \
+                '$1 == asset && $2 == bytes && $3 == sha { found=1 } END { exit(found ? 0 : 1) }' \
+                /tmp/growth-archive-offload/verified-assets.tsv
+              verified_part_count=$((verified_part_count + 1))
+            done < /tmp/growth-archive-offload/assets.tsv
+            test "$verified_part_count" -eq "$part_count"
             DELETED=false
             for attempt in $(seq 1 20); do
               if flyctl ssh console -a mvstudiopro \
@@ -712,7 +769,7 @@ jobs:
               sleep 30
             done
             test "$DELETED" = "true"
-          done < /tmp/growth-archive-offload/assets.tsv
+          done < /tmp/growth-archive-offload/archives.tsv
           flyctl ssh console -a mvstudiopro \
             -C "sh -s -- cleanup '$BATCH_ID'" \
             < scripts/growth-archive-offload-remote.sh
