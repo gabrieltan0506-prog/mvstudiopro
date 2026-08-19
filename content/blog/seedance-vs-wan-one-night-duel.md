@@ -135,9 +135,6 @@ Seedance 的单段音频建议控制在 2—30 秒；Wan 的参考音频总长�
 <video controls preload="metadata" width="100%" src="/api/blog-media/wm4k_diebao.mp4"></video>
 <p><em>《谍报追凶》终稿 4K|引擎:Seedance 2.5 参考生视频 + video-edit 原生全息|超分:字节 video-upscaler</em></p>
 
-<video controls preload="metadata" width="100%" src="/api/blog-media/wm_diebao_wan3.mp4"></video>
-<p><em>《谍报追凶》Wan 3.0 版(4K+配乐)|引擎:Wan 3.0——文中排队 74 分钟的那一发</em></p>
-
 <video controls preload="metadata" width="100%" src="/api/blog-media/wm_tianleijie.mp4"></video>
 <p><em>《天雷劫》v4 终稿|引擎:Seedance 2.5(纯对白轨+逐秒演技)</em></p>
 

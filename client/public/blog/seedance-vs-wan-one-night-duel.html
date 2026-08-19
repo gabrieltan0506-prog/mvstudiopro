@@ -170,7 +170,7 @@
 <nav class="top"><a href="/">首页</a> › <a href="/blog/">文章</a></nav>
 <article>
 <h1>同一套素材，我让 Seedance 2.5 和 Wan 3.0 跑了一夜：8 分钟与 74 分钟之后</h1>
-<p class="meta">2026-08-19 · 约 13 分钟</p>
+<p class="meta">2026-08-19 · 约 12 分钟</p>
 <blockquote>
 <p>这是 AI 漫剧工厂实测系列的上篇。我们在同一个晚上，用同一套素材和同一份提示词，分别生成了一支 30 秒谍战短片；随后又用一支兽首乐队 MV，把三条不同的 API 路线都跑了一遍。后来，这支 MV 又补成了 50 秒完整版本。文中的耗时、费用和失误，均来自当晚的真实记录。</p>
 </blockquote>
@@ -284,8 +284,7 @@
 <p>先检查两件事：第一，当前接口是否真的会保留参考音频；第二，<code>generate_audio</code> 在这条通道里究竟表示“补环境声”，还是让模型重新生成整条声音。不同入口的处理并不一致，最好先用一条很短的素材做低成本验证，不要凭模型名称猜。</p>
 <h2>实测样片(每支标注生成引擎)</h2>
 <p><video controls preload="metadata" width="100%" src="/api/blog-media/wm4k_diebao.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
-<p><em>《谍报追凶》终稿 4K|引擎:Seedance 2.5 参考生视频 + video-edit 原生全息|超分:字节 video-upscaler</em></p><p><video controls preload="metadata" width="100%" src="/api/blog-media/wm_diebao_wan3.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
-<p><em>《谍报追凶》Wan 3.0 版(4K+配乐)|引擎:Wan 3.0——文中排队 74 分钟的那一发</em></p><p><video controls preload="metadata" width="100%" src="/api/blog-media/wm_tianleijie.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
+<p><em>《谍报追凶》终稿 4K|引擎:Seedance 2.5 参考生视频 + video-edit 原生全息|超分:字节 video-upscaler</em></p><p><video controls preload="metadata" width="100%" src="/api/blog-media/wm_tianleijie.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
 <p><em>《天雷劫》v4 终稿|引擎:Seedance 2.5(纯对白轨+逐秒演技)</em></p><p><video controls preload="metadata" width="100%" src="/api/blog-media/wm_yiwang.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
 <p><em>《意网情深》50 秒完整版|引擎:Seedance 2.5(唱段原曲进片)+ extend 安可</em></p><p><video controls preload="metadata" width="100%" src="/api/blog-media/wm_tlj_v3_bad.mp4" controlsList="nodownload noplaybackrate" disablePictureInPicture oncontextmenu="return false" draggable="false"></video></p>
 <p><em>反面教材|引擎:Seedance 2.5——BGM 预混导致引擎重演绎对白</em></p><hr>
