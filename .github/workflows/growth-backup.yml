@@ -35,7 +35,7 @@ jobs:
           wait_for_started_vm() {
             local vm_attempt
             for vm_attempt in 1 2 3 4 5 6 7 8 9 10; do
-              if flyctl status -a mvstudiopro | grep -q "started"; then
+              if flyctl status -a mvstudiopro </dev/null | grep -q "started"; then
                 return 0
               fi
               echo "No started VM yet, retrying in 15s (attempt $vm_attempt/10)"
@@ -179,10 +179,13 @@ jobs:
           wait_for_interactive_workload() {
             local priority_attempt
             for priority_attempt in $(seq 1 60); do
+              # 本函数会从 `while read ... < <(jq ...)` 内调用。SSH 若继承循环 stdin，
+              # 会把尚未读取的分片清单吞掉，表现为首片成功后整文件大小校验失败。
+              # 探针不需要请求体，必须与清单文件描述符隔离。
               if wait_for_started_vm && timeout 20 flyctl ssh console -a mvstudiopro -C "sh -lc '
                 find /data/growth/runtime-interactive-workloads -type f -mmin +2 -delete 2>/dev/null || true
                 test -z \"\$(find /data/growth/runtime-interactive-workloads -type f -mmin -2 -print -quit 2>/dev/null)\"
-              '"; then
+              '" </dev/null; then
                 return 0
               fi
               echo "前台平台任务运行中，冷备传输暂停 30 秒（${priority_attempt}/60）"
