@@ -19,10 +19,10 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 ## 我们是怎么测的
 
 <video controls preload="metadata" width="100%" src="/api/blog-media/wm4k_diebao.mp4"></video>
-<p><em>《谍报追凶》终稿(4K,引擎原生全息+卡点配乐,水印版)</em></p>
+<p><em>《谍报追凶》终稿(4K)|生成引擎:Seedance 2.5(参考生视频)+ Seedance 2.5 video-edit 原生全息|超分:字节 video-upscaler</em></p>
 
 
-![天雷劫开场:雷暴法阵穹拍(720P 原帧,已加水印)](/blog-assets/dual-engine-night/de-06-opening-array.jpg)
+![天雷劫开场雷暴法阵穹拍|Seedance 2.5 成片 720P 原帧](/blog-assets/dual-engine-night/de-06-opening-array.jpg)
 
 
 这一晚一共跑了三组内容：
@@ -41,7 +41,7 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 
 ## 第二件事：同一个模型，换个接口，参考音频就变了
 
-![音轨频谱:对白窗与音乐层的真实分布](/blog-assets/dual-engine-night/de-08-spectrogram.jpg)
+![音轨频谱(分析图,非生成)](/blog-assets/dual-engine-night/de-08-spectrogram.jpg)
 
 
 这是整次测试中最意外的一处。
@@ -54,7 +54,7 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 ## 把唱段补到 50 秒后，我反而看见了它的边界
 
 <video controls preload="metadata" width="100%" src="/api/blog-media/wm_yiwang.mp4"></video>
-<p><em>《意网情深》兽首乐坊 50 秒完整版:20 秒主唱原曲进片 + 安可猫钢琴尾奏</em></p>
+<p><em>《意网情深》50 秒完整版|生成引擎:Seedance 2.5(唱段原曲进片)+ Seedance 2.5 extend(安可)</em></p>
 
 
 20 秒版本更像一段能力展示：主唱亮相、乐队接力、群像收束，信息密度高，几乎没有空拍。50 秒版本则更接近一场完整演出——主唱退场后，灯光逐步熄灭，黑猫钢琴手留在舞台中央，把情绪慢慢送到结束。
@@ -88,7 +88,7 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 ## 第五件事：不要把 BGM 提前混进参考对白
 
 <video controls preload="metadata" width="100%" src="/api/blog-media/wm_tlj_v3_bad.mp4"></video>
-<p><em>反面教材:BGM 预混进参考音轨后,引擎重新演绎了对白(台词换人)</em></p>
+<p><em>反面教材|生成引擎:Seedance 2.5——BGM 预混进参考音轨后引擎重新演绎对白(台词换人)</em></p>
 
 
 第二晚，我们又花了约 29 元验证一个想法：能不能把对白和配乐提前混成一条完整音轨，再让模型一次生成成片？如果可行，就能少做一道后期。
@@ -109,7 +109,7 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 ## 第七件事：画面清楚了，演员也可能变成蜡像
 
 <video controls preload="metadata" width="100%" src="/api/blog-media/wm_tianleijie.mp4"></video>
-<p><em>《天雷劫》v4 终稿(纯对白轨+逐秒演技提示词+后期配乐)</em></p>
+<p><em>《天雷劫》v4 终稿|生成引擎:Seedance 2.5(纯对白轨+逐秒演技提示词)|配乐后期</em></p>
 
 
 为了减少运动模糊，我们一度在提示词里反复强调 `motionless`、`frozen` 和“保持静止”。画面确实锐利了，但演员也失去了呼吸感：眼神不动，脸上没有细微变化，一看就不像活人。
@@ -120,6 +120,15 @@ cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 - 把表演拆到每句台词里，写清瞳孔、嘴角、颈部和手指的变化；群像镜头也不能只写一句“众人震惊”。
 - 在容易漂移的段落补全身关键帧，尤其是结尾长镜头。多花约 2 元做一张稳定的图，往往比反复抽一条约 29 元的视频划算。
 - Seedance 和 Wan 对中文影视表达的理解都不错，中文提示词反而更直接，不必为了显得专业而堆英文术语。
+
+
+## Wan 3.0 实拍样片(与上方 Seedance 系直接对照)
+
+<video controls preload="metadata" width="100%" src="/api/blog-media/wm_diebao_wan3.mp4"></video>
+<p><em>《谍报追凶》Wan 3.0 版(4K+配乐)|生成引擎:Wan 3.0 参考生视频——就是文中排队 74 分钟的那一发</em></p>
+
+<video controls preload="metadata" width="100%" src="/api/blog-media/wm_yiwang_wan3.mp4"></video>
+<p><em>《意网情深》兽首乐坊 Wan 3.0 版(30s)|生成引擎:Wan 3.0——多次高峰期排队失败后成功的一发,星空音乐节新场景</em></p>
 
 ## 上篇小结：怎么选，取决于你最怕什么
 
