@@ -6,7 +6,14 @@
     <atom:link href="https://www.mvstudiopro.com/blog/rss.xml" rel="self" type="application/rss+xml"/>
     <description>AI 漫剧与视频生成实测：模型对比、真实价格、工作流拆解</description>
     <language>zh-CN</language>
-    <lastBuildDate>Wed, 19 Aug 2026 00:00:00 GMT</lastBuildDate>
+    <lastBuildDate>Thu, 20 Aug 2026 00:00:00 GMT</lastBuildDate>
+    <item>
+      <title>双引擎对决(下篇):8 分钟 VS 80 分钟,你真愿意等吗?</title>
+      <link>https://www.mvstudiopro.com/blog/engine-shootout-final</link>
+      <guid isPermaLink="true">https://www.mvstudiopro.com/blog/engine-shootout-final</guid>
+      <pubDate>Thu, 20 Aug 2026 00:00:00 GMT</pubDate>
+      <description>上篇比完了画面和声音,下篇只聊一件事:等。Wan 3.0 慢成这样,什么活儿值得交给它排队?顺便让它开口唱了首歌。</description>
+    </item>
     <item>
       <title>Seedance 2.5 与 Wan 3.0 对决(上篇)</title>
       <link>https://www.mvstudiopro.com/blog/seedance-vs-wan-one-night-duel</link>
