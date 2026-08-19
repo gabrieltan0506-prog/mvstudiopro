@@ -337,20 +337,42 @@ jobs:
             fi
             for attempt in 1 2 3 4 5; do
               local next_path="${output_path}.next"
+              local transfer_status=1
+              local actual_bytes="missing"
+              local actual_sha="missing"
               rm -f "$next_path"
-              if wait_for_interactive_workload && run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro \
-                -C "sh -s -- stream-file '${remote_file}' '${block_bytes}' '${skip_blocks}' '${count_blocks}'" \
-                < scripts/growth-backup-stream-remote.sh > "$next_path"; then
-                local actual_bytes
-                local actual_sha
-                actual_bytes=$(stat -c%s "$next_path")
-                actual_sha=$(sha256sum "$next_path" | awk '{print $1}')
-                if [ "$actual_bytes" = "$expected_bytes" ] && [ "$actual_sha" = "$expected_sha" ]; then
-                  mv "$next_path" "$output_path"
-                  return 0
+              echo "Fetching verified part: $(basename "$remote_file") offset=${offset} attempt=${attempt}/5"
+              if wait_for_interactive_workload; then
+                if run_with_interactive_preemption timeout 720 flyctl ssh console -a mvstudiopro \
+                  -C "sh -s -- stream-file '${remote_file}' '${block_bytes}' '${skip_blocks}' '${count_blocks}'" \
+                  < scripts/growth-backup-stream-remote.sh > "$next_path"; then
+                  transfer_status=0
+                else
+                  transfer_status=$?
                 fi
-                echo "Part verification failed: bytes=${actual_bytes}/${expected_bytes} sha=${actual_sha}/${expected_sha}"
+              else
+                transfer_status=$?
               fi
+              if [ "$transfer_status" -eq 0 ] && [ -f "$next_path" ]; then
+                if actual_bytes=$(stat -c%s "$next_path") && actual_sha=$(sha256sum "$next_path" | awk '{print $1}'); then
+                  :
+                else
+                  echo "Part local verification tools failed: $(basename "$next_path")" >&2
+                  actual_bytes="verification_error"
+                  actual_sha="verification_error"
+                fi
+                if [ "$actual_bytes" = "$expected_bytes" ] && [ "$actual_sha" = "$expected_sha" ]; then
+                  if mv "$next_path" "$output_path"; then
+                    echo "Verified part fetched: $(basename "$output_path") bytes=${actual_bytes}"
+                    return 0
+                  fi
+                  echo "Part move failed: ${next_path} -> ${output_path}" >&2
+                fi
+              else
+                echo "Part transfer failed: status=${transfer_status} file_present=$([ -f "$next_path" ] && echo yes || echo no)" >&2
+              fi
+              echo "Part verification failed: bytes=${actual_bytes}/${expected_bytes} sha=${actual_sha}/${expected_sha}" >&2
+              rm -f "$next_path"
               sleep 20
             done
             echo "Verified part fetch failed: ${remote_file}@${offset}"
@@ -362,7 +384,14 @@ jobs:
             : > "$output"
             while IFS=$'\t' read -r offset part_bytes part_sha part_asset; do
               part_output="/tmp/growth-backup/release-current/${part_asset}"
-              fetch_verified_part "${REMOTE_BATCH_DIR}/${snapshot_file}" "$offset" "$part_bytes" "$part_sha" "$part_output"
+              if ! fetch_verified_part "${REMOTE_BATCH_DIR}/${snapshot_file}" "$offset" "$part_bytes" "$part_sha" "$part_output"; then
+                echo "Cannot assemble ${logical_name}: verified part unavailable at offset ${offset}" >&2
+                exit 1
+              fi
+              if [ ! -f "$part_output" ]; then
+                echo "Cannot assemble ${logical_name}: verified part file is missing: ${part_output}" >&2
+                exit 1
+              fi
               cat "$part_output" >> "$output"
             done < <(jq -r --arg platform "$platform" '.files[] | select(.platform == $platform) | .parts[] | [.offset,.bytes,.sha256,.assetName] | @tsv' /tmp/growth-backup/platform-current-snapshot-manifest.json)
             test "$(stat -c%s "$output")" = "$expected_bytes"
