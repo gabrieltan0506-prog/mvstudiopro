@@ -617,6 +617,7 @@ jobs:
           BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
           mkdir -p /tmp/growth-archive-offload/assets
           : > /tmp/growth-archive-offload/assets.tsv.next
+          : > /tmp/growth-archive-offload/archives.tsv.next
           while IFS=$'\t' read -r dir source_fingerprint source_bytes; do
             [ -n "$dir" ] || continue
             case "$dir" in ""|.|..|*[!0-9A-Za-z._-]*) echo "非法目录名: $dir"; exit 1 ;; esac
@@ -641,13 +642,31 @@ jobs:
             awk -v root="$dir" '$0 != root && index($0, root "/") != 1 { exit 1 }' "$output.list"
             asset_bytes=$(stat -c%s "$output")
             asset_sha=$(sha256sum "$output" | awk '{print $1}')
-            printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-              "$dir" "$(basename "$output")" "$asset_bytes" "$asset_sha" "$source_fingerprint" "$source_bytes" \
-              >> /tmp/growth-archive-offload/assets.tsv.next
+            asset_name=$(basename "$output")
+            # GitHub 单 asset 上限为 2GiB，但接近上限的大文件无法断点续传；
+            # 采用 256MiB 分片，把单次失败的重传成本限制在可接受范围内。
+            split -b 268435456 -d -a 4 "$output" "$output.part-"
+            part_count=0
+            for part in "$output".part-*; do
+              test -f "$part"
+              part_bytes=$(stat -c%s "$part")
+              part_sha=$(sha256sum "$part" | awk '{print $1}')
+              test "$part_bytes" -lt 2147483648
+              printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "$dir" "$(basename "$part")" "$part_bytes" "$part_sha" "$asset_name" "$part_count" \
+                >> /tmp/growth-archive-offload/assets.tsv.next
+              part_count=$((part_count + 1))
+            done
+            test "$part_count" -gt 0
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+              "$dir" "$asset_name" "$asset_bytes" "$asset_sha" "$source_fingerprint" "$source_bytes" "$part_count" \
+              >> /tmp/growth-archive-offload/archives.tsv.next
+            rm -f "$output" "$output.list"
             sleep 5
           done < /tmp/growth-archive-offload/snapshot.tsv
           mv /tmp/growth-archive-offload/assets.tsv.next /tmp/growth-archive-offload/assets.tsv
-          test "$(wc -l < /tmp/growth-archive-offload/assets.tsv)" -eq "$(wc -l < /tmp/growth-archive-offload/snapshot.tsv)"
+          mv /tmp/growth-archive-offload/archives.tsv.next /tmp/growth-archive-offload/archives.tsv
+          test "$(wc -l < /tmp/growth-archive-offload/archives.tsv)" -eq "$(wc -l < /tmp/growth-archive-offload/snapshot.tsv)"
       - name: Publish and read back archive bundles
         env:
           GH_TOKEN: ${{ github.token }}
@@ -686,7 +705,7 @@ jobs:
           gh release view growth-cold-store-latest >/dev/null 2>&1 || \
             gh release create growth-cold-store-latest --title "Growth Cold Store Latest" --notes "Latest cold-store restore assets"
           : > /tmp/growth-archive-offload/verified-assets.tsv
-          while IFS=$'\t' read -r dir asset_name asset_bytes asset_sha source_fingerprint source_bytes; do
+          while IFS=$'\t' read -r dir asset_name asset_bytes asset_sha archive_name part_index; do
             [ -n "$dir" ] || continue
             upload_and_readback_asset "/tmp/growth-archive-offload/assets/$asset_name"
           done < /tmp/growth-archive-offload/assets.tsv
@@ -694,13 +713,18 @@ jobs:
           const fs = require("fs");
           const parse = (file) => fs.readFileSync(file, "utf8").trim().split(/\r?\n/).filter(Boolean).map((line) => line.split("\t"));
           const batchId = fs.readFileSync("/tmp/growth-archive-offload/batch-id.txt", "utf8").trim();
-          const archives = parse("/tmp/growth-archive-offload/assets.tsv").map(([dir, asset, bytes, sha256, sourceFingerprint, sourceBytes]) => ({
+          const parts = parse("/tmp/growth-archive-offload/assets.tsv").map(([dir, asset, bytes, sha256, archive, partIndex]) => ({
+            dir, asset, bytes: Number(bytes), sha256, archive, partIndex: Number(partIndex),
+          }));
+          const archives = parse("/tmp/growth-archive-offload/archives.tsv").map(([dir, asset, bytes, sha256, sourceFingerprint, sourceBytes, partCount]) => ({
             dir, asset, bytes: Number(bytes), sha256, sourceFingerprint, sourceBytes: Number(sourceBytes),
+            parts: parts.filter((entry) => entry.dir === dir).sort((a, b) => a.partIndex - b.partIndex).map(({ asset: partAsset, bytes: partBytes, sha256: partSha, partIndex }) => ({ asset: partAsset, bytes: partBytes, sha256: partSha, partIndex })),
+            partCount: Number(partCount),
           }));
           const verified = new Set(parse("/tmp/growth-archive-offload/verified-assets.tsv").map(([asset]) => asset));
-          if (!archives.length || archives.some((entry) => !verified.has(entry.asset))) throw new Error("archive release read-back incomplete");
+          if (!archives.length || archives.some((entry) => entry.parts.length !== entry.partCount || entry.parts.some((part) => !verified.has(part.asset)))) throw new Error("archive release read-back incomplete");
           const manifest = {
-            schemaVersion: 2,
+            schemaVersion: 3,
             batchId,
             createdAt: new Date().toISOString(),
             baseUrl: "https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-cold-store-latest",
@@ -722,11 +746,17 @@ jobs:
           test -s /tmp/growth-archive-offload/DELETE_READY
           test -s /tmp/growth-archive-offload/verified-assets.tsv
           BATCH_ID=$(cat /tmp/growth-archive-offload/batch-id.txt)
-          while IFS=$'\t' read -r dir asset_name asset_bytes asset_sha source_fingerprint source_bytes; do
+          while IFS=$'\t' read -r dir archive_name archive_bytes archive_sha source_fingerprint source_bytes part_count; do
             [ -n "$dir" ] || continue
-            awk -F '\t' -v asset="$asset_name" -v bytes="$asset_bytes" -v sha="$asset_sha" \
-              '$1 == asset && $2 == bytes && $3 == sha { found=1 } END { exit(found ? 0 : 1) }' \
-              /tmp/growth-archive-offload/verified-assets.tsv
+            verified_part_count=0
+            while IFS=$'\t' read -r part_dir part_asset part_bytes part_sha part_archive part_index; do
+              [ "$part_dir" = "$dir" ] || continue
+              awk -F '\t' -v asset="$part_asset" -v bytes="$part_bytes" -v sha="$part_sha" \
+                '$1 == asset && $2 == bytes && $3 == sha { found=1 } END { exit(found ? 0 : 1) }' \
+                /tmp/growth-archive-offload/verified-assets.tsv
+              verified_part_count=$((verified_part_count + 1))
+            done < /tmp/growth-archive-offload/assets.tsv
+            test "$verified_part_count" -eq "$part_count"
             DELETED=false
             for attempt in $(seq 1 20); do
               if flyctl ssh console -a mvstudiopro \
@@ -739,7 +769,7 @@ jobs:
               sleep 30
             done
             test "$DELETED" = "true"
-          done < /tmp/growth-archive-offload/assets.tsv
+          done < /tmp/growth-archive-offload/archives.tsv
           flyctl ssh console -a mvstudiopro \
             -C "sh -s -- cleanup '$BATCH_ID'" \
             < scripts/growth-archive-offload-remote.sh
