@@ -1,12 +1,33 @@
 ---
-title: 同一套素材，我让 Seedance 2.5 和 Wan 3.0 跑了一夜：8 分钟与 74 分钟之后
+title: Seedance 2.5 与 Wan 3.0 对决(上篇)
 description: 同一晚、同一套素材、同一份提示词,把 30 秒短片分别交给 Seedance 2.5 与 Wan 3.0,并把三条调用通道全部实测一遍。速度、价格、音频行为、审核边界与七条实战结论,全部来自当晚真实账单。
 date: 2026-08-19
 keywords: Seedance 2.5,Wan 3.0,AI视频生成,参考生视频,音频锁定,AI漫剧,实测对比,视频生成成本
 cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
+
+## 实拍图集(全部带水印,标注生成引擎)
+
+![谍报:引擎原生全息面板·北斗路线|Seedance 2.5 video-edit 成片帧](/blog-assets/dual-engine-night/de-01-holo-beidou.jpg)
+*谍报:引擎原生全息面板·北斗路线|Seedance 2.5 video-edit 成片帧*
+
+![谍报:爆炸重锤卡点帧|Seedance 2.5 成片帧](/blog-assets/dual-engine-night/de-02-explosion-beat.jpg)
+*谍报:爆炸重锤卡点帧|Seedance 2.5 成片帧*
+
+![谍报:隐身模式线框|Seedance 2.5 成片帧](/blog-assets/dual-engine-night/de-03-stealth-wireframe.jpg)
+*谍报:隐身模式线框|Seedance 2.5 成片帧*
+
+![天雷劫:神象降世慢动作|Seedance 2.5 成片帧](/blog-assets/dual-engine-night/de-04-elephant-descent.jpg)
+*天雷劫:神象降世慢动作|Seedance 2.5 成片帧*
+
+![天雷劫:女主特写·血泪演技|Seedance 2.5 成片帧](/blog-assets/dual-engine-night/de-05-heroine-closeup.jpg)
+*天雷劫:女主特写·血泪演技|Seedance 2.5 成片帧*
+
+![关键帧锁定示例|gpt-image-2 生成](/blog-assets/dual-engine-night/de-07-keyframe-lock.jpg)
+*关键帧锁定示例|gpt-image-2 生成*
+
 ---
 
-# 同一套素材，我让 Seedance 2.5 和 Wan 3.0 跑了一夜：8 分钟与 74 分钟之后
+# Seedance 2.5 与 Wan 3.0 对决(上篇)
 
 > 这是 AI 漫剧工厂实测系列的上篇。我们在同一个晚上，用同一套素材和同一份提示词，分别生成了一支 30 秒谍战短片；随后又用一支兽首乐队 MV，把三条不同的 API 路线都跑了一遍。后来，这支 MV 又补成了 50 秒完整版本。文中的耗时、费用和失误，均来自当晚的真实记录。
 
