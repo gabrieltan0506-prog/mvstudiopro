@@ -1,12 +1,12 @@
 ---
-title: 同一套素材，我让 Seedance 2.5 和 Wan 3.0 跑了一夜：8 分钟与 74 分钟之后
+title: Seedance 2.5 与 Wan 3.0 对决(上篇)
 description: 同一晚、同一套素材、同一份提示词,把 30 秒短片分别交给 Seedance 2.5 与 Wan 3.0,并把多条调用通道全部实测一遍。速度、价格、音频行为、审核边界与七条实战结论,全部来自真实账单。
 date: 2026-08-19
-keywords: Seedance 2.5,Wan 3.0,AI视频生成,参考生视频,音频锁定,AI漫剧,实测对比,视频生成成本
+keywords: Seedance 2.5,Wan 3.0,AI视频生成,实测对比,音频锁定,AI漫剧
 cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 ---
 
-# 同一套素材，我让 Seedance 2.5 和 Wan 3.0 跑了一夜：8 分钟与 74 分钟之后
+# Seedance 2.5 与 Wan 3.0 对决(上篇)
 
 > 这是 AI 漫剧工厂实测系列的上篇。我们在同一个晚上，用同一套素材和同一份提示词，分别生成了一支 30 秒谍战短片；随后又用一支兽首乐队 MV，把三条不同的 API 路线都跑了一遍。后来，这支 MV 又补成了 50 秒完整版本。文中的耗时、费用和失误，均来自当晚的真实记录。
 
@@ -130,23 +130,38 @@ Seedance 的单段音频建议控制在 2—30 秒；Wan 的参考音频总长�
 
 先检查两件事：第一，当前接口是否真的会保留参考音频；第二，`generate_audio` 在这条通道里究竟表示“补环境声”，还是让模型重新生成整条声音。不同入口的处理并不一致，最好先用一条很短的素材做低成本验证，不要凭模型名称猜。
 
-## 实测样片(每支标注生成引擎)
+## 实拍图集(全部带水印,标注生成引擎)
+
+![谍报:引擎原生全息面板·北斗路线|Seedance 2.5 video-edit 成片帧](/blog-assets/dual-engine-night/de-01-holo-beidou.jpg)
+*谍报:引擎原生全息面板·北斗路线|Seedance 2.5 video-edit 成片帧*
+
+![谍报:爆炸重锤卡点帧|Seedance 2.5 成片帧](/blog-assets/dual-engine-night/de-02-explosion-beat.jpg)
+*谍报:爆炸重锤卡点帧|Seedance 2.5 成片帧*
+
+![谍报:隐身模式线框|Seedance 2.5 成片帧](/blog-assets/dual-engine-night/de-03-stealth-wireframe.jpg)
+*谍报:隐身模式线框|Seedance 2.5 成片帧*
+
+![天雷劫:神象降世慢动作|Seedance 2.5 成片帧](/blog-assets/dual-engine-night/de-04-elephant-descent.jpg)
+*天雷劫:神象降世慢动作|Seedance 2.5 成片帧*
+
+![天雷劫:女主特写·血泪演技|Seedance 2.5 成片帧](/blog-assets/dual-engine-night/de-05-heroine-closeup.jpg)
+*天雷劫:女主特写·血泪演技|Seedance 2.5 成片帧*
+
+![关键帧锁定示例|gpt-image-2 生成](/blog-assets/dual-engine-night/de-07-keyframe-lock.jpg)
+*关键帧锁定示例|gpt-image-2 生成*
+
+
+## 实测样片(标注生成引擎)
 
 <video controls preload="metadata" width="100%" src="/api/blog-media/wm4k_diebao.mp4"></video>
-<p><em>《谍报追凶》终稿 4K|引擎:Seedance 2.5 参考生视频 + video-edit 原生全息|超分:字节 video-upscaler</em></p>
+<p><em>《谍报追凶》终稿 4K|生成引擎:Seedance 2.5 参考生视频 + video-edit 原生全息|4K 超分:字节 video-upscaler</em></p>
 
 <video controls preload="metadata" width="100%" src="/api/blog-media/wm_tianleijie.mp4"></video>
-<p><em>《天雷劫》v4 终稿|引擎:Seedance 2.5(纯对白轨+逐秒演技)</em></p>
+<p><em>《天雷劫》v4 终稿|生成引擎:Seedance 2.5(纯对白轨+逐秒演技提示词)|配乐后期</em></p>
 
 <video controls preload="metadata" width="100%" src="/api/blog-media/wm_yiwang.mp4"></video>
-<p><em>《意网情深》50 秒完整版|引擎:Seedance 2.5(唱段原曲进片)+ extend 安可</em></p>
+<p><em>《意网情深》50 秒完整版|生成引擎:Seedance 2.5(主唱原曲进片)+ extend 安可</em></p>
 
 <video controls preload="metadata" width="100%" src="/api/blog-media/wm_tlj_v3_bad.mp4"></video>
-<p><em>反面教材|引擎:Seedance 2.5——BGM 预混导致引擎重演绎对白</em></p>
+<p><em>反面教材|生成引擎:Seedance 2.5——BGM 预混导致引擎重新演绎对白</em></p>
 
-
----
-
-![想学AI漫剧工作流,欢迎交流](/blog-assets/dual-engine-night/de-09-wechat-qr.png)
-
-**想学 AI 漫剧工作流,欢迎交流。**
