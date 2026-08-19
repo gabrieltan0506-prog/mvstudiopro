@@ -1,12 +1,12 @@
 ---
-title: Seedance 2.5 vs Wan 3.0 实测：同一套素材，8 分钟和 74 分钟到底差在哪？
+title: 8 分钟对 74 分钟:谁才是 AI 漫剧量产的那台发动机?
 description: 同一套素材、同一份提示词,Seedance 2.5 与 Wan 3.0 的正面对决:8 分钟与 74 分钟背后的速度、价格、音频行为与审核边界,全部来自真实账单。
 date: 2026-08-20
 keywords: Seedance 2.5,Wan 3.0,AI视频生成,实测对比,音频锁定,AI漫剧
 cover: /blog-assets/dual-engine-night/de-04-elephant-descent.jpg
 ---
 
-# Seedance 2.5 vs Wan 3.0 实测：同一套素材，8 分钟和 74 分钟到底差在哪？
+# 8 分钟对 74 分钟:谁才是 AI 漫剧量产的那台发动机?
 
 > 这是 AI 漫剧与短片生成实测的上篇。我用同一套角色、场景、声音和提示词，分别测试 Seedance 2.5 与 Wan 3.0；随后又用一支兽首乐队 MV 检查长段演唱、角色稳定和参考音频。文章里的时间、费用和失败记录，都来自实际任务，不用宣传页数据代替结果。
 
