@@ -91,7 +91,9 @@ jobs:
             asset_bytes=$(stat -c%s "$output")
             asset_sha=$(sha256sum "$output" | awk '{print $1}')
             asset_name=$(basename "$output")
-            split -b 1073741824 -d -a 4 "$output" "$output.part-"
+            # GitHub 单 asset 上限为 2GiB，但接近上限的大文件无法断点续传；
+            # 采用 256MiB 分片，把单次失败的重传成本限制在可接受范围内。
+            split -b 268435456 -d -a 4 "$output" "$output.part-"
             part_count=0
             for part in "$output".part-*; do
               test -f "$part"
