@@ -33,11 +33,12 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           wait_for_started_vm() {
-            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            local vm_attempt
+            for vm_attempt in 1 2 3 4 5 6 7 8 9 10; do
               if flyctl status -a mvstudiopro | grep -q "started"; then
                 return 0
               fi
-              echo "No started VM yet, retrying in 15s (attempt $attempt/10)"
+              echo "No started VM yet, retrying in 15s (attempt $vm_attempt/10)"
               sleep 15
             done
             echo "No started VM became available in time"
@@ -62,11 +63,12 @@ jobs:
         run: |
           mkdir -p /tmp/growth-backup
           wait_for_started_vm() {
-            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            local vm_attempt
+            for vm_attempt in 1 2 3 4 5 6 7 8 9 10; do
               if flyctl status -a mvstudiopro | grep -q "started"; then
                 return 0
               fi
-              echo "No started VM yet, retrying in 15s (attempt $attempt/10)"
+              echo "No started VM yet, retrying in 15s (attempt $vm_attempt/10)"
               sleep 15
             done
             echo "No started VM became available in time"
@@ -133,11 +135,12 @@ jobs:
           . /tmp/growth-backup/storage.env
 
           wait_for_started_vm() {
-            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            local vm_attempt
+            for vm_attempt in 1 2 3 4 5 6 7 8 9 10; do
               if flyctl status -a mvstudiopro | grep -q "started"; then
                 return 0
               fi
-              echo "No started VM yet, retrying in 15s (attempt $attempt/10)"
+              echo "No started VM yet, retrying in 15s (attempt $vm_attempt/10)"
               sleep 15
             done
             echo "No started VM became available in time"
@@ -162,25 +165,27 @@ jobs:
           fi
           (set -C; printf '%s' 'github-growth-backup' > "$LOCK") 2>/dev/null
           SH
-            for attempt in $(seq 1 60); do
+            local lane_attempt
+            for lane_attempt in $(seq 1 60); do
               if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C 'sh -s' < /tmp/acquire-growth-backup-lane.sh; then
                 return 0
               fi
-              echo "采集或前台平台任务仍在运行，冷备暂停 30 秒（${attempt}/60）"
+              echo "采集或前台平台任务仍在运行，冷备暂停 30 秒（${lane_attempt}/60）"
               sleep 30
             done
             return 1
           }
 
           wait_for_interactive_workload() {
-            for attempt in $(seq 1 60); do
+            local priority_attempt
+            for priority_attempt in $(seq 1 60); do
               if wait_for_started_vm && timeout 20 flyctl ssh console -a mvstudiopro -C "sh -lc '
                 find /data/growth/runtime-interactive-workloads -type f -mmin +2 -delete 2>/dev/null || true
                 test -z \"\$(find /data/growth/runtime-interactive-workloads -type f -mmin -2 -print -quit 2>/dev/null)\"
               '"; then
                 return 0
               fi
-              echo "前台平台任务运行中，冷备传输暂停 30 秒（${attempt}/60）"
+              echo "前台平台任务运行中，冷备传输暂停 30 秒（${priority_attempt}/60）"
               sleep 30
             done
             return 1
@@ -191,7 +196,16 @@ jobs:
           # SSH 会话内的 growth-backup-stream-remote.sh 监控前台 marker。
           run_with_interactive_preemption() {
             BACKUP_REMOTE_WORK_STARTED=true
-            "$@"
+            # 本步骤以 bash -e 运行。远端读取发现前台任务时会按设计返回 75；若直接
+            # 裸执行，errexit 会在调用方进入重试分支前终止整次 Action。必须把命令
+            # 放进显式条件并原样返回状态，让 fetch/capture 的重试循环接管。
+            if "$@"; then
+              return 0
+            else
+              local command_status=$?
+              echo "冷备远端操作暂未完成，交给调用方重试（status=${command_status}）" >&2
+              return "$command_status"
+            fi
           }
 
           release_backup_lane() {
