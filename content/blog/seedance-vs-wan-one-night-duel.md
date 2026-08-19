@@ -144,9 +144,6 @@ Seedance 的单段音频建议控制在 2—30 秒；Wan 的参考音频总长�
 <video controls preload="metadata" width="100%" src="/api/blog-media/wm_yiwang.mp4"></video>
 <p><em>《意网情深》50 秒完整版|引擎:Seedance 2.5(唱段原曲进片)+ extend 安可</em></p>
 
-<video controls preload="metadata" width="100%" src="/api/blog-media/wm_yiwang_wan3.mp4"></video>
-<p><em>《意网情深》兽首乐坊 Wan 3.0 版(30s)|引擎:Wan 3.0,星空音乐节新场景</em></p>
-
 <video controls preload="metadata" width="100%" src="/api/blog-media/wm_tlj_v3_bad.mp4"></video>
 <p><em>反面教材|引擎:Seedance 2.5——BGM 预混导致引擎重演绎对白</em></p>
 
