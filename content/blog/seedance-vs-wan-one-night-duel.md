@@ -165,9 +165,3 @@ Seedance 的单段音频建议控制在 2—30 秒；Wan 的参考音频总长�
 <video controls preload="metadata" width="100%" src="/api/blog-media/wm_tlj_v3_bad.mp4"></video>
 <p><em>反面教材|生成引擎:Seedance 2.5——BGM 预混导致引擎重新演绎对白</em></p>
 
-
----
-
-![想学AI漫剧工作流,欢迎交流](/blog-assets/dual-engine-night/de-09-wechat-qr.png)
-
-**想学 AI 漫剧工作流,欢迎交流。**
