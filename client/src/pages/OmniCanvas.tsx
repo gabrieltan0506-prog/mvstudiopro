@@ -208,7 +208,12 @@ import {
 } from "@/lib/manhuaCloudDraftSync";
 import {
   cacheCanvasMediaToLocalStore,
+  getLocalMediaRecord,
+  isLocalMediaPointer,
+  localMediaPointerId,
+  putLocalMediaRecord,
   rehydrateBlocksFromLocalMedia,
+  resolveUrlForLocalPersist,
   scheduleCacheCanvasMediaToLocalStore,
 } from "@/lib/manhuaLocalMediaStore";
 import {
@@ -1758,8 +1763,13 @@ export default function OmniCanvas() {
     }
     return { nodes: blocks.length, images };
   }, []);
-  /** 倒出:工作区快照下载成本机文件(与云备份同一载荷,可再导入) */
-  const exportBackupFile = useCallback(() => {
+  /**
+   * 倒出(0820 用户拍板:必须连图片二进制一起打包):
+   * zip = snapshot.json + assets/*.png + assets-manifest.json。
+   * 图优先取本机媒体库(零网络零过期),没有再拉线上;打包失败的逐张记进收据,不静默。
+   * 云端全灭时,凭这一个文件即可一键满血回灌。
+   */
+  const exportBackupFile = useCallback(async () => {
     const snap = latestDraftSnapshotRef.current;
     if (!snap) {
       toast.error("当前没有可导出的工作区内容");
@@ -1768,37 +1778,117 @@ export default function OmniCanvas() {
     try {
       const payload = buildLocalCloudDraftSnapshot(snap);
       const stats = countDraftPayloadStats(payload);
-      const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      zip.file("snapshot.json", JSON.stringify(payload));
+      const urls = new Set<string>();
+      for (const b of (payload.canvas?.blocks || []) as Array<Record<string, unknown>>) {
+        for (const u of [b.outputUrl, b.refImageUrl, ...(Array.isArray(b.outputUrls) ? b.outputUrls : []), ...(Array.isArray(b.editFusionUrls) ? b.editFusionUrls : [])]) {
+          const v = String(u || "").trim();
+          if (v) urls.add(v);
+        }
+      }
+      const manifest: Array<{ file: string; sourceUrl: string; mime: string }> = [];
+      const failed: string[] = [];
+      let idx = 0;
+      for (const url of Array.from(urls)) {
+        let blob: Blob | null = null;
+        let mime = "image/png";
+        // 本机媒体库优先
+        const localPtr = resolveUrlForLocalPersist(url);
+        if (localPtr && isLocalMediaPointer(localPtr)) {
+          const rec = await getLocalMediaRecord(localMediaPointerId(localPtr));
+          if (rec?.blob?.size) {
+            blob = rec.blob;
+            mime = rec.mime || mime;
+          }
+        }
+        if (!blob) {
+          try {
+            const res = await fetch(url, { credentials: "include" });
+            if (res.ok) {
+              const b = await res.blob();
+              if (b.size > 0) {
+                blob = b;
+                mime = b.type || mime;
+              }
+            }
+          } catch {
+            /* 记入 failed */
+          }
+        }
+        if (!blob) {
+          failed.push(url.slice(0, 120));
+          continue;
+        }
+        idx += 1;
+        const ext = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
+        const file = `assets/${String(idx).padStart(3, "0")}.${ext}`;
+        zip.file(file, blob);
+        manifest.push({ file, sourceUrl: url, mime });
+      }
+      zip.file("assets-manifest.json", JSON.stringify(manifest));
+      const out = await zip.generateAsync({ type: "blob", compression: "STORE" });
       const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `漫剧工作区备份-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
+      a.href = URL.createObjectURL(out);
+      a.download = `漫剧工作区备份-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.zip`;
       a.click();
       URL.revokeObjectURL(a.href);
-      toast.success(`已导出备份文件:节点 ${stats.nodes} 个、图片 ${stats.images} 张`);
+      if (failed.length) {
+        toast.warning(`备份包已导出:节点 ${stats.nodes}、图打包 ${manifest.length}/${urls.size} 张;${failed.length} 张未取到字节(链接失效),快照仍保留其地址`);
+      } else {
+        toast.success(`备份包已导出:节点 ${stats.nodes} 个、图片 ${manifest.length} 张全量随包`);
+      }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "导出失败");
     }
   }, [countDraftPayloadStats]);
-  /** 从本机备份文件导入(与云端回填同一条恢复通道,带对比确认) */
-  const importBackupFile = useCallback((file: File) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const draft = JSON.parse(String(reader.result || ""));
-        if (!draft?.canvas?.blocks) throw new Error("备份文件格式不对");
-        const stats = countDraftPayloadStats(draft);
-        const at = String(draft.clientUpdatedAt || "").slice(0, 16) || "未知时间";
-        const cur = latestDraftSnapshotRef.current;
-        const curStats = cur ? countDraftPayloadStats(buildLocalCloudDraftSnapshot(cur)) : null;
-        const curLine = curStats ? `;当前工作区:节点 ${curStats.nodes}、图 ${curStats.images}` : "";
-        if (!window.confirm(`将用备份文件(${at},节点 ${stats.nodes}、图 ${stats.images}${curLine})覆盖当前工作区。确定导入?`)) return;
-        applyCloudDraftToUi(draft);
-        toast.success("已从备份文件回填");
-      } catch (e: unknown) {
-        toast.error(e instanceof Error ? e.message : "备份文件解析失败");
+  /** 从本机备份导入:zip(带图回灌本机媒体库)或旧版纯 JSON;与云端回填同一条恢复通道 */
+  const importBackupFile = useCallback(async (file: File) => {
+    try {
+      let draft: Record<string, unknown> & { canvas?: { blocks?: unknown[] }; clientUpdatedAt?: string };
+      let restoredImages = 0;
+      if (/\.zip$/i.test(file.name)) {
+        const { default: JSZip } = await import("jszip");
+        const zip = await JSZip.loadAsync(file);
+        const snapRaw = await zip.file("snapshot.json")?.async("string");
+        if (!snapRaw) throw new Error("备份包里缺 snapshot.json");
+        draft = JSON.parse(snapRaw);
+        const maniRaw = await zip.file("assets-manifest.json")?.async("string");
+        const manifest: Array<{ file: string; sourceUrl: string; mime: string }> = maniRaw ? JSON.parse(maniRaw) : [];
+        for (const m of manifest) {
+          const entry = zip.file(m.file);
+          if (!entry) continue;
+          const blob = await entry.async("blob");
+          if (!blob.size) continue;
+          // 回灌本机媒体库:恢复通道按 sourceUrl 命中指针,图即刻可用,不再依赖任何线上链接
+          await putLocalMediaRecord({
+            id: `import-${m.file.replace(/\W+/g, "-")}-${blob.size}`,
+            blockId: "backup-import",
+            slot: "output",
+            blob: new Blob([blob], { type: m.mime || "image/png" }),
+            mime: m.mime || "image/png",
+            sourceUrl: m.sourceUrl,
+            updatedAt: Date.now(),
+          });
+          restoredImages += 1;
+        }
+      } else {
+        draft = JSON.parse(await file.text());
       }
-    };
-    reader.readAsText(file);
+      if (!draft?.canvas?.blocks) throw new Error("备份文件格式不对");
+      const stats = countDraftPayloadStats(draft as { canvas?: { blocks?: unknown[] } });
+      const at = String(draft.clientUpdatedAt || "").slice(0, 16) || "未知时间";
+      const cur = latestDraftSnapshotRef.current;
+      const curStats = cur ? countDraftPayloadStats(buildLocalCloudDraftSnapshot(cur)) : null;
+      const curLine = curStats ? `;当前工作区:节点 ${curStats.nodes}、图 ${curStats.images}` : "";
+      const imgLine = restoredImages ? `,随包图片 ${restoredImages} 张已回灌本机` : "";
+      if (!window.confirm(`将用备份(${at},节点 ${stats.nodes}、图 ${stats.images}${imgLine}${curLine})覆盖当前工作区。确定导入?`)) return;
+      applyCloudDraftToUi(draft as Parameters<typeof applyCloudDraftToUi>[0]);
+      toast.success(restoredImages ? `已回填:${restoredImages} 张图从备份包本机回灌` : "已从备份文件回填");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "备份文件解析失败");
+    }
   }, [countDraftPayloadStats, applyCloudDraftToUi]);
   const uploadCloudBackupNow = useCallback(async () => {
     if (cloudBackupBusy) return;
@@ -6864,14 +6954,14 @@ export default function OmniCanvas() {
                         e.target.value = "";
                         if (v === "upload") void uploadCloudBackupNow();
                         else if (v === "restore") void restoreCloudBackupNow();
-                        else if (v === "export") exportBackupFile();
+                        else if (v === "export") void exportBackupFile();
                         else if (v === "import") {
                           const input = document.createElement("input");
                           input.type = "file";
-                          input.accept = "application/json";
+                          input.accept = ".zip,application/zip,application/json";
                           input.onchange = () => {
                             const f = input.files?.[0];
-                            if (f) importBackupFile(f);
+                            if (f) void importBackupFile(f);
                           };
                           input.click();
                         }
