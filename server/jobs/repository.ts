@@ -601,6 +601,33 @@ export async function claimNextQueuedJobExcluding(excludeTypes: string[]): Promi
   return claimQueuedJobById(db, next, "claimNextQueuedJobExcluding");
 }
 
+/** 独立通道任务类型:主队列不领取,各自专用领取函数串行消化 */
+export const MAIN_QUEUE_EXCLUDED_TYPES = ["pdf_export", "post_prod"] as const;
+
+/** 专用 post_prod 队列:后期 ffmpeg 耗时长,单并发消化,不挤占普通媒体任务 */
+export async function claimNextPostProdJob(): Promise<NormalizedJob | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  let rows: Job[] = [];
+  try {
+    rows = await db
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.status, "queued"), eq(jobs.type, "post_prod")))
+      .orderBy(asc(jobs.createdAt))
+      .limit(1);
+  } catch (error) {
+    console.error("[JobsRepo] claimNextPostProdJob select failed:", error);
+    return null;
+  }
+
+  if (rows.length === 0) return null;
+
+  const next = rows[0];
+  return claimQueuedJobById(db, next, "claimNextPostProdJob");
+}
+
 /** 专用 pdf_export 队列，避免长时间 page.pdf 阻塞 image/video/audio/platform。 */
 export async function claimNextPdfExportJob(): Promise<NormalizedJob | null> {
   const db = await getDb();
@@ -629,7 +656,7 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
   const db = await getDb();
   if (!db) return null;
 
-  const excludeTypes = ["pdf_export"];
+  const excludeTypes = [...MAIN_QUEUE_EXCLUDED_TYPES];
   let rows: Job[] = [];
   try {
     const actionCondition = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (

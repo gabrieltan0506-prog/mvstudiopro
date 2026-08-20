@@ -15,6 +15,8 @@ import {
   router,
 } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
+import { postProdJobInputSchema } from "./jobs/postProdInput";
+import { resolvePostProdInputSources } from "./services/postProdMediaSource";
 import * as db from "./db";
 import * as sessionDb from "./sessionDb";
 import {
@@ -4273,23 +4275,31 @@ export const appRouter = router({
 
     /**
      * 后期工坊入队(蓝图二①):拼接/BGM贴装/响度验收,纯 ffmpeg 零付费上游。
-     * 素材地址仅收 gs:///https(服务层再验);参数细节由 postProduction 各函数把关。
+     * 路由与 worker 共用 postProdJobInputSchema;素材来源在创建任务前统一核对
+     * 存储范围与登记记录(未登记=普通输入提示,不创建任务)。
      */
     queuePostProd: protectedProcedure
-      .input(
-        z.object({
-          action: z.enum(["concat", "bgm_mount", "loudness_check"]),
-          params: z.record(z.string(), z.unknown()),
-        }),
-      )
+      .input(postProdJobInputSchema)
       .mutation(async ({ ctx, input }) => {
+        let normalizedInput;
+        try {
+          normalizedInput = await resolvePostProdInputSources({
+            userId: String(ctx.user.id),
+            input,
+          });
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "素材地址无法核对,请重新选择",
+          });
+        }
         const jobId = nanoid(16);
         await createJobRecord({
           id: jobId,
           userId: String(ctx.user.id),
           type: "post_prod",
           provider: "ffmpeg-post-prod",
-          input: { action: input.action, params: input.params },
+          input: normalizedInput,
         });
         return { jobId, status: "queued" as const };
       }),

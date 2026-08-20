@@ -58,6 +58,7 @@ import {
   claimNextManhuaTemplateLearnJob,
   claimNextQueuedJob,
   claimNextPdfExportJob,
+  claimNextPostProdJob,
   consumeManhuaTemplateLearnEpisodeSkip,
   getJobById,
   isManhuaTemplateLearnJobCancelRequested,
@@ -157,6 +158,8 @@ let processing = false;
 let timer: NodeJS.Timeout | null = null;
 let pdfProcessing = false;
 let pdfTimer: NodeJS.Timeout | null = null;
+let postProdProcessing = false;
+let postProdTimer: NodeJS.Timeout | null = null;
 /** 成长营素材分析专用 worker 并发（与平台长 Job 分池，默认 2） */
 const GROWTH_CAMP_JOB_WORKER_CONCURRENCY = Math.max(
   1,
@@ -2778,8 +2781,9 @@ async function executeJob(
   if (type === "platform") return processPlatformJob(input, jobId, userId);
   if (type === "pdf_export") return processPdfExportJob(inputRaw, userId, jobId);
   if (type === "post_prod") {
-    const { processPostProdJob } = await import("./postProdJob.js");
-    return processPostProdJob(input, userId);
+    // 防御分支:post_prod 已排除出主队列,正常只走 processOnePostProdJob(带 Abort 贯通)
+    const { runPostProdJobWithLimit } = await import("./postProdJob.js");
+    return runPostProdJobWithLimit(input, userId, timeoutMs);
   }
   return processAudioJob(input, timeoutMs, userId);
 }
@@ -3079,6 +3083,56 @@ export async function processPdfJobsOnce() {
   }
 }
 
+async function processOnePostProdJob(): Promise<boolean> {
+  const job = await claimNextPostProdJob();
+  if (!job) return false;
+
+  // 心跳刷新 updatedAt:stale reaper 只清"最后活动过旧"的 running 行,
+  // 心跳在=进程活着;进程崩溃后心跳停,租约到期由 reaper 清理,不自动重做。
+  const heartbeat = setInterval(() => {
+    void patchJobRunningProgress(job.id, {
+      postProdHeartbeatAt: new Date().toISOString(),
+    }).catch(() => {});
+  }, 30_000);
+  heartbeat.unref?.();
+
+  try {
+    const timeoutMs = JOB_TIMEOUT_MS.post_prod;
+    const { runPostProdJobWithLimit } = await import("./postProdJob.js");
+    // 时限贯通 AbortSignal:到点下载与 ffmpeg/ffprobe 子进程同步终止
+    const { output, provider } = await runPostProdJobWithLimit(
+      job.input,
+      String(job.userId),
+      timeoutMs,
+    );
+    await markJobSucceeded(job.id, output, provider);
+  } catch (error) {
+    // 后期任务确定性強、重跑同样贵:一律直接失败,不 requeue 重做整项媒体处理
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? `后期任务超时(${JOB_TIMEOUT_MS.post_prod}ms),已终止本次处理`
+        : getJobFailureMessage("post_prod" as JobType, error);
+    await markJobFailed(job.id, message.slice(0, 800));
+  } finally {
+    clearInterval(heartbeat);
+  }
+
+  return true;
+}
+
+/** 后期工坊独立通道:串行消化(单并发),不与普通媒体任务抢队列 */
+export async function processPostProdJobsOnce() {
+  if (postProdProcessing) return;
+  postProdProcessing = true;
+  try {
+    while (await processOnePostProdJob()) {
+      // Drain post_prod only, one at a time.
+    }
+  } finally {
+    postProdProcessing = false;
+  }
+}
+
 export async function processJobsOnce() {
   if (processing) return;
   processing = true;
@@ -3097,6 +3151,7 @@ export function startJobWorker() {
 
   void processJobsOnce();
   void processPdfJobsOnce();
+  void processPostProdJobsOnce();
   void processGrowthAnalyzeJobsOnce();
   void processManhuaLearnJobsOnce();
   timer = setInterval(() => {
@@ -3111,6 +3166,12 @@ export function startJobWorker() {
   pdfTimer = setInterval(() => {
     void processPdfJobsOnce();
   }, 3_000);
+  postProdTimer = setInterval(() => {
+    void processPostProdJobsOnce();
+  }, 3_000);
+  if (typeof postProdTimer.unref === "function") {
+    postProdTimer.unref();
+  }
 
   if (typeof timer.unref === "function") {
     timer.unref();
@@ -3135,5 +3196,7 @@ export function stopJobWorker() {
   manhuaLearnTimer = null;
   if (pdfTimer) clearInterval(pdfTimer);
   pdfTimer = null;
+  if (postProdTimer) clearInterval(postProdTimer);
+  postProdTimer = null;
   workerStarted = false;
 }

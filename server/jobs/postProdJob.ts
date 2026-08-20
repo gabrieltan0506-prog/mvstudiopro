@@ -1,43 +1,59 @@
 /**
- * 后期工坊异步任务(蓝图二①):action 分派到 postProduction 三件套。
- * envelope 形如 { action: "concat" | "bgm_mount" | "loudness_check", params: {...} }。
+ * 后期工坊异步任务:worker 对旧任务数据用统一 Schema 再解析一次,
+ * 解析通过才分派到 postProduction 三件套;任务时限用 AbortSignal 贯通到
+ * 下载与 ffmpeg/ffprobe 子进程,时限到直接结束本次处理,不自动重做。
  */
-import {
-  concatClips,
-  loudnessCheck,
-  mountBgm,
-  type BgmMountInput,
-  type ConcatInput,
-  type LoudnessCheckInput,
-} from "../services/postProduction";
+import { concatClips, loudnessCheck, mountBgm } from "../services/postProduction";
+import { postProdJobInputSchema } from "./postProdInput";
 
-type Envelope = { action?: string; params?: Record<string, unknown> };
-
-function asEnvelope(raw: unknown): Envelope {
-  if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as Envelope;
-  return {};
-}
+export type PostProdJobOptions = { signal?: AbortSignal };
 
 export async function processPostProdJob(
-  inputRaw: unknown,
+  rawInput: unknown,
   userId: string,
+  options?: PostProdJobOptions,
 ): Promise<{ output: unknown; provider: string }> {
-  const input = asEnvelope(inputRaw);
-  const params = input.params ?? {};
+  const input = postProdJobInputSchema.parse(rawInput);
+  const runOptions = { signal: options?.signal };
   switch (input.action) {
     case "concat": {
-      const output = await concatClips(params as ConcatInput, userId);
+      const output = await concatClips(input.params, userId, runOptions);
       return { output, provider: "ffmpeg-post-prod" };
     }
     case "bgm_mount": {
-      const output = await mountBgm(params as BgmMountInput, userId);
+      const output = await mountBgm(input.params, userId, runOptions);
       return { output, provider: "ffmpeg-post-prod" };
     }
     case "loudness_check": {
-      const output = await loudnessCheck(params as LoudnessCheckInput);
+      const output = await loudnessCheck(input.params, runOptions);
       return { output, provider: "ffmpeg-post-prod" };
     }
-    default:
-      throw new Error(`Unsupported post_prod action: ${String(input.action)}`);
   }
+}
+
+/**
+ * 任务时限执行器:时限到 abort(),让下载与媒体子进程同步结束。
+ * 只结束本次处理,不在这里重排任务(runner 侧直接判失败)。
+ */
+export async function runWithTaskLimit<T>(
+  timeoutMs: number,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new Error(`post_prod job timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+  try {
+    return await operation(controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function runPostProdJobWithLimit(
+  rawInput: unknown,
+  userId: string,
+  timeoutMs: number,
+): Promise<{ output: unknown; provider: string }> {
+  return runWithTaskLimit(timeoutMs, (signal) => processPostProdJob(rawInput, userId, { signal }));
 }
