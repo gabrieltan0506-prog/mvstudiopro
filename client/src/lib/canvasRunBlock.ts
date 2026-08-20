@@ -133,6 +133,8 @@ function resolveCanvasTextPrimaryModel(textModel: string | undefined): string {
 const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 12 * 60_000;
 
 export type CanvasRunDeps = {
+  /** 长排队任务创建即回写节点(taskId 持久化,刷新可恢复;审查 P1);缺省不回写 */
+  onVideoTaskCreated?: (blockId: string, info: { taskId: string; engine: string }) => void;
   optimizeCopy: (input: {
     sourceText: string;
     optimizationBrief?: string;
@@ -732,6 +734,7 @@ async function runHailuo3(
     clipIndex?: number;
     idempotencyKey?: string;
     seed?: number;
+    onTaskId?: (taskId: string) => void;
   },
 ): Promise<string> {
   const hailuoUrl = withLongJobsFlyDirect("/api/jobs?op=hailuo3Video");
@@ -785,6 +788,11 @@ async function runHailuo3(
   if (json.videoUrl) return String(json.videoUrl);
   if (json.taskId) {
     try {
+      opts?.onTaskId?.(String(json.taskId));
+    } catch {
+      /* 回写失败不阻塞生成 */
+    }
+    try {
       // Wan 公测排队以小时计:前端轮询期限对齐后端(3h)+缓冲
       const polled = await pollCanvasVideoTask(json.taskId, { timeoutMs: 200 * 60_000 });
       return polled.videoUrl;
@@ -798,7 +806,7 @@ async function runHailuo3(
 }
 
 /** Wan 参考图职责表:Wan 没有 @图片N 绑定语法,按数组顺序用自然语言声明每张图的唯一职责(审查 P1) */
-function buildWanReferenceRoleBlock(
+export function buildWanReferenceRoleBlock(
   images: string[],
   entries: Array<{ url: string; kind?: string }>,
 ): string {
@@ -817,7 +825,7 @@ function buildWanReferenceRoleBlock(
 }
 
 /** 简易稳定散列:节点+内容 → 幂等键,重试复用同键防重复扣费 */
-function stableWanIdempotencyKey(blockId: string, prompt: string, images: string[]): string {
+export function stableWanIdempotencyKey(blockId: string, prompt: string, images: string[]): string {
   const src = `${blockId}|${prompt}|${images.join(",")}`;
   let h = 5381;
   for (let i = 0; i < src.length; i++) h = ((h << 5) + h + src.charCodeAt(i)) >>> 0;
@@ -838,6 +846,8 @@ async function runWan30(
     /** 稳定幂等键:同节点同内容重试复用同键,防双击双扣费(审查 P1) */
     idempotencyKey?: string;
     seed?: number;
+    /** 拿到 taskId 立即回调(先持久化再慢慢轮询) */
+    onTaskId?: (taskId: string) => void;
   },
 ): Promise<string> {
   const wanUrl = withLongJobsFlyDirect("/api/jobs?op=wan30Video");
@@ -893,6 +903,11 @@ async function runWan30(
   if (json.videoUrl) return String(json.videoUrl);
   if (json.taskId) {
     try {
+      opts?.onTaskId?.(String(json.taskId));
+    } catch {
+      /* 回写失败不阻塞生成 */
+    }
+    try {
       // Wan 公测排队以小时计:前端轮询期限对齐后端(3h)+缓冲
       const polled = await pollCanvasVideoTask(json.taskId, { timeoutMs: 200 * 60_000 });
       return polled.videoUrl;
@@ -917,6 +932,7 @@ async function runHappyHorse(
     clipIndex?: number;
     idempotencyKey?: string;
     seed?: number;
+    onTaskId?: (taskId: string) => void;
   },
 ): Promise<string> {
   const hhUrl = withLongJobsFlyDirect("/api/jobs?op=happyHorseVideo");
@@ -964,6 +980,11 @@ async function runHappyHorse(
   }
   if (json.videoUrl) return String(json.videoUrl);
   if (json.taskId) {
+    try {
+      opts?.onTaskId?.(String(json.taskId));
+    } catch {
+      /* 回写失败不阻塞生成 */
+    }
     try {
       // Wan 公测排队以小时计:前端轮询期限对齐后端(3h)+缓冲
       const polled = await pollCanvasVideoTask(json.taskId, { timeoutMs: 200 * 60_000 });
@@ -1617,6 +1638,8 @@ export async function runCanvasBlock(
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
           idempotencyKey: stableWanIdempotencyKey(block.id, wanPrompt, wanImages),
+          onTaskId: (taskId) =>
+            deps.onVideoTaskCreated?.(block.id, { taskId, engine: "wan-3.0" }),
         });
       } else if (useHappyHorse) {
         const firstFrame = String(seedStill || "").trim();

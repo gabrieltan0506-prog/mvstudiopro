@@ -222,6 +222,13 @@ export type CanvasBlock = {
   /** 本段成片抽取的尾帧 HTTPS（续拍硬锚） */
   lastFrameUrl?: string;
   /**
+   * 长排队成片任务(如 Wan 3.0 公测):taskId 随画布持久化,刷新/断线后恢复轮询,
+   * 后端晚到的成功自动回填本节点(审查 P1:前端超时不许弄丢任务)。
+   */
+  videoTaskId?: string;
+  videoTaskEngine?: string;
+  videoTaskStatus?: "queued" | "running" | "succeeded" | "failed" | "timed_out_pending_reconcile" | "reconcile_manual";
+  /**
    * 上一版剧本留下的产物：换剧本时不删、只归档。
    *
    * 视频生成是全链最贵的一步，静帧次之。旧做法是重扩写就把整条工厂链连同

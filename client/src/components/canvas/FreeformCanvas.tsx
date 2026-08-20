@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import {
   CANVAS_BLOCK_DEFAULT_HEIGHT,
   CANVAS_BLOCK_DEFAULT_WIDTH,
@@ -664,8 +665,22 @@ export default function FreeformCanvas({
     () => filterCanvasVideoModelOptions(canUseSeedance25),
     [canUseSeedance25],
   );
+  /** patchOne 声明在后,经 ref 间接引用避免 TDZ;渲染期同步赋值,不会漏拍 */
+  const patchOneRef = useRef<((id: string, patch: Partial<CanvasBlock>) => void) | null>(null);
   const runDepsWithPlan = useMemo(
-    () => ({ ...runDeps, userPlan, userRole }),
+    () => ({
+      ...runDeps,
+      userPlan,
+      userRole,
+      // 长排队任务(Wan 公测等):taskId 创建即落节点,字段随画布持久化,刷新后由下方 effect 接管(审查 P1)
+      onVideoTaskCreated: (blockId: string, info: { taskId: string; engine: string }) => {
+        patchOneRef.current?.(blockId, {
+          videoTaskId: info.taskId,
+          videoTaskEngine: info.engine,
+          videoTaskStatus: "running",
+        });
+      },
+    }),
     [runDeps, userPlan, userRole],
   );
   const focusMissSinceRef = useRef<number | null>(null);
@@ -1053,6 +1068,7 @@ export default function FreeformCanvas({
     },
     [onBlocksChange],
   );
+  patchOneRef.current = patchOne;
 
   const removeBlock = useCallback(
     (id: string) => {
@@ -1192,6 +1208,71 @@ export default function FreeformCanvas({
       window.clearInterval(timer);
     };
   }, [activeUpscaleKey, patchOne]);
+
+  // 长排队成片任务统一轮询(含刷新恢复):Wan 公测以小时计,20 分钟前端断线不等于任务失败(审查 P1)
+  const activeVideoTaskKey = blocks
+    .filter(
+      (b) =>
+        b.videoTaskId &&
+        b.videoTaskStatus &&
+        b.videoTaskStatus !== "succeeded" &&
+        b.videoTaskStatus !== "failed" &&
+        b.videoTaskStatus !== "reconcile_manual",
+    )
+    .map((b) => `${b.id}:${b.videoTaskId}`)
+    .join(",");
+  useEffect(() => {
+    if (!activeVideoTaskKey) return;
+    const entries = activeVideoTaskKey.split(",").map((item) => {
+      const [blockId, taskId] = item.split(":");
+      return { blockId, taskId };
+    });
+    let cancelled = false;
+    const tick = () => {
+      for (const { blockId, taskId } of entries) {
+        void (async () => {
+          try {
+            const res = await fetch(
+              withLongJobsFlyDirect(`/api/jobs?op=canvasVideoStatus&taskId=${encodeURIComponent(taskId)}`),
+              { credentials: "include", cache: "no-store" },
+            );
+            const j = (await res.json().catch(() => ({}))) as {
+              ok?: boolean;
+              status?: string;
+              videoUrl?: string;
+              error?: string;
+            };
+            if (cancelled || !j?.status) return;
+            if (j.status === "succeeded" && j.videoUrl) {
+              patchOne(blockId, {
+                videoTaskStatus: "succeeded",
+                outputUrl: j.videoUrl,
+                status: "done",
+                error: undefined,
+              });
+              toast.success("后台成片完成,已回填到原节点");
+            } else if (j.status === "failed" || j.status === "reconcile_manual") {
+              patchOne(blockId, {
+                videoTaskStatus: j.status as CanvasBlock["videoTaskStatus"],
+                status: "error",
+                error: j.error || "成片失败(费用按对账规则处理)",
+              });
+            } else {
+              patchOne(blockId, { videoTaskStatus: "running" });
+            }
+          } catch {
+            /* 查询失败视为瞬态,下一轮再试 */
+          }
+        })();
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeVideoTaskKey, patchOne]);
 
   const runBlock = useCallback(
     async (blockId: string) => {

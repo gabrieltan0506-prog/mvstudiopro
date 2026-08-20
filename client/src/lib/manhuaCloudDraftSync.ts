@@ -375,6 +375,10 @@ export function cloudDraftBlocksToCanvas(
       imageMode: raw.imageMode === "edit" ? "edit" : "generate",
       aspectRatio: raw.aspectRatio === "16:9" ? "16:9" : "9:16",
       pathCameraRecipeId: raw.pathCameraRecipeId,
+      // 长排队任务字段随云草稿往返:换机/刷新也能接管轮询(审查 P1)
+      videoTaskId: (raw as { videoTaskId?: string }).videoTaskId,
+      videoTaskEngine: (raw as { videoTaskEngine?: string }).videoTaskEngine,
+      videoTaskStatus: (raw as { videoTaskStatus?: CanvasBlock["videoTaskStatus"] }).videoTaskStatus,
       // 手动划线标注已废除，历史草稿字段读取处兼容忽略，不再还原进画布节点。
       textModel: "kimi-k3",
       imageModel: "gpt-image-2",

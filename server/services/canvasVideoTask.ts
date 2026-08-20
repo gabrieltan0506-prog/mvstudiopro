@@ -152,6 +152,8 @@ export type CanvasVideoTaskRecord = {
   wavespeedPredictionId?: string;
   /** wan30:提交上游的随机种子,复现用 */
   seed?: number;
+  /** wan30:连续 404 计数——创建后最终一致性只容忍有限次,防无效单白轮数小时(审查 P2) */
+  wan404Count?: number;
 };
 
 /**
@@ -843,6 +845,15 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         }
         const snap = await pollWavespeedWanOnce(current.wavespeedPredictionId);
         if (snap.state === "running") {
+          if (snap.status === "transient_http_404") {
+            current.wan404Count = (current.wan404Count || 0) + 1;
+            // 创建后的最终一致性窗口给足 30 轮;仍 404 = 无效单,终态退分,不再白轮
+            if (current.wan404Count > 30) {
+              return failTask(current, "Wan 3.0 任务编号持续无效(404),已终止轮询");
+            }
+          } else {
+            current.wan404Count = 0;
+          }
           current.status = activePollStatus(current);
           current.lastTransientError = snap.status.startsWith("transient_") ? snap.status : undefined;
           await writeTask(current);
