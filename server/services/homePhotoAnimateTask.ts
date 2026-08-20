@@ -23,6 +23,7 @@ import { getUserPlan, refundCredits } from "../credits.js";
 import { recordCreation } from "../routers/creations.js";
 import {
   heartbeatActiveJob,
+  pauseActiveJob,
   registerActiveJob,
   refundCreditsOnFailure,
   unregisterActiveJob,
@@ -61,7 +62,9 @@ export type HomePhotoAnimateTaskStatus =
   | "queued"
   | "running"
   | "succeeded"
-  | "failed";
+  | "failed"
+  /** 上游状态无法确认(提交结果未知/超轮询期限):停自动化、不退款,转人工对账 */
+  | "reconcile_manual";
 
 export type HomePhotoAnimateTaskRecord = {
   taskId: string;
@@ -258,7 +261,13 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
   try {
     const task = await readTask(taskId);
     if (!task) return null;
-    if (task.status === "succeeded" || task.status === "failed") return task;
+    if (
+      task.status === "succeeded" ||
+      task.status === "failed" ||
+      task.status === "reconcile_manual"
+    ) {
+      return task;
+    }
 
     await heartbeatActiveJob(task.taskId, TASK_TYPE).catch(() => {});
 
@@ -279,9 +288,23 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
           await writeTask(task);
           return task;
         } catch (error) {
+          const { isBailianHappyHorseSubmitRejected, isBailianHappyHorseSubmitUnknown } =
+            await import("./bailianHappyHorseVideo.js");
           const reason = error instanceof Error ? error.message : String(error);
+          // 六审第9条:结果未知不许回落(可能已建单,回落=双倍生成),转人工对账、不退款
+          if (isBailianHappyHorseSubmitUnknown(error)) {
+            task.status = "reconcile_manual";
+            task.error = "百炼提交结果无法确认，为避免重复生成，已停止自动回落并转人工对账";
+            task.finishedAt = new Date().toISOString();
+            await writeTask(task);
+            await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+            return task;
+          }
+          if (!isBailianHappyHorseSubmitRejected(error)) {
+            return failTask(task, reason);
+          }
           console.warn(
-            `[homePhotoAnimateTask] 百炼 HappyHorse 提交失败,回落 OpenRouter · task=${task.taskId} · ${reason}`,
+            `[homePhotoAnimateTask] 百炼 HappyHorse 明确拒绝,回落 OpenRouter · task=${task.taskId} · ${reason}`,
           );
           task.fallbackReason = reason.slice(0, 200);
           task.bailianTaskId = undefined;
@@ -325,10 +348,19 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
 
     const createdMs = Date.parse(task.createdAt) || Date.now();
     if (Date.now() - createdMs > OPENROUTER_VIDEO_MAX_POLL_MS) {
-      return failTask(
-        task,
-        `视频生成超时（${Math.round(OPENROUTER_VIDEO_MAX_POLL_MS / 60_000)} 分钟）`,
-      );
+      /**
+       * 六审第10条:已提交上游的任务超线不能 failTask 退款——上游不可取消、
+       * 可能晚点成功,假失败真退款。转人工对账;只有从未提交上游的才按失败退。
+       */
+      if (task.bailianTaskId || task.pollingUrl) {
+        task.status = "reconcile_manual";
+        task.error = "上游任务超过自动轮询期限，最终状态未确认，已转人工对账";
+        task.finishedAt = new Date().toISOString();
+        await writeTask(task);
+        await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+        return task;
+      }
+      return failTask(task, "任务在提交上游前超时");
     }
 
     // 百炼官方轮询:瞬态查询故障不作终态(照 canvasVideoTask 口径),等下一轮

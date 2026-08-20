@@ -57,6 +57,30 @@ export function buildBailianHappyHorseSubmitBody(input: {
   };
 }
 
+/**
+ * 六审第8条:提交错误分两类——"明确拒绝"(上游 4xx 回执,确定没建单,可安全回落网关)
+ * 与"结果未知"(网络故障/5xx/超时,任务可能已建,回落会重复生成重复烧钱,只能转对账)。
+ */
+export class BailianHappyHorseSubmitRejectedError extends Error {
+  readonly kind = "rejected";
+}
+
+export class BailianHappyHorseSubmitUnknownError extends Error {
+  readonly kind = "unknown";
+}
+
+export function isBailianHappyHorseSubmitRejected(
+  error: unknown,
+): error is BailianHappyHorseSubmitRejectedError {
+  return error instanceof BailianHappyHorseSubmitRejectedError;
+}
+
+export function isBailianHappyHorseSubmitUnknown(
+  error: unknown,
+): error is BailianHappyHorseSubmitUnknownError {
+  return error instanceof BailianHappyHorseSubmitUnknownError;
+}
+
 export async function submitBailianHappyHorseVideo(input: {
   prompt: string;
   imageUrl: string;
@@ -64,34 +88,52 @@ export async function submitBailianHappyHorseVideo(input: {
   resolution?: string;
 }): Promise<{ bailianTaskId: string; model: typeof BAILIAN_HAPPYHORSE_I2V_MODEL }> {
   if (!isBailianHappyHorseConfigured()) {
-    throw new Error("百炼 HappyHorse 通道未配置");
+    // 本地配置缺失=确定没打到上游,按"明确拒绝"回落网关是安全的
+    throw new BailianHappyHorseSubmitRejectedError("百炼 HappyHorse 通道未配置");
   }
   const body = buildBailianHappyHorseSubmitBody(input);
-  const res = await fetch(
-    `${bailianBase()}/api/v1/services/aigc/video-generation/video-synthesis`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${bailianKey()}`,
-        "Content-Type": "application/json",
-        "X-DashScope-Async": "enable",
+  let res: Response;
+  try {
+    res = await fetch(
+      `${bailianBase()}/api/v1/services/aigc/video-generation/video-synthesis`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${bailianKey()}`,
+          "Content-Type": "application/json",
+          "X-DashScope-Async": "enable",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
       },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
-    },
-  );
+    );
+  } catch (error) {
+    throw new BailianHappyHorseSubmitUnknownError(
+      `百炼提交结果未知：${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   const json = (await res.json().catch(() => ({}))) as {
     output?: { task_id?: string };
+    request_id?: string;
     code?: string;
     message?: string;
   };
   const taskId = String(json.output?.task_id || "").trim();
-  if (!res.ok || !taskId) {
-    throw new Error(
-      `百炼 HappyHorse 提交失败 HTTP ${res.status} ${json.code || ""} ${json.message || ""}`.trim(),
-    );
+  if (res.ok && taskId) {
+    return { bailianTaskId: taskId, model: BAILIAN_HAPPYHORSE_I2V_MODEL };
   }
-  return { bailianTaskId: taskId, model: BAILIAN_HAPPYHORSE_I2V_MODEL };
+  const detail = [
+    `HTTP ${res.status}`,
+    json.code,
+    json.message,
+    json.request_id ? `request_id=${json.request_id}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  if (res.status >= 400 && res.status < 500) {
+    throw new BailianHappyHorseSubmitRejectedError(`百炼 HappyHorse 明确拒绝提交：${detail}`);
+  }
+  throw new BailianHappyHorseSubmitUnknownError(`百炼 HappyHorse 提交结果未知：${detail}`);
 }
 
 export type BailianHappyHorsePollSnapshot =
@@ -102,8 +144,13 @@ export type BailianHappyHorsePollSnapshot =
 export async function pollBailianHappyHorseOnce(
   taskId: string,
 ): Promise<BailianHappyHorsePollSnapshot> {
+  /**
+   * 六审第10条:查询侧任何故障都不能冒充"生成失败"——任务在上游照跑照收钱,
+   * 误判终态会假失败真退款。只有 2xx 里明确 FAILED/CANCELED/UNKNOWN 才是失败;
+   * 配置缺失、鉴权被拒、404、5xx 一律记瞬态,由任务框架的期限+对账治理。
+   */
   if (!isBailianHappyHorseConfigured()) {
-    return { state: "failed", error: "百炼 HappyHorse 通道暂不可用" };
+    return { state: "running", status: "transient_local_config_unavailable" };
   }
   let res: Response;
   try {
@@ -114,15 +161,8 @@ export async function pollBailianHappyHorseOnce(
   } catch {
     return { state: "running", status: "transient_fetch_error" };
   }
-  if (res.status >= 500 || res.status === 429) {
-    return { state: "running", status: `transient_http_${res.status}` };
-  }
-  if (res.status === 400 || res.status === 401 || res.status === 403) {
-    // 鉴权/参数被拒不可重试;404 给最终一致性窗口,由任务框架期限治理
-    return { state: "failed", error: `HappyHorse 查询被拒 HTTP ${res.status}(不可重试)` };
-  }
-  if (res.status === 404) {
-    return { state: "running", status: "transient_http_404" };
+  if (!res.ok) {
+    return { state: "running", status: `transient_query_http_${res.status}` };
   }
   const json = (await res.json().catch(() => ({}))) as {
     output?: {

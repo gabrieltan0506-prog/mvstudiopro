@@ -40,8 +40,6 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
   const [error, setError] = useState<string | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
 
-  const chargeStepMutation = trpc.workflow.chargeStep.useMutation();
-  const refundStepMutation = trpc.workflow.refundStep.useMutation();
   const uploadRefMutation = trpc.mvAnalysis.uploadCoverReferencePhoto.useMutation();
   const selfEditMode = activeId === PLATFORM_IMAGE_GEN_SELF_EDIT_ID;
 
@@ -151,15 +149,12 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
     setBusy(true);
     setError(null);
     setResultUrl(null);
-    let chargedCost = 0;
     try {
       toast.info("正在生成图片…", { duration: 6000 });
-      const charge = await chargeStepMutation.mutateAsync({
-        step: "scene_image",
-        quantity: 1,
-        creditsOverride: IMAGE_GEN_CREDITS,
-      });
-      chargedCost = charge.cost;
+      /**
+       * 六审第5条:不再前端预扣——GPT-Image-2 由 worker 服务端按 job 幂等键统一计费,
+       * 失败也由 worker 按原来源退款,前端不得再 refundStep(会双退)。
+       */
       const apiAspect = mapPlatformImageGenAspectForApi(aspectHint);
       const refs = refUrl ? [refUrl] : [];
       const { jobId } = await createJobSameOrigin({
@@ -170,8 +165,6 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
           aspectRatio: apiAspect,
           referenceImageUrls: refs.length ? refs : undefined,
           generalImageEdit: refs.length > 0,
-          // 预扣收据(五审 P0-2):worker 凭它免二次扣费;无收据 worker 会照常扣
-          chargeReceiptId: (charge as { chargeReceiptId?: string }).chargeReceiptId,
         }),
       });
       const job = await pollJobUntilTerminal(jobId, {
@@ -185,20 +178,8 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
       const url = String(out.imageUrl || out.imageUrls?.[0] || "").trim();
       if (!url) throw new Error("生成失败：未返回图片");
       setResultUrl(url);
-      toast.success(chargedCost > 0 ? `已生成（已扣 ${chargedCost} 积分）` : "已生成");
+      toast.success(`已生成（已扣 ${IMAGE_GEN_CREDITS} 积分）`);
     } catch (e) {
-      if (chargedCost > 0) {
-        try {
-          await refundStepMutation.mutateAsync({
-            step: "scene_image",
-            quantity: 1,
-            creditsOverride: chargedCost,
-            reason: "Platform文生图失败退款",
-          });
-        } catch {
-          /* ignore refund errors */
-        }
-      }
       const msg = e instanceof Error ? e.message : "生成失败";
       setError(msg);
       toast.error(msg.slice(0, 120));

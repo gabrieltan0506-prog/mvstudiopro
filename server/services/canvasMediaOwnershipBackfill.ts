@@ -12,6 +12,7 @@
  */
 import {
   extractCanvasMediaObjectPath,
+  readCanvasMediaOwner,
   registerCanvasMediaOwner,
   type OwnerStore,
 } from "./canvasMediaOwnership.js";
@@ -129,7 +130,27 @@ export async function backfillCanvasMediaOwnersPage(opts: {
         continue;
       }
       if (opts.dryRun) {
-        result.created += 1; // dry-run 口径:按"将尝试登记"计数,不落任何写
+        // 六审第11条:dry-run 按登记簿真实分类(只读),不再一律计 created 造假报表
+        try {
+          const existing = await readCanvasMediaOwner({ objectPath, store: opts.store });
+          if (!existing) {
+            result.created += 1;
+          } else if (Number(existing.ownerUserId) === uid) {
+            result.alreadyOwned += 1;
+          } else {
+            result.conflict += 1;
+            if (result.conflicts.length < 200) {
+              result.conflicts.push({ objectPath, jobId: job.id, jobUserId: uid });
+            }
+          }
+        } catch (error) {
+          result.errors += 1;
+          if (result.errorSamples.length < 20) {
+            result.errorSamples.push(
+              `${job.id} ${objectPath}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200),
+            );
+          }
+        }
         continue;
       }
       try {
@@ -159,11 +180,15 @@ export async function backfillCanvasMediaOwnersPage(opts: {
     }
   }
   const last = page[page.length - 1];
-  if (last) {
+  // 六审第11条:出过错的页不许推进游标——推进=把失败对象永久跳过;原地重跑直至干净
+  if (result.errors === 0 && last) {
     result.nextCheckpoint = {
       afterCreatedAtMs: new Date(last.createdAt).getTime(),
       afterId: String(last.id),
     };
+  } else if (result.errors > 0) {
+    result.nextCheckpoint = opts.checkpoint || null;
+    result.done = false;
   }
   return result;
 }

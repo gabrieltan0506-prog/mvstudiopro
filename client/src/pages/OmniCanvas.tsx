@@ -2566,12 +2566,12 @@ export default function OmniCanvas() {
         level: "info",
         detail: `clips=${ready.map((c) => c.episodeIndex).join(",")}`,
       });
-      const charged: Array<"music" | "final_render"> = [];
+      const charged: Array<{ step: "music" | "final_render"; chargeKey: string | null }> = [];
       try {
-        await chargeWorkflowStepMutation.mutateAsync({ step: "music", quantity: 1 });
-        charged.push("music");
-        await chargeWorkflowStepMutation.mutateAsync({ step: "final_render", quantity: 1 });
-        charged.push("final_render");
+        const musicCharge = await chargeWorkflowStepMutation.mutateAsync({ step: "music", quantity: 1 });
+        charged.push({ step: "music", chargeKey: musicCharge.chargeKey ?? null });
+        const renderCharge = await chargeWorkflowStepMutation.mutateAsync({ step: "final_render", quantity: 1 });
+        charged.push({ step: "final_render", chargeKey: renderCharge.chargeKey ?? null });
 
         // 短入队（www→Vercel rewrite→Fly）+ GET 轮询，不走长任务直连 api 子域
         pushDebug("assemble:music", { level: "info", detail: "queued · polling…" });
@@ -2655,9 +2655,10 @@ export default function OmniCanvas() {
         }, 80);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "合成失败";
-        for (const step of charged.reverse()) {
+        for (const item of charged.reverse()) {
+          if (!item.chargeKey) continue; // 没拿到 key=没扣成,无款可退
           void refundWorkflowStepMutation
-            .mutateAsync({ step, quantity: 1, reason: `漫剧合成失败退款·${step}` })
+            .mutateAsync({ chargeKey: item.chargeKey, reason: `漫剧合成失败退款·${item.step}` })
             .catch(() => {});
         }
         pushDebug("assemble:error", { level: "error", detail: msg });

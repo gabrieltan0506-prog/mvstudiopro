@@ -3617,94 +3617,17 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       });
     }
 
-    /** /canvas 自由画布 · GPT-Image-2（OpenAI → OpenRouter）；勿与 workflowGenerateSceneImage 混淆 */
+    /**
+     * 六审第1条:旧同步出图入口停用(410)。真实主链=短入队 worker(canvas_gpt_image2),
+     * 本入口曾是不扣费直调付费上游的旁门——无论登录与否一律拒绝,绝不触发图片上游。
+     */
     if (opNormalized === "canvasgptimage2") {
-      if (req.method !== "POST") {
-        return res.status(405).json({ ok: false, error: "Method not allowed" });
-      }
-      // 四审 P0-1:成图所有权在交付时由服务端登记,登记需要真实 userId → 出图要求登录
-      const imageViewer = await resolveJobUser(req);
-      if (!imageViewer) {
-        return res.status(401).json({ ok: false, error: "请先登录后再出图" });
-      }
-      const prompt = s(b.prompt || b.scenePrompt || "").trim();
-      if (!prompt) return res.status(400).json({ ok: false, error: "missing prompt" });
-      const aspectRatio = s(b.aspectRatio || "9:16") === "16:9" ? "16:9" : "9:16";
-      const referenceImageUrl = s(b.referenceImageUrl || b.imageUrl || "").trim();
-      const referenceImageUrlsRaw = Array.isArray(b.referenceImageUrls)
-        ? (b.referenceImageUrls as unknown[])
-            .map((u) => s(u).trim())
-            .filter(Boolean)
-        : [];
-      const referenceImageUrls = Array.from(
-        new Set([referenceImageUrl, ...referenceImageUrlsRaw].filter(Boolean)),
-      ).slice(0, 16);
-      const maskUrl = s(b.maskUrl || b.editMaskUrl || "").trim();
-      const generalImageEdit =
-        Boolean(b.generalImageEdit) ||
-        s(b.imageMode || "").toLowerCase() === "edit" ||
-        referenceImageUrls.length > 0;
-      const providerRaw = s(b.provider || b.gptImage2Provider || "").trim().toLowerCase();
-      const providerOverride =
-        providerRaw === "openai" || providerRaw === "openrouter" || providerRaw === "auto"
-          ? (providerRaw as "openai" | "openrouter" | "auto")
-          : undefined;
-      const laneRaw = s(b.imageLane || "").trim().toLowerCase();
-      const imageLane = laneRaw === "asset" || laneRaw === "keyart" ? laneRaw : undefined;
-      try {
-        const { generateGptImage2FromRawEnglishPrompt } = await import("../server/services/proxyImageService.js");
-        const captureError: {
-          message?: string;
-          moderationBlocked?: boolean;
-          openaiConfigured?: boolean;
-          openrouterConfigured?: boolean;
-          openaiError?: string;
-          openrouterError?: string;
-        } = {};
-        const imageUrl = await generateGptImage2FromRawEnglishPrompt({
-          englishPrompt: prompt,
-          aspectRatio,
-          gcsSubdir: "canvas-gpt-image2",
-          referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
-          maskUrl: maskUrl || undefined,
-          // Canvas：有参考图即按通用改图，勿注入平台封面换脸指令
-          generalImageEdit: referenceImageUrls.length > 0 || generalImageEdit,
-          // 画布画面一律禁字；与 server/jobs/runner.ts 的画布出图保持同一口径
-          onImageText: "forbid",
-          providerOverride,
-          imageLane,
-          captureError,
-        });
-        if (!imageUrl) {
-          return res.status(502).json({
-            ok: false,
-            error: captureError.message || "gpt_image2_empty",
-            moderationBlocked: Boolean(captureError.moderationBlocked),
-            openaiConfigured: Boolean(captureError.openaiConfigured),
-            openrouterConfigured: Boolean(captureError.openrouterConfigured),
-            openaiError: captureError.openaiError || null,
-            openrouterError: captureError.openrouterError || null,
-          });
-        }
-        // 五审 P1-1:登记进成功契约——交付即登记权威所有权;登记失败不得返回成功,
-        // 否则用户拿到"看得到一次、恢复后永久 403"的半成品(此同步入口不扣费,无退款项)。
-        try {
-          const { registerCanvasImageDeliveryOrThrow } = await import(
-            "../server/services/canvasMediaOwnership.js"
-          );
-          await registerCanvasImageDeliveryOrThrow({
-            imageUrl,
-            ownerUserId: imageViewer.userId,
-            source: "canvasgptimage2",
-          });
-        } catch (ownErr) {
-          console.error("[canvasgptimage2] owner register failed:", ownErr);
-          return res.status(502).json({ ok: false, error: "出图所有权登记失败,请重试" });
-        }
-        return res.status(200).json({ ok: true, imageUrl, imageUrls: [imageUrl] });
-      } catch (e: any) {
-        return res.status(502).json({ ok: false, error: e?.message || "canvas_gpt_image2_failed" });
-      }
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(410).json({
+        ok: false,
+        error: "该同步出图入口已停用，请升级客户端并通过异步任务生成图片",
+        code: "CANVAS_GPT_IMAGE2_SYNC_REMOVED",
+      });
     }
 
     if (op === "klingT2V" || op === "klingI2V") {

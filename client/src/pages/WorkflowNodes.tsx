@@ -593,15 +593,13 @@ export default function WorkflowNodes() {
     // ── 付费步骤：先扣积分，失败则退款 ──
     const creditInfo = OP_CREDIT_STEP[opKey];
     let chargedCost = 0;
-    let chargedStep: StepKey | null = null;
-    let chargedQty = 1;
+    let chargedKey: string | null = null;
     if (creditInfo) {
       try {
         const qty = creditInfo.getQuantity ? creditInfo.getQuantity(body) : 1;
         const charge = await chargeStepMutation.mutateAsync({ step: creditInfo.step, quantity: qty });
         chargedCost = charge.cost;
-        chargedStep = creditInfo.step;
-        chargedQty = qty;
+        chargedKey = charge.chargeKey ?? null;
       } catch (err: any) {
         const msg = err?.message || "Credits 不足，请前往充值页面购买积分";
         setGlobalStep({ loading: false, error: msg, success: false });
@@ -614,8 +612,8 @@ export default function WorkflowNodes() {
       const result = await postJson(op, payload);
       setLastDebugEntry({ op, request: payload, httpOk: result.httpOk, status: result.status, json: result.json });
       if (!result.httpOk || result.json?.ok === false) {
-        if (chargedStep && chargedCost > 0) {
-          void refundStepMutation.mutateAsync({ step: chargedStep, quantity: chargedQty, reason: `${op} 失败退款` }).catch(() => {});
+        if (chargedKey && chargedCost > 0) {
+          void refundStepMutation.mutateAsync({ chargeKey: chargedKey, reason: `${op} 失败退款` }).catch(() => {});
         }
         if (scriptPreCharge > 0) {
           void refundScriptGenMutation.mutateAsync({ amount: scriptPreCharge }).catch(() => {});
@@ -636,8 +634,8 @@ export default function WorkflowNodes() {
       onSuccess?.(result.json);
       return result.json;
     } catch (error: any) {
-      if (chargedStep && chargedCost > 0) {
-        void refundStepMutation.mutateAsync({ step: chargedStep, quantity: chargedQty, reason: `${op} 异常退款` }).catch(() => {});
+      if (chargedKey && chargedCost > 0) {
+        void refundStepMutation.mutateAsync({ chargeKey: chargedKey, reason: `${op} 异常退款` }).catch(() => {});
       }
       if (scriptPreCharge > 0) {
         void refundScriptGenMutation.mutateAsync({ amount: scriptPreCharge }).catch(() => {});
@@ -655,15 +653,13 @@ export default function WorkflowNodes() {
     const opKey = op.toLowerCase();
     const creditInfo = OP_CREDIT_STEP[opKey];
     let auxChargedCost = 0;
-    let auxChargedStep: StepKey | null = null;
-    let auxChargedQty = 1;
+    let auxChargedKey: string | null = null;
     if (creditInfo) {
       try {
         const qty = creditInfo.getQuantity ? creditInfo.getQuantity(body) : 1;
         const charge = await chargeStepMutation.mutateAsync({ step: creditInfo.step, quantity: qty });
         auxChargedCost = charge.cost;
-        auxChargedStep = creditInfo.step;
-        auxChargedQty = qty;
+        auxChargedKey = charge.chargeKey ?? null;
       } catch (err: any) {
         setAuxError(err?.message || "Credits 不足，请前往充值页面购买积分");
         setAuxBusyKey("");
@@ -676,8 +672,8 @@ export default function WorkflowNodes() {
       const result = await postJson(op, payload);
       setLastDebugEntry({ op, request: payload, httpOk: result.httpOk, status: result.status, json: result.json });
       if (!result.httpOk || result.json?.ok === false) {
-        if (auxChargedStep && auxChargedCost > 0) {
-          void refundStepMutation.mutateAsync({ step: auxChargedStep, quantity: auxChargedQty, reason: `${op} 失败退款` }).catch(() => {});
+        if (auxChargedKey && auxChargedCost > 0) {
+          void refundStepMutation.mutateAsync({ chargeKey: auxChargedKey, reason: `${op} 失败退款` }).catch(() => {});
         }
         setAuxError(extractErrorText(result.json));
         return null;
@@ -686,8 +682,8 @@ export default function WorkflowNodes() {
       onSuccess?.(result.json);
       return result.json;
     } catch (error: any) {
-      if (auxChargedStep && auxChargedCost > 0) {
-        void refundStepMutation.mutateAsync({ step: auxChargedStep, quantity: auxChargedQty, reason: `${op} 异常退款` }).catch(() => {});
+      if (auxChargedKey && auxChargedCost > 0) {
+        void refundStepMutation.mutateAsync({ chargeKey: auxChargedKey, reason: `${op} 异常退款` }).catch(() => {});
       }
       setAuxError(error?.message || String(error) || "request_failed");
       return null;
@@ -715,26 +711,25 @@ export default function WorkflowNodes() {
           }).credits
         : null;
 
+    let sceneVideoChargeKey: string | null = null;
     const refundSceneVideo = (reason: string) => {
-      if (videoEngine === "seedance" && seedanceChargeCredits != null) {
-        void refundStepMutation
-          .mutateAsync({ step: "scene_video", quantity: 1, creditsOverride: seedanceChargeCredits, reason })
-          .catch(() => {});
-      } else {
-        void refundStepMutation.mutateAsync({ step: "scene_video", quantity: 1, reason }).catch(() => {});
-      }
+      // 退款只按服务端 chargeKey 对账;没拿到 key 说明没扣成,无款可退
+      if (!sceneVideoChargeKey) return;
+      void refundStepMutation
+        .mutateAsync({ chargeKey: sceneVideoChargeKey, reason })
+        .catch(() => {});
     };
 
     try {
-      if (videoEngine === "seedance" && seedanceChargeCredits != null) {
-        await chargeStepMutation.mutateAsync({
-          step: "scene_video",
-          quantity: 1,
-          creditsOverride: seedanceChargeCredits,
-        });
-      } else {
-        await chargeStepMutation.mutateAsync({ step: "scene_video", quantity: 1 });
-      }
+      const charge =
+        videoEngine === "seedance" && seedanceChargeCredits != null
+          ? await chargeStepMutation.mutateAsync({
+              step: "scene_video",
+              quantity: 1,
+              creditsOverride: seedanceChargeCredits,
+            })
+          : await chargeStepMutation.mutateAsync({ step: "scene_video", quantity: 1 });
+      sceneVideoChargeKey = charge.chargeKey ?? null;
     } catch (err: any) {
       setAuxError(err?.message || "Credits 不足，请前往充值页面购买积分");
       setAuxBusyKey("");

@@ -532,7 +532,10 @@ export async function listSucceededImageJobsPage(opts: {
   limit?: number;
 }): Promise<NormalizedJob[]> {
   const db = await getDb();
-  if (!db) return [];
+  if (!db) {
+    // 六审第11条:DB 不可用时返回空页会被回填当成"扫完了"假成功,必须炸出来
+    throw new Error("canvas_media_owner_backfill_database_unavailable");
+  }
   const limit = Math.max(1, Math.min(500, Math.floor(Number(opts.limit) || 200)));
   try {
     const afterMs = Number(opts.afterCreatedAtMs);

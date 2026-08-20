@@ -288,7 +288,7 @@ function isOpenAiImageTimeoutError(message: string): boolean {
  * 短入队（www→Fly）+ 轮询；worker 内再等官方上游。
  * 勿再长 POST ?op=canvasGptImage2（会撞网关/浏览器长连接）。
  */
-async function runGptImage2(
+export async function runGptImage2(
   prompt: string,
   aspectRatio: "9:16" | "16:9",
   opts?: {
@@ -311,52 +311,48 @@ async function runGptImage2(
   const openaiOnly = Boolean(opts?.openaiOnly);
   const userId = String(opts?.userId || "");
 
-  let firstJobId = "";
-  const attemptOnce = async (isRetry = false): Promise<string> => {
-    const { jobId } = await createJobSameOrigin({
-      type: "image",
-      userId,
-      input: buildCanvasGptImage2JobInput({
-        prompt,
-        aspectRatio,
-        referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
-        maskUrl: maskUrl || undefined,
-        generalImageEdit: referenceImageUrls.length > 0,
-        providerOverride: openaiOnly ? "openai" : undefined,
-        imageLane: opts?.imageLane,
-        /**
-         * 五审 P0-2:扣费一律在 worker 服务端决定,chargeOnServer 标记已不被采信。
-         * 超时重入队带 retryOfJobId 引用首单:上一个 job 可能仍在跑并最终成功(那次已扣),
-         * 服务端校验后按"每首单豁免一次"免扣,同一张图不收两次。
-         */
-        retryOfJobId: isRetry && firstJobId ? firstJobId : undefined,
-        batchIndex: opts?.batchIndex,
-      }),
-    });
-    if (!isRetry) firstJobId = jobId;
-    const job = await pollJobUntilTerminal(jobId, {
+  /**
+   * 六审第4条:只创建一次 job。超时不再第二次入队(那会再打一次付费上游),
+   * 只对同一 jobId 继续轮询——上一轮可能只是慢,任务仍在 worker 里跑。
+   */
+  const { jobId } = await createJobSameOrigin({
+    type: "image",
+    userId,
+    input: buildCanvasGptImage2JobInput({
+      prompt,
+      aspectRatio,
+      referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
+      maskUrl: maskUrl || undefined,
+      generalImageEdit: referenceImageUrls.length > 0,
+      providerOverride: openaiOnly ? "openai" : undefined,
+      imageLane: opts?.imageLane,
+      batchIndex: opts?.batchIndex,
+    }),
+  });
+
+  let job: Awaited<ReturnType<typeof pollJobUntilTerminal>>;
+  try {
+    job = await pollJobUntilTerminal(jobId, {
       maxWaitMs: CANVAS_GPT_IMAGE2_POLL_MAX_MS,
       intervalMs: 2500,
     });
-    if (job.status !== "succeeded") {
-      throw new Error(job.error || "GPT-Image-2 生图失败");
-    }
-    const out = (job.output || {}) as { imageUrl?: string; imageUrls?: string[] };
-    const url = String(out.imageUrl || out.imageUrls?.[0] || "").trim();
-    if (!url) throw new Error("GPT-Image-2 未返回图片 URL");
-    return url;
-  };
-
-  try {
-    return await attemptOnce();
-  } catch (firstErr) {
-    const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
-    if (openaiOnly && isOpenAiImageTimeoutError(msg)) {
-      console.warn("[canvasRunBlock] 官方 Image-2 超时，仅再入队一次 OpenAI（不回落 OpenRouter）");
-      return await attemptOnce(true);
-    }
-    throw firstErr;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isOpenAiImageTimeoutError(message)) throw error;
+    console.warn("[canvasRunBlock] 轮询超时，继续查询同一任务（绝不重新调用图片上游）");
+    job = await pollJobUntilTerminal(jobId, {
+      maxWaitMs: CANVAS_GPT_IMAGE2_POLL_MAX_MS,
+      intervalMs: 5000,
+    });
   }
+
+  if (job.status !== "succeeded") {
+    throw new Error(job.error || "GPT-Image-2 生图失败");
+  }
+  const out = (job.output || {}) as { imageUrl?: string; imageUrls?: string[] };
+  const url = String(out.imageUrl || out.imageUrls?.[0] || "").trim();
+  if (!url) throw new Error("GPT-Image-2 未返回图片 URL");
+  return url;
 }
 
 async function runGptImage2Batch(

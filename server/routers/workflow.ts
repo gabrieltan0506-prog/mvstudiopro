@@ -1,10 +1,17 @@
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { and, count, desc, eq, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { users, workflows, workflowStepRuns, workspaces, stripeUsageLogs } from "../../drizzle/schema";
-import { deductCredits, deductCreditsAmount, getCredits, refundCredits } from "../credits";
+import {
+  deductCredits,
+  deductCreditsAmount,
+  getCredits,
+  refundCredits,
+  refundCreditsForDeductAmount,
+} from "../credits";
 import { CREDIT_COSTS } from "../plans";
 import { hasUnlimitedAccess } from "../services/access-policy";
 
@@ -623,7 +630,7 @@ export const workflowRouter = router({
         input.step === "scene_video" && input.creditsOverride != null && input.creditsOverride > 0;
       const totalCost = (useOverride ? input.creditsOverride! : unitCost) * input.quantity;
 
-      if (totalCost === 0) return { cost: 0, remaining: -1 };
+      if (totalCost === 0) return { cost: 0, remaining: -1, chargeKey: null };
 
       const credits = await getCredits(ctx.user.id);
       if (credits.totalAvailable < totalCost) {
@@ -634,76 +641,86 @@ export const workflowRouter = router({
       }
 
       /**
-       * scene_image 预扣要签一次性收据(五审 P0-2):canvas_gpt_image2 worker 已改为
-       * 无收据一律服务端扣费,客户端"我扣过了"的空口凭据不再被采信。
-       * 收据签发失败按预扣失败处理(fail-closed),否则前端以为扣过、worker 又扣一次。
+       * 六审第6条:每笔预扣带服务端生成的唯一 chargeKey 落进 stripe_usage_logs,
+       * 退款只认这把钥匙(refundStep 从 DB 读原扣款),客户端不再拥有"报数退款"能力。
        */
-      const issueReceiptIfImageStep = async (): Promise<string | undefined> => {
-        if (input.step !== "scene_image") return undefined;
-        const { issueImageChargeReceipt } = await import("../services/imageChargeReceipt.js");
-        try {
-          return await issueImageChargeReceipt({
-            userId: ctx.user.id,
-            reason: `chargeStep:scene_image ×${input.quantity}`,
-          });
-        } catch (error) {
-          // 扣了钱发不出收据:立刻原路退回再报错,不留"前端以为已扣、worker 再扣"的裂缝
-          const { refundCredits } = await import("../credits");
-          await refundCredits(ctx.user.id, totalCost, "scene_image 收据签发失败·退回").catch(() => {});
-          throw error;
-        }
-      };
-
-      if (useOverride) {
-        const result = await deductCreditsAmount(
-          ctx.user.id,
-          totalCost,
-          "workflowSceneVideo",
-          `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}（动态 ${input.creditsOverride}×${input.quantity}）`,
-        );
-        return {
-          cost: totalCost,
-          remaining: result.remainingBalance,
-          chargeReceiptId: await issueReceiptIfImageStep(),
-        };
-      }
-
-      const result = await deductCredits(
+      const chargeKey = `workflowStep/${ctx.user.id}/${input.step}/${randomUUID()}`;
+      const result = await deductCreditsAmount(
         ctx.user.id,
-        costKey,
-        `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}${input.quantity > 1 ? ` ×${input.quantity}` : ""}`,
+        totalCost,
+        `workflowStep:${input.step}`,
+        `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}${input.quantity > 1 ? ` ×${input.quantity}` : ""}${useOverride ? `（动态 ${input.creditsOverride}×${input.quantity}）` : ""}`,
+        { chargeKey },
       );
-      return {
-        cost: totalCost,
-        remaining: result.remainingBalance,
-        chargeReceiptId: await issueReceiptIfImageStep(),
-      };
+      return { cost: result.cost, remaining: result.remainingBalance, chargeKey };
     }),
 
+  /**
+   * 六审第6条:退款只按真实 chargeKey 对账——从 DB 读原扣款金额与来源(个人/团队),
+   * 不再接收客户端 step/quantity/creditsOverride 报数;重放退款由 refundKey 唯一索引挡。
+   */
   refundStep: protectedProcedure
     .input(
       z.object({
-        step: z.enum(["storyboard", "scene_image", "render_still", "scene_video", "scene_voice", "music", "final_render"]),
-        quantity: z.number().int().min(1).max(100).default(1),
+        chargeKey: z.string().min(20).max(120).regex(/^workflowStep\/[0-9]+\//),
         reason: z.string().max(200).optional(),
-        /** 与 chargeStep.creditsOverride 对称：动态场景视频退款总额 = amount × quantity（或单场景时 quantity=1） */
-        creditsOverride: z.number().int().min(1).max(5000).optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const costKey = WORKFLOW_STEP_COST_KEY[input.step];
-      const unitCost = CREDIT_COSTS[costKey];
-      const useOverride =
-        input.step === "scene_video" && input.creditsOverride != null && input.creditsOverride > 0;
-      const totalCost = (useOverride ? input.creditsOverride! : unitCost) * input.quantity;
-      if (totalCost === 0) return { refunded: 0 };
+      const database = await db();
+      const [row] = await database
+        .select({
+          userId: stripeUsageLogs.userId,
+          creditsCost: stripeUsageLogs.creditsCost,
+          metadata: stripeUsageLogs.metadata,
+          action: stripeUsageLogs.action,
+        })
+        .from(stripeUsageLogs)
+        .where(
+          and(
+            eq(stripeUsageLogs.userId, ctx.user.id),
+            eq(stripeUsageLogs.chargeKey, input.chargeKey),
+          ),
+        )
+        .limit(1);
 
-      await refundCredits(
+      if (!row || !String(row.action).startsWith("workflowStep:")) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "找不到可退款的原始扣款" });
+      }
+
+      let metadata: { source?: string; teamId?: number; memberId?: number } = {};
+      try {
+        metadata = row.metadata ? JSON.parse(row.metadata) : {};
+      } catch {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "原始扣款来源损坏，已停止自动退款",
+        });
+      }
+
+      const cost = Math.max(0, Number(row.creditsCost) || 0);
+      if (cost === 0) return { refunded: 0 };
+      const deduct = (
+        metadata.source === "team"
+          ? {
+              success: true,
+              cost,
+              remainingBalance: -1,
+              source: "team",
+              teamId: Number(metadata.teamId),
+              teamMemberId: Number(metadata.memberId),
+            }
+          : { success: true, cost, remainingBalance: -1, source: "personal" }
+      ) as Awaited<ReturnType<typeof deductCreditsAmount>>;
+
+      await refundCreditsForDeductAmount(
         ctx.user.id,
-        totalCost,
-        input.reason ?? `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}·生成失败·退回已扣积分`,
+        input.reason || "工作流生成失败退款",
+        deduct,
+        "workflowStepRefund",
+        { refundKey: `refund:${input.chargeKey}`.slice(0, 120) },
       );
-      return { refunded: totalCost };
+      return { refunded: cost };
     }),
 
   /** 大师级视频基地脚本：每日第 1 次免费，第 2 次起扣 2 cr（防薅）。请在调用 /api/jobs 前执行。 */

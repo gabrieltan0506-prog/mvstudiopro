@@ -190,6 +190,16 @@ export async function registerCanvasImageDeliveryOrThrow(input: {
     : new Error("canvas_media_owner_register_failed");
 }
 
+/** 只读检查(回填 dry-run 用):按登记簿真实回答"这条路径现在归谁";故障照抛 */
+export async function readCanvasMediaOwner(input: {
+  objectPath: string;
+  store?: OwnerStore;
+}): Promise<OwnerRecord | null> {
+  const objectPath = validObjectPath(input.objectPath);
+  if (!objectPath) return null;
+  return (input.store || gcsStore).get(objectPath);
+}
+
 /** 仅测试用:清缓存 */
 export function __resetCanvasMediaOwnershipCacheForTests(): void {
   cache.clear();

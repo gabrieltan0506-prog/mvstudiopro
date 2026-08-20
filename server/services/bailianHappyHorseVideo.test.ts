@@ -3,6 +3,8 @@ import {
   BAILIAN_HAPPYHORSE_I2V_MODEL,
   buildBailianHappyHorseSubmitBody,
   isBailianHappyHorseConfigured,
+  isBailianHappyHorseSubmitRejected,
+  isBailianHappyHorseSubmitUnknown,
   pollBailianHappyHorseOnce,
   submitBailianHappyHorseVideo,
 } from "./bailianHappyHorseVideo";
@@ -80,6 +82,30 @@ describe("bailianHappyHorseVideo · 百炼官方主通道", () => {
     ).rejects.toThrow(/HTTP 429/);
   });
 
+  it("提交错误分级(六审第8条):4xx=明确拒绝可回落;网络断/5xx=结果未知禁回落", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ code: "InvalidParameter" }), { status: 400 })),
+    );
+    const rejected = await submitBailianHappyHorseVideo({ prompt: "p", imageUrl: "https://a/b.png" }).catch((e) => e);
+    expect(isBailianHappyHorseSubmitRejected(rejected)).toBe(true);
+    expect(isBailianHappyHorseSubmitUnknown(rejected)).toBe(false);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("socket hang up");
+      }),
+    );
+    const unknownNet = await submitBailianHappyHorseVideo({ prompt: "p", imageUrl: "https://a/b.png" }).catch((e) => e);
+    expect(isBailianHappyHorseSubmitUnknown(unknownNet)).toBe(true);
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("oops", { status: 502 })));
+    const unknown5xx = await submitBailianHappyHorseVideo({ prompt: "p", imageUrl: "https://a/b.png" }).catch((e) => e);
+    expect(isBailianHappyHorseSubmitUnknown(unknown5xx)).toBe(true);
+    expect(isBailianHappyHorseSubmitRejected(unknown5xx)).toBe(false);
+  });
+
   it("轮询:SUCCEEDED 取 video_url;FAILED 带上游 message;PENDING 继续跑", async () => {
     const seq = [
       { output: { task_status: "PENDING" } },
@@ -102,11 +128,11 @@ describe("bailianHappyHorseVideo · 百炼官方主通道", () => {
     });
   });
 
-  it("轮询容错:5xx/网络故障记瞬态不作终态;401 才是不可重试终态", async () => {
+  it("轮询容错(六审第10条):查询侧任何故障都不冒充生成失败——5xx/网络断/401/404/配置缺失全记瞬态", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 503 })));
     expect(await pollBailianHappyHorseOnce("t")).toEqual({
       state: "running",
-      status: "transient_http_503",
+      status: "transient_query_http_503",
     });
     vi.stubGlobal(
       "fetch",
@@ -118,7 +144,17 @@ describe("bailianHappyHorseVideo · 百炼官方主通道", () => {
       state: "running",
       status: "transient_fetch_error",
     });
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 401 })));
-    expect((await pollBailianHappyHorseOnce("t")).state).toBe("failed");
+    for (const code of [400, 401, 403, 404]) {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: code })));
+      expect(await pollBailianHappyHorseOnce("t")).toEqual({
+        state: "running",
+        status: `transient_query_http_${code}`,
+      });
+    }
+    vi.stubEnv("WAN_OFFICIAL_API_KEY", "");
+    expect(await pollBailianHappyHorseOnce("t")).toEqual({
+      state: "running",
+      status: "transient_local_config_unavailable",
+    });
   });
 });

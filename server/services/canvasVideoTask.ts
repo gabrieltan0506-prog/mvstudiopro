@@ -285,7 +285,11 @@ function activePollStatus(task: CanvasVideoTaskRecord): CanvasVideoTaskStatus {
 /** 已拿到上游任务号/查询地址 = 上游在跑、钱已烧出去，超时只能对账不能退分 */
 function hasProviderTask(task: CanvasVideoTaskRecord): boolean {
   return Boolean(
-    task.evolinkTaskId || task.byteplusTaskId || task.pollingUrl || task.wavespeedPredictionId,
+    task.evolinkTaskId ||
+      task.byteplusTaskId ||
+      task.pollingUrl ||
+      task.wavespeedPredictionId ||
+      task.bailianTaskId,
   );
 }
 
@@ -296,6 +300,22 @@ function usesEvolinkTaskId(engine: CanvasVideoEngine): boolean {
     || engine === "seedance-mini-evolink"
     || engine === "seedance20-evolink"
   );
+}
+
+/**
+ * 六审第7条:是否还需要向上游提交,按引擎认对应任务号——HH 官方单(bailianTaskId)
+ * 此前不在判定里,worker 每轮都会重复提交百炼任务(重复烧钱)。抽成纯函数供测试。
+ */
+export function canvasVideoTaskNeedsSubmit(task: CanvasVideoTaskRecord): boolean {
+  if (usesEvolinkTaskId(task.engine)) return !task.evolinkTaskId;
+  if (task.engine === "seedance25-byteplus") return !task.byteplusTaskId;
+  if (task.engine === "wavespeed-upscale" || task.engine === "wan30-wavespeed") {
+    return !task.wavespeedPredictionId;
+  }
+  if (task.engine === "happyhorse-openrouter") {
+    return !task.bailianTaskId && !task.pollingUrl;
+  }
+  return !task.pollingUrl;
 }
 
 function seedance25RunInput(task: CanvasVideoTaskRecord): EvolinkSeedanceRunInput {
@@ -627,11 +647,30 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
         await writeTask(task);
         return;
       } catch (error) {
+        const { isBailianHappyHorseSubmitRejected, isBailianHappyHorseSubmitUnknown } =
+          await import("./bailianHappyHorseVideo.js");
         const reason = error instanceof Error ? error.message : String(error);
         // 归属校验失败是用户侧终态错误,回落网关同样必败,直接抛给任务框架退分
         if (/归属校验未通过/.test(reason)) throw error;
+        /**
+         * 六审第9条:只有上游**明确拒绝**(4xx 回执,确定没建单)才允许回落 OpenRouter。
+         * 结果未知(网络断/5xx/超时)时任务可能已建成——回落=同一段片双引擎各烧一次,
+         * 转 reconcile_manual 停自动化,不退款、由人工对账定夺。
+         */
+        if (isBailianHappyHorseSubmitUnknown(error)) {
+          task.status = "reconcile_manual";
+          task.error = "百炼提交结果无法确认，为避免重复生成，已停止自动回落并转人工对账";
+          task.lastTransientError = reason.slice(0, 280);
+          task.finishedAt = new Date().toISOString();
+          await writeTask(task);
+          await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+          return;
+        }
+        if (!isBailianHappyHorseSubmitRejected(error)) {
+          throw error;
+        }
         console.warn(
-          `[canvasVideoTask] 百炼 HappyHorse 提交失败,回落 OpenRouter · task=${task.taskId} · ${reason}`,
+          `[canvasVideoTask] 百炼 HappyHorse 明确拒绝,回落 OpenRouter · task=${task.taskId} · ${reason}`,
         );
         task.fallbackReason = reason.slice(0, 200);
         task.bailianTaskId = undefined;
@@ -771,19 +810,17 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
       // 对账态继续走下面的轮询逻辑
     }
 
-    const needsSubmit = usesEvolinkTaskId(task.engine)
-      ? !task.evolinkTaskId
-      : task.engine === "seedance25-byteplus"
-        ? !task.byteplusTaskId
-        : task.engine === "wavespeed-upscale" || task.engine === "wan30-wavespeed"
-          ? !task.wavespeedPredictionId
-          : !task.pollingUrl;
+    const needsSubmit = canvasVideoTaskNeedsSubmit(task);
 
     if (needsSubmit) {
       try {
         await submitUpstream(task);
         const after = await readTask(taskId);
-        if (after?.status === "succeeded" || after?.status === "failed") {
+        if (
+          after?.status === "succeeded" ||
+          after?.status === "failed" ||
+          after?.status === "reconcile_manual"
+        ) {
           return after;
         }
       } catch (error) {

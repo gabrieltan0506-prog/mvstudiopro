@@ -1037,75 +1037,39 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     const imageLane = normalizeOpenAiImageLane(params.imageLane) ?? undefined;
 
     /**
-     * 画布出图收费 v2(五审 P0-2):worker **一律服务端扣费**,客户端 chargeOnServer
-     * 标记不再被采信(省略它曾可免费调用付费上游)。仅两种豁免,都要服务端证据:
-     * - chargeReceiptId:chargeStep 预扣成功后服务端签发的一次性收据(/creative、/platform),
-     *   校验+原子核销通过才免扣;重放/伪造/过期一律照常扣费。
-     * - retryOfJobId:画布超时重入队引用首单——首单可能仍在跑并最终成功(那次已扣),
-     *   同一张图不能收两次;校验(同用户/同 action/首单非豁免单)+每首单只准核销一次。
-     * supervisor/admin 由 `deductCreditsAmount` 内部免扣,失败/空图退回。
+     * 画布出图收费 v3(六审第2条):**全部调用方统一由 worker 服务端计费**——
+     * Canvas / Creative / Platform 都走这里扣;客户端任何字段(chargeOnServer、
+     * 收据、重试引用)都不再参与收费决策,伪造/省略一律无效。
+     * 幂等靠 job 级 chargeKey:同 job 重跑撞 DB 唯一索引,不会二次扣款;
+     * 客户端超时也只继续轮询同一 job,不再第二次入队(canvasRunBlock 同步改)。
+     * supervisor/admin 由 `deductCreditsAmount` 内部免扣,失败/空图/登记失败按原来源退回。
      */
     const numericUserId = Number(jobUserId);
     if (!Number.isFinite(numericUserId) || numericUserId <= 0) {
-      // 五审 P0-2:入口已强制登录;这里兜底拒绝 public/NaN,绝不免费打上游
+      // 入口已强制登录;这里兜底拒绝 public/NaN,绝不免费打上游
       throw new Error("画布出图需要有效登录用户，已拒绝调用上游");
     }
-    let creditDeducted = 0;
-    let deductReceipt: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
-    let shouldCharge = true;
-    if (!assetStandardizeQuality) {
-      const receiptId =
-        typeof params.chargeReceiptId === "string" ? params.chargeReceiptId.trim() : "";
-      if (receiptId) {
-        const { consumeImageChargeReceipt } = await import("../services/imageChargeReceipt.js");
-        if (await consumeImageChargeReceipt({ userId: numericUserId, receiptId })) {
-          shouldCharge = false;
-        }
-      }
-      const retryOf = typeof params.retryOfJobId === "string" ? params.retryOfJobId.trim() : "";
-      if (shouldCharge && retryOf && jobId && retryOf !== jobId) {
-        const [{ getJobById }, { claimCanvasRetryChargeWaiver }] = await Promise.all([
-          import("./repository.js"),
-          import("../services/imageChargeReceipt.js"),
-        ]);
-        const orig = await getJobById(retryOf);
-        const origInput = (orig?.input || null) as {
-          action?: string;
-          params?: { retryOfJobId?: string; chargeReceiptId?: string };
-        } | null;
-        const validRetry = Boolean(
-          orig &&
-            String(orig.userId) === String(numericUserId) &&
-            origInput?.action === "canvas_gpt_image2" &&
-            !origInput?.params?.retryOfJobId &&
-            !origInput?.params?.chargeReceiptId,
-        );
-        if (validRetry && (await claimCanvasRetryChargeWaiver({ userId: numericUserId, retryOfJobId: retryOf }))) {
-          shouldCharge = false;
-        }
-      }
+    if (!jobId) {
+      throw new Error("canvas_gpt_image2 缺少 jobId，无法建立幂等计费");
     }
-    if (shouldCharge || assetStandardizeQuality) {
-      const { canvasImageCredits } = await import("../../shared/canvasGenerationPricing.js");
-      const { manhuaAssetStandardizeCredits } = await import("../../shared/manhuaAssetStandardize.js");
-      const cost = assetStandardizeQuality
-        ? manhuaAssetStandardizeCredits(assetStandardizeQuality)
-        : canvasImageCredits(typeof params.batchIndex === "number" ? params.batchIndex : 0);
-      // 每个 job 一把幂等扣费键:worker 重试同一 job 不会二次扣款(DB 唯一索引兜底)
-      const chargeKey = jobId
-        ? assetStandardizeQuality
-          ? `manhuaAssetStandardize/${jobId}`
-          : `canvasGptImage2/${jobId}`
-        : undefined;
-      const deducted = await deductCreditsAmount(
-        numericUserId,
-        cost,
-        assetStandardizeQuality ? "manhuaAssetStandardize" : "canvasGptImage2",
-        assetStandardizeQuality ? `导入资产 AI 标准化（${cost} 积分/张）` : `画布出图（${cost} 积分/张）`,
-        chargeKey ? { chargeKey } : undefined,
-      );
-      creditDeducted = deducted.cost;
-      deductReceipt = deducted;
+    const { canvasImageCredits } = await import("../../shared/canvasGenerationPricing.js");
+    const { manhuaAssetStandardizeCredits } = await import("../../shared/manhuaAssetStandardize.js");
+    const cost = assetStandardizeQuality
+      ? manhuaAssetStandardizeCredits(assetStandardizeQuality)
+      : canvasImageCredits(typeof params.batchIndex === "number" ? params.batchIndex : 0);
+    const chargeKey = assetStandardizeQuality
+      ? `manhuaAssetStandardize/${jobId}`
+      : `canvasGptImage2/${jobId}`;
+    const deducted = await deductCreditsAmount(
+      numericUserId,
+      cost,
+      assetStandardizeQuality ? "manhuaAssetStandardize" : "canvasGptImage2",
+      assetStandardizeQuality ? `导入资产 AI 标准化（${cost} 积分/张）` : `画布出图（${cost} 积分/张）`,
+      { chargeKey },
+    );
+    const creditDeducted = deducted.cost;
+    const deductReceipt: Awaited<ReturnType<typeof deductCreditsAmount>> | null = deducted;
+    {
       if (assetStandardizeQuality && jobId) {
         const { registerActiveJob } = await import("../services/paidJobLedger.js");
         try {

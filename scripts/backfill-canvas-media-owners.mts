@@ -67,9 +67,20 @@ for (;;) {
   console.log(
     `[backfill] 页${totals.pages}: 扫${page.scannedJobs} 登${page.created} 已在册${page.alreadyOwned} 冲突${page.conflict} 无效${page.invalid} 错${page.errors}`,
   );
+  // 六审第11条:错误页立即停机且不写 checkpoint——修复后重跑会重新处理本页
+  if (page.errors > 0) {
+    console.error(
+      `[backfill] 当前页出现 ${page.errors} 个错误，checkpoint 未推进；修复后重跑会重新处理本页`,
+    );
+    process.exitCode = 2;
+    break;
+  }
   checkpoint = page.nextCheckpoint;
   if (checkpointPath && checkpoint && !dryRun) {
-    await fs.writeFile(checkpointPath, JSON.stringify(checkpoint));
+    // 先写临时文件再原子改名,断电不会留半截 checkpoint
+    const tempPath = `${checkpointPath}.tmp`;
+    await fs.writeFile(tempPath, JSON.stringify(checkpoint));
+    await fs.rename(tempPath, checkpointPath);
   }
   if (page.done) break;
 }
