@@ -134,20 +134,15 @@ export default function CreativePage() {
         if (!url) throw new Error("生图失败：未返回图片");
         setImageUrl(url);
       } else {
-        // 七审 P1-3:Nano 迁入服务端计费契约——billing variant 由服务端定价 35 并在
-        // 失败时自动退款;前端不再 chargeStep/refundStep(标称35实扣5的错价已修)。
-        const res = await fetch(`/api/google?op=nanoImage&tier=flash&model=gemini-3.1-flash-image-preview`, {
+        // 八审 P0-1:改用独立强制计费 op creativeNanoImage——服务端强制登录、锁死
+        // Flash/1K/定价35、失败自动退;前端不能靠省略字段免费,也不能传 Pro/4K 骗低价。
+        const res = await fetch(`/api/google?op=creativeNanoImage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          credentials: "include",
           body: JSON.stringify({
             prompt: imagePrompt,
-            tier: "flash",
-            model: "gemini-3.1-flash-image-preview",
-            imageSize: aspectRatio,
             aspectRatio,
-            numberOfImages: 1,
-            guidanceScale: 4,
-            billing: "creative_nano_flash"
           })
         });
         const json = await res.json();

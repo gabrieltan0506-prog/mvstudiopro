@@ -79,14 +79,19 @@ export async function runPaidWorkflowStep<T>(input: {
   try {
     return await input.run();
   } catch (error) {
-    // 只有真实失败到这;refundKey 幂等,重复失败/双路径只退一次
-    await deps
-      .refund(userId, `${input.description}·执行失败·退回积分`, deducted, `${action}Refund`, {
+    /**
+     * 只有真实失败到这;refundKey 幂等,重复失败/双路径只退一次。
+     * 八审 P0-4 诚实标注:本契约(供 Vercel Serverless 的 Nano 用)**没有** refund_pending/
+     * reaper 恢复机制——退款 DB 写失败会真丢。故失败**重抛**让 refund 错误可见,
+     * 不再吞成假 "pending"。彻底修法(账本化)需把 Nano 迁 Fly image worker,见八审说明。
+     */
+    try {
+      await deps.refund(userId, `${input.description}·执行失败·退回积分`, deducted, `${action}Refund`, {
         refundKey: `refund:${chargeKey}`.slice(0, 120),
-      })
-      .catch((refundError) => {
-        console.error("[workflowStepBilling] refund failed (hold pending):", refundError);
       });
+    } catch (refundError) {
+      console.error("[workflowStepBilling] refund failed (NO recovery on serverless):", refundError);
+    }
     throw error;
   }
 }

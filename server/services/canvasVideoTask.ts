@@ -687,10 +687,10 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     try {
       submitted = await submitOpenRouterVideoJob(body);
     } catch (error) {
-      // 七审 P1-5B:网关提交"结果未知"(网络断/超时/5xx)任务可能已建,
-      // 抛给外层 failTask 会假失败真退款——转人工对账
-      const { isLikelyUnknownOutcomeSubmitError } = await import("./bailianHappyHorseVideo.js");
-      if (isLikelyUnknownOutcomeSubmitError(error)) {
+      // 八审 P1-5:用 typed error(提交层产出),不再靠文案正则猜——
+      // unknown(网络断/5xx/408/409/429/2xx缺id)任务可能已建,禁回落,转对账
+      const { isOpenRouterSubmitUnknown } = await import("./openrouterVideoCore.js");
+      if (isOpenRouterSubmitUnknown(error)) {
         task.status = "reconcile_manual";
         task.error = "网关提交结果无法确认，已停止自动重试并转人工对账";
         task.lastTransientError = (error instanceof Error ? error.message : String(error)).slice(0, 280);

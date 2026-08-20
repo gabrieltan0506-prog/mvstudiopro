@@ -87,6 +87,10 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
 
 
 
+/** 八审 P1-6:canvas 出图墙钟安全下限/默认值(env 只能上调,不可降到下限以下) */
+export const CANVAS_GPT_IMAGE2_MIN_TIMEOUT_MS = 12 * 60_000;
+export const CANVAS_GPT_IMAGE2_DEFAULT_TIMEOUT_MS = 15 * 60_000;
+
 /** 七审 P0-2:判定 canvas 出图任务(付费上游,专属超时/不重排/幂等退款) */
 export function isCanvasGptImage2Job(input: unknown): boolean {
   return Boolean(
@@ -1100,30 +1104,39 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     );
     const creditDeducted = deducted.cost;
     const deductReceipt: Awaited<ReturnType<typeof deductCreditsAmount>> | null = deducted;
+    /**
+     * 八审 P0-4:普通 canvas 出图也接 paidJobLedger——之前只有 assetStandardize 登记账本,
+     * 普通出图的退款只是"打一次日志",DB 短暂不可用时退款被吞、积分永久不退。
+     * 现在两条都 registerActiveJob:失败走 refundCreditsOnFailure(落 refund_pending,
+     * reaper 补退)、成功走 unregisterActiveJob("settled")、登记失败即退款并中止。
+     */
     {
-      if (assetStandardizeQuality && jobId) {
-        const { registerActiveJob } = await import("../services/paidJobLedger.js");
-        try {
-          await registerActiveJob({
-            jobId,
-            taskType: "manhuaAssetStandardize",
-            userId: numericUserId,
-            creditsBilled: deducted.cost,
-            action: `导入资产 AI 标准化 · ${assetStandardizeQuality}`,
-            deduct: deducted,
-            metadata: { assetRefId: String(params.assetRefId || "").slice(0, 100) },
-          });
-        } catch (error) {
-          const { refundCreditsForDeductAmount } = await import("../credits.js");
-          await refundCreditsForDeductAmount(
-            numericUserId,
-            "资产标准化登记失败·退回积分",
-            deducted,
-            "manhuaAssetStandardizeRefund",
-            { refundKey: `refund:manhuaAssetStandardize/register/${jobId}`.slice(0, 120) },
-          );
-          throw error;
-        }
+      const { registerActiveJob } = await import("../services/paidJobLedger.js");
+      const ledgerTaskType = assetStandardizeQuality ? "manhuaAssetStandardize" : "canvasGptImage2";
+      try {
+        await registerActiveJob({
+          jobId,
+          taskType: ledgerTaskType,
+          userId: numericUserId,
+          creditsBilled: deducted.cost,
+          action: assetStandardizeQuality
+            ? `导入资产 AI 标准化 · ${assetStandardizeQuality}`
+            : `画布出图 GPT-Image-2（${deducted.cost} 积分/张）`,
+          deduct: deducted,
+          metadata: assetStandardizeQuality
+            ? { assetRefId: String(params.assetRefId || "").slice(0, 100) }
+            : { batchIndex: typeof params.batchIndex === "number" ? params.batchIndex : 0 },
+        });
+      } catch (error) {
+        const { refundCreditsForDeductAmount } = await import("../credits.js");
+        await refundCreditsForDeductAmount(
+          numericUserId,
+          "画布出图登记失败·退回积分",
+          deducted,
+          `${ledgerTaskType}Refund`,
+          { refundKey: `refund:${ledgerTaskType}/register/${jobId}`.slice(0, 120) },
+        );
+        throw error;
       }
     }
 
@@ -1138,26 +1151,14 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     } = {};
     const refundCanvasImage = async (reason: string) => {
       if (creditDeducted <= 0) return;
-      if (assetStandardizeQuality && jobId) {
-        const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
-        await refundCreditsOnFailure(jobId, "manhuaAssetStandardize", "external_api_error", reason);
-        return;
-      }
-      if (deductReceipt) {
-        const { refundCreditsForDeductAmount } = await import("../credits.js");
-        // 七审 P0-2:退款带 DB 幂等键——同 job 无论几次进入退款路径,余额只回一次
-        await refundCreditsForDeductAmount(
-          numericUserId,
-          reason,
-          deductReceipt,
-          "canvasGptImage2Refund",
-          { refundKey: canvasGptImage2RefundKey(jobId) },
-        );
-        return;
-      }
-      const { refundCredits } = await import("../credits");
-      await refundCredits(numericUserId, creditDeducted, reason).catch((e) =>
-        console.error("[Credits] canvas image refund failed:", e),
+      // 八审 P0-4:两条路径都走账本 refundCreditsOnFailure——退款失败落 refund_pending,
+      // 由 ledger reaper 补退,不再是"打个日志就丢"。
+      const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
+      await refundCreditsOnFailure(
+        jobId,
+        assetStandardizeQuality ? "manhuaAssetStandardize" : "canvasGptImage2",
+        "external_api_error",
+        reason,
       );
     };
     let imageUrl: string | null | undefined;
@@ -1243,13 +1244,16 @@ export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
   const defaultTimeout = JOB_TIMEOUT_MS[type];
   if (type === "image" && isCanvasGptImage2Job(inputRaw)) {
     /**
-     * 七审 P0-2:image 默认 12 秒墙钟是给轻任务的;GPT-Image-2 单供应商 fetch
+     * 七审 P0-2 / 八审 P1-6:image 默认 12 秒墙钟是给轻任务的;GPT-Image-2 单供应商 fetch
      * 允许 6 分钟、客户端按 12 分钟轮询——12 秒必超时,还会触发整单重排双烧上游。
-     * 给足 双供应商 fallback + GCS 镜像 + 所有权登记 的墙钟。
+     * env 只能上调不能下调:设成低于 12 分钟的值会让外层先超时退款而上游仍在跑收钱,
+     * 故用 Math.max 钉死 12 分钟安全下限。
      */
     const raw = Number(process.env.CANVAS_GPT_IMAGE2_JOB_TIMEOUT_MS);
-    if (Number.isFinite(raw) && raw >= 120_000) return raw;
-    return 15 * 60_000;
+    if (Number.isFinite(raw)) {
+      return Math.max(CANVAS_GPT_IMAGE2_MIN_TIMEOUT_MS, Math.floor(raw));
+    }
+    return CANVAS_GPT_IMAGE2_DEFAULT_TIMEOUT_MS;
   }
   if (type === "platform") {
     try {
@@ -2702,6 +2706,30 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
       isRecord(job.input) &&
       isRecord(job.input.params) &&
       (job.input.params.assetStandardizeQuality === "medium" || job.input.params.assetStandardizeQuality === "high");
+    // 八审 P0-4:普通 canvas 出图(非资产标准化)成功后同样要结算账本 hold
+    const paidCanvasImage =
+      jobType === "image" && isCanvasGptImage2Job(job.input) && !paidAssetStandardize;
+    if (paidCanvasImage) {
+      const { markSettlementPending, unregisterActiveJob, refundCreditsOnFailure } =
+        await import("../services/paidJobLedger.js");
+      if (!succeededPersisted) {
+        // 上游有图但 output 没落库:用户拿不到产物,不能先结算后留永久扣费
+        await refundCreditsOnFailure(
+          job.id,
+          "canvasGptImage2",
+          "task_failed",
+          "画布出图结果保存失败·退回积分",
+        ).catch((e) => console.error("[Jobs] canvas image persistence refund failed:", e));
+        await markJobFailed(job.id, "画布出图结果保存失败，已进入退分流程");
+        return;
+      }
+      try {
+        await unregisterActiveJob(job.id, "canvasGptImage2", "settled");
+      } catch {
+        // 产物已落库,不能退款;reaper 只补结算不退成功单
+        await markSettlementPending(job.id, "canvasGptImage2");
+      }
+    }
     const paidPlatformVisualReport =
       jobType === "platform" &&
       isRecord(job.input) &&
@@ -2794,17 +2822,16 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
     } else if (resolveFailedJobDisposition(job) === "refund_and_fail_canvas_image") {
       /**
        * 七审 P0-2:canvas_gpt_image2 绝不整单重排——重排会第二次调用付费图片上游。
-       * 外层墙钟超时/进程级失败时进程内 deduct 快照可能已丢:按 chargeKey 从 DB
-       * 读原账退款,refundKey 与 processImageJob 内部退款同键,双路径只退一次。
+       * 八审 P0-4:外层墙钟超时/进程级失败走账本 refundCreditsOnFailure——退款失败
+       * 落 refund_pending 由 reaper 补退,不再是"打日志就丢";与内部退款同一账本键幂等。
        */
-      const { refundChargeByKey } = await import("../credits.js");
-      await refundChargeByKey({
-        userId: Number(job.userId),
-        chargeKey: `canvasGptImage2/${job.id}`,
-        reason: "画布出图失败或超时·退回已扣积分",
-        actionForLog: "canvasGptImage2Refund",
-        refundKey: canvasGptImage2RefundKey(job.id),
-      }).catch((refundError) =>
+      const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
+      await refundCreditsOnFailure(
+        job.id,
+        "canvasGptImage2",
+        "task_timeout",
+        "画布出图失败或超时·退回已扣积分",
+      ).catch((refundError) =>
         console.error("[Jobs] canvas image refund pending:", refundError),
       );
       await markJobFailed(job.id, message);

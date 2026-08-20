@@ -335,10 +335,10 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
           return succeedTask(task, videoUrl, submitted.model);
         }
       } catch (error) {
-        // 七审 P1-5B:网关提交"结果未知"(网络断/超时/5xx)任务可能已建——
-        // failTask 退款会假失败真退,转人工对账
-        const { isLikelyUnknownOutcomeSubmitError } = await import("./bailianHappyHorseVideo.js");
-        if (isLikelyUnknownOutcomeSubmitError(error)) {
+        // 八审 P1-5:typed error 判定(提交层产出),不再文案正则——
+        // unknown 任务可能已建,failTask 退款会假失败真退,转人工对账
+        const { isOpenRouterSubmitUnknown } = await import("./openrouterVideoCore.js");
+        if (isOpenRouterSubmitUnknown(error)) {
           task.status = "reconcile_manual";
           task.error = "网关提交结果无法确认，已停止自动重试并转人工对账";
           task.finishedAt = new Date().toISOString();

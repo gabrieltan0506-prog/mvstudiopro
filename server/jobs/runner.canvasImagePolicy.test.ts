@@ -36,6 +36,17 @@ describe("runner · canvas_gpt_image2 墙钟/重排/退款策略(七审 P0-2)", 
     expect(canvasGptImage2RefundKey(undefined)).toBe("refund:canvasGptImage2/unknown");
   });
 
+  it("八审 P1-6:超时墙钟 env 只能上调,设成低于 12 分钟被 Math.max 钉回下限", async () => {
+    const { resolveJobTimeoutMs } = await import("./runner");
+    const orig = process.env.CANVAS_GPT_IMAGE2_JOB_TIMEOUT_MS;
+    process.env.CANVAS_GPT_IMAGE2_JOB_TIMEOUT_MS = "180000"; // 3 分钟,恶意/误配
+    expect(resolveJobTimeoutMs("image", CANVAS_INPUT)).toBeGreaterThanOrEqual(12 * 60_000);
+    process.env.CANVAS_GPT_IMAGE2_JOB_TIMEOUT_MS = "1800000"; // 30 分钟,允许上调
+    expect(resolveJobTimeoutMs("image", CANVAS_INPUT)).toBe(1_800_000);
+    if (orig === undefined) delete process.env.CANVAS_GPT_IMAGE2_JOB_TIMEOUT_MS;
+    else process.env.CANVAS_GPT_IMAGE2_JOB_TIMEOUT_MS = orig;
+  });
+
   it("任务判定:action 精确匹配,数组/空值/其他 action 不误伤", () => {
     expect(isCanvasGptImage2Job(CANVAS_INPUT)).toBe(true);
     expect(isCanvasGptImage2Job({ action: "manhua_template_learn" })).toBe(false);

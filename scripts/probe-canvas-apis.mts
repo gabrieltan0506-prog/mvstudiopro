@@ -1,15 +1,4 @@
 /**
- * ⚠️ 已废弃(七审 P2-7):本脚本依赖的同步入口 /api/jobs?op=canvasGptImage2 已 410 停用
- * ——那条入口曾是免登录、免扣费直调付费图片上游的旁门,正是被封死的洞,不会为脚本重开。
- * 如需恢复本脚本:迁移为「服务身份登录 → POST /api/jobs 创建 image job(canvas_gpt_image2,
- * 服务端扣费)→ 轮询同一 jobId」。迁移前运行一律硬退出。
- */
-if (!process.env.ALLOW_DEPRECATED_CANVAS_SYNC_SCRIPT) {
-  console.error("[deprecated] 本脚本已废弃:同步出图入口已 410 停用(七审 P2-7),详见文件头注释。");
-  process.exit(1);
-}
-
-/**
  * /canvas 链路 API 探针：文案 / 整理 / 多图视觉 / 图片 / 视频。
  *
  * 用法：
@@ -329,7 +318,8 @@ async function main() {
   let imageUrl = "";
   if (!SKIP_IMAGE) {
     await probeLegacyWorkflowSceneImageWrongPath();
-    await probeCanvasGptImage2();
+    // 八审 P2-7:同步出图入口已 410 停用,跳过此探针(其余探针照常)
+    // await probeCanvasGptImage2();
     imageUrl = await probeNanoImage();
     await probeBananaOrFalImage();
   } else {

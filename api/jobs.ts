@@ -2388,6 +2388,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    /**
+     * 八审 P0-3:大师级视频基地的付费生成 op 在 API 层既不鉴权也不扣费(客户端 chargeStep
+     * 与真实生成是两个独立请求,跳过 chargeStep 直接 POST 这些 op 即可免费调付费上游)。
+     * 收口到 runPaidWorkflowStep 之前先 fail-closed:这些 op 本就是内部工具(UI 已限
+     * supervisor/admin),API 层同样强制 supervisor/admin;计费服务端化后再逐个放开。
+     */
+    const PAID_WORKFLOW_OPS = new Set([
+      "workflowgeneratescript",
+      "workflowgeneratestoryboard",
+      "workflowgeneratestoryboardimages",
+      "workflowregeneratesceneimages",
+      "workflowgeneratesceneimage",
+      "workflowregeneratesceneasset",
+      "workflowgeneraterenderstill",
+      "workflowbackgroundremove",
+      "workflowlockcharacter",
+      "workflowgeneratevideo",
+      "workflowgeneratescenevideo",
+      "workflowgeneratevoice",
+      "workflowgeneratescenevoice",
+      "workflowgeneratemusic",
+      "workflowrendervideo",
+      "workflowrenderfinalvideo",
+    ]);
+    if (PAID_WORKFLOW_OPS.has(opNormalized)) {
+      const wfUser = await resolveJobUser(req);
+      if (!wfUser) {
+        return res.status(401).json({ ok: false, error: "请先登录后再使用大师级视频基地" });
+      }
+      if (wfUser.role !== "admin" && wfUser.role !== "supervisor") {
+        return res.status(403).json({
+          ok: false,
+          code: "WORKFLOW_PAID_OP_REQUIRES_SUPERVISOR",
+          error: "该付费步骤为内部工具，正在迁移服务端计费，暂不对外开放",
+        });
+      }
+    }
+
     if (opNormalized === "workflowgeneratescript") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const prompt = s(b.prompt).trim();

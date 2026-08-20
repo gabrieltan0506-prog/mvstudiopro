@@ -4,10 +4,9 @@
  * 如需恢复本脚本:迁移为「服务身份登录 → POST /api/jobs 创建 image job(canvas_gpt_image2,
  * 服务端扣费)→ 轮询同一 jobId」。迁移前运行一律硬退出。
  */
-if (!process.env.ALLOW_DEPRECATED_CANVAS_SYNC_SCRIPT) {
-  console.error("[deprecated] 本脚本已废弃:同步出图入口已 410 停用(七审 P2-7),详见文件头注释。");
-  process.exit(1);
-}
+// 八审 P2-7:无条件硬退出(去掉 ALLOW_DEPRECATED 绕过)——同步出图入口已 410 永久停用。
+console.error("[deprecated] 本脚本已废弃:同步出图入口已 410 停用,详见文件头注释。");
+process.exit(1);
 
 /**
  * 用本人实拍 refs（me / t1–t3）作「软参考」重做指定男主槽。

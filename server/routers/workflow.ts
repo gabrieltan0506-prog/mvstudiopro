@@ -732,10 +732,17 @@ export const workflowRouter = router({
       return { ok: true as const };
     }),
 
+  /**
+   * 八审 P0-2:此路由曾对任意登录用户无条件退 amount(1-10)积分,不校验是否扣过、
+   * 是否失败、是否已退——反复调用即凭空造积分。与 refundStep 同罪,一律 FORBIDDEN。
+   * 脚本生成的失败退款迁入服务端 workflowgeneratescript handler(已限 supervisor/admin)。
+   */
   refundScriptGenerationCharge: protectedProcedure
-    .input(z.object({ amount: z.number().int().min(1).max(10) }))
-    .mutation(async ({ ctx, input }) => {
-      await refundCredits(ctx.user.id, input.amount, "脚本生成·失败·退回已扣积分");
-      return { ok: true as const };
+    .input(z.object({ amount: z.number().int().min(1).max(10).optional() }))
+    .mutation(async () => {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "脚本生成退款已迁入服务端执行契约，不再接受客户端退款请求",
+      });
     }),
 });

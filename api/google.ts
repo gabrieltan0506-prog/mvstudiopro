@@ -955,19 +955,44 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     // op=nanoImage, tier=flash|pro, size=1K|2K|4K, aspectRatio=16:9...
     // Pro · 4K：imageConfig.imageSize + outputResolution（產品文檔口徑）；Flash 僅在 2K/4K 時寫 imageSize。
     // fetch 一律 120s：4K Base64 體量大可導致讀取超時。
-    if(op === "nanoImage"){
+    /**
+     * 八审 P0-1:Nano 生图有两个 op——
+     * - creativeNanoImage:Creative 页付费产品。强制登录、服务端锁死 Flash/1K/model,
+     *   客户端的 model/tier/size 一律忽略(旧版可传 Pro/4K 却只扣 35 的错价洞),
+     *   扣 35 走 runPaidWorkflowStep,失败原路退。
+     * - nanoImage(裸):曾是公网免登录免扣费旁门(省略 billing 即免费打付费上游)。
+     *   收口为内部专用:强制登录 + supervisor/admin,普通/匿名一律 403。
+     */
+    if(op === "nanoImage" || op === "creativeNanoImage"){
+      const isCreativeNano = op === "creativeNanoImage";
       const prompt = s(b.prompt || q.prompt || "");
       if(!prompt) return res.status(400).json({ok:false,error:"missing_prompt"});
 
-      const tier = s(b.tier || q.tier || "flash").toLowerCase(); // flash|pro
-      const size = s(b.imageSize || q.imageSize || "1K").toUpperCase(); // 1K|2K|4K
+      const nanoViewer = await resolveGoogleGatewayUser(req);
+      if (isCreativeNano) {
+        if (!nanoViewer) {
+          return res.status(401).json({ ok: false, error: "请先登录后再生成图片" });
+        }
+      } else {
+        // 裸 nanoImage 不再作公网免扣费入口:仅内部 admin/supervisor
+        if (!nanoViewer || (nanoViewer.role !== "admin" && nanoViewer.role !== "supervisor")) {
+          return res.status(403).json({
+            ok: false,
+            error: "generic_nano_image_requires_internal_or_admin_access",
+          });
+        }
+      }
+
+      // Creative 产品规格由服务端锁死;裸 nano(仅 admin)沿用客户端参数
+      const tier = isCreativeNano ? "flash" : s(b.tier || q.tier || "flash").toLowerCase(); // flash|pro
+      const size = isCreativeNano ? "1K" : s(b.imageSize || q.imageSize || "1K").toUpperCase(); // 1K|2K|4K
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9");
       const negativePrompt = s(b.negativePrompt || q.negativePrompt || "");
       const guidanceScale = Number(b.guidanceScale || q.guidanceScale || 0);
       const seed = q.seed != null || b.seed != null ? Number(b.seed || q.seed) : undefined;
       const personGeneration = s(b.personGeneration || q.personGeneration || "");
 
-      const rawModel = s(b.model || q.model || "");
+      const rawModel = isCreativeNano ? "" : s(b.model || q.model || "");
 
       const resolvedTier = rawModel
         ? (
@@ -1033,23 +1058,16 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       };
 
       /**
-       * 七审 P1-3:Creative Nano 迁入服务端计费执行契约。客户端只能传产品
-       * variant(billing=creative_nano_flash),金额由服务端价格表定死(35),
-       * 扣费/执行/失败退款同在 runPaidWorkflowStep 一个契约内——
-       * 出图失败或空图即抛错触发原路退款,前端不再有任何计费/退款能力。
-       * 其余调用方(平台工具/脚本)不带 billing,维持原免计费行为不受影响。
+       * 八审 P0-1:creativeNanoImage 是强制服务端计费 op(登录已在块首校验,规格已锁 Flash/1K)。
+       * 扣费/执行/失败退款同在 runPaidWorkflowStep 一个契约内——省略任何字段都免不了这 35 分,
+       * 传 Pro/4K 也已被块首强制降为 Flash/1K。裸 nanoImage(仅 admin)不计费,照原样出图。
        */
-      const billingVariant = s(b.billing || q.billing || "").trim();
-      if (billingVariant === "creative_nano_flash") {
-        const viewer = await resolveGoogleGatewayUser(req);
-        if (!viewer) {
-          return res.status(401).json({ ok: false, error: "请先登录后再生成图片" });
-        }
+      if (isCreativeNano) {
         const { runPaidWorkflowStep } = await import("../server/services/workflowStepBilling.js");
         const { randomUUID } = await import("node:crypto");
         try {
           const out = await runPaidWorkflowStep({
-            userId: viewer.userId,
+            userId: nanoViewer!.userId,
             executionId: randomUUID(),
             step: "scene_image",
             totalCost: 35,
