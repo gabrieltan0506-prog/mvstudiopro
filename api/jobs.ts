@@ -4375,7 +4375,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         const { isOpenRouterHappyHorseConfigured } = await import(
           "../server/services/openrouterHappyHorseVideo.js"
         );
-        if (!isOpenRouterHappyHorseConfigured()) {
+        const { isBailianHappyHorseConfigured } = await import(
+          "../server/services/bailianHappyHorseVideo.js"
+        );
+        // 0820 拍板:百炼官方为主通道,OpenRouter 兜底——任一在配即可开闸
+        if (!isBailianHappyHorseConfigured() && !isOpenRouterHappyHorseConfigured()) {
           return res.status(503).json({
             ok: false,
             error: "视频服务暂不可用，请稍后重试",
@@ -4476,7 +4480,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         const { isOpenRouterHappyHorseConfigured } = await import(
           "../server/services/openrouterHappyHorseVideo.js"
         );
-        if (!isOpenRouterHappyHorseConfigured()) {
+        const { isBailianHappyHorseConfigured } = await import(
+          "../server/services/bailianHappyHorseVideo.js"
+        );
+        // 0820 拍板:百炼官方为主通道,OpenRouter 兜底——任一在配即可开闸
+        if (!isBailianHappyHorseConfigured() && !isOpenRouterHappyHorseConfigured()) {
           return res.status(503).json({ ok: false, error: "视频服务暂不可用，请稍后重试" });
         }
 

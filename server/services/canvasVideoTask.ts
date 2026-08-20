@@ -54,6 +54,12 @@ import {
 } from "./wavespeedVideoUpscale.js";
 import type { WavespeedUpscaleTarget } from "../../shared/wavespeedVideoUpscaleModels.js";
 import { pollWavespeedWanOnce, submitWavespeedWanVideo } from "./wavespeedWanVideo.js";
+import {
+  BAILIAN_HAPPYHORSE_I2V_MODEL,
+  isBailianHappyHorseConfigured,
+  pollBailianHappyHorseOnce,
+  submitBailianHappyHorseVideo,
+} from "./bailianHappyHorseVideo.js";
 import { getGcsBucketName, signGcsObjectPathV4ReadUrl } from "./gcs.js";
 import { verifyCanvasMediaOwnership } from "./canvasMediaOwnership.js";
 import {
@@ -130,6 +136,8 @@ export type CanvasVideoTaskRecord = {
   evolinkTaskId?: string;
   /** BytePlus ModelArk contents/generations task id */
   byteplusTaskId?: string;
+  /** 百炼官方 HappyHorse 异步任务 id(主通道;OpenRouter 兜底时此字段为空) */
+  bailianTaskId?: string;
   /** 若从 BytePlus 回落到 EvoLink，记下原因摘要 */
   fallbackReason?: string;
   model?: string;
@@ -512,6 +520,24 @@ async function succeedTask(
   return task;
 }
 
+/**
+ * 站内受保护稳定链(/api/canvas-media/…)外部供应商拿不到登录 Cookie,直接喂会 401(复审 P1-4)。
+ * 提交前在已授权的服务端把它解析回短期签名 HTTPS;签名前必须验 task.userId 对该对象的
+ * 真实归属(三审 P0-3,与 /api/canvas-media 路由同一把尺),未通过一律拒任务。
+ */
+async function resolveProtectedTaskMediaUrl(
+  task: CanvasVideoTaskRecord,
+  u: string,
+): Promise<string> {
+  const m = String(u || "").match(/^(?:https?:\/\/[^/]+)?\/api\/canvas-media\/(.+)$/i);
+  if (!m) return u;
+  const objectPath = decodeURIComponent(m[1]);
+  if (!(await verifyCanvasMediaOwnership(task.userId, objectPath))) {
+    throw new Error("参考素材归属校验未通过,已拒绝提交(请用自己画布里的素材)");
+  }
+  return signGcsObjectPathV4ReadUrl(getGcsBucketName(), objectPath, 24 * 3600);
+}
+
 async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
   if (task.engine === "seedance-openrouter") {
     const body = buildOpenRouterSeedanceSubmitBody({
@@ -580,9 +606,40 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
   if (task.engine === "happyhorse-openrouter") {
     const imageUrl = String(task.imageUrl || task.imageUrls?.[0] || "").trim();
     if (!imageUrl) throw new Error("Happy Horse 成片需要至少一张首帧参考图");
+    /**
+     * 0820 拍板:HappyHorse 主通道=百炼官方直连(同能力便宜约 1/4,i2v 官方契约),
+     * OpenRouter 网关降级为兜底——官方提交抛错(含配置缺失以外的任何原因)才回落。
+     * 官方 i2v 无 aspect_ratio 参数,画幅随首帧图,与网关行为差异已知且可接受。
+     */
+    if (isBailianHappyHorseConfigured()) {
+      try {
+        const submitted = await submitBailianHappyHorseVideo({
+          prompt: task.prompt,
+          imageUrl: await resolveProtectedTaskMediaUrl(task, imageUrl),
+          duration: task.duration,
+          resolution: task.resolution || "720p",
+        });
+        task.bailianTaskId = submitted.bailianTaskId;
+        task.model = submitted.model;
+        task.provider = "bailian";
+        task.status = "running";
+        task.startedAt = task.startedAt || new Date().toISOString();
+        await writeTask(task);
+        return;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        // 归属校验失败是用户侧终态错误,回落网关同样必败,直接抛给任务框架退分
+        if (/归属校验未通过/.test(reason)) throw error;
+        console.warn(
+          `[canvasVideoTask] 百炼 HappyHorse 提交失败,回落 OpenRouter · task=${task.taskId} · ${reason}`,
+        );
+        task.fallbackReason = reason.slice(0, 200);
+        task.bailianTaskId = undefined;
+      }
+    }
     const body = buildOpenRouterHappyHorseSubmitBody({
       prompt: task.prompt,
-      imageUrl,
+      imageUrl: await resolveProtectedTaskMediaUrl(task, imageUrl),
       aspectRatio: task.aspectRatio,
       duration: task.duration,
       resolution: task.resolution || "720p",
@@ -622,21 +679,7 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
   }
 
   if (task.engine === "wan30-wavespeed") {
-    /**
-     * 站内受保护稳定链(/api/canvas-media/…)外部供应商拿不到登录 Cookie,直接喂会 401(复审 P1-4)。
-     * 提交前在已授权的服务端把它解析回短期签名 HTTPS;任务归属本用户,签名即所有权范围内。
-     */
-    const resolveProtectedMediaUrl = async (u: string): Promise<string> => {
-      const m = String(u || "").match(/^(?:https?:\/\/[^/]+)?\/api\/canvas-media\/(.+)$/i);
-      if (!m) return u;
-      const objectPath = decodeURIComponent(m[1]);
-      // 三审 P0-3:签名前必须验 task.userId 对该对象的真实归属——与 /api/canvas-media 路由同一把尺;
-      // 未通过一律拒任务,绝不把受保护路径原样交给上游(上游也读不了,等于花钱买必败)。
-      if (!(await verifyCanvasMediaOwnership(task.userId, objectPath))) {
-        throw new Error("参考素材归属校验未通过,已拒绝提交(请用自己画布里的素材)");
-      }
-      return signGcsObjectPathV4ReadUrl(getGcsBucketName(), objectPath, 24 * 3600);
-    };
+    const resolveProtectedMediaUrl = (u: string) => resolveProtectedTaskMediaUrl(task, u);
     const images: string[] = [];
     for (const u of (task.imageUrls || []).filter(Boolean)) images.push(await resolveProtectedMediaUrl(u));
     if (!images.length && task.imageUrl) images.push(await resolveProtectedMediaUrl(task.imageUrl));
@@ -901,6 +944,25 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           videoUrl,
           current.model || "bytedance-video-upscaler",
           "wavespeed",
+        );
+      }
+
+      if (current.engine === "happyhorse-openrouter" && current.bailianTaskId) {
+        const snap = await pollBailianHappyHorseOnce(current.bailianTaskId);
+        if (snap.state === "running") {
+          current.status = activePollStatus(current);
+          current.lastTransientError = snap.status.startsWith("transient_") ? snap.status : undefined;
+          await writeTask(current);
+          return current;
+        }
+        if (snap.state === "failed") return failTask(current, snap.error);
+        // 官方产物是阿里 OSS 短期直链,镜像 GCS 再交付(存储签名铁律)
+        const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl);
+        return succeedTask(
+          current,
+          videoUrl,
+          current.model || BAILIAN_HAPPYHORSE_I2V_MODEL,
+          "bailian",
         );
       }
 
