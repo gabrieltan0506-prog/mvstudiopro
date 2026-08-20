@@ -827,15 +827,21 @@ export function buildWanReferenceRoleBlock(
       case "board":
         role = "导演板,只提供构图、运镜与动作路径参考,禁止用它锁定人物长相或服装";
         break;
-      case "asset":
-        if (e?.duty === "look") {
+      case "asset": {
+        // 三审 P1-2:类型判别只认 roleTag(@场景1/@道具1/@服装1/@角色1),
+        // labelZh 只是显示名——「断月桥」不含"场景"二字,靠名字猜必错。
+        const tag = String(e?.roleTag || "");
+        if (/^@?(场景|背景)/.test(tag)) {
+          role = `${who ? `「${who}」` : ""}场景参考,只锁空间、光色与布景,不锁定任何人物`;
+        } else if (/^@?道具/.test(tag)) {
+          role = `${who ? `「${who}」` : ""}道具参考,只锁该物件形态,不锁定任何人物`;
+        } else if (e?.duty === "look" || /^@?(服装|妆造)/.test(tag)) {
           role = `${who ? `「${who}」的` : ""}服装/妆造参考,只锁服化,不改脸型`;
-        } else if (who && /场景|道具|背景/.test(who)) {
-          role = `「${who}」场景/道具参考,只锁空间与物件,不锁定任何人物`;
         } else {
           role = `${who ? `「${who}」的` : ""}人物定妆参考,只锁脸部身份特征,不继承背景、文字或无关元素`;
         }
         break;
+      }
       default:
         role = "参考图,只继承与画面直接相关的元素,不继承背景文字与无关人物";
     }
@@ -856,6 +862,35 @@ export function newWanSubmissionKey(blockId: string): string {
       ? crypto.randomUUID().replace(/-/g, "").slice(0, 16)
       : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
   return `wan30_${blockId.replace(/[^0-9a-zA-Z_-]/g, "").slice(0, 40)}_${rand}`;
+}
+
+/** Wan 请求体构建器:抽出为纯函数,让测试能断言真实 POST 载荷(三审 P0-1) */
+export function buildWan30RequestBody(input: {
+  prompt: string;
+  images: string[];
+  aspectRatio: "9:16" | "16:9";
+  audioUrls?: string[];
+  duration?: number;
+  resolution?: string;
+  episodeIndex?: number;
+  clipIndex?: number;
+  idempotencyKey?: string;
+  seed?: number;
+}): Record<string, unknown> {
+  return {
+    prompt: input.prompt,
+    imageUrl: input.images[0],
+    imageUrls: input.images.slice(0, 10),
+    audioUrls: (input.audioUrls || []).filter(Boolean).slice(0, 5),
+    aspectRatio: input.aspectRatio,
+    duration: Math.min(30, Math.max(2, Math.floor(Number(input.duration) || 30))),
+    resolution: input.resolution || "720p",
+    generateAudio: true,
+    ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
+    ...(Number(input.clipIndex) > 0 ? { clipIndex: Number(input.clipIndex) } : {}),
+    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+    ...(Number.isFinite(Number(input.seed)) ? { seed: Math.floor(Number(input.seed)) } : {}),
+  };
 }
 
 /** Wan 3.0（公测）· WaveSpeed reference-to-video：可直出 30s；公测排队时间较长 */
@@ -887,20 +922,22 @@ async function runWan30(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({
-        // Wan 无 Seedance 的 @图片N 硬绑定语法,提示词由调用方按 Wan 口径编译,这里不再过 Seedance 渲染器(审查 P1)
-        prompt,
-        imageUrl: images[0],
-        imageUrls: images.slice(0, 10),
-        audioUrls: (opts?.audioUrls || []).filter(Boolean).slice(0, 5),
-        aspectRatio,
-        // Wan 卖点即 30s 直出；未指定时不缩水
-        duration: Math.min(30, Math.max(4, Math.floor(Number(opts?.duration) || 30))),
-        resolution: opts?.resolution || "720p",
-        generateAudio: true,
-        ...(Number(opts?.episodeIndex) > 0 ? { episodeIndex: Number(opts?.episodeIndex) } : {}),
-        ...(Number(opts?.clipIndex) > 0 ? { clipIndex: Number(opts?.clipIndex) } : {}),
-      }),
+      // 载荷统一走 buildWan30RequestBody:提交键/seed 必须真实入 POST(三审 P0-1),测试直接断言构建器输出
+      body: JSON.stringify(
+        buildWan30RequestBody({
+          // Wan 无 Seedance 的 @图片N 硬绑定语法,提示词由调用方按 Wan 口径编译,不过 Seedance 渲染器
+          prompt,
+          images,
+          aspectRatio,
+          audioUrls: opts?.audioUrls,
+          duration: opts?.duration,
+          resolution: opts?.resolution,
+          episodeIndex: opts?.episodeIndex,
+          clipIndex: opts?.clipIndex,
+          idempotencyKey: opts?.idempotencyKey,
+          seed: opts?.seed,
+        }),
+      ),
     }),
   );
   const text = await res.text();

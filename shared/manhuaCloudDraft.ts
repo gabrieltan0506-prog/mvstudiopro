@@ -42,6 +42,10 @@ export type ManhuaCloudDraftCanvasBlock = {
   refImageUrl?: string;
   /** 关键静帧融图参考（含站点相对 /manhua-* 路径） */
   editFusionUrls?: string[];
+  /** 微调遮罩(三审 P1-1:不落它=换机后局部改图参考全丢) */
+  editMaskUrl?: string;
+  /** 上段末帧续拍锚(三审 P1-1) */
+  lastFrameUrl?: string;
   imageMode?: string;
   aspectRatio?: string;
   /**
@@ -159,6 +163,9 @@ export function sanitizeManhuaCloudDraftBlock(raw: unknown): ManhuaCloudDraftCan
       refImageUrl: isPersistableAssetUrl(b.refImageUrl)
         ? String(b.refImageUrl).trim()
         : undefined,
+      lastFrameUrl: isPersistableAssetUrl(b.lastFrameUrl)
+        ? String(b.lastFrameUrl).trim()
+        : undefined,
     };
   }
 
@@ -182,6 +189,8 @@ export function sanitizeManhuaCloudDraftBlock(raw: unknown): ManhuaCloudDraftCan
     outputUrls: outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
     refImageUrl,
     editFusionUrls: editFusionUrls.length ? editFusionUrls : undefined,
+    editMaskUrl: isPersistableAssetUrl(b.editMaskUrl) ? String(b.editMaskUrl).trim() : undefined,
+    lastFrameUrl: isPersistableAssetUrl(b.lastFrameUrl) ? String(b.lastFrameUrl).trim() : undefined,
   };
 }
 

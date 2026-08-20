@@ -428,66 +428,18 @@ async function startServer() {
    * (所有权按引用判定,带 60s 内存缓存)。generated/ 前缀还有其他功能的产物,
    * 任何"任意已登录用户可续签任意路径"的口子都不留。
    */
-  const canvasMediaDraftCache = new Map<number, { paths: Set<string>; ts: number }>();
   app.get(/^\/api\/canvas-media\/(.+)$/, async (req, res) => {
     try {
       const objectPath = decodeURIComponent(String(req.params[0] || ""));
-      // 白名单:仅 generated/ 前缀的图片对象;防路径穿越/防签任意对象
-      if (
-        !/^generated\/[A-Za-z0-9_\/-]+\/[A-Za-z0-9_.-]+\.(png|jpg|jpeg|webp)$/.test(objectPath) ||
-        objectPath.includes("..")
-      ) {
-        return res.status(404).json({ error: "not found" });
-      }
       const { sdk } = await import("./sdk");
       const user = await sdk.authenticateRequest(req as any, { silentMissing: true }).catch(() => null);
       const userId = Number((user as any)?.id);
       if (!Number.isFinite(userId) || userId <= 0) {
         return res.status(401).json({ error: "unauthorized" });
       }
-      const now = Date.now();
-      let entry = canvasMediaDraftCache.get(userId);
-      if (!entry || now - entry.ts > 60_000) {
-        const paths = new Set<string>();
-        try {
-          const { downloadGcsObject, getGcsBucketName } = await import("../services/gcs");
-          const { buffer } = await downloadGcsObject({
-            gcsUri: `gs://${getGcsBucketName()}/manhua-cloud-drafts/user-${userId}.json`,
-          });
-          // 复审 P2-8:所有权只认草稿结构里的资产字段,不认"字符串在 JSON 里出现过"
-          // (prompt/outputText 里贴一个别人的路径不构成所有权)
-          const collect = (u: unknown) => {
-            const m = String(u || "").match(
-              /(?:^|\/api\/canvas-media\/|storage\.googleapis\.com\/[^/]+\/)(generated\/[A-Za-z0-9_\/-]+\/[A-Za-z0-9_.%-]+\.(?:png|jpe?g|webp))/i,
-            );
-            if (m) paths.add(decodeURIComponent(m[1]));
-          };
-          try {
-            const wrapper = JSON.parse(buffer.toString("utf8")) as {
-              payloadJson?: string;
-              payload?: unknown;
-            };
-            const payloadRaw =
-              typeof wrapper.payloadJson === "string" ? JSON.parse(wrapper.payloadJson) : wrapper.payload ?? wrapper;
-            const blocks = (payloadRaw as { canvas?: { blocks?: unknown[] } })?.canvas?.blocks || [];
-            for (const blk of blocks as Array<Record<string, unknown>>) {
-              collect(blk.outputUrl);
-              collect(blk.refImageUrl);
-              collect(blk.editMaskUrl);
-              collect(blk.lastFrameUrl);
-              for (const u of Array.isArray(blk.outputUrls) ? blk.outputUrls : []) collect(u);
-              for (const u of Array.isArray(blk.editFusionUrls) ? blk.editFusionUrls : []) collect(u);
-            }
-          } catch {
-            /* 草稿解析失败 = 空集,一律 403;不退回全文匹配 */
-          }
-        } catch {
-          /* 无快照 = 空集,一律 403 */
-        }
-        entry = { paths, ts: now };
-        canvasMediaDraftCache.set(userId, entry);
-      }
-      if (!entry.paths.has(objectPath)) {
+      // 所有权判定与 worker 同源同尺(server/services/canvasMediaOwnership.ts,三审 P0-3)
+      const { verifyCanvasMediaOwnership } = await import("../services/canvasMediaOwnership");
+      if (!(await verifyCanvasMediaOwnership(userId, objectPath))) {
         return res.status(403).json({ error: "forbidden" });
       }
       const { signGcsObjectPathV4ReadUrl, getGcsBucketName } = await import("../services/gcs");

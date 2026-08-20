@@ -294,7 +294,7 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
     expect(a.taskId).toBe(b.taskId);
   });
 
-  it("幂等：既有任务已 failed（已退分）→ 同键放行重开为新任务", async () => {
+  it("幂等：既有任务已 failed（已退分）→ 同键仍还原任务,不重开不重打上游(三审 P0-2)", async () => {
     const m = await mod();
     const first = await m.createCanvasVideoTask({
       userId: 7,
@@ -318,8 +318,10 @@ describe("canvasVideoTask 超时对账 + 幂等", () => {
       duration: 5,
       idempotencyKey: "client-key-2",
     });
-    expect(second.taskId).not.toBe(first.taskId);
-    expect(registerActiveJob).toHaveBeenCalledTimes(2);
+    // failed 已退分:同键重开=免费重跑计费漏洞;重试语义交给客户端换新提交键
+    expect(second.taskId).toBe(first.taskId);
+    expect(second.status).toBe("failed");
+    expect(registerActiveJob).toHaveBeenCalledTimes(1);
   });
 
   it("超分任务走同一状态机：submit 拿 predictionId，结果写 videoUrl、原片字段不动", async () => {

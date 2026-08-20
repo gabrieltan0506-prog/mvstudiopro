@@ -21,6 +21,8 @@ describe("manhuaCloudDraft · 稳定图链与任务字段往返", () => {
       prompt: "p",
       outputUrl: stableUrl,
       outputUrls: [stableUrl],
+      editMaskUrl: stableUrl,
+      lastFrameUrl: stableUrl,
       videoTaskId: "cv_abc",
       videoTaskEngine: "wan-3.0",
       videoTaskStatus: "running",
@@ -30,6 +32,9 @@ describe("manhuaCloudDraft · 稳定图链与任务字段往返", () => {
     expect(out?.videoTaskId).toBe("cv_abc");
     expect(out?.videoTaskEngine).toBe("wan-3.0");
     expect(out?.videoTaskStatus).toBe("running");
+    // 三审 P1-1:遮罩与末帧续拍锚同样必须存活
+    expect(out?.editMaskUrl).toBe(stableUrl);
+    expect(out?.lastFrameUrl).toBe(stableUrl);
   });
 
   it("serialize → parse 全程往返不丢字段", () => {

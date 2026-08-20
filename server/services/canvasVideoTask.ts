@@ -55,6 +55,7 @@ import {
 import type { WavespeedUpscaleTarget } from "../../shared/wavespeedVideoUpscaleModels.js";
 import { pollWavespeedWanOnce, submitWavespeedWanVideo } from "./wavespeedWanVideo.js";
 import { getGcsBucketName, signGcsObjectPathV4ReadUrl } from "./gcs.js";
+import { verifyCanvasMediaOwnership } from "./canvasMediaOwnership.js";
 import {
   SEEDANCE_EVOLINK_CONTENT_FILTER,
   type SeedanceEvolinkMode,
@@ -625,19 +626,24 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
      * 站内受保护稳定链(/api/canvas-media/…)外部供应商拿不到登录 Cookie,直接喂会 401(复审 P1-4)。
      * 提交前在已授权的服务端把它解析回短期签名 HTTPS;任务归属本用户,签名即所有权范围内。
      */
-    const resolveProtectedMediaUrl = (u: string): string => {
+    const resolveProtectedMediaUrl = async (u: string): Promise<string> => {
       const m = String(u || "").match(/^(?:https?:\/\/[^/]+)?\/api\/canvas-media\/(.+)$/i);
       if (!m) return u;
       const objectPath = decodeURIComponent(m[1]);
-      if (!/^generated\//.test(objectPath) || objectPath.includes("..")) return u;
+      // 三审 P0-3:签名前必须验 task.userId 对该对象的真实归属——与 /api/canvas-media 路由同一把尺;
+      // 未通过一律拒任务,绝不把受保护路径原样交给上游(上游也读不了,等于花钱买必败)。
+      if (!(await verifyCanvasMediaOwnership(task.userId, objectPath))) {
+        throw new Error("参考素材归属校验未通过,已拒绝提交(请用自己画布里的素材)");
+      }
       return signGcsObjectPathV4ReadUrl(getGcsBucketName(), objectPath, 24 * 3600);
     };
-    const images = (task.imageUrls || []).filter(Boolean).map(resolveProtectedMediaUrl);
-    if (!images.length && task.imageUrl) images.push(resolveProtectedMediaUrl(task.imageUrl));
+    const images: string[] = [];
+    for (const u of (task.imageUrls || []).filter(Boolean)) images.push(await resolveProtectedMediaUrl(u));
+    if (!images.length && task.imageUrl) images.push(await resolveProtectedMediaUrl(task.imageUrl));
     const submitted = await submitWavespeedWanVideo({
       prompt: task.prompt,
       imageUrls: images,
-      audioUrls: (task.audioUrls || []).map(resolveProtectedMediaUrl),
+      audioUrls: await Promise.all((task.audioUrls || []).map((u) => resolveProtectedMediaUrl(u))),
       duration: task.duration,
       resolution: task.resolution || "720p",
       aspectRatio: task.aspectRatio,
@@ -1029,17 +1035,10 @@ export async function createCanvasVideoTask(input: {
         const mappedId = String(raw.taskId || "").trim();
         if (mappedId) {
           const existing = await readTask(mappedId);
-          if (existing && existing.status === "failed") {
-            // 既有任务已终态失败（已退分）：这是一次全新的付费重试，换新 taskId 重开
-            // tmp+rename 原子替换，并发读不到半截内容
-            const reopenTmp = `${mapFile}.tmp.${process.pid}.${taskId}`;
-            await fs.writeFile(
-              reopenTmp,
-              JSON.stringify({ taskId, userId: input.userId, createdAt: now }),
-            );
-            await fs.rename(reopenTmp, mapFile);
-          } else if (existing) {
-            // 同键重复请求：直接还既有任务，不重复扣费、不重复提交上游
+          if (existing) {
+            // 同键一律还既有任务——包括 failed(三审 P0-2):failed 已退分,若同键重开会
+            // 命中旧扣费记录不再扣钱却再次真金白银打上游 = 免费重跑计费漏洞。
+            // 用户主动重试必须由客户端换新提交键(newWanSubmissionKey),新键=新扣费=新任务。
             return existing;
           } else {
             // 映射在、任务文件没写成（上一次在两写之间崩了）：沿用同一 taskId 补完创建
