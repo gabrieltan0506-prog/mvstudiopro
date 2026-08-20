@@ -1744,6 +1744,62 @@ export default function OmniCanvas() {
   /** 自动备份去重标记：上次自动上云的快照序列化；手动上传后清空，让下个周期重新校准 */
   const lastAutoBackupSerializedRef = useRef("");
   const autoBackupInFlightRef = useRef(false);
+  /** 快照体检:节点数/图片数,备份收据与回填对比都用它(0820 用户拍板:凭证防争执) */
+  const countDraftPayloadStats = useCallback((payload: { canvas?: { blocks?: unknown[] } }) => {
+    const blocks = (payload?.canvas?.blocks || []) as Array<Record<string, unknown>>;
+    let images = 0;
+    for (const b of blocks) {
+      const urls = new Set<string>();
+      for (const u of [b.outputUrl, b.refImageUrl, ...(Array.isArray(b.outputUrls) ? b.outputUrls : []), ...(Array.isArray(b.editFusionUrls) ? b.editFusionUrls : [])]) {
+        const v = String(u || "").trim();
+        if (v) urls.add(v);
+      }
+      images += urls.size;
+    }
+    return { nodes: blocks.length, images };
+  }, []);
+  /** 倒出:工作区快照下载成本机文件(与云备份同一载荷,可再导入) */
+  const exportBackupFile = useCallback(() => {
+    const snap = latestDraftSnapshotRef.current;
+    if (!snap) {
+      toast.error("当前没有可导出的工作区内容");
+      return;
+    }
+    try {
+      const payload = buildLocalCloudDraftSnapshot(snap);
+      const stats = countDraftPayloadStats(payload);
+      const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `漫剧工作区备份-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      toast.success(`已导出备份文件:节点 ${stats.nodes} 个、图片 ${stats.images} 张`);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "导出失败");
+    }
+  }, [countDraftPayloadStats]);
+  /** 从本机备份文件导入(与云端回填同一条恢复通道,带对比确认) */
+  const importBackupFile = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const draft = JSON.parse(String(reader.result || ""));
+        if (!draft?.canvas?.blocks) throw new Error("备份文件格式不对");
+        const stats = countDraftPayloadStats(draft);
+        const at = String(draft.clientUpdatedAt || "").slice(0, 16) || "未知时间";
+        const cur = latestDraftSnapshotRef.current;
+        const curStats = cur ? countDraftPayloadStats(buildLocalCloudDraftSnapshot(cur)) : null;
+        const curLine = curStats ? `;当前工作区:节点 ${curStats.nodes}、图 ${curStats.images}` : "";
+        if (!window.confirm(`将用备份文件(${at},节点 ${stats.nodes}、图 ${stats.images}${curLine})覆盖当前工作区。确定导入?`)) return;
+        applyCloudDraftToUi(draft);
+        toast.success("已从备份文件回填");
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? e.message : "备份文件解析失败");
+      }
+    };
+    reader.readAsText(file);
+  }, [countDraftPayloadStats, applyCloudDraftToUi]);
   const uploadCloudBackupNow = useCallback(async () => {
     if (cloudBackupBusy) return;
     const snap = latestDraftSnapshotRef.current;
@@ -1753,17 +1809,19 @@ export default function OmniCanvas() {
     }
     setCloudBackupBusy("upload");
     try {
-      await syncCloudDraftPayload(buildLocalCloudDraftSnapshot(snap));
+      const payload = buildLocalCloudDraftSnapshot(snap);
+      await syncCloudDraftPayload(payload);
       lastAutoBackupSerializedRef.current = "";
-      toast.success("已上传备份到云端");
+      const stats = countDraftPayloadStats(payload);
+      toast.success(`备份完成:节点 ${stats.nodes} 个、图片 ${stats.images} 张已入云端`);
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "备份上传失败，请稍后重试");
     } finally {
       setCloudBackupBusy(null);
     }
-  }, [cloudBackupBusy, syncCloudDraftPayload]);
+  }, [cloudBackupBusy, syncCloudDraftPayload, countDraftPayloadStats]);
   /**
-   * 自动云备份（2026-08-13 用户拍板：半小时自动刷新一次，防当机/断线丢档；
+   * 自动云备份（2026-08-20 用户拍板：15 分钟检查一次,有新增图片/节点才上云,没新增不动；
    * 覆盖旧「只有用户点上传才存云」口径）。内容没变或上一发在途就跳过；
    * 失败静默，下个周期自然重试——不拿报错打扰创作。
    */
@@ -1793,7 +1851,7 @@ export default function OmniCanvas() {
     };
     const timer = window.setInterval(() => {
       void tick();
-    }, 30 * 60 * 1000);
+    }, 15 * 60 * 1000);
     return () => window.clearInterval(timer);
   }, [syncCloudDraftPayload]);
   const restoreCloudBackupNow = useCallback(async () => {
@@ -1808,9 +1866,15 @@ export default function OmniCanvas() {
         return;
       }
       const at = String(draft.clientUpdatedAt || "").slice(0, 16) || "未知时间";
+      const cloudStats = countDraftPayloadStats(draft);
+      const cur = latestDraftSnapshotRef.current;
+      const curStats = cur ? countDraftPayloadStats(buildLocalCloudDraftSnapshot(cur)) : null;
+      const compareLine = curStats
+        ? `\n当前工作区:节点 ${curStats.nodes} 个、图 ${curStats.images} 张 → 云端快照:节点 ${cloudStats.nodes} 个、图 ${cloudStats.images} 张`
+        : "";
       if (
         !window.confirm(
-          `将用云端备份（${at}）覆盖当前工作区，本机未上传的改动会丢失。确定回填？`,
+          `将用云端备份（${at}）覆盖当前工作区，本机未上传的改动会丢失。${compareLine}\n确定回填？`,
         )
       ) {
         return;
@@ -1822,7 +1886,7 @@ export default function OmniCanvas() {
     } finally {
       setCloudBackupBusy(null);
     }
-  }, [cloudBackupBusy, cloudDraftQuery, applyCloudDraftToUi]);
+  }, [cloudBackupBusy, cloudDraftQuery, applyCloudDraftToUi, countDraftPayloadStats]);
 
   /** 登录后：云端与本机比新，胜出方驱动 UI，并补写较弱一侧 */
   useEffect(() => {
@@ -6788,26 +6852,48 @@ export default function OmniCanvas() {
               )}
               <div className="flex flex-wrap items-center gap-2">
                 {canvasMode === "manhua" ? (
-                  <>
-                    <button
-                      type="button"
-                      disabled={cloudBackupBusy != null || !cloudSyncReady || factoryBusy || writerBusy}
+                  /* 备份中心(0820 用户拍板):备份/倒出/回填坐一起,随时可选;15 分钟自动增量备份兜底 */
+                  <div className="relative" data-canvas-backup-menu>
+                    <select
+                      value=""
+                      disabled={cloudBackupBusy != null || factoryBusy || writerBusy}
                       className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] text-white/70 hover:bg-white/10 disabled:opacity-40"
-                      title="把当前工作区手动存到云端；系统不再自动备份"
-                      onClick={() => void uploadCloudBackupNow()}
+                      title="备份/回填中心:上传云端、回填云端、导出/导入本机文件;每 15 分钟自动检查,有新增图片或节点才自动备份"
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        e.target.value = "";
+                        if (v === "upload") void uploadCloudBackupNow();
+                        else if (v === "restore") void restoreCloudBackupNow();
+                        else if (v === "export") exportBackupFile();
+                        else if (v === "import") {
+                          const input = document.createElement("input");
+                          input.type = "file";
+                          input.accept = "application/json";
+                          input.onchange = () => {
+                            const f = input.files?.[0];
+                            if (f) importBackupFile(f);
+                          };
+                          input.click();
+                        }
+                      }}
                     >
-                      {cloudBackupBusy === "upload" ? "备份中…" : "上传备份"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={cloudBackupBusy != null || !cloudSyncReady || factoryBusy || writerBusy}
-                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] text-white/70 hover:bg-white/10 disabled:opacity-40"
-                      title="用云端备份覆盖当前工作区（会先确认）"
-                      onClick={() => void restoreCloudBackupNow()}
-                    >
-                      {cloudBackupBusy === "restore" ? "回填中…" : "回填备份"}
-                    </button>
-                  </>
+                      <option value="" disabled>
+                        {cloudBackupBusy === "upload"
+                          ? "备份中…"
+                          : cloudBackupBusy === "restore"
+                            ? "回填中…"
+                            : "备份 / 回填"}
+                      </option>
+                      <option value="upload" disabled={!cloudSyncReady}>
+                        立即备份到云端
+                      </option>
+                      <option value="restore" disabled={!cloudSyncReady}>
+                        从云端回填(先对比确认)
+                      </option>
+                      <option value="export">导出备份文件到本机</option>
+                      <option value="import">从本机备份文件导入</option>
+                    </select>
+                  </div>
                 ) : null}
                 {canShowCanvasDebug ? (
                   <button
