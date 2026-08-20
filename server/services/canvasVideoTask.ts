@@ -54,6 +54,7 @@ import {
 } from "./wavespeedVideoUpscale.js";
 import type { WavespeedUpscaleTarget } from "../../shared/wavespeedVideoUpscaleModels.js";
 import { pollWavespeedWanOnce, submitWavespeedWanVideo } from "./wavespeedWanVideo.js";
+import { getGcsBucketName, signGcsObjectPathV4ReadUrl } from "./gcs.js";
 import {
   SEEDANCE_EVOLINK_CONTENT_FILTER,
   type SeedanceEvolinkMode,
@@ -620,12 +621,23 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
   }
 
   if (task.engine === "wan30-wavespeed") {
-    const images = (task.imageUrls || []).filter(Boolean);
-    if (!images.length && task.imageUrl) images.push(task.imageUrl);
+    /**
+     * 站内受保护稳定链(/api/canvas-media/…)外部供应商拿不到登录 Cookie,直接喂会 401(复审 P1-4)。
+     * 提交前在已授权的服务端把它解析回短期签名 HTTPS;任务归属本用户,签名即所有权范围内。
+     */
+    const resolveProtectedMediaUrl = (u: string): string => {
+      const m = String(u || "").match(/^(?:https?:\/\/[^/]+)?\/api\/canvas-media\/(.+)$/i);
+      if (!m) return u;
+      const objectPath = decodeURIComponent(m[1]);
+      if (!/^generated\//.test(objectPath) || objectPath.includes("..")) return u;
+      return signGcsObjectPathV4ReadUrl(getGcsBucketName(), objectPath, 24 * 3600);
+    };
+    const images = (task.imageUrls || []).filter(Boolean).map(resolveProtectedMediaUrl);
+    if (!images.length && task.imageUrl) images.push(resolveProtectedMediaUrl(task.imageUrl));
     const submitted = await submitWavespeedWanVideo({
       prompt: task.prompt,
       imageUrls: images,
-      audioUrls: task.audioUrls || [],
+      audioUrls: (task.audioUrls || []).map(resolveProtectedMediaUrl),
       duration: task.duration,
       resolution: task.resolution || "720p",
       aspectRatio: task.aspectRatio,

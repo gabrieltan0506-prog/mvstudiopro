@@ -1,4 +1,5 @@
 import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, type CanvasBlock } from "./canvasTypes";
+import { isLocalMediaPointer, resolveUrlForCloudSync } from "./manhuaLocalMediaStore";
 import { withFlyHealthGate } from "./flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "./longJobsFlyOrigin";
 import { probeVideoDurationSec } from "./videoUpscaleApi";
@@ -211,8 +212,15 @@ async function toHttpsImageUrls(
 ): Promise<string[]> {
   const out: string[] = [];
   for (let i = 0; i < urls.length; i++) {
-    const u = String(urls[i] || "").trim();
+    let u = String(urls[i] || "").trim();
     if (!u) continue;
+    // 回填后节点常见 blob:/local-media: 展示地址:先溯源到 https 原链再编译,
+    // 否则这些参考会被静默丢掉(复审 P1-4)
+    if (u.startsWith("blob:") || isLocalMediaPointer(u)) {
+      const traced = resolveUrlForCloudSync(u);
+      if (traced) u = traced;
+      else continue;
+    }
     if (/^https?:\/\//i.test(u)) {
       out.push(u);
       continue;
@@ -732,9 +740,6 @@ async function runHailuo3(
     /** 漫剧集号／段号：服务端据此走整集折算段价 */
     episodeIndex?: number;
     clipIndex?: number;
-    idempotencyKey?: string;
-    seed?: number;
-    onTaskId?: (taskId: string) => void;
   },
 ): Promise<string> {
   const hailuoUrl = withLongJobsFlyDirect("/api/jobs?op=hailuo3Video");
@@ -759,8 +764,6 @@ async function runHailuo3(
         generateAudio: true,
         ...(Number(opts?.episodeIndex) > 0 ? { episodeIndex: Number(opts?.episodeIndex) } : {}),
         ...(Number(opts?.clipIndex) > 0 ? { clipIndex: Number(opts?.clipIndex) } : {}),
-        ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
-        ...(Number.isFinite(Number(opts?.seed)) ? { seed: Math.floor(Number(opts?.seed)) } : {}),
       }),
     }),
   );
@@ -787,49 +790,72 @@ async function runHailuo3(
   }
   if (json.videoUrl) return String(json.videoUrl);
   if (json.taskId) {
-    try {
-      opts?.onTaskId?.(String(json.taskId));
-    } catch {
-      /* 回写失败不阻塞生成 */
-    }
-    try {
-      // Wan 公测排队以小时计:前端轮询期限对齐后端(3h)+缓冲
-      const polled = await pollCanvasVideoTask(json.taskId, { timeoutMs: 200 * 60_000 });
-      return polled.videoUrl;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      // 不把仍在跑的任务谎报成失败:把单号交给用户,后端照常生成与对账
-      throw new Error(`${msg}(任务仍在后台生成,单号 ${json.taskId},勿重复提交)`);
-    }
+    const polled = await pollCanvasVideoTask(json.taskId);
+    return polled.videoUrl;
   }
   throw new Error(json.error || json.message || "成片生成失败");
 }
 
-/** Wan 参考图职责表:Wan 没有 @图片N 绑定语法,按数组顺序用自然语言声明每张图的唯一职责(审查 P1) */
+/**
+ * Wan 参考图职责表:Wan 没有 @图片N 绑定语法,按数组顺序用自然语言声明每张图的唯一职责。
+ * 复审 P1-5:必须吃满 bind plan 元数据——导演板只管构图运镜绝不锁脸;
+ * 定妆按 duty 分 identity(只锁脸)/look(只锁服化),并点名 labelZh/roleTag;静帧带秒段。
+ */
 export function buildWanReferenceRoleBlock(
   images: string[],
-  entries: Array<{ url: string; kind?: string }>,
+  entries: Array<{
+    url: string;
+    kind?: string;
+    roleTag?: string;
+    labelZh?: string;
+    duty?: "identity" | "look" | null;
+    slotZh?: string | null;
+  }>,
 ): string {
   if (!images.length) return "";
   const lines = images.map((u, i) => {
-    const kind = entries.find((e) => e.url === u)?.kind || "";
-    const role =
-      kind === "tail"
-        ? "上一段末帧,仅作起幅衔接参考,不继承其中文字与瑕疵"
-        : kind === "still"
-          ? "本段关键静帧,锁定人物、构图与动作结果"
-          : "角色/场景定妆参考,只锁定外观身份,不继承背景、文字或无关元素";
+    const e = entries.find((x) => x.url === u);
+    const who = String(e?.labelZh || e?.roleTag || "").trim();
+    let role: string;
+    switch (e?.kind) {
+      case "tail":
+        role = "上一段末帧,仅作起幅衔接参考,不继承其中文字与瑕疵,不锁定任何身份";
+        break;
+      case "still":
+        role = `本段关键静帧${e?.slotZh ? `(${e.slotZh})` : ""},锁定构图与动作结果`;
+        break;
+      case "board":
+        role = "导演板,只提供构图、运镜与动作路径参考,禁止用它锁定人物长相或服装";
+        break;
+      case "asset":
+        if (e?.duty === "look") {
+          role = `${who ? `「${who}」的` : ""}服装/妆造参考,只锁服化,不改脸型`;
+        } else if (who && /场景|道具|背景/.test(who)) {
+          role = `「${who}」场景/道具参考,只锁空间与物件,不锁定任何人物`;
+        } else {
+          role = `${who ? `「${who}」的` : ""}人物定妆参考,只锁脸部身份特征,不继承背景、文字或无关元素`;
+        }
+        break;
+      default:
+        role = "参考图,只继承与画面直接相关的元素,不继承背景文字与无关人物";
+    }
     return `Reference image ${i + 1}:${role}`;
   });
-  return `【参考图职责】\n${lines.join("\n")}\n每张参考图只承担上述唯一职责,人物身份必须与对应参考图完全一致,禁止串位、换脸、混合身份。`;
+  return `【参考图职责】\n${lines.join("\n")}\n每张参考图只承担上述唯一职责,人物身份必须与对应人物定妆图完全一致,禁止串位、换脸、混合身份。`;
 }
 
-/** 简易稳定散列:节点+内容 → 幂等键,重试复用同键防重复扣费 */
-export function stableWanIdempotencyKey(blockId: string, prompt: string, images: string[]): string {
-  const src = `${blockId}|${prompt}|${images.join(",")}`;
-  let h = 5381;
-  for (let i = 0; i < src.length; i++) h = ((h << 5) + h + src.charCodeAt(i)) >>> 0;
-  return `wan30_${blockId.replace(/[^0-9a-zA-Z_-]/g, "").slice(0, 40)}_${h.toString(36)}`;
+/**
+ * 单次用户提交 ID(复审 P0-2):每次点击生成都必须换新键。
+ * 内容散列键的坑:上一单 failed 已退款后,同内容重跑会命中旧扣费记录(alreadyCharged),
+ * 却再次真金白银打上游 = 免费重跑计费漏洞。改为一次提交一键:
+ * 同一次 POST 的传输层重试天然复用同一请求;用户再点一次 = 新键 = 重新扣费。
+ */
+export function newWanSubmissionKey(blockId: string): string {
+  const rand =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID().replace(/-/g, "").slice(0, 16)
+      : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  return `wan30_${blockId.replace(/[^0-9a-zA-Z_-]/g, "").slice(0, 40)}_${rand}`;
 }
 
 /** Wan 3.0（公测）· WaveSpeed reference-to-video：可直出 30s；公测排队时间较长 */
@@ -874,8 +900,6 @@ async function runWan30(
         generateAudio: true,
         ...(Number(opts?.episodeIndex) > 0 ? { episodeIndex: Number(opts?.episodeIndex) } : {}),
         ...(Number(opts?.clipIndex) > 0 ? { clipIndex: Number(opts?.clipIndex) } : {}),
-        ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
-        ...(Number.isFinite(Number(opts?.seed)) ? { seed: Math.floor(Number(opts?.seed)) } : {}),
       }),
     }),
   );
@@ -930,9 +954,6 @@ async function runHappyHorse(
     resolution?: string;
     episodeIndex?: number;
     clipIndex?: number;
-    idempotencyKey?: string;
-    seed?: number;
-    onTaskId?: (taskId: string) => void;
   },
 ): Promise<string> {
   const hhUrl = withLongJobsFlyDirect("/api/jobs?op=happyHorseVideo");
@@ -952,8 +973,6 @@ async function runHappyHorse(
         resolution,
         ...(Number(opts?.episodeIndex) > 0 ? { episodeIndex: Number(opts?.episodeIndex) } : {}),
         ...(Number(opts?.clipIndex) > 0 ? { clipIndex: Number(opts?.clipIndex) } : {}),
-        ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
-        ...(Number.isFinite(Number(opts?.seed)) ? { seed: Math.floor(Number(opts?.seed)) } : {}),
       }),
     }),
   );
@@ -980,20 +999,8 @@ async function runHappyHorse(
   }
   if (json.videoUrl) return String(json.videoUrl);
   if (json.taskId) {
-    try {
-      opts?.onTaskId?.(String(json.taskId));
-    } catch {
-      /* 回写失败不阻塞生成 */
-    }
-    try {
-      // Wan 公测排队以小时计:前端轮询期限对齐后端(3h)+缓冲
-      const polled = await pollCanvasVideoTask(json.taskId, { timeoutMs: 200 * 60_000 });
-      return polled.videoUrl;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      // 不把仍在跑的任务谎报成失败:把单号交给用户,后端照常生成与对账
-      throw new Error(`${msg}(任务仍在后台生成,单号 ${json.taskId},勿重复提交)`);
-    }
+    const polled = await pollCanvasVideoTask(json.taskId);
+    return polled.videoUrl;
   }
   throw new Error(json.error || json.message || "成片生成失败");
 }
@@ -1529,7 +1536,9 @@ export async function runCanvasBlock(
               ? HAPPYHORSE_REFERENCE_MAX.image
               : useHailuoH3
                 ? HAILUO_REFERENCE_MAX.image
-                : SEEDANCE_REFERENCE_MAX.image,
+                : useWan30
+                  ? 10
+                  : SEEDANCE_REFERENCE_MAX.image,
             boardUrl: boardUrl || null,
           })
         : null;
@@ -1637,7 +1646,7 @@ export async function runCanvasBlock(
           resolution: block.videoResolution,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
-          idempotencyKey: stableWanIdempotencyKey(block.id, wanPrompt, wanImages),
+          idempotencyKey: newWanSubmissionKey(block.id),
           onTaskId: (taskId) =>
             deps.onVideoTaskCreated?.(block.id, { taskId, engine: "wan-3.0" }),
         });

@@ -1905,10 +1905,15 @@ export default function OmniCanvas() {
     setCloudBackupBusy("upload");
     try {
       const payload = buildLocalCloudDraftSnapshot(snap);
-      await syncCloudDraftPayload(payload);
+      const confirmed = await syncCloudDraftPayload(payload);
       lastAutoBackupSerializedRef.current = "";
       const stats = countDraftPayloadStats(payload);
-      toast.success(`备份完成:节点 ${stats.nodes} 个、图片 ${stats.images} 张已入云端`);
+      if (confirmed) {
+        toast.success(`备份完成:节点 ${stats.nodes} 个、图片 ${stats.images} 张已入云端`);
+      } else {
+        // false = 走了兜底通道,成败未知——不许把"未知"谎报成"已入云端"(复审 P1-6)
+        toast.message("备份已转入备用通道处理,完成前请勿视为已入云;稍后可再点一次确认");
+      }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "备份上传失败，请稍后重试");
     } finally {

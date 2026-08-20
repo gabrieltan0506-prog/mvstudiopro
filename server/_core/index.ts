@@ -454,10 +454,33 @@ async function startServer() {
           const { buffer } = await downloadGcsObject({
             gcsUri: `gs://${getGcsBucketName()}/manhua-cloud-drafts/user-${userId}.json`,
           });
-          const raw = buffer.toString("utf8");
-          const re = /generated\/[A-Za-z0-9_\/-]+\/[A-Za-z0-9_.-]+\.(?:png|jpe?g|webp)/g;
-          let m: RegExpExecArray | null;
-          while ((m = re.exec(raw))) paths.add(m[0]);
+          // 复审 P2-8:所有权只认草稿结构里的资产字段,不认"字符串在 JSON 里出现过"
+          // (prompt/outputText 里贴一个别人的路径不构成所有权)
+          const collect = (u: unknown) => {
+            const m = String(u || "").match(
+              /(?:^|\/api\/canvas-media\/|storage\.googleapis\.com\/[^/]+\/)(generated\/[A-Za-z0-9_\/-]+\/[A-Za-z0-9_.%-]+\.(?:png|jpe?g|webp))/i,
+            );
+            if (m) paths.add(decodeURIComponent(m[1]));
+          };
+          try {
+            const wrapper = JSON.parse(buffer.toString("utf8")) as {
+              payloadJson?: string;
+              payload?: unknown;
+            };
+            const payloadRaw =
+              typeof wrapper.payloadJson === "string" ? JSON.parse(wrapper.payloadJson) : wrapper.payload ?? wrapper;
+            const blocks = (payloadRaw as { canvas?: { blocks?: unknown[] } })?.canvas?.blocks || [];
+            for (const blk of blocks as Array<Record<string, unknown>>) {
+              collect(blk.outputUrl);
+              collect(blk.refImageUrl);
+              collect(blk.editMaskUrl);
+              collect(blk.lastFrameUrl);
+              for (const u of Array.isArray(blk.outputUrls) ? blk.outputUrls : []) collect(u);
+              for (const u of Array.isArray(blk.editFusionUrls) ? blk.editFusionUrls : []) collect(u);
+            }
+          } catch {
+            /* 草稿解析失败 = 空集,一律 403;不退回全文匹配 */
+          }
         } catch {
           /* 无快照 = 空集,一律 403 */
         }
