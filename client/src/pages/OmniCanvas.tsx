@@ -1755,7 +1755,7 @@ export default function OmniCanvas() {
     let images = 0;
     for (const b of blocks) {
       const urls = new Set<string>();
-      for (const u of [b.outputUrl, b.refImageUrl, ...(Array.isArray(b.outputUrls) ? b.outputUrls : []), ...(Array.isArray(b.editFusionUrls) ? b.editFusionUrls : [])]) {
+      for (const u of [b.outputUrl, b.refImageUrl, b.editMaskUrl, b.lastFrameUrl, ...(Array.isArray(b.outputUrls) ? b.outputUrls : []), ...(Array.isArray(b.editFusionUrls) ? b.editFusionUrls : [])]) {
         const v = String(u || "").trim();
         if (v) urls.add(v);
       }
@@ -1783,7 +1783,7 @@ export default function OmniCanvas() {
       zip.file("snapshot.json", JSON.stringify(payload));
       const urls = new Set<string>();
       for (const b of (payload.canvas?.blocks || []) as Array<Record<string, unknown>>) {
-        for (const u of [b.outputUrl, b.refImageUrl, ...(Array.isArray(b.outputUrls) ? b.outputUrls : []), ...(Array.isArray(b.editFusionUrls) ? b.editFusionUrls : [])]) {
+        for (const u of [b.outputUrl, b.refImageUrl, b.editMaskUrl, b.lastFrameUrl, ...(Array.isArray(b.outputUrls) ? b.outputUrls : []), ...(Array.isArray(b.editFusionUrls) ? b.editFusionUrls : [])]) {
           const v = String(u || "").trim();
           if (v) urls.add(v);
         }

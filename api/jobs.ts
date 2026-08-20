@@ -3622,6 +3622,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
+      // 四审 P0-1:成图所有权在交付时由服务端登记,登记需要真实 userId → 出图要求登录
+      const imageViewer = await resolveJobUser(req);
+      if (!imageViewer) {
+        return res.status(401).json({ ok: false, error: "请先登录后再出图" });
+      }
       const prompt = s(b.prompt || b.scenePrompt || "").trim();
       if (!prompt) return res.status(400).json({ ok: false, error: "missing prompt" });
       const aspectRatio = s(b.aspectRatio || "9:16") === "16:9" ? "16:9" : "9:16";
@@ -3680,6 +3685,23 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             openaiError: captureError.openaiError || null,
             openrouterError: captureError.openrouterError || null,
           });
+        }
+        // 四审 P0-1:交付即登记权威所有权——服务器亲手生成、亲手交给这位登录用户,
+        // 这一刻是唯一不可伪造的归属证据;登记失败不阻断交付,但记日志待补。
+        try {
+          const { extractCanvasMediaObjectPath, registerCanvasMediaOwner } = await import(
+            "../server/services/canvasMediaOwnership.js"
+          );
+          const objectPath = extractCanvasMediaObjectPath(imageUrl);
+          if (objectPath) {
+            await registerCanvasMediaOwner({
+              objectPath,
+              ownerUserId: imageViewer.userId,
+              source: "canvasgptimage2",
+            });
+          }
+        } catch (ownErr) {
+          console.warn("[canvasgptimage2] owner register failed:", ownErr);
         }
         return res.status(200).json({ ok: true, imageUrl, imageUrls: [imageUrl] });
       } catch (e: any) {

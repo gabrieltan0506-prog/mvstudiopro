@@ -50,6 +50,7 @@ describe("manhuaCloudDraft · 稳定图链与任务字段往返", () => {
             x: 0, y: 0, width: 420, height: 360,
             prompt: "p",
             refImageUrl: stableUrl,
+            lastFrameUrl: stableUrl,
             videoTaskId: "cv_xyz",
             videoTaskEngine: "wan-3.0",
             videoTaskStatus: "running",
@@ -64,6 +65,8 @@ describe("manhuaCloudDraft · 稳定图链与任务字段往返", () => {
     );
     const blk = restored?.canvas.blocks[0];
     expect(blk?.refImageUrl).toBe(stableUrl);
+    // 四审建议:serialize→parse 全程也要断言续拍锚存活(视频节点 sanitize 分支)
+    expect(blk?.lastFrameUrl).toBe(stableUrl);
     expect(blk?.videoTaskId).toBe("cv_xyz");
     expect(blk?.videoTaskStatus).toBe("running");
   });
