@@ -729,10 +729,10 @@ export async function markJobSucceeded(id: string, output: unknown, provider?: s
 }
 
 /**
- * 漫剧学习已经完成媒体/模型工作后，只重试“同一份终态结果”的数据库写入；
- * 绝不重新执行学习链，避免因 Neon 短抖动重复下载、抽帧或调用模型。
+ * 通用终态写入重试:媒体/模型工作已完成后,只重试"同一份终态结果"的数据库写入;
+ * 绝不重新执行媒体处理链,避免因数据库短抖动重复下载、转码或调用模型。
  */
-export async function markManhuaLearnJobSucceededWithRetry(
+export async function markJobSucceededWithRetry(
   id: string,
   output: unknown,
   provider?: string,
@@ -748,6 +748,16 @@ export async function markManhuaLearnJobSucceededWithRetry(
   }
   console.error(`[JobsRepo] manhua learn terminal persistence exhausted: jobId=${id}`);
   return false;
+}
+
+/** 历史导出名保留:漫剧学习链的调用方不变,内部走通用重试 */
+export async function markManhuaLearnJobSucceededWithRetry(
+  id: string,
+  output: unknown,
+  provider?: string,
+  options?: { attempts?: number; delayMs?: number },
+): Promise<boolean> {
+  return markJobSucceededWithRetry(id, output, provider, options);
 }
 
 /** 最近一份平台动作任务（含运行中/成功/失败）；供持久任务在刷新后恢复。 */

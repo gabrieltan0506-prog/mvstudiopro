@@ -214,3 +214,50 @@ describe("post_prod 独立任务通道", () => {
     expect(await claimNextPostProdJob()).toBeNull();
   });
 });
+
+describe("markJobSucceededWithRetry:只重试状态写入", () => {
+  beforeEach(() => getDb.mockReset());
+
+  it("前两次状态写入未完成、第三次完成;媒体处理不在本函数内不会重跑", async () => {
+    let updateAttempts = 0;
+    getDb.mockImplementation(async () => ({
+      select: () => {
+        const chain = {
+          from: () => chain,
+          where: () => chain,
+          limit: async () => [],
+        };
+        return chain;
+      },
+      update: () => ({
+        set: () => ({
+          where: async () => {
+            updateAttempts += 1;
+            // 前两次:写入未完成;第三次成功
+            if (updateAttempts < 3) throw new Error("db transient");
+          },
+        }),
+      }),
+    }));
+
+    const { markJobSucceededWithRetry } = await import("./repository");
+    await expect(
+      markJobSucceededWithRetry("pp-1", { gcsUri: "gs://bucket-a/post-prod/7/x.mp4" }, "ffmpeg-post-prod", {
+        attempts: 4,
+        delayMs: 0,
+      }),
+    ).resolves.toBe(true);
+    expect(updateAttempts).toBe(3);
+  });
+
+  it("达到重试次数仍未写入时返回 false(runner 会保留 failed 任务记录)", async () => {
+    getDb.mockResolvedValue(null);
+    const { markJobSucceededWithRetry } = await import("./repository");
+    await expect(
+      markJobSucceededWithRetry("pp-2", { gcsUri: "gs://bucket-a/post-prod/7/y.mp4" }, undefined, {
+        attempts: 2,
+        delayMs: 0,
+      }),
+    ).resolves.toBe(false);
+  });
+});

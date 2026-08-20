@@ -2,12 +2,14 @@
  * 后期工坊核心(蓝图二①):拼接 / BGM 贴装 / 响度验收。
  * 纯 ffmpeg + 规则引擎,零大模型 token;配方来自《雷击》《天雷劫》实弹工艺:
  * - BGM 永远后期贴(0.48 规):侧链压对白、入场淡入、按完整时间线淡出;
- * - 响度验收 = ebur128 整体 + 分窗 RMS,媒体命令未完成一律抛错,不折成 null。
+ * - 响度验收 = ebur128 整体 + 分窗 RMS,媒体命令未完成一律抛错结束本次任务。
  *
- * 工程约束(0821 审阅清单):
- * - 所有下载/ffmpeg/ffprobe 共用同一个 AbortSignal,任务时限到即中止子进程;
- * - 单素材/拼接累计体积上限,HTTPS 流式落盘边下边数字节;
- * - 不同画幅统一 scale+pad 进同一拼接序列,无声素材补静音轨;
+ * 工程约束(0821 审阅清单一/二审):
+ * - 所有下载/ffmpeg/ffprobe/上传共用同一个 AbortSignal,任务时限到即中止;
+ * - gs:// 与 HTTPS 共用流式读取(gs:// 现签短链再流式拉),边下边数字节,
+ *   超单素材上限或拼接累计预算立即中止读取;
+ * - 不同画幅统一 scale+pad 进同一拼接序列;无声素材补静音轨;
+ *   每段音轨 apad+atrim 对齐该段画面时长;
  * - 临时目录一律 finally 清理。
  */
 import { execFile } from "node:child_process";
@@ -15,8 +17,10 @@ import { createWriteStream } from "node:fs";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
-import { downloadGcsObject, signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
+import { signGsUriV4ReadUrl, uploadBufferToGcs } from "./gcs.js";
 import type { BgmMountParams, ConcatParams, LoudnessParams } from "../jobs/postProdInput";
 
 const execFileAsync = promisify(execFile);
@@ -27,27 +31,14 @@ export const MAX_CONCAT_CLIPS = 12;
 export const MAX_SOURCE_BYTES = 512 * 1024 * 1024;
 /** 拼接素材累计体积上限 */
 export const MAX_CONCAT_TOTAL_BYTES = 1536 * 1024 * 1024;
-/** 产物体积上限(buffer 上传前把关) */
+/** 产物体积上限(上传前把关) */
 export const MAX_RESULT_BYTES = 512 * 1024 * 1024;
 /** 单素材下载时限(连接+读取) */
 export const DOWNLOAD_TIMEOUT_MS = 120_000;
 
 const NEVER_ABORT = new AbortController().signal;
 
-/** 组合多个 signal(Node<20.3 无 AbortSignal.any 的兜底) */
-function anySignal(signals: AbortSignal[]): AbortSignal {
-  const c = new AbortController();
-  for (const s of signals) {
-    if (s.aborted) {
-      c.abort(s.reason);
-      break;
-    }
-    s.addEventListener("abort", () => c.abort(s.reason), { once: true });
-  }
-  return c.signal;
-}
-
-/** 媒体子进程统一入口:共用任务 signal,时限到同步终止 */
+/** 媒体子进程统一入口:共用任务 signal,任务时限结束即同步终止 */
 export function runMediaTool(
   command: "ffmpeg" | "ffprobe",
   args: string[],
@@ -61,75 +52,81 @@ export function runMediaTool(
 
 export type DownloadBudget = { remainingBytes: number };
 
+/** 边写边数字节,超出当前处理上限立即报错中止 */
+class ByteBudgetTransform extends Transform {
+  bytes = 0;
+
+  constructor(private readonly maxBytes: number) {
+    super();
+  }
+
+  override _transform(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null, data?: Buffer) => void,
+  ): void {
+    this.bytes += chunk.length;
+    if (this.bytes > this.maxBytes) {
+      callback(new Error("素材体积超过当前处理上限"));
+      return;
+    }
+    callback(null, chunk);
+  }
+}
+
 /**
- * 素材落盘:gs:// 走 GCS 下载(下载后验字节),https 流式写文件边下边数,
- * 超单素材上限或累计预算立即中止读取。
+ * 素材落盘:gs:// 现签短链后与 HTTPS 共用同一条流式读取路径,
+ * 不把整个对象读进 Buffer 后才检查体积。
  */
 export async function fetchPostProdSourceToFile(
   uriOrUrl: string,
   filePath: string,
-  opts: { signal: AbortSignal; maxBytes?: number; budget?: DownloadBudget },
+  opts: {
+    signal: AbortSignal;
+    maxBytes?: number;
+    budget?: DownloadBudget;
+    /** 测试注入口;生产用默认 DOWNLOAD_TIMEOUT_MS */
+    downloadTimeoutMs?: number;
+  },
 ): Promise<number> {
-  const src = String(uriOrUrl || "").trim();
-  const maxBytes = Math.min(opts.maxBytes ?? MAX_SOURCE_BYTES, opts.budget?.remainingBytes ?? Infinity);
-  if (maxBytes <= 0) throw new Error("拼接素材累计体积超过上限");
+  opts.signal.throwIfAborted();
 
-  let bytes = 0;
-  if (src.startsWith("gs://")) {
-    opts.signal.throwIfAborted();
-    const { buffer } = await downloadGcsObject({ gcsUri: src });
-    if (buffer.length > maxBytes) throw new Error("素材体积超过上限");
-    opts.signal.throwIfAborted();
-    await writeBufferToFile(filePath, buffer);
-    bytes = buffer.length;
-  } else if (/^https:\/\//.test(src)) {
-    const signal = anySignal([opts.signal, AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS)]);
-    const res = await fetch(src, { signal });
-    if (!res.ok) throw new Error(`素材下载失败 HTTP ${res.status}`);
-    const declared = Number(res.headers.get("content-length") || 0);
-    if (declared > maxBytes) throw new Error("素材体积超过上限");
-    if (!res.body) throw new Error("素材下载失败:空响应体");
-    const out = createWriteStream(filePath);
-    try {
-      const reader = res.body.getReader();
-      for (;;) {
-        signal.throwIfAborted();
-        const { done, value } = await reader.read();
-        if (done) break;
-        bytes += value.byteLength;
-        if (bytes > maxBytes) {
-          await reader.cancel();
-          throw new Error("素材体积超过上限");
-        }
-        if (!out.write(value)) {
-          await new Promise<void>((resolve, reject) => {
-            out.once("drain", resolve);
-            out.once("error", reject);
-          });
-        }
-      }
-      await new Promise<void>((resolve, reject) => {
-        out.end(() => resolve());
-        out.once("error", reject);
-      });
-    } catch (e) {
-      out.destroy();
-      throw e;
-    }
-  } else {
-    throw new Error("素材地址仅接受 gs:// 或 https://");
+  const source = String(uriOrUrl || "").trim();
+  const maxBytes = Math.min(
+    opts.maxBytes ?? MAX_SOURCE_BYTES,
+    opts.budget?.remainingBytes ?? Number.POSITIVE_INFINITY,
+  );
+  if (maxBytes <= 0) throw new Error("素材累计体积超过当前处理上限");
+
+  const requestUrl = source.startsWith("gs://") ? signGsUriV4ReadUrl(source, 3600) : source;
+  if (!requestUrl.startsWith("https://")) throw new Error("素材地址格式不正确");
+
+  const signal = AbortSignal.any([
+    opts.signal,
+    AbortSignal.timeout(opts.downloadTimeoutMs ?? DOWNLOAD_TIMEOUT_MS),
+  ]);
+
+  // 系统素材都是同源直链;出现跳转说明地址不在当前处理范围,不继续
+  const response = await fetch(requestUrl, { signal, redirect: "error" });
+  if (!response.ok) throw new Error(`素材读取未完成 HTTP ${response.status}`);
+
+  const declaredBytes = Number(response.headers.get("content-length") || 0);
+  if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+    await response.body?.cancel();
+    throw new Error("素材体积超过当前处理上限");
   }
+  if (!response.body) throw new Error("素材内容为空");
 
-  if (opts.budget) opts.budget.remainingBytes -= bytes;
-  return bytes;
-}
+  const meter = new ByteBudgetTransform(maxBytes);
+  await pipeline(
+    Readable.fromWeb(response.body as never),
+    meter,
+    createWriteStream(filePath, { flags: "wx" }),
+    { signal },
+  );
 
-async function writeBufferToFile(filePath: string, buffer: Buffer): Promise<void> {
-  const out = createWriteStream(filePath);
-  await new Promise<void>((resolve, reject) => {
-    out.once("error", reject);
-    out.end(buffer, () => resolve());
-  });
+  if (opts.budget) opts.budget.remainingBytes -= meter.bytes;
+  return meter.bytes;
 }
 
 async function uploadResult(params: {
@@ -138,21 +135,30 @@ async function uploadResult(params: {
   kind: string;
   ext: string;
   contentType: string;
+  signal: AbortSignal;
 }): Promise<{ gcsUri: string; url: string; bytes: number }> {
+  params.signal.throwIfAborted();
   const st = await stat(params.filePath);
-  if (st.size > MAX_RESULT_BYTES) throw new Error("产物体积超过上限,请缩短素材或分批处理");
-  const buffer = await readFile(params.filePath);
+  if (st.size > MAX_RESULT_BYTES) throw new Error("产物体积超过当前处理上限,请缩短素材或分批处理");
+  const buffer = await readFile(params.filePath, { signal: params.signal });
+  params.signal.throwIfAborted();
   const safeUser = String(params.userId).replace(/[^0-9a-zA-Z_-]/g, "");
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   const objectName = `post-prod/${safeUser}/${stamp}/${params.kind}-${Date.now()}-${Math.random()
     .toString(36)
     .slice(2, 8)}.${params.ext}`;
-  const { gcsUri } = await uploadBufferToGcs({
+  const uploaded = await uploadBufferToGcs({
     objectName,
     buffer,
     contentType: params.contentType,
+    signal: params.signal,
   });
-  return { gcsUri, url: signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600), bytes: buffer.length };
+  params.signal.throwIfAborted();
+  return {
+    gcsUri: uploaded.gcsUri,
+    url: signGsUriV4ReadUrl(uploaded.gcsUri, 7 * 24 * 3600),
+    bytes: buffer.length,
+  };
 }
 
 async function probe(
@@ -172,7 +178,13 @@ async function probe(
   );
   const info = JSON.parse(String(stdout)) as {
     format?: { duration?: string };
-    streams?: Array<{ codec_type?: string; width?: number; height?: number; avg_frame_rate?: string }>;
+    streams?: Array<{
+      codec_type?: string;
+      width?: number;
+      height?: number;
+      avg_frame_rate?: string;
+      duration?: string;
+    }>;
   };
   const v = (info.streams || []).find((s) => s.codec_type === "video");
   const a = (info.streams || []).find((s) => s.codec_type === "audio");
@@ -182,7 +194,9 @@ async function probe(
     const [n, d] = fr.split("/").map(Number);
     if (d > 0) fps = Math.round((n / d) * 100) / 100;
   }
-  const durationSec = Number(info.format?.duration) || 0;
+  // 对齐基准=画面时长:音轨长于画面时容器时长会被音轨拉长,不能拿它当画面长度
+  const videoStreamSec = Number(v?.duration) || 0;
+  const durationSec = videoStreamSec > 0 ? videoStreamSec : Number(info.format?.duration) || 0;
   if (!v || durationSec <= 0) throw new Error("素材不是可用视频(探测不到视频轨/时长)");
   return {
     durationSec,
@@ -221,6 +235,7 @@ export async function concatClips(
     /**
      * 统一画面参数:保持原比例 scale 进 ${width}x${height} 内、余量补边居中,
      * 统一帧率/像素格式/SAR,时间戳归零;音频统一 48kHz stereo 归零,
+     * 并 apad+atrim 对齐该段画面时长(音轨短补静音、长则裁切);
      * 无声素材用 anullsrc 补同长度静音轨(追加为额外输入)。
      */
     const args: string[] = ["-y"];
@@ -243,10 +258,11 @@ export async function concatClips(
       `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=${fps},format=yuv420p,setsar=1,` +
       `setpts=PTS-STARTPTS[v${i}]`;
     const aChain = (i: number) => {
-      const src = silentInputIndexByClip.has(i) ? silentInputIndexByClip.get(i) : i;
+      const sourceIndex = silentInputIndexByClip.get(i) ?? i;
+      const duration = locals[i].durationSec.toFixed(3);
       return (
-        `[${src}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,` +
-        `asetpts=PTS-STARTPTS[a${i}]`
+        `[${sourceIndex}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,` +
+        `apad,atrim=0:${duration},asetpts=PTS-STARTPTS[a${i}]`
       );
     };
     const per = locals.map((_l, i) => `${vChain(i)};${aChain(i)}`).join(";");
@@ -262,7 +278,14 @@ export async function concatClips(
     );
     await runMediaTool("ffmpeg", args, signal);
     const meta = await probe(outPath, signal);
-    const up = await uploadResult({ filePath: outPath, userId, kind: "concat", ext: "mp4", contentType: "video/mp4" });
+    const up = await uploadResult({
+      filePath: outPath,
+      userId,
+      kind: "concat",
+      ext: "mp4",
+      contentType: "video/mp4",
+      signal,
+    });
     return { ...up, durationSec: meta.durationSec, clipCount: clips.length };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
@@ -339,7 +362,14 @@ export async function mountBgm(
     );
     await runMediaTool("ffmpeg", args, signal);
     const outMeta = await probe(outPath, signal);
-    const up = await uploadResult({ filePath: outPath, userId, kind: "bgm", ext: "mp4", contentType: "video/mp4" });
+    const up = await uploadResult({
+      filePath: outPath,
+      userId,
+      kind: "bgm",
+      ext: "mp4",
+      contentType: "video/mp4",
+      signal,
+    });
     return { ...up, durationSec: outMeta.durationSec };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
@@ -378,7 +408,7 @@ export async function loudnessCheck(
       return { status: "no_audio", durationSec: D, integratedLufs: null, windows: [] };
     }
 
-    // 媒体命令未完成一律抛错结束本次任务,不把失败折成 null 假装量过了
+    // 媒体命令未完成一律抛错结束本次任务,不折成 null
     const ebur = await runMediaTool(
       "ffmpeg",
       ["-i", vPath, "-af", "ebur128", "-f", "null", "-"],
@@ -392,7 +422,7 @@ export async function loudnessCheck(
     const lastLufs = lufsMatches?.length
       ? lufsMatches[lufsMatches.length - 1].match(/(-?\d+(?:\.\d+)?)/)
       : null;
-    if (!lastLufs) throw new Error("响度检测未完成(ebur128 无结果),本次任务失败");
+    if (!lastLufs) throw new Error("响度检测的媒体命令未完成,本次任务失败");
     const integratedLufs = Number(lastLufs[1]);
 
     const windows: Array<{ startSec: number; durationSec: number; rmsDb: number }> = [];
@@ -418,7 +448,7 @@ export async function loudnessCheck(
         return { stdout: "", stderr: String(e?.stderr || "") };
       });
       const m = String(r.stderr || "").match(/RMS level dB:\s*(-?\d+(?:\.\d+)?)/);
-      if (!m) throw new Error("分窗响度检测未完成,本次任务失败");
+      if (!m) throw new Error("分窗响度检测的媒体命令未完成,本次任务失败");
       windows.push({ startSec: w.startSec, durationSec: clippedDuration, rmsDb: Number(m[1]) });
     }
 

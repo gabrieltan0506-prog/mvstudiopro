@@ -7,11 +7,21 @@ import { z } from "zod";
 
 const mediaSourceSchema = z.string().trim().min(1).max(2048);
 
+/** 编码器要求画面尺寸为偶数;奇数在 Schema 层就打回,不进 ffmpeg */
+function evenDimension(min: number, max: number) {
+  return z
+    .number()
+    .int()
+    .min(min)
+    .max(max)
+    .refine((value) => value % 2 === 0, "画面尺寸必须为偶数");
+}
+
 export const concatParamsSchema = z
   .object({
     clips: z.array(mediaSourceSchema).min(2).max(12),
-    width: z.number().int().min(320).max(3840).default(1280),
-    height: z.number().int().min(240).max(2160).default(720),
+    width: evenDimension(320, 3840).default(1280),
+    height: evenDimension(240, 2160).default(720),
     fps: z.number().int().min(12).max(60).default(30),
   })
   .strict();

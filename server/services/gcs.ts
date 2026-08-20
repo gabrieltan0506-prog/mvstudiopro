@@ -203,7 +203,10 @@ export async function uploadBufferToGcs(params: {
   contentType: string;
   /** Override the default GCS bucket — use for non-video uploads */
   bucket?: string;
+  /** 任务时限结束时同步中止上传 */
+  signal?: AbortSignal;
 }): Promise<{ bucket: string; objectName: string; gcsUri: string }> {
+  params.signal?.throwIfAborted();
   const bucket = params.bucket || getGcsBucketName();
   if (!bucket) {
     throw new Error("GCS bucket is not configured");
@@ -228,6 +231,7 @@ export async function uploadBufferToGcs(params: {
       "Content-Length": String(params.buffer.byteLength),
     },
     body: new Uint8Array(params.buffer),
+    signal: params.signal,
   });
 
   const json = await response.json().catch(() => null);

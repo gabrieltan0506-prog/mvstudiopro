@@ -63,6 +63,7 @@ import {
   getJobById,
   isManhuaTemplateLearnJobCancelRequested,
   markJobFailed,
+  markJobSucceededWithRetry,
   markManhuaLearnJobSucceededWithRetry,
   markJobSucceeded,
   patchJobRunningProgress,
@@ -3105,7 +3106,12 @@ async function processOnePostProdJob(): Promise<boolean> {
       String(job.userId),
       timeoutMs,
     );
-    await markJobSucceeded(job.id, output, provider);
+    // 只重试状态写入,不重新执行媒体处理;写不进去按失败留痕
+    const saved = await markJobSucceededWithRetry(job.id, output, provider);
+    if (!saved) {
+      await markJobFailed(job.id, "后期结果状态保存未完成,请重新提交");
+      return true;
+    }
   } catch (error) {
     // 后期任务确定性強、重跑同样贵:一律直接失败,不 requeue 重做整项媒体处理
     const message =
