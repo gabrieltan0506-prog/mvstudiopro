@@ -56,7 +56,9 @@ export type CanvasVideoModel =
   /** MiniMax H3 · OpenRouter minimax/hailuo-3（2K） */
   | "minimax-hailuo-3"
   /** Happy Horse 1.1 · OpenRouter alibaba/happyhorse-1.1（≤15s） */
-  | "happyhorse-1.1";
+  | "happyhorse-1.1"
+  /** Wan 3.0 · WaveSpeed reference-to-video（公测；可直出 30s；排队时间较长） */
+  | "wan-3.0";
 /** 文生图 vs 改图（EvoLink image_urls edit） */
 export type CanvasImageMode = "generate" | "edit";
 
@@ -310,6 +312,7 @@ export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }>
   { id: "seedance-2.5", label: "Seedance 2.5" },
   { id: "minimax-hailuo-3", label: "Minimax H3" },
   { id: "happyhorse-1.1", label: "Happy Horse 1.1" },
+  { id: "wan-3.0", label: "Wan 3.0（公测 · 直出30s · 排队时间较长）" },
 ];
 
 /**
@@ -366,6 +369,9 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
 
 export function normalizeCanvasVideoModel(raw: unknown): CanvasVideoModel {
   const key = String(raw || "").trim();
+  if (key === "wan-3.0" || key === "wan3.0" || key === "wan30" || key === "alibaba/wan-3.0") {
+    return "wan-3.0";
+  }
   if (key === "seedance-2.0-mini" || key === "2.0-mini" || key === "mini") {
     return "seedance-2.0-mini";
   }
@@ -403,8 +409,15 @@ export function isCanvasProductVideoModel(
     videoModel === "seedance-2.0-fast" ||
     videoModel === "seedance-2.5" ||
     videoModel === "minimax-hailuo-3" ||
-    videoModel === "happyhorse-1.1"
+    videoModel === "happyhorse-1.1" ||
+    videoModel === "wan-3.0"
   );
+}
+
+export function isCanvasWan30VideoModel(
+  videoModel: string | null | undefined,
+): boolean {
+  return String(videoModel || "").trim() === "wan-3.0";
 }
 
 export function isCanvasSeedance25VideoModel(
@@ -433,6 +446,10 @@ export function migrateFactoryClipVideoModel(block: CanvasBlock): CanvasBlock {
   }
   if (isClip && block.videoModel === "happyhorse-1.1") {
     return { ...block, videoModel: "seedance-2.0-fast" };
+  }
+  if (isClip && block.videoModel === "wan-3.0") {
+    // Wan 公测排队时长不可控,不进整集流水线;clip 节点迁到同为 30s 档的 2.5
+    return { ...block, videoModel: "seedance-2.5" };
   }
   if (isCanvasProductVideoModel(block.videoModel)) {
     return block;

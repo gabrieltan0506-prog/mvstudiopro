@@ -4239,6 +4239,99 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
      * Happy Horse 1.1 · OpenRouter。
      * 画布 videoModel=happyhorse-1.1；首帧图生；时长钳制 5/10/15（最长 15s）。
      */
+    if (op === "wan30Video") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      if (!(await resolveJobUser(req))) {
+        return res.status(401).json({ ok: false, error: "请先登录后再生成成片" });
+      }
+      const prompt =
+        s(b.prompt || q.prompt || "").trim() || "Cinematic motion shot with stable camera and rich detail.";
+      const rawImages: unknown[] = Array.isArray(b.imageUrls) ? b.imageUrls : [];
+      const imageUrls = rawImages
+        .map((u) => s(u).trim())
+        .filter((u) => /^https?:\/\//i.test(u));
+      const firstImage = s(b.imageUrl || q.imageUrl || "").trim();
+      if (firstImage && !imageUrls.includes(firstImage)) imageUrls.unshift(firstImage);
+      if (!imageUrls.length) {
+        return res.status(400).json({ ok: false, error: "Wan 3.0 成片需要至少一张参考图" });
+      }
+      const rawAudios: unknown[] = Array.isArray(b.audioUrls) ? b.audioUrls : [];
+      const audioUrls = rawAudios
+        .map((u) => s(u).trim())
+        .filter((u) => /^https?:\/\//i.test(u));
+      const aspectRatio = s(b.aspectRatio || q.aspectRatio || "9:16").trim() || "9:16";
+      try {
+        const { isWavespeedWanConfigured } = await import("../server/services/wavespeedWanVideo.js");
+        if (!isWavespeedWanConfigured()) {
+          return res.status(503).json({ ok: false, error: "Wan 3.0 通道暂不可用，请稍后重试" });
+        }
+        const { clampWan30Duration, normalizeWan30Resolution, WAN30_REFERENCE_MAX } = await import(
+          "../shared/wanWavespeedModels.js"
+        );
+        const duration = clampWan30Duration(b.duration ?? b.durationSec ?? q.duration);
+        const resolution = normalizeWan30Resolution(b.resolution || q.resolution);
+        const label = `画布成片·Wan 3.0 公测（${resolution}·${duration}s·排队较长）`;
+        const requestKey =
+          s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
+          `srvwan_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+        const charged = await chargeCanvasVideoCredits(req, {
+          idempotencyKey: requestKey,
+          durationSec: duration,
+          episodeIndex: b.episodeIndex,
+          label,
+          resolution,
+        });
+        if (!charged.ok) {
+          return res.status(charged.status).json({ ok: false, error: charged.error });
+        }
+        try {
+          const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
+          const task = await createCanvasVideoTask({
+            userId: charged.userId,
+            creditsCharged: charged.credits,
+            deduct: charged.deduct,
+            idempotencyKey: requestKey,
+            engine: "wan30-wavespeed",
+            label,
+            prompt,
+            imageUrl: imageUrls[0],
+            imageUrls: imageUrls.slice(0, WAN30_REFERENCE_MAX.image),
+            audioUrls: audioUrls.slice(0, WAN30_REFERENCE_MAX.audio),
+            aspectRatio,
+            duration,
+            resolution,
+            generateAudio: b.generateAudio !== false,
+          });
+          return res.status(200).json({
+            ok: true,
+            async: true,
+            taskId: task.taskId,
+            status: task.status,
+            videoUrl: task.videoUrl || undefined,
+            provider: "wavespeed",
+            version: "wan-3.0",
+            resolution,
+            creditsUsed: charged.credits,
+          });
+        } catch (error: any) {
+          const refundOutcome = await refundCanvasChargeOnCreateFail(charged, label);
+          if (error instanceof Error && refundOutcome !== "skipped") {
+            error.message +=
+              refundOutcome === "refunded"
+                ? "（费用已退回）"
+                : refundOutcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
+          }
+          throw error;
+        }
+      } catch (e: any) {
+        return res.status(502).json({ ok: false, error: e?.message || "wan30_failed" });
+      }
+    }
+
     if (op === "happyHorseVideo") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });

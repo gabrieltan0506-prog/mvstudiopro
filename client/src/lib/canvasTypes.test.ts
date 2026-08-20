@@ -36,6 +36,7 @@ describe("canvas spawn + defaults", () => {
       "seedance-2.5",
       "minimax-hailuo-3",
       "happyhorse-1.1",
+      "wan-3.0",
     ]);
     expect(VIDEO_MODEL_OPTIONS.map((m) => m.label)).toEqual([
       "Seedance 2.0 mini（草稿档）",
@@ -44,9 +45,29 @@ describe("canvas spawn + defaults", () => {
       "Seedance 2.5",
       "Minimax H3",
       "Happy Horse 1.1",
+      "Wan 3.0（公测 · 直出30s · 排队时间较长）",
     ]);
     expect(normalizeCanvasVideoModel("alibaba/happyhorse-1.1")).toBe("happyhorse-1.1");
     expect(normalizeCanvasVideoModel("happy-horse")).toBe("happyhorse-1.1");
+    expect(normalizeCanvasVideoModel("alibaba/wan-3.0")).toBe("wan-3.0");
+    expect(normalizeCanvasVideoModel("wan30")).toBe("wan-3.0");
+  });
+
+  /** Wan 公测排队不可控:漫剧段节点迁到同 30s 档 2.5,自由画布节点保留 */
+  it("migrates Wan 3.0 off manhua clip nodes but keeps it on free-canvas nodes", () => {
+    const clip = normalizeCanvasBlock({
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "clip-e01-s02",
+      videoModel: "wan-3.0",
+    });
+    expect(clip.videoModel).toBe("seedance-2.5");
+
+    const freeCanvas = normalizeCanvasBlock({
+      ...defaultCanvasBlock("video", 0, 0),
+      id: "block-wan-free",
+      videoModel: "wan-3.0",
+    });
+    expect(freeCanvas.videoModel).toBe("wan-3.0");
   });
 
   /** Mini 是画布可选正式档（漫剧开场也有），别名要认全，否则旧草稿会被顶回默认 2.5 */

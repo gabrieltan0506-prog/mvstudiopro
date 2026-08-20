@@ -53,6 +53,7 @@ import {
   WAVESPEED_UPSCALE_MAX_POLL_MS,
 } from "./wavespeedVideoUpscale.js";
 import type { WavespeedUpscaleTarget } from "../../shared/wavespeedVideoUpscaleModels.js";
+import { pollWavespeedWanOnce, submitWavespeedWanVideo } from "./wavespeedWanVideo.js";
 import {
   SEEDANCE_EVOLINK_CONTENT_FILTER,
   type SeedanceEvolinkMode,
@@ -71,6 +72,12 @@ const RECONCILE_EXTRA_MS = Math.min(
   7_200_000,
 );
 
+/** Wan 3.0 公测排队极长（实测数十分钟到数小时），默认 3h 轮询,之后进对账窗口 */
+const WAN30_MAX_POLL_MS = Math.min(
+  Math.max(Number(process.env.WAN30_VIDEO_POLL_TIMEOUT_MS) || 10_800_000, 600_000),
+  21_600_000,
+);
+
 export type CanvasVideoEngine =
   | "seedance-openrouter"
   | "hailuo-openrouter"
@@ -82,7 +89,9 @@ export type CanvasVideoEngine =
   /** Seedance 2.0 标准档·仿真人正向路由：真人照参考被 BytePlus/OpenRouter 拦，扣费前直切 EvoLink */
   | "seedance20-evolink"
   /** WaveSpeed 字节视频超分（2K/4K）：复用同一套异步任务框架，入参走 upscale* 字段 */
-  | "wavespeed-upscale";
+  | "wavespeed-upscale"
+  /** Wan 3.0（公测）· WaveSpeed reference-to-video：可直出 30s，公测排队极长 */
+  | "wan30-wavespeed";
 
 export type CanvasVideoTaskStatus =
   | "queued"
@@ -250,6 +259,7 @@ function maxPollMs(engine: CanvasVideoEngine): number {
     return EVOLINK_SEEDANCE_MAX_POLL_MS;
   }
   if (engine === "wavespeed-upscale") return WAVESPEED_UPSCALE_MAX_POLL_MS;
+  if (engine === "wan30-wavespeed") return WAN30_MAX_POLL_MS;
   return OPENROUTER_VIDEO_MAX_POLL_MS;
 }
 
@@ -605,6 +615,26 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
     return;
   }
 
+  if (task.engine === "wan30-wavespeed") {
+    const images = (task.imageUrls || []).filter(Boolean);
+    if (!images.length && task.imageUrl) images.push(task.imageUrl);
+    const submitted = await submitWavespeedWanVideo({
+      prompt: task.prompt,
+      imageUrls: images,
+      audioUrls: task.audioUrls || [],
+      duration: task.duration,
+      resolution: task.resolution || "720p",
+      enableAudio: task.generateAudio !== false,
+    });
+    task.wavespeedPredictionId = submitted.predictionId;
+    task.model = task.model || "wan-3.0";
+    task.provider = "wavespeed";
+    task.status = "running";
+    task.startedAt = task.startedAt || new Date().toISOString();
+    await writeTask(task);
+    return;
+  }
+
   if (task.engine === "wavespeed-upscale") {
     const source = String(task.upscaleSourceUrl || "").trim();
     if (!source) throw new Error("缺少要放大的视频地址");
@@ -677,7 +707,7 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
       ? !task.evolinkTaskId
       : task.engine === "seedance25-byteplus"
         ? !task.byteplusTaskId
-        : task.engine === "wavespeed-upscale"
+        : task.engine === "wavespeed-upscale" || task.engine === "wan30-wavespeed"
           ? !task.wavespeedPredictionId
           : !task.pollingUrl;
 
@@ -800,6 +830,22 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
           current.model || (isMini ? "seedance-2.0-mini" : "seedance-2.5"),
           "evolink",
         );
+      }
+
+      if (current.engine === "wan30-wavespeed") {
+        if (!current.wavespeedPredictionId) {
+          return failTask(current, "Wan 3.0 服务未返回任务编号");
+        }
+        const snap = await pollWavespeedWanOnce(current.wavespeedPredictionId);
+        if (snap.state === "running") {
+          current.status = activePollStatus(current);
+          current.lastTransientError = snap.status.startsWith("transient_") ? snap.status : undefined;
+          await writeTask(current);
+          return current;
+        }
+        if (snap.state === "failed") return failTask(current, snap.error);
+        const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl);
+        return succeedTask(current, videoUrl, current.model || "wan-3.0", "wavespeed");
       }
 
       if (current.engine === "wavespeed-upscale") {
