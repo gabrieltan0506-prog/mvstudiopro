@@ -109,6 +109,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { copyText } from "@/lib/copyText";
 
 /** 左栏节点列表标题（学参考画布：可读名 + 类型，不泄供应商） */
 function freeformNodeListLabel(block: CanvasBlock): string {
@@ -2433,10 +2434,11 @@ export default function FreeformCanvas({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  void navigator.clipboard
-                                    .writeText(block.videoTaskId || "")
-                                    .then(() => toast.success("任务单号已复制"))
-                                    .catch(() => toast.error("复制失败，请手动选取"));
+                                  void copyText(block.videoTaskId || "").then((ok) =>
+                                    ok
+                                      ? toast.success("任务单号已复制")
+                                      : toast.error("复制失败，请手动选取"),
+                                  );
                                 }}
                                 className="shrink-0 rounded-md border border-white/15 bg-white/10 px-1.5 py-0.5 font-mono text-[9px] text-white/80 hover:bg-white/15"
                                 title={`复制任务单号：${block.videoTaskId}`}
