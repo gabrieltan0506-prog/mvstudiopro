@@ -4,7 +4,7 @@ import { getDb } from "../db";
 import { omitChineseStagingFromJobOutput } from "../services/platformImageChineseStaging.js";
 import { deleteDrProSecondaryStagingByJobId } from "../services/drProSecondaryStaging.js";
 
-export type JobType = "video" | "image" | "audio" | "platform" | "pdf_export";
+export type JobType = "video" | "image" | "audio" | "platform" | "pdf_export" | "post_prod";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 
 type NormalizedJob = Job & {

@@ -90,6 +90,8 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
   platform: 12 * 60_000,
   /** 与 Cloud Run pdf-worker + 跨云回传对齐；独占队列不阻塞别的任务 */
   pdf_export: 55 * 60_000,
+  /** 后期工坊纯 ffmpeg：拼接最重(≤12 段下载+转码+上传)，10 分钟封顶 */
+  post_prod: 10 * 60_000,
 };
 
 
@@ -2775,6 +2777,10 @@ async function executeJob(
   if (type === "image") return processImageJob(input, timeoutMs, userId, jobId);
   if (type === "platform") return processPlatformJob(input, jobId, userId);
   if (type === "pdf_export") return processPdfExportJob(inputRaw, userId, jobId);
+  if (type === "post_prod") {
+    const { processPostProdJob } = await import("./postProdJob.js");
+    return processPostProdJob(input, userId);
+  }
   return processAudioJob(input, timeoutMs, userId);
 }
 

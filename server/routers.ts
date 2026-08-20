@@ -4271,6 +4271,51 @@ export const appRouter = router({
         };
       }),
 
+    /**
+     * 后期工坊入队(蓝图二①):拼接/BGM贴装/响度验收,纯 ffmpeg 零付费上游。
+     * 素材地址仅收 gs:///https(服务层再验);参数细节由 postProduction 各函数把关。
+     */
+    queuePostProd: protectedProcedure
+      .input(
+        z.object({
+          action: z.enum(["concat", "bgm_mount", "loudness_check"]),
+          params: z.record(z.string(), z.unknown()),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const jobId = nanoid(16);
+        await createJobRecord({
+          id: jobId,
+          userId: String(ctx.user.id),
+          type: "post_prod",
+          provider: "ffmpeg-post-prod",
+          input: { action: input.action, params: input.params },
+        });
+        return { jobId, status: "queued" as const };
+      }),
+
+    /** 查询后期工坊任务(只许本人看,与 PDF 同口径) */
+    getPostProdJob: protectedProcedure
+      .input(z.object({ jobId: z.string().min(1) }))
+      .query(async ({ ctx, input }) => {
+        const job = await getJobById(input.jobId);
+        if (!job || job.type !== "post_prod") {
+          throw new TRPCError({ code: "NOT_FOUND", message: "后期任务不存在" });
+        }
+        if (String(job.userId) !== String(ctx.user.id)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "无权查看此任务" });
+        }
+        return {
+          jobId: job.id,
+          status: job.status,
+          error: job.error,
+          output: job.output,
+          provider: job.provider,
+          createdAt: job.createdAt,
+          updatedAt: job.updatedAt,
+        };
+      }),
+
     recordAnalysisSnapshot: protectedProcedure
       .input(z.object({
         analysisType: z.enum(["growth_camp", "platform"]),
