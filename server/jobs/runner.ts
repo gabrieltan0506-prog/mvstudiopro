@@ -74,6 +74,13 @@ import {
   beginGrowthInteractiveWorkload,
   isAuthenticatedRunningPlatformJob,
 } from "../growth/growthWorkloadPriority";
+import {
+  CREATIVE_NANO_IMAGE_CREDITS,
+  CREATIVE_NANO_IMAGE_QUALITY,
+  CREATIVE_NANO_IMAGE_TASK_TYPE,
+  isCreativeNanoImageJob,
+  normalizeCreativeNanoImageAspectRatio,
+} from "../../shared/creativeNanoImageJobInput.js";
 
 const JOB_TIMEOUT_MS: Record<JobType, number> = {
   image: 12_000,
@@ -86,6 +93,58 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
 };
 
 
+
+/** 八审 P1-6:canvas 出图墙钟安全下限/默认值(env 只能上调,不可降到下限以下) */
+export const CANVAS_GPT_IMAGE2_MIN_TIMEOUT_MS = 12 * 60_000;
+export const CANVAS_GPT_IMAGE2_DEFAULT_TIMEOUT_MS = 15 * 60_000;
+export const CREATIVE_NANO_IMAGE_TIMEOUT_MS = 8 * 60_000;
+
+/** 七审 P0-2:判定 canvas 出图任务(付费上游,专属超时/不重排/幂等退款) */
+export function isCanvasGptImage2Job(input: unknown): boolean {
+  return Boolean(
+    input &&
+      typeof input === "object" &&
+      !Array.isArray(input) &&
+      (input as { action?: unknown }).action === "canvas_gpt_image2",
+  );
+}
+
+export function paidImageLedgerTaskType(input: unknown): string | null {
+  if (isCreativeNanoImageJob(input)) return CREATIVE_NANO_IMAGE_TASK_TYPE;
+  if (!isCanvasGptImage2Job(input)) return null;
+  const params = (input as { params?: unknown }).params;
+  if (
+    params &&
+    typeof params === "object" &&
+    !Array.isArray(params) &&
+    ((params as { assetStandardizeQuality?: unknown }).assetStandardizeQuality === "medium" ||
+      (params as { assetStandardizeQuality?: unknown }).assetStandardizeQuality === "high")
+  ) {
+    return "manhuaAssetStandardize";
+  }
+  return "canvasGptImage2";
+}
+
+/** 七审 P0-2:canvas 出图退款的 DB 幂等键——同 job 多次进入退款路径余额只回一次 */
+export function canvasGptImage2RefundKey(jobId: string | undefined): string {
+  return `refund:canvasGptImage2/${jobId || "unknown"}`.slice(0, 120);
+}
+
+/**
+ * 七审 P0-2:失败任务处置纯函数。canvas_gpt_image2 绝不整单重排——
+ * 重排=第二次调用付费图片上游(chargeKey 只能防第二次扣积分,防不了第二次烧上游),
+ * 直接退款+终态失败;其余任务维持 attempts<2 重排的旧策略。
+ */
+export function resolveFailedJobDisposition(job: {
+  type: string;
+  input: unknown;
+  attempts?: number | null;
+}): "refund_and_fail_paid_image" | "requeue" | "fail" {
+  if (job.type === "image" && paidImageLedgerTaskType(job.input)) {
+    return "refund_and_fail_paid_image";
+  }
+  return (job.attempts ?? 0) < 2 ? "requeue" : "fail";
+}
 
 const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 const POLL_INTERVAL_MS = 2_000;
@@ -902,6 +961,87 @@ async function resolveUserForJob(userId: string): Promise<User> {
 async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId: string, jobId?: string): Promise<{ output: unknown; provider?: string }> {
   const params = input.params ?? {};
 
+  if (isCreativeNanoImageJob(input)) {
+    const prompt = String(params.prompt || "").trim();
+    if (!prompt) throw new Error("creative_nano_image_missing_prompt");
+    const numericUserId = Number(jobUserId);
+    if (!Number.isFinite(numericUserId) || numericUserId <= 0) {
+      throw new Error("Creative Nano 需要有效登录用户，已拒绝调用上游");
+    }
+    if (!jobId) throw new Error("creative_nano_image 缺少 jobId，无法建立幂等计费");
+
+    const chargeKey = `${CREATIVE_NANO_IMAGE_TASK_TYPE}/${jobId}`;
+    const deducted = await deductCreditsAmount(
+      numericUserId,
+      CREATIVE_NANO_IMAGE_CREDITS,
+      CREATIVE_NANO_IMAGE_TASK_TYPE,
+      `Creative 生图 · Nano Banana 2 Flash（${CREATIVE_NANO_IMAGE_CREDITS} 积分/张）`,
+      { chargeKey },
+    );
+    const { registerActiveJob, refundCreditsOnFailure } = await import(
+      "../services/paidJobLedger.js"
+    );
+    try {
+      await registerActiveJob({
+        jobId,
+        taskType: CREATIVE_NANO_IMAGE_TASK_TYPE,
+        userId: numericUserId,
+        creditsBilled: deducted.cost,
+        action: `Creative 生图 · Nano Banana 2 Flash（${deducted.cost} 积分/张）`,
+        deduct: deducted,
+        metadata: {
+          modelTier: "flash",
+          quality: CREATIVE_NANO_IMAGE_QUALITY,
+          aspectRatio: normalizeCreativeNanoImageAspectRatio(params.aspectRatio),
+        },
+      });
+    } catch (error) {
+      const { refundCreditsForDeductAmount } = await import("../credits.js");
+      await refundCreditsForDeductAmount(
+        numericUserId,
+        "Creative Nano 账本登记失败·退回积分",
+        deducted,
+        "creativeNanoImageRefund",
+        { refundKey: `refund:${CREATIVE_NANO_IMAGE_TASK_TYPE}/register/${jobId}`.slice(0, 120) },
+      );
+      throw error;
+    }
+
+    try {
+      if (!isGeminiImageAvailable()) {
+        throw new Error("Nano image generation unavailable: Vertex AI credentials not configured");
+      }
+      const result = await generateGeminiImage({
+        prompt,
+        quality: CREATIVE_NANO_IMAGE_QUALITY,
+        modelTier: "flash",
+        aspectRatio: normalizeCreativeNanoImageAspectRatio(params.aspectRatio),
+        maxRetries: 2,
+        requestTimeoutMs: 120_000,
+      });
+      if (!String(result.imageUrl || "").trim()) {
+        throw new Error("creative_nano_image_empty");
+      }
+      return {
+        provider: "vertex-nano-banana-2",
+        output: {
+          imageUrl: result.imageUrl,
+          imageUrls: result.imageUrls?.length ? result.imageUrls : [result.imageUrl],
+          quality: CREATIVE_NANO_IMAGE_QUALITY,
+          model: result.model,
+        },
+      };
+    } catch (error) {
+      await refundCreditsOnFailure(
+        jobId,
+        CREATIVE_NANO_IMAGE_TASK_TYPE,
+        "external_api_error",
+        "Creative Nano 生成失败·退回积分",
+      );
+      throw error;
+    }
+  }
+
   if (input.action === "kling_image") {
     ensureKlingInitialized();
     const request = buildImageRequest({
@@ -1037,59 +1177,70 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     const imageLane = normalizeOpenAiImageLane(params.imageLane) ?? undefined;
 
     /**
-     * 画布出图收费：此前这条队列**一分钱不收**（`/canvas` 的静帧、封面、设定图都走这里），
-     * 官方 Image-2 一张真金白银。supervisor/admin 由 `deductCreditsAmount` 内部免扣，
-     * 失败/空图退回，所以自动重试不会累计扣款。
-     *
-     * 只扣带 `chargeOnServer` 的：这条队列还服务 `/creative` 生图与 `/platform` 单帧生图，
-     * 那两处已在前端 `chargeStep` 扣过，无条件扣会双扣。
+     * 画布出图收费 v3(六审第2条):**全部调用方统一由 worker 服务端计费**——
+     * Canvas / Creative / Platform 都走这里扣;客户端任何字段(chargeOnServer、
+     * 收据、重试引用)都不再参与收费决策,伪造/省略一律无效。
+     * 幂等靠 job 级 chargeKey:同 job 重跑撞 DB 唯一索引,不会二次扣款;
+     * 客户端超时也只继续轮询同一 job,不再第二次入队(canvasRunBlock 同步改)。
+     * supervisor/admin 由 `deductCreditsAmount` 内部免扣,失败/空图/登记失败按原来源退回。
      */
     const numericUserId = Number(jobUserId);
-    if (assetStandardizeQuality && (!Number.isFinite(numericUserId) || numericUserId <= 0)) {
-      throw new Error("资产标准化缺少有效登录用户，已拒绝调用上游");
+    if (!Number.isFinite(numericUserId) || numericUserId <= 0) {
+      // 入口已强制登录;这里兜底拒绝 public/NaN,绝不免费打上游
+      throw new Error("画布出图需要有效登录用户，已拒绝调用上游");
     }
-    let creditDeducted = 0;
-    let deductReceipt: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
-    const shouldCharge = params.chargeOnServer === true || Boolean(assetStandardizeQuality);
-    if (shouldCharge && Number.isFinite(numericUserId) && numericUserId > 0) {
-      const { canvasImageCredits } = await import("../../shared/canvasGenerationPricing.js");
-      const { manhuaAssetStandardizeCredits } = await import("../../shared/manhuaAssetStandardize.js");
-      const cost = assetStandardizeQuality
-        ? manhuaAssetStandardizeCredits(assetStandardizeQuality)
-        : canvasImageCredits(typeof params.batchIndex === "number" ? params.batchIndex : 0);
-      const chargeKey = assetStandardizeQuality && jobId ? `manhuaAssetStandardize/${jobId}` : undefined;
-      const deducted = await deductCreditsAmount(
-        numericUserId,
-        cost,
-        assetStandardizeQuality ? "manhuaAssetStandardize" : "canvasGptImage2",
-        assetStandardizeQuality ? `导入资产 AI 标准化（${cost} 积分/张）` : `画布出图（${cost} 积分/张）`,
-        chargeKey ? { chargeKey } : undefined,
-      );
-      creditDeducted = deducted.cost;
-      deductReceipt = deducted;
-      if (assetStandardizeQuality && jobId) {
-        const { registerActiveJob } = await import("../services/paidJobLedger.js");
-        try {
-          await registerActiveJob({
-            jobId,
-            taskType: "manhuaAssetStandardize",
-            userId: numericUserId,
-            creditsBilled: deducted.cost,
-            action: `导入资产 AI 标准化 · ${assetStandardizeQuality}`,
-            deduct: deducted,
-            metadata: { assetRefId: String(params.assetRefId || "").slice(0, 100) },
-          });
-        } catch (error) {
-          const { refundCreditsForDeductAmount } = await import("../credits.js");
-          await refundCreditsForDeductAmount(
-            numericUserId,
-            "资产标准化登记失败·退回积分",
-            deducted,
-            "manhuaAssetStandardizeRefund",
-            { refundKey: `refund:manhuaAssetStandardize/register/${jobId}`.slice(0, 120) },
-          );
-          throw error;
-        }
+    if (!jobId) {
+      throw new Error("canvas_gpt_image2 缺少 jobId，无法建立幂等计费");
+    }
+    const { canvasImageCredits } = await import("../../shared/canvasGenerationPricing.js");
+    const { manhuaAssetStandardizeCredits } = await import("../../shared/manhuaAssetStandardize.js");
+    const cost = assetStandardizeQuality
+      ? manhuaAssetStandardizeCredits(assetStandardizeQuality)
+      : canvasImageCredits(typeof params.batchIndex === "number" ? params.batchIndex : 0);
+    const chargeKey = assetStandardizeQuality
+      ? `manhuaAssetStandardize/${jobId}`
+      : `canvasGptImage2/${jobId}`;
+    const deducted = await deductCreditsAmount(
+      numericUserId,
+      cost,
+      assetStandardizeQuality ? "manhuaAssetStandardize" : "canvasGptImage2",
+      assetStandardizeQuality ? `导入资产 AI 标准化（${cost} 积分/张）` : `画布出图（${cost} 积分/张）`,
+      { chargeKey },
+    );
+    const creditDeducted = deducted.cost;
+    /**
+     * 八审 P0-4:普通 canvas 出图也接 paidJobLedger——之前只有 assetStandardize 登记账本,
+     * 普通出图的退款只是"打一次日志",DB 短暂不可用时退款被吞、积分永久不退。
+     * 现在两条都 registerActiveJob:失败走 refundCreditsOnFailure(落 refund_pending,
+     * reaper 补退)、成功走 unregisterActiveJob("settled")、登记失败即退款并中止。
+     */
+    {
+      const { registerActiveJob } = await import("../services/paidJobLedger.js");
+      const ledgerTaskType = assetStandardizeQuality ? "manhuaAssetStandardize" : "canvasGptImage2";
+      try {
+        await registerActiveJob({
+          jobId,
+          taskType: ledgerTaskType,
+          userId: numericUserId,
+          creditsBilled: deducted.cost,
+          action: assetStandardizeQuality
+            ? `导入资产 AI 标准化 · ${assetStandardizeQuality}`
+            : `画布出图 GPT-Image-2（${deducted.cost} 积分/张）`,
+          deduct: deducted,
+          metadata: assetStandardizeQuality
+            ? { assetRefId: String(params.assetRefId || "").slice(0, 100) }
+            : { batchIndex: typeof params.batchIndex === "number" ? params.batchIndex : 0 },
+        });
+      } catch (error) {
+        const { refundCreditsForDeductAmount } = await import("../credits.js");
+        await refundCreditsForDeductAmount(
+          numericUserId,
+          "画布出图登记失败·退回积分",
+          deducted,
+          `${ledgerTaskType}Refund`,
+          { refundKey: `refund:${ledgerTaskType}/register/${jobId}`.slice(0, 120) },
+        );
+        throw error;
       }
     }
 
@@ -1104,24 +1255,14 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     } = {};
     const refundCanvasImage = async (reason: string) => {
       if (creditDeducted <= 0) return;
-      if (assetStandardizeQuality && jobId) {
-        const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
-        await refundCreditsOnFailure(jobId, "manhuaAssetStandardize", "external_api_error", reason);
-        return;
-      }
-      if (deductReceipt) {
-        const { refundCreditsForDeductAmount } = await import("../credits.js");
-        await refundCreditsForDeductAmount(
-          numericUserId,
-          reason,
-          deductReceipt,
-          "canvasGptImage2Refund",
-        );
-        return;
-      }
-      const { refundCredits } = await import("../credits");
-      await refundCredits(numericUserId, creditDeducted, reason).catch((e) =>
-        console.error("[Credits] canvas image refund failed:", e),
+      // 八审 P0-4:两条路径都走账本 refundCreditsOnFailure——退款失败落 refund_pending,
+      // 由 ledger reaper 补退,不再是"打个日志就丢"。
+      const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
+      await refundCreditsOnFailure(
+        jobId,
+        assetStandardizeQuality ? "manhuaAssetStandardize" : "canvasGptImage2",
+        "external_api_error",
+        reason,
       );
     };
     let imageUrl: string | null | undefined;
@@ -1151,6 +1292,25 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     if (!imageUrl) {
       await refundCanvasImage("画布出图·未出图·退回已扣积分");
       throw new Error(captureError.message || "gpt_image2_empty");
+    }
+    /**
+     * 五审 P0-1/P1-1:所有权登记进成功契约——这里是画布出图的真实主链
+     * (短入队 worker,同步 op=canvasGptImage2 已弃用),不登记则 /api/canvas-media
+     * 与 Wan 参考校验都会拒绝这张新图。登记失败(含冲突/提取失败/存储故障重试尽)
+     * 不得报 succeeded:退回已扣积分后抛错,绝不交付"看得到一次、恢复后 403"的半成品。
+     */
+    try {
+      const { registerCanvasImageDeliveryOrThrow } = await import(
+        "../services/canvasMediaOwnership.js"
+      );
+      await registerCanvasImageDeliveryOrThrow({
+        imageUrl,
+        ownerUserId: numericUserId,
+        source: "canvasgptimage2-runner",
+      });
+    } catch (err) {
+      await refundCanvasImage("画布出图·所有权登记失败·退回已扣积分");
+      throw err;
     }
     return {
       provider: providerOverride === "openrouter" ? "openrouter-gpt-image-2" : "openai-gpt-image-2",
@@ -1184,8 +1344,24 @@ function normalizeAudioStatus(status: string): "PENDING" | "SUCCESS" | "FAILED" 
   return "PENDING";
 }
 
-function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
+export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
   const defaultTimeout = JOB_TIMEOUT_MS[type];
+  if (type === "image" && isCreativeNanoImageJob(inputRaw)) {
+    return CREATIVE_NANO_IMAGE_TIMEOUT_MS;
+  }
+  if (type === "image" && isCanvasGptImage2Job(inputRaw)) {
+    /**
+     * 七审 P0-2 / 八审 P1-6:image 默认 12 秒墙钟是给轻任务的;GPT-Image-2 单供应商 fetch
+     * 允许 6 分钟、客户端按 12 分钟轮询——12 秒必超时,还会触发整单重排双烧上游。
+     * env 只能上调不能下调:设成低于 12 分钟的值会让外层先超时退款而上游仍在跑收钱,
+     * 故用 Math.max 钉死 12 分钟安全下限。
+     */
+    const raw = Number(process.env.CANVAS_GPT_IMAGE2_JOB_TIMEOUT_MS);
+    if (Number.isFinite(raw)) {
+      return Math.max(CANVAS_GPT_IMAGE2_MIN_TIMEOUT_MS, Math.floor(raw));
+    }
+    return CANVAS_GPT_IMAGE2_DEFAULT_TIMEOUT_MS;
+  }
   if (type === "platform") {
     try {
       const input = asEnvelope(inputRaw);
@@ -2605,9 +2781,18 @@ async function executeJob(
 async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>> & object) {
   if (!job) return;
   let releaseInteractiveWorkload: (() => Promise<void>) | undefined;
+  let paidImageHeartbeat: ReturnType<typeof setInterval> | undefined;
   try {
     const jobType = job.type as JobType;
     const timeoutMs = resolveJobTimeoutMs(jobType, job.input);
+    const paidImageTaskType = jobType === "image" ? paidImageLedgerTaskType(job.input) : null;
+    if (paidImageTaskType) {
+      const { heartbeatActiveJob } = await import("../services/paidJobLedger.js");
+      paidImageHeartbeat = setInterval(() => {
+        void heartbeatActiveJob(job.id, paidImageTaskType).catch(() => {});
+      }, 30_000);
+      paidImageHeartbeat.unref?.();
+    }
     // claimNextQueuedJob 已经用数据库 CAS 把 queued 改为 running；再同时核对正整数
     // users.id，确保 public/匿名/伪造字符串不会持有前台租约。租约由本函数 finally
     // 释放，因此墙钟超时/requeue 后不会被仍未 settle 的孤儿 Promise 永久续心跳。
@@ -2637,6 +2822,50 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
       isRecord(job.input) &&
       isRecord(job.input.params) &&
       (job.input.params.assetStandardizeQuality === "medium" || job.input.params.assetStandardizeQuality === "high");
+    // 八审 P0-4:普通 canvas 出图(非资产标准化)成功后同样要结算账本 hold
+    const paidCanvasImage =
+      jobType === "image" && isCanvasGptImage2Job(job.input) && !paidAssetStandardize;
+    const paidCreativeNanoImage = jobType === "image" && isCreativeNanoImageJob(job.input);
+    if (paidCreativeNanoImage) {
+      const { markSettlementPending, unregisterActiveJob, refundCreditsOnFailure } =
+        await import("../services/paidJobLedger.js");
+      if (!succeededPersisted) {
+        await refundCreditsOnFailure(
+          job.id,
+          CREATIVE_NANO_IMAGE_TASK_TYPE,
+          "task_failed",
+          "Creative Nano 结果保存失败·退回积分",
+        ).catch((error) => console.error("[Jobs] Creative Nano persistence refund failed:", error));
+        await markJobFailed(job.id, "Creative Nano 结果保存失败，已进入退分流程");
+        return;
+      }
+      try {
+        await unregisterActiveJob(job.id, CREATIVE_NANO_IMAGE_TASK_TYPE, "settled");
+      } catch {
+        await markSettlementPending(job.id, CREATIVE_NANO_IMAGE_TASK_TYPE);
+      }
+    }
+    if (paidCanvasImage) {
+      const { markSettlementPending, unregisterActiveJob, refundCreditsOnFailure } =
+        await import("../services/paidJobLedger.js");
+      if (!succeededPersisted) {
+        // 上游有图但 output 没落库:用户拿不到产物,不能先结算后留永久扣费
+        await refundCreditsOnFailure(
+          job.id,
+          "canvasGptImage2",
+          "task_failed",
+          "画布出图结果保存失败·退回积分",
+        ).catch((e) => console.error("[Jobs] canvas image persistence refund failed:", e));
+        await markJobFailed(job.id, "画布出图结果保存失败，已进入退分流程");
+        return;
+      }
+      try {
+        await unregisterActiveJob(job.id, "canvasGptImage2", "settled");
+      } catch {
+        // 产物已落库,不能退款;reaper 只补结算不退成功单
+        await markSettlementPending(job.id, "canvasGptImage2");
+      }
+    }
     const paidPlatformVisualReport =
       jobType === "platform" &&
       isRecord(job.input) &&
@@ -2726,12 +2955,30 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
         console.error("[Jobs] trend report refund failed:", refundError),
       );
       await markJobFailed(job.id, message);
+    } else if (resolveFailedJobDisposition(job) === "refund_and_fail_paid_image") {
+      /**
+       * 七审 P0-2:canvas_gpt_image2 绝不整单重排——重排会第二次调用付费图片上游。
+       * 八审 P0-4:外层墙钟超时/进程级失败走账本 refundCreditsOnFailure——退款失败
+       * 落 refund_pending 由 reaper 补退,不再是"打日志就丢";与内部退款同一账本键幂等。
+       */
+      const { refundCreditsOnFailure } = await import("../services/paidJobLedger.js");
+      const paidImageTaskType = paidImageLedgerTaskType(job.input)!;
+      await refundCreditsOnFailure(
+        job.id,
+        paidImageTaskType,
+        "task_timeout",
+        "付费图片任务失败或超时·退回已扣积分",
+      ).catch((refundError) =>
+        console.error("[Jobs] paid image refund pending:", refundError),
+      );
+      await markJobFailed(job.id, message);
     } else if ((job.attempts ?? 0) < 2) {
       await requeueJob(job.id, message);
     } else {
       await markJobFailed(job.id, message);
     }
   } finally {
+    if (paidImageHeartbeat) clearInterval(paidImageHeartbeat);
     await releaseInteractiveWorkload?.();
   }
 }

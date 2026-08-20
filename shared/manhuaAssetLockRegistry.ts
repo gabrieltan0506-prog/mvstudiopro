@@ -1107,9 +1107,10 @@ export function planManhuaClipSeedanceImageBind(input: {
    */
   boardUrl?: string | null;
 }): ManhuaClipSeedanceImageBindPlan {
+  // 上限由引擎决定(Wan 3.0 可到 10),不再被 Seedance 的 9 硬钳(复审 P2-9);硬顶 16 防失控
   const max = Math.max(
     1,
-    Math.min(SEEDANCE_REFERENCE_MAX.image, Math.floor(input.maxImages ?? SEEDANCE_REFERENCE_MAX.image)),
+    Math.min(16, Math.floor(input.maxImages ?? SEEDANCE_REFERENCE_MAX.image)),
   );
   const tails = (input.tailUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
   const stills = (input.stillUrls || []).map((u) => String(u || "").trim()).filter(Boolean);

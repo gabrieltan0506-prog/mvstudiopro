@@ -1,5 +1,4 @@
 import { routeModel } from "../../router/modelRouter";
-import { generateVideoWithVeo } from "../../models/veo";
 
 function s(v:any){
   if(v==null) return "";
@@ -33,7 +32,7 @@ function pickPrompt(task:any){
   ).trim();
 }
 
-export async function videoStep(task:any){
+export async function videoStep(task:any): Promise<any> {
   task.outputs = task.outputs || {};
 
   const videoRoute = routeModel("video");
@@ -43,16 +42,8 @@ export async function videoStep(task:any){
   const prompt = pickPrompt(task);
 
   if (!imageUrls.length) throw new Error("missing_reference_images");
-  const generated = await generateVideoWithVeo({
-    scenePrompt: prompt,
-    referenceImages: imageUrls,
-    imageUrls,
-  });
-  if (!generated.videoUrl) throw new Error(generated.errorMessage || "vertex_veo_failed");
-
-  task.outputs.videoProvider = provider;
-  task.outputs.videoModel = model;
-  task.outputs.videoUrl = generated.videoUrl;
-  task.outputs.finalVideoUrl = generated.videoUrl;
-  return task;
+  void provider;
+  void model;
+  void prompt;
+  throw new Error("legacy_video_step_retired: 请通过当前 Seedance/Kling 异步成片入口生成");
 }

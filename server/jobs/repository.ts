@@ -521,6 +521,48 @@ export async function createJob(data: {
   return data.id;
 }
 
+/**
+ * 所有权登记簿存量引导专用(五审 P0-4):按 (createdAt,id) 游标分页列出
+ * 已成功的 image 任务——服务端持久化的任务记录是唯一可信归属证据来源,
+ * action 过滤(canvas_gpt_image2)由调用方在 input 上判定。
+ */
+export async function listSucceededImageJobsPage(opts: {
+  afterCreatedAtMs?: number;
+  afterId?: string;
+  limit?: number;
+}): Promise<NormalizedJob[]> {
+  const db = await getDb();
+  if (!db) {
+    // 六审第11条:DB 不可用时返回空页会被回填当成"扫完了"假成功,必须炸出来
+    throw new Error("canvas_media_owner_backfill_database_unavailable");
+  }
+  const limit = Math.max(1, Math.min(500, Math.floor(Number(opts.limit) || 200)));
+  try {
+    const afterMs = Number(opts.afterCreatedAtMs);
+    const afterId = String(opts.afterId || "");
+    const rows = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.type, "image"),
+          eq(jobs.status, "succeeded"),
+          ...(Number.isFinite(afterMs) && afterMs > 0
+            ? [
+                sql`("createdAt" > ${new Date(afterMs)} OR ("createdAt" = ${new Date(afterMs)} AND "id" > ${afterId}))`,
+              ]
+            : []),
+        ),
+      )
+      .orderBy(asc(jobs.createdAt), asc(jobs.id))
+      .limit(limit);
+    return rows.map(normalizeJob);
+  } catch (error) {
+    console.error("[JobsRepo] listSucceededImageJobsPage failed:", error);
+    throw error;
+  }
+}
+
 export async function getJobById(id: string): Promise<NormalizedJob | null> {
   const db = await getDb();
   if (!db) return null;

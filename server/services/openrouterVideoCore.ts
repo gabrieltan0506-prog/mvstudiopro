@@ -173,6 +173,25 @@ async function pollOpenRouterVideoJob(
   throw new Error(`视频生成超时（${Math.round(MAX_POLL_MS / 60_000)} 分钟）`);
 }
 
+/**
+ * 八审 P1-5:提交层直接产出 typed error,不让调用方回头猜文案。
+ * rejected=上游明确 4xx 拒绝(确定没建单,可安全回落网关);
+ * unknown=网络断/5xx/超时/2xx 缺 id——任务可能已建,禁止回落,转对账。
+ */
+export class OpenRouterSubmitRejectedError extends Error {
+  readonly kind = "rejected";
+}
+export class OpenRouterSubmitUnknownError extends Error {
+  readonly kind = "unknown";
+}
+export function isOpenRouterSubmitRejected(e: unknown): e is OpenRouterSubmitRejectedError {
+  return e instanceof OpenRouterSubmitRejectedError;
+}
+export function isOpenRouterSubmitUnknown(e: unknown): e is OpenRouterSubmitUnknownError {
+  return e instanceof OpenRouterSubmitUnknownError;
+}
+const OPENROUTER_DEFINITE_REJECT = new Set([400, 401, 403, 404, 413, 415, 422]);
+
 export async function submitOpenRouterVideoJob(
   body: Record<string, unknown>,
 ): Promise<{
@@ -183,34 +202,45 @@ export async function submitOpenRouterVideoJob(
   apiKey: string;
 }> {
   const apiKey = getOpenRouterApiKey();
-  if (!apiKey) throw new Error("视频服务暂不可用，请稍后重试");
+  // 配置缺失=确定没打上游,按明确拒绝(回落网关安全)
+  if (!apiKey) throw new OpenRouterSubmitRejectedError("视频服务暂不可用，请稍后重试");
 
   const model = String(body.model || "").trim();
   const prompt = String(body.prompt || "").trim();
-  if (!model) throw new Error("视频服务模型未配置");
-  if (!prompt) throw new Error("请填写视频提示词");
+  if (!model) throw new OpenRouterSubmitRejectedError("视频服务模型未配置");
+  if (!prompt) throw new OpenRouterSubmitRejectedError("请填写视频提示词");
 
-  const createResponse = await fetch(`${OPENROUTER_BASE}/videos`, {
-    method: "POST",
-    headers: buildOpenRouterAuthHeaders(apiKey),
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  });
+  let createResponse: Response;
+  try {
+    createResponse = await fetch(`${OPENROUTER_BASE}/videos`, {
+      method: "POST",
+      headers: buildOpenRouterAuthHeaders(apiKey),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (error) {
+    // 网络断/超时:任务可能已在上游建成,结果未知
+    throw new OpenRouterSubmitUnknownError(
+      `OpenRouter 提交结果未知：${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   const createJson = (await createResponse
     .json()
     .catch(() => ({}))) as OpenRouterVideoJob;
   if (!createResponse.ok) {
-    throw new Error(
-      userFacingOpenRouterVideoError(
-        jobErrorMessage(createJson) || `创建任务失败 (${createResponse.status})`,
-      ),
-    );
+    const detail = `HTTP ${createResponse.status} ${jobErrorMessage(createJson) || ""}`.trim();
+    if (OPENROUTER_DEFINITE_REJECT.has(createResponse.status)) {
+      throw new OpenRouterSubmitRejectedError(detail);
+    }
+    // 408/409/425/429/5xx:任务可能已被接受,禁止回落
+    throw new OpenRouterSubmitUnknownError(detail);
   }
 
   const pollingUrlRaw = String(createJson.polling_url || "").trim();
   const openRouterJobId = String(createJson.id || "").trim();
   if (!pollingUrlRaw && !openRouterJobId) {
-    throw new Error("视频服务未返回任务信息");
+    // 2xx 但没给任务号:任务可能已建,结果未知
+    throw new OpenRouterSubmitUnknownError("OpenRouter 2xx 但未返回 id/polling_url");
   }
   const pollingUrl = assertSafePollingUrl(
     pollingUrlRaw || `${OPENROUTER_BASE}/videos/${encodeURIComponent(openRouterJobId)}`,

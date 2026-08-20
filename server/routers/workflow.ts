@@ -1,10 +1,17 @@
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { and, count, desc, eq, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { users, workflows, workflowStepRuns, workspaces, stripeUsageLogs } from "../../drizzle/schema";
-import { deductCredits, deductCreditsAmount, getCredits, refundCredits } from "../credits";
+import {
+  deductCredits,
+  deductCreditsAmount,
+  getCredits,
+  refundCredits,
+  refundCreditsForDeductAmount,
+} from "../credits";
 import { CREDIT_COSTS } from "../plans";
 import { hasUnlimitedAccess } from "../services/access-policy";
 
@@ -623,7 +630,7 @@ export const workflowRouter = router({
         input.step === "scene_video" && input.creditsOverride != null && input.creditsOverride > 0;
       const totalCost = (useOverride ? input.creditsOverride! : unitCost) * input.quantity;
 
-      if (totalCost === 0) return { cost: 0, remaining: -1 };
+      if (totalCost === 0) return { cost: 0, remaining: -1, chargeKey: null };
 
       const credits = await getCredits(ctx.user.id);
       if (credits.totalAvailable < totalCost) {
@@ -633,48 +640,41 @@ export const workflowRouter = router({
         });
       }
 
-      if (useOverride) {
-        const result = await deductCreditsAmount(
-          ctx.user.id,
-          totalCost,
-          "workflowSceneVideo",
-          `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}（动态 ${input.creditsOverride}×${input.quantity}）`,
-        );
-        return { cost: totalCost, remaining: result.remainingBalance };
-      }
-
-      const result = await deductCredits(
+      /**
+       * 六审第6条:每笔预扣带服务端生成的唯一 chargeKey 落进 stripe_usage_logs,
+       * 退款只认这把钥匙(refundStep 从 DB 读原扣款),客户端不再拥有"报数退款"能力。
+       */
+      const chargeKey = `workflowStep/${ctx.user.id}/${input.step}/${randomUUID()}`;
+      // 七审 P1-6:action 保持历史 costKey(报表按 action 聚合,禁止拆成新旧两组);
+      // step 新命名只进 description。
+      const result = await deductCreditsAmount(
         ctx.user.id,
+        totalCost,
         costKey,
-        `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}${input.quantity > 1 ? ` ×${input.quantity}` : ""}`,
+        `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}[step:${input.step}]${input.quantity > 1 ? ` ×${input.quantity}` : ""}${useOverride ? `（动态 ${input.creditsOverride}×${input.quantity}）` : ""}`,
+        { chargeKey },
       );
-      return { cost: totalCost, remaining: result.remainingBalance };
+      return { cost: result.cost, remaining: result.remainingBalance, chargeKey };
     }),
 
+  /**
+   * 七审 P0-1:通用退款路由**下线**——退款资格无法在此校验(用户成功拿到成片后
+   * 仍可自退全款,白嫖链成立)。扣费/执行/失败退款已收进服务端执行契约
+   * server/services/workflowStepBilling.ts(runPaidWorkflowStep);前端不再持有
+   * 任何可触发退款的能力。保留路由仅为旧客户端不至于 404,一律 FORBIDDEN。
+   */
   refundStep: protectedProcedure
     .input(
       z.object({
-        step: z.enum(["storyboard", "scene_image", "render_still", "scene_video", "scene_voice", "music", "final_render"]),
-        quantity: z.number().int().min(1).max(100).default(1),
+        chargeKey: z.string().max(200).optional(),
         reason: z.string().max(200).optional(),
-        /** 与 chargeStep.creditsOverride 对称：动态场景视频退款总额 = amount × quantity（或单场景时 quantity=1） */
-        creditsOverride: z.number().int().min(1).max(5000).optional(),
       }),
     )
-    .mutation(async ({ ctx, input }) => {
-      const costKey = WORKFLOW_STEP_COST_KEY[input.step];
-      const unitCost = CREDIT_COSTS[costKey];
-      const useOverride =
-        input.step === "scene_video" && input.creditsOverride != null && input.creditsOverride > 0;
-      const totalCost = (useOverride ? input.creditsOverride! : unitCost) * input.quantity;
-      if (totalCost === 0) return { refunded: 0 };
-
-      await refundCredits(
-        ctx.user.id,
-        totalCost,
-        input.reason ?? `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}·生成失败·退回已扣积分`,
-      );
-      return { refunded: totalCost };
+    .mutation(async () => {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "退款由服务端在生成失败时自动执行，不再接受客户端退款请求",
+      });
     }),
 
   /** 大师级视频基地脚本：每日第 1 次免费，第 2 次起扣 2 cr（防薅）。请在调用 /api/jobs 前执行。 */
@@ -732,10 +732,17 @@ export const workflowRouter = router({
       return { ok: true as const };
     }),
 
+  /**
+   * 八审 P0-2:此路由曾对任意登录用户无条件退 amount(1-10)积分,不校验是否扣过、
+   * 是否失败、是否已退——反复调用即凭空造积分。与 refundStep 同罪,一律 FORBIDDEN。
+   * 脚本生成的失败退款迁入服务端 workflowgeneratescript handler(已限 supervisor/admin)。
+   */
   refundScriptGenerationCharge: protectedProcedure
-    .input(z.object({ amount: z.number().int().min(1).max(10) }))
-    .mutation(async ({ ctx, input }) => {
-      await refundCredits(ctx.user.id, input.amount, "脚本生成·失败·退回已扣积分");
-      return { ok: true as const };
+    .input(z.object({ amount: z.number().int().min(1).max(10).optional() }))
+    .mutation(async () => {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "脚本生成退款已迁入服务端执行契约，不再接受客户端退款请求",
+      });
     }),
 });

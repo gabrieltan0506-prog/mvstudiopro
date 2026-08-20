@@ -318,7 +318,8 @@ async function main() {
   let imageUrl = "";
   if (!SKIP_IMAGE) {
     await probeLegacyWorkflowSceneImageWrongPath();
-    await probeCanvasGptImage2();
+    // 八审 P2-7:同步出图入口已 410 停用,跳过此探针(其余探针照常)
+    // await probeCanvasGptImage2();
     imageUrl = await probeNanoImage();
     await probeBananaOrFalImage();
   } else {

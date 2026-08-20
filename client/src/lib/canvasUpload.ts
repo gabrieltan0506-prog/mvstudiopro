@@ -1,5 +1,5 @@
 import type { CanvasAssetKind, CanvasUploadedAsset } from "./canvasTypes";
-import { resolveOmniMaterialUrl, uploadFileToSignedUrl } from "./omniCanvasApi";
+import { resolveCanvasMaterialUrl, uploadFileToSignedUrl } from "./omniCanvasApi";
 
 const DOCUMENT_EXT = /\.(pdf|txt|md|markdown)$/i;
 const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif)$/i;
@@ -113,7 +113,7 @@ export async function uploadOneCanvasAsset(params: {
 
   if (!signed.gcsUri) throw new Error(`上传失败：${file.name}`);
 
-  const readUrl = await resolveOmniMaterialUrl(signed.gcsUri);
+  const readUrl = await resolveCanvasMaterialUrl(signed.gcsUri);
   const previewUrl = kind === "image" ? URL.createObjectURL(file) : readUrl;
 
   return {

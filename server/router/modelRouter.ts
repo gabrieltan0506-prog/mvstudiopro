@@ -27,8 +27,8 @@ export function routeModel(type: ModelType): ModelRoute {
 
     case "video":
       return {
-        provider:"vertex",
-        model:"veo-3.1-generate-001"
+        provider:"kling",
+        model:"kling-v2-6"
       }
 
     case "music":

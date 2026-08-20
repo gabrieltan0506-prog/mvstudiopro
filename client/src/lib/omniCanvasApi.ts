@@ -1,16 +1,5 @@
-/** Gemini Omni Canvas · 前端 API 封装 */
+/** Canvas 共用的 Google 文本、图像与素材 API 封装（文件名仅为历史兼容）。 */
 import { resolveGeminiScriptFallbackModel } from "@shared/geminiScriptFallback";
-
-export type OmniCanvasVideoEngine = "omni" | "seedance25";
-
-export type OmniVideoTask =
-  | "unspecified"
-  | "text_to_video"
-  | "image_to_video"
-  | "reference_to_video"
-  | "edit"
-  | "extend"
-  | "edit_video";
 
 async function parseJson(resp: Response) {
   const text = await resp.text();
@@ -24,73 +13,13 @@ async function parseJson(resp: Response) {
   }
 }
 
-export async function resolveOmniMaterialUrl(gcsUri: string): Promise<string> {
-  const resp = await fetch(`/api/google?op=omniMaterialUrl&gcsUri=${encodeURIComponent(gcsUri)}`);
+export async function resolveCanvasMaterialUrl(gcsUri: string): Promise<string> {
+  const resp = await fetch(`/api/google?op=materialReadUrl&gcsUri=${encodeURIComponent(gcsUri)}`, {
+    credentials: "include",
+  });
   const json = await parseJson(resp);
   if (!resp.ok || !json.ok) throw new Error(String(json.message || json.error || "签名 URL 失败"));
   return String(json.url || "");
-}
-
-export async function createOmniInteraction(body: {
-  prompt: string;
-  task?: OmniVideoTask;
-  aspectRatio?: "9:16" | "16:9";
-  durationSeconds?: number;
-  imageUrl?: string;
-  videoUrl?: string;
-  gcsUri?: string;
-  referenceImageUrls?: string[];
-  previousInteractionId?: string;
-  systemInstruction?: string;
-}) {
-  const resp = await fetch("/api/google?op=omniInteractionCreate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const json = await parseJson(resp);
-  if (!resp.ok || !json.ok) {
-    throw new Error(String(json.message || json.error || "Omni 任务创建失败"));
-  }
-  return json as { id: string; model: string; task: string };
-}
-
-export async function getOmniInteraction(interactionId: string) {
-  const resp = await fetch(
-    `/api/google?op=omniInteractionGet&interactionId=${encodeURIComponent(interactionId)}`,
-  );
-  const json = await parseJson(resp);
-  if (!resp.ok || !json.ok) {
-    throw new Error(String(json.message || json.error || "Omni 轮询失败"));
-  }
-  return json as {
-    status: string;
-    videoUrl?: string | null;
-    text?: string | null;
-    imageUrls?: string[];
-    failed?: boolean;
-    error?: unknown;
-  };
-}
-
-export async function pollOmniInteractionUntilDone(
-  interactionId: string,
-  opts?: { maxAttempts?: number; intervalMs?: number },
-) {
-  const maxAttempts = opts?.maxAttempts ?? 120;
-  const intervalMs = opts?.intervalMs ?? 4000;
-  for (let i = 0; i < maxAttempts; i++) {
-    const row = await getOmniInteraction(interactionId);
-    const status = String(row.status || "").toLowerCase();
-    if (row.videoUrl || (row.imageUrls && row.imageUrls.length > 0) || (row.text && status === "completed")) {
-      return row;
-    }
-    if (row.failed || status === "failed" || status === "cancelled") {
-      throw new Error(String((row.error as any)?.message || "Omni 任务失败"));
-    }
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-  throw new Error("Omni 任务超时，请稍后再试");
 }
 
 function isTransientGeminiHttp(status: number): boolean {

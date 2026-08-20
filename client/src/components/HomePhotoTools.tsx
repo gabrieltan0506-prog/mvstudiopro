@@ -396,7 +396,8 @@ export default function HomePhotoTools() {
           const statusRaw = await statusRes.text();
           let statusJson: {
             ok?: boolean;
-            status?: string;
+            /** 与服务端 HomePhotoAnimateTaskStatus 对齐,不再当任意字符串用 */
+            status?: "queued" | "running" | "succeeded" | "failed" | "reconcile_manual";
             videoUrl?: string;
             creditsUsed?: number;
             resolution?: HomePhotoAnimateResolution;
@@ -418,6 +419,13 @@ export default function HomePhotoTools() {
           }
           if (statusJson.status === "failed") {
             throw new Error(statusJson.error || "照片动画生成失败，积分已自动退回");
+          }
+          // 七审 P1-4:服务端已转人工对账=终态,不再空轮询 20 分钟骗自己"仍在生成"
+          if (statusJson.status === "reconcile_manual") {
+            throw new Error(
+              statusJson.error ||
+                `照片动画状态无法自动确认，已转人工对账。任务号：${created.taskId}`,
+            );
           }
         }
       }

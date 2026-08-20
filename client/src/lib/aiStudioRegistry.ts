@@ -56,31 +56,6 @@ export const AI_STUDIO_MODELS: ModelRegistryItem[] = [
   },
 
   {
-    id: "veo-rapid",
-    label: "Veo 3.1 Rapid",
-    family: "video",
-    provider: "google",
-    plan: "business",
-    uiGroup: "google",
-    createOp: "veoCreate",
-    taskOp: "veoTask",
-    defaults: { provider: "rapid", durationSeconds: 8, aspectRatio: "16:9", resolution: "720p" },
-    notes: "更快，适合快速预览",
-  },
-  {
-    id: "veo-pro",
-    label: "Veo 3.1 Pro",
-    family: "video",
-    provider: "google",
-    plan: "director",
-    uiGroup: "google",
-    createOp: "veoCreate",
-    taskOp: "veoTask",
-    defaults: { provider: "pro", durationSeconds: 8, aspectRatio: "16:9", resolution: "720p" },
-    notes: "更高质量",
-  },
-
-  {
     id: "kling-image-2.6",
     label: "Kling 2.6 图像（教育）",
     family: "image",

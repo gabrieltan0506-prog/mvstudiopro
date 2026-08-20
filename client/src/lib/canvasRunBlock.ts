@@ -1,13 +1,10 @@
-import { DEFAULT_CANVAS_VIDEO_MODEL, type CanvasBlock } from "./canvasTypes";
+import { DEFAULT_CANVAS_VIDEO_MODEL, isCanvasWan30VideoModel, normalizeCanvasVideoModel, type CanvasBlock } from "./canvasTypes";
+import { isLocalMediaPointer, resolveUrlForCloudSync } from "./manhuaLocalMediaStore";
 import { withFlyHealthGate } from "./flyHealthGate";
 import { flyHealthProbeOriginForUrl, withLongJobsFlyDirect } from "./longJobsFlyOrigin";
 import { probeVideoDurationSec } from "./videoUpscaleApi";
 import { createJobSameOrigin, pollJobUntilTerminal } from "./jobs";
-import {
-  createOmniInteraction,
-  pollOmniInteractionUntilDone,
-  runGeminiScript,
-} from "./omniCanvasApi";
+import { runGeminiScript } from "./omniCanvasApi";
 import {
   compileI2VMotionPrompt,
   isManhuaSeedanceDirectorPrompt,
@@ -133,6 +130,8 @@ function resolveCanvasTextPrimaryModel(textModel: string | undefined): string {
 const CANVAS_GPT_IMAGE2_POLL_MAX_MS = 12 * 60_000;
 
 export type CanvasRunDeps = {
+  /** 长排队任务创建即回写节点(taskId 持久化,刷新可恢复;审查 P1);缺省不回写 */
+  onVideoTaskCreated?: (blockId: string, info: { taskId: string; engine: string }) => void;
   optimizeCopy: (input: {
     sourceText: string;
     optimizationBrief?: string;
@@ -209,8 +208,15 @@ async function toHttpsImageUrls(
 ): Promise<string[]> {
   const out: string[] = [];
   for (let i = 0; i < urls.length; i++) {
-    const u = String(urls[i] || "").trim();
+    let u = String(urls[i] || "").trim();
     if (!u) continue;
+    // 回填后节点常见 blob:/local-media: 展示地址:先溯源到 https 原链再编译,
+    // 否则这些参考会被静默丢掉(复审 P1-4)
+    if (u.startsWith("blob:") || isLocalMediaPointer(u)) {
+      const traced = resolveUrlForCloudSync(u);
+      if (traced) u = traced;
+      else continue;
+    }
     if (/^https?:\/\//i.test(u)) {
       out.push(u);
       continue;
@@ -278,7 +284,7 @@ function isOpenAiImageTimeoutError(message: string): boolean {
  * 短入队（www→Fly）+ 轮询；worker 内再等官方上游。
  * 勿再长 POST ?op=canvasGptImage2（会撞网关/浏览器长连接）。
  */
-async function runGptImage2(
+export async function runGptImage2(
   prompt: string,
   aspectRatio: "9:16" | "16:9",
   opts?: {
@@ -301,50 +307,48 @@ async function runGptImage2(
   const openaiOnly = Boolean(opts?.openaiOnly);
   const userId = String(opts?.userId || "");
 
-  const attemptOnce = async (isRetry = false): Promise<string> => {
-    const { jobId } = await createJobSameOrigin({
-      type: "image",
-      userId,
-      input: buildCanvasGptImage2JobInput({
-        prompt,
-        aspectRatio,
-        referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
-        maskUrl: maskUrl || undefined,
-        generalImageEdit: referenceImageUrls.length > 0,
-        providerOverride: openaiOnly ? "openai" : undefined,
-        imageLane: opts?.imageLane,
-        /**
-         * 画布出图由 worker 扣积分；`/creative` 与 `/platform` 走同一队列但已在前端扣，故不带此标记。
-         * 超时重入队的那次也不带：上一个 job 可能仍在跑并最终成功（那次已扣），
-         * 同一张图不能收两次。宁可少收，也不误扣。
-         */
-        chargeOnServer: !isRetry,
-        batchIndex: opts?.batchIndex,
-      }),
-    });
-    const job = await pollJobUntilTerminal(jobId, {
+  /**
+   * 六审第4条:只创建一次 job。超时不再第二次入队(那会再打一次付费上游),
+   * 只对同一 jobId 继续轮询——上一轮可能只是慢,任务仍在 worker 里跑。
+   */
+  const { jobId } = await createJobSameOrigin({
+    type: "image",
+    userId,
+    input: buildCanvasGptImage2JobInput({
+      prompt,
+      aspectRatio,
+      referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
+      maskUrl: maskUrl || undefined,
+      generalImageEdit: referenceImageUrls.length > 0,
+      providerOverride: openaiOnly ? "openai" : undefined,
+      imageLane: opts?.imageLane,
+      batchIndex: opts?.batchIndex,
+    }),
+  });
+
+  let job: Awaited<ReturnType<typeof pollJobUntilTerminal>>;
+  try {
+    job = await pollJobUntilTerminal(jobId, {
       maxWaitMs: CANVAS_GPT_IMAGE2_POLL_MAX_MS,
       intervalMs: 2500,
     });
-    if (job.status !== "succeeded") {
-      throw new Error(job.error || "GPT-Image-2 生图失败");
-    }
-    const out = (job.output || {}) as { imageUrl?: string; imageUrls?: string[] };
-    const url = String(out.imageUrl || out.imageUrls?.[0] || "").trim();
-    if (!url) throw new Error("GPT-Image-2 未返回图片 URL");
-    return url;
-  };
-
-  try {
-    return await attemptOnce();
-  } catch (firstErr) {
-    const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
-    if (openaiOnly && isOpenAiImageTimeoutError(msg)) {
-      console.warn("[canvasRunBlock] 官方 Image-2 超时，仅再入队一次 OpenAI（不回落 OpenRouter）");
-      return await attemptOnce(true);
-    }
-    throw firstErr;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isOpenAiImageTimeoutError(message)) throw error;
+    console.warn("[canvasRunBlock] 轮询超时，继续查询同一任务（绝不重新调用图片上游）");
+    job = await pollJobUntilTerminal(jobId, {
+      maxWaitMs: CANVAS_GPT_IMAGE2_POLL_MAX_MS,
+      intervalMs: 5000,
+    });
   }
+
+  if (job.status !== "succeeded") {
+    throw new Error(job.error || "GPT-Image-2 生图失败");
+  }
+  const out = (job.output || {}) as { imageUrl?: string; imageUrls?: string[] };
+  const url = String(out.imageUrl || out.imageUrls?.[0] || "").trim();
+  if (!url) throw new Error("GPT-Image-2 未返回图片 URL");
+  return url;
 }
 
 async function runGptImage2Batch(
@@ -532,11 +536,13 @@ type SeedanceProductVideoResult = {
 /** 画布成片异步任务：短轮询 status，避免单条 HTTP 长等被部署掐断。 */
 async function pollCanvasVideoTask(
   taskId: string,
+  opts?: { timeoutMs?: number },
 ): Promise<{ videoUrl: string; workMode?: SeedanceEvolinkMode }> {
   const statusEndpoint = withLongJobsFlyDirect(
     `/api/jobs?op=canvasVideoStatus&taskId=${encodeURIComponent(taskId)}`,
   );
-  const deadline = Date.now() + 20 * 60_000;
+  // 轮询期限按引擎传入:Wan 公测排队以小时计,写死 20 分钟会把活任务误报成失败(审查 P1)
+  const deadline = Date.now() + Math.max(60_000, Number(opts?.timeoutMs) || 20 * 60_000);
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 5_000));
     const statusRes = await fetch(statusEndpoint, {
@@ -784,6 +790,191 @@ async function runHailuo3(
   throw new Error(json.error || json.message || "成片生成失败");
 }
 
+/**
+ * Wan 参考图职责表:Wan 没有 @图片N 绑定语法,按数组顺序用自然语言声明每张图的唯一职责。
+ * 复审 P1-5:必须吃满 bind plan 元数据——导演板只管构图运镜绝不锁脸;
+ * 定妆按 duty 分 identity(只锁脸)/look(只锁服化),并点名 labelZh/roleTag;静帧带秒段。
+ */
+export function buildWanReferenceRoleBlock(
+  images: string[],
+  entries: Array<{
+    url: string;
+    kind?: string;
+    roleTag?: string;
+    labelZh?: string;
+    duty?: "identity" | "look" | null;
+    slotZh?: string | null;
+  }>,
+): string {
+  if (!images.length) return "";
+  const lines = images.map((u, i) => {
+    const e = entries.find((x) => x.url === u);
+    const who = String(e?.labelZh || e?.roleTag || "").trim();
+    let role: string;
+    switch (e?.kind) {
+      case "tail":
+        role = "上一段末帧,仅作起幅衔接参考,不继承其中文字与瑕疵,不锁定任何身份";
+        break;
+      case "still":
+        role = `本段关键静帧${e?.slotZh ? `(${e.slotZh})` : ""},锁定构图与动作结果`;
+        break;
+      case "board":
+        role = "导演板,只提供构图、运镜与动作路径参考,禁止用它锁定人物长相或服装";
+        break;
+      case "asset": {
+        // 三审 P1-2:类型判别只认 roleTag(@场景1/@道具1/@服装1/@角色1),
+        // labelZh 只是显示名——「断月桥」不含"场景"二字,靠名字猜必错。
+        const tag = String(e?.roleTag || "");
+        if (/^@?(场景|背景)/.test(tag)) {
+          role = `${who ? `「${who}」` : ""}场景参考,只锁空间、光色与布景,不锁定任何人物`;
+        } else if (/^@?道具/.test(tag)) {
+          role = `${who ? `「${who}」` : ""}道具参考,只锁该物件形态,不锁定任何人物`;
+        } else if (e?.duty === "look" || /^@?(服装|妆造)/.test(tag)) {
+          role = `${who ? `「${who}」的` : ""}服装/妆造参考,只锁服化,不改脸型`;
+        } else {
+          role = `${who ? `「${who}」的` : ""}人物定妆参考,只锁脸部身份特征,不继承背景、文字或无关元素`;
+        }
+        break;
+      }
+      default:
+        role = "参考图,只继承与画面直接相关的元素,不继承背景文字与无关人物";
+    }
+    return `Reference image ${i + 1}:${role}`;
+  });
+  return `【参考图职责】\n${lines.join("\n")}\n每张参考图只承担上述唯一职责,人物身份必须与对应人物定妆图完全一致,禁止串位、换脸、混合身份。`;
+}
+
+/**
+ * 单次用户提交 ID(复审 P0-2):每次点击生成都必须换新键。
+ * 内容散列键的坑:上一单 failed 已退款后,同内容重跑会命中旧扣费记录(alreadyCharged),
+ * 却再次真金白银打上游 = 免费重跑计费漏洞。改为一次提交一键:
+ * 同一次 POST 的传输层重试天然复用同一请求;用户再点一次 = 新键 = 重新扣费。
+ */
+export function newWanSubmissionKey(blockId: string): string {
+  const rand =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID().replace(/-/g, "").slice(0, 16)
+      : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  return `wan30_${blockId.replace(/[^0-9a-zA-Z_-]/g, "").slice(0, 40)}_${rand}`;
+}
+
+/** Wan 请求体构建器:抽出为纯函数,让测试能断言真实 POST 载荷(三审 P0-1) */
+export function buildWan30RequestBody(input: {
+  prompt: string;
+  images: string[];
+  aspectRatio: "9:16" | "16:9";
+  audioUrls?: string[];
+  duration?: number;
+  resolution?: string;
+  episodeIndex?: number;
+  clipIndex?: number;
+  idempotencyKey?: string;
+  seed?: number;
+}): Record<string, unknown> {
+  return {
+    prompt: input.prompt,
+    imageUrl: input.images[0],
+    imageUrls: input.images.slice(0, 10),
+    audioUrls: (input.audioUrls || []).filter(Boolean).slice(0, 5),
+    aspectRatio: input.aspectRatio,
+    duration: Math.min(30, Math.max(2, Math.floor(Number(input.duration) || 30))),
+    resolution: input.resolution || "720p",
+    generateAudio: true,
+    ...(Number(input.episodeIndex) > 0 ? { episodeIndex: Number(input.episodeIndex) } : {}),
+    ...(Number(input.clipIndex) > 0 ? { clipIndex: Number(input.clipIndex) } : {}),
+    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+    ...(Number.isFinite(Number(input.seed)) ? { seed: Math.floor(Number(input.seed)) } : {}),
+  };
+}
+
+/** Wan 3.0（公测）· WaveSpeed reference-to-video：可直出 30s；公测排队时间较长 */
+async function runWan30(
+  prompt: string,
+  imageUrls: string[],
+  aspectRatio: "9:16" | "16:9",
+  opts?: {
+    audioUrls?: string[];
+    duration?: number;
+    resolution?: string;
+    episodeIndex?: number;
+    clipIndex?: number;
+    /** 稳定幂等键:同节点同内容重试复用同键,防双击双扣费(审查 P1) */
+    idempotencyKey?: string;
+    seed?: number;
+    /** 拿到 taskId 立即回调(先持久化再慢慢轮询) */
+    onTaskId?: (taskId: string) => void;
+  },
+): Promise<string> {
+  const wanUrl = withLongJobsFlyDirect("/api/jobs?op=wan30Video");
+  const probeOrigin = flyHealthProbeOriginForUrl(wanUrl);
+  const images = imageUrls.map((u) => String(u || "").trim()).filter(Boolean);
+  if (!images.length) {
+    throw new Error("Wan 3.0 成片需要至少一张参考图（请先出静帧或上传参考）");
+  }
+  const res = await withFlyHealthGate(probeOrigin, () =>
+    fetch(wanUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      // 载荷统一走 buildWan30RequestBody:提交键/seed 必须真实入 POST(三审 P0-1),测试直接断言构建器输出
+      body: JSON.stringify(
+        buildWan30RequestBody({
+          // Wan 无 Seedance 的 @图片N 硬绑定语法,提示词由调用方按 Wan 口径编译,不过 Seedance 渲染器
+          prompt,
+          images,
+          aspectRatio,
+          audioUrls: opts?.audioUrls,
+          duration: opts?.duration,
+          resolution: opts?.resolution,
+          episodeIndex: opts?.episodeIndex,
+          clipIndex: opts?.clipIndex,
+          idempotencyKey: opts?.idempotencyKey,
+          seed: opts?.seed,
+        }),
+      ),
+    }),
+  );
+  const text = await res.text();
+  let json: {
+    videoUrl?: string;
+    error?: string;
+    message?: string;
+    ok?: boolean;
+    async?: boolean;
+    taskId?: string;
+  } = {};
+  try {
+    json = JSON.parse(text) as typeof json;
+  } catch {
+    throw new Error(
+      /An error o|ROUTER_EXTERNAL/i.test(text)
+        ? "成片网关超时，请稍后重试（已尽量直连长任务 API）"
+        : `成片生成失败：${text.slice(0, 160)}`,
+    );
+  }
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error || json.message || "成片生成失败");
+  }
+  if (json.videoUrl) return String(json.videoUrl);
+  if (json.taskId) {
+    try {
+      opts?.onTaskId?.(String(json.taskId));
+    } catch {
+      /* 回写失败不阻塞生成 */
+    }
+    try {
+      // Wan 公测排队以小时计:前端轮询期限对齐后端(3h)+缓冲
+      const polled = await pollCanvasVideoTask(json.taskId, { timeoutMs: 200 * 60_000 });
+      return polled.videoUrl;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // 不把仍在跑的任务谎报成失败:把单号交给用户,后端照常生成与对账
+      throw new Error(`${msg}(任务仍在后台生成,单号 ${json.taskId},勿重复提交)`);
+    }
+  }
+  throw new Error(json.error || json.message || "成片生成失败");
+}
+
 /** Happy Horse 1.1 · OpenRouter（首帧图生；时长 5/10/15，最长 15s） */
 async function runHappyHorse(
   prompt: string,
@@ -845,68 +1036,9 @@ async function runHappyHorse(
   throw new Error(json.error || json.message || "成片生成失败");
 }
 
-export const OMNI_CLIP_DURATION_SECONDS = 10;
-
 /** 成片跟静帧：正向约束，不堆「禁止真人」以免上游拒答 */
 const MANHUA_VIDEO_FOLLOW_STILL_ZH =
   "【参考静帧】成片画面风格、人物造型、服装与场景材质请直接对齐本段参考静帧；以参考图为准做微动演绎。";
-
-export function normalizeOmniClipPrompt(rawPrompt: string): string {
-  const prompt = String(rawPrompt || "")
-    .replace(/(?:约|大约|目标约)?\s*15\s*(?:秒|s)\s*(?:成片|视频)?/gi, "10 秒成片")
-    .replace(/打斗短阶段/g, "动作短阶段")
-    .replace(/兵器交锋/g, "舞台化兵器走位")
-    .replace(/击打反馈/g, "动作反馈")
-    .replace(/攻击/g, "动作")
-    .replace(/(?:不出现|禁止出现)?\s*(?:伤口|流血|血迹)+/g, "保持克制")
-    .trim();
-  return [
-    `单次成片严格为 ${OMNI_CLIP_DURATION_SECONDS} 秒。`,
-    "动作采用非写实、无伤害的舞台化调度，保持克制与安全。",
-    prompt.includes("参考静帧") ? "" : MANHUA_VIDEO_FOLLOW_STILL_ZH,
-    prompt,
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-async function runOmniFlash(
-  prompt: string,
-  imageUrl: string | undefined,
-  aspectRatio: "9:16" | "16:9",
-  opts?: {
-    videoUrl?: string;
-    previousInteractionId?: string;
-    edit?: boolean;
-    referenceImageUrls?: string[];
-  },
-): Promise<string> {
-  const edit = Boolean(opts?.edit || opts?.videoUrl || opts?.previousInteractionId);
-  const refs = (opts?.referenceImageUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
-  const primary = imageUrl || refs[0];
-  const multiRefs = Array.from(new Set([primary, ...refs].filter(Boolean))) as string[];
-  const task = edit
-    ? ("edit" as const)
-    : multiRefs.length > 1
-      ? ("reference_to_video" as const)
-      : primary
-        ? ("image_to_video" as const)
-        : ("text_to_video" as const);
-  const created = await createOmniInteraction({
-    prompt: normalizeOmniClipPrompt(prompt),
-    task,
-    aspectRatio,
-    durationSeconds: OMNI_CLIP_DURATION_SECONDS,
-    imageUrl: edit ? undefined : primary,
-    referenceImageUrls: edit ? undefined : multiRefs.length > 1 ? multiRefs : undefined,
-    videoUrl: opts?.videoUrl,
-    previousInteractionId: opts?.previousInteractionId,
-  });
-  const result = await pollOmniInteractionUntilDone(created.id);
-  const outUrl = String(result.videoUrl || "");
-  if (!outUrl) throw new Error("视频改写未返回成片，请稍后重试");
-  return outUrl;
-}
 
 export function formatCanvasUpstreamPrompt(basePrompt: string, upstreamTexts: string[]): string {
   const trimmed = basePrompt.trim();
@@ -1250,9 +1382,10 @@ export async function runCanvasBlock(
     const motionPrompt = isClip
       ? stripManhuaAssetUrlsFromPrompt(appendManhuaClipEngineOptics(compiledMotion))
       : compiledMotion;
-    const videoModel = block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL;
+    const videoModel = normalizeCanvasVideoModel(block.videoModel || DEFAULT_CANVAS_VIDEO_MODEL);
     const useHailuoH3 = isCanvasHailuoH3VideoModel(videoModel);
     const useHappyHorse = isCanvasHappyHorseVideoModel(videoModel);
+    const useWan30 = isCanvasWan30VideoModel(videoModel);
     const useSeedance25 = videoModel === "seedance-2.5";
     if (useSeedance25) {
       // 与服务端 assertSeedance25PaidAccess 同一套判定（到点 + 会员 + 内部角色），
@@ -1274,7 +1407,8 @@ export async function runCanvasBlock(
       videoModel === "seedance-2.0-fast" ||
       useSeedance25 ||
       useHailuoH3 ||
-      useHappyHorse
+      useHappyHorse ||
+      useWan30
     ) {
       // ~15s 一镜：下一段起幅必须吃上一段末 3–5s 帧，再叠本段静帧（配额≤6）
       const stillPool: string[] = [];
@@ -1374,7 +1508,9 @@ export async function runCanvasBlock(
               ? HAPPYHORSE_REFERENCE_MAX.image
               : useHailuoH3
                 ? HAILUO_REFERENCE_MAX.image
-                : SEEDANCE_REFERENCE_MAX.image,
+                : useWan30
+                  ? 10
+                  : SEEDANCE_REFERENCE_MAX.image,
             boardUrl: boardUrl || null,
           })
         : null;
@@ -1385,7 +1521,9 @@ export async function runCanvasBlock(
         ? HAPPYHORSE_REFERENCE_MAX.image
         : useHailuoH3
           ? HAILUO_REFERENCE_MAX.image
-          : SEEDANCE_REFERENCE_MAX.image;
+          : useWan30
+            ? 10
+            : SEEDANCE_REFERENCE_MAX.image;
       const httpsImages = await toHttpsImageUrls(
         deps,
         rawPool.slice(0, maxRefImages),
@@ -1461,7 +1599,30 @@ export async function runCanvasBlock(
         parseManhuaClipTargetDurationSec(block.prompt) ??
         undefined;
       const clipDuration = clampManhuaClipDurationSecForVideoModel(videoModel, clipDurationRaw);
-      if (useHappyHorse) {
+      if (useWan30) {
+        // Wan 3.0 公测:多图参考 + 可选对白参考音;30s 直出;排队时间较长。
+        // 提示词按 Wan 口径编译:不用 Seedance 的 @图片N 绑定,改为按数组顺序的参考职责表(审查 P1)
+        const wanImages = httpsImages.length ? httpsImages : ([seedStill].filter(Boolean) as string[]);
+        const wanPrompt = [
+          buildWanReferenceRoleBlock(wanImages, keptEntries),
+          isClip ? stripManhuaStaleAssetBindForModel(motionPrompt) : motionPrompt,
+          voiceOneLine ? `【声线】${voiceOneLine}` : "",
+          audioRefBlock,
+        ]
+          .filter(Boolean)
+          .join("\n")
+          .trim();
+        url = await runWan30(wanPrompt, wanImages, ar, {
+          audioUrls: seedanceAudioUrls,
+          duration: clipDurationRaw ?? 30,
+          resolution: block.videoResolution,
+          episodeIndex: block.episodeIndex,
+          clipIndex: parseClipIndexFromBlockId(block.id),
+          idempotencyKey: newWanSubmissionKey(block.id),
+          onTaskId: (taskId) =>
+            deps.onVideoTaskCreated?.(block.id, { taskId, engine: "wan-3.0" }),
+        });
+      } else if (useHappyHorse) {
         const firstFrame = String(seedStill || "").trim();
         if (!/^https?:\/\//i.test(firstFrame)) {
           throw new Error("Happy Horse 成片需要至少一张首帧参考图（请先出静帧或上传参考）");
@@ -1592,30 +1753,6 @@ export async function runCanvasBlock(
           );
         }
       }
-    } else {
-      // omni_edit / 续编：有上游成片时用 edit；否则段内静帧 I2V / 多图 reference_to_video
-      const isOmniEdit = block.id.startsWith("omni_edit-");
-      const editVideoUrl =
-        block.refVideoUrl ||
-        uploadedVideoUrl ||
-        (looksLikeVideo(refUrl) ? refUrl : undefined) ||
-        upstream.visionImages.find((i) => looksLikeVideo(i.url))?.url;
-      const useVideoContinuity =
-        Boolean(editVideoUrl && looksLikeVideo(editVideoUrl)) &&
-        (isOmniEdit || Boolean(block.refVideoUrl));
-      const omniRefs = Array.from(
-        new Set([stillRef || refUrl, ...fusionStillUrls].filter(Boolean) as string[]),
-      );
-      url = await runOmniFlash(
-        motionPrompt,
-        useVideoContinuity ? undefined : omniRefs[0],
-        ar,
-        {
-          edit: useVideoContinuity,
-          videoUrl: useVideoContinuity ? editVideoUrl : undefined,
-          referenceImageUrls: useVideoContinuity ? undefined : omniRefs,
-        },
-      );
     }
     let lastFrameUrl: string | undefined;
     if (url && /^https?:\/\//i.test(url) && block.id.startsWith("clip-")) {
@@ -1646,4 +1783,4 @@ export async function runCanvasBlock(
   throw new Error("未知方块类型");
 }
 
-export { uploadFileToSignedUrl, resolveOmniMaterialUrl } from "./omniCanvasApi";
+export { uploadFileToSignedUrl, resolveCanvasMaterialUrl } from "./omniCanvasApi";

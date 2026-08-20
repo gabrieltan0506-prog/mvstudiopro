@@ -24,6 +24,7 @@ describe("manhuaSeedanceLayout", () => {
       "Seedance 2.0",
       "Seedance 2.0 fast",
       "Seedance 2.5",
+      "Wan 3.0（公测）",
       "Minimax H3",
     ]);
   });

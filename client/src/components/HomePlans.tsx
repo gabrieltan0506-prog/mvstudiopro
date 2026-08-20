@@ -57,7 +57,7 @@ export default function HomePlans() {
             <div className="text-4xl text-yellow-400 mb-6">¥999</div>
 
             <ul className="text-gray-300 space-y-3 mb-8">
-              <li>Veo 3.1 Pro</li>
+              <li>旗舰视频生成</li>
               <li>高级工作流</li>
               <li>创作商业成长营</li>
               <li>1000 积分</li>

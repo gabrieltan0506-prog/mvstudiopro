@@ -15,7 +15,6 @@ import {
   startWorkflow as startCoreWorkflow,
   type WorkflowTask,
 } from "../server/vercel-api-core/workflow.js";
-import { generateVideoWithVeo } from "../server/models/veo.js";
 import { buildScriptPrompt } from "../server/workflow/prompts/scriptPrompt.js";
 import { buildStoryboardPrompt } from "../server/workflow/prompts/storyboardPrompt.js";
 import { buildStoryboardImagePrompt } from "../server/workflow/prompts/storyboardImagePrompt.js";
@@ -27,6 +26,10 @@ import { characterLockStep } from "../server/workflow/steps/characterLockStep.js
 import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveStep.js";
 import { synthesizeVoiceAudio } from "../server/models/voiceSynthesis.js";
 import { resolveSafeFlyPlatformImageReadPath } from "../server/services/flyVolumeGeneratedImages.js";
+import {
+  hasSupervisorRole,
+  isSupervisorWorkflowOp,
+} from "../shared/internalMediaEndpointPolicy.js";
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
 function getBody(req: VercelRequest): any {
@@ -91,12 +94,6 @@ function imageContentTypeToExtension(contentType: string) {
 }
 
 const WORKFLOW_VIDEO_REF_MAX_EDGE = 1280;
-
-function mapVeoAspectRatio(raw: string): "16:9" | "9:16" {
-  const a = s(raw).trim();
-  if (a === "9:16" || a === "3:4") return "9:16";
-  return "16:9";
-}
 
 /** Seedance：fal duration 枚举 4–15 或 auto */
 function parseSeedanceDurationInput(raw: any): number | "auto" {
@@ -1886,6 +1883,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const bodyOp = s(b.op || b.OP || b.Op || b.oP).trim();
     const op = queryOp || bodyOp;
     const opNormalized = op.toLowerCase();
+
+    /**
+     * 大师级视频基地是监管验收工具。整个 workflow 命名空间（含 test/status/poll/save
+     * 与未来新动作）以及 startWorkflow 都在任何读写或付费上游之前统一鉴权，避免手写
+     * 付费动作清单漏掉 workflowTest 这类可启动完整生成链的旁门。
+     */
+    if (isSupervisorWorkflowOp(opNormalized)) {
+      const wfUser = await resolveJobUser(req);
+      if (!wfUser) {
+        return res.status(401).json({ ok: false, error: "请先登录后再使用大师级视频基地" });
+      }
+      if (!hasSupervisorRole(wfUser.role)) {
+        return res.status(403).json({
+          ok: false,
+          code: "WORKFLOW_REQUIRES_SUPERVISOR",
+          error: "大师级视频基地仅供监管验收",
+        });
+      }
+    }
     if (!op) return res.status(400).json({ ok: false, error: "missing_op" });
 
     const KLING_BASE = (s(process.env.KLING_CN_BASE_URL) || "https://api-beijing.klingai.com").replace(/\/+$/, "");
@@ -3011,155 +3027,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!characterImageUrl) return res.status(400).json(fail("character image is required before scene video generation"));
       if (!sceneImageUrls.length) return res.status(400).json(fail("at least one scene image is required before scene video generation"));
 
+      const videoEngine = s(b.videoEngine || "seedance").trim().toLowerCase();
+      if (videoEngine !== "seedance") {
+        return res.status(410).json(fail("video_engine_retired", "Veo 已下线，请使用 Seedance"));
+      }
+
       const prompt = simplifySceneVideoPrompt(effectiveScene);
       const preparedReferenceImages = await Promise.all(
         referenceImages.map((imageUrl, idx) => uploadWorkflowImageToBlob(imageUrl, `scene-video-${sceneIndex}-ref-${idx + 1}`, { mode: "video" })),
       );
 
-      const videoEngine = s(b.videoEngine || "veo").trim().toLowerCase();
       const aspectRatioInput = s(b.aspectRatio || "16:9").trim() || "16:9";
       const videoResolution = s(b.videoResolution || "720p").trim() === "1080p" ? "1080p" : "720p";
 
-      if (videoEngine === "seedance") {
-        let sceneVideoUrl = "";
-        let videoDurationForUi = 8;
-        let videoModel = "seedance-2.0";
-        try {
-          const { isEvolinkSeedanceConfigured, runEvolinkSeedanceVideo } = await import(
-            "../server/services/evolinkSeedanceVideo.js"
-          );
-          if (!isEvolinkSeedanceConfigured()) {
-            return res.status(503).json(fail("evolink_not_configured", "EVOLINK_API_KEY 未配置，Seedance 仅支持 EvoLink"));
-          }
-          const durationInput = parseSeedanceDurationInput(b.videoDuration ?? b.duration ?? effectiveScene.duration);
-          const seedanceOut = await runEvolinkSeedanceVideo({
-            prompt,
-            imageUrl: preparedReferenceImages[0] || "",
-            quality: videoResolution,
-            duration: durationInput === "auto" ? 8 : durationInput,
-            aspectRatio: aspectRatioInput,
-            generateAudio: b.generateSceneVideoAudio !== false && b.generateSceneVideoAudio !== 0,
-            version: "2.0",
-          });
-          sceneVideoUrl = seedanceOut.videoUrl;
-          videoModel = seedanceOut.model;
-          videoDurationForUi = durationInput === "auto" ? 8 : durationInput;
-        } catch (err: any) {
-          return res.status(502).json(fail("seedance_failed", err?.message || "Seedance 视频生成失败"));
-        }
-
-        const scene: any = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || {};
-        const nextStoryboardImages = upsertStoryboardImageItem(storyboardImages, sceneIndex, (existing: any) => buildSceneAssetBundle(existing, sceneIndex, {
-          prompt: s(scene?.scenePrompt).trim(),
-          duration: videoDurationForUi,
-          sceneVideoUrl,
-          backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
-          characterLocked: Boolean(existing?.characterLocked),
-          referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
-          characterPngUrl: s(existing?.characterPngUrl).trim(),
-        }));
-        const next = saveWorkflowPatch(workflow, {
-          currentStep: "video",
-          outputs: {
-            script: s(b.script || workflow.outputs?.script).trim(),
-            storyboard: storyboard.map((item: any) =>
-              Number(item?.sceneIndex) === sceneIndex ? effectiveScene : item,
-            ),
-            storyboardImages: nextStoryboardImages,
-            videoProvider: "evolink",
-            videoModel,
-            sceneVideoAspectRatio: aspectRatioInput,
-            sceneVideoResolution: videoResolution,
-          },
-        });
-        return res.status(200).json({
-          ok: true,
-          workflow: next,
-          sceneVideoUrl,
-          sceneIndex,
-          status: "completed",
-          videoEngine: "seedance",
-        });
-      }
-
-      let operationName = "";
-      let veoModel = "veo-3.1-generate-001";
-      let veoLocation = "us-central1";
+      let sceneVideoUrl = "";
+      let videoDurationForUi = 8;
+      let videoModel = "seedance-2.0";
       try {
-        const { startVideo } = await import("../server/veo.js");
-        const started = await startVideo({
+        const { isEvolinkSeedanceConfigured, runEvolinkSeedanceVideo } = await import(
+          "../server/services/evolinkSeedanceVideo.js"
+        );
+        if (!isEvolinkSeedanceConfigured()) {
+          return res.status(503).json(fail("evolink_not_configured", "EVOLINK_API_KEY 未配置，Seedance 仅支持 EvoLink"));
+        }
+        const durationInput = parseSeedanceDurationInput(b.videoDuration ?? b.duration ?? effectiveScene.duration);
+        const seedanceOut = await runEvolinkSeedanceVideo({
           prompt,
           imageUrl: preparedReferenceImages[0] || "",
-          quality: "standard",
-          aspectRatio: mapVeoAspectRatio(aspectRatioInput),
-          resolution: videoResolution,
-          negativePrompt: "multiple people, extra limbs, duplicate subject, distorted face",
+          quality: videoResolution,
+          duration: durationInput === "auto" ? 8 : durationInput,
+          aspectRatio: aspectRatioInput,
+          generateAudio: b.generateSceneVideoAudio !== false && b.generateSceneVideoAudio !== 0,
+          version: "2.0",
         });
-        operationName = started.operationName;
-        veoModel = started.model;
-        veoLocation = started.location;
+        sceneVideoUrl = seedanceOut.videoUrl;
+        videoModel = seedanceOut.model;
+        videoDurationForUi = durationInput === "auto" ? 8 : durationInput;
       } catch (err: any) {
-        return res.status(502).json(fail("veo_start_failed", err?.message || "Veo 3.1 task creation failed"));
+        return res.status(502).json(fail("seedance_failed", err?.message || "Seedance 视频生成失败"));
       }
 
-      const next = saveWorkflowPatch(workflow, {
-        currentStep: "video",
-        outputs: {
-          script: s(b.script || workflow.outputs?.script).trim(),
-          storyboard: storyboard.map((item: any) =>
-            Number(item?.sceneIndex) === sceneIndex ? effectiveScene : item,
-          ),
-          storyboardImages: storyboardImages,
-          videoProvider: "vertex",
-          videoModel: veoModel,
-          sceneVideoAspectRatio: aspectRatioInput,
-          sceneVideoResolution: videoResolution,
-        },
-      });
-      return res.status(200).json({
-        ok: true,
-        workflow: next,
-        taskId: operationName,
-        veoModel,
-        veoLocation,
-        sceneIndex,
-        status: "pending",
-        videoEngine: "veo",
-      });
-    }
-
-    // ─── Veo 轮询（单次）────────────────────────────────────────────────────
-    if (opNormalized === "workflowveopoll") {
-      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const taskId = s(b.taskId).trim();
-      const veoModel = s(b.veoModel || "veo-3.1-generate-001").trim();
-      const veoLocation = s(b.veoLocation || "us-central1").trim();
-      if (!taskId) return res.status(400).json(fail("taskId is required"));
-      try {
-        const { pollVideo } = await import("../server/veo.js");
-        const result = await pollVideo(taskId, veoModel, veoLocation);
-        return res.status(200).json({ ok: true, ...result });
-      } catch (err: any) {
-        return res.status(502).json(fail("veo_poll_failed", err?.message || "poll failed"));
-      }
-    }
-
-    // ─── 将完成的 Veo 视频 URL 保存回 workflow ──────────────────────────────
-    if (opNormalized === "workflowveosave") {
-      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
-      const sceneIndex = Number(b.sceneIndex || 0);
-      const videoUrl = s(b.videoUrl).trim();
-      if (!sceneIndex || !videoUrl) return res.status(400).json(fail("sceneIndex and videoUrl are required"));
-
-      const storyboard = getStoryboardDraftFromBody(workflow, b);
-      const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
-      const scene: any = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || {};
-
+      const savedScene: any = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || {};
       const nextStoryboardImages = upsertStoryboardImageItem(storyboardImages, sceneIndex, (existing: any) => buildSceneAssetBundle(existing, sceneIndex, {
-        prompt: s(scene?.scenePrompt).trim(),
-        duration: 8,
-        sceneVideoUrl: videoUrl,
+        prompt: s(savedScene?.scenePrompt).trim(),
+        duration: videoDurationForUi,
+        sceneVideoUrl,
         backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
         characterLocked: Boolean(existing?.characterLocked),
         referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
@@ -3168,12 +3080,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const next = saveWorkflowPatch(workflow, {
         currentStep: "video",
         outputs: {
+          script: s(b.script || workflow.outputs?.script).trim(),
+          storyboard: storyboard.map((item: any) =>
+            Number(item?.sceneIndex) === sceneIndex ? effectiveScene : item,
+          ),
           storyboardImages: nextStoryboardImages,
-          videoProvider: "vertex",
-          videoModel: s(b.veoModel || "veo-3.1-generate-001").trim(),
+          videoProvider: "evolink",
+          videoModel,
+          sceneVideoAspectRatio: aspectRatioInput,
+          sceneVideoResolution: videoResolution,
         },
       });
-      return res.status(200).json({ ok: true, workflow: next, sceneVideoUrl: videoUrl });
+      return res.status(200).json({
+        ok: true,
+        workflow: next,
+        sceneVideoUrl,
+        sceneIndex,
+        status: "completed",
+        videoEngine: "seedance",
+      });
+    }
+
+    if (opNormalized === "workflowveopoll" || opNormalized === "workflowveosave") {
+      return res.status(410).json(fail("video_engine_retired", "Veo 已下线，请使用 Seedance"));
     }
 
     if (opNormalized === "workflowgeneratevoice") {
@@ -3617,74 +3546,17 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
       });
     }
 
-    /** /canvas 自由画布 · GPT-Image-2（OpenAI → OpenRouter）；勿与 workflowGenerateSceneImage 混淆 */
+    /**
+     * 六审第1条:旧同步出图入口停用(410)。真实主链=短入队 worker(canvas_gpt_image2),
+     * 本入口曾是不扣费直调付费上游的旁门——无论登录与否一律拒绝,绝不触发图片上游。
+     */
     if (opNormalized === "canvasgptimage2") {
-      if (req.method !== "POST") {
-        return res.status(405).json({ ok: false, error: "Method not allowed" });
-      }
-      const prompt = s(b.prompt || b.scenePrompt || "").trim();
-      if (!prompt) return res.status(400).json({ ok: false, error: "missing prompt" });
-      const aspectRatio = s(b.aspectRatio || "9:16") === "16:9" ? "16:9" : "9:16";
-      const referenceImageUrl = s(b.referenceImageUrl || b.imageUrl || "").trim();
-      const referenceImageUrlsRaw = Array.isArray(b.referenceImageUrls)
-        ? (b.referenceImageUrls as unknown[])
-            .map((u) => s(u).trim())
-            .filter(Boolean)
-        : [];
-      const referenceImageUrls = Array.from(
-        new Set([referenceImageUrl, ...referenceImageUrlsRaw].filter(Boolean)),
-      ).slice(0, 16);
-      const maskUrl = s(b.maskUrl || b.editMaskUrl || "").trim();
-      const generalImageEdit =
-        Boolean(b.generalImageEdit) ||
-        s(b.imageMode || "").toLowerCase() === "edit" ||
-        referenceImageUrls.length > 0;
-      const providerRaw = s(b.provider || b.gptImage2Provider || "").trim().toLowerCase();
-      const providerOverride =
-        providerRaw === "openai" || providerRaw === "openrouter" || providerRaw === "auto"
-          ? (providerRaw as "openai" | "openrouter" | "auto")
-          : undefined;
-      const laneRaw = s(b.imageLane || "").trim().toLowerCase();
-      const imageLane = laneRaw === "asset" || laneRaw === "keyart" ? laneRaw : undefined;
-      try {
-        const { generateGptImage2FromRawEnglishPrompt } = await import("../server/services/proxyImageService.js");
-        const captureError: {
-          message?: string;
-          moderationBlocked?: boolean;
-          openaiConfigured?: boolean;
-          openrouterConfigured?: boolean;
-          openaiError?: string;
-          openrouterError?: string;
-        } = {};
-        const imageUrl = await generateGptImage2FromRawEnglishPrompt({
-          englishPrompt: prompt,
-          aspectRatio,
-          gcsSubdir: "canvas-gpt-image2",
-          referenceImageUrls: referenceImageUrls.length ? referenceImageUrls : undefined,
-          maskUrl: maskUrl || undefined,
-          // Canvas：有参考图即按通用改图，勿注入平台封面换脸指令
-          generalImageEdit: referenceImageUrls.length > 0 || generalImageEdit,
-          // 画布画面一律禁字；与 server/jobs/runner.ts 的画布出图保持同一口径
-          onImageText: "forbid",
-          providerOverride,
-          imageLane,
-          captureError,
-        });
-        if (!imageUrl) {
-          return res.status(502).json({
-            ok: false,
-            error: captureError.message || "gpt_image2_empty",
-            moderationBlocked: Boolean(captureError.moderationBlocked),
-            openaiConfigured: Boolean(captureError.openaiConfigured),
-            openrouterConfigured: Boolean(captureError.openrouterConfigured),
-            openaiError: captureError.openaiError || null,
-            openrouterError: captureError.openrouterError || null,
-          });
-        }
-        return res.status(200).json({ ok: true, imageUrl, imageUrls: [imageUrl] });
-      } catch (e: any) {
-        return res.status(502).json({ ok: false, error: e?.message || "canvas_gpt_image2_failed" });
-      }
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(410).json({
+        ok: false,
+        error: "该同步出图入口已停用，请升级客户端并通过异步任务生成图片",
+        code: "CANVAS_GPT_IMAGE2_SYNC_REMOVED",
+      });
     }
 
     if (op === "klingT2V" || op === "klingI2V") {
@@ -4239,6 +4111,102 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
      * Happy Horse 1.1 · OpenRouter。
      * 画布 videoModel=happyhorse-1.1；首帧图生；时长钳制 5/10/15（最长 15s）。
      */
+    if (op === "wan30Video") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      if (!(await resolveJobUser(req))) {
+        return res.status(401).json({ ok: false, error: "请先登录后再生成成片" });
+      }
+      const prompt =
+        s(b.prompt || q.prompt || "").trim() || "Cinematic motion shot with stable camera and rich detail.";
+      const rawImages: unknown[] = Array.isArray(b.imageUrls) ? b.imageUrls : [];
+      const imageUrls = rawImages
+        .map((u) => s(u).trim())
+        .filter((u) => /^https?:\/\//i.test(u));
+      const firstImage = s(b.imageUrl || q.imageUrl || "").trim();
+      if (firstImage && !imageUrls.includes(firstImage)) imageUrls.unshift(firstImage);
+      if (!imageUrls.length) {
+        return res.status(400).json({ ok: false, error: "Wan 3.0 成片需要至少一张参考图" });
+      }
+      const rawAudios: unknown[] = Array.isArray(b.audioUrls) ? b.audioUrls : [];
+      const audioUrls = rawAudios
+        .map((u) => s(u).trim())
+        .filter((u) => /^https?:\/\//i.test(u));
+      const aspectRatio = s(b.aspectRatio || q.aspectRatio || "9:16").trim() || "9:16";
+      try {
+        const { isWavespeedWanConfigured } = await import("../server/services/wavespeedWanVideo.js");
+        if (!isWavespeedWanConfigured()) {
+          return res.status(503).json({ ok: false, error: "Wan 3.0 通道暂不可用，请稍后重试" });
+        }
+        const { clampWan30Duration, normalizeWan30Resolution, WAN30_REFERENCE_MAX } = await import(
+          "../shared/wanWavespeedModels.js"
+        );
+        const duration = clampWan30Duration(b.duration ?? b.durationSec ?? q.duration);
+        const resolution = normalizeWan30Resolution(b.resolution || q.resolution);
+        const label = `画布成片·Wan 3.0 公测（${resolution}·${duration}s·排队较长）`;
+        const requestKey =
+          s(b.idempotencyKey || q.idempotencyKey || "").trim() ||
+          `srvwan_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+        const charged = await chargeCanvasVideoCredits(req, {
+          idempotencyKey: requestKey,
+          durationSec: duration,
+          episodeIndex: b.episodeIndex,
+          label,
+          resolution,
+        });
+        if (!charged.ok) {
+          return res.status(charged.status).json({ ok: false, error: charged.error });
+        }
+        try {
+          const { createCanvasVideoTask } = await import("../server/services/canvasVideoTask.js");
+          const task = await createCanvasVideoTask({
+            userId: charged.userId,
+            creditsCharged: charged.credits,
+            deduct: charged.deduct,
+            idempotencyKey: requestKey,
+            engine: "wan30-wavespeed",
+            label,
+            prompt,
+            imageUrl: imageUrls[0],
+            imageUrls: imageUrls.slice(0, WAN30_REFERENCE_MAX.image),
+            audioUrls: audioUrls.slice(0, WAN30_REFERENCE_MAX.audio),
+            aspectRatio,
+            duration,
+            resolution,
+            generateAudio: b.generateAudio !== false,
+            ...(Number.isFinite(Number(b.seed)) && Number(b.seed) >= 0 && Number(b.seed) <= 2147483647
+              ? { seed: Math.floor(Number(b.seed)) }
+              : {}),
+          });
+          return res.status(200).json({
+            ok: true,
+            async: true,
+            taskId: task.taskId,
+            status: task.status,
+            videoUrl: task.videoUrl || undefined,
+            provider: "wavespeed",
+            version: "wan-3.0",
+            resolution,
+            creditsUsed: charged.credits,
+          });
+        } catch (error: any) {
+          const refundOutcome = await refundCanvasChargeOnCreateFail(charged, label);
+          if (error instanceof Error && refundOutcome !== "skipped") {
+            error.message +=
+              refundOutcome === "refunded"
+                ? "（费用已退回）"
+                : refundOutcome === "pending"
+                  ? "（退款处理中，将自动补退）"
+                  : "（退款受阻已记录，需人工对账）";
+          }
+          throw error;
+        }
+      } catch (e: any) {
+        return res.status(502).json({ ok: false, error: e?.message || "wan30_failed" });
+      }
+    }
+
     if (op === "happyHorseVideo") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -4257,7 +4225,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         const { isOpenRouterHappyHorseConfigured } = await import(
           "../server/services/openrouterHappyHorseVideo.js"
         );
-        if (!isOpenRouterHappyHorseConfigured()) {
+        const { isBailianHappyHorseConfigured } = await import(
+          "../server/services/bailianHappyHorseVideo.js"
+        );
+        // 0820 拍板:百炼官方为主通道,OpenRouter 兜底——任一在配即可开闸
+        if (!isBailianHappyHorseConfigured() && !isOpenRouterHappyHorseConfigured()) {
           return res.status(503).json({
             ok: false,
             error: "视频服务暂不可用，请稍后重试",
@@ -4358,7 +4330,11 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
         const { isOpenRouterHappyHorseConfigured } = await import(
           "../server/services/openrouterHappyHorseVideo.js"
         );
-        if (!isOpenRouterHappyHorseConfigured()) {
+        const { isBailianHappyHorseConfigured } = await import(
+          "../server/services/bailianHappyHorseVideo.js"
+        );
+        // 0820 拍板:百炼官方为主通道,OpenRouter 兜底——任一在配即可开闸
+        if (!isBailianHappyHorseConfigured() && !isOpenRouterHappyHorseConfigured()) {
           return res.status(503).json({ ok: false, error: "视频服务暂不可用，请稍后重试" });
         }
 

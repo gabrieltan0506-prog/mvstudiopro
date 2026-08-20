@@ -1990,7 +1990,8 @@ export default function ManhuaScriptWorkbench({
             ) : null}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5">
+        {/* 主操作簇居中(用户 0820:高频按钮别压在最右上角,挪到画面上方中间) */}
+        <div className="mx-auto flex flex-wrap items-center justify-center gap-1.5">
           {factoryBusy && onStopFactory ? (
             <button
               type="button"
@@ -2015,9 +2016,7 @@ export default function ManhuaScriptWorkbench({
                       ? "ring-2 ring-cyan-300/70 ring-offset-1 ring-offset-[#0a121c]"
                       : ""
                   }`}
-                  title={
-                    keyartGateHint ||
-                    "一次出齐本集关键静帧（条件不满足时会提示缺什么）"
+                  title={"一次出齐本集关键静帧（条件不满足时会提示缺什么）"
                   }
                 >
                   <Play className="h-3.5 w-3.5" />
@@ -2171,9 +2170,7 @@ export default function ManhuaScriptWorkbench({
                 disabled={Boolean(factoryBusy)}
                 onClick={runGenerateFragment}
                 className="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-white/75 hover:bg-white/[0.08] disabled:opacity-45"
-                title={
-                  clipGateHint ||
-                  `当前第 ${String(activeSegNo).padStart(2, "0")} 段（含镜 ${String(activeShotNo).padStart(2, "0")}）：缺静帧则只补本段再出片`
+                title={`当前第 ${String(activeSegNo).padStart(2, "0")} 段（含镜 ${String(activeShotNo).padStart(2, "0")}）：缺静帧则只补本段再出片`
                 }
               >
                 {`生成第 ${String(activeSegNo).padStart(2, "0")} 段成片`}
@@ -2210,9 +2207,7 @@ export default function ManhuaScriptWorkbench({
                 );
               }}
               className="rounded-lg border border-cyan-300/35 bg-cyan-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-cyan-50 hover:bg-cyan-500/25 disabled:opacity-45"
-              title={
-                clipGateHint ||
-                `依次生成已勾选段：${Array.from(
+              title={`依次生成已勾选段：${Array.from(
                   new Set(
                     selectedSorted.map((n) =>
                       String(resolveSegmentIndexFromShotIndex(n)).padStart(2, "0"),
@@ -2252,7 +2247,7 @@ export default function ManhuaScriptWorkbench({
                 onGenerateMissingFragments(idxs);
               }}
               className="rounded-lg border border-fuchsia-300/35 bg-fuchsia-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-fuchsia-50 hover:bg-fuchsia-500/25 disabled:opacity-45"
-              title={clipGateHint || "静帧与导戏单锁定后批量出片"}
+              title={"静帧与导戏单锁定后批量出片"}
             >
               确认静帧，生成全部成片
             </button>
@@ -2268,7 +2263,7 @@ export default function ManhuaScriptWorkbench({
                 setActivePhase("storyboard");
                 onRerunKeyartsFromReverse();
               }}
-              title={keyartGateHint || "从编导反推重跑本集多镜静帧，覆盖旧图"}
+              title={"从编导反推重跑本集多镜静帧，覆盖旧图"}
               className="rounded-lg border border-amber-400/40 bg-amber-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/25 disabled:opacity-45"
             >
               重出全部分镜
@@ -2329,7 +2324,7 @@ export default function ManhuaScriptWorkbench({
                 if (refuseIfBlocked(keyartGateHint)) return;
                 onResumeFromFailure();
               }}
-              title={keyartGateHint || "仅从失败/未完成节点接着跑；已出的错图不会重做"}
+              title={"仅从失败/未完成节点接着跑；已出的错图不会重做"}
               className="rounded-lg border border-white/12 px-2 py-1.5 text-[10px] text-white/55 hover:bg-white/[0.06] disabled:opacity-45"
             >
               续跑
@@ -2385,6 +2380,25 @@ export default function ManhuaScriptWorkbench({
             className="shrink-0 rounded-md border border-amber-300/45 bg-amber-500/25 px-2.5 py-1 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/35"
           >
             打开资产设定
+          </button>
+        </div>
+      ) : null}
+      {/* A2(UI 优化):成片闸门收敛为一条黄色状态条+跳转,按钮 title 不再重复整句 */}
+      {outlineComplete && !keyartGateHint && clipGateHint ? (
+        <div
+          data-manhua-clip-gate-banner
+          className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-amber-400/20 bg-amber-500/10 px-3 py-1.5"
+        >
+          <p className="min-w-0 flex-1 text-[11px] text-amber-50/90">{clipGateHint}</p>
+          <button
+            type="button"
+            data-manhua-action="goto-fix-from-clip-banner"
+            onClick={() =>
+              selectPhase(/静帧|垫图|导戏单/.test(clipGateHint) ? "storyboard" : "assets")
+            }
+            className="shrink-0 rounded-md border border-amber-300/45 bg-amber-500/25 px-2.5 py-1 text-[10px] font-semibold text-amber-50 hover:bg-amber-500/35"
+          >
+            {/静帧|垫图|导戏单/.test(clipGateHint) ? "去出静帧" : "去补图"}
           </button>
         </div>
       ) : null}
@@ -2712,9 +2726,7 @@ export default function ManhuaScriptWorkbench({
                     setActivePhase("storyboard");
                   }}
                   className="rounded-lg border border-violet-300/50 bg-violet-500/30 px-3 py-1.5 text-[12px] font-bold text-violet-50 disabled:opacity-45"
-                  title={
-                    keyartGateHint ||
-                    (stillsReadyEnough ? "进入分镜" : "生成关键静帧")
+                  title={(stillsReadyEnough ? "进入分镜" : "生成关键静帧")
                   }
                 >
                   {fullSpawnArmAt != null
@@ -3147,9 +3159,11 @@ export default function ManhuaScriptWorkbench({
                           <div className="text-[10px] font-semibold text-emerald-50/80">
                             {sec.titleZh}
                             <span className="ml-1 font-normal text-white/40">· {items.length}</span>
+                            {/* D10(UI 优化):缺图红点计数,别让人在 30 张「定位」里找那颗补图钮 */}
                             {pending.length ? (
-                              <span className="ml-1 font-normal text-amber-200/70">
-                                · 待生成 {pending.length}
+                              <span className="ml-1.5 inline-flex items-center gap-1 rounded-full border border-rose-400/40 bg-rose-500/15 px-1.5 py-px font-semibold text-rose-100">
+                                <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
+                                缺 {pending.length} 项
                               </span>
                             ) : null}
                           </div>
@@ -3321,8 +3335,9 @@ export default function ManhuaScriptWorkbench({
                                 </div>
                               );
                             })}
+                            {/* D10(UI 优化):缺图条与补图卡 order-first 置顶,先补缺再看已出的 */}
                             {pending.length ? (
-                              <div className="flex w-full flex-wrap items-center gap-2 rounded-lg border border-dashed border-amber-300/45 bg-amber-500/[0.07] px-2.5 py-1.5">
+                              <div className="order-first flex w-full flex-wrap items-center gap-2 rounded-lg border border-dashed border-amber-300/45 bg-amber-500/[0.07] px-2.5 py-1.5">
                                 <span className="text-[10px] font-semibold text-amber-100/90">
                                   待生成 {pending.length}
                                 </span>
@@ -5547,7 +5562,7 @@ export default function ManhuaScriptWorkbench({
                             onRerunKeyartShot(shotKey.id, shot.index);
                           }}
                           className="flex w-full items-center justify-center gap-1 border-t border-white/10 py-1 text-[9px] text-amber-100/75 hover:bg-amber-500/10 disabled:opacity-35"
-                          title={keyartGateHint || `只重出第 ${shot.index} 镜，保留其他镜头`}
+                          title={`只重出第 ${shot.index} 镜，保留其他镜头`}
                         >
                           <RefreshCw className="h-3 w-3" />
                           单镜重出
@@ -6431,7 +6446,7 @@ export default function ManhuaScriptWorkbench({
                       });
                     }}
                     className="w-full border-t border-white/10 bg-white/[0.04] py-0.5 text-[8px] font-semibold text-cyan-100/80 hover:bg-cyan-500/15 disabled:opacity-35"
-                    title={clipGateHint || `生成第 ${seg.index} 段成片（约 ${seg.durationSec}s）`}
+                    title={`生成第 ${seg.index} 段成片（约 ${seg.durationSec}s）`}
                   >
                     {clipUrl ? "重出本段成片" : "生成本段成片"}
                   </button>

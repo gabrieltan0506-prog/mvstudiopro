@@ -93,6 +93,13 @@ function PageLoader() {
   );
 }
 
+function SupervisorWorkflowNodesRoute() {
+  const { user, loading } = useAuth();
+  if (loading) return <PageLoader />;
+  if (user?.role !== "admin" && user?.role !== "supervisor") return <NotFound />;
+  return <WorkflowNodes />;
+}
+
 function LegacyRemixRedirect() {
   const [, navigate] = useLocation();
 
@@ -129,7 +136,7 @@ function Router() {
         <Route path={"/workspace"} component={WorkspaceStudio} />
         <Route path={"/templates"} component={TemplatesLibrary} />
         <Route path={"/test-lab"} component={TestLab} />
-        <Route path={"/workflow-nodes"} component={WorkflowNodes} />
+        <Route path={"/workflow-nodes"} component={SupervisorWorkflowNodesRoute} />
         <Route path={"/creative"} component={CreativePage} />
         <Route path={"/create"} component={CreativePage} />
         <Route path={"/canvas"} component={OmniCanvas} />

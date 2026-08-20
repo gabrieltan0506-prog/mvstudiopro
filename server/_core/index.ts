@@ -50,6 +50,10 @@ import blobPutImageHandler from "../../api/blob-put-image";
 import exportHandler from "../../api/export";
 import googleHandler from "../../api/google";
 import klingImageHandler from "../../api/kling-image";
+import {
+  CREATIVE_NANO_IMAGE_ACTION,
+} from "../../shared/creativeNanoImageJobInput";
+import { hasSupervisorRole } from "../../shared/internalMediaEndpointPolicy";
 
 function isGrowthTrendSchedulerDisabled() {
   const raw = String(process.env.DISABLE_GROWTH_TREND_SCHEDULER || "").trim().toLowerCase();
@@ -292,15 +296,34 @@ async function startServer() {
       }
 
       const action = typeof (input as any).action === "string" ? String((input as any).action) : "";
-      const isManhuaAssetStandardize =
-        action === "canvas_gpt_image2" &&
-        ((input as any)?.params?.assetStandardizeQuality === "medium" ||
-          (input as any)?.params?.assetStandardizeQuality === "high");
-      if (isManhuaAssetStandardize) {
-        // 这是服务端扣费入口；若允许省略 userId 落成 public，worker 会拿不到付款人，
-        // 不能把“无法扣费”降级成免费调用上游。
+      if (action === "canvas_gpt_image2" || action === CREATIVE_NANO_IMAGE_ACTION) {
+        /**
+         * 五审 P0-2:这条队列调用付费 GPT-Image-2,曾允许匿名(public)入队+客户端
+         * chargeOnServer 决定收费,省略两者即可免费打上游。现一律要求已登录的
+         * 正整数用户,且 userId 只信会话——客户端 body 里的 userId 只做一致性校验,
+         * 不做身份来源。
+         */
         if (!ctx.user || !Number.isFinite(Number(ctx.user.id)) || Number(ctx.user.id) <= 0) {
-          return res.status(401).json({ error: "请先登录后再标准化资产" });
+          return res.status(401).json({ error: "请先登录后再生成图片" });
+        }
+        if (type !== "image") {
+          return res.status(400).json({ error: `${action} only supports image jobs` });
+        }
+        resolvedUserId = String(ctx.user.id);
+      }
+      if (action === "nano_image" || action === "kling_image") {
+        /**
+         * 旧通用图片 action 没有服务端计费，且当前没有正式前端调用方。只留给监管探针；
+         * 普通用户必须走有固定价格和持久账本的产品 action，不能从队列旁路白打上游。
+         */
+        if (!ctx.user) {
+          return res.status(401).json({ error: "请先登录后再生成图片" });
+        }
+        if (!hasSupervisorRole(ctx.user.role)) {
+          return res.status(403).json({ error: "legacy_image_job_requires_supervisor" });
+        }
+        if (type !== "image") {
+          return res.status(400).json({ error: `${action} only supports image jobs` });
         }
         resolvedUserId = String(ctx.user.id);
       }
@@ -348,6 +371,8 @@ async function startServer() {
           ? "kling-cn"
           : action === "nano_image"
           ? "nano"
+          : action === CREATIVE_NANO_IMAGE_ACTION
+          ? "vertex-nano-banana-2"
           : action === "canvas_gpt_image2"
           ? "openai-gpt-image-2"
           : "kling-cn";
@@ -417,6 +442,37 @@ async function startServer() {
       return res.redirect(302, url);
     } catch (error) {
       console.error("[BlogMedia] sign failed:", error);
+      return res.status(404).json({ error: "not found" });
+    }
+  });
+
+  // 画布生成图媒体:成图永久镜像在私有桶 generated/ 前缀下,快照里存本路由的固定地址,
+  // 请求时现签短时读链 302 跳转——根治「备份里的七天签名链过期=图消失」(2026-08-20 用户回填丢图案)。
+  /**
+   * 鉴权模型(P0 审查修复):①必须登录;②对象必须出现在**请求者本人**的云端画布快照里
+   * (所有权按引用判定,带 60s 内存缓存)。generated/ 前缀还有其他功能的产物,
+   * 任何"任意已登录用户可续签任意路径"的口子都不留。
+   */
+  app.get(/^\/api\/canvas-media\/(.+)$/, async (req, res) => {
+    try {
+      const objectPath = decodeURIComponent(String(req.params[0] || ""));
+      const { sdk } = await import("./sdk");
+      const user = await sdk.authenticateRequest(req as any, { silentMissing: true }).catch(() => null);
+      const userId = Number((user as any)?.id);
+      if (!Number.isFinite(userId) || userId <= 0) {
+        return res.status(401).json({ error: "unauthorized" });
+      }
+      // 所有权判定与 worker 同源同尺(server/services/canvasMediaOwnership.ts,三审 P0-3)
+      const { verifyCanvasMediaOwnership } = await import("../services/canvasMediaOwnership");
+      if (!(await verifyCanvasMediaOwnership(userId, objectPath))) {
+        return res.status(403).json({ error: "forbidden" });
+      }
+      const { signGcsObjectPathV4ReadUrl, getGcsBucketName } = await import("../services/gcs");
+      const url = signGcsObjectPathV4ReadUrl(getGcsBucketName(), objectPath, 3600);
+      res.setHeader("Cache-Control", "private, max-age=0");
+      return res.redirect(302, url);
+    } catch (error) {
+      console.error("[CanvasMedia] sign failed:", error);
       return res.status(404).json({ error: "not found" });
     }
   });
@@ -742,24 +798,9 @@ async function startServer() {
         console.warn("[canvasVideoTask] resume failed:", e),
       );
     }).catch(() => {});
-    // ── 付费任务持久账本：启动时清扫死任务（进程崩溃 / 部署中断 → 自动幂等退积分） ──
-    //   策略：默认 staleMs = 5 分钟（heartbeat 超过 5 分钟没刷的判定为僵尸任务）。
-    //   对 holdPausedAt 的任务（计划审核停留中）只在超过 30 天硬上限时才退。
-    import("../services/paidJobLedger").then(({ reapStuckPaidJobs }) => {
-      reapStuckPaidJobs()
-        .then((r) => {
-          if (r.refunded > 0 || r.errors > 0 || r.cancelled > 0) {
-            console.warn(
-              `[paidJobLedger] startup reap: 扫描 ${r.scanned}，` +
-                `退积分 ${r.refunded}（含 cancelled ${r.cancelled}），失败 ${r.errors}`,
-            );
-          } else {
-            console.log(
-              `[paidJobLedger] startup reap: 扫描 ${r.scanned}，无需退积分（系统正常）`,
-            );
-          }
-        })
-        .catch((e) => console.warn("[paidJobLedger] startup reap failed:", e?.message));
+    // 启动即扫 + 每 5 分钟常驻补扫；防止退款失败只有等下次部署才会恢复。
+    import("../services/paidJobLedger").then(({ startPaidJobLedgerReaper }) => {
+      startPaidJobLedgerReaper();
     }).catch(() => {});
     if (isGrowthTrendSchedulerDisabled()) {
       console.warn("[growth.scheduler] disabled by DISABLE_GROWTH_TREND_SCHEDULER");

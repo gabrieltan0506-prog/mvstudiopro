@@ -168,6 +168,7 @@ const CANVAS_VIDEO_RESOLUTIONS_BY_MODEL: Readonly<
   "seedance-2.0-fast": ["720p"],
   "seedance-2.0-mini": ["720p"],
   "seedance-2.5": ["720p"],
+  "wan-3.0": ["720p"],
   "minimax-hailuo-3": ["720p", "2K"],
 };
 
@@ -181,6 +182,9 @@ function canvasVideoModelPricingKey(videoModel?: string | null): string {
   }
   if (k === "2.0-fast" || k === "fast") return "seedance-2.0-fast";
   if (k === "2.5" || k === "25") return "seedance-2.5";
+  if (k === "wan-3.0" || k === "wan3.0" || k === "wan30" || k === "alibaba/wan-3.0") {
+    return "wan-3.0";
+  }
   if (k === "2.0") return "seedance-2.0";
   return k;
 }

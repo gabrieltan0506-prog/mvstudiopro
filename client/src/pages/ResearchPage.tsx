@@ -1,11 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
-import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug, ImagePlus, ZoomIn, ExternalLink, Music, Video, Mic, MicOff, Download, FileDown } from "lucide-react";
+import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug, ImagePlus, ZoomIn, ExternalLink, Music, Mic, MicOff, Download, FileDown } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { getMusicClipsFromJobPayload, clipToGeneratedSong, songDownloadUrlCandidates, downloadGeneratedMusicToFile } from "@/lib/growthMusic";
-
-const VIDEO_FIRST_USE_KEY = "mvs-video-first-used";
 
 async function fetchJsonish(url: string, opts?: RequestInit) {
   try {
@@ -165,7 +163,7 @@ export default function ResearchPage() {
           <h3 style="color:#f5a800;margin:0 0 10px">🎬 镜头 ${sc.sceneNumber}</h3>
           <p style="color:#e8d5b0;line-height:1.8;margin:0 0 10px">${esc(sc.copywriting)}</p>
           ${sc.visualPrompt ? `<p style="font-size:12px;color:#7eb8d4;font-family:monospace;margin:0 0 6px"><b>🎨 生图提示词：</b>${esc(sc.visualPrompt)}</p>` : ""}
-          ${sc.audioPrompt ? `<p style="font-size:12px;color:#f97316;margin:0 0 6px"><b>🗣️ 口播台词&拟音（Veo）：</b>${esc(sc.audioPrompt)}</p>` : ""}
+          ${sc.audioPrompt ? `<p style="font-size:12px;color:#f97316;margin:0 0 6px"><b>🗣️ 口播台词&拟音：</b>${esc(sc.audioPrompt)}</p>` : ""}
           ${sc.bgmPrompt ? `<p style="font-size:12px;color:#e8c87a;margin:0"><b>🎵 BGM战略（Suno）：</b>${esc(sc.bgmPrompt)}</p>` : ""}
         </div>`).join("") : "";
 
@@ -582,7 +580,7 @@ export default function ResearchPage() {
   );
 }
 
-// ── 多场景分镜制片台：文案 + 口播拟音（Veo）+ BGM战略（Suno）+ 参考图 + 视频 ──
+// ── 多场景分镜制片台：文案 + 口播拟音 + BGM 战略（Suno）+ 参考图 ──
 function SceneVideoCard({ scene, index, platform }: {
   scene: { sceneNumber: number; copywriting: string; visualPrompt: string; audioPrompt: string; bgmPrompt?: string };
   index: number;
@@ -593,14 +591,12 @@ function SceneVideoCard({ scene, index, platform }: {
   const [visualPrompt, setVisualPrompt] = useState(scene.visualPrompt || `${platform} platform viral content cover, vertical 9:16, high contrast, professional blogger style`);
   const [genBusy, setGenBusy] = useState(false);
   const [upscaleBusy, setUpscaleBusy] = useState(false);
-  const [videoBusy, setVideoBusy] = useState(false);
   const [bgmBusy, setBgmBusy] = useState(false);
   const [bgmProgress, setBgmProgress] = useState("");
   const [bgmSong, setBgmSong] = useState<{ title: string; audioUrl?: string; streamUrl?: string } | null>(null);
   const bgmRunRef = useRef(0);
   const [origUrl, setOrigUrl] = useState("");
   const [hdUrl, setHdUrl] = useState("");
-  const [videoUrl, setVideoUrl] = useState("");
 
   const effectiveVisualPrompt = visualPrompt.trim() || `${platform} platform viral content cover, vertical 9:16, high contrast, professional blogger style`;
 
@@ -696,86 +692,6 @@ function SceneVideoCard({ scene, index, platform }: {
     }
   }
 
-  async function generateVideo() {
-    const imageToUse = hdUrl || origUrl;
-    if (!imageToUse) { toast.error("请先生成参考图，再生成视频"); return; }
-    const isFirst = !localStorage.getItem(VIDEO_FIRST_USE_KEY);
-    const cost = isFirst ? 80 : 99;
-    if (!window.confirm(`生成镜头 ${index + 1} 的视频将扣除 ${cost} 点${isFirst ? "（首次体验优惠价）" : ""}，确定继续？`)) return;
-    setVideoBusy(true);
-    setVideoUrl("");
-    try {
-      // Step 1: 中文音效/台词 → Veo 原生英文指令（Gemini Flash 翻译中间件）
-      let veoAudio = audioPrompt.trim();
-      if (veoAudio) {
-        try {
-          const tr = await fetchJsonish("/api/google?op=translateForVeo", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt: veoAudio }),
-          });
-          if (tr?.json?.translated) {
-            veoAudio = tr.json.translated;
-            console.log("[Veo] 翻译完成:", veoAudio.slice(0, 100));
-          }
-        } catch (tErr) {
-          console.warn("[Veo] 翻译中间件调用失败，降级使用原始文本:", tErr);
-        }
-      }
-
-      // Step 2: 构造「视听对位」Veo 指令（口播对口型 + 拟音SFX，严格无BGM）
-      const veoPrompt = veoAudio
-        ? `Animate this reference image into a professional cinematic short video.
-
-VISUAL: The main character MUST have perfect lip-sync. Their mouth, jaw, and facial muscles must move naturally and precisely in synchronization with every spoken syllable.
-
-AUDIO DIRECTION (character voice & sound effects ONLY — strictly NO background music):
-${veoAudio}
-
-TECHNICAL REQUIREMENTS:
-1. Achieve Hollywood-grade lip-sync accuracy — every phoneme must match the mouth shape.
-2. Include realistic, immersive sound effects that match the scene's physical actions.
-3. If animals or cartoon characters are present, add their authentic vocalizations.
-4. Maintain stable camera with subtle cinematic motion.
-5. ABSOLUTELY NO background music or BGM — only character voice and action SFX.`
-        : "Animate this reference image into a cinematic 8-second short video with natural character motion, stable camera, and rich environmental sound effects. No background music.";
-
-      const create = await fetchJsonish("/api/google?op=veoCreate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: veoPrompt,
-          imageUrl: imageToUse,
-          provider: "pro",
-          durationSeconds: 8,
-          aspectRatio: "9:16",
-          resolution: "720p",
-        }),
-      });
-      const taskId = String(create?.json?.taskId || "").trim();
-      if (!create.ok || !taskId) throw new Error(create?.json?.error || "Veo 任务创建失败");
-
-      // Step 2: 轮询结果（2.5s 间隔，最多 120 次 ≈ 5 分钟）
-      for (let i = 0; i < 120; i++) {
-        await new Promise((r) => setTimeout(r, 2500));
-        const poll = await fetchJsonish(`/api/google?op=veoTask&provider=pro&taskId=${encodeURIComponent(taskId)}`);
-        const status = String(poll?.json?.status || "");
-        const url = String(poll?.json?.videoUrl || "").trim();
-        if (url) {
-          localStorage.setItem(VIDEO_FIRST_USE_KEY, "1");
-          setVideoUrl(url);
-          return;
-        }
-        if (status === "failed") throw new Error("Veo 渲染失败，请重试");
-      }
-      throw new Error("Veo 生成超时（超过5分钟），请重试");
-    } catch (e: any) {
-      toast.error(`视频生成失败：${e?.message}`);
-    } finally {
-      setVideoBusy(false);
-    }
-  }
-
   return (
     <div style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, overflow: "hidden" }}>
       {/* 镜头头部 */}
@@ -814,17 +730,17 @@ TECHNICAL REQUIREMENTS:
           />
         </div>
 
-        {/* 口播台词 + 动作拟音（传给 Veo，可编辑） */}
+        {/* 口播台词 + 动作拟音（供后续成片，可编辑） */}
         <div>
           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, fontWeight: 700, color: "rgba(249,115,22,0.8)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
             <Music size={11} />
-            🗣️ 口播台词 & 动作拟音（Veo 对口型 · 可修改）
+            🗣️ 口播台词 & 动作拟音（可修改）
           </label>
           <textarea
             rows={3}
             value={audioPrompt}
             onChange={(e) => setAudioPrompt(e.target.value)}
-            placeholder="角色说的具体台词 + 动作音效描述，传入 Veo 实现精准对口型…"
+            placeholder="角色说的具体台词 + 动作音效描述，供后续成片引擎使用…"
             style={{
               width: "100%", padding: "10px 14px", borderRadius: 10, fontSize: 13,
               background: "rgba(0,0,0,0.3)", border: "1px solid rgba(249,115,22,0.22)",
@@ -835,11 +751,11 @@ TECHNICAL REQUIREMENTS:
             onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(249,115,22,0.22)"; }}
           />
           <p style={{ fontSize: 10, color: "rgba(249,115,22,0.45)", margin: "4px 0 0", fontStyle: "italic" }}>
-            ⚡ 此指令直接传入 Veo · 严格无BGM · 仅角色人声 + 动作音效
+            ⚡ 严格无 BGM · 仅角色人声 + 动作音效
           </p>
         </div>
 
-        {/* BGM 背景音乐战略（预留给 Suno，不传给 Veo） */}
+        {/* BGM 背景音乐战略（预留给 Suno） */}
         <div>
           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, fontWeight: 700, color: "rgba(251,191,36,0.7)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
             <Music size={11} />
@@ -860,7 +776,7 @@ TECHNICAL REQUIREMENTS:
             onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(251,191,36,0.2)"; }}
           />
           <p style={{ fontSize: 10, color: "rgba(251,191,36,0.4)", margin: "4px 0 0", fontStyle: "italic" }}>
-            🎼 此战略仅供 Suno BGM 生成使用，不影响 Veo 视频渲染
+            🎼 此战略仅供 Suno BGM 生成使用，不会混入上方对白与拟音描述
           </p>
         </div>
 
@@ -924,7 +840,6 @@ TECHNICAL REQUIREMENTS:
             </button>
           )}
 
-          <VideoButton videoBusy={videoBusy} hasImage={!!(hdUrl || origUrl)} onGenerate={generateVideo} />
         </div>
 
         {/* 图片对比区：原图左 / 高清右 */}
@@ -959,38 +874,8 @@ TECHNICAL REQUIREMENTS:
           </div>
         )}
 
-        {/* 视频展示区 */}
-        {videoUrl && (
-          <div style={{ borderRadius: 12, overflow: "hidden", border: "1px solid rgba(249,115,22,0.3)", background: "#000" }}>
-            <video src={videoUrl} controls autoPlay loop style={{ width: "100%", display: "block", aspectRatio: "9/16", objectFit: "cover", maxHeight: 480 }} />
-          </div>
-        )}
       </div>
     </div>
-  );
-}
-
-// ── 视频生成按钮（动态显示首次/后续积分） ───────────────────────────
-function VideoButton({ videoBusy, hasImage, onGenerate }: { videoBusy: boolean; hasImage: boolean; onGenerate: () => void }) {
-  const [isFirst, setIsFirst] = useState(!localStorage.getItem(VIDEO_FIRST_USE_KEY));
-  useEffect(() => {
-    setIsFirst(!localStorage.getItem(VIDEO_FIRST_USE_KEY));
-  }, [videoBusy]);
-  const cost = isFirst ? 80 : 99;
-  const disabled = videoBusy || !hasImage;
-  return (
-    <button
-      onClick={onGenerate}
-      disabled={disabled}
-      title={!hasImage ? "请先生成参考图" : undefined}
-      style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: disabled ? "rgba(249,115,22,0.04)" : "linear-gradient(135deg, rgba(249,115,22,0.25), rgba(234,88,12,0.2))", border: "1px solid rgba(249,115,22,0.25)", color: disabled ? "rgba(249,115,22,0.3)" : "#fb923c", fontSize: 12, fontWeight: 700, cursor: disabled ? "not-allowed" : "pointer", marginLeft: "auto", position: "relative" }}
-    >
-      {videoBusy ? <Loader2 size={12} className="animate-spin" /> : <Video size={12} />}
-      {videoBusy ? "Veo 3.1 渲染中…" : !hasImage ? "生成视频（先生成参考图）" : `生成此镜视频（${cost}点）`}
-      {isFirst && !disabled && (
-        <span style={{ position: "absolute", top: -8, right: -4, fontSize: 9, fontWeight: 900, background: "#ef4444", color: "#fff", borderRadius: 99, padding: "1px 5px", letterSpacing: 0 }}>首次优惠</span>
-      )}
-    </button>
   );
 }
 

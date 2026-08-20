@@ -196,7 +196,12 @@ async function fetchUrlAsBlob(url: string): Promise<Blob | null> {
   const trimmed = String(url || "").trim();
   if (!trimmed || trimmed.startsWith("blob:") || isLocalMediaPointer(trimmed)) return null;
   try {
-    const res = await fetch(trimmed, { mode: "cors", credentials: "omit", cache: "force-cache" });
+    const res = await fetch(trimmed, {
+      mode: trimmed.startsWith("/") ? "same-origin" : "cors",
+      // 站内受保护媒体(/api/canvas-media/)需要登录 Cookie;跨域仍不带凭据
+      credentials: trimmed.startsWith("/") ? "include" : "omit",
+      cache: "force-cache",
+    });
     if (res.ok) {
       const blob = await res.blob();
       if (blob.size > 0) return blob;
@@ -322,7 +327,12 @@ export async function cacheCanvasMediaToLocalStore(blocks: CanvasBlock[]): Promi
     for (const job of jobs) {
       const u = String(job.url || "").trim();
       if (!u || u.startsWith("blob:") || isLocalMediaPointer(u)) continue;
-      if (!/^https?:\/\//i.test(u) && !u.startsWith("/manhua-") && !u.startsWith("/assets/")) {
+      if (
+        !/^https?:\/\//i.test(u) &&
+        !u.startsWith("/manhua-") &&
+        !u.startsWith("/assets/") &&
+        !u.startsWith("/api/canvas-media/")
+      ) {
         continue;
       }
       const ptr = await cacheOne(blockId, job.slot, u);

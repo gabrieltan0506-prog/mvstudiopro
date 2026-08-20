@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { withLongJobsFlyDirect } from "@/lib/longJobsFlyOrigin";
 import {
   CANVAS_BLOCK_DEFAULT_HEIGHT,
   CANVAS_BLOCK_DEFAULT_WIDTH,
@@ -20,6 +21,7 @@ import {
   resolveNearestUpstreamImageUrl,
   SPAWN_KIND_OPTIONS,
   TEXT_MODEL_OPTIONS,
+  isCanvasProductVideoModel,
   isCanvasSeedance25VideoModel,
   type CanvasBlock,
   type CanvasBlockKind,
@@ -663,8 +665,22 @@ export default function FreeformCanvas({
     () => filterCanvasVideoModelOptions(canUseSeedance25),
     [canUseSeedance25],
   );
+  /** patchOne 声明在后,经 ref 间接引用避免 TDZ;渲染期同步赋值,不会漏拍 */
+  const patchOneRef = useRef<((id: string, patch: Partial<CanvasBlock>) => void) | null>(null);
   const runDepsWithPlan = useMemo(
-    () => ({ ...runDeps, userPlan, userRole }),
+    () => ({
+      ...runDeps,
+      userPlan,
+      userRole,
+      // 长排队任务(Wan 公测等):taskId 创建即落节点,字段随画布持久化,刷新后由下方 effect 接管(审查 P1)
+      onVideoTaskCreated: (blockId: string, info: { taskId: string; engine: string }) => {
+        patchOneRef.current?.(blockId, {
+          videoTaskId: info.taskId,
+          videoTaskEngine: info.engine,
+          videoTaskStatus: "running",
+        });
+      },
+    }),
     [runDeps, userPlan, userRole],
   );
   const focusMissSinceRef = useRef<number | null>(null);
@@ -868,6 +884,23 @@ export default function FreeformCanvas({
     return () => ro?.disconnect();
   }, [fillContainer, fitAllInView, leftRailCollapsed, visibleBlocks.length]);
 
+  /**
+   * B5(UI 优化):独立画布(非嵌入右栏)载入时自动「看全图」一次。
+   * 此前只有嵌入模式会持续自动 fit,主 /canvas 落地在未聚焦的远处,新手找不到内容、
+   * 得手动点「看全图」。这里只做**一次性**初始聚焦(节点就绪后),不加持续 ResizeObserver,
+   * 不改独立画布后续的手动缩放/滚动行为。
+   */
+  const didInitialFitRef = useRef(false);
+  useEffect(() => {
+    if (fillContainer) return; // 嵌入模式上面那条已持续自动 fit
+    if (didInitialFitRef.current) return;
+    if (!canvasRef.current) return;
+    if (visibleBlocks.length === 0) return; // 等有节点再聚焦,空画布不动
+    didInitialFitRef.current = true;
+    const t = setTimeout(() => fitAllInView(), 60); // 等布局稳定(节点尺寸/滚动容器就绪)
+    return () => clearTimeout(t);
+  }, [fillContainer, fitAllInView, visibleBlocks.length]);
+
   useEffect(() => {
     if (!focusBlockId) {
       focusMissSinceRef.current = null;
@@ -1052,6 +1085,7 @@ export default function FreeformCanvas({
     },
     [onBlocksChange],
   );
+  patchOneRef.current = patchOne;
 
   const removeBlock = useCallback(
     (id: string) => {
@@ -1191,6 +1225,71 @@ export default function FreeformCanvas({
       window.clearInterval(timer);
     };
   }, [activeUpscaleKey, patchOne]);
+
+  // 长排队成片任务统一轮询(含刷新恢复):Wan 公测以小时计,20 分钟前端断线不等于任务失败(审查 P1)
+  const activeVideoTaskKey = blocks
+    .filter(
+      (b) =>
+        b.videoTaskId &&
+        b.videoTaskStatus &&
+        b.videoTaskStatus !== "succeeded" &&
+        b.videoTaskStatus !== "failed" &&
+        b.videoTaskStatus !== "reconcile_manual",
+    )
+    .map((b) => `${b.id}:${b.videoTaskId}`)
+    .join(",");
+  useEffect(() => {
+    if (!activeVideoTaskKey) return;
+    const entries = activeVideoTaskKey.split(",").map((item) => {
+      const [blockId, taskId] = item.split(":");
+      return { blockId, taskId };
+    });
+    let cancelled = false;
+    const tick = () => {
+      for (const { blockId, taskId } of entries) {
+        void (async () => {
+          try {
+            const res = await fetch(
+              withLongJobsFlyDirect(`/api/jobs?op=canvasVideoStatus&taskId=${encodeURIComponent(taskId)}`),
+              { credentials: "include", cache: "no-store" },
+            );
+            const j = (await res.json().catch(() => ({}))) as {
+              ok?: boolean;
+              status?: string;
+              videoUrl?: string;
+              error?: string;
+            };
+            if (cancelled || !j?.status) return;
+            if (j.status === "succeeded" && j.videoUrl) {
+              patchOne(blockId, {
+                videoTaskStatus: "succeeded",
+                outputUrl: j.videoUrl,
+                status: "done",
+                error: undefined,
+              });
+              toast.success("后台成片完成,已回填到原节点");
+            } else if (j.status === "failed" || j.status === "reconcile_manual") {
+              patchOne(blockId, {
+                videoTaskStatus: j.status as CanvasBlock["videoTaskStatus"],
+                status: "error",
+                error: j.error || "成片失败(费用按对账规则处理)",
+              });
+            } else {
+              patchOne(blockId, { videoTaskStatus: "running" });
+            }
+          } catch {
+            /* 查询失败视为瞬态,下一轮再试 */
+          }
+        })();
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeVideoTaskKey, patchOne]);
 
   const runBlock = useCallback(
     async (blockId: string) => {
@@ -2216,11 +2315,7 @@ export default function FreeformCanvas({
                             <span className="shrink-0 text-white/45">成片档位</span>
                             <select
                               value={
-                                block.videoModel === "seedance-2.0" ||
-                                block.videoModel === "seedance-2.0-mini" ||
-                                block.videoModel === "seedance-2.5" ||
-                                block.videoModel === "minimax-hailuo-3" ||
-                                block.videoModel === "happyhorse-1.1"
+                                isCanvasProductVideoModel(block.videoModel)
                                   ? block.videoModel
                                   : DEFAULT_CANVAS_VIDEO_MODEL
                               }
@@ -2234,9 +2329,23 @@ export default function FreeformCanvas({
                               }}
                               className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/40 px-2 py-1 text-[11px] text-white"
                             >
+                              {/* C7(UI 优化):换档带价——与服务端同一计价函数,按本节点段性/画质/时长口径 */}
                               {videoModelOptions.map((m) => (
                                 <option key={m.id} value={m.id}>
                                   {m.label}
+                                  {" · "}
+                                  {canvasVideoClipCredits({
+                                    videoModel: m.id,
+                                    isEpisodeSegment: Number(block.episodeIndex) > 0,
+                                    resolution:
+                                      m.id === "seedance-2.0"
+                                        ? normalizeCanvasVideoResolution(block.videoResolution)
+                                        : undefined,
+                                    durationSec:
+                                      parseManhuaClipDirectorCardSummary(block.prompt)
+                                        .durationSec ?? undefined,
+                                  })}
+                                  {" 积分/段"}
                                 </option>
                               ))}
                             </select>
@@ -2252,7 +2361,9 @@ export default function FreeformCanvas({
                                     ? "Minimax H3：2K 成片，多图参考，固定 15s"
                                     : block.videoModel === "happyhorse-1.1"
                                       ? "Happy Horse 1.1：首帧图生，最长 15s"
-                                      : "Seedance 2.0 fast：多图参考 + 运镜/动作/对白，更快更省，最长约 15s"}
+                                      : block.videoModel === "wan-3.0"
+                                        ? "Wan 3.0（公测）：多图参考 + 参考音频，可直出 30s；排队时间较长，适合不赶时间的镜头"
+                                        : "Seedance 2.0 fast：多图参考 + 运镜/动作/对白，更快更省，最长约 15s"}
                           </div>
                           {/* 画质只对标准档开放：快速档定位是便宜快，H3 固定 2K，2.5 固定 720p */}
                           {block.videoModel === "seedance-2.0" ? (
@@ -2291,6 +2402,47 @@ export default function FreeformCanvas({
                           {!canUsePaidVideo ? (
                             <div className="rounded-lg border border-dashed border-amber-400/30 bg-amber-500/5 px-2 py-1.5 text-[10px] leading-5 text-amber-100/85">
                               {PAID_VIDEO_MEMBER_ONLY_LABEL_ZH}
+                            </div>
+                          ) : null}
+                          {/* C8(UI 优化):长排队任务状态徽章+可复制单号——Wan 公测以小时计,只有转圈用户会以为死了 */}
+                          {block.videoTaskId ? (
+                            <div
+                              className={`flex items-center justify-between gap-2 rounded-lg border px-2 py-1.5 text-[10px] ${
+                                block.videoTaskStatus === "succeeded"
+                                  ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-100"
+                                  : block.videoTaskStatus === "failed"
+                                    ? "border-red-400/30 bg-red-500/10 text-red-100"
+                                    : block.videoTaskStatus === "reconcile_manual" ||
+                                        block.videoTaskStatus === "timed_out_pending_reconcile"
+                                      ? "border-sky-400/30 bg-sky-500/10 text-sky-100"
+                                      : "border-amber-400/30 bg-amber-500/10 text-amber-100"
+                              }`}
+                            >
+                              <span className="min-w-0 truncate font-medium">
+                                {block.videoTaskStatus === "succeeded"
+                                  ? "后台任务已完成"
+                                  : block.videoTaskStatus === "failed"
+                                    ? "后台任务失败"
+                                    : block.videoTaskStatus === "reconcile_manual" ||
+                                        block.videoTaskStatus === "timed_out_pending_reconcile"
+                                      ? "结果确认中（费用按对账处理）"
+                                      : "排队/生成中 · 可关页，回来自动回填"}
+                                {block.videoTaskEngine ? ` · ${block.videoTaskEngine}` : ""}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void navigator.clipboard
+                                    .writeText(block.videoTaskId || "")
+                                    .then(() => toast.success("任务单号已复制"))
+                                    .catch(() => toast.error("复制失败，请手动选取"));
+                                }}
+                                className="shrink-0 rounded-md border border-white/15 bg-white/10 px-1.5 py-0.5 font-mono text-[9px] text-white/80 hover:bg-white/15"
+                                title={`复制任务单号：${block.videoTaskId}`}
+                              >
+                                单号 {block.videoTaskId.slice(0, 8)}… ⧉
+                              </button>
                             </div>
                           ) : null}
                           {block.videoModel === "seedance-2.5" && canUseSeedance25 ? (

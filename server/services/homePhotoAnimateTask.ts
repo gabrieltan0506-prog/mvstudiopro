@@ -23,6 +23,7 @@ import { getUserPlan, refundCredits } from "../credits.js";
 import { recordCreation } from "../routers/creations.js";
 import {
   heartbeatActiveJob,
+  pauseActiveJob,
   registerActiveJob,
   refundCreditsOnFailure,
   unregisterActiveJob,
@@ -45,6 +46,13 @@ import {
   pollOpenRouterVideoJobOnce,
   submitOpenRouterVideoJob,
 } from "./openrouterVideoCore.js";
+import {
+  BAILIAN_HAPPYHORSE_I2V_MODEL,
+  isBailianHappyHorseConfigured,
+  pollBailianHappyHorseOnce,
+  submitBailianHappyHorseVideo,
+} from "./bailianHappyHorseVideo.js";
+import { mirrorSeedanceMp4ToGcsSignedUrl } from "./seedanceVideo.js";
 
 const TASK_TYPE = "homePhotoAnimate" as const;
 const PRIMARY_DIR =
@@ -54,7 +62,9 @@ export type HomePhotoAnimateTaskStatus =
   | "queued"
   | "running"
   | "succeeded"
-  | "failed";
+  | "failed"
+  /** 上游状态无法确认(提交结果未知/超轮询期限):停自动化、不退款,转人工对账 */
+  | "reconcile_manual";
 
 export type HomePhotoAnimateTaskRecord = {
   taskId: string;
@@ -70,6 +80,10 @@ export type HomePhotoAnimateTaskRecord = {
   aspectRatio: string;
   openRouterJobId?: string;
   pollingUrl?: string;
+  /** 百炼官方 HappyHorse 异步任务 id(主通道;OpenRouter 兜底时为空) */
+  bailianTaskId?: string;
+  /** 官方提交失败回落网关时的原因摘要 */
+  fallbackReason?: string;
   model?: string;
   videoUrl?: string;
   error?: string;
@@ -247,17 +261,55 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
   try {
     const task = await readTask(taskId);
     if (!task) return null;
-    if (task.status === "succeeded" || task.status === "failed") return task;
-
-    const apiKey = getOpenRouterApiKey();
-    if (!apiKey) {
-      return failTask(task, "视频服务暂不可用，请稍后重试");
+    if (
+      task.status === "succeeded" ||
+      task.status === "failed" ||
+      task.status === "reconcile_manual"
+    ) {
+      return task;
     }
 
     await heartbeatActiveJob(task.taskId, TASK_TYPE).catch(() => {});
 
-    // 尚未提交上游：创建 OpenRouter 任务
-    if (!task.pollingUrl) {
+    // 尚未提交上游:百炼官方为主通道(0820 拍板),提交失败回落 OpenRouter 网关
+    if (!task.pollingUrl && !task.bailianTaskId) {
+      if (isBailianHappyHorseConfigured()) {
+        try {
+          const submitted = await submitBailianHappyHorseVideo({
+            prompt: task.prompt,
+            imageUrl: task.imageUrl,
+            duration: task.duration,
+            resolution: task.resolution,
+          });
+          task.bailianTaskId = submitted.bailianTaskId;
+          task.model = submitted.model;
+          task.status = "running";
+          task.startedAt = task.startedAt || new Date().toISOString();
+          await writeTask(task);
+          return task;
+        } catch (error) {
+          const { isBailianHappyHorseSubmitRejected, isBailianHappyHorseSubmitUnknown } =
+            await import("./bailianHappyHorseVideo.js");
+          const reason = error instanceof Error ? error.message : String(error);
+          // 六审第9条:结果未知不许回落(可能已建单,回落=双倍生成),转人工对账、不退款
+          if (isBailianHappyHorseSubmitUnknown(error)) {
+            task.status = "reconcile_manual";
+            task.error = "百炼提交结果无法确认，为避免重复生成，已停止自动回落并转人工对账";
+            task.finishedAt = new Date().toISOString();
+            await writeTask(task);
+            await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+            return task;
+          }
+          if (!isBailianHappyHorseSubmitRejected(error)) {
+            return failTask(task, reason);
+          }
+          console.warn(
+            `[homePhotoAnimateTask] 百炼 HappyHorse 明确拒绝,回落 OpenRouter · task=${task.taskId} · ${reason}`,
+          );
+          task.fallbackReason = reason.slice(0, 200);
+          task.bailianTaskId = undefined;
+        }
+      }
       try {
         const body = buildOpenRouterHappyHorseSubmitBody({
           prompt: task.prompt,
@@ -283,6 +335,17 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
           return succeedTask(task, videoUrl, submitted.model);
         }
       } catch (error) {
+        // 八审 P1-5:typed error 判定(提交层产出),不再文案正则——
+        // unknown 任务可能已建,failTask 退款会假失败真退,转人工对账
+        const { isOpenRouterSubmitUnknown } = await import("./openrouterVideoCore.js");
+        if (isOpenRouterSubmitUnknown(error)) {
+          task.status = "reconcile_manual";
+          task.error = "网关提交结果无法确认，已停止自动重试并转人工对账";
+          task.finishedAt = new Date().toISOString();
+          await writeTask(task);
+          await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+          return task;
+        }
         return failTask(
           task,
           error instanceof Error ? error.message : "照片动画创建失败",
@@ -290,20 +353,71 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
       }
     }
 
-    if (!task.pollingUrl) {
+    if (!task.pollingUrl && !task.bailianTaskId) {
       return failTask(task, "视频服务未返回任务查询地址");
     }
 
     const createdMs = Date.parse(task.createdAt) || Date.now();
     if (Date.now() - createdMs > OPENROUTER_VIDEO_MAX_POLL_MS) {
-      return failTask(
-        task,
-        `视频生成超时（${Math.round(OPENROUTER_VIDEO_MAX_POLL_MS / 60_000)} 分钟）`,
-      );
+      /**
+       * 六审第10条:已提交上游的任务超线不能 failTask 退款——上游不可取消、
+       * 可能晚点成功,假失败真退款。转人工对账;只有从未提交上游的才按失败退。
+       */
+      if (task.bailianTaskId || task.pollingUrl) {
+        task.status = "reconcile_manual";
+        task.error = "上游任务超过自动轮询期限，最终状态未确认，已转人工对账";
+        task.finishedAt = new Date().toISOString();
+        await writeTask(task);
+        await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+        return task;
+      }
+      return failTask(task, "任务在提交上游前超时");
+    }
+
+    // 百炼官方轮询:瞬态查询故障不作终态(照 canvasVideoTask 口径),等下一轮
+    if (task.bailianTaskId) {
+      const snap = await pollBailianHappyHorseOnce(task.bailianTaskId);
+      if (snap.state === "running") {
+        task.status = "running";
+        await writeTask(task);
+        return task;
+      }
+      if (snap.state === "failed") {
+        return failTask(task, snap.error);
+      }
+      // 官方产物是阿里 OSS 短期直链,镜像 GCS 再交付(存储签名铁律);
+      // 七审 P1-5B:镜像抖动不是生成失败,留任务下一轮再搬,不许 failTask 退款
+      try {
+        const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl, {
+          durableStorage: { keyPrefix: "home-photo/animation" },
+        });
+        return succeedTask(task, videoUrl, task.model || BAILIAN_HAPPYHORSE_I2V_MODEL);
+      } catch (error) {
+        task.status = "running";
+        task.error = (
+          error instanceof Error ? error.message : "照片动画搬运暂时失败"
+        ).slice(0, 280);
+        await writeTask(task);
+        return task;
+      }
+    }
+
+    const pollingUrl = task.pollingUrl;
+    if (!pollingUrl) {
+      return failTask(task, "视频服务未返回任务查询地址");
+    }
+    const apiKey = getOpenRouterApiKey();
+    if (!apiKey) {
+      // 七审 P1-5B:已有 pollingUrl=任务已提交;本地查询配置缺失只是查不了,
+      // 不能 failTask 假失败真退款——保持 running 等配置恢复
+      task.status = "running";
+      task.error = "OpenRouter 查询配置暂不可用，任务状态尚未确认";
+      await writeTask(task);
+      return task;
     }
 
     try {
-      const snap = await pollOpenRouterVideoJobOnce(task.pollingUrl, apiKey);
+      const snap = await pollOpenRouterVideoJobOnce(pollingUrl, apiKey);
       if (snap.state === "running") {
         task.status = "running";
         await writeTask(task);
@@ -322,10 +436,13 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
         task.model || OPENROUTER_HAPPYHORSE_1_1_MODEL,
       );
     } catch (error) {
-      return failTask(
-        task,
-        error instanceof Error ? error.message : "照片动画生成失败",
-      );
+      // 七审 P1-5B:查询/镜像异常说明不了任务死活,记录后保持 running 等下一轮
+      task.status = "running";
+      task.error = (
+        error instanceof Error ? error.message : "照片动画查询暂时失败"
+      ).slice(0, 280);
+      await writeTask(task);
+      return task;
     }
   } finally {
     inflight.delete(taskId);
@@ -343,7 +460,7 @@ export async function createHomePhotoAnimateTask(input: {
   resolution: string;
   aspectRatio?: string;
 }): Promise<HomePhotoAnimateTaskRecord> {
-  if (!isOpenRouterHappyHorseConfigured()) {
+  if (!isBailianHappyHorseConfigured() && !isOpenRouterHappyHorseConfigured()) {
     throw new Error("视频服务暂不可用，请稍后重试");
   }
   if (!isHomePhotoAnimateDuration(input.duration)) {

@@ -56,7 +56,9 @@ export type CanvasVideoModel =
   /** MiniMax H3 · OpenRouter minimax/hailuo-3（2K） */
   | "minimax-hailuo-3"
   /** Happy Horse 1.1 · OpenRouter alibaba/happyhorse-1.1（≤15s） */
-  | "happyhorse-1.1";
+  | "happyhorse-1.1"
+  /** Wan 3.0 · WaveSpeed reference-to-video（公测；可直出 30s；排队时间较长） */
+  | "wan-3.0";
 /** 文生图 vs 改图（EvoLink image_urls edit） */
 export type CanvasImageMode = "generate" | "edit";
 
@@ -220,6 +222,13 @@ export type CanvasBlock = {
   /** 本段成片抽取的尾帧 HTTPS（续拍硬锚） */
   lastFrameUrl?: string;
   /**
+   * 长排队成片任务(如 Wan 3.0 公测):taskId 随画布持久化,刷新/断线后恢复轮询,
+   * 后端晚到的成功自动回填本节点(审查 P1:前端超时不许弄丢任务)。
+   */
+  videoTaskId?: string;
+  videoTaskEngine?: string;
+  videoTaskStatus?: "queued" | "running" | "succeeded" | "failed" | "timed_out_pending_reconcile" | "reconcile_manual";
+  /**
    * 上一版剧本留下的产物：换剧本时不删、只归档。
    *
    * 视频生成是全链最贵的一步，静帧次之。旧做法是重扩写就把整条工厂链连同
@@ -310,6 +319,7 @@ export const VIDEO_MODEL_OPTIONS: Array<{ id: CanvasVideoModel; label: string }>
   { id: "seedance-2.5", label: "Seedance 2.5" },
   { id: "minimax-hailuo-3", label: "Minimax H3" },
   { id: "happyhorse-1.1", label: "Happy Horse 1.1" },
+  { id: "wan-3.0", label: "Wan 3.0（公测 · 直出30s · 排队时间较长）" },
 ];
 
 /**
@@ -366,6 +376,9 @@ export function defaultCanvasBlock(kind: CanvasBlockKind, x: number, y: number, 
 
 export function normalizeCanvasVideoModel(raw: unknown): CanvasVideoModel {
   const key = String(raw || "").trim();
+  if (key === "wan-3.0" || key === "wan3.0" || key === "wan30" || key === "alibaba/wan-3.0") {
+    return "wan-3.0";
+  }
   if (key === "seedance-2.0-mini" || key === "2.0-mini" || key === "mini") {
     return "seedance-2.0-mini";
   }
@@ -403,8 +416,15 @@ export function isCanvasProductVideoModel(
     videoModel === "seedance-2.0-fast" ||
     videoModel === "seedance-2.5" ||
     videoModel === "minimax-hailuo-3" ||
-    videoModel === "happyhorse-1.1"
+    videoModel === "happyhorse-1.1" ||
+    videoModel === "wan-3.0"
   );
+}
+
+export function isCanvasWan30VideoModel(
+  videoModel: string | null | undefined,
+): boolean {
+  return String(videoModel || "").trim() === "wan-3.0";
 }
 
 export function isCanvasSeedance25VideoModel(

@@ -19,6 +19,12 @@ import {
   buildManhuaClipQualityPrompt,
   parseManhuaClipQualityMarkdown,
 } from "../shared/manhuaClipQuality";
+import {
+  hasSupervisorRole,
+  isInternalGoogleMediaOp,
+  isRetiredGoogleVideoOp,
+} from "../shared/internalMediaEndpointPolicy";
+import { isAllowedCanvasMaterialGcsUri } from "../shared/canvasMaterialReadPolicy";
 export { runVertexUpscaleImage, type VertexUpscaleResult };
 
 /**
@@ -360,6 +366,52 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     const b:any = req.method==="POST" ? getBody(req) : {};
     const op = s(q.op || b.op).trim();
     if(!op) return res.status(400).json({ok:false,error:"missing_op"});
+
+    if (op === "materialReadUrl") {
+      const viewer = await resolveGoogleGatewayUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required" });
+      const gcsUri = s(b.gcsUri || q.gcsUri || "").trim();
+      const allowedBuckets = [
+        process.env.GCS_USER_UPLOAD_BUCKET,
+        process.env.GCS_PDF_EXPORT_BUCKET,
+        process.env.GCS_BUCKET_NAME,
+        process.env.GROWTH_CAMP_GCS_BUCKET,
+        process.env.VERTEX_GCS_BUCKET,
+        process.env.GOOGLE_CLOUD_STORAGE_BUCKET,
+        "mv-studio-pro-vertex-video-temp",
+      ];
+      if (!isAllowedCanvasMaterialGcsUri(gcsUri, allowedBuckets)) {
+        return res.status(403).json({ ok: false, error: "gcs_uri_not_allowed" });
+      }
+      try {
+        return res.status(200).json({ ok: true, gcsUri, url: signGsUriV4ReadUrl(gcsUri, 3600) });
+      } catch (error: any) {
+        return res.status(502).json({ ok: false, error: "sign_failed", message: error?.message || String(error) });
+      }
+    }
+
+    /** Veo 与 Google Omni 已淘汰；旧客户端在触达上游前得到明确 410。 */
+    if (isRetiredGoogleVideoOp(op)) {
+      return res.status(410).json({
+        ok: false,
+        code: "GOOGLE_VIDEO_MODEL_RETIRED",
+        error: "Veo 与 Google Omni 已下线，请改用当前成片引擎",
+      });
+    }
+    if (op === "creativeNanoImage") {
+      return res.status(410).json({
+        ok: false,
+        code: "CREATIVE_NANO_SYNC_REMOVED",
+        error: "Creative Nano 同步入口已停用，请通过异步图片任务生成",
+      });
+    }
+    if (isInternalGoogleMediaOp(op)) {
+      const viewer = await resolveGoogleGatewayUser(req);
+      if (!viewer) return res.status(401).json({ ok: false, error: "authentication_required" });
+      if (!hasSupervisorRole(viewer.role)) {
+        return res.status(403).json({ ok: false, error: "admin_or_supervisor_required" });
+      }
+    }
 
     const nanoForceInlineBase64 = /^(1|true|yes|on)$/i.test(s(q.inlineBase64 || b.inlineBase64));
 
@@ -955,6 +1007,14 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     // op=nanoImage, tier=flash|pro, size=1K|2K|4K, aspectRatio=16:9...
     // Pro · 4K：imageConfig.imageSize + outputResolution（產品文檔口徑）；Flash 僅在 2K/4K 時寫 imageSize。
     // fetch 一律 120s：4K Base64 體量大可導致讀取超時。
+    /**
+     * 八审 P0-1:Nano 生图有两个 op——
+     * - creativeNanoImage:Creative 页付费产品。强制登录、服务端锁死 Flash/1K/model,
+     *   客户端的 model/tier/size 一律忽略(旧版可传 Pro/4K 却只扣 35 的错价洞),
+     *   扣 35 走 runPaidWorkflowStep,失败原路退。
+     * - nanoImage(裸):曾是公网免登录免扣费旁门(省略 billing 即免费打付费上游)。
+     *   收口为内部专用:强制登录 + supervisor/admin,普通/匿名一律 403。
+     */
     if(op === "nanoImage"){
       const prompt = s(b.prompt || q.prompt || "");
       if(!prompt) return res.status(400).json({ok:false,error:"missing_prompt"});
@@ -1011,25 +1071,29 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         signal: AbortSignal.timeout(nanoVertexTimeoutMs),
       });
 
-      let r = await fetchJson(url, makeNanoVertexInit());
-      for (let attempt = 0; attempt < 4 && shouldRetryVertexImage(r.status, r.json, r.rawText); attempt += 1) {
-        await sleep((2 ** attempt) * 1000 + Math.floor(Math.random() * 300));
-        r = await fetchJson(url, makeNanoVertexInit());
-      }
+      const generateNanoOnce = async () => {
+        let r = await fetchJson(url, makeNanoVertexInit());
+        for (let attempt = 0; attempt < 4 && shouldRetryVertexImage(r.status, r.json, r.rawText); attempt += 1) {
+          await sleep((2 ** attempt) * 1000 + Math.floor(Math.random() * 300));
+          r = await fetchJson(url, makeNanoVertexInit());
+        }
+        const raw = r.json ?? r.rawText;
+        const images = r.ok ? extractGeneratedImages(r.json) : [];
+        const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
+        const bodyNb = await buildNanoImageResponseBody({
+          ok: r.ok,
+          status: r.status,
+          model,
+          url: r.url,
+          raw,
+          imageUrls,
+          forceInlineBase64: nanoForceInlineBase64,
+        });
+        return { ok: r.ok, status: r.status, imageUrls, bodyNb };
+      };
 
-      const raw = r.json ?? r.rawText;
-      const images = r.ok ? extractGeneratedImages(r.json) : [];
-      const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
-      const bodyNb = await buildNanoImageResponseBody({
-        ok: r.ok,
-        status: r.status,
-        model,
-        url: r.url,
-        raw,
-        imageUrls,
-        forceInlineBase64: nanoForceInlineBase64,
-      });
-      return res.status(r.ok ? 200 : 502).json(bodyNb);
+      const result = await generateNanoOnce();
+      return res.status(result.ok ? 200 : 502).json(result.bodyNb);
     }
 
     // ---------------- Veo (video) ----------------

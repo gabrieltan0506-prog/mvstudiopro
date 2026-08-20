@@ -795,6 +795,38 @@ export async function refundCredits(
 /**
  * 與 {@link deductCreditsAmount} 對稱：依扣款時的 **來源（個人 / 團隊）** 退回同額度，避免「團隊扣款、失敗卻加回個人」的帳務錯亂。
  */
+/**
+ * 七审 P0-2:按 chargeKey 从 stripe_usage_logs 读回原扣款(金额+个人/团队来源)并原路退回。
+ * 供 worker 外层(runClaimedJob catch)在拿不到进程内 deduct 快照时退款——
+ * 墙钟超时/进程重启后快照已丢,DB 里的 chargeKey 行是唯一可信账。
+ * refundKey 与 processImageJob 内部退款用同一把,天然幂等,双路径只退一次。
+ */
+export async function refundChargeByKey(input: {
+  userId: number;
+  chargeKey: string;
+  reason: string;
+  actionForLog: string;
+  refundKey: string;
+}): Promise<{ refunded: number }> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const charge = await findChargeByKey(db, input.userId, input.chargeKey);
+  if (!charge || charge.cost <= 0) return { refunded: 0 };
+  const deduct = {
+    success: true,
+    cost: charge.cost,
+    remainingBalance: -1,
+    source: charge.source,
+    ...(charge.source === "team"
+      ? { teamId: charge.teamId, teamMemberId: charge.teamMemberId }
+      : {}),
+  } as Awaited<ReturnType<typeof deductCreditsAmount>>;
+  await refundCreditsForDeductAmount(input.userId, input.reason, deduct, input.actionForLog, {
+    refundKey: input.refundKey,
+  });
+  return { refunded: charge.cost };
+}
+
 export async function refundCreditsForDeductAmount(
   userId: number,
   reason: string,

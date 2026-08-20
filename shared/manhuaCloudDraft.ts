@@ -42,6 +42,10 @@ export type ManhuaCloudDraftCanvasBlock = {
   refImageUrl?: string;
   /** 关键静帧融图参考（含站点相对 /manhua-* 路径） */
   editFusionUrls?: string[];
+  /** 微调遮罩(三审 P1-1:不落它=换机后局部改图参考全丢) */
+  editMaskUrl?: string;
+  /** 上段末帧续拍锚(三审 P1-1) */
+  lastFrameUrl?: string;
   imageMode?: string;
   aspectRatio?: string;
   /**
@@ -51,6 +55,13 @@ export type ManhuaCloudDraftCanvasBlock = {
   videoModel?: string;
   pathCameraRecipeId?: string;
   pathAnnotationJson?: unknown;
+  /**
+   * 长排队成片任务(Wan 公测等):taskId 必须随云草稿往返,换机/仅存云备份时
+   * 也能恢复轮询并把晚到的成功回填原节点(复审 P1-3)。
+   */
+  videoTaskId?: string;
+  videoTaskEngine?: string;
+  videoTaskStatus?: string;
 };
 
 export type ManhuaCloudDraftEdge = { fromId: string; toId: string };
@@ -83,7 +94,9 @@ function isPersistableAssetUrl(u: unknown): u is string {
     s.startsWith("/manhua-") ||
     s.startsWith("/assets/") ||
     s.startsWith("/demo/") ||
-    s.startsWith("/public/")
+    s.startsWith("/public/") ||
+    // 站内永久图链(现签现跳),生成图的云备份形态(复审 P0-1:过滤它=云备份/ZIP 全丢生成图)
+    s.startsWith("/api/canvas-media/")
   );
 }
 
@@ -134,6 +147,9 @@ export function sanitizeManhuaCloudDraftBlock(raw: unknown): ManhuaCloudDraftCan
     pathCameraRecipeId:
       b.pathCameraRecipeId != null ? String(b.pathCameraRecipeId).slice(0, 80) : undefined,
     pathAnnotationJson: b.pathAnnotationJson,
+    videoTaskId: b.videoTaskId != null ? String(b.videoTaskId).slice(0, 80) : undefined,
+    videoTaskEngine: b.videoTaskEngine != null ? String(b.videoTaskEngine).slice(0, 40) : undefined,
+    videoTaskStatus: b.videoTaskStatus != null ? String(b.videoTaskStatus).slice(0, 40) : undefined,
   };
 
   if (isManhuaCloudDraftVideoBlock(base)) {
@@ -146,6 +162,9 @@ export function sanitizeManhuaCloudDraftBlock(raw: unknown): ManhuaCloudDraftCan
       outputUrls: [],
       refImageUrl: isPersistableAssetUrl(b.refImageUrl)
         ? String(b.refImageUrl).trim()
+        : undefined,
+      lastFrameUrl: isPersistableAssetUrl(b.lastFrameUrl)
+        ? String(b.lastFrameUrl).trim()
         : undefined,
     };
   }
@@ -170,6 +189,8 @@ export function sanitizeManhuaCloudDraftBlock(raw: unknown): ManhuaCloudDraftCan
     outputUrls: outputUrl && !outputUrls.includes(outputUrl) ? [outputUrl, ...outputUrls] : outputUrls,
     refImageUrl,
     editFusionUrls: editFusionUrls.length ? editFusionUrls : undefined,
+    editMaskUrl: isPersistableAssetUrl(b.editMaskUrl) ? String(b.editMaskUrl).trim() : undefined,
+    lastFrameUrl: isPersistableAssetUrl(b.lastFrameUrl) ? String(b.lastFrameUrl).trim() : undefined,
   };
 }
 

@@ -20,11 +20,8 @@ export type CanvasGptImage2JobParams = {
   /** 设定图 / 静帧分走两把官方密钥 */
   imageLane?: OpenAiImageLane;
   /**
-   * 由 worker 扣积分（`server/jobs/runner.ts` 的 `canvas_gpt_image2`）。
-   *
-   * 这条队列有三个调用方：`/canvas`、`/creative` 生图、`/platform` 单帧生图。
-   * 后两个已在前端 `chargeStep` 扣过，worker 再扣就是双扣，所以只有画布带这个标记。
-   * 缺省不扣：漏带只会少收钱，不会误扣用户，比反向标记安全。
+   * @deprecated 六审第3条:收费一律由 worker 服务端按 job 幂等键决定,
+   * 本字段完全被忽略,仅为旧客户端载荷兼容保留。
    */
   chargeOnServer?: boolean;
   /** 批量出图里的第几张（0-based）：第 2 张起走批量价 */

@@ -94,7 +94,7 @@ import {
   type ManhuaAssetStashRole,
 } from "@shared/manhuaAssetStash";
 import { uploadCanvasFilesParallel } from "@/lib/canvasUpload";
-import { resolveOmniMaterialUrl } from "@/lib/omniCanvasApi";
+import { resolveCanvasMaterialUrl } from "@/lib/omniCanvasApi";
 import {
   MANHUA_FACTORY_STAGE_LABEL_ZH,
   MANHUA_FACTORY_STAGE_ORDER,
@@ -208,7 +208,12 @@ import {
 } from "@/lib/manhuaCloudDraftSync";
 import {
   cacheCanvasMediaToLocalStore,
+  getLocalMediaRecord,
+  isLocalMediaPointer,
+  localMediaPointerId,
+  putLocalMediaRecord,
   rehydrateBlocksFromLocalMedia,
+  resolveUrlForLocalPersist,
   scheduleCacheCanvasMediaToLocalStore,
 } from "@/lib/manhuaLocalMediaStore";
 import {
@@ -828,7 +833,7 @@ export default function OmniCanvas() {
       const resolved = await Promise.all(
         stale.map(async (r) => {
           try {
-            const url = await resolveOmniMaterialUrl(r.gcsUri!);
+            const url = await resolveCanvasMaterialUrl(r.gcsUri!);
             return { id: r.id, gcsUri: r.gcsUri!, url };
           } catch {
             return null;
@@ -865,7 +870,7 @@ export default function OmniCanvas() {
         const gcsUri = String(e?.gcsUri || "").trim();
         if (!Number.isFinite(ep) || !gcsUri) continue;
         try {
-          const url = await resolveOmniMaterialUrl(gcsUri);
+          const url = await resolveCanvasMaterialUrl(gcsUri);
           resolved.push({ ep, gcsUri, url });
         } catch {
           /* 保持旧 url，下次再试 */
@@ -906,7 +911,7 @@ export default function OmniCanvas() {
       const resolved: Array<{ ep: number; seg: number; gcsUri: string; url: string }> = [];
       for (const s of stale) {
         try {
-          resolved.push({ ...s, url: await resolveOmniMaterialUrl(s.gcsUri) });
+          resolved.push({ ...s, url: await resolveCanvasMaterialUrl(s.gcsUri) });
         } catch {
           /* 保持旧 url，下次再试 */
         }
@@ -1020,7 +1025,6 @@ export default function OmniCanvas() {
   const [finalAssembleVideoUrl, setFinalAssembleVideoUrl] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const chargeWorkflowStepMutation = trpc.workflow.chargeStep.useMutation();
-  const refundWorkflowStepMutation = trpc.workflow.refundStep.useMutation();
   /** 登录后云端草稿：与本机双通路，互不放弃 */
   const [cloudSyncReady, setCloudSyncReady] = useState(false);
   const cloudHydrateDoneRef = useRef(false);
@@ -1744,6 +1748,152 @@ export default function OmniCanvas() {
   /** 自动备份去重标记：上次自动上云的快照序列化；手动上传后清空，让下个周期重新校准 */
   const lastAutoBackupSerializedRef = useRef("");
   const autoBackupInFlightRef = useRef(false);
+  /** 快照体检:节点数/图片数,备份收据与回填对比都用它(0820 用户拍板:凭证防争执) */
+  const countDraftPayloadStats = useCallback((payload: { canvas?: { blocks?: unknown[] } }) => {
+    const blocks = (payload?.canvas?.blocks || []) as Array<Record<string, unknown>>;
+    let images = 0;
+    for (const b of blocks) {
+      const urls = new Set<string>();
+      for (const u of [b.outputUrl, b.refImageUrl, b.editMaskUrl, b.lastFrameUrl, ...(Array.isArray(b.outputUrls) ? b.outputUrls : []), ...(Array.isArray(b.editFusionUrls) ? b.editFusionUrls : [])]) {
+        const v = String(u || "").trim();
+        if (v) urls.add(v);
+      }
+      images += urls.size;
+    }
+    return { nodes: blocks.length, images };
+  }, []);
+  /**
+   * 倒出(0820 用户拍板:必须连图片二进制一起打包):
+   * zip = snapshot.json + assets/*.png + assets-manifest.json。
+   * 图优先取本机媒体库(零网络零过期),没有再拉线上;打包失败的逐张记进收据,不静默。
+   * 云端全灭时,凭这一个文件即可一键满血回灌。
+   */
+  const exportBackupFile = useCallback(async () => {
+    const snap = latestDraftSnapshotRef.current;
+    if (!snap) {
+      toast.error("当前没有可导出的工作区内容");
+      return;
+    }
+    try {
+      const payload = buildLocalCloudDraftSnapshot(snap);
+      const stats = countDraftPayloadStats(payload);
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      zip.file("snapshot.json", JSON.stringify(payload));
+      const urls = new Set<string>();
+      for (const b of (payload.canvas?.blocks || []) as Array<Record<string, unknown>>) {
+        for (const u of [b.outputUrl, b.refImageUrl, b.editMaskUrl, b.lastFrameUrl, ...(Array.isArray(b.outputUrls) ? b.outputUrls : []), ...(Array.isArray(b.editFusionUrls) ? b.editFusionUrls : [])]) {
+          const v = String(u || "").trim();
+          if (v) urls.add(v);
+        }
+      }
+      const manifest: Array<{ file: string; sourceUrl: string; mime: string }> = [];
+      const failed: string[] = [];
+      let idx = 0;
+      for (const url of Array.from(urls)) {
+        let blob: Blob | null = null;
+        let mime = "image/png";
+        // 本机媒体库优先
+        const localPtr = resolveUrlForLocalPersist(url);
+        if (localPtr && isLocalMediaPointer(localPtr)) {
+          const rec = await getLocalMediaRecord(localMediaPointerId(localPtr));
+          if (rec?.blob?.size) {
+            blob = rec.blob;
+            mime = rec.mime || mime;
+          }
+        }
+        if (!blob) {
+          try {
+            const res = await fetch(url, { credentials: "include" });
+            if (res.ok) {
+              const b = await res.blob();
+              if (b.size > 0) {
+                blob = b;
+                mime = b.type || mime;
+              }
+            }
+          } catch {
+            /* 记入 failed */
+          }
+        }
+        if (!blob) {
+          failed.push(url.slice(0, 120));
+          continue;
+        }
+        idx += 1;
+        const ext = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
+        const file = `assets/${String(idx).padStart(3, "0")}.${ext}`;
+        zip.file(file, blob);
+        manifest.push({ file, sourceUrl: url, mime });
+      }
+      zip.file("assets-manifest.json", JSON.stringify(manifest));
+      const out = await zip.generateAsync({ type: "blob", compression: "STORE" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(out);
+      a.download = `漫剧工作区备份-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.zip`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      if (failed.length) {
+        toast.warning(`备份包已导出:节点 ${stats.nodes}、图打包 ${manifest.length}/${urls.size} 张;${failed.length} 张未取到字节(链接失效),快照仍保留其地址`);
+      } else {
+        toast.success(`备份包已导出:节点 ${stats.nodes} 个、图片 ${manifest.length} 张全量随包`);
+      }
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "导出失败");
+    }
+  }, [countDraftPayloadStats]);
+  /** 从本机备份导入:zip(带图回灌本机媒体库)或旧版纯 JSON;与云端回填同一条恢复通道 */
+  const importBackupFile = useCallback(async (file: File) => {
+    try {
+      let draft: Record<string, unknown> & { canvas?: { blocks?: unknown[] }; clientUpdatedAt?: string };
+      let restoredImages = 0;
+      if (/\.zip$/i.test(file.name)) {
+        const { default: JSZip } = await import("jszip");
+        const zip = await JSZip.loadAsync(file);
+        const snapRaw = await zip.file("snapshot.json")?.async("string");
+        if (!snapRaw) throw new Error("备份包里缺 snapshot.json");
+        draft = JSON.parse(snapRaw);
+        const maniRaw = await zip.file("assets-manifest.json")?.async("string");
+        const manifest: Array<{ file: string; sourceUrl: string; mime: string }> = maniRaw ? JSON.parse(maniRaw) : [];
+        for (const m of manifest) {
+          const entry = zip.file(m.file);
+          if (!entry) continue;
+          const blob = await entry.async("blob");
+          if (!blob.size) continue;
+          // 记录 ID 用内容 SHA-256:不同备份的同名同大小图不再互相覆盖(审查 P2)
+          const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+          const hash = Array.from(new Uint8Array(digest).slice(0, 16))
+            .map((x) => x.toString(16).padStart(2, "0"))
+            .join("");
+          // 回灌本机媒体库:恢复通道按 sourceUrl 命中指针,图即刻可用,不再依赖任何线上链接
+          await putLocalMediaRecord({
+            id: `import-${hash}`,
+            blockId: "backup-import",
+            slot: "output",
+            blob: new Blob([blob], { type: m.mime || "image/png" }),
+            mime: m.mime || "image/png",
+            sourceUrl: m.sourceUrl,
+            updatedAt: Date.now(),
+          });
+          restoredImages += 1;
+        }
+      } else {
+        draft = JSON.parse(await file.text());
+      }
+      if (!draft?.canvas?.blocks) throw new Error("备份文件格式不对");
+      const stats = countDraftPayloadStats(draft as { canvas?: { blocks?: unknown[] } });
+      const at = String(draft.clientUpdatedAt || "").slice(0, 16) || "未知时间";
+      const cur = latestDraftSnapshotRef.current;
+      const curStats = cur ? countDraftPayloadStats(buildLocalCloudDraftSnapshot(cur)) : null;
+      const curLine = curStats ? `;当前工作区:节点 ${curStats.nodes}、图 ${curStats.images}` : "";
+      const imgLine = restoredImages ? `,随包图片 ${restoredImages} 张已回灌本机` : "";
+      if (!window.confirm(`将用备份(${at},节点 ${stats.nodes}、图 ${stats.images}${imgLine}${curLine})覆盖当前工作区。确定导入?`)) return;
+      applyCloudDraftToUi(draft as Parameters<typeof applyCloudDraftToUi>[0]);
+      toast.success(restoredImages ? `已回填:${restoredImages} 张图从备份包本机回灌` : "已从备份文件回填");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "备份文件解析失败");
+    }
+  }, [countDraftPayloadStats, applyCloudDraftToUi]);
   const uploadCloudBackupNow = useCallback(async () => {
     if (cloudBackupBusy) return;
     const snap = latestDraftSnapshotRef.current;
@@ -1753,17 +1903,24 @@ export default function OmniCanvas() {
     }
     setCloudBackupBusy("upload");
     try {
-      await syncCloudDraftPayload(buildLocalCloudDraftSnapshot(snap));
+      const payload = buildLocalCloudDraftSnapshot(snap);
+      const confirmed = await syncCloudDraftPayload(payload);
       lastAutoBackupSerializedRef.current = "";
-      toast.success("已上传备份到云端");
+      const stats = countDraftPayloadStats(payload);
+      if (confirmed) {
+        toast.success(`备份完成:节点 ${stats.nodes} 个、图片 ${stats.images} 张已入云端`);
+      } else {
+        // false = 走了兜底通道,成败未知——不许把"未知"谎报成"已入云端"(复审 P1-6)
+        toast.message("备份已转入备用通道处理,完成前请勿视为已入云;稍后可再点一次确认");
+      }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "备份上传失败，请稍后重试");
     } finally {
       setCloudBackupBusy(null);
     }
-  }, [cloudBackupBusy, syncCloudDraftPayload]);
+  }, [cloudBackupBusy, syncCloudDraftPayload, countDraftPayloadStats]);
   /**
-   * 自动云备份（2026-08-13 用户拍板：半小时自动刷新一次，防当机/断线丢档；
+   * 自动云备份（2026-08-20 用户拍板：15 分钟检查一次,有新增图片/节点才上云,没新增不动；
    * 覆盖旧「只有用户点上传才存云」口径）。内容没变或上一发在途就跳过；
    * 失败静默，下个周期自然重试——不拿报错打扰创作。
    */
@@ -1793,7 +1950,7 @@ export default function OmniCanvas() {
     };
     const timer = window.setInterval(() => {
       void tick();
-    }, 30 * 60 * 1000);
+    }, 15 * 60 * 1000);
     return () => window.clearInterval(timer);
   }, [syncCloudDraftPayload]);
   const restoreCloudBackupNow = useCallback(async () => {
@@ -1808,9 +1965,15 @@ export default function OmniCanvas() {
         return;
       }
       const at = String(draft.clientUpdatedAt || "").slice(0, 16) || "未知时间";
+      const cloudStats = countDraftPayloadStats(draft);
+      const cur = latestDraftSnapshotRef.current;
+      const curStats = cur ? countDraftPayloadStats(buildLocalCloudDraftSnapshot(cur)) : null;
+      const compareLine = curStats
+        ? `\n当前工作区:节点 ${curStats.nodes} 个、图 ${curStats.images} 张 → 云端快照:节点 ${cloudStats.nodes} 个、图 ${cloudStats.images} 张`
+        : "";
       if (
         !window.confirm(
-          `将用云端备份（${at}）覆盖当前工作区，本机未上传的改动会丢失。确定回填？`,
+          `将用云端备份（${at}）覆盖当前工作区，本机未上传的改动会丢失。${compareLine}\n确定回填？`,
         )
       ) {
         return;
@@ -1822,7 +1985,7 @@ export default function OmniCanvas() {
     } finally {
       setCloudBackupBusy(null);
     }
-  }, [cloudBackupBusy, cloudDraftQuery, applyCloudDraftToUi]);
+  }, [cloudBackupBusy, cloudDraftQuery, applyCloudDraftToUi, countDraftPayloadStats]);
 
   /** 登录后：云端与本机比新，胜出方驱动 UI，并补写较弱一侧 */
   useEffect(() => {
@@ -2402,12 +2565,10 @@ export default function OmniCanvas() {
         level: "info",
         detail: `clips=${ready.map((c) => c.episodeIndex).join(",")}`,
       });
-      const charged: Array<"music" | "final_render"> = [];
       try {
+        // 七审 P0-1:客户端退款能力已下线;失败退款迁往服务端计费契约
         await chargeWorkflowStepMutation.mutateAsync({ step: "music", quantity: 1 });
-        charged.push("music");
         await chargeWorkflowStepMutation.mutateAsync({ step: "final_render", quantity: 1 });
-        charged.push("final_render");
 
         // 短入队（www→Vercel rewrite→Fly）+ GET 轮询，不走长任务直连 api 子域
         pushDebug("assemble:music", { level: "info", detail: "queued · polling…" });
@@ -2491,11 +2652,6 @@ export default function OmniCanvas() {
         }, 80);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "合成失败";
-        for (const step of charged.reverse()) {
-          void refundWorkflowStepMutation
-            .mutateAsync({ step, quantity: 1, reason: `漫剧合成失败退款·${step}` })
-            .catch(() => {});
-        }
         pushDebug("assemble:error", { level: "error", detail: msg });
         toast.error(msg);
       } finally {
@@ -2506,7 +2662,6 @@ export default function OmniCanvas() {
       assembleBusy,
       factoryBusy,
       chargeWorkflowStepMutation,
-      refundWorkflowStepMutation,
       factoryTopic,
       writerPack?.seriesTitle,
       writerPack?.logline,
@@ -6788,26 +6943,48 @@ export default function OmniCanvas() {
               )}
               <div className="flex flex-wrap items-center gap-2">
                 {canvasMode === "manhua" ? (
-                  <>
-                    <button
-                      type="button"
-                      disabled={cloudBackupBusy != null || !cloudSyncReady || factoryBusy || writerBusy}
+                  /* 备份中心(0820 用户拍板):备份/倒出/回填坐一起,随时可选;15 分钟自动增量备份兜底 */
+                  <div className="relative" data-canvas-backup-menu>
+                    <select
+                      value=""
+                      disabled={cloudBackupBusy != null || factoryBusy || writerBusy}
                       className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] text-white/70 hover:bg-white/10 disabled:opacity-40"
-                      title="把当前工作区手动存到云端；系统不再自动备份"
-                      onClick={() => void uploadCloudBackupNow()}
+                      title="备份/回填中心:上传云端、回填云端、导出/导入本机文件;每 15 分钟自动检查,有新增图片或节点才自动备份"
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        e.target.value = "";
+                        if (v === "upload") void uploadCloudBackupNow();
+                        else if (v === "restore") void restoreCloudBackupNow();
+                        else if (v === "export") void exportBackupFile();
+                        else if (v === "import") {
+                          const input = document.createElement("input");
+                          input.type = "file";
+                          input.accept = ".zip,application/zip,application/json";
+                          input.onchange = () => {
+                            const f = input.files?.[0];
+                            if (f) void importBackupFile(f);
+                          };
+                          input.click();
+                        }
+                      }}
                     >
-                      {cloudBackupBusy === "upload" ? "备份中…" : "上传备份"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={cloudBackupBusy != null || !cloudSyncReady || factoryBusy || writerBusy}
-                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] text-white/70 hover:bg-white/10 disabled:opacity-40"
-                      title="用云端备份覆盖当前工作区（会先确认）"
-                      onClick={() => void restoreCloudBackupNow()}
-                    >
-                      {cloudBackupBusy === "restore" ? "回填中…" : "回填备份"}
-                    </button>
-                  </>
+                      <option value="" disabled>
+                        {cloudBackupBusy === "upload"
+                          ? "备份中…"
+                          : cloudBackupBusy === "restore"
+                            ? "回填中…"
+                            : "备份 / 回填"}
+                      </option>
+                      <option value="upload" disabled={!cloudSyncReady}>
+                        立即备份到云端
+                      </option>
+                      <option value="restore" disabled={!cloudSyncReady}>
+                        从云端回填(先对比确认)
+                      </option>
+                      <option value="export">导出备份文件到本机</option>
+                      <option value="import">从本机备份文件导入</option>
+                    </select>
+                  </div>
                 ) : null}
                 {canShowCanvasDebug ? (
                   <button
@@ -7917,58 +8094,48 @@ export default function OmniCanvas() {
                 <p className="mt-0.5 text-[10px] leading-4 text-white/35">
                   先选再扩写：决定一集几段、每段几秒，并写入后续铺板。
                 </p>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {writerLayoutChoices.map((c) => {
-                    const on = writerVideoModel === c.videoModel;
-                    /**
-                     * 整集价必须跟着「单集时长」档走：2.0 / 2.0-fast 选长档是 12 段，
-                     * 拿 choices 里的默认 6 段算会把 2064 印成 1032。钉死段表的档不受影响。
-                     */
-                    const cardSegmentCount = resolveManhuaSeedanceLayoutProfile(
-                      c.videoModel,
-                      writerLengthTierId,
-                    ).segmentCount;
-                    return (
-                      <button
-                        key={c.videoModel}
-                        type="button"
-                        disabled={writerBusy || factoryBusy}
-                        title={c.layoutHintZh}
-                        onClick={() => {
-                          if (c.videoModel === "seedance-2.5" && !canUseSeedance25) {
-                            toast.error(
-                              seedance25Gate.message || SEEDANCE_25_PAID_ONLY_LABEL_ZH,
-                            );
-                            return;
-                          }
-                          setWriterVideoModel(c.videoModel);
-                          setWriterVideoModelPicked(true);
-                          setWriterConfirmed(false);
-                        }}
-                        className={`rounded-lg border px-2.5 py-1.5 text-left text-[11px] disabled:opacity-50 ${
-                          on
-                            ? "border-cyan-300/50 bg-cyan-500/20 text-cyan-50"
-                            : "border-white/12 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]"
-                        }`}
-                      >
-                        <div className="font-semibold">{c.labelZh}</div>
-                        <div className="mt-0.5 max-w-[14rem] text-[9px] leading-snug text-white/40">
-                          {c.layoutHintZh}
-                        </div>
-                        <div className="mt-0.5 text-[9px] leading-snug text-amber-200/60">
+                <div className="mt-2">
+                  {/* 下拉式选单(用户 0820 拍板):替换旧卡片按钮组,选项一眼看全 */}
+                  <select
+                    value={hasManhuaSeedanceLayoutChoice(writerVideoModel) ? writerVideoModel : ""}
+                    disabled={writerBusy || factoryBusy}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (!next) return;
+                      if (next === "seedance-2.5" && !canUseSeedance25) {
+                        toast.error(seedance25Gate.message || SEEDANCE_25_PAID_ONLY_LABEL_ZH);
+                        return;
+                      }
+                      setWriterVideoModel(next as (typeof writerLayoutChoices)[number]["videoModel"]);
+                      setWriterVideoModelPicked(true);
+                      setWriterConfirmed(false);
+                    }}
+                    className="w-full rounded-lg border border-white/12 bg-black/40 px-2.5 py-2 text-[12px] text-white disabled:opacity-50"
+                  >
+                    <option value="" disabled>
+                      请选择成片引擎…
+                    </option>
+                    {writerLayoutChoices.map((c) => {
+                      const cardSegmentCount = resolveManhuaSeedanceLayoutProfile(
+                        c.videoModel,
+                        writerLengthTierId,
+                      ).segmentCount;
+                      return (
+                        <option key={c.videoModel} value={c.videoModel}>
+                          {c.labelZh} · {c.layoutHintZh} ·{" "}
                           {canvasVideoClipCredits({
                             isEpisodeSegment: true,
                             videoModel: c.videoModel,
-                          })}{" "}
+                          })}
                           积分/段 · 整集约{" "}
                           {manhuaEpisodeTotalCredits({
                             videoModel: c.videoModel,
                             segmentCount: cardSegmentCount,
                           })}
-                        </div>
-                      </button>
-                    );
-                  })}
+                        </option>
+                      );
+                    })}
+                  </select>
                 </div>
                 {hasManhuaSeedanceLayoutChoice(writerVideoModel) ? (
                   <p className="mt-1.5 text-[10px] text-cyan-100/70">
