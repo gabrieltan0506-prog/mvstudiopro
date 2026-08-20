@@ -170,6 +170,8 @@ export default function PlatformImageGenPanel({ disabled }: { disabled?: boolean
           aspectRatio: apiAspect,
           referenceImageUrls: refs.length ? refs : undefined,
           generalImageEdit: refs.length > 0,
+          // 预扣收据(五审 P0-2):worker 凭它免二次扣费;无收据 worker 会照常扣
+          chargeReceiptId: (charge as { chargeReceiptId?: string }).chargeReceiptId,
         }),
       });
       const job = await pollJobUntilTerminal(jobId, {

@@ -1037,27 +1037,66 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     const imageLane = normalizeOpenAiImageLane(params.imageLane) ?? undefined;
 
     /**
-     * 画布出图收费：此前这条队列**一分钱不收**（`/canvas` 的静帧、封面、设定图都走这里），
-     * 官方 Image-2 一张真金白银。supervisor/admin 由 `deductCreditsAmount` 内部免扣，
-     * 失败/空图退回，所以自动重试不会累计扣款。
-     *
-     * 只扣带 `chargeOnServer` 的：这条队列还服务 `/creative` 生图与 `/platform` 单帧生图，
-     * 那两处已在前端 `chargeStep` 扣过，无条件扣会双扣。
+     * 画布出图收费 v2(五审 P0-2):worker **一律服务端扣费**,客户端 chargeOnServer
+     * 标记不再被采信(省略它曾可免费调用付费上游)。仅两种豁免,都要服务端证据:
+     * - chargeReceiptId:chargeStep 预扣成功后服务端签发的一次性收据(/creative、/platform),
+     *   校验+原子核销通过才免扣;重放/伪造/过期一律照常扣费。
+     * - retryOfJobId:画布超时重入队引用首单——首单可能仍在跑并最终成功(那次已扣),
+     *   同一张图不能收两次;校验(同用户/同 action/首单非豁免单)+每首单只准核销一次。
+     * supervisor/admin 由 `deductCreditsAmount` 内部免扣,失败/空图退回。
      */
     const numericUserId = Number(jobUserId);
-    if (assetStandardizeQuality && (!Number.isFinite(numericUserId) || numericUserId <= 0)) {
-      throw new Error("资产标准化缺少有效登录用户，已拒绝调用上游");
+    if (!Number.isFinite(numericUserId) || numericUserId <= 0) {
+      // 五审 P0-2:入口已强制登录;这里兜底拒绝 public/NaN,绝不免费打上游
+      throw new Error("画布出图需要有效登录用户，已拒绝调用上游");
     }
     let creditDeducted = 0;
     let deductReceipt: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
-    const shouldCharge = params.chargeOnServer === true || Boolean(assetStandardizeQuality);
-    if (shouldCharge && Number.isFinite(numericUserId) && numericUserId > 0) {
+    let shouldCharge = true;
+    if (!assetStandardizeQuality) {
+      const receiptId =
+        typeof params.chargeReceiptId === "string" ? params.chargeReceiptId.trim() : "";
+      if (receiptId) {
+        const { consumeImageChargeReceipt } = await import("../services/imageChargeReceipt.js");
+        if (await consumeImageChargeReceipt({ userId: numericUserId, receiptId })) {
+          shouldCharge = false;
+        }
+      }
+      const retryOf = typeof params.retryOfJobId === "string" ? params.retryOfJobId.trim() : "";
+      if (shouldCharge && retryOf && jobId && retryOf !== jobId) {
+        const [{ getJobById }, { claimCanvasRetryChargeWaiver }] = await Promise.all([
+          import("./repository.js"),
+          import("../services/imageChargeReceipt.js"),
+        ]);
+        const orig = await getJobById(retryOf);
+        const origInput = (orig?.input || null) as {
+          action?: string;
+          params?: { retryOfJobId?: string; chargeReceiptId?: string };
+        } | null;
+        const validRetry = Boolean(
+          orig &&
+            String(orig.userId) === String(numericUserId) &&
+            origInput?.action === "canvas_gpt_image2" &&
+            !origInput?.params?.retryOfJobId &&
+            !origInput?.params?.chargeReceiptId,
+        );
+        if (validRetry && (await claimCanvasRetryChargeWaiver({ userId: numericUserId, retryOfJobId: retryOf }))) {
+          shouldCharge = false;
+        }
+      }
+    }
+    if (shouldCharge || assetStandardizeQuality) {
       const { canvasImageCredits } = await import("../../shared/canvasGenerationPricing.js");
       const { manhuaAssetStandardizeCredits } = await import("../../shared/manhuaAssetStandardize.js");
       const cost = assetStandardizeQuality
         ? manhuaAssetStandardizeCredits(assetStandardizeQuality)
         : canvasImageCredits(typeof params.batchIndex === "number" ? params.batchIndex : 0);
-      const chargeKey = assetStandardizeQuality && jobId ? `manhuaAssetStandardize/${jobId}` : undefined;
+      // 每个 job 一把幂等扣费键:worker 重试同一 job 不会二次扣款(DB 唯一索引兜底)
+      const chargeKey = jobId
+        ? assetStandardizeQuality
+          ? `manhuaAssetStandardize/${jobId}`
+          : `canvasGptImage2/${jobId}`
+        : undefined;
       const deducted = await deductCreditsAmount(
         numericUserId,
         cost,
@@ -1151,6 +1190,25 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
     if (!imageUrl) {
       await refundCanvasImage("画布出图·未出图·退回已扣积分");
       throw new Error(captureError.message || "gpt_image2_empty");
+    }
+    /**
+     * 五审 P0-1/P1-1:所有权登记进成功契约——这里是画布出图的真实主链
+     * (短入队 worker,同步 op=canvasGptImage2 已弃用),不登记则 /api/canvas-media
+     * 与 Wan 参考校验都会拒绝这张新图。登记失败(含冲突/提取失败/存储故障重试尽)
+     * 不得报 succeeded:退回已扣积分后抛错,绝不交付"看得到一次、恢复后 403"的半成品。
+     */
+    try {
+      const { registerCanvasImageDeliveryOrThrow } = await import(
+        "../services/canvasMediaOwnership.js"
+      );
+      await registerCanvasImageDeliveryOrThrow({
+        imageUrl,
+        ownerUserId: numericUserId,
+        source: "canvasgptimage2-runner",
+      });
+    } catch (err) {
+      await refundCanvasImage("画布出图·所有权登记失败·退回已扣积分");
+      throw err;
     }
     return {
       provider: providerOverride === "openrouter" ? "openrouter-gpt-image-2" : "openai-gpt-image-2",

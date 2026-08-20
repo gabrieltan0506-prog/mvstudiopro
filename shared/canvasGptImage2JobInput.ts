@@ -20,13 +20,22 @@ export type CanvasGptImage2JobParams = {
   /** 设定图 / 静帧分走两把官方密钥 */
   imageLane?: OpenAiImageLane;
   /**
-   * 由 worker 扣积分（`server/jobs/runner.ts` 的 `canvas_gpt_image2`）。
-   *
-   * 这条队列有三个调用方：`/canvas`、`/creative` 生图、`/platform` 单帧生图。
-   * 后两个已在前端 `chargeStep` 扣过，worker 再扣就是双扣，所以只有画布带这个标记。
-   * 缺省不扣：漏带只会少收钱，不会误扣用户，比反向标记安全。
+   * @deprecated 五审 P0-2:客户端标记不再决定是否收费(攻击者省略即可白嫖)。
+   * worker 现在一律服务端扣费;预扣豁免只认 chargeReceiptId,重试免双扣只认 retryOfJobId。
+   * 字段保留仅为旧客户端载荷兼容,服务端忽略其值。
    */
   chargeOnServer?: boolean;
+  /**
+   * 服务端签发的一次性预扣收据(chargeStep scene_image 预扣成功后返回):
+   * worker 校验并核销后跳过扣费;无收据/收据无效一律正常扣费。
+   */
+  chargeReceiptId?: string;
+  /**
+   * 超时重入队时引用的首次 jobId:worker 校验(同用户、同 action、非重试单)后
+   * 复用首单扣费键——首单可能仍在跑并最终成功,同一张图不能收两次;
+   * 每个首单只允许核销一次重试豁免,防同一 jobId 无限白嫖。
+   */
+  retryOfJobId?: string;
   /** 批量出图里的第几张（0-based）：第 2 张起走批量价 */
   batchIndex?: number;
   /** 用户明确点选的漫剧导入资产标准化；服务端固定 GPT-image-2 edit 并按 3/5 积分结算。 */
@@ -45,6 +54,8 @@ export function buildCanvasGptImage2JobInput(params: {
   gcsSubdir?: string;
   imageLane?: OpenAiImageLane | string;
   chargeOnServer?: boolean;
+  chargeReceiptId?: string;
+  retryOfJobId?: string;
   batchIndex?: number;
   assetStandardizeQuality?: ManhuaAssetStandardizeQuality;
   assetRefId?: string;
@@ -89,6 +100,12 @@ export function buildCanvasGptImage2JobInput(params: {
       ...(providerOverride ? { providerOverride } : {}),
       ...(imageLane ? { imageLane } : {}),
       ...(params.chargeOnServer ? { chargeOnServer: true } : {}),
+      ...(String(params.chargeReceiptId || "").trim()
+        ? { chargeReceiptId: String(params.chargeReceiptId).trim().slice(0, 64) }
+        : {}),
+      ...(String(params.retryOfJobId || "").trim()
+        ? { retryOfJobId: String(params.retryOfJobId).trim().slice(0, 64) }
+        : {}),
       ...(Number(params.batchIndex) > 0 ? { batchIndex: Math.floor(Number(params.batchIndex)) } : {}),
       ...(assetStandardizeQuality ? { assetStandardizeQuality } : {}),
       ...(assetStandardizeQuality && String(params.assetRefId || "").trim()

@@ -633,6 +633,27 @@ export const workflowRouter = router({
         });
       }
 
+      /**
+       * scene_image 预扣要签一次性收据(五审 P0-2):canvas_gpt_image2 worker 已改为
+       * 无收据一律服务端扣费,客户端"我扣过了"的空口凭据不再被采信。
+       * 收据签发失败按预扣失败处理(fail-closed),否则前端以为扣过、worker 又扣一次。
+       */
+      const issueReceiptIfImageStep = async (): Promise<string | undefined> => {
+        if (input.step !== "scene_image") return undefined;
+        const { issueImageChargeReceipt } = await import("../services/imageChargeReceipt.js");
+        try {
+          return await issueImageChargeReceipt({
+            userId: ctx.user.id,
+            reason: `chargeStep:scene_image ×${input.quantity}`,
+          });
+        } catch (error) {
+          // 扣了钱发不出收据:立刻原路退回再报错,不留"前端以为已扣、worker 再扣"的裂缝
+          const { refundCredits } = await import("../credits");
+          await refundCredits(ctx.user.id, totalCost, "scene_image 收据签发失败·退回").catch(() => {});
+          throw error;
+        }
+      };
+
       if (useOverride) {
         const result = await deductCreditsAmount(
           ctx.user.id,
@@ -640,7 +661,11 @@ export const workflowRouter = router({
           "workflowSceneVideo",
           `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}（动态 ${input.creditsOverride}×${input.quantity}）`,
         );
-        return { cost: totalCost, remaining: result.remainingBalance };
+        return {
+          cost: totalCost,
+          remaining: result.remainingBalance,
+          chargeReceiptId: await issueReceiptIfImageStep(),
+        };
       }
 
       const result = await deductCredits(
@@ -648,7 +673,11 @@ export const workflowRouter = router({
         costKey,
         `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}${input.quantity > 1 ? ` ×${input.quantity}` : ""}`,
       );
-      return { cost: totalCost, remaining: result.remainingBalance };
+      return {
+        cost: totalCost,
+        remaining: result.remainingBalance,
+        chargeReceiptId: await issueReceiptIfImageStep(),
+      };
     }),
 
   refundStep: protectedProcedure

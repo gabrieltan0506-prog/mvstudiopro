@@ -1,36 +1,43 @@
 /**
- * 画布生成媒体所有权 v2(四审 P0-1):**权威登记簿**,不再采信任何客户端可写的来源。
+ * 画布生成媒体所有权 v3(五审 P0-3/P0-4):**原子权威登记簿**。
  *
- * 上一版把「路径出现在用户云草稿的资产字段里」当所有权——草稿本身是客户端可上传伪造的,
- * 攻击者把受害者路径写进自己草稿的 outputUrl 即可冒领。四审探针实锤后废弃该判定。
+ * v2 的问题:①get→put 两步登记在并发下后写覆盖先写(TOCTOU,实测两用户都返回 true);
+ * ②get 吞掉一切 GCS 错误当"无记录",403/超时/5xx/坏 JSON 都可能触发覆盖真主;
+ * ③put 是可选字段,缺 put 也报登记成功;④backfill 以客户端可写草稿为归属证据,可被抢注。
  *
- * v2 判定:对象生成交付给已登录用户的那一刻,由**服务端**写入所有权记录
- * `media-owners/<objectPath>.owner.json` = { ownerUserId, source, createdAt }。
- * 记录只由服务端在生成/交付路径写入,客户端没有任何接口能改它。
- * 验证 = 读记录并比对 userId;无记录一律拒绝。
- * 云草稿字段自此只是「引用」,与所有权无关。
- *
- * 存量对象:提供 backfillCanvasMediaOwnersFromDraft(手动/部署时一次性引导)——
- * 在登记簿上线**之前**写入云端的草稿是历史上由真实客户端产生的,以其资产字段做
- * 首次登记(先到先得,冲突跳过并记日志);引导完成后新对象全靠交付时登记,
- * 无记录的旧对象不自动续签(四审要求)。
+ * v3 契约:
+ * - 存储层唯一写入原语是 createIfAbsent(GCS ifGenerationMatch=0 条件创建,412=已存在),
+ *   不存在覆盖路径;登记结果四态 created / alreadyOwned / conflict / invalid。
+ * - get 只有明确 404 才是"无记录";其余错误一律抛出,登记与验证都不许在故障时下结论。
+ * - 缓存只缓存**正记录**;"无记录"不缓存(五审 P1-2:跨实例登记后 60s 负缓存误拒)。
+ * - 存量引导只认服务端 jobs 表的成功任务(见 canvasMediaOwnershipBackfill.ts),
+ *   客户端草稿永不作为归属证据。
  */
-import { downloadGcsObject, getGcsBucketName, uploadBufferToGcs } from "./gcs.js";
+import {
+  downloadGcsObject,
+  getGcsBucketName,
+  uploadBufferToGcsIfAbsent,
+} from "./gcs.js";
 
 export const CANVAS_MEDIA_OBJECT_RE =
   /^generated\/[A-Za-z0-9_\/-]+\/[A-Za-z0-9_.-]+\.(png|jpg|jpeg|webp)$/;
 
 const OWNER_PREFIX = "media-owners/";
 
-type OwnerRecord = { ownerUserId: number; source?: string; createdAt?: string };
+export type OwnerRecord = { ownerUserId: number; source?: string; createdAt?: string };
 
-/** 测试注入口:读/写记录 */
+export type RegisterOwnerOutcome = "created" | "alreadyOwned" | "conflict" | "invalid";
+
+/**
+ * 测试注入口。get:无记录返回 null(仅明确 404),故障必须抛错;
+ * createIfAbsent:原子条件创建,已存在(无论谁的)返回 "exists",绝不覆盖。
+ */
 export type OwnerStore = {
   get: (objectPath: string) => Promise<OwnerRecord | null>;
-  put?: (objectPath: string, record: OwnerRecord) => Promise<void>;
+  createIfAbsent: (objectPath: string, record: OwnerRecord) => Promise<"created" | "exists">;
 };
 
-const cache = new Map<string, { rec: OwnerRecord | null; ts: number }>();
+const cache = new Map<string, { rec: OwnerRecord; ts: number }>();
 const CACHE_TTL_MS = 60_000;
 
 function ownerObjectName(objectPath: string): string {
@@ -44,22 +51,37 @@ const gcsStore: OwnerStore = {
         gcsUri: `gs://${getGcsBucketName()}/${ownerObjectName(objectPath)}`,
       });
       const rec = JSON.parse(buffer.toString("utf8")) as OwnerRecord;
-      return Number.isFinite(Number(rec?.ownerUserId)) ? rec : null;
-    } catch {
-      return null;
+      if (!Number.isFinite(Number(rec?.ownerUserId))) {
+        // 记录存在但损坏:不是"无记录",按故障处理,禁止当作可登记空位
+        throw new Error(`owner_record_corrupt:${objectPath}`);
+      }
+      return rec;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      // downloadGcsObject 抛 gcs_download_failed:<status>:<body>;只有 404 是"无记录"
+      if (/^gcs_download_failed:404:/.test(msg)) return null;
+      throw error;
     }
   },
-  async put(objectPath, record) {
-    await uploadBufferToGcs({
+  async createIfAbsent(objectPath, record) {
+    const { created } = await uploadBufferToGcsIfAbsent({
       objectName: ownerObjectName(objectPath),
       buffer: Buffer.from(JSON.stringify(record)),
       contentType: "application/json",
     });
+    return created ? "created" : "exists";
   },
 };
 
+function validObjectPath(objectPath: unknown): string | null {
+  const p = String(objectPath || "");
+  return CANVAS_MEDIA_OBJECT_RE.test(p) && !p.includes("..") ? p : null;
+}
+
 /**
- * 服务端在生成/交付路径登记所有权。已有记录则不覆盖(先到先得,防后写冒领)。
+ * 服务端在生成/交付路径登记所有权(先到先得,原子)。
+ * created=本次登记成功;alreadyOwned=同主已在册(幂等);conflict=他人已在册;
+ * invalid=路径/用户不合法。存储故障(含 get 非 404 错误)向上抛,调用方不得视为成功。
  * 只允许服务端代码调用;绝不能暴露成任何客户端可达的接口。
  */
 export async function registerCanvasMediaOwner(input: {
@@ -67,42 +89,45 @@ export async function registerCanvasMediaOwner(input: {
   ownerUserId: number;
   source?: string;
   store?: OwnerStore;
-}): Promise<boolean> {
-  const p = String(input.objectPath || "");
+}): Promise<RegisterOwnerOutcome> {
+  const p = validObjectPath(input.objectPath);
   const uid = Number(input.ownerUserId);
-  if (!CANVAS_MEDIA_OBJECT_RE.test(p) || p.includes("..")) return false;
-  if (!Number.isFinite(uid) || uid <= 0) return false;
+  if (!p || !Number.isFinite(uid) || uid <= 0) return "invalid";
   const store = input.store || gcsStore;
-  const existing = await store.get(p);
-  if (existing) return Number(existing.ownerUserId) === uid;
-  await store.put?.(p, {
+  const outcome = await store.createIfAbsent(p, {
     ownerUserId: uid,
     source: String(input.source || "delivery").slice(0, 60),
     createdAt: new Date().toISOString(),
   });
-  cache.set(p, { rec: { ownerUserId: uid }, ts: Date.now() });
-  return true;
+  if (outcome === "created") {
+    cache.set(p, { rec: { ownerUserId: uid }, ts: Date.now() });
+    return "created";
+  }
+  // 已存在:读回真实记录比对(此时必有记录;读失败照抛,不猜)
+  const existing = await store.get(p);
+  if (existing && Number(existing.ownerUserId) === uid) return "alreadyOwned";
+  return "conflict";
 }
 
-/** 唯一的授权判定:权威记录存在且 ownerUserId 匹配;其余一律拒绝 */
+/** 唯一的授权判定:权威记录存在且 ownerUserId 匹配;无记录拒绝;存储故障向上抛(不许误判) */
 export async function verifyCanvasMediaOwnership(
   userId: number,
   objectPath: string,
   opts?: { store?: OwnerStore; skipCache?: boolean },
 ): Promise<boolean> {
-  const p = String(objectPath || "");
-  if (!CANVAS_MEDIA_OBJECT_RE.test(p) || p.includes("..")) return false;
+  const p = validObjectPath(objectPath);
   const uid = Number(userId);
-  if (!Number.isFinite(uid) || uid <= 0) return false;
+  if (!p || !Number.isFinite(uid) || uid <= 0) return false;
   const now = Date.now();
   if (!opts?.skipCache) {
     const hit = cache.get(p);
-    if (hit && now - hit.ts <= CACHE_TTL_MS) {
-      return hit.rec != null && Number(hit.rec.ownerUserId) === uid;
+    // 只信正缓存;负结果不缓存——另一实例刚登记完,这里不能拿旧的"无记录"顶 60s
+    if (hit && now - hit.ts <= CACHE_TTL_MS && Number(hit.rec.ownerUserId) === uid) {
+      return true;
     }
   }
   const rec = await (opts?.store || gcsStore).get(p);
-  cache.set(p, { rec, ts: now });
+  if (rec != null) cache.set(p, { rec, ts: now });
   return rec != null && Number(rec.ownerUserId) === uid;
 }
 
@@ -114,72 +139,55 @@ export function extractCanvasMediaObjectPath(u: unknown): string | null {
   if (!m) return null;
   try {
     const p = decodeURIComponent(m[1]);
-    return CANVAS_MEDIA_OBJECT_RE.test(p) && !p.includes("..") ? p : null;
+    return validObjectPath(p);
   } catch {
     return null;
   }
 }
 
 /**
- * 存量引导(手动/部署时执行一次,登记簿上线前的历史对象专用):
- * 读该用户当时的云草稿资产字段做首次登记;已有记录(含他人先登)一律跳过并计数。
- * 引导之后的新对象全靠交付时登记,本函数不得再对新增内容使用。
+ * 生成交付登记(五审 P0-1/P1-1:真实主链 runner 与同步 op 共用)。
+ * 成功产出 imageUrl 之后、任务报成功之前调用:
+ * - 提不出 generated/ 对象路径:URL 若明显是本站受保护对象(带 /generated/)则视为异常抛错,
+ *   否则(外部存储/其他前缀,受保护路由本就不服务)跳过登记返回 "skipped"。
+ * - conflict / invalid / 存储故障 → 抛错,调用方不得把任务标成 succeeded(退费由调用方兜)。
+ * - 瞬态存储故障内置 3 次重试,避免一次抖动就烧掉整单付费生成。
  */
-export async function backfillCanvasMediaOwnersFromDraft(
-  userId: number,
-  opts?: { store?: OwnerStore; loadDraft?: (userId: number) => Promise<string | null> },
-): Promise<{ registered: number; skipped: number }> {
-  const uid = Number(userId);
-  if (!Number.isFinite(uid) || uid <= 0) return { registered: 0, skipped: 0 };
-  const load =
-    opts?.loadDraft ||
-    (async (id: number) => {
-      try {
-        const { buffer } = await downloadGcsObject({
-          gcsUri: `gs://${getGcsBucketName()}/manhua-cloud-drafts/user-${id}.json`,
-        });
-        return buffer.toString("utf8");
-      } catch {
-        return null;
-      }
-    });
-  const raw = await load(uid);
-  if (!raw) return { registered: 0, skipped: 0 };
-  const paths = new Set<string>();
-  try {
-    const wrapper = JSON.parse(raw) as { payloadJson?: string; payload?: unknown };
-    const payloadRaw =
-      typeof wrapper.payloadJson === "string" ? JSON.parse(wrapper.payloadJson) : wrapper.payload ?? wrapper;
-    const blocks = (payloadRaw as { canvas?: { blocks?: unknown[] } })?.canvas?.blocks || [];
-    for (const blk of blocks as Array<Record<string, unknown>>) {
-      for (const u of [
-        blk.outputUrl,
-        blk.refImageUrl,
-        blk.editMaskUrl,
-        blk.lastFrameUrl,
-        ...(Array.isArray(blk.outputUrls) ? blk.outputUrls : []),
-        ...(Array.isArray(blk.editFusionUrls) ? blk.editFusionUrls : []),
-      ]) {
-        const p = extractCanvasMediaObjectPath(u);
-        if (p) paths.add(p);
-      }
+export async function registerCanvasImageDeliveryOrThrow(input: {
+  imageUrl: string;
+  ownerUserId: number;
+  source?: string;
+  store?: OwnerStore;
+}): Promise<"created" | "alreadyOwned" | "skipped"> {
+  const objectPath = extractCanvasMediaObjectPath(input.imageUrl);
+  if (!objectPath) {
+    if (/\/generated\//i.test(String(input.imageUrl || ""))) {
+      throw new Error(`canvas_media_owner_extract_failed:${String(input.imageUrl).slice(0, 160)}`);
     }
-  } catch {
-    return { registered: 0, skipped: 0 };
+    return "skipped";
   }
-  let registered = 0;
-  let skipped = 0;
-  for (const p of Array.from(paths)) {
-    const ok = await registerCanvasMediaOwner({
-      objectPath: p,
-      ownerUserId: uid,
-      source: "backfill-draft",
-      store: opts?.store,
-    });
-    if (ok) registered += 1;
-    else skipped += 1;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 800 * attempt));
+    try {
+      const outcome = await registerCanvasMediaOwner({
+        objectPath,
+        ownerUserId: input.ownerUserId,
+        source: input.source,
+        store: input.store,
+      });
+      if (outcome === "created" || outcome === "alreadyOwned") return outcome;
+      throw new Error(`canvas_media_owner_${outcome}:${objectPath}`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      // 冲突/非法是确定性结论,重试无意义
+      if (/^canvas_media_owner_(conflict|invalid)/.test(msg)) throw error;
+      lastError = error;
+    }
   }
-  return { registered, skipped };
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("canvas_media_owner_register_failed");
 }
 
 /** 仅测试用:清缓存 */

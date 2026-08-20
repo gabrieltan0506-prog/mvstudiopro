@@ -3686,22 +3686,20 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             openrouterError: captureError.openrouterError || null,
           });
         }
-        // 四审 P0-1:交付即登记权威所有权——服务器亲手生成、亲手交给这位登录用户,
-        // 这一刻是唯一不可伪造的归属证据;登记失败不阻断交付,但记日志待补。
+        // 五审 P1-1:登记进成功契约——交付即登记权威所有权;登记失败不得返回成功,
+        // 否则用户拿到"看得到一次、恢复后永久 403"的半成品(此同步入口不扣费,无退款项)。
         try {
-          const { extractCanvasMediaObjectPath, registerCanvasMediaOwner } = await import(
+          const { registerCanvasImageDeliveryOrThrow } = await import(
             "../server/services/canvasMediaOwnership.js"
           );
-          const objectPath = extractCanvasMediaObjectPath(imageUrl);
-          if (objectPath) {
-            await registerCanvasMediaOwner({
-              objectPath,
-              ownerUserId: imageViewer.userId,
-              source: "canvasgptimage2",
-            });
-          }
+          await registerCanvasImageDeliveryOrThrow({
+            imageUrl,
+            ownerUserId: imageViewer.userId,
+            source: "canvasgptimage2",
+          });
         } catch (ownErr) {
-          console.warn("[canvasgptimage2] owner register failed:", ownErr);
+          console.error("[canvasgptimage2] owner register failed:", ownErr);
+          return res.status(502).json({ ok: false, error: "出图所有权登记失败,请重试" });
         }
         return res.status(200).json({ ok: true, imageUrl, imageUrls: [imageUrl] });
       } catch (e: any) {

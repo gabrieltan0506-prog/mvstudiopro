@@ -311,6 +311,7 @@ async function runGptImage2(
   const openaiOnly = Boolean(opts?.openaiOnly);
   const userId = String(opts?.userId || "");
 
+  let firstJobId = "";
   const attemptOnce = async (isRetry = false): Promise<string> => {
     const { jobId } = await createJobSameOrigin({
       type: "image",
@@ -324,14 +325,15 @@ async function runGptImage2(
         providerOverride: openaiOnly ? "openai" : undefined,
         imageLane: opts?.imageLane,
         /**
-         * 画布出图由 worker 扣积分；`/creative` 与 `/platform` 走同一队列但已在前端扣，故不带此标记。
-         * 超时重入队的那次也不带：上一个 job 可能仍在跑并最终成功（那次已扣），
-         * 同一张图不能收两次。宁可少收，也不误扣。
+         * 五审 P0-2:扣费一律在 worker 服务端决定,chargeOnServer 标记已不被采信。
+         * 超时重入队带 retryOfJobId 引用首单:上一个 job 可能仍在跑并最终成功(那次已扣),
+         * 服务端校验后按"每首单豁免一次"免扣,同一张图不收两次。
          */
-        chargeOnServer: !isRetry,
+        retryOfJobId: isRetry && firstJobId ? firstJobId : undefined,
         batchIndex: opts?.batchIndex,
       }),
     });
+    if (!isRetry) firstJobId = jobId;
     const job = await pollJobUntilTerminal(jobId, {
       maxWaitMs: CANVAS_GPT_IMAGE2_POLL_MAX_MS,
       intervalMs: 2500,

@@ -242,6 +242,50 @@ export async function uploadBufferToGcs(params: {
   };
 }
 
+/**
+ * 条件创建:仅当对象不存在时写入(ifGenerationMatch=0)。
+ * 已存在返回 { created:false }(GCS 412 Precondition Failed),其余错误照抛。
+ * 供所有权登记簿等"先到先得"场景做真原子创建——get→put 两步在并发下必被覆盖。
+ */
+export async function uploadBufferToGcsIfAbsent(params: {
+  objectName: string;
+  buffer: Buffer;
+  contentType: string;
+  bucket?: string;
+}): Promise<{ created: boolean }> {
+  const bucket = params.bucket || getGcsBucketName();
+  if (!bucket) throw new Error("GCS bucket is not configured");
+  const objectName = normalizeObjectName(params.objectName);
+  const accessToken = await getVertexAccessToken();
+  const uploadUrl = new URL(
+    `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o`,
+  );
+  uploadUrl.searchParams.set("uploadType", "media");
+  uploadUrl.searchParams.set("name", objectName);
+  uploadUrl.searchParams.set("ifGenerationMatch", "0");
+  const userProject = getGcsUserProject();
+  if (userProject) uploadUrl.searchParams.set("userProject", userProject);
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": params.contentType || "application/octet-stream",
+      "Content-Length": String(params.buffer.byteLength),
+    },
+    body: new Uint8Array(params.buffer),
+  });
+  if (response.status === 412) {
+    await response.text().catch(() => "");
+    return { created: false };
+  }
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`gcs_conditional_upload_failed:${response.status}:${text.slice(0, 300)}`);
+  }
+  await response.json().catch(() => null);
+  return { created: true };
+}
+
 export async function downloadGcsObject(params: {
   gcsUri: string;
 }): Promise<{ buffer: Buffer; bucket: string; objectName: string }> {
