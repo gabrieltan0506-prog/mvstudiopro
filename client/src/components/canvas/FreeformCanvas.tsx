@@ -884,6 +884,23 @@ export default function FreeformCanvas({
     return () => ro?.disconnect();
   }, [fillContainer, fitAllInView, leftRailCollapsed, visibleBlocks.length]);
 
+  /**
+   * B5(UI 优化):独立画布(非嵌入右栏)载入时自动「看全图」一次。
+   * 此前只有嵌入模式会持续自动 fit,主 /canvas 落地在未聚焦的远处,新手找不到内容、
+   * 得手动点「看全图」。这里只做**一次性**初始聚焦(节点就绪后),不加持续 ResizeObserver,
+   * 不改独立画布后续的手动缩放/滚动行为。
+   */
+  const didInitialFitRef = useRef(false);
+  useEffect(() => {
+    if (fillContainer) return; // 嵌入模式上面那条已持续自动 fit
+    if (didInitialFitRef.current) return;
+    if (!canvasRef.current) return;
+    if (visibleBlocks.length === 0) return; // 等有节点再聚焦,空画布不动
+    didInitialFitRef.current = true;
+    const t = setTimeout(() => fitAllInView(), 60); // 等布局稳定(节点尺寸/滚动容器就绪)
+    return () => clearTimeout(t);
+  }, [fillContainer, fitAllInView, visibleBlocks.length]);
+
   useEffect(() => {
     if (!focusBlockId) {
       focusMissSinceRef.current = null;
