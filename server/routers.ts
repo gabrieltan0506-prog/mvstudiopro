@@ -15,6 +15,8 @@ import {
   router,
 } from "./_core/trpc";
 import { TRPCError } from "@trpc/server";
+import { postProdJobInputSchema } from "./jobs/postProdInput";
+import { resolvePostProdInputSources } from "./services/postProdMediaSource";
 import * as db from "./db";
 import * as sessionDb from "./sessionDb";
 import {
@@ -4265,6 +4267,59 @@ export const appRouter = router({
           error: job.error,
           output: job.output,
           pdfDebug,
+          provider: job.provider,
+          createdAt: job.createdAt,
+          updatedAt: job.updatedAt,
+        };
+      }),
+
+    /**
+     * 后期工坊入队(蓝图二①):拼接/BGM贴装/响度验收,纯 ffmpeg 零付费上游。
+     * 路由与 worker 共用 postProdJobInputSchema;素材来源在创建任务前统一核对
+     * 存储范围与登记记录(未登记=普通输入提示,不创建任务)。
+     */
+    queuePostProd: protectedProcedure
+      .input(postProdJobInputSchema)
+      .mutation(async ({ ctx, input }) => {
+        let normalizedInput;
+        try {
+          normalizedInput = await resolvePostProdInputSources({
+            userId: String(ctx.user.id),
+            input,
+          });
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "素材地址无法核对,请重新选择",
+          });
+        }
+        const jobId = nanoid(16);
+        await createJobRecord({
+          id: jobId,
+          userId: String(ctx.user.id),
+          type: "post_prod",
+          provider: "ffmpeg-post-prod",
+          input: normalizedInput,
+        });
+        return { jobId, status: "queued" as const };
+      }),
+
+    /** 查询后期工坊任务(只许本人看,与 PDF 同口径) */
+    getPostProdJob: protectedProcedure
+      .input(z.object({ jobId: z.string().min(1) }))
+      .query(async ({ ctx, input }) => {
+        const job = await getJobById(input.jobId);
+        if (!job || job.type !== "post_prod") {
+          throw new TRPCError({ code: "NOT_FOUND", message: "后期任务不存在" });
+        }
+        if (String(job.userId) !== String(ctx.user.id)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "无权查看此任务" });
+        }
+        return {
+          jobId: job.id,
+          status: job.status,
+          error: job.error,
+          output: job.output,
           provider: job.provider,
           createdAt: job.createdAt,
           updatedAt: job.updatedAt,

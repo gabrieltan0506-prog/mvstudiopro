@@ -1,4 +1,4 @@
-import { and, eq, lt, sql } from "drizzle-orm";
+import { and, eq, lt, ne, or, sql } from "drizzle-orm";
 import { jobs } from "../../drizzle/schema";
 import { getDb } from "../db";
 
@@ -67,17 +67,50 @@ export async function reapStaleJobsOnce(
   const qCutoff = wallCutoffSql(qMin);
 
   try {
+    // post_prod 任务记录保留:停止更新的行改判 failed 而不是删除,
+    // getPostProdJob 仍能返回任务状态,不会直接变成 404。
+    await db
+      .update(jobs)
+      .set({
+        status: "failed",
+        error: "后期任务已停止,请重新提交",
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(jobs.type, "post_prod"),
+          or(
+            and(eq(jobs.status, "running"), lt(jobs.updatedAt, runCutoff)),
+            and(eq(jobs.status, "queued"), lt(jobs.createdAt, qCutoff)),
+          ),
+        ),
+      );
+
     // 漫剧学习有逐集 GCS 检查点与启动恢复机制。不能在部署后的恢复 SQL 前把
     // running 行删除，否则页面只剩“操作不可用”而无法续跑。
     const nonManhuaLearn = sql`coalesce(${jobs.input}::jsonb->>'action', '') <> 'manhua_template_learn'`;
     const runningRows = await db
       .delete(jobs)
-      .where(and(eq(jobs.status, "running"), nonManhuaLearn, lt(jobs.updatedAt, runCutoff)))
+      .where(
+        and(
+          eq(jobs.status, "running"),
+          nonManhuaLearn,
+          ne(jobs.type, "post_prod"),
+          lt(jobs.updatedAt, runCutoff),
+        ),
+      )
       .returning({ id: jobs.id });
 
     const queuedRows = await db
       .delete(jobs)
-      .where(and(eq(jobs.status, "queued"), nonManhuaLearn, lt(jobs.createdAt, qCutoff)))
+      .where(
+        and(
+          eq(jobs.status, "queued"),
+          nonManhuaLearn,
+          ne(jobs.type, "post_prod"),
+          lt(jobs.createdAt, qCutoff),
+        ),
+      )
       .returning({ id: jobs.id });
 
     return { runningCleared: runningRows.length, queuedCleared: queuedRows.length };

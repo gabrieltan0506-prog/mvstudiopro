@@ -10,7 +10,9 @@ vi.mock("../services/drProSecondaryStaging.js", () => ({
 }));
 
 import {
+  claimNextPostProdJob,
   claimNextQueuedJobExcluding,
+  MAIN_QUEUE_EXCLUDED_TYPES,
   markManhuaLearnJobSucceededWithRetry,
   recoverInterruptedManhuaTemplateLearnJobsOnStartup,
 } from "./repository";
@@ -188,5 +190,74 @@ describe("漫剧学习终态落库", () => {
       ),
     ).resolves.toBe(false);
     expect(writes).toBe(2);
+  });
+});
+
+describe("post_prod 独立任务通道", () => {
+  beforeEach(() => getDb.mockReset());
+
+  it("普通任务通道排除 post_prod(与 pdf_export 同列)", () => {
+    expect(MAIN_QUEUE_EXCLUDED_TYPES).toContain("post_prod");
+    expect(MAIN_QUEUE_EXCLUDED_TYPES).toContain("pdf_export");
+  });
+
+  it("claimNextPostProdJob 用同一套条件 UPDATE 抢占,抢到返回任务", async () => {
+    const db = fakeDb([1]);
+    getDb.mockResolvedValue(db);
+    const job = await claimNextPostProdJob();
+    expect(job?.id).toBe("job-1");
+  });
+
+  it("被别的实例抢走(影响 0 行)返回 null,不重复执行同一条后期任务", async () => {
+    const db = fakeDb([0]);
+    getDb.mockResolvedValue(db);
+    expect(await claimNextPostProdJob()).toBeNull();
+  });
+});
+
+describe("markJobSucceededWithRetry:只重试状态写入", () => {
+  beforeEach(() => getDb.mockReset());
+
+  it("前两次状态写入未完成、第三次完成;媒体处理不在本函数内不会重跑", async () => {
+    let updateAttempts = 0;
+    getDb.mockImplementation(async () => ({
+      select: () => {
+        const chain = {
+          from: () => chain,
+          where: () => chain,
+          limit: async () => [],
+        };
+        return chain;
+      },
+      update: () => ({
+        set: () => ({
+          where: async () => {
+            updateAttempts += 1;
+            // 前两次:写入未完成;第三次成功
+            if (updateAttempts < 3) throw new Error("db transient");
+          },
+        }),
+      }),
+    }));
+
+    const { markJobSucceededWithRetry } = await import("./repository");
+    await expect(
+      markJobSucceededWithRetry("pp-1", { gcsUri: "gs://bucket-a/post-prod/7/x.mp4" }, "ffmpeg-post-prod", {
+        attempts: 4,
+        delayMs: 0,
+      }),
+    ).resolves.toBe(true);
+    expect(updateAttempts).toBe(3);
+  });
+
+  it("达到重试次数仍未写入时返回 false(runner 会保留 failed 任务记录)", async () => {
+    getDb.mockResolvedValue(null);
+    const { markJobSucceededWithRetry } = await import("./repository");
+    await expect(
+      markJobSucceededWithRetry("pp-2", { gcsUri: "gs://bucket-a/post-prod/7/y.mp4" }, undefined, {
+        attempts: 2,
+        delayMs: 0,
+      }),
+    ).resolves.toBe(false);
   });
 });

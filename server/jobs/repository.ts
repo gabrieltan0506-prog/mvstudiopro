@@ -4,7 +4,7 @@ import { getDb } from "../db";
 import { omitChineseStagingFromJobOutput } from "../services/platformImageChineseStaging.js";
 import { deleteDrProSecondaryStagingByJobId } from "../services/drProSecondaryStaging.js";
 
-export type JobType = "video" | "image" | "audio" | "platform" | "pdf_export";
+export type JobType = "video" | "image" | "audio" | "platform" | "pdf_export" | "post_prod";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 
 type NormalizedJob = Job & {
@@ -601,6 +601,33 @@ export async function claimNextQueuedJobExcluding(excludeTypes: string[]): Promi
   return claimQueuedJobById(db, next, "claimNextQueuedJobExcluding");
 }
 
+/** 独立通道任务类型:主队列不领取,各自专用领取函数串行消化 */
+export const MAIN_QUEUE_EXCLUDED_TYPES = ["pdf_export", "post_prod"] as const;
+
+/** 专用 post_prod 队列:后期 ffmpeg 耗时长,单并发消化,不挤占普通媒体任务 */
+export async function claimNextPostProdJob(): Promise<NormalizedJob | null> {
+  const db = await getDb();
+  if (!db) return null;
+
+  let rows: Job[] = [];
+  try {
+    rows = await db
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.status, "queued"), eq(jobs.type, "post_prod")))
+      .orderBy(asc(jobs.createdAt))
+      .limit(1);
+  } catch (error) {
+    console.error("[JobsRepo] claimNextPostProdJob select failed:", error);
+    return null;
+  }
+
+  if (rows.length === 0) return null;
+
+  const next = rows[0];
+  return claimQueuedJobById(db, next, "claimNextPostProdJob");
+}
+
 /** 专用 pdf_export 队列，避免长时间 page.pdf 阻塞 image/video/audio/platform。 */
 export async function claimNextPdfExportJob(): Promise<NormalizedJob | null> {
   const db = await getDb();
@@ -629,7 +656,7 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
   const db = await getDb();
   if (!db) return null;
 
-  const excludeTypes = ["pdf_export"];
+  const excludeTypes = [...MAIN_QUEUE_EXCLUDED_TYPES];
   let rows: Job[] = [];
   try {
     const actionCondition = sql`coalesce(${jobs.input}::jsonb->>'action', '') not in (
@@ -702,10 +729,10 @@ export async function markJobSucceeded(id: string, output: unknown, provider?: s
 }
 
 /**
- * 漫剧学习已经完成媒体/模型工作后，只重试“同一份终态结果”的数据库写入；
- * 绝不重新执行学习链，避免因 Neon 短抖动重复下载、抽帧或调用模型。
+ * 通用终态写入重试:媒体/模型工作已完成后,只重试"同一份终态结果"的数据库写入;
+ * 绝不重新执行媒体处理链,避免因数据库短抖动重复下载、转码或调用模型。
  */
-export async function markManhuaLearnJobSucceededWithRetry(
+export async function markJobSucceededWithRetry(
   id: string,
   output: unknown,
   provider?: string,
@@ -719,8 +746,18 @@ export async function markManhuaLearnJobSucceededWithRetry(
       await new Promise<void>((resolve) => setTimeout(resolve, delayMs * attempt));
     }
   }
-  console.error(`[JobsRepo] manhua learn terminal persistence exhausted: jobId=${id}`);
+  console.error(`[JobsRepo] terminal persistence exhausted: jobId=${id}`);
   return false;
+}
+
+/** 历史导出名保留:漫剧学习链的调用方不变,内部走通用重试 */
+export async function markManhuaLearnJobSucceededWithRetry(
+  id: string,
+  output: unknown,
+  provider?: string,
+  options?: { attempts?: number; delayMs?: number },
+): Promise<boolean> {
+  return markJobSucceededWithRetry(id, output, provider, options);
 }
 
 /** 最近一份平台动作任务（含运行中/成功/失败）；供持久任务在刷新后恢复。 */
