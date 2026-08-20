@@ -1,12 +1,12 @@
 /**
- * GLM 三网关链回归(复审三轮 P1-5):成功短路/HTTP 失败降级/业务验真失败降级/
+ * GLM GLM-5.3 链回归(复审三轮 P1-5):成功短路/HTTP 失败降级/业务验真失败降级/
  * abort 停链/全灭带完整轨迹/参数透传。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GlmGatewayError, invokeGlmJsonChatWithGatewayFallback } from "./bailianChat";
 
 const GOOD = JSON.stringify({ reportTitle: "报表", insightSummary: [{ role: "判断", title: "t", description: "d" }], trackGrowth: [{ name: "n", growth: "+1%" }] });
-const okBody = (content: string, model = "glm-5.2") =>
+const okBody = (content: string, model = "glm-5.3") =>
   JSON.stringify({ choices: [{ message: { content }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 2 }, model });
 
 function stubFetchSeq(handlers: Array<(url: string, init: any) => { ok: boolean; status: number; body: string }>) {
@@ -25,7 +25,7 @@ function stubFetchSeq(handlers: Array<(url: string, init: any) => { ok: boolean;
   return calls;
 }
 
-describe("invokeGlmJsonChatWithGatewayFallback(三网关链)", () => {
+describe("invokeGlmJsonChatWithGatewayFallback(GLM-5.3 链)", () => {
   beforeEach(() => {
     vi.stubEnv("WAN_OFFICIAL_BASE", "https://ws.example.cn");
     vi.stubEnv("WAN_OFFICIAL_API_KEY", "bl-key");
@@ -43,7 +43,7 @@ describe("invokeGlmJsonChatWithGatewayFallback(三网关链)", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toContain("ws.example.cn/compatible-mode");
     expect(r.gateway).toBe("bailian");
-    expect(r.gatewayTrace).toEqual([{ gateway: "bailian", model: "glm-5.2", outcome: "ok" }]);
+    expect(r.gatewayTrace).toEqual([{ gateway: "bailian", model: "glm-5.3", outcome: "ok" }]);
   });
 
   it("百炼 HTTP 500 后降级 EvoLink 成功", async () => {
@@ -99,17 +99,17 @@ describe("invokeGlmJsonChatWithGatewayFallback(三网关链)", () => {
     expect(vi.mocked(fetch as any).mock.calls).toHaveLength(1);
   });
 
-  it("三网关全灭:GlmGatewayError 带完整轨迹;max_tokens/model/signal 透传正确", async () => {
+  it("全链失败:GlmGatewayError 带完整轨迹(含 Qwen 末档);max_tokens/model/signal 透传正确", async () => {
     const calls = stubFetchSeq([() => ({ ok: false, status: 502, body: "bad" })]);
     const err = await invokeGlmJsonChatWithGatewayFallback({ system: "s", user: "u", maxTokens: 12_345 }).catch((e) => e);
     expect(err).toBeInstanceOf(GlmGatewayError);
-    expect(err.gatewayTrace.map((t: any) => t.gateway)).toEqual(["bailian", "evolink", "openrouter"]);
+    expect(err.gatewayTrace.map((t: any) => t.gateway)).toEqual(["bailian", "evolink", "openrouter", "evolink_qwen"]);
     expect(err.gatewayTrace.every((t: any) => t.outcome === "http_error")).toBe(true);
     const body0 = JSON.parse(String(calls[0].init?.body));
     expect(body0.max_tokens).toBe(12_345);
-    expect(body0.model).toBe("glm-5.2");
+    expect(body0.model).toBe("glm-5.3");
     const body2 = JSON.parse(String(calls[2].init?.body));
-    expect(body2.model).toBe("z-ai/glm-5.2");
+    expect(body2.model).toBe("z-ai/glm-5.3");
     expect(calls[0].init?.signal).toBeInstanceOf(AbortSignal);
   });
 });

@@ -5191,8 +5191,8 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 
         /**
-         * 平台趋势长图（2026-08-18 用户拍板）：主力 DeepSeek 经济档（约 K3 价 1/16，
-         * 持久 job 不受断线影响,推理慢也无碍);前两攻 DeepSeek,第三攻兜底 GLM-5.2 三网关。
+         * 平台趋势长图（2026-08-21 用户拍板改口径）：主力 GLM-5.3 链
+         * (百炼→EvoLink→OpenRouter→Qwen3.8-Max 末档),前两攻 GLM-5.3,第三攻兜底 DeepSeek 经济档。
          */
         const { runVisualReportLlmAttempts, buildVisualReportFailureTelemetry, parseVisualReportJson } = await import(
           "./services/visualReportLlm"
@@ -5249,19 +5249,18 @@ ${JSON.stringify(industryGrowthHintsObj, null, 2)}
           );
           const visualReportUser = `${userPayload}\n\n【輸出】僅輸出一個合法 JSON 物件（禁止 markdown围栏與前言後語）；首尾字元為 { 與 }。`;
 
-          // 三攻路由（审查返工 2026-08-18）：attempt 1-2 DeepSeek（带 job 硬截止信号与
-          // 报表 max-token 配置）→ attempt 3 兜底 GLM-5.2 三网关；
-          // 全部失败时抛 VisualReportAttemptsError,进入下方 catch 走既有退款语义。
+          // 三攻路由（2026-08-21 改口径）：attempt 1-2 GLM-5.3 链（每网关先过报表业务
+          // 验真才算成功,复审三轮 P1-1）→ attempt 3 兜底 DeepSeek 经济档（带 job 硬截止
+          // 信号与报表 max-token 配置）；全部失败抛 VisualReportAttemptsError,
+          // 进入下方 catch 走既有退款语义。
           visualReportStage = "llm";
           llmResult = await runVisualReportLlmAttempts({
             systemPrompt,
             userPrompt: visualReportUser,
             maxTokens: visualReportMaxTokens,
-            fallbackModelName: BAILIAN_GLM_MODEL,
+            primaryModelName: BAILIAN_GLM_MODEL,
             abortSignal: ctx.clientDisconnected,
-            // 兜底 = GLM-5.2 三网关链(百炼→EvoLink→OpenRouter);每网关先过报表业务验真
-            // 才算成功(复审三轮 P1-1),三网关全灭则如实失败退款
-            fallbackInvoke: () =>
+            primaryInvoke: () =>
               invokeGlmJsonChatWithGatewayFallback({
                 system: systemPrompt,
                 user: visualReportUser,
