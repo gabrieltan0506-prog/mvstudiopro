@@ -532,11 +532,13 @@ type SeedanceProductVideoResult = {
 /** 画布成片异步任务：短轮询 status，避免单条 HTTP 长等被部署掐断。 */
 async function pollCanvasVideoTask(
   taskId: string,
+  opts?: { timeoutMs?: number },
 ): Promise<{ videoUrl: string; workMode?: SeedanceEvolinkMode }> {
   const statusEndpoint = withLongJobsFlyDirect(
     `/api/jobs?op=canvasVideoStatus&taskId=${encodeURIComponent(taskId)}`,
   );
-  const deadline = Date.now() + 20 * 60_000;
+  // 轮询期限按引擎传入:Wan 公测排队以小时计,写死 20 分钟会把活任务误报成失败(审查 P1)
+  const deadline = Date.now() + Math.max(60_000, Number(opts?.timeoutMs) || 20 * 60_000);
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 5_000));
     const statusRes = await fetch(statusEndpoint, {
@@ -728,6 +730,8 @@ async function runHailuo3(
     /** 漫剧集号／段号：服务端据此走整集折算段价 */
     episodeIndex?: number;
     clipIndex?: number;
+    idempotencyKey?: string;
+    seed?: number;
   },
 ): Promise<string> {
   const hailuoUrl = withLongJobsFlyDirect("/api/jobs?op=hailuo3Video");
@@ -752,6 +756,8 @@ async function runHailuo3(
         generateAudio: true,
         ...(Number(opts?.episodeIndex) > 0 ? { episodeIndex: Number(opts?.episodeIndex) } : {}),
         ...(Number(opts?.clipIndex) > 0 ? { clipIndex: Number(opts?.clipIndex) } : {}),
+        ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
+        ...(Number.isFinite(Number(opts?.seed)) ? { seed: Math.floor(Number(opts?.seed)) } : {}),
       }),
     }),
   );
@@ -778,10 +784,44 @@ async function runHailuo3(
   }
   if (json.videoUrl) return String(json.videoUrl);
   if (json.taskId) {
-    const polled = await pollCanvasVideoTask(json.taskId);
-    return polled.videoUrl;
+    try {
+      // Wan 公测排队以小时计:前端轮询期限对齐后端(3h)+缓冲
+      const polled = await pollCanvasVideoTask(json.taskId, { timeoutMs: 200 * 60_000 });
+      return polled.videoUrl;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // 不把仍在跑的任务谎报成失败:把单号交给用户,后端照常生成与对账
+      throw new Error(`${msg}(任务仍在后台生成,单号 ${json.taskId},勿重复提交)`);
+    }
   }
   throw new Error(json.error || json.message || "成片生成失败");
+}
+
+/** Wan 参考图职责表:Wan 没有 @图片N 绑定语法,按数组顺序用自然语言声明每张图的唯一职责(审查 P1) */
+function buildWanReferenceRoleBlock(
+  images: string[],
+  entries: Array<{ url: string; kind?: string }>,
+): string {
+  if (!images.length) return "";
+  const lines = images.map((u, i) => {
+    const kind = entries.find((e) => e.url === u)?.kind || "";
+    const role =
+      kind === "tail"
+        ? "上一段末帧,仅作起幅衔接参考,不继承其中文字与瑕疵"
+        : kind === "still"
+          ? "本段关键静帧,锁定人物、构图与动作结果"
+          : "角色/场景定妆参考,只锁定外观身份,不继承背景、文字或无关元素";
+    return `Reference image ${i + 1}:${role}`;
+  });
+  return `【参考图职责】\n${lines.join("\n")}\n每张参考图只承担上述唯一职责,人物身份必须与对应参考图完全一致,禁止串位、换脸、混合身份。`;
+}
+
+/** 简易稳定散列:节点+内容 → 幂等键,重试复用同键防重复扣费 */
+function stableWanIdempotencyKey(blockId: string, prompt: string, images: string[]): string {
+  const src = `${blockId}|${prompt}|${images.join(",")}`;
+  let h = 5381;
+  for (let i = 0; i < src.length; i++) h = ((h << 5) + h + src.charCodeAt(i)) >>> 0;
+  return `wan30_${blockId.replace(/[^0-9a-zA-Z_-]/g, "").slice(0, 40)}_${h.toString(36)}`;
 }
 
 /** Wan 3.0（公测）· WaveSpeed reference-to-video：可直出 30s；公测排队时间较长 */
@@ -795,6 +835,9 @@ async function runWan30(
     resolution?: string;
     episodeIndex?: number;
     clipIndex?: number;
+    /** 稳定幂等键:同节点同内容重试复用同键,防双击双扣费(审查 P1) */
+    idempotencyKey?: string;
+    seed?: number;
   },
 ): Promise<string> {
   const wanUrl = withLongJobsFlyDirect("/api/jobs?op=wan30Video");
@@ -809,10 +852,11 @@ async function runWan30(
       headers: { "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify({
-        prompt: renderManhuaClipPromptForSeedance(prompt),
+        // Wan 无 Seedance 的 @图片N 硬绑定语法,提示词由调用方按 Wan 口径编译,这里不再过 Seedance 渲染器(审查 P1)
+        prompt,
         imageUrl: images[0],
         imageUrls: images.slice(0, 10),
-        audioUrls: (opts?.audioUrls || []).filter(Boolean).slice(0, 4),
+        audioUrls: (opts?.audioUrls || []).filter(Boolean).slice(0, 5),
         aspectRatio,
         // Wan 卖点即 30s 直出；未指定时不缩水
         duration: Math.min(30, Math.max(4, Math.floor(Number(opts?.duration) || 30))),
@@ -820,6 +864,8 @@ async function runWan30(
         generateAudio: true,
         ...(Number(opts?.episodeIndex) > 0 ? { episodeIndex: Number(opts?.episodeIndex) } : {}),
         ...(Number(opts?.clipIndex) > 0 ? { clipIndex: Number(opts?.clipIndex) } : {}),
+        ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
+        ...(Number.isFinite(Number(opts?.seed)) ? { seed: Math.floor(Number(opts?.seed)) } : {}),
       }),
     }),
   );
@@ -846,8 +892,15 @@ async function runWan30(
   }
   if (json.videoUrl) return String(json.videoUrl);
   if (json.taskId) {
-    const polled = await pollCanvasVideoTask(json.taskId);
-    return polled.videoUrl;
+    try {
+      // Wan 公测排队以小时计:前端轮询期限对齐后端(3h)+缓冲
+      const polled = await pollCanvasVideoTask(json.taskId, { timeoutMs: 200 * 60_000 });
+      return polled.videoUrl;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // 不把仍在跑的任务谎报成失败:把单号交给用户,后端照常生成与对账
+      throw new Error(`${msg}(任务仍在后台生成,单号 ${json.taskId},勿重复提交)`);
+    }
   }
   throw new Error(json.error || json.message || "成片生成失败");
 }
@@ -862,6 +915,8 @@ async function runHappyHorse(
     resolution?: string;
     episodeIndex?: number;
     clipIndex?: number;
+    idempotencyKey?: string;
+    seed?: number;
   },
 ): Promise<string> {
   const hhUrl = withLongJobsFlyDirect("/api/jobs?op=happyHorseVideo");
@@ -881,6 +936,8 @@ async function runHappyHorse(
         resolution,
         ...(Number(opts?.episodeIndex) > 0 ? { episodeIndex: Number(opts?.episodeIndex) } : {}),
         ...(Number(opts?.clipIndex) > 0 ? { clipIndex: Number(opts?.clipIndex) } : {}),
+        ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
+        ...(Number.isFinite(Number(opts?.seed)) ? { seed: Math.floor(Number(opts?.seed)) } : {}),
       }),
     }),
   );
@@ -907,8 +964,15 @@ async function runHappyHorse(
   }
   if (json.videoUrl) return String(json.videoUrl);
   if (json.taskId) {
-    const polled = await pollCanvasVideoTask(json.taskId);
-    return polled.videoUrl;
+    try {
+      // Wan 公测排队以小时计:前端轮询期限对齐后端(3h)+缓冲
+      const polled = await pollCanvasVideoTask(json.taskId, { timeoutMs: 200 * 60_000 });
+      return polled.videoUrl;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // 不把仍在跑的任务谎报成失败:把单号交给用户,后端照常生成与对账
+      throw new Error(`${msg}(任务仍在后台生成,单号 ${json.taskId},勿重复提交)`);
+    }
   }
   throw new Error(json.error || json.message || "成片生成失败");
 }
@@ -1534,13 +1598,25 @@ export async function runCanvasBlock(
         undefined;
       const clipDuration = clampManhuaClipDurationSecForVideoModel(videoModel, clipDurationRaw);
       if (useWan30) {
-        // Wan 3.0 公测:多图参考 + 可选对白参考音;30s 直出;排队时间较长
-        url = await runWan30(seedancePrompt, httpsImages.length ? httpsImages : [seedStill].filter(Boolean) as string[], ar, {
+        // Wan 3.0 公测:多图参考 + 可选对白参考音;30s 直出;排队时间较长。
+        // 提示词按 Wan 口径编译:不用 Seedance 的 @图片N 绑定,改为按数组顺序的参考职责表(审查 P1)
+        const wanImages = httpsImages.length ? httpsImages : ([seedStill].filter(Boolean) as string[]);
+        const wanPrompt = [
+          buildWanReferenceRoleBlock(wanImages, keptEntries),
+          isClip ? stripManhuaStaleAssetBindForModel(motionPrompt) : motionPrompt,
+          voiceOneLine ? `【声线】${voiceOneLine}` : "",
+          audioRefBlock,
+        ]
+          .filter(Boolean)
+          .join("\n")
+          .trim();
+        url = await runWan30(wanPrompt, wanImages, ar, {
           audioUrls: seedanceAudioUrls,
           duration: clipDurationRaw ?? 30,
           resolution: block.videoResolution,
           episodeIndex: block.episodeIndex,
           clipIndex: parseClipIndexFromBlockId(block.id),
+          idempotencyKey: stableWanIdempotencyKey(block.id, wanPrompt, wanImages),
         });
       } else if (useHappyHorse) {
         const firstFrame = String(seedStill || "").trim();

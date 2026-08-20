@@ -108,7 +108,12 @@ function isPersistableAssetUrl(u: unknown): boolean {
   if (!s || s.startsWith("blob:") || s.startsWith("data:")) return false;
   if (isLocalMediaPointer(s)) return true;
   if (/^https?:\/\//i.test(s)) return true;
-  return s.startsWith("/manhua-") || s.startsWith("/assets/") || s.startsWith("/demo/");
+  return (
+    s.startsWith("/manhua-") ||
+    s.startsWith("/assets/") ||
+    s.startsWith("/demo/") ||
+    s.startsWith("/api/canvas-media/")
+  );
 }
 
 function persistableLocalUrl(u: unknown): string | undefined {

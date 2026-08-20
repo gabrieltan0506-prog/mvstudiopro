@@ -1861,9 +1861,14 @@ export default function OmniCanvas() {
           if (!entry) continue;
           const blob = await entry.async("blob");
           if (!blob.size) continue;
+          // 记录 ID 用内容 SHA-256:不同备份的同名同大小图不再互相覆盖(审查 P2)
+          const digest = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+          const hash = Array.from(new Uint8Array(digest).slice(0, 16))
+            .map((x) => x.toString(16).padStart(2, "0"))
+            .join("");
           // 回灌本机媒体库:恢复通道按 sourceUrl 命中指针,图即刻可用,不再依赖任何线上链接
           await putLocalMediaRecord({
-            id: `import-${m.file.replace(/\W+/g, "-")}-${blob.size}`,
+            id: `import-${hash}`,
             blockId: "backup-import",
             slot: "output",
             blob: new Blob([blob], { type: m.mime || "image/png" }),

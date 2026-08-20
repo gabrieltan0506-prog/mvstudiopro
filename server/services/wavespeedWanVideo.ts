@@ -9,6 +9,7 @@ import {
   WAN30_REFERENCE_MAX,
   WAN30_WAVESPEED_PATH,
   clampWan30Duration,
+  normalizeWan30AspectRatio,
   normalizeWan30Resolution,
 } from "../../shared/wanWavespeedModels.js";
 import { getWavespeedApiKey } from "./wavespeedVideoUpscale.js";
@@ -45,6 +46,11 @@ export async function submitWavespeedWanVideo(input: {
   audioUrls?: string[];
   duration?: number;
   resolution?: string;
+  aspectRatio?: string;
+  /** 复杂漫剧提示词默认开(上游深思模式);简单镜头可关 */
+  thinkingMode?: boolean;
+  /** 0..2147483647;持久化到任务记录供复现 */
+  seed?: number;
   enableAudio?: boolean;
 }): Promise<{ predictionId: string }> {
   const apiKey = getWavespeedApiKey();
@@ -65,8 +71,12 @@ export async function submitWavespeedWanVideo(input: {
     reference_images: images,
     duration: clampWan30Duration(input.duration),
     resolution: normalizeWan30Resolution(input.resolution),
+    aspect_ratio: normalizeWan30AspectRatio(input.aspectRatio),
+    thinking_mode: input.thinkingMode !== false,
     enable_audio: input.enableAudio !== false,
   };
+  const seed = Math.floor(Number(input.seed));
+  if (Number.isFinite(seed) && seed >= 0 && seed <= 2147483647) body.seed = seed;
   if (audios.length) body.reference_audios = audios;
 
   const res = await fetch(`${apiBase()}${WAN30_WAVESPEED_PATH}`, {
@@ -105,6 +115,14 @@ export async function pollWavespeedWanOnce(
   if (res.status >= 500 || res.status === 429) {
     return { state: "running", status: `transient_http_${res.status}` };
   }
+  if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 422) {
+    // 明确不可重试:鉴权/参数错误再轮几小时也不会好,立即终态退分
+    return { state: "failed", error: `Wan 3.0 查询被拒 HTTP ${res.status}(不可重试)` };
+  }
+  if (res.status === 404) {
+    // 创建后最终一致性窗口:标记 transient,由任务框架的期限+对账治理,不无限白轮
+    return { state: "running", status: "transient_http_404" };
+  }
   const json = (await res.json().catch(() => ({}))) as WavespeedPrediction;
   const p = pickPrediction(json);
   if (p.status === "completed" || p.status === "succeeded") {
@@ -112,7 +130,13 @@ export async function pollWavespeedWanOnce(
     if (!sourceUrl) return { state: "failed", error: "Wan 3.0 任务完成但未返回视频" };
     return { state: "completed", sourceUrl };
   }
-  if (p.status === "failed" || p.status === "error" || p.status === "canceled") {
+  if (
+    p.status === "failed" ||
+    p.status === "error" ||
+    p.status === "canceled" ||
+    p.status === "cancelled" ||
+    p.status === "timeout"
+  ) {
     return { state: "failed", error: p.error || "Wan 3.0 生成失败" };
   }
   return { state: "running", status: p.status || "processing" };

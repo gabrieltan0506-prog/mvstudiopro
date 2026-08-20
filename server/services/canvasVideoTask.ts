@@ -150,6 +150,8 @@ export type CanvasVideoTaskRecord = {
   upscaleSourceUrl?: string;
   upscaleTarget?: WavespeedUpscaleTarget;
   wavespeedPredictionId?: string;
+  /** wan30:提交上游的随机种子,复现用 */
+  seed?: number;
 };
 
 /**
@@ -624,6 +626,9 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
       audioUrls: task.audioUrls || [],
       duration: task.duration,
       resolution: task.resolution || "720p",
+      aspectRatio: task.aspectRatio,
+      seed: task.seed,
+      thinkingMode: true,
       enableAudio: task.generateAudio !== false,
     });
     task.wavespeedPredictionId = submitted.predictionId;
@@ -971,6 +976,8 @@ export async function createCanvasVideoTask(input: {
   /** wavespeed-upscale 专用 */
   upscaleSourceUrl?: string;
   upscaleTarget?: WavespeedUpscaleTarget;
+  /** wan30:随机种子(0..2147483647),持久化供复现 */
+  seed?: number;
 }): Promise<CanvasVideoTaskRecord> {
   const prompt = String(input.prompt || "").trim();
   if (!prompt && input.engine !== "wavespeed-upscale") throw new Error("请填写视频提示词");
@@ -1033,6 +1040,7 @@ export async function createCanvasVideoTask(input: {
     imageUrls: input.imageUrls,
     videoUrls: input.videoUrls,
     audioUrls: input.audioUrls,
+    seed: input.seed,
     aspectRatio: String(input.aspectRatio || "16:9").trim() || "16:9",
     duration: Number(input.duration) || 15,
     resolution: input.resolution,

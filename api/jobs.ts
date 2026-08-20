@@ -4303,6 +4303,9 @@ ${truncateText(storyboardMoodSummary, 3500)}`;
             duration,
             resolution,
             generateAudio: b.generateAudio !== false,
+            ...(Number.isFinite(Number(b.seed)) && Number(b.seed) >= 0 && Number(b.seed) <= 2147483647
+              ? { seed: Math.floor(Number(b.seed)) }
+              : {}),
           });
           return res.status(200).json({
             ok: true,

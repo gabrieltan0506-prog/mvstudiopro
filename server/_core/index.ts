@@ -423,6 +423,12 @@ async function startServer() {
 
   // 画布生成图媒体:成图永久镜像在私有桶 generated/ 前缀下,快照里存本路由的固定地址,
   // 请求时现签短时读链 302 跳转——根治「备份里的七天签名链过期=图消失」(2026-08-20 用户回填丢图案)。
+  /**
+   * 鉴权模型(P0 审查修复):①必须登录;②对象必须出现在**请求者本人**的云端画布快照里
+   * (所有权按引用判定,带 60s 内存缓存)。generated/ 前缀还有其他功能的产物,
+   * 任何"任意已登录用户可续签任意路径"的口子都不留。
+   */
+  const canvasMediaDraftCache = new Map<number, { paths: Set<string>; ts: number }>();
   app.get(/^\/api\/canvas-media\/(.+)$/, async (req, res) => {
     try {
       const objectPath = decodeURIComponent(String(req.params[0] || ""));
@@ -432,6 +438,34 @@ async function startServer() {
         objectPath.includes("..")
       ) {
         return res.status(404).json({ error: "not found" });
+      }
+      const { sdk } = await import("./sdk");
+      const user = await sdk.authenticateRequest(req as any, { silentMissing: true }).catch(() => null);
+      const userId = Number((user as any)?.id);
+      if (!Number.isFinite(userId) || userId <= 0) {
+        return res.status(401).json({ error: "unauthorized" });
+      }
+      const now = Date.now();
+      let entry = canvasMediaDraftCache.get(userId);
+      if (!entry || now - entry.ts > 60_000) {
+        const paths = new Set<string>();
+        try {
+          const { downloadGcsObject, getGcsBucketName } = await import("../services/gcs");
+          const { buffer } = await downloadGcsObject({
+            gcsUri: `gs://${getGcsBucketName()}/manhua-cloud-drafts/user-${userId}.json`,
+          });
+          const raw = buffer.toString("utf8");
+          const re = /generated\/[A-Za-z0-9_\/-]+\/[A-Za-z0-9_.-]+\.(?:png|jpe?g|webp)/g;
+          let m: RegExpExecArray | null;
+          while ((m = re.exec(raw))) paths.add(m[0]);
+        } catch {
+          /* 无快照 = 空集,一律 403 */
+        }
+        entry = { paths, ts: now };
+        canvasMediaDraftCache.set(userId, entry);
+      }
+      if (!entry.paths.has(objectPath)) {
+        return res.status(403).json({ error: "forbidden" });
       }
       const { signGcsObjectPathV4ReadUrl, getGcsBucketName } = await import("../services/gcs");
       const url = signGcsObjectPathV4ReadUrl(getGcsBucketName(), objectPath, 3600);
