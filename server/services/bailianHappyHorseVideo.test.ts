@@ -106,6 +106,20 @@ describe("bailianHappyHorseVideo · 百炼官方主通道", () => {
     expect(isBailianHappyHorseSubmitRejected(unknown5xx)).toBe(false);
   });
 
+  it("七审 P1-5A:白名单外的 4xx(408/409/429)任务可能已被接受,归结果未知禁回落;422 明确拒绝", async () => {
+    for (const code of [408, 409, 425, 429]) {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: code })));
+      const e = await submitBailianHappyHorseVideo({ prompt: "p", imageUrl: "https://a/b.png" }).catch((x) => x);
+      expect(isBailianHappyHorseSubmitUnknown(e)).toBe(true);
+      expect(isBailianHappyHorseSubmitRejected(e)).toBe(false);
+    }
+    for (const code of [401, 403, 413, 415, 422]) {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: code })));
+      const e = await submitBailianHappyHorseVideo({ prompt: "p", imageUrl: "https://a/b.png" }).catch((x) => x);
+      expect(isBailianHappyHorseSubmitRejected(e)).toBe(true);
+    }
+  });
+
   it("轮询:SUCCEEDED 取 video_url;FAILED 带上游 message;PENDING 继续跑", async () => {
     const seq = [
       { output: { task_status: "PENDING" } },

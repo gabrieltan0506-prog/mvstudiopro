@@ -43,7 +43,6 @@ export default function CreativePage() {
   const [imageModel, setImageModel] = useState("gemini-3.1-flash-image-preview");
   
   const chargeStepMutation = trpc.workflow.chargeStep.useMutation();
-  const refundStepMutation = trpc.workflow.refundStep.useMutation();
   const optimizeCopyMutation = trpc.mvAnalysis.optimizeCustomCopy.useMutation();
 
   const subQuery = trpc.stripe.getSubscription.useQuery(undefined, {
@@ -95,12 +94,8 @@ export default function CreativePage() {
     setVideoUrl("");
     setPipelineNote("");
     
-    let chargedCost = 0;
-    let chargedKey: string | null = null;
     try {
       const isGptImage2 = imageModel === "gpt-image-2";
-      // GPT-image-2 成本设定为 54，Nano Banana 2 (flash) 设定为 35
-      const overrideCost = isGptImage2 ? 54 : 35;
       
       if (isGptImage2 && !isPaidUser) {
          const usageKey = `gpt2_usage_${user?.id}`;
@@ -139,15 +134,8 @@ export default function CreativePage() {
         if (!url) throw new Error("生图失败：未返回图片");
         setImageUrl(url);
       } else {
-        // Nano 旧链暂时维持前端 chargeStep(另行迁移服务端计费);退款只认 chargeKey
-        const charge = await chargeStepMutation.mutateAsync({
-          step: "scene_image",
-          quantity: 1,
-          creditsOverride: overrideCost,
-        });
-        chargedCost = charge.cost;
-        chargedKey = charge.chargeKey ?? null;
-        // Nano Banana 2 (Flash) 生图
+        // 七审 P1-3:Nano 迁入服务端计费契约——billing variant 由服务端定价 35 并在
+        // 失败时自动退款;前端不再 chargeStep/refundStep(标称35实扣5的错价已修)。
         const res = await fetch(`/api/google?op=nanoImage&tier=flash&model=gemini-3.1-flash-image-preview`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -158,7 +146,8 @@ export default function CreativePage() {
             imageSize: aspectRatio,
             aspectRatio,
             numberOfImages: 1,
-            guidanceScale: 4
+            guidanceScale: 4,
+            billing: "creative_nano_flash"
           })
         });
         const json = await res.json();
@@ -168,10 +157,6 @@ export default function CreativePage() {
         setImageUrl(json.imageUrl || json.imageUrls?.[0]);
       }
     } catch (err: any) {
-      // 只有 Nano 前端预扣过才退;退款只按服务端 chargeKey 对账
-      if (chargedCost > 0 && chargedKey) {
-        await refundStepMutation.mutateAsync({ chargeKey: chargedKey, reason: "Creative生图失败退款" }).catch(() => {});
-      }
       setError(err.message || "生成图片失败");
     } finally {
       setLoading(false);
@@ -194,8 +179,6 @@ export default function CreativePage() {
     setError("");
     setVideoUrl("");
     
-    let chargedCost = 0;
-    let chargedKey: string | null = null;
     try {
       /**
        * Seedance 与 H3 的扣费已收口到服务端（`api/jobs.ts` 的 `chargeCanvasVideoAndRun`），
@@ -203,13 +186,12 @@ export default function CreativePage() {
        */
       const chargeOnClient = videoModel === "veo-3.1";
       if (chargeOnClient) {
-        const charge = await chargeStepMutation.mutateAsync({
+        // 七审 P0-1:客户端退款能力已下线;失败退款迁往服务端契约
+        await chargeStepMutation.mutateAsync({
           step: "scene_video",
           quantity: 1,
           creditsOverride: CREATIVE_VIDEO_CREDITS_VEO_31,
         });
-        chargedCost = charge.cost;
-        chargedKey = charge.chargeKey ?? null;
       }
 
 
@@ -331,9 +313,6 @@ export default function CreativePage() {
       }
       setVideoUrl(finalVideoUrl);
     } catch (err: any) {
-      if (chargedCost > 0 && chargedKey) {
-        await refundStepMutation.mutateAsync({ chargeKey: chargedKey, reason: "Creative视频失败退款" }).catch(() => {});
-      }
       setError(err.message || "生成视频失败");
     } finally {
       setLoading(false);

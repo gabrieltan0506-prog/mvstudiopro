@@ -1025,7 +1025,6 @@ export default function OmniCanvas() {
   const [finalAssembleVideoUrl, setFinalAssembleVideoUrl] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const chargeWorkflowStepMutation = trpc.workflow.chargeStep.useMutation();
-  const refundWorkflowStepMutation = trpc.workflow.refundStep.useMutation();
   /** 登录后云端草稿：与本机双通路，互不放弃 */
   const [cloudSyncReady, setCloudSyncReady] = useState(false);
   const cloudHydrateDoneRef = useRef(false);
@@ -2566,12 +2565,10 @@ export default function OmniCanvas() {
         level: "info",
         detail: `clips=${ready.map((c) => c.episodeIndex).join(",")}`,
       });
-      const charged: Array<{ step: "music" | "final_render"; chargeKey: string | null }> = [];
       try {
-        const musicCharge = await chargeWorkflowStepMutation.mutateAsync({ step: "music", quantity: 1 });
-        charged.push({ step: "music", chargeKey: musicCharge.chargeKey ?? null });
-        const renderCharge = await chargeWorkflowStepMutation.mutateAsync({ step: "final_render", quantity: 1 });
-        charged.push({ step: "final_render", chargeKey: renderCharge.chargeKey ?? null });
+        // 七审 P0-1:客户端退款能力已下线;失败退款迁往服务端计费契约
+        await chargeWorkflowStepMutation.mutateAsync({ step: "music", quantity: 1 });
+        await chargeWorkflowStepMutation.mutateAsync({ step: "final_render", quantity: 1 });
 
         // 短入队（www→Vercel rewrite→Fly）+ GET 轮询，不走长任务直连 api 子域
         pushDebug("assemble:music", { level: "info", detail: "queued · polling…" });
@@ -2655,12 +2652,6 @@ export default function OmniCanvas() {
         }, 80);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "合成失败";
-        for (const item of charged.reverse()) {
-          if (!item.chargeKey) continue; // 没拿到 key=没扣成,无款可退
-          void refundWorkflowStepMutation
-            .mutateAsync({ chargeKey: item.chargeKey, reason: `漫剧合成失败退款·${item.step}` })
-            .catch(() => {});
-        }
         pushDebug("assemble:error", { level: "error", detail: msg });
         toast.error(msg);
       } finally {
@@ -2671,7 +2662,6 @@ export default function OmniCanvas() {
       assembleBusy,
       factoryBusy,
       chargeWorkflowStepMutation,
-      refundWorkflowStepMutation,
       factoryTopic,
       writerPack?.seriesTitle,
       writerPack?.logline,

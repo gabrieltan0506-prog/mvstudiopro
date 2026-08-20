@@ -683,7 +683,24 @@ async function submitUpstream(task: CanvasVideoTaskRecord): Promise<void> {
       duration: task.duration,
       resolution: task.resolution || "720p",
     });
-    const submitted = await submitOpenRouterVideoJob(body);
+    let submitted: Awaited<ReturnType<typeof submitOpenRouterVideoJob>>;
+    try {
+      submitted = await submitOpenRouterVideoJob(body);
+    } catch (error) {
+      // 七审 P1-5B:网关提交"结果未知"(网络断/超时/5xx)任务可能已建,
+      // 抛给外层 failTask 会假失败真退款——转人工对账
+      const { isLikelyUnknownOutcomeSubmitError } = await import("./bailianHappyHorseVideo.js");
+      if (isLikelyUnknownOutcomeSubmitError(error)) {
+        task.status = "reconcile_manual";
+        task.error = "网关提交结果无法确认，已停止自动重试并转人工对账";
+        task.lastTransientError = (error instanceof Error ? error.message : String(error)).slice(0, 280);
+        task.finishedAt = new Date().toISOString();
+        await writeTask(task);
+        await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+        return;
+      }
+      throw error;
+    }
     task.openRouterJobId = submitted.openRouterJobId;
     task.pollingUrl = submitted.pollingUrl;
     task.model = submitted.model;
@@ -1007,7 +1024,14 @@ async function advanceTask(taskId: string): Promise<CanvasVideoTaskRecord | null
         return failTask(current, "视频服务未返回任务查询地址");
       }
       const apiKey = getOpenRouterApiKey();
-      if (!apiKey) return failTask(current, "视频服务暂不可用，请稍后重试");
+      if (!apiKey) {
+        // 七审 P1-5B:已有 pollingUrl=任务已提交、上游照跑照收钱;
+        // 本地查询配置缺失只是查不了,不能 failTask 假失败真退款——记瞬态等下一轮。
+        current.lastTransientError = "openrouter_query_config_unavailable";
+        current.status = activePollStatus(current);
+        await writeTask(current);
+        return current;
+      }
 
       const snap = await pollOpenRouterVideoJobOnce(current.pollingUrl, apiKey);
       if (snap.state === "running") {

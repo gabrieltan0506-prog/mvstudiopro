@@ -87,6 +87,37 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
 
 
 
+/** 七审 P0-2:判定 canvas 出图任务(付费上游,专属超时/不重排/幂等退款) */
+export function isCanvasGptImage2Job(input: unknown): boolean {
+  return Boolean(
+    input &&
+      typeof input === "object" &&
+      !Array.isArray(input) &&
+      (input as { action?: unknown }).action === "canvas_gpt_image2",
+  );
+}
+
+/** 七审 P0-2:canvas 出图退款的 DB 幂等键——同 job 多次进入退款路径余额只回一次 */
+export function canvasGptImage2RefundKey(jobId: string | undefined): string {
+  return `refund:canvasGptImage2/${jobId || "unknown"}`.slice(0, 120);
+}
+
+/**
+ * 七审 P0-2:失败任务处置纯函数。canvas_gpt_image2 绝不整单重排——
+ * 重排=第二次调用付费图片上游(chargeKey 只能防第二次扣积分,防不了第二次烧上游),
+ * 直接退款+终态失败;其余任务维持 attempts<2 重排的旧策略。
+ */
+export function resolveFailedJobDisposition(job: {
+  type: string;
+  input: unknown;
+  attempts?: number | null;
+}): "refund_and_fail_canvas_image" | "requeue" | "fail" {
+  if (job.type === "image" && isCanvasGptImage2Job(job.input)) {
+    return "refund_and_fail_canvas_image";
+  }
+  return (job.attempts ?? 0) < 2 ? "requeue" : "fail";
+}
+
 const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 const POLL_INTERVAL_MS = 2_000;
 
@@ -1114,11 +1145,13 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
       }
       if (deductReceipt) {
         const { refundCreditsForDeductAmount } = await import("../credits.js");
+        // 七审 P0-2:退款带 DB 幂等键——同 job 无论几次进入退款路径,余额只回一次
         await refundCreditsForDeductAmount(
           numericUserId,
           reason,
           deductReceipt,
           "canvasGptImage2Refund",
+          { refundKey: canvasGptImage2RefundKey(jobId) },
         );
         return;
       }
@@ -1206,8 +1239,18 @@ function normalizeAudioStatus(status: string): "PENDING" | "SUCCESS" | "FAILED" 
   return "PENDING";
 }
 
-function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
+export function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
   const defaultTimeout = JOB_TIMEOUT_MS[type];
+  if (type === "image" && isCanvasGptImage2Job(inputRaw)) {
+    /**
+     * 七审 P0-2:image 默认 12 秒墙钟是给轻任务的;GPT-Image-2 单供应商 fetch
+     * 允许 6 分钟、客户端按 12 分钟轮询——12 秒必超时,还会触发整单重排双烧上游。
+     * 给足 双供应商 fallback + GCS 镜像 + 所有权登记 的墙钟。
+     */
+    const raw = Number(process.env.CANVAS_GPT_IMAGE2_JOB_TIMEOUT_MS);
+    if (Number.isFinite(raw) && raw >= 120_000) return raw;
+    return 15 * 60_000;
+  }
   if (type === "platform") {
     try {
       const input = asEnvelope(inputRaw);
@@ -2746,6 +2789,23 @@ async function runClaimedJob(job: Awaited<ReturnType<typeof claimNextQueuedJob>>
         "趋势报告生成失败或超时·退回积分",
       ).catch((refundError) =>
         console.error("[Jobs] trend report refund failed:", refundError),
+      );
+      await markJobFailed(job.id, message);
+    } else if (resolveFailedJobDisposition(job) === "refund_and_fail_canvas_image") {
+      /**
+       * 七审 P0-2:canvas_gpt_image2 绝不整单重排——重排会第二次调用付费图片上游。
+       * 外层墙钟超时/进程级失败时进程内 deduct 快照可能已丢:按 chargeKey 从 DB
+       * 读原账退款,refundKey 与 processImageJob 内部退款同键,双路径只退一次。
+       */
+      const { refundChargeByKey } = await import("../credits.js");
+      await refundChargeByKey({
+        userId: Number(job.userId),
+        chargeKey: `canvasGptImage2/${job.id}`,
+        reason: "画布出图失败或超时·退回已扣积分",
+        actionForLog: "canvasGptImage2Refund",
+        refundKey: canvasGptImage2RefundKey(job.id),
+      }).catch((refundError) =>
+        console.error("[Jobs] canvas image refund pending:", refundError),
       );
       await markJobFailed(job.id, message);
     } else if ((job.attempts ?? 0) < 2) {

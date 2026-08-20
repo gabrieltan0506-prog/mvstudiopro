@@ -1011,25 +1011,67 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         signal: AbortSignal.timeout(nanoVertexTimeoutMs),
       });
 
-      let r = await fetchJson(url, makeNanoVertexInit());
-      for (let attempt = 0; attempt < 4 && shouldRetryVertexImage(r.status, r.json, r.rawText); attempt += 1) {
-        await sleep((2 ** attempt) * 1000 + Math.floor(Math.random() * 300));
-        r = await fetchJson(url, makeNanoVertexInit());
+      const generateNanoOnce = async () => {
+        let r = await fetchJson(url, makeNanoVertexInit());
+        for (let attempt = 0; attempt < 4 && shouldRetryVertexImage(r.status, r.json, r.rawText); attempt += 1) {
+          await sleep((2 ** attempt) * 1000 + Math.floor(Math.random() * 300));
+          r = await fetchJson(url, makeNanoVertexInit());
+        }
+        const raw = r.json ?? r.rawText;
+        const images = r.ok ? extractGeneratedImages(r.json) : [];
+        const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
+        const bodyNb = await buildNanoImageResponseBody({
+          ok: r.ok,
+          status: r.status,
+          model,
+          url: r.url,
+          raw,
+          imageUrls,
+          forceInlineBase64: nanoForceInlineBase64,
+        });
+        return { ok: r.ok, status: r.status, imageUrls, bodyNb };
+      };
+
+      /**
+       * 七审 P1-3:Creative Nano 迁入服务端计费执行契约。客户端只能传产品
+       * variant(billing=creative_nano_flash),金额由服务端价格表定死(35),
+       * 扣费/执行/失败退款同在 runPaidWorkflowStep 一个契约内——
+       * 出图失败或空图即抛错触发原路退款,前端不再有任何计费/退款能力。
+       * 其余调用方(平台工具/脚本)不带 billing,维持原免计费行为不受影响。
+       */
+      const billingVariant = s(b.billing || q.billing || "").trim();
+      if (billingVariant === "creative_nano_flash") {
+        const viewer = await resolveGoogleGatewayUser(req);
+        if (!viewer) {
+          return res.status(401).json({ ok: false, error: "请先登录后再生成图片" });
+        }
+        const { runPaidWorkflowStep } = await import("../server/services/workflowStepBilling.js");
+        const { randomUUID } = await import("node:crypto");
+        try {
+          const out = await runPaidWorkflowStep({
+            userId: viewer.userId,
+            executionId: randomUUID(),
+            step: "scene_image",
+            totalCost: 35,
+            description: "Creative 生图 · Nano Banana 2 Flash（35 积分/张）",
+            run: async () => {
+              const result = await generateNanoOnce();
+              if (!result.ok || result.imageUrls.length === 0) {
+                throw new Error(
+                  (result.bodyNb as { error?: string })?.error || `nano_image_failed:${result.status}`,
+                );
+              }
+              return result;
+            },
+          });
+          return res.status(200).json(out.bodyNb);
+        } catch (e: any) {
+          return res.status(502).json({ ok: false, error: e?.message || "nano_image_failed" });
+        }
       }
 
-      const raw = r.json ?? r.rawText;
-      const images = r.ok ? extractGeneratedImages(r.json) : [];
-      const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
-      const bodyNb = await buildNanoImageResponseBody({
-        ok: r.ok,
-        status: r.status,
-        model,
-        url: r.url,
-        raw,
-        imageUrls,
-        forceInlineBase64: nanoForceInlineBase64,
-      });
-      return res.status(r.ok ? 200 : 502).json(bodyNb);
+      const result = await generateNanoOnce();
+      return res.status(result.ok ? 200 : 502).json(result.bodyNb);
     }
 
     // ---------------- Veo (video) ----------------

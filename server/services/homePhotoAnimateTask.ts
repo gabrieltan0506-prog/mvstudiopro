@@ -335,6 +335,17 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
           return succeedTask(task, videoUrl, submitted.model);
         }
       } catch (error) {
+        // 七审 P1-5B:网关提交"结果未知"(网络断/超时/5xx)任务可能已建——
+        // failTask 退款会假失败真退,转人工对账
+        const { isLikelyUnknownOutcomeSubmitError } = await import("./bailianHappyHorseVideo.js");
+        if (isLikelyUnknownOutcomeSubmitError(error)) {
+          task.status = "reconcile_manual";
+          task.error = "网关提交结果无法确认，已停止自动重试并转人工对账";
+          task.finishedAt = new Date().toISOString();
+          await writeTask(task);
+          await pauseActiveJob(task.taskId, TASK_TYPE).catch(() => {});
+          return task;
+        }
         return failTask(
           task,
           error instanceof Error ? error.message : "照片动画创建失败",
@@ -374,11 +385,21 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
       if (snap.state === "failed") {
         return failTask(task, snap.error);
       }
-      // 官方产物是阿里 OSS 短期直链,镜像 GCS 再交付(存储签名铁律)
-      const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl, {
-        durableStorage: { keyPrefix: "home-photo/animation" },
-      });
-      return succeedTask(task, videoUrl, task.model || BAILIAN_HAPPYHORSE_I2V_MODEL);
+      // 官方产物是阿里 OSS 短期直链,镜像 GCS 再交付(存储签名铁律);
+      // 七审 P1-5B:镜像抖动不是生成失败,留任务下一轮再搬,不许 failTask 退款
+      try {
+        const videoUrl = await mirrorSeedanceMp4ToGcsSignedUrl(snap.sourceUrl, {
+          durableStorage: { keyPrefix: "home-photo/animation" },
+        });
+        return succeedTask(task, videoUrl, task.model || BAILIAN_HAPPYHORSE_I2V_MODEL);
+      } catch (error) {
+        task.status = "running";
+        task.error = (
+          error instanceof Error ? error.message : "照片动画搬运暂时失败"
+        ).slice(0, 280);
+        await writeTask(task);
+        return task;
+      }
     }
 
     const pollingUrl = task.pollingUrl;
@@ -387,7 +408,12 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
     }
     const apiKey = getOpenRouterApiKey();
     if (!apiKey) {
-      return failTask(task, "视频服务暂不可用，请稍后重试");
+      // 七审 P1-5B:已有 pollingUrl=任务已提交;本地查询配置缺失只是查不了,
+      // 不能 failTask 假失败真退款——保持 running 等配置恢复
+      task.status = "running";
+      task.error = "OpenRouter 查询配置暂不可用，任务状态尚未确认";
+      await writeTask(task);
+      return task;
     }
 
     try {
@@ -410,10 +436,13 @@ async function advanceTask(taskId: string): Promise<HomePhotoAnimateTaskRecord |
         task.model || OPENROUTER_HAPPYHORSE_1_1_MODEL,
       );
     } catch (error) {
-      return failTask(
-        task,
-        error instanceof Error ? error.message : "照片动画生成失败",
-      );
+      // 七审 P1-5B:查询/镜像异常说明不了任务死活,记录后保持 running 等下一轮
+      task.status = "running";
+      task.error = (
+        error instanceof Error ? error.message : "照片动画查询暂时失败"
+      ).slice(0, 280);
+      await writeTask(task);
+      return task;
     }
   } finally {
     inflight.delete(taskId);

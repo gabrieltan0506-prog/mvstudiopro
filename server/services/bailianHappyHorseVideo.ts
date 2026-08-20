@@ -130,11 +130,36 @@ export async function submitBailianHappyHorseVideo(input: {
   ]
     .filter(Boolean)
     .join(" ");
-  if (res.status >= 400 && res.status < 500) {
+  /**
+   * 七审 P1-5A:只有明确的参数/鉴权类 4xx 才算"确定没建单"。
+   * 408(请求超时)/409(冲突)/425/429(限流)任务可能已被接受,按结果未知处理,禁止自动回落。
+   */
+  if (DEFINITE_REJECTION_STATUS.has(res.status)) {
     throw new BailianHappyHorseSubmitRejectedError(`百炼 HappyHorse 明确拒绝提交：${detail}`);
   }
   throw new BailianHappyHorseSubmitUnknownError(`百炼 HappyHorse 提交结果未知：${detail}`);
 }
+
+/**
+ * 七审 P1-5B:OpenRouter 网关提交错误的"结果未知"启发式——网络断/超时/5xx
+ * 任务可能已建,调用方应转 reconcile_manual 而不是 failTask 假失败真退款。
+ */
+export function isLikelyUnknownOutcomeSubmitError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /timeout|timed out|aborted|network|fetch failed|socket|ECONN|EPIPE|HTTP 5\d\d|\b50[0-9]\b|502|503|504/i.test(
+    msg,
+  );
+}
+
+const DEFINITE_REJECTION_STATUS = new Set([
+  400, // 参数错误
+  401, // 鉴权失败
+  403, // 无权限
+  404, // 提交端点不存在
+  413, // 载荷过大
+  415, // 媒体类型错误
+  422, // 参数语义不合法
+]);
 
 export type BailianHappyHorsePollSnapshot =
   | { state: "completed"; sourceUrl: string }

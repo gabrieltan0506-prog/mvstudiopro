@@ -645,82 +645,36 @@ export const workflowRouter = router({
        * 退款只认这把钥匙(refundStep 从 DB 读原扣款),客户端不再拥有"报数退款"能力。
        */
       const chargeKey = `workflowStep/${ctx.user.id}/${input.step}/${randomUUID()}`;
+      // 七审 P1-6:action 保持历史 costKey(报表按 action 聚合,禁止拆成新旧两组);
+      // step 新命名只进 description。
       const result = await deductCreditsAmount(
         ctx.user.id,
         totalCost,
-        `workflowStep:${input.step}`,
-        `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}${input.quantity > 1 ? ` ×${input.quantity}` : ""}${useOverride ? `（动态 ${input.creditsOverride}×${input.quantity}）` : ""}`,
+        costKey,
+        `大师级视频基地·${WORKFLOW_STEP_LABEL[input.step]}[step:${input.step}]${input.quantity > 1 ? ` ×${input.quantity}` : ""}${useOverride ? `（动态 ${input.creditsOverride}×${input.quantity}）` : ""}`,
         { chargeKey },
       );
       return { cost: result.cost, remaining: result.remainingBalance, chargeKey };
     }),
 
   /**
-   * 六审第6条:退款只按真实 chargeKey 对账——从 DB 读原扣款金额与来源(个人/团队),
-   * 不再接收客户端 step/quantity/creditsOverride 报数;重放退款由 refundKey 唯一索引挡。
+   * 七审 P0-1:通用退款路由**下线**——退款资格无法在此校验(用户成功拿到成片后
+   * 仍可自退全款,白嫖链成立)。扣费/执行/失败退款已收进服务端执行契约
+   * server/services/workflowStepBilling.ts(runPaidWorkflowStep);前端不再持有
+   * 任何可触发退款的能力。保留路由仅为旧客户端不至于 404,一律 FORBIDDEN。
    */
   refundStep: protectedProcedure
     .input(
       z.object({
-        chargeKey: z.string().min(20).max(120).regex(/^workflowStep\/[0-9]+\//),
+        chargeKey: z.string().max(200).optional(),
         reason: z.string().max(200).optional(),
       }),
     )
-    .mutation(async ({ ctx, input }) => {
-      const database = await db();
-      const [row] = await database
-        .select({
-          userId: stripeUsageLogs.userId,
-          creditsCost: stripeUsageLogs.creditsCost,
-          metadata: stripeUsageLogs.metadata,
-          action: stripeUsageLogs.action,
-        })
-        .from(stripeUsageLogs)
-        .where(
-          and(
-            eq(stripeUsageLogs.userId, ctx.user.id),
-            eq(stripeUsageLogs.chargeKey, input.chargeKey),
-          ),
-        )
-        .limit(1);
-
-      if (!row || !String(row.action).startsWith("workflowStep:")) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "找不到可退款的原始扣款" });
-      }
-
-      let metadata: { source?: string; teamId?: number; memberId?: number } = {};
-      try {
-        metadata = row.metadata ? JSON.parse(row.metadata) : {};
-      } catch {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: "原始扣款来源损坏，已停止自动退款",
-        });
-      }
-
-      const cost = Math.max(0, Number(row.creditsCost) || 0);
-      if (cost === 0) return { refunded: 0 };
-      const deduct = (
-        metadata.source === "team"
-          ? {
-              success: true,
-              cost,
-              remainingBalance: -1,
-              source: "team",
-              teamId: Number(metadata.teamId),
-              teamMemberId: Number(metadata.memberId),
-            }
-          : { success: true, cost, remainingBalance: -1, source: "personal" }
-      ) as Awaited<ReturnType<typeof deductCreditsAmount>>;
-
-      await refundCreditsForDeductAmount(
-        ctx.user.id,
-        input.reason || "工作流生成失败退款",
-        deduct,
-        "workflowStepRefund",
-        { refundKey: `refund:${input.chargeKey}`.slice(0, 120) },
-      );
-      return { refunded: cost };
+    .mutation(async () => {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "退款由服务端在生成失败时自动执行，不再接受客户端退款请求",
+      });
     }),
 
   /** 大师级视频基地脚本：每日第 1 次免费，第 2 次起扣 2 cr（防薅）。请在调用 /api/jobs 前执行。 */

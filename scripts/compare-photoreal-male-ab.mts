@@ -1,4 +1,15 @@
 /**
+ * ⚠️ 已废弃(七审 P2-7):本脚本依赖的同步入口 /api/jobs?op=canvasGptImage2 已 410 停用
+ * ——那条入口曾是免登录、免扣费直调付费图片上游的旁门,正是被封死的洞,不会为脚本重开。
+ * 如需恢复本脚本:迁移为「服务身份登录 → POST /api/jobs 创建 image job(canvas_gpt_image2,
+ * 服务端扣费)→ 轮询同一 jobId」。迁移前运行一律硬退出。
+ */
+if (!process.env.ALLOW_DEPRECATED_CANVAS_SYNC_SCRIPT) {
+  console.error("[deprecated] 本脚本已废弃:同步出图入口已 410 停用(七审 P2-7),详见文件头注释。");
+  process.exit(1);
+}
+
+/**
  * 仿真人男女主 A/B 对照（不覆盖正式库，只写入 Downloads 审阅目录）
  *
  *   A = 纯文生（不挂真人样本；接近老人槽那条路）
